@@ -42,6 +42,23 @@ enum ContractStatus {
   CANCELLED
 }
 
+enum BuildingType {
+  SILO
+  HAY_BARN
+  MACHINE_SHED
+  CATTLE_BARN
+  PIGSTY
+  WORKSHOP
+  FARMHOUSE
+}
+
+enum CellKind {
+  EMPTY
+  CROP
+  BUILDING
+  VEHICLE
+}
+
 model User {
   id             String         @id @default(cuid())
   email          String         @unique
@@ -56,9 +73,9 @@ model User {
 }
 
 model Farm {
-  id        String   @id @default(cuid())
-  userId    String   @unique
-  user      User     @relation(fields: [userId], references: [id])
+  id        String          @id @default(cuid())
+  userId    String          @unique
+  user      User            @relation(fields: [userId], references: [id])
   name      String
   parcels   Parcel[]
   inventory InventoryItem[]
@@ -66,58 +83,98 @@ model Farm {
 }
 
 model Zone {
-  id          String   @id @default(cuid())
-  code        String   @unique
-  name        String
-  country     String
-  koppen      String
-  riskNote    String
-  parcels     Parcel[]
+  id       String   @id @default(cuid())
+  code     String   @unique
+  name     String
+  country  String
+  koppen   String
+  riskNote String
+  mapW     Int      @default(4)
+  mapH     Int      @default(3)
+  parcels  Parcel[]
 }
 
 model Parcel {
-  id           String      @id @default(cuid())
-  zoneId       String
-  zone         Zone        @relation(fields: [zoneId], references: [id])
-  farmId       String?
-  farm         Farm?       @relation(fields: [farmId], references: [id])
-  label        String
-  gridW        Int         @default(8)
-  gridH        Int         @default(8)
-  landPrice    Float
-  fertility    Float       @default(0.7)
-  fieldStage   FieldStage  @default(EMPTY)
-  crop         CropCode?
-  plantedAt    DateTime?
-  readyAt      DateTime?
-  fertilizedPasses Int     @default(0)
-  weedsControlled  Boolean @default(false)
+  id         String     @id @default(cuid())
+  zoneId     String
+  zone       Zone       @relation(fields: [zoneId], references: [id])
+  farmId     String?
+  farm       Farm?      @relation(fields: [farmId], references: [id])
+  label      String
+  mapX       Int
+  mapY       Int
+  gridW      Int        @default(8)
+  gridH      Int        @default(8)
+  landPrice  Float
+  fertility  Float      @default(0.7)
+  cells      ParcelCell[]
+  buildings  Building[]
+  machines   Machine[]  @relation("ParkedOn")
+
+  @@unique([zoneId, mapX, mapY])
+}
+
+model ParcelCell {
+  id               String     @id @default(cuid())
+  parcelId         String
+  parcel           Parcel     @relation(fields: [parcelId], references: [id], onDelete: Cascade)
+  x                Int
+  y                Int
+  kind             CellKind   @default(EMPTY)
+  buildingId       String?
+  building         Building?  @relation(fields: [buildingId], references: [id], onDelete: SetNull)
+  machineId        String?    @unique
+  machine          Machine?   @relation(fields: [machineId], references: [id], onDelete: SetNull)
+  crop             CropCode?
+  fieldStage       FieldStage @default(EMPTY)
+  plantedAt        DateTime?
+  readyAt          DateTime?
+  fertilizedPasses Int        @default(0)
+  weedsControlled  Boolean    @default(false)
+
+  @@unique([parcelId, x, y])
+}
+
+model Building {
+  id        String       @id @default(cuid())
+  parcelId  String
+  parcel    Parcel       @relation(fields: [parcelId], references: [id], onDelete: Cascade)
+  type      BuildingType
+  originX   Int
+  originY   Int
+  cells     ParcelCell[]
+  storedMachines Machine[] @relation("StoredIn")
 }
 
 model InventoryItem {
-  id       String   @id @default(cuid())
+  id       String @id @default(cuid())
   farmId   String
-  farm     Farm     @relation(fields: [farmId], references: [id])
+  farm     Farm   @relation(fields: [farmId], references: [id])
   itemCode String
   qty      Float
-  quality  Int      @default(3)
+  quality  Int    @default(3)
 }
 
 model Machine {
-  id        String @id @default(cuid())
-  farmId    String
-  farm      Farm   @relation(fields: [farmId], references: [id])
-  type      String
-  tier      Int    @default(1)
-  condition Float  @default(100)
+  id                 String      @id @default(cuid())
+  farmId             String
+  farm               Farm        @relation(fields: [farmId], references: [id])
+  type               String
+  tier               Int         @default(1)
+  condition          Float       @default(100)
+  parkedParcelId     String?
+  parkedParcel       Parcel?     @relation("ParkedOn", fields: [parkedParcelId], references: [id])
+  storedInBuildingId String?
+  storedInBuilding   Building?   @relation("StoredIn", fields: [storedInBuildingId], references: [id])
+  cell               ParcelCell?
 }
 
 model MarketPrice {
-  id         String   @id @default(cuid())
-  commodity  CropCode @unique
-  price      Float
-  stockTons  Float    @default(1000)
-  updatedAt  DateTime @updatedAt
+  id        String   @id @default(cuid())
+  commodity CropCode @unique
+  price     Float
+  stockTons Float    @default(1000)
+  updatedAt DateTime @updatedAt
 }
 
 model NpcContract {

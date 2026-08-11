@@ -157,20 +157,22 @@ Verdict : **intéressant si non obligatoire**. Filets NPC + bonus faibles = bouc
 
 ---
 
-## 8. Action case par case
+## 8. Action case par case (grille d’exploitation)
 
-Chaque parcelle est une grille de **cases** (taille à calibrer — voir `09_WORLD_MAP.md`).
+Chaque parcelle est une grille **8×8** (MVP) où le joueur place :
+- **cultures** (case par case) ;
+- **bâtiments** (silo, hangar, étable, porcherie…) avec emprise multi-cases ;
+- **véhicules** stationnés (ou rangés dans hangar matériel).
 
-Travail machine :
-- sélection de cases / chemin ;
-- animation machine ;
-- temps par case (ex. **1 case ≈ 30–60 s réel** en manuel `[TEST]`) ;
-- possibilité d’engager un prestataire ou d’automatiser partiellement plus tard.
+Les bâtiments du menu donnent des **bonus** (stock, yield léger, slots animaux).  
+On peut **acheter une parcelle adjacente** libre (même zone, bord commun).
 
-Équilibre recherché :
-- manuel = plaisir / feedback ;
-- prestataire = économie sociale ;
-- auto (tardif / limité) = confort, pas remplacement total du multi.
+Détail : `22_FARM_GRID_LAYOUT.md`.
+
+Travail machine / ETA :
+- sélection de cases ;
+- animation / temps ;
+- presta possible.
 
 ---
 

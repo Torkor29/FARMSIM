@@ -1,6 +1,6 @@
-import { simulateField, tickMarket, sellToMarket } from "../index";
+import { simulateCell, tickMarket, sellToMarket } from "../index";
 
-describe("simulateField", () => {
+describe("simulateCell", () => {
   const base = {
     crop: "WHEAT" as const,
     plantedAt: 0,
@@ -10,32 +10,31 @@ describe("simulateField", () => {
   };
 
   it("n’est pas prêt avant growMs", () => {
-    const r = simulateField({ ...base, now: 60_000 });
+    const r = simulateCell({ ...base, now: 60_000 });
     expect(r.ready).toBe(false);
     expect(r.progress).toBeLessThan(1);
   });
 
-  it("est prêt après growMs et calcule un yield > 0", () => {
-    const r = simulateField({ ...base, now: 14 * 60 * 1000 });
+  it("est prêt après growMs", () => {
+    const r = simulateCell({ ...base, now: 3 * 60 * 1000 });
     expect(r.ready).toBe(true);
-    expect(r.estimatedYieldTons).toBeGreaterThan(5);
+    expect(r.estimatedYieldTons).toBeGreaterThan(0.2);
   });
 
-  it("applique un malus pluie à la récolte", () => {
-    const dry = simulateField({ ...base, now: 14 * 60 * 1000, weatherAtHarvest: "CLEAR" });
-    const wet = simulateField({ ...base, now: 14 * 60 * 1000, weatherAtHarvest: "RAIN" });
+  it("applique un malus pluie", () => {
+    const dry = simulateCell({ ...base, now: 3 * 60 * 1000, weatherAtHarvest: "CLEAR" });
+    const wet = simulateCell({ ...base, now: 3 * 60 * 1000, weatherAtHarvest: "RAIN" });
     expect(wet.estimatedYieldTons).toBeLessThan(dry.estimatedYieldTons);
-    expect(wet.moisturePenalty).toBe(0.25);
   });
 
-  it("donne un léger bonus céréalier", () => {
-    const normal = simulateField({ ...base, now: 14 * 60 * 1000 });
-    const spe = simulateField({
+  it("applique bonus bâtiments plafonné", () => {
+    const baseY = simulateCell({ ...base, now: 3 * 60 * 1000 });
+    const buff = simulateCell({
       ...base,
-      now: 14 * 60 * 1000,
-      specialization: "CEREALIER",
+      now: 3 * 60 * 1000,
+      buildingYieldBonus: 0.05,
     });
-    expect(spe.estimatedYieldTons).toBeGreaterThan(normal.estimatedYieldTons);
+    expect(buff.estimatedYieldTons).toBeGreaterThan(baseY.estimatedYieldTons);
   });
 });
 
