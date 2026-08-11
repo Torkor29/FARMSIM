@@ -281,7 +281,27 @@ button.ghost {
 .tick.flat { color: var(--muted); }
 .tick.weather-tick { color: #9ec9ff; }
 .tick small { font-weight: 500; opacity: 0.85; }
-.wx { color: #9ec9ff !important; }
+.auth-tabs {
+  display: flex;
+  gap: 0.5rem;
+  margin-bottom: 0.25rem;
+}
+.resume-banner {
+  position: absolute;
+  top: 5.8rem;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 9;
+  width: min(420px, calc(100vw - 2rem));
+  display: grid;
+  gap: 0.35rem;
+}
+.resume-banner p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+.resume-banner strong { color: var(--accent-hot); font-size: 0.85rem; }
 .brush-group {
   display: inline-flex;
   gap: 0.25rem;

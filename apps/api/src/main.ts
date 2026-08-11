@@ -33,7 +33,9 @@ import {
   machineCanWork,
   tickWeather,
   marketNpcPressure,
+  buildSessionResume,
 } from "@farmsim/sim";
+import { randomBytes } from "crypto";
 
 const prisma = new PrismaClient();
 const app = express();
@@ -360,11 +362,117 @@ async function runWorldTick() {
   };
   return lastSimTick;
 }
+
+const SESSION_TTL_MS = 30 * 24 * 60 * 60 * 1000;
+
+function newSessionToken() {
+  return randomBytes(24).toString("hex");
+}
+
+async function createSession(userId: string) {
+  const token = newSessionToken();
+  const expiresAt = new Date(Date.now() + SESSION_TTL_MS);
+  await prisma.session.create({ data: { token, userId, expiresAt } });
+  return token;
+}
+
+async function userFromAuthHeader(req: express.Request) {
+  const header = req.headers.authorization;
+  if (!header?.startsWith("Bearer ")) return null;
+  const token = header.slice(7);
+  const session = await prisma.session.findUnique({
+    where: { token },
+    include: { user: { include: { farm: { include: farmInclude() } } } },
+  });
+  if (!session || session.expiresAt.getTime() < Date.now()) return null;
+  return { session, user: session.user };
+}
+
+async function marketPriceMap() {
+  const rows = await prisma.marketPrice.findMany();
+  return Object.fromEntries(rows.map((r) => [r.commodity, r.price])) as Record<string, number>;
+}
+
+async function buildResumeForUser(userId: string) {
+  const user = await prisma.user.findUnique({
+    where: { id: userId },
+    include: {
+      farm: {
+        include: {
+          parcels: { include: { cells: true } },
+        },
+      },
+    },
+  });
+  if (!user) return null;
+  const now = Date.now();
+  const last = user.lastSeenAt?.getTime() ?? user.createdAt.getTime();
+  const awayMs = Math.max(0, now - last);
+  let cropsReady = 0;
+  let cropsGrowing = 0;
+  for (const parcel of user.farm?.parcels ?? []) {
+    for (const cell of parcel.cells) {
+      if (cell.kind !== "CROP" || !cell.crop || !cell.plantedAt) continue;
+      const sim = simulateCell({
+        crop: cell.crop,
+        plantedAt: cell.plantedAt.getTime(),
+        now,
+        fertility: parcel.fertility,
+        weedsControlled: cell.weedsControlled,
+        fertilizedPasses: Math.min(2, cell.fertilizedPasses) as 0 | 1 | 2,
+        specialization: user.specialization,
+      });
+      if (sim.ready) cropsReady += 1;
+      else cropsGrowing += 1;
+    }
+  }
+  let marketBefore: Record<string, number> = {};
+  try {
+    marketBefore = user.lastMarketJson ? JSON.parse(user.lastMarketJson) : {};
+  } catch {
+    marketBefore = {};
+  }
+  const marketNow = await marketPriceMap();
+  const weather = await prisma.weatherSnapshot.findMany();
+  return buildSessionResume({
+    awayMs,
+    cropsReady,
+    cropsGrowing,
+    marketBefore,
+    marketNow,
+    weatherStates: weather.map((w) => w.state),
+  });
+}
+
+async function touchUserPresence(userId: string) {
+  const market = await marketPriceMap();
+  await prisma.user.update({
+    where: { id: userId },
+    data: {
+      lastSeenAt: new Date(),
+      lastMarketJson: JSON.stringify(market),
+    },
+  });
+}
+
+async function playerPayload(userId: string) {
+  const user = await prisma.user.findUnique({
+    where: { id: userId },
+    include: { farm: { include: farmInclude() } },
+  });
+  if (!user) return null;
+  const bonuses = user.farm ? await getFarmBonuses(user.farm.id) : null;
+  const { accessCode: _omit, ...safe } = user;
+  void _omit;
+  return { ...safe, bonuses };
+}
+
 const registerSchema = z.object({
   email: z.string().email(),
   displayName: z.string().min(2).max(32),
   specialization: z.enum(["CEREALIER", "ELEVEUR", "ETA"]),
   parcelId: z.string().optional(),
+  accessCode: z.string().min(3).max(32).optional(),
 });
 
 app.post("/auth/register", async (req, res) => {
@@ -373,14 +481,22 @@ app.post("/auth/register", async (req, res) => {
     res.status(400).json(parsed.error.flatten());
     return;
   }
-  const { email, displayName, specialization, parcelId } = parsed.data;
+  const { email, displayName, specialization, parcelId, accessCode } = parsed.data;
   if (specialization !== "ETA" && !parcelId) {
     res.status(400).json({ error: "parcelId requis pour céréalier/éleveur" });
     return;
   }
   try {
     const user = await prisma.$transaction(async (tx) => {
-      const u = await tx.user.create({ data: { email, displayName, specialization } });
+      const u = await tx.user.create({
+        data: {
+          email,
+          displayName,
+          specialization,
+          accessCode: accessCode ?? "ferme",
+          lastSeenAt: new Date(),
+        },
+      });
       const farm = await tx.farm.create({
         data: {
           userId: u.id,
@@ -426,7 +542,19 @@ app.post("/auth/register", async (req, res) => {
         include: { farm: { include: farmInclude() } },
       });
     });
-    res.status(201).json(user);
+    if (!user) {
+      res.status(500).json({ error: "Erreur création" });
+      return;
+    }
+    const token = await createSession(user.id);
+    await touchUserPresence(user.id);
+    const player = await playerPayload(user.id);
+    res.status(201).json({
+      token,
+      player,
+      accessCodeHint: accessCode ?? "ferme",
+      resume: await buildResumeForUser(user.id),
+    });
   } catch (e) {
     const msg = e instanceof Error ? e.message : "ERROR";
     if (msg === "PARCEL_UNAVAILABLE") {
@@ -446,19 +574,67 @@ app.post("/auth/register", async (req, res) => {
   }
 });
 
+app.post("/auth/login", async (req, res) => {
+  const body = z
+    .object({
+      email: z.string().email(),
+      accessCode: z.string().min(1),
+    })
+    .safeParse(req.body);
+  if (!body.success) {
+    res.status(400).json(body.error.flatten());
+    return;
+  }
+  const user = await prisma.user.findUnique({ where: { email: body.data.email } });
+  if (!user || user.accessCode !== body.data.accessCode) {
+    res.status(401).json({ error: "Email ou code incorrect" });
+    return;
+  }
+  const resume = await buildResumeForUser(user.id);
+  const token = await createSession(user.id);
+  await touchUserPresence(user.id);
+  const player = await playerPayload(user.id);
+  res.json({ token, player, resume });
+});
+
+app.get("/auth/me", async (req, res) => {
+  const auth = await userFromAuthHeader(req);
+  if (!auth) {
+    res.status(401).json({ error: "Session invalide" });
+    return;
+  }
+  const player = await playerPayload(auth.user.id);
+  res.json({ token: auth.session.token, player });
+});
+
+app.get("/session/resume", async (req, res) => {
+  const auth = await userFromAuthHeader(req);
+  if (!auth) {
+    res.status(401).json({ error: "Session invalide" });
+    return;
+  }
+  const resume = await buildResumeForUser(auth.user.id);
+  res.json(resume);
+});
+
+app.post("/session/heartbeat", async (req, res) => {
+  const auth = await userFromAuthHeader(req);
+  if (!auth) {
+    res.status(401).json({ error: "Session invalide" });
+    return;
+  }
+  await touchUserPresence(auth.user.id);
+  res.json({ ok: true, at: new Date().toISOString() });
+});
+
 app.get("/players/:id", async (req, res) => {
-  const user = await prisma.user.findUnique({
-    where: { id: req.params.id },
-    include: { farm: { include: farmInclude() } },
-  });
-  if (!user) {
+  const player = await playerPayload(req.params.id);
+  if (!player) {
     res.status(404).json({ error: "Introuvable" });
     return;
   }
-  const bonuses = user.farm ? await getFarmBonuses(user.farm.id) : null;
-  res.json({ ...user, bonuses });
+  res.json(player);
 });
-
 app.get("/parcels/:id", async (req, res) => {
   const parcel = await prisma.parcel.findUnique({
     where: { id: req.params.id },

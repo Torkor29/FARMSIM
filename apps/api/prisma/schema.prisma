@@ -67,9 +67,23 @@ model User {
   level          Int            @default(1)
   xp             Int            @default(0)
   crd            Float          @default(12000)
+  /** Code d’accès MVP (pas un vrai hash — démo locale) */
+  accessCode     String         @default("ferme")
+  lastSeenAt     DateTime?
+  lastMarketJson String?
   createdAt      DateTime       @default(now())
   farm           Farm?
   contracts      NpcContract[]  @relation("Provider")
+  sessions       Session[]
+}
+
+model Session {
+  id        String   @id @default(cuid())
+  token     String   @unique
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now())
+  expiresAt DateTime
 }
 
 model Farm {

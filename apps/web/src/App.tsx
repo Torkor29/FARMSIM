@@ -14,6 +14,17 @@ import {
 import { IsoFarmView } from "./IsoFarmView";
 
 const API = "/api";
+const TOKEN_KEY = "farmsim_token";
+
+type SessionResume = {
+  awayMs: number;
+  awayLabel: string;
+  cropsReady: number;
+  cropsGrowing: number;
+  marketDelta: Record<string, number>;
+  weatherStates: string[];
+  hint: string;
+};
 
 type Cell = {
   id: string;
@@ -102,13 +113,23 @@ type WeatherSnap = { id: string; zoneCode: string; state: WeatherState; updatedA
 type Tool = "SELECT" | "PLANT_WHEAT" | "PLANT_MAIZE" | "FERTILIZE" | "HARVEST" | "BUILD" | "PARK";
 
 async function api<T>(path: string, init?: RequestInit): Promise<T> {
+  const token = localStorage.getItem(TOKEN_KEY);
   const res = await fetch(`${API}${path}`, {
-    headers: { "Content-Type": "application/json", ...(init?.headers ?? {}) },
+    headers: {
+      "Content-Type": "application/json",
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      ...(init?.headers ?? {}),
+    },
     ...init,
   });
   const data = await res.json();
   if (!res.ok) throw new Error(data.error ?? "Erreur API");
   return data as T;
+}
+
+function clearSession() {
+  localStorage.removeItem(TOKEN_KEY);
+  localStorage.removeItem("farmsim_player");
 }
 
 const ACTION_BAR: [Tool, string][] = [
@@ -124,13 +145,12 @@ export function App() {
   const [zones, setZones] = useState<Zone[]>([]);
   const [market, setMarket] = useState<MarketPrice[]>([]);
   const [contracts, setContracts] = useState<Contract[]>([]);
-  const [player, setPlayer] = useState<Player | null>(() => {
-    const raw = localStorage.getItem("farmsim_player");
-    return raw ? (JSON.parse(raw) as Player) : null;
-  });
+  const [player, setPlayer] = useState<Player | null>(null);
+  const [authMode, setAuthMode] = useState<"register" | "login">("register");
   const [spe, setSpe] = useState<Specialization>("CEREALIER");
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
+  const [accessCode, setAccessCode] = useState("ferme");
   const [selectedParcelId, setSelectedParcelId] = useState<string | null>(null);
   const [activeParcelId, setActiveParcelId] = useState<string | null>(null);
   const [parcelDetail, setParcelDetail] = useState<{
@@ -150,6 +170,20 @@ export function App() {
   const [weather, setWeather] = useState<WeatherSnap[]>([]);
   const [brush, setBrush] = useState<1 | 2 | 3>(1);
   const [prevPrices, setPrevPrices] = useState<Record<string, number>>({});
+  const [resumeBanner, setResumeBanner] = useState<string | null>(null);
+  const [booting, setBooting] = useState(true);
+
+  function applyAuth(payload: { token: string; player: Player; resume?: SessionResume | null }) {
+    localStorage.setItem(TOKEN_KEY, payload.token);
+    setPlayer(payload.player);
+    if (payload.player.farm?.parcels[0]) {
+      setActiveParcelId(payload.player.farm.parcels[0].id);
+    }
+    if (payload.resume && payload.resume.awayMs >= 30_000) {
+      setResumeBanner(payload.resume.hint);
+      setMsg(payload.resume.hint);
+    }
+  }
 
   const refreshMeta = useCallback(async () => {
     const [z, m, c, w] = await Promise.all([
@@ -170,14 +204,13 @@ export function App() {
     setWeather(w);
   }, []);
 
-  const refreshPlayer = useCallback(async (id: string) => {
-    const p = await api<Player>(`/players/${id}`);
-    setPlayer(p);
-    localStorage.setItem("farmsim_player", JSON.stringify(p));
-    if (!activeParcelId && p.farm?.parcels[0]) {
-      setActiveParcelId(p.farm.parcels[0].id);
+  const refreshPlayer = useCallback(async () => {
+    const me = await api<{ player: Player }>("/auth/me");
+    setPlayer(me.player);
+    if (!activeParcelId && me.player.farm?.parcels[0]) {
+      setActiveParcelId(me.player.farm.parcels[0].id);
     }
-    return p;
+    return me.player;
   }, [activeParcelId]);
 
   const loadParcel = useCallback(async (id: string) => {
@@ -188,11 +221,7 @@ export function App() {
   useEffect(() => {
     refreshMeta().catch((e) => setErr(String(e.message ?? e)));
     const t = setInterval(() => {
-      refreshMeta()
-        .then(() => {
-          /* track deltas after refresh via market state */
-        })
-        .catch(() => undefined);
+      refreshMeta().catch(() => undefined);
     }, 10000);
     return () => clearInterval(t);
   }, [refreshMeta]);
@@ -212,12 +241,42 @@ export function App() {
   }, [market]);
 
   useEffect(() => {
-    if (!player?.id) return;
-    refreshPlayer(player.id).catch(() => {
+    const token = localStorage.getItem(TOKEN_KEY);
+    if (!token) {
       localStorage.removeItem("farmsim_player");
-      setPlayer(null);
-    });
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+      setBooting(false);
+      return;
+    }
+    api<{ player: Player }>("/auth/me")
+      .then(async (me) => {
+        setPlayer(me.player);
+        if (me.player.farm?.parcels[0]) setActiveParcelId(me.player.farm.parcels[0].id);
+        const resume = await api<SessionResume>("/session/resume");
+        if (resume.awayMs >= 30_000) {
+          setResumeBanner(resume.hint);
+          setMsg(resume.hint);
+        }
+        await api("/session/heartbeat", { method: "POST", body: "{}" });
+      })
+      .catch(() => {
+        clearSession();
+        setPlayer(null);
+      })
+      .finally(() => setBooting(false));
+  }, []);
+
+  useEffect(() => {
+    if (!player) return;
+    const beat = () => {
+      api("/session/heartbeat", { method: "POST", body: "{}" }).catch(() => undefined);
+    };
+    const t = setInterval(beat, 60_000);
+    window.addEventListener("pagehide", beat);
+    return () => {
+      clearInterval(t);
+      window.removeEventListener("pagehide", beat);
+    };
+  }, [player]);
 
   useEffect(() => {
     if (!activeParcelId) return;
@@ -227,7 +286,6 @@ export function App() {
     }, 4000);
     return () => clearInterval(t);
   }, [activeParcelId, loadParcel]);
-
   const freeParcels = useMemo(
     () =>
       zones.flatMap((z) =>
@@ -291,9 +349,10 @@ export function App() {
     setErr(null);
     try {
       const body: Record<string, string> = {
-        email: email || `${name.toLowerCase().replace(/\s+/g, "")}@demo.farmsim`,
+        email: email || `${(name || "fermier").toLowerCase().replace(/\s+/g, "")}@demo.farmsim`,
         displayName: name || "Fermier",
         specialization: spe,
+        accessCode: accessCode || "ferme",
       };
       if (spe !== "ETA") {
         if (!selectedParcelId) throw new Error("Choisis une parcelle");
@@ -301,15 +360,35 @@ export function App() {
       } else if (selectedParcelId) {
         body.parcelId = selectedParcelId;
       }
-      const p = await api<Player>("/auth/register", {
-        method: "POST",
-        body: JSON.stringify(body),
-      });
-      setPlayer(p);
-      localStorage.setItem("farmsim_player", JSON.stringify(p));
-      if (p.farm?.parcels[0]) setActiveParcelId(p.farm.parcels[0].id);
+      const r = await api<{ token: string; player: Player; resume?: SessionResume }>(
+        "/auth/register",
+        { method: "POST", body: JSON.stringify(body) },
+      );
+      applyAuth(r);
       await refreshMeta();
-      setMsg("Exploitation créée");
+      setMsg(`Exploitation créée · code « ${accessCode || "ferme"} »`);
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function login() {
+    setBusy(true);
+    setErr(null);
+    try {
+      if (!email) throw new Error("Email requis");
+      const r = await api<{ token: string; player: Player; resume?: SessionResume }>(
+        "/auth/login",
+        {
+          method: "POST",
+          body: JSON.stringify({ email, accessCode: accessCode || "ferme" }),
+        },
+      );
+      applyAuth(r);
+      await refreshMeta();
+      if (!r.resume || r.resume.awayMs < 30_000) setMsg("Connexion OK");
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e));
     } finally {
@@ -345,7 +424,7 @@ export function App() {
         });
         setMsg("Véhicule stationné");
       }
-      await refreshPlayer(player.id);
+      await refreshPlayer();
       await loadParcel(activeParcelId);
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e));
@@ -396,7 +475,7 @@ export function App() {
         );
       }
       setSelectedCells([]);
-      await refreshPlayer(player.id);
+      await refreshPlayer();
       await loadParcel(activeParcelId);
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e));
@@ -414,7 +493,7 @@ export function App() {
         body: JSON.stringify({ userId: player.id }),
       });
       setMsg(`Récolte totale ${r.totalTons.toFixed(2)} t`);
-      await refreshPlayer(player.id);
+      await refreshPlayer();
       await loadParcel(activeParcelId);
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e));
@@ -431,7 +510,7 @@ export function App() {
         method: "POST",
         body: JSON.stringify({ userId: player.id }),
       });
-      await refreshPlayer(player.id);
+      await refreshPlayer();
       await refreshMeta();
       setActiveParcelId(parcelId);
       setMsg("Parcelle acquise");
@@ -450,7 +529,7 @@ export function App() {
         method: "POST",
         body: JSON.stringify({ userId: player.id, commodity, tons }),
       });
-      await refreshPlayer(player.id);
+      await refreshPlayer();
       await refreshMeta();
       setMsg(`Vendu pour ${r.revenue} CRD`);
     } catch (e) {
@@ -471,7 +550,7 @@ export function App() {
           body: JSON.stringify({ userId: player.id }),
         },
       );
-      await refreshPlayer(player.id);
+      await refreshPlayer();
       await refreshMeta();
       const wearNote = r.machine
         ? ` · ${r.machine.type} −${r.machine.wearApplied.toFixed(1)}%`
@@ -493,7 +572,7 @@ export function App() {
         method: "POST",
         body: JSON.stringify({ userId: player.id, type }),
       });
-      await refreshPlayer(player.id);
+      await refreshPlayer();
       if (activeParcelId) await loadParcel(activeParcelId);
       setMsg(`${MACHINE_DEFS[type].name} acheté`);
     } catch (e) {
@@ -512,13 +591,21 @@ export function App() {
         method: "POST",
         body: JSON.stringify({ userId: player.id }),
       });
-      await refreshPlayer(player.id);
+      await refreshPlayer();
       setMsg(`Réparé → ${r.condition.toFixed(0)}% (−${r.cost} CRD)`);
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e));
     } finally {
       setBusy(false);
     }
+  }
+
+  if (booting) {
+    return (
+      <div className="app shell">
+        <p className="muted">Chargement de la session…</p>
+      </div>
+    );
   }
 
   if (!player) {
@@ -529,59 +616,100 @@ export function App() {
           <p className="lede">Ferme isométrique · marché mondial · ETA</p>
         </header>
         {(msg || err) && <p className={err ? "error" : "ok"}>{err ?? msg}</p>}
-        <div className="onboard">
-          <section className="glass">
-            <h2>Métier</h2>
-            <div className="spe-cards">
-              {(Object.keys(SPECIALIZATION_LABELS) as Specialization[]).map((k) => (
-                <button
-                  key={k}
-                  type="button"
-                  className={`spe ${spe === k ? "active" : ""}`}
-                  onClick={() => setSpe(k)}
-                >
-                  <strong>{SPECIALIZATION_LABELS[k]}</strong>
-                  <div className="muted">
-                    {k === "ETA"
-                      ? "Missions sans terre obligatoire."
-                      : "Parcelle de départ sur la carte."}
-                  </div>
-                </button>
-              ))}
-            </div>
-            <div className="row" style={{ marginTop: "1rem" }}>
-              <input placeholder="Nom" value={name} onChange={(e) => setName(e.target.value)} />
+        <div className="auth-tabs">
+          <button
+            type="button"
+            className={authMode === "register" ? "chip on" : "chip"}
+            onClick={() => setAuthMode("register")}
+          >
+            Créer un compte
+          </button>
+          <button
+            type="button"
+            className={authMode === "login" ? "chip on" : "chip"}
+            onClick={() => setAuthMode("login")}
+          >
+            Se connecter
+          </button>
+        </div>
+        {authMode === "login" ? (
+          <section className="glass" style={{ maxWidth: 420, marginTop: "1rem" }}>
+            <h2>Connexion</h2>
+            <div className="row" style={{ marginTop: "0.75rem" }}>
               <input placeholder="Email" value={email} onChange={(e) => setEmail(e.target.value)} />
+              <input
+                placeholder="Code d’accès"
+                value={accessCode}
+                onChange={(e) => setAccessCode(e.target.value)}
+              />
             </div>
-          </section>
-          <section className="glass">
-            <h2>Parcelle de départ</h2>
-            {spe === "ETA" ? (
-              <p className="muted">Optionnel pour ETA.</p>
-            ) : null}
-            <div className="parcel-map">
-              {freeParcels.map((p) => (
-                <button
-                  key={p.id}
-                  type="button"
-                  className={`parcel ${selectedParcelId === p.id ? "selected" : ""}`}
-                  onClick={() => setSelectedParcelId(p.id)}
-                >
-                  <strong>{p.label}</strong>
-                  <span className="muted">
-                    {p.zone?.name} · ({p.mapX},{p.mapY})
-                  </span>
-                  <span>{p.landPrice} CRD</span>
-                </button>
-              ))}
-            </div>
+            <p className="muted tiny" style={{ marginTop: "0.5rem" }}>
+              Code par défaut à l’inscription : <code>ferme</code>
+            </p>
             <div style={{ marginTop: "1rem" }}>
-              <button type="button" disabled={busy} onClick={register}>
-                Créer mon compte
+              <button type="button" disabled={busy} onClick={login}>
+                Entrer dans ma ferme
               </button>
             </div>
           </section>
-        </div>
+        ) : (
+          <div className="onboard">
+            <section className="glass">
+              <h2>Métier</h2>
+              <div className="spe-cards">
+                {(Object.keys(SPECIALIZATION_LABELS) as Specialization[]).map((k) => (
+                  <button
+                    key={k}
+                    type="button"
+                    className={`spe ${spe === k ? "active" : ""}`}
+                    onClick={() => setSpe(k)}
+                  >
+                    <strong>{SPECIALIZATION_LABELS[k]}</strong>
+                    <div className="muted">
+                      {k === "ETA"
+                        ? "Missions sans terre obligatoire."
+                        : "Parcelle de départ sur la carte."}
+                    </div>
+                  </button>
+                ))}
+              </div>
+              <div className="row" style={{ marginTop: "1rem" }}>
+                <input placeholder="Nom" value={name} onChange={(e) => setName(e.target.value)} />
+                <input placeholder="Email" value={email} onChange={(e) => setEmail(e.target.value)} />
+                <input
+                  placeholder="Code d’accès"
+                  value={accessCode}
+                  onChange={(e) => setAccessCode(e.target.value)}
+                />
+              </div>
+            </section>
+            <section className="glass">
+              <h2>Parcelle de départ</h2>
+              {spe === "ETA" ? <p className="muted">Optionnel pour ETA.</p> : null}
+              <div className="parcel-map">
+                {freeParcels.map((p) => (
+                  <button
+                    key={p.id}
+                    type="button"
+                    className={`parcel ${selectedParcelId === p.id ? "selected" : ""}`}
+                    onClick={() => setSelectedParcelId(p.id)}
+                  >
+                    <strong>{p.label}</strong>
+                    <span className="muted">
+                      {p.zone?.name} · ({p.mapX},{p.mapY})
+                    </span>
+                    <span>{p.landPrice} CRD</span>
+                  </button>
+                ))}
+              </div>
+              <div style={{ marginTop: "1rem" }}>
+                <button type="button" disabled={busy} onClick={register}>
+                  Créer mon compte
+                </button>
+              </div>
+            </section>
+          </div>
+        )}
       </div>
     );
   }
@@ -623,18 +751,29 @@ export function App() {
             className="ghost"
             type="button"
             onClick={() => {
-              localStorage.removeItem("farmsim_player");
+              clearSession();
               setPlayer(null);
               setParcelDetail(null);
+              setResumeBanner(null);
+              setActiveParcelId(null);
             }}
           >
-            Compte
+            Déconnexion
           </button>
         </div>
       </header>
 
       {(msg || err) && (
         <div className={`toast ${err ? "bad" : "good"}`}>{err ?? msg}</div>
+      )}
+      {resumeBanner && !err && (
+        <div className="resume-banner glass">
+          <strong>Pendant votre absence</strong>
+          <p>{resumeBanner}</p>
+          <button type="button" className="ghost" onClick={() => setResumeBanner(null)}>
+            OK
+          </button>
+        </div>
       )}
 
       <div className="market-ticker">

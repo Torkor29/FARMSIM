@@ -8,6 +8,7 @@ import {
   tickWeather,
   marketNpcPressure,
   weatherYieldFactor,
+  buildSessionResume,
 } from "../index";
 
 describe("simulateCell", () => {
@@ -140,5 +141,23 @@ describe("weather & market pressure", () => {
   it("weatherYieldFactor pénalise orage/neige", () => {
     expect(weatherYieldFactor("STORM")).toBeLessThan(weatherYieldFactor("CLEAR"));
     expect(weatherYieldFactor("SNOW")).toBeLessThan(weatherYieldFactor("CLOUDY"));
+  });
+});
+
+describe("session resume", () => {
+  it("résume absence, cultures et marché", () => {
+    const r = buildSessionResume({
+      awayMs: 120_000,
+      cropsReady: 3,
+      cropsGrowing: 5,
+      marketBefore: { WHEAT: 220, MAIZE: 200 },
+      marketNow: { WHEAT: 230, MAIZE: 195 },
+      weatherStates: ["RAIN"],
+    });
+    expect(r.awayLabel).toBe("2 min");
+    expect(r.marketDelta.WHEAT).toBe(10);
+    expect(r.marketDelta.MAIZE).toBe(-5);
+    expect(r.hint).toContain("prête");
+    expect(r.hint).toContain("Météo");
   });
 });

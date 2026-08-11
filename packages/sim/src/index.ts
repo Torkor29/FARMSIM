@@ -144,6 +144,69 @@ export function machineCanWork(condition: number, minCondition: number): boolean
   return condition >= minCondition;
 }
 
+/** Construit le résumé de retour après absence */
+export function buildSessionResume(opts: {
+  awayMs: number;
+  cropsReady: number;
+  cropsGrowing: number;
+  marketBefore: Record<string, number>;
+  marketNow: Record<string, number>;
+  weatherStates: string[];
+}): {
+  awayMs: number;
+  awayLabel: string;
+  cropsReady: number;
+  cropsGrowing: number;
+  marketDelta: Record<string, number>;
+  weatherStates: string[];
+  hint: string;
+} {
+  const marketDelta: Record<string, number> = {};
+  for (const [k, now] of Object.entries(opts.marketNow)) {
+    const before = opts.marketBefore[k];
+    if (before !== undefined) {
+      marketDelta[k] = Math.round((now - before) * 100) / 100;
+    }
+  }
+  const awayLabel = formatAway(opts.awayMs);
+  const parts: string[] = [];
+  if (opts.awayMs >= 30_000) parts.push(`Absent ${awayLabel}`);
+  if (opts.cropsReady > 0) parts.push(`${opts.cropsReady} case(s) prête(s) à récolter`);
+  if (opts.cropsGrowing > 0 && opts.cropsReady === 0) {
+    parts.push(`${opts.cropsGrowing} culture(s) en croissance`);
+  }
+  const movers = Object.entries(marketDelta).filter(([, d]) => Math.abs(d) >= 1);
+  if (movers.length) {
+    parts.push(
+      movers.map(([c, d]) => `${c} ${d > 0 ? "+" : ""}${d.toFixed(1)}`).join(" · "),
+    );
+  }
+  if (opts.weatherStates.some((w) => w === "STORM" || w === "RAIN")) {
+    parts.push("Météo humide — attention à la récolte");
+  }
+  const hint =
+    parts.length > 0 ? parts.join(" · ") : "Rien de critique pendant votre absence.";
+  return {
+    awayMs: opts.awayMs,
+    awayLabel,
+    cropsReady: opts.cropsReady,
+    cropsGrowing: opts.cropsGrowing,
+    marketDelta,
+    weatherStates: opts.weatherStates,
+    hint,
+  };
+}
+
+function formatAway(ms: number): string {
+  const s = Math.floor(ms / 1000);
+  if (s < 60) return `${s}s`;
+  const m = Math.floor(s / 60);
+  if (m < 60) return `${m} min`;
+  const h = Math.floor(m / 60);
+  if (h < 48) return `${h} h`;
+  return `${Math.floor(h / 24)} j`;
+}
+
 /** Facteur rendement lié à la météo pendant la croissance `[GD]` */
 export function weatherYieldFactor(weather?: WeatherState): number {
   switch (weather) {
