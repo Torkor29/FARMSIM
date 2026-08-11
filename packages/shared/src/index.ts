@@ -14,6 +14,17 @@ export type FieldStage =
 
 export type WeatherState = "CLEAR" | "CLOUDY" | "RAIN" | "STORM" | "SNOW";
 
+export const WEATHER_LABELS: Record<WeatherState, string> = {
+  CLEAR: "Clair",
+  CLOUDY: "Nuageux",
+  RAIN: "Pluie",
+  STORM: "Orage",
+  SNOW: "Neige",
+};
+
+/** Intervalle tick serveur MVP `[TEST]` */
+export const SIM_TICK_MS = 20_000;
+
 export type ContractJobType =
   | "PLOW"
   | "SOW"

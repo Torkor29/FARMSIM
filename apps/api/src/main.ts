@@ -18,8 +18,11 @@ import {
   MACHINE_DEFS,
   CONTRACT_WORK,
   CONTRACT_WEAR_CELLS,
+  SIM_TICK_MS,
+  WEATHER_LABELS,
   type BuildingType as SharedBuildingType,
   type MachineType,
+  type WeatherState,
 } from "@farmsim/shared";
 import {
   simulateCell,
@@ -28,6 +31,8 @@ import {
   applyMachineWear,
   repairMachineCost,
   machineCanWork,
+  tickWeather,
+  marketNpcPressure,
 } from "@farmsim/sim";
 
 const prisma = new PrismaClient();
@@ -264,6 +269,18 @@ app.get("/zones", async (_req, res) => {
 
 app.get("/market", async (_req, res) => res.json(await prisma.marketPrice.findMany()));
 app.get("/weather", async (_req, res) => res.json(await prisma.weatherSnapshot.findMany()));
+app.get("/sim/status", (_req, res) => {
+  res.json({
+    lastTickAt: lastSimTick?.at ?? null,
+    lastTick: lastSimTick,
+    tickMs: SIM_TICK_MS,
+    weatherLabels: WEATHER_LABELS,
+  });
+});
+app.post("/sim/tick", async (_req, res) => {
+  const result = await runWorldTick();
+  res.json(result);
+});
 app.get("/contracts", async (_req, res) => {
   res.json(
     await prisma.npcContract.findMany({
@@ -273,6 +290,76 @@ app.get("/contracts", async (_req, res) => {
   );
 });
 
+let lastSimTick: {
+  at: string;
+  weather: { zoneCode: string; state: string; changed: boolean }[];
+  market: { commodity: string; price: number; stockTons: number; supply: number; demand: number }[];
+} | null = null;
+
+async function runWorldTick() {
+  const zones = await prisma.zone.findMany();
+  const snapshots = await prisma.weatherSnapshot.findMany();
+  const weatherOut: { zoneCode: string; state: string; changed: boolean }[] = [];
+
+  for (const snap of snapshots) {
+    const zone = zones.find((z) => z.code === snap.zoneCode);
+    const next = tickWeather({
+      current: snap.state as WeatherState,
+      koppen: zone?.koppen ?? "Cfb",
+    });
+    if (next.changed) {
+      await prisma.weatherSnapshot.update({
+        where: { id: snap.id },
+        data: { state: next.state },
+      });
+    }
+    weatherOut.push({ zoneCode: snap.zoneCode, state: next.state, changed: next.changed });
+  }
+
+  const states = weatherOut.map((w) => w.state as WeatherState);
+  const prices = await prisma.marketPrice.findMany();
+  const marketOut: {
+    commodity: string;
+    price: number;
+    stockTons: number;
+    supply: number;
+    demand: number;
+  }[] = [];
+
+  for (const row of prices) {
+    const pressure = marketNpcPressure({ weatherStates: states });
+    // Légère asymétrie blé / maïs
+    const supply =
+      row.commodity === "MAIZE" ? Math.round(pressure.supplyTons * 1.05) : pressure.supplyTons;
+    const demand =
+      row.commodity === "WHEAT" ? Math.round(pressure.demandTons * 1.05) : pressure.demandTons;
+    const tick = tickMarket({
+      commodity: row.commodity,
+      price: row.price,
+      supplyTons: supply,
+      demandTons: demand,
+      stockTons: row.stockTons,
+    });
+    await prisma.marketPrice.update({
+      where: { id: row.id },
+      data: { price: tick.price, stockTons: tick.stockTons },
+    });
+    marketOut.push({
+      commodity: row.commodity,
+      price: tick.price,
+      stockTons: tick.stockTons,
+      supply,
+      demand,
+    });
+  }
+
+  lastSimTick = {
+    at: new Date().toISOString(),
+    weather: weatherOut,
+    market: marketOut,
+  };
+  return lastSimTick;
+}
 const registerSchema = z.object({
   email: z.string().email(),
   displayName: z.string().min(2).max(32),
@@ -395,7 +482,7 @@ app.get("/parcels/:id", async (req, res) => {
         weedsControlled: c.weedsControlled,
         fertilizedPasses: Math.min(2, c.fertilizedPasses) as 0 | 1 | 2,
         buildingYieldBonus: bonuses?.yieldBonus,
-        weatherAtHarvest: weather?.state as "CLEAR" | "RAIN" | undefined,
+        weatherAtHarvest: weather?.state as WeatherState | undefined,
       });
       if (sim.ready && c.fieldStage !== "READY") {
         await prisma.parcelCell.update({
@@ -647,7 +734,7 @@ app.post("/parcels/:id/harvest", async (req, res) => {
         fertilizedPasses: Math.min(2, cell.fertilizedPasses) as 0 | 1 | 2,
         specialization: user?.specialization,
         buildingYieldBonus: bonuses.yieldBonus,
-        weatherAtHarvest: weather?.state as "CLEAR" | "RAIN" | undefined,
+        weatherAtHarvest: weather?.state as WeatherState | undefined,
       });
       if (!sim.ready) continue;
       harvested.push({
@@ -1158,8 +1245,13 @@ app.post("/contracts/:id/accept", async (req, res) => {
 
 async function main() {
   await ensureSeed();
+  await runWorldTick();
+  setInterval(() => {
+    runWorldTick().catch((e) => console.error("sim tick failed", e));
+  }, SIM_TICK_MS);
   app.listen(PORT, () => {
     console.log(`API Farming Navigateur sur http://localhost:${PORT}`);
+    console.log(`Sim tick toutes les ${SIM_TICK_MS / 1000}s`);
   });
 }
 

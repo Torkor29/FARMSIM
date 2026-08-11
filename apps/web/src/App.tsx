@@ -4,10 +4,12 @@ import {
   BUILDING_DEFS,
   MACHINE_DEFS,
   PARCEL_HECTARES,
+  WEATHER_LABELS,
   type Specialization,
   type CropCode,
   type BuildingType,
   type MachineType,
+  type WeatherState,
 } from "@farmsim/shared";
 import { IsoFarmView } from "./IsoFarmView";
 
@@ -95,6 +97,7 @@ type Contract = {
 };
 
 type MarketPrice = { commodity: string; price: number; stockTons: number };
+type WeatherSnap = { id: string; zoneCode: string; state: WeatherState; updatedAt?: string };
 
 type Tool = "SELECT" | "PLANT_WHEAT" | "PLANT_MAIZE" | "FERTILIZE" | "HARVEST" | "BUILD" | "PARK";
 
@@ -133,6 +136,7 @@ export function App() {
   const [parcelDetail, setParcelDetail] = useState<{
     parcel: Parcel;
     bonuses: Player["bonuses"];
+    weather?: WeatherSnap | null;
     cellSims: { x: number; y: number; sim: { progress: number; ready: boolean } }[];
   } | null>(null);
   const [tool, setTool] = useState<Tool>("SELECT");
@@ -143,16 +147,27 @@ export function App() {
   const [busy, setBusy] = useState(false);
   const [showEta, setShowEta] = useState(false);
   const [showGarage, setShowGarage] = useState(true);
+  const [weather, setWeather] = useState<WeatherSnap[]>([]);
+  const [brush, setBrush] = useState<1 | 2 | 3>(1);
+  const [prevPrices, setPrevPrices] = useState<Record<string, number>>({});
 
   const refreshMeta = useCallback(async () => {
-    const [z, m, c] = await Promise.all([
+    const [z, m, c, w] = await Promise.all([
       api<Zone[]>("/zones"),
       api<MarketPrice[]>("/market"),
       api<Contract[]>("/contracts"),
+      api<WeatherSnap[]>("/weather"),
     ]);
+    setPrevPrices((prev) => {
+      if (Object.keys(prev).length === 0) {
+        return Object.fromEntries(m.map((x) => [x.commodity, x.price]));
+      }
+      return prev;
+    });
     setZones(z);
     setMarket(m);
     setContracts(c);
+    setWeather(w);
   }, []);
 
   const refreshPlayer = useCallback(async (id: string) => {
@@ -172,7 +187,29 @@ export function App() {
 
   useEffect(() => {
     refreshMeta().catch((e) => setErr(String(e.message ?? e)));
+    const t = setInterval(() => {
+      refreshMeta()
+        .then(() => {
+          /* track deltas after refresh via market state */
+        })
+        .catch(() => undefined);
+    }, 10000);
+    return () => clearInterval(t);
   }, [refreshMeta]);
+
+  useEffect(() => {
+    setPrevPrices((prev) => {
+      const next = { ...prev };
+      for (const m of market) {
+        if (prev[m.commodity] === undefined) next[m.commodity] = m.price;
+      }
+      return next;
+    });
+    const t = setTimeout(() => {
+      setPrevPrices(Object.fromEntries(market.map((x) => [x.commodity, x.price])));
+    }, 4000);
+    return () => clearTimeout(t);
+  }, [market]);
 
   useEffect(() => {
     if (!player?.id) return;
@@ -208,17 +245,44 @@ export function App() {
   const grid = parcel?.cells ?? [];
   const zoneName = parcel?.zone?.name ?? ownedParcels[0]?.zone?.name ?? "France";
   const koppen = parcel?.zone?.koppen ?? "Cfb";
+  const zoneCode =
+    parcel?.zone?.code ??
+    ownedParcels[0]?.zone?.code ??
+    zones[0]?.code ??
+    "FR-BEAUCE";
+  const localWeather =
+    parcelDetail?.weather?.state ??
+    weather.find((w) => w.zoneCode === zoneCode)?.state ??
+    "CLEAR";
+  const weatherLabel = WEATHER_LABELS[localWeather] ?? localWeather;
   const avgProgress = useMemo(() => {
     const sims = parcelDetail?.cellSims ?? [];
     if (!sims.length) return 0;
     return sims.reduce((a, s) => a + s.sim.progress, 0) / sims.length;
   }, [parcelDetail]);
 
+  function brushCells(x: number, y: number): { x: number; y: number }[] {
+    const cells: { x: number; y: number }[] = [];
+    for (let dy = 0; dy < brush; dy++) {
+      for (let dx = 0; dx < brush; dx++) {
+        const cx = x + dx;
+        const cy = y + dy;
+        if (cx >= 0 && cy >= 0 && cx < gw && cy < gh) cells.push({ x: cx, y: cy });
+      }
+    }
+    return cells;
+  }
+
   function toggleCell(x: number, y: number) {
+    const block = brushCells(x, y);
     setSelectedCells((prev) => {
-      const exists = prev.some((c) => c.x === x && c.y === y);
-      if (exists) return prev.filter((c) => !(c.x === x && c.y === y));
-      return [...prev, { x, y }];
+      const allIn = block.every((c) => prev.some((s) => s.x === c.x && s.y === c.y));
+      if (allIn) return prev.filter((s) => !block.some((c) => c.x === s.x && c.y === s.y));
+      const next = [...prev];
+      for (const c of block) {
+        if (!next.some((s) => s.x === c.x && s.y === c.y)) next.push(c);
+      }
+      return next;
     });
   }
 
@@ -257,7 +321,7 @@ export function App() {
     if (!player || !activeParcelId) return;
     if (tool === "SELECT" || tool === "PLANT_WHEAT" || tool === "PLANT_MAIZE" || tool === "FERTILIZE" || tool === "HARVEST") {
       if (tool === "SELECT") {
-        setSelectedCells([{ x, y }]);
+        setSelectedCells(brushCells(x, y));
         return;
       }
       toggleCell(x, y);
@@ -533,6 +597,7 @@ export function App() {
             buildings={parcel.buildings ?? []}
             cellSims={parcelDetail?.cellSims ?? []}
             selected={selectedCells}
+            weather={localWeather}
             onCellClick={applyToolOnCell}
           />
         ) : (
@@ -572,6 +637,24 @@ export function App() {
         <div className={`toast ${err ? "bad" : "good"}`}>{err ?? msg}</div>
       )}
 
+      <div className="market-ticker">
+        {market.map((m) => {
+          const prev = prevPrices[m.commodity] ?? m.price;
+          const delta = m.price - prev;
+          const cls = delta > 0.05 ? "up" : delta < -0.05 ? "down" : "flat";
+          return (
+            <span key={m.commodity} className={`tick ${cls}`}>
+              {m.commodity} {m.price.toFixed(1)}
+              <small>
+                {delta > 0.05 ? " ▲" : delta < -0.05 ? " ▼" : " ·"}
+                {Math.abs(delta) > 0.05 ? Math.abs(delta).toFixed(1) : ""}
+              </small>
+            </span>
+          );
+        })}
+        <span className="tick weather-tick">{weatherLabel}</span>
+      </div>
+
       <aside className="glass geo-panel">
         <h3>Contexte géographique</h3>
         <dl>
@@ -582,6 +665,10 @@ export function App() {
           <div>
             <dt>Climat</dt>
             <dd>{koppen}</dd>
+          </div>
+          <div>
+            <dt>Météo</dt>
+            <dd className="wx">{weatherLabel}</dd>
           </div>
           <div>
             <dt>Aptitude blé</dt>
@@ -642,6 +729,18 @@ export function App() {
       </aside>
 
       <div className="action-bar">
+        <div className="brush-group" title="Taille du pinceau">
+          {([1, 2, 3] as const).map((n) => (
+            <button
+              key={n}
+              type="button"
+              className={brush === n ? "action on" : "action"}
+              onClick={() => setBrush(n)}
+            >
+              {n}×{n}
+            </button>
+          ))}
+        </div>
         {ACTION_BAR.map(([t, label]) => (
           <button
             key={t}

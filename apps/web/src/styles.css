@@ -255,9 +255,43 @@ button.ghost {
   color: #1a1408;
 }
 
+.market-ticker {
+  position: absolute;
+  top: 3.4rem;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 5;
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 0.45rem;
+  max-width: min(720px, calc(100vw - 2rem));
+  pointer-events: none;
+}
+.tick {
+  font-size: 0.78rem;
+  font-weight: 600;
+  padding: 0.28rem 0.55rem;
+  border-radius: 8px;
+  background: rgba(8, 12, 20, 0.75);
+  border: 1px solid var(--glass-border);
+}
+.tick.up { color: #8fef9a; }
+.tick.down { color: #ff9b86; }
+.tick.flat { color: var(--muted); }
+.tick.weather-tick { color: #9ec9ff; }
+.tick small { font-weight: 500; opacity: 0.85; }
+.wx { color: #9ec9ff !important; }
+.brush-group {
+  display: inline-flex;
+  gap: 0.25rem;
+  padding-right: 0.35rem;
+  border-right: 1px solid var(--glass-border);
+  margin-right: 0.15rem;
+}
 .toast {
   position: absolute;
-  top: 4rem;
+  top: 5.2rem;
   left: 50%;
   transform: translateX(-50%);
   z-index: 8;

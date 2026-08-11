@@ -5,6 +5,9 @@ import {
   applyMachineWear,
   repairMachineCost,
   machineCanWork,
+  tickWeather,
+  marketNpcPressure,
+  weatherYieldFactor,
 } from "../index";
 
 describe("simulateCell", () => {
@@ -106,5 +109,36 @@ describe("machines", () => {
   it("refuse le travail sous le seuil", () => {
     expect(machineCanWork(11, 12)).toBe(false);
     expect(machineCanWork(12, 12)).toBe(true);
+  });
+});
+
+describe("weather & market pressure", () => {
+  it("tickWeather est déterministe avec rng", () => {
+    const a = tickWeather({ current: "CLEAR", koppen: "Cfb", rng: 0.1 });
+    const b = tickWeather({ current: "CLEAR", koppen: "Cfb", rng: 0.1 });
+    expect(a.state).toBe(b.state);
+  });
+
+  it("peut changer d’état", () => {
+    const r = tickWeather({ current: "CLEAR", koppen: "Cfb", rng: 0.95 });
+    expect(["CLEAR", "CLOUDY", "RAIN", "STORM", "SNOW"]).toContain(r.state);
+  });
+
+  it("marketNpcPressure réagit aux orages", () => {
+    const calm = marketNpcPressure({
+      weatherStates: ["CLEAR", "CLEAR"],
+      rng: () => 0.5,
+    });
+    const storm = marketNpcPressure({
+      weatherStates: ["STORM", "STORM"],
+      rng: () => 0.5,
+    });
+    expect(storm.supplyTons).toBeLessThan(calm.supplyTons);
+    expect(storm.demandTons).toBeGreaterThanOrEqual(calm.demandTons);
+  });
+
+  it("weatherYieldFactor pénalise orage/neige", () => {
+    expect(weatherYieldFactor("STORM")).toBeLessThan(weatherYieldFactor("CLEAR"));
+    expect(weatherYieldFactor("SNOW")).toBeLessThan(weatherYieldFactor("CLOUDY"));
   });
 });

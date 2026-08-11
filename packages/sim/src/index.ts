@@ -51,7 +51,8 @@ export function simulateCell(input: CellSimInput): CellSimResult {
   const ready = input.now >= readyAt;
   const mgmt = managementFactor(input);
   const wet = moisturePenalty(input.weatherAtHarvest);
-  const estimatedYieldTons = def.yieldPerCell * mgmt * (1 - wet);
+  const climate = weatherYieldFactor(input.weatherAtHarvest);
+  const estimatedYieldTons = def.yieldPerCell * mgmt * climate * (1 - wet);
   return {
     ready,
     progress,
@@ -141,4 +142,190 @@ export function repairMachineCost(opts: {
 
 export function machineCanWork(condition: number, minCondition: number): boolean {
   return condition >= minCondition;
+}
+
+/** Facteur rendement lié à la météo pendant la croissance `[GD]` */
+export function weatherYieldFactor(weather?: WeatherState): number {
+  switch (weather) {
+    case "CLEAR":
+      return 1.02;
+    case "CLOUDY":
+      return 1.0;
+    case "RAIN":
+      return 1.0; // humidité gérée à part à la récolte
+    case "STORM":
+      return 0.88;
+    case "SNOW":
+      return 0.75;
+    default:
+      return 1;
+  }
+}
+
+/**
+ * Chaîne de Markov météo par climat Köppen simplifié.
+ * `rng` ∈ [0,1) pour tests déterministes.
+ */
+export function tickWeather(opts: {
+  current: WeatherState;
+  koppen: string;
+  rng?: number;
+}): { state: WeatherState; changed: boolean } {
+  const r = opts.rng ?? Math.random();
+  const table = weatherTransitions(opts.koppen);
+  const row = table[opts.current] ?? table.CLEAR;
+  let acc = 0;
+  let next: WeatherState = opts.current;
+  for (const [state, p] of row) {
+    acc += p;
+    if (r < acc) {
+      next = state;
+      break;
+    }
+  }
+  return { state: next, changed: next !== opts.current };
+}
+
+function weatherTransitions(
+  koppen: string,
+): Record<WeatherState, Array<[WeatherState, number]>> {
+  const k = koppen.toUpperCase();
+  // Océanique (Cfb) : plus de pluie
+  if (k.startsWith("C")) {
+    return {
+      CLEAR: [
+        ["CLEAR", 0.45],
+        ["CLOUDY", 0.35],
+        ["RAIN", 0.15],
+        ["STORM", 0.05],
+        ["SNOW", 0],
+      ],
+      CLOUDY: [
+        ["CLEAR", 0.25],
+        ["CLOUDY", 0.35],
+        ["RAIN", 0.3],
+        ["STORM", 0.1],
+        ["SNOW", 0],
+      ],
+      RAIN: [
+        ["CLEAR", 0.15],
+        ["CLOUDY", 0.35],
+        ["RAIN", 0.35],
+        ["STORM", 0.15],
+        ["SNOW", 0],
+      ],
+      STORM: [
+        ["CLEAR", 0.1],
+        ["CLOUDY", 0.3],
+        ["RAIN", 0.4],
+        ["STORM", 0.2],
+        ["SNOW", 0],
+      ],
+      SNOW: [
+        ["CLOUDY", 0.4],
+        ["RAIN", 0.3],
+        ["SNOW", 0.3],
+        ["CLEAR", 0],
+        ["STORM", 0],
+      ],
+    };
+  }
+  // Continental (Dfa) : orages / neige possibles
+  if (k.startsWith("D")) {
+    return {
+      CLEAR: [
+        ["CLEAR", 0.5],
+        ["CLOUDY", 0.25],
+        ["RAIN", 0.1],
+        ["STORM", 0.1],
+        ["SNOW", 0.05],
+      ],
+      CLOUDY: [
+        ["CLEAR", 0.3],
+        ["CLOUDY", 0.3],
+        ["RAIN", 0.2],
+        ["STORM", 0.1],
+        ["SNOW", 0.1],
+      ],
+      RAIN: [
+        ["CLEAR", 0.2],
+        ["CLOUDY", 0.3],
+        ["RAIN", 0.25],
+        ["STORM", 0.15],
+        ["SNOW", 0.1],
+      ],
+      STORM: [
+        ["CLEAR", 0.15],
+        ["CLOUDY", 0.25],
+        ["RAIN", 0.3],
+        ["STORM", 0.2],
+        ["SNOW", 0.1],
+      ],
+      SNOW: [
+        ["CLEAR", 0.15],
+        ["CLOUDY", 0.3],
+        ["SNOW", 0.4],
+        ["RAIN", 0.1],
+        ["STORM", 0.05],
+      ],
+    };
+  }
+  // Défaut
+  return {
+    CLEAR: [
+      ["CLEAR", 0.55],
+      ["CLOUDY", 0.3],
+      ["RAIN", 0.1],
+      ["STORM", 0.05],
+      ["SNOW", 0],
+    ],
+    CLOUDY: [
+      ["CLEAR", 0.3],
+      ["CLOUDY", 0.4],
+      ["RAIN", 0.2],
+      ["STORM", 0.1],
+      ["SNOW", 0],
+    ],
+    RAIN: [
+      ["CLEAR", 0.2],
+      ["CLOUDY", 0.35],
+      ["RAIN", 0.35],
+      ["STORM", 0.1],
+      ["SNOW", 0],
+    ],
+    STORM: [
+      ["CLEAR", 0.15],
+      ["CLOUDY", 0.35],
+      ["RAIN", 0.35],
+      ["STORM", 0.15],
+      ["SNOW", 0],
+    ],
+    SNOW: [
+      ["CLOUDY", 0.5],
+      ["SNOW", 0.3],
+      ["CLEAR", 0.2],
+      ["RAIN", 0],
+      ["STORM", 0],
+    ],
+  };
+}
+
+/** Pression NPC marché : offre/demande bruitée + boost offre si pluie large */
+export function marketNpcPressure(opts: {
+  weatherStates: WeatherState[];
+  rng?: () => number;
+}): { supplyTons: number; demandTons: number } {
+  const rnd = opts.rng ?? Math.random;
+  const wetShare =
+    opts.weatherStates.filter((w) => w === "RAIN" || w === "STORM" || w === "SNOW").length /
+    Math.max(1, opts.weatherStates.length);
+  const stormShare =
+    opts.weatherStates.filter((w) => w === "STORM").length / Math.max(1, opts.weatherStates.length);
+  // Pluie → récoltes plus difficiles → offre ↓ ; orage → choc offre ↓↓ ; demande stable bruitée
+  const supplyTons = 80 + rnd() * 60 - wetShare * 40 - stormShare * 50;
+  const demandTons = 90 + rnd() * 70 + stormShare * 20;
+  return {
+    supplyTons: Math.max(10, Math.round(supplyTons)),
+    demandTons: Math.max(10, Math.round(demandTons)),
+  };
 }

@@ -31,6 +31,7 @@ type Props = {
   buildings: IsoBuilding[];
   cellSims: IsoSim[];
   selected: { x: number; y: number }[];
+  weather?: string;
   onCellClick: (x: number, y: number) => void;
 };
 
@@ -78,12 +79,15 @@ export function IsoFarmView({
   buildings,
   cellSims,
   selected,
+  weather = "CLEAR",
   onCellClick,
 }: Props) {
   const mountRef = useRef<HTMLDivElement>(null);
   const onClickRef = useRef(onCellClick);
   onClickRef.current = onCellClick;
   const layoutRef = useRef<(() => void) | null>(null);
+  const weatherRef = useRef(weather);
+  weatherRef.current = weather;
 
   const dataRef = useRef({ cells, buildings, cellSims, selected, gridW, gridH });
   dataRef.current = { cells, buildings, cellSims, selected, gridW, gridH };
@@ -94,8 +98,15 @@ export function IsoFarmView({
     const el = mount;
 
     const scene = new THREE.Scene();
-    scene.background = new THREE.Color(0x1a2430);
-    scene.fog = new THREE.Fog(0x1a2430, 28, 55);
+    const skyFor = (w: string) => {
+      if (w === "STORM") return 0x1a2030;
+      if (w === "RAIN") return 0x243040;
+      if (w === "CLOUDY") return 0x2a3545;
+      if (w === "SNOW") return 0x3a4555;
+      return 0x1a2430;
+    };
+    scene.background = new THREE.Color(skyFor(weatherRef.current));
+    scene.fog = new THREE.Fog(skyFor(weatherRef.current), 28, 55);
 
     const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false });
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
@@ -372,6 +383,9 @@ export function IsoFarmView({
     function tick() {
       raf = requestAnimationFrame(tick);
       const t = clock.getElapsedTime();
+      const sky = skyFor(weatherRef.current);
+      scene.background = new THREE.Color(sky);
+      if (scene.fog instanceof THREE.Fog) scene.fog.color.setHex(sky);
       hexGroup.rotation.y = Math.sin(t * 0.05) * 0.02;
       world.position.y = Math.sin(t * 0.7) * 0.015;
       renderer.render(scene, camera);

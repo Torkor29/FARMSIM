@@ -53,6 +53,7 @@ Chaque valeur chiffrée dans cette documentation est classée :
 | — | [22_FARM_GRID_LAYOUT.md](./22_FARM_GRID_LAYOUT.md) | Grille parcelle, bâtiments, parking, adjacence |
 | — | [23_GRID_SIZING.md](./23_GRID_SIZING.md) | Calcul taille grille optimale (12×12) |
 | — | [24_MACHINES.md](./24_MACHINES.md) | Catalogue machines, usure, prérequis |
+| — | [25_WEATHER_MARKET_TICK.md](./25_WEATHER_MARKET_TICK.md) | Tick météo/marché + brush |
 
 ---
 
