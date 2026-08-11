@@ -36,14 +36,17 @@ Conversion indirecte type Dofus (temps → CRD → certains items aussi achetabl
 |------|-------------|
 | Achat semences / engrais / carburant NPC | Récurrent |
 | Entretien machines / réparation | Récurrent |
-| Frais de stockage | Anti-thésaurisation |
-| Taxes marché / commission | % |
+| Frais de stockage + **spoil** denrées | Anti-thésaurisation |
+| Taxes marché / commission (2–5 %) | % |
+| **Office public / acheteur NPC** | Achète surplus → détruit une fraction (inspiration Albion Black Market) |
 | Achat terrains NPC / baux | Gros sinks |
 | Construction bâtiments | Mid/late |
 | Échecs (pertes récolte, mortalités) | Soft sink ressources |
 | Amende multi-compte / saisies anti-fraude | Exceptionnel |
 
-**Règle :** tout faucet massif doit avoir un sink associé dimensionné.
+**Règle :** tout faucet massif doit avoir un sink associé dimensionné.  
+**Priorité d’implémentation `[PROPOSITION]` :** énergie/actions plafonnées + spoil + taxes → marketplace escrow → office public → pont soft↔premium → **MER hebdo** (métriques faucet/sink).  
+Détail comparatif MMO : `20_GAME_ECONOMIES_DEEP_DIVE.md`.
 
 ---
 
