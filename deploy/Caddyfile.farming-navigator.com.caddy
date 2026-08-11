@@ -1,0 +1,27 @@
+# FARMSIM ne fait pas tourner son propre Caddy : ce bloc va dans le portier
+# commun du serveur, une pile Caddy séparée qui sert TOUS les sites (voir le
+# dépôt GESTIONPROJET, dossier deploiement/, pour la mise en place complète
+# et la marche à suivre pour ajouter un nouveau site ou service).
+#
+# À poser sous /opt/proxy/sites/farming-navigator.com.caddy sur le serveur,
+# puis recharger sans interrompre les autres sites :
+#
+#   docker compose -f /opt/proxy/docker-compose.yml exec caddy \
+#     caddy reload --config /etc/caddy/Caddyfile
+#
+# « hote » désigne la machine elle-même, vue depuis le conteneur Caddy — il
+# est déclaré une fois dans le docker-compose.yml du portier (extra_hosts:
+# hote -> host-gateway), pour ne pas dépendre de l'adresse du pont Docker,
+# qui n'est pas garantie stable. FARMSIM doit publier son port sur 0.0.0.0
+# (voir FARMSIM_BIND dans .env) pour rester joignable par ce chemin.
+#
+# Préalable : la zone DNS OVH de farming-navigator.com pointe aujourd'hui
+# vers l'hébergement mutualisé (146.59.209.152), pas vers ce serveur.
+# Remplacez l'enregistrement A (racine et www) par l'IP du VPS avant de
+# recharger ce fichier — sinon Let's Encrypt ne pourra pas délivrer le
+# certificat.
+
+farming-navigator.com, www.farming-navigator.com {
+	encode gzip zstd
+	reverse_proxy hote:8081
+}

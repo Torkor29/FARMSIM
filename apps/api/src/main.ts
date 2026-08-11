@@ -41,11 +41,25 @@ import {
   mergeMoisture,
 } from "@farmsim/sim";
 import { randomBytes } from "crypto";
+import path from "node:path";
 
 const prisma = new PrismaClient();
 const app = express();
 app.use(cors());
 app.use(express.json());
+
+// Le front (apps/web) appelle toujours `${API}${chemin}` avec API = "/api" —
+// en développement, le serveur Vite réécrit `/api/xxx` en `/xxx` avant de
+// relayer vers cette API (voir apps/web/vite.config.ts). En production, les
+// deux sont servis par le même processus : on reproduit la même réécriture
+// ici, pour que les routes ci-dessous (déclarées sans préfixe) n'aient pas à
+// changer.
+app.use((req, _res, next) => {
+  if (req.url.startsWith("/api/") || req.url === "/api") {
+    req.url = req.url.slice(4) || "/";
+  }
+  next();
+});
 
 const PORT = Number(process.env.PORT ?? 3001);
 
@@ -1207,7 +1221,7 @@ app.post("/machines/:id/park", async (req, res) => {
   }
   const machine = await prisma.machine.findUnique({
     where: { id: req.params.id },
-    include: { farm: true },
+    include: { farm: true, cell: true },
   });
   if (!machine || machine.farm.userId !== body.data.userId) {
     res.status(403).json({ error: "Machine non possédée" });
@@ -1528,6 +1542,17 @@ app.post("/contracts/:id/accept", async (req, res) => {
     return { user: u, reward, machine: { id: picked.machine.id, type: picked.machine.type, ...wear } };
   });
   res.json(result);
+});
+
+// Sert le front construit (apps/web/dist, recopié à côté de ce fichier compilé
+// — voir le Dockerfile) et retombe sur son index.html pour toute route qui
+// n'est ni un fichier statique existant ni une des routes API ci-dessus.
+// L'appli n'a pas de routeur côté client aujourd'hui, mais ça garde un lien
+// direct utilisable pour n'importe quelle URL du jeu.
+const webDist = process.env.WEB_DIST_DIR ?? path.join(__dirname, "web");
+app.use(express.static(webDist));
+app.get("*", (_req, res) => {
+  res.sendFile(path.join(webDist, "index.html"));
 });
 
 async function main() {

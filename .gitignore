@@ -9,4 +9,5 @@ coverage
 .env.local
 *.db
 *.db-journal
+*.tsbuildinfo
 .DS_Store
