@@ -16,13 +16,13 @@
 
 ## 2. Recommandations stack
 
-### Frontend web : **Next.js (React)** `[PROPOSITION]`
+### Frontend web : **Vite + React (client jeu)** + Next.js optionnel (marketing) `[PROPOSITION]`
 **Pourquoi :**
-- App complexe (auth, marché, compte, SEO landing) ;
-- SSR/SSG pour marketing + CSR pour client jeu ;
-- écosystème mature.
+- Le cœur est une app stateful longue durée (WebSocket + canvas), pas un site SSR.
+- **Vite + React + TS** pour le client jeu : contrôle runtime, pas d’hydration WebGL inutile.
+- **Next.js** en site marketing / SEO / auth landing (séparé ou plus tard) — pas obligatoire dans le même bundle que le jeu.
 
-Alternatives : Nuxt (OK si équipe Vue) ; SPA Vite+React pure (OK MVP ultra-lean).
+Alternative monolithique Next (App Router + client jeu) acceptable si l’équipe veut un seul repo déployable, au prix d’une complexité hydration à maîtriser.
 
 ### Rendu parcelle : **Three.js** (isométrique low-poly) `[PROPOSITION]`
 **Pourquoi :**
@@ -76,11 +76,23 @@ Rust : excellent perf, ROI équipe souvent mauvais au MVP.
 
 ---
 
-## 4. Authoritative simulation
+## 4. Authoritative simulation (lazy, pas tick 1 Hz)
 
 **Tout** yield, price, inventory, XP, contrat = validé serveur.  
-Client = prédiction visuelle.  
-Catch-up à la reconnexion : `simulate(lastTick → now)` borné.
+Client = prédiction visuelle.
+
+**Principe `[PROPOSITION]` :** formule temporelle plutôt que tick massif par parcelle :
+
+```
+ready_at = planted_at + f(crop, weather_history, soil, research)
+state = derive(now)   # à la connexion / poll / action
+```
+
+Workers périodiques : météo régionale, maturité **batch**, spoilage, indices marché.  
+Champs **dormants** jusqu’à visite ou événement — coût non linéaire avec le nombre de parcelles.
+
+Catch-up à la reconnexion : `simulate(lastTick → now)` borné.  
+Inspiration documentée : backends de jeux navigateur strategy (ex. Old Light — lazy/buckets, TS+Postgres+WS).
 
 ---
 
@@ -130,7 +142,11 @@ OpenTelemetry, métriques économiques custom, alertes prix out-of-band, slow qu
 
 ## 9. Stack MVP minimale
 
-Next.js · Three.js · NestJS · PostgreSQL · Redis · BullMQ · S3 · Docker Compose
+Vite+React+TS · Three.js · NestJS · PostgreSQL · Redis · BullMQ · S3 · Docker Compose  
+(+ Next.js marketing séparé si besoin SEO)
+
+Workers MVP : GrowthSettler · WeatherTicker · MarketMatcher · NotificationWorker  
+(+ ContractSettler dès V1 prestations)
 
 ---
 

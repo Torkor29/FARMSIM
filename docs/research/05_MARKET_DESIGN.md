@@ -84,9 +84,11 @@ Le stockage est une **compétence de risque**, pas un win button (mean-reverting
 
 ## 6. Régions & transport
 
-MVP : prix **mondial unique** par commodité (± qualité).  
-V1 : modifiers régionaux (±5–15 %) + coût transport symbolique pour « export ».  
-Évite l’arbitrage infini dès le début tout en préparant la profondeur.
+MVP : prix **mondial unique** par commodité (± qualité) — liquidité et simplicité.  
+V1 : **marchés régionaux** + frais de fret / délai + modifiers (±5–15 %).  
+Évite l’arbitrage instantané type HFT tout en préparant la spécialisation géographique.
+
+**[PROPOSITION]** Ne pas ouvrir un carnet d’ordres mondial temps réel au lancement : surface de manipulation + goulot. Matching asynchrone (1–5 s) suffit pour un rythme farm.
 
 ---
 

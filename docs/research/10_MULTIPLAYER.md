@@ -37,14 +37,10 @@ C’est un **MMO économique / gestion**.
 ### Métiers
 Récolte, labour, semis, fertilisation, transport, (plus tard) soins animaux.
 
-### Anti-abus
-- Escrow + litiges timeout.
-- Réputation bidirectionnelle.
-- Plafonds prix absurdes (bornes).
-- Détection collusion multi-comptes (paiement circulaire).
-- Annulation pénalisée.
-
-**Impact gameplay :** permet de jouer sans toutes les machines ; crée le métier Entrepreneur.
+### Matching
+MVP : tableau d’offres filtré région + type + deadline (asynchrone — pas de lobby FPS).  
+V1 : score (distance, réputation, machines, prix) + notifications.  
+Exécution **toujours** validée serveur (`FieldState` atteint l’objectif) — escrow libéré automatiquement si possible.
 
 ---
 

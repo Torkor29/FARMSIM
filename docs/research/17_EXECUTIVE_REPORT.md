@@ -121,8 +121,8 @@ Cash-out : **non**.
 
 ## M. Architecture
 
-**MVP :** Next.js + Three.js (parcelle) + MapLibre/carte 2D + NestJS + PostgreSQL + Redis + BullMQ + WebSocket.  
-Authoritative server.  
+**MVP :** Vite+React (client jeu) + Three.js (parcelle) + MapLibre/carte 2D + NestJS + PostgreSQL + Redis + BullMQ + WebSocket ; Next.js marketing optionnel.  
+Simulation **lazy** (`ready_at` / derive) — pas de tick 1 Hz massif.  
 Go workers possibles plus tard sur market/sim.
 
 ---
