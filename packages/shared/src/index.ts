@@ -107,7 +107,28 @@ export type BuildingDef = {
   yieldBonus?: number;
   repairDiscount?: number;
   xpBonus?: number;
+  /** Soft dryer — bonus réduction humidité au séchage `[GD]` */
+  softDryer?: boolean;
 };
+
+/**
+ * Humidité de récolte & séchage MVP `[TEST]`
+ * @see docs/research/27_MOISTURE_DRYING.md
+ */
+export const DRYING = {
+  /** CRD par tonne et par passe de séchage */
+  costPerTonPerPass: 12,
+  /** Réduction d’humidité (fraction) par passe */
+  moistureReductionPerPass: 0.06,
+  /** Réduction extra si SILO / HAY_BARN sur la ferme */
+  barnExtraReduction: 0.03,
+  /** Plancher d’humidité après séchage */
+  moistureFloor: 0.1,
+  /** Au-delà : malus vente */
+  sellThreshold: 0.14,
+  /** Malus prix si humidité > seuil */
+  sellPenaltyAbove: 0.15,
+} as const;
 
 export const BUILDING_DEFS: Record<BuildingType, BuildingDef> = {
   SILO: {
@@ -116,9 +137,10 @@ export const BUILDING_DEFS: Record<BuildingType, BuildingDef> = {
     w: 2,
     h: 2,
     cost: 1200,
-    description: "Stocke céréales ; +capacité.",
+    description: "Stocke céréales ; +capacité ; séchage soft.",
     storageGrain: 40,
     yieldBonus: 0.01,
+    softDryer: true,
   },
   HAY_BARN: {
     type: "HAY_BARN",
@@ -126,8 +148,9 @@ export const BUILDING_DEFS: Record<BuildingType, BuildingDef> = {
     w: 2,
     h: 2,
     cost: 900,
-    description: "Stocke bottes et fourrages.",
+    description: "Stocke bottes et fourrages ; séchage soft.",
     storageHay: 30,
+    softDryer: true,
   },
   MACHINE_SHED: {
     type: "MACHINE_SHED",
@@ -196,6 +219,8 @@ export type MachineDef = {
   minCondition: number;
   description: string;
   works: Array<"PLANT" | "FERTILIZE" | "HARVEST" | "PLOW">;
+  /** Teinte iso HUD (réf. IsoFarmView) */
+  isoColor: "green" | "red-gold" | "amber";
 };
 
 export const MACHINE_DEFS: Record<MachineType, MachineDef> = {
@@ -209,6 +234,7 @@ export const MACHINE_DEFS: Record<MachineType, MachineDef> = {
     minCondition: 12,
     description: "Semis et travaux de base.",
     works: ["PLANT", "PLOW", "FERTILIZE"],
+    isoColor: "green",
   },
   HARVESTER: {
     type: "HARVESTER",
@@ -220,6 +246,7 @@ export const MACHINE_DEFS: Record<MachineType, MachineDef> = {
     minCondition: 12,
     description: "Récolte céréales.",
     works: ["HARVEST"],
+    isoColor: "red-gold",
   },
   SPREADER: {
     type: "SPREADER",
@@ -231,6 +258,7 @@ export const MACHINE_DEFS: Record<MachineType, MachineDef> = {
     minCondition: 10,
     description: "Fertilisation plus efficace (−usure vs tracteur).",
     works: ["FERTILIZE"],
+    isoColor: "amber",
   },
 };
 

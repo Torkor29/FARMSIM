@@ -1,3 +1,4 @@
+import { DRYING } from "@farmsim/shared";
 import {
   simulateCell,
   tickMarket,
@@ -9,6 +10,10 @@ import {
   marketNpcPressure,
   weatherYieldFactor,
   buildSessionResume,
+  harvestMoisture,
+  dryInventory,
+  moistureSellPenalty,
+  mergeMoisture,
 } from "../index";
 
 describe("simulateCell", () => {
@@ -159,5 +164,41 @@ describe("session resume", () => {
     expect(r.marketDelta.MAIZE).toBe(-5);
     expect(r.hint).toContain("prête");
     expect(r.hint).toContain("Météo");
+  });
+});
+
+describe("harvestMoisture & dryInventory", () => {
+  it("donne une humidité plus haute sous pluie/orage/neige", () => {
+    expect(harvestMoisture("CLEAR")).toBeLessThan(harvestMoisture("RAIN"));
+    expect(harvestMoisture("RAIN")).toBeLessThan(harvestMoisture("STORM"));
+    expect(harvestMoisture("STORM")).toBeLessThan(harvestMoisture("SNOW"));
+  });
+
+  it("sèche et facture par passe", () => {
+    const r = dryInventory({ moisture: 0.25, tons: 10, passes: 1 });
+    expect(r.moisture).toBeCloseTo(0.25 - DRYING.moistureReductionPerPass, 3);
+    expect(r.cost).toBe(10 * DRYING.costPerTonPerPass);
+    expect(r.reduction).toBeCloseTo(DRYING.moistureReductionPerPass, 3);
+  });
+
+  it("applique le bonus silo/hangar", () => {
+    const base = dryInventory({ moisture: 0.25, tons: 5, passes: 1 });
+    const barn = dryInventory({ moisture: 0.25, tons: 5, passes: 1, barnBonus: true });
+    expect(barn.moisture).toBeLessThan(base.moisture);
+    expect(barn.cost).toBe(base.cost);
+  });
+
+  it("respecte le plancher d’humidité", () => {
+    const r = dryInventory({ moisture: 0.11, tons: 2, passes: 5, barnBonus: true });
+    expect(r.moisture).toBe(DRYING.moistureFloor);
+  });
+
+  it("pénalise la vente au-dessus du seuil", () => {
+    expect(moistureSellPenalty(0.12)).toBe(0);
+    expect(moistureSellPenalty(0.2)).toBe(DRYING.sellPenaltyAbove);
+  });
+
+  it("fusionne l’humidité en moyenne pondérée", () => {
+    expect(mergeMoisture(10, 0.12, 10, 0.22)).toBe(0.17);
   });
 });

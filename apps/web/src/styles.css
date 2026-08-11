@@ -102,7 +102,25 @@ input { min-width: 0; flex: 1; }
   pointer-events: none;
 }
 .hud-top > * { pointer-events: auto; }
+.brand-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.55rem;
+}
 .brand-mark { font-size: 1.35rem; }
+.mvp-badge {
+  font-size: 0.68rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--muted);
+  opacity: 0.85;
+  padding: 0.15rem 0.4rem;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 4px;
+  background: rgba(0, 0, 0, 0.25);
+}
 .hud-stats {
   display: flex;
   flex-wrap: wrap;
@@ -116,6 +134,7 @@ input { min-width: 0; flex: 1; }
   background: rgba(0,0,0,0.35);
   border: 1px solid var(--glass-border);
 }
+.stat-xp { color: #b8d4c4; }
 .gold { color: var(--accent-hot) !important; }
 button.ghost {
   background: transparent;
@@ -342,6 +361,143 @@ button.ghost {
   gap: 0.15rem;
 }
 .parcel.selected { outline: 2px solid var(--accent-hot); }
+
+/* —— Zone map (onboarding + expansion) —— */
+.zone-maps {
+  display: grid;
+  gap: 0.75rem;
+}
+.zone-map {
+  display: grid;
+  gap: 0.45rem;
+}
+.zone-map-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.35rem 0.75rem;
+}
+.zone-map-name {
+  font-family: Syne, "DM Sans", sans-serif;
+  font-size: 0.92rem;
+  letter-spacing: -0.02em;
+}
+.zone-grid {
+  display: grid;
+  gap: 4px;
+  width: 100%;
+  aspect-ratio: 4 / 3;
+  max-height: 220px;
+}
+.zone-map.compact .zone-grid {
+  max-height: 140px;
+  aspect-ratio: auto;
+  min-height: 96px;
+}
+.zone-cell {
+  position: relative;
+  display: grid;
+  place-content: center;
+  gap: 0;
+  padding: 0.2rem;
+  border-radius: 6px;
+  border: 1px solid transparent;
+  font-size: 0.68rem;
+  font-weight: 600;
+  line-height: 1.1;
+  min-width: 0;
+  min-height: 0;
+  transition: border-color 0.15s ease, filter 0.15s ease, transform 0.12s ease;
+}
+.zone-cell-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 100%;
+}
+.zone-cell-price {
+  font-size: 0.62rem;
+  font-weight: 500;
+  opacity: 0.85;
+  color: var(--accent-hot);
+}
+.zone-cell.st-free {
+  background: rgba(61, 154, 95, 0.28);
+  border-color: rgba(61, 154, 95, 0.45);
+  color: #c8efd4;
+}
+.zone-cell.st-mine {
+  background: rgba(201, 162, 39, 0.32);
+  border-color: rgba(201, 162, 39, 0.55);
+  color: #f0e2a8;
+}
+.zone-cell.st-other {
+  background: rgba(120, 90, 90, 0.35);
+  border-color: rgba(255, 155, 134, 0.25);
+  color: #d4b8b0;
+}
+.zone-cell.st-empty {
+  background: rgba(255, 255, 255, 0.03);
+  border-color: rgba(255, 255, 255, 0.06);
+  color: var(--muted);
+}
+.zone-cell.clickable:hover:not(:disabled) {
+  filter: brightness(1.15);
+  transform: translateY(-1px);
+  border-color: var(--accent-hot);
+}
+.zone-cell.selected {
+  outline: 2px solid var(--accent-hot);
+  outline-offset: 1px;
+  z-index: 1;
+}
+.zone-cell.locked:disabled {
+  opacity: 0.72;
+  cursor: default;
+}
+.zone-cell.st-free.locked:disabled {
+  background: rgba(61, 154, 95, 0.12);
+  border-color: rgba(61, 154, 95, 0.2);
+}
+.zone-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.55rem 0.85rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  font-size: 0.72rem;
+  color: var(--muted);
+}
+.zone-legend li {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+}
+.zone-legend .swatch {
+  display: inline-block;
+  width: 0.65rem;
+  height: 0.65rem;
+  border-radius: 3px;
+  border: 1px solid transparent;
+}
+.zone-legend .swatch.st-free {
+  background: rgba(61, 154, 95, 0.55);
+  border-color: rgba(61, 154, 95, 0.7);
+}
+.zone-legend .swatch.st-mine {
+  background: rgba(201, 162, 39, 0.55);
+  border-color: rgba(201, 162, 39, 0.7);
+}
+.zone-legend .swatch.st-other {
+  background: rgba(120, 90, 90, 0.55);
+  border-color: rgba(255, 155, 134, 0.35);
+}
+.zone-select-hint {
+  margin: 0.35rem 0 0;
+  font-size: 0.78rem;
+}
 .spe-cards { display: grid; gap: 0.5rem; }
 .spe {
   text-align: left;
@@ -358,6 +514,12 @@ button.ghost {
   border-radius: 8px;
   background: rgba(0,0,0,0.25);
   font-size: 0.86rem;
+}
+.row-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  justify-content: flex-end;
 }
 .error { color: var(--danger); }
 .ok { color: var(--ok); }

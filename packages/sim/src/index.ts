@@ -1,5 +1,6 @@
 import {
   CROP_DEFS,
+  DRYING,
   MARKET_BOUNDS,
   type CropCode,
   type Specialization,
@@ -42,6 +43,76 @@ function moisturePenalty(weather?: WeatherState): number {
   if (weather === "RAIN" || weather === "STORM") return 0.25;
   if (weather === "SNOW") return 0.35;
   return 0;
+}
+
+/**
+ * Humidité grain à la récolte (fraction 0–1) selon météo `[GD]`.
+ * Distinct du malus rendement `moisturePenalty`.
+ */
+export function harvestMoisture(weather?: WeatherState): number {
+  switch (weather) {
+    case "RAIN":
+      return 0.22;
+    case "STORM":
+      return 0.25;
+    case "SNOW":
+      return 0.28;
+    case "CLOUDY":
+      return 0.14;
+    case "CLEAR":
+    default:
+      return 0.12;
+  }
+}
+
+/**
+ * Une ou plusieurs passes de séchage : coût CRD + baisse d’humidité.
+ * `barnBonus` si SILO / HAY_BARN (soft dryer) sur la ferme.
+ */
+export function dryInventory(opts: {
+  moisture: number;
+  tons: number;
+  passes: number;
+  barnBonus?: boolean;
+}): { moisture: number; cost: number; reduction: number } {
+  const passes = Math.max(0, Math.floor(opts.passes));
+  const tons = Math.max(0, opts.tons);
+  const perPass =
+    DRYING.moistureReductionPerPass +
+    (opts.barnBonus ? DRYING.barnExtraReduction : 0);
+  const maxDrop = Math.max(0, opts.moisture - DRYING.moistureFloor);
+  const reduction = Math.min(maxDrop, perPass * passes);
+  const moisture =
+    Math.round(Math.max(DRYING.moistureFloor, opts.moisture - reduction) * 1000) /
+    1000;
+  const cost =
+    Math.round(tons * DRYING.costPerTonPerPass * passes * 100) / 100;
+  return {
+    moisture,
+    cost,
+    reduction: Math.round((opts.moisture - moisture) * 1000) / 1000,
+  };
+}
+
+/** Malus prix marché si humidité au-dessus du seuil de vente. */
+export function moistureSellPenalty(moisture: number): number {
+  return moisture > DRYING.sellThreshold ? DRYING.sellPenaltyAbove : 0;
+}
+
+/** Moyenne pondérée d’humidité lors d’un ajout au stock. */
+export function mergeMoisture(
+  existingQty: number,
+  existingMoisture: number,
+  addTons: number,
+  addMoisture: number,
+): number {
+  const total = existingQty + addTons;
+  if (total <= 0) return addMoisture;
+  return (
+    Math.round(
+      ((existingQty * existingMoisture + addTons * addMoisture) / total) * 1000,
+    ) / 1000
+  );
 }
 
 export function simulateCell(input: CellSimInput): CellSimResult {

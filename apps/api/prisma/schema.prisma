@@ -167,6 +167,8 @@ model InventoryItem {
   itemCode String
   qty      Float
   quality  Int    @default(3)
+  /** Humidité grain 0–1 (ex. 0.14 = 14 %) */
+  moisture Float  @default(0)
 }
 
 model Machine {

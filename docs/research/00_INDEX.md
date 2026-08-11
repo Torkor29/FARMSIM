@@ -55,6 +55,10 @@ Chaque valeur chiffrée dans cette documentation est classée :
 | — | [24_MACHINES.md](./24_MACHINES.md) | Catalogue machines, usure, prérequis |
 | — | [25_WEATHER_MARKET_TICK.md](./25_WEATHER_MARKET_TICK.md) | Tick météo/marché + brush |
 | — | [26_AUTH_SESSION.md](./26_AUTH_SESSION.md) | Login, token, résumé de retour |
+| — | [28_ZONE_MAP_UI.md](./28_ZONE_MAP_UI.md) | Grille carte zones (onboarding + expansion) |
+| — | [27_MOISTURE_DRYING.md](./27_MOISTURE_DRYING.md) | Humidité récolte + séchage MVP |
+| — | [29_ISO_POLISH.md](./29_ISO_POLISH.md) | Animations machines iso + feedback action |
+| — | [30_FIRST_PLAYABLE.md](./30_FIRST_PLAYABLE.md) | Checklist première version jouable |
 
 ---
 

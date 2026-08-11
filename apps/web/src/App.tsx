@@ -12,6 +12,7 @@ import {
   type WeatherState,
 } from "@farmsim/shared";
 import { IsoFarmView } from "./IsoFarmView";
+import { ZoneMap } from "./ZoneMap";
 
 const API = "/api";
 const TOKEN_KEY = "farmsim_token";
@@ -36,6 +37,7 @@ type Cell = {
   fertilizedPasses?: number;
   buildingId?: string | null;
   machineId?: string | null;
+  machineType?: MachineType | null;
 };
 
 type Building = {
@@ -87,7 +89,7 @@ type Player = {
       parkedParcelId?: string | null;
       storedInBuildingId?: string | null;
     }[];
-    inventory: { id: string; itemCode: string; qty: number; quality: number }[];
+    inventory: { id: string; itemCode: string; qty: number; quality: number; moisture: number }[];
   } | null;
   bonuses?: {
     yieldBonus: number;
@@ -96,6 +98,7 @@ type Player = {
     machineSlots: number;
     cattleSlots: number;
     pigSlots: number;
+    softDryer?: boolean;
   };
 };
 
@@ -172,6 +175,11 @@ export function App() {
   const [prevPrices, setPrevPrices] = useState<Record<string, number>>({});
   const [resumeBanner, setResumeBanner] = useState<string | null>(null);
   const [booting, setBooting] = useState(true);
+  const [pulseCells, setPulseCells] = useState<{ x: number; y: number }[]>([]);
+  const [activeWork, setActiveWork] = useState<{
+    type: MachineType;
+    cells: { x: number; y: number }[];
+  } | null>(null);
 
   function applyAuth(payload: { token: string; player: Player; resume?: SessionResume | null }) {
     localStorage.setItem(TOKEN_KEY, payload.token);
@@ -297,10 +305,40 @@ export function App() {
   );
 
   const ownedParcels = player?.farm?.parcels ?? [];
+
+  /** Adjacent free parcels for expansion (all free if no land yet). */
+  const expandableParcelIds = useMemo(() => {
+    const ids = freeParcels
+      .filter((fp) =>
+        ownedParcels.length === 0
+          ? true
+          : ownedParcels.some(
+              (op) =>
+                op.zone?.code === fp.zone?.code &&
+                ((Math.abs(op.mapX - fp.mapX) === 1 && op.mapY === fp.mapY) ||
+                  (Math.abs(op.mapY - fp.mapY) === 1 && op.mapX === fp.mapX)),
+            ),
+      )
+      .map((p) => p.id);
+    return new Set(ids);
+  }, [freeParcels, ownedParcels]);
+
+  const selectedFree = freeParcels.find((p) => p.id === selectedParcelId);
   const parcel = parcelDetail?.parcel;
   const gw = parcel?.gridW ?? 12;
   const gh = parcel?.gridH ?? 12;
-  const grid = parcel?.cells ?? [];
+  const grid = useMemo(() => {
+    const cells = parcel?.cells ?? [];
+    const machines = player?.farm?.machines ?? [];
+    return cells.map((c) => {
+      if (c.kind !== "VEHICLE" || !c.machineId) return c;
+      const m = machines.find((x) => x.id === c.machineId);
+      return {
+        ...c,
+        machineType: (m?.type as MachineType | undefined) ?? "TRACTOR",
+      };
+    });
+  }, [parcel?.cells, player?.farm?.machines]);
   const zoneName = parcel?.zone?.name ?? ownedParcels[0]?.zone?.name ?? "France";
   const koppen = parcel?.zone?.koppen ?? "Cfb";
   const zoneCode =
@@ -433,10 +471,30 @@ export function App() {
     }
   }
 
+  function workMachineForTool(t: Tool): MachineType {
+    if (t === "HARVEST") return "HARVESTER";
+    if (t === "FERTILIZE") {
+      const hasSpreader = player?.farm?.machines.some((m) => m.type === "SPREADER");
+      return hasSpreader ? "SPREADER" : "TRACTOR";
+    }
+    return "TRACTOR";
+  }
+
+  function flashWork(type: MachineType, cells: { x: number; y: number }[]) {
+    setPulseCells(cells);
+    setActiveWork({ type, cells });
+    window.setTimeout(() => {
+      setPulseCells([]);
+      setActiveWork(null);
+    }, 900);
+  }
+
   async function runSelectionAction() {
     if (!player || !activeParcelId || !selectedCells.length) return;
     setBusy(true);
     setErr(null);
+    const workCells = selectedCells.slice();
+    flashWork(workMachineForTool(tool), workCells);
     try {
       if (tool === "PLANT_WHEAT" || tool === "PLANT_MAIZE") {
         const crop: CropCode = tool === "PLANT_WHEAT" ? "WHEAT" : "MAIZE";
@@ -479,6 +537,8 @@ export function App() {
       await loadParcel(activeParcelId);
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e));
+      setPulseCells([]);
+      setActiveWork(null);
     } finally {
       setBusy(false);
     }
@@ -488,6 +548,11 @@ export function App() {
     if (!player || !activeParcelId) return;
     setBusy(true);
     try {
+      const readyCells =
+        (parcelDetail?.cellSims ?? [])
+          .filter((s) => s.sim.ready)
+          .map((s) => ({ x: s.x, y: s.y })) || [];
+      if (readyCells.length) flashWork("HARVESTER", readyCells);
       const r = await api<{ totalTons: number }>(`/parcels/${activeParcelId}/harvest`, {
         method: "POST",
         body: JSON.stringify({ userId: player.id }),
@@ -497,6 +562,8 @@ export function App() {
       await loadParcel(activeParcelId);
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e));
+      setPulseCells([]);
+      setActiveWork(null);
     } finally {
       setBusy(false);
     }
@@ -532,6 +599,25 @@ export function App() {
       await refreshPlayer();
       await refreshMeta();
       setMsg(`Vendu pour ${r.revenue} CRD`);
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function dryStock(itemId: string) {
+    if (!player) return;
+    setBusy(true);
+    try {
+      const r = await api<{ cost: number; moisture: number; reduction: number }>(`/inventory/dry`, {
+        method: "POST",
+        body: JSON.stringify({ userId: player.id, itemId, passes: 1 }),
+      });
+      await refreshPlayer();
+      setMsg(
+        `Séché (−${(r.reduction * 100).toFixed(0)} pts) · ${(r.moisture * 100).toFixed(0)} % · −${r.cost} CRD`,
+      );
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e));
     } finally {
@@ -686,22 +772,25 @@ export function App() {
             <section className="glass">
               <h2>Parcelle de départ</h2>
               {spe === "ETA" ? <p className="muted">Optionnel pour ETA.</p> : null}
-              <div className="parcel-map">
-                {freeParcels.map((p) => (
-                  <button
-                    key={p.id}
-                    type="button"
-                    className={`parcel ${selectedParcelId === p.id ? "selected" : ""}`}
-                    onClick={() => setSelectedParcelId(p.id)}
-                  >
-                    <strong>{p.label}</strong>
-                    <span className="muted">
-                      {p.zone?.name} · ({p.mapX},{p.mapY})
-                    </span>
-                    <span>{p.landPrice} CRD</span>
-                  </button>
+              {/* zone-map-ui: onboarding */}
+              <div className="zone-maps">
+                {zones.map((z) => (
+                  <ZoneMap
+                    key={z.id}
+                    zone={z}
+                    selectedParcelId={selectedParcelId}
+                    onSelect={setSelectedParcelId}
+                  />
                 ))}
               </div>
+              {selectedFree ? (
+                <p className="zone-select-hint muted">
+                  Sélection : <strong>{selectedFree.label}</strong> · {selectedFree.zone?.name} ·{" "}
+                  {selectedFree.landPrice} CRD
+                </p>
+              ) : (
+                <p className="zone-select-hint muted">Clique une case libre sur la carte.</p>
+              )}
               <div style={{ marginTop: "1rem" }}>
                 <button type="button" disabled={busy} onClick={register}>
                   Créer mon compte
@@ -725,6 +814,8 @@ export function App() {
             buildings={parcel.buildings ?? []}
             cellSims={parcelDetail?.cellSims ?? []}
             selected={selectedCells}
+            pulseCells={pulseCells}
+            activeWork={activeWork}
             weather={localWeather}
             onCellClick={applyToolOnCell}
           />
@@ -736,10 +827,18 @@ export function App() {
       </div>
 
       <header className="hud-top">
-        <div className="brand-mark">Farming Navigateur</div>
+        <div className="brand-row">
+          <div className="brand-mark">Farming Navigateur</div>
+          <span className="mvp-badge" title="Build jouable minimale">
+            Première version · MVP
+          </span>
+        </div>
         <div className="hud-stats">
           <span>{player.displayName}</span>
           <span>{SPECIALIZATION_LABELS[player.specialization]}</span>
+          <span className="stat-xp" title="Niveau / expérience">
+            Nv.{player.level} · {player.xp} XP
+          </span>
           <span className="gold">{Math.round(player.crd)} CRD</span>
           {player.bonuses && (
             <span>
@@ -1012,40 +1111,58 @@ export function App() {
             ))}
           </ul>
           <h3 className="spaced">Expansion</h3>
-          <div className="parcel-map compact">
-            {freeParcels
-              .filter((fp) =>
-                ownedParcels.length === 0
-                  ? true
-                  : ownedParcels.some(
-                      (op) =>
-                        op.zone?.code === fp.zone?.code &&
-                        ((Math.abs(op.mapX - fp.mapX) === 1 && op.mapY === fp.mapY) ||
-                          (Math.abs(op.mapY - fp.mapY) === 1 && op.mapX === fp.mapX)),
-                    ),
+          {/* zone-map-ui: expansion */}
+          <div className="zone-maps">
+            {zones
+              .filter(
+                (z) =>
+                  ownedParcels.length === 0 ||
+                  ownedParcels.some((op) => op.zone?.code === z.code) ||
+                  z.parcels.some((p) => expandableParcelIds.has(p.id)),
               )
-              .slice(0, 6)
-              .map((p) => (
-                <button key={p.id} type="button" className="parcel" onClick={() => buyAdjacent(p.id)}>
-                  <strong>{p.label}</strong>
-                  <span className="muted tiny">
-                    ({p.mapX},{p.mapY}) · {p.landPrice} CRD
-                  </span>
-                </button>
+              .map((z) => (
+                <ZoneMap
+                  key={z.id}
+                  zone={z}
+                  myFarmId={player.farm?.id}
+                  selectableIds={expandableParcelIds}
+                  onSelect={buyAdjacent}
+                  compact
+                />
               ))}
           </div>
+          {expandableParcelIds.size === 0 ? (
+            <p className="muted tiny">Aucune parcelle adjacente libre.</p>
+          ) : null}
           <h3 className="spaced">Stock / marché</h3>
           <ul className="list">
-            {(player.farm?.inventory ?? []).map((i) => (
-              <li key={i.id}>
-                <span>
-                  {i.itemCode} · {i.qty.toFixed(2)} t
-                </span>
-                <button type="button" disabled={busy} onClick={() => sell(i.itemCode as CropCode, i.qty)}>
-                  Vendre
-                </button>
-              </li>
-            ))}
+            {(player.farm?.inventory ?? []).map((i) => {
+              const moistPct = Math.round((i.moisture ?? 0) * 100);
+              const canDry = (i.moisture ?? 0) > 0.1 && i.qty > 0;
+              return (
+                <li key={i.id}>
+                  <span>
+                    {i.itemCode} · {i.qty.toFixed(2)} t
+                    <div className={`muted tiny ${moistPct > 14 ? "warn" : ""}`}>
+                      Humidité {moistPct} % · q{i.quality}
+                      {player.bonuses?.softDryer ? " · séchoir" : ""}
+                    </div>
+                  </span>
+                  <span className="row-actions">
+                    <button type="button" disabled={busy || !canDry} onClick={() => dryStock(i.id)}>
+                      Sécher
+                    </button>
+                    <button
+                      type="button"
+                      disabled={busy}
+                      onClick={() => sell(i.itemCode as CropCode, i.qty)}
+                    >
+                      Vendre
+                    </button>
+                  </span>
+                </li>
+              );
+            })}
           </ul>
           <ul className="list">
             {market.map((m) => (

@@ -1,6 +1,11 @@
 import { useEffect, useRef } from "react";
 import * as THREE from "three";
-import { BUILDING_DEFS, type BuildingType, type CropCode } from "@farmsim/shared";
+import {
+  BUILDING_DEFS,
+  type BuildingType,
+  type CropCode,
+  type MachineType,
+} from "@farmsim/shared";
 
 export type IsoCell = {
   x: number;
@@ -9,6 +14,8 @@ export type IsoCell = {
   crop?: CropCode | null;
   fieldStage?: string;
   fertilizedPasses?: number;
+  /** Type machine si kind === VEHICLE (sinon TRACTOR par défaut) */
+  machineType?: MachineType | null;
 };
 
 export type IsoBuilding = {
@@ -24,6 +31,11 @@ export type IsoSim = {
   sim: { progress: number; ready: boolean };
 };
 
+export type ActiveWork = {
+  type: MachineType;
+  cells: { x: number; y: number }[];
+};
+
 type Props = {
   gridW: number;
   gridH: number;
@@ -31,6 +43,10 @@ type Props = {
   buildings: IsoBuilding[];
   cellSims: IsoSim[];
   selected: { x: number; y: number }[];
+  /** Flash court sur cases après / pendant une action */
+  pulseCells?: { x: number; y: number }[];
+  /** Engin temporaire qui se déplace vers les cases travaillées */
+  activeWork?: ActiveWork | null;
   weather?: string;
   onCellClick: (x: number, y: number) => void;
 };
@@ -41,6 +57,16 @@ const GROW = 0x6f9a45;
 const READY = 0xd4a84b;
 const SELECT = 0x4ade80;
 const DIRT = 0x6b5238;
+const PULSE = 0xf0e6a0;
+
+const MACHINE_LOOK: Record<
+  MachineType,
+  { body: number; accent: number; w: number; h: number; d: number }
+> = {
+  TRACTOR: { body: 0x3d8f3a, accent: 0x2a6a28, w: 0.55, h: 0.28, d: 0.35 },
+  HARVESTER: { body: 0xc44a2f, accent: 0xd4a84b, w: 0.72, h: 0.32, d: 0.4 },
+  SPREADER: { body: 0x6a7380, accent: 0xc9a227, w: 0.5, h: 0.34, d: 0.42 },
+};
 
 function cropColor(c: IsoCell, sim?: IsoSim): number {
   if (c.kind !== "CROP") return SOIL;
@@ -72,6 +98,66 @@ function buildingPalette(type: BuildingType): { body: number; roof: number; h: n
   }
 }
 
+function makeVehicleMesh(type: MachineType): THREE.Group {
+  const look = MACHINE_LOOK[type] ?? MACHINE_LOOK.TRACTOR;
+  const g = new THREE.Group();
+  g.userData.machineType = type;
+
+  const body = new THREE.Mesh(
+    new THREE.BoxGeometry(look.w, look.h, look.d),
+    new THREE.MeshLambertMaterial({ color: look.body, flatShading: true }),
+  );
+  body.castShadow = true;
+  body.position.y = look.h / 2;
+  g.add(body);
+
+  if (type === "TRACTOR") {
+    const cabin = new THREE.Mesh(
+      new THREE.BoxGeometry(0.28, 0.22, 0.28),
+      new THREE.MeshLambertMaterial({ color: look.accent, flatShading: true }),
+    );
+    cabin.position.set(-0.05, look.h + 0.08, 0);
+    cabin.castShadow = true;
+    g.add(cabin);
+  } else if (type === "HARVESTER") {
+    const header = new THREE.Mesh(
+      new THREE.BoxGeometry(0.22, 0.12, 0.55),
+      new THREE.MeshLambertMaterial({ color: look.accent, flatShading: true }),
+    );
+    header.position.set(look.w * 0.42, look.h * 0.35, 0);
+    header.castShadow = true;
+    g.add(header);
+    const pipe = new THREE.Mesh(
+      new THREE.BoxGeometry(0.12, 0.35, 0.12),
+      new THREE.MeshLambertMaterial({ color: 0x888888, flatShading: true }),
+    );
+    pipe.position.set(-0.15, look.h + 0.12, 0);
+    g.add(pipe);
+  } else {
+    // SPREADER — cuve dorée
+    const tank = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.16, 0.18, 0.38, 6),
+      new THREE.MeshLambertMaterial({ color: look.accent, flatShading: true }),
+    );
+    tank.rotation.z = Math.PI / 2;
+    tank.position.set(0, look.h + 0.06, 0);
+    tank.castShadow = true;
+    g.add(tank);
+  }
+
+  return g;
+}
+
+function disposeObject3D(obj: THREE.Object3D) {
+  obj.traverse((o) => {
+    if (o instanceof THREE.Mesh) {
+      o.geometry.dispose();
+      if (Array.isArray(o.material)) o.material.forEach((m) => m.dispose());
+      else (o.material as THREE.Material).dispose();
+    }
+  });
+}
+
 export function IsoFarmView({
   gridW,
   gridH,
@@ -79,6 +165,8 @@ export function IsoFarmView({
   buildings,
   cellSims,
   selected,
+  pulseCells = [],
+  activeWork = null,
   weather = "CLEAR",
   onCellClick,
 }: Props) {
@@ -89,8 +177,22 @@ export function IsoFarmView({
   const weatherRef = useRef(weather);
   weatherRef.current = weather;
 
-  const dataRef = useRef({ cells, buildings, cellSims, selected, gridW, gridH });
-  dataRef.current = { cells, buildings, cellSims, selected, gridW, gridH };
+  const dataRef = useRef({
+    cells,
+    buildings,
+    cellSims,
+    selected,
+    pulseCells,
+    activeWork,
+    gridW,
+    gridH,
+  });
+  dataRef.current = { cells, buildings, cellSims, selected, pulseCells, activeWork, gridW, gridH };
+
+  const pulseStartRef = useRef(0);
+  const workStartRef = useRef(0);
+  const prevPulseKey = useRef("");
+  const prevWorkKey = useRef("");
 
   useEffect(() => {
     const mount = mountRef.current;
@@ -125,7 +227,6 @@ export function IsoFarmView({
     sun.shadow.mapSize.set(1024, 1024);
     scene.add(sun);
 
-    // Hex-ish ground map (stylized France backdrop)
     const hexGroup = new THREE.Group();
     hexGroup.position.y = -0.35;
     const hexMat = new THREE.MeshLambertMaterial({ color: 0x2d4a38, flatShading: true });
@@ -149,8 +250,14 @@ export function IsoFarmView({
 
     const cellMeshes = new Map<string, THREE.Mesh>();
     const cropMeshes = new Map<string, THREE.Mesh>();
+    /** Véhicules stationnés — animés en idle (hors pickables) */
+    const vehicleGroups = new Map<string, THREE.Group>();
     const buildingGroup = new THREE.Group();
     world.add(buildingGroup);
+
+    const workGroup = new THREE.Group();
+    world.add(workGroup);
+    let workVehicle: THREE.Group | null = null;
 
     const platformMat = new THREE.MeshLambertMaterial({ color: 0x4a3828, flatShading: true });
     const platform = new THREE.Mesh(new THREE.BoxGeometry(1, 0.45, 1), platformMat);
@@ -164,17 +271,40 @@ export function IsoFarmView({
 
     const raycaster = new THREE.Raycaster();
     const pointer = new THREE.Vector2();
+    /** Uniquement les dalles de sol — les engins ne bloquent pas le clic */
     const pickables: THREE.Object3D[] = [];
+
+    let cellSize = 1;
+    let step = 1.06;
+    let ox = 0;
+    let oz = 0;
 
     function key(x: number, y: number) {
       return `${x},${y}`;
     }
 
-    function layout() {
-      const { gridW: gw, gridH: gh, cells: cs, buildings: bs, cellSims: sims, selected: sel } =
-        dataRef.current;
+    function cellWorldPos(x: number, y: number) {
+      return { px: ox + x * step, pz: oz + y * step };
+    }
 
-      // clear dynamic
+    function clearWorkVehicle() {
+      if (workVehicle) {
+        workGroup.remove(workVehicle);
+        disposeObject3D(workVehicle);
+        workVehicle = null;
+      }
+    }
+
+    function layout() {
+      const {
+        gridW: gw,
+        gridH: gh,
+        cells: cs,
+        buildings: bs,
+        cellSims: sims,
+        selected: sel,
+      } = dataRef.current;
+
       for (const m of cellMeshes.values()) {
         world.remove(m);
         m.geometry.dispose();
@@ -187,31 +317,32 @@ export function IsoFarmView({
         (m.material as THREE.Material).dispose();
       }
       cropMeshes.clear();
+      for (const g of vehicleGroups.values()) {
+        world.remove(g);
+        disposeObject3D(g);
+      }
+      vehicleGroups.clear();
       while (buildingGroup.children.length) {
         const c = buildingGroup.children[0];
         buildingGroup.remove(c);
-        if (c instanceof THREE.Mesh) {
-          c.geometry.dispose();
-          if (Array.isArray(c.material)) c.material.forEach((m) => m.dispose());
-          else (c.material as THREE.Material).dispose();
-        }
+        disposeObject3D(c);
       }
       while (fenceGroup.children.length) {
         const c = fenceGroup.children[0];
         fenceGroup.remove(c);
+        disposeObject3D(c);
       }
       pickables.length = 0;
 
-      const cellSize = 1;
+      cellSize = 1;
       const gap = 0.06;
-      const step = cellSize + gap;
-      const ox = -((gw - 1) * step) / 2;
-      const oz = -((gh - 1) * step) / 2;
+      step = cellSize + gap;
+      ox = -((gw - 1) * step) / 2;
+      oz = -((gh - 1) * step) / 2;
 
       platform.scale.set(gw * step + 1.4, 1, gh * step + 1.4);
       platform.position.set(0, -0.28, 0);
 
-      // hedges
       const hedgeH = 0.55;
       const hedgeT = 0.28;
       const hw = gw * step + 0.9;
@@ -235,7 +366,6 @@ export function IsoFarmView({
         m.castShadow = true;
         fenceGroup.add(m);
       });
-      // corner trees
       const treeMat = new THREE.MeshLambertMaterial({ color: 0x2f6b32, flatShading: true });
       const trunkMat = new THREE.MeshLambertMaterial({ color: 0x5a3a22, flatShading: true });
       for (const [tx, tz] of [
@@ -256,8 +386,7 @@ export function IsoFarmView({
           const cell = cs.find((c) => c.x === x && c.y === y);
           const sim = sims.find((s) => s.x === x && s.y === y);
           const isSel = sel.some((s) => s.x === x && s.y === y);
-          const px = ox + x * step;
-          const pz = oz + y * step;
+          const { px, pz } = cellWorldPos(x, y);
 
           let col = (x + y) % 2 === 0 ? SOIL : SOIL_DARK;
           if (cell?.kind === "CROP") col = cropColor(cell, sim);
@@ -271,7 +400,7 @@ export function IsoFarmView({
           const mesh = new THREE.Mesh(new THREE.BoxGeometry(cellSize, 0.18, cellSize), mat);
           mesh.position.set(px, 0, pz);
           mesh.receiveShadow = true;
-          mesh.userData = { x, y };
+          mesh.userData = { x, y, baseColor: isSel ? SELECT : col };
           world.add(mesh);
           cellMeshes.set(key(x, y), mesh);
           pickables.push(mesh);
@@ -290,14 +419,15 @@ export function IsoFarmView({
           }
 
           if (cell?.kind === "VEHICLE") {
-            const body = new THREE.Mesh(
-              new THREE.BoxGeometry(0.55, 0.28, 0.35),
-              new THREE.MeshLambertMaterial({ color: 0x3d8f3a, flatShading: true }),
-            );
-            body.position.set(px, 0.28, pz);
-            body.castShadow = true;
-            world.add(body);
-            cropMeshes.set(key(x, y) + ":v", body);
+            const mType = (cell.machineType as MachineType) || "TRACTOR";
+            const vg = makeVehicleMesh(mType);
+            vg.position.set(px, 0.12, pz);
+            vg.userData.baseX = px;
+            vg.userData.baseY = 0.12;
+            vg.userData.baseZ = pz;
+            vg.userData.phase = (x * 1.7 + y * 2.3) % (Math.PI * 2);
+            world.add(vg);
+            vehicleGroups.set(key(x, y), vg);
           }
         }
       }
@@ -380,6 +510,9 @@ export function IsoFarmView({
 
     let raf = 0;
     const clock = new THREE.Clock();
+    const tmpColor = new THREE.Color();
+    const pulseColor = new THREE.Color(PULSE);
+
     function tick() {
       raf = requestAnimationFrame(tick);
       const t = clock.getElapsedTime();
@@ -388,6 +521,77 @@ export function IsoFarmView({
       if (scene.fog instanceof THREE.Fog) scene.fog.color.setHex(sky);
       hexGroup.rotation.y = Math.sin(t * 0.05) * 0.02;
       world.position.y = Math.sin(t * 0.7) * 0.015;
+
+      // Idle bob / légère avance sur véhicules stationnés
+      for (const vg of vehicleGroups.values()) {
+        const bx = vg.userData.baseX as number;
+        const by = vg.userData.baseY as number;
+        const bz = vg.userData.baseZ as number;
+        const ph = vg.userData.phase as number;
+        vg.position.y = by + Math.sin(t * 2.1 + ph) * 0.028;
+        vg.position.x = bx + Math.sin(t * 1.15 + ph) * 0.018;
+        vg.position.z = bz;
+        vg.rotation.y = Math.sin(t * 0.9 + ph) * 0.04;
+      }
+
+      // Pulse cases (flash ~0.55s)
+      const { pulseCells: pc, activeWork: aw } = dataRef.current;
+      const pulseKey = pc.map((c) => `${c.x},${c.y}`).join("|");
+      if (pulseKey !== prevPulseKey.current) {
+        prevPulseKey.current = pulseKey;
+        if (pulseKey) pulseStartRef.current = t;
+      }
+      const pulseAge = t - pulseStartRef.current;
+      const pulseActive = pulseKey.length > 0 && pulseAge < 0.55;
+      const pulseSet = new Set(pc.map((c) => key(c.x, c.y)));
+      for (const [k, mesh] of cellMeshes) {
+        const mat = mesh.material as THREE.MeshLambertMaterial;
+        const base = mesh.userData.baseColor as number;
+        if (pulseActive && pulseSet.has(k)) {
+          const w = Math.sin((pulseAge / 0.55) * Math.PI);
+          tmpColor.setHex(base).lerp(pulseColor, 0.55 * w);
+          mat.color.copy(tmpColor);
+        } else {
+          mat.color.setHex(base);
+        }
+      }
+
+      // Engin de travail : parcours simple des cases
+      const workKey = aw
+        ? `${aw.type}:${aw.cells.map((c) => `${c.x},${c.y}`).join("|")}`
+        : "";
+      if (workKey !== prevWorkKey.current) {
+        prevWorkKey.current = workKey;
+        clearWorkVehicle();
+        if (aw && aw.cells.length) {
+          workStartRef.current = t;
+          workVehicle = makeVehicleMesh(aw.type);
+          workGroup.add(workVehicle);
+        }
+      }
+      if (workVehicle && aw && aw.cells.length) {
+        const duration = Math.max(0.7, aw.cells.length * 0.28);
+        const u = Math.min(1, (t - workStartRef.current) / duration);
+        const n = aw.cells.length;
+        const f = u * Math.max(1, n - 1);
+        const i0 = Math.min(n - 1, Math.floor(f));
+        const i1 = Math.min(n - 1, i0 + 1);
+        const local = f - i0;
+        const a = aw.cells[i0];
+        const b = aw.cells[i1];
+        const pa = cellWorldPos(a.x, a.y);
+        const pb = cellWorldPos(b.x, b.y);
+        const px = pa.px + (pb.px - pa.px) * local;
+        const pz = pa.pz + (pb.pz - pa.pz) * local;
+        workVehicle.position.set(px, 0.2 + Math.sin(t * 8) * 0.02, pz);
+        workVehicle.rotation.y = Math.atan2(pb.px - pa.px, pb.pz - pa.pz) || 0;
+        workVehicle.visible = u < 1;
+        if (u >= 1) {
+          // reste visible brièvement puis masqué jusqu’au prochain work
+          workVehicle.visible = false;
+        }
+      }
+
       renderer.render(scene, camera);
     }
     tick();
@@ -401,6 +605,7 @@ export function IsoFarmView({
       layoutRef.current = null;
       ro.disconnect();
       renderer.domElement.removeEventListener("pointerdown", onPointer);
+      clearWorkVehicle();
       renderer.dispose();
       if (renderer.domElement.parentNode === el) el.removeChild(renderer.domElement);
     };

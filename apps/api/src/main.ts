@@ -11,6 +11,7 @@ import { z } from "zod";
 import {
   BUILDING_DEFS,
   CROP_DEFS,
+  DRYING,
   MARKET_BOUNDS,
   SPECIALIZATION_LABELS,
   footprintCells,
@@ -34,6 +35,10 @@ import {
   tickWeather,
   marketNpcPressure,
   buildSessionResume,
+  harvestMoisture,
+  dryInventory,
+  moistureSellPenalty,
+  mergeMoisture,
 } from "@farmsim/sim";
 import { randomBytes } from "crypto";
 
@@ -138,6 +143,7 @@ async function getFarmBonuses(farmId: string) {
   let pigSlots = 0;
   let repairDiscount = 0;
   let xpBonus = 0;
+  let softDryer = false;
   for (const b of buildings) {
     const def = BUILDING_DEFS[b.type as SharedBuildingType];
     yieldBonus += def.yieldBonus ?? 0;
@@ -148,6 +154,7 @@ async function getFarmBonuses(farmId: string) {
     pigSlots += def.pigSlots ?? 0;
     repairDiscount += def.repairDiscount ?? 0;
     xpBonus += def.xpBonus ?? 0;
+    if (def.softDryer) softDryer = true;
   }
   return {
     yieldBonus: Math.min(0.1, yieldBonus),
@@ -158,6 +165,7 @@ async function getFarmBonuses(farmId: string) {
     pigSlots,
     repairDiscount: Math.min(0.3, repairDiscount),
     xpBonus: Math.min(0.1, xpBonus),
+    softDryer,
   };
 }
 
@@ -895,7 +903,8 @@ app.post("/parcels/:id/harvest", async (req, res) => {
     ? parcel.cells.filter((c) => body.data.cells!.some((t) => t.x === c.x && t.y === c.y))
     : parcel.cells.filter((c) => c.kind === "CROP");
 
-  const harvested: { crop: CropCode; tons: number; moisturePenalty: number }[] = [];
+  const harvested: { crop: CropCode; tons: number; moisturePenalty: number; moisture: number }[] =
+    [];
   const now = Date.now();
 
   const wear = await prisma.$transaction(async (tx) => {
@@ -913,10 +922,12 @@ app.post("/parcels/:id/harvest", async (req, res) => {
         weatherAtHarvest: weather?.state as WeatherState | undefined,
       });
       if (!sim.ready) continue;
+      const moisture = harvestMoisture(weather?.state as WeatherState | undefined);
       harvested.push({
         crop: cell.crop,
         tons: sim.estimatedYieldTons,
         moisturePenalty: sim.moisturePenalty,
+        moisture,
       });
       await tx.parcelCell.update({
         where: { id: cell.id },
@@ -932,21 +943,28 @@ app.post("/parcels/:id/harvest", async (req, res) => {
       });
     }
 
-    const byCrop = new Map<CropCode, { tons: number; wet: boolean }>();
+    const byCrop = new Map<CropCode, { tons: number; wet: boolean; moistureSum: number }>();
     for (const h of harvested) {
-      const cur = byCrop.get(h.crop) ?? { tons: 0, wet: false };
+      const cur = byCrop.get(h.crop) ?? { tons: 0, wet: false, moistureSum: 0 };
       cur.tons += h.tons;
-      if (h.moisturePenalty > 0) cur.wet = true;
+      cur.moistureSum += h.tons * h.moisture;
+      if (h.moisturePenalty > 0 || h.moisture > DRYING.sellThreshold) cur.wet = true;
       byCrop.set(h.crop, cur);
     }
-    for (const [crop, { tons, wet }] of byCrop) {
+    for (const [crop, { tons, wet, moistureSum }] of byCrop) {
+      const batchMoisture = tons > 0 ? moistureSum / tons : harvestMoisture();
       const existing = await tx.inventoryItem.findFirst({
         where: { farmId: parcel.farmId!, itemCode: crop },
       });
       if (existing) {
+        const nextMoisture = mergeMoisture(existing.qty, existing.moisture, tons, batchMoisture);
         await tx.inventoryItem.update({
           where: { id: existing.id },
-          data: { qty: { increment: tons }, quality: wet ? Math.min(existing.quality, 2) : existing.quality },
+          data: {
+            qty: { increment: tons },
+            quality: wet ? Math.min(existing.quality, 2) : existing.quality,
+            moisture: nextMoisture,
+          },
         });
       } else {
         await tx.inventoryItem.create({
@@ -955,6 +973,7 @@ app.post("/parcels/:id/harvest", async (req, res) => {
             itemCode: crop,
             qty: tons,
             quality: wet ? 2 : 3,
+            moisture: Math.round(batchMoisture * 1000) / 1000,
           },
         });
       }
@@ -1317,7 +1336,7 @@ app.post("/market/sell", async (req, res) => {
     res.status(500).json({ error: "Marché non initialisé" });
     return;
   }
-  const moisturePenalty = inv.quality <= 2 ? 0.15 : 0;
+  const moisturePenalty = moistureSellPenalty(inv.moisture);
   const sale = sellToMarket({
     tons: body.data.tons,
     price: market.price,
@@ -1349,9 +1368,101 @@ app.post("/market/sell", async (req, res) => {
   res.json({
     revenue: sale.revenue,
     effectivePrice: sale.effectivePrice,
+    moisturePenalty,
+    moisture: inv.moisture,
     crd: updated.crd,
     market: tick,
     bonuses,
+  });
+});
+
+app.post("/inventory/dry", async (req, res) => {
+  const body = z
+    .object({
+      userId: z.string(),
+      itemId: z.string(),
+      tons: z.number().positive().optional(),
+      passes: z.number().int().min(1).max(5).optional(),
+    })
+    .safeParse(req.body);
+  if (!body.success) {
+    res.status(400).json(body.error.flatten());
+    return;
+  }
+  const user = await prisma.user.findUnique({
+    where: { id: body.data.userId },
+    include: { farm: { include: { inventory: true } } },
+  });
+  if (!user?.farm) {
+    res.status(404).json({ error: "Ferme introuvable" });
+    return;
+  }
+  const inv = user.farm.inventory.find((i) => i.id === body.data.itemId);
+  if (!inv) {
+    res.status(404).json({ error: "Stock introuvable" });
+    return;
+  }
+  if (inv.qty <= 0) {
+    res.status(409).json({ error: "Stock vide" });
+    return;
+  }
+  const tons = Math.min(inv.qty, body.data.tons ?? inv.qty);
+  if (tons <= 0) {
+    res.status(409).json({ error: "Quantité invalide" });
+    return;
+  }
+  if (inv.moisture <= DRYING.moistureFloor + 0.0005) {
+    res.status(409).json({ error: "Déjà sec" });
+    return;
+  }
+  const bonuses = await getFarmBonuses(user.farm.id);
+  const passes = body.data.passes ?? 1;
+  const dried = dryInventory({
+    moisture: inv.moisture,
+    tons,
+    passes,
+    barnBonus: bonuses.softDryer,
+  });
+  if (dried.cost > user.crd) {
+    res.status(409).json({ error: "CRD insuffisants pour sécher" });
+    return;
+  }
+  if (dried.reduction <= 0) {
+    res.status(409).json({ error: "Aucune réduction possible" });
+    return;
+  }
+
+  // Partial dry: blend dried tons back into remaining stock moisture
+  const remaining = inv.qty - tons;
+  const nextMoisture =
+    remaining > 0
+      ? mergeMoisture(remaining, inv.moisture, tons, dried.moisture)
+      : dried.moisture;
+
+  const updated = await prisma.$transaction(async (tx) => {
+    const item = await tx.inventoryItem.update({
+      where: { id: inv.id },
+      data: {
+        moisture: nextMoisture,
+        quality: nextMoisture <= DRYING.sellThreshold ? Math.max(inv.quality, 3) : inv.quality,
+      },
+    });
+    const u = await tx.user.update({
+      where: { id: user.id },
+      data: { crd: { decrement: dried.cost } },
+    });
+    return { item, crd: u.crd };
+  });
+
+  res.json({
+    cost: dried.cost,
+    reduction: dried.reduction,
+    moisture: updated.item.moisture,
+    driedTons: tons,
+    passes,
+    barnBonus: bonuses.softDryer,
+    crd: updated.crd,
+    item: updated.item,
   });
 });
 
