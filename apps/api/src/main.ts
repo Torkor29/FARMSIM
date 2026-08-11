@@ -248,7 +248,13 @@ app.post("/auth/register", async (req, res) => {
             data: { parkedParcelId: parcel.id },
           });
           await tx.parcelCell.update({
-            where: { parcelId_x_y: { parcelId: parcel.id, x: 0, y: 7 } },
+            where: {
+              parcelId_x_y: {
+                parcelId: parcel.id,
+                x: 0,
+                y: Math.max(0, parcel.gridH - 1),
+              },
+            },
             data: { kind: "VEHICLE", machineId: machine.id },
           });
         }

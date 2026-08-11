@@ -51,6 +51,7 @@ Chaque valeur chiffrée dans cette documentation est classée :
 | — | [20_GAME_ECONOMIES_DEEP_DIVE.md](./20_GAME_ECONOMIES_DEEP_DIVE.md) | Deep dive économies MMO (Dofus/EVE/Albion…) |
 | — | [21_MULTIAGENT_FINAL_SYNTHESIS.md](./21_MULTIAGENT_FINAL_SYNTHESIS.md) | Synthèse finale tous agents |
 | — | [22_FARM_GRID_LAYOUT.md](./22_FARM_GRID_LAYOUT.md) | Grille parcelle, bâtiments, parking, adjacence |
+| — | [23_GRID_SIZING.md](./23_GRID_SIZING.md) | Calcul taille grille optimale (12×12) |
 
 ---
 

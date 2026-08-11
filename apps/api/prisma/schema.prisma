@@ -103,8 +103,8 @@ model Parcel {
   label      String
   mapX       Int
   mapY       Int
-  gridW      Int        @default(8)
-  gridH      Int        @default(8)
+  gridW      Int        @default(12)
+  gridH      Int        @default(12)
   landPrice  Float
   fertility  Float      @default(0.7)
   cells      ParcelCell[]

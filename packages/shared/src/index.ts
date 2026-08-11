@@ -124,8 +124,8 @@ export const BUILDING_DEFS: Record<BuildingType, BuildingDef> = {
     w: 3,
     h: 2,
     cost: 1500,
-    description: "Range engins sans occuper la cour.",
-    machineSlots: 4,
+    description: "Range jusqu’à 6 engins sans occuper la cour.",
+    machineSlots: 6,
   },
   CATTLE_BARN: {
     type: "CATTLE_BARN",
@@ -166,7 +166,10 @@ export const BUILDING_DEFS: Record<BuildingType, BuildingDef> = {
   },
 };
 
-export const DEFAULT_GRID = { w: 8, h: 8 } as const;
+export const DEFAULT_GRID = { w: 12, h: 12 } as const;
+
+/** Narratif : 12×12 ≈ 12–15 ha `[GD]` — voir `23_GRID_SIZING.md` */
+export const PARCEL_HECTARES = 14;
 
 export function footprintCells(x: number, y: number, w: number, h: number) {
   const cells: { x: number; y: number }[] = [];

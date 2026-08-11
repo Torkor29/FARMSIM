@@ -7,7 +7,7 @@
 
 ## Vision
 
-Chaque **parcelle** est une grille `gridW × gridH` (MVP : **8×8**).  
+Chaque **parcelle** est une grille `gridW × gridH` (MVP : **12×12**, voir [23_GRID_SIZING.md](./23_GRID_SIZING.md)).  
 Le joueur y place librement :
 
 | Contenu | Exemples |
@@ -69,7 +69,7 @@ Cohérent avec la règle globale « bonus faibles ».
 
 ## MVP implémenté
 
-- Grille 8×8 interactive
+- Grille **12×12** interactive (iso low-poly)
 - Placement bâtiments du catalogue
 - Plantation case par case
 - Parking machines
