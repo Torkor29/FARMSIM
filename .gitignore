@@ -1,0 +1,12 @@
+# Dependencies
+node_modules
+dist
+build
+.next
+.turbo
+coverage
+.env
+.env.local
+*.db
+*.db-journal
+.DS_Store

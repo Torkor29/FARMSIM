@@ -1,0 +1,141 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+enum Specialization {
+  CEREALIER
+  ELEVEUR
+  ETA
+}
+
+enum CropCode {
+  WHEAT
+  MAIZE
+}
+
+enum FieldStage {
+  EMPTY
+  PREPARED
+  PLANTED
+  GROWING
+  READY
+  HARVESTED
+}
+
+enum ContractJobType {
+  PLOW
+  SOW
+  FERTILIZE
+  HARVEST
+  TRANSPORT
+}
+
+enum ContractStatus {
+  OPEN
+  ACCEPTED
+  COMPLETED
+  CANCELLED
+}
+
+model User {
+  id             String         @id @default(cuid())
+  email          String         @unique
+  displayName    String
+  specialization Specialization
+  level          Int            @default(1)
+  xp             Int            @default(0)
+  crd            Float          @default(12000)
+  createdAt      DateTime       @default(now())
+  farm           Farm?
+  contracts      NpcContract[]  @relation("Provider")
+}
+
+model Farm {
+  id        String   @id @default(cuid())
+  userId    String   @unique
+  user      User     @relation(fields: [userId], references: [id])
+  name      String
+  parcels   Parcel[]
+  inventory InventoryItem[]
+  machines  Machine[]
+}
+
+model Zone {
+  id          String   @id @default(cuid())
+  code        String   @unique
+  name        String
+  country     String
+  koppen      String
+  riskNote    String
+  parcels     Parcel[]
+}
+
+model Parcel {
+  id           String      @id @default(cuid())
+  zoneId       String
+  zone         Zone        @relation(fields: [zoneId], references: [id])
+  farmId       String?
+  farm         Farm?       @relation(fields: [farmId], references: [id])
+  label        String
+  gridW        Int         @default(8)
+  gridH        Int         @default(8)
+  landPrice    Float
+  fertility    Float       @default(0.7)
+  fieldStage   FieldStage  @default(EMPTY)
+  crop         CropCode?
+  plantedAt    DateTime?
+  readyAt      DateTime?
+  fertilizedPasses Int     @default(0)
+  weedsControlled  Boolean @default(false)
+}
+
+model InventoryItem {
+  id       String   @id @default(cuid())
+  farmId   String
+  farm     Farm     @relation(fields: [farmId], references: [id])
+  itemCode String
+  qty      Float
+  quality  Int      @default(3)
+}
+
+model Machine {
+  id        String @id @default(cuid())
+  farmId    String
+  farm      Farm   @relation(fields: [farmId], references: [id])
+  type      String
+  tier      Int    @default(1)
+  condition Float  @default(100)
+}
+
+model MarketPrice {
+  id         String   @id @default(cuid())
+  commodity  CropCode @unique
+  price      Float
+  stockTons  Float    @default(1000)
+  updatedAt  DateTime @updatedAt
+}
+
+model NpcContract {
+  id          String          @id @default(cuid())
+  jobType     ContractJobType
+  title       String
+  rewardCrd   Float
+  regionNote  String
+  status      ContractStatus  @default(OPEN)
+  providerId  String?
+  provider    User?           @relation("Provider", fields: [providerId], references: [id])
+  createdAt   DateTime        @default(now())
+  completedAt DateTime?
+}
+
+model WeatherSnapshot {
+  id        String   @id @default(cuid())
+  zoneCode  String
+  state     String
+  updatedAt DateTime @updatedAt
+}

@@ -45,10 +45,12 @@ Choix initial (modifiable rare / coûteux `[PROPOSITION]`).
 - +santé
 - +qualité animalière
 
-### Futur : Entrepreneur
-- +réputation contrats
-- −usure en prestation
-- +vitesse matching
+### ETA (Entreprise de Travaux Agricoles) — **3ᵉ spé de lancement**
+Métier **ouvrier / entrepreneur de travaux** : pas de ferme obligatoire.
+- +réputation / matching tableau de missions
+- −usure machines en prestation
+- +vitesse travail en mission
+- accès prioritaire aux contrats NPC early (MVP) puis P2P (V1)
 
 Magnitude : +2 % → +5 % → +10 % selon palier de maîtrise **dans la spé**, pas cadeau jour 1.
 

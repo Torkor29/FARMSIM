@@ -1,0 +1,16 @@
+{
+  "name": "farmsim",
+  "private": true,
+  "packageManager": "pnpm@9.15.0",
+  "scripts": {
+    "dev:api": "pnpm --filter @farmsim/api dev",
+    "dev:web": "pnpm --filter @farmsim/web dev",
+    "build": "pnpm -r build",
+    "test": "pnpm -r test",
+    "test:sim": "pnpm --filter @farmsim/sim test",
+    "lint": "pnpm -r lint"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

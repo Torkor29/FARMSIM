@@ -38,21 +38,16 @@ Raw WebGL : coût dev trop haut.
 ### Carte monde : **MapLibre GL** ou canvas vectoriel custom
 Pas de globe Three pour tout le monde au MVP.
 
-### Backend API : **NestJS (Node) + TypeScript** `[PROPOSITION]` MVP
-**Pourquoi :**
-- Même langage que front → vitesse équipe ;
-- architecture modules (market, farm, weather) ;
-- good enough jusqu’à dizaines de k joueurs avec bons workers.
+### Backend API : **Express + Prisma (MVP) → NestJS** `[PROPOSITION]`
+**MVP livré :** Express/TypeScript pour la boucle auth / parcelle / marché / contrats ETA.  
+**Cible :** extraction modules NestJS quand le domaine grossit ; hotpaths Go ensuite si besoin.
 
-**Scale path :** extraire hotpaths (market matching, sim ticks) en **Go** workers si besoin.  
-Rust : excellent perf, ROI équipe souvent mauvais au MVP.
-
-### DB : **PostgreSQL** (source de vérité)
-### Cache / locks / presence : **Redis**
-### Jobs : **BullMQ** (Redis) ou **Temporal**/queue cloud plus tard
-### Realtime : **WebSocket** (Socket.IO ou uWebSockets / Nest gateway)
+### DB : **SQLite local MVP** · **PostgreSQL** en prod
+### Cache / locks / presence : **Redis** (post-MVP)
+### Jobs : **BullMQ** plus tard (GrowthSettler / MarketTick en process pour l’instant)
+### Realtime : **WebSocket** (plus tard)
 ### Object storage : S3-compatible (assets)
-### Auth : email + OAuth ; sessions JWT/opaque + refresh ; 2FA plus tard
+### Auth : email démo MVP ; OAuth + sessions ensuite
 
 ---
 

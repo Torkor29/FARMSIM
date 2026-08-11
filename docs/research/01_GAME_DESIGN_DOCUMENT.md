@@ -54,17 +54,17 @@ Profils cibles simultanés :
 ```
 Choisir parcelle (géographie)
     ↓
-Spécialisation légère (céréalier / éleveur / …)
+Spécialisation (céréalier / éleveur / ETA)
     ↓
-Cycle cultural / animal
+Cycle cultural / animal  —ou—  missions de travaux (ETA)
     ↓
-Décision : vendre / stocker / transformer (plus tard)
+Décision : vendre / stocker / sécher / transformer (plus tard)
     ↓
 Réinvestir : terres, machines, semences, bâtiments
     ↓
-Optionnel : prestations pour autres joueurs
+Prestations ETA ↔ céréaliers / éleveurs (tableau de missions)
     ↓
-Marché mondial réagit (offre, stocks, météo, saison)
+Marché mondial réagit (offre, stocks, météo, saison, events IRL)
 ```
 
 ### Micro-boucle (session courte)
@@ -88,7 +88,10 @@ Spécialisation, expansion foncière, R&D semences, positionnement marché, rép
 | Météo simple | ✓ | ✓ | ✓ |
 | Marché mondial NPC | ✓ | ✓ | ✓ |
 | Machines + usure | ✓ | ✓ | ✓ |
-| Prestations joueurs | — | ✓ | ✓ |
+| Spé ETA + tableau missions | NPC contrats | ✓ P2P | ✓ |
+| Humidité récolte / séchage | basique | ✓ | ✓ |
+| Events IRL → économie (engrais…) | scriptés | ✓ | ✓ |
+| Prestations joueurs (P2P) | — | ✓ | ✓ |
 | Qualité produits | basique | ✓ | ✓ |
 | Semences / variétés | 2–3 | ✓ + R&D | ✓ |
 | Élevage | — | basique | profond |
@@ -117,8 +120,19 @@ Bonus légers sur :
 - production (lait, viande, œufs) ;
 - qualité animalière.
 
+### ETA — Entreprise de Travaux Agricoles `[PROPOSITION]`
+Le joueur **n’est pas obligé** d’avoir des terres : il vend de la **force de travail + machines**.
+Bonus légers sur :
+- réputation / matching missions ;
+- −usure en prestation ;
+- +vitesse de travail en mission ;
+- commissions / pourboires (plafonnés).
+
+Tableau de missions : labour, semis, fertilisation, récolte, transport, (plus tard) soins animaux.  
+Client publie → ETA accepte → escrow → exécution validée serveur → paiement − commission.
+
 ### Extensions futures
-Entrepreneur agricole, maraîcher, viticulteur, bio-spécialiste, trader/stockeur…  
+Maraîcher, viticulteur, bio-spécialiste, trader/stockeur…  
 Toujours avec des bonus **faibles** pour préserver l’économie et l’interdépendance.
 
 **Philosophie :** identité + orientation économique, **pas** prison de build. Un céréalier peut avoir quelques animaux ; un éleveur peut cultiver un peu de fourrage.

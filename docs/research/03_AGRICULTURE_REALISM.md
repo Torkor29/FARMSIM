@@ -77,23 +77,30 @@ Mise à jour :
 
 ## 5. Engrais
 
+### Besoins N indicatifs (méthode bilan COMIFER) `[RÉEL]`
+`Dose N ≈ besoin culture − fournitures sol`  
+Ex. : blé ~2,8–3,2 kg N/q ; maïs grain ~2,1–2,3 kg N/q ; soja ≈ 0–30 kg starter.
+
 | Type | Source | Effet principal | Secondaire | Coût relatif `[GD]` |
 |------|--------|-----------------|------------|---------------------|
 | Minéral NPK | Achat NPC | +N rapide | Peu d’effet matière organique | Moyen |
-| Fumier | Élevage / marché | +N + structure lente | Qualité sol | Variable |
-| Lisier | Élevage | +N rapide | Transport / fenêtre | Variable |
+| Fumier bovin | Élevage / marché | +N lent (~4–6 kg N/t) ; Keq année 1 ~0,3 | Structure / MO | Variable |
+| Lisier | Élevage | +N plus disponible (Keq ~0,45–0,6) | Transport / fenêtre | Variable |
 | Compost | Plus tard | Structure / qualité | Lent | Élevé effort |
-| Engrais vert | Culture intercalaire | +N partiel | Temps perdu | Faible cash |
+| Engrais vert / légumineuse | Précédent | +20–60 kg N/ha équivalent `[A]` | Temps / place rotation | Faible cash |
 
-Combinaison avec rotation + variété + météo = levier stratégique (pas un bouton +50 %).
+Sources : COMIFER, ARVALIS, Protect’eau, APORTHE.
 
 ---
 
 ## 6. Eau & irrigation
 
-- Pluie régionale alimente `humidité`.
-- Sécheresse → stress → −rendement / −qualité.
-- Irrigation `[V1]` : capex + opex (énergie/eau) ; plafonnée selon réglementation locale future.
+Consommation sans stress indicative `[RÉEL]` (ARVALIS / Perspectives Agricoles) :
+- Blé ~350–500 mm · Orge P ~220–350 · Maïs ~450–600 mm.
+
+- Pluie régionale alimente `humidité` / RU.
+- Sécheresse à floraison maïs → pertes fortes (méta-analyses jusqu’à ~−40 % en stress sévère).
+- Irrigation `[V1]` : capex + opex ; efficience ordre ~2–4 q / 10 mm selon culture.
 - Excès d’eau / inondation → pourriture / −qualité / blocage travaux.
 
 ---
@@ -137,21 +144,33 @@ Grade 1–5 dérivé de :
 - variété ;
 - fertilisation équilibrée (pas seulement max N) ;
 - timing récolte ;
+- **humidité à la récolte** (voir §9b) ;
 - (élevage) alimentation & santé.
 
 Prix marché = prix base × multiplicateur grade.
 
 ---
 
+## 9b. Humidité de récolte & séchage `[PROPOSITION]`
+
+La rentabilité dépend de l’**hygrométrie** à la récolte :
+- trop humide → malus prix immédiat (ou refus partiel) ;
+- le joueur peut **vendre tel quel** (moins cher) ou envoyer en **cellule sécheuse** (+valeur, +temps, +coût énergie).
+
+Variables : `grainMoisture`, `dryerCapacity`, `dryCost`, `dryDuration`.  
+MVP : malus pluie à la récolte. V1 : séchage jouable.
+
+---
+
 ## 10. Élevage (aperçu — détail `07`)
 
-Variables clés réelles à garder :
-- conversion alimentaire (kg aliment → produit) ;
-- courbe de croissance ;
-- reproduction ;
-- santé / mortalité ;
-- bâtiments (capacité, confort) ;
-- effluents (fumier/lisier) comme co-produit économique.
+Ancres techniques `[RÉEL]` :
+- Porc FR (IFIP 2023) : IC global ~2,76 ; ~25,3 porcs/truie/an ; GMQ engraissement ~842 g/j.
+- Lait : cas-types souvent ~7 000–8 500 L/vache/an (EcoAlim / INRAE).
+- Pondeuses : ~300–330 œufs/an ; poulet standard IC ~1,6–1,7 `[A]`.
+- Efficience N animale souvent **<50 %** → reste en effluents (boucle fumier).
+
+Variables à garder : IC, courbe croissance, reproduction, santé, bâtiments, effluents.
 
 ---
 

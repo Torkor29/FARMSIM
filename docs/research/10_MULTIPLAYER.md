@@ -17,7 +17,8 @@ C’est un **MMO économique / gestion**.
 |-------------|-----|----|----|
 | Marché mondial NPC | ✓ | ✓ | ✓ |
 | Voir voisins région | ✓ | ✓ | ✓ |
-| Prestations agricoles | — | ✓ | ✓ |
+| Prestations ETA (NPC) | ✓ | ✓ | ✓ |
+| Prestations ETA (P2P) | — | ✓ | ✓ |
 | Chat / guilde | — | ✓ | ✓ |
 | Vente P2P intrants | — | limité | ✓ |
 | Politique locale | — | — | optionnel |
@@ -25,11 +26,13 @@ C’est un **MMO économique / gestion**.
 
 ---
 
-## 3. Prestations de services (cœur social)
+## 3. Prestations de services — métier ETA
+
+L’**ETA (Entreprise de Travaux Agricoles)** est une **spécialisation de lancement** à égalité avec céréalier et éleveur : le joueur peut vivre des prestations sans (ou avec peu de) terres.
 
 ### Flux
-1. Client publie demande : type travail, parcelle, cases, deadline, prix CRD, caution.
-2. Prestataires matchent (filtres machines requises, réputation, distance).
+1. Client (céréalier / éleveur) publie demande : type travail, parcelle, cases, deadline, prix CRD, caution — **ou** le serveur publie des contrats NPC (MVP).
+2. ETA matchent (filtres machines requises, réputation, distance).
 3. Acceptation → contrat escrow.
 4. Exécution (manuel ou semi-auto sur parcelle client).
 5. Validation serveur → paiement − commission.

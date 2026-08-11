@@ -39,7 +39,10 @@ Statut : `MVP` · `V1` · `V2+` · `DOC_ONLY` · `REJECT_SOCLE` · `OPEN`
 | 32 | Architecture technique | DOC | `13` |
 | 33 | Grille parcelles multi-niveaux | MVP | |
 | 34 | Vue iso 3D stylisée | MVP | |
-| 35 | Spé céréalier / éleveur faibles % | MVP/V2 | Éleveur late |
+| 35 | Spé céréalier / éleveur / **ETA** faibles % | MVP | ETA = métier ouvrier/prestations |
+| 35b | Tableau missions ETA | MVP NPC / V1 P2P | |
+| 35c | Humidité récolte + cellule sécheuse | MVP malus / V1 séchage | Discord Strea |
+| 35d | Events IRL → prix (ex. Ukraine/engrais) | V1 | Cartes scriptées |
 | 36 | Interdépendance céréales↔élevage | V2 | Filets NPC |
 | 37 | Semences multi-attributs | V1 | |
 | 38 | R&D compromis | V1–V2 | |

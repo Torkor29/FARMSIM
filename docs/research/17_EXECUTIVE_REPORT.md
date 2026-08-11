@@ -83,9 +83,11 @@ Politique locale : documentée, **non prioritaire**, dangereuse si mal bornée.
 ## I. Progression
 
 Machines ≫ niveaux.  
-Spé céréalier/éleveur : identité, pas prison.  
+Spés de lancement : **Céréalier · Éleveur · ETA** (ouvriers / travaux agricoles).  
+ETA : tableau de missions (NPC MVP, P2P V1) — viable sans terres.  
 R&D semences à trade-offs.  
-Niveaux : +2…+10 % cap.
+Niveaux : +2…+10 % cap.  
+V1 : humidité/séchage ; events IRL (engrais…).
 
 ---
 

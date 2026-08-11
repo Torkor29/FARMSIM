@@ -16,7 +16,14 @@ Un joueur peut :
 9. Progresser (niveau faible + argent)
 10. Revenir plus tard et voir l’état à jour
 
-**Hors MVP :** élevage, politique, OGM, R&D profonde, prestations P2P, cash-out, catalogue machines large, globe entier.
+**Spécialisations au choix dès MVP :** Céréalier · Éleveur (contenu limité) · **ETA** (contrats NPC / tableau de missions simplifié).
+
+**MVP ETA :** contrats NPC (labour, semis, récolte) + stats machines — le joueur ETA peut jouer sans parcelle.  
+**V1 ETA :** tableau P2P escrow (céréaliers/éleveurs ↔ ETA).
+
+**Aussi documenté pour V1 :** humidité de récolte + cellule sécheuse ; events IRL (ex. Ukraine → prix engrais).
+
+**Hors MVP :** élevage profond, politique, OGM, R&D profonde, P2P presta complet, cash-out, catalogue machines large, globe entier.
 
 ---
 
@@ -24,7 +31,8 @@ Un joueur peut :
 
 | Epic | Contenu | Priorité |
 |------|---------|----------|
-| E1 Auth & profil | Register, login, spé choix | P0 |
+| E1 Auth & profil | Register, login, spé **céréalier / éleveur / ETA** | P0 |
+| E1b Contrats NPC | Tableau missions ETA (labour/semis/récolte) | P0 |
 | E2 Carte & parcelle | Sélection, attributs climat basiques | P0 |
 | E3 Simulation champ | Plant/grow/harvest, sol simple | P0 |
 | E4 Marché | Prix tick, vente, soldes | P0 |

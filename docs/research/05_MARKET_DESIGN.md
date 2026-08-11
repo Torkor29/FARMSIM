@@ -125,12 +125,20 @@ Mitigations :
 
 ## 9. Événements marché (design)
 
-Exemples :
-- Sécheresse corridor céréalier → −supply régionale → +prix blé/maïs ;
-- Épizootie → −cheptel → +prix viande, −demande feed ;
-- « Super récolte » → +stock → −prix.
+| Événement | Impact prix typique `[A]` | Durée |
+|-----------|--------------------------|-------|
+| Blocage mer Noire | Blé +15–40 % ; oléagineux +20–50 % | 1–6 mois |
+| Sécheresse Corn Belt / UE | Maïs/soja +10–30 % | saison |
+| Guerre commerciale US–Chine | Soja US − / Brésil + | 6–24 mois |
+| Pic gaz/engrais (event IRL type Ukraine) | Coûts N ↑ → marges − à N+1 ; engrais minéraux plus chers | 1–2 campagnes |
+| Épizootie (PPA, grippe aviaire) | Viande/œufs ↑ ; demande feed ↓ | 3–18 mois |
+| Super récolte | Stocks ↑ → prix − | saison |
 
-Chaque événement publie une **fiche narrative** (crédibilité + contenu créateurs).
+**Events IRL `[PROPOSITION]` :** cartes narratives calibrées (pas de feed news live obligatoire). Ex. « Tension mer Noire → engrais +X % » — rejouable, borné, annoncé in-game.
+
+Signal stocks `[RÉEL]` : WASDE blé mondial stocks/use ~33 % (2026/27 proj.) mais stocks Chine peu exportables — le jeu doit suivre un **S/U hors Chine** pour le prix international.
+
+Chaque événement publie une fiche narrative (crédibilité + contenu créateurs).
 
 ---
 
