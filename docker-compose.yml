@@ -1,0 +1,48 @@
+# FARMSIM — pile autonome, indépendante de tout autre site du serveur.
+#
+# Ne dépend d'aucun réseau ni conteneur externe : il publie son port sur
+# l'hôte, et c'est le proxy commun du serveur (une pile séparée, hors de ce
+# dépôt — voir deploy/Caddyfile.farmsim.exemple.caddy) qui vient le chercher
+# là. Rien ici n'a besoin d'exister au préalable pour que
+# « docker compose up » réussisse.
+#
+# Variables utiles (.env) :
+#   FARMSIM_BIND  = 0.0.0.0 par défaut. Le proxy commun joint ce port via
+#                   « host-gateway », ce qui exige que le port soit publié
+#                   sur toutes les interfaces.
+#   FARMSIM_PORT  = port publié sur l'hôte (8081 par défaut — 8080 est déjà
+#                   pris par Comptap sur ce serveur).
+
+name: farmsim
+
+services:
+  farmsim:
+    container_name: farmsim
+    build: .
+    ports:
+      - "${FARMSIM_BIND:-0.0.0.0}:${FARMSIM_PORT:-8081}:8080"
+    volumes:
+      - farmsim-data:/data
+    tmpfs:
+      - /tmp:size=64M,mode=1777
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    restart: unless-stopped
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "fetch('http://127.0.0.1:8080/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))",
+        ]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 25s
+
+volumes:
+  farmsim-data:
