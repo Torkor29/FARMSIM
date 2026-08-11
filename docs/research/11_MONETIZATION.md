@@ -25,6 +25,12 @@ Slogan interne : *Pay for comfort, not for victory.*
 
 ## 3. Proposition retenue (MVP→V1) `[PROPOSITION]`
 
+Alignée sur trois modèles « sûrs » FR/UE (sans cash-out) — priorité **Modèle 1**, option **Modèle 2** en V1 :
+
+### Modèle 1 — F2P cosmétique + abo confort (priorité)
+### Modèle 2 — Dual currency type Dofus (voir §4)
+### Modèle 3 — Buy-to-play + cosmétique (si positionnement premium)
+
 ### Gratuit
 Accès complet gameplay cœur (ferme, marché, progression).
 
@@ -33,7 +39,7 @@ Accès complet gameplay cœur (ferme, marché, progression).
 - Emotes / décorations parcelle
 - 1–2 slots confort (file notification, preset rotations)
 - Boosts **temps** plafonnés (ex. +10 % XP, pas yield)
-- Pass saisonnier cosmétique + confort
+- Pass saisonnier **déterministe** (pas de loot box payante)
 
 ### Abonnement « Club Exploitant » (optionnel)
 - Stats avancées / historique prix
@@ -45,15 +51,20 @@ Accès complet gameplay cœur (ferme, marché, progression).
 ### Commission
 Sur échanges boutique PRM ; plus tard commission contrats presta (petite).
 
+**À éviter en V1 :** loot boxes payantes tradables, NFT, P2E, AH real-money, boosts de puissance.
+
 ---
 
-## 4. Double monnaie style Dofus
+## 4. Double monnaie style Dofus (BaK)
 
-Certains items confort achetable :
-- en PRM (rapide)
-- en CRD (cher en temps)
+**[FAIT]** Ankama : ogrines = confort ; Bourse aux Kamas permet kamas ↔ ogrines ; ogrines issues de la BaK **liées au compte**, **périssables (~90 j)**, non revendables ensuite ; accès BaK conditionné (anti-bots).
 
-Cela monétise l’impatience **sans** vendre la puissance brute.  
+Reproduire les garde-fous :
+- soft → premium **lié + expiration** pour abo/boutique uniquement ;
+- **jamais** soft → € ;
+- **jamais** rachat éditeur ;
+- CGU : licence d’usage, pas de propriété, pas de valeur hors jeu.
+
 Surveillance bots farm CRD obligatoire.
 
 ---

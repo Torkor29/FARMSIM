@@ -13,28 +13,37 @@ Toute monétisation réelle = joueur → éditeur (achat PRM), pas éditeur/joue
 
 ## 2. France / UE — points clés `[FAIT]`
 
-### Jeux d’argent
-En France, les jeux d’argent et de hasard sont réglementés (ANJ). Un jeu qui combine **mise**, **hasard**, **gain monétaire** tombe sous un régime lourd.
+### Jeux d’argent (CSI L.320-1)
+Critères ANJ cumulatifs : offre au public + espérance de **gain** + hasard (même partiel) + **sacrifice financier**.  
+Agrément ANJ limité (paris, poker…) — pas un cadre pour un farm MMO classique.
+
+### Monnaie virtuelle ≠ e-money
+- **Monnaie de jeu** : licence d’usage interne, en principe non remboursable.
+- **Monnaie électronique (dir. 2009/110/CE)** : valeur émise contre fonds, créance sur l’émetteur, remboursable au nominal, acceptée par des tiers → agrément (ACPR).
+- **PSD2 / DSP2** : services de paiement si détention/exécution de fonds pour tiers.
+- Exemption « réseau limité » possible mais **pas automatique** (volumes, usage).
+
+**[PROPOSITION]** CGU : pas de propriété, licence, pas de remboursement, pas de vocabulaire « wallet / withdraw » pour le CRD.
 
 ### JONUM (loi SREN 2024-449 + décret 2026-60)
 L’ANJ encadre à titre expérimental les **Jeux à Objets Numériques Monétisables** :
-- sacrifice financier + hasard + objets numériques monétisables (NFT / jetons échangeables) ;
+- sacrifice financier + hasard + objets numériques monétisables (NFT / jetons échangeables à des tiers) ;
 - déclaration préalable ANJ ;
-- **interdiction des gains en monnaie ayant cours légal (euro)** dans ce cadre ;
-- obligations LCB-FT / KYC / majorité ;
-- catégories de jeux listées (dont gestion/construction — potentiellement proche).
+- **interdiction des gains en euro** ; éditeur **ne rachète pas** les ONUM ;
+- majeurs only ; LCB-FT / KYC ;
+- catégories listées (dont gestion/construction — potentiellement proche si ONUM).
 
 Sources :
 - https://anj.fr/jeux-objets-numeriques-monetisables-jonum
+- https://anj.fr/professionnels/porteur-de-projet
 - Loi n° 2024-449 du 21 mai 2024 (SREN)
+- Directive 2009/110/CE (e-money) ; directive (UE) 2015/2366 (PSD2)
 
-**Implication :** un design « farm → NFT → revente cash » ou « CRD → euro » n’est **pas** un détail feature : c’est un changement de régime réglementaire.
-
-### Monnaie électronique / DSP2
-Si l’éditeur permet de stocker de la valeur remboursable en EUR, risque de qualification **monnaie électronique** / services de paiement → agrément, KYC, AML.
+**Implication :** « farm → NFT → revente cash » ou « CRD → euro » n’est pas une feature : c’est un **changement de régime**.
 
 ### Marketplace type Steam
-Revente items entre joueurs en argent réel = zone grise / obligations selon design (commission, custody, convertibilité). Cas historiques (AH Diablo réel, Secondary markets) = leçons de fraude et fermetures.
+**[FAIT]** Steam Wallet : liquidité **fermée** (pas de retrait cash) — stratégie de réduction du risque AML.  
+Revente items en € ouvert = zone PSP/AML ; si hasard en amont → JONUM/JAH.
 
 ---
 
@@ -52,17 +61,24 @@ Revente items entre joueurs en argent réel = zone grise / obligations selon des
 
 ## 4. Cash-out — étude séparée (non autorisé par défaut)
 
-Si un jour envisagé, prérequis typiques à explorer avec conseil :
-- structure corporate et pays d’établissement ;
-- qualification (jeu, paiement, crowdfunding, rewards) ;
-- KYC/AML ;
-- plafonds ;
-- interdiction mineurs ;
-- fiscalité joueurs ;
-- risques blanchiment (farm→cash) ;
-- CGU propriété des assets.
+| Scénario | Description | Posture |
+|----------|-------------|---------|
+| A — Aucun cash-out (Steam-like) | Crédit non retirable | **Cible** |
+| B — Rachat éditeur € | Éditeur paye les joueurs | **Risque max** |
+| C — Marketplace + payout | P2P € via plateforme | PSP + AML (+ JONUM si hasard) |
+| D — NFT / DEX | ONUM externes | JONUM / MiCA |
 
-**Ne pas** communiquer marketing « gagnez de l’argent réel » tant que S0.
+Leçons : Diablo III RMAH (gameplay cassé, fermé 2014) ; Second Life (payout via entité régulée + KYC, non transposable naïvement) ; Axie (P2E = vigilance AML).
+
+Si un jour envisagé (scénario C skill-only, majeurs) — prérequis typiques **`[À VALIDER JURIDIQUE]`** :
+- jeu déjà viable sans cash-out ;
+- avis avocat jeux + finance FR/UE ;
+- partenariat EMI/PSP agréé ;
+- KYC/AML, plafonds, TRACFIN ;
+- items cash-outables **craft/skill**, pas RNG payant ;
+- entité / stack paiement **séparés** du jeu.
+
+**Ne pas** communiquer « gagnez de l’argent réel » tant que S0.
 
 ---
 
