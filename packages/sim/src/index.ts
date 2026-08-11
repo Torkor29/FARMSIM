@@ -109,9 +109,36 @@ export function sellToMarket(opts: {
   };
 }
 
-export function aggregateBuildingBonuses(
-  types: Array<keyof typeof import("@farmsim/shared").BUILDING_DEFS>,
-) {
-  // lazy import avoided — caller passes summed numbers
-  return types;
+/** Usure machine après N cases. Hangar = −15 % usure `[GD]`. ETA presta = −10 % usure. */
+export function applyMachineWear(opts: {
+  condition: number;
+  wearPerCell: number;
+  cells: number;
+  inShed?: boolean;
+  etaBonus?: boolean;
+}): { condition: number; wearApplied: number } {
+  let mult = 1;
+  if (opts.inShed) mult *= 0.85;
+  if (opts.etaBonus) mult *= 0.9;
+  const wearApplied =
+    Math.round(opts.wearPerCell * Math.max(0, opts.cells) * mult * 100) / 100;
+  const condition = Math.max(0, Math.round((opts.condition - wearApplied) * 100) / 100);
+  return { condition, wearApplied };
+}
+
+export function repairMachineCost(opts: {
+  condition: number;
+  repairCostPerPoint: number;
+  targetCondition?: number;
+  workshopDiscount?: number;
+}): { points: number; cost: number; nextCondition: number } {
+  const target = Math.min(100, opts.targetCondition ?? 100);
+  const points = Math.max(0, Math.round((target - opts.condition) * 100) / 100);
+  const discount = Math.min(0.4, Math.max(0, opts.workshopDiscount ?? 0));
+  const cost = Math.round(points * opts.repairCostPerPoint * (1 - discount) * 100) / 100;
+  return { points, cost, nextCondition: target };
+}
+
+export function machineCanWork(condition: number, minCondition: number): boolean {
+  return condition >= minCondition;
 }

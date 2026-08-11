@@ -171,6 +171,82 @@ export const DEFAULT_GRID = { w: 12, h: 12 } as const;
 /** Narratif : 12×12 ≈ 12–15 ha `[GD]` — voir `23_GRID_SIZING.md` */
 export const PARCEL_HECTARES = 14;
 
+export type MachineType = "TRACTOR" | "HARVESTER" | "SPREADER";
+
+export type MachineDef = {
+  type: MachineType;
+  name: string;
+  cost: number;
+  tier: number;
+  /** Points de condition perdus par case travaillée */
+  wearPerCell: number;
+  /** Coût CRD pour +1 point de condition */
+  repairCostPerPoint: number;
+  minCondition: number;
+  description: string;
+  works: Array<"PLANT" | "FERTILIZE" | "HARVEST" | "PLOW">;
+};
+
+export const MACHINE_DEFS: Record<MachineType, MachineDef> = {
+  TRACTOR: {
+    type: "TRACTOR",
+    name: "Tracteur T1",
+    cost: 3200,
+    tier: 1,
+    wearPerCell: 0.7,
+    repairCostPerPoint: 8,
+    minCondition: 12,
+    description: "Semis et travaux de base.",
+    works: ["PLANT", "PLOW", "FERTILIZE"],
+  },
+  HARVESTER: {
+    type: "HARVESTER",
+    name: "Moissonneuse T1",
+    cost: 4800,
+    tier: 1,
+    wearPerCell: 1.1,
+    repairCostPerPoint: 12,
+    minCondition: 12,
+    description: "Récolte céréales.",
+    works: ["HARVEST"],
+  },
+  SPREADER: {
+    type: "SPREADER",
+    name: "Épandeur T1",
+    cost: 1800,
+    tier: 1,
+    wearPerCell: 0.45,
+    repairCostPerPoint: 6,
+    minCondition: 10,
+    description: "Fertilisation plus efficace (−usure vs tracteur).",
+    works: ["FERTILIZE"],
+  },
+};
+
+/** Mapping contrats NPC → type de travail machine */
+export const CONTRACT_WORK: Record<
+  ContractJobType,
+  "PLANT" | "FERTILIZE" | "HARVEST" | "PLOW"
+> = {
+  PLOW: "PLOW",
+  SOW: "PLANT",
+  FERTILIZE: "FERTILIZE",
+  HARVEST: "HARVEST",
+  TRANSPORT: "PLOW",
+};
+
+/** @deprecated préférer CONTRACT_WORK + pickMachine */
+export const CONTRACT_MACHINE: Record<ContractJobType, MachineType> = {
+  PLOW: "TRACTOR",
+  SOW: "TRACTOR",
+  FERTILIZE: "TRACTOR",
+  HARVEST: "HARVESTER",
+  TRANSPORT: "TRACTOR",
+};
+
+/** Usure forfaitaire contrats NPC (équivalent ~N cases) */
+export const CONTRACT_WEAR_CELLS = 10;
+
 export function footprintCells(x: number, y: number, w: number, h: number) {
   const cells: { x: number; y: number }[] = [];
   for (let dy = 0; dy < h; dy++) {

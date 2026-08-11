@@ -2,10 +2,12 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   SPECIALIZATION_LABELS,
   BUILDING_DEFS,
+  MACHINE_DEFS,
   PARCEL_HECTARES,
   type Specialization,
   type CropCode,
   type BuildingType,
+  type MachineType,
 } from "@farmsim/shared";
 import { IsoFarmView } from "./IsoFarmView";
 
@@ -68,6 +70,7 @@ type Player = {
     machines: {
       id: string;
       type: string;
+      condition: number;
       parkedParcelId?: string | null;
       storedInBuildingId?: string | null;
     }[];
@@ -139,6 +142,7 @@ export function App() {
   const [err, setErr] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [showEta, setShowEta] = useState(false);
+  const [showGarage, setShowGarage] = useState(true);
 
   const refreshMeta = useCallback(async () => {
     const [z, m, c] = await Promise.all([
@@ -293,23 +297,39 @@ export function App() {
     try {
       if (tool === "PLANT_WHEAT" || tool === "PLANT_MAIZE") {
         const crop: CropCode = tool === "PLANT_WHEAT" ? "WHEAT" : "MAIZE";
-        await api(`/parcels/${activeParcelId}/plant`, {
-          method: "POST",
-          body: JSON.stringify({ userId: player.id, crop, cells: selectedCells }),
-        });
-        setMsg(`Semé ${crop} sur ${selectedCells.length} case(s)`);
+        const r = await api<{ machine?: { wearApplied: number; condition: number; type: string } }>(
+          `/parcels/${activeParcelId}/plant`,
+          {
+            method: "POST",
+            body: JSON.stringify({ userId: player.id, crop, cells: selectedCells }),
+          },
+        );
+        setMsg(
+          `Semé ${crop} ×${selectedCells.length}` +
+            (r.machine ? ` · ${r.machine.type} ${r.machine.condition.toFixed(0)}%` : ""),
+        );
       } else if (tool === "FERTILIZE") {
-        await api(`/parcels/${activeParcelId}/fertilize`, {
-          method: "POST",
-          body: JSON.stringify({ userId: player.id, cells: selectedCells }),
-        });
-        setMsg("Fertilisé");
+        const r = await api<{ machine?: { condition: number; type: string } }>(
+          `/parcels/${activeParcelId}/fertilize`,
+          {
+            method: "POST",
+            body: JSON.stringify({ userId: player.id, cells: selectedCells }),
+          },
+        );
+        setMsg(
+          "Fertilisé" + (r.machine ? ` · ${r.machine.type} ${r.machine.condition.toFixed(0)}%` : ""),
+        );
       } else if (tool === "HARVEST") {
-        await api(`/parcels/${activeParcelId}/harvest`, {
-          method: "POST",
-          body: JSON.stringify({ userId: player.id, cells: selectedCells }),
-        });
-        setMsg("Récolte OK");
+        const r = await api<{ machine?: { condition: number; type: string } }>(
+          `/parcels/${activeParcelId}/harvest`,
+          {
+            method: "POST",
+            body: JSON.stringify({ userId: player.id, cells: selectedCells }),
+          },
+        );
+        setMsg(
+          "Récolte OK" + (r.machine ? ` · ${r.machine.type} ${r.machine.condition.toFixed(0)}%` : ""),
+        );
       }
       setSelectedCells([]);
       await refreshPlayer(player.id);
@@ -380,13 +400,56 @@ export function App() {
     if (!player) return;
     setBusy(true);
     try {
-      const r = await api<{ reward: number }>(`/contracts/${id}/accept`, {
+      const r = await api<{ reward: number; machine?: { type: string; condition: number; wearApplied: number } }>(
+        `/contracts/${id}/accept`,
+        {
+          method: "POST",
+          body: JSON.stringify({ userId: player.id }),
+        },
+      );
+      await refreshPlayer(player.id);
+      await refreshMeta();
+      const wearNote = r.machine
+        ? ` · ${r.machine.type} −${r.machine.wearApplied.toFixed(1)}%`
+        : "";
+      setMsg(`Mission +${r.reward} CRD${wearNote}`);
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function buyMachine(type: MachineType) {
+    if (!player) return;
+    setBusy(true);
+    setErr(null);
+    try {
+      await api(`/machines/buy`, {
+        method: "POST",
+        body: JSON.stringify({ userId: player.id, type }),
+      });
+      await refreshPlayer(player.id);
+      if (activeParcelId) await loadParcel(activeParcelId);
+      setMsg(`${MACHINE_DEFS[type].name} acheté`);
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function repairMachine(id: string) {
+    if (!player) return;
+    setBusy(true);
+    setErr(null);
+    try {
+      const r = await api<{ condition: number; cost: number }>(`/machines/${id}/repair`, {
         method: "POST",
         body: JSON.stringify({ userId: player.id }),
       });
       await refreshPlayer(player.id);
-      await refreshMeta();
-      setMsg(`Mission +${r.reward} CRD`);
+      setMsg(`Réparé → ${r.condition.toFixed(0)}% (−${r.cost} CRD)`);
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e));
     } finally {
@@ -598,6 +661,13 @@ export function App() {
         ))}
         <button
           type="button"
+          className={`action ${showGarage ? "on" : ""}`}
+          onClick={() => setShowGarage((v) => !v)}
+        >
+          Garage
+        </button>
+        <button
+          type="button"
           className={`action eta ${showEta ? "on" : ""}`}
           onClick={() => setShowEta((v) => !v)}
         >
@@ -629,6 +699,61 @@ export function App() {
           Tout récolter
         </button>
       </div>
+
+      {showGarage && (
+        <aside className="glass garage-panel">
+          <h3>Garage</h3>
+          <p className="muted tiny">
+            Semis / ferti → tracteur · Récolte → moissonneuse. Usure à chaque case.
+          </p>
+          <ul className="list">
+            {(player.farm?.machines ?? []).map((m) => {
+              const def = MACHINE_DEFS[m.type as MachineType];
+              const low = def ? m.condition < def.minCondition : m.condition < 12;
+              return (
+                <li key={m.id}>
+                  <span>
+                    <strong>{def?.name ?? m.type}</strong>
+                    <div className={`muted tiny ${low ? "warn" : ""}`}>
+                      État {m.condition.toFixed(0)}%
+                      {m.storedInBuildingId ? " · hangar" : m.parkedParcelId ? " · parcelle" : ""}
+                    </div>
+                  </span>
+                  <button
+                    type="button"
+                    disabled={busy || m.condition >= 99.5}
+                    onClick={() => repairMachine(m.id)}
+                  >
+                    Réparer
+                  </button>
+                </li>
+              );
+            })}
+            {(player.farm?.machines.length ?? 0) === 0 && (
+              <li className="muted">Aucune machine</li>
+            )}
+          </ul>
+          <h3 className="spaced">Acheter</h3>
+          <div className="build-list">
+            {(Object.keys(MACHINE_DEFS) as MachineType[]).map((t) => {
+              const d = MACHINE_DEFS[t];
+              return (
+                <button
+                  key={t}
+                  type="button"
+                  className="build-item"
+                  disabled={busy}
+                  onClick={() => buyMachine(t)}
+                >
+                  <strong>{d.name}</strong>
+                  <span>{d.cost} CRD</span>
+                  <span className="muted tiny">{d.description}</span>
+                </button>
+              );
+            })}
+          </div>
+        </aside>
+      )}
 
       {showEta && (
         <aside className="glass eta-panel">

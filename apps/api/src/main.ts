@@ -15,9 +15,20 @@ import {
   SPECIALIZATION_LABELS,
   footprintCells,
   DEFAULT_GRID,
+  MACHINE_DEFS,
+  CONTRACT_WORK,
+  CONTRACT_WEAR_CELLS,
   type BuildingType as SharedBuildingType,
+  type MachineType,
 } from "@farmsim/shared";
-import { simulateCell, sellToMarket, tickMarket } from "@farmsim/sim";
+import {
+  simulateCell,
+  sellToMarket,
+  tickMarket,
+  applyMachineWear,
+  repairMachineCost,
+  machineCanWork,
+} from "@farmsim/sim";
 
 const prisma = new PrismaClient();
 const app = express();
@@ -49,6 +60,63 @@ function farmInclude() {
     machines: true,
     inventory: true,
   } as const;
+}
+
+type FarmMachine = {
+  id: string;
+  type: string;
+  condition: number;
+  storedInBuildingId: string | null;
+};
+
+/** Choisit une machine capable du travail, condition OK. */
+function pickMachineForWork(
+  machines: FarmMachine[],
+  work: "PLANT" | "FERTILIZE" | "HARVEST" | "PLOW",
+): { machine: FarmMachine; def: (typeof MACHINE_DEFS)[MachineType] } | null {
+  const candidates = machines
+    .map((m) => {
+      const def = MACHINE_DEFS[m.type as MachineType];
+      if (!def || !def.works.includes(work)) return null;
+      if (!machineCanWork(m.condition, def.minCondition)) return null;
+      return { machine: m, def };
+    })
+    .filter(Boolean) as { machine: FarmMachine; def: (typeof MACHINE_DEFS)[MachineType] }[];
+
+  if (!candidates.length) return null;
+  candidates.sort((a, b) => {
+    if (work === "FERTILIZE") {
+      const ap = a.def.type === "SPREADER" ? 1 : 0;
+      const bp = b.def.type === "SPREADER" ? 1 : 0;
+      if (ap !== bp) return bp - ap;
+    }
+    return b.machine.condition - a.machine.condition;
+  });
+  return candidates[0];
+}
+
+async function applyWearToMachine(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  tx: any,
+  opts: {
+    machine: FarmMachine;
+    def: (typeof MACHINE_DEFS)[MachineType];
+    cells: number;
+    specialization?: string;
+  },
+) {
+  const wear = applyMachineWear({
+    condition: opts.machine.condition,
+    wearPerCell: opts.def.wearPerCell,
+    cells: opts.cells,
+    inShed: Boolean(opts.machine.storedInBuildingId),
+    etaBonus: opts.specialization === "ETA",
+  });
+  await tx.machine.update({
+    where: { id: opts.machine.id },
+    data: { condition: wear.condition },
+  });
+  return wear;
 }
 
 async function getFarmBonuses(farmId: string) {
@@ -172,6 +240,7 @@ async function ensureSeed() {
 app.get("/health", (_req, res) => res.json({ ok: true, service: "farmsim-api" }));
 app.get("/meta/specializations", (_req, res) => res.json(SPECIALIZATION_LABELS));
 app.get("/meta/buildings", (_req, res) => res.json(BUILDING_DEFS));
+app.get("/meta/machines", (_req, res) => res.json(MACHINE_DEFS));
 
 app.get("/zones", async (_req, res) => {
   const zones = await prisma.zone.findMany({
@@ -230,7 +299,13 @@ app.post("/auth/register", async (req, res) => {
           userId: u.id,
           name: `Ferme ${displayName}`,
           machines: {
-            create: [{ type: specialization === "ETA" ? "HARVESTER" : "TRACTOR", tier: 1 }],
+            create:
+              specialization === "ETA"
+                ? [
+                    { type: "TRACTOR", tier: 1 },
+                    { type: "HARVESTER", tier: 1 },
+                  ]
+                : [{ type: "TRACTOR", tier: 1 }],
           },
         },
       });
@@ -404,7 +479,7 @@ app.post("/parcels/:id/plant", async (req, res) => {
   }
   const parcel = await prisma.parcel.findUnique({
     where: { id: req.params.id },
-    include: { farm: true, cells: true },
+    include: { farm: { include: { machines: true } }, cells: true },
   });
   if (!parcel?.farm || parcel.farm.userId !== body.data.userId) {
     res.status(403).json({ error: "Parcelle non possédée" });
@@ -413,6 +488,13 @@ app.post("/parcels/:id/plant", async (req, res) => {
   const user = await prisma.user.findUnique({ where: { id: body.data.userId } });
   if (!user) {
     res.status(404).json({ error: "Joueur introuvable" });
+    return;
+  }
+  const picked = pickMachineForWork(parcel.farm.machines, "PLANT");
+  if (!picked) {
+    res.status(409).json({
+      error: "Tracteur requis (condition trop basse ou absent) — achetez / réparez.",
+    });
     return;
   }
   const cost = CROP_DEFS[body.data.crop].seedCostPerCell * body.data.cells.length;
@@ -431,7 +513,7 @@ app.post("/parcels/:id/plant", async (req, res) => {
 
   const now = Date.now();
   const growMs = CROP_DEFS[body.data.crop].growMs;
-  await prisma.$transaction(async (tx) => {
+  const wear = await prisma.$transaction(async (tx) => {
     await tx.user.update({ where: { id: user.id }, data: { crd: { decrement: cost } } });
     for (const { x, y } of body.data.cells) {
       await tx.parcelCell.update({
@@ -447,11 +529,20 @@ app.post("/parcels/:id/plant", async (req, res) => {
         },
       });
     }
+    return applyWearToMachine(tx, {
+      machine: picked.machine,
+      def: picked.def,
+      cells: body.data.cells.length,
+      specialization: user.specialization,
+    });
   });
-  res.json(await prisma.parcel.findUnique({
-    where: { id: parcel.id },
-    include: { cells: true, buildings: true },
-  }));
+  res.json({
+    parcel: await prisma.parcel.findUnique({
+      where: { id: parcel.id },
+      include: { cells: true, buildings: true },
+    }),
+    machine: { id: picked.machine.id, type: picked.machine.type, ...wear },
+  });
 });
 
 app.post("/parcels/:id/fertilize", async (req, res) => {
@@ -467,10 +558,17 @@ app.post("/parcels/:id/fertilize", async (req, res) => {
   }
   const parcel = await prisma.parcel.findUnique({
     where: { id: req.params.id },
-    include: { farm: true, cells: true },
+    include: { farm: { include: { machines: true } }, cells: true },
   });
   if (!parcel?.farm || parcel.farm.userId !== body.data.userId) {
     res.status(403).json({ error: "Parcelle non possédée" });
+    return;
+  }
+  const picked = pickMachineForWork(parcel.farm.machines, "FERTILIZE");
+  if (!picked) {
+    res.status(409).json({
+      error: "Tracteur ou épandeur requis (condition OK) pour fertiliser.",
+    });
     return;
   }
   const cost = 10 * body.data.cells.length;
@@ -479,7 +577,8 @@ app.post("/parcels/:id/fertilize", async (req, res) => {
     res.status(402).json({ error: "CRD insuffisants" });
     return;
   }
-  await prisma.$transaction(async (tx) => {
+  let fertilized = 0;
+  const wear = await prisma.$transaction(async (tx) => {
     await tx.user.update({ where: { id: user.id }, data: { crd: { decrement: cost } } });
     for (const { x, y } of body.data.cells) {
       const cell = parcel.cells.find((c) => c.x === x && c.y === y);
@@ -488,9 +587,16 @@ app.post("/parcels/:id/fertilize", async (req, res) => {
         where: { id: cell.id },
         data: { fertilizedPasses: { increment: 1 }, weedsControlled: true },
       });
+      fertilized += 1;
     }
+    return applyWearToMachine(tx, {
+      machine: picked.machine,
+      def: picked.def,
+      cells: Math.max(1, fertilized),
+      specialization: user.specialization,
+    });
   });
-  res.json({ ok: true });
+  res.json({ ok: true, fertilized, machine: { id: picked.machine.id, type: picked.machine.type, ...wear } });
 });
 
 app.post("/parcels/:id/harvest", async (req, res) => {
@@ -506,10 +612,17 @@ app.post("/parcels/:id/harvest", async (req, res) => {
   }
   const parcel = await prisma.parcel.findUnique({
     where: { id: req.params.id },
-    include: { farm: true, cells: true, zone: true },
+    include: { farm: { include: { machines: true } }, cells: true, zone: true },
   });
   if (!parcel?.farm || parcel.farm.userId !== body.data.userId) {
     res.status(403).json({ error: "Parcelle non possédée" });
+    return;
+  }
+  const picked = pickMachineForWork(parcel.farm.machines, "HARVEST");
+  if (!picked) {
+    res.status(409).json({
+      error: "Moissonneuse requise — achetez-en une au garage ou jouez ETA.",
+    });
     return;
   }
   const bonuses = await getFarmBonuses(parcel.farmId!);
@@ -522,7 +635,7 @@ app.post("/parcels/:id/harvest", async (req, res) => {
   const harvested: { crop: CropCode; tons: number; moisturePenalty: number }[] = [];
   const now = Date.now();
 
-  await prisma.$transaction(async (tx) => {
+  const wear = await prisma.$transaction(async (tx) => {
     for (const cell of targets) {
       if (cell.kind !== "CROP" || !cell.crop || !cell.plantedAt) continue;
       const sim = simulateCell({
@@ -583,6 +696,16 @@ app.post("/parcels/:id/harvest", async (req, res) => {
         });
       }
     }
+
+    if (harvested.length === 0) {
+      return null;
+    }
+    return applyWearToMachine(tx, {
+      machine: picked.machine,
+      def: picked.def,
+      cells: harvested.length,
+      specialization: user?.specialization,
+    });
   });
 
   if (harvested.length === 0) {
@@ -593,6 +716,7 @@ app.post("/parcels/:id/harvest", async (req, res) => {
     harvested,
     totalTons: harvested.reduce((s, h) => s + h.tons, 0),
     bonuses,
+    machine: { id: picked.machine.id, type: picked.machine.type, ...wear },
   });
 });
 
@@ -665,6 +789,125 @@ app.post("/parcels/:id/build", async (req, res) => {
 
   const bonuses = await getFarmBonuses(parcel.farmId!);
   res.status(201).json({ building, bonuses, def });
+});
+
+app.post("/machines/buy", async (req, res) => {
+  const body = z
+    .object({
+      userId: z.string(),
+      type: z.enum(["TRACTOR", "HARVESTER", "SPREADER"]),
+    })
+    .safeParse(req.body);
+  if (!body.success) {
+    res.status(400).json(body.error.flatten());
+    return;
+  }
+  const def = MACHINE_DEFS[body.data.type];
+  const user = await prisma.user.findUnique({
+    where: { id: body.data.userId },
+    include: { farm: { include: { machines: true, parcels: { include: { buildings: true } } } } },
+  });
+  if (!user?.farm) {
+    res.status(404).json({ error: "Ferme introuvable" });
+    return;
+  }
+  if (user.crd < def.cost) {
+    res.status(402).json({ error: "CRD insuffisants" });
+    return;
+  }
+  const bonuses = await getFarmBonuses(user.farm.id);
+  const owned = user.farm.machines.length;
+  if (owned >= bonuses.machineSlots) {
+    res.status(409).json({
+      error: `Slots machines pleins (${bonuses.machineSlots}). Construisez un hangar matériel.`,
+    });
+    return;
+  }
+  const result = await prisma.$transaction(async (tx) => {
+    await tx.user.update({ where: { id: user.id }, data: { crd: { decrement: def.cost } } });
+    const machine = await tx.machine.create({
+      data: {
+        farmId: user.farm!.id,
+        type: def.type,
+        tier: def.tier,
+        condition: 100,
+      },
+    });
+    const firstParcel = user.farm!.parcels[0];
+    if (firstParcel) {
+      const free = await tx.parcelCell.findFirst({
+        where: { parcelId: firstParcel.id, kind: "EMPTY" },
+        orderBy: [{ y: "desc" }, { x: "asc" }],
+      });
+      if (free) {
+        await tx.machine.update({
+          where: { id: machine.id },
+          data: { parkedParcelId: firstParcel.id },
+        });
+        await tx.parcelCell.update({
+          where: { id: free.id },
+          data: { kind: "VEHICLE", machineId: machine.id },
+        });
+      }
+    }
+    return machine;
+  });
+  const refreshed = await prisma.user.findUnique({
+    where: { id: user.id },
+    include: { farm: { include: farmInclude() } },
+  });
+  res.status(201).json({ machine: result, player: refreshed });
+});
+
+app.post("/machines/:id/repair", async (req, res) => {
+  const body = z.object({ userId: z.string() }).safeParse(req.body);
+  if (!body.success) {
+    res.status(400).json(body.error.flatten());
+    return;
+  }
+  const machine = await prisma.machine.findUnique({
+    where: { id: req.params.id },
+    include: { farm: { include: { user: true } } },
+  });
+  if (!machine || machine.farm.userId !== body.data.userId) {
+    res.status(403).json({ error: "Machine non possédée" });
+    return;
+  }
+  const def = MACHINE_DEFS[machine.type as MachineType];
+  if (!def) {
+    res.status(400).json({ error: "Type machine inconnu" });
+    return;
+  }
+  if (machine.condition >= 99.5) {
+    res.status(409).json({ error: "Déjà en parfait état" });
+    return;
+  }
+  const bonuses = await getFarmBonuses(machine.farmId);
+  const quote = repairMachineCost({
+    condition: machine.condition,
+    repairCostPerPoint: def.repairCostPerPoint,
+    workshopDiscount: bonuses.repairDiscount,
+  });
+  if (machine.farm.user.crd < quote.cost) {
+    res.status(402).json({ error: `Réparation ${quote.cost} CRD — fonds insuffisants` });
+    return;
+  }
+  await prisma.$transaction(async (tx) => {
+    await tx.user.update({
+      where: { id: body.data.userId },
+      data: { crd: { decrement: quote.cost } },
+    });
+    await tx.machine.update({
+      where: { id: machine.id },
+      data: { condition: quote.nextCondition },
+    });
+  });
+  res.json({
+    machineId: machine.id,
+    condition: quote.nextCondition,
+    cost: quote.cost,
+    discount: bonuses.repairDiscount,
+  });
 });
 
 app.post("/machines/:id/park", async (req, res) => {
@@ -855,9 +1098,16 @@ app.post("/contracts/:id/accept", async (req, res) => {
     res.status(400).json(body.error.flatten());
     return;
   }
-  const user = await prisma.user.findUnique({ where: { id: body.data.userId } });
+  const user = await prisma.user.findUnique({
+    where: { id: body.data.userId },
+    include: { farm: { include: { machines: true } } },
+  });
   if (!user) {
     res.status(404).json({ error: "Joueur introuvable" });
+    return;
+  }
+  if (!user.farm) {
+    res.status(409).json({ error: "Ferme requise (machines) pour les contrats" });
     return;
   }
   const contract = await prisma.npcContract.findUnique({ where: { id: req.params.id } });
@@ -865,9 +1115,23 @@ app.post("/contracts/:id/accept", async (req, res) => {
     res.status(409).json({ error: "Contrat indisponible" });
     return;
   }
+  const work = CONTRACT_WORK[contract.jobType as ContractJobType];
+  const picked = pickMachineForWork(user.farm.machines, work);
+  if (!picked) {
+    res.status(409).json({
+      error: `Machine requise pour ${contract.jobType} (condition OK) — achetez / réparez au garage.`,
+    });
+    return;
+  }
   const etaBonus = user.specialization === "ETA" ? 1.05 : 1;
   const reward = Math.round(contract.rewardCrd * etaBonus * 100) / 100;
   const result = await prisma.$transaction(async (tx) => {
+    const wear = await applyWearToMachine(tx, {
+      machine: picked.machine,
+      def: picked.def,
+      cells: CONTRACT_WEAR_CELLS,
+      specialization: user.specialization,
+    });
     await tx.npcContract.update({
       where: { id: contract.id },
       data: { status: "COMPLETED", providerId: user.id, completedAt: new Date() },
@@ -887,7 +1151,7 @@ app.post("/contracts/:id/accept", async (req, res) => {
         regionNote: contract.regionNote,
       },
     });
-    return { user: u, reward };
+    return { user: u, reward, machine: { id: picked.machine.id, type: picked.machine.type, ...wear } };
   });
   res.json(result);
 });

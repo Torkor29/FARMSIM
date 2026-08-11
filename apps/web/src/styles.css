@@ -147,6 +147,20 @@ button.ghost {
   overflow: auto;
   z-index: 4;
 }
+.garage-panel {
+  position: absolute;
+  top: 4.2rem;
+  left: 1rem;
+  width: min(280px, calc(100vw - 2rem));
+  max-height: min(55vh, 480px);
+  overflow: auto;
+  z-index: 4;
+}
+.garage-panel h3, .eta-panel h3 {
+  font-size: 0.95rem;
+  color: var(--accent-hot);
+}
+.warn { color: var(--danger) !important; }
 
 .geo-panel h3, .build-panel h3, .eta-panel h3 {
   font-size: 0.95rem;
@@ -298,13 +312,19 @@ button.ghost {
   .geo-panel {
     top: auto;
     bottom: 5.2rem;
+    left: auto;
+    right: 1rem;
+    width: min(180px, calc(100vw - 2rem));
+  }
+  .garage-panel {
+    top: auto;
+    bottom: 5.2rem;
     left: 1rem;
-    right: auto;
-    width: min(200px, calc(100vw - 2rem));
+    width: min(170px, calc(100vw - 2rem));
+    max-height: 32vh;
   }
   .build-panel {
-    width: min(180px, calc(100vw - 2rem));
-    max-height: 28vh;
+    display: none;
   }
   .hud-top { padding: 0.6rem 0.75rem; }
   .brand-mark { font-size: 1.05rem; }
