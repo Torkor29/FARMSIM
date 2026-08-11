@@ -14,18 +14,21 @@ Représenter la Terre sans simuler chaque m², tout en rendant lat/long **signif
 World
  └─ Country (ISO)
      └─ MacroRegion (ex. "Bassin parisien", "Iowa")
-         └─ Zone (tuile climatique ~25–100 km)
-             └─ Parcel (unité achetable / jouable)
-                 └─ Cells (grille de travail)
+         └─ Zone / cellule météo (H3 res 5–6 ≈ 36–250 km², ou grille 0.1°)
+             └─ Parcel (unité achetable / jouable, 5–20 ha MVP)
+                 └─ Cells (grille de travail machine)
 ```
 
 | Niveau | Rôle | Sim |
 |--------|------|-----|
 | Country | UI, langue, flags légaux futurs | Règles |
-| MacroRegion | Identité / marketing | Stats |
-| Zone | Climat, sol bake, prix régional V1 | Météo agrégée |
+| MacroRegion | Identité / marketing / marché local V1 | Stats |
+| Zone (H3) | Climat, sol bake, **1 météo/jour** | Tick météo |
 | Parcel | Propriété joueur | État cultural |
 | Cell | Travaux machines | Animation / temps |
+
+**[FAIT]** Aires H3 : res5 ≈ 253 km², res6 ≈ 36 km², res7 ≈ 5,2 km² (h3geo.org).  
+Générer seulement cellules **occupées / adjacentes joueurs** + bassins productifs NPC pour le marché — pas toute la Terre en 0,1°.
 
 ---
 

@@ -28,11 +28,14 @@ Les URLs ont été consultées durant la phase de recherche (2026-08-11). Certai
 
 ## Climat / géographie
 
-- Köppen-Geiger : Beck et al. ; https://koppen.earth/
-- WorldClim
-- Open-Meteo
-- SoilGrids / ISRIC
-- Copernicus / ERA5
+- Köppen-Geiger : Beck et al. ; https://koppen.earth/ ; https://www.gloh2o.org/koppen
+- WorldClim 2.1 (Fick & Hijmans 2017) : https://worldclim.org/
+- Open-Meteo (forecast, historical, ET₀, terms/pricing) : https://open-meteo.com
+- AgERA5 / ERA5-Land — Copernicus CDS
+- SoilGrids / ISRIC : https://docs.isric.org/globaldata/soilgrids/
+- H3 grid : https://h3geo.org/
+- FAO GIEWS / FPMA / SOLAW (stress agri & aptitudes)
+- Zabel et al. agricultural suitability (Zenodo)
 
 ## Économies de jeux
 

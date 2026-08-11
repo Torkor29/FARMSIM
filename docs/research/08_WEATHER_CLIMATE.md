@@ -22,32 +22,52 @@
 
 ---
 
-## 3. Stratégie runtime : simulation > live feed
+## 3. Stratégie runtime : hybride (recommandé)
 
 | Approche | Pros | Cons |
 |----------|------|------|
-| Météo live réelle | Marketing | Fragile, unfair (vrai climat change), ops |
+| Météo live réelle | Marketing | Fragile, unfair, quotas API, licence commerciale Open-Meteo |
 | Historique rejoué | Réalisme | Prédictible / datamining |
-| **Simulation paramétrée par climat** | Contrôle, fair, stable | Moins « vrai temps » |
+| Simulation paramétrée | Contrôle, fair | Moins « vrai temps » |
+| **Hybride** | Ancrage géo + équilibre MMO | Un peu plus complexe |
 
-**Choix `[PROPOSITION]` :** simulation serveur pilotée par profil climatique de la région (norms WorldClim/Köppen), avec bruit stochastique + événements scriptés.  
-Option cosmétique : « inspiré des moyennes 1991–2020 de ta région ».
+**Choix `[PROPOSITION]` :**  
+1. **Bake statique** : Köppen + norms WorldClim + sol résumé (SoilGrids offline).  
+2. **Runtime** : climatologie + bruit spatial corrélé (seed serveur) + événements calibrés.  
+3. **Optionnel plus tard** : mode « Live Weather » (Open-Meteo commercial / self-host) pour serveurs RP — pas le défaut MMO.
+
+**[FAIT]** Open-Meteo API gratuite = usage non commercial / quotas ; un jeu monétisé nécessite plan commercial ou self-host (terms Open-Meteo).
 
 ---
 
-## 4. Modèle simplifié
+## 4. Modèle simplifié (cellule météo → parcelle)
 
-Chaque `Region` :
+**Ne jamais** simuler la météo au m² ni à chaque parcelle.
+
+| Niveau | Exemple | Rôle |
+|--------|---------|------|
+| Cellule météo | H3 res 5–6 (~36–250 km²) ou grille ~0.1° | 1 tick météo / jour |
+| Bloc sol | H3 res 7–8 (bake) | Profil sol |
+| Parcelle | 5–20 ha MVP | État culture (eau, stade, biomasse) |
+
+Chaque `Zone` / cellule :
 - `climateZone` (Köppen)
 - `tempMonth[12]`, `precipMonth[12]` (norms)
 - `extremeRisk` (grêle, gel, sécheresse, inondation)
 
-Chaque jour-jeu (ou tick 4–6 h) :
-- tire T°, pluie ;
-- met à jour humidité sols des parcelles actives ;
-- chance d’événement.
+### Bilan journalier minimal `[PROPOSITION]` (inspiré FAO-56)
 
-Parcelles **inactives / non peuplées** : pas de sim granuleuse — seulement agrégats régionaux pour le marché.
+```
+GDD += max(0, (Tmin+Tmax)/2 − Tbase)
+ETc = Kc(stade) × ET0
+Δeau = pluie + irrigation − ETc − ruissellement_simplifié
+W = clamp(eau / eau_utile, 0, 1)   # stress hydrique
+Δbiomasse ∝ f(GDD) × W × f_therm × f_maladies
+```
+
+Grêle / inondation locale : **événements stochastiques** conditionnés par climat (mal couverts en réanalyse à 10–25 km).
+
+Parcelles **inactives** : pas de sim granuleuse — agrégats régionaux pour le marché seulement.
 
 ---
 
