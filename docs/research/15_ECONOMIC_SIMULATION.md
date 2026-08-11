@@ -105,12 +105,14 @@ Script Python/TS :
 
 | Élément | Valeur | Source | Justification |
 |---------|--------|--------|---------------|
-| Prix initial | 220 CRD/t | `[RÉEL]` ancré | Zone calme Euronext-like |
-| Prix min | 120 | `[GD]` | Évite death spiral revenus |
-| Prix max | 450 | `[RÉEL]` inspiré pic 2022 | Rare, événementiel |
+| Prix initial | 220 CRD/t | `[RÉEL]` ancré | Zone calme Euronext 160–230 €/t |
+| Prix min | 120 | `[GD]` | Évite death spiral |
+| Prix max | 450–500 | `[RÉEL]` inspiré pic 2022 | Rare, événementiel |
+| Coût complet blé (réf.) | ~250–314 €/t | `[RÉEL]` Arvalis 2023–24 | Afficher vs prix vente |
 | Yield cycle | 8 t | `[GD]` | Abstraction parcelle |
-| Coût cycle | 900 | `[TEST]` | Marge ~40 % skill moyen |
+| Coût cycle IG | 900 | `[TEST]` | Marge ~40 % skill moyen |
 | Frais stock /jour | 0.5 % | `[TEST]` | Anti-hoard |
+| Feed index (porc) | 0.55 maïs + 0.35 tourteau + 0.10 blé | `[HYPOTHÈSE]` | Boucle élevage |
 | Bonus spé max | +10 % | `[GD]` | Design |
 | Bonus level max | +10 % | `[GD]` | Design |
 

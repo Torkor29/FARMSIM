@@ -45,15 +45,20 @@ Qualité : `P_effective = P_base × qualityMult[grade]`.
 
 ## 3. Ancrage données réelles (calibration)
 
-| Produit | Ancre `[RÉEL]` | Fourchette historique indicative | Source type |
-|---------|----------------|----------------------------------|-------------|
-| Blé | ~200–240 €/t (périodes calmes 2023–24) ; pics >400 €/t (2022 Ukraine) | 150–450 | Euronext EBM, presse agri |
-| Maïs | Souvent sous blé en EU | large | Euronext / CBOT |
-| Soja | USD/bushel CBOT → convertir | large | CBOT |
-| Lait | €/1000 L régional | variable | FranceAgriMer / UE |
-| Viandes | €/kg carcasse | variable | Occasions / UE |
+| Produit | Ancre calme `[RÉEL]/[A]` | Fourchette haute crédible | Sources |
+|---------|---------------------------|---------------------------|---------|
+| Blé | 160–230 €/t (Euronext ~218–231 €/t août 2026) | 350–500 €/t (pic 2022 ~522 $/t) | Euronext EBM, IMF, World Bank |
+| Maïs | 150–250 €/t | 300–350 €/t | Euronext / CBOT / IMF |
+| Soja | 350–420 €/t (~369 €/t CBOT) | 600–750 $/t | CBOT / IMF |
+| Colza graine | 400–550 €/t (~539 €/t Euronext) | 700–900 €/t | Euronext |
+| Tourteau soja | 280–400 €/t | 450–550 €/t | IMF |
+| Lait | 350–500 €/1000 L (FR ~480–490) | 550–650 | FranceAgriMer / DRAAF |
+| Porc | 1,4–2,0 €/kg (Plérin 2024 ~1,90) | 2,2–2,5 | DRAAF |
+| Engrais N (AN 33,5 %) | 400–550 €/t | ×2–3 en crise | Cotations FR |
 
-**Runtime :** prix en CRD **dérivés** de ces ancres, pas feed live obligatoire.
+**Runtime :** prix en CRD **dérivés** de ces ancres (Option B hybride / C contrôlé) — pas de feed live obligatoire.
+
+**Leçon coûts `[RÉEL]` :** blé FR 2024 — coût complet observatoire ~314 €/t vs vente ~185 €/t (ciseaux). Le jeu doit montrer **prix vs coût de revient**, pas seulement le spot.
 
 ---
 

@@ -159,11 +159,11 @@ Détail marché : `05_MARKET_DESIGN.md`.
 
 | Option | Avantages | Inconvénients | Verdict |
 |--------|-----------|---------------|---------|
-| A — prix réels live | Crédibilité | Dépendance API, légal, UX confuse, pas de contrôle balance | **Rejetée** pour runtime |
-| B — réel comme base + sim | Ancrage + contrôle | Complexité ETL | **Retenue calibration** |
-| C — indépendant calibré | Contrôle total | Moins « wow réel » | **Retenue runtime** |
+| A — prix réels live | Crédibilité | Dépendance API, pas d’agency joueur | Décor / tutoriel only |
+| B — réel comme base + sim | Ancrage + agency | ETL / bornes | **Recommandée (défaut)** |
+| C — indépendant calibré | Contrôle total | Moins « wow réel » | Sandbox / offline |
 
-**Choix `[PROPOSITION]` :** Option **C runtime** + **B calibration** (table de référence Euronext/CME/FAO mise à jour manuellement / trimestrielle).
+**Choix `[PROPOSITION]` :** **B** en production (ancre 70 % / sim 30 %, clamp ~0,5×–2,5× sauf crise) ; tables FMI/Euronext/WASDE mises à jour périodiquement. Option A = mode « saison historique ». Option C = sandbox modding.
 
 ---
 
