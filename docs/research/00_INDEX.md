@@ -49,6 +49,7 @@ Chaque valeur chiffrée dans cette documentation est classée :
 | — | [18_SYNTHESIS_CROSS.md](./18_SYNTHESIS_CROSS.md) | Synthèse multi-agents |
 | — | [19_SOURCES.md](./19_SOURCES.md) | Bibliographie & sources |
 | — | [20_GAME_ECONOMIES_DEEP_DIVE.md](./20_GAME_ECONOMIES_DEEP_DIVE.md) | Deep dive économies MMO (Dofus/EVE/Albion…) |
+| — | [21_MULTIAGENT_FINAL_SYNTHESIS.md](./21_MULTIAGENT_FINAL_SYNTHESIS.md) | Synthèse finale tous agents |
 
 ---
 

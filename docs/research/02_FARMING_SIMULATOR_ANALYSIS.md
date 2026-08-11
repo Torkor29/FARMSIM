@@ -34,47 +34,45 @@ Ce qui est lourd pour un navigateur :
 ## 2. Agriculture (mécaniques FS)
 
 ### 2.1 Préparation du sol `[FS]`
-- Labour (plow) quand le champ « needs plowing » → bonus rendement (~15 %).
-- Cultivateur / déchaumeur pour préparation plus légère.
-- Chaume : mulching avant culture suivante (~2,5 %).
-- Rouleau après semis (~2,5 %).
+- Labour (plow) quand le champ « needs plowing » → bonus rendement (~15 %). Sous-soleuse alternative (ne bloque pas adventices).
+- Cultivateur / déchaumeur pour lit de semence (sauf semoir direct).
+- Chaume : mulching avant culture suivante (~2,5–5 % selon guides).
+- Rouleau après semis (~2,5–5 %).
 - Chaux (lime) tous les ~3 cycles → ~15 % si besoin signalé.
+- Pierres : endommagent le matériel (pas le rendement).
 
 ### 2.2 Semis `[FS]`
-- Semoirs / planteuses selon culture.
-- Calendrier saisonnier optionnel (planting windows).
+- Semoirs / planteuses selon culture ; certains fertilisent / travaillent en même temps.
+- Semoirs directs sans cultivateur préalable.
+- Calendrier saisonnier optionnel (planting windows) ; hors fenêtre → flétrissement.
 - ~25 cultures principales en FS25 (céréales, oléagineux, racines, riz, etc.).
 
 ### 2.3 Fertilisation `[FS]`
-- Jusqu’à **2 applications** par cycle pour bonus max (~45 % cumulé selon guides ; chiffres guides varient légèrement — traiter comme ordre de grandeur).
+- Jusqu’à **2 applications** par cycle ; ~**+23 %** chacune selon guides Gamepressure (ordre de grandeur ; guides varient).
 - Types : engrais minéral solide/liquide, fumier, lisier, digestat, engrais vert (radis oléagineux).
 - Fumier/lisier : double rate possible en un passage.
-- Precision Farming (DLC/feature) : cartographie azote, optimisation.
+- Precision Farming (DLC) : cartographie N/pH, score environnemental (± jusqu’à ~15 %).
 
 ### 2.4 Désherbage `[FS]`
-- Adventices réduisent le rendement (~20 % si non traités).
-- Herse / bineuse / pulvérisateur herbicide.
-- Herse parfois préférable (moins de pénalité que certains herbicides selon guides).
+- Adventices ~**−20 %** rendement.
+- Herse / bineuse / pulvérisateur herbicide ; labour profond réduit l’apparition.
 
 ### 2.5 Croissance & saisons `[FS]`
-- Stades de croissance visibles.
-- Saisons affectent fenêtres semis/récolte et ambiance.
-- Option désactiver seasonal growth.
-- Pluie/neige : **récolte interdite ou pénalisée** (guides : jusqu’à ~50 % perte si récolte sous pluie).
+- Stades visibles + calendrier (ex. blé semis sept–oct, récolte juil–août).
+- Année par défaut très compressée (souvent ~12 jours = 12 mois).
+- Pluie/neige : **récolte pénalisée** ; option seasonal growth on/off.
 
 ### 2.6 Récolte, rendement, qualité `[FS]`
-- Moissonneuses + outils culture-spécifiques.
-- Rendement = base culture × bonus (ferti, lime, weeds, plow, roll, mulch…).
-- Qualité : présente surtout via animals / productions ; champs plutôt « yield-centric ».
-- Grêle / tornades (événements) : dégâts champs / balles non stockées.
+- Rendement = checklist d’actions (ferti, lime, weeds, plow, roll, mulch…) — **pas** de qualité grain fine (protéines/humidité) en vanilla.
+- Precision Farming ajoute profondeur sol optionnelle.
+- FS25 : déformation sol / ornières ; rizières avec gestion d’eau.
 
 ### 2.7 Rotation / maladies / ravageurs `[FS]`
-- **Rotation profonde, maladies cryptogamiques, insectes complexes : très simplifiés ou absents** vs réalité.
-- Besoin de labour après certaines cultures (maïs, pomme de terre, etc.) = proxy de structure sol.
-- Pas de modèle épidémiologique riche type jeu « Plant Pathology ».
+- **Vanilla : pas de maladies/ravageurs ni rotation pathogène** — domaine des mods.
+- Besoin de labour après certaines cultures = proxy structure sol.
 
-**À reprendre :** boucle sol → fertilisation → adventices → calendrier → rendement.  
-**À ne pas copier 1:1 :** liste exhaustive d’outils, précision centimetrique, DLC Precision Farming complet.
+**À reprendre :** boucle sol → fertilisation → adventices → calendrier → rendement empilable.  
+**À ne pas copier 1:1 :** Precision Farming complet, déformation 3D, maladies mods, catalogue culture-spécifique dès MVP.
 
 ---
 
@@ -100,12 +98,12 @@ Catégories : tracteurs, moissonneuses, semoirs, pulvérisateurs, épandeurs, re
 ## 4. Économie `[FS]`
 
 - Prix NPC par point de vente, fluctuation saisonnière / demande locale.
-- Contrats de travaux (missions) pour gagner de l’argent tôt.
-- Crédit / prêt selon mode.
-- Location de machines possible.
-- Productions (moulins, filatures, etc.) : transformation valeur ajoutée (FS22+).
+- Stocker pour vendre au pic ; saturer un produit tire le prix vers le bas.
+- Contrats de travaux (missions) pour cashflow early ; matériel emprunté possible (déduit de la paye).
+- Crédit / prêt (guides : tranches, plafond, intérêts journaliers punitifs — **ne pas** reproduire 0,8 %/jour en navigateur).
+- Location machines : ~5 % à l’entrée + ~1 %/mois (guides Gamepressure).
+- Productions (moulins, etc.) : transformation valeur ajoutée (FS22+).
 - **Pas** de marché mondial multi-joueurs persistant type MMO.
-- **Pas** de vraie spéculation multi-agents à l’échelle planète.
 
 **À reprendre :** contrats débutant, location, transformation (plus tard), stockage stratégique.  
 **À inventer :** marché mondial, stocks globaux, chocs climatiques macro.
@@ -115,23 +113,26 @@ Catégories : tracteurs, moissonneuses, semoirs, pulvérisateurs, épandeurs, re
 ## 5. Travail `[FS]`
 
 - Joueur conduit presque tout.
-- **AI workers** : employés automatiques (coût, limitations, améliorations helpers).
-- Contrats : labourer/semer/récolter pour NPC.
+- **AI workers** : Go to / Field Work / Deliver / Load & Deliver ; rachat auto carburant/semences (coûteux).
+- Contrats NPC : labourer/semer/récolter ; plusieurs en parallèle.
 - Multi coop : partager ferme / travaux.
+- Employés nommés / RH : **pas en vanilla** (mods).
 
-**Gap vs notre vision :** pas de **marché de prestations P2P** structuré (offres/demandes tarifées entre joueurs inconnus à l’échelle MMO).
+**Gap vs notre vision :** pas de **marché de prestations P2P** structuré.  
+**Navigateur :** abstraire helpers en timers + coûts ; pas de pathfinding 3D.
 
 ---
 
 ## 6. Animaux `[FS]`
 
-Espèces : vaches, cochons, moutons, chevaux, poules, etc.  
-Mécaniques : bâtiments, nourriture (types), paille/litière, eau, propreté, reproduction, produits (lait, œufs, lisier, fumier, laine…).  
-Santé/propreté impactent productivité.  
-Rentabilité souvent discutée communautairment (setup lourd, ROI long).
+Espèces : vaches, cochons, moutons, chevaux, poules, abeilles (+ buffles FS25).  
+Alimentation vaches (guides stables) : herbe **40 %** · foin **80 %** · **TMR 100 %**.  
+Outputs : lait, œufs, laine, miel, fumier, lisier, vente animaux.  
+Santé/propreté abstraites ; pas de génétique / épidémies fines.  
+Rentabilité souvent discutée (setup lourd, ROI long).
 
-**À reprendre :** lien aliment ↔ production ↔ effluents.  
-**À simplifier :** pas de micro-gestion FS complète au MVP.
+**À reprendre :** lien aliment ↔ production ↔ effluents ; 2 qualités d’alimentation.  
+**À simplifier :** pas de TMR multi-étapes ni transport animaux 3D au MVP.
 
 ---
 
