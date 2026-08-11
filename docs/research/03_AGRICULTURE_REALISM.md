@@ -26,15 +26,17 @@ On abandonne au MVP :
 
 | Culture | Rôle gameplay | Rendement ordres de grandeur `[RÉEL]` | Notes |
 |---------|---------------|----------------------------------------|-------|
-| Blé tendre | Base céréalière mondiale | Monde ~3,5 t/ha ; UE souvent 6–8+ ; zones pauvres <2 | USDA/FAO : rendement mondial blé ~3,5 t/ha (MY 2023/24) |
-| Maïs grain | Fourrage/énergie, sensible eau | Fort écart régional (3–12 t/ha) | Très sensible irrigation / pluie |
-| Soja | Protéine, lien élevage | ~2,3–3,9 t/ha selon fermes agri benchmark | Clé interdépendance |
-| Colza / canola | Oléagineux, rotation | Variable ~2–4 t/ha Europe | Bon pour diversification |
-| Orge | Alternative blé, fourrage | Proche blé, souvent un peu moins | |
+| Blé tendre | Base céréalière | FR ~6,2–7,4 t/ha (2023–24) ; monde ~2–8 | Meunerie : protéines souvent ≥11–11,5 % |
+| Maïs grain | Fourrage/énergie, sensible eau | FR ~9–10 ; US ~11 t/ha ; Brésil ~5–6 | Stress floraison très punitif |
+| Soja | Protéine, lien élevage | FR ~2,5–2,7 ; US/BR ~3,4 ; Arg ~3,0 | Peu/pas d’N minéral (fixation) |
+| Colza | Oléagineux, rotation | FR ~3,0–3,7 t/ha | Retour ≥3–4 ans conseillé |
+| Orge | Alternative blé / fourrage / brassicole | FR ~6–7 t/ha | Brassage : protéines plafonnées |
 
-Sources ordres de grandeur : USDA PSD, FAOSTAT, agri benchmark / Purdue (soja).
+Sources : Agreste, FranceAgriMer, USDA PSD/IPAD, FAOSTAT, Terres Univia.
 
-**Valeurs de jeu `[GD]` :** on n’affiche pas forcément t/ha réels ; on peut utiliser une unité IG calibrée, mais le **ratio** entre cultures doit coller aux ordres de grandeur.
+**Calendriers `[RÉEL]` :** HN — blé/colza semis automne ; maïs/soja printemps (sol ≥10 °C). HS : décalage ~+6 mois. FAO Crop Calendar / SEMAE / Chambres d’agriculture.
+
+**Valeurs de jeu `[GD]` :** unités IG OK si les **ratios** entre cultures et régions collent à ces bornes.
 
 ---
 
