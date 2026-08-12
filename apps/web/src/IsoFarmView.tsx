@@ -1025,8 +1025,13 @@ export function IsoFarmView({
       // navigateurs : rien ne sert de peindre une scène que personne ne voit.
       if (document.hidden) return;
       const now = performance.now();
+      // La toute première image n'a pas de précédente à comparer : la laisser
+      // passer sans condition. La version d'avant lui appliquait un délai de
+      // repli inférieur au seuil, sortait avant d'avoir horodaté l'image, et
+      // se retrouvait à refuser indéfiniment de peindre — grille noire sur
+      // tout appareil passé en réglage sobre.
+      if (lastFrame && quality.maxFps && now - lastFrame < 1000 / quality.maxFps - 1) return;
       const delta = lastFrame ? now - lastFrame : 16;
-      if (quality.maxFps && delta < 1000 / quality.maxFps - 1) return;
       lastFrame = now;
       governor(delta);
 

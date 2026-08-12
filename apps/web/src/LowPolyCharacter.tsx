@@ -202,7 +202,10 @@ export function LowPolyCharacter({ code, active = false, height = 190 }: Props) 
     const start = performance.now();
     const tick = () => {
       const now = performance.now();
-      if (document.hidden || (quality.maxFps && now - lastFrame < 1000 / quality.maxFps - 1)) {
+      // La première image passe toujours : sans précédente à comparer, la
+      // brider reviendrait à ne jamais rien peindre.
+      const tooSoon = Boolean(lastFrame) && now - lastFrame < 1000 / Math.max(1, quality.maxFps) - 1;
+      if (document.hidden || (quality.maxFps && tooSoon)) {
         raf = requestAnimationFrame(tick);
         return;
       }

@@ -1080,7 +1080,10 @@ export function GlobeView({
       // Le globe tourne en permanence : sur une machine qui rasterise au
       // processeur, mieux vaut une rotation à trente images qu'un thread
       // principal saturé. Onglet caché, on ne peint pas du tout.
-      if (document.hidden || (quality.maxFps && now - lastFrame < 1000 / quality.maxFps - 1)) {
+      // La première image passe toujours : sans précédente à comparer, la
+      // brider reviendrait à ne jamais rien peindre.
+      const tooSoon = Boolean(lastFrame) && now - lastFrame < 1000 / Math.max(1, quality.maxFps) - 1;
+      if (document.hidden || (quality.maxFps && tooSoon)) {
         raf = requestAnimationFrame(tick);
         return;
       }
