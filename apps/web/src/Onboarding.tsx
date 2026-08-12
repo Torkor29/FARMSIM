@@ -47,6 +47,9 @@ export type WorldRegion = {
   mapH: number;
   fertility: number;
   weather: WeatherState;
+  crops: string[];
+  /** Faux si aucune culture ne pousse : interdit comme ferme de départ */
+  starterEligible: boolean;
   parcels: WorldParcel[];
 };
 
@@ -297,11 +300,12 @@ export function Onboarding({
               <div className="region-tabs">
                 {detail.regions.map((r) => {
                   const free = r.parcels.filter((p) => !p.taken).length;
+                  const barren = r.starterEligible === false;
                   return (
                     <button
                       key={r.code}
                       type="button"
-                      className={`region-tab ${regionCode === r.code ? "on" : ""}`}
+                      className={`region-tab ${regionCode === r.code ? "on" : ""} ${barren ? "barren" : ""}`}
                       onClick={() => {
                         setRegionCode(r.code);
                         setParcelId(null);
@@ -309,7 +313,11 @@ export function Onboarding({
                     >
                       <strong>{r.name}</strong>
                       <span>{r.climateLabel}</span>
-                      <em>{free} libres</em>
+                      {barren ? (
+                        <em className="warn">Rien n’y pousse</em>
+                      ) : (
+                        <em>{free} libres</em>
+                      )}
                     </button>
                   );
                 })}
@@ -343,6 +351,12 @@ export function Onboarding({
                       </div>
                     </dl>
                     <p className="region-risk">{region.riskNote}</p>
+                    {region.starterEligible === false && (
+                      <p className="region-barren">
+                        Ni blé ni maïs ne poussent sous ce climat. Vous pourrez acheter
+                        ici plus tard, mais pas y installer votre première ferme.
+                      </p>
+                    )}
                   </div>
 
                   <div className="parcel-board">
@@ -359,11 +373,13 @@ export function Onboarding({
                             key={p.id}
                             type="button"
                             className={`parcel-tile ${p.taken ? "taken" : "free"} ${sel ? "sel" : ""}`}
-                            disabled={p.taken}
+                            disabled={p.taken || region.starterEligible === false}
                             title={
-                              p.taken
-                                ? `${p.label} — exploité par ${p.ownerName ?? "un autre joueur"}`
-                                : `${p.label} — fertilité ${(p.fertility * 100).toFixed(0)} %`
+                              region.starterEligible === false
+                                ? `${p.label} — aucune culture viable ici`
+                                : p.taken
+                                  ? `${p.label} — exploité par ${p.ownerName ?? "un autre joueur"}`
+                                  : `${p.label} — fertilité ${(p.fertility * 100).toFixed(0)} %`
                             }
                             onClick={() => setParcelId(p.id)}
                           >

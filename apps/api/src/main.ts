@@ -23,6 +23,7 @@ import {
   WEATHER_LABELS,
   WORLD,
   CONTINENT_BY_CODE,
+  REGION_BY_CODE,
   CLASS_PROFILES,
   parcelName,
   marketValue,
@@ -487,13 +488,20 @@ app.get("/world/:continent", async (req, res) => {
       accent: continent.accent,
       season: currentSeason(continent.hemisphere as Hemisphere, now),
     },
-    regions: zones.map((z) => ({
+    regions: zones.map((z) => {
+      const region = REGION_BY_CODE[z.code];
+      const crops = region?.crops ?? [];
+      return {
       code: z.code,
       name: z.name,
       city: z.city,
       koppen: z.koppen,
       climateLabel: z.climateLabel,
       riskNote: z.riskNote,
+      crops,
+      // Une région où ni blé ni maïs ne pousse est un piège pour un débutant :
+      // elle reste achetable plus tard, mais jamais comme ferme de départ.
+      starterEligible: crops.length > 0,
       lat: z.lat,
       lon: z.lon,
       mapW: z.mapW,
@@ -512,7 +520,8 @@ app.get("/world/:continent", async (req, res) => {
         taken: Boolean(p.farmId),
         ownerName: p.farm?.user?.displayName ?? null,
       })),
-    })),
+      };
+    }),
   });
 });
 
@@ -547,8 +556,14 @@ app.post("/world/claim", async (req, res) => {
 
       const parcel = await tx.parcel.findFirst({
         where: { id: body.data.parcelId, farmId: null },
+        include: { zone: true },
       });
       if (!parcel) throw new Error("PARCEL_UNAVAILABLE");
+      // La parcelle de départ ne doit jamais être un piège : on refuse les
+      // régions où aucune culture du catalogue ne pousse.
+      if ((REGION_BY_CODE[parcel.zone.code]?.crops.length ?? 0) === 0) {
+        throw new Error("REGION_NOT_STARTER");
+      }
 
       await tx.user.update({
         where: { id: user.id },
@@ -599,6 +614,12 @@ app.post("/world/claim", async (req, res) => {
     }
     if (msg === "ALREADY_SETTLED") {
       res.status(409).json({ error: "Vous possédez déjà une exploitation" });
+      return;
+    }
+    if (msg === "REGION_NOT_STARTER") {
+      res.status(409).json({
+        error: "Aucune culture ne pousse ici — choisissez une autre région pour débuter",
+      });
       return;
     }
     console.error(e);

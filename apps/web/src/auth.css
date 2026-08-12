@@ -568,6 +568,18 @@
 .region-tab strong { font-size: 0.95rem; color: var(--teal-700); }
 .region-tab span { font-size: 0.76rem; color: var(--ink-soft); }
 .region-tab em { font-style: normal; font-size: 0.74rem; font-weight: 800; color: var(--gold-700); }
+.region-tab em.warn { color: var(--danger); }
+.region-tab.barren { opacity: 0.72; border-style: dashed; }
+.region-tab.barren.on { opacity: 1; border-style: solid; border-color: var(--danger); }
+.region-barren {
+  margin: 0.35rem 0 0;
+  padding: 0.55rem 0.7rem;
+  border-radius: var(--r-sm);
+  background: #fdecea;
+  color: #a8382a;
+  font-size: 0.84rem;
+  font-weight: 600;
+}
 
 .region-panel {
   display: grid;
