@@ -23,6 +23,8 @@ export type IsoBuilding = {
   type: BuildingType;
   originX: number;
   originY: number;
+  /** 1 à 5 — le bâtiment grandit et se garnit à chaque palier */
+  level?: number;
 };
 
 export type IsoSim = {
@@ -92,24 +94,31 @@ function cropColor(c: IsoCell, sim?: IsoSim): number {
   return g.lerp(r, Math.min(1, p)).getHex();
 }
 
+/**
+ * Palette commune : toit vert sarcelle, murs bois miel, socle herbe — la
+ * cohérence de la ferme vient du toit, la lecture du bâtiment vient du corps.
+ */
+const ROOF_TEAL = 0x3f8f7a;
+const WOOD_WARM = 0xc79a5f;
+
 function buildingPalette(type: BuildingType): { body: number; roof: number; h: number } {
   switch (type) {
     case "SILO":
-      return { body: 0xb8c0c8, roof: 0x8a939c, h: 2.4 };
+      return { body: 0xd8dde2, roof: ROOF_TEAL, h: 2.4 };
     case "HAY_BARN":
-      return { body: 0x8b6914, roof: 0x5c4030, h: 1.2 };
+      return { body: WOOD_WARM, roof: ROOF_TEAL, h: 1.2 };
     case "MACHINE_SHED":
-      return { body: 0x7a5c3a, roof: 0x3d4a3a, h: 1.35 };
+      return { body: 0xe6dcc4, roof: ROOF_TEAL, h: 1.35 };
     case "CATTLE_BARN":
-      return { body: 0x8a5a3a, roof: 0xa84828, h: 1.5 };
+      return { body: 0xb07a4a, roof: ROOF_TEAL, h: 1.5 };
     case "PIGSTY":
-      return { body: 0x9a6a4a, roof: 0x6a4030, h: 1.1 };
+      return { body: 0xa97a55, roof: ROOF_TEAL, h: 1.1 };
     case "WORKSHOP":
-      return { body: 0x6a6a6a, roof: 0x444444, h: 1.2 };
+      return { body: 0xa8adb2, roof: ROOF_TEAL, h: 1.2 };
     case "FARMHOUSE":
-      return { body: 0xe8dcc8, roof: 0xb84828, h: 1.6 };
+      return { body: 0xf2e8d4, roof: ROOF_TEAL, h: 1.6 };
     default:
-      return { body: 0x888888, roof: 0x555555, h: 1 };
+      return { body: WOOD_WARM, roof: ROOF_TEAL, h: 1 };
   }
 }
 
@@ -480,39 +489,90 @@ export function IsoFarmView({
       for (const b of bs) {
         const def = BUILDING_DEFS[b.type];
         const pal = buildingPalette(b.type);
+        const level = Math.max(1, Math.min(5, b.level ?? 1));
+        // Le bâtiment prend de la hauteur et se garnit à chaque palier.
+        const grow = 1 + (level - 1) * 0.16;
+        const height = pal.h * grow;
         const cx = ox + (b.originX + (def.w - 1) / 2) * step;
         const cz = oz + (b.originY + (def.h - 1) / 2) * step;
         const bw = def.w * step - gap;
         const bd = def.h * step - gap;
+        const bodyMat = new THREE.MeshLambertMaterial({
+          color: pal.body,
+          flatShading: true,
+        });
+        const roofMat = new THREE.MeshLambertMaterial({
+          color: pal.roof,
+          flatShading: true,
+        });
 
         if (b.type === "SILO") {
-          const cyl = new THREE.Mesh(
-            new THREE.CylinderGeometry(0.45, 0.5, pal.h, 8),
-            new THREE.MeshLambertMaterial({ color: pal.body, flatShading: true }),
-          );
-          cyl.position.set(cx, pal.h / 2, cz);
-          cyl.castShadow = true;
-          buildingGroup.add(cyl);
-          const cap = new THREE.Mesh(
-            new THREE.ConeGeometry(0.52, 0.35, 8),
-            new THREE.MeshLambertMaterial({ color: pal.roof, flatShading: true }),
-          );
-          cap.position.set(cx, pal.h + 0.15, cz);
-          buildingGroup.add(cap);
+          // Un silo de plus tous les deux paliers, comme sur la planche d'art.
+          const tanks = 1 + Math.floor(level / 2);
+          const spread = 0.34;
+          for (let i = 0; i < tanks; i++) {
+            const offX = (i - (tanks - 1) / 2) * spread;
+            const tankH = height * (i === 0 ? 1 : 0.86);
+            const cyl = new THREE.Mesh(
+              new THREE.CylinderGeometry(0.3, 0.33, tankH, 10),
+              bodyMat,
+            );
+            cyl.position.set(cx + offX, tankH / 2, cz + (i % 2 ? 0.18 : -0.12));
+            cyl.castShadow = true;
+            buildingGroup.add(cyl);
+            const cap = new THREE.Mesh(new THREE.ConeGeometry(0.35, 0.28, 10), roofMat);
+            cap.position.set(cyl.position.x, tankH + 0.12, cyl.position.z);
+            buildingGroup.add(cap);
+          }
         } else {
-          const body = new THREE.Mesh(
-            new THREE.BoxGeometry(bw, pal.h, bd),
-            new THREE.MeshLambertMaterial({ color: pal.body, flatShading: true }),
-          );
-          body.position.set(cx, pal.h / 2, cz);
+          const body = new THREE.Mesh(new THREE.BoxGeometry(bw, height, bd), bodyMat);
+          body.position.set(cx, height / 2, cz);
           body.castShadow = true;
           buildingGroup.add(body);
-          const roof = new THREE.Mesh(
-            new THREE.BoxGeometry(bw * 1.08, 0.18, bd * 1.08),
-            new THREE.MeshLambertMaterial({ color: pal.roof, flatShading: true }),
+
+          // Toit à deux pans : le prisme donne la silhouette de grange.
+          const ridge = new THREE.Mesh(
+            new THREE.CylinderGeometry(bd * 0.62, bd * 0.62, bw * 1.06, 3, 1),
+            roofMat,
           );
-          roof.position.set(cx, pal.h + 0.05, cz);
-          roof.rotation.z = 0.08;
+          ridge.rotation.z = Math.PI / 2;
+          ridge.rotation.y = Math.PI / 2;
+          ridge.position.set(cx, height + bd * 0.24, cz);
+          ridge.castShadow = true;
+          buildingGroup.add(ridge);
+
+          if (level >= 3) {
+            const chimney = new THREE.Mesh(
+              new THREE.BoxGeometry(0.14, 0.34, 0.14),
+              new THREE.MeshLambertMaterial({ color: 0x9a6a52, flatShading: true }),
+            );
+            chimney.position.set(cx + bw * 0.28, height + bd * 0.42, cz - bd * 0.2);
+            buildingGroup.add(chimney);
+          }
+          if (level >= 4) {
+            const annex = new THREE.Mesh(
+              new THREE.BoxGeometry(bw * 0.34, height * 0.55, bd * 0.5),
+              bodyMat,
+            );
+            annex.position.set(cx - bw * 0.58, height * 0.275, cz + bd * 0.16);
+            annex.castShadow = true;
+            buildingGroup.add(annex);
+          }
+          if (level >= 5) {
+            const tank = new THREE.Mesh(
+              new THREE.CylinderGeometry(0.2, 0.2, height * 0.9, 10),
+              new THREE.MeshLambertMaterial({ color: 0xd8dde2, flatShading: true }),
+            );
+            tank.position.set(cx + bw * 0.56, height * 0.45, cz - bd * 0.24);
+            tank.castShadow = true;
+            buildingGroup.add(tank);
+          }
+
+          const roof = new THREE.Mesh(
+            new THREE.BoxGeometry(bw * 1.08, 0.12, bd * 1.08),
+            roofMat,
+          );
+          roof.position.set(cx, height + 0.02, cz);
           buildingGroup.add(roof);
         }
       }

@@ -24,11 +24,25 @@ import {
   WORLD,
   CONTINENT_BY_CODE,
   CLASS_PROFILES,
-  landPrice,
   parcelName,
+  marketValue,
+  askPrice,
+  accessIndex,
+  canAcquire,
+  landTax,
+  landStatusFor,
+  estateBonuses,
+  LAND_CAPS,
+  LAND_STATUS_LABELS,
+  type AcquisitionRule,
+  buildingStatsAtLevel,
+  buildingUpgradeCost,
+  buildingLevelDef,
+  MAX_BUILDING_LEVEL,
   currentSeason,
   seasonProgress,
-  requiredLevelForParcel,
+  pickWeather,
+  climateYieldFactor,
   type Hemisphere,
   type BuildingType as SharedBuildingType,
   type MachineType,
@@ -41,7 +55,6 @@ import {
   applyMachineWear,
   repairMachineCost,
   machineCanWork,
-  tickWeather,
   marketNpcPressure,
   buildSessionResume,
   harvestMoisture,
@@ -154,6 +167,68 @@ async function applyWearToMachine(
   return wear;
 }
 
+const ACQUISITION_ERRORS: Record<AcquisitionRule, string> = {
+  LEVEL_TOO_LOW: "Votre niveau est trop bas pour une parcelle de plus",
+  MAX_PARCELS_PER_PLAYER: `Plafond atteint : ${LAND_CAPS.global} parcelles maximum`,
+  MAX_PARCELS_PER_REGION: `Plafond régional atteint : ${LAND_CAPS.perRegion} parcelles par région`,
+  MAX_REGION_SHARE_PLAYER: `Vous détiendriez plus de ${Math.round(LAND_CAPS.regionSharePct * 100)} % de la région`,
+};
+
+type OwnedParcel = { zoneId: string; mapX: number; mapY: number };
+
+/**
+ * Valorisation d'une parcelle : la valeur publique sert à la taxe et à
+ * l'affichage, le prix demandé ajoute l'adjacence et l'escalade patrimoniale
+ * propres à l'acheteur.
+ */
+async function quoteParcel(
+  target: { id: string; zoneId: string; mapX: number; mapY: number; fertility: number; accessIndex: number; zone: { koppen: string; continentCode: string } },
+  owned: OwnedParcel[],
+  _playerLevel: number,
+) {
+  const [regionTotal, regionTaken, continentTotal, continentTaken] = await Promise.all([
+    prisma.parcel.count({ where: { zoneId: target.zoneId } }),
+    prisma.parcel.count({ where: { zoneId: target.zoneId, farmId: { not: null } } }),
+    prisma.parcel.count({ where: { zone: { continentCode: target.zone.continentCode } } }),
+    prisma.parcel.count({
+      where: { zone: { continentCode: target.zone.continentCode }, farmId: { not: null } },
+    }),
+  ]);
+
+  const neighborDensity = regionTotal > 0 ? regionTaken / regionTotal : 0;
+  const occupancy = continentTotal > 0 ? continentTaken / continentTotal : 0;
+  const adjacentOwnedBorders = owned.filter(
+    (p) =>
+      p.zoneId === target.zoneId &&
+      ((Math.abs(p.mapX - target.mapX) === 1 && p.mapY === target.mapY) ||
+        (Math.abs(p.mapY - target.mapY) === 1 && p.mapX === target.mapX)),
+  ).length;
+
+  const publicInput = {
+    fertility: target.fertility,
+    koppen: target.zone.koppen,
+    accessIndex: target.accessIndex,
+    neighborDensity,
+    occupancy,
+  };
+  const priced = askPrice({
+    ...publicInput,
+    adjacentOwnedBorders,
+    ownershipRank: owned.length + 1,
+  });
+
+  return {
+    parcelId: target.id,
+    marketValue: marketValue(publicInput),
+    total: priced.total,
+    breakdown: priced.breakdown,
+    adjacentOwnedBorders,
+    ownershipRank: owned.length + 1,
+    neighborDensity,
+    occupancy,
+  };
+}
+
 async function getFarmBonuses(farmId: string) {
   const buildings = await prisma.building.findMany({
     where: { parcel: { farmId } },
@@ -168,16 +243,16 @@ async function getFarmBonuses(farmId: string) {
   let xpBonus = 0;
   let softDryer = false;
   for (const b of buildings) {
-    const def = BUILDING_DEFS[b.type as SharedBuildingType];
-    yieldBonus += def.yieldBonus ?? 0;
-    storageGrain += def.storageGrain ?? 0;
-    storageHay += def.storageHay ?? 0;
-    machineSlots += def.machineSlots ?? 0;
-    cattleSlots += def.cattleSlots ?? 0;
-    pigSlots += def.pigSlots ?? 0;
-    repairDiscount += def.repairDiscount ?? 0;
-    xpBonus += def.xpBonus ?? 0;
-    if (def.softDryer) softDryer = true;
+    const stats = buildingStatsAtLevel(b.type as SharedBuildingType, b.level);
+    yieldBonus += stats.yieldBonus ?? 0;
+    storageGrain += stats.storageGrain ?? 0;
+    storageHay += stats.storageHay ?? 0;
+    machineSlots += stats.machineSlots ?? 0;
+    cattleSlots += stats.cattleSlots ?? 0;
+    pigSlots += stats.pigSlots ?? 0;
+    repairDiscount += stats.repairDiscount ?? 0;
+    xpBonus += stats.xpBonus ?? 0;
+    if (stats.softDryer) softDryer = true;
   }
   return {
     yieldBonus: Math.min(0.1, yieldBonus),
@@ -228,6 +303,13 @@ async function ensureSeed() {
               0.25,
               Math.min(0.97, region.fertility * (1.08 - edge * 0.35)),
             );
+            // La distance au hub de marché fait le gros de l'indice d'accès :
+            // le centre de la région vaut plus cher que ses confins.
+            const hubDistance = Math.max(
+              Math.abs(mx - Math.floor((region.mapW - 1) / 2)),
+              Math.abs(my - Math.floor((region.mapH - 1) / 2)),
+            );
+            const access = accessIndex({ hubDistance, road: 0.6, silo: 0.3, rail: 0.1 });
             const parcel = await prisma.parcel.create({
               data: {
                 zoneId: zone.id,
@@ -237,11 +319,14 @@ async function ensureSeed() {
                 gridW: DEFAULT_GRID.w,
                 gridH: DEFAULT_GRID.h,
                 fertility,
-                landPrice: landPrice({
+                accessIndex: access,
+                landPrice: marketValue({
                   fertility,
-                  regionPriceMult: region.priceMult,
-                  continentPriceMult: continent.priceMult,
-                  ownedCount: 0,
+                  koppen: region.koppen,
+                  cropFitA: region.crops.length >= 2,
+                  accessIndex: access,
+                  neighborDensity: 0,
+                  occupancy: 0,
                 }),
               },
             });
@@ -555,19 +640,19 @@ async function runWorldTick() {
   const snapshots = await prisma.weatherSnapshot.findMany();
   const weatherOut: { zoneCode: string; state: string; changed: boolean }[] = [];
 
+  const now = Date.now();
   for (const snap of snapshots) {
     const zone = zones.find((z) => z.code === snap.zoneCode);
-    const next = tickWeather({
-      current: snap.state as WeatherState,
-      koppen: zone?.koppen ?? "Cfb",
-    });
-    if (next.changed) {
-      await prisma.weatherSnapshot.update({
-        where: { id: snap.id },
-        data: { state: next.state },
-      });
+    const koppen = zone?.koppen ?? "Cfb";
+    const season = currentSeason((zone?.hemisphere as Hemisphere) ?? "N", now);
+    // La météo suit le climat Köppen réel de la région et sa saison locale :
+    // il ne peut pas neiger en Méridie l'été, ni faire sec en mousson.
+    const state = pickWeather(koppen, season, Math.random);
+    const changed = state !== snap.state;
+    if (changed) {
+      await prisma.weatherSnapshot.update({ where: { id: snap.id }, data: { state } });
     }
-    weatherOut.push({ zoneCode: snap.zoneCode, state: next.state, changed: next.changed });
+    weatherOut.push({ zoneCode: snap.zoneCode, state, changed });
   }
 
   const states = weatherOut.map((w) => w.state as WeatherState);
@@ -898,6 +983,13 @@ app.get("/parcels/:id", async (req, res) => {
   const weather = await prisma.weatherSnapshot.findFirst({ where: { zoneCode: parcel.zone.code } });
   const bonuses = parcel.farmId ? await getFarmBonuses(parcel.farmId) : null;
   const now = Date.now();
+  const season = currentSeason((parcel.zone.hemisphere as Hemisphere) ?? "N", now);
+  const climate = {
+    season,
+    koppen: parcel.zone.koppen,
+    label: parcel.zone.climateLabel,
+    yieldFactor: climateYieldFactor(parcel.zone.koppen, season),
+  };
   const cellSims = [];
   for (const c of parcel.cells) {
     if (c.kind === "CROP" && c.crop && c.plantedAt) {
@@ -920,7 +1012,7 @@ app.get("/parcels/:id", async (req, res) => {
       cellSims.push({ x: c.x, y: c.y, sim });
     }
   }
-  res.json({ parcel, weather, bonuses, cellSims });
+  res.json({ parcel, weather, bonuses, cellSims, climate });
 });
 
 /** Achat parcelle adjacente (ou 1ʳᵉ parcelle si ferme sans terre) */
@@ -948,50 +1040,80 @@ app.post("/parcels/:id/buy", async (req, res) => {
   }
 
   const owned = user.farm.parcels;
-  const requiredLevel = requiredLevelForParcel(owned.length + 1);
-  if (user.level < requiredLevel) {
-    res.status(403).json({
-      error: `Niveau ${requiredLevel} requis pour une ${owned.length + 1}ᵉ parcelle`,
-    });
+  const quote = await quoteParcel(target, owned, user.level);
+
+  const gate = canAcquire({
+    playerLevel: user.level,
+    ownedTotal: owned.length,
+    ownedInRegion: owned.filter((p) => p.zoneId === target.zoneId).length,
+    regionParcelCount: await prisma.parcel.count({ where: { zoneId: target.zoneId } }),
+  });
+  if (!gate.ok) {
+    res.status(403).json({ error: ACQUISITION_ERRORS[gate.reason!] ?? "Acquisition refusée" });
     return;
   }
-
-  const adjacentOwned = owned.filter(
-    (p) =>
-      p.zoneId === target.zoneId &&
-      ((Math.abs(p.mapX - target.mapX) === 1 && p.mapY === target.mapY) ||
-        (Math.abs(p.mapY - target.mapY) === 1 && p.mapX === target.mapX)),
-  ).length;
-
-  const continent = CONTINENT_BY_CODE[target.zone.continentCode];
-  const price = landPrice({
-    fertility: target.fertility,
-    regionPriceMult: target.zone.priceMult,
-    continentPriceMult: continent?.priceMult ?? 1,
-    ownedCount: owned.length,
-    adjacentOwned,
-  });
-
-  if (user.crd < price) {
-    res.status(402).json({ error: `CRD insuffisants — ${price} requis` });
+  if (user.crd < quote.total) {
+    res.status(402).json({ error: `CRD insuffisants — ${quote.total} requis` });
     return;
   }
 
   const updated = await prisma.$transaction(async (tx) => {
     await tx.user.update({
       where: { id: user.id },
-      data: { crd: { decrement: price } },
+      data: { crd: { decrement: quote.total } },
     });
     await tx.parcel.update({
       where: { id: target.id },
-      data: { farmId: user.farm!.id, landPrice: price },
+      data: { farmId: user.farm!.id, landPrice: quote.marketValue },
     });
     return tx.user.findUnique({
       where: { id: user.id },
       include: { farm: { include: farmInclude() } },
     });
   });
-  res.json({ ...updated, paid: price, adjacentOwned });
+  res.json({
+    ...updated,
+    paid: quote.total,
+    marketValue: quote.marketValue,
+    breakdown: quote.breakdown,
+    adjacentOwned: quote.adjacentOwnedBorders,
+  });
+});
+
+/** Devis détaillé avant achat : le joueur voit chaque facteur du prix. */
+app.get("/parcels/:id/quote", async (req, res) => {
+  const auth = await userFromAuthHeader(req);
+  if (!auth) {
+    res.status(401).json({ error: "Session invalide" });
+    return;
+  }
+  const target = await prisma.parcel.findUnique({
+    where: { id: req.params.id },
+    include: { zone: true },
+  });
+  if (!target) {
+    res.status(404).json({ error: "Parcelle introuvable" });
+    return;
+  }
+  const farm = await prisma.farm.findUnique({
+    where: { userId: auth.user.id },
+    include: { parcels: true },
+  });
+  const owned = farm?.parcels ?? [];
+  const quote = await quoteParcel(target, owned, auth.user.level);
+  const gate = canAcquire({
+    playerLevel: auth.user.level,
+    ownedTotal: owned.length,
+    ownedInRegion: owned.filter((p) => p.zoneId === target.zoneId).length,
+    regionParcelCount: await prisma.parcel.count({ where: { zoneId: target.zoneId } }),
+  });
+  res.json({
+    ...quote,
+    taken: Boolean(target.farmId),
+    canAcquire: gate.ok,
+    reason: gate.ok ? null : (ACQUISITION_ERRORS[gate.reason!] ?? "Acquisition refusée"),
+    caps: LAND_CAPS,
+  });
 });
 
 app.post("/parcels/:id/plant", async (req, res) => {
@@ -1329,6 +1451,62 @@ app.post("/parcels/:id/build", async (req, res) => {
 
   const bonuses = await getFarmBonuses(parcel.farmId!);
   res.status(201).json({ building, bonuses, def });
+});
+
+/** Passage d'un bâtiment au palier suivant (5 niveaux au total). */
+app.post("/buildings/:id/upgrade", async (req, res) => {
+  const body = z.object({ userId: z.string() }).safeParse(req.body);
+  if (!body.success) {
+    res.status(400).json(body.error.flatten());
+    return;
+  }
+  const building = await prisma.building.findUnique({
+    where: { id: req.params.id },
+    include: { parcel: { include: { farm: true } } },
+  });
+  if (!building?.parcel.farm || building.parcel.farm.userId !== body.data.userId) {
+    res.status(403).json({ error: "Bâtiment non possédé" });
+    return;
+  }
+  if (building.level >= MAX_BUILDING_LEVEL) {
+    res.status(409).json({ error: "Niveau maximum atteint" });
+    return;
+  }
+  const cost = buildingUpgradeCost(building.type as SharedBuildingType, building.level);
+  if (cost === null) {
+    res.status(409).json({ error: "Niveau maximum atteint" });
+    return;
+  }
+  const nextDef = buildingLevelDef(building.level + 1);
+  const user = await prisma.user.findUnique({ where: { id: body.data.userId } });
+  if (!user) {
+    res.status(404).json({ error: "Joueur introuvable" });
+    return;
+  }
+  if (user.level < nextDef.requiredLevel) {
+    res.status(403).json({ error: `Niveau joueur ${nextDef.requiredLevel} requis` });
+    return;
+  }
+  if (user.crd < cost) {
+    res.status(402).json({ error: `CRD insuffisants — ${cost} requis` });
+    return;
+  }
+
+  const updated = await prisma.$transaction(async (tx) => {
+    await tx.user.update({ where: { id: user.id }, data: { crd: { decrement: cost } } });
+    return tx.building.update({
+      where: { id: building.id },
+      data: { level: building.level + 1 },
+    });
+  });
+  const bonuses = await getFarmBonuses(building.parcel.farm.id);
+  res.json({
+    building: updated,
+    cost,
+    levelName: nextDef.name,
+    stats: buildingStatsAtLevel(building.type as SharedBuildingType, updated.level),
+    bonuses,
+  });
 });
 
 app.post("/machines/buy", async (req, res) => {

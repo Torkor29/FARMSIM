@@ -10,6 +10,8 @@
  * @see docs/research/32_LAND_ECONOMY.md
  */
 
+import { EXTRA_REGIONS } from "./climate.js";
+
 export type Hemisphere = "N" | "S";
 
 export type Difficulty = "EASY" | "MEDIUM" | "HARD";
@@ -528,6 +530,14 @@ export const WORLD: ContinentDef[] = [
   },
 ];
 
+// Les régions supplémentaires vivent dans climate.ts, avec la table météo
+// détaillée qui les accompagne ; on les recolle ici pour que `WORLD` reste
+// l'unique source de vérité du monde.
+for (const continent of WORLD) {
+  const extra = EXTRA_REGIONS[continent.code];
+  if (extra) continent.regions.push(...extra);
+}
+
 export const CONTINENT_BY_CODE: Record<string, ContinentDef> = Object.fromEntries(
   WORLD.map((c) => [c.code, c]),
 );
@@ -608,87 +618,6 @@ export function weatherOdds(
     STORM: season === "SUMMER" ? 0.08 : 0.04,
     SNOW: cold ? 0.06 : 0,
   };
-}
-
-/* ------------------------------------------------------------------ */
-/* Économie foncière                                                   */
-/* ------------------------------------------------------------------ */
-
-/** Prix de base d'une parcelle de 12×12 `[GD]` */
-export const LAND_BASE_PRICE = 3000;
-
-/** Majoration par parcelle déjà possédée — rend l'expansion coûteuse `[GD]` */
-export const LAND_OWNERSHIP_STEP = 0.45;
-
-/** Bonus de rendement par parcelle adjacente possédée `[GD]` */
-export const ADJACENCY_YIELD_BONUS = 0.03;
-export const ADJACENCY_YIELD_CAP = 0.12;
-
-/** Bonus si l'on possède des terres dans les deux hémisphères `[GD]` */
-export const HEMISPHERE_HEDGE_BONUS = 0.05;
-
-/** Entretien annuel, en fraction du prix, à partir de la 3ᵉ parcelle `[GD]` */
-export const LAND_UPKEEP_RATE = 0.015;
-
-/**
- * Prix d'une parcelle.
- *
- * La fertilité et la position (région, continent) fixent la valeur intrinsèque ;
- * le nombre de parcelles déjà possédées applique une majoration croissante qui
- * empêche un joueur d'accaparer une région entière.
- */
-export function landPrice(opts: {
-  fertility: number;
-  regionPriceMult: number;
-  continentPriceMult: number;
-  /** Parcelles déjà possédées par l'acheteur */
-  ownedCount: number;
-  /** Parcelles voisines déjà possédées par l'acheteur */
-  adjacentOwned?: number;
-}): number {
-  const intrinsic =
-    LAND_BASE_PRICE *
-    (0.55 + opts.fertility * 0.9) *
-    opts.regionPriceMult *
-    opts.continentPriceMult;
-  const scarcity = 1 + LAND_OWNERSHIP_STEP * Math.max(0, opts.ownedCount);
-  // Regrouper ses terres coûte un peu plus cher : la synergie se paie.
-  const clustering = 1 + 0.08 * Math.min(4, opts.adjacentOwned ?? 0);
-  return Math.round(intrinsic * scarcity * clustering);
-}
-
-/** La première parcelle d'un joueur est offerte. */
-export function starterPrice(): number {
-  return 0;
-}
-
-/** Bonus de rendement issu de la structure du patrimoine foncier. */
-export function estateYieldBonus(opts: {
-  adjacentOwned: number;
-  hemispheres: Hemisphere[];
-}): number {
-  const adjacency = Math.min(
-    ADJACENCY_YIELD_CAP,
-    ADJACENCY_YIELD_BONUS * Math.max(0, opts.adjacentOwned),
-  );
-  const hedge =
-    opts.hemispheres.includes("N") && opts.hemispheres.includes("S")
-      ? HEMISPHERE_HEDGE_BONUS
-      : 0;
-  return adjacency + hedge;
-}
-
-/** Entretien dû par tour, exonéré sur les deux premières parcelles. */
-export function landUpkeep(parcelPrices: number[]): number {
-  if (parcelPrices.length <= 2) return 0;
-  const taxed = [...parcelPrices].sort((a, b) => a - b).slice(2);
-  return Math.round(taxed.reduce((sum, p) => sum + p * LAND_UPKEEP_RATE, 0));
-}
-
-/** Palier de niveau requis pour posséder la n-ième parcelle `[GD]` */
-export function requiredLevelForParcel(index: number): number {
-  if (index <= 1) return 1;
-  return Math.min(20, 1 + Math.ceil((index - 1) * 1.5));
 }
 
 /* ------------------------------------------------------------------ */

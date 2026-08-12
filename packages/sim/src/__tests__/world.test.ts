@@ -1,23 +1,22 @@
 import {
   ALL_REGIONS,
   CLASS_PROFILES,
+  CLIMATE_WEATHER,
   SEASON_DURATION_MS,
   WORLD,
+  climateWeatherOdds,
   currentSeason,
-  estateYieldBonus,
-  landPrice,
-  landUpkeep,
   parcelName,
-  requiredLevelForParcel,
   weatherOdds,
 } from "@farmsim/shared";
 
 describe("monde", () => {
-  it("expose six continents dotés de régions", () => {
+  it("expose six continents de six régions chacun", () => {
     expect(WORLD).toHaveLength(6);
     for (const c of WORLD) {
-      expect(c.regions.length).toBeGreaterThanOrEqual(4);
+      expect(c.regions).toHaveLength(6);
     }
+    expect(ALL_REGIONS).toHaveLength(36);
   });
 
   it("n’utilise aucun code de région en double", () => {
@@ -65,53 +64,36 @@ describe("saisons", () => {
   });
 });
 
-describe("économie foncière", () => {
-  const base = { fertility: 0.8, regionPriceMult: 1, continentPriceMult: 1 };
-
-  it("fait grimper le prix à chaque parcelle possédée", () => {
-    const first = landPrice({ ...base, ownedCount: 0 });
-    const third = landPrice({ ...base, ownedCount: 2 });
-    expect(third).toBeGreaterThan(first * 1.5);
+describe("table climatique détaillée", () => {
+  it("couvre chaque code Köppen utilisé par une région", () => {
+    for (const r of ALL_REGIONS) {
+      expect(CLIMATE_WEATHER[r.koppen]).toBeDefined();
+    }
   });
 
-  it("valorise la terre fertile", () => {
-    const poor = landPrice({ ...base, fertility: 0.4, ownedCount: 0 });
-    const rich = landPrice({ ...base, fertility: 0.9, ownedCount: 0 });
-    expect(rich).toBeGreaterThan(poor);
+  it("somme chaque distribution à 1, pour tous les climats et saisons", () => {
+    for (const [koppen, seasons] of Object.entries(CLIMATE_WEATHER)) {
+      for (const [season, odds] of Object.entries(seasons)) {
+        const total = Object.values(odds).reduce((a, b) => a + b, 0);
+        expect({ koppen, season, total: Number(total.toFixed(3)) }).toEqual({
+          koppen,
+          season,
+          total: 1,
+        });
+      }
+    }
   });
 
-  it("facture un supplément pour agrandir un bloc existant", () => {
-    const isolated = landPrice({ ...base, ownedCount: 1, adjacentOwned: 0 });
-    const clustered = landPrice({ ...base, ownedCount: 1, adjacentOwned: 3 });
-    expect(clustered).toBeGreaterThan(isolated);
+  it("distingue deux climats tempérés que l’ancienne table confondait", () => {
+    const mediterranean = climateWeatherOdds("Csa", "SUMMER");
+    const oceanic = climateWeatherOdds("Cfb", "SUMMER");
+    expect(mediterranean.CLEAR).toBeGreaterThan(oceanic.CLEAR);
+    expect(mediterranean.RAIN).toBeLessThan(oceanic.RAIN);
   });
 
-  it("récompense le regroupement des parcelles, avec un plafond", () => {
-    expect(estateYieldBonus({ adjacentOwned: 1, hemispheres: ["N"] })).toBeCloseTo(0.03);
-    expect(estateYieldBonus({ adjacentOwned: 99, hemispheres: ["N"] })).toBeCloseTo(0.12);
-  });
-
-  it("récompense la présence dans les deux hémisphères", () => {
-    const single = estateYieldBonus({ adjacentOwned: 0, hemispheres: ["N"] });
-    const hedged = estateYieldBonus({ adjacentOwned: 0, hemispheres: ["N", "S"] });
-    expect(hedged - single).toBeCloseTo(0.05);
-  });
-
-  it("exonère d’entretien les deux premières parcelles", () => {
-    expect(landUpkeep([3000, 5000])).toBe(0);
-    expect(landUpkeep([3000, 5000, 10000])).toBeGreaterThan(0);
-  });
-
-  it("taxe les parcelles les plus chères en premier", () => {
-    // Les deux moins chères sont exonérées : seule la plus chère est taxée.
-    expect(landUpkeep([1000, 2000, 10000])).toBe(150);
-  });
-
-  it("verrouille l’expansion derrière des paliers de niveau", () => {
-    expect(requiredLevelForParcel(1)).toBe(1);
-    expect(requiredLevelForParcel(2)).toBeGreaterThan(1);
-    expect(requiredLevelForParcel(10)).toBeGreaterThan(requiredLevelForParcel(5));
-    expect(requiredLevelForParcel(100)).toBeLessThanOrEqual(20);
+  it("réserve la neige aux climats et saisons qui la permettent", () => {
+    expect(climateWeatherOdds("Aw", "WINTER").SNOW).toBe(0);
+    expect(climateWeatherOdds("Dfb", "WINTER").SNOW).toBeGreaterThan(0);
   });
 });
 

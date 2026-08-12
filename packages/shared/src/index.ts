@@ -1,6 +1,8 @@
 /** Types & constantes partagés Farming Navigateur */
 
 export * from "./world.js";
+export * from "./climate.js";
+export * from "./land.js";
 
 export type Specialization = "CEREALIER" | "ELEVEUR" | "ETA";
 
@@ -200,6 +202,78 @@ export const BUILDING_DEFS: Record<BuildingType, BuildingDef> = {
     description: "HQ — léger bonus XP.",
     xpBonus: 0.02,
   },
+};
+
+/* ------------------------------------------------------------------ */
+/* Niveaux de bâtiment                                                 */
+/* ------------------------------------------------------------------ */
+
+export const MAX_BUILDING_LEVEL = 5;
+
+export type BuildingLevelDef = {
+  level: number;
+  name: string;
+  /** Coût de passage depuis le niveau précédent, en fraction du coût de base */
+  upgradeCostMult: number;
+  /** Multiplicateur appliqué à toutes les capacités et bonus du bâtiment */
+  capacityMult: number;
+  /** Niveau de joueur requis */
+  requiredLevel: number;
+};
+
+/**
+ * Cinq paliers pour chaque bâtiment. Le coût grimpe plus vite que la
+ * capacité : agrandir un bâtiment existant reste rentable, mais jamais
+ * gratuit, et le dernier palier se mérite.
+ * `[GD]`
+ */
+export const BUILDING_LEVELS: BuildingLevelDef[] = [
+  { level: 1, name: "Rudimentaire", upgradeCostMult: 0, capacityMult: 1, requiredLevel: 1 },
+  { level: 2, name: "Consolidé", upgradeCostMult: 0.8, capacityMult: 1.6, requiredLevel: 2 },
+  { level: 3, name: "Agrandi", upgradeCostMult: 1.5, capacityMult: 2.4, requiredLevel: 4 },
+  { level: 4, name: "Mécanisé", upgradeCostMult: 2.6, capacityMult: 3.4, requiredLevel: 7 },
+  { level: 5, name: "Industriel", upgradeCostMult: 4.2, capacityMult: 4.6, requiredLevel: 11 },
+];
+
+export function buildingLevelDef(level: number): BuildingLevelDef {
+  const clamped = Math.max(1, Math.min(MAX_BUILDING_LEVEL, Math.round(level)));
+  return BUILDING_LEVELS[clamped - 1];
+}
+
+/** Coût en CRD pour passer un bâtiment au niveau suivant. */
+export function buildingUpgradeCost(type: BuildingType, currentLevel: number): number | null {
+  if (currentLevel >= MAX_BUILDING_LEVEL) return null;
+  const next = buildingLevelDef(currentLevel + 1);
+  return Math.round(BUILDING_DEFS[type].cost * next.upgradeCostMult);
+}
+
+/** Capacités et bonus d'un bâtiment à un niveau donné. */
+export function buildingStatsAtLevel(type: BuildingType, level: number) {
+  const def = BUILDING_DEFS[type];
+  const mult = buildingLevelDef(level).capacityMult;
+  const scale = (v: number | undefined) => (v === undefined ? undefined : v * mult);
+  return {
+    storageGrain: scale(def.storageGrain),
+    storageHay: scale(def.storageHay),
+    machineSlots: def.machineSlots === undefined ? undefined : Math.round(def.machineSlots * mult),
+    cattleSlots: def.cattleSlots === undefined ? undefined : Math.round(def.cattleSlots * mult),
+    pigSlots: def.pigSlots === undefined ? undefined : Math.round(def.pigSlots * mult),
+    yieldBonus: scale(def.yieldBonus),
+    repairDiscount: scale(def.repairDiscount),
+    xpBonus: scale(def.xpBonus),
+    softDryer: def.softDryer,
+  };
+}
+
+/** Illustration isométrique du bâtiment, pour l'UI. */
+export const BUILDING_ART: Record<BuildingType, string> = {
+  SILO: "/assets/buildings/silo.webp",
+  HAY_BARN: "/assets/buildings/hay-barn.webp",
+  MACHINE_SHED: "/assets/buildings/machine-shed.webp",
+  CATTLE_BARN: "/assets/buildings/cattle-barn.webp",
+  PIGSTY: "/assets/buildings/pigsty.webp",
+  WORKSHOP: "/assets/buildings/workshop.webp",
+  FARMHOUSE: "/assets/buildings/farmhouse.webp",
 };
 
 export const DEFAULT_GRID = { w: 12, h: 12 } as const;

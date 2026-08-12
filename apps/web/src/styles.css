@@ -312,6 +312,64 @@ button.ghost {
 .build-item strong { font-size: 0.88rem; }
 .build-item span { font-size: 0.78rem; }
 
+.build-item.art,
+.upgrade-item {
+  display: grid;
+  grid-template-columns: 46px 1fr;
+  align-items: center;
+  gap: 0.55rem;
+  text-align: left;
+}
+.upgrade-item {
+  grid-template-columns: 40px 1fr auto;
+  padding: 0.45rem 0.55rem;
+  border-radius: var(--r-sm);
+  background: var(--sand);
+  border: 1px solid var(--line);
+}
+.build-art {
+  width: 46px;
+  height: 46px;
+  object-fit: contain;
+  filter: drop-shadow(0 2px 4px rgba(34, 49, 44, 0.18));
+}
+.build-art.small { width: 40px; height: 40px; }
+.build-text { display: grid; gap: 0.05rem; min-width: 0; }
+.level-row {
+  display: flex;
+  align-items: center;
+  gap: 0.2rem;
+  flex-wrap: wrap;
+}
+.pip {
+  width: 0.42rem;
+  height: 0.42rem;
+  border-radius: 50%;
+  background: rgba(34, 49, 44, 0.16);
+}
+.pip.on { background: var(--gold-500); }
+.level-row em {
+  font-style: normal;
+  font-size: 0.72rem;
+  font-weight: 700;
+  color: var(--gold-700);
+  margin-left: 0.2rem;
+}
+.upgrade-btn {
+  padding: 0.35rem 0.6rem;
+  border-radius: var(--r-pill);
+  font-size: 0.74rem;
+  background: linear-gradient(180deg, var(--gold-300), var(--gold-500));
+  border: none;
+  color: #3a2c07;
+  white-space: nowrap;
+}
+.upgrade-max {
+  font-size: 0.72rem;
+  font-weight: 800;
+  color: var(--teal-500);
+}
+
 .action-bar {
   position: absolute;
   left: 50%;

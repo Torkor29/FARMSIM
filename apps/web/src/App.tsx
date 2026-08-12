@@ -1,8 +1,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   SPECIALIZATION_LABELS,
+  BUILDING_ART,
   BUILDING_DEFS,
   MACHINE_DEFS,
+  MAX_BUILDING_LEVEL,
+  buildingLevelDef,
+  buildingUpgradeCost,
   PARCEL_HECTARES,
   SEASON_LABELS,
   WEATHER_LABELS,
@@ -57,6 +61,7 @@ type Building = {
   type: BuildingType;
   originX: number;
   originY: number;
+  level?: number;
 };
 
 type Parcel = {
@@ -881,6 +886,25 @@ export function App() {
     }
   }
 
+  async function upgradeBuilding(id: string) {
+    if (!player) return;
+    setBusy(true);
+    setErr(null);
+    try {
+      const r = await api<{ cost: number; levelName: string; building: { level: number } }>(
+        `/buildings/${id}/upgrade`,
+        { method: "POST", body: JSON.stringify({ userId: player.id }) },
+      );
+      flashToast(`Niveau ${r.building.level} · ${r.levelName} — ${r.cost} CRD`);
+      await refreshPlayer();
+      if (activeParcelId) await loadParcel(activeParcelId);
+    } catch (e) {
+      flashToast(e instanceof Error ? e.message : String(e), true);
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function repairMachine(id: string) {
     if (!player) return;
     setBusy(true);
@@ -1117,7 +1141,7 @@ export function App() {
       </aside>
 
       <aside className="glass build-panel">
-        <h3>Bâtiments</h3>
+        <h3>Construire</h3>
         <div className="build-list">
           {(Object.keys(BUILDING_DEFS) as BuildingType[]).map((t) => {
             const d = BUILDING_DEFS[t];
@@ -1125,22 +1149,73 @@ export function App() {
               <button
                 key={t}
                 type="button"
-                className={`build-item ${tool === "BUILD" && buildType === t ? "on" : ""}`}
+                className={`build-item art ${tool === "BUILD" && buildType === t ? "on" : ""}`}
                 onClick={() => {
                   setTool("BUILD");
                   setBuildType(t);
                   setSelectedCells([]);
                 }}
               >
-                <strong>{d.name}</strong>
-                <span>
-                  {d.w}×{d.h} · {d.cost} CRD
+                <img className="build-art" src={BUILDING_ART[t]} alt="" loading="lazy" />
+                <span className="build-text">
+                  <strong>{d.name}</strong>
+                  <span>
+                    {d.w}×{d.h} · {d.cost} CRD
+                  </span>
+                  <span className="muted tiny">{d.description}</span>
                 </span>
-                <span className="muted tiny">{d.description}</span>
               </button>
             );
           })}
         </div>
+
+        {(parcel?.buildings?.length ?? 0) > 0 && (
+          <>
+            <h3 className="spaced">Améliorer</h3>
+            <div className="build-list">
+              {(parcel?.buildings ?? []).map((b) => {
+                const d = BUILDING_DEFS[b.type];
+                const lvl = b.level ?? 1;
+                const cost = buildingUpgradeCost(b.type, lvl);
+                const next = lvl < MAX_BUILDING_LEVEL ? buildingLevelDef(lvl + 1) : null;
+                const blocked = next ? player.level < next.requiredLevel : false;
+                return (
+                  <div key={b.id} className="upgrade-item">
+                    <img className="build-art small" src={BUILDING_ART[b.type]} alt="" />
+                    <span className="build-text">
+                      <strong>{d.name}</strong>
+                      <span className="level-row">
+                        {Array.from({ length: MAX_BUILDING_LEVEL }, (_, i) => (
+                          <i key={i} className={`pip ${i < lvl ? "on" : ""}`} />
+                        ))}
+                        <em>
+                          Nv.{lvl} · {buildingLevelDef(lvl).name}
+                        </em>
+                      </span>
+                    </span>
+                    {cost === null ? (
+                      <span className="upgrade-max">Max</span>
+                    ) : (
+                      <button
+                        type="button"
+                        className="upgrade-btn"
+                        disabled={busy || blocked || player.crd < cost}
+                        title={
+                          blocked
+                            ? `Niveau joueur ${next?.requiredLevel} requis`
+                            : `Passer au niveau ${lvl + 1} pour ${cost} CRD`
+                        }
+                        onClick={() => upgradeBuilding(b.id)}
+                      >
+                        {cost} CRD
+                      </button>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          </>
+        )}
       </aside>
 
       <div className="action-bar">

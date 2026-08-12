@@ -128,8 +128,9 @@ model Parcel {
   mapY       Int
   gridW      Int        @default(12)
   gridH      Int        @default(12)
-  landPrice  Float
-  fertility  Float      @default(0.7)
+  landPrice   Float
+  fertility   Float     @default(0.7)
+  accessIndex Float     @default(0.5)
   cells      ParcelCell[]
   buildings  Building[]
   machines   Machine[]  @relation("ParkedOn")
@@ -163,6 +164,7 @@ model Building {
   parcelId  String
   parcel    Parcel       @relation(fields: [parcelId], references: [id], onDelete: Cascade)
   type      BuildingType
+  level     Int          @default(1)
   originX   Int
   originY   Int
   cells     ParcelCell[]
