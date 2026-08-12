@@ -570,7 +570,14 @@ export function GlobeView({
     // (5 000 triangles inutiles à tester à chaque mouvement de souris).
     const pickTargets: THREE.Object3D[] = [];
 
-    for (let i = 0; i < continents.length; i++) {
+    /**
+     * Un continent coûte quelques dizaines de millisecondes de bruit fractal.
+     * Les construire d'affilée bloquait le fil principal près de 400 ms —
+     * Chrome le signalait comme une violation, et le clic paraissait figé. On
+     * en pose donc un par image : l'océan s'affiche tout de suite, les terres
+     * apparaissent en un peu plus d'un dixième de seconde, et rien ne bloque.
+     */
+    function buildContinent(i: number) {
       const c = continents[i];
       const rivals = fields.filter((_, k) => k !== i);
       const geometry =
@@ -589,6 +596,15 @@ export function GlobeView({
       landByCode.set(c.code, mesh);
       landMat.set(c.code, material);
     }
+
+    let buildRaf = 0;
+    let nextContinent = 0;
+    const buildNext = () => {
+      if (nextContinent >= continents.length) return;
+      buildContinent(nextContinent++);
+      buildRaf = requestAnimationFrame(buildNext);
+    };
+    buildNext();
 
     // Nuages : patchs aplatis répartis en spirale de Fibonacci.
     const clouds = new THREE.Group();
@@ -1020,6 +1036,7 @@ export function GlobeView({
 
     return () => {
       cancelAnimationFrame(raf);
+      cancelAnimationFrame(buildRaf);
       ro.disconnect();
       apiRef.current = null;
       const el = renderer.domElement;

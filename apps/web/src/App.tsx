@@ -558,6 +558,12 @@ export function App() {
     return out;
   }, [barns, parcel?.buildings]);
 
+  /** Cases réellement récoltables : mûres et pas encore perdues. */
+  const readyCellCount = useMemo(
+    () => (parcelDetail?.cellSims ?? []).filter((s) => s.sim.ready && !s.sim.lost).length,
+    [parcelDetail],
+  );
+
   /**
    * Alerte de fenêtre de récolte. Sans elle, la décote serait une punition
    * invisible : le joueur perdrait des tonnes sans jamais savoir pourquoi.
@@ -1685,8 +1691,20 @@ export function App() {
             )}
           </>
         )}
-        <button type="button" className="action" disabled={busy} onClick={harvestAll}>
-          Tout récolter
+        <button
+          type="button"
+          className="action"
+          // Le serveur sait déjà répondre « rien à récolter » ; l'état local
+          // aussi. Autant ne pas partir chercher un refus prévisible.
+          disabled={busy || readyCellCount === 0}
+          title={
+            readyCellCount
+              ? `Récolter les ${readyCellCount} case(s) mûres`
+              : "Aucune culture n’est mûre"
+          }
+          onClick={harvestAll}
+        >
+          Tout récolter{readyCellCount ? ` ×${readyCellCount}` : ""}
         </button>
       </div>
 
