@@ -133,12 +133,25 @@ silo               : WHEAT 25 t · HAY 10 t · MILK 2,64 hL · MEAT 0,18 t
 
 ---
 
+## Traité depuis
+
+**Les cours ne saturent plus.** Trois marchandises sur cinq étaient collées à
+leur plafond : le déséquilibre offre/demande poussait le prix sans jamais de
+rappel. Un retour vers le prix de référence les fait respirer, et un test
+simule cinq cents ticks pour interdire la récidive dans les deux sens.
+
+**La ration au maïs est jouable.** Un second bouton la propose face au
+fourrage. Mesuré : 110 L de lait par cycle au fourrage, **132 L au maïs** —
+mais c'est du maïs qu'on ne vend pas.
+
+**`feedConsumption` n'est plus du code mort.** Elle faisait doublon avec
+`feedBurn`, qui ignorait le niveau d'étable ; c'est désormais elle qui calcule
+la consommation, et l'isolation du bâtiment économise réellement du foin.
+
+---
+
 ## Reste à faire
 
-- **Les cours dérivent vers leur plafond** : le tick pousse le blé à 450 CRD,
-  soit sa borne haute. La pression PNJ est trop favorable au vendeur.
 - Le lait et la viande sont marqués périssables mais ne se dégradent pas
   encore.
 - Pas de reproduction : le cheptel ne croît que par achat.
-- La ration premium au maïs est possible côté serveur mais l'interface ne
-  propose que le fourrage.

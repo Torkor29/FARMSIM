@@ -114,14 +114,20 @@ suivant.
 
 ---
 
+## Traité depuis
+
+**Des courtiers PNJ** passent à chaque tick et raflent les lots dont le prix
+ne dépasse pas 118 % du cours, après un délai de quatre-vingt-dix secondes.
+Plus le vendeur est gourmand, plus il attend ; au-delà du seuil, personne ne
+mord et le lot expire. La criée fonctionne donc dès le premier joueur.
+
+**La profondeur du carnet ne tombe plus à zéro** : un plancher à 30 % de la
+profondeur nominale empêche qu'une vente ordinaire subisse la décote maximale.
+
+---
+
 ## Reste à faire
 
-- **Aucun acheteur automatique sur la criée** : tant que la population est
-  faible, un lot ne trouve preneur que si un vrai joueur passe. Un acheteur
-  PNJ qui rafle les lots sous le cours après quelques minutes rendrait le
-  canal viable en solo.
-- La profondeur de marché peut tomber à zéro et déclencher la décote maximale
-  sur n'importe quelle vente — le tick devrait maintenir un plancher.
 - Pas d'historique des cours : le joueur ne peut pas juger si le moment est
   bon.
 - Pas de contrats à terme, alors que le document d'économie les prévoit.

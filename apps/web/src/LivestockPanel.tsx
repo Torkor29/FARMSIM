@@ -35,10 +35,11 @@ type Props = {
   onBuyAnimals: (buildingId: string, count: number) => void;
   onGraze: (herdId: string) => void;
   onBuildPaddock: (yardType: BuildingType) => void;
-  onFeed: (herdId: string) => void;
+  onFeed: (herdId: string, useMaize: boolean) => void;
   onMilk: (herdId: string) => void;
   onSlaughter: (herdId: string, count: number) => void;
   hayTons: number;
+  maizeTons: number;
 };
 
 /** Panneau élevage : effectif, bien-être, sortie au pré. */
@@ -53,6 +54,7 @@ export function LivestockPanel({
   onMilk,
   onSlaughter,
   hayTons,
+  maizeTons,
 }: Props) {
   if (!barns.length) return null;
 
@@ -108,7 +110,11 @@ export function LivestockPanel({
                     />
                   </div>
                   <span className={`feed-label ${herd.hungry ? "warn" : ""}`}>
-                    {herd.hungry ? "Ration à distribuer" : "Ration suffisante"}
+                    {herd.hungry
+                      ? "Ration à distribuer"
+                      : herd.feedQuality > 0.5
+                        ? "Ration au maïs — rendement maximal"
+                        : "Ration au fourrage"}
                   </span>
                 </div>
 
@@ -154,11 +160,26 @@ export function LivestockPanel({
                   title={
                     hayTons <= 0
                       ? "Aucun fourrage en silo — achetez-en au négociant"
-                      : "Distribuer la ration"
+                      : "Distribuer du fourrage"
                   }
-                  onClick={() => onFeed(herd.id)}
+                  onClick={() => onFeed(herd.id, false)}
                 >
                   Nourrir
+                </button>
+              )}
+
+              {herd && (
+                <button
+                  type="button"
+                  disabled={busy || maizeTons <= 0}
+                  title={
+                    maizeTons <= 0
+                      ? "Aucun maïs en silo — il faut en cultiver"
+                      : "Ration au maïs : plus nutritive, mais c’est du maïs qu’on ne vend pas"
+                  }
+                  onClick={() => onFeed(herd.id, true)}
+                >
+                  Ration maïs
                 </button>
               )}
 

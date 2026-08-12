@@ -588,6 +588,11 @@ export function App() {
     [player?.farm?.inventory],
   );
 
+  const maizeInStock = useMemo(
+    () => (player?.farm?.inventory ?? []).find((i) => i.itemCode === "MAIZE")?.qty ?? 0,
+    [player?.farm?.inventory],
+  );
+
   /** Tonnage total en silo — affiché sur le bouton pour appeler à vendre. */
   const totalStockTons = useMemo(
     () => (player?.farm?.inventory ?? []).reduce((sum, i) => sum + i.qty, 0),
@@ -1357,19 +1362,32 @@ export function App() {
     }
   }
 
-  /** Distribue toute la ration disponible : le joueur n'a pas à doser. */
-  async function feedHerd(herdId: string) {
+  /**
+   * Distribue une ration complète : le joueur choisit l'aliment, pas la dose.
+   * Le maïs nourrit mieux, mais c'est du maïs qu'il ne vendra pas.
+   */
+  async function feedHerd(herdId: string, useMaize: boolean) {
     if (!player) return;
     setBusy(true);
     try {
       const barn = barns.find((b) => b.herd?.id === herdId);
-      const need = barn?.herd ? Math.max(0, barn.herd.feedNeed - barn.herd.feedStock) : 0;
-      const hay = Math.min(hayInStock, Math.max(1, Math.ceil(need / 14)));
-      const r = await api<{ units: number }>(`/herds/${herdId}/feed`, {
+      const size = barn?.herd?.size ?? 1;
+      // Une tonne couvre une bête pendant environ 70 cycles : on vise large
+      // sans vider le silo.
+      const wanted = Math.max(1, Math.ceil(size / 3));
+      const stock = useMaize ? maizeInStock : hayInStock;
+      const tons = Math.min(stock, wanted);
+      const r = await api<{ units: number; quality: number }>(`/herds/${herdId}/feed`, {
         method: "POST",
-        body: JSON.stringify({ userId: player.id, hayTons: hay, maizeTons: 0 }),
+        body: JSON.stringify({
+          userId: player.id,
+          hayTons: useMaize ? 0 : tons,
+          maizeTons: useMaize ? tons : 0,
+        }),
       });
-      flashToast(`Ration distribuée · ${r.units} unités`);
+      flashToast(
+        `${useMaize ? "Maïs" : "Fourrage"} distribué · ${tons.toFixed(1)} t · ${r.units} kg`,
+      );
       await refreshPlayer();
       if (activeParcelId) await loadLivestock(activeParcelId);
     } catch (e) {
@@ -2035,6 +2053,7 @@ export function App() {
         onMilk={milkHerd}
         onSlaughter={slaughterHerd}
         hayTons={hayInStock}
+        maizeTons={maizeInStock}
         onBuildPaddock={(yardType) => {
           setTool("BUILD");
           setBuildType(yardType);

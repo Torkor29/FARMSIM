@@ -91,9 +91,17 @@ Un nouvel état `SPOILED` s'ajoute à `FieldStage`.
 
 ---
 
+## Traité depuis
+
+Le résumé d'absence annonce les mauvaises nouvelles en premier : cultures
+perdues à labourer, récoltes qui se dégradent, troupeaux sans ration. Une
+perte découverte une heure plus tard, par hasard, est bien plus frustrante
+qu'une perte annoncée.
+
+---
+
 ## Reste à faire
 
 - La météo n'influence pas la vitesse de dégradation, alors qu'une pluie sur
   du blé mûr le fait germer bien plus vite qu'un temps sec
 - Aucune notification hors écran : un joueur absent découvre la perte au retour
-- Le résumé de session ne mentionne pas les cultures perdues pendant l'absence

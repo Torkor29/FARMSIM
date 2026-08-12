@@ -86,11 +86,16 @@ continent sélectionné. Ces éléments n'ont jamais été mis en cause.
 
 ---
 
+## Traité depuis
+
+Le survol désigne à nouveau le continent : une calotte lumineuse additive se
+pose sur la terre visée, l'opacité glissant pour éviter le clignotement quand
+la souris passe de l'un à l'autre. La sélection prime sur le survol.
+
+---
+
 ## Reste à faire
 
-- Le survol ne met plus le continent en surbrillance : avec une seule surface,
-  l'ancien réglage d'émissive par maillage n'a plus de support. Seul le repère
-  réagit. Un halo local sur la carte de couleur ferait mieux.
 - La résolution de texture plafonne le détail au zoom extrême ; une carte de
   détail répétée en surimpression le repousserait sans coûter de mémoire.
 - La peinture pourrait migrer dans un Worker : elle ne bloque plus, mais elle
