@@ -69,6 +69,7 @@ Chaque valeur chiffrée dans cette documentation est classée :
 | — | [38_HARVEST_WINDOW.md](./38_HARVEST_WINDOW.md) | Fenêtre de récolte : décote de sur-maturité et labour |
 | — | [39_SOIL_WORK.md](./39_SOIL_WORK.md) | Travail du sol : déchaumage, labour obligatoire, résidus |
 | — | [40_CONSOLE_HYGIENE.md](./40_CONSOLE_HYGIENE.md) | Avertissements traités, fuite WebGL, allègement du bundle |
+| — | [41_GLOBE_RENDER.md](./41_GLOBE_RENDER.md) | Globe : sphère lisse et textures procédurales |
 
 ---
 

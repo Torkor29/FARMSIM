@@ -1154,6 +1154,25 @@ Côté 3D : si `prefers-reduced-motion`, désactiver la rotation auto du globe, 
 
 ---
 
+## Addendum (2026-08-12) — le globe abandonne le low-poly
+
+La recette « globe low-poly » de ce document a été appliquée puis **rejetée
+deux fois** : le maillage montrait ses polygones, et le zoom les rendait
+criants. Augmenter la subdivision n'y changeait rien, parce que le défaut
+était d'approche, pas de réglage.
+
+La planète est désormais **une sphère lisse habillée de textures
+équirectangulaires procédurales** — couleur, relief, rugosité — calculées en
+2048×1024. Une texture ne montre jamais ses polygones.
+
+Ce qui reste valable de ce document : la palette, les biomes, le halo
+fresnel, les nuages, l'éclairage. Ce qui ne l'est plus : la construction du
+globe par tuiles ou par plaques extrudées.
+
+Détail complet dans [41_GLOBE_RENDER](./41_GLOBE_RENDER.md).
+
+---
+
 ## Résumé (10 lignes)
 
 1. Le problème n'est pas « du détail » : l'app est **sombre, étroite, minuscule et sans hiérarchie** — quatre défauts structurels.
