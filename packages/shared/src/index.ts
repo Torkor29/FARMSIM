@@ -6,6 +6,7 @@ export * from "./land.js";
 export * from "./livestock.js";
 export * from "./ripeness.js";
 export * from "./soil.js";
+export * from "./trade.js";
 
 export type Specialization = "CEREALIER" | "ELEVEUR" | "ETA";
 

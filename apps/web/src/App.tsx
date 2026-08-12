@@ -31,6 +31,7 @@ import {
 import { AuthScreen } from "./AuthScreen";
 import type { GrazingHerd, PreviewBuilding } from "./IsoFarmView";
 import { LivestockPanel, type BarnState } from "./LivestockPanel";
+import { MarketPanel, type Listing } from "./MarketPanel";
 import type { ContinentDetail, WorldContinent } from "./Onboarding";
 
 // Three.js pèse plus lourd que tout le reste de l'application réunie. L'écran
@@ -281,6 +282,8 @@ export function App() {
   const [continentDetail, setContinentDetail] = useState<ContinentDetail | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
   const [barns, setBarns] = useState<BarnState[]>([]);
+  const [listings, setListings] = useState<Listing[]>([]);
+  const [showMarket, setShowMarket] = useState(false);
   const [showArrival, setShowArrival] = useState(false);
   const arrivalShownRef = useRef(false);
 
@@ -352,6 +355,17 @@ export function App() {
       setBarns(r.barns);
     } catch {
       setBarns([]);
+    }
+  }, []);
+
+  const loadListings = useCallback(async (playerId: string) => {
+    try {
+      const r = await api<{ listings: Listing[] }>(
+        `/market/listings?userId=${encodeURIComponent(playerId)}`,
+      );
+      setListings(r.listings);
+    } catch {
+      setListings([]);
     }
   }, []);
 
@@ -445,6 +459,14 @@ export function App() {
     }, 4000);
     return () => clearInterval(t);
   }, [activeParcelId, loadParcel, loadLivestock]);
+
+  // La criée bouge sans nous : d'autres joueurs déposent et achètent.
+  useEffect(() => {
+    if (!player) return;
+    loadListings(player.id);
+    const t = setInterval(() => loadListings(player.id), 8000);
+    return () => clearInterval(t);
+  }, [player?.id, loadListings]);
   const freeParcels = useMemo(
     () =>
       zones.flatMap((z) =>
@@ -557,6 +579,12 @@ export function App() {
     }
     return out;
   }, [barns, parcel?.buildings]);
+
+  /** Tonnage total en silo — affiché sur le bouton pour appeler à vendre. */
+  const totalStockTons = useMemo(
+    () => (player?.farm?.inventory ?? []).reduce((sum, i) => sum + i.qty, 0),
+    [player?.farm?.inventory],
+  );
 
   /** Cases réellement récoltables : mûres et pas encore perdues. */
   const readyCellCount = useMemo(
@@ -1084,6 +1112,79 @@ export function App() {
       setMsg("Parcelle acquise");
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  /** Rachat immédiat par le négociant : prix bas, mais toujours preneur. */
+  async function sellToDealer(commodity: CropCode, tons: number) {
+    if (!player) return;
+    setBusy(true);
+    try {
+      const r = await api<{ revenue: number; pricePerTon: number }>("/market/dealer", {
+        method: "POST",
+        body: JSON.stringify({ userId: player.id, commodity, tons }),
+      });
+      flashToast(`Négociant : ${tons.toFixed(2)} t · +${r.revenue} CRD`);
+      await refreshPlayer();
+      await refreshMeta();
+    } catch (e) {
+      flashToast(e instanceof Error ? e.message : String(e), true);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function createListing(commodity: CropCode, tons: number, pricePerTon: number) {
+    if (!player) return;
+    setBusy(true);
+    try {
+      const r = await api<{ fee: number }>("/market/listings", {
+        method: "POST",
+        body: JSON.stringify({ userId: player.id, commodity, tons, pricePerTon }),
+      });
+      flashToast(`Lot déposé à la criée · frais ${r.fee} CRD`);
+      await refreshPlayer();
+      await loadListings(player.id);
+    } catch (e) {
+      flashToast(e instanceof Error ? e.message : String(e), true);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function cancelListing(id: string) {
+    if (!player) return;
+    setBusy(true);
+    try {
+      const r = await api<{ returned: number }>(`/market/listings/${id}/cancel`, {
+        method: "POST",
+        body: JSON.stringify({ userId: player.id }),
+      });
+      flashToast(`${r.returned.toFixed(2)} t revenues au silo`);
+      await refreshPlayer();
+      await loadListings(player.id);
+    } catch (e) {
+      flashToast(e instanceof Error ? e.message : String(e), true);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function buyListing(id: string) {
+    if (!player) return;
+    setBusy(true);
+    try {
+      const r = await api<{ bought: number; paid: number }>(`/market/listings/${id}/buy`, {
+        method: "POST",
+        body: JSON.stringify({ userId: player.id }),
+      });
+      flashToast(`Acheté ${r.bought.toFixed(2)} t · −${r.paid} CRD`);
+      await refreshPlayer();
+      await loadListings(player.id);
+    } catch (e) {
+      flashToast(e instanceof Error ? e.message : String(e), true);
     } finally {
       setBusy(false);
     }
@@ -1643,8 +1744,16 @@ export function App() {
         </button>
         <button
           type="button"
+          className="action sell"
+          title="Vendre votre récolte : négociant, cours mondial ou criée"
+          onClick={() => setShowMarket(true)}
+        >
+          💰 Vendre{totalStockTons > 0 ? ` ${totalStockTons.toFixed(1)} t` : ""}
+        </button>
+        <button
+          type="button"
           className={`action eta ${showEta ? "on" : ""}`}
-          title="Stock, marché, contrats et achat de terres"
+          title="Contrats, terres et stock"
           onClick={() => setShowEta((v) => !v)}
         >
           Bureau
@@ -1776,6 +1885,22 @@ export function App() {
           </div>
         </aside>
       )}
+
+      <MarketPanel
+        open={showMarket}
+        onClose={() => setShowMarket(false)}
+        stock={player.farm?.inventory ?? []}
+        listings={listings}
+        marketPrices={market}
+        crd={player.crd}
+        busy={busy}
+        onSellDealer={sellToDealer}
+        onSellMarket={sell}
+        onList={createListing}
+        onBuyListing={buyListing}
+        onCancelListing={cancelListing}
+        onDry={dryStock}
+      />
 
       <LivestockPanel
         barns={barns}

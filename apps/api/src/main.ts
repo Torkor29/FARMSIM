@@ -54,6 +54,16 @@ import {
   STUBBLE_COST_PER_CELL,
   SOIL_WORK_REFUSAL_LABELS,
   MAX_HARVESTS_BEFORE_PLOW,
+  quoteAllChannels,
+  dealerPricePerTon,
+  marketPricePerTon,
+  listingFee,
+  listingProceeds,
+  canList,
+  LISTING_REFUSAL_LABELS,
+  LISTING_TTL_MS,
+  DEALER_MIN_TONS,
+  volumeSlippage,
   machineResaleValue,
   buildingResaleValue,
   isPaddockAdjacent,
@@ -2600,6 +2610,378 @@ app.post("/machines/:id/store", async (req, res) => {
   res.json({ ok: true });
 });
 
+/* ------------------------------------------------------------------ */
+/* Commerce : négociant, cours mondial, criée entre joueurs            */
+/* ------------------------------------------------------------------ */
+
+/** Retire des tonnes du stock d'une ferme, en supprimant le lot s'il est vidé. */
+async function drawFromStock(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  tx: any,
+  item: { id: string; qty: number },
+  tons: number,
+) {
+  const left = item.qty - tons;
+  if (left <= 0.0001) await tx.inventoryItem.delete({ where: { id: item.id } });
+  else await tx.inventoryItem.update({ where: { id: item.id }, data: { qty: left } });
+}
+
+/** Ferme les annonces expirées et rend la marchandise à leurs vendeurs. */
+async function expireListings() {
+  const stale = await prisma.marketListing.findMany({
+    where: { status: "OPEN", expiresAt: { lt: new Date() } },
+    include: { seller: { include: { farm: true } } },
+  });
+  for (const listing of stale) {
+    await prisma.$transaction(async (tx) => {
+      await tx.marketListing.update({
+        where: { id: listing.id },
+        data: { status: "EXPIRED" },
+      });
+      const farmId = listing.seller.farm?.id;
+      if (!farmId) return;
+      const existing = await tx.inventoryItem.findFirst({
+        where: { farmId, itemCode: listing.commodity },
+      });
+      if (existing) {
+        await tx.inventoryItem.update({
+          where: { id: existing.id },
+          data: {
+            qty: existing.qty + listing.tons,
+            moisture: mergeMoisture(
+              existing.qty,
+              existing.moisture,
+              listing.tons,
+              listing.moisture,
+            ),
+          },
+        });
+      } else {
+        await tx.inventoryItem.create({
+          data: {
+            farmId,
+            itemCode: listing.commodity,
+            qty: listing.tons,
+            quality: listing.quality,
+            moisture: listing.moisture,
+          },
+        });
+      }
+    });
+  }
+}
+
+/** Devis comparé des trois canaux, pour un lot donné. */
+app.get("/market/quote", async (req, res) => {
+  const parsed = z
+    .object({
+      commodity: z.enum(["WHEAT", "MAIZE"]),
+      tons: z.coerce.number().positive(),
+      moisture: z.coerce.number().min(0).max(1).optional(),
+      ask: z.coerce.number().positive().optional(),
+    })
+    .safeParse(req.query);
+  if (!parsed.success) {
+    res.status(400).json(parsed.error.flatten());
+    return;
+  }
+  const market = await prisma.marketPrice.findUnique({
+    where: { commodity: parsed.data.commodity },
+  });
+  if (!market) {
+    res.status(500).json({ error: "Marché non initialisé" });
+    return;
+  }
+  res.json({
+    marketPrice: market.price,
+    stockTons: market.stockTons,
+    channels: quoteAllChannels({
+      commodity: parsed.data.commodity,
+      tons: parsed.data.tons,
+      marketPrice: market.price,
+      stockTons: market.stockTons,
+      moisturePenalty: moistureSellPenalty(parsed.data.moisture ?? 0.12),
+      askPricePerTon: parsed.data.ask,
+    }),
+  });
+});
+
+/** Rachat par le négociant : immédiat, garanti, à prix bas. */
+app.post("/market/dealer", async (req, res) => {
+  const body = z
+    .object({
+      userId: z.string(),
+      commodity: z.enum(["WHEAT", "MAIZE"]),
+      tons: z.number().positive(),
+    })
+    .safeParse(req.body);
+  if (!body.success) {
+    res.status(400).json(body.error.flatten());
+    return;
+  }
+  if (body.data.tons < DEALER_MIN_TONS) {
+    res.status(409).json({ error: `Lot trop petit — ${DEALER_MIN_TONS} t minimum` });
+    return;
+  }
+  const user = await prisma.user.findUnique({
+    where: { id: body.data.userId },
+    include: { farm: { include: { inventory: true } } },
+  });
+  if (!user?.farm) {
+    res.status(404).json({ error: "Ferme introuvable" });
+    return;
+  }
+  const inv = user.farm.inventory.find((i) => i.itemCode === body.data.commodity);
+  if (!inv || inv.qty < body.data.tons) {
+    res.status(409).json({ error: "Stock insuffisant" });
+    return;
+  }
+  const market = await prisma.marketPrice.findUnique({
+    where: { commodity: body.data.commodity },
+  });
+  if (!market) {
+    res.status(500).json({ error: "Marché non initialisé" });
+    return;
+  }
+  const keep = 1 - moistureSellPenalty(inv.moisture);
+  const pricePerTon = dealerPricePerTon(market.price) * keep;
+  const revenue = Math.round(pricePerTon * body.data.tons);
+
+  await prisma.$transaction(async (tx) => {
+    await drawFromStock(tx, inv, body.data.tons);
+    await tx.user.update({ where: { id: user.id }, data: { crd: { increment: revenue } } });
+    // Le négociant revend au marché : le stock mondial monte, le cours cède.
+    await tx.marketPrice.update({
+      where: { commodity: body.data.commodity },
+      data: { stockTons: { increment: body.data.tons } },
+    });
+  });
+  res.json({ revenue, pricePerTon: Math.round(pricePerTon * 100) / 100, channel: "DEALER" });
+});
+
+/** Annonces ouvertes, les plus avantageuses d'abord. */
+app.get("/market/listings", async (req, res) => {
+  await expireListings();
+  const mine = typeof req.query.userId === "string" ? req.query.userId : null;
+  const listings = await prisma.marketListing.findMany({
+    where: { status: "OPEN" },
+    include: { seller: { select: { id: true, displayName: true } } },
+    orderBy: [{ pricePerTon: "asc" }],
+    take: 60,
+  });
+  res.json({
+    listings: listings.map((l) => ({
+      id: l.id,
+      commodity: l.commodity,
+      tons: l.tons,
+      pricePerTon: l.pricePerTon,
+      total: Math.round(l.pricePerTon * l.tons),
+      moisture: l.moisture,
+      quality: l.quality,
+      sellerName: l.seller.displayName,
+      mine: mine === l.sellerId,
+      expiresInMs: Math.max(0, l.expiresAt.getTime() - Date.now()),
+    })),
+  });
+});
+
+/** Dépôt d'une annonce : la marchandise quitte le silo, les frais sont dus. */
+app.post("/market/listings", async (req, res) => {
+  const body = z
+    .object({
+      userId: z.string(),
+      commodity: z.enum(["WHEAT", "MAIZE"]),
+      tons: z.number().positive(),
+      pricePerTon: z.number().positive(),
+    })
+    .safeParse(req.body);
+  if (!body.success) {
+    res.status(400).json(body.error.flatten());
+    return;
+  }
+  const user = await prisma.user.findUnique({
+    where: { id: body.data.userId },
+    include: { farm: { include: { inventory: true } } },
+  });
+  if (!user?.farm) {
+    res.status(404).json({ error: "Ferme introuvable" });
+    return;
+  }
+  const inv = user.farm.inventory.find((i) => i.itemCode === body.data.commodity);
+  const market = await prisma.marketPrice.findUnique({
+    where: { commodity: body.data.commodity },
+  });
+  if (!market) {
+    res.status(500).json({ error: "Marché non initialisé" });
+    return;
+  }
+  const openListings = await prisma.marketListing.count({
+    where: { sellerId: user.id, status: "OPEN" },
+  });
+  const verdict = canList({
+    pricePerTon: body.data.pricePerTon,
+    tons: body.data.tons,
+    marketPrice: market.price,
+    openListings,
+    stockTons: inv?.qty ?? 0,
+    crd: user.crd,
+  });
+  if (!verdict.ok) {
+    res.status(409).json({ error: LISTING_REFUSAL_LABELS[verdict.reason!] });
+    return;
+  }
+
+  const fee = listingFee(body.data.pricePerTon, body.data.tons);
+  const listing = await prisma.$transaction(async (tx) => {
+    await drawFromStock(tx, inv!, body.data.tons);
+    await tx.user.update({ where: { id: user.id }, data: { crd: { decrement: fee } } });
+    return tx.marketListing.create({
+      data: {
+        sellerId: user.id,
+        commodity: body.data.commodity,
+        tons: body.data.tons,
+        pricePerTon: body.data.pricePerTon,
+        moisture: inv!.moisture,
+        quality: inv!.quality,
+        expiresAt: new Date(Date.now() + LISTING_TTL_MS),
+      },
+    });
+  });
+  res.status(201).json({ listing, fee, expiresInMs: LISTING_TTL_MS });
+});
+
+/** Retrait d'une annonce : la marchandise revient, les frais restent dus. */
+app.post("/market/listings/:id/cancel", async (req, res) => {
+  const body = z.object({ userId: z.string() }).safeParse(req.body);
+  if (!body.success) {
+    res.status(400).json(body.error.flatten());
+    return;
+  }
+  const listing = await prisma.marketListing.findUnique({
+    where: { id: req.params.id },
+    include: { seller: { include: { farm: true } } },
+  });
+  if (!listing || listing.sellerId !== body.data.userId) {
+    res.status(403).json({ error: "Annonce introuvable" });
+    return;
+  }
+  if (listing.status !== "OPEN") {
+    res.status(409).json({ error: "Cette annonce n'est plus ouverte" });
+    return;
+  }
+  const farmId = listing.seller.farm?.id;
+  await prisma.$transaction(async (tx) => {
+    await tx.marketListing.update({
+      where: { id: listing.id },
+      data: { status: "CANCELLED" },
+    });
+    if (!farmId) return;
+    const existing = await tx.inventoryItem.findFirst({
+      where: { farmId, itemCode: listing.commodity },
+    });
+    if (existing) {
+      await tx.inventoryItem.update({
+        where: { id: existing.id },
+        data: {
+          qty: existing.qty + listing.tons,
+          moisture: mergeMoisture(
+            existing.qty,
+            existing.moisture,
+            listing.tons,
+            listing.moisture,
+          ),
+        },
+      });
+    } else {
+      await tx.inventoryItem.create({
+        data: {
+          farmId,
+          itemCode: listing.commodity,
+          qty: listing.tons,
+          quality: listing.quality,
+          moisture: listing.moisture,
+        },
+      });
+    }
+  });
+  res.json({ returned: listing.tons, commodity: listing.commodity });
+});
+
+/** Achat d'une annonce : les CRD passent au vendeur, la marchandise à l'acheteur. */
+app.post("/market/listings/:id/buy", async (req, res) => {
+  const body = z.object({ userId: z.string() }).safeParse(req.body);
+  if (!body.success) {
+    res.status(400).json(body.error.flatten());
+    return;
+  }
+  await expireListings();
+  const listing = await prisma.marketListing.findUnique({ where: { id: req.params.id } });
+  if (!listing || listing.status !== "OPEN") {
+    res.status(409).json({ error: "Ce lot vient d'être vendu ou retiré" });
+    return;
+  }
+  if (listing.sellerId === body.data.userId) {
+    res.status(409).json({ error: "Vous ne pouvez pas acheter votre propre lot" });
+    return;
+  }
+  const buyer = await prisma.user.findUnique({
+    where: { id: body.data.userId },
+    include: { farm: true },
+  });
+  if (!buyer?.farm) {
+    res.status(404).json({ error: "Ferme introuvable" });
+    return;
+  }
+  const total = Math.round(listing.pricePerTon * listing.tons);
+  if (buyer.crd < total) {
+    res.status(402).json({ error: `CRD insuffisants — ${total} requis` });
+    return;
+  }
+  const proceeds = listingProceeds(listing.pricePerTon, listing.tons);
+
+  await prisma.$transaction(async (tx) => {
+    const fresh = await tx.marketListing.findUnique({ where: { id: listing.id } });
+    if (!fresh || fresh.status !== "OPEN") throw new Error("LISTING_GONE");
+    await tx.marketListing.update({
+      where: { id: listing.id },
+      data: { status: "SOLD", buyerId: buyer.id, soldAt: new Date() },
+    });
+    await tx.user.update({ where: { id: buyer.id }, data: { crd: { decrement: total } } });
+    await tx.user.update({
+      where: { id: listing.sellerId },
+      data: { crd: { increment: proceeds } },
+    });
+    const existing = await tx.inventoryItem.findFirst({
+      where: { farmId: buyer.farm!.id, itemCode: listing.commodity },
+    });
+    if (existing) {
+      await tx.inventoryItem.update({
+        where: { id: existing.id },
+        data: {
+          qty: existing.qty + listing.tons,
+          moisture: mergeMoisture(
+            existing.qty,
+            existing.moisture,
+            listing.tons,
+            listing.moisture,
+          ),
+        },
+      });
+    } else {
+      await tx.inventoryItem.create({
+        data: {
+          farmId: buyer.farm!.id,
+          itemCode: listing.commodity,
+          qty: listing.tons,
+          quality: listing.quality,
+          moisture: listing.moisture,
+        },
+      });
+    }
+  });
+  res.json({ bought: listing.tons, commodity: listing.commodity, paid: total, proceeds });
+});
+
 app.post("/market/sell", async (req, res) => {
   const body = z
     .object({
@@ -2637,9 +3019,12 @@ app.post("/market/sell", async (req, res) => {
     return;
   }
   const moisturePenalty = moistureSellPenalty(inv.moisture);
+  // Écouler un gros lot d'un coup fait plonger le cours obtenu : c'est ce qui
+  // rend l'étalement des ventes — ou la criée — réellement plus rentable.
+  const slippage = volumeSlippage(body.data.tons, market.stockTons);
   const sale = sellToMarket({
     tons: body.data.tons,
-    price: market.price,
+    price: marketPricePerTon(market.price, body.data.tons, market.stockTons),
     moisturePenalty,
   });
   const tick = tickMarket({
@@ -2651,10 +3036,7 @@ app.post("/market/sell", async (req, res) => {
   });
   const xpGain = Math.round(10 * (1 + bonuses.xpBonus));
   const updated = await prisma.$transaction(async (tx) => {
-    await tx.inventoryItem.update({
-      where: { id: inv.id },
-      data: { qty: { decrement: body.data.tons } },
-    });
+    await drawFromStock(tx, inv, body.data.tons);
     const u = await tx.user.update({
       where: { id: user.id },
       data: { crd: { increment: sale.revenue }, xp: { increment: xpGain } },
@@ -2668,11 +3050,13 @@ app.post("/market/sell", async (req, res) => {
   res.json({
     revenue: sale.revenue,
     effectivePrice: sale.effectivePrice,
+    slippage,
     moisturePenalty,
     moisture: inv.moisture,
     crd: updated.crd,
     market: tick,
     bonuses,
+    channel: "MARKET",
   });
 });
 

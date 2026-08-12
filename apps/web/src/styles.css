@@ -406,6 +406,153 @@ button.ghost {
 }
 .sell-btn:hover:not(:disabled) { background: #fbdcd6; }
 
+/* —— Vente —— */
+.action.sell {
+  background: linear-gradient(180deg, var(--gold-300), var(--gold-500));
+  border-color: transparent;
+  color: #3a2c07;
+  font-weight: 800;
+}
+.market-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  display: grid;
+  place-items: center;
+  padding: 1rem;
+  background: rgba(24, 44, 38, 0.55);
+  backdrop-filter: blur(6px);
+}
+.market-sheet {
+  width: min(940px, 100%);
+  max-height: 90vh;
+  overflow: auto;
+  padding: 1.1rem 1.2rem 1.3rem;
+  border-radius: var(--r-lg);
+  display: grid;
+  gap: 0.75rem;
+  align-content: start;
+}
+.market-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 1rem;
+}
+.market-head h2 { margin: 0; color: var(--teal-700); }
+.market-tabs { display: flex; gap: 0.4rem; }
+.market-tab {
+  border-radius: var(--r-pill);
+  padding: 0.45rem 1rem;
+  background: var(--sand);
+  border: 1px solid var(--line);
+  font-size: 0.88rem;
+}
+.market-tab.on {
+  background: linear-gradient(180deg, var(--teal-300), var(--teal-500));
+  border-color: transparent;
+  color: #fff;
+}
+.market-empty {
+  margin: 0;
+  padding: 1.5rem;
+  text-align: center;
+  color: var(--muted);
+  background: var(--sand);
+  border-radius: var(--r-md);
+}
+.stock-row { display: flex; flex-wrap: wrap; gap: 0.45rem; }
+.stock-chip {
+  display: grid;
+  gap: 0.05rem;
+  text-align: left;
+  padding: 0.5rem 0.8rem;
+  border-radius: var(--r-md);
+  background: var(--paper);
+  border: 2px solid var(--line);
+}
+.stock-chip.on { border-color: var(--gold-500); box-shadow: 0 0 0 3px var(--gold-100); }
+.stock-chip span { font-size: 0.82rem; font-weight: 700; }
+.stock-chip em { font-style: normal; font-size: 0.72rem; color: var(--muted); }
+.stock-chip em.wet { color: var(--danger); font-weight: 700; }
+.market-warn {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.6rem;
+  margin: 0;
+  padding: 0.55rem 0.7rem;
+  border-radius: var(--r-sm);
+  background: #fdeceb;
+  color: #a8382a;
+  font-size: 0.84rem;
+  font-weight: 600;
+}
+.market-field { display: grid; gap: 0.3rem; font-size: 0.88rem; }
+.market-field input[type="range"] { width: 100%; padding: 0; }
+.market-course { margin: 0; font-size: 0.9rem; color: var(--ink-soft); }
+.channel-grid {
+  display: grid;
+  gap: 0.6rem;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+}
+.channel-card {
+  display: grid;
+  gap: 0.25rem;
+  align-content: start;
+  padding: 0.8rem 0.85rem;
+  border-radius: var(--r-md);
+  background: var(--paper);
+  border: 2px solid var(--line);
+}
+.channel-card.best { border-color: var(--teal-500); box-shadow: 0 0 0 3px var(--teal-100); }
+.channel-card h3 { margin: 0; font-size: 1rem; color: var(--teal-700); }
+.channel-price { margin: 0; font-weight: 700; color: var(--ink-soft); font-size: 0.86rem; }
+.channel-net {
+  margin: 0;
+  display: grid;
+  font-family: "Baloo 2", Nunito, sans-serif;
+  font-size: 1.35rem;
+  font-weight: 800;
+  color: var(--gold-700);
+}
+.channel-net em {
+  font-style: normal;
+  font-family: Nunito, sans-serif;
+  font-size: 0.7rem;
+  font-weight: 700;
+}
+.channel-net em.sure { color: var(--ok); }
+.channel-net em.risky { color: var(--info); }
+.channel-note { margin: 0; font-size: 0.74rem; color: var(--muted); min-height: 2.2em; }
+.ask-field { display: grid; gap: 0.15rem; font-size: 0.74rem; color: var(--muted); }
+.ask-field input { padding: 0.35rem 0.5rem; }
+.channel-go {
+  margin-top: 0.35rem;
+  border-radius: var(--r-pill);
+  border: none;
+  padding: 0.5rem 0.9rem;
+  background: linear-gradient(180deg, var(--gold-300), var(--gold-500));
+  color: #3a2c07;
+  font-size: 0.86rem;
+}
+.market-rules { margin: 0; font-size: 0.76rem; color: var(--muted); }
+.listing-list { display: grid; gap: 0.35rem; margin: 0; padding: 0; list-style: none; }
+.listing-list li {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.5rem 0.65rem;
+  border-radius: var(--r-sm);
+  background: var(--sand);
+}
+.listing-list span { display: grid; gap: 0.05rem; }
+.listing-list em { font-style: normal; font-size: 0.76rem; color: var(--ink-soft); }
+.listing-seller { color: var(--muted) !important; font-size: 0.72rem !important; }
+.listing-right { justify-items: end; gap: 0.25rem !important; }
+.listing-ttl { color: var(--gold-700) !important; font-weight: 700; }
+
 /* —— Élevage —— */
 .livestock-panel {
   position: absolute;

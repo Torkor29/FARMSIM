@@ -78,6 +78,8 @@ model User {
   farm           Farm?
   contracts      NpcContract[]  @relation("Provider")
   sessions       Session[]
+  listings       MarketListing[] @relation("Selling")
+  purchases      MarketListing[] @relation("Buying")
 }
 
 model Session {
@@ -231,6 +233,28 @@ model MarketPrice {
   price     Float
   stockTons Float    @default(1000)
   updatedAt DateTime @updatedAt
+}
+
+/// Une annonce à la criée : un lot mis en vente par un joueur, qu'un autre
+/// joueur peut acheter tant qu'elle n'a pas expiré.
+model MarketListing {
+  id          String   @id @default(cuid())
+  sellerId    String
+  seller      User     @relation("Selling", fields: [sellerId], references: [id], onDelete: Cascade)
+  commodity   CropCode
+  tons        Float
+  pricePerTon Float
+  /// Humidité du lot : elle suit la marchandise jusque chez l'acheteur
+  moisture    Float    @default(0.12)
+  quality     Int      @default(3)
+  status      String   @default("OPEN")
+  createdAt   DateTime @default(now())
+  expiresAt   DateTime
+  buyerId     String?
+  buyer       User?    @relation("Buying", fields: [buyerId], references: [id])
+  soldAt      DateTime?
+
+  @@index([status, commodity])
 }
 
 model NpcContract {

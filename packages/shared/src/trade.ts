@@ -1,0 +1,213 @@
+/**
+ * Écouler sa récolte : trois canaux, trois compromis.
+ *
+ * Un jeu d'économie n'a d'intérêt que si vendre est une décision. Un seul
+ * bouton « vendre » au cours du jour n'en est pas une. Le joueur arbitre donc
+ * entre trois débouchés, du plus sûr au plus rémunérateur :
+ *
+ * 1. **Le négociant** rachète tout, tout de suite, à un prix volontairement
+ *    bas. C'est le plancher : on ne se retrouve jamais avec un silo plein et
+ *    zéro CRD.
+ * 2. **Le cours mondial** paie le prix du jour, mais écouler un gros volume
+ *    fait plonger ce prix — vendre en une fois coûte cher.
+ * 3. **La criée** laisse fixer son prix et attendre un acheteur. Meilleur
+ *    rendement possible, mais frais de dépôt non remboursés et aucune
+ *    garantie de vente.
+ *
+ * @see docs/research/42_TRADE.md
+ */
+
+import type { CropCode } from "./index.js";
+
+export type SaleChannel = "DEALER" | "MARKET" | "LISTING";
+
+export const SALE_CHANNEL_LABELS: Record<SaleChannel, string> = {
+  DEALER: "Négociant",
+  MARKET: "Cours mondial",
+  LISTING: "Criée",
+};
+
+export const SALE_CHANNEL_HINTS: Record<SaleChannel, string> = {
+  DEALER: "Rachat immédiat, prix bas mais garanti",
+  MARKET: "Prix du jour ; un gros volume fait chuter le cours",
+  LISTING: "Vous fixez le prix et vous attendez un acheteur",
+};
+
+/* ------------------------------------------------------------------ */
+/* 1. Le négociant — le plancher                                       */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Part du cours que le négociant consent `[GD]`.
+ *
+ * 60 % doit rester franchement décevant : c'est un filet de sécurité, pas une
+ * stratégie. Plus haut, personne ne prendrait la peine de suivre le marché.
+ */
+export const DEALER_RATIO = 0.6;
+
+/** Le négociant refuse les lots ridicules : il se déplace `[GD]` */
+export const DEALER_MIN_TONS = 0.05;
+
+export function dealerPricePerTon(marketPrice: number): number {
+  return Math.round(marketPrice * DEALER_RATIO * 100) / 100;
+}
+
+/* ------------------------------------------------------------------ */
+/* 2. Le cours mondial — l'impact du volume                            */
+/* ------------------------------------------------------------------ */
+
+/** Impact maximal d'une vente unique sur le cours `[GD]` */
+export const MAX_SLIPPAGE = 0.35;
+
+/**
+ * Décote de volume : écouler `tons` sur un marché qui en stocke `stockTons`
+ * fait baisser le prix obtenu. La racine carrée adoucit la courbe — une
+ * petite vente ne coûte presque rien, une vente massive fait mal.
+ */
+export function volumeSlippage(tons: number, stockTons: number): number {
+  const depth = Math.max(1, stockTons);
+  const raw = Math.sqrt(Math.max(0, tons) / depth) * 0.9;
+  return Math.min(MAX_SLIPPAGE, raw);
+}
+
+/** Prix moyen réellement obtenu au cours mondial, décote de volume comprise. */
+export function marketPricePerTon(
+  marketPrice: number,
+  tons: number,
+  stockTons: number,
+): number {
+  return Math.round(marketPrice * (1 - volumeSlippage(tons, stockTons)) * 100) / 100;
+}
+
+/* ------------------------------------------------------------------ */
+/* 3. La criée — vendre à d'autres joueurs                             */
+/* ------------------------------------------------------------------ */
+
+/** Frais de dépôt, en fraction du montant demandé `[GD]` — jamais remboursés */
+export const LISTING_FEE_RATE = 0.02;
+
+/** Commission prélevée à la vente `[GD]` */
+export const LISTING_COMMISSION_RATE = 0.05;
+
+/** Durée de vie d'une annonce `[GD]` — une saison */
+export const LISTING_TTL_MS = 15 * 60 * 1000;
+
+/** Bornes du prix demandé, en multiples du cours `[GD]` */
+export const LISTING_PRICE_MIN_RATIO = 0.3;
+export const LISTING_PRICE_MAX_RATIO = 2.5;
+
+/** Annonces ouvertes simultanément par joueur `[GD]` */
+export const MAX_OPEN_LISTINGS = 6;
+
+/** Frais à régler au dépôt d'une annonce. */
+export function listingFee(pricePerTon: number, tons: number): number {
+  return Math.max(1, Math.round(pricePerTon * tons * LISTING_FEE_RATE));
+}
+
+/** Ce que le vendeur touche réellement quand l'annonce trouve preneur. */
+export function listingProceeds(pricePerTon: number, tons: number): number {
+  const gross = pricePerTon * tons;
+  return Math.round(gross * (1 - LISTING_COMMISSION_RATE));
+}
+
+export type ListingRefusal =
+  | "PRICE_TOO_LOW"
+  | "PRICE_TOO_HIGH"
+  | "TOO_MANY_LISTINGS"
+  | "NOT_ENOUGH_STOCK"
+  | "CANNOT_AFFORD_FEE";
+
+export const LISTING_REFUSAL_LABELS: Record<ListingRefusal, string> = {
+  PRICE_TOO_LOW: "Prix trop bas — le négociant paie mieux",
+  PRICE_TOO_HIGH: "Prix irréaliste : personne n’achètera",
+  TOO_MANY_LISTINGS: `Vous avez déjà ${MAX_OPEN_LISTINGS} annonces en cours`,
+  NOT_ENOUGH_STOCK: "Stock insuffisant",
+  CANNOT_AFFORD_FEE: "CRD insuffisants pour les frais de dépôt",
+};
+
+export function canList(input: {
+  pricePerTon: number;
+  tons: number;
+  marketPrice: number;
+  openListings: number;
+  stockTons: number;
+  crd: number;
+}): { ok: boolean; reason?: ListingRefusal } {
+  if (input.tons <= 0 || input.stockTons < input.tons) {
+    return { ok: false, reason: "NOT_ENOUGH_STOCK" };
+  }
+  if (input.openListings >= MAX_OPEN_LISTINGS) {
+    return { ok: false, reason: "TOO_MANY_LISTINGS" };
+  }
+  if (input.pricePerTon < input.marketPrice * LISTING_PRICE_MIN_RATIO) {
+    return { ok: false, reason: "PRICE_TOO_LOW" };
+  }
+  if (input.pricePerTon > input.marketPrice * LISTING_PRICE_MAX_RATIO) {
+    return { ok: false, reason: "PRICE_TOO_HIGH" };
+  }
+  if (input.crd < listingFee(input.pricePerTon, input.tons)) {
+    return { ok: false, reason: "CANNOT_AFFORD_FEE" };
+  }
+  return { ok: true };
+}
+
+/* ------------------------------------------------------------------ */
+/* Comparaison des trois canaux                                        */
+/* ------------------------------------------------------------------ */
+
+export type ChannelQuote = {
+  channel: SaleChannel;
+  pricePerTon: number;
+  /** Montant net encaissé, frais et décotes compris */
+  net: number;
+  /** Vrai si l'encaissement est garanti et immédiat */
+  guaranteed: boolean;
+  note: string;
+};
+
+/**
+ * Les trois offres côte à côte, pour que l'arbitrage se lise d'un coup d'œil
+ * plutôt que de se deviner.
+ */
+export function quoteAllChannels(input: {
+  commodity: CropCode;
+  tons: number;
+  marketPrice: number;
+  stockTons: number;
+  /** Malus d'humidité déjà calculé, 0 à 1 */
+  moisturePenalty: number;
+  /** Prix demandé si le joueur passait par la criée */
+  askPricePerTon?: number;
+}): ChannelQuote[] {
+  const keep = 1 - Math.max(0, Math.min(1, input.moisturePenalty));
+  const dealer = dealerPricePerTon(input.marketPrice) * keep;
+  const market = marketPricePerTon(input.marketPrice, input.tons, input.stockTons) * keep;
+  const ask = (input.askPricePerTon ?? input.marketPrice * 1.15) * keep;
+
+  return [
+    {
+      channel: "DEALER",
+      pricePerTon: Math.round(dealer * 100) / 100,
+      net: Math.round(dealer * input.tons),
+      guaranteed: true,
+      note: SALE_CHANNEL_HINTS.DEALER,
+    },
+    {
+      channel: "MARKET",
+      pricePerTon: Math.round(market * 100) / 100,
+      net: Math.round(market * input.tons),
+      guaranteed: true,
+      note:
+        volumeSlippage(input.tons, input.stockTons) > 0.05
+          ? `Décote de volume : −${Math.round(volumeSlippage(input.tons, input.stockTons) * 100)} %`
+          : SALE_CHANNEL_HINTS.MARKET,
+    },
+    {
+      channel: "LISTING",
+      pricePerTon: Math.round(ask * 100) / 100,
+      net: listingProceeds(ask, input.tons) - listingFee(ask, input.tons),
+      guaranteed: false,
+      note: `Frais ${listingFee(ask, input.tons)} CRD · commission ${Math.round(LISTING_COMMISSION_RATE * 100)} %`,
+    },
+  ];
+}
