@@ -135,10 +135,21 @@ type Field = {
   dry(dir: THREE.Vector3): number;
 };
 
+/** Surfaces peintes du globe : couleur, relief, brillance, et carte d'index. */
+type PlanetSkin = {
+  color: HTMLCanvasElement;
+  bump: HTMLCanvasElement;
+  rough: HTMLCanvasElement;
+  /** Continent sous chaque texel, 0 = océan. Sert au survol et au clic. */
+  owner: Uint8Array;
+  width: number;
+  height: number;
+};
+
 type GeometryCache = {
   key: string;
-  ocean: THREE.BufferGeometry | null;
-  land: Map<string, THREE.BufferGeometry>;
+  planet: THREE.BufferGeometry | null;
+  skin: PlanetSkin | null;
 };
 
 /**
@@ -153,9 +164,8 @@ let geometryCache: GeometryCache | null = null;
 function takeGeometryCache(continents: GlobeContinent[]): GeometryCache {
   const key = continents.map((c) => c.code).join("|");
   if (!geometryCache || geometryCache.key !== key) {
-    geometryCache?.ocean?.dispose();
-    geometryCache?.land.forEach((g) => g.dispose());
-    geometryCache = { key, ocean: null, land: new Map() };
+    geometryCache?.planet?.dispose();
+    geometryCache = { key, planet: null, skin: null };
   }
   return geometryCache;
 }
@@ -219,232 +229,261 @@ const POLAR = new THREE.Color(0xc4e4f2);
 const SHALLOW = new THREE.Color(0x92dcef);
 
 /* ------------------------------------------------------------------ */
-/* Construction des masses continentales                                */
+/* Peinture de la planète                                              */
 /* ------------------------------------------------------------------ */
 
 /**
- * Grille gnomonique centrée sur le continent : on échantillonne le champ,
- * on garde les cellules « terre », puis on coud une jupe verticale sur
- * chaque bord de côte. Résultat : une plaque de terre épaisse, façon carte
- * en relief, avec un littoral irrégulier — jamais des hexagones épars.
+ * Résolution des textures équirectangulaires.
+ *
+ * C'est le cœur du rendu : la géométrie n'est plus qu'une sphère lisse, et
+ * tout le détail — côtes, reliefs, bancs de sable, calottes — vient de ces
+ * images. Un maillage facetté trahit toujours ses polygones en gros plan ;
+ * une texture, jamais.
  */
-function buildLand(
-  c: GlobeContinent,
-  f: Field,
-  others: Field[],
-  cells: number,
-): { geometry: THREE.BufferGeometry; triangles: number } {
-  const N = cells;
-  const base = new THREE.Color(c.color);
-  const accent = new THREE.Color(c.accent);
-  const cliff = base.clone().lerp(CLIFF, 0.72).multiplyScalar(0.92);
+const TEX_W = 2048;
+const TEX_H = 1024;
 
-  // Les nœuds entiers sont décalés dans le plan tangent : les côtes perdent
-  // leur allure de damier et les facettes deviennent irrégulières.
-  const dirAt = (i: number, j: number, jitter = false): THREE.Vector3 => {
-    let gi = i;
-    let gj = j;
-    if (jitter) {
-      gi += (hashInt(i, j, 17) - 0.5) * 0.62;
-      gj += (hashInt(i, j, 91) - 0.5) * 0.62;
-    }
-    const a = Math.tan(((gi / N) * 2 - 1) * f.spanU * 1.12);
-    const b = Math.tan(((gj / N) * 2 - 1) * f.spanV * 1.12);
-    return new THREE.Vector3()
-      .copy(f.center)
-      .addScaledVector(f.east, a)
-      .addScaledVector(f.north, b)
-      .normalize();
-  };
+/**
+ * Résolution de l'aperçu. Peindre la pleine définition demande plusieurs
+ * secondes ; une planète grossière mais complète coûte quelques dizaines de
+ * millisecondes. On affiche donc l'aperçu tout de suite et on lui substitue
+ * la version fine dès qu'elle est prête — le joueur ne voit jamais de bille
+ * bleue vide.
+ */
+const PREVIEW_W = 256;
+const PREVIEW_H = 128;
 
-  // Champ échantillonné au centre des cellules : la côte tombe sur une arête.
-  const cellDir: THREE.Vector3[] = new Array(N * N);
-  const cellH = new Float32Array(N * N);
-  const land = new Uint8Array(N * N);
-  for (let j = 0; j < N; j++) {
-    for (let i = 0; i < N; i++) {
-      const d = dirAt(i + 0.5, j + 0.5);
-      const h = f.height(d);
-      const k = j * N + i;
-      cellDir[k] = d;
-      cellH[k] = h;
-      // Deux continents voisins se partagent la frontière au lieu de se
-      // superposer : le plus « fort » gagne, et un détroit reste entre eux.
-      let rival = -1;
-      for (const o of others) rival = Math.max(rival, o.height(d));
-      land[k] = h > 0 && h > rival + 0.05 ? 1 : 0;
-    }
-  }
+/** Budget de calcul par image, en ms : au-delà, on rend la main au navigateur. */
+const PAINT_BUDGET_MS = 10;
 
-  // Nettoyage cellulaire : on gomme les pixels isolés et on bouche les trous
-  // d'un carreau, sinon la côte grésille au lieu d'onduler.
-  const neighbours = (arr: Uint8Array, i: number, j: number): number => {
-    let n = 0;
-    if (i > 0 && arr[j * N + i - 1]) n++;
-    if (i < N - 1 && arr[j * N + i + 1]) n++;
-    if (j > 0 && arr[(j - 1) * N + i]) n++;
-    if (j < N - 1 && arr[(j + 1) * N + i]) n++;
-    return n;
-  };
-  for (let pass = 0; pass < 2; pass++) {
-    const next = land.slice();
-    for (let j = 0; j < N; j++) {
-      for (let i = 0; i < N; i++) {
-        const k = j * N + i;
-        const n = neighbours(land, i, j);
-        if (land[k] && n <= 1) next[k] = 0;
-        if (!land[k] && n >= 4) next[k] = 1;
-      }
-    }
-    land.set(next);
-  }
-
-  // Altitude aux nœuds : moyenne des cellules terrestres adjacentes, ce qui
-  // donne une surface continue (et des sommets partagés, donc peu de tris).
-  const nodeDir: THREE.Vector3[] = new Array((N + 1) * (N + 1));
-  const nodeR = new Float32Array((N + 1) * (N + 1));
-  for (let j = 0; j <= N; j++) {
-    for (let i = 0; i <= N; i++) {
-      const idx = j * (N + 1) + i;
-      nodeDir[idx] = dirAt(i, j, true);
-      let sum = 0;
-      let count = 0;
-      for (let dj = -1; dj <= 0; dj++) {
-        for (let di = -1; di <= 0; di++) {
-          const ci = i + di;
-          const cj = j + dj;
-          if (ci < 0 || cj < 0 || ci >= N || cj >= N) continue;
-          const ck = cj * N + ci;
-          if (!land[ck]) continue;
-          sum += elevationOf(Math.max(0, cellH[ck]), f.mountain(cellDir[ck]));
-          count++;
-        }
-      }
-      // Froissement haute fréquence : sans lui, une plaine reste une crêpe
-      // lisse. Avec le flat shading, chaque facette accroche la lumière.
-      const wrinkle = count
-        ? (valueNoise3(nodeDir[idx].x * 26, nodeDir[idx].y * 26, nodeDir[idx].z * 26) - 0.5) * 0.026
-        : 0;
-      nodeR[idx] = R + (count ? sum / count + wrinkle : 0.02);
-    }
-  }
-
-  const pos: number[] = [];
-  const col: number[] = [];
-  const tmp = new THREE.Color();
-  const p = new THREE.Vector3();
-
-  const push = (dir: THREE.Vector3, radius: number, color: THREE.Color) => {
-    p.copy(dir).multiplyScalar(radius);
-    pos.push(p.x, p.y, p.z);
-    col.push(color.r, color.g, color.b);
-  };
-
-  for (let j = 0; j < N; j++) {
-    for (let i = 0; i < N; i++) {
-      const k = j * N + i;
-      if (!land[k]) continue;
-
-      const d = cellDir[k];
-      const h = Math.max(0, cellH[k]);
-      const m = f.mountain(d);
-      const lat = Math.abs(Math.asin(d.y) * (180 / Math.PI));
-      const ridge = m > 0.54 ? (m - 0.54) / 0.46 : 0;
-
-      // Palette : accent clair sur les côtes basses, couleur pleine dans les
-      // terres, taches sombres de couvert végétal, roche en altitude, sable au
-      // tropique sec et neige sur les hauts sommets ou près des pôles.
-      const biome = valueNoise3(d.x * 7 + 11, d.y * 7 + 5, d.z * 7 + 3);
-      tmp.copy(base).lerp(accent, clamp01(1 - h * 2.6) * 0.75);
-      if (biome > 0.56) tmp.multiplyScalar(1 - clamp01((biome - 0.56) * 2.4) * 0.24);
-      else if (biome < 0.4) tmp.lerp(accent, clamp01((0.4 - biome) * 2) * 0.35);
-      if (ridge > 0) tmp.lerp(ROCK, clamp01(ridge * 1.6));
-      const arid = f.dry(d);
-      if (lat > 14 && lat < 38 && arid > 0.52) {
-        tmp.lerp(SAND, clamp01((arid - 0.52) * 2.4) * 0.8);
-      }
-      const cold = clamp01((lat - 52) / 20) + clamp01((ridge - 0.35) * 2.2);
-      if (cold > 0) tmp.lerp(SNOW, clamp01(cold) * 0.92);
-      // Micro-variation par facette : la lumière accroche mieux.
-      const jitter = 0.94 + valueNoise3(d.x * 34 + 3, d.y * 34, d.z * 34) * 0.13;
-      tmp.multiplyScalar(jitter);
-
-      const n00 = j * (N + 1) + i;
-      const n10 = n00 + 1;
-      const n01 = n00 + (N + 1);
-      const n11 = n01 + 1;
-
-      push(nodeDir[n00], nodeR[n00], tmp);
-      push(nodeDir[n10], nodeR[n10], tmp);
-      push(nodeDir[n11], nodeR[n11], tmp);
-      push(nodeDir[n00], nodeR[n00], tmp);
-      push(nodeDir[n11], nodeR[n11], tmp);
-      push(nodeDir[n01], nodeR[n01], tmp);
-
-      // Jupe de falaise sur chaque arête donnant sur la mer.
-      const edges: Array<[number, number, boolean]> = [
-        [n00, n10, j === 0 || !land[(j - 1) * N + i]],
-        [n10, n11, i === N - 1 || !land[j * N + i + 1]],
-        [n11, n01, j === N - 1 || !land[(j + 1) * N + i]],
-        [n01, n00, i === 0 || !land[j * N + i - 1]],
-      ];
-      for (const [a, b, open] of edges) {
-        if (!open) continue;
-        push(nodeDir[a], nodeR[a], cliff);
-        push(nodeDir[b], nodeR[b], cliff);
-        push(nodeDir[b], R - 0.02, cliff);
-        push(nodeDir[a], nodeR[a], cliff);
-        push(nodeDir[b], R - 0.02, cliff);
-        push(nodeDir[a], R - 0.02, cliff);
-      }
-    }
-  }
-
-  const geometry = new THREE.BufferGeometry();
-  geometry.setAttribute("position", new THREE.Float32BufferAttribute(pos, 3));
-  geometry.setAttribute("color", new THREE.Float32BufferAttribute(col, 3));
-  geometry.computeVertexNormals();
-  geometry.computeBoundingSphere();
-  return { geometry, triangles: pos.length / 9 };
+/** Direction unitaire correspondant à un texel, dans le repère de SphereGeometry. */
+function texelDir(u: number, v: number, out: THREE.Vector3): THREE.Vector3 {
+  const az = u * Math.PI * 2;
+  const pol = v * Math.PI;
+  const s = Math.sin(pol);
+  return out.set(-Math.cos(az) * s, Math.cos(pol), Math.sin(az) * s);
 }
 
-/** Océan lisse : teintes par latitude, variation de profondeur, hauts-fonds. */
-function buildOcean(fields: Field[]): THREE.BufferGeometry {
-  // Niveau 4 (5 120 triangles) : la silhouette est déjà parfaitement ronde et
-  // le budget reste tenable — au-delà, on paie des sommets qu'on ne voit pas.
-  const geometry = new THREE.IcosahedronGeometry(R, 4);
-  const pos = geometry.getAttribute("position");
+/** Mélange linéaire de deux couleurs, écrit directement dans un tampon RVBA. */
+function writeRgb(
+  data: Uint8ClampedArray,
+  i: number,
+  c: THREE.Color,
+  shade = 1,
+): void {
+  data[i] = c.r * 255 * shade;
+  data[i + 1] = c.g * 255 * shade;
+  data[i + 2] = c.b * 255 * shade;
+  data[i + 3] = 255;
+}
 
-  // La couleur se calcule par SOMMET, à partir de sa propre direction, et non
-  // par triangle. Une teinte unique par face dessinait des bandes diagonales
-  // parfaitement visibles au zoom, quel que soit le niveau de subdivision :
-  // c'était la coloration, pas la géométrie, qui trahissait le maillage.
-  // La sphère reste parfaitement ronde pour la même raison.
-  const colors = new Float32Array(pos.count * 3);
+const LOWLAND = new THREE.Color(0x6ea653);
+const HIGHLAND = new THREE.Color(0x8a9a52);
+const FOREST = new THREE.Color(0x40703c);
+const TUNDRA = new THREE.Color(0x9fae9a);
+
+/**
+ * Peint les trois cartes de la planète, bande de lignes par bande de lignes.
+ *
+ * Le travail est découpé pour ne jamais bloquer le fil principal : deux
+ * millions de texels avec du bruit fractal représentent près d'une seconde de
+ * calcul, ce qui figerait l'interface si on le faisait d'un bloc.
+ */
+function makePlanetPainter(
+  fields: Field[],
+  continents: GlobeContinent[],
+  texW = TEX_W,
+  texH = TEX_H,
+): { skin: PlanetSkin; paintBand: () => boolean; paintAll: () => PlanetSkin } {
+  const color = document.createElement("canvas");
+  const bump = document.createElement("canvas");
+  const rough = document.createElement("canvas");
+  for (const c of [color, bump, rough]) {
+    c.width = texW;
+    c.height = texH;
+  }
+  const ctxColor = color.getContext("2d")!;
+  const ctxBump = bump.getContext("2d")!;
+  const ctxRough = rough.getContext("2d")!;
+
+  const owner = new Uint8Array(texW * texH);
+  const palette = continents.map((c) => ({
+    base: new THREE.Color(c.color),
+    accent: new THREE.Color(c.accent),
+  }));
+
+  let row = 0;
+
   const dir = new THREE.Vector3();
   const tint = new THREE.Color();
 
+  /** Peint `rows` lignes à partir de `row`. */
+  const paintRows = (rows: number): void => {
+    const imgColor = ctxColor.createImageData(texW, rows);
+    const imgBump = ctxBump.createImageData(texW, rows);
+    const imgRough = ctxRough.createImageData(texW, rows);
+
+    for (let y = 0; y < rows; y++) {
+      const gy = row + y;
+      const v = (gy + 0.5) / texH;
+      for (let x = 0; x < texW; x++) {
+        const u = (x + 0.5) / texW;
+        texelDir(u, v, dir);
+        const i = (y * texW + x) * 4;
+
+        // Champ continental dominant sous ce texel.
+        let best = -1;
+        let bestH = -1;
+        for (let f = 0; f < fields.length; f++) {
+          const h = fields[f].height(dir);
+          if (h > bestH) {
+            bestH = h;
+            best = f;
+          }
+        }
+
+        const lat = Math.abs(Math.asin(dir.y) * (180 / Math.PI));
+        // Grain fin commun terre et mer : c'est lui qui empêche les aplats.
+        const grain = valueNoise3(dir.x * 90, dir.y * 90, dir.z * 90);
+
+        if (bestH <= 0) {
+          owner[gy * texW + x] = 0;
+          // Profondeur : le fond remonte à l'approche des côtes.
+          const shelf = clamp01((bestH + 0.9) / 0.9);
+          tint.copy(DEEP).lerp(MID, clamp01((bestH + 1.6) / 1.4));
+          tint.lerp(SHALLOW, shelf * shelf * 0.85);
+          if (lat > 62) tint.lerp(POLAR, clamp01((lat - 62) / 22) * 0.75);
+          else if (lat < 26) tint.lerp(TROPIC, (1 - lat / 26) * 0.35);
+          // Houle : de longues ondulations, pas un bruit uniforme.
+          const swell = fbm(dir.x * 7 + 3.1, dir.y * 7 + 8.4, dir.z * 7 + 1.9, 2);
+          writeRgb(imgColor.data, i, tint, 0.94 + swell * 0.12);
+
+          const wave = 118 + (swell - 0.5) * 26 + (grain - 0.5) * 8;
+          writeRgb(imgBump.data, i, tint, 0);
+          imgBump.data[i] = imgBump.data[i + 1] = imgBump.data[i + 2] = wave;
+          imgBump.data[i + 3] = 255;
+          // L'eau est lisse : c'est ce qui lui donne son reflet de soleil.
+          const r = 40 + shelf * 40;
+          imgRough.data[i] = imgRough.data[i + 1] = imgRough.data[i + 2] = r;
+          imgRough.data[i + 3] = 255;
+          continue;
+        }
+
+        owner[gy * texW + x] = best + 1;
+        const field = fields[best];
+        const pal = palette[best];
+        const m = field.mountain(dir);
+        const arid = field.dry(dir);
+        const elev = elevationOf(bestH, m);
+        const ridge = m > 0.54 ? (m - 0.54) / 0.46 : 0;
+
+        // Biome : la couleur du continent domine, l'altitude et la sécheresse
+        // la nuancent, et le littoral s'ourle de sable.
+        tint.copy(pal.base).lerp(LOWLAND, 0.25);
+        tint.lerp(pal.accent, clamp01(bestH) * 0.34);
+        if (arid < 0.42) tint.lerp(FOREST, (0.42 - arid) * 1.5);
+        else if (arid > 0.58) tint.lerp(SAND, (arid - 0.58) * 1.3);
+        if (ridge > 0) {
+          tint.lerp(HIGHLAND, clamp01(ridge * 0.9));
+          tint.lerp(ROCK, clamp01((ridge - 0.35) * 1.6));
+        }
+        if (lat > 58) tint.lerp(TUNDRA, clamp01((lat - 58) / 18) * 0.7);
+        const snowLine = 0.62 - clamp01((lat - 30) / 60) * 0.34;
+        if (ridge > snowLine || lat > 74) {
+          const snow = Math.max(clamp01((ridge - snowLine) * 3), clamp01((lat - 74) / 12));
+          tint.lerp(SNOW, snow * 0.92);
+        }
+        // Trait de côte : une frange de sable puis une falaise sous-jacente.
+        const shore = clamp01(bestH / 0.22);
+        if (shore < 1) {
+          tint.lerp(SAND, (1 - shore) * 0.65);
+          tint.lerp(CLIFF, (1 - shore) * 0.18);
+        }
+
+        const speckle = 0.93 + grain * 0.14;
+        writeRgb(imgColor.data, i, tint, speckle);
+
+        const relief = clamp01(elev / 0.9) * 190 + 40 + (grain - 0.5) * 22;
+        imgBump.data[i] = imgBump.data[i + 1] = imgBump.data[i + 2] = relief;
+        imgBump.data[i + 3] = 255;
+
+        // La terre ne brille pas : rugosité forte, plus forte encore sur roche.
+        const r = 200 + ridge * 40 - shore * 30;
+        imgRough.data[i] = imgRough.data[i + 1] = imgRough.data[i + 2] = r;
+        imgRough.data[i + 3] = 255;
+      }
+    }
+
+    ctxColor.putImageData(imgColor, 0, row);
+    ctxBump.putImageData(imgBump, 0, row);
+    ctxRough.putImageData(imgRough, 0, row);
+    row += rows;
+  };
+
+  const skin: PlanetSkin = { color, bump, rough, owner, width: texW, height: texH };
+
+  /**
+   * Peint autant de lignes que le budget d'image l'autorise. Un nombre de
+   * lignes fixe ne convenait pas : une bande peut coûter dix fois plus qu'une
+   * autre selon qu'elle traverse un océan vide ou trois continents.
+   */
+  const paintBand = (): boolean => {
+    if (row >= texH) return true;
+    const deadline = performance.now() + PAINT_BUDGET_MS;
+    do {
+      paintRows(Math.min(8, texH - row));
+    } while (row < texH && performance.now() < deadline);
+    return row >= texH;
+  };
+
+  const paintAll = (): PlanetSkin => {
+    while (row < texH) paintRows(Math.min(32, texH - row));
+    return skin;
+  };
+
+  return { skin, paintBand, paintAll };
+}
+
+/** Continent sous une direction donnée, d'après la carte d'index peinte. */
+function ownerAt(skin: PlanetSkin, dir: THREE.Vector3): number {
+  const pol = Math.acos(Math.max(-1, Math.min(1, dir.y)));
+  let az = Math.atan2(dir.z, -dir.x);
+  if (az < 0) az += Math.PI * 2;
+  const x = Math.min(skin.width - 1, Math.floor((az / (Math.PI * 2)) * skin.width));
+  const y = Math.min(skin.height - 1, Math.floor((pol / Math.PI) * skin.height));
+  return skin.owner[y * skin.width + x];
+}
+
+/**
+ * Sphère lisse au relief modéré. Le déplacement ne sert qu'à donner du
+ * volume à la silhouette : le détail visible vient des textures, ce qui
+ * autorise une géométrie sans arête apparente.
+ */
+function buildPlanetGeometry(fields: Field[]): THREE.BufferGeometry {
+  const geometry = new THREE.SphereGeometry(R, 256, 128);
+  const pos = geometry.getAttribute("position");
+  const dir = new THREE.Vector3();
   for (let i = 0; i < pos.count; i++) {
     dir.set(pos.getX(i), pos.getY(i), pos.getZ(i)).normalize();
-
-    const lat = Math.abs(Math.asin(dir.y) * (180 / Math.PI));
-    const n = fbm(dir.x * 2.4 + 19.1, dir.y * 2.4 + 3.3, dir.z * 2.4 + 8.8, 3);
-    tint.copy(DEEP).lerp(MID, clamp01((n - 0.28) / 0.44));
-    if (lat > 60) tint.lerp(POLAR, clamp01((lat - 60) / 24) * 0.8);
-    else if (lat < 24) tint.lerp(TROPIC, (1 - lat / 24) * 0.4);
-
-    // Haut-fond : on éclaircit là où le champ continental frôle le zéro.
-    let near = -1;
-    for (const f of fields) near = Math.max(near, f.height(dir));
-    if (near > -0.42) tint.lerp(SHALLOW, clamp01((near + 0.42) / 0.42) * 0.85);
-
-    colors[i * 3] = tint.r;
-    colors[i * 3 + 1] = tint.g;
-    colors[i * 3 + 2] = tint.b;
+    let bestH = -1;
+    let bestField: Field | null = null;
+    for (const f of fields) {
+      const h = f.height(dir);
+      if (h > bestH) {
+        bestH = h;
+        bestField = f;
+      }
+    }
+    let radius = R;
+    if (bestH > 0 && bestField) {
+      radius = R + elevationOf(bestH, bestField.mountain(dir)) * 0.5;
+    }
+    dir.multiplyScalar(radius);
+    pos.setXYZ(i, dir.x, dir.y, dir.z);
   }
-
-  geometry.setAttribute("color", new THREE.BufferAttribute(colors, 3));
+  pos.needsUpdate = true;
   geometry.computeVertexNormals();
+  geometry.computeBoundingSphere();
   return geometry;
 }
 
@@ -546,65 +585,73 @@ export function GlobeView({
     const fields = continents.map(makeField);
     const geometryCache = takeGeometryCache(continents);
 
-    // Ombrage lissé sur l'océan : les facettes anguleuses lisibles à l'œil nu
-    // faisaient « bille en plastique ». La terre, elle, reste facettée.
-    const oceanMat = new THREE.MeshStandardMaterial({
-      vertexColors: true,
-      flatShading: false,
-      roughness: 0.62,
-      metalness: 0.02,
+    // Une seule sphère lisse porte toute la planète. Le détail vient des
+    // textures, jamais de la géométrie : c'est la seule façon d'éviter que des
+    // polygones apparaissent en gros plan.
+    const planetMat = new THREE.MeshStandardMaterial({
+      color: 0xffffff,
+      roughness: 0.85,
+      metalness: 0.04,
+      bumpScale: 0.9,
     });
-    const ocean = new THREE.Mesh(
-      (geometryCache.ocean ??= markShared(buildOcean(fields))),
-      oceanMat,
+    const planet = new THREE.Mesh(
+      (geometryCache.planet ??= markShared(buildPlanetGeometry(fields))),
+      planetMat,
     );
-    spinner.add(ocean);
+    spinner.add(planet);
 
-    // Résolution de la grille de terre : c'est elle qui décide si une côte
-    // ressemble à un littoral ou à un escalier. Le coût reste modeste car seules
-    // les cellules émergées produisent des triangles.
-    const cellCount = continents.length > 6 ? 34 : 40;
-    const landByCode = new Map<string, THREE.Mesh>();
-    const landMat = new Map<string, THREE.MeshLambertMaterial>();
-    // Cibles de raycast : terres et marqueurs seulement, jamais l'océan
-    // (5 000 triangles inutiles à tester à chaque mouvement de souris).
-    const pickTargets: THREE.Object3D[] = [];
+    const pickTargets: THREE.Object3D[] = [planet];
 
     /**
-     * Un continent coûte quelques dizaines de millisecondes de bruit fractal.
-     * Les construire d'affilée bloquait le fil principal près de 400 ms —
-     * Chrome le signalait comme une violation, et le clic paraissait figé. On
-     * en pose donc un par image : l'océan s'affiche tout de suite, les terres
-     * apparaissent en un peu plus d'un dixième de seconde, et rien ne bloque.
+     * Peinture en deux temps. Deux millions de texels de bruit fractal
+     * représentent plusieurs secondes de calcul : on affiche d'abord une
+     * planète complète en basse définition, puis on peint la version fine par
+     * tranches limitées en temps, sans jamais bloquer une image. Le résultat
+     * est mis en cache pour la session.
      */
-    function buildContinent(i: number) {
-      const c = continents[i];
-      const rivals = fields.filter((_, k) => k !== i);
-      const geometry =
-        geometryCache.land.get(c.code) ??
-        markShared(buildLand(c, fields[i], rivals, cellCount).geometry);
-      geometryCache.land.set(c.code, geometry);
-      const material = new THREE.MeshLambertMaterial({
-        vertexColors: true,
-        flatShading: true,
-        emissive: new THREE.Color(0x000000),
-      });
-      const mesh = new THREE.Mesh(geometry, material);
-      mesh.userData.continentCode = c.code;
-      spinner.add(mesh);
-      pickTargets.push(mesh);
-      landByCode.set(c.code, mesh);
-      landMat.set(c.code, material);
-    }
-
-    let buildRaf = 0;
-    let nextContinent = 0;
-    const buildNext = () => {
-      if (nextContinent >= continents.length) return;
-      buildContinent(nextContinent++);
-      buildRaf = requestAnimationFrame(buildNext);
+    let skin = geometryCache.skin;
+    let paintRaf = 0;
+    const ownedTextures: THREE.Texture[] = [];
+    const applySkin = (s: PlanetSkin) => {
+      // Les textures précédentes — l'aperçu — n'ont plus lieu d'être.
+      ownedTextures.splice(0).forEach((t) => t.dispose());
+      const colorTex = new THREE.CanvasTexture(s.color);
+      colorTex.colorSpace = THREE.SRGBColorSpace;
+      colorTex.anisotropy = renderer.capabilities.getMaxAnisotropy();
+      const bumpTex = new THREE.CanvasTexture(s.bump);
+      const roughTex = new THREE.CanvasTexture(s.rough);
+      for (const t of [colorTex, bumpTex, roughTex]) {
+        t.wrapS = THREE.RepeatWrapping;
+        t.minFilter = THREE.LinearMipmapLinearFilter;
+      }
+      planetMat.map = colorTex;
+      planetMat.bumpMap = bumpTex;
+      planetMat.roughnessMap = roughTex;
+      planetMat.needsUpdate = true;
+      ownedTextures.push(colorTex, bumpTex, roughTex);
     };
-    buildNext();
+
+    if (skin) {
+      applySkin(skin);
+    } else {
+      // Planète complète tout de suite, en basse définition : quelques dizaines
+      // de millisecondes suffisent, et le joueur voit un monde plutôt qu'une
+      // bille bleue pendant que la version fine se calcule.
+      skin = makePlanetPainter(fields, continents, PREVIEW_W, PREVIEW_H).paintAll();
+      applySkin(skin);
+
+      const painter = makePlanetPainter(fields, continents);
+      const paintNext = () => {
+        if (painter.paintBand()) {
+          geometryCache.skin = painter.skin;
+          skin = painter.skin;
+          applySkin(painter.skin);
+          return;
+        }
+        paintRaf = requestAnimationFrame(paintNext);
+      };
+      paintRaf = requestAnimationFrame(paintNext);
+    }
 
     // Nuages : patchs aplatis répartis en spirale de Fibonacci.
     const clouds = new THREE.Group();
@@ -805,6 +852,7 @@ export function GlobeView({
       pointer.x = ((ev.clientX - rect.left) / rect.width) * 2 - 1;
       pointer.y = -((ev.clientY - rect.top) / rect.height) * 2 + 1;
       raycaster.setFromCamera(pointer, camera);
+      // Les repères l'emportent : ils sont petits et le joueur les vise.
       const hits = raycaster.intersectObjects(pickTargets, true);
       for (const hit of hits) {
         let o: THREE.Object3D | null = hit.object;
@@ -814,10 +862,15 @@ export function GlobeView({
           o = o.parent;
         }
       }
-      // Rien touché : on tolère le clic « à côté » en projetant sur la sphère
-      // et en cherchant le continent dont le champ est le plus proche du bord.
       if (!raycaster.ray.intersectSphere(pickBounds, hitPoint)) return null;
       const local = spinner.worldToLocal(hitPoint.clone()).normalize();
+      // La carte d'index dit exactement quelle terre est sous le doigt.
+      if (skin) {
+        const idx = ownerAt(skin, local);
+        if (idx > 0) return continents[idx - 1].code;
+      }
+      // En pleine mer, on tolère le clic « à côté » : le continent dont le
+      // champ est le plus proche du bord l'emporte.
       let best: string | null = null;
       let bestVal = -0.5;
       for (let i = 0; i < fields.length; i++) {
@@ -1009,17 +1062,6 @@ export function GlobeView({
           : 0.22 + pulse * 0.06;
       }
 
-      for (const [code, mesh] of landByCode) {
-        const lift = code === sel ? 1.012 : 1;
-        scaleTmp.set(lift, lift, lift);
-        mesh.scale.lerp(scaleTmp, 0.12);
-        const mat = landMat.get(code);
-        if (mat) {
-          const want = code === sel ? 0.075 : code === hovered ? 0.04 : 0;
-          mat.emissive.setScalar(mat.emissive.r + (want - mat.emissive.r) * 0.15);
-        }
-      }
-
       renderer.render(scene, camera);
       raf = requestAnimationFrame(tick);
     };
@@ -1036,7 +1078,8 @@ export function GlobeView({
 
     return () => {
       cancelAnimationFrame(raf);
-      cancelAnimationFrame(buildRaf);
+      cancelAnimationFrame(paintRaf);
+      ownedTextures.forEach((t) => t.dispose());
       ro.disconnect();
       apiRef.current = null;
       const el = renderer.domElement;
