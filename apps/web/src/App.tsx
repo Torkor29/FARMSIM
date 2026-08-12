@@ -1194,20 +1194,20 @@ export function App() {
                       </span>
                     </span>
                     {cost === null ? (
-                      <span className="upgrade-max">Max</span>
+                      <span className="upgrade-max">Niveau max</span>
+                    ) : blocked ? (
+                      <span className="upgrade-locked">Nv. joueur {next?.requiredLevel}</span>
+                    ) : player.crd < cost ? (
+                      <span className="upgrade-locked poor">{cost} CRD</span>
                     ) : (
                       <button
                         type="button"
                         className="upgrade-btn"
-                        disabled={busy || blocked || player.crd < cost}
-                        title={
-                          blocked
-                            ? `Niveau joueur ${next?.requiredLevel} requis`
-                            : `Passer au niveau ${lvl + 1} pour ${cost} CRD`
-                        }
+                        disabled={busy}
+                        title={`Passer au niveau ${lvl + 1} — ${buildingLevelDef(lvl + 1).name}`}
                         onClick={() => upgradeBuilding(b.id)}
                       >
-                        {cost} CRD
+                        ↑ {cost} CRD
                       </button>
                     )}
                   </div>

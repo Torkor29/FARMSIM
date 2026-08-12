@@ -342,12 +342,17 @@ button.ghost {
   flex-wrap: wrap;
 }
 .pip {
-  width: 0.42rem;
-  height: 0.42rem;
+  width: 0.6rem;
+  height: 0.6rem;
   border-radius: 50%;
-  background: rgba(34, 49, 44, 0.16);
+  background: rgba(34, 49, 44, 0.14);
+  border: 1px solid rgba(34, 49, 44, 0.12);
 }
-.pip.on { background: var(--gold-500); }
+.pip.on {
+  background: linear-gradient(180deg, var(--gold-300), var(--gold-500));
+  border-color: var(--gold-700);
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.6) inset;
+}
 .level-row em {
   font-style: normal;
   font-size: 0.72rem;
@@ -368,7 +373,19 @@ button.ghost {
   font-size: 0.72rem;
   font-weight: 800;
   color: var(--teal-500);
+  white-space: nowrap;
 }
+/* Un blocage doit se lire, pas se deviner au survol d'un bouton grisé. */
+.upgrade-locked {
+  padding: 0.3rem 0.55rem;
+  border-radius: var(--r-pill);
+  border: 1px dashed rgba(34, 49, 44, 0.28);
+  font-size: 0.7rem;
+  font-weight: 800;
+  color: var(--muted);
+  white-space: nowrap;
+}
+.upgrade-locked.poor { color: var(--danger); border-color: #e8b4ad; }
 
 .action-bar {
   position: absolute;
