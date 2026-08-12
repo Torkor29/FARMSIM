@@ -1,6 +1,6 @@
 import { useEffect, useRef } from "react";
 import * as THREE from "three";
-import { disposeRenderer, disposeThreeScene } from "./three-cleanup";
+import { disposeRenderer, disposeThreeScene, markShared } from "./three-cleanup";
 
 export type GlobeContinent = {
   code: string;
@@ -134,6 +134,31 @@ type Field = {
   mountain(dir: THREE.Vector3): number;
   dry(dir: THREE.Vector3): number;
 };
+
+type GeometryCache = {
+  key: string;
+  ocean: THREE.BufferGeometry | null;
+  land: Map<string, THREE.BufferGeometry>;
+};
+
+/**
+ * Le relief du globe est déterministe : mêmes continents, même géométrie.
+ * La construire coûte pourtant plusieurs centaines de millisecondes de bruit
+ * fractal, et le composant se monte plusieurs fois — deux fois en StrictMode,
+ * puis à chaque retour sur l'écran des continents et pour le vol d'approche.
+ * On garde donc le résultat en mémoire pour la durée de la session.
+ */
+let geometryCache: GeometryCache | null = null;
+
+function takeGeometryCache(continents: GlobeContinent[]): GeometryCache {
+  const key = continents.map((c) => c.code).join("|");
+  if (!geometryCache || geometryCache.key !== key) {
+    geometryCache?.ocean?.dispose();
+    geometryCache?.land.forEach((g) => g.dispose());
+    geometryCache = { key, ocean: null, land: new Map() };
+  }
+  return geometryCache;
+}
 
 function makeField(c: GlobeContinent): Field {
   const center = latLonToVec3(c.lat, c.lon, 1);
@@ -519,6 +544,7 @@ export function GlobeView({
     axis.add(spinner);
 
     const fields = continents.map(makeField);
+    const geometryCache = takeGeometryCache(continents);
 
     // Ombrage lissé sur l'océan : les facettes anguleuses lisibles à l'œil nu
     // faisaient « bille en plastique ». La terre, elle, reste facettée.
@@ -528,7 +554,10 @@ export function GlobeView({
       roughness: 0.62,
       metalness: 0.02,
     });
-    const ocean = new THREE.Mesh(buildOcean(fields), oceanMat);
+    const ocean = new THREE.Mesh(
+      (geometryCache.ocean ??= markShared(buildOcean(fields))),
+      oceanMat,
+    );
     spinner.add(ocean);
 
     // Résolution de la grille de terre : c'est elle qui décide si une côte
@@ -544,7 +573,10 @@ export function GlobeView({
     for (let i = 0; i < continents.length; i++) {
       const c = continents[i];
       const rivals = fields.filter((_, k) => k !== i);
-      const { geometry } = buildLand(c, fields[i], rivals, cellCount);
+      const geometry =
+        geometryCache.land.get(c.code) ??
+        markShared(buildLand(c, fields[i], rivals, cellCount).geometry);
+      geometryCache.land.set(c.code, geometry);
       const material = new THREE.MeshLambertMaterial({
         vertexColors: true,
         flatShading: true,

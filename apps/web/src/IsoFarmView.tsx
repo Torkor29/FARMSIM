@@ -337,7 +337,9 @@ export function IsoFarmView({
     const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false });
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
     renderer.shadowMap.enabled = true;
-    renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    // PCFSoftShadowMap est déprécié depuis r185 : le renderer le remplace de
+    // toute façon par PCFShadowMap en émettant un avertissement.
+    renderer.shadowMap.type = THREE.PCFShadowMap;
     el.appendChild(renderer.domElement);
 
     const camera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0.1, 100);

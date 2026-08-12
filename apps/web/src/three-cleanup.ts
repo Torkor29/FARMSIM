@@ -11,10 +11,20 @@ import * as THREE from "three";
  * StrictMode en développement. Sans libération explicite, la limite est
  * atteinte et des canevas deviennent noirs sans la moindre erreur.
  */
+/**
+ * Marque une géométrie comme partagée entre plusieurs montages : le nettoyage
+ * de scène la laissera intacte. Sert aux géométries mises en cache, coûteuses
+ * à reconstruire et strictement identiques d'un montage à l'autre.
+ */
+export function markShared<T extends THREE.BufferGeometry>(geometry: T): T {
+  geometry.userData.shared = true;
+  return geometry;
+}
+
 export function disposeThreeScene(scene: THREE.Scene): void {
   scene.traverse((object) => {
     const mesh = object as Partial<THREE.Mesh>;
-    mesh.geometry?.dispose?.();
+    if (!mesh.geometry?.userData?.shared) mesh.geometry?.dispose?.();
     const material = mesh.material;
     if (Array.isArray(material)) {
       for (const m of material) disposeMaterial(m);
