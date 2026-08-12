@@ -78,6 +78,31 @@ du code. Un redémarrage à cache vidé l'a levé.
 
 ---
 
+## Deuxième passe (après le commerce et l'élevage)
+
+Un audit a été refait une fois le code neuf livré — écran de vente, marché
+entre joueurs, actions d'élevage, remodelage des bâtiments. Résultat : aucune
+dépréciation, aucun avertissement React, aucune erreur, aucun 404, aucune
+fuite de contexte. Mais cinq violations de performance, dont une à 1 702 ms.
+
+| Violation | Cause réelle | Correction |
+|-----------|--------------|------------|
+| `'click' handler took 1702ms` | `window.confirm()` gèle le fil principal tant que la boîte est ouverte : Chrome comptait le temps de lecture de l'utilisateur | Boîte de confirmation intégrée, échappement au clavier |
+| `'message' handler took 228–502ms`, **toutes les 4 s** | La parcelle est sondée en continu et renvoie des objets neufs ; `layout()` détruisait et reconstruisait les 144 dalles, cultures, engins et bâtiments à chaque fois | Signature de l'état réel de la scène ; plus aucune reconstruction inutile |
+| Coût du premier montage | 144 géométries de dalle identiques allouées une à une | Une seule géométrie partagée |
+| `POST …/build 402` | Le fantôme rouge signalait le manque de CRD mais le clic partait quand même | Le budget entre dans la condition de placement |
+
+**Mesuré après correction :** zéro violation sur quarante secondes
+d'inactivité, là où il y en avait une toutes les quatre secondes. Il reste
+trois violations de 215 à 453 ms au premier chargement, inhérentes à la
+construction initiale de la scène.
+
+La leçon de cette passe : **une violation n'est pas toujours un problème de
+performance**. La pire des cinq mesurait le temps qu'un humain passait à lire
+une boîte de dialogue. Il faut chercher la cause avant d'optimiser.
+
+---
+
 ## Entretien
 
 À faire avant chaque livraison :

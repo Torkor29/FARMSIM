@@ -706,9 +706,16 @@ export function App() {
     return `Case (${x},${y}) · ${cell.kind}`;
   }
 
+  /**
+   * Emprise libre ET budget suffisant. Le fantôme rouge signalait déjà le
+   * manque de CRD, mais le clic partait quand même et le serveur répondait
+   * 402 : un aller-retour perdu, et une erreur rouge en console pour une
+   * situation parfaitement prévisible côté client.
+   */
   function canPlaceBuildingAt(x: number, y: number): boolean {
     const def = BUILDING_DEFS[buildType];
     if (x + def.w > gw || y + def.h > gh) return false;
+    if ((player?.crd ?? 0) < def.cost) return false;
     const footprint = footprintCells(x, y, def.w, def.h);
     return footprint.every((fc) => {
       const c = grid.find((cell) => cell.x === fc.x && cell.y === fc.y);
