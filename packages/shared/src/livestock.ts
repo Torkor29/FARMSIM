@@ -167,13 +167,18 @@ export function happinessTarget(input: {
   grazedRecentlyMs: number;
   /** Effectif / capacité de l'enclos */
   crowding: number;
+  /** Pénalité de faim, cf. `hungerPenalty()` */
+  hunger?: number;
 }): number {
   const span = HAPPINESS.grazedCeiling - HAPPINESS.confinedFloor;
   const freshness = input.hasPaddock
     ? clamp(1 - Math.max(0, input.grazedRecentlyMs) / HAPPINESS.grazeMemoryMs, 0, 1)
     : 0;
   const base = HAPPINESS.confinedFloor + span * freshness;
-  return clamp(base - crowdingPenalty(input.crowding), HAPPINESS.min, HAPPINESS.max);
+  // La faim passe avant le confort : une bête affamée ne se console pas d'un
+  // beau pré, et la pénalité peut donc pousser sous le plancher.
+  const malus = crowdingPenalty(input.crowding) + Math.max(0, input.hunger ?? 0);
+  return clamp(base - malus, HAPPINESS.min, HAPPINESS.max);
 }
 
 /**
@@ -193,6 +198,8 @@ export function tickHappiness(input: {
   /** Effectif / capacité de l'enclos */
   crowding: number;
   elapsedMs: number;
+  /** Pénalité de faim, cf. `hungerPenalty()` */
+  hunger?: number;
 }): number {
   const current = clamp(input.happiness, HAPPINESS.min, HAPPINESS.max);
   const hours = Math.max(0, input.elapsedMs) / HOUR_MS;
@@ -221,11 +228,58 @@ export const GRAZING_BLOCKING_WEATHER: readonly WeatherState[] = ["STORM", "SNOW
 /** Motif de refus de sortie, tel qu'il s'affiche dans l'UI. */
 export type GrazingRefusal = "NO_PADDOCK" | "PADDOCK_FULL" | "BAD_WEATHER" | "WRONG_SPECIES";
 
+/* ------------------------------------------------------------------ */
+/* Alimentation — la ration conditionne tout le reste                  */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Effet de la faim `[GD]`.
+ *
+ * Un troupeau non nourri ne meurt pas : il maigrit et se stresse. La cible de
+ * bien-être s'effondre, donc lait et viande suivent. C'est la sanction la plus
+ * lisible — le joueur voit sa jauge plonger sans qu'on lui supprime son
+ * cheptel du jour au lendemain.
+ */
+export const HUNGER = {
+  /** Au-delà, la ration précédente ne compte plus `[GD]` */
+  memoryMs: 0,
+  /** Pénalité maximale sur la cible de bien-être `[GD]` */
+  penaltyMax: 0.55,
+  /** Ration d'une bête pour un cycle, en kg équivalent fourrage `[RÉEL]` */
+  unitsPerAnimalPerCycle: 14,
+} as const;
+
+/**
+ * Pénalité de faim, de 0 (rassasié) à `penaltyMax` (réserve vide).
+ * La réserve est exprimée en unités nutritives déjà distribuées.
+ */
+export function hungerPenalty(input: {
+  feedStock: number;
+  herdSize: number;
+}): number {
+  const need = Math.max(1, input.herdSize) * HUNGER.unitsPerAnimalPerCycle;
+  const covered = Math.max(0, Math.min(1, input.feedStock / need));
+  return (1 - covered) * HUNGER.penaltyMax;
+}
+
+/** Unités nutritives consommées par un troupeau sur une durée donnée. */
+export function feedBurn(input: {
+  herdSize: number;
+  elapsedMs: number;
+  cycleMs: number;
+  /** Au pré, les bêtes se nourrissent en partie seules */
+  grazing: boolean;
+}): number {
+  const cycles = Math.max(0, input.elapsedMs) / Math.max(1, input.cycleMs);
+  const ratio = input.grazing ? FEED_GRAZING_RATIO : 1;
+  return input.herdSize * HUNGER.unitsPerAnimalPerCycle * cycles * ratio;
+}
+
 export const GRAZING_REFUSAL_LABELS: Record<GrazingRefusal, string> = {
   NO_PADDOCK: "Aucun enclos accolé à l’étable",
   PADDOCK_FULL: "Enclos saturé",
   BAD_WEATHER: "Météo impraticable",
-  WRONG_SPECIES: "Espèce non pâturable",
+  WRONG_SPECIES: "Cette aire de sortie n’est pas faite pour cette espèce",
 };
 
 /**
@@ -240,8 +294,14 @@ export function canGraze(input: {
   animalsOutside?: number;
   weather: WeatherState;
   kind?: AnimalKind;
+  /** Espèce que l'aire de sortie accueille ; par défaut, des bovins */
+  paddockKind?: AnimalKind;
 }): { ok: boolean; reason?: GrazingRefusal } {
-  if ((input.kind ?? "COW") !== "COW") return { ok: false, reason: "WRONG_SPECIES" };
+  // Une vache ne se met pas dans une souille, un porc ne pâture pas : chaque
+  // espèce a son aire de sortie.
+  if ((input.kind ?? "COW") !== (input.paddockKind ?? "COW")) {
+    return { ok: false, reason: "WRONG_SPECIES" };
+  }
   if (input.paddock === null || !input.paddock.adjacent) {
     return { ok: false, reason: "NO_PADDOCK" };
   }

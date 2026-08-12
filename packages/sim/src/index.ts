@@ -5,6 +5,7 @@ import {
   residueBonus,
   ripenessAt,
   type CropCode,
+  type TradeGood,
   type RipenessInfo,
   type Specialization,
   type WeatherState,
@@ -156,7 +157,7 @@ export function simulateCell(input: CellSimInput): CellSimResult {
 export const simulateField = simulateCell;
 
 export type MarketTickInput = {
-  commodity: CropCode;
+  commodity: TradeGood;
   price: number;
   supplyTons: number;
   demandTons: number;

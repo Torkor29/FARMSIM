@@ -10,6 +10,7 @@ export type BarnState = {
   cowPrice: number;
   canGraze: boolean;
   grazeRefusal: string | null;
+  yardType: BuildingType;
   herd: {
     id: string;
     kind: string;
@@ -17,6 +18,11 @@ export type BarnState = {
     happiness: number;
     label: string;
     grazingUntil: number | null;
+    feedStock: number;
+    feedNeed: number;
+    feedQuality: number;
+    hungry: boolean;
+    canMilk: boolean;
     milkPerCycle: number;
     meatAtSlaughter: number;
   } | null;
@@ -28,7 +34,11 @@ type Props = {
   crd: number;
   onBuyAnimals: (buildingId: string, count: number) => void;
   onGraze: (herdId: string) => void;
-  onBuildPaddock: () => void;
+  onBuildPaddock: (yardType: BuildingType) => void;
+  onFeed: (herdId: string) => void;
+  onMilk: (herdId: string) => void;
+  onSlaughter: (herdId: string, count: number) => void;
+  hayTons: number;
 };
 
 /** Panneau élevage : effectif, bien-être, sortie au pré. */
@@ -39,6 +49,10 @@ export function LivestockPanel({
   onBuyAnimals,
   onGraze,
   onBuildPaddock,
+  onFeed,
+  onMilk,
+  onSlaughter,
+  hayTons,
 }: Props) {
   if (!barns.length) return null;
 
@@ -46,8 +60,8 @@ export function LivestockPanel({
     <aside className="glass livestock-panel">
       <h3>Élevage</h3>
       <p className="muted tiny">
-        Enfermées, les bêtes s’étiolent. Un enclos collé à l’étable leur permet de
-        sortir : elles deviennent plus heureuses, donnent plus de lait et plus de viande.
+        Nourrissez, sortez, trayez. Un troupeau affamé s’effondre ; une aire de
+        sortie accolée au bâtiment le rend nettement plus productif.
       </p>
 
       {barns.map((barn) => {
@@ -84,6 +98,20 @@ export function LivestockPanel({
                   </span>
                 </div>
 
+                <div className="feed-row">
+                  <div className="feed-bar">
+                    <span
+                      className={`feed-fill ${herd.hungry ? "low" : ""}`}
+                      style={{
+                        width: `${Math.min(100, Math.round((herd.feedStock / Math.max(1, herd.feedNeed)) * 100))}%`,
+                      }}
+                    />
+                  </div>
+                  <span className={`feed-label ${herd.hungry ? "warn" : ""}`}>
+                    {herd.hungry ? "Ration à distribuer" : "Ration suffisante"}
+                  </span>
+                </div>
+
                 <dl className="barn-stats">
                   <div>
                     <dt>Lait / cycle</dt>
@@ -101,8 +129,8 @@ export function LivestockPanel({
 
             <p className={`paddock-note ${barn.paddockCapacity > 0 ? "ok" : "none"}`}>
               {barn.paddockCapacity > 0
-                ? `Enclos attenant · ${barn.paddockCapacity} places de sortie`
-                : "Aucun enclos attenant — les bêtes restent enfermées"}
+                ? `${BUILDING_DEFS[barn.yardType].name} attenant · ${barn.paddockCapacity} places de sortie`
+                : `Aucun${barn.yardType === "PIG_YARD" ? "e courette" : " enclos"} attenant — les bêtes restent enfermées`}
             </p>
 
             <div className="barn-actions">
@@ -111,7 +139,7 @@ export function LivestockPanel({
                 disabled={busy || !canBuy}
                 title={
                   room <= 0
-                    ? "Étable pleine — agrandissez-la"
+                    ? "Bâtiment plein — agrandissez-le"
                     : `Acheter une bête pour ${barn.cowPrice} CRD`
                 }
                 onClick={() => onBuyAnimals(barn.buildingId, 1)}
@@ -119,12 +147,55 @@ export function LivestockPanel({
                 +1 bête · {barn.cowPrice}
               </button>
 
+              {herd && (
+                <button
+                  type="button"
+                  disabled={busy || hayTons <= 0}
+                  title={
+                    hayTons <= 0
+                      ? "Aucun fourrage en silo — achetez-en au négociant"
+                      : "Distribuer la ration"
+                  }
+                  onClick={() => onFeed(herd.id)}
+                >
+                  Nourrir
+                </button>
+              )}
+
+              {herd && herd.kind === "COW" && (
+                <button
+                  type="button"
+                  className="accent-btn"
+                  disabled={busy || !herd.canMilk}
+                  title={herd.canMilk ? "Traire le troupeau" : "Les vaches viennent d’être traites"}
+                  onClick={() => onMilk(herd.id)}
+                >
+                  Traire
+                </button>
+              )}
+
+              {herd && (
+                <button
+                  type="button"
+                  className="slaughter-btn"
+                  disabled={busy}
+                  title={`Abattre une bête — environ ${(herd.meatAtSlaughter / Math.max(1, herd.size)).toFixed(0)} kg`}
+                  onClick={() => onSlaughter(herd.id, 1)}
+                >
+                  Abattre
+                </button>
+              )}
+
               {barn.paddockCapacity === 0 ? (
-                <button type="button" className="accent-btn" onClick={onBuildPaddock}>
-                  Construire un enclos
+                <button
+                  type="button"
+                  className="accent-btn"
+                  onClick={() => onBuildPaddock(barn.yardType)}
+                >
+                  {barn.yardType === "PIG_YARD" ? "Construire une courette" : "Construire un enclos"}
                 </button>
               ) : outside ? (
-                <span className="grazing-now">Au pré…</span>
+                <span className="grazing-now">Dehors…</span>
               ) : (
                 <button
                   type="button"

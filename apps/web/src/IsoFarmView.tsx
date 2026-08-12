@@ -155,6 +155,8 @@ function buildingPalette(type: BuildingType): { body: number; roof: number; h: n
       return { body: 0xf2e8d4, roof: ROOF_TEAL, h: 1.6 };
     case "PADDOCK":
       return { body: 0x8fcf6a, roof: WOOD_WARM, h: 0.5 };
+    case "PIG_YARD":
+      return { body: 0x8a6f52, roof: 0x7a5c3a, h: 0.45 };
     default:
       return { body: WOOD_WARM, roof: ROOF_TEAL, h: 1 };
   }
@@ -602,13 +604,17 @@ export function IsoFarmView({
           flatShading: true,
         });
 
-        if (b.type === "PADDOCK") {
+        if (b.type === "PADDOCK" || b.type === "PIG_YARD") {
+          const isPigYard = b.type === "PIG_YARD";
           // Un enclos n'est pas un bâtiment : de l'herbe, une clôture, un
           // abreuvoir. Lui coller un toit ferait exactement le contraire de
           // ce qu'il représente.
           const grass = new THREE.Mesh(
             new THREE.BoxGeometry(bw, 0.08, bd),
-            new THREE.MeshLambertMaterial({ color: 0x8fcf6a, flatShading: true }),
+            new THREE.MeshLambertMaterial({
+              color: isPigYard ? 0x8a6f52 : 0x8fcf6a,
+              flatShading: true,
+            }),
           );
           grass.position.set(cx, 0.04, cz);
           grass.receiveShadow = true;
@@ -681,55 +687,133 @@ export function IsoFarmView({
             buildingGroup.add(cap);
           }
         } else {
+          // Chaque palier change la SILHOUETTE, pas seulement l'échelle : un
+          // appentis, puis un pignon relevé, puis une aile en L, puis une
+          // toiture industrielle. C'est ce qui rend l'amélioration lisible de
+          // loin, comme sur la planche d'art de référence.
           const body = new THREE.Mesh(new THREE.BoxGeometry(bw, height, bd), bodyMat);
           body.position.set(cx, height / 2, cz);
           body.castShadow = true;
           buildingGroup.add(body);
 
-          // Toit à deux pans : le prisme donne la silhouette de grange.
-          const ridge = new THREE.Mesh(
-            new THREE.CylinderGeometry(bd * 0.62, bd * 0.62, bw * 1.06, 3, 1),
-            roofMat,
-          );
-          ridge.rotation.z = Math.PI / 2;
-          ridge.rotation.y = Math.PI / 2;
-          ridge.position.set(cx, height + bd * 0.24, cz);
-          ridge.castShadow = true;
-          buildingGroup.add(ridge);
+          const trimMat = new THREE.MeshLambertMaterial({
+            color: 0x8a6a4a,
+            flatShading: true,
+          });
+          const metalMat = new THREE.MeshLambertMaterial({
+            color: 0xd8dde2,
+            flatShading: true,
+          });
 
-          if (level >= 3) {
-            const chimney = new THREE.Mesh(
-              new THREE.BoxGeometry(0.14, 0.34, 0.14),
-              new THREE.MeshLambertMaterial({ color: 0x9a6a52, flatShading: true }),
+          if (level <= 2) {
+            // Toit à deux pans simple, faîtage bas.
+            const ridge = new THREE.Mesh(
+              new THREE.CylinderGeometry(bd * 0.58, bd * 0.58, bw * 1.06, 3, 1),
+              roofMat,
             );
-            chimney.position.set(cx + bw * 0.28, height + bd * 0.42, cz - bd * 0.2);
-            buildingGroup.add(chimney);
-          }
-          if (level >= 4) {
-            const annex = new THREE.Mesh(
-              new THREE.BoxGeometry(bw * 0.34, height * 0.55, bd * 0.5),
+            ridge.rotation.z = Math.PI / 2;
+            ridge.rotation.y = Math.PI / 2;
+            ridge.position.set(cx, height + bd * 0.2, cz);
+            ridge.castShadow = true;
+            buildingGroup.add(ridge);
+          } else if (level === 3) {
+            // Pignon relevé et lucarne : le bâtiment prend de la prestance.
+            const ridge = new THREE.Mesh(
+              new THREE.CylinderGeometry(bd * 0.72, bd * 0.72, bw * 1.1, 3, 1),
+              roofMat,
+            );
+            ridge.rotation.z = Math.PI / 2;
+            ridge.rotation.y = Math.PI / 2;
+            ridge.position.set(cx, height + bd * 0.3, cz);
+            ridge.castShadow = true;
+            buildingGroup.add(ridge);
+
+            const dormer = new THREE.Mesh(
+              new THREE.BoxGeometry(bw * 0.26, bd * 0.34, bd * 0.42),
               bodyMat,
             );
-            annex.position.set(cx - bw * 0.58, height * 0.275, cz + bd * 0.16);
-            annex.castShadow = true;
-            buildingGroup.add(annex);
-          }
-          if (level >= 5) {
-            const tank = new THREE.Mesh(
-              new THREE.CylinderGeometry(0.2, 0.2, height * 0.9, 10),
-              new THREE.MeshLambertMaterial({ color: 0xd8dde2, flatShading: true }),
+            dormer.position.set(cx - bw * 0.12, height + bd * 0.3, cz + bd * 0.24);
+            buildingGroup.add(dormer);
+          } else {
+            // Toiture industrielle en deux volumes décalés : la silhouette
+            // devient franchement rectiligne, plus « usine » que « grange ».
+            const main = new THREE.Mesh(
+              new THREE.BoxGeometry(bw * 1.06, bd * 0.3, bd * 1.06),
+              roofMat,
             );
-            tank.position.set(cx + bw * 0.56, height * 0.45, cz - bd * 0.24);
-            tank.castShadow = true;
-            buildingGroup.add(tank);
+            main.position.set(cx, height + bd * 0.15, cz);
+            main.rotation.z = 0.06;
+            main.castShadow = true;
+            buildingGroup.add(main);
+
+            const clerestory = new THREE.Mesh(
+              new THREE.BoxGeometry(bw * 0.5, bd * 0.24, bd * 0.5),
+              metalMat,
+            );
+            clerestory.position.set(cx, height + bd * 0.42, cz);
+            buildingGroup.add(clerestory);
           }
 
-          const roof = new THREE.Mesh(
-            new THREE.BoxGeometry(bw * 1.08, 0.12, bd * 1.08),
-            roofMat,
-          );
-          roof.position.set(cx, height + 0.02, cz);
-          buildingGroup.add(roof);
+          if (level === 2) {
+            // Appentis accolé : le premier signe visible d'agrandissement.
+            const lean = new THREE.Mesh(
+              new THREE.BoxGeometry(bw * 0.3, height * 0.6, bd * 0.82),
+              trimMat,
+            );
+            lean.position.set(cx + bw * 0.62, height * 0.3, cz);
+            lean.castShadow = true;
+            buildingGroup.add(lean);
+            const leanRoof = new THREE.Mesh(
+              new THREE.BoxGeometry(bw * 0.36, 0.08, bd * 0.9),
+              roofMat,
+            );
+            leanRoof.position.set(cx + bw * 0.62, height * 0.62, cz);
+            leanRoof.rotation.z = -0.16;
+            buildingGroup.add(leanRoof);
+          }
+
+          if (level >= 3) {
+            const chimney = new THREE.Mesh(new THREE.BoxGeometry(0.14, 0.4, 0.14), trimMat);
+            chimney.position.set(cx + bw * 0.3, height + bd * 0.48, cz - bd * 0.22);
+            chimney.castShadow = true;
+            buildingGroup.add(chimney);
+          }
+
+          if (level >= 4) {
+            // Aile en L : l'emprise visuelle déborde, le bâtiment n'est plus
+            // une simple boîte.
+            const wing = new THREE.Mesh(
+              new THREE.BoxGeometry(bw * 0.44, height * 0.78, bd * 0.6),
+              bodyMat,
+            );
+            wing.position.set(cx - bw * 0.6, height * 0.39, cz + bd * 0.3);
+            wing.castShadow = true;
+            buildingGroup.add(wing);
+            const wingRoof = new THREE.Mesh(
+              new THREE.BoxGeometry(bw * 0.5, 0.1, bd * 0.66),
+              roofMat,
+            );
+            wingRoof.position.set(cx - bw * 0.6, height * 0.8, cz + bd * 0.3);
+            buildingGroup.add(wingRoof);
+          }
+
+          if (level >= 5) {
+            for (const side of [-1, 1]) {
+              const tank = new THREE.Mesh(
+                new THREE.CylinderGeometry(0.19, 0.19, height * 0.95, 10),
+                metalMat,
+              );
+              tank.position.set(cx + bw * 0.58 * side, height * 0.48, cz - bd * 0.3);
+              tank.castShadow = true;
+              buildingGroup.add(tank);
+            }
+            const walkway = new THREE.Mesh(
+              new THREE.BoxGeometry(bw * 1.2, 0.06, 0.12),
+              metalMat,
+            );
+            walkway.position.set(cx, height * 0.95, cz - bd * 0.3);
+            buildingGroup.add(walkway);
+          }
         }
       }
 

@@ -17,6 +17,7 @@ import {
   MAX_HARVESTS_BEFORE_PLOW,
   type FarmWork,
   type RipenessStage,
+  type TradeGood,
   PARCEL_HECTARES,
   SEASON_LABELS,
   WEATHER_LABELS,
@@ -579,6 +580,11 @@ export function App() {
     }
     return out;
   }, [barns, parcel?.buildings]);
+
+  const hayInStock = useMemo(
+    () => (player?.farm?.inventory ?? []).find((i) => i.itemCode === "HAY")?.qty ?? 0,
+    [player?.farm?.inventory],
+  );
 
   /** Tonnage total en silo — affiché sur le bouton pour appeler à vendre. */
   const totalStockTons = useMemo(
@@ -1190,6 +1196,24 @@ export function App() {
     }
   }
 
+  /** Achat d'un intrant au négociant — du fourrage, pour l'instant. */
+  async function buyInput(commodity: TradeGood, tons: number) {
+    if (!player) return;
+    setBusy(true);
+    try {
+      const r = await api<{ bought: number; cost: number }>("/market/buy", {
+        method: "POST",
+        body: JSON.stringify({ userId: player.id, commodity, tons }),
+      });
+      flashToast(`${r.bought} t de fourrage · −${r.cost} CRD`);
+      await refreshPlayer();
+    } catch (e) {
+      flashToast(e instanceof Error ? e.message : String(e), true);
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function sell(commodity: CropCode, tons: number) {
     if (!player) return;
     setBusy(true);
@@ -1316,6 +1340,65 @@ export function App() {
         body: JSON.stringify({ userId: player.id }),
       });
       flashToast(`${r.animals} bête(s) sortent au pré`);
+      if (activeParcelId) await loadLivestock(activeParcelId);
+    } catch (e) {
+      flashToast(e instanceof Error ? e.message : String(e), true);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  /** Distribue toute la ration disponible : le joueur n'a pas à doser. */
+  async function feedHerd(herdId: string) {
+    if (!player) return;
+    setBusy(true);
+    try {
+      const barn = barns.find((b) => b.herd?.id === herdId);
+      const need = barn?.herd ? Math.max(0, barn.herd.feedNeed - barn.herd.feedStock) : 0;
+      const hay = Math.min(hayInStock, Math.max(1, Math.ceil(need / 14)));
+      const r = await api<{ units: number }>(`/herds/${herdId}/feed`, {
+        method: "POST",
+        body: JSON.stringify({ userId: player.id, hayTons: hay, maizeTons: 0 }),
+      });
+      flashToast(`Ration distribuée · ${r.units} unités`);
+      await refreshPlayer();
+      if (activeParcelId) await loadLivestock(activeParcelId);
+    } catch (e) {
+      flashToast(e instanceof Error ? e.message : String(e), true);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function milkHerd(herdId: string) {
+    if (!player) return;
+    setBusy(true);
+    try {
+      const r = await api<{ hectolitres: number; litres: number }>(`/herds/${herdId}/milk`, {
+        method: "POST",
+        body: JSON.stringify({ userId: player.id }),
+      });
+      flashToast(`Traite : ${r.litres} L au silo`);
+      await refreshPlayer();
+      if (activeParcelId) await loadLivestock(activeParcelId);
+    } catch (e) {
+      flashToast(e instanceof Error ? e.message : String(e), true);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function slaughterHerd(herdId: string, count: number) {
+    if (!player) return;
+    if (!window.confirm(`Abattre ${count} bête(s) ? C’est définitif.`)) return;
+    setBusy(true);
+    try {
+      const r = await api<{ kg: number; maturity: number; remaining: number }>(
+        `/herds/${herdId}/slaughter`,
+        { method: "POST", body: JSON.stringify({ userId: player.id, count }) },
+      );
+      flashToast(`Abattu · ${r.kg} kg de viande · maturité ${r.maturity} %`);
+      await refreshPlayer();
       if (activeParcelId) await loadLivestock(activeParcelId);
     } catch (e) {
       flashToast(e instanceof Error ? e.message : String(e), true);
@@ -1900,6 +1983,7 @@ export function App() {
         onBuyListing={buyListing}
         onCancelListing={cancelListing}
         onDry={dryStock}
+        onBuyInput={buyInput}
       />
 
       <LivestockPanel
@@ -1908,11 +1992,19 @@ export function App() {
         crd={player.crd}
         onBuyAnimals={buyAnimals}
         onGraze={grazeHerd}
-        onBuildPaddock={() => {
+        onFeed={feedHerd}
+        onMilk={milkHerd}
+        onSlaughter={slaughterHerd}
+        hayTons={hayInStock}
+        onBuildPaddock={(yardType) => {
           setTool("BUILD");
-          setBuildType("PADDOCK");
+          setBuildType(yardType);
           setSelectedCells([]);
-          flashToast("Posez l’enclos contre un bord de l’étable");
+          flashToast(
+            yardType === "PIG_YARD"
+              ? "Posez la courette contre un bord de la porcherie"
+              : "Posez l’enclos contre un bord de l’étable",
+          );
         }}
       />
 

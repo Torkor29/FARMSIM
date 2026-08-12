@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import {
-  CROP_DEFS,
+  GOOD_DEFS,
+  dealerAskPrice,
   DEALER_RATIO,
   LISTING_COMMISSION_RATE,
   LISTING_FEE_RATE,
@@ -12,6 +13,7 @@ import {
   type ChannelQuote,
   type CropCode,
   type SaleChannel,
+  type TradeGood,
 } from "@farmsim/shared";
 
 export type StockItem = {
@@ -48,6 +50,7 @@ type Props = {
   onBuyListing: (id: string) => void;
   onCancelListing: (id: string) => void;
   onDry: (itemId: string) => void;
+  onBuyInput: (commodity: TradeGood, tons: number) => void;
 };
 
 function moisturePenaltyOf(moisture: number): number {
@@ -71,11 +74,13 @@ export function MarketPanel({
   onBuyListing,
   onCancelListing,
   onDry,
+  onBuyInput,
 }: Props) {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [tons, setTons] = useState(0);
   const [ask, setAsk] = useState(0);
-  const [tab, setTab] = useState<"SELL" | "BUY">("SELL");
+  const [tab, setTab] = useState<"SELL" | "BUY" | "SUPPLY">("SELL");
+  const [hayTons, setHayTons] = useState(5);
 
   const item = useMemo(
     () => stock.find((s) => s.id === selectedId) ?? stock[0] ?? null,
@@ -144,9 +149,25 @@ export function MarketPanel({
           >
             Acheter aux autres ({listings.filter((l) => !l.mine).length})
           </button>
+          <button
+            type="button"
+            className={`market-tab ${tab === "SUPPLY" ? "on" : ""}`}
+            onClick={() => setTab("SUPPLY")}
+          >
+            Intrants
+          </button>
         </div>
 
-        {tab === "SELL" ? (
+        {tab === "SUPPLY" ? (
+          <SupplyTab
+            marketPrices={marketPrices}
+            crd={crd}
+            busy={busy}
+            tons={hayTons}
+            onTons={setHayTons}
+            onBuy={onBuyInput}
+          />
+        ) : tab === "SELL" ? (
           !stock.length ? (
             <p className="market-empty">
               Votre silo est vide. Récoltez d’abord — le grain apparaîtra ici.
@@ -163,8 +184,10 @@ export function MarketPanel({
                       className={`stock-chip ${item?.id === s.id ? "on" : ""}`}
                       onClick={() => setSelectedId(s.id)}
                     >
-                      <strong>{CROP_DEFS[s.itemCode as CropCode]?.name ?? s.itemCode}</strong>
-                      <span>{s.qty.toFixed(2)} t</span>
+                      <strong>{GOOD_DEFS[s.itemCode as TradeGood]?.name ?? s.itemCode}</strong>
+                      <span>
+                        {s.qty.toFixed(2)} {GOOD_DEFS[s.itemCode as TradeGood]?.unit ?? "t"}
+                      </span>
                       <em className={wet ? "wet" : ""}>
                         {Math.round(s.moisture * 100)} % humidité
                       </em>
@@ -269,7 +292,7 @@ export function MarketPanel({
                         <li key={l.id}>
                           <span>
                             <strong>
-                              {CROP_DEFS[l.commodity as CropCode]?.name ?? l.commodity}
+                              {GOOD_DEFS[l.commodity as TradeGood]?.name ?? l.commodity}
                             </strong>
                             <em>
                               {l.tons.toFixed(2)} t à {l.pricePerTon.toFixed(0)} CRD/t ·{" "}
@@ -306,7 +329,7 @@ export function MarketPanel({
                     <li key={l.id}>
                       <span>
                         <strong>
-                          {CROP_DEFS[l.commodity as CropCode]?.name ?? l.commodity}
+                          {GOOD_DEFS[l.commodity as TradeGood]?.name ?? l.commodity}
                         </strong>
                         <em>
                           {l.tons.toFixed(2)} t à {l.pricePerTon.toFixed(0)} CRD/t ·{" "}
@@ -331,6 +354,62 @@ export function MarketPanel({
             )}
           </>
         )}
+      </div>
+    </div>
+  );
+}
+
+/** Achat d'intrants au négociant : il vend plus cher qu'il ne rachète. */
+function SupplyTab({
+  marketPrices,
+  crd,
+  busy,
+  tons,
+  onTons,
+  onBuy,
+}: {
+  marketPrices: { commodity: string; price: number }[];
+  crd: number;
+  busy: boolean;
+  tons: number;
+  onTons: (n: number) => void;
+  onBuy: (commodity: TradeGood, tons: number) => void;
+}) {
+  const base =
+    marketPrices.find((m) => m.commodity === "HAY")?.price ?? GOOD_DEFS.HAY.basePrice;
+  const unit = dealerAskPrice(base);
+  const total = Math.round(unit * tons);
+
+  return (
+    <div className="supply-tab">
+      <p className="muted tiny">
+        Le négociant vend le fourrage nécessaire au bétail. Il le facture plus cher
+        qu&rsquo;il ne le rachète : produire son propre maïs revient moins cher.
+      </p>
+      <div className="supply-card">
+        <img className="build-art" src="/assets/items/hay-bales.webp" alt="" />
+        <span className="build-text">
+          <strong>{GOOD_DEFS.HAY.name}</strong>
+          <span>{unit.toFixed(1)} CRD/t</span>
+        </span>
+        <label className="supply-qty">
+          <span>Quantité</span>
+          <input
+            type="number"
+            min={1}
+            step={1}
+            value={tons}
+            onChange={(e) => onTons(Math.max(1, Number(e.target.value)))}
+          />
+        </label>
+        <button
+          type="button"
+          className="channel-go"
+          disabled={busy || crd < total}
+          onClick={() => onBuy("HAY", tons)}
+        >
+          Acheter · {total} CRD
+        </button>
       </div>
     </div>
   );

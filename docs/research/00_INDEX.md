@@ -71,6 +71,7 @@ Chaque valeur chiffrée dans cette documentation est classée :
 | — | [40_CONSOLE_HYGIENE.md](./40_CONSOLE_HYGIENE.md) | Avertissements traités, fuite WebGL, allègement du bundle |
 | — | [41_GLOBE_RENDER.md](./41_GLOBE_RENDER.md) | Globe : sphère lisse et textures procédurales |
 | — | [42_TRADE.md](./42_TRADE.md) | Vendre : négociant, cours mondial, criée entre joueurs |
+| — | [43_LIVESTOCK_PRODUCE.md](./43_LIVESTOCK_PRODUCE.md) | Traire, abattre, nourrir ; courette à porcs ; formes des bâtiments |
 
 ---
 

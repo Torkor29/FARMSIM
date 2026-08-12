@@ -74,8 +74,18 @@ import {
   milkYield,
   meatYield,
   happinessLabel,
+  hungerPenalty,
+  HUNGER,
+  feedBurn,
+  feedUnits,
+  rationQuality,
+  dealerAskPrice,
+  GOOD_DEFS,
   GRAZING_REFUSAL_LABELS,
+  LIVESTOCK_CYCLE_MS,
+  MEAT_MATURITY_MS,
   type AnimalKind,
+  type TradeGood,
   currentSeason,
   seasonProgress,
   pickWeather,
@@ -402,7 +412,7 @@ async function ensureSeed() {
     }
   }
 
-  for (const code of ["WHEAT", "MAIZE"] as CropCode[]) {
+  for (const code of Object.keys(MARKET_BOUNDS) as TradeGood[]) {
     const existing = await prisma.marketPrice.findUnique({ where: { commodity: code } });
     if (!existing) {
       await prisma.marketPrice.create({
@@ -758,7 +768,7 @@ async function runWorldTick() {
     const demand =
       row.commodity === "WHEAT" ? Math.round(pressure.demandTons * 1.05) : pressure.demandTons;
     const tick = tickMarket({
-      commodity: row.commodity,
+      commodity: row.commodity as TradeGood,
       price: row.price,
       supplyTons: supply,
       demandTons: demand,
@@ -2067,7 +2077,7 @@ const COW_PRICE = 420;
 function paddocksFor(
   barn: { originX: number; originY: number; type: string },
   buildings: { type: string; originX: number; originY: number }[],
-): { cells: number; capacity: number } {
+): { cells: number; capacity: number; yardType: SharedBuildingType } {
   const barnDef = BUILDING_DEFS[barn.type as SharedBuildingType];
   const footprint = {
     originX: barn.originX,
@@ -2075,14 +2085,17 @@ function paddocksFor(
     w: barnDef.w,
     h: barnDef.h,
   };
+  // Une étable appelle un enclos de pâture, une porcherie une courette : on ne
+  // met pas des porcs au pré ni des vaches dans une souille.
+  const yardType: SharedBuildingType = barn.type === "PIGSTY" ? "PIG_YARD" : "PADDOCK";
+  const def = BUILDING_DEFS[yardType];
   let cells = 0;
   for (const b of buildings) {
-    if (b.type !== "PADDOCK") continue;
-    const def = BUILDING_DEFS.PADDOCK;
+    if (b.type !== yardType) continue;
     const other = { originX: b.originX, originY: b.originY, w: def.w, h: def.h };
     if (isPaddockAdjacent(footprint, other)) cells += def.w * def.h;
   }
-  return { cells, capacity: paddockCapacity(cells) };
+  return { cells, capacity: paddockCapacity(cells), yardType };
 }
 
 /** Fait vieillir le bonheur d'un troupeau jusqu'à maintenant. */
@@ -2093,24 +2106,39 @@ async function settleHerd(
     happiness: number;
     lastTickAt: Date;
     lastGrazedAt: Date | null;
+    grazingUntil: Date | null;
+    feedStock: number;
   },
   paddockCapacityCells: number,
   now: number,
-) {
+): Promise<{ happiness: number; feedStock: number }> {
   const elapsedMs = Math.max(0, now - herd.lastTickAt.getTime());
-  if (elapsedMs < 1000) return herd.happiness;
+  if (elapsedMs < 1000) return { happiness: herd.happiness, feedStock: herd.feedStock };
+
+  // Le troupeau puise dans la ration distribuée ; au pré, il se sert seul.
+  const grazing = Boolean(herd.grazingUntil && herd.grazingUntil.getTime() > now);
+  const burnt = feedBurn({
+    herdSize: herd.size,
+    elapsedMs,
+    cycleMs: LIVESTOCK_CYCLE_MS,
+    grazing,
+  });
+  const feedStock = Math.max(0, herd.feedStock - burnt);
+  const hunger = hungerPenalty({ feedStock, herdSize: herd.size });
+
   const happiness = tickHappiness({
     happiness: herd.happiness,
     hasPaddock: paddockCapacityCells > 0,
     grazedRecentlyMs: herd.lastGrazedAt ? now - herd.lastGrazedAt.getTime() : Number.MAX_SAFE_INTEGER,
     crowding: paddockCapacityCells > 0 ? herd.size / Math.max(1, paddockCapacityCells) : 1,
     elapsedMs,
+    hunger,
   });
   await prisma.herd.update({
     where: { id: herd.id },
-    data: { happiness, lastTickAt: new Date(now) },
+    data: { happiness, feedStock, lastTickAt: new Date(now) },
   });
-  return happiness;
+  return { happiness, feedStock };
 }
 
 /** État complet de l'élevage d'une parcelle, prêt pour l'affichage. */
@@ -2135,7 +2163,12 @@ app.get("/parcels/:id/livestock", async (req, res) => {
     const stats = buildingStatsAtLevel(b.type as SharedBuildingType, b.level);
     const capacity = (b.type === "CATTLE_BARN" ? stats.cattleSlots : stats.pigSlots) ?? 0;
     let happiness = b.herd?.happiness ?? 0;
-    if (b.herd) happiness = await settleHerd(b.herd, paddock.capacity, now);
+    let feedStock = b.herd?.feedStock ?? 0;
+    if (b.herd) {
+      const settled = await settleHerd(b.herd, paddock.capacity, now);
+      happiness = settled.happiness;
+      feedStock = settled.feedStock;
+    }
 
     const graze = b.herd
       ? canGraze({
@@ -2147,6 +2180,7 @@ app.get("/parcels/:id/livestock", async (req, res) => {
           animals: b.herd.size,
           weather: (weather?.state as WeatherState) ?? "CLEAR",
           kind: b.herd.kind as AnimalKind,
+          paddockKind: paddock.yardType === "PIG_YARD" ? "PIG" : "COW",
         })
       : { ok: false as const, reason: "NO_PADDOCK" as const };
 
@@ -2157,6 +2191,7 @@ app.get("/parcels/:id/livestock", async (req, res) => {
       capacity,
       paddockCells: paddock.cells,
       paddockCapacity: paddock.capacity,
+      yardType: paddock.yardType,
       herd: b.herd
         ? {
             id: b.herd.id,
@@ -2165,11 +2200,19 @@ app.get("/parcels/:id/livestock", async (req, res) => {
             happiness,
             label: happinessLabel(happiness),
             grazingUntil: b.herd.grazingUntil?.getTime() ?? null,
+            feedStock: Math.round(feedStock * 10) / 10,
+            feedNeed: b.herd.size * HUNGER.unitsPerAnimalPerCycle,
+            feedQuality: b.herd.feedQuality,
+            hungry: hungerPenalty({ feedStock, herdSize: b.herd.size }) > 0.05,
+            canMilk:
+              b.herd.kind === "COW" &&
+              now - (b.herd.lastMilkedAt?.getTime() ?? b.herd.bornAt.getTime()) >=
+                LIVESTOCK_CYCLE_MS * 0.15,
             milkPerCycle: milkYield({
               herdSize: b.herd.size,
               happiness,
               barnLevel: b.level,
-              feedQuality: 0.7,
+              feedQuality: b.herd.feedQuality,
             }),
             meatAtSlaughter: meatYield({
               herdSize: b.herd.size,
@@ -2313,6 +2356,223 @@ app.post("/herds/:id/graze", async (req, res) => {
     },
   });
   res.json({ window, animals: window.animals });
+});
+
+/** Ajoute une marchandise au silo, en fusionnant l'humidité si besoin. */
+async function addToStock(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  tx: any,
+  farmId: string,
+  itemCode: string,
+  qty: number,
+  moisture = 0,
+  quality = 3,
+) {
+  const existing = await tx.inventoryItem.findFirst({ where: { farmId, itemCode } });
+  if (existing) {
+    await tx.inventoryItem.update({
+      where: { id: existing.id },
+      data: {
+        qty: existing.qty + qty,
+        moisture: mergeMoisture(existing.qty, existing.moisture, qty, moisture),
+      },
+    });
+  } else {
+    await tx.inventoryItem.create({ data: { farmId, itemCode, qty, quality, moisture } });
+  }
+}
+
+/** Distribution de la ration : le fourrage et le maïs quittent le silo. */
+app.post("/herds/:id/feed", async (req, res) => {
+  const body = z
+    .object({
+      userId: z.string(),
+      hayTons: z.number().min(0).default(0),
+      maizeTons: z.number().min(0).default(0),
+    })
+    .safeParse(req.body);
+  if (!body.success) {
+    res.status(400).json(body.error.flatten());
+    return;
+  }
+  const { hayTons, maizeTons } = body.data;
+  if (hayTons + maizeTons <= 0) {
+    res.status(400).json({ error: "Indiquez une quantité à distribuer" });
+    return;
+  }
+  const herd = await prisma.herd.findUnique({
+    where: { id: req.params.id },
+    include: { farm: { include: { inventory: true } } },
+  });
+  if (!herd || herd.farm.userId !== body.data.userId) {
+    res.status(403).json({ error: "Troupeau non possédé" });
+    return;
+  }
+  const hay = herd.farm.inventory.find((i) => i.itemCode === "HAY");
+  const maize = herd.farm.inventory.find((i) => i.itemCode === "MAIZE");
+  if (hayTons > (hay?.qty ?? 0)) {
+    res.status(409).json({ error: "Fourrage insuffisant — achetez-en au négociant" });
+    return;
+  }
+  if (maizeTons > (maize?.qty ?? 0)) {
+    res.status(409).json({ error: "Maïs insuffisant" });
+    return;
+  }
+
+  const units = feedUnits(hayTons, maizeTons);
+  const quality = rationQuality(hayTons, maizeTons);
+  await prisma.$transaction(async (tx) => {
+    if (hayTons > 0 && hay) await drawFromStock(tx, hay, hayTons);
+    if (maizeTons > 0 && maize) await drawFromStock(tx, maize, maizeTons);
+    await tx.herd.update({
+      where: { id: herd.id },
+      data: {
+        feedStock: herd.feedStock + units,
+        feedQuality: quality,
+        lastFedAt: new Date(),
+      },
+    });
+  });
+  res.json({ units: Math.round(units * 100) / 100, quality });
+});
+
+/** Traite : le lait s'accumule entre deux passages, et se perd s'il attend. */
+app.post("/herds/:id/milk", async (req, res) => {
+  const body = z.object({ userId: z.string() }).safeParse(req.body);
+  if (!body.success) {
+    res.status(400).json(body.error.flatten());
+    return;
+  }
+  const herd = await prisma.herd.findUnique({
+    where: { id: req.params.id },
+    include: { farm: true, building: true },
+  });
+  if (!herd || herd.farm.userId !== body.data.userId) {
+    res.status(403).json({ error: "Troupeau non possédé" });
+    return;
+  }
+  if (herd.kind !== "COW") {
+    res.status(409).json({ error: "Seules les vaches se traient" });
+    return;
+  }
+  if (herd.size <= 0) {
+    res.status(409).json({ error: "Étable vide" });
+    return;
+  }
+
+  const now = Date.now();
+  const since = herd.lastMilkedAt?.getTime() ?? herd.bornAt.getTime();
+  const cycles = Math.min(2, (now - since) / LIVESTOCK_CYCLE_MS);
+  if (cycles < 0.15) {
+    const wait = Math.ceil(((0.15 - cycles) * LIVESTOCK_CYCLE_MS) / 1000);
+    res.status(409).json({ error: `Les vaches viennent d'être traites — ${wait} s` });
+    return;
+  }
+
+  const perCycle = milkYield({
+    herdSize: herd.size,
+    happiness: herd.happiness,
+    barnLevel: herd.building.level,
+    feedQuality: herd.feedQuality,
+  });
+  // Le lait se compte en hectolitres au silo : cent litres la tonne d'échange.
+  const litres = perCycle * cycles;
+  const hectolitres = Math.round((litres / 100) * 1000) / 1000;
+  if (hectolitres <= 0) {
+    res.status(409).json({ error: "Rien à traire : le troupeau ne produit pas" });
+    return;
+  }
+
+  await prisma.$transaction(async (tx) => {
+    await addToStock(tx, herd.farmId, "MILK", hectolitres, 0, 3);
+    await tx.herd.update({ where: { id: herd.id }, data: { lastMilkedAt: new Date(now) } });
+  });
+  res.json({ hectolitres, litres: Math.round(litres), cycles: Math.round(cycles * 100) / 100 });
+});
+
+/** Abattage : on convertit des bêtes en viande, définitivement. */
+app.post("/herds/:id/slaughter", async (req, res) => {
+  const body = z
+    .object({ userId: z.string(), count: z.number().int().min(1) })
+    .safeParse(req.body);
+  if (!body.success) {
+    res.status(400).json(body.error.flatten());
+    return;
+  }
+  const herd = await prisma.herd.findUnique({
+    where: { id: req.params.id },
+    include: { farm: true, building: true },
+  });
+  if (!herd || herd.farm.userId !== body.data.userId) {
+    res.status(403).json({ error: "Troupeau non possédé" });
+    return;
+  }
+  if (body.data.count > herd.size) {
+    res.status(409).json({ error: `Seulement ${herd.size} bête(s) au troupeau` });
+    return;
+  }
+
+  const now = Date.now();
+  const ageMs = now - herd.bornAt.getTime();
+  const kgTotal = meatYield({
+    herdSize: body.data.count,
+    happiness: herd.happiness,
+    averageAgeMs: ageMs,
+    barnLevel: herd.building.level,
+  });
+  const tons = Math.round((kgTotal / 1000) * 1000) / 1000;
+  const maturity = Math.min(1, ageMs / MEAT_MATURITY_MS);
+
+  await prisma.$transaction(async (tx) => {
+    await addToStock(tx, herd.farmId, "MEAT", tons, 0, herd.happiness > 0.7 ? 4 : 3);
+    const left = herd.size - body.data.count;
+    if (left <= 0) await tx.herd.delete({ where: { id: herd.id } });
+    else await tx.herd.update({ where: { id: herd.id }, data: { size: left } });
+  });
+  res.json({
+    slaughtered: body.data.count,
+    tons,
+    kg: Math.round(kgTotal),
+    maturity: Math.round(maturity * 100),
+    remaining: herd.size - body.data.count,
+  });
+});
+
+/** Achat d'intrants au négociant — le fourrage, pour l'instant. */
+app.post("/market/buy", async (req, res) => {
+  const body = z
+    .object({
+      userId: z.string(),
+      commodity: z.enum(["HAY"]),
+      tons: z.number().positive(),
+    })
+    .safeParse(req.body);
+  if (!body.success) {
+    res.status(400).json(body.error.flatten());
+    return;
+  }
+  const user = await prisma.user.findUnique({
+    where: { id: body.data.userId },
+    include: { farm: true },
+  });
+  if (!user?.farm) {
+    res.status(404).json({ error: "Ferme introuvable" });
+    return;
+  }
+  const market = await prisma.marketPrice.findUnique({
+    where: { commodity: body.data.commodity },
+  });
+  const base = market?.price ?? GOOD_DEFS[body.data.commodity].basePrice;
+  const cost = Math.round(dealerAskPrice(base) * body.data.tons);
+  if (user.crd < cost) {
+    res.status(402).json({ error: `CRD insuffisants — ${cost} requis` });
+    return;
+  }
+  await prisma.$transaction(async (tx) => {
+    await tx.user.update({ where: { id: user.id }, data: { crd: { decrement: cost } } });
+    await addToStock(tx, user.farm!.id, body.data.commodity, body.data.tons, 0, 3);
+  });
+  res.json({ bought: body.data.tons, cost, pricePerTon: dealerAskPrice(base) });
 });
 
 /** Reprise d'une machine — l'état conditionne le prix. */

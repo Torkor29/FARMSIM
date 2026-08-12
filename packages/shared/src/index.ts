@@ -7,6 +7,9 @@ export * from "./livestock.js";
 export * from "./ripeness.js";
 export * from "./soil.js";
 export * from "./trade.js";
+export * from "./goods.js";
+
+import type { TradeGood } from "./goods.js";
 
 export type Specialization = "CEREALIER" | "ELEVEUR" | "ETA";
 
@@ -50,7 +53,8 @@ export type BuildingType =
   | "PIGSTY"
   | "WORKSHOP"
   | "FARMHOUSE"
-  | "PADDOCK";
+  | "PADDOCK"
+  | "PIG_YARD";
 
 export type CellKind = "EMPTY" | "CROP" | "BUILDING" | "VEHICLE";
 
@@ -112,10 +116,22 @@ export const CROP_DEFS: Record<
   },
 };
 
-export const MARKET_BOUNDS = {
+/**
+ * Bornes de cours par marchandise. Toutes les marchandises échangées doivent
+ * y figurer : le tick de marché les parcourt sans distinction, et une entrée
+ * manquante produirait un prix `NaN`.
+ */
+export const MARKET_BOUNDS: Record<
+  TradeGood,
+  { initial: number; min: number; max: number }
+> = {
   WHEAT: { initial: 220, min: 120, max: 450 },
   MAIZE: { initial: 200, min: 100, max: 400 },
-} as const;
+  // Le lait varie peu : c'est un revenu régulier, pas un pari.
+  MILK: { initial: 42, min: 30, max: 62 },
+  MEAT: { initial: 1450, min: 900, max: 2300 },
+  HAY: { initial: 95, min: 60, max: 165 },
+};
 
 export type BuildingDef = {
   type: BuildingType;
@@ -230,7 +246,16 @@ export const BUILDING_DEFS: Record<BuildingType, BuildingDef> = {
     w: 3,
     h: 3,
     cost: 1210,
-    description: "Collé à une étable, il laisse sortir les bêtes : elles sont plus heureuses et produisent davantage.",
+    description: "Collé à une étable, il laisse sortir les vaches : elles sont plus heureuses et produisent davantage.",
+  },
+  PIG_YARD: {
+    type: "PIG_YARD",
+    name: "Courette à porcs",
+    w: 2,
+    h: 3,
+    // Moins chère que l'enclos : une souille close, pas une prairie.
+    cost: 780,
+    description: "Collée à une porcherie, elle laisse les porcs fouir dehors : moins de stress, plus de viande.",
   },
 };
 
@@ -307,6 +332,7 @@ export const BUILDING_ART: Record<BuildingType, string> = {
   WORKSHOP: "/assets/buildings/workshop.webp",
   FARMHOUSE: "/assets/buildings/farmhouse.webp",
   PADDOCK: "/assets/buildings/paddock.webp",
+  PIG_YARD: "/assets/buildings/pig-yard.webp",
 };
 
 export const DEFAULT_GRID = { w: 12, h: 12 } as const;

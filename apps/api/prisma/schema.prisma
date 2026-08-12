@@ -53,6 +53,7 @@ enum BuildingType {
   WORKSHOP
   FARMHOUSE
   PADDOCK
+  PIG_YARD
 }
 
 enum CellKind {
@@ -187,6 +188,12 @@ model Herd {
   lastTickAt    DateTime @default(now())
   lastMilkedAt  DateTime?
   grazingUntil  DateTime?
+  /// Dernier repas distribué ; sans ration, le troupeau dépérit
+  lastFedAt     DateTime?
+  /// Qualité de la dernière ration, 0 = fourrage seul, 1 = maïs
+  feedQuality   Float     @default(0)
+  /// Réserve d'aliment déjà distribuée, en unités nutritives
+  feedStock     Float     @default(0)
 }
 
 model Building {
@@ -229,7 +236,8 @@ model Machine {
 
 model MarketPrice {
   id        String   @id @default(cuid())
-  commodity CropCode @unique
+  /// Code marchandise libre : cultures, mais aussi lait, viande et fourrage
+  commodity String   @unique
   price     Float
   stockTons Float    @default(1000)
   updatedAt DateTime @updatedAt
@@ -241,7 +249,7 @@ model MarketListing {
   id          String   @id @default(cuid())
   sellerId    String
   seller      User     @relation("Selling", fields: [sellerId], references: [id], onDelete: Cascade)
-  commodity   CropCode
+  commodity   String
   tons        Float
   pricePerTon Float
   /// Humidité du lot : elle suit la marchandise jusque chez l'acheteur

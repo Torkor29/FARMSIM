@@ -623,6 +623,41 @@ button.ghost {
   align-self: center;
 }
 .graze-refusal { margin: 0; font-size: 0.72rem; color: var(--danger); font-weight: 700; }
+.feed-row { display: grid; gap: 0.15rem; }
+.feed-bar {
+  height: 7px;
+  border-radius: var(--r-pill);
+  background: var(--sand);
+  overflow: hidden;
+}
+.feed-fill {
+  display: block;
+  height: 100%;
+  background: linear-gradient(90deg, #d9b96a, var(--gold-500));
+  transition: width 0.4s ease;
+}
+.feed-fill.low { background: linear-gradient(90deg, #e8896f, #d1483a); }
+.feed-label { font-size: 0.72rem; font-weight: 700; color: var(--muted); }
+.feed-label.warn { color: var(--danger); }
+.slaughter-btn {
+  border: 1px solid #e0b5ad;
+  background: #fdeeeb;
+  color: #a8382a;
+}
+
+.supply-tab { display: grid; gap: 0.6rem; }
+.supply-card {
+  display: grid;
+  grid-template-columns: 56px 1fr auto auto;
+  align-items: center;
+  gap: 0.7rem;
+  padding: 0.7rem 0.8rem;
+  border-radius: var(--r-md);
+  background: var(--paper);
+  border: 1px solid var(--line);
+}
+.supply-qty { display: grid; gap: 0.1rem; font-size: 0.72rem; color: var(--muted); }
+.supply-qty input { width: 5rem; padding: 0.35rem 0.5rem; }
 
 @media (max-width: 720px) {
   .livestock-panel { display: none; }
