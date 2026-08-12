@@ -1,5 +1,7 @@
 /** Types & constantes partagés Farming Navigateur */
 
+export * from "./world.js";
+
 export type Specialization = "CEREALIER" | "ELEVEUR" | "ETA";
 
 export type CropCode = "WHEAT" | "MAIZE";

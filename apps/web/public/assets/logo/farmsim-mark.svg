@@ -1,17 +1,35 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" fill="none" aria-label="FARMSIM">
-  <!-- FARMSIM CC0  marque combinée blé + grange -->
-  <rect width="64" height="64" rx="14" fill="#0e1620"/>
-  <ellipse cx="32" cy="52" rx="18" ry="4" fill="#3d9a5f" opacity="0.2"/>
-  <!-- grange miniature -->
-  <path d="M8 44 L24 36 L40 44 L24 52 Z" fill="#8a5a3a"/>
-  <path d="M8 44 L8 34 L24 26 L24 36 Z" fill="#9a6a4a"/>
-  <path d="M24 36 L40 44 L40 34 L24 26 Z" fill="#b07050"/>
-  <path d="M8 34 L24 26 L40 34 L24 22 Z" fill="#b84828"/>
-  <!-- blé -->
-  <path d="M44 54 Q43 38 46 22" stroke="#6f9a45" stroke-width="2" stroke-linecap="round"/>
-  <path d="M48 54 Q49 36 48 18" stroke="#3d9a5f" stroke-width="2.5" stroke-linecap="round"/>
-  <path d="M52 54 Q53 40 50 24" stroke="#6f9a45" stroke-width="2" stroke-linecap="round"/>
-  <ellipse cx="46" cy="20" rx="3" ry="5.5" fill="#d4a84b"/>
-  <ellipse cx="48" cy="16" rx="3.5" ry="6" fill="#c9a227"/>
-  <ellipse cx="50" cy="22" rx="3" ry="5" fill="#d4a84b"/>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 460" role="img" aria-label="Farming Navigator">
+  <title>Farming Navigator</title>
+  <defs>
+    <linearGradient id="mkRim" x1="0%" y1="0%" x2="30%" y2="100%">
+      <stop offset="0%" stop-color="#fdf0b8"/>
+      <stop offset="20%" stop-color="#e8c65e"/>
+      <stop offset="48%" stop-color="#c9962b"/>
+      <stop offset="66%" stop-color="#f3dc8e"/>
+      <stop offset="100%" stop-color="#8a5c12"/>
+    </linearGradient>
+    <radialGradient id="mkTeal" cx="42%" cy="30%" r="82%">
+      <stop offset="0%" stop-color="#2b8a72"/>
+      <stop offset="55%" stop-color="#1b6d5a"/>
+      <stop offset="100%" stop-color="#0e4a3d"/>
+    </radialGradient>
+    <linearGradient id="mkMap" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#f6dc96"/>
+      <stop offset="100%" stop-color="#cf9c34"/>
+    </linearGradient>
+    <clipPath id="mkClip">
+      <path d="M112 46 H288 L368 196 L318 366 L200 430 L82 366 L32 196 Z"/>
+    </clipPath>
+  </defs>
+  <path d="M104 24 H296 L388 192 L334 376 L200 452 L66 376 L12 192 Z" fill="url(#mkRim)"/>
+  <path d="M112 46 H288 L368 196 L318 366 L200 430 L82 366 L32 196 Z" fill="url(#mkTeal)"/>
+  <g clip-path="url(#mkClip)" fill="url(#mkMap)">
+    <path d="M78 152 q22-20 48-16 t44 6 q14 4 8 16 t-26 14 q-18 2-24 14 t-22 10 q-18-2-24-18 t-4-26z"/>
+    <path d="M132 206 q16-6 26 4 t10 26 q-2 22-12 40 t-16 30 q-8 10-14-2 t-2-32 q2-24 0-40 t8-26z"/>
+    <path d="M196 138 q26-14 56-10 t54 8 q16 4 10 16 t-28 12 q-24 2-36 10 t-32 4 q-20-4-26-18 t2-22z"/>
+    <path d="M204 188 q22-8 40 2 t22 34 q0 26-12 44 t-30 20 q-16-2-22-22 t-4-46 q2-24 6-32z"/>
+    <path d="M264 196 q30-14 58-6 t40 22 q8 14-6 22 t-40 10 q-30 0-44-14 t-8-34z"/>
+    <path d="M292 270 q22-10 36 2 t8 30 q-6 16-24 18 t-28-14 q-6-22 8-36z"/>
+    <path d="M96 320 q20-8 30 6 t2 26 q-10 12-26 8 t-14-24 q0-12 8-16z"/>
+  </g>
 </svg>

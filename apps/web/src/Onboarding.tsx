@@ -1,0 +1,493 @@
+import { useEffect, useMemo, useState } from "react";
+import {
+  CLASS_PROFILES,
+  DIFFICULTY_LABELS,
+  SEASON_LABELS,
+  WEATHER_LABELS,
+  type ClassProfile,
+  type Difficulty,
+  type Season,
+  type Specialization,
+  type WeatherState,
+} from "@farmsim/shared";
+import { GlobeView, type GlobeContinent } from "./GlobeView";
+import { LowPolyCharacter } from "./LowPolyCharacter";
+
+export type WorldContinent = GlobeContinent & {
+  tagline: string;
+  description: string;
+  hemisphere: "N" | "S";
+  difficulty: Difficulty;
+  season: Season;
+  regionCount: number;
+  parcelTaken: number;
+};
+
+export type WorldParcel = {
+  id: string;
+  label: string;
+  mapX: number;
+  mapY: number;
+  gridW: number;
+  gridH: number;
+  fertility: number;
+  landPrice: number;
+  taken: boolean;
+  ownerName: string | null;
+};
+
+export type WorldRegion = {
+  code: string;
+  name: string;
+  city: string;
+  koppen: string;
+  climateLabel: string;
+  riskNote: string;
+  mapW: number;
+  mapH: number;
+  fertility: number;
+  weather: WeatherState;
+  parcels: WorldParcel[];
+};
+
+export type ContinentDetail = {
+  continent: {
+    code: string;
+    name: string;
+    tagline: string;
+    description: string;
+    hemisphere: "N" | "S";
+    difficulty: Difficulty;
+    season: Season;
+  };
+  regions: WorldRegion[];
+};
+
+type Props = {
+  playerName: string;
+  continents: WorldContinent[];
+  detail: ContinentDetail | null;
+  detailLoading: boolean;
+  onLoadContinent: (code: string) => void;
+  onConfirm: (opts: { specialization: Specialization; parcelId: string }) => void;
+  busy: boolean;
+  err: string | null;
+};
+
+type Step = 0 | 1 | 2 | 3;
+
+const STEP_TITLES = ["Votre métier", "Votre continent", "Votre terre", "Confirmation"];
+
+function fertilityLabel(f: number): string {
+  if (f >= 0.85) return "Exceptionnelle";
+  if (f >= 0.75) return "Très bonne";
+  if (f >= 0.62) return "Correcte";
+  if (f >= 0.5) return "Moyenne";
+  return "Difficile";
+}
+
+export function Onboarding({
+  playerName,
+  continents,
+  detail,
+  detailLoading,
+  onLoadContinent,
+  onConfirm,
+  busy,
+  err,
+}: Props) {
+  const [step, setStep] = useState<Step>(0);
+  const [spe, setSpe] = useState<Specialization | null>(null);
+  const [continentCode, setContinentCode] = useState<string | null>(null);
+  const [regionCode, setRegionCode] = useState<string | null>(null);
+  const [parcelId, setParcelId] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (continentCode) onLoadContinent(continentCode);
+  }, [continentCode, onLoadContinent]);
+
+  useEffect(() => {
+    if (detail && !regionCode && detail.regions.length) {
+      setRegionCode(detail.regions[0].code);
+    }
+  }, [detail, regionCode]);
+
+  const region = useMemo(
+    () => detail?.regions.find((r) => r.code === regionCode) ?? null,
+    [detail, regionCode],
+  );
+  const parcel = useMemo(
+    () => region?.parcels.find((p) => p.id === parcelId) ?? null,
+    [region, parcelId],
+  );
+  const continent = continents.find((c) => c.code === continentCode) ?? null;
+
+  const suggested = spe ? CLASS_PROFILES[spe].suggestedContinents : [];
+
+  function goTo(next: Step) {
+    setStep(next);
+  }
+
+  return (
+    <div className="onb">
+      <header className="onb-top">
+        <img className="onb-logo" src="/logo.svg" alt="" />
+        <div>
+          <h1 className="onb-title">Installation de votre exploitation</h1>
+          <p className="onb-sub">
+            Bienvenue {playerName} — quatre étapes et vous êtes aux commandes.
+          </p>
+        </div>
+      </header>
+
+      <ol className="onb-steps" aria-label="Progression">
+        {STEP_TITLES.map((t, i) => (
+          <li
+            key={t}
+            className={`onb-step ${i === step ? "on" : ""} ${i < step ? "done" : ""}`}
+          >
+            <span className="onb-step-num">{i < step ? "✓" : i + 1}</span>
+            <span className="onb-step-label">{t}</span>
+          </li>
+        ))}
+      </ol>
+
+      {err && <p className="gate-alert bad">{err}</p>}
+
+      {step === 0 && (
+        <section className="onb-body">
+          <p className="onb-lead">
+            Votre métier détermine vos machines de départ, vos revenus et les régions où
+            vous serez le plus à l'aise. Il ne pourra plus être changé.
+          </p>
+          <div className="class-grid">
+            {(Object.keys(CLASS_PROFILES) as ClassProfile["code"][]).map((code) => {
+              const p = CLASS_PROFILES[code];
+              const active = spe === code;
+              return (
+                <button
+                  key={code}
+                  type="button"
+                  className={`class-card ${active ? "on" : ""}`}
+                  onClick={() => setSpe(code)}
+                  aria-pressed={active}
+                >
+                  <LowPolyCharacter code={code} active={active} height={185} />
+                  <h3>{p.name}</h3>
+                  <p className="class-tag">{p.tagline}</p>
+                  <ul className="class-perks">
+                    {p.perks.map((x) => (
+                      <li key={x} className="perk">
+                        {x}
+                      </li>
+                    ))}
+                    {p.drawbacks.map((x) => (
+                      <li key={x} className="draw">
+                        {x}
+                      </li>
+                    ))}
+                  </ul>
+                  <p className="class-machines">
+                    Départ : {p.startingMachines.join(" + ")}
+                  </p>
+                </button>
+              );
+            })}
+          </div>
+          <div className="onb-nav">
+            <span />
+            <button
+              type="button"
+              className="btn-primary big"
+              disabled={!spe}
+              onClick={() => goTo(1)}
+            >
+              Continuer
+            </button>
+          </div>
+        </section>
+      )}
+
+      {step === 1 && (
+        <section className="onb-body">
+          <p className="onb-lead">
+            Faites tourner le globe et choisissez votre continent. Les saisons de
+            l'hémisphère sud sont inversées — un jour, vous voudrez des terres dans les
+            deux.
+          </p>
+          <div className="globe-layout">
+            <div className="globe-wrap">
+              <GlobeView
+                continents={continents}
+                selected={continentCode}
+                onSelect={setContinentCode}
+                focus={Boolean(continentCode)}
+                height={420}
+              />
+              <p className="globe-hint">Glissez pour tourner · cliquez un repère doré</p>
+            </div>
+            <div className="continent-list">
+              {continents.map((c) => {
+                const active = continentCode === c.code;
+                const isSuggested = suggested.includes(c.code);
+                const full = c.parcelFree === 0;
+                return (
+                  <button
+                    key={c.code}
+                    type="button"
+                    className={`continent-card ${active ? "on" : ""} ${full ? "full" : ""}`}
+                    onClick={() => !full && setContinentCode(c.code)}
+                    disabled={full}
+                  >
+                    <span className="cc-dot" style={{ background: c.color }} />
+                    <span className="cc-main">
+                      <strong>{c.name}</strong>
+                      <span className="cc-tag">{c.tagline}</span>
+                      <span className="cc-meta">
+                        <em className={`diff ${c.difficulty.toLowerCase()}`}>
+                          {DIFFICULTY_LABELS[c.difficulty]}
+                        </em>
+                        <em>{SEASON_LABELS[c.season]}</em>
+                        <em>{c.hemisphere === "N" ? "Hém. nord" : "Hém. sud"}</em>
+                      </span>
+                    </span>
+                    <span className="cc-stock">
+                      {full ? (
+                        "Complet"
+                      ) : (
+                        <>
+                          <strong>{c.parcelFree}</strong> libres
+                        </>
+                      )}
+                      {isSuggested && <em className="cc-reco">Conseillé</em>}
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+          {continent && (
+            <p className="continent-desc">{continent.description}</p>
+          )}
+          <div className="onb-nav">
+            <button type="button" className="btn-ghost" onClick={() => goTo(0)}>
+              Retour
+            </button>
+            <button
+              type="button"
+              className="btn-primary big"
+              disabled={!continentCode}
+              onClick={() => goTo(2)}
+            >
+              Voir les régions
+            </button>
+          </div>
+        </section>
+      )}
+
+      {step === 2 && (
+        <section className="onb-body">
+          <p className="onb-lead">
+            Chaque région a son climat, sa ville-marché et ses risques. Les parcelles
+            grises appartiennent déjà à d'autres exploitants.
+          </p>
+          {detailLoading && <p className="muted">Chargement du continent…</p>}
+          {detail && (
+            <>
+              <div className="region-tabs">
+                {detail.regions.map((r) => {
+                  const free = r.parcels.filter((p) => !p.taken).length;
+                  return (
+                    <button
+                      key={r.code}
+                      type="button"
+                      className={`region-tab ${regionCode === r.code ? "on" : ""}`}
+                      onClick={() => {
+                        setRegionCode(r.code);
+                        setParcelId(null);
+                      }}
+                    >
+                      <strong>{r.name}</strong>
+                      <span>{r.climateLabel}</span>
+                      <em>{free} libres</em>
+                    </button>
+                  );
+                })}
+              </div>
+
+              {region && (
+                <div className="region-panel">
+                  <div className="region-info">
+                    <h3>{region.name}</h3>
+                    <p className="region-city">
+                      Ville-marché : <strong>{region.city}</strong>
+                    </p>
+                    <dl className="region-facts">
+                      <div>
+                        <dt>Climat</dt>
+                        <dd>
+                          {region.climateLabel} ({region.koppen})
+                        </dd>
+                      </div>
+                      <div>
+                        <dt>Météo</dt>
+                        <dd>{WEATHER_LABELS[region.weather] ?? region.weather}</dd>
+                      </div>
+                      <div>
+                        <dt>Fertilité</dt>
+                        <dd>{fertilityLabel(region.fertility)}</dd>
+                      </div>
+                      <div>
+                        <dt>Saison</dt>
+                        <dd>{SEASON_LABELS[detail.continent.season]}</dd>
+                      </div>
+                    </dl>
+                    <p className="region-risk">{region.riskNote}</p>
+                  </div>
+
+                  <div className="parcel-board">
+                    <div
+                      className="parcel-grid"
+                      style={{
+                        gridTemplateColumns: `repeat(${region.mapW}, minmax(0, 1fr))`,
+                      }}
+                    >
+                      {region.parcels.map((p) => {
+                        const sel = parcelId === p.id;
+                        return (
+                          <button
+                            key={p.id}
+                            type="button"
+                            className={`parcel-tile ${p.taken ? "taken" : "free"} ${sel ? "sel" : ""}`}
+                            disabled={p.taken}
+                            title={
+                              p.taken
+                                ? `${p.label} — exploité par ${p.ownerName ?? "un autre joueur"}`
+                                : `${p.label} — fertilité ${(p.fertility * 100).toFixed(0)} %`
+                            }
+                            onClick={() => setParcelId(p.id)}
+                          >
+                            <span
+                              className="parcel-fert"
+                              style={{
+                                opacity: p.taken ? 0.25 : 0.35 + p.fertility * 0.65,
+                              }}
+                            />
+                            <span className="parcel-name">{p.label}</span>
+                            {p.taken ? (
+                              <span className="parcel-owner">{p.ownerName ?? "Occupée"}</span>
+                            ) : (
+                              <span className="parcel-fertnum">
+                                {(p.fertility * 100).toFixed(0)} %
+                              </span>
+                            )}
+                          </button>
+                        );
+                      })}
+                    </div>
+                    <ul className="parcel-legend">
+                      <li>
+                        <span className="sw free" /> Libre — plus la couleur est forte, plus la
+                        terre est fertile
+                      </li>
+                      <li>
+                        <span className="sw taken" /> Déjà exploitée par un joueur
+                      </li>
+                      <li>
+                        <span className="sw sel" /> Votre choix
+                      </li>
+                    </ul>
+                  </div>
+                </div>
+              )}
+            </>
+          )}
+          <div className="onb-nav">
+            <button type="button" className="btn-ghost" onClick={() => goTo(1)}>
+              Changer de continent
+            </button>
+            <button
+              type="button"
+              className="btn-primary big"
+              disabled={!parcelId}
+              onClick={() => goTo(3)}
+            >
+              Choisir cette parcelle
+            </button>
+          </div>
+        </section>
+      )}
+
+      {step === 3 && spe && parcel && region && detail && (
+        <section className="onb-body">
+          <div className="recap">
+            <div className="recap-char">
+              <LowPolyCharacter code={spe} active height={220} />
+            </div>
+            <div className="recap-info">
+              <h2>Tout est prêt</h2>
+              <dl className="recap-list">
+                <div>
+                  <dt>Métier</dt>
+                  <dd>{CLASS_PROFILES[spe].name}</dd>
+                </div>
+                <div>
+                  <dt>Continent</dt>
+                  <dd>
+                    {detail.continent.name} · {SEASON_LABELS[detail.continent.season]}
+                  </dd>
+                </div>
+                <div>
+                  <dt>Région</dt>
+                  <dd>
+                    {region.name} — {region.city}
+                  </dd>
+                </div>
+                <div>
+                  <dt>Climat</dt>
+                  <dd>
+                    {region.climateLabel} ({region.koppen})
+                  </dd>
+                </div>
+                <div>
+                  <dt>Parcelle</dt>
+                  <dd>
+                    {parcel.label} · {parcel.gridW}×{parcel.gridH}
+                  </dd>
+                </div>
+                <div>
+                  <dt>Fertilité</dt>
+                  <dd>
+                    {fertilityLabel(parcel.fertility)} ({(parcel.fertility * 100).toFixed(0)} %)
+                  </dd>
+                </div>
+                <div>
+                  <dt>Prix</dt>
+                  <dd className="free-price">Offerte — première installation</dd>
+                </div>
+              </dl>
+              <p className="recap-note">
+                Vos prochaines parcelles seront payantes et de plus en plus chères :
+                regrouper vos terres donne un bonus de rendement, et posséder dans les deux
+                hémisphères vous protège des mauvaises saisons.
+              </p>
+            </div>
+          </div>
+          <div className="onb-nav">
+            <button type="button" className="btn-ghost" onClick={() => goTo(2)}>
+              Retour
+            </button>
+            <button
+              type="button"
+              className="btn-primary big"
+              disabled={busy}
+              onClick={() => onConfirm({ specialization: spe, parcelId: parcel.id })}
+            >
+              {busy ? "Installation…" : "M'installer ici"}
+            </button>
+          </div>
+        </section>
+      )}
+    </div>
+  );
+}

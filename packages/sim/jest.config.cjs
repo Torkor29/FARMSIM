@@ -9,7 +9,12 @@ module.exports = {
   transform: {
     "^.+\\.tsx?$": [
       "ts-jest",
-      { useESM: true, tsconfig: { module: "ESNext", moduleResolution: "Bundler" } },
+      {
+        useESM: true,
+        // Les tests importent aussi les sources de @farmsim/shared : la racine
+        // doit englober les deux paquets.
+        tsconfig: { module: "ESNext", moduleResolution: "Bundler", rootDir: ".." },
+      },
     ],
   },
   testMatch: ["**/__tests__/**/*.test.ts"],
