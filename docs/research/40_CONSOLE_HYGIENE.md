@@ -103,6 +103,41 @@ une boîte de dialogue. Il faut chercher la cause avant d'optimiser.
 
 ---
 
+## Troisième passe : deux bugs cachés derrière la console
+
+En reprenant un rapport de console au lieu de le croire sur parole, deux
+défauts réels sont apparus — dont un qu'aucun audit n'avait signalé.
+
+### Le lait et la viande étaient invendables
+
+Les endpoints marchands validaient `z.enum(["WHEAT", "MAIZE"])`. Le lait et la
+viande se produisaient donc normalement, s'empilaient au silo, et n'avaient
+**aucun débouché** : toute la boucle d'élevage livrée juste avant ne rapportait
+rien.
+
+Le bug ne produisait aucune erreur visible tant qu'on ne tentait pas la vente.
+Un test de non-régression parcourt désormais chaque marchandise vendable et
+vérifie que les trois canaux la cotent.
+
+### Le `ReferenceError` fantôme avait une cause structurelle
+
+J'avais attribué un `readyCellCount is not defined` au rechargement à chaud et
+je m'étais arrêté là. C'était incomplet.
+
+React Fast Refresh n'applique une mise à jour **sans réexécuter le module** que
+si celui-ci n'exporte que des composants. Or `MarketPanel` réexportait une
+constante partagée pour rien, et `TutorialOverlay` exportait sa clé de
+stockage. Ces deux modules faisaient donc échouer l'optimisation, et un import
+pointant dessus pouvait se retrouver momentanément indéfini.
+
+Les constantes vivent maintenant dans `storage-keys.ts`, hors de tout module de
+composant.
+
+**Règle à tenir :** un fichier de composant n'exporte que des composants et des
+types. Toute constante partagée va dans un module ordinaire.
+
+---
+
 ## Entretien
 
 À faire avant chaque livraison :
