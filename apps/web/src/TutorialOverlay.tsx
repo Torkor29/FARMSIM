@@ -12,9 +12,9 @@ type Step = {
 const STEPS: Step[] = [
   {
     id: "welcome",
-    title: "Bienvenue sur votre ferme",
-    body: "Vous gérez une parcelle en vue isométrique. Les cases s’illuminent au survol et à la sélection.",
-    hint: "Suivez les étapes — vous pouvez rejouer le tutoriel dans le menu ?",
+    title: "Bienvenue chez vous",
+    body: "Voici votre parcelle, vue du ciel. Les cases s’illuminent quand vous les survolez et quand vous les sélectionnez.",
+    hint: "Le bouton ? en haut à gauche rejoue ce tutoriel à tout moment",
   },
   {
     id: "select",
@@ -48,8 +48,14 @@ const STEPS: Step[] = [
   },
   {
     id: "sell",
-    title: "6 — Vendre & expand",
-    body: "ETA Presta : stock, marché, missions. Achetez des parcelles voisines sur la carte.",
+    title: "6 — Vendre et s’agrandir",
+    body: "Le bouton ETA Presta ouvre votre stock, le marché et les missions. C’est aussi là que vous achetez de nouvelles terres.",
+    hint: "Terres voisines = bonus de rendement · terres dans l’autre hémisphère = récoltes toute l’année",
+  },
+  {
+    id: "climate",
+    title: "7 — Climat et saisons",
+    body: "Le panneau de droite indique votre ville, votre climat et la saison en cours. Une saison dure 15 minutes et change les rendements.",
     hint: "Vous êtes prêt — bonne récolte !",
   },
 ];

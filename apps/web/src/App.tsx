@@ -185,11 +185,9 @@ export function App() {
   const [contracts, setContracts] = useState<Contract[]>([]);
   const [player, setPlayer] = useState<Player | null>(null);
   const [authMode, setAuthMode] = useState<"register" | "login">("register");
-  const [spe, setSpe] = useState<Specialization>("CEREALIER");
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [accessCode, setAccessCode] = useState("ferme");
-  const [selectedParcelId, setSelectedParcelId] = useState<string | null>(null);
   const [activeParcelId, setActiveParcelId] = useState<string | null>(null);
   const [parcelDetail, setParcelDetail] = useState<{
     parcel: Parcel;
@@ -402,7 +400,6 @@ export function App() {
     return new Set(ids);
   }, [freeParcels, ownedParcels]);
 
-  const selectedFree = freeParcels.find((p) => p.id === selectedParcelId);
   const parcel = parcelDetail?.parcel;
   const gw = parcel?.gridW ?? 12;
   const gh = parcel?.gridH ?? 12;
@@ -566,7 +563,6 @@ export function App() {
         method: "POST",
         body: JSON.stringify(opts),
       });
-      setSpe(opts.specialization);
       setPlayer(r.player);
       if (r.player.farm?.parcels[0]) setActiveParcelId(r.player.farm.parcels[0].id);
       await Promise.all([refreshMeta(), loadWorld()]);

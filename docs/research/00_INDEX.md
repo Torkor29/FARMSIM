@@ -60,6 +60,10 @@ Chaque valeur chiffrée dans cette documentation est classée :
 | — | [29_ISO_POLISH.md](./29_ISO_POLISH.md) | Animations machines iso + feedback action |
 | — | [30_FIRST_PLAYABLE.md](./30_FIRST_PLAYABLE.md) | Checklist première version jouable |
 | — | [31_UX_MOBILE.md](./31_UX_MOBILE.md) | Splash, auth mobile, tutoriel, icônes, preview bâtiment |
+| — | [32_LAND_ECONOMY.md](./32_LAND_ECONOMY.md) | Système foncier stratégique : prix, rareté, anti-monopole |
+| — | [33_ART_DIRECTION.md](./33_ART_DIRECTION.md) | Direction artistique : palette claire, typo, low-poly, globe |
+| — | [34_WORLD_GEOGRAPHY.md](./34_WORLD_GEOGRAPHY.md) | Monde imaginaire : continents, régions, climats, saisons |
+| — | [35_ONBOARDING_FLOW.md](./35_ONBOARDING_FLOW.md) | Parcours d’entrée : porte, installation guidée, arrivée |
 
 ---
 
