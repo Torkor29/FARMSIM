@@ -9,6 +9,7 @@ import {
   type RipenessStage,
 } from "@farmsim/shared";
 import { disposeRenderer, disposeThreeScene, markShared } from "./three-cleanup";
+import { initialQuality, makeFrameGovernor, qualityForContext, type RenderQuality } from "./render-quality";
 
 export type IsoCell = {
   x: number;
@@ -252,10 +253,30 @@ function makeVehicleMesh(type: MachineType): THREE.Group {
   return g;
 }
 
+/**
+ * Géométrie des hexagones du décor, taillée une fois pour toutes.
+ *
+ * Le tapis de fond en compte quatre-vingt-onze, tous identiques et de taille
+ * fixe. En créer un par tuile à chaque montage — deux fois de suite sous
+ * StrictMode — allongeait la construction de la scène pour rien.
+ */
+let groundHexGeo: THREE.CylinderGeometry | null = null;
+function groundHexGeometry(): THREE.CylinderGeometry {
+  groundHexGeo ??= markShared(new THREE.CylinderGeometry(1.05, 1.05, 0.12, 6));
+  return groundHexGeo;
+}
+
+/** Touffe de culture unitaire, mise à l'échelle selon l'avancement du cycle. */
+let cropGeo: THREE.BoxGeometry | null = null;
+function cropGeometry(): THREE.BoxGeometry {
+  cropGeo ??= markShared(new THREE.BoxGeometry(0.55, 1, 0.55));
+  return cropGeo;
+}
+
 function disposeObject3D(obj: THREE.Object3D) {
   obj.traverse((o) => {
     if (o instanceof THREE.Mesh) {
-      o.geometry.dispose();
+      if (!o.geometry.userData.shared) o.geometry.dispose();
       if (Array.isArray(o.material)) o.material.forEach((m) => m.dispose());
       else (o.material as THREE.Material).dispose();
     }
@@ -336,9 +357,14 @@ export function IsoFarmView({
     scene.background = new THREE.Color(skyFor(weatherRef.current));
     scene.fog = new THREE.Fog(skyFor(weatherRef.current), 34, 66);
 
-    const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false });
-    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
-    renderer.shadowMap.enabled = true;
+    let quality = initialQuality();
+    const renderer = new THREE.WebGLRenderer({ antialias: quality.antialias, alpha: false });
+    // Le contexte n'existe qu'une fois le rendu construit : c'est le premier
+    // moment où l'on peut savoir qui rasterise, et le seul sans allouer de
+    // contexte supplémentaire.
+    quality = qualityForContext(renderer.getContext()) ?? quality;
+    renderer.setPixelRatio(quality.pixelRatio);
+    renderer.shadowMap.enabled = quality.shadows;
     // PCFSoftShadowMap est déprécié depuis r185 : le renderer le remplace de
     // toute façon par PCFShadowMap en émettant un avertissement.
     renderer.shadowMap.type = THREE.PCFShadowMap;
@@ -354,7 +380,7 @@ export function IsoFarmView({
     scene.add(ambient);
     const sun = new THREE.DirectionalLight(0xfff2d4, 1.55);
     sun.position.set(14, 24, 10);
-    sun.castShadow = true;
+    sun.castShadow = quality.shadows;
     sun.shadow.mapSize.set(1024, 1024);
     sun.shadow.bias = -0.0006;
     scene.add(sun);
@@ -369,8 +395,7 @@ export function IsoFarmView({
     for (let q = -5; q <= 5; q++) {
       for (let r = -4; r <= 4; r++) {
         if (Math.abs(q) + Math.abs(r) + Math.abs(-q - r) > 10) continue;
-        const geo = new THREE.CylinderGeometry(1.05, 1.05, 0.12, 6);
-        const mesh = new THREE.Mesh(geo, (q + r) % 2 === 0 ? hexMat : hexEdge);
+        const mesh = new THREE.Mesh(groundHexGeometry(), (q + r) % 2 === 0 ? hexMat : hexEdge);
         const x = 1.8 * (q + r / 2);
         const z = 1.55 * r;
         mesh.position.set(x, 0, z);
@@ -385,6 +410,20 @@ export function IsoFarmView({
 
     const cellMeshes = new Map<string, THREE.Mesh>();
     const cropMeshes = new Map<string, THREE.Mesh>();
+    /**
+     * Matériaux de culture indexés par couleur. Les cases ne prennent qu'une
+     * poignée de teintes — les stades de maturité — alors qu'on en créait un
+     * par case, avec le coût d'allocation et de compilation associé.
+     */
+    const cropMats = new Map<number, THREE.MeshLambertMaterial>();
+    function cropMaterial(color: number): THREE.MeshLambertMaterial {
+      let mat = cropMats.get(color);
+      if (!mat) {
+        mat = new THREE.MeshLambertMaterial({ color, flatShading: true });
+        cropMats.set(color, mat);
+      }
+      return mat;
+    }
     /** Véhicules stationnés — animés en idle (hors pickables) */
     const vehicleGroups = new Map<string, THREE.Group>();
     const buildingGroup = new THREE.Group();
@@ -474,12 +513,12 @@ export function IsoFarmView({
         (m.material as THREE.Material).dispose();
       }
       cellMeshes.clear();
-      for (const m of cropMeshes.values()) {
-        world.remove(m);
-        m.geometry.dispose();
-        (m.material as THREE.Material).dispose();
-      }
+      for (const m of cropMeshes.values()) world.remove(m);
       cropMeshes.clear();
+      // Géométrie partagée entre tous les montages, matériaux mutualisés par
+      // teinte : rien à libérer par case, un passage sur le cache suffit.
+      for (const mat of cropMats.values()) mat.dispose();
+      cropMats.clear();
       for (const g of vehicleGroups.values()) {
         world.remove(g);
         disposeObject3D(g);
@@ -570,11 +609,11 @@ export function IsoFarmView({
 
           if (cell?.kind === "CROP") {
             const h = 0.15 + (sim?.sim.progress ?? 0.25) * 0.55;
-            const cropMat = new THREE.MeshLambertMaterial({
-              color: cropColor(cell, sim),
-              flatShading: true,
-            });
-            const crop = new THREE.Mesh(new THREE.BoxGeometry(0.55, h, 0.55), cropMat);
+            // Hauteur portée par l'échelle plutôt que par la géométrie : la
+            // touffe ne diffère que par sa taille, une seule boîte unitaire
+            // sert donc les cent quarante-quatre cases.
+            const crop = new THREE.Mesh(cropGeometry(), cropMaterial(cropColor(cell, sim)));
+            crop.scale.y = h;
             crop.position.set(px, 0.1 + h / 2, pz);
             crop.castShadow = true;
             world.add(crop);
@@ -960,8 +999,42 @@ export function IsoFarmView({
       previewGroup.add(shell);
     }
 
+    /**
+     * Repasse la scène en réglage sobre sans la reconstruire. Couper la carte
+     * d'ombres change le code des shaders : il faut demander leur
+     * recompilation, ce qui provoque un à-coup unique, largement remboursé dès
+     * l'image suivante.
+     */
+    const applyQuality = (next: RenderQuality) => {
+      quality = next;
+      renderer.setPixelRatio(next.pixelRatio);
+      renderer.shadowMap.enabled = next.shadows;
+      sun.castShadow = next.shadows;
+      scene.traverse((o) => {
+        const mats = (o as Partial<THREE.Mesh>).material;
+        if (Array.isArray(mats)) for (const m of mats) m.needsUpdate = true;
+        else if (mats) mats.needsUpdate = true;
+      });
+    };
+    const governor = makeFrameGovernor(applyQuality);
+    let lastFrame = 0;
+
     function tick() {
       raf = requestAnimationFrame(tick);
+      // Un onglet caché continue de recevoir des images sur certains
+      // navigateurs : rien ne sert de peindre une scène que personne ne voit.
+      if (document.hidden) return;
+      const now = performance.now();
+      // La toute première image n'a pas de précédente à comparer : la laisser
+      // passer sans condition. La version d'avant lui appliquait un délai de
+      // repli inférieur au seuil, sortait avant d'avoir horodaté l'image, et
+      // se retrouvait à refuser indéfiniment de peindre — grille noire sur
+      // tout appareil passé en réglage sobre.
+      if (lastFrame && quality.maxFps && now - lastFrame < 1000 / quality.maxFps - 1) return;
+      const delta = lastFrame ? now - lastFrame : 16;
+      lastFrame = now;
+      governor(delta);
+
       timer.update();
       const t = timer.getElapsed();
       const sky = skyFor(weatherRef.current);
