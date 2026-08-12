@@ -1,7 +1,7 @@
 import { useEffect, useRef } from "react";
 import * as THREE from "three";
 import { disposeRenderer, disposeThreeScene, markShared } from "./three-cleanup";
-import { initialQuality, makeFrameGovernor, type RenderQuality } from "./render-quality";
+import { initialQuality, makeFrameGovernor, qualityForContext, type RenderQuality } from "./render-quality";
 
 export type GlobeContinent = {
   code: string;
@@ -558,6 +558,7 @@ export function GlobeView({
 
     let quality = initialQuality();
     const renderer = new THREE.WebGLRenderer({ antialias: quality.antialias, alpha: true });
+    quality = qualityForContext(renderer.getContext()) ?? quality;
     renderer.setPixelRatio(Math.min(1.75, quality.pixelRatio));
     let lastFrame = 0;
     const applyQuality = (next: RenderQuality) => {

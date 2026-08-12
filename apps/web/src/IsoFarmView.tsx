@@ -9,7 +9,7 @@ import {
   type RipenessStage,
 } from "@farmsim/shared";
 import { disposeRenderer, disposeThreeScene, markShared } from "./three-cleanup";
-import { initialQuality, makeFrameGovernor, type RenderQuality } from "./render-quality";
+import { initialQuality, makeFrameGovernor, qualityForContext, type RenderQuality } from "./render-quality";
 
 export type IsoCell = {
   x: number;
@@ -359,6 +359,10 @@ export function IsoFarmView({
 
     let quality = initialQuality();
     const renderer = new THREE.WebGLRenderer({ antialias: quality.antialias, alpha: false });
+    // Le contexte n'existe qu'une fois le rendu construit : c'est le premier
+    // moment où l'on peut savoir qui rasterise, et le seul sans allouer de
+    // contexte supplémentaire.
+    quality = qualityForContext(renderer.getContext()) ?? quality;
     renderer.setPixelRatio(quality.pixelRatio);
     renderer.shadowMap.enabled = quality.shadows;
     // PCFSoftShadowMap est déprécié depuis r185 : le renderer le remplace de

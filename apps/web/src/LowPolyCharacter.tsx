@@ -2,7 +2,7 @@ import { useEffect, useRef } from "react";
 import * as THREE from "three";
 import { CLASS_PROFILES, type ClassProfile } from "@farmsim/shared";
 import { disposeRenderer, disposeThreeScene } from "./three-cleanup";
-import { initialQuality } from "./render-quality";
+import { initialQuality, qualityForContext } from "./render-quality";
 
 type Props = {
   code: ClassProfile["code"];
@@ -172,8 +172,9 @@ export function LowPolyCharacter({ code, active = false, height = 190 }: Props) 
     // Trois de ces portraits tournent côte à côte sur l'écran des métiers,
     // chacun avec sa boucle de rendu : c'est là qu'un réglage sobre se voit le
     // plus sur une machine sans carte graphique.
-    const quality = initialQuality();
+    let quality = initialQuality();
     const renderer = new THREE.WebGLRenderer({ antialias: quality.antialias, alpha: true });
+    quality = qualityForContext(renderer.getContext()) ?? quality;
     renderer.setPixelRatio(quality.pixelRatio);
     renderer.setSize(width, height, false);
     host.appendChild(renderer.domElement);
