@@ -27,6 +27,7 @@ import {
 import { ArrivalTransition } from "./ArrivalTransition";
 import { AuthScreen } from "./AuthScreen";
 import { IsoFarmView, type PreviewBuilding } from "./IsoFarmView";
+import { LivestockPanel, type BarnState } from "./LivestockPanel";
 import {
   Onboarding,
   type ContinentDetail,
@@ -231,6 +232,7 @@ export function App() {
   const [worldContinents, setWorldContinents] = useState<WorldContinent[]>([]);
   const [continentDetail, setContinentDetail] = useState<ContinentDetail | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
+  const [barns, setBarns] = useState<BarnState[]>([]);
   const [showArrival, setShowArrival] = useState(false);
   const arrivalShownRef = useRef(false);
 
@@ -295,6 +297,15 @@ export function App() {
     }
     return me.player;
   }, [activeParcelId]);
+
+  const loadLivestock = useCallback(async (parcelId: string) => {
+    try {
+      const r = await api<{ barns: BarnState[] }>(`/parcels/${parcelId}/livestock`);
+      setBarns(r.barns);
+    } catch {
+      setBarns([]);
+    }
+  }, []);
 
   const loadParcel = useCallback(async (id: string) => {
     const d = await api<typeof parcelDetail>(`/parcels/${id}`);
@@ -379,11 +390,13 @@ export function App() {
   useEffect(() => {
     if (!activeParcelId) return;
     loadParcel(activeParcelId).catch((e) => setErr(String(e.message ?? e)));
+    loadLivestock(activeParcelId);
     const t = setInterval(() => {
       loadParcel(activeParcelId).catch(() => undefined);
+      loadLivestock(activeParcelId);
     }, 4000);
     return () => clearInterval(t);
-  }, [activeParcelId, loadParcel]);
+  }, [activeParcelId, loadParcel, loadLivestock]);
   const freeParcels = useMemo(
     () =>
       zones.flatMap((z) =>
@@ -965,6 +978,41 @@ export function App() {
     }
   }
 
+  async function buyAnimals(buildingId: string, count: number) {
+    if (!player) return;
+    setBusy(true);
+    try {
+      const r = await api<{ added: number; cost: number }>(`/buildings/${buildingId}/animals`, {
+        method: "POST",
+        body: JSON.stringify({ userId: player.id, count }),
+      });
+      flashToast(`+${r.added} bête(s) · −${r.cost} CRD`);
+      await refreshPlayer();
+      if (activeParcelId) await loadLivestock(activeParcelId);
+    } catch (e) {
+      flashToast(e instanceof Error ? e.message : String(e), true);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function grazeHerd(herdId: string) {
+    if (!player) return;
+    setBusy(true);
+    try {
+      const r = await api<{ animals: number }>(`/herds/${herdId}/graze`, {
+        method: "POST",
+        body: JSON.stringify({ userId: player.id }),
+      });
+      flashToast(`${r.animals} bête(s) sortent au pré`);
+      if (activeParcelId) await loadLivestock(activeParcelId);
+    } catch (e) {
+      flashToast(e instanceof Error ? e.message : String(e), true);
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function sellMachine(id: string, label: string) {
     if (!player) return;
     if (!window.confirm(`Vendre ${label} ? Cette action est définitive.`)) return;
@@ -1487,6 +1535,20 @@ export function App() {
           </div>
         </aside>
       )}
+
+      <LivestockPanel
+        barns={barns}
+        busy={busy}
+        crd={player.crd}
+        onBuyAnimals={buyAnimals}
+        onGraze={grazeHerd}
+        onBuildPaddock={() => {
+          setTool("BUILD");
+          setBuildType("PADDOCK");
+          setSelectedCells([]);
+          flashToast("Posez l’enclos contre un bord de l’étable");
+        }}
+      />
 
       <TutorialOverlay open={showTutorial} onClose={() => setShowTutorial(false)} />
 

@@ -44,6 +44,16 @@ import {
   CONTRACTOR_YIELD_MALUS,
   machineResaleValue,
   buildingResaleValue,
+  isPaddockAdjacent,
+  paddockCapacity,
+  tickHappiness,
+  canGraze,
+  planGrazing,
+  milkYield,
+  meatYield,
+  happinessLabel,
+  GRAZING_REFUSAL_LABELS,
+  type AnimalKind,
   currentSeason,
   seasonProgress,
   pickWeather,
@@ -1631,6 +1641,7 @@ app.post("/parcels/:id/build", async (req, res) => {
         "PIGSTY",
         "WORKSHOP",
         "FARMHOUSE",
+        "PADDOCK",
       ]),
       x: z.number().int().min(0),
       y: z.number().int().min(0),
@@ -1744,6 +1755,264 @@ app.post("/buildings/:id/upgrade", async (req, res) => {
     stats: buildingStatsAtLevel(building.type as SharedBuildingType, updated.level),
     bonuses,
   });
+});
+
+/* ------------------------------------------------------------------ */
+/* Élevage                                                             */
+/* ------------------------------------------------------------------ */
+
+const COW_PRICE = 420;
+
+/** Enclos collés à une étable, avec leur capacité de sortie cumulée. */
+function paddocksFor(
+  barn: { originX: number; originY: number; type: string },
+  buildings: { type: string; originX: number; originY: number }[],
+): { cells: number; capacity: number } {
+  const barnDef = BUILDING_DEFS[barn.type as SharedBuildingType];
+  const footprint = {
+    originX: barn.originX,
+    originY: barn.originY,
+    w: barnDef.w,
+    h: barnDef.h,
+  };
+  let cells = 0;
+  for (const b of buildings) {
+    if (b.type !== "PADDOCK") continue;
+    const def = BUILDING_DEFS.PADDOCK;
+    const other = { originX: b.originX, originY: b.originY, w: def.w, h: def.h };
+    if (isPaddockAdjacent(footprint, other)) cells += def.w * def.h;
+  }
+  return { cells, capacity: paddockCapacity(cells) };
+}
+
+/** Fait vieillir le bonheur d'un troupeau jusqu'à maintenant. */
+async function settleHerd(
+  herd: {
+    id: string;
+    size: number;
+    happiness: number;
+    lastTickAt: Date;
+    lastGrazedAt: Date | null;
+  },
+  paddockCapacityCells: number,
+  now: number,
+) {
+  const elapsedMs = Math.max(0, now - herd.lastTickAt.getTime());
+  if (elapsedMs < 1000) return herd.happiness;
+  const happiness = tickHappiness({
+    happiness: herd.happiness,
+    hasPaddock: paddockCapacityCells > 0,
+    grazedRecentlyMs: herd.lastGrazedAt ? now - herd.lastGrazedAt.getTime() : Number.MAX_SAFE_INTEGER,
+    crowding: paddockCapacityCells > 0 ? herd.size / Math.max(1, paddockCapacityCells) : 1,
+    elapsedMs,
+  });
+  await prisma.herd.update({
+    where: { id: herd.id },
+    data: { happiness, lastTickAt: new Date(now) },
+  });
+  return happiness;
+}
+
+/** État complet de l'élevage d'une parcelle, prêt pour l'affichage. */
+app.get("/parcels/:id/livestock", async (req, res) => {
+  const parcel = await prisma.parcel.findUnique({
+    where: { id: req.params.id },
+    include: { buildings: { include: { herd: true } }, zone: true, farm: true },
+  });
+  if (!parcel) {
+    res.status(404).json({ error: "Parcelle introuvable" });
+    return;
+  }
+  const weather = await prisma.weatherSnapshot.findFirst({
+    where: { zoneCode: parcel.zone.code },
+  });
+  const now = Date.now();
+
+  const barns = [];
+  for (const b of parcel.buildings) {
+    if (b.type !== "CATTLE_BARN" && b.type !== "PIGSTY") continue;
+    const paddock = paddocksFor(b, parcel.buildings);
+    const stats = buildingStatsAtLevel(b.type as SharedBuildingType, b.level);
+    const capacity = (b.type === "CATTLE_BARN" ? stats.cattleSlots : stats.pigSlots) ?? 0;
+    let happiness = b.herd?.happiness ?? 0;
+    if (b.herd) happiness = await settleHerd(b.herd, paddock.capacity, now);
+
+    const graze = b.herd
+      ? canGraze({
+          paddock: {
+            adjacent: paddock.capacity > 0,
+            cells: paddock.cells,
+            capacity: paddock.capacity,
+          },
+          animals: b.herd.size,
+          weather: (weather?.state as WeatherState) ?? "CLEAR",
+          kind: b.herd.kind as AnimalKind,
+        })
+      : { ok: false as const, reason: "NO_PADDOCK" as const };
+
+    barns.push({
+      buildingId: b.id,
+      type: b.type,
+      level: b.level,
+      capacity,
+      paddockCells: paddock.cells,
+      paddockCapacity: paddock.capacity,
+      herd: b.herd
+        ? {
+            id: b.herd.id,
+            kind: b.herd.kind,
+            size: b.herd.size,
+            happiness,
+            label: happinessLabel(happiness),
+            grazingUntil: b.herd.grazingUntil?.getTime() ?? null,
+            milkPerCycle: milkYield({
+              herdSize: b.herd.size,
+              happiness,
+              barnLevel: b.level,
+              feedQuality: 0.7,
+            }),
+            meatAtSlaughter: meatYield({
+              herdSize: b.herd.size,
+              happiness,
+              averageAgeMs: now - b.herd.bornAt.getTime(),
+              barnLevel: b.level,
+            }),
+          }
+        : null,
+      canGraze: graze.ok,
+      grazeRefusal: graze.ok || !graze.reason ? null : GRAZING_REFUSAL_LABELS[graze.reason],
+      cowPrice: COW_PRICE,
+    });
+  }
+  res.json({ barns, weather: weather?.state ?? "CLEAR" });
+});
+
+/** Achat de bêtes pour une étable. */
+app.post("/buildings/:id/animals", async (req, res) => {
+  const body = z
+    .object({ userId: z.string(), count: z.number().int().min(1).max(50) })
+    .safeParse(req.body);
+  if (!body.success) {
+    res.status(400).json(body.error.flatten());
+    return;
+  }
+  const building = await prisma.building.findUnique({
+    where: { id: req.params.id },
+    include: { parcel: { include: { farm: true } }, herd: true },
+  });
+  if (!building?.parcel.farm || building.parcel.farm.userId !== body.data.userId) {
+    res.status(403).json({ error: "Bâtiment non possédé" });
+    return;
+  }
+  if (building.type !== "CATTLE_BARN" && building.type !== "PIGSTY") {
+    res.status(409).json({ error: "Ce bâtiment n'héberge pas d'animaux" });
+    return;
+  }
+  const stats = buildingStatsAtLevel(building.type as SharedBuildingType, building.level);
+  const capacity =
+    (building.type === "CATTLE_BARN" ? stats.cattleSlots : stats.pigSlots) ?? 0;
+  const current = building.herd?.size ?? 0;
+  if (current + body.data.count > capacity) {
+    res.status(409).json({
+      error: `Capacité dépassée — ${capacity} places, ${current} occupées`,
+    });
+    return;
+  }
+  const cost = COW_PRICE * body.data.count;
+  const user = await prisma.user.findUnique({ where: { id: body.data.userId } });
+  if (!user || user.crd < cost) {
+    res.status(402).json({ error: `CRD insuffisants — ${cost} requis` });
+    return;
+  }
+
+  const kind: AnimalKind = building.type === "CATTLE_BARN" ? "COW" : "PIG";
+  await prisma.$transaction(async (tx) => {
+    await tx.user.update({ where: { id: user.id }, data: { crd: { decrement: cost } } });
+    if (building.herd) {
+      await tx.herd.update({
+        where: { id: building.herd.id },
+        data: { size: current + body.data.count },
+      });
+    } else {
+      await tx.herd.create({
+        data: {
+          farmId: building.parcel.farm!.id,
+          buildingId: building.id,
+          kind,
+          size: body.data.count,
+        },
+      });
+    }
+  });
+  res.status(201).json({ added: body.data.count, cost });
+});
+
+/** Sortie au pâturage : c'est l'enclos adjacent qui la rend possible. */
+app.post("/herds/:id/graze", async (req, res) => {
+  const body = z.object({ userId: z.string() }).safeParse(req.body);
+  if (!body.success) {
+    res.status(400).json(body.error.flatten());
+    return;
+  }
+  const herd = await prisma.herd.findUnique({
+    where: { id: req.params.id },
+    include: {
+      farm: true,
+      building: { include: { parcel: { include: { buildings: true, zone: true } } } },
+    },
+  });
+  if (!herd || herd.farm.userId !== body.data.userId) {
+    res.status(403).json({ error: "Troupeau non possédé" });
+    return;
+  }
+  const paddock = paddocksFor(herd.building, herd.building.parcel.buildings);
+  const weather = await prisma.weatherSnapshot.findFirst({
+    where: { zoneCode: herd.building.parcel.zone.code },
+  });
+  const verdict = canGraze({
+    paddock: {
+      adjacent: paddock.capacity > 0,
+      cells: paddock.cells,
+      capacity: paddock.capacity,
+    },
+    animals: herd.size,
+    weather: (weather?.state as WeatherState) ?? "CLEAR",
+    kind: herd.kind as AnimalKind,
+  });
+  if (!verdict.ok) {
+    res.status(409).json({
+      error: verdict.reason ? GRAZING_REFUSAL_LABELS[verdict.reason] : "Sortie impossible",
+    });
+    return;
+  }
+
+  const now = Date.now();
+  const window = planGrazing(
+    now,
+    {
+      id: herd.id,
+      kind: herd.kind as AnimalKind,
+      size: herd.size,
+      happiness: herd.happiness,
+      averageAgeMs: now - herd.bornAt.getTime(),
+      lastGrazedAt: herd.lastGrazedAt?.getTime() ?? null,
+      lastMilkedAt: herd.lastMilkedAt?.getTime() ?? null,
+    },
+    { adjacent: true, cells: paddock.cells, capacity: paddock.capacity },
+  );
+  if (!window) {
+    res.status(409).json({ error: "Sortie impossible pour le moment" });
+    return;
+  }
+  await prisma.herd.update({
+    where: { id: herd.id },
+    data: {
+      lastGrazedAt: new Date(now),
+      grazingUntil: new Date(window.endsAt),
+      lastTickAt: new Date(now),
+    },
+  });
+  res.json({ window, animals: window.animals });
 });
 
 /** Reprise d'une machine — l'état conditionne le prix. */

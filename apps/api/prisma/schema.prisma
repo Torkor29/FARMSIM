@@ -50,6 +50,7 @@ enum BuildingType {
   PIGSTY
   WORKSHOP
   FARMHOUSE
+  PADDOCK
 }
 
 enum CellKind {
@@ -94,6 +95,7 @@ model Farm {
   parcels   Parcel[]
   inventory InventoryItem[]
   machines  Machine[]
+  herds     Herd[]
 }
 
 model Zone {
@@ -159,6 +161,24 @@ model ParcelCell {
   @@unique([parcelId, x, y])
 }
 
+/// Un troupeau vit dans une étable. Son bonheur dépend de l'accès à un
+/// enclos adjacent, et conditionne lait et viande.
+model Herd {
+  id            String   @id @default(cuid())
+  farmId        String
+  farm          Farm     @relation(fields: [farmId], references: [id], onDelete: Cascade)
+  buildingId    String   @unique
+  building      Building @relation(fields: [buildingId], references: [id], onDelete: Cascade)
+  kind          String   @default("COW")
+  size          Int      @default(0)
+  happiness     Float    @default(0.6)
+  bornAt        DateTime @default(now())
+  lastGrazedAt  DateTime?
+  lastTickAt    DateTime @default(now())
+  lastMilkedAt  DateTime?
+  grazingUntil  DateTime?
+}
+
 model Building {
   id        String       @id @default(cuid())
   parcelId  String
@@ -169,6 +189,7 @@ model Building {
   originY   Int
   cells     ParcelCell[]
   storedMachines Machine[] @relation("StoredIn")
+  herd      Herd?
 }
 
 model InventoryItem {

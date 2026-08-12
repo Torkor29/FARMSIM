@@ -3,6 +3,7 @@
 export * from "./world.js";
 export * from "./climate.js";
 export * from "./land.js";
+export * from "./livestock.js";
 
 export type Specialization = "CEREALIER" | "ELEVEUR" | "ETA";
 
@@ -43,7 +44,8 @@ export type BuildingType =
   | "CATTLE_BARN"
   | "PIGSTY"
   | "WORKSHOP"
-  | "FARMHOUSE";
+  | "FARMHOUSE"
+  | "PADDOCK";
 
 export type CellKind = "EMPTY" | "CROP" | "BUILDING" | "VEHICLE";
 
@@ -216,6 +218,14 @@ export const BUILDING_DEFS: Record<BuildingType, BuildingDef> = {
     description: "HQ — léger bonus XP.",
     xpBonus: 0.02,
   },
+  PADDOCK: {
+    type: "PADDOCK",
+    name: "Enclos de pâture",
+    w: 3,
+    h: 3,
+    cost: 1210,
+    description: "Collé à une étable, il laisse sortir les bêtes : elles sont plus heureuses et produisent davantage.",
+  },
 };
 
 /* ------------------------------------------------------------------ */
@@ -290,6 +300,7 @@ export const BUILDING_ART: Record<BuildingType, string> = {
   PIGSTY: "/assets/buildings/pigsty.webp",
   WORKSHOP: "/assets/buildings/workshop.webp",
   FARMHOUSE: "/assets/buildings/farmhouse.webp",
+  PADDOCK: "/assets/buildings/paddock.webp",
 };
 
 export const DEFAULT_GRID = { w: 12, h: 12 } as const;

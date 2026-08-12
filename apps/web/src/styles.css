@@ -391,6 +391,81 @@ button.ghost {
   white-space: nowrap;
 }
 .sell-btn:hover:not(:disabled) { background: #fbdcd6; }
+
+/* —— Élevage —— */
+.livestock-panel {
+  position: absolute;
+  left: 1rem;
+  top: 6.5rem;
+  z-index: 6;
+  width: min(280px, calc(100vw - 2rem));
+  max-height: 46vh;
+  overflow: auto;
+  display: grid;
+  gap: 0.6rem;
+  align-content: start;
+}
+.barn-card {
+  display: grid;
+  gap: 0.4rem;
+  padding: 0.6rem;
+  border-radius: var(--r-md);
+  background: var(--paper);
+  border: 1px solid var(--line);
+}
+.barn-head {
+  display: grid;
+  grid-template-columns: 40px 1fr;
+  align-items: center;
+  gap: 0.5rem;
+}
+.happy-row { display: grid; gap: 0.2rem; }
+.happy-bar {
+  height: 9px;
+  border-radius: var(--r-pill);
+  background: var(--sand);
+  overflow: hidden;
+}
+.happy-fill { display: block; height: 100%; transition: width 0.4s ease; }
+.happy-fill.low { background: linear-gradient(90deg, #e8896f, #d1483a); }
+.happy-fill.mid { background: linear-gradient(90deg, #f0cf6e, var(--gold-500)); }
+.happy-fill.high { background: linear-gradient(90deg, var(--teal-300), var(--teal-500)); }
+.happy-label { font-size: 0.76rem; font-weight: 800; color: var(--teal-700); }
+.barn-stats { display: grid; gap: 0.2rem; margin: 0; }
+.barn-stats > div {
+  display: flex;
+  justify-content: space-between;
+  font-size: 0.78rem;
+}
+.barn-stats dt { color: var(--muted); }
+.barn-stats dd { margin: 0; font-weight: 800; }
+.paddock-note {
+  margin: 0;
+  padding: 0.35rem 0.5rem;
+  border-radius: var(--r-sm);
+  font-size: 0.74rem;
+  font-weight: 700;
+}
+.paddock-note.ok { background: var(--teal-100); color: var(--teal-700); }
+.paddock-note.none { background: var(--gold-100); color: var(--gold-700); }
+.barn-actions { display: flex; flex-wrap: wrap; gap: 0.35rem; }
+.barn-actions button { font-size: 0.74rem; padding: 0.35rem 0.6rem; }
+.accent-btn {
+  background: linear-gradient(180deg, var(--teal-300), var(--teal-500));
+  border-color: transparent;
+  color: #fff;
+}
+.grazing-now {
+  font-size: 0.74rem;
+  font-weight: 800;
+  color: var(--teal-500);
+  align-self: center;
+}
+.graze-refusal { margin: 0; font-size: 0.72rem; color: var(--danger); font-weight: 700; }
+
+@media (max-width: 720px) {
+  .livestock-panel { display: none; }
+}
 /* Un blocage doit se lire, pas se deviner au survol d'un bouton grisé. */
 .upgrade-locked {
   padding: 0.3rem 0.55rem;

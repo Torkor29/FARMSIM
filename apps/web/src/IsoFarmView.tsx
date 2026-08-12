@@ -117,6 +117,8 @@ function buildingPalette(type: BuildingType): { body: number; roof: number; h: n
       return { body: 0xa8adb2, roof: ROOF_TEAL, h: 1.2 };
     case "FARMHOUSE":
       return { body: 0xf2e8d4, roof: ROOF_TEAL, h: 1.6 };
+    case "PADDOCK":
+      return { body: 0x8fcf6a, roof: WOOD_WARM, h: 0.5 };
     default:
       return { body: WOOD_WARM, roof: ROOF_TEAL, h: 1 };
   }
@@ -505,6 +507,66 @@ export function IsoFarmView({
           color: pal.roof,
           flatShading: true,
         });
+
+        if (b.type === "PADDOCK") {
+          // Un enclos n'est pas un bâtiment : de l'herbe, une clôture, un
+          // abreuvoir. Lui coller un toit ferait exactement le contraire de
+          // ce qu'il représente.
+          const grass = new THREE.Mesh(
+            new THREE.BoxGeometry(bw, 0.08, bd),
+            new THREE.MeshLambertMaterial({ color: 0x8fcf6a, flatShading: true }),
+          );
+          grass.position.set(cx, 0.04, cz);
+          grass.receiveShadow = true;
+          buildingGroup.add(grass);
+
+          const postMat = new THREE.MeshLambertMaterial({
+            color: WOOD_WARM,
+            flatShading: true,
+          });
+          const railMat = new THREE.MeshLambertMaterial({
+            color: 0xd8b689,
+            flatShading: true,
+          });
+          const halfW = bw / 2;
+          const halfD = bd / 2;
+          for (const [sx, sz, len, horizontal] of [
+            [0, -halfD, bw, true],
+            [0, halfD, bw, true],
+            [-halfW, 0, bd, false],
+            [halfW, 0, bd, false],
+          ] as [number, number, number, boolean][]) {
+            for (const rail of [0.22, 0.4]) {
+              const bar = new THREE.Mesh(
+                horizontal
+                  ? new THREE.BoxGeometry(len, 0.04, 0.05)
+                  : new THREE.BoxGeometry(0.05, 0.04, len),
+                railMat,
+              );
+              bar.position.set(cx + sx, rail, cz + sz);
+              buildingGroup.add(bar);
+            }
+          }
+          for (const [px, pz] of [
+            [-halfW, -halfD],
+            [halfW, -halfD],
+            [-halfW, halfD],
+            [halfW, halfD],
+          ]) {
+            const post = new THREE.Mesh(new THREE.BoxGeometry(0.09, 0.5, 0.09), postMat);
+            post.position.set(cx + px, 0.25, cz + pz);
+            post.castShadow = true;
+            buildingGroup.add(post);
+          }
+
+          const trough = new THREE.Mesh(
+            new THREE.BoxGeometry(0.42, 0.14, 0.2),
+            new THREE.MeshLambertMaterial({ color: 0x8a9299, flatShading: true }),
+          );
+          trough.position.set(cx + halfW * 0.5, 0.11, cz - halfD * 0.5);
+          buildingGroup.add(trough);
+          continue;
+        }
 
         if (b.type === "SILO") {
           // Un silo de plus tous les deux paliers, comme sur la planche d'art.
