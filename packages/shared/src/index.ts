@@ -123,15 +123,32 @@ export const CROP_DEFS: Record<
  */
 export const MARKET_BOUNDS: Record<
   TradeGood,
-  { initial: number; min: number; max: number }
+  { initial: number; min: number; max: number; depth: number }
 > = {
-  WHEAT: { initial: 220, min: 120, max: 450 },
-  MAIZE: { initial: 200, min: 100, max: 400 },
+  WHEAT: { initial: 220, min: 120, max: 450, depth: 2000 },
+  MAIZE: { initial: 200, min: 100, max: 400, depth: 2000 },
   // Le lait varie peu : c'est un revenu régulier, pas un pari.
-  MILK: { initial: 42, min: 30, max: 62 },
-  MEAT: { initial: 1450, min: 900, max: 2300 },
-  HAY: { initial: 95, min: 60, max: 165 },
+  MILK: { initial: 42, min: 30, max: 62, depth: 800 },
+  MEAT: { initial: 1450, min: 900, max: 2300, depth: 300 },
+  HAY: { initial: 95, min: 60, max: 165, depth: 1500 },
 };
+
+/**
+ * Force de rappel du cours vers son prix de référence, par tick `[GD]`.
+ *
+ * Sans elle, le déséquilibre offre/demande poussait le prix dans la même
+ * direction indéfiniment : blé, viande et fourrage finissaient collés à leur
+ * plafond, et guetter le marché ne servait plus à rien. Le rappel fait
+ * respirer les cours autour de leur valeur fondamentale.
+ */
+export const MARKET_REVERSION = 0.12;
+
+/**
+ * Profondeur minimale d'un marché, en fraction de sa profondeur nominale
+ * `[GD]`. Un carnet vide appliquait la décote de volume maximale à la moindre
+ * vente : il y a toujours des acheteurs quelque part.
+ */
+export const MARKET_DEPTH_FLOOR = 0.3;
 
 export type BuildingDef = {
   type: BuildingType;

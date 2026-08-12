@@ -152,6 +152,52 @@ export function canList(input: {
 }
 
 /* ------------------------------------------------------------------ */
+/* Acheteurs PNJ — pour que la criée fonctionne dès le premier joueur  */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Une criée déserte est une criée inutile.
+ *
+ * Tant que la population est faible, un lot déposé n'a aucune chance de
+ * trouver preneur : le canal le plus rémunérateur des trois serait mort-né.
+ * Des courtiers passent donc régulièrement et raflent ce qui est raisonnable,
+ * sans jamais dépasser ce qu'un marchand accepterait de payer.
+ */
+export const NPC_BUYER = {
+  /** Un lot doit avoir vécu ce délai avant qu'un courtier s'y intéresse `[GD]` */
+  minAgeMs: 90 * 1000,
+  /** Au-delà de ce multiple du cours, aucun courtier ne mord `[GD]` */
+  maxPriceRatio: 1.18,
+  /** Probabilité qu'un courtier passe, par tick et par lot éligible `[TEST]` */
+  chancePerTick: 0.35,
+} as const;
+
+/**
+ * Un courtier achèterait-il ce lot ?
+ *
+ * Le prix décide seul de l'appétit : plus le vendeur est gourmand, plus il
+ * attendra. Un lot au prix du marché part vite, un lot à +40 % n'intéresse
+ * personne et finira par expirer.
+ */
+export function npcWouldBuy(input: {
+  pricePerTon: number;
+  marketPrice: number;
+  ageMs: number;
+  roll: number;
+}): boolean {
+  if (input.ageMs < NPC_BUYER.minAgeMs) return false;
+  const ratio = input.pricePerTon / Math.max(1, input.marketPrice);
+  if (ratio > NPC_BUYER.maxPriceRatio) return false;
+  // Un lot bradé part presque à coup sûr, un lot au plafond se fait désirer.
+  const eagerness = clamp01((NPC_BUYER.maxPriceRatio - ratio) / 0.4);
+  return input.roll < NPC_BUYER.chancePerTick * (0.35 + eagerness * 0.65);
+}
+
+function clamp01(v: number): number {
+  return v < 0 ? 0 : v > 1 ? 1 : v;
+}
+
+/* ------------------------------------------------------------------ */
 /* Comparaison des trois canaux                                        */
 /* ------------------------------------------------------------------ */
 

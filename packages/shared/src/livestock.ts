@@ -240,13 +240,20 @@ export type GrazingRefusal = "NO_PADDOCK" | "PADDOCK_FULL" | "BAD_WEATHER" | "WR
  * lisible — le joueur voit sa jauge plonger sans qu'on lui supprime son
  * cheptel du jour au lendemain.
  */
+/** Ration de base d'une bête par cycle, en kg de matière sèche `[RÉEL]` */
+export const FEED_BASE_PER_COW = 14;
+
 export const HUNGER = {
   /** Au-delà, la ration précédente ne compte plus `[GD]` */
   memoryMs: 0,
   /** Pénalité maximale sur la cible de bien-être `[GD]` */
   penaltyMax: 0.55,
-  /** Ration d'une bête pour un cycle, en kg équivalent fourrage `[RÉEL]` */
-  unitsPerAnimalPerCycle: 14,
+  /**
+   * Ration d'une bête pour un cycle, en kg équivalent fourrage `[RÉEL]`.
+   * Doit rester égal à `FEED_BASE_PER_COW` : c'est la même ration, vue une
+   * fois du côté du besoin et une fois du côté de la consommation.
+   */
+  unitsPerAnimalPerCycle: FEED_BASE_PER_COW,
 } as const;
 
 /**
@@ -262,17 +269,29 @@ export function hungerPenalty(input: {
   return (1 - covered) * HUNGER.penaltyMax;
 }
 
-/** Unités nutritives consommées par un troupeau sur une durée donnée. */
+/**
+ * Fourrage consommé sur une durée donnée, en kg.
+ *
+ * S'appuie sur `feedConsumption()` plutôt que de recalculer la ration : une
+ * étable mieux isolée économise du foin, et cette économie doit valoir aussi
+ * bien pour l'affichage que pour la consommation réelle.
+ */
 export function feedBurn(input: {
   herdSize: number;
   elapsedMs: number;
   cycleMs: number;
   /** Au pré, les bêtes se nourrissent en partie seules */
   grazing: boolean;
+  /** Niveau de l'étable ; par défaut, la plus rustique */
+  barnLevel?: number;
 }): number {
   const cycles = Math.max(0, input.elapsedMs) / Math.max(1, input.cycleMs);
-  const ratio = input.grazing ? FEED_GRAZING_RATIO : 1;
-  return input.herdSize * HUNGER.unitsPerAnimalPerCycle * cycles * ratio;
+  const perCycle = feedConsumption({
+    herdSize: input.herdSize,
+    grazing: input.grazing,
+    barnLevel: input.barnLevel ?? 1,
+  });
+  return perCycle * cycles;
 }
 
 export const GRAZING_REFUSAL_LABELS: Record<GrazingRefusal, string> = {
@@ -425,7 +444,6 @@ export function meatYield(input: {
 }
 
 /** Fourrage distribué par vache et par cycle, en kg de matière sèche `[GD]` */
-export const FEED_BASE_PER_COW = 14;
 
 /**
  * Part du fourrage encore distribuée quand le lot pâture `[GD]` : **65 %**.

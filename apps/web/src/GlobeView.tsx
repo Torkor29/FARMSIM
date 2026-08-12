@@ -783,6 +783,60 @@ export function GlobeView({
       markers.push({ code: c.code, pin, ring, ringMat, free });
     }
 
+    /**
+     * Lueur de survol posée sur la terre elle-même.
+     *
+     * Tant que chaque continent avait son maillage, il suffisait d'en éclairer
+     * le matériau. Avec une surface unique, ce support a disparu et seul le
+     * repère réagissait : on survolait un continent sans que rien ne le
+     * désigne. Cette calotte lumineuse rend le retour visuel au relief.
+     */
+    const highlightMat = new THREE.ShaderMaterial({
+      transparent: true,
+      depthWrite: false,
+      blending: THREE.AdditiveBlending,
+      uniforms: {
+        uColor: { value: new THREE.Color(0xffe9a8) },
+        uOpacity: { value: 0 },
+      },
+      vertexShader: `
+        varying vec2 vUv;
+        void main() {
+          vUv = uv;
+          gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+        }
+      `,
+      fragmentShader: `
+        uniform vec3 uColor;
+        uniform float uOpacity;
+        varying vec2 vUv;
+        void main() {
+          float d = distance(vUv, vec2(0.5));
+          float falloff = smoothstep(0.5, 0.06, d);
+          gl_FragColor = vec4(uColor, falloff * uOpacity);
+        }
+      `,
+    });
+    const highlight = new THREE.Mesh(new THREE.CircleGeometry(0.78, 32), highlightMat);
+    highlight.visible = false;
+    spinner.add(highlight);
+
+    function placeHighlight(code: string | null): void {
+      if (!code) {
+        highlight.visible = false;
+        return;
+      }
+      const c = continents.find((x) => x.code === code);
+      if (!c) {
+        highlight.visible = false;
+        return;
+      }
+      const p = latLonToVec3(c.lat, c.lon, R + 0.09);
+      highlight.position.copy(p);
+      highlight.lookAt(p.clone().multiplyScalar(2));
+      highlight.visible = true;
+    }
+
     /* ---------------- interaction ---------------- */
 
     const raycaster = new THREE.Raycaster();
@@ -1049,6 +1103,18 @@ export function GlobeView({
       glowMat.uniforms.uIntensity.value = 0.14 + clamp01((dist - DIST_FOCUS) / 6) * 0.22;
 
       const pulse = 0.5 + 0.5 * Math.sin(now * 0.0022);
+
+      // La sélection prime sur le survol ; l'opacité glisse pour éviter le
+      // clignotement quand la souris passe d'un continent à l'autre.
+      const lit = sel ?? hovered;
+      if (lit !== highlight.userData.code) {
+        highlight.userData.code = lit;
+        placeHighlight(lit);
+      }
+      const wantOpacity = lit ? (lit === sel ? 0.42 : 0.24) + pulse * 0.08 : 0;
+      const uOpacity = highlightMat.uniforms.uOpacity;
+      uOpacity.value += (wantOpacity - uOpacity.value) * 0.14;
+
       for (const m of markers) {
         const isSel = m.code === sel;
         const isHover = m.code === hovered;

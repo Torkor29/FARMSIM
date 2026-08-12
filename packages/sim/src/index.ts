@@ -2,6 +2,8 @@ import {
   CROP_DEFS,
   DRYING,
   MARKET_BOUNDS,
+  MARKET_REVERSION,
+  MARKET_DEPTH_FLOOR,
   residueBonus,
   ripenessAt,
   type CropCode,
@@ -178,8 +180,18 @@ export function tickMarket(input: MarketTickInput): MarketTickResult {
   const imbalance =
     (input.demandTons - input.supplyTons - stockPressure * 0.5) / normalize;
   let price = input.price * (1 + kappa * imbalance);
+  // Rappel vers le prix de référence : sans lui, un déséquilibre durable
+  // poussait le cours jusqu'à sa borne et l'y laissait pour toujours.
+  price += (bounds.initial - price) * MARKET_REVERSION;
   price = Math.min(bounds.max, Math.max(bounds.min, price));
-  const stockTons = Math.max(0, input.stockTons + input.supplyTons - input.demandTons);
+
+  // Le carnet ne se vide jamais complètement : il reste toujours des
+  // acheteurs, sans quoi la moindre vente subissait la décote maximale.
+  const floor = bounds.depth * MARKET_DEPTH_FLOOR;
+  const stockTons = Math.max(
+    floor,
+    input.stockTons + input.supplyTons - input.demandTons,
+  );
   return {
     price: Math.round(price * 100) / 100,
     stockTons: Math.round(stockTons * 100) / 100,
@@ -240,6 +252,12 @@ export function buildSessionResume(opts: {
   awayMs: number;
   cropsReady: number;
   cropsGrowing: number;
+  /** Cases dont la culture s'est perdue faute d'avoir été récoltée à temps */
+  cropsLost?: number;
+  /** Cases dont la récolte se dégrade déjà */
+  cropsDeclining?: number;
+  /** Troupeaux dont la réserve d'aliment est vide */
+  herdsHungry?: number;
   marketBefore: Record<string, number>;
   marketNow: Record<string, number>;
   weatherStates: string[];
@@ -248,6 +266,7 @@ export function buildSessionResume(opts: {
   awayLabel: string;
   cropsReady: number;
   cropsGrowing: number;
+  cropsLost: number;
   marketDelta: Record<string, number>;
   weatherStates: string[];
   hint: string;
@@ -262,6 +281,14 @@ export function buildSessionResume(opts: {
   const awayLabel = formatAway(opts.awayMs);
   const parts: string[] = [];
   if (opts.awayMs >= 30_000) parts.push(`Absent ${awayLabel}`);
+  // Les mauvaises nouvelles d'abord : une perte découverte par hasard, une
+  // heure plus tard, est bien plus frustrante qu'une perte annoncée.
+  const lost = opts.cropsLost ?? 0;
+  if (lost > 0) parts.push(`${lost} culture(s) perdue(s) — à labourer`);
+  const declining = opts.cropsDeclining ?? 0;
+  if (declining > 0) parts.push(`${declining} récolte(s) qui se dégradent`);
+  const hungry = opts.herdsHungry ?? 0;
+  if (hungry > 0) parts.push(`${hungry} troupeau(x) sans ration`);
   if (opts.cropsReady > 0) parts.push(`${opts.cropsReady} case(s) prête(s) à récolter`);
   if (opts.cropsGrowing > 0 && opts.cropsReady === 0) {
     parts.push(`${opts.cropsGrowing} culture(s) en croissance`);
@@ -282,6 +309,7 @@ export function buildSessionResume(opts: {
     awayLabel,
     cropsReady: opts.cropsReady,
     cropsGrowing: opts.cropsGrowing,
+    cropsLost: lost,
     marketDelta,
     weatherStates: opts.weatherStates,
     hint,

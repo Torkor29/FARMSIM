@@ -58,6 +58,7 @@ import {
   dealerPricePerTon,
   marketPricePerTon,
   listingFee,
+  npcWouldBuy,
   listingProceeds,
   canList,
   LISTING_REFUSAL_LABELS,
@@ -732,6 +733,8 @@ let lastSimTick: {
 } | null = null;
 
 async function runWorldTick() {
+  await expireListings();
+  await runNpcBuyers();
   const zones = await prisma.zone.findMany();
   const snapshots = await prisma.weatherSnapshot.findMany();
   const weatherOut: { zoneCode: string; state: string; changed: boolean }[] = [];
@@ -843,6 +846,8 @@ async function buildResumeForUser(userId: string) {
   const awayMs = Math.max(0, now - last);
   let cropsReady = 0;
   let cropsGrowing = 0;
+  let cropsLost = 0;
+  let cropsDeclining = 0;
   for (const parcel of user.farm?.parcels ?? []) {
     for (const cell of parcel.cells) {
       if (cell.kind !== "CROP" || !cell.crop || !cell.plantedAt) continue;
@@ -856,7 +861,9 @@ async function buildResumeForUser(userId: string) {
         residuePasses: cell.residuePasses,
         specialization: user.specialization,
       });
-      if (sim.ready) cropsReady += 1;
+      if (sim.lost) cropsLost += 1;
+      else if (sim.ripeness && sim.ripeness.stage !== "PEAK") cropsDeclining += 1;
+      else if (sim.ready) cropsReady += 1;
       else cropsGrowing += 1;
     }
   }
@@ -868,10 +875,20 @@ async function buildResumeForUser(userId: string) {
   }
   const marketNow = await marketPriceMap();
   const weather = await prisma.weatherSnapshot.findMany();
+  const herdsHungry = (
+    await prisma.herd.findMany({
+      where: { farm: { userId } },
+      select: { size: true, feedStock: true },
+    })
+  ).filter((h) => hungerPenalty({ feedStock: h.feedStock, herdSize: h.size }) > 0.3).length;
+
   return buildSessionResume({
     awayMs,
     cropsReady,
     cropsGrowing,
+    cropsLost,
+    cropsDeclining,
+    herdsHungry,
     marketBefore,
     marketNow,
     weatherStates: weather.map((w) => w.state),
@@ -2112,6 +2129,7 @@ async function settleHerd(
   },
   paddockCapacityCells: number,
   now: number,
+  barnLevel = 1,
 ): Promise<{ happiness: number; feedStock: number }> {
   const elapsedMs = Math.max(0, now - herd.lastTickAt.getTime());
   if (elapsedMs < 1000) return { happiness: herd.happiness, feedStock: herd.feedStock };
@@ -2123,6 +2141,7 @@ async function settleHerd(
     elapsedMs,
     cycleMs: LIVESTOCK_CYCLE_MS,
     grazing,
+    barnLevel,
   });
   const feedStock = Math.max(0, herd.feedStock - burnt);
   const hunger = hungerPenalty({ feedStock, herdSize: herd.size });
@@ -2166,7 +2185,7 @@ app.get("/parcels/:id/livestock", async (req, res) => {
     let happiness = b.herd?.happiness ?? 0;
     let feedStock = b.herd?.feedStock ?? 0;
     if (b.herd) {
-      const settled = await settleHerd(b.herd, paddock.capacity, now);
+      const settled = await settleHerd(b.herd, paddock.capacity, now, b.level);
       happiness = settled.happiness;
       feedStock = settled.feedStock;
     }
@@ -2894,6 +2913,53 @@ async function drawFromStock(
   const left = item.qty - tons;
   if (left <= 0.0001) await tx.inventoryItem.delete({ where: { id: item.id } });
   else await tx.inventoryItem.update({ where: { id: item.id }, data: { qty: left } });
+}
+
+/**
+ * Passage des courtiers : ils raflent les lots raisonnablement prix.
+ *
+ * Sans eux, la criée resterait déserte tant que la population est faible, et
+ * le canal le mieux payé des trois serait décoratif.
+ */
+async function runNpcBuyers() {
+  const open = await prisma.marketListing.findMany({
+    where: { status: "OPEN", expiresAt: { gt: new Date() } },
+    include: { seller: true },
+  });
+  if (!open.length) return;
+  const prices = await prisma.marketPrice.findMany();
+  const now = Date.now();
+
+  for (const listing of open) {
+    const market = prices.find((p) => p.commodity === listing.commodity);
+    if (!market) continue;
+    const willBuy = npcWouldBuy({
+      pricePerTon: listing.pricePerTon,
+      marketPrice: market.price,
+      ageMs: now - listing.createdAt.getTime(),
+      roll: Math.random(),
+    });
+    if (!willBuy) continue;
+
+    const proceeds = listingProceeds(listing.pricePerTon, listing.tons);
+    await prisma.$transaction(async (tx) => {
+      const fresh = await tx.marketListing.findUnique({ where: { id: listing.id } });
+      if (!fresh || fresh.status !== "OPEN") return;
+      await tx.marketListing.update({
+        where: { id: listing.id },
+        data: { status: "SOLD", soldAt: new Date(now) },
+      });
+      await tx.user.update({
+        where: { id: listing.sellerId },
+        data: { crd: { increment: proceeds } },
+      });
+      // Le courtier remet la marchandise en circulation : le carnet s'épaissit.
+      await tx.marketPrice.update({
+        where: { commodity: listing.commodity },
+        data: { stockTons: { increment: listing.tons } },
+      });
+    });
+  }
 }
 
 /** Ferme les annonces expirées et rend la marchandise à leurs vendeurs. */
