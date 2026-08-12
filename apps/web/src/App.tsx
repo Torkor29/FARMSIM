@@ -31,6 +31,7 @@ import {
 } from "@farmsim/shared";
 import { AuthScreen } from "./AuthScreen";
 import type { GrazingHerd, PreviewBuilding } from "./IsoFarmView";
+import { ConfirmDialog, type ConfirmRequest } from "./ConfirmDialog";
 import { LivestockPanel, type BarnState } from "./LivestockPanel";
 import { MarketPanel, type Listing } from "./MarketPanel";
 import type { ContinentDetail, WorldContinent } from "./Onboarding";
@@ -285,6 +286,7 @@ export function App() {
   const [barns, setBarns] = useState<BarnState[]>([]);
   const [listings, setListings] = useState<Listing[]>([]);
   const [showMarket, setShowMarket] = useState(false);
+  const [confirmRequest, setConfirmRequest] = useState<ConfirmRequest | null>(null);
   const [showArrival, setShowArrival] = useState(false);
   const arrivalShownRef = useRef(false);
 
@@ -1388,9 +1390,19 @@ export function App() {
     }
   }
 
-  async function slaughterHerd(herdId: string, count: number) {
+  function slaughterHerd(herdId: string, count: number) {
     if (!player) return;
-    if (!window.confirm(`Abattre ${count} bête(s) ? C’est définitif.`)) return;
+    setConfirmRequest({
+      title: `Abattre ${count} bête(s) ?`,
+      detail: "La viande part au silo, les bêtes ne reviennent pas.",
+      confirmLabel: "Abattre",
+      destructive: true,
+      onConfirm: () => void doSlaughter(herdId, count),
+    });
+  }
+
+  async function doSlaughter(herdId: string, count: number) {
+    if (!player) return;
     setBusy(true);
     try {
       const r = await api<{ kg: number; maturity: number; remaining: number }>(
@@ -1407,9 +1419,19 @@ export function App() {
     }
   }
 
-  async function sellMachine(id: string, label: string) {
+  function sellMachine(id: string, label: string) {
     if (!player) return;
-    if (!window.confirm(`Vendre ${label} ? Cette action est définitive.`)) return;
+    setConfirmRequest({
+      title: `Vendre ${label} ?`,
+      detail: "La reprise dépend de l’état de la machine. Elle quitte le garage définitivement.",
+      confirmLabel: "Vendre",
+      destructive: true,
+      onConfirm: () => void doSellMachine(id, label),
+    });
+  }
+
+  async function doSellMachine(id: string, label: string) {
+    if (!player) return;
     setBusy(true);
     setErr(null);
     try {
@@ -1427,9 +1449,19 @@ export function App() {
     }
   }
 
-  async function sellBuilding(id: string, label: string) {
+  function sellBuilding(id: string, label: string) {
     if (!player) return;
-    if (!window.confirm(`Démolir ${label} ? Cette action est définitive.`)) return;
+    setConfirmRequest({
+      title: `Démolir ${label} ?`,
+      detail: "Vous récupérez une partie des matériaux. Les niveaux payés sont perdus.",
+      confirmLabel: "Démolir",
+      destructive: true,
+      onConfirm: () => void doSellBuilding(id, label),
+    });
+  }
+
+  async function doSellBuilding(id: string, label: string) {
+    if (!player) return;
     setBusy(true);
     setErr(null);
     try {
@@ -2007,6 +2039,8 @@ export function App() {
           );
         }}
       />
+
+      <ConfirmDialog request={confirmRequest} onCancel={() => setConfirmRequest(null)} />
 
       <TutorialOverlay open={showTutorial} onClose={() => setShowTutorial(false)} />
 

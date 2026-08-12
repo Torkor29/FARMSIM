@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useMemo, useRef } from "react";
 import * as THREE from "three";
 import {
   BUILDING_DEFS,
@@ -8,7 +8,7 @@ import {
   type MachineType,
   type RipenessStage,
 } from "@farmsim/shared";
-import { disposeRenderer, disposeThreeScene } from "./three-cleanup";
+import { disposeRenderer, disposeThreeScene, markShared } from "./three-cleanup";
 
 export type IsoCell = {
   x: number;
@@ -435,6 +435,17 @@ export function IsoFarmView({
       return `${x},${y}`;
     }
 
+    // Les 144 dalles sont identiques : une seule géométrie suffit. En créer
+    // une par case coûtait l'essentiel du temps de construction de la scène.
+    let sharedTile: { size: number; geo: THREE.BoxGeometry } | null = null;
+    function tileGeo(size: number): THREE.BoxGeometry {
+      if (!sharedTile || sharedTile.size !== size) {
+        sharedTile?.geo.dispose();
+        sharedTile = { size, geo: markShared(new THREE.BoxGeometry(size, 0.18, size)) };
+      }
+      return sharedTile.geo;
+    }
+
     function cellWorldPos(x: number, y: number) {
       return { px: ox + x * step, pz: oz + y * step };
     }
@@ -459,7 +470,7 @@ export function IsoFarmView({
 
       for (const m of cellMeshes.values()) {
         world.remove(m);
-        m.geometry.dispose();
+        // La géométrie est partagée : seul le matériau est propre à la dalle.
         (m.material as THREE.Material).dispose();
       }
       cellMeshes.clear();
@@ -549,7 +560,7 @@ export function IsoFarmView({
             color: isSel ? SELECT_GLOW : col,
             flatShading: true,
           });
-          const mesh = new THREE.Mesh(new THREE.BoxGeometry(cellSize, 0.18, cellSize), mat);
+          const mesh = new THREE.Mesh(tileGeo(cellSize), mat);
           mesh.position.set(px, 0, pz);
           mesh.receiveShadow = true;
           mesh.userData = { x, y, baseColor: col, isSelected: isSel };
@@ -1127,14 +1138,45 @@ export function IsoFarmView({
         disposeObject3D(c);
       }
       clearWorkVehicle();
+      // Marquée partagée pour survivre aux reconstructions de scène, la
+      // géométrie de dalle doit être libérée explicitement au démontage.
+      sharedTile?.geo.dispose();
+      sharedTile = null;
       disposeThreeScene(scene);
       disposeRenderer(renderer, el);
     };
   }, []);
 
+  /**
+   * Signature de ce qui change réellement la scène.
+   *
+   * La parcelle est rechargée toutes les quatre secondes et renvoie des objets
+   * neufs à chaque fois, même quand rien n'a bougé. Or `layout()` détruit et
+   * reconstruit les 144 dalles, les cultures, les engins et les bâtiments :
+   * sans ce garde-fou, le jeu s'interrompait un tiers de seconde à chaque
+   * sondage, indéfiniment.
+   */
+  const sceneKey = useMemo(() => {
+    const c = cells
+      .map(
+        (x) =>
+          `${x.x},${x.y},${x.kind},${x.crop ?? ""},${x.fieldStage ?? ""},${x.machineType ?? ""},${x.hasStubble ? 1 : 0},${x.residuePasses ?? 0}`,
+      )
+      .join("|");
+    const b = buildings
+      .map((x) => `${x.id},${x.type},${x.level ?? 1},${x.originX},${x.originY}`)
+      .join("|");
+    // Seul le palier de maturité compte visuellement, pas la progression fine.
+    const s = cellSims
+      .map((x) => `${x.x},${x.y},${x.sim.ripeness?.stage ?? (x.sim.ready ? "R" : "G")}`)
+      .join("|");
+    const sel = selected.map((x) => `${x.x},${x.y}`).join("|");
+    return `${gridW}x${gridH}#${c}#${b}#${s}#${sel}`;
+  }, [cells, buildings, cellSims, selected, gridW, gridH]);
+
   useEffect(() => {
     layoutRef.current?.();
-  }, [cells, buildings, cellSims, selected, gridW, gridH]);
+  }, [sceneKey]);
 
   return <div className="iso-viewport" ref={mountRef} aria-label="Vue isométrique de la ferme" />;
 }
