@@ -17,7 +17,7 @@
  * @see docs/research/42_TRADE.md
  */
 
-import type { CropCode } from "./index.js";
+import type { TradeGood } from "./goods.js";
 
 export type SaleChannel = "DEALER" | "MARKET" | "LISTING";
 
@@ -170,7 +170,7 @@ export type ChannelQuote = {
  * plutôt que de se deviner.
  */
 export function quoteAllChannels(input: {
-  commodity: CropCode;
+  commodity: TradeGood;
   tons: number;
   marketPrice: number;
   stockTons: number;

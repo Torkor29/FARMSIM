@@ -5,7 +5,6 @@ import {
   DEALER_RATIO,
   LISTING_COMMISSION_RATE,
   LISTING_FEE_RATE,
-  SALE_CHANNEL_HINTS,
   SALE_CHANNEL_LABELS,
   listingFee,
   listingProceeds,
@@ -44,9 +43,9 @@ type Props = {
   marketPrices: { commodity: string; price: number; stockTons: number }[];
   crd: number;
   busy: boolean;
-  onSellDealer: (commodity: CropCode, tons: number) => void;
-  onSellMarket: (commodity: CropCode, tons: number) => void;
-  onList: (commodity: CropCode, tons: number, pricePerTon: number) => void;
+  onSellDealer: (commodity: TradeGood, tons: number) => void;
+  onSellMarket: (commodity: TradeGood, tons: number) => void;
+  onList: (commodity: TradeGood, tons: number, pricePerTon: number) => void;
   onBuyListing: (id: string) => void;
   onCancelListing: (id: string) => void;
   onDry: (itemId: string) => void;
@@ -100,7 +99,7 @@ export function MarketPanel({
   const quotes: ChannelQuote[] = useMemo(() => {
     if (!item || !price || tons <= 0) return [];
     return quoteAllChannels({
-      commodity: item.itemCode as CropCode,
+      commodity: item.itemCode as TradeGood,
       tons,
       marketPrice: price.price,
       stockTons: price.stockTons,
@@ -118,7 +117,7 @@ export function MarketPanel({
 
   const act = (channel: SaleChannel) => {
     if (!item || tons <= 0) return;
-    const code = item.itemCode as CropCode;
+    const code = item.itemCode as TradeGood;
     if (channel === "DEALER") onSellDealer(code, tons);
     else if (channel === "MARKET") onSellMarket(code, tons);
     else onList(code, tons, ask);
@@ -415,4 +414,3 @@ function SupplyTab({
   );
 }
 
-export { SALE_CHANNEL_HINTS };

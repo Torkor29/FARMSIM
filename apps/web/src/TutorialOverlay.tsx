@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 
-export const TUTORIAL_KEY = "farmsim_tutorial_v1";
+import { TUTORIAL_KEY } from "./storage-keys";
 
 type Step = {
   id: string;

@@ -81,6 +81,7 @@ import {
   rationQuality,
   dealerAskPrice,
   GOOD_DEFS,
+  SELLABLE_GOODS,
   GRAZING_REFUSAL_LABELS,
   LIVESTOCK_CYCLE_MS,
   MEAT_MATURITY_MS,
@@ -2358,6 +2359,15 @@ app.post("/herds/:id/graze", async (req, res) => {
   res.json({ window, animals: window.animals });
 });
 
+/**
+ * Marchandises que le joueur peut écouler. Restreindre les endpoints de vente
+ * au blé et au maïs rendait le lait et la viande produisibles mais
+ * invendables : ils s'accumulaient au silo sans débouché.
+ */
+const sellableGood = z.enum(
+  SELLABLE_GOODS as [TradeGood, ...TradeGood[]],
+);
+
 /** Ajoute une marchandise au silo, en fusionnant l'humidité si besoin. */
 async function addToStock(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -2935,7 +2945,7 @@ async function expireListings() {
 app.get("/market/quote", async (req, res) => {
   const parsed = z
     .object({
-      commodity: z.enum(["WHEAT", "MAIZE"]),
+      commodity: sellableGood,
       tons: z.coerce.number().positive(),
       moisture: z.coerce.number().min(0).max(1).optional(),
       ask: z.coerce.number().positive().optional(),
@@ -2971,7 +2981,7 @@ app.post("/market/dealer", async (req, res) => {
   const body = z
     .object({
       userId: z.string(),
-      commodity: z.enum(["WHEAT", "MAIZE"]),
+      commodity: sellableGood,
       tons: z.number().positive(),
     })
     .safeParse(req.body);
@@ -3050,7 +3060,7 @@ app.post("/market/listings", async (req, res) => {
   const body = z
     .object({
       userId: z.string(),
-      commodity: z.enum(["WHEAT", "MAIZE"]),
+      commodity: sellableGood,
       tons: z.number().positive(),
       pricePerTon: z.number().positive(),
     })
@@ -3246,7 +3256,7 @@ app.post("/market/sell", async (req, res) => {
   const body = z
     .object({
       userId: z.string(),
-      commodity: z.enum(["WHEAT", "MAIZE"]),
+      commodity: sellableGood,
       tons: z.number().positive(),
     })
     .safeParse(req.body);

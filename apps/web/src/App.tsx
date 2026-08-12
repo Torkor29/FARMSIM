@@ -47,11 +47,11 @@ const IsoFarmView = lazy(() =>
 );
 const Onboarding = lazy(() => import("./Onboarding").then((m) => ({ default: m.Onboarding })));
 import { SplashScreen } from "./SplashScreen";
-import { TutorialOverlay, TUTORIAL_KEY } from "./TutorialOverlay";
+import { TutorialOverlay } from "./TutorialOverlay";
+import { TOKEN_KEY, TUTORIAL_KEY } from "./storage-keys";
 import { ZoneMap } from "./ZoneMap";
 
 const API = "/api";
-const TOKEN_KEY = "farmsim_token";
 
 type SessionResume = {
   awayMs: number;
@@ -1133,7 +1133,7 @@ export function App() {
   }
 
   /** Rachat immédiat par le négociant : prix bas, mais toujours preneur. */
-  async function sellToDealer(commodity: CropCode, tons: number) {
+  async function sellToDealer(commodity: TradeGood, tons: number) {
     if (!player) return;
     setBusy(true);
     try {
@@ -1151,7 +1151,7 @@ export function App() {
     }
   }
 
-  async function createListing(commodity: CropCode, tons: number, pricePerTon: number) {
+  async function createListing(commodity: TradeGood, tons: number, pricePerTon: number) {
     if (!player) return;
     setBusy(true);
     try {
@@ -1223,7 +1223,7 @@ export function App() {
     }
   }
 
-  async function sell(commodity: CropCode, tons: number) {
+  async function sell(commodity: TradeGood, tons: number) {
     if (!player) return;
     setBusy(true);
     try {
