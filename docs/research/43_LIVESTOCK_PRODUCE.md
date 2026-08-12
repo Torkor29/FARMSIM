@@ -152,6 +152,5 @@ la consommation, et l'isolation du bâtiment économise réellement du foin.
 
 ## Reste à faire
 
-- Le lait et la viande sont marqués périssables mais ne se dégradent pas
-  encore.
-- Pas de reproduction : le cheptel ne croît que par achat.
+- Voir [44_BREEDING_SPOILAGE](./44_BREEDING_SPOILAGE.md) pour la reproduction
+  et la péremption, désormais en place.

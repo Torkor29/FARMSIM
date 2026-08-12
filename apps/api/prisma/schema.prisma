@@ -194,6 +194,10 @@ model Herd {
   feedQuality   Float     @default(0)
   /// Réserve d'aliment déjà distribuée, en unités nutritives
   feedStock     Float     @default(0)
+  /// Début de la gestation en cours ; null si aucune
+  gestatingSince DateTime?
+  /// Dernière mise bas
+  lastCalvedAt  DateTime?
 }
 
 model Building {
@@ -218,6 +222,8 @@ model InventoryItem {
   quality  Int    @default(3)
   /** Humidité grain 0–1 (ex. 0.14 = 14 %) */
   moisture Float  @default(0)
+  /// Dernier passage de la péremption sur ce lot
+  lastDecayAt DateTime @default(now())
 }
 
 model Machine {

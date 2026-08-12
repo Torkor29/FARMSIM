@@ -76,12 +76,19 @@ import {
   meatYield,
   happinessLabel,
   hungerPenalty,
+  canBreed,
+  gestationProgress,
+  litterFor,
+  BREEDING_REFUSAL_LABELS,
   HUNGER,
   feedBurn,
   feedUnits,
   rationQuality,
   dealerAskPrice,
   GOOD_DEFS,
+  isPerishable,
+  afterSpoilage,
+  SPOILAGE_PER_CYCLE,
   SELLABLE_GOODS,
   GRAZING_REFUSAL_LABELS,
   LIVESTOCK_CYCLE_MS,
@@ -732,9 +739,43 @@ let lastSimTick: {
   market: { commodity: string; price: number; stockTons: number; supply: number; demand: number }[];
 } | null = null;
 
+/**
+ * Dégradation des denrées périssables en silo.
+ *
+ * Le lait perd plus de dix pour cent par cycle : c'est ce qui donne enfin une
+ * raison d'accepter le prix bas du négociant plutôt que d'attendre la criée.
+ * La décroissance est exponentielle, donc indépendante du découpage des ticks.
+ */
+async function spoilPerishables() {
+  const perishables = (Object.keys(GOOD_DEFS) as TradeGood[]).filter(isPerishable);
+  if (!perishables.length) return;
+  const items = await prisma.inventoryItem.findMany({
+    where: { itemCode: { in: perishables } },
+  });
+  const now = Date.now();
+  for (const item of items) {
+    const elapsedMs = now - item.lastDecayAt.getTime();
+    if (elapsedMs < 5000) continue;
+    const left = afterSpoilage({
+      good: item.itemCode as TradeGood,
+      qty: item.qty,
+      elapsedMs,
+      cycleMs: LIVESTOCK_CYCLE_MS,
+    });
+    if (left <= 0) await prisma.inventoryItem.delete({ where: { id: item.id } });
+    else {
+      await prisma.inventoryItem.update({
+        where: { id: item.id },
+        data: { qty: left, lastDecayAt: new Date(now) },
+      });
+    }
+  }
+}
+
 async function runWorldTick() {
   await expireListings();
   await runNpcBuyers();
+  await spoilPerishables();
   const zones = await prisma.zone.findMany();
   const snapshots = await prisma.weatherSnapshot.findMany();
   const weatherOut: { zoneCode: string; state: string; changed: boolean }[] = [];
@@ -2126,13 +2167,31 @@ async function settleHerd(
     lastGrazedAt: Date | null;
     grazingUntil: Date | null;
     feedStock: number;
+    kind: string;
+    gestatingSince: Date | null;
+    lastCalvedAt: Date | null;
   },
   paddockCapacityCells: number,
   now: number,
   barnLevel = 1,
-): Promise<{ happiness: number; feedStock: number }> {
+  capacity = 0,
+): Promise<{
+  happiness: number;
+  feedStock: number;
+  size: number;
+  gestatingSince: Date | null;
+  born: number;
+}> {
   const elapsedMs = Math.max(0, now - herd.lastTickAt.getTime());
-  if (elapsedMs < 1000) return { happiness: herd.happiness, feedStock: herd.feedStock };
+  if (elapsedMs < 1000) {
+    return {
+      happiness: herd.happiness,
+      feedStock: herd.feedStock,
+      size: herd.size,
+      gestatingSince: herd.gestatingSince,
+      born: 0,
+    };
+  }
 
   // Le troupeau puise dans la ration distribuée ; au pré, il se sert seul.
   const grazing = Boolean(herd.grazingUntil && herd.grazingUntil.getTime() > now);
@@ -2154,11 +2213,46 @@ async function settleHerd(
     elapsedMs,
     hunger,
   });
+
+  // Reproduction : une gestation démarre quand tout est réuni, et aboutit
+  // quand elle arrive à terme. Un troupeau bien mené grossit tout seul.
+  const feedRatio = feedStock / Math.max(1, herd.size * HUNGER.unitsPerAnimalPerCycle);
+  const freeSlots = capacity - herd.size;
+  let size = herd.size;
+  let gestatingSince: Date | null = herd.gestatingSince;
+  let lastCalvedAt = herd.lastCalvedAt;
+  let born = 0;
+
+  if (gestatingSince) {
+    const progress = gestationProgress({
+      kind: herd.kind as AnimalKind,
+      gestatingSince: gestatingSince.getTime(),
+      now,
+      cycleMs: LIVESTOCK_CYCLE_MS,
+    });
+    if (progress >= 1) {
+      born = litterFor(herd.kind as AnimalKind, freeSlots);
+      size += born;
+      gestatingSince = null;
+      lastCalvedAt = new Date(now);
+    }
+  } else {
+    const verdict = canBreed({
+      kind: herd.kind as AnimalKind,
+      size: herd.size,
+      happiness,
+      feedRatio,
+      freeSlots,
+      gestatingSince: null,
+    });
+    if (verdict.ok) gestatingSince = new Date(now);
+  }
+
   await prisma.herd.update({
     where: { id: herd.id },
-    data: { happiness, feedStock, lastTickAt: new Date(now) },
+    data: { happiness, feedStock, size, gestatingSince, lastCalvedAt, lastTickAt: new Date(now) },
   });
-  return { happiness, feedStock };
+  return { happiness, feedStock, size, gestatingSince, born };
 }
 
 /** État complet de l'élevage d'une parcelle, prêt pour l'affichage. */
@@ -2184,10 +2278,14 @@ app.get("/parcels/:id/livestock", async (req, res) => {
     const capacity = (b.type === "CATTLE_BARN" ? stats.cattleSlots : stats.pigSlots) ?? 0;
     let happiness = b.herd?.happiness ?? 0;
     let feedStock = b.herd?.feedStock ?? 0;
+    let herdSize = b.herd?.size ?? 0;
+    let gestatingSince: Date | null = b.herd?.gestatingSince ?? null;
     if (b.herd) {
-      const settled = await settleHerd(b.herd, paddock.capacity, now, b.level);
+      const settled = await settleHerd(b.herd, paddock.capacity, now, b.level, capacity);
       happiness = settled.happiness;
       feedStock = settled.feedStock;
+      herdSize = settled.size;
+      gestatingSince = settled.gestatingSince;
     }
 
     const graze = b.herd
@@ -2216,11 +2314,29 @@ app.get("/parcels/:id/livestock", async (req, res) => {
         ? {
             id: b.herd.id,
             kind: b.herd.kind,
-            size: b.herd.size,
+            size: herdSize,
             happiness,
             label: happinessLabel(happiness),
             grazingUntil: b.herd.grazingUntil?.getTime() ?? null,
             feedStock: Math.round(feedStock * 10) / 10,
+            gestation: gestationProgress({
+              kind: b.herd.kind as AnimalKind,
+              gestatingSince: gestatingSince?.getTime() ?? null,
+              now,
+              cycleMs: LIVESTOCK_CYCLE_MS,
+            }),
+            breedRefusal: (() => {
+              if (gestatingSince) return null;
+              const v = canBreed({
+                kind: b.herd.kind as AnimalKind,
+                size: herdSize,
+                happiness,
+                feedRatio: feedStock / Math.max(1, herdSize * HUNGER.unitsPerAnimalPerCycle),
+                freeSlots: capacity - herdSize,
+                gestatingSince: null,
+              });
+              return v.ok || !v.reason ? null : BREEDING_REFUSAL_LABELS[v.reason];
+            })(),
             feedNeed: b.herd.size * HUNGER.unitsPerAnimalPerCycle,
             feedQuality: b.herd.feedQuality,
             hungry: hungerPenalty({ feedStock, herdSize: b.herd.size }) > 0.05,
@@ -2976,6 +3092,15 @@ async function expireListings() {
       });
       const farmId = listing.seller.farm?.id;
       if (!farmId) return;
+      // Un lot périssable a vieilli en vitrine : déposer à la criée ne doit
+      // pas être une façon d'échapper à la péremption.
+      const back = afterSpoilage({
+        good: listing.commodity as TradeGood,
+        qty: listing.tons,
+        elapsedMs: Date.now() - listing.createdAt.getTime(),
+        cycleMs: LIVESTOCK_CYCLE_MS,
+      });
+      if (back <= 0) return;
       const existing = await tx.inventoryItem.findFirst({
         where: { farmId, itemCode: listing.commodity },
       });
@@ -2983,11 +3108,11 @@ async function expireListings() {
         await tx.inventoryItem.update({
           where: { id: existing.id },
           data: {
-            qty: existing.qty + listing.tons,
+            qty: existing.qty + back,
             moisture: mergeMoisture(
               existing.qty,
               existing.moisture,
-              listing.tons,
+              back,
               listing.moisture,
             ),
           },
@@ -2997,7 +3122,7 @@ async function expireListings() {
           data: {
             farmId,
             itemCode: listing.commodity,
-            qty: listing.tons,
+            qty: back,
             quality: listing.quality,
             moisture: listing.moisture,
           },

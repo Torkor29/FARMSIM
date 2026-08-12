@@ -1,6 +1,9 @@
 import { useEffect, useMemo, useState } from "react";
 import {
   GOOD_DEFS,
+  SPOILAGE_PER_CYCLE,
+  isPerishable,
+  spoilageWarning,
   dealerAskPrice,
   DEALER_RATIO,
   LISTING_COMMISSION_RATE,
@@ -188,7 +191,9 @@ export function MarketPanel({
                         {s.qty.toFixed(2)} {GOOD_DEFS[s.itemCode as TradeGood]?.unit ?? "t"}
                       </span>
                       <em className={wet ? "wet" : ""}>
-                        {Math.round(s.moisture * 100)} % humidité
+                        {isPerishable(s.itemCode as TradeGood)
+                          ? `−${Math.round((SPOILAGE_PER_CYCLE[s.itemCode as TradeGood] ?? 0) * 100)} % / cycle`
+                          : `${Math.round(s.moisture * 100)} % humidité`}
                       </em>
                     </button>
                   );
@@ -197,6 +202,12 @@ export function MarketPanel({
 
               {item && price && (
                 <>
+                  {spoilageWarning(item.itemCode as TradeGood, item.qty) && (
+                    <p className="market-warn perish">
+                      {spoilageWarning(item.itemCode as TradeGood, item.qty)}
+                    </p>
+                  )}
+
                   {item.moisture > 0.14 && (
                     <p className="market-warn">
                       Grain trop humide : toute vente est décotée. Séchez d’abord.

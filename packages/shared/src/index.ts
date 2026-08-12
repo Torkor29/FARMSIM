@@ -8,6 +8,7 @@ export * from "./ripeness.js";
 export * from "./soil.js";
 export * from "./trade.js";
 export * from "./goods.js";
+export * from "./breeding.js";
 
 import type { TradeGood } from "./goods.js";
 

@@ -23,6 +23,8 @@ export type BarnState = {
     feedQuality: number;
     hungry: boolean;
     canMilk: boolean;
+    gestation: number;
+    breedRefusal: string | null;
     milkPerCycle: number;
     meatAtSlaughter: number;
   } | null;
@@ -117,6 +119,24 @@ export function LivestockPanel({
                         : "Ration au fourrage"}
                   </span>
                 </div>
+
+                {herd.gestation > 0 ? (
+                  <div className="gest-row">
+                    <div className="gest-bar">
+                      <span
+                        className="gest-fill"
+                        style={{ width: `${Math.round(herd.gestation * 100)}%` }}
+                      />
+                    </div>
+                    <span className="gest-label">
+                      Gestation · {Math.round(herd.gestation * 100)} %
+                    </span>
+                  </div>
+                ) : (
+                  herd.breedRefusal && (
+                    <p className="gest-blocked">{herd.breedRefusal}</p>
+                  )
+                )}
 
                 <dl className="barn-stats">
                   <div>

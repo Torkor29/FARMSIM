@@ -72,6 +72,7 @@ Chaque valeur chiffrée dans cette documentation est classée :
 | — | [41_GLOBE_RENDER.md](./41_GLOBE_RENDER.md) | Globe : sphère lisse et textures procédurales |
 | — | [42_TRADE.md](./42_TRADE.md) | Vendre : négociant, cours mondial, criée entre joueurs |
 | — | [43_LIVESTOCK_PRODUCE.md](./43_LIVESTOCK_PRODUCE.md) | Traire, abattre, nourrir ; courette à porcs ; formes des bâtiments |
+| — | [44_BREEDING_SPOILAGE.md](./44_BREEDING_SPOILAGE.md) | Reproduction du cheptel et péremption des denrées |
 
 ---
 
