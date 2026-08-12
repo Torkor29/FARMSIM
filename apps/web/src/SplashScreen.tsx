@@ -12,15 +12,15 @@ export function SplashScreen({ onComplete }: Props) {
   const [useTextLogo, setUseTextLogo] = useState(false);
 
   useEffect(() => {
-    const png = new Image();
-    png.onload = () => setLogoSrc("/logo.png");
-    png.onerror = () => {
+    const raster = new Image();
+    raster.onload = () => setLogoSrc("/logo.webp");
+    raster.onerror = () => {
       const svg = new Image();
       svg.onload = () => setLogoSrc("/logo.svg");
       svg.onerror = () => setUseTextLogo(true);
       svg.src = "/logo.svg";
     };
-    png.src = "/logo.png";
+    raster.src = "/logo.webp";
   }, []);
 
   useEffect(() => {

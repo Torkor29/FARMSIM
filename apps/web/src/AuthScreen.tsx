@@ -60,7 +60,7 @@ export function AuthScreen({
       </div>
 
       <main className="gate-inner">
-        <img className="gate-logo" src="/logo.svg" alt="Farming Navigator" />
+        <img className="gate-logo" src="/logo.webp" alt="Farming Navigator" />
 
         <div className="gate-card">
           <div className="gate-tabs" role="tablist" aria-label="Accès au jeu">

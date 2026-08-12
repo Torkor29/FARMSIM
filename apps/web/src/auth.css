@@ -547,6 +547,38 @@
 }
 
 /* Régions & parcelles */
+/* Fil d'Ariane du choix : continent, puis région, puis ferme. */
+.onb-path {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.4rem;
+  margin: 0;
+  font-size: 0.9rem;
+}
+.onb-path span {
+  padding: 0.25rem 0.7rem;
+  border-radius: var(--r-pill);
+  background: var(--paper);
+  border: 1px solid var(--line);
+  font-weight: 700;
+}
+.onb-path span.done { background: var(--teal-100); color: var(--teal-700); }
+.onb-path span.todo {
+  color: var(--muted);
+  font-weight: 600;
+  border-style: dashed;
+}
+.onb-path b { color: var(--muted); }
+
+.parcel-board-title {
+  margin: 0;
+  font-weight: 800;
+  font-size: 0.92rem;
+  color: var(--teal-700);
+}
+.cc-unit { font-size: 0.72rem; }
+
 .region-tabs {
   display: flex;
   gap: 0.5rem;

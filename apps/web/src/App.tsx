@@ -230,10 +230,15 @@ export function App() {
 
   function applyAuth(payload: { token: string; player: Player; resume?: SessionResume | null }) {
     localStorage.setItem(TOKEN_KEY, payload.token);
-    setPlayer(payload.player);
-    if (payload.player.farm?.parcels[0]) {
+    // Le vol d'approche doit être décidé dans le même rendu que l'arrivée du
+    // joueur : sinon la ferme s'affiche une fraction de seconde, puis
+    // l'animation se déclenche par-dessus, ce qui n'a aucun sens.
+    if (payload.player.farm?.parcels?.length) {
+      arrivalShownRef.current = true;
+      setShowArrival(true);
       setActiveParcelId(payload.player.farm.parcels[0].id);
     }
+    setPlayer(payload.player);
     if (payload.resume && payload.resume.awayMs >= 30_000) {
       setResumeBanner(payload.resume.hint);
       setMsg(payload.resume.hint);
@@ -322,8 +327,14 @@ export function App() {
     }
     api<{ player: Player }>("/auth/me")
       .then(async (me) => {
+        // Le monde d'abord : le vol d'approche a besoin du globe peuplé.
+        await loadWorld().catch(() => undefined);
+        if (me.player.farm?.parcels?.length) {
+          arrivalShownRef.current = true;
+          setShowArrival(true);
+          setActiveParcelId(me.player.farm.parcels[0].id);
+        }
         setPlayer(me.player);
-        if (me.player.farm?.parcels[0]) setActiveParcelId(me.player.farm.parcels[0].id);
         const resume = await api<SessionResume>("/session/resume");
         if (resume.awayMs >= 30_000) {
           setResumeBanner(resume.hint);
@@ -358,15 +369,6 @@ export function App() {
       window.removeEventListener("pagehide", beat);
     };
   }, [player]);
-
-  // Le vol jusqu'à la ferme ne se joue qu'une fois par session ouverte.
-  useEffect(() => {
-    if (!player || arrivalShownRef.current) return;
-    if (!player.farm?.parcels?.length) return;
-    if (!worldContinents.length) return;
-    arrivalShownRef.current = true;
-    setShowArrival(true);
-  }, [player, worldContinents.length]);
 
   useEffect(() => {
     if (!activeParcelId) return;
@@ -545,7 +547,6 @@ export function App() {
           }),
         },
       );
-      arrivalShownRef.current = true;
       applyAuth(r);
       await Promise.all([refreshMeta(), loadWorld()]);
       setMsg(null);
@@ -568,10 +569,12 @@ export function App() {
         method: "POST",
         body: JSON.stringify(opts),
       });
-      setPlayer(r.player);
-      if (r.player.farm?.parcels[0]) setActiveParcelId(r.player.farm.parcels[0].id);
       await Promise.all([refreshMeta(), loadWorld()]);
-      arrivalShownRef.current = false;
+      // Un seul rendu : le vol d'approche, puis la ferme. Jamais l'inverse.
+      arrivalShownRef.current = true;
+      setShowArrival(true);
+      if (r.player.farm?.parcels[0]) setActiveParcelId(r.player.farm.parcels[0].id);
+      setPlayer(r.player);
       setMsg("Bienvenue chez vous !");
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e));
@@ -592,9 +595,9 @@ export function App() {
           body: JSON.stringify({ email, accessCode: accessCode || "ferme" }),
         },
       );
-      arrivalShownRef.current = false;
+      await loadWorld().catch(() => undefined);
       applyAuth(r);
-      await Promise.all([refreshMeta(), loadWorld()]);
+      await refreshMeta();
       if (!r.resume || r.resume.awayMs < 30_000) setMsg("Connexion OK");
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e));
@@ -1011,7 +1014,7 @@ export function App() {
 
       <header className="hud-top">
         <div className="brand-row">
-          <img className="brand-logo" src="/logo.svg" alt="" width={36} height={36} />
+          <img className="brand-logo" src="/logo.webp" alt="" width={36} height={36} />
           <div className="brand-mark">Farming Navigateur</div>
           <span className="mvp-badge" title="Build jouable minimale">
             Première version · MVP

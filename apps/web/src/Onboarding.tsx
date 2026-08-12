@@ -134,7 +134,7 @@ export function Onboarding({
   return (
     <div className="onb">
       <header className="onb-top">
-        <img className="onb-logo" src="/logo.svg" alt="" />
+        <img className="onb-logo" src="/logo.webp" alt="" />
         <div>
           <h1 className="onb-title">Installation de votre exploitation</h1>
           <p className="onb-sub">
@@ -233,14 +233,19 @@ export function Onboarding({
               {continents.map((c) => {
                 const active = continentCode === c.code;
                 const isSuggested = suggested.includes(c.code);
-                const full = c.parcelFree === 0;
+                // Un continent sans aucune parcelle n'est pas « complet » : il
+                // n'est pas encore ouvert. Confondre les deux faisait croire au
+                // joueur que le monde était plein alors qu'il était vide.
+                const unopened = c.parcelTotal === 0;
+                const full = !unopened && c.parcelFree === 0;
+                const disabled = full || unopened;
                 return (
                   <button
                     key={c.code}
                     type="button"
-                    className={`continent-card ${active ? "on" : ""} ${full ? "full" : ""}`}
-                    onClick={() => !full && setContinentCode(c.code)}
-                    disabled={full}
+                    className={`continent-card ${active ? "on" : ""} ${disabled ? "full" : ""}`}
+                    onClick={() => !disabled && setContinentCode(c.code)}
+                    disabled={disabled}
                   >
                     <span className="cc-dot" style={{ background: c.color }} />
                     <span className="cc-main">
@@ -255,14 +260,19 @@ export function Onboarding({
                       </span>
                     </span>
                     <span className="cc-stock">
-                      {full ? (
+                      {unopened ? (
+                        "Bientôt"
+                      ) : full ? (
                         "Complet"
                       ) : (
                         <>
-                          <strong>{c.parcelFree}</strong> libres
+                          <strong>{c.parcelFree}</strong>
+                          <span className="cc-unit">
+                            {c.parcelFree > 1 ? "fermes libres" : "ferme libre"}
+                          </span>
                         </>
                       )}
-                      {isSuggested && <em className="cc-reco">Conseillé</em>}
+                      {isSuggested && !disabled && <em className="cc-reco">Conseillé</em>}
                     </span>
                   </button>
                 );
@@ -291,9 +301,24 @@ export function Onboarding({
       {step === 2 && (
         <section className="onb-body">
           <p className="onb-lead">
-            Chaque région a son climat, sa ville-marché et ses risques. Les parcelles
-            grises appartiennent déjà à d'autres exploitants.
+            Un continent se divise en <strong>régions</strong>, et chaque région est
+            découpée en <strong>fermes</strong> de {parcel?.gridW ?? 12}×
+            {parcel?.gridH ?? 12} cases. Choisissez d'abord la région — c'est elle qui
+            fixe le climat — puis la ferme dans le quadrillage.
           </p>
+          {detail && (
+            <p className="onb-path">
+              <span>{detail.continent.name}</span>
+              <b>›</b>
+              <span className={regionCode ? "done" : "todo"}>
+                {region ? region.name : "choisissez une région"}
+              </span>
+              <b>›</b>
+              <span className={parcelId ? "done" : "todo"}>
+                {parcel ? parcel.label : "choisissez une ferme"}
+              </span>
+            </p>
+          )}
           {detailLoading && <p className="muted">Chargement du continent…</p>}
           {detail && (
             <>
@@ -327,9 +352,11 @@ export function Onboarding({
                 <div className="region-panel">
                   <div className="region-info">
                     <h3>{region.name}</h3>
-                    <p className="region-city">
-                      Ville-marché : <strong>{region.city}</strong>
-                    </p>
+                    {region.city && (
+                      <p className="region-city">
+                        Ville-marché : <strong>{region.city}</strong>
+                      </p>
+                    )}
                     <dl className="region-facts">
                       <div>
                         <dt>Climat</dt>
@@ -360,6 +387,10 @@ export function Onboarding({
                   </div>
 
                   <div className="parcel-board">
+                    <p className="parcel-board-title">
+                      Les {region.parcels.length} fermes de {region.name} —{" "}
+                      {region.parcels.filter((p) => !p.taken).length} encore libres
+                    </p>
                     <div
                       className="parcel-grid"
                       style={{

@@ -268,10 +268,38 @@ async function getFarmBonuses(farmId: string) {
   };
 }
 
+/**
+ * Retire les zones héritées d'une version antérieure du monde (Beauce, Iowa…).
+ * Sans ça, une base déjà amorçée garde éternellement l'ancien monde : le test
+ * `zone.count() === 0` n'est jamais vrai et le nouveau monde n'arrive jamais.
+ * Les zones où un joueur possède déjà une terre sont conservées.
+ */
+async function retireLegacyZones() {
+  const zones = await prisma.zone.findMany({
+    include: { parcels: { select: { farmId: true } } },
+  });
+  for (const zone of zones) {
+    if (REGION_BY_CODE[zone.code]) continue;
+    if (zone.parcels.some((p) => p.farmId)) {
+      console.warn(`Zone héritée ${zone.code} conservée : des joueurs y sont installés`);
+      continue;
+    }
+    await prisma.parcel.deleteMany({ where: { zoneId: zone.id } });
+    await prisma.weatherSnapshot.deleteMany({ where: { zoneCode: zone.code } });
+    await prisma.zone.delete({ where: { id: zone.id } });
+    console.log(`Zone héritée ${zone.code} retirée`);
+  }
+}
+
 async function ensureSeed() {
-  if ((await prisma.zone.count()) === 0) {
-    for (const continent of WORLD) {
-      for (const region of continent.regions) {
+  await retireLegacyZones();
+
+  // Amorçage par région, et non « tout ou rien » : une région ajoutée dans une
+  // version ultérieure apparaît sans avoir à réinitialiser la base.
+  for (const continent of WORLD) {
+    for (const region of continent.regions) {
+      if (await prisma.zone.findUnique({ where: { code: region.code } })) continue;
+      {
         const zone = await prisma.zone.create({
           data: {
             code: region.code,
