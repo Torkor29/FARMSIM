@@ -38,6 +38,14 @@ export type ActiveWork = {
   cells: { x: number; y: number }[];
 };
 
+/** Un troupeau au pré : de quelle étable il sort, et vers quel enclos. */
+export type GrazingHerd = {
+  buildingId: string;
+  animals: number;
+  barn: { originX: number; originY: number; w: number; h: number };
+  paddock: { originX: number; originY: number; w: number; h: number };
+};
+
 export type PreviewBuilding = {
   type: BuildingType;
   originX: number;
@@ -60,6 +68,8 @@ type Props = {
   pulseCells?: { x: number; y: number }[];
   /** Engin temporaire qui se déplace vers les cases travaillées */
   activeWork?: ActiveWork | null;
+  /** Troupeaux dehors : une entrée par étable dont les bêtes pâturent */
+  grazing?: GrazingHerd[];
   weather?: string;
   onCellClick: (x: number, y: number) => void;
   onCellHover?: (cell: { x: number; y: number } | null) => void;
@@ -122,6 +132,46 @@ function buildingPalette(type: BuildingType): { body: number; roof: number; h: n
     default:
       return { body: WOOD_WARM, roof: ROOF_TEAL, h: 1 };
   }
+}
+
+/** Vache low-poly, taille d'une demi-case. */
+function makeCowMesh(): THREE.Group {
+  const g = new THREE.Group();
+  const hide = new THREE.MeshLambertMaterial({ color: 0xf4efe4, flatShading: true });
+  const patch = new THREE.MeshLambertMaterial({ color: 0x5a4132, flatShading: true });
+  const snout = new THREE.MeshLambertMaterial({ color: 0xe3b3a8, flatShading: true });
+
+  const body = new THREE.Mesh(new THREE.BoxGeometry(0.34, 0.2, 0.19), hide);
+  body.position.y = 0.21;
+  body.castShadow = true;
+  g.add(body);
+
+  const spot = new THREE.Mesh(new THREE.BoxGeometry(0.13, 0.1, 0.2), patch);
+  spot.position.set(0.05, 0.25, 0);
+  g.add(spot);
+
+  const head = new THREE.Mesh(new THREE.BoxGeometry(0.15, 0.14, 0.14), hide);
+  head.position.set(-0.24, 0.25, 0);
+  g.add(head);
+
+  const muzzle = new THREE.Mesh(new THREE.BoxGeometry(0.07, 0.08, 0.1), snout);
+  muzzle.position.set(-0.33, 0.22, 0);
+  g.add(muzzle);
+
+  for (const [lx, lz] of [
+    [-0.11, 0.06],
+    [-0.11, -0.06],
+    [0.11, 0.06],
+    [0.11, -0.06],
+  ]) {
+    const leg = new THREE.Mesh(
+      new THREE.BoxGeometry(0.055, 0.14, 0.055),
+      new THREE.MeshLambertMaterial({ color: 0xdcd4c6, flatShading: true }),
+    );
+    leg.position.set(lx, 0.07, lz);
+    g.add(leg);
+  }
+  return g;
 }
 
 function makeVehicleMesh(type: MachineType): THREE.Group {
@@ -195,6 +245,7 @@ export function IsoFarmView({
   previewBuilding = null,
   pulseCells = [],
   activeWork = null,
+  grazing = [],
   weather = "CLEAR",
   onCellClick,
   onCellHover,
@@ -217,6 +268,7 @@ export function IsoFarmView({
     previewBuilding,
     pulseCells,
     activeWork,
+    grazing,
     gridW,
     gridH,
   });
@@ -229,6 +281,7 @@ export function IsoFarmView({
     previewBuilding,
     pulseCells,
     activeWork,
+    grazing,
     gridW,
     gridH,
   };
@@ -314,6 +367,19 @@ export function IsoFarmView({
     const previewGroup = new THREE.Group();
     world.add(previewGroup);
     let prevPreviewKey = "";
+
+    // Bêtes au pré : chaque vache garde sa propre trajectoire, sinon le
+    // troupeau se déplace comme un bloc et l'illusion tombe.
+    const grazeGroup = new THREE.Group();
+    world.add(grazeGroup);
+    let grazeKey = "";
+    const cowWalkers: {
+      mesh: THREE.Group;
+      from: THREE.Vector3;
+      to: THREE.Vector3;
+      delay: number;
+      wander: number;
+    }[] = [];
 
     const platformMat = new THREE.MeshLambertMaterial({ color: 0x8a6b4a, flatShading: true });
     const platform = new THREE.Mesh(new THREE.BoxGeometry(1, 0.45, 1), platformMat);
@@ -788,6 +854,68 @@ export function IsoFarmView({
         vg.position.x = bx + Math.sin(t * 1.15 + ph) * 0.018;
         vg.position.z = bz;
         vg.rotation.y = Math.sin(t * 0.9 + ph) * 0.04;
+      }
+
+      // Troupeaux au pré : sortie de l'étable, puis broutage dans l'enclos.
+      const herds = dataRef.current.grazing ?? [];
+      const nextGrazeKey = herds.map((h) => `${h.buildingId}:${h.animals}`).join("|");
+      if (nextGrazeKey !== grazeKey) {
+        grazeKey = nextGrazeKey;
+        for (const w of cowWalkers) {
+          grazeGroup.remove(w.mesh);
+          disposeObject3D(w.mesh);
+        }
+        cowWalkers.length = 0;
+
+        for (const herd of herds) {
+          // Au plus huit bêtes visibles : au-delà, l'enclos devient illisible
+          // et le coût de rendu grimpe pour rien.
+          const shown = Math.min(8, herd.animals);
+          for (let i = 0; i < shown; i++) {
+            const doorX = ox + (herd.barn.originX + herd.barn.w / 2) * step;
+            const doorZ = oz + (herd.barn.originY + herd.barn.h / 2) * step;
+            const spreadX = (((i % 3) - 1) * 0.55 + (i * 0.13) % 0.4) * step;
+            const spreadZ = ((Math.floor(i / 3) - 1) * 0.55 + (i * 0.21) % 0.4) * step;
+            const targetX = ox + (herd.paddock.originX + herd.paddock.w / 2) * step + spreadX;
+            const targetZ = oz + (herd.paddock.originY + herd.paddock.h / 2) * step + spreadZ;
+
+            const mesh = makeCowMesh();
+            mesh.scale.setScalar(cellSize * 0.85);
+            grazeGroup.add(mesh);
+            cowWalkers.push({
+              mesh,
+              from: new THREE.Vector3(doorX, 0.1, doorZ),
+              to: new THREE.Vector3(targetX, 0.1, targetZ),
+              delay: i * 0.55,
+              wander: i * 1.7,
+            });
+          }
+        }
+      }
+
+      for (const w of cowWalkers) {
+        // Aller, brouter, revenir : un cycle lent qui se lit d'un coup d'œil.
+        const local = Math.max(0, t - w.delay);
+        const cycle = 26;
+        const phase = (local % cycle) / cycle;
+        let progress: number;
+        if (phase < 0.18) progress = phase / 0.18;
+        else if (phase < 0.82) progress = 1;
+        else progress = 1 - (phase - 0.82) / 0.18;
+        const eased = progress * progress * (3 - 2 * progress);
+
+        w.mesh.position.lerpVectors(w.from, w.to, eased);
+        if (progress === 1) {
+          w.mesh.position.x += Math.sin(t * 0.35 + w.wander) * 0.1 * step;
+          w.mesh.position.z += Math.cos(t * 0.28 + w.wander) * 0.1 * step;
+          // Tête qui plonge dans l'herbe par intermittence.
+          w.mesh.rotation.x = Math.max(0, Math.sin(t * 0.7 + w.wander)) * 0.22;
+        } else {
+          w.mesh.rotation.x = 0;
+        }
+        const dir = eased < 1 ? w.to.clone().sub(w.from) : new THREE.Vector3(1, 0, 0);
+        w.mesh.rotation.y = Math.atan2(dir.z, dir.x) + Math.sin(t * 0.4 + w.wander) * 0.25;
+        w.mesh.visible = local > 0;
       }
 
       // Pulse cases (flash ~0.55s)

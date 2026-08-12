@@ -11,6 +11,7 @@ import {
   buildingResaleValue,
   buildingUpgradeCost,
   contractorQuote,
+  isPaddockAdjacent,
   machineResaleValue,
   type FarmWork,
   PARCEL_HECTARES,
@@ -26,7 +27,11 @@ import {
 } from "@farmsim/shared";
 import { ArrivalTransition } from "./ArrivalTransition";
 import { AuthScreen } from "./AuthScreen";
-import { IsoFarmView, type PreviewBuilding } from "./IsoFarmView";
+import {
+  IsoFarmView,
+  type GrazingHerd,
+  type PreviewBuilding,
+} from "./IsoFarmView";
 import { LivestockPanel, type BarnState } from "./LivestockPanel";
 import {
   Onboarding,
@@ -465,6 +470,50 @@ export function App() {
     if (!sims.length) return 0;
     return sims.reduce((a, s) => a + s.sim.progress, 0) / sims.length;
   }, [parcelDetail]);
+
+  /** Troupeaux effectivement dehors, avec l'enclos vers lequel ils marchent. */
+  const grazingHerds = useMemo((): GrazingHerd[] => {
+    const all = parcel?.buildings ?? [];
+    const now = Date.now();
+    const out: GrazingHerd[] = [];
+    for (const barn of barns) {
+      const herd = barn.herd;
+      if (!herd?.grazingUntil || herd.grazingUntil <= now) continue;
+      const barnB = all.find((b) => b.id === barn.buildingId);
+      if (!barnB) continue;
+      const barnDef = BUILDING_DEFS[barnB.type];
+      const barnBox = {
+        originX: barnB.originX,
+        originY: barnB.originY,
+        w: barnDef.w,
+        h: barnDef.h,
+      };
+      const paddockB = all.find((b) => {
+        if (b.type !== "PADDOCK") return false;
+        const d = BUILDING_DEFS.PADDOCK;
+        return isPaddockAdjacent(barnBox, {
+          originX: b.originX,
+          originY: b.originY,
+          w: d.w,
+          h: d.h,
+        });
+      });
+      if (!paddockB) continue;
+      const pDef = BUILDING_DEFS.PADDOCK;
+      out.push({
+        buildingId: barn.buildingId,
+        animals: herd.size,
+        barn: barnBox,
+        paddock: {
+          originX: paddockB.originX,
+          originY: paddockB.originY,
+          w: pDef.w,
+          h: pDef.h,
+        },
+      });
+    }
+    return out;
+  }, [barns, parcel?.buildings]);
 
   function flashToast(text: string, isError = false) {
     if (isError) setErr(text);
@@ -1146,6 +1195,7 @@ export function App() {
             previewBuilding={previewBuilding}
             pulseCells={pulseCells}
             activeWork={activeWork}
+            grazing={grazingHerds}
             weather={localWeather}
             onCellClick={applyToolOnCell}
             onCellHover={setHoverCell}

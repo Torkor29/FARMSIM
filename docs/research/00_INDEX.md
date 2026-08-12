@@ -65,6 +65,7 @@ Chaque valeur chiffrée dans cette documentation est classée :
 | — | [34_WORLD_GEOGRAPHY.md](./34_WORLD_GEOGRAPHY.md) | Monde imaginaire : continents, régions, climats, saisons |
 | — | [35_ONBOARDING_FLOW.md](./35_ONBOARDING_FLOW.md) | Parcours d’entrée : porte, installation guidée, arrivée |
 | — | [36_SYSTEMS_V2.md](./36_SYSTEMS_V2.md) | Mise en œuvre : 36 régions, foncier v2, bâtiments à paliers |
+| — | [37_LIVESTOCK_SERVICES.md](./37_LIVESTOCK_SERVICES.md) | Élevage au pré, prestation ETA, revente, assets |
 
 ---
 
