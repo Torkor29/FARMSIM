@@ -1,6 +1,7 @@
 import { useEffect, useRef } from "react";
 import * as THREE from "three";
 import { CLASS_PROFILES, type ClassProfile } from "@farmsim/shared";
+import { disposeRenderer, disposeThreeScene } from "./three-cleanup";
 
 type Props = {
   code: ClassProfile["code"];
@@ -215,16 +216,8 @@ export function LowPolyCharacter({ code, active = false, height = 190 }: Props) 
     return () => {
       cancelAnimationFrame(raf);
       ro.disconnect();
-      renderer.dispose();
-      scene.traverse((o) => {
-        if (o instanceof THREE.Mesh) {
-          o.geometry.dispose();
-          const m = o.material;
-          if (Array.isArray(m)) m.forEach((x) => x.dispose());
-          else m.dispose();
-        }
-      });
-      host.removeChild(renderer.domElement);
+      disposeThreeScene(scene);
+      disposeRenderer(renderer, host);
     };
   }, [code, height]);
 

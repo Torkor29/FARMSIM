@@ -8,6 +8,7 @@ import {
   type MachineType,
   type RipenessStage,
 } from "@farmsim/shared";
+import { disposeRenderer, disposeThreeScene } from "./three-cleanup";
 
 export type IsoCell = {
   x: number;
@@ -791,7 +792,9 @@ export function IsoFarmView({
     renderer.domElement.addEventListener("pointerleave", onPointerLeave);
 
     let raf = 0;
-    const clock = new THREE.Clock();
+    // THREE.Clock est déprécié depuis r183 au profit de Timer, qui doit être
+    // avancé explicitement à chaque image.
+    const timer = new THREE.Timer();
     const tmpColor = new THREE.Color();
     const pulseColor = new THREE.Color(PULSE);
     const hoverColor = new THREE.Color(HOVER);
@@ -862,7 +865,8 @@ export function IsoFarmView({
 
     function tick() {
       raf = requestAnimationFrame(tick);
-      const t = clock.getElapsedTime();
+      timer.update();
+      const t = timer.getElapsed();
       const sky = skyFor(weatherRef.current);
       scene.background = new THREE.Color(sky);
       if (scene.fog instanceof THREE.Fog) scene.fog.color.setHex(sky);
@@ -1037,8 +1041,8 @@ export function IsoFarmView({
         disposeObject3D(c);
       }
       clearWorkVehicle();
-      renderer.dispose();
-      if (renderer.domElement.parentNode === el) el.removeChild(renderer.domElement);
+      disposeThreeScene(scene);
+      disposeRenderer(renderer, el);
     };
   }, []);
 

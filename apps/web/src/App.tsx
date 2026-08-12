@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   SPECIALIZATION_LABELS,
   BUILDING_ART,
@@ -28,19 +28,21 @@ import {
   type MachineType,
   type WeatherState,
 } from "@farmsim/shared";
-import { ArrivalTransition } from "./ArrivalTransition";
 import { AuthScreen } from "./AuthScreen";
-import {
-  IsoFarmView,
-  type GrazingHerd,
-  type PreviewBuilding,
-} from "./IsoFarmView";
+import type { GrazingHerd, PreviewBuilding } from "./IsoFarmView";
 import { LivestockPanel, type BarnState } from "./LivestockPanel";
-import {
-  Onboarding,
-  type ContinentDetail,
-  type WorldContinent,
-} from "./Onboarding";
+import type { ContinentDetail, WorldContinent } from "./Onboarding";
+
+// Three.js pèse plus lourd que tout le reste de l'application réunie. L'écran
+// de connexion n'en a aucun besoin : on ne le télécharge qu'au moment où une
+// vue 3D s'affiche vraiment.
+const ArrivalTransition = lazy(() =>
+  import("./ArrivalTransition").then((m) => ({ default: m.ArrivalTransition })),
+);
+const IsoFarmView = lazy(() =>
+  import("./IsoFarmView").then((m) => ({ default: m.IsoFarmView })),
+);
+const Onboarding = lazy(() => import("./Onboarding").then((m) => ({ default: m.Onboarding })));
 import { SplashScreen } from "./SplashScreen";
 import { TutorialOverlay, TUTORIAL_KEY } from "./TutorialOverlay";
 import { ZoneMap } from "./ZoneMap";
@@ -183,6 +185,16 @@ async function api<T>(path: string, init?: RequestInit): Promise<T> {
   const data = await res.json();
   if (!res.ok) throw new Error(data.error ?? "Erreur API");
   return data as T;
+}
+
+/** Attente pendant le téléchargement d'une vue 3D. */
+function SceneLoading({ label }: { label: string }) {
+  return (
+    <div className="scene-loading" role="status" aria-live="polite">
+      <span className="scene-spinner" aria-hidden="true" />
+      <p>{label}</p>
+    </div>
+  );
 }
 
 function clearSession() {
@@ -1298,28 +1310,32 @@ export function App() {
   // Pas encore de terre : on déroule l'installation guidée avant le jeu.
   if (!ownedParcels.length) {
     return (
-      <Onboarding
-        playerName={player.displayName}
-        continents={worldContinents}
-        detail={continentDetail}
-        detailLoading={detailLoading}
-        onLoadContinent={loadContinent}
-        onConfirm={claimStarterParcel}
-        busy={busy}
-        err={err}
-      />
+      <Suspense fallback={<SceneLoading label="Préparation du globe…" />}>
+        <Onboarding
+          playerName={player.displayName}
+          continents={worldContinents}
+          detail={continentDetail}
+          detailLoading={detailLoading}
+          onLoadContinent={loadContinent}
+          onConfirm={claimStarterParcel}
+          busy={busy}
+          err={err}
+        />
+      </Suspense>
     );
   }
 
   if (showArrival) {
     return (
-      <ArrivalTransition
-        continents={worldContinents}
-        continentCode={homeContinentCode}
-        regionName={zoneName}
-        cityName={homeCity}
-        onDone={() => setShowArrival(false)}
-      />
+      <Suspense fallback={<SceneLoading label="Approche…" />}>
+        <ArrivalTransition
+          continents={worldContinents}
+          continentCode={homeContinentCode}
+          regionName={zoneName}
+          cityName={homeCity}
+          onDone={() => setShowArrival(false)}
+        />
+      </Suspense>
     );
   }
 
@@ -1327,22 +1343,24 @@ export function App() {
     <div className="game-stage">
       <div className="iso-layer">
         {parcel ? (
-          <IsoFarmView
-            gridW={gw}
-            gridH={gh}
-            cells={grid}
-            buildings={parcel.buildings ?? []}
-            cellSims={parcelDetail?.cellSims ?? []}
-            selected={selectedCells}
-            hoverCell={hoverCell}
-            previewBuilding={previewBuilding}
-            pulseCells={pulseCells}
-            activeWork={activeWork}
-            grazing={grazingHerds}
-            weather={localWeather}
-            onCellClick={applyToolOnCell}
-            onCellHover={setHoverCell}
-          />
+          <Suspense fallback={<SceneLoading label="Chargement de la ferme…" />}>
+            <IsoFarmView
+              gridW={gw}
+              gridH={gh}
+              cells={grid}
+              buildings={parcel.buildings ?? []}
+              cellSims={parcelDetail?.cellSims ?? []}
+              selected={selectedCells}
+              hoverCell={hoverCell}
+              previewBuilding={previewBuilding}
+              pulseCells={pulseCells}
+              activeWork={activeWork}
+              grazing={grazingHerds}
+              weather={localWeather}
+              onCellClick={applyToolOnCell}
+              onCellHover={setHoverCell}
+            />
+          </Suspense>
         ) : (
           <div className="iso-viewport empty-farm">
             <p>Achetez une parcelle pour ouvrir la grille {gw}×{gh}.</p>

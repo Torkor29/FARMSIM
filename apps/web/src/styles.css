@@ -1,4 +1,5 @@
-@import url("https://fonts.googleapis.com/css2?family=Baloo+2:wght@500;600;700;800&family=Nunito:wght@400;600;700;800&display=swap");
+/* Les polices sont chargées depuis index.html : un @import CSS bloque le
+   rendu le temps de résoudre la feuille distante. */
 
 :root {
   /* Or et sarcelle repris du logo */

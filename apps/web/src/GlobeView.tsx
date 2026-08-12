@@ -1,5 +1,6 @@
 import { useEffect, useRef } from "react";
 import * as THREE from "three";
+import { disposeRenderer, disposeThreeScene } from "./three-cleanup";
 
 export type GlobeContinent = {
   code: string;
@@ -998,21 +999,9 @@ export function GlobeView({
       el.removeEventListener("wheel", onWheel);
       el.removeEventListener("dblclick", onDouble);
 
-      const geos = new Set<THREE.BufferGeometry>();
-      const mats = new Set<THREE.Material>();
-      scene.traverse((o) => {
-        if (o instanceof THREE.Mesh) {
-          geos.add(o.geometry);
-          const m = o.material;
-          if (Array.isArray(m)) m.forEach((x) => mats.add(x));
-          else mats.add(m);
-        }
-      });
-      geos.forEach((g) => g.dispose());
-      mats.forEach((m) => m.dispose());
       cloudGeos.forEach((g) => g.dispose());
-      renderer.dispose();
-      host.removeChild(el);
+      disposeThreeScene(scene);
+      disposeRenderer(renderer, host);
     };
   }, [continents, height]);
 

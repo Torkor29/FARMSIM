@@ -315,6 +315,33 @@
 .gate-pitch strong { font-family: "Baloo 2", Nunito, sans-serif; color: var(--teal-700); }
 .gate-pitch span { font-size: 0.82rem; color: var(--ink-soft); }
 
+.scene-loading {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-content: center;
+  justify-items: center;
+  gap: 0.75rem;
+  background: linear-gradient(180deg, #e6f4fb 0%, #f6efdd 100%);
+  color: var(--teal-700);
+  font-weight: 700;
+}
+.scene-loading p { margin: 0; }
+.scene-spinner {
+  width: 2.4rem;
+  height: 2.4rem;
+  border-radius: 50%;
+  border: 4px solid var(--teal-100);
+  border-top-color: var(--teal-500);
+  animation: scene-spin 0.9s linear infinite;
+}
+@keyframes scene-spin {
+  to { transform: rotate(360deg); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .scene-spinner { animation-duration: 3s; }
+}
+
 .auth-loading {
   min-height: 100vh;
   display: grid;
