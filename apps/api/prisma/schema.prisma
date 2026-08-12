@@ -159,6 +159,12 @@ model ParcelCell {
   readyAt          DateTime?
   fertilizedPasses Int        @default(0)
   weedsControlled  Boolean    @default(false)
+  /// Récoltes depuis le dernier labour ; à 3, la charrue devient obligatoire
+  harvestsSincePlow Int       @default(0)
+  /// Déchaumages consécutifs : les résidus incorporés bonifient le rendement
+  residuePasses    Int        @default(0)
+  /// Chaumes en place après moisson : il faut travailler le sol avant de semer
+  hasStubble       Boolean    @default(false)
 
   @@unique([parcelId, x, y])
 }

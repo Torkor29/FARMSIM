@@ -67,6 +67,7 @@ Chaque valeur chiffrée dans cette documentation est classée :
 | — | [36_SYSTEMS_V2.md](./36_SYSTEMS_V2.md) | Mise en œuvre : 36 régions, foncier v2, bâtiments à paliers |
 | — | [37_LIVESTOCK_SERVICES.md](./37_LIVESTOCK_SERVICES.md) | Élevage au pré, prestation ETA, revente, assets |
 | — | [38_HARVEST_WINDOW.md](./38_HARVEST_WINDOW.md) | Fenêtre de récolte : décote de sur-maturité et labour |
+| — | [39_SOIL_WORK.md](./39_SOIL_WORK.md) | Travail du sol : déchaumage, labour obligatoire, résidus |
 
 ---
 

@@ -13,6 +13,8 @@ import {
   contractorQuote,
   isPaddockAdjacent,
   machineResaleValue,
+  soilSummary,
+  MAX_HARVESTS_BEFORE_PLOW,
   type FarmWork,
   type RipenessStage,
   PARCEL_HECTARES,
@@ -64,6 +66,9 @@ type Cell = {
   crop?: CropCode | null;
   fieldStage?: string;
   fertilizedPasses?: number;
+  harvestsSincePlow?: number;
+  residuePasses?: number;
+  hasStubble?: boolean;
   buildingId?: string | null;
   machineId?: string | null;
   machineType?: MachineType | null;
@@ -160,6 +165,7 @@ type Tool =
   | "PLANT_MAIZE"
   | "FERTILIZE"
   | "HARVEST"
+  | "STUBBLE"
   | "PLOW"
   | "BUILD"
   | "PARK";
@@ -190,6 +196,7 @@ const ACTION_BAR: { tool: Tool; label: string; icon: string }[] = [
   { tool: "FERTILIZE", label: "Ferti", icon: "/assets/icons/tools/fertilize.svg" },
   { tool: "HARVEST", label: "Récolte", icon: "/assets/icons/tools/harvest.svg" },
   { tool: "BUILD", label: "Bâtir", icon: "/assets/icons/tools/build.svg" },
+  { tool: "STUBBLE", label: "Déchaum.", icon: "/assets/icons/tools/stubble.svg" },
   { tool: "PLOW", label: "Labour", icon: "/assets/icons/tools/plow.svg" },
   { tool: "PARK", label: "Park", icon: "/assets/icons/tools/park.svg" },
 ];
@@ -564,6 +571,21 @@ export function App() {
         detail: "Trop tard pour récolter — passez l’outil Labour pour les libérer.",
       };
     }
+    // Les chaumes ne sont pas une urgence, mais laisser le joueur chercher
+    // pourquoi son semis est refusé n'aurait aucun intérêt.
+    const stubble = (parcel?.cells ?? []).filter((c) => c.hasStubble);
+    if (stubble.length) {
+      const mustPlow = stubble.filter(
+        (c) => (c.harvestsSincePlow ?? 0) >= MAX_HARVESTS_BEFORE_PLOW,
+      ).length;
+      return {
+        level: mustPlow ? ("warn" as const) : ("soft" as const),
+        title: `${stubble.length} case(s) en chaumes`,
+        detail: mustPlow
+          ? `${mustPlow} exigent la charrue : trois récoltes sans labour.`
+          : "Déchaumez pour gagner du rendement, ou labourez pour repartir à neuf.",
+      };
+    }
     if (poor || declining) {
       const mins = Math.max(0, Math.round(soonestLossMs / 60000));
       return {
@@ -578,7 +600,7 @@ export function App() {
       };
     }
     return null;
-  }, [parcelDetail]);
+  }, [parcelDetail, parcel?.cells]);
 
   function flashToast(text: string, isError = false) {
     if (isError) setErr(text);
@@ -593,7 +615,14 @@ export function App() {
     const cell = grid.find((c) => c.x === x && c.y === y);
     const sim = parcelDetail?.cellSims?.find((s) => s.x === x && s.y === y);
     if (!cell || cell.kind === "EMPTY") {
-      return `Case (${x},${y}) · vide`;
+      const soil = cell
+        ? soilSummary({
+            harvestsSincePlow: cell.harvestsSincePlow ?? 0,
+            residuePasses: cell.residuePasses ?? 0,
+            hasStubble: cell.hasStubble ?? false,
+          })
+        : "vide";
+      return `Case (${x},${y}) · ${soil}`;
     }
     if (cell.kind === "CROP") {
       const crop = cell.crop ?? "?";
@@ -762,6 +791,7 @@ export function App() {
       tool === "PLANT_MAIZE" ||
       tool === "FERTILIZE" ||
       tool === "HARVEST" ||
+      tool === "STUBBLE" ||
       tool === "PLOW"
     ) {
       const block = brushCells(x, y);
@@ -849,9 +879,12 @@ export function App() {
             ? "HARVEST"
             : tool === "PLOW"
               ? "PLOW"
-              : null;
+              : tool === "STUBBLE"
+                ? "STUBBLE"
+                : null;
     if (!work || !selectedCells.length) return null;
-    const needed: MachineType = work === "HARVEST" ? "HARVESTER" : "TRACTOR";
+    const needed: MachineType =
+      work === "HARVEST" ? "HARVESTER" : work === "STUBBLE" ? "DISC_HARROW" : "TRACTOR";
     const hasMachine = (player?.farm?.machines ?? []).some(
       (m) => m.type === needed && m.condition >= (MACHINE_DEFS[needed]?.minCondition ?? 12),
     );
@@ -958,13 +991,28 @@ export function App() {
         const r = await api<{
           plowed: number;
           cost: number;
-          fertilityLost: number;
+          fertilityDelta: number;
         }>(`/parcels/${activeParcelId}/plow`, {
           method: "POST",
           body: JSON.stringify({ userId: player.id, cells: selectedCells }),
         });
+        const fert = r.fertilityDelta;
+        const fertNote =
+          Math.abs(fert) < 0.0005
+            ? ""
+            : ` · fertilité ${fert > 0 ? "+" : "−"}${Math.abs(fert * 100).toFixed(1)} pt`;
+        setMsg(`Labouré ×${r.plowed} · −${r.cost} CRD${fertNote} · sol remis à zéro`);
+      } else if (tool === "STUBBLE") {
+        const r = await api<{
+          stubbled: number;
+          cost: number;
+          nextBonus: number;
+        }>(`/parcels/${activeParcelId}/stubble`, {
+          method: "POST",
+          body: JSON.stringify({ userId: player.id, cells: selectedCells }),
+        });
         setMsg(
-          `Labouré ×${r.plowed} · −${r.cost} CRD · fertilité −${(r.fertilityLost * 100).toFixed(1)} pt`,
+          `Déchaumé ×${r.stubbled} · −${r.cost} CRD · +${Math.round(r.nextBonus * 100)} % sur la prochaine récolte`,
         );
       }
       setSelectedCells([]);
@@ -1581,6 +1629,7 @@ export function App() {
           tool === "PLANT_MAIZE" ||
           tool === "FERTILIZE" ||
           tool === "HARVEST" ||
+          tool === "STUBBLE" ||
           tool === "PLOW") && (
           <>
             <button

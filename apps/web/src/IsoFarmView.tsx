@@ -16,6 +16,10 @@ export type IsoCell = {
   crop?: CropCode | null;
   fieldStage?: string;
   fertilizedPasses?: number;
+  /** Chaumes après moisson : la case n'est pas semable en l'état */
+  hasStubble?: boolean;
+  /** Déchaumages consécutifs — le sol s'assombrit à mesure qu'il s'enrichit */
+  residuePasses?: number;
   /** Type machine si kind === VEHICLE (sinon TRACTOR par défaut) */
   machineType?: MachineType | null;
 };
@@ -100,10 +104,20 @@ const MACHINE_LOOK: Record<
   TRACTOR: { body: 0x3d8f3a, accent: 0x2a6a28, w: 0.55, h: 0.28, d: 0.35 },
   HARVESTER: { body: 0xc44a2f, accent: 0xd4a84b, w: 0.72, h: 0.32, d: 0.4 },
   SPREADER: { body: 0x6a7380, accent: 0xc9a227, w: 0.5, h: 0.34, d: 0.42 },
+  DISC_HARROW: { body: 0x8a6a4a, accent: 0xb8bec4, w: 0.62, h: 0.22, d: 0.44 },
 };
 
+const STUBBLE_SOIL = 0xd9c48a;
+const RESIDUE_SOIL = 0x7f6a44;
+
 function cropColor(c: IsoCell, sim?: IsoSim): number {
-  if (c.kind !== "CROP") return SOIL;
+  if (c.kind !== "CROP") {
+    // Un champ moissonné se lit à sa couleur : chaume clair tant qu'il n'est
+    // pas travaillé, terre sombre une fois les résidus incorporés.
+    if (c.hasStubble) return STUBBLE_SOIL;
+    if ((c.residuePasses ?? 0) > 0) return RESIDUE_SOIL;
+    return SOIL;
+  }
   // Passé la maturité, la teinte raconte la dégradation : l'or vire au brun
   // puis à la tige morte. C'est le seul signal qui prévienne le joueur.
   if (sim?.sim.ripeness) return RIPENESS_COLORS[sim.sim.ripeness.stage];

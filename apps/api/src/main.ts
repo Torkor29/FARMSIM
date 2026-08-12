@@ -42,9 +42,18 @@ import {
   MAX_BUILDING_LEVEL,
   contractorQuote,
   CONTRACTOR_YIELD_MALUS,
+  type FarmWork,
   ripenessAt,
-  PLOW_COST_PER_CELL,
   LOST_CROP_FERTILITY_MALUS,
+  plowRequired,
+  canStubble,
+  applyStubble,
+  residueBonus,
+  PLOW_COST_PER_CELL_SOIL,
+  PLOW_FERTILITY_GAIN,
+  STUBBLE_COST_PER_CELL,
+  SOIL_WORK_REFUSAL_LABELS,
+  MAX_HARVESTS_BEFORE_PLOW,
   machineResaleValue,
   buildingResaleValue,
   isPaddockAdjacent,
@@ -138,7 +147,7 @@ type FarmMachine = {
 /** Choisit une machine capable du travail, condition OK. */
 function pickMachineForWork(
   machines: FarmMachine[],
-  work: "PLANT" | "FERTILIZE" | "HARVEST" | "PLOW",
+  work: FarmWork,
 ): { machine: FarmMachine; def: (typeof MACHINE_DEFS)[MachineType] } | null {
   const candidates = machines
     .map((m) => {
@@ -823,6 +832,7 @@ async function buildResumeForUser(userId: string) {
         fertility: parcel.fertility,
         weedsControlled: cell.weedsControlled,
         fertilizedPasses: Math.min(2, cell.fertilizedPasses) as 0 | 1 | 2,
+        residuePasses: cell.residuePasses,
         specialization: user.specialization,
       });
       if (sim.ready) cropsReady += 1;
@@ -1066,6 +1076,7 @@ app.get("/parcels/:id", async (req, res) => {
         fertility: parcel.fertility,
         weedsControlled: c.weedsControlled,
         fertilizedPasses: Math.min(2, c.fertilizedPasses) as 0 | 1 | 2,
+        residuePasses: c.residuePasses,
         buildingYieldBonus: bonuses?.yieldBonus,
         weatherAtHarvest: weather?.state as WeatherState | undefined,
       });
@@ -1448,6 +1459,14 @@ app.post("/parcels/:id/plant", async (req, res) => {
       res.status(409).json({ error: `Case ${x},${y} non libre` });
       return;
     }
+    if (cell.hasStubble) {
+      res.status(409).json({
+        error: plowRequired(cell)
+          ? `Case ${x},${y} : sol épuisé, il faut labourer`
+          : `Case ${x},${y} : chaumes en place — déchaumez ou labourez d’abord`,
+      });
+      return;
+    }
   }
 
   const now = Date.now();
@@ -1571,29 +1590,37 @@ app.post("/parcels/:id/plow", async (req, res) => {
   }
 
   const now = Date.now();
+  // La charrue traite deux situations : les chaumes après moisson, et les
+  // cultures perdues qu'on ne peut plus récolter.
   const candidates = (
     body.data.cells
       ? parcel.cells.filter((c) => body.data.cells!.some((t) => t.x === c.x && t.y === c.y))
       : parcel.cells
   ).filter((cell) => {
+    if (cell.hasStubble) return true;
     if (cell.kind !== "CROP" || !cell.crop || !cell.plantedAt) return false;
     const readyAt = cell.plantedAt.getTime() + CROP_DEFS[cell.crop].growMs;
     return ripenessAt(readyAt, CROP_DEFS[cell.crop].growMs, now).needsPlowing;
   });
 
   if (!candidates.length) {
-    res.status(409).json({ error: "Aucune culture perdue à labourer ici" });
+    res.status(409).json({ error: "Rien à labourer ici : ni chaumes, ni culture perdue" });
     return;
   }
 
-  const cost = PLOW_COST_PER_CELL * candidates.length;
+  const lostCount = candidates.filter((c) => c.kind === "CROP").length;
+  const cost = PLOW_COST_PER_CELL_SOIL * candidates.length;
   const user = await prisma.user.findUnique({ where: { id: body.data.userId } });
   if (!user || user.crd < cost) {
     res.status(402).json({ error: `CRD insuffisants — ${cost} requis` });
     return;
   }
 
-  const malus = LOST_CROP_FERTILITY_MALUS * candidates.length;
+  // Un labour d'entretien décompacte et enfouit les adventices ; seules les
+  // cultures perdues coûtent de la fertilité.
+  const malus =
+    LOST_CROP_FERTILITY_MALUS * lostCount -
+    PLOW_FERTILITY_GAIN * (candidates.length - lostCount);
   const wear = await prisma.$transaction(async (tx) => {
     await tx.user.update({ where: { id: user.id }, data: { crd: { decrement: cost } } });
     for (const cell of candidates) {
@@ -1607,12 +1634,15 @@ app.post("/parcels/:id/plow", async (req, res) => {
           readyAt: null,
           fertilizedPasses: 0,
           weedsControlled: false,
+          hasStubble: false,
+          harvestsSincePlow: 0,
+          residuePasses: 0,
         },
       });
     }
     await tx.parcel.update({
       where: { id: parcel.id },
-      data: { fertility: Math.max(0.2, parcel.fertility - malus) },
+      data: { fertility: Math.max(0.2, Math.min(0.99, parcel.fertility - malus)) },
     });
     return applyWearToMachine(tx, {
       machine: picked.machine,
@@ -1624,8 +1654,110 @@ app.post("/parcels/:id/plow", async (req, res) => {
 
   res.json({
     plowed: candidates.length,
+    lostCleared: lostCount,
     cost,
-    fertilityLost: Math.round(malus * 1000) / 1000,
+    fertilityDelta: Math.round(-malus * 1000) / 1000,
+    machine: { id: picked.machine.id, type: picked.machine.type, ...wear },
+  });
+});
+
+/**
+ * Déchaumage : travail superficiel qui incorpore les résidus de la récolte
+ * précédente. Moins cher que le labour, il bonifie la culture suivante, mais
+ * il ne remet pas le compteur à zéro — au bout de trois récoltes, il refuse.
+ */
+app.post("/parcels/:id/stubble", async (req, res) => {
+  const body = z
+    .object({
+      userId: z.string(),
+      cells: z.array(z.object({ x: z.number().int(), y: z.number().int() })).optional(),
+    })
+    .safeParse(req.body);
+  if (!body.success) {
+    res.status(400).json(body.error.flatten());
+    return;
+  }
+  const parcel = await prisma.parcel.findUnique({
+    where: { id: req.params.id },
+    include: { farm: { include: { machines: true } }, cells: true },
+  });
+  if (!parcel?.farm || parcel.farm.userId !== body.data.userId) {
+    res.status(403).json({ error: "Parcelle non possédée" });
+    return;
+  }
+  const picked = pickMachineForWork(parcel.farm.machines, "STUBBLE");
+  if (!picked) {
+    res.status(409).json({
+      error: "Déchaumeur à disques requis — achetez-en un au garage, ou labourez.",
+    });
+    return;
+  }
+
+  const selection = body.data.cells
+    ? parcel.cells.filter((c) => body.data.cells!.some((t) => t.x === c.x && t.y === c.y))
+    : parcel.cells;
+
+  const targets: (typeof selection)[number][] = [];
+  let blockedByPlow = 0;
+  for (const cell of selection) {
+    const verdict = canStubble({
+      harvestsSincePlow: cell.harvestsSincePlow,
+      residuePasses: cell.residuePasses,
+      hasStubble: cell.hasStubble,
+    });
+    if (verdict.ok) targets.push(cell);
+    else if (verdict.reason === "PLOW_REQUIRED") blockedByPlow += 1;
+  }
+
+  if (!targets.length) {
+    res.status(409).json({
+      error: blockedByPlow
+        ? SOIL_WORK_REFUSAL_LABELS.PLOW_REQUIRED
+        : SOIL_WORK_REFUSAL_LABELS.NO_STUBBLE,
+      blockedByPlow,
+    });
+    return;
+  }
+
+  const cost = STUBBLE_COST_PER_CELL * targets.length;
+  const user = await prisma.user.findUnique({ where: { id: body.data.userId } });
+  if (!user || user.crd < cost) {
+    res.status(402).json({ error: `CRD insuffisants — ${cost} requis` });
+    return;
+  }
+
+  const wear = await prisma.$transaction(async (tx) => {
+    await tx.user.update({ where: { id: user.id }, data: { crd: { decrement: cost } } });
+    for (const cell of targets) {
+      const next = applyStubble({
+        harvestsSincePlow: cell.harvestsSincePlow,
+        residuePasses: cell.residuePasses,
+        hasStubble: cell.hasStubble,
+      });
+      await tx.parcelCell.update({
+        where: { id: cell.id },
+        data: {
+          fieldStage: "PREPARED",
+          hasStubble: false,
+          residuePasses: next.residuePasses,
+          // Faux-semis : le déchaumage fait lever puis détruit les adventices.
+          weedsControlled: true,
+        },
+      });
+    }
+    return applyWearToMachine(tx, {
+      machine: picked.machine,
+      def: picked.def,
+      cells: targets.length,
+      specialization: user.specialization,
+    });
+  });
+
+  res.json({
+    stubbled: targets.length,
+    blockedByPlow,
+    cost,
+    nextBonus: residueBonus(targets[0].residuePasses + 1),
     machine: { id: picked.machine.id, type: picked.machine.type, ...wear },
   });
 });
@@ -1678,6 +1810,7 @@ app.post("/parcels/:id/harvest", async (req, res) => {
         fertility: parcel.fertility,
         weedsControlled: cell.weedsControlled,
         fertilizedPasses: Math.min(2, cell.fertilizedPasses) as 0 | 1 | 2,
+        residuePasses: cell.residuePasses,
         specialization: user?.specialization,
         buildingYieldBonus: bonuses.yieldBonus,
         weatherAtHarvest: weather?.state as WeatherState | undefined,
@@ -1700,16 +1833,23 @@ app.post("/parcels/:id/harvest", async (req, res) => {
         moisturePenalty: sim.moisturePenalty,
         moisture,
       });
+      // La moisson ne rend pas une case nue : elle laisse des chaumes qu'il
+      // faudra déchaumer ou labourer avant de resemer.
       await tx.parcelCell.update({
         where: { id: cell.id },
         data: {
           kind: "EMPTY",
           crop: null,
-          fieldStage: "EMPTY",
+          fieldStage: "HARVESTED",
           plantedAt: null,
           readyAt: null,
           fertilizedPasses: 0,
           weedsControlled: false,
+          hasStubble: true,
+          harvestsSincePlow: Math.min(
+            MAX_HARVESTS_BEFORE_PLOW,
+            cell.harvestsSincePlow + 1,
+          ),
         },
       });
     }
@@ -2237,7 +2377,7 @@ app.post("/machines/buy", async (req, res) => {
   const body = z
     .object({
       userId: z.string(),
-      type: z.enum(["TRACTOR", "HARVESTER", "SPREADER"]),
+      type: z.enum(["TRACTOR", "HARVESTER", "SPREADER", "DISC_HARROW"]),
     })
     .safeParse(req.body);
   if (!body.success) {

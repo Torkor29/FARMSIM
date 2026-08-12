@@ -5,6 +5,7 @@ export * from "./climate.js";
 export * from "./land.js";
 export * from "./livestock.js";
 export * from "./ripeness.js";
+export * from "./soil.js";
 
 export type Specialization = "CEREALIER" | "ELEVEUR" | "ETA";
 
@@ -70,6 +71,7 @@ export const MACHINE_ART: Record<MachineType, string> = {
   TRACTOR: "/assets/vehicles/tractor.webp",
   HARVESTER: "/assets/vehicles/harvester.webp",
   SPREADER: "/assets/vehicles/spreader.webp",
+  DISC_HARROW: "/assets/vehicles/harrow.webp",
 };
 
 /** Bonus spé max ≤ +10 % — valeurs de départ faibles `[GD]` */
@@ -311,7 +313,7 @@ export const DEFAULT_GRID = { w: 12, h: 12 } as const;
 /** Narratif : 12×12 ≈ 12–15 ha `[GD]` — voir `23_GRID_SIZING.md` */
 export const PARCEL_HECTARES = 14;
 
-export type MachineType = "TRACTOR" | "HARVESTER" | "SPREADER";
+export type MachineType = "TRACTOR" | "HARVESTER" | "SPREADER" | "DISC_HARROW";
 
 export type MachineDef = {
   type: MachineType;
@@ -324,7 +326,7 @@ export type MachineDef = {
   repairCostPerPoint: number;
   minCondition: number;
   description: string;
-  works: Array<"PLANT" | "FERTILIZE" | "HARVEST" | "PLOW">;
+  works: Array<"PLANT" | "FERTILIZE" | "HARVEST" | "PLOW" | "STUBBLE">;
   /** Teinte iso HUD (réf. IsoFarmView) */
   isoColor: "green" | "red-gold" | "amber";
 };
@@ -364,6 +366,20 @@ export const MACHINE_DEFS: Record<MachineType, MachineDef> = {
     minCondition: 10,
     description: "Fertilisation plus efficace (−usure vs tracteur).",
     works: ["FERTILIZE"],
+    isoColor: "amber",
+  },
+  DISC_HARROW: {
+    type: "DISC_HARROW",
+    name: "Déchaumeur à disques",
+    cost: 2100,
+    tier: 1,
+    // Travail superficiel à grand débit : il s'use bien moins qu'une charrue.
+    wearPerCell: 0.3,
+    repairCostPerPoint: 5,
+    minCondition: 10,
+    description:
+      "Incorpore les résidus après moisson : bonus de rendement, sans remettre le sol à zéro.",
+    works: ["STUBBLE"],
     isoColor: "amber",
   },
 };
@@ -408,13 +424,14 @@ export function buildingResaleValue(type: BuildingType, level: number): number {
 /* Prestation ETA — faire travailler ses terres par un tiers           */
 /* ------------------------------------------------------------------ */
 
-export type FarmWork = "PLANT" | "FERTILIZE" | "HARVEST" | "PLOW";
+export type FarmWork = "PLANT" | "FERTILIZE" | "HARVEST" | "PLOW" | "STUBBLE";
 
 export const WORK_LABELS: Record<FarmWork, string> = {
   PLANT: "Semis",
   FERTILIZE: "Épandage",
   HARVEST: "Moisson",
   PLOW: "Labour",
+  STUBBLE: "Déchaumage",
 };
 
 /**
@@ -429,6 +446,7 @@ export const CONTRACTOR_RATE_PER_CELL: Record<FarmWork, number> = {
   FERTILIZE: 16,
   HARVEST: 38,
   PLOW: 14,
+  STUBBLE: 9,
 };
 
 /** Frais de déplacement, quel que soit le nombre de cases `[GD]` */

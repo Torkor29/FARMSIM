@@ -2,6 +2,7 @@ import {
   CROP_DEFS,
   DRYING,
   MARKET_BOUNDS,
+  residueBonus,
   ripenessAt,
   type CropCode,
   type RipenessInfo,
@@ -20,6 +21,8 @@ export type CellSimInput = {
   weatherAtHarvest?: WeatherState;
   /** Bonus bâtiments ferme (ex. 0.03) */
   buildingYieldBonus?: number;
+  /** Déchaumages consécutifs avant ce semis — les résidus nourrissent le sol */
+  residuePasses?: number;
 };
 
 export type CellSimResult = {
@@ -43,7 +46,10 @@ function managementFactor(input: CellSimInput): number {
   if (input.specialization === "CEREALIER") f *= 1.02;
   const b = Math.min(0.1, Math.max(0, input.buildingYieldBonus ?? 0));
   f *= 1 + b;
-  return Math.min(1.4, f);
+  // Les résidus de la récolte précédente, incorporés au déchaumeur, se
+  // décomposent et nourrissent la culture en place.
+  f *= 1 + residueBonus(input.residuePasses ?? 0);
+  return Math.min(1.5, f);
 }
 
 function moisturePenalty(weather?: WeatherState): number {
