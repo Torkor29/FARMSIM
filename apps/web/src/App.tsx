@@ -5,13 +5,17 @@ import {
   MACHINE_DEFS,
   PARCEL_HECTARES,
   WEATHER_LABELS,
+  footprintCells,
   type Specialization,
   type CropCode,
   type BuildingType,
   type MachineType,
   type WeatherState,
 } from "@farmsim/shared";
-import { IsoFarmView } from "./IsoFarmView";
+import { AuthScreen } from "./AuthScreen";
+import { IsoFarmView, type PreviewBuilding } from "./IsoFarmView";
+import { SplashScreen } from "./SplashScreen";
+import { TutorialOverlay, TUTORIAL_KEY } from "./TutorialOverlay";
 import { ZoneMap } from "./ZoneMap";
 
 const API = "/api";
@@ -135,14 +139,26 @@ function clearSession() {
   localStorage.removeItem("farmsim_player");
 }
 
-const ACTION_BAR: [Tool, string][] = [
-  ["SELECT", "Inspect"],
-  ["PLANT_WHEAT", "Semer"],
-  ["FERTILIZE", "Ferti"],
-  ["HARVEST", "Récolte"],
-  ["BUILD", "Bâtir"],
-  ["PARK", "Park"],
+const ACTION_BAR: { tool: Tool; label: string; icon: string }[] = [
+  { tool: "SELECT", label: "Inspect", icon: "/assets/icons/tools/select.svg" },
+  { tool: "PLANT_WHEAT", label: "Semer", icon: "/assets/icons/tools/plant.svg" },
+  { tool: "FERTILIZE", label: "Ferti", icon: "/assets/icons/tools/fertilize.svg" },
+  { tool: "HARVEST", label: "Récolte", icon: "/assets/icons/tools/harvest.svg" },
+  { tool: "BUILD", label: "Bâtir", icon: "/assets/icons/tools/build.svg" },
+  { tool: "PARK", label: "Park", icon: "/assets/icons/tools/park.svg" },
 ];
+
+/** Sons UI optionnels — ignorés tant qu’aucun asset n’est fourni */
+function playUiSound(_kind: "click" | "place") {
+  const urls: Partial<Record<"click" | "place", string>> = {};
+  const url = urls[_kind];
+  if (!url) return;
+  try {
+    new Audio(url).play().catch(() => undefined);
+  } catch {
+    /* skip */
+  }
+}
 
 export function App() {
   const [zones, setZones] = useState<Zone[]>([]);
@@ -175,11 +191,15 @@ export function App() {
   const [prevPrices, setPrevPrices] = useState<Record<string, number>>({});
   const [resumeBanner, setResumeBanner] = useState<string | null>(null);
   const [booting, setBooting] = useState(true);
+  const [showSplash, setShowSplash] = useState(true);
+  const [showTutorial, setShowTutorial] = useState(false);
   const [pulseCells, setPulseCells] = useState<{ x: number; y: number }[]>([]);
   const [activeWork, setActiveWork] = useState<{
     type: MachineType;
     cells: { x: number; y: number }[];
   } | null>(null);
+  const [hoverCell, setHoverCell] = useState<{ x: number; y: number } | null>(null);
+  const [toastTick, setToastTick] = useState(0);
 
   function applyAuth(payload: { token: string; player: Player; resume?: SessionResume | null }) {
     localStorage.setItem(TOKEN_KEY, payload.token);
@@ -275,6 +295,14 @@ export function App() {
 
   useEffect(() => {
     if (!player) return;
+    if (!localStorage.getItem(TUTORIAL_KEY)) {
+      const t = window.setTimeout(() => setShowTutorial(true), 600);
+      return () => window.clearTimeout(t);
+    }
+  }, [player?.id]);
+
+  useEffect(() => {
+    if (!player) return;
     const beat = () => {
       api("/session/heartbeat", { method: "POST", body: "{}" }).catch(() => undefined);
     };
@@ -357,6 +385,65 @@ export function App() {
     return sims.reduce((a, s) => a + s.sim.progress, 0) / sims.length;
   }, [parcelDetail]);
 
+  function flashToast(text: string, isError = false) {
+    if (isError) setErr(text);
+    else {
+      setErr(null);
+      setMsg(text);
+    }
+    setToastTick((n) => n + 1);
+  }
+
+  function describeCell(x: number, y: number): string {
+    const cell = grid.find((c) => c.x === x && c.y === y);
+    const sim = parcelDetail?.cellSims?.find((s) => s.x === x && s.y === y);
+    if (!cell || cell.kind === "EMPTY") {
+      return `Case (${x},${y}) · vide`;
+    }
+    if (cell.kind === "CROP") {
+      const crop = cell.crop ?? "?";
+      const stage = cell.fieldStage ?? "GROWING";
+      const fert = cell.fertilizedPasses ?? 0;
+      const prog = sim ? `${Math.round(sim.sim.progress * 100)}%` : "—";
+      const ready = sim?.sim.ready ? " · prête" : "";
+      return `Case (${x},${y}) · ${crop} · ${stage} · ${prog}${ready} · ferti ${fert}`;
+    }
+    if (cell.kind === "BUILDING") {
+      const b = parcel?.buildings?.find((bd) => bd.id === cell.buildingId);
+      const name = b ? BUILDING_DEFS[b.type].name : "Bâtiment";
+      return `Case (${x},${y}) · ${name}`;
+    }
+    if (cell.kind === "VEHICLE") {
+      const mType = cell.machineType ?? "TRACTOR";
+      const name = MACHINE_DEFS[mType]?.name ?? mType;
+      return `Case (${x},${y}) · ${name} stationné`;
+    }
+    return `Case (${x},${y}) · ${cell.kind}`;
+  }
+
+  function canPlaceBuildingAt(x: number, y: number): boolean {
+    const def = BUILDING_DEFS[buildType];
+    if (x + def.w > gw || y + def.h > gh) return false;
+    const footprint = footprintCells(x, y, def.w, def.h);
+    return footprint.every((fc) => {
+      const c = grid.find((cell) => cell.x === fc.x && cell.y === fc.y);
+      return c?.kind === "EMPTY";
+    });
+  }
+
+  const previewBuilding = useMemo((): PreviewBuilding | null => {
+    if (tool !== "BUILD" || !hoverCell) return null;
+    const def = BUILDING_DEFS[buildType];
+    const spaceOk = canPlaceBuildingAt(hoverCell.x, hoverCell.y);
+    const moneyOk = (player?.crd ?? 0) >= def.cost;
+    return {
+      type: buildType,
+      originX: hoverCell.x,
+      originY: hoverCell.y,
+      valid: spaceOk && moneyOk,
+    };
+  }, [tool, buildType, hoverCell, grid, gw, gh, player?.crd]);
+
   function brushCells(x: number, y: number): { x: number; y: number }[] {
     const cells: { x: number; y: number }[] = [];
     for (let dy = 0; dy < brush; dy++) {
@@ -436,38 +523,87 @@ export function App() {
 
   async function applyToolOnCell(x: number, y: number) {
     if (!player || !activeParcelId) return;
-    if (tool === "SELECT" || tool === "PLANT_WHEAT" || tool === "PLANT_MAIZE" || tool === "FERTILIZE" || tool === "HARVEST") {
-      if (tool === "SELECT") {
-        setSelectedCells(brushCells(x, y));
-        return;
-      }
-      toggleCell(x, y);
+    playUiSound("click");
+
+    if (tool === "SELECT") {
+      const block = brushCells(x, y);
+      setSelectedCells(block);
+      flashToast(describeCell(x, y));
       return;
     }
-    setBusy(true);
-    setErr(null);
-    try {
-      if (tool === "BUILD") {
+
+    if (tool === "PLANT_WHEAT" || tool === "PLANT_MAIZE" || tool === "FERTILIZE" || tool === "HARVEST") {
+      const block = brushCells(x, y);
+      const allIn = block.every((c) => selectedCells.some((s) => s.x === c.x && s.y === c.y));
+      const nextCount = allIn
+        ? selectedCells.length -
+          block.filter((c) => selectedCells.some((s) => s.x === c.x && s.y === c.y)).length
+        : selectedCells.length +
+          block.filter((c) => !selectedCells.some((s) => s.x === c.x && s.y === c.y)).length;
+      toggleCell(x, y);
+      const label =
+        tool === "PLANT_WHEAT"
+          ? "Blé"
+          : tool === "PLANT_MAIZE"
+            ? "Maïs"
+            : tool === "FERTILIZE"
+              ? "Ferti"
+              : "Récolte";
+      flashToast(`${label} · ${nextCount} case(s) sélectionnée(s)`);
+      return;
+    }
+
+    if (tool === "BUILD") {
+      const def = BUILDING_DEFS[buildType];
+      if (!canPlaceBuildingAt(x, y)) {
+        const reason =
+          x + def.w > gw || y + def.h > gh
+            ? "Emprise hors grille"
+            : player.crd < def.cost
+              ? `CRD insuffisants (${def.cost})`
+              : "Collision ou case occupée";
+        flashToast(reason, true);
+        return;
+      }
+      flashToast(`Placement ${def.name}…`);
+      setBusy(true);
+      setErr(null);
+      try {
         await api(`/parcels/${activeParcelId}/build`, {
           method: "POST",
           body: JSON.stringify({ userId: player.id, type: buildType, x, y }),
         });
-        setMsg(`${BUILDING_DEFS[buildType].name} placé`);
-      } else if (tool === "PARK") {
+        flashToast(`${def.name} placé · −${def.cost} CRD`);
+        playUiSound("place");
+        await refreshPlayer();
+        await loadParcel(activeParcelId);
+      } catch (e) {
+        flashToast(e instanceof Error ? e.message : String(e), true);
+      } finally {
+        setBusy(false);
+      }
+      return;
+    }
+
+    if (tool === "PARK") {
+      flashToast("Stationnement…");
+      setBusy(true);
+      setErr(null);
+      try {
         const free = player.farm?.machines.find((m) => !m.parkedParcelId && !m.storedInBuildingId);
         if (!free) throw new Error("Aucun véhicule libre à stationner");
         await api(`/machines/${free.id}/park`, {
           method: "POST",
           body: JSON.stringify({ userId: player.id, parcelId: activeParcelId, x, y }),
         });
-        setMsg("Véhicule stationné");
+        flashToast("Véhicule stationné");
+        await refreshPlayer();
+        await loadParcel(activeParcelId);
+      } catch (e) {
+        flashToast(e instanceof Error ? e.message : String(e), true);
+      } finally {
+        setBusy(false);
       }
-      await refreshPlayer();
-      await loadParcel(activeParcelId);
-    } catch (e) {
-      setErr(e instanceof Error ? e.message : String(e));
-    } finally {
-      setBusy(false);
     }
   }
 
@@ -686,9 +822,13 @@ export function App() {
     }
   }
 
+  if (showSplash) {
+    return <SplashScreen onComplete={() => setShowSplash(false)} />;
+  }
+
   if (booting) {
     return (
-      <div className="app shell">
+      <div className="auth-loading">
         <p className="muted">Chargement de la session…</p>
       </div>
     );
@@ -696,110 +836,27 @@ export function App() {
 
   if (!player) {
     return (
-      <div className="app shell">
-        <header className="topbar">
-          <div className="brand">Farming Navigateur</div>
-          <p className="lede">Ferme isométrique · marché mondial · ETA</p>
-        </header>
-        {(msg || err) && <p className={err ? "error" : "ok"}>{err ?? msg}</p>}
-        <div className="auth-tabs">
-          <button
-            type="button"
-            className={authMode === "register" ? "chip on" : "chip"}
-            onClick={() => setAuthMode("register")}
-          >
-            Créer un compte
-          </button>
-          <button
-            type="button"
-            className={authMode === "login" ? "chip on" : "chip"}
-            onClick={() => setAuthMode("login")}
-          >
-            Se connecter
-          </button>
-        </div>
-        {authMode === "login" ? (
-          <section className="glass" style={{ maxWidth: 420, marginTop: "1rem" }}>
-            <h2>Connexion</h2>
-            <div className="row" style={{ marginTop: "0.75rem" }}>
-              <input placeholder="Email" value={email} onChange={(e) => setEmail(e.target.value)} />
-              <input
-                placeholder="Code d’accès"
-                value={accessCode}
-                onChange={(e) => setAccessCode(e.target.value)}
-              />
-            </div>
-            <p className="muted tiny" style={{ marginTop: "0.5rem" }}>
-              Code par défaut à l’inscription : <code>ferme</code>
-            </p>
-            <div style={{ marginTop: "1rem" }}>
-              <button type="button" disabled={busy} onClick={login}>
-                Entrer dans ma ferme
-              </button>
-            </div>
-          </section>
-        ) : (
-          <div className="onboard">
-            <section className="glass">
-              <h2>Métier</h2>
-              <div className="spe-cards">
-                {(Object.keys(SPECIALIZATION_LABELS) as Specialization[]).map((k) => (
-                  <button
-                    key={k}
-                    type="button"
-                    className={`spe ${spe === k ? "active" : ""}`}
-                    onClick={() => setSpe(k)}
-                  >
-                    <strong>{SPECIALIZATION_LABELS[k]}</strong>
-                    <div className="muted">
-                      {k === "ETA"
-                        ? "Missions sans terre obligatoire."
-                        : "Parcelle de départ sur la carte."}
-                    </div>
-                  </button>
-                ))}
-              </div>
-              <div className="row" style={{ marginTop: "1rem" }}>
-                <input placeholder="Nom" value={name} onChange={(e) => setName(e.target.value)} />
-                <input placeholder="Email" value={email} onChange={(e) => setEmail(e.target.value)} />
-                <input
-                  placeholder="Code d’accès"
-                  value={accessCode}
-                  onChange={(e) => setAccessCode(e.target.value)}
-                />
-              </div>
-            </section>
-            <section className="glass">
-              <h2>Parcelle de départ</h2>
-              {spe === "ETA" ? <p className="muted">Optionnel pour ETA.</p> : null}
-              {/* zone-map-ui: onboarding */}
-              <div className="zone-maps">
-                {zones.map((z) => (
-                  <ZoneMap
-                    key={z.id}
-                    zone={z}
-                    selectedParcelId={selectedParcelId}
-                    onSelect={setSelectedParcelId}
-                  />
-                ))}
-              </div>
-              {selectedFree ? (
-                <p className="zone-select-hint muted">
-                  Sélection : <strong>{selectedFree.label}</strong> · {selectedFree.zone?.name} ·{" "}
-                  {selectedFree.landPrice} CRD
-                </p>
-              ) : (
-                <p className="zone-select-hint muted">Clique une case libre sur la carte.</p>
-              )}
-              <div style={{ marginTop: "1rem" }}>
-                <button type="button" disabled={busy} onClick={register}>
-                  Créer mon compte
-                </button>
-              </div>
-            </section>
-          </div>
-        )}
-      </div>
+      <AuthScreen
+        authMode={authMode}
+        onAuthModeChange={setAuthMode}
+        spe={spe}
+        onSpeChange={setSpe}
+        name={name}
+        onNameChange={setName}
+        email={email}
+        onEmailChange={setEmail}
+        accessCode={accessCode}
+        onAccessCodeChange={setAccessCode}
+        selectedParcelId={selectedParcelId}
+        onSelectParcel={setSelectedParcelId}
+        zones={zones}
+        selectedFree={selectedFree}
+        busy={busy}
+        msg={msg}
+        err={err}
+        onRegister={register}
+        onLogin={login}
+      />
     );
   }
 
@@ -814,10 +871,13 @@ export function App() {
             buildings={parcel.buildings ?? []}
             cellSims={parcelDetail?.cellSims ?? []}
             selected={selectedCells}
+            hoverCell={hoverCell}
+            previewBuilding={previewBuilding}
             pulseCells={pulseCells}
             activeWork={activeWork}
             weather={localWeather}
             onCellClick={applyToolOnCell}
+            onCellHover={setHoverCell}
           />
         ) : (
           <div className="iso-viewport empty-farm">
@@ -828,10 +888,20 @@ export function App() {
 
       <header className="hud-top">
         <div className="brand-row">
+          <img className="brand-logo" src="/logo.svg" alt="" width={36} height={36} />
           <div className="brand-mark">Farming Navigateur</div>
           <span className="mvp-badge" title="Build jouable minimale">
             Première version · MVP
           </span>
+          <button
+            type="button"
+            className="help-btn"
+            title="Tutoriel"
+            aria-label="Ouvrir le tutoriel"
+            onClick={() => setShowTutorial(true)}
+          >
+            ?
+          </button>
         </div>
         <div className="hud-stats">
           <span>{player.displayName}</span>
@@ -863,7 +933,7 @@ export function App() {
       </header>
 
       {(msg || err) && (
-        <div className={`toast ${err ? "bad" : "good"}`}>{err ?? msg}</div>
+        <div key={toastTick} className={`toast ${err ? "bad" : "good"} pop`}>{err ?? msg}</div>
       )}
       {resumeBanner && !err && (
         <div className="resume-banner glass">
@@ -979,11 +1049,13 @@ export function App() {
             </button>
           ))}
         </div>
-        {ACTION_BAR.map(([t, label]) => (
+        {ACTION_BAR.map(({ tool: t, label, icon }) => (
           <button
             key={t}
             type="button"
-            className={tool === t && t !== "BUILD" ? "action on" : "action"}
+            className={`action icon-action ${tool === t || (t === "BUILD" && tool === "BUILD") ? "on" : ""}`}
+            title={label}
+            aria-label={label}
             onClick={() => {
               if (t === "BUILD") {
                 setTool("BUILD");
@@ -993,7 +1065,8 @@ export function App() {
               setSelectedCells([]);
             }}
           >
-            {label}
+            <img src={icon} alt="" width={22} height={22} />
+            <span className="action-label">{label}</span>
           </button>
         ))}
         <button
@@ -1091,6 +1164,8 @@ export function App() {
           </div>
         </aside>
       )}
+
+      <TutorialOverlay open={showTutorial} onClose={() => setShowTutorial(false)} />
 
       {showEta && (
         <aside className="glass eta-panel">

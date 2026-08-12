@@ -36,6 +36,13 @@ export type ActiveWork = {
   cells: { x: number; y: number }[];
 };
 
+export type PreviewBuilding = {
+  type: BuildingType;
+  originX: number;
+  originY: number;
+  valid: boolean;
+};
+
 type Props = {
   gridW: number;
   gridH: number;
@@ -43,19 +50,27 @@ type Props = {
   buildings: IsoBuilding[];
   cellSims: IsoSim[];
   selected: { x: number; y: number }[];
+  /** Case sous le curseur (survol) */
+  hoverCell?: { x: number; y: number } | null;
+  /** Emprise fantôme quand outil BUILD + survol */
+  previewBuilding?: PreviewBuilding | null;
   /** Flash court sur cases après / pendant une action */
   pulseCells?: { x: number; y: number }[];
   /** Engin temporaire qui se déplace vers les cases travaillées */
   activeWork?: ActiveWork | null;
   weather?: string;
   onCellClick: (x: number, y: number) => void;
+  onCellHover?: (cell: { x: number; y: number } | null) => void;
 };
 
 const SOIL = 0x5a7a42;
 const SOIL_DARK = 0x4a6436;
 const GROW = 0x6f9a45;
 const READY = 0xd4a84b;
-const SELECT = 0x4ade80;
+const SELECT_GLOW = 0x86efac;
+const HOVER = 0x7dd3fc;
+const PREVIEW_OK = 0x22c55e;
+const PREVIEW_BAD = 0xef4444;
 const DIRT = 0x6b5238;
 const PULSE = 0xf0e6a0;
 
@@ -165,14 +180,19 @@ export function IsoFarmView({
   buildings,
   cellSims,
   selected,
+  hoverCell = null,
+  previewBuilding = null,
   pulseCells = [],
   activeWork = null,
   weather = "CLEAR",
   onCellClick,
+  onCellHover,
 }: Props) {
   const mountRef = useRef<HTMLDivElement>(null);
   const onClickRef = useRef(onCellClick);
   onClickRef.current = onCellClick;
+  const onHoverRef = useRef(onCellHover);
+  onHoverRef.current = onCellHover;
   const layoutRef = useRef<(() => void) | null>(null);
   const weatherRef = useRef(weather);
   weatherRef.current = weather;
@@ -182,12 +202,25 @@ export function IsoFarmView({
     buildings,
     cellSims,
     selected,
+    hoverCell,
+    previewBuilding,
     pulseCells,
     activeWork,
     gridW,
     gridH,
   });
-  dataRef.current = { cells, buildings, cellSims, selected, pulseCells, activeWork, gridW, gridH };
+  dataRef.current = {
+    cells,
+    buildings,
+    cellSims,
+    selected,
+    hoverCell,
+    previewBuilding,
+    pulseCells,
+    activeWork,
+    gridW,
+    gridH,
+  };
 
   const pulseStartRef = useRef(0);
   const workStartRef = useRef(0);
@@ -258,6 +291,10 @@ export function IsoFarmView({
     const workGroup = new THREE.Group();
     world.add(workGroup);
     let workVehicle: THREE.Group | null = null;
+
+    const previewGroup = new THREE.Group();
+    world.add(previewGroup);
+    let prevPreviewKey = "";
 
     const platformMat = new THREE.MeshLambertMaterial({ color: 0x4a3828, flatShading: true });
     const platform = new THREE.Mesh(new THREE.BoxGeometry(1, 0.45, 1), platformMat);
@@ -394,13 +431,13 @@ export function IsoFarmView({
           if (cell?.kind === "VEHICLE") col = 0x3a3f44;
 
           const mat = new THREE.MeshLambertMaterial({
-            color: isSel ? SELECT : col,
+            color: isSel ? SELECT_GLOW : col,
             flatShading: true,
           });
           const mesh = new THREE.Mesh(new THREE.BoxGeometry(cellSize, 0.18, cellSize), mat);
           mesh.position.set(px, 0, pz);
           mesh.receiveShadow = true;
-          mesh.userData = { x, y, baseColor: isSel ? SELECT : col };
+          mesh.userData = { x, y, baseColor: col, isSelected: isSel };
           world.add(mesh);
           cellMeshes.set(key(x, y), mesh);
           pickables.push(mesh);
@@ -495,23 +532,112 @@ export function IsoFarmView({
     ro.observe(el);
     resize();
 
-    function onPointer(ev: PointerEvent) {
-      const rect = renderer.domElement.getBoundingClientRect();
-      pointer.x = ((ev.clientX - rect.left) / rect.width) * 2 - 1;
-      pointer.y = -((ev.clientY - rect.top) / rect.height) * 2 + 1;
+    function raycastCell(): { x: number; y: number } | null {
       raycaster.setFromCamera(pointer, camera);
       const hits = raycaster.intersectObjects(pickables, false);
       if (hits[0]?.object.userData) {
         const { x, y } = hits[0].object.userData as { x: number; y: number };
-        onClickRef.current(x, y);
+        return { x, y };
       }
+      return null;
     }
+
+    function setPointerFromEvent(ev: PointerEvent) {
+      const rect = renderer.domElement.getBoundingClientRect();
+      pointer.x = ((ev.clientX - rect.left) / rect.width) * 2 - 1;
+      pointer.y = -((ev.clientY - rect.top) / rect.height) * 2 + 1;
+    }
+
+    function onPointerMove(ev: PointerEvent) {
+      setPointerFromEvent(ev);
+      const cell = raycastCell();
+      onHoverRef.current?.(cell);
+    }
+
+    function onPointerLeave() {
+      onHoverRef.current?.(null);
+    }
+
+    function onPointer(ev: PointerEvent) {
+      setPointerFromEvent(ev);
+      const cell = raycastCell();
+      if (cell) onClickRef.current(cell.x, cell.y);
+    }
+
+    renderer.domElement.style.cursor = "crosshair";
     renderer.domElement.addEventListener("pointerdown", onPointer);
+    renderer.domElement.addEventListener("pointermove", onPointerMove);
+    renderer.domElement.addEventListener("pointerleave", onPointerLeave);
 
     let raf = 0;
     const clock = new THREE.Clock();
     const tmpColor = new THREE.Color();
     const pulseColor = new THREE.Color(PULSE);
+    const hoverColor = new THREE.Color(HOVER);
+    const selectColor = new THREE.Color(SELECT_GLOW);
+
+    function syncPreviewFootprint() {
+      const pb = dataRef.current.previewBuilding;
+      const pk = pb ? `${pb.type}:${pb.originX}:${pb.originY}:${pb.valid}` : "";
+      if (pk === prevPreviewKey) return;
+      prevPreviewKey = pk;
+      while (previewGroup.children.length) {
+        const c = previewGroup.children[0];
+        previewGroup.remove(c);
+        disposeObject3D(c);
+      }
+      if (!pb) return;
+
+      const def = BUILDING_DEFS[pb.type];
+      const gap = 0.06;
+      const col = pb.valid ? PREVIEW_OK : PREVIEW_BAD;
+      const ghostMat = new THREE.MeshLambertMaterial({
+        color: col,
+        flatShading: true,
+        transparent: true,
+        opacity: 0.42,
+        depthWrite: false,
+      });
+      const edgeMat = new THREE.MeshLambertMaterial({
+        color: col,
+        flatShading: true,
+        transparent: true,
+        opacity: 0.75,
+        depthWrite: false,
+      });
+
+      for (let dy = 0; dy < def.h; dy++) {
+        for (let dx = 0; dx < def.w; dx++) {
+          const cx = pb.originX + dx;
+          const cy = pb.originY + dy;
+          const { px, pz } = cellWorldPos(cx, cy);
+          const tile = new THREE.Mesh(new THREE.BoxGeometry(cellSize * 0.92, 0.22, cellSize * 0.92), ghostMat);
+          tile.position.set(px, 0.14, pz);
+          previewGroup.add(tile);
+          const rim = new THREE.Mesh(new THREE.BoxGeometry(cellSize, 0.04, cellSize), edgeMat);
+          rim.position.set(px, 0.26, pz);
+          previewGroup.add(rim);
+        }
+      }
+
+      const bw = def.w * step - gap;
+      const bd = def.h * step - gap;
+      const centerX = ox + (pb.originX + (def.w - 1) / 2) * step;
+      const centerZ = oz + (pb.originY + (def.h - 1) / 2) * step;
+      const pal = buildingPalette(pb.type);
+      const shell = new THREE.Mesh(
+        new THREE.BoxGeometry(bw * 0.88, pal.h * 0.55, bd * 0.88),
+        new THREE.MeshLambertMaterial({
+          color: col,
+          flatShading: true,
+          transparent: true,
+          opacity: 0.28,
+          depthWrite: false,
+        }),
+      );
+      shell.position.set(centerX, pal.h * 0.28, centerZ);
+      previewGroup.add(shell);
+    }
 
     function tick() {
       raf = requestAnimationFrame(tick);
@@ -544,16 +670,31 @@ export function IsoFarmView({
       const pulseAge = t - pulseStartRef.current;
       const pulseActive = pulseKey.length > 0 && pulseAge < 0.55;
       const pulseSet = new Set(pc.map((c) => key(c.x, c.y)));
+      const { hoverCell: hc, selected: sel } = dataRef.current;
+      const hoverKey = hc ? key(hc.x, hc.y) : null;
+      const selSet = new Set(sel.map((s) => key(s.x, s.y)));
+      const hoverPulse = 0.45 + Math.sin(t * 7) * 0.18;
+      const selPulse = 0.35 + Math.sin(t * 4.5) * 0.12;
+
+      syncPreviewFootprint();
+
       for (const [k, mesh] of cellMeshes) {
         const mat = mesh.material as THREE.MeshLambertMaterial;
         const base = mesh.userData.baseColor as number;
+        const isSelected = mesh.userData.isSelected as boolean;
+        tmpColor.setHex(base);
+
+        if (isSelected || selSet.has(k)) {
+          tmpColor.lerp(selectColor, selPulse);
+        }
+        if (k === hoverKey) {
+          tmpColor.lerp(hoverColor, hoverPulse);
+        }
         if (pulseActive && pulseSet.has(k)) {
           const w = Math.sin((pulseAge / 0.55) * Math.PI);
-          tmpColor.setHex(base).lerp(pulseColor, 0.55 * w);
-          mat.color.copy(tmpColor);
-        } else {
-          mat.color.setHex(base);
+          tmpColor.lerp(pulseColor, 0.55 * w);
         }
+        mat.color.copy(tmpColor);
       }
 
       // Engin de travail : parcours simple des cases
@@ -605,6 +746,13 @@ export function IsoFarmView({
       layoutRef.current = null;
       ro.disconnect();
       renderer.domElement.removeEventListener("pointerdown", onPointer);
+      renderer.domElement.removeEventListener("pointermove", onPointerMove);
+      renderer.domElement.removeEventListener("pointerleave", onPointerLeave);
+      while (previewGroup.children.length) {
+        const c = previewGroup.children[0];
+        previewGroup.remove(c);
+        disposeObject3D(c);
+      }
       clearWorkVehicle();
       renderer.dispose();
       if (renderer.domElement.parentNode === el) el.removeChild(renderer.domElement);

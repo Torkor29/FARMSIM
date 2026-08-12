@@ -1,0 +1,20 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" fill="none" aria-hidden="true">
+  <!-- FARMSIM CC0 placeholder  tracteur isométrique flat -->
+  <ellipse cx="32" cy="54" rx="22" ry="6" fill="#1a2a1a" opacity="0.35"/>
+  <!-- roues arrière -->
+  <ellipse cx="20" cy="44" rx="7" ry="5" fill="#2a3a2a"/>
+  <ellipse cx="20" cy="43" rx="5" ry="3.5" fill="#1e2e1e"/>
+  <!-- roue avant -->
+  <ellipse cx="44" cy="46" rx="5" ry="3.5" fill="#2a3a2a"/>
+  <ellipse cx="44" cy="45.5" rx="3.5" ry="2.5" fill="#1e2e1e"/>
+  <!-- châssis isométrique -->
+  <path d="M14 38 L34 30 L50 36 L30 44 Z" fill="#2a6a28"/>
+  <path d="M30 44 L50 36 L50 32 L30 40 Z" fill="#3d8f3a"/>
+  <path d="M14 38 L30 40 L30 44 Z" fill="#348535"/>
+  <!-- cabine -->
+  <path d="M22 34 L30 31 L30 37 L22 40 Z" fill="#1f5a1f"/>
+  <path d="M30 31 L36 33 L36 39 L30 37 Z" fill="#2a6a28"/>
+  <path d="M22 34 L30 31 L36 33 L28 36 Z" fill="#4aa84a"/>
+  <!-- échappement -->
+  <rect x="12" y="30" width="3" height="8" rx="1" fill="#6a7380"/>
+</svg>

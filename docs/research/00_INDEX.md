@@ -59,6 +59,7 @@ Chaque valeur chiffrée dans cette documentation est classée :
 | — | [27_MOISTURE_DRYING.md](./27_MOISTURE_DRYING.md) | Humidité récolte + séchage MVP |
 | — | [29_ISO_POLISH.md](./29_ISO_POLISH.md) | Animations machines iso + feedback action |
 | — | [30_FIRST_PLAYABLE.md](./30_FIRST_PLAYABLE.md) | Checklist première version jouable |
+| — | [31_UX_MOBILE.md](./31_UX_MOBILE.md) | Splash, auth mobile, tutoriel, icônes, preview bâtiment |
 
 ---
 

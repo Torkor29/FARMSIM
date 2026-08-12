@@ -79,6 +79,7 @@ input { min-width: 0; flex: 1; }
   display: block;
   width: 100% !important;
   height: 100% !important;
+  touch-action: none;
 }
 .empty-farm {
   display: grid;
@@ -105,10 +106,32 @@ input { min-width: 0; flex: 1; }
 .brand-row {
   display: flex;
   flex-wrap: wrap;
-  align-items: baseline;
+  align-items: center;
   gap: 0.55rem;
 }
+.brand-logo {
+  width: 36px;
+  height: 36px;
+  object-fit: contain;
+  filter: drop-shadow(0 2px 8px rgba(0, 0, 0, 0.35));
+}
 .brand-mark { font-size: 1.35rem; }
+.help-btn {
+  width: 1.75rem;
+  height: 1.75rem;
+  padding: 0;
+  border-radius: 50%;
+  border: 1px solid var(--glass-border);
+  background: rgba(201, 162, 39, 0.2);
+  color: var(--accent-hot);
+  font-weight: 800;
+  font-size: 0.95rem;
+  line-height: 1;
+  cursor: pointer;
+}
+.help-btn:hover {
+  background: rgba(201, 162, 39, 0.35);
+}
 .mvp-badge {
   font-size: 0.68rem;
   font-weight: 600;
@@ -261,6 +284,27 @@ button.ghost {
   background: rgba(255,255,255,0.06);
   font-size: 0.86rem;
 }
+.action.icon-action {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.15rem;
+  min-width: 3.1rem;
+  padding: 0.45rem 0.5rem;
+}
+.action.icon-action img {
+  display: block;
+  filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.4));
+}
+.action.icon-action .action-label {
+  font-size: 0.62rem;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  opacity: 0.9;
+}
+.action.icon-action.on img {
+  filter: brightness(1.15) drop-shadow(0 1px 3px rgba(0, 0, 0, 0.35));
+}
 .action.on {
   background: linear-gradient(180deg, #4aaf6a, var(--accent));
   border-color: transparent;
@@ -339,9 +383,28 @@ button.ghost {
   background: var(--glass);
   border: 1px solid var(--glass-border);
   font-size: 0.9rem;
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.45);
+  pointer-events: none;
 }
-.toast.good { color: var(--ok); }
-.toast.bad { color: var(--danger); }
+.toast.pop {
+  animation: toast-pop 0.38s ease-out;
+}
+@keyframes toast-pop {
+  0% {
+    opacity: 0;
+    transform: translateX(-50%) translateY(-6px) scale(0.96);
+  }
+  55% {
+    opacity: 1;
+    transform: translateX(-50%) translateY(2px) scale(1.02);
+  }
+  100% {
+    opacity: 1;
+    transform: translateX(-50%) translateY(0) scale(1);
+  }
+}
+.toast.good { color: var(--ok); border-color: rgba(155, 228, 160, 0.35); }
+.toast.bad { color: var(--danger); border-color: rgba(255, 155, 134, 0.35); }
 
 .row { display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: center; }
 .parcel-map {
@@ -544,4 +607,82 @@ button.ghost {
   }
   .hud-top { padding: 0.6rem 0.75rem; }
   .brand-mark { font-size: 1.05rem; }
+  .action.icon-action .action-label { display: none; }
+  .action.icon-action { min-width: 2.6rem; padding: 0.5rem; }
+}
+
+/* —— Tutoriel pas-à-pas —— */
+.tutorial-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  display: grid;
+  place-items: center;
+  padding: 1rem;
+  background: rgba(4, 8, 14, 0.72);
+  backdrop-filter: blur(6px);
+  animation: tut-fade-in 0.35s ease;
+}
+@keyframes tut-fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+.tutorial-card {
+  width: min(420px, 100%);
+  padding: 1.25rem 1.2rem 1.1rem;
+  border-radius: 18px;
+}
+.tutorial-progress {
+  display: flex;
+  gap: 0.35rem;
+  margin-bottom: 0.75rem;
+}
+.tutorial-dot {
+  flex: 1;
+  height: 4px;
+  border-radius: 2px;
+  background: rgba(255, 255, 255, 0.12);
+  transition: background 0.25s ease;
+}
+.tutorial-dot.on {
+  background: linear-gradient(90deg, var(--accent), var(--accent-hot));
+}
+.tutorial-step-label {
+  margin: 0 0 0.35rem;
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--muted);
+}
+.tutorial-card h2 {
+  margin: 0 0 0.65rem;
+  font-size: 1.2rem;
+}
+.tutorial-body {
+  margin: 0 0 0.5rem;
+  line-height: 1.5;
+  color: #d0dde8;
+}
+.tutorial-hint {
+  margin: 0 0 1rem;
+  padding: 0.55rem 0.65rem;
+  border-radius: 10px;
+  background: rgba(61, 154, 95, 0.12);
+  border: 1px solid rgba(61, 154, 95, 0.25);
+  font-size: 0.82rem;
+  color: #9be4a0;
+}
+.tutorial-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+  justify-content: flex-end;
+}
+.tutorial-next {
+  padding: 0.55rem 1.1rem;
+  border-radius: 10px;
+  border: none;
+  background: linear-gradient(180deg, #4aaf6a, var(--accent));
+  color: #0a140e;
+  font-weight: 800;
 }

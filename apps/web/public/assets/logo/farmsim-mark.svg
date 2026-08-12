@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" fill="none" aria-label="FARMSIM">
+  <!-- FARMSIM CC0  marque combinée blé + grange -->
+  <rect width="64" height="64" rx="14" fill="#0e1620"/>
+  <ellipse cx="32" cy="52" rx="18" ry="4" fill="#3d9a5f" opacity="0.2"/>
+  <!-- grange miniature -->
+  <path d="M8 44 L24 36 L40 44 L24 52 Z" fill="#8a5a3a"/>
+  <path d="M8 44 L8 34 L24 26 L24 36 Z" fill="#9a6a4a"/>
+  <path d="M24 36 L40 44 L40 34 L24 26 Z" fill="#b07050"/>
+  <path d="M8 34 L24 26 L40 34 L24 22 Z" fill="#b84828"/>
+  <!-- blé -->
+  <path d="M44 54 Q43 38 46 22" stroke="#6f9a45" stroke-width="2" stroke-linecap="round"/>
+  <path d="M48 54 Q49 36 48 18" stroke="#3d9a5f" stroke-width="2.5" stroke-linecap="round"/>
+  <path d="M52 54 Q53 40 50 24" stroke="#6f9a45" stroke-width="2" stroke-linecap="round"/>
+  <ellipse cx="46" cy="20" rx="3" ry="5.5" fill="#d4a84b"/>
+  <ellipse cx="48" cy="16" rx="3.5" ry="6" fill="#c9a227"/>
+  <ellipse cx="50" cy="22" rx="3" ry="5" fill="#d4a84b"/>
+</svg>
