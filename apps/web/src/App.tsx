@@ -15,6 +15,9 @@ import {
   machineResaleValue,
   soilSummary,
   MAX_HARVESTS_BEFORE_PLOW,
+  DIRECT_SEED_COST_PER_CELL,
+  DIRECT_SEED_YIELD_MALUS,
+  rotationFactor,
   type FarmWork,
   type RipenessStage,
   type TradeGood,
@@ -74,6 +77,9 @@ type Cell = {
   harvestsSincePlow?: number;
   residuePasses?: number;
   hasStubble?: boolean;
+  directSeeded?: boolean;
+  lastCrop?: CropCode | null;
+  cropStreak?: number;
   buildingId?: string | null;
   machineId?: string | null;
   machineType?: MachineType | null;
@@ -259,6 +265,8 @@ export function App() {
     }[];
   } | null>(null);
   const [tool, setTool] = useState<Tool>("SELECT");
+  /** Semer dans les chaumes plutôt que de travailler le sol au préalable */
+  const [directSeed, setDirectSeed] = useState(false);
   const [buildType, setBuildType] = useState<BuildingType>("SILO");
   const [selectedCells, setSelectedCells] = useState<{ x: number; y: number }[]>([]);
   const [msg, setMsg] = useState<string | null>(null);
@@ -361,6 +369,13 @@ export function App() {
     }
   }, []);
 
+  const loadPriceHistory = useCallback(async (commodity: TradeGood) => {
+    const r = await api<{ series: Record<string, { at: string; price: number }[]> }>(
+      `/market/history?commodity=${encodeURIComponent(commodity)}&hours=3`,
+    );
+    return r.series[commodity] ?? [];
+  }, []);
+
   const loadListings = useCallback(async (playerId: string) => {
     try {
       const r = await api<{ listings: Listing[] }>(
@@ -382,9 +397,13 @@ export function App() {
     loadWorld().catch(() => undefined);
     const t = setInterval(() => {
       refreshMeta().catch(() => undefined);
+      // Le stock aussi vieillit : le lait et la viande se dégradent sur le
+      // tick du serveur, et sans ce rappel le silo restait figé à l'écran
+      // pendant des minutes — d'où l'impression qu'ils ne périmaient jamais.
+      refreshPlayer().catch(() => undefined);
     }, 10000);
     return () => clearInterval(t);
-  }, [refreshMeta, loadWorld]);
+  }, [refreshMeta, loadWorld, refreshPlayer]);
 
   useEffect(() => {
     setPrevPrices((prev) => {
@@ -642,7 +661,7 @@ export function App() {
         title: `${stubble.length} case(s) en chaumes`,
         detail: mustPlow
           ? `${mustPlow} exigent la charrue : trois récoltes sans labour.`
-          : "Déchaumez pour gagner du rendement, ou labourez pour repartir à neuf.",
+          : "Déchaumez pour le rendement, labourez pour repartir à neuf, ou semez direct.",
       };
     }
     if (poor || declining) {
@@ -660,6 +679,37 @@ export function App() {
     }
     return null;
   }, [parcelDetail, parcel?.cells]);
+
+  /**
+   * Ce que coûterait le semis en cours de préparation, du fait du précédent
+   * cultural. Le joueur doit voir la facture de sa facilité avant de semer,
+   * pas la découvrir à la moisson.
+   */
+  const rotationAlert = useMemo(() => {
+    if (tool !== "PLANT_WHEAT" && tool !== "PLANT_MAIZE") return null;
+    if (!selectedCells.length) return null;
+    const crop: CropCode = tool === "PLANT_WHEAT" ? "WHEAT" : "MAIZE";
+    const cells = parcel?.cells ?? [];
+    let worst = 1;
+    let repeated = 0;
+    for (const sel of selectedCells) {
+      const cell = cells.find((c) => c.x === sel.x && c.y === sel.y);
+      if (!cell) continue;
+      const factor = rotationFactor(
+        { lastCrop: (cell.lastCrop as CropCode | null) ?? null, cropStreak: cell.cropStreak ?? 0 },
+        crop,
+      );
+      if (factor < 1) {
+        repeated += 1;
+        worst = Math.min(worst, factor);
+      }
+    }
+    if (!repeated) return null;
+    return {
+      cells: repeated,
+      malus: Math.round((1 - worst) * 100),
+    };
+  }, [tool, selectedCells, parcel?.cells]);
 
   function flashToast(text: string, isError = false) {
     if (isError) setErr(text);
@@ -1021,11 +1071,11 @@ export function App() {
           `/parcels/${activeParcelId}/plant`,
           {
             method: "POST",
-            body: JSON.stringify({ userId: player.id, crop, cells: selectedCells }),
+            body: JSON.stringify({ userId: player.id, crop, cells: selectedCells, directSeed }),
           },
         );
         setMsg(
-          `Semé ${crop} ×${selectedCells.length}` +
+          `Semé ${crop} ×${selectedCells.length}${directSeed ? " en direct" : ""}` +
             (r.machine ? ` · ${r.machine.type} ${r.machine.condition.toFixed(0)}%` : ""),
         );
       } else if (tool === "FERTILIZE") {
@@ -1731,6 +1781,18 @@ export function App() {
         </div>
         <p className="muted tiny">Occupation cultures · {Math.round(avgProgress * 100)}%</p>
 
+        {rotationAlert && (
+          <div className="harvest-alert warn">
+            <strong>
+              Même culture sur {rotationAlert.cells} case
+              {rotationAlert.cells > 1 ? "s" : ""}
+            </strong>
+            <span>
+              Jusqu’à −{rotationAlert.malus} % de rendement : les maladies du sol s’installent.
+              Alternez pour retrouver l’effet précédent.
+            </span>
+          </div>
+        )}
         {harvestAlert && (
           <div className={`harvest-alert ${harvestAlert.level}`}>
             <strong>{harvestAlert.title}</strong>
@@ -1923,6 +1985,18 @@ export function App() {
                 Blé
               </button>
             )}
+            {(tool === "PLANT_WHEAT" || tool === "PLANT_MAIZE") && (
+              <button
+                type="button"
+                className={`action ${directSeed ? "on" : ""}`}
+                title={`Semer dans les chaumes, sans travail du sol préalable : ${DIRECT_SEED_COST_PER_CELL} CRD par case en plus, ${Math.round(
+                  DIRECT_SEED_YIELD_MALUS * 100,
+                )} % de rendement en moins, mais un passage économisé et un sol préservé.`}
+                onClick={() => setDirectSeed((v) => !v)}
+              >
+                Semis direct
+              </button>
+            )}
             {contractorOffer && (
               <button
                 type="button"
@@ -2041,6 +2115,7 @@ export function App() {
         onCancelListing={cancelListing}
         onDry={dryStock}
         onBuyInput={buyInput}
+        onLoadHistory={loadPriceHistory}
       />
 
       <LivestockPanel

@@ -168,6 +168,12 @@ model ParcelCell {
   residuePasses    Int        @default(0)
   /// Chaumes en place après moisson : il faut travailler le sol avant de semer
   hasStubble       Boolean    @default(false)
+  /// Semé dans les chaumes, sans travail du sol : rendement moindre
+  directSeeded     Boolean    @default(false)
+  /// Culture semée au cycle précédent, pour l'effet de rotation
+  lastCrop         CropCode?
+  /// Cycles consécutifs de cette même culture ; deux blés d'affilée se paient
+  cropStreak       Int        @default(0)
 
   @@unique([parcelId, x, y])
 }
@@ -247,6 +253,17 @@ model MarketPrice {
   price     Float
   stockTons Float    @default(1000)
   updatedAt DateTime @updatedAt
+}
+
+/// Un relevé de cours. Sans mémoire des prix, le joueur ne peut ni juger si
+/// l'offre du jour est bonne, ni décider d'attendre : il vend au hasard.
+model MarketTick {
+  id        String   @id @default(cuid())
+  commodity String
+  price     Float
+  at        DateTime @default(now())
+
+  @@index([commodity, at])
 }
 
 /// Une annonce à la criée : un lot mis en vente par un joueur, qu'un autre

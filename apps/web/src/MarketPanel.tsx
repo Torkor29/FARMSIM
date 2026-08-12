@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import { PriceSparkline } from "./PriceSparkline";
 import {
   GOOD_DEFS,
   SPOILAGE_PER_CYCLE,
@@ -53,6 +54,8 @@ type Props = {
   onCancelListing: (id: string) => void;
   onDry: (itemId: string) => void;
   onBuyInput: (commodity: TradeGood, tons: number) => void;
+  /** Cours passés de la marchandise, du plus ancien au plus récent */
+  onLoadHistory: (commodity: TradeGood) => Promise<{ at: string; price: number }[]>;
 };
 
 function moisturePenaltyOf(moisture: number): number {
@@ -77,6 +80,7 @@ export function MarketPanel({
   onCancelListing,
   onDry,
   onBuyInput,
+  onLoadHistory,
 }: Props) {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [tons, setTons] = useState(0);
@@ -98,6 +102,25 @@ export function MarketPanel({
     setTons(Math.round(item.qty * 100) / 100);
     if (price) setAsk(Math.round(price.price * 1.15));
   }, [item?.id, price?.price]);
+
+  const [history, setHistory] = useState<{ at: string; price: number }[]>([]);
+  useEffect(() => {
+    if (!open || !item) {
+      setHistory([]);
+      return;
+    }
+    let alive = true;
+    onLoadHistory(item.itemCode as TradeGood)
+      .then((pts) => {
+        if (alive) setHistory(pts);
+      })
+      .catch(() => {
+        if (alive) setHistory([]);
+      });
+    return () => {
+      alive = false;
+    };
+  }, [open, item?.itemCode, onLoadHistory]);
 
   const quotes: ChannelQuote[] = useMemo(() => {
     if (!item || !price || tons <= 0) return [];
@@ -235,6 +258,7 @@ export function MarketPanel({
                   <p className="market-course">
                     Cours du jour : <strong>{price.price.toFixed(1)} CRD/t</strong>
                   </p>
+                  <PriceSparkline points={history} />
 
                   <div className="channel-grid">
                     {quotes.map((q) => (

@@ -54,6 +54,12 @@ import {
   STUBBLE_COST_PER_CELL,
   SOIL_WORK_REFUSAL_LABELS,
   MAX_HARVESTS_BEFORE_PLOW,
+  canDirectSeed,
+  applyDirectSeed,
+  DIRECT_SEED_COST_PER_CELL,
+  DIRECT_SEED_FERTILITY_GAIN,
+  nextRotation,
+  type RotationState,
   quoteAllChannels,
   dealerPricePerTon,
   marketPricePerTon,
@@ -711,6 +717,37 @@ app.post("/world/claim", async (req, res) => {
 });
 
 app.get("/market", async (_req, res) => res.json(await prisma.marketPrice.findMany()));
+
+/**
+ * Cours passés d'une marchandise, du plus ancien au plus récent. Le joueur y
+ * lit la tendance : vendre maintenant, ou laisser courir.
+ */
+app.get("/market/history", async (req, res) => {
+  const parsed = z
+    .object({
+      commodity: z.enum(SELLABLE_GOODS as unknown as [TradeGood, ...TradeGood[]]).optional(),
+      hours: z.coerce.number().min(0.25).max(12).optional(),
+    })
+    .safeParse(req.query);
+  if (!parsed.success) {
+    res.status(400).json(parsed.error.flatten());
+    return;
+  }
+  const since = new Date(Date.now() - (parsed.data.hours ?? 3) * 60 * 60 * 1000);
+  const rows = await prisma.marketTick.findMany({
+    where: {
+      at: { gte: since },
+      ...(parsed.data.commodity ? { commodity: parsed.data.commodity } : {}),
+    },
+    orderBy: { at: "asc" },
+    select: { commodity: true, price: true, at: true },
+  });
+  const series: Record<string, { at: string; price: number }[]> = {};
+  for (const r of rows) {
+    (series[r.commodity] ??= []).push({ at: r.at.toISOString(), price: r.price });
+  }
+  res.json({ since: since.toISOString(), series });
+});
 app.get("/weather", async (_req, res) => res.json(await prisma.weatherSnapshot.findMany()));
 app.get("/sim/status", (_req, res) => {
   res.json({
@@ -776,6 +813,7 @@ async function runWorldTick() {
   await expireListings();
   await runNpcBuyers();
   await spoilPerishables();
+  await settleAllHerds();
   const zones = await prisma.zone.findMany();
   const snapshots = await prisma.weatherSnapshot.findMany();
   const weatherOut: { zoneCode: string; state: string; changed: boolean }[] = [];
@@ -832,12 +870,35 @@ async function runWorldTick() {
     });
   }
 
+  await recordMarketHistory(marketOut);
+
   lastSimTick = {
     at: new Date().toISOString(),
     weather: weatherOut,
     market: marketOut,
   };
   return lastSimTick;
+}
+
+/**
+ * Archive les cours du tick et élague les plus vieux.
+ *
+ * Sans mémoire des prix, le joueur ne peut ni juger si l'offre du jour est
+ * bonne, ni décider d'attendre : il vend au hasard. Une fenêtre glissante
+ * suffit — personne ne spécule sur le cours d'avant-hier — et elle borne la
+ * table, qui grossirait sinon de cinq lignes toutes les vingt secondes.
+ */
+const MARKET_HISTORY_MS = 12 * 60 * 60 * 1000;
+
+async function recordMarketHistory(rows: { commodity: string; price: number }[]) {
+  if (!rows.length) return;
+  const at = new Date();
+  await prisma.marketTick.createMany({
+    data: rows.map((r) => ({ commodity: r.commodity, price: r.price, at })),
+  });
+  await prisma.marketTick.deleteMany({
+    where: { at: { lt: new Date(at.getTime() - MARKET_HISTORY_MS) } },
+  });
 }
 
 const SESSION_TTL_MS = 30 * 24 * 60 * 60 * 1000;
@@ -900,6 +961,8 @@ async function buildResumeForUser(userId: string) {
         weedsControlled: cell.weedsControlled,
         fertilizedPasses: Math.min(2, cell.fertilizedPasses) as 0 | 1 | 2,
         residuePasses: cell.residuePasses,
+        directSeeded: cell.directSeeded,
+        rotation: rotationOf(cell),
         specialization: user.specialization,
       });
       if (sim.lost) cropsLost += 1;
@@ -1156,6 +1219,8 @@ app.get("/parcels/:id", async (req, res) => {
         weedsControlled: c.weedsControlled,
         fertilizedPasses: Math.min(2, c.fertilizedPasses) as 0 | 1 | 2,
         residuePasses: c.residuePasses,
+        directSeeded: c.directSeeded,
+        rotation: rotationOf(c),
         buildingYieldBonus: bonuses?.yieldBonus,
         weatherAtHarvest: weather?.state as WeatherState | undefined,
       });
@@ -1494,12 +1559,32 @@ app.post("/parcels/:id/contractor", async (req, res) => {
   });
 });
 
+/**
+ * Mémoire de rotation d'une case, telle que la simulation doit la lire.
+ *
+ * Les colonnes retiennent ce que la case a **déjà produit**, pas ce qu'elle
+ * porte : elles ne sont écrites qu'à la libération de la case, moisson ou
+ * culture perdue. Une culture en terre voit donc le précédent qui la concerne,
+ * sans avoir à défalquer son propre cycle.
+ */
+function rotationOf(cell: { lastCrop: CropCode | null; cropStreak: number }): RotationState {
+  return { lastCrop: cell.lastCrop, cropStreak: cell.cropStreak };
+}
+
+/** Le cycle qui s'achève entre dans la mémoire de la case. */
+function rotationUpdate(cell: { lastCrop: CropCode | null; cropStreak: number }, crop: CropCode) {
+  const next = nextRotation(rotationOf(cell), crop);
+  return { lastCrop: next.lastCrop, cropStreak: next.cropStreak };
+}
+
 app.post("/parcels/:id/plant", async (req, res) => {
   const body = z
     .object({
       userId: z.string(),
       crop: z.enum(["WHEAT", "MAIZE"]),
       cells: z.array(z.object({ x: z.number().int(), y: z.number().int() })).min(1),
+      /** Semer dans les chaumes, sans travail du sol préalable */
+      directSeed: z.boolean().optional(),
     })
     .safeParse(req.body);
   if (!body.success) {
@@ -1526,7 +1611,9 @@ app.post("/parcels/:id/plant", async (req, res) => {
     });
     return;
   }
-  const cost = CROP_DEFS[body.data.crop].seedCostPerCell * body.data.cells.length;
+  const directSeed = body.data.directSeed ?? false;
+  const seedCost = CROP_DEFS[body.data.crop].seedCostPerCell * body.data.cells.length;
+  const cost = seedCost + (directSeed ? DIRECT_SEED_COST_PER_CELL * body.data.cells.length : 0);
   if (user.crd < cost) {
     res.status(402).json({ error: "CRD insuffisants pour semences" });
     return;
@@ -1538,11 +1625,24 @@ app.post("/parcels/:id/plant", async (req, res) => {
       res.status(409).json({ error: `Case ${x},${y} non libre` });
       return;
     }
-    if (cell.hasStubble) {
+    if (directSeed) {
+      // Le semis direct exige des chaumes : sans eux, c'est un semis ordinaire
+      // et le joueur paierait le surcoût du semoir lourd pour rien.
+      const verdict = canDirectSeed(cell);
+      if (!verdict.ok) {
+        res.status(409).json({
+          error:
+            verdict.reason === "PLOW_REQUIRED"
+              ? `Case ${x},${y} : sol trop tassé — le semis direct ne décompacte pas, il faut labourer`
+              : `Case ${x},${y} : pas de chaumes — semez normalement`,
+        });
+        return;
+      }
+    } else if (cell.hasStubble) {
       res.status(409).json({
         error: plowRequired(cell)
           ? `Case ${x},${y} : sol épuisé, il faut labourer`
-          : `Case ${x},${y} : chaumes en place — déchaumez ou labourez d’abord`,
+          : `Case ${x},${y} : chaumes en place — déchaumez, labourez ou semez direct`,
       });
       return;
     }
@@ -1553,6 +1653,10 @@ app.post("/parcels/:id/plant", async (req, res) => {
   const wear = await prisma.$transaction(async (tx) => {
     await tx.user.update({ where: { id: user.id }, data: { crd: { decrement: cost } } });
     for (const { x, y } of body.data.cells) {
+      const cell = parcel.cells.find((c) => c.x === x && c.y === y);
+      // Le semis direct perce les chaumes : la case est semée sans qu'aucun
+      // outil ne soit passé, et le sol garde son tassement.
+      const soil = directSeed && cell ? applyDirectSeed(cell) : null;
       await tx.parcelCell.update({
         where: { parcelId_x_y: { parcelId: parcel.id, x, y } },
         data: {
@@ -1563,7 +1667,23 @@ app.post("/parcels/:id/plant", async (req, res) => {
           readyAt: new Date(now + growMs),
           fertilizedPasses: 0,
           weedsControlled: false,
+          directSeeded: directSeed,
+          ...(soil
+            ? {
+                harvestsSincePlow: soil.harvestsSincePlow,
+                residuePasses: soil.residuePasses,
+                hasStubble: soil.hasStubble,
+              }
+            : {}),
         },
+      });
+    }
+    if (directSeed) {
+      // La couverture permanente protège de l'érosion : le sol s'en trouve un
+      // peu mieux, ce qui compense en partie la perte de rendement.
+      await tx.parcel.update({
+        where: { id: parcel.id },
+        data: { fertility: Math.min(1, parcel.fertility + DIRECT_SEED_FERTILITY_GAIN) },
       });
     }
     return applyWearToMachine(tx, {
@@ -1890,6 +2010,8 @@ app.post("/parcels/:id/harvest", async (req, res) => {
         weedsControlled: cell.weedsControlled,
         fertilizedPasses: Math.min(2, cell.fertilizedPasses) as 0 | 1 | 2,
         residuePasses: cell.residuePasses,
+        directSeeded: cell.directSeeded,
+        rotation: rotationOf(cell),
         specialization: user?.specialization,
         buildingYieldBonus: bonuses.yieldBonus,
         weatherAtHarvest: weather?.state as WeatherState | undefined,
@@ -1901,7 +2023,9 @@ app.post("/parcels/:id/harvest", async (req, res) => {
         lostCells += 1;
         await tx.parcelCell.update({
           where: { id: cell.id },
-          data: { fieldStage: "SPOILED" },
+          // Une culture perdue a tout de même occupé la terre une saison :
+          // les champignons du sol s'y sont installés comme pour une réussie.
+          data: { fieldStage: "SPOILED", ...rotationUpdate(cell, cell.crop) },
         });
         continue;
       }
@@ -1929,6 +2053,7 @@ app.post("/parcels/:id/harvest", async (req, res) => {
             MAX_HARVESTS_BEFORE_PLOW,
             cell.harvestsSincePlow + 1,
           ),
+          ...rotationUpdate(cell, cell.crop),
         },
       });
     }
@@ -2155,6 +2280,27 @@ function paddocksFor(
     if (isPaddockAdjacent(footprint, other)) cells += def.w * def.h;
   }
   return { cells, capacity: paddockCapacity(cells), yardType };
+}
+
+/**
+ * Fait vivre tous les troupeaux, à chaque tick du monde.
+ *
+ * Cette avance ne tenait auparavant qu'au sondage de l'écran d'élevage : un
+ * joueur qui ne l'ouvrait pas ne voyait jamais une gestation démarrer, et son
+ * cheptel ne grandissait que par achat. Une bête vit qu'on la regarde ou non.
+ */
+async function settleAllHerds() {
+  const herds = await prisma.herd.findMany({
+    include: { building: { include: { parcel: { include: { buildings: true } } } } },
+  });
+  const now = Date.now();
+  for (const herd of herds) {
+    const barn = herd.building;
+    const paddock = paddocksFor(barn, barn.parcel.buildings);
+    const stats = buildingStatsAtLevel(barn.type as SharedBuildingType, barn.level);
+    const capacity = (barn.type === "CATTLE_BARN" ? stats.cattleSlots : stats.pigSlots) ?? 0;
+    await settleHerd(herd, paddock.capacity, now, barn.level, capacity);
+  }
 }
 
 /** Fait vieillir le bonheur d'un troupeau jusqu'à maintenant. */

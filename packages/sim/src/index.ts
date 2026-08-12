@@ -6,6 +6,10 @@ import {
   MARKET_DEPTH_FLOOR,
   residueBonus,
   ripenessAt,
+  rotationFactor,
+  DIRECT_SEED_YIELD_MALUS,
+  NO_ROTATION,
+  type RotationState,
   type CropCode,
   type TradeGood,
   type RipenessInfo,
@@ -26,6 +30,10 @@ export type CellSimInput = {
   buildingYieldBonus?: number;
   /** Déchaumages consécutifs avant ce semis — les résidus nourrissent le sol */
   residuePasses?: number;
+  /** Semé dans les chaumes, sans travail du sol préalable */
+  directSeeded?: boolean;
+  /** Ce que la case portait avant ce semis, pour l'effet de rotation */
+  rotation?: RotationState;
 };
 
 export type CellSimResult = {
@@ -143,7 +151,13 @@ export function simulateCell(input: CellSimInput): CellSimResult {
   // calculé, elle ne se compense pas par une bonne conduite de culture.
   const ripeness = ready ? ripenessAt(readyAt, def.growMs, input.now) : null;
   const overripe = ripeness?.yieldFactor ?? 1;
-  const estimatedYieldTons = def.yieldPerCell * mgmt * climate * (1 - wet) * overripe;
+  // Rotation et semis direct se décident avant la mise en terre : ce sont des
+  // coefficients sur le potentiel de la case, indépendants de la conduite de
+  // culture, d'où leur place à côté du climat plutôt que dans `managementFactor`.
+  const rotation = rotationFactor(input.rotation ?? NO_ROTATION, input.crop);
+  const tillage = input.directSeeded ? 1 - DIRECT_SEED_YIELD_MALUS : 1;
+  const estimatedYieldTons =
+    def.yieldPerCell * mgmt * climate * (1 - wet) * overripe * rotation * tillage;
   return {
     ready,
     progress,
