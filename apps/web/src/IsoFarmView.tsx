@@ -63,16 +63,16 @@ type Props = {
   onCellHover?: (cell: { x: number; y: number } | null) => void;
 };
 
-const SOIL = 0x5a7a42;
-const SOIL_DARK = 0x4a6436;
-const GROW = 0x6f9a45;
-const READY = 0xd4a84b;
-const SELECT_GLOW = 0x86efac;
-const HOVER = 0x7dd3fc;
-const PREVIEW_OK = 0x22c55e;
+const SOIL = 0x9ac06a;
+const SOIL_DARK = 0x8ab35e;
+const GROW = 0x7fbc4e;
+const READY = 0xe8c65e;
+const SELECT_GLOW = 0x5ee08a;
+const HOVER = 0x53c5f5;
+const PREVIEW_OK = 0x2fc46a;
 const PREVIEW_BAD = 0xef4444;
-const DIRT = 0x6b5238;
-const PULSE = 0xf0e6a0;
+const DIRT = 0xa4835c;
+const PULSE = 0xfff2b0;
 
 const MACHINE_LOOK: Record<
   MachineType,
@@ -233,37 +233,45 @@ export function IsoFarmView({
     const el = mount;
 
     const scene = new THREE.Scene();
+    // Ciel de plein jour : la ferme doit rester lisible par tous les temps.
     const skyFor = (w: string) => {
-      if (w === "STORM") return 0x1a2030;
-      if (w === "RAIN") return 0x243040;
-      if (w === "CLOUDY") return 0x2a3545;
-      if (w === "SNOW") return 0x3a4555;
-      return 0x1a2430;
+      if (w === "STORM") return 0x8a9bb0;
+      if (w === "RAIN") return 0xa4b8c8;
+      if (w === "CLOUDY") return 0xc2d4e0;
+      if (w === "SNOW") return 0xdce8f2;
+      return 0xbfe4f5;
     };
     scene.background = new THREE.Color(skyFor(weatherRef.current));
-    scene.fog = new THREE.Fog(skyFor(weatherRef.current), 28, 55);
+    scene.fog = new THREE.Fog(skyFor(weatherRef.current), 34, 66);
 
     const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false });
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
     renderer.shadowMap.enabled = true;
+    renderer.shadowMap.type = THREE.PCFSoftShadowMap;
     el.appendChild(renderer.domElement);
 
     const camera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0.1, 100);
     camera.position.set(18, 16, 18);
     camera.lookAt(0, 0, 0);
 
-    const ambient = new THREE.AmbientLight(0xfff4e0, 0.55);
+    const hemi = new THREE.HemisphereLight(0xffffff, 0x9ab87e, 1.25);
+    scene.add(hemi);
+    const ambient = new THREE.AmbientLight(0xfff6e4, 0.65);
     scene.add(ambient);
-    const sun = new THREE.DirectionalLight(0xffe8c8, 1.05);
-    sun.position.set(12, 22, 8);
+    const sun = new THREE.DirectionalLight(0xfff2d4, 1.55);
+    sun.position.set(14, 24, 10);
     sun.castShadow = true;
     sun.shadow.mapSize.set(1024, 1024);
+    sun.shadow.bias = -0.0006;
     scene.add(sun);
+    const bounce = new THREE.DirectionalLight(0xbfe0c8, 0.4);
+    bounce.position.set(-10, 6, -8);
+    scene.add(bounce);
 
     const hexGroup = new THREE.Group();
     hexGroup.position.y = -0.35;
-    const hexMat = new THREE.MeshLambertMaterial({ color: 0x2d4a38, flatShading: true });
-    const hexEdge = new THREE.MeshLambertMaterial({ color: 0x3a5c48, flatShading: true });
+    const hexMat = new THREE.MeshLambertMaterial({ color: 0x74ad63, flatShading: true });
+    const hexEdge = new THREE.MeshLambertMaterial({ color: 0x86bd71, flatShading: true });
     for (let q = -5; q <= 5; q++) {
       for (let r = -4; r <= 4; r++) {
         if (Math.abs(q) + Math.abs(r) + Math.abs(-q - r) > 10) continue;
@@ -296,13 +304,13 @@ export function IsoFarmView({
     world.add(previewGroup);
     let prevPreviewKey = "";
 
-    const platformMat = new THREE.MeshLambertMaterial({ color: 0x4a3828, flatShading: true });
+    const platformMat = new THREE.MeshLambertMaterial({ color: 0x8a6b4a, flatShading: true });
     const platform = new THREE.Mesh(new THREE.BoxGeometry(1, 0.45, 1), platformMat);
     platform.receiveShadow = true;
     platform.castShadow = true;
     world.add(platform);
 
-    const hedgeMat = new THREE.MeshLambertMaterial({ color: 0x3d6b3a, flatShading: true });
+    const hedgeMat = new THREE.MeshLambertMaterial({ color: 0x5c9a52, flatShading: true });
     const fenceGroup = new THREE.Group();
     world.add(fenceGroup);
 

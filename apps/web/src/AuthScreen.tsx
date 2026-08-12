@@ -1,49 +1,14 @@
-import {
-  SPECIALIZATION_LABELS,
-  type Specialization,
-} from "@farmsim/shared";
-import { ZoneMap } from "./ZoneMap";
-
-type Zone = {
-  id: string;
-  code: string;
-  name: string;
-  koppen: string;
-  mapW: number;
-  mapH: number;
-  parcels: {
-    id: string;
-    label: string;
-    mapX: number;
-    mapY: number;
-    landPrice: number;
-    farmId?: string | null;
-    gridW: number;
-    gridH: number;
-    fertility?: number;
-    zone?: { code: string; name: string; koppen: string };
-  }[];
-};
-
-type FreeParcel = Zone["parcels"][number] & {
-  zone?: { code: string; name: string; koppen: string };
-};
+import { useState } from "react";
 
 type Props = {
   authMode: "register" | "login";
   onAuthModeChange: (mode: "register" | "login") => void;
-  spe: Specialization;
-  onSpeChange: (spe: Specialization) => void;
   name: string;
   onNameChange: (name: string) => void;
   email: string;
   onEmailChange: (email: string) => void;
   accessCode: string;
   onAccessCodeChange: (code: string) => void;
-  selectedParcelId: string | null;
-  onSelectParcel: (id: string | null) => void;
-  zones: Zone[];
-  selectedFree?: FreeParcel;
   busy: boolean;
   msg: string | null;
   err: string | null;
@@ -51,152 +16,182 @@ type Props = {
   onLogin: () => void;
 };
 
+/**
+ * Première page du jeu : rien d'autre que se connecter ou créer un compte.
+ * Le choix du métier et de la terre arrive ensuite, dans l'installation guidée.
+ */
 export function AuthScreen({
   authMode,
   onAuthModeChange,
-  spe,
-  onSpeChange,
   name,
   onNameChange,
   email,
   onEmailChange,
   accessCode,
   onAccessCodeChange,
-  selectedParcelId,
-  onSelectParcel,
-  zones,
-  selectedFree,
   busy,
   msg,
   err,
   onRegister,
   onLogin,
 }: Props) {
+  const [showCode, setShowCode] = useState(false);
+  const isRegister = authMode === "register";
+  const canSubmit = isRegister
+    ? name.trim().length >= 2 && email.includes("@") && accessCode.length >= 3
+    : email.includes("@") && accessCode.length >= 1;
+
+  function submit() {
+    if (!canSubmit || busy) return;
+    if (isRegister) onRegister();
+    else onLogin();
+  }
+
   return (
-    <div className="auth-screen">
-      <header className="auth-header">
-        <img className="auth-logo" src="/logo.svg" alt="" width={120} height={120} />
-        <h1 className="auth-brand">Farming Navigateur</h1>
-        <p className="auth-lede">Élevage · Cultivation · Gestion</p>
-        <p className="auth-lede auth-lede-sub">Créez votre compte ou connectez-vous pour jouer</p>
-      </header>
+    <div className="gate">
+      <div className="gate-sky" aria-hidden="true">
+        <span className="gate-sun" />
+        <span className="gate-cloud c1" />
+        <span className="gate-cloud c2" />
+        <span className="gate-cloud c3" />
+        <span className="gate-hill h1" />
+        <span className="gate-hill h2" />
+        <span className="gate-field" />
+      </div>
 
-      {(msg || err) && (
-        <p className={`auth-alert ${err ? "error" : "ok"}`}>{err ?? msg}</p>
-      )}
+      <main className="gate-inner">
+        <img className="gate-logo" src="/logo.svg" alt="Farming Navigator" />
 
-      <div className="auth-card">
-        <div className="auth-tabs" role="tablist" aria-label="Authentification">
-          <button
-            type="button"
-            role="tab"
-            aria-selected={authMode === "register"}
-            className={`auth-tab ${authMode === "register" ? "active" : ""}`}
-            onClick={() => onAuthModeChange("register")}
+        <div className="gate-card">
+          <div className="gate-tabs" role="tablist" aria-label="Accès au jeu">
+            <button
+              type="button"
+              role="tab"
+              aria-selected={isRegister}
+              className={`gate-tab ${isRegister ? "active" : ""}`}
+              onClick={() => onAuthModeChange("register")}
+            >
+              Je débute
+            </button>
+            <button
+              type="button"
+              role="tab"
+              aria-selected={!isRegister}
+              className={`gate-tab ${!isRegister ? "active" : ""}`}
+              onClick={() => onAuthModeChange("login")}
+            >
+              J'ai un compte
+            </button>
+          </div>
+
+          <form
+            className="gate-form"
+            onSubmit={(e) => {
+              e.preventDefault();
+              submit();
+            }}
           >
-            Créer
-          </button>
-          <button
-            type="button"
-            role="tab"
-            aria-selected={authMode === "login"}
-            className={`auth-tab ${authMode === "login" ? "active" : ""}`}
-            onClick={() => onAuthModeChange("login")}
-          >
-            Connexion
-          </button>
-        </div>
+            {isRegister && (
+              <label className="field">
+                <span className="field-label">Votre nom d'exploitant</span>
+                <input
+                  value={name}
+                  onChange={(e) => onNameChange(e.target.value)}
+                  placeholder="Jean Terroir"
+                  autoComplete="nickname"
+                  maxLength={32}
+                />
+              </label>
+            )}
 
-        {authMode === "login" ? (
-          <section className="auth-panel" role="tabpanel">
-            <h2>Connexion</h2>
-            <div className="auth-fields">
+            <label className="field">
+              <span className="field-label">Adresse e-mail</span>
               <input
-                placeholder="Email"
+                type="email"
                 value={email}
                 onChange={(e) => onEmailChange(e.target.value)}
+                placeholder="vous@exemple.fr"
                 autoComplete="email"
               />
-              <input
-                placeholder="Code d'accès"
-                value={accessCode}
-                onChange={(e) => onAccessCodeChange(e.target.value)}
-                autoComplete="current-password"
-              />
-            </div>
-            <p className="auth-hint">
-              Code par défaut à l'inscription : <code>ferme</code>
-            </p>
-            <button type="button" className="auth-submit" disabled={busy} onClick={onLogin}>
-              Entrer dans ma ferme
-            </button>
-          </section>
-        ) : (
-          <div className="auth-onboard">
-            <section className="auth-panel">
-              <h2>Métier</h2>
-              <div className="spe-cards">
-                {(Object.keys(SPECIALIZATION_LABELS) as Specialization[]).map((k) => (
-                  <button
-                    key={k}
-                    type="button"
-                    className={`spe ${spe === k ? "active" : ""}`}
-                    onClick={() => onSpeChange(k)}
-                  >
-                    <strong>{SPECIALIZATION_LABELS[k]}</strong>
-                    <div className="muted">
-                      {k === "ETA"
-                        ? "Missions sans terre obligatoire."
-                        : "Parcelle de départ sur la carte."}
-                    </div>
-                  </button>
-                ))}
-              </div>
-              <div className="auth-fields" style={{ marginTop: "1rem" }}>
-                <input placeholder="Nom" value={name} onChange={(e) => onNameChange(e.target.value)} />
+            </label>
+
+            <label className="field">
+              <span className="field-label">
+                {isRegister ? "Choisissez un code d'accès" : "Code d'accès"}
+              </span>
+              <span className="field-row">
                 <input
-                  placeholder="Email"
-                  value={email}
-                  onChange={(e) => onEmailChange(e.target.value)}
-                  autoComplete="email"
-                />
-                <input
-                  placeholder="Code d'accès"
+                  type={showCode ? "text" : "password"}
                   value={accessCode}
                   onChange={(e) => onAccessCodeChange(e.target.value)}
-                  autoComplete="new-password"
+                  placeholder={isRegister ? "au moins 3 caractères" : "votre code"}
+                  autoComplete={isRegister ? "new-password" : "current-password"}
                 />
-              </div>
-            </section>
-
-            <section className="auth-panel">
-              <h2>Parcelle de départ</h2>
-              {spe === "ETA" ? <p className="muted">Optionnel pour ETA.</p> : null}
-              <div className="zone-maps">
-                {zones.map((z) => (
-                  <ZoneMap
-                    key={z.id}
-                    zone={z}
-                    selectedParcelId={selectedParcelId}
-                    onSelect={onSelectParcel}
-                  />
-                ))}
-              </div>
-              {selectedFree ? (
-                <p className="zone-select-hint muted">
-                  Sélection : <strong>{selectedFree.label}</strong> · {selectedFree.zone?.name} ·{" "}
-                  {selectedFree.landPrice} CRD
-                </p>
-              ) : (
-                <p className="zone-select-hint muted">Clique une case libre sur la carte.</p>
+                <button
+                  type="button"
+                  className="field-toggle"
+                  onClick={() => setShowCode((v) => !v)}
+                  aria-label={showCode ? "Masquer le code" : "Afficher le code"}
+                >
+                  {showCode ? "Masquer" : "Voir"}
+                </button>
+              </span>
+              {isRegister && (
+                <span className="field-help">
+                  Ce code remplace le mot de passe. Notez-le : il vous servira à revenir.
+                </span>
               )}
-              <button type="button" className="auth-submit" disabled={busy} onClick={onRegister}>
-                Créer mon compte
-              </button>
-            </section>
-          </div>
-        )}
-      </div>
+            </label>
+
+            {(msg || err) && (
+              <p className={`gate-alert ${err ? "bad" : "good"}`} role="status">
+                {err ?? msg}
+              </p>
+            )}
+
+            <button type="submit" className="btn-primary big" disabled={busy || !canSubmit}>
+              {busy
+                ? "Un instant…"
+                : isRegister
+                  ? "Créer mon exploitation"
+                  : "Reprendre ma ferme"}
+            </button>
+          </form>
+
+          <p className="gate-switch">
+            {isRegister ? (
+              <>
+                Déjà installé ?{" "}
+                <button type="button" className="link" onClick={() => onAuthModeChange("login")}>
+                  Se connecter
+                </button>
+              </>
+            ) : (
+              <>
+                Première visite ?{" "}
+                <button type="button" className="link" onClick={() => onAuthModeChange("register")}>
+                  Créer un compte
+                </button>
+              </>
+            )}
+          </p>
+        </div>
+
+        <ul className="gate-pitch">
+          <li>
+            <strong>6 continents</strong>
+            <span>Climats réels, saisons inversées</span>
+          </li>
+          <li>
+            <strong>3 métiers</strong>
+            <span>Céréalier, éleveur ou entrepreneur</span>
+          </li>
+          <li>
+            <strong>Marché vivant</strong>
+            <span>Les cours bougent en continu</span>
+          </li>
+        </ul>
+      </main>
     </div>
   );
 }

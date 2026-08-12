@@ -1,23 +1,84 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 460" role="img" aria-label="Farming Navigator">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 470" role="img" aria-label="Farming Navigator">
+  <title>Farming Navigator</title>
   <defs>
-    <linearGradient id="gold" x1="0%" y1="0%" x2="0%" y2="100%">
-      <stop offset="0%" stop-color="#f5d76e"/>
-      <stop offset="50%" stop-color="#c9a227"/>
-      <stop offset="100%" stop-color="#8b6914"/>
+    <linearGradient id="fnGoldRim" x1="0%" y1="0%" x2="30%" y2="100%">
+      <stop offset="0%" stop-color="#fdf0b8"/>
+      <stop offset="18%" stop-color="#e8c65e"/>
+      <stop offset="42%" stop-color="#c9962b"/>
+      <stop offset="58%" stop-color="#f3dc8e"/>
+      <stop offset="78%" stop-color="#b8801d"/>
+      <stop offset="100%" stop-color="#8a5c12"/>
     </linearGradient>
-    <linearGradient id="hexBg" x1="0%" y1="0%" x2="0%" y2="100%">
-      <stop offset="0%" stop-color="#1a4a3a"/>
-      <stop offset="100%" stop-color="#0d2a22"/>
+    <linearGradient id="fnGoldFace" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#fbe9a8"/>
+      <stop offset="35%" stop-color="#e2b447"/>
+      <stop offset="70%" stop-color="#c08a22"/>
+      <stop offset="100%" stop-color="#96650f"/>
     </linearGradient>
-    <filter id="glow" x="-20%" y="-20%" width="140%" height="140%">
-      <feGaussianBlur stdDeviation="4" result="b"/>
-      <feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge>
+    <linearGradient id="fnGoldText" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#fff6cf"/>
+      <stop offset="30%" stop-color="#f0cf6e"/>
+      <stop offset="62%" stop-color="#cf9a2c"/>
+      <stop offset="100%" stop-color="#9c6a14"/>
+    </linearGradient>
+    <radialGradient id="fnTeal" cx="42%" cy="30%" r="82%">
+      <stop offset="0%" stop-color="#2b8a72"/>
+      <stop offset="52%" stop-color="#1b6d5a"/>
+      <stop offset="100%" stop-color="#0e4a3d"/>
+    </radialGradient>
+    <linearGradient id="fnMap" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#f6dc96"/>
+      <stop offset="100%" stop-color="#cf9c34"/>
+    </linearGradient>
+    <linearGradient id="fnSheen" x1="0%" y1="0%" x2="60%" y2="100%">
+      <stop offset="0%" stop-color="#ffffff" stop-opacity="0.32"/>
+      <stop offset="45%" stop-color="#ffffff" stop-opacity="0.05"/>
+      <stop offset="100%" stop-color="#ffffff" stop-opacity="0"/>
+    </linearGradient>
+    <filter id="fnDrop" x="-25%" y="-20%" width="150%" height="145%">
+      <feDropShadow dx="0" dy="9" stdDeviation="11" flood-color="#000000" flood-opacity="0.34"/>
     </filter>
+    <clipPath id="fnInnerClip">
+      <path d="M112 46 H288 L368 196 L318 366 L200 430 L82 366 L32 196 Z"/>
+    </clipPath>
   </defs>
-  <polygon points="200,8 372,108 372,308 200,408 28,308 28,108" fill="url(#hexBg)" stroke="url(#gold)" stroke-width="10" filter="url(#glow)"/>
-  <ellipse cx="200" cy="155" rx="95" ry="55" fill="#2d5a48" opacity="0.9"/>
-  <path d="M120 155 Q200 95 280 155 Q200 175 120 155" fill="#c4a574" opacity="0.85"/>
-  <text x="200" y="248" text-anchor="middle" font-family="system-ui,sans-serif" font-weight="800" font-size="38" fill="url(#gold)" letter-spacing="2">FARMING</text>
-  <text x="200" y="292" text-anchor="middle" font-family="system-ui,sans-serif" font-weight="800" font-size="34" fill="url(#gold)" letter-spacing="1">NAVIGATOR</text>
-  <text x="200" y="340" text-anchor="middle" font-family="system-ui,sans-serif" font-size="14" fill="#9ec9ff" letter-spacing="3">ÉLEVAGE · CULTURE · GESTION</text>
+
+  <g filter="url(#fnDrop)">
+    <path d="M104 24 H296 L388 192 L334 376 L200 452 L66 376 L12 192 Z"
+          fill="url(#fnGoldRim)"/>
+    <path d="M112 46 H288 L368 196 L318 366 L200 430 L82 366 L32 196 Z"
+          fill="url(#fnTeal)"/>
+
+    <g clip-path="url(#fnInnerClip)" fill="url(#fnMap)">
+      <path d="M78 132 q22-20 48-16 t44 6 q14 4 8 16 t-26 14 q-18 2-24 14 t-22 10 q-18-2-24-18 t-4-26z"/>
+      <path d="M132 186 q16-6 26 4 t10 26 q-2 22-12 40 t-16 30 q-8 10-14-2 t-2-32 q2-24 0-40 t8-26z"/>
+      <path d="M196 118 q26-14 56-10 t54 8 q16 4 10 16 t-28 12 q-24 2-36 10 t-32 4 q-20-4-26-18 t2-22z"/>
+      <path d="M204 168 q22-8 40 2 t22 34 q0 26-12 44 t-30 20 q-16-2-22-22 t-4-46 q2-24 6-32z"/>
+      <path d="M264 176 q30-14 58-6 t40 22 q8 14-6 22 t-40 10 q-30 0-44-14 t-8-34z"/>
+      <path d="M292 250 q22-10 36 2 t8 30 q-6 16-24 18 t-28-14 q-6-22 8-36z"/>
+      <path d="M96 300 q20-8 30 6 t2 26 q-10 12-26 8 t-14-24 q0-12 8-16z"/>
+    </g>
+
+    <path d="M112 46 H288 L368 196 L318 366 L200 430 L82 366 L32 196 Z"
+          fill="url(#fnSheen)"/>
+
+    <path d="M30 236 H370 L352 316 H48 Z" fill="url(#fnGoldFace)"/>
+    <path d="M30 236 H370 L366 254 H34 Z" fill="#fff3c4" opacity="0.42"/>
+
+    <text x="200" y="288" text-anchor="middle"
+          font-family="Verdana, DejaVu Sans, sans-serif" font-weight="700" font-size="52"
+          fill="#0f4a3c" letter-spacing="1">FARMING</text>
+    <text x="200" y="348" text-anchor="middle"
+          font-family="Verdana, DejaVu Sans, sans-serif" font-weight="700" font-size="46"
+          fill="url(#fnGoldText)" stroke="#7d5410" stroke-width="1.2" letter-spacing="0.5">NAVIGATOR</text>
+
+    <path d="M56 360 H344 L332 392 H68 Z" fill="url(#fnGoldFace)"/>
+    <text x="200" y="383" text-anchor="middle"
+          font-family="Verdana, DejaVu Sans, sans-serif" font-weight="700" font-size="17"
+          fill="#0f4a3c" letter-spacing="1.6">ÉLEVAGE · CULTIVATION · GESTION</text>
+
+    <text x="200" y="414" text-anchor="middle"
+          font-family="Verdana, DejaVu Sans, sans-serif" font-weight="700" font-size="14"
+          fill="url(#fnGoldText)" letter-spacing="1.8">DIRIGEZ VOTRE EXPLOITATION</text>
+  </g>
 </svg>

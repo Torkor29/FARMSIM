@@ -21,6 +21,15 @@ import {
   CONTRACT_WEAR_CELLS,
   SIM_TICK_MS,
   WEATHER_LABELS,
+  WORLD,
+  CONTINENT_BY_CODE,
+  CLASS_PROFILES,
+  landPrice,
+  parcelName,
+  currentSeason,
+  seasonProgress,
+  requiredLevelForParcel,
+  type Hemisphere,
   type BuildingType as SharedBuildingType,
   type MachineType,
   type WeatherState,
@@ -185,43 +194,59 @@ async function getFarmBonuses(farmId: string) {
 
 async function ensureSeed() {
   if ((await prisma.zone.count()) === 0) {
-    const zones = [
-      {
-        code: "FR-BEAUCE",
-        name: "Beauce",
-        country: "FR",
-        koppen: "Cfb",
-        riskNote: "Gel tardif ; bonnes céréales",
-        mapW: 4,
-        mapH: 3,
-      },
-      {
-        code: "US-IOWA",
-        name: "Iowa",
-        country: "US",
-        koppen: "Dfa",
-        riskNote: "Sécheresse estivale ; maïs",
-        mapW: 4,
-        mapH: 3,
-      },
-    ];
-    for (const z of zones) {
-      const zone = await prisma.zone.create({ data: z });
-      let n = 1;
-      for (let my = 0; my < z.mapH; my++) {
-        for (let mx = 0; mx < z.mapW; mx++) {
-          const parcel = await prisma.parcel.create({
-            data: {
-              zoneId: zone.id,
-              label: `${z.name}-${n++}`,
-              mapX: mx,
-              mapY: my,
-              gridW: DEFAULT_GRID.w,
-              gridH: DEFAULT_GRID.h,
-              landPrice: 3200 + (mx + my) * 150,
-            },
-          });
-          await createParcelGrid(parcel.id, DEFAULT_GRID.w, DEFAULT_GRID.h);
+    for (const continent of WORLD) {
+      for (const region of continent.regions) {
+        const zone = await prisma.zone.create({
+          data: {
+            code: region.code,
+            name: region.name,
+            country: continent.code,
+            koppen: region.koppen,
+            riskNote: region.riskNote,
+            mapW: region.mapW,
+            mapH: region.mapH,
+            continentCode: continent.code,
+            continentName: continent.name,
+            city: region.city,
+            climateLabel: region.climateLabel,
+            hemisphere: continent.hemisphere,
+            lat: region.lat,
+            lon: region.lon,
+            priceMult: region.priceMult,
+            baseFertility: region.fertility,
+          },
+        });
+        let n = 0;
+        for (let my = 0; my < region.mapH; my++) {
+          for (let mx = 0; mx < region.mapW; mx++) {
+            // Variation locale de fertilité : le centre de la région est
+            // toujours un peu meilleur que ses marges.
+            const dx = (mx - (region.mapW - 1) / 2) / Math.max(1, region.mapW);
+            const dy = (my - (region.mapH - 1) / 2) / Math.max(1, region.mapH);
+            const edge = Math.sqrt(dx * dx + dy * dy);
+            const fertility = Math.max(
+              0.25,
+              Math.min(0.97, region.fertility * (1.08 - edge * 0.35)),
+            );
+            const parcel = await prisma.parcel.create({
+              data: {
+                zoneId: zone.id,
+                label: parcelName(continent.code, n++),
+                mapX: mx,
+                mapY: my,
+                gridW: DEFAULT_GRID.w,
+                gridH: DEFAULT_GRID.h,
+                fertility,
+                landPrice: landPrice({
+                  fertility,
+                  regionPriceMult: region.priceMult,
+                  continentPriceMult: continent.priceMult,
+                  ownedCount: 0,
+                }),
+              },
+            });
+            await createParcelGrid(parcel.id, DEFAULT_GRID.w, DEFAULT_GRID.h);
+          }
         }
       }
     }
@@ -256,13 +281,12 @@ async function ensureSeed() {
     for (const j of jobs) await prisma.npcContract.create({ data: j });
   }
 
-  if ((await prisma.weatherSnapshot.count()) === 0) {
-    await prisma.weatherSnapshot.createMany({
-      data: [
-        { zoneCode: "FR-BEAUCE", state: "CLEAR" },
-        { zoneCode: "US-IOWA", state: "CLOUDY" },
-      ],
-    });
+  const zonesForWeather = await prisma.zone.findMany({ select: { code: true } });
+  for (const z of zonesForWeather) {
+    const existing = await prisma.weatherSnapshot.findFirst({ where: { zoneCode: z.code } });
+    if (!existing) {
+      await prisma.weatherSnapshot.create({ data: { zoneCode: z.code, state: "CLEAR" } });
+    }
   }
 }
 
@@ -289,6 +313,212 @@ app.get("/zones", async (_req, res) => {
     },
   });
   res.json(zones);
+});
+
+app.get("/meta/classes", (_req, res) => res.json(CLASS_PROFILES));
+
+/**
+ * Vue globe : un continent par entrée, avec l'occupation réelle des terres.
+ * Sert à peindre la carte du monde avant même que le joueur ait un compte.
+ */
+app.get("/world", async (_req, res) => {
+  const zones = await prisma.zone.findMany({
+    include: { parcels: { select: { farmId: true } } },
+  });
+  const byContinent = new Map<string, { total: number; taken: number; regions: number }>();
+  for (const z of zones) {
+    const entry = byContinent.get(z.continentCode) ?? { total: 0, taken: 0, regions: 0 };
+    entry.total += z.parcels.length;
+    entry.taken += z.parcels.filter((p) => p.farmId).length;
+    entry.regions += 1;
+    byContinent.set(z.continentCode, entry);
+  }
+  const now = Date.now();
+  res.json({
+    seasonProgress: seasonProgress(now),
+    continents: WORLD.map((c) => {
+      const stats = byContinent.get(c.code) ?? { total: 0, taken: 0, regions: 0 };
+      return {
+        code: c.code,
+        name: c.name,
+        tagline: c.tagline,
+        description: c.description,
+        hemisphere: c.hemisphere,
+        difficulty: c.difficulty,
+        lat: c.lat,
+        lon: c.lon,
+        color: c.color,
+        accent: c.accent,
+        priceMult: c.priceMult,
+        season: currentSeason(c.hemisphere as Hemisphere, now),
+        regionCount: stats.regions,
+        parcelTotal: stats.total,
+        parcelTaken: stats.taken,
+        parcelFree: stats.total - stats.taken,
+      };
+    }),
+  });
+});
+
+/** Détail d'un continent : régions, parcelles, propriétaires. */
+app.get("/world/:continent", async (req, res) => {
+  const continent = CONTINENT_BY_CODE[req.params.continent.toUpperCase()];
+  if (!continent) {
+    res.status(404).json({ error: "Continent inconnu" });
+    return;
+  }
+  const zones = await prisma.zone.findMany({
+    where: { continentCode: continent.code },
+    include: {
+      parcels: {
+        select: {
+          id: true,
+          label: true,
+          mapX: true,
+          mapY: true,
+          gridW: true,
+          gridH: true,
+          fertility: true,
+          landPrice: true,
+          farmId: true,
+          farm: { select: { name: true, user: { select: { displayName: true } } } },
+        },
+        orderBy: [{ mapY: "asc" }, { mapX: "asc" }],
+      },
+    },
+    orderBy: { name: "asc" },
+  });
+  const weather = await prisma.weatherSnapshot.findMany();
+  const now = Date.now();
+  res.json({
+    continent: {
+      code: continent.code,
+      name: continent.name,
+      tagline: continent.tagline,
+      description: continent.description,
+      hemisphere: continent.hemisphere,
+      difficulty: continent.difficulty,
+      color: continent.color,
+      accent: continent.accent,
+      season: currentSeason(continent.hemisphere as Hemisphere, now),
+    },
+    regions: zones.map((z) => ({
+      code: z.code,
+      name: z.name,
+      city: z.city,
+      koppen: z.koppen,
+      climateLabel: z.climateLabel,
+      riskNote: z.riskNote,
+      lat: z.lat,
+      lon: z.lon,
+      mapW: z.mapW,
+      mapH: z.mapH,
+      fertility: z.baseFertility,
+      weather: weather.find((w) => w.zoneCode === z.code)?.state ?? "CLEAR",
+      parcels: z.parcels.map((p) => ({
+        id: p.id,
+        label: p.label,
+        mapX: p.mapX,
+        mapY: p.mapY,
+        gridW: p.gridW,
+        gridH: p.gridH,
+        fertility: p.fertility,
+        landPrice: p.landPrice,
+        taken: Boolean(p.farmId),
+        ownerName: p.farm?.user?.displayName ?? null,
+      })),
+    })),
+  });
+});
+
+/**
+ * Attribution de la parcelle de départ : gratuite, une seule fois, et
+ * seulement si le joueur n'a pas encore de terre.
+ */
+app.post("/world/claim", async (req, res) => {
+  const auth = await userFromAuthHeader(req);
+  if (!auth) {
+    res.status(401).json({ error: "Session invalide" });
+    return;
+  }
+  const body = z
+    .object({
+      parcelId: z.string(),
+      specialization: z.enum(["CEREALIER", "ELEVEUR", "ETA"]),
+    })
+    .safeParse(req.body);
+  if (!body.success) {
+    res.status(400).json(body.error.flatten());
+    return;
+  }
+  try {
+    await prisma.$transaction(async (tx) => {
+      const user = await tx.user.findUnique({
+        where: { id: auth.user.id },
+        include: { farm: { include: { parcels: true, machines: true } } },
+      });
+      if (!user) throw new Error("NOT_FOUND");
+      if (user.farm && user.farm.parcels.length > 0) throw new Error("ALREADY_SETTLED");
+
+      const parcel = await tx.parcel.findFirst({
+        where: { id: body.data.parcelId, farmId: null },
+      });
+      if (!parcel) throw new Error("PARCEL_UNAVAILABLE");
+
+      await tx.user.update({
+        where: { id: user.id },
+        data: { specialization: body.data.specialization },
+      });
+
+      let farm = user.farm;
+      if (!farm) {
+        farm = await tx.farm.create({
+          data: { userId: user.id, name: `Ferme ${user.displayName}` },
+          include: { parcels: true, machines: true },
+        });
+      }
+
+      if (farm.machines.length === 0) {
+        const types =
+          body.data.specialization === "ETA"
+            ? [{ type: "TRACTOR" as const, tier: 1 }, { type: "HARVESTER" as const, tier: 1 }]
+            : [{ type: "TRACTOR" as const, tier: 1 }];
+        for (const m of types) {
+          await tx.machine.create({ data: { ...m, farmId: farm.id } });
+        }
+      }
+
+      await tx.parcel.update({ where: { id: parcel.id }, data: { farmId: farm.id } });
+
+      const machine = await tx.machine.findFirst({ where: { farmId: farm.id } });
+      if (machine) {
+        await tx.machine.update({
+          where: { id: machine.id },
+          data: { parkedParcelId: parcel.id },
+        });
+        await tx.parcelCell.update({
+          where: {
+            parcelId_x_y: { parcelId: parcel.id, x: 0, y: Math.max(0, parcel.gridH - 1) },
+          },
+          data: { kind: "VEHICLE", machineId: machine.id },
+        });
+      }
+    });
+    const player = await playerPayload(auth.user.id);
+    res.status(201).json({ player });
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : "ERROR";
+    if (msg === "PARCEL_UNAVAILABLE") {
+      res.status(409).json({ error: "Cette parcelle vient d'être prise" });
+      return;
+    }
+    if (msg === "ALREADY_SETTLED") {
+      res.status(409).json({ error: "Vous possédez déjà une exploitation" });
+      return;
+    }
+    console.error(e);
+    res.status(500).json({ error: "Erreur serveur" });
+  }
 });
 
 app.get("/market", async (_req, res) => res.json(await prisma.marketPrice.findMany()));
@@ -492,7 +722,8 @@ async function playerPayload(userId: string) {
 const registerSchema = z.object({
   email: z.string().email(),
   displayName: z.string().min(2).max(32),
-  specialization: z.enum(["CEREALIER", "ELEVEUR", "ETA"]),
+  /** Choisie plus tard, pendant l'installation guidée */
+  specialization: z.enum(["CEREALIER", "ELEVEUR", "ETA"]).optional(),
   parcelId: z.string().optional(),
   accessCode: z.string().min(3).max(32).optional(),
 });
@@ -504,17 +735,13 @@ app.post("/auth/register", async (req, res) => {
     return;
   }
   const { email, displayName, specialization, parcelId, accessCode } = parsed.data;
-  if (specialization !== "ETA" && !parcelId) {
-    res.status(400).json({ error: "parcelId requis pour céréalier/éleveur" });
-    return;
-  }
   try {
     const user = await prisma.$transaction(async (tx) => {
       const u = await tx.user.create({
         data: {
           email,
           displayName,
-          specialization,
+          specialization: specialization ?? "CEREALIER",
           accessCode: accessCode ?? "ferme",
           lastSeenAt: new Date(),
         },
@@ -530,7 +757,9 @@ app.post("/auth/register", async (req, res) => {
                     { type: "TRACTOR", tier: 1 },
                     { type: "HARVESTER", tier: 1 },
                   ]
-                : [{ type: "TRACTOR", tier: 1 }],
+                : specialization
+                  ? [{ type: "TRACTOR", tier: 1 }]
+                  : [],
           },
         },
       });
@@ -701,7 +930,10 @@ app.post("/parcels/:id/buy", async (req, res) => {
     res.status(400).json(body.error.flatten());
     return;
   }
-  const target = await prisma.parcel.findUnique({ where: { id: req.params.id } });
+  const target = await prisma.parcel.findUnique({
+    where: { id: req.params.id },
+    include: { zone: true },
+  });
   if (!target || target.farmId) {
     res.status(409).json({ error: "Parcelle indisponible" });
     return;
@@ -714,40 +946,52 @@ app.post("/parcels/:id/buy", async (req, res) => {
     res.status(404).json({ error: "Ferme introuvable" });
     return;
   }
-  if (user.crd < target.landPrice) {
-    res.status(402).json({ error: "CRD insuffisants" });
+
+  const owned = user.farm.parcels;
+  const requiredLevel = requiredLevelForParcel(owned.length + 1);
+  if (user.level < requiredLevel) {
+    res.status(403).json({
+      error: `Niveau ${requiredLevel} requis pour une ${owned.length + 1}ᵉ parcelle`,
+    });
     return;
   }
 
-  const owned = user.farm.parcels;
-  if (owned.length > 0) {
-    const adjacent = owned.some(
-      (p) =>
-        p.zoneId === target.zoneId &&
-        ((Math.abs(p.mapX - target.mapX) === 1 && p.mapY === target.mapY) ||
-          (Math.abs(p.mapY - target.mapY) === 1 && p.mapX === target.mapX)),
-    );
-    if (!adjacent) {
-      res.status(403).json({ error: "Parcelle non adjacente à votre exploitation" });
-      return;
-    }
+  const adjacentOwned = owned.filter(
+    (p) =>
+      p.zoneId === target.zoneId &&
+      ((Math.abs(p.mapX - target.mapX) === 1 && p.mapY === target.mapY) ||
+        (Math.abs(p.mapY - target.mapY) === 1 && p.mapX === target.mapX)),
+  ).length;
+
+  const continent = CONTINENT_BY_CODE[target.zone.continentCode];
+  const price = landPrice({
+    fertility: target.fertility,
+    regionPriceMult: target.zone.priceMult,
+    continentPriceMult: continent?.priceMult ?? 1,
+    ownedCount: owned.length,
+    adjacentOwned,
+  });
+
+  if (user.crd < price) {
+    res.status(402).json({ error: `CRD insuffisants — ${price} requis` });
+    return;
   }
 
   const updated = await prisma.$transaction(async (tx) => {
     await tx.user.update({
       where: { id: user.id },
-      data: { crd: { decrement: target.landPrice } },
+      data: { crd: { decrement: price } },
     });
     await tx.parcel.update({
       where: { id: target.id },
-      data: { farmId: user.farm!.id },
+      data: { farmId: user.farm!.id, landPrice: price },
     });
     return tx.user.findUnique({
       where: { id: user.id },
       include: { farm: { include: farmInclude() } },
     });
   });
-  res.json(updated);
+  res.json({ ...updated, paid: price, adjacentOwned });
 });
 
 app.post("/parcels/:id/plant", async (req, res) => {

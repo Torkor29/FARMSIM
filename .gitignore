@@ -11,3 +11,6 @@ coverage
 *.db-journal
 *.tsbuildinfo
 .DS_Store
+
+# Cache Vite local
+apps/web/.vite/

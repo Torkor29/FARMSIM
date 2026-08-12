@@ -1,10 +1,12 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   SPECIALIZATION_LABELS,
   BUILDING_DEFS,
   MACHINE_DEFS,
   PARCEL_HECTARES,
+  SEASON_LABELS,
   WEATHER_LABELS,
+  currentSeason,
   footprintCells,
   type Specialization,
   type CropCode,
@@ -12,8 +14,14 @@ import {
   type MachineType,
   type WeatherState,
 } from "@farmsim/shared";
+import { ArrivalTransition } from "./ArrivalTransition";
 import { AuthScreen } from "./AuthScreen";
 import { IsoFarmView, type PreviewBuilding } from "./IsoFarmView";
+import {
+  Onboarding,
+  type ContinentDetail,
+  type WorldContinent,
+} from "./Onboarding";
 import { SplashScreen } from "./SplashScreen";
 import { TutorialOverlay, TUTORIAL_KEY } from "./TutorialOverlay";
 import { ZoneMap } from "./ZoneMap";
@@ -61,9 +69,20 @@ type Parcel = {
   gridW: number;
   gridH: number;
   fertility?: number;
-  zone?: { code: string; name: string; koppen: string };
+  zone?: ZoneRef;
   cells?: Cell[];
   buildings?: Building[];
+};
+
+type ZoneRef = {
+  code: string;
+  name: string;
+  koppen: string;
+  continentCode?: string;
+  continentName?: string;
+  city?: string;
+  climateLabel?: string;
+  hemisphere?: string;
 };
 
 type Zone = {
@@ -200,6 +219,11 @@ export function App() {
   } | null>(null);
   const [hoverCell, setHoverCell] = useState<{ x: number; y: number } | null>(null);
   const [toastTick, setToastTick] = useState(0);
+  const [worldContinents, setWorldContinents] = useState<WorldContinent[]>([]);
+  const [continentDetail, setContinentDetail] = useState<ContinentDetail | null>(null);
+  const [detailLoading, setDetailLoading] = useState(false);
+  const [showArrival, setShowArrival] = useState(false);
+  const arrivalShownRef = useRef(false);
 
   function applyAuth(payload: { token: string; player: Player; resume?: SessionResume | null }) {
     localStorage.setItem(TOKEN_KEY, payload.token);
@@ -232,6 +256,23 @@ export function App() {
     setWeather(w);
   }, []);
 
+  const loadWorld = useCallback(async () => {
+    const w = await api<{ continents: WorldContinent[] }>("/world");
+    setWorldContinents(w.continents);
+  }, []);
+
+  const loadContinent = useCallback(async (code: string) => {
+    setDetailLoading(true);
+    try {
+      const d = await api<ContinentDetail>(`/world/${code}`);
+      setContinentDetail(d);
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e));
+    } finally {
+      setDetailLoading(false);
+    }
+  }, []);
+
   const refreshPlayer = useCallback(async () => {
     const me = await api<{ player: Player }>("/auth/me");
     setPlayer(me.player);
@@ -248,11 +289,12 @@ export function App() {
 
   useEffect(() => {
     refreshMeta().catch((e) => setErr(String(e.message ?? e)));
+    loadWorld().catch(() => undefined);
     const t = setInterval(() => {
       refreshMeta().catch(() => undefined);
     }, 10000);
     return () => clearInterval(t);
-  }, [refreshMeta]);
+  }, [refreshMeta, loadWorld]);
 
   useEffect(() => {
     setPrevPrices((prev) => {
@@ -314,6 +356,15 @@ export function App() {
     };
   }, [player]);
 
+  // Le vol jusqu'à la ferme ne se joue qu'une fois par session ouverte.
+  useEffect(() => {
+    if (!player || arrivalShownRef.current) return;
+    if (!player.farm?.parcels?.length) return;
+    if (!worldContinents.length) return;
+    arrivalShownRef.current = true;
+    setShowArrival(true);
+  }, [player, worldContinents.length]);
+
   useEffect(() => {
     if (!activeParcelId) return;
     loadParcel(activeParcelId).catch((e) => setErr(String(e.message ?? e)));
@@ -367,8 +418,15 @@ export function App() {
       };
     });
   }, [parcel?.cells, player?.farm?.machines]);
-  const zoneName = parcel?.zone?.name ?? ownedParcels[0]?.zone?.name ?? "France";
+  const zoneName = parcel?.zone?.name ?? ownedParcels[0]?.zone?.name ?? "Votre région";
   const koppen = parcel?.zone?.koppen ?? "Cfb";
+  const homeCity = parcel?.zone?.city ?? ownedParcels[0]?.zone?.city ?? "";
+  const climateLabel = parcel?.zone?.climateLabel ?? "";
+  const continentName = parcel?.zone?.continentName ?? "";
+  const homeContinentCode =
+    parcel?.zone?.continentCode ?? ownedParcels[0]?.zone?.continentCode ?? null;
+  const hemisphere = (parcel?.zone?.hemisphere as "N" | "S" | undefined) ?? "N";
+  const season = currentSeason(hemisphere);
   const zoneCode =
     parcel?.zone?.code ??
     ownedParcels[0]?.zone?.code ??
@@ -469,29 +527,51 @@ export function App() {
     });
   }
 
+  /** Crée le compte seul : le métier et la terre se choisissent juste après. */
   async function register() {
     setBusy(true);
     setErr(null);
     try {
-      const body: Record<string, string> = {
-        email: email || `${(name || "fermier").toLowerCase().replace(/\s+/g, "")}@demo.farmsim`,
-        displayName: name || "Fermier",
-        specialization: spe,
-        accessCode: accessCode || "ferme",
-      };
-      if (spe !== "ETA") {
-        if (!selectedParcelId) throw new Error("Choisis une parcelle");
-        body.parcelId = selectedParcelId;
-      } else if (selectedParcelId) {
-        body.parcelId = selectedParcelId;
-      }
       const r = await api<{ token: string; player: Player; resume?: SessionResume }>(
         "/auth/register",
-        { method: "POST", body: JSON.stringify(body) },
+        {
+          method: "POST",
+          body: JSON.stringify({
+            email,
+            displayName: name.trim(),
+            accessCode: accessCode || "ferme",
+          }),
+        },
       );
+      arrivalShownRef.current = true;
       applyAuth(r);
-      await refreshMeta();
-      setMsg(`Exploitation créée · code « ${accessCode || "ferme"} »`);
+      await Promise.all([refreshMeta(), loadWorld()]);
+      setMsg(null);
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  /** Fin de l'installation guidée : métier + parcelle offerte. */
+  async function claimStarterParcel(opts: {
+    specialization: Specialization;
+    parcelId: string;
+  }) {
+    setBusy(true);
+    setErr(null);
+    try {
+      const r = await api<{ player: Player }>("/world/claim", {
+        method: "POST",
+        body: JSON.stringify(opts),
+      });
+      setSpe(opts.specialization);
+      setPlayer(r.player);
+      if (r.player.farm?.parcels[0]) setActiveParcelId(r.player.farm.parcels[0].id);
+      await Promise.all([refreshMeta(), loadWorld()]);
+      arrivalShownRef.current = false;
+      setMsg("Bienvenue chez vous !");
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e));
     } finally {
@@ -511,8 +591,9 @@ export function App() {
           body: JSON.stringify({ email, accessCode: accessCode || "ferme" }),
         },
       );
+      arrivalShownRef.current = false;
       applyAuth(r);
-      await refreshMeta();
+      await Promise.all([refreshMeta(), loadWorld()]);
       if (!r.resume || r.resume.awayMs < 30_000) setMsg("Connexion OK");
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e));
@@ -839,23 +920,45 @@ export function App() {
       <AuthScreen
         authMode={authMode}
         onAuthModeChange={setAuthMode}
-        spe={spe}
-        onSpeChange={setSpe}
         name={name}
         onNameChange={setName}
         email={email}
         onEmailChange={setEmail}
         accessCode={accessCode}
         onAccessCodeChange={setAccessCode}
-        selectedParcelId={selectedParcelId}
-        onSelectParcel={setSelectedParcelId}
-        zones={zones}
-        selectedFree={selectedFree}
         busy={busy}
         msg={msg}
         err={err}
         onRegister={register}
         onLogin={login}
+      />
+    );
+  }
+
+  // Pas encore de terre : on déroule l'installation guidée avant le jeu.
+  if (!ownedParcels.length) {
+    return (
+      <Onboarding
+        playerName={player.displayName}
+        continents={worldContinents}
+        detail={continentDetail}
+        detailLoading={detailLoading}
+        onLoadContinent={loadContinent}
+        onConfirm={claimStarterParcel}
+        busy={busy}
+        err={err}
+      />
+    );
+  }
+
+  if (showArrival) {
+    return (
+      <ArrivalTransition
+        continents={worldContinents}
+        continentCode={homeContinentCode}
+        regionName={zoneName}
+        cityName={homeCity}
+        onDone={() => setShowArrival(false)}
       />
     );
   }
@@ -964,23 +1067,31 @@ export function App() {
       </div>
 
       <aside className="glass geo-panel">
-        <h3>Contexte géographique</h3>
+        <h3>{homeCity || zoneName}</h3>
         <dl>
           <div>
-            <dt>Lieu</dt>
+            <dt>Région</dt>
             <dd>{zoneName}</dd>
           </div>
           <div>
+            <dt>Continent</dt>
+            <dd>{continentName || "—"}</dd>
+          </div>
+          <div>
             <dt>Climat</dt>
-            <dd>{koppen}</dd>
+            <dd title={koppen}>{climateLabel || koppen}</dd>
+          </div>
+          <div>
+            <dt>Saison</dt>
+            <dd>{SEASON_LABELS[season]}</dd>
           </div>
           <div>
             <dt>Météo</dt>
             <dd className="wx">{weatherLabel}</dd>
           </div>
           <div>
-            <dt>Aptitude blé</dt>
-            <dd>{((parcel?.fertility ?? 0.7) + 0.2).toFixed(2)}</dd>
+            <dt>Fertilité</dt>
+            <dd>{Math.round((parcel?.fertility ?? 0.7) * 100)} %</dd>
           </div>
           <div>
             <dt>Parcelle</dt>

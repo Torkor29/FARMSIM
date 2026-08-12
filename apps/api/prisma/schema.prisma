@@ -97,15 +97,24 @@ model Farm {
 }
 
 model Zone {
-  id       String   @id @default(cuid())
-  code     String   @unique
-  name     String
-  country  String
-  koppen   String
-  riskNote String
-  mapW     Int      @default(4)
-  mapH     Int      @default(3)
-  parcels  Parcel[]
+  id            String   @id @default(cuid())
+  code          String   @unique
+  name          String
+  country       String
+  koppen        String
+  riskNote      String
+  mapW          Int      @default(4)
+  mapH          Int      @default(3)
+  continentCode String   @default("AUR")
+  continentName String   @default("Auralie")
+  city          String   @default("")
+  climateLabel  String   @default("")
+  hemisphere    String   @default("N")
+  lat           Float    @default(0)
+  lon           Float    @default(0)
+  priceMult     Float    @default(1)
+  baseFertility Float    @default(0.7)
+  parcels       Parcel[]
 }
 
 model Parcel {
