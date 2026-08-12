@@ -1,6 +1,7 @@
 import { useEffect, useRef } from "react";
 import * as THREE from "three";
 import { disposeRenderer, disposeThreeScene, markShared } from "./three-cleanup";
+import { initialQuality, makeFrameGovernor, type RenderQuality } from "./render-quality";
 
 export type GlobeContinent = {
   code: string;
@@ -555,8 +556,15 @@ export function GlobeView({
     const camera = new THREE.PerspectiveCamera(38, width / height, 0.1, 100);
     camera.position.set(0, 0, DIST_WORLD);
 
-    const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
-    renderer.setPixelRatio(Math.min(1.75, window.devicePixelRatio));
+    let quality = initialQuality();
+    const renderer = new THREE.WebGLRenderer({ antialias: quality.antialias, alpha: true });
+    renderer.setPixelRatio(Math.min(1.75, quality.pixelRatio));
+    let lastFrame = 0;
+    const applyQuality = (next: RenderQuality) => {
+      quality = next;
+      renderer.setPixelRatio(Math.min(1.75, next.pixelRatio));
+    };
+    const governor = makeFrameGovernor(applyQuality);
     renderer.setSize(width, height, false);
     renderer.outputColorSpace = THREE.SRGBColorSpace;
     host.appendChild(renderer.domElement);
@@ -1068,6 +1076,16 @@ export function GlobeView({
 
     const tick = () => {
       const now = performance.now();
+      // Le globe tourne en permanence : sur une machine qui rasterise au
+      // processeur, mieux vaut une rotation à trente images qu'un thread
+      // principal saturé. Onglet caché, on ne peint pas du tout.
+      if (document.hidden || (quality.maxFps && now - lastFrame < 1000 / quality.maxFps - 1)) {
+        raf = requestAnimationFrame(tick);
+        return;
+      }
+      const frameDelta = lastFrame ? now - lastFrame : 16;
+      lastFrame = now;
+      governor(frameDelta);
       const dt = Math.min(0.05, (now - prev) / 1000);
       prev = now;
       const { selected: sel, focus: foc } = stateRef.current;

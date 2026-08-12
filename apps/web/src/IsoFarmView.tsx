@@ -9,6 +9,7 @@ import {
   type RipenessStage,
 } from "@farmsim/shared";
 import { disposeRenderer, disposeThreeScene, markShared } from "./three-cleanup";
+import { initialQuality, makeFrameGovernor, type RenderQuality } from "./render-quality";
 
 export type IsoCell = {
   x: number;
@@ -356,9 +357,10 @@ export function IsoFarmView({
     scene.background = new THREE.Color(skyFor(weatherRef.current));
     scene.fog = new THREE.Fog(skyFor(weatherRef.current), 34, 66);
 
-    const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false });
-    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
-    renderer.shadowMap.enabled = true;
+    let quality = initialQuality();
+    const renderer = new THREE.WebGLRenderer({ antialias: quality.antialias, alpha: false });
+    renderer.setPixelRatio(quality.pixelRatio);
+    renderer.shadowMap.enabled = quality.shadows;
     // PCFSoftShadowMap est déprécié depuis r185 : le renderer le remplace de
     // toute façon par PCFShadowMap en émettant un avertissement.
     renderer.shadowMap.type = THREE.PCFShadowMap;
@@ -374,7 +376,7 @@ export function IsoFarmView({
     scene.add(ambient);
     const sun = new THREE.DirectionalLight(0xfff2d4, 1.55);
     sun.position.set(14, 24, 10);
-    sun.castShadow = true;
+    sun.castShadow = quality.shadows;
     sun.shadow.mapSize.set(1024, 1024);
     sun.shadow.bias = -0.0006;
     scene.add(sun);
@@ -993,8 +995,37 @@ export function IsoFarmView({
       previewGroup.add(shell);
     }
 
+    /**
+     * Repasse la scène en réglage sobre sans la reconstruire. Couper la carte
+     * d'ombres change le code des shaders : il faut demander leur
+     * recompilation, ce qui provoque un à-coup unique, largement remboursé dès
+     * l'image suivante.
+     */
+    const applyQuality = (next: RenderQuality) => {
+      quality = next;
+      renderer.setPixelRatio(next.pixelRatio);
+      renderer.shadowMap.enabled = next.shadows;
+      sun.castShadow = next.shadows;
+      scene.traverse((o) => {
+        const mats = (o as Partial<THREE.Mesh>).material;
+        if (Array.isArray(mats)) for (const m of mats) m.needsUpdate = true;
+        else if (mats) mats.needsUpdate = true;
+      });
+    };
+    const governor = makeFrameGovernor(applyQuality);
+    let lastFrame = 0;
+
     function tick() {
       raf = requestAnimationFrame(tick);
+      // Un onglet caché continue de recevoir des images sur certains
+      // navigateurs : rien ne sert de peindre une scène que personne ne voit.
+      if (document.hidden) return;
+      const now = performance.now();
+      const delta = lastFrame ? now - lastFrame : 16;
+      if (quality.maxFps && delta < 1000 / quality.maxFps - 1) return;
+      lastFrame = now;
+      governor(delta);
+
       timer.update();
       const t = timer.getElapsed();
       const sky = skyFor(weatherRef.current);

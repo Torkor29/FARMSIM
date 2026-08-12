@@ -2,6 +2,7 @@ import { useEffect, useRef } from "react";
 import * as THREE from "three";
 import { CLASS_PROFILES, type ClassProfile } from "@farmsim/shared";
 import { disposeRenderer, disposeThreeScene } from "./three-cleanup";
+import { initialQuality } from "./render-quality";
 
 type Props = {
   code: ClassProfile["code"];
@@ -168,8 +169,12 @@ export function LowPolyCharacter({ code, active = false, height = 190 }: Props) 
     camera.position.set(0, 1.35, 4.4);
     camera.lookAt(0, 0.85, 0);
 
-    const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
-    renderer.setPixelRatio(Math.min(2, window.devicePixelRatio));
+    // Trois de ces portraits tournent côte à côte sur l'écran des métiers,
+    // chacun avec sa boucle de rendu : c'est là qu'un réglage sobre se voit le
+    // plus sur une machine sans carte graphique.
+    const quality = initialQuality();
+    const renderer = new THREE.WebGLRenderer({ antialias: quality.antialias, alpha: true });
+    renderer.setPixelRatio(quality.pixelRatio);
     renderer.setSize(width, height, false);
     host.appendChild(renderer.domElement);
 
@@ -192,9 +197,16 @@ export function LowPolyCharacter({ code, active = false, height = 190 }: Props) 
     scene.add(character);
 
     let raf = 0;
+    let lastFrame = 0;
     const start = performance.now();
     const tick = () => {
-      const t = (performance.now() - start) / 1000;
+      const now = performance.now();
+      if (document.hidden || (quality.maxFps && now - lastFrame < 1000 / quality.maxFps - 1)) {
+        raf = requestAnimationFrame(tick);
+        return;
+      }
+      lastFrame = now;
+      const t = (now - start) / 1000;
       const speed = activeRef.current ? 0.75 : 0.28;
       character.rotation.y = t * speed;
       character.position.y = activeRef.current ? Math.sin(t * 2.2) * 0.035 : 0;
