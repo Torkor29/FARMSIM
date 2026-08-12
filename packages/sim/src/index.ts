@@ -2,7 +2,9 @@ import {
   CROP_DEFS,
   DRYING,
   MARKET_BOUNDS,
+  ripenessAt,
   type CropCode,
+  type RipenessInfo,
   type Specialization,
   type WeatherState,
 } from "@farmsim/shared";
@@ -24,8 +26,13 @@ export type CellSimResult = {
   ready: boolean;
   progress: number;
   readyAt: number;
+  /** Rendement attendu, décote de sur-maturité déjà appliquée */
   estimatedYieldTons: number;
   moisturePenalty: number;
+  /** État de la culture depuis sa maturité — `null` tant qu'elle pousse */
+  ripeness: RipenessInfo | null;
+  /** Vrai quand la culture est perdue : plus rien à récolter, il faut labourer */
+  lost: boolean;
 };
 
 function managementFactor(input: CellSimInput): number {
@@ -123,13 +130,19 @@ export function simulateCell(input: CellSimInput): CellSimResult {
   const mgmt = managementFactor(input);
   const wet = moisturePenalty(input.weatherAtHarvest);
   const climate = weatherYieldFactor(input.weatherAtHarvest);
-  const estimatedYieldTons = def.yieldPerCell * mgmt * climate * (1 - wet);
+  // La sur-maturité s'applique en dernier : elle ronge un rendement déjà
+  // calculé, elle ne se compense pas par une bonne conduite de culture.
+  const ripeness = ready ? ripenessAt(readyAt, def.growMs, input.now) : null;
+  const overripe = ripeness?.yieldFactor ?? 1;
+  const estimatedYieldTons = def.yieldPerCell * mgmt * climate * (1 - wet) * overripe;
   return {
     ready,
     progress,
     readyAt,
     estimatedYieldTons: Math.round(estimatedYieldTons * 1000) / 1000,
     moisturePenalty: wet,
+    ripeness,
+    lost: ripeness?.needsPlowing ?? false,
   };
 }
 

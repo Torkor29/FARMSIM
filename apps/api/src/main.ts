@@ -42,6 +42,9 @@ import {
   MAX_BUILDING_LEVEL,
   contractorQuote,
   CONTRACTOR_YIELD_MALUS,
+  ripenessAt,
+  PLOW_COST_PER_CELL,
+  LOST_CROP_FERTILITY_MALUS,
   machineResaleValue,
   buildingResaleValue,
   isPaddockAdjacent,
@@ -1188,7 +1191,7 @@ app.post("/parcels/:id/contractor", async (req, res) => {
   const body = z
     .object({
       userId: z.string(),
-      work: z.enum(["PLANT", "FERTILIZE", "HARVEST"]),
+      work: z.enum(["PLANT", "FERTILIZE", "HARVEST", "PLOW"]),
       crop: z.enum(["WHEAT", "MAIZE"]).optional(),
       cells: z.array(z.object({ x: z.number().int(), y: z.number().int() })).min(1),
     })
@@ -1258,6 +1261,44 @@ app.post("/parcels/:id/contractor", async (req, res) => {
       }
     });
     res.json({ work, cells: cells.length, cost: total, service, seeds });
+    return;
+  }
+
+  if (work === "PLOW") {
+    const lost = cells
+      .map(({ x, y }) => parcel.cells.find((c) => c.x === x && c.y === y))
+      .filter((c): c is NonNullable<typeof c> => {
+        if (!c || c.kind !== "CROP" || !c.crop || !c.plantedAt) return false;
+        const grow = CROP_DEFS[c.crop].growMs;
+        return ripenessAt(c.plantedAt.getTime() + grow, grow, now).needsPlowing;
+      });
+    if (!lost.length) {
+      res.status(409).json({ error: "Aucune culture perdue à labourer ici" });
+      return;
+    }
+    const malus = LOST_CROP_FERTILITY_MALUS * lost.length;
+    await prisma.$transaction(async (tx) => {
+      await tx.user.update({ where: { id: user.id }, data: { crd: { decrement: total } } });
+      for (const cell of lost) {
+        await tx.parcelCell.update({
+          where: { id: cell.id },
+          data: {
+            kind: "EMPTY",
+            crop: null,
+            fieldStage: "PREPARED",
+            plantedAt: null,
+            readyAt: null,
+            fertilizedPasses: 0,
+            weedsControlled: false,
+          },
+        });
+      }
+      await tx.parcel.update({
+        where: { id: parcel.id },
+        data: { fertility: Math.max(0.2, parcel.fertility - malus) },
+      });
+    });
+    res.json({ work, cells: lost.length, cost: total, service, seeds: 0 });
     return;
   }
 
@@ -1497,6 +1538,98 @@ app.post("/parcels/:id/fertilize", async (req, res) => {
   res.json({ ok: true, fertilized, machine: { id: picked.machine.id, type: picked.machine.type, ...wear } });
 });
 
+/**
+ * Labour : la seule façon de libérer une case dont la culture est perdue.
+ * Le sol s'appauvrit un peu au passage — laisser pourrir une récolte se paie
+ * au-delà de la récolte elle-même.
+ */
+app.post("/parcels/:id/plow", async (req, res) => {
+  const body = z
+    .object({
+      userId: z.string(),
+      cells: z.array(z.object({ x: z.number().int(), y: z.number().int() })).optional(),
+    })
+    .safeParse(req.body);
+  if (!body.success) {
+    res.status(400).json(body.error.flatten());
+    return;
+  }
+  const parcel = await prisma.parcel.findUnique({
+    where: { id: req.params.id },
+    include: { farm: { include: { machines: true } }, cells: true },
+  });
+  if (!parcel?.farm || parcel.farm.userId !== body.data.userId) {
+    res.status(403).json({ error: "Parcelle non possédée" });
+    return;
+  }
+  const picked = pickMachineForWork(parcel.farm.machines, "PLOW");
+  if (!picked) {
+    res.status(409).json({
+      error: "Tracteur requis pour labourer — ou faites venir une ETA.",
+    });
+    return;
+  }
+
+  const now = Date.now();
+  const candidates = (
+    body.data.cells
+      ? parcel.cells.filter((c) => body.data.cells!.some((t) => t.x === c.x && t.y === c.y))
+      : parcel.cells
+  ).filter((cell) => {
+    if (cell.kind !== "CROP" || !cell.crop || !cell.plantedAt) return false;
+    const readyAt = cell.plantedAt.getTime() + CROP_DEFS[cell.crop].growMs;
+    return ripenessAt(readyAt, CROP_DEFS[cell.crop].growMs, now).needsPlowing;
+  });
+
+  if (!candidates.length) {
+    res.status(409).json({ error: "Aucune culture perdue à labourer ici" });
+    return;
+  }
+
+  const cost = PLOW_COST_PER_CELL * candidates.length;
+  const user = await prisma.user.findUnique({ where: { id: body.data.userId } });
+  if (!user || user.crd < cost) {
+    res.status(402).json({ error: `CRD insuffisants — ${cost} requis` });
+    return;
+  }
+
+  const malus = LOST_CROP_FERTILITY_MALUS * candidates.length;
+  const wear = await prisma.$transaction(async (tx) => {
+    await tx.user.update({ where: { id: user.id }, data: { crd: { decrement: cost } } });
+    for (const cell of candidates) {
+      await tx.parcelCell.update({
+        where: { id: cell.id },
+        data: {
+          kind: "EMPTY",
+          crop: null,
+          fieldStage: "PREPARED",
+          plantedAt: null,
+          readyAt: null,
+          fertilizedPasses: 0,
+          weedsControlled: false,
+        },
+      });
+    }
+    await tx.parcel.update({
+      where: { id: parcel.id },
+      data: { fertility: Math.max(0.2, parcel.fertility - malus) },
+    });
+    return applyWearToMachine(tx, {
+      machine: picked.machine,
+      def: picked.def,
+      cells: candidates.length,
+      specialization: user.specialization,
+    });
+  });
+
+  res.json({
+    plowed: candidates.length,
+    cost,
+    fertilityLost: Math.round(malus * 1000) / 1000,
+    machine: { id: picked.machine.id, type: picked.machine.type, ...wear },
+  });
+});
+
 app.post("/parcels/:id/harvest", async (req, res) => {
   const body = z
     .object({
@@ -1532,6 +1665,7 @@ app.post("/parcels/:id/harvest", async (req, res) => {
 
   const harvested: { crop: CropCode; tons: number; moisturePenalty: number; moisture: number }[] =
     [];
+  let lostCells = 0;
   const now = Date.now();
 
   const wear = await prisma.$transaction(async (tx) => {
@@ -1549,6 +1683,16 @@ app.post("/parcels/:id/harvest", async (req, res) => {
         weatherAtHarvest: weather?.state as WeatherState | undefined,
       });
       if (!sim.ready) continue;
+      // Culture perdue : la moissonneuse n'a plus rien à ramasser, la case
+      // reste occupée par des tiges mortes jusqu'au labour.
+      if (sim.lost) {
+        lostCells += 1;
+        await tx.parcelCell.update({
+          where: { id: cell.id },
+          data: { fieldStage: "SPOILED" },
+        });
+        continue;
+      }
       const moisture = harvestMoisture(weather?.state as WeatherState | undefined);
       harvested.push({
         crop: cell.crop,
@@ -1618,11 +1762,17 @@ app.post("/parcels/:id/harvest", async (req, res) => {
   });
 
   if (harvested.length === 0) {
-    res.status(409).json({ error: "Rien à récolter (pas prêt)" });
+    res.status(409).json({
+      error: lostCells
+        ? `${lostCells} case(s) perdue(s) — trop tard pour récolter, il faut labourer`
+        : "Rien à récolter (pas prêt)",
+      lostCells,
+    });
     return;
   }
   res.json({
     harvested,
+    lostCells,
     totalTons: harvested.reduce((s, h) => s + h.tons, 0),
     bonuses,
     machine: { id: picked.machine.id, type: picked.machine.type, ...wear },

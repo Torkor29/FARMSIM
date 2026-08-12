@@ -282,6 +282,19 @@ button.ghost {
   background: linear-gradient(90deg, var(--accent), var(--accent-hot));
 }
 
+.harvest-alert {
+  display: grid;
+  gap: 0.1rem;
+  margin-top: 0.5rem;
+  padding: 0.5rem 0.6rem;
+  border-radius: var(--r-sm);
+  font-size: 0.78rem;
+}
+.harvest-alert strong { font-size: 0.84rem; }
+.harvest-alert.soft { background: var(--gold-100); color: var(--gold-700); }
+.harvest-alert.warn { background: #fde8d6; color: #a85a1e; }
+.harvest-alert.bad { background: #fdeceb; color: #a8382a; }
+
 .chip-row { display: flex; flex-wrap: wrap; gap: 0.35rem; }
 .chip {
   font-size: 0.78rem;

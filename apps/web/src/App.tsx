@@ -14,6 +14,7 @@ import {
   isPaddockAdjacent,
   machineResaleValue,
   type FarmWork,
+  type RipenessStage,
   PARCEL_HECTARES,
   SEASON_LABELS,
   WEATHER_LABELS,
@@ -153,7 +154,15 @@ type Contract = {
 type MarketPrice = { commodity: string; price: number; stockTons: number };
 type WeatherSnap = { id: string; zoneCode: string; state: WeatherState; updatedAt?: string };
 
-type Tool = "SELECT" | "PLANT_WHEAT" | "PLANT_MAIZE" | "FERTILIZE" | "HARVEST" | "BUILD" | "PARK";
+type Tool =
+  | "SELECT"
+  | "PLANT_WHEAT"
+  | "PLANT_MAIZE"
+  | "FERTILIZE"
+  | "HARVEST"
+  | "PLOW"
+  | "BUILD"
+  | "PARK";
 
 async function api<T>(path: string, init?: RequestInit): Promise<T> {
   const token = localStorage.getItem(TOKEN_KEY);
@@ -181,6 +190,7 @@ const ACTION_BAR: { tool: Tool; label: string; icon: string }[] = [
   { tool: "FERTILIZE", label: "Ferti", icon: "/assets/icons/tools/fertilize.svg" },
   { tool: "HARVEST", label: "Récolte", icon: "/assets/icons/tools/harvest.svg" },
   { tool: "BUILD", label: "Bâtir", icon: "/assets/icons/tools/build.svg" },
+  { tool: "PLOW", label: "Labour", icon: "/assets/icons/tools/plow.svg" },
   { tool: "PARK", label: "Park", icon: "/assets/icons/tools/park.svg" },
 ];
 
@@ -210,7 +220,21 @@ export function App() {
     parcel: Parcel;
     bonuses: Player["bonuses"];
     weather?: WeatherSnap | null;
-    cellSims: { x: number; y: number; sim: { progress: number; ready: boolean } }[];
+    cellSims: {
+      x: number;
+      y: number;
+      sim: {
+        progress: number;
+        ready: boolean;
+        ripeness?: {
+          stage: RipenessStage;
+          label: string;
+          yieldFactor: number;
+          msToLoss: number;
+        } | null;
+        lost?: boolean;
+      };
+    }[];
   } | null>(null);
   const [tool, setTool] = useState<Tool>("SELECT");
   const [buildType, setBuildType] = useState<BuildingType>("SILO");
@@ -515,6 +539,47 @@ export function App() {
     return out;
   }, [barns, parcel?.buildings]);
 
+  /**
+   * Alerte de fenêtre de récolte. Sans elle, la décote serait une punition
+   * invisible : le joueur perdrait des tonnes sans jamais savoir pourquoi.
+   */
+  const harvestAlert = useMemo(() => {
+    const sims = parcelDetail?.cellSims ?? [];
+    let lost = 0;
+    let poor = 0;
+    let declining = 0;
+    let soonestLossMs = Number.POSITIVE_INFINITY;
+    for (const s of sims) {
+      const r = s.sim.ripeness;
+      if (!r) continue;
+      if (r.stage === "LOST") lost += 1;
+      else if (r.stage === "POOR") poor += 1;
+      else if (r.stage === "DECLINING") declining += 1;
+      if (r.stage !== "LOST") soonestLossMs = Math.min(soonestLossMs, r.msToLoss);
+    }
+    if (lost) {
+      return {
+        level: "bad" as const,
+        title: `${lost} case(s) perdue(s)`,
+        detail: "Trop tard pour récolter — passez l’outil Labour pour les libérer.",
+      };
+    }
+    if (poor || declining) {
+      const mins = Math.max(0, Math.round(soonestLossMs / 60000));
+      return {
+        level: poor ? ("warn" as const) : ("soft" as const),
+        title: poor
+          ? `${poor} case(s) presque perdue(s)`
+          : `${declining} case(s) se dégradent`,
+        detail:
+          mins > 0
+            ? `Récoltez sous ${mins} min avant la perte totale.`
+            : "Récoltez immédiatement.",
+      };
+    }
+    return null;
+  }, [parcelDetail]);
+
   function flashToast(text: string, isError = false) {
     if (isError) setErr(text);
     else {
@@ -532,11 +597,18 @@ export function App() {
     }
     if (cell.kind === "CROP") {
       const crop = cell.crop ?? "?";
-      const stage = cell.fieldStage ?? "GROWING";
       const fert = cell.fertilizedPasses ?? 0;
+      const ripe = sim?.sim.ripeness;
+      if (ripe) {
+        const keep = Math.round(ripe.yieldFactor * 100);
+        if (ripe.stage === "LOST") {
+          return `Case (${x},${y}) · ${crop} perdu — à labourer`;
+        }
+        const mins = Math.max(1, Math.round(ripe.msToLoss / 60000));
+        return `Case (${x},${y}) · ${crop} · ${ripe.label} · ${keep} % du rendement · perdue dans ${mins} min`;
+      }
       const prog = sim ? `${Math.round(sim.sim.progress * 100)}%` : "—";
-      const ready = sim?.sim.ready ? " · prête" : "";
-      return `Case (${x},${y}) · ${crop} · ${stage} · ${prog}${ready} · ferti ${fert}`;
+      return `Case (${x},${y}) · ${crop} · en croissance ${prog} · ferti ${fert}`;
     }
     if (cell.kind === "BUILDING") {
       const b = parcel?.buildings?.find((bd) => bd.id === cell.buildingId);
@@ -685,7 +757,13 @@ export function App() {
       return;
     }
 
-    if (tool === "PLANT_WHEAT" || tool === "PLANT_MAIZE" || tool === "FERTILIZE" || tool === "HARVEST") {
+    if (
+      tool === "PLANT_WHEAT" ||
+      tool === "PLANT_MAIZE" ||
+      tool === "FERTILIZE" ||
+      tool === "HARVEST" ||
+      tool === "PLOW"
+    ) {
       const block = brushCells(x, y);
       const allIn = block.every((c) => selectedCells.some((s) => s.x === c.x && s.y === c.y));
       const nextCount = allIn
@@ -769,7 +847,9 @@ export function App() {
           ? "FERTILIZE"
           : tool === "HARVEST"
             ? "HARVEST"
-            : null;
+            : tool === "PLOW"
+              ? "PLOW"
+              : null;
     if (!work || !selectedCells.length) return null;
     const needed: MachineType = work === "HARVEST" ? "HARVESTER" : "TRACTOR";
     const hasMachine = (player?.farm?.machines ?? []).some(
@@ -861,15 +941,30 @@ export function App() {
           "Fertilisé" + (r.machine ? ` · ${r.machine.type} ${r.machine.condition.toFixed(0)}%` : ""),
         );
       } else if (tool === "HARVEST") {
-        const r = await api<{ machine?: { condition: number; type: string } }>(
-          `/parcels/${activeParcelId}/harvest`,
-          {
-            method: "POST",
-            body: JSON.stringify({ userId: player.id, cells: selectedCells }),
-          },
-        );
+        const r = await api<{
+          machine?: { condition: number; type: string };
+          totalTons?: number;
+          lostCells?: number;
+        }>(`/parcels/${activeParcelId}/harvest`, {
+          method: "POST",
+          body: JSON.stringify({ userId: player.id, cells: selectedCells }),
+        });
+        const lost = r.lostCells ? ` · ${r.lostCells} perdue(s)` : "";
         setMsg(
-          "Récolte OK" + (r.machine ? ` · ${r.machine.type} ${r.machine.condition.toFixed(0)}%` : ""),
+          `Récolte ${r.totalTons?.toFixed(2) ?? ""} t${lost}` +
+            (r.machine ? ` · ${r.machine.type} ${r.machine.condition.toFixed(0)}%` : ""),
+        );
+      } else if (tool === "PLOW") {
+        const r = await api<{
+          plowed: number;
+          cost: number;
+          fertilityLost: number;
+        }>(`/parcels/${activeParcelId}/plow`, {
+          method: "POST",
+          body: JSON.stringify({ userId: player.id, cells: selectedCells }),
+        });
+        setMsg(
+          `Labouré ×${r.plowed} · −${r.cost} CRD · fertilité −${(r.fertilityLost * 100).toFixed(1)} pt`,
         );
       }
       setSelectedCells([]);
@@ -1323,6 +1418,13 @@ export function App() {
         </div>
         <p className="muted tiny">Occupation cultures · {Math.round(avgProgress * 100)}%</p>
 
+        {harvestAlert && (
+          <div className={`harvest-alert ${harvestAlert.level}`}>
+            <strong>{harvestAlert.title}</strong>
+            <span>{harvestAlert.detail}</span>
+          </div>
+        )}
+
         <h3 className="spaced">Mes parcelles</h3>
         <div className="chip-row">
           {ownedParcels.map((p) => (
@@ -1475,7 +1577,11 @@ export function App() {
         >
           Bureau
         </button>
-        {(tool === "PLANT_WHEAT" || tool === "PLANT_MAIZE" || tool === "FERTILIZE" || tool === "HARVEST") && (
+        {(tool === "PLANT_WHEAT" ||
+          tool === "PLANT_MAIZE" ||
+          tool === "FERTILIZE" ||
+          tool === "HARVEST" ||
+          tool === "PLOW") && (
           <>
             <button
               type="button"

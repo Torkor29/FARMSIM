@@ -2,9 +2,11 @@ import { useEffect, useRef } from "react";
 import * as THREE from "three";
 import {
   BUILDING_DEFS,
+  RIPENESS_COLORS,
   type BuildingType,
   type CropCode,
   type MachineType,
+  type RipenessStage,
 } from "@farmsim/shared";
 
 export type IsoCell = {
@@ -30,7 +32,12 @@ export type IsoBuilding = {
 export type IsoSim = {
   x: number;
   y: number;
-  sim: { progress: number; ready: boolean };
+  sim: {
+    progress: number;
+    ready: boolean;
+    ripeness?: { stage: RipenessStage } | null;
+    lost?: boolean;
+  };
 };
 
 export type ActiveWork = {
@@ -97,6 +104,10 @@ const MACHINE_LOOK: Record<
 
 function cropColor(c: IsoCell, sim?: IsoSim): number {
   if (c.kind !== "CROP") return SOIL;
+  // Passé la maturité, la teinte raconte la dégradation : l'or vire au brun
+  // puis à la tige morte. C'est le seul signal qui prévienne le joueur.
+  if (sim?.sim.ripeness) return RIPENESS_COLORS[sim.sim.ripeness.stage];
+  if (c.fieldStage === "SPOILED") return RIPENESS_COLORS.LOST;
   if (c.fieldStage === "READY" || sim?.sim.ready) return READY;
   const p = sim?.sim.progress ?? 0.3;
   const g = new THREE.Color(GROW);

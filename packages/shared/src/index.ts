@@ -4,6 +4,7 @@ export * from "./world.js";
 export * from "./climate.js";
 export * from "./land.js";
 export * from "./livestock.js";
+export * from "./ripeness.js";
 
 export type Specialization = "CEREALIER" | "ELEVEUR" | "ETA";
 
@@ -15,6 +16,8 @@ export type FieldStage =
   | "PLANTED"
   | "GROWING"
   | "READY"
+  /** Récolte manquée : la culture est perdue, seul le labour libère la case */
+  | "SPOILED"
   | "HARVESTED";
 
 export type WeatherState = "CLEAR" | "CLOUDY" | "RAIN" | "STORM" | "SNOW";

@@ -24,6 +24,8 @@ enum FieldStage {
   PLANTED
   GROWING
   READY
+  /// Laissée trop longtemps sur pied : plus rien à récolter, labour requis
+  SPOILED
   HARVESTED
 }
 
