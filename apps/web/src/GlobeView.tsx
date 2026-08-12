@@ -600,7 +600,17 @@ export function GlobeView({
     );
     spinner.add(planet);
 
-    const pickTargets: THREE.Object3D[] = [planet];
+    /**
+     * Cibles de raycast : **jamais la planète**.
+     *
+     * Sa sphère fait 65 536 triangles, et Three les teste un à un faute
+     * d'arbre de partitionnement — à chaque clic comme à chaque mouvement de
+     * souris. C'était l'essentiel des 444 ms mesurées sur la sélection d'un
+     * continent. L'intersection analytique avec une sphère, suivie d'une
+     * lecture dans la carte d'index, donne le même résultat en temps
+     * constant.
+     */
+    const pickTargets: THREE.Object3D[] = [];
 
     /**
      * Peinture en deux temps. Deux millions de texels de bruit fractal
