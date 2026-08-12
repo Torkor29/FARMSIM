@@ -5,7 +5,9 @@
   --gold-100: #fdf3cd;
   --gold-300: #f0d27a;
   --gold-500: #c9a227;
-  --gold-700: #97741a;
+  /* Or de texte : #c9a227 ne fait que 2,28:1 sur crème, illisible.
+     Ce ton passe AA (≥ 4,8:1) sur crème, sable et or pâle. */
+  --gold-700: #7d6112;
   --teal-100: #d8f0e7;
   --teal-300: #74c3a9;
   --teal-500: #1a6b5a;
