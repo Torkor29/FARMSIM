@@ -40,6 +40,10 @@ import {
   buildingUpgradeCost,
   buildingLevelDef,
   MAX_BUILDING_LEVEL,
+  contractorQuote,
+  CONTRACTOR_YIELD_MALUS,
+  machineResaleValue,
+  buildingResaleValue,
   currentSeason,
   seasonProgress,
   pickWeather,
@@ -1165,6 +1169,190 @@ app.get("/parcels/:id/quote", async (req, res) => {
   });
 });
 
+/**
+ * Prestation ETA : une entreprise extérieure vient travailler la parcelle
+ * avec ses propres machines. Aucun matériel requis côté joueur — c'est
+ * précisément l'intérêt — mais le service se paie à la case.
+ */
+app.post("/parcels/:id/contractor", async (req, res) => {
+  const body = z
+    .object({
+      userId: z.string(),
+      work: z.enum(["PLANT", "FERTILIZE", "HARVEST"]),
+      crop: z.enum(["WHEAT", "MAIZE"]).optional(),
+      cells: z.array(z.object({ x: z.number().int(), y: z.number().int() })).min(1),
+    })
+    .safeParse(req.body);
+  if (!body.success) {
+    res.status(400).json(body.error.flatten());
+    return;
+  }
+  const { work, cells, crop } = body.data;
+
+  const parcel = await prisma.parcel.findUnique({
+    where: { id: req.params.id },
+    include: { farm: true, cells: true, zone: true },
+  });
+  if (!parcel?.farm || parcel.farm.userId !== body.data.userId) {
+    res.status(403).json({ error: "Parcelle non possédée" });
+    return;
+  }
+  const user = await prisma.user.findUnique({ where: { id: body.data.userId } });
+  if (!user) {
+    res.status(404).json({ error: "Joueur introuvable" });
+    return;
+  }
+
+  const service = contractorQuote(work, cells.length);
+  const seeds = work === "PLANT" && crop ? CROP_DEFS[crop].seedCostPerCell * cells.length : 0;
+  const total = service + seeds;
+  if (user.crd < total) {
+    res.status(402).json({ error: `CRD insuffisants — ${total} requis` });
+    return;
+  }
+
+  const bonuses = await getFarmBonuses(parcel.farm.id);
+  const weather = await prisma.weatherSnapshot.findFirst({
+    where: { zoneCode: parcel.zone.code },
+  });
+  const now = Date.now();
+
+  if (work === "PLANT") {
+    if (!crop) {
+      res.status(400).json({ error: "Culture requise pour un semis" });
+      return;
+    }
+    for (const { x, y } of cells) {
+      const cell = parcel.cells.find((c) => c.x === x && c.y === y);
+      if (!cell || cell.kind !== "EMPTY") {
+        res.status(409).json({ error: `Case ${x},${y} non libre` });
+        return;
+      }
+    }
+    const growMs = CROP_DEFS[crop].growMs;
+    await prisma.$transaction(async (tx) => {
+      await tx.user.update({ where: { id: user.id }, data: { crd: { decrement: total } } });
+      for (const { x, y } of cells) {
+        await tx.parcelCell.update({
+          where: { parcelId_x_y: { parcelId: parcel.id, x, y } },
+          data: {
+            kind: "CROP",
+            crop,
+            fieldStage: "PLANTED",
+            plantedAt: new Date(now),
+            readyAt: new Date(now + growMs),
+            fertilizedPasses: 0,
+            weedsControlled: false,
+          },
+        });
+      }
+    });
+    res.json({ work, cells: cells.length, cost: total, service, seeds });
+    return;
+  }
+
+  if (work === "FERTILIZE") {
+    await prisma.$transaction(async (tx) => {
+      await tx.user.update({ where: { id: user.id }, data: { crd: { decrement: total } } });
+      for (const { x, y } of cells) {
+        const cell = parcel.cells.find((c) => c.x === x && c.y === y);
+        if (!cell || cell.kind !== "CROP") continue;
+        await tx.parcelCell.update({
+          where: { parcelId_x_y: { parcelId: parcel.id, x, y } },
+          data: {
+            fertilizedPasses: Math.min(2, cell.fertilizedPasses + 1),
+            weedsControlled: true,
+          },
+        });
+      }
+    });
+    res.json({ work, cells: cells.length, cost: total, service, seeds: 0 });
+    return;
+  }
+
+  // HARVEST — le cas qui débloque un joueur sans moissonneuse.
+  const ready = cells
+    .map(({ x, y }) => parcel.cells.find((c) => c.x === x && c.y === y))
+    .filter((c): c is NonNullable<typeof c> => Boolean(c && c.kind === "CROP" && c.plantedAt));
+  if (!ready.length) {
+    res.status(409).json({ error: "Aucune culture à récolter sur la sélection" });
+    return;
+  }
+
+  let totalTons = 0;
+  const perCrop = new Map<CropCode, number>();
+  for (const cell of ready) {
+    const sim = simulateCell({
+      crop: cell.crop!,
+      plantedAt: cell.plantedAt!.getTime(),
+      now,
+      fertility: parcel.fertility,
+      weedsControlled: cell.weedsControlled,
+      fertilizedPasses: Math.min(2, cell.fertilizedPasses) as 0 | 1 | 2,
+      buildingYieldBonus: bonuses.yieldBonus,
+      weatherAtHarvest: weather?.state as WeatherState | undefined,
+      specialization: user.specialization,
+    });
+    if (!sim.ready) continue;
+    // Un prestataire connaît moins bien la parcelle que celui qui la cultive.
+    const tons = sim.estimatedYieldTons * (1 - CONTRACTOR_YIELD_MALUS);
+    totalTons += tons;
+    perCrop.set(cell.crop!, (perCrop.get(cell.crop!) ?? 0) + tons);
+  }
+
+  if (totalTons <= 0) {
+    res.status(409).json({ error: "Rien n'est mûr sur la sélection" });
+    return;
+  }
+
+  const moisture = harvestMoisture(weather?.state as WeatherState | undefined);
+
+  await prisma.$transaction(async (tx) => {
+    await tx.user.update({ where: { id: user.id }, data: { crd: { decrement: total } } });
+    for (const cell of ready) {
+      await tx.parcelCell.update({
+        where: { id: cell.id },
+        data: {
+          kind: "EMPTY",
+          crop: null,
+          fieldStage: "EMPTY",
+          plantedAt: null,
+          readyAt: null,
+          fertilizedPasses: 0,
+        },
+      });
+    }
+    for (const [code, tons] of perCrop) {
+      const existing = await tx.inventoryItem.findFirst({
+        where: { farmId: parcel.farm!.id, itemCode: code },
+      });
+      if (existing) {
+        await tx.inventoryItem.update({
+          where: { id: existing.id },
+          data: {
+            qty: existing.qty + tons,
+            moisture: mergeMoisture(existing.qty, existing.moisture, tons, moisture),
+          },
+        });
+      } else {
+        await tx.inventoryItem.create({
+          data: { farmId: parcel.farm!.id, itemCode: code, qty: tons, quality: 1, moisture },
+        });
+      }
+    }
+  });
+
+  res.json({
+    work,
+    cells: ready.length,
+    cost: total,
+    service,
+    seeds: 0,
+    totalTons,
+    moisture,
+  });
+});
+
 app.post("/parcels/:id/plant", async (req, res) => {
   const body = z
     .object({
@@ -1556,6 +1744,74 @@ app.post("/buildings/:id/upgrade", async (req, res) => {
     stats: buildingStatsAtLevel(building.type as SharedBuildingType, updated.level),
     bonuses,
   });
+});
+
+/** Reprise d'une machine — l'état conditionne le prix. */
+app.post("/machines/:id/sell", async (req, res) => {
+  const body = z.object({ userId: z.string() }).safeParse(req.body);
+  if (!body.success) {
+    res.status(400).json(body.error.flatten());
+    return;
+  }
+  const machine = await prisma.machine.findUnique({
+    where: { id: req.params.id },
+    include: { farm: true },
+  });
+  if (!machine?.farm || machine.farm.userId !== body.data.userId) {
+    res.status(403).json({ error: "Machine non possédée" });
+    return;
+  }
+  const value = machineResaleValue(machine.type as MachineType, machine.condition);
+  await prisma.$transaction(async (tx) => {
+    // Libérer la case si l'engin était stationné sur la parcelle.
+    await tx.parcelCell.updateMany({
+      where: { machineId: machine.id },
+      data: { kind: "EMPTY", machineId: null },
+    });
+    await tx.machine.delete({ where: { id: machine.id } });
+    await tx.user.update({
+      where: { id: body.data.userId },
+      data: { crd: { increment: value } },
+    });
+  });
+  res.json({ sold: machine.type, value });
+});
+
+/** Démolition d'un bâtiment — les niveaux payés se récupèrent en partie. */
+app.post("/buildings/:id/sell", async (req, res) => {
+  const body = z.object({ userId: z.string() }).safeParse(req.body);
+  if (!body.success) {
+    res.status(400).json(body.error.flatten());
+    return;
+  }
+  const building = await prisma.building.findUnique({
+    where: { id: req.params.id },
+    include: { parcel: { include: { farm: true } }, storedMachines: true },
+  });
+  if (!building?.parcel.farm || building.parcel.farm.userId !== body.data.userId) {
+    res.status(403).json({ error: "Bâtiment non possédé" });
+    return;
+  }
+  const value = buildingResaleValue(building.type as SharedBuildingType, building.level);
+  await prisma.$transaction(async (tx) => {
+    // Les engins rangés à l'intérieur ressortent, ils ne disparaissent pas
+    // avec le hangar.
+    await tx.machine.updateMany({
+      where: { storedInBuildingId: building.id },
+      data: { storedInBuildingId: null },
+    });
+    await tx.parcelCell.updateMany({
+      where: { buildingId: building.id },
+      data: { kind: "EMPTY", buildingId: null },
+    });
+    await tx.building.delete({ where: { id: building.id } });
+    await tx.user.update({
+      where: { id: body.data.userId },
+      data: { crd: { increment: value } },
+    });
+  });
+  const bonuses = await getFarmBonuses(building.parcel.farm.id);
+  res.json({ sold: building.type, level: building.level, value, bonuses });
 });
 
 app.post("/machines/buy", async (req, res) => {

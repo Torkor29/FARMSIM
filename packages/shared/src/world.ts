@@ -636,6 +636,8 @@ export type ClassProfile = {
   suggestedContinents: string[];
   /** Palette du personnage low-poly */
   palette: { skin: string; cloth: string; accent: string; prop: string };
+  /** Illustration du métier, pour les écrans où la 3D serait superflue */
+  art: string;
 };
 
 export const CLASS_PROFILES: Record<ClassProfile["code"], ClassProfile> = {
@@ -655,6 +657,7 @@ export const CLASS_PROFILES: Record<ClassProfile["code"], ClassProfile> = {
     startingMachines: ["Tracteur T1"],
     suggestedContinents: ["AUR", "KOR"],
     palette: { skin: "#e8b58a", cloth: "#3f8f52", accent: "#d9b23c", prop: "#c9a227" },
+    art: "/assets/characters/cerealier.webp",
   },
   ELEVEUR: {
     code: "ELEVEUR",
@@ -672,11 +675,12 @@ export const CLASS_PROFILES: Record<ClassProfile["code"], ClassProfile> = {
     startingMachines: ["Tracteur T1"],
     suggestedContinents: ["AUR", "AUS"],
     palette: { skin: "#d9a276", cloth: "#8a5a3a", accent: "#c0663f", prop: "#f0e6d2" },
+    art: "/assets/characters/eleveur.webp",
   },
   ETA: {
     code: "ETA",
-    name: "Entrepreneur (ETA)",
-    tagline: "Travailler la terre des autres",
+    name: "ETA — Travaux agricoles",
+    tagline: "Vous travaillez la terre des autres, avec vos machines",
     perks: [
       "+2 % de vitesse de travail et usure machine réduite",
       "Démarre avec un tracteur ET une moissonneuse",
@@ -689,6 +693,7 @@ export const CLASS_PROFILES: Record<ClassProfile["code"], ClassProfile> = {
     startingMachines: ["Tracteur T1", "Moissonneuse T1"],
     suggestedContinents: ["KOR", "YAN"],
     palette: { skin: "#c98f66", cloth: "#3a5a8a", accent: "#e0762f", prop: "#5a6a7a" },
+    art: "/assets/characters/eta.webp",
   },
 };
 

@@ -375,6 +375,22 @@ button.ghost {
   color: var(--teal-500);
   white-space: nowrap;
 }
+.upgrade-actions {
+  display: grid;
+  gap: 0.25rem;
+  justify-items: end;
+}
+.sell-btn {
+  padding: 0.3rem 0.55rem;
+  border-radius: var(--r-pill);
+  border: 1px solid #e0b5ad;
+  background: #fdeeeb;
+  color: #a8382a;
+  font-size: 0.7rem;
+  font-weight: 800;
+  white-space: nowrap;
+}
+.sell-btn:hover:not(:disabled) { background: #fbdcd6; }
 /* Un blocage doit se lire, pas se deviner au survol d'un bouton grisé. */
 .upgrade-locked {
   padding: 0.3rem 0.55rem;
@@ -445,6 +461,11 @@ button.ghost {
 .action.accent {
   background: linear-gradient(180deg, var(--gold-300), var(--gold-500));
   color: #3a2c07;
+}
+.action.contractor {
+  background: linear-gradient(180deg, #f6b45a, #e0762f);
+  border-color: transparent;
+  color: #3a1f07;
 }
 
 .market-ticker {
@@ -793,8 +814,11 @@ button.ghost {
 }
 .tutorial-body {
   margin: 0 0 0.5rem;
-  line-height: 1.5;
-  color: #d0dde8;
+  line-height: 1.55;
+  /* Le corps du tutoriel était en gris clair hérité du thème sombre :
+     illisible sur la carte blanche. */
+  color: var(--ink);
+  font-size: 0.98rem;
 }
 .tutorial-hint {
   margin: 0 0 1rem;

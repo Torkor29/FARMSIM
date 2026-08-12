@@ -37,8 +37,8 @@ const STEPS: Step[] = [
   {
     id: "harvest",
     title: "4 — Récolter",
-    body: "Outil Récolte + cases mûres (dorées) + OK. Une moissonneuse est obligatoire — achetez-la au Garage.",
-    hint: "Pluie = grain humide → bouton Sécher dans ETA",
+    body: "Outil Récolte + cases mûres (dorées) + OK. Sans moissonneuse, le bouton « Faire venir une ETA » fait le travail pour vous, contre paiement.",
+    hint: "Pluie = grain humide → bouton Sécher dans le Bureau",
   },
   {
     id: "build",
@@ -49,7 +49,7 @@ const STEPS: Step[] = [
   {
     id: "sell",
     title: "6 — Vendre et s’agrandir",
-    body: "Le bouton ETA Presta ouvre votre stock, le marché et les missions. C’est aussi là que vous achetez de nouvelles terres.",
+    body: "Le bouton Bureau ouvre votre stock, le marché, vos contrats et l’achat de terres. Une ETA — Entreprise de Travaux Agricoles — travaille les champs des autres : vous pouvez en faire venir une, ou en devenir une.",
     hint: "Terres voisines = bonus de rendement · terres dans l’autre hémisphère = récoltes toute l’année",
   },
   {

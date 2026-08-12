@@ -50,7 +50,21 @@ export type CellKind = "EMPTY" | "CROP" | "BUILDING" | "VEHICLE";
 export const SPECIALIZATION_LABELS: Record<Specialization, string> = {
   CEREALIER: "Céréalier",
   ELEVEUR: "Éleveur",
-  ETA: "ETA (Travaux agricoles)",
+  ETA: "ETA — Entreprise de Travaux Agricoles",
+};
+
+/** Version courte, pour les barres d'état où la place manque. */
+export const SPECIALIZATION_SHORT: Record<Specialization, string> = {
+  CEREALIER: "Céréalier",
+  ELEVEUR: "Éleveur",
+  ETA: "ETA",
+};
+
+/** Illustration du matériel, pour le catalogue et le garage. */
+export const MACHINE_ART: Record<MachineType, string> = {
+  TRACTOR: "/assets/vehicles/tractor.webp",
+  HARVESTER: "/assets/vehicles/harvester.webp",
+  SPREADER: "/assets/vehicles/spreader.webp",
 };
 
 /** Bonus spé max ≤ +10 % — valeurs de départ faibles `[GD]` */
@@ -339,6 +353,90 @@ export const MACHINE_DEFS: Record<MachineType, MachineDef> = {
     isoColor: "amber",
   },
 };
+
+/* ------------------------------------------------------------------ */
+/* Revente de matériel et de bâtiments                                 */
+/* ------------------------------------------------------------------ */
+
+/** Décote de revente d'une machine, avant prise en compte de l'usure `[GD]` */
+export const MACHINE_RESALE_RATE = 0.55;
+
+/**
+ * Un bâtiment se revend moins bien qu'une machine : on ne déplace pas un
+ * silo, on le démolit. Le prix reflète les matériaux récupérés. `[GD]`
+ */
+export const BUILDING_RESALE_RATE = 0.4;
+
+/**
+ * Prix de reprise d'une machine. L'état compte pour moitié : une machine
+ * ruinée ne vaut presque plus rien, une machine neuve garde l'essentiel de
+ * la décote de base.
+ */
+export function machineResaleValue(type: MachineType, condition: number): number {
+  const wear = Math.max(0, Math.min(100, condition)) / 100;
+  return Math.round(MACHINE_DEFS[type].cost * MACHINE_RESALE_RATE * (0.45 + wear * 0.55));
+}
+
+/**
+ * Prix de démolition d'un bâtiment, niveau compris : les agrandissements
+ * payés se récupèrent en partie.
+ */
+export function buildingResaleValue(type: BuildingType, level: number): number {
+  const base = BUILDING_DEFS[type].cost;
+  let invested = base;
+  for (let l = 2; l <= Math.max(1, Math.min(MAX_BUILDING_LEVEL, level)); l++) {
+    invested += base * BUILDING_LEVELS[l - 1].upgradeCostMult;
+  }
+  return Math.round(invested * BUILDING_RESALE_RATE);
+}
+
+/* ------------------------------------------------------------------ */
+/* Prestation ETA — faire travailler ses terres par un tiers           */
+/* ------------------------------------------------------------------ */
+
+export type FarmWork = "PLANT" | "FERTILIZE" | "HARVEST" | "PLOW";
+
+export const WORK_LABELS: Record<FarmWork, string> = {
+  PLANT: "Semis",
+  FERTILIZE: "Épandage",
+  HARVEST: "Moisson",
+  PLOW: "Labour",
+};
+
+/**
+ * Une ETA — Entreprise de Travaux Agricoles — vient travailler vos terres
+ * avec SES machines. C'est la porte de sortie quand on n'a ni moissonneuse
+ * ni les moyens d'en acheter une : on paie le service à la case, plus cher
+ * que de le faire soi-même, mais sans immobiliser 4 800 CRD.
+ * `[GD]`
+ */
+export const CONTRACTOR_RATE_PER_CELL: Record<FarmWork, number> = {
+  PLANT: 22,
+  FERTILIZE: 16,
+  HARVEST: 38,
+  PLOW: 14,
+};
+
+/** Frais de déplacement, quel que soit le nombre de cases `[GD]` */
+export const CONTRACTOR_CALLOUT_FEE = 120;
+
+/** Un ETA travaille moins bien qu'un propriétaire sur ses propres terres `[GD]` */
+export const CONTRACTOR_YIELD_MALUS = 0.06;
+
+/** Coût total d'une prestation, frais de déplacement compris. */
+export function contractorQuote(work: FarmWork, cells: number): number {
+  if (cells <= 0) return 0;
+  return CONTRACTOR_CALLOUT_FEE + CONTRACTOR_RATE_PER_CELL[work] * cells;
+}
+
+/**
+ * À partir de combien de cases posséder sa propre machine devient rentable.
+ * Sert à afficher un conseil honnête au joueur plutôt qu'à lui vendre du
+ * service à perte.
+ */
+export function contractorBreakEvenCells(work: FarmWork, machineCost: number): number {
+  return Math.ceil(machineCost / CONTRACTOR_RATE_PER_CELL[work]);
+}
 
 /** Mapping contrats NPC → type de travail machine */
 export const CONTRACT_WORK: Record<

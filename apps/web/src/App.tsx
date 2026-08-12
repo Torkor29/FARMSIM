@@ -3,10 +3,16 @@ import {
   SPECIALIZATION_LABELS,
   BUILDING_ART,
   BUILDING_DEFS,
+  MACHINE_ART,
   MACHINE_DEFS,
   MAX_BUILDING_LEVEL,
+  WORK_LABELS,
   buildingLevelDef,
+  buildingResaleValue,
   buildingUpgradeCost,
+  contractorQuote,
+  machineResaleValue,
+  type FarmWork,
   PARCEL_HECTARES,
   SEASON_LABELS,
   WEATHER_LABELS,
@@ -692,6 +698,57 @@ export function App() {
     }
   }
 
+  /** Le prestataire n'est proposé que là où il a un sens : sur du travail aux champs. */
+  const contractorOffer = useMemo(() => {
+    const work: FarmWork | null =
+      tool === "PLANT_WHEAT" || tool === "PLANT_MAIZE"
+        ? "PLANT"
+        : tool === "FERTILIZE"
+          ? "FERTILIZE"
+          : tool === "HARVEST"
+            ? "HARVEST"
+            : null;
+    if (!work || !selectedCells.length) return null;
+    const needed: MachineType = work === "HARVEST" ? "HARVESTER" : "TRACTOR";
+    const hasMachine = (player?.farm?.machines ?? []).some(
+      (m) => m.type === needed && m.condition >= (MACHINE_DEFS[needed]?.minCondition ?? 12),
+    );
+    return { work, hasMachine, cost: contractorQuote(work, selectedCells.length) };
+  }, [tool, selectedCells.length, player?.farm?.machines]);
+
+  async function callContractor() {
+    if (!player || !activeParcelId || !contractorOffer) return;
+    setBusy(true);
+    setErr(null);
+    const workCells = selectedCells.slice();
+    flashWork(contractorOffer.work === "HARVEST" ? "HARVESTER" : "TRACTOR", workCells);
+    try {
+      const r = await api<{ cost: number; cells: number; totalTons?: number }>(
+        `/parcels/${activeParcelId}/contractor`,
+        {
+          method: "POST",
+          body: JSON.stringify({
+            userId: player.id,
+            work: contractorOffer.work,
+            crop: tool === "PLANT_MAIZE" ? "MAIZE" : tool === "PLANT_WHEAT" ? "WHEAT" : undefined,
+            cells: workCells,
+          }),
+        },
+      );
+      const tons = r.totalTons ? ` · ${r.totalTons.toFixed(2)} t` : "";
+      flashToast(`ETA : ${WORK_LABELS[contractorOffer.work]} ×${r.cells}${tons} · −${r.cost} CRD`);
+      setSelectedCells([]);
+      await refreshPlayer();
+      await loadParcel(activeParcelId);
+    } catch (e) {
+      flashToast(e instanceof Error ? e.message : String(e), true);
+      setPulseCells([]);
+      setActiveWork(null);
+    } finally {
+      setBusy(false);
+    }
+  }
+
   function workMachineForTool(t: Tool): MachineType {
     if (t === "HARVEST") return "HARVESTER";
     if (t === "FERTILIZE") {
@@ -899,6 +956,46 @@ export function App() {
         { method: "POST", body: JSON.stringify({ userId: player.id }) },
       );
       flashToast(`Niveau ${r.building.level} · ${r.levelName} — ${r.cost} CRD`);
+      await refreshPlayer();
+      if (activeParcelId) await loadParcel(activeParcelId);
+    } catch (e) {
+      flashToast(e instanceof Error ? e.message : String(e), true);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function sellMachine(id: string, label: string) {
+    if (!player) return;
+    if (!window.confirm(`Vendre ${label} ? Cette action est définitive.`)) return;
+    setBusy(true);
+    setErr(null);
+    try {
+      const r = await api<{ value: number }>(`/machines/${id}/sell`, {
+        method: "POST",
+        body: JSON.stringify({ userId: player.id }),
+      });
+      flashToast(`${label} vendu · +${r.value} CRD`);
+      await refreshPlayer();
+      if (activeParcelId) await loadParcel(activeParcelId);
+    } catch (e) {
+      flashToast(e instanceof Error ? e.message : String(e), true);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function sellBuilding(id: string, label: string) {
+    if (!player) return;
+    if (!window.confirm(`Démolir ${label} ? Cette action est définitive.`)) return;
+    setBusy(true);
+    setErr(null);
+    try {
+      const r = await api<{ value: number }>(`/buildings/${id}/sell`, {
+        method: "POST",
+        body: JSON.stringify({ userId: player.id }),
+      });
+      flashToast(`${label} démoli · +${r.value} CRD`);
       await refreshPlayer();
       if (activeParcelId) await loadParcel(activeParcelId);
     } catch (e) {
@@ -1196,23 +1293,34 @@ export function App() {
                         </em>
                       </span>
                     </span>
-                    {cost === null ? (
-                      <span className="upgrade-max">Niveau max</span>
-                    ) : blocked ? (
-                      <span className="upgrade-locked">Nv. joueur {next?.requiredLevel}</span>
-                    ) : player.crd < cost ? (
-                      <span className="upgrade-locked poor">{cost} CRD</span>
-                    ) : (
+                    <span className="upgrade-actions">
+                      {cost === null ? (
+                        <span className="upgrade-max">Niveau max</span>
+                      ) : blocked ? (
+                        <span className="upgrade-locked">Nv. joueur {next?.requiredLevel}</span>
+                      ) : player.crd < cost ? (
+                        <span className="upgrade-locked poor">{cost} CRD</span>
+                      ) : (
+                        <button
+                          type="button"
+                          className="upgrade-btn"
+                          disabled={busy}
+                          title={`Passer au niveau ${lvl + 1} — ${buildingLevelDef(lvl + 1).name}`}
+                          onClick={() => upgradeBuilding(b.id)}
+                        >
+                          ↑ {cost} CRD
+                        </button>
+                      )}
                       <button
                         type="button"
-                        className="upgrade-btn"
+                        className="sell-btn"
                         disabled={busy}
-                        title={`Passer au niveau ${lvl + 1} — ${buildingLevelDef(lvl + 1).name}`}
-                        onClick={() => upgradeBuilding(b.id)}
+                        title={`Démolir et récupérer ${buildingResaleValue(b.type, lvl)} CRD`}
+                        onClick={() => sellBuilding(b.id, d.name)}
                       >
-                        ↑ {cost} CRD
+                        Démolir {buildingResaleValue(b.type, lvl)}
                       </button>
-                    )}
+                    </span>
                   </div>
                 );
               })}
@@ -1264,9 +1372,10 @@ export function App() {
         <button
           type="button"
           className={`action eta ${showEta ? "on" : ""}`}
+          title="Stock, marché, contrats et achat de terres"
           onClick={() => setShowEta((v) => !v)}
         >
-          ETA Presta
+          Bureau
         </button>
         {(tool === "PLANT_WHEAT" || tool === "PLANT_MAIZE" || tool === "FERTILIZE" || tool === "HARVEST") && (
           <>
@@ -1286,6 +1395,21 @@ export function App() {
             {tool === "PLANT_MAIZE" && (
               <button type="button" className="action" onClick={() => setTool("PLANT_WHEAT")}>
                 Blé
+              </button>
+            )}
+            {contractorOffer && (
+              <button
+                type="button"
+                className="action contractor"
+                disabled={busy || !selectedCells.length || player.crd < contractorOffer.cost}
+                title={
+                  contractorOffer.hasMachine
+                    ? `Sous-traiter à une ETA — ${contractorOffer.cost} CRD`
+                    : `Vous n'avez pas la machine : une ETA fait le travail pour ${contractorOffer.cost} CRD`
+                }
+                onClick={callContractor}
+              >
+                🚜 ETA · {contractorOffer.cost} CRD
               </button>
             )}
           </>
@@ -1314,13 +1438,24 @@ export function App() {
                       {m.storedInBuildingId ? " · hangar" : m.parkedParcelId ? " · parcelle" : ""}
                     </div>
                   </span>
-                  <button
-                    type="button"
-                    disabled={busy || m.condition >= 99.5}
-                    onClick={() => repairMachine(m.id)}
-                  >
-                    Réparer
-                  </button>
+                  <span className="row-actions">
+                    <button
+                      type="button"
+                      disabled={busy || m.condition >= 99.5}
+                      onClick={() => repairMachine(m.id)}
+                    >
+                      Réparer
+                    </button>
+                    <button
+                      type="button"
+                      className="sell-btn"
+                      disabled={busy}
+                      title={`Reprise ${machineResaleValue(m.type as MachineType, m.condition)} CRD`}
+                      onClick={() => sellMachine(m.id, def?.name ?? m.type)}
+                    >
+                      Vendre {machineResaleValue(m.type as MachineType, m.condition)}
+                    </button>
+                  </span>
                 </li>
               );
             })}
@@ -1336,13 +1471,16 @@ export function App() {
                 <button
                   key={t}
                   type="button"
-                  className="build-item"
+                  className="build-item art"
                   disabled={busy}
                   onClick={() => buyMachine(t)}
                 >
-                  <strong>{d.name}</strong>
-                  <span>{d.cost} CRD</span>
-                  <span className="muted tiny">{d.description}</span>
+                  <img className="build-art" src={MACHINE_ART[t]} alt="" loading="lazy" />
+                  <span className="build-text">
+                    <strong>{d.name}</strong>
+                    <span>{d.cost} CRD</span>
+                    <span className="muted tiny">{d.description}</span>
+                  </span>
                 </button>
               );
             })}
@@ -1354,7 +1492,11 @@ export function App() {
 
       {showEta && (
         <aside className="glass eta-panel">
-          <h3>Missions ETA</h3>
+          <h3>Travaux à façon</h3>
+          <p className="muted tiny">
+            Vous partez travailler chez d’autres exploitants avec votre matériel.
+            C’est le métier d’une ETA — Entreprise de Travaux Agricoles.
+          </p>
           <ul className="list">
             {contracts.map((c) => (
               <li key={c.id}>
