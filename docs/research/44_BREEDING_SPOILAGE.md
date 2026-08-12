@@ -87,11 +87,45 @@ viande en silo     : 0,180 → 0,079 t
 Trois champs s'ajoutent : `Herd.gestatingSince`, `Herd.lastCalvedAt`, et
 `InventoryItem.lastDecayAt`.
 
-La gestation est gérée dans `settleHerd()`, appelé à chaque lecture de
-l'élevage. La péremption tourne dans le tick monde, avec les courtiers et les
-annonces expirées.
+La gestation est gérée dans `settleHerd()`. La péremption tourne dans le tick
+monde, avec les courtiers et les annonces expirées.
 
 `GET /parcels/:id/livestock` expose `gestation` (0 à 1) et `breedRefusal`.
+
+---
+
+## Deuxième passe : deux mécaniques écrites mais invisibles
+
+Les deux systèmes existaient, étaient testés, et le joueur ne les voyait
+pourtant pas. Chaque fois pour une raison de câblage, pas de logique.
+
+### Le cheptel ne grandissait que par achat
+
+`settleHerd()` n'était appelé que par `GET /parcels/:id/livestock`, c'est-à-dire
+par le sondage de l'écran d'élevage. Un joueur qui ne l'ouvrait pas ne voyait
+jamais une gestation démarrer : son troupeau vivait à l'arrêt. Le reproche
+était exact, et sa cause tenait en une ligne manquante.
+
+`settleAllHerds()` fait désormais vivre tous les troupeaux à chaque tick du
+monde. Une bête vit qu'on la regarde ou non.
+
+Vérifié sans jamais appeler l'écran d'élevage : la gestation démarre seule sur
+un tick, et un troupeau de trois vaches arrivé à terme passe à quatre.
+
+### Le lait ne semblait jamais tourner
+
+Là, le serveur faisait son travail — la quantité en base baissait bien à
+chaque tick. Mais l'inventaire du joueur n'était rechargé qu'après une action
+de sa part : le silo restait figé à l'écran pendant des minutes, et la
+péremption paraissait décorative.
+
+Le stock est maintenant rafraîchi avec le reste, toutes les dix secondes.
+Mesuré sur deux minutes : cent tonnes de lait tombent à 98,5.
+
+**La leçon, une fois de plus :** une mécanique n'existe que si le joueur la
+voit bouger. Une fonction pure, testée et correcte, ne prouve rien tant que la
+chaîne complète — planificateur, écriture, rafraîchissement de l'écran — n'a
+pas été parcourue de bout en bout.
 
 ---
 

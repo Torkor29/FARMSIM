@@ -126,8 +126,30 @@ profondeur nominale empêche qu'une vente ordinaire subisse la décote maximale.
 
 ---
 
+## L'historique des cours
+
+Une cotation seule ne veut rien dire : 265 CRD la tonne est une bonne affaire
+ou une braderie selon d'où le cours vient. Sans mémoire des prix, le joueur ne
+pouvait ni juger l'offre du jour ni décider d'attendre — il vendait au hasard,
+et les trois canaux de vente ne servaient qu'à comparer entre eux, jamais à
+choisir son moment.
+
+Chaque tick archive les cours dans `MarketTick`. L'écran de vente en tire une
+courbe sous la cotation courante : pas d'axes ni de graduations, juste la
+forme — ça monte, ça descend, ça stagne — avec l'amplitude de la période et la
+variation en pourcentage, colorée selon le sens.
+
+La fenêtre glisse sur douze heures et les relevés plus anciens sont élagués au
+même tick. Personne ne spécule sur le cours d'avant-hier, et la table
+grossirait sinon de cinq lignes toutes les vingt secondes.
+
+`GET /market/history?commodity=WHEAT&hours=3` renvoie la série, du plus ancien
+au plus récent.
+
+---
+
 ## Reste à faire
 
-- Pas d'historique des cours : le joueur ne peut pas juger si le moment est
-  bon.
 - Pas de contrats à terme, alors que le document d'économie les prévoit.
+- La courbe ne marque pas les ventes du joueur : il ne peut pas voir a
+  posteriori s'il a bien ou mal vendu.

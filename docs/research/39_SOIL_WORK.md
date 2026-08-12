@@ -101,16 +101,50 @@ Trois champs s'ajoutent à `ParcelCell` : `harvestsSincePlow`, `residuePasses`,
 |-------|-------|
 | `POST /parcels/:id/stubble` | Incorpore les résidus, compteur inchangé, refuse au seuil |
 | `POST /parcels/:id/plow` | Remet le sol à zéro, bonus compris |
-| `POST /parcels/:id/plant` | Refuse une case portant des chaumes |
+| `POST /parcels/:id/plant` | Refuse une case portant des chaumes, sauf en semis direct |
 | `POST /parcels/:id/contractor` | Accepte `work: "STUBBLE"` |
+
+---
+
+## Le semis direct, troisième voie
+
+Déchaumer ou labourer supposait qu'il fallait forcément travailler le sol. Le
+semis direct s'en dispense : le semoir ouvre un sillon dans les chaumes et
+referme derrière lui. Un passage entier économisé, un sol qui garde son
+humidité et sa structure, et une couverture permanente qui le protège de
+l'érosion.
+
+Ce n'est pas gratuit. Les résidus restent en surface au lieu d'être
+incorporés, donc aucun bonus de décomposition — le compteur de résidus
+retombe à zéro. La terre se réchauffe plus lentement au printemps et la levée
+est moins régulière, d'où la perte de rendement. Surtout, rien ne décompacte :
+le semis direct fait avancer le compteur du labour obligatoire au lieu de le
+laisser en place, si bien qu'on ne peut pas en vivre indéfiniment.
+
+| | Coût / case | Rendement | Compteur labour | Résidus |
+|---|---|---|---|---|
+| Déchaumage | 5 CRD | +5 % puis +9 % | inchangé | incorporés |
+| Labour | 12 CRD | — | remis à zéro | effacés |
+| Semis direct | 3 CRD | −10 % | **+1** | laissés en surface |
+
+L'arbitrage tient debout : le semis direct est le moins cher et le plus
+rapide, mais c'est celui qui rapproche le plus vite de la charrue obligatoire.
+
+Il exige des chaumes — sans eux, c'est un semis ordinaire et le joueur
+paierait le surcoût du semoir lourd pour rien — et il est refusé dès que le
+sol réclame la charrue, puisqu'il ne décompacte pas.
+
+`ParcelCell.directSeeded` mémorise le choix ; `POST /parcels/:id/plant`
+accepte `directSeed: true`. Vérifié contre l'API réelle : −9,8 % de rendement
+et le compteur de labour passé de 1 à 2 sur la case semée en direct.
 
 ---
 
 ## Reste à faire
 
-- Le semis direct, troisième voie qui supprime tout travail du sol au prix
-  d'un rendement moindre
-- La rotation des cultures : enchaîner deux fois le même blé devrait pénaliser
-  davantage que d'alterner avec du maïs
 - Les résidus ne dépendent pas du volume récolté, alors qu'une grosse moisson
   laisse plus de paille
+- Le semis direct ne demande aucun désherbage supplémentaire, alors que c'est
+  sa contrainte principale en pratique
+- Aucun outil intermédiaire — décompacteur, strip-till — entre le déchaumeur
+  et la charrue
