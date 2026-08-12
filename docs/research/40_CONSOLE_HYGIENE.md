@@ -138,6 +138,75 @@ types. Toute constante partagée va dans un module ordinaire.
 
 ---
 
+## Quatrième passe : mesurer avant d'optimiser
+
+Il restait les violations du premier chargement, que la passe précédente avait
+classées « inhérentes à la construction de la scène ». C'était une supposition,
+pas une mesure. Deux causes ont été cherchées, et une seule des deux était la
+bonne — l'écart entre les deux est la vraie leçon de cette passe.
+
+### Le globe testait soixante-cinq mille triangles à chaque clic
+
+`pick()` lançait un rayon sur le maillage de la planète. Depuis le passage à
+une sphère lisse texturée, ce maillage compte 256 × 128 segments, et Three les
+teste un à un faute d'arbre de partitionnement. La fonction tournait à chaque
+clic **et à chaque mouvement de souris**.
+
+Le repli analytique existait déjà juste en dessous : intersection avec une
+sphère, puis lecture de la carte d'index des continents. La planète a été
+retirée des cibles de raycast, et ce chemin en temps constant est devenu le
+seul. Les violations au survol et au clic ont disparu.
+
+### Les allocations de géométrie n'y étaient pour rien
+
+Même raisonnement appliqué à la ferme — géométries d'hexagone et de culture
+mutualisées, matériaux indexés par teinte — pour un gain **nul** sur les
+violations du chargement. L'hypothèse était fausse.
+
+Le profileur a tranché : sur un enregistrement de 20,5 s, **94,5 % du temps
+était de la peinture** (19 347 ms) contre 4,8 % de JavaScript (985 ms). Ce
+n'étaient pas nos calculs qui coûtaient, c'était la rasterisation.
+
+### Qualité de rendu adaptative
+
+La machine de test n'a pas de carte graphique et rasterise au processeur. On
+pourrait s'arrêter là et parler d'artefact d'environnement — sauf qu'un
+téléphone d'entrée de gamme se comporte de la même façon, et que le jeu se veut
+mobile. `render-quality.ts` reconnaît les rasteriseurs logiciels connus et,
+surtout, surveille le temps réellement passé par image pour déclasser un
+appareil que sa chaîne de caractères ne trahit pas. Le réglage sobre coupe les
+ombres portées — une passe de rendu complète en moins par image —, ramène la
+densité de pixels à un, désactive l'antialiasing et bride à trente images. Les
+trois vues 3D en profitent, et aucune ne peint plus quand l'onglet est caché.
+
+| | Avant | Après |
+|---|---|---|
+| Peinture | 19 347 ms | 72 ms |
+| Violations au chargement de la ferme | 229, 318, 459, 506 ms | aucune |
+| Violation au clic sur un continent | 444 ms | aucune |
+| Violations sur 45 s d'inactivité | aucune | aucune |
+
+Le style bas-poly encaisse la perte des ombres sans dommage : les volumes
+restent lisibles grâce à l'éclairage directionnel, et trente images par seconde
+suffisent à ce rythme de jeu.
+
+### La sonde a d'abord fait planter le navigateur
+
+Première version de la détection : ouvrir un contexte WebGL jetable, lire le
+nom du rasteriseur, puis le rendre avec `loseContext()`. Sous SwiftShader,
+cette allocation supplémentaire faisait tomber le processus de composition de
+Chrome au chargement — soit exactement la machine que la sonde cherchait à
+reconnaître, rendue totalement injouable.
+
+Le contexte du rendu existe déjà au moment où l'on veut savoir qui rasterise.
+On l'interroge lui, par une simple lecture de paramètre, sans rien allouer.
+
+**Deux règles retenues :** ne jamais optimiser sur une hypothèse quand un
+profileur peut trancher, et se méfier d'un diagnostic qui alloue des ressources
+pour se renseigner.
+
+---
+
 ## Entretien
 
 À faire avant chaque livraison :
