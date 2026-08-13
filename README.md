@@ -12,7 +12,7 @@ Rapport exécutif : [`docs/research/17_EXECUTIVE_REPORT.md`](./docs/research/17_
 - `apps/web` — Vite + React
 - `apps/api` — Express + Prisma (SQLite en local ; PostgreSQL en prod)
 - `packages/sim` — simulation croissance / marché (lazy)
-- `packages/shared` — types & constantes (dont spé **ETA**)
+- `packages/shared` — types & constantes
 
 ## Démarrage
 
@@ -52,5 +52,5 @@ GESTIONPROJET, dossier `deploiement/`, pour la marche à suivre complète.
 ## Spécialisations
 
 - **Céréalier** — cultures
-- **Éleveur** — animaux (contenu limité MVP)
-- **ETA** — Entreprise de Travaux Agricoles (missions NPC dès le MVP)
+- **Éleveur** — animaux
+- Les travaux à façon sont un **appoint** (missions 8–24 cases), pas un troisième métier.

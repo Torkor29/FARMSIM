@@ -160,8 +160,9 @@ export function Onboarding({
       {step === 0 && (
         <section className="onb-body">
           <p className="onb-lead">
-            Votre métier détermine vos machines de départ, vos revenus et les régions où
-            vous serez le plus à l'aise. Il ne pourra plus être changé.
+            Deux métiers. Céréalier ou éleveur. Pendant que vos cultures poussent (ou que le
+            troupeau mange), votre fer idle peut aller bosser chez le voisin — ce n’est pas un
+            troisième métier, c’est de l’appoint.
           </p>
           <div className="class-grid">
             {(Object.keys(CLASS_PROFILES) as ClassProfile["code"][]).map((code) => {

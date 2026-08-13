@@ -625,7 +625,7 @@ export function weatherOdds(
 /* ------------------------------------------------------------------ */
 
 export type ClassProfile = {
-  code: "CEREALIER" | "ELEVEUR" | "ETA";
+  code: "CEREALIER" | "ELEVEUR";
   name: string;
   tagline: string;
   /** Ce que la classe change concrètement pour le joueur */
@@ -648,11 +648,11 @@ export const CLASS_PROFILES: Record<ClassProfile["code"], ClassProfile> = {
     perks: [
       "+2 % de rendement sur toutes les cultures",
       "Parcelle de départ dans la région fertile de votre choix",
-      "Prix des semences réduit",
+      "Pendant que ça pousse : un chantier chez le voisin, avec votre fer",
     ],
     drawbacks: [
       "Revenus dépendants du cours du blé et du maïs",
-      "Aucun revenu pendant la croissance",
+      "La moissonneuse s'achète — ou on fait venir une entreprise",
     ],
     startingMachines: ["Tracteur T1"],
     suggestedContinents: ["AUR", "KOR"],
@@ -666,7 +666,7 @@ export const CLASS_PROFILES: Record<ClassProfile["code"], ClassProfile> = {
     perks: [
       "+2 % d'efficacité alimentaire du troupeau",
       "Revenus lissés, peu sensibles aux cours céréaliers",
-      "Prospère même en climat froid ou en altitude",
+      "Le fer idle va bosser chez le voisin le temps que le troupeau mange",
     ],
     drawbacks: [
       "Bâtiments d'élevage coûteux à construire",
@@ -676,24 +676,6 @@ export const CLASS_PROFILES: Record<ClassProfile["code"], ClassProfile> = {
     suggestedContinents: ["AUR", "AUS"],
     palette: { skin: "#d9a276", cloth: "#8a5a3a", accent: "#c0663f", prop: "#f0e6d2" },
     art: "/assets/characters/eleveur.webp",
-  },
-  ETA: {
-    code: "ETA",
-    name: "ETA — Travaux agricoles",
-    tagline: "Vous travaillez la terre des autres, avec vos machines",
-    perks: [
-      "+2 % de vitesse de travail et usure machine réduite",
-      "Démarre avec un tracteur ET une moissonneuse",
-      "Contrats rémunérés dès le premier jour, sans posséder de terre",
-    ],
-    drawbacks: [
-      "Pas de récolte à soi : aucun stock à spéculer",
-      "Dépend des missions disponibles dans la région",
-    ],
-    startingMachines: ["Tracteur T1", "Moissonneuse T1"],
-    suggestedContinents: ["KOR", "YAN"],
-    palette: { skin: "#c98f66", cloth: "#3a5a8a", accent: "#e0762f", prop: "#5a6a7a" },
-    art: "/assets/characters/eta.webp",
   },
 };
 

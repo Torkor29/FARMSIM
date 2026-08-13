@@ -1,4 +1,4 @@
-/** Entretien des machines — graisse, saleté, pannes. Mode ETA. `[GD]` */
+/** Entretien des machines — graisse, saleté, pannes. Ouvert à tous. `[GD]` */
 
 export type BreakdownKind = "BELT" | "HYDRAULIC" | "ENGINE";
 
@@ -11,8 +11,8 @@ export const BREAKDOWN_LABELS: Record<BreakdownKind, string> = {
 export const DIRT_DIRTY_THRESHOLD = 25;
 export const GREASE_COST_CRD = 12;
 export const CLEAN_COST_CRD = 18;
-/** Remise réparation ETA, en plus de l'atelier `[GD]` */
-export const ETA_REPAIR_EXTRA_DISCOUNT = 0.25;
+/** Remise réparation atelier uniquement — plus de caste ETA `[GD]` */
+export const ETA_REPAIR_EXTRA_DISCOUNT = 0;
 
 export const DIRT_PER_CELL: Record<string, number> = {
   PLANT: 0.6,

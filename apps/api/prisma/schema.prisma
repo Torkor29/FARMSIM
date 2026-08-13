@@ -328,6 +328,8 @@ model NpcContract {
   title       String
   rewardCrd   Float
   regionNote  String
+  /// Cases du chantier (8–24). L'usure et le salaire suivent ce chiffre.
+  cells       Int             @default(16)
   status      ContractStatus  @default(OPEN)
   providerId  String?
   provider    User?           @relation("Provider", fields: [providerId], references: [id])

@@ -28,7 +28,6 @@ describe("guide et objectifs", () => {
     const cur = currentObjective(empty("CEREALIER"));
     expect(cur?.id).toBe("sow");
     expect(currentObjective(empty("ELEVEUR"))?.id).toBe("sow");
-    expect(currentObjective(empty("ETA"))?.id).toBe("sow");
   });
 
   it("enchaîne semer → récolter → vendre", () => {
@@ -45,7 +44,8 @@ describe("guide et objectifs", () => {
     expect(objectivesFor("CEREALIER").some((o) => o.id === "pea")).toBe(true);
     expect(objectivesFor("ELEVEUR").some((o) => o.id === "barn")).toBe(true);
     expect(objectivesFor("CEREALIER").some((o) => o.id === "barn")).toBe(false);
-    expect(objectivesFor("ETA").some((o) => o.id === "workshop")).toBe(true);
+    expect(objectivesFor("CEREALIER").some((o) => o.id === "workshop")).toBe(true);
+    expect(objectivesFor("ELEVEUR").some((o) => o.id === "contract")).toBe(true);
   });
 
   it("verrouille les objectifs suivants tant que le courant n'est pas fait", () => {

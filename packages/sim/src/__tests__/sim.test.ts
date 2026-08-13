@@ -1,4 +1,4 @@
-import { DRYING, MACHINE_DEFS, contractorQuote, repairHalfwayTarget } from "@farmsim/shared";
+import { DRYING, MACHINE_DEFS, contractorQuote, missionPayout, urgentContractorQuote, CROP_DEFS, MISSION_OPEN_MAX, clampMissionCells, repairHalfwayTarget } from "@farmsim/shared";
 import {
   simulateCell,
   tickMarket,
@@ -93,12 +93,10 @@ describe("machines", () => {
     expect(r.wearApplied).toBe(10);
   });
 
-  it("réduit l’usure en hangar et bonus ETA", () => {
+  it("réduit l’usure en hangar", () => {
     const base = applyMachineWear({ condition: 100, wearPerCell: 1, cells: 10 });
     const shed = applyMachineWear({ condition: 100, wearPerCell: 1, cells: 10, inShed: true });
-    const eta = applyMachineWear({ condition: 100, wearPerCell: 1, cells: 10, etaBonus: true });
     expect(shed.wearApplied).toBeLessThan(base.wearApplied);
-    expect(eta.wearApplied).toBeLessThan(base.wearApplied);
   });
 
   it("calcule le coût de réparation avec atelier", () => {
@@ -144,6 +142,38 @@ describe("machines", () => {
   it("sous-traiter une parcelle entière coûte moins que l’engin", () => {
     expect(contractorQuote("HARVEST", 144)).toBeLessThan(MACHINE_DEFS.HARVESTER.cost);
     expect(contractorQuote("PLANT", 144)).toBeLessThan(MACHINE_DEFS.TRACTOR.cost);
+  });
+});
+
+describe("missions d’appoint", () => {
+  it("paie 55 % du devis client, jamais 100 %", () => {
+    const client = contractorQuote("HARVEST", 16);
+    const npc = missionPayout("HARVEST", 16, "NPC");
+    const p2p = missionPayout("HARVEST", 16, "P2P");
+    expect(npc).toBe(Math.round(client * 0.55));
+    expect(p2p).toBe(Math.round(client * 0.85));
+    expect(npc).toBeLessThan(p2p);
+    expect(p2p).toBeLessThan(client);
+  });
+
+  it("plafonne un chantier à 24 cases", () => {
+    expect(clampMissionCells(144)).toBe(24);
+    expect(clampMissionCells(3)).toBe(8);
+  });
+
+  it("facture l’urgent PNJ 15 % de plus que le barème", () => {
+    expect(urgentContractorQuote("HARVEST", 24)).toBe(
+      Math.round(contractorQuote("HARVEST", 24) * 1.15),
+    );
+  });
+
+  it("10 min de tableau (3 moissons) rapportent moins que 24 cases de blé", () => {
+    const wheat = CROP_DEFS.WHEAT;
+    const grain = 24 * wheat.yieldPerCell * 220;
+    const seeds = 24 * wheat.seedCostPerCell;
+    const cultureNet = grain - seeds;
+    const board = MISSION_OPEN_MAX * missionPayout("HARVEST", 24, "NPC");
+    expect(board).toBeLessThan(cultureNet);
   });
 });
 

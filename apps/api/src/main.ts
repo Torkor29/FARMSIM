@@ -18,7 +18,6 @@ import {
   DEFAULT_GRID,
   MACHINE_DEFS,
   CONTRACT_WORK,
-  CONTRACT_WEAR_CELLS,
   SIM_TICK_MS,
   WEATHER_LABELS,
   WORLD,
@@ -40,11 +39,15 @@ import {
   buildingUpgradeCost,
   buildingLevelDef,
   MAX_BUILDING_LEVEL,
-  contractorQuote,
+  urgentContractorQuote,
   CONTRACTOR_YIELD_MALUS,
-  npcMissionReward,
+  missionPayout,
+  MISSION_OPEN_MAX,
+  MISSION_CELL_CHOICES,
+  clampMissionCells,
   repairHalfwayTarget,
   type FarmWork,
+  type Specialization,
   ripenessAt,
   LOST_CROP_FERTILITY_MALUS,
   plowRequired,
@@ -137,7 +140,6 @@ import {
   isBreakdownKind,
   GREASE_COST_CRD,
   CLEAN_COST_CRD,
-  ETA_REPAIR_EXTRA_DISCOUNT,
   type BreakdownKind,
 } from "@farmsim/shared";
 import {
@@ -307,19 +309,8 @@ async function applyWearToMachine(
     wearPerCell: opts.def.wearPerCell,
     cells: opts.cells,
     inShed: Boolean(opts.machine.storedInBuildingId),
-    etaBonus: opts.specialization === "ETA",
-    careMult:
-      opts.specialization === "ETA"
-        ? careWearMultiplier({ greased: care.greased, dirt: care.dirt })
-        : 1,
+    careMult: careWearMultiplier({ greased: care.greased, dirt: care.dirt }),
   });
-  if (opts.specialization !== "ETA") {
-    await tx.machine.update({
-      where: { id: opts.machine.id },
-      data: { condition: wear.condition },
-    });
-    return wear;
-  }
   const after = applyJobCare(
     { ...care, condition: wear.condition },
     { work: opts.work, cells: opts.cells },
@@ -342,6 +333,11 @@ async function applyWearToMachine(
     greased: after.next.greased,
     broke: after.broke,
   };
+}
+
+function playableSpec(s: string | null | undefined): Specialization | undefined {
+  if (!s) return undefined;
+  return s === "ELEVEUR" ? "ELEVEUR" : "CEREALIER";
 }
 
 const ACQUISITION_ERRORS: Record<AcquisitionRule, string> = {
@@ -471,7 +467,46 @@ async function retireLegacyZones() {
   }
 }
 
+const MISSION_JOBS: {
+  jobType: ContractJobType;
+  work: "PLANT" | "FERTILIZE" | "HARVEST" | "PLOW";
+  regionNote: string;
+  title: (cells: number) => string;
+}[] = [
+  { jobType: "HARVEST", work: "HARVEST", regionNote: "Beauce", title: (n) => `Moisson blé · ${n} cases` },
+  { jobType: "PLOW", work: "PLOW", regionNote: "Iowa", title: (n) => `Labour de printemps · ${n} cases` },
+  { jobType: "SOW", work: "PLANT", regionNote: "Beauce", title: (n) => `Semis maïs · ${n} cases` },
+  { jobType: "FERTILIZE", work: "FERTILIZE", regionNote: "Iowa", title: (n) => `Épandage NPK · ${n} cases` },
+  { jobType: "TRANSPORT", work: "PLOW", regionNote: "Beauce", title: (n) => `Transport grain · ${n} cases` },
+];
+
+function pickMissionCells(): number {
+  return MISSION_CELL_CHOICES[Math.floor(Math.random() * MISSION_CELL_CHOICES.length)]!;
+}
+
+function makeMissionRow(job = MISSION_JOBS[Math.floor(Math.random() * MISSION_JOBS.length)]!) {
+  const cells = pickMissionCells();
+  return {
+    jobType: job.jobType,
+    title: job.title(cells),
+    rewardCrd: missionPayout(job.work, cells, "NPC"),
+    regionNote: job.regionNote,
+    cells,
+  };
+}
+
+async function topUpOpenMissions() {
+  const open = await prisma.npcContract.count({ where: { status: "OPEN" } });
+  for (let i = open; i < MISSION_OPEN_MAX; i++) {
+    await prisma.npcContract.create({ data: makeMissionRow() });
+  }
+}
+
 async function ensureSeed() {
+  await prisma.user.updateMany({
+    where: { specialization: "ETA" },
+    data: { specialization: "CEREALIER" },
+  });
   await retireLegacyZones();
 
   // Amorçage par région, et non « tout ou rien » : une région ajoutée dans une
@@ -559,29 +594,28 @@ async function ensureSeed() {
     }
   }
 
-  if ((await prisma.npcContract.count({ where: { status: "OPEN" } })) < 5) {
-    const jobs: {
-      jobType: ContractJobType;
-      title: string;
-      rewardCrd: number;
-      regionNote: string;
-    }[] = [
-      { jobType: "HARVEST", title: "Moisson blé — 12 ha", rewardCrd: npcMissionReward("HARVEST"), regionNote: "Beauce" },
-      { jobType: "PLOW", title: "Labour de printemps", rewardCrd: npcMissionReward("PLOW"), regionNote: "Iowa" },
-      { jobType: "SOW", title: "Semis maïs", rewardCrd: npcMissionReward("PLANT"), regionNote: "Beauce" },
-      { jobType: "FERTILIZE", title: "Épandage NPK", rewardCrd: npcMissionReward("FERTILIZE"), regionNote: "Iowa" },
-      { jobType: "TRANSPORT", title: "Transport grain → silo", rewardCrd: npcMissionReward("PLOW"), regionNote: "Beauce" },
-    ];
-    for (const j of jobs) await prisma.npcContract.create({ data: j });
+  const leftover = await prisma.npcContract.findMany({
+    where: { status: "OPEN" },
+    orderBy: { createdAt: "desc" },
+    skip: MISSION_OPEN_MAX,
+  });
+  if (leftover.length) {
+    await prisma.npcContract.deleteMany({ where: { id: { in: leftover.map((c) => c.id) } } });
   }
-  // Recaler les lignes déjà ouvertes sur le barème (sinon 850 TRN fantômes restent).
-  for (const jobType of ["HARVEST", "PLOW", "SOW", "FERTILIZE", "TRANSPORT"] as const) {
-    const work = CONTRACT_WORK[jobType];
-    await prisma.npcContract.updateMany({
-      where: { status: "OPEN", jobType },
-      data: { rewardCrd: npcMissionReward(work) },
+  const openJobs = await prisma.npcContract.findMany({ where: { status: "OPEN" } });
+  for (const c of openJobs) {
+    const work = CONTRACT_WORK[c.jobType as ContractJobType];
+    const cells = clampMissionCells(c.cells || 16);
+    await prisma.npcContract.update({
+      where: { id: c.id },
+      data: {
+        cells,
+        rewardCrd: missionPayout(work, cells, "NPC"),
+        title: c.title.includes("cases") ? c.title : `${c.title} · ${cells} cases`,
+      },
     });
   }
+  await topUpOpenMissions();
 
   const zonesForWeather = await prisma.zone.findMany({ select: { code: true } });
   for (const z of zonesForWeather) {
@@ -754,7 +788,7 @@ app.post("/world/claim", async (req, res) => {
   const body = z
     .object({
       parcelId: z.string(),
-      specialization: z.enum(["CEREALIER", "ELEVEUR", "ETA"]),
+      specialization: z.enum(["CEREALIER", "ELEVEUR"]),
     })
     .safeParse(req.body);
   if (!body.success) {
@@ -795,10 +829,7 @@ app.post("/world/claim", async (req, res) => {
       }
 
       if (farm.machines.length === 0) {
-        const types =
-          body.data.specialization === "ETA"
-            ? [{ type: "TRACTOR" as const, tier: 1 }, { type: "HARVESTER" as const, tier: 1 }]
-            : [{ type: "TRACTOR" as const, tier: 1 }];
+        const types = [{ type: "TRACTOR" as const, tier: 1 }];
         for (const m of types) {
           await tx.machine.create({ data: { ...m, farmId: farm.id } });
         }
@@ -1187,13 +1218,19 @@ app.post("/sim/tick", async (_req, res) => {
   const result = await runWorldTick();
   res.json(result);
 });
-app.get("/contracts", async (_req, res) => {
-  res.json(
-    await prisma.npcContract.findMany({
-      where: { status: "OPEN" },
-      orderBy: { createdAt: "desc" },
-    }),
-  );
+app.get("/contracts", async (req, res) => {
+  const userId = typeof req.query.userId === "string" ? req.query.userId : null;
+  const open = await prisma.npcContract.findMany({
+    where: { status: "OPEN" },
+    orderBy: { createdAt: "desc" },
+    take: MISSION_OPEN_MAX,
+  });
+  const active = userId
+    ? await prisma.npcContract.findFirst({
+        where: { status: "ACCEPTED", providerId: userId },
+      })
+    : null;
+  res.json({ contracts: open, active });
 });
 
 let lastSimTick: {
@@ -1398,7 +1435,7 @@ async function buildResumeForUser(userId: string) {
         residuePasses: cell.residuePasses,
         directSeeded: cell.directSeeded,
         rotation: rotationOf(cell),
-        specialization: user.specialization,
+        specialization: playableSpec(user.specialization),
       });
       if (sim.lost) cropsLost += 1;
       else if (sim.ripeness && sim.ripeness.stage !== "PEAK") cropsDeclining += 1;
@@ -1486,7 +1523,7 @@ const registerSchema = z.object({
   email: z.string().email(),
   displayName: z.string().min(2).max(32),
   /** Choisie plus tard, pendant l'installation guidée */
-  specialization: z.enum(["CEREALIER", "ELEVEUR", "ETA"]).optional(),
+  specialization: z.enum(["CEREALIER", "ELEVEUR"]).optional(),
   parcelId: z.string().optional(),
   accessCode: z.string().min(3).max(32).optional(),
 });
@@ -1514,15 +1551,9 @@ app.post("/auth/register", async (req, res) => {
           userId: u.id,
           name: `Ferme ${displayName}`,
           machines: {
-            create:
-              specialization === "ETA"
-                ? [
-                    { type: "TRACTOR", tier: 1 },
-                    { type: "HARVESTER", tier: 1 },
-                  ]
-                : specialization
-                  ? [{ type: "TRACTOR", tier: 1 }]
-                  : [],
+            create: specialization
+              ? [{ type: "TRACTOR", tier: 1 }]
+              : [],
           },
         },
       });
@@ -1798,9 +1829,8 @@ app.get("/parcels/:id/quote", async (req, res) => {
 });
 
 /**
- * Prestation ETA : une entreprise extérieure vient travailler la parcelle
- * avec ses propres machines. Aucun matériel requis côté joueur — c'est
- * précisément l'intérêt — mais le service se paie à la case.
+ * Faire venir une entreprise (filet urgent PNJ) : barème client +15 %,
+ * malus de rendement, l'argent sort. Aucun matériel requis côté joueur.
  */
 app.post("/parcels/:id/contractor", async (req, res) => {
   const body = z
@@ -1831,7 +1861,7 @@ app.post("/parcels/:id/contractor", async (req, res) => {
     return;
   }
 
-  const service = contractorQuote(work, cells.length);
+  const service = urgentContractorQuote(work, cells.length);
   const seeds = work === "PLANT" && crop ? CROP_DEFS[crop].seedCostPerCell * cells.length : 0;
   const total = service + seeds;
   if (user.crd < total) {
@@ -1957,7 +1987,7 @@ app.post("/parcels/:id/contractor", async (req, res) => {
       fertilizedPasses: Math.min(2, cell.fertilizedPasses) as 0 | 1 | 2,
       buildingYieldBonus: bonuses.yieldBonus,
       weatherAtHarvest: weather?.state as WeatherState | undefined,
-      specialization: user.specialization,
+      specialization: playableSpec(user.specialization),
     });
     if (!sim.ready) continue;
     // Un prestataire connaît moins bien la parcelle que celui qui la cultive.
@@ -2490,7 +2520,7 @@ app.post("/parcels/:id/harvest", async (req, res) => {
         residuePasses: cell.residuePasses,
         directSeeded: cell.directSeeded,
         rotation: rotationOf(cell),
-        specialization: user?.specialization,
+        specialization: playableSpec(user?.specialization),
         buildingYieldBonus: bonuses.yieldBonus,
         weatherAtHarvest: weather?.state as WeatherState | undefined,
       });
@@ -3843,12 +3873,11 @@ app.post("/machines/:id/service", async (req, res) => {
     return;
   }
   const bonuses = await getFarmBonuses(machine.farmId);
-  const etaCut = machine.farm.user.specialization === "ETA" ? ETA_REPAIR_EXTRA_DISCOUNT : 0;
   const quote = repairMachineCost({
     condition: machine.condition,
     repairCostPerPoint: def.repairCostPerPoint,
     targetCondition: target,
-    workshopDiscount: bonuses.repairDiscount + etaCut,
+    workshopDiscount: bonuses.repairDiscount,
   });
   if (machine.farm.user.crd < quote.cost) {
     res.status(402).json({ error: `Réparation ${quote.cost} TRN — fonds insuffisants` });
@@ -4611,6 +4640,13 @@ app.post("/contracts/:id/accept", async (req, res) => {
     res.status(409).json({ error: "Ferme requise (machines) pour les contrats" });
     return;
   }
+  const already = await prisma.npcContract.findFirst({
+    where: { status: "ACCEPTED", providerId: user.id },
+  });
+  if (already) {
+    res.status(409).json({ error: "Une mission à la fois — terminez d'abord le chantier en cours." });
+    return;
+  }
   const contract = await prisma.npcContract.findUnique({ where: { id: req.params.id } });
   if (!contract || contract.status !== "OPEN") {
     res.status(409).json({ error: "Contrat indisponible" });
@@ -4624,38 +4660,86 @@ app.post("/contracts/:id/accept", async (req, res) => {
     });
     return;
   }
-  const etaBonus = user.specialization === "ETA" ? 1.05 : 1;
-  const reward = Math.round(contract.rewardCrd * etaBonus * 100) / 100;
+  const cells = clampMissionCells(contract.cells || 16);
+  const reward = missionPayout(work, cells, "NPC");
+  const updated = await prisma.npcContract.update({
+    where: { id: contract.id },
+    data: { status: "ACCEPTED", providerId: user.id, cells, rewardCrd: reward },
+  });
+  res.json({
+    contract: {
+      ...updated,
+      work,
+      machineType: picked.def.type,
+    },
+  });
+});
+
+app.post("/contracts/:id/complete", async (req, res) => {
+  const body = z.object({ userId: z.string() }).safeParse(req.body);
+  if (!body.success) {
+    res.status(400).json(body.error.flatten());
+    return;
+  }
+  const user = await prisma.user.findUnique({
+    where: { id: body.data.userId },
+    include: { farm: { include: { machines: true } } },
+  });
+  if (!user?.farm) {
+    res.status(404).json({ error: "Joueur introuvable" });
+    return;
+  }
+  const contract = await prisma.npcContract.findUnique({ where: { id: req.params.id } });
+  if (!contract || contract.status !== "ACCEPTED" || contract.providerId !== user.id) {
+    res.status(409).json({ error: "Pas votre chantier" });
+    return;
+  }
+  const work = CONTRACT_WORK[contract.jobType as ContractJobType];
+  const picked = pickMachineForWork(user.farm.machines, work);
+  if (!picked) {
+    res.status(409).json({ error: explainNoMachine(user.farm.machines, work) });
+    return;
+  }
+  const cells = clampMissionCells(contract.cells || 16);
+  const reward = missionPayout(work, cells, "NPC");
   const result = await prisma.$transaction(async (tx) => {
     const wear = await applyWearToMachine(tx, {
       machine: picked.machine,
       def: picked.def,
-      cells: CONTRACT_WEAR_CELLS,
+      cells,
       work,
       specialization: user.specialization,
     });
     await tx.npcContract.update({
       where: { id: contract.id },
-      data: { status: "COMPLETED", providerId: user.id, completedAt: new Date() },
+      data: { status: "COMPLETED", completedAt: new Date() },
     });
     const u = await tx.user.update({
       where: { id: user.id },
-      data: {
-        crd: { increment: reward },
-        xp: { increment: user.specialization === "ETA" ? 25 : 15 },
-      },
-    });
-    await tx.npcContract.create({
-      data: {
-        jobType: contract.jobType,
-        title: contract.title,
-        rewardCrd: contract.rewardCrd,
-        regionNote: contract.regionNote,
-      },
+      data: { crd: { increment: reward }, xp: { increment: 15 } },
     });
     return { user: u, reward, machine: { id: picked.machine.id, type: picked.machine.type, ...wear } };
   });
+  await topUpOpenMissions();
   res.json(result);
+});
+
+app.post("/contracts/:id/abandon", async (req, res) => {
+  const body = z.object({ userId: z.string() }).safeParse(req.body);
+  if (!body.success) {
+    res.status(400).json(body.error.flatten());
+    return;
+  }
+  const contract = await prisma.npcContract.findUnique({ where: { id: req.params.id } });
+  if (!contract || contract.status !== "ACCEPTED" || contract.providerId !== body.data.userId) {
+    res.status(409).json({ error: "Pas votre chantier" });
+    return;
+  }
+  await prisma.npcContract.update({
+    where: { id: contract.id },
+    data: { status: "OPEN", providerId: null },
+  });
+  res.json({ ok: true });
 });
 
 // Sert le front construit (apps/web/dist, recopié à côté de ce fichier compilé

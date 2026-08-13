@@ -22,7 +22,7 @@ function cyl(rt: number, rb: number, h: number, seg: number, mat: THREE.Material
   return new THREE.Mesh(new THREE.CylinderGeometry(rt, rb, h, seg), mat);
 }
 
-/** Corps commun aux trois métiers : le détail vient de l'accessoire. */
+/** Corps commun aux deux métiers : le détail vient de l'accessoire. */
 function buildFarmer(profile: ClassProfile): THREE.Group {
   const g = new THREE.Group();
   const skin = FLAT(profile.palette.skin);
@@ -129,27 +129,6 @@ function buildFarmer(profile: ClassProfile): THREE.Group {
     g.add(calf);
   }
 
-  if (profile.code === "ETA") {
-    const helmet = cyl(0.21, 0.23, 0.18, 8, FLAT("#e0762f"));
-    helmet.position.y = 1.6;
-    const brim = box(0.3, 0.05, 0.16, FLAT("#e0762f"));
-    brim.position.set(0, 1.53, 0.18);
-    g.add(helmet, brim);
-
-    const vest = box(0.54, 0.2, 0.32, FLAT("#f2b13c"));
-    vest.position.y = 0.92;
-    g.add(vest);
-
-    // Clé à molette : il travaille les terres des autres, pas les siennes.
-    const wrench = box(0.07, 0.62, 0.07, prop);
-    wrench.position.set(-0.42, 0.78, 0.06);
-    wrench.rotation.z = 0.3;
-    const jaw = box(0.2, 0.14, 0.09, prop);
-    jaw.position.set(-0.53, 1.06, 0.06);
-    jaw.rotation.z = 0.3;
-    g.add(wrench, jaw);
-  }
-
   return g;
 }
 
@@ -169,7 +148,7 @@ export function LowPolyCharacter({ code, active = false, height = 190 }: Props) 
     camera.position.set(0, 1.35, 4.4);
     camera.lookAt(0, 0.85, 0);
 
-    // Trois de ces portraits tournent côte à côte sur l'écran des métiers,
+    // Deux portraits côte à côte sur l'écran des métiers.
     // chacun avec sa boucle de rendu : c'est là qu'un réglage sobre se voit le
     // plus sur une machine sans carte graphique.
     let quality = initialQuality();

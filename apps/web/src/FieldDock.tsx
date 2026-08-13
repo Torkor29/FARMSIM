@@ -226,11 +226,11 @@ export function FieldDock({
                 title={
                   contractor.hasMachine
                     ? `Sous-traiter — ${contractor.cost} TRN`
-                    : `Pas la machine : une ETA le fait pour ${contractor.cost} TRN`
+                    : `Pas la machine : une entreprise le fait pour ${contractor.cost} TRN`
                 }
                 onClick={onContractor}
               >
-                ETA · {contractor.cost} TRN
+                Entreprise · {contractor.cost} TRN
               </button>
             )}
             {readyCount > 0 && (

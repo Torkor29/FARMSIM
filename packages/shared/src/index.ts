@@ -22,7 +22,10 @@ export const CURRENCY_NAME = "terron";
 
 import type { TradeGood } from "./goods.js";
 
-export type Specialization = "CEREALIER" | "ELEVEUR" | "ETA";
+export type Specialization = "CEREALIER" | "ELEVEUR";
+
+/** Les deux métiers jouables. Les travaux à façon sont un appoint, pas un 3ᵉ métier. */
+export const PLAYABLE_SPECIALIZATIONS: Specialization[] = ["CEREALIER", "ELEVEUR"];
 
 export type CropCode = "WHEAT" | "MAIZE" | "PEA";
 
@@ -73,14 +76,12 @@ export type CellKind = "EMPTY" | "CROP" | "BUILDING" | "VEHICLE";
 export const SPECIALIZATION_LABELS: Record<Specialization, string> = {
   CEREALIER: "Céréalier",
   ELEVEUR: "Éleveur",
-  ETA: "ETA — Entreprise de Travaux Agricoles",
 };
 
 /** Version courte, pour les barres d'état où la place manque. */
 export const SPECIALIZATION_SHORT: Record<Specialization, string> = {
   CEREALIER: "Céréalier",
   ELEVEUR: "Éleveur",
-  ETA: "ETA",
 };
 
 /** Illustration du matériel, pour le catalogue et le garage. */
@@ -98,7 +99,6 @@ export const SPECIALIZATION_BONUSES: Record<
 > = {
   CEREALIER: { domain: "cropYield", bonus: 0.02 },
   ELEVEUR: { domain: "feedConversion", bonus: 0.02 },
-  ETA: { domain: "workSpeed", bonus: 0.02 },
 };
 
 export const CROP_DEFS: Record<
@@ -529,7 +529,7 @@ export function buildingResaleValue(type: BuildingType, level: number): number {
 }
 
 /* ------------------------------------------------------------------ */
-/* Prestation ETA — faire travailler ses terres par un tiers           */
+/* Deux prix : client (faire venir) vs prestataire (mission)           */
 /* ------------------------------------------------------------------ */
 
 export type FarmWork = "PLANT" | "FERTILIZE" | "HARVEST" | "PLOW" | "STUBBLE";
@@ -543,12 +543,8 @@ export const WORK_LABELS: Record<FarmWork, string> = {
 };
 
 /**
- * Une ETA — Entreprise de Travaux Agricoles — vient travailler vos terres
- * avec SES machines. C'est la porte de sortie quand on n'a ni moissonneuse
- * ni les moyens d'en acheter une : on paie le service à la case, plus cher
- * que de le faire soi-même, mais sans immobiliser le prix de l'engin.
-
- * `[GD]`
+ * Prix **client** : ce qu'on paie pour ne pas avoir la machine.
+ * Ce n'est pas un salaire. `[GD]`
  */
 export const CONTRACTOR_RATE_PER_CELL: Record<FarmWork, number> = {
   PLANT: 8,
@@ -561,13 +557,21 @@ export const CONTRACTOR_RATE_PER_CELL: Record<FarmWork, number> = {
 /** Frais de déplacement, quel que soit le nombre de cases `[GD]` */
 export const CONTRACTOR_CALLOUT_FEE = 80;
 
-/** Un ETA travaille moins bien qu'un propriétaire sur ses propres terres `[GD]` */
+/** Filet urgent PNJ : moins bon que soi-même, instantané `[GD]` */
 export const CONTRACTOR_YIELD_MALUS = 0.06;
+
+/** Urgent PNJ (bouton « entreprise ») : le client paie le barème +15 % `[GD]` */
+export const URGENT_NPC_SURCHARGE = 0.15;
 
 /** Coût total d'une prestation, frais de déplacement compris. */
 export function contractorQuote(work: FarmWork, cells: number): number {
   if (cells <= 0) return 0;
   return CONTRACTOR_CALLOUT_FEE + CONTRACTOR_RATE_PER_CELL[work] * cells;
+}
+
+/** Devis urgent PNJ : barème client majoré. L'argent sort de l'économie joueur. */
+export function urgentContractorQuote(work: FarmWork, cells: number): number {
+  return Math.round(contractorQuote(work, cells) * (1 + URGENT_NPC_SURCHARGE));
 }
 
 /**
@@ -579,12 +583,46 @@ export function contractorBreakEvenCells(work: FarmWork, machineCost: number): n
   return Math.ceil(machineCost / CONTRACTOR_RATE_PER_CELL[work]);
 }
 
-export const NPC_MISSION_SHARE = 0.55;
-export const NPC_MISSION_CELLS = 10;
+export type MissionKind = "NPC" | "P2P";
 
-/** Salaire d'un contrat PNJ : 55 % du devis client, pour N cases. */
-export function npcMissionReward(work: FarmWork): number {
-  return Math.round(contractorQuote(work, NPC_MISSION_CELLS) * NPC_MISSION_SHARE);
+/** Salaire mission PNJ = 55 % du devis client `[GD]` */
+export const MISSION_NPC_SHARE = 0.55;
+/** Salaire P2P = 85 % du devis client `[GD]` */
+export const MISSION_P2P_SHARE = 0.85;
+
+export const MISSION_CELLS_MIN = 8;
+export const MISSION_CELLS_MAX = 24;
+export const MISSION_CELL_CHOICES = [8, 12, 16, 18, 24] as const;
+/** Au plus 3 chantiers ouverts à la fois (anti-rente) `[GD]` */
+export const MISSION_OPEN_MAX = 3;
+
+export function clampMissionCells(cells: number): number {
+  const n = Math.round(cells);
+  return Math.max(MISSION_CELLS_MIN, Math.min(MISSION_CELLS_MAX, n));
+}
+
+/**
+ * Salaire du prestataire. Jamais égal au prix client tant que le donneur
+ * d'ordre est un PNJ : sinon le tableau devient le jeu.
+ */
+export function missionPayout(
+  work: FarmWork,
+  cells: number,
+  kind: MissionKind = "NPC",
+): number {
+  const n = clampMissionCells(cells);
+  const share = kind === "P2P" ? MISSION_P2P_SHARE : MISSION_NPC_SHARE;
+  return Math.round(contractorQuote(work, n) * share);
+}
+
+/** @deprecated préférer missionPayout(work, cells, "NPC") */
+export const NPC_MISSION_SHARE = MISSION_NPC_SHARE;
+/** @deprecated les chantiers varient de 8 à 24 cases */
+export const NPC_MISSION_CELLS = 16;
+
+/** Salaire d'un contrat PNJ pour N cases (défaut 16). */
+export function npcMissionReward(work: FarmWork, cells: number = NPC_MISSION_CELLS): number {
+  return missionPayout(work, cells, "NPC");
 }
 
 /** Mapping contrats NPC → type de travail machine */
@@ -608,8 +646,8 @@ export const CONTRACT_MACHINE: Record<ContractJobType, MachineType> = {
   TRANSPORT: "TRACTOR",
 };
 
-/** Usure forfaitaire contrats NPC (équivalent ~N cases) */
-export const CONTRACT_WEAR_CELLS = 10;
+/** @deprecated l'usure suit les cases du chantier (`contract.cells`) */
+export const CONTRACT_WEAR_CELLS = 16;
 
 export function footprintCells(x: number, y: number, w: number, h: number) {
   const cells: { x: number; y: number }[] = [];

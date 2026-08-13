@@ -10,7 +10,7 @@ import {
   buildingLevelDef,
   buildingResaleValue,
   buildingUpgradeCost,
-  contractorQuote,
+  urgentContractorQuote,
   repairHalfwayTarget,
   repairQuote,
   isPaddockAdjacent,
@@ -45,6 +45,7 @@ import { AuthScreen } from "./AuthScreen";
 import type { GrazingHerd, PreviewBuilding } from "./IsoFarmView";
 import { ConfirmDialog, type ConfirmRequest } from "./ConfirmDialog";
 import { MachineCareOverlay, type CareMode } from "./MachineCareOverlay";
+import { MissionPlay, type MissionPlayContract } from "./MissionPlay";
 import { LivestockPanel, type BarnState } from "./LivestockPanel";
 import { MarketPanel, type Listing, type FuturesContract } from "./MarketPanel";
 import type { ContinentDetail, WorldContinent } from "./Onboarding";
@@ -64,7 +65,7 @@ import { TutorialOverlay } from "./TutorialOverlay";
 import { FieldDock } from "./FieldDock";
 import { PlayGuide } from "./PlayGuide";
 import { TOKEN_KEY, TUTORIAL_KEY, GUIDE_FLAGS_KEY } from "./storage-keys";
-import { isFieldWorkTool, isPlantTool, isSoilTool, type Tool } from "./tools";
+import { isPlantTool, isSoilTool, type Tool } from "./tools";
 import { useIsMobile } from "./use-media-query";
 import { DevPanel, type DevGrant } from "./DevPanel";
 import { NO_ALERTS, tabBadge, useAwayAlerts, useNotificationState, type FarmAlerts } from "./use-alerts";
@@ -192,6 +193,10 @@ type Contract = {
   title: string;
   rewardCrd: number;
   regionNote: string;
+  cells?: number;
+  status?: string;
+  work?: FarmWork;
+  machineType?: string;
 };
 
 type MarketPrice = { commodity: string; price: number; stockTons: number };
@@ -326,6 +331,7 @@ export function App() {
   const [zones, setZones] = useState<Zone[]>([]);
   const [market, setMarket] = useState<MarketPrice[]>([]);
   const [contracts, setContracts] = useState<Contract[]>([]);
+  const [activeMission, setActiveMission] = useState<MissionPlayContract | null>(null);
   const [player, setPlayer] = useState<Player | null>(null);
   const [authMode, setAuthMode] = useState<"register" | "login">("register");
   const [name, setName] = useState("");
@@ -420,11 +426,17 @@ export function App() {
     }
   }
 
+  const playerIdRef = useRef<string | null>(null);
+  playerIdRef.current = player?.id ?? null;
+
   const refreshMeta = useCallback(async () => {
+    const uid = playerIdRef.current;
     const [z, m, c, w] = await Promise.all([
       api<Zone[]>("/zones"),
       api<MarketPrice[]>("/market"),
-      api<Contract[]>("/contracts"),
+      api<{ contracts: Contract[]; active: Contract | null }>(
+        uid ? `/contracts?userId=${encodeURIComponent(uid)}` : "/contracts",
+      ),
       api<WeatherSnap[]>("/weather"),
     ]);
     setPrevPrices((prev) => {
@@ -438,7 +450,27 @@ export function App() {
     // mémos et rerendait tout l'écran pour des données identiques.
     setZones((prev) => keepIfSame(prev, z));
     setMarket((prev) => keepIfSame(prev, m));
-    setContracts((prev) => keepIfSame(prev, c));
+    setContracts((prev) => keepIfSame(prev, c.contracts));
+    if (c.active && c.active.cells) {
+      const work = (c.active.work ??
+        (c.active.jobType === "HARVEST"
+          ? "HARVEST"
+          : c.active.jobType === "SOW"
+            ? "PLANT"
+            : c.active.jobType === "FERTILIZE"
+              ? "FERTILIZE"
+              : "PLOW")) as FarmWork;
+      setActiveMission({
+        id: c.active.id,
+        title: c.active.title,
+        jobType: c.active.jobType,
+        rewardCrd: c.active.rewardCrd,
+        regionNote: c.active.regionNote,
+        cells: c.active.cells,
+        work,
+        machineType: c.active.machineType,
+      });
+    }
     setWeather((prev) => keepIfSame(prev, w));
   }, []);
 
@@ -1367,7 +1399,7 @@ export function App() {
     const hasMachine = (player?.farm?.machines ?? []).some(
       (m) => m.type === needed && m.condition >= (MACHINE_DEFS[needed]?.minCondition ?? 15),
     );
-    return { work, hasMachine, cost: contractorQuote(work, selectedCells.length) };
+    return { work, hasMachine, cost: urgentContractorQuote(work, selectedCells.length) };
   }, [tool, selectedCells.length, player?.farm?.machines]);
 
   async function callContractor() {
@@ -1390,7 +1422,7 @@ export function App() {
         },
       );
       const tons = r.totalTons ? ` · ${r.totalTons.toFixed(2)} t` : "";
-      flashToast(`ETA : ${WORK_LABELS[contractorOffer.work]} ×${r.cells}${tons} · −${r.cost} TRN`);
+      flashToast(`Entreprise : ${WORK_LABELS[contractorOffer.work]} ×${r.cells}${tons} · −${r.cost} TRN`);
       setSelectedCells([]);
       await refreshPlayer();
       await loadParcel(activeParcelId);
@@ -1731,8 +1763,25 @@ export function App() {
     if (!player) return;
     setBusy(true);
     try {
+      const r = await api<{ contract: MissionPlayContract }>(`/contracts/${id}/accept`, {
+        method: "POST",
+        body: JSON.stringify({ userId: player.id }),
+      });
+      setActiveMission(r.contract);
+      await refreshMeta();
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function finishMission() {
+    if (!player || !activeMission) return;
+    setBusy(true);
+    try {
       const r = await api<{ reward: number; machine?: { type: string; condition: number; wearApplied: number } }>(
-        `/contracts/${id}/accept`,
+        `/contracts/${activeMission.id}/complete`,
         {
           method: "POST",
           body: JSON.stringify({ userId: player.id }),
@@ -1743,8 +1792,26 @@ export function App() {
       const wearNote = r.machine
         ? ` · ${r.machine.type} −${r.machine.wearApplied.toFixed(1)}%`
         : "";
-      setMsg(`Mission +${r.reward} TRN${wearNote}`);
+      flashToast(`Chantier honoré · +${r.reward} TRN${wearNote}`);
+      setActiveMission(null);
       markGuideFlag("contract");
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function abandonMission() {
+    if (!player || !activeMission) return;
+    setBusy(true);
+    try {
+      await api(`/contracts/${activeMission.id}/abandon`, {
+        method: "POST",
+        body: JSON.stringify({ userId: player.id }),
+      });
+      setActiveMission(null);
+      await refreshMeta();
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e));
     } finally {
@@ -2106,7 +2173,7 @@ export function App() {
               activeWork={activeWork}
               grazing={grazingHerds}
               weather={localWeather}
-              strokeWork={player.specialization === "ETA" && isFieldWorkTool(tool)}
+              strokeWork={false}
               onStrokePreview={setSelectedCells}
               onWorkStroke={(cells) => {
                 if (busy) return;
@@ -2438,7 +2505,7 @@ export function App() {
         tool={tool}
         brush={brush}
         isMobile={isMobile}
-        isEta={player.specialization === "ETA"}
+        isEta={false}
         busy={busy}
         selectedCount={selectedCells.length}
         readyCount={readyCellCount}
@@ -2473,9 +2540,7 @@ export function App() {
         <aside className={panelClass("garage-panel", "GARAGE")} {...(isMobile ? sheetGesture : {})}>
           <h3>Garage</h3>
           <p className="muted tiny">
-            {player.specialization === "ETA"
-              ? "Graissez avant de partir. Rafistoler ramène à mi-chemin du neuf, réviser remet à 100 %."
-              : "Rafistoler = moitié du neuf (moins cher). Réviser = 100 %. Usure à chaque case."}
+            Graissez avant d’enchaîner. Rafistoler ramène à mi-chemin du neuf, réviser remet à 100 %.
           </p>
           <ul className="list">
             {(player.farm?.machines ?? []).map((m) => {
@@ -2483,7 +2548,7 @@ export function App() {
               const low = def ? m.condition < def.minCondition : m.condition < 15;
               const dirty = (m.dirt ?? 0) >= DIRT_DIRTY_THRESHOLD;
               const panne = isBreakdownKind(m.breakdown) ? BREAKDOWN_LABELS[m.breakdown] : null;
-              const eta = player.specialization === "ETA";
+              const eta = true;
               const halfTarget = repairHalfwayTarget(m.condition);
               const halfQuote = def
                 ? repairQuote({
@@ -2514,8 +2579,6 @@ export function App() {
                     </div>
                   </span>
                   <span className="row-actions">
-                    {eta && (
-                      <>
                         <button
                           type="button"
                           disabled={busy || (m.greased !== false && (m.greaseSkipStreak ?? 0) === 0)}
@@ -2532,8 +2595,6 @@ export function App() {
                         >
                           Nettoyer
                         </button>
-                      </>
-                    )}
                     <button
                       type="button"
                       disabled={busy || !canHalf || (halfQuote != null && player.crd < halfQuote.cost)}
@@ -2662,6 +2723,15 @@ export function App() {
         );
       })()}
 
+      {activeMission && (
+        <MissionPlay
+          contract={activeMission}
+          busy={busy}
+          onCancel={() => void abandonMission()}
+          onDone={() => void finishMission()}
+        />
+      )}
+
       <TutorialOverlay open={showTutorial} onClose={() => setShowTutorial(false)} />
       <PlayGuide open={showGuide} snapshot={guideSnapshot} onClose={() => setShowGuide(false)} />
 
@@ -2669,8 +2739,8 @@ export function App() {
         <aside className={panelClass("eta-panel", "OFFICE")} {...(isMobile ? sheetGesture : {})}>
           <h3>Travaux à façon</h3>
           <p className="muted tiny">
-            Vous partez travailler chez d’autres exploitants avec votre matériel.
-            C’est le métier d’une ETA — Entreprise de Travaux Agricoles.
+            Cases à travailler dans la région. Il faut l’engin, et qu’il tienne. Appoint pendant
+            que vos cultures poussent — pas une rente.
           </p>
           <ul className="list">
             {contracts.map((c) => (
@@ -2678,11 +2748,11 @@ export function App() {
                 <span>
                   <strong>{c.title}</strong>
                   <div className="muted tiny">
-                    {c.jobType} · {c.rewardCrd} TRN
+                    {c.jobType} · {c.cells ?? "?"} cases · {c.rewardCrd} TRN
                   </div>
                 </span>
-                <button type="button" disabled={busy} onClick={() => acceptContract(c.id)}>
-                  Faire
+                <button type="button" disabled={busy || Boolean(activeMission)} onClick={() => acceptContract(c.id)}>
+                  Prendre
                 </button>
               </li>
             ))}
