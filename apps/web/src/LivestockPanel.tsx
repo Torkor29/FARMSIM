@@ -39,11 +39,12 @@ type Props = {
   onBuyAnimals: (buildingId: string, count: number) => void;
   onGraze: (herdId: string) => void;
   onBuildPaddock: (yardType: BuildingType) => void;
-  onFeed: (herdId: string, useMaize: boolean) => void;
+  onFeed: (herdId: string, ration: "hay" | "maize" | "barley") => void;
   onMilk: (herdId: string) => void;
   onSlaughter: (herdId: string, count: number) => void;
   hayTons: number;
   maizeTons: number;
+  barleyTons: number;
   /** Permet à la coque mobile d'en faire un tiroir du bas */
   className?: string;
 };
@@ -61,6 +62,7 @@ export function LivestockPanel({
   onSlaughter,
   hayTons,
   maizeTons,
+  barleyTons,
   className = "glass livestock-panel",
 }: Props) {
   if (!barns.length) return null;
@@ -193,7 +195,7 @@ export function LivestockPanel({
                       ? "Aucun fourrage en silo — achetez-en au négociant"
                       : "Distribuer du fourrage"
                   }
-                  onClick={() => onFeed(herd.id, false)}
+                  onClick={() => onFeed(herd.id, "hay")}
                 >
                   Nourrir
                 </button>
@@ -208,9 +210,24 @@ export function LivestockPanel({
                       ? "Aucun maïs en silo — il faut en cultiver"
                       : "Ration au maïs : plus nutritive, mais c’est du maïs qu’on ne vend pas"
                   }
-                  onClick={() => onFeed(herd.id, true)}
+                  onClick={() => onFeed(herd.id, "maize")}
                 >
                   Ration maïs
+                </button>
+              )}
+
+              {herd && (
+                <button
+                  type="button"
+                  disabled={busy || barleyTons <= 0}
+                  title={
+                    barleyTons <= 0
+                      ? "Aucune orge en silo — semez-en, surtout pour les cochons"
+                      : "Ration à l’orge : concentré un peu moins riche que le maïs"
+                  }
+                  onClick={() => onFeed(herd.id, "barley")}
+                >
+                  Ration orge
                 </button>
               )}
 

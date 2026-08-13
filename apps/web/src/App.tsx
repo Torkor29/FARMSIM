@@ -37,6 +37,8 @@ import {
   evaluateObjectives,
   type GuideSnapshot,
   type Specialization,
+  CROP_DEFS,
+  isMowCrop,
   type CropCode,
   type BuildingType,
   type MachineType,
@@ -71,7 +73,7 @@ import { TutorialOverlay } from "./TutorialOverlay";
 import { FieldDock } from "./FieldDock";
 import { PlayGuide } from "./PlayGuide";
 import { TOKEN_KEY, TUTORIAL_KEY, GUIDE_FLAGS_KEY } from "./storage-keys";
-import { isPlantTool, isSoilTool, type Tool } from "./tools";
+import { cropFromPlantTool, isPlantTool, isSoilTool, plantCropLabel, type Tool } from "./tools";
 import { useIsMobile } from "./use-media-query";
 import { DevPanel, type DevGrant } from "./DevPanel";
 import { NO_ALERTS, tabBadge, useAwayAlerts, useNotificationState, type FarmAlerts } from "./use-alerts";
@@ -333,14 +335,22 @@ function harvestGrainNote(r: {
   soldTons?: number;
   soldRevenue?: number;
   soldReason?: "NO_SILO" | "SILO_FULL" | null;
+  hayTons?: number;
+  grassRegrew?: number;
 }): string {
+  if (r.hayTons && r.hayTons > 0 && (r.totalTons ?? 0) <= r.hayTons + 0.001) {
+    return r.grassRegrew
+      ? `Foin ${r.hayTons.toFixed(2)} t en hangar · le champ reprend`
+      : `Foin ${r.hayTons.toFixed(2)} t en hangar`;
+  }
   const total = r.totalTons != null ? r.totalTons.toFixed(2) : "";
-  if (!r.soldTons) return `Récolte ${total} t`;
+  const hay = r.hayTons ? ` · foin ${r.hayTons.toFixed(2)} t` : "";
+  if (!r.soldTons) return `Récolte ${total} t${hay}`;
   const money = r.soldRevenue ? ` · +${Math.round(r.soldRevenue)} TRN` : "";
   if (r.soldReason === "NO_SILO") {
-    return `Récolte ${total} t vendue au négociant (pas de silo)${money}`;
+    return `Récolte ${total} t vendue au négociant (pas de silo)${money}${hay}`;
   }
-  return `Récolte ${total} t · ${r.soldTons.toFixed(2)} t vendues (silo plein)${money}`;
+  return `Récolte ${total} t · ${r.soldTons.toFixed(2)} t vendues (silo plein)${money}${hay}`;
 }
 
 /** Sons UI optionnels — ignorés tant qu’aucun asset n’est fourni */
@@ -429,6 +439,7 @@ export function App() {
   const [activeWork, setActiveWork] = useState<{
     type: MachineType;
     cells: { x: number; y: number }[];
+    cut?: "harvest" | "mow";
   } | null>(null);
   const [hoverCell, setHoverCell] = useState<{ x: number; y: number } | null>(null);
   const [toastTick, setToastTick] = useState(0);
@@ -944,6 +955,11 @@ export function App() {
     [player?.farm?.inventory],
   );
 
+  const barleyInStock = useMemo(
+    () => (player?.farm?.inventory ?? []).find((i) => i.itemCode === "BARLEY")?.qty ?? 0,
+    [player?.farm?.inventory],
+  );
+
   /** Tonnage total en silo — affiché sur le bouton pour appeler à vendre. */
   const totalStockTons = useMemo(
     () => (player?.farm?.inventory ?? []).reduce((sum, i) => sum + i.qty, 0),
@@ -973,7 +989,7 @@ export function App() {
       milkOrMeat: stock("MILK") + stock("MEAT"),
       animals: barns.reduce((n, b) => n + (b.herd?.size ?? 0), 0),
       hasSold: guideFlags.sold,
-      hasHarvested: guideFlags.harvested || cells.some((c) => c.hasStubble) || stock("WHEAT") + stock("MAIZE") + stock("PEA") > 0,
+      hasHarvested: guideFlags.harvested || cells.some((c) => c.hasStubble) || stock("WHEAT") + stock("MAIZE") + stock("PEA") + stock("BARLEY") + stock("RAPE") + stock("HAY") > 0,
       hasContract: guideFlags.contract,
     };
   }, [
@@ -1056,10 +1072,9 @@ export function App() {
    * pas la découvrir à la moisson.
    */
   const rotationAlert = useMemo(() => {
-    if (tool !== "PLANT_WHEAT" && tool !== "PLANT_MAIZE" && tool !== "PLANT_PEA") return null;
+    const crop = cropFromPlantTool(tool);
+    if (!crop) return null;
     if (!selectedCells.length) return null;
-    const crop: CropCode =
-      tool === "PLANT_WHEAT" ? "WHEAT" : tool === "PLANT_MAIZE" ? "MAIZE" : "PEA";
     const cells = parcel?.cells ?? [];
     let worst = 1;
     let repeated = 0;
@@ -1217,7 +1232,7 @@ export function App() {
       return `Case (${x},${y}) · ${soil}`;
     }
     if (cell.kind === "CROP") {
-      const crop = cell.crop ?? "?";
+      const crop = cell.crop ? (CROP_DEFS[cell.crop]?.name ?? cell.crop) : "?";
       const fert = cell.fertilizedPasses ?? 0;
       const ripe = sim?.sim.ripeness;
       if (ripe) {
@@ -1387,9 +1402,7 @@ export function App() {
     }
 
     if (
-      tool === "PLANT_WHEAT" ||
-      tool === "PLANT_MAIZE" ||
-      tool === "PLANT_PEA" ||
+      isPlantTool(tool) ||
       tool === "FERTILIZE" ||
       tool === "HARVEST" ||
       tool === "STUBBLE" ||
@@ -1403,13 +1416,14 @@ export function App() {
         : selectedCells.length +
           block.filter((c) => !selectedCells.some((s) => s.x === c.x && s.y === c.y)).length;
       toggleCell(x, y);
-      const label =
-        tool === "PLANT_WHEAT"
-          ? "Blé"
-          : tool === "PLANT_MAIZE"
-            ? "Maïs"
-            : tool === "FERTILIZE"
-              ? "Ferti"
+      const label = isPlantTool(tool)
+        ? plantCropLabel(tool)
+        : tool === "FERTILIZE"
+          ? "Ferti"
+          : tool === "PLOW"
+            ? "Labour"
+            : tool === "STUBBLE"
+              ? "Déchaumage"
               : "Récolte";
       flashToast(`${label} · ${nextCount} case(s) sélectionnée(s)`);
       return;
@@ -1474,19 +1488,37 @@ export function App() {
   }
 
   /** Le prestataire n'est proposé que là où il a un sens : sur du travail aux champs. */
+  const selectedAreGrass = useMemo(() => {
+    if (!selectedCells.length) return false;
+    return selectedCells.every((sel) => {
+      const cell = parcel?.cells?.find((c) => c.x === sel.x && c.y === sel.y);
+      return isMowCrop(cell?.crop);
+    });
+  }, [selectedCells, parcel?.cells]);
+
+  const readyAreGrass = useMemo(() => {
+    const ready = (parcelDetail?.cellSims ?? []).filter((s) => s.sim.ready);
+    if (!ready.length) return false;
+    return ready.every((s) => {
+      const cell = parcel?.cells?.find((c) => c.x === s.x && c.y === s.y);
+      return isMowCrop(cell?.crop);
+    });
+  }, [parcelDetail?.cellSims, parcel?.cells]);
+
   const contractorOffer = useMemo(() => {
-    const work: FarmWork | null =
-      tool === "PLANT_WHEAT" || tool === "PLANT_MAIZE" || tool === "PLANT_PEA"
-        ? "PLANT"
-        : tool === "FERTILIZE"
-          ? "FERTILIZE"
-          : tool === "HARVEST"
-            ? "HARVEST"
-            : tool === "PLOW"
-              ? "PLOW"
-              : tool === "STUBBLE"
-                ? "STUBBLE"
-                : null;
+    const work: FarmWork | null = isPlantTool(tool)
+      ? "PLANT"
+      : tool === "FERTILIZE"
+        ? "FERTILIZE"
+        : tool === "HARVEST"
+          ? selectedAreGrass
+            ? "MOW"
+            : "HARVEST"
+          : tool === "PLOW"
+            ? "PLOW"
+            : tool === "STUBBLE"
+              ? "STUBBLE"
+              : null;
     if (!work || !selectedCells.length) return null;
     const needed: MachineType =
       work === "HARVEST" ? "HARVESTER" : work === "STUBBLE" ? "DISC_HARROW" : "TRACTOR";
@@ -1494,14 +1526,13 @@ export function App() {
       (m) => m.type === needed && m.condition >= (MACHINE_DEFS[needed]?.minCondition ?? 15),
     );
     return { work, hasMachine, cost: urgentContractorQuote(work, selectedCells.length) };
-  }, [tool, selectedCells.length, player?.farm?.machines]);
+  }, [tool, selectedCells.length, selectedAreGrass, player?.farm?.machines]);
 
   const laborQuote = useMemo(() => {
     if (visiting || !contractorOffer) return null;
     const n = selectedCells.length;
     if (n < MISSION_CELLS_MIN || n > MISSION_CELLS_MAX) return null;
-    const crop: CropCode | undefined =
-      tool === "PLANT_WHEAT" ? "WHEAT" : tool === "PLANT_MAIZE" ? "MAIZE" : tool === "PLANT_PEA" ? "PEA" : undefined;
+    const crop: CropCode | undefined = cropFromPlantTool(tool) ?? undefined;
     return laborEscrow(contractorOffer.work, n, crop).escrow;
   }, [visiting, contractorOffer, selectedCells.length, tool]);
 
@@ -1509,8 +1540,7 @@ export function App() {
     if (!player || !activeParcelId || !contractorOffer || laborQuote == null) return;
     setBusy(true);
     try {
-      const crop =
-        tool === "PLANT_MAIZE" ? "MAIZE" : tool === "PLANT_WHEAT" ? "WHEAT" : tool === "PLANT_PEA" ? "PEA" : undefined;
+      const crop = cropFromPlantTool(tool) ?? undefined;
       const r = await api<{ escrow: number }>(`/parcels/${activeParcelId}/labor-orders`, {
         method: "POST",
         body: JSON.stringify({
@@ -1584,7 +1614,11 @@ export function App() {
     setBusy(true);
     setErr(null);
     const workCells = selectedCells.slice();
-    flashWork(contractorOffer.work === "HARVEST" ? "HARVESTER" : "TRACTOR", workCells);
+    flashWork(
+      contractorOffer.work === "HARVEST" ? "HARVESTER" : "TRACTOR",
+      workCells,
+      contractorOffer.work === "MOW" ? "mow" : contractorOffer.work === "HARVEST" ? "harvest" : undefined,
+    );
     try {
       const r = await api<{ cost: number; cells: number; totalTons?: number }>(
         `/parcels/${activeParcelId}/contractor`,
@@ -1593,7 +1627,7 @@ export function App() {
           body: JSON.stringify({
             userId: player.id,
             work: contractorOffer.work,
-            crop: tool === "PLANT_MAIZE" ? "MAIZE" : tool === "PLANT_WHEAT" ? "WHEAT" : undefined,
+            crop: cropFromPlantTool(tool) ?? undefined,
             cells: workCells,
           }),
         },
@@ -1625,9 +1659,13 @@ export function App() {
     return "TRACTOR";
   }
 
-  function flashWork(type: MachineType, cells: { x: number; y: number }[]) {
+  function flashWork(
+    type: MachineType,
+    cells: { x: number; y: number }[],
+    cut?: "harvest" | "mow",
+  ) {
     setPulseCells(cells);
-    setActiveWork({ type, cells });
+    setActiveWork({ type, cells, cut });
     // Un peu de marge sur la durée du parcours : l'engin doit atteindre la
     // dernière case avant qu'on ne l'efface.
     window.setTimeout(() => {
@@ -1641,13 +1679,18 @@ export function App() {
     setBusy(true);
     setErr(null);
     const workCells = cells.slice();
-    flashWork(workMachineForTool(tool), workCells);
+    const plantCrop = cropFromPlantTool(tool);
+    const harvestCut = tool === "HARVEST" ? (selectedAreGrass ? "mow" : "harvest") : undefined;
+    flashWork(
+      tool === "HARVEST" && selectedAreGrass ? "TRACTOR" : workMachineForTool(tool),
+      workCells,
+      harvestCut,
+    );
     type LaborBit = { remaining: number; completed: boolean; payout?: number };
     let labor: LaborBit | undefined;
     try {
-      if (tool === "PLANT_WHEAT" || tool === "PLANT_MAIZE" || tool === "PLANT_PEA") {
-        const crop: CropCode =
-          tool === "PLANT_WHEAT" ? "WHEAT" : tool === "PLANT_MAIZE" ? "MAIZE" : "PEA";
+      if (plantCrop) {
+        const crop = plantCrop;
         const r = await api<{
           machine?: {
             wearApplied: number;
@@ -1662,7 +1705,8 @@ export function App() {
           body: JSON.stringify({ userId: player.id, crop, cells: workCells, directSeed }),
         });
         setMsg(
-          `Semé ${crop} ×${workCells.length}${directSeed ? " en direct" : ""}` + wearNote(r.machine),
+          `Semé ${CROP_DEFS[crop].name} ×${workCells.length}${directSeed ? " en direct" : ""}` +
+            wearNote(r.machine),
         );
         labor = r.labor;
       } else if (tool === "FERTILIZE") {
@@ -1692,6 +1736,8 @@ export function App() {
           lostCells?: number;
           soldTons?: number;
           soldRevenue?: number;
+          hayTons?: number;
+          grassRegrew?: number;
           soldReason?: "NO_SILO" | "SILO_FULL" | null;
           labor?: { remaining: number; completed: boolean; payout?: number };
         }>(`/parcels/${activeParcelId}/harvest`, {
@@ -1788,11 +1834,19 @@ export function App() {
               ? visitOrder.cellList.some((r) => r.x === c.x && r.y === c.y)
               : true,
           ) || [];
-      if (readyCells.length) flashWork("HARVESTER", readyCells);
+      if (readyCells.length) {
+        flashWork(
+          readyAreGrass ? "TRACTOR" : "HARVESTER",
+          readyCells,
+          readyAreGrass ? "mow" : "harvest",
+        );
+      }
       const r = await api<{
         totalTons: number;
         soldTons?: number;
         soldRevenue?: number;
+        hayTons?: number;
+        grassRegrew?: number;
         soldReason?: "NO_SILO" | "SILO_FULL" | null;
         labor?: { remaining: number; completed: boolean; payout?: number };
       }>(`/parcels/${activeParcelId}/harvest`, {
@@ -2108,28 +2162,27 @@ export function App() {
    * Distribue une ration complète : le joueur choisit l'aliment, pas la dose.
    * Le maïs nourrit mieux, mais c'est du maïs qu'il ne vendra pas.
    */
-  async function feedHerd(herdId: string, useMaize: boolean) {
+  async function feedHerd(herdId: string, ration: "hay" | "maize" | "barley") {
     if (!player) return;
     setBusy(true);
     try {
       const barn = barns.find((b) => b.herd?.id === herdId);
       const size = barn?.herd?.size ?? 1;
-      // Une tonne couvre une bête pendant environ 70 cycles : on vise large
-      // sans vider le silo.
       const wanted = Math.max(1, Math.ceil(size / 3));
-      const stock = useMaize ? maizeInStock : hayInStock;
+      const stock =
+        ration === "maize" ? maizeInStock : ration === "barley" ? barleyInStock : hayInStock;
       const tons = Math.min(stock, wanted);
       const r = await api<{ units: number; quality: number }>(`/herds/${herdId}/feed`, {
         method: "POST",
         body: JSON.stringify({
           userId: player.id,
-          hayTons: useMaize ? 0 : tons,
-          maizeTons: useMaize ? tons : 0,
+          hayTons: ration === "hay" ? tons : 0,
+          maizeTons: ration === "maize" ? tons : 0,
+          barleyTons: ration === "barley" ? tons : 0,
         }),
       });
-      flashToast(
-        `${useMaize ? "Maïs" : "Fourrage"} distribué · ${tons.toFixed(1)} t · ${r.units} kg`,
-      );
+      const label = ration === "maize" ? "Maïs" : ration === "barley" ? "Orge" : "Fourrage";
+      flashToast(`${label} distribué · ${tons.toFixed(1)} t · ${r.units} kg`);
       await refreshPlayer();
       if (activeParcelId) await loadLivestock(activeParcelId);
     } catch (e) {
@@ -2755,6 +2808,8 @@ export function App() {
         onDirectSeed={() => setDirectSeed((v) => !v)}
         onConfirm={runSelectionAction}
         onHarvestAll={harvestAll}
+        mowSelected={selectedAreGrass}
+        mowReadyAll={readyAreGrass}
         onContractor={callContractor}
         onPublishLabor={publishLaborOrder}
         onSell={() => setShowMarket(true)}
@@ -2925,6 +2980,7 @@ export function App() {
         onSlaughter={slaughterHerd}
         hayTons={hayInStock}
         maizeTons={maizeInStock}
+        barleyTons={barleyInStock}
         onBuildPaddock={(yardType) => {
           setTool("BUILD");
           setBuildType(yardType);
@@ -3099,7 +3155,7 @@ export function App() {
                     <button
                       type="button"
                       disabled={busy}
-                      onClick={() => sell(i.itemCode as CropCode, i.qty)}
+                      onClick={() => sell(i.itemCode as TradeGood, i.qty)}
                     >
                       Vendre
                     </button>

@@ -11,6 +11,13 @@ import { z } from "zod";
 import {
   BUILDING_DEFS,
   CROP_DEFS,
+  CROP_CODES,
+  cropGrowMs,
+  harvestItemCode,
+  isMowCrop,
+  grassWillRegrow,
+  grassCutsDone,
+  isCropCode,
   DRYING,
   MARKET_BOUNDS,
   SPECIALIZATION_LABELS,
@@ -258,6 +265,9 @@ function explainNoMachine(machines: FarmMachine[], work: FarmWork): string {
   if (!capable.length) {
     if (work === "HARVEST") {
       return "Moissonneuse requise (condition trop basse ou absente) — achetez / réparez.";
+    }
+    if (work === "MOW") {
+      return "Tracteur requis pour faucher l’herbe (condition trop basse ou absent) — achetez / réparez.";
     }
     if (work === "STUBBLE") {
       return "Déchaumeur requis (condition trop basse ou absent) — achetez / réparez.";
@@ -1411,7 +1421,7 @@ app.post("/dev/grant", async (req, res) => {
     });
     const now = Date.now();
     for (const c of cells) {
-      const grow = CROP_DEFS[c.crop as CropCode].growMs;
+      const grow = cropGrowMs(c.crop as CropCode, grassCutsDone(c));
       await prisma.parcelCell.update({
         where: { id: c.id },
         data: {
@@ -1713,6 +1723,7 @@ async function buildResumeForUser(userId: string) {
         directSeeded: cell.directSeeded,
         rotation: rotationOf(cell),
         specialization: playableSpec(user.specialization),
+        cutsDone: grassCutsDone(cell),
       });
       if (sim.lost) cropsLost += 1;
       else if (sim.ripeness && sim.ripeness.stage !== "PEAK") cropsDeclining += 1;
@@ -2018,6 +2029,7 @@ app.get("/parcels/:id", async (req, res) => {
         rotation: rotationOf(c),
         buildingYieldBonus: bonuses?.yieldBonus,
         weatherAtHarvest: weather?.state as WeatherState | undefined,
+        cutsDone: grassCutsDone(c),
       });
       if (sim.ready && c.fieldStage !== "READY") {
         await prisma.parcelCell.update({
@@ -2073,8 +2085,8 @@ app.post("/parcels/:id/labor-orders", async (req, res) => {
   const body = z
     .object({
       userId: z.string(),
-      work: z.enum(["PLANT", "FERTILIZE", "HARVEST", "PLOW", "STUBBLE"]),
-      crop: z.enum(["WHEAT", "MAIZE", "PEA"]).optional(),
+      work: z.enum(["PLANT", "FERTILIZE", "HARVEST", "PLOW", "STUBBLE", "MOW"]),
+      crop: z.enum(CROP_CODES).optional(),
       cells: z.array(z.object({ x: z.number().int(), y: z.number().int() })).min(1),
     })
     .safeParse(req.body);
@@ -2378,8 +2390,8 @@ app.post("/parcels/:id/contractor", async (req, res) => {
   const body = z
     .object({
       userId: z.string(),
-      work: z.enum(["PLANT", "FERTILIZE", "HARVEST", "PLOW"]),
-      crop: z.enum(["WHEAT", "MAIZE", "PEA"]).optional(),
+      work: z.enum(["PLANT", "FERTILIZE", "HARVEST", "PLOW", "MOW"]),
+      crop: z.enum(CROP_CODES).optional(),
       cells: z.array(z.object({ x: z.number().int(), y: z.number().int() })).min(1),
     })
     .safeParse(req.body);
@@ -2429,7 +2441,7 @@ app.post("/parcels/:id/contractor", async (req, res) => {
         return;
       }
     }
-    const growMs = CROP_DEFS[crop].growMs;
+    const growMs = cropGrowMs(crop, 0);
     await prisma.$transaction(async (tx) => {
       await tx.user.update({ where: { id: user.id }, data: { crd: { decrement: total } } });
       for (const { x, y } of cells) {
@@ -2456,7 +2468,7 @@ app.post("/parcels/:id/contractor", async (req, res) => {
       .map(({ x, y }) => parcel.cells.find((c) => c.x === x && c.y === y))
       .filter((c): c is NonNullable<typeof c> => {
         if (!c || c.kind !== "CROP" || !c.crop || !c.plantedAt) return false;
-        const grow = CROP_DEFS[c.crop].growMs;
+        const grow = cropGrowMs(c.crop, grassCutsDone(c));
         return ripenessAt(c.plantedAt.getTime() + grow, grow, now).needsPlowing;
       });
     if (!lost.length) {
@@ -2508,7 +2520,7 @@ app.post("/parcels/:id/contractor", async (req, res) => {
     return;
   }
 
-  // HARVEST — le cas qui débloque un joueur sans moissonneuse.
+  // HARVEST / MOW — grain au silo, herbe au hangar. L'herbe peut reprendre.
   const ready = cells
     .map(({ x, y }) => parcel.cells.find((c) => c.x === x && c.y === y))
     .filter((c): c is NonNullable<typeof c> => Boolean(c && c.kind === "CROP" && c.plantedAt));
@@ -2518,8 +2530,11 @@ app.post("/parcels/:id/contractor", async (req, res) => {
   }
 
   let totalTons = 0;
-  const perCrop = new Map<CropCode, number>();
+  let hayTons = 0;
+  const perItem = new Map<string, number>();
+  const taken: typeof ready = [];
   for (const cell of ready) {
+    if (work === "MOW" && !isMowCrop(cell.crop)) continue;
     const sim = simulateCell({
       crop: cell.crop!,
       plantedAt: cell.plantedAt!.getTime(),
@@ -2530,16 +2545,21 @@ app.post("/parcels/:id/contractor", async (req, res) => {
       buildingYieldBonus: bonuses.yieldBonus,
       weatherAtHarvest: weather?.state as WeatherState | undefined,
       specialization: playableSpec(user.specialization),
+      cutsDone: grassCutsDone(cell),
     });
     if (!sim.ready) continue;
-    // Un prestataire connaît moins bien la parcelle que celui qui la cultive.
     const tons = sim.estimatedYieldTons * (1 - CONTRACTOR_YIELD_MALUS);
     totalTons += tons;
-    perCrop.set(cell.crop!, (perCrop.get(cell.crop!) ?? 0) + tons);
+    const item = harvestItemCode(cell.crop!);
+    perItem.set(item, (perItem.get(item) ?? 0) + tons);
+    if (item === "HAY") hayTons += tons;
+    taken.push(cell);
   }
 
   if (totalTons <= 0) {
-    res.status(409).json({ error: "Rien n'est mûr sur la sélection" });
+    res.status(409).json({
+      error: work === "MOW" ? "Rien à faucher sur la sélection" : "Rien n'est mûr sur la sélection",
+    });
     return;
   }
 
@@ -2547,46 +2567,31 @@ app.post("/parcels/:id/contractor", async (req, res) => {
 
   await prisma.$transaction(async (tx) => {
     await tx.user.update({ where: { id: user.id }, data: { crd: { decrement: total } } });
-    for (const cell of ready) {
-      await tx.parcelCell.update({
-        where: { id: cell.id },
-        data: {
-          kind: "EMPTY",
-          crop: null,
-          fieldStage: "EMPTY",
-          plantedAt: null,
-          readyAt: null,
-          fertilizedPasses: 0,
+    for (const cell of taken) {
+      const next = afterTakeField(
+        {
+          crop: cell.crop!,
+          lastCrop: cell.lastCrop,
+          cropStreak: cell.cropStreak,
+          harvestsSincePlow: cell.harvestsSincePlow,
         },
-      });
+        now,
+      );
+      await tx.parcelCell.update({ where: { id: cell.id }, data: next.data });
     }
-    for (const [code, tons] of perCrop) {
-      const existing = await tx.inventoryItem.findFirst({
-        where: { farmId: parcel.farm!.id, itemCode: code },
-      });
-      if (existing) {
-        await tx.inventoryItem.update({
-          where: { id: existing.id },
-          data: {
-            qty: existing.qty + tons,
-            moisture: mergeMoisture(existing.qty, existing.moisture, tons, moisture),
-          },
-        });
-      } else {
-        await tx.inventoryItem.create({
-          data: { farmId: parcel.farm!.id, itemCode: code, qty: tons, quality: 1, moisture },
-        });
-      }
+    for (const [code, tons] of perItem) {
+      await addToStock(tx, parcel.farm!.id, code, tons, moisture, 3);
     }
   });
 
   res.json({
     work,
-    cells: ready.length,
+    cells: taken.length,
     cost: total,
     service,
     seeds: 0,
     totalTons,
+    hayTons,
     moisture,
   });
 });
@@ -2609,11 +2614,69 @@ function rotationUpdate(cell: { lastCrop: CropCode | null; cropStreak: number },
   return { lastCrop: next.lastCrop, cropStreak: next.cropStreak };
 }
 
+/** Après une coupe : l'herbe reprend, le grain laisse des chaumes. */
+function afterTakeField(
+  cell: {
+    crop: CropCode;
+    lastCrop: CropCode | null;
+    cropStreak: number;
+    harvestsSincePlow: number;
+  },
+  now: number,
+) {
+  const nextCuts = Math.min(MAX_HARVESTS_BEFORE_PLOW, cell.harvestsSincePlow + 1);
+  if (isMowCrop(cell.crop) && grassWillRegrow(nextCuts)) {
+    return {
+      regrow: true as const,
+      data: {
+        kind: "CROP" as const,
+        crop: "GRASS" as CropCode,
+        fieldStage: "PLANTED" as const,
+        plantedAt: new Date(now),
+        readyAt: new Date(now + cropGrowMs("GRASS", nextCuts)),
+        fertilizedPasses: 0,
+        weedsControlled: false,
+        hasStubble: false,
+        harvestsSincePlow: nextCuts,
+        lastCrop: "GRASS" as CropCode,
+        cropStreak: 1,
+      },
+    };
+  }
+  return {
+    regrow: false as const,
+    data: {
+      kind: "EMPTY" as const,
+      crop: null,
+      fieldStage: "HARVESTED" as const,
+      plantedAt: null,
+      readyAt: null,
+      fertilizedPasses: 0,
+      weedsControlled: false,
+      hasStubble: true,
+      harvestsSincePlow: nextCuts,
+      ...rotationUpdate(cell, cell.crop),
+    },
+  };
+}
+
+async function resolveHarvestOrMowAccess(opts: {
+  parcelId: string;
+  userId: string;
+  cells: CellXY[];
+}): Promise<FieldAccess> {
+  const harvest = await resolveFieldAccess({ ...opts, work: "HARVEST" });
+  if (harvest.ok) return harvest;
+  const mow = await resolveFieldAccess({ ...opts, work: "MOW" });
+  if (mow.ok) return mow;
+  return harvest;
+}
+
 app.post("/parcels/:id/plant", async (req, res) => {
   const body = z
     .object({
       userId: z.string(),
-      crop: z.enum(["WHEAT", "MAIZE", "PEA"]),
+      crop: z.enum(CROP_CODES),
       cells: z.array(z.object({ x: z.number().int(), y: z.number().int() })).min(1),
       /** Semer dans les chaumes, sans travail du sol préalable */
       directSeed: z.boolean().optional(),
@@ -2647,9 +2710,7 @@ app.post("/parcels/:id/plant", async (req, res) => {
     return;
   }
   const plantCrop =
-    access.order?.crop === "WHEAT" || access.order?.crop === "MAIZE" || access.order?.crop === "PEA"
-      ? access.order.crop
-      : body.data.crop;
+    isCropCode(access.order?.crop) ? access.order.crop : body.data.crop;
   if (access.order?.crop && access.order.crop !== body.data.crop) {
     res.status(409).json({ error: `Ce chantier demande du ${access.order.crop}` });
     return;
@@ -2692,7 +2753,7 @@ app.post("/parcels/:id/plant", async (req, res) => {
   }
 
   const now = Date.now();
-  const growMs = CROP_DEFS[plantCrop].growMs;
+  const growMs = cropGrowMs(plantCrop, 0);
   const last = body.data.cells[body.data.cells.length - 1];
   const { wear, labor } = await prisma.$transaction(async (tx) => {
     if (access.charge) {
@@ -2879,8 +2940,9 @@ app.post("/parcels/:id/plow", async (req, res) => {
     if (cell.kind === "EMPTY" && plowRequired(cell)) return true;
     if (cell.fieldStage === "SPOILED") return true;
     if (cell.kind !== "CROP" || !cell.crop || !cell.plantedAt) return false;
-    const readyAt = cell.plantedAt.getTime() + CROP_DEFS[cell.crop].growMs;
-    return ripenessAt(readyAt, CROP_DEFS[cell.crop].growMs, now).needsPlowing;
+    const grow = cropGrowMs(cell.crop, grassCutsDone(cell));
+    const readyAt = cell.plantedAt.getTime() + grow;
+    return ripenessAt(readyAt, grow, now).needsPlowing;
   });
 
   if (!candidates.length) {
@@ -3084,10 +3146,9 @@ app.post("/parcels/:id/harvest", async (req, res) => {
     res.status(400).json(body.error.flatten());
     return;
   }
-  const access = await resolveFieldAccess({
+  const access = await resolveHarvestOrMowAccess({
     parcelId: req.params.id,
     userId: body.data.userId,
-    work: "HARVEST",
     cells: body.data.cells ?? [],
   });
   if (!access.ok) {
@@ -3100,13 +3161,6 @@ app.post("/parcels/:id/harvest", async (req, res) => {
     return;
   }
   const farm = parcel.farm;
-  const picked = pickMachineForWork(access.machines, "HARVEST");
-  if (!picked) {
-    res.status(409).json({
-      error: explainNoMachine(access.machines, "HARVEST"),
-    });
-    return;
-  }
   const bonuses = await getFarmBonuses(parcel.farmId!);
   const weather = await prisma.weatherSnapshot.findFirst({ where: { zoneCode: parcel.zone.code } });
   const user = await prisma.user.findUnique({ where: { id: body.data.userId } });
@@ -3117,13 +3171,51 @@ app.post("/parcels/:id/harvest", async (req, res) => {
       ? parcel.cells.filter((c) => remaining.some((t) => t.x === c.x && t.y === c.y))
       : parcel.cells.filter((c) => c.kind === "CROP");
 
+  const now = Date.now();
+  let previewGrass = 0;
+  let previewGrain = 0;
+  for (const cell of targets) {
+    if (cell.kind !== "CROP" || !cell.crop || !cell.plantedAt) continue;
+    const sim = simulateCell({
+      crop: cell.crop,
+      plantedAt: cell.plantedAt.getTime(),
+      now,
+      fertility: parcel.fertility,
+      weedsControlled: cell.weedsControlled,
+      fertilizedPasses: Math.min(2, cell.fertilizedPasses) as 0 | 1 | 2,
+      residuePasses: cell.residuePasses,
+      directSeeded: cell.directSeeded,
+      rotation: rotationOf(cell),
+      specialization: playableSpec(farm.user.specialization ?? user?.specialization),
+      buildingYieldBonus: bonuses.yieldBonus,
+      weatherAtHarvest: weather?.state as WeatherState | undefined,
+      cutsDone: grassCutsDone(cell),
+    });
+    if (!sim.ready || sim.lost) continue;
+    if (isMowCrop(cell.crop)) previewGrass += 1;
+    else previewGrain += 1;
+  }
+  const pickedHarvest = previewGrain > 0 ? pickMachineForWork(access.machines, "HARVEST") : null;
+  const pickedMow = previewGrass > 0 ? pickMachineForWork(access.machines, "MOW") : null;
+  if (previewGrain > 0 && !pickedHarvest) {
+    res.status(409).json({ error: explainNoMachine(access.machines, "HARVEST") });
+    return;
+  }
+  if (previewGrass > 0 && !pickedMow) {
+    res.status(409).json({ error: explainNoMachine(access.machines, "MOW") });
+    return;
+  }
+
   const harvested: { crop: CropCode; tons: number; moisturePenalty: number; moisture: number }[] =
     [];
   const harvestedCells: CellXY[] = [];
   let lostCells = 0;
-  const now = Date.now();
+  let hayTons = 0;
+  let grassRegrew = 0;
 
   const outcome = await prisma.$transaction(async (tx) => {
+    let grainCells = 0;
+    let grassCells = 0;
     for (const cell of targets) {
       if (cell.kind !== "CROP" || !cell.crop || !cell.plantedAt) continue;
       const sim = simulateCell({
@@ -3139,16 +3231,13 @@ app.post("/parcels/:id/harvest", async (req, res) => {
         specialization: playableSpec(farm.user.specialization ?? user?.specialization),
         buildingYieldBonus: bonuses.yieldBonus,
         weatherAtHarvest: weather?.state as WeatherState | undefined,
+        cutsDone: grassCutsDone(cell),
       });
       if (!sim.ready) continue;
-      // Culture perdue : la moissonneuse n'a plus rien à ramasser, la case
-      // reste occupée par des tiges mortes jusqu'au labour.
       if (sim.lost) {
         lostCells += 1;
         await tx.parcelCell.update({
           where: { id: cell.id },
-          // Une culture perdue a tout de même occupé la terre une saison :
-          // les champignons du sol s'y sont installés comme pour une réussie.
           data: { fieldStage: "SPOILED", ...rotationUpdate(cell, cell.crop) },
         });
         continue;
@@ -3164,25 +3253,25 @@ app.post("/parcels/:id/harvest", async (req, res) => {
         moisture,
       });
       harvestedCells.push({ x: cell.x, y: cell.y });
-      // La moisson ne rend pas une case nue : elle laisse des chaumes qu'il
-      // faudra déchaumer ou labourer avant de resemer.
+      if (isMowCrop(cell.crop)) {
+        grassCells += 1;
+        hayTons += tons;
+      } else {
+        grainCells += 1;
+      }
+      const next = afterTakeField(
+        {
+          crop: cell.crop,
+          lastCrop: cell.lastCrop,
+          cropStreak: cell.cropStreak,
+          harvestsSincePlow: cell.harvestsSincePlow,
+        },
+        now,
+      );
+      if (next.regrow) grassRegrew += 1;
       await tx.parcelCell.update({
         where: { id: cell.id },
-        data: {
-          kind: "EMPTY",
-          crop: null,
-          fieldStage: "HARVESTED",
-          plantedAt: null,
-          readyAt: null,
-          fertilizedPasses: 0,
-          weedsControlled: false,
-          hasStubble: true,
-          harvestsSincePlow: Math.min(
-            MAX_HARVESTS_BEFORE_PLOW,
-            cell.harvestsSincePlow + 1,
-          ),
-          ...rotationUpdate(cell, cell.crop),
-        },
+        data: next.data,
       });
     }
 
@@ -3211,7 +3300,7 @@ app.post("/parcels/:id/harvest", async (req, res) => {
       });
     }
     const grain =
-      harvested.length === 0
+      incomingGrain.length === 0
         ? { soldTons: 0, storedTons: 0, revenue: 0, reason: null }
         : await applyGrainCapacity(tx, {
             farmId: parcel.farmId!,
@@ -3219,19 +3308,35 @@ app.post("/parcels/:id/harvest", async (req, res) => {
             capacity: bonuses.storageGrain,
             incoming: incomingGrain,
           });
+    if (hayTons > 0) {
+      await addToStock(tx, parcel.farmId!, "HAY", hayTons, 0, 3);
+    }
 
     if (harvested.length === 0) {
-      return { wear: null, grain, labor: null };
+      return { wear: null, mowWear: null, grain, labor: null };
     }
-    const wear = await applyWearToMachine(tx, {
-      machine: picked.machine,
-      def: picked.def,
-      cells: harvested.length,
-      work: "HARVEST",
-      specialization: user?.specialization,
-    });
+    const wear =
+      pickedHarvest && grainCells > 0
+        ? await applyWearToMachine(tx, {
+            machine: pickedHarvest.machine,
+            def: pickedHarvest.def,
+            cells: grainCells,
+            work: "HARVEST",
+            specialization: user?.specialization,
+          })
+        : null;
+    const mowWear =
+      pickedMow && grassCells > 0
+        ? await applyWearToMachine(tx, {
+            machine: pickedMow.machine,
+            def: pickedMow.def,
+            cells: grassCells,
+            work: "MOW",
+            specialization: user?.specialization,
+          })
+        : null;
     const labor = access.order ? await settleLaborProgress(tx, access.order, harvestedCells) : null;
-    return { wear, grain, labor };
+    return { wear, mowWear, grain, labor };
   });
 
   if (harvested.length === 0) {
@@ -3245,16 +3350,22 @@ app.post("/parcels/:id/harvest", async (req, res) => {
   }
   const last = harvestedCells[harvestedCells.length - 1];
   if (user && last) await touchFieldPresence(user.id, parcel.id, last);
+  const shown = pickedHarvest ?? pickedMow;
+  const shownWear = outcome.wear ?? outcome.mowWear;
   res.json({
     harvested,
     lostCells,
+    hayTons,
+    grassRegrew,
     totalTons: harvested.reduce((s, h) => s + h.tons, 0),
     storedTons: outcome.grain.storedTons,
     soldTons: outcome.grain.soldTons,
     soldRevenue: outcome.grain.revenue,
     soldReason: outcome.grain.reason,
     bonuses,
-    machine: { id: picked.machine.id, type: picked.machine.type, ...outcome.wear },
+    machine: shown
+      ? { id: shown.machine.id, type: shown.machine.type, ...shownWear }
+      : null,
     labor: outcome.labor,
   });
 });
@@ -3992,14 +4103,15 @@ app.post("/herds/:id/feed", async (req, res) => {
       userId: z.string(),
       hayTons: z.number().min(0).default(0),
       maizeTons: z.number().min(0).default(0),
+      barleyTons: z.number().min(0).default(0),
     })
     .safeParse(req.body);
   if (!body.success) {
     res.status(400).json(body.error.flatten());
     return;
   }
-  const { hayTons, maizeTons } = body.data;
-  if (hayTons + maizeTons <= 0) {
+  const { hayTons, maizeTons, barleyTons } = body.data;
+  if (hayTons + maizeTons + barleyTons <= 0) {
     res.status(400).json({ error: "Indiquez une quantité à distribuer" });
     return;
   }
@@ -4013,6 +4125,7 @@ app.post("/herds/:id/feed", async (req, res) => {
   }
   const hay = herd.farm.inventory.find((i) => i.itemCode === "HAY");
   const maize = herd.farm.inventory.find((i) => i.itemCode === "MAIZE");
+  const barley = herd.farm.inventory.find((i) => i.itemCode === "BARLEY");
   if (hayTons > (hay?.qty ?? 0)) {
     res.status(409).json({ error: "Fourrage insuffisant — achetez-en au négociant" });
     return;
@@ -4021,12 +4134,17 @@ app.post("/herds/:id/feed", async (req, res) => {
     res.status(409).json({ error: "Maïs insuffisant" });
     return;
   }
+  if (barleyTons > (barley?.qty ?? 0)) {
+    res.status(409).json({ error: "Orge insuffisante" });
+    return;
+  }
 
-  const units = feedUnits(hayTons, maizeTons);
-  const quality = rationQuality(hayTons, maizeTons);
+  const units = feedUnits(hayTons, maizeTons, barleyTons);
+  const quality = rationQuality(hayTons, maizeTons, barleyTons);
   await prisma.$transaction(async (tx) => {
     if (hayTons > 0 && hay) await drawFromStock(tx, hay, hayTons);
     if (maizeTons > 0 && maize) await drawFromStock(tx, maize, maizeTons);
+    if (barleyTons > 0 && barley) await drawFromStock(tx, barley, barleyTons);
     await tx.herd.update({
       where: { id: herd.id },
       data: {

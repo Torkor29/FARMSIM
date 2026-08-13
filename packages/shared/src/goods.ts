@@ -10,7 +10,7 @@
  * @see docs/research/43_LIVESTOCK_PRODUCE.md
  */
 
-export type TradeGood = "WHEAT" | "MAIZE" | "PEA" | "MILK" | "MEAT" | "HAY";
+export type TradeGood = "WHEAT" | "MAIZE" | "PEA" | "BARLEY" | "RAPE" | "MILK" | "MEAT" | "HAY";
 
 export type GoodDef = {
   code: TradeGood;
@@ -86,6 +86,24 @@ export const GOOD_DEFS: Record<TradeGood, GoodDef> = {
     purchasable: true,
     perishable: false,
   },
+  BARLEY: {
+    code: "BARLEY",
+    name: "Orge",
+    unit: "t",
+    basePrice: 195,
+    sellable: true,
+    purchasable: false,
+    perishable: false,
+  },
+  RAPE: {
+    code: "RAPE",
+    name: "Colza",
+    unit: "t",
+    basePrice: 340,
+    sellable: true,
+    purchasable: false,
+    perishable: false,
+  },
 };
 
 export const SELLABLE_GOODS = (Object.keys(GOOD_DEFS) as TradeGood[]).filter(
@@ -114,13 +132,15 @@ export function dealerAskPrice(marketPrice: number): number {
 export const FEED_VALUE: Partial<Record<TradeGood, number>> = {
   HAY: 1,
   MAIZE: 1.4,
+  BARLEY: 1.2,
 };
 
-/** Qualité de ration obtenue, 0 = strictement du fourrage, 1 = tout au maïs. */
-export function rationQuality(hayTons: number, maizeTons: number): number {
-  const total = hayTons + maizeTons;
+/** Qualité de ration : 0 = que du foin, 1 = que du concentré. */
+export function rationQuality(hayTons: number, maizeTons: number, barleyTons = 0): number {
+  const concentrate = maizeTons + barleyTons;
+  const total = hayTons + concentrate;
   if (total <= 0) return 0;
-  return Math.max(0, Math.min(1, maizeTons / total));
+  return Math.max(0, Math.min(1, concentrate / total));
 }
 
 /**
@@ -130,6 +150,11 @@ export function rationQuality(hayTons: number, maizeTons: number): number {
  * confondre les deux échelles rendrait une tonne de foin dérisoire alors
  * qu'elle nourrit un troupeau plusieurs jours.
  */
-export function feedUnits(hayTons: number, maizeTons: number): number {
-  return (hayTons * (FEED_VALUE.HAY ?? 1) + maizeTons * (FEED_VALUE.MAIZE ?? 1)) * 1000;
+export function feedUnits(hayTons: number, maizeTons: number, barleyTons = 0): number {
+  return (
+    (hayTons * (FEED_VALUE.HAY ?? 1) +
+      maizeTons * (FEED_VALUE.MAIZE ?? 1) +
+      barleyTons * (FEED_VALUE.BARLEY ?? 1.2)) *
+    1000
+  );
 }

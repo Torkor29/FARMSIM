@@ -17,6 +17,9 @@ enum CropCode {
   WHEAT
   MAIZE
   PEA
+  BARLEY
+  RAPE
+  GRASS
 }
 
 enum FieldStage {

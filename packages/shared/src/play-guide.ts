@@ -206,7 +206,7 @@ export const GUIDE_CHAPTERS: GuideChapter[] = [
   {
     id: "crops",
     title: "Cultiver",
-    lead: "Trois cultures. On ne les sème pas pour la même raison : le blé paie, le maïs nourrit, le pois prépare la suivante.",
+    lead: "Six cultures. On ne les sème pas pour la même raison : le blé paie, l’orge nourrit les cochons, le maïs aussi, le colza casse la rotation, le pois laisse l’azote, l’herbe devient du foin.",
     entries: [
       {
         id: "WHEAT",
@@ -215,16 +215,34 @@ export const GUIDE_CHAPTERS: GuideChapter[] = [
         usedBy: "Céréalier : vente. Éleveur : paille (bientôt). Missions de moisson.",
       },
       {
+        id: "BARLEY",
+        name: "Orge · 13 TRN/case · 0,32 t",
+        how: "Outil Semer → Orge. Un peu plus rapide que le blé. Moissonneuse.",
+        usedBy: "Céréalier : vente. Éleveur : concentré pour les cochons.",
+      },
+      {
         id: "MAIZE",
         name: "Maïs · 18 TRN/case · 0,45 t",
         how: "Outil Semer → Maïs. Un peu plus long. Sert aussi de concentré.",
         usedBy: "Céréalier : vente. Éleveur : ration. Plus tard : ensilage.",
       },
       {
+        id: "RAPE",
+        name: "Colza · 16 TRN/case · 0,22 t",
+        how: "Outil Semer → Colza. Plus long, moins de tonnes, mieux payé. Pas de paille.",
+        usedBy: "Céréalier : rupture de rotation et vente. Ce n’est pas une légumineuse.",
+      },
+      {
         id: "PEA",
         name: "Pois · 12 TRN/case · 0,26 t",
         how: "Outil Semer → Pois. Rapporte moins, laisse l’azote : +13 % sur la culture suivante.",
         usedBy: "Céréalier : rotation. Marché : protéine mieux payée.",
+      },
+      {
+        id: "GRASS",
+        name: "Herbe · 8 TRN/case · 0,40 t de foin",
+        how: "Outil Semer → Herbe. Faucher au tracteur, pas à la moissonneuse. Trois coupes, puis resemer.",
+        usedBy: "Éleveur : foin au hangar. Le champ reprend tout seul entre deux fauches.",
       },
     ],
   },
@@ -280,9 +298,19 @@ export const GUIDE_CHAPTERS: GuideChapter[] = [
         "Marché. Céréalier : la culture d’après.",
       ),
       goodEntry(
+        "BARLEY",
+        "Même geste que le blé. Moins cher à semer, un peu moins de tonnes.",
+        "Marché. Éleveur : ration orge, surtout les cochons.",
+      ),
+      goodEntry(
+        "RAPE",
+        "Jaune à maturité. On le sème pour casser la rotation et vendre cher.",
+        "Marché. Céréalier : pas une légumineuse — ça ne laisse pas d’azote.",
+      ),
+      goodEntry(
         "HAY",
-        "Seul achat chez le négociant aujourd’hui. L’éleveur en a besoin chaque cycle.",
-        "Éleveur. Le céréalier en produira via le hangar à foin.",
+        "On le fauche sur l’herbe, ou on l’achète au négociant. Le foin va au hangar, pas au silo à grain.",
+        "Éleveur. Le céréalier en produit en fauchant.",
       ),
       goodEntry(
         "MILK",

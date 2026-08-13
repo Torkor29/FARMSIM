@@ -16,6 +16,7 @@ export * from "./machine-care.js";
 export * from "./art-anchor.js";
 export * from "./play-guide.js";
 export * from "./appearance.js";
+export * from "./crops.js";
 
 /** Monnaie du jeu : le terron (TRN). Le champ interne reste `crd`. */
 export const CURRENCY_CODE = "TRN";
@@ -28,7 +29,7 @@ export type Specialization = "CEREALIER" | "ELEVEUR";
 /** Les deux métiers jouables. Les travaux à façon sont un appoint, pas un 3ᵉ métier. */
 export const PLAYABLE_SPECIALIZATIONS: Specialization[] = ["CEREALIER", "ELEVEUR"];
 
-export type CropCode = "WHEAT" | "MAIZE" | "PEA";
+import type { CropCode } from "./crops.js";
 
 export type FieldStage =
   | "EMPTY"
@@ -111,6 +112,8 @@ export const CROP_DEFS: Record<
     yieldPerCell: number;
     growMs: number;
     seedCostPerCell: number;
+    /** Herbe : temps entre deux fauches, plus court que le premier cycle */
+    regrowMs?: number;
   }
 > = {
   WHEAT: {
@@ -137,7 +140,36 @@ export const CROP_DEFS: Record<
     growMs: 2.5 * 60 * 1000,
     seedCostPerCell: 12,
   },
+  BARLEY: {
+    code: "BARLEY",
+    name: "Orge",
+    yieldPerCell: 0.32,
+    growMs: 160 * 1000,
+    seedCostPerCell: 13,
+  },
+  RAPE: {
+    code: "RAPE",
+    name: "Colza",
+    yieldPerCell: 0.22,
+    growMs: 200 * 1000,
+    seedCostPerCell: 16,
+  },
+  GRASS: {
+    code: "GRASS",
+    name: "Herbe",
+    yieldPerCell: 0.4,
+    growMs: 2 * 60 * 1000,
+    regrowMs: 80 * 1000,
+    seedCostPerCell: 8,
+  },
 };
+
+/** Durée de pousse : l'herbe déjà fauchée reprend plus vite. */
+export function cropGrowMs(crop: CropCode, cutsDone = 0): number {
+  const def = CROP_DEFS[crop];
+  if (crop === "GRASS" && cutsDone > 0) return def.regrowMs ?? def.growMs;
+  return def.growMs;
+}
 
 /**
  * Bornes de cours par marchandise. Toutes les marchandises échangées doivent
@@ -156,6 +188,8 @@ export const MARKET_BOUNDS: Record<
   HAY: { initial: 95, min: 60, max: 165, depth: 1500 },
   // Marché plus étroit que le blé : un gros lot y pèse davantage.
   PEA: { initial: 285, min: 170, max: 520, depth: 900 },
+  BARLEY: { initial: 195, min: 110, max: 380, depth: 1600 },
+  RAPE: { initial: 340, min: 210, max: 580, depth: 700 },
 };
 
 /**
@@ -414,7 +448,7 @@ export type MachineDef = {
   repairCostPerPoint: number;
   minCondition: number;
   description: string;
-  works: Array<"PLANT" | "FERTILIZE" | "HARVEST" | "PLOW" | "STUBBLE">;
+  works: Array<"PLANT" | "FERTILIZE" | "HARVEST" | "PLOW" | "STUBBLE" | "MOW">;
   /** Teinte iso HUD (réf. IsoFarmView) */
   isoColor: "green" | "red-gold" | "amber";
 };
@@ -430,8 +464,8 @@ export const MACHINE_DEFS: Record<MachineType, MachineDef> = {
     // Révision complète ≈ 20 % de l'achat (560 TRN).
     repairCostPerPoint: 6,
     minCondition: 15,
-    description: "Semis et travaux de base.",
-    works: ["PLANT", "PLOW", "FERTILIZE"],
+    description: "Semis, travaux de base et fauche de l’herbe.",
+    works: ["PLANT", "PLOW", "FERTILIZE", "MOW"],
     isoColor: "green",
   },
   HARVESTER: {
@@ -533,7 +567,7 @@ export function buildingResaleValue(type: BuildingType, level: number): number {
 /* Deux prix : client (faire venir) vs prestataire (mission)           */
 /* ------------------------------------------------------------------ */
 
-export type FarmWork = "PLANT" | "FERTILIZE" | "HARVEST" | "PLOW" | "STUBBLE";
+export type FarmWork = "PLANT" | "FERTILIZE" | "HARVEST" | "PLOW" | "STUBBLE" | "MOW";
 
 export const WORK_LABELS: Record<FarmWork, string> = {
   PLANT: "Semis",
@@ -541,6 +575,7 @@ export const WORK_LABELS: Record<FarmWork, string> = {
   HARVEST: "Moisson",
   PLOW: "Labour",
   STUBBLE: "Déchaumage",
+  MOW: "Fauche",
 };
 
 /**
@@ -553,6 +588,7 @@ export const CONTRACTOR_RATE_PER_CELL: Record<FarmWork, number> = {
   HARVEST: 12,
   PLOW: 5,
   STUBBLE: 4,
+  MOW: 5,
 };
 
 /** Frais de déplacement, quel que soit le nombre de cases `[GD]` */

@@ -34,6 +34,9 @@ export type IsoCell = {
   residuePasses?: number;
   /** Type machine si kind === VEHICLE (sinon TRACTOR par défaut) */
   machineType?: MachineType | null;
+  /** Coupes / moissons depuis le labour — l'herbe déjà fauchée est plus courte */
+  harvestsSincePlow?: number;
+  lastCrop?: CropCode | null;
 };
 
 export type IsoBuilding = {
@@ -59,6 +62,8 @@ export type IsoSim = {
 export type ActiveWork = {
   type: MachineType;
   cells: { x: number; y: number }[];
+  /** La machine coupe : moisson (cache le plant) ou fauche (andain) */
+  cut?: "harvest" | "mow";
 };
 
 /** Un troupeau au pré : de quelle étable il sort, et vers quel enclos. */
@@ -128,8 +133,28 @@ const TILE_TOP = TILE_THICK / 2;
 const MACHINE_GROUND = TILE_TOP - 0.012;
 /** Aire de parking : terre tassée, pas un carré d'herbe au milieu du champ. */
 const PARKING = 0x6a5538;
-const GROW = 0x7fbc4e;
-const READY = 0xe8c65e;
+const WINDROW = 0xc9c46a;
+
+type CropLook = {
+  grow: number;
+  ready: number;
+  fullH: number;
+  slim: number;
+  ears: "none" | "wheat" | "maize" | "barley" | "rape";
+};
+
+const CROP_LOOK: Record<string, CropLook> = {
+  WHEAT: { grow: 0x7fbc4e, ready: 0xe8c65e, fullH: 0.7, slim: 1, ears: "wheat" },
+  MAIZE: { grow: 0x5aa63a, ready: 0xe8c65e, fullH: 0.98, slim: 0.74, ears: "maize" },
+  PEA: { grow: 0x6bb84a, ready: 0xc6d45a, fullH: 0.55, slim: 0.9, ears: "wheat" },
+  BARLEY: { grow: 0x8cba4a, ready: 0xe6d27a, fullH: 0.58, slim: 1, ears: "barley" },
+  RAPE: { grow: 0x5aaa38, ready: 0xf2d429, fullH: 0.72, slim: 0.95, ears: "rape" },
+  GRASS: { grow: 0x4a9a36, ready: 0x5aad42, fullH: 0.38, slim: 1.08, ears: "none" },
+};
+
+function lookOf(crop?: CropCode | null): CropLook {
+  return CROP_LOOK[crop ?? ""] ?? CROP_LOOK.WHEAT;
+}
 const SELECT_GLOW = 0x5ee08a;
 const HOVER = 0x53c5f5;
 const PREVIEW_OK = 0x2fc46a;
@@ -218,14 +243,14 @@ function makeFurrowMap(): THREE.CanvasTexture {
 
 function cropColor(c: IsoCell, sim?: IsoSim): number {
   if (c.kind !== "CROP") return SOIL_COLORS[soilLook(c)];
-  // Passé la maturité, la teinte raconte la dégradation : l'or vire au brun
-  // puis à la tige morte. C'est le seul signal qui prévienne le joueur.
-  if (sim?.sim.ripeness) return RIPENESS_COLORS[sim.sim.ripeness.stage];
+  const look = lookOf(c.crop);
+  // L'herbe reste verte à maturité : c'est du fourrage, pas un épi doré.
+  if (c.crop !== "GRASS" && sim?.sim.ripeness) return RIPENESS_COLORS[sim.sim.ripeness.stage];
   if (c.fieldStage === "SPOILED") return RIPENESS_COLORS.LOST;
-  if (c.fieldStage === "READY" || sim?.sim.ready) return READY;
+  if (c.fieldStage === "READY" || sim?.sim.ready) return look.ready;
   const p = sim?.sim.progress ?? 0.3;
-  const g = new THREE.Color(GROW);
-  const r = new THREE.Color(READY);
+  const g = new THREE.Color(look.grow);
+  const r = new THREE.Color(look.ready);
   return g.lerp(r, Math.min(1, p)).getHex();
 }
 
@@ -638,6 +663,9 @@ export function IsoFarmView({
 
     const cellMeshes = new Map<string, THREE.Mesh>();
     const cropMeshes = new Map<string, THREE.Mesh>();
+    const windrowMeshes = new Map<string, THREE.Mesh>();
+    let windrowGeo: THREE.BoxGeometry | null = null;
+    let windrowMat: THREE.MeshLambertMaterial | null = null;
     /**
      * Matériaux de culture indexés par couleur. Les cases ne prennent qu'une
      * poignée de teintes — les stades de maturité — alors qu'on en créait un
@@ -874,7 +902,10 @@ export function IsoFarmView({
      * dorés ; le maïs un seul, trapu. C'est le signal « récoltable » le plus
      * direct qu'on puisse donner sur la grille elle-même.
      */
-    function buildEars(spots: { px: number; pz: number; y: number; maize: boolean }[], size: number) {
+    function buildEars(
+      spots: { px: number; pz: number; y: number; kind: CropLook["ears"] }[],
+      size: number,
+    ) {
       while (earGroup.children.length) {
         const c = earGroup.children[0];
         earGroup.remove(c);
@@ -883,23 +914,46 @@ export function IsoFarmView({
       if (!spots.length) return;
 
       const m = new THREE.Matrix4();
-      for (const maize of [false, true]) {
-        const group = spots.filter((s) => s.maize === maize);
+      const kinds: CropLook["ears"][] = ["wheat", "maize", "barley", "rape"];
+      for (const kind of kinds) {
+        const group = spots.filter((s) => s.kind === kind);
         if (!group.length) continue;
-        const offsets: [number, number][] = maize
-          ? [[0, 0]]
-          : [
-              [-0.13, -0.08],
-              [0.13, 0.06],
-              [0, 0.16],
-            ];
-        const geo = maize
-          ? new THREE.BoxGeometry(size * 0.2, 0.2, size * 0.2)
-          : new THREE.BoxGeometry(size * 0.09, 0.15, size * 0.09);
+        const offsets: [number, number, number][] =
+          kind === "maize"
+            ? [[0, 0, 0.06]]
+            : kind === "rape"
+              ? [
+                  [-0.12, -0.1, 0.04],
+                  [0.12, 0.08, 0.05],
+                  [0.02, 0.16, 0.03],
+                  [-0.08, 0.06, 0.06],
+                  [0.1, -0.12, 0.04],
+                ]
+              : kind === "barley"
+                ? [
+                    [-0.1, -0.06, 0.02],
+                    [0.1, 0.05, 0.02],
+                    [0, 0.12, 0.01],
+                  ]
+                : [
+                    [-0.13, -0.08, 0.06],
+                    [0.13, 0.06, 0.06],
+                    [0, 0.16, 0.06],
+                  ];
+        const geo =
+          kind === "maize"
+            ? new THREE.BoxGeometry(size * 0.2, 0.2, size * 0.2)
+            : kind === "rape"
+              ? new THREE.BoxGeometry(size * 0.08, 0.1, size * 0.08)
+              : kind === "barley"
+                ? new THREE.BoxGeometry(size * 0.08, 0.12, size * 0.08)
+                : new THREE.BoxGeometry(size * 0.09, 0.15, size * 0.09);
+        const color =
+          kind === "maize" ? 0xf0c33c : kind === "rape" ? 0xf5d427 : kind === "barley" ? 0xe6d27a : 0xe6c95f;
         const mesh = new THREE.InstancedMesh(
           geo,
           new THREE.MeshLambertMaterial({
-            color: maize ? 0xf0c33c : 0xe6c95f,
+            color,
             flatShading: true,
           }),
           group.length * offsets.length,
@@ -907,14 +961,31 @@ export function IsoFarmView({
         mesh.castShadow = true;
         let i = 0;
         for (const s of group) {
-          for (const [dx, dz] of offsets) {
-            m.makeTranslation(s.px + dx * size, s.y + 0.06, s.pz + dz * size);
+          for (const [dx, dz, dy] of offsets) {
+            m.makeTranslation(s.px + dx * size, s.y + dy, s.pz + dz * size);
             mesh.setMatrixAt(i++, m);
           }
         }
         mesh.instanceMatrix.needsUpdate = true;
         earGroup.add(mesh);
       }
+    }
+
+    function placeWindrow(k: string, px: number, pz: number) {
+      if (windrowMeshes.has(k)) return;
+      windrowGeo ??= markShared(new THREE.BoxGeometry(0.7, 0.08, 0.28));
+      windrowMat ??= new THREE.MeshLambertMaterial({ color: WINDROW, flatShading: true });
+      const w = new THREE.Mesh(windrowGeo, windrowMat);
+      w.position.set(px, 0.14, pz);
+      w.rotation.y = ((px + pz) % 2 === 0 ? 0.35 : -0.28);
+      w.castShadow = true;
+      world.add(w);
+      windrowMeshes.set(k, w);
+    }
+
+    function clearWindrows() {
+      for (const m of windrowMeshes.values()) world.remove(m);
+      windrowMeshes.clear();
     }
 
     function cellWorldPos(x: number, y: number) {
@@ -948,6 +1019,7 @@ export function IsoFarmView({
       cellMeshes.clear();
       for (const m of cropMeshes.values()) world.remove(m);
       cropMeshes.clear();
+      clearWindrows();
       // Géométrie partagée entre tous les montages, matériaux mutualisés par
       // teinte : rien à libérer par case, un passage sur le cache suffit.
       for (const mat of cropMats.values()) mat.dispose();
@@ -1034,7 +1106,7 @@ export function IsoFarmView({
         /** Relief à semer sur les cases une fois la grille posée. */
       const soilDetails: { look: SoilLook; px: number; pz: number }[] = [];
       /** Épis des cultures arrivées à maturité. */
-      const ears: { px: number; pz: number; y: number; maize: boolean }[] = [];
+      const ears: { px: number; pz: number; y: number; kind: CropLook["ears"] }[] = [];
 
       for (let y = 0; y < gh; y++) {
         for (let x = 0; x < gw; x++) {
@@ -1086,25 +1158,21 @@ export function IsoFarmView({
           if (cell?.kind === "CROP") {
             const progress = sim?.sim.progress ?? 0.25;
             const lost = cell.fieldStage === "SPOILED" || sim?.sim.ripeness?.stage === "LOST";
-            // Le maïs monte plus haut et plus étroit que le blé : c'est à la
-            // silhouette qu'on reconnaît une culture de loin, pas à sa teinte.
-            const tall = cell.crop === "MAIZE";
-            const full = tall ? 0.98 : 0.7;
-            // Une culture desséchée s'affaisse. Elle doit se voir comme une
-            // perte, pas comme une récolte qui attend.
+            const look = lookOf(cell.crop);
+            // L'herbe déjà fauchée reprend plus basse : on lit la coupe.
+            const cuts = cell.crop === "GRASS" ? (cell.harvestsSincePlow ?? 0) : 0;
+            const full = look.fullH * (cuts > 0 ? 0.78 : 1);
             const h = lost ? 0.22 : 0.12 + progress * (full - 0.12);
             const crop = new THREE.Mesh(cropGeometry(), cropMaterial(cropColor(cell, sim)));
-            crop.scale.set(tall ? 0.74 : 1, h, tall ? 0.74 : 1);
+            crop.scale.set(look.slim, h, look.slim);
             crop.position.set(px, 0.1 + h / 2, pz);
             if (lost) crop.rotation.z = 0.12;
             crop.castShadow = true;
             world.add(crop);
             cropMeshes.set(key(x, y), crop);
 
-            // Épis : ils ne sortent qu'à maturité et signalent la récolte
-            // possible sans qu'il faille lire un panneau.
-            if (!lost && (sim?.sim.ready || cell.fieldStage === "READY")) {
-              ears.push({ px, pz, y: 0.1 + h, maize: tall });
+            if (!lost && look.ears !== "none" && (sim?.sim.ready || cell.fieldStage === "READY")) {
+              ears.push({ px, pz, y: 0.1 + h, kind: look.ears });
             }
           }
 
@@ -1669,10 +1737,22 @@ export function IsoFarmView({
 
         // La coupe se voit : chaque case franchie perd sa culture au passage,
         // au lieu que le champ entier disparaisse d'un coup au rechargement.
-        if (aw?.type === "HARVESTER") {
+        const cutting = aw?.cut === "harvest" || aw?.cut === "mow" || aw?.type === "HARVESTER";
+        if (cutting) {
           for (let i = 0; i <= i0; i++) {
-            const done = cropMeshes.get(key(workPath[i].x, workPath[i].y));
-            if (done) done.visible = false;
+            const cell = workPath[i];
+            const k = key(cell.x, cell.y);
+            const done = cropMeshes.get(k);
+            if (!done) continue;
+            if (aw?.cut === "mow") {
+              const low = 0.1;
+              done.scale.y = low;
+              done.position.y = 0.1 + low / 2;
+              const pos = cellWorldPos(cell.x, cell.y);
+              placeWindrow(k, pos.px, pos.pz);
+            } else {
+              done.visible = false;
+            }
           }
         }
 
@@ -1752,6 +1832,8 @@ export function IsoFarmView({
       // géométrie de dalle doit être libérée explicitement au démontage.
       sharedTile?.geo.dispose();
       sharedTile = null;
+      windrowGeo?.dispose();
+      windrowMat?.dispose();
       plowedMap.dispose();
       disposeThreeScene(scene);
       disposeRenderer(renderer, el);
@@ -1771,7 +1853,7 @@ export function IsoFarmView({
     const c = cells
       .map(
         (x) =>
-          `${x.x},${x.y},${x.kind},${x.crop ?? ""},${x.fieldStage ?? ""},${x.machineType ?? ""},${x.hasStubble ? 1 : 0},${x.residuePasses ?? 0},${x.weedsControlled ? 1 : 0}`,
+          `${x.x},${x.y},${x.kind},${x.crop ?? ""},${x.fieldStage ?? ""},${x.machineType ?? ""},${x.hasStubble ? 1 : 0},${x.residuePasses ?? 0},${x.weedsControlled ? 1 : 0},${x.harvestsSincePlow ?? 0}`,
       )
       .join("|");
     const b = buildings

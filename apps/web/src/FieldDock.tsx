@@ -38,6 +38,10 @@ type Props = {
   onDesktopOffice?: () => void;
   showDev?: boolean;
   onDev?: () => void;
+  /** La sélection n'est que de l'herbe mûre : on fauche, on ne moissonne pas */
+  mowSelected?: boolean;
+  /** Toutes les cases prêtes sont de l'herbe */
+  mowReadyAll?: boolean;
 };
 
 const DOCK: { id: "SELECT" | "PLANT" | "HARVEST" | "SOIL" | "SELL"; label: string; icon: string }[] =
@@ -88,6 +92,8 @@ export function FieldDock({
   onDesktopOffice,
   showDev,
   onDev,
+  mowSelected = false,
+  mowReadyAll = false,
 }: Props) {
   const plant = isPlantTool(tool);
   const soil = isSoilTool(tool);
@@ -143,8 +149,11 @@ export function FieldDock({
               {(
                 [
                   ["PLANT_WHEAT", "Blé"],
+                  ["PLANT_BARLEY", "Orge"],
                   ["PLANT_MAIZE", "Maïs"],
+                  ["PLANT_RAPE", "Colza"],
                   ["PLANT_PEA", "Pois"],
+                  ["PLANT_GRASS", "Herbe"],
                 ] as const
               ).map(([t, label]) => (
                 <button
@@ -221,7 +230,9 @@ export function FieldDock({
                 disabled={busy || selectedCount === 0}
                 onClick={onConfirm}
               >
-                Faire{plant ? ` ${plantCropLabel(tool)}` : ""} ×{selectedCount}
+                {tool === "HARVEST" && mowSelected
+                  ? `Faucher ×${selectedCount}`
+                  : `Faire${plant ? ` ${plantCropLabel(tool)}` : ""} ×${selectedCount}`}
               </button>
             )}
             {contractor && !visiting && (
@@ -257,7 +268,7 @@ export function FieldDock({
                 disabled={busy}
                 onClick={onHarvestAll}
               >
-                Tout récolter ×{readyCount}
+                {mowReadyAll ? `Tout faucher ×${readyCount}` : `Tout récolter ×${readyCount}`}
               </button>
             )}
           </div>
