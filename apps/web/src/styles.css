@@ -1230,6 +1230,12 @@ button.ghost {
   }
   .profile-actions button { min-height: 44px; }
 
+  .brush-cycle {
+    font-weight: 800;
+    min-width: 3.1rem;
+    background: var(--sand);
+  }
+
   /* —— Tiroirs —— */
   .game-stage.mobile .sheet {
     position: fixed;

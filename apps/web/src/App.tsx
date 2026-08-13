@@ -1996,18 +1996,32 @@ export function App() {
       </aside>
 
       <div className="action-bar">
-        <div className="brush-group" title="Taille du pinceau">
-          {([1, 2, 3] as const).map((n) => (
-            <button
-              key={n}
-              type="button"
-              className={brush === n ? "action on" : "action"}
-              onClick={() => setBrush(n)}
-            >
-              {n}×{n}
-            </button>
-          ))}
-        </div>
+        {/* Trois boutons en tête d'une barre qui défile repoussaient les
+            outils hors de vue. Au doigt, un seul bouton qui alterne. */}
+        {isMobile ? (
+          <button
+            type="button"
+            className="action brush-cycle"
+            title="Taille du pinceau"
+            aria-label={`Pinceau ${brush}×${brush}, toucher pour changer`}
+            onClick={() => setBrush(brush === 3 ? 1 : ((brush + 1) as 1 | 2 | 3))}
+          >
+            {brush}×{brush}
+          </button>
+        ) : (
+          <div className="brush-group" title="Taille du pinceau">
+            {([1, 2, 3] as const).map((n) => (
+              <button
+                key={n}
+                type="button"
+                className={brush === n ? "action on" : "action"}
+                onClick={() => setBrush(n)}
+              >
+                {n}×{n}
+              </button>
+            ))}
+          </div>
+        )}
         {ACTION_BAR.map(({ tool: t, label, icon }) => (
           <button
             key={t}
