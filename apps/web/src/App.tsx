@@ -213,7 +213,7 @@ function clearSession() {
 }
 
 /** Tiroirs du bas, sur petit écran. */
-type SheetKey = "INFO" | "BUILD" | "GARAGE" | "OFFICE" | "HERD";
+type SheetKey = "INFO" | "BUILD" | "GARAGE" | "OFFICE" | "HERD" | "PROFILE";
 
 const SHEET_TABS: { key: SheetKey; label: string; icon: string }[] = [
   { key: "INFO", label: "Parcelle", icon: "🌾" },
@@ -735,6 +735,15 @@ export function App() {
    * visible seulement quand son onglet est actif : la place manque pour
    * border la ferme de colonnes, et la masquer serait absurde.
    */
+  function logout() {
+    clearSession();
+    setPlayer(null);
+    setParcelDetail(null);
+    setResumeBanner(null);
+    setActiveParcelId(null);
+    setSheet(null);
+  }
+
   function panelClass(base: string, key: SheetKey): string {
     if (!isMobile) return `glass ${base}`;
     return `glass ${base} sheet${sheet === key ? " open" : ""}`;
@@ -1694,82 +1703,135 @@ export function App() {
         )}
       </div>
 
-      <header className="hud-top">
-        <div className="brand-row">
-          <img className="brand-logo" src="/logo.webp" alt="" width={36} height={36} />
-          <div className="brand-mark">Farming Navigateur</div>
-          <span className="mvp-badge" title="Build jouable minimale">
-            Première version · MVP
-          </span>
-          <button
-            type="button"
-            className="help-btn"
-            title="Tutoriel"
-            aria-label="Ouvrir le tutoriel"
-            onClick={() => setShowTutorial(true)}
-          >
-            ?
-          </button>
-        </div>
-        <div className="hud-stats">
-          <span>{player.displayName}</span>
-          <span>{SPECIALIZATION_LABELS[player.specialization]}</span>
-          <span className="stat-xp" title="Niveau / expérience">
-            Nv.{player.level} · {player.xp} XP
-          </span>
-          <span className="gold">{Math.round(player.crd)} CRD</span>
-          {player.bonuses && (
-            <span>
-              grain {player.bonuses.storageGrain}t · +
-              {Math.round(player.bonuses.yieldBonus * 100)}%
+      {/* Bandeau, pastilles et cotations vivaient en trois calques posés à des
+          décalages fixes : dès que l'un s'allongeait, il recouvrait le suivant.
+          Empilés en flux, ils ne peuvent plus se marcher dessus. */}
+      <div className="hud-stack">
+        <header className="hud-top">
+          <div className="brand-row">
+            <img className="brand-logo" src="/logo.webp" alt="" width={36} height={36} />
+            <div className="brand-mark">Farming Navigateur</div>
+            <span className="mvp-badge" title="Build jouable minimale">
+              Première version · MVP
             </span>
-          )}
-          <button
-            className="ghost"
-            type="button"
-            onClick={() => {
-              clearSession();
-              setPlayer(null);
-              setParcelDetail(null);
-              setResumeBanner(null);
-              setActiveParcelId(null);
-            }}
-          >
-            Déconnexion
-          </button>
+            <button
+              type="button"
+              className="help-btn"
+              title="Tutoriel"
+              aria-label="Ouvrir le tutoriel"
+              onClick={() => setShowTutorial(true)}
+            >
+              ?
+            </button>
+          </div>
+          <div className="hud-stats">
+            <span className="stat-name">{player.displayName}</span>
+            <span className="stat-job">{SPECIALIZATION_LABELS[player.specialization]}</span>
+            <span className="stat-xp" title="Niveau / expérience">
+              Nv.{player.level} · {player.xp} XP
+            </span>
+            <span className="gold">{Math.round(player.crd)} CRD</span>
+            {player.bonuses && (
+              <span className="stat-bonus">
+                grain {player.bonuses.storageGrain}t · +
+                {Math.round(player.bonuses.yieldBonus * 100)}%
+              </span>
+            )}
+            {/* Au téléphone, tout ce qui précède sauf les CRD passe dans un
+                tiroir : le bandeau doit tenir sur une ligne. */}
+            <button
+              type="button"
+              className="profile-btn"
+              aria-label="Profil et déconnexion"
+              onClick={() => setSheet((cur) => (cur === "PROFILE" ? null : "PROFILE"))}
+            >
+              ☰
+            </button>
+            <button
+              className="ghost logout-btn"
+              type="button"
+              onClick={logout}
+            >
+              Déconnexion
+            </button>
+          </div>
+        </header>
+
+        <div className="market-ticker">
+          {market.map((m) => {
+            const prev = prevPrices[m.commodity] ?? m.price;
+            const delta = m.price - prev;
+            const cls = delta > 0.05 ? "up" : delta < -0.05 ? "down" : "flat";
+            return (
+              <span key={m.commodity} className={`tick ${cls}`}>
+                {m.commodity} {m.price.toFixed(1)}
+                <small>
+                  {delta > 0.05 ? " ▲" : delta < -0.05 ? " ▼" : " ·"}
+                  {Math.abs(delta) > 0.05 ? Math.abs(delta).toFixed(1) : ""}
+                </small>
+              </span>
+            );
+          })}
+          <span className="tick weather-tick">{weatherLabel}</span>
         </div>
-      </header>
+      </div>
 
       {(msg || err) && (
         <div key={toastTick} className={`toast ${err ? "bad" : "good"} pop`}>{err ?? msg}</div>
       )}
+
+      {/* Le bilan d'absence annonce parfois huit cultures perdues : il mérite
+          d'être lu, donc acquitté, plutôt que de flotter sur la ferme. */}
       {resumeBanner && !err && (
-        <div className="resume-banner glass">
-          <strong>Pendant votre absence</strong>
-          <p>{resumeBanner}</p>
-          <button type="button" className="ghost" onClick={() => setResumeBanner(null)}>
-            OK
-          </button>
+        <div className="resume-backdrop" role="dialog" aria-modal="true">
+          <div className="resume-card glass">
+            <strong>Pendant votre absence</strong>
+            <p>{resumeBanner}</p>
+            <button type="button" className="accent" onClick={() => setResumeBanner(null)}>
+              J’ai vu
+            </button>
+          </div>
         </div>
       )}
 
-      <div className="market-ticker">
-        {market.map((m) => {
-          const prev = prevPrices[m.commodity] ?? m.price;
-          const delta = m.price - prev;
-          const cls = delta > 0.05 ? "up" : delta < -0.05 ? "down" : "flat";
-          return (
-            <span key={m.commodity} className={`tick ${cls}`}>
-              {m.commodity} {m.price.toFixed(1)}
-              <small>
-                {delta > 0.05 ? " ▲" : delta < -0.05 ? " ▼" : " ·"}
-                {Math.abs(delta) > 0.05 ? Math.abs(delta).toFixed(1) : ""}
-              </small>
-            </span>
-          );
-        })}
-        <span className="tick weather-tick">{weatherLabel}</span>
-      </div>
+      {sheet === "PROFILE" && isMobile && (
+        <aside className={panelClass("profile-panel", "PROFILE")}>
+          <h3>{player.displayName}</h3>
+          <dl>
+            <div>
+              <dt>Métier</dt>
+              <dd>{SPECIALIZATION_LABELS[player.specialization]}</dd>
+            </div>
+            <div>
+              <dt>Niveau</dt>
+              <dd>
+                Nv.{player.level} · {player.xp} XP
+              </dd>
+            </div>
+            <div>
+              <dt>Trésorerie</dt>
+              <dd>{Math.round(player.crd)} CRD</dd>
+            </div>
+            {player.bonuses && (
+              <div>
+                <dt>Bonus ferme</dt>
+                <dd>
+                  grain {player.bonuses.storageGrain} t · +
+                  {Math.round(player.bonuses.yieldBonus * 100)} % rendement
+                </dd>
+              </div>
+            )}
+          </dl>
+          <div className="profile-actions">
+            <button type="button" className="ghost" onClick={() => setShowTutorial(true)}>
+              Revoir le tutoriel
+            </button>
+            <button type="button" className="ghost" onClick={logout}>
+              Déconnexion
+            </button>
+          </div>
+        </aside>
+      )}
 
       <aside className={panelClass("geo-panel", "INFO")}>
         <h3>{homeCity || zoneName}</h3>
