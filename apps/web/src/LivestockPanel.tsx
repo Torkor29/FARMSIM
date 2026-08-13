@@ -25,12 +25,18 @@ export type BarnState = {
     /** Le lot commence à perdre des bêtes : il faut agir maintenant */
     atRisk: boolean;
     canMilk: boolean;
+    canCollectEggs?: boolean;
+    canShear?: boolean;
     gestation: number;
     breedRefusal: string | null;
     milkPerCycle: number;
+    eggsPerCycle?: number;
+    woolPerShear?: number;
     meatAtSlaughter: number;
   } | null;
 };
+
+type FeedRation = "hay" | "maize" | "barley" | "wheat";
 
 type Props = {
   barns: BarnState[];
@@ -39,12 +45,15 @@ type Props = {
   onBuyAnimals: (buildingId: string, count: number) => void;
   onGraze: (herdId: string) => void;
   onBuildPaddock: (yardType: BuildingType) => void;
-  onFeed: (herdId: string, ration: "hay" | "maize" | "barley") => void;
+  onFeed: (herdId: string, ration: FeedRation) => void;
   onMilk: (herdId: string) => void;
+  onCollectEggs: (herdId: string) => void;
+  onShear: (herdId: string) => void;
   onSlaughter: (herdId: string, count: number) => void;
   hayTons: number;
   maizeTons: number;
   barleyTons: number;
+  wheatTons: number;
   /** Permet à la coque mobile d'en faire un tiroir du bas */
   className?: string;
 };
@@ -59,10 +68,13 @@ export function LivestockPanel({
   onBuildPaddock,
   onFeed,
   onMilk,
+  onCollectEggs,
+  onShear,
   onSlaughter,
   hayTons,
   maizeTons,
   barleyTons,
+  wheatTons,
   className = "glass livestock-panel",
 }: Props) {
   if (!barns.length) return null;
@@ -71,8 +83,8 @@ export function LivestockPanel({
     <aside className={className}>
       <h3>Élevage</h3>
       <p className="muted tiny">
-        Nourrissez, sortez, trayez. Un troupeau affamé s’effondre ; une aire de
-        sortie accolée au bâtiment le rend nettement plus productif.
+        Nourrissez, sortez, collectez. Un troupeau affamé s’effondre ; une aire
+        de sortie accolée au bâtiment le rend nettement plus productif.
       </p>
 
       {barns.map((barn) => {
@@ -152,10 +164,24 @@ export function LivestockPanel({
                 )}
 
                 <dl className="barn-stats">
-                  <div>
-                    <dt>Lait / cycle</dt>
-                    <dd>{herd.milkPerCycle.toFixed(0)} L</dd>
-                  </div>
+                  {herd.kind === "COW" && (
+                    <div>
+                      <dt>Lait / cycle</dt>
+                      <dd>{herd.milkPerCycle.toFixed(0)} L</dd>
+                    </div>
+                  )}
+                  {herd.kind === "HEN" && (
+                    <div>
+                      <dt>Œufs / cycle</dt>
+                      <dd>{(herd.eggsPerCycle ?? 0).toFixed(1)} caisse</dd>
+                    </div>
+                  )}
+                  {herd.kind === "SHEEP" && (
+                    <div>
+                      <dt>Laine / tonte</dt>
+                      <dd>{(herd.woolPerShear ?? 0).toFixed(3)} t</dd>
+                    </div>
+                  )}
                   <div>
                     <dt>Viande à l’abattage</dt>
                     <dd>{herd.meatAtSlaughter.toFixed(0)} kg</dd>
@@ -163,13 +189,13 @@ export function LivestockPanel({
                 </dl>
               </>
             ) : (
-              <p className="muted tiny">Étable vide — achetez des bêtes pour démarrer.</p>
+              <p className="muted tiny">Bâtiment vide — achetez des bêtes pour démarrer.</p>
             )}
 
             <p className={`paddock-note ${barn.paddockCapacity > 0 ? "ok" : "none"}`}>
               {barn.paddockCapacity > 0
                 ? `${BUILDING_DEFS[barn.yardType].name} attenant · ${barn.paddockCapacity} places de sortie`
-                : `Aucun${barn.yardType === "PIG_YARD" ? "e courette" : " enclos"} attenant — les bêtes restent enfermées`}
+                : `Aucun${barn.yardType === "PIG_YARD" || barn.yardType === "HEN_YARD" ? "e courette" : " enclos"} attenant — les bêtes restent enfermées`}
             </p>
 
             <div className="barn-actions">
@@ -222,12 +248,27 @@ export function LivestockPanel({
                   disabled={busy || barleyTons <= 0}
                   title={
                     barleyTons <= 0
-                      ? "Aucune orge en silo — semez-en, surtout pour les cochons"
+                      ? "Aucune orge en silo — semez-en, surtout pour les cochons et les poules"
                       : "Ration à l’orge : concentré un peu moins riche que le maïs"
                   }
                   onClick={() => onFeed(herd.id, "barley")}
                 >
                   Ration orge
+                </button>
+              )}
+
+              {herd && (herd.kind === "HEN" || herd.kind === "SHEEP") && (
+                <button
+                  type="button"
+                  disabled={busy || wheatTons <= 0}
+                  title={
+                    wheatTons <= 0
+                      ? "Aucun blé en silo — semez-en pour les poules"
+                      : "Ration au blé : un peu moins riche que l’orge"
+                  }
+                  onClick={() => onFeed(herd.id, "wheat")}
+                >
+                  Ration blé
                 </button>
               )}
 
@@ -240,6 +281,34 @@ export function LivestockPanel({
                   onClick={() => onMilk(herd.id)}
                 >
                   Traire
+                </button>
+              )}
+
+              {herd && herd.kind === "HEN" && (
+                <button
+                  type="button"
+                  className="accent-btn"
+                  disabled={busy || !herd.canCollectEggs}
+                  title={
+                    herd.canCollectEggs
+                      ? "Ramasser les œufs"
+                      : "Les œufs viennent d’être ramassés"
+                  }
+                  onClick={() => onCollectEggs(herd.id)}
+                >
+                  Ramasser
+                </button>
+              )}
+
+              {herd && herd.kind === "SHEEP" && (
+                <button
+                  type="button"
+                  className="accent-btn"
+                  disabled={busy || !herd.canShear}
+                  title={herd.canShear ? "Tondre le lot" : "Les moutons viennent d’être tondus"}
+                  onClick={() => onShear(herd.id)}
+                >
+                  Tondre
                 </button>
               )}
 
@@ -261,7 +330,9 @@ export function LivestockPanel({
                   className="accent-btn"
                   onClick={() => onBuildPaddock(barn.yardType)}
                 >
-                  {barn.yardType === "PIG_YARD" ? "Construire une courette" : "Construire un enclos"}
+                  {barn.yardType === "PIG_YARD" || barn.yardType === "HEN_YARD"
+                    ? "Construire une courette"
+                    : "Construire un enclos"}
                 </button>
               ) : outside ? (
                 <span className="grazing-now">Dehors…</span>

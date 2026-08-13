@@ -259,11 +259,38 @@ describe("sortie au pré — conditions d’autorisation", () => {
     ).toEqual({ ok: false, reason: "PADDOCK_FULL" });
   });
 
-  it("refuse de sortir les porcs, qui restent en bâtiment", () => {
+  it("refuse de sortir une espèce dans l’aire d’une autre", () => {
     expect(canGraze({ paddock: enclos(), animals: 4, weather: clair, kind: "PIG" })).toEqual({
       ok: false,
       reason: "WRONG_SPECIES",
     });
+    expect(
+      canGraze({
+        paddock: enclos(),
+        animals: 4,
+        weather: clair,
+        kind: "PIG",
+        paddockKind: "PIG",
+      }).ok,
+    ).toBe(true);
+    expect(
+      canGraze({
+        paddock: enclos(),
+        animals: 4,
+        weather: clair,
+        kind: "HEN",
+        paddockKind: "HEN",
+      }).ok,
+    ).toBe(true);
+    expect(
+      canGraze({
+        paddock: enclos(),
+        animals: 4,
+        weather: clair,
+        kind: "SHEEP",
+        paddockKind: "SHEEP",
+      }).ok,
+    ).toBe(true);
   });
 
   it("nomme chaque motif de refus pour l’UI", () => {
@@ -498,10 +525,15 @@ describe("fenêtres de pâturage", () => {
     expect(GRAZING.cooldownMs).toBe(20 * HOUR);
   });
 
-  it("refuse de planifier une sortie pour les porcs ou un enclos sans capacité", () => {
-    expect(planGrazing(now, troupeau({ kind: "PIG" }), enclos())).toBeNull();
+  it("refuse de planifier une sortie pour un enclos sans capacité", () => {
     expect(planGrazing(now, troupeau(), enclos({ cells: 4, capacity: paddockCapacity(4) }))).toBeNull();
     expect(planGrazing(now, troupeau({ size: 0 }), enclos())).toBeNull();
+  });
+
+  it("planifie aussi pour les porcs, les poules et les moutons", () => {
+    expect(planGrazing(now, troupeau({ kind: "PIG" }), enclos())).not.toBeNull();
+    expect(planGrazing(now, troupeau({ kind: "HEN" }), enclos())).not.toBeNull();
+    expect(planGrazing(now, troupeau({ kind: "SHEEP" }), enclos())).not.toBeNull();
   });
 
   it("compte les vagues nécessaires pour sortir tout le troupeau", () => {

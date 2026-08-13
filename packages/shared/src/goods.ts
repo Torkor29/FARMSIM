@@ -10,7 +10,17 @@
  * @see docs/research/43_LIVESTOCK_PRODUCE.md
  */
 
-export type TradeGood = "WHEAT" | "MAIZE" | "PEA" | "BARLEY" | "RAPE" | "MILK" | "MEAT" | "HAY";
+export type TradeGood =
+  | "WHEAT"
+  | "MAIZE"
+  | "PEA"
+  | "BARLEY"
+  | "RAPE"
+  | "MILK"
+  | "MEAT"
+  | "HAY"
+  | "EGGS"
+  | "WOOL";
 
 export type GoodDef = {
   code: TradeGood;
@@ -104,6 +114,24 @@ export const GOOD_DEFS: Record<TradeGood, GoodDef> = {
     purchasable: false,
     perishable: false,
   },
+  EGGS: {
+    code: "EGGS",
+    name: "Œufs",
+    unit: "caisse",
+    basePrice: 22,
+    sellable: true,
+    purchasable: false,
+    perishable: true,
+  },
+  WOOL: {
+    code: "WOOL",
+    name: "Laine",
+    unit: "t",
+    basePrice: 420,
+    sellable: true,
+    purchasable: false,
+    perishable: false,
+  },
 };
 
 export const SELLABLE_GOODS = (Object.keys(GOOD_DEFS) as TradeGood[]).filter(
@@ -133,11 +161,17 @@ export const FEED_VALUE: Partial<Record<TradeGood, number>> = {
   HAY: 1,
   MAIZE: 1.4,
   BARLEY: 1.2,
+  WHEAT: 1.1,
 };
 
 /** Qualité de ration : 0 = que du foin, 1 = que du concentré. */
-export function rationQuality(hayTons: number, maizeTons: number, barleyTons = 0): number {
-  const concentrate = maizeTons + barleyTons;
+export function rationQuality(
+  hayTons: number,
+  maizeTons: number,
+  barleyTons = 0,
+  wheatTons = 0,
+): number {
+  const concentrate = maizeTons + barleyTons + wheatTons;
   const total = hayTons + concentrate;
   if (total <= 0) return 0;
   return Math.max(0, Math.min(1, concentrate / total));
@@ -150,11 +184,17 @@ export function rationQuality(hayTons: number, maizeTons: number, barleyTons = 0
  * confondre les deux échelles rendrait une tonne de foin dérisoire alors
  * qu'elle nourrit un troupeau plusieurs jours.
  */
-export function feedUnits(hayTons: number, maizeTons: number, barleyTons = 0): number {
+export function feedUnits(
+  hayTons: number,
+  maizeTons: number,
+  barleyTons = 0,
+  wheatTons = 0,
+): number {
   return (
     (hayTons * (FEED_VALUE.HAY ?? 1) +
       maizeTons * (FEED_VALUE.MAIZE ?? 1) +
-      barleyTons * (FEED_VALUE.BARLEY ?? 1.2)) *
+      barleyTons * (FEED_VALUE.BARLEY ?? 1.2) +
+      wheatTons * (FEED_VALUE.WHEAT ?? 1.1)) *
     1000
   );
 }

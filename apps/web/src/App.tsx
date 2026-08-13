@@ -893,9 +893,10 @@ export function App() {
         w: barnDef.w,
         h: barnDef.h,
       };
+      const yardType = barn.yardType;
       const paddockB = all.find((b) => {
-        if (b.type !== "PADDOCK") return false;
-        const d = BUILDING_DEFS.PADDOCK;
+        if (b.type !== yardType) return false;
+        const d = BUILDING_DEFS[yardType];
         return isPaddockAdjacent(barnBox, {
           originX: b.originX,
           originY: b.originY,
@@ -904,10 +905,12 @@ export function App() {
         });
       });
       if (!paddockB) continue;
-      const pDef = BUILDING_DEFS.PADDOCK;
+      const pDef = BUILDING_DEFS[yardType];
       out.push({
         buildingId: barn.buildingId,
         animals: herd.size,
+        kind: herd.kind,
+        sheared: herd.kind === "SHEEP" && !herd.canShear,
         barn: barnBox,
         paddock: {
           originX: paddockB.originX,
@@ -957,6 +960,11 @@ export function App() {
 
   const barleyInStock = useMemo(
     () => (player?.farm?.inventory ?? []).find((i) => i.itemCode === "BARLEY")?.qty ?? 0,
+    [player?.farm?.inventory],
+  );
+
+  const wheatInStock = useMemo(
+    () => (player?.farm?.inventory ?? []).find((i) => i.itemCode === "WHEAT")?.qty ?? 0,
     [player?.farm?.inventory],
   );
 
@@ -2162,7 +2170,7 @@ export function App() {
    * Distribue une ration complète : le joueur choisit l'aliment, pas la dose.
    * Le maïs nourrit mieux, mais c'est du maïs qu'il ne vendra pas.
    */
-  async function feedHerd(herdId: string, ration: "hay" | "maize" | "barley") {
+  async function feedHerd(herdId: string, ration: "hay" | "maize" | "barley" | "wheat") {
     if (!player) return;
     setBusy(true);
     try {
@@ -2170,7 +2178,13 @@ export function App() {
       const size = barn?.herd?.size ?? 1;
       const wanted = Math.max(1, Math.ceil(size / 3));
       const stock =
-        ration === "maize" ? maizeInStock : ration === "barley" ? barleyInStock : hayInStock;
+        ration === "maize"
+          ? maizeInStock
+          : ration === "barley"
+            ? barleyInStock
+            : ration === "wheat"
+              ? wheatInStock
+              : hayInStock;
       const tons = Math.min(stock, wanted);
       const r = await api<{ units: number; quality: number }>(`/herds/${herdId}/feed`, {
         method: "POST",
@@ -2179,9 +2193,11 @@ export function App() {
           hayTons: ration === "hay" ? tons : 0,
           maizeTons: ration === "maize" ? tons : 0,
           barleyTons: ration === "barley" ? tons : 0,
+          wheatTons: ration === "wheat" ? tons : 0,
         }),
       });
-      const label = ration === "maize" ? "Maïs" : ration === "barley" ? "Orge" : "Fourrage";
+      const label =
+        ration === "maize" ? "Maïs" : ration === "barley" ? "Orge" : ration === "wheat" ? "Blé" : "Fourrage";
       flashToast(`${label} distribué · ${tons.toFixed(1)} t · ${r.units} kg`);
       await refreshPlayer();
       if (activeParcelId) await loadLivestock(activeParcelId);
@@ -2201,6 +2217,42 @@ export function App() {
         body: JSON.stringify({ userId: player.id }),
       });
       flashToast(`Traite : ${r.litres} L au silo`);
+      await refreshPlayer();
+      if (activeParcelId) await loadLivestock(activeParcelId);
+    } catch (e) {
+      flashToast(e instanceof Error ? e.message : String(e), true);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function collectEggs(herdId: string) {
+    if (!player) return;
+    setBusy(true);
+    try {
+      const r = await api<{ crates: number }>(`/herds/${herdId}/collect-eggs`, {
+        method: "POST",
+        body: JSON.stringify({ userId: player.id }),
+      });
+      flashToast(`Œufs : ${r.crates} caisse(s) au stock`);
+      await refreshPlayer();
+      if (activeParcelId) await loadLivestock(activeParcelId);
+    } catch (e) {
+      flashToast(e instanceof Error ? e.message : String(e), true);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function shearHerd(herdId: string) {
+    if (!player) return;
+    setBusy(true);
+    try {
+      const r = await api<{ tons: number }>(`/herds/${herdId}/shear`, {
+        method: "POST",
+        body: JSON.stringify({ userId: player.id }),
+      });
+      flashToast(`Tonte : ${r.tons.toFixed(3)} t de laine`);
       await refreshPlayer();
       if (activeParcelId) await loadLivestock(activeParcelId);
     } catch (e) {
@@ -2437,6 +2489,32 @@ export function App() {
               pulseCells={pulseCells}
               activeWork={activeWork}
               grazing={grazingHerds}
+              yardSignals={barns.flatMap((barn) => {
+                const b = (parcel?.buildings ?? []).find((x) => x.id === barn.buildingId);
+                if (!b || !barn.herd) return [];
+                const def = BUILDING_DEFS[b.type];
+                const out: { kind: "eggs" | "wool"; originX: number; originY: number; w: number; h: number }[] =
+                  [];
+                if (barn.herd.canCollectEggs) {
+                  out.push({
+                    kind: "eggs",
+                    originX: b.originX,
+                    originY: b.originY,
+                    w: def.w,
+                    h: def.h,
+                  });
+                }
+                if (barn.herd.canShear) {
+                  out.push({
+                    kind: "wool",
+                    originX: b.originX,
+                    originY: b.originY,
+                    w: def.w,
+                    h: def.h,
+                  });
+                }
+                return out;
+              })}
               workers={fieldWorkers}
               weather={localWeather}
               strokeWork={visiting}
@@ -2977,10 +3055,13 @@ export function App() {
         onGraze={grazeHerd}
         onFeed={feedHerd}
         onMilk={milkHerd}
+        onCollectEggs={collectEggs}
+        onShear={shearHerd}
         onSlaughter={slaughterHerd}
         hayTons={hayInStock}
         maizeTons={maizeInStock}
         barleyTons={barleyInStock}
+        wheatTons={wheatInStock}
         onBuildPaddock={(yardType) => {
           setTool("BUILD");
           setBuildType(yardType);
@@ -2988,7 +3069,9 @@ export function App() {
           flashToast(
             yardType === "PIG_YARD"
               ? "Posez la courette contre un bord de la porcherie"
-              : "Posez l’enclos contre un bord de l’étable",
+              : yardType === "HEN_YARD"
+                ? "Posez la courette contre un bord du poulailler"
+                : "Posez l’enclos contre un bord de l’étable",
           );
         }}
       />

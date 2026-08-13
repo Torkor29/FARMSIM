@@ -48,6 +48,13 @@ describe("guide et objectifs", () => {
     expect(objectivesFor("ELEVEUR").some((o) => o.id === "contract")).toBe(true);
   });
 
+  it("compte le poulailler et la bergerie comme bâtiment d'élevage", () => {
+    const barn = objectivesFor("ELEVEUR").find((o) => o.id === "barn")!;
+    expect(barn.check({ ...empty("ELEVEUR"), buildings: ["HENHOUSE"] })).toBe(true);
+    expect(barn.check({ ...empty("ELEVEUR"), buildings: ["SHEEPFOLD"] })).toBe(true);
+    expect(barn.check({ ...empty("ELEVEUR"), buildings: ["SILO"] })).toBe(false);
+  });
+
   it("verrouille les objectifs suivants tant que le courant n'est pas fait", () => {
     const views = evaluateObjectives(empty("CEREALIER"));
     expect(views.filter((o) => o.current)).toHaveLength(1);

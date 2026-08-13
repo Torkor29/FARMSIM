@@ -119,17 +119,21 @@ export const OBJECTIVE_DEFS: ObjectiveDef[] = [
   },
   {
     id: "barn",
-    title: "Bâtissez une étable ou une porcherie",
-    hint: "Onglet Bâtir. Sans bâtiment, pas de bêtes.",
-    unlock: "Acheter des animaux et produire lait ou viande",
+    title: "Bâtissez un bâtiment d’élevage",
+    hint: "Onglet Bâtir : étable, porcherie, poulailler ou bergerie.",
+    unlock: "Acheter des animaux et produire lait, œufs, laine ou viande",
     spec: "ELEVEUR",
-    check: (s) => s.buildings.includes("CATTLE_BARN") || s.buildings.includes("PIGSTY"),
+    check: (s) =>
+      s.buildings.includes("CATTLE_BARN") ||
+      s.buildings.includes("PIGSTY") ||
+      s.buildings.includes("HENHOUSE") ||
+      s.buildings.includes("SHEEPFOLD"),
   },
   {
     id: "animals",
     title: "Achetez vos premières bêtes",
     hint: "Onglet Élevage, une fois l’étable posée.",
-    unlock: "La ration, la traite, la vente de lait",
+    unlock: "La ration, puis la traite, les œufs ou la laine",
     spec: "ELEVEUR",
     check: (s) => s.animals > 0,
   },
@@ -322,6 +326,16 @@ export const GUIDE_CHAPTERS: GuideChapter[] = [
         "Abattage. Se gâte moins vite que le lait. Gros lot, gros prix.",
         "Marché.",
       ),
+      goodEntry(
+        "EGGS",
+        "Ramassage au poulailler. Se gâte vite (18 % par cycle) : vendez ou chambre froide.",
+        "Marché. Revenu régulier des poules.",
+      ),
+      goodEntry(
+        "WOOL",
+        "Tonte à la bergerie. Ne se gâte pas. Prix calme.",
+        "Marché. Revenu des moutons, avant la viande.",
+      ),
       {
         id: "STRAW",
         name: "Paille",
@@ -381,9 +395,21 @@ export const GUIDE_CHAPTERS: GuideChapter[] = [
         usedBy: "Éleveur.",
       },
       {
+        id: "HENHOUSE",
+        name: "Poulailler · 1 400 TRN · 2×2",
+        how: "24 places. Le revenu, c’est l’œuf, pas la viande.",
+        usedBy: "Éleveur.",
+      },
+      {
+        id: "SHEEPFOLD",
+        name: "Bergerie · 2 000 TRN · 3×2",
+        how: "16 places. On tond la laine ; la viande vient après.",
+        usedBy: "Éleveur.",
+      },
+      {
         id: "COLD_ROOM",
         name: "Chambre froide · 2 600 TRN · 2×2",
-        how: "Ralentit de 40 % la perte du lait et de la viande.",
+        how: "Ralentit de 40 % la perte du lait, de la viande et des œufs.",
         usedBy: "Éleveur qui ne vend pas dans la minute.",
       },
       {
@@ -408,6 +434,12 @@ export const GUIDE_CHAPTERS: GuideChapter[] = [
         id: "PIG_YARD",
         name: "Courette à porcs · 780 TRN · 2×3",
         how: "À coller contre la porcherie.",
+        usedBy: "Éleveur.",
+      },
+      {
+        id: "HEN_YARD",
+        name: "Courette à poules · 520 TRN · 2×3",
+        how: "À coller contre le poulailler. Les poules picorent, elles pondent mieux.",
         usedBy: "Éleveur.",
       },
     ],
@@ -451,13 +483,25 @@ export const GUIDE_CHAPTERS: GuideChapter[] = [
       {
         id: "feed",
         name: "Nourrir",
-        how: "Fourrage (négociant) et/ou maïs (stock). Sans ration, le troupeau dépérit.",
-        usedBy: "Éleveur. Céréalier : débouché pour le maïs.",
+        how: "Fourrage, maïs, orge ou blé. Les poules aiment l’orge et le blé ; les moutons, le foin.",
+        usedBy: "Éleveur. Céréalier : débouché pour le grain et l’herbe.",
       },
       {
         id: "milk-job",
         name: "Traire",
         how: "Onglet Élevage, sur un troupeau bovin nourri.",
+        usedBy: "Éleveur.",
+      },
+      {
+        id: "collect-eggs",
+        name: "Ramasser les œufs",
+        how: "Onglet Élevage, sur un poulailler. Souvent, peu à la fois. Ça se gâte.",
+        usedBy: "Éleveur.",
+      },
+      {
+        id: "shear",
+        name: "Tondre",
+        how: "Onglet Élevage, sur une bergerie. La laine ne se gâte pas.",
         usedBy: "Éleveur.",
       },
       {
@@ -469,7 +513,7 @@ export const GUIDE_CHAPTERS: GuideChapter[] = [
       {
         id: "cold",
         name: "Chambre froide",
-        how: "Ralentit la perte du lait et de la viande de 40 %.",
+        how: "Ralentit la perte du lait, de la viande et des œufs de 40 %.",
         usedBy: "Éleveur qui ne vend pas dans la minute.",
       },
     ],
@@ -488,7 +532,7 @@ export const GUIDE_CHAPTERS: GuideChapter[] = [
       {
         id: "elv",
         name: "Éleveur",
-        how: "Produit lait et viande. Achète foin et maïs. Bientôt : paille, ensilage, et lisier à rendre au céréalier.",
+        how: "Produit lait, viande, œufs et laine. Achète foin et grain, ou fauche son herbe. Bientôt : paille, ensilage, et lisier à rendre au céréalier.",
         usedBy: "Débouché du céréalier. Chantiers d’épandage pour qui a l’engin.",
       },
       {

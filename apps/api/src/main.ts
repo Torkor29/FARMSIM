@@ -101,9 +101,15 @@ import {
   canGraze,
   planGrazing,
   milkYield,
+  eggYield,
+  woolYield,
   meatYield,
   happinessLabel,
   hungerPenalty,
+  kindForBarn,
+  yardTypeForBarn,
+  ANIMAL_PRICE,
+  FEED_BASE,
   canBreed,
   gestationProgress,
   litterFor,
@@ -3380,9 +3386,14 @@ app.post("/parcels/:id/build", async (req, res) => {
         "MACHINE_SHED",
         "CATTLE_BARN",
         "PIGSTY",
+        "HENHOUSE",
+        "SHEEPFOLD",
         "WORKSHOP",
         "FARMHOUSE",
         "PADDOCK",
+        "PIG_YARD",
+        "HEN_YARD",
+        "COLD_ROOM",
       ]),
       x: z.number().int().min(0),
       y: z.number().int().min(0),
@@ -3502,7 +3513,23 @@ app.post("/buildings/:id/upgrade", async (req, res) => {
 /* Élevage                                                             */
 /* ------------------------------------------------------------------ */
 
-const COW_PRICE = 420;
+/** Places d'hébergement selon l'espèce du bâtiment. */
+function barnCapacity(
+  type: string,
+  stats: ReturnType<typeof buildingStatsAtLevel>,
+): number {
+  const kind = kindForBarn(type);
+  if (kind === "COW") return stats.cattleSlots ?? 0;
+  if (kind === "PIG") return stats.pigSlots ?? 0;
+  if (kind === "HEN") return stats.henSlots ?? 0;
+  if (kind === "SHEEP") return stats.sheepSlots ?? 0;
+  return 0;
+}
+
+/** La collecte (traite, œufs, laine) n'est pas un clic en continu. */
+function collectReady(lastAt: Date | null, bornAt: Date, now: number): boolean {
+  return now - (lastAt?.getTime() ?? bornAt.getTime()) >= LIVESTOCK_CYCLE_MS * 0.15;
+}
 
 /** Enclos collés à une étable, avec leur capacité de sortie cumulée. */
 function paddocksFor(
@@ -3516,9 +3543,8 @@ function paddocksFor(
     w: barnDef.w,
     h: barnDef.h,
   };
-  // Une étable appelle un enclos de pâture, une porcherie une courette : on ne
-  // met pas des porcs au pré ni des vaches dans une souille.
-  const yardType: SharedBuildingType = barn.type === "PIGSTY" ? "PIG_YARD" : "PADDOCK";
+  // Chaque espèce a son aire : pré, courette à porcs, courette à poules.
+  const yardType = yardTypeForBarn(barn.type) as SharedBuildingType;
   const def = BUILDING_DEFS[yardType];
   let cells = 0;
   for (const b of buildings) {
@@ -3545,7 +3571,7 @@ async function settleAllHerds() {
     const barn = herd.building;
     const paddock = paddocksFor(barn, barn.parcel.buildings);
     const stats = buildingStatsAtLevel(barn.type as SharedBuildingType, barn.level);
-    const capacity = (barn.type === "CATTLE_BARN" ? stats.cattleSlots : stats.pigSlots) ?? 0;
+    const capacity = barnCapacity(barn.type, stats);
     await settleHerd(herd, paddock.capacity, now, barn.level, capacity);
   }
 }
@@ -3593,6 +3619,7 @@ async function settleHerd(
   }
 
   // Le troupeau puise dans la ration distribuée ; au pré, il se sert seul.
+  const kind = herd.kind as AnimalKind;
   const grazing = Boolean(herd.grazingUntil && herd.grazingUntil.getTime() > now);
   const burnt = feedBurn({
     herdSize: herd.size,
@@ -3600,9 +3627,10 @@ async function settleHerd(
     cycleMs: LIVESTOCK_CYCLE_MS,
     grazing,
     barnLevel,
+    kind,
   });
   const feedStock = Math.max(0, herd.feedStock - burnt);
-  const hunger = hungerPenalty({ feedStock, herdSize: herd.size });
+  const hunger = hungerPenalty({ feedStock, herdSize: herd.size, kind });
 
   const happiness = tickHappiness({
     happiness: herd.happiness,
@@ -3615,7 +3643,8 @@ async function settleHerd(
 
   // Reproduction : une gestation démarre quand tout est réuni, et aboutit
   // quand elle arrive à terme. Un troupeau bien mené grossit tout seul.
-  const feedRatio = feedStock / Math.max(1, herd.size * HUNGER.unitsPerAnimalPerCycle);
+  const feedPer = FEED_BASE[kind] ?? HUNGER.unitsPerAnimalPerCycle;
+  const feedRatio = feedStock / Math.max(1, herd.size * feedPer);
   const freeSlots = capacity - herd.size;
   let size = herd.size;
   let gestatingSince: Date | null = herd.gestatingSince;
@@ -3704,10 +3733,10 @@ app.get("/parcels/:id/livestock", async (req, res) => {
 
   const barns = [];
   for (const b of parcel.buildings) {
-    if (b.type !== "CATTLE_BARN" && b.type !== "PIGSTY") continue;
+    if (!kindForBarn(b.type)) continue;
     const paddock = paddocksFor(b, parcel.buildings);
     const stats = buildingStatsAtLevel(b.type as SharedBuildingType, b.level);
-    const capacity = (b.type === "CATTLE_BARN" ? stats.cattleSlots : stats.pigSlots) ?? 0;
+    const capacity = barnCapacity(b.type, stats);
     let happiness = b.herd?.happiness ?? 0;
     let feedStock = b.herd?.feedStock ?? 0;
     let herdSize = b.herd?.size ?? 0;
@@ -3730,10 +3759,12 @@ app.get("/parcels/:id/livestock", async (req, res) => {
           animals: b.herd.size,
           weather: (weather?.state as WeatherState) ?? "CLEAR",
           kind: b.herd.kind as AnimalKind,
-          paddockKind: paddock.yardType === "PIG_YARD" ? "PIG" : "COW",
+          paddockKind: kindForBarn(b.type) ?? "COW",
         })
       : { ok: false as const, reason: "NO_PADDOCK" as const };
 
+    const herdKind = (b.herd?.kind as AnimalKind | undefined) ?? kindForBarn(b.type);
+    const feedPer = herdKind ? (FEED_BASE[herdKind] ?? HUNGER.unitsPerAnimalPerCycle) : HUNGER.unitsPerAnimalPerCycle;
     barns.push({
       buildingId: b.id,
       type: b.type,
@@ -3767,20 +3798,38 @@ app.get("/parcels/:id/livestock", async (req, res) => {
                 kind: b.herd.kind as AnimalKind,
                 size: herdSize,
                 happiness,
-                feedRatio: feedStock / Math.max(1, herdSize * HUNGER.unitsPerAnimalPerCycle),
+                feedRatio: feedStock / Math.max(1, herdSize * feedPer),
                 freeSlots: capacity - herdSize,
                 gestatingSince: null,
               });
               return v.ok || !v.reason ? null : BREEDING_REFUSAL_LABELS[v.reason];
             })(),
-            feedNeed: b.herd.size * HUNGER.unitsPerAnimalPerCycle,
+            feedNeed: b.herd.size * feedPer,
             feedQuality: b.herd.feedQuality,
-            hungry: hungerPenalty({ feedStock, herdSize: b.herd.size }) > 0.05,
+            hungry: hungerPenalty({
+              feedStock,
+              herdSize: b.herd.size,
+              kind: b.herd.kind as AnimalKind,
+            }) > 0.05,
             canMilk:
-              b.herd.kind === "COW" &&
-              now - (b.herd.lastMilkedAt?.getTime() ?? b.herd.bornAt.getTime()) >=
-                LIVESTOCK_CYCLE_MS * 0.15,
+              b.herd.kind === "COW" && collectReady(b.herd.lastMilkedAt, b.herd.bornAt, now),
+            canCollectEggs:
+              b.herd.kind === "HEN" && collectReady(b.herd.lastMilkedAt, b.herd.bornAt, now),
+            canShear:
+              b.herd.kind === "SHEEP" && collectReady(b.herd.lastMilkedAt, b.herd.bornAt, now),
             milkPerCycle: milkYield({
+              herdSize: b.herd.size,
+              happiness,
+              barnLevel: b.level,
+              feedQuality: b.herd.feedQuality,
+            }),
+            eggsPerCycle: eggYield({
+              herdSize: b.herd.size,
+              happiness,
+              barnLevel: b.level,
+              feedQuality: b.herd.feedQuality,
+            }),
+            woolPerShear: woolYield({
               herdSize: b.herd.size,
               happiness,
               barnLevel: b.level,
@@ -3791,12 +3840,13 @@ app.get("/parcels/:id/livestock", async (req, res) => {
               happiness,
               averageAgeMs: b.herd.avgAgeMs,
               barnLevel: b.level,
+              kind: b.herd.kind as AnimalKind,
             }),
           }
         : null,
       canGraze: graze.ok,
       grazeRefusal: graze.ok || !graze.reason ? null : GRAZING_REFUSAL_LABELS[graze.reason],
-      cowPrice: COW_PRICE,
+      cowPrice: herdKind ? ANIMAL_PRICE[herdKind] : ANIMAL_PRICE.COW,
     });
   }
   res.json({ barns, weather: weather?.state ?? "CLEAR" });
@@ -3819,13 +3869,13 @@ app.post("/buildings/:id/animals", async (req, res) => {
     res.status(403).json({ error: "Bâtiment non possédé" });
     return;
   }
-  if (building.type !== "CATTLE_BARN" && building.type !== "PIGSTY") {
+  const kind = kindForBarn(building.type);
+  if (!kind) {
     res.status(409).json({ error: "Ce bâtiment n'héberge pas d'animaux" });
     return;
   }
   const stats = buildingStatsAtLevel(building.type as SharedBuildingType, building.level);
-  const capacity =
-    (building.type === "CATTLE_BARN" ? stats.cattleSlots : stats.pigSlots) ?? 0;
+  const capacity = barnCapacity(building.type, stats);
   const current = building.herd?.size ?? 0;
   if (current + body.data.count > capacity) {
     res.status(409).json({
@@ -3833,14 +3883,12 @@ app.post("/buildings/:id/animals", async (req, res) => {
     });
     return;
   }
-  const cost = COW_PRICE * body.data.count;
+  const cost = ANIMAL_PRICE[kind] * body.data.count;
   const user = await prisma.user.findUnique({ where: { id: body.data.userId } });
   if (!user || user.crd < cost) {
     res.status(402).json({ error: `TRN insuffisants — ${cost} requis` });
     return;
   }
-
-  const kind: AnimalKind = building.type === "CATTLE_BARN" ? "COW" : "PIG";
   await prisma.$transaction(async (tx) => {
     await tx.user.update({ where: { id: user.id }, data: { crd: { decrement: cost } } });
     if (building.herd) {
@@ -3904,6 +3952,7 @@ app.post("/herds/:id/graze", async (req, res) => {
     animals: herd.size,
     weather: (weather?.state as WeatherState) ?? "CLEAR",
     kind: herd.kind as AnimalKind,
+    paddockKind: kindForBarn(herd.building.type) ?? "COW",
   });
   if (!verdict.ok) {
     res.status(409).json({
@@ -4104,14 +4153,15 @@ app.post("/herds/:id/feed", async (req, res) => {
       hayTons: z.number().min(0).default(0),
       maizeTons: z.number().min(0).default(0),
       barleyTons: z.number().min(0).default(0),
+      wheatTons: z.number().min(0).default(0),
     })
     .safeParse(req.body);
   if (!body.success) {
     res.status(400).json(body.error.flatten());
     return;
   }
-  const { hayTons, maizeTons, barleyTons } = body.data;
-  if (hayTons + maizeTons + barleyTons <= 0) {
+  const { hayTons, maizeTons, barleyTons, wheatTons } = body.data;
+  if (hayTons + maizeTons + barleyTons + wheatTons <= 0) {
     res.status(400).json({ error: "Indiquez une quantité à distribuer" });
     return;
   }
@@ -4126,6 +4176,7 @@ app.post("/herds/:id/feed", async (req, res) => {
   const hay = herd.farm.inventory.find((i) => i.itemCode === "HAY");
   const maize = herd.farm.inventory.find((i) => i.itemCode === "MAIZE");
   const barley = herd.farm.inventory.find((i) => i.itemCode === "BARLEY");
+  const wheat = herd.farm.inventory.find((i) => i.itemCode === "WHEAT");
   if (hayTons > (hay?.qty ?? 0)) {
     res.status(409).json({ error: "Fourrage insuffisant — achetez-en au négociant" });
     return;
@@ -4138,13 +4189,18 @@ app.post("/herds/:id/feed", async (req, res) => {
     res.status(409).json({ error: "Orge insuffisante" });
     return;
   }
+  if (wheatTons > (wheat?.qty ?? 0)) {
+    res.status(409).json({ error: "Blé insuffisant" });
+    return;
+  }
 
-  const units = feedUnits(hayTons, maizeTons, barleyTons);
-  const quality = rationQuality(hayTons, maizeTons, barleyTons);
+  const units = feedUnits(hayTons, maizeTons, barleyTons, wheatTons);
+  const quality = rationQuality(hayTons, maizeTons, barleyTons, wheatTons);
   await prisma.$transaction(async (tx) => {
     if (hayTons > 0 && hay) await drawFromStock(tx, hay, hayTons);
     if (maizeTons > 0 && maize) await drawFromStock(tx, maize, maizeTons);
     if (barleyTons > 0 && barley) await drawFromStock(tx, barley, barleyTons);
+    if (wheatTons > 0 && wheat) await drawFromStock(tx, wheat, wheatTons);
     await tx.herd.update({
       where: { id: herd.id },
       data: {
@@ -4211,6 +4267,110 @@ app.post("/herds/:id/milk", async (req, res) => {
   res.json({ hectolitres, litres: Math.round(litres), cycles: Math.round(cycles * 100) / 100 });
 });
 
+/** Ramassage : les œufs s'accumulent entre deux passages, et se perdent s'ils attendent. */
+app.post("/herds/:id/collect-eggs", async (req, res) => {
+  const body = z.object({ userId: z.string() }).safeParse(req.body);
+  if (!body.success) {
+    res.status(400).json(body.error.flatten());
+    return;
+  }
+  const herd = await prisma.herd.findUnique({
+    where: { id: req.params.id },
+    include: { farm: true, building: true },
+  });
+  if (!herd || herd.farm.userId !== body.data.userId) {
+    res.status(403).json({ error: "Troupeau non possédé" });
+    return;
+  }
+  if (herd.kind !== "HEN") {
+    res.status(409).json({ error: "Seules les poules pondent" });
+    return;
+  }
+  if (herd.size <= 0) {
+    res.status(409).json({ error: "Poulailler vide" });
+    return;
+  }
+
+  const now = Date.now();
+  const since = herd.lastMilkedAt?.getTime() ?? herd.bornAt.getTime();
+  const cycles = Math.min(2, (now - since) / LIVESTOCK_CYCLE_MS);
+  if (cycles < 0.15) {
+    const wait = Math.ceil(((0.15 - cycles) * LIVESTOCK_CYCLE_MS) / 1000);
+    res.status(409).json({ error: `Les œufs viennent d'être ramassés — ${wait} s` });
+    return;
+  }
+
+  const perCycle = eggYield({
+    herdSize: herd.size,
+    happiness: herd.happiness,
+    barnLevel: herd.building.level,
+    feedQuality: herd.feedQuality,
+  });
+  const crates = Math.round(perCycle * cycles * 100) / 100;
+  if (crates <= 0) {
+    res.status(409).json({ error: "Rien à ramasser : le lot ne pond pas" });
+    return;
+  }
+
+  await prisma.$transaction(async (tx) => {
+    await addToStock(tx, herd.farmId, "EGGS", crates, 0, 3);
+    await tx.herd.update({ where: { id: herd.id }, data: { lastMilkedAt: new Date(now) } });
+  });
+  res.json({ crates, cycles: Math.round(cycles * 100) / 100 });
+});
+
+/** Tonte : la laine s'accumule entre deux passages. Elle ne se gâte pas. */
+app.post("/herds/:id/shear", async (req, res) => {
+  const body = z.object({ userId: z.string() }).safeParse(req.body);
+  if (!body.success) {
+    res.status(400).json(body.error.flatten());
+    return;
+  }
+  const herd = await prisma.herd.findUnique({
+    where: { id: req.params.id },
+    include: { farm: true, building: true },
+  });
+  if (!herd || herd.farm.userId !== body.data.userId) {
+    res.status(403).json({ error: "Troupeau non possédé" });
+    return;
+  }
+  if (herd.kind !== "SHEEP") {
+    res.status(409).json({ error: "Seuls les moutons se tondent" });
+    return;
+  }
+  if (herd.size <= 0) {
+    res.status(409).json({ error: "Bergerie vide" });
+    return;
+  }
+
+  const now = Date.now();
+  const since = herd.lastMilkedAt?.getTime() ?? herd.bornAt.getTime();
+  const cycles = Math.min(2, (now - since) / LIVESTOCK_CYCLE_MS);
+  if (cycles < 0.15) {
+    const wait = Math.ceil(((0.15 - cycles) * LIVESTOCK_CYCLE_MS) / 1000);
+    res.status(409).json({ error: `Les moutons viennent d'être tondus — ${wait} s` });
+    return;
+  }
+
+  const perCycle = woolYield({
+    herdSize: herd.size,
+    happiness: herd.happiness,
+    barnLevel: herd.building.level,
+    feedQuality: herd.feedQuality,
+  });
+  const tons = Math.round(perCycle * cycles * 1000) / 1000;
+  if (tons <= 0) {
+    res.status(409).json({ error: "Rien à tondre : le lot ne produit pas" });
+    return;
+  }
+
+  await prisma.$transaction(async (tx) => {
+    await addToStock(tx, herd.farmId, "WOOL", tons, 0, 3);
+    await tx.herd.update({ where: { id: herd.id }, data: { lastMilkedAt: new Date(now) } });
+  });
+  res.json({ tons, cycles: Math.round(cycles * 100) / 100 });
+});
+
 /** Abattage : on convertit des bêtes en viande, définitivement. */
 app.post("/herds/:id/slaughter", async (req, res) => {
   const body = z
@@ -4240,6 +4400,7 @@ app.post("/herds/:id/slaughter", async (req, res) => {
     happiness: herd.happiness,
     averageAgeMs: ageMs,
     barnLevel: herd.building.level,
+    kind: herd.kind as AnimalKind,
   });
   const tons = Math.round((kgTotal / 1000) * 1000) / 1000;
   const maturity = Math.min(1, ageMs / MEAT_MATURITY_MS);

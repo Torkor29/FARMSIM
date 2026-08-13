@@ -8,6 +8,7 @@ import {
   billboardLift,
   opaqueRowSpans,
   workAnimationMs,
+  type AnimalKind,
   type BuildingType,
   type CropCode,
   type MachineType,
@@ -70,8 +71,20 @@ export type ActiveWork = {
 export type GrazingHerd = {
   buildingId: string;
   animals: number;
+  kind?: AnimalKind | string;
+  /** Moutons tondus : le volume rétrécit jusqu'à la prochaine laine. */
+  sheared?: boolean;
   barn: { originX: number; originY: number; w: number; h: number };
   paddock: { originX: number; originY: number; w: number; h: number };
+};
+
+/** Caisse d'œufs ou ballot de laine au pied du bâtiment, quand c'est prêt. */
+export type YardSignal = {
+  kind: "eggs" | "wool";
+  originX: number;
+  originY: number;
+  w: number;
+  h: number;
 };
 
 /** Un joueur présent sur la parcelle — soi-même ou un prestataire en mission. */
@@ -109,6 +122,8 @@ type Props = {
   activeWork?: ActiveWork | null;
   /** Troupeaux dehors : une entrée par étable dont les bêtes pâturent */
   grazing?: GrazingHerd[];
+  /** Caisse d'œufs / ballot de laine au pied du bâtiment */
+  yardSignals?: YardSignal[];
   /** Personnages présents (propriétaire, prestataire en mission) */
   workers?: FieldWorker[];
   weather?: string;
@@ -273,6 +288,14 @@ function buildingPalette(type: BuildingType): { body: number; roof: number; h: n
       return { body: 0xb07a4a, roof: ROOF_TEAL, h: 1.5 };
     case "PIGSTY":
       return { body: 0xa97a55, roof: ROOF_TEAL, h: 1.1 };
+    case "HENHOUSE":
+      return { body: 0xc4a06a, roof: ROOF_TEAL, h: 0.95 };
+    case "SHEEPFOLD":
+      return { body: 0xb08a5c, roof: ROOF_TEAL, h: 1.25 };
+    case "HEN_YARD":
+      return { body: 0x9bb56a, roof: 0x7a5c3a, h: 0.4 };
+    case "COLD_ROOM":
+      return { body: 0xc5d4dc, roof: ROOF_TEAL, h: 1.15 };
     case "WORKSHOP":
       return { body: 0xa8adb2, roof: ROOF_TEAL, h: 1.2 };
     case "FARMHOUSE":
@@ -323,6 +346,117 @@ function makeCowMesh(): THREE.Group {
     leg.position.set(lx, 0.07, lz);
     g.add(leg);
   }
+  return g;
+}
+
+/** Poule low-poly : plus petite que la vache, tête qui picore. */
+function makeHenMesh(): THREE.Group {
+  const g = new THREE.Group();
+  const hide = new THREE.MeshLambertMaterial({ color: 0xf4efe4, flatShading: true });
+  const brown = new THREE.MeshLambertMaterial({ color: 0x8a5a32, flatShading: true });
+  const comb = new THREE.MeshLambertMaterial({ color: 0xc23b22, flatShading: true });
+  const beak = new THREE.MeshLambertMaterial({ color: 0xe8a317, flatShading: true });
+
+  const body = new THREE.Mesh(new THREE.BoxGeometry(0.16, 0.12, 0.12), hide);
+  body.position.y = 0.12;
+  body.castShadow = true;
+  g.add(body);
+
+  const wing = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.06, 0.13), brown);
+  wing.position.set(0.01, 0.13, 0);
+  g.add(wing);
+
+  const head = new THREE.Mesh(new THREE.BoxGeometry(0.07, 0.07, 0.07), hide);
+  head.position.set(-0.1, 0.18, 0);
+  g.add(head);
+
+  const crest = new THREE.Mesh(new THREE.BoxGeometry(0.03, 0.04, 0.04), comb);
+  crest.position.set(-0.1, 0.23, 0);
+  g.add(crest);
+
+  const bill = new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.025, 0.03), beak);
+  bill.position.set(-0.14, 0.16, 0);
+  g.add(bill);
+
+  for (const lz of [0.03, -0.03]) {
+    const leg = new THREE.Mesh(
+      new THREE.BoxGeometry(0.02, 0.07, 0.02),
+      new THREE.MeshLambertMaterial({ color: 0xe8a317, flatShading: true }),
+    );
+    leg.position.set(0.01, 0.035, lz);
+    g.add(leg);
+  }
+  return g;
+}
+
+/** Mouton low-poly : plus bas que la vache, volume blanc. */
+function makeSheepMesh(sheared = false): THREE.Group {
+  const g = new THREE.Group();
+  const wool = new THREE.MeshLambertMaterial({ color: 0xf7f4ee, flatShading: true });
+  const face = new THREE.MeshLambertMaterial({ color: 0x3d342c, flatShading: true });
+  const h = sheared ? 0.12 : 0.16;
+
+  const body = new THREE.Mesh(new THREE.BoxGeometry(0.26, h, 0.16), wool);
+  body.position.y = 0.14;
+  body.castShadow = true;
+  g.add(body);
+
+  const head = new THREE.Mesh(new THREE.BoxGeometry(0.09, 0.09, 0.09), face);
+  head.position.set(-0.16, 0.16, 0);
+  g.add(head);
+
+  for (const [lx, lz] of [
+    [-0.08, 0.045],
+    [-0.08, -0.045],
+    [0.08, 0.045],
+    [0.08, -0.045],
+  ]) {
+    const leg = new THREE.Mesh(new THREE.BoxGeometry(0.035, 0.09, 0.035), face);
+    leg.position.set(lx, 0.045, lz);
+    g.add(leg);
+  }
+  return g;
+}
+
+function meshForHerd(kind?: string, sheared = false): THREE.Group {
+  if (kind === "HEN") return makeHenMesh();
+  if (kind === "SHEEP") return makeSheepMesh(sheared);
+  return makeCowMesh();
+}
+
+/** Caisse d'œufs au pied du poulailler. */
+function makeEggCrate(): THREE.Group {
+  const g = new THREE.Group();
+  const wood = new THREE.MeshLambertMaterial({ color: 0xc4a06a, flatShading: true });
+  const crate = new THREE.Mesh(new THREE.BoxGeometry(0.22, 0.08, 0.16), wood);
+  crate.position.y = 0.04;
+  crate.castShadow = true;
+  g.add(crate);
+  const egg = new THREE.MeshLambertMaterial({ color: 0xf4efe4, flatShading: true });
+  for (const [x, z] of [
+    [-0.05, -0.03],
+    [0.05, -0.03],
+    [0, 0.03],
+  ]) {
+    const e = new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.06, 0.04), egg);
+    e.position.set(x, 0.1, z);
+    g.add(e);
+  }
+  return g;
+}
+
+/** Ballot de laine près de la bergerie. */
+function makeWoolBale(): THREE.Group {
+  const g = new THREE.Group();
+  const wool = new THREE.MeshLambertMaterial({ color: 0xf0ebe3, flatShading: true });
+  const wrap = new THREE.MeshLambertMaterial({ color: 0x8a6b3a, flatShading: true });
+  const bale = new THREE.Mesh(new THREE.BoxGeometry(0.28, 0.18, 0.2), wool);
+  bale.position.y = 0.09;
+  bale.castShadow = true;
+  g.add(bale);
+  const band = new THREE.Mesh(new THREE.BoxGeometry(0.3, 0.03, 0.22), wrap);
+  band.position.y = 0.09;
+  g.add(band);
   return g;
 }
 
@@ -533,6 +667,7 @@ export function IsoFarmView({
   pulseCells = [],
   activeWork = null,
   grazing = [],
+  yardSignals = [],
   workers = [],
   weather = "CLEAR",
   onCellClick,
@@ -566,6 +701,7 @@ export function IsoFarmView({
     pulseCells,
     activeWork,
     grazing,
+    yardSignals,
     workers,
     gridW,
     gridH,
@@ -580,6 +716,7 @@ export function IsoFarmView({
     pulseCells,
     activeWork,
     grazing,
+    yardSignals,
     workers,
     gridW,
     gridH,
@@ -725,7 +862,11 @@ export function IsoFarmView({
       to: THREE.Vector3;
       delay: number;
       wander: number;
+      kind: string;
     }[] = [];
+    const pickupGroup = new THREE.Group();
+    world.add(pickupGroup);
+    let pickupKey = "";
 
     const farmerGroup = new THREE.Group();
     world.add(farmerGroup);
@@ -1583,7 +1724,9 @@ export function IsoFarmView({
 
       // Troupeaux au pré : sortie de l'étable, puis broutage dans l'enclos.
       const herds = dataRef.current.grazing ?? [];
-      const nextGrazeKey = herds.map((h) => `${h.buildingId}:${h.animals}`).join("|");
+      const nextGrazeKey = herds
+        .map((h) => `${h.buildingId}:${h.animals}:${h.kind ?? "COW"}:${h.sheared ? 1 : 0}`)
+        .join("|");
       if (nextGrazeKey !== grazeKey) {
         grazeKey = nextGrazeKey;
         for (const w of cowWalkers) {
@@ -1596,6 +1739,7 @@ export function IsoFarmView({
           // Au plus huit bêtes visibles : au-delà, l'enclos devient illisible
           // et le coût de rendu grimpe pour rien.
           const shown = Math.min(8, herd.animals);
+          const kind = herd.kind ?? "COW";
           for (let i = 0; i < shown; i++) {
             const doorX = ox + (herd.barn.originX + herd.barn.w / 2) * step;
             const doorZ = oz + (herd.barn.originY + herd.barn.h / 2) * step;
@@ -1604,8 +1748,10 @@ export function IsoFarmView({
             const targetX = ox + (herd.paddock.originX + herd.paddock.w / 2) * step + spreadX;
             const targetZ = oz + (herd.paddock.originY + herd.paddock.h / 2) * step + spreadZ;
 
-            const mesh = makeCowMesh();
-            mesh.scale.setScalar(cellSize * 0.85);
+            const mesh = meshForHerd(kind, Boolean(herd.sheared));
+            const base = kind === "HEN" ? 0.55 : kind === "SHEEP" ? 0.75 : 0.85;
+            const yScale = base * (kind === "SHEEP" && herd.sheared ? 0.75 : 1);
+            mesh.scale.set(cellSize * base, cellSize * yScale, cellSize * base);
             grazeGroup.add(mesh);
             cowWalkers.push({
               mesh,
@@ -1613,8 +1759,28 @@ export function IsoFarmView({
               to: new THREE.Vector3(targetX, 0.1, targetZ),
               delay: i * 0.55,
               wander: i * 1.7,
+              kind,
             });
           }
+        }
+      }
+
+      const signals = dataRef.current.yardSignals ?? [];
+      const nextPickupKey = signals.map((s) => `${s.kind}:${s.originX}:${s.originY}`).join("|");
+      if (nextPickupKey !== pickupKey) {
+        pickupKey = nextPickupKey;
+        while (pickupGroup.children.length) {
+          const c = pickupGroup.children[0];
+          pickupGroup.remove(c);
+          disposeObject3D(c);
+        }
+        for (const sig of signals) {
+          const mesh = sig.kind === "eggs" ? makeEggCrate() : makeWoolBale();
+          const px = ox + (sig.originX + sig.w / 2) * step + 0.28 * step;
+          const pz = oz + (sig.originY + sig.h) * step + 0.12 * step;
+          mesh.position.set(px, 0.1, pz);
+          mesh.scale.setScalar(cellSize);
+          pickupGroup.add(mesh);
         }
       }
 
@@ -1633,8 +1799,10 @@ export function IsoFarmView({
         if (progress === 1) {
           w.mesh.position.x += Math.sin(t * 0.35 + w.wander) * 0.1 * step;
           w.mesh.position.z += Math.cos(t * 0.28 + w.wander) * 0.1 * step;
-          // Tête qui plonge dans l'herbe par intermittence.
-          w.mesh.rotation.x = Math.max(0, Math.sin(t * 0.7 + w.wander)) * 0.22;
+          // Poules : picorage rapide. Autres : tête dans l'herbe.
+          const peck = w.kind === "HEN" ? 2.4 : 0.7;
+          const dip = w.kind === "HEN" ? 0.38 : 0.22;
+          w.mesh.rotation.x = Math.max(0, Math.sin(t * peck + w.wander)) * dip;
         } else {
           w.mesh.rotation.x = 0;
         }

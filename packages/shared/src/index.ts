@@ -67,10 +67,13 @@ export type BuildingType =
   | "MACHINE_SHED"
   | "CATTLE_BARN"
   | "PIGSTY"
+  | "HENHOUSE"
+  | "SHEEPFOLD"
   | "WORKSHOP"
   | "FARMHOUSE"
   | "PADDOCK"
   | "PIG_YARD"
+  | "HEN_YARD"
   | "COLD_ROOM";
 
 export type CellKind = "EMPTY" | "CROP" | "BUILDING" | "VEHICLE";
@@ -190,6 +193,8 @@ export const MARKET_BOUNDS: Record<
   PEA: { initial: 285, min: 170, max: 520, depth: 900 },
   BARLEY: { initial: 195, min: 110, max: 380, depth: 1600 },
   RAPE: { initial: 340, min: 210, max: 580, depth: 700 },
+  EGGS: { initial: 22, min: 12, max: 40, depth: 400 },
+  WOOL: { initial: 420, min: 260, max: 680, depth: 250 },
 };
 
 /**
@@ -221,6 +226,8 @@ export type BuildingDef = {
   machineSlots?: number;
   cattleSlots?: number;
   pigSlots?: number;
+  henSlots?: number;
+  sheepSlots?: number;
   /** Multiplicateur yield cultures (ex. 0.02 = +2 %) */
   yieldBonus?: number;
   repairDiscount?: number;
@@ -306,13 +313,31 @@ export const BUILDING_DEFS: Record<BuildingType, BuildingDef> = {
     description: "Bâtiment élevage porcin (slots).",
     pigSlots: 20,
   },
+  HENHOUSE: {
+    type: "HENHOUSE",
+    name: "Poulailler",
+    w: 2,
+    h: 2,
+    cost: 1400,
+    description: "Petit, pas cher. Le revenu, c’est l’œuf.",
+    henSlots: 24,
+  },
+  SHEEPFOLD: {
+    type: "SHEEPFOLD",
+    name: "Bergerie",
+    w: 3,
+    h: 2,
+    cost: 2000,
+    description: "Les moutons vivent surtout dehors. On tond la laine.",
+    sheepSlots: 16,
+  },
   COLD_ROOM: {
     type: "COLD_ROOM",
     name: "Chambre froide",
     w: 2,
     h: 2,
     cost: 2600,
-    description: "Ralentit la dégradation du lait et de la viande.",
+    description: "Ralentit la dégradation du lait, de la viande et des œufs.",
     spoilageSlow: 0.4,
   },
   WORKSHOP: {
@@ -339,7 +364,7 @@ export const BUILDING_DEFS: Record<BuildingType, BuildingDef> = {
     w: 3,
     h: 3,
     cost: 1210,
-    description: "Collé à une étable, il laisse sortir les vaches : elles sont plus heureuses et produisent davantage.",
+    description: "Collé à une étable ou une bergerie : les bêtes sortent, elles sont plus heureuses.",
   },
   PIG_YARD: {
     type: "PIG_YARD",
@@ -349,6 +374,14 @@ export const BUILDING_DEFS: Record<BuildingType, BuildingDef> = {
     // Moins chère que l'enclos : une souille close, pas une prairie.
     cost: 780,
     description: "Collée à une porcherie, elle laisse les porcs fouir dehors : moins de stress, plus de viande.",
+  },
+  HEN_YARD: {
+    type: "HEN_YARD",
+    name: "Courette à poules",
+    w: 2,
+    h: 3,
+    cost: 520,
+    description: "Collée au poulailler : les poules picorent dehors, elles pondent mieux.",
   },
 };
 
@@ -408,6 +441,8 @@ export function buildingStatsAtLevel(type: BuildingType, level: number) {
     machineSlots: def.machineSlots === undefined ? undefined : Math.round(def.machineSlots * mult),
     cattleSlots: def.cattleSlots === undefined ? undefined : Math.round(def.cattleSlots * mult),
     pigSlots: def.pigSlots === undefined ? undefined : Math.round(def.pigSlots * mult),
+    henSlots: def.henSlots === undefined ? undefined : Math.round(def.henSlots * mult),
+    sheepSlots: def.sheepSlots === undefined ? undefined : Math.round(def.sheepSlots * mult),
     yieldBonus: scale(def.yieldBonus),
     repairDiscount: scale(def.repairDiscount),
     xpBonus: scale(def.xpBonus),
@@ -423,10 +458,13 @@ export const BUILDING_ART: Record<BuildingType, string> = {
   MACHINE_SHED: "/assets/buildings/machine-shed.webp",
   CATTLE_BARN: "/assets/buildings/cattle-barn.webp",
   PIGSTY: "/assets/buildings/pigsty.webp",
+  HENHOUSE: "/assets/buildings/pigsty.webp",
+  SHEEPFOLD: "/assets/buildings/cattle-barn.webp",
   WORKSHOP: "/assets/buildings/workshop.webp",
   FARMHOUSE: "/assets/buildings/farmhouse.webp",
   PADDOCK: "/assets/buildings/paddock.webp",
   PIG_YARD: "/assets/buildings/pig-yard.webp",
+  HEN_YARD: "/assets/buildings/pig-yard.webp",
   COLD_ROOM: "/assets/buildings/cold-room.webp",
 };
 

@@ -12,7 +12,17 @@ import {
  * si bien qu'ils s'empilaient au silo sans débouché.
  */
 describe("tout ce qui se produit doit pouvoir se vendre", () => {
-  const PRODUITS: TradeGood[] = ["WHEAT", "MAIZE", "PEA", "BARLEY", "RAPE", "MILK", "MEAT"];
+  const PRODUITS: TradeGood[] = [
+    "WHEAT",
+    "MAIZE",
+    "PEA",
+    "BARLEY",
+    "RAPE",
+    "MILK",
+    "MEAT",
+    "EGGS",
+    "WOOL",
+  ];
 
   it("déclare vendable chaque marchandise que la ferme produit", () => {
     for (const code of PRODUITS) {
