@@ -74,6 +74,7 @@ Chaque valeur chiffrée dans cette documentation est classée :
 | — | [43_LIVESTOCK_PRODUCE.md](./43_LIVESTOCK_PRODUCE.md) | Traire, abattre, nourrir ; courette à porcs ; formes des bâtiments |
 | — | [44_BREEDING_SPOILAGE.md](./44_BREEDING_SPOILAGE.md) | Reproduction du cheptel et péremption des denrées |
 | — | [45_ROTATION.md](./45_ROTATION.md) | Rotation des cultures : le blé sur blé se paie |
+| — | [46_MOBILE_SHELL.md](./46_MOBILE_SHELL.md) | Coque mobile : tiroirs du bas, gestes sur la grille |
 
 ---
 
