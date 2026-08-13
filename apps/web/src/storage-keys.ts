@@ -14,3 +14,6 @@ export const TOKEN_KEY = "farmsim_token";
 
 /** Marque le tutoriel comme déjà vu. */
 export const TUTORIAL_KEY = "farmsim_tutorial_v1";
+
+/** Drapeaux d'objectifs qui ne se déduisent pas de la ferme (vente, chantier…). */
+export const GUIDE_FLAGS_KEY = "farmsim_guide_flags_v1";

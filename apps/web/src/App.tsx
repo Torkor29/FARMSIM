@@ -16,8 +16,6 @@ import {
   soilSummary,
   MAX_HARVESTS_BEFORE_PLOW,
   workAnimationMs,
-  DIRECT_SEED_COST_PER_CELL,
-  DIRECT_SEED_YIELD_MALUS,
   rotationFactor,
   type FarmWork,
   type RipenessStage,
@@ -27,6 +25,9 @@ import {
   WEATHER_LABELS,
   currentSeason,
   footprintCells,
+  currentObjective,
+  evaluateObjectives,
+  type GuideSnapshot,
   type Specialization,
   type CropCode,
   type BuildingType,
@@ -59,7 +60,10 @@ const IsoFarmView = lazy(() =>
 const Onboarding = lazy(() => import("./Onboarding").then((m) => ({ default: m.Onboarding })));
 import { SplashScreen } from "./SplashScreen";
 import { TutorialOverlay } from "./TutorialOverlay";
-import { TOKEN_KEY, TUTORIAL_KEY } from "./storage-keys";
+import { FieldDock } from "./FieldDock";
+import { PlayGuide } from "./PlayGuide";
+import { TOKEN_KEY, TUTORIAL_KEY, GUIDE_FLAGS_KEY } from "./storage-keys";
+import { isFieldWorkTool, isPlantTool, isSoilTool, type Tool } from "./tools";
 import { useIsMobile } from "./use-media-query";
 import { DevPanel, type DevGrant } from "./DevPanel";
 import { NO_ALERTS, tabBadge, useAwayAlerts, useNotificationState, type FarmAlerts } from "./use-alerts";
@@ -186,18 +190,6 @@ type Contract = {
 type MarketPrice = { commodity: string; price: number; stockTons: number };
 type WeatherSnap = { id: string; zoneCode: string; state: WeatherState; updatedAt?: string };
 
-type Tool =
-  | "SELECT"
-  | "PLANT_WHEAT"
-  | "PLANT_MAIZE"
-  | "PLANT_PEA"
-  | "FERTILIZE"
-  | "HARVEST"
-  | "STUBBLE"
-  | "PLOW"
-  | "BUILD"
-  | "PARK";
-
 async function api<T>(path: string, init?: RequestInit): Promise<T> {
   const token = localStorage.getItem(TOKEN_KEY);
   const res = await fetch(`${API}${path}`, {
@@ -249,39 +241,37 @@ function clearSession() {
   localStorage.removeItem("farmsim_player");
 }
 
+type GuideFlags = { sold: boolean; harvested: boolean; contract: boolean };
+
+function readGuideFlags(): GuideFlags {
+  try {
+    const raw = localStorage.getItem(GUIDE_FLAGS_KEY);
+    if (!raw) return { sold: false, harvested: false, contract: false };
+    const parsed = JSON.parse(raw) as Partial<GuideFlags>;
+    return {
+      sold: !!parsed.sold,
+      harvested: !!parsed.harvested,
+      contract: !!parsed.contract,
+    };
+  } catch {
+    return { sold: false, harvested: false, contract: false };
+  }
+}
+
+function writeGuideFlags(next: GuideFlags) {
+  localStorage.setItem(GUIDE_FLAGS_KEY, JSON.stringify(next));
+}
+
 /** Tiroirs du bas, sur petit écran. */
 type SheetKey = "INFO" | "BUILD" | "GARAGE" | "OFFICE" | "HERD" | "PROFILE";
 
 const SHEET_TABS: { key: SheetKey; label: string; icon: string }[] = [
   { key: "INFO", label: "Parcelle", icon: "🌾" },
   { key: "BUILD", label: "Bâtir", icon: "🏗️" },
-  { key: "HERD", label: "Élevage", icon: "🐄" },
+  { key: "HERD", label: "Troupeau", icon: "🐄" },
   { key: "GARAGE", label: "Garage", icon: "🚜" },
   { key: "OFFICE", label: "Bureau", icon: "📋" },
 ];
-
-const ACTION_BAR: { tool: Tool; label: string; icon: string }[] = [
-  { tool: "SELECT", label: "Inspect", icon: "/assets/icons/tools/select.svg" },
-  { tool: "PLANT_WHEAT", label: "Semer", icon: "/assets/icons/tools/plant.svg" },
-  { tool: "FERTILIZE", label: "Ferti", icon: "/assets/icons/tools/fertilize.svg" },
-  { tool: "HARVEST", label: "Récolte", icon: "/assets/icons/tools/harvest.svg" },
-  { tool: "BUILD", label: "Bâtir", icon: "/assets/icons/tools/build.svg" },
-  { tool: "STUBBLE", label: "Déchaum.", icon: "/assets/icons/tools/stubble.svg" },
-  { tool: "PLOW", label: "Labour", icon: "/assets/icons/tools/plow.svg" },
-  { tool: "PARK", label: "Park", icon: "/assets/icons/tools/park.svg" },
-];
-
-function isFieldWorkTool(t: Tool): boolean {
-  return (
-    t === "PLANT_WHEAT" ||
-    t === "PLANT_MAIZE" ||
-    t === "PLANT_PEA" ||
-    t === "FERTILIZE" ||
-    t === "HARVEST" ||
-    t === "STUBBLE" ||
-    t === "PLOW"
-  );
-}
 
 function wearNote(machine?: {
   type?: string;
@@ -371,6 +361,8 @@ export function App() {
   const [booting, setBooting] = useState(true);
   const [showSplash, setShowSplash] = useState(true);
   const [showTutorial, setShowTutorial] = useState(false);
+  const [showGuide, setShowGuide] = useState(false);
+  const [guideFlags, setGuideFlags] = useState(() => readGuideFlags());
   const [pulseCells, setPulseCells] = useState<{ x: number; y: number }[]>([]);
   const [activeWork, setActiveWork] = useState<{
     type: MachineType;
@@ -810,6 +802,44 @@ export function App() {
     [parcelDetail],
   );
 
+  const guideSnapshot: GuideSnapshot = useMemo(() => {
+    const cells = parcel?.cells ?? [];
+    const inv = player?.farm?.inventory ?? [];
+    const stock = (code: string) => inv.filter((i) => i.itemCode === code).reduce((s, i) => s + i.qty, 0);
+    return {
+      spec: player?.specialization ?? "CEREALIER",
+      plantedCells: cells.filter((c) => c.kind === "CROP").length,
+      readyCells: readyCellCount,
+      stubbleCells: cells.filter((c) => c.hasStubble).length,
+      peaCells: cells.filter((c) => c.kind === "CROP" && c.crop === "PEA").length,
+      buildings: (parcel?.buildings ?? []).map((b) => b.type),
+      machines: (player?.farm?.machines ?? []).map((m) => m.type as MachineType),
+      stockTons: totalStockTons,
+      hayTons: stock("HAY"),
+      milkOrMeat: stock("MILK") + stock("MEAT"),
+      animals: barns.reduce((n, b) => n + (b.herd?.size ?? 0), 0),
+      hasSold: guideFlags.sold,
+      hasHarvested: guideFlags.harvested || cells.some((c) => c.hasStubble) || stock("WHEAT") + stock("MAIZE") + stock("PEA") > 0,
+      hasContract: guideFlags.contract,
+    };
+  }, [
+    player?.specialization,
+    player?.farm?.inventory,
+    player?.farm?.machines,
+    parcel?.cells,
+    parcel?.buildings,
+    readyCellCount,
+    totalStockTons,
+    barns,
+    guideFlags,
+  ]);
+
+  const nextGoal = useMemo(() => currentObjective(guideSnapshot), [guideSnapshot]);
+  const allGoalsDone = useMemo(
+    () => evaluateObjectives(guideSnapshot).every((g) => g.done),
+    [guideSnapshot],
+  );
+
   /**
    * Alerte de fenêtre de récolte. Sans elle, la décote serait une punition
    * invisible : le joueur perdrait des tonnes sans jamais savoir pourquoi.
@@ -966,6 +996,15 @@ export function App() {
       setMsg(text);
     }
     setToastTick((n) => n + 1);
+  }
+
+  function markGuideFlag(key: keyof GuideFlags) {
+    setGuideFlags((prev) => {
+      if (prev[key]) return prev;
+      const next = { ...prev, [key]: true };
+      writeGuideFlags(next);
+      return next;
+    });
   }
 
   function describeCell(x: number, y: number): string {
@@ -1367,6 +1406,7 @@ export function App() {
         });
         const lost = r.lostCells ? ` · ${r.lostCells} perdue(s)` : "";
         setMsg(`Récolte ${r.totalTons?.toFixed(2) ?? ""} t${lost}` + wearNote(r.machine));
+        markGuideFlag("harvested");
       } else if (tool === "PLOW") {
         const r = await api<{
           plowed: number;
@@ -1441,6 +1481,7 @@ export function App() {
         body: JSON.stringify({ userId: player.id }),
       });
       setMsg(`Récolte totale ${r.totalTons.toFixed(2)} t`);
+      markGuideFlag("harvested");
       await refreshPlayer();
       await loadParcel(activeParcelId);
     } catch (e) {
@@ -1481,6 +1522,7 @@ export function App() {
         body: JSON.stringify({ userId: player.id, commodity, tons }),
       });
       flashToast(`Négociant : ${tons.toFixed(2)} t · +${r.revenue} CRD`);
+      markGuideFlag("sold");
       await refreshPlayer();
       await refreshMeta();
     } catch (e) {
@@ -1573,6 +1615,7 @@ export function App() {
       await refreshPlayer();
       await refreshMeta();
       setMsg(`Vendu pour ${r.revenue} CRD`);
+      markGuideFlag("sold");
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e));
     } finally {
@@ -1616,6 +1659,7 @@ export function App() {
         ? ` · ${r.machine.type} −${r.machine.wearApplied.toFixed(1)}%`
         : "";
       setMsg(`Mission +${r.reward} CRD${wearNote}`);
+      markGuideFlag("contract");
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e));
     } finally {
@@ -2004,9 +2048,9 @@ export function App() {
             <button
               type="button"
               className="help-btn"
-              title="Tutoriel"
-              aria-label="Ouvrir le tutoriel"
-              onClick={() => setShowTutorial(true)}
+              title="Guide de ferme"
+              aria-label="Ouvrir le guide"
+              onClick={() => setShowGuide(true)}
             >
               ?
             </button>
@@ -2123,6 +2167,9 @@ export function App() {
                 Alertes refusées — à rouvrir dans les réglages du navigateur
               </span>
             )}
+            <button type="button" className="ghost" onClick={() => setShowGuide(true)}>
+              Guide de ferme
+            </button>
             <button type="button" className="ghost" onClick={() => setShowTutorial(true)}>
               Revoir le tutoriel
             </button>
@@ -2295,170 +2342,40 @@ export function App() {
         )}
       </aside>
 
-      <div className="action-bar">
-        {/* Trois boutons en tête d'une barre qui défile repoussaient les
-            outils hors de vue. Au doigt, un seul bouton qui alterne. */}
-        {isMobile ? (
-          <button
-            type="button"
-            className="action brush-cycle"
-            title="Taille du pinceau"
-            aria-label={`Pinceau ${brush}×${brush}, toucher pour changer`}
-            onClick={() => setBrush(brush === 3 ? 1 : ((brush + 1) as 1 | 2 | 3))}
-          >
-            {brush}×{brush}
-          </button>
-        ) : (
-          <div className="brush-group" title="Taille du pinceau">
-            {([1, 2, 3] as const).map((n) => (
-              <button
-                key={n}
-                type="button"
-                className={brush === n ? "action on" : "action"}
-                onClick={() => setBrush(n)}
-              >
-                {n}×{n}
-              </button>
-            ))}
-          </div>
-        )}
-        {ACTION_BAR.map(({ tool: t, label, icon }) => (
-          <button
-            key={t}
-            type="button"
-            className={`action icon-action ${tool === t || (t === "BUILD" && tool === "BUILD") ? "on" : ""}`}
-            title={label}
-            aria-label={label}
-            onClick={() => {
-              if (t === "BUILD") {
-                setTool("BUILD");
-                return;
-              }
-              setTool(t);
-              setSelectedCells([]);
-            }}
-          >
-            <img src={icon} alt="" width={22} height={22} />
-            <span className="action-label">{label}</span>
-          </button>
-        ))}
-        <button
-          type="button"
-          className={`action garage-toggle ${showGarage ? "on" : ""}`}
-          onClick={() => setShowGarage((v) => !v)}
-        >
-          Garage
-        </button>
-        <button
-          type="button"
-          className="action sell"
-          title="Vendre votre récolte : négociant, cours mondial ou criée"
-          onClick={() => setShowMarket(true)}
-        >
-          💰 Vendre{totalStockTons > 0 ? ` ${totalStockTons.toFixed(1)} t` : ""}
-        </button>
-        {devEnabled && (
-          <button
-            type="button"
-            className={`action dev-toggle ${showDev ? "on" : ""}`}
-            title="Outils de test : argent, niveau, stock, maturité"
-            onClick={() => setShowDev(true)}
-          >
-            🛠 Test
-          </button>
-        )}
-        <button
-          type="button"
-          className={`action eta ${showEta ? "on" : ""}`}
-          title="Contrats, terres et stock"
-          onClick={() => setShowEta((v) => !v)}
-        >
-          Bureau
-        </button>
-          {(tool === "PLANT_WHEAT" ||
-          tool === "PLANT_MAIZE" ||
-          tool === "PLANT_PEA" ||
-          tool === "FERTILIZE" ||
-          tool === "HARVEST" ||
-          tool === "STUBBLE" ||
-          tool === "PLOW") && (
-          <>
-            {player.specialization === "ETA" && (
-              <p className="stroke-hint">Glissez sur le champ · deux doigts pour bouger la vue</p>
-            )}
-            <button
-              type="button"
-              className="action accent"
-              disabled={busy || !selectedCells.length}
-              onClick={runSelectionAction}
-            >
-              OK ×{selectedCells.length}
-            </button>
-            {tool === "PLANT_WHEAT" && (
-              <button type="button" className="action" onClick={() => setTool("PLANT_MAIZE")}>
-                Maïs
-              </button>
-            )}
-            {tool === "PLANT_MAIZE" && (
-              <button
-                type="button"
-                className="action"
-                title="Tête de rotation : rapporte moins, mais laisse le sol azoté"
-                onClick={() => setTool("PLANT_PEA")}
-              >
-                Pois
-              </button>
-            )}
-            {tool === "PLANT_PEA" && (
-              <button type="button" className="action" onClick={() => setTool("PLANT_WHEAT")}>
-                Blé
-              </button>
-            )}
-            {(tool === "PLANT_WHEAT" || tool === "PLANT_MAIZE" || tool === "PLANT_PEA") && (
-              <button
-                type="button"
-                className={`action ${directSeed ? "on" : ""}`}
-                title={`Semer dans les chaumes, sans travail du sol préalable : ${DIRECT_SEED_COST_PER_CELL} CRD par case en plus, ${Math.round(
-                  DIRECT_SEED_YIELD_MALUS * 100,
-                )} % de rendement en moins, mais un passage économisé et un sol préservé.`}
-                onClick={() => setDirectSeed((v) => !v)}
-              >
-                Semis direct
-              </button>
-            )}
-            {contractorOffer && (
-              <button
-                type="button"
-                className="action contractor"
-                disabled={busy || !selectedCells.length || player.crd < contractorOffer.cost}
-                title={
-                  contractorOffer.hasMachine
-                    ? `Sous-traiter à une ETA — ${contractorOffer.cost} CRD`
-                    : `Vous n'avez pas la machine : une ETA fait le travail pour ${contractorOffer.cost} CRD`
-                }
-                onClick={callContractor}
-              >
-                🚜 ETA · {contractorOffer.cost} CRD
-              </button>
-            )}
-          </>
-        )}
-        <button
-          type="button"
-          className="action"
-          // Le serveur sait déjà répondre « rien à récolter » ; l'état local
-          // aussi. Autant ne pas partir chercher un refus prévisible.
-          disabled={busy || readyCellCount === 0}
-          title={
-            readyCellCount
-              ? `Récolter les ${readyCellCount} case(s) mûres`
-              : "Aucune culture n’est mûre"
-          }
-          onClick={harvestAll}
-        >
-          Tout récolter{readyCellCount ? ` ×${readyCellCount}` : ""}
-        </button>
-      </div>
+      <FieldDock
+        tool={tool}
+        brush={brush}
+        isMobile={isMobile}
+        isEta={player.specialization === "ETA"}
+        busy={busy}
+        selectedCount={selectedCells.length}
+        readyCount={readyCellCount}
+        stockTons={totalStockTons}
+        crd={player.crd}
+        directSeed={directSeed}
+        contractor={contractorOffer}
+        objective={nextGoal}
+        allGoalsDone={allGoalsDone}
+        onTool={(t) => {
+          const keep =
+            (isPlantTool(tool) && isPlantTool(t)) || (isSoilTool(tool) && isSoilTool(t));
+          setTool(t);
+          if (!keep && t !== "BUILD") setSelectedCells([]);
+        }}
+        onBrush={setBrush}
+        onDirectSeed={() => setDirectSeed((v) => !v)}
+        onConfirm={runSelectionAction}
+        onHarvestAll={harvestAll}
+        onContractor={callContractor}
+        onSell={() => setShowMarket(true)}
+        onGuide={() => setShowGuide(true)}
+        desktopGarage={showGarage}
+        desktopOffice={showEta}
+        onDesktopGarage={() => setShowGarage((v) => !v)}
+        onDesktopOffice={() => setShowEta((v) => !v)}
+        showDev={devEnabled}
+        onDev={() => setShowDev(true)}
+      />
 
       {(isMobile ? sheet === "GARAGE" : showGarage) && (
         <aside className={panelClass("garage-panel", "GARAGE")} {...(isMobile ? sheetGesture : {})}>
@@ -2642,6 +2559,7 @@ export function App() {
       })()}
 
       <TutorialOverlay open={showTutorial} onClose={() => setShowTutorial(false)} />
+      <PlayGuide open={showGuide} snapshot={guideSnapshot} onClose={() => setShowGuide(false)} />
 
       {(isMobile ? sheet === "OFFICE" : showEta) && (
         <aside className={panelClass("eta-panel", "OFFICE")} {...(isMobile ? sheetGesture : {})}>
