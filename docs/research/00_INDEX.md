@@ -90,4 +90,4 @@ Chaque valeur chiffrée dans cette documentation est classée :
 3. `16_MVP_ROADMAP.md`
 4. Documents thématiques selon besoin
 5. `12_LEGAL_REGULATORY.md` avant toute décision cash-out / marketplace argent réel
-6. `49_TRIANGLE_METIERS.md` avant d'ajouter une mécanique de métier
+6. `51_ETA_MISSIONS.md` avant `49_TRIANGLE_METIERS.md` : l’ETA est un appoint, pas un troisième métier
