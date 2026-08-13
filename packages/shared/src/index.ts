@@ -56,7 +56,8 @@ export type BuildingType =
   | "WORKSHOP"
   | "FARMHOUSE"
   | "PADDOCK"
-  | "PIG_YARD";
+  | "PIG_YARD"
+  | "COLD_ROOM";
 
 export type CellKind = "EMPTY" | "CROP" | "BUILDING" | "VEHICLE";
 
@@ -182,6 +183,14 @@ export type BuildingDef = {
   xpBonus?: number;
   /** Soft dryer — bonus réduction humidité au séchage `[GD]` */
   softDryer?: boolean;
+  /**
+   * Part de la dégradation évitée sur les denrées périssables `[GD]`.
+   *
+   * Le lait perdait douze pour cent par cycle sans qu'aucun bâtiment n'y
+   * puisse rien : produire beaucoup n'avait donc pas de sens si l'on ne
+   * vendait pas dans la foulée. Le froid rend l'élevage tenable.
+   */
+  spoilageSlow?: number;
 };
 
 /**
@@ -252,6 +261,15 @@ export const BUILDING_DEFS: Record<BuildingType, BuildingDef> = {
     cost: 2200,
     description: "Bâtiment élevage porcin (slots).",
     pigSlots: 20,
+  },
+  COLD_ROOM: {
+    type: "COLD_ROOM",
+    name: "Chambre froide",
+    w: 2,
+    h: 2,
+    cost: 2600,
+    description: "Ralentit la dégradation du lait et de la viande.",
+    spoilageSlow: 0.4,
   },
   WORKSHOP: {
     type: "WORKSHOP",
@@ -350,6 +368,7 @@ export function buildingStatsAtLevel(type: BuildingType, level: number) {
     repairDiscount: scale(def.repairDiscount),
     xpBonus: scale(def.xpBonus),
     softDryer: def.softDryer,
+    spoilageSlow: scale(def.spoilageSlow),
   };
 }
 
@@ -364,6 +383,7 @@ export const BUILDING_ART: Record<BuildingType, string> = {
   FARMHOUSE: "/assets/buildings/farmhouse.webp",
   PADDOCK: "/assets/buildings/paddock.webp",
   PIG_YARD: "/assets/buildings/pig-yard.webp",
+  COLD_ROOM: "/assets/buildings/cold-room.webp",
 };
 
 export const DEFAULT_GRID = { w: 12, h: 12 } as const;

@@ -97,6 +97,7 @@ import {
   dealerAskPrice,
   GOOD_DEFS,
   isPerishable,
+  SPOILAGE_SLOW_CAP,
   afterSpoilage,
   SPOILAGE_PER_CYCLE,
   SELLABLE_GOODS,
@@ -319,6 +320,7 @@ async function getFarmBonuses(farmId: string) {
   let repairDiscount = 0;
   let xpBonus = 0;
   let softDryer = false;
+  let spoilageSlow = 0;
   for (const b of buildings) {
     const stats = buildingStatsAtLevel(b.type as SharedBuildingType, b.level);
     yieldBonus += stats.yieldBonus ?? 0;
@@ -329,6 +331,7 @@ async function getFarmBonuses(farmId: string) {
     pigSlots += stats.pigSlots ?? 0;
     repairDiscount += stats.repairDiscount ?? 0;
     xpBonus += stats.xpBonus ?? 0;
+    spoilageSlow += stats.spoilageSlow ?? 0;
     if (stats.softDryer) softDryer = true;
   }
   return {
@@ -340,6 +343,8 @@ async function getFarmBonuses(farmId: string) {
     pigSlots,
     repairDiscount: Math.min(0.3, repairDiscount),
     xpBonus: Math.min(0.1, xpBonus),
+    // Plusieurs chambres aident, mais on ne conserve jamais indéfiniment.
+    spoilageSlow: Math.min(SPOILAGE_SLOW_CAP, spoilageSlow),
     softDryer,
   };
 }
@@ -928,7 +933,14 @@ async function spoilPerishables() {
     where: { itemCode: { in: perishables } },
   });
   const now = Date.now();
+  // Le froid dépend de la ferme : on le résout une fois par exploitation
+  // concernée plutôt qu'à chaque lot.
+  const chill = new Map<string, number>();
   for (const item of items) {
+    if (!chill.has(item.farmId)) {
+      const bonuses = await getFarmBonuses(item.farmId);
+      chill.set(item.farmId, bonuses.spoilageSlow ?? 0);
+    }
     const elapsedMs = now - item.lastDecayAt.getTime();
     if (elapsedMs < 5000) continue;
     const left = afterSpoilage({
@@ -936,6 +948,7 @@ async function spoilPerishables() {
       qty: item.qty,
       elapsedMs,
       cycleMs: LIVESTOCK_CYCLE_MS,
+      spoilageSlow: chill.get(item.farmId) ?? 0,
     });
     if (left <= 0) await prisma.inventoryItem.delete({ where: { id: item.id } });
     else {
