@@ -4,6 +4,7 @@ import {
   STARTER_COW_COUNT,
   STARTER_HAY_TONS,
   deliveryAutoFee,
+  deliveryHaulPath,
   lotQualityLine,
 } from "@farmsim/shared";
 
@@ -22,6 +23,14 @@ describe("livraison après la criée", () => {
   it("facture le voisin auto plus cher qu’un trajet soi-même", () => {
     expect(deliveryAutoFee(1)).toBe(8);
     expect(deliveryAutoFee(10)).toBe(40);
+  });
+
+  it("fait entrer le tracteur par le bord opposé au silo", () => {
+    const path = deliveryHaulPath(12, 12, { x: 9, y: 2 });
+    expect(path[0]).toEqual({ x: 0, y: 2 });
+    expect(path[path.length - 1]).toEqual({ x: 9, y: 2 });
+    expect(path.length).toBeGreaterThanOrEqual(2);
+    expect(path.every((c) => c.x >= 0 && c.x < 12 && c.y >= 0 && c.y < 12)).toBe(true);
   });
 });
 

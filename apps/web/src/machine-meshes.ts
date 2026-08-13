@@ -138,6 +138,59 @@ function makeTractor(): THREE.Group {
   return g;
 }
 
+/** Remorque low-poly, attelée derrière le tracteur pour une livraison. */
+export function makeTrailer(cargoColor = 0xc9a36a): THREE.Group {
+  const g = new THREE.Group();
+  const wood = paint(0x8b5a2b);
+  const dark = paint(0x5a3a1c);
+  const steel = paint(0x8a93a0);
+  const tire = paint(0x2a3230);
+  const rim = paint(0xc5cdd4);
+  const cargo = paint(cargoColor);
+  const wheels: THREE.Object3D[] = [];
+
+  addShadow(g, 0.42, 0.55);
+  addWheel(g, wheels, 0.1, 0.07, -0.2, 0.02, tire, rim);
+  addWheel(g, wheels, 0.1, 0.07, 0.2, 0.02, tire, rim);
+
+  addBox(g, steel, 0.06, 0.04, 0.28, 0, 0.14, 0.38);
+  addBox(g, wood, 0.4, 0.08, 0.48, 0, 0.16, -0.02);
+  addBox(g, dark, 0.4, 0.1, 0.04, 0, 0.25, -0.24);
+  addBox(g, dark, 0.4, 0.1, 0.04, 0, 0.25, 0.2);
+  addBox(g, dark, 0.04, 0.1, 0.44, -0.18, 0.25, -0.02);
+  addBox(g, dark, 0.04, 0.1, 0.44, 0.18, 0.25, -0.02);
+  addBox(g, cargo, 0.28, 0.14, 0.32, 0, 0.3, -0.02);
+
+  g.userData.wheels = wheels;
+  g.name = "trailer";
+  return g;
+}
+
+const CARGO_TINT: Record<string, number> = {
+  WHEAT: 0xe8c65e,
+  BARLEY: 0xe6d27a,
+  MAIZE: 0xf0c33c,
+  RAPE: 0xf2d429,
+  PEA: 0xc6d45a,
+  HAY: 0xc9c46a,
+  MILK: 0xf4f0e8,
+  EGGS: 0xf3e6c4,
+  WOOL: 0xf0ebe3,
+  MEAT: 0xd47a6a,
+  MANURE: 0x5a3d24,
+};
+
+/** Accroche la remorque derrière le tracteur ; les roues tournent avec lui. */
+export function hitchTrailer(tractor: THREE.Group, commodity?: string): void {
+  const trailer = makeTrailer(CARGO_TINT[commodity ?? ""] ?? 0xc9a36a);
+  trailer.position.set(0, 0, -0.64);
+  tractor.add(trailer);
+  const extra = (trailer.userData.wheels as THREE.Object3D[]) ?? [];
+  const wheels = (tractor.userData.wheels as THREE.Object3D[]) ?? [];
+  tractor.userData.wheels = [...wheels, ...extra];
+  tractor.userData.hauled = true;
+}
+
 function makeHarvester(): THREE.Group {
   const g = new THREE.Group();
   const red = paint(0xc44a2f);

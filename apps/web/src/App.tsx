@@ -23,6 +23,7 @@ import {
   soilSummary,
   MAX_HARVESTS_BEFORE_PLOW,
   workAnimationMs,
+  deliveryHaulPath,
   rotationFactor,
   type FarmWork,
   type RipenessStage,
@@ -439,7 +440,13 @@ export function App() {
     type: MachineType;
     cells: { x: number; y: number }[];
     cut?: "harvest" | "mow";
+    haul?: boolean;
+    cargo?: string;
   } | null>(null);
+  const haulPendingRef = useRef<Set<string>>(new Set());
+  const haulSeenRef = useRef<Set<string>>(new Set());
+  const haulReadyRef = useRef(false);
+  const playHaulRef = useRef<(commodity?: string) => void>(() => undefined);
   const [hoverCell, setHoverCell] = useState<{ x: number; y: number } | null>(null);
   const [toastTick, setToastTick] = useState(0);
   const [worldContinents, setWorldContinents] = useState<WorldContinent[]>([]);
@@ -684,6 +691,23 @@ export function App() {
         `/deliveries?userId=${encodeURIComponent(playerId)}`,
       );
       setDeliveries((prev) => keepIfSame(prev, r.deliveries));
+      for (const d of r.deliveries) {
+        if (d.role !== "BUYER") continue;
+        if (d.status === "PENDING") {
+          haulPendingRef.current.add(d.id);
+          continue;
+        }
+        if (d.status !== "DELIVERED") continue;
+        const wasPending = haulPendingRef.current.has(d.id);
+        haulPendingRef.current.delete(d.id);
+        if (wasPending && haulReadyRef.current && !haulSeenRef.current.has(d.id)) {
+          haulSeenRef.current.add(d.id);
+          playHaulRef.current(d.commodity);
+        } else {
+          haulSeenRef.current.add(d.id);
+        }
+      }
+      haulReadyRef.current = true;
     } catch {
       setDeliveries([]);
     }
@@ -1662,9 +1686,10 @@ export function App() {
     type: MachineType,
     cells: { x: number; y: number }[],
     cut?: "harvest" | "mow",
+    extra?: { haul?: boolean; cargo?: string },
   ) {
     setPulseCells(cells);
-    setActiveWork({ type, cells, cut });
+    setActiveWork({ type, cells, cut, haul: extra?.haul, cargo: extra?.cargo });
     // Un peu de marge sur la durée du parcours : l'engin doit atteindre la
     // dernière case avant qu'on ne l'efface.
     window.setTimeout(() => {
@@ -1672,6 +1697,29 @@ export function App() {
       setActiveWork(null);
     }, workAnimationMs(cells.length) + 250);
   }
+
+  /** Tracteur + remorque sur la parcelle d’arrivée, comme chez le voisin. */
+  function flashDeliveryArrival(commodity?: string) {
+    if (visiting) return;
+    const destBuilding = (parcel?.buildings ?? []).find(
+      (b) =>
+        b.type === "SILO" ||
+        b.type === "HAY_BARN" ||
+        b.type === "FARMHOUSE" ||
+        b.type === "CATTLE_BARN",
+    );
+    const cells = deliveryHaulPath(
+      gw,
+      gh,
+      destBuilding
+        ? { x: destBuilding.originX, y: destBuilding.originY }
+        : null,
+    );
+    if (cells.length < 2) return;
+    setShowMarket(false);
+    flashWork("TRACTOR", cells, undefined, { haul: true, cargo: commodity });
+  }
+  playHaulRef.current = flashDeliveryArrival;
 
   async function runWorkOnCells(cells: { x: number; y: number }[]) {
     if (!player || !activeParcelId || !cells.length || busy) return;
@@ -2001,11 +2049,16 @@ export function App() {
     if (!player) return;
     setBusy(true);
     try {
-      const r = await api<{ delivered: number; autoFee: number }>(`/deliveries/${id}/auto`, {
-        method: "POST",
-        body: JSON.stringify({ userId: player.id }),
-      });
+      const r = await api<{ delivered: number; autoFee: number; commodity?: string }>(
+        `/deliveries/${id}/auto`,
+        {
+          method: "POST",
+          body: JSON.stringify({ userId: player.id }),
+        },
+      );
       flashToast(`Arrivé · −${r.autoFee} TRN`);
+      haulSeenRef.current.add(id);
+      flashDeliveryArrival(r.commodity);
       await refreshPlayer();
       await loadDeliveries(player.id);
     } catch (e) {

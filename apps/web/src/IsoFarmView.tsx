@@ -15,7 +15,7 @@ import {
   type RipenessStage,
 } from "@farmsim/shared";
 import { disposeRenderer, disposeThreeScene, markShared } from "./three-cleanup";
-import { makeMachineMesh, tickMachine } from "./machine-meshes";
+import { hitchTrailer, makeMachineMesh, tickMachine } from "./machine-meshes";
 import { initialQuality, makeFrameGovernor, qualityForContext, type RenderQuality } from "./render-quality";
 import type { CharacterAppearance } from "@farmsim/shared";
 
@@ -75,6 +75,9 @@ export type ActiveWork = {
   cells: { x: number; y: number }[];
   /** La machine coupe : moisson (cache le plant) ou fauche (andain) */
   cut?: "harvest" | "mow";
+  /** Livraison : tracteur + remorque, sans toucher aux cultures */
+  haul?: boolean;
+  cargo?: string;
 };
 
 /** Un troupeau au pré : de quelle étable il sort, et vers quel enclos. */
@@ -1918,7 +1921,7 @@ export function IsoFarmView({
 
       // Engin de travail : parcours des cases, rang par rang.
       const workKey = aw
-        ? `${aw.type}:${aw.cells.map((c) => `${c.x},${c.y}`).join("|")}`
+        ? `${aw.type}:${aw.haul ? "H" : ""}:${aw.cargo ?? ""}:${aw.cells.map((c) => `${c.x},${c.y}`).join("|")}`
         : "";
       if (workKey !== prevWorkKey.current) {
         prevWorkKey.current = workKey;
@@ -1926,6 +1929,7 @@ export function IsoFarmView({
         if (aw && aw.cells.length) {
           workStartRef.current = t;
           workVehicle = makeVehicleSprite(aw.type);
+          if (aw.haul) hitchTrailer(workVehicle, aw.cargo);
           workGroup.add(workVehicle);
           workVehicle.userData.lastX = undefined;
           workVehicle.userData.lastZ = undefined;
