@@ -480,10 +480,14 @@
   font-weight: 700;
   color: var(--teal-500);
 }
+/* Le plateau : un ciel de fin d'après-midi derrière le personnage, avec une
+   lueur au sol qui l'assied dans la vignette. */
 .lowpoly-char {
   width: 100%;
   border-radius: var(--r-md);
-  background: linear-gradient(180deg, #eaf7fb 0%, #dff0e4 100%);
+  background:
+    radial-gradient(70% 42% at 50% 88%, rgba(255, 236, 190, 0.85) 0%, rgba(255, 236, 190, 0) 62%),
+    linear-gradient(180deg, #e6f4fb 0%, #dfeee6 55%, #cfe2cd 100%);
   overflow: hidden;
 }
 .lowpoly-char canvas { display: block; }
@@ -495,42 +499,140 @@
 }
 @media (min-width: 860px) {
   .char-creator {
-    grid-template-columns: minmax(240px, 320px) 1fr;
+    grid-template-columns: minmax(260px, 360px) 1fr;
     align-items: start;
   }
 }
+
+/* Le miroir. Il reste visible pendant qu'on règle : c'est la seule raison
+   d'être d'un menu de personnalisation. */
 .char-stage {
   display: grid;
-  gap: 0.6rem;
+  gap: 0.5rem;
   justify-items: center;
+}
+/* Le miroir ne se fige qu'en deux colonnes : sur un écran étroit il partage
+   la colonne des réglages, et le figer le ferait passer par-dessus eux. */
+@media (min-width: 860px) {
+  .char-stage {
+    position: sticky;
+    top: 0.75rem;
+  }
 }
 .char-stage .lowpoly-char {
   width: 100%;
-  min-height: 260px;
+  min-height: 300px;
+  box-shadow: var(--sh-1);
+  border: 2px solid var(--line);
 }
+.char-stage-hint {
+  margin: 0;
+  font-size: 0.76rem;
+  color: var(--muted);
+}
+.char-dice {
+  border: 2px solid var(--line);
+  background: var(--paper);
+  border-radius: var(--r-pill);
+  padding: 0.4rem 0.95rem;
+  font-weight: 800;
+  font-size: 0.86rem;
+  color: var(--ink);
+  cursor: pointer;
+  transition: border-color 0.18s ease, transform 0.18s ease;
+}
+.char-dice:hover {
+  border-color: var(--gold-500);
+  transform: translateY(-1px);
+}
+
+.char-panel {
+  display: grid;
+  gap: 0.75rem;
+  align-content: start;
+}
+.char-tabs {
+  display: flex;
+  gap: 0.3rem;
+  padding: 0.25rem;
+  border-radius: var(--r-pill);
+  background: var(--line);
+}
+.char-tab {
+  flex: 1;
+  border: 0;
+  background: transparent;
+  border-radius: var(--r-pill);
+  padding: 0.45rem 0.6rem;
+  font-weight: 800;
+  font-size: 0.86rem;
+  color: var(--ink-soft);
+  cursor: pointer;
+  transition: background 0.18s ease, color 0.18s ease;
+}
+.char-tab.on {
+  background: var(--paper);
+  color: var(--teal-700);
+  box-shadow: var(--sh-1);
+}
+
 .char-rows {
   display: grid;
-  gap: 0.7rem;
+  gap: 0.6rem;
 }
 .char-row {
   display: grid;
-  gap: 0.35rem;
+  gap: 0.4rem;
+  padding: 0.6rem 0.7rem;
+  border-radius: var(--r-md);
+  background: var(--paper);
+  border: 2px solid var(--line);
+}
+.char-row-head {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
 }
 .char-row-label {
-  font-size: 0.78rem;
+  font-size: 0.74rem;
   font-weight: 800;
-  letter-spacing: 0.04em;
+  letter-spacing: 0.05em;
   text-transform: uppercase;
   color: var(--muted);
 }
+.char-row-value {
+  font-size: 0.86rem;
+  font-weight: 800;
+  color: var(--teal-700);
+}
+.char-row-steps {
+  margin-left: auto;
+  display: flex;
+  gap: 0.25rem;
+}
+.char-step {
+  width: 1.7rem;
+  height: 1.7rem;
+  border-radius: 50%;
+  border: 2px solid var(--line);
+  background: var(--paper);
+  font-size: 1rem;
+  font-weight: 800;
+  line-height: 1;
+  color: var(--ink-soft);
+  cursor: pointer;
+}
+.char-step:hover { border-color: var(--gold-500); color: var(--ink); }
+
 .char-swatches {
   display: flex;
   flex-wrap: wrap;
   gap: 0.35rem;
 }
+.char-row.colors .char-swatches { gap: 0.45rem; }
 .char-swatch {
   min-height: 2rem;
-  padding: 0.25rem 0.55rem;
+  padding: 0.25rem 0.6rem;
   border-radius: var(--r-pill);
   border: 2px solid var(--line);
   background: var(--paper);
@@ -538,16 +640,24 @@
   font-weight: 700;
   color: var(--ink);
   cursor: pointer;
+  transition: border-color 0.15s ease, transform 0.15s ease;
 }
+.char-swatch:hover { transform: translateY(-1px); }
 .char-swatch.tone {
-  width: 1.85rem;
-  min-height: 1.85rem;
+  width: 2rem;
+  min-height: 2rem;
   padding: 0;
   border-radius: 50%;
+  border-color: rgba(0, 0, 0, 0.12);
+  /* Un pastille claire sur fond clair a besoin d'un relief pour exister. */
+  box-shadow: inset 0 -0.25rem 0.4rem rgba(0, 0, 0, 0.18);
 }
 .char-swatch.on {
   border-color: var(--gold-500);
   box-shadow: 0 0 0 3px var(--gold-100);
+}
+.char-swatch.tone.on {
+  box-shadow: 0 0 0 3px var(--gold-100), inset 0 -0.25rem 0.4rem rgba(0, 0, 0, 0.18);
 }
 .sr-only {
   position: absolute;

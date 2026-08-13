@@ -51,6 +51,36 @@ export const EARS = [
   { id: "wide", label: "Larges" },
 ] as const;
 
+export const HAIRS = [
+  { id: "crop", label: "Court" },
+  { id: "wavy", label: "Ondulé" },
+  { id: "bun", label: "Chignon" },
+  { id: "ponytail", label: "Queue de cheval" },
+  { id: "braids", label: "Nattes" },
+  { id: "afro", label: "Afro" },
+  { id: "curtain", label: "Mi-long" },
+  { id: "bald", label: "Rasé" },
+] as const;
+
+export const HAIR_COLORS = [
+  { id: "black", hex: "#221a15", label: "Noir" },
+  { id: "brown", hex: "#4b3120", label: "Châtain" },
+  { id: "chestnut", hex: "#6d452a", label: "Marron" },
+  { id: "blond", hex: "#c39a52", label: "Blond" },
+  { id: "ginger", hex: "#a8502a", label: "Roux" },
+  { id: "grey", hex: "#8e8b85", label: "Gris" },
+  { id: "white", hex: "#ddd8ce", label: "Blanc" },
+] as const;
+
+export const BEARDS = [
+  { id: "none", label: "Rasé" },
+  { id: "stubble", label: "Barbe de trois jours" },
+  { id: "moustache", label: "Moustache" },
+  { id: "goatee", label: "Bouc" },
+  { id: "full", label: "Barbe pleine" },
+  { id: "chops", label: "Favoris" },
+] as const;
+
 export const HATS = [
   { id: "none", label: "Aucun" },
   { id: "straw", label: "Paille" },
@@ -104,6 +134,9 @@ export type CharacterAppearance = {
   mouth: number;
   nose: number;
   ears: number;
+  hair: number;
+  hairColor: number;
+  beard: number;
   hat: number;
   hatColor: number;
   clothes: number;
@@ -118,6 +151,9 @@ const KEYS: (keyof CharacterAppearance)[] = [
   "mouth",
   "nose",
   "ears",
+  "hair",
+  "hairColor",
+  "beard",
   "hat",
   "hatColor",
   "clothes",
@@ -132,6 +168,9 @@ const LENS: Record<keyof CharacterAppearance, number> = {
   mouth: MOUTHS.length,
   nose: NOSES.length,
   ears: EARS.length,
+  hair: HAIRS.length,
+  hairColor: HAIR_COLORS.length,
+  beard: BEARDS.length,
   hat: HATS.length,
   hatColor: HAT_COLORS.length,
   clothes: CLOTHES.length,
@@ -154,6 +193,9 @@ export function defaultAppearance(spec?: "CEREALIER" | "ELEVEUR"): CharacterAppe
       mouth: 0,
       nose: 1,
       ears: 1,
+      hair: 0,
+      hairColor: 1,
+      beard: 3,
       hat: 4,
       hatColor: 1,
       clothes: 2,
@@ -168,6 +210,9 @@ export function defaultAppearance(spec?: "CEREALIER" | "ELEVEUR"): CharacterAppe
     mouth: 0,
     nose: 0,
     ears: 0,
+    hair: 1,
+    hairColor: 2,
+    beard: 0,
     hat: 1,
     hatColor: 0,
     clothes: 0,
@@ -211,6 +256,11 @@ export function randomAppearance(spec?: "CEREALIER" | "ELEVEUR"): CharacterAppea
     mouth: pick(LENS.mouth),
     nose: pick(LENS.nose),
     ears: pick(LENS.ears),
+    hair: pick(LENS.hair),
+    hairColor: pick(LENS.hairColor),
+    // Un visage sur deux glabre : tirer une barbe à chaque fois donnerait un
+    // village entier de barbus.
+    beard: Math.random() < 0.5 ? 0 : pick(LENS.beard - 1) + 1,
     hat: spec === "ELEVEUR" ? pick(LENS.hat - 1) + 1 : pick(LENS.hat),
     hatColor: pick(LENS.hatColor),
     clothes: pick(LENS.clothes),

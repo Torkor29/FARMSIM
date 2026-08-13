@@ -1,11 +1,14 @@
 import * as THREE from "three";
 import {
   ACCENT_COLORS,
+  BEARDS,
   CLOTH_COLORS,
   CLOTHES,
   EARS,
   EYE_COLORS,
   EYE_SHAPES,
+  HAIR_COLORS,
+  HAIRS,
   HAT_COLORS,
   HATS,
   MOUTHS,
@@ -14,309 +17,1349 @@ import {
   type CharacterAppearance,
   type Specialization,
 } from "@farmsim/shared";
+import { HALF, box, cyl, lathe, mergeAll, place, roundedBox, tube, type Vec3 } from "./machine-kit";
 
-const FLAT = (color: number | string) =>
-  new THREE.MeshLambertMaterial({ color: new THREE.Color(color), flatShading: true });
+/**
+ * Le personnage.
+ *
+ * Même méthode que le parc matériel : de la géométrie procédurale, fusionnée
+ * par matière, montée sur une hiérarchie d'articulations nommées. La différence
+ * tient au vocabulaire de formes — un corps n'a pas d'arêtes vives, donc
+ * ellipsoïdes et capsules plutôt que boîtes — et aux matières, où le tissu
+ * doit se lire comme du tissu et la peau comme de la peau.
+ *
+ * Le squelette existe pour une raison : sans lui, un bonhomme ne peut que
+ * tourner sur son socle. Avec lui, il respire, cligne des yeux, marche, salue.
+ *
+ * Repères : les pieds posent en y = 0, le sommet du crâne arrive vers 1,80, et
+ * le personnage regarde vers **+Z**.
+ */
 
-function box(w: number, h: number, d: number, mat: THREE.Material) {
-  return new THREE.Mesh(new THREE.BoxGeometry(w, h, d), mat);
+/* ------------------------------------------------------------------ */
+/* Matières                                                            */
+/* ------------------------------------------------------------------ */
+
+export type CharMat =
+  | "skin"
+  | "skinShade"
+  | "hair"
+  | "cloth"
+  | "clothDark"
+  | "accent"
+  | "linen"
+  | "hat"
+  | "hatDark"
+  | "leather"
+  | "metal"
+  | "eyeWhite"
+  | "iris"
+  | "pupil"
+  | "lip"
+  | "mouth"
+  | "teeth";
+
+export type CharMaterials = Record<CharMat, THREE.Material>;
+
+function shade(hex: string, amount: number): THREE.Color {
+  const c = new THREE.Color(hex);
+  const hsl = c.getHSL({ h: 0, s: 0, l: 0 });
+  return c.setHSL(hsl.h, hsl.s, THREE.MathUtils.clamp(hsl.l + amount, 0, 1));
 }
 
-function cyl(rt: number, rb: number, h: number, seg: number, mat: THREE.Material) {
-  return new THREE.Mesh(new THREE.CylinderGeometry(rt, rb, h, seg), mat);
+/**
+ * Matières d'un personnage.
+ *
+ * Deux choix portent tout le rendu. La peau reçoit un voile de `sheen` chaud :
+ * c'est l'approximation la moins chère de la lumière qui traverse l'épiderme,
+ * et sans elle un visage a l'air taillé dans du plâtre. Le tissu, lui, reçoit
+ * un `sheen` large et rugueux — le halo qu'on voit sur un vêtement à
+ * contre-jour — ce qui suffit à le distinguer d'une carrosserie peinte.
+ */
+export function createCharacterMaterials(look: CharacterAppearance): CharMaterials {
+  const skinHex = SKIN_TONES[look.skin]?.hex ?? "#e8b58a";
+  const clothHex = CLOTH_COLORS[look.clothColor]?.hex ?? "#3f8f52";
+  const accentHex = ACCENT_COLORS[look.accentColor]?.hex ?? "#d9b23c";
+  const hairHex = HAIR_COLORS[look.hairColor]?.hex ?? "#4b3120";
+  const hatHex = HAT_COLORS[look.hatColor]?.hex ?? "#c9a227";
+
+  const fabric = (color: THREE.Color | string, roughness = 0.86) =>
+    new THREE.MeshPhysicalMaterial({
+      color: new THREE.Color(color),
+      roughness,
+      metalness: 0,
+      sheen: 0.55,
+      sheenRoughness: 0.85,
+      sheenColor: new THREE.Color(color).lerp(new THREE.Color(0xffffff), 0.55),
+    });
+
+  return {
+    skin: new THREE.MeshPhysicalMaterial({
+      color: new THREE.Color(skinHex),
+      roughness: 0.68,
+      metalness: 0,
+      // Un voile de sheen chaud approxime la lumière qui traverse l'épiderme.
+      // Poussé plus loin, il délave la carnation jusqu'au plâtre.
+      sheen: 0.22,
+      sheenRoughness: 0.6,
+      sheenColor: new THREE.Color(0xd98a6a),
+    }),
+    // Creux du visage, intérieur des oreilles, pli du cou.
+    skinShade: new THREE.MeshStandardMaterial({
+      color: shade(skinHex, -0.09),
+      roughness: 0.72,
+      metalness: 0,
+    }),
+    hair: new THREE.MeshPhysicalMaterial({
+      color: new THREE.Color(hairHex),
+      roughness: 0.52,
+      metalness: 0,
+      sheen: 0.8,
+      sheenRoughness: 0.35,
+      sheenColor: shade(hairHex, 0.3),
+    }),
+    cloth: fabric(clothHex),
+    clothDark: fabric(shade(clothHex, -0.11), 0.9),
+    accent: fabric(accentHex, 0.8),
+    // Chemise, col, doublure : le blanc cassé de la toile de travail.
+    linen: fabric("#efe6d4", 0.9),
+    // Le couvre-chef a sa propre teinte : on ne choisit pas la couleur de son
+    // chapeau en changeant de pantalon.
+    hat: fabric(hatHex, 0.82),
+    hatDark: fabric(shade(hatHex, -0.12), 0.88),
+    leather: new THREE.MeshPhysicalMaterial({
+      color: new THREE.Color(0x4a3526),
+      roughness: 0.48,
+      metalness: 0.05,
+      clearcoat: 0.3,
+      clearcoatRoughness: 0.5,
+    }),
+    metal: new THREE.MeshStandardMaterial({ color: 0xc8ccd0, roughness: 0.28, metalness: 0.9 }),
+    eyeWhite: new THREE.MeshStandardMaterial({ color: 0xf6f3ec, roughness: 0.22, metalness: 0 }),
+    iris: new THREE.MeshStandardMaterial({
+      color: new THREE.Color(EYE_COLORS[look.eyeColor]?.hex ?? "#3b2418"),
+      roughness: 0.14,
+      metalness: 0,
+    }),
+    pupil: new THREE.MeshStandardMaterial({ color: 0x120c08, roughness: 0.1, metalness: 0 }),
+    lip: new THREE.MeshStandardMaterial({
+      color: shade(skinHex, -0.16).lerp(new THREE.Color(0xa8564e), 0.55),
+      roughness: 0.48,
+      metalness: 0,
+    }),
+    mouth: new THREE.MeshStandardMaterial({ color: 0x3d1a17, roughness: 0.6, metalness: 0 }),
+    teeth: new THREE.MeshStandardMaterial({ color: 0xf7f3ea, roughness: 0.3, metalness: 0 }),
+  };
 }
 
-function addHat(g: THREE.Group, appearance: CharacterAppearance) {
-  const kind = HATS[appearance.hat]?.id ?? "none";
-  if (kind === "none") return;
-  const mat = FLAT(HAT_COLORS[appearance.hatColor]?.hex ?? "#c9a227");
-  if (kind === "straw") {
-    const brim = cyl(0.38, 0.38, 0.035, 8, mat);
-    brim.position.y = 1.55;
-    const crown = cyl(0.19, 0.21, 0.2, 8, mat);
-    crown.position.y = 1.65;
-    g.add(brim, crown);
-    return;
-  }
-  if (kind === "cap") {
-    const crown = cyl(0.2, 0.22, 0.16, 8, mat);
-    crown.position.y = 1.6;
-    const visor = box(0.22, 0.03, 0.16, mat);
-    visor.position.set(0, 1.54, 0.2);
-    visor.rotation.x = 0.15;
-    g.add(crown, visor);
-    return;
-  }
-  if (kind === "beanie") {
-    const hat = cyl(0.2, 0.22, 0.2, 8, mat);
-    hat.position.y = 1.62;
-    const pom = cyl(0.05, 0.05, 0.06, 6, mat);
-    pom.position.y = 1.74;
-    g.add(hat, pom);
-    return;
-  }
-  if (kind === "cowboy") {
-    const brim = cyl(0.4, 0.4, 0.04, 8, mat);
-    brim.position.y = 1.54;
-    brim.rotation.z = 0.08;
-    const crown = cyl(0.16, 0.2, 0.26, 8, mat);
-    crown.position.y = 1.68;
-    g.add(brim, crown);
-    return;
-  }
-  if (kind === "beret") {
-    const disc = cyl(0.24, 0.24, 0.06, 8, mat);
-    disc.position.set(0.04, 1.58, 0);
-    disc.rotation.z = 0.18;
-    g.add(disc);
-    return;
-  }
-  const wrap = box(0.4, 0.08, 0.38, mat);
-  wrap.position.y = 1.52;
-  g.add(wrap);
+/* ------------------------------------------------------------------ */
+/* Formes du corps                                                     */
+/* ------------------------------------------------------------------ */
+
+/** Ellipsoïde : la brique de base d'un corps, là où la machine prend un cube. */
+function ell(rx: number, ry: number, rz: number, pos: Vec3, rot?: Vec3, seg = 16) {
+  const g = new THREE.SphereGeometry(1, seg, Math.max(8, Math.round(seg * 0.6)));
+  g.scale(rx, ry, rz);
+  return place(g, pos, rot);
 }
 
-function addEyes(g: THREE.Group, appearance: CharacterAppearance, skin: THREE.Material) {
-  const shape = EYE_SHAPES[appearance.eyeShape]?.id ?? "round";
-  const iris = FLAT(EYE_COLORS[appearance.eyeColor]?.hex ?? "#2b2018");
-  const white = FLAT("#f4f1ea");
-  let w = 0.05;
-  let h = 0.06;
-  let gap = 0.08;
-  if (shape === "almond") {
-    w = 0.07;
-    h = 0.045;
-  } else if (shape === "wide") {
-    gap = 0.12;
-  } else if (shape === "narrow") {
-    gap = 0.05;
-    w = 0.045;
-  } else if (shape === "sleepy") {
-    h = 0.03;
-    w = 0.06;
-  }
-  const y = 1.4;
-  const z = 0.18;
-  for (const side of [-1, 1]) {
-    const sclera = box(w + 0.02, h + 0.01, 0.02, white);
-    sclera.position.set(side * gap, y, z);
-    const pupil = box(w, h, 0.025, iris);
-    pupil.position.set(side * gap, y, z + 0.012);
-    g.add(sclera, pupil);
-  }
-  void skin;
+/** Capsule : membre ou doigt, avec ses extrémités arrondies. Axe sur Y. */
+function cap(r: number, length: number, pos: Vec3, rot?: Vec3, seg = 12) {
+  return place(new THREE.CapsuleGeometry(r, Math.max(0.001, length), 4, seg), pos, rot);
 }
 
-function addMouth(g: THREE.Group, appearance: CharacterAppearance) {
-  const kind = MOUTHS[appearance.mouth]?.id ?? "smile";
-  const lip = FLAT("#a85a52");
-  if (kind === "neutral") {
-    const line = box(0.1, 0.02, 0.02, lip);
-    line.position.set(0, 1.24, 0.18);
-    g.add(line);
-    return;
-  }
-  if (kind === "grin") {
-    const line = box(0.16, 0.035, 0.025, lip);
-    line.position.set(0, 1.23, 0.18);
-    const tooth = box(0.1, 0.02, 0.02, FLAT("#f7f3ea"));
-    tooth.position.set(0, 1.24, 0.19);
-    g.add(line, tooth);
-    return;
-  }
-  if (kind === "smirk") {
-    const line = box(0.1, 0.025, 0.02, lip);
-    line.position.set(0.03, 1.24, 0.18);
-    line.rotation.z = -0.25;
-    g.add(line);
-    return;
-  }
-  if (kind === "open") {
-    const hole = box(0.07, 0.05, 0.03, FLAT("#4a201c"));
-    hole.position.set(0, 1.23, 0.18);
-    g.add(hole);
-    return;
-  }
-  const line = box(0.12, 0.025, 0.02, lip);
-  line.position.set(0, 1.235, 0.18);
-  const cornerL = box(0.03, 0.02, 0.02, lip);
-  cornerL.position.set(-0.06, 1.245, 0.18);
-  const cornerR = cornerL.clone();
-  cornerR.position.x = 0.06;
-  g.add(line, cornerL, cornerR);
+/**
+ * Membre fuselé : plus large à la racine qu'à l'extrémité, comme une cuisse ou
+ * un bras. Deux cylindres coniques et deux calottes, fusionnés.
+ */
+function limb(rTop: number, rBottom: number, length: number, pos: Vec3, rot?: Vec3) {
+  const merged = mergeAll([
+    place(new THREE.CylinderGeometry(rTop, rBottom, length, 14), [0, -length / 2, 0]),
+    ell(rTop, rTop * 0.9, rTop, [0, 0, 0], undefined, 12),
+    ell(rBottom, rBottom * 0.9, rBottom, [0, -length, 0], undefined, 12),
+  ]);
+  // `place` d'abord la rotation, puis la translation : l'inverse ferait
+  // décrire un arc de cercle à la pièce au lieu de l'incliner sur place.
+  return place(merged, pos, rot);
 }
 
-function addNose(g: THREE.Group, appearance: CharacterAppearance, skin: THREE.Material) {
-  const kind = NOSES[appearance.nose]?.id ?? "small";
-  let mesh: THREE.Mesh;
-  if (kind === "round") mesh = cyl(0.045, 0.05, 0.07, 6, skin);
-  else if (kind === "long") mesh = box(0.05, 0.1, 0.08, skin);
-  else if (kind === "button") mesh = cyl(0.035, 0.04, 0.05, 6, skin);
-  else if (kind === "broad") mesh = box(0.1, 0.06, 0.07, skin);
-  else mesh = box(0.05, 0.06, 0.05, skin);
-  mesh.position.set(0, 1.32, 0.2);
-  g.add(mesh);
+/**
+ * Plaque épousant une enveloppe : bavette, revers, pan de gilet.
+ *
+ * Un vêtement à plat sur un torse rond fait un panneau publicitaire ; empilé
+ * en tranches, il fait des marches d'escalier. Un secteur de la sphère du
+ * corps, écarté de `out`, suit la courbe exactement et se raccorde sans
+ * couture. `span` est le demi-angle couvert autour de l'axe +Z.
+ */
+function plate(
+  r: Vec3,
+  c: Vec3,
+  yTop: number,
+  yBottom: number,
+  span: number,
+  out: number,
+  seg = 20,
+): THREE.BufferGeometry {
+  const R: Vec3 = [r[0] + out, r[1] + out, r[2] + out];
+  const angle = (y: number) => Math.acos(THREE.MathUtils.clamp((y - c[1]) / R[1], -1, 1));
+  const t0 = angle(yTop);
+  const t1 = angle(yBottom);
+  // Dans SphereGeometry, l'axe +Z tombe à phi = π/2.
+  const g = new THREE.SphereGeometry(1, seg, seg, HALF - span, span * 2, t0, Math.max(0.01, t1 - t0));
+  g.scale(R[0], R[1], R[2]);
+  return place(g, c);
 }
 
-function addEars(g: THREE.Group, appearance: CharacterAppearance, skin: THREE.Material) {
-  const kind = EARS[appearance.ears]?.id ?? "small";
-  let w = 0.05;
-  let h = 0.08;
-  let d = 0.04;
+/** Calotte sphérique : coiffe, paupière, coquille d'oreille. */
+function domeCap(r: number, coverage: number, pos: Vec3, rot?: Vec3, seg = 18) {
+  return place(
+    new THREE.SphereGeometry(r, seg, Math.max(6, Math.round(seg * 0.55)), 0, Math.PI * 2, 0, coverage),
+    pos,
+    rot,
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/* Squelette                                                           */
+/* ------------------------------------------------------------------ */
+
+export type Joint =
+  | "root"
+  | "hips"
+  | "chest"
+  | "neck"
+  | "head"
+  | "jaw"
+  | "lidL"
+  | "lidR"
+  | "browL"
+  | "browR"
+  | "armL"
+  | "armR"
+  | "foreL"
+  | "foreR"
+  | "handL"
+  | "handR"
+  | "thighL"
+  | "thighR"
+  | "shinL"
+  | "shinR"
+  | "footL"
+  | "footR"
+  | "prop";
+
+/** Nœud du plan de montage : ses pièces par matière, et ses articulations. */
+class Node {
+  private buckets = new Map<CharMat, THREE.BufferGeometry[]>();
+  private kids: { name: Joint; node: Node; pos: Vec3; rot?: Vec3 }[] = [];
+
+  add(mat: CharMat, ...geos: THREE.BufferGeometry[]): this {
+    const bucket = this.buckets.get(mat) ?? [];
+    bucket.push(...geos);
+    this.buckets.set(mat, bucket);
+    return this;
+  }
+
+  joint(name: Joint, pos: Vec3, rot?: Vec3): Node {
+    const node = new Node();
+    this.kids.push({ name, node, pos, rot });
+    return node;
+  }
+
+  build(
+    materials: CharMaterials,
+    joints: Partial<Record<Joint, THREE.Group>>,
+    shadows: boolean,
+  ): THREE.Group {
+    const group = new THREE.Group();
+    for (const [mat, geos] of this.buckets) {
+      const merged = geos.length === 1 ? geos[0] : mergeAll(geos);
+      const mesh = new THREE.Mesh(merged, materials[mat]);
+      // Nommer par matière : le modèle reste lisible une fois exporté, et les
+      // tests peuvent viser une pièce précise.
+      mesh.name = mat;
+      mesh.castShadow = shadows;
+      group.add(mesh);
+    }
+    for (const kid of this.kids) {
+      const g = kid.node.build(materials, joints, shadows);
+      g.name = kid.name;
+      g.position.set(...kid.pos);
+      if (kid.rot) g.rotation.set(...kid.rot);
+      // Chaque articulation garde sa pose de repos : les animations s'y
+      // ajoutent au lieu de l'écraser.
+      g.userData.rest = { x: g.rotation.x, y: g.rotation.y, z: g.rotation.z, py: g.position.y };
+      joints[kid.name] = g;
+      group.add(g);
+    }
+    return group;
+  }
+}
+
+/* ------------------------------------------------------------------ */
+/* Visage                                                              */
+/* ------------------------------------------------------------------ */
+
+/**
+ * La tête, d'un seul tenant.
+ *
+ * Premier essai : un crâne et une mâchoire, deux ellipsoïdes qui se
+ * recouvrent. Le résultat portait une cicatrice — la courbe d'intersection des
+ * deux surfaces, parfaitement visible de l'oreille au menton. Deux volumes qui
+ * se croisent laissent toujours cette trace.
+ *
+ * D'où une seule forme, rétreinte vers le bas : le crâne garde son galbe, la
+ * mâchoire se resserre et le menton avance. La transition est continue, donc
+ * il n'y a rien à raccorder.
+ */
+const HEAD_R: Vec3 = [0.135, 0.17, 0.15];
+const HEAD_C: Vec3 = [0, 0.152, -0.008];
+/** Au-dessus de cette hauteur la tête est pleine ; en dessous elle se resserre. */
+const JAW_LINE = 0.158;
+const JAW_BOTTOM = HEAD_C[1] - HEAD_R[1];
+const JAW_NARROW = 0.3;
+const JAW_FLATTEN = 0.22;
+const CHIN_PUSH = 0.02;
+
+/** Avancement du rétreint à une hauteur donnée : 0 au front, 1 au menton. */
+function jawT(y: number): number {
+  const t = (JAW_LINE - y) / (JAW_LINE - JAW_BOTTOM);
+  return Math.pow(THREE.MathUtils.clamp(t, 0, 1), 1.6);
+}
+
+const jawKx = (y: number) => 1 - JAW_NARROW * jawT(y);
+const jawKz = (y: number) => 1 - JAW_FLATTEN * jawT(y);
+const chinPush = (y: number) => CHIN_PUSH * jawT(y);
+
+/** Crâne rétreint : une sphère mise à l'échelle, puis resserrée vers le bas. */
+function headShape(grow = 0, seg = 28): THREE.BufferGeometry {
+  const g = new THREE.SphereGeometry(1, seg, Math.round(seg * 0.7));
+  g.scale(HEAD_R[0] + grow, HEAD_R[1] + grow, HEAD_R[2] + grow);
+  g.translate(HEAD_C[0], HEAD_C[1], HEAD_C[2]);
+  const pos = g.attributes.position;
+  for (let i = 0; i < pos.count; i++) {
+    const y = pos.getY(i);
+    pos.setX(i, pos.getX(i) * jawKx(y));
+    pos.setZ(i, (pos.getZ(i) - HEAD_C[2]) * jawKz(y) + HEAD_C[2] + chinPush(y));
+  }
+  g.computeVertexNormals();
+  return g;
+}
+
+/**
+ * Avant du visage à une hauteur et un écart donnés.
+ *
+ * Toutes les pièces du visage se posent **sur** cette surface, jamais à une
+ * profondeur devinée : un œil placé à un `z` fixe se retrouve enfoui dès qu'on
+ * retouche la forme de la tête, et le personnage perd son regard sans que rien
+ * ne le signale.
+ */
+function faceZ(x: number, y: number): number {
+  const v = (y - HEAD_C[1]) / HEAD_R[1];
+  const s2 = 1 - v * v;
+  if (s2 <= 0) return HEAD_C[2] + chinPush(y);
+  // On remonte au rayon d'avant rétreint pour rester sur la surface réelle.
+  const u = x / jawKx(y) / HEAD_R[0];
+  const k = s2 - u * u;
+  if (k <= 0) return HEAD_C[2] + chinPush(y);
+  return HEAD_C[2] + HEAD_R[2] * jawKz(y) * Math.sqrt(k) + chinPush(y);
+}
+
+/** Demi-largeur de la tête à une hauteur donnée : où poser oreilles et coiffe. */
+function headHalfWidth(y: number): number {
+  const v = (y - HEAD_C[1]) / HEAD_R[1];
+  const s2 = 1 - v * v;
+  return s2 <= 0 ? 0 : HEAD_R[0] * jawKx(y) * Math.sqrt(s2);
+}
+
+const LID_CLOSED = 1.72;
+/**
+ * Paupière basse, fixe : elle borne l'ouverture par le dessous.
+ *
+ * Sans elle le globe entier est visible et le personnage écarquille les yeux
+ * en permanence — le regard de terreur qu'on voit sur tous les avatars ratés.
+ * Un œil réel ne laisse voir qu'une fente entre les deux paupières.
+ */
+const LOWER_LID = Math.PI + 0.46;
+
+function eyeSpec(look: CharacterAppearance) {
+  switch (EYE_SHAPES[look.eyeShape]?.id) {
+    case "almond":
+      return { gap: 0.052, r: 0.027, open: -0.3, squash: 0.84 };
+    case "wide":
+      return { gap: 0.062, r: 0.027, open: -0.46, squash: 0.94 };
+    case "narrow":
+      return { gap: 0.045, r: 0.025, open: -0.26, squash: 0.9 };
+    case "sleepy":
+      return { gap: 0.054, r: 0.026, open: 0.02, squash: 0.76 };
+    default:
+      return { gap: 0.054, r: 0.027, open: -0.38, squash: 0.95 };
+  }
+}
+
+function addEyes(head: Node, look: CharacterAppearance) {
+  const { gap, r, open, squash } = eyeSpec(look);
+  const y = 0.176;
+
+  for (const side of [-1, 1] as const) {
+    const x = side * gap;
+    // Le globe est enfoncé dans l'orbite : c'est ce qui le distingue d'une
+    // bille collée sur une joue.
+    const z = faceZ(x, y) - r * 0.8;
+    head.add("skinShade", ell(r * 1.2, r * 1.05, r * 0.3, [x, y, z + r * 0.4]));
+    head.add("eyeWhite", ell(r, r * squash, r * 0.9, [x, y, z]));
+    head.add("iris", ell(r * 0.5, r * 0.5 * squash, r * 0.34, [x, y, z + r * 0.68]));
+    head.add("pupil", ell(r * 0.22, r * 0.22, r * 0.2, [x, y, z + r * 0.84]));
+
+    // Paupière haute : une calotte qui bascule. Au repos elle coiffe le haut du
+    // globe ; au clignement elle passe devant et rejoint la basse.
+    const lid = head.joint(side < 0 ? "lidL" : "lidR", [x, y, z], [open, 0, 0]);
+    lid.add("skin", domeCap(r * 1.07, Math.PI * 0.5, [0, 0, 0], undefined, 14));
+    head.add("skin", domeCap(r * 1.06, Math.PI * 0.5, [x, y, z], [LOWER_LID, 0, 0], 14));
+
+    // Sourcil, posé sur l'arcade.
+    const by = y + 0.042;
+    const brow = head.joint(side < 0 ? "browL" : "browR", [x, by, faceZ(x, by) - 0.012]);
+    brow.add("hair", roundedBox(0.046, 0.011, 0.014, 0.005, [0, 0, 0], [0.15, 0, side * 0.2]));
+  }
+}
+
+function addNose(head: Node, look: CharacterAppearance) {
+  const kind = NOSES[look.nose]?.id ?? "small";
+  // Hauteur du bout du nez, à mi-distance entre les yeux et la bouche.
+  const y = 0.132;
+  const z = faceZ(0, y);
+
+  /** Arête : de la racine, entre les yeux, jusqu'au bout du nez. */
+  const bridge = (h: number, w: number) =>
+    head.add("skin", ell(w, h, 0.038, [0, y + h * 0.55, z - 0.036]));
+
   if (kind === "round") {
-    w = 0.07;
-    h = 0.07;
-  } else if (kind === "pointed") {
-    w = 0.045;
-    h = 0.11;
-  } else if (kind === "wide") {
-    w = 0.08;
-    h = 0.09;
-    d = 0.05;
+    bridge(0.044, 0.016);
+    head.add("skin", ell(0.024, 0.022, 0.026, [0, y, z - 0.014]));
+  } else if (kind === "long") {
+    bridge(0.062, 0.014);
+    head.add("skin", ell(0.019, 0.024, 0.03, [0, y - 0.01, z - 0.01]));
+  } else if (kind === "button") {
+    bridge(0.032, 0.013);
+    head.add("skin", ell(0.019, 0.018, 0.021, [0, y + 0.005, z - 0.016]));
+  } else if (kind === "broad") {
+    bridge(0.044, 0.022);
+    head.add("skin", ell(0.034, 0.02, 0.024, [0, y - 0.002, z - 0.016]));
+  } else {
+    bridge(0.04, 0.013);
+    head.add("skin", ell(0.021, 0.019, 0.023, [0, y, z - 0.016]));
   }
-  const earL = box(w, h, d, skin);
-  earL.position.set(-0.2, 1.37, 0);
-  const earR = earL.clone();
-  earR.position.x = 0.2;
-  g.add(earL, earR);
+  // Narines : deux ombres, pas des trous.
+  for (const side of [-1, 1]) {
+    head.add("skinShade", ell(0.008, 0.006, 0.008, [side * 0.016, y - 0.012, z - 0.014]));
+  }
 }
 
-function addClothes(
-  g: THREE.Group,
-  appearance: CharacterAppearance,
-  cloth: THREE.Material,
-  accent: THREE.Material,
-  skin: THREE.Material,
-) {
-  const kind = CLOTHES[appearance.clothes]?.id ?? "overalls";
-  const boot = FLAT("#3b2b1e");
-  const pants = kind === "coverall" ? cloth : kind === "overalls" ? cloth : FLAT("#3a3f4a");
+function addMouth(head: Node, look: CharacterAppearance) {
+  const kind = MOUTHS[look.mouth]?.id ?? "smile";
+  const y = 0.084;
 
-  const legL = box(0.22, 0.52, 0.24, pants);
-  legL.position.set(-0.14, 0.26, 0);
-  const legR = legL.clone();
-  legR.position.x = 0.14;
-  g.add(legL, legR);
+  /**
+   * Lèvre : un boudin unique suivant une parabole plaquée sur le visage.
+   *
+   * Le premier essai posait sept petites billes le long de la courbe — elles
+   * ne se rejoignaient pas et la bouche ressemblait à un collier. Un tube
+   * passant par cinq points donne une lèvre d'un seul tenant.
+   *
+   * `bow` est la flèche de l'arc, comptée **aux coins** : positive, les
+   * commissures remontent et la bouche sourit ; négative, elles tombent. C'est
+   * l'inverse de ce que dit l'intuition — relever le milieu d'une bouche fait
+   * une moue, pas un sourire.
+   */
+  const lipLine = (
+    mat: CharMat,
+    half: number,
+    bow: number,
+    thickness: number,
+    base: number,
+    skew = 0,
+  ) => {
+    const pts: Vec3[] = [];
+    for (let i = 0; i < 5; i++) {
+      const u = (i / 4) * 2 - 1;
+      const x = u * half;
+      const py = base - bow * (1 - u * u) + skew * u;
+      // Les coins rentrent dans la joue : une bouche ne s'arrête pas net.
+      pts.push([x, py, faceZ(x, py) - 0.008 - (1 - Math.abs(u)) * -0.004]);
+    }
+    head.add(mat, tube(pts, thickness, 7));
+  };
 
-  const bootL = box(0.26, 0.14, 0.32, boot);
-  bootL.position.set(-0.14, 0.07, 0.04);
-  const bootR = bootL.clone();
-  bootR.position.x = 0.14;
-  g.add(bootL, bootR);
+  if (kind === "neutral") {
+    lipLine("lip", 0.032, 0.002, 0.0068, y + 0.007);
+    lipLine("lip", 0.03, 0.001, 0.0078, y - 0.008);
+    lipLine("mouth", 0.029, 0.0015, 0.0026, y);
+  } else if (kind === "grin") {
+    lipLine("lip", 0.04, 0.015, 0.0072, y + 0.014);
+    lipLine("lip", 0.038, 0.005, 0.0085, y - 0.017);
+    lipLine("mouth", 0.036, 0.012, 0.0105, y - 0.002);
+    lipLine("teeth", 0.034, 0.011, 0.0065, y + 0.004);
+  } else if (kind === "smirk") {
+    lipLine("lip", 0.033, 0.008, 0.0068, y + 0.007, 0.009);
+    lipLine("lip", 0.031, 0.003, 0.0078, y - 0.009, 0.009);
+    lipLine("mouth", 0.03, 0.006, 0.0026, y - 0.001, 0.009);
+    head.add("skinShade", ell(0.009, 0.012, 0.007, [0.046, y + 0.017, faceZ(0.046, y + 0.017) - 0.014]));
+  } else if (kind === "open") {
+    const g = new THREE.TorusGeometry(0.027, 0.0105, 6, 20);
+    g.scale(1, 1.2, 0.55);
+    head.add("lip", place(g, [0, y - 0.002, faceZ(0, y) - 0.006]));
+    head.add("mouth", ell(0.023, 0.028, 0.016, [0, y - 0.002, faceZ(0, y) - 0.018]));
+    head.add("teeth", ell(0.019, 0.006, 0.009, [0, y + 0.017, faceZ(0, y + 0.017) - 0.016]));
+  } else {
+    lipLine("lip", 0.034, 0.013, 0.0068, y + 0.007);
+    lipLine("lip", 0.032, 0.005, 0.0078, y - 0.008);
+    lipLine("mouth", 0.031, 0.011, 0.0026, y);
+    // Fossettes : le sourire ne tient pas dans la seule bouche.
+    for (const side of [-1, 1]) {
+      const dx = side * 0.052;
+      head.add("skinShade", ell(0.008, 0.013, 0.006, [dx, y + 0.013, faceZ(dx, y + 0.013) - 0.014]));
+    }
+  }
+}
 
-  const torsoW = kind === "jacket" || kind === "sweater" ? 0.58 : 0.52;
-  const torsoD = kind === "sweater" ? 0.34 : 0.3;
-  const shirt = kind === "vest" ? FLAT("#efe6d4") : cloth;
-  const torso = box(torsoW, 0.58, torsoD, shirt);
-  torso.position.y = 0.81;
-  g.add(torso);
+function addEars(head: Node, look: CharacterAppearance) {
+  const kind = EARS[look.ears]?.id ?? "small";
+  let rx = 0.02;
+  let ry = 0.042;
+  let rz = 0.03;
+  let tip = 0;
+  if (kind === "round") {
+    ry = 0.038;
+    rz = 0.036;
+  } else if (kind === "pointed") {
+    ry = 0.052;
+    tip = 1;
+  } else if (kind === "wide") {
+    rx = 0.026;
+    ry = 0.046;
+    rz = 0.038;
+  }
+  const y = 0.155;
+  for (const side of [-1, 1]) {
+    const x = side * (headHalfWidth(y) - 0.008);
+    head.add("skin", ell(rx, ry, rz, [x, y, HEAD_C[2] + 0.008], [0, 0, side * -0.12]));
+    // Conque : l'ombre intérieure, sans quoi l'oreille est une olive collée.
+    head.add("skinShade", ell(rx * 0.5, ry * 0.6, rz * 0.6, [x + side * 0.008, y - 0.002, HEAD_C[2] + 0.014]));
+    if (tip) {
+      head.add("skin", place(
+        new THREE.ConeGeometry(rx * 0.9, 0.03, 8),
+        [x, y + ry * 0.86, HEAD_C[2] + 0.008],
+        [0, 0, side * -0.18],
+      ));
+    }
+  }
+}
+
+/* ------------------------------------------------------------------ */
+/* Cheveux et barbe                                                    */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Coiffe épousant le crâne.
+ *
+ * Une calotte droite ne peut pas convenir : elle descend à la même hauteur
+ * partout, donc soit elle laisse la nuque nue, soit elle mange les sourcils.
+ * On l'incline vers l'arrière — la ligne de front remonte, la nuque descend,
+ * ce qui est exactement le dessin d'une implantation de cheveux.
+ */
+function scalp(growth: number, coverage = Math.PI * 0.46, tilt = -0.42): THREE.BufferGeometry {
+  const g = domeCap(1, coverage, [0, 0, 0], undefined, 22);
+  g.scale(HEAD_R[0] + growth, HEAD_R[1] + growth, HEAD_R[2] + growth);
+  return place(g, HEAD_C, [tilt, 0, 0]);
+}
+
+/**
+ * Chevelure.
+ *
+ * Sous un chapeau, tout ce qui coiffait le crâne disparaît : les mèches
+ * traversaient la paille et sortaient sur le dessus. Ne restent que ce qui
+ * dépasse pour de vrai — la nuque, les tempes, une natte, une queue de cheval.
+ */
+function addHair(head: Node, look: CharacterAppearance, underHat: boolean) {
+  const kind = HAIRS[look.hair]?.id ?? "crop";
+  if (kind === "bald") return;
+
+  const hair = (g: THREE.BufferGeometry) => head.add("hair", g);
+  const top = HEAD_C[1] + HEAD_R[1];
+
+  // Nuque et tempes : visibles chapeau ou pas.
+  hair(ell(0.118, 0.08, 0.086, [0, HEAD_C[1] - 0.035, HEAD_C[2] - 0.07]));
+  if (underHat) {
+    for (const side of [-1, 1]) {
+      hair(ell(0.02, 0.036, 0.034, [side * (headHalfWidth(0.2) - 0.004), 0.2, -0.03]));
+    }
+  }
+
+  if (kind === "afro") {
+    // Volume franc, facetté : la masse compte plus que la mèche.
+    if (!underHat) {
+      const g = new THREE.IcosahedronGeometry(0.19, 1);
+      g.scale(1.06, 0.98, 1);
+      hair(place(g, [0, HEAD_C[1] + 0.06, HEAD_C[2] - 0.01]));
+      hair(scalp(0.014, Math.PI * 0.56, -0.3));
+    }
+    return;
+  }
+
+  if (!underHat) hair(scalp(0.014, kind === "crop" ? Math.PI * 0.44 : Math.PI * 0.48));
+
+  if (kind === "crop") {
+    if (!underHat) {
+      for (const side of [-1, 1]) {
+        hair(ell(0.022, 0.038, 0.032, [side * (headHalfWidth(0.2) - 0.002), 0.2, -0.03]));
+      }
+    }
+    return;
+  }
+
+  if (kind === "wavy") {
+    if (underHat) return;
+    // Trois mèches qui se chevauchent : le désordre se fabrique.
+    hair(ell(0.078, 0.048, 0.072, [-0.05, top - 0.02, 0.03], [0.2, 0, 0.3]));
+    hair(ell(0.072, 0.044, 0.066, [0.055, top - 0.012, 0.0], [0.1, 0, -0.35]));
+    hair(ell(0.06, 0.042, 0.056, [0.005, top - 0.045, 0.08], [0.5, 0, 0.05]));
+    return;
+  }
+
+  if (kind === "bun") {
+    hair(ell(0.062, 0.06, 0.058, [0, top - 0.03, -0.14]));
+    hair(place(new THREE.TorusGeometry(0.057, 0.012, 6, 14), [0, top - 0.03, -0.14], [0.4, 0, 0]));
+    return;
+  }
+
+  if (kind === "ponytail") {
+    hair(
+      tube(
+        [
+          [0, top - 0.05, -0.13],
+          [0, 0.19, -0.19],
+          [0, 0.09, -0.205],
+          [0, -0.005, -0.175],
+        ],
+        0.032,
+        8,
+      ),
+    );
+    hair(place(new THREE.TorusGeometry(0.036, 0.011, 6, 12), [0, top - 0.05, -0.128], [HALF, 0, 0]));
+    return;
+  }
+
+  if (kind === "braids") {
+    for (const side of [-1, 1]) {
+      hair(
+        tube(
+          [
+            [side * 0.112, 0.205, -0.055],
+            [side * 0.136, 0.115, -0.088],
+            [side * 0.14, 0.025, -0.09],
+            [side * 0.132, -0.04, -0.07],
+          ],
+          0.026,
+          7,
+        ),
+      );
+      // Les nœuds de la natte : trois anneaux suffisent à la lire.
+      for (let i = 0; i < 3; i++) {
+        hair(place(
+          new THREE.TorusGeometry(0.028, 0.008, 5, 10),
+          [side * (0.12 + i * 0.008), 0.17 - i * 0.06, -0.08],
+          [HALF, 0, 0],
+        ));
+      }
+    }
+    return;
+  }
+
+  // curtain : deux rideaux encadrant le visage, qui sortent même d'un chapeau
+  for (const side of [-1, 1]) {
+    hair(ell(0.044, 0.09, 0.05, [side * 0.108, 0.128, 0.012], [0, 0, side * 0.1]));
+    hair(ell(0.034, 0.054, 0.04, [side * 0.094, 0.042, -0.014], [0, 0, side * 0.14]));
+  }
+  if (!underHat) hair(ell(0.088, 0.036, 0.05, [0, top - 0.035, 0.07], [0.35, 0, 0]));
+}
+
+function addBeard(head: Node, look: CharacterAppearance) {
+  const kind = BEARDS[look.beard]?.id ?? "none";
+  if (kind === "none") return;
+  const hair = (g: THREE.BufferGeometry) => head.add("hair", g);
+
+  const moustache = () => {
+    const y = 0.105;
+    for (const side of [-1, 1]) {
+      hair(ell(0.026, 0.011, 0.016, [side * 0.023, y, faceZ(0, y) - 0.012], [0, 0, side * 0.22]));
+    }
+  };
+  /**
+   * Coquille suivant la mâchoire, ouverte devant la bouche : une sphère
+   * tronquée en longitude comme en latitude, un peu plus grande que la
+   * mâchoire elle-même.
+   */
+  /**
+   * Coquille suivant le bas du visage.
+   *
+   * On repart de la forme de la tête, grossie de l'épaisseur du poil, et on ne
+   * garde que les triangles sous la pommette et devant l'oreille. Découper la
+   * vraie surface évite l'écueil du volume rapporté : la barbe épouse le
+   * menton exactement, quelle que soit la tête.
+   */
+  const jawShell = (thickness: number) => {
+    const g = headShape(thickness, 26).toNonIndexed();
+    const pos = g.attributes.position;
+    const kept: number[] = [];
+    for (let i = 0; i < pos.count; i += 3) {
+      let inside = 0;
+      for (let k = 0; k < 3; k++) {
+        const y = pos.getY(i + k);
+        const z = pos.getZ(i + k);
+        // Sous la ligne des pommettes, et pas sur la nuque.
+        if (y < 0.152 && z > HEAD_C[2] - 0.06) inside++;
+      }
+      if (inside < 2) continue;
+      for (let k = 0; k < 3; k++) {
+        kept.push(pos.getX(i + k), pos.getY(i + k), pos.getZ(i + k));
+      }
+    }
+    g.dispose();
+    const out = new THREE.BufferGeometry();
+    out.setAttribute("position", new THREE.Float32BufferAttribute(kept, 3));
+    out.computeVertexNormals();
+    // `mergeAll` exige les mêmes attributs partout : la barbe voisine des
+    // sphères, qui portent aussi des UV.
+    out.setAttribute(
+      "uv",
+      new THREE.Float32BufferAttribute(new Float32Array((kept.length / 3) * 2), 2),
+    );
+    return out;
+  };
+
+  if (kind === "stubble") {
+    hair(jawShell(0.004));
+    moustache();
+    return;
+  }
+  if (kind === "moustache") {
+    moustache();
+    return;
+  }
+  if (kind === "goatee") {
+    moustache();
+    const y = 0.042;
+    hair(ell(0.032, 0.044, 0.03, [0, y, faceZ(0, y) - 0.016]));
+    return;
+  }
+  if (kind === "chops") {
+    for (const side of [-1, 1]) {
+      hair(ell(0.018, 0.058, 0.038, [side * (headHalfWidth(0.135) - 0.012), 0.135, 0.0], [0, 0, side * -0.1]));
+    }
+    return;
+  }
+  // full
+  hair(jawShell(0.014));
+  hair(ell(0.046, 0.05, 0.042, [0, 0.028, faceZ(0, 0.028) - 0.016]));
+  moustache();
+}
+
+/* ------------------------------------------------------------------ */
+/* Chapeaux                                                            */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Hauteur de la ligne de coiffe : juste au-dessus des oreilles, comme se porte
+ * un chapeau. Les calots montent de là jusque vers 0,36 — le crâne culmine à
+ * 0,318, il faut donc les loger au-dessus sans les faire flotter.
+ */
+const HAT_Y = 0.232;
+
+function addHat(head: Node, look: CharacterAppearance) {
+  const kind = HATS[look.hat]?.id ?? "none";
+  if (kind === "none") return;
+  const y = HAT_Y;
+  // Rayon de la tête à la ligne de coiffe : tout chapeau part de là.
+  const fit = 0.138;
+
+  if (kind === "straw") {
+    // Bord tourné au tour, légèrement retombant : c'est la courbe qui fait le
+    // canotier, pas la couleur.
+    head.add(
+      "hat",
+      lathe(
+        [
+          [0.0, 0.135],
+          [0.085, 0.132],
+          [0.12, 0.112],
+          [fit, 0.024],
+          [0.18, 0.012],
+          [0.214, -0.006],
+          [0.217, -0.019],
+          [0.172, -0.001],
+          [fit - 0.008, 0.008],
+          [0.112, 0.11],
+          [0.078, 0.13],
+          [0.0, 0.125],
+        ].map(([r, h]) => [r, h + y]) as [number, number][],
+        22,
+        [0, 0, 0],
+        [0, 0, 0],
+      ),
+    );
+    head.add("leather", place(new THREE.TorusGeometry(fit - 0.014, 0.012, 6, 22), [0, y + 0.05, 0], [HALF, 0, 0]));
+    return;
+  }
+
+  if (kind === "cap") {
+    const crown = domeCap(fit, Math.PI * 0.5, [0, 0, 0], undefined, 22);
+    crown.scale(1, 0.95, 1.02);
+    head.add("hat", place(crown, [0, y - 0.005, -0.004]));
+    // Visière : un anneau aplati, découpé en demi-cercle et incliné.
+    const visor = new THREE.CylinderGeometry(fit + 0.012, fit + 0.012, 0.013, 22, 1, false, HALF * 0.55, Math.PI * 0.9);
+    visor.scale(1, 1, 1.36);
+    head.add("hat", place(visor, [0, y - 0.006, 0.026], [-0.18, 0, 0]));
+    head.add("hatDark", place(new THREE.TorusGeometry(fit, 0.011, 6, 22), [0, y - 0.004, 0], [HALF, 0, 0]));
+    head.add("metal", ell(0.011, 0.011, 0.011, [0, y + 0.145, -0.004]));
+    return;
+  }
+
+  if (kind === "beanie") {
+    const crown = domeCap(fit + 0.008, Math.PI * 0.54, [0, 0, 0], undefined, 22);
+    crown.scale(1, 1.08, 1);
+    head.add("hat", place(crown, [0, y - 0.012, -0.004]));
+    // Le revers : un bourrelet roulé, ce qui distingue un bonnet d'une calotte.
+    head.add("hatDark", place(new THREE.TorusGeometry(fit + 0.006, 0.023, 8, 24), [0, y - 0.008, -0.004], [HALF, 0, 0]));
+    head.add("accent", ell(0.036, 0.034, 0.036, [0, y + 0.175, -0.004]));
+    return;
+  }
+
+  if (kind === "cowboy") {
+    head.add(
+      "hat",
+      lathe(
+        [
+          [0.0, 0.185],
+          [0.075, 0.18],
+          [0.115, 0.14],
+          [fit, 0.03],
+          [0.19, 0.008],
+          [0.275, 0.03],
+          [0.278, 0.016],
+          [0.188, -0.006],
+          [fit - 0.008, 0.014],
+          [0.107, 0.135],
+          [0.07, 0.172],
+          [0.0, 0.175],
+        ].map(([r, h]) => [r, h + y]) as [number, number][],
+        22,
+        [0, 0, 0],
+        [0, 0, 0],
+      ),
+    );
+    // Le pli du calot : deux creux latéraux, la signature du chapeau.
+    for (const side of [-1, 1]) {
+      head.add("hat", ell(0.028, 0.055, 0.07, [side * 0.088, y + 0.115, -0.004]));
+    }
+    head.add("accent", place(new THREE.TorusGeometry(fit - 0.008, 0.014, 6, 22), [0, y + 0.045, 0], [HALF, 0, 0]));
+    return;
+  }
+
+  if (kind === "beret") {
+    // Galette posée de travers, avec sa queue au sommet.
+    const g = domeCap(fit + 0.035, Math.PI * 0.52, [0, 0, 0], undefined, 22);
+    g.scale(1, 0.46, 1);
+    head.add("hat", place(g, [0.014, y + 0.03, -0.012], [0.06, 0, 0.22]));
+    head.add("hatDark", place(new THREE.TorusGeometry(fit - 0.004, 0.014, 6, 22), [0.014, y + 0.014, -0.012], [HALF + 0.06, 0, 0.22]));
+    head.add("hat", cyl(0.008, 0.008, 0.028, 6, [0.03, y + 0.115, -0.012], [0, 0, 0.22]));
+    return;
+  }
+
+  // bandana : un serre-tête noué sur la nuque
+  const capG = domeCap(fit, Math.PI * 0.44, [0, 0, 0], undefined, 20);
+  capG.scale(1, 0.92, 1);
+  head.add("hat", place(capG, [0, y - 0.004, -0.004]));
+  head.add("hat", place(new THREE.TorusGeometry(fit - 0.002, 0.022, 8, 24), [0, y - 0.004, -0.004], [HALF, 0, 0]));
+  head.add("hat", ell(0.03, 0.026, 0.03, [0, y - 0.01, -0.155]));
+  for (const side of [-1, 1]) {
+    head.add("hat", ell(0.012, 0.05, 0.02, [side * 0.022, y - 0.062, -0.155], [0, 0, side * 0.3]));
+  }
+}
+
+/* ------------------------------------------------------------------ */
+/* Corps et vêtements                                                  */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Cotes du buste, dans le repère de l'articulation « chest ».
+ *
+ * Même règle que pour le visage : les pièces d'un vêtement — bavette, revers,
+ * boutonnière — se posent **sur** cette enveloppe. Un détail placé à une
+ * profondeur devinée finit noyé dans le torse, et le vêtement se réduit à sa
+ * couleur.
+ */
+const BUST: Vec3 = [0.172, 0.155, 0.112];
+const BUST_Y = 0.27;
+const WAIST: Vec3 = [0.134, 0.122, 0.09];
+const WAIST_Y = 0.1;
+const SHOULDER = BUST[0] + 0.05;
+
+type Build = {
+  /** Manches : longues, courtes, ou bras nus */
+  sleeves: "long" | "short" | "none";
+  /** Épaisseur ajoutée par le vêtement */
+  bulk: number;
+  /** Matière de l'enveloppe du buste */
+  torso: CharMat;
+  /** Matière des manches, quand il y en a */
+  sleeve: CharMat;
+  legs: CharMat;
+};
+
+function outfitOf(look: CharacterAppearance): Build {
+  switch (CLOTHES[look.clothes]?.id) {
+    case "shirt":
+      return { sleeves: "long", bulk: 0.005, torso: "cloth", sleeve: "cloth", legs: "clothDark" };
+    case "jacket":
+      return { sleeves: "long", bulk: 0.018, torso: "cloth", sleeve: "cloth", legs: "clothDark" };
+    case "coverall":
+      return { sleeves: "long", bulk: 0.012, torso: "cloth", sleeve: "cloth", legs: "cloth" };
+    case "sweater":
+      return { sleeves: "long", bulk: 0.024, torso: "cloth", sleeve: "cloth", legs: "clothDark" };
+    case "vest":
+      return { sleeves: "none", bulk: 0.008, torso: "linen", sleeve: "skin", legs: "clothDark" };
+    default:
+      // Salopette : chemise de toile dessous, bavette et pantalon en tissu.
+      return { sleeves: "short", bulk: 0.006, torso: "linen", sleeve: "linen", legs: "cloth" };
+  }
+}
+
+/** Profondeur de la surface d'un ellipsoïde, à une hauteur et un écart donnés. */
+function surfaceZ(r: Vec3, c: Vec3, x: number, y: number): number {
+  const dx = (x - c[0]) / r[0];
+  const dy = (y - c[1]) / r[1];
+  const k = 1 - dx * dx - dy * dy;
+  return k <= 0 ? c[2] : c[2] + r[2] * Math.sqrt(k);
+}
+
+/** Surface de l'enveloppe du buste, à une hauteur donnée, dans l'axe. */
+function bustZ(y: number, b: number): number {
+  return Math.max(
+    surfaceZ([BUST[0] + b, BUST[1] + b, BUST[2] + b], [0, BUST_Y, 0], 0, y),
+    surfaceZ([WAIST[0] + b, WAIST[1] + b, WAIST[2] + b], [0, WAIST_Y, 0], 0, y),
+  );
+}
+
+function addTorso(chest: Node, look: CharacterAppearance, fit: Build) {
+  const kind = CLOTHES[look.clothes]?.id ?? "overalls";
+  const b = fit.bulk;
+  /** Pièce plaquée sur le devant du buste, épaisseur comprise. */
+  const front = (y: number, out = 0.004) => bustZ(y, b) + out;
+  /** Plaque suivant le galbe de la poitrine. */
+  const bustPlate = (yTop: number, yBottom: number, span: number, out: number) =>
+    plate(BUST, [0, BUST_Y, 0], yTop, yBottom, span, b + out);
+
+  // Buste : cage thoracique large en haut, taille resserrée. Deux ellipsoïdes
+  // qui se recouvrent valent mieux qu'une boîte.
+  chest.add(fit.torso, ell(BUST[0] + b, BUST[1] + b, BUST[2] + b, [0, BUST_Y, 0]));
+  chest.add(fit.torso, ell(WAIST[0] + b, WAIST[1] + b, WAIST[2] + b, [0, WAIST_Y, 0]));
+  // Épaules : la ligne qui donne la carrure, et le raccord avec le bras.
+  for (const side of [-1, 1]) {
+    chest.add(fit.torso, ell(0.082 + b, 0.072 + b, 0.092 + b, [side * (BUST[0] - 0.016), 0.335, 0]));
+  }
+  // Cou, pris dans le buste.
+  chest.add("skin", cap(0.05, 0.08, [0, 0.44, 0.004]));
 
   if (kind === "overalls") {
-    const bib = box(0.3, 0.34, 0.32, accent);
-    bib.position.set(0, 0.86, 0.01);
-    g.add(bib);
+    // Bavette : une plaque rectangulaire épousant la poitrine, ses bretelles
+    // par-dessus l'épaule et son gousset au milieu.
+    chest.add("cloth", bustPlate(0.375, 0.16, 0.62, 0.014));
+    // Sous la bavette, la toile devient le haut du pantalon : sans ça, le
+    // ventre de la chemise reste nu entre les deux.
+    chest.add("cloth", ell(WAIST[0] + b + 0.008, 0.1, WAIST[2] + b + 0.008, [0, 0.055, 0]));
+    for (const side of [-1, 1]) {
+      chest.add("cloth", box(0.042, 0.2, 0.024, [side * 0.082, 0.335, 0.076], [0.36, 0, side * 0.04]));
+      chest.add("cloth", box(0.042, 0.19, 0.024, [side * 0.094, 0.325, -0.082], [-0.32, 0, side * 0.05]));
+      // Boucle de bretelle, à la jonction avec la bavette.
+      const y = 0.352;
+      chest.add("metal", box(0.024, 0.024, 0.012, [side * 0.074, y, front(y) + 0.008]));
+    }
+    chest.add("accent", roundedBox(0.062, 0.046, 0.016, 0.012, [0, 0.238, front(0.238) + 0.008]));
   } else if (kind === "jacket") {
-    const lapel = box(0.5, 0.4, 0.34, cloth);
-    lapel.position.y = 0.86;
-    g.add(lapel);
-    const collar = box(0.34, 0.08, 0.28, accent);
-    collar.position.y = 1.08;
-    g.add(collar);
+    // Revers ouverts sur la chemise, fermeture au milieu.
+    chest.add("linen", bustPlate(0.4, 0.14, 0.28, 0.012));
+    for (const side of [-1, 1]) {
+      const lapel = plate(BUST, [0, BUST_Y, 0], 0.41, 0.16, 0.34, b + 0.02);
+      chest.add("clothDark", place(lapel, [0, 0, 0], [0, side * 0.44, 0]));
+      chest.add("clothDark", roundedBox(0.062, 0.05, 0.02, 0.012, [side * 0.092, 0.11, front(0.11) + 0.006]));
+    }
+    chest.add("metal", box(0.012, 0.24, 0.012, [0, 0.25, front(0.25) + 0.014]));
+    chest.add("cloth", place(new THREE.TorusGeometry(0.066, 0.02, 8, 18), [0, 0.42, 0.004], [HALF, 0, 0]));
   } else if (kind === "sweater") {
-    const collar = cyl(0.12, 0.14, 0.08, 8, cloth);
-    collar.position.y = 1.12;
-    g.add(collar);
+    // Côtes : le col roulé et le bas de maille, marqués par des anneaux —
+    // c'est ce qui fait lire de la laine plutôt que du plastique.
+    chest.add("cloth", place(new THREE.TorusGeometry(0.064, 0.03, 8, 20), [0, 0.435, 0.004], [HALF, 0, 0]));
+    for (let i = 0; i < 3; i++) {
+      chest.add("clothDark", place(
+        new THREE.TorusGeometry(WAIST[0] + b - 0.006, 0.009, 6, 22),
+        [0, -0.008 + i * 0.019, 0],
+        [HALF, 0, 0],
+      ));
+    }
   } else if (kind === "vest") {
-    const panelL = box(0.16, 0.42, 0.32, accent);
-    panelL.position.set(-0.14, 0.84, 0.01);
-    const panelR = panelL.clone();
-    panelR.position.x = 0.14;
-    g.add(panelL, panelR);
+    // Gilet ouvert sur la chemise : deux pans devant, un dos plein.
+    for (const side of [-1, 1]) {
+      const panel = plate(BUST, [0, BUST_Y, 0], 0.4, 0.13, 0.3, b + 0.014);
+      chest.add("cloth", place(panel, [0, 0, 0], [0, side * 0.36, 0]));
+      chest.add("cloth", ell(0.056, 0.066, 0.094, [side * (BUST[0] - 0.014), 0.33, 0]));
+      chest.add("accent", roundedBox(0.05, 0.042, 0.016, 0.012, [side * 0.088, 0.17, front(0.17) + 0.008]));
+    }
+    chest.add("clothDark", ell(BUST[0] + 0.008, BUST[1] + 0.002, 0.094, [0, BUST_Y, -0.028]));
   } else if (kind === "shirt") {
-    const collar = box(0.28, 0.06, 0.26, FLAT("#efe6d4"));
-    collar.position.y = 1.08;
-    g.add(collar);
+    // Col ouvert, patte de boutonnage, quatre boutons.
+    for (const side of [-1, 1]) {
+      chest.add("linen", box(0.062, 0.058, 0.02, [side * 0.042, 0.4, front(0.4) - 0.014], [0.3, 0, side * 0.35]));
+      chest.add("clothDark", roundedBox(0.058, 0.046, 0.016, 0.012, [side * 0.09, 0.19, front(0.19) + 0.006]));
+    }
+    chest.add("linen", bustPlate(0.38, 0.12, 0.13, 0.01));
+    for (let i = 0; i < 4; i++) {
+      const y = 0.36 - i * 0.072;
+      chest.add("metal", ell(0.008, 0.008, 0.006, [0, y, front(y) + 0.012]));
+    }
+  } else {
+    // coverall : fermeture pleine longueur, col rabattu, ceinture de taille
+    chest.add("metal", box(0.014, 0.34, 0.012, [0, 0.24, front(0.24) + 0.008]));
+    chest.add("clothDark", place(new THREE.TorusGeometry(0.066, 0.02, 8, 18), [0, 0.43, 0.004], [HALF, 0, 0]));
+    chest.add("clothDark", place(new THREE.TorusGeometry(WAIST[0] + b - 0.004, 0.014, 6, 22), [0, 0.07, 0], [HALF, 0, 0]));
+    for (const side of [-1, 1]) {
+      chest.add("accent", roundedBox(0.056, 0.046, 0.016, 0.012, [side * 0.082, 0.17, front(0.17) + 0.008]));
+    }
   }
-
-  const armMat = kind === "vest" ? skin : cloth;
-  const armL = box(0.14, 0.46, 0.16, armMat);
-  armL.position.set(-0.33, 0.82, 0);
-  armL.rotation.z = 0.12;
-  const armR = armL.clone();
-  armR.position.x = 0.33;
-  armR.rotation.z = -0.12;
-  g.add(armL, armR);
-
-  const handL = box(0.15, 0.14, 0.17, skin);
-  handL.position.set(-0.35, 0.56, 0);
-  const handR = handL.clone();
-  handR.position.x = 0.35;
-  g.add(handL, handR);
 }
 
-function addClassProp(g: THREE.Group, spec?: Specialization) {
+/**
+ * Bras : le haut porte la manche, l'avant-bras est toujours nu — c'est ainsi
+ * qu'on travaille, et ça évite un tube de tissu uniforme du col au poignet.
+ */
+function addArm(shoulder: Node, fit: Build) {
+  // Le bras nu d'abord : la manche vient par-dessus, jamais à la place.
+  shoulder.add("skin", limb(0.05, 0.042, 0.24, [0, 0, 0]));
+  if (fit.sleeves === "short") {
+    shoulder.add(fit.sleeve, limb(0.057 + fit.bulk, 0.05, 0.115, [0, 0.012, 0]));
+  } else if (fit.sleeves === "long") {
+    shoulder.add(fit.sleeve, limb(0.057 + fit.bulk, 0.047 + fit.bulk, 0.225, [0, 0.012, 0]));
+    // Manche retroussée : le bourrelet au coude, tel qu'on porte une chemise
+    // de travail.
+    shoulder.add("clothDark", place(new THREE.TorusGeometry(0.048, 0.013, 6, 16), [0, -0.213, 0], [HALF, 0, 0]));
+  }
+}
+
+function addForearm(fore: Node) {
+  fore.add("skin", limb(0.043, 0.033, 0.23, [0, 0, 0]));
+}
+
+/** Main au repos : paume, quatre doigts groupés, pouce en dehors. */
+function addHand(hand: Node, side: number) {
+  hand.add("skin", ell(0.036, 0.046, 0.026, [0, -0.036, 0]));
+  hand.add("skin", cap(0.017, 0.042, [0, -0.086, 0.004], [0.22, 0, 0]));
+  // Le pouce écarte la main du corps : sans lui, c'est une moufle.
+  hand.add("skin", cap(0.013, 0.03, [side * -0.03, -0.05, 0.008], [0, 0, side * 0.75]));
+}
+
+function addLegs(hips: Node, look: CharacterAppearance, fit: Build) {
+  const kind = CLOTHES[look.clothes]?.id ?? "overalls";
+  // Bassin : la culotte du pantalon, qui relie les deux cuisses.
+  hips.add(fit.legs, ell(0.142, 0.105, 0.1, [0, -0.028, 0]));
+  if (kind !== "overalls" && kind !== "coverall") {
+    hips.add("leather", place(new THREE.TorusGeometry(0.142, 0.018, 6, 20), [0, 0.035, 0], [HALF, 0, 0]));
+    hips.add("metal", box(0.045, 0.04, 0.016, [0, 0.035, 0.128]));
+  }
+
+  // Chaîne de jambe, cotée depuis le sol : hanche 0,78 — genou 0,42 —
+  // cheville 0,085 — semelle 0. Les articulations pivotent au sommet du
+  // segment qu'elles portent, sinon la jambe se plie au milieu de l'os.
+  for (const side of [-1, 1] as const) {
+    const thigh = hips.joint(side < 0 ? "thighL" : "thighR", [side * 0.082, -0.06, 0]);
+    thigh.add(fit.legs, limb(0.072, 0.058, 0.36, [0, 0, 0]));
+
+    const shin = thigh.joint(side < 0 ? "shinL" : "shinR", [0, -0.36, 0]);
+    shin.add(fit.legs, limb(0.058, 0.042, 0.3, [0, 0, 0]));
+    // Bas de jambe rentré dans la botte.
+    shin.add("leather", limb(0.058, 0.055, 0.16, [0, -0.18, 0]));
+
+    const foot = shin.joint(side < 0 ? "footL" : "footR", [0, -0.335, 0]);
+    foot.add("leather", roundedBox(0.098, 0.09, 0.2, 0.028, [0, -0.04, 0.032]));
+    // Semelle : plus large que la tige, c'est elle qui pose au sol.
+    foot.add("leather", roundedBox(0.108, 0.026, 0.215, 0.012, [0, -0.072, 0.034]));
+    foot.add("skinShade", box(0.092, 0.01, 0.2, [0, -0.081, 0.034]));
+  }
+}
+
+/* ------------------------------------------------------------------ */
+/* Accessoire de métier                                                */
+/* ------------------------------------------------------------------ */
+
+function addProp(prop: Node, spec?: Specialization) {
   if (spec === "CEREALIER") {
-    const stalk = cyl(0.02, 0.02, 0.7, 5, FLAT("#c9a227"));
-    stalk.position.set(0.4, 0.85, 0.1);
-    stalk.rotation.z = -0.22;
-    const ear = cyl(0.07, 0.02, 0.24, 6, FLAT("#e8c85a"));
-    ear.position.set(0.47, 1.24, 0.1);
-    ear.rotation.z = -0.22;
-    g.add(stalk, ear);
+    // Tige montant du sol, jamais dessous : l'accessoire est planté, pas posé.
+    prop.add("accent", cyl(0.007, 0.011, 0.46, 6, [0, 0.23, 0], [0, 0, 0.05]));
+    for (const y of [0.16, 0.3]) {
+      prop.add("accent", box(0.012, 0.11, 0.004, [0.03, y, 0], [0, 0, -0.7]));
+    }
+    // Épi : des grains en quinconce, pas un cône.
+    for (let i = 0; i < 7; i++) {
+      const y = 0.47 + i * 0.026;
+      const s = 1 - i * 0.09;
+      for (const side of [-1, 1]) {
+        prop.add("accent", ell(0.016 * s, 0.012 * s, 0.012 * s, [side * 0.014 * s, y, 0], [0, 0, side * 0.5]));
+      }
+      prop.add("accent", cyl(0.001, 0.003, 0.05, 4, [0.006, y + 0.03, 0], [0, 0, 0.25]));
+    }
+    return;
   }
   if (spec === "ELEVEUR") {
-    const calf = new THREE.Group();
-    const body = box(0.42, 0.24, 0.24, FLAT("#f2ece1"));
-    body.position.y = 0.26;
-    const patch = box(0.16, 0.12, 0.25, FLAT("#4a3527"));
-    patch.position.set(0.06, 0.31, 0);
-    const headC = box(0.2, 0.18, 0.18, FLAT("#f2ece1"));
-    headC.position.set(-0.29, 0.32, 0);
-    const snout = box(0.09, 0.1, 0.12, FLAT("#e0b6ac"));
-    snout.position.set(-0.4, 0.28, 0);
-    calf.add(body, patch, headC, snout);
-    for (const [lx, lz] of [
-      [-0.14, 0.08],
-      [-0.14, -0.08],
-      [0.14, 0.08],
-      [0.14, -0.08],
-    ]) {
-      const leg = box(0.07, 0.18, 0.07, FLAT("#d9d2c6"));
-      leg.position.set(lx, 0.09, lz);
-      calf.add(leg);
+    // Un veau, coté depuis ses sabots : garrot 0,28 — sabots 0.
+    const hide = "linen" as const;
+    prop.add(hide, ell(0.13, 0.085, 0.085, [0, 0.22, 0]));
+    prop.add("leather", ell(0.05, 0.04, 0.05, [0.045, 0.25, 0.03]));
+    prop.add(hide, ell(0.065, 0.06, 0.06, [-0.14, 0.25, 0]));
+    prop.add("lip", ell(0.038, 0.032, 0.035, [-0.185, 0.225, 0.005]));
+    for (const side of [-1, 1]) {
+      prop.add(hide, ell(0.018, 0.028, 0.012, [-0.13, 0.295, side * 0.045], [side * 0.4, 0, 0.3]));
     }
-    calf.position.set(0.62, 0, 0.18);
-    calf.rotation.y = -0.5;
-    calf.scale.setScalar(0.86);
-    g.add(calf);
+    for (const [lx, lz] of [
+      [-0.06, 0.05],
+      [-0.06, -0.05],
+      [0.07, 0.05],
+      [0.07, -0.05],
+    ]) {
+      prop.add(hide, limb(0.022, 0.018, 0.12, [lx, 0.19, lz]));
+      prop.add("leather", ell(0.026, 0.018, 0.028, [lx, 0.018, lz + 0.004]));
+    }
   }
 }
 
-/** Personnage low-poly assemblé à partir des indices d'apparence. */
+/* ------------------------------------------------------------------ */
+/* Montage                                                             */
+/* ------------------------------------------------------------------ */
+
+export type CharacterPose = {
+  /** Secondes écoulées : respiration, clignement, balancement */
+  t: number;
+  /** Distance parcourue : c'est elle qui règle le pas, jamais le temps */
+  distance?: number;
+  walking?: boolean;
+  /** Salut de la main — 0 à 1, monté et descendu par l'appelant */
+  wave?: number;
+  /** Penché sur l'ouvrage */
+  working?: boolean;
+  /** Cible du regard, en radians autour de Y */
+  look?: number;
+};
+
+export type CharacterRig = {
+  group: THREE.Group;
+  joints: Partial<Record<Joint, THREE.Group>>;
+  /** Hauteur totale, sommet du chapeau compris */
+  height: number;
+  update(pose: CharacterPose): void;
+  dispose(): void;
+};
+
+/** Longueur d'une foulée : deux pas par cycle complet de jambes. */
+const STRIDE = 0.72;
+
+function plan(look: CharacterAppearance, opts: { spec?: Specialization; prop?: boolean }): Node {
+  const fit = outfitOf(look);
+  const root = new Node();
+
+  const hips = root.joint("hips", [0, 0.84, 0]);
+  addLegs(hips, look, fit);
+
+  const chest = hips.joint("chest", [0, 0.06, 0]);
+  addTorso(chest, look, fit);
+
+  for (const side of [-1, 1] as const) {
+    // Bras au repos : écarté du buste, coude à peine fléchi, avant-bras
+    // légèrement rentré. Deux bras rigoureusement verticaux font un pantin.
+    const arm = chest.joint(side < 0 ? "armL" : "armR", [side * SHOULDER, 0.33, 0], [0.04, 0, side * 0.12]);
+    addArm(arm, fit);
+    const fore = arm.joint(side < 0 ? "foreL" : "foreR", [0, -0.24, 0], [0.1, 0, side * -0.06]);
+    addForearm(fore);
+    const hand = fore.joint(side < 0 ? "handL" : "handR", [0, -0.23, 0]);
+    addHand(hand, side);
+  }
+
+  const head = chest.joint("head", [0, 0.47, 0.004]);
+  head.add("skin", headShape());
+  // Pas de pommettes rapportées : deux essais ont donné deux excroissances sur
+  // les joues. Le galbe du crâne et de la mâchoire suffit — un relief de plus
+  // se voit comme une verrue, jamais comme un os.
+
+  addEars(head, look);
+  addEyes(head, look);
+  addNose(head, look);
+  addMouth(head, look);
+  addBeard(head, look);
+  addHair(head, look, (HATS[look.hat]?.id ?? "none") !== "none");
+  addHat(head, look);
+
+  if (opts.prop) {
+    // L'accessoire est planté au sol à côté du personnage : il ne suit ni le
+    // bras ni la respiration, il attend.
+    const prop = root.joint("prop", [0.5, 0, 0.08], [0, -0.5, 0]);
+    addProp(prop, opts.spec);
+  }
+
+  return root;
+}
+
+/**
+ * Personnage complet, articulé.
+ *
+ * `seed` décale les cycles d'inactivité : deux voisins qui respirent et
+ * clignent des yeux à l'unisson trahissent tout de suite la mécanique.
+ */
+export function createCharacterRig(
+  look: CharacterAppearance,
+  opts: { spec?: Specialization; prop?: boolean; shadows?: boolean; seed?: number } = {},
+): CharacterRig {
+  const materials = createCharacterMaterials(look);
+  const joints: Partial<Record<Joint, THREE.Group>> = {};
+  const group = plan(look, opts).build(materials, joints, opts.shadows ?? false);
+  group.name = "character";
+
+  const seed = opts.seed ?? 0;
+  const box3 = new THREE.Box3().setFromObject(group);
+  const height = box3.max.y;
+
+  const rest = (j: THREE.Group | undefined) =>
+    (j?.userData.rest as { x: number; y: number; z: number; py: number }) ?? {
+      x: 0,
+      y: 0,
+      z: 0,
+      py: 0,
+    };
+
+  /** Amorti d'une valeur vers sa cible : rien ne doit sauter d'une image à l'autre. */
+  let leanNow = 0;
+  let waveNow = 0;
+
+  function update(pose: CharacterPose): void {
+    const t = pose.t + seed * 1.7;
+    const { hips, chest, head, armL, armR, foreL, foreR, thighL, thighR, shinL, shinR, footL, footR } =
+      joints;
+
+    const target = pose.working ? 1 : 0;
+    leanNow += (target - leanNow) * 0.08;
+    waveNow += ((pose.wave ?? 0) - waveNow) * 0.12;
+
+    // Respiration : la cage se soulève, le corps monte d'un millimètre.
+    const breath = Math.sin(t * 1.5);
+    if (chest) {
+      const r = rest(chest);
+      chest.scale.set(1 + breath * 0.014, 1 + breath * 0.008, 1 + breath * 0.018);
+      chest.rotation.x = r.x + breath * 0.012 + leanNow * 0.42;
+    }
+
+    // Report du poids d'un pied sur l'autre : c'est ce qui empêche la pose de
+    // paraître figée.
+    const sway = Math.sin(t * 0.42);
+    if (hips) {
+      const r = rest(hips);
+      hips.rotation.z = r.z + sway * 0.028;
+      hips.rotation.y = Math.sin(t * 0.31) * 0.035;
+      hips.position.y = r.py - Math.abs(sway) * 0.008 - leanNow * 0.05;
+    }
+
+    if (head) {
+      const r = rest(head);
+      head.rotation.y = r.y + (pose.look ?? 0) + Math.sin(t * 0.37) * 0.16;
+      head.rotation.x = r.x + Math.sin(t * 0.29) * 0.05 - leanNow * 0.2;
+      head.rotation.z = r.z + Math.sin(t * 0.23) * 0.03;
+    }
+
+    // Clignement : trois secondes environ, jamais tout à fait régulier.
+    const cycle = (t * 0.31) % 1;
+    const blink = cycle < 0.05 ? Math.sin((cycle / 0.05) * Math.PI) : 0;
+    for (const key of ["lidL", "lidR"] as const) {
+      const lid = joints[key];
+      if (!lid) continue;
+      const r = rest(lid);
+      // Fermé, la paupière dépasse un peu la verticale : elle doit recouvrir
+      // le globe, pas l'affleurer.
+      lid.rotation.x = r.x + blink * (LID_CLOSED - r.x);
+    }
+    for (const key of ["browL", "browR"] as const) {
+      const brow = joints[key];
+      if (!brow) continue;
+      const r = rest(brow);
+      brow.position.y = r.py + Math.sin(t * 0.6) * 0.004 - blink * 0.006;
+    }
+
+    // Marche : la phase vient de la distance, comme les roues des engins. Deux
+    // personnages côte à côte à la même vitesse posent le pied ensemble.
+    const phase = ((pose.distance ?? 0) / STRIDE) * Math.PI * 2;
+    const gait = pose.walking ? 1 : 0;
+    const swing = Math.sin(phase);
+    const lift = Math.cos(phase);
+
+    for (const [thigh, shin, foot, dir] of [
+      [thighL, shinL, footL, 1],
+      [thighR, shinR, footR, -1],
+    ] as const) {
+      if (!thigh || !shin || !foot) continue;
+      const s = swing * dir;
+      thigh.rotation.x = rest(thigh).x + s * 0.62 * gait;
+      // Le genou ne plie que vers l'arrière, et surtout au retour de jambe.
+      shin.rotation.x = rest(shin).x - Math.max(0, -s) * 0.9 * gait;
+      foot.rotation.x = rest(foot).x + (0.25 - s * 0.3) * gait;
+    }
+    if (hips && gait) hips.position.y += Math.abs(lift) * 0.022;
+
+    for (const [arm, fore, dir] of [
+      [armL, foreL, -1],
+      [armR, foreR, 1],
+    ] as const) {
+      if (!arm || !fore) continue;
+      const r = rest(arm);
+      const idle = Math.sin(t * 1.5 + (dir > 0 ? 0 : Math.PI)) * 0.04;
+      arm.rotation.x = r.x + swing * dir * 0.5 * gait + idle * (1 - gait) + leanNow * 0.5;
+      arm.rotation.z = r.z + leanNow * dir * -0.12;
+      fore.rotation.x = rest(fore).x - 0.12 - Math.max(0, swing * dir) * 0.5 * gait - leanNow * 0.7;
+    }
+
+    // Salut : le bras droit monte, l'avant-bras balaie.
+    if (waveNow > 0.002 && armR && foreR) {
+      const r = rest(armR);
+      armR.rotation.z = r.z - waveNow * 2.15;
+      armR.rotation.x = r.x - waveNow * 0.25;
+      foreR.rotation.z = rest(foreR).z + waveNow * (0.35 + Math.sin(t * 9) * 0.45);
+      foreR.rotation.x = rest(foreR).x;
+    }
+  }
+
+  function dispose(): void {
+    group.traverse((o) => {
+      const mesh = o as THREE.Mesh;
+      if (mesh.isMesh) mesh.geometry.dispose();
+    });
+    for (const m of Object.values(materials)) m.dispose();
+  }
+
+  update({ t: 0 });
+  return { group, joints, height, update, dispose };
+}
+
+/**
+ * Personnage figé, sans articulation exposée.
+ *
+ * C'est la forme dont la parcelle a besoin : des dizaines d'ouvriers dont on ne
+ * fait rien d'autre que les poser au champ.
+ */
 export function buildCharacter(
   appearance: CharacterAppearance,
-  opts: { spec?: Specialization; prop?: boolean } = {},
+  opts: { spec?: Specialization; prop?: boolean; shadows?: boolean } = {},
 ): THREE.Group {
-  const g = new THREE.Group();
-  const skin = FLAT(SKIN_TONES[appearance.skin]?.hex ?? "#e8b58a");
-  const cloth = FLAT(CLOTH_COLORS[appearance.clothColor]?.hex ?? "#3f8f52");
-  const accent = FLAT(ACCENT_COLORS[appearance.accentColor]?.hex ?? "#d9b23c");
-
-  addClothes(g, appearance, cloth, accent, skin);
-
-  const neck = box(0.16, 0.1, 0.16, skin);
-  neck.position.y = 1.15;
-  g.add(neck);
-
-  const head = box(0.36, 0.36, 0.34, skin);
-  head.position.y = 1.37;
-  g.add(head);
-
-  addEars(g, appearance, skin);
-  addEyes(g, appearance, skin);
-  addNose(g, appearance, skin);
-  addMouth(g, appearance);
-  addHat(g, appearance);
-  if (opts.prop) addClassProp(g, opts.spec);
-  return g;
+  return createCharacterRig(appearance, opts).group;
 }
