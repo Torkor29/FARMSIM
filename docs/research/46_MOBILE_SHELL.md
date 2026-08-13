@@ -119,6 +119,68 @@ Le petit téléphone reste le format le plus serré. Il est jouable, sans marge.
 
 ---
 
+## Deuxième passe : le haut se superposait encore
+
+Une capture d'un joueur, sur son propre téléphone, a montré ce que
+l'émulation n'avait pas révélé : le haut de l'écran était un empilement
+illisible, et la ferme n'occupait plus que la moitié de la hauteur.
+
+### Quatre calques à des décalages fixes
+
+Le bandeau, les pastilles du joueur, les cotations et le bilan d'absence
+étaient positionnés en absolu, indépendamment, à des décalages codés en dur —
+`top: 0`, `top: 3.4rem`, `top: 5.8rem`. Il suffisait qu'un élément grandisse
+pour qu'il recouvre le suivant. Or les pastilles passent à la ligne dès qu'on
+rétrécit, et elles étaient six.
+
+Bandeau et cotations vivent désormais dans un même conteneur en flux. La
+superposition n'est plus improbable, elle est **structurellement impossible**.
+
+### Ce que le bandeau garde, et ce qu'il rend
+
+Nom du jeu, badge de version, métier, niveau, expérience, bonus de ferme,
+bouton d'aide et déconnexion occupaient quatre rangées au-dessus de la ferme.
+Il n'en reste que ce qu'on surveille en jouant : qui l'on est, et ce qu'on a
+en caisse. Le reste est passé dans un tiroir *Profil*, appelé par un bouton du
+bandeau.
+
+Le nom du jeu lui-même est masqué : sur un téléphone, le logo suffit à dire où
+l'on est, et son texte écrasait le nom du joueur à trois lettres tout en
+poussant la trésorerie sur une deuxième ligne.
+
+Les cotations défilent sur une seule ligne au lieu d'en empiler trois.
+
+Le bilan d'absence est devenu un dialogue qu'on acquitte. Il annonce parfois
+huit cultures perdues : il mérite d'être lu, pas de flotter sur la ferme.
+
+Le sélecteur de pinceau, enfin, tenait trois boutons en tête d'une barre qui
+défile et repoussait les outils hors de vue. Un seul bouton alterne
+maintenant entre les trois tailles.
+
+### La grille sortait de l'écran
+
+Défaut plus grave, et sans rapport avec la superposition : le cadrage de la
+caméra se réglait sur la hauteur seule. L'étendue horizontale vaut cette
+hauteur multipliée par le rapport de l'écran — donc **plus petite** en
+portrait. La parcelle n'y tenait pas, et le joueur atterrissait dans un coin,
+la grille coupée des deux côtés.
+
+La caméra recule désormais jusqu'à ce que la parcelle tienne dans la dimension
+la plus étroite. Le comportement sur grand écran est inchangé, le facteur ne
+s'appliquant qu'en deçà d'un rapport de 1.
+
+### Résultat
+
+La ferme occupe environ les trois quarts de la hauteur, contre la moitié
+avant. Le bandeau tient sur une rangée, les cotations sur une autre, et les
+quatre bords de la parcelle sont visibles avec leurs cases distinctes.
+
+**La leçon :** trois formats d'émulation n'avaient rien montré, parce que
+j'avais vérifié que chaque élément était atteignable sans regarder ce que leur
+somme donnait. Une capture d'un vrai téléphone l'a montré en une seconde.
+
+---
+
 ## Reste à faire
 
 - La barre d'onglets ne signale pas ce qui réclame l'attention : un troupeau
