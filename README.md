@@ -30,6 +30,13 @@ Tests sim : `pnpm test:sim`
 Atelier du parc matériel 3D (hors jeu, pour juger les engins) :
 `http://localhost:5173/machines.html`
 
+Modèles 3D exportables (Blender, autre moteur) — `models/*.glb`, hiérarchie
+nommée et animation « Travail » incluses :
+
+```bash
+node scripts/export-machines.mjs
+```
+
 ## Déploiement
 
 Une seule image Docker : l'API (Express + Prisma) sert aussi les fichiers

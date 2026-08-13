@@ -9,6 +9,7 @@ import {
   type RipenessStage,
 } from "@farmsim/shared";
 import { disposeRenderer, disposeThreeScene, markShared } from "./three-cleanup";
+import { attachStudioEnvironment } from "./machine-kit";
 import {
   createDustTrail,
   createMachineRig,
@@ -306,6 +307,11 @@ export function IsoFarmView({
     // toute façon par PCFShadowMap en émettant un avertissement.
     renderer.shadowMap.type = THREE.PCFShadowMap;
     el.appendChild(renderer.domElement);
+
+    // Les engins sont en matières PBR : sans environnement, leur peinture
+    // vernie et leur chrome rendraient comme de la peinture mate. Le reste de
+    // la ferme, en Lambert, n'en est pas affecté.
+    const releaseEnvironment = attachStudioEnvironment(renderer, scene, 0.3);
 
     const camera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0.1, 100);
     camera.position.set(18, 16, 18);
@@ -1073,8 +1079,12 @@ export function IsoFarmView({
         }
       }
       if (workRig && aw && aw.cells.length) {
-        const duration = Math.max(0.7, aw.cells.length * 0.28);
-        const u = Math.min(1, (t - workStartRef.current) / duration);
+        const duration = Math.max(0.7, aw.cells.length * 0.32);
+        const raw = Math.min(1, (t - workStartRef.current) / duration);
+        // Démarrage et arrêt adoucis : un engin ne passe pas de zéro à sa
+        // vitesse de travail en une image. Les roues suivent la distance,
+        // elles accélèrent donc avec lui.
+        const u = raw * raw * (3 - 2 * raw);
         const n = aw.cells.length;
         const f = u * Math.max(1, n - 1);
         const i0 = Math.min(n - 1, Math.floor(f));
@@ -1150,6 +1160,7 @@ export function IsoFarmView({
       }
       clearWorkVehicle();
       workDust.dispose();
+      releaseEnvironment();
       // Marquée partagée pour survivre aux reconstructions de scène, la
       // géométrie de dalle doit être libérée explicitement au démontage.
       sharedTile?.geo.dispose();

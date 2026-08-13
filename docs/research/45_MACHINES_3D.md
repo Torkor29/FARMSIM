@@ -1,8 +1,9 @@
 # 45 — Parc matériel 3D : des engins montés, riggés, animés
 
 **Date :** 2026-08-13
-**Portée :** `apps/web/src/machines3d.ts`, `MachineView3D.tsx`, `MachineShowcase.tsx`,
-intégration dans `IsoFarmView.tsx`, page atelier `/machines.html`.
+**Portée :** `apps/web/src/machine-kit.ts`, `machines3d.ts`, `MachineView3D.tsx`,
+`MachineShowcase.tsx`, intégration dans `IsoFarmView.tsx`, page atelier
+`/machines.html`, export glTF (`scripts/export-machines.mjs` → `models/`).
 
 ---
 
@@ -59,30 +60,48 @@ Un épandeur et un déchaumeur n'ont pas de moteur. Ils sont donc livrés :
 - **attelés derrière un tracteur** dès qu'ils travaillent (`{ towed: true }`),
   l'anneau d'attelage de l'outil posé exactement sur la chape du tracteur.
 
-### Style et budget
+### Le niveau de détail
 
-Règles de la charte (`33_ART_DIRECTION.md`) respectées : facettes assumées,
-aucune texture, révolutions à 6/8/10 segments, couleurs plates, variation de
-teinte de ±3 % par instance. La palette reprend celle des illustrations 2D du
-catalogue : tracteur vert à jantes jaunes, moissonneuse rouge à barre de coupe
-or, épandeur gris à châssis jaune, déchaumeur brun à disques d'acier.
+Le parc a d'abord été monté au budget low-poly de la charte
+(`33_ART_DIRECTION.md` §4.2 : 180–260 triangles pour un tracteur). Le résultat
+était juste, mais restait un assemblage de boîtes peintes. Les engins étant les
+seuls objets mobiles de la ferme — donc ceux que l'œil suit —, ils sont passés
+au niveau au-dessus, et **tout le parc au même niveau** : une seule machine
+détaillée au milieu de trois autres taillées à la serpe serait pire que quatre
+machines sobres.
 
-**Écart assumé sur le budget géométrique.** La charte prévoit 180–260 triangles
-pour un tracteur ; ces engins sont deux à trois fois plus lourds. C'est délibéré :
-ils sont les seuls objets mobiles, ils portent le regard, et ils ne sont jamais
-plus d'une poignée à l'écran. La compensation est ailleurs :
+Le vocabulaire de formes est dans `machine-kit.ts`, et rien n'y est une boîte :
 
-- **fusion par matériau** (`mergeGeometries`) : capot, calandre, tôles et
-  marchepieds d'un tracteur ne font qu'un seul maillage. Environ 8 appels de
-  rendu par machine au lieu d'une quarantaine ;
-- **cache de géométrie** marqué partagé (`markShared`) : la vue iso reconstruit
-  sa scène plusieurs fois par seconde, monter un engin ne coûte plus que des
-  maillages et des matériaux ;
-- **matériaux propres à l'instance**, libérés par `rig.dispose()`.
+- capots et caisses : **profils de côté extrudés** et biseautés ;
+- tôles : **boîtes aux arêtes cassées** — une tôle n'a jamais d'arête vive ;
+- pneus, jantes, disques d'épandage, disques de déchaumeur : **tournés au
+  tour** (`LatheGeometry`), crampons en chevron sur deux rangées ;
+- garde-boue : tôle cintrée avec bourrelet de bord ;
+- flexibles et mains courantes : **courbes** (`TubeGeometry`), pas des bâtons.
+
+Les matières sont PBR : peinture vernie (une couche spéculaire nette par-dessus
+la couleur — c'est elle qui distingue une carrosserie d'un aplat), chrome,
+fonte mate, caoutchouc, verre teinté. La scène doit fournir un environnement
+(`attachStudioEnvironment`), faute de quoi les métaux paraissent éteints.
+
+Compter ~10 000 à 20 000 triangles par engin, contre ~700 pour la version
+sobre. Ce qui tient le coût :
+
+- **fusion par matière** (`mergeGeometries`) : capot, calandre, tôles et
+  marchepieds ne font qu'un maillage. Une quinzaine d'appels de rendu par
+  machine au lieu d'une centaine ;
+- **cache de plans de montage** marqués partagés (`markShared`) : la vue iso
+  reconstruit sa scène plusieurs fois par seconde, monter un engin ne crée
+  plus que des maillages et des matériaux ;
+- **matériaux propres à l'instance**, libérés par `rig.dispose()` ;
+- jamais plus d'une poignée d'engins à l'écran.
 
 Corollaire : `disposeObject3D()` de la vue iso ignore désormais les géométries
 marquées partagées. Sans cela, la première machine détruite viderait le cache et
 laisserait les suivantes sans maillage.
+
+Coût de bundle : la peinture vernie et l'environnement font passer le morceau
+`three` de 523 à 563 kB (132 → 144 kB gzip).
 
 ### Poussière
 
@@ -107,35 +126,29 @@ champ : sous l'angle exact de la vue de jeu, et à l'échelle des cases.
 Le composant `MachineView3D` est autonome : il peut être posé tel quel dans le
 garage ou le catalogue à la place de l'illustration 2D.
 
-## Essai : un tracteur « héros »
+## Des fichiers, pas seulement du code
 
-`tractor-hero.ts` pousse **un seul engin** au-delà de la charte, pour mesurer
-ce qu'on gagne à quitter le low-poly :
+Le jeu construit ses engins au chargement : il n'a aucun fichier de modèle à
+télécharger. Mais un modèle qu'on ne peut ouvrir nulle part ailleurs n'est pas
+vraiment un asset — impossible de le retoucher dans Blender, de le confier à un
+graphiste, de le réutiliser ailleurs.
 
-| | Modèle du jeu | Modèle détaillé |
-|---|---|---|
-| Triangles | ~700 | ~14 000 |
-| Volumes | boîtes et cylindres facettés | capot extrudé galbé, tôles à arêtes cassées, pneus et jantes tournés au tour |
-| Ombrage | facettes assumées | lisse sur les tôles, facettes sur les crampons |
-| Matières | `MeshLambert`, couleurs plates | peinture vernie (`clearcoat`), chrome, fonte mate, verre teinté |
-| Éclairage | soleil + hémisphère | idem + environnement PMREM, ACES, ombres 2048 |
-| Détail | calandre, phares, attelage suggérés | calandre à lames, phares à enjoliveur, panneaux de porte, marchepieds, relevage trois points complet avec rotules, prise de force cannelée, flexibles hydrauliques courbés, rétroviseurs, gyrophare |
+```bash
+node scripts/export-machines.mjs      # → models/*.glb
+```
 
-Il expose la même interface que le parc (`MachineRig`) : il se substitue à
-`createMachineRig("TRACTOR")` sans rien changer à l'appelant, et répond aux
-mêmes commandes d'animation.
+Le script démarre le serveur de développement, ouvre `export-models.html` dans
+un navigateur sans interface et récupère un `.glb` par machine. Chaque fichier
+contient :
 
-**Ce que ça coûte, honnêtement.** La peinture vernie tire `MeshPhysicalMaterial`
-et l'environnement tire `PMREMGenerator` : le morceau `three` partagé passe de
-523 à 563 kB (143 → 144 kB gzip). Comme la page de jeu charge le même morceau,
-elle paie aujourd'hui pour une pièce qu'elle n'utilise pas. À régler si le
-modèle détaillé entre en jeu — en séparant le `three` de l'atelier de celui du
-jeu, ou en réservant le modèle à un écran qui charge son propre bundle.
+- la **hiérarchie nommée** — `wheel_1`…, `steer_1`, `reel_1`, `gang_1`,
+  `spinner_1`, `tool_1`, `auger_1`, `beacon_1` : de quoi animer la machine dans
+  n'importe quel outil ;
+- une **animation « Travail »** déjà posée, en boucle de deux secondes ;
+- les **matières PBR** d'origine.
 
-Verdict à trancher : le modèle détaillé est fait pour un **garage ou un
-catalogue** — un engin à l'écran, vu de près, sur plateau tournant. Dans la
-parcelle, à 40 px de haut et à plusieurs exemplaires, il n'apporterait presque
-rien de visible pour vingt fois le coût.
+Les fichiers vivent dans `models/`, hors de `public/` : ce sont des livrables
+pour l'extérieur, pas des ressources chargées par le jeu.
 
 ## Reste à faire
 
@@ -149,5 +162,5 @@ rien de visible pour vingt fois le coût.
 - Le grain ne descend pas dans la trémie de la moissonneuse au fil de la
   moisson, et la vis se déploie sans rien déverser
 - Pas de tier 2 : les quatre engins sont figés au niveau 1 du catalogue
-- Le modèle détaillé n'existe que pour le tracteur, et n'est branché nulle
-  part ailleurs que dans l'atelier
+- Les `.glb` sont lourds (1 à 3 Mo) : géométrie non indexée, sans compression
+  Draco ni quantification
