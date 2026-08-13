@@ -102,13 +102,47 @@ async function exportOne(type: MachineType): Promise<string> {
   return btoa(binary);
 }
 
+/**
+ * Contrôle d'assiette : un engin doit poser ses roues sur y = 0, ni flotter ni
+ * s'enfoncer. Rend les bornes verticales de chaque état.
+ */
+function bounds(type: MachineType, state: { working: boolean; towed: boolean }) {
+  const rig = createMachineRig(type, { towed: state.towed, shadows: false });
+  rig.update({ t: 0, distance: 0, working: state.working });
+  // Deux cents pas : les mouvements amortis (outil, vis) doivent être arrivés.
+  for (let i = 0; i < 200; i++) rig.update({ t: i * 0.016, distance: 0, working: state.working });
+  const boxAll = new THREE.Box3().setFromObject(rig.group);
+  // Les trois pièces les plus basses : c'est par là qu'un engin s'enfonce.
+  const lowest: { part: string; y: number }[] = [];
+  rig.group.updateWorldMatrix(true, true);
+  rig.group.traverse((o) => {
+    const mesh = o as THREE.Mesh;
+    if (!mesh.isMesh) return;
+    const b = new THREE.Box3().setFromObject(mesh);
+    let path = mesh.name;
+    for (let p = mesh.parent; p && p !== rig.group; p = p.parent) if (p.name) path = `${p.name}/${path}`;
+    lowest.push({ part: path, y: b.min.y });
+  });
+  lowest.sort((a, b) => a.y - b.y);
+  const result = {
+    min: boxAll.min.y,
+    max: boxAll.max.y,
+    length: rig.length,
+    lowest: lowest.slice(0, 4),
+  };
+  rig.dispose();
+  return result;
+}
+
 declare global {
   interface Window {
     exportMachine?: (type: MachineType) => Promise<string>;
+    machineBounds?: (type: MachineType, state: { working: boolean; towed: boolean }) => unknown;
   }
 }
 
 window.exportMachine = exportOne;
+window.machineBounds = bounds;
 
 const root = document.getElementById("root");
 if (root) {

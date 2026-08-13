@@ -507,12 +507,17 @@ function buildSpreader(): Blueprint {
   const CX = -0.46;
 
   /* — Flèche, anneau, béquille ————————————————————————— */
-  root.add("rim", roundedBox(0.34, 0.07, 0.08, 0.02, [-0.17, 0.3, 0]));
-  root.add("chrome", ring(0.042, 0.012, 12, Math.PI * 2, [0.01, 0.3, 0], [HALF, 0, 0]));
+  //
+  // L'anneau est à la hauteur exacte de la chape du tracteur (y = 0.16) : le
+  // timon monte ensuite vers le châssis. Sans cette contrainte partagée,
+  // atteler l'outil l'enfonçait dans le sol de la différence des deux
+  // hauteurs.
+  root.add("rim", roundedBox(0.4, 0.07, 0.08, 0.02, [-0.19, 0.24, 0], [0, 0, -0.4]));
+  root.add("chrome", ring(0.042, 0.012, 12, Math.PI * 2, [0.01, 0.16, 0], [HALF, 0, 0]));
   root.add(
     "steel",
-    cyl(0.018, 0.018, 0.2, 8, [-0.1, 0.2, 0.07]),
-    roundedBox(0.07, 0.02, 0.07, 0.012, [-0.1, 0.11, 0.07]),
+    cyl(0.018, 0.018, 0.16, 8, [-0.12, 0.16, 0.07]),
+    roundedBox(0.07, 0.02, 0.07, 0.012, [-0.12, 0.08, 0.07]),
   );
 
   /* — Châssis : deux longerons, la trémie posée dessus ——————— */
@@ -604,7 +609,7 @@ function buildSpreader(): Blueprint {
     );
   }
 
-  return { root, length: 1.1, hitch: [-0.95, 0.3, 0], eye: [0.01, 0.3, 0] };
+  return { root, length: 1.1, hitch: [-0.95, 0.3, 0], eye: [0.01, 0.16, 0] };
 }
 
 /* ------------------------------------------------------------------ */
@@ -617,9 +622,13 @@ function buildDiscHarrow(): Blueprint {
   const DISC_R = 0.16;
 
   /* — Flèche, anneau, béquille ————————————————————————— */
-  root.add("paint", roundedBox(0.36, 0.08, 0.09, 0.025, [-0.18, 0.36, 0]));
-  root.add("chrome", ring(0.042, 0.012, 12, Math.PI * 2, [0.01, 0.36, 0], [HALF, 0, 0]));
-  root.add("steel", cyl(0.018, 0.018, 0.22, 8, [-0.12, 0.25, 0.08]));
+  //
+  // Anneau à la hauteur de la chape du tracteur (y = 0.16), timon montant
+  // jusqu'au cadre : c'est ce qui garantit que l'outil attelé pose ses roues
+  // au sol et non dessous.
+  root.add("paint", roundedBox(0.48, 0.08, 0.09, 0.025, [-0.19, 0.29, 0], [0, 0, -0.62]));
+  root.add("chrome", ring(0.042, 0.012, 12, Math.PI * 2, [0.01, 0.16, 0], [HALF, 0, 0]));
+  root.add("steel", cyl(0.018, 0.018, 0.18, 8, [-0.14, 0.17, 0.08]));
 
   /* — Cadre : longerons, traverse, contreventement ——————————— */
   root.add(
@@ -684,7 +693,7 @@ function buildDiscHarrow(): Blueprint {
     root.add("paint", roundedBox(0.09, 0.34, 0.08, 0.02, [-0.98, WHEEL_R + 0.19, z * 0.8]));
   }
 
-  return { root, length: 1.2, hitch: [-1.1, 0.36, 0], eye: [0.01, 0.36, 0] };
+  return { root, length: 1.2, hitch: [-1.1, 0.36, 0], eye: [0.01, 0.16, 0] };
 }
 
 /* ------------------------------------------------------------------ */

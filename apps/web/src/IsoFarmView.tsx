@@ -119,6 +119,16 @@ function shortestAngle(a: number): number {
 /** Aire de stationnement des engins — terre battue claire */
 const PARKING = 0xd8c9a8;
 
+/**
+ * Échelle commune du parc matériel.
+ *
+ * Une seule et même valeur pour toutes les machines : c'est ce qui préserve
+ * leurs tailles relatives. Normaliser chaque engin sur la case, comme on le
+ * faisait, donnait un tracteur et une moissonneuse de même longueur — alors
+ * qu'une moissonneuse déborde légitimement sur la case voisine.
+ */
+const MACHINE_SCALE = 0.72;
+
 const STUBBLE_SOIL = 0xd9c48a;
 const RESIDUE_SOIL = 0x7f6a44;
 
@@ -564,8 +574,7 @@ export function IsoFarmView({
             // Au parc, un outil est dételé : c'est ainsi qu'on le reconnaît
             // du même outil au travail, accroché derrière son tracteur.
             const rig = createMachineRig(mType, { seed: x * 7 + y * 13 });
-            // L'engin tient dans sa case sans déborder sur les voisines.
-            rig.group.scale.setScalar((cellSize * 0.92) / Math.max(1, rig.length));
+            rig.group.scale.setScalar(cellSize * MACHINE_SCALE);
             // Un parc rangé au cordeau sonne faux : chaque engin est posé de
             // travers de quelques degrés, toujours les mêmes.
             rig.group.rotation.y = PARK_HEADING + Math.sin(x * 3.7 + y * 1.9) * 0.5;
@@ -1071,7 +1080,7 @@ export function IsoFarmView({
           // Un outil traîné arrive attelé : un déchaumeur qui traverse le
           // champ tout seul ne trompe personne.
           workRig = createMachineRig(aw.type, { towed: isTowedImplement(aw.type) });
-          workRig.group.scale.setScalar(0.92);
+          workRig.group.scale.setScalar(MACHINE_SCALE);
           workGroup.add(workRig.group);
           workTravelled = 0;
           workHeading = null;
@@ -1112,6 +1121,16 @@ export function IsoFarmView({
         const steer = workHeading === null ? 0 : shortestAngle(heading - workHeading);
         workHeading = heading;
         lastWorkPos = { x: px, z: pz };
+
+        // Moisson : le blé disparaît derrière la machine. Sans cela, la
+        // moissonneuse traverse un champ intact — l'incohérence saute aux
+        // yeux dès qu'on regarde le passage.
+        if (aw.type === "HARVESTER") {
+          for (let i = 0; i <= i0; i++) {
+            const cut = cropMeshes.get(key(aw.cells[i].x, aw.cells[i].y));
+            if (cut) cut.visible = false;
+          }
+        }
 
         workRig.group.position.set(px, 0.09, pz);
         workRig.group.rotation.y = heading;

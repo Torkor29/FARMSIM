@@ -194,8 +194,10 @@ export function roundedBox(
   pos: Vec3,
   rot?: Vec3,
 ) {
-  const bevel = Math.min(0.012, d * 0.2);
-  const geo = new THREE.ExtrudeGeometry(roundedShape(w, h, r), {
+  const bevel = Math.min(0.012, d * 0.2, w * 0.2, h * 0.2);
+  // `bevelSize` pousse le contour vers l'extérieur : sans cette compensation,
+  // la pièce mesure 2 × bevelSize de trop en largeur comme en hauteur.
+  const geo = new THREE.ExtrudeGeometry(roundedShape(w - bevel * 2, h - bevel * 2, Math.max(0.001, r - bevel)), {
     depth: Math.max(0.001, d - bevel * 2),
     bevelEnabled: true,
     bevelThickness: bevel,
@@ -322,6 +324,9 @@ export class Part {
     for (const [mat, geos] of this.buckets) {
       const merged = geos.length === 1 ? geos[0] : mergeAll(geos);
       const mesh = new THREE.Mesh(markShared(merged), materials[mat]);
+      // Nommer par matière : utile au diagnostic d'assiette, et lisible une
+      // fois le modèle ouvert dans un outil 3D.
+      mesh.name = mat;
       mesh.castShadow = shadows;
       group.add(mesh);
     }
@@ -386,15 +391,23 @@ export function wheelPart(radius: number, width: number, lugs: number): Part {
     ),
   );
 
+  // Crampons en chevron, sur deux rangées décalées d'un demi-pas.
+  //
+  // L'ordre des rotations compte : `place` tourne autour de X, puis Y, puis Z.
+  // Après le `rotateZ(a)` final, c'est l'axe **X** de la boîte qui pointe vers
+  // l'extérieur de la roue — donc sa dimension X est l'épaisseur du crampon,
+  // et l'inclinaison en chevron se prend autour de X. Poser la grande
+  // dimension sur X faisait dépasser le crampon de 13 % du rayon, et l'engin
+  // s'enfonçait d'autant dans le sol.
   const treads: THREE.BufferGeometry[] = [];
   for (let i = 0; i < lugs; i++) {
     for (const side of [-1, 1] as const) {
       const a = ((i + (side > 0 ? 0.5 : 0)) / lugs) * Math.PI * 2;
       treads.push(
         place(
-          new THREE.BoxGeometry(radius * 0.22, radius * 0.07, width * 0.46),
+          new THREE.BoxGeometry(radius * 0.07, radius * 0.24, width * 0.46),
           [Math.cos(a) * radius * 0.955, Math.sin(a) * radius * 0.955, side * width * 0.22],
-          [0, side * 0.46, a],
+          [side * 0.46, 0, a],
         ),
       );
     }

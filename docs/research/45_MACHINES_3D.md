@@ -126,6 +126,35 @@ champ : sous l'angle exact de la vue de jeu, et à l'échelle des cases.
 Le composant `MachineView3D` est autonome : il peut être posé tel quel dans le
 garage ou le catalogue à la place de l'illustration 2D.
 
+### Assiette : les roues posent au sol
+
+Trois défauts faisaient s'enfoncer les engins dans le terrain. Ils étaient
+invisibles à l'œil nu sur une vignette, flagrants dès qu'on zoomait.
+
+| Défaut | Effet | Cause |
+|---|---|---|
+| Crampons de pneu | −3 cm sur un rayon de 23 | `place()` tourne autour de X, puis Y, puis Z : après le `rotateZ` final, c'est l'axe **X** de la boîte qui pointe vers l'extérieur de la roue. La grande dimension du crampon était sur X, elle débordait donc de 13 % du rayon |
+| Biseau d'extrusion | +1,2 cm sous chaque tôle | `bevelSize` pousse le contour vers l'**extérieur** : toute « boîte arrondie » mesurait 2 × bevelSize de trop |
+| Attelage | −14 à −20 cm sur l'outil entier | L'anneau des outils était à y = 0,30 / 0,36, la chape du tracteur à y = 0,16 : atteler enfonçait l'outil de la différence |
+
+Après correction, les huit combinaisons (quatre engins × dételé/attelé) posent
+entre −2 mm et +2 mm de y = 0. Le contrôle est reproductible :
+`window.machineBounds(type, état)` sur la page `export-models.html` rend les
+bornes verticales et les trois pièces les plus basses.
+
+### Échelle : une seule pour tout le parc
+
+Chaque engin était mis à l'échelle de sa case, ce qui donnait un tracteur et
+une moissonneuse **de même longueur**. Une seule valeur commune
+(`MACHINE_SCALE`) préserve désormais les tailles relatives : la moissonneuse
+déborde sur la case voisine, comme dans la réalité et comme le prévoit la
+charte (§4.8).
+
+### Le blé tombe derrière la moissonneuse
+
+Une moissonneuse qui traverse un champ intact ne trompe personne : les cultures
+des cases déjà parcourues sont masquées au passage de la machine.
+
 ## Des fichiers, pas seulement du code
 
 Le jeu construit ses engins au chargement : il n'a aucun fichier de modèle à
