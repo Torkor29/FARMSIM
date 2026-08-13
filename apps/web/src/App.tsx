@@ -552,26 +552,6 @@ export function App() {
     if (labor.active) {
       setVisitOrder((prev) => (prev?.id === labor.active!.id ? prev : labor.active));
     }
-    if (c.active && c.active.cells) {
-      const work = (c.active.work ??
-        (c.active.jobType === "HARVEST"
-          ? "HARVEST"
-          : c.active.jobType === "SOW"
-            ? "PLANT"
-            : c.active.jobType === "FERTILIZE"
-              ? "FERTILIZE"
-              : "PLOW")) as FarmWork;
-      setActiveMission({
-        id: c.active.id,
-        title: c.active.title,
-        jobType: c.active.jobType,
-        rewardCrd: c.active.rewardCrd,
-        regionNote: c.active.regionNote,
-        cells: c.active.cells,
-        work,
-        machineType: c.active.machineType,
-      });
-    }
     setWeather((prev) => keepIfSame(prev, w));
   }, []);
 
