@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { MACHINE_DEFS, type MachineType } from "@farmsim/shared";
 import { MachineView3D } from "./MachineView3D";
-import { IsoFarmView, type IsoCell } from "./IsoFarmView";
+import { IsoFarmView, type IsoBuilding, type IsoCell } from "./IsoFarmView";
 import { isTowedImplement } from "./machines3d";
 
 const TYPES = Object.keys(MACHINE_DEFS) as MachineType[];
@@ -13,11 +13,23 @@ const TYPES = Object.keys(MACHINE_DEFS) as MachineType[];
  * vue ferme, à l'arrêt comme au travail, avant de les envoyer au champ.
  */
 export function MachineShowcase() {
+  // `?iso` n'affiche que la vue ferme : cinq canevas 3D sur une même page
+  // suffisent à mettre à genoux un rendu logiciel, et l'inspection des effets
+  // demande justement du plein régime.
+  const isoOnly = typeof location !== "undefined" && location.search.includes("iso");
   const [working, setWorking] = useState(true);
   const [speed, setSpeed] = useState(1.6);
   const [towed, setTowed] = useState(true);
   const [turntable, setTurntable] = useState(true);
   const [big, setBig] = useState(false);
+
+  if (isoOnly) {
+    return (
+      <div className="atelier">
+        <FarmPreview />
+      </div>
+    );
+  }
 
   return (
     <div className="atelier">
@@ -111,12 +123,19 @@ function FarmPreview() {
       for (let x = 0; x < 6; x++) {
         if (x === 0 && y === 0) out.push({ x, y, kind: "VEHICLE", machineType: "TRACTOR" });
         else if (x === 1 && y === 0) out.push({ x, y, kind: "VEHICLE", machineType: "DISC_HARROW" });
+        else if (x >= 4 && y <= 1) out.push({ x, y, kind: "BUILDING" });
         else if (y >= 2) out.push({ x, y, kind: "CROP", crop: "WHEAT", fieldStage: "READY" });
         else out.push({ x, y, kind: "EMPTY" });
       }
     }
     return out;
   }, []);
+
+  // Une ferme au fond de la parcelle : sa cheminée fume.
+  const buildings = useMemo<IsoBuilding[]>(
+    () => [{ id: "hq", type: "FARMHOUSE", originX: 4, originY: 0, level: 3 }],
+    [],
+  );
 
   const activeWork = useMemo(
     () => ({
@@ -147,7 +166,7 @@ function FarmPreview() {
           gridW={6}
           gridH={6}
           cells={cells}
-          buildings={[]}
+          buildings={buildings}
           cellSims={[]}
           selected={[]}
           activeWork={activeWork}

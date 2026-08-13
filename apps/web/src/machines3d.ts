@@ -776,6 +776,12 @@ export type MachineRig = {
   length: number;
   /** Sortie du pot d'échappement — nul sur un outil traîné */
   exhaust: THREE.Object3D | null;
+  /**
+   * Nœuds animés d'un rôle donné — rabatteur, trains de disques, disques
+   * d'épandage… La vue s'en sert comme points d'émission : les gerbes partent
+   * de la pièce qui les produit, pas d'un point approximatif.
+   */
+  anchors(role: Role): THREE.Object3D[];
   update(state: MachineState): void;
   dispose(): void;
 };
@@ -902,6 +908,11 @@ export function createMachineRig(type: MachineType, opts: MachineRigOptions = {}
     group,
     length,
     exhaust: units[0].roles.get("exhaust")?.[0] ?? null,
+    anchors(role) {
+      const found: THREE.Object3D[] = [];
+      for (const unit of units) found.push(...(unit.roles.get(role) ?? []));
+      return found;
+    },
     update(next: MachineState) {
       state.t = next.t;
       state.distance = next.distance;

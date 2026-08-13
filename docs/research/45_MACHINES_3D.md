@@ -134,6 +134,29 @@ lentes, plus diluées, émises à la **sortie réelle du pot** — le rig expose
 nœud `exhaust` dont la vue lit la position monde après cap et échelle. Un
 moteur en charge fume ; moteur coupé, rien ne sort.
 
+### Ce que chaque machine projette
+
+`particles.ts` : des projections **balistiques**, à distinguer de la poussière
+et de la fumée qui, elles, montent et se diluent. Une gerbe part avec une
+vitesse, retombe sous la gravité, s'écrase au sol et s'éteint. Un bassin par
+effet, un seul appel de rendu chacun, particules mortes mises à l'échelle zéro
+plutôt que retirées du tampon.
+
+| Machine | Projection | Départ |
+|---|---|---|
+| Moissonneuse | grain doré en parabole vers la trémie ; flux serré sous la vis quand elle vide | nœud `reel`, puis `auger` |
+| Déchaumeur | mottes de terre en gerbe basse vers l'arrière | nœuds `gang` |
+| Épandeur | engrais en éventail, chaque disque dans son sens de rotation | nœuds `spinner` |
+| Ferme (palier 3+) | fumée lente au conduit de cheminée | position du conduit |
+
+Les points d'émission ne sont pas approximés : le rig expose ses nœuds animés
+(`rig.anchors(role)`), et la vue lit leur position monde après cap et échelle.
+La gerbe part donc de la pièce qui la produit.
+
+**Une contrainte que ça impose au champ** : le blé montait jusqu'à 0,84 unité,
+soit plus haut qu'un tracteur. L'engin au travail disparaissait derrière les
+épis des rangs voisins. Une culture mûre plafonne désormais à hauteur de capot.
+
 ### Aire de stationnement
 
 Les cases `VEHICLE` étaient peintes en `0x3a3f44` — un enrobé presque noir qui

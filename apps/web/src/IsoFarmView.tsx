@@ -10,6 +10,7 @@ import {
 } from "@farmsim/shared";
 import { disposeRenderer, disposeThreeScene, markShared } from "./three-cleanup";
 import { createCropField } from "./crop-field";
+import { createSpray } from "./particles";
 import { attachStudioEnvironment } from "./machine-kit";
 import {
   createDustTrail,
@@ -400,6 +401,27 @@ export function IsoFarmView({
     workGroup.add(workSmoke.object);
     const exhaustPoint = new THREE.Vector3();
 
+    // Ce que chaque machine projette : grain à la moisson, terre au
+    // déchaumage, engrais à l'épandage. Trois bassins, trois appels de rendu.
+    const grainSpray = createSpray({ count: 70, color: 0xe8c65c, size: 0.028, life: 0.75 });
+    const soilSpray = createSpray({ count: 60, color: 0x8a6141, size: 0.038, life: 0.85 });
+    const fertSpray = createSpray({
+      count: 90,
+      color: 0xe6e0cd,
+      size: 0.022,
+      life: 0.7,
+      gravity: 5,
+    });
+    workGroup.add(grainSpray.object, soilSpray.object, fertSpray.object);
+    const anchorPoint = new THREE.Vector3();
+    /** Cadence d'émission : on ne lance pas une gerbe à chaque image. */
+    let emitClock = 0;
+
+    // Fumée de cheminée : la ferme respire même quand rien ne travaille.
+    const chimneySmoke = createExhaustSmoke(10);
+    world.add(chimneySmoke.object);
+    let chimneyPos: THREE.Vector3 | null = null;
+
     const previewGroup = new THREE.Group();
     world.add(previewGroup);
     let prevPreviewKey = "";
@@ -497,6 +519,7 @@ export function IsoFarmView({
         disposeObject3D(c);
       }
       pickables.length = 0;
+      chimneyPos = null;
       const cropStalks: {
         x: number;
         y: number;
@@ -583,13 +606,15 @@ export function IsoFarmView({
           pickables.push(mesh);
 
           if (cell?.kind === "CROP") {
-            // La hauteur raconte l'avancement : semis ras, épi haut à maturité.
+            // La hauteur raconte l'avancement : semis ras, épi haut à
+            // maturité — mais jamais plus haut que le capot d'un tracteur,
+            // sans quoi la machine au travail disparaît dans le champ.
             cropStalks.push({
               x,
               y,
               px,
               pz,
-              height: 0.22 + (sim?.sim.progress ?? 0.25) * 0.62,
+              height: 0.16 + (sim?.sim.progress ?? 0.25) * 0.3,
               color: cropColor(cell, sim),
             });
           }
@@ -805,6 +830,8 @@ export function IsoFarmView({
             chimney.position.set(cx + bw * 0.3, height + bd * 0.48, cz - bd * 0.22);
             chimney.castShadow = true;
             buildingGroup.add(chimney);
+            // Le conduit fume : c'est le seul signe de vie d'un bâtiment.
+            chimneyPos = chimney.position.clone().setY(chimney.position.y + 0.24);
           }
 
           if (level >= 4) {
@@ -1186,10 +1213,105 @@ export function IsoFarmView({
           workGroup.worldToLocal(exhaustPoint);
           workSmoke.update(dt, exhaustPoint.x, exhaustPoint.y, exhaustPoint.z, u < 1);
         }
+
+        // Projections : chaque machine lance ce qu'elle travaille, depuis la
+        // pièce qui le produit. Cadencées, jamais une gerbe par image.
+        emitClock += dt;
+        const working = u < 1;
+        // Vecteur « vers l'arrière de l'engin », dans le plan du sol.
+        const rearX = -Math.cos(heading);
+        const rearZ = Math.sin(heading);
+        if (working && emitClock > 0.045) {
+          emitClock = 0;
+          const anchorWorld = (node: THREE.Object3D) => {
+            node.getWorldPosition(anchorPoint);
+            workGroup.worldToLocal(anchorPoint);
+            return anchorPoint;
+          };
+
+          if (aw.type === "HARVESTER") {
+            // Le grain saute du bec de coupe vers la trémie : une parabole
+            // vers l'arrière, par-dessus la cabine.
+            for (const reel of workRig.anchors("reel")) {
+              const p = anchorWorld(reel);
+              for (let n = 0; n < 3; n++) {
+                grainSpray.emit(
+                  p.x + (Math.random() - 0.5) * 0.3,
+                  p.y,
+                  p.z + (Math.random() - 0.5) * 0.3,
+                  rearX * (0.5 + Math.random() * 0.4),
+                  1.5 + Math.random() * 0.5,
+                  rearZ * (0.5 + Math.random() * 0.4),
+                );
+              }
+            }
+            // Vidange : le grain coule de la vis dans un flux serré.
+            if (aw.type === "HARVESTER" && u > 0.62) {
+              for (const auger of workRig.anchors("auger")) {
+                const p = anchorWorld(auger);
+                grainSpray.emit(
+                  p.x + (Math.random() - 0.5) * 0.06,
+                  p.y - 0.05,
+                  p.z + (Math.random() - 0.5) * 0.06,
+                  0,
+                  -0.4,
+                  0,
+                );
+              }
+            }
+          } else if (aw.type === "DISC_HARROW") {
+            // La terre part vers l'arrière, à ras du sol, en gerbe basse.
+            for (const gang of workRig.anchors("gang")) {
+              const p = anchorWorld(gang);
+              for (let n = 0; n < 2; n++) {
+                soilSpray.emit(
+                  p.x,
+                  p.y + 0.02,
+                  p.z,
+                  rearX * (0.6 + Math.random() * 0.6) + (Math.random() - 0.5) * 0.3,
+                  0.7 + Math.random() * 0.6,
+                  rearZ * (0.6 + Math.random() * 0.6) + (Math.random() - 0.5) * 0.3,
+                );
+              }
+            }
+          } else if (aw.type === "SPREADER") {
+            // Engrais : chaque disque envoie son éventail vers l'extérieur,
+            // dans son propre sens de rotation.
+            for (const disc of workRig.anchors("spinner")) {
+              const p = anchorWorld(disc);
+              const dir = (disc.userData.spin as number) || 1;
+              for (let n = 0; n < 4; n++) {
+                const spread = heading + Math.PI + dir * (0.4 + Math.random() * 1.1);
+                const speed = 1.2 + Math.random() * 0.9;
+                fertSpray.emit(
+                  p.x,
+                  p.y,
+                  p.z,
+                  Math.cos(spread) * speed,
+                  0.5 + Math.random() * 0.4,
+                  -Math.sin(spread) * speed,
+                );
+              }
+            }
+          }
+        }
       } else {
         workDust.update(dt, 0, 0, 0, false);
         workSmoke.update(dt, 0, 0, 0, false);
       }
+
+      grainSpray.update(dt);
+      soilSpray.update(dt);
+      fertSpray.update(dt);
+
+      // La cheminée de la ferme fume en continu, doucement.
+      chimneySmoke.update(
+        dt,
+        chimneyPos?.x ?? 0,
+        chimneyPos?.y ?? 0,
+        chimneyPos?.z ?? 0,
+        chimneyPos !== null,
+      );
 
       renderer.render(scene, camera);
     }
@@ -1214,6 +1336,10 @@ export function IsoFarmView({
       clearWorkVehicle();
       workDust.dispose();
       workSmoke.dispose();
+      grainSpray.dispose();
+      soilSpray.dispose();
+      fertSpray.dispose();
+      chimneySmoke.dispose();
       cropField.dispose();
       releaseEnvironment();
       // Marquée partagée pour survivre aux reconstructions de scène, la

@@ -28,7 +28,8 @@ pnpm dev:web   # :5173
 Tests sim : `pnpm test:sim`
 
 Atelier du parc matériel 3D (hors jeu, pour juger les engins) :
-`http://localhost:5173/machines.html`
+`http://localhost:5173/machines.html` — suffixer `?iso` n'affiche que la vue
+ferme, utile quand la machine à tester peine à faire tourner cinq canevas 3D.
 
 Modèles 3D exportables (Blender, autre moteur) — `models/*.glb`, hiérarchie
 nommée et animation « Travail » incluses :
