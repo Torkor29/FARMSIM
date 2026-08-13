@@ -443,7 +443,11 @@ export function App() {
       // Le stock aussi vieillit : le lait et la viande se dégradent sur le
       // tick du serveur, et sans ce rappel le silo restait figé à l'écran
       // pendant des minutes — d'où l'impression qu'ils ne périmaient jamais.
-      refreshPlayer().catch(() => undefined);
+      //
+      // Mais seulement une fois connecté : sans jeton, `/auth/me` répond 401,
+      // et l'écran de connexion accumulait une erreur toutes les dix secondes
+      // dans la console pour une requête qui ne pouvait pas aboutir.
+      if (localStorage.getItem(TOKEN_KEY)) refreshPlayer().catch(() => undefined);
     }, 10000);
     return () => clearInterval(t);
   }, [refreshMeta, loadWorld, refreshPlayer]);
