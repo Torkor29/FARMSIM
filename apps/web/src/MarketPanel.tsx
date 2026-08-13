@@ -13,6 +13,7 @@ import {
   listingFee,
   listingProceeds,
   quoteAllChannels,
+  maxSelectableTons,
   type ChannelQuote,
   type CropCode,
   type SaleChannel,
@@ -97,11 +98,21 @@ export function MarketPanel({
     [marketPrices, item],
   );
 
+  /**
+   * Plus grande quantité réellement sélectionnable, au pas du curseur.
+   *
+   * L'affichage travaille au centième de tonne quand le stock en compte
+   * trois. Arrondir au plus proche proposait donc, une fois sur deux, une
+   * quantité supérieure au stock : le serveur refusait, et le joueur voyait
+   * un bouton « Vendre » sans effet. On tronque.
+   */
+  const maxTons = useMemo(() => (item ? maxSelectableTons(item.qty) : 0), [item?.qty]);
+
   useEffect(() => {
     if (!item) return;
-    setTons(Math.round(item.qty * 100) / 100);
+    setTons(maxTons);
     if (price) setAsk(Math.round(price.price * 1.15));
-  }, [item?.id, price?.price]);
+  }, [item?.id, maxTons, price?.price]);
 
   const [history, setHistory] = useState<{ at: string; price: number }[]>([]);
   useEffect(() => {
@@ -248,11 +259,19 @@ export function MarketPanel({
                     <input
                       type="range"
                       min={0.01}
-                      max={item.qty}
+                      max={maxTons}
                       step={0.01}
-                      value={Math.min(tons, item.qty)}
+                      value={Math.min(tons, maxTons)}
                       onChange={(e) => setTons(Number(e.target.value))}
                     />
+                    <button
+                      type="button"
+                      className="ghost tiny"
+                      disabled={tons >= maxTons}
+                      onClick={() => setTons(maxTons)}
+                    >
+                      Tout ({maxTons.toFixed(2)} t)
+                    </button>
                   </label>
 
                   <p className="market-course">

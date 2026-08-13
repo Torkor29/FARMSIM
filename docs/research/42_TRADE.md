@@ -148,6 +148,49 @@ au plus récent.
 
 ---
 
+## Vendre « tout » était refusé
+
+Signalé en jeu : le bouton de vente ne faisait rien, l'écran répondait
+« Stock insuffisant », et il fallait redescendre le curseur à tâtons — vers
+80 % — pour qu'une vente passe. Impossible de vendre la totalité d'un lot.
+
+Deux causes s'additionnaient, et la première suffisait.
+
+**L'écran proposait plus que le stock.** La quantité par défaut valait
+`Math.round(qty * 100) / 100`, soit un arrondi **au plus proche** d'un stock
+qui compte trois décimales. Pour 83,716 t en silo, l'écran demandait 83,72 t.
+Le serveur comparait strictement et refusait. Pire, le curseur affichait la
+valeur bornée au stock : le joueur voyait donc une quantité correcte et un
+bouton sans effet. Une fois sur deux, selon la troisième décimale.
+
+Le curseur n'atteignait pas non plus son maximum : il avance par pas de 0,01 t
+depuis 0,01, si bien qu'aucune position ne tombe jamais sur 83,716. D'où le
+« je ne pouvais pas mettre 100 % ».
+
+**La denrée tournait entre l'affichage et le clic.** Le lait perd 12 % par
+cycle et le serveur le décompte à chaque tick, quand l'écran ne se rafraîchit
+que toutes les dix secondes. Pour une denrée périssable, demander la totalité
+était donc voué à l'échec par construction, quel que soit l'arrondi.
+
+**Correction.** L'écran tronque au lieu d'arrondir, son maximum est une
+position réellement atteignable, et un bouton « Tout » l'y amène d'un geste.
+Côté serveur, `settleSaleTons` vend ce qui est là plutôt que de refuser : un
+négociant ne renvoie pas le chargement parce qu'il pèse trois kilos de moins
+que l'annonce. La tolérance vaut 2 % du lot ou 20 kg, le plus grand des deux ;
+au-delà, la demande n'est plus un écart d'arrondi mais une erreur, et elle
+reste refusée. Les trois canaux partagent la même règle — la criée avait le
+même défaut, elle ne se manifestait simplement pas au même moment.
+
+Vérifié contre l'API : 83,72 t demandées sur 83,716 t en silo vident le lot ;
+40,123 t de lait demandées après un tick en vendent 40,065 ; 99 999 t restent
+refusées.
+
+**La leçon :** une valeur affichée bornée mais envoyée brute est un piège. Le
+joueur voit ce qu'il attend et ne comprend pas le refus — c'est la pire forme
+de bug, celle qui fait passer le jeu pour cassé sans laisser de trace.
+
+---
+
 ## Reste à faire
 
 - Pas de contrats à terme, alors que le document d'économie les prévoit.

@@ -96,6 +96,7 @@ import {
   afterSpoilage,
   SPOILAGE_PER_CYCLE,
   SELLABLE_GOODS,
+  settleSaleTons,
   GRAZING_REFUSAL_LABELS,
   LIVESTOCK_CYCLE_MS,
   MEAT_MATURITY_MS,
@@ -3339,7 +3340,8 @@ app.post("/market/dealer", async (req, res) => {
     return;
   }
   const inv = user.farm.inventory.find((i) => i.itemCode === body.data.commodity);
-  if (!inv || inv.qty < body.data.tons) {
+  const tons = settleSaleTons(body.data.tons, inv?.qty ?? 0);
+  if (!inv || tons === null) {
     res.status(409).json({ error: "Stock insuffisant" });
     return;
   }
@@ -3352,18 +3354,23 @@ app.post("/market/dealer", async (req, res) => {
   }
   const keep = 1 - moistureSellPenalty(inv.moisture);
   const pricePerTon = dealerPricePerTon(market.price) * keep;
-  const revenue = Math.round(pricePerTon * body.data.tons);
+  const revenue = Math.round(pricePerTon * tons);
 
   await prisma.$transaction(async (tx) => {
-    await drawFromStock(tx, inv, body.data.tons);
+    await drawFromStock(tx, inv, tons);
     await tx.user.update({ where: { id: user.id }, data: { crd: { increment: revenue } } });
     // Le négociant revend au marché : le stock mondial monte, le cours cède.
     await tx.marketPrice.update({
       where: { commodity: body.data.commodity },
-      data: { stockTons: { increment: body.data.tons } },
+      data: { stockTons: { increment: tons } },
     });
   });
-  res.json({ revenue, pricePerTon: Math.round(pricePerTon * 100) / 100, channel: "DEALER" });
+  res.json({
+    revenue,
+    tons,
+    pricePerTon: Math.round(pricePerTon * 100) / 100,
+    channel: "DEALER",
+  });
 });
 
 /** Annonces ouvertes, les plus avantageuses d'abord. */
@@ -3415,6 +3422,9 @@ app.post("/market/listings", async (req, res) => {
     return;
   }
   const inv = user.farm.inventory.find((i) => i.itemCode === body.data.commodity);
+  // Mettre en criée la totalité d'un lot achoppait sur les mêmes centièmes que
+  // la vente directe : on règle le tonnage sur ce qui est réellement en stock.
+  const tons = settleSaleTons(body.data.tons, inv?.qty ?? 0) ?? body.data.tons;
   const market = await prisma.marketPrice.findUnique({
     where: { commodity: body.data.commodity },
   });
@@ -3427,7 +3437,7 @@ app.post("/market/listings", async (req, res) => {
   });
   const verdict = canList({
     pricePerTon: body.data.pricePerTon,
-    tons: body.data.tons,
+    tons,
     marketPrice: market.price,
     openListings,
     stockTons: inv?.qty ?? 0,
@@ -3438,15 +3448,15 @@ app.post("/market/listings", async (req, res) => {
     return;
   }
 
-  const fee = listingFee(body.data.pricePerTon, body.data.tons);
+  const fee = listingFee(body.data.pricePerTon, tons);
   const listing = await prisma.$transaction(async (tx) => {
-    await drawFromStock(tx, inv!, body.data.tons);
+    await drawFromStock(tx, inv!, tons);
     await tx.user.update({ where: { id: user.id }, data: { crd: { decrement: fee } } });
     return tx.marketListing.create({
       data: {
         sellerId: user.id,
         commodity: body.data.commodity,
-        tons: body.data.tons,
+        tons: tons,
         pricePerTon: body.data.pricePerTon,
         moisture: inv!.moisture,
         quality: inv!.quality,
@@ -3610,12 +3620,13 @@ app.post("/market/sell", async (req, res) => {
     return;
   }
   const inv = user.farm.inventory.find((i) => i.itemCode === body.data.commodity);
-  if (!inv || inv.qty < body.data.tons) {
+  const tons = settleSaleTons(body.data.tons, inv?.qty ?? 0);
+  if (!inv || tons === null) {
     res.status(409).json({ error: "Stock insuffisant" });
     return;
   }
   const bonuses = await getFarmBonuses(user.farm.id);
-  if (inv.qty > bonuses.storageGrain && body.data.tons > 0) {
+  if (inv.qty > bonuses.storageGrain && tons > 0) {
     // soft warning only — allow sell
   }
   const market = await prisma.marketPrice.findUnique({
@@ -3628,22 +3639,22 @@ app.post("/market/sell", async (req, res) => {
   const moisturePenalty = moistureSellPenalty(inv.moisture);
   // Écouler un gros lot d'un coup fait plonger le cours obtenu : c'est ce qui
   // rend l'étalement des ventes — ou la criée — réellement plus rentable.
-  const slippage = volumeSlippage(body.data.tons, market.stockTons);
+  const slippage = volumeSlippage(tons, market.stockTons);
   const sale = sellToMarket({
-    tons: body.data.tons,
-    price: marketPricePerTon(market.price, body.data.tons, market.stockTons),
+    tons: tons,
+    price: marketPricePerTon(market.price, tons, market.stockTons),
     moisturePenalty,
   });
   const tick = tickMarket({
     commodity: body.data.commodity,
     price: market.price,
-    supplyTons: body.data.tons,
-    demandTons: body.data.tons * 0.9,
+    supplyTons: tons,
+    demandTons: tons * 0.9,
     stockTons: market.stockTons,
   });
   const xpGain = Math.round(10 * (1 + bonuses.xpBonus));
   const updated = await prisma.$transaction(async (tx) => {
-    await drawFromStock(tx, inv, body.data.tons);
+    await drawFromStock(tx, inv, tons);
     const u = await tx.user.update({
       where: { id: user.id },
       data: { crd: { increment: sale.revenue }, xp: { increment: xpGain } },
@@ -3656,6 +3667,7 @@ app.post("/market/sell", async (req, res) => {
   });
   res.json({
     revenue: sale.revenue,
+    tons,
     effectivePrice: sale.effectivePrice,
     slippage,
     moisturePenalty,

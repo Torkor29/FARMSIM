@@ -257,3 +257,49 @@ export function quoteAllChannels(input: {
     },
   ];
 }
+
+/* ------------------------------------------------------------------ */
+/* Vendre « tout »                                                     */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Écart toléré entre la quantité demandée et le stock réellement présent.
+ *
+ * Un joueur qui demande à vendre la totalité de son silo se voyait refuser la
+ * vente pour quelques grammes, et devait redescendre le curseur à tâtons
+ * jusqu'à ce que ça passe. Deux causes s'additionnaient.
+ *
+ * L'affichage travaille au centième de tonne quand le stock en compte trois :
+ * arrondir au plus proche pour proposer « tout » dépassait le stock une fois
+ * sur deux. Et le lait comme la viande se dégradent à chaque tick du serveur,
+ * si bien que le stock connu du client est déjà périmé au moment du clic —
+ * pour une denrée périssable, demander la totalité était voué à l'échec.
+ *
+ * On vend donc ce qui est là. Un négociant ne refuse pas le chargement parce
+ * qu'il pèse trois kilos de moins que l'annonce. Au-delà de la tolérance, en
+ * revanche, la demande n'est plus un écart d'arrondi mais une erreur, et elle
+ * reste refusée.
+ */
+export const SALE_TOLERANCE_RATIO = 0.02;
+export const SALE_TOLERANCE_TONS = 0.02;
+
+/**
+ * Tonnage à réellement débiter, ou `null` si la demande dépasse franchement le
+ * stock. Le résultat ne dépasse jamais `available`.
+ */
+export function settleSaleTons(requested: number, available: number): number | null {
+  if (requested <= 0 || available <= 0) return null;
+  if (requested <= available) return requested;
+  const slack = Math.max(SALE_TOLERANCE_TONS, available * SALE_TOLERANCE_RATIO);
+  return requested <= available + slack ? available : null;
+}
+
+/**
+ * Plus grande quantité que le joueur puisse choisir sur un curseur au pas
+ * donné. Tronque au lieu d'arrondir : proposer une valeur inatteignable, puis
+ * la refuser à la vente, est le plus sûr moyen de passer pour cassé.
+ */
+export function maxSelectableTons(available: number, step = 0.01): number {
+  const steps = Math.floor(available / step + 1e-9);
+  return Math.max(0, Math.round(steps * step * 1000) / 1000);
+}
