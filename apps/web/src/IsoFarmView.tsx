@@ -464,6 +464,35 @@ function makeFarmhouseMesh(spanX: number, spanY: number): THREE.Group {
   return g;
 }
 
+/**
+ * Porte d’étable : fermée = les bêtes sont dedans, ouverte = elles sont au pré.
+ * Pas d’image dédiée — deux planches et un trou noir, lisible de loin.
+ */
+function makeBarnDoor(open: boolean): THREE.Group {
+  const g = new THREE.Group();
+  const wood = new THREE.MeshLambertMaterial({ color: 0x6b4528, flatShading: true });
+  const dark = new THREE.MeshLambertMaterial({ color: 0x1a120c, flatShading: true });
+  const hole = new THREE.Mesh(new THREE.BoxGeometry(0.42, 0.55, 0.04), dark);
+  hole.position.set(0, 0.28, 0);
+  g.add(hole);
+  const left = new THREE.Mesh(new THREE.BoxGeometry(0.2, 0.52, 0.05), wood);
+  const right = new THREE.Mesh(new THREE.BoxGeometry(0.2, 0.52, 0.05), wood);
+  if (open) {
+    left.position.set(-0.32, 0.28, 0.12);
+    left.rotation.y = 0.95;
+    right.position.set(0.32, 0.28, 0.12);
+    right.rotation.y = -0.95;
+  } else {
+    left.position.set(-0.1, 0.28, 0.03);
+    right.position.set(0.1, 0.28, 0.03);
+  }
+  left.castShadow = true;
+  right.castShadow = true;
+  g.add(left);
+  g.add(right);
+  return g;
+}
+
 /** Vache low-poly, taille d'une demi-case. */
 function makeCowMesh(): THREE.Group {
   const g = new THREE.Group();
@@ -1018,6 +1047,8 @@ export function IsoFarmView({
       kind: string;
       out: boolean;
     }[] = [];
+    const doorGroup = new THREE.Group();
+    world.add(doorGroup);
     const pickupGroup = new THREE.Group();
     world.add(pickupGroup);
     let pickupKey = "";
@@ -1796,14 +1827,28 @@ export function IsoFarmView({
         }
         cowWalkers.length = 0;
 
+        while (doorGroup.children.length) {
+          const c = doorGroup.children[0];
+          doorGroup.remove(c);
+          disposeObject3D(c);
+        }
+
         for (const herd of herds) {
           // Au plus huit bêtes visibles : au-delà, l'enclos devient illisible
           // et le coût de rendu grimpe pour rien.
           const shown = Math.min(8, herd.animals);
           const kind = herd.kind ?? "COW";
+          const doorX = ox + (herd.barn.originX + herd.barn.w / 2) * step;
+          const doorZ = oz + (herd.barn.originY + herd.barn.h) * step + 0.08 * step;
+          const door = makeBarnDoor(Boolean(herd.out));
+          door.position.set(doorX, 0.1, doorZ);
+          door.scale.setScalar(cellSize * (kind === "HEN" ? 0.7 : 1));
+          doorGroup.add(door);
+
           for (let i = 0; i < shown; i++) {
-            const doorX = ox + (herd.barn.originX + herd.barn.w / 2) * step;
-            const doorZ = oz + (herd.barn.originY + herd.barn.h / 2) * step;
+            const along = ((i % 4) - 1.5) * 0.28 * step;
+            const frontX = doorX + along;
+            const frontZ = doorZ + 0.22 * step + Math.floor(i / 4) * 0.2 * step;
             const spreadX = (((i % 3) - 1) * 0.55 + (i * 0.13) % 0.4) * step;
             const spreadZ = ((Math.floor(i / 3) - 1) * 0.55 + (i * 0.21) % 0.4) * step;
             const targetX = ox + (herd.paddock.originX + herd.paddock.w / 2) * step + spreadX;
@@ -1816,9 +1861,9 @@ export function IsoFarmView({
             grazeGroup.add(mesh);
             cowWalkers.push({
               mesh,
-              from: new THREE.Vector3(doorX, 0.1, doorZ),
+              from: new THREE.Vector3(frontX, 0.1, frontZ),
               to: new THREE.Vector3(targetX, 0.1, targetZ),
-              delay: i * 0.55,
+              delay: i * 0.45,
               wander: i * 1.7,
               kind,
               out: Boolean(herd.out),
