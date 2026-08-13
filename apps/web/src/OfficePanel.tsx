@@ -61,11 +61,30 @@ type Props = {
   onBuyLand: (parcelId: string) => void;
 };
 
-type Tab = "BOURSE" | "CHIFFRE" | "CONSIGNES" | "TERRES";
+type Mode = "TAKE" | "MINE" | "CONSIGNES" | "LAND";
+type WorkCat = "ALL" | FarmWork;
+type SortKey = "payout" | "ttl" | "cells" | "client";
+
+const WORK_CATS: { id: WorkCat; label: string }[] = [
+  { id: "ALL", label: "Tous les chantiers" },
+  { id: "HARVEST", label: WORK_LABELS.HARVEST },
+  { id: "SILAGE", label: WORK_LABELS.SILAGE },
+  { id: "BALE", label: WORK_LABELS.BALE },
+  { id: "COLLECT", label: WORK_LABELS.COLLECT },
+  { id: "STUBBLE", label: WORK_LABELS.STUBBLE },
+  { id: "PLOW", label: WORK_LABELS.PLOW },
+  { id: "PLANT", label: WORK_LABELS.PLANT },
+  { id: "FERTILIZE", label: WORK_LABELS.FERTILIZE },
+];
+
+function ttlMs(iso: string): number {
+  const ms = new Date(iso).getTime() - Date.now();
+  return Number.isFinite(ms) ? ms : 0;
+}
 
 function ttlLabel(iso: string): string {
-  const ms = new Date(iso).getTime() - Date.now();
-  if (!Number.isFinite(ms) || ms <= 0) return "expire";
+  const ms = ttlMs(iso);
+  if (ms <= 0) return "expire";
   const min = Math.round(ms / 60_000);
   if (min < 60) return `${min} min`;
   return `${Math.floor(min / 60)} h ${min % 60} min`;
@@ -73,6 +92,10 @@ function ttlLabel(iso: string): string {
 
 function money(n: number): string {
   return `${Math.round(n).toLocaleString("fr-FR")} TRN`;
+}
+
+function perCell(o: OfficeLabor): number {
+  return o.remaining > 0 ? o.payoutCrd / o.remaining : o.payoutCrd;
 }
 
 export function OfficePanel({
@@ -96,15 +119,39 @@ export function OfficePanel({
   expandableIds,
   onBuyLand,
 }: Props) {
-  const [tab, setTab] = useState<Tab>("BOURSE");
+  const [mode, setMode] = useState<Mode>("TAKE");
+  const [cat, setCat] = useState<WorkCat>("ALL");
+  const [query, setQuery] = useState("");
+  const [sort, setSort] = useState<SortKey>("payout");
+  const [pickId, setPickId] = useState<string | null>(null);
+  const [ghostId, setGhostId] = useState<string | null>(null);
 
   const escrow = useMemo(
     () => posted.reduce((s, o) => s + (o.status === "OPEN" || o.status === "ACCEPTED" ? o.escrowCrd : 0), 0),
     [posted],
   );
   const toEarn = useMemo(() => board.reduce((s, o) => s + o.payoutCrd, 0), [board]);
-  const locked = escrow;
   const cannotTake = busy || Boolean(active) || takeLocked;
+
+  const filtered = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    const rows = board.filter((o) => {
+      if (cat !== "ALL" && o.work !== cat) return false;
+      if (!q) return true;
+      const blob = `${WORK_LABELS[o.work]} ${o.clientName} ${o.parcelLabel} ${o.zoneName} ${o.crop ?? ""}`.toLowerCase();
+      return blob.includes(q);
+    });
+    const dir = sort === "client" ? 1 : -1;
+    return [...rows].sort((a, b) => {
+      if (sort === "payout") return (a.payoutCrd - b.payoutCrd) * dir;
+      if (sort === "cells") return (a.remaining - b.remaining) * dir;
+      if (sort === "ttl") return (ttlMs(a.expiresAt) - ttlMs(b.expiresAt)) * dir;
+      return a.clientName.localeCompare(b.clientName, "fr");
+    });
+  }, [board, cat, query, sort]);
+
+  const pick = filtered.find((o) => o.id === pickId) ?? filtered[0] ?? null;
+  const ghostPick = ghost.find((c) => c.id === ghostId) ?? ghost[0] ?? null;
 
   useEffect(() => {
     if (!open) return;
@@ -119,253 +166,57 @@ export function OfficePanel({
 
   return (
     <div
-      className="hall-backdrop"
+      className="hdv-backdrop hall-backdrop"
       role="dialog"
       aria-modal="true"
-      aria-label="Bureau"
+      aria-label="Hôtel du travail"
       onClick={(e) => {
         if (e.target === e.currentTarget) onClose();
       }}
     >
-      <div className="hall-sheet glass" onClick={(e) => e.stopPropagation()}>
-        <header className="hall-head">
-          <div>
-            <p className="hall-kicker">Bureau de l’exploitation</p>
-            <h2>Ordres &amp; missions</h2>
+      <div className="hdv-shell hall-sheet glass" onClick={(e) => e.stopPropagation()}>
+        <header className="hdv-top">
+          <div className="hdv-brand">
+            <p className="hdv-kicker">Hôtel du travail</p>
+            <h2>Bourse des chantiers</h2>
           </div>
-          <dl className="hall-wallet">
-            <div>
-              <dt>Caisse</dt>
-              <dd>{money(crd)}</dd>
-            </div>
-            <div>
-              <dt>Séquestre</dt>
-              <dd>{money(locked)}</dd>
-            </div>
-            <div>
-              <dt>Plafond consignes</dt>
-              <dd>{money(consignes.maxSpend)}</dd>
-            </div>
-            <div>
-              <dt>À gagner sur la bourse</dt>
-              <dd className="gain">{money(toEarn)}</dd>
-            </div>
-          </dl>
-          <button type="button" className="ghost" onClick={onClose}>
+          <div className="hdv-purse">
+            <span>Caisse</span>
+            <strong>{money(crd)}</strong>
+            <em>séquestre {money(escrow)}</em>
+          </div>
+          <div className="hdv-purse alt">
+            <span>À gagner</span>
+            <strong className="gain">{money(toEarn)}</strong>
+            <em>{board.length} offre(s)</em>
+          </div>
+          <button type="button" className="ghost hdv-close" onClick={onClose}>
             Fermer
           </button>
         </header>
 
-        <nav className="hall-tabs" aria-label="Sections du bureau">
+        <nav className="hdv-modes" aria-label="Modes">
           {(
             [
-              ["BOURSE", `Bourse (${board.length})`],
-              ["CHIFFRE", `À réaliser (${(active ? 1 : 0) + posted.length + ghost.length})`],
+              ["TAKE", `Prendre (${board.length})`],
+              ["MINE", `Mes offres (${posted.length + (active ? 1 : 0)})`],
               ["CONSIGNES", "Consignes"],
-              ["TERRES", "Terres"],
+              ["LAND", "Terres"],
             ] as const
           ).map(([id, label]) => (
-            <button
-              key={id}
-              type="button"
-              className={`hall-tab ${tab === id ? "on" : ""}`}
-              onClick={() => setTab(id)}
-            >
+            <button key={id} type="button" className={mode === id ? "on" : ""} onClick={() => setMode(id)}>
               {label}
             </button>
           ))}
         </nav>
 
-        {tab === "BOURSE" && (
-          <section className="hall-body">
-            <p className="hall-lead">
-              Chantiers sur de vraies parcelles. Vous y allez avec votre matériel, vous
-              encaissez en rentrant. Appoint — pas une rente.
-            </p>
-            {active && (
-              <div className="job-banner">
-                <div>
-                  <strong>En cours · {WORK_LABELS[active.work]}</strong>
-                  <span>
-                    Chez {active.npc ? "une ferme voisine" : active.clientName} · {active.parcelLabel} ·{" "}
-                    {active.remaining} case(s) restantes
-                  </span>
-                </div>
-                <button type="button" className="ghost" disabled={busy} onClick={onAbandonActive}>
-                  Lâcher
-                </button>
-              </div>
-            )}
-            {board.length === 0 ? (
-              <p className="hall-empty">Aucun chantier ouvert pour l’instant. Revenez un peu plus tard.</p>
-            ) : (
-              <ul className="job-grid">
-                {board.map((o) => (
-                  <li key={o.id} className={`job-card ${o.npc ? "npc" : ""}`}>
-                    <header>
-                      <strong>{WORK_LABELS[o.work]}</strong>
-                      <em>{ttlLabel(o.expiresAt)}</em>
-                    </header>
-                    <p>
-                      {o.npc ? "Ferme voisine" : o.clientName}
-                      {o.zoneName ? ` · ${o.zoneName}` : ""}
-                    </p>
-                    <p className="job-meta">
-                      {o.parcelLabel} · {o.remaining}/{o.cells} cases
-                      {o.crop ? ` · ${o.crop}` : ""}
-                    </p>
-                    <footer>
-                      <span>
-                        <b>{money(o.payoutCrd)}</b>
-                        <small>à l’encaissement</small>
-                      </span>
-                      <button
-                        type="button"
-                        className="channel-go"
-                        disabled={cannotTake}
-                        onClick={() => onTake(o.id)}
-                      >
-                        Prendre
-                      </button>
-                    </footer>
-                  </li>
-                ))}
-              </ul>
-            )}
-          </section>
-        )}
-
-        {tab === "CHIFFRE" && (
-          <section className="hall-body">
-            <p className="hall-lead">
-              Ce que vous avez publié, ce que vous avez pris, ce qui est encore dû.
-            </p>
-            <div className="ledger">
-              <div>
-                <em>Caisse</em>
-                <strong>{money(crd)}</strong>
-              </div>
-              <div>
-                <em>Dépensé · séquestre</em>
-                <strong className="loss">−{money(locked)}</strong>
-              </div>
-              <div>
-                <em>Mission en cours</em>
-                <strong className="gain">{active ? money(active.payoutCrd) : "—"}</strong>
-              </div>
-              <div>
-                <em>Chantiers publiés</em>
-                <strong>{posted.length}</strong>
-              </div>
-            </div>
-            {active && (
-              <>
-                <h3>Mission en cours</h3>
-                <ul className="job-grid">
-                  <li className="job-card on">
-                    <header>
-                      <strong>{WORK_LABELS[active.work]}</strong>
-                      <em>en cours</em>
-                    </header>
-                    <p>
-                      {active.clientName} · {active.parcelLabel}
-                    </p>
-                    <p className="job-meta">
-                      {active.remaining} case(s) · {money(active.payoutCrd)} à l’arrivée
-                    </p>
-                    <footer>
-                      <span>
-                        <b>{money(active.payoutCrd)}</b>
-                        <small>si vous terminez</small>
-                      </span>
-                      <button type="button" className="ghost" disabled={busy} onClick={onAbandonActive}>
-                        Abandonner
-                      </button>
-                    </footer>
-                  </li>
-                </ul>
-              </>
-            )}
-            <h3>Mes chantiers publiés</h3>
-            {posted.length === 0 ? (
-              <p className="hall-empty">Vous n’avez rien publié. Au champ : sélectionnez, puis « Publier ».</p>
-            ) : (
-              <ul className="job-grid">
-                {posted.map((o) => (
-                  <li key={o.id} className="job-card posted">
-                    <header>
-                      <strong>{WORK_LABELS[o.work]}</strong>
-                      <em>{o.status === "ACCEPTED" ? "pris" : "ouvert"}</em>
-                    </header>
-                    <p>
-                      {o.parcelLabel} · {o.remaining} case(s)
-                    </p>
-                    <p className="job-meta">
-                      Séquestre {money(o.escrowCrd)} · devis {money(o.quoteCrd)}
-                    </p>
-                    <footer>
-                      <span>
-                        <b>−{money(o.escrowCrd)}</b>
-                        <small>bloqués</small>
-                      </span>
-                      {o.status === "OPEN" && (
-                        <button type="button" disabled={busy} onClick={() => onCancelPosted(o.id)}>
-                          Annuler · remboursement
-                        </button>
-                      )}
-                    </footer>
-                  </li>
-                ))}
-              </ul>
-            )}
-            {ghost.length > 0 && (
-              <>
-                <h3>Ancien filet</h3>
-                <p className="muted tiny">À terminer ou à abandonner — plus de nouveaux contrats fantômes.</p>
-                <ul className="job-grid">
-                  {ghost.map((c) => (
-                    <li key={c.id} className="job-card">
-                      <header>
-                        <strong>{c.title}</strong>
-                      </header>
-                      <p className="job-meta">
-                        {c.jobType} · {c.cells ?? "?"} cases
-                      </p>
-                      <footer>
-                        <span>
-                          <b>{money(c.rewardCrd)}</b>
-                          <small>salaire</small>
-                        </span>
-                        <button
-                          type="button"
-                          className="channel-go"
-                          disabled={cannotTake}
-                          onClick={() => onTakeGhost(c.id)}
-                        >
-                          Prendre
-                        </button>
-                      </footer>
-                    </li>
-                  ))}
-                </ul>
-              </>
-            )}
-          </section>
-        )}
-
-        {tab === "CONSIGNES" && (
-          <section className="hall-body">
-            <p className="hall-lead">
-              Si vous partez, les cases déjà engagées se publient toutes seules. Jamais de
-              culture nouvelle. Le plafond empêche de vider la caisse.
-            </p>
-            <ConsignesForm consignes={consignes} busy={busy} onSave={onSaveConsignes} locked={locked} crd={crd} />
-          </section>
-        )}
-
-        {tab === "TERRES" && (
-          <section className="hall-body">
-            <p className="hall-lead">Parcelles adjacentes libres — cliquez pour acheter.</p>
+        {mode === "CONSIGNES" ? (
+          <div className="hdv-single">
+            <ConsignesForm consignes={consignes} busy={busy} onSave={onSaveConsignes} locked={escrow} crd={crd} />
+          </div>
+        ) : mode === "LAND" ? (
+          <div className="hdv-single">
+            <p className="hdv-muted">Parcelles adjacentes libres — cliquez pour acheter.</p>
             <div className="zone-maps office-maps">
               {zones.map((z) => (
                 <ZoneMap
@@ -378,12 +229,370 @@ export function OfficePanel({
                 />
               ))}
             </div>
-            {expandableIds.size === 0 && (
-              <p className="hall-empty">Aucune parcelle adjacente libre pour le moment.</p>
-            )}
-          </section>
+            {expandableIds.size === 0 && <p className="hdv-empty">Aucune parcelle adjacente libre.</p>}
+          </div>
+        ) : mode === "MINE" ? (
+          <MineBody
+            active={active}
+            posted={posted}
+            ghost={ghost}
+            busy={busy}
+            cannotTake={cannotTake}
+            onAbandon={onAbandonActive}
+            onCancel={onCancelPosted}
+            onTakeGhost={onTakeGhost}
+            ghostPick={ghostPick}
+            setGhostId={setGhostId}
+          />
+        ) : (
+          <div className="hdv-body">
+            <aside className="hdv-cats" aria-label="Types de chantier">
+              <p>Travaux</p>
+              {WORK_CATS.map((c) => {
+                const n = c.id === "ALL" ? board.length : board.filter((o) => o.work === c.id).length;
+                if (c.id !== "ALL" && n === 0) return null;
+                return (
+                  <button
+                    key={c.id}
+                    type="button"
+                    className={cat === c.id ? "on" : ""}
+                    onClick={() => setCat(c.id)}
+                  >
+                    <span>{c.label}</span>
+                    <em>{n}</em>
+                  </button>
+                );
+              })}
+            </aside>
+
+            <section className="hdv-main">
+              {active && (
+                <div className="hdv-banner">
+                  <div>
+                    <strong>En cours · {WORK_LABELS[active.work]}</strong>
+                    <span>
+                      Chez {active.npc ? "une ferme voisine" : active.clientName} · {active.parcelLabel} ·{" "}
+                      {active.remaining} case(s)
+                    </span>
+                  </div>
+                  <button type="button" className="ghost" disabled={busy} onClick={onAbandonActive}>
+                    Lâcher
+                  </button>
+                </div>
+              )}
+              <div className="hdv-toolbar">
+                <input
+                  type="search"
+                  placeholder="Rechercher un chantier, un client, une parcelle…"
+                  value={query}
+                  onChange={(e) => setQuery(e.target.value)}
+                  aria-label="Recherche"
+                />
+                <span className="hdv-count">{filtered.length} offre(s)</span>
+              </div>
+              {filtered.length === 0 ? (
+                <p className="hdv-empty">Aucune offre dans ce rayon. Revenez un peu plus tard.</p>
+              ) : (
+                <div className="hdv-table-wrap">
+                  <table className="hdv-table">
+                    <thead>
+                      <tr>
+                        <th>Chantier</th>
+                        <th>
+                          <button type="button" className="hdv-sort" onClick={() => setSort("client")}>
+                            Client
+                          </button>
+                        </th>
+                        <th>
+                          <button type="button" className="hdv-sort" onClick={() => setSort("cells")}>
+                            Cases
+                          </button>
+                        </th>
+                        <th>
+                          <button type="button" className="hdv-sort" onClick={() => setSort("payout")}>
+                            Salaire
+                          </button>
+                        </th>
+                        <th>
+                          <button type="button" className="hdv-sort" onClick={() => setSort("ttl")}>
+                            Délai
+                          </button>
+                        </th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {filtered.map((o) => (
+                        <tr
+                          key={o.id}
+                          className={pick?.id === o.id ? "sel" : ""}
+                          onClick={() => setPickId(o.id)}
+                        >
+                          <td>
+                            <strong>{WORK_LABELS[o.work]}</strong>
+                            {o.npc && <em className="local-tag">voisin</em>}
+                            {o.crop ? <span className="hdv-sub">{o.crop}</span> : null}
+                          </td>
+                          <td>
+                            {o.npc ? "Ferme voisine" : o.clientName}
+                            <span className="hdv-sub">
+                              {o.parcelLabel}
+                              {o.zoneName ? ` · ${o.zoneName}` : ""}
+                            </span>
+                          </td>
+                          <td className="num">
+                            {o.remaining}/{o.cells}
+                          </td>
+                          <td className="num last">{money(o.payoutCrd)}</td>
+                          <td>{ttlLabel(o.expiresAt)}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </section>
+
+            <aside className="hdv-detail">
+              {pick ? (
+                <div className="hdv-card">
+                  <header>
+                    <h3>{WORK_LABELS[pick.work]}</h3>
+                    {pick.npc && <em className="local-tag">voisin</em>}
+                  </header>
+                  <dl className="hdv-quotes">
+                    <div>
+                      <dt>Salaire</dt>
+                      <dd>{money(pick.payoutCrd)}</dd>
+                    </div>
+                    <div>
+                      <dt>Par case</dt>
+                      <dd>{money(perCell(pick))}</dd>
+                    </div>
+                    <div>
+                      <dt>Restant</dt>
+                      <dd>
+                        {pick.remaining}/{pick.cells}
+                      </dd>
+                    </div>
+                    <div>
+                      <dt>Délai</dt>
+                      <dd>{ttlLabel(pick.expiresAt)}</dd>
+                    </div>
+                  </dl>
+                  <p>
+                    <strong>{pick.npc ? "Ferme voisine" : pick.clientName}</strong>
+                    <span className="hdv-sub">
+                      {pick.parcelLabel}
+                      {pick.zoneName ? ` · ${pick.zoneName}` : ""}
+                      {pick.crop ? ` · ${pick.crop}` : ""}
+                    </span>
+                  </p>
+                  <p className="hdv-muted">
+                    Vous y allez avec votre matériel. Paiement à l’encaissement, au retour. Appoint — pas une
+                    rente.
+                  </p>
+                  {cannotTake && active && (
+                    <p className="hdv-muted">Terminez ou lâchez le chantier en cours avant d’en prendre un autre.</p>
+                  )}
+                  <button
+                    type="button"
+                    className="accent"
+                    disabled={cannotTake}
+                    onClick={() => onTake(pick.id)}
+                  >
+                    Prendre · {money(pick.payoutCrd)}
+                  </button>
+                </div>
+              ) : (
+                <p className="hdv-empty">Sélectionnez une offre pour voir le détail.</p>
+              )}
+            </aside>
+          </div>
         )}
       </div>
+    </div>
+  );
+}
+
+function MineBody({
+  active,
+  posted,
+  ghost,
+  busy,
+  cannotTake,
+  onAbandon,
+  onCancel,
+  onTakeGhost,
+  ghostPick,
+  setGhostId,
+}: {
+  active: OfficeLabor | null;
+  posted: OfficeLabor[];
+  ghost: OfficeContract[];
+  busy: boolean;
+  cannotTake: boolean;
+  onAbandon: () => void;
+  onCancel: (id: string) => void;
+  onTakeGhost: (id: string) => void;
+  ghostPick: OfficeContract | null;
+  setGhostId: (id: string) => void;
+}) {
+  const [sel, setSel] = useState<string | null>(active?.id ?? posted[0]?.id ?? null);
+  const row = posted.find((o) => o.id === sel) ?? posted[0] ?? null;
+
+  return (
+    <div className="hdv-body">
+      <aside className="hdv-cats">
+        <p>Carnet</p>
+        <button type="button" className={!ghost.length || sel ? "on" : ""} onClick={() => setSel(posted[0]?.id ?? active?.id ?? null)}>
+          <span>Mes publications</span>
+          <em>{posted.length}</em>
+        </button>
+        {ghost.length > 0 && (
+          <button type="button" className={!sel && ghostPick ? "on" : ""} onClick={() => setSel("")}>
+            <span>Ancien filet</span>
+            <em>{ghost.length}</em>
+          </button>
+        )}
+      </aside>
+      <section className="hdv-main">
+        {active && (
+          <div className="hdv-banner">
+            <div>
+              <strong>Mission en cours · {WORK_LABELS[active.work]}</strong>
+              <span>
+                {active.clientName} · {active.parcelLabel} · {active.remaining} case(s) · {money(active.payoutCrd)} à
+                l’arrivée
+              </span>
+            </div>
+            <button type="button" className="ghost" disabled={busy} onClick={onAbandon}>
+              Abandonner
+            </button>
+          </div>
+        )}
+        {sel !== "" ? (
+          posted.length === 0 ? (
+            <p className="hdv-empty">Vous n’avez rien publié. Au champ : sélectionnez, puis « Publier ».</p>
+          ) : (
+            <div className="hdv-table-wrap">
+              <table className="hdv-table">
+                <thead>
+                  <tr>
+                    <th>Chantier</th>
+                    <th>Parcelle</th>
+                    <th>État</th>
+                    <th>Séquestre</th>
+                    <th>Restant</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {posted.map((o) => (
+                    <tr key={o.id} className={row?.id === o.id ? "sel" : ""} onClick={() => setSel(o.id)}>
+                      <td>
+                        <strong>{WORK_LABELS[o.work]}</strong>
+                      </td>
+                      <td>{o.parcelLabel}</td>
+                      <td>{o.status === "ACCEPTED" ? "pris" : "ouvert"}</td>
+                      <td className="num loss">−{money(o.escrowCrd)}</td>
+                      <td className="num">
+                        {o.remaining}/{o.cells}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )
+        ) : (
+          <div className="hdv-table-wrap">
+            <table className="hdv-table">
+              <thead>
+                <tr>
+                  <th>Mission</th>
+                  <th>Type</th>
+                  <th>Cases</th>
+                  <th>Salaire</th>
+                </tr>
+              </thead>
+              <tbody>
+                {ghost.map((c) => (
+                  <tr
+                    key={c.id}
+                    className={ghostPick?.id === c.id ? "sel" : ""}
+                    onClick={() => setGhostId(c.id)}
+                  >
+                    <td>
+                      <strong>{c.title}</strong>
+                    </td>
+                    <td>{c.jobType}</td>
+                    <td className="num">{c.cells ?? "—"}</td>
+                    <td className="num last">{money(c.rewardCrd)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </section>
+      <aside className="hdv-detail">
+        {sel !== "" && row ? (
+          <div className="hdv-card">
+            <header>
+              <h3>{WORK_LABELS[row.work]}</h3>
+            </header>
+            <dl className="hdv-quotes">
+              <div>
+                <dt>Bloqué</dt>
+                <dd className="loss">−{money(row.escrowCrd)}</dd>
+              </div>
+              <div>
+                <dt>Devis</dt>
+                <dd>{money(row.quoteCrd)}</dd>
+              </div>
+              <div>
+                <dt>État</dt>
+                <dd>{row.status === "ACCEPTED" ? "pris" : "ouvert"}</dd>
+              </div>
+            </dl>
+            <p className="hdv-muted">
+              {row.parcelLabel} · {row.remaining} case(s). Annuler rembourse le séquestre tant que personne n’a
+              pris.
+            </p>
+            {row.status === "OPEN" && (
+              <button type="button" className="ghost" disabled={busy} onClick={() => onCancel(row.id)}>
+                Annuler · remboursement
+              </button>
+            )}
+          </div>
+        ) : ghostPick ? (
+          <div className="hdv-card">
+            <header>
+              <h3>{ghostPick.title}</h3>
+            </header>
+            <p className="hdv-muted">Ancien filet — plus de nouveaux contrats fantômes.</p>
+            <dl className="hdv-quotes">
+              <div>
+                <dt>Salaire</dt>
+                <dd>{money(ghostPick.rewardCrd)}</dd>
+              </div>
+              <div>
+                <dt>Cases</dt>
+                <dd>{ghostPick.cells ?? "—"}</dd>
+              </div>
+            </dl>
+            <button
+              type="button"
+              className="accent"
+              disabled={cannotTake}
+              onClick={() => onTakeGhost(ghostPick.id)}
+            >
+              Prendre
+            </button>
+          </div>
+        ) : (
+          <p className="hdv-empty">Rien à afficher.</p>
+        )}
+      </aside>
     </div>
   );
 }
@@ -415,11 +624,14 @@ function ConsignesForm({
     { key: "straw", title: "Paille", hint: "Presser l’andain, ramasser les bottes." },
     { key: "stubble", title: "Déchaumer", hint: "Après la moisson, quand plus rien n’attend au sol." },
     { key: "plow", title: "Labourer", hint: "Seulement si le sol est épuisé ou la culture perdue." },
-    { key: "npcAllowed", title: "Filet voisin autorisé", hint: "Sinon, personne peut ne pas prendre — la culture peut se perdre." },
+    { key: "npcAllowed", title: "Filet voisin autorisé", hint: "Sinon personne peut ne pas prendre — la culture peut se perdre." },
   ];
 
   return (
     <div className="consigne-form">
+      <p className="hdv-muted">
+        Si vous partez, les cases déjà engagées se publient toutes seules. Jamais de culture nouvelle.
+      </p>
       <div className="consigne-budget">
         <div>
           <em>Disponible</em>
