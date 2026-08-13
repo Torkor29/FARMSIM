@@ -39,6 +39,7 @@ import {
   GREASE_COST_CRD,
   CLEAN_COST_CRD,
   DIRT_DIRTY_THRESHOLD,
+  isBreakdownKind,
 } from "@farmsim/shared";
 import { AuthScreen } from "./AuthScreen";
 import type { GrazingHerd, PreviewBuilding } from "./IsoFarmView";
