@@ -5,6 +5,9 @@ import {
   BUILDING_DEFS,
   MACHINE_ART,
   RIPENESS_COLORS,
+  artGroundFraction,
+  billboardLift,
+  opaqueRowSpans,
   workAnimationMs,
   type BuildingType,
   type CropCode,
@@ -252,27 +255,142 @@ const BUILDING_ART_RATIO = 1;
  * on ne recharge ni ne recompile rien.
  */
 const artCache = new Map<string, THREE.MeshBasicMaterial>();
+const artAnchorCache = new Map<string, number>();
+const artAnchorWaiters = new Map<string, Array<(t: number) => void>>();
 let artLoader: THREE.TextureLoader | null = null;
+
+/**
+ * Tant que l'image n'est pas lue, on suppose une dalle isométrique typique
+ * (équateur vers 66 % du cadre) pour les bâtiments et engins. Un arbre, lui,
+ * touche déjà le bas du fichier.
+ */
+function guessArtGround(url: string): number {
+  if (url.includes("/buildings/") || url.includes("/vehicles/") || url.includes("/animals/")) {
+    return 0.66;
+  }
+  return 1;
+}
+
+function artAnchor(url: string): number {
+  return artAnchorCache.get(url) ?? guessArtGround(url);
+}
+
+function onArtAnchor(url: string, cb: (t: number) => void): void {
+  const hit = artAnchorCache.get(url);
+  if (hit != null) {
+    cb(hit);
+    return;
+  }
+  let list = artAnchorWaiters.get(url);
+  if (!list) {
+    list = [];
+    artAnchorWaiters.set(url, list);
+  }
+  list.push(cb);
+}
+
+function setArtAnchor(url: string, t: number): void {
+  artAnchorCache.set(url, t);
+  const list = artAnchorWaiters.get(url);
+  artAnchorWaiters.delete(url);
+  list?.forEach((cb) => cb(t));
+}
+
+function measureTextureGround(image: TexImageSource, url = ""): number {
+  const w = (image as { width?: number }).width;
+  const h = (image as { height?: number }).height;
+  if (!w || !h) return guessArtGround(url);
+  const canvas = document.createElement("canvas");
+  canvas.width = w;
+  canvas.height = h;
+  const ctx = canvas.getContext("2d", { willReadFrequently: true });
+  if (!ctx) return guessArtGround(url);
+  try {
+    ctx.drawImage(image as CanvasImageSource, 0, 0);
+    const { data } = ctx.getImageData(0, 0, w, h);
+    return artGroundFraction(opaqueRowSpans(data, w, h), w);
+  } catch {
+    return guessArtGround(url);
+  }
+}
+
+function isTexImageSource(image: unknown): image is TexImageSource {
+  if (!image || typeof image !== "object") return false;
+  return "width" in image && "height" in image;
+}
+
+function rememberArtGround(url: string, image: unknown): void {
+  if (!isTexImageSource(image) || artAnchorCache.has(url)) return;
+  setArtAnchor(url, measureTextureGround(image, url));
+}
 
 function artMaterial(url: string): THREE.MeshBasicMaterial {
   const hit = artCache.get(url);
-  if (hit) return hit;
+  if (hit) {
+    rememberArtGround(url, hit.map?.image);
+    return hit;
+  }
   artLoader ??= new THREE.TextureLoader();
-  const tex = artLoader.load(url);
+  const tex = artLoader.load(url, (loaded) => {
+    rememberArtGround(url, loaded.image);
+  });
   tex.colorSpace = THREE.SRGBColorSpace;
   tex.minFilter = THREE.LinearMipmapLinearFilter;
   tex.generateMipmaps = true;
   const mat = new THREE.MeshBasicMaterial({
     map: tex,
     transparent: true,
-    // Le seuil alpha évite d'avoir à trier les panneaux entre eux : chaque
-    // pixel est écrit ou rejeté, et la profondeur suffit à les ordonner.
+    // Le seuil alpha découpe le cadre : le vide autour du dessin ne masque
+    // pas les tuiles. On ignore le z-buffer — les cases d'emprise, plus
+    // proches de la caméra, mangeaient sinon tout le panneau.
     alphaTest: 0.35,
+    // Les tuiles d'emprise sont plus proches de la caméra que le panneau
+    // une fois celui-ci abaissé : sans ça, le hangar disparaît et il ne
+    // reste que la terre brune.
+    depthWrite: false,
+    depthTest: false,
     side: THREE.DoubleSide,
   });
   mat.userData.shared = true;
   artCache.set(url, mat);
   return mat;
+}
+
+/**
+ * Panneau d'illustration planté au sol.
+ *
+ * Recadrer l'image sous la dalle dessinée faisait disparaître le bâtiment :
+ * les tuiles d'emprise, plus proches de la caméra, mangeaient le reste. On
+ * garde le dessin entier, on abaisse le rang d'ancrage, et on avance un peu
+ * le panneau vers la caméra pour qu'il passe devant la terre.
+ */
+function makeArtBillboard(
+  url: string,
+  camera: THREE.Camera,
+  x: number,
+  y: number,
+  z: number,
+  spanX: number,
+  spanY: number,
+): THREE.Mesh {
+  const mesh = new THREE.Mesh(new THREE.PlaneGeometry(spanX, spanY), artMaterial(url));
+  mesh.name = "art";
+  mesh.renderOrder = 3;
+  const token = { live: true };
+  mesh.userData.anchorToken = token;
+
+  const plant = (t: number) => {
+    if (!token.live) return;
+    const ground = Math.min(1, Math.max(0.2, t));
+    mesh.quaternion.copy(camera.quaternion);
+    mesh.position.set(x, y, z);
+    mesh.translateY(billboardLift(spanY, ground));
+    mesh.translateZ(-0.2);
+  };
+
+  plant(artAnchor(url));
+  if (!artAnchorCache.has(url)) onArtAnchor(url, plant);
+  return mesh;
 }
 
 /**
@@ -300,11 +418,7 @@ function makeVehicleSprite(type: MachineType, camera: THREE.Camera): THREE.Group
   g.add(shadow);
 
   const size = type === "HARVESTER" ? 1.15 : 0.95;
-  const art = new THREE.Mesh(new THREE.PlaneGeometry(size, size), artMaterial(MACHINE_ART[type]));
-  art.quaternion.copy(camera.quaternion);
-  art.translateY(size / 2);
-  art.name = "art";
-  g.add(art);
+  g.add(makeArtBillboard(MACHINE_ART[type], camera, 0, 0, 0, size, size));
   return g;
 }
 
@@ -330,6 +444,8 @@ function cropGeometry(): THREE.BoxGeometry {
 
 function disposeObject3D(obj: THREE.Object3D) {
   obj.traverse((o) => {
+    const token = o.userData.anchorToken as { live?: boolean } | undefined;
+    if (token) token.live = false;
     if (o instanceof THREE.Mesh) {
       if (!o.geometry.userData.shared) o.geometry.dispose();
       if (Array.isArray(o.material)) o.material.forEach((m) => m.dispose());
@@ -491,6 +607,7 @@ export function IsoFarmView({
     /** Véhicules stationnés — animés en idle (hors pickables) */
     const vehicleGroups = new Map<string, THREE.Group>();
     const buildingGroup = new THREE.Group();
+    buildingGroup.renderOrder = 2;
     world.add(buildingGroup);
 
     const workGroup = new THREE.Group();
@@ -871,14 +988,7 @@ export function IsoFarmView({
         shade.position.set(tx, 0.02, tz);
         fenceGroup.add(shade);
 
-        const tree = new THREE.Mesh(
-          new THREE.PlaneGeometry(1.5, 2),
-          artMaterial("/assets/decor/tree.webp"),
-        );
-        tree.quaternion.copy(camera.quaternion);
-        tree.position.set(tx, 0, tz);
-        tree.translateY(1);
-        fenceGroup.add(tree);
+        fenceGroup.add(makeArtBillboard("/assets/decor/tree.webp", camera, tx, 0, tz, 1.5, 2));
       }
 
         /** Relief à semer sur les cases une fois la grille posée. */
@@ -914,7 +1024,15 @@ export function IsoFarmView({
             flatShading: true,
           });
           const mesh = new THREE.Mesh(tileGeo(cellSize), mat);
-          mesh.position.set(px, 0, pz);
+          // Les cases d'emprise ne doivent pas former un muret : le panneau
+          // du bâtiment passe alors derrière, et il ne reste que la terre.
+          if (cell?.kind === "BUILDING" || cell?.kind === "VEHICLE") {
+            mesh.scale.y = 0.22;
+            mesh.position.set(px, -0.07, pz);
+            mat.depthWrite = false;
+          } else {
+            mesh.position.set(px, 0, pz);
+          }
           mesh.receiveShadow = true;
           mesh.userData = { x, y, baseColor: col, isSelected: isSel };
           world.add(mesh);
@@ -992,16 +1110,12 @@ export function IsoFarmView({
         const grow = 1 + (level - 1) * 0.1;
         const spanX = (def.w + def.h) * step * 0.56 * grow;
         const spanY = spanX * BUILDING_ART_RATIO;
-        const art = new THREE.Mesh(
-          new THREE.PlaneGeometry(spanX, spanY),
-          artMaterial(BUILDING_ART[b.type]),
+        // Le rang d'ancrage — pieds du bâtiment, pas le bas du cadre —
+        // repose sur les tuiles. Sinon l'illustration flotte : la dalle
+        // dessinée dans le webp se mettait au-dessus du sol 3D.
+        buildingGroup.add(
+          makeArtBillboard(BUILDING_ART[b.type], camera, cx, 0.1, cz, spanX, spanY),
         );
-        art.quaternion.copy(camera.quaternion);
-        // Le bas de l'image repose sur le sol de la case, sans quoi le
-        // bâtiment paraîtrait enfoncé ou suspendu.
-        art.position.set(cx, 0.1, cz);
-        art.translateY(spanY / 2);
-        buildingGroup.add(art);
       }
 
       viewSpan = Math.max(gw, gh) * step;

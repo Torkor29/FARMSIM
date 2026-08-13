@@ -12,6 +12,7 @@ export * from "./breeding.js";
 export * from "./rotation.js";
 export * from "./futures.js";
 export * from "./machine-care.js";
+export * from "./art-anchor.js";
 
 import type { TradeGood } from "./goods.js";
 
