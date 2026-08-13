@@ -107,6 +107,36 @@ champ : sous l'angle exact de la vue de jeu, et à l'échelle des cases.
 Le composant `MachineView3D` est autonome : il peut être posé tel quel dans le
 garage ou le catalogue à la place de l'illustration 2D.
 
+## Essai : un tracteur « héros »
+
+`tractor-hero.ts` pousse **un seul engin** au-delà de la charte, pour mesurer
+ce qu'on gagne à quitter le low-poly :
+
+| | Modèle du jeu | Modèle détaillé |
+|---|---|---|
+| Triangles | ~700 | ~14 000 |
+| Volumes | boîtes et cylindres facettés | capot extrudé galbé, tôles à arêtes cassées, pneus et jantes tournés au tour |
+| Ombrage | facettes assumées | lisse sur les tôles, facettes sur les crampons |
+| Matières | `MeshLambert`, couleurs plates | peinture vernie (`clearcoat`), chrome, fonte mate, verre teinté |
+| Éclairage | soleil + hémisphère | idem + environnement PMREM, ACES, ombres 2048 |
+| Détail | calandre, phares, attelage suggérés | calandre à lames, phares à enjoliveur, panneaux de porte, marchepieds, relevage trois points complet avec rotules, prise de force cannelée, flexibles hydrauliques courbés, rétroviseurs, gyrophare |
+
+Il expose la même interface que le parc (`MachineRig`) : il se substitue à
+`createMachineRig("TRACTOR")` sans rien changer à l'appelant, et répond aux
+mêmes commandes d'animation.
+
+**Ce que ça coûte, honnêtement.** La peinture vernie tire `MeshPhysicalMaterial`
+et l'environnement tire `PMREMGenerator` : le morceau `three` partagé passe de
+523 à 563 kB (143 → 144 kB gzip). Comme la page de jeu charge le même morceau,
+elle paie aujourd'hui pour une pièce qu'elle n'utilise pas. À régler si le
+modèle détaillé entre en jeu — en séparant le `three` de l'atelier de celui du
+jeu, ou en réservant le modèle à un écran qui charge son propre bundle.
+
+Verdict à trancher : le modèle détaillé est fait pour un **garage ou un
+catalogue** — un engin à l'écran, vu de près, sur plateau tournant. Dans la
+parcelle, à 40 px de haut et à plusieurs exemplaires, il n'apporterait presque
+rien de visible pour vingt fois le coût.
+
 ## Reste à faire
 
 - Le catalogue et le garage affichent toujours les `.webp` : le rendu 3D est
@@ -119,3 +149,5 @@ garage ou le catalogue à la place de l'illustration 2D.
 - Le grain ne descend pas dans la trémie de la moissonneuse au fil de la
   moisson, et la vis se déploie sans rien déverser
 - Pas de tier 2 : les quatre engins sont figés au niveau 1 du catalogue
+- Le modèle détaillé n'existe que pour le tracteur, et n'est branché nulle
+  part ailleurs que dans l'atelier

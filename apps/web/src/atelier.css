@@ -130,3 +130,10 @@ body {
   width: 100%;
   height: 100%;
 }
+
+.atelier-lead {
+  margin: 0 0 12px;
+  max-width: 78ch;
+  color: var(--ink-muted);
+  line-height: 1.5;
+}

@@ -85,8 +85,53 @@ export function MachineShowcase() {
         })}
       </div>
 
+      <HeroTrial />
+
       <FarmPreview />
     </div>
+  );
+}
+
+/**
+ * Essai « héros » : le même tracteur, monté deux fois — au budget low-poly de
+ * la charte, puis en modèle détaillé. Les deux vignettes tournent au même
+ * rythme, sous le même angle : c'est la seule façon honnête de juger si le
+ * détail supplémentaire vaut son coût.
+ */
+function HeroTrial() {
+  const [working, setWorking] = useState(false);
+
+  return (
+    <section className="atelier-farm">
+      <h2>Essai — tracteur détaillé</h2>
+      <p className="atelier-lead">
+        À gauche le modèle du jeu (~700 triangles, facettes, couleurs plates). À droite
+        le modèle détaillé (~14 000 triangles, tôles galbées, peinture métallisée,
+        chrome et verre avec reflets). Même échelle, même angle de caméra.
+      </p>
+      <div className="atelier-controls">
+        <label>
+          <input type="checkbox" checked={working} onChange={(e) => setWorking(e.target.checked)} />
+          Au travail
+        </label>
+      </div>
+      <div className="atelier-grid big">
+        <article className="atelier-card">
+          <MachineView3D type="TRACTOR" height={420} working={working} />
+          <div className="atelier-meta">
+            <h2>Low-poly — modèle du jeu</h2>
+            <p>Budget de la charte, posé jusqu'à plusieurs fois dans la parcelle.</p>
+          </div>
+        </article>
+        <article className="atelier-card">
+          <MachineView3D type="TRACTOR" height={420} working={working} detail="hero" />
+          <div className="atelier-meta">
+            <h2>Détaillé — vitrine</h2>
+            <p>Garage, catalogue, écran de choix : un seul engin à l'écran à la fois.</p>
+          </div>
+        </article>
+      </div>
+    </section>
   );
 }
 

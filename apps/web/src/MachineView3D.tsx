@@ -2,6 +2,7 @@ import { useEffect, useRef } from "react";
 import * as THREE from "three";
 import type { MachineType } from "@farmsim/shared";
 import { createDustTrail, createMachineRig, isTowedImplement } from "./machines3d";
+import { createHeroTractorRig } from "./tractor-hero";
 import { disposeRenderer, disposeThreeScene } from "./three-cleanup";
 
 type Props = {
@@ -16,6 +17,11 @@ type Props = {
   towed?: boolean;
   /** Tour de plateau : l'engin pivote pour se montrer sous toutes ses faces */
   turntable?: boolean;
+  /**
+   * `hero` : modèle détaillé, ombrage lisse et rendu PBR — vitrine seulement.
+   * Disponible pour le tracteur ; les autres types retombent sur `lowpoly`.
+   */
+  detail?: "lowpoly" | "hero";
 };
 
 /**
@@ -31,6 +37,7 @@ export function MachineView3D({
   speed = 1.6,
   towed = false,
   turntable = true,
+  detail = "lowpoly",
 }: Props) {
   const hostRef = useRef<HTMLDivElement | null>(null);
   const liveRef = useRef({ working, speed, turntable });
@@ -43,12 +50,37 @@ export function MachineView3D({
     const scene = new THREE.Scene();
     scene.background = new THREE.Color(0xcfeafb);
 
+    const hero = detail === "hero" && type === "TRACTOR";
+
     const renderer = new THREE.WebGLRenderer({ antialias: true });
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
     renderer.shadowMap.enabled = true;
     renderer.shadowMap.type = THREE.PCFShadowMap;
     renderer.outputColorSpace = THREE.SRGBColorSpace;
+    if (hero) {
+      renderer.toneMapping = THREE.ACESFilmicToneMapping;
+      renderer.toneMappingExposure = 0.94;
+    }
     host.appendChild(renderer.domElement);
+
+    // Le modèle détaillé vit de ses reflets : sans environnement, la peinture
+    // métallisée, le chrome et le verre rendent comme de la peinture mate.
+    // Chargée à la demande : cette pièce ne sert qu'au modèle détaillé, elle
+    // n'a rien à faire dans le trois.js que télécharge un joueur ordinaire.
+    let pmrem: THREE.PMREMGenerator | null = null;
+    let unmounted = false;
+    if (hero) {
+      void import("three/examples/jsm/environments/RoomEnvironment.js").then(
+        ({ RoomEnvironment }) => {
+          if (unmounted) return;
+          pmrem = new THREE.PMREMGenerator(renderer);
+          const room = new RoomEnvironment();
+          scene.environment = pmrem.fromScene(room, 0.04).texture;
+          scene.environmentIntensity = 0.42;
+          room.traverse((o) => (o as THREE.Mesh).geometry?.dispose?.());
+        },
+      );
+    }
 
     // Caméra isométrique, comme la vue ferme : un engin doit être jugé sous
     // l'angle où il sera vu en jeu.
@@ -56,12 +88,12 @@ export function MachineView3D({
     camera.position.set(9, 7.35, 9);
     camera.lookAt(0, 0.35, 0);
 
-    scene.add(new THREE.HemisphereLight(0xdff0ff, 0xc8b48a, 1.05));
-    scene.add(new THREE.AmbientLight(0xfff6e6, 0.28));
-    const sun = new THREE.DirectionalLight(0xfff0d0, 1.45);
+    scene.add(new THREE.HemisphereLight(0xdff0ff, 0xc8b48a, hero ? 0.6 : 1.05));
+    scene.add(new THREE.AmbientLight(0xfff6e6, hero ? 0.12 : 0.28));
+    const sun = new THREE.DirectionalLight(0xfff0d0, hero ? 1.7 : 1.45);
     sun.position.set(6, 9, 4);
     sun.castShadow = true;
-    sun.shadow.mapSize.set(1024, 1024);
+    sun.shadow.mapSize.set(hero ? 2048 : 1024, hero ? 2048 : 1024);
     sun.shadow.camera.left = -3;
     sun.shadow.camera.right = 3;
     sun.shadow.camera.top = 3;
@@ -76,7 +108,9 @@ export function MachineView3D({
     const turn = new THREE.Group();
     scene.add(turn);
 
-    const rig = createMachineRig(type, { towed: towed && isTowedImplement(type), seed: 3 });
+    const rig = hero
+      ? createHeroTractorRig()
+      : createMachineRig(type, { towed: towed && isTowedImplement(type), seed: 3 });
     turn.add(rig.group);
 
     // Le socle suit la taille de l'engin : un attelage de deux mètres ne se
@@ -136,14 +170,17 @@ export function MachineView3D({
     tick();
 
     return () => {
+      unmounted = true;
       cancelAnimationFrame(raf);
       ro.disconnect();
       rig.dispose();
       dust.dispose();
+      scene.environment = null;
+      pmrem?.dispose();
       disposeThreeScene(scene);
       disposeRenderer(renderer, host);
     };
-  }, [type, height, towed]);
+  }, [type, height, towed, detail]);
 
   return <div className="machine-view3d" ref={hostRef} style={{ height }} aria-hidden="true" />;
 }
