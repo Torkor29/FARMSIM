@@ -204,6 +204,10 @@ model Herd {
   gestatingSince DateTime?
   /// Dernière mise bas
   lastCalvedAt  DateTime?
+  /// Âge moyen du lot, dilué à chaque naissance ou achat
+  avgAgeMs      Float     @default(0)
+  /// Pertes fractionnaires reportées : sans elles, un petit lot ne meurt jamais
+  mortalityDebt Float     @default(0)
 }
 
 model Building {

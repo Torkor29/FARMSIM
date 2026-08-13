@@ -1465,3 +1465,16 @@ button.ghost {
   color: #ffffff;
   font-weight: 800;
 }
+
+/* Un troupeau qui meurt de faim ne doit pas se découvrir au retour. */
+.herd-alert {
+  margin: 0.3rem 0;
+  padding: 0.4rem 0.55rem;
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--danger) 14%, transparent);
+  border: 1px solid color-mix(in srgb, var(--danger) 38%, transparent);
+  color: var(--danger);
+  font-size: 0.78rem;
+  font-weight: 700;
+  line-height: 1.35;
+}

@@ -86,6 +86,10 @@ import {
   gestationProgress,
   litterFor,
   BREEDING_REFUSAL_LABELS,
+  mortalityToll,
+  MORTALITY,
+  blendedAgeMs,
+  PURCHASED_AGE_MS,
   HUNGER,
   feedBurn,
   feedUnits,
@@ -2331,6 +2335,8 @@ async function settleHerd(
     kind: string;
     gestatingSince: Date | null;
     lastCalvedAt: Date | null;
+    avgAgeMs: number;
+    mortalityDebt: number;
   },
   paddockCapacityCells: number,
   now: number,
@@ -2342,6 +2348,8 @@ async function settleHerd(
   size: number;
   gestatingSince: Date | null;
   born: number;
+  died: number;
+  avgAgeMs: number;
 }> {
   const elapsedMs = Math.max(0, now - herd.lastTickAt.getTime());
   if (elapsedMs < 1000) {
@@ -2351,6 +2359,8 @@ async function settleHerd(
       size: herd.size,
       gestatingSince: herd.gestatingSince,
       born: 0,
+      died: 0,
+      avgAgeMs: herd.avgAgeMs,
     };
   }
 
@@ -2409,11 +2419,44 @@ async function settleHerd(
     if (verdict.ok) gestatingSince = new Date(now);
   }
 
+  // Le lot vieillit du temps écoulé, puis la moyenne se dilue des veaux qui
+  // viennent de naître : sans quoi un nouveau-né compterait comme un adulte à
+  // l'abattage.
+  let avgAgeMs = Math.max(0, herd.avgAgeMs) + elapsedMs;
+  if (born > 0) {
+    avgAgeMs = blendedAgeMs({
+      herdSize: size - born,
+      averageAgeMs: avgAgeMs,
+      added: born,
+      addedAgeMs: 0,
+    });
+  }
+
+  // Un troupeau affamé finit par perdre des bêtes. Lentement : on doit avoir
+  // le temps de réagir en rentrant.
+  const toll = mortalityToll({
+    happiness,
+    herdSize: size,
+    elapsedMs,
+    cycleMs: LIVESTOCK_CYCLE_MS,
+    debt: herd.mortalityDebt,
+  });
+  size = Math.max(0, size - toll.deaths);
+
   await prisma.herd.update({
     where: { id: herd.id },
-    data: { happiness, feedStock, size, gestatingSince, lastCalvedAt, lastTickAt: new Date(now) },
+    data: {
+      happiness,
+      feedStock,
+      size,
+      gestatingSince: size > 0 ? gestatingSince : null,
+      lastCalvedAt,
+      avgAgeMs,
+      mortalityDebt: toll.debt,
+      lastTickAt: new Date(now),
+    },
   });
-  return { happiness, feedStock, size, gestatingSince, born };
+  return { happiness, feedStock, size, gestatingSince, born, died: toll.deaths, avgAgeMs };
 }
 
 /** État complet de l'élevage d'une parcelle, prêt pour l'affichage. */
@@ -2478,6 +2521,10 @@ app.get("/parcels/:id/livestock", async (req, res) => {
             size: herdSize,
             happiness,
             label: happinessLabel(happiness),
+            // Prévenir vaut mieux que constater : au-dessous du seuil, le lot
+            // commence à perdre des bêtes, et le joueur doit pouvoir agir
+            // avant d'en compter les pertes.
+            atRisk: happiness < MORTALITY.floor,
             grazingUntil: b.herd.grazingUntil?.getTime() ?? null,
             feedStock: Math.round(feedStock * 10) / 10,
             gestation: gestationProgress({
@@ -2514,7 +2561,7 @@ app.get("/parcels/:id/livestock", async (req, res) => {
             meatAtSlaughter: meatYield({
               herdSize: b.herd.size,
               happiness,
-              averageAgeMs: now - b.herd.bornAt.getTime(),
+              averageAgeMs: b.herd.avgAgeMs,
               barnLevel: b.level,
             }),
           }
@@ -2569,9 +2616,19 @@ app.post("/buildings/:id/animals", async (req, res) => {
   await prisma.$transaction(async (tx) => {
     await tx.user.update({ where: { id: user.id }, data: { crd: { decrement: cost } } });
     if (building.herd) {
+      // On achète du bétail déjà élevé : la moyenne d'âge du lot se déplace
+      // vers celle des arrivantes, au prorata des effectifs.
       await tx.herd.update({
         where: { id: building.herd.id },
-        data: { size: current + body.data.count },
+        data: {
+          size: current + body.data.count,
+          avgAgeMs: blendedAgeMs({
+            herdSize: current,
+            averageAgeMs: building.herd.avgAgeMs,
+            added: body.data.count,
+            addedAgeMs: PURCHASED_AGE_MS,
+          }),
+        },
       });
     } else {
       await tx.herd.create({
@@ -2580,6 +2637,7 @@ app.post("/buildings/:id/animals", async (req, res) => {
           buildingId: building.id,
           kind,
           size: body.data.count,
+          avgAgeMs: PURCHASED_AGE_MS,
         },
       });
     }
@@ -2634,7 +2692,7 @@ app.post("/herds/:id/graze", async (req, res) => {
       kind: herd.kind as AnimalKind,
       size: herd.size,
       happiness: herd.happiness,
-      averageAgeMs: now - herd.bornAt.getTime(),
+      averageAgeMs: herd.avgAgeMs,
       lastGrazedAt: herd.lastGrazedAt?.getTime() ?? null,
       lastMilkedAt: herd.lastMilkedAt?.getTime() ?? null,
     },
@@ -2819,7 +2877,7 @@ app.post("/herds/:id/slaughter", async (req, res) => {
   }
 
   const now = Date.now();
-  const ageMs = now - herd.bornAt.getTime();
+  const ageMs = herd.avgAgeMs;
   const kgTotal = meatYield({
     herdSize: body.data.count,
     happiness: herd.happiness,

@@ -22,6 +22,8 @@ export type BarnState = {
     feedNeed: number;
     feedQuality: number;
     hungry: boolean;
+    /** Le lot commence à perdre des bêtes : il faut agir maintenant */
+    atRisk: boolean;
     canMilk: boolean;
     gestation: number;
     breedRefusal: string | null;
@@ -106,6 +108,12 @@ export function LivestockPanel({
                 </div>
 
                 <div className="feed-row">
+                  {herd.atRisk && (
+                    <p className="herd-alert">
+                      Le troupeau dépérit — des bêtes vont mourir. Distribuez une
+                      ration sans attendre.
+                    </p>
+                  )}
                   <div className="feed-bar">
                     <span
                       className={`feed-fill ${herd.hungry ? "low" : ""}`}
