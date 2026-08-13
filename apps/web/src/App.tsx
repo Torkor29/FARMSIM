@@ -312,8 +312,16 @@ const SHEET_TABS: { key: SheetKey; label: string; icon: string }[] = [
   { key: "BUILD", label: "Bâtir", icon: "🏗️" },
   { key: "HERD", label: "Troupeau", icon: "🐄" },
   { key: "GARAGE", label: "Garage", icon: "🚜" },
-  { key: "OFFICE", label: "Bureau", icon: "📋" },
+  { key: "OFFICE", label: "Travaux", icon: "🤝" },
 ];
+
+function seenLabel(online: boolean, lastSeenAt: number | null): string {
+  if (online) return "en ligne";
+  if (!lastSeenAt) return "pas encore vu";
+  const min = Math.max(1, Math.round((Date.now() - lastSeenAt) / 60_000));
+  if (min < 60) return `il y a ${min} min`;
+  return `il y a ${Math.round(min / 60)} h`;
+}
 
 function wearNote(machine?: {
   type?: string;
@@ -348,7 +356,7 @@ function harvestGrainNote(r: {
   if (!r.soldTons) return `Récolte ${total} t${hay}`;
   const money = r.soldRevenue ? ` · +${Math.round(r.soldRevenue)} TRN` : "";
   if (r.soldReason === "NO_SILO") {
-    return `Récolte ${total} t vendue au négociant (pas de silo)${money}${hay}`;
+    return `Récolte ${total} t vendue tout de suite (pas de silo)${money}${hay}`;
   }
   return `Récolte ${total} t · ${r.soldTons.toFixed(2)} t vendues (silo plein)${money}${hay}`;
 }
@@ -457,6 +465,9 @@ export function App() {
   const [manureStain, setManureStain] = useState<Record<string, number>>({});
   const [listings, setListings] = useState<Listing[]>([]);
   const [deliveries, setDeliveries] = useState<MarketDelivery[]>([]);
+  const [onlinePlayers, setOnlinePlayers] = useState<
+    { id: string; name: string; online: boolean; lastSeenAt: number | null }[]
+  >([]);
   const [showMarket, setShowMarket] = useState(false);
   const [confirmRequest, setConfirmRequest] = useState<ConfirmRequest | null>(null);
   const [showArrival, setShowArrival] = useState(false);
@@ -484,7 +495,7 @@ export function App() {
 
   const refreshMeta = useCallback(async () => {
     const uid = playerIdRef.current;
-    const [z, m, c, w, labor] = await Promise.all([
+    const [z, m, c, w, labor, peers] = await Promise.all([
       api<Zone[]>("/zones"),
       api<MarketPrice[]>("/market"),
       api<{ contracts: Contract[]; active: Contract | null }>(
@@ -496,6 +507,11 @@ export function App() {
             `/labor-orders?userId=${encodeURIComponent(uid)}`,
           )
         : Promise.resolve({ orders: [] as LaborOrderView[], active: null, posted: [] as LaborOrderView[] }),
+      uid
+        ? api<{ players: { id: string; name: string; online: boolean; lastSeenAt: number | null }[] }>(
+            `/players?userId=${encodeURIComponent(uid)}`,
+          )
+        : Promise.resolve({ players: [] }),
     ]);
     setPrevPrices((prev) => {
       if (Object.keys(prev).length === 0) {
@@ -511,6 +527,7 @@ export function App() {
     setContracts((prev) => keepIfSame(prev, c.contracts));
     setLaborBoard((prev) => keepIfSame(prev, labor.orders));
     setMyPostedLabor((prev) => keepIfSame(prev, labor.posted));
+    setOnlinePlayers((prev) => keepIfSame(prev, peers.players));
     if (labor.active) {
       setVisitOrder((prev) => (prev?.id === labor.active!.id ? prev : labor.active));
     }
@@ -561,8 +578,8 @@ export function App() {
       const money = dump.revenue ? ` · +${Math.round(dump.revenue)} TRN` : "";
       flashToast(
         dump.reason === "NO_SILO"
-          ? `Grain vendu au négociant (pas de silo)${money}`
-          : `Silo plein : ${dump.soldTons.toFixed(2)} t vendues au négociant${money}`,
+          ? `Grain vendu tout de suite (pas de silo)${money}`
+          : `Silo plein : ${dump.soldTons.toFixed(2)} t vendues tout de suite${money}`,
       );
       markGuideFlag("sold");
     }
@@ -1070,7 +1087,7 @@ export function App() {
         title: `${stubble.length} case(s) en chaumes`,
         detail: mustPlow
           ? `${mustPlow} exigent la charrue : trois récoltes sans labour.`
-          : "Déchaumez pour le rendement, labourez pour repartir à neuf, ou semez direct.",
+          : "Nettoyez le sol pour le rendement, labourez pour repartir à neuf, ou semez direct.",
       };
     }
     if (poor || declining) {
@@ -1442,11 +1459,11 @@ export function App() {
       const label = isPlantTool(tool)
         ? plantCropLabel(tool)
         : tool === "FERTILIZE"
-          ? "Ferti"
+          ? "Engrais"
           : tool === "PLOW"
             ? "Labour"
             : tool === "STUBBLE"
-              ? "Déchaumage"
+              ? "Nettoyer"
               : "Récolte";
       flashToast(`${label} · ${nextCount} case(s) sélectionnée(s)`);
       return;
@@ -1656,7 +1673,7 @@ export function App() {
         },
       );
       const tons = r.totalTons ? ` · ${r.totalTons.toFixed(2)} t` : "";
-      flashToast(`Entreprise : ${WORK_LABELS[contractorOffer.work]} ×${r.cells}${tons} · −${r.cost} TRN`);
+      flashToast(`C’est fait : ${WORK_LABELS[contractorOffer.work]} ×${r.cells}${tons} · −${r.cost} TRN`);
       setSelectedCells([]);
       await refreshPlayer();
       await loadParcel(activeParcelId);
@@ -1848,7 +1865,7 @@ export function App() {
           body: JSON.stringify({ userId: player.id, cells: workCells }),
         });
         setMsg(
-          `Déchaumé ×${r.stubbled} · −${r.cost} TRN · +${Math.round(r.nextBonus * 100)} % sur la prochaine récolte` +
+          `Sol nettoyé ×${r.stubbled} · −${r.cost} TRN · +${Math.round(r.nextBonus * 100)} % sur la prochaine récolte` +
             wearNote(r.machine),
         );
         labor = r.labor;
@@ -1980,7 +1997,7 @@ export function App() {
         method: "POST",
         body: JSON.stringify({ userId: player.id, commodity, tons, pricePerTon }),
       });
-      flashToast(`Lot déposé à la criée · frais ${r.fee} TRN`);
+      flashToast(`Lot mis en vente · frais ${r.fee} TRN`);
       await refreshPlayer();
       await loadListings(player.id);
     } catch (e) {
@@ -3243,56 +3260,73 @@ export function App() {
 
       {(isMobile ? sheet === "OFFICE" : showEta) && (
         <aside className={panelClass("eta-panel", "OFFICE")} {...(isMobile ? sheetGesture : {})}>
-          <h3>Marché du travail</h3>
+          <h3>Travaux</h3>
           <p className="muted tiny">
-            Chantiers publiés par d’autres fermes. Vous allez sur leur parcelle, avec votre fer.
-            Appoint pendant que vos cultures poussent — pas une rente.
+            Pendant que ça pousse, allez aider un voisin. On vous paie. Il faut la machine.
           </p>
+          {onlinePlayers.length > 0 && (
+            <>
+              <h3 className="spaced">Qui est là</h3>
+              <ul className="who-list">
+                {onlinePlayers.map((p) => (
+                  <li key={p.id}>
+                    <span>
+                      <strong>{p.name}</strong>
+                    </span>
+                    <span className="muted tiny" style={{ display: "flex", alignItems: "center", gap: "0.35rem" }}>
+                      <i className={`who-dot ${p.online ? "on" : ""}`} aria-hidden="true" />
+                      {seenLabel(p.online, p.lastSeenAt)}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            </>
+          )}
           {visitOrder && (
             <p className="muted tiny">
-              En cours chez {visitOrder.clientName} — {visitOrder.remaining} case(s).
+              Vous êtes chez {visitOrder.clientName} — encore {visitOrder.remaining} case(s).
             </p>
           )}
-          <ul className="list">
-            {laborBoard.map((o) => (
-              <li key={o.id}>
-                <span>
-                  <strong>
-                    {WORK_LABELS[o.work]} · {o.clientName}
-                  </strong>
-                  <div className="muted tiny">
-                    {o.parcelLabel} · {o.remaining} cases · {o.payoutCrd} TRN
+          <h3 className="spaced">On cherche quelqu’un</h3>
+          {laborBoard.length === 0 ? (
+            <p className="muted tiny">Personne n’a demandé d’aide pour l’instant.</p>
+          ) : (
+            <div className="lot-grid">
+              {laborBoard.map((o) => (
+                <article key={o.id} className="job-card">
+                  <div>
+                    <strong>
+                      {WORK_LABELS[o.work]} chez {o.clientName}
+                    </strong>
+                    <div className="muted tiny">
+                      {o.remaining} cases · {o.payoutCrd} TRN
+                    </div>
                   </div>
-                </span>
-                <button
-                  type="button"
-                  disabled={busy || Boolean(visitOrder) || Boolean(activeMission)}
-                  onClick={() => void acceptLaborOrder(o.id)}
-                >
-                  Prendre
-                </button>
-              </li>
-            ))}
-            {laborBoard.length === 0 && (
-              <li>
-                <span className="muted tiny">Aucun chantier joueur pour l’instant.</span>
-              </li>
-            )}
-          </ul>
+                  <button
+                    type="button"
+                    disabled={busy || Boolean(visitOrder) || Boolean(activeMission)}
+                    onClick={() => void acceptLaborOrder(o.id)}
+                  >
+                    J’y vais
+                  </button>
+                </article>
+              ))}
+            </div>
+          )}
           {myPostedLabor.length > 0 && (
             <>
-              <h3 className="spaced">Mes chantiers</h3>
-              <ul className="list">
+              <h3 className="spaced">J’ai demandé de l’aide</h3>
+              <div className="lot-grid">
                 {myPostedLabor.map((o) => (
-                  <li key={o.id}>
-                    <span>
+                  <article key={o.id} className="job-card">
+                    <div>
                       <strong>
-                        {WORK_LABELS[o.work]} · {o.status === "ACCEPTED" ? "pris" : "ouvert"}
+                        {WORK_LABELS[o.work]} · {o.status === "ACCEPTED" ? "quelqu’un s’en occupe" : "en attente"}
                       </strong>
                       <div className="muted tiny">
-                        {o.remaining} cases · séquestre {o.escrowCrd} TRN
+                        {o.remaining} cases · {o.escrowCrd} TRN bloqués
                       </div>
-                    </span>
+                    </div>
                     {o.status === "OPEN" && (
                       <button
                         type="button"
@@ -3307,28 +3341,32 @@ export function App() {
                         Annuler
                       </button>
                     )}
-                  </li>
+                  </article>
                 ))}
-              </ul>
+              </div>
             </>
           )}
-          <h3 className="spaced">Missions d’appoint</h3>
-          <p className="muted tiny">Filet PNJ si le marché est vide. Moins bien payé.</p>
-          <ul className="list">
+          <h3 className="spaced">Si personne ne vient</h3>
+          <p className="muted tiny">Travail tout seul, moins payé.</p>
+          <div className="lot-grid">
             {contracts.map((c) => (
-              <li key={c.id}>
-                <span>
+              <article key={c.id} className="job-card">
+                <div>
                   <strong>{c.title}</strong>
                   <div className="muted tiny">
-                    {c.jobType} · {c.cells ?? "?"} cases · {c.rewardCrd} TRN
+                    {c.cells ?? "?"} cases · {c.rewardCrd} TRN
                   </div>
-                </span>
-                <button type="button" disabled={busy || Boolean(activeMission) || Boolean(visitOrder)} onClick={() => acceptContract(c.id)}>
+                </div>
+                <button
+                  type="button"
+                  disabled={busy || Boolean(activeMission) || Boolean(visitOrder)}
+                  onClick={() => acceptContract(c.id)}
+                >
                   Prendre
                 </button>
-              </li>
+              </article>
             ))}
-          </ul>
+          </div>
           <h3 className="spaced">Expansion</h3>
           {/* zone-map-ui: expansion */}
           <div className="zone-maps">
@@ -3353,45 +3391,11 @@ export function App() {
           {expandableParcelIds.size === 0 ? (
             <p className="muted tiny">Aucune parcelle adjacente libre.</p>
           ) : null}
-          <h3 className="spaced">Stock / marché</h3>
-          <ul className="list">
-            {(player.farm?.inventory ?? []).map((i) => {
-              const moistPct = Math.round((i.moisture ?? 0) * 100);
-              const canDry = (i.moisture ?? 0) > 0.1 && i.qty > 0;
-              return (
-                <li key={i.id}>
-                  <span>
-                    {i.itemCode} · {i.qty.toFixed(2)} t
-                    <div className={`muted tiny ${moistPct > 14 ? "warn" : ""}`}>
-                      Humidité {moistPct} % · q{i.quality}
-                      {player.bonuses?.softDryer ? " · séchoir" : ""}
-                    </div>
-                  </span>
-                  <span className="row-actions">
-                    <button type="button" disabled={busy || !canDry} onClick={() => dryStock(i.id)}>
-                      Sécher
-                    </button>
-                    <button
-                      type="button"
-                      disabled={busy}
-                      onClick={() => sell(i.itemCode as TradeGood, i.qty)}
-                    >
-                      Vendre
-                    </button>
-                  </span>
-                </li>
-              );
-            })}
-          </ul>
-          <ul className="list">
-            {market.map((m) => (
-              <li key={m.commodity}>
-                <span>
-                  {m.commodity} · {m.price.toFixed(1)} TRN/t
-                </span>
-              </li>
-            ))}
-          </ul>
+          <h3 className="spaced">Hôtel des ventes</h3>
+          <p className="muted tiny">Acheter et vendre entre joueurs, ou vendre tout de suite.</p>
+          <button type="button" className="channel-go" onClick={() => setShowMarket(true)}>
+            Ouvrir les ventes
+          </button>
         </aside>
       )}
 

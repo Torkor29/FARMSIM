@@ -627,12 +627,12 @@ export function buildingResaleValue(type: BuildingType, level: number): number {
 export type FarmWork = "PLANT" | "FERTILIZE" | "HARVEST" | "PLOW" | "STUBBLE" | "MOW";
 
 export const WORK_LABELS: Record<FarmWork, string> = {
-  PLANT: "Semis",
-  FERTILIZE: "Épandage",
-  HARVEST: "Moisson",
-  PLOW: "Labour",
-  STUBBLE: "Déchaumage",
-  MOW: "Fauche",
+  PLANT: "Semer",
+  FERTILIZE: "Mettre de l’engrais",
+  HARVEST: "Récolter",
+  PLOW: "Labourer",
+  STUBBLE: "Nettoyer le sol",
+  MOW: "Faucher",
 };
 
 /**

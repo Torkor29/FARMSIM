@@ -96,15 +96,15 @@ export const OBJECTIVE_DEFS: ObjectiveDef[] = [
   {
     id: "silo",
     title: "Bâtissez un silo",
-    hint: "Sans silo, le grain part au négociant. Le silo permet d’attendre un meilleur cours.",
+    hint: "Sans silo, le grain se vend tout de suite, moins cher. Le silo permet d’attendre.",
     unlock: "Stockage et séchage du grain humide",
     spec: "CEREALIER",
     check: (s) => s.buildings.includes("SILO"),
   },
   {
     id: "stubble",
-    title: "Déchaumez après la moisson",
-    hint: "Outil Sol → Déchaumer sur les chaumes. Sans ça, on ne resème pas.",
+    title: "Nettoyez le sol après la récolte",
+    hint: "Outil Sol → Nettoyer sur les chaumes. Sans ça, on ne resème pas.",
     unlock: "Un nouveau cycle de culture",
     spec: "CEREALIER",
     check: (s) => s.hasHarvested && s.stubbleCells === 0,
@@ -140,7 +140,7 @@ export const OBJECTIVE_DEFS: ObjectiveDef[] = [
   {
     id: "hay",
     title: "Stockez du fourrage",
-    hint: "Vendre → le négociant vend du foin. L’éleveur achète ce que le céréalier cultive.",
+    hint: "Vendre → on peut acheter du foin. L’éleveur achète ce que le céréalier cultive.",
     unlock: "Nourrir le troupeau sans le laisser dépérir",
     spec: "ELEVEUR",
     check: (s) => s.hayTons > 0,
@@ -162,9 +162,9 @@ export const OBJECTIVE_DEFS: ObjectiveDef[] = [
   },
   {
     id: "contract",
-    title: "Prenez un chantier pendant que ça pousse",
-    hint: "Onglet Bureau → Travaux à façon. Il faut l’engin, et qu’il tienne.",
-    unlock: "Un appoint en terrons, pas une rente",
+    title: "Aidez un voisin pendant que ça pousse",
+    hint: "Onglet Travaux. Il faut la machine.",
+    unlock: "Un peu d’argent en plus, pas une rente",
     check: (s) => s.hasContract,
   },
 ];
@@ -288,7 +288,7 @@ export const GUIDE_CHAPTERS: GuideChapter[] = [
     entries: [
       goodEntry(
         "WHEAT",
-        "Récolte à point (cases dorées). Pluie = grain humide : séchez au Bureau, ou vendez moins cher.",
+        "Récolte à point (cases dorées). Pluie = grain humide : séchez, ou vendez moins cher.",
         "Marché. Éleveur : paille (bientôt).",
       ),
       goodEntry(
@@ -313,7 +313,7 @@ export const GUIDE_CHAPTERS: GuideChapter[] = [
       ),
       goodEntry(
         "HAY",
-        "On le fauche sur l’herbe, ou on l’achète au négociant. Le foin va au hangar, pas au silo à grain.",
+        "On le fauche sur l’herbe, ou on l’achète à l’hôtel des ventes. Le foin va au hangar, pas au silo à grain.",
         "Éleveur. Le céréalier en produit en fauchant.",
       ),
       goodEntry(
@@ -353,7 +353,7 @@ export const GUIDE_CHAPTERS: GuideChapter[] = [
       goodEntry(
         "MANURE",
         "Reste à côté du bâtiment. Épandez-le (outil Ferti) ou vendez-le au voisin. Fosse pleine : les bêtes sont moins bien.",
-        "Céréalier (azote). Éleveur (doit vider la fosse). Pas au négociant.",
+        "Céréalier (azote). Éleveur (doit vider la fosse). On le vend au voisin, pas à l’hôtel des ventes.",
       ),
       {
         id: "SLURRY",
@@ -372,7 +372,7 @@ export const GUIDE_CHAPTERS: GuideChapter[] = [
       {
         id: "SILO",
         name: "Silo à grain · 1 200 TRN · 2×2",
-        how: "Sans silo, le grain part au négociant. Avec un silo : stocker, sécher, vendre au bon cours.",
+        how: "Sans silo, le grain se vend tout de suite, moins cher. Avec un silo : stocker, sécher, vendre au bon moment.",
         usedBy: "Céréalier. Premier bâtiment à viser après la vente.",
       },
       {
@@ -463,7 +463,7 @@ export const GUIDE_CHAPTERS: GuideChapter[] = [
       {
         id: "HARVESTER",
         name: "Moissonneuse T1 · 4 000 TRN",
-        how: "Récolte. On ne la donne pas au départ : publiez au Bureau, ou achetez-la plus tard.",
+        how: "Récolte. On ne la donne pas au départ : demandez de l’aide, ou achetez-la plus tard.",
         usedBy: "Céréalier (ou il fait venir quelqu’un). Chantier le plus demandé.",
       },
       {
@@ -476,7 +476,7 @@ export const GUIDE_CHAPTERS: GuideChapter[] = [
         id: "DISC_HARROW",
         name: "Déchaumeur · 1 600 TRN",
         how: "Enterre les chaumes.",
-        usedBy: "Céréalier. Missions de déchaumage.",
+        usedBy: "Céréalier. Pour nettoyer le sol après la récolte.",
       },
     ],
   },
@@ -549,13 +549,13 @@ export const GUIDE_CHAPTERS: GuideChapter[] = [
       {
         id: "appoint",
         name: "Travaux à façon",
-        how: "Ce n’est pas un métier. Bureau → un chantier 8–24 cases → glissez sur le champ du voisin. Salaire d’appoint, pas une rente.",
+        how: "Ce n’est pas un métier. Travaux → un job 8–24 cases chez un voisin. Un peu d’argent, pas une rente.",
         usedBy: "Les deux, pendant que les cultures poussent ou que le troupeau mange.",
       },
       {
         id: "npc",
         name: "Pas la machine du moment ?",
-        how: "Un joueur fera mieux. Le voisin auto, c’est si personne ne vient. Publiez au Bureau, ou le bouton orange « Entreprise ».",
+        how: "Un joueur fera mieux. Si personne ne vient, un voisin le fait. Demandez de l’aide, ou « Faire faire ».",
         usedBy: "Céréalier et éleveur sans l’engin sous la main.",
       },
     ],

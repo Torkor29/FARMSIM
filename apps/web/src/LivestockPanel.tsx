@@ -243,7 +243,7 @@ export function LivestockPanel({
                   disabled={busy || hayTons <= 0}
                   title={
                     hayTons <= 0
-                      ? "Aucun fourrage en silo — achetez-en au négociant"
+                      ? "Aucun fourrage — achetez-en à l’hôtel des ventes"
                       : "Distribuer du fourrage"
                   }
                   onClick={() => onFeed(herd.id, "hay")}
@@ -353,7 +353,7 @@ export function LivestockPanel({
                 <button
                   type="button"
                   disabled={busy}
-                  title="Vendre le tas au céréalier voisin — prix local, pas le négociant"
+                  title="Vendre le tas au voisin — sur place, tout de suite"
                   onClick={() => onSellManure(barn.buildingId)}
                 >
                   Vendre le fumier

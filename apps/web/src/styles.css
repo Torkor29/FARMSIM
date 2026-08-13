@@ -697,7 +697,80 @@ button.ghost {
   gap: 1rem;
 }
 .market-head h2 { margin: 0; color: var(--teal-700); }
-.market-tabs { display: flex; gap: 0.4rem; }
+.hall-kicker {
+  margin: 0;
+  font-size: 0.72rem;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--gold-700);
+}
+.hall-lead {
+  margin: 0;
+  font-size: 0.88rem;
+  color: var(--ink-soft);
+  line-height: 1.35;
+}
+.hall-block { display: grid; gap: 0.45rem; }
+.hall-block h3 { margin: 0; font-size: 0.95rem; }
+.lot-grid { display: grid; gap: 0.55rem; }
+.lot-card {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.75rem 0.85rem;
+  border-radius: var(--r-md);
+  background: var(--paper);
+  border: 2px solid var(--line);
+}
+.lot-card.route { border-color: var(--gold-500); background: #fff8e8; }
+.lot-card.mine { background: var(--sand); }
+.lot-main { display: grid; gap: 0.12rem; }
+.lot-main strong { font-size: 1.05rem; }
+.lot-main span { font-size: 0.8rem; color: var(--ink-soft); }
+.lot-main em { font-style: normal; font-size: 0.76rem; color: var(--muted); }
+.lot-pay { display: grid; justify-items: end; gap: 0.15rem; }
+.lot-pay strong { font-size: 1.15rem; color: var(--gold-700); }
+.lot-pay em { font-style: normal; font-size: 0.72rem; color: var(--muted); }
+.lot-go {
+  border: none;
+  border-radius: var(--r-pill);
+  padding: 0.5rem 0.95rem;
+  background: linear-gradient(180deg, var(--gold-300), var(--gold-500));
+  color: #3a2c07;
+  font-weight: 800;
+}
+.who-list { display: grid; gap: 0.35rem; margin: 0; padding: 0; list-style: none; }
+.who-list li {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.4rem 0.55rem;
+  border-radius: var(--r-sm);
+  background: var(--sand);
+  font-size: 0.88rem;
+}
+.who-dot {
+  width: 0.55rem;
+  height: 0.55rem;
+  border-radius: 50%;
+  background: #9aa39a;
+}
+.who-dot.on { background: #2f9e5f; box-shadow: 0 0 0 3px #2f9e5f33; }
+.job-card {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 0.6rem;
+  padding: 0.65rem 0.7rem;
+  border-radius: var(--r-md);
+  background: var(--paper);
+  border: 1px solid var(--line);
+}
+.job-card strong { display: block; }
+.market-tabs { display: flex; gap: 0.4rem; flex-wrap: wrap; }
 .market-tab {
   border-radius: var(--r-pill);
   padding: 0.45rem 1rem;

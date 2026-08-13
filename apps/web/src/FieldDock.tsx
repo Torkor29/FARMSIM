@@ -185,7 +185,7 @@ export function FieldDock({
                 className={`chip ${tool === "STUBBLE" ? "on" : ""}`}
                 onClick={() => onTool("STUBBLE")}
               >
-                Déchaumer
+                Nettoyer
               </button>
               <button
                 type="button"
@@ -199,7 +199,7 @@ export function FieldDock({
                 className={`chip ${tool === "FERTILIZE" ? "on" : ""}`}
                 onClick={() => onTool("FERTILIZE")}
               >
-                Ferti
+                Engrais
               </button>
               <button
                 type="button"
@@ -238,23 +238,19 @@ export function FieldDock({
             {contractor && !visiting && (
               <>
                 <p className="dock-hint">
-                  Un joueur fera mieux. Le voisin auto, c’est si personne ne vient.
+                  Un autre joueur le fera mieux. Si personne ne vient, on envoie un voisin.
                 </p>
                 {tool === "HARVEST" && !mowSelected && !contractor.hasMachine && (
-                  <p className="dock-hint">Publiez au Bureau, ou achetez la machine.</p>
+                  <p className="dock-hint">Demandez de l’aide, ou achetez la machine.</p>
                 )}
                 <button
                   type="button"
                   className="chip eta"
                   disabled={busy || selectedCount === 0 || crd < contractor.cost}
-                  title={
-                    contractor.hasMachine
-                      ? `Sous-traiter — ${contractor.cost} TRN`
-                      : `Pas la machine : une entreprise le fait pour ${contractor.cost} TRN`
-                  }
+                  title={`Quelqu’un le fait pour vous — ${contractor.cost} TRN`}
                   onClick={onContractor}
                 >
-                  Entreprise · {contractor.cost} TRN
+                  Faire faire · {contractor.cost} TRN
                 </button>
               </>
             )}
@@ -266,7 +262,7 @@ export function FieldDock({
                 title="Cet argent est bloqué jusqu’à la fin (ou l’annulation)."
                 onClick={onPublishLabor}
               >
-                Publier · {laborQuote} TRN
+                Demander de l’aide · {laborQuote} TRN
               </button>
             )}
             {readyCount > 0 && (
@@ -330,7 +326,7 @@ export function FieldDock({
               <span className="dock-emoji" aria-hidden="true">
                 📋
               </span>
-              <span className="dock-label">Bureau</span>
+              <span className="dock-label">Travaux</span>
             </button>
           </>
         )}

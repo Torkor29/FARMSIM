@@ -62,6 +62,7 @@ import {
   appearanceFromJson,
   parseAppearance,
   FIELD_PRESENCE_TTL_MS,
+  PLAYER_ONLINE_MS,
   repairHalfwayTarget,
   type FarmWork,
   type Specialization,
@@ -771,11 +772,11 @@ const MISSION_JOBS: {
   regionNote: string;
   title: (cells: number) => string;
 }[] = [
-  { jobType: "HARVEST", work: "HARVEST", regionNote: "Beauce", title: (n) => `Moisson blé · ${n} cases` },
-  { jobType: "PLOW", work: "PLOW", regionNote: "Iowa", title: (n) => `Labour de printemps · ${n} cases` },
-  { jobType: "SOW", work: "PLANT", regionNote: "Beauce", title: (n) => `Semis maïs · ${n} cases` },
-  { jobType: "FERTILIZE", work: "FERTILIZE", regionNote: "Iowa", title: (n) => `Épandage NPK · ${n} cases` },
-  { jobType: "TRANSPORT", work: "PLOW", regionNote: "Beauce", title: (n) => `Transport grain · ${n} cases` },
+  { jobType: "HARVEST", work: "HARVEST", regionNote: "Beauce", title: (n) => `Récolter du blé · ${n} cases` },
+  { jobType: "PLOW", work: "PLOW", regionNote: "Iowa", title: (n) => `Labourer · ${n} cases` },
+  { jobType: "SOW", work: "PLANT", regionNote: "Beauce", title: (n) => `Semer du maïs · ${n} cases` },
+  { jobType: "FERTILIZE", work: "FERTILIZE", regionNote: "Iowa", title: (n) => `Mettre de l’engrais · ${n} cases` },
+  { jobType: "TRANSPORT", work: "PLOW", regionNote: "Beauce", title: (n) => `Transporter du grain · ${n} cases` },
 ];
 
 function pickMissionCells(): number {
@@ -2023,6 +2024,27 @@ app.get("/auth/me", async (req, res) => {
   }
   const player = await playerPayload(auth.user.id);
   res.json({ token: auth.session.token, player });
+});
+
+/** Les autres fermes : qui est connecté, qui est passé récemment. */
+app.get("/players", async (req, res) => {
+  const mine = typeof req.query.userId === "string" ? req.query.userId : null;
+  const since = new Date(Date.now() - PLAYER_ONLINE_MS);
+  const users = await prisma.user.findMany({
+    select: { id: true, displayName: true, lastSeenAt: true },
+    orderBy: { lastSeenAt: "desc" },
+    take: 40,
+  });
+  res.json({
+    players: users
+      .filter((u) => u.id !== mine)
+      .map((u) => ({
+        id: u.id,
+        name: u.displayName,
+        online: Boolean(u.lastSeenAt && u.lastSeenAt >= since),
+        lastSeenAt: u.lastSeenAt?.getTime() ?? null,
+      })),
+  });
 });
 
 app.patch("/me/appearance", async (req, res) => {

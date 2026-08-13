@@ -22,15 +22,15 @@ import type { TradeGood } from "./goods.js";
 export type SaleChannel = "DEALER" | "MARKET" | "LISTING";
 
 export const SALE_CHANNEL_LABELS: Record<SaleChannel, string> = {
-  DEALER: "Négociant",
-  MARKET: "Cours mondial",
-  LISTING: "Criée",
+  DEALER: "Vendre à tout prix",
+  MARKET: "Vendre maintenant",
+  LISTING: "Proposer aux joueurs",
 };
 
 export const SALE_CHANNEL_HINTS: Record<SaleChannel, string> = {
-  DEALER: "Rachat immédiat, prix bas mais garanti",
-  MARKET: "Prix du jour ; un gros volume fait chuter le cours",
-  LISTING: "Vous fixez le prix et vous attendez un acheteur",
+  DEALER: "On vous paie moins, mais c’est immédiat",
+  MARKET: "Le prix du jour, tout de suite",
+  LISTING: "Vous choisissez le prix. Un autre joueur doit acheter",
 };
 
 /* ------------------------------------------------------------------ */

@@ -71,7 +71,7 @@ export function MissionPlay({ contract, busy = false, onCancel, onDone }: Props)
           {contract.regionNote} · {WORK_LABELS[contract.work]} · {contract.rewardCrd} TRN
         </p>
         <p className="muted tiny">
-          Glissez sur les cases. Une mission à la fois — vos cultures, elles, poussent chez vous.
+          Glissez sur les cases. Un travail à la fois — vos cultures poussent chez vous.
         </p>
         <div className="mission-progress" aria-live="polite">
           {progress} / {total}
