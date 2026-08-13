@@ -40,6 +40,31 @@ export const MAX_BARN_LEVEL = 5;
  */
 export const LIVESTOCK_CYCLE_MS = 15 * 60 * 1000;
 
+/** Traite / œufs / laine : prêt au bout de 15 % d’un cycle. */
+export const COLLECT_READY_RATIO = 0.15;
+
+/** 0 = vient d’être collecté, 1 = prêt. */
+export function collectProgress(
+  lastAt: number | null,
+  bornAt: number,
+  now: number,
+  cycleMs = LIVESTOCK_CYCLE_MS,
+): number {
+  const start = lastAt ?? bornAt;
+  const need = cycleMs * COLLECT_READY_RATIO;
+  if (need <= 0) return 1;
+  return Math.min(1, Math.max(0, (now - start) / need));
+}
+
+export function collectReady(
+  lastAt: number | null,
+  bornAt: number,
+  now: number,
+  cycleMs = LIVESTOCK_CYCLE_MS,
+): boolean {
+  return collectProgress(lastAt, bornAt, now, cycleMs) >= 1;
+}
+
 /**
  * « Heure » d'élevage — unité de toutes les constantes de dérive. Elle suit le
  * temps compressé du jeu, pas l'horloge murale : 24 heures d'élevage font un

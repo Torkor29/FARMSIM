@@ -87,6 +87,8 @@ export type GrazingHerd = {
   kind?: AnimalKind | string;
   /** Moutons tondus : le volume rétrécit jusqu'à la prochaine laine. */
   sheared?: boolean;
+  /** Dehors dans l’enclos ; sinon collées à l’étable. */
+  out?: boolean;
   barn: { originX: number; originY: number; w: number; h: number };
   paddock: { originX: number; originY: number; w: number; h: number };
 };
@@ -1014,6 +1016,7 @@ export function IsoFarmView({
       delay: number;
       wander: number;
       kind: string;
+      out: boolean;
     }[] = [];
     const pickupGroup = new THREE.Group();
     world.add(pickupGroup);
@@ -1783,7 +1786,7 @@ export function IsoFarmView({
       // Troupeaux au pré : sortie de l'étable, puis broutage dans l'enclos.
       const herds = dataRef.current.grazing ?? [];
       const nextGrazeKey = herds
-        .map((h) => `${h.buildingId}:${h.animals}:${h.kind ?? "COW"}:${h.sheared ? 1 : 0}`)
+        .map((h) => `${h.buildingId}:${h.animals}:${h.kind ?? "COW"}:${h.sheared ? 1 : 0}:${h.out ? 1 : 0}`)
         .join("|");
       if (nextGrazeKey !== grazeKey) {
         grazeKey = nextGrazeKey;
@@ -1818,6 +1821,7 @@ export function IsoFarmView({
               delay: i * 0.55,
               wander: i * 1.7,
               kind,
+              out: Boolean(herd.out),
             });
           }
         }
@@ -1856,14 +1860,16 @@ export function IsoFarmView({
       }
 
       for (const w of cowWalkers) {
-        // Aller, brouter, revenir : un cycle lent qui se lit d'un coup d'œil.
+        // Dehors : elles restent au pré. À l’étable : elles restent à la porte.
         const local = Math.max(0, t - w.delay);
-        const cycle = 26;
-        const phase = (local % cycle) / cycle;
         let progress: number;
-        if (phase < 0.18) progress = phase / 0.18;
-        else if (phase < 0.82) progress = 1;
-        else progress = 1 - (phase - 0.82) / 0.18;
+        if (!w.out) {
+          progress = 0;
+        } else if (local < 2.2) {
+          progress = local / 2.2;
+        } else {
+          progress = 1;
+        }
         const eased = progress * progress * (3 - 2 * progress);
 
         w.mesh.position.lerpVectors(w.from, w.to, eased);
@@ -1874,12 +1880,16 @@ export function IsoFarmView({
           const peck = w.kind === "HEN" ? 2.4 : 0.7;
           const dip = w.kind === "HEN" ? 0.38 : 0.22;
           w.mesh.rotation.x = Math.max(0, Math.sin(t * peck + w.wander)) * dip;
+        } else if (!w.out) {
+          w.mesh.position.x += Math.sin(t * 0.3 + w.wander) * 0.05 * step;
+          w.mesh.position.z += Math.cos(t * 0.22 + w.wander) * 0.05 * step;
+          w.mesh.rotation.x = 0;
         } else {
           w.mesh.rotation.x = 0;
         }
         const dir = eased < 1 ? w.to.clone().sub(w.from) : new THREE.Vector3(1, 0, 0);
         w.mesh.rotation.y = Math.atan2(dir.z, dir.x) + Math.sin(t * 0.4 + w.wander) * 0.25;
-        w.mesh.visible = local > 0;
+        w.mesh.visible = !w.out || local > 0;
       }
 
       // Pulse cases (flash ~0.55s)

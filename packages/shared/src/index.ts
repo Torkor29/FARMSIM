@@ -486,7 +486,7 @@ export const BUILDING_ART: Record<BuildingType, string> = {
   PADDOCK: "/assets/buildings/paddock.webp",
   PIG_YARD: "/assets/buildings/pig-yard.webp",
   HEN_YARD: "/assets/buildings/pig-yard.webp",
-  COLD_ROOM: "/assets/buildings/cold-room.webp",
+  COLD_ROOM: "/assets/buildings/workshop.webp",
 };
 
 export const DEFAULT_GRID = { w: 12, h: 12 } as const;

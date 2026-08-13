@@ -153,7 +153,7 @@ export function AuthScreen({
               {busy
                 ? "Un instant…"
                 : isRegister
-                  ? "Créer mon exploitation"
+                  ? "Créer ma ferme"
                   : "Reprendre ma ferme"}
             </button>
           </form>

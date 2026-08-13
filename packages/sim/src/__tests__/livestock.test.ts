@@ -10,6 +10,8 @@ import {
   MILK_BASE_PER_COW,
   MILK_HAPPINESS_SPAN,
   PADDOCK,
+  collectProgress,
+  collectReady,
   canGraze,
   crowdingPenalty,
   feedConsumption,
@@ -628,5 +630,18 @@ describe("scénario complet — l’étable seule contre l’étable + enclos", 
     expect(feedConsumption({ herdSize: 20, grazing: true, barnLevel: 2 })).toBeLessThan(
       feedConsumption({ herdSize: 20, grazing: false, barnLevel: 2 }),
     );
+  });
+});
+
+describe("barre de lait", () => {
+  it("passe de 0 à prêt en 15 % d’un cycle", () => {
+    const born = 1_000;
+    expect(collectProgress(born, born, born)).toBe(0);
+    expect(collectReady(born, born, born)).toBe(false);
+    const mid = born + LIVESTOCK_CYCLE_MS * 0.075;
+    expect(collectProgress(born, born, mid)).toBeCloseTo(0.5, 5);
+    const readyAt = born + LIVESTOCK_CYCLE_MS * 0.15;
+    expect(collectReady(born, born, readyAt)).toBe(true);
+    expect(collectProgress(born, born, readyAt)).toBe(1);
   });
 });

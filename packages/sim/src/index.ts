@@ -248,7 +248,7 @@ export function applyMachineWear(opts: {
   let mult = 1;
   if (opts.inShed) mult *= 0.85;
   if (opts.etaBonus) mult *= 0.9;
-  const care = Math.max(1, opts.careMult ?? 1);
+  const care = Math.max(0.5, opts.careMult ?? 1);
   mult *= care;
   const wearApplied =
     Math.round(opts.wearPerCell * Math.max(0, opts.cells) * mult * 100) / 100;
@@ -271,10 +271,20 @@ export type MachineCareState = {
 };
 
 export function careWearMultiplier(opts: { greased: boolean; dirt: number }): number {
+  const clean = opts.dirt < DIRT_DIRTY_THRESHOLD;
+  if (opts.greased && clean) return 0.75;
   let m = 1;
   if (!opts.greased) m *= 1.5;
-  if (opts.dirt >= DIRT_DIRTY_THRESHOLD) m *= 2;
+  if (!clean) m *= 2;
   return m;
+}
+
+/** Propre et graissé : un peu plus de récolte. Sale et à sec : un peu moins. */
+export function careYieldBonus(opts: { greased: boolean; dirt: number }): number {
+  const clean = opts.dirt < DIRT_DIRTY_THRESHOLD;
+  if (opts.greased && clean) return 0.08;
+  if (!opts.greased && !clean) return -0.06;
+  return 0;
 }
 
 export function dirtFromWork(work: string, cells: number): number {

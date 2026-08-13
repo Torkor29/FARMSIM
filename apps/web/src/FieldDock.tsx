@@ -34,8 +34,11 @@ type Props = {
   onGuide: () => void;
   desktopGarage?: boolean;
   desktopOffice?: boolean;
+  desktopHerd?: boolean;
+  hasHerd?: boolean;
   onDesktopGarage?: () => void;
   onDesktopOffice?: () => void;
+  onDesktopHerd?: () => void;
   showDev?: boolean;
   onDev?: () => void;
   /** La sélection n'est que de l'herbe mûre : on fauche, on ne moissonne pas */
@@ -88,8 +91,11 @@ export function FieldDock({
   onGuide,
   desktopGarage,
   desktopOffice,
+  desktopHerd,
+  hasHerd,
   onDesktopGarage,
   onDesktopOffice,
+  onDesktopHerd,
   showDev,
   onDev,
   mowSelected = false,
@@ -328,6 +334,18 @@ export function FieldDock({
               </span>
               <span className="dock-label">Missions</span>
             </button>
+            {hasHerd && (
+              <button
+                type="button"
+                className={`dock-tool extra ${desktopHerd ? "on" : ""}`}
+                onClick={onDesktopHerd}
+              >
+                <span className="dock-emoji" aria-hidden="true">
+                  🐄
+                </span>
+                <span className="dock-label">Élevage</span>
+              </button>
+            )}
           </>
         )}
         {showDev && (

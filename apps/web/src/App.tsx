@@ -242,8 +242,14 @@ async function api<T>(path: string, init?: RequestInit): Promise<T> {
     },
     ...init,
   });
-  const data = await res.json();
-  if (!res.ok) throw new Error(data.error ?? "Erreur API");
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    const flat = data as { error?: string; formErrors?: string[]; fieldErrors?: Record<string, string[]> };
+    const field = flat.fieldErrors
+      ? Object.values(flat.fieldErrors).flat().find(Boolean)
+      : undefined;
+    throw new Error(flat.error ?? flat.formErrors?.[0] ?? field ?? "Erreur serveur");
+  }
   return data as T;
 }
 
@@ -425,7 +431,8 @@ export function App() {
     kind?: "BELT" | "HYDRAULIC" | "ENGINE";
   } | null>(null);
   const [showEta, setShowEta] = useState(false);
-  const [showGarage, setShowGarage] = useState(true);
+  const [showGarage, setShowGarage] = useState(false);
+  const [showHerd, setShowHerd] = useState(false);
   const [weather, setWeather] = useState<WeatherSnap[]>([]);
   const [brush, setBrush] = useState<1 | 2 | 3>(1);
   const [prevPrices, setPrevPrices] = useState<Record<string, number>>({});
@@ -938,14 +945,14 @@ export function App() {
     return sims.reduce((a, s) => a + s.sim.progress, 0) / sims.length;
   }, [parcelDetail]);
 
-  /** Troupeaux effectivement dehors, avec l'enclos vers lequel ils marchent. */
+  /** Troupeaux visibles : à l’étable, ou dehors dans l’enclos. */
   const grazingHerds = useMemo((): GrazingHerd[] => {
     const all = parcel?.buildings ?? [];
     const now = Date.now();
     const out: GrazingHerd[] = [];
     for (const barn of barns) {
       const herd = barn.herd;
-      if (!herd?.grazingUntil || herd.grazingUntil <= now) continue;
+      if (!herd || herd.size <= 0) continue;
       const barnB = all.find((b) => b.id === barn.buildingId);
       if (!barnB) continue;
       const barnDef = BUILDING_DEFS[barnB.type];
@@ -966,20 +973,23 @@ export function App() {
           h: d.h,
         });
       });
-      if (!paddockB) continue;
-      const pDef = BUILDING_DEFS[yardType];
+      const outside = Boolean(herd.grazingUntil && herd.grazingUntil > now && paddockB);
+      const pDef = paddockB ? BUILDING_DEFS[yardType] : barnDef;
       out.push({
         buildingId: barn.buildingId,
         animals: herd.size,
         kind: herd.kind,
         sheared: herd.kind === "SHEEP" && !herd.canShear,
+        out: outside,
         barn: barnBox,
-        paddock: {
-          originX: paddockB.originX,
-          originY: paddockB.originY,
-          w: pDef.w,
-          h: pDef.h,
-        },
+        paddock: paddockB
+          ? {
+              originX: paddockB.originX,
+              originY: paddockB.originY,
+              w: pDef.w,
+              h: pDef.h,
+            }
+          : barnBox,
       });
     }
     return out;
@@ -3073,8 +3083,11 @@ export function App() {
         onGuide={() => setShowGuide(true)}
         desktopGarage={showGarage}
         desktopOffice={showEta}
+        desktopHerd={showHerd}
+        hasHerd={barns.length > 0}
         onDesktopGarage={() => setShowGarage((v) => !v)}
         onDesktopOffice={() => setShowEta((v) => !v)}
+        onDesktopHerd={() => setShowHerd((v) => !v)}
         showDev={devEnabled}
         onDev={() => setShowDev(true)}
       />
@@ -3083,7 +3096,8 @@ export function App() {
         <aside className={panelClass("garage-panel", "GARAGE")} {...(isMobile ? sheetGesture : {})}>
           <h3>Garage</h3>
           <p className="muted tiny">
-            Graissez avant d’enchaîner. Rafistoler ramène à mi-chemin du neuf, réviser remet à 100 %.
+            Graissez et nettoyez : la machine s’use moins et récolte un peu plus.
+            Rafistoler ramène à mi-chemin, réviser remet à 100 %.
           </p>
           <ul className="list">
             {(player.farm?.machines ?? []).map((m) => {
@@ -3114,7 +3128,19 @@ export function App() {
                   <span>
                     <strong>{def?.name ?? m.type}</strong>
                     <div className={`muted tiny ${low || panne ? "warn" : ""}`}>
-                      État {m.condition.toFixed(0)}%
+                      État {m.condition.toFixed(0)}% ·{" "}
+                      {m.condition <= 0
+                        ? "HS"
+                        : m.condition < 15
+                          ? "à réparer"
+                          : m.condition < 40
+                            ? "usé"
+                            : m.condition < 70
+                              ? "correct"
+                              : m.condition < 90
+                                ? "bon"
+                                : "neuf"}
+                      {m.greased !== false && !dirty && !panne ? " · propre et graissé (+)" : ""}
                       {m.greased === false ? " · pas graissé" : ""}
                       {dirty ? " · sale" : ""}
                       {panne ? ` · panne ${panne}` : ""}
@@ -3228,8 +3254,14 @@ export function App() {
         onTick={devTick}
       />
 
+      {(isMobile ? sheet === "HERD" : showHerd) && (
       <LivestockPanel
         className={panelClass("livestock-panel", "HERD")}
+        gesture={isMobile ? sheetGesture : undefined}
+        onClose={() => {
+          if (isMobile) setSheet(null);
+          else setShowHerd(false);
+        }}
         barns={barns}
         busy={busy}
         crd={player.crd}
@@ -3259,6 +3291,7 @@ export function App() {
           );
         }}
       />
+      )}
 
       <ConfirmDialog request={confirmRequest} onCancel={() => setConfirmRequest(null)} />
       {care && player && (() => {

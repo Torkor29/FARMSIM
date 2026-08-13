@@ -157,7 +157,7 @@ export const OBJECTIVE_DEFS: ObjectiveDef[] = [
     id: "workshop",
     title: "Installez l’atelier",
     hint: "Onglet Bâtir → Atelier. Réparations moins chères, graisse et nettoyage.",
-    unlock: "Réparations moins chères dès que le fer enchaîne",
+    unlock: "Réparations moins chères dès que les machines enchaînent",
     check: (s) => s.buildings.includes("WORKSHOP"),
   },
   {

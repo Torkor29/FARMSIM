@@ -665,7 +665,7 @@ export const CLASS_PROFILES: Record<ClassProfile["code"], ClassProfile> = {
     tagline: "Des revenus réguliers, toute l'année",
     perks: [
       "+2 % d'efficacité alimentaire du troupeau",
-      "Revenus lissés, peu sensibles aux cours céréaliers",
+      "Lait et viande toute l’année — mais les bêtes mangent du grain",
       "Pendant que le troupeau mange : allez aider un voisin",
     ],
     drawbacks: [

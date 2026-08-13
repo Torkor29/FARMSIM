@@ -1,3 +1,4 @@
+import type { PointerEvent as ReactPointerEvent } from "react";
 import { BUILDING_ART, BUILDING_DEFS, type BuildingType } from "@farmsim/shared";
 
 export type BarnState = {
@@ -27,6 +28,8 @@ export type BarnState = {
     canMilk: boolean;
     canCollectEggs?: boolean;
     canShear?: boolean;
+    /** 0 = vient d’être collecté, 1 = prêt à traire / ramasser / tondre */
+    collectProgress?: number;
     gestation: number;
     breedRefusal: string | null;
     milkPerCycle: number;
@@ -62,6 +65,11 @@ type Props = {
   wheatTons: number;
   /** Permet à la coque mobile d'en faire un tiroir du bas */
   className?: string;
+  onClose?: () => void;
+  gesture?: {
+    onPointerDown?: (e: ReactPointerEvent<HTMLElement>) => void;
+    onPointerUp?: (e: ReactPointerEvent<HTMLElement>) => void;
+  };
 };
 
 /** Panneau élevage : effectif, bien-être, sortie au pré. */
@@ -84,12 +92,21 @@ export function LivestockPanel({
   barleyTons,
   wheatTons,
   className = "glass livestock-panel",
+  onClose,
+  gesture,
 }: Props) {
   if (!barns.length) return null;
 
   return (
-    <aside className={className}>
-      <h3>Élevage</h3>
+    <aside className={className} {...gesture}>
+      <div className="panel-head">
+        <h3>Élevage</h3>
+        {onClose && (
+          <button type="button" className="ghost tiny" onClick={onClose}>
+            Fermer
+          </button>
+        )}
+      </div>
       <p className="muted tiny">
         Nourrissez, sortez, collectez. Un troupeau affamé s’effondre ; une aire
         de sortie accolée au bâtiment le rend nettement plus productif.
@@ -169,6 +186,58 @@ export function LivestockPanel({
                   herd.breedRefusal && (
                     <p className="gest-blocked">{herd.breedRefusal}</p>
                   )
+                )}
+
+                {herd.kind === "COW" && (
+                  <div className="feed-row">
+                    <div className="feed-bar milk-bar">
+                      <span
+                        className={`feed-fill ${herd.canMilk ? "ready" : ""}`}
+                        style={{
+                          width: `${Math.round((herd.collectProgress ?? (herd.canMilk ? 1 : 0)) * 100)}%`,
+                        }}
+                      />
+                    </div>
+                    <span className={`feed-label ${herd.canMilk ? "ok" : ""}`}>
+                      {herd.canMilk
+                        ? `Lait prêt · ${herd.milkPerCycle.toFixed(0)} L`
+                        : `Lait · ${Math.round((herd.collectProgress ?? 0) * 100)} %`}
+                    </span>
+                  </div>
+                )}
+                {herd.kind === "HEN" && (
+                  <div className="feed-row">
+                    <div className="feed-bar milk-bar">
+                      <span
+                        className={`feed-fill ${herd.canCollectEggs ? "ready" : ""}`}
+                        style={{
+                          width: `${Math.round((herd.collectProgress ?? (herd.canCollectEggs ? 1 : 0)) * 100)}%`,
+                        }}
+                      />
+                    </div>
+                    <span className={`feed-label ${herd.canCollectEggs ? "ok" : ""}`}>
+                      {herd.canCollectEggs
+                        ? `Œufs prêts · ${(herd.eggsPerCycle ?? 0).toFixed(1)} caisse`
+                        : `Œufs · ${Math.round((herd.collectProgress ?? 0) * 100)} %`}
+                    </span>
+                  </div>
+                )}
+                {herd.kind === "SHEEP" && (
+                  <div className="feed-row">
+                    <div className="feed-bar milk-bar">
+                      <span
+                        className={`feed-fill ${herd.canShear ? "ready" : ""}`}
+                        style={{
+                          width: `${Math.round((herd.collectProgress ?? (herd.canShear ? 1 : 0)) * 100)}%`,
+                        }}
+                      />
+                    </div>
+                    <span className={`feed-label ${herd.canShear ? "ok" : ""}`}>
+                      {herd.canShear
+                        ? `Laine prête · ${(herd.woolPerShear ?? 0).toFixed(3)} t`
+                        : `Laine · ${Math.round((herd.collectProgress ?? 0) * 100)} %`}
+                    </span>
+                  </div>
                 )}
 
                 <dl className="barn-stats">

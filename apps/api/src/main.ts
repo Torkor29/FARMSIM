@@ -154,6 +154,8 @@ import {
   settleSaleTons,
   GRAZING_REFUSAL_LABELS,
   LIVESTOCK_CYCLE_MS,
+  collectProgress,
+  collectReady,
   MEAT_MATURITY_MS,
   type AnimalKind,
   type TradeGood,
@@ -192,6 +194,7 @@ import {
   mergeMoisture,
   applyJobCare,
   careWearMultiplier,
+  careYieldBonus,
   machineWorkBlock,
   repairTargetCondition,
   pickBreakdownKind,
@@ -716,6 +719,7 @@ async function getFarmBonuses(farmId: string) {
   let softDryer = false;
   let spoilageSlow = 0;
   for (const b of buildings) {
+    if (!BUILDING_DEFS[b.type as SharedBuildingType]) continue;
     const stats = buildingStatsAtLevel(b.type as SharedBuildingType, b.level);
     yieldBonus += stats.yieldBonus ?? 0;
     storageGrain += stats.storageGrain ?? 0;
@@ -3398,9 +3402,12 @@ app.post("/parcels/:id/harvest", async (req, res) => {
         continue;
       }
       const moisture = harvestMoisture(weather?.state as WeatherState | undefined);
-      const tons = access.charge
-        ? sim.estimatedYieldTons
-        : sim.estimatedYieldTons * (1 - P2P_YIELD_MALUS);
+      const picked = isMowCrop(cell.crop) ? pickedMow : pickedHarvest;
+      const care = picked ? careOf(picked.machine) : null;
+      const careMult = care ? 1 + careYieldBonus(care) : 1;
+      const tons =
+        (access.charge ? sim.estimatedYieldTons : sim.estimatedYieldTons * (1 - P2P_YIELD_MALUS)) *
+        careMult;
       harvested.push({
         crop: cell.crop,
         tons,
@@ -3549,10 +3556,18 @@ app.post("/parcels/:id/build", async (req, res) => {
     })
     .safeParse(req.body);
   if (!body.success) {
-    res.status(400).json(body.error.flatten());
+    const flat = body.error.flatten();
+    res.status(400).json({
+      error: flat.formErrors[0] ?? "Impossible de poser ce bâtiment",
+      ...flat,
+    });
     return;
   }
   const def = BUILDING_DEFS[body.data.type];
+  if (!def) {
+    res.status(400).json({ error: "Bâtiment inconnu" });
+    return;
+  }
   const parcel = await prisma.parcel.findUnique({
     where: { id: req.params.id },
     include: { farm: true, cells: true },
@@ -3579,27 +3594,32 @@ app.post("/parcels/:id/build", async (req, res) => {
     return;
   }
 
-  const building = await prisma.$transaction(async (tx) => {
-    await tx.user.update({ where: { id: user.id }, data: { crd: { decrement: def.cost } } });
-    const b = await tx.building.create({
-      data: {
-        parcelId: parcel.id,
-        type: body.data.type as BuildingType,
-        originX: body.data.x,
-        originY: body.data.y,
-      },
-    });
-    for (const c of cells) {
-      await tx.parcelCell.update({
-        where: { parcelId_x_y: { parcelId: parcel.id, x: c.x, y: c.y } },
-        data: { kind: "BUILDING", buildingId: b.id },
+  try {
+    const building = await prisma.$transaction(async (tx) => {
+      await tx.user.update({ where: { id: user.id }, data: { crd: { decrement: def.cost } } });
+      const b = await tx.building.create({
+        data: {
+          parcelId: parcel.id,
+          type: body.data.type as BuildingType,
+          originX: body.data.x,
+          originY: body.data.y,
+        },
       });
-    }
-    return b;
-  });
+      for (const c of cells) {
+        await tx.parcelCell.update({
+          where: { parcelId_x_y: { parcelId: parcel.id, x: c.x, y: c.y } },
+          data: { kind: "BUILDING", buildingId: b.id },
+        });
+      }
+      return b;
+    });
 
-  const bonuses = await getFarmBonuses(parcel.farmId!);
-  res.status(201).json({ building, bonuses, def });
+    const bonuses = await getFarmBonuses(parcel.farmId!);
+    res.status(201).json({ building, bonuses, def });
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : "Pose impossible";
+    res.status(500).json({ error: `Impossible de poser ${def.name} — ${msg}` });
+  }
 });
 
 /** Passage d'un bâtiment au palier suivant (5 niveaux au total). */
@@ -3675,9 +3695,13 @@ function barnCapacity(
   return 0;
 }
 
-/** La collecte (traite, œufs, laine) n'est pas un clic en continu. */
-function collectReady(lastAt: Date | null, bornAt: Date, now: number): boolean {
-  return now - (lastAt?.getTime() ?? bornAt.getTime()) >= LIVESTOCK_CYCLE_MS * 0.15;
+function collectClock(lastAt: Date | null, bornAt: Date, now: number) {
+  const last = lastAt?.getTime() ?? null;
+  const born = bornAt.getTime();
+  return {
+    ready: collectReady(last, born, now),
+    progress: collectProgress(last, born, now),
+  };
 }
 
 /** Enclos collés à une étable, avec leur capacité de sortie cumulée. */
@@ -4036,11 +4060,12 @@ app.get("/parcels/:id/livestock", async (req, res) => {
               kind: b.herd.kind as AnimalKind,
             }) > 0.05,
             canMilk:
-              b.herd.kind === "COW" && collectReady(b.herd.lastMilkedAt, b.herd.bornAt, now),
+              b.herd.kind === "COW" && collectClock(b.herd.lastMilkedAt, b.herd.bornAt, now).ready,
             canCollectEggs:
-              b.herd.kind === "HEN" && collectReady(b.herd.lastMilkedAt, b.herd.bornAt, now),
+              b.herd.kind === "HEN" && collectClock(b.herd.lastMilkedAt, b.herd.bornAt, now).ready,
             canShear:
-              b.herd.kind === "SHEEP" && collectReady(b.herd.lastMilkedAt, b.herd.bornAt, now),
+              b.herd.kind === "SHEEP" && collectClock(b.herd.lastMilkedAt, b.herd.bornAt, now).ready,
+            collectProgress: collectClock(b.herd.lastMilkedAt, b.herd.bornAt, now).progress,
             milkPerCycle: milkYield({
               herdSize: b.herd.size,
               happiness,

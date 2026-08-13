@@ -3,6 +3,7 @@ import {
   applyJobCare,
   breakdownChance,
   careWearMultiplier,
+  careYieldBonus,
   dirtFromWork,
   machineWorkBlock,
   pickBreakdownKind,
@@ -18,11 +19,17 @@ describe("entretien machines", () => {
     breakdown: null,
   };
 
-  it("double l'usure si la machine est sale, ×1,5 si pas graissée", () => {
-    expect(careWearMultiplier({ greased: true, dirt: 0 })).toBe(1);
+  it("double l'usure si la machine est sale, ×1,5 si pas graissée, −25 % si nickel", () => {
+    expect(careWearMultiplier({ greased: true, dirt: 0 })).toBe(0.75);
     expect(careWearMultiplier({ greased: false, dirt: 0 })).toBe(1.5);
     expect(careWearMultiplier({ greased: true, dirt: 25 })).toBe(2);
     expect(careWearMultiplier({ greased: false, dirt: 25 })).toBe(3);
+  });
+
+  it("donne un bonus de récolte si la machine est nickel", () => {
+    expect(careYieldBonus({ greased: true, dirt: 0 })).toBe(0.08);
+    expect(careYieldBonus({ greased: false, dirt: 25 })).toBe(-0.06);
+    expect(careYieldBonus({ greased: true, dirt: 25 })).toBe(0);
   });
 
   it("applique le multiplicateur à l'usure", () => {

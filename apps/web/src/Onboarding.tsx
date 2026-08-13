@@ -152,7 +152,7 @@ export function Onboarding({
       <header className="onb-top">
         <img className="onb-logo" src="/logo.webp" alt="" />
         <div>
-          <h1 className="onb-title">Installation de votre exploitation</h1>
+          <h1 className="onb-title">Installation de votre ferme</h1>
           <p className="onb-sub">
             Bienvenue {playerName} — cinq étapes et vous êtes aux commandes.
           </p>
