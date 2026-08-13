@@ -201,6 +201,25 @@ html.playing .field-dock {
 }
 .hud-stack > * { pointer-events: auto; }
 
+.visit-banner {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.55rem;
+  margin: 0.4rem 0.7rem 0;
+  padding: 0.45rem 0.7rem;
+  border-radius: var(--r-pill);
+  background: rgba(12, 42, 58, 0.82);
+  color: #f6f1e4;
+  font-size: 0.86rem;
+}
+.visit-banner strong { font-weight: 800; }
+.visit-banner span { opacity: 0.88; }
+.visit-banner .chip {
+  background: #f6f1e4;
+  color: #0c2a3a;
+}
+
 .hud-top {
   position: relative;
   display: flex;

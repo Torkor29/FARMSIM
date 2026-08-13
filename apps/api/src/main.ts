@@ -14,6 +14,7 @@ import {
   DRYING,
   MARKET_BOUNDS,
   SPECIALIZATION_LABELS,
+  WORK_LABELS,
   footprintCells,
   DEFAULT_GRID,
   MACHINE_DEFS,
@@ -42,9 +43,18 @@ import {
   urgentContractorQuote,
   CONTRACTOR_YIELD_MALUS,
   missionPayout,
+  laborEscrow,
+  LABOR_ORDER_TTL_MS,
+  LABOR_OPEN_MAX_PER_CLIENT,
+  MISSION_CELLS_MIN,
+  MISSION_CELLS_MAX,
   MISSION_OPEN_MAX,
+  P2P_YIELD_MALUS,
   MISSION_CELL_CHOICES,
   clampMissionCells,
+  appearanceFromJson,
+  parseAppearance,
+  FIELD_PRESENCE_TTL_MS,
   repairHalfwayTarget,
   type FarmWork,
   type Specialization,
@@ -292,6 +302,191 @@ function pickMachineForWork(
   return candidates[0];
 }
 
+type CellXY = { x: number; y: number };
+
+function parseCellJson(raw: string): CellXY[] {
+  try {
+    const v = JSON.parse(raw) as unknown;
+    if (!Array.isArray(v)) return [];
+    return v.filter(
+      (c): c is CellXY =>
+        !!c && typeof c === "object" && Number.isInteger((c as CellXY).x) && Number.isInteger((c as CellXY).y),
+    );
+  } catch {
+    return [];
+  }
+}
+
+function cellsSubset(inner: CellXY[], outer: CellXY[]): boolean {
+  return inner.every((c) => outer.some((o) => o.x === c.x && o.y === c.y));
+}
+
+function subtractCells(from: CellXY[], remove: CellXY[]): CellXY[] {
+  return from.filter((c) => !remove.some((r) => r.x === c.x && r.y === c.y));
+}
+
+type FieldAccess =
+  | {
+      ok: true;
+      parcel: NonNullable<Awaited<ReturnType<typeof loadParcelForWork>>>;
+      machines: FarmMachine[];
+      charge: boolean;
+      order: { id: string; remainingJson: string; work: string; crop: string | null; payoutCrd: number; escrowCrd: number; quoteCrd: number; clientId: string; providerId: string | null } | null;
+    }
+  | { ok: false; status: number; error: string };
+
+async function loadParcelForWork(parcelId: string) {
+  return prisma.parcel.findUnique({
+    where: { id: parcelId },
+    include: { farm: { include: { machines: true, user: true } }, cells: true, zone: true },
+  });
+}
+
+async function resolveFieldAccess(opts: {
+  parcelId: string;
+  userId: string;
+  work: FarmWork;
+  cells: CellXY[];
+}): Promise<FieldAccess> {
+  const parcel = await loadParcelForWork(opts.parcelId);
+  if (!parcel?.farm) {
+    return { ok: false, status: 404, error: "Parcelle introuvable" };
+  }
+  if (parcel.farm.userId === opts.userId) {
+    return { ok: true, parcel, machines: parcel.farm.machines, charge: true, order: null };
+  }
+  const order = await prisma.laborOrder.findFirst({
+    where: { parcelId: opts.parcelId, providerId: opts.userId, status: "ACCEPTED" },
+  });
+  if (!order) {
+    return { ok: false, status: 403, error: "Parcelle non possédée" };
+  }
+  if (order.work !== opts.work) {
+    return { ok: false, status: 409, error: `Ce chantier est un ${WORK_LABELS[order.work as FarmWork] ?? order.work}` };
+  }
+  const remaining = parseCellJson(order.remainingJson);
+  if (opts.cells.length && !cellsSubset(opts.cells, remaining)) {
+    return { ok: false, status: 409, error: "Ces cases ne font pas partie du chantier" };
+  }
+  const provider = await prisma.user.findUnique({
+    where: { id: opts.userId },
+    include: { farm: { include: { machines: true } } },
+  });
+  if (!provider?.farm) {
+    return { ok: false, status: 409, error: "Ferme requise (machines) pour les contrats" };
+  }
+  return {
+    ok: true,
+    parcel,
+    machines: provider.farm.machines,
+    charge: false,
+    order: {
+      id: order.id,
+      remainingJson: order.remainingJson,
+      work: order.work,
+      crop: order.crop,
+      payoutCrd: order.payoutCrd,
+      escrowCrd: order.escrowCrd,
+      quoteCrd: order.quoteCrd,
+      clientId: order.clientId,
+      providerId: order.providerId,
+    },
+  };
+}
+
+async function settleLaborProgress(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  tx: any,
+  order: NonNullable<Extract<FieldAccess, { ok: true }>["order"]>,
+  worked: CellXY[],
+): Promise<{ remaining: number; completed: boolean; payout?: number }> {
+  const left = subtractCells(parseCellJson(order.remainingJson), worked);
+  if (left.length > 0) {
+    await tx.laborOrder.update({
+      where: { id: order.id },
+      data: { remainingJson: JSON.stringify(left) },
+    });
+    return { remaining: left.length, completed: false };
+  }
+  await tx.laborOrder.update({
+    where: { id: order.id },
+    data: { remainingJson: "[]", status: "COMPLETED", completedAt: new Date() },
+  });
+  if (order.providerId) {
+    await tx.user.update({
+      where: { id: order.providerId },
+      data: { crd: { increment: order.payoutCrd }, xp: { increment: 15 } },
+    });
+  }
+  const rebate = Math.max(0, Math.round((order.quoteCrd - order.payoutCrd) * 100) / 100);
+  if (rebate > 0) {
+    await tx.user.update({
+      where: { id: order.clientId },
+      data: { crd: { increment: rebate } },
+    });
+  }
+  return { remaining: 0, completed: true, payout: order.payoutCrd };
+}
+
+function publicLaborOrder(o: {
+  id: string;
+  work: string;
+  crop: string | null;
+  cellsJson: string;
+  remainingJson: string;
+  quoteCrd: number;
+  extrasCrd: number;
+  escrowCrd: number;
+  payoutCrd: number;
+  status: string;
+  parcelId: string;
+  clientId: string;
+  providerId: string | null;
+  expiresAt: Date;
+  parcel?: { label: string; zone?: { name: string } | null; farm?: { user?: { displayName: string } | null } | null };
+  client?: { displayName: string };
+}) {
+  const cells = parseCellJson(o.cellsJson);
+  const remaining = parseCellJson(o.remainingJson);
+  return {
+    id: o.id,
+    kind: "P2P" as const,
+    work: o.work,
+    crop: o.crop,
+    cells: cells.length,
+    remaining: remaining.length,
+    cellList: remaining,
+    quoteCrd: o.quoteCrd,
+    escrowCrd: o.escrowCrd,
+    payoutCrd: o.payoutCrd,
+    status: o.status,
+    parcelId: o.parcelId,
+    parcelLabel: o.parcel?.label ?? "",
+    zoneName: o.parcel?.zone?.name ?? "",
+    clientName: o.client?.displayName ?? o.parcel?.farm?.user?.displayName ?? "Exploitant",
+    expiresAt: o.expiresAt.toISOString(),
+  };
+}
+
+async function expireLaborOrders() {
+  const now = new Date();
+  const stale = await prisma.laborOrder.findMany({
+    where: { status: { in: ["OPEN", "ACCEPTED"] }, expiresAt: { lte: now } },
+  });
+  for (const o of stale) {
+    await prisma.$transaction(async (tx) => {
+      await tx.laborOrder.update({
+        where: { id: o.id },
+        data: { status: "CANCELLED", providerId: null },
+      });
+      await tx.user.update({
+        where: { id: o.clientId },
+        data: { crd: { increment: o.escrowCrd } },
+      });
+    });
+  }
+}
+
 async function applyWearToMachine(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   tx: any,
@@ -338,6 +533,81 @@ async function applyWearToMachine(
 function playableSpec(s: string | null | undefined): Specialization | undefined {
   if (!s) return undefined;
   return s === "ELEVEUR" ? "ELEVEUR" : "CEREALIER";
+}
+
+const appearanceSchema = z.object({
+  skin: z.number().int(),
+  eyeColor: z.number().int(),
+  eyeShape: z.number().int(),
+  mouth: z.number().int(),
+  nose: z.number().int(),
+  ears: z.number().int(),
+  hat: z.number().int(),
+  hatColor: z.number().int(),
+  clothes: z.number().int(),
+  clothColor: z.number().int(),
+  accentColor: z.number().int(),
+});
+
+async function touchFieldPresence(userId: string, parcelId: string, cell?: CellXY) {
+  await prisma.user.update({
+    where: { id: userId },
+    data: {
+      lastSeenAt: new Date(),
+      lastParcelId: parcelId,
+      lastCellX: cell?.x ?? undefined,
+      lastCellY: cell?.y ?? undefined,
+    },
+  });
+}
+
+async function listFieldWorkers(parcelId: string) {
+  const since = new Date(Date.now() - FIELD_PRESENCE_TTL_MS);
+  const users = await prisma.user.findMany({
+    where: { lastParcelId: parcelId, lastSeenAt: { gte: since } },
+    select: {
+      id: true,
+      displayName: true,
+      appearanceJson: true,
+      specialization: true,
+      lastCellX: true,
+      lastCellY: true,
+    },
+  });
+  return users.map((u) => ({
+    id: u.id,
+    name: u.displayName,
+    x: u.lastCellX ?? 0,
+    y: u.lastCellY ?? 0,
+    appearance: appearanceFromJson(u.appearanceJson, playableSpec(u.specialization)),
+    specialization: playableSpec(u.specialization),
+  }));
+}
+
+async function hasActiveMission(userId: string) {
+  const [npc, p2p] = await Promise.all([
+    prisma.npcContract.findFirst({ where: { status: "ACCEPTED", providerId: userId } }),
+    prisma.laborOrder.findFirst({ where: { status: "ACCEPTED", providerId: userId } }),
+  ]);
+  return Boolean(npc || p2p);
+}
+
+const laborOrderInclude = {
+  parcel: { include: { zone: true, farm: { include: { user: true } } } },
+  client: true,
+} as const;
+
+async function canVisitParcel(userId: string, parcelId: string) {
+  const parcel = await prisma.parcel.findUnique({
+    where: { id: parcelId },
+    include: { farm: true },
+  });
+  if (!parcel?.farm) return false;
+  if (parcel.farm.userId === userId) return true;
+  const order = await prisma.laborOrder.findFirst({
+    where: { parcelId, providerId: userId, status: "ACCEPTED" },
+  });
+  return Boolean(order);
 }
 
 const ACQUISITION_ERRORS: Record<AcquisitionRule, string> = {
@@ -789,6 +1059,7 @@ app.post("/world/claim", async (req, res) => {
     .object({
       parcelId: z.string(),
       specialization: z.enum(["CEREALIER", "ELEVEUR"]),
+      appearance: appearanceSchema.optional(),
     })
     .safeParse(req.body);
   if (!body.success) {
@@ -817,7 +1088,12 @@ app.post("/world/claim", async (req, res) => {
 
       await tx.user.update({
         where: { id: user.id },
-        data: { specialization: body.data.specialization },
+        data: {
+          specialization: body.data.specialization,
+          appearanceJson: JSON.stringify(
+            parseAppearance(body.data.appearance, body.data.specialization),
+          ),
+        },
       });
 
       let farm = user.farm;
@@ -1282,6 +1558,7 @@ async function spoilPerishables() {
 
 async function runWorldTick() {
   await expireListings();
+  await expireLaborOrders();
   await runNpcBuyers();
   await spoilPerishables();
   await settleAllHerds();
@@ -1510,10 +1787,11 @@ async function playerPayload(userId: string) {
     }
   }
   const bonuses = user.farm ? await getFarmBonuses(user.farm.id) : null;
-  const { accessCode: _omit, ...safe } = user;
+  const { accessCode: _omit, appearanceJson, ...safe } = user;
   void _omit;
   return {
     ...safe,
+    appearance: appearanceFromJson(appearanceJson, playableSpec(user.specialization)),
     bonuses,
     grainDump: grainDump && grainDump.soldTons > 0 ? grainDump : undefined,
   };
@@ -1652,6 +1930,26 @@ app.get("/auth/me", async (req, res) => {
   res.json({ token: auth.session.token, player });
 });
 
+app.patch("/me/appearance", async (req, res) => {
+  const auth = await userFromAuthHeader(req);
+  if (!auth) {
+    res.status(401).json({ error: "Session invalide" });
+    return;
+  }
+  const body = appearanceSchema.safeParse(req.body);
+  if (!body.success) {
+    res.status(400).json(body.error.flatten());
+    return;
+  }
+  const appearance = parseAppearance(body.data, playableSpec(auth.user.specialization));
+  await prisma.user.update({
+    where: { id: auth.user.id },
+    data: { appearanceJson: JSON.stringify(appearance) },
+  });
+  const player = await playerPayload(auth.user.id);
+  res.json({ player, appearance });
+});
+
 app.get("/session/resume", async (req, res) => {
   const auth = await userFromAuthHeader(req);
   if (!auth) {
@@ -1683,7 +1981,13 @@ app.get("/players/:id", async (req, res) => {
 app.get("/parcels/:id", async (req, res) => {
   const parcel = await prisma.parcel.findUnique({
     where: { id: req.params.id },
-    include: { zone: true, cells: true, buildings: true, machines: true, farm: true },
+    include: {
+      zone: true,
+      cells: true,
+      buildings: true,
+      machines: true,
+      farm: { include: { user: { select: { id: true, displayName: true } } } },
+    },
   });
   if (!parcel) {
     res.status(404).json({ error: "Introuvable" });
@@ -1724,7 +2028,245 @@ app.get("/parcels/:id", async (req, res) => {
       cellSims.push({ x: c.x, y: c.y, sim });
     }
   }
-  res.json({ parcel, weather, bonuses, cellSims, climate });
+  const workers = await listFieldWorkers(parcel.id);
+  const labor = await prisma.laborOrder.findMany({
+    where: { parcelId: parcel.id, status: { in: ["OPEN", "ACCEPTED"] } },
+    include: laborOrderInclude,
+  });
+  res.json({
+    parcel,
+    weather,
+    bonuses,
+    cellSims,
+    climate,
+    workers,
+    labor: labor.map(publicLaborOrder),
+  });
+});
+
+app.post("/parcels/:id/presence", async (req, res) => {
+  const body = z
+    .object({
+      userId: z.string(),
+      x: z.number().int().optional(),
+      y: z.number().int().optional(),
+    })
+    .safeParse(req.body);
+  if (!body.success) {
+    res.status(400).json(body.error.flatten());
+    return;
+  }
+  const allowed = await canVisitParcel(body.data.userId, req.params.id);
+  if (!allowed) {
+    res.status(403).json({ error: "Parcelle non possédée" });
+    return;
+  }
+  await touchFieldPresence(
+    body.data.userId,
+    req.params.id,
+    body.data.x != null && body.data.y != null ? { x: body.data.x, y: body.data.y } : undefined,
+  );
+  res.json({ ok: true, workers: await listFieldWorkers(req.params.id) });
+});
+
+app.post("/parcels/:id/labor-orders", async (req, res) => {
+  const body = z
+    .object({
+      userId: z.string(),
+      work: z.enum(["PLANT", "FERTILIZE", "HARVEST", "PLOW", "STUBBLE"]),
+      crop: z.enum(["WHEAT", "MAIZE", "PEA"]).optional(),
+      cells: z.array(z.object({ x: z.number().int(), y: z.number().int() })).min(1),
+    })
+    .safeParse(req.body);
+  if (!body.success) {
+    res.status(400).json(body.error.flatten());
+    return;
+  }
+  const n = body.data.cells.length;
+  if (n < MISSION_CELLS_MIN || n > MISSION_CELLS_MAX) {
+    res.status(400).json({
+      error: `Un chantier fait ${MISSION_CELLS_MIN} à ${MISSION_CELLS_MAX} cases`,
+    });
+    return;
+  }
+  const parcel = await prisma.parcel.findUnique({
+    where: { id: req.params.id },
+    include: { farm: true, cells: true },
+  });
+  if (!parcel?.farm || parcel.farm.userId !== body.data.userId) {
+    res.status(403).json({ error: "Parcelle non possédée" });
+    return;
+  }
+  const unique = body.data.cells.filter(
+    (c, i, arr) => arr.findIndex((o) => o.x === c.x && o.y === c.y) === i,
+  );
+  for (const { x, y } of unique) {
+    const cell = parcel.cells.find((c) => c.x === x && c.y === y);
+    if (!cell || cell.kind === "BUILDING" || cell.kind === "VEHICLE") {
+      res.status(409).json({ error: `Case ${x},${y} hors chantier` });
+      return;
+    }
+  }
+  const openCount = await prisma.laborOrder.count({
+    where: { clientId: body.data.userId, status: { in: ["OPEN", "ACCEPTED"] } },
+  });
+  if (openCount >= LABOR_OPEN_MAX_PER_CLIENT) {
+    res.status(409).json({ error: `Au plus ${LABOR_OPEN_MAX_PER_CLIENT} chantiers ouverts` });
+    return;
+  }
+  const crop = body.data.work === "PLANT" ? (body.data.crop ?? "WHEAT") : null;
+  const money = laborEscrow(body.data.work, unique.length, crop);
+  const user = await prisma.user.findUnique({ where: { id: body.data.userId } });
+  if (!user || user.crd < money.escrow) {
+    res.status(402).json({ error: `TRN insuffisants — ${money.escrow} en séquestre` });
+    return;
+  }
+  const order = await prisma.$transaction(async (tx) => {
+    await tx.user.update({
+      where: { id: user.id },
+      data: { crd: { decrement: money.escrow } },
+    });
+    return tx.laborOrder.create({
+      data: {
+        parcelId: parcel.id,
+        clientId: user.id,
+        work: body.data.work,
+        crop,
+        cellsJson: JSON.stringify(unique),
+        remainingJson: JSON.stringify(unique),
+        quoteCrd: money.quote,
+        extrasCrd: money.extras,
+        escrowCrd: money.escrow,
+        payoutCrd: money.payout,
+        expiresAt: new Date(Date.now() + LABOR_ORDER_TTL_MS),
+      },
+      include: laborOrderInclude,
+    });
+  });
+  res.status(201).json({ order: publicLaborOrder(order), escrow: money.escrow });
+});
+
+app.get("/labor-orders", async (req, res) => {
+  const userId = typeof req.query.userId === "string" ? req.query.userId : null;
+  await expireLaborOrders();
+  const open = await prisma.laborOrder.findMany({
+    where: { status: "OPEN" },
+    orderBy: { createdAt: "desc" },
+    take: 24,
+    include: laborOrderInclude,
+  });
+  const active = userId
+    ? await prisma.laborOrder.findFirst({
+        where: { status: "ACCEPTED", providerId: userId },
+        include: laborOrderInclude,
+      })
+    : null;
+  const posted = userId
+    ? await prisma.laborOrder.findMany({
+        where: { clientId: userId, status: { in: ["OPEN", "ACCEPTED"] } },
+        include: laborOrderInclude,
+      })
+    : [];
+  res.json({
+    orders: open.map(publicLaborOrder),
+    active: active ? publicLaborOrder(active) : null,
+    posted: posted.map(publicLaborOrder),
+  });
+});
+
+app.post("/labor-orders/:id/accept", async (req, res) => {
+  const body = z.object({ userId: z.string() }).safeParse(req.body);
+  if (!body.success) {
+    res.status(400).json(body.error.flatten());
+    return;
+  }
+  const user = await prisma.user.findUnique({
+    where: { id: body.data.userId },
+    include: { farm: { include: { machines: true } } },
+  });
+  if (!user?.farm) {
+    res.status(409).json({ error: "Ferme requise (machines) pour les contrats" });
+    return;
+  }
+  if (await hasActiveMission(user.id)) {
+    res.status(409).json({ error: "Une mission à la fois — terminez d'abord le chantier en cours." });
+    return;
+  }
+  const order = await prisma.laborOrder.findUnique({
+    where: { id: req.params.id },
+    include: laborOrderInclude,
+  });
+  if (!order || order.status !== "OPEN") {
+    res.status(409).json({ error: "Chantier indisponible" });
+    return;
+  }
+  if (order.clientId === user.id) {
+    res.status(409).json({ error: "Vous ne pouvez pas prendre votre propre chantier" });
+    return;
+  }
+  const picked = pickMachineForWork(user.farm.machines, order.work as FarmWork);
+  if (!picked) {
+    res.status(409).json({ error: explainNoMachine(user.farm.machines, order.work as FarmWork) });
+    return;
+  }
+  const updated = await prisma.laborOrder.update({
+    where: { id: order.id },
+    data: { providerId: user.id, status: "ACCEPTED" },
+    include: laborOrderInclude,
+  });
+  const remaining = parseCellJson(updated.remainingJson);
+  await touchFieldPresence(user.id, updated.parcelId, remaining[0]);
+  res.json({ order: publicLaborOrder(updated) });
+});
+
+app.post("/labor-orders/:id/cancel", async (req, res) => {
+  const body = z.object({ userId: z.string() }).safeParse(req.body);
+  if (!body.success) {
+    res.status(400).json(body.error.flatten());
+    return;
+  }
+  const order = await prisma.laborOrder.findUnique({ where: { id: req.params.id } });
+  if (!order || order.clientId !== body.data.userId) {
+    res.status(403).json({ error: "Pas votre chantier" });
+    return;
+  }
+  if (order.status !== "OPEN") {
+    res.status(409).json({ error: "Annulation seulement tant que personne n'a pris le chantier" });
+    return;
+  }
+  await prisma.$transaction(async (tx) => {
+    await tx.laborOrder.update({
+      where: { id: order.id },
+      data: { status: "CANCELLED" },
+    });
+    await tx.user.update({
+      where: { id: order.clientId },
+      data: { crd: { increment: order.escrowCrd } },
+    });
+  });
+  res.json({ ok: true, refunded: order.escrowCrd });
+});
+
+app.post("/labor-orders/:id/abandon", async (req, res) => {
+  const body = z.object({ userId: z.string() }).safeParse(req.body);
+  if (!body.success) {
+    res.status(400).json(body.error.flatten());
+    return;
+  }
+  const order = await prisma.laborOrder.findUnique({
+    where: { id: req.params.id },
+    include: laborOrderInclude,
+  });
+  if (!order || order.providerId !== body.data.userId || order.status !== "ACCEPTED") {
+    res.status(409).json({ error: "Pas votre chantier" });
+    return;
+  }
+  const updated = await prisma.laborOrder.update({
+    where: { id: order.id },
+    data: { providerId: null, status: "OPEN" },
+    include: laborOrderInclude,
+  });
+  res.json({ order: publicLaborOrder(updated) });
 });
 
 /** Achat parcelle adjacente (ou 1ʳᵉ parcelle si ferme sans terre) */
@@ -2081,30 +2623,41 @@ app.post("/parcels/:id/plant", async (req, res) => {
     res.status(400).json(body.error.flatten());
     return;
   }
-  const parcel = await prisma.parcel.findUnique({
-    where: { id: req.params.id },
-    include: { farm: { include: { machines: true } }, cells: true },
+  const access = await resolveFieldAccess({
+    parcelId: req.params.id,
+    userId: body.data.userId,
+    work: "PLANT",
+    cells: body.data.cells,
   });
-  if (!parcel?.farm || parcel.farm.userId !== body.data.userId) {
-    res.status(403).json({ error: "Parcelle non possédée" });
+  if (!access.ok) {
+    res.status(access.status).json({ error: access.error });
     return;
   }
+  const parcel = access.parcel;
   const user = await prisma.user.findUnique({ where: { id: body.data.userId } });
   if (!user) {
     res.status(404).json({ error: "Joueur introuvable" });
     return;
   }
-  const picked = pickMachineForWork(parcel.farm.machines, "PLANT");
+  const picked = pickMachineForWork(access.machines, "PLANT");
   if (!picked) {
     res.status(409).json({
-      error: explainNoMachine(parcel.farm.machines, "PLANT"),
+      error: explainNoMachine(access.machines, "PLANT"),
     });
     return;
   }
+  const plantCrop =
+    access.order?.crop === "WHEAT" || access.order?.crop === "MAIZE" || access.order?.crop === "PEA"
+      ? access.order.crop
+      : body.data.crop;
+  if (access.order?.crop && access.order.crop !== body.data.crop) {
+    res.status(409).json({ error: `Ce chantier demande du ${access.order.crop}` });
+    return;
+  }
   const directSeed = body.data.directSeed ?? false;
-  const seedCost = CROP_DEFS[body.data.crop].seedCostPerCell * body.data.cells.length;
+  const seedCost = CROP_DEFS[plantCrop].seedCostPerCell * body.data.cells.length;
   const cost = seedCost + (directSeed ? DIRECT_SEED_COST_PER_CELL * body.data.cells.length : 0);
-  if (user.crd < cost) {
+  if (access.charge && user.crd < cost) {
     res.status(402).json({ error: "TRN insuffisants pour semences" });
     return;
   }
@@ -2139,9 +2692,12 @@ app.post("/parcels/:id/plant", async (req, res) => {
   }
 
   const now = Date.now();
-  const growMs = CROP_DEFS[body.data.crop].growMs;
-  const wear = await prisma.$transaction(async (tx) => {
-    await tx.user.update({ where: { id: user.id }, data: { crd: { decrement: cost } } });
+  const growMs = CROP_DEFS[plantCrop].growMs;
+  const last = body.data.cells[body.data.cells.length - 1];
+  const { wear, labor } = await prisma.$transaction(async (tx) => {
+    if (access.charge) {
+      await tx.user.update({ where: { id: user.id }, data: { crd: { decrement: cost } } });
+    }
     for (const { x, y } of body.data.cells) {
       const cell = parcel.cells.find((c) => c.x === x && c.y === y);
       // Le semis direct perce les chaumes : la case est semée sans qu'aucun
@@ -2151,7 +2707,7 @@ app.post("/parcels/:id/plant", async (req, res) => {
         where: { parcelId_x_y: { parcelId: parcel.id, x, y } },
         data: {
           kind: "CROP",
-          crop: body.data.crop,
+          crop: plantCrop,
           fieldStage: "PLANTED",
           plantedAt: new Date(now),
           readyAt: new Date(now + growMs),
@@ -2176,20 +2732,26 @@ app.post("/parcels/:id/plant", async (req, res) => {
         data: { fertility: Math.min(1, parcel.fertility + DIRECT_SEED_FERTILITY_GAIN) },
       });
     }
-    return applyWearToMachine(tx, {
+    const wear = await applyWearToMachine(tx, {
       machine: picked.machine,
       def: picked.def,
       cells: body.data.cells.length,
       work: "PLANT",
       specialization: user.specialization,
     });
+    const labor = access.order
+      ? await settleLaborProgress(tx, access.order, body.data.cells)
+      : null;
+    return { wear, labor };
   });
+  await touchFieldPresence(user.id, parcel.id, last);
   res.json({
     parcel: await prisma.parcel.findUnique({
       where: { id: parcel.id },
       include: { cells: true, buildings: true },
     }),
     machine: { id: picked.machine.id, type: picked.machine.type, ...wear },
+    labor,
   });
 });
 
@@ -2204,30 +2766,36 @@ app.post("/parcels/:id/fertilize", async (req, res) => {
     res.status(400).json(body.error.flatten());
     return;
   }
-  const parcel = await prisma.parcel.findUnique({
-    where: { id: req.params.id },
-    include: { farm: { include: { machines: true } }, cells: true },
+  const access = await resolveFieldAccess({
+    parcelId: req.params.id,
+    userId: body.data.userId,
+    work: "FERTILIZE",
+    cells: body.data.cells,
   });
-  if (!parcel?.farm || parcel.farm.userId !== body.data.userId) {
-    res.status(403).json({ error: "Parcelle non possédée" });
+  if (!access.ok) {
+    res.status(access.status).json({ error: access.error });
     return;
   }
-  const picked = pickMachineForWork(parcel.farm.machines, "FERTILIZE");
+  const parcel = access.parcel;
+  const picked = pickMachineForWork(access.machines, "FERTILIZE");
   if (!picked) {
     res.status(409).json({
-      error: explainNoMachine(parcel.farm.machines, "FERTILIZE"),
+      error: explainNoMachine(access.machines, "FERTILIZE"),
     });
     return;
   }
   const cost = 10 * body.data.cells.length;
   const user = await prisma.user.findUnique({ where: { id: body.data.userId } });
-  if (!user || user.crd < cost) {
+  if (!user || (access.charge && user.crd < cost)) {
     res.status(402).json({ error: "TRN insuffisants" });
     return;
   }
   let fertilized = 0;
-  const wear = await prisma.$transaction(async (tx) => {
-    await tx.user.update({ where: { id: user.id }, data: { crd: { decrement: cost } } });
+  const last = body.data.cells[body.data.cells.length - 1];
+  const { wear, labor } = await prisma.$transaction(async (tx) => {
+    if (access.charge) {
+      await tx.user.update({ where: { id: user.id }, data: { crd: { decrement: cost } } });
+    }
     for (const { x, y } of body.data.cells) {
       const cell = parcel.cells.find((c) => c.x === x && c.y === y);
       if (!cell || cell.kind !== "CROP" || cell.fertilizedPasses >= 2) continue;
@@ -2237,15 +2805,25 @@ app.post("/parcels/:id/fertilize", async (req, res) => {
       });
       fertilized += 1;
     }
-    return applyWearToMachine(tx, {
+    const wear = await applyWearToMachine(tx, {
       machine: picked.machine,
       def: picked.def,
       cells: Math.max(1, fertilized),
       work: "FERTILIZE",
       specialization: user.specialization,
     });
+    const labor = access.order
+      ? await settleLaborProgress(tx, access.order, body.data.cells)
+      : null;
+    return { wear, labor };
   });
-  res.json({ ok: true, fertilized, machine: { id: picked.machine.id, type: picked.machine.type, ...wear } });
+  await touchFieldPresence(user.id, parcel.id, last);
+  res.json({
+    ok: true,
+    fertilized,
+    machine: { id: picked.machine.id, type: picked.machine.type, ...wear },
+    labor,
+  });
 });
 
 /**
@@ -2264,29 +2842,35 @@ app.post("/parcels/:id/plow", async (req, res) => {
     res.status(400).json(body.error.flatten());
     return;
   }
-  const parcel = await prisma.parcel.findUnique({
-    where: { id: req.params.id },
-    include: { farm: { include: { machines: true } }, cells: true },
+  const access = await resolveFieldAccess({
+    parcelId: req.params.id,
+    userId: body.data.userId,
+    work: "PLOW",
+    cells: body.data.cells ?? [],
   });
-  if (!parcel?.farm || parcel.farm.userId !== body.data.userId) {
-    res.status(403).json({ error: "Parcelle non possédée" });
+  if (!access.ok) {
+    res.status(access.status).json({ error: access.error });
     return;
   }
-  const picked = pickMachineForWork(parcel.farm.machines, "PLOW");
+  const parcel = access.parcel;
+  const picked = pickMachineForWork(access.machines, "PLOW");
   if (!picked) {
     res.status(409).json({
-      error: explainNoMachine(parcel.farm.machines, "PLOW"),
+      error: explainNoMachine(access.machines, "PLOW"),
     });
     return;
   }
 
   const now = Date.now();
+  const remaining = access.order ? parseCellJson(access.order.remainingJson) : null;
   // La charrue traite deux situations : les chaumes après moisson, et les
   // cultures perdues qu'on ne peut plus récolter.
   const candidates = (
     body.data.cells
       ? parcel.cells.filter((c) => body.data.cells!.some((t) => t.x === c.x && t.y === c.y))
-      : parcel.cells
+      : remaining
+        ? parcel.cells.filter((c) => remaining.some((t) => t.x === c.x && t.y === c.y))
+        : parcel.cells
   ).filter((cell) => {
     if (cell.hasStubble) return true;
     // Une case qui a atteint la limite de récoltes réclame la charrue, même
@@ -2316,7 +2900,7 @@ app.post("/parcels/:id/plow", async (req, res) => {
   const lostCount = candidates.filter((c) => c.kind === "CROP").length;
   const cost = PLOW_COST_PER_CELL_SOIL * candidates.length;
   const user = await prisma.user.findUnique({ where: { id: body.data.userId } });
-  if (!user || user.crd < cost) {
+  if (!user || (access.charge && user.crd < cost)) {
     res.status(402).json({ error: `TRN insuffisants — ${cost} requis` });
     return;
   }
@@ -2326,8 +2910,11 @@ app.post("/parcels/:id/plow", async (req, res) => {
   const malus =
     LOST_CROP_FERTILITY_MALUS * lostCount -
     PLOW_FERTILITY_GAIN * (candidates.length - lostCount);
-  const wear = await prisma.$transaction(async (tx) => {
-    await tx.user.update({ where: { id: user.id }, data: { crd: { decrement: cost } } });
+  const worked = candidates.map((c) => ({ x: c.x, y: c.y }));
+  const { wear, labor } = await prisma.$transaction(async (tx) => {
+    if (access.charge) {
+      await tx.user.update({ where: { id: user.id }, data: { crd: { decrement: cost } } });
+    }
     for (const cell of candidates) {
       await tx.parcelCell.update({
         where: { id: cell.id },
@@ -2349,21 +2936,25 @@ app.post("/parcels/:id/plow", async (req, res) => {
       where: { id: parcel.id },
       data: { fertility: Math.max(0.2, Math.min(0.99, parcel.fertility - malus)) },
     });
-    return applyWearToMachine(tx, {
+    const wear = await applyWearToMachine(tx, {
       machine: picked.machine,
       def: picked.def,
       cells: candidates.length,
       work: "PLOW",
       specialization: user.specialization,
     });
+    const labor = access.order ? await settleLaborProgress(tx, access.order, worked) : null;
+    return { wear, labor };
   });
 
+  await touchFieldPresence(user.id, parcel.id, worked[worked.length - 1]);
   res.json({
     plowed: candidates.length,
     lostCleared: lostCount,
-    cost,
+    cost: access.charge ? cost : 0,
     fertilityDelta: Math.round(-malus * 1000) / 1000,
     machine: { id: picked.machine.id, type: picked.machine.type, ...wear },
+    labor,
   });
 });
 
@@ -2383,25 +2974,31 @@ app.post("/parcels/:id/stubble", async (req, res) => {
     res.status(400).json(body.error.flatten());
     return;
   }
-  const parcel = await prisma.parcel.findUnique({
-    where: { id: req.params.id },
-    include: { farm: { include: { machines: true } }, cells: true },
+  const access = await resolveFieldAccess({
+    parcelId: req.params.id,
+    userId: body.data.userId,
+    work: "STUBBLE",
+    cells: body.data.cells ?? [],
   });
-  if (!parcel?.farm || parcel.farm.userId !== body.data.userId) {
-    res.status(403).json({ error: "Parcelle non possédée" });
+  if (!access.ok) {
+    res.status(access.status).json({ error: access.error });
     return;
   }
-  const picked = pickMachineForWork(parcel.farm.machines, "STUBBLE");
+  const parcel = access.parcel;
+  const picked = pickMachineForWork(access.machines, "STUBBLE");
   if (!picked) {
     res.status(409).json({
-      error: explainNoMachine(parcel.farm.machines, "STUBBLE"),
+      error: explainNoMachine(access.machines, "STUBBLE"),
     });
     return;
   }
 
+  const remaining = access.order ? parseCellJson(access.order.remainingJson) : null;
   const selection = body.data.cells
     ? parcel.cells.filter((c) => body.data.cells!.some((t) => t.x === c.x && t.y === c.y))
-    : parcel.cells;
+    : remaining
+      ? parcel.cells.filter((c) => remaining.some((t) => t.x === c.x && t.y === c.y))
+      : parcel.cells;
 
   const targets: (typeof selection)[number][] = [];
   let blockedByPlow = 0;
@@ -2427,13 +3024,16 @@ app.post("/parcels/:id/stubble", async (req, res) => {
 
   const cost = STUBBLE_COST_PER_CELL * targets.length;
   const user = await prisma.user.findUnique({ where: { id: body.data.userId } });
-  if (!user || user.crd < cost) {
+  if (!user || (access.charge && user.crd < cost)) {
     res.status(402).json({ error: `TRN insuffisants — ${cost} requis` });
     return;
   }
 
-  const wear = await prisma.$transaction(async (tx) => {
-    await tx.user.update({ where: { id: user.id }, data: { crd: { decrement: cost } } });
+  const worked = targets.map((c) => ({ x: c.x, y: c.y }));
+  const { wear, labor } = await prisma.$transaction(async (tx) => {
+    if (access.charge) {
+      await tx.user.update({ where: { id: user.id }, data: { crd: { decrement: cost } } });
+    }
     for (const cell of targets) {
       const next = applyStubble({
         harvestsSincePlow: cell.harvestsSincePlow,
@@ -2451,21 +3051,25 @@ app.post("/parcels/:id/stubble", async (req, res) => {
         },
       });
     }
-    return applyWearToMachine(tx, {
+    const wear = await applyWearToMachine(tx, {
       machine: picked.machine,
       def: picked.def,
       cells: targets.length,
       work: "STUBBLE",
       specialization: user.specialization,
     });
+    const labor = access.order ? await settleLaborProgress(tx, access.order, worked) : null;
+    return { wear, labor };
   });
 
+  await touchFieldPresence(user.id, parcel.id, worked[worked.length - 1]);
   res.json({
     stubbled: targets.length,
     blockedByPlow,
-    cost,
+    cost: access.charge ? cost : 0,
     nextBonus: residueBonus(targets[0].residuePasses + 1),
     machine: { id: picked.machine.id, type: picked.machine.type, ...wear },
+    labor,
   });
 });
 
@@ -2480,30 +3084,42 @@ app.post("/parcels/:id/harvest", async (req, res) => {
     res.status(400).json(body.error.flatten());
     return;
   }
-  const parcel = await prisma.parcel.findUnique({
-    where: { id: req.params.id },
-    include: { farm: { include: { machines: true } }, cells: true, zone: true },
+  const access = await resolveFieldAccess({
+    parcelId: req.params.id,
+    userId: body.data.userId,
+    work: "HARVEST",
+    cells: body.data.cells ?? [],
   });
-  if (!parcel?.farm || parcel.farm.userId !== body.data.userId) {
-    res.status(403).json({ error: "Parcelle non possédée" });
+  if (!access.ok) {
+    res.status(access.status).json({ error: access.error });
     return;
   }
-  const picked = pickMachineForWork(parcel.farm.machines, "HARVEST");
+  const parcel = access.parcel;
+  if (!parcel.farm) {
+    res.status(404).json({ error: "Parcelle introuvable" });
+    return;
+  }
+  const farm = parcel.farm;
+  const picked = pickMachineForWork(access.machines, "HARVEST");
   if (!picked) {
     res.status(409).json({
-      error: explainNoMachine(parcel.farm.machines, "HARVEST"),
+      error: explainNoMachine(access.machines, "HARVEST"),
     });
     return;
   }
   const bonuses = await getFarmBonuses(parcel.farmId!);
   const weather = await prisma.weatherSnapshot.findFirst({ where: { zoneCode: parcel.zone.code } });
   const user = await prisma.user.findUnique({ where: { id: body.data.userId } });
+  const remaining = access.order ? parseCellJson(access.order.remainingJson) : null;
   const targets = body.data.cells
     ? parcel.cells.filter((c) => body.data.cells!.some((t) => t.x === c.x && t.y === c.y))
-    : parcel.cells.filter((c) => c.kind === "CROP");
+    : remaining
+      ? parcel.cells.filter((c) => remaining.some((t) => t.x === c.x && t.y === c.y))
+      : parcel.cells.filter((c) => c.kind === "CROP");
 
   const harvested: { crop: CropCode; tons: number; moisturePenalty: number; moisture: number }[] =
     [];
+  const harvestedCells: CellXY[] = [];
   let lostCells = 0;
   const now = Date.now();
 
@@ -2520,7 +3136,7 @@ app.post("/parcels/:id/harvest", async (req, res) => {
         residuePasses: cell.residuePasses,
         directSeeded: cell.directSeeded,
         rotation: rotationOf(cell),
-        specialization: playableSpec(user?.specialization),
+        specialization: playableSpec(farm.user.specialization ?? user?.specialization),
         buildingYieldBonus: bonuses.yieldBonus,
         weatherAtHarvest: weather?.state as WeatherState | undefined,
       });
@@ -2538,12 +3154,16 @@ app.post("/parcels/:id/harvest", async (req, res) => {
         continue;
       }
       const moisture = harvestMoisture(weather?.state as WeatherState | undefined);
+      const tons = access.charge
+        ? sim.estimatedYieldTons
+        : sim.estimatedYieldTons * (1 - P2P_YIELD_MALUS);
       harvested.push({
         crop: cell.crop,
-        tons: sim.estimatedYieldTons,
+        tons,
         moisturePenalty: sim.moisturePenalty,
         moisture,
       });
+      harvestedCells.push({ x: cell.x, y: cell.y });
       // La moisson ne rend pas une case nue : elle laisse des chaumes qu'il
       // faudra déchaumer ou labourer avant de resemer.
       await tx.parcelCell.update({
@@ -2595,13 +3215,13 @@ app.post("/parcels/:id/harvest", async (req, res) => {
         ? { soldTons: 0, storedTons: 0, revenue: 0, reason: null }
         : await applyGrainCapacity(tx, {
             farmId: parcel.farmId!,
-            userId: body.data.userId,
+            userId: farm.userId,
             capacity: bonuses.storageGrain,
             incoming: incomingGrain,
           });
 
     if (harvested.length === 0) {
-      return { wear: null, grain };
+      return { wear: null, grain, labor: null };
     }
     const wear = await applyWearToMachine(tx, {
       machine: picked.machine,
@@ -2610,7 +3230,8 @@ app.post("/parcels/:id/harvest", async (req, res) => {
       work: "HARVEST",
       specialization: user?.specialization,
     });
-    return { wear, grain };
+    const labor = access.order ? await settleLaborProgress(tx, access.order, harvestedCells) : null;
+    return { wear, grain, labor };
   });
 
   if (harvested.length === 0) {
@@ -2622,6 +3243,8 @@ app.post("/parcels/:id/harvest", async (req, res) => {
     });
     return;
   }
+  const last = harvestedCells[harvestedCells.length - 1];
+  if (user && last) await touchFieldPresence(user.id, parcel.id, last);
   res.json({
     harvested,
     lostCells,
@@ -2632,6 +3255,7 @@ app.post("/parcels/:id/harvest", async (req, res) => {
     soldReason: outcome.grain.reason,
     bonuses,
     machine: { id: picked.machine.id, type: picked.machine.type, ...outcome.wear },
+    labor: outcome.labor,
   });
 });
 
@@ -4640,9 +5264,7 @@ app.post("/contracts/:id/accept", async (req, res) => {
     res.status(409).json({ error: "Ferme requise (machines) pour les contrats" });
     return;
   }
-  const already = await prisma.npcContract.findFirst({
-    where: { status: "ACCEPTED", providerId: user.id },
-  });
+  const already = await hasActiveMission(user.id);
   if (already) {
     res.status(409).json({ error: "Une mission à la fois — terminez d'abord le chantier en cours." });
     return;

@@ -11,6 +11,12 @@ import {
   buildingResaleValue,
   buildingUpgradeCost,
   urgentContractorQuote,
+  MISSION_CELLS_MIN,
+  MISSION_CELLS_MAX,
+  laborEscrow,
+  defaultAppearance,
+  type CharacterAppearance,
+  type FieldWorkerView,
   repairHalfwayTarget,
   repairQuote,
   isPaddockAdjacent,
@@ -42,7 +48,7 @@ import {
   isBreakdownKind,
 } from "@farmsim/shared";
 import { AuthScreen } from "./AuthScreen";
-import type { GrazingHerd, PreviewBuilding } from "./IsoFarmView";
+import type { FieldWorker, GrazingHerd, PreviewBuilding } from "./IsoFarmView";
 import { ConfirmDialog, type ConfirmRequest } from "./ConfirmDialog";
 import { MachineCareOverlay, type CareMode } from "./MachineCareOverlay";
 import { MissionPlay, type MissionPlayContract } from "./MissionPlay";
@@ -124,6 +130,8 @@ type Parcel = {
   zone?: ZoneRef;
   cells?: Cell[];
   buildings?: Building[];
+  machines?: { id: string; type: string }[];
+  farm?: { userId?: string; user?: { id: string; displayName: string } | null } | null;
 };
 
 type ZoneRef = {
@@ -185,6 +193,7 @@ type Player = {
     revenue: number;
     reason: "NO_SILO" | "SILO_FULL" | null;
   };
+  appearance?: CharacterAppearance;
 };
 
 type Contract = {
@@ -197,6 +206,25 @@ type Contract = {
   status?: string;
   work?: FarmWork;
   machineType?: string;
+};
+
+type LaborOrderView = {
+  id: string;
+  kind: "P2P";
+  work: FarmWork;
+  crop: string | null;
+  cells: number;
+  remaining: number;
+  cellList: { x: number; y: number }[];
+  quoteCrd: number;
+  escrowCrd: number;
+  payoutCrd: number;
+  status: string;
+  parcelId: string;
+  parcelLabel: string;
+  zoneName: string;
+  clientName: string;
+  expiresAt: string;
 };
 
 type MarketPrice = { commodity: string; price: number; stockTons: number };
@@ -331,6 +359,9 @@ export function App() {
   const [zones, setZones] = useState<Zone[]>([]);
   const [market, setMarket] = useState<MarketPrice[]>([]);
   const [contracts, setContracts] = useState<Contract[]>([]);
+  const [laborBoard, setLaborBoard] = useState<LaborOrderView[]>([]);
+  const [myPostedLabor, setMyPostedLabor] = useState<LaborOrderView[]>([]);
+  const [visitOrder, setVisitOrder] = useState<LaborOrderView | null>(null);
   const [activeMission, setActiveMission] = useState<MissionPlayContract | null>(null);
   const [player, setPlayer] = useState<Player | null>(null);
   const [authMode, setAuthMode] = useState<"register" | "login">("register");
@@ -357,6 +388,8 @@ export function App() {
         lost?: boolean;
       };
     }[];
+    workers?: FieldWorkerView[];
+    labor?: LaborOrderView[];
   } | null>(null);
   const [tool, setTool] = useState<Tool>("SELECT");
   /** Outils de test : n'existent que si le serveur les autorise. */
@@ -431,13 +464,18 @@ export function App() {
 
   const refreshMeta = useCallback(async () => {
     const uid = playerIdRef.current;
-    const [z, m, c, w] = await Promise.all([
+    const [z, m, c, w, labor] = await Promise.all([
       api<Zone[]>("/zones"),
       api<MarketPrice[]>("/market"),
       api<{ contracts: Contract[]; active: Contract | null }>(
         uid ? `/contracts?userId=${encodeURIComponent(uid)}` : "/contracts",
       ),
       api<WeatherSnap[]>("/weather"),
+      uid
+        ? api<{ orders: LaborOrderView[]; active: LaborOrderView | null; posted: LaborOrderView[] }>(
+            `/labor-orders?userId=${encodeURIComponent(uid)}`,
+          )
+        : Promise.resolve({ orders: [] as LaborOrderView[], active: null, posted: [] as LaborOrderView[] }),
     ]);
     setPrevPrices((prev) => {
       if (Object.keys(prev).length === 0) {
@@ -451,6 +489,11 @@ export function App() {
     setZones((prev) => keepIfSame(prev, z));
     setMarket((prev) => keepIfSame(prev, m));
     setContracts((prev) => keepIfSame(prev, c.contracts));
+    setLaborBoard((prev) => keepIfSame(prev, labor.orders));
+    setMyPostedLabor((prev) => keepIfSame(prev, labor.posted));
+    if (labor.active) {
+      setVisitOrder((prev) => (prev?.id === labor.active!.id ? prev : labor.active));
+    }
     if (c.active && c.active.cells) {
       const work = (c.active.work ??
         (c.active.jobType === "HARVEST"
@@ -721,6 +764,20 @@ export function App() {
     return () => clearInterval(t);
   }, [activeParcelId, loadParcel, loadLivestock]);
 
+  useEffect(() => {
+    if (!player || !activeParcelId) return;
+    const beat = () => {
+      const cell = selectedCells[0] ?? { x: 0, y: 0 };
+      api(`/parcels/${activeParcelId}/presence`, {
+        method: "POST",
+        body: JSON.stringify({ userId: player.id, x: cell.x, y: cell.y }),
+      }).catch(() => undefined);
+    };
+    beat();
+    const t = setInterval(beat, 8000);
+    return () => clearInterval(t);
+  }, [player?.id, activeParcelId, selectedCells]);
+
   // La criée bouge sans nous : d'autres joueurs déposent et achètent.
   useEffect(() => {
     if (!player) return;
@@ -743,6 +800,11 @@ export function App() {
   );
 
   const ownedParcels = player?.farm?.parcels ?? [];
+  const visiting = Boolean(
+    visitOrder && activeParcelId && visitOrder.parcelId === activeParcelId,
+  );
+  const homeOwner =
+    parcelDetail?.parcel?.farm?.user?.displayName ?? visitOrder?.clientName ?? null;
 
   /** Adjacent free parcels for expansion (all free if no land yet). */
   const expandableParcelIds = useMemo(() => {
@@ -766,7 +828,9 @@ export function App() {
   const gh = parcel?.gridH ?? 12;
   const grid = useMemo(() => {
     const cells = parcel?.cells ?? [];
-    const machines = player?.farm?.machines ?? [];
+    const machines = visiting
+      ? (parcel?.machines ?? [])
+      : (player?.farm?.machines ?? []);
     return cells.map((c) => {
       if (c.kind !== "VEHICLE" || !c.machineId) return c;
       const m = machines.find((x) => x.id === c.machineId);
@@ -775,7 +839,7 @@ export function App() {
         machineType: (m?.type as MachineType | undefined) ?? "TRACTOR",
       };
     });
-  }, [parcel?.cells, player?.farm?.machines]);
+  }, [parcel?.cells, parcel?.machines, player?.farm?.machines, visiting]);
   const zoneName = parcel?.zone?.name ?? ownedParcels[0]?.zone?.name ?? "Votre région";
   const koppen = parcel?.zone?.koppen ?? "Cfb";
   const homeCity = parcel?.zone?.city ?? ownedParcels[0]?.zone?.city ?? "";
@@ -844,6 +908,31 @@ export function App() {
     }
     return out;
   }, [barns, parcel?.buildings]);
+
+  const fieldWorkers = useMemo((): FieldWorker[] => {
+    const fromServer = (parcelDetail?.workers ?? []).map((w) => ({
+      id: w.id,
+      name: w.name,
+      x: w.x,
+      y: w.y,
+      appearance: w.appearance,
+      specialization: w.specialization,
+      working: Boolean(activeWork && player && w.id === player.id),
+    }));
+    if (player && activeWork && !fromServer.some((w) => w.id === player.id)) {
+      const cell = activeWork.cells[0] ?? selectedCells[0] ?? { x: 0, y: 0 };
+      fromServer.push({
+        id: player.id,
+        name: player.displayName,
+        x: cell.x,
+        y: cell.y,
+        appearance: player.appearance ?? defaultAppearance(player.specialization),
+        specialization: player.specialization,
+        working: true,
+      });
+    }
+    return fromServer;
+  }, [parcelDetail?.workers, activeWork, player, selectedCells]);
 
   const hayInStock = useMemo(
     () => (player?.farm?.inventory ?? []).find((i) => i.itemCode === "HAY")?.qty ?? 0,
@@ -1240,6 +1329,7 @@ export function App() {
   async function claimStarterParcel(opts: {
     specialization: Specialization;
     parcelId: string;
+    appearance: CharacterAppearance;
   }) {
     setBusy(true);
     setErr(null);
@@ -1326,6 +1416,10 @@ export function App() {
     }
 
     if (tool === "BUILD") {
+      if (visiting) {
+        flashToast("Pas de construction chez le voisin", true);
+        return;
+      }
       const def = BUILDING_DEFS[buildType];
       if (!canPlaceBuildingAt(x, y)) {
         const reason =
@@ -1402,6 +1496,89 @@ export function App() {
     return { work, hasMachine, cost: urgentContractorQuote(work, selectedCells.length) };
   }, [tool, selectedCells.length, player?.farm?.machines]);
 
+  const laborQuote = useMemo(() => {
+    if (visiting || !contractorOffer) return null;
+    const n = selectedCells.length;
+    if (n < MISSION_CELLS_MIN || n > MISSION_CELLS_MAX) return null;
+    const crop: CropCode | undefined =
+      tool === "PLANT_WHEAT" ? "WHEAT" : tool === "PLANT_MAIZE" ? "MAIZE" : tool === "PLANT_PEA" ? "PEA" : undefined;
+    return laborEscrow(contractorOffer.work, n, crop).escrow;
+  }, [visiting, contractorOffer, selectedCells.length, tool]);
+
+  async function publishLaborOrder() {
+    if (!player || !activeParcelId || !contractorOffer || laborQuote == null) return;
+    setBusy(true);
+    try {
+      const crop =
+        tool === "PLANT_MAIZE" ? "MAIZE" : tool === "PLANT_WHEAT" ? "WHEAT" : tool === "PLANT_PEA" ? "PEA" : undefined;
+      const r = await api<{ escrow: number }>(`/parcels/${activeParcelId}/labor-orders`, {
+        method: "POST",
+        body: JSON.stringify({
+          userId: player.id,
+          work: contractorOffer.work,
+          crop,
+          cells: selectedCells,
+        }),
+      });
+      flashToast(`Chantier publié · ${r.escrow} TRN en séquestre`);
+      setSelectedCells([]);
+      await refreshPlayer();
+      await refreshMeta();
+    } catch (e) {
+      flashToast(e instanceof Error ? e.message : String(e), true);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function acceptLaborOrder(id: string) {
+    if (!player) return;
+    setBusy(true);
+    try {
+      const r = await api<{ order: LaborOrderView }>(`/labor-orders/${id}/accept`, {
+        method: "POST",
+        body: JSON.stringify({ userId: player.id }),
+      });
+      setVisitOrder(r.order);
+      setActiveParcelId(r.order.parcelId);
+      setSheet(null);
+      setShowEta(false);
+      flashToast(`Chez ${r.order.clientName} — ${WORK_LABELS[r.order.work]}`);
+      await loadParcel(r.order.parcelId);
+      await refreshMeta();
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function abandonVisit() {
+    if (!player || !visitOrder) return;
+    setBusy(true);
+    try {
+      await api(`/labor-orders/${visitOrder.id}/abandon`, {
+        method: "POST",
+        body: JSON.stringify({ userId: player.id }),
+      });
+      setVisitOrder(null);
+      const home = player.farm?.parcels[0]?.id;
+      if (home) setActiveParcelId(home);
+      flashToast("Chantier relâché");
+      await refreshMeta();
+    } catch (e) {
+      flashToast(e instanceof Error ? e.message : String(e), true);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  function goHome() {
+    const home = player?.farm?.parcels[0]?.id;
+    if (home) setActiveParcelId(home);
+    setVisitOrder(null);
+  }
+
   async function callContractor() {
     if (!player || !activeParcelId || !contractorOffer) return;
     setBusy(true);
@@ -1465,6 +1642,8 @@ export function App() {
     setErr(null);
     const workCells = cells.slice();
     flashWork(workMachineForTool(tool), workCells);
+    type LaborBit = { remaining: number; completed: boolean; payout?: number };
+    let labor: LaborBit | undefined;
     try {
       if (tool === "PLANT_WHEAT" || tool === "PLANT_MAIZE" || tool === "PLANT_PEA") {
         const crop: CropCode =
@@ -1477,6 +1656,7 @@ export function App() {
             broke?: boolean;
             breakdown?: string | null;
           };
+          labor?: LaborBit;
         }>(`/parcels/${activeParcelId}/plant`, {
           method: "POST",
           body: JSON.stringify({ userId: player.id, crop, cells: workCells, directSeed }),
@@ -1484,6 +1664,7 @@ export function App() {
         setMsg(
           `Semé ${crop} ×${workCells.length}${directSeed ? " en direct" : ""}` + wearNote(r.machine),
         );
+        labor = r.labor;
       } else if (tool === "FERTILIZE") {
         const r = await api<{
           machine?: {
@@ -1492,11 +1673,13 @@ export function App() {
             broke?: boolean;
             breakdown?: string | null;
           };
+          labor?: { remaining: number; completed: boolean; payout?: number };
         }>(`/parcels/${activeParcelId}/fertilize`, {
           method: "POST",
           body: JSON.stringify({ userId: player.id, cells: workCells }),
         });
         setMsg("Fertilisé" + wearNote(r.machine));
+        labor = r.labor;
       } else if (tool === "HARVEST") {
         const r = await api<{
           machine?: {
@@ -1510,6 +1693,7 @@ export function App() {
           soldTons?: number;
           soldRevenue?: number;
           soldReason?: "NO_SILO" | "SILO_FULL" | null;
+          labor?: { remaining: number; completed: boolean; payout?: number };
         }>(`/parcels/${activeParcelId}/harvest`, {
           method: "POST",
           body: JSON.stringify({ userId: player.id, cells: workCells }),
@@ -1518,6 +1702,7 @@ export function App() {
         setMsg(harvestGrainNote(r) + lost + wearNote(r.machine));
         markGuideFlag("harvested");
         if (r.soldTons) markGuideFlag("sold");
+        labor = r.labor;
       } else if (tool === "PLOW") {
         const r = await api<{
           plowed: number;
@@ -1529,6 +1714,7 @@ export function App() {
             broke?: boolean;
             breakdown?: string | null;
           };
+          labor?: { remaining: number; completed: boolean; payout?: number };
         }>(`/parcels/${activeParcelId}/plow`, {
           method: "POST",
           body: JSON.stringify({ userId: player.id, cells: workCells }),
@@ -1541,6 +1727,7 @@ export function App() {
         setMsg(
           `Labouré ×${r.plowed} · −${r.cost} TRN${fertNote} · sol remis à zéro` + wearNote(r.machine),
         );
+        labor = r.labor;
       } else if (tool === "STUBBLE") {
         const r = await api<{
           stubbled: number;
@@ -1552,6 +1739,7 @@ export function App() {
             broke?: boolean;
             breakdown?: string | null;
           };
+          labor?: { remaining: number; completed: boolean; payout?: number };
         }>(`/parcels/${activeParcelId}/stubble`, {
           method: "POST",
           body: JSON.stringify({ userId: player.id, cells: workCells }),
@@ -1560,10 +1748,19 @@ export function App() {
           `Déchaumé ×${r.stubbled} · −${r.cost} TRN · +${Math.round(r.nextBonus * 100)} % sur la prochaine récolte` +
             wearNote(r.machine),
         );
+        labor = r.labor;
       }
       setSelectedCells([]);
       await refreshPlayer();
       await loadParcel(activeParcelId);
+      if (labor?.completed) {
+        flashToast(`Chantier terminé · +${Math.round(labor.payout ?? 0)} TRN`);
+        setVisitOrder(null);
+        const home = player.farm?.parcels[0]?.id;
+        if (home) setActiveParcelId(home);
+      } else if (labor) {
+        setVisitOrder((prev) => (prev ? { ...prev, remaining: labor!.remaining } : prev));
+      }
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e));
       flashToast(e instanceof Error ? e.message : String(e), true);
@@ -1585,20 +1782,35 @@ export function App() {
       const readyCells =
         (parcelDetail?.cellSims ?? [])
           .filter((s) => s.sim.ready)
-          .map((s) => ({ x: s.x, y: s.y })) || [];
+          .map((s) => ({ x: s.x, y: s.y }))
+          .filter((c) =>
+            visiting && visitOrder
+              ? visitOrder.cellList.some((r) => r.x === c.x && r.y === c.y)
+              : true,
+          ) || [];
       if (readyCells.length) flashWork("HARVESTER", readyCells);
       const r = await api<{
         totalTons: number;
         soldTons?: number;
         soldRevenue?: number;
         soldReason?: "NO_SILO" | "SILO_FULL" | null;
+        labor?: { remaining: number; completed: boolean; payout?: number };
       }>(`/parcels/${activeParcelId}/harvest`, {
         method: "POST",
-        body: JSON.stringify({ userId: player.id }),
+        body: JSON.stringify({
+          userId: player.id,
+          cells: visiting ? readyCells : undefined,
+        }),
       });
       setMsg(harvestGrainNote(r));
       markGuideFlag("harvested");
       if (r.soldTons) markGuideFlag("sold");
+      if (r.labor?.completed) {
+        flashToast(`Chantier terminé · +${Math.round(r.labor.payout ?? 0)} TRN`);
+        setVisitOrder(null);
+        const home = player.farm?.parcels[0]?.id;
+        if (home) setActiveParcelId(home);
+      }
       await refreshPlayer();
       await loadParcel(activeParcelId);
     } catch (e) {
@@ -2172,8 +2384,9 @@ export function App() {
               pulseCells={pulseCells}
               activeWork={activeWork}
               grazing={grazingHerds}
+              workers={fieldWorkers}
               weather={localWeather}
-              strokeWork={false}
+              strokeWork={visiting}
               onStrokePreview={setSelectedCells}
               onWorkStroke={(cells) => {
                 if (busy) return;
@@ -2194,6 +2407,21 @@ export function App() {
           décalages fixes : dès que l'un s'allongeait, il recouvrait le suivant.
           Empilés en flux, ils ne peuvent plus se marcher dessus. */}
       <div className="hud-stack">
+        {visiting && visitOrder && (
+          <div className="visit-banner">
+            <strong>Chez {homeOwner ?? visitOrder.clientName}</strong>
+            <span>
+              {WORK_LABELS[visitOrder.work]} · {visitOrder.remaining} case(s) · {visitOrder.payoutCrd}{" "}
+              TRN
+            </span>
+            <button type="button" className="chip" onClick={goHome}>
+              Rentrer
+            </button>
+            <button type="button" className="chip" onClick={() => void abandonVisit()}>
+              Abandonner
+            </button>
+          </div>
+        )}
         <header className="hud-top">
           <div className="brand-row">
             <img className="brand-logo" src="/logo.webp" alt="" width={36} height={36} />
@@ -2505,14 +2733,16 @@ export function App() {
         tool={tool}
         brush={brush}
         isMobile={isMobile}
-        isEta={false}
+        isEta={visiting}
+        visiting={visiting}
         busy={busy}
         selectedCount={selectedCells.length}
-        readyCount={readyCellCount}
+        readyCount={visiting ? Math.min(readyCellCount, visitOrder?.remaining ?? 0) : readyCellCount}
         stockTons={totalStockTons}
         crd={player.crd}
         directSeed={directSeed}
-        contractor={contractorOffer}
+        contractor={visiting ? null : contractorOffer}
+        laborQuote={laborQuote}
         objective={nextGoal}
         allGoalsDone={allGoalsDone}
         onTool={(t) => {
@@ -2526,6 +2756,7 @@ export function App() {
         onConfirm={runSelectionAction}
         onHarvestAll={harvestAll}
         onContractor={callContractor}
+        onPublishLabor={publishLaborOrder}
         onSell={() => setShowMarket(true)}
         onGuide={() => setShowGuide(true)}
         desktopGarage={showGarage}
@@ -2737,11 +2968,77 @@ export function App() {
 
       {(isMobile ? sheet === "OFFICE" : showEta) && (
         <aside className={panelClass("eta-panel", "OFFICE")} {...(isMobile ? sheetGesture : {})}>
-          <h3>Travaux à façon</h3>
+          <h3>Marché du travail</h3>
           <p className="muted tiny">
-            Cases à travailler dans la région. Il faut l’engin, et qu’il tienne. Appoint pendant
-            que vos cultures poussent — pas une rente.
+            Chantiers publiés par d’autres fermes. Vous allez sur leur parcelle, avec votre fer.
+            Appoint pendant que vos cultures poussent — pas une rente.
           </p>
+          {visitOrder && (
+            <p className="muted tiny">
+              En cours chez {visitOrder.clientName} — {visitOrder.remaining} case(s).
+            </p>
+          )}
+          <ul className="list">
+            {laborBoard.map((o) => (
+              <li key={o.id}>
+                <span>
+                  <strong>
+                    {WORK_LABELS[o.work]} · {o.clientName}
+                  </strong>
+                  <div className="muted tiny">
+                    {o.parcelLabel} · {o.remaining} cases · {o.payoutCrd} TRN
+                  </div>
+                </span>
+                <button
+                  type="button"
+                  disabled={busy || Boolean(visitOrder) || Boolean(activeMission)}
+                  onClick={() => void acceptLaborOrder(o.id)}
+                >
+                  Prendre
+                </button>
+              </li>
+            ))}
+            {laborBoard.length === 0 && (
+              <li>
+                <span className="muted tiny">Aucun chantier joueur pour l’instant.</span>
+              </li>
+            )}
+          </ul>
+          {myPostedLabor.length > 0 && (
+            <>
+              <h3 className="spaced">Mes chantiers</h3>
+              <ul className="list">
+                {myPostedLabor.map((o) => (
+                  <li key={o.id}>
+                    <span>
+                      <strong>
+                        {WORK_LABELS[o.work]} · {o.status === "ACCEPTED" ? "pris" : "ouvert"}
+                      </strong>
+                      <div className="muted tiny">
+                        {o.remaining} cases · séquestre {o.escrowCrd} TRN
+                      </div>
+                    </span>
+                    {o.status === "OPEN" && (
+                      <button
+                        type="button"
+                        disabled={busy}
+                        onClick={() =>
+                          void api(`/labor-orders/${o.id}/cancel`, {
+                            method: "POST",
+                            body: JSON.stringify({ userId: player.id }),
+                          }).then(() => refreshMeta())
+                        }
+                      >
+                        Annuler
+                      </button>
+                    )}
+                  </li>
+                ))}
+              </ul>
+            </>
+          )}
+          <h3 className="spaced">Missions d’appoint</h3>
+          <p className="muted tiny">Filet PNJ si le marché est vide. Moins bien payé.</p>
           <ul className="list">
             {contracts.map((c) => (
               <li key={c.id}>
@@ -2751,7 +3048,7 @@ export function App() {
                     {c.jobType} · {c.cells ?? "?"} cases · {c.rewardCrd} TRN
                   </div>
                 </span>
-                <button type="button" disabled={busy || Boolean(activeMission)} onClick={() => acceptContract(c.id)}>
+                <button type="button" disabled={busy || Boolean(activeMission) || Boolean(visitOrder)} onClick={() => acceptContract(c.id)}>
                   Prendre
                 </button>
               </li>

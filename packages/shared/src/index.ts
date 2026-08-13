@@ -15,6 +15,7 @@ export * from "./futures.js";
 export * from "./machine-care.js";
 export * from "./art-anchor.js";
 export * from "./play-guide.js";
+export * from "./appearance.js";
 
 /** Monnaie du jeu : le terron (TRN). Le champ interne reste `crd`. */
 export const CURRENCY_CODE = "TRN";
@@ -613,6 +614,36 @@ export function missionPayout(
   const n = clampMissionCells(cells);
   const share = kind === "P2P" ? MISSION_P2P_SHARE : MISSION_NPC_SHARE;
   return Math.round(contractorQuote(work, n) * share);
+}
+
+export const P2P_YIELD_MALUS = 0.02;
+export const LABOR_ORDER_TTL_MS = 45 * 60 * 1000;
+export const LABOR_OPEN_MAX_PER_CLIENT = 3;
+export const FERTILIZE_COST_PER_CELL = 10;
+
+export function laborExtras(work: FarmWork, cells: number, crop?: CropCode | null): number {
+  const n = Math.max(0, cells);
+  if (work === "PLANT") return (crop ? CROP_DEFS[crop].seedCostPerCell : 15) * n;
+  if (work === "FERTILIZE") return FERTILIZE_COST_PER_CELL * n;
+  if (work === "PLOW") return 12 * n;
+  if (work === "STUBBLE") return 5 * n;
+  return 0;
+}
+
+export function laborEscrow(
+  work: FarmWork,
+  cells: number,
+  crop?: CropCode | null,
+): { quote: number; extras: number; escrow: number; payout: number } {
+  const n = clampMissionCells(cells);
+  const quote = contractorQuote(work, n);
+  const extras = laborExtras(work, n, crop);
+  return {
+    quote,
+    extras,
+    escrow: quote + extras,
+    payout: missionPayout(work, n, "P2P"),
+  };
 }
 
 /** @deprecated préférer missionPayout(work, cells, "NPC") */

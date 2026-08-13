@@ -12,6 +12,7 @@ type Props = {
   brush: 1 | 2 | 3;
   isMobile: boolean;
   isEta: boolean;
+  visiting?: boolean;
   busy: boolean;
   selectedCount: number;
   readyCount: number;
@@ -19,6 +20,7 @@ type Props = {
   crd: number;
   directSeed: boolean;
   contractor: ContractorOffer | null;
+  laborQuote?: number | null;
   objective: ObjectiveView | null;
   allGoalsDone: boolean;
   onTool: (t: Tool) => void;
@@ -27,6 +29,7 @@ type Props = {
   onConfirm: () => void;
   onHarvestAll: () => void;
   onContractor: () => void;
+  onPublishLabor?: () => void;
   onSell: () => void;
   onGuide: () => void;
   desktopGarage?: boolean;
@@ -59,6 +62,7 @@ export function FieldDock({
   brush,
   isMobile,
   isEta,
+  visiting = false,
   busy,
   selectedCount,
   readyCount,
@@ -66,6 +70,7 @@ export function FieldDock({
   crd,
   directSeed,
   contractor,
+  laborQuote = null,
   objective,
   allGoalsDone,
   onTool,
@@ -74,6 +79,7 @@ export function FieldDock({
   onConfirm,
   onHarvestAll,
   onContractor,
+  onPublishLabor,
   onSell,
   onGuide,
   desktopGarage,
@@ -218,7 +224,7 @@ export function FieldDock({
                 Faire{plant ? ` ${plantCropLabel(tool)}` : ""} ×{selectedCount}
               </button>
             )}
-            {contractor && (
+            {contractor && !visiting && (
               <button
                 type="button"
                 className="chip eta"
@@ -231,6 +237,17 @@ export function FieldDock({
                 onClick={onContractor}
               >
                 Entreprise · {contractor.cost} TRN
+              </button>
+            )}
+            {laborQuote != null && !visiting && onPublishLabor && (
+              <button
+                type="button"
+                className="chip"
+                disabled={busy || crd < laborQuote}
+                title={`Publier un chantier joueur — ${laborQuote} TRN en séquestre`}
+                onClick={onPublishLabor}
+              >
+                Publier · {laborQuote} TRN
               </button>
             )}
             {readyCount > 0 && (

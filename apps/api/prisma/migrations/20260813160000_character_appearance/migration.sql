@@ -1,0 +1,5 @@
+-- AlterTable
+ALTER TABLE "User" ADD COLUMN "appearanceJson" TEXT;
+ALTER TABLE "User" ADD COLUMN "lastParcelId" TEXT;
+ALTER TABLE "User" ADD COLUMN "lastCellX" INTEGER;
+ALTER TABLE "User" ADD COLUMN "lastCellY" INTEGER;

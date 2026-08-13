@@ -76,9 +76,16 @@ model User {
   accessCode     String         @default("ferme")
   lastSeenAt     DateTime?
   lastMarketJson String?
+  /** Indices du créateur de perso (peau, chapeau, vêtements…) */
+  appearanceJson String?
+  lastParcelId   String?
+  lastCellX      Int?
+  lastCellY      Int?
   createdAt      DateTime       @default(now())
   farm           Farm?
   contracts      NpcContract[]  @relation("Provider")
+  laborPosted    LaborOrder[]   @relation("LaborClient")
+  laborTaken     LaborOrder[]   @relation("LaborProvider")
   sessions       Session[]
   listings       MarketListing[] @relation("Selling")
   futures        FuturesContract[] @relation("Futures")
@@ -143,6 +150,7 @@ model Parcel {
   cells      ParcelCell[]
   buildings  Building[]
   machines   Machine[]  @relation("ParkedOn")
+  laborOrders LaborOrder[]
 
   @@unique([zoneId, mapX, mapY])
 }
@@ -335,6 +343,33 @@ model NpcContract {
   provider    User?           @relation("Provider", fields: [providerId], references: [id])
   createdAt   DateTime        @default(now())
   completedAt DateTime?
+}
+
+/// Chantier P2P : le client escrowe le devis, le prestataire travaille SA parcelle.
+model LaborOrder {
+  id            String         @id @default(cuid())
+  parcelId      String
+  parcel        Parcel         @relation(fields: [parcelId], references: [id], onDelete: Cascade)
+  clientId      String
+  client        User           @relation("LaborClient", fields: [clientId], references: [id], onDelete: Cascade)
+  providerId    String?
+  provider      User?          @relation("LaborProvider", fields: [providerId], references: [id])
+  work          String
+  crop          String?
+  cellsJson     String
+  remainingJson String
+  quoteCrd      Float
+  extrasCrd     Float
+  escrowCrd     Float
+  payoutCrd     Float
+  status        ContractStatus @default(OPEN)
+  createdAt     DateTime       @default(now())
+  expiresAt     DateTime
+  completedAt   DateTime?
+
+  @@index([status, createdAt])
+  @@index([providerId, status])
+  @@index([parcelId, status])
 }
 
 model WeatherSnapshot {

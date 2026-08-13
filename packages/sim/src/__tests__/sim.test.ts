@@ -1,4 +1,4 @@
-import { DRYING, MACHINE_DEFS, contractorQuote, missionPayout, urgentContractorQuote, CROP_DEFS, MISSION_OPEN_MAX, clampMissionCells, repairHalfwayTarget } from "@farmsim/shared";
+import { DRYING, MACHINE_DEFS, contractorQuote, missionPayout, urgentContractorQuote, CROP_DEFS, MISSION_OPEN_MAX, clampMissionCells, repairHalfwayTarget, laborEscrow, parseAppearance, defaultAppearance, SKIN_TONES, HATS } from "@farmsim/shared";
 import {
   simulateCell,
   tickMarket,
@@ -174,6 +174,29 @@ describe("missions d’appoint", () => {
     const cultureNet = grain - seeds;
     const board = MISSION_OPEN_MAX * missionPayout("HARVEST", 24, "NPC");
     expect(board).toBeLessThan(cultureNet);
+  });
+
+  it("escrowe devis + extras, paie 85 % du devis seulement", () => {
+    const money = laborEscrow("HARVEST", 16);
+    expect(money.payout).toBe(missionPayout("HARVEST", 16, "P2P"));
+    expect(money.escrow).toBe(money.quote + money.extras);
+    expect(money.payout).toBeLessThan(money.quote);
+  });
+});
+
+describe("apparence", () => {
+  it("borne les indices hors catalogue", () => {
+    const a = parseAppearance({ skin: 99, hat: -1, clothes: 2 });
+    expect(a.skin).toBeGreaterThanOrEqual(0);
+    expect(a.skin).toBeLessThan(SKIN_TONES.length);
+    expect(a.hat).toBeGreaterThanOrEqual(0);
+    expect(a.hat).toBeLessThan(HATS.length);
+    expect(a.clothes).toBe(2);
+  });
+
+  it("donne un céréalier chapeau de paille par défaut", () => {
+    expect(HATS[defaultAppearance("CEREALIER").hat].id).toBe("straw");
+    expect(HATS[defaultAppearance("ELEVEUR").hat].id).toBe("cowboy");
   });
 });
 

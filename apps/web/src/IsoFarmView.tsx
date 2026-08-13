@@ -15,7 +15,9 @@ import {
 } from "@farmsim/shared";
 import { disposeRenderer, disposeThreeScene, markShared } from "./three-cleanup";
 import { makeMachineMesh, tickMachine } from "./machine-meshes";
+import { buildCharacter } from "./character-mesh";
 import { initialQuality, makeFrameGovernor, qualityForContext, type RenderQuality } from "./render-quality";
+import type { CharacterAppearance } from "@farmsim/shared";
 
 export type IsoCell = {
   x: number;
@@ -67,6 +69,17 @@ export type GrazingHerd = {
   paddock: { originX: number; originY: number; w: number; h: number };
 };
 
+/** Un joueur présent sur la parcelle — soi-même ou un prestataire en mission. */
+export type FieldWorker = {
+  id: string;
+  name: string;
+  x: number;
+  y: number;
+  appearance: CharacterAppearance;
+  specialization?: "CEREALIER" | "ELEVEUR";
+  working?: boolean;
+};
+
 export type PreviewBuilding = {
   type: BuildingType;
   originX: number;
@@ -91,6 +104,8 @@ type Props = {
   activeWork?: ActiveWork | null;
   /** Troupeaux dehors : une entrée par étable dont les bêtes pâturent */
   grazing?: GrazingHerd[];
+  /** Personnages présents (propriétaire, prestataire en mission) */
+  workers?: FieldWorker[];
   weather?: string;
   onCellClick: (x: number, y: number) => void;
   onCellHover?: (cell: { x: number; y: number } | null) => void;
@@ -493,6 +508,7 @@ export function IsoFarmView({
   pulseCells = [],
   activeWork = null,
   grazing = [],
+  workers = [],
   weather = "CLEAR",
   onCellClick,
   onCellHover,
@@ -525,6 +541,7 @@ export function IsoFarmView({
     pulseCells,
     activeWork,
     grazing,
+    workers,
     gridW,
     gridH,
   });
@@ -538,6 +555,7 @@ export function IsoFarmView({
     pulseCells,
     activeWork,
     grazing,
+    workers,
     gridW,
     gridH,
   };
@@ -680,6 +698,10 @@ export function IsoFarmView({
       delay: number;
       wander: number;
     }[] = [];
+
+    const farmerGroup = new THREE.Group();
+    world.add(farmerGroup);
+    const farmerMeshes = new Map<string, THREE.Group>();
 
     const platformMat = new THREE.MeshLambertMaterial({ color: 0x8a6b4a, flatShading: true });
     const platform = new THREE.Mesh(new THREE.BoxGeometry(1, 0.45, 1), platformMat);
@@ -945,6 +967,11 @@ export function IsoFarmView({
         fenceGroup.remove(c);
         disposeObject3D(c);
       }
+      for (const g of farmerMeshes.values()) {
+        farmerGroup.remove(g);
+        disposeObject3D(g);
+      }
+      farmerMeshes.clear();
       pickables.length = 0;
 
       cellSize = 1;
@@ -1093,6 +1120,14 @@ export function IsoFarmView({
             vehicleGroups.set(key(x, y), vg);
           }
         }
+      }
+
+      for (const worker of dataRef.current.workers) {
+        const mesh = buildCharacter(worker.appearance, { spec: worker.specialization, prop: false });
+        mesh.scale.setScalar(0.42);
+        mesh.userData.workerId = worker.id;
+        farmerGroup.add(mesh);
+        farmerMeshes.set(worker.id, mesh);
       }
 
       buildSoilRelief(soilDetails, cellSize);
@@ -1663,6 +1698,27 @@ export function IsoFarmView({
         }
       }
 
+      const { workers: fieldWorkers } = dataRef.current;
+      for (const worker of fieldWorkers) {
+        const mesh = farmerMeshes.get(worker.id);
+        if (!mesh) continue;
+        let px: number;
+        let pz: number;
+        let facing = 0;
+        if (worker.working && workVehicle && workPath.length && workVehicle.visible) {
+          px = workVehicle.position.x + 0.38;
+          pz = workVehicle.position.z + 0.22;
+          facing = workVehicle.rotation.y;
+        } else {
+          const pos = cellWorldPos(worker.x, worker.y);
+          px = pos.px;
+          pz = pos.pz;
+        }
+        mesh.position.set(px, TILE_TOP, pz);
+        mesh.rotation.y = facing + Math.sin(t * 2.4) * 0.08;
+        mesh.position.y = TILE_TOP + Math.abs(Math.sin(t * (worker.working ? 8 : 2.2))) * (worker.working ? 0.04 : 0.015);
+      }
+
       renderer.render(scene, camera);
     }
     tick();
@@ -1736,8 +1792,9 @@ export function IsoFarmView({
       )
       .join("|");
     const sel = selected.map((x) => `${x.x},${x.y}`).join("|");
-    return `${gridW}x${gridH}#${c}#${b}#${s}#${sel}`;
-  }, [cells, buildings, cellSims, selected, gridW, gridH]);
+    const w = workers.map((x) => x.id).join("|");
+    return `${gridW}x${gridH}#${c}#${b}#${s}#${sel}#${w}`;
+  }, [cells, buildings, cellSims, selected, workers, gridW, gridH]);
 
   useEffect(() => {
     layoutRef.current?.();
