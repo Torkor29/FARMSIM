@@ -15,6 +15,7 @@ import {
   machineResaleValue,
   soilSummary,
   MAX_HARVESTS_BEFORE_PLOW,
+  workAnimationMs,
   DIRECT_SEED_COST_PER_CELL,
   DIRECT_SEED_YIELD_MALUS,
   rotationFactor,
@@ -1122,10 +1123,12 @@ export function App() {
   function flashWork(type: MachineType, cells: { x: number; y: number }[]) {
     setPulseCells(cells);
     setActiveWork({ type, cells });
+    // Un peu de marge sur la durée du parcours : l'engin doit atteindre la
+    // dernière case avant qu'on ne l'efface.
     window.setTimeout(() => {
       setPulseCells([]);
       setActiveWork(null);
-    }, 900);
+    }, workAnimationMs(cells.length) + 250);
   }
 
   async function runSelectionAction() {

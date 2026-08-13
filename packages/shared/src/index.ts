@@ -549,3 +549,15 @@ export function footprintCells(x: number, y: number, w: number, h: number) {
   }
   return cells;
 }
+
+/**
+ * Durée de l'animation d'un travail, en millisecondes.
+ *
+ * L'écran effaçait l'engin au bout de neuf cents millisecondes fixes, quand la
+ * vue 3D le faisait avancer d'une case toutes les 280 ms : un travail sur
+ * neuf cases voyait donc sa machine s'évaporer au tiers du parcours. Les deux
+ * côtés lisent désormais la même formule.
+ */
+export function workAnimationMs(cells: number): number {
+  return Math.max(700, cells * 280);
+}

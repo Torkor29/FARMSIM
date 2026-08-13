@@ -5,6 +5,7 @@ import {
   BUILDING_DEFS,
   MACHINE_ART,
   RIPENESS_COLORS,
+  workAnimationMs,
   type BuildingType,
   type CropCode,
   type MachineType,
@@ -812,19 +813,36 @@ export function IsoFarmView({
         m.castShadow = true;
         fenceGroup.add(m);
       });
-      const treeMat = new THREE.MeshLambertMaterial({ color: 0x2f6b32, flatShading: true });
-      const trunkMat = new THREE.MeshLambertMaterial({ color: 0x5a3a22, flatShading: true });
+      // Les arbres étaient deux cubes empilés, ce qui jurait franchement avec
+      // des bâtiments dessinés. Ils reçoivent leur illustration, comme le
+      // reste de la carte.
       for (const [tx, tz] of [
         [-hw / 2, -hh / 2],
         [hw / 2, -hh / 2],
         [-hw / 2, hh / 2],
         [hw / 2, hh / 2],
       ] as const) {
-        const trunk = new THREE.Mesh(new THREE.BoxGeometry(0.18, 0.5, 0.18), trunkMat);
-        trunk.position.set(tx, 0.2, tz);
-        const crown = new THREE.Mesh(new THREE.BoxGeometry(0.55, 0.55, 0.55), treeMat);
-        crown.position.set(tx, 0.65, tz);
-        fenceGroup.add(trunk, crown);
+        const shade = new THREE.Mesh(
+          new THREE.PlaneGeometry(0.8, 0.6),
+          new THREE.MeshBasicMaterial({
+            color: 0x2c3b2a,
+            transparent: true,
+            opacity: 0.2,
+            depthWrite: false,
+          }),
+        );
+        shade.rotation.x = -Math.PI / 2;
+        shade.position.set(tx, 0.02, tz);
+        fenceGroup.add(shade);
+
+        const tree = new THREE.Mesh(
+          new THREE.PlaneGeometry(1.5, 2),
+          artMaterial("/assets/decor/tree.webp"),
+        );
+        tree.quaternion.copy(camera.quaternion);
+        tree.position.set(tx, 0, tz);
+        tree.translateY(1);
+        fenceGroup.add(tree);
       }
 
         /** Relief à semer sur les cases une fois la grille posée. */
@@ -1368,7 +1386,7 @@ export function IsoFarmView({
         }
       }
       if (workVehicle && aw && aw.cells.length) {
-        const duration = Math.max(0.7, aw.cells.length * 0.28);
+        const duration = workAnimationMs(aw.cells.length) / 1000;
         const u = Math.min(1, (t - workStartRef.current) / duration);
         const n = aw.cells.length;
         const f = u * Math.max(1, n - 1);
