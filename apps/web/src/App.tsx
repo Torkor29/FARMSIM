@@ -1030,6 +1030,31 @@ export function App() {
     setToastTick((n) => n + 1);
   }
 
+  useEffect(() => {
+    if (!msg) return;
+    const t = window.setTimeout(() => setMsg(null), 2800);
+    return () => window.clearTimeout(t);
+  }, [msg, toastTick]);
+
+  const onFarm = Boolean(player && ownedParcels.length);
+  useEffect(() => {
+    document.documentElement.classList.toggle("playing", onFarm);
+    if (!onFarm) return;
+    const blockGesture = (e: Event) => e.preventDefault();
+    const blockBrowserZoom = (e: WheelEvent) => {
+      if (e.ctrlKey) e.preventDefault();
+    };
+    document.addEventListener("gesturestart", blockGesture, { passive: false });
+    document.addEventListener("gesturechange", blockGesture, { passive: false });
+    document.addEventListener("wheel", blockBrowserZoom, { passive: false });
+    return () => {
+      document.documentElement.classList.remove("playing");
+      document.removeEventListener("gesturestart", blockGesture);
+      document.removeEventListener("gesturechange", blockGesture);
+      document.removeEventListener("wheel", blockBrowserZoom);
+    };
+  }, [onFarm]);
+
   function markGuideFlag(key: keyof GuideFlags) {
     setGuideFlags((prev) => {
       if (prev[key]) return prev;
@@ -2147,11 +2172,12 @@ export function App() {
           })}
           <span className="tick weather-tick">{weatherLabel}</span>
         </div>
+        {(msg || err) && (
+          <div key={toastTick} className={`toast ${err ? "bad" : "good"} pop`}>
+            {err ?? msg}
+          </div>
+        )}
       </div>
-
-      {(msg || err) && (
-        <div key={toastTick} className={`toast ${err ? "bad" : "good"} pop`}>{err ?? msg}</div>
-      )}
 
       {/* Le bilan d'absence annonce parfois huit cultures perdues : il mérite
           d'être lu, donc acquitté, plutôt que de flotter sur la ferme. */}

@@ -105,6 +105,11 @@ type Props = {
 
 const SOIL = 0x9ac06a;
 const SOIL_DARK = 0x8ab35e;
+/** Hauteur des dalles, centrées à y=0 : le dessus est à TILE_TOP. */
+const TILE_THICK = 0.18;
+const TILE_TOP = TILE_THICK / 2;
+/** Aire de parking : même hauteur que le champ, teinte à peine plus sombre. */
+const PARKING = 0x7a8f58;
 const GROW = 0x7fbc4e;
 const READY = 0xe8c65e;
 const SELECT_GLOW = 0x5ee08a;
@@ -669,7 +674,7 @@ export function IsoFarmView({
     function tileGeo(size: number): THREE.BoxGeometry {
       if (!sharedTile || sharedTile.size !== size) {
         sharedTile?.geo.dispose();
-        sharedTile = { size, geo: markShared(new THREE.BoxGeometry(size, 0.18, size)) };
+        sharedTile = { size, geo: markShared(new THREE.BoxGeometry(size, TILE_THICK, size)) };
       }
       return sharedTile.geo;
     }
@@ -992,7 +997,7 @@ export function IsoFarmView({
           let col = look === "PLAIN" ? ((x + y) % 2 === 0 ? SOIL : SOIL_DARK) : SOIL_COLORS[look];
           if (cell?.kind === "CROP") col = cropColor(cell, sim);
           if (cell?.kind === "BUILDING") col = DIRT;
-          if (cell?.kind === "VEHICLE") col = 0x3a3f44;
+          if (cell?.kind === "VEHICLE") col = PARKING;
           if (cell && cell.kind === "EMPTY" && look !== "PLAIN") soilDetails.push({ look, px, pz });
           // Les adventices pesaient sur le rendement sans jamais se montrer.
           // Une culture non désherbée porte donc ses touffes parasites.
@@ -1005,9 +1010,10 @@ export function IsoFarmView({
             flatShading: true,
           });
           const mesh = new THREE.Mesh(tileGeo(cellSize), mat);
-          // Les cases d'emprise ne doivent pas former un muret : le panneau
-          // du bâtiment passe alors derrière, et il ne reste que la terre.
-          if (cell?.kind === "BUILDING" || cell?.kind === "VEHICLE") {
+          // Les cases d'emprise d'un bâtiment ne doivent pas former un muret.
+          // Les aires de parking, elles, restent à hauteur du champ : les
+          // engins 3D posent leurs pneus sur le dessus de la dalle.
+          if (cell?.kind === "BUILDING") {
             mesh.scale.y = 0.22;
             mesh.position.set(px, -0.07, pz);
             mat.depthWrite = false;
@@ -1048,9 +1054,9 @@ export function IsoFarmView({
           if (cell?.kind === "VEHICLE") {
             const mType = (cell.machineType as MachineType) || "TRACTOR";
             const vg = makeVehicleSprite(mType);
-            vg.position.set(px, 0, pz);
+            vg.position.set(px, TILE_TOP, pz);
             vg.userData.baseX = px;
-            vg.userData.baseY = 0;
+            vg.userData.baseY = TILE_TOP;
             vg.userData.baseZ = pz;
             vg.userData.phase = (x * 1.7 + y * 2.3) % (Math.PI * 2);
             world.add(vg);
@@ -1290,16 +1296,14 @@ export function IsoFarmView({
     }
 
     /**
-     * Zoom à la molette, en écouteur passif.
+     * Zoom molette et pincement trackpad.
      *
-     * Appeler `preventDefault` obligerait à déclarer l'écouteur bloquant, ce
-     * que Chrome signale comme une violation : il ne peut plus faire défiler
-     * la page avant de savoir si on l'y autorise. C'est inutile ici, la scène
-     * occupe un conteneur qui ne défile pas. La molette avec Ctrl est laissée
-     * au navigateur, à qui elle appartient.
+     * Ctrl+molette est le zoom du navigateur : si on le laisse passer, le HUD
+     * entier gonfle et on ne voit plus les menus. On le prend pour soi, la
+     * carte seule change d'échelle.
      */
     function onWheel(ev: WheelEvent) {
-      if (ev.ctrlKey) return;
+      ev.preventDefault();
       setZoom(view.zoom * (ev.deltaY < 0 ? 1.12 : 1 / 1.12));
     }
 
@@ -1312,7 +1316,7 @@ export function IsoFarmView({
     renderer.domElement.addEventListener("pointerup", onPointerUp);
     renderer.domElement.addEventListener("pointercancel", onPointerUp);
     renderer.domElement.addEventListener("pointerleave", onPointerLeave);
-    renderer.domElement.addEventListener("wheel", onWheel, { passive: true });
+    renderer.domElement.addEventListener("wheel", onWheel, { passive: false });
 
     let raf = 0;
     // THREE.Clock est déprécié depuis r183 au profit de Timer, qui doit être
@@ -1430,15 +1434,13 @@ export function IsoFarmView({
       hexGroup.rotation.y = Math.sin(t * 0.05) * 0.02;
       world.position.y = Math.sin(t * 0.7) * 0.015;
 
-      // Idle : un tremblement de moteur, pas une carte qui dérive.
+      // Idle : un léger roulis de moteur, collé au sol.
       for (const vg of vehicleGroups.values()) {
         const bx = vg.userData.baseX as number;
         const by = vg.userData.baseY as number;
         const bz = vg.userData.baseZ as number;
         const ph = vg.userData.phase as number;
-        vg.position.y = by + Math.sin(t * 2.1 + ph) * 0.012;
-        vg.position.x = bx;
-        vg.position.z = bz;
+        vg.position.set(bx, by, bz);
         vg.rotation.y = Math.sin(t * 0.9 + ph) * 0.03;
       }
 
@@ -1580,7 +1582,7 @@ export function IsoFarmView({
         const px = pa.px + (pb.px - pa.px) * local;
         const pz = pa.pz + (pb.pz - pa.pz) * local;
         const bounce = Math.sin(t * 14) * 0.012;
-        workVehicle.position.set(px, bounce, pz);
+        workVehicle.position.set(px, TILE_TOP + bounce, pz);
         workVehicle.rotation.y = Math.atan2(pb.px - pa.px, pb.pz - pa.pz) || 0;
         workVehicle.visible = u < 1;
 
