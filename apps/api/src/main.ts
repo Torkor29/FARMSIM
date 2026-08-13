@@ -91,6 +91,8 @@ import {
   canList,
   LISTING_REFUSAL_LABELS,
   LISTING_TTL_MS,
+  DELIVERY_TTL_MS,
+  deliveryAutoFee,
   DEALER_MIN_TONS,
   volumeSlippage,
   machineResaleValue,
@@ -109,6 +111,8 @@ import {
   kindForBarn,
   yardTypeForBarn,
   ANIMAL_PRICE,
+  STARTER_COW_COUNT,
+  STARTER_HAY_TONS,
   FEED_BASE,
   canBreed,
   gestationProgress,
@@ -1069,6 +1073,31 @@ app.get("/world/:continent", async (req, res) => {
   });
 });
 
+/** Coin opposé au tracteur, pour poser l’étable de départ sans collision. */
+function findStarterBarnSpot(
+  gridW: number,
+  gridH: number,
+  tractorX: number,
+  tractorY: number,
+): { x: number; y: number } | null {
+  const w = BUILDING_DEFS.CATTLE_BARN.w;
+  const h = BUILDING_DEFS.CATTLE_BARN.h;
+  const candidates = [
+    { x: Math.max(0, gridW - w), y: 0 },
+    { x: 0, y: 0 },
+    { x: Math.max(0, gridW - w), y: Math.max(0, gridH - h) },
+    { x: 0, y: Math.max(0, gridH - h) },
+  ];
+  for (const c of candidates) {
+    if (c.x + w > gridW || c.y + h > gridH) continue;
+    const hitsTractor = footprintCells(c.x, c.y, w, h).some(
+      (p) => p.x === tractorX && p.y === tractorY,
+    );
+    if (!hitsTractor) return c;
+  }
+  return null;
+}
+
 /**
  * Attribution de la parcelle de départ : gratuite, une seule fois, et
  * seulement si le joueur n'a pas encore de terre.
@@ -1129,26 +1158,66 @@ app.post("/world/claim", async (req, res) => {
       }
 
       if (farm.machines.length === 0) {
-        const types = [{ type: "TRACTOR" as const, tier: 1 }];
-        for (const m of types) {
-          await tx.machine.create({ data: { ...m, farmId: farm.id } });
+        await tx.machine.create({ data: { type: "TRACTOR", tier: 1, farmId: farm.id } });
+        // Le céréalier démarre avec le déchaumeur, pas la moissonneuse :
+        // la première récolte passe par le Bureau.
+        if (body.data.specialization === "CEREALIER") {
+          await tx.machine.create({
+            data: { type: "DISC_HARROW", tier: 1, farmId: farm.id },
+          });
         }
       }
 
       await tx.parcel.update({ where: { id: parcel.id }, data: { farmId: farm.id } });
 
-      const machine = await tx.machine.findFirst({ where: { farmId: farm.id } });
-      if (machine) {
+      const tractorX = 0;
+      const tractorY = Math.max(0, parcel.gridH - 1);
+      const tractor = await tx.machine.findFirst({
+        where: { farmId: farm.id, type: "TRACTOR" },
+      });
+      if (tractor) {
         await tx.machine.update({
-          where: { id: machine.id },
+          where: { id: tractor.id },
           data: { parkedParcelId: parcel.id },
         });
         await tx.parcelCell.update({
           where: {
-            parcelId_x_y: { parcelId: parcel.id, x: 0, y: Math.max(0, parcel.gridH - 1) },
+            parcelId_x_y: { parcelId: parcel.id, x: tractorX, y: tractorY },
           },
-          data: { kind: "VEHICLE", machineId: machine.id },
+          data: { kind: "VEHICLE", machineId: tractor.id },
         });
+      }
+
+      if (body.data.specialization === "ELEVEUR") {
+        const barnSpot = findStarterBarnSpot(parcel.gridW, parcel.gridH, tractorX, tractorY);
+        if (barnSpot) {
+          const barnDef = BUILDING_DEFS.CATTLE_BARN;
+          const cells = footprintCells(barnSpot.x, barnSpot.y, barnDef.w, barnDef.h);
+          const barn = await tx.building.create({
+            data: {
+              parcelId: parcel.id,
+              type: "CATTLE_BARN",
+              originX: barnSpot.x,
+              originY: barnSpot.y,
+            },
+          });
+          for (const c of cells) {
+            await tx.parcelCell.update({
+              where: { parcelId_x_y: { parcelId: parcel.id, x: c.x, y: c.y } },
+              data: { kind: "BUILDING", buildingId: barn.id },
+            });
+          }
+          await tx.herd.create({
+            data: {
+              farmId: farm.id,
+              buildingId: barn.id,
+              kind: "COW",
+              size: STARTER_COW_COUNT,
+              avgAgeMs: PURCHASED_AGE_MS,
+            },
+          });
+          await addToStock(tx, farm.id, "HAY", STARTER_HAY_TONS, 0, 3);
+        }
       }
     });
     const player = await playerPayload(auth.user.id);
@@ -1582,6 +1651,7 @@ async function spoilPerishables() {
 
 async function runWorldTick() {
   await expireListings();
+  await settleOverdueDeliveries();
   await expireLaborOrders();
   await runNpcBuyers();
   await spoilPerishables();
@@ -5500,35 +5570,166 @@ app.post("/market/listings/:id/buy", async (req, res) => {
       where: { id: listing.sellerId },
       data: { crd: { increment: proceeds } },
     });
-    const existing = await tx.inventoryItem.findFirst({
-      where: { farmId: buyer.farm!.id, itemCode: listing.commodity },
+    // L'argent change de main tout de suite. Le stock, non : quelqu'un doit livrer.
+    await tx.delivery.create({
+      data: {
+        sellerId: listing.sellerId,
+        buyerId: buyer.id,
+        buyerFarmId: buyer.farm!.id,
+        listingId: listing.id,
+        commodity: listing.commodity,
+        tons: listing.tons,
+        moisture: listing.moisture,
+        quality: listing.quality,
+        status: "PENDING",
+        dueAt: new Date(Date.now() + DELIVERY_TTL_MS),
+        autoFee: deliveryAutoFee(listing.tons),
+      },
     });
-    if (existing) {
-      await tx.inventoryItem.update({
-        where: { id: existing.id },
-        data: {
-          qty: existing.qty + listing.tons,
-          moisture: mergeMoisture(
-            existing.qty,
-            existing.moisture,
-            listing.tons,
-            listing.moisture,
-          ),
-        },
-      });
-    } else {
-      await tx.inventoryItem.create({
-        data: {
-          farmId: buyer.farm!.id,
-          itemCode: listing.commodity,
-          qty: listing.tons,
-          quality: listing.quality,
-          moisture: listing.moisture,
-        },
-      });
-    }
   });
-  res.json({ bought: listing.tons, commodity: listing.commodity, paid: total, proceeds });
+  res.json({
+    bought: listing.tons,
+    commodity: listing.commodity,
+    paid: total,
+    proceeds,
+    pendingDelivery: true,
+  });
+});
+
+async function fulfillDelivery(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  tx: any,
+  delivery: { id: string; buyerFarmId: string; commodity: string; tons: number; moisture: number; quality: number },
+) {
+  await addToStock(
+    tx,
+    delivery.buyerFarmId,
+    delivery.commodity,
+    delivery.tons,
+    delivery.moisture,
+    delivery.quality,
+  );
+  await tx.delivery.update({
+    where: { id: delivery.id },
+    data: { status: "DELIVERED", deliveredAt: new Date() },
+  });
+}
+
+/** TTL écoulé : un voisin auto livre, et facture l'acheteur. */
+async function settleOverdueDeliveries() {
+  const stale = await prisma.delivery.findMany({
+    where: { status: "PENDING", dueAt: { lt: new Date() } },
+    include: { buyer: true },
+  });
+  for (const d of stale) {
+    await prisma.$transaction(async (tx) => {
+      const fresh = await tx.delivery.findUnique({ where: { id: d.id } });
+      if (!fresh || fresh.status !== "PENDING") return;
+      const fee = Math.min(d.buyer.crd, d.autoFee);
+      if (fee > 0) {
+        await tx.user.update({
+          where: { id: d.buyerId },
+          data: { crd: { decrement: fee } },
+        });
+      }
+      await fulfillDelivery(tx, fresh);
+    });
+  }
+}
+
+app.get("/deliveries", async (req, res) => {
+  const userId = typeof req.query.userId === "string" ? req.query.userId : null;
+  if (!userId) {
+    res.status(400).json({ error: "userId requis" });
+    return;
+  }
+  await settleOverdueDeliveries();
+  const rows = await prisma.delivery.findMany({
+    where: { OR: [{ sellerId: userId }, { buyerId: userId }] },
+    include: {
+      seller: { select: { displayName: true } },
+      buyer: { select: { displayName: true } },
+    },
+    orderBy: [{ status: "asc" }, { createdAt: "desc" }],
+    take: 40,
+  });
+  res.json({
+    deliveries: rows.map((d) => ({
+      id: d.id,
+      commodity: d.commodity,
+      tons: d.tons,
+      moisture: d.moisture,
+      quality: d.quality,
+      status: d.status,
+      role: d.sellerId === userId ? "SELLER" : "BUYER",
+      counterparty: d.sellerId === userId ? d.buyer.displayName : d.seller.displayName,
+      dueInMs: Math.max(0, d.dueAt.getTime() - Date.now()),
+      autoFee: d.autoFee,
+    })),
+  });
+});
+
+/** Le vendeur livre lui-même : gratuit, le stock arrive chez l'acheteur. */
+app.post("/deliveries/:id/deliver", async (req, res) => {
+  const body = z.object({ userId: z.string() }).safeParse(req.body);
+  if (!body.success) {
+    res.status(400).json(body.error.flatten());
+    return;
+  }
+  const delivery = await prisma.delivery.findUnique({ where: { id: req.params.id } });
+  if (!delivery || delivery.status !== "PENDING") {
+    res.status(409).json({ error: "Livraison introuvable ou déjà faite" });
+    return;
+  }
+  if (delivery.sellerId !== body.data.userId) {
+    res.status(403).json({ error: "Seul le vendeur peut livrer" });
+    return;
+  }
+  await prisma.$transaction(async (tx) => {
+    const fresh = await tx.delivery.findUnique({ where: { id: delivery.id } });
+    if (!fresh || fresh.status !== "PENDING") throw new Error("DELIVERY_GONE");
+    await fulfillDelivery(tx, fresh);
+  });
+  res.json({ delivered: delivery.tons, commodity: delivery.commodity });
+});
+
+/** L'acheteur paie un voisin auto pour faire livrer tout de suite. */
+app.post("/deliveries/:id/auto", async (req, res) => {
+  const body = z.object({ userId: z.string() }).safeParse(req.body);
+  if (!body.success) {
+    res.status(400).json(body.error.flatten());
+    return;
+  }
+  const delivery = await prisma.delivery.findUnique({
+    where: { id: req.params.id },
+    include: { buyer: true },
+  });
+  if (!delivery || delivery.status !== "PENDING") {
+    res.status(409).json({ error: "Livraison introuvable ou déjà faite" });
+    return;
+  }
+  if (delivery.buyerId !== body.data.userId) {
+    res.status(403).json({ error: "Seul l'acheteur peut faire livrer" });
+    return;
+  }
+  if (delivery.buyer.crd < delivery.autoFee) {
+    res.status(402).json({ error: `TRN insuffisants — ${delivery.autoFee} requis` });
+    return;
+  }
+  await prisma.$transaction(async (tx) => {
+    const fresh = await tx.delivery.findUnique({ where: { id: delivery.id } });
+    if (!fresh || fresh.status !== "PENDING") throw new Error("DELIVERY_GONE");
+    await tx.user.update({
+      where: { id: delivery.buyerId },
+      data: { crd: { decrement: delivery.autoFee } },
+    });
+    await fulfillDelivery(tx, fresh);
+  });
+  res.json({
+    delivered: delivery.tons,
+    commodity: delivery.commodity,
+    autoFee: delivery.autoFee,
+  });
 });
 
 app.post("/market/sell", async (req, res) => {

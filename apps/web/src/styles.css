@@ -1050,11 +1050,14 @@ button.ghost {
   box-shadow: var(--sh-2);
   backdrop-filter: blur(12px);
 }
-.dock-tray .stroke-hint {
+.dock-tray .stroke-hint,
+.dock-tray .dock-hint {
   margin: 0;
+  width: 100%;
   font-size: 0.75rem;
   text-align: center;
   color: var(--ink-soft);
+  line-height: 1.3;
 }
 .dock-chips {
   display: flex;

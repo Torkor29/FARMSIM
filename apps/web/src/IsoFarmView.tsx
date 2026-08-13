@@ -16,7 +16,6 @@ import {
 } from "@farmsim/shared";
 import { disposeRenderer, disposeThreeScene, markShared } from "./three-cleanup";
 import { makeMachineMesh, tickMachine } from "./machine-meshes";
-import { buildCharacter } from "./character-mesh";
 import { initialQuality, makeFrameGovernor, qualityForContext, type RenderQuality } from "./render-quality";
 import type { CharacterAppearance } from "@farmsim/shared";
 
@@ -167,17 +166,15 @@ type CropLook = {
   grow: number;
   ready: number;
   fullH: number;
-  slim: number;
-  ears: "none" | "wheat" | "maize" | "barley" | "rape";
 };
 
 const CROP_LOOK: Record<string, CropLook> = {
-  WHEAT: { grow: 0x7fbc4e, ready: 0xe8c65e, fullH: 0.7, slim: 1, ears: "wheat" },
-  MAIZE: { grow: 0x5aa63a, ready: 0xe8c65e, fullH: 0.98, slim: 0.74, ears: "maize" },
-  PEA: { grow: 0x6bb84a, ready: 0xc6d45a, fullH: 0.55, slim: 0.9, ears: "wheat" },
-  BARLEY: { grow: 0x8cba4a, ready: 0xe6d27a, fullH: 0.58, slim: 1, ears: "barley" },
-  RAPE: { grow: 0x5aaa38, ready: 0xf2d429, fullH: 0.72, slim: 0.95, ears: "rape" },
-  GRASS: { grow: 0x4a9a36, ready: 0x5aad42, fullH: 0.38, slim: 1.08, ears: "none" },
+  WHEAT: { grow: 0x7fbc4e, ready: 0xe8c65e, fullH: 0.7 },
+  MAIZE: { grow: 0x5aa63a, ready: 0xe8c65e, fullH: 0.98 },
+  PEA: { grow: 0x6bb84a, ready: 0xc6d45a, fullH: 0.55 },
+  BARLEY: { grow: 0x8cba4a, ready: 0xe6d27a, fullH: 0.58 },
+  RAPE: { grow: 0x5aaa38, ready: 0xf2d429, fullH: 0.72 },
+  GRASS: { grow: 0x4a9a36, ready: 0x5aad42, fullH: 0.38 },
 };
 
 function lookOf(crop?: CropCode | null): CropLook {
@@ -320,6 +317,146 @@ function buildingPalette(type: BuildingType): { body: number; roof: number; h: n
     default:
       return { body: WOOD_WARM, roof: ROOF_TEAL, h: 1 };
   }
+}
+
+/** Cube coloré, ancré par le centre — brique des silhouettes de culture. */
+function cropBox(
+  w: number,
+  h: number,
+  d: number,
+  color: number,
+  x: number,
+  y: number,
+  z: number,
+): THREE.Mesh {
+  const mesh = new THREE.Mesh(
+    new THREE.BoxGeometry(w, h, d),
+    new THREE.MeshLambertMaterial({ color, flatShading: true }),
+  );
+  mesh.position.set(x, y, z);
+  mesh.castShadow = true;
+  return mesh;
+}
+
+/**
+ * Une silhouette par culture, dès le semis.
+ *
+ * Un cube unique + des épis par-dessus + des adventices, ça faisait trois
+ * choses sur la même case. Ici le plant dit tout seul ce qui pousse.
+ */
+function makeCropPlant(
+  crop: CropCode | null | undefined,
+  progress: number,
+  ready: boolean,
+  lost: boolean,
+  color: number,
+  cuts: number,
+): THREE.Group {
+  const g = new THREE.Group();
+  const p = lost ? 0.35 : Math.max(0.18, Math.min(1, progress));
+  const look = lookOf(crop);
+  const full = look.fullH * (cuts > 0 ? 0.78 : 1);
+  const h = lost ? 0.22 : 0.14 + p * (full - 0.14);
+  const kind = crop ?? "WHEAT";
+
+  if (kind === "GRASS") {
+    g.add(cropBox(0.72, h, 0.72, color, 0, h / 2, 0));
+  } else if (kind === "MAIZE") {
+    g.add(cropBox(0.1, h, 0.1, color, 0, h / 2, 0));
+    const leafH = Math.max(0.06, h * 0.22);
+    g.add(cropBox(0.32, leafH, 0.06, color, 0.12, h * 0.45, 0));
+    g.add(cropBox(0.32, leafH, 0.06, color, -0.1, h * 0.62, 0.04));
+    if (ready && !lost) {
+      g.add(cropBox(0.08, 0.16, 0.08, look.ready, 0.06, h + 0.02, 0));
+    }
+  } else if (kind === "RAPE") {
+    g.add(cropBox(0.08, h, 0.08, color, 0, h / 2, 0));
+    const bloom = ready && !lost ? look.ready : color;
+    if (p > 0.4) {
+      g.add(cropBox(0.1, 0.08, 0.1, bloom, -0.08, h * 0.85, -0.04));
+      g.add(cropBox(0.1, 0.08, 0.1, bloom, 0.09, h * 0.92, 0.05));
+      g.add(cropBox(0.08, 0.07, 0.08, bloom, 0.02, h + 0.02, -0.06));
+    }
+  } else if (kind === "PEA") {
+    const bh = h * 0.72;
+    g.add(cropBox(0.22, bh, 0.22, color, -0.16, bh / 2, -0.08));
+    g.add(cropBox(0.2, bh * 0.85, 0.2, color, 0.14, (bh * 0.85) / 2, 0.1));
+    g.add(cropBox(0.18, bh * 0.75, 0.18, color, 0.02, (bh * 0.75) / 2, -0.16));
+  } else if (kind === "BARLEY") {
+    for (const [dx, dz] of [
+      [-0.16, -0.08],
+      [0.16, 0.06],
+      [-0.04, 0.14],
+      [0.08, -0.14],
+    ]) {
+      g.add(cropBox(0.07, h * 0.92, 0.07, color, dx, (h * 0.92) / 2, dz));
+    }
+  } else {
+    for (const [dx, dz] of [
+      [-0.18, -0.1],
+      [0.18, 0.08],
+      [0, 0.18],
+      [-0.08, -0.16],
+      [0.12, -0.04],
+    ]) {
+      g.add(cropBox(0.07, h, 0.07, color, dx, h / 2, dz));
+    }
+  }
+
+  if (lost) g.rotation.z = 0.12;
+  g.userData.plantH = h;
+  return g;
+}
+
+/**
+ * Maison alignée à la grille, pas un panneau qui tourne vers la caméra.
+ * Le webp isométrique se mettait de travers sur le damier.
+ */
+function makeFarmhouseMesh(spanX: number, spanY: number): THREE.Group {
+  const g = new THREE.Group();
+  const w = Math.max(0.9, spanX * 0.62);
+  const d = Math.max(0.75, spanX * 0.5);
+  const wallH = Math.max(0.55, spanY * 0.38);
+  const wall = new THREE.MeshLambertMaterial({ color: 0xe8d4b0, flatShading: true });
+  const wood = new THREE.MeshLambertMaterial({ color: 0x8b5a2b, flatShading: true });
+  const roofMat = new THREE.MeshLambertMaterial({ color: 0x6b3f22, flatShading: true });
+  const dark = new THREE.MeshLambertMaterial({ color: 0x4a3424, flatShading: true });
+  const glass = new THREE.MeshLambertMaterial({ color: 0x8ec8d8, flatShading: true });
+
+  const body = new THREE.Mesh(new THREE.BoxGeometry(w, wallH, d), wall);
+  body.position.y = wallH / 2;
+  body.castShadow = true;
+  g.add(body);
+
+  const door = new THREE.Mesh(new THREE.BoxGeometry(w * 0.18, wallH * 0.48, 0.04), wood);
+  door.position.set(0, wallH * 0.28, d / 2 + 0.01);
+  g.add(door);
+
+  const w1 = new THREE.Mesh(new THREE.BoxGeometry(w * 0.14, wallH * 0.18, 0.03), glass);
+  w1.position.set(-w * 0.28, wallH * 0.58, d / 2 + 0.01);
+  g.add(w1);
+  const w2 = w1.clone();
+  w2.position.x = w * 0.28;
+  g.add(w2);
+
+  const roofH = wallH * 0.42;
+  const left = new THREE.Mesh(new THREE.BoxGeometry(w * 1.12, 0.08, d * 0.72), roofMat);
+  left.position.set(0, wallH + roofH * 0.35, -d * 0.18);
+  left.rotation.x = 0.55;
+  left.castShadow = true;
+  g.add(left);
+  const right = new THREE.Mesh(new THREE.BoxGeometry(w * 1.12, 0.08, d * 0.72), roofMat);
+  right.position.set(0, wallH + roofH * 0.35, d * 0.18);
+  right.rotation.x = -0.55;
+  right.castShadow = true;
+  g.add(right);
+
+  const chim = new THREE.Mesh(new THREE.BoxGeometry(w * 0.12, wallH * 0.55, d * 0.12), dark);
+  chim.position.set(w * 0.28, wallH + roofH * 0.7, 0);
+  chim.castShadow = true;
+  g.add(chim);
+
+  return g;
 }
 
 /** Vache low-poly, taille d'une demi-case. */
@@ -665,13 +802,6 @@ function groundHexGeometry(): THREE.CylinderGeometry {
   return groundHexGeo;
 }
 
-/** Touffe de culture unitaire, mise à l'échelle selon l'avancement du cycle. */
-let cropGeo: THREE.BoxGeometry | null = null;
-function cropGeometry(): THREE.BoxGeometry {
-  cropGeo ??= markShared(new THREE.BoxGeometry(0.55, 1, 0.55));
-  return cropGeo;
-}
-
 function disposeObject3D(obj: THREE.Object3D) {
   obj.traverse((o) => {
     const token = o.userData.anchorToken as { live?: boolean } | undefined;
@@ -831,24 +961,10 @@ export function IsoFarmView({
     scene.add(world);
 
     const cellMeshes = new Map<string, THREE.Mesh>();
-    const cropMeshes = new Map<string, THREE.Mesh>();
+    const cropMeshes = new Map<string, THREE.Group>();
     const windrowMeshes = new Map<string, THREE.Mesh>();
     let windrowGeo: THREE.BoxGeometry | null = null;
     let windrowMat: THREE.MeshLambertMaterial | null = null;
-    /**
-     * Matériaux de culture indexés par couleur. Les cases ne prennent qu'une
-     * poignée de teintes — les stades de maturité — alors qu'on en créait un
-     * par case, avec le coût d'allocation et de compilation associé.
-     */
-    const cropMats = new Map<number, THREE.MeshLambertMaterial>();
-    function cropMaterial(color: number): THREE.MeshLambertMaterial {
-      let mat = cropMats.get(color);
-      if (!mat) {
-        mat = new THREE.MeshLambertMaterial({ color, flatShading: true });
-        cropMats.set(color, mat);
-      }
-      return mat;
-    }
     /** Véhicules stationnés — animés en idle (hors pickables) */
     const vehicleGroups = new Map<string, THREE.Group>();
     const buildingGroup = new THREE.Group();
@@ -900,10 +1016,6 @@ export function IsoFarmView({
     world.add(pickupGroup);
     let pickupKey = "";
 
-    const farmerGroup = new THREE.Group();
-    world.add(farmerGroup);
-    const farmerMeshes = new Map<string, THREE.Group>();
-
     const platformMat = new THREE.MeshLambertMaterial({ color: 0x8a6b4a, flatShading: true });
     const platform = new THREE.Mesh(new THREE.BoxGeometry(1, 0.45, 1), platformMat);
     platform.receiveShadow = true;
@@ -946,10 +1058,9 @@ export function IsoFarmView({
       return sharedTile.geo;
     }
 
-    /** Le relief du sol et les épis, reconstruits à chaque `layout()`. */
+    /** Le relief du sol, reconstruit à chaque `layout()`. */
     const reliefGroup = new THREE.Group();
-    const earGroup = new THREE.Group();
-    world.add(reliefGroup, earGroup);
+    world.add(reliefGroup);
 
     /**
      * Donne du grain aux états du sol.
@@ -1070,80 +1181,6 @@ export function IsoFarmView({
       }
     }
 
-    /**
-     * Coiffe les cultures mûres d'épis. Le blé en porte plusieurs, fins et
-     * dorés ; le maïs un seul, trapu. C'est le signal « récoltable » le plus
-     * direct qu'on puisse donner sur la grille elle-même.
-     */
-    function buildEars(
-      spots: { px: number; pz: number; y: number; kind: CropLook["ears"] }[],
-      size: number,
-    ) {
-      while (earGroup.children.length) {
-        const c = earGroup.children[0];
-        earGroup.remove(c);
-        disposeObject3D(c);
-      }
-      if (!spots.length) return;
-
-      const m = new THREE.Matrix4();
-      const kinds: CropLook["ears"][] = ["wheat", "maize", "barley", "rape"];
-      for (const kind of kinds) {
-        const group = spots.filter((s) => s.kind === kind);
-        if (!group.length) continue;
-        const offsets: [number, number, number][] =
-          kind === "maize"
-            ? [[0, 0, 0.06]]
-            : kind === "rape"
-              ? [
-                  [-0.12, -0.1, 0.04],
-                  [0.12, 0.08, 0.05],
-                  [0.02, 0.16, 0.03],
-                  [-0.08, 0.06, 0.06],
-                  [0.1, -0.12, 0.04],
-                ]
-              : kind === "barley"
-                ? [
-                    [-0.1, -0.06, 0.02],
-                    [0.1, 0.05, 0.02],
-                    [0, 0.12, 0.01],
-                  ]
-                : [
-                    [-0.13, -0.08, 0.06],
-                    [0.13, 0.06, 0.06],
-                    [0, 0.16, 0.06],
-                  ];
-        const geo =
-          kind === "maize"
-            ? new THREE.BoxGeometry(size * 0.2, 0.2, size * 0.2)
-            : kind === "rape"
-              ? new THREE.BoxGeometry(size * 0.08, 0.1, size * 0.08)
-              : kind === "barley"
-                ? new THREE.BoxGeometry(size * 0.08, 0.12, size * 0.08)
-                : new THREE.BoxGeometry(size * 0.09, 0.15, size * 0.09);
-        const color =
-          kind === "maize" ? 0xf0c33c : kind === "rape" ? 0xf5d427 : kind === "barley" ? 0xe6d27a : 0xe6c95f;
-        const mesh = new THREE.InstancedMesh(
-          geo,
-          new THREE.MeshLambertMaterial({
-            color,
-            flatShading: true,
-          }),
-          group.length * offsets.length,
-        );
-        mesh.castShadow = true;
-        let i = 0;
-        for (const s of group) {
-          for (const [dx, dz, dy] of offsets) {
-            m.makeTranslation(s.px + dx * size, s.y + dy, s.pz + dz * size);
-            mesh.setMatrixAt(i++, m);
-          }
-        }
-        mesh.instanceMatrix.needsUpdate = true;
-        earGroup.add(mesh);
-      }
-    }
-
     function placeWindrow(k: string, px: number, pz: number) {
       if (windrowMeshes.has(k)) return;
       windrowGeo ??= markShared(new THREE.BoxGeometry(0.7, 0.08, 0.28));
@@ -1190,13 +1227,12 @@ export function IsoFarmView({
         (m.material as THREE.Material).dispose();
       }
       cellMeshes.clear();
-      for (const m of cropMeshes.values()) world.remove(m);
+      for (const m of cropMeshes.values()) {
+        world.remove(m);
+        disposeObject3D(m);
+      }
       cropMeshes.clear();
       clearWindrows();
-      // Géométrie partagée entre tous les montages, matériaux mutualisés par
-      // teinte : rien à libérer par case, un passage sur le cache suffit.
-      for (const mat of cropMats.values()) mat.dispose();
-      cropMats.clear();
       for (const g of vehicleGroups.values()) {
         world.remove(g);
         disposeObject3D(g);
@@ -1212,11 +1248,6 @@ export function IsoFarmView({
         fenceGroup.remove(c);
         disposeObject3D(c);
       }
-      for (const g of farmerMeshes.values()) {
-        farmerGroup.remove(g);
-        disposeObject3D(g);
-      }
-      farmerMeshes.clear();
       pickables.length = 0;
 
       cellSize = 1;
@@ -1278,8 +1309,6 @@ export function IsoFarmView({
 
         /** Relief à semer sur les cases une fois la grille posée. */
       const soilDetails: { look: SoilLook; px: number; pz: number }[] = [];
-      /** Épis des cultures arrivées à maturité. */
-      const ears: { px: number; pz: number; y: number; kind: CropLook["ears"] }[] = [];
 
       for (let y = 0; y < gh; y++) {
         for (let x = 0; x < gw; x++) {
@@ -1304,11 +1333,8 @@ export function IsoFarmView({
           if (cell && cell.kind === "EMPTY" && look !== "PLAIN" && look !== "PLOWED") {
             soilDetails.push({ look, px, pz });
           }
-          // Les adventices pesaient sur le rendement sans jamais se montrer.
-          // Une culture non désherbée porte donc ses touffes parasites.
-          if (cell?.kind === "CROP" && !cell.weedsControlled) {
-            soilDetails.push({ look: "WEEDS", px, pz });
-          }
+          // Les adventices restent sur la terre nue. Sur une culture elles
+          // se lisaient comme un second plant — on ne les superpose plus.
 
           const mat = new THREE.MeshLambertMaterial({
             color: isSel ? SELECT_GLOW : col,
@@ -1335,22 +1361,19 @@ export function IsoFarmView({
           if (cell?.kind === "CROP") {
             const progress = sim?.sim.progress ?? 0.25;
             const lost = cell.fieldStage === "SPOILED" || sim?.sim.ripeness?.stage === "LOST";
-            const look = lookOf(cell.crop);
-            // L'herbe déjà fauchée reprend plus basse : on lit la coupe.
+            const ready = Boolean(sim?.sim.ready || cell.fieldStage === "READY");
             const cuts = cell.crop === "GRASS" ? (cell.harvestsSincePlow ?? 0) : 0;
-            const full = look.fullH * (cuts > 0 ? 0.78 : 1);
-            const h = lost ? 0.22 : 0.12 + progress * (full - 0.12);
-            const crop = new THREE.Mesh(cropGeometry(), cropMaterial(cropColor(cell, sim)));
-            crop.scale.set(look.slim, h, look.slim);
-            crop.position.set(px, 0.1 + h / 2, pz);
-            if (lost) crop.rotation.z = 0.12;
-            crop.castShadow = true;
+            const crop = makeCropPlant(
+              cell.crop,
+              progress,
+              ready,
+              lost,
+              cropColor(cell, sim),
+              cuts,
+            );
+            crop.position.set(px, 0.1, pz);
             world.add(crop);
             cropMeshes.set(key(x, y), crop);
-
-            if (!lost && look.ears !== "none" && (sim?.sim.ready || cell.fieldStage === "READY")) {
-              ears.push({ px, pz, y: 0.1 + h, kind: look.ears });
-            }
           }
 
           if (cell?.kind === "VEHICLE") {
@@ -1367,16 +1390,7 @@ export function IsoFarmView({
         }
       }
 
-      for (const worker of dataRef.current.workers) {
-        const mesh = buildCharacter(worker.appearance, { spec: worker.specialization, prop: false });
-        mesh.scale.setScalar(0.42);
-        mesh.userData.workerId = worker.id;
-        farmerGroup.add(mesh);
-        farmerMeshes.set(worker.id, mesh);
-      }
-
       buildSoilRelief(soilDetails, cellSize);
-      buildEars(ears, cellSize);
 
       for (const b of bs) {
         const def = BUILDING_DEFS[b.type];
@@ -1407,12 +1421,17 @@ export function IsoFarmView({
         const grow = 1 + (level - 1) * 0.1;
         const spanX = (def.w + def.h) * step * 0.56 * grow;
         const spanY = spanX * BUILDING_ART_RATIO;
-        // Le rang d'ancrage — pieds du bâtiment, pas le bas du cadre —
-        // repose sur les tuiles. Sinon l'illustration flotte : la dalle
-        // dessinée dans le webp se mettait au-dessus du sol 3D.
-        buildingGroup.add(
-          makeArtBillboard(BUILDING_ART[b.type], camera, cx, 0.1, cz, spanX, spanY),
-        );
+        // La maison en photo se mettait de travers : le panneau suit la
+        // caméra, pas la grille. On la pose en volumes, alignée au damier.
+        if (b.type === "FARMHOUSE") {
+          const house = makeFarmhouseMesh(spanX, spanY);
+          house.position.set(cx, 0.1, cz);
+          buildingGroup.add(house);
+        } else {
+          buildingGroup.add(
+            makeArtBillboard(BUILDING_ART[b.type], camera, cx, 0.1, cz, spanX, spanY),
+          );
+        }
       }
 
       viewSpan = Math.max(gw, gh) * step;
@@ -1962,9 +1981,7 @@ export function IsoFarmView({
             const done = cropMeshes.get(k);
             if (!done) continue;
             if (aw?.cut === "mow") {
-              const low = 0.1;
-              done.scale.y = low;
-              done.position.y = 0.1 + low / 2;
+              done.scale.set(1, 0.28, 1);
               const pos = cellWorldPos(cell.x, cell.y);
               placeWindrow(k, pos.px, pos.pz);
             } else {
@@ -1993,27 +2010,6 @@ export function IsoFarmView({
           // reste visible brièvement puis masqué jusqu’au prochain work
           workVehicle.visible = false;
         }
-      }
-
-      const { workers: fieldWorkers } = dataRef.current;
-      for (const worker of fieldWorkers) {
-        const mesh = farmerMeshes.get(worker.id);
-        if (!mesh) continue;
-        let px: number;
-        let pz: number;
-        let facing = 0;
-        if (worker.working && workVehicle && workPath.length && workVehicle.visible) {
-          px = workVehicle.position.x + 0.38;
-          pz = workVehicle.position.z + 0.22;
-          facing = workVehicle.rotation.y;
-        } else {
-          const pos = cellWorldPos(worker.x, worker.y);
-          px = pos.px;
-          pz = pos.pz;
-        }
-        mesh.position.set(px, TILE_TOP, pz);
-        mesh.rotation.y = facing + Math.sin(t * 2.4) * 0.08;
-        mesh.position.y = TILE_TOP + Math.abs(Math.sin(t * (worker.working ? 8 : 2.2))) * (worker.working ? 0.04 : 0.015);
       }
 
       renderer.render(scene, camera);

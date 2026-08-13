@@ -463,7 +463,7 @@ export const GUIDE_CHAPTERS: GuideChapter[] = [
       {
         id: "HARVESTER",
         name: "Moissonneuse T1 · 4 000 TRN",
-        how: "Récolte. Sans elle : bouton orange « Entreprise » sur l’outil Récolte.",
+        how: "Récolte. On ne la donne pas au départ : publiez au Bureau, ou achetez-la plus tard.",
         usedBy: "Céréalier (ou il fait venir quelqu’un). Chantier le plus demandé.",
       },
       {
@@ -555,7 +555,7 @@ export const GUIDE_CHAPTERS: GuideChapter[] = [
       {
         id: "npc",
         name: "Pas la machine du moment ?",
-        how: "Le bouton orange « Entreprise » fait venir quelqu’un tout de suite, plus cher, un peu moins bien. C’est le filet, pas un échec.",
+        how: "Un joueur fera mieux. Le voisin auto, c’est si personne ne vient. Publiez au Bureau, ou le bouton orange « Entreprise ».",
         usedBy: "Céréalier et éleveur sans l’engin sous la main.",
       },
     ],

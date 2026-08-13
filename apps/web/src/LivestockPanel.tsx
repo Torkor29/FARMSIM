@@ -199,8 +199,7 @@ export function LivestockPanel({
                 <div className="feed-row">
                   {herd.smelly && (
                     <p className="herd-alert">
-                      La fosse est trop pleine — ça sent, les bêtes sont moins bien. Épandez
-                      ou vendez.
+                      La fosse est pleine : les bêtes sont moins bien. Épandez ou vendez.
                     </p>
                   )}
                   <div className="feed-bar">

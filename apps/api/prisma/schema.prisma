@@ -97,6 +97,8 @@ model User {
   listings       MarketListing[] @relation("Selling")
   futures        FuturesContract[] @relation("Futures")
   purchases      MarketListing[] @relation("Buying")
+  deliveriesSold   Delivery[] @relation("DeliverySeller")
+  deliveriesBought Delivery[] @relation("DeliveryBuyer")
 }
 
 model Session {
@@ -337,6 +339,30 @@ model MarketListing {
   soldAt      DateTime?
 
   @@index([status, commodity])
+}
+
+/// Achat à la criée : l'argent a changé de main, la marchandise est encore en route.
+model Delivery {
+  id          String   @id @default(cuid())
+  sellerId    String
+  seller      User     @relation("DeliverySeller", fields: [sellerId], references: [id], onDelete: Cascade)
+  buyerId     String
+  buyer       User     @relation("DeliveryBuyer", fields: [buyerId], references: [id], onDelete: Cascade)
+  buyerFarmId String
+  listingId   String?
+  commodity   String
+  tons        Float
+  moisture    Float    @default(0.12)
+  quality     Int      @default(3)
+  status      String   @default("PENDING")
+  createdAt   DateTime @default(now())
+  dueAt       DateTime
+  autoFee     Float
+  deliveredAt DateTime?
+
+  @@index([buyerId, status])
+  @@index([sellerId, status])
+  @@index([status, dueAt])
 }
 
 model NpcContract {

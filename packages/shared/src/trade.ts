@@ -92,6 +92,14 @@ export const LISTING_COMMISSION_RATE = 0.05;
 /** Durée de vie d'une annonce `[GD]` — une saison */
 export const LISTING_TTL_MS = 15 * 60 * 1000;
 
+/** Après l’achat à la criée : quelqu’un doit encore livrer. */
+export const DELIVERY_TTL_MS = 8 * 60 * 1000;
+
+/** Frais « faire livrer » : le voisin auto, plus cher que de le faire soi-même. */
+export function deliveryAutoFee(tons: number): number {
+  return Math.max(8, Math.round(Math.max(0, tons) * 4));
+}
+
 /** Bornes du prix demandé, en multiples du cours `[GD]` */
 export const LISTING_PRICE_MIN_RATIO = 0.3;
 export const LISTING_PRICE_MAX_RATIO = 2.5;

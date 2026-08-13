@@ -266,6 +266,22 @@ export const DRYING = {
   sellPenaltyAbove: 0.15,
 } as const;
 
+/** Une ligne pour la fiche halle : tonnes, eau, malus, motif. */
+export function lotQualityLine(opts: {
+  tons: number;
+  moisture: number;
+  quality: number;
+}): string {
+  const rounded = Math.round(opts.tons * 100) / 100;
+  const tonsLabel = Number.isInteger(rounded) ? String(rounded) : rounded.toFixed(rounded < 10 ? 2 : 1);
+  const parts = [`${tonsLabel} t`, `${Math.round(opts.moisture * 100)} % d’eau`];
+  if (opts.moisture > DRYING.sellThreshold) {
+    parts.push(`−${Math.round(DRYING.sellPenaltyAbove * 100)} %`);
+  }
+  if (opts.quality <= 2) parts.push("Récolté trop tard");
+  return parts.join(" · ");
+}
+
 export const BUILDING_DEFS: Record<BuildingType, BuildingDef> = {
   SILO: {
     type: "SILO",

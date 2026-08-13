@@ -1,7 +1,9 @@
 import { useEffect, useMemo, useState } from "react";
 import { PriceSparkline } from "./PriceSparkline";
 import {
+  DRYING,
   GOOD_DEFS,
+  lotQualityLine,
   SPOILAGE_PER_CYCLE,
   isPerishable,
   spoilageWarning,
@@ -41,9 +43,23 @@ export type Listing = {
   pricePerTon: number;
   total: number;
   moisture: number;
+  quality: number;
   sellerName: string;
   mine: boolean;
   expiresInMs: number;
+};
+
+export type MarketDelivery = {
+  id: string;
+  commodity: string;
+  tons: number;
+  moisture: number;
+  quality: number;
+  status: string;
+  role: "SELLER" | "BUYER";
+  counterparty: string;
+  dueInMs: number;
+  autoFee: number;
 };
 
 type Props = {
@@ -51,6 +67,7 @@ type Props = {
   onClose: () => void;
   stock: StockItem[];
   listings: Listing[];
+  deliveries: MarketDelivery[];
   marketPrices: { commodity: string; price: number; stockTons: number }[];
   crd: number;
   busy: boolean;
@@ -59,6 +76,8 @@ type Props = {
   onList: (commodity: TradeGood, tons: number, pricePerTon: number) => void;
   onBuyListing: (id: string) => void;
   onCancelListing: (id: string) => void;
+  onDeliverLot: (id: string) => void;
+  onAutoDeliverLot: (id: string) => void;
   onDry: (itemId: string) => void;
   onBuyInput: (commodity: TradeGood, tons: number) => void;
   /** Cours passés de la marchandise, du plus ancien au plus récent */
@@ -79,9 +98,66 @@ export type FuturesContract = {
 };
 
 function moisturePenaltyOf(moisture: number): number {
-  // Reprend la règle du serveur : au-delà du seuil, la vente est décotée.
-  const over = moisture - 0.14;
-  return over <= 0 ? 0 : Math.min(0.15, over * 1.5);
+  return moisture > DRYING.sellThreshold ? DRYING.sellPenaltyAbove : 0;
+}
+
+function DeliveryList({
+  deliveries,
+  busy,
+  crd,
+  onDeliverLot,
+  onAutoDeliverLot,
+}: {
+  deliveries: MarketDelivery[];
+  busy: boolean;
+  crd: number;
+  onDeliverLot: (id: string) => void;
+  onAutoDeliverLot: (id: string) => void;
+}) {
+  if (!deliveries.length) return null;
+  return (
+    <>
+      <h3 className="spaced">Livraisons</h3>
+      <ul className="listing-list">
+        {deliveries.map((d) => (
+          <li key={d.id}>
+            <span>
+              <strong>{GOOD_DEFS[d.commodity as TradeGood]?.name ?? d.commodity}</strong>
+              <em>
+                {d.status === "PENDING" ? "en attente de livraison" : "arrivé"}
+                {" · "}
+                {lotQualityLine({
+                  tons: d.tons,
+                  moisture: d.moisture,
+                  quality: d.quality,
+                })}
+              </em>
+              <em className="listing-seller">{d.counterparty}</em>
+            </span>
+            {d.status === "PENDING" && d.role === "SELLER" && (
+              <span className="listing-right">
+                <button type="button" className="channel-go" disabled={busy} onClick={() => onDeliverLot(d.id)}>
+                  Livrer
+                </button>
+              </span>
+            )}
+            {d.status === "PENDING" && d.role === "BUYER" && (
+              <span className="listing-right">
+                <button
+                  type="button"
+                  className="channel-go"
+                  disabled={busy || crd < d.autoFee}
+                  onClick={() => onAutoDeliverLot(d.id)}
+                >
+                  Faire livrer · {d.autoFee} TRN
+                </button>
+              </span>
+            )}
+          </li>
+        ))}
+      </ul>
+    </>
+  );
 }
 
 /** Écran de vente : stock, trois débouchés comparés, et la criée. */
@@ -90,6 +166,7 @@ export function MarketPanel({
   onClose,
   stock,
   listings,
+  deliveries,
   marketPrices,
   crd,
   busy,
@@ -98,6 +175,8 @@ export function MarketPanel({
   onList,
   onBuyListing,
   onCancelListing,
+  onDeliverLot,
+  onAutoDeliverLot,
   onDry,
   onBuyInput,
   onLoadHistory,
@@ -251,14 +330,23 @@ export function MarketPanel({
           />
         ) : tab === "SELL" ? (
           !stock.length ? (
-            <p className="market-empty">
-              Votre silo est vide. Récoltez d’abord — le grain apparaîtra ici.
-            </p>
+            <>
+              <p className="market-empty">
+                Votre silo est vide. Récoltez d’abord — le grain apparaîtra ici.
+              </p>
+              <DeliveryList
+                deliveries={deliveries}
+                busy={busy}
+                crd={crd}
+                onDeliverLot={onDeliverLot}
+                onAutoDeliverLot={onAutoDeliverLot}
+              />
+            </>
           ) : (
             <>
               <div className="stock-row">
                 {stock.map((s) => {
-                  const wet = s.moisture > 0.14;
+                  const wet = s.moisture > DRYING.sellThreshold;
                   return (
                     <button
                       key={s.id}
@@ -270,10 +358,14 @@ export function MarketPanel({
                       <span>
                         {s.qty.toFixed(2)} {GOOD_DEFS[s.itemCode as TradeGood]?.unit ?? "t"}
                       </span>
-                      <em className={wet ? "wet" : ""}>
+                      <em className={wet || s.quality <= 2 ? "wet" : ""}>
                         {isPerishable(s.itemCode as TradeGood)
                           ? `−${Math.round((SPOILAGE_PER_CYCLE[s.itemCode as TradeGood] ?? 0) * 100)} % / cycle`
-                          : `${Math.round(s.moisture * 100)} % humidité`}
+                          : lotQualityLine({
+                              tons: s.qty,
+                              moisture: s.moisture,
+                              quality: s.quality,
+                            })}
                       </em>
                     </button>
                   );
@@ -288,13 +380,16 @@ export function MarketPanel({
                     </p>
                   )}
 
-                  {item.moisture > 0.14 && (
+                  {item.moisture > DRYING.sellThreshold && (
                     <p className="market-warn">
-                      Grain trop humide : toute vente est décotée. Séchez d’abord.
+                      Trop d’eau : le prix baisse. Séchez.
                       <button type="button" disabled={busy} onClick={() => onDry(item.id)}>
                         Sécher
                       </button>
                     </p>
+                  )}
+                  {item.quality <= 2 && item.moisture <= DRYING.sellThreshold && (
+                    <p className="market-warn">Récolté trop tard — ce lot vaut moins.</p>
                   )}
 
                   <label className="market-field">
@@ -381,6 +476,14 @@ export function MarketPanel({
                 </>
               )}
 
+              <DeliveryList
+                deliveries={deliveries}
+                busy={busy}
+                crd={crd}
+                onDeliverLot={onDeliverLot}
+                onAutoDeliverLot={onAutoDeliverLot}
+              />
+
               {listings.some((l) => l.mine) && (
                 <>
                   <h3 className="spaced">Mes annonces</h3>
@@ -394,7 +497,12 @@ export function MarketPanel({
                               {GOOD_DEFS[l.commodity as TradeGood]?.name ?? l.commodity}
                             </strong>
                             <em>
-                              {l.tons.toFixed(2)} t à {l.pricePerTon.toFixed(0)} TRN/t ·{" "}
+                              {lotQualityLine({
+                                tons: l.tons,
+                                moisture: l.moisture,
+                                quality: l.quality,
+                              })}{" "}
+                              · {l.pricePerTon.toFixed(0)} TRN/t ·{" "}
                               {listingProceeds(l.pricePerTon, l.tons)} TRN net
                             </em>
                           </span>
@@ -416,7 +524,8 @@ export function MarketPanel({
         ) : (
           <>
             <p className="muted tiny">
-              Les lots déposés par les autres exploitants, du moins cher au plus cher.
+              Les lots des autres exploitants. Après l’achat : pas encore chez vous, quelqu’un
+              doit livrer.
             </p>
             {listings.filter((l) => !l.mine).length === 0 ? (
               <p className="market-empty">Aucun lot en vente pour le moment.</p>
@@ -431,8 +540,12 @@ export function MarketPanel({
                           {GOOD_DEFS[l.commodity as TradeGood]?.name ?? l.commodity}
                         </strong>
                         <em>
-                          {l.tons.toFixed(2)} t à {l.pricePerTon.toFixed(0)} TRN/t ·{" "}
-                          {Math.round(l.moisture * 100)} % humidité
+                          {lotQualityLine({
+                            tons: l.tons,
+                            moisture: l.moisture,
+                            quality: l.quality,
+                          })}{" "}
+                          · {l.pricePerTon.toFixed(0)} TRN/t
                         </em>
                         <em className="listing-seller">{l.sellerName}</em>
                       </span>
@@ -451,6 +564,13 @@ export function MarketPanel({
                   ))}
               </ul>
             )}
+            <DeliveryList
+              deliveries={deliveries}
+              busy={busy}
+              crd={crd}
+              onDeliverLot={onDeliverLot}
+              onAutoDeliverLot={onAutoDeliverLot}
+            />
           </>
         )}
       </div>

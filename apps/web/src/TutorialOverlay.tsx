@@ -37,7 +37,7 @@ const STEPS: Step[] = [
   {
     id: "harvest",
     title: "4 — Récolter",
-    body: "Outil Récolte + cases mûres (dorées) + OK. Sans moissonneuse, le bouton « Entreprise » fait le travail pour vous, contre paiement.",
+    body: "Outil Récolte + cases mûres (dorées) + OK. Sans moissonneuse, publiez au Bureau, ou achetez la machine. Un joueur fera mieux que le voisin auto.",
     hint: "Sans silo, le grain part au négociant. Le silo permet de sécher et de vendre plus cher.",
   },
   {

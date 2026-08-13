@@ -236,26 +236,34 @@ export function FieldDock({
               </button>
             )}
             {contractor && !visiting && (
-              <button
-                type="button"
-                className="chip eta"
-                disabled={busy || selectedCount === 0 || crd < contractor.cost}
-                title={
-                  contractor.hasMachine
-                    ? `Sous-traiter — ${contractor.cost} TRN`
-                    : `Pas la machine : une entreprise le fait pour ${contractor.cost} TRN`
-                }
-                onClick={onContractor}
-              >
-                Entreprise · {contractor.cost} TRN
-              </button>
+              <>
+                <p className="dock-hint">
+                  Un joueur fera mieux. Le voisin auto, c’est si personne ne vient.
+                </p>
+                {tool === "HARVEST" && !mowSelected && !contractor.hasMachine && (
+                  <p className="dock-hint">Publiez au Bureau, ou achetez la machine.</p>
+                )}
+                <button
+                  type="button"
+                  className="chip eta"
+                  disabled={busy || selectedCount === 0 || crd < contractor.cost}
+                  title={
+                    contractor.hasMachine
+                      ? `Sous-traiter — ${contractor.cost} TRN`
+                      : `Pas la machine : une entreprise le fait pour ${contractor.cost} TRN`
+                  }
+                  onClick={onContractor}
+                >
+                  Entreprise · {contractor.cost} TRN
+                </button>
+              </>
             )}
             {laborQuote != null && !visiting && onPublishLabor && (
               <button
                 type="button"
                 className="chip"
                 disabled={busy || crd < laborQuote}
-                title={`Publier un chantier joueur — ${laborQuote} TRN en séquestre`}
+                title="Cet argent est bloqué jusqu’à la fin (ou l’annulation)."
                 onClick={onPublishLabor}
               >
                 Publier · {laborQuote} TRN

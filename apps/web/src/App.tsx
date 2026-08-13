@@ -14,7 +14,6 @@ import {
   MISSION_CELLS_MIN,
   MISSION_CELLS_MAX,
   laborEscrow,
-  defaultAppearance,
   type CharacterAppearance,
   type FieldWorkerView,
   repairHalfwayTarget,
@@ -50,12 +49,12 @@ import {
   isBreakdownKind,
 } from "@farmsim/shared";
 import { AuthScreen } from "./AuthScreen";
-import type { FieldWorker, GrazingHerd, PreviewBuilding } from "./IsoFarmView";
+import type { GrazingHerd, PreviewBuilding } from "./IsoFarmView";
 import { ConfirmDialog, type ConfirmRequest } from "./ConfirmDialog";
 import { MachineCareOverlay, type CareMode } from "./MachineCareOverlay";
 import { MissionPlay, type MissionPlayContract } from "./MissionPlay";
 import { LivestockPanel, type BarnState } from "./LivestockPanel";
-import { MarketPanel, type Listing, type FuturesContract } from "./MarketPanel";
+import { MarketPanel, type Listing, type MarketDelivery, type FuturesContract } from "./MarketPanel";
 import type { ContinentDetail, WorldContinent } from "./Onboarding";
 
 // Three.js pèse plus lourd que tout le reste de l'application réunie. L'écran
@@ -450,6 +449,7 @@ export function App() {
   /** Cases assombries après un épandage de fumier, jusqu'à cette date. */
   const [manureStain, setManureStain] = useState<Record<string, number>>({});
   const [listings, setListings] = useState<Listing[]>([]);
+  const [deliveries, setDeliveries] = useState<MarketDelivery[]>([]);
   const [showMarket, setShowMarket] = useState(false);
   const [confirmRequest, setConfirmRequest] = useState<ConfirmRequest | null>(null);
   const [showArrival, setShowArrival] = useState(false);
@@ -678,6 +678,17 @@ export function App() {
     }
   }, []);
 
+  const loadDeliveries = useCallback(async (playerId: string) => {
+    try {
+      const r = await api<{ deliveries: MarketDelivery[] }>(
+        `/deliveries?userId=${encodeURIComponent(playerId)}`,
+      );
+      setDeliveries((prev) => keepIfSame(prev, r.deliveries));
+    } catch {
+      setDeliveries([]);
+    }
+  }, []);
+
   const loadParcel = useCallback(async (id: string) => {
     const d = await api<typeof parcelDetail>(`/parcels/${id}`);
     setParcelDetail((prev) => keepIfSame(prev, d));
@@ -795,13 +806,15 @@ export function App() {
   useEffect(() => {
     if (!player) return;
     loadListings(player.id);
+    loadDeliveries(player.id);
     loadFutures();
     const t = setInterval(() => {
       loadListings(player.id);
+      loadDeliveries(player.id);
       loadFutures();
     }, 8000);
     return () => clearInterval(t);
-  }, [player?.id, loadListings]);
+  }, [player?.id, loadListings, loadDeliveries]);
   const freeParcels = useMemo(
     () =>
       zones.flatMap((z) =>
@@ -925,31 +938,6 @@ export function App() {
     }
     return out;
   }, [barns, parcel?.buildings]);
-
-  const fieldWorkers = useMemo((): FieldWorker[] => {
-    const fromServer = (parcelDetail?.workers ?? []).map((w) => ({
-      id: w.id,
-      name: w.name,
-      x: w.x,
-      y: w.y,
-      appearance: w.appearance,
-      specialization: w.specialization,
-      working: Boolean(activeWork && player && w.id === player.id),
-    }));
-    if (player && activeWork && !fromServer.some((w) => w.id === player.id)) {
-      const cell = activeWork.cells[0] ?? selectedCells[0] ?? { x: 0, y: 0 };
-      fromServer.push({
-        id: player.id,
-        name: player.displayName,
-        x: cell.x,
-        y: cell.y,
-        appearance: player.appearance ?? defaultAppearance(player.specialization),
-        specialization: player.specialization,
-        working: true,
-      });
-    }
-    return fromServer;
-  }, [parcelDetail?.workers, activeWork, player, selectedCells]);
 
   const hayInStock = useMemo(
     () => (player?.farm?.inventory ?? []).find((i) => i.itemCode === "HAY")?.qty ?? 0,
@@ -1561,7 +1549,7 @@ export function App() {
           cells: selectedCells,
         }),
       });
-      flashToast(`Chantier publié · ${r.escrow} TRN en séquestre`);
+      flashToast("Cet argent est bloqué jusqu’à la fin (ou l’annulation).");
       setSelectedCells([]);
       await refreshPlayer();
       await refreshMeta();
@@ -1980,9 +1968,46 @@ export function App() {
         method: "POST",
         body: JSON.stringify({ userId: player.id }),
       });
-      flashToast(`Acheté ${r.bought.toFixed(2)} t · −${r.paid} TRN`);
+      flashToast("Pas encore chez vous : quelqu’un doit livrer.");
       await refreshPlayer();
       await loadListings(player.id);
+      await loadDeliveries(player.id);
+    } catch (e) {
+      flashToast(e instanceof Error ? e.message : String(e), true);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function deliverLot(id: string) {
+    if (!player) return;
+    setBusy(true);
+    try {
+      const r = await api<{ delivered: number }>(`/deliveries/${id}/deliver`, {
+        method: "POST",
+        body: JSON.stringify({ userId: player.id }),
+      });
+      flashToast(`Livré ${r.delivered.toFixed(2)} t`);
+      await refreshPlayer();
+      await loadDeliveries(player.id);
+    } catch (e) {
+      flashToast(e instanceof Error ? e.message : String(e), true);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function autoDeliverLot(id: string) {
+    if (!player) return;
+    setBusy(true);
+    try {
+      const r = await api<{ delivered: number; autoFee: number }>(`/deliveries/${id}/auto`, {
+        method: "POST",
+        body: JSON.stringify({ userId: player.id }),
+      });
+      flashToast(`Arrivé · −${r.autoFee} TRN`);
+      await refreshPlayer();
+      await loadDeliveries(player.id);
     } catch (e) {
       flashToast(e instanceof Error ? e.message : String(e), true);
     } finally {
@@ -2568,7 +2593,7 @@ export function App() {
                 }
                 return out;
               })}
-              workers={fieldWorkers}
+              workers={[]}
               weather={localWeather}
               strokeWork={visiting}
               onStrokePreview={setSelectedCells}
@@ -3075,6 +3100,7 @@ export function App() {
         onClose={() => setShowMarket(false)}
         stock={player.farm?.inventory ?? []}
         listings={listings}
+        deliveries={deliveries}
         marketPrices={market}
         crd={player.crd}
         busy={busy}
@@ -3083,6 +3109,8 @@ export function App() {
         onList={createListing}
         onBuyListing={buyListing}
         onCancelListing={cancelListing}
+        onDeliverLot={deliverLot}
+        onAutoDeliverLot={autoDeliverLot}
         onDry={dryStock}
         onBuyInput={buyInput}
         onLoadHistory={loadPriceHistory}

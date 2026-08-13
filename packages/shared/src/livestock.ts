@@ -64,6 +64,11 @@ function round1(value: number): number {
 
 export type AnimalKind = "COW" | "PIG" | "HEN" | "SHEEP";
 
+/** Éleveur débutant : quelques vaches, pas une étable vide. */
+export const STARTER_COW_COUNT = 3;
+/** Foin offert à l’installation, pour tenir le premier cycle. */
+export const STARTER_HAY_TONS = 2;
+
 export const ANIMAL_PRICE: Record<AnimalKind, number> = {
   COW: 420,
   PIG: 420,
