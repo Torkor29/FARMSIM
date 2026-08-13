@@ -1,5 +1,6 @@
 import { useEffect, useRef } from "react";
 import * as THREE from "three";
+import { earthLandRings } from "./earth-land";
 import { disposeRenderer, disposeThreeScene, markShared } from "./three-cleanup";
 import { initialQuality, makeFrameGovernor, qualityForContext, type RenderQuality } from "./render-quality";
 
@@ -149,18 +150,27 @@ function latLonToVec3(lat: number, lon: number, radius = R): THREE.Vector3 {
  * un masque elliptique (la silhouette d'ensemble) perturbé par du bruit
  * (les côtes découpées). Positif = terre, négatif = mer.
  */
+/** Ancrage d'un continent du jeu : son centre et son repère local. */
 type Field = {
   code: string;
   center: THREE.Vector3;
   east: THREE.Vector3;
   north: THREE.Vector3;
-  spanU: number;
-  spanV: number;
-  ox: number;
-  oy: number;
-  oz: number;
+};
+
+/**
+ * Le relief de la Terre.
+ *
+ * `height` est une distance signée à la côte, exprimée en degrés puis
+ * normalisée : positive à l'intérieur des terres, négative en mer. C'est
+ * exactement ce dont le rendu a besoin — le plateau continental se lit dans les
+ * valeurs légèrement négatives, la frange de sable dans les légèrement
+ * positives, et la plaine profonde au-delà.
+ */
+type Terrain = {
   height(dir: THREE.Vector3): number;
   mountain(dir: THREE.Vector3): number;
+  /** Aridité, 0 = forêt, 1 = désert */
   dry(dir: THREE.Vector3): number;
 };
 
@@ -199,44 +209,228 @@ function takeGeometryCache(continents: GlobeContinent[]): GeometryCache {
   return geometryCache;
 }
 
+/**
+ * Résolution du masque des terres : un quart de degré.
+ *
+ * Les côtes embarquées sont simplifiées à 0,28° ; les rastériser plus fin ne
+ * rendrait pas un trait plus juste, seulement des escaliers plus nets. Le grain
+ * fin du littoral vient ensuite du bruit, pas du masque.
+ */
+const MASK_W = 1440;
+const MASK_H = 720;
+
+/**
+ * Rastérise les contours par balayage de lignes.
+ *
+ * Chaque anneau bascule l'appartenance des pixels qu'il enferme (règle
+ * pair-impair) ; comme Natural Earth ne fournit ici que des contours
+ * extérieurs, l'accumulation revient à une union.
+ */
+function rasterizeLand(): Uint8Array {
+  const mask = new Uint8Array(MASK_W * MASK_H);
+  const xs: number[] = [];
+  for (const ring of earthLandRings()) {
+    const n = ring.length / 2;
+    let minLat = 90;
+    let maxLat = -90;
+    for (let i = 0; i < n; i++) {
+      const lat = ring[i * 2 + 1];
+      if (lat < minLat) minLat = lat;
+      if (lat > maxLat) maxLat = lat;
+    }
+    const yFrom = Math.max(0, Math.floor(((90 - maxLat) / 180) * MASK_H));
+    const yTo = Math.min(MASK_H - 1, Math.ceil(((90 - minLat) / 180) * MASK_H));
+
+    for (let y = yFrom; y <= yTo; y++) {
+      const lat = 90 - ((y + 0.5) / MASK_H) * 180;
+      xs.length = 0;
+      for (let i = 0, j = n - 1; i < n; j = i++) {
+        const ay = ring[j * 2 + 1];
+        const by = ring[i * 2 + 1];
+        if (ay === by || lat < Math.min(ay, by) || lat >= Math.max(ay, by)) continue;
+        const ax = ring[j * 2];
+        const bx = ring[i * 2];
+        xs.push(ax + ((lat - ay) / (by - ay)) * (bx - ax));
+      }
+      if (xs.length < 2) continue;
+      xs.sort((a, b) => a - b);
+      for (let k = 0; k + 1 < xs.length; k += 2) {
+        const x0 = Math.max(0, Math.floor(((xs[k] + 180) / 360) * MASK_W));
+        const x1 = Math.min(MASK_W - 1, Math.ceil(((xs[k + 1] + 180) / 360) * MASK_W) - 1);
+        for (let x = x0; x <= x1; x++) mask[y * MASK_W + x] ^= 1;
+      }
+    }
+  }
+  return mask;
+}
+
+/**
+ * Distance signée à la côte, en degrés.
+ *
+ * Chanfrein en deux passes — une propagation avant puis arrière — sur la terre
+ * puis sur la mer. L'indice en longitude boucle : sans cela, le Pacifique
+ * serait coupé en deux au niveau de la ligne de changement de date, et une
+ * bande de « côte » apparaîtrait en plein océan.
+ */
+function signedCoastDistance(mask: Uint8Array): Float32Array {
+  const BIG = 1e6;
+  const inner = new Float32Array(MASK_W * MASK_H);
+  const outer = new Float32Array(MASK_W * MASK_H);
+  for (let i = 0; i < mask.length; i++) {
+    inner[i] = mask[i] ? BIG : 0;
+    outer[i] = mask[i] ? 0 : BIG;
+  }
+
+  /** Chanfrein 3×3 : 1 en droit, √2 en diagonale. */
+  const chamfer = (d: Float32Array) => {
+    const D = Math.SQRT2;
+    const wrap = (x: number) => (x + MASK_W) % MASK_W;
+    for (let y = 0; y < MASK_H; y++) {
+      for (let x = 0; x < MASK_W; x++) {
+        const i = y * MASK_W + x;
+        let v = d[i];
+        if (y > 0) {
+          v = Math.min(v, d[i - MASK_W] + 1);
+          v = Math.min(v, d[(y - 1) * MASK_W + wrap(x - 1)] + D);
+          v = Math.min(v, d[(y - 1) * MASK_W + wrap(x + 1)] + D);
+        }
+        v = Math.min(v, d[y * MASK_W + wrap(x - 1)] + 1);
+        d[i] = v;
+      }
+    }
+    for (let y = MASK_H - 1; y >= 0; y--) {
+      for (let x = MASK_W - 1; x >= 0; x--) {
+        const i = y * MASK_W + x;
+        let v = d[i];
+        if (y < MASK_H - 1) {
+          v = Math.min(v, d[i + MASK_W] + 1);
+          v = Math.min(v, d[(y + 1) * MASK_W + wrap(x - 1)] + D);
+          v = Math.min(v, d[(y + 1) * MASK_W + wrap(x + 1)] + D);
+        }
+        v = Math.min(v, d[y * MASK_W + wrap(x + 1)] + 1);
+        d[i] = v;
+      }
+    }
+  };
+
+  chamfer(inner);
+  chamfer(outer);
+
+  const deg = 180 / MASK_H;
+  const out = new Float32Array(MASK_W * MASK_H);
+  for (let i = 0; i < out.length; i++) {
+    out[i] = (mask[i] ? inner[i] : -outer[i]) * deg;
+  }
+  return out;
+}
+
+/** Échantillonnage bilinéaire de la carte de distance, longitude bouclée. */
+function sampleCoast(sdf: Float32Array, lon: number, lat: number): number {
+  const fx = ((lon + 180) / 360) * MASK_W - 0.5;
+  const fy = ((90 - lat) / 180) * MASK_H - 0.5;
+  const x0 = Math.floor(fx);
+  const y0 = Math.max(0, Math.min(MASK_H - 1, Math.floor(fy)));
+  const y1 = Math.min(MASK_H - 1, y0 + 1);
+  const tx = fx - x0;
+  const ty = fy - y0;
+  const xa = ((x0 % MASK_W) + MASK_W) % MASK_W;
+  const xb = (xa + 1) % MASK_W;
+  const a = sdf[y0 * MASK_W + xa];
+  const b = sdf[y0 * MASK_W + xb];
+  const c = sdf[y1 * MASK_W + xa];
+  const d = sdf[y1 * MASK_W + xb];
+  return (a + (b - a) * tx) * (1 - ty) + (c + (d - c) * tx) * ty;
+}
+
+/**
+ * Humidité attendue à une latitude donnée.
+ *
+ * La ceinture de pluie de l'équateur, les déserts des tropiques vers 25°, le
+ * retour des pluies aux latitudes tempérées et le désert froid des pôles : ce
+ * profil suffit à poser le Sahara, l'Arabie, le désert australien et le Gobi à
+ * peu près où il faut, sans une seule donnée climatique.
+ */
+const WET_BY_LAT = [1.0, 0.98, 0.62, 0.16, 0.14, 0.34, 0.72, 0.88, 0.82, 0.6, 0.36, 0.22, 0.18];
+
+function wetness(lat: number): number {
+  const t = (Math.abs(lat) / 90) * (WET_BY_LAT.length - 1);
+  const i = Math.min(WET_BY_LAT.length - 2, Math.floor(t));
+  const f = t - i;
+  return WET_BY_LAT[i] + (WET_BY_LAT[i + 1] - WET_BY_LAT[i]) * f;
+}
+
+/**
+ * Coordonnées géographiques d'une direction.
+ *
+ * Attention au décalage : `latLonToVec3` place le méridien de Greenwich à
+ * `theta = 180°`, si bien qu'un `atan2(z, -x)` naïf rend la longitude tournée
+ * d'un demi-tour. La première version de la carte des terres avait ce défaut —
+ * les continents étaient justes mais posés à l'antipode, et le repère de
+ * Yanashi tombait au milieu du Pacifique.
+ */
+function dirToLonLat(dir: THREE.Vector3, out: { lon: number; lat: number }) {
+  out.lat = Math.asin(THREE.MathUtils.clamp(dir.y, -1, 1)) * (180 / Math.PI);
+  let lon = Math.atan2(dir.z, -dir.x) * (180 / Math.PI) - 180;
+  if (lon < -180) lon += 360;
+  out.lon = lon;
+  return out;
+}
+
+let terrainCache: Terrain | null = null;
+
+/** Le relief terrestre, construit une fois pour la session. */
+function earthTerrain(): Terrain {
+  if (terrainCache) return terrainCache;
+  const sdf = signedCoastDistance(rasterizeLand());
+
+  const geo = { lon: 0, lat: 0 };
+
+  const height = (dir: THREE.Vector3): number => {
+    dirToLonLat(dir, geo);
+    const d = sampleCoast(sdf, geo.lon, geo.lat);
+    // Le trait brut est trop net pour une planète peinte : un bruit fin le
+    // frange, comme des dunes et des estuaires, sans déplacer les côtes.
+    const fray = (fbm(dir.x * 26, dir.y * 26, dir.z * 26, 3) - 0.5) * 0.9;
+    return d / 12 + fray * 0.09;
+  };
+
+  const mountain = (dir: THREE.Vector3): number =>
+    fbm(dir.x * 5.1 + 17.3, dir.y * 5.1 + 4.9, dir.z * 5.1 + 29.7, 4);
+
+  const dry = (dir: THREE.Vector3): number => {
+    dirToLonLat(dir, geo);
+    // Continentalité : loin de toute côte, il pleut moins. C'est ce qui creuse
+    // l'intérieur de l'Asie et de l'Australie sans les nommer.
+    const inland = clamp01(sampleCoast(sdf, geo.lon, geo.lat) / 16);
+    const base = 1 - wetness(geo.lat) * (1 - inland * 0.5);
+    const noise = fbm(dir.x * 3.4 + 8.1, dir.y * 3.4 + 22.6, dir.z * 3.4 + 3.3, 3) - 0.5;
+    return clamp01(base + inland * 0.18 + noise * 0.55);
+  };
+
+  terrainCache = { height, mountain, dry };
+  return terrainCache;
+}
+
 function makeField(c: GlobeContinent): Field {
   const center = latLonToVec3(c.lat, c.lon, 1);
   const polar = Math.abs(center.y) > 0.97 ? new THREE.Vector3(1, 0, 0) : new THREE.Vector3(0, 1, 0);
   const east = new THREE.Vector3().crossVectors(polar, center).normalize();
   const north = new THREE.Vector3().crossVectors(center, east).normalize();
+  return { code: c.code, center, east, north };
+}
 
-  const seed = hashCode(c.code);
-  const rnd = (n: number) => ((seed >>> n) % 1000) / 1000;
-  // Les continents s'étirent un peu en longitude, comme les vrais.
-  const spanU = 0.5 + rnd(3) * 0.16;
-  const spanV = 0.34 + rnd(9) * 0.12;
-  const ox = 11.3 + (seed % 37);
-  const oy = 5.7 + ((seed >>> 5) % 41);
-  const oz = 23.1 + ((seed >>> 11) % 29);
-
-  const height = (dir: THREE.Vector3): number => {
-    const d = dir.dot(center);
-    if (d <= 0.12) return -1;
-    const u = Math.atan2(dir.dot(east), d) / spanU;
-    const v = Math.atan2(dir.dot(north), d) / spanV;
-    const r2 = u * u + v * v;
-    if (r2 > 2.2) return -1;
-    const mask = 1 - r2;
-    // Deux échelles de bruit : golfes et péninsules larges, puis dentelle de
-    // côte. Les gains sont calibrés pour découper franchement le masque sans
-    // faire éclater la masse principale en archipel.
-    const big = fbm(dir.x * 3 + ox, dir.y * 3 + oy, dir.z * 3 + oz, 3);
-    const fine = fbm(dir.x * 9 + oz, dir.y * 9 + ox, dir.z * 9 + oy, 2);
-    return mask * 1.12 + (big - 0.5) * 2.8 + (fine - 0.5) * 0.9 - 0.3;
-  };
-
-  const mountain = (dir: THREE.Vector3): number =>
-    fbm(dir.x * 4.3 + oy * 1.7, dir.y * 4.3 + oz * 1.3, dir.z * 4.3 + ox * 1.9, 3);
-
-  const dry = (dir: THREE.Vector3): number =>
-    fbm(dir.x * 2.9 + oz * 2.3, dir.y * 2.9 + oy * 0.7, dir.z * 2.9 + ox * 1.1, 2);
-
-  return { code: c.code, center, east, north, spanU, spanV, ox, oy, oz, height, mountain, dry };
+/** Continent du jeu le plus proche d'une direction : sert au clic et au survol. */
+function nearestField(fields: Field[], dir: THREE.Vector3): number {
+  let best = -1;
+  let bestDot = -2;
+  for (let i = 0; i < fields.length; i++) {
+    const d = dir.dot(fields[i].center);
+    if (d > bestDot) {
+      bestDot = d;
+      best = i;
+    }
+  }
+  return best;
 }
 
 /** Altitude du sol au-dessus du niveau de la mer, plaines et pics compris. */
@@ -306,10 +500,13 @@ function writeRgb(
   data[i + 3] = 255;
 }
 
-const LOWLAND = new THREE.Color(0x6ea653);
+/** Biomes, du plus humide au plus sec, puis du plus chaud au plus froid. */
+const FOREST = new THREE.Color(0x3d6b38);
+const GRASS = new THREE.Color(0x71a253);
+const STEPPE = new THREE.Color(0xb2a765);
 const HIGHLAND = new THREE.Color(0x8a9a52);
-const FOREST = new THREE.Color(0x40703c);
-const TUNDRA = new THREE.Color(0x9fae9a);
+const TAIGA = new THREE.Color(0x3c5a45);
+const TUNDRA = new THREE.Color(0x9aa894);
 
 /**
  * Peint les trois cartes de la planète, bande de lignes par bande de lignes.
@@ -319,8 +516,8 @@ const TUNDRA = new THREE.Color(0x9fae9a);
  * calcul, ce qui figerait l'interface si on le faisait d'un bloc.
  */
 function makePlanetPainter(
+  terrain: Terrain,
   fields: Field[],
-  continents: GlobeContinent[],
   texW = TEX_W,
   texH = TEX_H,
 ): { skin: PlanetSkin; paintBand: () => boolean; paintAll: () => PlanetSkin } {
@@ -336,10 +533,6 @@ function makePlanetPainter(
   const ctxRough = rough.getContext("2d")!;
 
   const owner = new Uint8Array(texW * texH);
-  const palette = continents.map((c) => ({
-    base: new THREE.Color(c.color),
-    accent: new THREE.Color(c.accent),
-  }));
 
   let row = 0;
 
@@ -360,35 +553,28 @@ function makePlanetPainter(
         texelDir(u, v, dir);
         const i = (y * texW + x) * 4;
 
-        // Champ continental dominant sous ce texel.
-        let best = -1;
-        let bestH = -1;
-        for (let f = 0; f < fields.length; f++) {
-          const h = fields[f].height(dir);
-          if (h > bestH) {
-            bestH = h;
-            best = f;
-          }
-        }
-
-        const lat = Math.abs(Math.asin(dir.y) * (180 / Math.PI));
+        const h = terrain.height(dir);
+        const signedLat = Math.asin(THREE.MathUtils.clamp(dir.y, -1, 1)) * (180 / Math.PI);
+        const lat = Math.abs(signedLat);
         // Grain fin commun terre et mer : c'est lui qui empêche les aplats.
         const grain = valueNoise3(dir.x * 90, dir.y * 90, dir.z * 90);
 
-        if (bestH <= 0) {
+        if (h <= 0) {
           owner[gy * texW + x] = 0;
-          // Profondeur : le fond remonte à l'approche des côtes.
-          const shelf = clamp01((bestH + 0.9) / 0.9);
-          tint.copy(DEEP).lerp(MID, clamp01((bestH + 1.6) / 1.4));
-          tint.lerp(SHALLOW, shelf * shelf * 0.85);
+          // Le plateau continental remonte à l'approche des côtes ; au-delà,
+          // la fosse. La distance à la côte donne les deux gratuitement.
+          const shelf = clamp01((h + 0.34) / 0.34);
+          tint.copy(DEEP).lerp(MID, clamp01((h + 1.5) / 1.3));
+          tint.lerp(SHALLOW, shelf * shelf * 0.9);
           if (lat > 62) tint.lerp(POLAR, clamp01((lat - 62) / 22) * 0.75);
           else if (lat < 26) tint.lerp(TROPIC, (1 - lat / 26) * 0.35);
+          // Banquise : les pôles ne sont pas de l'eau bleue.
+          if (lat > 68) tint.lerp(SNOW, clamp01((lat - 68) / 14) * 0.9);
           // Houle : de longues ondulations, pas un bruit uniforme.
           const swell = fbm(dir.x * 7 + 3.1, dir.y * 7 + 8.4, dir.z * 7 + 1.9, 2);
           writeRgb(imgColor.data, i, tint, 0.94 + swell * 0.12);
 
           const wave = 118 + (swell - 0.5) * 26 + (grain - 0.5) * 8;
-          writeRgb(imgBump.data, i, tint, 0);
           imgBump.data[i] = imgBump.data[i + 1] = imgBump.data[i + 2] = wave;
           imgBump.data[i + 3] = 255;
           // L'eau est lisse : c'est ce qui lui donne son reflet de soleil.
@@ -398,35 +584,37 @@ function makePlanetPainter(
           continue;
         }
 
-        owner[gy * texW + x] = best + 1;
-        const field = fields[best];
-        const pal = palette[best];
-        const m = field.mountain(dir);
-        const arid = field.dry(dir);
-        const elev = elevationOf(bestH, m);
+        owner[gy * texW + x] = nearestField(fields, dir) + 1;
+        const m = terrain.mountain(dir);
+        const arid = terrain.dry(dir);
+        const elev = elevationOf(h, m);
         const ridge = m > 0.54 ? (m - 0.54) / 0.46 : 0;
 
-        // Biome : la couleur du continent domine, l'altitude et la sécheresse
-        // la nuancent, et le littoral s'ourle de sable.
-        tint.copy(pal.base).lerp(LOWLAND, 0.25);
-        tint.lerp(pal.accent, clamp01(bestH) * 0.34);
-        if (arid < 0.42) tint.lerp(FOREST, (0.42 - arid) * 1.5);
-        else if (arid > 0.58) tint.lerp(SAND, (arid - 0.58) * 1.3);
+        // Biome : l'aridité mène la couleur — forêt, prairie, steppe, désert —
+        // et l'altitude puis la latitude la refroidissent.
+        tint.copy(GRASS);
+        if (arid < 0.42) tint.lerp(FOREST, clamp01((0.42 - arid) * 2.4));
+        else if (arid > 0.52) {
+          tint.lerp(STEPPE, clamp01((arid - 0.52) * 3.4));
+          if (arid > 0.68) tint.lerp(SAND, clamp01((arid - 0.68) * 3.2));
+        }
         if (ridge > 0) {
           tint.lerp(HIGHLAND, clamp01(ridge * 0.9));
           tint.lerp(ROCK, clamp01((ridge - 0.35) * 1.6));
         }
-        if (lat > 58) tint.lerp(TUNDRA, clamp01((lat - 58) / 18) * 0.7);
-        const snowLine = 0.62 - clamp01((lat - 30) / 60) * 0.34;
-        if (ridge > snowLine || lat > 74) {
-          const snow = Math.max(clamp01((ridge - snowLine) * 3), clamp01((lat - 74) / 12));
-          tint.lerp(SNOW, snow * 0.92);
+        // Taïga puis toundra : la forêt fonce avant de céder à la mousse.
+        if (lat > 48) tint.lerp(TAIGA, clamp01((lat - 48) / 14) * 0.55);
+        if (lat > 60) tint.lerp(TUNDRA, clamp01((lat - 60) / 12) * 0.8);
+        const snowLine = 0.62 - clamp01((lat - 30) / 60) * 0.36;
+        if (ridge > snowLine || lat > 68) {
+          const snow = Math.max(clamp01((ridge - snowLine) * 3), clamp01((lat - 68) / 8));
+          tint.lerp(SNOW, snow * 0.95);
         }
         // Trait de côte : une frange de sable puis une falaise sous-jacente.
-        const shore = clamp01(bestH / 0.22);
+        const shore = clamp01(h / 0.16);
         if (shore < 1) {
-          tint.lerp(SAND, (1 - shore) * 0.65);
-          tint.lerp(CLIFF, (1 - shore) * 0.18);
+          tint.lerp(SAND, (1 - shore) * 0.6);
+          tint.lerp(CLIFF, (1 - shore) * 0.16);
         }
 
         const speckle = 0.93 + grain * 0.14;
@@ -488,25 +676,15 @@ function ownerAt(skin: PlanetSkin, dir: THREE.Vector3): number {
  * volume à la silhouette : le détail visible vient des textures, ce qui
  * autorise une géométrie sans arête apparente.
  */
-function buildPlanetGeometry(fields: Field[]): THREE.BufferGeometry {
+function buildPlanetGeometry(terrain: Terrain): THREE.BufferGeometry {
   const geometry = new THREE.SphereGeometry(R, 256, 128);
   const pos = geometry.getAttribute("position");
   const dir = new THREE.Vector3();
   for (let i = 0; i < pos.count; i++) {
     dir.set(pos.getX(i), pos.getY(i), pos.getZ(i)).normalize();
-    let bestH = -1;
-    let bestField: Field | null = null;
-    for (const f of fields) {
-      const h = f.height(dir);
-      if (h > bestH) {
-        bestH = h;
-        bestField = f;
-      }
-    }
+    const h = terrain.height(dir);
     let radius = R;
-    if (bestH > 0 && bestField) {
-      radius = R + elevationOf(bestH, bestField.mountain(dir)) * 0.5;
-    }
+    if (h > 0) radius = R + elevationOf(h, terrain.mountain(dir)) * 0.5;
     dir.multiplyScalar(radius);
     pos.setXYZ(i, dir.x, dir.y, dir.z);
   }
@@ -621,6 +799,7 @@ export function GlobeView({
     const spinner = new THREE.Group();
     axis.add(spinner);
 
+    const terrain = earthTerrain();
     const fields = continents.map(makeField);
     const geometryCache = takeGeometryCache(continents);
 
@@ -634,7 +813,7 @@ export function GlobeView({
       bumpScale: 0.9,
     });
     const planet = new THREE.Mesh(
-      (geometryCache.planet ??= markShared(buildPlanetGeometry(fields))),
+      (geometryCache.planet ??= markShared(buildPlanetGeometry(terrain))),
       planetMat,
     );
     spinner.add(planet);
@@ -686,10 +865,10 @@ export function GlobeView({
       // Planète complète tout de suite, en basse définition : quelques dizaines
       // de millisecondes suffisent, et le joueur voit un monde plutôt qu'une
       // bille bleue pendant que la version fine se calcule.
-      skin = makePlanetPainter(fields, continents, PREVIEW_W, PREVIEW_H).paintAll();
+      skin = makePlanetPainter(terrain, fields, PREVIEW_W, PREVIEW_H).paintAll();
       applySkin(skin);
 
-      const painter = makePlanetPainter(fields, continents);
+      const painter = makePlanetPainter(terrain, fields);
       const paintNext = () => {
         if (painter.paintBand()) {
           geometryCache.skin = painter.skin;
@@ -788,7 +967,7 @@ export function GlobeView({
           .normalize();
         surface = Math.max(
           surface,
-          R + elevationOf(Math.max(0, f.height(probe)), f.mountain(probe)),
+          R + elevationOf(Math.max(0, terrain.height(probe)), terrain.mountain(probe)),
         );
       }
 
@@ -903,7 +1082,9 @@ export function GlobeView({
     let pinchStart = 0;
     let pinchDist = 0;
 
-    let spin = 0;
+    // Le globe s'ouvre sur l'Europe et l'Afrique : sans cette rotation, la
+    // première image est le Pacifique, c'est-à-dire une bille bleue vide.
+    let spin = -1.92;
     let pitch = 0;
     let dist = DIST_WORLD;
     let distTarget = DIST_WORLD;
@@ -973,17 +1154,9 @@ export function GlobeView({
         if (idx > 0) return continents[idx - 1].code;
       }
       // En pleine mer, on tolère le clic « à côté » : le continent dont le
-      // champ est le plus proche du bord l'emporte.
-      let best: string | null = null;
-      let bestVal = -0.5;
-      for (let i = 0; i < fields.length; i++) {
-        const v = fields[i].height(local);
-        if (v > bestVal) {
-          bestVal = v;
-          best = continents[i].code;
-        }
-      }
-      return best;
+      // centre est le plus proche l'emporte.
+      const near = nearestField(fields, local);
+      return near >= 0 ? continents[near].code : null;
     }
 
     const onPointerDown = (ev: PointerEvent) => {
