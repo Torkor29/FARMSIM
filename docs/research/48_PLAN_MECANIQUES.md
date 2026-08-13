@@ -1,7 +1,8 @@
 # 48 — Plan des mécaniques à développer
 
-**Statut :** Plan, à dérouler une brique après l'autre
+**Statut :** Plan d'exécution des briques — la stratégie des métiers est dans [49_TRIANGLE_METIERS.md](./49_TRIANGLE_METIERS.md)
 **Date :** 2026-08-13
+**Mise à jour :** 2026-08-13 — l'absence n'est plus un trou ; l'ordre d'implémentation est révisé.
 
 ---
 
@@ -138,9 +139,10 @@ le produire quand on n'a pas les machines.
 
 ## Phase 3 — Les trois métiers, enfin distincts
 
-C'est le chantier le plus lourd et le plus structurant. Chaque métier doit avoir
-sa boucle, ses bâtiments, ses machines et sa façon de gagner sa vie. Le bonus de
-deux pour cent disparaît : il ne sert qu'à faire croire qu'un choix a été fait.
+Le détail — kits, absence, bourse, modes, filet PNJ — est dans le
+[49](./49_TRIANGLE_METIERS.md). Ici, seulement ce que chaque métier *gagne à
+faire en plus* une fois le triangle posé. Le bonus de deux pour cent n'est plus
+ce qui fait le métier.
 
 ### Céréalier — la terre se travaille
 
@@ -185,14 +187,16 @@ une entreprise.
 un type de travail, une échéance et une exigence de matériel. On en accepte
 plusieurs, on planifie, on livre à temps ou la réputation baisse.
 
-**Mécanique propre : les salariés.** On embauche pour exécuter des chantiers
-pendant qu'on fait autre chose. Attention : cela réduit la présence exigée, ce
-qui va contre l'objectif d'allonger le temps de jeu. Les salariés doivent donc
-coûter cher, être peu nombreux, et travailler moins bien que le joueur.
+**Mécanique propre : la flotte.** Quand l'ETA s'absente, ses machines dorment
+par défaut — les chantiers vont aux autres, c'est le jeu. En tardif, des
+conducteurs PNJ (plafond 2) utilisent *ses* machines, usure réelle, moins bien,
+moins cher. Ce n'est pas « le jeu se joue tout seul » : c'est vendre de la
+capacité. Le détail est au 49, § 8.4.
 
 **Économie** : l'ETA achète du matériel surdimensionné qu'il amortit sur les
 chantiers. Sa courbe de risque est inverse de celle du céréalier — il ne subit
-pas la météo sur une récolte, mais il porte des traites de matériel.
+pas la météo sur une récolte, mais il porte des traites de matériel. Son
+matière première, ce sont les terres des autres.
 
 ---
 
@@ -226,18 +230,24 @@ s'appuie sur des machines que les phases 1 et 2 auront rendues indispensables.
 
 ## Ordre retenu, et pourquoi
 
-1. **La paille.** Elle ajoute des chantiers sans rien changer aux règles
-   existantes, elle exploite un arbitrage déjà en place, et elle fournit la
-   litière dont l'élevage aura besoin.
-2. **Le maïs ensilage.** Il crée le premier pont entre deux métiers et prépare
-   la formulation de ration.
-3. **Les métiers.** Le plus lourd, mais il a besoin des deux précédents pour
-   avoir de la matière : sans paille ni ensilage, la boucle de l'éleveur reste
-   maigre.
-4. **Les saisons.** À faire une fois qu'il y a de quoi s'occuper hors des
-   champs, sinon l'hiver est un mur.
-5. **La CUMA.** En dernier : elle suppose des machines chères et des joueurs
-   installés.
+L'ordre ci-dessous est celui des *gestes* (ce que le joueur touche). L'ordre du
+*triangle* — bourse réelle, consignes, fermes PNJ, kits, puis seulement la
+paille — est dans le 49, § 14. On ne commence plus par la paille si l'ETA n'a
+toujours nulle part où aller.
+
+1. **La bourse des chantiers** (49, brique 0). Sans elle, l'ETA clique des
+   titres. Avec elle, elle entre sur une parcelle qui n'est pas la sienne.
+2. **Les consignes.** L'absence publie. La fenêtre de récolte (38) devient un
+   appel d'offres au lieu d'une amende.
+3. **Les fermes PNJ, puis les kits.** Le solo est un vrai triangle. Le choix
+   de métier à l'installation tient enfin sa promesse.
+4. **La paille.** Pont matière céréalier ↔ éleveur, chantier de pressage pour
+   l'ETA. L'arbitrage résidus vs vente était déjà le bon.
+5. **Le maïs ensilage.** Pont matière + ensileuse, machine signature de l'ETA.
+6. **Le lisier.** Pont retour éleveur → céréalier.
+7. **Les saisons qui ferment.** Elles créent le pic sans lequel l'ETA n'a pas
+   de saison. Pas avant d'avoir de quoi vivre l'hiver.
+8. **La flotte ETA, puis la CUMA.** Capacité et capital, en dernier.
 
 ---
 
@@ -258,8 +268,9 @@ garde-fous :
 
 ## Reste à faire
 
-- Tout. Ce document est un plan, aucune ligne n'est écrite.
+- Valider le 49 (thèse, kits de départ, ordre, flotte tardive) avant d'écrire
+  la brique 0.
 - Chiffrer les prix et les rendements de chaque nouvelle marchandise avant de
   coder : l'équilibrage rétroactif est toujours pire.
-- Décider si les salariés de l'ETA sont compatibles avec l'objectif d'allonger
-  le temps de jeu, ou s'il faut les remplacer par autre chose.
+- Les « salariés » ne sont plus une question ouverte : c'est la flotte, tardive,
+  plafond 2, machines du joueur, le présent gagne toujours (49, § 8.4).

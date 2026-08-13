@@ -76,7 +76,8 @@ Chaque valeur chiffrée dans cette documentation est classée :
 | — | [45_ROTATION.md](./45_ROTATION.md) | Rotation des cultures : le blé sur blé se paie |
 | — | [46_MOBILE_SHELL.md](./46_MOBILE_SHELL.md) | Coque mobile : tiroirs du bas, gestes sur la grille |
 | — | [47_FUTURES.md](./47_FUTURES.md) | Contrats à terme : engager une récolte à venir |
-| — | [48_PLAN_MECANIQUES.md](./48_PLAN_MECANIQUES.md) | Plan : paille, ensilage, métiers, saisons, CUMA |
+| — | [48_PLAN_MECANIQUES.md](./48_PLAN_MECANIQUES.md) | Plan d'exécution : paille, ensilage, saisons, CUMA |
+| — | [49_TRIANGLE_METIERS.md](./49_TRIANGLE_METIERS.md) | Stratégie : céréalier, éleveur, ETA parfaitement reliés |
 
 ---
 
@@ -87,3 +88,4 @@ Chaque valeur chiffrée dans cette documentation est classée :
 3. `16_MVP_ROADMAP.md`
 4. Documents thématiques selon besoin
 5. `12_LEGAL_REGULATORY.md` avant toute décision cash-out / marketplace argent réel
+6. `49_TRIANGLE_METIERS.md` avant d'ajouter une mécanique de métier
