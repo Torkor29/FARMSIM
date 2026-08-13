@@ -43,6 +43,8 @@ export type IsoCell = {
   residuePasses?: number;
   /** Type machine si kind === VEHICLE (sinon TRACTOR par défaut) */
   machineType?: MachineType | null;
+  /** État de la machine garée, 0 à 100 — il se lit sur sa carrosserie */
+  machineCondition?: number | null;
 };
 
 export type IsoBuilding = {
@@ -68,6 +70,8 @@ export type IsoSim = {
 export type ActiveWork = {
   type: MachineType;
   cells: { x: number; y: number }[];
+  /** État de l'engin de chantier, 0 à 100 */
+  condition?: number | null;
 };
 
 /** Un troupeau au pré : de quelle étable il sort, et vers quel enclos. */
@@ -983,6 +987,8 @@ export function IsoFarmView({
         pz: number;
         height: number;
         color: number;
+        density: number;
+        droop: number;
       }[] = [];
       const {
         gridW: gw,
@@ -1143,6 +1149,22 @@ export function IsoFarmView({
             // qu'un capot de tracteur : l'engin au travail doit rester
             // visible depuis le rang voisin.
             const h = lost ? 0.16 : 0.12 + progress * (full - 0.12);
+            // Ce que la parcelle sait, la parcelle le montre. La fumure et le
+            // désherbage font le peuplement ; la sur-maturité fait ployer les
+            // tiges avant que la perte soit actée.
+            const fed = Math.min(2, cell.fertilizedPasses ?? 0) / 2;
+            const choked = cell.weedsControlled === false ? 0.45 : 0;
+            // Les quatre paliers de maturité du jeu : à son heure la tige
+            // est droite, passé l'heure elle ploie, perdue elle verse.
+            const stage = sim?.sim.ripeness?.stage;
+            const droop =
+              lost || stage === "LOST"
+                ? 1
+                : stage === "POOR"
+                  ? 0.6
+                  : stage === "DECLINING"
+                    ? 0.28
+                    : 0;
             cropStalks.push({
               x,
               y,
@@ -1150,6 +1172,8 @@ export function IsoFarmView({
               pz,
               height: h,
               color: cropColor(cell, sim),
+              density: Math.max(0.15, 0.55 + fed * 0.45 - choked),
+              droop,
             });
 
             // Épis : ils ne sortent qu'à maturité et signalent la récolte
@@ -1166,6 +1190,7 @@ export function IsoFarmView({
             const rig = createMachineRig(mType, {
               seed: x * 7 + y * 13,
               shadows: quality.shadows,
+              condition: cell.machineCondition ?? undefined,
             });
             rig.group.scale.setScalar(cellSize * MACHINE_SCALE);
             // Un parc rangé au cordeau sonne faux : chaque engin est posé de
@@ -1688,6 +1713,7 @@ export function IsoFarmView({
           workRig = createMachineRig(aw.type, {
             towed: isTowedImplement(aw.type),
             shadows: quality.shadows,
+            condition: aw.condition ?? undefined,
           });
           workRig.group.scale.setScalar(MACHINE_SCALE);
           workGroup.add(workRig.group);

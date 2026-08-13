@@ -121,10 +121,24 @@ function FarmPreview() {
     const out: IsoCell[] = [];
     for (let y = 0; y < 6; y++) {
       for (let x = 0; x < 6; x++) {
-        if (x === 0 && y === 0) out.push({ x, y, kind: "VEHICLE", machineType: "TRACTOR" });
-        else if (x === 1 && y === 0) out.push({ x, y, kind: "VEHICLE", machineType: "DISC_HARROW" });
+        // Deux engins au parc : l'un sorti d'usine, l'autre bon à réviser.
+        if (x === 0 && y === 0)
+          out.push({ x, y, kind: "VEHICLE", machineType: "TRACTOR", machineCondition: 96 });
+        else if (x === 1 && y === 0)
+          out.push({ x, y, kind: "VEHICLE", machineType: "DISC_HARROW", machineCondition: 12 });
         else if (x >= 4 && y <= 1) out.push({ x, y, kind: "BUILDING" });
-        else if (y >= 2) out.push({ x, y, kind: "CROP", crop: "WHEAT", fieldStage: "READY" });
+        else if (y >= 2)
+          // Chaque rang raconte une conduite différente : bien fumé et
+          // désherbé à gauche, affamé et envahi à droite.
+          out.push({
+            x,
+            y,
+            kind: "CROP",
+            crop: "WHEAT",
+            fieldStage: "READY",
+            fertilizedPasses: x <= 1 ? 2 : x <= 3 ? 1 : 0,
+            weedsControlled: x <= 3,
+          });
         else out.push({ x, y, kind: "EMPTY" });
       }
     }
@@ -141,8 +155,21 @@ function FarmPreview() {
     () => ({
       type,
       cells: Array.from({ length: 6 }, (_, i) => ({ x: i, y: 3 + (run % 2) })),
+      // Un engin de chantier fatigué : sa carrosserie doit le dire.
+      condition: 28,
     }),
     [type, run],
+  );
+
+  // Le dernier rang a passé son heure : ses tiges ploient avant de verser.
+  const cellSims = useMemo(
+    () =>
+      Array.from({ length: 6 }, (_, x) => ({
+        x,
+        y: 5,
+        sim: { progress: 1, ready: true, ripeness: { stage: "POOR" as const } },
+      })),
+    [],
   );
 
   return (
@@ -167,7 +194,7 @@ function FarmPreview() {
           gridH={6}
           cells={cells}
           buildings={buildings}
-          cellSims={[]}
+          cellSims={cellSims}
           selected={[]}
           activeWork={activeWork}
           onCellClick={() => {}}

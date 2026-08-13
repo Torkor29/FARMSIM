@@ -763,6 +763,12 @@ export type MachineState = {
 export type MachineRigOptions = {
   /** Attelé derrière un tracteur — obligatoire pour un outil au travail */
   towed?: boolean;
+  /**
+   * État de la machine, 0 à 100 comme dans le jeu. En dessous du seuil de
+   * révision, la peinture se ternit, le chrome s'oxyde et les pneus
+   * blanchissent : l'entretien se lit sur le champ, pas seulement au garage.
+   */
+  condition?: number;
   /** Ombres portées */
   shadows?: boolean;
   /** Graine de variation de teinte, pour ne pas cloner deux engins voisins */
@@ -794,9 +800,20 @@ type Unit = {
   materials: Materials;
 };
 
+/**
+ * Usure visible, de 0 (neuve) à 1. Une machine reste présentable jusqu'aux
+ * trois quarts de sa vie : la dégradation ne se voit que dans le dernier
+ * tiers, là où le jeu demande justement d'intervenir.
+ */
+function wearOf(condition: number | undefined): number {
+  if (condition == null) return 0;
+  const c = Math.max(0, Math.min(100, condition));
+  return Math.max(0, Math.min(1, (75 - c) / 65));
+}
+
 function createUnit(type: MachineType, opts: MachineRigOptions): Unit {
   const bp = blueprint(type);
-  const materials = createMaterials(PALETTES[type], opts.seed ?? 0);
+  const materials = createMaterials(PALETTES[type], opts.seed ?? 0, wearOf(opts.condition));
   const roles = new Map<Role, THREE.Object3D[]>();
   const body = bp.root.build(materials, roles, opts.shadows ?? true);
   const group = new THREE.Group();

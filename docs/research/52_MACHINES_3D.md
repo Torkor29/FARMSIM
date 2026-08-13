@@ -247,11 +247,78 @@ contient :
 Les fichiers vivent dans `models/`, hors de `public/` : ce sont des livrables
 pour l'extérieur, pas des ressources chargées par le jeu.
 
+## L'usure se voit sur le champ
+
+Le jeu a tout un système d'entretien — graisser, rafistoler, réviser, barème
+TRN, seuil de panne — et la parcelle n'en montrait rien : une machine à 12 %
+était aussi pimpante qu'une neuve. Il fallait ouvrir le garage pour savoir
+qu'un engin agonisait.
+
+`createMachineRig(type, { condition })` salit désormais la machine, par les
+matières seules — la géométrie ne bouge pas, donc le cache tient :
+
+| Matière | Ce que l'usure fait |
+|---|---|
+| Peinture | tire vers la terre, perd sa saturation, **et perd son vernis** — une machine fatiguée ne brille plus |
+| Chrome, acier | s'oxydent : teinte rouille, métallicité en baisse, rugosité en hausse |
+| Caoutchouc | pâlit sous la poussière |
+| Verre | se voile |
+
+La dégradation ne commence qu'au dernier tiers de vie (75 %) : un parc bien
+suivi reste présentable, et le signal n'apparaît que là où le jeu demande
+d'intervenir. L'état voyage de `App` jusqu'à la vue par `IsoCell.machineCondition`
+et `ActiveWork.condition` — sur la parcelle d'un voisin, l'API ne donne pas
+l'état et la machine s'affiche donc comme neuve.
+
+## Le champ dit ce que la parcelle sait
+
+La simulation connaît la fumure, le désherbage et la fenêtre de récolte ; le
+champ ne le montrait que par une teinte. Il le montre maintenant par sa
+**forme**, ce qui se lit d'un coup d'œil et sans légende :
+
+- **densité du peuplement** = fumure et désherbage. Une case fumée deux fois et
+  désherbée est drue ; une case affamée ou envahie est clairsemée, et ses brins
+  sont plus courts — on voit la terre entre eux ;
+- **affaissement** = fenêtre de récolte. À son heure la tige est droite ; au
+  palier `DECLINING` elle s'incline, `POOR` elle ploie, `LOST` elle verse. Le
+  joueur voit sa récolte se dégrader avant que la perte soit actée ;
+- une case au plus mal garde toujours quelques brins : zéro voudrait dire
+  « pas de culture ici », ce qui serait un mensonge.
+
+## Ce qui se voit est enfin testé
+
+`apps/web` n'avait aucun test (`"test": "echo 'no web tests yet'"`) quand la
+simulation en comptait des centaines. Le prix s'est payé : **deux
+implémentations des engins ont livré le même défaut**, des roues enfoncées de
+trois centimètres dans la dalle. Personne ne l'a vu parce que rien ne le
+mesurait.
+
+Trois.js construit une scène sans le moindre contexte graphique : boîtes
+englobantes, hiérarchie et matières se vérifient donc dans Node, sans
+navigateur ni image à comparer. 51 tests couvrent :
+
+- **l'assiette** — chaque engin, dételé et attelé, à l'arrêt et au travail,
+  pose ses roues entre −5 mm et +20 mm du sol ;
+- **l'emprise annoncée** — `rig.length` sert au cadrage et au placement de la
+  poussière : elle doit correspondre à la boîte réelle ;
+- **les pièces animées** — chaque type expose les nœuds dont la vue a besoin
+  (roues, essieu, rabatteur, vis, trains, disques, gyrophare, pot) ;
+- **l'entraînement par la distance** — une roue immobile à l'arrêt, un tour par
+  circonférence, et le même angle pour la même distance à deux instants ;
+- **l'outil** — posé au travail, relevé en transport ;
+- **l'usure** — une machine fatiguée est plus terne, une machine suivie reste
+  intacte, et l'usure ne déforme jamais la géométrie ;
+- **le champ** — semis stable d'une reconstruction à l'autre, densité qui suit
+  le rendement, fauche qui ne touche que la case franchie et qui survit au
+  rechargement de la parcelle.
+
 ## Reste à faire
 
 - Le catalogue et le garage affichent toujours les `.webp` : le rendu 3D est
   disponible mais pas branché, faute d'un budget de contextes WebGL clair sur
   mobile
+- Les bâtiments et les arbres restent des illustrations 2D agrandies : à côté
+  des engins et du champ en géométrie, le raccord se voit
 - Aucun **niveau de détail** : la même géométrie sert de près comme de loin
 - L'usure ne se voit pas — une machine à 15 % de condition est aussi pimpante
   qu'une neuve, alors que la boue, la rouille ou un pot d'échappement noirci

@@ -59,10 +59,22 @@ export type Palette = {
 export type Materials = Record<MatKey, THREE.Material>;
 
 /**
- * Jeu de matières d'une machine. La graine décale légèrement la teinte : deux
- * engins voisins ne doivent pas être la photocopie l'un de l'autre.
+ * Jeu de matières d'une machine.
+ *
+ * `seed` décale légèrement la teinte : deux engins voisins ne doivent pas être
+ * la photocopie l'un de l'autre.
+ *
+ * `wear` (0 = sortie d'usine, 1 = bonne à réviser) salit la machine : la
+ * peinture se ternit et perd son vernis, le chrome s'oxyde, l'acier rouille,
+ * les pneus se couvrent de poussière. C'est le seul moyen de lire l'état du
+ * parc sans ouvrir un menu — et l'entretien du jeu se joue précisément là.
  */
-export function createMaterials(pal: Palette, seed = 0): Materials {
+export function createMaterials(pal: Palette, seed = 0, wear = 0): Materials {
+  const w = Math.max(0, Math.min(1, wear));
+  /** Terre séchée : ce vers quoi tout tire en vieillissant. */
+  const MUD = new THREE.Color(0x6b5a44);
+  const RUST = new THREE.Color(0x8a5a3c);
+  const soil = (c: THREE.Color, amount: number) => c.lerp(MUD, amount * w);
   const jitter = ((Math.sin(seed * 12.9898) * 43758.5453) % 1) - 0.5;
   const tint = (hex: number) => {
     const c = new THREE.Color(hex);
@@ -74,11 +86,12 @@ export function createMaterials(pal: Palette, seed = 0): Materials {
   // elle qui fait la différence entre une carrosserie et un aplat.
   const paint = (hex: number, roughness = 0.36) =>
     new THREE.MeshPhysicalMaterial({
-      color: tint(hex),
+      color: soil(tint(hex), 0.5),
       metalness: 0.15,
-      roughness,
-      clearcoat: 0.7,
-      clearcoatRoughness: 0.18,
+      roughness: Math.min(1, roughness + w * 0.34),
+      // Le vernis part le premier : une machine fatiguée ne brille plus.
+      clearcoat: 0.7 * (1 - w * 0.85),
+      clearcoatRoughness: 0.18 + w * 0.4,
     });
   const std = (p: THREE.MeshStandardMaterialParameters) => new THREE.MeshStandardMaterial(p);
 
@@ -86,17 +99,30 @@ export function createMaterials(pal: Palette, seed = 0): Materials {
     paint: paint(pal.body),
     paintDark: paint(pal.bodyDark, 0.45),
     trim: paint(pal.trim, 0.42),
-    chrome: std({ color: 0xd9dee2, metalness: 0.96, roughness: 0.14 }),
-    steel: std({ color: 0x8f979e, metalness: 0.72, roughness: 0.38 }),
+    chrome: std({
+      color: new THREE.Color(0xd9dee2).lerp(RUST, w * 0.5),
+      metalness: 0.96 - w * 0.5,
+      roughness: 0.14 + w * 0.5,
+    }),
+    steel: std({
+      color: new THREE.Color(0x8f979e).lerp(RUST, w * 0.45),
+      metalness: 0.72 - w * 0.35,
+      roughness: 0.38 + w * 0.4,
+    }),
     // Fonte de carter : mate, presque grenue.
     cast: std({ color: 0x53585d, metalness: 0.45, roughness: 0.72 }),
     plastic: std({ color: 0x26292d, metalness: 0.08, roughness: 0.62 }),
-    rubber: std({ color: 0x1c1c1f, metalness: 0.02, roughness: 0.93 }),
+    // Le caoutchouc ne rouille pas : il se couvre de poussière et pâlit.
+    rubber: std({
+      color: new THREE.Color(0x1c1c1f).lerp(new THREE.Color(0x6a6053), w * 0.45),
+      metalness: 0.02,
+      roughness: 0.93,
+    }),
     rim: paint(pal.rim, 0.34),
     glass: std({
-      color: 0x9fd2e2,
+      color: new THREE.Color(0x9fd2e2).lerp(new THREE.Color(0xb9b6a4), w * 0.6),
       metalness: 0.02,
-      roughness: 0.06,
+      roughness: 0.06 + w * 0.3,
       transparent: true,
       opacity: 0.46,
       side: THREE.DoubleSide,

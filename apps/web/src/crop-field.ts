@@ -32,7 +32,25 @@ const STALKS_PER_CELL = 40;
 /** Durée de la chute d'une tige fauchée, secondes */
 const CUT_TIME = 0.35;
 
-type CellEntry = { x: number; y: number; px: number; pz: number; height: number; color: number };
+type CellEntry = {
+  x: number;
+  y: number;
+  px: number;
+  pz: number;
+  height: number;
+  color: number;
+  /**
+   * Densité du peuplement, 0 à 1. C'est le rendement attendu qui se voit :
+   * une case fumée et désherbée est drue, une case affamée ou envahie est
+   * clairsemée et laisse voir la terre.
+   */
+  density?: number;
+  /**
+   * Affaissement, 0 à 1. Une culture qui a passé son heure ploie avant de
+   * verser — c'est le signal qui doit alarmer avant que la perte soit actée.
+   */
+  droop?: number;
+};
 
 export type CropField = {
   object: THREE.Object3D;
@@ -40,6 +58,10 @@ export type CropField = {
   setCells(cells: CellEntry[], cellSize: number): void;
   /** Fauche une case : ses tiges se couchent à partir de `t`. */
   cut(x: number, y: number, t: number): void;
+  /** Nombre de brins plantés sur une case — zéro si elle n'est pas semée. */
+  stalkCount(x: number, y: number): number;
+  /** Instant de fauche d'une case, ou `null` si elle est encore debout. */
+  cutAt(x: number, y: number): number | null;
   /** `wind` : 0 (calme) à 1 (rafale) */
   update(t: number, wind: number): void;
   dispose(): void;
@@ -86,7 +108,8 @@ export function createCropField(maxCells: number): CropField {
          uniform float uTime;
          uniform float uWind;
          attribute float aCut;
-         attribute float aPhase;`,
+         attribute float aPhase;
+         attribute float aDroop;`,
       )
       .replace(
         "#include <begin_vertex>",
@@ -95,10 +118,19 @@ export function createCropField(maxCells: number): CropField {
          // épi qui balaie. Deux fréquences pour que la houle ne soit pas
          // un métronome.
          float h = clamp(transformed.y, 0.0, 1.2);
-         float bend = uWind * h * h *
+         // Un brin qui ploie oscille moins : il n'a plus la raideur d'une
+         // tige verte.
+         float bend = uWind * h * h * (1.0 - aDroop * 0.6) *
            (sin(uTime * 1.7 + aPhase) * 0.055 + sin(uTime * 3.3 + aPhase * 1.7) * 0.022);
          transformed.x += bend;
          transformed.z += bend * 0.45;
+
+         // Affaissement : la tige s'arque et perd de la hauteur, sans tomber
+         // — la case reste récoltable, mais elle a mauvaise mine.
+         if (aDroop > 0.0) {
+           transformed.x += aDroop * 0.22 * h * h;
+           transformed.y -= aDroop * 0.14 * h;
+         }
 
          // Fauche : la tige se couche vers l'avant en se tassant.
          if (aCut >= 0.0) {
@@ -125,8 +157,10 @@ export function createCropField(maxCells: number): CropField {
 
   const cutAttr = new THREE.InstancedBufferAttribute(new Float32Array(capacity).fill(-1), 1);
   const phaseAttr = new THREE.InstancedBufferAttribute(new Float32Array(capacity), 1);
+  const droopAttr = new THREE.InstancedBufferAttribute(new Float32Array(capacity), 1);
   mesh.geometry.setAttribute("aCut", cutAttr);
   mesh.geometry.setAttribute("aPhase", phaseAttr);
+  mesh.geometry.setAttribute("aDroop", droopAttr);
   mesh.instanceColor = new THREE.InstancedBufferAttribute(new Float32Array(capacity * 3), 3);
 
   /** Plage d'instances occupée par chaque case, pour la fauche. */
@@ -146,7 +180,11 @@ export function createCropField(maxCells: number): CropField {
       for (const cell of cells) {
         const k = `${cell.x},${cell.y}`;
         const start = i;
-        for (let s = 0; s < STALKS_PER_CELL && i < capacity; s++, i++) {
+        // La densité se traduit en nombre de brins : c'est ce qui fait qu'une
+        // parcelle bien menée se voit de loin, sans lire un chiffre.
+        const density = Math.max(0, Math.min(1, cell.density ?? 1));
+        const planted = Math.max(6, Math.round(STALKS_PER_CELL * (0.34 + 0.66 * density)));
+        for (let s = 0; s < planted && i < capacity; s++, i++) {
           // Semis en quinconce, décalé au hasard mais toujours le même :
           // deux passages de `layout()` ne doivent pas redistribuer le champ.
           const noise = Math.sin((cell.x * 12.9 + cell.y * 78.2 + s * 37.7) * 1.7) * 43758.5453;
@@ -163,7 +201,9 @@ export function createCropField(maxCells: number): CropField {
             cell.pz + (gz + rz * 0.09) * spread,
           );
           dummy.rotation.set(0, noise % Math.PI, 0);
-          const grow = 0.78 + Math.abs(rx) * 0.5;
+          // Un peuplement clairsemé est aussi plus chétif : la case affamée
+          // n'a pas que des trous, elle a des brins courts.
+          const grow = (0.78 + Math.abs(rx) * 0.5) * (0.72 + density * 0.28);
           dummy.scale.set(1, cell.height * grow, 1);
           dummy.updateMatrix();
           mesh.setMatrixAt(i, dummy.matrix);
@@ -171,6 +211,7 @@ export function createCropField(maxCells: number): CropField {
           color.setHex(cell.color).offsetHSL(0, 0, rx * 0.05);
           mesh.setColorAt(i, color);
           phaseAttr.setX(i, (cell.px + cell.pz) * 1.6 + s * 0.7);
+          droopAttr.setX(i, Math.max(0, Math.min(1, cell.droop ?? 0)) * (0.7 + Math.abs(rz)));
           cutAttr.setX(i, cutCells.get(k) ?? -1);
         }
         ranges.set(k, { start, count: i - start });
@@ -180,6 +221,15 @@ export function createCropField(maxCells: number): CropField {
       if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
       cutAttr.needsUpdate = true;
       phaseAttr.needsUpdate = true;
+      droopAttr.needsUpdate = true;
+    },
+
+    stalkCount(x, y) {
+      return ranges.get(`${x},${y}`)?.count ?? 0;
+    },
+
+    cutAt(x, y) {
+      return cutCells.get(`${x},${y}`) ?? null;
     },
 
     cut(x, y, t) {

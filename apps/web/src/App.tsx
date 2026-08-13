@@ -429,6 +429,7 @@ export function App() {
   const [activeWork, setActiveWork] = useState<{
     type: MachineType;
     cells: { x: number; y: number }[];
+    condition?: number;
   } | null>(null);
   const [hoverCell, setHoverCell] = useState<{ x: number; y: number } | null>(null);
   const [toastTick, setToastTick] = useState(0);
@@ -837,6 +838,11 @@ export function App() {
       return {
         ...c,
         machineType: (m?.type as MachineType | undefined) ?? "TRACTOR",
+        // L'état part jusqu'à la vue : une machine fatiguée se ternit sur le
+        // champ, sans qu'il faille ouvrir le garage.
+        // Sur la parcelle d'un voisin, l'API ne donne que le type : l'état
+        // reste au propriétaire, et la machine s'affiche alors comme neuve.
+        machineCondition: (m as { condition?: number } | undefined)?.condition,
       };
     });
   }, [parcel?.cells, parcel?.machines, player?.farm?.machines, visiting]);
@@ -1627,7 +1633,10 @@ export function App() {
 
   function flashWork(type: MachineType, cells: { x: number; y: number }[]) {
     setPulseCells(cells);
-    setActiveWork({ type, cells });
+    // L'engin envoyé au chantier est celui du garage : il arrive avec son
+    // usure, visible sur sa carrosserie.
+    const used = (player?.farm?.machines ?? []).find((m) => m.type === type);
+    setActiveWork({ type, cells, condition: used?.condition });
     // Un peu de marge sur la durée du parcours : l'engin doit atteindre la
     // dernière case avant qu'on ne l'efface.
     window.setTimeout(() => {
