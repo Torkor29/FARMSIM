@@ -1026,8 +1026,17 @@ export function IsoFarmView({
       onHoverRef.current?.(null);
     }
 
+    /**
+     * Zoom à la molette, en écouteur passif.
+     *
+     * Appeler `preventDefault` obligerait à déclarer l'écouteur bloquant, ce
+     * que Chrome signale comme une violation : il ne peut plus faire défiler
+     * la page avant de savoir si on l'y autorise. C'est inutile ici, la scène
+     * occupe un conteneur qui ne défile pas. La molette avec Ctrl est laissée
+     * au navigateur, à qui elle appartient.
+     */
     function onWheel(ev: WheelEvent) {
-      ev.preventDefault();
+      if (ev.ctrlKey) return;
       setZoom(view.zoom * (ev.deltaY < 0 ? 1.12 : 1 / 1.12));
     }
 
@@ -1040,7 +1049,7 @@ export function IsoFarmView({
     renderer.domElement.addEventListener("pointerup", onPointerUp);
     renderer.domElement.addEventListener("pointercancel", onPointerUp);
     renderer.domElement.addEventListener("pointerleave", onPointerLeave);
-    renderer.domElement.addEventListener("wheel", onWheel, { passive: false });
+    renderer.domElement.addEventListener("wheel", onWheel, { passive: true });
 
     let raf = 0;
     // THREE.Clock est déprécié depuis r183 au profit de Timer, qui doit être

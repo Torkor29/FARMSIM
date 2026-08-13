@@ -1102,6 +1102,15 @@ button.ghost {
 .error { color: var(--danger); }
 .ok { color: var(--ok); }
 
+/**
+ * La barre d'onglets n'existe que dans la coque mobile. Le composant ne la
+ * monte déjà que sous le seuil, mais une seconde barrière ici garantit qu'un
+ * état retardataire — un basculement de fenêtre, l'émulateur d'appareil des
+ * outils de développement — ne la laisse jamais apparaître sur grand écran.
+ */
+.tabbar,
+.sheet-scrim { display: none; }
+
 /* ——————————————————————————————————————————————————————————————
    Coque mobile
    ——————————————————————————————————————————————————————————————
@@ -1168,6 +1177,7 @@ button.ghost {
   }
 
   .sheet-scrim {
+    display: block;
     position: fixed;
     inset: 0;
     z-index: 11;
