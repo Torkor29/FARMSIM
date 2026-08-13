@@ -178,6 +178,7 @@ type Tool =
   | "SELECT"
   | "PLANT_WHEAT"
   | "PLANT_MAIZE"
+  | "PLANT_PEA"
   | "FERTILIZE"
   | "HARVEST"
   | "STUBBLE"
@@ -775,9 +776,10 @@ export function App() {
    * pas la découvrir à la moisson.
    */
   const rotationAlert = useMemo(() => {
-    if (tool !== "PLANT_WHEAT" && tool !== "PLANT_MAIZE") return null;
+    if (tool !== "PLANT_WHEAT" && tool !== "PLANT_MAIZE" && tool !== "PLANT_PEA") return null;
     if (!selectedCells.length) return null;
-    const crop: CropCode = tool === "PLANT_WHEAT" ? "WHEAT" : "MAIZE";
+    const crop: CropCode =
+      tool === "PLANT_WHEAT" ? "WHEAT" : tool === "PLANT_MAIZE" ? "MAIZE" : "PEA";
     const cells = parcel?.cells ?? [];
     let worst = 1;
     let repeated = 0;
@@ -1095,7 +1097,7 @@ export function App() {
   /** Le prestataire n'est proposé que là où il a un sens : sur du travail aux champs. */
   const contractorOffer = useMemo(() => {
     const work: FarmWork | null =
-      tool === "PLANT_WHEAT" || tool === "PLANT_MAIZE"
+      tool === "PLANT_WHEAT" || tool === "PLANT_MAIZE" || tool === "PLANT_PEA"
         ? "PLANT"
         : tool === "FERTILIZE"
           ? "FERTILIZE"
@@ -1179,8 +1181,9 @@ export function App() {
     const workCells = selectedCells.slice();
     flashWork(workMachineForTool(tool), workCells);
     try {
-      if (tool === "PLANT_WHEAT" || tool === "PLANT_MAIZE") {
-        const crop: CropCode = tool === "PLANT_WHEAT" ? "WHEAT" : "MAIZE";
+      if (tool === "PLANT_WHEAT" || tool === "PLANT_MAIZE" || tool === "PLANT_PEA") {
+        const crop: CropCode =
+          tool === "PLANT_WHEAT" ? "WHEAT" : tool === "PLANT_MAIZE" ? "MAIZE" : "PEA";
         const r = await api<{ machine?: { wearApplied: number; condition: number; type: string } }>(
           `/parcels/${activeParcelId}/plant`,
           {
@@ -2153,6 +2156,7 @@ export function App() {
         </button>
         {(tool === "PLANT_WHEAT" ||
           tool === "PLANT_MAIZE" ||
+          tool === "PLANT_PEA" ||
           tool === "FERTILIZE" ||
           tool === "HARVEST" ||
           tool === "STUBBLE" ||
@@ -2172,11 +2176,21 @@ export function App() {
               </button>
             )}
             {tool === "PLANT_MAIZE" && (
+              <button
+                type="button"
+                className="action"
+                title="Tête de rotation : rapporte moins, mais laisse le sol azoté"
+                onClick={() => setTool("PLANT_PEA")}
+              >
+                Pois
+              </button>
+            )}
+            {tool === "PLANT_PEA" && (
               <button type="button" className="action" onClick={() => setTool("PLANT_WHEAT")}>
                 Blé
               </button>
             )}
-            {(tool === "PLANT_WHEAT" || tool === "PLANT_MAIZE") && (
+            {(tool === "PLANT_WHEAT" || tool === "PLANT_MAIZE" || tool === "PLANT_PEA") && (
               <button
                 type="button"
                 className={`action ${directSeed ? "on" : ""}`}

@@ -51,7 +51,12 @@ export const NO_ROTATION: RotationState = { lastCrop: null, cropStreak: 0 };
  */
 export function rotationFactor(state: RotationState, crop: CropCode): number {
   if (!state.lastCrop || state.cropStreak <= 0) return 1;
-  if (state.lastCrop !== crop) return 1 + BREAK_CROP_BONUS;
+  if (state.lastCrop !== crop) {
+    // Une légumineuse ne se contente pas de couper le cycle des maladies :
+    // elle laisse de l'azote. Le gain est donc plus franc qu'une rupture
+    // ordinaire — sauf pour une autre légumineuse, qui n'en a que faire.
+    return isLegume(state.lastCrop) && !isLegume(crop) ? 1 + NITROGEN_BONUS : 1 + BREAK_CROP_BONUS;
+  }
   const i = Math.min(ROTATION_MALUS.length - 1, Math.max(0, Math.floor(state.cropStreak)));
   return 1 - ROTATION_MALUS[i];
 }
@@ -80,3 +85,20 @@ export function rotationSummary(state: RotationState): string {
   if (state.cropStreak === 1) return `Précédent : ${state.lastCrop}`;
   return `Précédent : ${state.lastCrop} × ${state.cropStreak}`;
 }
+
+/**
+ * Les légumineuses fixent l'azote de l'air par leurs nodosités et en laissent
+ * une part dans le sol. La culture qui suit démarre donc sur une réserve que
+ * le blé ou le maïs, eux, ne font que consommer.
+ *
+ * C'est ce qui distingue une vraie tête de rotation d'une simple alternance,
+ * et ce qui justifie de semer un pois dont la tonne rapporte moins.
+ */
+export const LEGUMES: readonly CropCode[] = ["PEA"];
+
+export function isLegume(crop: CropCode): boolean {
+  return LEGUMES.includes(crop);
+}
+
+/** Gain apporté à la culture suivant une légumineuse `[GD]` */
+export const NITROGEN_BONUS = 0.13;

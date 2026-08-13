@@ -1485,7 +1485,7 @@ app.post("/parcels/:id/contractor", async (req, res) => {
     .object({
       userId: z.string(),
       work: z.enum(["PLANT", "FERTILIZE", "HARVEST", "PLOW"]),
-      crop: z.enum(["WHEAT", "MAIZE"]).optional(),
+      crop: z.enum(["WHEAT", "MAIZE", "PEA"]).optional(),
       cells: z.array(z.object({ x: z.number().int(), y: z.number().int() })).min(1),
     })
     .safeParse(req.body);
@@ -1719,7 +1719,7 @@ app.post("/parcels/:id/plant", async (req, res) => {
   const body = z
     .object({
       userId: z.string(),
-      crop: z.enum(["WHEAT", "MAIZE"]),
+      crop: z.enum(["WHEAT", "MAIZE", "PEA"]),
       cells: z.array(z.object({ x: z.number().int(), y: z.number().int() })).min(1),
       /** Semer dans les chaumes, sans travail du sol préalable */
       directSeed: z.boolean().optional(),

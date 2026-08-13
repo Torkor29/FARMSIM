@@ -16,6 +16,7 @@ enum Specialization {
 enum CropCode {
   WHEAT
   MAIZE
+  PEA
 }
 
 enum FieldStage {

@@ -10,7 +10,7 @@
  * @see docs/research/43_LIVESTOCK_PRODUCE.md
  */
 
-export type TradeGood = "WHEAT" | "MAIZE" | "MILK" | "MEAT" | "HAY";
+export type TradeGood = "WHEAT" | "MAIZE" | "PEA" | "MILK" | "MEAT" | "HAY";
 
 export type GoodDef = {
   code: TradeGood;
@@ -65,6 +65,17 @@ export const GOOD_DEFS: Record<TradeGood, GoodDef> = {
     sellable: true,
     purchasable: false,
     perishable: true,
+  },
+  PEA: {
+    code: "PEA",
+    name: "Pois",
+    unit: "t",
+    // Une protéine se paie mieux qu'une céréale, ce qui compense en partie un
+    // rendement à l'hectare plus faible.
+    basePrice: 285,
+    sellable: true,
+    purchasable: false,
+    perishable: false,
   },
   HAY: {
     code: "HAY",

@@ -15,7 +15,7 @@ import type { TradeGood } from "./goods.js";
 
 export type Specialization = "CEREALIER" | "ELEVEUR" | "ETA";
 
-export type CropCode = "WHEAT" | "MAIZE";
+export type CropCode = "WHEAT" | "MAIZE" | "PEA";
 
 export type FieldStage =
   | "EMPTY"
@@ -116,6 +116,16 @@ export const CROP_DEFS: Record<
     growMs: 3.5 * 60 * 1000,
     seedCostPerCell: 18,
   },
+  // Tête de rotation : le pois rapporte moins à la tonne, mais il laisse
+  // derrière lui un sol azoté dont profite la culture suivante. C'est ce qui
+  // en fait une décision, et non un choix par défaut.
+  PEA: {
+    code: "PEA",
+    name: "Pois",
+    yieldPerCell: 0.26,
+    growMs: 2.5 * 60 * 1000,
+    seedCostPerCell: 12,
+  },
 };
 
 /**
@@ -133,6 +143,8 @@ export const MARKET_BOUNDS: Record<
   MILK: { initial: 42, min: 30, max: 62, depth: 800 },
   MEAT: { initial: 1450, min: 900, max: 2300, depth: 300 },
   HAY: { initial: 95, min: 60, max: 165, depth: 1500 },
+  // Marché plus étroit que le blé : un gros lot y pèse davantage.
+  PEA: { initial: 285, min: 170, max: 520, depth: 900 },
 };
 
 /**
