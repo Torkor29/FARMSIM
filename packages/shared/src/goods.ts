@@ -10,7 +10,18 @@
  * @see docs/research/43_LIVESTOCK_PRODUCE.md
  */
 
-export type TradeGood = "WHEAT" | "MAIZE" | "PEA" | "MILK" | "MEAT" | "HAY";
+export type TradeGood =
+  | "WHEAT"
+  | "MAIZE"
+  | "PEA"
+  | "BARLEY"
+  | "RAPE"
+  | "MILK"
+  | "MEAT"
+  | "HAY"
+  | "EGGS"
+  | "WOOL"
+  | "MANURE";
 
 export type GoodDef = {
   code: TradeGood;
@@ -25,6 +36,11 @@ export type GoodDef = {
   purchasable: boolean;
   /** Se dégrade-t-il ? Le lait ne se garde pas comme du blé. */
   perishable: boolean;
+  /**
+   * Reste sur la ferme, se vend au voisin : pas un cours mondial.
+   * Le négociant n'en fait pas commerce.
+   */
+  localOnly?: boolean;
 };
 
 export const GOOD_DEFS: Record<TradeGood, GoodDef> = {
@@ -86,10 +102,72 @@ export const GOOD_DEFS: Record<TradeGood, GoodDef> = {
     purchasable: true,
     perishable: false,
   },
+  BARLEY: {
+    code: "BARLEY",
+    name: "Orge",
+    unit: "t",
+    basePrice: 195,
+    sellable: true,
+    purchasable: false,
+    perishable: false,
+  },
+  RAPE: {
+    code: "RAPE",
+    name: "Colza",
+    unit: "t",
+    basePrice: 340,
+    sellable: true,
+    purchasable: false,
+    perishable: false,
+  },
+  EGGS: {
+    code: "EGGS",
+    name: "Œufs",
+    unit: "caisse",
+    basePrice: 22,
+    sellable: true,
+    purchasable: false,
+    perishable: true,
+  },
+  WOOL: {
+    code: "WOOL",
+    name: "Laine",
+    unit: "t",
+    basePrice: 420,
+    sellable: true,
+    purchasable: false,
+    perishable: false,
+  },
+  MANURE: {
+    code: "MANURE",
+    name: "Fumier",
+    unit: "t",
+    basePrice: 55,
+    sellable: true,
+    purchasable: false,
+    perishable: false,
+    localOnly: true,
+  },
 };
 
+/** Icône pour l’hôtel des ventes — un dessin, pas un code machine. */
+export const GOOD_ICONS: Record<TradeGood, string> = {
+  WHEAT: "🌾",
+  BARLEY: "🌾",
+  MAIZE: "🌽",
+  RAPE: "🌼",
+  PEA: "🟢",
+  HAY: "🌿",
+  MILK: "🥛",
+  MEAT: "🥩",
+  EGGS: "🥚",
+  WOOL: "🧶",
+  MANURE: "🟤",
+};
+
+/** Marchandises à cours mondial — le fumier s'écoule au voisin, pas ici. */
 export const SELLABLE_GOODS = (Object.keys(GOOD_DEFS) as TradeGood[]).filter(
-  (g) => GOOD_DEFS[g].sellable,
+  (g) => GOOD_DEFS[g].sellable && !GOOD_DEFS[g].localOnly,
 );
 
 /** Marge du négociant à l'achat : il vend plus cher qu'il ne rachète `[GD]` */
@@ -114,13 +192,21 @@ export function dealerAskPrice(marketPrice: number): number {
 export const FEED_VALUE: Partial<Record<TradeGood, number>> = {
   HAY: 1,
   MAIZE: 1.4,
+  BARLEY: 1.2,
+  WHEAT: 1.1,
 };
 
-/** Qualité de ration obtenue, 0 = strictement du fourrage, 1 = tout au maïs. */
-export function rationQuality(hayTons: number, maizeTons: number): number {
-  const total = hayTons + maizeTons;
+/** Qualité de ration : 0 = que du foin, 1 = que du concentré. */
+export function rationQuality(
+  hayTons: number,
+  maizeTons: number,
+  barleyTons = 0,
+  wheatTons = 0,
+): number {
+  const concentrate = maizeTons + barleyTons + wheatTons;
+  const total = hayTons + concentrate;
   if (total <= 0) return 0;
-  return Math.max(0, Math.min(1, maizeTons / total));
+  return Math.max(0, Math.min(1, concentrate / total));
 }
 
 /**
@@ -130,6 +216,17 @@ export function rationQuality(hayTons: number, maizeTons: number): number {
  * confondre les deux échelles rendrait une tonne de foin dérisoire alors
  * qu'elle nourrit un troupeau plusieurs jours.
  */
-export function feedUnits(hayTons: number, maizeTons: number): number {
-  return (hayTons * (FEED_VALUE.HAY ?? 1) + maizeTons * (FEED_VALUE.MAIZE ?? 1)) * 1000;
+export function feedUnits(
+  hayTons: number,
+  maizeTons: number,
+  barleyTons = 0,
+  wheatTons = 0,
+): number {
+  return (
+    (hayTons * (FEED_VALUE.HAY ?? 1) +
+      maizeTons * (FEED_VALUE.MAIZE ?? 1) +
+      barleyTons * (FEED_VALUE.BARLEY ?? 1.2) +
+      wheatTons * (FEED_VALUE.WHEAT ?? 1.1)) *
+    1000
+  );
 }

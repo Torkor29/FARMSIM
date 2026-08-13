@@ -1,0 +1,1 @@
+-- SQLite stocke CropCode en texte : orge, colza et herbe deviennent des valeurs valides.

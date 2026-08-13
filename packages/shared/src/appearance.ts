@@ -272,6 +272,9 @@ export function randomAppearance(spec?: "CEREALIER" | "ELEVEUR"): CharacterAppea
 /** Présence au champ : au-delà, le perso disparaît de la parcelle. */
 export const FIELD_PRESENCE_TTL_MS = 90_000;
 
+/** Un joueur est « en ligne » s’il a été vu récemment. */
+export const PLAYER_ONLINE_MS = 2 * 60 * 1000;
+
 export type FieldWorkerView = {
   id: string;
   name: string;

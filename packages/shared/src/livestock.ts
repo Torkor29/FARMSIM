@@ -40,6 +40,31 @@ export const MAX_BARN_LEVEL = 5;
  */
 export const LIVESTOCK_CYCLE_MS = 15 * 60 * 1000;
 
+/** Traite / œufs / laine : prêt au bout de 15 % d’un cycle. */
+export const COLLECT_READY_RATIO = 0.15;
+
+/** 0 = vient d’être collecté, 1 = prêt. */
+export function collectProgress(
+  lastAt: number | null,
+  bornAt: number,
+  now: number,
+  cycleMs = LIVESTOCK_CYCLE_MS,
+): number {
+  const start = lastAt ?? bornAt;
+  const need = cycleMs * COLLECT_READY_RATIO;
+  if (need <= 0) return 1;
+  return Math.min(1, Math.max(0, (now - start) / need));
+}
+
+export function collectReady(
+  lastAt: number | null,
+  bornAt: number,
+  now: number,
+  cycleMs = LIVESTOCK_CYCLE_MS,
+): boolean {
+  return collectProgress(lastAt, bornAt, now, cycleMs) >= 1;
+}
+
 /**
  * « Heure » d'élevage — unité de toutes les constantes de dérive. Elle suit le
  * temps compressé du jeu, pas l'horloge murale : 24 heures d'élevage font un
@@ -62,7 +87,55 @@ function round1(value: number): number {
 /* 1. Entités                                                          */
 /* ------------------------------------------------------------------ */
 
-export type AnimalKind = "COW" | "PIG";
+export type AnimalKind = "COW" | "PIG" | "HEN" | "SHEEP";
+
+/** Dessin isométrique de la bête, pour l’UI — même principe que les bâtiments. */
+export const ANIMAL_ART: Record<AnimalKind, string> = {
+  COW: "/assets/animals/cow.svg",
+  PIG: "/assets/animals/pig.svg",
+  HEN: "/assets/animals/hen.svg",
+  SHEEP: "/assets/animals/sheep.svg",
+};
+
+/** Pose tête au sol (pré), quand on a un second dessin. */
+export const ANIMAL_GRAZE_ART: Partial<Record<AnimalKind, string>> = {
+  COW: "/assets/animals/cow-graze.svg",
+};
+
+/** Éleveur débutant : quelques vaches, pas une étable vide. */
+export const STARTER_COW_COUNT = 3;
+/** Foin offert à l’installation, pour tenir le premier cycle. */
+export const STARTER_HAY_TONS = 2;
+
+export const ANIMAL_PRICE: Record<AnimalKind, number> = {
+  COW: 420,
+  PIG: 420,
+  HEN: 28,
+  SHEEP: 160,
+};
+
+/** Ration de base par bête et par cycle, en kg `[GD]` */
+export const FEED_BASE: Record<AnimalKind, number> = {
+  COW: 14,
+  PIG: 14,
+  HEN: 2,
+  SHEEP: 8,
+};
+
+export function kindForBarn(type: string): AnimalKind | null {
+  if (type === "CATTLE_BARN") return "COW";
+  if (type === "PIGSTY") return "PIG";
+  if (type === "HENHOUSE") return "HEN";
+  if (type === "SHEEPFOLD") return "SHEEP";
+  return null;
+}
+
+/** Aire de sortie collée au bâtiment : pré pour vaches/moutons, courette sinon. */
+export function yardTypeForBarn(type: string): string {
+  if (type === "PIGSTY") return "PIG_YARD";
+  if (type === "HENHOUSE") return "HEN_YARD";
+  return "PADDOCK";
+}
 
 /**
  * Un lot d'animaux, pas un animal : la doc §2 impose l'agrégat en V1, sinon la
@@ -263,8 +336,10 @@ export const HUNGER = {
 export function hungerPenalty(input: {
   feedStock: number;
   herdSize: number;
+  kind?: AnimalKind;
 }): number {
-  const need = Math.max(1, input.herdSize) * HUNGER.unitsPerAnimalPerCycle;
+  const per = FEED_BASE[input.kind ?? "COW"] ?? HUNGER.unitsPerAnimalPerCycle;
+  const need = Math.max(1, input.herdSize) * per;
   const covered = Math.max(0, Math.min(1, input.feedStock / need));
   return (1 - covered) * HUNGER.penaltyMax;
 }
@@ -284,12 +359,14 @@ export function feedBurn(input: {
   grazing: boolean;
   /** Niveau de l'étable ; par défaut, la plus rustique */
   barnLevel?: number;
+  kind?: AnimalKind;
 }): number {
   const cycles = Math.max(0, input.elapsedMs) / Math.max(1, input.cycleMs);
   const perCycle = feedConsumption({
     herdSize: input.herdSize,
     grazing: input.grazing,
     barnLevel: input.barnLevel ?? 1,
+    kind: input.kind,
   });
   return perCycle * cycles;
 }
@@ -384,6 +461,42 @@ export function milkYield(input: {
   return round1(MILK_BASE_PER_COW * size * welfare * barn * feed);
 }
 
+/** Caisses d'œufs par poule et par cycle `[GD]` */
+export const EGGS_BASE_PER_HEN = 0.14;
+
+export function eggYield(input: {
+  herdSize: number;
+  happiness: number;
+  barnLevel: number;
+  feedQuality: number;
+}): number {
+  const size = Math.max(0, Math.floor(input.herdSize));
+  if (size === 0) return 0;
+  const welfare = 1 + MILK_HAPPINESS_SPAN * welfareIndex(input.happiness);
+  const level = clamp(Math.round(input.barnLevel), 1, MAX_BARN_LEVEL);
+  const barn = 1 + MILK_BARN_LEVEL_STEP * (level - 1);
+  const feed = 1 + MILK_FEED_SPAN * clamp(input.feedQuality, 0, 1);
+  return Math.round(EGGS_BASE_PER_HEN * size * welfare * barn * feed * 100) / 100;
+}
+
+/** Tonnes de laine par mouton et par tonte `[GD]` */
+export const WOOL_BASE_PER_SHEEP = 0.012;
+
+export function woolYield(input: {
+  herdSize: number;
+  happiness: number;
+  barnLevel: number;
+  feedQuality: number;
+}): number {
+  const size = Math.max(0, Math.floor(input.herdSize));
+  if (size === 0) return 0;
+  const welfare = 1 + MILK_HAPPINESS_SPAN * 0.6 * welfareIndex(input.happiness);
+  const level = clamp(Math.round(input.barnLevel), 1, MAX_BARN_LEVEL);
+  const barn = 1 + MILK_BARN_LEVEL_STEP * (level - 1);
+  const feed = 1 + MILK_FEED_SPAN * 0.5 * clamp(input.feedQuality, 0, 1);
+  return Math.round(WOOL_BASE_PER_SHEEP * size * welfare * barn * feed * 1000) / 1000;
+}
+
 /** Poids de carcasse d'un bovin adulte, en kg `[GD]` */
 export const MEAT_BASE_KG = 280;
 
@@ -420,11 +533,18 @@ export const MEAT_BARN_LEVEL_STEP = 0.03;
  * le rythme toute la vie du lot touche le bonus plein. Aucun historique n'est
  * stocké : la jauge *est* l'historique.
  */
+export function meatBaseKg(kind: AnimalKind = "COW"): number {
+  if (kind === "HEN") return 2.2;
+  if (kind === "SHEEP") return 42;
+  return MEAT_BASE_KG;
+}
+
 export function meatYield(input: {
   herdSize: number;
   happiness: number;
   averageAgeMs: number;
   barnLevel: number;
+  kind?: AnimalKind;
 }): number {
   const size = Math.max(0, Math.floor(input.herdSize));
   if (size === 0) return 0;
@@ -440,7 +560,7 @@ export function meatYield(input: {
   const level = clamp(Math.round(input.barnLevel), 1, MAX_BARN_LEVEL);
   const barn = 1 + MEAT_BARN_LEVEL_STEP * (level - 1);
 
-  return Math.round(MEAT_BASE_KG * size * growth * welfare * barn);
+  return Math.round(meatBaseKg(input.kind ?? "COW") * size * growth * welfare * barn);
 }
 
 /** Fourrage distribué par vache et par cycle, en kg de matière sèche `[GD]` */
@@ -475,6 +595,7 @@ export function feedConsumption(input: {
   /** Le lot est-il sorti au pré sur ce cycle ? */
   grazing: boolean;
   barnLevel: number;
+  kind?: AnimalKind;
 }): number {
   const size = Math.max(0, Math.floor(input.herdSize));
   if (size === 0) return 0;
@@ -482,8 +603,9 @@ export function feedConsumption(input: {
   const level = clamp(Math.round(input.barnLevel), 1, MAX_BARN_LEVEL);
   const saving = Math.min(FEED_BARN_SAVING_CAP, FEED_BARN_LEVEL_STEP * (level - 1));
   const pasture = input.grazing ? FEED_GRAZING_RATIO : 1;
+  const base = FEED_BASE[input.kind ?? "COW"] ?? FEED_BASE_PER_COW;
 
-  return round1(FEED_BASE_PER_COW * size * pasture * (1 - saving));
+  return round1(base * size * pasture * (1 - saving));
 }
 
 /* ------------------------------------------------------------------ */
@@ -610,7 +732,6 @@ export function planGrazing(
   paddock: PaddockState | null,
 ): GrazingWindow | null {
   if (paddock === null || !paddock.adjacent) return null;
-  if (herd.kind !== "COW") return null;
 
   const size = Math.max(0, Math.floor(herd.size));
   const places = Math.min(size, Math.max(0, Math.floor(paddock.capacity)));

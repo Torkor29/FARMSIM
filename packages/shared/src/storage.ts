@@ -9,7 +9,7 @@
 import type { TradeGood } from "./goods.js";
 
 /** Céréales et protéagineux du silo — pas le foin, pas le lait. */
-export const GRAIN_GOODS = ["WHEAT", "MAIZE", "PEA"] as const satisfies readonly TradeGood[];
+export const GRAIN_GOODS = ["WHEAT", "MAIZE", "PEA", "BARLEY", "RAPE"] as const satisfies readonly TradeGood[];
 export type GrainGood = (typeof GRAIN_GOODS)[number];
 
 export function isGrainGood(code: string): code is GrainGood {
@@ -27,7 +27,7 @@ export function grainForcedSaleReason(
 }
 
 export function emptyGrainStock(): Record<GrainGood, number> {
-  return { WHEAT: 0, MAIZE: 0, PEA: 0 };
+  return { WHEAT: 0, MAIZE: 0, PEA: 0, BARLEY: 0, RAPE: 0 };
 }
 
 export function grainStockFromItems(

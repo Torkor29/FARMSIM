@@ -22,15 +22,15 @@ import type { TradeGood } from "./goods.js";
 export type SaleChannel = "DEALER" | "MARKET" | "LISTING";
 
 export const SALE_CHANNEL_LABELS: Record<SaleChannel, string> = {
-  DEALER: "Négociant",
-  MARKET: "Cours mondial",
-  LISTING: "Criée",
+  DEALER: "Vendre à tout prix",
+  MARKET: "Vendre maintenant",
+  LISTING: "Proposer aux joueurs",
 };
 
 export const SALE_CHANNEL_HINTS: Record<SaleChannel, string> = {
-  DEALER: "Rachat immédiat, prix bas mais garanti",
-  MARKET: "Prix du jour ; un gros volume fait chuter le cours",
-  LISTING: "Vous fixez le prix et vous attendez un acheteur",
+  DEALER: "On vous paie moins, mais c’est immédiat",
+  MARKET: "Le prix du jour, tout de suite",
+  LISTING: "Vous choisissez le prix. Un autre joueur doit acheter",
 };
 
 /* ------------------------------------------------------------------ */
@@ -91,6 +91,45 @@ export const LISTING_COMMISSION_RATE = 0.05;
 
 /** Durée de vie d'une annonce `[GD]` — une saison */
 export const LISTING_TTL_MS = 15 * 60 * 1000;
+
+/** Après l’achat à la criée : quelqu’un doit encore livrer. */
+export const DELIVERY_TTL_MS = 8 * 60 * 1000;
+
+/** Frais « faire livrer » : le voisin auto, plus cher que de le faire soi-même. */
+export function deliveryAutoFee(tons: number): number {
+  return Math.max(8, Math.round(Math.max(0, tons) * 4));
+}
+
+/**
+ * Trajet du tracteur + remorque sur la parcelle d’arrivée.
+ * On entre par le bord opposé au silo / hangar, on roule jusqu’à lui.
+ */
+export function deliveryHaulPath(
+  gridW: number,
+  gridH: number,
+  dest?: { x: number; y: number } | null,
+): { x: number; y: number }[] {
+  const w = Math.max(1, Math.floor(gridW));
+  const h = Math.max(1, Math.floor(gridH));
+  const destX = dest
+    ? Math.min(w - 1, Math.max(0, dest.x))
+    : Math.floor(w / 2);
+  const destY = dest
+    ? Math.min(h - 1, Math.max(0, dest.y))
+    : Math.floor(h / 2);
+  const fromLeft = destX >= w / 2;
+  const startX = fromLeft ? 0 : w - 1;
+  const step = fromLeft ? 1 : -1;
+  const cells: { x: number; y: number }[] = [];
+  for (let x = startX; step > 0 ? x <= destX : x >= destX; x += step) {
+    cells.push({ x, y: destY });
+  }
+  if (cells.length < 2) {
+    const y = Math.floor(h / 2);
+    return Array.from({ length: w }, (_, x) => ({ x, y }));
+  }
+  return cells;
+}
 
 /** Bornes du prix demandé, en multiples du cours `[GD]` */
 export const LISTING_PRICE_MIN_RATIO = 0.3;

@@ -152,7 +152,7 @@ export function Onboarding({
       <header className="onb-top">
         <img className="onb-logo" src="/logo.webp" alt="" />
         <div>
-          <h1 className="onb-title">Installation de votre exploitation</h1>
+          <h1 className="onb-title">Installation de votre ferme</h1>
           <p className="onb-sub">
             Bienvenue {playerName} — cinq étapes et vous êtes aux commandes.
           </p>
@@ -176,9 +176,8 @@ export function Onboarding({
       {step === 0 && (
         <section className="onb-body">
           <p className="onb-lead">
-            Deux métiers. Céréalier ou éleveur. Pendant que vos cultures poussent (ou que le
-            troupeau mange), votre fer idle peut aller bosser chez le voisin — ce n’est pas un
-            troisième métier, c’est de l’appoint.
+            Deux métiers : céréalier ou éleveur. Pendant que ça pousse, vous pouvez aller aider
+            un voisin — on vous paie.
           </p>
           <div className="class-grid">
             {(Object.keys(CLASS_PROFILES) as ClassProfile["code"][]).map((code) => {
@@ -234,8 +233,8 @@ export function Onboarding({
       {step === 1 && spe && (
         <section className="onb-body">
           <p className="onb-lead">
-            C’est vous qu’on verra au champ — y compris chez le voisin, si vous prenez un
-            chantier. Chapeau, peau, visage, vêtements : tout est en 3D, pièce par pièce.
+            C’est vous qu’on verra au champ, y compris chez le voisin si vous l’aidez. Chapeau,
+            peau, visage, vêtements : tout est en 3D, pièce par pièce.
           </p>
           <CharacterCreator spec={spe} appearance={appearance} onChange={setAppearance} />
           <div className="onb-nav">

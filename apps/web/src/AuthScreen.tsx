@@ -156,7 +156,7 @@ export function AuthScreen({
               {busy
                 ? "Un instant…"
                 : isRegister
-                  ? "Créer mon exploitation"
+                  ? "Créer ma ferme"
                   : "Reprendre ma ferme"}
             </button>
           </form>
@@ -197,7 +197,7 @@ export function AuthScreen({
           </li>
           <li>
             <strong>2 métiers</strong>
-            <span>Céréalier ou éleveur — missions d’appoint pour les deux</span>
+            <span>Céréalier ou éleveur — aidez les voisins pour gagner un peu</span>
           </li>
           <li>
             <strong>Marché vivant</strong>

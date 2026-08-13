@@ -96,15 +96,15 @@ export const OBJECTIVE_DEFS: ObjectiveDef[] = [
   {
     id: "silo",
     title: "Bâtissez un silo",
-    hint: "Sans silo, le grain part au négociant. Le silo permet d’attendre un meilleur cours.",
+    hint: "Sans silo, le grain se vend tout de suite, moins cher. Le silo permet d’attendre.",
     unlock: "Stockage et séchage du grain humide",
     spec: "CEREALIER",
     check: (s) => s.buildings.includes("SILO"),
   },
   {
     id: "stubble",
-    title: "Déchaumez après la moisson",
-    hint: "Outil Sol → Déchaumer sur les chaumes. Sans ça, on ne resème pas.",
+    title: "Nettoyez le sol après la récolte",
+    hint: "Outil Sol → Nettoyer sur les chaumes. Sans ça, on ne resème pas.",
     unlock: "Un nouveau cycle de culture",
     spec: "CEREALIER",
     check: (s) => s.hasHarvested && s.stubbleCells === 0,
@@ -119,24 +119,28 @@ export const OBJECTIVE_DEFS: ObjectiveDef[] = [
   },
   {
     id: "barn",
-    title: "Bâtissez une étable ou une porcherie",
-    hint: "Onglet Bâtir. Sans bâtiment, pas de bêtes.",
-    unlock: "Acheter des animaux et produire lait ou viande",
+    title: "Bâtissez un bâtiment d’élevage",
+    hint: "Onglet Bâtir : étable, porcherie, poulailler ou bergerie.",
+    unlock: "Acheter des animaux et produire lait, œufs, laine ou viande",
     spec: "ELEVEUR",
-    check: (s) => s.buildings.includes("CATTLE_BARN") || s.buildings.includes("PIGSTY"),
+    check: (s) =>
+      s.buildings.includes("CATTLE_BARN") ||
+      s.buildings.includes("PIGSTY") ||
+      s.buildings.includes("HENHOUSE") ||
+      s.buildings.includes("SHEEPFOLD"),
   },
   {
     id: "animals",
     title: "Achetez vos premières bêtes",
     hint: "Onglet Élevage, une fois l’étable posée.",
-    unlock: "La ration, la traite, la vente de lait",
+    unlock: "La ration, puis la traite, les œufs ou la laine",
     spec: "ELEVEUR",
     check: (s) => s.animals > 0,
   },
   {
     id: "hay",
     title: "Stockez du fourrage",
-    hint: "Vendre → le négociant vend du foin. L’éleveur achète ce que le céréalier cultive.",
+    hint: "Vendre → on peut acheter du foin. L’éleveur achète ce que le céréalier cultive.",
     unlock: "Nourrir le troupeau sans le laisser dépérir",
     spec: "ELEVEUR",
     check: (s) => s.hayTons > 0,
@@ -153,14 +157,14 @@ export const OBJECTIVE_DEFS: ObjectiveDef[] = [
     id: "workshop",
     title: "Installez l’atelier",
     hint: "Onglet Bâtir → Atelier. Réparations moins chères, graisse et nettoyage.",
-    unlock: "Réparations moins chères dès que le fer enchaîne",
+    unlock: "Réparations moins chères dès que les machines enchaînent",
     check: (s) => s.buildings.includes("WORKSHOP"),
   },
   {
     id: "contract",
-    title: "Prenez un chantier pendant que ça pousse",
-    hint: "Onglet Bureau → Travaux à façon. Il faut l’engin, et qu’il tienne.",
-    unlock: "Un appoint en terrons, pas une rente",
+    title: "Aidez un voisin pendant que ça pousse",
+    hint: "Onglet Missions. Il faut la machine.",
+    unlock: "Un peu d’argent en plus, pas une rente",
     check: (s) => s.hasContract,
   },
 ];
@@ -206,7 +210,7 @@ export const GUIDE_CHAPTERS: GuideChapter[] = [
   {
     id: "crops",
     title: "Cultiver",
-    lead: "Trois cultures. On ne les sème pas pour la même raison : le blé paie, le maïs nourrit, le pois prépare la suivante.",
+    lead: "Six cultures. On ne les sème pas pour la même raison : le blé paie, l’orge nourrit les cochons, le maïs aussi, le colza casse la rotation, le pois laisse l’azote, l’herbe devient du foin.",
     entries: [
       {
         id: "WHEAT",
@@ -215,16 +219,34 @@ export const GUIDE_CHAPTERS: GuideChapter[] = [
         usedBy: "Céréalier : vente. Éleveur : paille (bientôt). Missions de moisson.",
       },
       {
+        id: "BARLEY",
+        name: "Orge · 13 TRN/case · 0,32 t",
+        how: "Outil Semer → Orge. Un peu plus rapide que le blé. Moissonneuse.",
+        usedBy: "Céréalier : vente. Éleveur : concentré pour les cochons.",
+      },
+      {
         id: "MAIZE",
         name: "Maïs · 18 TRN/case · 0,45 t",
         how: "Outil Semer → Maïs. Un peu plus long. Sert aussi de concentré.",
         usedBy: "Céréalier : vente. Éleveur : ration. Plus tard : ensilage.",
       },
       {
+        id: "RAPE",
+        name: "Colza · 16 TRN/case · 0,22 t",
+        how: "Outil Semer → Colza. Plus long, moins de tonnes, mieux payé. Pas de paille.",
+        usedBy: "Céréalier : rupture de rotation et vente. Ce n’est pas une légumineuse.",
+      },
+      {
         id: "PEA",
         name: "Pois · 12 TRN/case · 0,26 t",
         how: "Outil Semer → Pois. Rapporte moins, laisse l’azote : +13 % sur la culture suivante.",
         usedBy: "Céréalier : rotation. Marché : protéine mieux payée.",
+      },
+      {
+        id: "GRASS",
+        name: "Herbe · 8 TRN/case · 0,40 t de foin",
+        how: "Outil Semer → Herbe. Faucher au tracteur, pas à la moissonneuse. Trois coupes, puis resemer.",
+        usedBy: "Éleveur : foin au hangar. Le champ reprend tout seul entre deux fauches.",
       },
     ],
   },
@@ -243,7 +265,7 @@ export const GUIDE_CHAPTERS: GuideChapter[] = [
         id: "plow",
         name: "Labour",
         how: "Outil Sol → Labourer. Obligatoire après 3 récoltes, ou si la culture est perdue.",
-        usedBy: "Tout le monde qui cultive. Une entreprise le facture à la case.",
+        usedBy: "Tout le monde qui cultive. On peut payer quelqu’un à la case.",
       },
       {
         id: "direct",
@@ -254,8 +276,8 @@ export const GUIDE_CHAPTERS: GuideChapter[] = [
       {
         id: "ferti",
         name: "Fertilisation",
-        how: "Outil Sol → Ferti, jusqu’à 2 passages. Plus tard, le lisier de l’éleveur remplacera une partie de l’engrais.",
-        usedBy: "Céréalier. Éleveur (lisier, bientôt). Missions d’épandage.",
+        how: "Outil Sol → Ferti, jusqu’à 2 passages. Le fumier de l’éleveur remplace l’engrais du magasin : moins cher, le sol gagne un peu.",
+        usedBy: "Céréalier. Éleveur : fosse à vider. Missions d’épandage.",
       },
     ],
   },
@@ -266,7 +288,7 @@ export const GUIDE_CHAPTERS: GuideChapter[] = [
     entries: [
       goodEntry(
         "WHEAT",
-        "Récolte à point (cases dorées). Pluie = grain humide : séchez au Bureau, ou vendez moins cher.",
+        "Récolte à point (cases dorées). Pluie = grain humide : séchez, ou vendez moins cher.",
         "Marché. Éleveur : paille (bientôt).",
       ),
       goodEntry(
@@ -280,9 +302,19 @@ export const GUIDE_CHAPTERS: GuideChapter[] = [
         "Marché. Céréalier : la culture d’après.",
       ),
       goodEntry(
+        "BARLEY",
+        "Même geste que le blé. Moins cher à semer, un peu moins de tonnes.",
+        "Marché. Éleveur : ration orge, surtout les cochons.",
+      ),
+      goodEntry(
+        "RAPE",
+        "Jaune à maturité. On le sème pour casser la rotation et vendre cher.",
+        "Marché. Céréalier : pas une légumineuse — ça ne laisse pas d’azote.",
+      ),
+      goodEntry(
         "HAY",
-        "Seul achat chez le négociant aujourd’hui. L’éleveur en a besoin chaque cycle.",
-        "Éleveur. Le céréalier en produira via le hangar à foin.",
+        "On le fauche sur l’herbe, ou on l’achète à l’hôtel des ventes. Le foin va au hangar, pas au silo à grain.",
+        "Éleveur. Le céréalier en produit en fauchant.",
       ),
       goodEntry(
         "MILK",
@@ -293,6 +325,16 @@ export const GUIDE_CHAPTERS: GuideChapter[] = [
         "MEAT",
         "Abattage. Se gâte moins vite que le lait. Gros lot, gros prix.",
         "Marché.",
+      ),
+      goodEntry(
+        "EGGS",
+        "Ramassage au poulailler. Se gâte vite (18 % par cycle) : vendez ou chambre froide.",
+        "Marché. Revenu régulier des poules.",
+      ),
+      goodEntry(
+        "WOOL",
+        "Tonte à la bergerie. Ne se gâte pas. Prix calme.",
+        "Marché. Revenu des moutons, avant la viande.",
       ),
       {
         id: "STRAW",
@@ -308,11 +350,16 @@ export const GUIDE_CHAPTERS: GuideChapter[] = [
         usedBy: "Éleveur (énergie d’hiver). Missions d’ensilage.",
         soon: true,
       },
+      goodEntry(
+        "MANURE",
+        "Reste à côté du bâtiment. Épandez-le (outil Ferti) ou vendez-le au voisin. Fosse pleine : les bêtes sont moins bien.",
+        "Céréalier (azote). Éleveur (doit vider la fosse). On le vend au voisin, pas à l’hôtel des ventes.",
+      ),
       {
         id: "SLURRY",
-        name: "Lisier / fumier",
-        how: "Produit par le troupeau, épandu sur les champs. Pas encore dans cette version.",
-        usedBy: "Céréalier (azote). Éleveur (doit s’en débarrasser). Missions d’épandage.",
+        name: "Lisier liquide",
+        how: "La tonne à lisier, plus tard. Pour l’instant, c’est le fumier solide.",
+        usedBy: "Céréalier. Éleveur.",
         soon: true,
       },
     ],
@@ -325,7 +372,7 @@ export const GUIDE_CHAPTERS: GuideChapter[] = [
       {
         id: "SILO",
         name: "Silo à grain · 1 200 TRN · 2×2",
-        how: "Sans silo, le grain part au négociant. Avec un silo : stocker, sécher, vendre au bon cours.",
+        how: "Sans silo, le grain se vend tout de suite, moins cher. Avec un silo : stocker, sécher, vendre au bon moment.",
         usedBy: "Céréalier. Premier bâtiment à viser après la vente.",
       },
       {
@@ -353,9 +400,21 @@ export const GUIDE_CHAPTERS: GuideChapter[] = [
         usedBy: "Éleveur.",
       },
       {
+        id: "HENHOUSE",
+        name: "Poulailler · 1 400 TRN · 2×2",
+        how: "24 places. Le revenu, c’est l’œuf, pas la viande.",
+        usedBy: "Éleveur.",
+      },
+      {
+        id: "SHEEPFOLD",
+        name: "Bergerie · 2 000 TRN · 3×2",
+        how: "16 places. On tond la laine ; la viande vient après.",
+        usedBy: "Éleveur.",
+      },
+      {
         id: "COLD_ROOM",
         name: "Chambre froide · 2 600 TRN · 2×2",
-        how: "Ralentit de 40 % la perte du lait et de la viande.",
+        how: "Ralentit de 40 % la perte du lait, de la viande et des œufs.",
         usedBy: "Éleveur qui ne vend pas dans la minute.",
       },
       {
@@ -382,12 +441,18 @@ export const GUIDE_CHAPTERS: GuideChapter[] = [
         how: "À coller contre la porcherie.",
         usedBy: "Éleveur.",
       },
+      {
+        id: "HEN_YARD",
+        name: "Courette à poules · 520 TRN · 2×3",
+        how: "À coller contre le poulailler. Les poules picorent, elles pondent mieux.",
+        usedBy: "Éleveur.",
+      },
     ],
   },
   {
     id: "machines",
     title: "Machines",
-    lead: "Sans le bon engin, le geste est refusé — ou une entreprise le fait à votre place, contre des terrons.",
+    lead: "Sans la bonne machine, le geste est refusé — ou vous payez quelqu’un, contre des terrons.",
     entries: [
       {
         id: "TRACTOR",
@@ -398,7 +463,7 @@ export const GUIDE_CHAPTERS: GuideChapter[] = [
       {
         id: "HARVESTER",
         name: "Moissonneuse T1 · 4 000 TRN",
-        how: "Récolte. Sans elle : bouton orange « Entreprise » sur l’outil Récolte.",
+        how: "Récolte. On ne la donne pas au départ : demandez de l’aide, ou achetez-la plus tard.",
         usedBy: "Céréalier (ou il fait venir quelqu’un). Chantier le plus demandé.",
       },
       {
@@ -411,7 +476,7 @@ export const GUIDE_CHAPTERS: GuideChapter[] = [
         id: "DISC_HARROW",
         name: "Déchaumeur · 1 600 TRN",
         how: "Enterre les chaumes.",
-        usedBy: "Céréalier. Missions de déchaumage.",
+        usedBy: "Céréalier. Pour nettoyer le sol après la récolte.",
       },
     ],
   },
@@ -423,13 +488,25 @@ export const GUIDE_CHAPTERS: GuideChapter[] = [
       {
         id: "feed",
         name: "Nourrir",
-        how: "Fourrage (négociant) et/ou maïs (stock). Sans ration, le troupeau dépérit.",
-        usedBy: "Éleveur. Céréalier : débouché pour le maïs.",
+        how: "Fourrage, maïs, orge ou blé. Les poules aiment l’orge et le blé ; les moutons, le foin.",
+        usedBy: "Éleveur. Céréalier : débouché pour le grain et l’herbe.",
       },
       {
         id: "milk-job",
         name: "Traire",
         how: "Onglet Élevage, sur un troupeau bovin nourri.",
+        usedBy: "Éleveur.",
+      },
+      {
+        id: "collect-eggs",
+        name: "Ramasser les œufs",
+        how: "Onglet Élevage, sur un poulailler. Souvent, peu à la fois. Ça se gâte.",
+        usedBy: "Éleveur.",
+      },
+      {
+        id: "shear",
+        name: "Tondre",
+        how: "Onglet Élevage, sur une bergerie. La laine ne se gâte pas.",
         usedBy: "Éleveur.",
       },
       {
@@ -439,41 +516,47 @@ export const GUIDE_CHAPTERS: GuideChapter[] = [
         usedBy: "Éleveur.",
       },
       {
+        id: "manure-pit",
+        name: "Fosse à fumier",
+        how: "Le tas grossit tout seul. Épandez (Ferti) ou vendez au voisin. À 80 %, ça sent ; à 100 %, plus rien n’entre.",
+        usedBy: "Éleveur. Céréalier : azote moins cher que l’engrais du magasin.",
+      },
+      {
         id: "cold",
         name: "Chambre froide",
-        how: "Ralentit la perte du lait et de la viande de 40 %.",
+        how: "Ralentit la perte du lait, de la viande et des œufs de 40 %.",
         usedBy: "Éleveur qui ne vend pas dans la minute.",
       },
     ],
   },
   {
     id: "triangle",
-    title: "Cultiver, élever, et le fer des autres",
-    lead: "Deux métiers. Personne ne gagne tout seul — et le fer idle va chez le voisin le temps que ça pousse.",
+    title: "Cultiver, élever, aider",
+    lead: "Deux métiers. Personne ne gagne tout seul — pendant que ça pousse, allez aider un voisin.",
     entries: [
       {
         id: "cer",
         name: "Céréalier",
-        how: "Produit blé, maïs, pois. Moissonne lui-même ou fait venir une entreprise. Bientôt : paille et ensilage pour l’éleveur.",
-        usedBy: "Nourrit l’éleveur. Occupe le fer des autres aux pics de saison.",
+        how: "Produit blé, maïs, pois. Moissonne lui-même ou demande de l’aide. Bientôt : paille et ensilage pour l’éleveur.",
+        usedBy: "Nourrit l’éleveur. Occupe les machines des autres aux pics de saison.",
       },
       {
         id: "elv",
         name: "Éleveur",
-        how: "Produit lait et viande. Achète foin et maïs. Bientôt : paille, ensilage, et lisier à rendre au céréalier.",
-        usedBy: "Débouché du céréalier. Chantiers d’épandage pour qui a l’engin.",
+        how: "Produit lait, viande, œufs, laine et fumier. Achète foin et grain, ou fauche son herbe. Le fumier part au champ du céréalier, ou s’épand chez soi.",
+        usedBy: "Achète le grain du céréalier. On peut l’aider à épandre.",
       },
       {
         id: "appoint",
-        name: "Travaux à façon",
-        how: "Ce n’est pas un métier. Bureau → un chantier 8–24 cases → glissez sur le champ du voisin. Salaire d’appoint, pas une rente.",
+        name: "Aider les voisins",
+        how: "Ce n’est pas un métier. Missions → un travail de 8 à 24 cases chez un voisin. Un peu d’argent, pas une rente.",
         usedBy: "Les deux, pendant que les cultures poussent ou que le troupeau mange.",
       },
       {
         id: "npc",
         name: "Pas la machine du moment ?",
-        how: "Le bouton orange « Entreprise » fait venir quelqu’un tout de suite, plus cher, un peu moins bien. C’est le filet, pas un échec.",
-        usedBy: "Céréalier et éleveur sans l’engin sous la main.",
+        how: "Un joueur fera mieux. Si personne ne vient, on envoie quelqu’un. Demandez de l’aide, ou « Payer quelqu’un ».",
+        usedBy: "Céréalier et éleveur sans la machine sous la main.",
       },
     ],
   },

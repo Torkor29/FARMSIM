@@ -34,10 +34,17 @@ type Props = {
   onGuide: () => void;
   desktopGarage?: boolean;
   desktopOffice?: boolean;
+  desktopHerd?: boolean;
+  hasHerd?: boolean;
   onDesktopGarage?: () => void;
   onDesktopOffice?: () => void;
+  onDesktopHerd?: () => void;
   showDev?: boolean;
   onDev?: () => void;
+  /** La sélection n'est que de l'herbe mûre : on fauche, on ne moissonne pas */
+  mowSelected?: boolean;
+  /** Toutes les cases prêtes sont de l'herbe */
+  mowReadyAll?: boolean;
 };
 
 const DOCK: { id: "SELECT" | "PLANT" | "HARVEST" | "SOIL" | "SELL"; label: string; icon: string }[] =
@@ -84,10 +91,15 @@ export function FieldDock({
   onGuide,
   desktopGarage,
   desktopOffice,
+  desktopHerd,
+  hasHerd,
   onDesktopGarage,
   onDesktopOffice,
+  onDesktopHerd,
   showDev,
   onDev,
+  mowSelected = false,
+  mowReadyAll = false,
 }: Props) {
   const plant = isPlantTool(tool);
   const soil = isSoilTool(tool);
@@ -143,8 +155,11 @@ export function FieldDock({
               {(
                 [
                   ["PLANT_WHEAT", "Blé"],
+                  ["PLANT_BARLEY", "Orge"],
                   ["PLANT_MAIZE", "Maïs"],
+                  ["PLANT_RAPE", "Colza"],
                   ["PLANT_PEA", "Pois"],
+                  ["PLANT_GRASS", "Herbe"],
                 ] as const
               ).map(([t, label]) => (
                 <button
@@ -176,7 +191,7 @@ export function FieldDock({
                 className={`chip ${tool === "STUBBLE" ? "on" : ""}`}
                 onClick={() => onTool("STUBBLE")}
               >
-                Déchaumer
+                Nettoyer
               </button>
               <button
                 type="button"
@@ -190,7 +205,7 @@ export function FieldDock({
                 className={`chip ${tool === "FERTILIZE" ? "on" : ""}`}
                 onClick={() => onTool("FERTILIZE")}
               >
-                Ferti
+                Engrais
               </button>
               <button
                 type="button"
@@ -221,33 +236,39 @@ export function FieldDock({
                 disabled={busy || selectedCount === 0}
                 onClick={onConfirm}
               >
-                Faire{plant ? ` ${plantCropLabel(tool)}` : ""} ×{selectedCount}
+                {tool === "HARVEST" && mowSelected
+                  ? `Faucher ×${selectedCount}`
+                  : `Faire${plant ? ` ${plantCropLabel(tool)}` : ""} ×${selectedCount}`}
               </button>
             )}
             {contractor && !visiting && (
-              <button
-                type="button"
-                className="chip eta"
-                disabled={busy || selectedCount === 0 || crd < contractor.cost}
-                title={
-                  contractor.hasMachine
-                    ? `Sous-traiter — ${contractor.cost} TRN`
-                    : `Pas la machine : une entreprise le fait pour ${contractor.cost} TRN`
-                }
-                onClick={onContractor}
-              >
-                Entreprise · {contractor.cost} TRN
-              </button>
+              <>
+                <p className="dock-hint">
+                  Un autre joueur le fera mieux. Si personne ne vient, on envoie quelqu’un.
+                </p>
+                {tool === "HARVEST" && !mowSelected && !contractor.hasMachine && (
+                  <p className="dock-hint">Demandez de l’aide, ou achetez la machine.</p>
+                )}
+                <button
+                  type="button"
+                  className="chip eta"
+                  disabled={busy || selectedCount === 0 || crd < contractor.cost}
+                  title={`Quelqu’un le fait pour vous — ${contractor.cost} TRN`}
+                  onClick={onContractor}
+                >
+                  Payer quelqu’un · {contractor.cost} TRN
+                </button>
+              </>
             )}
             {laborQuote != null && !visiting && onPublishLabor && (
               <button
                 type="button"
                 className="chip"
                 disabled={busy || crd < laborQuote}
-                title={`Publier un chantier joueur — ${laborQuote} TRN en séquestre`}
+                title="Cet argent est mis de côté jusqu’à la fin (ou l’annulation)."
                 onClick={onPublishLabor}
               >
-                Publier · {laborQuote} TRN
+                Demander de l’aide · {laborQuote} TRN
               </button>
             )}
             {readyCount > 0 && (
@@ -257,7 +278,7 @@ export function FieldDock({
                 disabled={busy}
                 onClick={onHarvestAll}
               >
-                Tout récolter ×{readyCount}
+                {mowReadyAll ? `Tout faucher ×${readyCount}` : `Tout récolter ×${readyCount}`}
               </button>
             )}
           </div>
@@ -311,8 +332,20 @@ export function FieldDock({
               <span className="dock-emoji" aria-hidden="true">
                 📋
               </span>
-              <span className="dock-label">Bureau</span>
+              <span className="dock-label">Missions</span>
             </button>
+            {hasHerd && (
+              <button
+                type="button"
+                className={`dock-tool extra ${desktopHerd ? "on" : ""}`}
+                onClick={onDesktopHerd}
+              >
+                <span className="dock-emoji" aria-hidden="true">
+                  🐄
+                </span>
+                <span className="dock-label">Élevage</span>
+              </button>
+            )}
           </>
         )}
         {showDev && (

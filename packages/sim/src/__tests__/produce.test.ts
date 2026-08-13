@@ -54,6 +54,13 @@ describe("rations", () => {
     expect(feedUnits(0, 1)).toBeGreaterThan(feedUnits(1, 0));
   });
 
+  it("compte l'orge comme un concentré, un peu moins que le maïs", () => {
+    expect(feedUnits(0, 0, 1)).toBeGreaterThan(feedUnits(1, 0));
+    expect(feedUnits(0, 1, 0)).toBeGreaterThan(feedUnits(0, 0, 1));
+    expect(rationQuality(0, 0, 10)).toBe(1);
+    expect(rationQuality(5, 0, 5)).toBeCloseTo(0.5, 2);
+  });
+
   it("convertit les tonnes du silo en kilos de ration", () => {
     // Une tonne de foin doit nourrir un troupeau plusieurs cycles, pas une
     // fraction de bête : les deux échelles ne doivent jamais se confondre.

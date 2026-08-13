@@ -8,18 +8,21 @@ import {
   billboardLift,
   opaqueRowSpans,
   workAnimationMs,
+  type AnimalKind,
   type BuildingType,
   type CropCode,
   type MachineType,
   type RipenessStage,
 } from "@farmsim/shared";
 import { disposeRenderer, disposeThreeScene, markShared } from "./three-cleanup";
+import { applyHerdPose, meshForHerd } from "./animal-meshes";
 import { createCropField } from "./crop-field";
 import { attachStudioEnvironment } from "./machine-kit";
 import {
   createDustTrail,
   createExhaustSmoke,
   createMachineRig,
+  hitchTrailer,
   isTowedImplement,
   type MachineRig,
 } from "./machines3d";
@@ -45,6 +48,20 @@ export type IsoCell = {
   machineType?: MachineType | null;
   /** État de la machine garée, 0 à 100 — il se lit sur sa carrosserie */
   machineCondition?: number | null;
+  /** Coupes / moissons depuis le labour — l'herbe déjà fauchée est plus courte */
+  harvestsSincePlow?: number;
+  lastCrop?: CropCode | null;
+  /** Épandage de fumier récent : la case s'assombrit une minute */
+  manuredUntil?: number;
+};
+
+export type ManurePile = {
+  buildingId: string;
+  originX: number;
+  originY: number;
+  w: number;
+  h: number;
+  fill: number;
 };
 
 export type IsoBuilding = {
@@ -72,14 +89,33 @@ export type ActiveWork = {
   cells: { x: number; y: number }[];
   /** État de l'engin de chantier, 0 à 100 */
   condition?: number | null;
+  /** La machine coupe : moisson (cache le plant) ou fauche (andain) */
+  cut?: "harvest" | "mow";
+  /** Livraison : tracteur + remorque, sans toucher aux cultures */
+  haul?: boolean;
+  cargo?: string;
 };
 
 /** Un troupeau au pré : de quelle étable il sort, et vers quel enclos. */
 export type GrazingHerd = {
   buildingId: string;
   animals: number;
+  kind?: AnimalKind | string;
+  /** Moutons tondus : le volume rétrécit jusqu'à la prochaine laine. */
+  sheared?: boolean;
+  /** Dehors dans l’enclos ; sinon collées à l’étable. */
+  out?: boolean;
   barn: { originX: number; originY: number; w: number; h: number };
   paddock: { originX: number; originY: number; w: number; h: number };
+};
+
+/** Caisse d'œufs ou ballot de laine au pied du bâtiment, quand c'est prêt. */
+export type YardSignal = {
+  kind: "eggs" | "wool";
+  originX: number;
+  originY: number;
+  w: number;
+  h: number;
 };
 
 /** Un joueur présent sur la parcelle — soi-même ou un prestataire en mission. */
@@ -117,6 +153,10 @@ type Props = {
   activeWork?: ActiveWork | null;
   /** Troupeaux dehors : une entrée par étable dont les bêtes pâturent */
   grazing?: GrazingHerd[];
+  /** Caisse d'œufs / ballot de laine au pied du bâtiment */
+  yardSignals?: YardSignal[];
+  /** Tas de fumier à côté des bâtiments d'élevage */
+  manurePiles?: ManurePile[];
   /** Personnages présents (propriétaire, prestataire en mission) */
   workers?: FieldWorker[];
   weather?: string;
@@ -168,8 +208,25 @@ function windFor(weather: string): number {
 }
 /** Aire de parking : terre tassée, pas un carré d'herbe au milieu du champ. */
 const PARKING = 0x6a5538;
-const GROW = 0x7fbc4e;
-const READY = 0xe8c65e;
+
+type CropLook = {
+  grow: number;
+  ready: number;
+  fullH: number;
+};
+
+const CROP_LOOK: Record<string, CropLook> = {
+  WHEAT: { grow: 0x7fbc4e, ready: 0xe8c65e, fullH: 0.7 },
+  MAIZE: { grow: 0x5aa63a, ready: 0xe8c65e, fullH: 0.98 },
+  PEA: { grow: 0x6bb84a, ready: 0xc6d45a, fullH: 0.55 },
+  BARLEY: { grow: 0x8cba4a, ready: 0xe6d27a, fullH: 0.58 },
+  RAPE: { grow: 0x5aaa38, ready: 0xf2d429, fullH: 0.72 },
+  GRASS: { grow: 0x4a9a36, ready: 0x5aad42, fullH: 0.38 },
+};
+
+function lookOf(crop?: CropCode | null): CropLook {
+  return CROP_LOOK[crop ?? ""] ?? CROP_LOOK.WHEAT;
+}
 const SELECT_GLOW = 0x5ee08a;
 const HOVER = 0x53c5f5;
 const PREVIEW_OK = 0x2fc46a;
@@ -258,14 +315,14 @@ function makeFurrowMap(): THREE.CanvasTexture {
 
 function cropColor(c: IsoCell, sim?: IsoSim): number {
   if (c.kind !== "CROP") return SOIL_COLORS[soilLook(c)];
-  // Passé la maturité, la teinte raconte la dégradation : l'or vire au brun
-  // puis à la tige morte. C'est le seul signal qui prévienne le joueur.
-  if (sim?.sim.ripeness) return RIPENESS_COLORS[sim.sim.ripeness.stage];
+  const look = lookOf(c.crop);
+  // L'herbe reste verte à maturité : c'est du fourrage, pas un épi doré.
+  if (c.crop !== "GRASS" && sim?.sim.ripeness) return RIPENESS_COLORS[sim.sim.ripeness.stage];
   if (c.fieldStage === "SPOILED") return RIPENESS_COLORS.LOST;
-  if (c.fieldStage === "READY" || sim?.sim.ready) return READY;
+  if (c.fieldStage === "READY" || sim?.sim.ready) return look.ready;
   const p = sim?.sim.progress ?? 0.3;
-  const g = new THREE.Color(GROW);
-  const r = new THREE.Color(READY);
+  const g = new THREE.Color(look.grow);
+  const r = new THREE.Color(look.ready);
   return g.lerp(r, Math.min(1, p)).getHex();
 }
 
@@ -288,6 +345,14 @@ function buildingPalette(type: BuildingType): { body: number; roof: number; h: n
       return { body: 0xb07a4a, roof: ROOF_TEAL, h: 1.5 };
     case "PIGSTY":
       return { body: 0xa97a55, roof: ROOF_TEAL, h: 1.1 };
+    case "HENHOUSE":
+      return { body: 0xc4a06a, roof: ROOF_TEAL, h: 0.95 };
+    case "SHEEPFOLD":
+      return { body: 0xb08a5c, roof: ROOF_TEAL, h: 1.25 };
+    case "HEN_YARD":
+      return { body: 0x9bb56a, roof: 0x7a5c3a, h: 0.4 };
+    case "COLD_ROOM":
+      return { body: 0xc5d4dc, roof: ROOF_TEAL, h: 1.15 };
     case "WORKSHOP":
       return { body: 0xa8adb2, roof: ROOF_TEAL, h: 1.2 };
     case "FARMHOUSE":
@@ -301,43 +366,88 @@ function buildingPalette(type: BuildingType): { body: number; roof: number; h: n
   }
 }
 
-/** Vache low-poly, taille d'une demi-case. */
-function makeCowMesh(): THREE.Group {
+function makeBarnDoor(): THREE.Group {
   const g = new THREE.Group();
-  const hide = new THREE.MeshLambertMaterial({ color: 0xf4efe4, flatShading: true });
-  const patch = new THREE.MeshLambertMaterial({ color: 0x5a4132, flatShading: true });
-  const snout = new THREE.MeshLambertMaterial({ color: 0xe3b3a8, flatShading: true });
+  const wood = new THREE.MeshLambertMaterial({ color: 0x6b4528, flatShading: true });
+  const dark = new THREE.MeshLambertMaterial({ color: 0x1a120c, flatShading: true });
+  const hole = new THREE.Mesh(new THREE.BoxGeometry(0.42, 0.55, 0.04), dark);
+  hole.position.set(0, 0.28, 0);
+  g.add(hole);
+  const left = new THREE.Mesh(new THREE.BoxGeometry(0.2, 0.52, 0.05), wood);
+  left.name = "left";
+  left.castShadow = true;
+  g.add(left);
+  const right = new THREE.Mesh(new THREE.BoxGeometry(0.2, 0.52, 0.05), wood);
+  right.name = "right";
+  right.castShadow = true;
+  g.add(right);
+  setBarnDoorOpen(g, 0);
+  return g;
+}
 
-  const body = new THREE.Mesh(new THREE.BoxGeometry(0.34, 0.2, 0.19), hide);
-  body.position.y = 0.21;
-  body.castShadow = true;
-  g.add(body);
-
-  const spot = new THREE.Mesh(new THREE.BoxGeometry(0.13, 0.1, 0.2), patch);
-  spot.position.set(0.05, 0.25, 0);
-  g.add(spot);
-
-  const head = new THREE.Mesh(new THREE.BoxGeometry(0.15, 0.14, 0.14), hide);
-  head.position.set(-0.24, 0.25, 0);
-  g.add(head);
-
-  const muzzle = new THREE.Mesh(new THREE.BoxGeometry(0.07, 0.08, 0.1), snout);
-  muzzle.position.set(-0.33, 0.22, 0);
-  g.add(muzzle);
-
-  for (const [lx, lz] of [
-    [-0.11, 0.06],
-    [-0.11, -0.06],
-    [0.11, 0.06],
-    [0.11, -0.06],
-  ]) {
-    const leg = new THREE.Mesh(
-      new THREE.BoxGeometry(0.055, 0.14, 0.055),
-      new THREE.MeshLambertMaterial({ color: 0xdcd4c6, flatShading: true }),
-    );
-    leg.position.set(lx, 0.07, lz);
-    g.add(leg);
+function setBarnDoorOpen(g: THREE.Group, open: number): void {
+  const o = Math.max(0, Math.min(1, open));
+  const left = g.getObjectByName("left");
+  const right = g.getObjectByName("right");
+  if (left) {
+    left.position.set(-0.1 - o * 0.22, 0.28, 0.03 + o * 0.09);
+    left.rotation.y = o * 0.95;
   }
+  if (right) {
+    right.position.set(0.1 + o * 0.22, 0.28, 0.03 + o * 0.09);
+    right.rotation.y = -o * 0.95;
+  }
+}
+
+/** Caisse d'œufs au pied du poulailler. */
+function makeEggCrate(): THREE.Group {
+  const g = new THREE.Group();
+  const wood = new THREE.MeshLambertMaterial({ color: 0xc4a06a, flatShading: true });
+  const crate = new THREE.Mesh(new THREE.BoxGeometry(0.22, 0.08, 0.16), wood);
+  crate.position.y = 0.04;
+  crate.castShadow = true;
+  g.add(crate);
+  const egg = new THREE.MeshLambertMaterial({ color: 0xf4efe4, flatShading: true });
+  for (const [x, z] of [
+    [-0.05, -0.03],
+    [0.05, -0.03],
+    [0, 0.03],
+  ]) {
+    const e = new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.06, 0.04), egg);
+    e.position.set(x, 0.1, z);
+    g.add(e);
+  }
+  return g;
+}
+
+/** Ballot de laine près de la bergerie. */
+/** Tas brun à côté de l'étable : il grossit avec la fosse. */
+function makeManurePile(fill: number): THREE.Group {
+  const g = new THREE.Group();
+  const t = Math.max(0.15, Math.min(1, fill));
+  const dung = new THREE.MeshLambertMaterial({ color: 0x5a3d24, flatShading: true });
+  const dark = new THREE.MeshLambertMaterial({ color: 0x3d2918, flatShading: true });
+  const base = new THREE.Mesh(new THREE.BoxGeometry(0.42 * t + 0.18, 0.1 + 0.16 * t, 0.36 * t + 0.16), dung);
+  base.position.y = 0.05 + 0.08 * t;
+  base.castShadow = true;
+  g.add(base);
+  const top = new THREE.Mesh(new THREE.BoxGeometry(0.22 * t + 0.1, 0.08 + 0.1 * t, 0.2 * t + 0.08), dark);
+  top.position.set(0.04, 0.14 + 0.14 * t, 0.02);
+  g.add(top);
+  return g;
+}
+
+function makeWoolBale(): THREE.Group {
+  const g = new THREE.Group();
+  const wool = new THREE.MeshLambertMaterial({ color: 0xf0ebe3, flatShading: true });
+  const wrap = new THREE.MeshLambertMaterial({ color: 0x8a6b3a, flatShading: true });
+  const bale = new THREE.Mesh(new THREE.BoxGeometry(0.28, 0.18, 0.2), wool);
+  bale.position.y = 0.09;
+  bale.castShadow = true;
+  g.add(bale);
+  const band = new THREE.Mesh(new THREE.BoxGeometry(0.3, 0.03, 0.22), wrap);
+  band.position.y = 0.09;
+  g.add(band);
   return g;
 }
 
@@ -507,13 +617,6 @@ function groundHexGeometry(): THREE.CylinderGeometry {
   return groundHexGeo;
 }
 
-/** Touffe de culture unitaire, mise à l'échelle selon l'avancement du cycle. */
-let cropGeo: THREE.BoxGeometry | null = null;
-function cropGeometry(): THREE.BoxGeometry {
-  cropGeo ??= markShared(new THREE.BoxGeometry(0.55, 1, 0.55));
-  return cropGeo;
-}
-
 function disposeObject3D(obj: THREE.Object3D) {
   obj.traverse((o) => {
     const token = o.userData.anchorToken as { live?: boolean } | undefined;
@@ -538,6 +641,8 @@ export function IsoFarmView({
   pulseCells = [],
   activeWork = null,
   grazing = [],
+  yardSignals = [],
+  manurePiles = [],
   workers = [],
   weather = "CLEAR",
   onCellClick,
@@ -571,6 +676,8 @@ export function IsoFarmView({
     pulseCells,
     activeWork,
     grazing,
+    yardSignals,
+    manurePiles,
     workers,
     gridW,
     gridH,
@@ -585,6 +692,8 @@ export function IsoFarmView({
     pulseCells,
     activeWork,
     grazing,
+    yardSignals,
+    manurePiles,
     workers,
     gridW,
     gridH,
@@ -740,14 +849,27 @@ export function IsoFarmView({
     // troupeau se déplace comme un bloc et l'illusion tombe.
     const grazeGroup = new THREE.Group();
     world.add(grazeGroup);
-    let grazeKey = "";
+    let grazeIdKey = "";
+    let grazeOutKey = "";
     const cowWalkers: {
       mesh: THREE.Group;
-      from: THREE.Vector3;
-      to: THREE.Vector3;
-      delay: number;
+      door: THREE.Vector3;
+      paddock: THREE.Vector3;
+      walkFrom: THREE.Vector3;
+      walkTo: THREE.Vector3;
+      walkT0: number;
+      walkDur: number;
       wander: number;
+      kind: string;
+      buildingId: string;
+      wantOut: boolean;
     }[] = [];
+    const herdDoors: { mesh: THREE.Group; buildingId: string; open: number }[] = [];
+    const doorGroup = new THREE.Group();
+    world.add(doorGroup);
+    const pickupGroup = new THREE.Group();
+    world.add(pickupGroup);
+    let pickupKey = "";
 
     const farmerGroup = new THREE.Group();
     world.add(farmerGroup);
@@ -795,7 +917,7 @@ export function IsoFarmView({
       return sharedTile.geo;
     }
 
-    /** Le relief du sol et les épis, reconstruits à chaque `layout()`. */
+    /** Le relief du sol, reconstruit à chaque `layout()`. */
     const reliefGroup = new THREE.Group();
     const earGroup = new THREE.Group();
     world.add(reliefGroup, earGroup);
@@ -980,6 +1102,8 @@ export function IsoFarmView({
     }
 
     function layout() {
+      grazeIdKey = "";
+      grazeOutKey = "";
       const cropStalks: {
         x: number;
         y: number;
@@ -1085,7 +1209,7 @@ export function IsoFarmView({
         fenceGroup.add(makeArtBillboard("/assets/decor/tree.webp", camera, tx, 0, tz, 1.5, 2));
       }
 
-        /** Relief à semer sur les cases une fois la grille posée. */
+      /** Relief à semer sur les cases une fois la grille posée. */
       const soilDetails: { look: SoilLook; px: number; pz: number }[] = [];
       /** Épis des cultures arrivées à maturité. */
       const ears: { px: number; pz: number; y: number; maize: boolean }[] = [];
@@ -1106,14 +1230,15 @@ export function IsoFarmView({
           if (cell?.kind === "CROP") col = cropColor(cell, sim);
           if (cell?.kind === "BUILDING") col = DIRT;
           if (cell?.kind === "VEHICLE") col = PARKING;
+          if (cell?.manuredUntil && cell.manuredUntil > Date.now()) {
+            const stain = new THREE.Color(col).lerp(new THREE.Color(0x3d2918), 0.45);
+            col = stain.getHex();
+          }
           if (cell && cell.kind === "EMPTY" && look !== "PLAIN" && look !== "PLOWED") {
             soilDetails.push({ look, px, pz });
           }
-          // Les adventices pesaient sur le rendement sans jamais se montrer.
-          // Une culture non désherbée porte donc ses touffes parasites.
-          if (cell?.kind === "CROP" && !cell.weedsControlled) {
-            soilDetails.push({ look: "WEEDS", px, pz });
-          }
+          // Les adventices restent sur la terre nue. Sur une culture elles
+          // se lisaient comme un second plant — on ne les superpose plus.
 
           const mat = new THREE.MeshLambertMaterial({
             color: isSel ? SELECT_GLOW : col,
@@ -1143,7 +1268,8 @@ export function IsoFarmView({
             // Le maïs monte plus haut et plus dru que le blé : c'est à la
             // silhouette qu'on reconnaît une culture de loin, pas à sa teinte.
             const tall = cell.crop === "MAIZE";
-            const full = tall ? 0.62 : 0.46;
+            const cuts = cell.crop === "GRASS" ? (cell.harvestsSincePlow ?? 0) : 0;
+            const full = (tall ? 0.62 : 0.46) * (cuts > 0 ? 0.78 : 1);
             // Une culture desséchée s'affaisse. Elle doit se voir comme une
             // perte, pas comme une récolte qui attend. Et jamais plus haut
             // qu'un capot de tracteur : l'engin au travail doit rester
@@ -1600,66 +1726,163 @@ export function IsoFarmView({
       // Le champ respire : la houle suit la météo.
       cropField.update(t, windFor(weatherRef.current));
 
-      // Troupeaux au pré : sortie de l'étable, puis broutage dans l'enclos.
+      // Troupeaux : deux poses, et une vraie marche entre la porte et le pré.
       const herds = dataRef.current.grazing ?? [];
-      const nextGrazeKey = herds.map((h) => `${h.buildingId}:${h.animals}`).join("|");
-      if (nextGrazeKey !== grazeKey) {
-        grazeKey = nextGrazeKey;
+      const nextIdKey = herds
+        .map((h) => `${h.buildingId}:${h.animals}:${h.kind ?? "COW"}:${h.sheared ? 1 : 0}`)
+        .join("|");
+      const nextOutKey = herds.map((h) => `${h.buildingId}:${h.out ? 1 : 0}`).join("|");
+
+      if (nextIdKey !== grazeIdKey) {
+        grazeIdKey = nextIdKey;
+        grazeOutKey = nextOutKey;
         for (const w of cowWalkers) {
           grazeGroup.remove(w.mesh);
           disposeObject3D(w.mesh);
         }
         cowWalkers.length = 0;
+        while (doorGroup.children.length) {
+          const c = doorGroup.children[0];
+          doorGroup.remove(c);
+          disposeObject3D(c);
+        }
+        herdDoors.length = 0;
 
         for (const herd of herds) {
-          // Au plus huit bêtes visibles : au-delà, l'enclos devient illisible
-          // et le coût de rendu grimpe pour rien.
           const shown = Math.min(8, herd.animals);
+          const kind = herd.kind ?? "COW";
+          const doorX = ox + (herd.barn.originX + herd.barn.w / 2) * step;
+          const doorZ = oz + (herd.barn.originY + herd.barn.h) * step + 0.08 * step;
+          const door = makeBarnDoor();
+          door.position.set(doorX, 0.1, doorZ);
+          door.scale.setScalar(cellSize * (kind === "HEN" ? 0.7 : 1));
+          setBarnDoorOpen(door, herd.out ? 1 : 0);
+          doorGroup.add(door);
+          herdDoors.push({ mesh: door, buildingId: herd.buildingId, open: herd.out ? 1 : 0 });
+
           for (let i = 0; i < shown; i++) {
-            const doorX = ox + (herd.barn.originX + herd.barn.w / 2) * step;
-            const doorZ = oz + (herd.barn.originY + herd.barn.h / 2) * step;
+            const along = ((i % 4) - 1.5) * 0.28 * step;
+            const front = new THREE.Vector3(
+              doorX + along,
+              0.1,
+              doorZ + 0.22 * step + Math.floor(i / 4) * 0.2 * step,
+            );
             const spreadX = (((i % 3) - 1) * 0.55 + (i * 0.13) % 0.4) * step;
             const spreadZ = ((Math.floor(i / 3) - 1) * 0.55 + (i * 0.21) % 0.4) * step;
-            const targetX = ox + (herd.paddock.originX + herd.paddock.w / 2) * step + spreadX;
-            const targetZ = oz + (herd.paddock.originY + herd.paddock.h / 2) * step + spreadZ;
-
-            const mesh = makeCowMesh();
-            mesh.scale.setScalar(cellSize * 0.85);
+            const paddock = new THREE.Vector3(
+              ox + (herd.paddock.originX + herd.paddock.w / 2) * step + spreadX,
+              0.1,
+              oz + (herd.paddock.originY + herd.paddock.h / 2) * step + spreadZ,
+            );
+            const mesh = meshForHerd(kind, Boolean(herd.sheared));
+            const base = kind === "HEN" ? 0.55 : kind === "SHEEP" ? 0.75 : 0.85;
+            const yScale = base * (kind === "SHEEP" && herd.sheared ? 0.75 : 1);
+            mesh.scale.set(cellSize * base, cellSize * yScale, cellSize * base);
+            const here = herd.out ? paddock : front;
+            mesh.position.copy(here);
             grazeGroup.add(mesh);
             cowWalkers.push({
               mesh,
-              from: new THREE.Vector3(doorX, 0.1, doorZ),
-              to: new THREE.Vector3(targetX, 0.1, targetZ),
-              delay: i * 0.55,
+              door: front.clone(),
+              paddock: paddock.clone(),
+              walkFrom: here.clone(),
+              walkTo: here.clone(),
+              walkT0: -10,
+              walkDur: 2.6,
               wander: i * 1.7,
+              kind,
+              buildingId: herd.buildingId,
+              wantOut: Boolean(herd.out),
             });
+          }
+        }
+      } else if (nextOutKey !== grazeOutKey) {
+        grazeOutKey = nextOutKey;
+        let wi = 0;
+        for (const herd of herds) {
+          const shown = Math.min(8, herd.animals);
+          for (let i = 0; i < shown; i++) {
+            const w = cowWalkers[wi++];
+            if (!w) continue;
+            const nextOut = Boolean(herd.out);
+            if (w.wantOut === nextOut) continue;
+            w.wantOut = nextOut;
+            w.walkFrom.set(w.mesh.position.x, 0.1, w.mesh.position.z);
+            w.walkTo.copy(nextOut ? w.paddock : w.door);
+            w.walkT0 = t + i * 0.38;
+            w.walkDur = 2.6;
           }
         }
       }
 
-      for (const w of cowWalkers) {
-        // Aller, brouter, revenir : un cycle lent qui se lit d'un coup d'œil.
-        const local = Math.max(0, t - w.delay);
-        const cycle = 26;
-        const phase = (local % cycle) / cycle;
-        let progress: number;
-        if (phase < 0.18) progress = phase / 0.18;
-        else if (phase < 0.82) progress = 1;
-        else progress = 1 - (phase - 0.82) / 0.18;
-        const eased = progress * progress * (3 - 2 * progress);
+      const signals = dataRef.current.yardSignals ?? [];
+      const piles = dataRef.current.manurePiles ?? [];
+      const nextPickupKey = [
+        ...signals.map((s) => `${s.kind}:${s.originX}:${s.originY}`),
+        ...piles.map((p) => `m:${p.buildingId}:${p.fill.toFixed(2)}`),
+      ].join("|");
+      if (nextPickupKey !== pickupKey) {
+        pickupKey = nextPickupKey;
+        while (pickupGroup.children.length) {
+          const c = pickupGroup.children[0];
+          pickupGroup.remove(c);
+          disposeObject3D(c);
+        }
+        for (const sig of signals) {
+          const mesh = sig.kind === "eggs" ? makeEggCrate() : makeWoolBale();
+          const px = ox + (sig.originX + sig.w / 2) * step + 0.28 * step;
+          const pz = oz + (sig.originY + sig.h) * step + 0.12 * step;
+          mesh.position.set(px, 0.1, pz);
+          mesh.scale.setScalar(cellSize);
+          pickupGroup.add(mesh);
+        }
+        for (const pile of piles) {
+          if (pile.fill <= 0.02) continue;
+          const mesh = makeManurePile(pile.fill);
+          const px = ox + (pile.originX + pile.w / 2) * step - 0.38 * step;
+          const pz = oz + (pile.originY + pile.h) * step + 0.08 * step;
+          mesh.position.set(px, 0.1, pz);
+          mesh.scale.setScalar(cellSize);
+          pickupGroup.add(mesh);
+        }
+      }
 
-        w.mesh.position.lerpVectors(w.from, w.to, eased);
-        if (progress === 1) {
+      for (const w of cowWalkers) {
+        const raw = (t - w.walkT0) / w.walkDur;
+        const progress = Math.min(1, Math.max(0, raw));
+        const eased = progress * progress * (3 - 2 * progress);
+        const walking = progress > 0.02 && progress < 0.98;
+        w.mesh.position.lerpVectors(w.walkFrom, w.walkTo, eased);
+        if (walking) {
+          w.mesh.position.y = 0.1 + Math.abs(Math.sin(t * 9 + w.wander)) * 0.04 * step;
+        } else if (w.wantOut) {
           w.mesh.position.x += Math.sin(t * 0.35 + w.wander) * 0.1 * step;
           w.mesh.position.z += Math.cos(t * 0.28 + w.wander) * 0.1 * step;
-          // Tête qui plonge dans l'herbe par intermittence.
-          w.mesh.rotation.x = Math.max(0, Math.sin(t * 0.7 + w.wander)) * 0.22;
         } else {
-          w.mesh.rotation.x = 0;
+          w.mesh.position.x += Math.sin(t * 0.25 + w.wander) * 0.03 * step;
+          w.mesh.position.z += Math.cos(t * 0.2 + w.wander) * 0.03 * step;
         }
-        const dir = eased < 1 ? w.to.clone().sub(w.from) : new THREE.Vector3(1, 0, 0);
-        w.mesh.rotation.y = Math.atan2(dir.z, dir.x) + Math.sin(t * 0.4 + w.wander) * 0.25;
-        w.mesh.visible = local > 0;
+        const graze =
+          w.wantOut && !walking ? Math.min(1, Math.max(0, (t - w.walkT0 - w.walkDur) / 0.4)) : 0;
+        applyHerdPose(w.mesh, w.kind, graze, walking, t, w.wander);
+        const dir = walking
+          ? w.walkTo.clone().sub(w.walkFrom)
+          : new THREE.Vector3(w.wantOut ? 1 : 0.2, 0, w.wantOut ? 0.2 : 1);
+        w.mesh.rotation.y = Math.atan2(dir.x, dir.z) + (walking ? Math.sin(t * 8 + w.wander) * 0.12 : 0);
+        w.mesh.rotation.x = 0;
+        w.mesh.visible = true;
+      }
+
+      for (const d of herdDoors) {
+        const mine = cowWalkers.filter((w) => w.buildingId === d.buildingId);
+        const want = mine.some((w) => {
+          const p = Math.min(1, Math.max(0, (t - w.walkT0) / w.walkDur));
+          return w.wantOut || p < 1;
+        })
+          ? 1
+          : 0;
+        d.open += (want - d.open) * Math.min(1, 0.08);
+        setBarnDoorOpen(d.mesh, d.open);
       }
 
       // Pulse cases (flash ~0.55s)
@@ -1701,7 +1924,7 @@ export function IsoFarmView({
 
       // Engin de travail : parcours des cases, rang par rang.
       const workKey = aw
-        ? `${aw.type}:${aw.cells.map((c) => `${c.x},${c.y}`).join("|")}`
+        ? `${aw.type}:${aw.haul ? "H" : ""}:${aw.cargo ?? ""}:${aw.cells.map((c) => `${c.x},${c.y}`).join("|")}`
         : "";
       if (workKey !== prevWorkKey.current) {
         prevWorkKey.current = workKey;
@@ -1710,11 +1933,12 @@ export function IsoFarmView({
           workStartRef.current = t;
           // Un outil traîné arrive attelé : un déchaumeur qui traverse le
           // champ tout seul ne trompe personne.
-          workRig = createMachineRig(aw.type, {
-            towed: isTowedImplement(aw.type),
+          workRig = createMachineRig(aw.haul ? "TRACTOR" : aw.type, {
+            towed: !aw.haul && isTowedImplement(aw.type),
             shadows: quality.shadows,
             condition: aw.condition ?? undefined,
           });
+          if (aw.haul) hitchTrailer(workRig, aw.cargo);
           workRig.group.scale.setScalar(MACHINE_SCALE);
           workGroup.add(workRig.group);
           workTravelled = 0;
@@ -1778,7 +2002,7 @@ export function IsoFarmView({
 
         // La coupe se voit : les brins des cases franchies se couchent au
         // passage, au lieu que le champ entier disparaisse d'un coup.
-        if (aw?.type === "HARVESTER") {
+        if (aw?.type === "HARVESTER" || aw?.cut === "harvest" || aw?.cut === "mow") {
           for (let i = 0; i <= i0; i++) cropField.cut(workPath[i].x, workPath[i].y, t);
         }
 
@@ -1972,7 +2196,7 @@ export function IsoFarmView({
     const c = cells
       .map(
         (x) =>
-          `${x.x},${x.y},${x.kind},${x.crop ?? ""},${x.fieldStage ?? ""},${x.machineType ?? ""},${x.hasStubble ? 1 : 0},${x.residuePasses ?? 0},${x.weedsControlled ? 1 : 0}`,
+          `${x.x},${x.y},${x.kind},${x.crop ?? ""},${x.fieldStage ?? ""},${x.machineType ?? ""},${x.hasStubble ? 1 : 0},${x.residuePasses ?? 0},${x.weedsControlled ? 1 : 0},${x.harvestsSincePlow ?? 0}`,
       )
       .join("|");
     const b = buildings

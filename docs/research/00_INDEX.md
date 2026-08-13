@@ -81,6 +81,7 @@ Chaque valeur chiffrée dans cette documentation est classée :
 | — | [50_MACHINE_CARE.md](./50_MACHINE_CARE.md) | Atelier : graisser, glisser, réparer (tous) |
 | — | [51_ETA_MISSIONS.md](./51_ETA_MISSIONS.md) | L’ETA n’est pas un métier — missions d’appoint |
 | — | [52_MACHINES_3D.md](./52_MACHINES_3D.md) | Parc matériel 3D : engins détaillés, champ vivant, projections |
+| — | [53_BOUCLES_LIEES.md](./52_BOUCLES_LIEES.md) | Plan : cultures, poules/moutons, fumier, transport, halle |
 
 ---
 

@@ -10,6 +10,8 @@ import {
   MILK_BASE_PER_COW,
   MILK_HAPPINESS_SPAN,
   PADDOCK,
+  collectProgress,
+  collectReady,
   canGraze,
   crowdingPenalty,
   feedConsumption,
@@ -259,11 +261,38 @@ describe("sortie au pré — conditions d’autorisation", () => {
     ).toEqual({ ok: false, reason: "PADDOCK_FULL" });
   });
 
-  it("refuse de sortir les porcs, qui restent en bâtiment", () => {
+  it("refuse de sortir une espèce dans l’aire d’une autre", () => {
     expect(canGraze({ paddock: enclos(), animals: 4, weather: clair, kind: "PIG" })).toEqual({
       ok: false,
       reason: "WRONG_SPECIES",
     });
+    expect(
+      canGraze({
+        paddock: enclos(),
+        animals: 4,
+        weather: clair,
+        kind: "PIG",
+        paddockKind: "PIG",
+      }).ok,
+    ).toBe(true);
+    expect(
+      canGraze({
+        paddock: enclos(),
+        animals: 4,
+        weather: clair,
+        kind: "HEN",
+        paddockKind: "HEN",
+      }).ok,
+    ).toBe(true);
+    expect(
+      canGraze({
+        paddock: enclos(),
+        animals: 4,
+        weather: clair,
+        kind: "SHEEP",
+        paddockKind: "SHEEP",
+      }).ok,
+    ).toBe(true);
   });
 
   it("nomme chaque motif de refus pour l’UI", () => {
@@ -498,10 +527,15 @@ describe("fenêtres de pâturage", () => {
     expect(GRAZING.cooldownMs).toBe(20 * HOUR);
   });
 
-  it("refuse de planifier une sortie pour les porcs ou un enclos sans capacité", () => {
-    expect(planGrazing(now, troupeau({ kind: "PIG" }), enclos())).toBeNull();
+  it("refuse de planifier une sortie pour un enclos sans capacité", () => {
     expect(planGrazing(now, troupeau(), enclos({ cells: 4, capacity: paddockCapacity(4) }))).toBeNull();
     expect(planGrazing(now, troupeau({ size: 0 }), enclos())).toBeNull();
+  });
+
+  it("planifie aussi pour les porcs, les poules et les moutons", () => {
+    expect(planGrazing(now, troupeau({ kind: "PIG" }), enclos())).not.toBeNull();
+    expect(planGrazing(now, troupeau({ kind: "HEN" }), enclos())).not.toBeNull();
+    expect(planGrazing(now, troupeau({ kind: "SHEEP" }), enclos())).not.toBeNull();
   });
 
   it("compte les vagues nécessaires pour sortir tout le troupeau", () => {
@@ -596,5 +630,18 @@ describe("scénario complet — l’étable seule contre l’étable + enclos", 
     expect(feedConsumption({ herdSize: 20, grazing: true, barnLevel: 2 })).toBeLessThan(
       feedConsumption({ herdSize: 20, grazing: false, barnLevel: 2 }),
     );
+  });
+});
+
+describe("barre de lait", () => {
+  it("passe de 0 à prêt en 15 % d’un cycle", () => {
+    const born = 1_000;
+    expect(collectProgress(born, born, born)).toBe(0);
+    expect(collectReady(born, born, born)).toBe(false);
+    const mid = born + LIVESTOCK_CYCLE_MS * 0.075;
+    expect(collectProgress(born, born, mid)).toBeCloseTo(0.5, 5);
+    const readyAt = born + LIVESTOCK_CYCLE_MS * 0.15;
+    expect(collectReady(born, born, readyAt)).toBe(true);
+    expect(collectProgress(born, born, readyAt)).toBe(1);
   });
 });

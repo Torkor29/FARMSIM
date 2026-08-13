@@ -124,7 +124,7 @@ function GoalsPane({
       </ol>
       <p className="guide-foot">
         {remaining ? `${remaining} objectif(s) devant vous.` : "Tous les objectifs de départ sont faits."}{" "}
-        Le recueil reste là : cultures, bâtiments, ce que l’éleveur achète au céréalier, ce que l’ETA vient faire.
+        Le recueil reste là : cultures, bâtiments, ce que l’éleveur achète au céréalier, les travaux chez le voisin.
       </p>
     </>
   );
