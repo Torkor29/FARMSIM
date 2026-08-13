@@ -1169,13 +1169,10 @@ button.ghost {
     align-items: center;
   }
   .brand-row { flex-wrap: nowrap; min-width: 0; }
-  .brand-mark {
-    font-size: 0.92rem;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-  }
   .brand-logo { width: 26px; height: 26px; }
+  /* Le nom du jeu mangeait la moitié de la ligne et écrasait le reste. Sur
+     un téléphone, le logo suffit à dire où l'on est. */
+  .brand-mark,
   .hud-top .tagline,
   .mvp-badge,
   .help-btn,
@@ -1185,12 +1182,18 @@ button.ghost {
   .logout-btn { display: none; }
   .hud-stats { flex-wrap: nowrap; gap: 0.3rem; }
   .stat-name {
-    max-width: 6.5rem;
+    max-width: 8rem;
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
   }
-  .hud-stats > span { padding: 0.25rem 0.5rem; font-size: 0.78rem; }
+  /* La trésorerie passait à la ligne et doublait la hauteur du bandeau. */
+  .hud-stats > span {
+    padding: 0.25rem 0.5rem;
+    font-size: 0.78rem;
+    white-space: nowrap;
+  }
+  .hud-stats { margin-left: auto; }
 
   .profile-btn {
     display: grid;

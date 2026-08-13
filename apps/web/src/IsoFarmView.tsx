@@ -887,8 +887,13 @@ export function IsoFarmView({
      */
     function applyCamera() {
       const span = viewSpan;
-      const frustum = (span * 0.72) / view.zoom;
       const aspect = el.clientWidth / Math.max(1, el.clientHeight);
+      // Le cadrage se réglait sur la hauteur seule. Sur un écran en portrait,
+      // l'étendue horizontale — la hauteur multipliée par le rapport, donc
+      // plus petite — ne suffisait pas à contenir la parcelle : on atterrissait
+      // dans un coin, la grille coupée des deux côtés. On recule jusqu'à ce
+      // qu'elle tienne dans la dimension la plus étroite.
+      const frustum = (span * 0.72) / Math.min(1, aspect) / view.zoom;
       camera.left = -frustum * aspect;
       camera.right = frustum * aspect;
       camera.top = frustum;
