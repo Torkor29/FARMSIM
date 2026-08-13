@@ -947,6 +947,39 @@ export function createMachineRig(type: MachineType, opts: MachineRigOptions = {}
   };
 }
 
+const CARGO_TINT: Record<string, number> = {
+  WHEAT: 0xe8c65e,
+  BARLEY: 0xe6d27a,
+  MAIZE: 0xf0c33c,
+  RAPE: 0xf2d429,
+  PEA: 0xc6d45a,
+  HAY: 0xc9c46a,
+  MILK: 0xf4f0e8,
+  EGGS: 0xf3e6c4,
+  WOOL: 0xf0ebe3,
+  MEAT: 0xd47a6a,
+  MANURE: 0x5a3d24,
+};
+
+/** Accroche une remorque derrière le tracteur, pour une livraison. */
+export function hitchTrailer(rig: MachineRig, commodity?: string): void {
+  if (rig.group.userData.hauled) return;
+  const cargo = CARGO_TINT[commodity ?? ""] ?? 0xc9a36a;
+  const trailer = new THREE.Group();
+  const wood = new THREE.MeshLambertMaterial({ color: 0x8b5a2b, flatShading: true });
+  const load = new THREE.MeshLambertMaterial({ color: cargo, flatShading: true });
+  const bed = new THREE.Mesh(new THREE.BoxGeometry(0.48, 0.08, 0.4), wood);
+  bed.position.set(0, 0.16, 0);
+  trailer.add(bed);
+  const heap = new THREE.Mesh(new THREE.BoxGeometry(0.32, 0.14, 0.28), load);
+  heap.position.set(0, 0.28, 0);
+  trailer.add(heap);
+  const hitch = blueprint("TRACTOR").hitch;
+  trailer.position.set(hitch[0] - 0.42, 0, 0);
+  rig.group.add(trailer);
+  rig.group.userData.hauled = true;
+}
+
 /* ------------------------------------------------------------------ */
 /* Poussière de travail                                                */
 /* ------------------------------------------------------------------ */

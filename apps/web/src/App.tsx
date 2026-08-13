@@ -14,7 +14,6 @@ import {
   MISSION_CELLS_MIN,
   MISSION_CELLS_MAX,
   laborEscrow,
-  defaultAppearance,
   type CharacterAppearance,
   type FieldWorkerView,
   repairHalfwayTarget,
@@ -24,6 +23,7 @@ import {
   soilSummary,
   MAX_HARVESTS_BEFORE_PLOW,
   workAnimationMs,
+  deliveryHaulPath,
   rotationFactor,
   type FarmWork,
   type RipenessStage,
@@ -37,6 +37,9 @@ import {
   evaluateObjectives,
   type GuideSnapshot,
   type Specialization,
+  CROP_DEFS,
+  GOOD_DEFS,
+  isMowCrop,
   type CropCode,
   type BuildingType,
   type MachineType,
@@ -48,12 +51,13 @@ import {
   isBreakdownKind,
 } from "@farmsim/shared";
 import { AuthScreen } from "./AuthScreen";
-import type { FieldWorker, GrazingHerd, PreviewBuilding } from "./IsoFarmView";
+import type { GrazingHerd, PreviewBuilding } from "./IsoFarmView";
 import { ConfirmDialog, type ConfirmRequest } from "./ConfirmDialog";
 import { MachineCareOverlay, type CareMode } from "./MachineCareOverlay";
 import { MissionPlay, type MissionPlayContract } from "./MissionPlay";
 import { LivestockPanel, type BarnState } from "./LivestockPanel";
-import { MarketPanel, type Listing, type FuturesContract } from "./MarketPanel";
+import { MarketPanel, type Listing, type MarketDelivery, type FuturesContract } from "./MarketPanel";
+import { MissionsPanel } from "./MissionsPanel";
 import type { ContinentDetail, WorldContinent } from "./Onboarding";
 
 // Three.js pèse plus lourd que tout le reste de l'application réunie. L'écran
@@ -71,12 +75,10 @@ import { TutorialOverlay } from "./TutorialOverlay";
 import { FieldDock } from "./FieldDock";
 import { PlayGuide } from "./PlayGuide";
 import { TOKEN_KEY, TUTORIAL_KEY, GUIDE_FLAGS_KEY } from "./storage-keys";
-import { isPlantTool, isSoilTool, type Tool } from "./tools";
+import { cropFromPlantTool, isPlantTool, isSoilTool, plantCropLabel, type Tool } from "./tools";
 import { useIsMobile } from "./use-media-query";
 import { DevPanel, type DevGrant } from "./DevPanel";
 import { NO_ALERTS, tabBadge, useAwayAlerts, useNotificationState, type FarmAlerts } from "./use-alerts";
-import { ZoneMap } from "./ZoneMap";
-
 const API = "/api";
 
 type SessionResume = {
@@ -240,8 +242,14 @@ async function api<T>(path: string, init?: RequestInit): Promise<T> {
     },
     ...init,
   });
-  const data = await res.json();
-  if (!res.ok) throw new Error(data.error ?? "Erreur API");
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    const flat = data as { error?: string; formErrors?: string[]; fieldErrors?: Record<string, string[]> };
+    const field = flat.fieldErrors
+      ? Object.values(flat.fieldErrors).flat().find(Boolean)
+      : undefined;
+    throw new Error(flat.error ?? flat.formErrors?.[0] ?? field ?? "Erreur serveur");
+  }
   return data as T;
 }
 
@@ -310,7 +318,7 @@ const SHEET_TABS: { key: SheetKey; label: string; icon: string }[] = [
   { key: "BUILD", label: "Bâtir", icon: "🏗️" },
   { key: "HERD", label: "Troupeau", icon: "🐄" },
   { key: "GARAGE", label: "Garage", icon: "🚜" },
-  { key: "OFFICE", label: "Bureau", icon: "📋" },
+  { key: "OFFICE", label: "Missions", icon: "🤝" },
 ];
 
 function wearNote(machine?: {
@@ -333,14 +341,22 @@ function harvestGrainNote(r: {
   soldTons?: number;
   soldRevenue?: number;
   soldReason?: "NO_SILO" | "SILO_FULL" | null;
+  hayTons?: number;
+  grassRegrew?: number;
 }): string {
+  if (r.hayTons && r.hayTons > 0 && (r.totalTons ?? 0) <= r.hayTons + 0.001) {
+    return r.grassRegrew
+      ? `Foin ${r.hayTons.toFixed(2)} t en hangar · le champ reprend`
+      : `Foin ${r.hayTons.toFixed(2)} t en hangar`;
+  }
   const total = r.totalTons != null ? r.totalTons.toFixed(2) : "";
-  if (!r.soldTons) return `Récolte ${total} t`;
+  const hay = r.hayTons ? ` · foin ${r.hayTons.toFixed(2)} t` : "";
+  if (!r.soldTons) return `Récolte ${total} t${hay}`;
   const money = r.soldRevenue ? ` · +${Math.round(r.soldRevenue)} TRN` : "";
   if (r.soldReason === "NO_SILO") {
-    return `Récolte ${total} t vendue au négociant (pas de silo)${money}`;
+    return `Récolte ${total} t vendue tout de suite (pas de silo)${money}${hay}`;
   }
-  return `Récolte ${total} t · ${r.soldTons.toFixed(2)} t vendues (silo plein)${money}`;
+  return `Récolte ${total} t · ${r.soldTons.toFixed(2)} t vendues (silo plein)${money}${hay}`;
 }
 
 /** Sons UI optionnels — ignorés tant qu’aucun asset n’est fourni */
@@ -415,7 +431,8 @@ export function App() {
     kind?: "BELT" | "HYDRAULIC" | "ENGINE";
   } | null>(null);
   const [showEta, setShowEta] = useState(false);
-  const [showGarage, setShowGarage] = useState(true);
+  const [showGarage, setShowGarage] = useState(false);
+  const [showHerd, setShowHerd] = useState(false);
   const [weather, setWeather] = useState<WeatherSnap[]>([]);
   const [brush, setBrush] = useState<1 | 2 | 3>(1);
   const [prevPrices, setPrevPrices] = useState<Record<string, number>>({});
@@ -430,14 +447,29 @@ export function App() {
     type: MachineType;
     cells: { x: number; y: number }[];
     condition?: number;
+    cut?: "harvest" | "mow";
+    haul?: boolean;
+    cargo?: string;
   } | null>(null);
+  const haulPendingRef = useRef<Set<string>>(new Set());
+  const haulSeenRef = useRef<Set<string>>(new Set());
+  const haulReadyRef = useRef(false);
+  const playHaulRef = useRef<(commodity?: string) => void>(() => undefined);
   const [hoverCell, setHoverCell] = useState<{ x: number; y: number } | null>(null);
   const [toastTick, setToastTick] = useState(0);
   const [worldContinents, setWorldContinents] = useState<WorldContinent[]>([]);
   const [continentDetail, setContinentDetail] = useState<ContinentDetail | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
   const [barns, setBarns] = useState<BarnState[]>([]);
+  /** Cases assombries après un épandage de fumier, jusqu'à cette date. */
+  const [manureStain, setManureStain] = useState<Record<string, number>>({});
   const [listings, setListings] = useState<Listing[]>([]);
+  const [deliveries, setDeliveries] = useState<MarketDelivery[]>([]);
+  const [onlinePlayers, setOnlinePlayers] = useState<
+    { id: string; name: string; online: boolean; lastSeenAt: number | null }[]
+  >([]);
+  const onlineSeenRef = useRef<Set<string>>(new Set());
+  const onlineReadyRef = useRef(false);
   const [showMarket, setShowMarket] = useState(false);
   const [confirmRequest, setConfirmRequest] = useState<ConfirmRequest | null>(null);
   const [showArrival, setShowArrival] = useState(false);
@@ -465,7 +497,7 @@ export function App() {
 
   const refreshMeta = useCallback(async () => {
     const uid = playerIdRef.current;
-    const [z, m, c, w, labor] = await Promise.all([
+    const [z, m, c, w, labor, peers] = await Promise.all([
       api<Zone[]>("/zones"),
       api<MarketPrice[]>("/market"),
       api<{ contracts: Contract[]; active: Contract | null }>(
@@ -477,6 +509,11 @@ export function App() {
             `/labor-orders?userId=${encodeURIComponent(uid)}`,
           )
         : Promise.resolve({ orders: [] as LaborOrderView[], active: null, posted: [] as LaborOrderView[] }),
+      uid
+        ? api<{ players: { id: string; name: string; online: boolean; lastSeenAt: number | null }[] }>(
+            `/players?userId=${encodeURIComponent(uid)}`,
+          )
+        : Promise.resolve({ players: [] }),
     ]);
     setPrevPrices((prev) => {
       if (Object.keys(prev).length === 0) {
@@ -492,6 +529,18 @@ export function App() {
     setContracts((prev) => keepIfSame(prev, c.contracts));
     setLaborBoard((prev) => keepIfSame(prev, labor.orders));
     setMyPostedLabor((prev) => keepIfSame(prev, labor.posted));
+    setOnlinePlayers((prev) => keepIfSame(prev, peers.players));
+    const liveNow = peers.players.filter((p) => p.online);
+    if (onlineReadyRef.current) {
+      const arrived = liveNow.find((p) => !onlineSeenRef.current.has(p.id));
+      if (arrived) {
+        setErr(null);
+        setMsg(`${arrived.name} vient de se connecter`);
+        setToastTick((n) => n + 1);
+      }
+    }
+    onlineReadyRef.current = true;
+    onlineSeenRef.current = new Set(liveNow.map((p) => p.id));
     if (labor.active) {
       setVisitOrder((prev) => (prev?.id === labor.active!.id ? prev : labor.active));
     }
@@ -542,8 +591,8 @@ export function App() {
       const money = dump.revenue ? ` · +${Math.round(dump.revenue)} TRN` : "";
       flashToast(
         dump.reason === "NO_SILO"
-          ? `Grain vendu au négociant (pas de silo)${money}`
-          : `Silo plein : ${dump.soldTons.toFixed(2)} t vendues au négociant${money}`,
+          ? `Grain vendu tout de suite (pas de silo)${money}`
+          : `Silo plein : ${dump.soldTons.toFixed(2)} t vendues tout de suite${money}`,
       );
       markGuideFlag("sold");
     }
@@ -666,6 +715,34 @@ export function App() {
     }
   }, []);
 
+  const loadDeliveries = useCallback(async (playerId: string) => {
+    try {
+      const r = await api<{ deliveries: MarketDelivery[] }>(
+        `/deliveries?userId=${encodeURIComponent(playerId)}`,
+      );
+      setDeliveries((prev) => keepIfSame(prev, r.deliveries));
+      for (const d of r.deliveries) {
+        if (d.role !== "BUYER") continue;
+        if (d.status === "PENDING") {
+          haulPendingRef.current.add(d.id);
+          continue;
+        }
+        if (d.status !== "DELIVERED") continue;
+        const wasPending = haulPendingRef.current.has(d.id);
+        haulPendingRef.current.delete(d.id);
+        if (wasPending && haulReadyRef.current && !haulSeenRef.current.has(d.id)) {
+          haulSeenRef.current.add(d.id);
+          playHaulRef.current(d.commodity);
+        } else {
+          haulSeenRef.current.add(d.id);
+        }
+      }
+      haulReadyRef.current = true;
+    } catch {
+      setDeliveries([]);
+    }
+  }, []);
+
   const loadParcel = useCallback(async (id: string) => {
     const d = await api<typeof parcelDetail>(`/parcels/${id}`);
     setParcelDetail((prev) => keepIfSame(prev, d));
@@ -746,7 +823,7 @@ export function App() {
     const beat = () => {
       api("/session/heartbeat", { method: "POST", body: "{}" }).catch(() => undefined);
     };
-    const t = setInterval(beat, 60_000);
+    const t = setInterval(beat, 30_000);
     window.addEventListener("pagehide", beat);
     return () => {
       clearInterval(t);
@@ -779,17 +856,19 @@ export function App() {
     return () => clearInterval(t);
   }, [player?.id, activeParcelId, selectedCells]);
 
-  // La criée bouge sans nous : d'autres joueurs déposent et achètent.
+  // L’hôtel des ventes bouge sans nous : d'autres joueurs déposent et achètent.
   useEffect(() => {
     if (!player) return;
     loadListings(player.id);
+    loadDeliveries(player.id);
     loadFutures();
     const t = setInterval(() => {
       loadListings(player.id);
+      loadDeliveries(player.id);
       loadFutures();
     }, 8000);
     return () => clearInterval(t);
-  }, [player?.id, loadListings]);
+  }, [player?.id, loadListings, loadDeliveries]);
   const freeParcels = useMemo(
     () =>
       zones.flatMap((z) =>
@@ -833,10 +912,11 @@ export function App() {
       ? (parcel?.machines ?? [])
       : (player?.farm?.machines ?? []);
     return cells.map((c) => {
-      if (c.kind !== "VEHICLE" || !c.machineId) return c;
+      const stained = { ...c, manuredUntil: manureStain[`${c.x},${c.y}`] };
+      if (c.kind !== "VEHICLE" || !c.machineId) return stained;
       const m = machines.find((x) => x.id === c.machineId);
       return {
-        ...c,
+        ...stained,
         machineType: (m?.type as MachineType | undefined) ?? "TRACTOR",
         // L'état part jusqu'à la vue : une machine fatiguée se ternit sur le
         // champ, sans qu'il faille ouvrir le garage.
@@ -845,7 +925,7 @@ export function App() {
         machineCondition: (m as { condition?: number } | undefined)?.condition,
       };
     });
-  }, [parcel?.cells, parcel?.machines, player?.farm?.machines, visiting]);
+  }, [parcel?.cells, parcel?.machines, player?.farm?.machines, visiting, manureStain]);
   const zoneName = parcel?.zone?.name ?? ownedParcels[0]?.zone?.name ?? "Votre région";
   const koppen = parcel?.zone?.koppen ?? "Cfb";
   const homeCity = parcel?.zone?.city ?? ownedParcels[0]?.zone?.city ?? "";
@@ -871,14 +951,14 @@ export function App() {
     return sims.reduce((a, s) => a + s.sim.progress, 0) / sims.length;
   }, [parcelDetail]);
 
-  /** Troupeaux effectivement dehors, avec l'enclos vers lequel ils marchent. */
+  /** Troupeaux visibles : à l’étable, ou dehors dans l’enclos. */
   const grazingHerds = useMemo((): GrazingHerd[] => {
     const all = parcel?.buildings ?? [];
     const now = Date.now();
     const out: GrazingHerd[] = [];
     for (const barn of barns) {
       const herd = barn.herd;
-      if (!herd?.grazingUntil || herd.grazingUntil <= now) continue;
+      if (!herd || herd.size <= 0) continue;
       const barnB = all.find((b) => b.id === barn.buildingId);
       if (!barnB) continue;
       const barnDef = BUILDING_DEFS[barnB.type];
@@ -888,9 +968,10 @@ export function App() {
         w: barnDef.w,
         h: barnDef.h,
       };
+      const yardType = barn.yardType;
       const paddockB = all.find((b) => {
-        if (b.type !== "PADDOCK") return false;
-        const d = BUILDING_DEFS.PADDOCK;
+        if (b.type !== yardType) return false;
+        const d = BUILDING_DEFS[yardType];
         return isPaddockAdjacent(barnBox, {
           originX: b.originX,
           originY: b.originY,
@@ -898,47 +979,27 @@ export function App() {
           h: d.h,
         });
       });
-      if (!paddockB) continue;
-      const pDef = BUILDING_DEFS.PADDOCK;
+      const outside = Boolean(herd.grazingUntil && herd.grazingUntil > now && paddockB);
+      const pDef = paddockB ? BUILDING_DEFS[yardType] : barnDef;
       out.push({
         buildingId: barn.buildingId,
         animals: herd.size,
+        kind: herd.kind,
+        sheared: herd.kind === "SHEEP" && !herd.canShear,
+        out: outside,
         barn: barnBox,
-        paddock: {
-          originX: paddockB.originX,
-          originY: paddockB.originY,
-          w: pDef.w,
-          h: pDef.h,
-        },
+        paddock: paddockB
+          ? {
+              originX: paddockB.originX,
+              originY: paddockB.originY,
+              w: pDef.w,
+              h: pDef.h,
+            }
+          : barnBox,
       });
     }
     return out;
   }, [barns, parcel?.buildings]);
-
-  const fieldWorkers = useMemo((): FieldWorker[] => {
-    const fromServer = (parcelDetail?.workers ?? []).map((w) => ({
-      id: w.id,
-      name: w.name,
-      x: w.x,
-      y: w.y,
-      appearance: w.appearance,
-      specialization: w.specialization,
-      working: Boolean(activeWork && player && w.id === player.id),
-    }));
-    if (player && activeWork && !fromServer.some((w) => w.id === player.id)) {
-      const cell = activeWork.cells[0] ?? selectedCells[0] ?? { x: 0, y: 0 };
-      fromServer.push({
-        id: player.id,
-        name: player.displayName,
-        x: cell.x,
-        y: cell.y,
-        appearance: player.appearance ?? defaultAppearance(player.specialization),
-        specialization: player.specialization,
-        working: true,
-      });
-    }
-    return fromServer;
-  }, [parcelDetail?.workers, activeWork, player, selectedCells]);
 
   const hayInStock = useMemo(
     () => (player?.farm?.inventory ?? []).find((i) => i.itemCode === "HAY")?.qty ?? 0,
@@ -947,6 +1008,16 @@ export function App() {
 
   const maizeInStock = useMemo(
     () => (player?.farm?.inventory ?? []).find((i) => i.itemCode === "MAIZE")?.qty ?? 0,
+    [player?.farm?.inventory],
+  );
+
+  const barleyInStock = useMemo(
+    () => (player?.farm?.inventory ?? []).find((i) => i.itemCode === "BARLEY")?.qty ?? 0,
+    [player?.farm?.inventory],
+  );
+
+  const wheatInStock = useMemo(
+    () => (player?.farm?.inventory ?? []).find((i) => i.itemCode === "WHEAT")?.qty ?? 0,
     [player?.farm?.inventory],
   );
 
@@ -979,7 +1050,7 @@ export function App() {
       milkOrMeat: stock("MILK") + stock("MEAT"),
       animals: barns.reduce((n, b) => n + (b.herd?.size ?? 0), 0),
       hasSold: guideFlags.sold,
-      hasHarvested: guideFlags.harvested || cells.some((c) => c.hasStubble) || stock("WHEAT") + stock("MAIZE") + stock("PEA") > 0,
+      hasHarvested: guideFlags.harvested || cells.some((c) => c.hasStubble) || stock("WHEAT") + stock("MAIZE") + stock("PEA") + stock("BARLEY") + stock("RAPE") + stock("HAY") > 0,
       hasContract: guideFlags.contract,
     };
   }, [
@@ -1037,7 +1108,7 @@ export function App() {
         title: `${stubble.length} case(s) en chaumes`,
         detail: mustPlow
           ? `${mustPlow} exigent la charrue : trois récoltes sans labour.`
-          : "Déchaumez pour le rendement, labourez pour repartir à neuf, ou semez direct.",
+          : "Nettoyez le sol pour le rendement, labourez pour repartir à neuf, ou semez direct.",
       };
     }
     if (poor || declining) {
@@ -1062,10 +1133,9 @@ export function App() {
    * pas la découvrir à la moisson.
    */
   const rotationAlert = useMemo(() => {
-    if (tool !== "PLANT_WHEAT" && tool !== "PLANT_MAIZE" && tool !== "PLANT_PEA") return null;
+    const crop = cropFromPlantTool(tool);
+    if (!crop) return null;
     if (!selectedCells.length) return null;
-    const crop: CropCode =
-      tool === "PLANT_WHEAT" ? "WHEAT" : tool === "PLANT_MAIZE" ? "MAIZE" : "PEA";
     const cells = parcel?.cells ?? [];
     let worst = 1;
     let repeated = 0;
@@ -1223,7 +1293,7 @@ export function App() {
       return `Case (${x},${y}) · ${soil}`;
     }
     if (cell.kind === "CROP") {
-      const crop = cell.crop ?? "?";
+      const crop = cell.crop ? (CROP_DEFS[cell.crop]?.name ?? cell.crop) : "?";
       const fert = cell.fertilizedPasses ?? 0;
       const ripe = sim?.sim.ripeness;
       if (ripe) {
@@ -1416,9 +1486,7 @@ export function App() {
     }
 
     if (
-      tool === "PLANT_WHEAT" ||
-      tool === "PLANT_MAIZE" ||
-      tool === "PLANT_PEA" ||
+      isPlantTool(tool) ||
       tool === "FERTILIZE" ||
       tool === "HARVEST" ||
       tool === "STUBBLE" ||
@@ -1432,13 +1500,14 @@ export function App() {
         : selectedCells.length +
           block.filter((c) => !selectedCells.some((s) => s.x === c.x && s.y === c.y)).length;
       toggleCell(x, y);
-      const label =
-        tool === "PLANT_WHEAT"
-          ? "Blé"
-          : tool === "PLANT_MAIZE"
-            ? "Maïs"
-            : tool === "FERTILIZE"
-              ? "Ferti"
+      const label = isPlantTool(tool)
+        ? plantCropLabel(tool)
+        : tool === "FERTILIZE"
+          ? "Engrais"
+          : tool === "PLOW"
+            ? "Labour"
+            : tool === "STUBBLE"
+              ? "Nettoyer"
               : "Récolte";
       flashToast(`${label} · ${nextCount} case(s) sélectionnée(s)`);
       return;
@@ -1503,19 +1572,37 @@ export function App() {
   }
 
   /** Le prestataire n'est proposé que là où il a un sens : sur du travail aux champs. */
+  const selectedAreGrass = useMemo(() => {
+    if (!selectedCells.length) return false;
+    return selectedCells.every((sel) => {
+      const cell = parcel?.cells?.find((c) => c.x === sel.x && c.y === sel.y);
+      return isMowCrop(cell?.crop);
+    });
+  }, [selectedCells, parcel?.cells]);
+
+  const readyAreGrass = useMemo(() => {
+    const ready = (parcelDetail?.cellSims ?? []).filter((s) => s.sim.ready);
+    if (!ready.length) return false;
+    return ready.every((s) => {
+      const cell = parcel?.cells?.find((c) => c.x === s.x && c.y === s.y);
+      return isMowCrop(cell?.crop);
+    });
+  }, [parcelDetail?.cellSims, parcel?.cells]);
+
   const contractorOffer = useMemo(() => {
-    const work: FarmWork | null =
-      tool === "PLANT_WHEAT" || tool === "PLANT_MAIZE" || tool === "PLANT_PEA"
-        ? "PLANT"
-        : tool === "FERTILIZE"
-          ? "FERTILIZE"
-          : tool === "HARVEST"
-            ? "HARVEST"
-            : tool === "PLOW"
-              ? "PLOW"
-              : tool === "STUBBLE"
-                ? "STUBBLE"
-                : null;
+    const work: FarmWork | null = isPlantTool(tool)
+      ? "PLANT"
+      : tool === "FERTILIZE"
+        ? "FERTILIZE"
+        : tool === "HARVEST"
+          ? selectedAreGrass
+            ? "MOW"
+            : "HARVEST"
+          : tool === "PLOW"
+            ? "PLOW"
+            : tool === "STUBBLE"
+              ? "STUBBLE"
+              : null;
     if (!work || !selectedCells.length) return null;
     const needed: MachineType =
       work === "HARVEST" ? "HARVESTER" : work === "STUBBLE" ? "DISC_HARROW" : "TRACTOR";
@@ -1523,14 +1610,13 @@ export function App() {
       (m) => m.type === needed && m.condition >= (MACHINE_DEFS[needed]?.minCondition ?? 15),
     );
     return { work, hasMachine, cost: urgentContractorQuote(work, selectedCells.length) };
-  }, [tool, selectedCells.length, player?.farm?.machines]);
+  }, [tool, selectedCells.length, selectedAreGrass, player?.farm?.machines]);
 
   const laborQuote = useMemo(() => {
     if (visiting || !contractorOffer) return null;
     const n = selectedCells.length;
     if (n < MISSION_CELLS_MIN || n > MISSION_CELLS_MAX) return null;
-    const crop: CropCode | undefined =
-      tool === "PLANT_WHEAT" ? "WHEAT" : tool === "PLANT_MAIZE" ? "MAIZE" : tool === "PLANT_PEA" ? "PEA" : undefined;
+    const crop: CropCode | undefined = cropFromPlantTool(tool) ?? undefined;
     return laborEscrow(contractorOffer.work, n, crop).escrow;
   }, [visiting, contractorOffer, selectedCells.length, tool]);
 
@@ -1538,8 +1624,7 @@ export function App() {
     if (!player || !activeParcelId || !contractorOffer || laborQuote == null) return;
     setBusy(true);
     try {
-      const crop =
-        tool === "PLANT_MAIZE" ? "MAIZE" : tool === "PLANT_WHEAT" ? "WHEAT" : tool === "PLANT_PEA" ? "PEA" : undefined;
+      const crop = cropFromPlantTool(tool) ?? undefined;
       const r = await api<{ escrow: number }>(`/parcels/${activeParcelId}/labor-orders`, {
         method: "POST",
         body: JSON.stringify({
@@ -1549,7 +1634,7 @@ export function App() {
           cells: selectedCells,
         }),
       });
-      flashToast(`Chantier publié · ${r.escrow} TRN en séquestre`);
+      flashToast("Cet argent est bloqué jusqu’à la fin (ou l’annulation).");
       setSelectedCells([]);
       await refreshPlayer();
       await refreshMeta();
@@ -1613,7 +1698,11 @@ export function App() {
     setBusy(true);
     setErr(null);
     const workCells = selectedCells.slice();
-    flashWork(contractorOffer.work === "HARVEST" ? "HARVESTER" : "TRACTOR", workCells);
+    flashWork(
+      contractorOffer.work === "HARVEST" ? "HARVESTER" : "TRACTOR",
+      workCells,
+      contractorOffer.work === "MOW" ? "mow" : contractorOffer.work === "HARVEST" ? "harvest" : undefined,
+    );
     try {
       const r = await api<{ cost: number; cells: number; totalTons?: number }>(
         `/parcels/${activeParcelId}/contractor`,
@@ -1622,13 +1711,13 @@ export function App() {
           body: JSON.stringify({
             userId: player.id,
             work: contractorOffer.work,
-            crop: tool === "PLANT_MAIZE" ? "MAIZE" : tool === "PLANT_WHEAT" ? "WHEAT" : undefined,
+            crop: cropFromPlantTool(tool) ?? undefined,
             cells: workCells,
           }),
         },
       );
       const tons = r.totalTons ? ` · ${r.totalTons.toFixed(2)} t` : "";
-      flashToast(`Entreprise : ${WORK_LABELS[contractorOffer.work]} ×${r.cells}${tons} · −${r.cost} TRN`);
+      flashToast(`C’est fait : ${WORK_LABELS[contractorOffer.work]} ×${r.cells}${tons} · −${r.cost} TRN`);
       setSelectedCells([]);
       await refreshPlayer();
       await loadParcel(activeParcelId);
@@ -1654,12 +1743,17 @@ export function App() {
     return "TRACTOR";
   }
 
-  function flashWork(type: MachineType, cells: { x: number; y: number }[]) {
+  function flashWork(
+    type: MachineType,
+    cells: { x: number; y: number }[],
+    cut?: "harvest" | "mow",
+    extra?: { haul?: boolean; cargo?: string },
+  ) {
     setPulseCells(cells);
     // L'engin envoyé au chantier est celui du garage : il arrive avec son
     // usure, visible sur sa carrosserie.
     const used = (player?.farm?.machines ?? []).find((m) => m.type === type);
-    setActiveWork({ type, cells, condition: used?.condition });
+    setActiveWork({ type, cells, cut, haul: extra?.haul, cargo: extra?.cargo, condition: used?.condition });
     // Un peu de marge sur la durée du parcours : l'engin doit atteindre la
     // dernière case avant qu'on ne l'efface.
     window.setTimeout(() => {
@@ -1668,18 +1762,46 @@ export function App() {
     }, workAnimationMs(cells.length) + 250);
   }
 
+  /** Tracteur + remorque sur la parcelle d’arrivée, comme chez le voisin. */
+  function flashDeliveryArrival(commodity?: string) {
+    if (visiting) return;
+    const destBuilding = (parcel?.buildings ?? []).find(
+      (b) =>
+        b.type === "SILO" ||
+        b.type === "HAY_BARN" ||
+        b.type === "FARMHOUSE" ||
+        b.type === "CATTLE_BARN",
+    );
+    const cells = deliveryHaulPath(
+      gw,
+      gh,
+      destBuilding
+        ? { x: destBuilding.originX, y: destBuilding.originY }
+        : null,
+    );
+    if (cells.length < 2) return;
+    setShowMarket(false);
+    flashWork("TRACTOR", cells, undefined, { haul: true, cargo: commodity });
+  }
+  playHaulRef.current = flashDeliveryArrival;
+
   async function runWorkOnCells(cells: { x: number; y: number }[]) {
     if (!player || !activeParcelId || !cells.length || busy) return;
     setBusy(true);
     setErr(null);
     const workCells = cells.slice();
-    flashWork(workMachineForTool(tool), workCells);
+    const plantCrop = cropFromPlantTool(tool);
+    const harvestCut = tool === "HARVEST" ? (selectedAreGrass ? "mow" : "harvest") : undefined;
+    flashWork(
+      tool === "HARVEST" && selectedAreGrass ? "TRACTOR" : workMachineForTool(tool),
+      workCells,
+      harvestCut,
+    );
     type LaborBit = { remaining: number; completed: boolean; payout?: number };
     let labor: LaborBit | undefined;
     try {
-      if (tool === "PLANT_WHEAT" || tool === "PLANT_MAIZE" || tool === "PLANT_PEA") {
-        const crop: CropCode =
-          tool === "PLANT_WHEAT" ? "WHEAT" : tool === "PLANT_MAIZE" ? "MAIZE" : "PEA";
+      if (plantCrop) {
+        const crop = plantCrop;
         const r = await api<{
           machine?: {
             wearApplied: number;
@@ -1694,7 +1816,8 @@ export function App() {
           body: JSON.stringify({ userId: player.id, crop, cells: workCells, directSeed }),
         });
         setMsg(
-          `Semé ${crop} ×${workCells.length}${directSeed ? " en direct" : ""}` + wearNote(r.machine),
+          `Semé ${CROP_DEFS[crop].name} ×${workCells.length}${directSeed ? " en direct" : ""}` +
+            wearNote(r.machine),
         );
         labor = r.labor;
       } else if (tool === "FERTILIZE") {
@@ -1706,11 +1829,21 @@ export function App() {
             breakdown?: string | null;
           };
           labor?: { remaining: number; completed: boolean; payout?: number };
+          usedManure?: boolean;
         }>(`/parcels/${activeParcelId}/fertilize`, {
           method: "POST",
           body: JSON.stringify({ userId: player.id, cells: workCells }),
         });
-        setMsg("Fertilisé" + wearNote(r.machine));
+        setMsg((r.usedManure ? "Fumier épandu" : "Fertilisé") + wearNote(r.machine));
+        if (r.usedManure) {
+          const until = Date.now() + 60_000;
+          setManureStain((prev) => {
+            const next = { ...prev };
+            for (const c of workCells) next[`${c.x},${c.y}`] = until;
+            return next;
+          });
+          if (activeParcelId) await loadLivestock(activeParcelId);
+        }
         labor = r.labor;
       } else if (tool === "HARVEST") {
         const r = await api<{
@@ -1724,6 +1857,8 @@ export function App() {
           lostCells?: number;
           soldTons?: number;
           soldRevenue?: number;
+          hayTons?: number;
+          grassRegrew?: number;
           soldReason?: "NO_SILO" | "SILO_FULL" | null;
           labor?: { remaining: number; completed: boolean; payout?: number };
         }>(`/parcels/${activeParcelId}/harvest`, {
@@ -1777,7 +1912,7 @@ export function App() {
           body: JSON.stringify({ userId: player.id, cells: workCells }),
         });
         setMsg(
-          `Déchaumé ×${r.stubbled} · −${r.cost} TRN · +${Math.round(r.nextBonus * 100)} % sur la prochaine récolte` +
+          `Sol nettoyé ×${r.stubbled} · −${r.cost} TRN · +${Math.round(r.nextBonus * 100)} % sur la prochaine récolte` +
             wearNote(r.machine),
         );
         labor = r.labor;
@@ -1820,11 +1955,19 @@ export function App() {
               ? visitOrder.cellList.some((r) => r.x === c.x && r.y === c.y)
               : true,
           ) || [];
-      if (readyCells.length) flashWork("HARVESTER", readyCells);
+      if (readyCells.length) {
+        flashWork(
+          readyAreGrass ? "TRACTOR" : "HARVESTER",
+          readyCells,
+          readyAreGrass ? "mow" : "harvest",
+        );
+      }
       const r = await api<{
         totalTons: number;
         soldTons?: number;
         soldRevenue?: number;
+        hayTons?: number;
+        grassRegrew?: number;
         soldReason?: "NO_SILO" | "SILO_FULL" | null;
         labor?: { remaining: number; completed: boolean; payout?: number };
       }>(`/parcels/${activeParcelId}/harvest`, {
@@ -1901,7 +2044,7 @@ export function App() {
         method: "POST",
         body: JSON.stringify({ userId: player.id, commodity, tons, pricePerTon }),
       });
-      flashToast(`Lot déposé à la criée · frais ${r.fee} TRN`);
+      flashToast(`Lot mis en vente · frais ${r.fee} TRN`);
       await refreshPlayer();
       await loadListings(player.id);
     } catch (e) {
@@ -1937,9 +2080,51 @@ export function App() {
         method: "POST",
         body: JSON.stringify({ userId: player.id }),
       });
-      flashToast(`Acheté ${r.bought.toFixed(2)} t · −${r.paid} TRN`);
+      flashToast("Pas encore chez vous : quelqu’un doit livrer.");
       await refreshPlayer();
       await loadListings(player.id);
+      await loadDeliveries(player.id);
+    } catch (e) {
+      flashToast(e instanceof Error ? e.message : String(e), true);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function deliverLot(id: string) {
+    if (!player) return;
+    setBusy(true);
+    try {
+      const r = await api<{ delivered: number }>(`/deliveries/${id}/deliver`, {
+        method: "POST",
+        body: JSON.stringify({ userId: player.id }),
+      });
+      flashToast(`Livré ${r.delivered.toFixed(2)} t`);
+      await refreshPlayer();
+      await loadDeliveries(player.id);
+    } catch (e) {
+      flashToast(e instanceof Error ? e.message : String(e), true);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function autoDeliverLot(id: string) {
+    if (!player) return;
+    setBusy(true);
+    try {
+      const r = await api<{ delivered: number; autoFee: number; commodity?: string }>(
+        `/deliveries/${id}/auto`,
+        {
+          method: "POST",
+          body: JSON.stringify({ userId: player.id }),
+        },
+      );
+      flashToast(`Arrivé · −${r.autoFee} TRN`);
+      haulSeenRef.current.add(id);
+      flashDeliveryArrival(r.commodity);
+      await refreshPlayer();
+      await loadDeliveries(player.id);
     } catch (e) {
       flashToast(e instanceof Error ? e.message : String(e), true);
     } finally {
@@ -2140,28 +2325,35 @@ export function App() {
    * Distribue une ration complète : le joueur choisit l'aliment, pas la dose.
    * Le maïs nourrit mieux, mais c'est du maïs qu'il ne vendra pas.
    */
-  async function feedHerd(herdId: string, useMaize: boolean) {
+  async function feedHerd(herdId: string, ration: "hay" | "maize" | "barley" | "wheat") {
     if (!player) return;
     setBusy(true);
     try {
       const barn = barns.find((b) => b.herd?.id === herdId);
       const size = barn?.herd?.size ?? 1;
-      // Une tonne couvre une bête pendant environ 70 cycles : on vise large
-      // sans vider le silo.
       const wanted = Math.max(1, Math.ceil(size / 3));
-      const stock = useMaize ? maizeInStock : hayInStock;
+      const stock =
+        ration === "maize"
+          ? maizeInStock
+          : ration === "barley"
+            ? barleyInStock
+            : ration === "wheat"
+              ? wheatInStock
+              : hayInStock;
       const tons = Math.min(stock, wanted);
       const r = await api<{ units: number; quality: number }>(`/herds/${herdId}/feed`, {
         method: "POST",
         body: JSON.stringify({
           userId: player.id,
-          hayTons: useMaize ? 0 : tons,
-          maizeTons: useMaize ? tons : 0,
+          hayTons: ration === "hay" ? tons : 0,
+          maizeTons: ration === "maize" ? tons : 0,
+          barleyTons: ration === "barley" ? tons : 0,
+          wheatTons: ration === "wheat" ? tons : 0,
         }),
       });
-      flashToast(
-        `${useMaize ? "Maïs" : "Fourrage"} distribué · ${tons.toFixed(1)} t · ${r.units} kg`,
-      );
+      const label =
+        ration === "maize" ? "Maïs" : ration === "barley" ? "Orge" : ration === "wheat" ? "Blé" : "Fourrage";
+      flashToast(`${label} distribué · ${tons.toFixed(1)} t · ${r.units} kg`);
       await refreshPlayer();
       if (activeParcelId) await loadLivestock(activeParcelId);
     } catch (e) {
@@ -2180,6 +2372,66 @@ export function App() {
         body: JSON.stringify({ userId: player.id }),
       });
       flashToast(`Traite : ${r.litres} L au silo`);
+      await refreshPlayer();
+      if (activeParcelId) await loadLivestock(activeParcelId);
+    } catch (e) {
+      flashToast(e instanceof Error ? e.message : String(e), true);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  function spreadManure(_buildingId: string) {
+    setTool("FERTILIZE");
+    setSelectedCells([]);
+    flashToast("Sélectionnez les cultures, puis Faire — le fumier part de la fosse");
+  }
+
+  async function sellManure(buildingId: string) {
+    if (!player) return;
+    setBusy(true);
+    try {
+      const r = await api<{ tons: number; proceeds: number }>(
+        `/buildings/${buildingId}/manure/sell`,
+        { method: "POST", body: JSON.stringify({ userId: player.id }) },
+      );
+      flashToast(`Fumier vendu au voisin · ${r.tons.toFixed(2)} t · +${r.proceeds} TRN`);
+      await refreshPlayer();
+      if (activeParcelId) await loadLivestock(activeParcelId);
+    } catch (e) {
+      flashToast(e instanceof Error ? e.message : String(e), true);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function collectEggs(herdId: string) {
+    if (!player) return;
+    setBusy(true);
+    try {
+      const r = await api<{ crates: number }>(`/herds/${herdId}/collect-eggs`, {
+        method: "POST",
+        body: JSON.stringify({ userId: player.id }),
+      });
+      flashToast(`Œufs : ${r.crates} caisse(s) au stock`);
+      await refreshPlayer();
+      if (activeParcelId) await loadLivestock(activeParcelId);
+    } catch (e) {
+      flashToast(e instanceof Error ? e.message : String(e), true);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function shearHerd(herdId: string) {
+    if (!player) return;
+    setBusy(true);
+    try {
+      const r = await api<{ tons: number }>(`/herds/${herdId}/shear`, {
+        method: "POST",
+        body: JSON.stringify({ userId: player.id }),
+      });
+      flashToast(`Tonte : ${r.tons.toFixed(3)} t de laine`);
       await refreshPlayer();
       if (activeParcelId) await loadLivestock(activeParcelId);
     } catch (e) {
@@ -2417,7 +2669,49 @@ export function App() {
               pulseCells={pulseCells}
               activeWork={activeWork}
               grazing={grazingHerds}
-              workers={fieldWorkers}
+              manurePiles={barns.flatMap((barn) => {
+                const b = (parcel?.buildings ?? []).find((x) => x.id === barn.buildingId);
+                const fill = barn.herd?.manureFill ?? 0;
+                if (!b || fill <= 0.02) return [];
+                const def = BUILDING_DEFS[b.type];
+                return [
+                  {
+                    buildingId: b.id,
+                    originX: b.originX,
+                    originY: b.originY,
+                    w: def.w,
+                    h: def.h,
+                    fill,
+                  },
+                ];
+              })}
+              yardSignals={barns.flatMap((barn) => {
+                const b = (parcel?.buildings ?? []).find((x) => x.id === barn.buildingId);
+                if (!b || !barn.herd) return [];
+                const def = BUILDING_DEFS[b.type];
+                const out: { kind: "eggs" | "wool"; originX: number; originY: number; w: number; h: number }[] =
+                  [];
+                if (barn.herd.canCollectEggs) {
+                  out.push({
+                    kind: "eggs",
+                    originX: b.originX,
+                    originY: b.originY,
+                    w: def.w,
+                    h: def.h,
+                  });
+                }
+                if (barn.herd.canShear) {
+                  out.push({
+                    kind: "wool",
+                    originX: b.originX,
+                    originY: b.originY,
+                    w: def.w,
+                    h: def.h,
+                  });
+                }
+                return out;
+              })}
+              workers={[]}
               weather={localWeather}
               strokeWork={visiting}
               onStrokePreview={setSelectedCells}
@@ -2514,7 +2808,7 @@ export function App() {
             const cls = delta > 0.05 ? "up" : delta < -0.05 ? "down" : "flat";
             return (
               <span key={m.commodity} className={`tick ${cls}`}>
-                {m.commodity} {m.price.toFixed(1)}
+                {GOOD_DEFS[m.commodity as TradeGood]?.name ?? m.commodity} {m.price.toFixed(1)}
                 <small>
                   {delta > 0.05 ? " ▲" : delta < -0.05 ? " ▼" : " ·"}
                   {Math.abs(delta) > 0.05 ? Math.abs(delta).toFixed(1) : ""}
@@ -2524,6 +2818,32 @@ export function App() {
           })}
           <span className="tick weather-tick">{weatherLabel}</span>
         </div>
+        <button
+          type="button"
+          className="who-now-bar"
+          onClick={() => {
+            if (isMobile) setSheet("OFFICE");
+            else setShowEta((v) => !v);
+          }}
+        >
+          {onlinePlayers.some((p) => p.online) ? (
+            <>
+              <i className="who-dot on" aria-hidden="true" />
+              {onlinePlayers
+                .filter((p) => p.online)
+                .map((p) => p.name)
+                .join(", ")}{" "}
+              {onlinePlayers.filter((p) => p.online).length > 1
+                ? "sont connectés"
+                : "est connecté"}
+            </>
+          ) : (
+            <>
+              <i className="who-dot" aria-hidden="true" />
+              Vous êtes seul pour l’instant
+            </>
+          )}
+        </button>
         {(msg || err) && (
           <div key={toastTick} className={`toast ${err ? "bad" : "good"} pop`}>
             {err ?? msg}
@@ -2788,14 +3108,19 @@ export function App() {
         onDirectSeed={() => setDirectSeed((v) => !v)}
         onConfirm={runSelectionAction}
         onHarvestAll={harvestAll}
+        mowSelected={selectedAreGrass}
+        mowReadyAll={readyAreGrass}
         onContractor={callContractor}
         onPublishLabor={publishLaborOrder}
         onSell={() => setShowMarket(true)}
         onGuide={() => setShowGuide(true)}
         desktopGarage={showGarage}
         desktopOffice={showEta}
+        desktopHerd={showHerd}
+        hasHerd={barns.length > 0}
         onDesktopGarage={() => setShowGarage((v) => !v)}
         onDesktopOffice={() => setShowEta((v) => !v)}
+        onDesktopHerd={() => setShowHerd((v) => !v)}
         showDev={devEnabled}
         onDev={() => setShowDev(true)}
       />
@@ -2804,7 +3129,8 @@ export function App() {
         <aside className={panelClass("garage-panel", "GARAGE")} {...(isMobile ? sheetGesture : {})}>
           <h3>Garage</h3>
           <p className="muted tiny">
-            Graissez avant d’enchaîner. Rafistoler ramène à mi-chemin du neuf, réviser remet à 100 %.
+            Graissez et nettoyez : la machine s’use moins et récolte un peu plus.
+            Rafistoler ramène à mi-chemin, réviser remet à 100 %.
           </p>
           <ul className="list">
             {(player.farm?.machines ?? []).map((m) => {
@@ -2835,7 +3161,19 @@ export function App() {
                   <span>
                     <strong>{def?.name ?? m.type}</strong>
                     <div className={`muted tiny ${low || panne ? "warn" : ""}`}>
-                      État {m.condition.toFixed(0)}%
+                      État {m.condition.toFixed(0)}% ·{" "}
+                      {m.condition <= 0
+                        ? "HS"
+                        : m.condition < 15
+                          ? "à réparer"
+                          : m.condition < 40
+                            ? "usé"
+                            : m.condition < 70
+                              ? "correct"
+                              : m.condition < 90
+                                ? "bon"
+                                : "neuf"}
+                      {m.greased !== false && !dirty && !panne ? " · propre et graissé (+)" : ""}
                       {m.greased === false ? " · pas graissé" : ""}
                       {dirty ? " · sale" : ""}
                       {panne ? ` · panne ${panne}` : ""}
@@ -2922,6 +3260,7 @@ export function App() {
         onClose={() => setShowMarket(false)}
         stock={player.farm?.inventory ?? []}
         listings={listings}
+        deliveries={deliveries}
         marketPrices={market}
         crd={player.crd}
         busy={busy}
@@ -2930,6 +3269,8 @@ export function App() {
         onList={createListing}
         onBuyListing={buyListing}
         onCancelListing={cancelListing}
+        onDeliverLot={deliverLot}
+        onAutoDeliverLot={autoDeliverLot}
         onDry={dryStock}
         onBuyInput={buyInput}
         onLoadHistory={loadPriceHistory}
@@ -2946,8 +3287,14 @@ export function App() {
         onTick={devTick}
       />
 
+      {(isMobile ? sheet === "HERD" : showHerd) && (
       <LivestockPanel
         className={panelClass("livestock-panel", "HERD")}
+        gesture={isMobile ? sheetGesture : undefined}
+        onClose={() => {
+          if (isMobile) setSheet(null);
+          else setShowHerd(false);
+        }}
         barns={barns}
         busy={busy}
         crd={player.crd}
@@ -2955,9 +3302,15 @@ export function App() {
         onGraze={grazeHerd}
         onFeed={feedHerd}
         onMilk={milkHerd}
+        onCollectEggs={collectEggs}
+        onShear={shearHerd}
         onSlaughter={slaughterHerd}
+        onSpreadManure={spreadManure}
+        onSellManure={sellManure}
         hayTons={hayInStock}
         maizeTons={maizeInStock}
+        barleyTons={barleyInStock}
+        wheatTons={wheatInStock}
         onBuildPaddock={(yardType) => {
           setTool("BUILD");
           setBuildType(yardType);
@@ -2965,10 +3318,13 @@ export function App() {
           flashToast(
             yardType === "PIG_YARD"
               ? "Posez la courette contre un bord de la porcherie"
-              : "Posez l’enclos contre un bord de l’étable",
+              : yardType === "HEN_YARD"
+                ? "Posez la courette contre un bord du poulailler"
+                : "Posez l’enclos contre un bord de l’étable",
           );
         }}
       />
+      )}
 
       <ConfirmDialog request={confirmRequest} onCancel={() => setConfirmRequest(null)} />
       {care && player && (() => {
@@ -3000,157 +3356,35 @@ export function App() {
       <PlayGuide open={showGuide} snapshot={guideSnapshot} onClose={() => setShowGuide(false)} />
 
       {(isMobile ? sheet === "OFFICE" : showEta) && (
-        <aside className={panelClass("eta-panel", "OFFICE")} {...(isMobile ? sheetGesture : {})}>
-          <h3>Marché du travail</h3>
-          <p className="muted tiny">
-            Chantiers publiés par d’autres fermes. Vous allez sur leur parcelle, avec votre fer.
-            Appoint pendant que vos cultures poussent — pas une rente.
-          </p>
-          {visitOrder && (
-            <p className="muted tiny">
-              En cours chez {visitOrder.clientName} — {visitOrder.remaining} case(s).
-            </p>
+        <MissionsPanel
+          className={panelClass("eta-panel", "OFFICE")}
+          gesture={isMobile ? sheetGesture : undefined}
+          busy={busy}
+          onlinePlayers={onlinePlayers}
+          visitName={visitOrder?.clientName ?? null}
+          visitLeft={visitOrder?.remaining ?? null}
+          helpWanted={laborBoard}
+          myAsks={myPostedLabor}
+          solo={contracts}
+          onAcceptHelp={(id) => void acceptLaborOrder(id)}
+          onCancelAsk={(id) =>
+            void api(`/labor-orders/${id}/cancel`, {
+              method: "POST",
+              body: JSON.stringify({ userId: player.id }),
+            }).then(() => refreshMeta())
+          }
+          onAcceptSolo={(id) => acceptContract(id)}
+          locked={Boolean(visitOrder) || Boolean(activeMission)}
+          zones={zones.filter(
+            (z) =>
+              ownedParcels.length === 0 ||
+              ownedParcels.some((op) => op.zone?.code === z.code) ||
+              z.parcels.some((p) => expandableParcelIds.has(p.id)),
           )}
-          <ul className="list">
-            {laborBoard.map((o) => (
-              <li key={o.id}>
-                <span>
-                  <strong>
-                    {WORK_LABELS[o.work]} · {o.clientName}
-                  </strong>
-                  <div className="muted tiny">
-                    {o.parcelLabel} · {o.remaining} cases · {o.payoutCrd} TRN
-                  </div>
-                </span>
-                <button
-                  type="button"
-                  disabled={busy || Boolean(visitOrder) || Boolean(activeMission)}
-                  onClick={() => void acceptLaborOrder(o.id)}
-                >
-                  Prendre
-                </button>
-              </li>
-            ))}
-            {laborBoard.length === 0 && (
-              <li>
-                <span className="muted tiny">Aucun chantier joueur pour l’instant.</span>
-              </li>
-            )}
-          </ul>
-          {myPostedLabor.length > 0 && (
-            <>
-              <h3 className="spaced">Mes chantiers</h3>
-              <ul className="list">
-                {myPostedLabor.map((o) => (
-                  <li key={o.id}>
-                    <span>
-                      <strong>
-                        {WORK_LABELS[o.work]} · {o.status === "ACCEPTED" ? "pris" : "ouvert"}
-                      </strong>
-                      <div className="muted tiny">
-                        {o.remaining} cases · séquestre {o.escrowCrd} TRN
-                      </div>
-                    </span>
-                    {o.status === "OPEN" && (
-                      <button
-                        type="button"
-                        disabled={busy}
-                        onClick={() =>
-                          void api(`/labor-orders/${o.id}/cancel`, {
-                            method: "POST",
-                            body: JSON.stringify({ userId: player.id }),
-                          }).then(() => refreshMeta())
-                        }
-                      >
-                        Annuler
-                      </button>
-                    )}
-                  </li>
-                ))}
-              </ul>
-            </>
-          )}
-          <h3 className="spaced">Missions d’appoint</h3>
-          <p className="muted tiny">Filet PNJ si le marché est vide. Moins bien payé.</p>
-          <ul className="list">
-            {contracts.map((c) => (
-              <li key={c.id}>
-                <span>
-                  <strong>{c.title}</strong>
-                  <div className="muted tiny">
-                    {c.jobType} · {c.cells ?? "?"} cases · {c.rewardCrd} TRN
-                  </div>
-                </span>
-                <button type="button" disabled={busy || Boolean(activeMission) || Boolean(visitOrder)} onClick={() => acceptContract(c.id)}>
-                  Prendre
-                </button>
-              </li>
-            ))}
-          </ul>
-          <h3 className="spaced">Expansion</h3>
-          {/* zone-map-ui: expansion */}
-          <div className="zone-maps">
-            {zones
-              .filter(
-                (z) =>
-                  ownedParcels.length === 0 ||
-                  ownedParcels.some((op) => op.zone?.code === z.code) ||
-                  z.parcels.some((p) => expandableParcelIds.has(p.id)),
-              )
-              .map((z) => (
-                <ZoneMap
-                  key={z.id}
-                  zone={z}
-                  myFarmId={player.farm?.id}
-                  selectableIds={expandableParcelIds}
-                  onSelect={buyAdjacent}
-                  compact
-                />
-              ))}
-          </div>
-          {expandableParcelIds.size === 0 ? (
-            <p className="muted tiny">Aucune parcelle adjacente libre.</p>
-          ) : null}
-          <h3 className="spaced">Stock / marché</h3>
-          <ul className="list">
-            {(player.farm?.inventory ?? []).map((i) => {
-              const moistPct = Math.round((i.moisture ?? 0) * 100);
-              const canDry = (i.moisture ?? 0) > 0.1 && i.qty > 0;
-              return (
-                <li key={i.id}>
-                  <span>
-                    {i.itemCode} · {i.qty.toFixed(2)} t
-                    <div className={`muted tiny ${moistPct > 14 ? "warn" : ""}`}>
-                      Humidité {moistPct} % · q{i.quality}
-                      {player.bonuses?.softDryer ? " · séchoir" : ""}
-                    </div>
-                  </span>
-                  <span className="row-actions">
-                    <button type="button" disabled={busy || !canDry} onClick={() => dryStock(i.id)}>
-                      Sécher
-                    </button>
-                    <button
-                      type="button"
-                      disabled={busy}
-                      onClick={() => sell(i.itemCode as CropCode, i.qty)}
-                    >
-                      Vendre
-                    </button>
-                  </span>
-                </li>
-              );
-            })}
-          </ul>
-          <ul className="list">
-            {market.map((m) => (
-              <li key={m.commodity}>
-                <span>
-                  {m.commodity} · {m.price.toFixed(1)} TRN/t
-                </span>
-              </li>
-            ))}
-          </ul>
-        </aside>
+          myFarmId={player.farm?.id}
+          expandableIds={expandableParcelIds}
+          onBuyField={buyAdjacent}
+        />
       )}
 
       {isMobile && (

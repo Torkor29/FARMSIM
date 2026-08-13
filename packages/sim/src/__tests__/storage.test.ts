@@ -11,6 +11,8 @@ describe("silo à grain", () => {
   it("ne range que les céréales", () => {
     expect(isGrainGood("MAIZE")).toBe(true);
     expect(isGrainGood("PEA")).toBe(true);
+    expect(isGrainGood("BARLEY")).toBe(true);
+    expect(isGrainGood("RAPE")).toBe(true);
     expect(isGrainGood("HAY")).toBe(false);
     expect(isGrainGood("MILK")).toBe(false);
   });

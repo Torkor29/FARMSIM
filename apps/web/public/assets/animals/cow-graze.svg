@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" fill="none" aria-hidden="true">
+  <!-- FARMSIM CC0  vache isométrique, tête dans lherbe -->
+  <ellipse cx="32" cy="56" rx="20" ry="5" fill="#1a2a1a" opacity="0.35"/>
+  <path d="M20 50 L21 42 L24 43 L23 51 Z" fill="#2b3a33"/>
+  <path d="M26 51 L27 43 L30 44 L29 52 Z" fill="#2a2218"/>
+  <path d="M38 50 L39 42 L42 43 L41 51 Z" fill="#2b3a33"/>
+  <path d="M44 49 L45 41 L48 42 L47 50 Z" fill="#2a2218"/>
+  <path d="M14 40 L32 32 L50 38 L32 46 Z" fill="#fdf3e2"/>
+  <path d="M14 40 L14 34 L32 26 L32 32 Z" fill="#e8d8c4"/>
+  <path d="M32 32 L50 38 L50 32 L32 26 Z" fill="#fff8ee"/>
+  <path d="M24 36 L30 34 L36 36 L30 38 Z" fill="#2b3a33"/>
+  <path d="M40 38 L48 42 L54 46 L48 48 L40 44 Z" fill="#fdf3e2"/>
+  <path d="M48 42 L54 46 L54 50 L50 52 L46 48 Z" fill="#e3b3a8"/>
+  <path d="M42 36 L44 33 L46 35 Z" fill="#ead9ba"/>
+  <path d="M48 38 L50 35 L52 37 Z" fill="#ead9ba"/>
+</svg>

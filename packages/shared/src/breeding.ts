@@ -31,9 +31,9 @@ export const BREEDING = {
   /** La réserve doit couvrir au moins ce ratio du besoin `[GD]` */
   minFeedRatio: 0.5,
   /** Cycles de gestation par espèce `[GD]` */
-  gestationCycles: { COW: 8, PIG: 4 } as Record<AnimalKind, number>,
+  gestationCycles: { COW: 8, PIG: 4, HEN: 2, SHEEP: 5 } as Record<AnimalKind, number>,
   /** Petits par mise bas `[RÉEL]` — une vache fait un veau, une truie une portée */
-  litterSize: { COW: 1, PIG: 4 } as Record<AnimalKind, number>,
+  litterSize: { COW: 1, PIG: 4, HEN: 6, SHEEP: 1 } as Record<AnimalKind, number>,
   /**
    * Le bâtiment doit garder de la place : on ne fait pas naître une bête pour
    * la mettre à l'étroit, ce qui ferait chuter le bien-être de tout le lot.
@@ -115,6 +115,7 @@ export function litterFor(kind: AnimalKind, freeSlots: number): number {
 export const SPOILAGE_PER_CYCLE: Partial<Record<TradeGood, number>> = {
   MILK: 0.12,
   MEAT: 0.05,
+  EGGS: 0.18,
 };
 
 /** Une denrée se dégrade-t-elle ? */

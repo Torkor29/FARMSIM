@@ -11,6 +11,13 @@ import { z } from "zod";
 import {
   BUILDING_DEFS,
   CROP_DEFS,
+  CROP_CODES,
+  cropGrowMs,
+  harvestItemCode,
+  isMowCrop,
+  grassWillRegrow,
+  grassCutsDone,
+  isCropCode,
   DRYING,
   MARKET_BOUNDS,
   SPECIALIZATION_LABELS,
@@ -55,6 +62,7 @@ import {
   appearanceFromJson,
   parseAppearance,
   FIELD_PRESENCE_TTL_MS,
+  PLAYER_ONLINE_MS,
   repairHalfwayTarget,
   type FarmWork,
   type Specialization,
@@ -84,6 +92,8 @@ import {
   canList,
   LISTING_REFUSAL_LABELS,
   LISTING_TTL_MS,
+  DELIVERY_TTL_MS,
+  deliveryAutoFee,
   DEALER_MIN_TONS,
   volumeSlippage,
   machineResaleValue,
@@ -94,9 +104,17 @@ import {
   canGraze,
   planGrazing,
   milkYield,
+  eggYield,
+  woolYield,
   meatYield,
   happinessLabel,
   hungerPenalty,
+  kindForBarn,
+  yardTypeForBarn,
+  ANIMAL_PRICE,
+  STARTER_COW_COUNT,
+  STARTER_HAY_TONS,
+  FEED_BASE,
   canBreed,
   gestationProgress,
   litterFor,
@@ -136,9 +154,19 @@ import {
   settleSaleTons,
   GRAZING_REFUSAL_LABELS,
   LIVESTOCK_CYCLE_MS,
+  collectProgress,
+  collectReady,
   MEAT_MATURITY_MS,
   type AnimalKind,
   type TradeGood,
+  manureProduced,
+  manurePitCapacity,
+  addManureToPit,
+  manureFill,
+  manureSmellPenalty,
+  manureNeededForCells,
+  manureSaleProceeds,
+  MANURE_FERTILITY_GAIN,
   currentSeason,
   seasonProgress,
   pickWeather,
@@ -166,6 +194,7 @@ import {
   mergeMoisture,
   applyJobCare,
   careWearMultiplier,
+  careYieldBonus,
   machineWorkBlock,
   repairTargetCondition,
   pickBreakdownKind,
@@ -258,6 +287,9 @@ function explainNoMachine(machines: FarmMachine[], work: FarmWork): string {
   if (!capable.length) {
     if (work === "HARVEST") {
       return "Moissonneuse requise (condition trop basse ou absente) — achetez / réparez.";
+    }
+    if (work === "MOW") {
+      return "Tracteur requis pour faucher l’herbe (condition trop basse ou absent) — achetez / réparez.";
     }
     if (work === "STUBBLE") {
       return "Déchaumeur requis (condition trop basse ou absent) — achetez / réparez.";
@@ -362,11 +394,11 @@ async function resolveFieldAccess(opts: {
     return { ok: false, status: 403, error: "Parcelle non possédée" };
   }
   if (order.work !== opts.work) {
-    return { ok: false, status: 409, error: `Ce chantier est un ${WORK_LABELS[order.work as FarmWork] ?? order.work}` };
+    return { ok: false, status: 409, error: `Ce travail est un ${WORK_LABELS[order.work as FarmWork] ?? order.work}` };
   }
   const remaining = parseCellJson(order.remainingJson);
   if (opts.cells.length && !cellsSubset(opts.cells, remaining)) {
-    return { ok: false, status: 409, error: "Ces cases ne font pas partie du chantier" };
+    return { ok: false, status: 409, error: "Ces cases ne font pas partie du travail" };
   }
   const provider = await prisma.user.findUnique({
     where: { id: opts.userId },
@@ -687,6 +719,7 @@ async function getFarmBonuses(farmId: string) {
   let softDryer = false;
   let spoilageSlow = 0;
   for (const b of buildings) {
+    if (!BUILDING_DEFS[b.type as SharedBuildingType]) continue;
     const stats = buildingStatsAtLevel(b.type as SharedBuildingType, b.level);
     yieldBonus += stats.yieldBonus ?? 0;
     storageGrain += stats.storageGrain ?? 0;
@@ -743,11 +776,11 @@ const MISSION_JOBS: {
   regionNote: string;
   title: (cells: number) => string;
 }[] = [
-  { jobType: "HARVEST", work: "HARVEST", regionNote: "Beauce", title: (n) => `Moisson blé · ${n} cases` },
-  { jobType: "PLOW", work: "PLOW", regionNote: "Iowa", title: (n) => `Labour de printemps · ${n} cases` },
-  { jobType: "SOW", work: "PLANT", regionNote: "Beauce", title: (n) => `Semis maïs · ${n} cases` },
-  { jobType: "FERTILIZE", work: "FERTILIZE", regionNote: "Iowa", title: (n) => `Épandage NPK · ${n} cases` },
-  { jobType: "TRANSPORT", work: "PLOW", regionNote: "Beauce", title: (n) => `Transport grain · ${n} cases` },
+  { jobType: "HARVEST", work: "HARVEST", regionNote: "Beauce", title: (n) => `Récolter du blé · ${n} cases` },
+  { jobType: "PLOW", work: "PLOW", regionNote: "Iowa", title: (n) => `Labourer · ${n} cases` },
+  { jobType: "SOW", work: "PLANT", regionNote: "Beauce", title: (n) => `Semer du maïs · ${n} cases` },
+  { jobType: "FERTILIZE", work: "FERTILIZE", regionNote: "Iowa", title: (n) => `Mettre de l’engrais · ${n} cases` },
+  { jobType: "TRANSPORT", work: "PLOW", regionNote: "Beauce", title: (n) => `Labourer · ${n} cases` },
 ];
 
 function pickMissionCells(): number {
@@ -1045,6 +1078,31 @@ app.get("/world/:continent", async (req, res) => {
   });
 });
 
+/** Coin opposé au tracteur, pour poser l’étable de départ sans collision. */
+function findStarterBarnSpot(
+  gridW: number,
+  gridH: number,
+  tractorX: number,
+  tractorY: number,
+): { x: number; y: number } | null {
+  const w = BUILDING_DEFS.CATTLE_BARN.w;
+  const h = BUILDING_DEFS.CATTLE_BARN.h;
+  const candidates = [
+    { x: Math.max(0, gridW - w), y: 0 },
+    { x: 0, y: 0 },
+    { x: Math.max(0, gridW - w), y: Math.max(0, gridH - h) },
+    { x: 0, y: Math.max(0, gridH - h) },
+  ];
+  for (const c of candidates) {
+    if (c.x + w > gridW || c.y + h > gridH) continue;
+    const hitsTractor = footprintCells(c.x, c.y, w, h).some(
+      (p) => p.x === tractorX && p.y === tractorY,
+    );
+    if (!hitsTractor) return c;
+  }
+  return null;
+}
+
 /**
  * Attribution de la parcelle de départ : gratuite, une seule fois, et
  * seulement si le joueur n'a pas encore de terre.
@@ -1105,26 +1163,66 @@ app.post("/world/claim", async (req, res) => {
       }
 
       if (farm.machines.length === 0) {
-        const types = [{ type: "TRACTOR" as const, tier: 1 }];
-        for (const m of types) {
-          await tx.machine.create({ data: { ...m, farmId: farm.id } });
+        await tx.machine.create({ data: { type: "TRACTOR", tier: 1, farmId: farm.id } });
+        // Le céréalier démarre avec le déchaumeur, pas la moissonneuse :
+        // la première récolte passe par le Bureau.
+        if (body.data.specialization === "CEREALIER") {
+          await tx.machine.create({
+            data: { type: "DISC_HARROW", tier: 1, farmId: farm.id },
+          });
         }
       }
 
       await tx.parcel.update({ where: { id: parcel.id }, data: { farmId: farm.id } });
 
-      const machine = await tx.machine.findFirst({ where: { farmId: farm.id } });
-      if (machine) {
+      const tractorX = 0;
+      const tractorY = Math.max(0, parcel.gridH - 1);
+      const tractor = await tx.machine.findFirst({
+        where: { farmId: farm.id, type: "TRACTOR" },
+      });
+      if (tractor) {
         await tx.machine.update({
-          where: { id: machine.id },
+          where: { id: tractor.id },
           data: { parkedParcelId: parcel.id },
         });
         await tx.parcelCell.update({
           where: {
-            parcelId_x_y: { parcelId: parcel.id, x: 0, y: Math.max(0, parcel.gridH - 1) },
+            parcelId_x_y: { parcelId: parcel.id, x: tractorX, y: tractorY },
           },
-          data: { kind: "VEHICLE", machineId: machine.id },
+          data: { kind: "VEHICLE", machineId: tractor.id },
         });
+      }
+
+      if (body.data.specialization === "ELEVEUR") {
+        const barnSpot = findStarterBarnSpot(parcel.gridW, parcel.gridH, tractorX, tractorY);
+        if (barnSpot) {
+          const barnDef = BUILDING_DEFS.CATTLE_BARN;
+          const cells = footprintCells(barnSpot.x, barnSpot.y, barnDef.w, barnDef.h);
+          const barn = await tx.building.create({
+            data: {
+              parcelId: parcel.id,
+              type: "CATTLE_BARN",
+              originX: barnSpot.x,
+              originY: barnSpot.y,
+            },
+          });
+          for (const c of cells) {
+            await tx.parcelCell.update({
+              where: { parcelId_x_y: { parcelId: parcel.id, x: c.x, y: c.y } },
+              data: { kind: "BUILDING", buildingId: barn.id },
+            });
+          }
+          await tx.herd.create({
+            data: {
+              farmId: farm.id,
+              buildingId: barn.id,
+              kind: "COW",
+              size: STARTER_COW_COUNT,
+              avgAgeMs: PURCHASED_AGE_MS,
+            },
+          });
+          await addToStock(tx, farm.id, "HAY", STARTER_HAY_TONS, 0, 3);
+        }
       }
     });
     const player = await playerPayload(auth.user.id);
@@ -1411,7 +1509,7 @@ app.post("/dev/grant", async (req, res) => {
     });
     const now = Date.now();
     for (const c of cells) {
-      const grow = CROP_DEFS[c.crop as CropCode].growMs;
+      const grow = cropGrowMs(c.crop as CropCode, grassCutsDone(c));
       await prisma.parcelCell.update({
         where: { id: c.id },
         data: {
@@ -1558,6 +1656,7 @@ async function spoilPerishables() {
 
 async function runWorldTick() {
   await expireListings();
+  await settleOverdueDeliveries();
   await expireLaborOrders();
   await runNpcBuyers();
   await spoilPerishables();
@@ -1713,6 +1812,7 @@ async function buildResumeForUser(userId: string) {
         directSeeded: cell.directSeeded,
         rotation: rotationOf(cell),
         specialization: playableSpec(user.specialization),
+        cutsDone: grassCutsDone(cell),
       });
       if (sim.lost) cropsLost += 1;
       else if (sim.ripeness && sim.ripeness.stage !== "PEAK") cropsDeclining += 1;
@@ -2010,6 +2110,27 @@ app.get("/auth/me", async (req, res) => {
   res.json({ token: auth.session.token, player });
 });
 
+/** Les autres fermes : qui est connecté, qui est passé récemment. */
+app.get("/players", async (req, res) => {
+  const mine = typeof req.query.userId === "string" ? req.query.userId : null;
+  const since = new Date(Date.now() - PLAYER_ONLINE_MS);
+  const users = await prisma.user.findMany({
+    select: { id: true, displayName: true, lastSeenAt: true },
+    orderBy: { lastSeenAt: "desc" },
+    take: 40,
+  });
+  res.json({
+    players: users
+      .filter((u) => u.id !== mine)
+      .map((u) => ({
+        id: u.id,
+        name: u.displayName,
+        online: Boolean(u.lastSeenAt && u.lastSeenAt >= since),
+        lastSeenAt: u.lastSeenAt?.getTime() ?? null,
+      })),
+  });
+});
+
 app.patch("/me/appearance", async (req, res) => {
   const auth = await userFromAuthHeader(req);
   if (!auth) {
@@ -2098,6 +2219,7 @@ app.get("/parcels/:id", async (req, res) => {
         rotation: rotationOf(c),
         buildingYieldBonus: bonuses?.yieldBonus,
         weatherAtHarvest: weather?.state as WeatherState | undefined,
+        cutsDone: grassCutsDone(c),
       });
       if (sim.ready && c.fieldStage !== "READY") {
         await prisma.parcelCell.update({
@@ -2153,8 +2275,8 @@ app.post("/parcels/:id/labor-orders", async (req, res) => {
   const body = z
     .object({
       userId: z.string(),
-      work: z.enum(["PLANT", "FERTILIZE", "HARVEST", "PLOW", "STUBBLE"]),
-      crop: z.enum(["WHEAT", "MAIZE", "PEA"]).optional(),
+      work: z.enum(["PLANT", "FERTILIZE", "HARVEST", "PLOW", "STUBBLE", "MOW"]),
+      crop: z.enum(CROP_CODES).optional(),
       cells: z.array(z.object({ x: z.number().int(), y: z.number().int() })).min(1),
     })
     .safeParse(req.body);
@@ -2165,7 +2287,7 @@ app.post("/parcels/:id/labor-orders", async (req, res) => {
   const n = body.data.cells.length;
   if (n < MISSION_CELLS_MIN || n > MISSION_CELLS_MAX) {
     res.status(400).json({
-      error: `Un chantier fait ${MISSION_CELLS_MIN} à ${MISSION_CELLS_MAX} cases`,
+      error: `Un travail fait ${MISSION_CELLS_MIN} à ${MISSION_CELLS_MAX} cases`,
     });
     return;
   }
@@ -2183,7 +2305,7 @@ app.post("/parcels/:id/labor-orders", async (req, res) => {
   for (const { x, y } of unique) {
     const cell = parcel.cells.find((c) => c.x === x && c.y === y);
     if (!cell || cell.kind === "BUILDING" || cell.kind === "VEHICLE") {
-      res.status(409).json({ error: `Case ${x},${y} hors chantier` });
+      res.status(409).json({ error: `Case ${x},${y} hors du travail` });
       return;
     }
   }
@@ -2191,14 +2313,21 @@ app.post("/parcels/:id/labor-orders", async (req, res) => {
     where: { clientId: body.data.userId, status: { in: ["OPEN", "ACCEPTED"] } },
   });
   if (openCount >= LABOR_OPEN_MAX_PER_CLIENT) {
-    res.status(409).json({ error: `Au plus ${LABOR_OPEN_MAX_PER_CLIENT} chantiers ouverts` });
+    res.status(409).json({ error: `Au plus ${LABOR_OPEN_MAX_PER_CLIENT} demandes d’aide en même temps` });
     return;
   }
   const crop = body.data.work === "PLANT" ? (body.data.crop ?? "WHEAT") : null;
   const money = laborEscrow(body.data.work, unique.length, crop);
+  if (body.data.work === "FERTILIZE") {
+    const available = await parcelManureTons(parcel.id);
+    if (available >= manureNeededForCells(unique.length)) {
+      money.extras = 0;
+      money.escrow = money.quote;
+    }
+  }
   const user = await prisma.user.findUnique({ where: { id: body.data.userId } });
   if (!user || user.crd < money.escrow) {
-    res.status(402).json({ error: `TRN insuffisants — ${money.escrow} en séquestre` });
+    res.status(402).json({ error: `Pas assez d’argent — ${money.escrow} TRN mis de côté` });
     return;
   }
   const order = await prisma.$transaction(async (tx) => {
@@ -2269,7 +2398,7 @@ app.post("/labor-orders/:id/accept", async (req, res) => {
     return;
   }
   if (await hasActiveMission(user.id)) {
-    res.status(409).json({ error: "Une mission à la fois — terminez d'abord le chantier en cours." });
+    res.status(409).json({ error: "Une mission à la fois — finissez d’abord celle en cours." });
     return;
   }
   const order = await prisma.laborOrder.findUnique({
@@ -2281,7 +2410,7 @@ app.post("/labor-orders/:id/accept", async (req, res) => {
     return;
   }
   if (order.clientId === user.id) {
-    res.status(409).json({ error: "Vous ne pouvez pas prendre votre propre chantier" });
+    res.status(409).json({ error: "Vous ne pouvez pas prendre votre propre demande" });
     return;
   }
   const picked = pickMachineForWork(user.farm.machines, order.work as FarmWork);
@@ -2307,11 +2436,11 @@ app.post("/labor-orders/:id/cancel", async (req, res) => {
   }
   const order = await prisma.laborOrder.findUnique({ where: { id: req.params.id } });
   if (!order || order.clientId !== body.data.userId) {
-    res.status(403).json({ error: "Pas votre chantier" });
+    res.status(403).json({ error: "Ce n’est pas votre demande" });
     return;
   }
   if (order.status !== "OPEN") {
-    res.status(409).json({ error: "Annulation seulement tant que personne n'a pris le chantier" });
+    res.status(409).json({ error: "Annulation seulement tant que personne n’a pris le travail" });
     return;
   }
   await prisma.$transaction(async (tx) => {
@@ -2338,7 +2467,7 @@ app.post("/labor-orders/:id/abandon", async (req, res) => {
     include: laborOrderInclude,
   });
   if (!order || order.providerId !== body.data.userId || order.status !== "ACCEPTED") {
-    res.status(409).json({ error: "Pas votre chantier" });
+    res.status(409).json({ error: "Ce n’est pas votre demande" });
     return;
   }
   const updated = await prisma.laborOrder.update({
@@ -2458,8 +2587,8 @@ app.post("/parcels/:id/contractor", async (req, res) => {
   const body = z
     .object({
       userId: z.string(),
-      work: z.enum(["PLANT", "FERTILIZE", "HARVEST", "PLOW"]),
-      crop: z.enum(["WHEAT", "MAIZE", "PEA"]).optional(),
+      work: z.enum(["PLANT", "FERTILIZE", "HARVEST", "PLOW", "MOW"]),
+      crop: z.enum(CROP_CODES).optional(),
       cells: z.array(z.object({ x: z.number().int(), y: z.number().int() })).min(1),
     })
     .safeParse(req.body);
@@ -2509,7 +2638,7 @@ app.post("/parcels/:id/contractor", async (req, res) => {
         return;
       }
     }
-    const growMs = CROP_DEFS[crop].growMs;
+    const growMs = cropGrowMs(crop, 0);
     await prisma.$transaction(async (tx) => {
       await tx.user.update({ where: { id: user.id }, data: { crd: { decrement: total } } });
       for (const { x, y } of cells) {
@@ -2536,7 +2665,7 @@ app.post("/parcels/:id/contractor", async (req, res) => {
       .map(({ x, y }) => parcel.cells.find((c) => c.x === x && c.y === y))
       .filter((c): c is NonNullable<typeof c> => {
         if (!c || c.kind !== "CROP" || !c.crop || !c.plantedAt) return false;
-        const grow = CROP_DEFS[c.crop].growMs;
+        const grow = cropGrowMs(c.crop, grassCutsDone(c));
         return ripenessAt(c.plantedAt.getTime() + grow, grow, now).needsPlowing;
       });
     if (!lost.length) {
@@ -2570,11 +2699,19 @@ app.post("/parcels/:id/contractor", async (req, res) => {
   }
 
   if (work === "FERTILIZE") {
+    const cropCells = cells.filter(({ x, y }) => {
+      const cell = parcel.cells.find((c) => c.x === x && c.y === y);
+      return cell && cell.kind === "CROP" && cell.fertilizedPasses < 2;
+    });
+    const needed = manureNeededForCells(cropCells.length);
+    const available = await parcelManureTons(parcel.id);
+    const usedManure = needed > 0 && available >= needed;
     await prisma.$transaction(async (tx) => {
       await tx.user.update({ where: { id: user.id }, data: { crd: { decrement: total } } });
-      for (const { x, y } of cells) {
+      if (usedManure) await drawManureFromPits(tx, parcel.id, needed);
+      for (const { x, y } of cropCells) {
         const cell = parcel.cells.find((c) => c.x === x && c.y === y);
-        if (!cell || cell.kind !== "CROP") continue;
+        if (!cell) continue;
         await tx.parcelCell.update({
           where: { parcelId_x_y: { parcelId: parcel.id, x, y } },
           data: {
@@ -2583,12 +2720,27 @@ app.post("/parcels/:id/contractor", async (req, res) => {
           },
         });
       }
+      if (usedManure && cropCells.length) {
+        await tx.parcel.update({
+          where: { id: parcel.id },
+          data: {
+            fertility: Math.min(1, parcel.fertility + MANURE_FERTILITY_GAIN * cropCells.length),
+          },
+        });
+      }
     });
-    res.json({ work, cells: cells.length, cost: total, service, seeds: 0 });
+    res.json({
+      work,
+      cells: cells.length,
+      cost: total,
+      service,
+      seeds: 0,
+      usedManure,
+    });
     return;
   }
 
-  // HARVEST — le cas qui débloque un joueur sans moissonneuse.
+  // HARVEST / MOW — grain au silo, herbe au hangar. L'herbe peut reprendre.
   const ready = cells
     .map(({ x, y }) => parcel.cells.find((c) => c.x === x && c.y === y))
     .filter((c): c is NonNullable<typeof c> => Boolean(c && c.kind === "CROP" && c.plantedAt));
@@ -2598,8 +2750,11 @@ app.post("/parcels/:id/contractor", async (req, res) => {
   }
 
   let totalTons = 0;
-  const perCrop = new Map<CropCode, number>();
+  let hayTons = 0;
+  const perItem = new Map<string, number>();
+  const taken: typeof ready = [];
   for (const cell of ready) {
+    if (work === "MOW" && !isMowCrop(cell.crop)) continue;
     const sim = simulateCell({
       crop: cell.crop!,
       plantedAt: cell.plantedAt!.getTime(),
@@ -2610,16 +2765,21 @@ app.post("/parcels/:id/contractor", async (req, res) => {
       buildingYieldBonus: bonuses.yieldBonus,
       weatherAtHarvest: weather?.state as WeatherState | undefined,
       specialization: playableSpec(user.specialization),
+      cutsDone: grassCutsDone(cell),
     });
     if (!sim.ready) continue;
-    // Un prestataire connaît moins bien la parcelle que celui qui la cultive.
     const tons = sim.estimatedYieldTons * (1 - CONTRACTOR_YIELD_MALUS);
     totalTons += tons;
-    perCrop.set(cell.crop!, (perCrop.get(cell.crop!) ?? 0) + tons);
+    const item = harvestItemCode(cell.crop!);
+    perItem.set(item, (perItem.get(item) ?? 0) + tons);
+    if (item === "HAY") hayTons += tons;
+    taken.push(cell);
   }
 
   if (totalTons <= 0) {
-    res.status(409).json({ error: "Rien n'est mûr sur la sélection" });
+    res.status(409).json({
+      error: work === "MOW" ? "Rien à faucher sur la sélection" : "Rien n'est mûr sur la sélection",
+    });
     return;
   }
 
@@ -2627,46 +2787,31 @@ app.post("/parcels/:id/contractor", async (req, res) => {
 
   await prisma.$transaction(async (tx) => {
     await tx.user.update({ where: { id: user.id }, data: { crd: { decrement: total } } });
-    for (const cell of ready) {
-      await tx.parcelCell.update({
-        where: { id: cell.id },
-        data: {
-          kind: "EMPTY",
-          crop: null,
-          fieldStage: "EMPTY",
-          plantedAt: null,
-          readyAt: null,
-          fertilizedPasses: 0,
+    for (const cell of taken) {
+      const next = afterTakeField(
+        {
+          crop: cell.crop!,
+          lastCrop: cell.lastCrop,
+          cropStreak: cell.cropStreak,
+          harvestsSincePlow: cell.harvestsSincePlow,
         },
-      });
+        now,
+      );
+      await tx.parcelCell.update({ where: { id: cell.id }, data: next.data });
     }
-    for (const [code, tons] of perCrop) {
-      const existing = await tx.inventoryItem.findFirst({
-        where: { farmId: parcel.farm!.id, itemCode: code },
-      });
-      if (existing) {
-        await tx.inventoryItem.update({
-          where: { id: existing.id },
-          data: {
-            qty: existing.qty + tons,
-            moisture: mergeMoisture(existing.qty, existing.moisture, tons, moisture),
-          },
-        });
-      } else {
-        await tx.inventoryItem.create({
-          data: { farmId: parcel.farm!.id, itemCode: code, qty: tons, quality: 1, moisture },
-        });
-      }
+    for (const [code, tons] of perItem) {
+      await addToStock(tx, parcel.farm!.id, code, tons, moisture, 3);
     }
   });
 
   res.json({
     work,
-    cells: ready.length,
+    cells: taken.length,
     cost: total,
     service,
     seeds: 0,
     totalTons,
+    hayTons,
     moisture,
   });
 });
@@ -2689,11 +2834,69 @@ function rotationUpdate(cell: { lastCrop: CropCode | null; cropStreak: number },
   return { lastCrop: next.lastCrop, cropStreak: next.cropStreak };
 }
 
+/** Après une coupe : l'herbe reprend, le grain laisse des chaumes. */
+function afterTakeField(
+  cell: {
+    crop: CropCode;
+    lastCrop: CropCode | null;
+    cropStreak: number;
+    harvestsSincePlow: number;
+  },
+  now: number,
+) {
+  const nextCuts = Math.min(MAX_HARVESTS_BEFORE_PLOW, cell.harvestsSincePlow + 1);
+  if (isMowCrop(cell.crop) && grassWillRegrow(nextCuts)) {
+    return {
+      regrow: true as const,
+      data: {
+        kind: "CROP" as const,
+        crop: "GRASS" as CropCode,
+        fieldStage: "PLANTED" as const,
+        plantedAt: new Date(now),
+        readyAt: new Date(now + cropGrowMs("GRASS", nextCuts)),
+        fertilizedPasses: 0,
+        weedsControlled: false,
+        hasStubble: false,
+        harvestsSincePlow: nextCuts,
+        lastCrop: "GRASS" as CropCode,
+        cropStreak: 1,
+      },
+    };
+  }
+  return {
+    regrow: false as const,
+    data: {
+      kind: "EMPTY" as const,
+      crop: null,
+      fieldStage: "HARVESTED" as const,
+      plantedAt: null,
+      readyAt: null,
+      fertilizedPasses: 0,
+      weedsControlled: false,
+      hasStubble: true,
+      harvestsSincePlow: nextCuts,
+      ...rotationUpdate(cell, cell.crop),
+    },
+  };
+}
+
+async function resolveHarvestOrMowAccess(opts: {
+  parcelId: string;
+  userId: string;
+  cells: CellXY[];
+}): Promise<FieldAccess> {
+  const harvest = await resolveFieldAccess({ ...opts, work: "HARVEST" });
+  if (harvest.ok) return harvest;
+  const mow = await resolveFieldAccess({ ...opts, work: "MOW" });
+  if (mow.ok) return mow;
+  return harvest;
+}
+
 app.post("/parcels/:id/plant", async (req, res) => {
   const body = z
     .object({
       userId: z.string(),
-      crop: z.enum(["WHEAT", "MAIZE", "PEA"]),
+      crop: z.enum(CROP_CODES),
       cells: z.array(z.object({ x: z.number().int(), y: z.number().int() })).min(1),
       /** Semer dans les chaumes, sans travail du sol préalable */
       directSeed: z.boolean().optional(),
@@ -2727,11 +2930,9 @@ app.post("/parcels/:id/plant", async (req, res) => {
     return;
   }
   const plantCrop =
-    access.order?.crop === "WHEAT" || access.order?.crop === "MAIZE" || access.order?.crop === "PEA"
-      ? access.order.crop
-      : body.data.crop;
+    isCropCode(access.order?.crop) ? access.order.crop : body.data.crop;
   if (access.order?.crop && access.order.crop !== body.data.crop) {
-    res.status(409).json({ error: `Ce chantier demande du ${access.order.crop}` });
+    res.status(409).json({ error: `Ce travail demande du ${access.order.crop}` });
     return;
   }
   const directSeed = body.data.directSeed ?? false;
@@ -2772,7 +2973,7 @@ app.post("/parcels/:id/plant", async (req, res) => {
   }
 
   const now = Date.now();
-  const growMs = CROP_DEFS[plantCrop].growMs;
+  const growMs = cropGrowMs(plantCrop, 0);
   const last = body.data.cells[body.data.cells.length - 1];
   const { wear, labor } = await prisma.$transaction(async (tx) => {
     if (access.charge) {
@@ -2864,7 +3065,14 @@ app.post("/parcels/:id/fertilize", async (req, res) => {
     });
     return;
   }
-  const cost = 10 * body.data.cells.length;
+  const eligible = body.data.cells.filter(({ x, y }) => {
+    const cell = parcel.cells.find((c) => c.x === x && c.y === y);
+    return Boolean(cell && cell.kind === "CROP" && cell.fertilizedPasses < 2);
+  });
+  const needed = manureNeededForCells(eligible.length);
+  const available = await parcelManureTons(parcel.id);
+  const usedManure = needed > 0 && available >= needed;
+  const cost = usedManure || !access.charge ? 0 : 10 * body.data.cells.length;
   const user = await prisma.user.findUnique({ where: { id: body.data.userId } });
   if (!user || (access.charge && user.crd < cost)) {
     res.status(402).json({ error: "TRN insuffisants" });
@@ -2873,9 +3081,10 @@ app.post("/parcels/:id/fertilize", async (req, res) => {
   let fertilized = 0;
   const last = body.data.cells[body.data.cells.length - 1];
   const { wear, labor } = await prisma.$transaction(async (tx) => {
-    if (access.charge) {
+    if (access.charge && cost > 0) {
       await tx.user.update({ where: { id: user.id }, data: { crd: { decrement: cost } } });
     }
+    if (usedManure) await drawManureFromPits(tx, parcel.id, needed);
     for (const { x, y } of body.data.cells) {
       const cell = parcel.cells.find((c) => c.x === x && c.y === y);
       if (!cell || cell.kind !== "CROP" || cell.fertilizedPasses >= 2) continue;
@@ -2884,6 +3093,14 @@ app.post("/parcels/:id/fertilize", async (req, res) => {
         data: { fertilizedPasses: { increment: 1 }, weedsControlled: true },
       });
       fertilized += 1;
+    }
+    if (usedManure && fertilized > 0) {
+      await tx.parcel.update({
+        where: { id: parcel.id },
+        data: {
+          fertility: Math.min(1, parcel.fertility + MANURE_FERTILITY_GAIN * fertilized),
+        },
+      });
     }
     const wear = await applyWearToMachine(tx, {
       machine: picked.machine,
@@ -2901,6 +3118,9 @@ app.post("/parcels/:id/fertilize", async (req, res) => {
   res.json({
     ok: true,
     fertilized,
+    usedManure,
+    manureTons: usedManure ? needed : 0,
+    cost,
     machine: { id: picked.machine.id, type: picked.machine.type, ...wear },
     labor,
   });
@@ -2959,8 +3179,9 @@ app.post("/parcels/:id/plow", async (req, res) => {
     if (cell.kind === "EMPTY" && plowRequired(cell)) return true;
     if (cell.fieldStage === "SPOILED") return true;
     if (cell.kind !== "CROP" || !cell.crop || !cell.plantedAt) return false;
-    const readyAt = cell.plantedAt.getTime() + CROP_DEFS[cell.crop].growMs;
-    return ripenessAt(readyAt, CROP_DEFS[cell.crop].growMs, now).needsPlowing;
+    const grow = cropGrowMs(cell.crop, grassCutsDone(cell));
+    const readyAt = cell.plantedAt.getTime() + grow;
+    return ripenessAt(readyAt, grow, now).needsPlowing;
   });
 
   if (!candidates.length) {
@@ -3164,10 +3385,9 @@ app.post("/parcels/:id/harvest", async (req, res) => {
     res.status(400).json(body.error.flatten());
     return;
   }
-  const access = await resolveFieldAccess({
+  const access = await resolveHarvestOrMowAccess({
     parcelId: req.params.id,
     userId: body.data.userId,
-    work: "HARVEST",
     cells: body.data.cells ?? [],
   });
   if (!access.ok) {
@@ -3180,13 +3400,6 @@ app.post("/parcels/:id/harvest", async (req, res) => {
     return;
   }
   const farm = parcel.farm;
-  const picked = pickMachineForWork(access.machines, "HARVEST");
-  if (!picked) {
-    res.status(409).json({
-      error: explainNoMachine(access.machines, "HARVEST"),
-    });
-    return;
-  }
   const bonuses = await getFarmBonuses(parcel.farmId!);
   const weather = await prisma.weatherSnapshot.findFirst({ where: { zoneCode: parcel.zone.code } });
   const user = await prisma.user.findUnique({ where: { id: body.data.userId } });
@@ -3197,13 +3410,51 @@ app.post("/parcels/:id/harvest", async (req, res) => {
       ? parcel.cells.filter((c) => remaining.some((t) => t.x === c.x && t.y === c.y))
       : parcel.cells.filter((c) => c.kind === "CROP");
 
+  const now = Date.now();
+  let previewGrass = 0;
+  let previewGrain = 0;
+  for (const cell of targets) {
+    if (cell.kind !== "CROP" || !cell.crop || !cell.plantedAt) continue;
+    const sim = simulateCell({
+      crop: cell.crop,
+      plantedAt: cell.plantedAt.getTime(),
+      now,
+      fertility: parcel.fertility,
+      weedsControlled: cell.weedsControlled,
+      fertilizedPasses: Math.min(2, cell.fertilizedPasses) as 0 | 1 | 2,
+      residuePasses: cell.residuePasses,
+      directSeeded: cell.directSeeded,
+      rotation: rotationOf(cell),
+      specialization: playableSpec(farm.user.specialization ?? user?.specialization),
+      buildingYieldBonus: bonuses.yieldBonus,
+      weatherAtHarvest: weather?.state as WeatherState | undefined,
+      cutsDone: grassCutsDone(cell),
+    });
+    if (!sim.ready || sim.lost) continue;
+    if (isMowCrop(cell.crop)) previewGrass += 1;
+    else previewGrain += 1;
+  }
+  const pickedHarvest = previewGrain > 0 ? pickMachineForWork(access.machines, "HARVEST") : null;
+  const pickedMow = previewGrass > 0 ? pickMachineForWork(access.machines, "MOW") : null;
+  if (previewGrain > 0 && !pickedHarvest) {
+    res.status(409).json({ error: explainNoMachine(access.machines, "HARVEST") });
+    return;
+  }
+  if (previewGrass > 0 && !pickedMow) {
+    res.status(409).json({ error: explainNoMachine(access.machines, "MOW") });
+    return;
+  }
+
   const harvested: { crop: CropCode; tons: number; moisturePenalty: number; moisture: number }[] =
     [];
   const harvestedCells: CellXY[] = [];
   let lostCells = 0;
-  const now = Date.now();
+  let hayTons = 0;
+  let grassRegrew = 0;
 
   const outcome = await prisma.$transaction(async (tx) => {
+    let grainCells = 0;
+    let grassCells = 0;
     for (const cell of targets) {
       if (cell.kind !== "CROP" || !cell.crop || !cell.plantedAt) continue;
       const sim = simulateCell({
@@ -3219,24 +3470,24 @@ app.post("/parcels/:id/harvest", async (req, res) => {
         specialization: playableSpec(farm.user.specialization ?? user?.specialization),
         buildingYieldBonus: bonuses.yieldBonus,
         weatherAtHarvest: weather?.state as WeatherState | undefined,
+        cutsDone: grassCutsDone(cell),
       });
       if (!sim.ready) continue;
-      // Culture perdue : la moissonneuse n'a plus rien à ramasser, la case
-      // reste occupée par des tiges mortes jusqu'au labour.
       if (sim.lost) {
         lostCells += 1;
         await tx.parcelCell.update({
           where: { id: cell.id },
-          // Une culture perdue a tout de même occupé la terre une saison :
-          // les champignons du sol s'y sont installés comme pour une réussie.
           data: { fieldStage: "SPOILED", ...rotationUpdate(cell, cell.crop) },
         });
         continue;
       }
       const moisture = harvestMoisture(weather?.state as WeatherState | undefined);
-      const tons = access.charge
-        ? sim.estimatedYieldTons
-        : sim.estimatedYieldTons * (1 - P2P_YIELD_MALUS);
+      const picked = isMowCrop(cell.crop) ? pickedMow : pickedHarvest;
+      const care = picked ? careOf(picked.machine) : null;
+      const careMult = care ? 1 + careYieldBonus(care) : 1;
+      const tons =
+        (access.charge ? sim.estimatedYieldTons : sim.estimatedYieldTons * (1 - P2P_YIELD_MALUS)) *
+        careMult;
       harvested.push({
         crop: cell.crop,
         tons,
@@ -3244,25 +3495,25 @@ app.post("/parcels/:id/harvest", async (req, res) => {
         moisture,
       });
       harvestedCells.push({ x: cell.x, y: cell.y });
-      // La moisson ne rend pas une case nue : elle laisse des chaumes qu'il
-      // faudra déchaumer ou labourer avant de resemer.
+      if (isMowCrop(cell.crop)) {
+        grassCells += 1;
+        hayTons += tons;
+      } else {
+        grainCells += 1;
+      }
+      const next = afterTakeField(
+        {
+          crop: cell.crop,
+          lastCrop: cell.lastCrop,
+          cropStreak: cell.cropStreak,
+          harvestsSincePlow: cell.harvestsSincePlow,
+        },
+        now,
+      );
+      if (next.regrow) grassRegrew += 1;
       await tx.parcelCell.update({
         where: { id: cell.id },
-        data: {
-          kind: "EMPTY",
-          crop: null,
-          fieldStage: "HARVESTED",
-          plantedAt: null,
-          readyAt: null,
-          fertilizedPasses: 0,
-          weedsControlled: false,
-          hasStubble: true,
-          harvestsSincePlow: Math.min(
-            MAX_HARVESTS_BEFORE_PLOW,
-            cell.harvestsSincePlow + 1,
-          ),
-          ...rotationUpdate(cell, cell.crop),
-        },
+        data: next.data,
       });
     }
 
@@ -3291,7 +3542,7 @@ app.post("/parcels/:id/harvest", async (req, res) => {
       });
     }
     const grain =
-      harvested.length === 0
+      incomingGrain.length === 0
         ? { soldTons: 0, storedTons: 0, revenue: 0, reason: null }
         : await applyGrainCapacity(tx, {
             farmId: parcel.farmId!,
@@ -3299,19 +3550,35 @@ app.post("/parcels/:id/harvest", async (req, res) => {
             capacity: bonuses.storageGrain,
             incoming: incomingGrain,
           });
+    if (hayTons > 0) {
+      await addToStock(tx, parcel.farmId!, "HAY", hayTons, 0, 3);
+    }
 
     if (harvested.length === 0) {
-      return { wear: null, grain, labor: null };
+      return { wear: null, mowWear: null, grain, labor: null };
     }
-    const wear = await applyWearToMachine(tx, {
-      machine: picked.machine,
-      def: picked.def,
-      cells: harvested.length,
-      work: "HARVEST",
-      specialization: user?.specialization,
-    });
+    const wear =
+      pickedHarvest && grainCells > 0
+        ? await applyWearToMachine(tx, {
+            machine: pickedHarvest.machine,
+            def: pickedHarvest.def,
+            cells: grainCells,
+            work: "HARVEST",
+            specialization: user?.specialization,
+          })
+        : null;
+    const mowWear =
+      pickedMow && grassCells > 0
+        ? await applyWearToMachine(tx, {
+            machine: pickedMow.machine,
+            def: pickedMow.def,
+            cells: grassCells,
+            work: "MOW",
+            specialization: user?.specialization,
+          })
+        : null;
     const labor = access.order ? await settleLaborProgress(tx, access.order, harvestedCells) : null;
-    return { wear, grain, labor };
+    return { wear, mowWear, grain, labor };
   });
 
   if (harvested.length === 0) {
@@ -3325,16 +3592,22 @@ app.post("/parcels/:id/harvest", async (req, res) => {
   }
   const last = harvestedCells[harvestedCells.length - 1];
   if (user && last) await touchFieldPresence(user.id, parcel.id, last);
+  const shown = pickedHarvest ?? pickedMow;
+  const shownWear = outcome.wear ?? outcome.mowWear;
   res.json({
     harvested,
     lostCells,
+    hayTons,
+    grassRegrew,
     totalTons: harvested.reduce((s, h) => s + h.tons, 0),
     storedTons: outcome.grain.storedTons,
     soldTons: outcome.grain.soldTons,
     soldRevenue: outcome.grain.revenue,
     soldReason: outcome.grain.reason,
     bonuses,
-    machine: { id: picked.machine.id, type: picked.machine.type, ...outcome.wear },
+    machine: shown
+      ? { id: shown.machine.id, type: shown.machine.type, ...shownWear }
+      : null,
     labor: outcome.labor,
   });
 });
@@ -3349,19 +3622,32 @@ app.post("/parcels/:id/build", async (req, res) => {
         "MACHINE_SHED",
         "CATTLE_BARN",
         "PIGSTY",
+        "HENHOUSE",
+        "SHEEPFOLD",
         "WORKSHOP",
         "FARMHOUSE",
         "PADDOCK",
+        "PIG_YARD",
+        "HEN_YARD",
+        "COLD_ROOM",
       ]),
       x: z.number().int().min(0),
       y: z.number().int().min(0),
     })
     .safeParse(req.body);
   if (!body.success) {
-    res.status(400).json(body.error.flatten());
+    const flat = body.error.flatten();
+    res.status(400).json({
+      error: flat.formErrors[0] ?? "Impossible de poser ce bâtiment",
+      ...flat,
+    });
     return;
   }
   const def = BUILDING_DEFS[body.data.type];
+  if (!def) {
+    res.status(400).json({ error: "Bâtiment inconnu" });
+    return;
+  }
   const parcel = await prisma.parcel.findUnique({
     where: { id: req.params.id },
     include: { farm: true, cells: true },
@@ -3388,27 +3674,32 @@ app.post("/parcels/:id/build", async (req, res) => {
     return;
   }
 
-  const building = await prisma.$transaction(async (tx) => {
-    await tx.user.update({ where: { id: user.id }, data: { crd: { decrement: def.cost } } });
-    const b = await tx.building.create({
-      data: {
-        parcelId: parcel.id,
-        type: body.data.type as BuildingType,
-        originX: body.data.x,
-        originY: body.data.y,
-      },
-    });
-    for (const c of cells) {
-      await tx.parcelCell.update({
-        where: { parcelId_x_y: { parcelId: parcel.id, x: c.x, y: c.y } },
-        data: { kind: "BUILDING", buildingId: b.id },
+  try {
+    const building = await prisma.$transaction(async (tx) => {
+      await tx.user.update({ where: { id: user.id }, data: { crd: { decrement: def.cost } } });
+      const b = await tx.building.create({
+        data: {
+          parcelId: parcel.id,
+          type: body.data.type as BuildingType,
+          originX: body.data.x,
+          originY: body.data.y,
+        },
       });
-    }
-    return b;
-  });
+      for (const c of cells) {
+        await tx.parcelCell.update({
+          where: { parcelId_x_y: { parcelId: parcel.id, x: c.x, y: c.y } },
+          data: { kind: "BUILDING", buildingId: b.id },
+        });
+      }
+      return b;
+    });
 
-  const bonuses = await getFarmBonuses(parcel.farmId!);
-  res.status(201).json({ building, bonuses, def });
+    const bonuses = await getFarmBonuses(parcel.farmId!);
+    res.status(201).json({ building, bonuses, def });
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : "Pose impossible";
+    res.status(500).json({ error: `Impossible de poser ${def.name} — ${msg}` });
+  }
 });
 
 /** Passage d'un bâtiment au palier suivant (5 niveaux au total). */
@@ -3471,7 +3762,27 @@ app.post("/buildings/:id/upgrade", async (req, res) => {
 /* Élevage                                                             */
 /* ------------------------------------------------------------------ */
 
-const COW_PRICE = 420;
+/** Places d'hébergement selon l'espèce du bâtiment. */
+function barnCapacity(
+  type: string,
+  stats: ReturnType<typeof buildingStatsAtLevel>,
+): number {
+  const kind = kindForBarn(type);
+  if (kind === "COW") return stats.cattleSlots ?? 0;
+  if (kind === "PIG") return stats.pigSlots ?? 0;
+  if (kind === "HEN") return stats.henSlots ?? 0;
+  if (kind === "SHEEP") return stats.sheepSlots ?? 0;
+  return 0;
+}
+
+function collectClock(lastAt: Date | null, bornAt: Date, now: number) {
+  const last = lastAt?.getTime() ?? null;
+  const born = bornAt.getTime();
+  return {
+    ready: collectReady(last, born, now),
+    progress: collectProgress(last, born, now),
+  };
+}
 
 /** Enclos collés à une étable, avec leur capacité de sortie cumulée. */
 function paddocksFor(
@@ -3485,9 +3796,8 @@ function paddocksFor(
     w: barnDef.w,
     h: barnDef.h,
   };
-  // Une étable appelle un enclos de pâture, une porcherie une courette : on ne
-  // met pas des porcs au pré ni des vaches dans une souille.
-  const yardType: SharedBuildingType = barn.type === "PIGSTY" ? "PIG_YARD" : "PADDOCK";
+  // Chaque espèce a son aire : pré, courette à porcs, courette à poules.
+  const yardType = yardTypeForBarn(barn.type) as SharedBuildingType;
   const def = BUILDING_DEFS[yardType];
   let cells = 0;
   for (const b of buildings) {
@@ -3496,6 +3806,49 @@ function paddocksFor(
     if (isPaddockAdjacent(footprint, other)) cells += def.w * def.h;
   }
   return { cells, capacity: paddockCapacity(cells), yardType };
+}
+
+/** Fumier encore dans les fosses de la parcelle, en tonnes. */
+async function parcelManureTons(parcelId: string): Promise<number> {
+  const buildings = await prisma.building.findMany({
+    where: { parcelId },
+    include: { herd: true },
+  });
+  return buildings.reduce((sum, b) => sum + (b.herd?.manureTons ?? 0), 0);
+}
+
+/** Vide les fosses les plus pleines d'abord. Retourne ce qui a vraiment été pris. */
+async function drawManureFromPits(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  tx: any,
+  parcelId: string,
+  tons: number,
+): Promise<number> {
+  const want = Math.max(0, tons);
+  if (want <= 1e-6) return 0;
+  const buildings = await tx.building.findMany({
+    where: { parcelId },
+    include: { herd: true },
+  });
+  const herds = buildings
+    .map((b: { herd: { id: string; manureTons: number } | null }) => b.herd)
+    .filter((h: { id: string; manureTons: number } | null): h is { id: string; manureTons: number } =>
+      Boolean(h && h.manureTons > 0),
+    )
+    .sort((a: { manureTons: number }, b: { manureTons: number }) => b.manureTons - a.manureTons);
+  let left = want;
+  let taken = 0;
+  for (const h of herds) {
+    if (left <= 1e-6) break;
+    const take = Math.min(h.manureTons, left);
+    await tx.herd.update({
+      where: { id: h.id },
+      data: { manureTons: Math.round((h.manureTons - take) * 1000) / 1000 },
+    });
+    left -= take;
+    taken += take;
+  }
+  return Math.round(taken * 1000) / 1000;
 }
 
 /**
@@ -3514,7 +3867,7 @@ async function settleAllHerds() {
     const barn = herd.building;
     const paddock = paddocksFor(barn, barn.parcel.buildings);
     const stats = buildingStatsAtLevel(barn.type as SharedBuildingType, barn.level);
-    const capacity = (barn.type === "CATTLE_BARN" ? stats.cattleSlots : stats.pigSlots) ?? 0;
+    const capacity = barnCapacity(barn.type, stats);
     await settleHerd(herd, paddock.capacity, now, barn.level, capacity);
   }
 }
@@ -3534,6 +3887,7 @@ async function settleHerd(
     lastCalvedAt: Date | null;
     avgAgeMs: number;
     mortalityDebt: number;
+    manureTons?: number;
   },
   paddockCapacityCells: number,
   now: number,
@@ -3547,6 +3901,7 @@ async function settleHerd(
   born: number;
   died: number;
   avgAgeMs: number;
+  manureTons: number;
 }> {
   const elapsedMs = Math.max(0, now - herd.lastTickAt.getTime());
   if (elapsedMs < 1000) {
@@ -3558,10 +3913,12 @@ async function settleHerd(
       born: 0,
       died: 0,
       avgAgeMs: herd.avgAgeMs,
+      manureTons: herd.manureTons ?? 0,
     };
   }
 
   // Le troupeau puise dans la ration distribuée ; au pré, il se sert seul.
+  const kind = herd.kind as AnimalKind;
   const grazing = Boolean(herd.grazingUntil && herd.grazingUntil.getTime() > now);
   const burnt = feedBurn({
     herdSize: herd.size,
@@ -3569,9 +3926,23 @@ async function settleHerd(
     cycleMs: LIVESTOCK_CYCLE_MS,
     grazing,
     barnLevel,
+    kind,
   });
   const feedStock = Math.max(0, herd.feedStock - burnt);
-  const hunger = hungerPenalty({ feedStock, herdSize: herd.size });
+  const hunger = hungerPenalty({ feedStock, herdSize: herd.size, kind });
+  const pitCap = manurePitCapacity(kind, capacity);
+  const produced = manureProduced({
+    kind,
+    herdSize: herd.size,
+    elapsedMs,
+    cycleMs: LIVESTOCK_CYCLE_MS,
+  });
+  const pit = addManureToPit({
+    current: herd.manureTons ?? 0,
+    produced,
+    capacity: pitCap,
+  });
+  const smell = manureSmellPenalty(manureFill(pit.tons, pitCap));
 
   const happiness = tickHappiness({
     happiness: herd.happiness,
@@ -3579,12 +3950,13 @@ async function settleHerd(
     grazedRecentlyMs: herd.lastGrazedAt ? now - herd.lastGrazedAt.getTime() : Number.MAX_SAFE_INTEGER,
     crowding: paddockCapacityCells > 0 ? herd.size / Math.max(1, paddockCapacityCells) : 1,
     elapsedMs,
-    hunger,
+    hunger: hunger + smell,
   });
 
   // Reproduction : une gestation démarre quand tout est réuni, et aboutit
   // quand elle arrive à terme. Un troupeau bien mené grossit tout seul.
-  const feedRatio = feedStock / Math.max(1, herd.size * HUNGER.unitsPerAnimalPerCycle);
+  const feedPer = FEED_BASE[kind] ?? HUNGER.unitsPerAnimalPerCycle;
+  const feedRatio = feedStock / Math.max(1, herd.size * feedPer);
   const freeSlots = capacity - herd.size;
   let size = herd.size;
   let gestatingSince: Date | null = herd.gestatingSince;
@@ -3650,10 +4022,20 @@ async function settleHerd(
       lastCalvedAt,
       avgAgeMs,
       mortalityDebt: toll.debt,
+      manureTons: pit.tons,
       lastTickAt: new Date(now),
     },
   });
-  return { happiness, feedStock, size, gestatingSince, born, died: toll.deaths, avgAgeMs };
+  return {
+    happiness,
+    feedStock,
+    size,
+    gestatingSince,
+    born,
+    died: toll.deaths,
+    avgAgeMs,
+    manureTons: pit.tons,
+  };
 }
 
 /** État complet de l'élevage d'une parcelle, prêt pour l'affichage. */
@@ -3673,21 +4055,28 @@ app.get("/parcels/:id/livestock", async (req, res) => {
 
   const barns = [];
   for (const b of parcel.buildings) {
-    if (b.type !== "CATTLE_BARN" && b.type !== "PIGSTY") continue;
+    if (!kindForBarn(b.type)) continue;
     const paddock = paddocksFor(b, parcel.buildings);
     const stats = buildingStatsAtLevel(b.type as SharedBuildingType, b.level);
-    const capacity = (b.type === "CATTLE_BARN" ? stats.cattleSlots : stats.pigSlots) ?? 0;
+    const capacity = barnCapacity(b.type, stats);
+    const herdKind = (b.herd?.kind as AnimalKind | undefined) ?? kindForBarn(b.type);
     let happiness = b.herd?.happiness ?? 0;
     let feedStock = b.herd?.feedStock ?? 0;
     let herdSize = b.herd?.size ?? 0;
     let gestatingSince: Date | null = b.herd?.gestatingSince ?? null;
+    let manureTons = b.herd?.manureTons ?? 0;
     if (b.herd) {
       const settled = await settleHerd(b.herd, paddock.capacity, now, b.level, capacity);
       happiness = settled.happiness;
       feedStock = settled.feedStock;
       herdSize = settled.size;
       gestatingSince = settled.gestatingSince;
+      manureTons = settled.manureTons;
     }
+    const pitCap = herdKind
+      ? manurePitCapacity(herdKind, capacity)
+      : manurePitCapacity("COW", capacity);
+    const pitFill = manureFill(manureTons, pitCap);
 
     const graze = b.herd
       ? canGraze({
@@ -3699,10 +4088,11 @@ app.get("/parcels/:id/livestock", async (req, res) => {
           animals: b.herd.size,
           weather: (weather?.state as WeatherState) ?? "CLEAR",
           kind: b.herd.kind as AnimalKind,
-          paddockKind: paddock.yardType === "PIG_YARD" ? "PIG" : "COW",
+          paddockKind: kindForBarn(b.type) ?? "COW",
         })
       : { ok: false as const, reason: "NO_PADDOCK" as const };
 
+    const feedPer = herdKind ? (FEED_BASE[herdKind] ?? HUNGER.unitsPerAnimalPerCycle) : HUNGER.unitsPerAnimalPerCycle;
     barns.push({
       buildingId: b.id,
       type: b.type,
@@ -3736,20 +4126,39 @@ app.get("/parcels/:id/livestock", async (req, res) => {
                 kind: b.herd.kind as AnimalKind,
                 size: herdSize,
                 happiness,
-                feedRatio: feedStock / Math.max(1, herdSize * HUNGER.unitsPerAnimalPerCycle),
+                feedRatio: feedStock / Math.max(1, herdSize * feedPer),
                 freeSlots: capacity - herdSize,
                 gestatingSince: null,
               });
               return v.ok || !v.reason ? null : BREEDING_REFUSAL_LABELS[v.reason];
             })(),
-            feedNeed: b.herd.size * HUNGER.unitsPerAnimalPerCycle,
+            feedNeed: b.herd.size * feedPer,
             feedQuality: b.herd.feedQuality,
-            hungry: hungerPenalty({ feedStock, herdSize: b.herd.size }) > 0.05,
+            hungry: hungerPenalty({
+              feedStock,
+              herdSize: b.herd.size,
+              kind: b.herd.kind as AnimalKind,
+            }) > 0.05,
             canMilk:
-              b.herd.kind === "COW" &&
-              now - (b.herd.lastMilkedAt?.getTime() ?? b.herd.bornAt.getTime()) >=
-                LIVESTOCK_CYCLE_MS * 0.15,
+              b.herd.kind === "COW" && collectClock(b.herd.lastMilkedAt, b.herd.bornAt, now).ready,
+            canCollectEggs:
+              b.herd.kind === "HEN" && collectClock(b.herd.lastMilkedAt, b.herd.bornAt, now).ready,
+            canShear:
+              b.herd.kind === "SHEEP" && collectClock(b.herd.lastMilkedAt, b.herd.bornAt, now).ready,
+            collectProgress: collectClock(b.herd.lastMilkedAt, b.herd.bornAt, now).progress,
             milkPerCycle: milkYield({
+              herdSize: b.herd.size,
+              happiness,
+              barnLevel: b.level,
+              feedQuality: b.herd.feedQuality,
+            }),
+            eggsPerCycle: eggYield({
+              herdSize: b.herd.size,
+              happiness,
+              barnLevel: b.level,
+              feedQuality: b.herd.feedQuality,
+            }),
+            woolPerShear: woolYield({
               herdSize: b.herd.size,
               happiness,
               barnLevel: b.level,
@@ -3760,12 +4169,17 @@ app.get("/parcels/:id/livestock", async (req, res) => {
               happiness,
               averageAgeMs: b.herd.avgAgeMs,
               barnLevel: b.level,
+              kind: b.herd.kind as AnimalKind,
             }),
+            manureTons: Math.round(manureTons * 1000) / 1000,
+            manureCap: pitCap,
+            manureFill: pitFill,
+            smelly: pitFill >= 0.8,
           }
         : null,
       canGraze: graze.ok,
       grazeRefusal: graze.ok || !graze.reason ? null : GRAZING_REFUSAL_LABELS[graze.reason],
-      cowPrice: COW_PRICE,
+      cowPrice: herdKind ? ANIMAL_PRICE[herdKind] : ANIMAL_PRICE.COW,
     });
   }
   res.json({ barns, weather: weather?.state ?? "CLEAR" });
@@ -3788,13 +4202,13 @@ app.post("/buildings/:id/animals", async (req, res) => {
     res.status(403).json({ error: "Bâtiment non possédé" });
     return;
   }
-  if (building.type !== "CATTLE_BARN" && building.type !== "PIGSTY") {
+  const kind = kindForBarn(building.type);
+  if (!kind) {
     res.status(409).json({ error: "Ce bâtiment n'héberge pas d'animaux" });
     return;
   }
   const stats = buildingStatsAtLevel(building.type as SharedBuildingType, building.level);
-  const capacity =
-    (building.type === "CATTLE_BARN" ? stats.cattleSlots : stats.pigSlots) ?? 0;
+  const capacity = barnCapacity(building.type, stats);
   const current = building.herd?.size ?? 0;
   if (current + body.data.count > capacity) {
     res.status(409).json({
@@ -3802,14 +4216,12 @@ app.post("/buildings/:id/animals", async (req, res) => {
     });
     return;
   }
-  const cost = COW_PRICE * body.data.count;
+  const cost = ANIMAL_PRICE[kind] * body.data.count;
   const user = await prisma.user.findUnique({ where: { id: body.data.userId } });
   if (!user || user.crd < cost) {
     res.status(402).json({ error: `TRN insuffisants — ${cost} requis` });
     return;
   }
-
-  const kind: AnimalKind = building.type === "CATTLE_BARN" ? "COW" : "PIG";
   await prisma.$transaction(async (tx) => {
     await tx.user.update({ where: { id: user.id }, data: { crd: { decrement: cost } } });
     if (building.herd) {
@@ -3840,6 +4252,46 @@ app.post("/buildings/:id/animals", async (req, res) => {
     }
   });
   res.status(201).json({ added: body.data.count, cost });
+});
+
+/** Vente locale : le fumier part au voisin, pas au silo ni au négociant. */
+app.post("/buildings/:id/manure/sell", async (req, res) => {
+  const body = z
+    .object({ userId: z.string(), tons: z.number().positive().optional() })
+    .safeParse(req.body);
+  if (!body.success) {
+    res.status(400).json(body.error.flatten());
+    return;
+  }
+  const building = await prisma.building.findUnique({
+    where: { id: req.params.id },
+    include: { parcel: { include: { farm: true } }, herd: true },
+  });
+  if (!building?.parcel.farm || building.parcel.farm.userId !== body.data.userId) {
+    res.status(403).json({ error: "Bâtiment non possédé" });
+    return;
+  }
+  if (!building.herd || building.herd.manureTons <= 0) {
+    res.status(409).json({ error: "Fosse vide — rien à vendre" });
+    return;
+  }
+  const tons = Math.min(building.herd.manureTons, body.data.tons ?? building.herd.manureTons);
+  if (tons <= 1e-6) {
+    res.status(409).json({ error: "Fosse vide — rien à vendre" });
+    return;
+  }
+  const proceeds = manureSaleProceeds(tons);
+  await prisma.$transaction(async (tx) => {
+    await tx.herd.update({
+      where: { id: building.herd!.id },
+      data: { manureTons: Math.round((building.herd!.manureTons - tons) * 1000) / 1000 },
+    });
+    await tx.user.update({
+      where: { id: body.data.userId },
+      data: { crd: { increment: proceeds } },
+    });
+  });
+  res.json({ tons: Math.round(tons * 1000) / 1000, proceeds });
 });
 
 /** Sortie au pâturage : c'est l'enclos adjacent qui la rend possible. */
@@ -3873,6 +4325,7 @@ app.post("/herds/:id/graze", async (req, res) => {
     animals: herd.size,
     weather: (weather?.state as WeatherState) ?? "CLEAR",
     kind: herd.kind as AnimalKind,
+    paddockKind: kindForBarn(herd.building.type) ?? "COW",
   });
   if (!verdict.ok) {
     res.status(409).json({
@@ -4072,14 +4525,16 @@ app.post("/herds/:id/feed", async (req, res) => {
       userId: z.string(),
       hayTons: z.number().min(0).default(0),
       maizeTons: z.number().min(0).default(0),
+      barleyTons: z.number().min(0).default(0),
+      wheatTons: z.number().min(0).default(0),
     })
     .safeParse(req.body);
   if (!body.success) {
     res.status(400).json(body.error.flatten());
     return;
   }
-  const { hayTons, maizeTons } = body.data;
-  if (hayTons + maizeTons <= 0) {
+  const { hayTons, maizeTons, barleyTons, wheatTons } = body.data;
+  if (hayTons + maizeTons + barleyTons + wheatTons <= 0) {
     res.status(400).json({ error: "Indiquez une quantité à distribuer" });
     return;
   }
@@ -4093,6 +4548,8 @@ app.post("/herds/:id/feed", async (req, res) => {
   }
   const hay = herd.farm.inventory.find((i) => i.itemCode === "HAY");
   const maize = herd.farm.inventory.find((i) => i.itemCode === "MAIZE");
+  const barley = herd.farm.inventory.find((i) => i.itemCode === "BARLEY");
+  const wheat = herd.farm.inventory.find((i) => i.itemCode === "WHEAT");
   if (hayTons > (hay?.qty ?? 0)) {
     res.status(409).json({ error: "Fourrage insuffisant — achetez-en au négociant" });
     return;
@@ -4101,12 +4558,22 @@ app.post("/herds/:id/feed", async (req, res) => {
     res.status(409).json({ error: "Maïs insuffisant" });
     return;
   }
+  if (barleyTons > (barley?.qty ?? 0)) {
+    res.status(409).json({ error: "Orge insuffisante" });
+    return;
+  }
+  if (wheatTons > (wheat?.qty ?? 0)) {
+    res.status(409).json({ error: "Blé insuffisant" });
+    return;
+  }
 
-  const units = feedUnits(hayTons, maizeTons);
-  const quality = rationQuality(hayTons, maizeTons);
+  const units = feedUnits(hayTons, maizeTons, barleyTons, wheatTons);
+  const quality = rationQuality(hayTons, maizeTons, barleyTons, wheatTons);
   await prisma.$transaction(async (tx) => {
     if (hayTons > 0 && hay) await drawFromStock(tx, hay, hayTons);
     if (maizeTons > 0 && maize) await drawFromStock(tx, maize, maizeTons);
+    if (barleyTons > 0 && barley) await drawFromStock(tx, barley, barleyTons);
+    if (wheatTons > 0 && wheat) await drawFromStock(tx, wheat, wheatTons);
     await tx.herd.update({
       where: { id: herd.id },
       data: {
@@ -4173,6 +4640,110 @@ app.post("/herds/:id/milk", async (req, res) => {
   res.json({ hectolitres, litres: Math.round(litres), cycles: Math.round(cycles * 100) / 100 });
 });
 
+/** Ramassage : les œufs s'accumulent entre deux passages, et se perdent s'ils attendent. */
+app.post("/herds/:id/collect-eggs", async (req, res) => {
+  const body = z.object({ userId: z.string() }).safeParse(req.body);
+  if (!body.success) {
+    res.status(400).json(body.error.flatten());
+    return;
+  }
+  const herd = await prisma.herd.findUnique({
+    where: { id: req.params.id },
+    include: { farm: true, building: true },
+  });
+  if (!herd || herd.farm.userId !== body.data.userId) {
+    res.status(403).json({ error: "Troupeau non possédé" });
+    return;
+  }
+  if (herd.kind !== "HEN") {
+    res.status(409).json({ error: "Seules les poules pondent" });
+    return;
+  }
+  if (herd.size <= 0) {
+    res.status(409).json({ error: "Poulailler vide" });
+    return;
+  }
+
+  const now = Date.now();
+  const since = herd.lastMilkedAt?.getTime() ?? herd.bornAt.getTime();
+  const cycles = Math.min(2, (now - since) / LIVESTOCK_CYCLE_MS);
+  if (cycles < 0.15) {
+    const wait = Math.ceil(((0.15 - cycles) * LIVESTOCK_CYCLE_MS) / 1000);
+    res.status(409).json({ error: `Les œufs viennent d'être ramassés — ${wait} s` });
+    return;
+  }
+
+  const perCycle = eggYield({
+    herdSize: herd.size,
+    happiness: herd.happiness,
+    barnLevel: herd.building.level,
+    feedQuality: herd.feedQuality,
+  });
+  const crates = Math.round(perCycle * cycles * 100) / 100;
+  if (crates <= 0) {
+    res.status(409).json({ error: "Rien à ramasser : le lot ne pond pas" });
+    return;
+  }
+
+  await prisma.$transaction(async (tx) => {
+    await addToStock(tx, herd.farmId, "EGGS", crates, 0, 3);
+    await tx.herd.update({ where: { id: herd.id }, data: { lastMilkedAt: new Date(now) } });
+  });
+  res.json({ crates, cycles: Math.round(cycles * 100) / 100 });
+});
+
+/** Tonte : la laine s'accumule entre deux passages. Elle ne se gâte pas. */
+app.post("/herds/:id/shear", async (req, res) => {
+  const body = z.object({ userId: z.string() }).safeParse(req.body);
+  if (!body.success) {
+    res.status(400).json(body.error.flatten());
+    return;
+  }
+  const herd = await prisma.herd.findUnique({
+    where: { id: req.params.id },
+    include: { farm: true, building: true },
+  });
+  if (!herd || herd.farm.userId !== body.data.userId) {
+    res.status(403).json({ error: "Troupeau non possédé" });
+    return;
+  }
+  if (herd.kind !== "SHEEP") {
+    res.status(409).json({ error: "Seuls les moutons se tondent" });
+    return;
+  }
+  if (herd.size <= 0) {
+    res.status(409).json({ error: "Bergerie vide" });
+    return;
+  }
+
+  const now = Date.now();
+  const since = herd.lastMilkedAt?.getTime() ?? herd.bornAt.getTime();
+  const cycles = Math.min(2, (now - since) / LIVESTOCK_CYCLE_MS);
+  if (cycles < 0.15) {
+    const wait = Math.ceil(((0.15 - cycles) * LIVESTOCK_CYCLE_MS) / 1000);
+    res.status(409).json({ error: `Les moutons viennent d'être tondus — ${wait} s` });
+    return;
+  }
+
+  const perCycle = woolYield({
+    herdSize: herd.size,
+    happiness: herd.happiness,
+    barnLevel: herd.building.level,
+    feedQuality: herd.feedQuality,
+  });
+  const tons = Math.round(perCycle * cycles * 1000) / 1000;
+  if (tons <= 0) {
+    res.status(409).json({ error: "Rien à tondre : le lot ne produit pas" });
+    return;
+  }
+
+  await prisma.$transaction(async (tx) => {
+    await addToStock(tx, herd.farmId, "WOOL", tons, 0, 3);
+    await tx.herd.update({ where: { id: herd.id }, data: { lastMilkedAt: new Date(now) } });
+  });
+  res.json({ tons, cycles: Math.round(cycles * 100) / 100 });
+});
+
 /** Abattage : on convertit des bêtes en viande, définitivement. */
 app.post("/herds/:id/slaughter", async (req, res) => {
   const body = z
@@ -4202,6 +4773,7 @@ app.post("/herds/:id/slaughter", async (req, res) => {
     happiness: herd.happiness,
     averageAgeMs: ageMs,
     barnLevel: herd.building.level,
+    kind: herd.kind as AnimalKind,
   });
   const tons = Math.round((kgTotal / 1000) * 1000) / 1000;
   const maturity = Math.min(1, ageMs / MEAT_MATURITY_MS);
@@ -5125,35 +5697,166 @@ app.post("/market/listings/:id/buy", async (req, res) => {
       where: { id: listing.sellerId },
       data: { crd: { increment: proceeds } },
     });
-    const existing = await tx.inventoryItem.findFirst({
-      where: { farmId: buyer.farm!.id, itemCode: listing.commodity },
+    // L'argent change de main tout de suite. Le stock, non : quelqu'un doit livrer.
+    await tx.delivery.create({
+      data: {
+        sellerId: listing.sellerId,
+        buyerId: buyer.id,
+        buyerFarmId: buyer.farm!.id,
+        listingId: listing.id,
+        commodity: listing.commodity,
+        tons: listing.tons,
+        moisture: listing.moisture,
+        quality: listing.quality,
+        status: "PENDING",
+        dueAt: new Date(Date.now() + DELIVERY_TTL_MS),
+        autoFee: deliveryAutoFee(listing.tons),
+      },
     });
-    if (existing) {
-      await tx.inventoryItem.update({
-        where: { id: existing.id },
-        data: {
-          qty: existing.qty + listing.tons,
-          moisture: mergeMoisture(
-            existing.qty,
-            existing.moisture,
-            listing.tons,
-            listing.moisture,
-          ),
-        },
-      });
-    } else {
-      await tx.inventoryItem.create({
-        data: {
-          farmId: buyer.farm!.id,
-          itemCode: listing.commodity,
-          qty: listing.tons,
-          quality: listing.quality,
-          moisture: listing.moisture,
-        },
-      });
-    }
   });
-  res.json({ bought: listing.tons, commodity: listing.commodity, paid: total, proceeds });
+  res.json({
+    bought: listing.tons,
+    commodity: listing.commodity,
+    paid: total,
+    proceeds,
+    pendingDelivery: true,
+  });
+});
+
+async function fulfillDelivery(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  tx: any,
+  delivery: { id: string; buyerFarmId: string; commodity: string; tons: number; moisture: number; quality: number },
+) {
+  await addToStock(
+    tx,
+    delivery.buyerFarmId,
+    delivery.commodity,
+    delivery.tons,
+    delivery.moisture,
+    delivery.quality,
+  );
+  await tx.delivery.update({
+    where: { id: delivery.id },
+    data: { status: "DELIVERED", deliveredAt: new Date() },
+  });
+}
+
+/** TTL écoulé : un voisin auto livre, et facture l'acheteur. */
+async function settleOverdueDeliveries() {
+  const stale = await prisma.delivery.findMany({
+    where: { status: "PENDING", dueAt: { lt: new Date() } },
+    include: { buyer: true },
+  });
+  for (const d of stale) {
+    await prisma.$transaction(async (tx) => {
+      const fresh = await tx.delivery.findUnique({ where: { id: d.id } });
+      if (!fresh || fresh.status !== "PENDING") return;
+      const fee = Math.min(d.buyer.crd, d.autoFee);
+      if (fee > 0) {
+        await tx.user.update({
+          where: { id: d.buyerId },
+          data: { crd: { decrement: fee } },
+        });
+      }
+      await fulfillDelivery(tx, fresh);
+    });
+  }
+}
+
+app.get("/deliveries", async (req, res) => {
+  const userId = typeof req.query.userId === "string" ? req.query.userId : null;
+  if (!userId) {
+    res.status(400).json({ error: "userId requis" });
+    return;
+  }
+  await settleOverdueDeliveries();
+  const rows = await prisma.delivery.findMany({
+    where: { OR: [{ sellerId: userId }, { buyerId: userId }] },
+    include: {
+      seller: { select: { displayName: true } },
+      buyer: { select: { displayName: true } },
+    },
+    orderBy: [{ status: "asc" }, { createdAt: "desc" }],
+    take: 40,
+  });
+  res.json({
+    deliveries: rows.map((d) => ({
+      id: d.id,
+      commodity: d.commodity,
+      tons: d.tons,
+      moisture: d.moisture,
+      quality: d.quality,
+      status: d.status,
+      role: d.sellerId === userId ? "SELLER" : "BUYER",
+      counterparty: d.sellerId === userId ? d.buyer.displayName : d.seller.displayName,
+      dueInMs: Math.max(0, d.dueAt.getTime() - Date.now()),
+      autoFee: d.autoFee,
+    })),
+  });
+});
+
+/** Le vendeur livre lui-même : gratuit, le stock arrive chez l'acheteur. */
+app.post("/deliveries/:id/deliver", async (req, res) => {
+  const body = z.object({ userId: z.string() }).safeParse(req.body);
+  if (!body.success) {
+    res.status(400).json(body.error.flatten());
+    return;
+  }
+  const delivery = await prisma.delivery.findUnique({ where: { id: req.params.id } });
+  if (!delivery || delivery.status !== "PENDING") {
+    res.status(409).json({ error: "Livraison introuvable ou déjà faite" });
+    return;
+  }
+  if (delivery.sellerId !== body.data.userId) {
+    res.status(403).json({ error: "Seul le vendeur peut livrer" });
+    return;
+  }
+  await prisma.$transaction(async (tx) => {
+    const fresh = await tx.delivery.findUnique({ where: { id: delivery.id } });
+    if (!fresh || fresh.status !== "PENDING") throw new Error("DELIVERY_GONE");
+    await fulfillDelivery(tx, fresh);
+  });
+  res.json({ delivered: delivery.tons, commodity: delivery.commodity });
+});
+
+/** L'acheteur paie un voisin auto pour faire livrer tout de suite. */
+app.post("/deliveries/:id/auto", async (req, res) => {
+  const body = z.object({ userId: z.string() }).safeParse(req.body);
+  if (!body.success) {
+    res.status(400).json(body.error.flatten());
+    return;
+  }
+  const delivery = await prisma.delivery.findUnique({
+    where: { id: req.params.id },
+    include: { buyer: true },
+  });
+  if (!delivery || delivery.status !== "PENDING") {
+    res.status(409).json({ error: "Livraison introuvable ou déjà faite" });
+    return;
+  }
+  if (delivery.buyerId !== body.data.userId) {
+    res.status(403).json({ error: "Seul l'acheteur peut faire livrer" });
+    return;
+  }
+  if (delivery.buyer.crd < delivery.autoFee) {
+    res.status(402).json({ error: `TRN insuffisants — ${delivery.autoFee} requis` });
+    return;
+  }
+  await prisma.$transaction(async (tx) => {
+    const fresh = await tx.delivery.findUnique({ where: { id: delivery.id } });
+    if (!fresh || fresh.status !== "PENDING") throw new Error("DELIVERY_GONE");
+    await tx.user.update({
+      where: { id: delivery.buyerId },
+      data: { crd: { decrement: delivery.autoFee } },
+    });
+    await fulfillDelivery(tx, fresh);
+  });
+  res.json({
+    delivered: delivery.tons,
+    commodity: delivery.commodity,
+    autoFee: delivery.autoFee,
+  });
 });
 
 app.post("/market/sell", async (req, res) => {
@@ -5346,7 +6049,7 @@ app.post("/contracts/:id/accept", async (req, res) => {
   }
   const already = await hasActiveMission(user.id);
   if (already) {
-    res.status(409).json({ error: "Une mission à la fois — terminez d'abord le chantier en cours." });
+    res.status(409).json({ error: "Une mission à la fois — finissez d’abord celle en cours." });
     return;
   }
   const contract = await prisma.npcContract.findUnique({ where: { id: req.params.id } });
@@ -5393,7 +6096,7 @@ app.post("/contracts/:id/complete", async (req, res) => {
   }
   const contract = await prisma.npcContract.findUnique({ where: { id: req.params.id } });
   if (!contract || contract.status !== "ACCEPTED" || contract.providerId !== user.id) {
-    res.status(409).json({ error: "Pas votre chantier" });
+    res.status(409).json({ error: "Ce n’est pas votre demande" });
     return;
   }
   const work = CONTRACT_WORK[contract.jobType as ContractJobType];
@@ -5434,7 +6137,7 @@ app.post("/contracts/:id/abandon", async (req, res) => {
   }
   const contract = await prisma.npcContract.findUnique({ where: { id: req.params.id } });
   if (!contract || contract.status !== "ACCEPTED" || contract.providerId !== body.data.userId) {
-    res.status(409).json({ error: "Pas votre chantier" });
+    res.status(409).json({ error: "Ce n’est pas votre demande" });
     return;
   }
   await prisma.npcContract.update({

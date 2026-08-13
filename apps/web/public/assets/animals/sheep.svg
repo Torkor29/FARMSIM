@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" fill="none" aria-hidden="true">
+  <!-- FARMSIM CC0  mouton isométrique -->
+  <ellipse cx="32" cy="56" rx="18" ry="5" fill="#1a2a1a" opacity="0.35"/>
+  <path d="M24 50 L25 44 L27 44 L26 51 Z" fill="#3d342c"/>
+  <path d="M30 51 L31 44 L33 44 L32 52 Z" fill="#2a2218"/>
+  <path d="M38 50 L39 44 L41 44 L40 51 Z" fill="#3d342c"/>
+  <path d="M44 49 L45 43 L47 43 L46 50 Z" fill="#2a2218"/>
+  <path d="M16 40 L34 30 L50 38 L32 48 Z" fill="#f7f4ee"/>
+  <path d="M16 40 L16 34 L34 24 L34 30 Z" fill="#e4ddd2"/>
+  <path d="M34 30 L50 38 L50 32 L34 24 Z" fill="#fffaf3"/>
+  <ellipse cx="28" cy="36" rx="5" ry="3.5" fill="#fffaf3"/>
+  <ellipse cx="38" cy="34" rx="4.5" ry="3" fill="#fffaf3"/>
+  <path d="M42 30 L48 26 L54 30 L48 34 L42 30 Z" fill="#3d342c"/>
+  <path d="M48 26 L54 30 L54 26 L48 22 Z" fill="#4a4036"/>
+  <path d="M40 28 L38 24 L40 23 L42 27 Z" fill="#3d342c"/>
+  <path d="M52 28 L54 24 L56 25 L54 29 Z" fill="#3d342c"/>
+</svg>

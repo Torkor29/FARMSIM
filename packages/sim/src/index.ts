@@ -1,5 +1,6 @@
 import {
   CROP_DEFS,
+  cropGrowMs,
   DRYING,
   MARKET_BOUNDS,
   MARKET_REVERSION,
@@ -38,6 +39,8 @@ export type CellSimInput = {
   directSeeded?: boolean;
   /** Ce que la case portait avant ce semis, pour l'effet de rotation */
   rotation?: RotationState;
+  /** Coupes déjà faites (herbe) : la suivante pousse plus vite */
+  cutsDone?: number;
 };
 
 export type CellSimResult = {
@@ -145,15 +148,16 @@ export function mergeMoisture(
 
 export function simulateCell(input: CellSimInput): CellSimResult {
   const def = CROP_DEFS[input.crop];
-  const readyAt = input.plantedAt + def.growMs;
-  const progress = Math.min(1, Math.max(0, (input.now - input.plantedAt) / def.growMs));
+  const growMs = cropGrowMs(input.crop, input.cutsDone ?? 0);
+  const readyAt = input.plantedAt + growMs;
+  const progress = Math.min(1, Math.max(0, (input.now - input.plantedAt) / growMs));
   const ready = input.now >= readyAt;
   const mgmt = managementFactor(input);
   const wet = moisturePenalty(input.weatherAtHarvest);
   const climate = weatherYieldFactor(input.weatherAtHarvest);
   // La sur-maturité s'applique en dernier : elle ronge un rendement déjà
   // calculé, elle ne se compense pas par une bonne conduite de culture.
-  const ripeness = ready ? ripenessAt(readyAt, def.growMs, input.now) : null;
+  const ripeness = ready ? ripenessAt(readyAt, growMs, input.now) : null;
   const overripe = ripeness?.yieldFactor ?? 1;
   // Rotation et semis direct se décident avant la mise en terre : ce sont des
   // coefficients sur le potentiel de la case, indépendants de la conduite de
@@ -244,7 +248,7 @@ export function applyMachineWear(opts: {
   let mult = 1;
   if (opts.inShed) mult *= 0.85;
   if (opts.etaBonus) mult *= 0.9;
-  const care = Math.max(1, opts.careMult ?? 1);
+  const care = Math.max(0.5, opts.careMult ?? 1);
   mult *= care;
   const wearApplied =
     Math.round(opts.wearPerCell * Math.max(0, opts.cells) * mult * 100) / 100;
@@ -267,10 +271,20 @@ export type MachineCareState = {
 };
 
 export function careWearMultiplier(opts: { greased: boolean; dirt: number }): number {
+  const clean = opts.dirt < DIRT_DIRTY_THRESHOLD;
+  if (opts.greased && clean) return 0.75;
   let m = 1;
   if (!opts.greased) m *= 1.5;
-  if (opts.dirt >= DIRT_DIRTY_THRESHOLD) m *= 2;
+  if (!clean) m *= 2;
   return m;
+}
+
+/** Propre et graissé : un peu plus de récolte. Sale et à sec : un peu moins. */
+export function careYieldBonus(opts: { greased: boolean; dirt: number }): number {
+  const clean = opts.dirt < DIRT_DIRTY_THRESHOLD;
+  if (opts.greased && clean) return 0.08;
+  if (!opts.greased && !clean) return -0.06;
+  return 0;
 }
 
 export function dirtFromWork(work: string, cells: number): number {

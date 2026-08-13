@@ -1,17 +1,14 @@
 import { useEffect, useMemo, useState } from "react";
 import { PriceSparkline } from "./PriceSparkline";
 import {
+  DRYING,
   GOOD_DEFS,
-  SPOILAGE_PER_CYCLE,
+  GOOD_ICONS,
+  lotQualityLine,
   isPerishable,
   spoilageWarning,
   dealerAskPrice,
-  DEALER_RATIO,
-  LISTING_COMMISSION_RATE,
-  LISTING_FEE_RATE,
-  SALE_CHANNEL_LABELS,
   listingFee,
-  listingProceeds,
   quoteAllChannels,
   maxSelectableTons,
   SELLABLE_GOODS,
@@ -21,7 +18,6 @@ import {
   FUTURES_MIN_TONS,
   FUTURES_PENALTY_RATE,
   type ChannelQuote,
-  type CropCode,
   type SaleChannel,
   type TradeGood,
 } from "@farmsim/shared";
@@ -41,9 +37,23 @@ export type Listing = {
   pricePerTon: number;
   total: number;
   moisture: number;
+  quality: number;
   sellerName: string;
   mine: boolean;
   expiresInMs: number;
+};
+
+export type MarketDelivery = {
+  id: string;
+  commodity: string;
+  tons: number;
+  moisture: number;
+  quality: number;
+  status: string;
+  role: "SELLER" | "BUYER";
+  counterparty: string;
+  dueInMs: number;
+  autoFee: number;
 };
 
 type Props = {
@@ -51,6 +61,7 @@ type Props = {
   onClose: () => void;
   stock: StockItem[];
   listings: Listing[];
+  deliveries: MarketDelivery[];
   marketPrices: { commodity: string; price: number; stockTons: number }[];
   crd: number;
   busy: boolean;
@@ -59,9 +70,10 @@ type Props = {
   onList: (commodity: TradeGood, tons: number, pricePerTon: number) => void;
   onBuyListing: (id: string) => void;
   onCancelListing: (id: string) => void;
+  onDeliverLot: (id: string) => void;
+  onAutoDeliverLot: (id: string) => void;
   onDry: (itemId: string) => void;
   onBuyInput: (commodity: TradeGood, tons: number) => void;
-  /** Cours passés de la marchandise, du plus ancien au plus récent */
   onLoadHistory: (commodity: TradeGood) => Promise<{ at: string; price: number }[]>;
   futures: FuturesContract[];
   onOpenFuture: (commodity: TradeGood, tons: number, horizonH: number) => void;
@@ -79,17 +91,82 @@ export type FuturesContract = {
 };
 
 function moisturePenaltyOf(moisture: number): number {
-  // Reprend la règle du serveur : au-delà du seuil, la vente est décotée.
-  const over = moisture - 0.14;
-  return over <= 0 ? 0 : Math.min(0.15, over * 1.5);
+  return moisture > DRYING.sellThreshold ? DRYING.sellPenaltyAbove : 0;
 }
 
-/** Écran de vente : stock, trois débouchés comparés, et la criée. */
+function goodName(code: string): string {
+  return GOOD_DEFS[code as TradeGood]?.name ?? code;
+}
+
+function goodIcon(code: string): string {
+  return GOOD_ICONS[code as TradeGood] ?? "📦";
+}
+
+function qualityOf(code: string, tons: number, moisture: number, quality: number): string {
+  const unit = GOOD_DEFS[code as TradeGood]?.unit;
+  return lotQualityLine({ tons, moisture, quality, unit });
+}
+
+function DeliveryList({
+  deliveries,
+  busy,
+  crd,
+  onDeliverLot,
+  onAutoDeliverLot,
+}: {
+  deliveries: MarketDelivery[];
+  busy: boolean;
+  crd: number;
+  onDeliverLot: (id: string) => void;
+  onAutoDeliverLot: (id: string) => void;
+}) {
+  const pending = deliveries.filter((d) => d.status === "PENDING");
+  if (!pending.length) return null;
+  return (
+    <section className="hall-block">
+      <h3>En route</h3>
+      <p className="hall-lead">Payé, pas encore arrivé chez l’acheteur.</p>
+      <div className="sale-grid">
+        {pending.map((d) => (
+          <article key={d.id} className="sale-card route">
+            <span className="sale-icon" aria-hidden="true">
+              {goodIcon(d.commodity)}
+            </span>
+            <div className="sale-body">
+              <strong>{goodName(d.commodity)}</strong>
+              <span>{qualityOf(d.commodity, d.tons, d.moisture, d.quality)}</span>
+              <em>
+                {d.role === "BUYER" ? `Acheté chez ${d.counterparty}` : `Pour ${d.counterparty}`}
+              </em>
+            </div>
+            {d.role === "SELLER" ? (
+              <button type="button" className="sale-go" disabled={busy} onClick={() => onDeliverLot(d.id)}>
+                J’apporte
+              </button>
+            ) : (
+              <button
+                type="button"
+                className="sale-go"
+                disabled={busy || crd < d.autoFee}
+                onClick={() => onAutoDeliverLot(d.id)}
+              >
+                Faire venir · {d.autoFee} TRN
+              </button>
+            )}
+          </article>
+        ))}
+      </div>
+    </section>
+  );
+}
+
+/** Hôtel des ventes : acheter ou vendre, comme à l’entrée. */
 export function MarketPanel({
   open,
   onClose,
   stock,
   listings,
+  deliveries,
   marketPrices,
   crd,
   busy,
@@ -98,6 +175,8 @@ export function MarketPanel({
   onList,
   onBuyListing,
   onCancelListing,
+  onDeliverLot,
+  onAutoDeliverLot,
   onDry,
   onBuyInput,
   onLoadHistory,
@@ -108,7 +187,7 @@ export function MarketPanel({
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [tons, setTons] = useState(0);
   const [ask, setAsk] = useState(0);
-  const [tab, setTab] = useState<"SELL" | "BUY" | "SUPPLY" | "FUTURES">("SELL");
+  const [tab, setTab] = useState<"BUY" | "SELL" | "MORE">("BUY");
   const [horizon, setHorizon] = useState<number>(3);
   const [good, setGood] = useState<TradeGood>("WHEAT");
   const [futTons, setFutTons] = useState(10);
@@ -123,14 +202,6 @@ export function MarketPanel({
     [marketPrices, item],
   );
 
-  /**
-   * Plus grande quantité réellement sélectionnable, au pas du curseur.
-   *
-   * L'affichage travaille au centième de tonne quand le stock en compte
-   * trois. Arrondir au plus proche proposait donc, une fois sur deux, une
-   * quantité supérieure au stock : le serveur refusait, et le joueur voyait
-   * un bouton « Vendre » sans effet. On tronque.
-   */
   const maxTons = useMemo(() => (item ? maxSelectableTons(item.qty) : 0), [item?.qty]);
 
   useEffect(() => {
@@ -172,11 +243,6 @@ export function MarketPanel({
 
   if (!open) return null;
 
-  const best = quotes.reduce<ChannelQuote | null>(
-    (acc, q) => (!acc || q.net > acc.net ? q : acc),
-    null,
-  );
-
   const act = (channel: SaleChannel) => {
     if (!item || tons <= 0) return;
     const code = item.itemCode as TradeGood;
@@ -185,80 +251,98 @@ export function MarketPanel({
     else onList(code, tons, ask);
   };
 
+  const others = listings.filter((l) => !l.mine);
+  const mine = listings.filter((l) => l.mine);
+  const dealerQ = quotes.find((q) => q.channel === "DEALER");
+  const marketQ = quotes.find((q) => q.channel === "MARKET");
+  const listQ = quotes.find((q) => q.channel === "LISTING");
+
   return (
-    <div className="market-backdrop" role="dialog" aria-modal="true" aria-label="Vendre">
-      <div className="market-sheet glass">
-        <header className="market-head">
-          <h2>Vendre ma récolte</h2>
+    <div className="market-backdrop" role="dialog" aria-modal="true" aria-label="Hôtel des ventes">
+      <div className="market-sheet glass hall">
+        <header className="hall-head">
+          <div>
+            <p className="hall-kicker">Bienvenue</p>
+            <h2>Hôtel des ventes</h2>
+            <p className="hall-wallet">
+              Vous avez <strong>{Math.round(crd)} TRN</strong>
+            </p>
+          </div>
           <button type="button" className="ghost" onClick={onClose}>
             Fermer
           </button>
         </header>
 
-        <div className="market-tabs">
+        <div className="hall-doors" role="tablist" aria-label="Acheter ou vendre">
           <button
             type="button"
-            className={`market-tab ${tab === "SELL" ? "on" : ""}`}
-            onClick={() => setTab("SELL")}
-          >
-            Vendre
-          </button>
-          <button
-            type="button"
-            className={`market-tab ${tab === "BUY" ? "on" : ""}`}
+            role="tab"
+            aria-selected={tab === "BUY"}
+            className={`hall-door buy ${tab === "BUY" ? "on" : ""}`}
             onClick={() => setTab("BUY")}
           >
-            Acheter aux autres ({listings.filter((l) => !l.mine).length})
+            <span aria-hidden="true">🛒</span>
+            <strong>Acheter</strong>
+            <em>{others.length ? `${others.length} en vitrine` : "Rien en vitrine"}</em>
           </button>
           <button
             type="button"
-            className={`market-tab ${tab === "SUPPLY" ? "on" : ""}`}
-            onClick={() => setTab("SUPPLY")}
+            role="tab"
+            aria-selected={tab === "SELL"}
+            className={`hall-door sell ${tab === "SELL" ? "on" : ""}`}
+            onClick={() => setTab("SELL")}
           >
-            Intrants
-          </button>
-          <button
-            type="button"
-            className={`market-tab ${tab === "FUTURES" ? "on" : ""}`}
-            onClick={() => setTab("FUTURES")}
-          >
-            À terme ({futures.filter((f) => f.status === "OPEN").length})
+            <span aria-hidden="true">💰</span>
+            <strong>Vendre</strong>
+            <em>{stock.length ? "Votre stock" : "Rien à vendre"}</em>
           </button>
         </div>
 
-        {tab === "FUTURES" ? (
-          <FuturesTab
-            futures={futures}
-            marketPrices={marketPrices}
-            busy={busy}
-            good={good}
-            setGood={setGood}
-            tons={futTons}
-            setTons={setFutTons}
-            horizon={horizon}
-            setHorizon={setHorizon}
-            onOpen={onOpenFuture}
-            onDeliver={onDeliverFuture}
-          />
-        ) : tab === "SUPPLY" ? (
-          <SupplyTab
-            marketPrices={marketPrices}
-            crd={crd}
-            busy={busy}
-            tons={hayTons}
-            onTons={setHayTons}
-            onBuy={onBuyInput}
-          />
+        {tab === "MORE" ? (
+          <div className="hall-more">
+            <button type="button" className="ghost tiny" onClick={() => setTab("BUY")}>
+              ← Retour
+            </button>
+            <SupplyTab
+              marketPrices={marketPrices}
+              crd={crd}
+              busy={busy}
+              tons={hayTons}
+              onTons={setHayTons}
+              onBuy={onBuyInput}
+            />
+            <FuturesTab
+              futures={futures}
+              marketPrices={marketPrices}
+              busy={busy}
+              good={good}
+              setGood={setGood}
+              tons={futTons}
+              setTons={setFutTons}
+              horizon={horizon}
+              setHorizon={setHorizon}
+              onOpen={onOpenFuture}
+              onDeliver={onDeliverFuture}
+            />
+          </div>
         ) : tab === "SELL" ? (
           !stock.length ? (
-            <p className="market-empty">
-              Votre silo est vide. Récoltez d’abord — le grain apparaîtra ici.
-            </p>
+            <>
+              <p className="market-empty">Rien à vendre. Récoltez d’abord, puis revenez ici.</p>
+              <DeliveryList
+                deliveries={deliveries}
+                busy={busy}
+                crd={crd}
+                onDeliverLot={onDeliverLot}
+                onAutoDeliverLot={onAutoDeliverLot}
+              />
+            </>
           ) : (
             <>
+              <p className="hall-lead">Choisissez ce que vous vendez, puis comment.</p>
               <div className="stock-row">
                 {stock.map((s) => {
-                  const wet = s.moisture > 0.14;
+                  const wet = s.moisture > DRYING.sellThreshold;
                   return (
                     <button
                       key={s.id}
@@ -266,14 +350,16 @@ export function MarketPanel({
                       className={`stock-chip ${item?.id === s.id ? "on" : ""}`}
                       onClick={() => setSelectedId(s.id)}
                     >
-                      <strong>{GOOD_DEFS[s.itemCode as TradeGood]?.name ?? s.itemCode}</strong>
+                      <strong>
+                        {goodIcon(s.itemCode)} {goodName(s.itemCode)}
+                      </strong>
                       <span>
                         {s.qty.toFixed(2)} {GOOD_DEFS[s.itemCode as TradeGood]?.unit ?? "t"}
                       </span>
-                      <em className={wet ? "wet" : ""}>
+                      <em className={wet || s.quality <= 2 ? "wet" : ""}>
                         {isPerishable(s.itemCode as TradeGood)
-                          ? `−${Math.round((SPOILAGE_PER_CYCLE[s.itemCode as TradeGood] ?? 0) * 100)} % / cycle`
-                          : `${Math.round(s.moisture * 100)} % humidité`}
+                          ? "À vendre vite : ça se gâte"
+                          : qualityOf(s.itemCode, s.qty, s.moisture, s.quality)}
                       </em>
                     </button>
                   );
@@ -288,19 +374,21 @@ export function MarketPanel({
                     </p>
                   )}
 
-                  {item.moisture > 0.14 && (
+                  {item.moisture > DRYING.sellThreshold && (
                     <p className="market-warn">
-                      Grain trop humide : toute vente est décotée. Séchez d’abord.
+                      Trop d’eau : on vous paie moins.
                       <button type="button" disabled={busy} onClick={() => onDry(item.id)}>
                         Sécher
                       </button>
                     </p>
                   )}
+                  {item.quality <= 2 && item.moisture <= DRYING.sellThreshold && (
+                    <p className="market-warn">Récolté trop tard — ça vaut moins.</p>
+                  )}
 
                   <label className="market-field">
                     <span>
-                      Quantité à vendre : <strong>{tons.toFixed(2)} t</strong> sur{" "}
-                      {item.qty.toFixed(2)} t
+                      Combien : <strong>{tons.toFixed(2)}</strong> sur {item.qty.toFixed(2)}
                     </span>
                     <input
                       type="range"
@@ -316,141 +404,166 @@ export function MarketPanel({
                       disabled={tons >= maxTons}
                       onClick={() => setTons(maxTons)}
                     >
-                      Tout ({maxTons.toFixed(2)} t)
+                      Tout
                     </button>
                   </label>
 
                   <p className="market-course">
-                    Cours du jour : <strong>{price.price.toFixed(1)} TRN/t</strong>
+                    Prix du jour : <strong>{price.price.toFixed(0)} TRN / {GOOD_DEFS[item.itemCode as TradeGood]?.unit ?? "t"}</strong>
                   </p>
                   <PriceSparkline points={history} />
 
-                  <div className="channel-grid">
-                    {quotes.map((q) => (
-                      <div
-                        key={q.channel}
-                        className={`channel-card ${q.channel === best?.channel ? "best" : ""}`}
-                      >
-                        <h3>{SALE_CHANNEL_LABELS[q.channel]}</h3>
-                        <p className="channel-price">{q.pricePerTon.toFixed(1)} TRN/t</p>
+                  <div className="channel-grid hall-sell">
+                    {marketQ && (
+                      <div className="channel-card">
+                        <h3>Vendre tout de suite</h3>
                         <p className="channel-net">
-                          {q.net} TRN
-                          {q.guaranteed ? (
-                            <em className="sure">encaissé tout de suite</em>
-                          ) : (
-                            <em className="risky">si un joueur achète</em>
-                          )}
+                          {marketQ.net} TRN
+                          <em className="sure">argent maintenant</em>
                         </p>
-                        <p className="channel-note">{q.note}</p>
-
-                        {q.channel === "LISTING" && (
-                          <label className="ask-field">
-                            <span>Votre prix</span>
-                            <input
-                              type="number"
-                              min={1}
-                              step={1}
-                              value={ask}
-                              onChange={(e) => setAsk(Number(e.target.value))}
-                            />
-                          </label>
-                        )}
-
+                        <p className="channel-note">Le prix du jour. C’est vendu.</p>
                         <button
                           type="button"
                           className="channel-go"
-                          disabled={
-                            busy ||
-                            tons <= 0 ||
-                            (q.channel === "LISTING" && crd < listingFee(ask, tons))
-                          }
-                          onClick={() => act(q.channel)}
+                          disabled={busy || tons <= 0}
+                          onClick={() => act("MARKET")}
                         >
-                          {q.channel === "LISTING" ? "Mettre en vente" : "Vendre"}
+                          Vendre
                         </button>
                       </div>
-                    ))}
+                    )}
+                    {listQ && (
+                      <div className="channel-card">
+                        <h3>Mettre en vitrine</h3>
+                        <p className="channel-net">
+                          {listQ.net} TRN
+                          <em className="risky">si un joueur achète</em>
+                        </p>
+                        <label className="ask-field">
+                          <span>Votre prix (TRN / {GOOD_DEFS[item.itemCode as TradeGood]?.unit ?? "t"})</span>
+                          <input
+                            type="number"
+                            min={1}
+                            step={1}
+                            value={ask}
+                            onChange={(e) => setAsk(Number(e.target.value))}
+                          />
+                        </label>
+                        <button
+                          type="button"
+                          className="channel-go"
+                          disabled={busy || tons <= 0 || crd < listingFee(ask, tons)}
+                          onClick={() => act("LISTING")}
+                        >
+                          Mettre en vente
+                        </button>
+                      </div>
+                    )}
                   </div>
-
-                  <p className="market-rules">
-                    Le négociant paie {Math.round(DEALER_RATIO * 100)} % du cours mais achète
-                    toujours. La criée prélève {Math.round(LISTING_FEE_RATE * 100)} % de frais
-                    au dépôt, non remboursés, puis{" "}
-                    {Math.round(LISTING_COMMISSION_RATE * 100)} % à la vente.
-                  </p>
+                  {dealerQ && (
+                    <p className="market-rules">
+                      Besoin d’argent tout de suite, même moins ?{" "}
+                      <button
+                        type="button"
+                        className="ghost tiny"
+                        disabled={busy || tons <= 0}
+                        onClick={() => act("DEALER")}
+                      >
+                        Vendre à tout prix · {dealerQ.net} TRN
+                      </button>
+                    </p>
+                  )}
                 </>
               )}
 
-              {listings.some((l) => l.mine) && (
-                <>
-                  <h3 className="spaced">Mes annonces</h3>
-                  <ul className="listing-list">
-                    {listings
-                      .filter((l) => l.mine)
-                      .map((l) => (
-                        <li key={l.id}>
-                          <span>
-                            <strong>
-                              {GOOD_DEFS[l.commodity as TradeGood]?.name ?? l.commodity}
-                            </strong>
-                            <em>
-                              {l.tons.toFixed(2)} t à {l.pricePerTon.toFixed(0)} TRN/t ·{" "}
-                              {listingProceeds(l.pricePerTon, l.tons)} TRN net
-                            </em>
-                          </span>
-                          <span className="listing-right">
-                            <em className="listing-ttl">
-                              {Math.max(0, Math.round(l.expiresInMs / 60000))} min
-                            </em>
-                            <button type="button" disabled={busy} onClick={() => onCancelListing(l.id)}>
-                              Retirer
-                            </button>
-                          </span>
-                        </li>
-                      ))}
-                  </ul>
-                </>
+              <DeliveryList
+                deliveries={deliveries}
+                busy={busy}
+                crd={crd}
+                onDeliverLot={onDeliverLot}
+                onAutoDeliverLot={onAutoDeliverLot}
+              />
+
+              {mine.length > 0 && (
+                <section className="hall-block">
+                  <h3>Encore en vitrine</h3>
+                  <div className="sale-grid">
+                    {mine.map((l) => (
+                      <article key={l.id} className="sale-card mine">
+                        <span className="sale-icon" aria-hidden="true">
+                          {goodIcon(l.commodity)}
+                        </span>
+                        <div className="sale-body">
+                          <strong>{goodName(l.commodity)}</strong>
+                          <span>{qualityOf(l.commodity, l.tons, l.moisture, l.quality)}</span>
+                          <em>
+                            {l.pricePerTon.toFixed(0)} TRN · encore{" "}
+                            {Math.max(0, Math.round(l.expiresInMs / 60000))} min
+                          </em>
+                        </div>
+                        <button type="button" disabled={busy} onClick={() => onCancelListing(l.id)}>
+                          Retirer
+                        </button>
+                      </article>
+                    ))}
+                  </div>
+                </section>
               )}
             </>
           )
         ) : (
           <>
-            <p className="muted tiny">
-              Les lots déposés par les autres exploitants, du moins cher au plus cher.
+            <p className="hall-lead">
+              Vous payez, puis ça arrive chez vous. Un autre joueur l’apporte, ou vous payez pour
+              le faire venir.
             </p>
-            {listings.filter((l) => !l.mine).length === 0 ? (
-              <p className="market-empty">Aucun lot en vente pour le moment.</p>
+            <DeliveryList
+              deliveries={deliveries}
+              busy={busy}
+              crd={crd}
+              onDeliverLot={onDeliverLot}
+              onAutoDeliverLot={onAutoDeliverLot}
+            />
+            {others.length === 0 ? (
+              <p className="market-empty">
+                Personne n’a rien mis en vitrine. Mettez le vôtre, ou revenez plus tard.
+              </p>
             ) : (
-              <ul className="listing-list">
-                {listings
-                  .filter((l) => !l.mine)
-                  .map((l) => (
-                    <li key={l.id}>
-                      <span>
-                        <strong>
-                          {GOOD_DEFS[l.commodity as TradeGood]?.name ?? l.commodity}
-                        </strong>
-                        <em>
-                          {l.tons.toFixed(2)} t à {l.pricePerTon.toFixed(0)} TRN/t ·{" "}
-                          {Math.round(l.moisture * 100)} % humidité
-                        </em>
-                        <em className="listing-seller">{l.sellerName}</em>
-                      </span>
-                      <span className="listing-right">
-                        <strong>{l.total} TRN</strong>
-                        <button
-                          type="button"
-                          className="channel-go"
-                          disabled={busy || crd < l.total}
-                          onClick={() => onBuyListing(l.id)}
-                        >
-                          Acheter
-                        </button>
-                      </span>
-                    </li>
-                  ))}
-              </ul>
+              <div className="sale-grid catalog">
+                {others.map((l) => (
+                  <article key={l.id} className="sale-card catalog">
+                    <span className="sale-icon" aria-hidden="true">
+                      {goodIcon(l.commodity)}
+                    </span>
+                    <div className="sale-body">
+                      <strong>{goodName(l.commodity)}</strong>
+                      <span>{qualityOf(l.commodity, l.tons, l.moisture, l.quality)}</span>
+                      <em>Chez {l.sellerName}</em>
+                    </div>
+                    <div className="sale-pay">
+                      <strong>{l.total} TRN</strong>
+                      <em>
+                        {l.pricePerTon.toFixed(0)} TRN /{" "}
+                        {GOOD_DEFS[l.commodity as TradeGood]?.unit ?? "t"}
+                      </em>
+                      <button
+                        type="button"
+                        className="sale-go"
+                        disabled={busy || crd < l.total}
+                        onClick={() => onBuyListing(l.id)}
+                      >
+                        Acheter
+                      </button>
+                    </div>
+                  </article>
+                ))}
+              </div>
             )}
+            <p className="hall-more-link">
+              <button type="button" className="ghost tiny" onClick={() => setTab("MORE")}>
+                Acheter du fourrage, ou vendre une récolte pas encore mûre
+              </button>
+            </p>
           </>
         )}
       </div>
@@ -458,7 +571,6 @@ export function MarketPanel({
   );
 }
 
-/** Achat d'intrants au négociant : il vend plus cher qu'il ne rachète. */
 function SupplyTab({
   marketPrices,
   crd,
@@ -481,18 +593,18 @@ function SupplyTab({
 
   return (
     <div className="supply-tab">
-      <p className="muted tiny">
-        Le négociant vend le fourrage nécessaire au bétail. Il le facture plus cher
-        qu&rsquo;il ne le rachète : produire son propre maïs revient moins cher.
-      </p>
+      <h3>Fourrage pour les bêtes</h3>
+      <p className="hall-lead">Pas de foin chez vous ? On en vend ici, un peu plus cher.</p>
       <div className="supply-card">
-        <img className="build-art" src="/assets/items/hay-bales.webp" alt="" />
+        <span className="sale-icon" aria-hidden="true">
+          {GOOD_ICONS.HAY}
+        </span>
         <span className="build-text">
           <strong>{GOOD_DEFS.HAY.name}</strong>
           <span>{unit.toFixed(1)} TRN/t</span>
         </span>
         <label className="supply-qty">
-          <span>Quantité</span>
+          <span>Combien (tonnes)</span>
           <input
             type="number"
             min={1}
@@ -514,13 +626,6 @@ function SupplyTab({
   );
 }
 
-
-/**
- * Engager une récolte à venir.
- *
- * Le tableau montre côte à côte le prix garanti et le cours du moment : c'est
- * la seule façon pour le joueur de juger son pari, pendant puis après.
- */
 function FuturesTab({
   futures,
   marketPrices,
@@ -553,26 +658,25 @@ function FuturesTab({
 
   return (
     <div className="futures-tab">
-      <p className="muted tiny">
-        Vous engagez une récolte que vous n’avez pas encore, à un prix fixé
-        maintenant. L’acheteur prend le risque à votre place et le facture :
-        le prix garanti est sous le cours du jour. Livrer hors délai coûte{" "}
-        {Math.round(FUTURES_PENALTY_RATE * 100)} % de la valeur du contrat.
+      <h3>Vendre une récolte pas encore mûre</h3>
+      <p className="hall-lead">
+        Le prix est fixé aujourd’hui. Si vous ne livrez pas à temps, ça coûte{" "}
+        {Math.round(FUTURES_PENALTY_RATE * 100)} % de plus.
       </p>
 
       <div className="futures-form">
         <label className="market-field">
-          <span>Marchandise</span>
+          <span>Quoi</span>
           <select value={good} onChange={(e) => setGood(e.target.value as TradeGood)}>
             {SELLABLE_GOODS.map((g) => (
               <option key={g} value={g}>
-                {GOOD_DEFS[g].name}
+                {GOOD_ICONS[g]} {GOOD_DEFS[g].name}
               </option>
             ))}
           </select>
         </label>
         <label className="market-field">
-          <span>Quantité (t)</span>
+          <span>Combien (tonnes)</span>
           <input
             type="number"
             min={FUTURES_MIN_TONS}
@@ -582,7 +686,7 @@ function FuturesTab({
           />
         </label>
         <label className="market-field">
-          <span>Échéance</span>
+          <span>Dans combien de temps</span>
           <select value={horizon} onChange={(e) => setHorizon(Number(e.target.value))}>
             {FUTURES_HORIZONS_H.map((h) => (
               <option key={h} value={h}>
@@ -594,7 +698,7 @@ function FuturesTab({
       </div>
 
       <p className="market-course">
-        Cours du jour <strong>{spot.toFixed(1)}</strong> · garanti{" "}
+        Prix du jour <strong>{spot.toFixed(1)}</strong> · prix fixé{" "}
         <strong>{garanti.toFixed(1)} TRN/t</strong> · total{" "}
         <strong>{Math.round(garanti * tons)} TRN</strong>
       </p>
@@ -604,11 +708,11 @@ function FuturesTab({
         disabled={busy || tons < FUTURES_MIN_TONS || spot <= 0}
         onClick={() => onOpen(good, tons, horizon)}
       >
-        S’engager
+        Fixer le prix
       </button>
 
-      <h3>Engagements en cours</h3>
-      {!open.length && <p className="muted tiny">Aucun engagement.</p>}
+      <h3>En cours</h3>
+      {!open.length && <p className="muted tiny">Rien en cours.</p>}
       <ul className="list">
         {open.map((f) => {
           const reste = Math.max(0, f.dueAt - Date.now());
@@ -617,14 +721,13 @@ function FuturesTab({
           return (
             <li key={f.id}>
               <span>
-                {GOOD_DEFS[f.commodity as TradeGood]?.name ?? f.commodity} ·{" "}
-                {f.tons.toFixed(2)} t à {f.pricePerTon.toFixed(0)} TRN/t · échéance dans{" "}
-                {mins} min
+                {GOOD_DEFS[f.commodity as TradeGood]?.name ?? f.commodity} · {f.tons.toFixed(2)} t à{" "}
+                {f.pricePerTon.toFixed(0)} TRN/t · encore {mins} min
                 {ecart !== null && (
                   <em className={ecart >= 0 ? "gain" : "loss"}>
                     {" "}
                     {ecart >= 0 ? "+" : ""}
-                    {ecart} TRN contre le comptant
+                    {ecart} TRN contre le prix du jour
                   </em>
                 )}
               </span>
@@ -638,13 +741,13 @@ function FuturesTab({
 
       {closed.length > 0 && (
         <>
-          <h3>Dénoués</h3>
+          <h3>Terminés</h3>
           <ul className="list">
             {closed.map((f) => (
               <li key={f.id}>
                 <span>
                   {GOOD_DEFS[f.commodity as TradeGood]?.name ?? f.commodity} · {f.tons.toFixed(2)} t ·{" "}
-                  {f.status === "SETTLED" ? "livré" : "non honoré, pénalité prélevée"}
+                  {f.status === "SETTLED" ? "livré" : "pas livré à temps, pénalité"}
                 </span>
               </li>
             ))}

@@ -37,8 +37,8 @@ const STEPS: Step[] = [
   {
     id: "harvest",
     title: "4 — Récolter",
-    body: "Outil Récolte + cases mûres (dorées) + OK. Sans moissonneuse, le bouton « Entreprise » fait le travail pour vous, contre paiement.",
-    hint: "Sans silo, le grain part au négociant. Le silo permet de sécher et de vendre plus cher.",
+    body: "Récolte, cases dorées, puis Faire. Sans moissonneuse : demandez de l’aide, ou achetez la machine.",
+    hint: "Sans silo, le grain se vend tout de suite, moins cher. Un silo permet d’attendre.",
   },
   {
     id: "build",
@@ -49,8 +49,8 @@ const STEPS: Step[] = [
   {
     id: "sell",
     title: "6 — Vendre et s’entraider",
-    body: "Vendre ouvre le négociant, le marché et la criée. L’éleveur achète le foin et le maïs du céréalier. Pendant que ça pousse, Bureau → un chantier chez le voisin.",
-    hint: "Le chapitre Métiers du guide relie les deux boucles — et l’appoint",
+    body: "Vendre ouvre l’hôtel des ventes. Vendez tout de suite, ou mettez votre grain en vitrine pour les autres. Pendant que ça pousse, ouvrez Missions et allez aider un voisin.",
+    hint: "L’éleveur achète le foin et le maïs du céréalier.",
   },
   {
     id: "climate",

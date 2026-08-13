@@ -20,6 +20,7 @@ export const DIRT_PER_CELL: Record<string, number> = {
   HARVEST: 0.8,
   PLOW: 1.2,
   STUBBLE: 1.1,
+  MOW: 0.7,
 };
 
 export const REPAIR_RESTORE: Record<

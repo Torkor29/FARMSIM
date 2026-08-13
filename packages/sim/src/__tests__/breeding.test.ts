@@ -171,7 +171,7 @@ describe("péremption", () => {
 
 describe("cohérence des denrées périssables", () => {
   it("dégrade exactement ce que le catalogue déclare périssable", () => {
-    const declares: TradeGood[] = ["MILK", "MEAT"];
+    const declares: TradeGood[] = ["MILK", "MEAT", "EGGS"];
     for (const g of declares) expect(SPOILAGE_PER_CYCLE[g]).toBeGreaterThan(0);
   });
 });

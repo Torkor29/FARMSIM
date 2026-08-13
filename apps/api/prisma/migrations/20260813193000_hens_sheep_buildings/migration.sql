@@ -1,0 +1,1 @@
+-- SQLite stocke BuildingType en texte : poulailler, bergerie, courette et chambre froide.
