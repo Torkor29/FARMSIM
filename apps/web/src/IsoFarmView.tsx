@@ -38,6 +38,17 @@ export type IsoCell = {
   /** Coupes / moissons depuis le labour — l'herbe déjà fauchée est plus courte */
   harvestsSincePlow?: number;
   lastCrop?: CropCode | null;
+  /** Épandage de fumier récent : la case s'assombrit une minute */
+  manuredUntil?: number;
+};
+
+export type ManurePile = {
+  buildingId: string;
+  originX: number;
+  originY: number;
+  w: number;
+  h: number;
+  fill: number;
 };
 
 export type IsoBuilding = {
@@ -124,6 +135,8 @@ type Props = {
   grazing?: GrazingHerd[];
   /** Caisse d'œufs / ballot de laine au pied du bâtiment */
   yardSignals?: YardSignal[];
+  /** Tas de fumier à côté des bâtiments d'élevage */
+  manurePiles?: ManurePile[];
   /** Personnages présents (propriétaire, prestataire en mission) */
   workers?: FieldWorker[];
   weather?: string;
@@ -446,6 +459,22 @@ function makeEggCrate(): THREE.Group {
 }
 
 /** Ballot de laine près de la bergerie. */
+/** Tas brun à côté de l'étable : il grossit avec la fosse. */
+function makeManurePile(fill: number): THREE.Group {
+  const g = new THREE.Group();
+  const t = Math.max(0.15, Math.min(1, fill));
+  const dung = new THREE.MeshLambertMaterial({ color: 0x5a3d24, flatShading: true });
+  const dark = new THREE.MeshLambertMaterial({ color: 0x3d2918, flatShading: true });
+  const base = new THREE.Mesh(new THREE.BoxGeometry(0.42 * t + 0.18, 0.1 + 0.16 * t, 0.36 * t + 0.16), dung);
+  base.position.y = 0.05 + 0.08 * t;
+  base.castShadow = true;
+  g.add(base);
+  const top = new THREE.Mesh(new THREE.BoxGeometry(0.22 * t + 0.1, 0.08 + 0.1 * t, 0.2 * t + 0.08), dark);
+  top.position.set(0.04, 0.14 + 0.14 * t, 0.02);
+  g.add(top);
+  return g;
+}
+
 function makeWoolBale(): THREE.Group {
   const g = new THREE.Group();
   const wool = new THREE.MeshLambertMaterial({ color: 0xf0ebe3, flatShading: true });
@@ -668,6 +697,7 @@ export function IsoFarmView({
   activeWork = null,
   grazing = [],
   yardSignals = [],
+  manurePiles = [],
   workers = [],
   weather = "CLEAR",
   onCellClick,
@@ -702,6 +732,7 @@ export function IsoFarmView({
     activeWork,
     grazing,
     yardSignals,
+    manurePiles,
     workers,
     gridW,
     gridH,
@@ -717,6 +748,7 @@ export function IsoFarmView({
     activeWork,
     grazing,
     yardSignals,
+    manurePiles,
     workers,
     gridW,
     gridH,
@@ -1265,6 +1297,10 @@ export function IsoFarmView({
           if (cell?.kind === "CROP") col = cropColor(cell, sim);
           if (cell?.kind === "BUILDING") col = DIRT;
           if (cell?.kind === "VEHICLE") col = PARKING;
+          if (cell?.manuredUntil && cell.manuredUntil > Date.now()) {
+            const stain = new THREE.Color(col).lerp(new THREE.Color(0x3d2918), 0.45);
+            col = stain.getHex();
+          }
           if (cell && cell.kind === "EMPTY" && look !== "PLAIN" && look !== "PLOWED") {
             soilDetails.push({ look, px, pz });
           }
@@ -1766,7 +1802,11 @@ export function IsoFarmView({
       }
 
       const signals = dataRef.current.yardSignals ?? [];
-      const nextPickupKey = signals.map((s) => `${s.kind}:${s.originX}:${s.originY}`).join("|");
+      const piles = dataRef.current.manurePiles ?? [];
+      const nextPickupKey = [
+        ...signals.map((s) => `${s.kind}:${s.originX}:${s.originY}`),
+        ...piles.map((p) => `m:${p.buildingId}:${p.fill.toFixed(2)}`),
+      ].join("|");
       if (nextPickupKey !== pickupKey) {
         pickupKey = nextPickupKey;
         while (pickupGroup.children.length) {
@@ -1778,6 +1818,15 @@ export function IsoFarmView({
           const mesh = sig.kind === "eggs" ? makeEggCrate() : makeWoolBale();
           const px = ox + (sig.originX + sig.w / 2) * step + 0.28 * step;
           const pz = oz + (sig.originY + sig.h) * step + 0.12 * step;
+          mesh.position.set(px, 0.1, pz);
+          mesh.scale.setScalar(cellSize);
+          pickupGroup.add(mesh);
+        }
+        for (const pile of piles) {
+          if (pile.fill <= 0.02) continue;
+          const mesh = makeManurePile(pile.fill);
+          const px = ox + (pile.originX + pile.w / 2) * step - 0.38 * step;
+          const pz = oz + (pile.originY + pile.h) * step + 0.08 * step;
           mesh.position.set(px, 0.1, pz);
           mesh.scale.setScalar(cellSize);
           pickupGroup.add(mesh);

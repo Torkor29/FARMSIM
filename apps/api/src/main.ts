@@ -152,6 +152,14 @@ import {
   MEAT_MATURITY_MS,
   type AnimalKind,
   type TradeGood,
+  manureProduced,
+  manurePitCapacity,
+  addManureToPit,
+  manureFill,
+  manureSmellPenalty,
+  manureNeededForCells,
+  manureSaleProceeds,
+  MANURE_FERTILITY_GAIN,
   currentSeason,
   seasonProgress,
   pickWeather,
@@ -2134,6 +2142,13 @@ app.post("/parcels/:id/labor-orders", async (req, res) => {
   }
   const crop = body.data.work === "PLANT" ? (body.data.crop ?? "WHEAT") : null;
   const money = laborEscrow(body.data.work, unique.length, crop);
+  if (body.data.work === "FERTILIZE") {
+    const available = await parcelManureTons(parcel.id);
+    if (available >= manureNeededForCells(unique.length)) {
+      money.extras = 0;
+      money.escrow = money.quote;
+    }
+  }
   const user = await prisma.user.findUnique({ where: { id: body.data.userId } });
   if (!user || user.crd < money.escrow) {
     res.status(402).json({ error: `TRN insuffisants — ${money.escrow} en séquestre` });
@@ -2508,11 +2523,19 @@ app.post("/parcels/:id/contractor", async (req, res) => {
   }
 
   if (work === "FERTILIZE") {
+    const cropCells = cells.filter(({ x, y }) => {
+      const cell = parcel.cells.find((c) => c.x === x && c.y === y);
+      return cell && cell.kind === "CROP" && cell.fertilizedPasses < 2;
+    });
+    const needed = manureNeededForCells(cropCells.length);
+    const available = await parcelManureTons(parcel.id);
+    const usedManure = needed > 0 && available >= needed;
     await prisma.$transaction(async (tx) => {
       await tx.user.update({ where: { id: user.id }, data: { crd: { decrement: total } } });
-      for (const { x, y } of cells) {
+      if (usedManure) await drawManureFromPits(tx, parcel.id, needed);
+      for (const { x, y } of cropCells) {
         const cell = parcel.cells.find((c) => c.x === x && c.y === y);
-        if (!cell || cell.kind !== "CROP") continue;
+        if (!cell) continue;
         await tx.parcelCell.update({
           where: { parcelId_x_y: { parcelId: parcel.id, x, y } },
           data: {
@@ -2521,8 +2544,23 @@ app.post("/parcels/:id/contractor", async (req, res) => {
           },
         });
       }
+      if (usedManure && cropCells.length) {
+        await tx.parcel.update({
+          where: { id: parcel.id },
+          data: {
+            fertility: Math.min(1, parcel.fertility + MANURE_FERTILITY_GAIN * cropCells.length),
+          },
+        });
+      }
     });
-    res.json({ work, cells: cells.length, cost: total, service, seeds: 0 });
+    res.json({
+      work,
+      cells: cells.length,
+      cost: total,
+      service,
+      seeds: 0,
+      usedManure,
+    });
     return;
   }
 
@@ -2851,7 +2889,14 @@ app.post("/parcels/:id/fertilize", async (req, res) => {
     });
     return;
   }
-  const cost = 10 * body.data.cells.length;
+  const eligible = body.data.cells.filter(({ x, y }) => {
+    const cell = parcel.cells.find((c) => c.x === x && c.y === y);
+    return Boolean(cell && cell.kind === "CROP" && cell.fertilizedPasses < 2);
+  });
+  const needed = manureNeededForCells(eligible.length);
+  const available = await parcelManureTons(parcel.id);
+  const usedManure = needed > 0 && available >= needed;
+  const cost = usedManure || !access.charge ? 0 : 10 * body.data.cells.length;
   const user = await prisma.user.findUnique({ where: { id: body.data.userId } });
   if (!user || (access.charge && user.crd < cost)) {
     res.status(402).json({ error: "TRN insuffisants" });
@@ -2860,9 +2905,10 @@ app.post("/parcels/:id/fertilize", async (req, res) => {
   let fertilized = 0;
   const last = body.data.cells[body.data.cells.length - 1];
   const { wear, labor } = await prisma.$transaction(async (tx) => {
-    if (access.charge) {
+    if (access.charge && cost > 0) {
       await tx.user.update({ where: { id: user.id }, data: { crd: { decrement: cost } } });
     }
+    if (usedManure) await drawManureFromPits(tx, parcel.id, needed);
     for (const { x, y } of body.data.cells) {
       const cell = parcel.cells.find((c) => c.x === x && c.y === y);
       if (!cell || cell.kind !== "CROP" || cell.fertilizedPasses >= 2) continue;
@@ -2871,6 +2917,14 @@ app.post("/parcels/:id/fertilize", async (req, res) => {
         data: { fertilizedPasses: { increment: 1 }, weedsControlled: true },
       });
       fertilized += 1;
+    }
+    if (usedManure && fertilized > 0) {
+      await tx.parcel.update({
+        where: { id: parcel.id },
+        data: {
+          fertility: Math.min(1, parcel.fertility + MANURE_FERTILITY_GAIN * fertilized),
+        },
+      });
     }
     const wear = await applyWearToMachine(tx, {
       machine: picked.machine,
@@ -2888,6 +2942,9 @@ app.post("/parcels/:id/fertilize", async (req, res) => {
   res.json({
     ok: true,
     fertilized,
+    usedManure,
+    manureTons: usedManure ? needed : 0,
+    cost,
     machine: { id: picked.machine.id, type: picked.machine.type, ...wear },
     labor,
   });
@@ -3555,6 +3612,49 @@ function paddocksFor(
   return { cells, capacity: paddockCapacity(cells), yardType };
 }
 
+/** Fumier encore dans les fosses de la parcelle, en tonnes. */
+async function parcelManureTons(parcelId: string): Promise<number> {
+  const buildings = await prisma.building.findMany({
+    where: { parcelId },
+    include: { herd: true },
+  });
+  return buildings.reduce((sum, b) => sum + (b.herd?.manureTons ?? 0), 0);
+}
+
+/** Vide les fosses les plus pleines d'abord. Retourne ce qui a vraiment été pris. */
+async function drawManureFromPits(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  tx: any,
+  parcelId: string,
+  tons: number,
+): Promise<number> {
+  const want = Math.max(0, tons);
+  if (want <= 1e-6) return 0;
+  const buildings = await tx.building.findMany({
+    where: { parcelId },
+    include: { herd: true },
+  });
+  const herds = buildings
+    .map((b: { herd: { id: string; manureTons: number } | null }) => b.herd)
+    .filter((h: { id: string; manureTons: number } | null): h is { id: string; manureTons: number } =>
+      Boolean(h && h.manureTons > 0),
+    )
+    .sort((a: { manureTons: number }, b: { manureTons: number }) => b.manureTons - a.manureTons);
+  let left = want;
+  let taken = 0;
+  for (const h of herds) {
+    if (left <= 1e-6) break;
+    const take = Math.min(h.manureTons, left);
+    await tx.herd.update({
+      where: { id: h.id },
+      data: { manureTons: Math.round((h.manureTons - take) * 1000) / 1000 },
+    });
+    left -= take;
+    taken += take;
+  }
+  return Math.round(taken * 1000) / 1000;
+}
+
 /**
  * Fait vivre tous les troupeaux, à chaque tick du monde.
  *
@@ -3591,6 +3691,7 @@ async function settleHerd(
     lastCalvedAt: Date | null;
     avgAgeMs: number;
     mortalityDebt: number;
+    manureTons?: number;
   },
   paddockCapacityCells: number,
   now: number,
@@ -3604,6 +3705,7 @@ async function settleHerd(
   born: number;
   died: number;
   avgAgeMs: number;
+  manureTons: number;
 }> {
   const elapsedMs = Math.max(0, now - herd.lastTickAt.getTime());
   if (elapsedMs < 1000) {
@@ -3615,6 +3717,7 @@ async function settleHerd(
       born: 0,
       died: 0,
       avgAgeMs: herd.avgAgeMs,
+      manureTons: herd.manureTons ?? 0,
     };
   }
 
@@ -3631,6 +3734,19 @@ async function settleHerd(
   });
   const feedStock = Math.max(0, herd.feedStock - burnt);
   const hunger = hungerPenalty({ feedStock, herdSize: herd.size, kind });
+  const pitCap = manurePitCapacity(kind, capacity);
+  const produced = manureProduced({
+    kind,
+    herdSize: herd.size,
+    elapsedMs,
+    cycleMs: LIVESTOCK_CYCLE_MS,
+  });
+  const pit = addManureToPit({
+    current: herd.manureTons ?? 0,
+    produced,
+    capacity: pitCap,
+  });
+  const smell = manureSmellPenalty(manureFill(pit.tons, pitCap));
 
   const happiness = tickHappiness({
     happiness: herd.happiness,
@@ -3638,7 +3754,7 @@ async function settleHerd(
     grazedRecentlyMs: herd.lastGrazedAt ? now - herd.lastGrazedAt.getTime() : Number.MAX_SAFE_INTEGER,
     crowding: paddockCapacityCells > 0 ? herd.size / Math.max(1, paddockCapacityCells) : 1,
     elapsedMs,
-    hunger,
+    hunger: hunger + smell,
   });
 
   // Reproduction : une gestation démarre quand tout est réuni, et aboutit
@@ -3710,10 +3826,20 @@ async function settleHerd(
       lastCalvedAt,
       avgAgeMs,
       mortalityDebt: toll.debt,
+      manureTons: pit.tons,
       lastTickAt: new Date(now),
     },
   });
-  return { happiness, feedStock, size, gestatingSince, born, died: toll.deaths, avgAgeMs };
+  return {
+    happiness,
+    feedStock,
+    size,
+    gestatingSince,
+    born,
+    died: toll.deaths,
+    avgAgeMs,
+    manureTons: pit.tons,
+  };
 }
 
 /** État complet de l'élevage d'une parcelle, prêt pour l'affichage. */
@@ -3737,17 +3863,24 @@ app.get("/parcels/:id/livestock", async (req, res) => {
     const paddock = paddocksFor(b, parcel.buildings);
     const stats = buildingStatsAtLevel(b.type as SharedBuildingType, b.level);
     const capacity = barnCapacity(b.type, stats);
+    const herdKind = (b.herd?.kind as AnimalKind | undefined) ?? kindForBarn(b.type);
     let happiness = b.herd?.happiness ?? 0;
     let feedStock = b.herd?.feedStock ?? 0;
     let herdSize = b.herd?.size ?? 0;
     let gestatingSince: Date | null = b.herd?.gestatingSince ?? null;
+    let manureTons = b.herd?.manureTons ?? 0;
     if (b.herd) {
       const settled = await settleHerd(b.herd, paddock.capacity, now, b.level, capacity);
       happiness = settled.happiness;
       feedStock = settled.feedStock;
       herdSize = settled.size;
       gestatingSince = settled.gestatingSince;
+      manureTons = settled.manureTons;
     }
+    const pitCap = herdKind
+      ? manurePitCapacity(herdKind, capacity)
+      : manurePitCapacity("COW", capacity);
+    const pitFill = manureFill(manureTons, pitCap);
 
     const graze = b.herd
       ? canGraze({
@@ -3763,7 +3896,6 @@ app.get("/parcels/:id/livestock", async (req, res) => {
         })
       : { ok: false as const, reason: "NO_PADDOCK" as const };
 
-    const herdKind = (b.herd?.kind as AnimalKind | undefined) ?? kindForBarn(b.type);
     const feedPer = herdKind ? (FEED_BASE[herdKind] ?? HUNGER.unitsPerAnimalPerCycle) : HUNGER.unitsPerAnimalPerCycle;
     barns.push({
       buildingId: b.id,
@@ -3842,6 +3974,10 @@ app.get("/parcels/:id/livestock", async (req, res) => {
               barnLevel: b.level,
               kind: b.herd.kind as AnimalKind,
             }),
+            manureTons: Math.round(manureTons * 1000) / 1000,
+            manureCap: pitCap,
+            manureFill: pitFill,
+            smelly: pitFill >= 0.8,
           }
         : null,
       canGraze: graze.ok,
@@ -3919,6 +4055,46 @@ app.post("/buildings/:id/animals", async (req, res) => {
     }
   });
   res.status(201).json({ added: body.data.count, cost });
+});
+
+/** Vente locale : le fumier part au voisin, pas au silo ni au négociant. */
+app.post("/buildings/:id/manure/sell", async (req, res) => {
+  const body = z
+    .object({ userId: z.string(), tons: z.number().positive().optional() })
+    .safeParse(req.body);
+  if (!body.success) {
+    res.status(400).json(body.error.flatten());
+    return;
+  }
+  const building = await prisma.building.findUnique({
+    where: { id: req.params.id },
+    include: { parcel: { include: { farm: true } }, herd: true },
+  });
+  if (!building?.parcel.farm || building.parcel.farm.userId !== body.data.userId) {
+    res.status(403).json({ error: "Bâtiment non possédé" });
+    return;
+  }
+  if (!building.herd || building.herd.manureTons <= 0) {
+    res.status(409).json({ error: "Fosse vide — rien à vendre" });
+    return;
+  }
+  const tons = Math.min(building.herd.manureTons, body.data.tons ?? building.herd.manureTons);
+  if (tons <= 1e-6) {
+    res.status(409).json({ error: "Fosse vide — rien à vendre" });
+    return;
+  }
+  const proceeds = manureSaleProceeds(tons);
+  await prisma.$transaction(async (tx) => {
+    await tx.herd.update({
+      where: { id: building.herd!.id },
+      data: { manureTons: Math.round((building.herd!.manureTons - tons) * 1000) / 1000 },
+    });
+    await tx.user.update({
+      where: { id: body.data.userId },
+      data: { crd: { increment: proceeds } },
+    });
+  });
+  res.json({ tons: Math.round(tons * 1000) / 1000, proceeds });
 });
 
 /** Sortie au pâturage : c'est l'enclos adjacent qui la rend possible. */

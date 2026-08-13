@@ -20,7 +20,8 @@ export type TradeGood =
   | "MEAT"
   | "HAY"
   | "EGGS"
-  | "WOOL";
+  | "WOOL"
+  | "MANURE";
 
 export type GoodDef = {
   code: TradeGood;
@@ -35,6 +36,11 @@ export type GoodDef = {
   purchasable: boolean;
   /** Se dégrade-t-il ? Le lait ne se garde pas comme du blé. */
   perishable: boolean;
+  /**
+   * Reste sur la ferme, se vend au voisin : pas un cours mondial.
+   * Le négociant n'en fait pas commerce.
+   */
+  localOnly?: boolean;
 };
 
 export const GOOD_DEFS: Record<TradeGood, GoodDef> = {
@@ -132,10 +138,21 @@ export const GOOD_DEFS: Record<TradeGood, GoodDef> = {
     purchasable: false,
     perishable: false,
   },
+  MANURE: {
+    code: "MANURE",
+    name: "Fumier",
+    unit: "t",
+    basePrice: 55,
+    sellable: true,
+    purchasable: false,
+    perishable: false,
+    localOnly: true,
+  },
 };
 
+/** Marchandises à cours mondial — le fumier s'écoule au voisin, pas ici. */
 export const SELLABLE_GOODS = (Object.keys(GOOD_DEFS) as TradeGood[]).filter(
-  (g) => GOOD_DEFS[g].sellable,
+  (g) => GOOD_DEFS[g].sellable && !GOOD_DEFS[g].localOnly,
 );
 
 /** Marge du négociant à l'achat : il vend plus cher qu'il ne rachète `[GD]` */

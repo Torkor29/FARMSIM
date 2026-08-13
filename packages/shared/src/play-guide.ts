@@ -276,8 +276,8 @@ export const GUIDE_CHAPTERS: GuideChapter[] = [
       {
         id: "ferti",
         name: "Fertilisation",
-        how: "Outil Sol → Ferti, jusqu’à 2 passages. Plus tard, le lisier de l’éleveur remplacera une partie de l’engrais.",
-        usedBy: "Céréalier. Éleveur (lisier, bientôt). Missions d’épandage.",
+        how: "Outil Sol → Ferti, jusqu’à 2 passages. Le fumier de l’éleveur remplace l’engrais du magasin : moins cher, le sol gagne un peu.",
+        usedBy: "Céréalier. Éleveur : fosse à vider. Missions d’épandage.",
       },
     ],
   },
@@ -350,11 +350,16 @@ export const GUIDE_CHAPTERS: GuideChapter[] = [
         usedBy: "Éleveur (énergie d’hiver). Missions d’ensilage.",
         soon: true,
       },
+      goodEntry(
+        "MANURE",
+        "Reste à côté du bâtiment. Épandez-le (outil Ferti) ou vendez-le au voisin. Fosse pleine : les bêtes sont moins bien.",
+        "Céréalier (azote). Éleveur (doit vider la fosse). Pas au négociant.",
+      ),
       {
         id: "SLURRY",
-        name: "Lisier / fumier",
-        how: "Produit par le troupeau, épandu sur les champs. Pas encore dans cette version.",
-        usedBy: "Céréalier (azote). Éleveur (doit s’en débarrasser). Missions d’épandage.",
+        name: "Lisier liquide",
+        how: "La tonne à lisier, plus tard. Pour l’instant, c’est le fumier solide.",
+        usedBy: "Céréalier. Éleveur.",
         soon: true,
       },
     ],
@@ -511,6 +516,12 @@ export const GUIDE_CHAPTERS: GuideChapter[] = [
         usedBy: "Éleveur.",
       },
       {
+        id: "manure-pit",
+        name: "Fosse à fumier",
+        how: "Le tas grossit tout seul. Épandez (Ferti) ou vendez au voisin. À 80 %, ça sent ; à 100 %, plus rien n’entre.",
+        usedBy: "Éleveur. Céréalier : azote moins cher que l’engrais du magasin.",
+      },
+      {
         id: "cold",
         name: "Chambre froide",
         how: "Ralentit la perte du lait, de la viande et des œufs de 40 %.",
@@ -532,7 +543,7 @@ export const GUIDE_CHAPTERS: GuideChapter[] = [
       {
         id: "elv",
         name: "Éleveur",
-        how: "Produit lait, viande, œufs et laine. Achète foin et grain, ou fauche son herbe. Bientôt : paille, ensilage, et lisier à rendre au céréalier.",
+        how: "Produit lait, viande, œufs, laine et fumier. Achète foin et grain, ou fauche son herbe. Le fumier part au champ du céréalier, ou s’épand chez soi.",
         usedBy: "Débouché du céréalier. Chantiers d’épandage pour qui a l’engin.",
       },
       {

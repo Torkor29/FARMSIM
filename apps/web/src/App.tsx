@@ -447,6 +447,8 @@ export function App() {
   const [continentDetail, setContinentDetail] = useState<ContinentDetail | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
   const [barns, setBarns] = useState<BarnState[]>([]);
+  /** Cases assombries après un épandage de fumier, jusqu'à cette date. */
+  const [manureStain, setManureStain] = useState<Record<string, number>>({});
   const [listings, setListings] = useState<Listing[]>([]);
   const [showMarket, setShowMarket] = useState(false);
   const [confirmRequest, setConfirmRequest] = useState<ConfirmRequest | null>(null);
@@ -843,14 +845,15 @@ export function App() {
       ? (parcel?.machines ?? [])
       : (player?.farm?.machines ?? []);
     return cells.map((c) => {
-      if (c.kind !== "VEHICLE" || !c.machineId) return c;
+      const stained = { ...c, manuredUntil: manureStain[`${c.x},${c.y}`] };
+      if (c.kind !== "VEHICLE" || !c.machineId) return stained;
       const m = machines.find((x) => x.id === c.machineId);
       return {
-        ...c,
+        ...stained,
         machineType: (m?.type as MachineType | undefined) ?? "TRACTOR",
       };
     });
-  }, [parcel?.cells, parcel?.machines, player?.farm?.machines, visiting]);
+  }, [parcel?.cells, parcel?.machines, player?.farm?.machines, visiting, manureStain]);
   const zoneName = parcel?.zone?.name ?? ownedParcels[0]?.zone?.name ?? "Votre région";
   const koppen = parcel?.zone?.koppen ?? "Cfb";
   const homeCity = parcel?.zone?.city ?? ownedParcels[0]?.zone?.city ?? "";
@@ -1726,11 +1729,21 @@ export function App() {
             breakdown?: string | null;
           };
           labor?: { remaining: number; completed: boolean; payout?: number };
+          usedManure?: boolean;
         }>(`/parcels/${activeParcelId}/fertilize`, {
           method: "POST",
           body: JSON.stringify({ userId: player.id, cells: workCells }),
         });
-        setMsg("Fertilisé" + wearNote(r.machine));
+        setMsg((r.usedManure ? "Fumier épandu" : "Fertilisé") + wearNote(r.machine));
+        if (r.usedManure) {
+          const until = Date.now() + 60_000;
+          setManureStain((prev) => {
+            const next = { ...prev };
+            for (const c of workCells) next[`${c.x},${c.y}`] = until;
+            return next;
+          });
+          if (activeParcelId) await loadLivestock(activeParcelId);
+        }
         labor = r.labor;
       } else if (tool === "HARVEST") {
         const r = await api<{
@@ -2226,6 +2239,30 @@ export function App() {
     }
   }
 
+  function spreadManure(_buildingId: string) {
+    setTool("FERTILIZE");
+    setSelectedCells([]);
+    flashToast("Sélectionnez les cultures, puis Faire — le fumier part de la fosse");
+  }
+
+  async function sellManure(buildingId: string) {
+    if (!player) return;
+    setBusy(true);
+    try {
+      const r = await api<{ tons: number; proceeds: number }>(
+        `/buildings/${buildingId}/manure/sell`,
+        { method: "POST", body: JSON.stringify({ userId: player.id }) },
+      );
+      flashToast(`Fumier vendu au voisin · ${r.tons.toFixed(2)} t · +${r.proceeds} TRN`);
+      await refreshPlayer();
+      if (activeParcelId) await loadLivestock(activeParcelId);
+    } catch (e) {
+      flashToast(e instanceof Error ? e.message : String(e), true);
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function collectEggs(herdId: string) {
     if (!player) return;
     setBusy(true);
@@ -2489,6 +2526,22 @@ export function App() {
               pulseCells={pulseCells}
               activeWork={activeWork}
               grazing={grazingHerds}
+              manurePiles={barns.flatMap((barn) => {
+                const b = (parcel?.buildings ?? []).find((x) => x.id === barn.buildingId);
+                const fill = barn.herd?.manureFill ?? 0;
+                if (!b || fill <= 0.02) return [];
+                const def = BUILDING_DEFS[b.type];
+                return [
+                  {
+                    buildingId: b.id,
+                    originX: b.originX,
+                    originY: b.originY,
+                    w: def.w,
+                    h: def.h,
+                    fill,
+                  },
+                ];
+              })}
               yardSignals={barns.flatMap((barn) => {
                 const b = (parcel?.buildings ?? []).find((x) => x.id === barn.buildingId);
                 if (!b || !barn.herd) return [];
@@ -3058,6 +3111,8 @@ export function App() {
         onCollectEggs={collectEggs}
         onShear={shearHerd}
         onSlaughter={slaughterHerd}
+        onSpreadManure={spreadManure}
+        onSellManure={sellManure}
         hayTons={hayInStock}
         maizeTons={maizeInStock}
         barleyTons={barleyInStock}

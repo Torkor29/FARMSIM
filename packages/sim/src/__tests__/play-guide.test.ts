@@ -67,6 +67,8 @@ describe("guide et objectifs", () => {
     expect(ids).toEqual(["crops", "soil", "goods", "build", "machines", "herd", "triangle"]);
     const soon = GUIDE_CHAPTERS.flatMap((c) => c.entries).filter((e) => e.soon);
     expect(soon.map((e) => e.id).sort()).toEqual(["SILAGE", "SLURRY", "STRAW"]);
+    const goods = GUIDE_CHAPTERS.find((c) => c.id === "goods");
+    expect(goods?.entries.some((e) => e.id === "MANURE" && !e.soon)).toBe(true);
   });
 
   it("explique qui utilise la production des autres", () => {

@@ -225,6 +225,8 @@ model Herd {
   avgAgeMs      Float     @default(0)
   /// Pertes fractionnaires reportées : sans elles, un petit lot ne meurt jamais
   mortalityDebt Float     @default(0)
+  /// Fosse à fumier, en tonnes — reste au bâtiment, pas au silo
+  manureTons    Float     @default(0)
 }
 
 model Building {

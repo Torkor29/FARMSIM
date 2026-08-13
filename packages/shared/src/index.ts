@@ -17,6 +17,7 @@ export * from "./art-anchor.js";
 export * from "./play-guide.js";
 export * from "./appearance.js";
 export * from "./crops.js";
+export * from "./manure.js";
 
 /** Monnaie du jeu : le terron (TRN). Le champ interne reste `crd`. */
 export const CURRENCY_CODE = "TRN";
@@ -195,6 +196,8 @@ export const MARKET_BOUNDS: Record<
   RAPE: { initial: 340, min: 210, max: 580, depth: 700 },
   EGGS: { initial: 22, min: 12, max: 40, depth: 400 },
   WOOL: { initial: 420, min: 260, max: 680, depth: 250 },
+  // Coté pour l'affichage ; le fumier ne s'échange pas sur ce marché.
+  MANURE: { initial: 55, min: 40, max: 80, depth: 200 },
 };
 
 /**

@@ -33,6 +33,10 @@ export type BarnState = {
     eggsPerCycle?: number;
     woolPerShear?: number;
     meatAtSlaughter: number;
+    manureTons?: number;
+    manureCap?: number;
+    manureFill?: number;
+    smelly?: boolean;
   } | null;
 };
 
@@ -50,6 +54,8 @@ type Props = {
   onCollectEggs: (herdId: string) => void;
   onShear: (herdId: string) => void;
   onSlaughter: (herdId: string, count: number) => void;
+  onSpreadManure: (buildingId: string) => void;
+  onSellManure: (buildingId: string) => void;
   hayTons: number;
   maizeTons: number;
   barleyTons: number;
@@ -71,6 +77,8 @@ export function LivestockPanel({
   onCollectEggs,
   onShear,
   onSlaughter,
+  onSpreadManure,
+  onSellManure,
   hayTons,
   maizeTons,
   barleyTons,
@@ -187,6 +195,24 @@ export function LivestockPanel({
                     <dd>{herd.meatAtSlaughter.toFixed(0)} kg</dd>
                   </div>
                 </dl>
+
+                <div className="feed-row">
+                  {herd.smelly && (
+                    <p className="herd-alert">
+                      La fosse est trop pleine — ça sent, les bêtes sont moins bien. Épandez
+                      ou vendez.
+                    </p>
+                  )}
+                  <div className="feed-bar">
+                    <span
+                      className={`feed-fill ${herd.smelly ? "low" : ""}`}
+                      style={{ width: `${Math.round((herd.manureFill ?? 0) * 100)}%` }}
+                    />
+                  </div>
+                  <span className={`feed-label ${herd.smelly ? "warn" : ""}`}>
+                    Fosse · {(herd.manureTons ?? 0).toFixed(2)} / {(herd.manureCap ?? 0).toFixed(2)} t
+                  </span>
+                </div>
               </>
             ) : (
               <p className="muted tiny">Bâtiment vide — achetez des bêtes pour démarrer.</p>
@@ -309,6 +335,29 @@ export function LivestockPanel({
                   onClick={() => onShear(herd.id)}
                 >
                   Tondre
+                </button>
+              )}
+
+              {herd && (herd.manureTons ?? 0) > 0 && (
+                <button
+                  type="button"
+                  className="accent-btn"
+                  disabled={busy}
+                  title="Épandre le fumier sur les cultures — moins cher que l’engrais du magasin"
+                  onClick={() => onSpreadManure(barn.buildingId)}
+                >
+                  Épandre
+                </button>
+              )}
+
+              {herd && (herd.manureTons ?? 0) > 0 && (
+                <button
+                  type="button"
+                  disabled={busy}
+                  title="Vendre le tas au céréalier voisin — prix local, pas le négociant"
+                  onClick={() => onSellManure(barn.buildingId)}
+                >
+                  Vendre le fumier
                 </button>
               )}
 
