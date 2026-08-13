@@ -91,6 +91,13 @@ type Props = {
   weather?: string;
   onCellClick: (x: number, y: number) => void;
   onCellHover?: (cell: { x: number; y: number } | null) => void;
+  /**
+   * ETA au champ : un doigt glisse et travaille, deux doigts cadrent.
+   * Le clic sans glisser reste une sélection.
+   */
+  strokeWork?: boolean;
+  onStrokePreview?: (cells: { x: number; y: number }[]) => void;
+  onWorkStroke?: (cells: { x: number; y: number }[]) => void;
 };
 
 const SOIL = 0x9ac06a;
@@ -346,12 +353,21 @@ export function IsoFarmView({
   weather = "CLEAR",
   onCellClick,
   onCellHover,
+  strokeWork = false,
+  onStrokePreview,
+  onWorkStroke,
 }: Props) {
   const mountRef = useRef<HTMLDivElement>(null);
   const onClickRef = useRef(onCellClick);
   onClickRef.current = onCellClick;
   const onHoverRef = useRef(onCellHover);
   onHoverRef.current = onCellHover;
+  const strokeWorkRef = useRef(strokeWork);
+  strokeWorkRef.current = strokeWork;
+  const onStrokePreviewRef = useRef(onStrokePreview);
+  onStrokePreviewRef.current = onStrokePreview;
+  const onWorkStrokeRef = useRef(onWorkStroke);
+  onWorkStrokeRef.current = onWorkStroke;
   const layoutRef = useRef<(() => void) | null>(null);
   const weatherRef = useRef(weather);
   weatherRef.current = weather;
@@ -1061,6 +1077,22 @@ export function IsoFarmView({
     let zoomStart = 1;
     let lastX = 0;
     let lastY = 0;
+    const strokeKeys = new Set<string>();
+    const strokeCells: { x: number; y: number }[] = [];
+
+    function addStrokeCell(cell: { x: number; y: number } | null) {
+      if (!cell) return;
+      const k = `${cell.x},${cell.y}`;
+      if (strokeKeys.has(k)) return;
+      strokeKeys.add(k);
+      strokeCells.push(cell);
+      onStrokePreviewRef.current?.(strokeCells.slice());
+    }
+
+    function clearStroke() {
+      strokeKeys.clear();
+      strokeCells.length = 0;
+    }
 
     /** Unités du monde parcourues par un pixel d'écran, au zoom courant. */
     function worldPerPixel(): number {
@@ -1099,11 +1131,13 @@ export function IsoFarmView({
       lastX = ev.clientX;
       lastY = ev.clientY;
       dragged = false;
+      clearStroke();
       if (pointers.size === 2) {
         pinchStart = pinchDistance();
         zoomStart = view.zoom;
         // Un pincement n'est jamais un clic, même si les doigts bougent peu.
         dragged = true;
+        clearStroke();
       }
     }
 
@@ -1127,6 +1161,14 @@ export function IsoFarmView({
       dragged = true;
       lastX = ev.clientX;
       lastY = ev.clientY;
+
+      if (strokeWorkRef.current) {
+        setPointerFromEvent(ev);
+        addStrokeCell(raycastCell());
+        onHoverRef.current?.(null);
+        return;
+      }
+
       panBy(dx, dy);
       onHoverRef.current?.(null);
     }
@@ -1135,7 +1177,14 @@ export function IsoFarmView({
       const had = pointers.delete(ev.pointerId);
       renderer.domElement.releasePointerCapture?.(ev.pointerId);
       if (pointers.size < 2) pinchStart = 0;
-      if (!had || dragged || pointers.size > 0) return;
+      if (!had || pointers.size > 0) return;
+      if (strokeWorkRef.current && dragged && strokeCells.length) {
+        const done = strokeCells.slice();
+        clearStroke();
+        onWorkStrokeRef.current?.(done);
+        return;
+      }
+      if (dragged) return;
       setPointerFromEvent(ev);
       const cell = raycastCell();
       if (cell) onClickRef.current(cell.x, cell.y);

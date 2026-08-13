@@ -245,6 +245,14 @@ model Machine {
   type               String
   tier               Int         @default(1)
   condition          Float       @default(100)
+  /** Graissé et prêt à partir. Consommé à chaque chantier. */
+  greased            Boolean     @default(true)
+  /** 0–100, la boue du champ. Au-dessus de 25, l'usure double. */
+  dirt               Float       @default(0)
+  /** Départs consécutifs sans graisser. À 1, le suivant est refusé. */
+  greaseSkipStreak   Int         @default(0)
+  /** BELT, HYDRAULIC, ENGINE — null si ça roule */
+  breakdown          String?
   parkedParcelId     String?
   parkedParcel       Parcel?     @relation("ParkedOn", fields: [parkedParcelId], references: [id])
   storedInBuildingId String?

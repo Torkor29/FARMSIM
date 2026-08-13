@@ -443,6 +443,101 @@ button.ghost {
   gap: 0.5rem;
 }
 .confirm-card h3 { margin: 0; font-size: 1.15rem; color: var(--teal-700); }
+
+/* Atelier : mini-jeux graisse / lavage / pièces */
+.care-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 70;
+  display: grid;
+  place-items: center;
+  padding: 1rem;
+  padding-bottom: max(1rem, env(safe-area-inset-bottom));
+  background: rgba(24, 44, 38, 0.65);
+  backdrop-filter: blur(4px);
+}
+.care-card {
+  width: min(420px, 100%);
+  padding: 1rem 1.1rem 1.05rem;
+  border-radius: var(--r-lg);
+  display: grid;
+  gap: 0.4rem;
+}
+.care-card h3 { margin: 0; font-size: 1.15rem; color: var(--teal-700); }
+.care-machine { margin: 0; font-weight: 650; color: var(--ink); }
+.care-stage {
+  position: relative;
+  width: 100%;
+  aspect-ratio: 1;
+  border-radius: var(--r-md);
+  overflow: hidden;
+  background: var(--sand);
+  touch-action: none;
+  user-select: none;
+}
+.care-stage img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  pointer-events: none;
+}
+.care-nipple,
+.care-dust,
+.care-mud {
+  position: absolute;
+  transform: translate(-50%, -50%);
+  border: 0;
+  padding: 0;
+}
+.care-nipple {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  background: rgba(201, 162, 39, 0.35);
+  box-shadow: inset 0 0 0 2px var(--gold-500);
+  cursor: pointer;
+}
+.care-nipple.done {
+  background: var(--gold-500);
+  box-shadow: 0 0 0 3px rgba(201, 162, 39, 0.35);
+}
+.care-dust {
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  background: radial-gradient(circle, rgba(90, 80, 60, 0.55), transparent 70%);
+  pointer-events: auto;
+}
+.care-mud {
+  width: 36px;
+  height: 28px;
+  border-radius: 40% 60% 50% 50%;
+  background: #6b4a2b;
+  opacity: 0.75;
+  cursor: pointer;
+}
+.care-parts {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.35rem;
+}
+.care-parts button {
+  width: 100%;
+  min-height: 44px;
+}
+.care-parts button.done {
+  background: var(--teal-100);
+  color: var(--teal-700);
+}
+.care-shake { animation: care-wiggle 0.28s ease; }
+@keyframes care-wiggle {
+  0%, 100% { transform: translateX(0); }
+  25% { transform: translateX(-6px); }
+  75% { transform: translateX(6px); }
+}
 .confirm-detail { margin: 0; color: var(--ink-soft); font-size: 0.9rem; }
 .confirm-actions {
   display: flex;
@@ -797,6 +892,13 @@ button.ghost {
   border: 1px solid var(--glass-border);
   border-radius: 14px;
   backdrop-filter: blur(12px);
+}
+.stroke-hint {
+  flex: 1 0 100%;
+  margin: 0;
+  text-align: center;
+  font-size: 0.78rem;
+  color: var(--ink-soft);
 }
 .action {
   border-radius: var(--r-sm);

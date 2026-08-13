@@ -32,10 +32,17 @@ import {
   type BuildingType,
   type MachineType,
   type WeatherState,
+  BREAKDOWN_LABELS,
+  GREASE_COST_CRD,
+  CLEAN_COST_CRD,
+  DIRT_DIRTY_THRESHOLD,
+  isBreakdownKind,
+  suggestedRepairKind,
 } from "@farmsim/shared";
 import { AuthScreen } from "./AuthScreen";
 import type { GrazingHerd, PreviewBuilding } from "./IsoFarmView";
 import { ConfirmDialog, type ConfirmRequest } from "./ConfirmDialog";
+import { MachineCareOverlay, type CareMode } from "./MachineCareOverlay";
 import { LivestockPanel, type BarnState } from "./LivestockPanel";
 import { MarketPanel, type Listing, type FuturesContract } from "./MarketPanel";
 import type { ContinentDetail, WorldContinent } from "./Onboarding";
@@ -150,6 +157,10 @@ type Player = {
       condition: number;
       parkedParcelId?: string | null;
       storedInBuildingId?: string | null;
+      greased?: boolean;
+      dirt?: number;
+      greaseSkipStreak?: number;
+      breakdown?: string | null;
     }[];
     inventory: { id: string; itemCode: string; qty: number; quality: number; moisture: number }[];
   } | null;
@@ -260,6 +271,32 @@ const ACTION_BAR: { tool: Tool; label: string; icon: string }[] = [
   { tool: "PARK", label: "Park", icon: "/assets/icons/tools/park.svg" },
 ];
 
+function isFieldWorkTool(t: Tool): boolean {
+  return (
+    t === "PLANT_WHEAT" ||
+    t === "PLANT_MAIZE" ||
+    t === "PLANT_PEA" ||
+    t === "FERTILIZE" ||
+    t === "HARVEST" ||
+    t === "STUBBLE" ||
+    t === "PLOW"
+  );
+}
+
+function wearNote(machine?: {
+  type?: string;
+  condition?: number;
+  broke?: boolean;
+  breakdown?: string | null;
+}): string {
+  if (!machine || machine.condition == null) return "";
+  const panne =
+    machine.broke && isBreakdownKind(machine.breakdown)
+      ? ` · PANNE ${BREAKDOWN_LABELS[machine.breakdown]}`
+      : "";
+  return ` · ${machine.type} ${machine.condition.toFixed(0)}%${panne}`;
+}
+
 /** Sons UI optionnels — ignorés tant qu’aucun asset n’est fourni */
 function playUiSound(_kind: "click" | "place") {
   const urls: Partial<Record<"click" | "place", string>> = {};
@@ -320,6 +357,11 @@ export function App() {
   const [msg, setMsg] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [care, setCare] = useState<{
+    mode: CareMode;
+    machineId: string;
+    kind?: "BELT" | "HYDRAULIC" | "ENGINE";
+  } | null>(null);
   const [showEta, setShowEta] = useState(false);
   const [showGarage, setShowGarage] = useState(true);
   const [weather, setWeather] = useState<WeatherSnap[]>([]);
@@ -1111,6 +1153,7 @@ export function App() {
     if (
       tool === "PLANT_WHEAT" ||
       tool === "PLANT_MAIZE" ||
+      tool === "PLANT_PEA" ||
       tool === "FERTILIZE" ||
       tool === "HARVEST" ||
       tool === "STUBBLE" ||
@@ -1270,78 +1313,101 @@ export function App() {
     }, workAnimationMs(cells.length) + 250);
   }
 
-  async function runSelectionAction() {
-    if (!player || !activeParcelId || !selectedCells.length) return;
+  async function runWorkOnCells(cells: { x: number; y: number }[]) {
+    if (!player || !activeParcelId || !cells.length || busy) return;
     setBusy(true);
     setErr(null);
-    const workCells = selectedCells.slice();
+    const workCells = cells.slice();
     flashWork(workMachineForTool(tool), workCells);
     try {
       if (tool === "PLANT_WHEAT" || tool === "PLANT_MAIZE" || tool === "PLANT_PEA") {
         const crop: CropCode =
           tool === "PLANT_WHEAT" ? "WHEAT" : tool === "PLANT_MAIZE" ? "MAIZE" : "PEA";
-        const r = await api<{ machine?: { wearApplied: number; condition: number; type: string } }>(
-          `/parcels/${activeParcelId}/plant`,
-          {
-            method: "POST",
-            body: JSON.stringify({ userId: player.id, crop, cells: selectedCells, directSeed }),
-          },
-        );
+        const r = await api<{
+          machine?: {
+            wearApplied: number;
+            condition: number;
+            type: string;
+            broke?: boolean;
+            breakdown?: string | null;
+          };
+        }>(`/parcels/${activeParcelId}/plant`, {
+          method: "POST",
+          body: JSON.stringify({ userId: player.id, crop, cells: workCells, directSeed }),
+        });
         setMsg(
-          `Semé ${crop} ×${selectedCells.length}${directSeed ? " en direct" : ""}` +
-            (r.machine ? ` · ${r.machine.type} ${r.machine.condition.toFixed(0)}%` : ""),
+          `Semé ${crop} ×${workCells.length}${directSeed ? " en direct" : ""}` + wearNote(r.machine),
         );
       } else if (tool === "FERTILIZE") {
-        const r = await api<{ machine?: { condition: number; type: string } }>(
-          `/parcels/${activeParcelId}/fertilize`,
-          {
-            method: "POST",
-            body: JSON.stringify({ userId: player.id, cells: selectedCells }),
-          },
-        );
-        setMsg(
-          "Fertilisé" + (r.machine ? ` · ${r.machine.type} ${r.machine.condition.toFixed(0)}%` : ""),
-        );
+        const r = await api<{
+          machine?: {
+            condition: number;
+            type: string;
+            broke?: boolean;
+            breakdown?: string | null;
+          };
+        }>(`/parcels/${activeParcelId}/fertilize`, {
+          method: "POST",
+          body: JSON.stringify({ userId: player.id, cells: workCells }),
+        });
+        setMsg("Fertilisé" + wearNote(r.machine));
       } else if (tool === "HARVEST") {
         const r = await api<{
-          machine?: { condition: number; type: string };
+          machine?: {
+            condition: number;
+            type: string;
+            broke?: boolean;
+            breakdown?: string | null;
+          };
           totalTons?: number;
           lostCells?: number;
         }>(`/parcels/${activeParcelId}/harvest`, {
           method: "POST",
-          body: JSON.stringify({ userId: player.id, cells: selectedCells }),
+          body: JSON.stringify({ userId: player.id, cells: workCells }),
         });
         const lost = r.lostCells ? ` · ${r.lostCells} perdue(s)` : "";
-        setMsg(
-          `Récolte ${r.totalTons?.toFixed(2) ?? ""} t${lost}` +
-            (r.machine ? ` · ${r.machine.type} ${r.machine.condition.toFixed(0)}%` : ""),
-        );
+        setMsg(`Récolte ${r.totalTons?.toFixed(2) ?? ""} t${lost}` + wearNote(r.machine));
       } else if (tool === "PLOW") {
         const r = await api<{
           plowed: number;
           cost: number;
           fertilityDelta: number;
+          machine?: {
+            condition: number;
+            type: string;
+            broke?: boolean;
+            breakdown?: string | null;
+          };
         }>(`/parcels/${activeParcelId}/plow`, {
           method: "POST",
-          body: JSON.stringify({ userId: player.id, cells: selectedCells }),
+          body: JSON.stringify({ userId: player.id, cells: workCells }),
         });
         const fert = r.fertilityDelta;
         const fertNote =
           Math.abs(fert) < 0.0005
             ? ""
             : ` · fertilité ${fert > 0 ? "+" : "−"}${Math.abs(fert * 100).toFixed(1)} pt`;
-        setMsg(`Labouré ×${r.plowed} · −${r.cost} CRD${fertNote} · sol remis à zéro`);
+        setMsg(
+          `Labouré ×${r.plowed} · −${r.cost} CRD${fertNote} · sol remis à zéro` + wearNote(r.machine),
+        );
       } else if (tool === "STUBBLE") {
         const r = await api<{
           stubbled: number;
           cost: number;
           nextBonus: number;
+          machine?: {
+            condition: number;
+            type: string;
+            broke?: boolean;
+            breakdown?: string | null;
+          };
         }>(`/parcels/${activeParcelId}/stubble`, {
           method: "POST",
-          body: JSON.stringify({ userId: player.id, cells: selectedCells }),
+          body: JSON.stringify({ userId: player.id, cells: workCells }),
         });
         setMsg(
-          `Déchaumé ×${r.stubbled} · −${r.cost} CRD · +${Math.round(r.nextBonus * 100)} % sur la prochaine récolte`,
+          `Déchaumé ×${r.stubbled} · −${r.cost} CRD · +${Math.round(r.nextBonus * 100)} % sur la prochaine récolte` +
+            wearNote(r.machine),
         );
       }
       setSelectedCells([]);
@@ -1349,11 +1415,16 @@ export function App() {
       await loadParcel(activeParcelId);
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e));
+      flashToast(e instanceof Error ? e.message : String(e), true);
       setPulseCells([]);
       setActiveWork(null);
     } finally {
       setBusy(false);
     }
+  }
+
+  async function runSelectionAction() {
+    await runWorkOnCells(selectedCells);
   }
 
   async function harvestAll() {
@@ -1785,6 +1856,41 @@ export function App() {
     }
   }
 
+  async function finishCare() {
+    if (!player || !care) return;
+    setBusy(true);
+    setErr(null);
+    try {
+      if (care.mode === "grease") {
+        const r = await api<{ cost: number }>(`/machines/${care.machineId}/grease`, {
+          method: "POST",
+          body: JSON.stringify({ userId: player.id }),
+        });
+        setMsg(`Graissé · −${r.cost} CRD`);
+      } else if (care.mode === "clean") {
+        const r = await api<{ cost: number }>(`/machines/${care.machineId}/clean`, {
+          method: "POST",
+          body: JSON.stringify({ userId: player.id }),
+        });
+        setMsg(`Nettoyé · −${r.cost} CRD`);
+      } else {
+        const kind = care.kind ?? "BELT";
+        const r = await api<{ condition: number; cost: number }>(`/machines/${care.machineId}/service`, {
+          method: "POST",
+          body: JSON.stringify({ userId: player.id, kind }),
+        });
+        setMsg(`Réparé → ${r.condition.toFixed(0)}% (−${r.cost} CRD)`);
+      }
+      setCare(null);
+      await refreshPlayer();
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e));
+      flashToast(e instanceof Error ? e.message : String(e), true);
+    } finally {
+      setBusy(false);
+    }
+  }
+
   if (showSplash) {
     return <SplashScreen onComplete={() => setShowSplash(false)} />;
   }
@@ -1867,6 +1973,12 @@ export function App() {
               activeWork={activeWork}
               grazing={grazingHerds}
               weather={localWeather}
+              strokeWork={player.specialization === "ETA" && isFieldWorkTool(tool)}
+              onStrokePreview={setSelectedCells}
+              onWorkStroke={(cells) => {
+                if (busy) return;
+                void runWorkOnCells(cells);
+              }}
               onCellClick={applyToolOnCell}
               onCellHover={setHoverCell}
             />
@@ -2263,7 +2375,7 @@ export function App() {
         >
           Bureau
         </button>
-        {(tool === "PLANT_WHEAT" ||
+          {(tool === "PLANT_WHEAT" ||
           tool === "PLANT_MAIZE" ||
           tool === "PLANT_PEA" ||
           tool === "FERTILIZE" ||
@@ -2271,6 +2383,9 @@ export function App() {
           tool === "STUBBLE" ||
           tool === "PLOW") && (
           <>
+            {player.specialization === "ETA" && (
+              <p className="stroke-hint">Glissez sur le champ · deux doigts pour bouger la vue</p>
+            )}
             <button
               type="button"
               className="action accent"
@@ -2349,29 +2464,71 @@ export function App() {
         <aside className={panelClass("garage-panel", "GARAGE")} {...(isMobile ? sheetGesture : {})}>
           <h3>Garage</h3>
           <p className="muted tiny">
-            Semis / ferti → tracteur · Récolte → moissonneuse. Usure à chaque case.
+            {player.specialization === "ETA"
+              ? "Graissez avant de partir, soufflez en rentrant. Une panne se répare à la main."
+              : "Semis / ferti → tracteur · Récolte → moissonneuse. Usure à chaque case."}
           </p>
           <ul className="list">
             {(player.farm?.machines ?? []).map((m) => {
               const def = MACHINE_DEFS[m.type as MachineType];
               const low = def ? m.condition < def.minCondition : m.condition < 12;
+              const dirty = (m.dirt ?? 0) >= DIRT_DIRTY_THRESHOLD;
+              const panne = isBreakdownKind(m.breakdown) ? BREAKDOWN_LABELS[m.breakdown] : null;
+              const eta = player.specialization === "ETA";
               return (
                 <li key={m.id}>
                   <span>
                     <strong>{def?.name ?? m.type}</strong>
-                    <div className={`muted tiny ${low ? "warn" : ""}`}>
+                    <div className={`muted tiny ${low || panne ? "warn" : ""}`}>
                       État {m.condition.toFixed(0)}%
+                      {m.greased === false ? " · pas graissé" : ""}
+                      {dirty ? " · sale" : ""}
+                      {panne ? ` · panne ${panne}` : ""}
                       {m.storedInBuildingId ? " · hangar" : m.parkedParcelId ? " · parcelle" : ""}
                     </div>
                   </span>
                   <span className="row-actions">
-                    <button
-                      type="button"
-                      disabled={busy || m.condition >= 99.5}
-                      onClick={() => repairMachine(m.id)}
-                    >
-                      Réparer
-                    </button>
+                    {eta ? (
+                      <>
+                        <button
+                          type="button"
+                          disabled={busy || (m.greased !== false && (m.greaseSkipStreak ?? 0) === 0)}
+                          title={`${GREASE_COST_CRD} CRD`}
+                          onClick={() => setCare({ mode: "grease", machineId: m.id })}
+                        >
+                          Graisser
+                        </button>
+                        <button
+                          type="button"
+                          disabled={busy || (m.dirt ?? 0) < 8}
+                          title={`${CLEAN_COST_CRD} CRD`}
+                          onClick={() => setCare({ mode: "clean", machineId: m.id })}
+                        >
+                          Nettoyer
+                        </button>
+                        <button
+                          type="button"
+                          disabled={busy || (!panne && m.condition >= 99.5)}
+                          onClick={() =>
+                            setCare({
+                              mode: "repair",
+                              machineId: m.id,
+                              kind: suggestedRepairKind(m.breakdown, m.condition),
+                            })
+                          }
+                        >
+                          Réparer
+                        </button>
+                      </>
+                    ) : (
+                      <button
+                        type="button"
+                        disabled={busy || m.condition >= 99.5}
+                        onClick={() => repairMachine(m.id)}
+                      >
+                        Réparer
+                      </button>
+                    )}
                     <button
                       type="button"
                       className="sell-btn"
@@ -2468,6 +2625,21 @@ export function App() {
       />
 
       <ConfirmDialog request={confirmRequest} onCancel={() => setConfirmRequest(null)} />
+      {care && player && (() => {
+        const m = player.farm?.machines.find((x) => x.id === care.machineId);
+        const def = m ? MACHINE_DEFS[m.type as MachineType] : null;
+        return (
+          <MachineCareOverlay
+            mode={care.mode}
+            machineName={def?.name ?? "Machine"}
+            machineType={(m?.type as MachineType) ?? "TRACTOR"}
+            kind={care.kind}
+            busy={busy}
+            onCancel={() => setCare(null)}
+            onDone={() => void finishCare()}
+          />
+        );
+      })()}
 
       <TutorialOverlay open={showTutorial} onClose={() => setShowTutorial(false)} />
 

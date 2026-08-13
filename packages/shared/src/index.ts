@@ -11,6 +11,7 @@ export * from "./goods.js";
 export * from "./breeding.js";
 export * from "./rotation.js";
 export * from "./futures.js";
+export * from "./machine-care.js";
 
 import type { TradeGood } from "./goods.js";
 

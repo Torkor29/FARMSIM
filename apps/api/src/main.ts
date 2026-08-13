@@ -124,6 +124,11 @@ import {
   type BuildingType as SharedBuildingType,
   type MachineType,
   type WeatherState,
+  isBreakdownKind,
+  GREASE_COST_CRD,
+  CLEAN_COST_CRD,
+  ETA_REPAIR_EXTRA_DISCOUNT,
+  type BreakdownKind,
 } from "@farmsim/shared";
 import {
   simulateCell,
@@ -131,13 +136,18 @@ import {
   tickMarket,
   applyMachineWear,
   repairMachineCost,
-  machineCanWork,
   marketNpcPressure,
   buildSessionResume,
   harvestMoisture,
   dryInventory,
   moistureSellPenalty,
   mergeMoisture,
+  applyJobCare,
+  careWearMultiplier,
+  machineWorkBlock,
+  repairTargetCondition,
+  pickBreakdownKind,
+  type MachineCareState,
 } from "@farmsim/sim";
 import { randomBytes } from "crypto";
 import path from "node:path";
@@ -202,9 +212,49 @@ type FarmMachine = {
   type: string;
   condition: number;
   storedInBuildingId: string | null;
+  greased?: boolean;
+  dirt?: number;
+  greaseSkipStreak?: number;
+  breakdown?: string | null;
 };
 
-/** Choisit une machine capable du travail, condition OK. */
+function careOf(m: FarmMachine): MachineCareState {
+  return {
+    condition: m.condition,
+    greased: m.greased ?? true,
+    dirt: m.dirt ?? 0,
+    greaseSkipStreak: m.greaseSkipStreak ?? 0,
+    breakdown: isBreakdownKind(m.breakdown) ? m.breakdown : null,
+  };
+}
+
+function explainNoMachine(machines: FarmMachine[], work: FarmWork): string {
+  const capable = machines.filter((m) => {
+    const def = MACHINE_DEFS[m.type as MachineType];
+    return Boolean(def?.works.includes(work));
+  });
+  if (!capable.length) {
+    if (work === "HARVEST") {
+      return "Moissonneuse requise (condition trop basse ou absente) — achetez / réparez.";
+    }
+    if (work === "STUBBLE") {
+      return "Déchaumeur requis (condition trop basse ou absent) — achetez / réparez.";
+    }
+    if (work === "FERTILIZE") {
+      return "Tracteur ou épandeur requis (condition OK) pour fertiliser.";
+    }
+    return "Tracteur requis (condition trop basse ou absent) — achetez / réparez.";
+  }
+  for (const m of capable) {
+    const def = MACHINE_DEFS[m.type as MachineType];
+    if (!def) continue;
+    const block = machineWorkBlock(careOf(m), def.minCondition);
+    if (block) return block.message;
+  }
+  return "Aucune machine en état pour ce travail — achetez / réparez.";
+}
+
+/** Choisit une machine capable du travail, condition OK, pas en panne. */
 function pickMachineForWork(
   machines: FarmMachine[],
   work: FarmWork,
@@ -213,7 +263,7 @@ function pickMachineForWork(
     .map((m) => {
       const def = MACHINE_DEFS[m.type as MachineType];
       if (!def || !def.works.includes(work)) return null;
-      if (!machineCanWork(m.condition, def.minCondition)) return null;
+      if (machineWorkBlock(careOf(m), def.minCondition)) return null;
       return { machine: m, def };
     })
     .filter(Boolean) as { machine: FarmMachine; def: (typeof MACHINE_DEFS)[MachineType] }[];
@@ -237,21 +287,51 @@ async function applyWearToMachine(
     machine: FarmMachine;
     def: (typeof MACHINE_DEFS)[MachineType];
     cells: number;
+    work: FarmWork;
     specialization?: string;
   },
 ) {
+  const care = careOf(opts.machine);
   const wear = applyMachineWear({
     condition: opts.machine.condition,
     wearPerCell: opts.def.wearPerCell,
     cells: opts.cells,
     inShed: Boolean(opts.machine.storedInBuildingId),
     etaBonus: opts.specialization === "ETA",
+    careMult:
+      opts.specialization === "ETA"
+        ? careWearMultiplier({ greased: care.greased, dirt: care.dirt })
+        : 1,
   });
+  if (opts.specialization !== "ETA") {
+    await tx.machine.update({
+      where: { id: opts.machine.id },
+      data: { condition: wear.condition },
+    });
+    return wear;
+  }
+  const after = applyJobCare(
+    { ...care, condition: wear.condition },
+    { work: opts.work, cells: opts.cells },
+  );
   await tx.machine.update({
     where: { id: opts.machine.id },
-    data: { condition: wear.condition },
+    data: {
+      condition: after.next.condition,
+      greased: after.next.greased,
+      dirt: after.next.dirt,
+      greaseSkipStreak: after.next.greaseSkipStreak,
+      breakdown: after.next.breakdown,
+    },
   });
-  return wear;
+  return {
+    ...wear,
+    condition: after.next.condition,
+    breakdown: after.next.breakdown,
+    dirt: after.next.dirt,
+    greased: after.next.greased,
+    broke: after.broke,
+  };
 }
 
 const ACQUISITION_ERRORS: Record<AcquisitionRule, string> = {
@@ -1036,7 +1116,7 @@ app.post("/dev/grant", async (req, res) => {
   if (body.data.fixMachines && user.farm) {
     await prisma.machine.updateMany({
       where: { farmId: user.farm.id },
-      data: { condition: 100 },
+      data: { condition: 100, greased: true, dirt: 0, greaseSkipStreak: 0, breakdown: null },
     });
     done.push("machines remises à neuf");
   }
@@ -1944,7 +2024,7 @@ app.post("/parcels/:id/plant", async (req, res) => {
   const picked = pickMachineForWork(parcel.farm.machines, "PLANT");
   if (!picked) {
     res.status(409).json({
-      error: "Tracteur requis (condition trop basse ou absent) — achetez / réparez.",
+      error: explainNoMachine(parcel.farm.machines, "PLANT"),
     });
     return;
   }
@@ -2027,6 +2107,7 @@ app.post("/parcels/:id/plant", async (req, res) => {
       machine: picked.machine,
       def: picked.def,
       cells: body.data.cells.length,
+      work: "PLANT",
       specialization: user.specialization,
     });
   });
@@ -2061,7 +2142,7 @@ app.post("/parcels/:id/fertilize", async (req, res) => {
   const picked = pickMachineForWork(parcel.farm.machines, "FERTILIZE");
   if (!picked) {
     res.status(409).json({
-      error: "Tracteur ou épandeur requis (condition OK) pour fertiliser.",
+      error: explainNoMachine(parcel.farm.machines, "FERTILIZE"),
     });
     return;
   }
@@ -2087,6 +2168,7 @@ app.post("/parcels/:id/fertilize", async (req, res) => {
       machine: picked.machine,
       def: picked.def,
       cells: Math.max(1, fertilized),
+      work: "FERTILIZE",
       specialization: user.specialization,
     });
   });
@@ -2120,7 +2202,7 @@ app.post("/parcels/:id/plow", async (req, res) => {
   const picked = pickMachineForWork(parcel.farm.machines, "PLOW");
   if (!picked) {
     res.status(409).json({
-      error: "Tracteur requis pour labourer — ou faites venir une ETA.",
+      error: explainNoMachine(parcel.farm.machines, "PLOW"),
     });
     return;
   }
@@ -2198,6 +2280,7 @@ app.post("/parcels/:id/plow", async (req, res) => {
       machine: picked.machine,
       def: picked.def,
       cells: candidates.length,
+      work: "PLOW",
       specialization: user.specialization,
     });
   });
@@ -2238,7 +2321,7 @@ app.post("/parcels/:id/stubble", async (req, res) => {
   const picked = pickMachineForWork(parcel.farm.machines, "STUBBLE");
   if (!picked) {
     res.status(409).json({
-      error: "Déchaumeur à disques requis — achetez-en un au garage, ou labourez.",
+      error: explainNoMachine(parcel.farm.machines, "STUBBLE"),
     });
     return;
   }
@@ -2299,6 +2382,7 @@ app.post("/parcels/:id/stubble", async (req, res) => {
       machine: picked.machine,
       def: picked.def,
       cells: targets.length,
+      work: "STUBBLE",
       specialization: user.specialization,
     });
   });
@@ -2334,7 +2418,7 @@ app.post("/parcels/:id/harvest", async (req, res) => {
   const picked = pickMachineForWork(parcel.farm.machines, "HARVEST");
   if (!picked) {
     res.status(409).json({
-      error: "Moissonneuse requise — achetez-en une au garage ou jouez ETA.",
+      error: explainNoMachine(parcel.farm.machines, "HARVEST"),
     });
     return;
   }
@@ -2452,6 +2536,7 @@ app.post("/parcels/:id/harvest", async (req, res) => {
       machine: picked.machine,
       def: picked.def,
       cells: harvested.length,
+      work: "HARVEST",
       specialization: user?.specialization,
     });
   });
@@ -3430,6 +3515,10 @@ app.post("/machines/:id/repair", async (req, res) => {
     res.status(409).json({ error: "Déjà en parfait état" });
     return;
   }
+  if (machine.farm.user.specialization === "ETA") {
+    res.status(409).json({ error: "À l'atelier : graissez, nettoyez ou réparez à la main." });
+    return;
+  }
   const bonuses = await getFarmBonuses(machine.farmId);
   const quote = repairMachineCost({
     condition: machine.condition,
@@ -3447,7 +3536,13 @@ app.post("/machines/:id/repair", async (req, res) => {
     });
     await tx.machine.update({
       where: { id: machine.id },
-      data: { condition: quote.nextCondition },
+      data: {
+        condition: quote.nextCondition,
+        greased: true,
+        dirt: 0,
+        greaseSkipStreak: 0,
+        breakdown: null,
+      },
     });
   });
   res.json({
@@ -3455,6 +3550,151 @@ app.post("/machines/:id/repair", async (req, res) => {
     condition: quote.nextCondition,
     cost: quote.cost,
     discount: bonuses.repairDiscount,
+  });
+});
+
+async function loadOwnedMachine(id: string, userId: string) {
+  const machine = await prisma.machine.findUnique({
+    where: { id },
+    include: { farm: { include: { user: true } } },
+  });
+  if (!machine || machine.farm.userId !== userId) return null;
+  return machine;
+}
+
+app.post("/machines/:id/grease", async (req, res) => {
+  const body = z.object({ userId: z.string() }).safeParse(req.body);
+  if (!body.success) {
+    res.status(400).json(body.error.flatten());
+    return;
+  }
+  const machine = await loadOwnedMachine(req.params.id, body.data.userId);
+  if (!machine) {
+    res.status(403).json({ error: "Machine non possédée" });
+    return;
+  }
+  if (machine.greased && machine.greaseSkipStreak === 0) {
+    res.status(409).json({ error: "Déjà graissé" });
+    return;
+  }
+  if (machine.farm.user.crd < GREASE_COST_CRD) {
+    res.status(402).json({ error: `Graissage ${GREASE_COST_CRD} CRD — fonds insuffisants` });
+    return;
+  }
+  await prisma.$transaction(async (tx) => {
+    await tx.user.update({
+      where: { id: body.data.userId },
+      data: { crd: { decrement: GREASE_COST_CRD } },
+    });
+    await tx.machine.update({
+      where: { id: machine.id },
+      data: { greased: true, greaseSkipStreak: 0 },
+    });
+  });
+  res.json({ machineId: machine.id, greased: true, cost: GREASE_COST_CRD });
+});
+
+app.post("/machines/:id/clean", async (req, res) => {
+  const body = z.object({ userId: z.string() }).safeParse(req.body);
+  if (!body.success) {
+    res.status(400).json(body.error.flatten());
+    return;
+  }
+  const machine = await loadOwnedMachine(req.params.id, body.data.userId);
+  if (!machine) {
+    res.status(403).json({ error: "Machine non possédée" });
+    return;
+  }
+  if (machine.dirt < 8) {
+    res.status(409).json({ error: "Déjà propre" });
+    return;
+  }
+  if (machine.farm.user.crd < CLEAN_COST_CRD) {
+    res.status(402).json({ error: `Nettoyage ${CLEAN_COST_CRD} CRD — fonds insuffisants` });
+    return;
+  }
+  await prisma.$transaction(async (tx) => {
+    await tx.user.update({
+      where: { id: body.data.userId },
+      data: { crd: { decrement: CLEAN_COST_CRD } },
+    });
+    await tx.machine.update({
+      where: { id: machine.id },
+      data: { dirt: 0 },
+    });
+  });
+  res.json({ machineId: machine.id, dirt: 0, cost: CLEAN_COST_CRD });
+});
+
+app.post("/machines/:id/service", async (req, res) => {
+  const body = z
+    .object({
+      userId: z.string(),
+      kind: z.enum(["BELT", "HYDRAULIC", "ENGINE"]),
+    })
+    .safeParse(req.body);
+  if (!body.success) {
+    res.status(400).json(body.error.flatten());
+    return;
+  }
+  const machine = await loadOwnedMachine(req.params.id, body.data.userId);
+  if (!machine) {
+    res.status(403).json({ error: "Machine non possédée" });
+    return;
+  }
+  const def = MACHINE_DEFS[machine.type as MachineType];
+  if (!def) {
+    res.status(400).json({ error: "Type machine inconnu" });
+    return;
+  }
+  const kind = body.data.kind as BreakdownKind;
+  const expected = machine.breakdown
+    ? isBreakdownKind(machine.breakdown)
+      ? machine.breakdown
+      : pickBreakdownKind(machine.condition)
+    : pickBreakdownKind(machine.condition);
+  if (kind !== expected && machine.breakdown) {
+    res.status(409).json({ error: "Ce n'est pas cette panne." });
+    return;
+  }
+  const target = repairTargetCondition(kind, machine.condition);
+  if (target <= machine.condition + 0.05 && !machine.breakdown) {
+    res.status(409).json({ error: "Rien à réparer" });
+    return;
+  }
+  const bonuses = await getFarmBonuses(machine.farmId);
+  const etaCut = machine.farm.user.specialization === "ETA" ? ETA_REPAIR_EXTRA_DISCOUNT : 0;
+  const quote = repairMachineCost({
+    condition: machine.condition,
+    repairCostPerPoint: def.repairCostPerPoint,
+    targetCondition: target,
+    workshopDiscount: bonuses.repairDiscount + etaCut,
+  });
+  if (machine.farm.user.crd < quote.cost) {
+    res.status(402).json({ error: `Réparation ${quote.cost} CRD — fonds insuffisants` });
+    return;
+  }
+  await prisma.$transaction(async (tx) => {
+    await tx.user.update({
+      where: { id: body.data.userId },
+      data: { crd: { decrement: quote.cost } },
+    });
+    await tx.machine.update({
+      where: { id: machine.id },
+      data: {
+        condition: target,
+        breakdown: null,
+        greased: true,
+        greaseSkipStreak: 0,
+      },
+    });
+  });
+  res.json({
+    machineId: machine.id,
+    condition: target,
+    cost: quote.cost,
+    kind,
+    breakdown: null,
   });
 });
 
@@ -4200,7 +4440,7 @@ app.post("/contracts/:id/accept", async (req, res) => {
   const picked = pickMachineForWork(user.farm.machines, work);
   if (!picked) {
     res.status(409).json({
-      error: `Machine requise pour ${contract.jobType} (condition OK) — achetez / réparez au garage.`,
+      error: explainNoMachine(user.farm.machines, work),
     });
     return;
   }
@@ -4211,6 +4451,7 @@ app.post("/contracts/:id/accept", async (req, res) => {
       machine: picked.machine,
       def: picked.def,
       cells: CONTRACT_WEAR_CELLS,
+      work,
       specialization: user.specialization,
     });
     await tx.npcContract.update({

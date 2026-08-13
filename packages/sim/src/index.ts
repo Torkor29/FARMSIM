@@ -9,6 +9,10 @@ import {
   rotationFactor,
   DIRECT_SEED_YIELD_MALUS,
   NO_ROTATION,
+  DIRT_DIRTY_THRESHOLD,
+  DIRT_PER_CELL,
+  REPAIR_RESTORE,
+  type BreakdownKind,
   type RotationState,
   type CropCode,
   type TradeGood,
@@ -234,10 +238,14 @@ export function applyMachineWear(opts: {
   cells: number;
   inShed?: boolean;
   etaBonus?: boolean;
+  /** Multiplicateur entretien (pas graissé, sale) */
+  careMult?: number;
 }): { condition: number; wearApplied: number } {
   let mult = 1;
   if (opts.inShed) mult *= 0.85;
   if (opts.etaBonus) mult *= 0.9;
+  const care = Math.max(1, opts.careMult ?? 1);
+  mult *= care;
   const wearApplied =
     Math.round(opts.wearPerCell * Math.max(0, opts.cells) * mult * 100) / 100;
   const condition = Math.max(0, Math.round((opts.condition - wearApplied) * 100) / 100);
@@ -259,6 +267,96 @@ export function repairMachineCost(opts: {
 
 export function machineCanWork(condition: number, minCondition: number): boolean {
   return condition >= minCondition;
+}
+
+export type MachineCareState = {
+  condition: number;
+  greased: boolean;
+  dirt: number;
+  greaseSkipStreak: number;
+  breakdown: BreakdownKind | null;
+};
+
+export function careWearMultiplier(opts: { greased: boolean; dirt: number }): number {
+  let m = 1;
+  if (!opts.greased) m *= 1.5;
+  if (opts.dirt >= DIRT_DIRTY_THRESHOLD) m *= 2;
+  return m;
+}
+
+export function dirtFromWork(work: string, cells: number): number {
+  const per = DIRT_PER_CELL[work] ?? 0.8;
+  return Math.round(per * Math.max(0, cells) * 100) / 100;
+}
+
+export function pickBreakdownKind(condition: number): BreakdownKind {
+  if (condition < 20) return "ENGINE";
+  if (condition < 45) return "HYDRAULIC";
+  return "BELT";
+}
+
+export function breakdownChance(opts: {
+  condition: number;
+  greased: boolean;
+  dirt: number;
+}): number {
+  if (opts.condition >= 50) return 0;
+  if (opts.greased && opts.dirt < DIRT_DIRTY_THRESHOLD) return 0;
+  let p = ((50 - opts.condition) / 50) * 0.35;
+  if (!opts.greased) p += 0.15;
+  if (opts.dirt >= 50) p += 0.15;
+  return Math.round(Math.min(0.55, Math.max(0, p)) * 1000) / 1000;
+}
+
+export function machineWorkBlock(
+  state: MachineCareState,
+  minCondition: number,
+): { code: "BROKEN" | "NEED_GREASE" | "NEED_REPAIR"; message: string } | null {
+  if (state.breakdown) {
+    return { code: "BROKEN", message: "En panne — réparez à l'atelier." };
+  }
+  if (!machineCanWork(state.condition, minCondition)) {
+    return { code: "NEED_REPAIR", message: "Condition trop basse — réparez." };
+  }
+  if (!state.greased && state.greaseSkipStreak >= 1) {
+    return { code: "NEED_GREASE", message: "Graissez avant de repartir." };
+  }
+  return null;
+}
+
+export function applyJobCare(
+  state: MachineCareState,
+  opts: { work: string; cells: number; rng?: () => number },
+): { next: MachineCareState; broke: boolean } {
+  const rng = opts.rng ?? Math.random;
+  const dirt = Math.min(100, Math.round((state.dirt + dirtFromWork(opts.work, opts.cells)) * 100) / 100);
+  const streak = state.greased ? 0 : state.greaseSkipStreak + 1;
+  const chance = breakdownChance({
+    condition: state.condition,
+    greased: state.greased,
+    dirt: state.dirt,
+  });
+  const broke = rng() < chance;
+  const breakdown = broke ? pickBreakdownKind(state.condition) : state.breakdown;
+  return {
+    broke,
+    next: {
+      condition: state.condition,
+      greased: false,
+      dirt,
+      greaseSkipStreak: streak,
+      breakdown,
+    },
+  };
+}
+
+export function repairTargetCondition(
+  kind: BreakdownKind,
+  condition: number,
+): number {
+  const spec = REPAIR_RESTORE[kind];
+  if (spec.conditionDelta === "full") return 100;
+  return Math.min(100, Math.round((condition + spec.conditionDelta) * 100) / 100);
 }
 
 /** Construit le résumé de retour après absence */

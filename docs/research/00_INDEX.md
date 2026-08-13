@@ -78,6 +78,7 @@ Chaque valeur chiffrée dans cette documentation est classée :
 | — | [47_FUTURES.md](./47_FUTURES.md) | Contrats à terme : engager une récolte à venir |
 | — | [48_PLAN_MECANIQUES.md](./48_PLAN_MECANIQUES.md) | Plan d'exécution : paille, ensilage, saisons, CUMA |
 | — | [49_TRIANGLE_METIERS.md](./49_TRIANGLE_METIERS.md) | Triangle des métiers : boucles éleveur / céréalier / ETA en osmose |
+| — | [50_MACHINE_CARE.md](./50_MACHINE_CARE.md) | Atelier ETA : graisser, glisser, réparer |
 
 ---
 
