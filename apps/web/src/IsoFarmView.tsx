@@ -1,7 +1,9 @@
 import { useEffect, useMemo, useRef } from "react";
 import * as THREE from "three";
 import {
+  BUILDING_ART,
   BUILDING_DEFS,
+  MACHINE_ART,
   RIPENESS_COLORS,
   type BuildingType,
   type CropCode,
@@ -99,15 +101,6 @@ const PREVIEW_BAD = 0xef4444;
 const DIRT = 0xa4835c;
 const PULSE = 0xfff2b0;
 
-const MACHINE_LOOK: Record<
-  MachineType,
-  { body: number; accent: number; w: number; h: number; d: number }
-> = {
-  TRACTOR: { body: 0x3d8f3a, accent: 0x2a6a28, w: 0.55, h: 0.28, d: 0.35 },
-  HARVESTER: { body: 0xc44a2f, accent: 0xd4a84b, w: 0.72, h: 0.32, d: 0.4 },
-  SPREADER: { body: 0x6a7380, accent: 0xc9a227, w: 0.5, h: 0.34, d: 0.42 },
-  DISC_HARROW: { body: 0x8a6a4a, accent: 0xb8bec4, w: 0.62, h: 0.22, d: 0.44 },
-};
 
 const STUBBLE_SOIL = 0xe3cf98;
 const RESIDUE_SOIL = 0x8a7048;
@@ -231,86 +224,74 @@ function makeCowMesh(): THREE.Group {
   return g;
 }
 
-function makeVehicleMesh(type: MachineType): THREE.Group {
-  const look = MACHINE_LOOK[type] ?? MACHINE_LOOK.TRACTOR;
+/**
+ * Rapport hauteur/largeur des illustrations : elles sont carrées, mais le
+ * bâtiment n'occupe pas tout le cadre et déborde vers le haut.
+ */
+const BUILDING_ART_RATIO = 1;
+
+/**
+ * Textures et matériaux des illustrations, mutualisés pour la session.
+ *
+ * La carte affiche désormais les images dessinées plutôt que des volumes
+ * reconstitués en boîtes : c'est la seule façon d'obtenir le rendu soigné que
+ * l'illustration promet. Un même bâtiment revenant souvent sur une parcelle,
+ * on ne recharge ni ne recompile rien.
+ */
+const artCache = new Map<string, THREE.MeshBasicMaterial>();
+let artLoader: THREE.TextureLoader | null = null;
+
+function artMaterial(url: string): THREE.MeshBasicMaterial {
+  const hit = artCache.get(url);
+  if (hit) return hit;
+  artLoader ??= new THREE.TextureLoader();
+  const tex = artLoader.load(url);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  tex.minFilter = THREE.LinearMipmapLinearFilter;
+  tex.generateMipmaps = true;
+  const mat = new THREE.MeshBasicMaterial({
+    map: tex,
+    transparent: true,
+    // Le seuil alpha évite d'avoir à trier les panneaux entre eux : chaque
+    // pixel est écrit ou rejeté, et la profondeur suffit à les ordonner.
+    alphaTest: 0.35,
+    side: THREE.DoubleSide,
+  });
+  mat.userData.shared = true;
+  artCache.set(url, mat);
+  return mat;
+}
+
+/**
+ * Un engin sur la carte : son illustration, posée sur son ombre.
+ *
+ * Les volumes en boîtes qui servaient jusqu'ici tenaient lieu d'illustration
+ * faute de mieux. Les dessins existaient pourtant déjà, mais ne s'affichaient
+ * que dans le garage.
+ */
+function makeVehicleSprite(type: MachineType, camera: THREE.Camera): THREE.Group {
   const g = new THREE.Group();
   g.userData.machineType = type;
 
-  const body = new THREE.Mesh(
-    new THREE.BoxGeometry(look.w, look.h, look.d),
-    new THREE.MeshLambertMaterial({ color: look.body, flatShading: true }),
+  const shadow = new THREE.Mesh(
+    new THREE.PlaneGeometry(0.7, 0.5),
+    new THREE.MeshBasicMaterial({
+      color: 0x2c3b2a,
+      transparent: true,
+      opacity: 0.22,
+      depthWrite: false,
+    }),
   );
-  body.castShadow = true;
-  body.position.y = look.h / 2;
-  g.add(body);
+  shadow.rotation.x = -Math.PI / 2;
+  shadow.position.y = 0.01;
+  g.add(shadow);
 
-  if (type === "TRACTOR") {
-    const cabin = new THREE.Mesh(
-      new THREE.BoxGeometry(0.28, 0.22, 0.28),
-      new THREE.MeshLambertMaterial({ color: look.accent, flatShading: true }),
-    );
-    cabin.position.set(-0.05, look.h + 0.08, 0);
-    cabin.castShadow = true;
-    g.add(cabin);
-  } else if (type === "HARVESTER") {
-    const header = new THREE.Mesh(
-      new THREE.BoxGeometry(0.22, 0.12, 0.55),
-      new THREE.MeshLambertMaterial({ color: look.accent, flatShading: true }),
-    );
-    header.position.set(look.w * 0.42, look.h * 0.35, 0);
-    header.castShadow = true;
-    g.add(header);
-    const pipe = new THREE.Mesh(
-      new THREE.BoxGeometry(0.12, 0.35, 0.12),
-      new THREE.MeshLambertMaterial({ color: 0x888888, flatShading: true }),
-    );
-    pipe.position.set(-0.15, look.h + 0.12, 0);
-    g.add(pipe);
-
-    // Rabatteur : quatre lattes autour d'un axe transversal. C'est la pièce
-    // qui tourne, et sans elle la moissonneuse ne moissonne pas — elle glisse.
-    const reel = new THREE.Group();
-    const slatMat = new THREE.MeshLambertMaterial({ color: 0xf0e2c0, flatShading: true });
-    for (let i = 0; i < 4; i++) {
-      const slat = new THREE.Mesh(new THREE.BoxGeometry(0.04, 0.14, 0.52), slatMat);
-      const a = (i / 4) * Math.PI * 2;
-      slat.position.set(Math.cos(a) * 0.11, Math.sin(a) * 0.11, 0);
-      slat.rotation.z = a;
-      reel.add(slat);
-    }
-    reel.position.set(look.w * 0.52, look.h * 0.62, 0);
-    reel.name = "reel";
-    g.add(reel);
-  } else if (type === "DISC_HARROW") {
-    // Un train de disques, et non une cuve : le déchaumeur héritait jusqu'ici
-    // de l'apparence de l'épandeur, faute d'un cas à lui.
-    const frame = new THREE.Mesh(
-      new THREE.BoxGeometry(0.16, 0.07, 0.46),
-      new THREE.MeshLambertMaterial({ color: look.accent, flatShading: true }),
-    );
-    frame.position.set(-look.w * 0.42, look.h * 0.5, 0);
-    g.add(frame);
-    const discMat = new THREE.MeshLambertMaterial({ color: 0xb8bec4, flatShading: true });
-    for (const dz of [-0.16, -0.05, 0.06, 0.17]) {
-      const disc = new THREE.Mesh(new THREE.CylinderGeometry(0.11, 0.11, 0.02, 10), discMat);
-      disc.rotation.x = Math.PI / 2;
-      disc.rotation.z = 0.25;
-      disc.position.set(-look.w * 0.42, 0.1, dz);
-      disc.castShadow = true;
-      g.add(disc);
-    }
-  } else {
-    // SPREADER — cuve dorée
-    const tank = new THREE.Mesh(
-      new THREE.CylinderGeometry(0.16, 0.18, 0.38, 6),
-      new THREE.MeshLambertMaterial({ color: look.accent, flatShading: true }),
-    );
-    tank.rotation.z = Math.PI / 2;
-    tank.position.set(0, look.h + 0.06, 0);
-    tank.castShadow = true;
-    g.add(tank);
-  }
-
+  const size = type === "HARVESTER" ? 1.15 : 0.95;
+  const art = new THREE.Mesh(new THREE.PlaneGeometry(size, size), artMaterial(MACHINE_ART[type]));
+  art.quaternion.copy(camera.quaternion);
+  art.translateY(size / 2);
+  art.name = "art";
+  g.add(art);
   return g;
 }
 
@@ -493,6 +474,24 @@ export function IsoFarmView({
     const workGroup = new THREE.Group();
     world.add(workGroup);
     let workVehicle: THREE.Group | null = null;
+
+    /** Bouffées de poussière derrière l'engin au travail. */
+    const dustPuffs: THREE.Mesh[] = [];
+    for (let i = 0; i < 3; i++) {
+      const puff = new THREE.Mesh(
+        new THREE.PlaneGeometry(1, 1),
+        new THREE.MeshBasicMaterial({
+          color: 0xd9c9a8,
+          transparent: true,
+          opacity: 0,
+          depthWrite: false,
+        }),
+      );
+      puff.visible = false;
+      puff.quaternion.copy(camera.quaternion);
+      workGroup.add(puff);
+      dustPuffs.push(puff);
+    }
 
     const previewGroup = new THREE.Group();
     world.add(previewGroup);
@@ -739,6 +738,7 @@ export function IsoFarmView({
         disposeObject3D(workVehicle);
         workVehicle = null;
       }
+      for (const puff of dustPuffs) puff.visible = false;
     }
 
     function layout() {
@@ -889,7 +889,7 @@ export function IsoFarmView({
 
           if (cell?.kind === "VEHICLE") {
             const mType = (cell.machineType as MachineType) || "TRACTOR";
-            const vg = makeVehicleMesh(mType);
+            const vg = makeVehicleSprite(mType, camera);
             vg.position.set(px, 0.12, pz);
             vg.userData.baseX = px;
             vg.userData.baseY = 0.12;
@@ -906,235 +906,43 @@ export function IsoFarmView({
 
       for (const b of bs) {
         const def = BUILDING_DEFS[b.type];
-        const pal = buildingPalette(b.type);
         const level = Math.max(1, Math.min(5, b.level ?? 1));
-        // Le bâtiment prend de la hauteur et se garnit à chaque palier.
-        const grow = 1 + (level - 1) * 0.16;
-        const height = pal.h * grow;
         const cx = ox + (b.originX + (def.w - 1) / 2) * step;
         const cz = oz + (b.originY + (def.h - 1) / 2) * step;
-        const bw = def.w * step - gap;
-        const bd = def.h * step - gap;
-        const bodyMat = new THREE.MeshLambertMaterial({
-          color: pal.body,
-          flatShading: true,
-        });
-        const roofMat = new THREE.MeshLambertMaterial({
-          color: pal.roof,
-          flatShading: true,
-        });
 
-        if (b.type === "PADDOCK" || b.type === "PIG_YARD") {
-          const isPigYard = b.type === "PIG_YARD";
-          // Un enclos n'est pas un bâtiment : de l'herbe, une clôture, un
-          // abreuvoir. Lui coller un toit ferait exactement le contraire de
-          // ce qu'il représente.
-          const grass = new THREE.Mesh(
-            new THREE.BoxGeometry(bw, 0.08, bd),
-            new THREE.MeshLambertMaterial({
-              color: isPigYard ? 0x8a6f52 : 0x8fcf6a,
-              flatShading: true,
-            }),
-          );
-          grass.position.set(cx, 0.04, cz);
-          grass.receiveShadow = true;
-          buildingGroup.add(grass);
+        // Ombre portée peinte au sol : une image plate posée dans une scène 3D
+        // flotte tant que rien ne l'y rattache. Ce disque sombre coûte un
+        // maillage et fait tout le travail.
+        const shadow = new THREE.Mesh(
+          new THREE.PlaneGeometry(def.w * step * 0.82, def.h * step * 0.82),
+          new THREE.MeshBasicMaterial({
+            color: 0x2c3b2a,
+            transparent: true,
+            opacity: 0.22,
+            depthWrite: false,
+          }),
+        );
+        shadow.rotation.x = -Math.PI / 2;
+        shadow.position.set(cx, 0.1, cz);
+        buildingGroup.add(shadow);
 
-          const postMat = new THREE.MeshLambertMaterial({
-            color: WOOD_WARM,
-            flatShading: true,
-          });
-          const railMat = new THREE.MeshLambertMaterial({
-            color: 0xd8b689,
-            flatShading: true,
-          });
-          const halfW = bw / 2;
-          const halfD = bd / 2;
-          for (const [sx, sz, len, horizontal] of [
-            [0, -halfD, bw, true],
-            [0, halfD, bw, true],
-            [-halfW, 0, bd, false],
-            [halfW, 0, bd, false],
-          ] as [number, number, number, boolean][]) {
-            for (const rail of [0.22, 0.4]) {
-              const bar = new THREE.Mesh(
-                horizontal
-                  ? new THREE.BoxGeometry(len, 0.04, 0.05)
-                  : new THREE.BoxGeometry(0.05, 0.04, len),
-                railMat,
-              );
-              bar.position.set(cx + sx, rail, cz + sz);
-              buildingGroup.add(bar);
-            }
-          }
-          for (const [px, pz] of [
-            [-halfW, -halfD],
-            [halfW, -halfD],
-            [-halfW, halfD],
-            [halfW, halfD],
-          ]) {
-            const post = new THREE.Mesh(new THREE.BoxGeometry(0.09, 0.5, 0.09), postMat);
-            post.position.set(cx + px, 0.25, cz + pz);
-            post.castShadow = true;
-            buildingGroup.add(post);
-          }
-
-          const trough = new THREE.Mesh(
-            new THREE.BoxGeometry(0.42, 0.14, 0.2),
-            new THREE.MeshLambertMaterial({ color: 0x8a9299, flatShading: true }),
-          );
-          trough.position.set(cx + halfW * 0.5, 0.11, cz - halfD * 0.5);
-          buildingGroup.add(trough);
-          continue;
-        }
-
-        if (b.type === "SILO") {
-          // Un silo de plus tous les deux paliers, comme sur la planche d'art.
-          const tanks = 1 + Math.floor(level / 2);
-          const spread = 0.34;
-          for (let i = 0; i < tanks; i++) {
-            const offX = (i - (tanks - 1) / 2) * spread;
-            const tankH = height * (i === 0 ? 1 : 0.86);
-            const cyl = new THREE.Mesh(
-              new THREE.CylinderGeometry(0.3, 0.33, tankH, 10),
-              bodyMat,
-            );
-            cyl.position.set(cx + offX, tankH / 2, cz + (i % 2 ? 0.18 : -0.12));
-            cyl.castShadow = true;
-            buildingGroup.add(cyl);
-            const cap = new THREE.Mesh(new THREE.ConeGeometry(0.35, 0.28, 10), roofMat);
-            cap.position.set(cyl.position.x, tankH + 0.12, cyl.position.z);
-            buildingGroup.add(cap);
-          }
-        } else {
-          // Chaque palier change la SILHOUETTE, pas seulement l'échelle : un
-          // appentis, puis un pignon relevé, puis une aile en L, puis une
-          // toiture industrielle. C'est ce qui rend l'amélioration lisible de
-          // loin, comme sur la planche d'art de référence.
-          const body = new THREE.Mesh(new THREE.BoxGeometry(bw, height, bd), bodyMat);
-          body.position.set(cx, height / 2, cz);
-          body.castShadow = true;
-          buildingGroup.add(body);
-
-          const trimMat = new THREE.MeshLambertMaterial({
-            color: 0x8a6a4a,
-            flatShading: true,
-          });
-          const metalMat = new THREE.MeshLambertMaterial({
-            color: 0xd8dde2,
-            flatShading: true,
-          });
-
-          if (level <= 2) {
-            // Toit à deux pans simple, faîtage bas.
-            const ridge = new THREE.Mesh(
-              new THREE.CylinderGeometry(bd * 0.58, bd * 0.58, bw * 1.06, 3, 1),
-              roofMat,
-            );
-            ridge.rotation.z = Math.PI / 2;
-            ridge.rotation.y = Math.PI / 2;
-            ridge.position.set(cx, height + bd * 0.2, cz);
-            ridge.castShadow = true;
-            buildingGroup.add(ridge);
-          } else if (level === 3) {
-            // Pignon relevé et lucarne : le bâtiment prend de la prestance.
-            const ridge = new THREE.Mesh(
-              new THREE.CylinderGeometry(bd * 0.72, bd * 0.72, bw * 1.1, 3, 1),
-              roofMat,
-            );
-            ridge.rotation.z = Math.PI / 2;
-            ridge.rotation.y = Math.PI / 2;
-            ridge.position.set(cx, height + bd * 0.3, cz);
-            ridge.castShadow = true;
-            buildingGroup.add(ridge);
-
-            const dormer = new THREE.Mesh(
-              new THREE.BoxGeometry(bw * 0.26, bd * 0.34, bd * 0.42),
-              bodyMat,
-            );
-            dormer.position.set(cx - bw * 0.12, height + bd * 0.3, cz + bd * 0.24);
-            buildingGroup.add(dormer);
-          } else {
-            // Toiture industrielle en deux volumes décalés : la silhouette
-            // devient franchement rectiligne, plus « usine » que « grange ».
-            const main = new THREE.Mesh(
-              new THREE.BoxGeometry(bw * 1.06, bd * 0.3, bd * 1.06),
-              roofMat,
-            );
-            main.position.set(cx, height + bd * 0.15, cz);
-            main.rotation.z = 0.06;
-            main.castShadow = true;
-            buildingGroup.add(main);
-
-            const clerestory = new THREE.Mesh(
-              new THREE.BoxGeometry(bw * 0.5, bd * 0.24, bd * 0.5),
-              metalMat,
-            );
-            clerestory.position.set(cx, height + bd * 0.42, cz);
-            buildingGroup.add(clerestory);
-          }
-
-          if (level === 2) {
-            // Appentis accolé : le premier signe visible d'agrandissement.
-            const lean = new THREE.Mesh(
-              new THREE.BoxGeometry(bw * 0.3, height * 0.6, bd * 0.82),
-              trimMat,
-            );
-            lean.position.set(cx + bw * 0.62, height * 0.3, cz);
-            lean.castShadow = true;
-            buildingGroup.add(lean);
-            const leanRoof = new THREE.Mesh(
-              new THREE.BoxGeometry(bw * 0.36, 0.08, bd * 0.9),
-              roofMat,
-            );
-            leanRoof.position.set(cx + bw * 0.62, height * 0.62, cz);
-            leanRoof.rotation.z = -0.16;
-            buildingGroup.add(leanRoof);
-          }
-
-          if (level >= 3) {
-            const chimney = new THREE.Mesh(new THREE.BoxGeometry(0.14, 0.4, 0.14), trimMat);
-            chimney.position.set(cx + bw * 0.3, height + bd * 0.48, cz - bd * 0.22);
-            chimney.castShadow = true;
-            buildingGroup.add(chimney);
-          }
-
-          if (level >= 4) {
-            // Aile en L : l'emprise visuelle déborde, le bâtiment n'est plus
-            // une simple boîte.
-            const wing = new THREE.Mesh(
-              new THREE.BoxGeometry(bw * 0.44, height * 0.78, bd * 0.6),
-              bodyMat,
-            );
-            wing.position.set(cx - bw * 0.6, height * 0.39, cz + bd * 0.3);
-            wing.castShadow = true;
-            buildingGroup.add(wing);
-            const wingRoof = new THREE.Mesh(
-              new THREE.BoxGeometry(bw * 0.5, 0.1, bd * 0.66),
-              roofMat,
-            );
-            wingRoof.position.set(cx - bw * 0.6, height * 0.8, cz + bd * 0.3);
-            buildingGroup.add(wingRoof);
-          }
-
-          if (level >= 5) {
-            for (const side of [-1, 1]) {
-              const tank = new THREE.Mesh(
-                new THREE.CylinderGeometry(0.19, 0.19, height * 0.95, 10),
-                metalMat,
-              );
-              tank.position.set(cx + bw * 0.58 * side, height * 0.48, cz - bd * 0.3);
-              tank.castShadow = true;
-              buildingGroup.add(tank);
-            }
-            const walkway = new THREE.Mesh(
-              new THREE.BoxGeometry(bw * 1.2, 0.06, 0.12),
-              metalMat,
-            );
-            walkway.position.set(cx, height * 0.95, cz - bd * 0.3);
-            buildingGroup.add(walkway);
-          }
-        }
+        // L'illustration elle-même. Le panneau fait face à la caméra, qui ne
+        // pivote jamais dans cette vue : l'image isométrique tombe donc juste.
+        // Chaque palier agrandit le bâtiment — la silhouette dessinée ne
+        // change pas, mais l'emprise visuelle dit le niveau.
+        const grow = 1 + (level - 1) * 0.1;
+        const spanX = (def.w + def.h) * step * 0.56 * grow;
+        const spanY = spanX * BUILDING_ART_RATIO;
+        const art = new THREE.Mesh(
+          new THREE.PlaneGeometry(spanX, spanY),
+          artMaterial(BUILDING_ART[b.type]),
+        );
+        art.quaternion.copy(camera.quaternion);
+        // Le bas de l'image repose sur le sol de la case, sans quoi le
+        // bâtiment paraîtrait enfoncé ou suspendu.
+        art.position.set(cx, 0.1, cz);
+        art.translateY(spanY / 2);
+        buildingGroup.add(art);
       }
 
       viewSpan = Math.max(gw, gh) * step;
@@ -1555,7 +1363,7 @@ export function IsoFarmView({
         clearWorkVehicle();
         if (aw && aw.cells.length) {
           workStartRef.current = t;
-          workVehicle = makeVehicleMesh(aw.type);
+          workVehicle = makeVehicleSprite(aw.type, camera);
           workGroup.add(workVehicle);
         }
       }
@@ -1577,10 +1385,11 @@ export function IsoFarmView({
         workVehicle.rotation.y = Math.atan2(pb.px - pa.px, pb.pz - pa.pz) || 0;
         workVehicle.visible = u < 1;
 
-        // Le rabatteur tourne tant que la machine avance. Sans lui, la
-        // moissonneuse se contentait de glisser au-dessus du champ.
-        const reel = workVehicle.getObjectByName("reel");
-        if (reel) reel.rotation.z = -t * 9;
+        // L'engin travaille : il tressaute et se balance légèrement. Une
+        // illustration ne peut pas faire tourner son rabatteur, mais elle peut
+        // cesser de glisser comme sur des rails.
+        const art = workVehicle.getObjectByName("art");
+        if (art) art.rotation.z = Math.sin(t * 16) * 0.025;
 
         // La coupe se voit : chaque case franchie perd sa culture au passage,
         // au lieu que le champ entier disparaisse d'un coup au rechargement.
@@ -1589,6 +1398,22 @@ export function IsoFarmView({
             const done = cropMeshes.get(key(aw.cells[i].x, aw.cells[i].y));
             if (done) done.visible = false;
           }
+        }
+
+        // Poussière soulevée derrière l'engin : trois bouffées qui gonflent et
+        // s'effacent, décalées dans le temps.
+        for (let d = 0; d < dustPuffs.length; d++) {
+          const puff = dustPuffs[d];
+          const age = (t * 1.6 + d * 0.33) % 1;
+          puff.visible = true;
+          puff.position.set(
+            px - Math.sin(workVehicle.rotation.y) * (0.35 + age * 0.5),
+            0.12 + age * 0.16,
+            pz - Math.cos(workVehicle.rotation.y) * (0.35 + age * 0.5),
+          );
+          const s = 0.12 + age * 0.3;
+          puff.scale.setScalar(s);
+          (puff.material as THREE.MeshBasicMaterial).opacity = 0.32 * (1 - age);
         }
 
         if (u >= 1) {
