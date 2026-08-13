@@ -3,7 +3,6 @@ import * as THREE from "three";
 import {
   BUILDING_ART,
   BUILDING_DEFS,
-  MACHINE_ART,
   RIPENESS_COLORS,
   artGroundFraction,
   billboardLift,
@@ -15,6 +14,7 @@ import {
   type RipenessStage,
 } from "@farmsim/shared";
 import { disposeRenderer, disposeThreeScene, markShared } from "./three-cleanup";
+import { makeMachineMesh, tickMachine } from "./machine-meshes";
 import { initialQuality, makeFrameGovernor, qualityForContext, type RenderQuality } from "./render-quality";
 
 export type IsoCell = {
@@ -394,32 +394,13 @@ function makeArtBillboard(
 }
 
 /**
- * Un engin sur la carte : son illustration, posée sur son ombre.
- *
- * Les volumes en boîtes qui servaient jusqu'ici tenaient lieu d'illustration
- * faute de mieux. Les dessins existaient pourtant déjà, mais ne s'affichaient
- * que dans le garage.
+ * Un engin sur la carte : un volume low-poly, pas l'illustration collée
+ * sur un panneau. Le dessin reste au garage ; ici il faut des roues qui
+ * tournent et un rabatteur qui bat, sinon le chantier n'est qu'une carte
+ * qui glisse.
  */
-function makeVehicleSprite(type: MachineType, camera: THREE.Camera): THREE.Group {
-  const g = new THREE.Group();
-  g.userData.machineType = type;
-
-  const shadow = new THREE.Mesh(
-    new THREE.PlaneGeometry(0.7, 0.5),
-    new THREE.MeshBasicMaterial({
-      color: 0x2c3b2a,
-      transparent: true,
-      opacity: 0.22,
-      depthWrite: false,
-    }),
-  );
-  shadow.rotation.x = -Math.PI / 2;
-  shadow.position.y = 0.01;
-  g.add(shadow);
-
-  const size = type === "HARVESTER" ? 1.15 : 0.95;
-  g.add(makeArtBillboard(MACHINE_ART[type], camera, 0, 0, 0, size, size));
-  return g;
+function makeVehicleSprite(type: MachineType): THREE.Group {
+  return makeMachineMesh(type);
 }
 
 /**
@@ -1066,10 +1047,10 @@ export function IsoFarmView({
 
           if (cell?.kind === "VEHICLE") {
             const mType = (cell.machineType as MachineType) || "TRACTOR";
-            const vg = makeVehicleSprite(mType, camera);
-            vg.position.set(px, 0.12, pz);
+            const vg = makeVehicleSprite(mType);
+            vg.position.set(px, 0, pz);
             vg.userData.baseX = px;
-            vg.userData.baseY = 0.12;
+            vg.userData.baseY = 0;
             vg.userData.baseZ = pz;
             vg.userData.phase = (x * 1.7 + y * 2.3) % (Math.PI * 2);
             world.add(vg);
@@ -1449,16 +1430,16 @@ export function IsoFarmView({
       hexGroup.rotation.y = Math.sin(t * 0.05) * 0.02;
       world.position.y = Math.sin(t * 0.7) * 0.015;
 
-      // Idle bob / légère avance sur véhicules stationnés
+      // Idle : un tremblement de moteur, pas une carte qui dérive.
       for (const vg of vehicleGroups.values()) {
         const bx = vg.userData.baseX as number;
         const by = vg.userData.baseY as number;
         const bz = vg.userData.baseZ as number;
         const ph = vg.userData.phase as number;
-        vg.position.y = by + Math.sin(t * 2.1 + ph) * 0.028;
-        vg.position.x = bx + Math.sin(t * 1.15 + ph) * 0.018;
+        vg.position.y = by + Math.sin(t * 2.1 + ph) * 0.012;
+        vg.position.x = bx;
         vg.position.z = bz;
-        vg.rotation.y = Math.sin(t * 0.9 + ph) * 0.04;
+        vg.rotation.y = Math.sin(t * 0.9 + ph) * 0.03;
       }
 
       // Troupeaux au pré : sortie de l'étable, puis broutage dans l'enclos.
@@ -1569,8 +1550,10 @@ export function IsoFarmView({
         clearWorkVehicle();
         if (aw && aw.cells.length) {
           workStartRef.current = t;
-          workVehicle = makeVehicleSprite(aw.type, camera);
+          workVehicle = makeVehicleSprite(aw.type);
           workGroup.add(workVehicle);
+          workVehicle.userData.lastX = undefined;
+          workVehicle.userData.lastZ = undefined;
           // On ne traverse pas un champ en diagonale. L'engin descend un rang
           // d'un bout à l'autre, tourne, et remonte le suivant en sens
           // inverse : c'est le va-et-vient d'un vrai chantier, et cela se lit
@@ -1596,15 +1579,22 @@ export function IsoFarmView({
         const pb = cellWorldPos(b.x, b.y);
         const px = pa.px + (pb.px - pa.px) * local;
         const pz = pa.pz + (pb.pz - pa.pz) * local;
-        workVehicle.position.set(px, 0.2 + Math.sin(t * 8) * 0.02, pz);
+        const bounce = Math.sin(t * 14) * 0.012;
+        workVehicle.position.set(px, bounce, pz);
         workVehicle.rotation.y = Math.atan2(pb.px - pa.px, pb.pz - pa.pz) || 0;
         workVehicle.visible = u < 1;
 
-        // L'engin travaille : il tressaute et se balance légèrement. Une
-        // illustration ne peut pas faire tourner son rabatteur, mais elle peut
-        // cesser de glisser comme sur des rails.
-        const art = workVehicle.getObjectByName("art");
-        if (art) art.rotation.z = Math.sin(t * 16) * 0.025;
+        const lastX = workVehicle.userData.lastX as number | undefined;
+        const lastZ = workVehicle.userData.lastZ as number | undefined;
+        const dist =
+          lastX == null || lastZ == null ? 0 : Math.min(0.45, Math.hypot(px - lastX, pz - lastZ));
+        workVehicle.userData.lastX = px;
+        workVehicle.userData.lastZ = pz;
+        tickMachine(workVehicle, {
+          distance: dist,
+          working: u < 1,
+          dt: delta / 1000,
+        });
 
         // La coupe se voit : chaque case franchie perd sa culture au passage,
         // au lieu que le champ entier disparaisse d'un coup au rechargement.
