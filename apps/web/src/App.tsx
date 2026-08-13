@@ -1039,18 +1039,35 @@ export function App() {
   const onFarm = Boolean(player && ownedParcels.length);
   useEffect(() => {
     document.documentElement.classList.toggle("playing", onFarm);
+    const meta = document.querySelector('meta[name="viewport"]');
+    const viewportBase =
+      "width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover";
+    // iOS ignore souvent maximum-scale tant que user-scalable reste omis.
+    if (meta) {
+      meta.setAttribute("content", onFarm ? `${viewportBase}, user-scalable=no` : viewportBase);
+    }
     if (!onFarm) return;
-    const blockGesture = (e: Event) => e.preventDefault();
+
+    const block = (e: Event) => e.preventDefault();
+    const blockPinch = (e: TouchEvent) => {
+      if (e.touches.length > 1) e.preventDefault();
+    };
     const blockBrowserZoom = (e: WheelEvent) => {
       if (e.ctrlKey) e.preventDefault();
     };
-    document.addEventListener("gesturestart", blockGesture, { passive: false });
-    document.addEventListener("gesturechange", blockGesture, { passive: false });
-    document.addEventListener("wheel", blockBrowserZoom, { passive: false });
+    const opts: AddEventListenerOptions = { passive: false };
+    document.addEventListener("gesturestart", block, opts);
+    document.addEventListener("gesturechange", block, opts);
+    document.addEventListener("gestureend", block, opts);
+    document.addEventListener("touchmove", blockPinch, opts);
+    document.addEventListener("wheel", blockBrowserZoom, opts);
     return () => {
       document.documentElement.classList.remove("playing");
-      document.removeEventListener("gesturestart", blockGesture);
-      document.removeEventListener("gesturechange", blockGesture);
+      if (meta) meta.setAttribute("content", viewportBase);
+      document.removeEventListener("gesturestart", block);
+      document.removeEventListener("gesturechange", block);
+      document.removeEventListener("gestureend", block);
+      document.removeEventListener("touchmove", blockPinch);
       document.removeEventListener("wheel", blockBrowserZoom);
     };
   }, [onFarm]);

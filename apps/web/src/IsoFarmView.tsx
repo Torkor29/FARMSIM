@@ -108,6 +108,9 @@ const SOIL_DARK = 0x8ab35e;
 /** Hauteur des dalles, centrées à y=0 : le dessus est à TILE_TOP. */
 const TILE_THICK = 0.18;
 const TILE_TOP = TILE_THICK / 2;
+/** Pneus légèrement dans la dalle : un contact pile au sommet laisse un
+ *  interstice d'un pixel iso, et l'engin a l'air de flotter. */
+const MACHINE_GROUND = TILE_TOP - 0.012;
 /** Aire de parking : même hauteur que le champ, teinte à peine plus sombre. */
 const PARKING = 0x7a8f58;
 const GROW = 0x7fbc4e;
@@ -1054,9 +1057,9 @@ export function IsoFarmView({
           if (cell?.kind === "VEHICLE") {
             const mType = (cell.machineType as MachineType) || "TRACTOR";
             const vg = makeVehicleSprite(mType);
-            vg.position.set(px, TILE_TOP, pz);
+            vg.position.set(px, MACHINE_GROUND, pz);
             vg.userData.baseX = px;
-            vg.userData.baseY = TILE_TOP;
+            vg.userData.baseY = MACHINE_GROUND;
             vg.userData.baseZ = pz;
             vg.userData.phase = (x * 1.7 + y * 2.3) % (Math.PI * 2);
             world.add(vg);
@@ -1252,6 +1255,7 @@ export function IsoFarmView({
       pointers.set(ev.pointerId, { x: ev.clientX, y: ev.clientY });
 
       if (pointers.size >= 2) {
+        ev.preventDefault();
         if (pinchStart > 0) setZoom((zoomStart * pinchDistance()) / pinchStart);
         return;
       }
@@ -1311,12 +1315,16 @@ export function IsoFarmView({
     // Sans cela, le navigateur intercepte le glissement pour faire défiler la
     // page et le zoom à deux doigts ne parvient jamais jusqu'ici.
     renderer.domElement.style.touchAction = "none";
+    function onTouchMove(ev: TouchEvent) {
+      if (ev.touches.length >= 2) ev.preventDefault();
+    }
     renderer.domElement.addEventListener("pointerdown", onPointerDown);
     renderer.domElement.addEventListener("pointermove", onPointerMove);
     renderer.domElement.addEventListener("pointerup", onPointerUp);
     renderer.domElement.addEventListener("pointercancel", onPointerUp);
     renderer.domElement.addEventListener("pointerleave", onPointerLeave);
     renderer.domElement.addEventListener("wheel", onWheel, { passive: false });
+    renderer.domElement.addEventListener("touchmove", onTouchMove, { passive: false });
 
     let raf = 0;
     // THREE.Clock est déprécié depuis r183 au profit de Timer, qui doit être
@@ -1432,7 +1440,6 @@ export function IsoFarmView({
       scene.background = new THREE.Color(sky);
       if (scene.fog instanceof THREE.Fog) scene.fog.color.setHex(sky);
       hexGroup.rotation.y = Math.sin(t * 0.05) * 0.02;
-      world.position.y = Math.sin(t * 0.7) * 0.015;
 
       // Idle : un léger roulis de moteur, collé au sol.
       for (const vg of vehicleGroups.values()) {
@@ -1582,7 +1589,7 @@ export function IsoFarmView({
         const px = pa.px + (pb.px - pa.px) * local;
         const pz = pa.pz + (pb.pz - pa.pz) * local;
         const bounce = Math.sin(t * 14) * 0.012;
-        workVehicle.position.set(px, TILE_TOP + bounce, pz);
+        workVehicle.position.set(px, MACHINE_GROUND + bounce, pz);
         workVehicle.rotation.y = Math.atan2(pb.px - pa.px, pb.pz - pa.pz) || 0;
         workVehicle.visible = u < 1;
 
@@ -1651,6 +1658,7 @@ export function IsoFarmView({
       renderer.domElement.removeEventListener("pointercancel", onPointerUp);
       renderer.domElement.removeEventListener("pointerleave", onPointerLeave);
       renderer.domElement.removeEventListener("wheel", onWheel);
+      renderer.domElement.removeEventListener("touchmove", onTouchMove);
       while (previewGroup.children.length) {
         const c = previewGroup.children[0];
         previewGroup.remove(c);

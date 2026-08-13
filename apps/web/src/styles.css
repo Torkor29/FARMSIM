@@ -108,6 +108,7 @@ html.playing #root {
   height: 100%;
   overflow: hidden;
   overscroll-behavior: none;
+  touch-action: none;
 }
 html.playing body {
   touch-action: none;
@@ -132,6 +133,14 @@ html.playing .game-stage {
 html.playing .iso-viewport {
   min-height: 0;
   height: 100%;
+}
+html.playing .hud-stack,
+html.playing .geo-panel,
+html.playing .build-panel,
+html.playing .eta-panel,
+html.playing .garage-panel,
+html.playing .field-dock {
+  position: fixed;
 }
 html.playing .sheet,
 html.playing aside,
