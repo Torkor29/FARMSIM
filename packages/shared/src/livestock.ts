@@ -89,6 +89,19 @@ function round1(value: number): number {
 
 export type AnimalKind = "COW" | "PIG" | "HEN" | "SHEEP";
 
+/** Dessin isométrique de la bête, pour l’UI — même principe que les bâtiments. */
+export const ANIMAL_ART: Record<AnimalKind, string> = {
+  COW: "/assets/animals/cow.svg",
+  PIG: "/assets/animals/pig.svg",
+  HEN: "/assets/animals/hen.svg",
+  SHEEP: "/assets/animals/sheep.svg",
+};
+
+/** Pose tête au sol (pré), quand on a un second dessin. */
+export const ANIMAL_GRAZE_ART: Partial<Record<AnimalKind, string>> = {
+  COW: "/assets/animals/cow-graze.svg",
+};
+
 /** Éleveur débutant : quelques vaches, pas une étable vide. */
 export const STARTER_COW_COUNT = 3;
 /** Foin offert à l’installation, pour tenir le premier cycle. */

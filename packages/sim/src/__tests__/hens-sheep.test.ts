@@ -1,4 +1,6 @@
 import {
+  ANIMAL_ART,
+  ANIMAL_GRAZE_ART,
   ANIMAL_PRICE,
   BREEDING,
   EGGS_BASE_PER_HEN,
@@ -114,6 +116,13 @@ describe("poules et moutons — marché", () => {
     expect(isPerishable("WOOL")).toBe(false);
     expect(SPOILAGE_PER_CYCLE.EGGS).toBe(0.18);
     expect(SPOILAGE_PER_CYCLE.WOOL ?? 0).toBe(0);
+  });
+
+  it("chaque bête a un dessin isométrique", () => {
+    for (const k of ["COW", "PIG", "HEN", "SHEEP"] as const) {
+      expect(ANIMAL_ART[k]).toMatch(/^\/assets\/animals\/.+\.svg$/);
+    }
+    expect(ANIMAL_GRAZE_ART.COW).toMatch(/cow-graze/);
   });
 
   it("compte le blé dans la ration", () => {

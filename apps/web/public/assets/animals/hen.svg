@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" fill="none" aria-hidden="true">
+  <!-- FARMSIM CC0  poule isométrique -->
+  <ellipse cx="32" cy="56" rx="14" ry="4" fill="#1a2a1a" opacity="0.35"/>
+  <path d="M28 52 L29 46 L31 46 L30 52 Z" fill="#e8a317"/>
+  <path d="M34 52 L35 46 L37 46 L36 52 Z" fill="#d49212"/>
+  <path d="M22 42 L34 34 L46 40 L34 48 Z" fill="#f4efe4"/>
+  <path d="M22 42 L22 36 L34 28 L34 34 Z" fill="#d9c8b0"/>
+  <path d="M34 34 L46 40 L46 34 L34 28 Z" fill="#fff8f0"/>
+  <path d="M26 40 L32 37 L38 40 L32 43 Z" fill="#8a5a32"/>
+  <path d="M20 38 L24 36 L26 38 L22 40 Z" fill="#c4b49a"/>
+  <path d="M38 32 L44 28 L50 32 L44 36 L38 32 Z" fill="#f4efe4"/>
+  <path d="M44 28 L50 32 L50 28 L44 24 Z" fill="#fff8f0"/>
+  <path d="M42 24 L44 20 L46 22 L44 26 Z" fill="#c23b22"/>
+  <path d="M48 32 L54 30 L56 32 L52 35 Z" fill="#e8a317"/>
+  <path d="M46 34 L48 36 L46 38 Z" fill="#b83228"/>
+</svg>

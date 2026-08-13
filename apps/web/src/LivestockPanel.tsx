@@ -1,5 +1,12 @@
 import type { PointerEvent as ReactPointerEvent } from "react";
-import { BUILDING_ART, BUILDING_DEFS, type BuildingType } from "@farmsim/shared";
+import {
+  ANIMAL_ART,
+  ANIMAL_GRAZE_ART,
+  BUILDING_ART,
+  BUILDING_DEFS,
+  type AnimalKind,
+  type BuildingType,
+} from "@farmsim/shared";
 
 export type BarnState = {
   buildingId: string;
@@ -123,7 +130,17 @@ export function LivestockPanel({
         return (
           <div key={barn.buildingId} className="barn-card">
             <div className="barn-head">
-              <img className="build-art small" src={BUILDING_ART[barn.type]} alt="" />
+              <img
+                className="build-art small"
+                src={
+                  herd
+                    ? (outside && ANIMAL_GRAZE_ART[herd.kind as AnimalKind]) ||
+                      ANIMAL_ART[herd.kind as AnimalKind] ||
+                      BUILDING_ART[barn.type]
+                    : BUILDING_ART[barn.type]
+                }
+                alt=""
+              />
               <span className="build-text">
                 <strong>{def.name}</strong>
                 <span className="muted tiny">

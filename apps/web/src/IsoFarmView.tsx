@@ -15,6 +15,7 @@ import {
   type RipenessStage,
 } from "@farmsim/shared";
 import { disposeRenderer, disposeThreeScene, markShared } from "./three-cleanup";
+import { applyHerdPose, meshForHerd } from "./animal-meshes";
 import { hitchTrailer, makeMachineMesh, tickMachine } from "./machine-meshes";
 import { initialQuality, makeFrameGovernor, qualityForContext, type RenderQuality } from "./render-quality";
 import type { CharacterAppearance } from "@farmsim/shared";
@@ -464,20 +465,6 @@ function makeFarmhouseMesh(spanX: number, spanY: number): THREE.Group {
   return g;
 }
 
-type AnimalRig = {
-  body: THREE.Object3D;
-  head: THREE.Object3D;
-  legs: THREE.Object3D[];
-};
-
-function hipLeg(w: number, h: number, d: number, color: number, x: number, y: number, z: number): THREE.Mesh {
-  const geo = new THREE.BoxGeometry(w, h, d);
-  geo.translate(0, -h / 2, 0);
-  const leg = new THREE.Mesh(geo, new THREE.MeshLambertMaterial({ color, flatShading: true }));
-  leg.position.set(x, y, z);
-  return leg;
-}
-
 /**
  * Porte d’étable animée : 0 fermée, 1 grande ouverte.
  */
@@ -512,159 +499,6 @@ function setBarnDoorOpen(g: THREE.Group, open: number): void {
     right.position.set(0.1 + o * 0.22, 0.28, 0.03 + o * 0.09);
     right.rotation.y = -o * 0.95;
   }
-}
-
-/** Vache : debout à l’étable, ou tête dans l’herbe au pré. */
-function makeCowMesh(): THREE.Group {
-  const g = new THREE.Group();
-  const hide = new THREE.MeshLambertMaterial({ color: 0xf4efe4, flatShading: true });
-  const patch = new THREE.MeshLambertMaterial({ color: 0x5a4132, flatShading: true });
-  const snout = new THREE.MeshLambertMaterial({ color: 0xe3b3a8, flatShading: true });
-
-  const body = new THREE.Group();
-  const torso = new THREE.Mesh(new THREE.BoxGeometry(0.34, 0.2, 0.19), hide);
-  torso.position.y = 0.21;
-  torso.castShadow = true;
-  body.add(torso);
-  const spot = new THREE.Mesh(new THREE.BoxGeometry(0.13, 0.1, 0.2), patch);
-  spot.position.set(0.05, 0.25, 0);
-  body.add(spot);
-  g.add(body);
-
-  const head = new THREE.Group();
-  const skull = new THREE.Mesh(new THREE.BoxGeometry(0.15, 0.14, 0.14), hide);
-  skull.position.set(-0.24, 0.25, 0);
-  head.add(skull);
-  const muzzle = new THREE.Mesh(new THREE.BoxGeometry(0.07, 0.08, 0.1), snout);
-  muzzle.position.set(-0.33, 0.22, 0);
-  head.add(muzzle);
-  const earL = new THREE.Mesh(new THREE.BoxGeometry(0.04, 0.06, 0.02), hide);
-  earL.position.set(-0.22, 0.34, 0.07);
-  head.add(earL);
-  const earR = earL.clone();
-  earR.position.z = -0.07;
-  head.add(earR);
-  g.add(head);
-
-  const legs = [
-    hipLeg(0.055, 0.14, 0.055, 0xdcd4c6, -0.11, 0.14, 0.06),
-    hipLeg(0.055, 0.14, 0.055, 0xdcd4c6, -0.11, 0.14, -0.06),
-    hipLeg(0.055, 0.14, 0.055, 0xdcd4c6, 0.11, 0.14, 0.06),
-    hipLeg(0.055, 0.14, 0.055, 0xdcd4c6, 0.11, 0.14, -0.06),
-  ];
-  for (const leg of legs) g.add(leg);
-
-  g.userData.rig = { body, head, legs } satisfies AnimalRig;
-  return g;
-}
-
-/** Poule : debout, ou tête au sol (picore). */
-function makeHenMesh(): THREE.Group {
-  const g = new THREE.Group();
-  const hide = new THREE.MeshLambertMaterial({ color: 0xf4efe4, flatShading: true });
-  const brown = new THREE.MeshLambertMaterial({ color: 0x8a5a32, flatShading: true });
-  const comb = new THREE.MeshLambertMaterial({ color: 0xc23b22, flatShading: true });
-  const beak = new THREE.MeshLambertMaterial({ color: 0xe8a317, flatShading: true });
-
-  const body = new THREE.Group();
-  const torso = new THREE.Mesh(new THREE.BoxGeometry(0.16, 0.12, 0.12), hide);
-  torso.position.y = 0.12;
-  torso.castShadow = true;
-  body.add(torso);
-  const wing = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.06, 0.13), brown);
-  wing.position.set(0.01, 0.13, 0);
-  body.add(wing);
-  g.add(body);
-
-  const head = new THREE.Group();
-  const skull = new THREE.Mesh(new THREE.BoxGeometry(0.07, 0.07, 0.07), hide);
-  skull.position.set(-0.1, 0.18, 0);
-  head.add(skull);
-  const crest = new THREE.Mesh(new THREE.BoxGeometry(0.03, 0.04, 0.04), comb);
-  crest.position.set(-0.1, 0.23, 0);
-  head.add(crest);
-  const bill = new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.025, 0.03), beak);
-  bill.position.set(-0.14, 0.16, 0);
-  head.add(bill);
-  g.add(head);
-
-  const legs = [
-    hipLeg(0.02, 0.07, 0.02, 0xe8a317, 0.01, 0.07, 0.03),
-    hipLeg(0.02, 0.07, 0.02, 0xe8a317, 0.01, 0.07, -0.03),
-  ];
-  for (const leg of legs) g.add(leg);
-
-  g.userData.rig = { body, head, legs } satisfies AnimalRig;
-  return g;
-}
-
-/** Mouton : debout, ou museau dans l’herbe. */
-function makeSheepMesh(sheared = false): THREE.Group {
-  const g = new THREE.Group();
-  const wool = new THREE.MeshLambertMaterial({ color: 0xf7f4ee, flatShading: true });
-  const face = new THREE.MeshLambertMaterial({ color: 0x3d342c, flatShading: true });
-  const h = sheared ? 0.12 : 0.16;
-
-  const body = new THREE.Group();
-  const torso = new THREE.Mesh(new THREE.BoxGeometry(0.26, h, 0.16), wool);
-  torso.position.y = 0.14;
-  torso.castShadow = true;
-  body.add(torso);
-  g.add(body);
-
-  const head = new THREE.Group();
-  const skull = new THREE.Mesh(new THREE.BoxGeometry(0.09, 0.09, 0.09), face);
-  skull.position.set(-0.16, 0.16, 0);
-  head.add(skull);
-  g.add(head);
-
-  const legs = [
-    hipLeg(0.035, 0.09, 0.035, 0x3d342c, -0.08, 0.09, 0.045),
-    hipLeg(0.035, 0.09, 0.035, 0x3d342c, -0.08, 0.09, -0.045),
-    hipLeg(0.035, 0.09, 0.035, 0x3d342c, 0.08, 0.09, 0.045),
-    hipLeg(0.035, 0.09, 0.035, 0x3d342c, 0.08, 0.09, -0.045),
-  ];
-  for (const leg of legs) g.add(leg);
-
-  g.userData.rig = { body, head, legs } satisfies AnimalRig;
-  return g;
-}
-
-function meshForHerd(kind?: string, sheared = false): THREE.Group {
-  if (kind === "HEN") return makeHenMesh();
-  if (kind === "SHEEP") return makeSheepMesh(sheared);
-  return makeCowMesh();
-}
-
-/** graze 0 = debout, 1 = tête au sol. walk 0–1 = en train de marcher. */
-function applyHerdPose(
-  mesh: THREE.Group,
-  kind: string,
-  graze: number,
-  walking: boolean,
-  t: number,
-  wander: number,
-): void {
-  const rig = mesh.userData.rig as AnimalRig | undefined;
-  if (!rig) return;
-  const g = Math.max(0, Math.min(1, graze));
-  if (kind === "HEN") {
-    rig.head.rotation.x = g * 1.05;
-    rig.head.position.set(0, -g * 0.04, 0);
-    rig.body.rotation.x = g * 0.2;
-  } else if (kind === "SHEEP") {
-    rig.head.rotation.x = g * 0.85;
-    rig.head.position.set(-g * 0.03, -g * 0.05, 0);
-    rig.body.rotation.x = g * 0.1;
-  } else {
-    rig.head.rotation.x = g * 1.05;
-    rig.head.position.set(-g * 0.04, -g * 0.1, 0);
-    rig.body.rotation.x = g * 0.18;
-  }
-  const swing = walking ? Math.sin(t * 9 + wander) * 0.55 : 0;
-  rig.legs.forEach((leg, i) => {
-    leg.rotation.x = swing * (i % 2 === 0 ? 1 : -1);
-  });
 }
 
 /** Caisse d'œufs au pied du poulailler. */
@@ -2023,7 +1857,7 @@ export function IsoFarmView({
         const dir = walking
           ? w.walkTo.clone().sub(w.walkFrom)
           : new THREE.Vector3(w.wantOut ? 1 : 0.2, 0, w.wantOut ? 0.2 : 1);
-        w.mesh.rotation.y = Math.atan2(dir.z, dir.x) + (walking ? Math.sin(t * 8 + w.wander) * 0.12 : 0);
+        w.mesh.rotation.y = Math.atan2(dir.x, dir.z) + (walking ? Math.sin(t * 8 + w.wander) * 0.12 : 0);
         w.mesh.rotation.x = 0;
         w.mesh.visible = true;
       }
