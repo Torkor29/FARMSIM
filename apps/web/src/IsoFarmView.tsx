@@ -6,6 +6,7 @@ import {
   MACHINE_ART,
   RIPENESS_COLORS,
   artGroundFraction,
+  billboardLift,
   opaqueRowSpans,
   workAnimationMs,
   type BuildingType,
@@ -339,9 +340,15 @@ function artMaterial(url: string): THREE.MeshBasicMaterial {
   const mat = new THREE.MeshBasicMaterial({
     map: tex,
     transparent: true,
-    // Le seuil alpha évite d'avoir à trier les panneaux entre eux : chaque
-    // pixel est écrit ou rejeté, et la profondeur suffit à les ordonner.
+    // Le seuil alpha découpe le cadre : le vide autour du dessin ne masque
+    // pas les tuiles. On ignore le z-buffer — les cases d'emprise, plus
+    // proches de la caméra, mangeaient sinon tout le panneau.
     alphaTest: 0.35,
+    // Les tuiles d'emprise sont plus proches de la caméra que le panneau
+    // une fois celui-ci abaissé : sans ça, le hangar disparaît et il ne
+    // reste que la terre brune.
+    depthWrite: false,
+    depthTest: false,
     side: THREE.DoubleSide,
   });
   mat.userData.shared = true;
@@ -350,8 +357,12 @@ function artMaterial(url: string): THREE.MeshBasicMaterial {
 }
 
 /**
- * Panneau d'illustration planté au sol : on recadre sous le rang d'ancrage
- * (dalle dessinée, marge vide) et on pose ce rang sur le terrain.
+ * Panneau d'illustration planté au sol.
+ *
+ * Recadrer l'image sous la dalle dessinée faisait disparaître le bâtiment :
+ * les tuiles d'emprise, plus proches de la caméra, mangeaient le reste. On
+ * garde le dessin entier, on abaisse le rang d'ancrage, et on avance un peu
+ * le panneau vers la caméra pour qu'il passe devant la terre.
  */
 function makeArtBillboard(
   url: string,
@@ -364,24 +375,17 @@ function makeArtBillboard(
 ): THREE.Mesh {
   const mesh = new THREE.Mesh(new THREE.PlaneGeometry(spanX, spanY), artMaterial(url));
   mesh.name = "art";
+  mesh.renderOrder = 3;
   const token = { live: true };
   mesh.userData.anchorToken = token;
 
   const plant = (t: number) => {
     if (!token.live) return;
     const ground = Math.min(1, Math.max(0.2, t));
-    const visH = spanY * ground;
-    const geo = new THREE.PlaneGeometry(spanX, visH);
-    const uv = geo.attributes.uv;
-    for (let i = 0; i < uv.count; i++) {
-      if (uv.getY(i) < 0.5) uv.setY(i, 1 - ground);
-    }
-    const old = mesh.geometry;
-    mesh.geometry = geo;
-    old.dispose();
     mesh.quaternion.copy(camera.quaternion);
     mesh.position.set(x, y, z);
-    mesh.translateY(visH / 2);
+    mesh.translateY(billboardLift(spanY, ground));
+    mesh.translateZ(-0.2);
   };
 
   plant(artAnchor(url));
@@ -603,6 +607,7 @@ export function IsoFarmView({
     /** Véhicules stationnés — animés en idle (hors pickables) */
     const vehicleGroups = new Map<string, THREE.Group>();
     const buildingGroup = new THREE.Group();
+    buildingGroup.renderOrder = 2;
     world.add(buildingGroup);
 
     const workGroup = new THREE.Group();
@@ -1019,7 +1024,15 @@ export function IsoFarmView({
             flatShading: true,
           });
           const mesh = new THREE.Mesh(tileGeo(cellSize), mat);
-          mesh.position.set(px, 0, pz);
+          // Les cases d'emprise ne doivent pas former un muret : le panneau
+          // du bâtiment passe alors derrière, et il ne reste que la terre.
+          if (cell?.kind === "BUILDING" || cell?.kind === "VEHICLE") {
+            mesh.scale.y = 0.22;
+            mesh.position.set(px, -0.07, pz);
+            mat.depthWrite = false;
+          } else {
+            mesh.position.set(px, 0, pz);
+          }
           mesh.receiveShadow = true;
           mesh.userData = { x, y, baseColor: col, isSelected: isSel };
           world.add(mesh);
