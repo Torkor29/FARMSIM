@@ -111,15 +111,43 @@ const MACHINE_LOOK: Record<
 
 const STUBBLE_SOIL = 0xd9c48a;
 const RESIDUE_SOIL = 0x7f6a44;
+/** Terre labourée : brune et grasse, celle qui attend la semence. */
+const PLOWED_SOIL = 0x6b4a2f;
+/** Terre sèche et craquelée, laissée par une culture perdue. */
+const DRY_SOIL = 0xa08a63;
+
+/**
+ * État visuel d'une case, tel qu'il doit se lire d'un coup d'œil.
+ *
+ * La couleur seule ne suffisait pas : rien ne distinguait une terre labourée
+ * d'un champ en chaumes, si bien qu'un joueur à qui l'on refusait un semis
+ * « il faut labourer » ne pouvait pas voir quelles cases traiter. Chaque état
+ * porte donc aussi un relief.
+ */
+type SoilLook = "PLOWED" | "STUBBLE" | "RESIDUE" | "DRY" | "PLAIN";
+
+function soilLook(c: IsoCell): SoilLook {
+  if (c.fieldStage === "SPOILED") return "DRY";
+  if (c.hasStubble) return "STUBBLE";
+  // Les résidus se lisent avant l'état « préparé », que le déchaumage et le
+  // labour partagent : c'est le compteur de résidus qui les distingue, le
+  // labour le remettant à zéro. Sans cet ordre, une terre déchaumée aurait
+  // l'aspect d'un labour et le joueur croirait son sol remis à neuf.
+  if ((c.residuePasses ?? 0) > 0) return "RESIDUE";
+  if (c.fieldStage === "PREPARED") return "PLOWED";
+  return "PLAIN";
+}
+
+const SOIL_COLORS: Record<SoilLook, number> = {
+  PLOWED: PLOWED_SOIL,
+  STUBBLE: STUBBLE_SOIL,
+  RESIDUE: RESIDUE_SOIL,
+  DRY: DRY_SOIL,
+  PLAIN: SOIL,
+};
 
 function cropColor(c: IsoCell, sim?: IsoSim): number {
-  if (c.kind !== "CROP") {
-    // Un champ moissonné se lit à sa couleur : chaume clair tant qu'il n'est
-    // pas travaillé, terre sombre une fois les résidus incorporés.
-    if (c.hasStubble) return STUBBLE_SOIL;
-    if ((c.residuePasses ?? 0) > 0) return RESIDUE_SOIL;
-    return SOIL;
-  }
+  if (c.kind !== "CROP") return SOIL_COLORS[soilLook(c)];
   // Passé la maturité, la teinte raconte la dégradation : l'or vire au brun
   // puis à la tige morte. C'est le seul signal qui prévienne le joueur.
   if (sim?.sim.ripeness) return RIPENESS_COLORS[sim.sim.ripeness.stage];
@@ -492,6 +520,169 @@ export function IsoFarmView({
       return sharedTile.geo;
     }
 
+    /** Le relief du sol et les épis, reconstruits à chaque `layout()`. */
+    const reliefGroup = new THREE.Group();
+    const earGroup = new THREE.Group();
+    world.add(reliefGroup, earGroup);
+
+    /**
+     * Donne du grain aux états du sol.
+     *
+     * La couleur seule ne suffit pas à lire un champ : « j'ai labouré et
+     * pourtant je ne peux pas replanter » vient de là. On grave donc des
+     * sillons sur la terre labourée, on laisse des tiges coupées sur les
+     * chaumes, on craquelle la terre sèche.
+     *
+     * Tout passe par des maillages instanciés : un seul appel de dessin par
+     * type de relief, quelle que soit la surface concernée.
+     */
+    function buildSoilRelief(
+      details: { look: SoilLook; px: number; pz: number }[],
+      size: number,
+    ) {
+      while (reliefGroup.children.length) {
+        const c = reliefGroup.children[0];
+        reliefGroup.remove(c);
+        disposeObject3D(c);
+      }
+      if (!details.length) return;
+
+      // Sillons, tiges et craquelures : forme, matière et disposition.
+      const kinds: {
+        look: SoilLook;
+        geo: THREE.BoxGeometry;
+        color: number;
+        /** Décalages, en fraction de case, des exemplaires posés par case */
+        spots: [number, number][];
+        y: number;
+      }[] = [
+        {
+          look: "PLOWED",
+          geo: new THREE.BoxGeometry(size * 0.86, 0.05, size * 0.12),
+          color: 0x54371f,
+          spots: [
+            [0, -0.26],
+            [0, 0],
+            [0, 0.26],
+          ],
+          y: 0.11,
+        },
+        {
+          look: "STUBBLE",
+          geo: new THREE.BoxGeometry(size * 0.07, 0.13, size * 0.07),
+          color: 0xc0a262,
+          spots: [
+            [-0.24, -0.2],
+            [0.2, -0.06],
+            [-0.08, 0.22],
+            [0.26, 0.24],
+          ],
+          y: 0.15,
+        },
+        {
+          look: "RESIDUE",
+          geo: new THREE.BoxGeometry(size * 0.26, 0.04, size * 0.09),
+          color: 0x5d4a2c,
+          spots: [
+            [-0.18, -0.14],
+            [0.19, 0.05],
+            [-0.05, 0.24],
+          ],
+          y: 0.1,
+        },
+        {
+          look: "DRY",
+          geo: new THREE.BoxGeometry(size * 0.6, 0.03, size * 0.05),
+          color: 0x6f5b3e,
+          spots: [
+            [0, -0.12],
+            [0, 0.16],
+          ],
+          y: 0.1,
+        },
+      ];
+
+      const m = new THREE.Matrix4();
+      for (const kind of kinds) {
+        const cells = details.filter((d) => d.look === kind.look);
+        if (!cells.length) {
+          kind.geo.dispose();
+          continue;
+        }
+        const count = cells.length * kind.spots.length;
+        const mesh = new THREE.InstancedMesh(
+          kind.geo,
+          new THREE.MeshLambertMaterial({ color: kind.color, flatShading: true }),
+          count,
+        );
+        mesh.receiveShadow = true;
+        let i = 0;
+        for (const cellPos of cells) {
+          for (const [dx, dz] of kind.spots) {
+            // Une craquelure alternée d'une case à l'autre évite le damier
+            // trop régulier qui trahit la génération.
+            const jitter = kind.look === "DRY" ? ((cellPos.px + cellPos.pz) % 2 === 0 ? 0.05 : -0.05) : 0;
+            m.makeTranslation(
+              cellPos.px + (dx + jitter) * size,
+              kind.y,
+              cellPos.pz + dz * size,
+            );
+            mesh.setMatrixAt(i++, m);
+          }
+        }
+        mesh.instanceMatrix.needsUpdate = true;
+        reliefGroup.add(mesh);
+      }
+    }
+
+    /**
+     * Coiffe les cultures mûres d'épis. Le blé en porte plusieurs, fins et
+     * dorés ; le maïs un seul, trapu. C'est le signal « récoltable » le plus
+     * direct qu'on puisse donner sur la grille elle-même.
+     */
+    function buildEars(spots: { px: number; pz: number; y: number; maize: boolean }[], size: number) {
+      while (earGroup.children.length) {
+        const c = earGroup.children[0];
+        earGroup.remove(c);
+        disposeObject3D(c);
+      }
+      if (!spots.length) return;
+
+      const m = new THREE.Matrix4();
+      for (const maize of [false, true]) {
+        const group = spots.filter((s) => s.maize === maize);
+        if (!group.length) continue;
+        const offsets: [number, number][] = maize
+          ? [[0, 0]]
+          : [
+              [-0.13, -0.08],
+              [0.13, 0.06],
+              [0, 0.16],
+            ];
+        const geo = maize
+          ? new THREE.BoxGeometry(size * 0.2, 0.2, size * 0.2)
+          : new THREE.BoxGeometry(size * 0.09, 0.15, size * 0.09);
+        const mesh = new THREE.InstancedMesh(
+          geo,
+          new THREE.MeshLambertMaterial({
+            color: maize ? 0xf0c33c : 0xe6c95f,
+            flatShading: true,
+          }),
+          group.length * offsets.length,
+        );
+        mesh.castShadow = true;
+        let i = 0;
+        for (const s of group) {
+          for (const [dx, dz] of offsets) {
+            m.makeTranslation(s.px + dx * size, s.y + 0.06, s.pz + dz * size);
+            mesh.setMatrixAt(i++, m);
+          }
+        }
+        mesh.instanceMatrix.needsUpdate = true;
+        earGroup.add(mesh);
+      }
+    }
+
     function cellWorldPos(x: number, y: number) {
       return { px: ox + x * step, pz: oz + y * step };
     }
@@ -590,6 +781,11 @@ export function IsoFarmView({
         fenceGroup.add(trunk, crown);
       }
 
+        /** Relief à semer sur les cases une fois la grille posée. */
+      const soilDetails: { look: SoilLook; px: number; pz: number }[] = [];
+      /** Épis des cultures arrivées à maturité. */
+      const ears: { px: number; pz: number; y: number; maize: boolean }[] = [];
+
       for (let y = 0; y < gh; y++) {
         for (let x = 0; x < gw; x++) {
           const cell = cs.find((c) => c.x === x && c.y === y);
@@ -597,10 +793,16 @@ export function IsoFarmView({
           const isSel = sel.some((s) => s.x === x && s.y === y);
           const { px, pz } = cellWorldPos(x, y);
 
-          let col = (x + y) % 2 === 0 ? SOIL : SOIL_DARK;
+          // Le damier ne vaut que pour une terre au repos. Dès qu'une case a
+          // été travaillée ou moissonnée, sa couleur dit son état — sans quoi
+          // rien ne distingue un labour de chaumes, et le joueur ne sait pas
+          // quelles cases traiter.
+          const look = cell ? soilLook(cell) : "PLAIN";
+          let col = look === "PLAIN" ? ((x + y) % 2 === 0 ? SOIL : SOIL_DARK) : SOIL_COLORS[look];
           if (cell?.kind === "CROP") col = cropColor(cell, sim);
           if (cell?.kind === "BUILDING") col = DIRT;
           if (cell?.kind === "VEHICLE") col = 0x3a3f44;
+          if (cell && cell.kind === "EMPTY" && look !== "PLAIN") soilDetails.push({ look, px, pz });
 
           const mat = new THREE.MeshLambertMaterial({
             color: isSel ? SELECT_GLOW : col,
@@ -615,16 +817,28 @@ export function IsoFarmView({
           pickables.push(mesh);
 
           if (cell?.kind === "CROP") {
-            const h = 0.15 + (sim?.sim.progress ?? 0.25) * 0.55;
-            // Hauteur portée par l'échelle plutôt que par la géométrie : la
-            // touffe ne diffère que par sa taille, une seule boîte unitaire
-            // sert donc les cent quarante-quatre cases.
+            const progress = sim?.sim.progress ?? 0.25;
+            const lost = cell.fieldStage === "SPOILED" || sim?.sim.ripeness?.stage === "LOST";
+            // Le maïs monte plus haut et plus étroit que le blé : c'est à la
+            // silhouette qu'on reconnaît une culture de loin, pas à sa teinte.
+            const tall = cell.crop === "MAIZE";
+            const full = tall ? 0.98 : 0.7;
+            // Une culture desséchée s'affaisse. Elle doit se voir comme une
+            // perte, pas comme une récolte qui attend.
+            const h = lost ? 0.22 : 0.12 + progress * (full - 0.12);
             const crop = new THREE.Mesh(cropGeometry(), cropMaterial(cropColor(cell, sim)));
-            crop.scale.y = h;
+            crop.scale.set(tall ? 0.74 : 1, h, tall ? 0.74 : 1);
             crop.position.set(px, 0.1 + h / 2, pz);
+            if (lost) crop.rotation.z = 0.12;
             crop.castShadow = true;
             world.add(crop);
             cropMeshes.set(key(x, y), crop);
+
+            // Épis : ils ne sortent qu'à maturité et signalent la récolte
+            // possible sans qu'il faille lire un panneau.
+            if (!lost && (sim?.sim.ready || cell.fieldStage === "READY")) {
+              ears.push({ px, pz, y: 0.1 + h, maize: tall });
+            }
           }
 
           if (cell?.kind === "VEHICLE") {
@@ -640,6 +854,9 @@ export function IsoFarmView({
           }
         }
       }
+
+      buildSoilRelief(soilDetails, cellSize);
+      buildEars(ears, cellSize);
 
       for (const b of bs) {
         const def = BUILDING_DEFS[b.type];

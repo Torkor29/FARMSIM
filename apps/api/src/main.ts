@@ -1798,13 +1798,27 @@ app.post("/parcels/:id/plow", async (req, res) => {
       : parcel.cells
   ).filter((cell) => {
     if (cell.hasStubble) return true;
+    // Une case qui a atteint la limite de récoltes réclame la charrue, même
+    // sans chaumes visibles : la refuser enfermerait le joueur, puisque le
+    // déchaumage et le semis direct la refusent déjà pour la même raison.
+    if (cell.kind === "EMPTY" && plowRequired(cell)) return true;
+    if (cell.fieldStage === "SPOILED") return true;
     if (cell.kind !== "CROP" || !cell.crop || !cell.plantedAt) return false;
     const readyAt = cell.plantedAt.getTime() + CROP_DEFS[cell.crop].growMs;
     return ripenessAt(readyAt, CROP_DEFS[cell.crop].growMs, now).needsPlowing;
   });
 
   if (!candidates.length) {
-    res.status(409).json({ error: "Rien à labourer ici : ni chaumes, ni culture perdue" });
+    // Dire ce qui n'est pas labourable ne sert à rien : le joueur veut savoir
+    // où aller. On lui indique donc ce qui, ailleurs sur la parcelle, l'est.
+    const elsewhere = parcel.cells.filter(
+      (c) => c.hasStubble || c.fieldStage === "SPOILED" || (c.kind === "EMPTY" && plowRequired(c)),
+    ).length;
+    res.status(409).json({
+      error: elsewhere
+        ? `Rien à labourer dans la sélection — ${elsewhere} case(s) attendent la charrue ailleurs sur la parcelle`
+        : "Rien à labourer : aucune case ne porte de chaumes ni de culture perdue",
+    });
     return;
   }
 
