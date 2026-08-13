@@ -207,6 +207,27 @@ function SceneLoading({ label }: { label: string }) {
   );
 }
 
+/**
+ * Conserve la référence précédente quand la charge utile est identique.
+ *
+ * Le jeu interroge le serveur toutes les quatre, huit et dix secondes. Chaque
+ * réponse produisait des objets neufs, même inchangés : React y voyait un
+ * changement, invalidait tous les mémos qui en dépendent et rerendait l'écran
+ * pour rien. Sur un appareil qui peine, ces rendus inutiles sont exactement ce
+ * qui déclenche les violations de handler.
+ *
+ * La comparaison sérialisée coûte quelques dixièmes de milliseconde sur des
+ * charges de cette taille, contre plusieurs millisecondes pour un rendu
+ * complet.
+ */
+function keepIfSame<T>(prev: T, next: T): T {
+  try {
+    return JSON.stringify(prev) === JSON.stringify(next) ? prev : next;
+  } catch {
+    return next;
+  }
+}
+
 function clearSession() {
   localStorage.removeItem(TOKEN_KEY);
   localStorage.removeItem("farmsim_player");
@@ -347,10 +368,13 @@ export function App() {
       }
       return prev;
     });
-    setZones(z);
-    setMarket(m);
-    setContracts(c);
-    setWeather(w);
+    // Zones, contrats et météo ne bougent presque jamais, mais chaque sondage
+    // en livrait des objets neufs : React voyait un changement, invalidait les
+    // mémos et rerendait tout l'écran pour des données identiques.
+    setZones((prev) => keepIfSame(prev, z));
+    setMarket((prev) => keepIfSame(prev, m));
+    setContracts((prev) => keepIfSame(prev, c));
+    setWeather((prev) => keepIfSame(prev, w));
   }, []);
 
   const loadWorld = useCallback(async () => {
@@ -372,7 +396,7 @@ export function App() {
 
   const refreshPlayer = useCallback(async () => {
     const me = await api<{ player: Player }>("/auth/me");
-    setPlayer(me.player);
+    setPlayer((prev) => keepIfSame(prev, me.player));
     if (!activeParcelId && me.player.farm?.parcels[0]) {
       setActiveParcelId(me.player.farm.parcels[0].id);
     }
@@ -382,7 +406,7 @@ export function App() {
   const loadLivestock = useCallback(async (parcelId: string) => {
     try {
       const r = await api<{ barns: BarnState[] }>(`/parcels/${parcelId}/livestock`);
-      setBarns(r.barns);
+      setBarns((prev) => keepIfSame(prev, r.barns));
     } catch {
       setBarns([]);
     }
@@ -400,7 +424,7 @@ export function App() {
       const r = await api<{ listings: Listing[] }>(
         `/market/listings?userId=${encodeURIComponent(playerId)}`,
       );
-      setListings(r.listings);
+      setListings((prev) => keepIfSame(prev, r.listings));
     } catch {
       setListings([]);
     }
@@ -408,7 +432,7 @@ export function App() {
 
   const loadParcel = useCallback(async (id: string) => {
     const d = await api<typeof parcelDetail>(`/parcels/${id}`);
-    setParcelDetail(d);
+    setParcelDetail((prev) => keepIfSame(prev, d));
   }, []);
 
   useEffect(() => {
