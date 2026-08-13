@@ -7,7 +7,7 @@
  *
  * 1. **Le négociant** rachète tout, tout de suite, à un prix volontairement
  *    bas. C'est le plancher : on ne se retrouve jamais avec un silo plein et
- *    zéro CRD.
+ *    zéro TRN.
  * 2. **Le cours mondial** paie le prix du jour, mais écouler un gros volume
  *    fait plonger ce prix — vendre en une fois coûte cher.
  * 3. **La criée** laisse fixer son prix et attendre un acheteur. Meilleur
@@ -122,7 +122,7 @@ export const LISTING_REFUSAL_LABELS: Record<ListingRefusal, string> = {
   PRICE_TOO_HIGH: "Prix irréaliste : personne n’achètera",
   TOO_MANY_LISTINGS: `Vous avez déjà ${MAX_OPEN_LISTINGS} annonces en cours`,
   NOT_ENOUGH_STOCK: "Stock insuffisant",
-  CANNOT_AFFORD_FEE: "CRD insuffisants pour les frais de dépôt",
+  CANNOT_AFFORD_FEE: "TRN insuffisants pour les frais de dépôt",
 };
 
 export function canList(input: {
@@ -253,7 +253,53 @@ export function quoteAllChannels(input: {
       pricePerTon: Math.round(ask * 100) / 100,
       net: listingProceeds(ask, input.tons) - listingFee(ask, input.tons),
       guaranteed: false,
-      note: `Frais ${listingFee(ask, input.tons)} CRD · commission ${Math.round(LISTING_COMMISSION_RATE * 100)} %`,
+      note: `Frais ${listingFee(ask, input.tons)} TRN · commission ${Math.round(LISTING_COMMISSION_RATE * 100)} %`,
     },
   ];
+}
+
+/* ------------------------------------------------------------------ */
+/* Vendre « tout »                                                     */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Écart toléré entre la quantité demandée et le stock réellement présent.
+ *
+ * Un joueur qui demande à vendre la totalité de son silo se voyait refuser la
+ * vente pour quelques grammes, et devait redescendre le curseur à tâtons
+ * jusqu'à ce que ça passe. Deux causes s'additionnaient.
+ *
+ * L'affichage travaille au centième de tonne quand le stock en compte trois :
+ * arrondir au plus proche pour proposer « tout » dépassait le stock une fois
+ * sur deux. Et le lait comme la viande se dégradent à chaque tick du serveur,
+ * si bien que le stock connu du client est déjà périmé au moment du clic —
+ * pour une denrée périssable, demander la totalité était voué à l'échec.
+ *
+ * On vend donc ce qui est là. Un négociant ne refuse pas le chargement parce
+ * qu'il pèse trois kilos de moins que l'annonce. Au-delà de la tolérance, en
+ * revanche, la demande n'est plus un écart d'arrondi mais une erreur, et elle
+ * reste refusée.
+ */
+export const SALE_TOLERANCE_RATIO = 0.02;
+export const SALE_TOLERANCE_TONS = 0.02;
+
+/**
+ * Tonnage à réellement débiter, ou `null` si la demande dépasse franchement le
+ * stock. Le résultat ne dépasse jamais `available`.
+ */
+export function settleSaleTons(requested: number, available: number): number | null {
+  if (requested <= 0 || available <= 0) return null;
+  if (requested <= available) return requested;
+  const slack = Math.max(SALE_TOLERANCE_TONS, available * SALE_TOLERANCE_RATIO);
+  return requested <= available + slack ? available : null;
+}
+
+/**
+ * Plus grande quantité que le joueur puisse choisir sur un curseur au pas
+ * donné. Tronque au lieu d'arrondir : proposer une valeur inatteignable, puis
+ * la refuser à la vente, est le plus sûr moyen de passer pour cassé.
+ */
+export function maxSelectableTons(available: number, step = 0.01): number {
+  const steps = Math.floor(available / step + 1e-9);
+  return Math.max(0, Math.round(steps * step * 1000) / 1000);
 }

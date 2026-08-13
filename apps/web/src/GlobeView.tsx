@@ -1,6 +1,7 @@
 import { useEffect, useRef } from "react";
 import * as THREE from "three";
 import { disposeRenderer, disposeThreeScene, markShared } from "./three-cleanup";
+import { initialQuality, makeFrameGovernor, qualityForContext, type RenderQuality } from "./render-quality";
 
 export type GlobeContinent = {
   code: string;
@@ -555,8 +556,16 @@ export function GlobeView({
     const camera = new THREE.PerspectiveCamera(38, width / height, 0.1, 100);
     camera.position.set(0, 0, DIST_WORLD);
 
-    const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
-    renderer.setPixelRatio(Math.min(1.75, window.devicePixelRatio));
+    let quality = initialQuality();
+    const renderer = new THREE.WebGLRenderer({ antialias: quality.antialias, alpha: true });
+    quality = qualityForContext(renderer.getContext()) ?? quality;
+    renderer.setPixelRatio(Math.min(1.75, quality.pixelRatio));
+    let lastFrame = 0;
+    const applyQuality = (next: RenderQuality) => {
+      quality = next;
+      renderer.setPixelRatio(Math.min(1.75, next.pixelRatio));
+    };
+    const governor = makeFrameGovernor(applyQuality);
     renderer.setSize(width, height, false);
     renderer.outputColorSpace = THREE.SRGBColorSpace;
     host.appendChild(renderer.domElement);
@@ -600,7 +609,17 @@ export function GlobeView({
     );
     spinner.add(planet);
 
-    const pickTargets: THREE.Object3D[] = [planet];
+    /**
+     * Cibles de raycast : **jamais la planète**.
+     *
+     * Sa sphère fait 65 536 triangles, et Three les teste un à un faute
+     * d'arbre de partitionnement — à chaque clic comme à chaque mouvement de
+     * souris. C'était l'essentiel des 444 ms mesurées sur la sélection d'un
+     * continent. L'intersection analytique avec une sphère, suivie d'une
+     * lecture dans la carte d'index, donne le même résultat en temps
+     * constant.
+     */
+    const pickTargets: THREE.Object3D[] = [];
 
     /**
      * Peinture en deux temps. Deux millions de texels de bruit fractal
@@ -1010,8 +1029,11 @@ export function GlobeView({
       }
     };
 
+    // Écouteur passif : `preventDefault` le rendrait bloquant pour le
+    // défilement, ce que Chrome signale comme une violation. La page ne défile
+    // pas derrière le globe, et le zoom du navigateur reste à Ctrl+molette.
     const onWheel = (ev: WheelEvent) => {
-      ev.preventDefault();
+      if (ev.ctrlKey) return;
       const factor = Math.exp(ev.deltaY * 0.0016);
       distTarget = THREE.MathUtils.clamp(distTarget * factor, DIST_MIN, DIST_MAX);
       idle = 0;
@@ -1035,7 +1057,7 @@ export function GlobeView({
     renderer.domElement.addEventListener("pointerup", onPointerUp);
     renderer.domElement.addEventListener("pointercancel", onPointerUp);
     renderer.domElement.addEventListener("pointerleave", onPointerLeave);
-    renderer.domElement.addEventListener("wheel", onWheel, { passive: false });
+    renderer.domElement.addEventListener("wheel", onWheel, { passive: true });
     renderer.domElement.addEventListener("dblclick", onDouble);
 
     apiRef.current = {
@@ -1058,6 +1080,19 @@ export function GlobeView({
 
     const tick = () => {
       const now = performance.now();
+      // Le globe tourne en permanence : sur une machine qui rasterise au
+      // processeur, mieux vaut une rotation à trente images qu'un thread
+      // principal saturé. Onglet caché, on ne peint pas du tout.
+      // La première image passe toujours : sans précédente à comparer, la
+      // brider reviendrait à ne jamais rien peindre.
+      const tooSoon = Boolean(lastFrame) && now - lastFrame < 1000 / Math.max(1, quality.maxFps) - 1;
+      if (document.hidden || (quality.maxFps && tooSoon)) {
+        raf = requestAnimationFrame(tick);
+        return;
+      }
+      const frameDelta = lastFrame ? now - lastFrame : 16;
+      lastFrame = now;
+      governor(frameDelta);
       const dt = Math.min(0.05, (now - prev) / 1000);
       prev = now;
       const { selected: sel, focus: foc } = stateRef.current;

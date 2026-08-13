@@ -1,11 +1,31 @@
 # 45 — Parc matériel 3D : des engins montés, riggés, animés
 
 **Date :** 2026-08-13
+**Numérotation :** ce document était le 45 sur sa branche ; `main` ayant pris
+ce numéro entre-temps (rotation des cultures), il passe au 52.
+
 **Portée :** `apps/web/src/machine-kit.ts`, `machines3d.ts`, `MachineView3D.tsx`,
 `MachineShowcase.tsx`, intégration dans `IsoFarmView.tsx`, page atelier
 `/machines.html`, export glTF (`scripts/export-machines.mjs` → `models/`).
 
 ---
+
+## Fusion : deux implémentations pour un même besoin
+
+Ce travail a été mené sur une branche pendant que `main` avançait de son côté —
+et `main` a reçu **sa propre version des engins 3D** (`machine-meshes.ts`,
+page `preview-machines.html`) : primitives facettées, roues et rabatteur qui
+tournent. C'est, à peu de choses près, la première étape de cette branche.
+
+À la fusion, la version détaillée l'emporte et remplace l'autre : mêmes rôles
+animés, mais géométrie galbée, matières PBR, champ vivant, projections et
+export glTF. Ce qui venait de `main` et n'existait pas ici est conservé — le
+gouverneur de qualité (`render-quality.ts`), les bâtiments en illustration,
+le va-et-vient rang par rang du chantier, les ouvriers sur la parcelle.
+
+Les particules et l'environnement PBR ne s'allument que si le gouverneur juge
+la machine capable (`quality.shadows`) : sur mobile modeste, il reste la
+poussière et la fumée, sans gerbes ni reflets.
 
 ## Le problème
 

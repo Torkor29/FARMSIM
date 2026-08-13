@@ -16,6 +16,7 @@ enum Specialization {
 enum CropCode {
   WHEAT
   MAIZE
+  PEA
 }
 
 enum FieldStage {
@@ -75,11 +76,19 @@ model User {
   accessCode     String         @default("ferme")
   lastSeenAt     DateTime?
   lastMarketJson String?
+  /** Indices du créateur de perso (peau, chapeau, vêtements…) */
+  appearanceJson String?
+  lastParcelId   String?
+  lastCellX      Int?
+  lastCellY      Int?
   createdAt      DateTime       @default(now())
   farm           Farm?
   contracts      NpcContract[]  @relation("Provider")
+  laborPosted    LaborOrder[]   @relation("LaborClient")
+  laborTaken     LaborOrder[]   @relation("LaborProvider")
   sessions       Session[]
   listings       MarketListing[] @relation("Selling")
+  futures        FuturesContract[] @relation("Futures")
   purchases      MarketListing[] @relation("Buying")
 }
 
@@ -141,6 +150,7 @@ model Parcel {
   cells      ParcelCell[]
   buildings  Building[]
   machines   Machine[]  @relation("ParkedOn")
+  laborOrders LaborOrder[]
 
   @@unique([zoneId, mapX, mapY])
 }
@@ -168,6 +178,12 @@ model ParcelCell {
   residuePasses    Int        @default(0)
   /// Chaumes en place après moisson : il faut travailler le sol avant de semer
   hasStubble       Boolean    @default(false)
+  /// Semé dans les chaumes, sans travail du sol : rendement moindre
+  directSeeded     Boolean    @default(false)
+  /// Culture semée au cycle précédent, pour l'effet de rotation
+  lastCrop         CropCode?
+  /// Cycles consécutifs de cette même culture ; deux blés d'affilée se paient
+  cropStreak       Int        @default(0)
 
   @@unique([parcelId, x, y])
 }
@@ -198,6 +214,10 @@ model Herd {
   gestatingSince DateTime?
   /// Dernière mise bas
   lastCalvedAt  DateTime?
+  /// Âge moyen du lot, dilué à chaque naissance ou achat
+  avgAgeMs      Float     @default(0)
+  /// Pertes fractionnaires reportées : sans elles, un petit lot ne meurt jamais
+  mortalityDebt Float     @default(0)
 }
 
 model Building {
@@ -233,6 +253,14 @@ model Machine {
   type               String
   tier               Int         @default(1)
   condition          Float       @default(100)
+  /** Graissé et prêt à partir. Consommé à chaque chantier. */
+  greased            Boolean     @default(true)
+  /** 0–100, la boue du champ. Au-dessus de 25, l'usure double. */
+  dirt               Float       @default(0)
+  /** Départs consécutifs sans graisser. À 1, le suivant est refusé. */
+  greaseSkipStreak   Int         @default(0)
+  /** BELT, HYDRAULIC, ENGINE — null si ça roule */
+  breakdown          String?
   parkedParcelId     String?
   parkedParcel       Parcel?     @relation("ParkedOn", fields: [parkedParcelId], references: [id])
   storedInBuildingId String?
@@ -247,6 +275,37 @@ model MarketPrice {
   price     Float
   stockTons Float    @default(1000)
   updatedAt DateTime @updatedAt
+}
+
+/// Un engagement à livrer plus tard, à un prix fixé aujourd'hui.
+model FuturesContract {
+  id           String   @id @default(cuid())
+  sellerId     String
+  seller       User     @relation("Futures", fields: [sellerId], references: [id], onDelete: Cascade)
+  commodity    String
+  tons         Float
+  pricePerTon  Float
+  createdAt    DateTime @default(now())
+  dueAt        DateTime
+  /// OPEN, SETTLED ou DEFAULTED
+  status       String   @default("OPEN")
+  settledAt    DateTime?
+  /// Cours au moment du dénouement, pour dire au joueur si son pari valait
+  marketAtDue  Float?
+
+  @@index([sellerId, status])
+  @@index([status, dueAt])
+}
+
+/// Un relevé de cours. Sans mémoire des prix, le joueur ne peut ni juger si
+/// l'offre du jour est bonne, ni décider d'attendre : il vend au hasard.
+model MarketTick {
+  id        String   @id @default(cuid())
+  commodity String
+  price     Float
+  at        DateTime @default(now())
+
+  @@index([commodity, at])
 }
 
 /// Une annonce à la criée : un lot mis en vente par un joueur, qu'un autre
@@ -277,11 +336,40 @@ model NpcContract {
   title       String
   rewardCrd   Float
   regionNote  String
+  /// Cases du chantier (8–24). L'usure et le salaire suivent ce chiffre.
+  cells       Int             @default(16)
   status      ContractStatus  @default(OPEN)
   providerId  String?
   provider    User?           @relation("Provider", fields: [providerId], references: [id])
   createdAt   DateTime        @default(now())
   completedAt DateTime?
+}
+
+/// Chantier P2P : le client escrowe le devis, le prestataire travaille SA parcelle.
+model LaborOrder {
+  id            String         @id @default(cuid())
+  parcelId      String
+  parcel        Parcel         @relation(fields: [parcelId], references: [id], onDelete: Cascade)
+  clientId      String
+  client        User           @relation("LaborClient", fields: [clientId], references: [id], onDelete: Cascade)
+  providerId    String?
+  provider      User?          @relation("LaborProvider", fields: [providerId], references: [id])
+  work          String
+  crop          String?
+  cellsJson     String
+  remainingJson String
+  quoteCrd      Float
+  extrasCrd     Float
+  escrowCrd     Float
+  payoutCrd     Float
+  status        ContractStatus @default(OPEN)
+  createdAt     DateTime       @default(now())
+  expiresAt     DateTime
+  completedAt   DateTime?
+
+  @@index([status, createdAt])
+  @@index([providerId, status])
+  @@index([parcelId, status])
 }
 
 model WeatherSnapshot {

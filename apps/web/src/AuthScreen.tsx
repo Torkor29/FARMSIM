@@ -183,8 +183,8 @@ export function AuthScreen({
             <span>Climats réels, saisons inversées</span>
           </li>
           <li>
-            <strong>3 métiers</strong>
-            <span>Céréalier, éleveur ou entrepreneur</span>
+            <strong>2 métiers</strong>
+            <span>Céréalier ou éleveur — missions d’appoint pour les deux</span>
           </li>
           <li>
             <strong>Marché vivant</strong>

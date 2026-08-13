@@ -106,8 +106,9 @@ describe("classes", () => {
     }
   });
 
-  it("donne deux machines de départ à l’ETA", () => {
-    expect(CLASS_PROFILES.ETA.startingMachines.length).toBe(2);
+  it("donne une seule machine de départ à chaque métier", () => {
+    expect(Object.keys(CLASS_PROFILES)).toEqual(["CEREALIER", "ELEVEUR"]);
     expect(CLASS_PROFILES.CEREALIER.startingMachines.length).toBe(1);
+    expect(CLASS_PROFILES.ELEVEUR.startingMachines.length).toBe(1);
   });
 });

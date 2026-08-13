@@ -22,6 +22,8 @@ export type BarnState = {
     feedNeed: number;
     feedQuality: number;
     hungry: boolean;
+    /** Le lot commence à perdre des bêtes : il faut agir maintenant */
+    atRisk: boolean;
     canMilk: boolean;
     gestation: number;
     breedRefusal: string | null;
@@ -42,6 +44,8 @@ type Props = {
   onSlaughter: (herdId: string, count: number) => void;
   hayTons: number;
   maizeTons: number;
+  /** Permet à la coque mobile d'en faire un tiroir du bas */
+  className?: string;
 };
 
 /** Panneau élevage : effectif, bien-être, sortie au pré. */
@@ -57,11 +61,12 @@ export function LivestockPanel({
   onSlaughter,
   hayTons,
   maizeTons,
+  className = "glass livestock-panel",
 }: Props) {
   if (!barns.length) return null;
 
   return (
-    <aside className="glass livestock-panel">
+    <aside className={className}>
       <h3>Élevage</h3>
       <p className="muted tiny">
         Nourrissez, sortez, trayez. Un troupeau affamé s’effondre ; une aire de
@@ -103,6 +108,12 @@ export function LivestockPanel({
                 </div>
 
                 <div className="feed-row">
+                  {herd.atRisk && (
+                    <p className="herd-alert">
+                      Le troupeau dépérit — des bêtes vont mourir. Distribuez une
+                      ration sans attendre.
+                    </p>
+                  )}
                   <div className="feed-bar">
                     <span
                       className={`feed-fill ${herd.hungry ? "low" : ""}`}
@@ -166,11 +177,11 @@ export function LivestockPanel({
                 title={
                   room <= 0
                     ? "Bâtiment plein — agrandissez-le"
-                    : `Acheter une bête pour ${barn.cowPrice} CRD`
+                    : `Acheter une bête pour ${barn.cowPrice} TRN`
                 }
                 onClick={() => onBuyAnimals(barn.buildingId, 1)}
               >
-                +1 bête · {barn.cowPrice}
+                +1 bête · {barn.cowPrice} TRN
               </button>
 
               {herd && (

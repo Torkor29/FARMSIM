@@ -1,0 +1,2 @@
+-- AlterTable
+ALTER TABLE "NpcContract" ADD COLUMN "cells" INTEGER NOT NULL DEFAULT 16;

@@ -102,14 +102,60 @@ input:focus-visible, button:focus-visible {
   box-shadow: var(--sh-2);
 }
 
+html.playing,
+html.playing body,
+html.playing #root {
+  height: 100%;
+  overflow: hidden;
+  overscroll-behavior: none;
+  touch-action: none;
+}
+html.playing body {
+  touch-action: none;
+}
 .game-stage {
   position: relative;
   min-height: 100vh;
   width: 100%;
   overflow: hidden;
+  touch-action: none;
   background:
     radial-gradient(ellipse 90% 55% at 50% -10%, #bfe6f5 0%, transparent 60%),
     linear-gradient(180deg, #e6f4fb 0%, #f6efdd 100%);
+}
+html.playing .game-stage {
+  position: fixed;
+  inset: 0;
+  min-height: 0;
+  height: 100%;
+  height: 100dvh;
+}
+html.playing .iso-viewport {
+  min-height: 0;
+  height: 100%;
+}
+html.playing .hud-stack,
+html.playing .geo-panel,
+html.playing .build-panel,
+html.playing .eta-panel,
+html.playing .garage-panel,
+html.playing .field-dock {
+  position: fixed;
+}
+html.playing .sheet,
+html.playing aside,
+html.playing .panel {
+  touch-action: pan-y;
+}
+html.playing .market-ticker {
+  touch-action: pan-x;
+}
+html.playing button,
+html.playing input,
+html.playing select,
+html.playing .tabbar,
+html.playing .field-dock {
+  touch-action: manipulation;
 }
 
 .iso-layer {
@@ -134,12 +180,48 @@ input:focus-visible, button:focus-visible {
   color: var(--muted);
 }
 
-.hud-top {
+/**
+ * Pile du haut.
+ *
+ * Bandeau et cotations étaient posés indépendamment en absolu, à des
+ * décalages fixes — 0 et 3,4 rem. Il suffisait que les pastilles joueur
+ * passent à la ligne, ce qui arrive dès qu'on rétrécit, pour qu'elles
+ * recouvrent les cours. Les empiler dans un même conteneur en flux rend la
+ * superposition structurellement impossible.
+ */
+.hud-stack {
   position: absolute;
   top: 0;
   left: 0;
   right: 0;
   z-index: 5;
+  display: grid;
+  gap: 0.4rem;
+  pointer-events: none;
+}
+.hud-stack > * { pointer-events: auto; }
+
+.visit-banner {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.55rem;
+  margin: 0.4rem 0.7rem 0;
+  padding: 0.45rem 0.7rem;
+  border-radius: var(--r-pill);
+  background: rgba(12, 42, 58, 0.82);
+  color: #f6f1e4;
+  font-size: 0.86rem;
+}
+.visit-banner strong { font-weight: 800; }
+.visit-banner span { opacity: 0.88; }
+.visit-banner .chip {
+  background: #f6f1e4;
+  color: #0c2a3a;
+}
+
+.hud-top {
+  position: relative;
   display: flex;
   flex-wrap: wrap;
   justify-content: space-between;
@@ -426,6 +508,145 @@ button.ghost {
   gap: 0.5rem;
 }
 .confirm-card h3 { margin: 0; font-size: 1.15rem; color: var(--teal-700); }
+
+/* Atelier : mini-jeux graisse / lavage / pièces */
+.care-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 70;
+  display: grid;
+  place-items: center;
+  padding: 1rem;
+  padding-bottom: max(1rem, env(safe-area-inset-bottom));
+  background: rgba(24, 44, 38, 0.65);
+  backdrop-filter: blur(4px);
+}
+.care-card {
+  width: min(420px, 100%);
+  padding: 1rem 1.1rem 1.05rem;
+  border-radius: var(--r-lg);
+  display: grid;
+  gap: 0.4rem;
+}
+.care-card h3 { margin: 0; font-size: 1.15rem; color: var(--teal-700); }
+.care-machine { margin: 0; font-weight: 650; color: var(--ink); }
+.care-stage {
+  position: relative;
+  width: 100%;
+  aspect-ratio: 1;
+  border-radius: var(--r-md);
+  overflow: hidden;
+  background: var(--sand);
+  touch-action: none;
+  user-select: none;
+}
+.care-stage img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  pointer-events: none;
+}
+.care-nipple,
+.care-dust,
+.care-mud {
+  position: absolute;
+  transform: translate(-50%, -50%);
+  border: 0;
+  padding: 0;
+}
+.care-nipple {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  background: rgba(201, 162, 39, 0.35);
+  box-shadow: inset 0 0 0 2px var(--gold-500);
+  cursor: pointer;
+}
+.care-nipple.done {
+  background: var(--gold-500);
+  box-shadow: 0 0 0 3px rgba(201, 162, 39, 0.35);
+}
+.care-dust {
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  background: radial-gradient(circle, rgba(90, 80, 60, 0.55), transparent 70%);
+  pointer-events: auto;
+}
+.care-mud {
+  width: 36px;
+  height: 28px;
+  border-radius: 40% 60% 50% 50%;
+  background: #6b4a2b;
+  opacity: 0.75;
+  cursor: pointer;
+}
+.care-parts {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.35rem;
+}
+.care-parts button {
+  width: 100%;
+  min-height: 44px;
+}
+.care-parts button.done {
+  background: var(--teal-100);
+  color: var(--teal-700);
+}
+.care-shake { animation: care-wiggle 0.28s ease; }
+@keyframes care-wiggle {
+  0%, 100% { transform: translateX(0); }
+  25% { transform: translateX(-6px); }
+  75% { transform: translateX(6px); }
+}
+
+.mission-card { width: min(460px, 100%); }
+.mission-progress {
+  font-weight: 800;
+  color: var(--teal-700);
+  font-family: "Baloo 2", Nunito, sans-serif;
+}
+.mission-grid {
+  display: grid;
+  gap: 6px;
+  touch-action: none;
+  user-select: none;
+  padding: 0.35rem 0 0.15rem;
+}
+.mission-cell {
+  aspect-ratio: 1;
+  min-height: 36px;
+  padding: 0;
+  border: 0;
+  border-radius: 8px;
+  background: #6a5538;
+  box-shadow: inset 0 -4px 0 rgba(0, 0, 0, 0.18);
+}
+.mission-grid.harvest .mission-cell { background: #c9a227; }
+.mission-grid.plant .mission-cell { background: #6a5538; }
+.mission-grid.ferti .mission-cell { background: #3f8f52; }
+.mission-grid.plow .mission-cell { background: #8a5a3a; }
+.mission-grid.stubble .mission-cell { background: #9a7a4a; }
+.mission-cell.done {
+  background: #2f8f52 !important;
+  box-shadow: inset 0 -4px 0 rgba(14, 74, 61, 0.35);
+  transform: none;
+}
+.care-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.45rem;
+  margin-top: 0.35rem;
+}
+.care-actions .go {
+  background: var(--gold-500);
+  color: #3a2e0c;
+  border-color: transparent;
+}
 .confirm-detail { margin: 0; color: var(--ink-soft); font-size: 0.9rem; }
 .confirm-actions {
   display: flex;
@@ -527,6 +748,43 @@ button.ghost {
 .market-field { display: grid; gap: 0.3rem; font-size: 0.88rem; }
 .market-field input[type="range"] { width: 100%; padding: 0; }
 .market-course { margin: 0; font-size: 0.9rem; color: var(--ink-soft); }
+
+/* Courbe des cours : la tendance, pas la mesure exacte. */
+.sparkline {
+  display: grid;
+  gap: 0.2rem;
+  padding: 0.4rem 0.55rem;
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--ink) 4%, transparent);
+}
+.sparkline.empty {
+  font-size: 0.78rem;
+  color: var(--ink-soft);
+  font-style: italic;
+}
+.sparkline svg {
+  width: 100%;
+  height: 34px;
+  display: block;
+  overflow: visible;
+}
+.sparkline polyline {
+  stroke: var(--ink-soft);
+  stroke-width: 2;
+  stroke-linejoin: round;
+  stroke-linecap: round;
+}
+.sparkline.up polyline { stroke: var(--good, #2f9e5f); }
+.sparkline.down polyline { stroke: var(--bad, #c8503c); }
+.sparkline-meta {
+  display: flex;
+  justify-content: space-between;
+  font-size: 0.72rem;
+  color: var(--ink-soft);
+}
+.sparkline .change { font-weight: 700; }
+.sparkline.up .change { color: var(--good, #2f9e5f); }
+.sparkline.down .change { color: var(--bad, #c8503c); }
 .channel-grid {
   display: grid;
   gap: 0.6rem;
@@ -727,23 +985,168 @@ button.ghost {
 }
 .upgrade-locked.poor { color: var(--danger); border-color: #e8b4ad; }
 
-.action-bar {
+.field-dock {
   position: absolute;
   left: 50%;
   bottom: 1rem;
   transform: translateX(-50%);
   z-index: 6;
-  display: flex;
-  flex-wrap: wrap;
-  justify-content: center;
+  width: min(36rem, calc(100vw - 1.4rem));
+  display: grid;
   gap: 0.4rem;
-  padding: 0.45rem;
-  max-width: calc(100vw - 1.5rem);
-  background: var(--bar);
+  pointer-events: none;
+}
+.field-dock > * { pointer-events: auto; }
+
+.quest-chip {
+  display: flex;
+  align-items: center;
+  gap: 0.65rem;
+  width: 100%;
+  text-align: left;
+  padding: 0.55rem 0.8rem;
+  border-radius: 16px;
   border: 1px solid var(--glass-border);
-  border-radius: 14px;
+  background: var(--bar);
+  box-shadow: var(--sh-2);
   backdrop-filter: blur(12px);
 }
+.quest-chip-mark {
+  flex: none;
+  width: 2rem;
+  height: 2rem;
+  display: grid;
+  place-items: center;
+  border-radius: 10px;
+  background: linear-gradient(180deg, var(--gold-300), var(--gold-500));
+  color: #3a2c07;
+  font-weight: 800;
+}
+.quest-chip-body {
+  display: grid;
+  gap: 0.05rem;
+  min-width: 0;
+}
+.quest-chip-body strong {
+  font-size: 0.78rem;
+  color: var(--gold-700);
+}
+.quest-chip-body span {
+  font-size: 0.82rem;
+  font-weight: 700;
+  color: var(--ink);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.dock-tray {
+  display: grid;
+  gap: 0.35rem;
+  padding: 0.5rem 0.55rem;
+  border-radius: 16px;
+  background: var(--bar);
+  border: 1px solid var(--glass-border);
+  box-shadow: var(--sh-2);
+  backdrop-filter: blur(12px);
+}
+.dock-tray .stroke-hint {
+  margin: 0;
+  font-size: 0.75rem;
+  text-align: center;
+  color: var(--ink-soft);
+}
+.dock-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+}
+.dock-chips-end { justify-content: flex-end; }
+.chip {
+  min-height: 40px;
+  padding: 0.35rem 0.75rem;
+  border-radius: 999px;
+  background: var(--sand);
+  border: 1px solid var(--line);
+  font-size: 0.82rem;
+}
+.chip.on {
+  background: linear-gradient(180deg, var(--teal-300), var(--teal-500));
+  border-color: transparent;
+  color: #fff;
+}
+.chip.go {
+  background: linear-gradient(180deg, var(--gold-300), var(--gold-500));
+  border-color: transparent;
+  color: #3a2c07;
+  font-weight: 800;
+}
+.chip.eta {
+  background: linear-gradient(180deg, #f6b45a, #e0762f);
+  border-color: transparent;
+  color: #3a1f07;
+}
+.chip.brush { min-width: 2.8rem; padding-inline: 0.55rem; }
+
+.dock-bar {
+  display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: 1fr;
+  gap: 0.3rem;
+  padding: 0.4rem;
+  border-radius: 20px;
+  background: var(--bar);
+  border: 1px solid var(--glass-border);
+  box-shadow: var(--sh-3);
+  backdrop-filter: blur(14px);
+}
+.dock-tool {
+  position: relative;
+  display: grid;
+  justify-items: center;
+  gap: 0.12rem;
+  min-height: 52px;
+  padding: 0.4rem 0.2rem 0.35rem;
+  border-radius: 14px;
+  background: transparent;
+  border: 0;
+  color: var(--ink);
+}
+.dock-tool img {
+  width: 22px;
+  height: 22px;
+  filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.25));
+}
+.dock-emoji { font-size: 1.15rem; line-height: 1; }
+.dock-label {
+  font-size: 0.68rem;
+  font-weight: 800;
+  letter-spacing: 0.01em;
+}
+.dock-tool.on {
+  background: linear-gradient(180deg, var(--teal-300), var(--teal-500));
+  color: #fff;
+}
+.dock-tool.on img { filter: brightness(1.2) drop-shadow(0 1px 2px rgba(0, 0, 0, 0.25)); }
+.dock-tool.sell .dock-label { color: var(--gold-700); }
+.dock-tool.sell.on,
+.dock-tool.sell:hover:not(:disabled) {
+  background: var(--gold-100);
+}
+.dock-badge {
+  position: absolute;
+  top: 0.15rem;
+  right: 0.35rem;
+  min-width: 1.1rem;
+  padding: 0 0.22rem;
+  border-radius: 999px;
+  background: var(--danger);
+  color: #fff;
+  font-size: 0.62rem;
+  font-weight: 800;
+  line-height: 1.2;
+}
+
 .action {
   border-radius: var(--r-sm);
   padding: 0.55rem 0.85rem;
@@ -751,53 +1154,15 @@ button.ghost {
   border: 1px solid var(--line);
   font-size: 0.86rem;
 }
-.action.icon-action {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 0.15rem;
-  min-width: 3.1rem;
-  padding: 0.45rem 0.5rem;
-}
-.action.icon-action img {
-  display: block;
-  filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.4));
-}
-.action.icon-action .action-label {
-  font-size: 0.62rem;
-  font-weight: 700;
-  letter-spacing: 0.02em;
-  opacity: 0.9;
-}
-.action.icon-action.on img {
-  filter: brightness(1.15) drop-shadow(0 1px 3px rgba(0, 0, 0, 0.35));
-}
 .action.on {
   background: linear-gradient(180deg, var(--teal-300), var(--teal-500));
   border-color: transparent;
   color: #ffffff;
 }
-.action.eta {
-  background: linear-gradient(180deg, #7fc0e8, #2b7bb9);
-  color: #ffffff;
-}
-.action.eta.on { outline: 2px solid #1a5f92; }
-.action.accent {
-  background: linear-gradient(180deg, var(--gold-300), var(--gold-500));
-  color: #3a2c07;
-}
-.action.contractor {
-  background: linear-gradient(180deg, #f6b45a, #e0762f);
-  border-color: transparent;
-  color: #3a1f07;
-}
 
 .market-ticker {
-  position: absolute;
-  top: 3.4rem;
-  left: 50%;
-  transform: translateX(-50%);
-  z-index: 5;
+  position: relative;
+  justify-self: center;
   display: flex;
   flex-wrap: wrap;
   justify-content: center;
@@ -824,22 +1189,35 @@ button.ghost {
   gap: 0.5rem;
   margin-bottom: 0.25rem;
 }
-.resume-banner {
-  position: absolute;
-  top: 5.8rem;
-  left: 50%;
-  transform: translateX(-50%);
-  z-index: 9;
-  width: min(420px, calc(100vw - 2rem));
+/* Bilan d'absence : un dialogue qu'on acquitte, et non une boîte de plus
+   posée sur la ferme. Il annonce parfois huit cultures perdues. */
+.resume-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 30;
   display: grid;
-  gap: 0.35rem;
+  place-items: center;
+  padding: 1rem;
+  background: rgba(24, 44, 38, 0.45);
+  backdrop-filter: blur(4px);
+  animation: tut-fade-in 0.2s ease;
 }
-.resume-banner p {
+.resume-card {
+  width: min(420px, 100%);
+  max-height: 70dvh;
+  overflow: auto;
+  display: grid;
+  gap: 0.5rem;
+  justify-items: start;
+}
+.resume-card p {
   margin: 0;
   color: var(--muted);
   font-size: 0.9rem;
+  line-height: 1.45;
 }
-.resume-banner strong { color: var(--gold-700); font-size: 0.9rem; }
+.resume-card strong { color: var(--gold-700); font-size: 0.95rem; }
+.resume-card button { min-height: 44px; justify-self: stretch; }
 .brush-group {
   display: inline-flex;
   gap: 0.25rem;
@@ -848,16 +1226,20 @@ button.ghost {
   margin-right: 0.15rem;
 }
 .toast {
-  position: absolute;
-  top: 5.2rem;
-  left: 50%;
-  transform: translateX(-50%);
-  z-index: 8;
-  padding: 0.55rem 1rem;
+  position: relative;
+  top: auto;
+  left: auto;
+  transform: none;
+  justify-self: center;
+  z-index: 6;
+  max-width: min(28rem, calc(100vw - 1.5rem));
+  padding: 0.45rem 0.9rem;
   border-radius: 10px;
   background: var(--glass);
   border: 1px solid var(--glass-border);
-  font-size: 0.9rem;
+  font-size: 0.86rem;
+  font-weight: 700;
+  text-align: center;
   box-shadow: var(--sh-3);
   pointer-events: none;
 }
@@ -867,19 +1249,16 @@ button.ghost {
 @keyframes toast-pop {
   0% {
     opacity: 0;
-    transform: translateX(-50%) translateY(-6px) scale(0.96);
+    transform: translateY(-6px) scale(0.96);
   }
   55% {
     opacity: 1;
-    transform: translateX(-50%) translateY(2px) scale(1.02);
+    transform: translateY(2px) scale(1.02);
   }
   100% {
     opacity: 1;
-    transform: translateX(-50%) translateY(0) scale(1);
+    transform: translateY(0) scale(1);
   }
-}
-.toast {
-  font-weight: 700;
 }
 .toast.good { color: var(--ok); border-color: var(--teal-300); background: var(--teal-100); }
 .toast.bad { color: var(--danger); border-color: #f0b5ae; background: #fdecea; }
@@ -1065,28 +1444,261 @@ button.ghost {
 .error { color: var(--danger); }
 .ok { color: var(--ok); }
 
-@media (max-width: 720px) {
-  .geo-panel {
-    top: auto;
-    bottom: 5.2rem;
-    left: auto;
-    right: 1rem;
-    width: min(180px, calc(100vw - 2rem));
+/**
+ * La barre d'onglets n'existe que dans la coque mobile. Le composant ne la
+ * monte déjà que sous le seuil, mais une seconde barrière ici garantit qu'un
+ * état retardataire — un basculement de fenêtre, l'émulateur d'appareil des
+ * outils de développement — ne la laisse jamais apparaître sur grand écran.
+ */
+.tabbar,
+.sheet-scrim,
+.profile-btn { display: none; }
+
+/* ——————————————————————————————————————————————————————————————
+   Coque mobile
+   ——————————————————————————————————————————————————————————————
+   La version précédente se contentait de rétrécir deux panneaux et de
+   masquer les autres : on ne pouvait ni bâtir ni gérer son troupeau sur un
+   téléphone, et les deux boîtes restantes flottaient par-dessus la ferme.
+
+   Ici la ferme occupe tout l'écran et chaque panneau devient un tiroir du
+   bas, un seul à la fois, appelé par une barre d'onglets. Rien n'est
+   supprimé : tout ce qui existe sur grand écran reste atteignable.
+   —————————————————————————————————————————————————————————————— */
+
+@media (max-width: 820px) {
+  /* `dvh` suit la barre d'adresse quand elle se rétracte ; `vh` la ignore
+     et laisse le bas de l'interface sous le pli. */
+  .game-stage { min-height: 100dvh; }
+
+  /* —— En-tête : une seule ligne, rien de plus ——
+     Nom, métier, expérience, bonus et déconnexion prenaient quatre rangées de
+     pastilles au-dessus de la ferme. Ils vivent maintenant dans le tiroir
+     Profil, appelé par le bouton du bandeau. Ne restent que l'essentiel qu'on
+     surveille en jouant : qui l'on est, et ce qu'on a en caisse. */
+  .hud-stack { gap: 0.3rem; }
+  .hud-top {
+    padding: calc(0.4rem + env(safe-area-inset-top)) 0.6rem 0.35rem;
+    gap: 0.4rem;
+    flex-wrap: nowrap;
+    align-items: center;
   }
-  .garage-panel {
-    top: auto;
-    bottom: 5.2rem;
-    left: 1rem;
-    width: min(170px, calc(100vw - 2rem));
-    max-height: 32vh;
+  .brand-row { flex-wrap: nowrap; min-width: 0; }
+  .brand-logo { width: 26px; height: 26px; }
+  /* Le nom du jeu mangeait la moitié de la ligne et écrasait le reste. Sur
+     un téléphone, le logo suffit à dire où l'on est. */
+  .brand-mark,
+  .hud-top .tagline,
+  .mvp-badge,
+  .stat-job,
+  .stat-xp,
+  .stat-bonus,
+  .logout-btn { display: none; }
+  .help-btn {
+    display: grid;
+    place-items: center;
+    min-width: 40px;
+    min-height: 40px;
+    padding: 0;
+    border-radius: 12px;
+    border: 1px solid var(--line);
+    background: var(--gold-100);
+    color: var(--gold-700);
+    font-size: 1.1rem;
+    font-weight: 800;
   }
-  .build-panel {
+  .hud-stats { flex-wrap: nowrap; gap: 0.3rem; }
+  .stat-name {
+    max-width: 8rem;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  /* La trésorerie passait à la ligne et doublait la hauteur du bandeau. */
+  .hud-stats > span {
+    padding: 0.25rem 0.5rem;
+    font-size: 0.78rem;
+    white-space: nowrap;
+  }
+  .hud-stats { margin-left: auto; }
+
+  .profile-btn {
+    display: grid;
+    place-items: center;
+    min-width: 40px;
+    min-height: 40px;
+    padding: 0;
+    border-radius: 12px;
+    border: 1px solid var(--line);
+    background: var(--paper);
+    font-size: 1rem;
+  }
+
+  /* —— Cotations : une ligne qui défile ——
+     Elles passaient à la ligne et empilaient jusqu'à trois rangées sur la
+     ferme. */
+  .market-ticker {
+    justify-self: stretch;
+    flex-wrap: nowrap;
+    justify-content: flex-start;
+    max-width: none;
+    margin: 0 0.5rem;
+    overflow-x: auto;
+    scrollbar-width: none;
+    touch-action: pan-x;
+    /* Le défilement suppose de pouvoir l'attraper. */
+    pointer-events: auto;
+  }
+  .market-ticker::-webkit-scrollbar { display: none; }
+  .market-ticker .tick { flex: 0 0 auto; }
+
+  .profile-panel dl { margin: 0; }
+  .profile-actions {
+    display: grid;
+    gap: 0.4rem;
+    margin-top: 0.6rem;
+  }
+  .profile-actions button { min-height: 44px; }
+
+  .brush-cycle {
+    font-weight: 800;
+    min-width: 3.1rem;
+    background: var(--sand);
+  }
+
+  /* —— Tiroirs —— */
+  .game-stage.mobile .sheet {
+    position: fixed;
+    left: 0;
+    right: 0;
+    /* Juste au-dessus de la barre d'onglets et de la barre d'action. */
+    bottom: calc(11.2rem + env(safe-area-inset-bottom));
+    top: auto;
+    width: auto;
+    max-height: min(52dvh, 460px);
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+    overscroll-behavior: contain;
+    z-index: 12;
+    margin: 0 0.5rem;
+    border-radius: 18px 18px 12px 12px;
+    box-shadow: 0 -10px 30px rgba(24, 44, 38, 0.22);
+    /* Fermé par défaut : le tiroir n'existe que quand on l'appelle. */
     display: none;
+    animation: sheet-rise 0.22s ease;
   }
-  .hud-top { padding: 0.6rem 0.75rem; }
-  .brand-mark { font-size: 1.05rem; }
-  .action.icon-action .action-label { display: none; }
-  .action.icon-action { min-width: 2.6rem; padding: 0.5rem; }
+  .game-stage.mobile .sheet.open { display: block; }
+
+  /* Poignée : elle signale qu'on a affaire à un tiroir, pas à une carte. */
+  .game-stage.mobile .sheet::before {
+    content: "";
+    display: block;
+    width: 38px;
+    height: 4px;
+    margin: 0 auto 0.6rem;
+    border-radius: 999px;
+    background: rgba(34, 49, 44, 0.22);
+  }
+
+  @keyframes sheet-rise {
+    from { transform: translateY(14px); opacity: 0; }
+    to { transform: translateY(0); opacity: 1; }
+  }
+
+  .sheet-scrim {
+    display: block;
+    position: fixed;
+    inset: 0;
+    z-index: 11;
+    border: 0;
+    padding: 0;
+    background: rgba(24, 44, 38, 0.28);
+    backdrop-filter: blur(2px);
+  }
+
+  /* —— Barre d'onglets —— */
+  .tabbar {
+    position: fixed;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 14;
+    display: grid;
+    grid-auto-flow: column;
+    grid-auto-columns: 1fr;
+    gap: 0.2rem;
+    padding: 0.3rem 0.4rem calc(0.3rem + env(safe-area-inset-bottom));
+    background: var(--bar);
+    border-top: 1px solid var(--glass-border);
+    backdrop-filter: blur(12px);
+  }
+  .tab {
+    display: grid;
+    justify-items: center;
+    gap: 0.1rem;
+    /* Quarante-quatre pixels : en deçà, le doigt manque la cible. */
+    min-height: 44px;
+    padding: 0.3rem 0.15rem;
+    border: 0;
+    border-radius: 12px;
+    background: transparent;
+    font-size: 1.05rem;
+    line-height: 1.1;
+    color: var(--ink);
+  }
+  .tab.on { background: var(--teal-100, rgba(46, 142, 122, 0.16)); }
+  .tab-label { font-size: 0.62rem; font-weight: 700; letter-spacing: 0.01em; }
+
+  /* —— Dock de champ : 5 outils étiquetés, jamais de défilement —— */
+  .field-dock {
+    left: 0.4rem;
+    right: 0.4rem;
+    width: auto;
+    transform: none;
+    bottom: calc(3.7rem + env(safe-area-inset-bottom));
+  }
+  .dock-tool { min-height: 48px; }
+  .dock-label { font-size: 0.64rem; }
+  .chip { min-height: 44px; }
+  .action { min-height: 44px; padding: 0.5rem 0.7rem; }
+
+  /* —— Modales : une feuille qui monte du bas, pas une carte flottante —— */
+  .market-sheet {
+    width: 100%;
+    max-width: none;
+    max-height: 92dvh;
+    margin: 0;
+    border-radius: 16px 16px 0 0;
+  }
+  .market-backdrop {
+    padding: 0;
+    align-items: end;
+  }
+  .market-tabs { overflow-x: auto; scrollbar-width: none; }
+  .market-tabs::-webkit-scrollbar { display: none; }
+  .market-tab { flex: 0 0 auto; min-height: 44px; }
+
+  .confirm-card {
+    width: min(100%, 26rem);
+    margin: 0 0.5rem calc(0.5rem + env(safe-area-inset-bottom));
+  }
+  .confirm-backdrop { align-items: end; }
+  .confirm-actions button { min-height: 44px; }
+
+  .channel-grid { grid-template-columns: 1fr; }
+
+  /* Les listes denses respirent mal au doigt. */
+  .build-list button,
+  .list li { min-height: 44px; }
+}
+
+/* Un téléphone couché n'a presque pas de hauteur : le tiroir doit lui
+   laisser voir la ferme malgré tout. */
+@media (max-width: 920px) and (max-height: 460px) {
+  .game-stage.mobile .sheet { max-height: 62dvh; bottom: calc(4.4rem + env(safe-area-inset-bottom)); }
+  .tab-label { display: none; }
+  .tab { min-height: 38px; }
+  .field-dock { bottom: calc(3rem + env(safe-area-inset-bottom)); }
 }
 
 /* —— Tutoriel pas-à-pas —— */
@@ -1167,3 +1779,205 @@ button.ghost {
   color: #ffffff;
   font-weight: 800;
 }
+
+/* —— Guide de ferme —— */
+.guide-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 45;
+  display: grid;
+  place-items: end center;
+  padding: 0;
+  background: rgba(24, 44, 38, 0.45);
+  backdrop-filter: blur(5px);
+}
+.guide-sheet {
+  width: min(560px, 100%);
+  max-height: min(88dvh, 760px);
+  display: grid;
+  grid-template-rows: auto auto 1fr;
+  border-radius: 22px 22px 0 0;
+  padding: 1rem 1rem 1.2rem;
+  overflow: hidden;
+}
+.guide-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: start;
+  gap: 0.8rem;
+}
+.guide-kicker {
+  margin: 0;
+  font-size: 0.72rem;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--gold-700);
+}
+.guide-head h2 { margin: 0.1rem 0 0; }
+.guide-close { min-height: 40px; }
+.guide-tabs {
+  display: flex;
+  gap: 0.3rem;
+  overflow-x: auto;
+  scrollbar-width: none;
+  padding: 0.7rem 0 0.5rem;
+}
+.guide-tabs::-webkit-scrollbar { display: none; }
+.guide-tabs button {
+  flex: 0 0 auto;
+  min-height: 36px;
+  padding: 0.3rem 0.7rem;
+  border-radius: 999px;
+  background: var(--sand);
+  font-size: 0.78rem;
+}
+.guide-tabs button.on {
+  background: linear-gradient(180deg, var(--teal-300), var(--teal-500));
+  border-color: transparent;
+  color: #fff;
+}
+.guide-body {
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  padding-right: 0.15rem;
+}
+.guide-lead {
+  margin: 0 0 0.8rem;
+  color: var(--ink-soft);
+  font-size: 0.92rem;
+}
+.guide-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 0.55rem;
+}
+.guide-list li {
+  display: grid;
+  gap: 0.2rem;
+  padding: 0.7rem 0.8rem;
+  border-radius: 14px;
+  background: var(--sand);
+  border: 1px solid var(--line);
+}
+.guide-list li.soon { opacity: 0.78; }
+.guide-list strong { font-size: 0.95rem; }
+.guide-list em {
+  margin-left: 0.4rem;
+  font-style: normal;
+  font-size: 0.7rem;
+  font-weight: 800;
+  color: var(--gold-700);
+  text-transform: uppercase;
+}
+.guide-list span { font-size: 0.86rem; color: var(--ink); }
+.guide-list small { color: var(--ink-soft); font-size: 0.78rem; }
+.guide-now {
+  padding: 0.85rem 0.95rem;
+  border-radius: 16px;
+  background: var(--gold-100);
+  border: 1px solid var(--gold-300);
+  margin-bottom: 0.8rem;
+}
+.guide-now h3 { margin: 0.15rem 0 0.35rem; }
+.guide-now p { margin: 0; }
+.guide-unlock { margin-top: 0.4rem !important; font-weight: 800; color: var(--gold-700); }
+.guide-now.done { background: var(--teal-100); border-color: var(--teal-300); }
+.guide-goals {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 0.4rem;
+}
+.guide-goals li {
+  display: flex;
+  gap: 0.55rem;
+  align-items: start;
+  padding: 0.45rem 0.2rem;
+  opacity: 0.55;
+}
+.guide-goals li.current,
+.guide-goals li.done { opacity: 1; }
+.goal-mark {
+  flex: none;
+  width: 1.4rem;
+  text-align: center;
+  font-weight: 800;
+  color: var(--teal-700);
+}
+.guide-goals .current .goal-mark { color: var(--gold-700); }
+.guide-goals strong { display: block; }
+.guide-goals small { color: var(--ink-soft); }
+.guide-foot { margin: 0.9rem 0 0; font-size: 0.82rem; color: var(--ink-soft); }
+
+@media (min-width: 821px) {
+  .guide-backdrop { place-items: center; padding: 1.2rem; }
+  .guide-sheet { border-radius: 22px; }
+}
+
+/* Un troupeau qui meurt de faim ne doit pas se découvrir au retour. */
+.herd-alert {
+  margin: 0.3rem 0;
+  padding: 0.4rem 0.55rem;
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--danger) 14%, transparent);
+  border: 1px solid color-mix(in srgb, var(--danger) 38%, transparent);
+  color: var(--danger);
+  font-size: 0.78rem;
+  font-weight: 700;
+  line-height: 1.35;
+}
+
+/* —— Outils de test —— */
+.dev-panel { max-width: 620px; }
+.dev-row {
+  display: grid;
+  gap: 0.5rem;
+  padding: 0.6rem 0.7rem;
+  border: 1px dashed var(--line);
+  border-radius: 12px;
+}
+.dev-row .market-field { margin: 0; }
+.dev-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  align-items: center;
+}
+.dev-actions.wide { display: grid; }
+.dev-actions button { min-height: 40px; }
+.action.dev-toggle {
+  background: color-mix(in srgb, var(--teal-500, #2e8e7a) 16%, var(--sand));
+  font-weight: 800;
+}
+
+/* Pastille d'alerte sur un onglet : le nombre de choses à traiter. */
+.tab { position: relative; }
+.tab-badge {
+  position: absolute;
+  top: 0.05rem;
+  right: 22%;
+  min-width: 1.05rem;
+  padding: 0 0.2rem;
+  border-radius: 999px;
+  background: var(--danger);
+  color: #fff;
+  font-size: 0.62rem;
+  font-weight: 800;
+  line-height: 1.05rem;
+  text-align: center;
+}
+
+/* —— Contrats à terme —— */
+.futures-tab { display: grid; gap: 0.7rem; }
+.futures-form {
+  display: grid;
+  gap: 0.5rem;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+}
+.futures-tab h3 { margin: 0.3rem 0 0; font-size: 0.92rem; }
+.futures-tab em.gain { color: var(--good, #2f9e5f); font-style: normal; font-weight: 700; }
+.futures-tab em.loss { color: var(--danger); font-style: normal; font-weight: 700; }

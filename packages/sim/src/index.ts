@@ -6,6 +6,14 @@ import {
   MARKET_DEPTH_FLOOR,
   residueBonus,
   ripenessAt,
+  rotationFactor,
+  DIRECT_SEED_YIELD_MALUS,
+  NO_ROTATION,
+  DIRT_DIRTY_THRESHOLD,
+  DIRT_PER_CELL,
+  REPAIR_RESTORE,
+  type BreakdownKind,
+  type RotationState,
   type CropCode,
   type TradeGood,
   type RipenessInfo,
@@ -26,6 +34,10 @@ export type CellSimInput = {
   buildingYieldBonus?: number;
   /** Déchaumages consécutifs avant ce semis — les résidus nourrissent le sol */
   residuePasses?: number;
+  /** Semé dans les chaumes, sans travail du sol préalable */
+  directSeeded?: boolean;
+  /** Ce que la case portait avant ce semis, pour l'effet de rotation */
+  rotation?: RotationState;
 };
 
 export type CellSimResult = {
@@ -82,7 +94,7 @@ export function harvestMoisture(weather?: WeatherState): number {
 }
 
 /**
- * Une ou plusieurs passes de séchage : coût CRD + baisse d’humidité.
+ * Une ou plusieurs passes de séchage : coût TRN + baisse d’humidité.
  * `barnBonus` si SILO / HAY_BARN (soft dryer) sur la ferme.
  */
 export function dryInventory(opts: {
@@ -143,7 +155,13 @@ export function simulateCell(input: CellSimInput): CellSimResult {
   // calculé, elle ne se compense pas par une bonne conduite de culture.
   const ripeness = ready ? ripenessAt(readyAt, def.growMs, input.now) : null;
   const overripe = ripeness?.yieldFactor ?? 1;
-  const estimatedYieldTons = def.yieldPerCell * mgmt * climate * (1 - wet) * overripe;
+  // Rotation et semis direct se décident avant la mise en terre : ce sont des
+  // coefficients sur le potentiel de la case, indépendants de la conduite de
+  // culture, d'où leur place à côté du climat plutôt que dans `managementFactor`.
+  const rotation = rotationFactor(input.rotation ?? NO_ROTATION, input.crop);
+  const tillage = input.directSeeded ? 1 - DIRECT_SEED_YIELD_MALUS : 1;
+  const estimatedYieldTons =
+    def.yieldPerCell * mgmt * climate * (1 - wet) * overripe * rotation * tillage;
   return {
     ready,
     progress,
@@ -220,31 +238,114 @@ export function applyMachineWear(opts: {
   cells: number;
   inShed?: boolean;
   etaBonus?: boolean;
+  /** Multiplicateur entretien (pas graissé, sale) */
+  careMult?: number;
 }): { condition: number; wearApplied: number } {
   let mult = 1;
   if (opts.inShed) mult *= 0.85;
   if (opts.etaBonus) mult *= 0.9;
+  const care = Math.max(1, opts.careMult ?? 1);
+  mult *= care;
   const wearApplied =
     Math.round(opts.wearPerCell * Math.max(0, opts.cells) * mult * 100) / 100;
   const condition = Math.max(0, Math.round((opts.condition - wearApplied) * 100) / 100);
   return { condition, wearApplied };
 }
 
-export function repairMachineCost(opts: {
-  condition: number;
-  repairCostPerPoint: number;
-  targetCondition?: number;
-  workshopDiscount?: number;
-}): { points: number; cost: number; nextCondition: number } {
-  const target = Math.min(100, opts.targetCondition ?? 100);
-  const points = Math.max(0, Math.round((target - opts.condition) * 100) / 100);
-  const discount = Math.min(0.4, Math.max(0, opts.workshopDiscount ?? 0));
-  const cost = Math.round(points * opts.repairCostPerPoint * (1 - discount) * 100) / 100;
-  return { points, cost, nextCondition: target };
-}
+export { repairQuote as repairMachineCost, repairHalfwayTarget } from "@farmsim/shared";
 
 export function machineCanWork(condition: number, minCondition: number): boolean {
   return condition >= minCondition;
+}
+
+export type MachineCareState = {
+  condition: number;
+  greased: boolean;
+  dirt: number;
+  greaseSkipStreak: number;
+  breakdown: BreakdownKind | null;
+};
+
+export function careWearMultiplier(opts: { greased: boolean; dirt: number }): number {
+  let m = 1;
+  if (!opts.greased) m *= 1.5;
+  if (opts.dirt >= DIRT_DIRTY_THRESHOLD) m *= 2;
+  return m;
+}
+
+export function dirtFromWork(work: string, cells: number): number {
+  const per = DIRT_PER_CELL[work] ?? 0.8;
+  return Math.round(per * Math.max(0, cells) * 100) / 100;
+}
+
+export function pickBreakdownKind(condition: number): BreakdownKind {
+  if (condition < 20) return "ENGINE";
+  if (condition < 45) return "HYDRAULIC";
+  return "BELT";
+}
+
+export function breakdownChance(opts: {
+  condition: number;
+  greased: boolean;
+  dirt: number;
+}): number {
+  if (opts.condition >= 50) return 0;
+  if (opts.greased && opts.dirt < DIRT_DIRTY_THRESHOLD) return 0;
+  let p = ((50 - opts.condition) / 50) * 0.35;
+  if (!opts.greased) p += 0.15;
+  if (opts.dirt >= 50) p += 0.15;
+  return Math.round(Math.min(0.55, Math.max(0, p)) * 1000) / 1000;
+}
+
+export function machineWorkBlock(
+  state: MachineCareState,
+  minCondition: number,
+): { code: "BROKEN" | "NEED_GREASE" | "NEED_REPAIR"; message: string } | null {
+  if (state.breakdown) {
+    return { code: "BROKEN", message: "En panne — réparez à l'atelier." };
+  }
+  if (!machineCanWork(state.condition, minCondition)) {
+    return { code: "NEED_REPAIR", message: "Condition trop basse — réparez." };
+  }
+  if (!state.greased && state.greaseSkipStreak >= 1) {
+    return { code: "NEED_GREASE", message: "Graissez avant de repartir." };
+  }
+  return null;
+}
+
+export function applyJobCare(
+  state: MachineCareState,
+  opts: { work: string; cells: number; rng?: () => number },
+): { next: MachineCareState; broke: boolean } {
+  const rng = opts.rng ?? Math.random;
+  const dirt = Math.min(100, Math.round((state.dirt + dirtFromWork(opts.work, opts.cells)) * 100) / 100);
+  const streak = state.greased ? 0 : state.greaseSkipStreak + 1;
+  const chance = breakdownChance({
+    condition: state.condition,
+    greased: state.greased,
+    dirt: state.dirt,
+  });
+  const broke = rng() < chance;
+  const breakdown = broke ? pickBreakdownKind(state.condition) : state.breakdown;
+  return {
+    broke,
+    next: {
+      condition: state.condition,
+      greased: false,
+      dirt,
+      greaseSkipStreak: streak,
+      breakdown,
+    },
+  };
+}
+
+export function repairTargetCondition(
+  kind: BreakdownKind,
+  condition: number,
+): number {
+  const spec = REPAIR_RESTORE[kind];
+  if (spec.conditionDelta === "full") return 100;
+  return Math.min(100, Math.round((condition + spec.conditionDelta) * 100) / 100);
 }
 
 /** Construit le résumé de retour après absence */

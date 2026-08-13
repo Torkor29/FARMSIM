@@ -4,6 +4,8 @@ import {
   DIFFICULTY_LABELS,
   SEASON_LABELS,
   WEATHER_LABELS,
+  defaultAppearance,
+  type CharacterAppearance,
   type ClassProfile,
   type Difficulty,
   type Season,
@@ -11,6 +13,7 @@ import {
   type WeatherState,
 } from "@farmsim/shared";
 import { GlobeView, type GlobeContinent } from "./GlobeView";
+import { CharacterCreator } from "./CharacterCreator";
 import { LowPolyCharacter } from "./LowPolyCharacter";
 
 export type WorldContinent = GlobeContinent & {
@@ -72,14 +75,24 @@ type Props = {
   detail: ContinentDetail | null;
   detailLoading: boolean;
   onLoadContinent: (code: string) => void;
-  onConfirm: (opts: { specialization: Specialization; parcelId: string }) => void;
+  onConfirm: (opts: {
+    specialization: Specialization;
+    parcelId: string;
+    appearance: CharacterAppearance;
+  }) => void;
   busy: boolean;
   err: string | null;
 };
 
-type Step = 0 | 1 | 2 | 3;
+type Step = 0 | 1 | 2 | 3 | 4;
 
-const STEP_TITLES = ["Votre métier", "Votre continent", "Votre terre", "Confirmation"];
+const STEP_TITLES = [
+  "Votre métier",
+  "Votre personnage",
+  "Votre continent",
+  "Votre terre",
+  "Confirmation",
+];
 
 function fertilityLabel(f: number): string {
   if (f >= 0.85) return "Exceptionnelle";
@@ -101,6 +114,9 @@ export function Onboarding({
 }: Props) {
   const [step, setStep] = useState<Step>(0);
   const [spe, setSpe] = useState<Specialization | null>(null);
+  const [appearance, setAppearance] = useState<CharacterAppearance>(() =>
+    defaultAppearance("CEREALIER"),
+  );
   const [continentCode, setContinentCode] = useState<string | null>(null);
   const [regionCode, setRegionCode] = useState<string | null>(null);
   const [parcelId, setParcelId] = useState<string | null>(null);
@@ -138,7 +154,7 @@ export function Onboarding({
         <div>
           <h1 className="onb-title">Installation de votre exploitation</h1>
           <p className="onb-sub">
-            Bienvenue {playerName} — quatre étapes et vous êtes aux commandes.
+            Bienvenue {playerName} — cinq étapes et vous êtes aux commandes.
           </p>
         </div>
       </header>
@@ -160,8 +176,9 @@ export function Onboarding({
       {step === 0 && (
         <section className="onb-body">
           <p className="onb-lead">
-            Votre métier détermine vos machines de départ, vos revenus et les régions où
-            vous serez le plus à l'aise. Il ne pourra plus être changé.
+            Deux métiers. Céréalier ou éleveur. Pendant que vos cultures poussent (ou que le
+            troupeau mange), votre fer idle peut aller bosser chez le voisin — ce n’est pas un
+            troisième métier, c’est de l’appoint.
           </p>
           <div className="class-grid">
             {(Object.keys(CLASS_PROFILES) as ClassProfile["code"][]).map((code) => {
@@ -172,7 +189,10 @@ export function Onboarding({
                   key={code}
                   type="button"
                   className={`class-card ${active ? "on" : ""}`}
-                  onClick={() => setSpe(code)}
+                  onClick={() => {
+                    setSpe(code);
+                    setAppearance(defaultAppearance(code));
+                  }}
                   aria-pressed={active}
                 >
                   <LowPolyCharacter code={code} active={active} height={185} />
@@ -211,7 +231,25 @@ export function Onboarding({
         </section>
       )}
 
-      {step === 1 && (
+      {step === 1 && spe && (
+        <section className="onb-body">
+          <p className="onb-lead">
+            C’est vous qu’on verra au champ — y compris chez le voisin, si vous prenez un
+            chantier. Chapeau, peau, visage, vêtements : tout est en 3D, pièce par pièce.
+          </p>
+          <CharacterCreator spec={spe} appearance={appearance} onChange={setAppearance} />
+          <div className="onb-nav">
+            <button type="button" className="btn-ghost" onClick={() => goTo(0)}>
+              Retour
+            </button>
+            <button type="button" className="btn-primary big" onClick={() => goTo(2)}>
+              Continuer
+            </button>
+          </div>
+        </section>
+      )}
+
+      {step === 2 && (
         <section className="onb-body">
           <p className="onb-lead">
             Faites tourner le globe et choisissez votre continent. Les saisons de
@@ -283,14 +321,14 @@ export function Onboarding({
             <p className="continent-desc">{continent.description}</p>
           )}
           <div className="onb-nav">
-            <button type="button" className="btn-ghost" onClick={() => goTo(0)}>
+            <button type="button" className="btn-ghost" onClick={() => goTo(1)}>
               Retour
             </button>
             <button
               type="button"
               className="btn-primary big"
               disabled={!continentCode}
-              onClick={() => goTo(2)}
+              onClick={() => goTo(3)}
             >
               Voir les régions
             </button>
@@ -298,7 +336,7 @@ export function Onboarding({
         </section>
       )}
 
-      {step === 2 && (
+      {step === 3 && (
         <section className="onb-body">
           <p className="onb-lead">
             Un continent se divise en <strong>régions</strong>, et chaque région est
@@ -450,14 +488,14 @@ export function Onboarding({
             </>
           )}
           <div className="onb-nav">
-            <button type="button" className="btn-ghost" onClick={() => goTo(1)}>
+            <button type="button" className="btn-ghost" onClick={() => goTo(2)}>
               Changer de continent
             </button>
             <button
               type="button"
               className="btn-primary big"
               disabled={!parcelId}
-              onClick={() => goTo(3)}
+              onClick={() => goTo(4)}
             >
               Choisir cette parcelle
             </button>
@@ -465,11 +503,11 @@ export function Onboarding({
         </section>
       )}
 
-      {step === 3 && spe && parcel && region && detail && (
+      {step === 4 && spe && parcel && region && detail && (
         <section className="onb-body">
           <div className="recap">
             <div className="recap-char">
-              <LowPolyCharacter code={spe} active height={220} />
+              <LowPolyCharacter code={spe} appearance={appearance} active height={220} />
             </div>
             <div className="recap-info">
               <h2>Tout est prêt</h2>
@@ -521,14 +559,16 @@ export function Onboarding({
             </div>
           </div>
           <div className="onb-nav">
-            <button type="button" className="btn-ghost" onClick={() => goTo(2)}>
+            <button type="button" className="btn-ghost" onClick={() => goTo(3)}>
               Retour
             </button>
             <button
               type="button"
               className="btn-primary big"
               disabled={busy}
-              onClick={() => onConfirm({ specialization: spe, parcelId: parcel.id })}
+              onClick={() =>
+                onConfirm({ specialization: spe, parcelId: parcel.id, appearance })
+              }
             >
               {busy ? "Installation…" : "M'installer ici"}
             </button>

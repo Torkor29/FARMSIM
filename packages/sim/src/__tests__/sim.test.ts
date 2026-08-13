@@ -1,4 +1,4 @@
-import { DRYING } from "@farmsim/shared";
+import { DRYING, MACHINE_DEFS, contractorQuote, missionPayout, urgentContractorQuote, CROP_DEFS, MISSION_OPEN_MAX, clampMissionCells, repairHalfwayTarget, laborEscrow, parseAppearance, defaultAppearance, SKIN_TONES, HATS } from "@farmsim/shared";
 import {
   simulateCell,
   tickMarket,
@@ -93,12 +93,10 @@ describe("machines", () => {
     expect(r.wearApplied).toBe(10);
   });
 
-  it("réduit l’usure en hangar et bonus ETA", () => {
+  it("réduit l’usure en hangar", () => {
     const base = applyMachineWear({ condition: 100, wearPerCell: 1, cells: 10 });
     const shed = applyMachineWear({ condition: 100, wearPerCell: 1, cells: 10, inShed: true });
-    const eta = applyMachineWear({ condition: 100, wearPerCell: 1, cells: 10, etaBonus: true });
     expect(shed.wearApplied).toBeLessThan(base.wearApplied);
-    expect(eta.wearApplied).toBeLessThan(base.wearApplied);
   });
 
   it("calcule le coût de réparation avec atelier", () => {
@@ -115,6 +113,90 @@ describe("machines", () => {
   it("refuse le travail sous le seuil", () => {
     expect(machineCanWork(11, 12)).toBe(false);
     expect(machineCanWork(12, 12)).toBe(true);
+  });
+
+  it("rafistole à mi-chemin du neuf", () => {
+    expect(repairHalfwayTarget(0)).toBe(50);
+    expect(repairHalfwayTarget(40)).toBe(70);
+    const half = repairMachineCost({
+      condition: 0,
+      repairCostPerPoint: 8,
+      targetCondition: repairHalfwayTarget(0),
+    });
+    const full = repairMachineCost({ condition: 0, repairCostPerPoint: 8 });
+    expect(half.nextCondition).toBe(50);
+    expect(half.cost).toBe(full.cost / 2);
+  });
+
+  it("une moissonneuse T1 survit à une parcelle 12×12", () => {
+    const def = MACHINE_DEFS.HARVESTER;
+    const r = applyMachineWear({
+      condition: 100,
+      wearPerCell: def.wearPerCell,
+      cells: 12 * 12,
+    });
+    expect(r.condition).toBeGreaterThan(def.minCondition);
+    expect(def.repairCostPerPoint * 100).toBeLessThanOrEqual(def.cost * 0.25);
+  });
+
+  it("sous-traiter une parcelle entière coûte moins que l’engin", () => {
+    expect(contractorQuote("HARVEST", 144)).toBeLessThan(MACHINE_DEFS.HARVESTER.cost);
+    expect(contractorQuote("PLANT", 144)).toBeLessThan(MACHINE_DEFS.TRACTOR.cost);
+  });
+});
+
+describe("missions d’appoint", () => {
+  it("paie 55 % du devis client, jamais 100 %", () => {
+    const client = contractorQuote("HARVEST", 16);
+    const npc = missionPayout("HARVEST", 16, "NPC");
+    const p2p = missionPayout("HARVEST", 16, "P2P");
+    expect(npc).toBe(Math.round(client * 0.55));
+    expect(p2p).toBe(Math.round(client * 0.85));
+    expect(npc).toBeLessThan(p2p);
+    expect(p2p).toBeLessThan(client);
+  });
+
+  it("plafonne un chantier à 24 cases", () => {
+    expect(clampMissionCells(144)).toBe(24);
+    expect(clampMissionCells(3)).toBe(8);
+  });
+
+  it("facture l’urgent PNJ 15 % de plus que le barème", () => {
+    expect(urgentContractorQuote("HARVEST", 24)).toBe(
+      Math.round(contractorQuote("HARVEST", 24) * 1.15),
+    );
+  });
+
+  it("10 min de tableau (3 moissons) rapportent moins que 24 cases de blé", () => {
+    const wheat = CROP_DEFS.WHEAT;
+    const grain = 24 * wheat.yieldPerCell * 220;
+    const seeds = 24 * wheat.seedCostPerCell;
+    const cultureNet = grain - seeds;
+    const board = MISSION_OPEN_MAX * missionPayout("HARVEST", 24, "NPC");
+    expect(board).toBeLessThan(cultureNet);
+  });
+
+  it("escrowe devis + extras, paie 85 % du devis seulement", () => {
+    const money = laborEscrow("HARVEST", 16);
+    expect(money.payout).toBe(missionPayout("HARVEST", 16, "P2P"));
+    expect(money.escrow).toBe(money.quote + money.extras);
+    expect(money.payout).toBeLessThan(money.quote);
+  });
+});
+
+describe("apparence", () => {
+  it("borne les indices hors catalogue", () => {
+    const a = parseAppearance({ skin: 99, hat: -1, clothes: 2 });
+    expect(a.skin).toBeGreaterThanOrEqual(0);
+    expect(a.skin).toBeLessThan(SKIN_TONES.length);
+    expect(a.hat).toBeGreaterThanOrEqual(0);
+    expect(a.hat).toBeLessThan(HATS.length);
+    expect(a.clothes).toBe(2);
+  });
+
+  it("donne un céréalier chapeau de paille par défaut", () => {
+    expect(HATS[defaultAppearance("CEREALIER").hat].id).toBe("straw");
+    expect(HATS[defaultAppearance("ELEVEUR").hat].id).toBe("cowboy");
   });
 });
 

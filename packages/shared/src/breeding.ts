@@ -84,6 +84,8 @@ export function gestationProgress(input: {
   gestatingSince: number | null;
   now: number;
   cycleMs: number;
+  /** Part de dégradation évitée par le froid, 0 si aucune chambre */
+  spoilageSlow?: number;
 }): number {
   if (input.gestatingSince === null) return 0;
   const total = BREEDING.gestationCycles[input.kind] * input.cycleMs;
@@ -132,8 +134,10 @@ export function afterSpoilage(input: {
   qty: number;
   elapsedMs: number;
   cycleMs: number;
+  /** Part de dégradation évitée par le froid, 0 sans chambre froide */
+  spoilageSlow?: number;
 }): number {
-  const rate = SPOILAGE_PER_CYCLE[input.good] ?? 0;
+  const rate = chilledSpoilageRate(SPOILAGE_PER_CYCLE[input.good] ?? 0, input.spoilageSlow);
   if (rate <= 0 || input.qty <= 0 || input.elapsedMs <= 0) return Math.max(0, input.qty);
   const cycles = input.elapsedMs / Math.max(1, input.cycleMs);
   const kept = Math.pow(1 - rate, cycles);
@@ -155,4 +159,18 @@ export function spoilageWarning(good: TradeGood, qty: number): string | null {
   const rate = SPOILAGE_PER_CYCLE[good];
   if (!rate || qty <= 0) return null;
   return `Se dégrade de ${Math.round(rate * 100)} % par cycle — vendez sans tarder`;
+}
+
+/**
+ * Dégradation restante une fois le froid pris en compte.
+ *
+ * Une chambre froide n'arrête pas la péremption, elle la ralentit : le taux
+ * par cycle est réduit d'autant, sans jamais tomber à zéro — un stock de lait
+ * ne se conserve pas indéfiniment, même au froid.
+ */
+export const SPOILAGE_SLOW_CAP = 0.75;
+
+export function chilledSpoilageRate(rate: number, spoilageSlow = 0): number {
+  const slow = Math.max(0, Math.min(SPOILAGE_SLOW_CAP, spoilageSlow));
+  return rate * (1 - slow);
 }

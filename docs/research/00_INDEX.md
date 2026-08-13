@@ -73,7 +73,14 @@ Chaque valeur chiffrée dans cette documentation est classée :
 | — | [42_TRADE.md](./42_TRADE.md) | Vendre : négociant, cours mondial, criée entre joueurs |
 | — | [43_LIVESTOCK_PRODUCE.md](./43_LIVESTOCK_PRODUCE.md) | Traire, abattre, nourrir ; courette à porcs ; formes des bâtiments |
 | — | [44_BREEDING_SPOILAGE.md](./44_BREEDING_SPOILAGE.md) | Reproduction du cheptel et péremption des denrées |
-| — | [45_MACHINES_3D.md](./45_MACHINES_3D.md) | Parc matériel 3D : engins riggés, animés par la distance, atelier |
+| — | [45_ROTATION.md](./45_ROTATION.md) | Rotation des cultures : le blé sur blé se paie |
+| — | [46_MOBILE_SHELL.md](./46_MOBILE_SHELL.md) | Coque mobile : tiroirs du bas, gestes sur la grille |
+| — | [47_FUTURES.md](./47_FUTURES.md) | Contrats à terme : engager une récolte à venir |
+| — | [48_PLAN_MECANIQUES.md](./48_PLAN_MECANIQUES.md) | Plan d'exécution : paille, ensilage, saisons, CUMA |
+| — | [49_TRIANGLE_METIERS.md](./49_TRIANGLE_METIERS.md) | Triangle des métiers : boucles éleveur / céréalier / ETA en osmose |
+| — | [50_MACHINE_CARE.md](./50_MACHINE_CARE.md) | Atelier : graisser, glisser, réparer (tous) |
+| — | [51_ETA_MISSIONS.md](./51_ETA_MISSIONS.md) | L’ETA n’est pas un métier — missions d’appoint |
+| — | [52_MACHINES_3D.md](./52_MACHINES_3D.md) | Parc matériel 3D : engins détaillés, champ vivant, projections |
 
 ---
 
@@ -84,3 +91,4 @@ Chaque valeur chiffrée dans cette documentation est classée :
 3. `16_MVP_ROADMAP.md`
 4. Documents thématiques selon besoin
 5. `12_LEGAL_REGULATORY.md` avant toute décision cash-out / marketplace argent réel
+6. `51_ETA_MISSIONS.md` avant `49_TRIANGLE_METIERS.md` : l’ETA est un appoint, pas un troisième métier

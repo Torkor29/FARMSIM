@@ -8,13 +8,27 @@ export * from "./ripeness.js";
 export * from "./soil.js";
 export * from "./trade.js";
 export * from "./goods.js";
+export * from "./storage.js";
 export * from "./breeding.js";
+export * from "./rotation.js";
+export * from "./futures.js";
+export * from "./machine-care.js";
+export * from "./art-anchor.js";
+export * from "./play-guide.js";
+export * from "./appearance.js";
+
+/** Monnaie du jeu : le terron (TRN). Le champ interne reste `crd`. */
+export const CURRENCY_CODE = "TRN";
+export const CURRENCY_NAME = "terron";
 
 import type { TradeGood } from "./goods.js";
 
-export type Specialization = "CEREALIER" | "ELEVEUR" | "ETA";
+export type Specialization = "CEREALIER" | "ELEVEUR";
 
-export type CropCode = "WHEAT" | "MAIZE";
+/** Les deux métiers jouables. Les travaux à façon sont un appoint, pas un 3ᵉ métier. */
+export const PLAYABLE_SPECIALIZATIONS: Specialization[] = ["CEREALIER", "ELEVEUR"];
+
+export type CropCode = "WHEAT" | "MAIZE" | "PEA";
 
 export type FieldStage =
   | "EMPTY"
@@ -55,21 +69,20 @@ export type BuildingType =
   | "WORKSHOP"
   | "FARMHOUSE"
   | "PADDOCK"
-  | "PIG_YARD";
+  | "PIG_YARD"
+  | "COLD_ROOM";
 
 export type CellKind = "EMPTY" | "CROP" | "BUILDING" | "VEHICLE";
 
 export const SPECIALIZATION_LABELS: Record<Specialization, string> = {
   CEREALIER: "Céréalier",
   ELEVEUR: "Éleveur",
-  ETA: "ETA — Entreprise de Travaux Agricoles",
 };
 
 /** Version courte, pour les barres d'état où la place manque. */
 export const SPECIALIZATION_SHORT: Record<Specialization, string> = {
   CEREALIER: "Céréalier",
   ELEVEUR: "Éleveur",
-  ETA: "ETA",
 };
 
 /** Illustration du matériel, pour le catalogue et le garage. */
@@ -87,7 +100,6 @@ export const SPECIALIZATION_BONUSES: Record<
 > = {
   CEREALIER: { domain: "cropYield", bonus: 0.02 },
   ELEVEUR: { domain: "feedConversion", bonus: 0.02 },
-  ETA: { domain: "workSpeed", bonus: 0.02 },
 };
 
 export const CROP_DEFS: Record<
@@ -115,6 +127,16 @@ export const CROP_DEFS: Record<
     growMs: 3.5 * 60 * 1000,
     seedCostPerCell: 18,
   },
+  // Tête de rotation : le pois rapporte moins à la tonne, mais il laisse
+  // derrière lui un sol azoté dont profite la culture suivante. C'est ce qui
+  // en fait une décision, et non un choix par défaut.
+  PEA: {
+    code: "PEA",
+    name: "Pois",
+    yieldPerCell: 0.26,
+    growMs: 2.5 * 60 * 1000,
+    seedCostPerCell: 12,
+  },
 };
 
 /**
@@ -132,6 +154,8 @@ export const MARKET_BOUNDS: Record<
   MILK: { initial: 42, min: 30, max: 62, depth: 800 },
   MEAT: { initial: 1450, min: 900, max: 2300, depth: 300 },
   HAY: { initial: 95, min: 60, max: 165, depth: 1500 },
+  // Marché plus étroit que le blé : un gros lot y pèse davantage.
+  PEA: { initial: 285, min: 170, max: 520, depth: 900 },
 };
 
 /**
@@ -169,6 +193,14 @@ export type BuildingDef = {
   xpBonus?: number;
   /** Soft dryer — bonus réduction humidité au séchage `[GD]` */
   softDryer?: boolean;
+  /**
+   * Part de la dégradation évitée sur les denrées périssables `[GD]`.
+   *
+   * Le lait perdait douze pour cent par cycle sans qu'aucun bâtiment n'y
+   * puisse rien : produire beaucoup n'avait donc pas de sens si l'on ne
+   * vendait pas dans la foulée. Le froid rend l'élevage tenable.
+   */
+  spoilageSlow?: number;
 };
 
 /**
@@ -176,7 +208,7 @@ export type BuildingDef = {
  * @see docs/research/27_MOISTURE_DRYING.md
  */
 export const DRYING = {
-  /** CRD par tonne et par passe de séchage */
+  /** TRN par tonne et par passe de séchage */
   costPerTonPerPass: 12,
   /** Réduction d’humidité (fraction) par passe */
   moistureReductionPerPass: 0.06,
@@ -197,7 +229,7 @@ export const BUILDING_DEFS: Record<BuildingType, BuildingDef> = {
     w: 2,
     h: 2,
     cost: 1200,
-    description: "Stocke céréales ; +capacité ; séchage soft.",
+    description: "Sans lui, le grain se vend au champ. Avec lui : stockage, séchage.",
     storageGrain: 40,
     yieldBonus: 0.01,
     softDryer: true,
@@ -239,6 +271,15 @@ export const BUILDING_DEFS: Record<BuildingType, BuildingDef> = {
     cost: 2200,
     description: "Bâtiment élevage porcin (slots).",
     pigSlots: 20,
+  },
+  COLD_ROOM: {
+    type: "COLD_ROOM",
+    name: "Chambre froide",
+    w: 2,
+    h: 2,
+    cost: 2600,
+    description: "Ralentit la dégradation du lait et de la viande.",
+    spoilageSlow: 0.4,
   },
   WORKSHOP: {
     type: "WORKSHOP",
@@ -315,7 +356,7 @@ export function buildingLevelDef(level: number): BuildingLevelDef {
   return BUILDING_LEVELS[clamped - 1];
 }
 
-/** Coût en CRD pour passer un bâtiment au niveau suivant. */
+/** Coût en TRN pour passer un bâtiment au niveau suivant. */
 export function buildingUpgradeCost(type: BuildingType, currentLevel: number): number | null {
   if (currentLevel >= MAX_BUILDING_LEVEL) return null;
   const next = buildingLevelDef(currentLevel + 1);
@@ -337,6 +378,7 @@ export function buildingStatsAtLevel(type: BuildingType, level: number) {
     repairDiscount: scale(def.repairDiscount),
     xpBonus: scale(def.xpBonus),
     softDryer: def.softDryer,
+    spoilageSlow: scale(def.spoilageSlow),
   };
 }
 
@@ -351,6 +393,7 @@ export const BUILDING_ART: Record<BuildingType, string> = {
   FARMHOUSE: "/assets/buildings/farmhouse.webp",
   PADDOCK: "/assets/buildings/paddock.webp",
   PIG_YARD: "/assets/buildings/pig-yard.webp",
+  COLD_ROOM: "/assets/buildings/cold-room.webp",
 };
 
 export const DEFAULT_GRID = { w: 12, h: 12 } as const;
@@ -367,7 +410,7 @@ export type MachineDef = {
   tier: number;
   /** Points de condition perdus par case travaillée */
   wearPerCell: number;
-  /** Coût CRD pour +1 point de condition */
+  /** Coût TRN pour +1 point de condition */
   repairCostPerPoint: number;
   minCondition: number;
   description: string;
@@ -380,11 +423,13 @@ export const MACHINE_DEFS: Record<MachineType, MachineDef> = {
   TRACTOR: {
     type: "TRACTOR",
     name: "Tracteur T1",
-    cost: 3200,
+    cost: 2800,
     tier: 1,
-    wearPerCell: 0.7,
-    repairCostPerPoint: 8,
-    minCondition: 12,
+    // ~2,5 tours de semis sur 12×12 avant le seuil. Avant : 0,7 × 144 = mort en un passage.
+    wearPerCell: 0.25,
+    // Révision complète ≈ 20 % de l'achat (560 TRN).
+    repairCostPerPoint: 6,
+    minCondition: 15,
     description: "Semis et travaux de base.",
     works: ["PLANT", "PLOW", "FERTILIZE"],
     isoColor: "green",
@@ -392,11 +437,12 @@ export const MACHINE_DEFS: Record<MachineType, MachineDef> = {
   HARVESTER: {
     type: "HARVESTER",
     name: "Moissonneuse T1",
-    cost: 4800,
+    cost: 4000,
     tier: 1,
-    wearPerCell: 1.1,
-    repairCostPerPoint: 12,
-    minCondition: 12,
+    // Une parcelle 12×12 : −46 pts, il en reste 54. Deuxième moisson puis rafistolage.
+    wearPerCell: 0.32,
+    repairCostPerPoint: 8,
+    minCondition: 15,
     description: "Récolte céréales.",
     works: ["HARVEST"],
     isoColor: "red-gold",
@@ -404,11 +450,11 @@ export const MACHINE_DEFS: Record<MachineType, MachineDef> = {
   SPREADER: {
     type: "SPREADER",
     name: "Épandeur T1",
-    cost: 1800,
+    cost: 1500,
     tier: 1,
-    wearPerCell: 0.45,
-    repairCostPerPoint: 6,
-    minCondition: 10,
+    wearPerCell: 0.2,
+    repairCostPerPoint: 3,
+    minCondition: 15,
     description: "Fertilisation plus efficace (−usure vs tracteur).",
     works: ["FERTILIZE"],
     isoColor: "amber",
@@ -416,18 +462,36 @@ export const MACHINE_DEFS: Record<MachineType, MachineDef> = {
   DISC_HARROW: {
     type: "DISC_HARROW",
     name: "Déchaumeur à disques",
-    cost: 2100,
+    cost: 1600,
     tier: 1,
-    // Travail superficiel à grand débit : il s'use bien moins qu'une charrue.
-    wearPerCell: 0.3,
-    repairCostPerPoint: 5,
-    minCondition: 10,
+    wearPerCell: 0.18,
+    repairCostPerPoint: 4,
+    minCondition: 15,
     description:
       "Incorpore les résidus après moisson : bonus de rendement, sans remettre le sol à zéro.",
     works: ["STUBBLE"],
     isoColor: "amber",
   },
 };
+
+/** Moitié du chemin vers le neuf : 0 % → 50 %, 40 % → 70 %. */
+export function repairHalfwayTarget(condition: number): number {
+  const c = Math.max(0, Math.min(100, condition));
+  return Math.round((c + (100 - c) / 2) * 100) / 100;
+}
+
+export function repairQuote(opts: {
+  condition: number;
+  repairCostPerPoint: number;
+  targetCondition?: number;
+  workshopDiscount?: number;
+}): { points: number; cost: number; nextCondition: number } {
+  const target = Math.min(100, opts.targetCondition ?? 100);
+  const points = Math.max(0, Math.round((target - opts.condition) * 100) / 100);
+  const discount = Math.min(0.4, Math.max(0, opts.workshopDiscount ?? 0));
+  const cost = Math.round(points * opts.repairCostPerPoint * (1 - discount) * 100) / 100;
+  return { points, cost, nextCondition: target };
+}
 
 /* ------------------------------------------------------------------ */
 /* Revente de matériel et de bâtiments                                 */
@@ -466,7 +530,7 @@ export function buildingResaleValue(type: BuildingType, level: number): number {
 }
 
 /* ------------------------------------------------------------------ */
-/* Prestation ETA — faire travailler ses terres par un tiers           */
+/* Deux prix : client (faire venir) vs prestataire (mission)           */
 /* ------------------------------------------------------------------ */
 
 export type FarmWork = "PLANT" | "FERTILIZE" | "HARVEST" | "PLOW" | "STUBBLE";
@@ -480,30 +544,35 @@ export const WORK_LABELS: Record<FarmWork, string> = {
 };
 
 /**
- * Une ETA — Entreprise de Travaux Agricoles — vient travailler vos terres
- * avec SES machines. C'est la porte de sortie quand on n'a ni moissonneuse
- * ni les moyens d'en acheter une : on paie le service à la case, plus cher
- * que de le faire soi-même, mais sans immobiliser 4 800 CRD.
- * `[GD]`
+ * Prix **client** : ce qu'on paie pour ne pas avoir la machine.
+ * Ce n'est pas un salaire. `[GD]`
  */
 export const CONTRACTOR_RATE_PER_CELL: Record<FarmWork, number> = {
-  PLANT: 22,
-  FERTILIZE: 16,
-  HARVEST: 38,
-  PLOW: 14,
-  STUBBLE: 9,
+  PLANT: 8,
+  FERTILIZE: 6,
+  HARVEST: 12,
+  PLOW: 5,
+  STUBBLE: 4,
 };
 
 /** Frais de déplacement, quel que soit le nombre de cases `[GD]` */
-export const CONTRACTOR_CALLOUT_FEE = 120;
+export const CONTRACTOR_CALLOUT_FEE = 80;
 
-/** Un ETA travaille moins bien qu'un propriétaire sur ses propres terres `[GD]` */
+/** Filet urgent PNJ : moins bon que soi-même, instantané `[GD]` */
 export const CONTRACTOR_YIELD_MALUS = 0.06;
+
+/** Urgent PNJ (bouton « entreprise ») : le client paie le barème +15 % `[GD]` */
+export const URGENT_NPC_SURCHARGE = 0.15;
 
 /** Coût total d'une prestation, frais de déplacement compris. */
 export function contractorQuote(work: FarmWork, cells: number): number {
   if (cells <= 0) return 0;
   return CONTRACTOR_CALLOUT_FEE + CONTRACTOR_RATE_PER_CELL[work] * cells;
+}
+
+/** Devis urgent PNJ : barème client majoré. L'argent sort de l'économie joueur. */
+export function urgentContractorQuote(work: FarmWork, cells: number): number {
+  return Math.round(contractorQuote(work, cells) * (1 + URGENT_NPC_SURCHARGE));
 }
 
 /**
@@ -513,6 +582,78 @@ export function contractorQuote(work: FarmWork, cells: number): number {
  */
 export function contractorBreakEvenCells(work: FarmWork, machineCost: number): number {
   return Math.ceil(machineCost / CONTRACTOR_RATE_PER_CELL[work]);
+}
+
+export type MissionKind = "NPC" | "P2P";
+
+/** Salaire mission PNJ = 55 % du devis client `[GD]` */
+export const MISSION_NPC_SHARE = 0.55;
+/** Salaire P2P = 85 % du devis client `[GD]` */
+export const MISSION_P2P_SHARE = 0.85;
+
+export const MISSION_CELLS_MIN = 8;
+export const MISSION_CELLS_MAX = 24;
+export const MISSION_CELL_CHOICES = [8, 12, 16, 18, 24] as const;
+/** Au plus 3 chantiers ouverts à la fois (anti-rente) `[GD]` */
+export const MISSION_OPEN_MAX = 3;
+
+export function clampMissionCells(cells: number): number {
+  const n = Math.round(cells);
+  return Math.max(MISSION_CELLS_MIN, Math.min(MISSION_CELLS_MAX, n));
+}
+
+/**
+ * Salaire du prestataire. Jamais égal au prix client tant que le donneur
+ * d'ordre est un PNJ : sinon le tableau devient le jeu.
+ */
+export function missionPayout(
+  work: FarmWork,
+  cells: number,
+  kind: MissionKind = "NPC",
+): number {
+  const n = clampMissionCells(cells);
+  const share = kind === "P2P" ? MISSION_P2P_SHARE : MISSION_NPC_SHARE;
+  return Math.round(contractorQuote(work, n) * share);
+}
+
+export const P2P_YIELD_MALUS = 0.02;
+export const LABOR_ORDER_TTL_MS = 45 * 60 * 1000;
+export const LABOR_OPEN_MAX_PER_CLIENT = 3;
+export const FERTILIZE_COST_PER_CELL = 10;
+
+export function laborExtras(work: FarmWork, cells: number, crop?: CropCode | null): number {
+  const n = Math.max(0, cells);
+  if (work === "PLANT") return (crop ? CROP_DEFS[crop].seedCostPerCell : 15) * n;
+  if (work === "FERTILIZE") return FERTILIZE_COST_PER_CELL * n;
+  if (work === "PLOW") return 12 * n;
+  if (work === "STUBBLE") return 5 * n;
+  return 0;
+}
+
+export function laborEscrow(
+  work: FarmWork,
+  cells: number,
+  crop?: CropCode | null,
+): { quote: number; extras: number; escrow: number; payout: number } {
+  const n = clampMissionCells(cells);
+  const quote = contractorQuote(work, n);
+  const extras = laborExtras(work, n, crop);
+  return {
+    quote,
+    extras,
+    escrow: quote + extras,
+    payout: missionPayout(work, n, "P2P"),
+  };
+}
+
+/** @deprecated préférer missionPayout(work, cells, "NPC") */
+export const NPC_MISSION_SHARE = MISSION_NPC_SHARE;
+/** @deprecated les chantiers varient de 8 à 24 cases */
+export const NPC_MISSION_CELLS = 16;
+
+/** Salaire d'un contrat PNJ pour N cases (défaut 16). */
+export function npcMissionReward(work: FarmWork, cells: number = NPC_MISSION_CELLS): number {
+  return missionPayout(work, cells, "NPC");
 }
 
 /** Mapping contrats NPC → type de travail machine */
@@ -536,8 +677,8 @@ export const CONTRACT_MACHINE: Record<ContractJobType, MachineType> = {
   TRANSPORT: "TRACTOR",
 };
 
-/** Usure forfaitaire contrats NPC (équivalent ~N cases) */
-export const CONTRACT_WEAR_CELLS = 10;
+/** @deprecated l'usure suit les cases du chantier (`contract.cells`) */
+export const CONTRACT_WEAR_CELLS = 16;
 
 export function footprintCells(x: number, y: number, w: number, h: number) {
   const cells: { x: number; y: number }[] = [];
@@ -547,4 +688,16 @@ export function footprintCells(x: number, y: number, w: number, h: number) {
     }
   }
   return cells;
+}
+
+/**
+ * Durée de l'animation d'un travail, en millisecondes.
+ *
+ * L'écran effaçait l'engin au bout de neuf cents millisecondes fixes, quand la
+ * vue 3D le faisait avancer d'une case toutes les 280 ms : un travail sur
+ * neuf cases voyait donc sa machine s'évaporer au tiers du parcours. Les deux
+ * côtés lisent désormais la même formule.
+ */
+export function workAnimationMs(cells: number): number {
+  return Math.max(700, cells * 280);
 }
