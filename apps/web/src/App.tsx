@@ -1,4 +1,4 @@
-import { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
 import {
   SPECIALIZATION_LABELS,
   BUILDING_ART,
@@ -55,6 +55,7 @@ import { TutorialOverlay } from "./TutorialOverlay";
 import { TOKEN_KEY, TUTORIAL_KEY } from "./storage-keys";
 import { useIsMobile } from "./use-media-query";
 import { DevPanel, type DevGrant } from "./DevPanel";
+import { NO_ALERTS, tabBadge, useAwayAlerts, useNotificationState, type FarmAlerts } from "./use-alerts";
 import { ZoneMap } from "./ZoneMap";
 
 const API = "/api";
@@ -816,10 +817,52 @@ export function App() {
     setSheet(null);
   }
 
+  /**
+   * Referme un tiroir d'un glissement vers le bas.
+   *
+   * Viser le voile à côté du tiroir n'est pas un geste naturel au pouce ; le
+   * balayage l'est, et c'est ce que fait toute application mobile.
+   */
+  const sheetDrag = useRef<number | null>(null);
+  const sheetGesture = {
+    onPointerDown: (e: ReactPointerEvent) => {
+      sheetDrag.current = e.clientY;
+    },
+    onPointerUp: (e: ReactPointerEvent) => {
+      const from = sheetDrag.current;
+      sheetDrag.current = null;
+      // Soixante pixels : assez pour ne pas déclencher sur un défilement de
+      // liste, assez peu pour rester sans effort.
+      if (from !== null && e.clientY - from > 60) setSheet(null);
+    },
+  };
+
   function panelClass(base: string, key: SheetKey): string {
     if (!isMobile) return `glass ${base}`;
     return `glass ${base} sheet${sheet === key ? " open" : ""}`;
   }
+
+  /**
+   * Ce qui réclame l'attention, calculé une fois pour la barre d'onglets et
+   * pour les notifications hors écran.
+   */
+  const alerts: FarmAlerts = useMemo(() => {
+    const sims = parcelDetail?.cellSims ?? [];
+    let ready = 0;
+    let urgent = 0;
+    let lost = 0;
+    for (const s of sims) {
+      const stage = s.sim.ripeness?.stage;
+      if (stage === "LOST") lost += 1;
+      else if (stage === "POOR" || stage === "DECLINING") urgent += 1;
+      else if (s.sim.ready) ready += 1;
+    }
+    const herdsAtRisk = barns.filter((b) => b.herd?.atRisk).length;
+    return { ready, urgent, lost, herdsAtRisk };
+  }, [parcelDetail, barns]);
+
+  const notifications = useNotificationState();
+  useAwayAlerts(alerts, notifications.state === "granted");
 
   function flashToast(text: string, isError = false) {
     if (isError) setErr(text);
@@ -1874,7 +1917,7 @@ export function App() {
       )}
 
       {sheet === "PROFILE" && isMobile && (
-        <aside className={panelClass("profile-panel", "PROFILE")}>
+        <aside className={panelClass("profile-panel", "PROFILE")} {...(isMobile ? sheetGesture : {})}>
           <h3>{player.displayName}</h3>
           <dl>
             <div>
@@ -1902,6 +1945,19 @@ export function App() {
             )}
           </dl>
           <div className="profile-actions">
+            {notifications.state === "default" && (
+              <button type="button" className="ghost" onClick={notifications.ask}>
+                M’alerter en cas de problème
+              </button>
+            )}
+            {notifications.state === "granted" && (
+              <span className="muted tiny">Alertes activées</span>
+            )}
+            {notifications.state === "denied" && (
+              <span className="muted tiny">
+                Alertes refusées — à rouvrir dans les réglages du navigateur
+              </span>
+            )}
             <button type="button" className="ghost" onClick={() => setShowTutorial(true)}>
               Revoir le tutoriel
             </button>
@@ -1912,7 +1968,7 @@ export function App() {
         </aside>
       )}
 
-      <aside className={panelClass("geo-panel", "INFO")}>
+      <aside className={panelClass("geo-panel", "INFO")} {...(isMobile ? sheetGesture : {})}>
         <h3>{homeCity || zoneName}</h3>
         <dl>
           <div>
@@ -1985,7 +2041,7 @@ export function App() {
         </div>
       </aside>
 
-      <aside className={panelClass("build-panel", "BUILD")}>
+      <aside className={panelClass("build-panel", "BUILD")} {...(isMobile ? sheetGesture : {})}>
         <h3>Construire</h3>
         <div className="build-list">
           {(Object.keys(BUILDING_DEFS) as BuildingType[]).map((t) => {
@@ -2237,7 +2293,7 @@ export function App() {
       </div>
 
       {(isMobile ? sheet === "GARAGE" : showGarage) && (
-        <aside className={panelClass("garage-panel", "GARAGE")}>
+        <aside className={panelClass("garage-panel", "GARAGE")} {...(isMobile ? sheetGesture : {})}>
           <h3>Garage</h3>
           <p className="muted tiny">
             Semis / ferti → tracteur · Récolte → moissonneuse. Usure à chaque case.
@@ -2360,7 +2416,7 @@ export function App() {
       <TutorialOverlay open={showTutorial} onClose={() => setShowTutorial(false)} />
 
       {(isMobile ? sheet === "OFFICE" : showEta) && (
-        <aside className={panelClass("eta-panel", "OFFICE")}>
+        <aside className={panelClass("eta-panel", "OFFICE")} {...(isMobile ? sheetGesture : {})}>
           <h3>Travaux à façon</h3>
           <p className="muted tiny">
             Vous partez travailler chez d’autres exploitants avec votre matériel.
@@ -2474,6 +2530,11 @@ export function App() {
                 >
                   <span aria-hidden="true">{t.icon}</span>
                   <span className="tab-label">{t.label}</span>
+                  {tabBadge(alerts, t.key) > 0 && (
+                    <span className="tab-badge" aria-label="à traiter">
+                      {tabBadge(alerts, t.key)}
+                    </span>
+                  )}
                 </button>
               );
             })}

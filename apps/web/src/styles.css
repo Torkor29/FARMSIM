@@ -1501,3 +1501,20 @@ button.ghost {
   background: color-mix(in srgb, var(--teal-500, #2e8e7a) 16%, var(--sand));
   font-weight: 800;
 }
+
+/* Pastille d'alerte sur un onglet : le nombre de choses à traiter. */
+.tab { position: relative; }
+.tab-badge {
+  position: absolute;
+  top: 0.05rem;
+  right: 22%;
+  min-width: 1.05rem;
+  padding: 0 0.2rem;
+  border-radius: 999px;
+  background: var(--danger);
+  color: #fff;
+  font-size: 0.62rem;
+  font-weight: 800;
+  line-height: 1.05rem;
+  text-align: center;
+}
