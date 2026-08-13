@@ -266,6 +266,39 @@ function makeVehicleMesh(type: MachineType): THREE.Group {
     );
     pipe.position.set(-0.15, look.h + 0.12, 0);
     g.add(pipe);
+
+    // Rabatteur : quatre lattes autour d'un axe transversal. C'est la pièce
+    // qui tourne, et sans elle la moissonneuse ne moissonne pas — elle glisse.
+    const reel = new THREE.Group();
+    const slatMat = new THREE.MeshLambertMaterial({ color: 0xf0e2c0, flatShading: true });
+    for (let i = 0; i < 4; i++) {
+      const slat = new THREE.Mesh(new THREE.BoxGeometry(0.04, 0.14, 0.52), slatMat);
+      const a = (i / 4) * Math.PI * 2;
+      slat.position.set(Math.cos(a) * 0.11, Math.sin(a) * 0.11, 0);
+      slat.rotation.z = a;
+      reel.add(slat);
+    }
+    reel.position.set(look.w * 0.52, look.h * 0.62, 0);
+    reel.name = "reel";
+    g.add(reel);
+  } else if (type === "DISC_HARROW") {
+    // Un train de disques, et non une cuve : le déchaumeur héritait jusqu'ici
+    // de l'apparence de l'épandeur, faute d'un cas à lui.
+    const frame = new THREE.Mesh(
+      new THREE.BoxGeometry(0.16, 0.07, 0.46),
+      new THREE.MeshLambertMaterial({ color: look.accent, flatShading: true }),
+    );
+    frame.position.set(-look.w * 0.42, look.h * 0.5, 0);
+    g.add(frame);
+    const discMat = new THREE.MeshLambertMaterial({ color: 0xb8bec4, flatShading: true });
+    for (const dz of [-0.16, -0.05, 0.06, 0.17]) {
+      const disc = new THREE.Mesh(new THREE.CylinderGeometry(0.11, 0.11, 0.02, 10), discMat);
+      disc.rotation.x = Math.PI / 2;
+      disc.rotation.z = 0.25;
+      disc.position.set(-look.w * 0.42, 0.1, dz);
+      disc.castShadow = true;
+      g.add(disc);
+    }
   } else {
     // SPREADER — cuve dorée
     const tank = new THREE.Mesh(
@@ -1543,6 +1576,21 @@ export function IsoFarmView({
         workVehicle.position.set(px, 0.2 + Math.sin(t * 8) * 0.02, pz);
         workVehicle.rotation.y = Math.atan2(pb.px - pa.px, pb.pz - pa.pz) || 0;
         workVehicle.visible = u < 1;
+
+        // Le rabatteur tourne tant que la machine avance. Sans lui, la
+        // moissonneuse se contentait de glisser au-dessus du champ.
+        const reel = workVehicle.getObjectByName("reel");
+        if (reel) reel.rotation.z = -t * 9;
+
+        // La coupe se voit : chaque case franchie perd sa culture au passage,
+        // au lieu que le champ entier disparaisse d'un coup au rechargement.
+        if (aw.type === "HARVESTER") {
+          for (let i = 0; i <= i0; i++) {
+            const done = cropMeshes.get(key(aw.cells[i].x, aw.cells[i].y));
+            if (done) done.visible = false;
+          }
+        }
+
         if (u >= 1) {
           // reste visible brièvement puis masqué jusqu’au prochain work
           workVehicle.visible = false;

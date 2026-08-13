@@ -1108,6 +1108,10 @@ export function App() {
 
   function workMachineForTool(t: Tool): MachineType {
     if (t === "HARVEST") return "HARVESTER";
+    // Le déchaumage se fait au déchaumeur à disques, seule machine que le
+    // serveur accepte pour ce travail. L'animation montrait pourtant un
+    // tracteur, alors que l'engin existait en modèle comme en illustration.
+    if (t === "STUBBLE") return "DISC_HARROW";
     if (t === "FERTILIZE") {
       const hasSpreader = player?.farm?.machines.some((m) => m.type === "SPREADER");
       return hasSpreader ? "SPREADER" : "TRACTOR";
