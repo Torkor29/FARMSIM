@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="fr">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Engins 3D — Farming Navigateur</title>
+    <style>
+      html, body { margin: 0; background: #e6f4fb; font-family: Nunito, system-ui, sans-serif; color: #22312c; }
+      h1 { margin: 0; padding: 16px 20px 8px; font-size: 22px; }
+      p { margin: 0 20px 12px; font-size: 14px; color: #4a5c55; }
+      .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; padding: 0 16px 16px; }
+      figure { margin: 0; background: #fdf8ec; border-radius: 16px; overflow: hidden; box-shadow: 0 8px 24px rgba(34,49,44,0.12); }
+      figcaption { padding: 8px 12px 12px; font-weight: 800; font-size: 15px; }
+      canvas { display: block; width: 100%; height: 420px; background: #e6f4fb; }
+    </style>
+  </head>
+  <body>
+    <h1>Volumes du champ (low-poly, vue iso)</h1>
+    <p>Ce sont les meshes du jeu, pas les webp du garage. Roues et outils sont figés à un cran de chantier pour qu’on lise les pièces.</p>
+    <div class="grid">
+      <figure>
+        <canvas id="TRACTOR" width="800" height="640"></canvas>
+        <figcaption>Tracteur — vert, cabine, échappement, grandes roues arrière</figcaption>
+      </figure>
+      <figure>
+        <canvas id="HARVESTER" width="800" height="640"></canvas>
+        <figcaption>Moissonneuse — rouge, cabine or, coupe avant, rabatteur, vis à grain</figcaption>
+      </figure>
+      <figure>
+        <canvas id="SPREADER" width="800" height="640"></canvas>
+        <figcaption>Épandeur — châssis gris, cuve ambre</figcaption>
+      </figure>
+      <figure>
+        <canvas id="DISC_HARROW" width="800" height="640"></canvas>
+        <figcaption>Déchaumeur — petit nez vert, barre de disques acier</figcaption>
+      </figure>
+    </div>
+    <script type="module" src="/src/preview-machines.ts"></script>
+  </body>
+</html>
