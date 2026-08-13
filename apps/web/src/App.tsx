@@ -2764,6 +2764,8 @@ export function App() {
             <button
               className="ghost logout-btn"
               type="button"
+              title="Déconnexion"
+              aria-label="Déconnexion"
               onClick={logout}
             >
               Déconnexion
