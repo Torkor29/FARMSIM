@@ -80,6 +80,7 @@ Chaque valeur chiffrée dans cette documentation est classée :
 | — | [49_TRIANGLE_METIERS.md](./49_TRIANGLE_METIERS.md) | Triangle des métiers : boucles éleveur / céréalier / ETA en osmose |
 | — | [50_MACHINE_CARE.md](./50_MACHINE_CARE.md) | Atelier : graisser, glisser, réparer (tous) |
 | — | [51_ETA_MISSIONS.md](./51_ETA_MISSIONS.md) | L’ETA n’est pas un métier — missions d’appoint |
+| — | [52_BOUCLES_LIEES.md](./52_BOUCLES_LIEES.md) | Plan : cultures, poules/moutons, fumier, transport, halle |
 
 ---
 
