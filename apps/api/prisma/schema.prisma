@@ -81,6 +81,7 @@ model User {
   contracts      NpcContract[]  @relation("Provider")
   sessions       Session[]
   listings       MarketListing[] @relation("Selling")
+  futures        FuturesContract[] @relation("Futures")
   purchases      MarketListing[] @relation("Buying")
 }
 
@@ -258,6 +259,26 @@ model MarketPrice {
   price     Float
   stockTons Float    @default(1000)
   updatedAt DateTime @updatedAt
+}
+
+/// Un engagement à livrer plus tard, à un prix fixé aujourd'hui.
+model FuturesContract {
+  id           String   @id @default(cuid())
+  sellerId     String
+  seller       User     @relation("Futures", fields: [sellerId], references: [id], onDelete: Cascade)
+  commodity    String
+  tons         Float
+  pricePerTon  Float
+  createdAt    DateTime @default(now())
+  dueAt        DateTime
+  /// OPEN, SETTLED ou DEFAULTED
+  status       String   @default("OPEN")
+  settledAt    DateTime?
+  /// Cours au moment du dénouement, pour dire au joueur si son pari valait
+  marketAtDue  Float?
+
+  @@index([sellerId, status])
+  @@index([status, dueAt])
 }
 
 /// Un relevé de cours. Sans mémoire des prix, le joueur ne peut ni juger si

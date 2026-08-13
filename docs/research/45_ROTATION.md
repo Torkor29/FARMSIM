@@ -84,9 +84,6 @@ que la même case vierge, toutes choses égales par ailleurs.
 
 ## Reste à faire
 
-- Deux cultures seulement : une vraie rotation demanderait une légumineuse,
-  qui fixe l'azote et bonifierait la suivante au lieu de simplement la
-  soulager
 - Le précédent n'influence pas le besoin en azote, alors que c'est son effet
   agronomique le mieux établi
 - Aucune notion d'interculture ni de couvert végétal entre deux cycles

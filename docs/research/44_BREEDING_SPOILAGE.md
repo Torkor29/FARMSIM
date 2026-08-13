@@ -131,9 +131,4 @@ pas été parcourue de bout en bout.
 
 ## Reste à faire
 
-- Pas de chambre froide : aucun bâtiment ne ralentit la péremption, alors
-  qu'un silo ralentit déjà le séchage du grain
 - La consanguinité et la génétique n'existent pas : toutes les bêtes se valent
-- Une bête ne vieillit pas individuellement — l'âge est celui du lot, si bien
-  qu'un veau né aujourd'hui compte comme ses aînés à l'abattage
-- Pas de mortalité : un troupeau affamé se stresse sans jamais perdre de bête

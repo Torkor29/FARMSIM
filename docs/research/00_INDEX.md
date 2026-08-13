@@ -75,6 +75,7 @@ Chaque valeur chiffrée dans cette documentation est classée :
 | — | [44_BREEDING_SPOILAGE.md](./44_BREEDING_SPOILAGE.md) | Reproduction du cheptel et péremption des denrées |
 | — | [45_ROTATION.md](./45_ROTATION.md) | Rotation des cultures : le blé sur blé se paie |
 | — | [46_MOBILE_SHELL.md](./46_MOBILE_SHELL.md) | Coque mobile : tiroirs du bas, gestes sur la grille |
+| — | [47_FUTURES.md](./47_FUTURES.md) | Contrats à terme : engager une récolte à venir |
 
 ---
 

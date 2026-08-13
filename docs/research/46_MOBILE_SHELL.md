@@ -183,10 +183,6 @@ somme donnait. Une capture d'un vrai téléphone l'a montré en une seconde.
 
 ## Reste à faire
 
-- La barre d'onglets ne signale pas ce qui réclame l'attention : un troupeau
-  affamé ou des cases mûres devraient s'y voir sans ouvrir le tiroir
-- Les tiroirs ne se ferment pas d'un glissement vers le bas, seulement d'une
-  tape hors d'eux
 - L'installation guidée et le globe n'ont pas été retravaillés pour le
   tactile avec la même attention que la ferme
 - Aucun mode paysage dédié : le téléphone couché reçoit la disposition large,

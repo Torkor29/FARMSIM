@@ -14,6 +14,12 @@ import {
   listingProceeds,
   quoteAllChannels,
   maxSelectableTons,
+  SELLABLE_GOODS,
+  futuresPrice,
+  FUTURES_HORIZONS_H,
+  FUTURES_DISCOUNT,
+  FUTURES_MIN_TONS,
+  FUTURES_PENALTY_RATE,
   type ChannelQuote,
   type CropCode,
   type SaleChannel,
@@ -57,6 +63,19 @@ type Props = {
   onBuyInput: (commodity: TradeGood, tons: number) => void;
   /** Cours passés de la marchandise, du plus ancien au plus récent */
   onLoadHistory: (commodity: TradeGood) => Promise<{ at: string; price: number }[]>;
+  futures: FuturesContract[];
+  onOpenFuture: (commodity: TradeGood, tons: number, horizonH: number) => void;
+  onDeliverFuture: (id: string) => void;
+};
+
+export type FuturesContract = {
+  id: string;
+  commodity: string;
+  tons: number;
+  pricePerTon: number;
+  dueAt: number;
+  status: string;
+  spotNow: number | null;
 };
 
 function moisturePenaltyOf(moisture: number): number {
@@ -82,11 +101,17 @@ export function MarketPanel({
   onDry,
   onBuyInput,
   onLoadHistory,
+  futures,
+  onOpenFuture,
+  onDeliverFuture,
 }: Props) {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [tons, setTons] = useState(0);
   const [ask, setAsk] = useState(0);
-  const [tab, setTab] = useState<"SELL" | "BUY" | "SUPPLY">("SELL");
+  const [tab, setTab] = useState<"SELL" | "BUY" | "SUPPLY" | "FUTURES">("SELL");
+  const [horizon, setHorizon] = useState<number>(3);
+  const [good, setGood] = useState<TradeGood>("WHEAT");
+  const [futTons, setFutTons] = useState(10);
   const [hayTons, setHayTons] = useState(5);
 
   const item = useMemo(
@@ -192,9 +217,30 @@ export function MarketPanel({
           >
             Intrants
           </button>
+          <button
+            type="button"
+            className={`market-tab ${tab === "FUTURES" ? "on" : ""}`}
+            onClick={() => setTab("FUTURES")}
+          >
+            À terme ({futures.filter((f) => f.status === "OPEN").length})
+          </button>
         </div>
 
-        {tab === "SUPPLY" ? (
+        {tab === "FUTURES" ? (
+          <FuturesTab
+            futures={futures}
+            marketPrices={marketPrices}
+            busy={busy}
+            good={good}
+            setGood={setGood}
+            tons={futTons}
+            setTons={setFutTons}
+            horizon={horizon}
+            setHorizon={setHorizon}
+            onOpen={onOpenFuture}
+            onDeliver={onDeliverFuture}
+          />
+        ) : tab === "SUPPLY" ? (
           <SupplyTab
             marketPrices={marketPrices}
             crd={crd}
@@ -468,3 +514,143 @@ function SupplyTab({
   );
 }
 
+
+/**
+ * Engager une récolte à venir.
+ *
+ * Le tableau montre côte à côte le prix garanti et le cours du moment : c'est
+ * la seule façon pour le joueur de juger son pari, pendant puis après.
+ */
+function FuturesTab({
+  futures,
+  marketPrices,
+  busy,
+  good,
+  setGood,
+  tons,
+  setTons,
+  horizon,
+  setHorizon,
+  onOpen,
+  onDeliver,
+}: {
+  futures: FuturesContract[];
+  marketPrices: { commodity: string; price: number }[];
+  busy: boolean;
+  good: TradeGood;
+  setGood: (g: TradeGood) => void;
+  tons: number;
+  setTons: (n: number) => void;
+  horizon: number;
+  setHorizon: (n: number) => void;
+  onOpen: (commodity: TradeGood, tons: number, horizonH: number) => void;
+  onDeliver: (id: string) => void;
+}) {
+  const spot = marketPrices.find((m) => m.commodity === good)?.price ?? 0;
+  const garanti = futuresPrice(spot, horizon as (typeof FUTURES_HORIZONS_H)[number]);
+  const open = futures.filter((f) => f.status === "OPEN");
+  const closed = futures.filter((f) => f.status !== "OPEN").slice(0, 5);
+
+  return (
+    <div className="futures-tab">
+      <p className="muted tiny">
+        Vous engagez une récolte que vous n’avez pas encore, à un prix fixé
+        maintenant. L’acheteur prend le risque à votre place et le facture :
+        le prix garanti est sous le cours du jour. Livrer hors délai coûte{" "}
+        {Math.round(FUTURES_PENALTY_RATE * 100)} % de la valeur du contrat.
+      </p>
+
+      <div className="futures-form">
+        <label className="market-field">
+          <span>Marchandise</span>
+          <select value={good} onChange={(e) => setGood(e.target.value as TradeGood)}>
+            {SELLABLE_GOODS.map((g) => (
+              <option key={g} value={g}>
+                {GOOD_DEFS[g].name}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label className="market-field">
+          <span>Quantité (t)</span>
+          <input
+            type="number"
+            min={FUTURES_MIN_TONS}
+            step={1}
+            value={tons}
+            onChange={(e) => setTons(Number(e.target.value))}
+          />
+        </label>
+        <label className="market-field">
+          <span>Échéance</span>
+          <select value={horizon} onChange={(e) => setHorizon(Number(e.target.value))}>
+            {FUTURES_HORIZONS_H.map((h) => (
+              <option key={h} value={h}>
+                {h} h · −{Math.round(FUTURES_DISCOUNT[h] * 100)} %
+              </option>
+            ))}
+          </select>
+        </label>
+      </div>
+
+      <p className="market-course">
+        Cours du jour <strong>{spot.toFixed(1)}</strong> · garanti{" "}
+        <strong>{garanti.toFixed(1)} CRD/t</strong> · total{" "}
+        <strong>{Math.round(garanti * tons)} CRD</strong>
+      </p>
+      <button
+        type="button"
+        className="accent"
+        disabled={busy || tons < FUTURES_MIN_TONS || spot <= 0}
+        onClick={() => onOpen(good, tons, horizon)}
+      >
+        S’engager
+      </button>
+
+      <h3>Engagements en cours</h3>
+      {!open.length && <p className="muted tiny">Aucun engagement.</p>}
+      <ul className="list">
+        {open.map((f) => {
+          const reste = Math.max(0, f.dueAt - Date.now());
+          const mins = Math.round(reste / 60000);
+          const ecart = f.spotNow === null ? null : Math.round((f.pricePerTon - f.spotNow) * f.tons);
+          return (
+            <li key={f.id}>
+              <span>
+                {GOOD_DEFS[f.commodity as TradeGood]?.name ?? f.commodity} ·{" "}
+                {f.tons.toFixed(2)} t à {f.pricePerTon.toFixed(0)} CRD/t · échéance dans{" "}
+                {mins} min
+                {ecart !== null && (
+                  <em className={ecart >= 0 ? "gain" : "loss"}>
+                    {" "}
+                    {ecart >= 0 ? "+" : ""}
+                    {ecart} CRD contre le comptant
+                  </em>
+                )}
+              </span>
+              <button type="button" className="accent" disabled={busy} onClick={() => onDeliver(f.id)}>
+                Livrer
+              </button>
+            </li>
+          );
+        })}
+      </ul>
+
+      {closed.length > 0 && (
+        <>
+          <h3>Dénoués</h3>
+          <ul className="list">
+            {closed.map((f) => (
+              <li key={f.id}>
+                <span>
+                  {GOOD_DEFS[f.commodity as TradeGood]?.name ?? f.commodity} · {f.tons.toFixed(2)} t ·{" "}
+                  {f.status === "SETTLED" ? "livré" : "non honoré, pénalité prélevée"}
+                </span>
+              </li>
+            ))}
+          </ul>
+        </>
+      )}
+    </div>
+  );
+}

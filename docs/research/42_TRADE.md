@@ -193,6 +193,5 @@ de bug, celle qui fait passer le jeu pour cassé sans laisser de trace.
 
 ## Reste à faire
 
-- Pas de contrats à terme, alors que le document d'économie les prévoit.
 - La courbe ne marque pas les ventes du joueur : il ne peut pas voir a
   posteriori s'il a bien ou mal vendu.

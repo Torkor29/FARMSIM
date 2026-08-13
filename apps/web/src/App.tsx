@@ -37,7 +37,7 @@ import { AuthScreen } from "./AuthScreen";
 import type { GrazingHerd, PreviewBuilding } from "./IsoFarmView";
 import { ConfirmDialog, type ConfirmRequest } from "./ConfirmDialog";
 import { LivestockPanel, type BarnState } from "./LivestockPanel";
-import { MarketPanel, type Listing } from "./MarketPanel";
+import { MarketPanel, type Listing, type FuturesContract } from "./MarketPanel";
 import type { ContinentDetail, WorldContinent } from "./Onboarding";
 
 // Three.js pèse plus lourd que tout le reste de l'application réunie. L'écran
@@ -456,6 +456,55 @@ export function App() {
     }
   }
 
+  const [futures, setFutures] = useState<FuturesContract[]>([]);
+
+  const loadFutures = useCallback(async () => {
+    try {
+      const r = await api<{ contracts: FuturesContract[] }>("/futures");
+      setFutures((prev) => keepIfSame(prev, r.contracts));
+    } catch {
+      setFutures([]);
+    }
+  }, []);
+
+  async function openFuture(commodity: TradeGood, tons: number, horizonH: number) {
+    setBusy(true);
+    try {
+      const r = await api<{ pricePerTon: number }>("/futures", {
+        method: "POST",
+        body: JSON.stringify({ commodity, tons, horizonH }),
+      });
+      await loadFutures();
+      flashToast(`Engagé ${tons} t à ${r.pricePerTon.toFixed(0)} CRD/t`);
+    } catch (e) {
+      flashToast(e instanceof Error ? e.message : String(e), true);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function deliverFuture(id: string) {
+    setBusy(true);
+    try {
+      const r = await api<{ revenue: number; outcome: { delta: number; better: boolean } }>(
+        `/futures/${id}/deliver`,
+        { method: "POST" },
+      );
+      await Promise.all([refreshPlayer(), loadFutures()]);
+      const verdict =
+        r.outcome.delta === 0
+          ? ""
+          : r.outcome.better
+            ? ` · ${r.outcome.delta} CRD de mieux que le comptant`
+            : ` · ${Math.abs(r.outcome.delta)} CRD de moins que le comptant`;
+      flashToast(`Livré · +${r.revenue} CRD${verdict}`);
+    } catch (e) {
+      flashToast(e instanceof Error ? e.message : String(e), true);
+    } finally {
+      setBusy(false);
+    }
+  }
+
   const loadPriceHistory = useCallback(async (commodity: TradeGood) => {
     const r = await api<{ series: Record<string, { at: string; price: number }[]> }>(
       `/market/history?commodity=${encodeURIComponent(commodity)}&hours=3`,
@@ -577,7 +626,11 @@ export function App() {
   useEffect(() => {
     if (!player) return;
     loadListings(player.id);
-    const t = setInterval(() => loadListings(player.id), 8000);
+    loadFutures();
+    const t = setInterval(() => {
+      loadListings(player.id);
+      loadFutures();
+    }, 8000);
     return () => clearInterval(t);
   }, [player?.id, loadListings]);
   const freeParcels = useMemo(
@@ -2377,6 +2430,9 @@ export function App() {
         onDry={dryStock}
         onBuyInput={buyInput}
         onLoadHistory={loadPriceHistory}
+        futures={futures}
+        onOpenFuture={openFuture}
+        onDeliverFuture={deliverFuture}
       />
 
       <DevPanel

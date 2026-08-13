@@ -1518,3 +1518,14 @@ button.ghost {
   line-height: 1.05rem;
   text-align: center;
 }
+
+/* —— Contrats à terme —— */
+.futures-tab { display: grid; gap: 0.7rem; }
+.futures-form {
+  display: grid;
+  gap: 0.5rem;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+}
+.futures-tab h3 { margin: 0.3rem 0 0; font-size: 0.92rem; }
+.futures-tab em.gain { color: var(--good, #2f9e5f); font-style: normal; font-weight: 700; }
+.futures-tab em.loss { color: var(--danger); font-style: normal; font-weight: 700; }

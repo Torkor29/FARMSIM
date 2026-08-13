@@ -98,6 +98,15 @@ import {
   GOOD_DEFS,
   isPerishable,
   SPOILAGE_SLOW_CAP,
+  canOpenFuture,
+  futuresPrice,
+  futuresProceeds,
+  futuresPenalty,
+  futuresOutcome,
+  FUTURES_HORIZONS_H,
+  FUTURES_DISCOUNT,
+  FUTURES_REFUSAL_LABELS,
+  type FuturesHorizonH,
   afterSpoilage,
   SPOILAGE_PER_CYCLE,
   SELLABLE_GOODS,
@@ -737,6 +746,182 @@ app.post("/world/claim", async (req, res) => {
 });
 
 /* ------------------------------------------------------------------ */
+/* Contrats à terme                                                     */
+/* ------------------------------------------------------------------ */
+
+/** Engagements du joueur, les plus proches de l'échéance d'abord. */
+app.get("/futures", async (req, res) => {
+  const auth = await userFromAuthHeader(req);
+  if (!auth) {
+    res.status(401).json({ error: "Session invalide" });
+    return;
+  }
+  const rows = await prisma.futuresContract.findMany({
+    where: { sellerId: auth.user.id },
+    orderBy: [{ status: "asc" }, { dueAt: "asc" }],
+    take: 30,
+  });
+  const market = await prisma.marketPrice.findMany();
+  res.json({
+    contracts: rows.map((c) => ({
+      id: c.id,
+      commodity: c.commodity,
+      tons: c.tons,
+      pricePerTon: c.pricePerTon,
+      dueAt: c.dueAt.getTime(),
+      status: c.status,
+      marketAtDue: c.marketAtDue,
+      // Ce que vaudrait la même quantité au comptant, pour juger sur pièce.
+      spotNow: market.find((m) => m.commodity === c.commodity)?.price ?? null,
+    })),
+    horizons: FUTURES_HORIZONS_H.map((h) => ({
+      hours: h,
+      discount: FUTURES_DISCOUNT[h],
+    })),
+  });
+});
+
+/** S'engager à livrer plus tard, au prix d'aujourd'hui moins la décote. */
+app.post("/futures", async (req, res) => {
+  const auth = await userFromAuthHeader(req);
+  if (!auth) {
+    res.status(401).json({ error: "Session invalide" });
+    return;
+  }
+  const body = z
+    .object({
+      commodity: z.enum(SELLABLE_GOODS as unknown as [TradeGood, ...TradeGood[]]),
+      tons: z.number().positive().max(10_000),
+      horizonH: z.number(),
+    })
+    .safeParse(req.body);
+  if (!body.success) {
+    res.status(400).json(body.error.flatten());
+    return;
+  }
+  const openContracts = await prisma.futuresContract.count({
+    where: { sellerId: auth.user.id, status: "OPEN" },
+  });
+  const verdict = canOpenFuture({
+    commodity: body.data.commodity,
+    tons: body.data.tons,
+    horizonH: body.data.horizonH,
+    openContracts,
+    tradable: SELLABLE_GOODS,
+  });
+  if (!verdict.ok) {
+    res.status(409).json({ error: FUTURES_REFUSAL_LABELS[verdict.reason!] });
+    return;
+  }
+  const market = await prisma.marketPrice.findUnique({
+    where: { commodity: body.data.commodity },
+  });
+  if (!market) {
+    res.status(500).json({ error: "Marché non initialisé" });
+    return;
+  }
+  const horizon = body.data.horizonH as FuturesHorizonH;
+  const pricePerTon = futuresPrice(market.price, horizon);
+  const contract = await prisma.futuresContract.create({
+    data: {
+      sellerId: auth.user.id,
+      commodity: body.data.commodity,
+      tons: body.data.tons,
+      pricePerTon,
+      dueAt: new Date(Date.now() + horizon * 60 * 60 * 1000),
+    },
+  });
+  res.status(201).json({ contract, pricePerTon });
+});
+
+/** Livrer un engagement avant son échéance. */
+app.post("/futures/:id/deliver", async (req, res) => {
+  const auth = await userFromAuthHeader(req);
+  if (!auth) {
+    res.status(401).json({ error: "Session invalide" });
+    return;
+  }
+  const contract = await prisma.futuresContract.findUnique({ where: { id: req.params.id } });
+  if (!contract || contract.sellerId !== auth.user.id) {
+    res.status(404).json({ error: "Contrat introuvable" });
+    return;
+  }
+  if (contract.status !== "OPEN") {
+    res.status(409).json({ error: "Contrat déjà dénoué" });
+    return;
+  }
+  const user = await prisma.user.findUnique({
+    where: { id: auth.user.id },
+    include: { farm: { include: { inventory: true } } },
+  });
+  const inv = user?.farm?.inventory.find((i) => i.itemCode === contract.commodity);
+  const tons = settleSaleTons(contract.tons, inv?.qty ?? 0);
+  if (!inv || tons === null) {
+    res.status(409).json({ error: "Stock insuffisant pour honorer l'engagement" });
+    return;
+  }
+  const revenue = futuresProceeds(contract.pricePerTon, tons);
+  const market = await prisma.marketPrice.findUnique({ where: { commodity: contract.commodity } });
+  await prisma.$transaction(async (tx) => {
+    await drawFromStock(tx, inv, tons);
+    await tx.user.update({ where: { id: user!.id }, data: { crd: { increment: revenue } } });
+    // La marchandise part sur le marché comme n'importe quelle vente.
+    await tx.marketPrice.update({
+      where: { commodity: contract.commodity },
+      data: { stockTons: { increment: tons } },
+    });
+    await tx.futuresContract.update({
+      where: { id: contract.id },
+      data: { status: "SETTLED", settledAt: new Date(), marketAtDue: market?.price ?? null },
+    });
+  });
+  res.json({
+    revenue,
+    tons,
+    outcome: futuresOutcome({
+      pricePerTon: contract.pricePerTon,
+      tons,
+      marketPriceAtDue: market?.price ?? contract.pricePerTon,
+    }),
+  });
+});
+
+/**
+ * Solde les engagements dont l'échéance est passée.
+ *
+ * Ne rien faire serait le plus simple, mais alors s'engager ne coûterait rien
+ * et le contrat n'aurait aucune portée : on prendrait le prix garanti quand il
+ * arrange, et on oublierait sinon.
+ */
+async function settleDueFutures() {
+  const due = await prisma.futuresContract.findMany({
+    where: { status: "OPEN", dueAt: { lte: new Date() } },
+    take: 100,
+  });
+  if (!due.length) return;
+  const market = await prisma.marketPrice.findMany();
+  for (const c of due) {
+    const penalty = futuresPenalty(c.pricePerTon, c.tons);
+    await prisma.$transaction(async (tx) => {
+      await tx.user.update({
+        where: { id: c.sellerId },
+        // La trésorerie peut passer sous zéro : une dette se rembourse, elle
+        // ne s'efface pas parce qu'on n'a pas de quoi la payer.
+        data: { crd: { decrement: penalty } },
+      });
+      await tx.futuresContract.update({
+        where: { id: c.id },
+        data: {
+          status: "DEFAULTED",
+          settledAt: new Date(),
+          marketAtDue: market.find((m) => m.commodity === c.commodity)?.price ?? null,
+        },
+      });
+    });
+  }
+}
+
+/* ------------------------------------------------------------------ */
 /* Outils de test — inertes sans FARMSIM_DEV_TOOLS                     */
 /* ------------------------------------------------------------------ */
 
@@ -965,6 +1150,7 @@ async function runWorldTick() {
   await runNpcBuyers();
   await spoilPerishables();
   await settleAllHerds();
+  await settleDueFutures();
   const zones = await prisma.zone.findMany();
   const snapshots = await prisma.weatherSnapshot.findMany();
   const weatherOut: { zoneCode: string; state: string; changed: boolean }[] = [];
