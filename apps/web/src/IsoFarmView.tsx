@@ -1323,12 +1323,16 @@ export function IsoFarmView({
     }
     tick();
 
-    const sync = setInterval(() => layout(), 350);
+    // Un minuteur rappelait `layout()` trois fois par seconde, ce qui
+    // reconstruisait dalles, cultures, engins et bâtiments en continu et
+    // annulait purement et simplement la signature de scène censée l'éviter.
+    // Tout ce qui change l'apparence figure dans cette signature ; le reste —
+    // survol, sélection, aperçu de pose, météo, troupeaux au pré — est animé
+    // image par image dans `tick`, sans reconstruction.
     layoutRef.current = layout;
 
     return () => {
       cancelAnimationFrame(raf);
-      clearInterval(sync);
       layoutRef.current = null;
       ro.disconnect();
       renderer.domElement.removeEventListener("pointerdown", onPointerDown);
@@ -1371,9 +1375,19 @@ export function IsoFarmView({
     const b = buildings
       .map((x) => `${x.id},${x.type},${x.level ?? 1},${x.originX},${x.originY}`)
       .join("|");
-    // Seul le palier de maturité compte visuellement, pas la progression fine.
+    // Le palier de maturité donne la couleur, la progression donne la hauteur
+    // du plant. Cette dernière est continue : on l'arrondit au dixième, sans
+    // quoi la scène se reconstruirait à chaque sondage pour un plant qui a
+    // grandi d'un pixel. Un blé pousse en trois minutes, soit un redimen-
+    // sionnement toutes les vingt secondes — largement assez pour qu'on le
+    // voie pousser.
     const s = cellSims
-      .map((x) => `${x.x},${x.y},${x.sim.ripeness?.stage ?? (x.sim.ready ? "R" : "G")}`)
+      .map(
+        (x) =>
+          `${x.x},${x.y},${x.sim.ripeness?.stage ?? (x.sim.ready ? "R" : "G")},${Math.round(
+            x.sim.progress * 10,
+          )}`,
+      )
       .join("|");
     const sel = selected.map((x) => `${x.x},${x.y}`).join("|");
     return `${gridW}x${gridH}#${c}#${b}#${s}#${sel}`;
