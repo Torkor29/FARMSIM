@@ -238,7 +238,7 @@ export function FieldDock({
             {contractor && !visiting && (
               <>
                 <p className="dock-hint">
-                  Un autre joueur le fera mieux. Si personne ne vient, on envoie un voisin.
+                  Un autre joueur le fera mieux. Si personne ne vient, on envoie quelqu’un.
                 </p>
                 {tool === "HARVEST" && !mowSelected && !contractor.hasMachine && (
                   <p className="dock-hint">Demandez de l’aide, ou achetez la machine.</p>
@@ -250,7 +250,7 @@ export function FieldDock({
                   title={`Quelqu’un le fait pour vous — ${contractor.cost} TRN`}
                   onClick={onContractor}
                 >
-                  Faire faire · {contractor.cost} TRN
+                  Payer quelqu’un · {contractor.cost} TRN
                 </button>
               </>
             )}
@@ -259,7 +259,7 @@ export function FieldDock({
                 type="button"
                 className="chip"
                 disabled={busy || crd < laborQuote}
-                title="Cet argent est bloqué jusqu’à la fin (ou l’annulation)."
+                title="Cet argent est mis de côté jusqu’à la fin (ou l’annulation)."
                 onClick={onPublishLabor}
               >
                 Demander de l’aide · {laborQuote} TRN
@@ -326,7 +326,7 @@ export function FieldDock({
               <span className="dock-emoji" aria-hidden="true">
                 📋
               </span>
-              <span className="dock-label">Travaux</span>
+              <span className="dock-label">Missions</span>
             </button>
           </>
         )}

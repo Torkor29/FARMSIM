@@ -163,7 +163,7 @@ export const OBJECTIVE_DEFS: ObjectiveDef[] = [
   {
     id: "contract",
     title: "Aidez un voisin pendant que ça pousse",
-    hint: "Onglet Travaux. Il faut la machine.",
+    hint: "Onglet Missions. Il faut la machine.",
     unlock: "Un peu d’argent en plus, pas une rente",
     check: (s) => s.hasContract,
   },
@@ -265,7 +265,7 @@ export const GUIDE_CHAPTERS: GuideChapter[] = [
         id: "plow",
         name: "Labour",
         how: "Outil Sol → Labourer. Obligatoire après 3 récoltes, ou si la culture est perdue.",
-        usedBy: "Tout le monde qui cultive. Une entreprise le facture à la case.",
+        usedBy: "Tout le monde qui cultive. On peut payer quelqu’un à la case.",
       },
       {
         id: "direct",
@@ -452,7 +452,7 @@ export const GUIDE_CHAPTERS: GuideChapter[] = [
   {
     id: "machines",
     title: "Machines",
-    lead: "Sans le bon engin, le geste est refusé — ou une entreprise le fait à votre place, contre des terrons.",
+    lead: "Sans la bonne machine, le geste est refusé — ou vous payez quelqu’un, contre des terrons.",
     entries: [
       {
         id: "TRACTOR",
@@ -531,32 +531,32 @@ export const GUIDE_CHAPTERS: GuideChapter[] = [
   },
   {
     id: "triangle",
-    title: "Cultiver, élever, et le fer des autres",
-    lead: "Deux métiers. Personne ne gagne tout seul — et le fer idle va chez le voisin le temps que ça pousse.",
+    title: "Cultiver, élever, aider",
+    lead: "Deux métiers. Personne ne gagne tout seul — pendant que ça pousse, allez aider un voisin.",
     entries: [
       {
         id: "cer",
         name: "Céréalier",
-        how: "Produit blé, maïs, pois. Moissonne lui-même ou fait venir une entreprise. Bientôt : paille et ensilage pour l’éleveur.",
-        usedBy: "Nourrit l’éleveur. Occupe le fer des autres aux pics de saison.",
+        how: "Produit blé, maïs, pois. Moissonne lui-même ou demande de l’aide. Bientôt : paille et ensilage pour l’éleveur.",
+        usedBy: "Nourrit l’éleveur. Occupe les machines des autres aux pics de saison.",
       },
       {
         id: "elv",
         name: "Éleveur",
         how: "Produit lait, viande, œufs, laine et fumier. Achète foin et grain, ou fauche son herbe. Le fumier part au champ du céréalier, ou s’épand chez soi.",
-        usedBy: "Débouché du céréalier. Chantiers d’épandage pour qui a l’engin.",
+        usedBy: "Achète le grain du céréalier. On peut l’aider à épandre.",
       },
       {
         id: "appoint",
-        name: "Travaux à façon",
-        how: "Ce n’est pas un métier. Travaux → un job 8–24 cases chez un voisin. Un peu d’argent, pas une rente.",
+        name: "Aider les voisins",
+        how: "Ce n’est pas un métier. Missions → un travail de 8 à 24 cases chez un voisin. Un peu d’argent, pas une rente.",
         usedBy: "Les deux, pendant que les cultures poussent ou que le troupeau mange.",
       },
       {
         id: "npc",
         name: "Pas la machine du moment ?",
-        how: "Un joueur fera mieux. Si personne ne vient, un voisin le fait. Demandez de l’aide, ou « Faire faire ».",
-        usedBy: "Céréalier et éleveur sans l’engin sous la main.",
+        how: "Un joueur fera mieux. Si personne ne vient, on envoie quelqu’un. Demandez de l’aide, ou « Payer quelqu’un ».",
+        usedBy: "Céréalier et éleveur sans la machine sous la main.",
       },
     ],
   },

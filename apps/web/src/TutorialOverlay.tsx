@@ -49,7 +49,7 @@ const STEPS: Step[] = [
   {
     id: "sell",
     title: "6 — Vendre et s’entraider",
-    body: "Vendre ouvre l’hôtel des ventes. Vous pouvez vendre tout de suite, ou proposer un lot aux autres joueurs. Pendant que ça pousse, Travaux : allez aider un voisin.",
+    body: "Vendre ouvre l’hôtel des ventes. Vendez tout de suite, ou mettez votre grain en vitrine pour les autres. Pendant que ça pousse, ouvrez Missions et allez aider un voisin.",
     hint: "L’éleveur achète le foin et le maïs du céréalier.",
   },
   {

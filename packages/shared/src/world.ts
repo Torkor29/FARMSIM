@@ -648,11 +648,11 @@ export const CLASS_PROFILES: Record<ClassProfile["code"], ClassProfile> = {
     perks: [
       "+2 % de rendement sur toutes les cultures",
       "Parcelle de départ dans la région fertile de votre choix",
-      "Pendant que ça pousse : un chantier chez le voisin, avec votre fer",
+      "Pendant que ça pousse : allez aider un voisin, on vous paie",
     ],
     drawbacks: [
       "Revenus dépendants du cours du blé et du maïs",
-      "La moissonneuse s'achète — ou on fait venir une entreprise",
+      "La moissonneuse s'achète — ou vous demandez de l'aide",
     ],
     startingMachines: ["Tracteur T1"],
     suggestedContinents: ["AUR", "KOR"],
@@ -666,7 +666,7 @@ export const CLASS_PROFILES: Record<ClassProfile["code"], ClassProfile> = {
     perks: [
       "+2 % d'efficacité alimentaire du troupeau",
       "Revenus lissés, peu sensibles aux cours céréaliers",
-      "Le fer idle va bosser chez le voisin le temps que le troupeau mange",
+      "Pendant que le troupeau mange : allez aider un voisin",
     ],
     drawbacks: [
       "Bâtiments d'élevage coûteux à construire",

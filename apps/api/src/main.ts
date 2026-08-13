@@ -391,11 +391,11 @@ async function resolveFieldAccess(opts: {
     return { ok: false, status: 403, error: "Parcelle non possédée" };
   }
   if (order.work !== opts.work) {
-    return { ok: false, status: 409, error: `Ce chantier est un ${WORK_LABELS[order.work as FarmWork] ?? order.work}` };
+    return { ok: false, status: 409, error: `Ce travail est un ${WORK_LABELS[order.work as FarmWork] ?? order.work}` };
   }
   const remaining = parseCellJson(order.remainingJson);
   if (opts.cells.length && !cellsSubset(opts.cells, remaining)) {
-    return { ok: false, status: 409, error: "Ces cases ne font pas partie du chantier" };
+    return { ok: false, status: 409, error: "Ces cases ne font pas partie du travail" };
   }
   const provider = await prisma.user.findUnique({
     where: { id: opts.userId },
@@ -776,7 +776,7 @@ const MISSION_JOBS: {
   { jobType: "PLOW", work: "PLOW", regionNote: "Iowa", title: (n) => `Labourer · ${n} cases` },
   { jobType: "SOW", work: "PLANT", regionNote: "Beauce", title: (n) => `Semer du maïs · ${n} cases` },
   { jobType: "FERTILIZE", work: "FERTILIZE", regionNote: "Iowa", title: (n) => `Mettre de l’engrais · ${n} cases` },
-  { jobType: "TRANSPORT", work: "PLOW", regionNote: "Beauce", title: (n) => `Transporter du grain · ${n} cases` },
+  { jobType: "TRANSPORT", work: "PLOW", regionNote: "Beauce", title: (n) => `Labourer · ${n} cases` },
 ];
 
 function pickMissionCells(): number {
@@ -2203,7 +2203,7 @@ app.post("/parcels/:id/labor-orders", async (req, res) => {
   const n = body.data.cells.length;
   if (n < MISSION_CELLS_MIN || n > MISSION_CELLS_MAX) {
     res.status(400).json({
-      error: `Un chantier fait ${MISSION_CELLS_MIN} à ${MISSION_CELLS_MAX} cases`,
+      error: `Un travail fait ${MISSION_CELLS_MIN} à ${MISSION_CELLS_MAX} cases`,
     });
     return;
   }
@@ -2221,7 +2221,7 @@ app.post("/parcels/:id/labor-orders", async (req, res) => {
   for (const { x, y } of unique) {
     const cell = parcel.cells.find((c) => c.x === x && c.y === y);
     if (!cell || cell.kind === "BUILDING" || cell.kind === "VEHICLE") {
-      res.status(409).json({ error: `Case ${x},${y} hors chantier` });
+      res.status(409).json({ error: `Case ${x},${y} hors du travail` });
       return;
     }
   }
@@ -2229,7 +2229,7 @@ app.post("/parcels/:id/labor-orders", async (req, res) => {
     where: { clientId: body.data.userId, status: { in: ["OPEN", "ACCEPTED"] } },
   });
   if (openCount >= LABOR_OPEN_MAX_PER_CLIENT) {
-    res.status(409).json({ error: `Au plus ${LABOR_OPEN_MAX_PER_CLIENT} chantiers ouverts` });
+    res.status(409).json({ error: `Au plus ${LABOR_OPEN_MAX_PER_CLIENT} demandes d’aide en même temps` });
     return;
   }
   const crop = body.data.work === "PLANT" ? (body.data.crop ?? "WHEAT") : null;
@@ -2243,7 +2243,7 @@ app.post("/parcels/:id/labor-orders", async (req, res) => {
   }
   const user = await prisma.user.findUnique({ where: { id: body.data.userId } });
   if (!user || user.crd < money.escrow) {
-    res.status(402).json({ error: `TRN insuffisants — ${money.escrow} en séquestre` });
+    res.status(402).json({ error: `Pas assez d’argent — ${money.escrow} TRN mis de côté` });
     return;
   }
   const order = await prisma.$transaction(async (tx) => {
@@ -2314,7 +2314,7 @@ app.post("/labor-orders/:id/accept", async (req, res) => {
     return;
   }
   if (await hasActiveMission(user.id)) {
-    res.status(409).json({ error: "Une mission à la fois — terminez d'abord le chantier en cours." });
+    res.status(409).json({ error: "Une mission à la fois — finissez d’abord celle en cours." });
     return;
   }
   const order = await prisma.laborOrder.findUnique({
@@ -2326,7 +2326,7 @@ app.post("/labor-orders/:id/accept", async (req, res) => {
     return;
   }
   if (order.clientId === user.id) {
-    res.status(409).json({ error: "Vous ne pouvez pas prendre votre propre chantier" });
+    res.status(409).json({ error: "Vous ne pouvez pas prendre votre propre demande" });
     return;
   }
   const picked = pickMachineForWork(user.farm.machines, order.work as FarmWork);
@@ -2352,11 +2352,11 @@ app.post("/labor-orders/:id/cancel", async (req, res) => {
   }
   const order = await prisma.laborOrder.findUnique({ where: { id: req.params.id } });
   if (!order || order.clientId !== body.data.userId) {
-    res.status(403).json({ error: "Pas votre chantier" });
+    res.status(403).json({ error: "Ce n’est pas votre demande" });
     return;
   }
   if (order.status !== "OPEN") {
-    res.status(409).json({ error: "Annulation seulement tant que personne n'a pris le chantier" });
+    res.status(409).json({ error: "Annulation seulement tant que personne n’a pris le travail" });
     return;
   }
   await prisma.$transaction(async (tx) => {
@@ -2383,7 +2383,7 @@ app.post("/labor-orders/:id/abandon", async (req, res) => {
     include: laborOrderInclude,
   });
   if (!order || order.providerId !== body.data.userId || order.status !== "ACCEPTED") {
-    res.status(409).json({ error: "Pas votre chantier" });
+    res.status(409).json({ error: "Ce n’est pas votre demande" });
     return;
   }
   const updated = await prisma.laborOrder.update({
@@ -2848,7 +2848,7 @@ app.post("/parcels/:id/plant", async (req, res) => {
   const plantCrop =
     isCropCode(access.order?.crop) ? access.order.crop : body.data.crop;
   if (access.order?.crop && access.order.crop !== body.data.crop) {
-    res.status(409).json({ error: `Ce chantier demande du ${access.order.crop}` });
+    res.status(409).json({ error: `Ce travail demande du ${access.order.crop}` });
     return;
   }
   const directSeed = body.data.directSeed ?? false;
@@ -5944,7 +5944,7 @@ app.post("/contracts/:id/accept", async (req, res) => {
   }
   const already = await hasActiveMission(user.id);
   if (already) {
-    res.status(409).json({ error: "Une mission à la fois — terminez d'abord le chantier en cours." });
+    res.status(409).json({ error: "Une mission à la fois — finissez d’abord celle en cours." });
     return;
   }
   const contract = await prisma.npcContract.findUnique({ where: { id: req.params.id } });
@@ -5991,7 +5991,7 @@ app.post("/contracts/:id/complete", async (req, res) => {
   }
   const contract = await prisma.npcContract.findUnique({ where: { id: req.params.id } });
   if (!contract || contract.status !== "ACCEPTED" || contract.providerId !== user.id) {
-    res.status(409).json({ error: "Pas votre chantier" });
+    res.status(409).json({ error: "Ce n’est pas votre demande" });
     return;
   }
   const work = CONTRACT_WORK[contract.jobType as ContractJobType];
@@ -6032,7 +6032,7 @@ app.post("/contracts/:id/abandon", async (req, res) => {
   }
   const contract = await prisma.npcContract.findUnique({ where: { id: req.params.id } });
   if (!contract || contract.status !== "ACCEPTED" || contract.providerId !== body.data.userId) {
-    res.status(409).json({ error: "Pas votre chantier" });
+    res.status(409).json({ error: "Ce n’est pas votre demande" });
     return;
   }
   await prisma.npcContract.update({

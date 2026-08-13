@@ -38,6 +38,7 @@ import {
   type GuideSnapshot,
   type Specialization,
   CROP_DEFS,
+  GOOD_DEFS,
   isMowCrop,
   type CropCode,
   type BuildingType,
@@ -56,6 +57,7 @@ import { MachineCareOverlay, type CareMode } from "./MachineCareOverlay";
 import { MissionPlay, type MissionPlayContract } from "./MissionPlay";
 import { LivestockPanel, type BarnState } from "./LivestockPanel";
 import { MarketPanel, type Listing, type MarketDelivery, type FuturesContract } from "./MarketPanel";
+import { MissionsPanel } from "./MissionsPanel";
 import type { ContinentDetail, WorldContinent } from "./Onboarding";
 
 // Three.js pèse plus lourd que tout le reste de l'application réunie. L'écran
@@ -77,8 +79,6 @@ import { cropFromPlantTool, isPlantTool, isSoilTool, plantCropLabel, type Tool }
 import { useIsMobile } from "./use-media-query";
 import { DevPanel, type DevGrant } from "./DevPanel";
 import { NO_ALERTS, tabBadge, useAwayAlerts, useNotificationState, type FarmAlerts } from "./use-alerts";
-import { ZoneMap } from "./ZoneMap";
-
 const API = "/api";
 
 type SessionResume = {
@@ -312,16 +312,8 @@ const SHEET_TABS: { key: SheetKey; label: string; icon: string }[] = [
   { key: "BUILD", label: "Bâtir", icon: "🏗️" },
   { key: "HERD", label: "Troupeau", icon: "🐄" },
   { key: "GARAGE", label: "Garage", icon: "🚜" },
-  { key: "OFFICE", label: "Travaux", icon: "🤝" },
+  { key: "OFFICE", label: "Missions", icon: "🤝" },
 ];
-
-function seenLabel(online: boolean, lastSeenAt: number | null): string {
-  if (online) return "en ligne";
-  if (!lastSeenAt) return "pas encore vu";
-  const min = Math.max(1, Math.round((Date.now() - lastSeenAt) / 60_000));
-  if (min < 60) return `il y a ${min} min`;
-  return `il y a ${Math.round(min / 60)} h`;
-}
 
 function wearNote(machine?: {
   type?: string;
@@ -468,6 +460,8 @@ export function App() {
   const [onlinePlayers, setOnlinePlayers] = useState<
     { id: string; name: string; online: boolean; lastSeenAt: number | null }[]
   >([]);
+  const onlineSeenRef = useRef<Set<string>>(new Set());
+  const onlineReadyRef = useRef(false);
   const [showMarket, setShowMarket] = useState(false);
   const [confirmRequest, setConfirmRequest] = useState<ConfirmRequest | null>(null);
   const [showArrival, setShowArrival] = useState(false);
@@ -528,6 +522,17 @@ export function App() {
     setLaborBoard((prev) => keepIfSame(prev, labor.orders));
     setMyPostedLabor((prev) => keepIfSame(prev, labor.posted));
     setOnlinePlayers((prev) => keepIfSame(prev, peers.players));
+    const liveNow = peers.players.filter((p) => p.online);
+    if (onlineReadyRef.current) {
+      const arrived = liveNow.find((p) => !onlineSeenRef.current.has(p.id));
+      if (arrived) {
+        setErr(null);
+        setMsg(`${arrived.name} vient de se connecter`);
+        setToastTick((n) => n + 1);
+      }
+    }
+    onlineReadyRef.current = true;
+    onlineSeenRef.current = new Set(liveNow.map((p) => p.id));
     if (labor.active) {
       setVisitOrder((prev) => (prev?.id === labor.active!.id ? prev : labor.active));
     }
@@ -810,7 +815,7 @@ export function App() {
     const beat = () => {
       api("/session/heartbeat", { method: "POST", body: "{}" }).catch(() => undefined);
     };
-    const t = setInterval(beat, 60_000);
+    const t = setInterval(beat, 30_000);
     window.addEventListener("pagehide", beat);
     return () => {
       clearInterval(t);
@@ -843,7 +848,7 @@ export function App() {
     return () => clearInterval(t);
   }, [player?.id, activeParcelId, selectedCells]);
 
-  // La criée bouge sans nous : d'autres joueurs déposent et achètent.
+  // L’hôtel des ventes bouge sans nous : d'autres joueurs déposent et achètent.
   useEffect(() => {
     if (!player) return;
     loadListings(player.id);
@@ -2760,7 +2765,7 @@ export function App() {
             const cls = delta > 0.05 ? "up" : delta < -0.05 ? "down" : "flat";
             return (
               <span key={m.commodity} className={`tick ${cls}`}>
-                {m.commodity} {m.price.toFixed(1)}
+                {GOOD_DEFS[m.commodity as TradeGood]?.name ?? m.commodity} {m.price.toFixed(1)}
                 <small>
                   {delta > 0.05 ? " ▲" : delta < -0.05 ? " ▼" : " ·"}
                   {Math.abs(delta) > 0.05 ? Math.abs(delta).toFixed(1) : ""}
@@ -2770,6 +2775,32 @@ export function App() {
           })}
           <span className="tick weather-tick">{weatherLabel}</span>
         </div>
+        <button
+          type="button"
+          className="who-now-bar"
+          onClick={() => {
+            if (isMobile) setSheet("OFFICE");
+            else setShowEta((v) => !v);
+          }}
+        >
+          {onlinePlayers.some((p) => p.online) ? (
+            <>
+              <i className="who-dot on" aria-hidden="true" />
+              {onlinePlayers
+                .filter((p) => p.online)
+                .map((p) => p.name)
+                .join(", ")}{" "}
+              {onlinePlayers.filter((p) => p.online).length > 1
+                ? "sont connectés"
+                : "est connecté"}
+            </>
+          ) : (
+            <>
+              <i className="who-dot" aria-hidden="true" />
+              Vous êtes seul pour l’instant
+            </>
+          )}
+        </button>
         {(msg || err) && (
           <div key={toastTick} className={`toast ${err ? "bad" : "good"} pop`}>
             {err ?? msg}
@@ -3259,144 +3290,35 @@ export function App() {
       <PlayGuide open={showGuide} snapshot={guideSnapshot} onClose={() => setShowGuide(false)} />
 
       {(isMobile ? sheet === "OFFICE" : showEta) && (
-        <aside className={panelClass("eta-panel", "OFFICE")} {...(isMobile ? sheetGesture : {})}>
-          <h3>Travaux</h3>
-          <p className="muted tiny">
-            Pendant que ça pousse, allez aider un voisin. On vous paie. Il faut la machine.
-          </p>
-          {onlinePlayers.length > 0 && (
-            <>
-              <h3 className="spaced">Qui est là</h3>
-              <ul className="who-list">
-                {onlinePlayers.map((p) => (
-                  <li key={p.id}>
-                    <span>
-                      <strong>{p.name}</strong>
-                    </span>
-                    <span className="muted tiny" style={{ display: "flex", alignItems: "center", gap: "0.35rem" }}>
-                      <i className={`who-dot ${p.online ? "on" : ""}`} aria-hidden="true" />
-                      {seenLabel(p.online, p.lastSeenAt)}
-                    </span>
-                  </li>
-                ))}
-              </ul>
-            </>
+        <MissionsPanel
+          className={panelClass("eta-panel", "OFFICE")}
+          gesture={isMobile ? sheetGesture : undefined}
+          busy={busy}
+          onlinePlayers={onlinePlayers}
+          visitName={visitOrder?.clientName ?? null}
+          visitLeft={visitOrder?.remaining ?? null}
+          helpWanted={laborBoard}
+          myAsks={myPostedLabor}
+          solo={contracts}
+          onAcceptHelp={(id) => void acceptLaborOrder(id)}
+          onCancelAsk={(id) =>
+            void api(`/labor-orders/${id}/cancel`, {
+              method: "POST",
+              body: JSON.stringify({ userId: player.id }),
+            }).then(() => refreshMeta())
+          }
+          onAcceptSolo={(id) => acceptContract(id)}
+          locked={Boolean(visitOrder) || Boolean(activeMission)}
+          zones={zones.filter(
+            (z) =>
+              ownedParcels.length === 0 ||
+              ownedParcels.some((op) => op.zone?.code === z.code) ||
+              z.parcels.some((p) => expandableParcelIds.has(p.id)),
           )}
-          {visitOrder && (
-            <p className="muted tiny">
-              Vous êtes chez {visitOrder.clientName} — encore {visitOrder.remaining} case(s).
-            </p>
-          )}
-          <h3 className="spaced">On cherche quelqu’un</h3>
-          {laborBoard.length === 0 ? (
-            <p className="muted tiny">Personne n’a demandé d’aide pour l’instant.</p>
-          ) : (
-            <div className="lot-grid">
-              {laborBoard.map((o) => (
-                <article key={o.id} className="job-card">
-                  <div>
-                    <strong>
-                      {WORK_LABELS[o.work]} chez {o.clientName}
-                    </strong>
-                    <div className="muted tiny">
-                      {o.remaining} cases · {o.payoutCrd} TRN
-                    </div>
-                  </div>
-                  <button
-                    type="button"
-                    disabled={busy || Boolean(visitOrder) || Boolean(activeMission)}
-                    onClick={() => void acceptLaborOrder(o.id)}
-                  >
-                    J’y vais
-                  </button>
-                </article>
-              ))}
-            </div>
-          )}
-          {myPostedLabor.length > 0 && (
-            <>
-              <h3 className="spaced">J’ai demandé de l’aide</h3>
-              <div className="lot-grid">
-                {myPostedLabor.map((o) => (
-                  <article key={o.id} className="job-card">
-                    <div>
-                      <strong>
-                        {WORK_LABELS[o.work]} · {o.status === "ACCEPTED" ? "quelqu’un s’en occupe" : "en attente"}
-                      </strong>
-                      <div className="muted tiny">
-                        {o.remaining} cases · {o.escrowCrd} TRN bloqués
-                      </div>
-                    </div>
-                    {o.status === "OPEN" && (
-                      <button
-                        type="button"
-                        disabled={busy}
-                        onClick={() =>
-                          void api(`/labor-orders/${o.id}/cancel`, {
-                            method: "POST",
-                            body: JSON.stringify({ userId: player.id }),
-                          }).then(() => refreshMeta())
-                        }
-                      >
-                        Annuler
-                      </button>
-                    )}
-                  </article>
-                ))}
-              </div>
-            </>
-          )}
-          <h3 className="spaced">Si personne ne vient</h3>
-          <p className="muted tiny">Travail tout seul, moins payé.</p>
-          <div className="lot-grid">
-            {contracts.map((c) => (
-              <article key={c.id} className="job-card">
-                <div>
-                  <strong>{c.title}</strong>
-                  <div className="muted tiny">
-                    {c.cells ?? "?"} cases · {c.rewardCrd} TRN
-                  </div>
-                </div>
-                <button
-                  type="button"
-                  disabled={busy || Boolean(activeMission) || Boolean(visitOrder)}
-                  onClick={() => acceptContract(c.id)}
-                >
-                  Prendre
-                </button>
-              </article>
-            ))}
-          </div>
-          <h3 className="spaced">Expansion</h3>
-          {/* zone-map-ui: expansion */}
-          <div className="zone-maps">
-            {zones
-              .filter(
-                (z) =>
-                  ownedParcels.length === 0 ||
-                  ownedParcels.some((op) => op.zone?.code === z.code) ||
-                  z.parcels.some((p) => expandableParcelIds.has(p.id)),
-              )
-              .map((z) => (
-                <ZoneMap
-                  key={z.id}
-                  zone={z}
-                  myFarmId={player.farm?.id}
-                  selectableIds={expandableParcelIds}
-                  onSelect={buyAdjacent}
-                  compact
-                />
-              ))}
-          </div>
-          {expandableParcelIds.size === 0 ? (
-            <p className="muted tiny">Aucune parcelle adjacente libre.</p>
-          ) : null}
-          <h3 className="spaced">Hôtel des ventes</h3>
-          <p className="muted tiny">Acheter et vendre entre joueurs, ou vendre tout de suite.</p>
-          <button type="button" className="channel-go" onClick={() => setShowMarket(true)}>
-            Ouvrir les ventes
-          </button>
-        </aside>
+          myFarmId={player.farm?.id}
+          expandableIds={expandableParcelIds}
+          onBuyField={buyAdjacent}
+        />
       )}
 
       {isMobile && (

@@ -266,19 +266,21 @@ export const DRYING = {
   sellPenaltyAbove: 0.15,
 } as const;
 
-/** Une ligne pour la fiche halle : tonnes, eau, malus, motif. */
+/** Une ligne pour une offre : combien, et pourquoi ça vaut moins. */
 export function lotQualityLine(opts: {
   tons: number;
   moisture: number;
   quality: number;
+  unit?: string;
 }): string {
   const rounded = Math.round(opts.tons * 100) / 100;
   const tonsLabel = Number.isInteger(rounded) ? String(rounded) : rounded.toFixed(rounded < 10 ? 2 : 1);
-  const parts = [`${tonsLabel} t`, `${Math.round(opts.moisture * 100)} % d’eau`];
+  const rawUnit = opts.unit && opts.unit !== "t" ? opts.unit : "tonnes";
+  const parts = [`${tonsLabel} ${rawUnit}`];
   if (opts.moisture > DRYING.sellThreshold) {
-    parts.push(`−${Math.round(DRYING.sellPenaltyAbove * 100)} %`);
+    parts.push("trop d’eau, moins cher");
   }
-  if (opts.quality <= 2) parts.push("Récolté trop tard");
+  if (opts.quality <= 2) parts.push("récolté trop tard");
   return parts.join(" · ");
 }
 

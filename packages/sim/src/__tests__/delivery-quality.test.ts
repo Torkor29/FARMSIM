@@ -1,6 +1,5 @@
 import {
   DELIVERY_TTL_MS,
-  DRYING,
   STARTER_COW_COUNT,
   STARTER_HAY_TONS,
   deliveryAutoFee,
@@ -35,21 +34,19 @@ describe("livraison après la criée", () => {
 });
 
 describe("fiche halle", () => {
-  it("dit pourquoi le prix baisse", () => {
+  it("dit pourquoi le prix baisse, sans pourcentage", () => {
     expect(lotQualityLine({ tons: 12, moisture: 0.18, quality: 3 })).toBe(
-      `12 t · 18 % d’eau · −${Math.round(DRYING.sellPenaltyAbove * 100)} %`,
+      "12 tonnes · trop d’eau, moins cher",
     );
   });
 
   it("signale une récolte trop tardive", () => {
     expect(lotQualityLine({ tons: 5, moisture: 0.12, quality: 2 })).toContain(
-      "Récolté trop tard",
+      "récolté trop tard",
     );
   });
 
-  it("ne décote pas un lot sec de bonne qualité", () => {
-    expect(lotQualityLine({ tons: 8, moisture: 0.12, quality: 3 })).toBe(
-      "8 t · 12 % d’eau",
-    );
+  it("ne décote pas un tas sec de bonne qualité", () => {
+    expect(lotQualityLine({ tons: 8, moisture: 0.12, quality: 3 })).toBe("8 tonnes");
   });
 });

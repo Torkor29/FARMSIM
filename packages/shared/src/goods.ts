@@ -150,6 +150,21 @@ export const GOOD_DEFS: Record<TradeGood, GoodDef> = {
   },
 };
 
+/** Icône pour l’hôtel des ventes — un dessin, pas un code machine. */
+export const GOOD_ICONS: Record<TradeGood, string> = {
+  WHEAT: "🌾",
+  BARLEY: "🌾",
+  MAIZE: "🌽",
+  RAPE: "🌼",
+  PEA: "🟢",
+  HAY: "🌿",
+  MILK: "🥛",
+  MEAT: "🥩",
+  EGGS: "🥚",
+  WOOL: "🧶",
+  MANURE: "🟤",
+};
+
 /** Marchandises à cours mondial — le fumier s'écoule au voisin, pas ici. */
 export const SELLABLE_GOODS = (Object.keys(GOOD_DEFS) as TradeGood[]).filter(
   (g) => GOOD_DEFS[g].sellable && !GOOD_DEFS[g].localOnly,
