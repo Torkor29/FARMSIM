@@ -1815,7 +1815,18 @@ button.ghost {
   }
   .market-ticker::-webkit-scrollbar { display: none; }
   .market-ticker .tick { flex: 0 0 auto; }
-  .who-now-bar { display: none; }
+  .who-now-bar,
+  .market-ticker { display: none; }
+  .game-stage.mobile.tray-open .quest-chip-hud,
+  .game-stage.mobile.tray-open .harvest-sold-banner { display: none; }
+  .dock-chips-scroll {
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    scrollbar-width: none;
+    -webkit-overflow-scrolling: touch;
+  }
+  .dock-chips-scroll::-webkit-scrollbar { display: none; }
+  .dock-chips-scroll .chip { flex: 0 0 auto; }
   .hall-doors { gap: 0.45rem; }
   .hall-door { padding: 0.7rem 0.4rem 0.6rem; }
   .hall-door strong { font-size: 1.02rem; }
