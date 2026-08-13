@@ -16,6 +16,8 @@ export * from "./machine-care.js";
 export * from "./art-anchor.js";
 export * from "./play-guide.js";
 export * from "./appearance.js";
+export * from "./consignes.js";
+export * from "./forage.js";
 
 /** Monnaie du jeu : le terron (TRN). Le champ interne reste `crd`. */
 export const CURRENCY_CODE = "TRN";
@@ -70,7 +72,8 @@ export type BuildingType =
   | "FARMHOUSE"
   | "PADDOCK"
   | "PIG_YARD"
-  | "COLD_ROOM";
+  | "COLD_ROOM"
+  | "BUNKER_SILO";
 
 export type CellKind = "EMPTY" | "CROP" | "BUILDING" | "VEHICLE";
 
@@ -91,6 +94,8 @@ export const MACHINE_ART: Record<MachineType, string> = {
   HARVESTER: "/assets/vehicles/harvester.webp",
   SPREADER: "/assets/vehicles/spreader.webp",
   DISC_HARROW: "/assets/vehicles/harrow.webp",
+  BALER: "/assets/vehicles/harrow.webp",
+  FORAGE_HARVESTER: "/assets/vehicles/harvester.webp",
 };
 
 /** Bonus spé max ≤ +10 % — valeurs de départ faibles `[GD]` */
@@ -154,6 +159,9 @@ export const MARKET_BOUNDS: Record<
   MILK: { initial: 42, min: 30, max: 62, depth: 800 },
   MEAT: { initial: 1450, min: 900, max: 2300, depth: 300 },
   HAY: { initial: 95, min: 60, max: 165, depth: 1500 },
+  STRAW: { initial: 72, min: 45, max: 130, depth: 900 },
+  // Carnet étroit à dessein : l'ensilage n'est pas un cours mondial liquide.
+  SILAGE: { initial: 110, min: 80, max: 160, depth: 80 },
   // Marché plus étroit que le blé : un gros lot y pèse davantage.
   PEA: { initial: 285, min: 170, max: 520, depth: 900 },
 };
@@ -316,6 +324,15 @@ export const BUILDING_DEFS: Record<BuildingType, BuildingDef> = {
     cost: 780,
     description: "Collée à une porcherie, elle laisse les porcs fouir dehors : moins de stress, plus de viande.",
   },
+  BUNKER_SILO: {
+    type: "BUNKER_SILO",
+    name: "Silo couloir",
+    w: 3,
+    h: 2,
+    cost: 1400,
+    description: "Tasse l’ensilage et la paille. Sans lui, le fourrage d’hiver n’a pas de place.",
+    storageHay: 50,
+  },
 };
 
 /* ------------------------------------------------------------------ */
@@ -394,6 +411,7 @@ export const BUILDING_ART: Record<BuildingType, string> = {
   PADDOCK: "/assets/buildings/paddock.webp",
   PIG_YARD: "/assets/buildings/pig-yard.webp",
   COLD_ROOM: "/assets/buildings/cold-room.webp",
+  BUNKER_SILO: "/assets/buildings/hay-barn.webp",
 };
 
 export const DEFAULT_GRID = { w: 12, h: 12 } as const;
@@ -401,7 +419,7 @@ export const DEFAULT_GRID = { w: 12, h: 12 } as const;
 /** Narratif : 12×12 ≈ 12–15 ha `[GD]` — voir `23_GRID_SIZING.md` */
 export const PARCEL_HECTARES = 14;
 
-export type MachineType = "TRACTOR" | "HARVESTER" | "SPREADER" | "DISC_HARROW";
+export type MachineType = "TRACTOR" | "HARVESTER" | "SPREADER" | "DISC_HARROW" | "BALER" | "FORAGE_HARVESTER";
 
 export type MachineDef = {
   type: MachineType;
@@ -414,7 +432,7 @@ export type MachineDef = {
   repairCostPerPoint: number;
   minCondition: number;
   description: string;
-  works: Array<"PLANT" | "FERTILIZE" | "HARVEST" | "PLOW" | "STUBBLE">;
+  works: Array<"PLANT" | "FERTILIZE" | "HARVEST" | "PLOW" | "STUBBLE" | "BALE" | "COLLECT" | "SILAGE">;
   /** Teinte iso HUD (réf. IsoFarmView) */
   isoColor: "green" | "red-gold" | "amber";
 };
@@ -430,8 +448,8 @@ export const MACHINE_DEFS: Record<MachineType, MachineDef> = {
     // Révision complète ≈ 20 % de l'achat (560 TRN).
     repairCostPerPoint: 6,
     minCondition: 15,
-    description: "Semis et travaux de base.",
-    works: ["PLANT", "PLOW", "FERTILIZE"],
+    description: "Semis et travaux de base. Ramasse aussi les bottes.",
+    works: ["PLANT", "PLOW", "FERTILIZE", "COLLECT"],
     isoColor: "green",
   },
   HARVESTER: {
@@ -471,6 +489,30 @@ export const MACHINE_DEFS: Record<MachineType, MachineDef> = {
       "Incorpore les résidus après moisson : bonus de rendement, sans remettre le sol à zéro.",
     works: ["STUBBLE"],
     isoColor: "amber",
+  },
+  BALER: {
+    type: "BALER",
+    name: "Presse à balles",
+    cost: 1800,
+    tier: 1,
+    wearPerCell: 0.22,
+    repairCostPerPoint: 5,
+    minCondition: 15,
+    description: "Presse l’andain en bottes. Sans elle, la paille reste au champ.",
+    works: ["BALE"],
+    isoColor: "amber",
+  },
+  FORAGE_HARVESTER: {
+    type: "FORAGE_HARVESTER",
+    name: "Ensileuse T1",
+    cost: 4200,
+    tier: 1,
+    wearPerCell: 0.34,
+    repairCostPerPoint: 9,
+    minCondition: 15,
+    description: "Récolte le maïs plante entière, plus tôt, plus de tonnage.",
+    works: ["SILAGE"],
+    isoColor: "red-gold",
   },
 };
 
@@ -533,7 +575,7 @@ export function buildingResaleValue(type: BuildingType, level: number): number {
 /* Deux prix : client (faire venir) vs prestataire (mission)           */
 /* ------------------------------------------------------------------ */
 
-export type FarmWork = "PLANT" | "FERTILIZE" | "HARVEST" | "PLOW" | "STUBBLE";
+export type FarmWork = "PLANT" | "FERTILIZE" | "HARVEST" | "PLOW" | "STUBBLE" | "BALE" | "COLLECT" | "SILAGE";
 
 export const WORK_LABELS: Record<FarmWork, string> = {
   PLANT: "Semis",
@@ -541,6 +583,9 @@ export const WORK_LABELS: Record<FarmWork, string> = {
   HARVEST: "Moisson",
   PLOW: "Labour",
   STUBBLE: "Déchaumage",
+  BALE: "Pressage",
+  COLLECT: "Ramassage",
+  SILAGE: "Ensilage",
 };
 
 /**
@@ -553,6 +598,9 @@ export const CONTRACTOR_RATE_PER_CELL: Record<FarmWork, number> = {
   HARVEST: 12,
   PLOW: 5,
   STUBBLE: 4,
+  BALE: 7,
+  COLLECT: 3,
+  SILAGE: 14,
 };
 
 /** Frais de déplacement, quel que soit le nombre de cases `[GD]` */
@@ -634,15 +682,16 @@ export function laborEscrow(
   work: FarmWork,
   cells: number,
   crop?: CropCode | null,
+  npcClient = false,
 ): { quote: number; extras: number; escrow: number; payout: number } {
   const n = clampMissionCells(cells);
-  const quote = contractorQuote(work, n);
+  const quote = Math.round(contractorQuote(work, n) * (npcClient ? 0.88 : 1));
   const extras = laborExtras(work, n, crop);
   return {
     quote,
     extras,
     escrow: quote + extras,
-    payout: missionPayout(work, n, "P2P"),
+    payout: Math.round(quote * MISSION_P2P_SHARE),
   };
 }
 

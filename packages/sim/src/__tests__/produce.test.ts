@@ -40,7 +40,7 @@ describe("marchandises", () => {
     const achetables = (Object.keys(GOOD_DEFS) as TradeGood[]).filter(
       (g) => GOOD_DEFS[g].purchasable,
     );
-    expect(achetables).toEqual(["HAY"]);
+    expect(achetables).toEqual(["HAY", "STRAW"]);
   });
 
   it("fait vendre le négociant plus cher qu'il ne rachète", () => {
@@ -66,6 +66,11 @@ describe("rations", () => {
     expect(rationQuality(10, 0)).toBe(0);
     expect(rationQuality(0, 10)).toBe(1);
     expect(rationQuality(5, 5)).toBeCloseTo(0.5, 2);
+  });
+
+  it("place l’ensilage au-dessus du maïs grain", () => {
+    expect(feedUnits(0, 0, 1)).toBeGreaterThan(feedUnits(0, 1));
+    expect(rationQuality(0, 0, 10)).toBe(1);
   });
 
   it("renvoie une qualité nulle sur une ration vide", () => {

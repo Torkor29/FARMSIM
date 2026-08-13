@@ -49,5 +49,8 @@ describe("tout ce qui se produit doit pouvoir se vendre", () => {
       expect(GOOD_DEFS[code].purchasable).toBe(false);
     }
     expect(GOOD_DEFS.HAY.purchasable).toBe(true);
+    expect(GOOD_DEFS.STRAW.purchasable).toBe(true);
+    expect(GOOD_DEFS.SILAGE.purchasable).toBe(false);
+    expect(GOOD_DEFS.SILAGE.localOnly).toBe(true);
   });
 });

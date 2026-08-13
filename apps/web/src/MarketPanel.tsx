@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { PriceSparkline } from "./PriceSparkline";
 import {
   GOOD_DEFS,
+  PURCHASABLE_GOODS,
   SPOILAGE_PER_CYCLE,
   isPerishable,
   spoilageWarning,
@@ -474,42 +475,47 @@ function SupplyTab({
   onTons: (n: number) => void;
   onBuy: (commodity: TradeGood, tons: number) => void;
 }) {
-  const base =
-    marketPrices.find((m) => m.commodity === "HAY")?.price ?? GOOD_DEFS.HAY.basePrice;
-  const unit = dealerAskPrice(base);
-  const total = Math.round(unit * tons);
+  const goods = PURCHASABLE_GOODS;
 
   return (
     <div className="supply-tab">
       <p className="muted tiny">
-        Le négociant vend le fourrage nécessaire au bétail. Il le facture plus cher
-        qu&rsquo;il ne le rachète : produire son propre maïs revient moins cher.
+        Le négociant vend le fourrage et la paille. Il facture plus cher qu&rsquo;il
+        ne rachète : produire chez soi, ou acheter au voisin, revient moins cher.
       </p>
-      <div className="supply-card">
-        <img className="build-art" src="/assets/items/hay-bales.webp" alt="" />
-        <span className="build-text">
-          <strong>{GOOD_DEFS.HAY.name}</strong>
-          <span>{unit.toFixed(1)} TRN/t</span>
-        </span>
-        <label className="supply-qty">
-          <span>Quantité</span>
-          <input
-            type="number"
-            min={1}
-            step={1}
-            value={tons}
-            onChange={(e) => onTons(Math.max(1, Number(e.target.value)))}
-          />
-        </label>
-        <button
-          type="button"
-          className="channel-go"
-          disabled={busy || crd < total}
-          onClick={() => onBuy("HAY", tons)}
-        >
-          Acheter · {total} TRN
-        </button>
-      </div>
+      {goods.map((code) => {
+        const base =
+          marketPrices.find((m) => m.commodity === code)?.price ?? GOOD_DEFS[code].basePrice;
+        const unit = dealerAskPrice(base);
+        const total = Math.round(unit * tons);
+        return (
+          <div className="supply-card" key={code}>
+            <img className="build-art" src="/assets/items/hay-bales.webp" alt="" />
+            <span className="build-text">
+              <strong>{GOOD_DEFS[code].name}</strong>
+              <span>{unit.toFixed(1)} TRN/t</span>
+            </span>
+            <label className="supply-qty">
+              <span>Quantité</span>
+              <input
+                type="number"
+                min={1}
+                step={1}
+                value={tons}
+                onChange={(e) => onTons(Math.max(1, Number(e.target.value)))}
+              />
+            </label>
+            <button
+              type="button"
+              className="channel-go"
+              disabled={busy || crd < total}
+              onClick={() => onBuy(code, tons)}
+            >
+              Acheter · {total} TRN
+            </button>
+          </div>
+        );
+      })}
     </div>
   );
 }

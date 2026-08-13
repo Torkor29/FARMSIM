@@ -267,12 +267,12 @@ export const GUIDE_CHAPTERS: GuideChapter[] = [
       goodEntry(
         "WHEAT",
         "Récolte à point (cases dorées). Pluie = grain humide : séchez au Bureau, ou vendez moins cher.",
-        "Marché. Éleveur : paille (bientôt).",
+        "Marché. Éleveur : paille (litière) et ensilage.",
       ),
       goodEntry(
         "MAIZE",
-        "Même geste que le blé. Sert aussi de concentré pour le troupeau.",
-        "Marché. Éleveur : ration. Plus tard : ensilage.",
+        "Même geste que le blé. Grain pour le marché, ou ensilage pour le troupeau.",
+        "Marché. Éleveur : ration et ensilage.",
       ),
       goodEntry(
         "PEA",
@@ -297,16 +297,14 @@ export const GUIDE_CHAPTERS: GuideChapter[] = [
       {
         id: "STRAW",
         name: "Paille",
-        how: "Après le blé : presser ou enfouir. Pas encore dans cette version.",
+        how: "Après le blé : presser (bottes) ou enfouir (déchaumage). Les bottes se ramassent au stock.",
         usedBy: "Éleveur (litière). Céréalier (vente à l’éleveur).",
-        soon: true,
       },
       {
         id: "SILAGE",
         name: "Ensilage",
-        how: "Maïs ensilé au lieu d’être moissonné en grain. Pas encore dans cette version.",
+        how: "Maïs récolté plante entière, plus tôt, plus de tonnage. Pas un cours mondial : on le donne au troupeau ou on le vend au voisin.",
         usedBy: "Éleveur (énergie d’hiver). Missions d’ensilage.",
-        soon: true,
       },
       {
         id: "SLURRY",
@@ -332,7 +330,7 @@ export const GUIDE_CHAPTERS: GuideChapter[] = [
         id: "HAY_BARN",
         name: "Hangar paille / foin · 900 TRN · 2×2",
         how: "Stocke fourrages, séchage doux.",
-        usedBy: "Éleveur. Céréalier qui vendra du foin.",
+        usedBy: "Éleveur. Céréalier qui vendra du foin et de la paille.",
       },
       {
         id: "MACHINE_SHED",
@@ -382,6 +380,12 @@ export const GUIDE_CHAPTERS: GuideChapter[] = [
         how: "À coller contre la porcherie.",
         usedBy: "Éleveur.",
       },
+      {
+        id: "BUNKER_SILO",
+        name: "Silo couloir · 1 400 TRN · 3×2",
+        how: "Tasse ensilage et paille. Le fourrage d’hiver a besoin d’une place.",
+        usedBy: "Éleveur. Céréalier qui ensile pour vendre au voisin.",
+      },
     ],
   },
   {
@@ -392,7 +396,7 @@ export const GUIDE_CHAPTERS: GuideChapter[] = [
       {
         id: "TRACTOR",
         name: "Tracteur T1 · 2 800 TRN",
-        how: "Semis, labour, ferti. Garage pour acheter, réparer, graisser.",
+        how: "Semis, labour, ferti, ramassage des bottes.",
         usedBy: "Les deux métiers. Idle, il va aussi chez le voisin.",
       },
       {
@@ -413,6 +417,18 @@ export const GUIDE_CHAPTERS: GuideChapter[] = [
         how: "Enterre les chaumes.",
         usedBy: "Céréalier. Missions de déchaumage.",
       },
+      {
+        id: "BALER",
+        name: "Presse à balles · 1 800 TRN",
+        how: "Presse l’andain en bottes. Sans elle, la paille reste au champ.",
+        usedBy: "Céréalier. Missions de pressage. L’éleveur achète les bottes.",
+      },
+      {
+        id: "FORAGE_HARVESTER",
+        name: "Ensileuse T1 · 4 200 TRN",
+        how: "Maïs plante entière, avant la maturité grain. Plus de tonnage, pour le troupeau.",
+        usedBy: "Céréalier. Missions d’ensilage.",
+      },
     ],
   },
   {
@@ -423,7 +439,7 @@ export const GUIDE_CHAPTERS: GuideChapter[] = [
       {
         id: "feed",
         name: "Nourrir",
-        how: "Fourrage (négociant) et/ou maïs (stock). Sans ration, le troupeau dépérit.",
+        how: "Fourrage, ensilage et/ou maïs. Sans ration, le troupeau dépérit.",
         usedBy: "Éleveur. Céréalier : débouché pour le maïs.",
       },
       {
@@ -454,7 +470,7 @@ export const GUIDE_CHAPTERS: GuideChapter[] = [
       {
         id: "cer",
         name: "Céréalier",
-        how: "Produit blé, maïs, pois. Moissonne lui-même ou fait venir une entreprise. Bientôt : paille et ensilage pour l’éleveur.",
+        how: "Produit blé, maïs, pois. Moissonne lui-même ou fait venir une entreprise. Paille et ensilage pour l’éleveur.",
         usedBy: "Nourrit l’éleveur. Occupe le fer des autres aux pics de saison.",
       },
       {

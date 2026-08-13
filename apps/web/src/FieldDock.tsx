@@ -16,6 +16,9 @@ type Props = {
   busy: boolean;
   selectedCount: number;
   readyCount: number;
+  strawCount?: number;
+  baleCount?: number;
+  silageReadyCount?: number;
   stockTons: number;
   crd: number;
   directSeed: boolean;
@@ -52,7 +55,7 @@ const DOCK: { id: "SELECT" | "PLANT" | "HARVEST" | "SOIL" | "SELL"; label: strin
 function dockOn(id: (typeof DOCK)[number]["id"], tool: Tool): boolean {
   if (id === "SELECT") return tool === "SELECT";
   if (id === "PLANT") return isPlantTool(tool);
-  if (id === "HARVEST") return tool === "HARVEST";
+  if (id === "HARVEST") return tool === "HARVEST" || tool === "SILAGE";
   if (id === "SOIL") return isSoilTool(tool);
   return false;
 }
@@ -66,6 +69,9 @@ export function FieldDock({
   busy,
   selectedCount,
   readyCount,
+  strawCount = 0,
+  baleCount = 0,
+  silageReadyCount = 0,
   stockTons,
   crd,
   directSeed,
@@ -91,8 +97,16 @@ export function FieldDock({
 }: Props) {
   const plant = isPlantTool(tool);
   const soil = isSoilTool(tool);
+  const harvest = tool === "HARVEST" || tool === "SILAGE";
   const work = isFieldWorkTool(tool);
-  const showTray = plant || soil || (work && selectedCount > 0) || readyCount > 0;
+  const showTray =
+    plant ||
+    soil ||
+    harvest ||
+    (work && selectedCount > 0) ||
+    readyCount > 0 ||
+    strawCount > 0 ||
+    baleCount > 0;
 
   function pickDock(id: (typeof DOCK)[number]["id"]) {
     if (id === "SELL") {
@@ -108,7 +122,7 @@ export function FieldDock({
       return;
     }
     if (id === "HARVEST") {
-      if (tool !== "HARVEST") onTool("HARVEST");
+      if (tool !== "HARVEST" && tool !== "SILAGE") onTool("HARVEST");
       return;
     }
     if (id === "SOIL" && !isSoilTool(tool)) onTool("STUBBLE");
@@ -169,6 +183,26 @@ export function FieldDock({
             </div>
           )}
 
+          {harvest && (
+            <div className="dock-chips">
+              <button
+                type="button"
+                className={`chip ${tool === "HARVEST" ? "on" : ""}`}
+                onClick={() => onTool("HARVEST")}
+              >
+                Grain
+              </button>
+              <button
+                type="button"
+                className={`chip ${tool === "SILAGE" ? "on" : ""}`}
+                title="Maïs plante entière, plus tôt, plus de tonnage"
+                onClick={() => onTool("SILAGE")}
+              >
+                Ensilage{silageReadyCount ? ` ×${silageReadyCount}` : ""}
+              </button>
+            </div>
+          )}
+
           {soil && (
             <div className="dock-chips">
               <button
@@ -198,6 +232,20 @@ export function FieldDock({
                 onClick={() => onTool("PARK")}
               >
                 Garer
+              </button>
+              <button
+                type="button"
+                className={`chip ${tool === "BALE" ? "on" : ""}`}
+                onClick={() => onTool("BALE")}
+              >
+                Presser{strawCount ? ` ×${strawCount}` : ""}
+              </button>
+              <button
+                type="button"
+                className={`chip ${tool === "COLLECT" ? "on" : ""}`}
+                onClick={() => onTool("COLLECT")}
+              >
+                Ramasser{baleCount ? ` ×${baleCount}` : ""}
               </button>
             </div>
           )}

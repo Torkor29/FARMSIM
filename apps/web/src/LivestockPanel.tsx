@@ -39,11 +39,12 @@ type Props = {
   onBuyAnimals: (buildingId: string, count: number) => void;
   onGraze: (herdId: string) => void;
   onBuildPaddock: (yardType: BuildingType) => void;
-  onFeed: (herdId: string, useMaize: boolean) => void;
+  onFeed: (herdId: string, kind: "hay" | "maize" | "silage") => void;
   onMilk: (herdId: string) => void;
   onSlaughter: (herdId: string, count: number) => void;
   hayTons: number;
   maizeTons: number;
+  silageTons?: number;
   /** Permet à la coque mobile d'en faire un tiroir du bas */
   className?: string;
 };
@@ -61,6 +62,7 @@ export function LivestockPanel({
   onSlaughter,
   hayTons,
   maizeTons,
+  silageTons = 0,
   className = "glass livestock-panel",
 }: Props) {
   if (!barns.length) return null;
@@ -193,7 +195,7 @@ export function LivestockPanel({
                       ? "Aucun fourrage en silo — achetez-en au négociant"
                       : "Distribuer du fourrage"
                   }
-                  onClick={() => onFeed(herd.id, false)}
+                  onClick={() => onFeed(herd.id, "hay")}
                 >
                   Nourrir
                 </button>
@@ -208,9 +210,24 @@ export function LivestockPanel({
                       ? "Aucun maïs en silo — il faut en cultiver"
                       : "Ration au maïs : plus nutritive, mais c’est du maïs qu’on ne vend pas"
                   }
-                  onClick={() => onFeed(herd.id, true)}
+                  onClick={() => onFeed(herd.id, "maize")}
                 >
                   Ration maïs
+                </button>
+              )}
+
+              {herd && (
+                <button
+                  type="button"
+                  disabled={busy || silageTons <= 0}
+                  title={
+                    silageTons <= 0
+                      ? "Pas d’ensilage — récoltez le maïs plante entière"
+                      : "Ration d’hiver, plus énergétique que le grain"
+                  }
+                  onClick={() => onFeed(herd.id, "silage")}
+                >
+                  Ration ensilage
                 </button>
               )}
 

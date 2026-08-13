@@ -10,7 +10,7 @@
  * @see docs/research/43_LIVESTOCK_PRODUCE.md
  */
 
-export type TradeGood = "WHEAT" | "MAIZE" | "PEA" | "MILK" | "MEAT" | "HAY";
+export type TradeGood = "WHEAT" | "MAIZE" | "PEA" | "MILK" | "MEAT" | "HAY" | "STRAW" | "SILAGE";
 
 export type GoodDef = {
   code: TradeGood;
@@ -25,6 +25,11 @@ export type GoodDef = {
   purchasable: boolean;
   /** Se dégrade-t-il ? Le lait ne se garde pas comme du blé. */
   perishable: boolean;
+  /**
+   * Pas de carnet mondial profond : l’ensilage se vend au voisin ou se
+   * donne au troupeau, sinon le pont céréalier–éleveur meurt.
+   */
+  localOnly?: boolean;
 };
 
 export const GOOD_DEFS: Record<TradeGood, GoodDef> = {
@@ -86,11 +91,37 @@ export const GOOD_DEFS: Record<TradeGood, GoodDef> = {
     purchasable: true,
     perishable: false,
   },
+  STRAW: {
+    code: "STRAW",
+    name: "Paille",
+    unit: "t",
+    basePrice: 72,
+    sellable: true,
+    purchasable: true,
+    perishable: false,
+  },
+  SILAGE: {
+    code: "SILAGE",
+    name: "Ensilage",
+    unit: "t",
+    basePrice: 110,
+    sellable: true,
+    purchasable: false,
+    perishable: false,
+    localOnly: true,
+  },
 };
 
 export const SELLABLE_GOODS = (Object.keys(GOOD_DEFS) as TradeGood[]).filter(
   (g) => GOOD_DEFS[g].sellable,
 );
+
+export const PURCHASABLE_GOODS = (Object.keys(GOOD_DEFS) as TradeGood[]).filter(
+  (g) => GOOD_DEFS[g].purchasable,
+);
+
+/** Marchandises à terme / carnet mondial — pas l’ensilage. */
+export const WORLD_MARKET_GOODS = SELLABLE_GOODS.filter((g) => !GOOD_DEFS[g].localOnly);
 
 /** Marge du négociant à l'achat : il vend plus cher qu'il ne rachète `[GD]` */
 export const DEALER_SELL_MARKUP = 1.25;
@@ -114,13 +145,14 @@ export function dealerAskPrice(marketPrice: number): number {
 export const FEED_VALUE: Partial<Record<TradeGood, number>> = {
   HAY: 1,
   MAIZE: 1.4,
+  SILAGE: 1.6,
 };
 
-/** Qualité de ration obtenue, 0 = strictement du fourrage, 1 = tout au maïs. */
-export function rationQuality(hayTons: number, maizeTons: number): number {
-  const total = hayTons + maizeTons;
+/** Qualité de ration obtenue, 0 = strictement du fourrage, 1 = concentré / ensilage. */
+export function rationQuality(hayTons: number, maizeTons: number, silageTons = 0): number {
+  const total = hayTons + maizeTons + silageTons;
   if (total <= 0) return 0;
-  return Math.max(0, Math.min(1, maizeTons / total));
+  return Math.max(0, Math.min(1, (maizeTons + silageTons) / total));
 }
 
 /**
@@ -130,6 +162,11 @@ export function rationQuality(hayTons: number, maizeTons: number): number {
  * confondre les deux échelles rendrait une tonne de foin dérisoire alors
  * qu'elle nourrit un troupeau plusieurs jours.
  */
-export function feedUnits(hayTons: number, maizeTons: number): number {
-  return (hayTons * (FEED_VALUE.HAY ?? 1) + maizeTons * (FEED_VALUE.MAIZE ?? 1)) * 1000;
+export function feedUnits(hayTons: number, maizeTons: number, silageTons = 0): number {
+  return (
+    (hayTons * (FEED_VALUE.HAY ?? 1) +
+      maizeTons * (FEED_VALUE.MAIZE ?? 1) +
+      silageTons * (FEED_VALUE.SILAGE ?? 1.6)) *
+    1000
+  );
 }

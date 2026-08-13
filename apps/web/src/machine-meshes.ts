@@ -270,16 +270,57 @@ function makeHarrow(): THREE.Group {
   return g;
 }
 
+function makeBaler(): THREE.Group {
+  const g = new THREE.Group();
+  const body = paint(0xc9a24a);
+  const dark = paint(0x8a6a28);
+  const straw = paint(0xd4b56a);
+  const tire = paint(0x2a3230);
+  const rim = paint(0xc5cdd4);
+  const steel = paint(0x8a93a0);
+  const wheels: THREE.Object3D[] = [];
+  const spin: SpinPart[] = [];
+
+  addShadow(g, 0.55, 0.5);
+  addWheel(g, wheels, 0.12, 0.08, -0.18, 0.12, tire, rim);
+  addWheel(g, wheels, 0.12, 0.08, 0.18, 0.12, tire, rim);
+
+  addBox(g, body, 0.42, 0.22, 0.5, 0, 0.28, 0);
+  addBox(g, dark, 0.28, 0.12, 0.18, 0, 0.4, 0.12);
+  const bale = addCyl(g, straw, 0.16, 0.16, 0.28, 8, 0, 0.26, -0.28);
+  bale.rotation.z = Math.PI / 2;
+  bale.userData.spinAxis = "x";
+  bale.userData.spinSpeed = 6;
+  spin.push(bale);
+  addBox(g, steel, 0.36, 0.06, 0.12, 0, 0.16, 0.28);
+
+  g.userData.wheels = wheels;
+  g.userData.spin = spin;
+  return g;
+}
+
+function makeForageHarvester(): THREE.Group {
+  const g = makeHarvester();
+  const spout = paint(0xc9a24a);
+  addBox(g, spout, 0.08, 0.08, 0.55, 0.22, 0.62, -0.05);
+  addBox(g, spout, 0.1, 0.08, 0.12, 0.22, 0.7, -0.34);
+  return g;
+}
+
 /** Machine posée sur le sol, origin au contact des pneus. */
 export function makeMachineMesh(type: MachineType): THREE.Group {
   const g =
     type === "HARVESTER"
       ? makeHarvester()
-      : type === "SPREADER"
-        ? makeSpreader()
-        : type === "DISC_HARROW"
-          ? makeHarrow()
-          : makeTractor();
+      : type === "FORAGE_HARVESTER"
+        ? makeForageHarvester()
+        : type === "SPREADER"
+          ? makeSpreader()
+          : type === "DISC_HARROW"
+            ? makeHarrow()
+            : type === "BALER"
+              ? makeBaler()
+              : makeTractor();
   g.userData.machineType = type;
   g.name = "machine";
   return g;

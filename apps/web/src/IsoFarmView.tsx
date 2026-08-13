@@ -32,6 +32,8 @@ export type IsoCell = {
   weedsControlled?: boolean;
   /** Déchaumages consécutifs — le sol s'assombrit à mesure qu'il s'enrichit */
   residuePasses?: number;
+  strawTons?: number;
+  baleCount?: number;
   /** Type machine si kind === VEHICLE (sinon TRACTOR par défaut) */
   machineType?: MachineType | null;
 };
@@ -153,10 +155,12 @@ const DRY_SOIL = 0xb5a179;
  * « il faut labourer » ne pouvait pas voir quelles cases traiter. Chaque état
  * porte donc aussi un relief.
  */
-type SoilLook = "PLOWED" | "STUBBLE" | "RESIDUE" | "DRY" | "WEEDS" | "PLAIN";
+type SoilLook = "PLOWED" | "STUBBLE" | "RESIDUE" | "DRY" | "WEEDS" | "PLAIN" | "STRAW" | "BALES";
 
 function soilLook(c: IsoCell): SoilLook {
   if (c.fieldStage === "SPOILED") return "DRY";
+  if ((c.baleCount ?? 0) > 0) return "BALES";
+  if ((c.strawTons ?? 0) > 0) return "STRAW";
   if (c.hasStubble) return "STUBBLE";
   // Les résidus se lisent avant l'état « préparé », que le déchaumage et le
   // labour partagent : c'est le compteur de résidus qui les distingue, le
@@ -173,6 +177,8 @@ const SOIL_COLORS: Record<SoilLook, number> = {
   WEEDS: SOIL,
   PLOWED: PLOWED_SOIL,
   STUBBLE: STUBBLE_SOIL,
+  STRAW: 0xc9b15a,
+  BALES: 0xb8943a,
   RESIDUE: RESIDUE_SOIL,
   DRY: DRY_SOIL,
   PLAIN: SOIL,
@@ -254,6 +260,8 @@ function buildingPalette(type: BuildingType): { body: number; roof: number; h: n
       return { body: 0xf2e8d4, roof: ROOF_TEAL, h: 1.6 };
     case "PADDOCK":
       return { body: 0x8fcf6a, roof: WOOD_WARM, h: 0.5 };
+    case "BUNKER_SILO":
+      return { body: 0xcfc6b0, roof: 0x6b5a3a, h: 0.7 };
     case "PIG_YARD":
       return { body: 0x8a6f52, roof: 0x7a5c3a, h: 0.45 };
     default:
@@ -795,6 +803,26 @@ export function IsoFarmView({
             [0.22, 0.28],
           ],
           h: 0.28,
+        },
+        {
+          look: "STRAW",
+          geo: new THREE.BoxGeometry(size * 0.55, 0.08, size * 0.16),
+          color: 0xd4c06a,
+          spots: [
+            [0, -0.12],
+            [0.08, 0.14],
+          ],
+          h: 0.08,
+        },
+        {
+          look: "BALES",
+          geo: new THREE.BoxGeometry(size * 0.22, 0.2, size * 0.16),
+          color: 0xc9a24a,
+          spots: [
+            [-0.16, 0.04],
+            [0.18, -0.1],
+          ],
+          h: 0.2,
         },
         {
           look: "RESIDUE",
@@ -1771,7 +1799,7 @@ export function IsoFarmView({
     const c = cells
       .map(
         (x) =>
-          `${x.x},${x.y},${x.kind},${x.crop ?? ""},${x.fieldStage ?? ""},${x.machineType ?? ""},${x.hasStubble ? 1 : 0},${x.residuePasses ?? 0},${x.weedsControlled ? 1 : 0}`,
+          `${x.x},${x.y},${x.kind},${x.crop ?? ""},${x.fieldStage ?? ""},${x.machineType ?? ""},${x.hasStubble ? 1 : 0},${x.residuePasses ?? 0},${x.weedsControlled ? 1 : 0},${Math.round((x.strawTons ?? 0) * 10)},${x.baleCount ?? 0}`,
       )
       .join("|");
     const b = buildings
