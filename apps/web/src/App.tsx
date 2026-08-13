@@ -177,6 +177,12 @@ type Player = {
     pigSlots: number;
     softDryer?: boolean;
   };
+  grainDump?: {
+    soldTons: number;
+    storedTons: number;
+    revenue: number;
+    reason: "NO_SILO" | "SILO_FULL" | null;
+  };
 };
 
 type Contract = {
@@ -285,6 +291,22 @@ function wearNote(machine?: {
       ? ` · PANNE ${BREAKDOWN_LABELS[machine.breakdown]}`
       : "";
   return ` · ${machine.type} ${machine.condition.toFixed(0)}%${panne}`;
+}
+
+function harvestGrainNote(r: {
+  totalTons?: number;
+  storedTons?: number;
+  soldTons?: number;
+  soldRevenue?: number;
+  soldReason?: "NO_SILO" | "SILO_FULL" | null;
+}): string {
+  const total = r.totalTons != null ? r.totalTons.toFixed(2) : "";
+  if (!r.soldTons) return `Récolte ${total} t`;
+  const money = r.soldRevenue ? ` · +${Math.round(r.soldRevenue)} CRD` : "";
+  if (r.soldReason === "NO_SILO") {
+    return `Récolte ${total} t vendue au négociant (pas de silo)${money}`;
+  }
+  return `Récolte ${total} t · ${r.soldTons.toFixed(2)} t vendues (silo plein)${money}`;
 }
 
 /** Sons UI optionnels — ignorés tant qu’aucun asset n’est fourni */
@@ -438,6 +460,16 @@ export function App() {
 
   const refreshPlayer = useCallback(async () => {
     const me = await api<{ player: Player }>("/auth/me");
+    if (me.player.grainDump && me.player.grainDump.soldTons > 0) {
+      const dump = me.player.grainDump;
+      const money = dump.revenue ? ` · +${Math.round(dump.revenue)} CRD` : "";
+      flashToast(
+        dump.reason === "NO_SILO"
+          ? `Grain vendu au négociant (pas de silo)${money}`
+          : `Silo plein : ${dump.soldTons.toFixed(2)} t vendues au négociant${money}`,
+      );
+      markGuideFlag("sold");
+    }
     setPlayer((prev) => keepIfSame(prev, me.player));
     if (!activeParcelId && me.player.farm?.parcels[0]) {
       setActiveParcelId(me.player.farm.parcels[0].id);
@@ -1400,13 +1432,17 @@ export function App() {
           };
           totalTons?: number;
           lostCells?: number;
+          soldTons?: number;
+          soldRevenue?: number;
+          soldReason?: "NO_SILO" | "SILO_FULL" | null;
         }>(`/parcels/${activeParcelId}/harvest`, {
           method: "POST",
           body: JSON.stringify({ userId: player.id, cells: workCells }),
         });
         const lost = r.lostCells ? ` · ${r.lostCells} perdue(s)` : "";
-        setMsg(`Récolte ${r.totalTons?.toFixed(2) ?? ""} t${lost}` + wearNote(r.machine));
+        setMsg(harvestGrainNote(r) + lost + wearNote(r.machine));
         markGuideFlag("harvested");
+        if (r.soldTons) markGuideFlag("sold");
       } else if (tool === "PLOW") {
         const r = await api<{
           plowed: number;
@@ -1476,12 +1512,18 @@ export function App() {
           .filter((s) => s.sim.ready)
           .map((s) => ({ x: s.x, y: s.y })) || [];
       if (readyCells.length) flashWork("HARVESTER", readyCells);
-      const r = await api<{ totalTons: number }>(`/parcels/${activeParcelId}/harvest`, {
+      const r = await api<{
+        totalTons: number;
+        soldTons?: number;
+        soldRevenue?: number;
+        soldReason?: "NO_SILO" | "SILO_FULL" | null;
+      }>(`/parcels/${activeParcelId}/harvest`, {
         method: "POST",
         body: JSON.stringify({ userId: player.id }),
       });
-      setMsg(`Récolte totale ${r.totalTons.toFixed(2)} t`);
+      setMsg(harvestGrainNote(r));
       markGuideFlag("harvested");
+      if (r.soldTons) markGuideFlag("sold");
       await refreshPlayer();
       await loadParcel(activeParcelId);
     } catch (e) {

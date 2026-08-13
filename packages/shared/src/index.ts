@@ -8,6 +8,7 @@ export * from "./ripeness.js";
 export * from "./soil.js";
 export * from "./trade.js";
 export * from "./goods.js";
+export * from "./storage.js";
 export * from "./breeding.js";
 export * from "./rotation.js";
 export * from "./futures.js";
@@ -223,7 +224,7 @@ export const BUILDING_DEFS: Record<BuildingType, BuildingDef> = {
     w: 2,
     h: 2,
     cost: 1200,
-    description: "Stocke céréales ; +capacité ; séchage soft.",
+    description: "Sans lui, le grain se vend au champ. Avec lui : stockage, séchage.",
     storageGrain: 40,
     yieldBonus: 0.01,
     softDryer: true,

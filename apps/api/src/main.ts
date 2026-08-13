@@ -110,6 +110,14 @@ import {
   afterSpoilage,
   SPOILAGE_PER_CYCLE,
   SELLABLE_GOODS,
+  GRAIN_GOODS,
+  allocateGrainIntake,
+  grainForcedSaleReason,
+  grainStockFromItems,
+  isGrainGood,
+  totalGrainTons,
+  type GrainForcedSaleReason,
+  type GrainGood,
   settleSaleTons,
   GRAZING_REFUSAL_LABELS,
   LIVESTOCK_CYCLE_MS,
@@ -401,7 +409,7 @@ async function getFarmBonuses(farmId: string) {
     where: { parcel: { farmId } },
   });
   let yieldBonus = 0;
-  let storageGrain = 10; // base
+  let storageGrain = 0;
   let storageHay = 5;
   let machineSlots = 2;
   let cattleSlots = 0;
@@ -1428,15 +1436,40 @@ async function touchUserPresence(userId: string) {
 }
 
 async function playerPayload(userId: string) {
-  const user = await prisma.user.findUnique({
+  let user = await prisma.user.findUnique({
     where: { id: userId },
     include: { farm: { include: farmInclude() } },
   });
   if (!user) return null;
+  let grainDump: GrainCapacityResult | undefined;
+  if (user.farm) {
+    const bonusesNow = await getFarmBonuses(user.farm.id);
+    const currentGrain = grainStockFromItems(user.farm.inventory);
+    if (totalGrainTons(currentGrain) > bonusesNow.storageGrain) {
+      grainDump = await prisma.$transaction((tx) =>
+        applyGrainCapacity(tx, {
+          farmId: user!.farm!.id,
+          userId: user!.id,
+          capacity: bonusesNow.storageGrain,
+        }),
+      );
+      if (grainDump.soldTons > 0) {
+        const fresh = await prisma.user.findUnique({
+          where: { id: userId },
+          include: { farm: { include: farmInclude() } },
+        });
+        if (fresh) user = fresh;
+      }
+    }
+  }
   const bonuses = user.farm ? await getFarmBonuses(user.farm.id) : null;
   const { accessCode: _omit, ...safe } = user;
   void _omit;
-  return { ...safe, bonuses };
+  return {
+    ...safe,
+    bonuses,
+    grainDump: grainDump && grainDump.soldTons > 0 ? grainDump : undefined,
+  };
 }
 
 const registerSchema = z.object({
@@ -2434,7 +2467,7 @@ app.post("/parcels/:id/harvest", async (req, res) => {
   let lostCells = 0;
   const now = Date.now();
 
-  const wear = await prisma.$transaction(async (tx) => {
+  const outcome = await prisma.$transaction(async (tx) => {
     for (const cell of targets) {
       if (cell.kind !== "CROP" || !cell.crop || !cell.plantedAt) continue;
       const sim = simulateCell({
@@ -2501,44 +2534,43 @@ app.post("/parcels/:id/harvest", async (req, res) => {
       if (h.moisturePenalty > 0 || h.moisture > DRYING.sellThreshold) cur.wet = true;
       byCrop.set(h.crop, cur);
     }
+    const incomingGrain: {
+      code: GrainGood;
+      tons: number;
+      moisture: number;
+      quality: number;
+    }[] = [];
     for (const [crop, { tons, wet, moistureSum }] of byCrop) {
+      if (!isGrainGood(crop)) continue;
       const batchMoisture = tons > 0 ? moistureSum / tons : harvestMoisture();
-      const existing = await tx.inventoryItem.findFirst({
-        where: { farmId: parcel.farmId!, itemCode: crop },
+      incomingGrain.push({
+        code: crop,
+        tons,
+        moisture: Math.round(batchMoisture * 1000) / 1000,
+        quality: wet ? 2 : 3,
       });
-      if (existing) {
-        const nextMoisture = mergeMoisture(existing.qty, existing.moisture, tons, batchMoisture);
-        await tx.inventoryItem.update({
-          where: { id: existing.id },
-          data: {
-            qty: { increment: tons },
-            quality: wet ? Math.min(existing.quality, 2) : existing.quality,
-            moisture: nextMoisture,
-          },
-        });
-      } else {
-        await tx.inventoryItem.create({
-          data: {
-            farmId: parcel.farmId!,
-            itemCode: crop,
-            qty: tons,
-            quality: wet ? 2 : 3,
-            moisture: Math.round(batchMoisture * 1000) / 1000,
-          },
-        });
-      }
     }
+    const grain =
+      harvested.length === 0
+        ? { soldTons: 0, storedTons: 0, revenue: 0, reason: null }
+        : await applyGrainCapacity(tx, {
+            farmId: parcel.farmId!,
+            userId: body.data.userId,
+            capacity: bonuses.storageGrain,
+            incoming: incomingGrain,
+          });
 
     if (harvested.length === 0) {
-      return null;
+      return { wear: null, grain };
     }
-    return applyWearToMachine(tx, {
+    const wear = await applyWearToMachine(tx, {
       machine: picked.machine,
       def: picked.def,
       cells: harvested.length,
       work: "HARVEST",
       specialization: user?.specialization,
     });
+    return { wear, grain };
   });
 
   if (harvested.length === 0) {
@@ -2554,8 +2586,12 @@ app.post("/parcels/:id/harvest", async (req, res) => {
     harvested,
     lostCells,
     totalTons: harvested.reduce((s, h) => s + h.tons, 0),
+    storedTons: outcome.grain.storedTons,
+    soldTons: outcome.grain.soldTons,
+    soldRevenue: outcome.grain.revenue,
+    soldReason: outcome.grain.reason,
     bonuses,
-    machine: { id: picked.machine.id, type: picked.machine.type, ...wear },
+    machine: { id: picked.machine.id, type: picked.machine.type, ...outcome.wear },
   });
 });
 
@@ -3161,6 +3197,128 @@ async function addToStock(
   } else {
     await tx.inventoryItem.create({ data: { farmId, itemCode, qty, quality, moisture } });
   }
+}
+
+type GrainIncoming = {
+  code: GrainGood;
+  tons: number;
+  moisture: number;
+  quality: number;
+};
+
+type GrainCapacityResult = {
+  soldTons: number;
+  storedTons: number;
+  revenue: number;
+  reason: GrainForcedSaleReason | null;
+};
+
+/** Rachat forcé au tarif négociant : immédiat, moins-disant, sans minimum de lot. */
+async function creditForcedGrainSales(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  tx: any,
+  opts: {
+    userId: string;
+    lots: { commodity: string; tons: number; moisture: number }[];
+  },
+): Promise<{ revenue: number; soldTons: number }> {
+  let revenue = 0;
+  let soldTons = 0;
+  for (const lot of opts.lots) {
+    if (lot.tons <= 1e-6) continue;
+    const market = await tx.marketPrice.findUnique({ where: { commodity: lot.commodity } });
+    if (!market) continue;
+    const keep = 1 - moistureSellPenalty(lot.moisture);
+    const pricePerTon = dealerPricePerTon(market.price) * keep;
+    const rev = Math.round(pricePerTon * lot.tons);
+    if (rev !== 0) {
+      await tx.user.update({ where: { id: opts.userId }, data: { crd: { increment: rev } } });
+    }
+    await tx.marketPrice.update({
+      where: { commodity: lot.commodity },
+      data: { stockTons: { increment: lot.tons } },
+    });
+    revenue += rev;
+    soldTons += lot.tons;
+  }
+  return { revenue, soldTons };
+}
+
+/**
+ * Range le grain dans la capacité du silo, vend le reste au négociant.
+ *
+ * Sans silo la capacité est nulle : rien ne reste en stock.
+ */
+async function applyGrainCapacity(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  tx: any,
+  opts: {
+    farmId: string;
+    userId: string;
+    capacity: number;
+    incoming?: GrainIncoming[];
+  },
+): Promise<GrainCapacityResult> {
+  const incoming = opts.incoming ?? [];
+  const items = (await tx.inventoryItem.findMany({
+    where: { farmId: opts.farmId, itemCode: { in: [...GRAIN_GOODS] } },
+  })) as { id: string; itemCode: string; qty: number; moisture: number }[];
+  const plan = allocateGrainIntake({
+    capacity: opts.capacity,
+    current: grainStockFromItems(items),
+    incoming: incoming.map((i) => ({ code: i.code, tons: i.tons })),
+  });
+  const itemByCode = new Map(items.map((i) => [i.itemCode, i]));
+  const incomingByCode = new Map(incoming.map((i) => [i.code, i]));
+
+  for (const g of GRAIN_GOODS) {
+    const dump = plan.dumpedExisting[g] ?? 0;
+    const item = itemByCode.get(g);
+    if (dump > 0 && item) await drawFromStock(tx, item, dump);
+  }
+
+  for (const g of GRAIN_GOODS) {
+    const keep = plan.keptIncoming[g] ?? 0;
+    if (keep <= 0) continue;
+    const inc = incomingByCode.get(g);
+    await addToStock(tx, opts.farmId, g, keep, inc?.moisture ?? 0, inc?.quality ?? 3);
+    if (inc && inc.quality <= 2) {
+      const row = await tx.inventoryItem.findFirst({
+        where: { farmId: opts.farmId, itemCode: g },
+      });
+      if (row) {
+        await tx.inventoryItem.update({
+          where: { id: row.id },
+          data: { quality: Math.min(row.quality, inc.quality) },
+        });
+      }
+    }
+  }
+
+  const lots: { commodity: string; tons: number; moisture: number }[] = [];
+  for (const g of GRAIN_GOODS) {
+    const dump = plan.dumpedExisting[g] ?? 0;
+    if (dump > 0) {
+      const item = itemByCode.get(g);
+      lots.push({ commodity: g, tons: dump, moisture: item?.moisture ?? 0 });
+    }
+    const soldIn = plan.soldIncoming[g] ?? 0;
+    if (soldIn > 0) {
+      lots.push({
+        commodity: g,
+        tons: soldIn,
+        moisture: incomingByCode.get(g)?.moisture ?? 0,
+      });
+    }
+  }
+
+  const sale = await creditForcedGrainSales(tx, { userId: opts.userId, lots });
+  return {
+    soldTons: sale.soldTons,
+    storedTons: totalGrainTons(plan.stored),
+    revenue: sale.revenue,
+    reason: grainForcedSaleReason(opts.capacity, sale.soldTons),
+  };
 }
 
 /** Distribution de la ration : le fourrage et le maïs quittent le silo. */

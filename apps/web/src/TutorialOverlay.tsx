@@ -38,7 +38,7 @@ const STEPS: Step[] = [
     id: "harvest",
     title: "4 — Récolter",
     body: "Outil Récolte + cases mûres (dorées) + OK. Sans moissonneuse, le bouton « Faire venir une ETA » fait le travail pour vous, contre paiement.",
-    hint: "Pluie = grain humide → bouton Sécher dans le Bureau",
+    hint: "Sans silo, le grain part au négociant. Le silo permet de sécher et de vendre plus cher.",
   },
   {
     id: "build",

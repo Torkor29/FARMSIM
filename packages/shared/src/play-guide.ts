@@ -89,14 +89,14 @@ export const OBJECTIVE_DEFS: ObjectiveDef[] = [
   {
     id: "sell",
     title: "Vendez votre première récolte",
-    hint: "Bouton Vendre : le négociant paie tout de suite, le marché paie mieux.",
+    hint: "Sans silo ça se vend tout seul, moins cher. Avec un silo, vous choisissez le moment.",
     unlock: "De quoi bâtir le prochain bâtiment",
     check: (s) => s.hasSold,
   },
   {
     id: "silo",
     title: "Bâtissez un silo",
-    hint: "Onglet Bâtir → Silo à grain, puis posez-le sur la grille.",
+    hint: "Sans silo, le grain part au négociant. Le silo permet d’attendre un meilleur cours.",
     unlock: "Stockage et séchage du grain humide",
     spec: "CEREALIER",
     check: (s) => s.buildings.includes("SILO"),
@@ -327,7 +327,7 @@ export const GUIDE_CHAPTERS: GuideChapter[] = [
       {
         id: "SILO",
         name: "Silo à grain · 1 200 CRD · 2×2",
-        how: "Stocke les céréales, sèche un peu le grain humide, +1 % de rendement.",
+        how: "Sans silo, le grain part au négociant. Avec un silo : stocker, sécher, vendre au bon cours.",
         usedBy: "Céréalier. Premier bâtiment à viser après la vente.",
       },
       {
