@@ -54,6 +54,7 @@ import { SplashScreen } from "./SplashScreen";
 import { TutorialOverlay } from "./TutorialOverlay";
 import { TOKEN_KEY, TUTORIAL_KEY } from "./storage-keys";
 import { useIsMobile } from "./use-media-query";
+import { DevPanel, type DevGrant } from "./DevPanel";
 import { ZoneMap } from "./ZoneMap";
 
 const API = "/api";
@@ -300,6 +301,9 @@ export function App() {
     }[];
   } | null>(null);
   const [tool, setTool] = useState<Tool>("SELECT");
+  /** Outils de test : n'existent que si le serveur les autorise. */
+  const [devEnabled, setDevEnabled] = useState(false);
+  const [showDev, setShowDev] = useState(false);
   const isMobile = useIsMobile();
   /**
    * Tiroir ouvert sur petit écran. Un seul à la fois : superposer des
@@ -413,6 +417,42 @@ export function App() {
       setBarns([]);
     }
   }, []);
+
+  useEffect(() => {
+    api<{ enabled: boolean }>("/dev/status")
+      .then((r) => setDevEnabled(r.enabled))
+      .catch(() => setDevEnabled(false));
+  }, []);
+
+  async function devGrant(grant: DevGrant) {
+    setBusy(true);
+    try {
+      const r = await api<{ done: string[] }>("/dev/grant", {
+        method: "POST",
+        body: JSON.stringify(grant),
+      });
+      await refreshPlayer();
+      if (activeParcelId) await loadParcel(activeParcelId).catch(() => undefined);
+      flashToast(r.done.length ? `Test : ${r.done.join(" · ")}` : "Rien à faire");
+    } catch (e) {
+      flashToast(e instanceof Error ? e.message : String(e), true);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function devTick() {
+    setBusy(true);
+    try {
+      await api("/sim/tick", { method: "POST" });
+      await Promise.all([refreshMeta(), refreshPlayer()]);
+      flashToast("Monde avancé d’un tick");
+    } catch (e) {
+      flashToast(e instanceof Error ? e.message : String(e), true);
+    } finally {
+      setBusy(false);
+    }
+  }
 
   const loadPriceHistory = useCallback(async (commodity: TradeGood) => {
     const r = await api<{ series: Record<string, { at: string; price: number }[]> }>(
@@ -2093,6 +2133,16 @@ export function App() {
         >
           💰 Vendre{totalStockTons > 0 ? ` ${totalStockTons.toFixed(1)} t` : ""}
         </button>
+        {devEnabled && (
+          <button
+            type="button"
+            className={`action dev-toggle ${showDev ? "on" : ""}`}
+            title="Outils de test : argent, niveau, stock, maturité"
+            onClick={() => setShowDev(true)}
+          >
+            🛠 Test
+          </button>
+        )}
         <button
           type="button"
           className={`action eta ${showEta ? "on" : ""}`}
@@ -2257,6 +2307,14 @@ export function App() {
         onDry={dryStock}
         onBuyInput={buyInput}
         onLoadHistory={loadPriceHistory}
+      />
+
+      <DevPanel
+        open={showDev}
+        onClose={() => setShowDev(false)}
+        busy={busy}
+        onGrant={devGrant}
+        onTick={devTick}
       />
 
       <LivestockPanel

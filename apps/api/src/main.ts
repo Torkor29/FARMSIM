@@ -152,6 +152,16 @@ app.use((req, _res, next) => {
 
 const PORT = Number(process.env.PORT ?? 3001);
 
+/**
+ * Outils de test, fermés par défaut.
+ *
+ * Ils donnent de l'argent, du niveau et du stock sur commande : ouverts en
+ * production, ils videraient l'économie de tout enjeu et n'importe quel joueur
+ * pourrait s'en servir. Il faut donc les demander explicitement, par variable
+ * d'environnement, sur l'installation où l'on teste.
+ */
+const DEV_TOOLS = /^(1|true|yes|on)$/i.test(process.env.FARMSIM_DEV_TOOLS ?? "");
+
 async function createParcelGrid(parcelId: string, gridW: number, gridH: number) {
   const data = [];
   for (let y = 0; y < gridH; y++) {
@@ -719,6 +729,129 @@ app.post("/world/claim", async (req, res) => {
     console.error(e);
     res.status(500).json({ error: "Erreur serveur" });
   }
+});
+
+/* ------------------------------------------------------------------ */
+/* Outils de test — inertes sans FARMSIM_DEV_TOOLS                     */
+/* ------------------------------------------------------------------ */
+
+/** L'écran ne montre le panneau de test que si le serveur l'autorise. */
+app.get("/dev/status", (_req, res) => res.json({ enabled: DEV_TOOLS }));
+
+/**
+ * Accorde ce qu'il faut pour éprouver une mécanique sans y passer l'après-midi.
+ *
+ * Chaque champ est facultatif : on ne touche qu'à ce qu'on demande. Les
+ * montants sont bornés, moins par méfiance que pour éviter qu'une faute de
+ * frappe ne rende les cours du marché absurdes pour tout le monde.
+ */
+app.post("/dev/grant", async (req, res) => {
+  if (!DEV_TOOLS) {
+    res.status(404).json({ error: "Outils de test désactivés" });
+    return;
+  }
+  const auth = await userFromAuthHeader(req);
+  if (!auth) {
+    res.status(401).json({ error: "Session invalide" });
+    return;
+  }
+  const body = z
+    .object({
+      crd: z.number().min(0).max(100_000_000).optional(),
+      level: z.number().int().min(1).max(50).optional(),
+      xp: z.number().int().min(0).max(1_000_000).optional(),
+      stock: z
+        .object({
+          commodity: z.enum(SELLABLE_GOODS as unknown as [TradeGood, ...TradeGood[]]),
+          tons: z.number().min(0).max(100_000),
+        })
+        .optional(),
+      /** Amène toutes les cultures en terre à maturité */
+      ripenAll: z.boolean().optional(),
+      /** Remplit la mangeoire de tous les troupeaux */
+      feedHerds: z.boolean().optional(),
+      /** Répare et remet à neuf toutes les machines */
+      fixMachines: z.boolean().optional(),
+    })
+    .safeParse(req.body);
+  if (!body.success) {
+    res.status(400).json(body.error.flatten());
+    return;
+  }
+
+  const user = await prisma.user.findUnique({
+    where: { id: auth.user.id },
+    include: { farm: { include: { parcels: true, machines: true } } },
+  });
+  if (!user) {
+    res.status(404).json({ error: "Joueur introuvable" });
+    return;
+  }
+  const done: string[] = [];
+
+  if (body.data.crd !== undefined) {
+    await prisma.user.update({ where: { id: user.id }, data: { crd: body.data.crd } });
+    done.push(`trésorerie à ${Math.round(body.data.crd)} CRD`);
+  }
+  if (body.data.level !== undefined || body.data.xp !== undefined) {
+    await prisma.user.update({
+      where: { id: user.id },
+      data: {
+        ...(body.data.level !== undefined ? { level: body.data.level } : {}),
+        ...(body.data.xp !== undefined ? { xp: body.data.xp } : {}),
+      },
+    });
+    done.push("niveau et expérience");
+  }
+  if (body.data.stock && user.farm) {
+    await addToStock(prisma, user.farm.id, body.data.stock.commodity, body.data.stock.tons, 0);
+    done.push(`${body.data.stock.tons} t de ${body.data.stock.commodity}`);
+  }
+  if (body.data.ripenAll && user.farm) {
+    // On recule la date de semis : la maturité se déduit du temps écoulé, il
+    // n'y a pas d'état « mûr » à forcer.
+    const parcelIds = user.farm.parcels.map((p) => p.id);
+    const cells = await prisma.parcelCell.findMany({
+      where: { parcelId: { in: parcelIds }, kind: "CROP", crop: { not: null } },
+    });
+    const now = Date.now();
+    for (const c of cells) {
+      const grow = CROP_DEFS[c.crop as CropCode].growMs;
+      await prisma.parcelCell.update({
+        where: { id: c.id },
+        data: {
+          plantedAt: new Date(now - grow),
+          readyAt: new Date(now),
+          fieldStage: "READY",
+        },
+      });
+    }
+    done.push(`${cells.length} case(s) à maturité`);
+  }
+  if (body.data.feedHerds && user.farm) {
+    const herds = await prisma.herd.findMany({ where: { farmId: user.farm.id } });
+    for (const h of herds) {
+      await prisma.herd.update({
+        where: { id: h.id },
+        data: {
+          feedStock: Math.max(1, h.size) * HUNGER.unitsPerAnimalPerCycle * 40,
+          feedQuality: 1,
+          mortalityDebt: 0,
+          lastFedAt: new Date(),
+        },
+      });
+    }
+    done.push(`${herds.length} troupeau(x) nourri(s)`);
+  }
+  if (body.data.fixMachines && user.farm) {
+    await prisma.machine.updateMany({
+      where: { farmId: user.farm.id },
+      data: { condition: 100 },
+    });
+    done.push("machines remises à neuf");
+  }
+
+  res.json({ ok: true, done, player: await playerPayload(user.id) });
 });
 
 app.get("/market", async (_req, res) => res.json(await prisma.marketPrice.findMany()));
@@ -3925,6 +4058,12 @@ async function main() {
   app.listen(PORT, () => {
     console.log(`API Farming Navigateur sur http://localhost:${PORT}`);
     console.log(`Sim tick toutes les ${SIM_TICK_MS / 1000}s`);
+    if (DEV_TOOLS) {
+      console.warn(
+        "OUTILS DE TEST ACTIFS — /dev/grant distribue argent, niveau et stock. " +
+          "Retirez FARMSIM_DEV_TOOLS de l'environnement en production.",
+      );
+    }
   });
 }
 

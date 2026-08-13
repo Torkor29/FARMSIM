@@ -1478,3 +1478,26 @@ button.ghost {
   font-weight: 700;
   line-height: 1.35;
 }
+
+/* —— Outils de test —— */
+.dev-panel { max-width: 620px; }
+.dev-row {
+  display: grid;
+  gap: 0.5rem;
+  padding: 0.6rem 0.7rem;
+  border: 1px dashed var(--line);
+  border-radius: 12px;
+}
+.dev-row .market-field { margin: 0; }
+.dev-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  align-items: center;
+}
+.dev-actions.wide { display: grid; }
+.dev-actions button { min-height: 40px; }
+.action.dev-toggle {
+  background: color-mix(in srgb, var(--teal-500, #2e8e7a) 16%, var(--sand));
+  font-weight: 800;
+}
