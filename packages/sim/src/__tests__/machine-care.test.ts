@@ -48,11 +48,9 @@ describe("entretien machines", () => {
     expect(dirtFromWork("FERTILIZE", 10)).toBeGreaterThan(dirtFromWork("HARVEST", 10));
   });
 
-  it("laisse finir le champ, refuse seulement quand la jauge est vide depuis un tour", () => {
+  it("ne bloque plus le champ pour la graisse — on peut toujours partir", () => {
     expect(machineWorkBlock({ ...sane, grease: 0, greased: false, greaseSkipStreak: 0 }, 12)).toBeNull();
-    expect(machineWorkBlock({ ...sane, grease: 0, greased: false, greaseSkipStreak: 1 }, 12)?.code).toBe(
-      "NEED_GREASE",
-    );
+    expect(machineWorkBlock({ ...sane, grease: 0, greased: false, greaseSkipStreak: 1 }, 12)).toBeNull();
     expect(machineWorkBlock({ ...sane, grease: 40, greased: true }, 12)).toBeNull();
   });
 

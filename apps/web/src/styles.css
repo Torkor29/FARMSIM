@@ -1440,6 +1440,24 @@ button.ghost {
   gap: 0.4rem;
 }
 .harvest-sold-actions button { min-height: 44px; }
+.sheet-head,
+.panel-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+.sheet-head h3,
+.panel-head h3 { margin: 0; }
+.sheet-close {
+  flex: none;
+  min-height: 44px;
+  padding: 0.35rem 0.85rem;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  background: var(--sand);
+  font-weight: 800;
+}
 .quest-chip-hud {
   justify-self: stretch;
   margin: 0 0.5rem;
@@ -1481,7 +1499,9 @@ button.ghost {
   font-weight: 700;
   text-align: center;
   box-shadow: var(--sh-3);
-  pointer-events: none;
+  pointer-events: auto;
+  color: inherit;
+  font-family: inherit;
 }
 .toast.pop {
   animation: toast-pop 0.38s ease-out;
@@ -1828,7 +1848,7 @@ button.ghost {
     bottom: calc(0.75rem + env(safe-area-inset-bottom));
     top: auto;
     width: auto;
-    max-height: min(70dvh, 560px);
+    max-height: min(48dvh, 420px);
     overflow-y: auto;
     -webkit-overflow-scrolling: touch;
     overscroll-behavior: contain;
@@ -1896,10 +1916,25 @@ button.ghost {
     transform: none;
     bottom: calc(0.85rem + env(safe-area-inset-bottom));
   }
-  .game-stage.mobile.sheet-open .field-dock { display: none; }
+  .game-stage.mobile.sheet-open .field-dock,
+  .game-stage.mobile.sheet-open .quest-chip-hud,
+  .game-stage.mobile.sheet-open .harvest-sold-banner { display: none; }
+  .game-stage.mobile .sheet-head {
+    position: sticky;
+    top: 0;
+    z-index: 1;
+    padding-bottom: 0.35rem;
+    background: var(--paper, #fff);
+  }
   .dock-tool { min-height: 56px; }
   .dock-label { font-size: 0.75rem; }
-  .chip { min-height: 44px; }
+  .dock-tray {
+    gap: 0.25rem;
+    padding: 0.4rem 0.45rem;
+  }
+  .dock-tray .dock-hint,
+  .dock-tray .stroke-hint { display: none; }
+  .chip { min-height: 40px; padding: 0.3rem 0.6rem; }
   .action { min-height: 44px; padding: 0.5rem 0.7rem; }
 
   /* —— Modales : une feuille qui monte du bas, pas une carte flottante —— */

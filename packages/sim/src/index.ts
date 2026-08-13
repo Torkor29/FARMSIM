@@ -334,10 +334,8 @@ export function machineWorkBlock(
   if (!machineCanWork(state.condition, minCondition)) {
     return { code: "NEED_REPAIR", message: "Condition trop basse — réparez." };
   }
-  const empty = greaseIsEmpty(state.grease ?? (state.greased ? GREASE_FULL : 0));
-  if (empty && state.greaseSkipStreak >= 1) {
-    return { code: "NEED_GREASE", message: "Graisse vide — passez à l’atelier." };
-  }
+  // La jauge se vide, les bonus tombent, mais on ne bloque plus le champ :
+  // « graissez avant de repartir » empêchait de jouer après l’atelier.
   return null;
 }
 

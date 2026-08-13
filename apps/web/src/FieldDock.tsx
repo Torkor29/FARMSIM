@@ -119,7 +119,8 @@ export function FieldDock({
   const plant = isPlantTool(tool);
   const soil = isSoilTool(tool);
   const work = isFieldWorkTool(tool);
-  const showTray = plant || soil || (work && selectedCount > 0) || readyCount > 0;
+  const harvestOn = tool === "HARVEST";
+  const showTray = plant || soil || (harvestOn && (selectedCount > 0 || readyCount > 0));
 
   function pickDock(id: DockId) {
     if (id === "MORE") {
@@ -135,14 +136,19 @@ export function FieldDock({
       return;
     }
     if (id === "PLANT") {
-      if (!isPlantTool(tool)) onTool("PLANT_WHEAT");
+      if (isPlantTool(tool)) onTool("SELECT");
+      else onTool("PLANT_WHEAT");
       return;
     }
     if (id === "HARVEST") {
-      if (tool !== "HARVEST") onTool("HARVEST");
+      if (tool === "HARVEST") onTool("SELECT");
+      else onTool("HARVEST");
       return;
     }
-    if (id === "SOIL" && !isSoilTool(tool)) onTool("STUBBLE");
+    if (id === "SOIL") {
+      if (isSoilTool(tool)) onTool("SELECT");
+      else onTool("STUBBLE");
+    }
   }
 
   return (
@@ -262,26 +268,18 @@ export function FieldDock({
                   : `Faire${plant ? ` ${plantCropLabel(tool)}` : ""} ×${selectedCount}`}
               </button>
             )}
-            {contractor && !visiting && (
-              <>
-                <p className="dock-hint">
-                  Un autre joueur le fera mieux. Si personne ne vient, on envoie quelqu’un.
-                </p>
-                {tool === "HARVEST" && !mowSelected && !contractor.hasMachine && (
-                  <p className="dock-hint">Demandez de l’aide, ou achetez la machine.</p>
-                )}
-                <button
-                  type="button"
-                  className="chip eta"
-                  disabled={busy || selectedCount === 0 || crd < contractor.cost}
-                  title={`Quelqu’un le fait pour vous — ${contractor.cost} TRN`}
-                  onClick={onContractor}
-                >
-                  Payer quelqu’un · {contractor.cost} TRN
-                </button>
-              </>
+            {contractor && !visiting && selectedCount > 0 && (
+              <button
+                type="button"
+                className="chip eta"
+                disabled={busy || crd < contractor.cost}
+                title={`Quelqu’un le fait pour vous — ${contractor.cost} TRN`}
+                onClick={onContractor}
+              >
+                Payer · {contractor.cost} TRN
+              </button>
             )}
-            {laborQuote != null && !visiting && onPublishLabor && (
+            {laborQuote != null && !visiting && selectedCount > 0 && onPublishLabor && (
               <button
                 type="button"
                 className="chip"
@@ -289,10 +287,10 @@ export function FieldDock({
                 title="Cet argent est mis de côté jusqu’à la fin (ou l’annulation)."
                 onClick={onPublishLabor}
               >
-                Demander de l’aide · {laborQuote} TRN
+                Aide · {laborQuote} TRN
               </button>
             )}
-            {readyCount > 0 && (
+            {harvestOn && readyCount > 0 && (
               <button
                 type="button"
                 className="chip go"
@@ -302,6 +300,13 @@ export function FieldDock({
                 {mowReadyAll ? `Tout faucher ×${readyCount}` : `Tout récolter ×${readyCount}`}
               </button>
             )}
+            <button
+              type="button"
+              className="chip"
+              onClick={() => onTool("SELECT")}
+            >
+              Masquer
+            </button>
           </div>
         </div>
       )}

@@ -42,6 +42,7 @@ type Props = {
   myAsks: MyHelpAsk[];
   onAcceptHelp: (id: string) => void;
   onCancelAsk: (id: string) => void;
+  onClose?: () => void;
   locked: boolean;
   zones: ExpandZone[];
   myFarmId?: string;
@@ -79,6 +80,7 @@ export function MissionsPanel({
   myAsks,
   onAcceptHelp,
   onCancelAsk,
+  onClose,
   locked,
   zones,
   myFarmId,
@@ -90,7 +92,14 @@ export function MissionsPanel({
 
   return (
     <aside className={className} {...gesture}>
-      <h3>Missions</h3>
+      <div className="sheet-head">
+        <h3>Missions</h3>
+        {onClose && (
+          <button type="button" className="sheet-close" onClick={onClose}>
+            Fermer
+          </button>
+        )}
+      </div>
       <p className="muted tiny">Aidez un voisin. On vous paie. Il faut la machine.</p>
 
       <section className="hall-block">

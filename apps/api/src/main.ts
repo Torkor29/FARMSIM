@@ -5066,8 +5066,13 @@ app.post("/machines/:id/grease", async (req, res) => {
     res.status(403).json({ error: "Machine non possédée" });
     return;
   }
-  if ((machine.grease ?? GREASE_FULL) >= GREASE_FULL - 0.5) {
-    res.status(409).json({ error: "Déjà plein de graisse" });
+  const alreadyFull = (machine.grease ?? GREASE_FULL) >= GREASE_FULL - 0.5;
+  if (alreadyFull) {
+    await prisma.machine.update({
+      where: { id: machine.id },
+      data: { greased: true, grease: GREASE_FULL, greaseSkipStreak: 0 },
+    });
+    res.json({ machineId: machine.id, greased: true, grease: GREASE_FULL, cost: 0 });
     return;
   }
   if (machine.farm.user.crd < GREASE_COST_CRD) {

@@ -1217,10 +1217,13 @@ export function App() {
   }
 
   useEffect(() => {
-    if (!msg) return;
-    const t = window.setTimeout(() => setMsg(null), 2800);
+    if (!msg && !err) return;
+    const t = window.setTimeout(() => {
+      setMsg(null);
+      setErr(null);
+    }, err ? 4500 : 2800);
     return () => window.clearTimeout(t);
-  }, [msg, toastTick]);
+  }, [msg, err, toastTick]);
 
   const onFarm = Boolean(player && ownedParcels.length);
   useEffect(() => {
@@ -2520,7 +2523,9 @@ export function App() {
           method: "POST",
           body: JSON.stringify({ userId: player.id }),
         });
-        setMsg(`Graissé · −${r.cost} TRN`);
+        setErr(null);
+        setMsg(r.cost ? `Graissé · −${r.cost} TRN — vous pouvez y aller` : "C’est graissé — vous pouvez y aller");
+        setSheet(null);
       } else if (care.mode === "clean") {
         const r = await api<{ cost: number }>(`/machines/${care.machineId}/clean`, {
           method: "POST",
@@ -2779,7 +2784,7 @@ export function App() {
           })}
           <span className="tick weather-tick">{weatherLabel}</span>
         </div>
-        {isMobile && (
+        {isMobile && !sheet && (
           <button type="button" className="quest-chip quest-chip-hud" onClick={() => setShowGuide(true)}>
             <span className="quest-chip-mark" aria-hidden="true">
               {allGoalsDone ? "★" : "➤"}
@@ -2796,7 +2801,7 @@ export function App() {
             </span>
           </button>
         )}
-        {soldBanner && (
+        {soldBanner && !sheet && (
           <div className="harvest-sold-banner" role="status">
             <p>
               {soldBanner.tons.toFixed(1)} t de {soldBanner.crop} vendues tout de suite · +
@@ -2849,9 +2854,17 @@ export function App() {
           </button>
         )}
         {(msg || err) && (
-          <div key={toastTick} className={`toast ${err ? "bad" : "good"} pop`}>
+          <button
+            key={toastTick}
+            type="button"
+            className={`toast ${err ? "bad" : "good"} pop`}
+            onClick={() => {
+              setMsg(null);
+              setErr(null);
+            }}
+          >
             {err ?? msg}
-          </div>
+          </button>
         )}
       </div>
 
@@ -2871,7 +2884,12 @@ export function App() {
 
       {sheet === "PROFILE" && isMobile && (
         <aside className={panelClass("profile-panel", "PROFILE")} {...(isMobile ? sheetGesture : {})}>
-          <h3>{player.displayName}</h3>
+          <div className="sheet-head">
+            <h3>{player.displayName}</h3>
+            <button type="button" className="sheet-close" onClick={() => setSheet(null)}>
+              Fermer
+            </button>
+          </div>
           <dl>
             <div>
               <dt>Métier</dt>
@@ -2925,7 +2943,14 @@ export function App() {
       )}
 
       <aside className={panelClass("geo-panel", "INFO")} {...(isMobile ? sheetGesture : {})}>
-        <h3>{homeCity || zoneName}</h3>
+        <div className="sheet-head">
+          <h3>{homeCity || zoneName}</h3>
+          {isMobile && (
+            <button type="button" className="sheet-close" onClick={() => setSheet(null)}>
+              Fermer
+            </button>
+          )}
+        </div>
         <dl>
           <div>
             <dt>Région</dt>
@@ -2998,7 +3023,14 @@ export function App() {
       </aside>
 
       <aside className={panelClass("build-panel", "BUILD")} {...(isMobile ? sheetGesture : {})}>
-        <h3>Construire</h3>
+        <div className="sheet-head">
+          <h3>Construire</h3>
+          {isMobile && (
+            <button type="button" className="sheet-close" onClick={() => setSheet(null)}>
+              Fermer
+            </button>
+          )}
+        </div>
         <div className="build-list">
           {(Object.keys(BUILDING_DEFS) as BuildingType[]).map((t) => {
             const d = BUILDING_DEFS[t];
@@ -3137,7 +3169,14 @@ export function App() {
 
       {(isMobile ? sheet === "GARAGE" : showGarage) && (
         <aside className={panelClass("garage-panel", "GARAGE")} {...(isMobile ? sheetGesture : {})}>
-          <h3>Garage</h3>
+          <div className="sheet-head">
+            <h3>Garage</h3>
+            {isMobile && (
+              <button type="button" className="sheet-close" onClick={() => setSheet(null)}>
+                Fermer
+              </button>
+            )}
+          </div>
           <p className="muted tiny">
             Graissez et nettoyez : la machine s’use moins et récolte un peu plus.
             Rafistoler ramène à mi-chemin, réviser remet à 100 %.
@@ -3374,6 +3413,7 @@ export function App() {
         <MissionsPanel
           className={panelClass("eta-panel", "OFFICE")}
           gesture={isMobile ? sheetGesture : undefined}
+          onClose={isMobile ? () => setSheet(null) : undefined}
           busy={busy}
           onlinePlayers={onlinePlayers}
           visitName={visitOrder?.clientName ?? null}
@@ -3402,7 +3442,12 @@ export function App() {
 
       {isMobile && sheet === "MORE" && (
         <aside className={panelClass("more-panel", "MORE")} {...sheetGesture}>
-          <h3>Plus</h3>
+          <div className="sheet-head">
+            <h3>Plus</h3>
+            <button type="button" className="sheet-close" onClick={() => setSheet(null)}>
+              Fermer
+            </button>
+          </div>
           <div className="more-list">
             {SHEET_TABS.map((t) => {
               const disabled = t.key === "HERD" && !barns.length;
