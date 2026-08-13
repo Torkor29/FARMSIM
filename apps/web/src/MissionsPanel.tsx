@@ -95,8 +95,8 @@ export function MissionsPanel({
       <div className="sheet-head">
         <h3>Missions</h3>
         {onClose && (
-          <button type="button" className="sheet-close" onClick={onClose}>
-            Fermer
+          <button type="button" className="sheet-close" aria-label="Fermer" onClick={onClose}>
+            ×
           </button>
         )}
       </div>

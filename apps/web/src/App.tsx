@@ -2776,7 +2776,7 @@ export function App() {
         </header>
 
         <div className="market-ticker" aria-label="Cours">
-          {[0, 1].map((copy) => (
+          {(isMobile ? [0, 1] : [0]).map((copy) => (
             <div key={copy} className="ticker-track" aria-hidden={copy === 1}>
               {market.map((m) => {
                 const prev = prevPrices[m.commodity] ?? m.price;
@@ -2898,8 +2898,8 @@ export function App() {
         <aside className={panelClass("profile-panel", "PROFILE")} {...(isMobile ? sheetGesture : {})}>
           <div className="sheet-head">
             <h3>{player.displayName}</h3>
-            <button type="button" className="sheet-close" onClick={() => setSheet(null)}>
-              Fermer
+            <button type="button" className="sheet-close" aria-label="Fermer" onClick={() => setSheet(null)}>
+              ×
             </button>
           </div>
           <dl>
@@ -2958,12 +2958,12 @@ export function App() {
         <div className="sheet-head">
           <h3>{homeCity || zoneName}</h3>
           {isMobile && (
-            <button type="button" className="sheet-close" onClick={() => setSheet(null)}>
-              Fermer
+            <button type="button" className="sheet-close" aria-label="Fermer" onClick={() => setSheet(null)}>
+              ×
             </button>
           )}
         </div>
-        <dl>
+        <dl className="sheet-stats">
           <div>
             <dt>Région</dt>
             <dd>{zoneName}</dd>
@@ -3038,8 +3038,8 @@ export function App() {
         <div className="sheet-head">
           <h3>Construire</h3>
           {isMobile && (
-            <button type="button" className="sheet-close" onClick={() => setSheet(null)}>
-              Fermer
+            <button type="button" className="sheet-close" aria-label="Fermer" onClick={() => setSheet(null)}>
+              ×
             </button>
           )}
         </div>
@@ -3184,16 +3184,15 @@ export function App() {
           <div className="sheet-head">
             <h3>Garage</h3>
             {isMobile && (
-              <button type="button" className="sheet-close" onClick={() => setSheet(null)}>
-                Fermer
+              <button type="button" className="sheet-close" aria-label="Fermer" onClick={() => setSheet(null)}>
+                ×
               </button>
             )}
           </div>
-          <p className="muted tiny">
+          <p className="muted tiny sheet-lead">
             Graissez et nettoyez : la machine s’use moins et récolte un peu plus.
-            Rafistoler ramène à mi-chemin, réviser remet à 100 %.
           </p>
-          <ul className="list">
+          <ul className="list machine-list">
             {(player.farm?.machines ?? []).map((m) => {
               const def = MACHINE_DEFS[m.type as MachineType];
               const low = def ? m.condition < def.minCondition : m.condition < 15;
@@ -3221,32 +3220,38 @@ export function App() {
               const canHalf = Boolean(halfQuote && halfQuote.points > 0.5 && m.condition < 99.5);
               const canFull = Boolean(fullQuote && fullQuote.points > 0.5 && m.condition < 99.5);
               return (
-                <li key={m.id}>
-                  <span>
+                <li key={m.id} className="machine-card">
+                  <div className="machine-card-top">
                     <strong>{def?.name ?? m.type}</strong>
-                    <div className={`muted tiny ${low || panne ? "warn" : ""}`}>
-                      État {m.condition.toFixed(0)}% ·{" "}
-                      {m.condition <= 0
-                        ? "HS"
-                        : m.condition < 15
-                          ? "à réparer"
-                          : m.condition < 40
-                            ? "usé"
-                            : m.condition < 70
-                              ? "correct"
-                              : m.condition < 90
-                                ? "bon"
-                                : "neuf"}
-                      {grease >= GREASE_OK && !dirty && !panne ? " · nickel (+)" : ""}
-                      {` · graisse ${Math.round(grease)} %`}
-                      {greaseEmpty ? " · vide" : greaseLow ? " · à graisser" : ""}
-                      {dirty ? " · sale" : ""}
-                      {panne ? ` · panne ${panne}` : ""}
-                      {m.storedInBuildingId ? " · hangar" : m.parkedParcelId ? " · parcelle" : ""}
-                      {greaseLow ? " 💧" : ""}
+                    <span className={`machine-tag${low || panne ? " warn" : ""}`}>
+                      {panne
+                        ? `Panne ${panne}`
+                        : dirty
+                          ? "Sale"
+                          : greaseEmpty
+                            ? "Graisse vide"
+                            : greaseLow
+                              ? "À graisser"
+                              : "Nickel"}
+                    </span>
+                  </div>
+                  <div className="meters">
+                    <div className="meter-row">
+                      <span>État</span>
+                      <i className="meter" aria-hidden="true">
+                        <i style={{ width: `${Math.max(0, Math.min(100, m.condition))}%` }} />
+                      </i>
+                      <b>{m.condition.toFixed(0)}%</b>
                     </div>
-                  </span>
-                  <span className="row-actions">
+                    <div className="meter-row">
+                      <span>Graisse</span>
+                      <i className={`meter grease${greaseLow ? " low" : ""}`} aria-hidden="true">
+                        <i style={{ width: `${Math.max(0, Math.min(100, grease))}%` }} />
+                      </i>
+                      <b>{Math.round(grease)}%</b>
+                    </div>
+                  </div>
+                  <div className="row-actions">
                         <button
                           type="button"
                           disabled={busy || grease >= GREASE_FULL - 0.5}
@@ -3288,7 +3293,7 @@ export function App() {
                     >
                       Vendre {machineResaleValue(m.type as MachineType, m.condition)}
                     </button>
-                  </span>
+                  </div>
                 </li>
               );
             })}

@@ -109,8 +109,8 @@ export function LivestockPanel({
       <div className="panel-head">
         <h3>Élevage</h3>
         {onClose && (
-          <button type="button" className="ghost tiny" onClick={onClose}>
-            Fermer
+          <button type="button" className="sheet-close" aria-label="Fermer" onClick={onClose}>
+            ×
           </button>
         )}
       </div>

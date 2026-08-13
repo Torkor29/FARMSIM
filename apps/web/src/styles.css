@@ -1382,6 +1382,7 @@ button.ghost {
 .tick.flat { color: var(--muted); }
 .tick.weather-tick { color: var(--info); }
 .tick small { font-weight: 500; opacity: 0.85; }
+.ticker-track { display: contents; }
 .auth-tabs {
   display: flex;
   gap: 0.5rem;
@@ -1451,12 +1452,63 @@ button.ghost {
 .panel-head h3 { margin: 0; }
 .sheet-close {
   flex: none;
-  min-height: 44px;
-  padding: 0.35rem 0.85rem;
-  border-radius: 999px;
+  width: 36px;
+  height: 36px;
+  min-height: 36px;
+  padding: 0;
+  border-radius: 50%;
   border: 1px solid var(--line);
   background: var(--sand);
+  font-weight: 700;
+  font-size: 1.35rem;
+  line-height: 1;
+  color: var(--ink);
+}
+.machine-card {
+  display: grid;
+  gap: 0.5rem;
+}
+.machine-card-top {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+.machine-tag {
+  font-size: 0.72rem;
   font-weight: 800;
+  color: var(--teal-700, #2a6b4f);
+}
+.machine-tag.warn { color: var(--danger); }
+.meters { display: grid; gap: 0.28rem; }
+.meter-row {
+  display: grid;
+  grid-template-columns: 3.6rem 1fr 2.2rem;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 0.72rem;
+  font-weight: 700;
+  color: var(--ink-soft);
+}
+.meter-row b { text-align: right; color: var(--ink); }
+.meter {
+  display: block;
+  height: 6px;
+  border-radius: 99px;
+  background: var(--sand);
+  overflow: hidden;
+}
+.meter > i {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, var(--teal-300, #7dbea8), var(--teal-500, #2e8e7a));
+}
+.meter.grease > i {
+  background: linear-gradient(90deg, var(--gold-300), var(--gold-500));
+}
+.meter.grease.low > i {
+  background: linear-gradient(90deg, #e0762f, #c94a2a);
 }
 .quest-chip-hud {
   justify-self: stretch;
@@ -1873,23 +1925,35 @@ button.ghost {
     box-shadow: 0 -10px 30px rgba(24, 44, 38, 0.22);
     /* Fermé par défaut : le tiroir n'existe que quand on l'appelle. */
     display: none;
-    animation: sheet-rise 0.22s ease;
+    padding: 0.85rem 0.9rem 1rem;
+    animation: sheet-rise 0.34s cubic-bezier(0.22, 1, 0.36, 1);
   }
   .game-stage.mobile .sheet.open { display: block; }
 
-  /* Poignée : elle signale qu'on a affaire à un tiroir, pas à une carte. */
   .game-stage.mobile .sheet::before {
     content: "";
     display: block;
-    width: 38px;
-    height: 4px;
-    margin: 0 auto 0.6rem;
+    width: 32px;
+    height: 3px;
+    margin: 0 auto 0.7rem;
     border-radius: 999px;
-    background: rgba(34, 49, 44, 0.22);
+    background: rgba(34, 49, 44, 0.18);
   }
 
   @keyframes sheet-rise {
-    from { transform: translateY(14px); opacity: 0; }
+    from { transform: translateY(28px) scale(0.98); opacity: 0; }
+    to { transform: translateY(0) scale(1); opacity: 1; }
+  }
+  @keyframes scrim-in {
+    from { opacity: 0; }
+    to { opacity: 1; }
+  }
+  @keyframes more-rise {
+    from { transform: translateY(16px); opacity: 0; }
+    to { transform: translateY(0); opacity: 1; }
+  }
+  @keyframes more-pop {
+    from { transform: translateY(10px); opacity: 0; }
     to { transform: translateY(0); opacity: 1; }
   }
 
@@ -1900,8 +1964,9 @@ button.ghost {
     z-index: 11;
     border: 0;
     padding: 0;
-    background: rgba(24, 44, 38, 0.28);
-    backdrop-filter: blur(2px);
+    background: rgba(24, 44, 38, 0.32);
+    backdrop-filter: blur(3px);
+    animation: scrim-in 0.22s ease;
   }
 
   /* —— Barre d'onglets : remplacée par Plus dans le dock —— */
@@ -1949,6 +2014,7 @@ button.ghost {
     border: 1px solid var(--glass-border);
     box-shadow: var(--sh-2);
     backdrop-filter: blur(12px);
+    animation: more-rise 0.28s cubic-bezier(0.22, 1, 0.36, 1);
   }
   .more-item {
     display: grid;
@@ -1958,7 +2024,16 @@ button.ghost {
     padding: 0.2rem 0.1rem;
     border: 0;
     background: transparent;
+    border-radius: 12px;
+    animation: more-pop 0.32s cubic-bezier(0.22, 1, 0.36, 1) both;
   }
+  .more-item:nth-child(1) { animation-delay: 0.03s; }
+  .more-item:nth-child(2) { animation-delay: 0.06s; }
+  .more-item:nth-child(3) { animation-delay: 0.09s; }
+  .more-item:nth-child(4) { animation-delay: 0.12s; }
+  .more-item:nth-child(5) { animation-delay: 0.15s; }
+  .more-item:nth-child(6) { animation-delay: 0.18s; }
+  .more-item:active { background: var(--sand); }
   .more-item strong { font-size: 0.64rem; font-weight: 800; }
   .quest-chip-hud {
     padding: 0.35rem 0.65rem;
@@ -1968,12 +2043,63 @@ button.ghost {
     height: 1.5rem;
     font-size: 0.75rem;
   }
-  .game-stage.mobile .sheet-head {
+  .game-stage.mobile .sheet-head,
+  .game-stage.mobile .panel-head {
     position: sticky;
     top: 0;
     z-index: 1;
-    padding-bottom: 0.35rem;
+    padding-bottom: 0.45rem;
+    margin-bottom: 0.35rem;
     background: var(--paper, #fff);
+  }
+  .game-stage.mobile .sheet h3 {
+    font-size: 1.05rem;
+    letter-spacing: -0.02em;
+  }
+  .game-stage.mobile .sheet-lead { display: none; }
+  .game-stage.mobile .sheet-stats {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 0.35rem 0.7rem;
+  }
+  .game-stage.mobile .sheet-stats > div {
+    padding: 0.4rem 0.5rem;
+    border-radius: 10px;
+    background: var(--sand);
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 0.1rem;
+  }
+  .game-stage.mobile .sheet-stats dt { font-size: 0.68rem; }
+  .game-stage.mobile .sheet-stats dd { font-size: 0.86rem; }
+  .game-stage.mobile .machine-list { gap: 0.6rem; }
+  .game-stage.mobile .machine-card {
+    padding: 0.7rem 0.75rem;
+    border-radius: 14px;
+    background: var(--paper);
+    border: 1px solid var(--line);
+    box-shadow: var(--sh-1);
+  }
+  .game-stage.mobile .machine-card .row-actions {
+    justify-content: stretch;
+  }
+  .game-stage.mobile .machine-card .row-actions button {
+    flex: 1 1 calc(50% - 0.2rem);
+    min-height: 38px;
+    font-size: 0.72rem;
+    font-weight: 700;
+    border-radius: 10px;
+  }
+  .game-stage.mobile .build-item.art,
+  .game-stage.mobile .upgrade-item {
+    padding: 0.5rem 0.55rem;
+    border-radius: 12px;
+    background: var(--paper);
+    box-shadow: var(--sh-1);
+  }
+  .game-stage.mobile .job-card {
+    border-radius: 12px;
+    padding: 0.65rem 0.7rem;
   }
   .dock-tool { min-height: 56px; }
   .dock-label { font-size: 0.75rem; }
