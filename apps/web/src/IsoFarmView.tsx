@@ -23,6 +23,8 @@ export type IsoCell = {
   fertilizedPasses?: number;
   /** Chaumes après moisson : la case n'est pas semable en l'état */
   hasStubble?: boolean;
+  /** Désherbage fait ; sans lui, les adventices concurrencent la culture */
+  weedsControlled?: boolean;
   /** Déchaumages consécutifs — le sol s'assombrit à mesure qu'il s'enrichit */
   residuePasses?: number;
   /** Type machine si kind === VEHICLE (sinon TRACTOR par défaut) */
@@ -118,7 +120,7 @@ const DRY_SOIL = 0xb5a179;
  * « il faut labourer » ne pouvait pas voir quelles cases traiter. Chaque état
  * porte donc aussi un relief.
  */
-type SoilLook = "PLOWED" | "STUBBLE" | "RESIDUE" | "DRY" | "PLAIN";
+type SoilLook = "PLOWED" | "STUBBLE" | "RESIDUE" | "DRY" | "WEEDS" | "PLAIN";
 
 function soilLook(c: IsoCell): SoilLook {
   if (c.fieldStage === "SPOILED") return "DRY";
@@ -133,6 +135,9 @@ function soilLook(c: IsoCell): SoilLook {
 }
 
 const SOIL_COLORS: Record<SoilLook, number> = {
+  // Les adventices ne repeignent pas la case : elles s'y ajoutent. La teinte
+  // ne sert que si la table est consultée pour elles.
+  WEEDS: SOIL,
   PLOWED: PLOWED_SOIL,
   STUBBLE: STUBBLE_SOIL,
   RESIDUE: RESIDUE_SOIL,
@@ -475,6 +480,8 @@ export function IsoFarmView({
     const workGroup = new THREE.Group();
     world.add(workGroup);
     let workVehicle: THREE.Group | null = null;
+    /** Cases à parcourir, ordonnées en va-et-vient rang par rang. */
+    let workPath: { x: number; y: number }[] = [];
 
     /** Bouffées de poussière derrière l'engin au travail. */
     const dustPuffs: THREE.Mesh[] = [];
@@ -632,6 +639,19 @@ export function IsoFarmView({
             [0.26, -0.26],
           ],
           h: 0.1,
+        },
+        {
+          // Touffes d'adventices : basses, désordonnées, d'un vert cru qui
+          // tranche avec la culture en place.
+          look: "WEEDS",
+          geo: new THREE.BoxGeometry(size * 0.12, 0.2, size * 0.12),
+          color: 0x5f9c3a,
+          spots: [
+            [-0.3, 0.3],
+            [0.31, -0.29],
+            [0.34, 0.33],
+          ],
+          h: 0.2,
         },
         {
           look: "DRY",
@@ -867,6 +887,11 @@ export function IsoFarmView({
           if (cell?.kind === "BUILDING") col = DIRT;
           if (cell?.kind === "VEHICLE") col = 0x3a3f44;
           if (cell && cell.kind === "EMPTY" && look !== "PLAIN") soilDetails.push({ look, px, pz });
+          // Les adventices pesaient sur le rendement sans jamais se montrer.
+          // Une culture non désherbée porte donc ses touffes parasites.
+          if (cell?.kind === "CROP" && !cell.weedsControlled) {
+            soilDetails.push({ look: "WEEDS", px, pz });
+          }
 
           const mat = new THREE.MeshLambertMaterial({
             color: isSel ? SELECT_GLOW : col,
@@ -1372,7 +1397,7 @@ export function IsoFarmView({
         mat.color.copy(tmpColor);
       }
 
-      // Engin de travail : parcours simple des cases
+      // Engin de travail : parcours des cases, rang par rang.
       const workKey = aw
         ? `${aw.type}:${aw.cells.map((c) => `${c.x},${c.y}`).join("|")}`
         : "";
@@ -1383,18 +1408,27 @@ export function IsoFarmView({
           workStartRef.current = t;
           workVehicle = makeVehicleSprite(aw.type, camera);
           workGroup.add(workVehicle);
+          // On ne traverse pas un champ en diagonale. L'engin descend un rang
+          // d'un bout à l'autre, tourne, et remonte le suivant en sens
+          // inverse : c'est le va-et-vient d'un vrai chantier, et cela se lit
+          // immédiatement comme un travail méthodique plutôt qu'un vol plané.
+          workPath = [...aw.cells].sort((p, q) =>
+            p.y !== q.y ? p.y - q.y : (p.y % 2 === 0 ? p.x - q.x : q.x - p.x),
+          );
+        } else {
+          workPath = [];
         }
       }
-      if (workVehicle && aw && aw.cells.length) {
-        const duration = workAnimationMs(aw.cells.length) / 1000;
+      if (workVehicle && workPath.length) {
+        const duration = workAnimationMs(workPath.length) / 1000;
         const u = Math.min(1, (t - workStartRef.current) / duration);
-        const n = aw.cells.length;
+        const n = workPath.length;
         const f = u * Math.max(1, n - 1);
         const i0 = Math.min(n - 1, Math.floor(f));
         const i1 = Math.min(n - 1, i0 + 1);
         const local = f - i0;
-        const a = aw.cells[i0];
-        const b = aw.cells[i1];
+        const a = workPath[i0];
+        const b = workPath[i1];
         const pa = cellWorldPos(a.x, a.y);
         const pb = cellWorldPos(b.x, b.y);
         const px = pa.px + (pb.px - pa.px) * local;
@@ -1411,9 +1445,9 @@ export function IsoFarmView({
 
         // La coupe se voit : chaque case franchie perd sa culture au passage,
         // au lieu que le champ entier disparaisse d'un coup au rechargement.
-        if (aw.type === "HARVESTER") {
+        if (aw?.type === "HARVESTER") {
           for (let i = 0; i <= i0; i++) {
-            const done = cropMeshes.get(key(aw.cells[i].x, aw.cells[i].y));
+            const done = cropMeshes.get(key(workPath[i].x, workPath[i].y));
             if (done) done.visible = false;
           }
         }
@@ -1490,7 +1524,7 @@ export function IsoFarmView({
     const c = cells
       .map(
         (x) =>
-          `${x.x},${x.y},${x.kind},${x.crop ?? ""},${x.fieldStage ?? ""},${x.machineType ?? ""},${x.hasStubble ? 1 : 0},${x.residuePasses ?? 0}`,
+          `${x.x},${x.y},${x.kind},${x.crop ?? ""},${x.fieldStage ?? ""},${x.machineType ?? ""},${x.hasStubble ? 1 : 0},${x.residuePasses ?? 0},${x.weedsControlled ? 1 : 0}`,
       )
       .join("|");
     const b = buildings

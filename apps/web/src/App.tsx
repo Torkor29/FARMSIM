@@ -79,6 +79,7 @@ type Cell = {
   harvestsSincePlow?: number;
   residuePasses?: number;
   hasStubble?: boolean;
+  weedsControlled?: boolean;
   directSeeded?: boolean;
   lastCrop?: CropCode | null;
   cropStreak?: number;
