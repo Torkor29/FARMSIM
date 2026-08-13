@@ -109,12 +109,12 @@ const MACHINE_LOOK: Record<
   DISC_HARROW: { body: 0x8a6a4a, accent: 0xb8bec4, w: 0.62, h: 0.22, d: 0.44 },
 };
 
-const STUBBLE_SOIL = 0xd9c48a;
-const RESIDUE_SOIL = 0x7f6a44;
+const STUBBLE_SOIL = 0xe3cf98;
+const RESIDUE_SOIL = 0x8a7048;
 /** Terre labourée : brune et grasse, celle qui attend la semence. */
-const PLOWED_SOIL = 0x6b4a2f;
+const PLOWED_SOIL = 0x593a20;
 /** Terre sèche et craquelée, laissée par une culture perdue. */
-const DRY_SOIL = 0xa08a63;
+const DRY_SOIL = 0xb5a179;
 
 /**
  * État visuel d'une case, tel qu'il doit se lire d'un coup d'œil.
@@ -548,57 +548,68 @@ export function IsoFarmView({
       if (!details.length) return;
 
       // Sillons, tiges et craquelures : forme, matière et disposition.
+      // Les tailles sont celles d'une illustration, pas d'un relevé de terrain.
+      // Une première version reproduisait les proportions réelles : sur un
+      // écran où une case fait quarante pixels, les sillons en occupaient deux
+      // et les craquelures un. Invisibles, donc inutiles.
       const kinds: {
         look: SoilLook;
         geo: THREE.BoxGeometry;
         color: number;
         /** Décalages, en fraction de case, des exemplaires posés par case */
         spots: [number, number][];
-        y: number;
+        /** Hauteur du relief ; sa base est posée sur le dessus de la dalle */
+        h: number;
       }[] = [
         {
+          // Crêtes claires sur terre sombre : c'est ainsi qu'un labour se lit,
+          // la lumière accrochant le sommet des billons.
           look: "PLOWED",
-          geo: new THREE.BoxGeometry(size * 0.86, 0.05, size * 0.12),
-          color: 0x54371f,
+          geo: new THREE.BoxGeometry(size * 0.88, 0.16, size * 0.13),
+          color: 0x8a6239,
           spots: [
-            [0, -0.26],
-            [0, 0],
-            [0, 0.26],
+            [0, -0.3],
+            [0, -0.1],
+            [0, 0.1],
+            [0, 0.3],
           ],
-          y: 0.11,
+          h: 0.16,
         },
         {
           look: "STUBBLE",
-          geo: new THREE.BoxGeometry(size * 0.07, 0.13, size * 0.07),
-          color: 0xc0a262,
+          geo: new THREE.BoxGeometry(size * 0.1, 0.28, size * 0.1),
+          color: 0xb59a55,
           spots: [
-            [-0.24, -0.2],
-            [0.2, -0.06],
-            [-0.08, 0.22],
-            [0.26, 0.24],
+            [-0.26, -0.22],
+            [0.04, -0.28],
+            [0.24, -0.04],
+            [-0.1, 0.18],
+            [0.22, 0.28],
           ],
-          y: 0.15,
+          h: 0.28,
         },
         {
           look: "RESIDUE",
-          geo: new THREE.BoxGeometry(size * 0.26, 0.04, size * 0.09),
-          color: 0x5d4a2c,
+          geo: new THREE.BoxGeometry(size * 0.3, 0.1, size * 0.12),
+          color: 0x4f3d22,
           spots: [
-            [-0.18, -0.14],
-            [0.19, 0.05],
-            [-0.05, 0.24],
+            [-0.2, -0.18],
+            [0.18, 0.02],
+            [-0.02, 0.26],
+            [0.26, -0.26],
           ],
-          y: 0.1,
+          h: 0.1,
         },
         {
           look: "DRY",
-          geo: new THREE.BoxGeometry(size * 0.6, 0.03, size * 0.05),
-          color: 0x6f5b3e,
+          geo: new THREE.BoxGeometry(size * 0.66, 0.09, size * 0.07),
+          color: 0x5f4c33,
           spots: [
-            [0, -0.12],
-            [0, 0.16],
+            [0, -0.18],
+            [0, 0.06],
+            [0, 0.28],
           ],
-          y: 0.1,
+          h: 0.09,
         },
       ];
 
@@ -621,10 +632,12 @@ export function IsoFarmView({
           for (const [dx, dz] of kind.spots) {
             // Une craquelure alternée d'une case à l'autre évite le damier
             // trop régulier qui trahit la génération.
-            const jitter = kind.look === "DRY" ? ((cellPos.px + cellPos.pz) % 2 === 0 ? 0.05 : -0.05) : 0;
+            const jitter = kind.look === "DRY" ? ((cellPos.px + cellPos.pz) % 2 === 0 ? 0.08 : -0.08) : 0;
+            // La dalle culmine à 0,09 : le relief se pose dessus, il ne s'y
+            // enfonce pas.
             m.makeTranslation(
               cellPos.px + (dx + jitter) * size,
-              kind.y,
+              0.09 + kind.h / 2,
               cellPos.pz + dz * size,
             );
             mesh.setMatrixAt(i++, m);
