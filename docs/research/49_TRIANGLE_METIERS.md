@@ -2,7 +2,7 @@
 
 **Statut :** Stratégie — à valider avant toute ligne de code  
 **Date :** 2026-08-13  
-**Mise à jour :** 2026-08-13 — boucles métier (§ 7) ; l'ETA glisse, graisse, répare, habite un dépôt sans champ (Strea / Torkor).  
+**Mise à jour :** 2026-08-13 — boucles métier ; ETA glisse / graisse / répare ; mini-jeux = 4 familles, pas une arcade par mission.  
 **Remplace :** la lecture de [48_PLAN_MECANIQUES.md](./48_PLAN_MECANIQUES.md) sur les métiers, l'absence et les salariés. Le 48 reste le plan d'exécution des briques (paille, ensilage, saisons, CUMA). Celui-ci dit **pourquoi** elles existent et **comment** elles s'emboîtent.
 
 ---
@@ -107,18 +107,18 @@ Pas des bonus. Des façons de gagner sa vie, des kits de départ, des dépendanc
 
 **Gagne sa vie** en vendant du *travail*. Elle ne produit aucune matière. Pas de récolte à elle, pas de lait à elle. Son chiffre d'affaires est la somme des chantiers honorés. Sa charge, c'est le matériel : achat, usure, gasoil, hangar.
 
-**Kit de départ** `[GD]` : **une** machine chère (moissonneuse *ou* gros tracteur + un outil), un hangar, **pas de parcelle agricole** — un dépôt. Le premier contrat est une parcelle mûre, PNJ ou joueur, **visible sur la carte**. On y entre. On travaille. On est payé.
+**Kit de départ** `[GD]` : **une** machine chère (moissonneuse *ou* gros tracteur + un outil), hangar + **atelier**, **pas de champ** — un dépôt. Le premier contrat est une parcelle mûre à côté. On graisse, on y entre, on **glisse**, on est payé.
 
-**Vend aux deux autres :** capacité. Moisson, ensilage, pressage, labour, épandage, transport. L'ensileuse et la presse sont *ses* machines emblématiques : trop chères, trop saisonnières pour qu'un céréalier les amortisse seul.
+**Vend aux deux autres :** capacité. Épandre (fumier / lisier), labourer, déchaumer, semer, récolter, désherber, presser, ensiler, transporter, **réparer leur matériel**. L'ensileuse et la presse restent les machines emblématiques.
 
-**Achète :** rien en matière agricole. Du gasoil, des pièces, plus tard des salariés (voir § 8.4). Elle a besoin que les deux autres **existent et plantent**. Une région sans céréaliers est une ETA au chômage.
+**Achète :** gasoil, graisse, pièces. Rien en matière agricole. Plus tard, une flotte de conducteurs (§ 8.4). Elle a besoin que les deux autres **existent et plantent**. Une région sans céréaliers est une ETA au chômage.
 
-**Échec propre :** machines qui s'usent à l'arrêt (traites, hangar), file d'attente vide, réputation qui glisse si on lâche un chantier. Être hors-ligne pendant la fenêtre de moisson, c'est laisser les chantiers aux autres ETA — joueurs ou PNJ.
+**Échec propre :** partir sans graisser → panne chez le client. File vide. Réputation si on lâche. Hors-ligne pendant la fenêtre = les chantiers vont ailleurs.
 
-**Session type, présent :** lire la bourse, enchaîner 3–8 chantiers, réparer, repositionner. C'est le métier *le plus* présent pendant les pics. 30–60 min d'affilée.
-**Session type, calme :** entretien, achat d'un second outil, élargir la zone, régler les filtres de la flotte. 10 min.
+**Session type, présent :** tableau → graisser → glisser 3–8 chantiers → souffler / nettoyer, ou sortir le 2ᵉ engin. 30–60 min d'affilée.
+**Session type, calme :** atelier, deuxième moissonneuse, rayon, filtres. 10 min.
 
-L'ETA n'est pas un céréalier sans champ. C'est un entrepreneur dont le planning *est* le jeu.
+L'ETA n'est pas un céréalier sans champ. Sa terre, c'est l'atelier. Son champ, ce sont les parcelles des autres.
 
 ---
 
@@ -496,6 +496,38 @@ Strea demande trois gestes, pas un bouton. On les pose **seulement sur l'ETA**. 
 
 **Missions PNJ autour.** Confirmé § 9. Rayon : la région, pas la planète. L'ETA voit les parcelles PNJ occupées et y entre comme chez un joueur.
 
+### 8.8 Mini-jeux — quatre familles, pas une dizaine de jouets
+
+Oui aux mini-jeux. Non à un mini-jeu différent par type de mission.
+
+Une dizaine de contrôles distincts (moisson-QTE, labour-puzzle, lisier-tuyaux, chaux-rythme…) casse le métier : on n'est plus ETA, on enchaîne des jouets. Ça ne tient pas au mobile (chaque schéma à réapprendre), ça ne parle pas au triangle (réussir un puzzle n'aide ni le céréalier ni l'éleveur, sauf le résultat), et ça coûte dix fois les assets pour une osmose nulle.
+
+Ce qu'on veut, c'est **le même geste, plus ou moins dur**. Quatre familles. Toute la variété vient de la panne, de la boue, de la largeur d'outil, de l'urgence du client — pas d'un nouveau jeu.
+
+| Famille | Geste unique | Ce qui change la difficulté |
+|---------|--------------|-----------------------------|
+| **1. Champ** | Maintien + glisser (§ 8.7) | Largeur T1→T3, boue, pente, nuit, engin qui tousse, surface du contrat |
+| **2. Graissage** | Pointer 4 à 8 graisseurs sur la silhouette | 15 s sur un T1 propre ; davantage de points sur un T3 / après la boue |
+| **3. Nettoyage** | Souffler (balayer la poussière) puis laver (passer l'eau sur les taches) | Un épandage de lisier sale plus qu'une moisson sèche. Deux phases, jamais un troisième jeu |
+| **4. Réparation** | Ouvrir l'engin, pièces en rouge, remplacer depuis le stock, tester | Voir l'échelle ci-dessous |
+
+L'échelle de la famille 4, c'est la réponse à « selon la réparation, plus ou moins dur » :
+
+| Gravité | Condition / cause | Mini-jeu | Durée cible `[TEST]` | Enjeu |
+|---------|-------------------|----------|----------------------|-------|
+| **Courroie** | Usure légère, entretien | 2–3 pièces, ordre libre | ~20 s | Peu de CRD, on reprend tout de suite |
+| **Hydraulique** | Fuite, saleté, choc | Trouver la fuite, poser le flexible, tester sous pression | ~45 s | Si on rate le test, ça fuit encore |
+| **Moteur / transmission** | Panne en plein champ, condition basse | Diagnostic (une jauge, un écoute) puis 5–8 pièces, ordre imposé | ~90 s | Le chantier client est figé. On peut abandonner et sortir le 2ᵉ engin |
+| **Chez le client (`REPAIR`)** | Sa machine, pas la nôtre | Même famille, un cran plus dur (modèle moins connu) | +20 % | On facture. Un raté = sa machine pas mieux, réputation |
+
+Même écran d'atelier pour les trois gravités : silhouette de l'engin, pièces, stock, bouton tester. On ne change pas de genre. On allonge, on contraint, on met la pression du *temps réel du monde* (la culture du céréalier continue de décoter pendant qu'on a le capot ouvert).
+
+**Ce que ça donne aux autres métiers.** Un graissage raté n'est pas un game over : l'engin part, il cassera plus tôt *chez eux*. Une réparation moteur trop longue, c'est leur fenêtre qui file. Le mini-jeu pèse sur le triangle, ou on ne le fait pas.
+
+**Ce qu'on ne pose pas en mini-jeu.** Semer, fertiliser, vendre, formuler une ration, signer un contrat. Ce sont des décisions de gestion. Le céréalier et l'éleveur n'ont pas une arcade collée à chaque clic — ils ont le bouton « Réparer » cher. L'arcade, c'est le mode ETA.
+
+Plus tard, si une famille est aimée, on peut *décliner* (aligner un convoyeur, poser une vis) **dans le même écran**. Ce n'est pas « dix mini-jeux ». C'est la famille 4 qui s'enrichit.
+
 ---
 
 ## 9. Fermes PNJ — l'infrastructure, pas un mode
@@ -587,6 +619,7 @@ On ne les code pas tant que la bourse, la paille et l'ensilage n'existent pas : 
 - **Pas de graisse / soufflage / nettoyage chez le céréalier et l'éleveur.** Ils gardent « Réparer » au tarif fort. L'entretien profond *est* le mode ETA.
 - **Pas de location magique.** Pas l'engin du chantier = pas la mission.
 - **Pas de chaux cosmétique.** Tant qu'il n'y a pas de levier sol (NPK / pH), on ne pose pas le bouton.
+- **Pas un mini-jeu par type de mission.** Quatre familles, une difficulté qui monte (§ 8.8). Pas de QTE de moisson distinct d'un puzzle de labour.
 
 ---
 
@@ -597,7 +630,7 @@ Le 48 disait : paille → ensilage → métiers → saisons → CUMA. C'était l
 | # | Brique | Pourquoi maintenant | Dépend de |
 |---|--------|---------------------|-----------|
 | **0** | **Bourse + geste** | Chantier lié à une parcelle. Machine **possédée** exigée. L'ETA **glisse** l'outil chez le client. Urgent PNJ = filet. | Travail aux champs déjà là |
-| **0b** | **Atelier ETA** | Graisser / souffler / nettoyer / panne. Remise métier. Chantier `REPAIR` chez les autres. Plusieurs fois le même engin. | 0, bâtiment `WORKSHOP` déjà là |
+| **0b** | **Atelier ETA** | Quatre familles de mini-jeux (§ 8.8). Graisser / nettoyer / réparer (échelle courroie → moteur). `REPAIR` chez les autres. | 0, `WORKSHOP` déjà là |
 | **1** | **Consignes + rapport d'absence** | Transforme la fenêtre de récolte (38) et la mortalité (44) en offre. L'absence devient le jeu de l'ETA. | 0 |
 | **2** | **Fermes PNJ sur la carte** | Rend le solo vrai. Donne à l'ETA des terres où aller dès le jour 1. | 0 |
 | **3** | **Kits de départ par métier** | Le choix à l'onboarding commence à tenir sa promesse. | 0, 2 (l'ETA a quelqu'un à servir) |
