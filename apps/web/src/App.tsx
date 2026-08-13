@@ -2617,7 +2617,9 @@ export function App() {
 
   return (
     <div
-      className={`game-stage${isMobile ? " mobile" : ""}${isMobile && sheet ? " sheet-open" : ""}${
+      className={`game-stage${isMobile ? " mobile" : ""}${isMobile && sheet && sheet !== "MORE" ? " sheet-open" : ""}${
+        isMobile && sheet === "MORE" ? " more-open" : ""
+      }${
         isMobile && (isPlantTool(tool) || isSoilTool(tool) || tool === "HARVEST") ? " tray-open" : ""
       }`}
     >
@@ -2773,22 +2775,26 @@ export function App() {
           </div>
         </header>
 
-        <div className="market-ticker">
-          {market.map((m) => {
-            const prev = prevPrices[m.commodity] ?? m.price;
-            const delta = m.price - prev;
-            const cls = delta > 0.05 ? "up" : delta < -0.05 ? "down" : "flat";
-            return (
-              <span key={m.commodity} className={`tick ${cls}`}>
-                {GOOD_DEFS[m.commodity as TradeGood]?.name ?? m.commodity} {m.price.toFixed(1)}
-                <small>
-                  {delta > 0.05 ? " ▲" : delta < -0.05 ? " ▼" : " ·"}
-                  {Math.abs(delta) > 0.05 ? Math.abs(delta).toFixed(1) : ""}
-                </small>
-              </span>
-            );
-          })}
-          <span className="tick weather-tick">{weatherLabel}</span>
+        <div className="market-ticker" aria-label="Cours">
+          {[0, 1].map((copy) => (
+            <div key={copy} className="ticker-track" aria-hidden={copy === 1}>
+              {market.map((m) => {
+                const prev = prevPrices[m.commodity] ?? m.price;
+                const delta = m.price - prev;
+                const cls = delta > 0.05 ? "up" : delta < -0.05 ? "down" : "flat";
+                return (
+                  <span key={`${copy}-${m.commodity}`} className={`tick ${cls}`}>
+                    {GOOD_DEFS[m.commodity as TradeGood]?.name ?? m.commodity} {m.price.toFixed(1)}
+                    <small>
+                      {delta > 0.05 ? " ▲" : delta < -0.05 ? " ▼" : " ·"}
+                      {Math.abs(delta) > 0.05 ? Math.abs(delta).toFixed(1) : ""}
+                    </small>
+                  </span>
+                );
+              })}
+              <span className="tick weather-tick">{weatherLabel}</span>
+            </div>
+          ))}
         </div>
         {isMobile && !sheet && (
           <button type="button" className="quest-chip quest-chip-hud" onClick={() => setShowGuide(true)}>
@@ -3447,53 +3453,45 @@ export function App() {
       )}
 
       {isMobile && sheet === "MORE" && (
-        <aside className={panelClass("more-panel", "MORE")} {...sheetGesture}>
-          <div className="sheet-head">
-            <h3>Plus</h3>
-            <button type="button" className="sheet-close" onClick={() => setSheet(null)}>
-              Fermer
-            </button>
-          </div>
-          <div className="more-list">
-            {SHEET_TABS.map((t) => {
-              const disabled = t.key === "HERD" && !barns.length;
-              return (
-                <button
-                  key={t.key}
-                  type="button"
-                  className="more-item"
-                  disabled={disabled}
-                  title={disabled ? "Aucun bâtiment d’élevage sur la parcelle" : t.label}
-                  onClick={() => setSheet(t.key)}
-                >
-                  <span aria-hidden="true">{t.icon}</span>
-                  <strong>{t.label}</strong>
-                  {tabBadge(alerts, t.key) > 0 && (
-                    <span className="tab-badge" aria-label="à traiter">
-                      {tabBadge(alerts, t.key)}
-                    </span>
-                  )}
-                </button>
-              );
-            })}
-            {devEnabled && (
+        <nav className="more-strip" aria-label="Plus">
+          {SHEET_TABS.map((t) => {
+            const disabled = t.key === "HERD" && !barns.length;
+            return (
               <button
+                key={t.key}
                 type="button"
                 className="more-item"
-                onClick={() => {
-                  setSheet(null);
-                  setShowDev(true);
-                }}
+                disabled={disabled}
+                title={disabled ? "Aucun bâtiment d’élevage sur la parcelle" : t.label}
+                onClick={() => setSheet(t.key)}
               >
-                <span aria-hidden="true">🛠</span>
-                <strong>Test</strong>
+                <span aria-hidden="true">{t.icon}</span>
+                <strong>{t.label}</strong>
+                {tabBadge(alerts, t.key) > 0 && (
+                  <span className="tab-badge" aria-label="à traiter">
+                    {tabBadge(alerts, t.key)}
+                  </span>
+                )}
               </button>
-            )}
-          </div>
-        </aside>
+            );
+          })}
+          {devEnabled && (
+            <button
+              type="button"
+              className="more-item"
+              onClick={() => {
+                setSheet(null);
+                setShowDev(true);
+              }}
+            >
+              <span aria-hidden="true">🛠</span>
+              <strong>Test</strong>
+            </button>
+          )}
+        </nav>
       )}
 
-      {isMobile && sheet && (
+      {isMobile && sheet && sheet !== "MORE" && (
         <button
           type="button"
           className="sheet-scrim"
