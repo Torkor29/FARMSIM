@@ -46,6 +46,8 @@ import {
   type WeatherState,
   BREAKDOWN_LABELS,
   GREASE_COST_CRD,
+  GREASE_FULL,
+  GREASE_OK,
   CLEAN_COST_CRD,
   DIRT_DIRTY_THRESHOLD,
   isBreakdownKind,
@@ -54,7 +56,6 @@ import { AuthScreen } from "./AuthScreen";
 import type { GrazingHerd, PreviewBuilding } from "./IsoFarmView";
 import { ConfirmDialog, type ConfirmRequest } from "./ConfirmDialog";
 import { MachineCareOverlay, type CareMode } from "./MachineCareOverlay";
-import { MissionPlay, type MissionPlayContract } from "./MissionPlay";
 import { LivestockPanel, type BarnState } from "./LivestockPanel";
 import { MarketPanel, type Listing, type MarketDelivery, type FuturesContract } from "./MarketPanel";
 import { MissionsPanel } from "./MissionsPanel";
@@ -174,6 +175,7 @@ type Player = {
       parkedParcelId?: string | null;
       storedInBuildingId?: string | null;
       greased?: boolean;
+      grease?: number;
       dirt?: number;
       greaseSkipStreak?: number;
       breakdown?: string | null;
@@ -311,7 +313,7 @@ function writeGuideFlags(next: GuideFlags) {
 }
 
 /** Tiroirs du bas, sur petit écran. */
-type SheetKey = "INFO" | "BUILD" | "GARAGE" | "OFFICE" | "HERD" | "PROFILE";
+type SheetKey = "INFO" | "BUILD" | "GARAGE" | "OFFICE" | "HERD" | "PROFILE" | "MORE";
 
 const SHEET_TABS: { key: SheetKey; label: string; icon: string }[] = [
   { key: "INFO", label: "Parcelle", icon: "🌾" },
@@ -374,11 +376,10 @@ function playUiSound(_kind: "click" | "place") {
 export function App() {
   const [zones, setZones] = useState<Zone[]>([]);
   const [market, setMarket] = useState<MarketPrice[]>([]);
-  const [contracts, setContracts] = useState<Contract[]>([]);
+  const [, setContracts] = useState<Contract[]>([]);
   const [laborBoard, setLaborBoard] = useState<LaborOrderView[]>([]);
   const [myPostedLabor, setMyPostedLabor] = useState<LaborOrderView[]>([]);
   const [visitOrder, setVisitOrder] = useState<LaborOrderView | null>(null);
-  const [activeMission, setActiveMission] = useState<MissionPlayContract | null>(null);
   const [player, setPlayer] = useState<Player | null>(null);
   const [authMode, setAuthMode] = useState<"register" | "login">("register");
   const [name, setName] = useState("");
@@ -437,6 +438,13 @@ export function App() {
   const [brush, setBrush] = useState<1 | 2 | 3>(1);
   const [prevPrices, setPrevPrices] = useState<Record<string, number>>({});
   const [resumeBanner, setResumeBanner] = useState<string | null>(null);
+  const [soldBanner, setSoldBanner] = useState<{
+    tons: number;
+    trn: number;
+    crop: string;
+  } | null>(null);
+  const [walletFlash, setWalletFlash] = useState(false);
+  const [marketTab, setMarketTab] = useState<"BUY" | "SELL">("BUY");
   const [booting, setBooting] = useState(true);
   const [showSplash, setShowSplash] = useState(true);
   const [showTutorial, setShowTutorial] = useState(false);
@@ -1867,6 +1875,7 @@ export function App() {
         });
         const lost = r.lostCells ? ` · ${r.lostCells} perdue(s)` : "";
         setMsg(harvestGrainNote(r) + lost + wearNote(r.machine));
+        noteForcedGrainSale(r, workCells);
         markGuideFlag("harvested");
         if (r.soldTons) markGuideFlag("sold");
         labor = r.labor;
@@ -1938,6 +1947,34 @@ export function App() {
     }
   }
 
+  function cropLabelForHarvest(cells: { x: number; y: number }[]): string {
+    const names = new Set<string>();
+    for (const c of cells) {
+      const cell = parcel?.cells?.find((p) => p.x === c.x && p.y === c.y);
+      if (cell?.crop && CROP_DEFS[cell.crop]) names.add(CROP_DEFS[cell.crop].name.toLowerCase());
+    }
+    if (names.size === 1) return [...names][0];
+    return "grain";
+  }
+
+  function noteForcedGrainSale(
+    r: {
+      soldTons?: number;
+      soldRevenue?: number;
+      soldReason?: "NO_SILO" | "SILO_FULL" | null;
+    },
+    cells: { x: number; y: number }[],
+  ) {
+    if (r.soldReason !== "NO_SILO" || !(r.soldTons && r.soldTons > 0)) return;
+    setSoldBanner({
+      tons: r.soldTons,
+      trn: Math.round(r.soldRevenue ?? 0),
+      crop: cropLabelForHarvest(cells),
+    });
+    setWalletFlash(true);
+    window.setTimeout(() => setWalletFlash(false), 2200);
+  }
+
   async function runSelectionAction() {
     await runWorkOnCells(selectedCells);
   }
@@ -1978,6 +2015,7 @@ export function App() {
         }),
       });
       setMsg(harvestGrainNote(r));
+      noteForcedGrainSale(r, readyCells);
       markGuideFlag("harvested");
       if (r.soldTons) markGuideFlag("sold");
       if (r.labor?.completed) {
@@ -2181,66 +2219,6 @@ export function App() {
       setMsg(
         `Séché (−${(r.reduction * 100).toFixed(0)} pts) · ${(r.moisture * 100).toFixed(0)} % · −${r.cost} TRN`,
       );
-    } catch (e) {
-      setErr(e instanceof Error ? e.message : String(e));
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  async function acceptContract(id: string) {
-    if (!player) return;
-    setBusy(true);
-    try {
-      const r = await api<{ contract: MissionPlayContract }>(`/contracts/${id}/accept`, {
-        method: "POST",
-        body: JSON.stringify({ userId: player.id }),
-      });
-      setActiveMission(r.contract);
-      await refreshMeta();
-    } catch (e) {
-      setErr(e instanceof Error ? e.message : String(e));
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  async function finishMission() {
-    if (!player || !activeMission) return;
-    setBusy(true);
-    try {
-      const r = await api<{ reward: number; machine?: { type: string; condition: number; wearApplied: number } }>(
-        `/contracts/${activeMission.id}/complete`,
-        {
-          method: "POST",
-          body: JSON.stringify({ userId: player.id }),
-        },
-      );
-      await refreshPlayer();
-      await refreshMeta();
-      const wearNote = r.machine
-        ? ` · ${r.machine.type} −${r.machine.wearApplied.toFixed(1)}%`
-        : "";
-      flashToast(`Chantier honoré · +${r.reward} TRN${wearNote}`);
-      setActiveMission(null);
-      markGuideFlag("contract");
-    } catch (e) {
-      setErr(e instanceof Error ? e.message : String(e));
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  async function abandonMission() {
-    if (!player || !activeMission) return;
-    setBusy(true);
-    try {
-      await api(`/contracts/${activeMission.id}/abandon`, {
-        method: "POST",
-        body: JSON.stringify({ userId: player.id }),
-      });
-      setActiveMission(null);
-      await refreshMeta();
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e));
     } finally {
@@ -2653,7 +2631,7 @@ export function App() {
   }
 
   return (
-    <div className={`game-stage${isMobile ? " mobile" : ""}`}>
+    <div className={`game-stage${isMobile ? " mobile" : ""}${isMobile && sheet ? " sheet-open" : ""}`}>
       <div className="iso-layer">
         {parcel ? (
           <Suspense fallback={<SceneLoading label="Chargement de la ferme…" />}>
@@ -2772,7 +2750,10 @@ export function App() {
             <span className="stat-xp" title="Niveau / expérience">
               Nv.{player.level} · {player.xp} XP
             </span>
-            <span className="gold" title="Terrons (TRN)">
+            <span className="stat-stock" title="Stock à la ferme">
+              Blé {wheatInStock.toFixed(1)} t · Foin {hayInStock.toFixed(1)} t
+            </span>
+            <span className={`gold${walletFlash ? " flash" : ""}`} title="Terrons (TRN)">
               {Math.round(player.crd)} TRN
             </span>
             {player.bonuses && (
@@ -2818,32 +2799,75 @@ export function App() {
           })}
           <span className="tick weather-tick">{weatherLabel}</span>
         </div>
-        <button
-          type="button"
-          className="who-now-bar"
-          onClick={() => {
-            if (isMobile) setSheet("OFFICE");
-            else setShowEta((v) => !v);
-          }}
-        >
-          {onlinePlayers.some((p) => p.online) ? (
-            <>
-              <i className="who-dot on" aria-hidden="true" />
-              {onlinePlayers
-                .filter((p) => p.online)
-                .map((p) => p.name)
-                .join(", ")}{" "}
-              {onlinePlayers.filter((p) => p.online).length > 1
-                ? "sont connectés"
-                : "est connecté"}
-            </>
-          ) : (
-            <>
-              <i className="who-dot" aria-hidden="true" />
-              Vous êtes seul pour l’instant
-            </>
-          )}
-        </button>
+        {isMobile && (
+          <button type="button" className="quest-chip quest-chip-hud" onClick={() => setShowGuide(true)}>
+            <span className="quest-chip-mark" aria-hidden="true">
+              {allGoalsDone ? "★" : "➤"}
+            </span>
+            <span className="quest-chip-body">
+              <strong>{allGoalsDone ? "Guide de ferme" : "À faire"}</strong>
+              <span>
+                {allGoalsDone
+                  ? "Tout est dans le recueil — cultures, bâtiments, métiers."
+                  : nextGoal
+                    ? `${nextGoal.title} · ${nextGoal.unlock}`
+                    : "Ouvrir le guide"}
+              </span>
+            </span>
+          </button>
+        )}
+        {soldBanner && (
+          <div className="harvest-sold-banner" role="status">
+            <p>
+              {soldBanner.tons.toFixed(1)} t de {soldBanner.crop} vendues tout de suite · +
+              {soldBanner.trn} TRN · bâtissez un silo pour attendre un meilleur prix.
+            </p>
+            <div className="harvest-sold-actions">
+              <button
+                type="button"
+                className="accent"
+                onClick={() => {
+                  setSoldBanner(null);
+                  if (isMobile) setSheet("BUILD");
+                  else {
+                    setTool("BUILD");
+                    setBuildType("SILO");
+                  }
+                }}
+              >
+                Bâtir un silo
+              </button>
+              <button type="button" className="ghost" onClick={() => setSoldBanner(null)}>
+                OK
+              </button>
+            </div>
+          </div>
+        )}
+        {!isMobile && (
+          <button
+            type="button"
+            className="who-now-bar"
+            onClick={() => setShowEta((v) => !v)}
+          >
+            {onlinePlayers.some((p) => p.online) ? (
+              <>
+                <i className="who-dot on" aria-hidden="true" />
+                {onlinePlayers
+                  .filter((p) => p.online)
+                  .map((p) => p.name)
+                  .join(", ")}{" "}
+                {onlinePlayers.filter((p) => p.online).length > 1
+                  ? "sont connectés"
+                  : "est connecté"}
+              </>
+            ) : (
+              <>
+                <i className="who-dot" aria-hidden="true" />
+                Vous êtes seul pour l’instant
+              </>
+            )}
+          </button>
+        )}
         {(msg || err) && (
           <div key={toastTick} className={`toast ${err ? "bad" : "good"} pop`}>
             {err ?? msg}
@@ -3112,7 +3136,13 @@ export function App() {
         mowReadyAll={readyAreGrass}
         onContractor={callContractor}
         onPublishLabor={publishLaborOrder}
-        onSell={() => setShowMarket(true)}
+        onSell={() => {
+          setMarketTab("SELL");
+          setShowMarket(true);
+        }}
+        onMore={() => setSheet((cur) => (cur === "MORE" ? null : "MORE"))}
+        moreOpen={sheet === "MORE"}
+        hideQuest={isMobile}
         onGuide={() => setShowGuide(true)}
         desktopGarage={showGarage}
         desktopOffice={showEta}
@@ -3137,6 +3167,9 @@ export function App() {
               const def = MACHINE_DEFS[m.type as MachineType];
               const low = def ? m.condition < def.minCondition : m.condition < 15;
               const dirty = (m.dirt ?? 0) >= DIRT_DIRTY_THRESHOLD;
+              const grease = m.grease ?? (m.greased === false ? 0 : GREASE_FULL);
+              const greaseLow = grease < GREASE_OK;
+              const greaseEmpty = grease <= 0;
               const panne = isBreakdownKind(m.breakdown) ? BREAKDOWN_LABELS[m.breakdown] : null;
               const eta = true;
               const halfTarget = repairHalfwayTarget(m.condition);
@@ -3173,17 +3206,19 @@ export function App() {
                               : m.condition < 90
                                 ? "bon"
                                 : "neuf"}
-                      {m.greased !== false && !dirty && !panne ? " · propre et graissé (+)" : ""}
-                      {m.greased === false ? " · pas graissé" : ""}
+                      {grease >= GREASE_OK && !dirty && !panne ? " · nickel (+)" : ""}
+                      {` · graisse ${Math.round(grease)} %`}
+                      {greaseEmpty ? " · vide" : greaseLow ? " · à graisser" : ""}
                       {dirty ? " · sale" : ""}
                       {panne ? ` · panne ${panne}` : ""}
                       {m.storedInBuildingId ? " · hangar" : m.parkedParcelId ? " · parcelle" : ""}
+                      {greaseLow ? " 💧" : ""}
                     </div>
                   </span>
                   <span className="row-actions">
                         <button
                           type="button"
-                          disabled={busy || (m.greased !== false && (m.greaseSkipStreak ?? 0) === 0)}
+                          disabled={busy || grease >= GREASE_FULL - 0.5}
                           title={`${GREASE_COST_CRD} TRN`}
                           onClick={() => setCare({ mode: "grease", machineId: m.id })}
                         >
@@ -3257,7 +3292,16 @@ export function App() {
 
       <MarketPanel
         open={showMarket}
-        onClose={() => setShowMarket(false)}
+        startTab={marketTab}
+        forcedSaleNote={
+          soldBanner && wheatInStock <= 0
+            ? `Votre ${soldBanner.crop} a déjà été vendu (pas de silo). Il reste ${Math.round(player.crd)} TRN.`
+            : null
+        }
+        onClose={() => {
+          setShowMarket(false);
+          setMarketTab("BUY");
+        }}
         stock={player.farm?.inventory ?? []}
         listings={listings}
         deliveries={deliveries}
@@ -3343,15 +3387,6 @@ export function App() {
         );
       })()}
 
-      {activeMission && (
-        <MissionPlay
-          contract={activeMission}
-          busy={busy}
-          onCancel={() => void abandonMission()}
-          onDone={() => void finishMission()}
-        />
-      )}
-
       <TutorialOverlay open={showTutorial} onClose={() => setShowTutorial(false)} />
       <PlayGuide open={showGuide} snapshot={guideSnapshot} onClose={() => setShowGuide(false)} />
 
@@ -3365,7 +3400,6 @@ export function App() {
           visitLeft={visitOrder?.remaining ?? null}
           helpWanted={laborBoard}
           myAsks={myPostedLabor}
-          solo={contracts}
           onAcceptHelp={(id) => void acceptLaborOrder(id)}
           onCancelAsk={(id) =>
             void api(`/labor-orders/${id}/cancel`, {
@@ -3373,8 +3407,7 @@ export function App() {
               body: JSON.stringify({ userId: player.id }),
             }).then(() => refreshMeta())
           }
-          onAcceptSolo={(id) => acceptContract(id)}
-          locked={Boolean(visitOrder) || Boolean(activeMission)}
+          locked={Boolean(visitOrder)}
           zones={zones.filter(
             (z) =>
               ownedParcels.length === 0 ||
@@ -3387,33 +3420,23 @@ export function App() {
         />
       )}
 
-      {isMobile && (
-        <>
-          {/* Un voile referme le tiroir d'une tape hors de lui : sur un
-              téléphone, chercher la bonne croix est une corvée. */}
-          {sheet && (
-            <button
-              type="button"
-              className="sheet-scrim"
-              aria-label="Fermer le panneau"
-              onClick={() => setSheet(null)}
-            />
-          )}
-          <nav className="tabbar" aria-label="Panneaux">
+      {isMobile && sheet === "MORE" && (
+        <aside className={panelClass("more-panel", "MORE")} {...sheetGesture}>
+          <h3>Plus</h3>
+          <div className="more-list">
             {SHEET_TABS.map((t) => {
               const disabled = t.key === "HERD" && !barns.length;
               return (
                 <button
                   key={t.key}
                   type="button"
-                  className={`tab${sheet === t.key ? " on" : ""}`}
+                  className="more-item"
                   disabled={disabled}
                   title={disabled ? "Aucun bâtiment d’élevage sur la parcelle" : t.label}
-                  aria-pressed={sheet === t.key}
-                  onClick={() => setSheet((cur) => (cur === t.key ? null : t.key))}
+                  onClick={() => setSheet(t.key)}
                 >
                   <span aria-hidden="true">{t.icon}</span>
-                  <span className="tab-label">{t.label}</span>
+                  <strong>{t.label}</strong>
                   {tabBadge(alerts, t.key) > 0 && (
                     <span className="tab-badge" aria-label="à traiter">
                       {tabBadge(alerts, t.key)}
@@ -3422,8 +3445,30 @@ export function App() {
                 </button>
               );
             })}
-          </nav>
-        </>
+            {devEnabled && (
+              <button
+                type="button"
+                className="more-item"
+                onClick={() => {
+                  setSheet(null);
+                  setShowDev(true);
+                }}
+              >
+                <span aria-hidden="true">🛠</span>
+                <strong>Test</strong>
+              </button>
+            )}
+          </div>
+        </aside>
+      )}
+
+      {isMobile && sheet && (
+        <button
+          type="button"
+          className="sheet-scrim"
+          aria-label="Fermer le panneau"
+          onClick={() => setSheet(null)}
+        />
       )}
     </div>
   );

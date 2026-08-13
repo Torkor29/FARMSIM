@@ -10,6 +10,32 @@ export const BREAKDOWN_LABELS: Record<BreakdownKind, string> = {
 
 export const DIRT_DIRTY_THRESHOLD = 25;
 export const GREASE_COST_CRD = 12;
+/** Plein réservoir. Un champ 12×12 (~144 cases) en consomme ~36. */
+export const GREASE_FULL = 100;
+/** Points vidés par case — assez bas pour deux ou trois champs d’affilée. */
+export const GREASE_PER_CELL = 0.25;
+/** Surcoût si la machine est déjà sale. */
+export const GREASE_DIRT_EXTRA = 0.1;
+/** En dessous, plus de bonus « nickel », mais on peut encore partir. */
+export const GREASE_OK = 20;
+
+export function greaseCost(cells: number, dirt: number): number {
+  const extra = dirt >= DIRT_DIRTY_THRESHOLD ? GREASE_DIRT_EXTRA : 0;
+  return Math.round((GREASE_PER_CELL + extra) * Math.max(0, cells) * 100) / 100;
+}
+
+export function applyGreaseUse(grease: number, cells: number, dirt: number): number {
+  return Math.max(0, Math.round((grease - greaseCost(cells, dirt)) * 100) / 100);
+}
+
+/** Assez de graisse pour le bonus d’usure / récolte. */
+export function greaseIsOk(grease: number): boolean {
+  return grease >= GREASE_OK;
+}
+
+export function greaseIsEmpty(grease: number): boolean {
+  return grease <= 0;
+}
 export const CLEAN_COST_CRD = 18;
 /** Remise réparation atelier uniquement — plus de caste ETA `[GD]` */
 export const ETA_REPAIR_EXTRA_DISCOUNT = 0;

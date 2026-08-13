@@ -290,6 +290,13 @@ html.playing .field-dock {
 }
 .stat-xp { color: var(--teal-500); }
 .gold { color: var(--gold-700) !important; }
+.gold.flash {
+  animation: wallet-flash 1.4s ease 2;
+}
+@keyframes wallet-flash {
+  0%, 100% { box-shadow: none; }
+  50% { box-shadow: 0 0 0 4px var(--gold-300); background: var(--gold-100); }
+}
 button.ghost {
   background: transparent;
   border: 1px solid var(--line);
@@ -1409,6 +1416,48 @@ button.ghost {
 }
 .resume-card strong { color: var(--gold-700); font-size: 0.95rem; }
 .resume-card button { min-height: 44px; justify-self: stretch; }
+.harvest-sold-banner {
+  justify-self: stretch;
+  margin: 0 0.5rem;
+  padding: 0.7rem 0.85rem;
+  border-radius: 14px;
+  background: var(--gold-100);
+  border: 1px solid var(--gold-300);
+  display: grid;
+  gap: 0.45rem;
+  box-shadow: var(--sh-1);
+}
+.harvest-sold-banner p {
+  margin: 0;
+  font-weight: 700;
+  font-size: 0.9rem;
+  line-height: 1.4;
+  color: var(--ink);
+}
+.harvest-sold-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+}
+.harvest-sold-actions button { min-height: 44px; }
+.quest-chip-hud {
+  justify-self: stretch;
+  margin: 0 0.5rem;
+}
+.more-list { display: grid; gap: 0.4rem; }
+.more-item {
+  display: flex;
+  align-items: center;
+  gap: 0.7rem;
+  min-height: 52px;
+  padding: 0.7rem 0.85rem;
+  border-radius: 14px;
+  border: 1px solid var(--line);
+  background: var(--paper);
+  text-align: left;
+}
+.more-item strong { font-size: 1rem; }
+.more-item:disabled { opacity: 0.45; }
 .brush-group {
   display: inline-flex;
   gap: 0.25rem;
@@ -1685,6 +1734,10 @@ button.ghost {
   .stat-xp,
   .stat-bonus,
   .logout-btn { display: none; }
+  .stat-stock {
+    font-size: 0.72rem;
+    white-space: nowrap;
+  }
   .help-btn {
     display: grid;
     place-items: center;
@@ -1742,11 +1795,7 @@ button.ghost {
   }
   .market-ticker::-webkit-scrollbar { display: none; }
   .market-ticker .tick { flex: 0 0 auto; }
-  .who-now-bar {
-    justify-self: stretch;
-    margin: 0 0.5rem;
-    font-size: 0.76rem;
-  }
+  .who-now-bar { display: none; }
   .hall-doors { gap: 0.45rem; }
   .hall-door { padding: 0.7rem 0.4rem 0.6rem; }
   .hall-door strong { font-size: 1.02rem; }
@@ -1775,11 +1824,11 @@ button.ghost {
     position: fixed;
     left: 0;
     right: 0;
-    /* Juste au-dessus de la barre d'onglets et de la barre d'action. */
-    bottom: calc(11.2rem + env(safe-area-inset-bottom));
+    /* Tiroir seul : la barre d’onglets a disparu, le dock se cache. */
+    bottom: calc(0.75rem + env(safe-area-inset-bottom));
     top: auto;
     width: auto;
-    max-height: min(52dvh, 460px);
+    max-height: min(70dvh, 560px);
     overflow-y: auto;
     -webkit-overflow-scrolling: touch;
     overscroll-behavior: contain;
@@ -1820,22 +1869,8 @@ button.ghost {
     backdrop-filter: blur(2px);
   }
 
-  /* —— Barre d'onglets —— */
-  .tabbar {
-    position: fixed;
-    left: 0;
-    right: 0;
-    bottom: 0;
-    z-index: 14;
-    display: grid;
-    grid-auto-flow: column;
-    grid-auto-columns: 1fr;
-    gap: 0.2rem;
-    padding: 0.3rem 0.4rem calc(0.3rem + env(safe-area-inset-bottom));
-    background: var(--bar);
-    border-top: 1px solid var(--glass-border);
-    backdrop-filter: blur(12px);
-  }
+  /* —— Barre d'onglets : remplacée par Plus dans le dock —— */
+  .tabbar { display: none !important; }
   .tab {
     display: grid;
     justify-items: center;
@@ -1859,10 +1894,11 @@ button.ghost {
     right: 0.4rem;
     width: auto;
     transform: none;
-    bottom: calc(3.7rem + env(safe-area-inset-bottom));
+    bottom: calc(0.85rem + env(safe-area-inset-bottom));
   }
-  .dock-tool { min-height: 48px; }
-  .dock-label { font-size: 0.64rem; }
+  .game-stage.mobile.sheet-open .field-dock { display: none; }
+  .dock-tool { min-height: 56px; }
+  .dock-label { font-size: 0.75rem; }
   .chip { min-height: 44px; }
   .action { min-height: 44px; padding: 0.5rem 0.7rem; }
 
@@ -1899,10 +1935,8 @@ button.ghost {
 /* Un téléphone couché n'a presque pas de hauteur : le tiroir doit lui
    laisser voir la ferme malgré tout. */
 @media (max-width: 920px) and (max-height: 460px) {
-  .game-stage.mobile .sheet { max-height: 62dvh; bottom: calc(4.4rem + env(safe-area-inset-bottom)); }
-  .tab-label { display: none; }
-  .tab { min-height: 38px; }
-  .field-dock { bottom: calc(3rem + env(safe-area-inset-bottom)); }
+  .game-stage.mobile .sheet { max-height: 62dvh; bottom: calc(0.6rem + env(safe-area-inset-bottom)); }
+  .field-dock { bottom: calc(0.5rem + env(safe-area-inset-bottom)); }
 }
 
 /* —— Tutoriel pas-à-pas —— */

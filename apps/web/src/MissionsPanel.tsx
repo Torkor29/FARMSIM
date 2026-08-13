@@ -26,13 +26,6 @@ export type MyHelpAsk = {
   status: string;
 };
 
-export type SoloMission = {
-  id: string;
-  title: string;
-  cells?: number;
-  rewardCrd: number;
-};
-
 type ExpandZone = ZoneMapZone & { id: string; parcels: ZoneMapZone["parcels"] };
 
 type Props = {
@@ -47,10 +40,8 @@ type Props = {
   visitLeft?: number | null;
   helpWanted: HelpWanted[];
   myAsks: MyHelpAsk[];
-  solo: SoloMission[];
   onAcceptHelp: (id: string) => void;
   onCancelAsk: (id: string) => void;
-  onAcceptSolo: (id: string) => void;
   locked: boolean;
   zones: ExpandZone[];
   myFarmId?: string;
@@ -86,10 +77,8 @@ export function MissionsPanel({
   visitLeft,
   helpWanted,
   myAsks,
-  solo,
   onAcceptHelp,
   onCancelAsk,
-  onAcceptSolo,
   locked,
   zones,
   myFarmId,
@@ -188,27 +177,10 @@ export function MissionsPanel({
 
       <section className="hall-block">
         <h3 className="spaced">Personne n’est là ?</h3>
-        <p className="muted tiny">Travail tout seul, moins payé.</p>
-        <div className="job-grid">
-          {solo.map((c) => (
-            <article key={c.id} className="job-card big">
-              <div>
-                <strong>{c.title}</strong>
-                <div className="muted tiny">
-                  {c.cells ?? "?"} cases · {c.rewardCrd} TRN
-                </div>
-              </div>
-              <button
-                type="button"
-                className="sale-go"
-                disabled={busy || locked}
-                onClick={() => onAcceptSolo(c.id)}
-              >
-                Prendre
-              </button>
-            </article>
-          ))}
-        </div>
+        <p className="muted tiny">
+          Les fermes voisines arrivent bientôt. En attendant, aidez un joueur : vous
+          travaillez sur sa parcelle, avec vos machines.
+        </p>
       </section>
 
       <section className="hall-block">
