@@ -26,10 +26,38 @@ type Props = {
 const R = 2;
 /** Inclinaison de l'axe (23,4°) : la Terre penchée est plus jolie qu'une bille droite. */
 const AXIS_TILT = 0.41;
-const DIST_WORLD = 7.6;
-const DIST_FOCUS = 4.2;
-const DIST_NEAR = 5.4;
-const DIST_MIN = 4;
+/**
+ * Cadrage du globe selon la forme de l'écran.
+ *
+ * La caméra a une ouverture **verticale** fixe : sur un écran plus haut que
+ * large — c'est-à-dire tout téléphone tenu droit — l'ouverture horizontale
+ * devient bien plus étroite, et la sphère déborde sur les côtés. Le globe
+ * paraît alors zoomé de force, et il faut dézoomer à la main pour le voir en
+ * entier. On recule donc la caméra du même rapport : le globe tient dans
+ * l'écran quelle que soit sa forme, sans rien changer au cadrage en paysage.
+ */
+function fitDistance(aspect: number): number {
+  if (!Number.isFinite(aspect) || aspect <= 0) return 1;
+  return Math.max(1, 1 / aspect);
+}
+
+/** Ouverture verticale de la caméra, en radians. */
+const FOV = (38 * Math.PI) / 180;
+/**
+ * Distance à laquelle la sphère remplit exactement la hauteur de l'image.
+ *
+ * C'est le plancher du zoom : plus près, la planète déborde du cadre et la
+ * carte — deux mille texels pour un tour complet — se met à baver. Toutes les
+ * distances de travail se lisent par rapport à ce repère.
+ */
+const DIST_FIT = R / Math.sin(FOV / 2);
+
+const DIST_WORLD = DIST_FIT * 1.24;
+/** Continent choisi : on s'approche, mais le limbe reste visible. */
+const DIST_FOCUS = DIST_FIT * 0.92;
+/** Continent survolé, sans engagement : à peine plus près que la vue monde. */
+const DIST_NEAR = DIST_FIT * 1.08;
+const DIST_MIN = DIST_FIT * 0.82;
 const DIST_MAX = 12;
 
 /* ------------------------------------------------------------------ */
@@ -554,7 +582,9 @@ export function GlobeView({
     const scene = new THREE.Scene();
     const width = host.clientWidth || 480;
     const camera = new THREE.PerspectiveCamera(38, width / height, 0.1, 100);
-    camera.position.set(0, 0, DIST_WORLD);
+    /** Facteur de recul imposé par la forme de l'écran, mis à jour au redimensionnement. */
+    let fit = fitDistance(width / height);
+    camera.position.set(0, 0, DIST_WORLD * fit);
 
     let quality = initialQuality();
     const renderer = new THREE.WebGLRenderer({ antialias: quality.antialias, alpha: true });
@@ -1131,11 +1161,12 @@ export function GlobeView({
       clouds.rotation.y = spin * 1.9 + (reduced ? 0 : now * 0.000012);
 
       dist += (distTarget - dist) * Math.min(1, dt * 3.6);
-      camera.position.set(0, 0, dist);
+      camera.position.set(0, 0, dist * fit);
       camera.lookAt(0, 0, 0);
       // Le halo doré s'ouvre quand on s'éloigne, discret en approche.
       const glowMat = glow.material as THREE.ShaderMaterial;
-      glowMat.uniforms.uIntensity.value = 0.14 + clamp01((dist - DIST_FOCUS) / 6) * 0.22;
+      glowMat.uniforms.uIntensity.value =
+        0.14 + clamp01((dist - DIST_MIN) / (DIST_MAX - DIST_MIN)) * 0.22;
 
       const pulse = 0.5 + 0.5 * Math.sin(now * 0.0022);
 
@@ -1171,6 +1202,7 @@ export function GlobeView({
     const onResize = () => {
       const w = host.clientWidth || 480;
       camera.aspect = w / height;
+      fit = fitDistance(camera.aspect);
       camera.updateProjectionMatrix();
       renderer.setSize(w, height, false);
     };

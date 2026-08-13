@@ -171,7 +171,7 @@ import {
   pickBreakdownKind,
   type MachineCareState,
 } from "@farmsim/sim";
-import { randomBytes } from "crypto";
+import { randomBytes, randomUUID } from "crypto";
 import path from "node:path";
 
 const prisma = new PrismaClient();
@@ -1890,6 +1890,86 @@ app.post("/auth/register", async (req, res) => {
     }
     if (typeof e === "object" && e && "code" in e && (e as { code: string }).code === "P2002") {
       res.status(409).json({ error: "Email déjà utilisé" });
+      return;
+    }
+    console.error(e);
+    res.status(500).json({ error: "Erreur serveur" });
+  }
+});
+
+/**
+ * Compte d'essai — jouer tout de suite, sans rien créer.
+ *
+ * Faire découvrir le jeu ne devrait pas commencer par un formulaire. Cette
+ * route fabrique une identité jetable, lui donne une terre de départ et un
+ * tracteur, et rend une session ouverte : le visiteur arrive directement sur
+ * sa ferme.
+ *
+ * Ce sont de vrais comptes, reconnaissables à leur adresse en
+ * `@essai.invalid` — un domaine réservé, donc jamais routable — et à leur
+ * code d'accès aléatoire, que personne ne connaît : le compte n'est pas
+ * récupérable, il vit le temps de l'essai.
+ */
+app.post("/auth/demo", async (_req, res) => {
+  const tag = randomUUID().slice(0, 8);
+  try {
+    const created = await prisma.$transaction(async (tx) => {
+      const u = await tx.user.create({
+        data: {
+          email: `essai-${tag}@essai.invalid`,
+          displayName: `Visiteur ${tag.slice(0, 4).toUpperCase()}`,
+          specialization: "CEREALIER",
+          accessCode: randomUUID(),
+          appearanceJson: JSON.stringify(parseAppearance(undefined, "CEREALIER")),
+          lastSeenAt: new Date(),
+        },
+      });
+      const farm = await tx.farm.create({
+        data: {
+          userId: u.id,
+          name: `Ferme ${u.displayName}`,
+          machines: { create: [{ type: "TRACTOR", tier: 1 }] },
+        },
+      });
+
+      // Une terre où quelque chose pousse : arriver sur une région stérile
+      // ferait de l'essai une mauvaise démonstration.
+      const free = await tx.parcel.findMany({
+        where: { farmId: null },
+        include: { zone: true },
+        take: 60,
+      });
+      const parcel = free.find((p) => (REGION_BY_CODE[p.zone.code]?.crops.length ?? 0) > 0);
+      if (!parcel) throw new Error("NO_PARCEL");
+
+      await tx.parcel.update({ where: { id: parcel.id }, data: { farmId: farm.id } });
+      const machine = await tx.machine.findFirst({ where: { farmId: farm.id } });
+      if (machine) {
+        await tx.machine.update({
+          where: { id: machine.id },
+          data: { parkedParcelId: parcel.id },
+        });
+        await tx.parcelCell.update({
+          where: {
+            parcelId_x_y: { parcelId: parcel.id, x: 0, y: Math.max(0, parcel.gridH - 1) },
+          },
+          data: { kind: "VEHICLE", machineId: machine.id },
+        });
+      }
+      return u;
+    });
+
+    const token = await createSession(created.id);
+    await touchUserPresence(created.id);
+    res.status(201).json({
+      token,
+      player: await playerPayload(created.id),
+      resume: await buildResumeForUser(created.id),
+      demo: true,
+    });
+  } catch (e) {
+    if (e instanceof Error && e.message === "NO_PARCEL") {
+      res.status(503).json({ error: "Aucune terre libre pour un essai" });
       return;
     }
     console.error(e);

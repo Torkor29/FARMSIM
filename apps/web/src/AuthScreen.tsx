@@ -14,6 +14,8 @@ type Props = {
   err: string | null;
   onRegister: () => void;
   onLogin: () => void;
+  /** Essai immédiat : une ferme jetable, sans formulaire */
+  onTryDemo: () => void;
 };
 
 /**
@@ -34,6 +36,7 @@ export function AuthScreen({
   err,
   onRegister,
   onLogin,
+  onTryDemo,
 }: Props) {
   const [showCode, setShowCode] = useState(false);
   const isRegister = authMode === "register";
@@ -157,6 +160,16 @@ export function AuthScreen({
                   : "Reprendre ma ferme"}
             </button>
           </form>
+
+          <div className="gate-demo">
+            <span className="gate-demo-sep">ou</span>
+            <button type="button" className="btn-ghost big" disabled={busy} onClick={onTryDemo}>
+              Essayer sans compte
+            </button>
+            <span className="gate-demo-note">
+              Une ferme prête à jouer, effacée quand vous partez. Rien à remplir.
+            </span>
+          </div>
 
           <p className="gate-switch">
             {isRegister ? (
