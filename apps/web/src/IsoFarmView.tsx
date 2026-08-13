@@ -9,6 +9,12 @@ import {
   type RipenessStage,
 } from "@farmsim/shared";
 import { disposeRenderer, disposeThreeScene, markShared } from "./three-cleanup";
+import {
+  createDustTrail,
+  createMachineRig,
+  isTowedImplement,
+  type MachineRig,
+} from "./machines3d";
 
 export type IsoCell = {
   x: number;
@@ -98,15 +104,19 @@ const PREVIEW_BAD = 0xef4444;
 const DIRT = 0xa4835c;
 const PULSE = 0xfff2b0;
 
-const MACHINE_LOOK: Record<
-  MachineType,
-  { body: number; accent: number; w: number; h: number; d: number }
-> = {
-  TRACTOR: { body: 0x3d8f3a, accent: 0x2a6a28, w: 0.55, h: 0.28, d: 0.35 },
-  HARVESTER: { body: 0xc44a2f, accent: 0xd4a84b, w: 0.72, h: 0.32, d: 0.4 },
-  SPREADER: { body: 0x6a7380, accent: 0xc9a227, w: 0.5, h: 0.34, d: 0.42 },
-  DISC_HARROW: { body: 0x8a6a4a, accent: 0xb8bec4, w: 0.62, h: 0.22, d: 0.44 },
-};
+/**
+ * Cap d'un engin garé : un quart de tour, pour qu'il présente son flanc et sa
+ * cabine au joueur plutôt que son capot ou son cul.
+ */
+const PARK_HEADING = -Math.PI / 2;
+
+/** Écart d'angle ramené dans ]−π, π] — sinon un passage par ±π braque à fond. */
+function shortestAngle(a: number): number {
+  return Math.atan2(Math.sin(a), Math.cos(a));
+}
+
+/** Aire de stationnement des engins — terre battue claire */
+const PARKING = 0xd8c9a8;
 
 const STUBBLE_SOIL = 0xd9c48a;
 const RESIDUE_SOIL = 0x7f6a44;
@@ -202,60 +212,13 @@ function makeCowMesh(): THREE.Group {
   return g;
 }
 
-function makeVehicleMesh(type: MachineType): THREE.Group {
-  const look = MACHINE_LOOK[type] ?? MACHINE_LOOK.TRACTOR;
-  const g = new THREE.Group();
-  g.userData.machineType = type;
-
-  const body = new THREE.Mesh(
-    new THREE.BoxGeometry(look.w, look.h, look.d),
-    new THREE.MeshLambertMaterial({ color: look.body, flatShading: true }),
-  );
-  body.castShadow = true;
-  body.position.y = look.h / 2;
-  g.add(body);
-
-  if (type === "TRACTOR") {
-    const cabin = new THREE.Mesh(
-      new THREE.BoxGeometry(0.28, 0.22, 0.28),
-      new THREE.MeshLambertMaterial({ color: look.accent, flatShading: true }),
-    );
-    cabin.position.set(-0.05, look.h + 0.08, 0);
-    cabin.castShadow = true;
-    g.add(cabin);
-  } else if (type === "HARVESTER") {
-    const header = new THREE.Mesh(
-      new THREE.BoxGeometry(0.22, 0.12, 0.55),
-      new THREE.MeshLambertMaterial({ color: look.accent, flatShading: true }),
-    );
-    header.position.set(look.w * 0.42, look.h * 0.35, 0);
-    header.castShadow = true;
-    g.add(header);
-    const pipe = new THREE.Mesh(
-      new THREE.BoxGeometry(0.12, 0.35, 0.12),
-      new THREE.MeshLambertMaterial({ color: 0x888888, flatShading: true }),
-    );
-    pipe.position.set(-0.15, look.h + 0.12, 0);
-    g.add(pipe);
-  } else {
-    // SPREADER — cuve dorée
-    const tank = new THREE.Mesh(
-      new THREE.CylinderGeometry(0.16, 0.18, 0.38, 6),
-      new THREE.MeshLambertMaterial({ color: look.accent, flatShading: true }),
-    );
-    tank.rotation.z = Math.PI / 2;
-    tank.position.set(0, look.h + 0.06, 0);
-    tank.castShadow = true;
-    g.add(tank);
-  }
-
-  return g;
-}
-
 function disposeObject3D(obj: THREE.Object3D) {
   obj.traverse((o) => {
     if (o instanceof THREE.Mesh) {
-      o.geometry.dispose();
+      // Les engins partagent leurs géométries entre instances et entre
+      // reconstructions de scène : les libérer ici viderait le cache et
+      // laisserait les machines suivantes sans maillage.
+      if (!o.geometry.userData?.shared) o.geometry.dispose();
       if (Array.isArray(o.material)) o.material.forEach((m) => m.dispose());
       else (o.material as THREE.Material).dispose();
     }
@@ -385,14 +348,20 @@ export function IsoFarmView({
 
     const cellMeshes = new Map<string, THREE.Mesh>();
     const cropMeshes = new Map<string, THREE.Mesh>();
-    /** Véhicules stationnés — animés en idle (hors pickables) */
-    const vehicleGroups = new Map<string, THREE.Group>();
+    /** Engins garés au parc — moteur coupé, mais gyrophare et roues prêts */
+    const vehicleRigs = new Map<string, MachineRig>();
     const buildingGroup = new THREE.Group();
     world.add(buildingGroup);
 
     const workGroup = new THREE.Group();
     world.add(workGroup);
-    let workVehicle: THREE.Group | null = null;
+    let workRig: MachineRig | null = null;
+    /** Distance cumulée du chantier en cours — entraîne roues et disques */
+    let workTravelled = 0;
+    let workHeading: number | null = null;
+    let lastWorkPos: { x: number; z: number } | null = null;
+    const workDust = createDustTrail(10);
+    workGroup.add(workDust.object);
 
     const previewGroup = new THREE.Group();
     world.add(previewGroup);
@@ -451,10 +420,10 @@ export function IsoFarmView({
     }
 
     function clearWorkVehicle() {
-      if (workVehicle) {
-        workGroup.remove(workVehicle);
-        disposeObject3D(workVehicle);
-        workVehicle = null;
+      if (workRig) {
+        workGroup.remove(workRig.group);
+        workRig.dispose();
+        workRig = null;
       }
     }
 
@@ -480,11 +449,11 @@ export function IsoFarmView({
         (m.material as THREE.Material).dispose();
       }
       cropMeshes.clear();
-      for (const g of vehicleGroups.values()) {
-        world.remove(g);
-        disposeObject3D(g);
+      for (const rig of vehicleRigs.values()) {
+        world.remove(rig.group);
+        rig.dispose();
       }
-      vehicleGroups.clear();
+      vehicleRigs.clear();
       while (buildingGroup.children.length) {
         const c = buildingGroup.children[0];
         buildingGroup.remove(c);
@@ -554,7 +523,10 @@ export function IsoFarmView({
           let col = (x + y) % 2 === 0 ? SOIL : SOIL_DARK;
           if (cell?.kind === "CROP") col = cropColor(cell, sim);
           if (cell?.kind === "BUILDING") col = DIRT;
-          if (cell?.kind === "VEHICLE") col = 0x3a3f44;
+          // Aire de stationnement : terre battue claire (charte §4.5), et non
+          // plus un enrobé presque noir — les engins s'y détachaient comme sur
+          // un trou dans la parcelle.
+          if (cell?.kind === "VEHICLE") col = PARKING;
 
           const mat = new THREE.MeshLambertMaterial({
             color: isSel ? SELECT_GLOW : col,
@@ -583,14 +555,17 @@ export function IsoFarmView({
 
           if (cell?.kind === "VEHICLE") {
             const mType = (cell.machineType as MachineType) || "TRACTOR";
-            const vg = makeVehicleMesh(mType);
-            vg.position.set(px, 0.12, pz);
-            vg.userData.baseX = px;
-            vg.userData.baseY = 0.12;
-            vg.userData.baseZ = pz;
-            vg.userData.phase = (x * 1.7 + y * 2.3) % (Math.PI * 2);
-            world.add(vg);
-            vehicleGroups.set(key(x, y), vg);
+            // Au parc, un outil est dételé : c'est ainsi qu'on le reconnaît
+            // du même outil au travail, accroché derrière son tracteur.
+            const rig = createMachineRig(mType, { seed: x * 7 + y * 13 });
+            // L'engin tient dans sa case sans déborder sur les voisines.
+            rig.group.scale.setScalar((cellSize * 0.92) / Math.max(1, rig.length));
+            // Un parc rangé au cordeau sonne faux : chaque engin est posé de
+            // travers de quelques degrés, toujours les mêmes.
+            rig.group.rotation.y = PARK_HEADING + Math.sin(x * 3.7 + y * 1.9) * 0.5;
+            rig.group.position.set(px, 0.09, pz);
+            world.add(rig.group);
+            vehicleRigs.set(key(x, y), rig);
           }
         }
       }
@@ -963,6 +938,7 @@ export function IsoFarmView({
     function tick() {
       raf = requestAnimationFrame(tick);
       timer.update();
+      const dt = Math.min(0.05, timer.getDelta());
       const t = timer.getElapsed();
       const sky = skyFor(weatherRef.current);
       scene.background = new THREE.Color(sky);
@@ -970,16 +946,11 @@ export function IsoFarmView({
       hexGroup.rotation.y = Math.sin(t * 0.05) * 0.02;
       world.position.y = Math.sin(t * 0.7) * 0.015;
 
-      // Idle bob / légère avance sur véhicules stationnés
-      for (const vg of vehicleGroups.values()) {
-        const bx = vg.userData.baseX as number;
-        const by = vg.userData.baseY as number;
-        const bz = vg.userData.baseZ as number;
-        const ph = vg.userData.phase as number;
-        vg.position.y = by + Math.sin(t * 2.1 + ph) * 0.028;
-        vg.position.x = bx + Math.sin(t * 1.15 + ph) * 0.018;
-        vg.position.z = bz;
-        vg.rotation.y = Math.sin(t * 0.9 + ph) * 0.04;
+      // Engins garés : moteur coupé. Rien ne bouge — ni roue, ni gyrophare,
+      // ni flottement. C'est le contraste avec l'engin au travail qui dit au
+      // joueur quelle machine est occupée.
+      for (const rig of vehicleRigs.values()) {
+        rig.update({ t, distance: 0, working: false });
       }
 
       // Troupeaux au pré : sortie de l'étable, puis broutage dans l'enclos.
@@ -1081,7 +1052,8 @@ export function IsoFarmView({
         mat.color.copy(tmpColor);
       }
 
-      // Engin de travail : parcours simple des cases
+      // Engin de chantier : il parcourt les cases travaillées, et tout le
+      // reste de son animation en découle — roues, disques, rabatteur.
       const workKey = aw
         ? `${aw.type}:${aw.cells.map((c) => `${c.x},${c.y}`).join("|")}`
         : "";
@@ -1090,11 +1062,17 @@ export function IsoFarmView({
         clearWorkVehicle();
         if (aw && aw.cells.length) {
           workStartRef.current = t;
-          workVehicle = makeVehicleMesh(aw.type);
-          workGroup.add(workVehicle);
+          // Un outil traîné arrive attelé : un déchaumeur qui traverse le
+          // champ tout seul ne trompe personne.
+          workRig = createMachineRig(aw.type, { towed: isTowedImplement(aw.type) });
+          workRig.group.scale.setScalar(0.92);
+          workGroup.add(workRig.group);
+          workTravelled = 0;
+          workHeading = null;
+          lastWorkPos = null;
         }
       }
-      if (workVehicle && aw && aw.cells.length) {
+      if (workRig && aw && aw.cells.length) {
         const duration = Math.max(0.7, aw.cells.length * 0.28);
         const u = Math.min(1, (t - workStartRef.current) / duration);
         const n = aw.cells.length;
@@ -1108,13 +1086,46 @@ export function IsoFarmView({
         const pb = cellWorldPos(b.x, b.y);
         const px = pa.px + (pb.px - pa.px) * local;
         const pz = pa.pz + (pb.pz - pa.pz) * local;
-        workVehicle.position.set(px, 0.2 + Math.sin(t * 8) * 0.02, pz);
-        workVehicle.rotation.y = Math.atan2(pb.px - pa.px, pb.pz - pa.pz) || 0;
-        workVehicle.visible = u < 1;
-        if (u >= 1) {
-          // reste visible brièvement puis masqué jusqu’au prochain work
-          workVehicle.visible = false;
-        }
+
+        // La distance réellement parcourue pilote les roues : elles tournent
+        // à la vitesse de l'engin, dans le bon sens, et calent à l'arrêt.
+        const stepX = lastWorkPos ? px - lastWorkPos.x : 0;
+        const stepZ = lastWorkPos ? pz - lastWorkPos.z : 0;
+        workTravelled += Math.hypot(stepX, stepZ);
+        // Cap : l'engin regarde vers +X dans son repère, d'où le −dz. Tant
+        // qu'il n'a pas bougé, on vise la case suivante pour ne pas le poser
+        // en travers au premier rendu.
+        const fallback =
+          workHeading ?? Math.atan2(-(pb.pz - pa.pz), pb.px - pa.px);
+        const heading =
+          Math.hypot(stepX, stepZ) > 1e-5 ? Math.atan2(-stepZ, stepX) : fallback;
+        const steer = workHeading === null ? 0 : shortestAngle(heading - workHeading);
+        workHeading = heading;
+        lastWorkPos = { x: px, z: pz };
+
+        workRig.group.position.set(px, 0.09, pz);
+        workRig.group.rotation.y = heading;
+        workRig.group.visible = u < 1;
+        workRig.update({
+          t,
+          distance: workTravelled,
+          working: true,
+          steer: Math.max(-1, Math.min(1, steer * 6)),
+          // Moissonneuse : la trémie se vide sur la fin du chantier.
+          unloading: aw.type === "HARVESTER" && u > 0.62,
+        });
+
+        // Poussière derrière l'engin, tant qu'il roule.
+        const back = workRig.length * 0.5;
+        workDust.update(
+          dt,
+          px - Math.cos(heading) * back,
+          0.12,
+          pz + Math.sin(heading) * back,
+          u < 1,
+        );
+      } else {
+        workDust.update(dt, 0, 0, 0, false);
       }
 
       renderer.render(scene, camera);
@@ -1138,6 +1149,7 @@ export function IsoFarmView({
         disposeObject3D(c);
       }
       clearWorkVehicle();
+      workDust.dispose();
       // Marquée partagée pour survivre aux reconstructions de scène, la
       // géométrie de dalle doit être libérée explicitement au démontage.
       sharedTile?.geo.dispose();

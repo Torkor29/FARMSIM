@@ -73,6 +73,7 @@ Chaque valeur chiffrée dans cette documentation est classée :
 | — | [42_TRADE.md](./42_TRADE.md) | Vendre : négociant, cours mondial, criée entre joueurs |
 | — | [43_LIVESTOCK_PRODUCE.md](./43_LIVESTOCK_PRODUCE.md) | Traire, abattre, nourrir ; courette à porcs ; formes des bâtiments |
 | — | [44_BREEDING_SPOILAGE.md](./44_BREEDING_SPOILAGE.md) | Reproduction du cheptel et péremption des denrées |
+| — | [45_MACHINES_3D.md](./45_MACHINES_3D.md) | Parc matériel 3D : engins riggés, animés par la distance, atelier |
 
 ---
 

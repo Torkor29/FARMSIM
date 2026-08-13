@@ -27,6 +27,9 @@ pnpm dev:web   # :5173
 
 Tests sim : `pnpm test:sim`
 
+Atelier du parc matériel 3D (hors jeu, pour juger les engins) :
+`http://localhost:5173/machines.html`
+
 ## Déploiement
 
 Une seule image Docker : l'API (Express + Prisma) sert aussi les fichiers
