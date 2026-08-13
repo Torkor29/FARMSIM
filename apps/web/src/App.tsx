@@ -2616,7 +2616,11 @@ export function App() {
   }
 
   return (
-    <div className={`game-stage${isMobile ? " mobile" : ""}${isMobile && sheet ? " sheet-open" : ""}`}>
+    <div
+      className={`game-stage${isMobile ? " mobile" : ""}${isMobile && sheet ? " sheet-open" : ""}${
+        isMobile && (isPlantTool(tool) || isSoilTool(tool) || tool === "HARVEST") ? " tray-open" : ""
+      }`}
+    >
       <div className="iso-layer">
         {parcel ? (
           <Suspense fallback={<SceneLoading label="Chargement de la ferme…" />}>

@@ -178,7 +178,7 @@ export function FieldDock({
           )}
 
           {plant && (
-            <div className="dock-chips">
+            <div className="dock-chips dock-chips-scroll">
               {(
                 [
                   ["PLANT_WHEAT", "Blé"],
@@ -198,16 +198,18 @@ export function FieldDock({
                   {label}
                 </button>
               ))}
-              <button
-                type="button"
-                className={`chip ${directSeed ? "on" : ""}`}
-                title={`Semer dans les chaumes : +${DIRECT_SEED_COST_PER_CELL} TRN/case, −${Math.round(
-                  DIRECT_SEED_YIELD_MALUS * 100,
-                )} % de rendement.`}
-                onClick={onDirectSeed}
-              >
-                Semis direct
-              </button>
+              {!isMobile && (
+                <button
+                  type="button"
+                  className={`chip ${directSeed ? "on" : ""}`}
+                  title={`Semer dans les chaumes : +${DIRECT_SEED_COST_PER_CELL} TRN/case, −${Math.round(
+                    DIRECT_SEED_YIELD_MALUS * 100,
+                  )} % de rendement.`}
+                  onClick={onDirectSeed}
+                >
+                  Semis direct
+                </button>
+              )}
             </div>
           )}
 
@@ -268,7 +270,7 @@ export function FieldDock({
                   : `Faire${plant ? ` ${plantCropLabel(tool)}` : ""} ×${selectedCount}`}
               </button>
             )}
-            {contractor && !visiting && selectedCount > 0 && (
+            {contractor && !visiting && selectedCount > 0 && !isMobile && (
               <button
                 type="button"
                 className="chip eta"
@@ -279,7 +281,7 @@ export function FieldDock({
                 Payer · {contractor.cost} TRN
               </button>
             )}
-            {laborQuote != null && !visiting && selectedCount > 0 && onPublishLabor && (
+            {laborQuote != null && !visiting && selectedCount > 0 && onPublishLabor && !isMobile && (
               <button
                 type="button"
                 className="chip"
