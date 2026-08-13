@@ -40,7 +40,7 @@ export const NOSES = [
   { id: "small", label: "Petit" },
   { id: "round", label: "Rond" },
   { id: "long", label: "Long" },
-  { id: "button", label: "Bouton" },
+  { id: "button", label: "Retroussé" },
   { id: "broad", label: "Large" },
 ] as const;
 
@@ -109,6 +109,11 @@ export const CLOTH_COLORS = [
   { id: "khaki", hex: "#9a8b5a", label: "Kaki" },
 ] as const;
 
+/**
+ * Couleur des petites pièces : boucles de salopette, rabats de poche, pompon
+ * de bonnet, bandeau de chapeau de cowboy. « Accent » ne disait rien à
+ * personne — le menu la nomme maintenant par ce qu'elle colore.
+ */
 export const ACCENT_COLORS = [
   { id: "gold", hex: "#d9b23c", label: "Or" },
   { id: "rust", hex: "#c0663f", label: "Rouille" },

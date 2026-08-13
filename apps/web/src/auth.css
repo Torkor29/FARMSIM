@@ -605,6 +605,11 @@
   font-weight: 800;
   color: var(--teal-700);
 }
+.char-row-hint {
+  font-size: 0.74rem;
+  color: var(--muted);
+  font-style: italic;
+}
 .char-row-steps {
   margin-left: auto;
   display: flex;

@@ -183,33 +183,95 @@ function limb(rTop: number, rBottom: number, length: number, pos: Vec3, rot?: Ve
 }
 
 /**
- * Plaque épousant une enveloppe : bavette, revers, pan de gilet.
+ * Plaque épousant une enveloppe : bavette, revers, pan de gilet, dos de veste.
  *
- * Un vêtement à plat sur un torse rond fait un panneau publicitaire ; empilé
- * en tranches, il fait des marches d'escalier. Un secteur de la sphère du
- * corps, écarté de `out`, suit la courbe exactement et se raccorde sans
- * couture. `span` est le demi-angle couvert autour de l'axe +Z.
+ * Un vêtement à plat sur un torse rond fait un panneau publicitaire ; empilé en
+ * tranches, il fait des marches d'escalier. Un secteur de la sphère du corps,
+ * écarté de `out`, suit la courbe exactement et se raccorde sans couture.
+ *
+ * `from` et `to` sont des angles autour de l'axe du regard : 0 au milieu de la
+ * poitrine, positif vers la gauche du personnage, ±π dans le dos.
  */
 function plate(
   r: Vec3,
   c: Vec3,
   yTop: number,
   yBottom: number,
-  span: number,
+  from: number,
+  to: number,
   out: number,
-  seg = 20,
+  seg = 24,
 ): THREE.BufferGeometry {
   const R: Vec3 = [r[0] + out, r[1] + out, r[2] + out];
   const angle = (y: number) => Math.acos(THREE.MathUtils.clamp((y - c[1]) / R[1], -1, 1));
   const t0 = angle(yTop);
   const t1 = angle(yBottom);
+  // Les deux bornes arrivent dans n'importe quel ordre — un pan gauche se
+  // décrit naturellement de −0,2 à −0,66. Un `phiLength` négatif ne dessine
+  // rien : on remet donc les angles dans l'ordre croissant.
+  const a0 = Math.min(from, to);
+  const a1 = Math.max(from, to);
   // Dans SphereGeometry, l'axe +Z tombe à phi = π/2.
-  const g = new THREE.SphereGeometry(1, seg, seg, HALF - span, span * 2, t0, Math.max(0.01, t1 - t0));
+  const g = new THREE.SphereGeometry(
+    1,
+    Math.max(4, Math.round((seg * (a1 - a0)) / Math.PI)),
+    seg,
+    HALF + a0,
+    a1 - a0,
+    t0,
+    Math.max(0.01, t1 - t0),
+  );
   g.scale(R[0], R[1], R[2]);
   return place(g, c);
 }
 
-/** Calotte sphérique : coiffe, paupière, coquille d'oreille. */
+/**
+ * Pan de devant d'un vêtement ouvert — veste, gilet.
+ *
+ * Le bord intérieur dessine un revers : serré au col, écarté au plus large de
+ * la poitrine, refermé à la taille. C'est ce tracé, et non la couleur, qui fait
+ * lire « veste ouverte ». Un premier essai laissait le bord intérieur s'ouvrir
+ * du haut vers le bas : le V se retrouvait à l'envers et le personnage avait
+ * l'air d'avoir la chemise qui sort du ventre.
+ *
+ * Le pan est découpé en bandes horizontales, toutes posées sur la même sphère :
+ * elles se recouvrent donc sans laisser de marche.
+ */
+function frontPanel(
+  r: Vec3,
+  c: Vec3,
+  yTop: number,
+  yBottom: number,
+  collar: number,
+  wide: number,
+  hem: number,
+  outer: number,
+  out: number,
+): THREE.BufferGeometry[] {
+  /** Hauteur relative du plus large du revers. */
+  const BREAK = 0.34;
+  const inner = (a: number) =>
+    a < BREAK
+      ? collar + (wide - collar) * (a / BREAK)
+      : wide + (hem - wide) * Math.pow((a - BREAK) / (1 - BREAK), 0.85);
+
+  const bands = 9;
+  const pieces: THREE.BufferGeometry[] = [];
+  for (let i = 0; i < bands; i++) {
+    const a = i / bands;
+    const b = (i + 1.05) / bands;
+    const yA = yTop + (yBottom - yTop) * a;
+    const yB = yTop + (yBottom - yTop) * b;
+    // `inner` et `outer` sont signés par le côté : on compare donc les
+    // distances au milieu, pas les angles eux-mêmes.
+    const sign = Math.sign(outer) || 1;
+    const from = sign * Math.min(Math.abs(inner(a)), Math.abs(outer) - 0.02);
+    pieces.push(plate(r, c, yA, yB, from, outer, out));
+  }
+  return pieces;
+}
+
+/** Calotte sphérique : coiffe, paupière, coquille d'oreille. *//** Calotte sphérique : coiffe, paupière, coquille d'oreille. *//** Calotte sphérique : coiffe, paupière, coquille d'oreille. */
 function domeCap(r: number, coverage: number, pos: Vec3, rot?: Vec3, seg = 18) {
   return place(
     new THREE.SphereGeometry(r, seg, Math.max(6, Math.round(seg * 0.55)), 0, Math.PI * 2, 0, coverage),
@@ -921,13 +983,13 @@ function outfitOf(look: CharacterAppearance): Build {
     case "shirt":
       return { sleeves: "long", bulk: 0.005, torso: "cloth", sleeve: "cloth", legs: "clothDark" };
     case "jacket":
-      return { sleeves: "long", bulk: 0.018, torso: "cloth", sleeve: "cloth", legs: "clothDark" };
+      return { sleeves: "long", bulk: 0.016, torso: "cloth", sleeve: "cloth", legs: "clothDark" };
     case "coverall":
       return { sleeves: "long", bulk: 0.012, torso: "cloth", sleeve: "cloth", legs: "cloth" };
     case "sweater":
       return { sleeves: "long", bulk: 0.024, torso: "cloth", sleeve: "cloth", legs: "clothDark" };
     case "vest":
-      return { sleeves: "none", bulk: 0.008, torso: "linen", sleeve: "skin", legs: "clothDark" };
+      return { sleeves: "none", bulk: 0.016, torso: "cloth", sleeve: "skin", legs: "clothDark" };
     default:
       // Salopette : chemise de toile dessous, bavette et pantalon en tissu.
       return { sleeves: "short", bulk: 0.006, torso: "linen", sleeve: "linen", legs: "cloth" };
@@ -956,8 +1018,63 @@ function addTorso(chest: Node, look: CharacterAppearance, fit: Build) {
   /** Pièce plaquée sur le devant du buste, épaisseur comprise. */
   const front = (y: number, out = 0.004) => bustZ(y, b) + out;
   /** Plaque suivant le galbe de la poitrine. */
+  /** Plaque centrée sur la poitrine, de demi-largeur angulaire `span`. */
   const bustPlate = (yTop: number, yBottom: number, span: number, out: number) =>
-    plate(BUST, [0, BUST_Y, 0], yTop, yBottom, span, b + out);
+    plate(BUST, [0, BUST_Y, 0], yTop, yBottom, -span, span, b + out);
+  /**
+   * Incrustation en V au milieu de la poitrine : la chemise vue dans
+   * l'ouverture d'une veste, ou le revers posé le long de cette ouverture.
+   *
+   * `side` restreint la pièce à une moitié, et `thickness` la réduit à une
+   * bande le long du bord — c'est ainsi qu'on obtient un revers sans avoir à
+   * découper quoi que ce soit.
+   */
+  const vInset = (
+    yTop: number,
+    yBottom: number,
+    topHalf: number,
+    bottomHalf: number,
+    out: number,
+    side = 0,
+    thickness = 0,
+  ) => {
+    const bands = 9;
+    const pieces: THREE.BufferGeometry[] = [];
+    for (let i = 0; i < bands; i++) {
+      const a = i / bands;
+      const c2 = (i + 1.05) / bands;
+      const yA = yTop + (yBottom - yTop) * a;
+      const yB = yTop + (yBottom - yTop) * c2;
+      const half = topHalf + (bottomHalf - topHalf) * Math.pow(a, 0.85);
+      const from = side === 0 ? -half : side > 0 ? Math.max(0, half - thickness) : -half;
+      const to = side === 0 ? half : side > 0 ? half : Math.min(0, -half + thickness);
+      pieces.push(plate(BUST, [0, BUST_Y, 0], yA, yB, from, to, b + out));
+    }
+    return pieces;
+  };
+
+  /** Pan de devant gauche ou droit d'un vêtement ouvert. */
+  const front2 = (
+    side: number,
+    yTop: number,
+    yBottom: number,
+    collar: number,
+    wide: number,
+    hem: number,
+    outer: number,
+    out: number,
+  ) =>
+    frontPanel(
+      BUST,
+      [0, BUST_Y, 0],
+      yTop,
+      yBottom,
+      side * collar,
+      side * wide,
+      side * hem,
+      side * outer,
+      b + out,
+    );
 
   // Buste : cage thoracique large en haut, taille resserrée. Deux ellipsoïdes
   // qui se recouvrent valent mieux qu'une boîte.
@@ -986,35 +1103,60 @@ function addTorso(chest: Node, look: CharacterAppearance, fit: Build) {
     }
     chest.add("accent", roundedBox(0.062, 0.046, 0.016, 0.012, [0, 0.238, front(0.238) + 0.008]));
   } else if (kind === "jacket") {
-    // Revers ouverts sur la chemise, fermeture au milieu.
-    chest.add("linen", bustPlate(0.4, 0.14, 0.28, 0.012));
-    for (const side of [-1, 1]) {
-      const lapel = plate(BUST, [0, BUST_Y, 0], 0.41, 0.16, 0.34, b + 0.02);
-      chest.add("clothDark", place(lapel, [0, 0, 0], [0, side * 0.44, 0]));
-      chest.add("clothDark", roundedBox(0.062, 0.05, 0.02, 0.012, [side * 0.092, 0.11, front(0.11) + 0.006]));
+    // Le vêtement habille tout le buste — épaules et taille comprises — et la
+    // chemise s'incruste **dans** l'ouverture.
+    //
+    // L'inverse avait été tenté : un torse en toile, des pans de veste plaqués
+    // dessus. Les épaules et la taille sont des volumes distincts du buste, si
+    // bien qu'elles ressortaient en blanc de part et d'autre des pans, et le
+    // personnage semblait porter une veste trouée.
+    for (const g of vInset(0.425, 0.15, 0.58, 0.04, 0.006)) chest.add("linen", g);
+    for (const side of [-1, 1] as const) {
+      // Revers : une bande rabattue le long de l'ouverture, un peu plus large
+      // en haut qu'en bas.
+      for (const g of vInset(0.425, 0.17, 0.62, 0.1, 0.016, side, 0.16)) {
+        chest.add("clothDark", g);
+      }
+      chest.add("clothDark", roundedBox(0.062, 0.05, 0.02, 0.014, [side * 0.1, 0.115, front(0.115) + 0.004]));
     }
-    chest.add("metal", box(0.012, 0.24, 0.012, [0, 0.25, front(0.25) + 0.014]));
-    chest.add("cloth", place(new THREE.TorusGeometry(0.066, 0.02, 8, 18), [0, 0.42, 0.004], [HALF, 0, 0]));
+    // Boutonnage sous la pointe du V, là où la veste se ferme vraiment.
+    for (let i = 0; i < 3; i++) {
+      const y = 0.135 - i * 0.052;
+      chest.add("metal", ell(0.009, 0.009, 0.006, [0.026, y, front(y) + 0.012]));
+    }
+    chest.add("clothDark", place(new THREE.TorusGeometry(0.072, 0.024, 8, 20), [0, 0.425, 0.004], [HALF, 0, 0]));
   } else if (kind === "sweater") {
     // Côtes : le col roulé et le bas de maille, marqués par des anneaux —
     // c'est ce qui fait lire de la laine plutôt que du plastique.
     chest.add("cloth", place(new THREE.TorusGeometry(0.064, 0.03, 8, 20), [0, 0.435, 0.004], [HALF, 0, 0]));
+    // Côte de taille : trois anneaux fins et rentrants. Un bourrelet unique
+    // faisait ceinture, ce qui est exactement ce qu'un pull n'a pas.
     for (let i = 0; i < 3; i++) {
       chest.add("clothDark", place(
-        new THREE.TorusGeometry(WAIST[0] + b - 0.006, 0.009, 6, 22),
-        [0, -0.008 + i * 0.019, 0],
+        new THREE.TorusGeometry(WAIST[0] + b - 0.012 - i * 0.004, 0.007, 6, 22),
+        [0, -0.012 + i * 0.017, 0],
         [HALF, 0, 0],
       ));
     }
   } else if (kind === "vest") {
-    // Gilet ouvert sur la chemise : deux pans devant, un dos plein.
-    for (const side of [-1, 1]) {
-      const panel = plate(BUST, [0, BUST_Y, 0], 0.4, 0.13, 0.3, b + 0.014);
-      chest.add("cloth", place(panel, [0, 0, 0], [0, side * 0.36, 0]));
-      chest.add("cloth", ell(0.056, 0.066, 0.094, [side * (BUST[0] - 0.014), 0.33, 0]));
-      chest.add("accent", roundedBox(0.05, 0.042, 0.016, 0.012, [side * 0.088, 0.17, front(0.17) + 0.008]));
+    // Gilet de travail : fermé, sans manches. Le premier essai l'ouvrait sur
+    // une chemise — mais des bras nus sous une chemise ouverte n'ont aucun
+    // sens. Fermé, il se lit d'un coup d'œil et le bras reste libre.
+    chest.add("clothDark", place(new THREE.TorusGeometry(0.07, 0.022, 8, 20), [0, 0.42, 0.004], [HALF, 0, 0]));
+    // Emmanchures bordées : c'est le liseré qui dit « sans manches ».
+    for (const side of [-1, 1] as const) {
+      chest.add("clothDark", place(
+        new THREE.TorusGeometry(0.078, 0.014, 6, 18),
+        [side * (BUST[0] - 0.006), 0.325, 0],
+        [0, 0, HALF + side * 0.24],
+      ));
+      // Grande poche plaquée à rabat : la pièce qui dit « gilet de travail ».
+      chest.add("clothDark", roundedBox(0.066, 0.058, 0.018, 0.014, [side * 0.088, 0.15, front(0.15) + 0.004]));
+      chest.add("accent", roundedBox(0.07, 0.016, 0.014, 0.006, [side * 0.088, 0.183, front(0.183) + 0.004]));
     }
-    chest.add("clothDark", ell(BUST[0] + 0.008, BUST[1] + 0.002, 0.094, [0, BUST_Y, -0.028]));
+    // Fermeture éclair au milieu, tirette comprise.
+    chest.add("metal", box(0.011, 0.32, 0.01, [0, 0.24, front(0.24) + 0.01]));
+    chest.add("metal", roundedBox(0.016, 0.028, 0.008, 0.006, [0, 0.078, front(0.078) + 0.014]));
   } else if (kind === "shirt") {
     // Col ouvert, patte de boutonnage, quatre boutons.
     for (const side of [-1, 1]) {

@@ -29,6 +29,8 @@ type Props = {
 type Row = {
   key: keyof CharacterAppearance;
   label: string;
+  /** Ce que le réglage colore ou change, quand le titre seul ne suffit pas */
+  hint?: string;
   options: readonly { id: string; label: string; hex?: string }[];
 };
 
@@ -55,7 +57,7 @@ const TABS: Tab[] = [
     frame: "bust",
     rows: [
       { key: "skin", label: "Peau", options: SKIN_TONES },
-      { key: "eyeShape", label: "Regard", options: EYE_SHAPES },
+      { key: "eyeShape", label: "Regard", hint: "forme des yeux", options: EYE_SHAPES },
       { key: "eyeColor", label: "Couleur des yeux", options: EYE_COLORS },
       { key: "nose", label: "Nez", options: NOSES },
       { key: "mouth", label: "Bouche", options: MOUTHS },
@@ -68,7 +70,7 @@ const TABS: Tab[] = [
     frame: "bust",
     rows: [
       { key: "hair", label: "Cheveux", options: HAIRS },
-      { key: "hairColor", label: "Couleur", options: HAIR_COLORS },
+      { key: "hairColor", label: "Couleur", hint: "cheveux et barbe", options: HAIR_COLORS },
       { key: "beard", label: "Barbe", options: BEARDS },
     ],
   },
@@ -78,8 +80,13 @@ const TABS: Tab[] = [
     frame: "full",
     rows: [
       { key: "clothes", label: "Vêtement", options: CLOTHES },
-      { key: "clothColor", label: "Tissu", options: CLOTH_COLORS },
-      { key: "accentColor", label: "Accent", options: ACCENT_COLORS },
+      { key: "clothColor", label: "Tissu", hint: "veste et pantalon", options: CLOTH_COLORS },
+      {
+        key: "accentColor",
+        label: "Détails",
+        hint: "poches, boucles, bandeau du chapeau",
+        options: ACCENT_COLORS,
+      },
       { key: "hat", label: "Chapeau", options: HATS },
       { key: "hatColor", label: "Couleur du chapeau", options: HAT_COLORS },
     ],
@@ -143,6 +150,7 @@ export function CharacterCreator({ spec, appearance, onChange }: Props) {
                 <div className="char-row-head">
                   <span className="char-row-label">{row.label}</span>
                   {!swatches && <span className="char-row-value">{current?.label}</span>}
+                  {row.hint && <span className="char-row-hint">{row.hint}</span>}
                   <span className="char-row-steps">
                     <button
                       type="button"

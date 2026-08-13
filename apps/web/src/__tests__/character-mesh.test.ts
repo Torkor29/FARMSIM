@@ -192,6 +192,35 @@ describe("les pièces choisies apparaissent vraiment", () => {
     jacket.dispose();
   });
 
+  it("aucune tenue ne laisse le buste à nu", () => {
+    // Les épaules et la taille sont des volumes distincts du buste. Une
+    // version antérieure plaquait la veste et le gilet sur le seul buste :
+    // les épaules ressortaient en blanc de part et d'autre, et le personnage
+    // semblait porter une veste trouée. On vérifie donc que le tissu monte
+    // bien jusqu'à l'épaule et redescend jusqu'à la taille.
+    for (let i = 0; i < CLOTHES.length; i++) {
+      const rig = createCharacterRig(look({ clothes: i }));
+      const chest = rig.joints.chest!;
+      for (const [lo, hi, où] of [
+        [0.3, 0.38, "épaule"],
+        [0.05, 0.12, "taille"],
+      ] as const) {
+        let covered = 0;
+        chest.traverse((o) => {
+          const mesh = o as THREE.Mesh;
+          if (!mesh.isMesh || (mesh.name !== "cloth" && mesh.name !== "linen")) return;
+          const pos = mesh.geometry.getAttribute("position");
+          for (let k = 0; k < pos.count; k++) {
+            const y = pos.getY(k);
+            if (y >= lo && y <= hi) covered++;
+          }
+        });
+        expect(`${CLOTHES[i].id} ${où} ${covered > 0}`).toBe(`${CLOTHES[i].id} ${où} true`);
+      }
+      rig.dispose();
+    }
+  });
+
   it("changer de couleur ne change pas la géométrie", () => {
     const a = bounds(look({ clothColor: 0, hairColor: 0, skin: 0 }));
     const b = bounds(look({ clothColor: 4, hairColor: 5, skin: 6 }));
