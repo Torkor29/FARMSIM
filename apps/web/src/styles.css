@@ -1753,10 +1753,21 @@ button.ghost {
   .stat-job,
   .stat-xp,
   .stat-bonus,
-  .logout-btn { display: none; }
-  .stat-stock {
-    font-size: 0.72rem;
-    white-space: nowrap;
+  .stat-stock { display: none; }
+  .logout-btn {
+    display: grid;
+    place-items: center;
+    min-width: 40px;
+    min-height: 40px;
+    padding: 0;
+    flex: none;
+    font-size: 0;
+    border-radius: 12px;
+  }
+  .logout-btn::after {
+    content: "⎋";
+    font-size: 1.15rem;
+    line-height: 1;
   }
   .help-btn {
     display: grid;
@@ -1773,7 +1784,7 @@ button.ghost {
   }
   .hud-stats { flex-wrap: nowrap; gap: 0.3rem; }
   .stat-name {
-    max-width: 8rem;
+    max-width: 5.5rem;
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
@@ -1792,6 +1803,7 @@ button.ghost {
     min-width: 40px;
     min-height: 40px;
     padding: 0;
+    flex: none;
     border-radius: 12px;
     border: 1px solid var(--line);
     background: var(--paper);
@@ -1815,8 +1827,7 @@ button.ghost {
   }
   .market-ticker::-webkit-scrollbar { display: none; }
   .market-ticker .tick { flex: 0 0 auto; }
-  .who-now-bar,
-  .market-ticker { display: none; }
+  .who-now-bar { display: none; }
   .game-stage.mobile.tray-open .quest-chip-hud,
   .game-stage.mobile.tray-open .harvest-sold-banner { display: none; }
   .dock-chips-scroll {
@@ -1930,6 +1941,22 @@ button.ghost {
   .game-stage.mobile.sheet-open .field-dock,
   .game-stage.mobile.sheet-open .quest-chip-hud,
   .game-stage.mobile.sheet-open .harvest-sold-banner { display: none; }
+  .game-stage.mobile .more-panel.sheet {
+    max-height: none;
+  }
+  .more-list {
+    display: grid;
+    grid-template-columns: repeat(5, 1fr);
+    gap: 0.25rem;
+  }
+  .more-item {
+    display: grid;
+    justify-items: center;
+    gap: 0.12rem;
+    min-height: 56px;
+    padding: 0.35rem 0.15rem;
+  }
+  .more-item strong { font-size: 0.68rem; font-weight: 800; }
   .game-stage.mobile .sheet-head {
     position: sticky;
     top: 0;
