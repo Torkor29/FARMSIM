@@ -79,6 +79,7 @@ Chaque valeur chiffrée dans cette documentation est classée :
 | — | [48_PLAN_MECANIQUES.md](./48_PLAN_MECANIQUES.md) | Plan d'exécution : paille, ensilage, saisons, CUMA |
 | — | [49_TRIANGLE_METIERS.md](./49_TRIANGLE_METIERS.md) | Triangle des métiers : boucles éleveur / céréalier / ETA en osmose |
 | — | [50_MACHINE_CARE.md](./50_MACHINE_CARE.md) | Atelier ETA : graisser, glisser, réparer |
+| — | [51_ETA_MISSIONS.md](./51_ETA_MISSIONS.md) | L’ETA n’est pas une spé : travaux à façon, coûts et gains |
 
 ---
 
@@ -89,4 +90,4 @@ Chaque valeur chiffrée dans cette documentation est classée :
 3. `16_MVP_ROADMAP.md`
 4. Documents thématiques selon besoin
 5. `12_LEGAL_REGULATORY.md` avant toute décision cash-out / marketplace argent réel
-6. `49_TRIANGLE_METIERS.md` avant d'ajouter une mécanique de métier
+6. `51_ETA_MISSIONS.md` avant `49_TRIANGLE_METIERS.md` : l’ETA est un appoint, pas un troisième métier
