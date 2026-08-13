@@ -464,11 +464,24 @@ function makeFarmhouseMesh(spanX: number, spanY: number): THREE.Group {
   return g;
 }
 
+type AnimalRig = {
+  body: THREE.Object3D;
+  head: THREE.Object3D;
+  legs: THREE.Object3D[];
+};
+
+function hipLeg(w: number, h: number, d: number, color: number, x: number, y: number, z: number): THREE.Mesh {
+  const geo = new THREE.BoxGeometry(w, h, d);
+  geo.translate(0, -h / 2, 0);
+  const leg = new THREE.Mesh(geo, new THREE.MeshLambertMaterial({ color, flatShading: true }));
+  leg.position.set(x, y, z);
+  return leg;
+}
+
 /**
- * Porte d’étable : fermée = les bêtes sont dedans, ouverte = elles sont au pré.
- * Pas d’image dédiée — deux planches et un trou noir, lisible de loin.
+ * Porte d’étable animée : 0 fermée, 1 grande ouverte.
  */
-function makeBarnDoor(open: boolean): THREE.Group {
+function makeBarnDoor(): THREE.Group {
   const g = new THREE.Group();
   const wood = new THREE.MeshLambertMaterial({ color: 0x6b4528, flatShading: true });
   const dark = new THREE.MeshLambertMaterial({ color: 0x1a120c, flatShading: true });
@@ -476,64 +489,76 @@ function makeBarnDoor(open: boolean): THREE.Group {
   hole.position.set(0, 0.28, 0);
   g.add(hole);
   const left = new THREE.Mesh(new THREE.BoxGeometry(0.2, 0.52, 0.05), wood);
-  const right = new THREE.Mesh(new THREE.BoxGeometry(0.2, 0.52, 0.05), wood);
-  if (open) {
-    left.position.set(-0.32, 0.28, 0.12);
-    left.rotation.y = 0.95;
-    right.position.set(0.32, 0.28, 0.12);
-    right.rotation.y = -0.95;
-  } else {
-    left.position.set(-0.1, 0.28, 0.03);
-    right.position.set(0.1, 0.28, 0.03);
-  }
+  left.name = "left";
   left.castShadow = true;
-  right.castShadow = true;
   g.add(left);
+  const right = new THREE.Mesh(new THREE.BoxGeometry(0.2, 0.52, 0.05), wood);
+  right.name = "right";
+  right.castShadow = true;
   g.add(right);
+  setBarnDoorOpen(g, 0);
   return g;
 }
 
-/** Vache low-poly, taille d'une demi-case. */
+function setBarnDoorOpen(g: THREE.Group, open: number): void {
+  const o = Math.max(0, Math.min(1, open));
+  const left = g.getObjectByName("left");
+  const right = g.getObjectByName("right");
+  if (left) {
+    left.position.set(-0.1 - o * 0.22, 0.28, 0.03 + o * 0.09);
+    left.rotation.y = o * 0.95;
+  }
+  if (right) {
+    right.position.set(0.1 + o * 0.22, 0.28, 0.03 + o * 0.09);
+    right.rotation.y = -o * 0.95;
+  }
+}
+
+/** Vache : debout à l’étable, ou tête dans l’herbe au pré. */
 function makeCowMesh(): THREE.Group {
   const g = new THREE.Group();
   const hide = new THREE.MeshLambertMaterial({ color: 0xf4efe4, flatShading: true });
   const patch = new THREE.MeshLambertMaterial({ color: 0x5a4132, flatShading: true });
   const snout = new THREE.MeshLambertMaterial({ color: 0xe3b3a8, flatShading: true });
 
-  const body = new THREE.Mesh(new THREE.BoxGeometry(0.34, 0.2, 0.19), hide);
-  body.position.y = 0.21;
-  body.castShadow = true;
-  g.add(body);
-
+  const body = new THREE.Group();
+  const torso = new THREE.Mesh(new THREE.BoxGeometry(0.34, 0.2, 0.19), hide);
+  torso.position.y = 0.21;
+  torso.castShadow = true;
+  body.add(torso);
   const spot = new THREE.Mesh(new THREE.BoxGeometry(0.13, 0.1, 0.2), patch);
   spot.position.set(0.05, 0.25, 0);
-  g.add(spot);
+  body.add(spot);
+  g.add(body);
 
-  const head = new THREE.Mesh(new THREE.BoxGeometry(0.15, 0.14, 0.14), hide);
-  head.position.set(-0.24, 0.25, 0);
-  g.add(head);
-
+  const head = new THREE.Group();
+  const skull = new THREE.Mesh(new THREE.BoxGeometry(0.15, 0.14, 0.14), hide);
+  skull.position.set(-0.24, 0.25, 0);
+  head.add(skull);
   const muzzle = new THREE.Mesh(new THREE.BoxGeometry(0.07, 0.08, 0.1), snout);
   muzzle.position.set(-0.33, 0.22, 0);
-  g.add(muzzle);
+  head.add(muzzle);
+  const earL = new THREE.Mesh(new THREE.BoxGeometry(0.04, 0.06, 0.02), hide);
+  earL.position.set(-0.22, 0.34, 0.07);
+  head.add(earL);
+  const earR = earL.clone();
+  earR.position.z = -0.07;
+  head.add(earR);
+  g.add(head);
 
-  for (const [lx, lz] of [
-    [-0.11, 0.06],
-    [-0.11, -0.06],
-    [0.11, 0.06],
-    [0.11, -0.06],
-  ]) {
-    const leg = new THREE.Mesh(
-      new THREE.BoxGeometry(0.055, 0.14, 0.055),
-      new THREE.MeshLambertMaterial({ color: 0xdcd4c6, flatShading: true }),
-    );
-    leg.position.set(lx, 0.07, lz);
-    g.add(leg);
-  }
+  const legs = [
+    hipLeg(0.055, 0.14, 0.055, 0xdcd4c6, -0.11, 0.14, 0.06),
+    hipLeg(0.055, 0.14, 0.055, 0xdcd4c6, -0.11, 0.14, -0.06),
+    hipLeg(0.055, 0.14, 0.055, 0xdcd4c6, 0.11, 0.14, 0.06),
+    hipLeg(0.055, 0.14, 0.055, 0xdcd4c6, 0.11, 0.14, -0.06),
+  ];
+  for (const leg of legs) g.add(leg);
+
+  g.userData.rig = { body, head, legs } satisfies AnimalRig;
   return g;
 }
 
-/** Poule low-poly : plus petite que la vache, tête qui picore. */
+/** Poule : debout, ou tête au sol (picore). */
 function makeHenMesh(): THREE.Group {
   const g = new THREE.Group();
   const hide = new THREE.MeshLambertMaterial({ color: 0xf4efe4, flatShading: true });
@@ -541,64 +566,67 @@ function makeHenMesh(): THREE.Group {
   const comb = new THREE.MeshLambertMaterial({ color: 0xc23b22, flatShading: true });
   const beak = new THREE.MeshLambertMaterial({ color: 0xe8a317, flatShading: true });
 
-  const body = new THREE.Mesh(new THREE.BoxGeometry(0.16, 0.12, 0.12), hide);
-  body.position.y = 0.12;
-  body.castShadow = true;
-  g.add(body);
-
+  const body = new THREE.Group();
+  const torso = new THREE.Mesh(new THREE.BoxGeometry(0.16, 0.12, 0.12), hide);
+  torso.position.y = 0.12;
+  torso.castShadow = true;
+  body.add(torso);
   const wing = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.06, 0.13), brown);
   wing.position.set(0.01, 0.13, 0);
-  g.add(wing);
+  body.add(wing);
+  g.add(body);
 
-  const head = new THREE.Mesh(new THREE.BoxGeometry(0.07, 0.07, 0.07), hide);
-  head.position.set(-0.1, 0.18, 0);
-  g.add(head);
-
+  const head = new THREE.Group();
+  const skull = new THREE.Mesh(new THREE.BoxGeometry(0.07, 0.07, 0.07), hide);
+  skull.position.set(-0.1, 0.18, 0);
+  head.add(skull);
   const crest = new THREE.Mesh(new THREE.BoxGeometry(0.03, 0.04, 0.04), comb);
   crest.position.set(-0.1, 0.23, 0);
-  g.add(crest);
-
+  head.add(crest);
   const bill = new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.025, 0.03), beak);
   bill.position.set(-0.14, 0.16, 0);
-  g.add(bill);
+  head.add(bill);
+  g.add(head);
 
-  for (const lz of [0.03, -0.03]) {
-    const leg = new THREE.Mesh(
-      new THREE.BoxGeometry(0.02, 0.07, 0.02),
-      new THREE.MeshLambertMaterial({ color: 0xe8a317, flatShading: true }),
-    );
-    leg.position.set(0.01, 0.035, lz);
-    g.add(leg);
-  }
+  const legs = [
+    hipLeg(0.02, 0.07, 0.02, 0xe8a317, 0.01, 0.07, 0.03),
+    hipLeg(0.02, 0.07, 0.02, 0xe8a317, 0.01, 0.07, -0.03),
+  ];
+  for (const leg of legs) g.add(leg);
+
+  g.userData.rig = { body, head, legs } satisfies AnimalRig;
   return g;
 }
 
-/** Mouton low-poly : plus bas que la vache, volume blanc. */
+/** Mouton : debout, ou museau dans l’herbe. */
 function makeSheepMesh(sheared = false): THREE.Group {
   const g = new THREE.Group();
   const wool = new THREE.MeshLambertMaterial({ color: 0xf7f4ee, flatShading: true });
   const face = new THREE.MeshLambertMaterial({ color: 0x3d342c, flatShading: true });
   const h = sheared ? 0.12 : 0.16;
 
-  const body = new THREE.Mesh(new THREE.BoxGeometry(0.26, h, 0.16), wool);
-  body.position.y = 0.14;
-  body.castShadow = true;
+  const body = new THREE.Group();
+  const torso = new THREE.Mesh(new THREE.BoxGeometry(0.26, h, 0.16), wool);
+  torso.position.y = 0.14;
+  torso.castShadow = true;
+  body.add(torso);
   g.add(body);
 
-  const head = new THREE.Mesh(new THREE.BoxGeometry(0.09, 0.09, 0.09), face);
-  head.position.set(-0.16, 0.16, 0);
+  const head = new THREE.Group();
+  const skull = new THREE.Mesh(new THREE.BoxGeometry(0.09, 0.09, 0.09), face);
+  skull.position.set(-0.16, 0.16, 0);
+  head.add(skull);
   g.add(head);
 
-  for (const [lx, lz] of [
-    [-0.08, 0.045],
-    [-0.08, -0.045],
-    [0.08, 0.045],
-    [0.08, -0.045],
-  ]) {
-    const leg = new THREE.Mesh(new THREE.BoxGeometry(0.035, 0.09, 0.035), face);
-    leg.position.set(lx, 0.045, lz);
-    g.add(leg);
-  }
+  const legs = [
+    hipLeg(0.035, 0.09, 0.035, 0x3d342c, -0.08, 0.09, 0.045),
+    hipLeg(0.035, 0.09, 0.035, 0x3d342c, -0.08, 0.09, -0.045),
+    hipLeg(0.035, 0.09, 0.035, 0x3d342c, 0.08, 0.09, 0.045),
+    hipLeg(0.035, 0.09, 0.035, 0x3d342c, 0.08, 0.09, -0.045),
+  ];
+  for (const leg of legs) g.add(leg);
+
+  g.userData.rig = { body, head, legs } satisfies AnimalRig;
   return g;
 }
 
@@ -606,6 +634,37 @@ function meshForHerd(kind?: string, sheared = false): THREE.Group {
   if (kind === "HEN") return makeHenMesh();
   if (kind === "SHEEP") return makeSheepMesh(sheared);
   return makeCowMesh();
+}
+
+/** graze 0 = debout, 1 = tête au sol. walk 0–1 = en train de marcher. */
+function applyHerdPose(
+  mesh: THREE.Group,
+  kind: string,
+  graze: number,
+  walking: boolean,
+  t: number,
+  wander: number,
+): void {
+  const rig = mesh.userData.rig as AnimalRig | undefined;
+  if (!rig) return;
+  const g = Math.max(0, Math.min(1, graze));
+  if (kind === "HEN") {
+    rig.head.rotation.x = g * 1.05;
+    rig.head.position.set(0, -g * 0.04, 0);
+    rig.body.rotation.x = g * 0.2;
+  } else if (kind === "SHEEP") {
+    rig.head.rotation.x = g * 0.85;
+    rig.head.position.set(-g * 0.03, -g * 0.05, 0);
+    rig.body.rotation.x = g * 0.1;
+  } else {
+    rig.head.rotation.x = g * 1.05;
+    rig.head.position.set(-g * 0.04, -g * 0.1, 0);
+    rig.body.rotation.x = g * 0.18;
+  }
+  const swing = walking ? Math.sin(t * 9 + wander) * 0.55 : 0;
+  rig.legs.forEach((leg, i) => {
+    leg.rotation.x = swing * (i % 2 === 0 ? 1 : -1);
+  });
 }
 
 /** Caisse d'œufs au pied du poulailler. */
@@ -1037,16 +1096,22 @@ export function IsoFarmView({
     // troupeau se déplace comme un bloc et l'illusion tombe.
     const grazeGroup = new THREE.Group();
     world.add(grazeGroup);
-    let grazeKey = "";
+    let grazeIdKey = "";
+    let grazeOutKey = "";
     const cowWalkers: {
       mesh: THREE.Group;
-      from: THREE.Vector3;
-      to: THREE.Vector3;
-      delay: number;
+      door: THREE.Vector3;
+      paddock: THREE.Vector3;
+      walkFrom: THREE.Vector3;
+      walkTo: THREE.Vector3;
+      walkT0: number;
+      walkDur: number;
       wander: number;
       kind: string;
-      out: boolean;
+      buildingId: string;
+      wantOut: boolean;
     }[] = [];
+    const herdDoors: { mesh: THREE.Group; buildingId: string; open: number }[] = [];
     const doorGroup = new THREE.Group();
     world.add(doorGroup);
     const pickupGroup = new THREE.Group();
@@ -1249,6 +1314,8 @@ export function IsoFarmView({
     }
 
     function layout() {
+      grazeIdKey = "";
+      grazeOutKey = "";
       const {
         gridW: gw,
         gridH: gh,
@@ -1814,60 +1881,91 @@ export function IsoFarmView({
         vg.rotation.y = Math.sin(t * 0.9 + ph) * 0.03;
       }
 
-      // Troupeaux au pré : sortie de l'étable, puis broutage dans l'enclos.
+      // Troupeaux : deux poses, et une vraie marche entre la porte et le pré.
       const herds = dataRef.current.grazing ?? [];
-      const nextGrazeKey = herds
-        .map((h) => `${h.buildingId}:${h.animals}:${h.kind ?? "COW"}:${h.sheared ? 1 : 0}:${h.out ? 1 : 0}`)
+      const nextIdKey = herds
+        .map((h) => `${h.buildingId}:${h.animals}:${h.kind ?? "COW"}:${h.sheared ? 1 : 0}`)
         .join("|");
-      if (nextGrazeKey !== grazeKey) {
-        grazeKey = nextGrazeKey;
+      const nextOutKey = herds.map((h) => `${h.buildingId}:${h.out ? 1 : 0}`).join("|");
+
+      if (nextIdKey !== grazeIdKey) {
+        grazeIdKey = nextIdKey;
+        grazeOutKey = nextOutKey;
         for (const w of cowWalkers) {
           grazeGroup.remove(w.mesh);
           disposeObject3D(w.mesh);
         }
         cowWalkers.length = 0;
-
         while (doorGroup.children.length) {
           const c = doorGroup.children[0];
           doorGroup.remove(c);
           disposeObject3D(c);
         }
+        herdDoors.length = 0;
 
         for (const herd of herds) {
-          // Au plus huit bêtes visibles : au-delà, l'enclos devient illisible
-          // et le coût de rendu grimpe pour rien.
           const shown = Math.min(8, herd.animals);
           const kind = herd.kind ?? "COW";
           const doorX = ox + (herd.barn.originX + herd.barn.w / 2) * step;
           const doorZ = oz + (herd.barn.originY + herd.barn.h) * step + 0.08 * step;
-          const door = makeBarnDoor(Boolean(herd.out));
+          const door = makeBarnDoor();
           door.position.set(doorX, 0.1, doorZ);
           door.scale.setScalar(cellSize * (kind === "HEN" ? 0.7 : 1));
+          setBarnDoorOpen(door, herd.out ? 1 : 0);
           doorGroup.add(door);
+          herdDoors.push({ mesh: door, buildingId: herd.buildingId, open: herd.out ? 1 : 0 });
 
           for (let i = 0; i < shown; i++) {
             const along = ((i % 4) - 1.5) * 0.28 * step;
-            const frontX = doorX + along;
-            const frontZ = doorZ + 0.22 * step + Math.floor(i / 4) * 0.2 * step;
+            const front = new THREE.Vector3(
+              doorX + along,
+              0.1,
+              doorZ + 0.22 * step + Math.floor(i / 4) * 0.2 * step,
+            );
             const spreadX = (((i % 3) - 1) * 0.55 + (i * 0.13) % 0.4) * step;
             const spreadZ = ((Math.floor(i / 3) - 1) * 0.55 + (i * 0.21) % 0.4) * step;
-            const targetX = ox + (herd.paddock.originX + herd.paddock.w / 2) * step + spreadX;
-            const targetZ = oz + (herd.paddock.originY + herd.paddock.h / 2) * step + spreadZ;
-
+            const paddock = new THREE.Vector3(
+              ox + (herd.paddock.originX + herd.paddock.w / 2) * step + spreadX,
+              0.1,
+              oz + (herd.paddock.originY + herd.paddock.h / 2) * step + spreadZ,
+            );
             const mesh = meshForHerd(kind, Boolean(herd.sheared));
             const base = kind === "HEN" ? 0.55 : kind === "SHEEP" ? 0.75 : 0.85;
             const yScale = base * (kind === "SHEEP" && herd.sheared ? 0.75 : 1);
             mesh.scale.set(cellSize * base, cellSize * yScale, cellSize * base);
+            const here = herd.out ? paddock : front;
+            mesh.position.copy(here);
             grazeGroup.add(mesh);
             cowWalkers.push({
               mesh,
-              from: new THREE.Vector3(frontX, 0.1, frontZ),
-              to: new THREE.Vector3(targetX, 0.1, targetZ),
-              delay: i * 0.45,
+              door: front.clone(),
+              paddock: paddock.clone(),
+              walkFrom: here.clone(),
+              walkTo: here.clone(),
+              walkT0: -10,
+              walkDur: 2.6,
               wander: i * 1.7,
               kind,
-              out: Boolean(herd.out),
+              buildingId: herd.buildingId,
+              wantOut: Boolean(herd.out),
             });
+          }
+        }
+      } else if (nextOutKey !== grazeOutKey) {
+        grazeOutKey = nextOutKey;
+        let wi = 0;
+        for (const herd of herds) {
+          const shown = Math.min(8, herd.animals);
+          for (let i = 0; i < shown; i++) {
+            const w = cowWalkers[wi++];
+            if (!w) continue;
+            const nextOut = Boolean(herd.out);
+            if (w.wantOut === nextOut) continue;
+            w.wantOut = nextOut;
+            w.walkFrom.set(w.mesh.position.x, 0.1, w.mesh.position.z);
+            w.walkTo.copy(nextOut ? w.paddock : w.door);
+            w.walkT0 = t + i * 0.38;
+            w.walkDur = 2.6;
           }
         }
       }
@@ -1905,36 +2003,41 @@ export function IsoFarmView({
       }
 
       for (const w of cowWalkers) {
-        // Dehors : elles restent au pré. À l’étable : elles restent à la porte.
-        const local = Math.max(0, t - w.delay);
-        let progress: number;
-        if (!w.out) {
-          progress = 0;
-        } else if (local < 2.2) {
-          progress = local / 2.2;
-        } else {
-          progress = 1;
-        }
+        const raw = (t - w.walkT0) / w.walkDur;
+        const progress = Math.min(1, Math.max(0, raw));
         const eased = progress * progress * (3 - 2 * progress);
-
-        w.mesh.position.lerpVectors(w.from, w.to, eased);
-        if (progress === 1) {
+        const walking = progress > 0.02 && progress < 0.98;
+        w.mesh.position.lerpVectors(w.walkFrom, w.walkTo, eased);
+        if (walking) {
+          w.mesh.position.y = 0.1 + Math.abs(Math.sin(t * 9 + w.wander)) * 0.04 * step;
+        } else if (w.wantOut) {
           w.mesh.position.x += Math.sin(t * 0.35 + w.wander) * 0.1 * step;
           w.mesh.position.z += Math.cos(t * 0.28 + w.wander) * 0.1 * step;
-          // Poules : picorage rapide. Autres : tête dans l'herbe.
-          const peck = w.kind === "HEN" ? 2.4 : 0.7;
-          const dip = w.kind === "HEN" ? 0.38 : 0.22;
-          w.mesh.rotation.x = Math.max(0, Math.sin(t * peck + w.wander)) * dip;
-        } else if (!w.out) {
-          w.mesh.position.x += Math.sin(t * 0.3 + w.wander) * 0.05 * step;
-          w.mesh.position.z += Math.cos(t * 0.22 + w.wander) * 0.05 * step;
-          w.mesh.rotation.x = 0;
         } else {
-          w.mesh.rotation.x = 0;
+          w.mesh.position.x += Math.sin(t * 0.25 + w.wander) * 0.03 * step;
+          w.mesh.position.z += Math.cos(t * 0.2 + w.wander) * 0.03 * step;
         }
-        const dir = eased < 1 ? w.to.clone().sub(w.from) : new THREE.Vector3(1, 0, 0);
-        w.mesh.rotation.y = Math.atan2(dir.z, dir.x) + Math.sin(t * 0.4 + w.wander) * 0.25;
-        w.mesh.visible = !w.out || local > 0;
+        const graze =
+          w.wantOut && !walking ? Math.min(1, Math.max(0, (t - w.walkT0 - w.walkDur) / 0.4)) : 0;
+        applyHerdPose(w.mesh, w.kind, graze, walking, t, w.wander);
+        const dir = walking
+          ? w.walkTo.clone().sub(w.walkFrom)
+          : new THREE.Vector3(w.wantOut ? 1 : 0.2, 0, w.wantOut ? 0.2 : 1);
+        w.mesh.rotation.y = Math.atan2(dir.z, dir.x) + (walking ? Math.sin(t * 8 + w.wander) * 0.12 : 0);
+        w.mesh.rotation.x = 0;
+        w.mesh.visible = true;
+      }
+
+      for (const d of herdDoors) {
+        const mine = cowWalkers.filter((w) => w.buildingId === d.buildingId);
+        const want = mine.some((w) => {
+          const p = Math.min(1, Math.max(0, (t - w.walkT0) / w.walkDur));
+          return w.wantOut || p < 1;
+        })
+          ? 1
+          : 0;
+        d.open += (want - d.open) * Math.min(1, 0.08);
+        setBarnDoorOpen(d.mesh, d.open);
       }
 
       // Pulse cases (flash ~0.55s)
