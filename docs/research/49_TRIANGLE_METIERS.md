@@ -2,6 +2,7 @@
 
 **Statut :** Stratégie — à valider avant toute ligne de code  
 **Date :** 2026-08-13  
+**Mise à jour :** 2026-08-13 — les « modes de jeu » sont les boucles métier (§ 7), pas des playlists solo/multi.  
 **Remplace :** la lecture de [48_PLAN_MECANIQUES.md](./48_PLAN_MECANIQUES.md) sur les métiers, l'absence et les salariés. Le 48 reste le plan d'exécution des briques (paille, ensilage, saisons, CUMA). Celui-ci dit **pourquoi** elles existent et **comment** elles s'emboîtent.
 
 ---
@@ -64,7 +65,7 @@ Cinq règles. Elles tranchent les débats avant qu'ils n'arrivent.
 
 ## 4. Ce que chaque métier *est*
 
-Pas des bonus. Des façons de gagner sa vie, des kits de départ, des dépendances, un échec propre.
+Pas des bonus. Des façons de gagner sa vie, des kits de départ, des dépendances, un échec propre. Le **mode de jeu** de chacun — la liste exacte de ce qu'il fait, et ce que ça donne à cultiver et à travailler chez les deux autres — est au § 7. Ici, seulement l'identité.
 
 ### 4.1 Céréalier — « je fais pousser, je ne tiens pas tout le matériel »
 
@@ -240,45 +241,165 @@ On peut tout retracer. Une règle que le joueur ne peut pas vérifier est vécue
 
 ---
 
-## 7. Modes de jeu
+## 7. Les trois modes de jeu
 
-Pas des playlists séparées. Trois façons d'habiter le même monde, plus une entente optionnelle.
+Un seul monde : un jeu de gestion en ligne, persistant, celui qu'on construit depuis le début. Il n'y a pas de playlist Solo, Mixte, Entente. Le filet PNJ (§ 9) n'est pas un mode, c'est l'infrastructure qui empêche le monde d'être vide.
 
-### Mode S — Solo, triangle PNJ
+Le mode de jeu, c'est **le métier**. Je suis éleveur : je fais *ceci*, et *ceci* force le céréalier à cultiver *cela* et donne à l'ETA *cela* à faire. Les trois horloges s'entraînent. Si une action d'un métier ne change rien chez les deux autres, ce n'est pas du jeu, c'est un mini-jeu collé à côté.
 
-Le joueur choisit un métier. Les deux autres existent comme **fermes PNJ de sa région**, sur de vraies parcelles, visibles sur la carte, nommées.
+---
 
-- 4 à 8 fermes PNJ par région `[TEST]` : mix céréaliers / éleveurs.
-- Elles sèment, mûrissent, publient des chantiers, achètent de la paille, vendent du lisier, au tick monde.
-- L'ETA joueur travaille **chez elles**. Le céréalier joueur leur vend. L'éleveur joueur leur achète.
-- L'ETA PNJ reste le filet pour le joueur qui embauche.
+### 7.1 Je suis éleveur
 
-C'est le mode par défaut tant qu'une région n'a pas assez de joueurs. Il n'y a pas de bouton « solo / multi ».
+Je transforme de la matière végétale en lait, viande et lisier. Je ne gagne pas en « cliquant des vaches ». Je gagne en tenant un troupeau vivant, propre, nourri — ce qui *tire* toute la production végétale de la région.
 
-### Mode R — Région mixte (le vrai jeu)
+**Ce que je fais, dans l'ordre d'une exploitation qui tourne :**
 
-Joueurs + PNJ sur la même bourse et le même marché local.
+1. **Je compose la ration.** Ensilage (volume, énergie) + grain (concentré) + un peu de foin. La jauge `feedQuality` cesse d'être un curseur magique : c'est le mélange que j'ai en stock. Une ration juste = plus de lait. Une ration de survie (que du foin NPC) = le troupeau survit, le tank se remplit mal.
+2. **Je paille.** Chaque cycle, le troupeau consomme de la litière. Sans paille, l'hygiène baisse, le lait se paie moins, la maladie approche. La paille ne pousse pas chez moi : elle vient du blé du céréalier.
+3. **Je sors au pré.** Déjà en place (doc 37). Ça baisse un peu la ration, ça monte le bonheur. Ça ne remplace ni l'ensilage ni la paille.
+4. **Je traite / je remplis le tank.** Le lait s'accumule. Tank plein → il faut vendre ou faire collecter. C'est un revenu régulier, à l'opposé des à-coups du céréalier.
+5. **Je vide la fosse.** Le lisier monte tout seul. À 80 %, je publie un épandage. À 100 %, je ne produis plus. Le lisier n'est pas un déchet : c'est de l'azote pour le champ du voisin.
+6. **Je fais naître, j'achète, j'abats.** Plus de bêtes = plus de ration, plus de paille, plus de lisier. Grandir *est* une commande passée aux deux autres métiers. Rétrécir, c'est les laisser sans débouché.
+7. **Je commande à l'avance.** Contrat d'ensilage, commande de paille, avant que le céréalier ne sème. C'est moi qui lui dis quoi mettre en terre — pas le cours mondial tout seul.
 
-- Un chantier joueur paie mieux qu'un chantier PNJ (+10 à +20 % `[GD]`). L'ETA priorise les voisins.
-- Un voisin éleveur paie mieux que le cours pour la paille. Le céréalier priorise le voisin.
-- Les fermes PNJ comblent les trous (région vide le mardi matin, pic le dimanche soir).
-- La carte distingue clairement : parcelle joueur, parcelle PNJ, parcelle libre.
+**Donc le céréalier cultive :**
 
-### Mode E — Entente (plus tard, après la CUMA)
+| Ce que je fais | Ce qu'il met en terre / ce qu'il garde |
+|----------------|----------------------------------------|
+| Je signe 20 t d'ensilage | Il sème du **maïs ensilage**, pas du maïs grain |
+| Mon troupeau a besoin de litière | Il **presse** son blé au lieu de l'enfouir |
+| Je monte à 40 bêtes | Il **étend** une parcelle, ou il sème plus de fourrage et moins de pois « cash » |
+| Je n'achète plus (je suis parti, troupeau vendu) | Il enfouit, il vend au marché, il perd le premium local |
 
-Trois joueurs se lient : un de chaque métier. Contrats internes à tarif préférentiel, machines éventuellement en CUMA, objectif commun (quota lait, surfaces, chiffre ETA).
+**Donc l'ETA a à faire :**
 
-Ce n'est **pas** requis pour que le triangle marche. C'est la cerise, pas le gâteau. On ne le code pas avant que S et R existent.
+| Ce que je fais | Chantier qui naît |
+|----------------|-------------------|
+| Fosse à 80 % | Épandage + transport chez le céréalier |
+| Commande d'ensilage mûre | Ensileuse chez le céréalier, remorque jusqu'à *mon* silo |
+| Paille pressée chez le voisin | Ramassage / livraison jusqu'à mon hangar |
+| Tank plein, laiterie pas passée | Collecte (transport) |
+| Je n'ai pas de champ et je veux un peu de maïs à moi | Semis + ensilage chez moi — rare, cher, possible |
 
-### Ce que chaque métier joue, en une phrase
+**Si je joue bien :** le céréalier de ma région a un carnet de commandes avant de semer. L'ETA a de l'épandage en hiver et de l'ensilage en été. Le cours du lait me paie le quotidien ; la viande paie les à-coups. **Si je joue mal :** j'achète tout au NPC, plus cher, moins bon, et je n'ai fait travailler personne. Le triangle tourne sans moi. Je survis, je ne suis plus un métier.
 
-| Métier | Fantaisie | Pic de présence | Calme |
-|--------|-----------|-----------------|-------|
-| Céréalier | Faire le plus de terre possible sans tout posséder | Semis et décisions grain/ensilage/paille | Attendre, vendre, consignes |
-| Éleveur | Transformer la matière du voisin, tous les jours | Ration, lisier, commandes | Collecte, rapport |
-| ETA | Être la machine que les autres n'achètent pas | Fenêtres de moisson / ensilage | Entretien, zone, flotte |
+---
 
-Le « mode de jeu » *est* le métier. On ne fait pas trois jeux dans un. On fait un monde où les trois horloges s'emboîtent.
+### 7.2 Je suis céréalier
+
+Je fais pousser. Je ne tiens pas tout le matériel. Chaque hectare que j'ouvre est une question : *pour qui*, et *qui va le travailler*.
+
+**Ce que je fais :**
+
+1. **Je lis la demande, pas seulement le cours.** L'éleveur voisin a-t-il commandé de l'ensilage ? De la paille ? Le pois est-il dû (rotation, doc 45) ? Le contrat à terme (doc 47) m'a-t-il déjà vendu du blé ? La parcelle se décide à l'intersection de ces quatre signaux, pas au plus haut prix du tick.
+2. **Je prépare le sol.** Déchaumage, labour, ou semis direct. Tracteur à moi, ou chantier ETA si j'ai trop de cases, ou si je suis parti.
+3. **Je sème.** Blé (grain + paille), maïs grain (marché), maïs ensilage (éleveur), pois (azote, peu de paille). Semer de l'ensilage sans ensileuse, c'est déjà embaucher une ETA. Semer du blé et décider plus tard « j'enfouis », c'est dire non à l'éleveur.
+4. **Je fertilise.** Engrais de synthèse, *ou* lisier de l'éleveur (moins cher à l'unité d'azote, fenêtre plus étroite, chantier d'ETA).
+5. **Je moissonne dans la fenêtre** (doc 38). Moi, ou l'ETA. Trois parcelles mûres le même jour : je ne peux pas être sur les trois. L'expansion *crée* de l'ETA.
+6. **Je décide de la paille.** Presser (revenu + litière pour l'éleveur, plus de bonus résidus) ou enfouir (sol, l'éleveur se fournit ailleurs). L'andain au sol est un chantier de presse en attente.
+7. **Je vends.** Négociant, criée, éleveur local, contrat à terme. Vendre local, c'est mieux pour les deux. Vendre au monde, c'est le filet.
+
+**Donc l'éleveur reçoit / subit :**
+
+| Ce que je fais | Chez l'éleveur |
+|----------------|----------------|
+| Je sème de l'ensilage sur sa commande | Son silo se remplira. Il peut monter le troupeau |
+| Je presse le blé | Il a de la litière locale, moins chère que le NPC |
+| J'enfouis tout, je ne sème que du pois et du maïs grain | Il n'a plus de paille ici. Il paie le filet, ou il réduit le cheptel |
+| Je m'absente sans consigne, culture perdue | Rien à lui livrer. Sa commande tombe |
+| Je prends son lisier | Mon azote est payé par son problème de fosse |
+
+**Donc l'ETA a à faire :**
+
+| Ce que je fais | Chantier qui naît |
+|----------------|-------------------|
+| Je sème sans tout pouvoir faire | Semis, puis plus tard moisson |
+| Je sème de l'ensilage sans ensileuse | **Le** chantier signature : ensileuse + remorques |
+| Je laisse l'andain | Pressage, puis souvent transport vers l'éleveur |
+| J'achète une 2ᵉ / 3ᵉ parcelle | Pic : plusieurs moissons dans la même fenêtre |
+| Je m'absente, consigne « si mûr » | Chantier publié tout seul. C'est son pain quotidien |
+| Je prends du lisier | Elle vient épandre *chez moi*, payée par l'éleveur ou par moi |
+
+**Si je joue bien :** mes assolements sont un planning pour l'éleveur et un carnet pour l'ETA. Mes hectares valent plus que leur grain, parce qu'ils font vivre deux voisins. **Si je joue mal :** j'achète une moissonneuse, je sème toujours du blé, j'enfouis, je vends au négociant. Je tiens. Personne n'a eu besoin de moi. J'ai refusé le métier.
+
+---
+
+### 7.3 Je suis ETA
+
+Je ne cultive pas. Je ne trait pas. **Mon mode de jeu, c'est d'entrer sur les terres des deux autres et d'y faire ce qu'ils ont déclenché.** Sans eux, je n'ai pas de partie.
+
+**Ce que je fais :**
+
+1. **Je lis la bourse comme un planning, pas comme un catalogue.** Parcelles mûres, andains, fosses à 80 %, livraisons. Chaque ligne est un lieu. J'y vais.
+2. **Je choisis *qui* je sers par le matériel que j'achète.** Moissonneuse → je vis du céréalier. Ensileuse → je vis du contrat céréalier–éleveur. Presse → je vis de la paille. Tonne à lisier → je vis de l'éleveur. Le garage *est* ma spécialisation à l'intérieur du métier.
+3. **J'enchaîne pendant les fenêtres.** Trois céréaliers mûrs le même jour, un éleveur qui ensile : c'est *ma* saison. Je priorise (réputation, marge, distance). Je ne peux pas tout prendre. C'est l'arbitrage.
+4. **Je livre.** Le grain reste chez le céréalier. L'ensilage et la paille doivent arriver chez l'éleveur. Le lisier chez le céréalier. Le transport n'est pas un quatrième métier : c'est la fin de *mon* chantier.
+5. **J'entretiens.** L'usure est réelle, sur *leurs* cases. Une machine cassée au milieu de la fenêtre, c'est un céréalier qui décote et un éleveur dont le silo reste vide. Ma panne est leur panne.
+6. **Je vis de leur absence.** Consigne « si mûr, publier » : le céréalier n'est pas là, la parcelle l'est. J'y entre. C'est pour ça que j'ai acheté la machine. Quand *je* m'absente, les chantiers vont ailleurs — sauf flotte tardive, moindre, plafonnée.
+
+**Donc le céréalier peut :**
+
+| Ce que je fais | Chez le céréalier |
+|----------------|-------------------|
+| Je moissonne sa fenêtre | Il étend ses terres sans acheter la moissonneuse |
+| Je presse / j'ensile | Il honore la commande de l'éleveur sans le matériel saisonnier |
+| Je n'existe pas / je suis saturée | Il décote, il perd, ou il paie l'Urgent PNJ plus cher |
+| Je lâche un chantier | Sa réputation à lui n'en pâtit pas. La mienne si |
+
+**Donc l'éleveur peut :**
+
+| Ce que je fais | Chez l'éleveur |
+|----------------|----------------|
+| J'ensile chez le céréalier et je livre chez lui | Son silo se remplit, le troupeau tient l'hiver |
+| J'épands son lisier | Sa fosse baisse, sa production continue |
+| Je livre la paille | Sa litière est là sans qu'il ait de chariot |
+| Je suis saturée à la moisson | Son contrat d'ensilage glisse. Il rabote la ration |
+
+**Si je joue bien :** les deux autres osent grandir. Le céréalier ouvre une parcelle *parce que* je suis là. L'éleveur signe 20 t *parce que* j'ai l'ensileuse. Je suis l'infrastructure du triangle. **Si je joue mal :** je clique des contrats-titres, je ne vais nulle part, je n'ai touché aucune terre. Je ne suis pas ETA.
+
+---
+
+### 7.4 Table d'osmose — une action, trois métiers, le monde
+
+Chaque ligne se lit : *quelqu'un fait X → les deux autres reçoivent Y → le jeu global (marché, sol, saison, foncier) bouge*.
+
+| Action | Céréalier | Éleveur | ETA | Jeu global |
+|--------|-----------|---------|-----|------------|
+| L'éleveur signe 20 t d'ensilage | Sème du maïs ensilage, pas du grain | Réserve son hiver | Ensileuse + livraison dans 1 saison | Moins de maïs grain sur le cours |
+| L'éleveur passe de 12 à 40 bêtes | Plus de paille et de fourrage à produire | Plus de lait, plus de lisier | Plus d'épandage, plus de transport | Demande locale > filet NPC |
+| L'éleveur laisse la fosse à 100 % | Plus de lisier disponible | Production **stoppée** | Chantier urgent, mieux payé | Azote organique en retard sur les semis |
+| Le céréalier sème du blé et presse | Perd le bonus résidus | Gagne la litière | Chantier presse + livraison | Cours paille local s'affaisse si trop d'offre |
+| Le céréalier sème du blé et enfouit | Gagne le sol | Doit acheter au NPC | Pas de presse | Sol (doc 39) vs triangle : l'arbitrage *est* le jeu |
+| Le céréalier sème du pois | Azote pour la suite, peu de paille | Trou de litière ce cycle | Moisson plus courte, moins de presse | Rotation (doc 45) vs demande éleveur |
+| Le céréalier ouvre une 3ᵉ parcelle | Plus de grain, plus de fenêtre | Plus de matière possible | Pic saturé : il *doit* me prendre | Foncier (doc 32) : l'hectare crée du travail, pas que du stock |
+| Le céréalier part, consigne moisson | Sauve une partie du rendement | Livraison possible quand même | Pain quotidien | Fenêtre 38 devient un appel d'offres, plus une amende |
+| L'ETA achète une ensileuse | Peut oser l'ensilage | Peut signer le contrat | S'ancre sur le pont des deux autres | Machine trop chère pour un seul : le triangle amortit |
+| L'ETA est saturée / absente | Urgent PNJ, ou décote | Ration rabotée, fosse qui monte | Les autres ETA / le filet prennent | Le présent gagne. L'absence de l'ETA *libère* du travail |
+| Le cours du lait monte | On lui commande plus d'ensilage | Il agrandit | Plus d'ensilage, plus d'épandage | Le marché mondial oriente l'assolement local |
+| Le cours du blé explose | Il sème du blé « cash », presse ou pas selon l'éleveur | Risque de manquer d'ensilage | Moisson blé plutôt qu'ensileuse | Tension volontaire : le monde tire, le voisin aussi |
+| L'hiver ferme les champs | Vend, planifie, consignes | **Son** pic : ration, litière, lisier | Transport, labour d'hiver, entretien | Saison = changement de métier temporaire, pas un mur |
+| Pluie sur andain / moisson | Décote, urgence | Qualité de paille ↓ | Malus, tarif qui monte | Météo déjà là, enfin branchée sur le triangle |
+
+Rien dans cette table n'est un DLC. Tout s'appuie sur ce qui existe (fenêtre, sol, rotation, marché, foncier, élevage, usure) ou sur les briques déjà planifiées (paille, ensilage, lisier, bourse).
+
+---
+
+### 7.5 Une année lue à trois voix
+
+Pas trois jeux qui s'alternent. La même horloge, trois lectures.
+
+**Semis.** Le céréalier décide les surfaces *avec* les commandes de l'éleveur sous les yeux. L'éleveur, lui, est encore dans son hiver : il vide la fosse sur les terres qui vont être semées (chantier ETA), et il signe l'ensilage de l'année. L'ETA enchaîne labour, épandage, semis. Le pic n'est pas « à moi » : il est *causé* par la décision de semer.
+
+**Pousse.** Le céréalier surveille. L'éleveur vit son quotidien (ration, pré, lait) sur les stocks de l'an passé. L'ETA entretient, livre ce qui reste, prend les retards. Le calme du champ n'est pas du vide : c'est le temps de l'élevage.
+
+**Moisson.** Le céréalier publie. L'éleveur ouvre le silo couloir et le hangar à paille. L'ETA *est* la saison. Moisson, ensilage, presse, livraison. Si elle n'y arrive pas, le céréalier décote et l'éleveur n'a pas d'hiver. Un seul raté, deux métiers touchés.
+
+**Arrière-saison.** Le céréalier déchaume ou pas, selon qu'il a pressé. L'éleveur pèse ses stocks : assez pour l'hiver ? L'ETA épand le lisier d'automne, laboure. Le sol du céréalier se lit encore à la fosse de l'éleveur.
+
+**Hiver.** Les champs se ferment (quand les saisons compteront). L'éleveur passe devant : c'est *son* mode qui tient le monde. Le céréalier vend, relit la rotation, pose les consignes. L'ETA transporte le fourrage, répare, prend les labours. Personne n'est au chômage si le triangle a été semé à l'automne.
+
+C'est ça, l'osmose avec le jeu global : le marché dit les prix, le sol dit la rotation, la saison dit *qui* est urgent, le foncier dit *combien* de chantiers. Aucun métier n'a sa propre carte. Ils jouent le même monde, de trois endroits.
 
 ---
 
@@ -342,9 +463,9 @@ La CUMA n'est pas un quatrième métier. C'est le céréalier et l'ETA (parfois 
 
 ---
 
-## 9. Fermes PNJ — le filet qui rend le solo vrai
+## 9. Fermes PNJ — l'infrastructure, pas un mode
 
-Sans elles, l'ETA n'a personne à servir le mardi, et l'éleveur n'a pas de paille si le voisin céréalier n'est pas encore arrivé.
+Le monde est unique et en ligne. S'il n'y a pas d'humain à côté, les deux autres métiers existent quand même, sur de vraies parcelles. Sinon l'éleveur n'a pas de paille le mardi, et l'ETA n'a nulle part où entrer. Ce n'est pas une playlist « solo ». C'est le filet du même jeu.
 
 ### 9.1 Occupation
 
@@ -425,7 +546,7 @@ On ne les code pas tant que la bourse, la paille et l'ensilage n'existent pas : 
 - **Pas de contrats fantômes.** Chaque ligne de la bourse pointe une parcelle réelle. `NpcContract` titre + récompense disparaît.
 - **Pas de murs de métier.** On ne retire pas d'outils selon la spé. On équipe différemment au départ.
 - **Pas de quatrième métier.** Transporteur, meunier, laiterie = PNJ ou chantiers d'ETA, pas une classe.
-- **Pas d'entente forcée.** Le solo avec PNJ est un jeu complet. Le multi est une meilleure version, pas la seule.
+- **Pas de playlist Solo / Mixte / Entente.** Un seul monde de gestion en ligne. Le filet PNJ comble les trous ; ce n'est pas un mode. Une CUMA / une entente de trois joueurs pourra exister plus tard, comme un contrat, pas comme une façon de lancer la partie.
 - **Pas de salariés jour 1.** Voir § 8.4.
 - **Pas d'ensilage vendu comme du blé.** S'il a un cours mondial liquide, le pont céréalier–éleveur meurt.
 
@@ -446,8 +567,7 @@ Le 48 disait : paille → ensilage → métiers → saisons → CUMA. C'était l
 | **6** | **Lisier** | Pont retour éleveur → céréalier. | 0, et un bâtiment fosse |
 | **7** | **Saisons qui ferment** | Crée les pics sans lesquels l'ETA n'a pas de saison. | 4–6, pour que l'hiver ait de quoi vivre |
 | **8** | **Flotte ETA (conducteurs)** | Tardif. Capacité, pas remplacement. | 0, 3, matériel T2 |
-| **9** | **CUMA** | Capital commun. | 5, 7, joueurs installés |
-| **10** | **Entente (mode E)** | Optionnel. | 9 |
+| **9** | **CUMA** | Capital commun, pas un mode de jeu. | 5, 7, joueurs installés |
 
 Les mécaniques « profondes » du 48 (analyse NPK, formulation de ration, sélection génétique, largeur de travail) restent valides. Elles **enrichissent un métier déjà relié**. On ne les fait pas avant 0–6 : un céréalier qui analyse son sol tout seul n'a toujours pas besoin de l'ETA.
 
@@ -494,8 +614,9 @@ Un testeur (ou nous) peut vérifier tout ça **à l'écran**, sans ouvrir le cod
 5. Une région sans aucun autre humain : des fermes PNJ sont sur la carte, elles publient, on peut y travailler. Le solo n'est pas une version amputée.
 6. Urgent PNJ existe toujours, plus cher, pour celui qui est devant l'écran et qui refuse d'attendre.
 7. Un joueur peut tout faire seul, plus mal, plus cher, plus lentement. Aucun bouton n'est grisé « parce que vous n'êtes pas ETA ».
+8. Un éleveur qui signe de l'ensilage change **ce que le céréalier sème** et **ce que l'ETA a dans sa bourse**. On le voit à l'écran chez les trois, pas dans un texte d'aide.
 
-Si 1 et 4 sont faux, l'ETA n'existe pas. Si 2 est faux, l'absence n'est pas le jeu. Si 3 est faux, céréalier et éleveur ne se parlent pas. Si 5 est faux, on a conçu un MMO qui ne se joue pas à un. Si 7 est faux, on a posé un mur.
+Si 1 et 4 sont faux, l'ETA n'existe pas. Si 2 est faux, l'absence n'est pas le jeu. Si 3 est faux, céréalier et éleveur ne se parlent pas. Si 5 est faux, le monde vide n'offre personne à servir. Si 7 est faux, on a posé un mur. Si 8 est faux, les métiers sont encore des playlists parallèles.
 
 ---
 
@@ -525,8 +646,9 @@ Ce document est la stratégie. Rien n'est codé.
 À valider, dans l'ordre, avant la brique 0 :
 
 1. La thèse : l'absence publie, l'ETA travaille chez les autres, le filet PNJ existe toujours.
-2. Les kits de départ (le céréalier **sans** moissonneuse, l'ETA **sans** champ). C'est le changement le plus visible pour un joueur actuel.
-3. L'ordre 0 → 10 ci-dessus, en particulier « bourse avant paille ».
-4. Le plafond à 2 conducteurs, tardif, jamais au départ.
+2. Les trois modes de jeu du § 7 — pas des playlists, les boucles métier qui s'entraînent.
+3. Les kits de départ (le céréalier **sans** moissonneuse, l'ETA **sans** champ). C'est le changement le plus visible pour un joueur actuel.
+4. L'ordre 0 → 9 ci-dessus, en particulier « bourse avant paille ».
+5. Le plafond à 2 conducteurs, tardif, jamais au départ.
 
 Les chiffres du § 15 se calibrent en jouant, pas en réunion. Les quatre points ci-dessus, non : ils sont des murs porteurs.

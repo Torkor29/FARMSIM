@@ -77,7 +77,7 @@ Chaque valeur chiffrée dans cette documentation est classée :
 | — | [46_MOBILE_SHELL.md](./46_MOBILE_SHELL.md) | Coque mobile : tiroirs du bas, gestes sur la grille |
 | — | [47_FUTURES.md](./47_FUTURES.md) | Contrats à terme : engager une récolte à venir |
 | — | [48_PLAN_MECANIQUES.md](./48_PLAN_MECANIQUES.md) | Plan d'exécution : paille, ensilage, saisons, CUMA |
-| — | [49_TRIANGLE_METIERS.md](./49_TRIANGLE_METIERS.md) | Stratégie : céréalier, éleveur, ETA parfaitement reliés |
+| — | [49_TRIANGLE_METIERS.md](./49_TRIANGLE_METIERS.md) | Triangle des métiers : boucles éleveur / céréalier / ETA en osmose |
 
 ---
 
