@@ -56,6 +56,7 @@ import { MachineCareOverlay, type CareMode } from "./MachineCareOverlay";
 import { MissionPlay, type MissionPlayContract } from "./MissionPlay";
 import { LivestockPanel, type BarnState } from "./LivestockPanel";
 import { MarketPanel, type Listing, type FuturesContract } from "./MarketPanel";
+import { OfficePanel } from "./OfficePanel";
 import type { ContinentDetail, WorldContinent } from "./Onboarding";
 
 // Three.js pèse plus lourd que tout le reste de l'application réunie. L'écran
@@ -77,7 +78,6 @@ import { isPlantTool, isSoilTool, type Tool } from "./tools";
 import { useIsMobile } from "./use-media-query";
 import { DevPanel, type DevGrant } from "./DevPanel";
 import { NO_ALERTS, tabBadge, useAwayAlerts, useNotificationState, type FarmAlerts } from "./use-alerts";
-import { ZoneMap } from "./ZoneMap";
 
 const API = "/api";
 
@@ -368,67 +368,6 @@ function playUiSound(_kind: "click" | "place") {
   } catch {
     /* skip */
   }
-}
-
-function ConsignesPanel({
-  consignes,
-  busy,
-  onSave,
-}: {
-  consignes: NonNullable<Player["consignes"]>;
-  busy: boolean;
-  onSave: (next: NonNullable<Player["consignes"]>) => Promise<void>;
-}) {
-  const [draft, setDraft] = useState(consignes);
-  useEffect(() => {
-    setDraft(consignes);
-  }, [consignes]);
-  function toggle(key: "harvest" | "stubble" | "plow" | "straw" | "npcAllowed") {
-    setDraft((d) => ({ ...d, [key]: !d[key] }));
-  }
-  return (
-    <div className="consignes">
-      <label className="chip">
-        <input type="checkbox" checked={draft.harvest} onChange={() => toggle("harvest")} />
-        Publier la moisson
-      </label>
-      <label className="chip">
-        <input type="checkbox" checked={draft.straw} onChange={() => toggle("straw")} />
-        Presser / ramasser la paille
-      </label>
-      <label className="chip">
-        <input type="checkbox" checked={draft.stubble} onChange={() => toggle("stubble")} />
-        Déchaumer après
-      </label>
-      <label className="chip">
-        <input type="checkbox" checked={draft.plow} onChange={() => toggle("plow")} />
-        Labourer si le sol est épuisé
-      </label>
-      <label className={`chip ${draft.npcAllowed ? "" : "warn"}`}>
-        <input type="checkbox" checked={draft.npcAllowed} onChange={() => toggle("npcAllowed")} />
-        PNJ autorisé
-      </label>
-      {!draft.npcAllowed && (
-        <p className="muted tiny" style={{ color: "var(--danger)" }}>
-          Si personne ne prend, la culture peut se perdre.
-        </p>
-      )}
-      <label className="supply-qty">
-        <span>Plafond TRN</span>
-        <input
-          type="number"
-          min={0}
-          max={20000}
-          step={50}
-          value={draft.maxSpend}
-          onChange={(e) => setDraft((d) => ({ ...d, maxSpend: Math.max(0, Number(e.target.value)) }))}
-        />
-      </label>
-      <button type="button" className="accent" disabled={busy} onClick={() => void onSave(draft)}>
-        Enregistrer
-      </button>
-    </div>
-  );
 }
 
 export function App() {
@@ -3156,187 +3095,59 @@ export function App() {
       <TutorialOverlay open={showTutorial} onClose={() => setShowTutorial(false)} />
       <PlayGuide open={showGuide} snapshot={guideSnapshot} onClose={() => setShowGuide(false)} />
 
-      {(isMobile ? sheet === "OFFICE" : showEta) && (
-        <aside className={panelClass("eta-panel", "OFFICE")} {...(isMobile ? sheetGesture : {})}>
-          <h3>Marché du travail</h3>
-          <p className="muted tiny">
-            Chantiers publiés par d’autres fermes. Vous allez sur leur parcelle, avec votre fer.
-            Appoint pendant que vos cultures poussent — pas une rente.
-          </p>
-          {visitOrder && (
-            <p className="muted tiny">
-              En cours chez {visitOrder.clientName} — {visitOrder.remaining} case(s).
-            </p>
-          )}
-          <ul className="list">
-            {laborBoard.map((o) => (
-              <li key={o.id}>
-                <span>
-                  <strong>
-                    {WORK_LABELS[o.work]} · {o.npc ? "Ferme voisine" : o.clientName}
-                  </strong>
-                  <div className="muted tiny">
-                    {o.parcelLabel} · {o.remaining} cases · {o.payoutCrd} TRN
-                    {o.npc ? " · appoint" : ""}
-                  </div>
-                </span>
-                <button
-                  type="button"
-                  disabled={busy || Boolean(visitOrder) || Boolean(activeMission)}
-                  onClick={() => void acceptLaborOrder(o.id)}
-                >
-                  Prendre
-                </button>
-              </li>
-            ))}
-            {laborBoard.length === 0 && (
-              <li>
-                <span className="muted tiny">Aucun chantier joueur pour l’instant.</span>
-              </li>
-            )}
-          </ul>
-          {myPostedLabor.length > 0 && (
-            <>
-              <h3 className="spaced">Mes chantiers</h3>
-              <ul className="list">
-                {myPostedLabor.map((o) => (
-                  <li key={o.id}>
-                    <span>
-                      <strong>
-                        {WORK_LABELS[o.work]} · {o.status === "ACCEPTED" ? "pris" : "ouvert"}
-                      </strong>
-                      <div className="muted tiny">
-                        {o.remaining} cases · séquestre {o.escrowCrd} TRN
-                      </div>
-                    </span>
-                    {o.status === "OPEN" && (
-                      <button
-                        type="button"
-                        disabled={busy}
-                        onClick={() =>
-                          void api(`/labor-orders/${o.id}/cancel`, {
-                            method: "POST",
-                            body: JSON.stringify({ userId: player.id }),
-                          }).then(() => refreshMeta())
-                        }
-                      >
-                        Annuler
-                      </button>
-                    )}
-                  </li>
-                ))}
-              </ul>
-            </>
-          )}
-          {contracts.length > 0 && (
-            <>
-              <h3 className="spaced">Missions d’appoint</h3>
-              <p className="muted tiny">Ancien filet — terminez ou abandonnez, plus de nouveaux contrats fantômes.</p>
-              <ul className="list">
-                {contracts.map((c) => (
-                  <li key={c.id}>
-                    <span>
-                      <strong>{c.title}</strong>
-                      <div className="muted tiny">
-                        {c.jobType} · {c.cells ?? "?"} cases · {c.rewardCrd} TRN
-                      </div>
-                    </span>
-                    <button type="button" disabled={busy || Boolean(activeMission) || Boolean(visitOrder)} onClick={() => acceptContract(c.id)}>
-                      Prendre
-                    </button>
-                  </li>
-                ))}
-              </ul>
-            </>
-          )}
-          <h3 className="spaced">Consignes d’absence</h3>
-          <p className="muted tiny">
-            Si vous partez, les cases déjà engagées se publient toutes seules. Jamais de culture
-            nouvelle. Plafond obligatoire.
-          </p>
-          <ConsignesPanel
-            consignes={player.consignes ?? DEFAULT_CONSIGNES}
-            busy={busy}
-            onSave={async (next) => {
-              const r = await api<{ consignes: NonNullable<Player["consignes"]> }>("/me/consignes", {
-                method: "POST",
-                body: JSON.stringify(next),
-              });
-              setPlayer((p) => (p ? { ...p, consignes: r.consignes } : p));
-              flashToast("Consignes enregistrées");
-            }}
-          />
-          <h3 className="spaced">Expansion</h3>
-          {/* zone-map-ui: expansion */}
-          <div className="zone-maps">
-            {zones
-              .filter(
-                (z) =>
-                  ownedParcels.length === 0 ||
-                  ownedParcels.some((op) => op.zone?.code === z.code) ||
-                  z.parcels.some((p) => expandableParcelIds.has(p.id)),
-              )
-              .map((z) => (
-                <ZoneMap
-                  key={z.id}
-                  zone={z}
-                  myFarmId={player.farm?.id}
-                  selectableIds={expandableParcelIds}
-                  onSelect={buyAdjacent}
-                  compact
-                />
-              ))}
-          </div>
-          {expandableParcelIds.size === 0 ? (
-            <p className="muted tiny">Aucune parcelle adjacente libre.</p>
-          ) : null}
-          <h3 className="spaced">Stock / marché</h3>
-          <ul className="list">
-            {(player.farm?.inventory ?? []).map((i) => {
-              const moistPct = Math.round((i.moisture ?? 0) * 100);
-              const canDry = (i.moisture ?? 0) > 0.1 && i.qty > 0;
-              return (
-                <li key={i.id}>
-                  <span>
-                    {i.itemCode} · {i.qty.toFixed(2)} t
-                    <div className={`muted tiny ${moistPct > 14 ? "warn" : ""}`}>
-                      Humidité {moistPct} % · q{i.quality}
-                      {player.bonuses?.softDryer ? " · séchoir" : ""}
-                    </div>
-                  </span>
-                  <span className="row-actions">
-                    <button type="button" disabled={busy || !canDry} onClick={() => dryStock(i.id)}>
-                      Sécher
-                    </button>
-                    <button
-                      type="button"
-                      disabled={busy}
-                      onClick={() => sell(i.itemCode as CropCode, i.qty)}
-                    >
-                      Vendre
-                    </button>
-                  </span>
-                </li>
-              );
-            })}
-          </ul>
-          <ul className="list">
-            {market.map((m) => (
-              <li key={m.commodity}>
-                <span>
-                  {m.commodity} · {m.price.toFixed(1)} TRN/t
-                </span>
-              </li>
-            ))}
-          </ul>
-        </aside>
-      )}
+      <OfficePanel
+        open={isMobile ? sheet === "OFFICE" : showEta}
+        onClose={() => {
+          setShowEta(false);
+          setSheet(null);
+        }}
+        crd={player.crd}
+        consignes={player.consignes ?? DEFAULT_CONSIGNES}
+        busy={busy}
+        board={laborBoard}
+        posted={myPostedLabor}
+        active={visitOrder}
+        ghost={contracts}
+        takeLocked={Boolean(activeMission)}
+        onTake={(id) => void acceptLaborOrder(id)}
+        onCancelPosted={(id) =>
+          void api(`/labor-orders/${id}/cancel`, {
+            method: "POST",
+            body: JSON.stringify({ userId: player.id }),
+          })
+            .then(() => refreshMeta())
+            .catch((e) => flashToast(e instanceof Error ? e.message : String(e), true))
+        }
+        onAbandonActive={() => void abandonVisit()}
+        onTakeGhost={(id) => {
+          void acceptContract(id);
+          setShowEta(false);
+          setSheet(null);
+        }}
+        onSaveConsignes={async (next) => {
+          const r = await api<{ consignes: NonNullable<Player["consignes"]> }>("/me/consignes", {
+            method: "POST",
+            body: JSON.stringify(next),
+          });
+          setPlayer((p) => (p ? { ...p, consignes: r.consignes } : p));
+          flashToast("Consignes enregistrées");
+        }}
+        zones={zones.filter(
+          (z) =>
+            ownedParcels.length === 0 ||
+            ownedParcels.some((op) => op.zone?.code === z.code) ||
+            z.parcels.some((p) => expandableParcelIds.has(p.id)),
+        )}
+        myFarmId={player.farm?.id}
+        expandableIds={expandableParcelIds}
+        onBuyLand={buyAdjacent}
+      />
 
       {isMobile && (
         <>
           {/* Un voile referme le tiroir d'une tape hors de lui : sur un
               téléphone, chercher la bonne croix est une corvée. */}
-          {sheet && (
+          {sheet && sheet !== "OFFICE" && (
             <button
               type="button"
               className="sheet-scrim"
