@@ -9,12 +9,14 @@ export * from "./soil.js";
 export * from "./trade.js";
 export * from "./goods.js";
 export * from "./breeding.js";
+export * from "./rotation.js";
+export * from "./futures.js";
 
 import type { TradeGood } from "./goods.js";
 
 export type Specialization = "CEREALIER" | "ELEVEUR" | "ETA";
 
-export type CropCode = "WHEAT" | "MAIZE";
+export type CropCode = "WHEAT" | "MAIZE" | "PEA";
 
 export type FieldStage =
   | "EMPTY"
@@ -55,7 +57,8 @@ export type BuildingType =
   | "WORKSHOP"
   | "FARMHOUSE"
   | "PADDOCK"
-  | "PIG_YARD";
+  | "PIG_YARD"
+  | "COLD_ROOM";
 
 export type CellKind = "EMPTY" | "CROP" | "BUILDING" | "VEHICLE";
 
@@ -115,6 +118,16 @@ export const CROP_DEFS: Record<
     growMs: 3.5 * 60 * 1000,
     seedCostPerCell: 18,
   },
+  // Tête de rotation : le pois rapporte moins à la tonne, mais il laisse
+  // derrière lui un sol azoté dont profite la culture suivante. C'est ce qui
+  // en fait une décision, et non un choix par défaut.
+  PEA: {
+    code: "PEA",
+    name: "Pois",
+    yieldPerCell: 0.26,
+    growMs: 2.5 * 60 * 1000,
+    seedCostPerCell: 12,
+  },
 };
 
 /**
@@ -132,6 +145,8 @@ export const MARKET_BOUNDS: Record<
   MILK: { initial: 42, min: 30, max: 62, depth: 800 },
   MEAT: { initial: 1450, min: 900, max: 2300, depth: 300 },
   HAY: { initial: 95, min: 60, max: 165, depth: 1500 },
+  // Marché plus étroit que le blé : un gros lot y pèse davantage.
+  PEA: { initial: 285, min: 170, max: 520, depth: 900 },
 };
 
 /**
@@ -169,6 +184,14 @@ export type BuildingDef = {
   xpBonus?: number;
   /** Soft dryer — bonus réduction humidité au séchage `[GD]` */
   softDryer?: boolean;
+  /**
+   * Part de la dégradation évitée sur les denrées périssables `[GD]`.
+   *
+   * Le lait perdait douze pour cent par cycle sans qu'aucun bâtiment n'y
+   * puisse rien : produire beaucoup n'avait donc pas de sens si l'on ne
+   * vendait pas dans la foulée. Le froid rend l'élevage tenable.
+   */
+  spoilageSlow?: number;
 };
 
 /**
@@ -239,6 +262,15 @@ export const BUILDING_DEFS: Record<BuildingType, BuildingDef> = {
     cost: 2200,
     description: "Bâtiment élevage porcin (slots).",
     pigSlots: 20,
+  },
+  COLD_ROOM: {
+    type: "COLD_ROOM",
+    name: "Chambre froide",
+    w: 2,
+    h: 2,
+    cost: 2600,
+    description: "Ralentit la dégradation du lait et de la viande.",
+    spoilageSlow: 0.4,
   },
   WORKSHOP: {
     type: "WORKSHOP",
@@ -337,6 +369,7 @@ export function buildingStatsAtLevel(type: BuildingType, level: number) {
     repairDiscount: scale(def.repairDiscount),
     xpBonus: scale(def.xpBonus),
     softDryer: def.softDryer,
+    spoilageSlow: scale(def.spoilageSlow),
   };
 }
 
@@ -351,6 +384,7 @@ export const BUILDING_ART: Record<BuildingType, string> = {
   FARMHOUSE: "/assets/buildings/farmhouse.webp",
   PADDOCK: "/assets/buildings/paddock.webp",
   PIG_YARD: "/assets/buildings/pig-yard.webp",
+  COLD_ROOM: "/assets/buildings/cold-room.webp",
 };
 
 export const DEFAULT_GRID = { w: 12, h: 12 } as const;
@@ -547,4 +581,16 @@ export function footprintCells(x: number, y: number, w: number, h: number) {
     }
   }
   return cells;
+}
+
+/**
+ * Durée de l'animation d'un travail, en millisecondes.
+ *
+ * L'écran effaçait l'engin au bout de neuf cents millisecondes fixes, quand la
+ * vue 3D le faisait avancer d'une case toutes les 280 ms : un travail sur
+ * neuf cases voyait donc sa machine s'évaporer au tiers du parcours. Les deux
+ * côtés lisent désormais la même formule.
+ */
+export function workAnimationMs(cells: number): number {
+  return Math.max(700, cells * 280);
 }

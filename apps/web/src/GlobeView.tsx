@@ -1029,8 +1029,11 @@ export function GlobeView({
       }
     };
 
+    // Écouteur passif : `preventDefault` le rendrait bloquant pour le
+    // défilement, ce que Chrome signale comme une violation. La page ne défile
+    // pas derrière le globe, et le zoom du navigateur reste à Ctrl+molette.
     const onWheel = (ev: WheelEvent) => {
-      ev.preventDefault();
+      if (ev.ctrlKey) return;
       const factor = Math.exp(ev.deltaY * 0.0016);
       distTarget = THREE.MathUtils.clamp(distTarget * factor, DIST_MIN, DIST_MAX);
       idle = 0;
@@ -1054,7 +1057,7 @@ export function GlobeView({
     renderer.domElement.addEventListener("pointerup", onPointerUp);
     renderer.domElement.addEventListener("pointercancel", onPointerUp);
     renderer.domElement.addEventListener("pointerleave", onPointerLeave);
-    renderer.domElement.addEventListener("wheel", onWheel, { passive: false });
+    renderer.domElement.addEventListener("wheel", onWheel, { passive: true });
     renderer.domElement.addEventListener("dblclick", onDouble);
 
     apiRef.current = {

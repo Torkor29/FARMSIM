@@ -54,6 +54,12 @@ import {
   STUBBLE_COST_PER_CELL,
   SOIL_WORK_REFUSAL_LABELS,
   MAX_HARVESTS_BEFORE_PLOW,
+  canDirectSeed,
+  applyDirectSeed,
+  DIRECT_SEED_COST_PER_CELL,
+  DIRECT_SEED_FERTILITY_GAIN,
+  nextRotation,
+  type RotationState,
   quoteAllChannels,
   dealerPricePerTon,
   marketPricePerTon,
@@ -80,6 +86,10 @@ import {
   gestationProgress,
   litterFor,
   BREEDING_REFUSAL_LABELS,
+  mortalityToll,
+  MORTALITY,
+  blendedAgeMs,
+  PURCHASED_AGE_MS,
   HUNGER,
   feedBurn,
   feedUnits,
@@ -87,9 +97,20 @@ import {
   dealerAskPrice,
   GOOD_DEFS,
   isPerishable,
+  SPOILAGE_SLOW_CAP,
+  canOpenFuture,
+  futuresPrice,
+  futuresProceeds,
+  futuresPenalty,
+  futuresOutcome,
+  FUTURES_HORIZONS_H,
+  FUTURES_DISCOUNT,
+  FUTURES_REFUSAL_LABELS,
+  type FuturesHorizonH,
   afterSpoilage,
   SPOILAGE_PER_CYCLE,
   SELLABLE_GOODS,
+  settleSaleTons,
   GRAZING_REFUSAL_LABELS,
   LIVESTOCK_CYCLE_MS,
   MEAT_MATURITY_MS,
@@ -140,6 +161,16 @@ app.use((req, _res, next) => {
 });
 
 const PORT = Number(process.env.PORT ?? 3001);
+
+/**
+ * Outils de test, fermés par défaut.
+ *
+ * Ils donnent de l'argent, du niveau et du stock sur commande : ouverts en
+ * production, ils videraient l'économie de tout enjeu et n'importe quel joueur
+ * pourrait s'en servir. Il faut donc les demander explicitement, par variable
+ * d'environnement, sur l'installation où l'on teste.
+ */
+const DEV_TOOLS = /^(1|true|yes|on)$/i.test(process.env.FARMSIM_DEV_TOOLS ?? "");
 
 async function createParcelGrid(parcelId: string, gridW: number, gridH: number) {
   const data = [];
@@ -298,6 +329,7 @@ async function getFarmBonuses(farmId: string) {
   let repairDiscount = 0;
   let xpBonus = 0;
   let softDryer = false;
+  let spoilageSlow = 0;
   for (const b of buildings) {
     const stats = buildingStatsAtLevel(b.type as SharedBuildingType, b.level);
     yieldBonus += stats.yieldBonus ?? 0;
@@ -308,6 +340,7 @@ async function getFarmBonuses(farmId: string) {
     pigSlots += stats.pigSlots ?? 0;
     repairDiscount += stats.repairDiscount ?? 0;
     xpBonus += stats.xpBonus ?? 0;
+    spoilageSlow += stats.spoilageSlow ?? 0;
     if (stats.softDryer) softDryer = true;
   }
   return {
@@ -319,6 +352,8 @@ async function getFarmBonuses(farmId: string) {
     pigSlots,
     repairDiscount: Math.min(0.3, repairDiscount),
     xpBonus: Math.min(0.1, xpBonus),
+    // Plusieurs chambres aident, mais on ne conserve jamais indéfiniment.
+    spoilageSlow: Math.min(SPOILAGE_SLOW_CAP, spoilageSlow),
     softDryer,
   };
 }
@@ -710,7 +745,337 @@ app.post("/world/claim", async (req, res) => {
   }
 });
 
+/* ------------------------------------------------------------------ */
+/* Contrats à terme                                                     */
+/* ------------------------------------------------------------------ */
+
+/** Engagements du joueur, les plus proches de l'échéance d'abord. */
+app.get("/futures", async (req, res) => {
+  const auth = await userFromAuthHeader(req);
+  if (!auth) {
+    res.status(401).json({ error: "Session invalide" });
+    return;
+  }
+  const rows = await prisma.futuresContract.findMany({
+    where: { sellerId: auth.user.id },
+    orderBy: [{ status: "asc" }, { dueAt: "asc" }],
+    take: 30,
+  });
+  const market = await prisma.marketPrice.findMany();
+  res.json({
+    contracts: rows.map((c) => ({
+      id: c.id,
+      commodity: c.commodity,
+      tons: c.tons,
+      pricePerTon: c.pricePerTon,
+      dueAt: c.dueAt.getTime(),
+      status: c.status,
+      marketAtDue: c.marketAtDue,
+      // Ce que vaudrait la même quantité au comptant, pour juger sur pièce.
+      spotNow: market.find((m) => m.commodity === c.commodity)?.price ?? null,
+    })),
+    horizons: FUTURES_HORIZONS_H.map((h) => ({
+      hours: h,
+      discount: FUTURES_DISCOUNT[h],
+    })),
+  });
+});
+
+/** S'engager à livrer plus tard, au prix d'aujourd'hui moins la décote. */
+app.post("/futures", async (req, res) => {
+  const auth = await userFromAuthHeader(req);
+  if (!auth) {
+    res.status(401).json({ error: "Session invalide" });
+    return;
+  }
+  const body = z
+    .object({
+      commodity: z.enum(SELLABLE_GOODS as unknown as [TradeGood, ...TradeGood[]]),
+      tons: z.number().positive().max(10_000),
+      horizonH: z.number(),
+    })
+    .safeParse(req.body);
+  if (!body.success) {
+    res.status(400).json(body.error.flatten());
+    return;
+  }
+  const openContracts = await prisma.futuresContract.count({
+    where: { sellerId: auth.user.id, status: "OPEN" },
+  });
+  const verdict = canOpenFuture({
+    commodity: body.data.commodity,
+    tons: body.data.tons,
+    horizonH: body.data.horizonH,
+    openContracts,
+    tradable: SELLABLE_GOODS,
+  });
+  if (!verdict.ok) {
+    res.status(409).json({ error: FUTURES_REFUSAL_LABELS[verdict.reason!] });
+    return;
+  }
+  const market = await prisma.marketPrice.findUnique({
+    where: { commodity: body.data.commodity },
+  });
+  if (!market) {
+    res.status(500).json({ error: "Marché non initialisé" });
+    return;
+  }
+  const horizon = body.data.horizonH as FuturesHorizonH;
+  const pricePerTon = futuresPrice(market.price, horizon);
+  const contract = await prisma.futuresContract.create({
+    data: {
+      sellerId: auth.user.id,
+      commodity: body.data.commodity,
+      tons: body.data.tons,
+      pricePerTon,
+      dueAt: new Date(Date.now() + horizon * 60 * 60 * 1000),
+    },
+  });
+  res.status(201).json({ contract, pricePerTon });
+});
+
+/** Livrer un engagement avant son échéance. */
+app.post("/futures/:id/deliver", async (req, res) => {
+  const auth = await userFromAuthHeader(req);
+  if (!auth) {
+    res.status(401).json({ error: "Session invalide" });
+    return;
+  }
+  const contract = await prisma.futuresContract.findUnique({ where: { id: req.params.id } });
+  if (!contract || contract.sellerId !== auth.user.id) {
+    res.status(404).json({ error: "Contrat introuvable" });
+    return;
+  }
+  if (contract.status !== "OPEN") {
+    res.status(409).json({ error: "Contrat déjà dénoué" });
+    return;
+  }
+  const user = await prisma.user.findUnique({
+    where: { id: auth.user.id },
+    include: { farm: { include: { inventory: true } } },
+  });
+  const inv = user?.farm?.inventory.find((i) => i.itemCode === contract.commodity);
+  const tons = settleSaleTons(contract.tons, inv?.qty ?? 0);
+  if (!inv || tons === null) {
+    res.status(409).json({ error: "Stock insuffisant pour honorer l'engagement" });
+    return;
+  }
+  const revenue = futuresProceeds(contract.pricePerTon, tons);
+  const market = await prisma.marketPrice.findUnique({ where: { commodity: contract.commodity } });
+  await prisma.$transaction(async (tx) => {
+    await drawFromStock(tx, inv, tons);
+    await tx.user.update({ where: { id: user!.id }, data: { crd: { increment: revenue } } });
+    // La marchandise part sur le marché comme n'importe quelle vente.
+    await tx.marketPrice.update({
+      where: { commodity: contract.commodity },
+      data: { stockTons: { increment: tons } },
+    });
+    await tx.futuresContract.update({
+      where: { id: contract.id },
+      data: { status: "SETTLED", settledAt: new Date(), marketAtDue: market?.price ?? null },
+    });
+  });
+  res.json({
+    revenue,
+    tons,
+    outcome: futuresOutcome({
+      pricePerTon: contract.pricePerTon,
+      tons,
+      marketPriceAtDue: market?.price ?? contract.pricePerTon,
+    }),
+  });
+});
+
+/**
+ * Solde les engagements dont l'échéance est passée.
+ *
+ * Ne rien faire serait le plus simple, mais alors s'engager ne coûterait rien
+ * et le contrat n'aurait aucune portée : on prendrait le prix garanti quand il
+ * arrange, et on oublierait sinon.
+ */
+async function settleDueFutures() {
+  const due = await prisma.futuresContract.findMany({
+    where: { status: "OPEN", dueAt: { lte: new Date() } },
+    take: 100,
+  });
+  if (!due.length) return;
+  const market = await prisma.marketPrice.findMany();
+  for (const c of due) {
+    const penalty = futuresPenalty(c.pricePerTon, c.tons);
+    await prisma.$transaction(async (tx) => {
+      await tx.user.update({
+        where: { id: c.sellerId },
+        // La trésorerie peut passer sous zéro : une dette se rembourse, elle
+        // ne s'efface pas parce qu'on n'a pas de quoi la payer.
+        data: { crd: { decrement: penalty } },
+      });
+      await tx.futuresContract.update({
+        where: { id: c.id },
+        data: {
+          status: "DEFAULTED",
+          settledAt: new Date(),
+          marketAtDue: market.find((m) => m.commodity === c.commodity)?.price ?? null,
+        },
+      });
+    });
+  }
+}
+
+/* ------------------------------------------------------------------ */
+/* Outils de test — inertes sans FARMSIM_DEV_TOOLS                     */
+/* ------------------------------------------------------------------ */
+
+/** L'écran ne montre le panneau de test que si le serveur l'autorise. */
+app.get("/dev/status", (_req, res) => res.json({ enabled: DEV_TOOLS }));
+
+/**
+ * Accorde ce qu'il faut pour éprouver une mécanique sans y passer l'après-midi.
+ *
+ * Chaque champ est facultatif : on ne touche qu'à ce qu'on demande. Les
+ * montants sont bornés, moins par méfiance que pour éviter qu'une faute de
+ * frappe ne rende les cours du marché absurdes pour tout le monde.
+ */
+app.post("/dev/grant", async (req, res) => {
+  if (!DEV_TOOLS) {
+    res.status(404).json({ error: "Outils de test désactivés" });
+    return;
+  }
+  const auth = await userFromAuthHeader(req);
+  if (!auth) {
+    res.status(401).json({ error: "Session invalide" });
+    return;
+  }
+  const body = z
+    .object({
+      crd: z.number().min(0).max(100_000_000).optional(),
+      level: z.number().int().min(1).max(50).optional(),
+      xp: z.number().int().min(0).max(1_000_000).optional(),
+      stock: z
+        .object({
+          commodity: z.enum(SELLABLE_GOODS as unknown as [TradeGood, ...TradeGood[]]),
+          tons: z.number().min(0).max(100_000),
+        })
+        .optional(),
+      /** Amène toutes les cultures en terre à maturité */
+      ripenAll: z.boolean().optional(),
+      /** Remplit la mangeoire de tous les troupeaux */
+      feedHerds: z.boolean().optional(),
+      /** Répare et remet à neuf toutes les machines */
+      fixMachines: z.boolean().optional(),
+    })
+    .safeParse(req.body);
+  if (!body.success) {
+    res.status(400).json(body.error.flatten());
+    return;
+  }
+
+  const user = await prisma.user.findUnique({
+    where: { id: auth.user.id },
+    include: { farm: { include: { parcels: true, machines: true } } },
+  });
+  if (!user) {
+    res.status(404).json({ error: "Joueur introuvable" });
+    return;
+  }
+  const done: string[] = [];
+
+  if (body.data.crd !== undefined) {
+    await prisma.user.update({ where: { id: user.id }, data: { crd: body.data.crd } });
+    done.push(`trésorerie à ${Math.round(body.data.crd)} CRD`);
+  }
+  if (body.data.level !== undefined || body.data.xp !== undefined) {
+    await prisma.user.update({
+      where: { id: user.id },
+      data: {
+        ...(body.data.level !== undefined ? { level: body.data.level } : {}),
+        ...(body.data.xp !== undefined ? { xp: body.data.xp } : {}),
+      },
+    });
+    done.push("niveau et expérience");
+  }
+  if (body.data.stock && user.farm) {
+    await addToStock(prisma, user.farm.id, body.data.stock.commodity, body.data.stock.tons, 0);
+    done.push(`${body.data.stock.tons} t de ${body.data.stock.commodity}`);
+  }
+  if (body.data.ripenAll && user.farm) {
+    // On recule la date de semis : la maturité se déduit du temps écoulé, il
+    // n'y a pas d'état « mûr » à forcer.
+    const parcelIds = user.farm.parcels.map((p) => p.id);
+    const cells = await prisma.parcelCell.findMany({
+      where: { parcelId: { in: parcelIds }, kind: "CROP", crop: { not: null } },
+    });
+    const now = Date.now();
+    for (const c of cells) {
+      const grow = CROP_DEFS[c.crop as CropCode].growMs;
+      await prisma.parcelCell.update({
+        where: { id: c.id },
+        data: {
+          plantedAt: new Date(now - grow),
+          readyAt: new Date(now),
+          fieldStage: "READY",
+        },
+      });
+    }
+    done.push(`${cells.length} case(s) à maturité`);
+  }
+  if (body.data.feedHerds && user.farm) {
+    const herds = await prisma.herd.findMany({ where: { farmId: user.farm.id } });
+    for (const h of herds) {
+      await prisma.herd.update({
+        where: { id: h.id },
+        data: {
+          feedStock: Math.max(1, h.size) * HUNGER.unitsPerAnimalPerCycle * 40,
+          feedQuality: 1,
+          mortalityDebt: 0,
+          lastFedAt: new Date(),
+        },
+      });
+    }
+    done.push(`${herds.length} troupeau(x) nourri(s)`);
+  }
+  if (body.data.fixMachines && user.farm) {
+    await prisma.machine.updateMany({
+      where: { farmId: user.farm.id },
+      data: { condition: 100 },
+    });
+    done.push("machines remises à neuf");
+  }
+
+  res.json({ ok: true, done, player: await playerPayload(user.id) });
+});
+
 app.get("/market", async (_req, res) => res.json(await prisma.marketPrice.findMany()));
+
+/**
+ * Cours passés d'une marchandise, du plus ancien au plus récent. Le joueur y
+ * lit la tendance : vendre maintenant, ou laisser courir.
+ */
+app.get("/market/history", async (req, res) => {
+  const parsed = z
+    .object({
+      commodity: z.enum(SELLABLE_GOODS as unknown as [TradeGood, ...TradeGood[]]).optional(),
+      hours: z.coerce.number().min(0.25).max(12).optional(),
+    })
+    .safeParse(req.query);
+  if (!parsed.success) {
+    res.status(400).json(parsed.error.flatten());
+    return;
+  }
+  const since = new Date(Date.now() - (parsed.data.hours ?? 3) * 60 * 60 * 1000);
+  const rows = await prisma.marketTick.findMany({
+    where: {
+      at: { gte: since },
+      ...(parsed.data.commodity ? { commodity: parsed.data.commodity } : {}),
+    },
+    orderBy: { at: "asc" },
+    select: { commodity: true, price: true, at: true },
+  });
+  const series: Record<string, { at: string; price: number }[]> = {};
+  for (const r of rows) {
+    (series[r.commodity] ??= []).push({ at: r.at.toISOString(), price: r.price });
+  }
+  res.json({ since: since.toISOString(), series });
+});
 app.get("/weather", async (_req, res) => res.json(await prisma.weatherSnapshot.findMany()));
 app.get("/sim/status", (_req, res) => {
   res.json({
@@ -753,7 +1118,14 @@ async function spoilPerishables() {
     where: { itemCode: { in: perishables } },
   });
   const now = Date.now();
+  // Le froid dépend de la ferme : on le résout une fois par exploitation
+  // concernée plutôt qu'à chaque lot.
+  const chill = new Map<string, number>();
   for (const item of items) {
+    if (!chill.has(item.farmId)) {
+      const bonuses = await getFarmBonuses(item.farmId);
+      chill.set(item.farmId, bonuses.spoilageSlow ?? 0);
+    }
     const elapsedMs = now - item.lastDecayAt.getTime();
     if (elapsedMs < 5000) continue;
     const left = afterSpoilage({
@@ -761,6 +1133,7 @@ async function spoilPerishables() {
       qty: item.qty,
       elapsedMs,
       cycleMs: LIVESTOCK_CYCLE_MS,
+      spoilageSlow: chill.get(item.farmId) ?? 0,
     });
     if (left <= 0) await prisma.inventoryItem.delete({ where: { id: item.id } });
     else {
@@ -776,6 +1149,8 @@ async function runWorldTick() {
   await expireListings();
   await runNpcBuyers();
   await spoilPerishables();
+  await settleAllHerds();
+  await settleDueFutures();
   const zones = await prisma.zone.findMany();
   const snapshots = await prisma.weatherSnapshot.findMany();
   const weatherOut: { zoneCode: string; state: string; changed: boolean }[] = [];
@@ -832,12 +1207,35 @@ async function runWorldTick() {
     });
   }
 
+  await recordMarketHistory(marketOut);
+
   lastSimTick = {
     at: new Date().toISOString(),
     weather: weatherOut,
     market: marketOut,
   };
   return lastSimTick;
+}
+
+/**
+ * Archive les cours du tick et élague les plus vieux.
+ *
+ * Sans mémoire des prix, le joueur ne peut ni juger si l'offre du jour est
+ * bonne, ni décider d'attendre : il vend au hasard. Une fenêtre glissante
+ * suffit — personne ne spécule sur le cours d'avant-hier — et elle borne la
+ * table, qui grossirait sinon de cinq lignes toutes les vingt secondes.
+ */
+const MARKET_HISTORY_MS = 12 * 60 * 60 * 1000;
+
+async function recordMarketHistory(rows: { commodity: string; price: number }[]) {
+  if (!rows.length) return;
+  const at = new Date();
+  await prisma.marketTick.createMany({
+    data: rows.map((r) => ({ commodity: r.commodity, price: r.price, at })),
+  });
+  await prisma.marketTick.deleteMany({
+    where: { at: { lt: new Date(at.getTime() - MARKET_HISTORY_MS) } },
+  });
 }
 
 const SESSION_TTL_MS = 30 * 24 * 60 * 60 * 1000;
@@ -900,6 +1298,8 @@ async function buildResumeForUser(userId: string) {
         weedsControlled: cell.weedsControlled,
         fertilizedPasses: Math.min(2, cell.fertilizedPasses) as 0 | 1 | 2,
         residuePasses: cell.residuePasses,
+        directSeeded: cell.directSeeded,
+        rotation: rotationOf(cell),
         specialization: user.specialization,
       });
       if (sim.lost) cropsLost += 1;
@@ -1156,6 +1556,8 @@ app.get("/parcels/:id", async (req, res) => {
         weedsControlled: c.weedsControlled,
         fertilizedPasses: Math.min(2, c.fertilizedPasses) as 0 | 1 | 2,
         residuePasses: c.residuePasses,
+        directSeeded: c.directSeeded,
+        rotation: rotationOf(c),
         buildingYieldBonus: bonuses?.yieldBonus,
         weatherAtHarvest: weather?.state as WeatherState | undefined,
       });
@@ -1282,7 +1684,7 @@ app.post("/parcels/:id/contractor", async (req, res) => {
     .object({
       userId: z.string(),
       work: z.enum(["PLANT", "FERTILIZE", "HARVEST", "PLOW"]),
-      crop: z.enum(["WHEAT", "MAIZE"]).optional(),
+      crop: z.enum(["WHEAT", "MAIZE", "PEA"]).optional(),
       cells: z.array(z.object({ x: z.number().int(), y: z.number().int() })).min(1),
     })
     .safeParse(req.body);
@@ -1494,12 +1896,32 @@ app.post("/parcels/:id/contractor", async (req, res) => {
   });
 });
 
+/**
+ * Mémoire de rotation d'une case, telle que la simulation doit la lire.
+ *
+ * Les colonnes retiennent ce que la case a **déjà produit**, pas ce qu'elle
+ * porte : elles ne sont écrites qu'à la libération de la case, moisson ou
+ * culture perdue. Une culture en terre voit donc le précédent qui la concerne,
+ * sans avoir à défalquer son propre cycle.
+ */
+function rotationOf(cell: { lastCrop: CropCode | null; cropStreak: number }): RotationState {
+  return { lastCrop: cell.lastCrop, cropStreak: cell.cropStreak };
+}
+
+/** Le cycle qui s'achève entre dans la mémoire de la case. */
+function rotationUpdate(cell: { lastCrop: CropCode | null; cropStreak: number }, crop: CropCode) {
+  const next = nextRotation(rotationOf(cell), crop);
+  return { lastCrop: next.lastCrop, cropStreak: next.cropStreak };
+}
+
 app.post("/parcels/:id/plant", async (req, res) => {
   const body = z
     .object({
       userId: z.string(),
-      crop: z.enum(["WHEAT", "MAIZE"]),
+      crop: z.enum(["WHEAT", "MAIZE", "PEA"]),
       cells: z.array(z.object({ x: z.number().int(), y: z.number().int() })).min(1),
+      /** Semer dans les chaumes, sans travail du sol préalable */
+      directSeed: z.boolean().optional(),
     })
     .safeParse(req.body);
   if (!body.success) {
@@ -1526,7 +1948,9 @@ app.post("/parcels/:id/plant", async (req, res) => {
     });
     return;
   }
-  const cost = CROP_DEFS[body.data.crop].seedCostPerCell * body.data.cells.length;
+  const directSeed = body.data.directSeed ?? false;
+  const seedCost = CROP_DEFS[body.data.crop].seedCostPerCell * body.data.cells.length;
+  const cost = seedCost + (directSeed ? DIRECT_SEED_COST_PER_CELL * body.data.cells.length : 0);
   if (user.crd < cost) {
     res.status(402).json({ error: "CRD insuffisants pour semences" });
     return;
@@ -1538,11 +1962,24 @@ app.post("/parcels/:id/plant", async (req, res) => {
       res.status(409).json({ error: `Case ${x},${y} non libre` });
       return;
     }
-    if (cell.hasStubble) {
+    if (directSeed) {
+      // Le semis direct exige des chaumes : sans eux, c'est un semis ordinaire
+      // et le joueur paierait le surcoût du semoir lourd pour rien.
+      const verdict = canDirectSeed(cell);
+      if (!verdict.ok) {
+        res.status(409).json({
+          error:
+            verdict.reason === "PLOW_REQUIRED"
+              ? `Case ${x},${y} : sol trop tassé — le semis direct ne décompacte pas, il faut labourer`
+              : `Case ${x},${y} : pas de chaumes — semez normalement`,
+        });
+        return;
+      }
+    } else if (cell.hasStubble) {
       res.status(409).json({
         error: plowRequired(cell)
           ? `Case ${x},${y} : sol épuisé, il faut labourer`
-          : `Case ${x},${y} : chaumes en place — déchaumez ou labourez d’abord`,
+          : `Case ${x},${y} : chaumes en place — déchaumez, labourez ou semez direct`,
       });
       return;
     }
@@ -1553,6 +1990,10 @@ app.post("/parcels/:id/plant", async (req, res) => {
   const wear = await prisma.$transaction(async (tx) => {
     await tx.user.update({ where: { id: user.id }, data: { crd: { decrement: cost } } });
     for (const { x, y } of body.data.cells) {
+      const cell = parcel.cells.find((c) => c.x === x && c.y === y);
+      // Le semis direct perce les chaumes : la case est semée sans qu'aucun
+      // outil ne soit passé, et le sol garde son tassement.
+      const soil = directSeed && cell ? applyDirectSeed(cell) : null;
       await tx.parcelCell.update({
         where: { parcelId_x_y: { parcelId: parcel.id, x, y } },
         data: {
@@ -1563,7 +2004,23 @@ app.post("/parcels/:id/plant", async (req, res) => {
           readyAt: new Date(now + growMs),
           fertilizedPasses: 0,
           weedsControlled: false,
+          directSeeded: directSeed,
+          ...(soil
+            ? {
+                harvestsSincePlow: soil.harvestsSincePlow,
+                residuePasses: soil.residuePasses,
+                hasStubble: soil.hasStubble,
+              }
+            : {}),
         },
+      });
+    }
+    if (directSeed) {
+      // La couverture permanente protège de l'érosion : le sol s'en trouve un
+      // peu mieux, ce qui compense en partie la perte de rendement.
+      await tx.parcel.update({
+        where: { id: parcel.id },
+        data: { fertility: Math.min(1, parcel.fertility + DIRECT_SEED_FERTILITY_GAIN) },
       });
     }
     return applyWearToMachine(tx, {
@@ -1677,13 +2134,27 @@ app.post("/parcels/:id/plow", async (req, res) => {
       : parcel.cells
   ).filter((cell) => {
     if (cell.hasStubble) return true;
+    // Une case qui a atteint la limite de récoltes réclame la charrue, même
+    // sans chaumes visibles : la refuser enfermerait le joueur, puisque le
+    // déchaumage et le semis direct la refusent déjà pour la même raison.
+    if (cell.kind === "EMPTY" && plowRequired(cell)) return true;
+    if (cell.fieldStage === "SPOILED") return true;
     if (cell.kind !== "CROP" || !cell.crop || !cell.plantedAt) return false;
     const readyAt = cell.plantedAt.getTime() + CROP_DEFS[cell.crop].growMs;
     return ripenessAt(readyAt, CROP_DEFS[cell.crop].growMs, now).needsPlowing;
   });
 
   if (!candidates.length) {
-    res.status(409).json({ error: "Rien à labourer ici : ni chaumes, ni culture perdue" });
+    // Dire ce qui n'est pas labourable ne sert à rien : le joueur veut savoir
+    // où aller. On lui indique donc ce qui, ailleurs sur la parcelle, l'est.
+    const elsewhere = parcel.cells.filter(
+      (c) => c.hasStubble || c.fieldStage === "SPOILED" || (c.kind === "EMPTY" && plowRequired(c)),
+    ).length;
+    res.status(409).json({
+      error: elsewhere
+        ? `Rien à labourer dans la sélection — ${elsewhere} case(s) attendent la charrue ailleurs sur la parcelle`
+        : "Rien à labourer : aucune case ne porte de chaumes ni de culture perdue",
+    });
     return;
   }
 
@@ -1890,6 +2361,8 @@ app.post("/parcels/:id/harvest", async (req, res) => {
         weedsControlled: cell.weedsControlled,
         fertilizedPasses: Math.min(2, cell.fertilizedPasses) as 0 | 1 | 2,
         residuePasses: cell.residuePasses,
+        directSeeded: cell.directSeeded,
+        rotation: rotationOf(cell),
         specialization: user?.specialization,
         buildingYieldBonus: bonuses.yieldBonus,
         weatherAtHarvest: weather?.state as WeatherState | undefined,
@@ -1901,7 +2374,9 @@ app.post("/parcels/:id/harvest", async (req, res) => {
         lostCells += 1;
         await tx.parcelCell.update({
           where: { id: cell.id },
-          data: { fieldStage: "SPOILED" },
+          // Une culture perdue a tout de même occupé la terre une saison :
+          // les champignons du sol s'y sont installés comme pour une réussie.
+          data: { fieldStage: "SPOILED", ...rotationUpdate(cell, cell.crop) },
         });
         continue;
       }
@@ -1929,6 +2404,7 @@ app.post("/parcels/:id/harvest", async (req, res) => {
             MAX_HARVESTS_BEFORE_PLOW,
             cell.harvestsSincePlow + 1,
           ),
+          ...rotationUpdate(cell, cell.crop),
         },
       });
     }
@@ -2157,6 +2633,27 @@ function paddocksFor(
   return { cells, capacity: paddockCapacity(cells), yardType };
 }
 
+/**
+ * Fait vivre tous les troupeaux, à chaque tick du monde.
+ *
+ * Cette avance ne tenait auparavant qu'au sondage de l'écran d'élevage : un
+ * joueur qui ne l'ouvrait pas ne voyait jamais une gestation démarrer, et son
+ * cheptel ne grandissait que par achat. Une bête vit qu'on la regarde ou non.
+ */
+async function settleAllHerds() {
+  const herds = await prisma.herd.findMany({
+    include: { building: { include: { parcel: { include: { buildings: true } } } } },
+  });
+  const now = Date.now();
+  for (const herd of herds) {
+    const barn = herd.building;
+    const paddock = paddocksFor(barn, barn.parcel.buildings);
+    const stats = buildingStatsAtLevel(barn.type as SharedBuildingType, barn.level);
+    const capacity = (barn.type === "CATTLE_BARN" ? stats.cattleSlots : stats.pigSlots) ?? 0;
+    await settleHerd(herd, paddock.capacity, now, barn.level, capacity);
+  }
+}
+
 /** Fait vieillir le bonheur d'un troupeau jusqu'à maintenant. */
 async function settleHerd(
   herd: {
@@ -2170,6 +2667,8 @@ async function settleHerd(
     kind: string;
     gestatingSince: Date | null;
     lastCalvedAt: Date | null;
+    avgAgeMs: number;
+    mortalityDebt: number;
   },
   paddockCapacityCells: number,
   now: number,
@@ -2181,6 +2680,8 @@ async function settleHerd(
   size: number;
   gestatingSince: Date | null;
   born: number;
+  died: number;
+  avgAgeMs: number;
 }> {
   const elapsedMs = Math.max(0, now - herd.lastTickAt.getTime());
   if (elapsedMs < 1000) {
@@ -2190,6 +2691,8 @@ async function settleHerd(
       size: herd.size,
       gestatingSince: herd.gestatingSince,
       born: 0,
+      died: 0,
+      avgAgeMs: herd.avgAgeMs,
     };
   }
 
@@ -2248,11 +2751,44 @@ async function settleHerd(
     if (verdict.ok) gestatingSince = new Date(now);
   }
 
+  // Le lot vieillit du temps écoulé, puis la moyenne se dilue des veaux qui
+  // viennent de naître : sans quoi un nouveau-né compterait comme un adulte à
+  // l'abattage.
+  let avgAgeMs = Math.max(0, herd.avgAgeMs) + elapsedMs;
+  if (born > 0) {
+    avgAgeMs = blendedAgeMs({
+      herdSize: size - born,
+      averageAgeMs: avgAgeMs,
+      added: born,
+      addedAgeMs: 0,
+    });
+  }
+
+  // Un troupeau affamé finit par perdre des bêtes. Lentement : on doit avoir
+  // le temps de réagir en rentrant.
+  const toll = mortalityToll({
+    happiness,
+    herdSize: size,
+    elapsedMs,
+    cycleMs: LIVESTOCK_CYCLE_MS,
+    debt: herd.mortalityDebt,
+  });
+  size = Math.max(0, size - toll.deaths);
+
   await prisma.herd.update({
     where: { id: herd.id },
-    data: { happiness, feedStock, size, gestatingSince, lastCalvedAt, lastTickAt: new Date(now) },
+    data: {
+      happiness,
+      feedStock,
+      size,
+      gestatingSince: size > 0 ? gestatingSince : null,
+      lastCalvedAt,
+      avgAgeMs,
+      mortalityDebt: toll.debt,
+      lastTickAt: new Date(now),
+    },
   });
-  return { happiness, feedStock, size, gestatingSince, born };
+  return { happiness, feedStock, size, gestatingSince, born, died: toll.deaths, avgAgeMs };
 }
 
 /** État complet de l'élevage d'une parcelle, prêt pour l'affichage. */
@@ -2317,6 +2853,10 @@ app.get("/parcels/:id/livestock", async (req, res) => {
             size: herdSize,
             happiness,
             label: happinessLabel(happiness),
+            // Prévenir vaut mieux que constater : au-dessous du seuil, le lot
+            // commence à perdre des bêtes, et le joueur doit pouvoir agir
+            // avant d'en compter les pertes.
+            atRisk: happiness < MORTALITY.floor,
             grazingUntil: b.herd.grazingUntil?.getTime() ?? null,
             feedStock: Math.round(feedStock * 10) / 10,
             gestation: gestationProgress({
@@ -2353,7 +2893,7 @@ app.get("/parcels/:id/livestock", async (req, res) => {
             meatAtSlaughter: meatYield({
               herdSize: b.herd.size,
               happiness,
-              averageAgeMs: now - b.herd.bornAt.getTime(),
+              averageAgeMs: b.herd.avgAgeMs,
               barnLevel: b.level,
             }),
           }
@@ -2408,9 +2948,19 @@ app.post("/buildings/:id/animals", async (req, res) => {
   await prisma.$transaction(async (tx) => {
     await tx.user.update({ where: { id: user.id }, data: { crd: { decrement: cost } } });
     if (building.herd) {
+      // On achète du bétail déjà élevé : la moyenne d'âge du lot se déplace
+      // vers celle des arrivantes, au prorata des effectifs.
       await tx.herd.update({
         where: { id: building.herd.id },
-        data: { size: current + body.data.count },
+        data: {
+          size: current + body.data.count,
+          avgAgeMs: blendedAgeMs({
+            herdSize: current,
+            averageAgeMs: building.herd.avgAgeMs,
+            added: body.data.count,
+            addedAgeMs: PURCHASED_AGE_MS,
+          }),
+        },
       });
     } else {
       await tx.herd.create({
@@ -2419,6 +2969,7 @@ app.post("/buildings/:id/animals", async (req, res) => {
           buildingId: building.id,
           kind,
           size: body.data.count,
+          avgAgeMs: PURCHASED_AGE_MS,
         },
       });
     }
@@ -2473,7 +3024,7 @@ app.post("/herds/:id/graze", async (req, res) => {
       kind: herd.kind as AnimalKind,
       size: herd.size,
       happiness: herd.happiness,
-      averageAgeMs: now - herd.bornAt.getTime(),
+      averageAgeMs: herd.avgAgeMs,
       lastGrazedAt: herd.lastGrazedAt?.getTime() ?? null,
       lastMilkedAt: herd.lastMilkedAt?.getTime() ?? null,
     },
@@ -2658,7 +3209,7 @@ app.post("/herds/:id/slaughter", async (req, res) => {
   }
 
   const now = Date.now();
-  const ageMs = now - herd.bornAt.getTime();
+  const ageMs = herd.avgAgeMs;
   const kgTotal = meatYield({
     herdSize: body.data.count,
     happiness: herd.happiness,
@@ -3193,7 +3744,8 @@ app.post("/market/dealer", async (req, res) => {
     return;
   }
   const inv = user.farm.inventory.find((i) => i.itemCode === body.data.commodity);
-  if (!inv || inv.qty < body.data.tons) {
+  const tons = settleSaleTons(body.data.tons, inv?.qty ?? 0);
+  if (!inv || tons === null) {
     res.status(409).json({ error: "Stock insuffisant" });
     return;
   }
@@ -3206,18 +3758,23 @@ app.post("/market/dealer", async (req, res) => {
   }
   const keep = 1 - moistureSellPenalty(inv.moisture);
   const pricePerTon = dealerPricePerTon(market.price) * keep;
-  const revenue = Math.round(pricePerTon * body.data.tons);
+  const revenue = Math.round(pricePerTon * tons);
 
   await prisma.$transaction(async (tx) => {
-    await drawFromStock(tx, inv, body.data.tons);
+    await drawFromStock(tx, inv, tons);
     await tx.user.update({ where: { id: user.id }, data: { crd: { increment: revenue } } });
     // Le négociant revend au marché : le stock mondial monte, le cours cède.
     await tx.marketPrice.update({
       where: { commodity: body.data.commodity },
-      data: { stockTons: { increment: body.data.tons } },
+      data: { stockTons: { increment: tons } },
     });
   });
-  res.json({ revenue, pricePerTon: Math.round(pricePerTon * 100) / 100, channel: "DEALER" });
+  res.json({
+    revenue,
+    tons,
+    pricePerTon: Math.round(pricePerTon * 100) / 100,
+    channel: "DEALER",
+  });
 });
 
 /** Annonces ouvertes, les plus avantageuses d'abord. */
@@ -3269,6 +3826,9 @@ app.post("/market/listings", async (req, res) => {
     return;
   }
   const inv = user.farm.inventory.find((i) => i.itemCode === body.data.commodity);
+  // Mettre en criée la totalité d'un lot achoppait sur les mêmes centièmes que
+  // la vente directe : on règle le tonnage sur ce qui est réellement en stock.
+  const tons = settleSaleTons(body.data.tons, inv?.qty ?? 0) ?? body.data.tons;
   const market = await prisma.marketPrice.findUnique({
     where: { commodity: body.data.commodity },
   });
@@ -3281,7 +3841,7 @@ app.post("/market/listings", async (req, res) => {
   });
   const verdict = canList({
     pricePerTon: body.data.pricePerTon,
-    tons: body.data.tons,
+    tons,
     marketPrice: market.price,
     openListings,
     stockTons: inv?.qty ?? 0,
@@ -3292,15 +3852,15 @@ app.post("/market/listings", async (req, res) => {
     return;
   }
 
-  const fee = listingFee(body.data.pricePerTon, body.data.tons);
+  const fee = listingFee(body.data.pricePerTon, tons);
   const listing = await prisma.$transaction(async (tx) => {
-    await drawFromStock(tx, inv!, body.data.tons);
+    await drawFromStock(tx, inv!, tons);
     await tx.user.update({ where: { id: user.id }, data: { crd: { decrement: fee } } });
     return tx.marketListing.create({
       data: {
         sellerId: user.id,
         commodity: body.data.commodity,
-        tons: body.data.tons,
+        tons: tons,
         pricePerTon: body.data.pricePerTon,
         moisture: inv!.moisture,
         quality: inv!.quality,
@@ -3464,12 +4024,13 @@ app.post("/market/sell", async (req, res) => {
     return;
   }
   const inv = user.farm.inventory.find((i) => i.itemCode === body.data.commodity);
-  if (!inv || inv.qty < body.data.tons) {
+  const tons = settleSaleTons(body.data.tons, inv?.qty ?? 0);
+  if (!inv || tons === null) {
     res.status(409).json({ error: "Stock insuffisant" });
     return;
   }
   const bonuses = await getFarmBonuses(user.farm.id);
-  if (inv.qty > bonuses.storageGrain && body.data.tons > 0) {
+  if (inv.qty > bonuses.storageGrain && tons > 0) {
     // soft warning only — allow sell
   }
   const market = await prisma.marketPrice.findUnique({
@@ -3482,22 +4043,22 @@ app.post("/market/sell", async (req, res) => {
   const moisturePenalty = moistureSellPenalty(inv.moisture);
   // Écouler un gros lot d'un coup fait plonger le cours obtenu : c'est ce qui
   // rend l'étalement des ventes — ou la criée — réellement plus rentable.
-  const slippage = volumeSlippage(body.data.tons, market.stockTons);
+  const slippage = volumeSlippage(tons, market.stockTons);
   const sale = sellToMarket({
-    tons: body.data.tons,
-    price: marketPricePerTon(market.price, body.data.tons, market.stockTons),
+    tons: tons,
+    price: marketPricePerTon(market.price, tons, market.stockTons),
     moisturePenalty,
   });
   const tick = tickMarket({
     commodity: body.data.commodity,
     price: market.price,
-    supplyTons: body.data.tons,
-    demandTons: body.data.tons * 0.9,
+    supplyTons: tons,
+    demandTons: tons * 0.9,
     stockTons: market.stockTons,
   });
   const xpGain = Math.round(10 * (1 + bonuses.xpBonus));
   const updated = await prisma.$transaction(async (tx) => {
-    await drawFromStock(tx, inv, body.data.tons);
+    await drawFromStock(tx, inv, tons);
     const u = await tx.user.update({
       where: { id: user.id },
       data: { crd: { increment: sale.revenue }, xp: { increment: xpGain } },
@@ -3510,6 +4071,7 @@ app.post("/market/sell", async (req, res) => {
   });
   res.json({
     revenue: sale.revenue,
+    tons,
     effectivePrice: sale.effectivePrice,
     slippage,
     moisturePenalty,
@@ -3695,6 +4257,12 @@ async function main() {
   app.listen(PORT, () => {
     console.log(`API Farming Navigateur sur http://localhost:${PORT}`);
     console.log(`Sim tick toutes les ${SIM_TICK_MS / 1000}s`);
+    if (DEV_TOOLS) {
+      console.warn(
+        "OUTILS DE TEST ACTIFS — /dev/grant distribue argent, niveau et stock. " +
+          "Retirez FARMSIM_DEV_TOOLS de l'environnement en production.",
+      );
+    }
   });
 }
 

@@ -664,3 +664,74 @@ export function happinessLabel(happiness: number): string {
   }
   return label;
 }
+
+/* ------------------------------------------------------------------ */
+/* Mortalité et âge du lot                                             */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Un troupeau affamé finit par perdre des bêtes.
+ *
+ * Sans cela, négliger son élevage ne coûtait rien : le bien-être tombait au
+ * plancher, la production s'effondrait, et le lot attendait indéfiniment que
+ * le joueur revienne. La faim devient une vraie perte, mais lente — on doit
+ * avoir le temps de réagir en rentrant.
+ */
+export const MORTALITY = {
+  /** En dessous de ce bien-être, les pertes commencent `[GD]` */
+  floor: 0.15,
+  /** Part du lot perdue par cycle, bien-être au plus bas `[GD]` */
+  perCycleAtWorst: 0.06,
+} as const;
+
+/**
+ * Pertes d'un lot sur une durée donnée.
+ *
+ * La dette fractionnaire est reportée d'un appel à l'autre : sans elle, un lot
+ * de trois bêtes ne perdrait jamais rien, la perte attendue par cycle restant
+ * sous l'unité. Elle est retournée pour être stockée.
+ */
+export function mortalityToll(input: {
+  happiness: number;
+  herdSize: number;
+  elapsedMs: number;
+  cycleMs: number;
+  debt: number;
+}): { deaths: number; debt: number } {
+  const size = Math.max(0, Math.floor(input.herdSize));
+  if (size <= 0) return { deaths: 0, debt: 0 };
+  if (input.happiness >= MORTALITY.floor) {
+    // Un troupeau qu'on remet d'aplomb ne traîne pas sa dette : la pression
+    // retombe avec la faim.
+    return { deaths: 0, debt: Math.max(0, input.debt - 0.25) };
+  }
+  const severity = clamp((MORTALITY.floor - input.happiness) / MORTALITY.floor, 0, 1);
+  const cycles = Math.max(0, input.elapsedMs) / Math.max(1, input.cycleMs);
+  const debt = input.debt + size * MORTALITY.perCycleAtWorst * severity * cycles;
+  const deaths = Math.min(size, Math.floor(debt));
+  return { deaths, debt: debt - deaths };
+}
+
+/** Âge des bêtes achetées : on achète du bétail élevé, pas des nouveau-nés `[GD]` */
+export const PURCHASED_AGE_MS = Math.round(0.6 * MEAT_MATURITY_MS);
+
+/**
+ * Âge moyen du lot après l'arrivée de bêtes plus jeunes — naissances ou achat.
+ *
+ * L'âge était celui du lot depuis sa création, si bien qu'un veau né le jour
+ * même comptait comme ses aînés à l'abattage. La moyenne se dilue désormais à
+ * chaque arrivée, au prorata des effectifs.
+ */
+export function blendedAgeMs(input: {
+  herdSize: number;
+  averageAgeMs: number;
+  added: number;
+  addedAgeMs: number;
+}): number {
+  const size = Math.max(0, Math.floor(input.herdSize));
+  const added = Math.max(0, Math.floor(input.added));
+  if (added <= 0) return Math.max(0, input.averageAgeMs);
+  const total = size + added;
+  if (total <= 0) return 0;
+  return Math.max(0, (input.averageAgeMs * size + input.addedAgeMs * added) / total);
+}

@@ -12,6 +12,13 @@
  *   compteur à zéro.
  * - La **charrue** retourne la terre en profondeur. Elle efface les résidus
  *   accumulés, donc le bonus, mais elle remet le sol à neuf.
+ * - Le **semis direct** ne travaille pas le sol du tout : le semoir ouvre un
+ *   sillon dans les chaumes et referme derrière lui. On économise un passage
+ *   entier, le sol garde son humidité et sa structure, et la couverture
+ *   permanente le protège de l'érosion. En échange les résidus restent en
+ *   surface au lieu d'être incorporés — donc aucun bonus de décomposition —,
+ *   la terre se réchauffe plus lentement au printemps et la levée est moins
+ *   régulière. Le rendement en pâtit, et rien ne décompacte.
  *
  * Au bout de trois récoltes sans labour, le sol est tassé et la pression des
  * adventices trop forte : la charrue devient obligatoire.
@@ -20,11 +27,12 @@
  */
 
 /** Travail réalisé sur une case depuis la dernière récolte. */
-export type SoilWork = "STUBBLE" | "PLOW";
+export type SoilWork = "STUBBLE" | "PLOW" | "DIRECT_SEED";
 
 export const SOIL_WORK_LABELS: Record<SoilWork, string> = {
   STUBBLE: "Déchaumage",
   PLOW: "Labour",
+  DIRECT_SEED: "Semis direct",
 };
 
 /** Récoltes possibles avant que la charrue ne devienne obligatoire `[GD]` */
@@ -73,6 +81,22 @@ export function plowRequired(state: Pick<SoilState, "harvestsSincePlow">): boole
   return state.harvestsSincePlow >= MAX_HARVESTS_BEFORE_PLOW;
 }
 
+/**
+ * Surcoût du semis direct, par case `[GD]`.
+ *
+ * Le semoir de semis direct est une machine autrement plus lourde qu'un semoir
+ * classique : il lui faut assez de poids et de disques pour percer un matelas
+ * de résidus. On paie donc un peu plus la graine mise en terre — mais on
+ * économise le passage de déchaumage, qui coûte davantage.
+ */
+export const DIRECT_SEED_COST_PER_CELL = 3;
+
+/** Perte de rendement du semis direct `[GD]` — levée irrégulière, sol froid */
+export const DIRECT_SEED_YIELD_MALUS = 0.1;
+
+/** Le sol couvert en permanence s'érode moins et se structure `[GD]` */
+export const DIRECT_SEED_FERTILITY_GAIN = 0.003;
+
 export type SoilWorkRefusal = "NO_STUBBLE" | "PLOW_REQUIRED";
 
 export const SOIL_WORK_REFUSAL_LABELS: Record<SoilWorkRefusal, string> = {
@@ -110,7 +134,34 @@ export function applyHarvest(state: SoilState): SoilState {
   };
 }
 
-/** Peut-on semer sur cette case, ou faut-il d'abord travailler le sol ? */
+/**
+ * Le semis direct est-il possible ? Il lui faut justement des chaumes — sans
+ * quoi c'est un semis ordinaire — et un sol qui n'a pas atteint sa limite de
+ * tassement, puisqu'il ne décompacte rien.
+ */
+export function canDirectSeed(state: SoilState): { ok: boolean; reason?: SoilWorkRefusal } {
+  if (!state.hasStubble) return { ok: false, reason: "NO_STUBBLE" };
+  if (plowRequired(state)) return { ok: false, reason: "PLOW_REQUIRED" };
+  return { ok: true };
+}
+
+/**
+ * Le sol après un semis direct : les chaumes sont percés, donc semés, mais
+ * rien n'a été incorporé — le compteur de résidus retombe à zéro — et rien n'a
+ * été décompacté, d'où une récolte de plus au compteur du labour.
+ */
+export function applyDirectSeed(state: SoilState): SoilState {
+  return {
+    harvestsSincePlow: Math.min(MAX_HARVESTS_BEFORE_PLOW, state.harvestsSincePlow + 1),
+    residuePasses: 0,
+    hasStubble: false,
+  };
+}
+
+/**
+ * Peut-on semer sur cette case sans autre forme de procès ? Des chaumes
+ * imposent un choix préalable : les travailler, ou semer directement dedans.
+ */
 export function canSow(state: SoilState): boolean {
   return !state.hasStubble;
 }
@@ -120,7 +171,9 @@ export function soilSummary(state: SoilState): string {
   if (state.hasStubble) {
     return plowRequired(state)
       ? "Chaumes · labour obligatoire"
-      : `Chaumes · ${MAX_HARVESTS_BEFORE_PLOW - state.harvestsSincePlow} récolte(s) avant labour`;
+      : `Chaumes · déchaumer, labourer ou semer direct · ${
+          MAX_HARVESTS_BEFORE_PLOW - state.harvestsSincePlow
+        } récolte(s) avant labour`;
   }
   const bonus = residueBonus(state.residuePasses);
   if (bonus > 0) return `Résidus incorporés · +${Math.round(bonus * 100)} % de rendement`;

@@ -1,8 +1,11 @@
 import { useEffect, useMemo, useRef } from "react";
 import * as THREE from "three";
 import {
+  BUILDING_ART,
   BUILDING_DEFS,
+  MACHINE_ART,
   RIPENESS_COLORS,
+  workAnimationMs,
   type BuildingType,
   type CropCode,
   type MachineType,
@@ -20,6 +23,8 @@ export type IsoCell = {
   fertilizedPasses?: number;
   /** Chaumes après moisson : la case n'est pas semable en l'état */
   hasStubble?: boolean;
+  /** Désherbage fait ; sans lui, les adventices concurrencent la culture */
+  weedsControlled?: boolean;
   /** Déchaumages consécutifs — le sol s'assombrit à mesure qu'il s'enrichit */
   residuePasses?: number;
   /** Type machine si kind === VEHICLE (sinon TRACTOR par défaut) */
@@ -99,27 +104,49 @@ const PREVIEW_BAD = 0xef4444;
 const DIRT = 0xa4835c;
 const PULSE = 0xfff2b0;
 
-const MACHINE_LOOK: Record<
-  MachineType,
-  { body: number; accent: number; w: number; h: number; d: number }
-> = {
-  TRACTOR: { body: 0x3d8f3a, accent: 0x2a6a28, w: 0.55, h: 0.28, d: 0.35 },
-  HARVESTER: { body: 0xc44a2f, accent: 0xd4a84b, w: 0.72, h: 0.32, d: 0.4 },
-  SPREADER: { body: 0x6a7380, accent: 0xc9a227, w: 0.5, h: 0.34, d: 0.42 },
-  DISC_HARROW: { body: 0x8a6a4a, accent: 0xb8bec4, w: 0.62, h: 0.22, d: 0.44 },
+
+const STUBBLE_SOIL = 0xe3cf98;
+const RESIDUE_SOIL = 0x8a7048;
+/** Terre labourée : brune et grasse, celle qui attend la semence. */
+const PLOWED_SOIL = 0x593a20;
+/** Terre sèche et craquelée, laissée par une culture perdue. */
+const DRY_SOIL = 0xb5a179;
+
+/**
+ * État visuel d'une case, tel qu'il doit se lire d'un coup d'œil.
+ *
+ * La couleur seule ne suffisait pas : rien ne distinguait une terre labourée
+ * d'un champ en chaumes, si bien qu'un joueur à qui l'on refusait un semis
+ * « il faut labourer » ne pouvait pas voir quelles cases traiter. Chaque état
+ * porte donc aussi un relief.
+ */
+type SoilLook = "PLOWED" | "STUBBLE" | "RESIDUE" | "DRY" | "WEEDS" | "PLAIN";
+
+function soilLook(c: IsoCell): SoilLook {
+  if (c.fieldStage === "SPOILED") return "DRY";
+  if (c.hasStubble) return "STUBBLE";
+  // Les résidus se lisent avant l'état « préparé », que le déchaumage et le
+  // labour partagent : c'est le compteur de résidus qui les distingue, le
+  // labour le remettant à zéro. Sans cet ordre, une terre déchaumée aurait
+  // l'aspect d'un labour et le joueur croirait son sol remis à neuf.
+  if ((c.residuePasses ?? 0) > 0) return "RESIDUE";
+  if (c.fieldStage === "PREPARED") return "PLOWED";
+  return "PLAIN";
+}
+
+const SOIL_COLORS: Record<SoilLook, number> = {
+  // Les adventices ne repeignent pas la case : elles s'y ajoutent. La teinte
+  // ne sert que si la table est consultée pour elles.
+  WEEDS: SOIL,
+  PLOWED: PLOWED_SOIL,
+  STUBBLE: STUBBLE_SOIL,
+  RESIDUE: RESIDUE_SOIL,
+  DRY: DRY_SOIL,
+  PLAIN: SOIL,
 };
 
-const STUBBLE_SOIL = 0xd9c48a;
-const RESIDUE_SOIL = 0x7f6a44;
-
 function cropColor(c: IsoCell, sim?: IsoSim): number {
-  if (c.kind !== "CROP") {
-    // Un champ moissonné se lit à sa couleur : chaume clair tant qu'il n'est
-    // pas travaillé, terre sombre une fois les résidus incorporés.
-    if (c.hasStubble) return STUBBLE_SOIL;
-    if ((c.residuePasses ?? 0) > 0) return RESIDUE_SOIL;
-    return SOIL;
-  }
+  if (c.kind !== "CROP") return SOIL_COLORS[soilLook(c)];
   // Passé la maturité, la teinte raconte la dégradation : l'or vire au brun
   // puis à la tige morte. C'est le seul signal qui prévienne le joueur.
   if (sim?.sim.ripeness) return RIPENESS_COLORS[sim.sim.ripeness.stage];
@@ -203,53 +230,74 @@ function makeCowMesh(): THREE.Group {
   return g;
 }
 
-function makeVehicleMesh(type: MachineType): THREE.Group {
-  const look = MACHINE_LOOK[type] ?? MACHINE_LOOK.TRACTOR;
+/**
+ * Rapport hauteur/largeur des illustrations : elles sont carrées, mais le
+ * bâtiment n'occupe pas tout le cadre et déborde vers le haut.
+ */
+const BUILDING_ART_RATIO = 1;
+
+/**
+ * Textures et matériaux des illustrations, mutualisés pour la session.
+ *
+ * La carte affiche désormais les images dessinées plutôt que des volumes
+ * reconstitués en boîtes : c'est la seule façon d'obtenir le rendu soigné que
+ * l'illustration promet. Un même bâtiment revenant souvent sur une parcelle,
+ * on ne recharge ni ne recompile rien.
+ */
+const artCache = new Map<string, THREE.MeshBasicMaterial>();
+let artLoader: THREE.TextureLoader | null = null;
+
+function artMaterial(url: string): THREE.MeshBasicMaterial {
+  const hit = artCache.get(url);
+  if (hit) return hit;
+  artLoader ??= new THREE.TextureLoader();
+  const tex = artLoader.load(url);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  tex.minFilter = THREE.LinearMipmapLinearFilter;
+  tex.generateMipmaps = true;
+  const mat = new THREE.MeshBasicMaterial({
+    map: tex,
+    transparent: true,
+    // Le seuil alpha évite d'avoir à trier les panneaux entre eux : chaque
+    // pixel est écrit ou rejeté, et la profondeur suffit à les ordonner.
+    alphaTest: 0.35,
+    side: THREE.DoubleSide,
+  });
+  mat.userData.shared = true;
+  artCache.set(url, mat);
+  return mat;
+}
+
+/**
+ * Un engin sur la carte : son illustration, posée sur son ombre.
+ *
+ * Les volumes en boîtes qui servaient jusqu'ici tenaient lieu d'illustration
+ * faute de mieux. Les dessins existaient pourtant déjà, mais ne s'affichaient
+ * que dans le garage.
+ */
+function makeVehicleSprite(type: MachineType, camera: THREE.Camera): THREE.Group {
   const g = new THREE.Group();
   g.userData.machineType = type;
 
-  const body = new THREE.Mesh(
-    new THREE.BoxGeometry(look.w, look.h, look.d),
-    new THREE.MeshLambertMaterial({ color: look.body, flatShading: true }),
+  const shadow = new THREE.Mesh(
+    new THREE.PlaneGeometry(0.7, 0.5),
+    new THREE.MeshBasicMaterial({
+      color: 0x2c3b2a,
+      transparent: true,
+      opacity: 0.22,
+      depthWrite: false,
+    }),
   );
-  body.castShadow = true;
-  body.position.y = look.h / 2;
-  g.add(body);
+  shadow.rotation.x = -Math.PI / 2;
+  shadow.position.y = 0.01;
+  g.add(shadow);
 
-  if (type === "TRACTOR") {
-    const cabin = new THREE.Mesh(
-      new THREE.BoxGeometry(0.28, 0.22, 0.28),
-      new THREE.MeshLambertMaterial({ color: look.accent, flatShading: true }),
-    );
-    cabin.position.set(-0.05, look.h + 0.08, 0);
-    cabin.castShadow = true;
-    g.add(cabin);
-  } else if (type === "HARVESTER") {
-    const header = new THREE.Mesh(
-      new THREE.BoxGeometry(0.22, 0.12, 0.55),
-      new THREE.MeshLambertMaterial({ color: look.accent, flatShading: true }),
-    );
-    header.position.set(look.w * 0.42, look.h * 0.35, 0);
-    header.castShadow = true;
-    g.add(header);
-    const pipe = new THREE.Mesh(
-      new THREE.BoxGeometry(0.12, 0.35, 0.12),
-      new THREE.MeshLambertMaterial({ color: 0x888888, flatShading: true }),
-    );
-    pipe.position.set(-0.15, look.h + 0.12, 0);
-    g.add(pipe);
-  } else {
-    // SPREADER — cuve dorée
-    const tank = new THREE.Mesh(
-      new THREE.CylinderGeometry(0.16, 0.18, 0.38, 6),
-      new THREE.MeshLambertMaterial({ color: look.accent, flatShading: true }),
-    );
-    tank.rotation.z = Math.PI / 2;
-    tank.position.set(0, look.h + 0.06, 0);
-    tank.castShadow = true;
-    g.add(tank);
-  }
-
+  const size = type === "HARVESTER" ? 1.15 : 0.95;
+  const art = new THREE.Mesh(new THREE.PlaneGeometry(size, size), artMaterial(MACHINE_ART[type]));
+  art.quaternion.copy(camera.quaternion);
+  art.translateY(size / 2);
+  art.name = "art";
+  g.add(art);
   return g;
 }
 
@@ -432,6 +480,26 @@ export function IsoFarmView({
     const workGroup = new THREE.Group();
     world.add(workGroup);
     let workVehicle: THREE.Group | null = null;
+    /** Cases à parcourir, ordonnées en va-et-vient rang par rang. */
+    let workPath: { x: number; y: number }[] = [];
+
+    /** Bouffées de poussière derrière l'engin au travail. */
+    const dustPuffs: THREE.Mesh[] = [];
+    for (let i = 0; i < 3; i++) {
+      const puff = new THREE.Mesh(
+        new THREE.PlaneGeometry(1, 1),
+        new THREE.MeshBasicMaterial({
+          color: 0xd9c9a8,
+          transparent: true,
+          opacity: 0,
+          depthWrite: false,
+        }),
+      );
+      puff.visible = false;
+      puff.quaternion.copy(camera.quaternion);
+      workGroup.add(puff);
+      dustPuffs.push(puff);
+    }
 
     const previewGroup = new THREE.Group();
     world.add(previewGroup);
@@ -465,6 +533,13 @@ export function IsoFarmView({
     /** Uniquement les dalles de sol — les engins ne bloquent pas le clic */
     const pickables: THREE.Object3D[] = [];
 
+    /**
+     * Cadrage choisi par le joueur, conservé d'une reconstruction de scène à
+     * l'autre. Le zoom vaut 1 quand la parcelle tient juste dans l'écran.
+     */
+    const view = { zoom: 1, panX: 0, panZ: 0 };
+    let viewSpan = 12;
+
     let cellSize = 1;
     let step = 1.06;
     let ox = 0;
@@ -485,6 +560,195 @@ export function IsoFarmView({
       return sharedTile.geo;
     }
 
+    /** Le relief du sol et les épis, reconstruits à chaque `layout()`. */
+    const reliefGroup = new THREE.Group();
+    const earGroup = new THREE.Group();
+    world.add(reliefGroup, earGroup);
+
+    /**
+     * Donne du grain aux états du sol.
+     *
+     * La couleur seule ne suffit pas à lire un champ : « j'ai labouré et
+     * pourtant je ne peux pas replanter » vient de là. On grave donc des
+     * sillons sur la terre labourée, on laisse des tiges coupées sur les
+     * chaumes, on craquelle la terre sèche.
+     *
+     * Tout passe par des maillages instanciés : un seul appel de dessin par
+     * type de relief, quelle que soit la surface concernée.
+     */
+    function buildSoilRelief(
+      details: { look: SoilLook; px: number; pz: number }[],
+      size: number,
+    ) {
+      while (reliefGroup.children.length) {
+        const c = reliefGroup.children[0];
+        reliefGroup.remove(c);
+        disposeObject3D(c);
+      }
+      if (!details.length) return;
+
+      // Sillons, tiges et craquelures : forme, matière et disposition.
+      // Les tailles sont celles d'une illustration, pas d'un relevé de terrain.
+      // Une première version reproduisait les proportions réelles : sur un
+      // écran où une case fait quarante pixels, les sillons en occupaient deux
+      // et les craquelures un. Invisibles, donc inutiles.
+      const kinds: {
+        look: SoilLook;
+        geo: THREE.BoxGeometry;
+        color: number;
+        /** Décalages, en fraction de case, des exemplaires posés par case */
+        spots: [number, number][];
+        /** Hauteur du relief ; sa base est posée sur le dessus de la dalle */
+        h: number;
+      }[] = [
+        {
+          // Crêtes claires sur terre sombre : c'est ainsi qu'un labour se lit,
+          // la lumière accrochant le sommet des billons.
+          look: "PLOWED",
+          geo: new THREE.BoxGeometry(size * 0.88, 0.16, size * 0.13),
+          color: 0x8a6239,
+          spots: [
+            [0, -0.3],
+            [0, -0.1],
+            [0, 0.1],
+            [0, 0.3],
+          ],
+          h: 0.16,
+        },
+        {
+          look: "STUBBLE",
+          geo: new THREE.BoxGeometry(size * 0.1, 0.28, size * 0.1),
+          color: 0xb59a55,
+          spots: [
+            [-0.26, -0.22],
+            [0.04, -0.28],
+            [0.24, -0.04],
+            [-0.1, 0.18],
+            [0.22, 0.28],
+          ],
+          h: 0.28,
+        },
+        {
+          look: "RESIDUE",
+          geo: new THREE.BoxGeometry(size * 0.3, 0.1, size * 0.12),
+          color: 0x4f3d22,
+          spots: [
+            [-0.2, -0.18],
+            [0.18, 0.02],
+            [-0.02, 0.26],
+            [0.26, -0.26],
+          ],
+          h: 0.1,
+        },
+        {
+          // Touffes d'adventices : basses, désordonnées, d'un vert cru qui
+          // tranche avec la culture en place.
+          look: "WEEDS",
+          geo: new THREE.BoxGeometry(size * 0.12, 0.2, size * 0.12),
+          color: 0x5f9c3a,
+          spots: [
+            [-0.3, 0.3],
+            [0.31, -0.29],
+            [0.34, 0.33],
+          ],
+          h: 0.2,
+        },
+        {
+          look: "DRY",
+          geo: new THREE.BoxGeometry(size * 0.66, 0.09, size * 0.07),
+          color: 0x5f4c33,
+          spots: [
+            [0, -0.18],
+            [0, 0.06],
+            [0, 0.28],
+          ],
+          h: 0.09,
+        },
+      ];
+
+      const m = new THREE.Matrix4();
+      for (const kind of kinds) {
+        const cells = details.filter((d) => d.look === kind.look);
+        if (!cells.length) {
+          kind.geo.dispose();
+          continue;
+        }
+        const count = cells.length * kind.spots.length;
+        const mesh = new THREE.InstancedMesh(
+          kind.geo,
+          new THREE.MeshLambertMaterial({ color: kind.color, flatShading: true }),
+          count,
+        );
+        mesh.receiveShadow = true;
+        let i = 0;
+        for (const cellPos of cells) {
+          for (const [dx, dz] of kind.spots) {
+            // Une craquelure alternée d'une case à l'autre évite le damier
+            // trop régulier qui trahit la génération.
+            const jitter = kind.look === "DRY" ? ((cellPos.px + cellPos.pz) % 2 === 0 ? 0.08 : -0.08) : 0;
+            // La dalle culmine à 0,09 : le relief se pose dessus, il ne s'y
+            // enfonce pas.
+            m.makeTranslation(
+              cellPos.px + (dx + jitter) * size,
+              0.09 + kind.h / 2,
+              cellPos.pz + dz * size,
+            );
+            mesh.setMatrixAt(i++, m);
+          }
+        }
+        mesh.instanceMatrix.needsUpdate = true;
+        reliefGroup.add(mesh);
+      }
+    }
+
+    /**
+     * Coiffe les cultures mûres d'épis. Le blé en porte plusieurs, fins et
+     * dorés ; le maïs un seul, trapu. C'est le signal « récoltable » le plus
+     * direct qu'on puisse donner sur la grille elle-même.
+     */
+    function buildEars(spots: { px: number; pz: number; y: number; maize: boolean }[], size: number) {
+      while (earGroup.children.length) {
+        const c = earGroup.children[0];
+        earGroup.remove(c);
+        disposeObject3D(c);
+      }
+      if (!spots.length) return;
+
+      const m = new THREE.Matrix4();
+      for (const maize of [false, true]) {
+        const group = spots.filter((s) => s.maize === maize);
+        if (!group.length) continue;
+        const offsets: [number, number][] = maize
+          ? [[0, 0]]
+          : [
+              [-0.13, -0.08],
+              [0.13, 0.06],
+              [0, 0.16],
+            ];
+        const geo = maize
+          ? new THREE.BoxGeometry(size * 0.2, 0.2, size * 0.2)
+          : new THREE.BoxGeometry(size * 0.09, 0.15, size * 0.09);
+        const mesh = new THREE.InstancedMesh(
+          geo,
+          new THREE.MeshLambertMaterial({
+            color: maize ? 0xf0c33c : 0xe6c95f,
+            flatShading: true,
+          }),
+          group.length * offsets.length,
+        );
+        mesh.castShadow = true;
+        let i = 0;
+        for (const s of group) {
+          for (const [dx, dz] of offsets) {
+            m.makeTranslation(s.px + dx * size, s.y + 0.06, s.pz + dz * size);
+            mesh.setMatrixAt(i++, m);
+          }
+        }
+        mesh.instanceMatrix.needsUpdate = true;
+        earGroup.add(mesh);
+      }
+    }
+
     function cellWorldPos(x: number, y: number) {
       return { px: ox + x * step, pz: oz + y * step };
     }
@@ -495,6 +759,7 @@ export function IsoFarmView({
         disposeObject3D(workVehicle);
         workVehicle = null;
       }
+      for (const puff of dustPuffs) puff.visible = false;
     }
 
     function layout() {
@@ -568,20 +833,42 @@ export function IsoFarmView({
         m.castShadow = true;
         fenceGroup.add(m);
       });
-      const treeMat = new THREE.MeshLambertMaterial({ color: 0x2f6b32, flatShading: true });
-      const trunkMat = new THREE.MeshLambertMaterial({ color: 0x5a3a22, flatShading: true });
+      // Les arbres étaient deux cubes empilés, ce qui jurait franchement avec
+      // des bâtiments dessinés. Ils reçoivent leur illustration, comme le
+      // reste de la carte.
       for (const [tx, tz] of [
         [-hw / 2, -hh / 2],
         [hw / 2, -hh / 2],
         [-hw / 2, hh / 2],
         [hw / 2, hh / 2],
       ] as const) {
-        const trunk = new THREE.Mesh(new THREE.BoxGeometry(0.18, 0.5, 0.18), trunkMat);
-        trunk.position.set(tx, 0.2, tz);
-        const crown = new THREE.Mesh(new THREE.BoxGeometry(0.55, 0.55, 0.55), treeMat);
-        crown.position.set(tx, 0.65, tz);
-        fenceGroup.add(trunk, crown);
+        const shade = new THREE.Mesh(
+          new THREE.PlaneGeometry(0.8, 0.6),
+          new THREE.MeshBasicMaterial({
+            color: 0x2c3b2a,
+            transparent: true,
+            opacity: 0.2,
+            depthWrite: false,
+          }),
+        );
+        shade.rotation.x = -Math.PI / 2;
+        shade.position.set(tx, 0.02, tz);
+        fenceGroup.add(shade);
+
+        const tree = new THREE.Mesh(
+          new THREE.PlaneGeometry(1.5, 2),
+          artMaterial("/assets/decor/tree.webp"),
+        );
+        tree.quaternion.copy(camera.quaternion);
+        tree.position.set(tx, 0, tz);
+        tree.translateY(1);
+        fenceGroup.add(tree);
       }
+
+        /** Relief à semer sur les cases une fois la grille posée. */
+      const soilDetails: { look: SoilLook; px: number; pz: number }[] = [];
+      /** Épis des cultures arrivées à maturité. */
+      const ears: { px: number; pz: number; y: number; maize: boolean }[] = [];
 
       for (let y = 0; y < gh; y++) {
         for (let x = 0; x < gw; x++) {
@@ -590,10 +877,21 @@ export function IsoFarmView({
           const isSel = sel.some((s) => s.x === x && s.y === y);
           const { px, pz } = cellWorldPos(x, y);
 
-          let col = (x + y) % 2 === 0 ? SOIL : SOIL_DARK;
+          // Le damier ne vaut que pour une terre au repos. Dès qu'une case a
+          // été travaillée ou moissonnée, sa couleur dit son état — sans quoi
+          // rien ne distingue un labour de chaumes, et le joueur ne sait pas
+          // quelles cases traiter.
+          const look = cell ? soilLook(cell) : "PLAIN";
+          let col = look === "PLAIN" ? ((x + y) % 2 === 0 ? SOIL : SOIL_DARK) : SOIL_COLORS[look];
           if (cell?.kind === "CROP") col = cropColor(cell, sim);
           if (cell?.kind === "BUILDING") col = DIRT;
           if (cell?.kind === "VEHICLE") col = 0x3a3f44;
+          if (cell && cell.kind === "EMPTY" && look !== "PLAIN") soilDetails.push({ look, px, pz });
+          // Les adventices pesaient sur le rendement sans jamais se montrer.
+          // Une culture non désherbée porte donc ses touffes parasites.
+          if (cell?.kind === "CROP" && !cell.weedsControlled) {
+            soilDetails.push({ look: "WEEDS", px, pz });
+          }
 
           const mat = new THREE.MeshLambertMaterial({
             color: isSel ? SELECT_GLOW : col,
@@ -608,21 +906,33 @@ export function IsoFarmView({
           pickables.push(mesh);
 
           if (cell?.kind === "CROP") {
-            const h = 0.15 + (sim?.sim.progress ?? 0.25) * 0.55;
-            // Hauteur portée par l'échelle plutôt que par la géométrie : la
-            // touffe ne diffère que par sa taille, une seule boîte unitaire
-            // sert donc les cent quarante-quatre cases.
+            const progress = sim?.sim.progress ?? 0.25;
+            const lost = cell.fieldStage === "SPOILED" || sim?.sim.ripeness?.stage === "LOST";
+            // Le maïs monte plus haut et plus étroit que le blé : c'est à la
+            // silhouette qu'on reconnaît une culture de loin, pas à sa teinte.
+            const tall = cell.crop === "MAIZE";
+            const full = tall ? 0.98 : 0.7;
+            // Une culture desséchée s'affaisse. Elle doit se voir comme une
+            // perte, pas comme une récolte qui attend.
+            const h = lost ? 0.22 : 0.12 + progress * (full - 0.12);
             const crop = new THREE.Mesh(cropGeometry(), cropMaterial(cropColor(cell, sim)));
-            crop.scale.y = h;
+            crop.scale.set(tall ? 0.74 : 1, h, tall ? 0.74 : 1);
             crop.position.set(px, 0.1 + h / 2, pz);
+            if (lost) crop.rotation.z = 0.12;
             crop.castShadow = true;
             world.add(crop);
             cropMeshes.set(key(x, y), crop);
+
+            // Épis : ils ne sortent qu'à maturité et signalent la récolte
+            // possible sans qu'il faille lire un panneau.
+            if (!lost && (sim?.sim.ready || cell.fieldStage === "READY")) {
+              ears.push({ px, pz, y: 0.1 + h, maize: tall });
+            }
           }
 
           if (cell?.kind === "VEHICLE") {
             const mType = (cell.machineType as MachineType) || "TRACTOR";
-            const vg = makeVehicleMesh(mType);
+            const vg = makeVehicleSprite(mType, camera);
             vg.position.set(px, 0.12, pz);
             vg.userData.baseX = px;
             vg.userData.baseY = 0.12;
@@ -634,249 +944,77 @@ export function IsoFarmView({
         }
       }
 
+      buildSoilRelief(soilDetails, cellSize);
+      buildEars(ears, cellSize);
+
       for (const b of bs) {
         const def = BUILDING_DEFS[b.type];
-        const pal = buildingPalette(b.type);
         const level = Math.max(1, Math.min(5, b.level ?? 1));
-        // Le bâtiment prend de la hauteur et se garnit à chaque palier.
-        const grow = 1 + (level - 1) * 0.16;
-        const height = pal.h * grow;
         const cx = ox + (b.originX + (def.w - 1) / 2) * step;
         const cz = oz + (b.originY + (def.h - 1) / 2) * step;
-        const bw = def.w * step - gap;
-        const bd = def.h * step - gap;
-        const bodyMat = new THREE.MeshLambertMaterial({
-          color: pal.body,
-          flatShading: true,
-        });
-        const roofMat = new THREE.MeshLambertMaterial({
-          color: pal.roof,
-          flatShading: true,
-        });
 
-        if (b.type === "PADDOCK" || b.type === "PIG_YARD") {
-          const isPigYard = b.type === "PIG_YARD";
-          // Un enclos n'est pas un bâtiment : de l'herbe, une clôture, un
-          // abreuvoir. Lui coller un toit ferait exactement le contraire de
-          // ce qu'il représente.
-          const grass = new THREE.Mesh(
-            new THREE.BoxGeometry(bw, 0.08, bd),
-            new THREE.MeshLambertMaterial({
-              color: isPigYard ? 0x8a6f52 : 0x8fcf6a,
-              flatShading: true,
-            }),
-          );
-          grass.position.set(cx, 0.04, cz);
-          grass.receiveShadow = true;
-          buildingGroup.add(grass);
+        // Ombre portée peinte au sol : une image plate posée dans une scène 3D
+        // flotte tant que rien ne l'y rattache. Ce disque sombre coûte un
+        // maillage et fait tout le travail.
+        const shadow = new THREE.Mesh(
+          new THREE.PlaneGeometry(def.w * step * 0.82, def.h * step * 0.82),
+          new THREE.MeshBasicMaterial({
+            color: 0x2c3b2a,
+            transparent: true,
+            opacity: 0.22,
+            depthWrite: false,
+          }),
+        );
+        shadow.rotation.x = -Math.PI / 2;
+        shadow.position.set(cx, 0.1, cz);
+        buildingGroup.add(shadow);
 
-          const postMat = new THREE.MeshLambertMaterial({
-            color: WOOD_WARM,
-            flatShading: true,
-          });
-          const railMat = new THREE.MeshLambertMaterial({
-            color: 0xd8b689,
-            flatShading: true,
-          });
-          const halfW = bw / 2;
-          const halfD = bd / 2;
-          for (const [sx, sz, len, horizontal] of [
-            [0, -halfD, bw, true],
-            [0, halfD, bw, true],
-            [-halfW, 0, bd, false],
-            [halfW, 0, bd, false],
-          ] as [number, number, number, boolean][]) {
-            for (const rail of [0.22, 0.4]) {
-              const bar = new THREE.Mesh(
-                horizontal
-                  ? new THREE.BoxGeometry(len, 0.04, 0.05)
-                  : new THREE.BoxGeometry(0.05, 0.04, len),
-                railMat,
-              );
-              bar.position.set(cx + sx, rail, cz + sz);
-              buildingGroup.add(bar);
-            }
-          }
-          for (const [px, pz] of [
-            [-halfW, -halfD],
-            [halfW, -halfD],
-            [-halfW, halfD],
-            [halfW, halfD],
-          ]) {
-            const post = new THREE.Mesh(new THREE.BoxGeometry(0.09, 0.5, 0.09), postMat);
-            post.position.set(cx + px, 0.25, cz + pz);
-            post.castShadow = true;
-            buildingGroup.add(post);
-          }
-
-          const trough = new THREE.Mesh(
-            new THREE.BoxGeometry(0.42, 0.14, 0.2),
-            new THREE.MeshLambertMaterial({ color: 0x8a9299, flatShading: true }),
-          );
-          trough.position.set(cx + halfW * 0.5, 0.11, cz - halfD * 0.5);
-          buildingGroup.add(trough);
-          continue;
-        }
-
-        if (b.type === "SILO") {
-          // Un silo de plus tous les deux paliers, comme sur la planche d'art.
-          const tanks = 1 + Math.floor(level / 2);
-          const spread = 0.34;
-          for (let i = 0; i < tanks; i++) {
-            const offX = (i - (tanks - 1) / 2) * spread;
-            const tankH = height * (i === 0 ? 1 : 0.86);
-            const cyl = new THREE.Mesh(
-              new THREE.CylinderGeometry(0.3, 0.33, tankH, 10),
-              bodyMat,
-            );
-            cyl.position.set(cx + offX, tankH / 2, cz + (i % 2 ? 0.18 : -0.12));
-            cyl.castShadow = true;
-            buildingGroup.add(cyl);
-            const cap = new THREE.Mesh(new THREE.ConeGeometry(0.35, 0.28, 10), roofMat);
-            cap.position.set(cyl.position.x, tankH + 0.12, cyl.position.z);
-            buildingGroup.add(cap);
-          }
-        } else {
-          // Chaque palier change la SILHOUETTE, pas seulement l'échelle : un
-          // appentis, puis un pignon relevé, puis une aile en L, puis une
-          // toiture industrielle. C'est ce qui rend l'amélioration lisible de
-          // loin, comme sur la planche d'art de référence.
-          const body = new THREE.Mesh(new THREE.BoxGeometry(bw, height, bd), bodyMat);
-          body.position.set(cx, height / 2, cz);
-          body.castShadow = true;
-          buildingGroup.add(body);
-
-          const trimMat = new THREE.MeshLambertMaterial({
-            color: 0x8a6a4a,
-            flatShading: true,
-          });
-          const metalMat = new THREE.MeshLambertMaterial({
-            color: 0xd8dde2,
-            flatShading: true,
-          });
-
-          if (level <= 2) {
-            // Toit à deux pans simple, faîtage bas.
-            const ridge = new THREE.Mesh(
-              new THREE.CylinderGeometry(bd * 0.58, bd * 0.58, bw * 1.06, 3, 1),
-              roofMat,
-            );
-            ridge.rotation.z = Math.PI / 2;
-            ridge.rotation.y = Math.PI / 2;
-            ridge.position.set(cx, height + bd * 0.2, cz);
-            ridge.castShadow = true;
-            buildingGroup.add(ridge);
-          } else if (level === 3) {
-            // Pignon relevé et lucarne : le bâtiment prend de la prestance.
-            const ridge = new THREE.Mesh(
-              new THREE.CylinderGeometry(bd * 0.72, bd * 0.72, bw * 1.1, 3, 1),
-              roofMat,
-            );
-            ridge.rotation.z = Math.PI / 2;
-            ridge.rotation.y = Math.PI / 2;
-            ridge.position.set(cx, height + bd * 0.3, cz);
-            ridge.castShadow = true;
-            buildingGroup.add(ridge);
-
-            const dormer = new THREE.Mesh(
-              new THREE.BoxGeometry(bw * 0.26, bd * 0.34, bd * 0.42),
-              bodyMat,
-            );
-            dormer.position.set(cx - bw * 0.12, height + bd * 0.3, cz + bd * 0.24);
-            buildingGroup.add(dormer);
-          } else {
-            // Toiture industrielle en deux volumes décalés : la silhouette
-            // devient franchement rectiligne, plus « usine » que « grange ».
-            const main = new THREE.Mesh(
-              new THREE.BoxGeometry(bw * 1.06, bd * 0.3, bd * 1.06),
-              roofMat,
-            );
-            main.position.set(cx, height + bd * 0.15, cz);
-            main.rotation.z = 0.06;
-            main.castShadow = true;
-            buildingGroup.add(main);
-
-            const clerestory = new THREE.Mesh(
-              new THREE.BoxGeometry(bw * 0.5, bd * 0.24, bd * 0.5),
-              metalMat,
-            );
-            clerestory.position.set(cx, height + bd * 0.42, cz);
-            buildingGroup.add(clerestory);
-          }
-
-          if (level === 2) {
-            // Appentis accolé : le premier signe visible d'agrandissement.
-            const lean = new THREE.Mesh(
-              new THREE.BoxGeometry(bw * 0.3, height * 0.6, bd * 0.82),
-              trimMat,
-            );
-            lean.position.set(cx + bw * 0.62, height * 0.3, cz);
-            lean.castShadow = true;
-            buildingGroup.add(lean);
-            const leanRoof = new THREE.Mesh(
-              new THREE.BoxGeometry(bw * 0.36, 0.08, bd * 0.9),
-              roofMat,
-            );
-            leanRoof.position.set(cx + bw * 0.62, height * 0.62, cz);
-            leanRoof.rotation.z = -0.16;
-            buildingGroup.add(leanRoof);
-          }
-
-          if (level >= 3) {
-            const chimney = new THREE.Mesh(new THREE.BoxGeometry(0.14, 0.4, 0.14), trimMat);
-            chimney.position.set(cx + bw * 0.3, height + bd * 0.48, cz - bd * 0.22);
-            chimney.castShadow = true;
-            buildingGroup.add(chimney);
-          }
-
-          if (level >= 4) {
-            // Aile en L : l'emprise visuelle déborde, le bâtiment n'est plus
-            // une simple boîte.
-            const wing = new THREE.Mesh(
-              new THREE.BoxGeometry(bw * 0.44, height * 0.78, bd * 0.6),
-              bodyMat,
-            );
-            wing.position.set(cx - bw * 0.6, height * 0.39, cz + bd * 0.3);
-            wing.castShadow = true;
-            buildingGroup.add(wing);
-            const wingRoof = new THREE.Mesh(
-              new THREE.BoxGeometry(bw * 0.5, 0.1, bd * 0.66),
-              roofMat,
-            );
-            wingRoof.position.set(cx - bw * 0.6, height * 0.8, cz + bd * 0.3);
-            buildingGroup.add(wingRoof);
-          }
-
-          if (level >= 5) {
-            for (const side of [-1, 1]) {
-              const tank = new THREE.Mesh(
-                new THREE.CylinderGeometry(0.19, 0.19, height * 0.95, 10),
-                metalMat,
-              );
-              tank.position.set(cx + bw * 0.58 * side, height * 0.48, cz - bd * 0.3);
-              tank.castShadow = true;
-              buildingGroup.add(tank);
-            }
-            const walkway = new THREE.Mesh(
-              new THREE.BoxGeometry(bw * 1.2, 0.06, 0.12),
-              metalMat,
-            );
-            walkway.position.set(cx, height * 0.95, cz - bd * 0.3);
-            buildingGroup.add(walkway);
-          }
-        }
+        // L'illustration elle-même. Le panneau fait face à la caméra, qui ne
+        // pivote jamais dans cette vue : l'image isométrique tombe donc juste.
+        // Chaque palier agrandit le bâtiment — la silhouette dessinée ne
+        // change pas, mais l'emprise visuelle dit le niveau.
+        const grow = 1 + (level - 1) * 0.1;
+        const spanX = (def.w + def.h) * step * 0.56 * grow;
+        const spanY = spanX * BUILDING_ART_RATIO;
+        const art = new THREE.Mesh(
+          new THREE.PlaneGeometry(spanX, spanY),
+          artMaterial(BUILDING_ART[b.type]),
+        );
+        art.quaternion.copy(camera.quaternion);
+        // Le bas de l'image repose sur le sol de la case, sans quoi le
+        // bâtiment paraîtrait enfoncé ou suspendu.
+        art.position.set(cx, 0.1, cz);
+        art.translateY(spanY / 2);
+        buildingGroup.add(art);
       }
 
-      const span = Math.max(gw, gh) * step;
-      const frustum = span * 0.72;
+      viewSpan = Math.max(gw, gh) * step;
+      applyCamera();
+    }
+
+    /**
+     * Cadre la caméra en tenant compte du zoom et du déplacement du joueur.
+     *
+     * Séparé de `layout()` : la scène se reconstruit à chaque changement de
+     * données, et recadrer d'office renverrait le joueur au centre à chaque
+     * fois — insupportable dès qu'on travaille sur un coin de la parcelle.
+     */
+    function applyCamera() {
+      const span = viewSpan;
       const aspect = el.clientWidth / Math.max(1, el.clientHeight);
+      // Le cadrage se réglait sur la hauteur seule. Sur un écran en portrait,
+      // l'étendue horizontale — la hauteur multipliée par le rapport, donc
+      // plus petite — ne suffisait pas à contenir la parcelle : on atterrissait
+      // dans un coin, la grille coupée des deux côtés. On recule jusqu'à ce
+      // qu'elle tienne dans la dimension la plus étroite.
+      const frustum = (span * 0.72) / Math.min(1, aspect) / view.zoom;
       camera.left = -frustum * aspect;
       camera.right = frustum * aspect;
       camera.top = frustum;
       camera.bottom = -frustum;
       camera.updateProjectionMatrix();
-      camera.position.set(span * 0.95, span * 0.85, span * 0.95);
-      camera.lookAt(0, 0, 0);
+      camera.position.set(span * 0.95 + view.panX, span * 0.85, span * 0.95 + view.panZ);
+      camera.lookAt(view.panX, 0, view.panZ);
     }
 
     function resize() {
@@ -906,26 +1044,131 @@ export function IsoFarmView({
       pointer.y = -((ev.clientY - rect.top) / rect.height) * 2 + 1;
     }
 
+    /**
+     * Déplacement et zoom au doigt.
+     *
+     * Une grille de douze sur douze tient à peine sur un téléphone : sans
+     * pouvoir approcher ni faire glisser, viser une case relève de la chance.
+     *
+     * Le clic ne part qu'au relâchement, et seulement si le doigt n'a
+     * pratiquement pas bougé : autrement, chaque déplacement de la vue
+     * sèmerait une case au passage.
+     */
+    const DRAG_SLOP_PX = 8;
+    const pointers = new Map<number, { x: number; y: number }>();
+    let dragged = false;
+    let pinchStart = 0;
+    let zoomStart = 1;
+    let lastX = 0;
+    let lastY = 0;
+
+    /** Unités du monde parcourues par un pixel d'écran, au zoom courant. */
+    function worldPerPixel(): number {
+      return (camera.right - camera.left) / Math.max(1, el.clientWidth);
+    }
+
+    /** Axes de l'écran ramenés au plan du sol, pour glisser dans le bon sens. */
+    const dragRight = new THREE.Vector3();
+    const dragUp = new THREE.Vector3();
+    function panBy(dxPx: number, dyPx: number) {
+      dragRight.setFromMatrixColumn(camera.matrix, 0).setY(0).normalize();
+      dragUp.setFromMatrixColumn(camera.matrix, 1).setY(0).normalize();
+      const k = worldPerPixel();
+      view.panX -= dragRight.x * dxPx * k + dragUp.x * -dyPx * k;
+      view.panZ -= dragRight.z * dxPx * k + dragUp.z * -dyPx * k;
+      // Sans borne, on perd la ferme de vue et plus rien ne la ramène.
+      const limit = viewSpan * 0.9;
+      view.panX = Math.max(-limit, Math.min(limit, view.panX));
+      view.panZ = Math.max(-limit, Math.min(limit, view.panZ));
+      applyCamera();
+    }
+
+    function setZoom(next: number) {
+      view.zoom = Math.max(0.6, Math.min(3.2, next));
+      applyCamera();
+    }
+
+    function pinchDistance(): number {
+      const [a, b] = [...pointers.values()];
+      return Math.hypot(a.x - b.x, a.y - b.y);
+    }
+
+    function onPointerDown(ev: PointerEvent) {
+      pointers.set(ev.pointerId, { x: ev.clientX, y: ev.clientY });
+      renderer.domElement.setPointerCapture?.(ev.pointerId);
+      lastX = ev.clientX;
+      lastY = ev.clientY;
+      dragged = false;
+      if (pointers.size === 2) {
+        pinchStart = pinchDistance();
+        zoomStart = view.zoom;
+        // Un pincement n'est jamais un clic, même si les doigts bougent peu.
+        dragged = true;
+      }
+    }
+
     function onPointerMove(ev: PointerEvent) {
+      if (!pointers.has(ev.pointerId)) {
+        // Survol à la souris, sans bouton enfoncé.
+        setPointerFromEvent(ev);
+        onHoverRef.current?.(raycastCell());
+        return;
+      }
+      pointers.set(ev.pointerId, { x: ev.clientX, y: ev.clientY });
+
+      if (pointers.size >= 2) {
+        if (pinchStart > 0) setZoom((zoomStart * pinchDistance()) / pinchStart);
+        return;
+      }
+
+      const dx = ev.clientX - lastX;
+      const dy = ev.clientY - lastY;
+      if (!dragged && Math.hypot(dx, dy) < DRAG_SLOP_PX) return;
+      dragged = true;
+      lastX = ev.clientX;
+      lastY = ev.clientY;
+      panBy(dx, dy);
+      onHoverRef.current?.(null);
+    }
+
+    function onPointerUp(ev: PointerEvent) {
+      const had = pointers.delete(ev.pointerId);
+      renderer.domElement.releasePointerCapture?.(ev.pointerId);
+      if (pointers.size < 2) pinchStart = 0;
+      if (!had || dragged || pointers.size > 0) return;
       setPointerFromEvent(ev);
       const cell = raycastCell();
-      onHoverRef.current?.(cell);
+      if (cell) onClickRef.current(cell.x, cell.y);
     }
 
     function onPointerLeave() {
       onHoverRef.current?.(null);
     }
 
-    function onPointer(ev: PointerEvent) {
-      setPointerFromEvent(ev);
-      const cell = raycastCell();
-      if (cell) onClickRef.current(cell.x, cell.y);
+    /**
+     * Zoom à la molette, en écouteur passif.
+     *
+     * Appeler `preventDefault` obligerait à déclarer l'écouteur bloquant, ce
+     * que Chrome signale comme une violation : il ne peut plus faire défiler
+     * la page avant de savoir si on l'y autorise. C'est inutile ici, la scène
+     * occupe un conteneur qui ne défile pas. La molette avec Ctrl est laissée
+     * au navigateur, à qui elle appartient.
+     */
+    function onWheel(ev: WheelEvent) {
+      if (ev.ctrlKey) return;
+      setZoom(view.zoom * (ev.deltaY < 0 ? 1.12 : 1 / 1.12));
     }
 
     renderer.domElement.style.cursor = "crosshair";
-    renderer.domElement.addEventListener("pointerdown", onPointer);
+    // Sans cela, le navigateur intercepte le glissement pour faire défiler la
+    // page et le zoom à deux doigts ne parvient jamais jusqu'ici.
+    renderer.domElement.style.touchAction = "none";
+    renderer.domElement.addEventListener("pointerdown", onPointerDown);
     renderer.domElement.addEventListener("pointermove", onPointerMove);
+    renderer.domElement.addEventListener("pointerup", onPointerUp);
+    renderer.domElement.addEventListener("pointercancel", onPointerUp);
     renderer.domElement.addEventListener("pointerleave", onPointerLeave);
+    renderer.domElement.addEventListener("wheel", onWheel, { passive: true });
 
     let raf = 0;
     // THREE.Clock est déprécié depuis r183 au profit de Timer, qui doit être
@@ -1154,7 +1397,7 @@ export function IsoFarmView({
         mat.color.copy(tmpColor);
       }
 
-      // Engin de travail : parcours simple des cases
+      // Engin de travail : parcours des cases, rang par rang.
       const workKey = aw
         ? `${aw.type}:${aw.cells.map((c) => `${c.x},${c.y}`).join("|")}`
         : "";
@@ -1163,20 +1406,29 @@ export function IsoFarmView({
         clearWorkVehicle();
         if (aw && aw.cells.length) {
           workStartRef.current = t;
-          workVehicle = makeVehicleMesh(aw.type);
+          workVehicle = makeVehicleSprite(aw.type, camera);
           workGroup.add(workVehicle);
+          // On ne traverse pas un champ en diagonale. L'engin descend un rang
+          // d'un bout à l'autre, tourne, et remonte le suivant en sens
+          // inverse : c'est le va-et-vient d'un vrai chantier, et cela se lit
+          // immédiatement comme un travail méthodique plutôt qu'un vol plané.
+          workPath = [...aw.cells].sort((p, q) =>
+            p.y !== q.y ? p.y - q.y : (p.y % 2 === 0 ? p.x - q.x : q.x - p.x),
+          );
+        } else {
+          workPath = [];
         }
       }
-      if (workVehicle && aw && aw.cells.length) {
-        const duration = Math.max(0.7, aw.cells.length * 0.28);
+      if (workVehicle && workPath.length) {
+        const duration = workAnimationMs(workPath.length) / 1000;
         const u = Math.min(1, (t - workStartRef.current) / duration);
-        const n = aw.cells.length;
+        const n = workPath.length;
         const f = u * Math.max(1, n - 1);
         const i0 = Math.min(n - 1, Math.floor(f));
         const i1 = Math.min(n - 1, i0 + 1);
         const local = f - i0;
-        const a = aw.cells[i0];
-        const b = aw.cells[i1];
+        const a = workPath[i0];
+        const b = workPath[i1];
         const pa = cellWorldPos(a.x, a.y);
         const pb = cellWorldPos(b.x, b.y);
         const px = pa.px + (pb.px - pa.px) * local;
@@ -1184,6 +1436,38 @@ export function IsoFarmView({
         workVehicle.position.set(px, 0.2 + Math.sin(t * 8) * 0.02, pz);
         workVehicle.rotation.y = Math.atan2(pb.px - pa.px, pb.pz - pa.pz) || 0;
         workVehicle.visible = u < 1;
+
+        // L'engin travaille : il tressaute et se balance légèrement. Une
+        // illustration ne peut pas faire tourner son rabatteur, mais elle peut
+        // cesser de glisser comme sur des rails.
+        const art = workVehicle.getObjectByName("art");
+        if (art) art.rotation.z = Math.sin(t * 16) * 0.025;
+
+        // La coupe se voit : chaque case franchie perd sa culture au passage,
+        // au lieu que le champ entier disparaisse d'un coup au rechargement.
+        if (aw?.type === "HARVESTER") {
+          for (let i = 0; i <= i0; i++) {
+            const done = cropMeshes.get(key(workPath[i].x, workPath[i].y));
+            if (done) done.visible = false;
+          }
+        }
+
+        // Poussière soulevée derrière l'engin : trois bouffées qui gonflent et
+        // s'effacent, décalées dans le temps.
+        for (let d = 0; d < dustPuffs.length; d++) {
+          const puff = dustPuffs[d];
+          const age = (t * 1.6 + d * 0.33) % 1;
+          puff.visible = true;
+          puff.position.set(
+            px - Math.sin(workVehicle.rotation.y) * (0.35 + age * 0.5),
+            0.12 + age * 0.16,
+            pz - Math.cos(workVehicle.rotation.y) * (0.35 + age * 0.5),
+          );
+          const s = 0.12 + age * 0.3;
+          puff.scale.setScalar(s);
+          (puff.material as THREE.MeshBasicMaterial).opacity = 0.32 * (1 - age);
+        }
+
         if (u >= 1) {
           // reste visible brièvement puis masqué jusqu’au prochain work
           workVehicle.visible = false;
@@ -1194,17 +1478,24 @@ export function IsoFarmView({
     }
     tick();
 
-    const sync = setInterval(() => layout(), 350);
+    // Un minuteur rappelait `layout()` trois fois par seconde, ce qui
+    // reconstruisait dalles, cultures, engins et bâtiments en continu et
+    // annulait purement et simplement la signature de scène censée l'éviter.
+    // Tout ce qui change l'apparence figure dans cette signature ; le reste —
+    // survol, sélection, aperçu de pose, météo, troupeaux au pré — est animé
+    // image par image dans `tick`, sans reconstruction.
     layoutRef.current = layout;
 
     return () => {
       cancelAnimationFrame(raf);
-      clearInterval(sync);
       layoutRef.current = null;
       ro.disconnect();
-      renderer.domElement.removeEventListener("pointerdown", onPointer);
+      renderer.domElement.removeEventListener("pointerdown", onPointerDown);
       renderer.domElement.removeEventListener("pointermove", onPointerMove);
+      renderer.domElement.removeEventListener("pointerup", onPointerUp);
+      renderer.domElement.removeEventListener("pointercancel", onPointerUp);
       renderer.domElement.removeEventListener("pointerleave", onPointerLeave);
+      renderer.domElement.removeEventListener("wheel", onWheel);
       while (previewGroup.children.length) {
         const c = previewGroup.children[0];
         previewGroup.remove(c);
@@ -1233,15 +1524,25 @@ export function IsoFarmView({
     const c = cells
       .map(
         (x) =>
-          `${x.x},${x.y},${x.kind},${x.crop ?? ""},${x.fieldStage ?? ""},${x.machineType ?? ""},${x.hasStubble ? 1 : 0},${x.residuePasses ?? 0}`,
+          `${x.x},${x.y},${x.kind},${x.crop ?? ""},${x.fieldStage ?? ""},${x.machineType ?? ""},${x.hasStubble ? 1 : 0},${x.residuePasses ?? 0},${x.weedsControlled ? 1 : 0}`,
       )
       .join("|");
     const b = buildings
       .map((x) => `${x.id},${x.type},${x.level ?? 1},${x.originX},${x.originY}`)
       .join("|");
-    // Seul le palier de maturité compte visuellement, pas la progression fine.
+    // Le palier de maturité donne la couleur, la progression donne la hauteur
+    // du plant. Cette dernière est continue : on l'arrondit au dixième, sans
+    // quoi la scène se reconstruirait à chaque sondage pour un plant qui a
+    // grandi d'un pixel. Un blé pousse en trois minutes, soit un redimen-
+    // sionnement toutes les vingt secondes — largement assez pour qu'on le
+    // voie pousser.
     const s = cellSims
-      .map((x) => `${x.x},${x.y},${x.sim.ripeness?.stage ?? (x.sim.ready ? "R" : "G")}`)
+      .map(
+        (x) =>
+          `${x.x},${x.y},${x.sim.ripeness?.stage ?? (x.sim.ready ? "R" : "G")},${Math.round(
+            x.sim.progress * 10,
+          )}`,
+      )
       .join("|");
     const sel = selected.map((x) => `${x.x},${x.y}`).join("|");
     return `${gridW}x${gridH}#${c}#${b}#${s}#${sel}`;

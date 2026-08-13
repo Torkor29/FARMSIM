@@ -16,6 +16,7 @@ enum Specialization {
 enum CropCode {
   WHEAT
   MAIZE
+  PEA
 }
 
 enum FieldStage {
@@ -80,6 +81,7 @@ model User {
   contracts      NpcContract[]  @relation("Provider")
   sessions       Session[]
   listings       MarketListing[] @relation("Selling")
+  futures        FuturesContract[] @relation("Futures")
   purchases      MarketListing[] @relation("Buying")
 }
 
@@ -168,6 +170,12 @@ model ParcelCell {
   residuePasses    Int        @default(0)
   /// Chaumes en place après moisson : il faut travailler le sol avant de semer
   hasStubble       Boolean    @default(false)
+  /// Semé dans les chaumes, sans travail du sol : rendement moindre
+  directSeeded     Boolean    @default(false)
+  /// Culture semée au cycle précédent, pour l'effet de rotation
+  lastCrop         CropCode?
+  /// Cycles consécutifs de cette même culture ; deux blés d'affilée se paient
+  cropStreak       Int        @default(0)
 
   @@unique([parcelId, x, y])
 }
@@ -198,6 +206,10 @@ model Herd {
   gestatingSince DateTime?
   /// Dernière mise bas
   lastCalvedAt  DateTime?
+  /// Âge moyen du lot, dilué à chaque naissance ou achat
+  avgAgeMs      Float     @default(0)
+  /// Pertes fractionnaires reportées : sans elles, un petit lot ne meurt jamais
+  mortalityDebt Float     @default(0)
 }
 
 model Building {
@@ -247,6 +259,37 @@ model MarketPrice {
   price     Float
   stockTons Float    @default(1000)
   updatedAt DateTime @updatedAt
+}
+
+/// Un engagement à livrer plus tard, à un prix fixé aujourd'hui.
+model FuturesContract {
+  id           String   @id @default(cuid())
+  sellerId     String
+  seller       User     @relation("Futures", fields: [sellerId], references: [id], onDelete: Cascade)
+  commodity    String
+  tons         Float
+  pricePerTon  Float
+  createdAt    DateTime @default(now())
+  dueAt        DateTime
+  /// OPEN, SETTLED ou DEFAULTED
+  status       String   @default("OPEN")
+  settledAt    DateTime?
+  /// Cours au moment du dénouement, pour dire au joueur si son pari valait
+  marketAtDue  Float?
+
+  @@index([sellerId, status])
+  @@index([status, dueAt])
+}
+
+/// Un relevé de cours. Sans mémoire des prix, le joueur ne peut ni juger si
+/// l'offre du jour est bonne, ni décider d'attendre : il vend au hasard.
+model MarketTick {
+  id        String   @id @default(cuid())
+  commodity String
+  price     Float
+  at        DateTime @default(now())
+
+  @@index([commodity, at])
 }
 
 /// Une annonce à la criée : un lot mis en vente par un joueur, qu'un autre

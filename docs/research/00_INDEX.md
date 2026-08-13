@@ -73,6 +73,10 @@ Chaque valeur chiffrée dans cette documentation est classée :
 | — | [42_TRADE.md](./42_TRADE.md) | Vendre : négociant, cours mondial, criée entre joueurs |
 | — | [43_LIVESTOCK_PRODUCE.md](./43_LIVESTOCK_PRODUCE.md) | Traire, abattre, nourrir ; courette à porcs ; formes des bâtiments |
 | — | [44_BREEDING_SPOILAGE.md](./44_BREEDING_SPOILAGE.md) | Reproduction du cheptel et péremption des denrées |
+| — | [45_ROTATION.md](./45_ROTATION.md) | Rotation des cultures : le blé sur blé se paie |
+| — | [46_MOBILE_SHELL.md](./46_MOBILE_SHELL.md) | Coque mobile : tiroirs du bas, gestes sur la grille |
+| — | [47_FUTURES.md](./47_FUTURES.md) | Contrats à terme : engager une récolte à venir |
+| — | [48_PLAN_MECANIQUES.md](./48_PLAN_MECANIQUES.md) | Plan : paille, ensilage, métiers, saisons, CUMA |
 
 ---
 

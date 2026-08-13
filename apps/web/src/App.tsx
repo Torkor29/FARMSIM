@@ -1,4 +1,4 @@
-import { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
 import {
   SPECIALIZATION_LABELS,
   BUILDING_ART,
@@ -15,6 +15,10 @@ import {
   machineResaleValue,
   soilSummary,
   MAX_HARVESTS_BEFORE_PLOW,
+  workAnimationMs,
+  DIRECT_SEED_COST_PER_CELL,
+  DIRECT_SEED_YIELD_MALUS,
+  rotationFactor,
   type FarmWork,
   type RipenessStage,
   type TradeGood,
@@ -33,7 +37,7 @@ import { AuthScreen } from "./AuthScreen";
 import type { GrazingHerd, PreviewBuilding } from "./IsoFarmView";
 import { ConfirmDialog, type ConfirmRequest } from "./ConfirmDialog";
 import { LivestockPanel, type BarnState } from "./LivestockPanel";
-import { MarketPanel, type Listing } from "./MarketPanel";
+import { MarketPanel, type Listing, type FuturesContract } from "./MarketPanel";
 import type { ContinentDetail, WorldContinent } from "./Onboarding";
 
 // Three.js pèse plus lourd que tout le reste de l'application réunie. L'écran
@@ -49,6 +53,9 @@ const Onboarding = lazy(() => import("./Onboarding").then((m) => ({ default: m.O
 import { SplashScreen } from "./SplashScreen";
 import { TutorialOverlay } from "./TutorialOverlay";
 import { TOKEN_KEY, TUTORIAL_KEY } from "./storage-keys";
+import { useIsMobile } from "./use-media-query";
+import { DevPanel, type DevGrant } from "./DevPanel";
+import { NO_ALERTS, tabBadge, useAwayAlerts, useNotificationState, type FarmAlerts } from "./use-alerts";
 import { ZoneMap } from "./ZoneMap";
 
 const API = "/api";
@@ -74,6 +81,10 @@ type Cell = {
   harvestsSincePlow?: number;
   residuePasses?: number;
   hasStubble?: boolean;
+  weedsControlled?: boolean;
+  directSeeded?: boolean;
+  lastCrop?: CropCode | null;
+  cropStreak?: number;
   buildingId?: string | null;
   machineId?: string | null;
   machineType?: MachineType | null;
@@ -168,6 +179,7 @@ type Tool =
   | "SELECT"
   | "PLANT_WHEAT"
   | "PLANT_MAIZE"
+  | "PLANT_PEA"
   | "FERTILIZE"
   | "HARVEST"
   | "STUBBLE"
@@ -200,10 +212,42 @@ function SceneLoading({ label }: { label: string }) {
   );
 }
 
+/**
+ * Conserve la référence précédente quand la charge utile est identique.
+ *
+ * Le jeu interroge le serveur toutes les quatre, huit et dix secondes. Chaque
+ * réponse produisait des objets neufs, même inchangés : React y voyait un
+ * changement, invalidait tous les mémos qui en dépendent et rerendait l'écran
+ * pour rien. Sur un appareil qui peine, ces rendus inutiles sont exactement ce
+ * qui déclenche les violations de handler.
+ *
+ * La comparaison sérialisée coûte quelques dixièmes de milliseconde sur des
+ * charges de cette taille, contre plusieurs millisecondes pour un rendu
+ * complet.
+ */
+function keepIfSame<T>(prev: T, next: T): T {
+  try {
+    return JSON.stringify(prev) === JSON.stringify(next) ? prev : next;
+  } catch {
+    return next;
+  }
+}
+
 function clearSession() {
   localStorage.removeItem(TOKEN_KEY);
   localStorage.removeItem("farmsim_player");
 }
+
+/** Tiroirs du bas, sur petit écran. */
+type SheetKey = "INFO" | "BUILD" | "GARAGE" | "OFFICE" | "HERD" | "PROFILE";
+
+const SHEET_TABS: { key: SheetKey; label: string; icon: string }[] = [
+  { key: "INFO", label: "Parcelle", icon: "🌾" },
+  { key: "BUILD", label: "Bâtir", icon: "🏗️" },
+  { key: "HERD", label: "Élevage", icon: "🐄" },
+  { key: "GARAGE", label: "Garage", icon: "🚜" },
+  { key: "OFFICE", label: "Bureau", icon: "📋" },
+];
 
 const ACTION_BAR: { tool: Tool; label: string; icon: string }[] = [
   { tool: "SELECT", label: "Inspect", icon: "/assets/icons/tools/select.svg" },
@@ -259,6 +303,18 @@ export function App() {
     }[];
   } | null>(null);
   const [tool, setTool] = useState<Tool>("SELECT");
+  /** Outils de test : n'existent que si le serveur les autorise. */
+  const [devEnabled, setDevEnabled] = useState(false);
+  const [showDev, setShowDev] = useState(false);
+  const isMobile = useIsMobile();
+  /**
+   * Tiroir ouvert sur petit écran. Un seul à la fois : superposer des
+   * panneaux sur un téléphone revient à masquer la ferme, qui est pourtant
+   * ce qu'on est venu regarder.
+   */
+  const [sheet, setSheet] = useState<SheetKey | null>(null);
+  /** Semer dans les chaumes plutôt que de travailler le sol au préalable */
+  const [directSeed, setDirectSeed] = useState(false);
   const [buildType, setBuildType] = useState<BuildingType>("SILO");
   const [selectedCells, setSelectedCells] = useState<{ x: number; y: number }[]>([]);
   const [msg, setMsg] = useState<string | null>(null);
@@ -320,10 +376,13 @@ export function App() {
       }
       return prev;
     });
-    setZones(z);
-    setMarket(m);
-    setContracts(c);
-    setWeather(w);
+    // Zones, contrats et météo ne bougent presque jamais, mais chaque sondage
+    // en livrait des objets neufs : React voyait un changement, invalidait les
+    // mémos et rerendait tout l'écran pour des données identiques.
+    setZones((prev) => keepIfSame(prev, z));
+    setMarket((prev) => keepIfSame(prev, m));
+    setContracts((prev) => keepIfSame(prev, c));
+    setWeather((prev) => keepIfSame(prev, w));
   }, []);
 
   const loadWorld = useCallback(async () => {
@@ -345,7 +404,7 @@ export function App() {
 
   const refreshPlayer = useCallback(async () => {
     const me = await api<{ player: Player }>("/auth/me");
-    setPlayer(me.player);
+    setPlayer((prev) => keepIfSame(prev, me.player));
     if (!activeParcelId && me.player.farm?.parcels[0]) {
       setActiveParcelId(me.player.farm.parcels[0].id);
     }
@@ -355,10 +414,102 @@ export function App() {
   const loadLivestock = useCallback(async (parcelId: string) => {
     try {
       const r = await api<{ barns: BarnState[] }>(`/parcels/${parcelId}/livestock`);
-      setBarns(r.barns);
+      setBarns((prev) => keepIfSame(prev, r.barns));
     } catch {
       setBarns([]);
     }
+  }, []);
+
+  useEffect(() => {
+    api<{ enabled: boolean }>("/dev/status")
+      .then((r) => setDevEnabled(r.enabled))
+      .catch(() => setDevEnabled(false));
+  }, []);
+
+  async function devGrant(grant: DevGrant) {
+    setBusy(true);
+    try {
+      const r = await api<{ done: string[] }>("/dev/grant", {
+        method: "POST",
+        body: JSON.stringify(grant),
+      });
+      await refreshPlayer();
+      if (activeParcelId) await loadParcel(activeParcelId).catch(() => undefined);
+      flashToast(r.done.length ? `Test : ${r.done.join(" · ")}` : "Rien à faire");
+    } catch (e) {
+      flashToast(e instanceof Error ? e.message : String(e), true);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function devTick() {
+    setBusy(true);
+    try {
+      await api("/sim/tick", { method: "POST" });
+      await Promise.all([refreshMeta(), refreshPlayer()]);
+      flashToast("Monde avancé d’un tick");
+    } catch (e) {
+      flashToast(e instanceof Error ? e.message : String(e), true);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  const [futures, setFutures] = useState<FuturesContract[]>([]);
+
+  const loadFutures = useCallback(async () => {
+    try {
+      const r = await api<{ contracts: FuturesContract[] }>("/futures");
+      setFutures((prev) => keepIfSame(prev, r.contracts));
+    } catch {
+      setFutures([]);
+    }
+  }, []);
+
+  async function openFuture(commodity: TradeGood, tons: number, horizonH: number) {
+    setBusy(true);
+    try {
+      const r = await api<{ pricePerTon: number }>("/futures", {
+        method: "POST",
+        body: JSON.stringify({ commodity, tons, horizonH }),
+      });
+      await loadFutures();
+      flashToast(`Engagé ${tons} t à ${r.pricePerTon.toFixed(0)} CRD/t`);
+    } catch (e) {
+      flashToast(e instanceof Error ? e.message : String(e), true);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function deliverFuture(id: string) {
+    setBusy(true);
+    try {
+      const r = await api<{ revenue: number; outcome: { delta: number; better: boolean } }>(
+        `/futures/${id}/deliver`,
+        { method: "POST" },
+      );
+      await Promise.all([refreshPlayer(), loadFutures()]);
+      const verdict =
+        r.outcome.delta === 0
+          ? ""
+          : r.outcome.better
+            ? ` · ${r.outcome.delta} CRD de mieux que le comptant`
+            : ` · ${Math.abs(r.outcome.delta)} CRD de moins que le comptant`;
+      flashToast(`Livré · +${r.revenue} CRD${verdict}`);
+    } catch (e) {
+      flashToast(e instanceof Error ? e.message : String(e), true);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  const loadPriceHistory = useCallback(async (commodity: TradeGood) => {
+    const r = await api<{ series: Record<string, { at: string; price: number }[]> }>(
+      `/market/history?commodity=${encodeURIComponent(commodity)}&hours=3`,
+    );
+    return r.series[commodity] ?? [];
   }, []);
 
   const loadListings = useCallback(async (playerId: string) => {
@@ -366,7 +517,7 @@ export function App() {
       const r = await api<{ listings: Listing[] }>(
         `/market/listings?userId=${encodeURIComponent(playerId)}`,
       );
-      setListings(r.listings);
+      setListings((prev) => keepIfSame(prev, r.listings));
     } catch {
       setListings([]);
     }
@@ -374,7 +525,7 @@ export function App() {
 
   const loadParcel = useCallback(async (id: string) => {
     const d = await api<typeof parcelDetail>(`/parcels/${id}`);
-    setParcelDetail(d);
+    setParcelDetail((prev) => keepIfSame(prev, d));
   }, []);
 
   useEffect(() => {
@@ -382,9 +533,17 @@ export function App() {
     loadWorld().catch(() => undefined);
     const t = setInterval(() => {
       refreshMeta().catch(() => undefined);
+      // Le stock aussi vieillit : le lait et la viande se dégradent sur le
+      // tick du serveur, et sans ce rappel le silo restait figé à l'écran
+      // pendant des minutes — d'où l'impression qu'ils ne périmaient jamais.
+      //
+      // Mais seulement une fois connecté : sans jeton, `/auth/me` répond 401,
+      // et l'écran de connexion accumulait une erreur toutes les dix secondes
+      // dans la console pour une requête qui ne pouvait pas aboutir.
+      if (localStorage.getItem(TOKEN_KEY)) refreshPlayer().catch(() => undefined);
     }, 10000);
     return () => clearInterval(t);
-  }, [refreshMeta, loadWorld]);
+  }, [refreshMeta, loadWorld, refreshPlayer]);
 
   useEffect(() => {
     setPrevPrices((prev) => {
@@ -467,7 +626,11 @@ export function App() {
   useEffect(() => {
     if (!player) return;
     loadListings(player.id);
-    const t = setInterval(() => loadListings(player.id), 8000);
+    loadFutures();
+    const t = setInterval(() => {
+      loadListings(player.id);
+      loadFutures();
+    }, 8000);
     return () => clearInterval(t);
   }, [player?.id, loadListings]);
   const freeParcels = useMemo(
@@ -642,7 +805,7 @@ export function App() {
         title: `${stubble.length} case(s) en chaumes`,
         detail: mustPlow
           ? `${mustPlow} exigent la charrue : trois récoltes sans labour.`
-          : "Déchaumez pour gagner du rendement, ou labourez pour repartir à neuf.",
+          : "Déchaumez pour le rendement, labourez pour repartir à neuf, ou semez direct.",
       };
     }
     if (poor || declining) {
@@ -660,6 +823,99 @@ export function App() {
     }
     return null;
   }, [parcelDetail, parcel?.cells]);
+
+  /**
+   * Ce que coûterait le semis en cours de préparation, du fait du précédent
+   * cultural. Le joueur doit voir la facture de sa facilité avant de semer,
+   * pas la découvrir à la moisson.
+   */
+  const rotationAlert = useMemo(() => {
+    if (tool !== "PLANT_WHEAT" && tool !== "PLANT_MAIZE" && tool !== "PLANT_PEA") return null;
+    if (!selectedCells.length) return null;
+    const crop: CropCode =
+      tool === "PLANT_WHEAT" ? "WHEAT" : tool === "PLANT_MAIZE" ? "MAIZE" : "PEA";
+    const cells = parcel?.cells ?? [];
+    let worst = 1;
+    let repeated = 0;
+    for (const sel of selectedCells) {
+      const cell = cells.find((c) => c.x === sel.x && c.y === sel.y);
+      if (!cell) continue;
+      const factor = rotationFactor(
+        { lastCrop: (cell.lastCrop as CropCode | null) ?? null, cropStreak: cell.cropStreak ?? 0 },
+        crop,
+      );
+      if (factor < 1) {
+        repeated += 1;
+        worst = Math.min(worst, factor);
+      }
+    }
+    if (!repeated) return null;
+    return {
+      cells: repeated,
+      malus: Math.round((1 - worst) * 100),
+    };
+  }, [tool, selectedCells, parcel?.cells]);
+
+  /**
+   * Classe d'un panneau latéral. Sur petit écran il devient un tiroir du bas,
+   * visible seulement quand son onglet est actif : la place manque pour
+   * border la ferme de colonnes, et la masquer serait absurde.
+   */
+  function logout() {
+    clearSession();
+    setPlayer(null);
+    setParcelDetail(null);
+    setResumeBanner(null);
+    setActiveParcelId(null);
+    setSheet(null);
+  }
+
+  /**
+   * Referme un tiroir d'un glissement vers le bas.
+   *
+   * Viser le voile à côté du tiroir n'est pas un geste naturel au pouce ; le
+   * balayage l'est, et c'est ce que fait toute application mobile.
+   */
+  const sheetDrag = useRef<number | null>(null);
+  const sheetGesture = {
+    onPointerDown: (e: ReactPointerEvent) => {
+      sheetDrag.current = e.clientY;
+    },
+    onPointerUp: (e: ReactPointerEvent) => {
+      const from = sheetDrag.current;
+      sheetDrag.current = null;
+      // Soixante pixels : assez pour ne pas déclencher sur un défilement de
+      // liste, assez peu pour rester sans effort.
+      if (from !== null && e.clientY - from > 60) setSheet(null);
+    },
+  };
+
+  function panelClass(base: string, key: SheetKey): string {
+    if (!isMobile) return `glass ${base}`;
+    return `glass ${base} sheet${sheet === key ? " open" : ""}`;
+  }
+
+  /**
+   * Ce qui réclame l'attention, calculé une fois pour la barre d'onglets et
+   * pour les notifications hors écran.
+   */
+  const alerts: FarmAlerts = useMemo(() => {
+    const sims = parcelDetail?.cellSims ?? [];
+    let ready = 0;
+    let urgent = 0;
+    let lost = 0;
+    for (const s of sims) {
+      const stage = s.sim.ripeness?.stage;
+      if (stage === "LOST") lost += 1;
+      else if (stage === "POOR" || stage === "DECLINING") urgent += 1;
+      else if (s.sim.ready) ready += 1;
+    }
+    const herdsAtRisk = barns.filter((b) => b.herd?.atRisk).length;
+    return { ready, urgent, lost, herdsAtRisk };
+  }, [parcelDetail, barns]);
+
+  const notifications = useNotificationState();
+  useAwayAlerts(alerts, notifications.state === "granted");
 
   function flashToast(text: string, isError = false) {
     if (isError) setErr(text);
@@ -937,7 +1193,7 @@ export function App() {
   /** Le prestataire n'est proposé que là où il a un sens : sur du travail aux champs. */
   const contractorOffer = useMemo(() => {
     const work: FarmWork | null =
-      tool === "PLANT_WHEAT" || tool === "PLANT_MAIZE"
+      tool === "PLANT_WHEAT" || tool === "PLANT_MAIZE" || tool === "PLANT_PEA"
         ? "PLANT"
         : tool === "FERTILIZE"
           ? "FERTILIZE"
@@ -992,6 +1248,10 @@ export function App() {
 
   function workMachineForTool(t: Tool): MachineType {
     if (t === "HARVEST") return "HARVESTER";
+    // Le déchaumage se fait au déchaumeur à disques, seule machine que le
+    // serveur accepte pour ce travail. L'animation montrait pourtant un
+    // tracteur, alors que l'engin existait en modèle comme en illustration.
+    if (t === "STUBBLE") return "DISC_HARROW";
     if (t === "FERTILIZE") {
       const hasSpreader = player?.farm?.machines.some((m) => m.type === "SPREADER");
       return hasSpreader ? "SPREADER" : "TRACTOR";
@@ -1002,10 +1262,12 @@ export function App() {
   function flashWork(type: MachineType, cells: { x: number; y: number }[]) {
     setPulseCells(cells);
     setActiveWork({ type, cells });
+    // Un peu de marge sur la durée du parcours : l'engin doit atteindre la
+    // dernière case avant qu'on ne l'efface.
     window.setTimeout(() => {
       setPulseCells([]);
       setActiveWork(null);
-    }, 900);
+    }, workAnimationMs(cells.length) + 250);
   }
 
   async function runSelectionAction() {
@@ -1015,17 +1277,18 @@ export function App() {
     const workCells = selectedCells.slice();
     flashWork(workMachineForTool(tool), workCells);
     try {
-      if (tool === "PLANT_WHEAT" || tool === "PLANT_MAIZE") {
-        const crop: CropCode = tool === "PLANT_WHEAT" ? "WHEAT" : "MAIZE";
+      if (tool === "PLANT_WHEAT" || tool === "PLANT_MAIZE" || tool === "PLANT_PEA") {
+        const crop: CropCode =
+          tool === "PLANT_WHEAT" ? "WHEAT" : tool === "PLANT_MAIZE" ? "MAIZE" : "PEA";
         const r = await api<{ machine?: { wearApplied: number; condition: number; type: string } }>(
           `/parcels/${activeParcelId}/plant`,
           {
             method: "POST",
-            body: JSON.stringify({ userId: player.id, crop, cells: selectedCells }),
+            body: JSON.stringify({ userId: player.id, crop, cells: selectedCells, directSeed }),
           },
         );
         setMsg(
-          `Semé ${crop} ×${selectedCells.length}` +
+          `Semé ${crop} ×${selectedCells.length}${directSeed ? " en direct" : ""}` +
             (r.machine ? ` · ${r.machine.type} ${r.machine.condition.toFixed(0)}%` : ""),
         );
       } else if (tool === "FERTILIZE") {
@@ -1587,7 +1850,7 @@ export function App() {
   }
 
   return (
-    <div className="game-stage">
+    <div className={`game-stage${isMobile ? " mobile" : ""}`}>
       <div className="iso-layer">
         {parcel ? (
           <Suspense fallback={<SceneLoading label="Chargement de la ferme…" />}>
@@ -1615,84 +1878,150 @@ export function App() {
         )}
       </div>
 
-      <header className="hud-top">
-        <div className="brand-row">
-          <img className="brand-logo" src="/logo.webp" alt="" width={36} height={36} />
-          <div className="brand-mark">Farming Navigateur</div>
-          <span className="mvp-badge" title="Build jouable minimale">
-            Première version · MVP
-          </span>
-          <button
-            type="button"
-            className="help-btn"
-            title="Tutoriel"
-            aria-label="Ouvrir le tutoriel"
-            onClick={() => setShowTutorial(true)}
-          >
-            ?
-          </button>
-        </div>
-        <div className="hud-stats">
-          <span>{player.displayName}</span>
-          <span>{SPECIALIZATION_LABELS[player.specialization]}</span>
-          <span className="stat-xp" title="Niveau / expérience">
-            Nv.{player.level} · {player.xp} XP
-          </span>
-          <span className="gold">{Math.round(player.crd)} CRD</span>
-          {player.bonuses && (
-            <span>
-              grain {player.bonuses.storageGrain}t · +
-              {Math.round(player.bonuses.yieldBonus * 100)}%
+      {/* Bandeau, pastilles et cotations vivaient en trois calques posés à des
+          décalages fixes : dès que l'un s'allongeait, il recouvrait le suivant.
+          Empilés en flux, ils ne peuvent plus se marcher dessus. */}
+      <div className="hud-stack">
+        <header className="hud-top">
+          <div className="brand-row">
+            <img className="brand-logo" src="/logo.webp" alt="" width={36} height={36} />
+            <div className="brand-mark">Farming Navigateur</div>
+            <span className="mvp-badge" title="Build jouable minimale">
+              Première version · MVP
             </span>
-          )}
-          <button
-            className="ghost"
-            type="button"
-            onClick={() => {
-              clearSession();
-              setPlayer(null);
-              setParcelDetail(null);
-              setResumeBanner(null);
-              setActiveParcelId(null);
-            }}
-          >
-            Déconnexion
-          </button>
+            <button
+              type="button"
+              className="help-btn"
+              title="Tutoriel"
+              aria-label="Ouvrir le tutoriel"
+              onClick={() => setShowTutorial(true)}
+            >
+              ?
+            </button>
+          </div>
+          <div className="hud-stats">
+            <span className="stat-name">{player.displayName}</span>
+            <span className="stat-job">{SPECIALIZATION_LABELS[player.specialization]}</span>
+            <span className="stat-xp" title="Niveau / expérience">
+              Nv.{player.level} · {player.xp} XP
+            </span>
+            <span className="gold">{Math.round(player.crd)} CRD</span>
+            {player.bonuses && (
+              <span className="stat-bonus">
+                grain {player.bonuses.storageGrain}t · +
+                {Math.round(player.bonuses.yieldBonus * 100)}%
+              </span>
+            )}
+            {/* Au téléphone, tout ce qui précède sauf les CRD passe dans un
+                tiroir : le bandeau doit tenir sur une ligne. */}
+            <button
+              type="button"
+              className="profile-btn"
+              aria-label="Profil et déconnexion"
+              onClick={() => setSheet((cur) => (cur === "PROFILE" ? null : "PROFILE"))}
+            >
+              ☰
+            </button>
+            <button
+              className="ghost logout-btn"
+              type="button"
+              onClick={logout}
+            >
+              Déconnexion
+            </button>
+          </div>
+        </header>
+
+        <div className="market-ticker">
+          {market.map((m) => {
+            const prev = prevPrices[m.commodity] ?? m.price;
+            const delta = m.price - prev;
+            const cls = delta > 0.05 ? "up" : delta < -0.05 ? "down" : "flat";
+            return (
+              <span key={m.commodity} className={`tick ${cls}`}>
+                {m.commodity} {m.price.toFixed(1)}
+                <small>
+                  {delta > 0.05 ? " ▲" : delta < -0.05 ? " ▼" : " ·"}
+                  {Math.abs(delta) > 0.05 ? Math.abs(delta).toFixed(1) : ""}
+                </small>
+              </span>
+            );
+          })}
+          <span className="tick weather-tick">{weatherLabel}</span>
         </div>
-      </header>
+      </div>
 
       {(msg || err) && (
         <div key={toastTick} className={`toast ${err ? "bad" : "good"} pop`}>{err ?? msg}</div>
       )}
+
+      {/* Le bilan d'absence annonce parfois huit cultures perdues : il mérite
+          d'être lu, donc acquitté, plutôt que de flotter sur la ferme. */}
       {resumeBanner && !err && (
-        <div className="resume-banner glass">
-          <strong>Pendant votre absence</strong>
-          <p>{resumeBanner}</p>
-          <button type="button" className="ghost" onClick={() => setResumeBanner(null)}>
-            OK
-          </button>
+        <div className="resume-backdrop" role="dialog" aria-modal="true">
+          <div className="resume-card glass">
+            <strong>Pendant votre absence</strong>
+            <p>{resumeBanner}</p>
+            <button type="button" className="accent" onClick={() => setResumeBanner(null)}>
+              J’ai vu
+            </button>
+          </div>
         </div>
       )}
 
-      <div className="market-ticker">
-        {market.map((m) => {
-          const prev = prevPrices[m.commodity] ?? m.price;
-          const delta = m.price - prev;
-          const cls = delta > 0.05 ? "up" : delta < -0.05 ? "down" : "flat";
-          return (
-            <span key={m.commodity} className={`tick ${cls}`}>
-              {m.commodity} {m.price.toFixed(1)}
-              <small>
-                {delta > 0.05 ? " ▲" : delta < -0.05 ? " ▼" : " ·"}
-                {Math.abs(delta) > 0.05 ? Math.abs(delta).toFixed(1) : ""}
-              </small>
-            </span>
-          );
-        })}
-        <span className="tick weather-tick">{weatherLabel}</span>
-      </div>
+      {sheet === "PROFILE" && isMobile && (
+        <aside className={panelClass("profile-panel", "PROFILE")} {...(isMobile ? sheetGesture : {})}>
+          <h3>{player.displayName}</h3>
+          <dl>
+            <div>
+              <dt>Métier</dt>
+              <dd>{SPECIALIZATION_LABELS[player.specialization]}</dd>
+            </div>
+            <div>
+              <dt>Niveau</dt>
+              <dd>
+                Nv.{player.level} · {player.xp} XP
+              </dd>
+            </div>
+            <div>
+              <dt>Trésorerie</dt>
+              <dd>{Math.round(player.crd)} CRD</dd>
+            </div>
+            {player.bonuses && (
+              <div>
+                <dt>Bonus ferme</dt>
+                <dd>
+                  grain {player.bonuses.storageGrain} t · +
+                  {Math.round(player.bonuses.yieldBonus * 100)} % rendement
+                </dd>
+              </div>
+            )}
+          </dl>
+          <div className="profile-actions">
+            {notifications.state === "default" && (
+              <button type="button" className="ghost" onClick={notifications.ask}>
+                M’alerter en cas de problème
+              </button>
+            )}
+            {notifications.state === "granted" && (
+              <span className="muted tiny">Alertes activées</span>
+            )}
+            {notifications.state === "denied" && (
+              <span className="muted tiny">
+                Alertes refusées — à rouvrir dans les réglages du navigateur
+              </span>
+            )}
+            <button type="button" className="ghost" onClick={() => setShowTutorial(true)}>
+              Revoir le tutoriel
+            </button>
+            <button type="button" className="ghost" onClick={logout}>
+              Déconnexion
+            </button>
+          </div>
+        </aside>
+      )}
 
-      <aside className="glass geo-panel">
+      <aside className={panelClass("geo-panel", "INFO")} {...(isMobile ? sheetGesture : {})}>
         <h3>{homeCity || zoneName}</h3>
         <dl>
           <div>
@@ -1731,6 +2060,18 @@ export function App() {
         </div>
         <p className="muted tiny">Occupation cultures · {Math.round(avgProgress * 100)}%</p>
 
+        {rotationAlert && (
+          <div className="harvest-alert warn">
+            <strong>
+              Même culture sur {rotationAlert.cells} case
+              {rotationAlert.cells > 1 ? "s" : ""}
+            </strong>
+            <span>
+              Jusqu’à −{rotationAlert.malus} % de rendement : les maladies du sol s’installent.
+              Alternez pour retrouver l’effet précédent.
+            </span>
+          </div>
+        )}
         {harvestAlert && (
           <div className={`harvest-alert ${harvestAlert.level}`}>
             <strong>{harvestAlert.title}</strong>
@@ -1753,7 +2094,7 @@ export function App() {
         </div>
       </aside>
 
-      <aside className="glass build-panel">
+      <aside className={panelClass("build-panel", "BUILD")} {...(isMobile ? sheetGesture : {})}>
         <h3>Construire</h3>
         <div className="build-list">
           {(Object.keys(BUILDING_DEFS) as BuildingType[]).map((t) => {
@@ -1843,18 +2184,32 @@ export function App() {
       </aside>
 
       <div className="action-bar">
-        <div className="brush-group" title="Taille du pinceau">
-          {([1, 2, 3] as const).map((n) => (
-            <button
-              key={n}
-              type="button"
-              className={brush === n ? "action on" : "action"}
-              onClick={() => setBrush(n)}
-            >
-              {n}×{n}
-            </button>
-          ))}
-        </div>
+        {/* Trois boutons en tête d'une barre qui défile repoussaient les
+            outils hors de vue. Au doigt, un seul bouton qui alterne. */}
+        {isMobile ? (
+          <button
+            type="button"
+            className="action brush-cycle"
+            title="Taille du pinceau"
+            aria-label={`Pinceau ${brush}×${brush}, toucher pour changer`}
+            onClick={() => setBrush(brush === 3 ? 1 : ((brush + 1) as 1 | 2 | 3))}
+          >
+            {brush}×{brush}
+          </button>
+        ) : (
+          <div className="brush-group" title="Taille du pinceau">
+            {([1, 2, 3] as const).map((n) => (
+              <button
+                key={n}
+                type="button"
+                className={brush === n ? "action on" : "action"}
+                onClick={() => setBrush(n)}
+              >
+                {n}×{n}
+              </button>
+            ))}
+          </div>
+        )}
         {ACTION_BAR.map(({ tool: t, label, icon }) => (
           <button
             key={t}
@@ -1877,7 +2232,7 @@ export function App() {
         ))}
         <button
           type="button"
-          className={`action ${showGarage ? "on" : ""}`}
+          className={`action garage-toggle ${showGarage ? "on" : ""}`}
           onClick={() => setShowGarage((v) => !v)}
         >
           Garage
@@ -1890,6 +2245,16 @@ export function App() {
         >
           💰 Vendre{totalStockTons > 0 ? ` ${totalStockTons.toFixed(1)} t` : ""}
         </button>
+        {devEnabled && (
+          <button
+            type="button"
+            className={`action dev-toggle ${showDev ? "on" : ""}`}
+            title="Outils de test : argent, niveau, stock, maturité"
+            onClick={() => setShowDev(true)}
+          >
+            🛠 Test
+          </button>
+        )}
         <button
           type="button"
           className={`action eta ${showEta ? "on" : ""}`}
@@ -1900,6 +2265,7 @@ export function App() {
         </button>
         {(tool === "PLANT_WHEAT" ||
           tool === "PLANT_MAIZE" ||
+          tool === "PLANT_PEA" ||
           tool === "FERTILIZE" ||
           tool === "HARVEST" ||
           tool === "STUBBLE" ||
@@ -1919,8 +2285,30 @@ export function App() {
               </button>
             )}
             {tool === "PLANT_MAIZE" && (
+              <button
+                type="button"
+                className="action"
+                title="Tête de rotation : rapporte moins, mais laisse le sol azoté"
+                onClick={() => setTool("PLANT_PEA")}
+              >
+                Pois
+              </button>
+            )}
+            {tool === "PLANT_PEA" && (
               <button type="button" className="action" onClick={() => setTool("PLANT_WHEAT")}>
                 Blé
+              </button>
+            )}
+            {(tool === "PLANT_WHEAT" || tool === "PLANT_MAIZE" || tool === "PLANT_PEA") && (
+              <button
+                type="button"
+                className={`action ${directSeed ? "on" : ""}`}
+                title={`Semer dans les chaumes, sans travail du sol préalable : ${DIRECT_SEED_COST_PER_CELL} CRD par case en plus, ${Math.round(
+                  DIRECT_SEED_YIELD_MALUS * 100,
+                )} % de rendement en moins, mais un passage économisé et un sol préservé.`}
+                onClick={() => setDirectSeed((v) => !v)}
+              >
+                Semis direct
               </button>
             )}
             {contractorOffer && (
@@ -1957,8 +2345,8 @@ export function App() {
         </button>
       </div>
 
-      {showGarage && (
-        <aside className="glass garage-panel">
+      {(isMobile ? sheet === "GARAGE" : showGarage) && (
+        <aside className={panelClass("garage-panel", "GARAGE")} {...(isMobile ? sheetGesture : {})}>
           <h3>Garage</h3>
           <p className="muted tiny">
             Semis / ferti → tracteur · Récolte → moissonneuse. Usure à chaque case.
@@ -2041,9 +2429,22 @@ export function App() {
         onCancelListing={cancelListing}
         onDry={dryStock}
         onBuyInput={buyInput}
+        onLoadHistory={loadPriceHistory}
+        futures={futures}
+        onOpenFuture={openFuture}
+        onDeliverFuture={deliverFuture}
+      />
+
+      <DevPanel
+        open={showDev}
+        onClose={() => setShowDev(false)}
+        busy={busy}
+        onGrant={devGrant}
+        onTick={devTick}
       />
 
       <LivestockPanel
+        className={panelClass("livestock-panel", "HERD")}
         barns={barns}
         busy={busy}
         crd={player.crd}
@@ -2070,8 +2471,8 @@ export function App() {
 
       <TutorialOverlay open={showTutorial} onClose={() => setShowTutorial(false)} />
 
-      {showEta && (
-        <aside className="glass eta-panel">
+      {(isMobile ? sheet === "OFFICE" : showEta) && (
+        <aside className={panelClass("eta-panel", "OFFICE")} {...(isMobile ? sheetGesture : {})}>
           <h3>Travaux à façon</h3>
           <p className="muted tiny">
             Vous partez travailler chez d’autres exploitants avec votre matériel.
@@ -2156,6 +2557,45 @@ export function App() {
             ))}
           </ul>
         </aside>
+      )}
+
+      {isMobile && (
+        <>
+          {/* Un voile referme le tiroir d'une tape hors de lui : sur un
+              téléphone, chercher la bonne croix est une corvée. */}
+          {sheet && (
+            <button
+              type="button"
+              className="sheet-scrim"
+              aria-label="Fermer le panneau"
+              onClick={() => setSheet(null)}
+            />
+          )}
+          <nav className="tabbar" aria-label="Panneaux">
+            {SHEET_TABS.map((t) => {
+              const disabled = t.key === "HERD" && !barns.length;
+              return (
+                <button
+                  key={t.key}
+                  type="button"
+                  className={`tab${sheet === t.key ? " on" : ""}`}
+                  disabled={disabled}
+                  title={disabled ? "Aucun bâtiment d’élevage sur la parcelle" : t.label}
+                  aria-pressed={sheet === t.key}
+                  onClick={() => setSheet((cur) => (cur === t.key ? null : t.key))}
+                >
+                  <span aria-hidden="true">{t.icon}</span>
+                  <span className="tab-label">{t.label}</span>
+                  {tabBadge(alerts, t.key) > 0 && (
+                    <span className="tab-badge" aria-label="à traiter">
+                      {tabBadge(alerts, t.key)}
+                    </span>
+                  )}
+                </button>
+              );
+            })}
+          </nav>
+        </>
       )}
     </div>
   );

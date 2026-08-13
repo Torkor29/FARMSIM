@@ -104,4 +104,3 @@ qu'une perte annoncée.
 
 - La météo n'influence pas la vitesse de dégradation, alors qu'une pluie sur
   du blé mûr le fait germer bien plus vite qu'un temps sec
-- Aucune notification hors écran : un joueur absent découvre la perte au retour

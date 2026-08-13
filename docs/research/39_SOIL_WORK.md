@@ -101,16 +101,120 @@ Trois champs s'ajoutent à `ParcelCell` : `harvestsSincePlow`, `residuePasses`,
 |-------|-------|
 | `POST /parcels/:id/stubble` | Incorpore les résidus, compteur inchangé, refuse au seuil |
 | `POST /parcels/:id/plow` | Remet le sol à zéro, bonus compris |
-| `POST /parcels/:id/plant` | Refuse une case portant des chaumes |
+| `POST /parcels/:id/plant` | Refuse une case portant des chaumes, sauf en semis direct |
 | `POST /parcels/:id/contractor` | Accepte `work: "STUBBLE"` |
+
+---
+
+## Le semis direct, troisième voie
+
+Déchaumer ou labourer supposait qu'il fallait forcément travailler le sol. Le
+semis direct s'en dispense : le semoir ouvre un sillon dans les chaumes et
+referme derrière lui. Un passage entier économisé, un sol qui garde son
+humidité et sa structure, et une couverture permanente qui le protège de
+l'érosion.
+
+Ce n'est pas gratuit. Les résidus restent en surface au lieu d'être
+incorporés, donc aucun bonus de décomposition — le compteur de résidus
+retombe à zéro. La terre se réchauffe plus lentement au printemps et la levée
+est moins régulière, d'où la perte de rendement. Surtout, rien ne décompacte :
+le semis direct fait avancer le compteur du labour obligatoire au lieu de le
+laisser en place, si bien qu'on ne peut pas en vivre indéfiniment.
+
+| | Coût / case | Rendement | Compteur labour | Résidus |
+|---|---|---|---|---|
+| Déchaumage | 5 CRD | +5 % puis +9 % | inchangé | incorporés |
+| Labour | 12 CRD | — | remis à zéro | effacés |
+| Semis direct | 3 CRD | −10 % | **+1** | laissés en surface |
+
+L'arbitrage tient debout : le semis direct est le moins cher et le plus
+rapide, mais c'est celui qui rapproche le plus vite de la charrue obligatoire.
+
+Il exige des chaumes — sans eux, c'est un semis ordinaire et le joueur
+paierait le surcoût du semoir lourd pour rien — et il est refusé dès que le
+sol réclame la charrue, puisqu'il ne décompacte pas.
+
+`ParcelCell.directSeeded` mémorise le choix ; `POST /parcels/:id/plant`
+accepte `directSeed: true`. Vérifié contre l'API réelle : −9,8 % de rendement
+et le compteur de labour passé de 1 à 2 sur la case semée en direct.
+
+---
+
+## Le sol devait se voir, pas seulement se calculer
+
+Signalé en jeu, et c'est le meilleur résumé du défaut : « j'ai labouré et
+pourtant je peux pas replanter, ça me dit qu'il faut que je laboure ; quand je
+veux labourer, ça me dit qu'il n'y a rien à labourer. »
+
+Aucune de ces deux réponses n'était fausse. Elles portaient simplement sur des
+cases différentes — et **rien ne permettait de les distinguer à l'écran**. Le
+joueur sélectionnait à l'aveugle, croyait avoir traité une case, et se voyait
+opposer une règle qu'il ne pouvait pas vérifier.
+
+Le comble : `cropColor` savait décrire les états du sol depuis le début. Mais
+elle n'était appelée que pour les cases portant une culture. Les cases vides
+gardaient leur damier vert, quel que soit leur état. La fonctionnalité existait
+et n'était jamais affichée.
+
+### Un relief par état
+
+La couleur seule ne suffisait pas — la demande était explicite : « pas une
+case, une gueule de terre ». Chaque état porte donc une matière :
+
+| État | Couleur | Relief |
+|------|---------|--------|
+| Terre normale | vert terreux | aucun |
+| Terre labourée | brun profond | sillons parallèles |
+| Terre déchaumée | brun moyen | résidus hachés, épars et plats |
+| Chaumes | paille claire | tiges coupées dressées |
+| Terre sèche | ocre gris | craquelures, décalées d'une case à l'autre |
+
+Tout passe par des maillages instanciés : un seul appel de dessin par type de
+relief, quelle que soit la surface concernée. La leçon des passes de
+performance précédentes valait d'être retenue.
+
+### L'ordre de lecture compte
+
+Le déchaumage et le labour laissent tous deux `fieldStage: "PREPARED"`. Seul le
+compteur de résidus les sépare, que le labour remet à zéro. Les résidus se
+lisent donc **avant** l'état préparé — sans quoi une terre déchaumée aurait
+l'aspect d'un labour, et le joueur croirait son sol remis à neuf alors que le
+compteur de récoltes court toujours.
+
+### Les cultures aussi
+
+Le maïs monte plus haut et plus étroit que le blé : on reconnaît une culture à
+sa silhouette avant sa teinte. Une culture desséchée s'affaisse et penche, pour
+se lire comme une perte et non comme une récolte qui attend. Des épis coiffent
+les cultures mûres — plusieurs et fins pour le blé, un seul et trapu pour le
+maïs — ce qui signale la récolte sur la grille même, sans passer par un
+panneau.
+
+### Le blocage lui-même
+
+Par précaution, le labour accepte désormais une case arrivée à la limite de
+récoltes même sans chaumes visibles. La refuser enfermerait le joueur, puisque
+le déchaumage et le semis direct la refusent déjà pour cette raison exacte.
+
+Et quand la sélection ne contient rien à labourer, le message ne se contente
+plus de le constater : il indique combien de cases attendent la charrue
+ailleurs sur la parcelle. Dire à quelqu'un ce qu'il ne peut pas faire ne l'aide
+pas ; lui dire où aller, si.
+
+**La leçon :** une règle que le joueur ne peut pas vérifier à l'écran est vécue
+comme un bug, même quand elle fonctionne exactement comme prévu.
 
 ---
 
 ## Reste à faire
 
-- Le semis direct, troisième voie qui supprime tout travail du sol au prix
-  d'un rendement moindre
-- La rotation des cultures : enchaîner deux fois le même blé devrait pénaliser
-  davantage que d'alterner avec du maïs
 - Les résidus ne dépendent pas du volume récolté, alors qu'une grosse moisson
   laisse plus de paille
+- Les adventices ont un effet de rendement mais aucune représentation : la
+  planche de référence du joueur en prévoyait une
+- Le relief est le même quelle que soit l'orientation de la case : de vrais
+  sillons suivraient le sens du travail
+- Le semis direct ne demande aucun désherbage supplémentaire, alors que c'est
+  sa contrainte principale en pratique
+- Aucun outil intermédiaire — décompacteur, strip-till — entre le déchaumeur
+  et la charrue
