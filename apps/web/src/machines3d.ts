@@ -126,6 +126,7 @@ function buildTractor(): Blueprint {
     cyl(0.034, 0.034, 0.12, 16, [0.4, 0.62, 0.126]),
   );
   root.add("chrome", cyl(0.03, 0.026, 0.06, 16, [0.4, 0.9, 0.126], [0, 0, 0.22]));
+  root.child([0.4, 0.94, 0.126], { role: "exhaust" });
 
   /* — Cabine ——————————————————————————————————————— */
   const cabFloor = 0.46;
@@ -316,6 +317,13 @@ function buildHarvester(): Blueprint {
   for (let i = 0; i < 5; i++) grid.push(box(0.012, 0.012, 0.3, [-0.805, 0.37 + i * 0.035, 0]));
   root.add("steel", ...grid);
   root.add("cast", roundedBox(0.12, 0.18, 0.46, 0.04, [-0.86, 0.34, 0]));
+  root.add(
+    "plastic",
+    cyl(0.028, 0.032, 0.3, 14, [-0.6, 0.78, 0.19]),
+    cyl(0.036, 0.036, 0.1, 14, [-0.6, 0.66, 0.19]),
+  );
+  root.add("chrome", cyl(0.032, 0.028, 0.05, 14, [-0.6, 0.95, 0.19], [0, 0, 0.2]));
+  root.child([-0.6, 0.99, 0.19], { role: "exhaust" });
 
   /* — Trémie à grain : caisse évasée, rambarde, blé qui affleure ——— */
   root.add(
@@ -766,6 +774,8 @@ export type MachineRig = {
   group: THREE.Group;
   /** Emprise au sol, unités monde */
   length: number;
+  /** Sortie du pot d'échappement — nul sur un outil traîné */
+  exhaust: THREE.Object3D | null;
   update(state: MachineState): void;
   dispose(): void;
 };
@@ -891,6 +901,7 @@ export function createMachineRig(type: MachineType, opts: MachineRigOptions = {}
   return {
     group,
     length,
+    exhaust: units[0].roles.get("exhaust")?.[0] ?? null,
     update(next: MachineState) {
       state.t = next.t;
       state.distance = next.distance;
@@ -927,7 +938,44 @@ let dustGeometry: THREE.IcosahedronGeometry | null = null;
  * C'est le détail qui fait qu'une machine *pèse* sur le sol au lieu de
  * glisser dessus.
  */
-export function createDustTrail(count = 8, color = 0xd8c9a8): DustTrail {
+/**
+ * Fumée d'échappement : bouffées grises qui montent et s'étalent en se
+ * diluant. Plus légères et plus lentes que la poussière du sol — un moteur qui
+ * tire fume, il ne soulève pas de la terre.
+ */
+export function createExhaustSmoke(count = 12): DustTrail {
+  return createDustTrail(count, 0x7c7a76, {
+    rise: 0.5,
+    spread: 0.04,
+    grow: 3.2,
+    fade: 1.0,
+    interval: 0.11,
+    opacity: 0.42,
+  });
+}
+
+export type PuffOptions = {
+  /** Vitesse de montée, unités par seconde */
+  rise?: number;
+  /** Dispersion horizontale à l'émission */
+  spread?: number;
+  /** Grossissement sur la durée de vie */
+  grow?: number;
+  /** Vitesse d'extinction */
+  fade?: number;
+  /** Délai entre deux bouffées, secondes */
+  interval?: number;
+  /** Opacité initiale */
+  opacity?: number;
+};
+
+export function createDustTrail(count = 8, color = 0xd8c9a8, opts: PuffOptions = {}): DustTrail {
+  const rise = opts.rise ?? 0.18;
+  const spread = opts.spread ?? 0.12;
+  const grow = opts.grow ?? 0.9;
+  const fade = opts.fade ?? 2;
+  const interval = opts.interval ?? 0.09;
+  const baseOpacity = opts.opacity ?? 0.35;
   const object = new THREE.Group();
   if (!dustGeometry) dustGeometry = markShared(new THREE.IcosahedronGeometry(0.07, 0));
   const geo = dustGeometry;
@@ -935,7 +983,7 @@ export function createDustTrail(count = 8, color = 0xd8c9a8): DustTrail {
     color,
     flatShading: true,
     transparent: true,
-    opacity: 0.35,
+    opacity: baseOpacity,
     depthWrite: false,
   });
   const puffs = Array.from({ length: count }, () => {
@@ -952,23 +1000,28 @@ export function createDustTrail(count = 8, color = 0xd8c9a8): DustTrail {
     update(dt, x, y, z, emitting) {
       cooldown -= dt;
       if (emitting && cooldown <= 0) {
-        cooldown = 0.09;
+        cooldown = interval;
         const puff = puffs[next];
         next = (next + 1) % puffs.length;
         puff.life = 1;
-        puff.mesh.position.set(x + (Math.random() - 0.5) * 0.12, y, z + (Math.random() - 0.5) * 0.12);
+        puff.mesh.position.set(
+          x + (Math.random() - 0.5) * spread,
+          y,
+          z + (Math.random() - 0.5) * spread,
+        );
+        puff.mesh.scale.setScalar(0.5);
         puff.mesh.visible = true;
       }
       for (const puff of puffs) {
         if (puff.life <= 0) continue;
-        puff.life -= dt * 2;
+        puff.life -= dt * fade;
         if (puff.life <= 0) {
           puff.mesh.visible = false;
           continue;
         }
-        puff.mesh.position.y += dt * 0.18;
-        puff.mesh.scale.setScalar(1 + (1 - puff.life) * 0.9);
-        (puff.mesh.material as THREE.MeshLambertMaterial).opacity = puff.life * 0.35;
+        puff.mesh.position.y += dt * rise;
+        puff.mesh.scale.setScalar(0.5 + (1 - puff.life) * grow);
+        (puff.mesh.material as THREE.MeshLambertMaterial).opacity = puff.life * baseOpacity;
       }
     },
     dispose() {

@@ -286,7 +286,17 @@ export function mergeAll(geos: THREE.BufferGeometry[]): THREE.BufferGeometry {
 }
 
 /** Rôles animés reconnus par les rigs. */
-export type Role = "wheel" | "steer" | "reel" | "auger" | "spinner" | "gang" | "tool" | "beacon";
+export type Role =
+  | "wheel"
+  | "steer"
+  | "reel"
+  | "auger"
+  | "spinner"
+  | "gang"
+  | "tool"
+  | "beacon"
+  /** Sortie du pot : un nœud vide, d'où part la fumée */
+  | "exhaust";
 
 /**
  * Nœud d'un plan de montage : ses pièces, fusionnées par matière à la

@@ -9,9 +9,11 @@ import {
   type RipenessStage,
 } from "@farmsim/shared";
 import { disposeRenderer, disposeThreeScene, markShared } from "./three-cleanup";
+import { createCropField } from "./crop-field";
 import { attachStudioEnvironment } from "./machine-kit";
 import {
   createDustTrail,
+  createExhaustSmoke,
   createMachineRig,
   isTowedImplement,
   type MachineRig,
@@ -119,6 +121,15 @@ function shortestAngle(a: number): number {
 /** Aire de stationnement des engins — terre battue claire */
 const PARKING = 0xd8c9a8;
 
+/** Force de la houle sur les épis, par météo. */
+function windFor(weather: string): number {
+  if (weather === "STORM") return 1.7;
+  if (weather === "RAIN") return 1.0;
+  if (weather === "CLOUDY") return 0.75;
+  if (weather === "SNOW") return 0.45;
+  return 0.55;
+}
+
 /**
  * Échelle commune du parc matériel.
  *
@@ -128,6 +139,9 @@ const PARKING = 0xd8c9a8;
  * qu'une moissonneuse déborde légitimement sur la case voisine.
  */
 const MACHINE_SCALE = 0.72;
+
+/** Terre d'une case semée, visible entre les brins */
+const SEEDED_SOIL = 0xa07f56;
 
 const STUBBLE_SOIL = 0xd9c48a;
 const RESIDUE_SOIL = 0x7f6a44;
@@ -363,7 +377,10 @@ export function IsoFarmView({
     scene.add(world);
 
     const cellMeshes = new Map<string, THREE.Mesh>();
-    const cropMeshes = new Map<string, THREE.Mesh>();
+    // Le champ entier tient dans un seul maillage instancié : les tiges y
+    // ondulent et s'y couchent sans coûter un appel de rendu par case.
+    const cropField = createCropField(400);
+    world.add(cropField.object);
     /** Engins garés au parc — moteur coupé, mais gyrophare et roues prêts */
     const vehicleRigs = new Map<string, MachineRig>();
     const buildingGroup = new THREE.Group();
@@ -378,6 +395,10 @@ export function IsoFarmView({
     let lastWorkPos: { x: number; z: number } | null = null;
     const workDust = createDustTrail(10);
     workGroup.add(workDust.object);
+    // Fumée du pot : elle sort d'où il faut, et seulement moteur en charge.
+    const workSmoke = createExhaustSmoke(14);
+    workGroup.add(workSmoke.object);
+    const exhaustPoint = new THREE.Vector3();
 
     const previewGroup = new THREE.Group();
     world.add(previewGroup);
@@ -459,12 +480,7 @@ export function IsoFarmView({
         (m.material as THREE.Material).dispose();
       }
       cellMeshes.clear();
-      for (const m of cropMeshes.values()) {
-        world.remove(m);
-        m.geometry.dispose();
-        (m.material as THREE.Material).dispose();
-      }
-      cropMeshes.clear();
+
       for (const rig of vehicleRigs.values()) {
         world.remove(rig.group);
         rig.dispose();
@@ -481,6 +497,14 @@ export function IsoFarmView({
         disposeObject3D(c);
       }
       pickables.length = 0;
+      const cropStalks: {
+        x: number;
+        y: number;
+        px: number;
+        pz: number;
+        height: number;
+        color: number;
+      }[] = [];
 
       cellSize = 1;
       const gap = 0.06;
@@ -537,7 +561,9 @@ export function IsoFarmView({
           const { px, pz } = cellWorldPos(x, y);
 
           let col = (x + y) % 2 === 0 ? SOIL : SOIL_DARK;
-          if (cell?.kind === "CROP") col = cropColor(cell, sim);
+          // Une case cultivée montre sa terre : ce sont les brins qui portent
+          // la couleur de la culture, plus la dalle sous eux.
+          if (cell?.kind === "CROP") col = cell.hasStubble ? STUBBLE_SOIL : SEEDED_SOIL;
           if (cell?.kind === "BUILDING") col = DIRT;
           // Aire de stationnement : terre battue claire (charte §4.5), et non
           // plus un enrobé presque noir — les engins s'y détachaient comme sur
@@ -557,16 +583,15 @@ export function IsoFarmView({
           pickables.push(mesh);
 
           if (cell?.kind === "CROP") {
-            const h = 0.15 + (sim?.sim.progress ?? 0.25) * 0.55;
-            const cropMat = new THREE.MeshLambertMaterial({
+            // La hauteur raconte l'avancement : semis ras, épi haut à maturité.
+            cropStalks.push({
+              x,
+              y,
+              px,
+              pz,
+              height: 0.22 + (sim?.sim.progress ?? 0.25) * 0.62,
               color: cropColor(cell, sim),
-              flatShading: true,
             });
-            const crop = new THREE.Mesh(new THREE.BoxGeometry(0.55, h, 0.55), cropMat);
-            crop.position.set(px, 0.1 + h / 2, pz);
-            crop.castShadow = true;
-            world.add(crop);
-            cropMeshes.set(key(x, y), crop);
           }
 
           if (cell?.kind === "VEHICLE") {
@@ -584,6 +609,8 @@ export function IsoFarmView({
           }
         }
       }
+
+      cropField.setCells(cropStalks, cellSize);
 
       for (const b of bs) {
         const def = BUILDING_DEFS[b.type];
@@ -959,6 +986,7 @@ export function IsoFarmView({
       scene.background = new THREE.Color(sky);
       if (scene.fog instanceof THREE.Fog) scene.fog.color.setHex(sky);
       hexGroup.rotation.y = Math.sin(t * 0.05) * 0.02;
+      cropField.update(t, windFor(weatherRef.current));
       world.position.y = Math.sin(t * 0.7) * 0.015;
 
       // Engins garés : moteur coupé. Rien ne bouge — ni roue, ni gyrophare,
@@ -1126,10 +1154,7 @@ export function IsoFarmView({
         // moissonneuse traverse un champ intact — l'incohérence saute aux
         // yeux dès qu'on regarde le passage.
         if (aw.type === "HARVESTER") {
-          for (let i = 0; i <= i0; i++) {
-            const cut = cropMeshes.get(key(aw.cells[i].x, aw.cells[i].y));
-            if (cut) cut.visible = false;
-          }
+          for (let i = 0; i <= i0; i++) cropField.cut(aw.cells[i].x, aw.cells[i].y, t);
         }
 
         workRig.group.position.set(px, 0.09, pz);
@@ -1145,7 +1170,7 @@ export function IsoFarmView({
         });
 
         // Poussière derrière l'engin, tant qu'il roule.
-        const back = workRig.length * 0.5;
+        const back = workRig.length * MACHINE_SCALE * 0.5;
         workDust.update(
           dt,
           px - Math.cos(heading) * back,
@@ -1153,8 +1178,17 @@ export function IsoFarmView({
           pz + Math.sin(heading) * back,
           u < 1,
         );
+
+        // Fumée : émise à la sortie du pot, dont on lit la position réelle
+        // après application du cap et de l'échelle de l'engin.
+        if (workRig.exhaust) {
+          workRig.exhaust.getWorldPosition(exhaustPoint);
+          workGroup.worldToLocal(exhaustPoint);
+          workSmoke.update(dt, exhaustPoint.x, exhaustPoint.y, exhaustPoint.z, u < 1);
+        }
       } else {
         workDust.update(dt, 0, 0, 0, false);
+        workSmoke.update(dt, 0, 0, 0, false);
       }
 
       renderer.render(scene, camera);
@@ -1179,6 +1213,8 @@ export function IsoFarmView({
       }
       clearWorkVehicle();
       workDust.dispose();
+      workSmoke.dispose();
+      cropField.dispose();
       releaseEnvironment();
       // Marquée partagée pour survivre aux reconstructions de scène, la
       // géométrie de dalle doit être libérée explicitement au démontage.

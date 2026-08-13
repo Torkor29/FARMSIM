@@ -103,11 +103,36 @@ laisserait les suivantes sans maillage.
 Coût de bundle : la peinture vernie et l'environnement font passer le morceau
 `three` de 523 à 563 kB (132 → 144 kB gzip).
 
+### Le champ vit
+
+Une culture était rendue par **une boîte colorée par case** : lisible, mais
+morte. Une parcelle de blé, c'est d'abord du mouvement.
+
+`crop-field.ts` sème quarante brins par case — une lame plate à trois
+segments et son épi, quatorze faces — dans **une seule `InstancedMesh` pour
+tout le champ** : cent quarante-quatre cases tiennent en un appel de rendu.
+
+- **La houle** est calculée dans le nuancier, pas sur le processeur : le brin
+  se courbe comme le carré de sa hauteur, pied planté et épi qui balaie, sur
+  deux fréquences déphasées pour que le vent ne soit pas un métronome. Sa
+  force suit la météo — calme par beau temps, rafale sous l'orage.
+- **La fauche est un instant, pas un interrupteur.** Chaque brin porte l'heure
+  à laquelle il a été coupé ; le nuancier le couche et le tasse en un tiers de
+  seconde, avec un léger décalage d'un brin à l'autre. La moissonneuse laisse
+  donc un andain derrière elle au lieu d'un champ qui clignote.
+- La dalle sous les brins montre désormais **sa terre** : ce sont les épis qui
+  portent la couleur de la culture et le signal de maturité.
+
 ### Poussière
 
 `createDustTrail()` : huit bouffées recyclées derrière l'engin au travail,
 conformément au budget particules de la charte (§8.2). C'est le détail qui fait
 qu'une machine *pèse* sur le sol au lieu de flotter dessus.
+
+`createExhaustSmoke()` en est le réglage léger : des bouffées grises, plus
+lentes, plus diluées, émises à la **sortie réelle du pot** — le rig expose un
+nœud `exhaust` dont la vue lit la position monde après cap et échelle. Un
+moteur en charge fume ; moteur coupé, rien ne sort.
 
 ### Aire de stationnement
 
