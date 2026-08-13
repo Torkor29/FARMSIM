@@ -2,7 +2,7 @@
 
 **Statut :** Stratégie — à valider avant toute ligne de code  
 **Date :** 2026-08-13  
-**Mise à jour :** 2026-08-13 — les « modes de jeu » sont les boucles métier (§ 7), pas des playlists solo/multi.  
+**Mise à jour :** 2026-08-13 — boucles métier (§ 7) ; l'ETA glisse, graisse, répare, habite un dépôt sans champ (Strea / Torkor).  
 **Remplace :** la lecture de [48_PLAN_MECANIQUES.md](./48_PLAN_MECANIQUES.md) sur les métiers, l'absence et les salariés. Le 48 reste le plan d'exécution des briques (paille, ensilage, saisons, CUMA). Celui-ci dit **pourquoi** elles existent et **comment** elles s'emboîtent.
 
 ---
@@ -153,7 +153,7 @@ Chantier
   client        joueur ou ferme PNJ
   parcelle      id réel, on peut s'y rendre
   cases         liste, état du sol / de la culture
-  type          PLOW | SOW | FERTILIZE | HARVEST | BALE | SPREAD | TRANSPORT | ENSILE
+  type          PLOW | SOW | FERTILIZE | HARVEST | STUBBLE | BALE | SPREAD | LIME | WEED | ENSILE | TRANSPORT | REPAIR
   échéance      héritée de la fenêtre (maturité, fosse pleine, etc.)
   offre         CRD proposés par le client, ou tarif barème
   matériel exigé
@@ -168,7 +168,7 @@ Chantier
 
 **Exécution** — trois issues, dans l'ordre :
 
-1. Une **ETA joueur** prend le chantier, se rend sur la parcelle, travaille avec *ses* machines, animation réelle, usure réelle, paiement escrow.
+1. Une **ETA joueur** prend le chantier, **à condition d'avoir chez elle la machine exigée** en état de partir (graissée, assez propre, condition ≥ seuil). Elle se rend sur la parcelle, **glisse l'outil sur les cases** (§ 7.3), usure réelle, paiement escrow.
 2. Personne ne prend avant l'échéance de confort → **ETA PNJ** au tarif actuel (`contractorQuote`), malus −6 %, instantané ou après un court délai visible.
 3. Personne ne prend avant l'échéance dure (culture perdue, fosse qui déborde) → sauvetage PNJ **plus cher**, ou échec si le client a interdit le sauvetage.
 
@@ -327,36 +327,43 @@ Je fais pousser. Je ne tiens pas tout le matériel. Chaque hectare que j'ouvre e
 
 ### 7.3 Je suis ETA
 
-Je ne cultive pas. Je ne trait pas. **Mon mode de jeu, c'est d'entrer sur les terres des deux autres et d'y faire ce qu'ils ont déclenché.** Sans eux, je n'ai pas de partie.
+Je ne cultive pas. Je ne trait pas. **Mon mode de jeu, c'est d'entrer sur les terres des deux autres et d'y faire ce qu'ils ont affiché au tableau.** Sans eux — joueurs ou fermes PNJ du voisinage — je n'ai pas de partie.
+
+Strea le dit tel quel : c'est une Entreprise de Travaux Agricoles. Un joueur sans matériel pose la mission (épandre du fumier, labourer, moissonner…). Je la prends. Je dois avoir l'engin **chez moi**, sinon le bouton n'existe pas. Sur le champ, je ne valide pas un contrat : **je clique (ou j'appuie) et je glisse en maintenant**, avec le bon outil, jusqu'à avoir couvert la parcelle.
 
 **Ce que je fais :**
 
-1. **Je lis la bourse comme un planning, pas comme un catalogue.** Parcelles mûres, andains, fosses à 80 %, livraisons. Chaque ligne est un lieu. J'y vais.
-2. **Je choisis *qui* je sers par le matériel que j'achète.** Moissonneuse → je vis du céréalier. Ensileuse → je vis du contrat céréalier–éleveur. Presse → je vis de la paille. Tonne à lisier → je vis de l'éleveur. Le garage *est* ma spécialisation à l'intérieur du métier.
-3. **J'enchaîne pendant les fenêtres.** Trois céréaliers mûrs le même jour, un éleveur qui ensile : c'est *ma* saison. Je priorise (réputation, marge, distance). Je ne peux pas tout prendre. C'est l'arbitrage.
-4. **Je livre.** Le grain reste chez le céréalier. L'ensilage et la paille doivent arriver chez l'éleveur. Le lisier chez le céréalier. Le transport n'est pas un quatrième métier : c'est la fin de *mon* chantier.
-5. **J'entretiens.** L'usure est réelle, sur *leurs* cases. Une machine cassée au milieu de la fenêtre, c'est un céréalier qui décote et un éleveur dont le silo reste vide. Ma panne est leur panne.
-6. **Je vis de leur absence.** Consigne « si mûr, publier » : le céréalier n'est pas là, la parcelle l'est. J'y entre. C'est pour ça que j'ai acheté la machine. Quand *je* m'absente, les chantiers vont ailleurs — sauf flotte tardive, moindre, plafonnée.
+1. **Je lis le tableau.** Chaque ligne est un lieu réel, un type de travail, une machine exigée, une échéance. Épandre, labourer, déchaumer, semer, récolter, désherber, chaux, presser, ensiler, transporter, **réparer le matériel d'un autre**. Les missions PNJ des parcelles autour remplissent les trous : je n'attends pas qu'un humain clique.
+2. **Je ne pars que si l'engin est chez moi et prêt.** Pas de location magique. Pas de « le jeu te prête la moissonneuse ». Pas de machine en panne, ni sèche de graisse, ni crottée de la veille.
+3. **Avant le chantier : je graisse.** C'est le rituel de départ, à l'atelier. Sans ça, l'engin part quand même une fois — et il casse plus vite, ou il refuse au deuxième essai.
+4. **Sur le champ : je glisse.** Maintien + glisser, toute la surface du contrat, largeur de l'outil (1 case au T1, davantage ensuite). L'animation suit *ma* trace, ce n'est plus un aller-retour automatique. Un céréalier sur *sa* terre garde la sélection + passage auto : ce n'est pas le même métier.
+5. **Après : je souffle, puis je nettoie.** Retour au dépôt. Tant que ce n'est pas fait, le prochain chantier use double, et la panne se rapproche.
+6. **De temps à autre, ça casse.** En plein champ : le chantier se fige, le client voit « en panne », les cases non faites restent. Je répare sur place (plus cher, plus sale) ou je ramène à l'atelier, ou **je sors la deuxième moissonneuse**. C'est pour ça que j'en achète trois, pas une.
+7. **Je répare aussi chez les autres.** Leur tracteur à 15 %, leur moissonneuse coincée : chantier `REPAIR`, dans *leur* cour ou à *mon* atelier. Ils paient plus cher que si je répare le mien — je suis le pro. Eux gardent un bouton « Réparer » simple, au tarif fort. Moi j'ai l'atelier, le geste, la remise.
+8. **Je vis de leur absence.** Consigne « si mûr, publier » : ils ne sont pas là, la terre l'est. J'y glisse. Quand *je* m'absente, les chantiers vont ailleurs.
+
+**Ma parcelle, réponse à Torkor : ce n'est pas un champ.** Hangars, atelier, cour de manœuvre. On y range, on y graisse, on y souffle, on y répare, on y aligne quatre tracteurs. Pas de blé. Si plus tard j'achète une terre agricole, je sors du métier, je ne l'approfondis pas.
 
 **Donc le céréalier peut :**
 
 | Ce que je fais | Chez le céréalier |
 |----------------|-------------------|
-| Je moissonne sa fenêtre | Il étend ses terres sans acheter la moissonneuse |
-| Je presse / j'ensile | Il honore la commande de l'éleveur sans le matériel saisonnier |
-| Je n'existe pas / je suis saturée | Il décote, il perd, ou il paie l'Urgent PNJ plus cher |
-| Je lâche un chantier | Sa réputation à lui n'en pâtit pas. La mienne si |
+| Je glisse la moisson / le labour / le déchaumage chez lui | Il étend sans acheter l'engin |
+| Je graisse et je ne casse pas | Sa fenêtre est honorée |
+| Je casse au milieu | Sa culture attend. Il voit la panne. Il peut rappeler un PNJ |
+| Je répare *sa* machine | Il n'a plus à payer le tarif amateur |
+| Je n'ai pas l'outil qu'il a affiché | Sa ligne reste au tableau, un autre la prend |
 
 **Donc l'éleveur peut :**
 
 | Ce que je fais | Chez l'éleveur |
 |----------------|----------------|
-| J'ensile chez le céréalier et je livre chez lui | Son silo se remplit, le troupeau tient l'hiver |
-| J'épands son lisier | Sa fosse baisse, sa production continue |
-| Je livre la paille | Sa litière est là sans qu'il ait de chariot |
-| Je suis saturée à la moisson | Son contrat d'ensilage glisse. Il rabote la ration |
+| J'épands son fumier / lisier (l'exemple de Strea) | La fosse baisse, le céréalier reçoit l'azote |
+| J'ensile et je livre | Le silo tient l'hiver |
+| Je répare son petit tracteur | Il nourrit sans attendre une pièce |
+| Je suis saturée ou en panne | Fosse qui monte, ration qui glisse |
 
-**Si je joue bien :** les deux autres osent grandir. Le céréalier ouvre une parcelle *parce que* je suis là. L'éleveur signe 20 t *parce que* j'ai l'ensileuse. Je suis l'infrastructure du triangle. **Si je joue mal :** je clique des contrats-titres, je ne vais nulle part, je n'ai touché aucune terre. Je ne suis pas ETA.
+**Si je joue bien :** j'ai plusieurs fois le même engin, un atelier qui tourne, un tableau plein, et les deux autres osent grandir. **Si je joue mal :** je clique un titre, je n'ai pas glissé, je n'ai pas graissé, je n'ai touché aucune terre. Je ne suis pas ETA.
 
 ---
 
@@ -374,7 +381,10 @@ Chaque ligne se lit : *quelqu'un fait X → les deux autres reçoivent Y → le 
 | Le céréalier sème du pois | Azote pour la suite, peu de paille | Trou de litière ce cycle | Moisson plus courte, moins de presse | Rotation (doc 45) vs demande éleveur |
 | Le céréalier ouvre une 3ᵉ parcelle | Plus de grain, plus de fenêtre | Plus de matière possible | Pic saturé : il *doit* me prendre | Foncier (doc 32) : l'hectare crée du travail, pas que du stock |
 | Le céréalier part, consigne moisson | Sauve une partie du rendement | Livraison possible quand même | Pain quotidien | Fenêtre 38 devient un appel d'offres, plus une amende |
-| L'ETA achète une ensileuse | Peut oser l'ensilage | Peut signer le contrat | S'ancre sur le pont des deux autres | Machine trop chère pour un seul : le triangle amortit |
+| L'ETA achète une 2ᵉ / 3ᵉ moissonneuse | Moisson tenue même si l'une casse | Ensilage moins risqué | Enchaîne sans rentrer à chaque panne | Le capital ETA = flotte, pas un champ |
+| L'ETA ne graisse pas / ne nettoie pas | Panne possible en pleine fenêtre | Chantier figé, fosse ou silo en attente | Usure ×2, puis casse | L'atelier est sa « terre » |
+| L'ETA répare la machine du voisin | Tarif amateur évité | Tracteur d'alimentation OK | Chantier `REPAIR`, atelier qui tourne | Usure (doc 24) devient un pont métier |
+| Le client affiche un épandage de fumier | Reçoit l'azote si c'est chez lui | Fosse qui baisse | Glisse la tonne sur *son* champ | L'exemple de Strea : le tableau *est* le métier |
 | L'ETA est saturée / absente | Urgent PNJ, ou décote | Ration rabotée, fosse qui monte | Les autres ETA / le filet prennent | Le présent gagne. L'absence de l'ETA *libère* du travail |
 | Le cours du lait monte | On lui commande plus d'ensilage | Il agrandit | Plus d'ensilage, plus d'épandage | Le marché mondial oriente l'assolement local |
 | Le cours du blé explose | Il sème du blé « cash », presse ou pas selon l'éleveur | Risque de manquer d'ensilage | Moisson blé plutôt qu'ensileuse | Tension volontaire : le monde tire, le voisin aussi |
@@ -461,6 +471,31 @@ Achat commun d'une ensileuse, d'une presse, d'une tonne à lisier. Calendrier de
 
 La CUMA n'est pas un quatrième métier. C'est le céréalier et l'ETA (parfois l'éleveur) qui mettent en commun ce que le triangle a rendu trop cher.
 
+### 8.7 L'atelier est la ferme de l'ETA
+
+Aujourd'hui une machine a une jauge `condition` et un bouton « Réparer » (doc 24). L'atelier donne −10 %. L'ETA use 10 % de moins (`etaBonus`). C'est trop plat pour un métier dont l'outil *est* le matériel.
+
+Strea demande trois gestes, pas un bouton. On les pose **seulement sur l'ETA**. Céréalier et éleveur gardent « Réparer » au tarif fort — c'est ce qui rend le chantier `REPAIR` rationnel.
+
+| Geste | Quand | Où | Si on saute |
+|-------|-------|----|-------------|
+| **Graisser** | Avant de partir | Atelier du dépôt | Usure ×1,5 sur le chantier ; à la 2ᵉ fois sans graisse, refus de partir `[GD]` |
+| **Glisser le chantier** | Pendant | Parcelle du client | Voir ci-dessous |
+| **Souffler puis nettoyer** | Après, deux actions | Cour / atelier | Prochain chantier : usure ×2, saleté visible sur le sprite |
+| **Réparer (panne)** | Quand ça casse | Sur place (cher) ou atelier (remise ETA) | Chantier figé. Client voit l'état. On peut swapper d'engin |
+
+**Panne** `[TEST]` : tirage sur un chantier si condition basse **et** (pas graissé ou sale). Plus fréquent chez l'ETA parce qu'elle enchaîne, pas parce que le RNG la punit. Visible : l'engin s'arrête, fumée, cases restantes intactes.
+
+**Coûts** `[GD]` : graisser / souffler / nettoyer = temps + CRD faibles (consommables). Réparer : tarif ETA = déjà `workshopDiscount` + remise de métier **−25 %** sur `repairCostPerPoint`. Tarif céréalier / éleveur = plein tarif, d'où le chantier chez l'ETA.
+
+**Plusieurs fois le même engin.** Le schéma le permet déjà (`Machine` en N). C'est la stratégie de Strea : 3 moissonneuses, 4 tracteurs. Une à l'atelier, deux au champ. La flotte de conducteurs (§ 8.4) vient *après* ; la flotte d'engins, dès qu'on a l'argent.
+
+**Le geste sur le champ.** Chez soi (céréalier) : sélection de cases + passage automatique, déjà là. En mission ETA : l'outil est armé, **maintien + glisser** couvre une bande égale à la largeur de l'engin. Mobile : un doigt = travail, deux doigts = cadrage (le pan actuel). Mission livrée seulement si toutes les cases du contrat sont passées. L'animation existante (va-et-vient, poussière) **suit la trace**, elle ne la remplace pas.
+
+**Chaux et désherbage.** Strea les met au tableau. Le désherbage s'adosse à `weedsControlled` (déjà posé par l'épandage). La chaux attend un vrai levier sol (NPK / pH) : en attendant, on ne l'invente pas comme un bouton cosmétique. Lisier / fumier, labour, déchaumage, moisson, réparation : jour 1 du tableau.
+
+**Missions PNJ autour.** Confirmé § 9. Rayon : la région, pas la planète. L'ETA voit les parcelles PNJ occupées et y entre comme chez un joueur.
+
 ---
 
 ## 9. Fermes PNJ — l'infrastructure, pas un mode
@@ -498,10 +533,10 @@ Aujourd'hui tout le monde démarre presque pareil, plus un bonus de 2 %. Le choi
 
 | | Céréalier | Éleveur | ETA |
 |--|-----------|---------|-----|
-| Terre | 1 parcelle agricole | dépôt + étable, pas de champ | dépôt, pas de champ |
+| Terre | 1 parcelle agricole | dépôt + étable, pas de champ | **dépôt : hangar + atelier, pas de champ** |
 | Machines | tracteur + outil de sol | petit tracteur *ou* rien | **1** machine de chantier (moissonneuse *ou* gros tracteur + outil) |
-| Stock | semences | 2 jours de fourrage + litière | gasoil |
-| Première leçon | « Votre blé est mûr. Publiez la moisson. » | « Il vous reste 2 jours. Commandez de la paille. » | « Une parcelle est mûre à 400 m. Prenez le chantier. » |
+| Stock | semences | 2 jours de fourrage + litière | gasoil, graisse |
+| Première leçon | « Votre blé est mûr. Publiez la moisson. » | « Il vous reste 2 jours. Commandez de la paille. » | « Une parcelle est mûre à 400 m. Graissez, prenez, glissez. » |
 | Bonus chiffré | on le garde faible, domaines disjoints (doc 06) | idem | idem |
 
 Le bonus de 2 % peut rester. Il n'est plus ce qui *fait* le métier.
@@ -549,6 +584,9 @@ On ne les code pas tant que la bourse, la paille et l'ensilage n'existent pas : 
 - **Pas de playlist Solo / Mixte / Entente.** Un seul monde de gestion en ligne. Le filet PNJ comble les trous ; ce n'est pas un mode. Une CUMA / une entente de trois joueurs pourra exister plus tard, comme un contrat, pas comme une façon de lancer la partie.
 - **Pas de salariés jour 1.** Voir § 8.4.
 - **Pas d'ensilage vendu comme du blé.** S'il a un cours mondial liquide, le pont céréalier–éleveur meurt.
+- **Pas de graisse / soufflage / nettoyage chez le céréalier et l'éleveur.** Ils gardent « Réparer » au tarif fort. L'entretien profond *est* le mode ETA.
+- **Pas de location magique.** Pas l'engin du chantier = pas la mission.
+- **Pas de chaux cosmétique.** Tant qu'il n'y a pas de levier sol (NPK / pH), on ne pose pas le bouton.
 
 ---
 
@@ -558,7 +596,8 @@ Le 48 disait : paille → ensilage → métiers → saisons → CUMA. C'était l
 
 | # | Brique | Pourquoi maintenant | Dépend de |
 |---|--------|---------------------|-----------|
-| **0** | **Bourse des chantiers réelle** | Sans elle, l'ETA n'existe pas. Convertir contractor + NpcContract en un `Chantier` lié à une parcelle. Urgent PNJ = filet. | Rien. On peut l'ancrer sur la moisson / le labour déjà là. |
+| **0** | **Bourse + geste** | Chantier lié à une parcelle. Machine **possédée** exigée. L'ETA **glisse** l'outil chez le client. Urgent PNJ = filet. | Travail aux champs déjà là |
+| **0b** | **Atelier ETA** | Graisser / souffler / nettoyer / panne. Remise métier. Chantier `REPAIR` chez les autres. Plusieurs fois le même engin. | 0, bâtiment `WORKSHOP` déjà là |
 | **1** | **Consignes + rapport d'absence** | Transforme la fenêtre de récolte (38) et la mortalité (44) en offre. L'absence devient le jeu de l'ETA. | 0 |
 | **2** | **Fermes PNJ sur la carte** | Rend le solo vrai. Donne à l'ETA des terres où aller dès le jour 1. | 0 |
 | **3** | **Kits de départ par métier** | Le choix à l'onboarding commence à tenir sa promesse. | 0, 2 (l'ETA a quelqu'un à servir) |
@@ -593,6 +632,11 @@ Garde-fous du 48, conservés : arbitrage, lecture écran, lien, économie, anima
 | Timeout bourse avant filet PNJ (client présent) | 45 s, skippable | `[TEST]` |
 | Timeout bourse (client absent) | jusqu'à l'échéance de consigne / palier de maturité | `[GD]` |
 | Plafond conducteurs ETA | 2 | `[GD]` |
+| Remise réparation ETA (en plus de l'atelier) | −25 % | `[GD]` |
+| Usure si pas graissé | ×1,5 | `[GD]` |
+| Usure si pas nettoyé | ×2 sur le chantier suivant | `[GD]` |
+| 2ᵉ départ sans graisse | refus | `[GD]` |
+| Largeur d'outil T1 (glisser) | 1 case | `[GD]` |
 | Jours de stock éleveur au départ | 2 | `[GD]` |
 | Fosse lisier, seuil chantier | 80 % | `[GD]` |
 | Fosse lisier, blocage | 100 % | `[GD]` |
@@ -607,16 +651,17 @@ Barème de prestation : on **garde** `CONTRACTOR_RATE_PER_CELL` et `CONTRACTOR_C
 
 Un testeur (ou nous) peut vérifier tout ça **à l'écran**, sans ouvrir le code.
 
-1. Un céréalier sans moissonneuse publie une moisson. Une ETA entre sur **sa** parcelle, on voit la machine, les cases changent, l'argent a bougé chez les deux.
+1. Un céréalier sans moissonneuse publie une moisson. Une ETA **qui a la moissonneuse chez elle** entre sur **sa** parcelle, **glisse** l'outil, les cases changent, l'argent a bougé chez les deux.
 2. Le même céréalier se déconnecte avec la consigne « si mûr, publier ». Une ETA (joueur ou PNJ) prend. Au retour, le rapport cite le nom, les tonnes, le coût.
 3. Un éleveur à court de paille achète à un céréalier de la région. Les deux comptes bougent. Le cours mondial n'est pas passé par là.
-4. Un ETA sans champ enchaîne deux chantiers sur deux parcelles qui ne sont pas les siennes. Son hangar, lui, est à lui.
-5. Une région sans aucun autre humain : des fermes PNJ sont sur la carte, elles publient, on peut y travailler. Le solo n'est pas une version amputée.
+4. Un ETA **sans champ**, avec hangar et atelier, enchaîne deux chantiers sur deux parcelles qui ne sont pas les siennes. Entre les deux, il graisse / souffle / nettoie, ou il sort le deuxième engin.
+5. Une région sans aucun autre humain : des fermes PNJ sont sur la carte, elles publient, on peut y travailler. Le monde vide n'est pas une version amputée.
 6. Urgent PNJ existe toujours, plus cher, pour celui qui est devant l'écran et qui refuse d'attendre.
 7. Un joueur peut tout faire seul, plus mal, plus cher, plus lentement. Aucun bouton n'est grisé « parce que vous n'êtes pas ETA ».
 8. Un éleveur qui signe de l'ensilage change **ce que le céréalier sème** et **ce que l'ETA a dans sa bourse**. On le voit à l'écran chez les trois, pas dans un texte d'aide.
+9. Un céréalier dont la machine est à 15 % publie `REPAIR`. L'ETA la répare moins cher que le bouton amateur. Sans l'engin exigé, la mission n'est pas prenante.
 
-Si 1 et 4 sont faux, l'ETA n'existe pas. Si 2 est faux, l'absence n'est pas le jeu. Si 3 est faux, céréalier et éleveur ne se parlent pas. Si 5 est faux, le monde vide n'offre personne à servir. Si 7 est faux, on a posé un mur. Si 8 est faux, les métiers sont encore des playlists parallèles.
+Si 1 et 4 sont faux, l'ETA n'existe pas. Si le geste de 1 est un clic sur un titre, ce n'est toujours pas le métier. Si 2 est faux, l'absence n'est pas le jeu. Si 3 est faux, céréalier et éleveur ne se parlent pas. Si 5 est faux, le monde vide n'offre personne à servir. Si 7 est faux, on a posé un mur. Si 8 est faux, les métiers sont encore des playlists parallèles. Si 9 est faux, l'atelier n'est pas une ferme.
 
 ---
 
@@ -628,6 +673,8 @@ On n'ajoute pas une application dans l'application. On branche.
 |--------|----|
 | Publier / urgent PNJ | Panneau Parcelle, à la place du bouton contractor actuel |
 | Bourse, filtres, prendre un chantier | Bureau, à la place de « Travaux à façon » |
+| Glisser l'outil (mission) | Même grille ferme, bandeau « Chantier chez *X* », 1 doigt = travail |
+| Graisser / souffler / nettoyer / panne | Garage + atelier du dépôt ETA |
 | Consignes | Bureau, nouvel onglet |
 | Rapport d'absence | Plein écran à la reconnexion, puis consultable au Bureau |
 | Fermes PNJ / joueurs | Carte région déjà là, pastilles métier |
