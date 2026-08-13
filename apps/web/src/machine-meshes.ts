@@ -93,16 +93,18 @@ function addWheel(
 
 function addShadow(parent: THREE.Object3D, w: number, d: number): void {
   const shadow = new THREE.Mesh(
-    new THREE.PlaneGeometry(w, d),
+    new THREE.CircleGeometry(0.5, 12),
     new THREE.MeshBasicMaterial({
-      color: 0x2c3b2a,
+      color: 0x1a2418,
       transparent: true,
-      opacity: 0.22,
+      opacity: 0.28,
       depthWrite: false,
     }),
   );
   shadow.rotation.x = -Math.PI / 2;
-  shadow.position.y = 0.02;
+  shadow.scale.set(w, d, 1);
+  shadow.position.y = 0.006;
+  shadow.renderOrder = 1;
   parent.add(shadow);
 }
 
@@ -117,7 +119,7 @@ function makeTractor(): THREE.Group {
   const glass = paint(0x7ec8e8);
   const wheels: THREE.Object3D[] = [];
 
-  addShadow(g, 0.72, 0.95);
+  addShadow(g, 0.5, 0.62);
   addWheel(g, wheels, 0.16, 0.1, -0.22, -0.18, tire, rim);
   addWheel(g, wheels, 0.16, 0.1, 0.22, -0.18, tire, rim);
   addWheel(g, wheels, 0.1, 0.07, -0.18, 0.28, tire, rim);
@@ -149,7 +151,7 @@ function makeHarvester(): THREE.Group {
   const wheels: THREE.Object3D[] = [];
   const spin: SpinPart[] = [];
 
-  addShadow(g, 1.05, 1.35);
+  addShadow(g, 0.7, 0.85);
   addWheel(g, wheels, 0.14, 0.1, -0.28, -0.22, tire, rim);
   addWheel(g, wheels, 0.14, 0.1, 0.28, -0.22, tire, rim);
   addWheel(g, wheels, 0.12, 0.09, -0.28, 0.22, tire, rim);
@@ -196,7 +198,7 @@ function makeSpreader(): THREE.Group {
   const wheels: THREE.Object3D[] = [];
   const spin: SpinPart[] = [];
 
-  addShadow(g, 0.7, 0.9);
+  addShadow(g, 0.48, 0.58);
   addWheel(g, wheels, 0.13, 0.09, -0.22, -0.12, tire, rim);
   addWheel(g, wheels, 0.13, 0.09, 0.22, -0.12, tire, rim);
   addWheel(g, wheels, 0.1, 0.07, -0.18, 0.26, tire, rim);
@@ -239,7 +241,7 @@ function makeHarrow(): THREE.Group {
   const wheels: THREE.Object3D[] = [];
   const spin: SpinPart[] = [];
 
-  addShadow(g, 0.95, 0.85);
+  addShadow(g, 0.62, 0.55);
   addWheel(g, wheels, 0.11, 0.08, -0.2, 0.18, tire, rim);
   addWheel(g, wheels, 0.11, 0.08, 0.2, 0.18, tire, rim);
 

@@ -111,8 +111,8 @@ const TILE_TOP = TILE_THICK / 2;
 /** Pneus légèrement dans la dalle : un contact pile au sommet laisse un
  *  interstice d'un pixel iso, et l'engin a l'air de flotter. */
 const MACHINE_GROUND = TILE_TOP - 0.012;
-/** Aire de parking : même hauteur que le champ, teinte à peine plus sombre. */
-const PARKING = 0x7a8f58;
+/** Aire de parking : terre tassée, pas un carré d'herbe au milieu du champ. */
+const PARKING = 0x6a5538;
 const GROW = 0x7fbc4e;
 const READY = 0xe8c65e;
 const SELECT_GLOW = 0x5ee08a;
@@ -162,6 +162,44 @@ const SOIL_COLORS: Record<SoilLook, number> = {
   DRY: DRY_SOIL,
   PLAIN: SOIL,
 };
+
+/**
+ * Labour en texture, pas en planches 3D.
+ *
+ * Quatre billons hauts comme la dalle se lisaient comme un ponton : trop
+ * gros, trop peu, et ils enterraient les pneus des engins. Ici le sillon
+ * est un grain répété, teinté par la couleur de la case.
+ */
+function makeFurrowMap(): THREE.CanvasTexture {
+  const n = 128;
+  const stripes = 16;
+  const canvas = document.createElement("canvas");
+  canvas.width = n;
+  canvas.height = n;
+  const ctx = canvas.getContext("2d");
+  if (ctx) {
+    ctx.fillStyle = "#737373";
+    ctx.fillRect(0, 0, n, n);
+    const step = n / stripes;
+    for (let i = 0; i < stripes; i++) {
+      const y = i * step;
+      ctx.fillStyle = "#3a3a3a";
+      ctx.fillRect(0, y, n, step * 0.4);
+      ctx.fillStyle = "#c4c4c4";
+      ctx.fillRect(0, y + step * 0.36, n, step * 0.2);
+      ctx.fillStyle = "#8d8d8d";
+      ctx.fillRect(0, y + step * 0.58, n, step * 0.16);
+    }
+  }
+  const tex = new THREE.CanvasTexture(canvas);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  tex.wrapS = THREE.RepeatWrapping;
+  tex.wrapT = THREE.RepeatWrapping;
+  tex.magFilter = THREE.LinearFilter;
+  tex.minFilter = THREE.LinearMipmapLinearFilter;
+  tex.needsUpdate = true;
+  return tex;
+}
 
 function cropColor(c: IsoCell, sim?: IsoSim): number {
   if (c.kind !== "CROP") return SOIL_COLORS[soilLook(c)];
@@ -539,6 +577,9 @@ export function IsoFarmView({
     renderer.shadowMap.type = THREE.PCFShadowMap;
     el.appendChild(renderer.domElement);
 
+    const plowedMap = makeFurrowMap();
+    plowedMap.anisotropy = Math.min(8, renderer.capabilities.getMaxAnisotropy());
+
     const camera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0.1, 100);
     camera.position.set(18, 16, 18);
     camera.lookAt(0, 0, 0);
@@ -709,11 +750,8 @@ export function IsoFarmView({
       }
       if (!details.length) return;
 
-      // Sillons, tiges et craquelures : forme, matière et disposition.
-      // Les tailles sont celles d'une illustration, pas d'un relevé de terrain.
-      // Une première version reproduisait les proportions réelles : sur un
-      // écran où une case fait quarante pixels, les sillons en occupaient deux
-      // et les craquelures un. Invisibles, donc inutiles.
+      // Tiges et craquelures seulement : le labour est une texture de dalle,
+      // pas des planches 3D qui masquaient les machines.
       const kinds: {
         look: SoilLook;
         geo: THREE.BoxGeometry;
@@ -723,20 +761,6 @@ export function IsoFarmView({
         /** Hauteur du relief ; sa base est posée sur le dessus de la dalle */
         h: number;
       }[] = [
-        {
-          // Crêtes claires sur terre sombre : c'est ainsi qu'un labour se lit,
-          // la lumière accrochant le sommet des billons.
-          look: "PLOWED",
-          geo: new THREE.BoxGeometry(size * 0.88, 0.16, size * 0.13),
-          color: 0x8a6239,
-          spots: [
-            [0, -0.3],
-            [0, -0.1],
-            [0, 0.1],
-            [0, 0.3],
-          ],
-          h: 0.16,
-        },
         {
           look: "STUBBLE",
           geo: new THREE.BoxGeometry(size * 0.1, 0.28, size * 0.1),
@@ -1001,7 +1025,9 @@ export function IsoFarmView({
           if (cell?.kind === "CROP") col = cropColor(cell, sim);
           if (cell?.kind === "BUILDING") col = DIRT;
           if (cell?.kind === "VEHICLE") col = PARKING;
-          if (cell && cell.kind === "EMPTY" && look !== "PLAIN") soilDetails.push({ look, px, pz });
+          if (cell && cell.kind === "EMPTY" && look !== "PLAIN" && look !== "PLOWED") {
+            soilDetails.push({ look, px, pz });
+          }
           // Les adventices pesaient sur le rendement sans jamais se montrer.
           // Une culture non désherbée porte donc ses touffes parasites.
           if (cell?.kind === "CROP" && !cell.weedsControlled) {
@@ -1011,6 +1037,7 @@ export function IsoFarmView({
           const mat = new THREE.MeshLambertMaterial({
             color: isSel ? SELECT_GLOW : col,
             flatShading: true,
+            map: look === "PLOWED" && cell?.kind === "EMPTY" ? plowedMap : null,
           });
           const mesh = new THREE.Mesh(tileGeo(cellSize), mat);
           // Les cases d'emprise d'un bâtiment ne doivent pas former un muret.
@@ -1669,6 +1696,7 @@ export function IsoFarmView({
       // géométrie de dalle doit être libérée explicitement au démontage.
       sharedTile?.geo.dispose();
       sharedTile = null;
+      plowedMap.dispose();
       disposeThreeScene(scene);
       disposeRenderer(renderer, el);
     };
