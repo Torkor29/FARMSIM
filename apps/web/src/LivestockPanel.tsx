@@ -42,6 +42,8 @@ type Props = {
   onSlaughter: (herdId: string, count: number) => void;
   hayTons: number;
   maizeTons: number;
+  /** Permet à la coque mobile d'en faire un tiroir du bas */
+  className?: string;
 };
 
 /** Panneau élevage : effectif, bien-être, sortie au pré. */
@@ -57,11 +59,12 @@ export function LivestockPanel({
   onSlaughter,
   hayTons,
   maizeTons,
+  className = "glass livestock-panel",
 }: Props) {
   if (!barns.length) return null;
 
   return (
-    <aside className="glass livestock-panel">
+    <aside className={className}>
       <h3>Élevage</h3>
       <p className="muted tiny">
         Nourrissez, sortez, trayez. Un troupeau affamé s’effondre ; une aire de

@@ -52,6 +52,7 @@ const Onboarding = lazy(() => import("./Onboarding").then((m) => ({ default: m.O
 import { SplashScreen } from "./SplashScreen";
 import { TutorialOverlay } from "./TutorialOverlay";
 import { TOKEN_KEY, TUTORIAL_KEY } from "./storage-keys";
+import { useIsMobile } from "./use-media-query";
 import { ZoneMap } from "./ZoneMap";
 
 const API = "/api";
@@ -211,6 +212,17 @@ function clearSession() {
   localStorage.removeItem("farmsim_player");
 }
 
+/** Tiroirs du bas, sur petit écran. */
+type SheetKey = "INFO" | "BUILD" | "GARAGE" | "OFFICE" | "HERD";
+
+const SHEET_TABS: { key: SheetKey; label: string; icon: string }[] = [
+  { key: "INFO", label: "Parcelle", icon: "🌾" },
+  { key: "BUILD", label: "Bâtir", icon: "🏗️" },
+  { key: "HERD", label: "Élevage", icon: "🐄" },
+  { key: "GARAGE", label: "Garage", icon: "🚜" },
+  { key: "OFFICE", label: "Bureau", icon: "📋" },
+];
+
 const ACTION_BAR: { tool: Tool; label: string; icon: string }[] = [
   { tool: "SELECT", label: "Inspect", icon: "/assets/icons/tools/select.svg" },
   { tool: "PLANT_WHEAT", label: "Semer", icon: "/assets/icons/tools/plant.svg" },
@@ -265,6 +277,13 @@ export function App() {
     }[];
   } | null>(null);
   const [tool, setTool] = useState<Tool>("SELECT");
+  const isMobile = useIsMobile();
+  /**
+   * Tiroir ouvert sur petit écran. Un seul à la fois : superposer des
+   * panneaux sur un téléphone revient à masquer la ferme, qui est pourtant
+   * ce qu'on est venu regarder.
+   */
+  const [sheet, setSheet] = useState<SheetKey | null>(null);
   /** Semer dans les chaumes plutôt que de travailler le sol au préalable */
   const [directSeed, setDirectSeed] = useState(false);
   const [buildType, setBuildType] = useState<BuildingType>("SILO");
@@ -710,6 +729,16 @@ export function App() {
       malus: Math.round((1 - worst) * 100),
     };
   }, [tool, selectedCells, parcel?.cells]);
+
+  /**
+   * Classe d'un panneau latéral. Sur petit écran il devient un tiroir du bas,
+   * visible seulement quand son onglet est actif : la place manque pour
+   * border la ferme de colonnes, et la masquer serait absurde.
+   */
+  function panelClass(base: string, key: SheetKey): string {
+    if (!isMobile) return `glass ${base}`;
+    return `glass ${base} sheet${sheet === key ? " open" : ""}`;
+  }
 
   function flashToast(text: string, isError = false) {
     if (isError) setErr(text);
@@ -1637,7 +1666,7 @@ export function App() {
   }
 
   return (
-    <div className="game-stage">
+    <div className={`game-stage${isMobile ? " mobile" : ""}`}>
       <div className="iso-layer">
         {parcel ? (
           <Suspense fallback={<SceneLoading label="Chargement de la ferme…" />}>
@@ -1742,7 +1771,7 @@ export function App() {
         <span className="tick weather-tick">{weatherLabel}</span>
       </div>
 
-      <aside className="glass geo-panel">
+      <aside className={panelClass("geo-panel", "INFO")}>
         <h3>{homeCity || zoneName}</h3>
         <dl>
           <div>
@@ -1815,7 +1844,7 @@ export function App() {
         </div>
       </aside>
 
-      <aside className="glass build-panel">
+      <aside className={panelClass("build-panel", "BUILD")}>
         <h3>Construire</h3>
         <div className="build-list">
           {(Object.keys(BUILDING_DEFS) as BuildingType[]).map((t) => {
@@ -1939,7 +1968,7 @@ export function App() {
         ))}
         <button
           type="button"
-          className={`action ${showGarage ? "on" : ""}`}
+          className={`action garage-toggle ${showGarage ? "on" : ""}`}
           onClick={() => setShowGarage((v) => !v)}
         >
           Garage
@@ -2031,8 +2060,8 @@ export function App() {
         </button>
       </div>
 
-      {showGarage && (
-        <aside className="glass garage-panel">
+      {(isMobile ? sheet === "GARAGE" : showGarage) && (
+        <aside className={panelClass("garage-panel", "GARAGE")}>
           <h3>Garage</h3>
           <p className="muted tiny">
             Semis / ferti → tracteur · Récolte → moissonneuse. Usure à chaque case.
@@ -2119,6 +2148,7 @@ export function App() {
       />
 
       <LivestockPanel
+        className={panelClass("livestock-panel", "HERD")}
         barns={barns}
         busy={busy}
         crd={player.crd}
@@ -2145,8 +2175,8 @@ export function App() {
 
       <TutorialOverlay open={showTutorial} onClose={() => setShowTutorial(false)} />
 
-      {showEta && (
-        <aside className="glass eta-panel">
+      {(isMobile ? sheet === "OFFICE" : showEta) && (
+        <aside className={panelClass("eta-panel", "OFFICE")}>
           <h3>Travaux à façon</h3>
           <p className="muted tiny">
             Vous partez travailler chez d’autres exploitants avec votre matériel.
@@ -2231,6 +2261,40 @@ export function App() {
             ))}
           </ul>
         </aside>
+      )}
+
+      {isMobile && (
+        <>
+          {/* Un voile referme le tiroir d'une tape hors de lui : sur un
+              téléphone, chercher la bonne croix est une corvée. */}
+          {sheet && (
+            <button
+              type="button"
+              className="sheet-scrim"
+              aria-label="Fermer le panneau"
+              onClick={() => setSheet(null)}
+            />
+          )}
+          <nav className="tabbar" aria-label="Panneaux">
+            {SHEET_TABS.map((t) => {
+              const disabled = t.key === "HERD" && !barns.length;
+              return (
+                <button
+                  key={t.key}
+                  type="button"
+                  className={`tab${sheet === t.key ? " on" : ""}`}
+                  disabled={disabled}
+                  title={disabled ? "Aucun bâtiment d’élevage sur la parcelle" : t.label}
+                  aria-pressed={sheet === t.key}
+                  onClick={() => setSheet((cur) => (cur === t.key ? null : t.key))}
+                >
+                  <span aria-hidden="true">{t.icon}</span>
+                  <span className="tab-label">{t.label}</span>
+                </button>
+              );
+            })}
+          </nav>
+        </>
       )}
     </div>
   );

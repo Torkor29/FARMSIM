@@ -465,6 +465,13 @@ export function IsoFarmView({
     /** Uniquement les dalles de sol — les engins ne bloquent pas le clic */
     const pickables: THREE.Object3D[] = [];
 
+    /**
+     * Cadrage choisi par le joueur, conservé d'une reconstruction de scène à
+     * l'autre. Le zoom vaut 1 quand la parcelle tient juste dans l'écran.
+     */
+    const view = { zoom: 1, panX: 0, panZ: 0 };
+    let viewSpan = 12;
+
     let cellSize = 1;
     let step = 1.06;
     let ox = 0;
@@ -867,16 +874,28 @@ export function IsoFarmView({
         }
       }
 
-      const span = Math.max(gw, gh) * step;
-      const frustum = span * 0.72;
+      viewSpan = Math.max(gw, gh) * step;
+      applyCamera();
+    }
+
+    /**
+     * Cadre la caméra en tenant compte du zoom et du déplacement du joueur.
+     *
+     * Séparé de `layout()` : la scène se reconstruit à chaque changement de
+     * données, et recadrer d'office renverrait le joueur au centre à chaque
+     * fois — insupportable dès qu'on travaille sur un coin de la parcelle.
+     */
+    function applyCamera() {
+      const span = viewSpan;
+      const frustum = (span * 0.72) / view.zoom;
       const aspect = el.clientWidth / Math.max(1, el.clientHeight);
       camera.left = -frustum * aspect;
       camera.right = frustum * aspect;
       camera.top = frustum;
       camera.bottom = -frustum;
       camera.updateProjectionMatrix();
-      camera.position.set(span * 0.95, span * 0.85, span * 0.95);
-      camera.lookAt(0, 0, 0);
+      camera.position.set(span * 0.95 + view.panX, span * 0.85, span * 0.95 + view.panZ);
+      camera.lookAt(view.panX, 0, view.panZ);
     }
 
     function resize() {
@@ -906,26 +925,122 @@ export function IsoFarmView({
       pointer.y = -((ev.clientY - rect.top) / rect.height) * 2 + 1;
     }
 
+    /**
+     * Déplacement et zoom au doigt.
+     *
+     * Une grille de douze sur douze tient à peine sur un téléphone : sans
+     * pouvoir approcher ni faire glisser, viser une case relève de la chance.
+     *
+     * Le clic ne part qu'au relâchement, et seulement si le doigt n'a
+     * pratiquement pas bougé : autrement, chaque déplacement de la vue
+     * sèmerait une case au passage.
+     */
+    const DRAG_SLOP_PX = 8;
+    const pointers = new Map<number, { x: number; y: number }>();
+    let dragged = false;
+    let pinchStart = 0;
+    let zoomStart = 1;
+    let lastX = 0;
+    let lastY = 0;
+
+    /** Unités du monde parcourues par un pixel d'écran, au zoom courant. */
+    function worldPerPixel(): number {
+      return (camera.right - camera.left) / Math.max(1, el.clientWidth);
+    }
+
+    /** Axes de l'écran ramenés au plan du sol, pour glisser dans le bon sens. */
+    const dragRight = new THREE.Vector3();
+    const dragUp = new THREE.Vector3();
+    function panBy(dxPx: number, dyPx: number) {
+      dragRight.setFromMatrixColumn(camera.matrix, 0).setY(0).normalize();
+      dragUp.setFromMatrixColumn(camera.matrix, 1).setY(0).normalize();
+      const k = worldPerPixel();
+      view.panX -= dragRight.x * dxPx * k + dragUp.x * -dyPx * k;
+      view.panZ -= dragRight.z * dxPx * k + dragUp.z * -dyPx * k;
+      // Sans borne, on perd la ferme de vue et plus rien ne la ramène.
+      const limit = viewSpan * 0.9;
+      view.panX = Math.max(-limit, Math.min(limit, view.panX));
+      view.panZ = Math.max(-limit, Math.min(limit, view.panZ));
+      applyCamera();
+    }
+
+    function setZoom(next: number) {
+      view.zoom = Math.max(0.6, Math.min(3.2, next));
+      applyCamera();
+    }
+
+    function pinchDistance(): number {
+      const [a, b] = [...pointers.values()];
+      return Math.hypot(a.x - b.x, a.y - b.y);
+    }
+
+    function onPointerDown(ev: PointerEvent) {
+      pointers.set(ev.pointerId, { x: ev.clientX, y: ev.clientY });
+      renderer.domElement.setPointerCapture?.(ev.pointerId);
+      lastX = ev.clientX;
+      lastY = ev.clientY;
+      dragged = false;
+      if (pointers.size === 2) {
+        pinchStart = pinchDistance();
+        zoomStart = view.zoom;
+        // Un pincement n'est jamais un clic, même si les doigts bougent peu.
+        dragged = true;
+      }
+    }
+
     function onPointerMove(ev: PointerEvent) {
+      if (!pointers.has(ev.pointerId)) {
+        // Survol à la souris, sans bouton enfoncé.
+        setPointerFromEvent(ev);
+        onHoverRef.current?.(raycastCell());
+        return;
+      }
+      pointers.set(ev.pointerId, { x: ev.clientX, y: ev.clientY });
+
+      if (pointers.size >= 2) {
+        if (pinchStart > 0) setZoom((zoomStart * pinchDistance()) / pinchStart);
+        return;
+      }
+
+      const dx = ev.clientX - lastX;
+      const dy = ev.clientY - lastY;
+      if (!dragged && Math.hypot(dx, dy) < DRAG_SLOP_PX) return;
+      dragged = true;
+      lastX = ev.clientX;
+      lastY = ev.clientY;
+      panBy(dx, dy);
+      onHoverRef.current?.(null);
+    }
+
+    function onPointerUp(ev: PointerEvent) {
+      const had = pointers.delete(ev.pointerId);
+      renderer.domElement.releasePointerCapture?.(ev.pointerId);
+      if (pointers.size < 2) pinchStart = 0;
+      if (!had || dragged || pointers.size > 0) return;
       setPointerFromEvent(ev);
       const cell = raycastCell();
-      onHoverRef.current?.(cell);
+      if (cell) onClickRef.current(cell.x, cell.y);
     }
 
     function onPointerLeave() {
       onHoverRef.current?.(null);
     }
 
-    function onPointer(ev: PointerEvent) {
-      setPointerFromEvent(ev);
-      const cell = raycastCell();
-      if (cell) onClickRef.current(cell.x, cell.y);
+    function onWheel(ev: WheelEvent) {
+      ev.preventDefault();
+      setZoom(view.zoom * (ev.deltaY < 0 ? 1.12 : 1 / 1.12));
     }
 
     renderer.domElement.style.cursor = "crosshair";
-    renderer.domElement.addEventListener("pointerdown", onPointer);
+    // Sans cela, le navigateur intercepte le glissement pour faire défiler la
+    // page et le zoom à deux doigts ne parvient jamais jusqu'ici.
+    renderer.domElement.style.touchAction = "none";
+    renderer.domElement.addEventListener("pointerdown", onPointerDown);
     renderer.domElement.addEventListener("pointermove", onPointerMove);
+    renderer.domElement.addEventListener("pointerup", onPointerUp);
+    renderer.domElement.addEventListener("pointercancel", onPointerUp);
     renderer.domElement.addEventListener("pointerleave", onPointerLeave);
+    renderer.domElement.addEventListener("wheel", onWheel, { passive: false });
 
     let raf = 0;
     // THREE.Clock est déprécié depuis r183 au profit de Timer, qui doit être
@@ -1202,9 +1317,12 @@ export function IsoFarmView({
       clearInterval(sync);
       layoutRef.current = null;
       ro.disconnect();
-      renderer.domElement.removeEventListener("pointerdown", onPointer);
+      renderer.domElement.removeEventListener("pointerdown", onPointerDown);
       renderer.domElement.removeEventListener("pointermove", onPointerMove);
+      renderer.domElement.removeEventListener("pointerup", onPointerUp);
+      renderer.domElement.removeEventListener("pointercancel", onPointerUp);
       renderer.domElement.removeEventListener("pointerleave", onPointerLeave);
+      renderer.domElement.removeEventListener("wheel", onWheel);
       while (previewGroup.children.length) {
         const c = previewGroup.children[0];
         previewGroup.remove(c);
