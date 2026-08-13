@@ -42,6 +42,8 @@ import {
   MAX_BUILDING_LEVEL,
   contractorQuote,
   CONTRACTOR_YIELD_MALUS,
+  npcMissionReward,
+  repairHalfwayTarget,
   type FarmWork,
   ripenessAt,
   LOST_CROP_FERTILITY_MALUS,
@@ -564,13 +566,21 @@ async function ensureSeed() {
       rewardCrd: number;
       regionNote: string;
     }[] = [
-      { jobType: "HARVEST", title: "Moisson blé — 12 ha", rewardCrd: 850, regionNote: "Beauce" },
-      { jobType: "PLOW", title: "Labour de printemps", rewardCrd: 420, regionNote: "Iowa" },
-      { jobType: "SOW", title: "Semis maïs", rewardCrd: 560, regionNote: "Beauce" },
-      { jobType: "FERTILIZE", title: "Épandage NPK", rewardCrd: 380, regionNote: "Iowa" },
-      { jobType: "TRANSPORT", title: "Transport grain → silo", rewardCrd: 300, regionNote: "Beauce" },
+      { jobType: "HARVEST", title: "Moisson blé — 12 ha", rewardCrd: npcMissionReward("HARVEST"), regionNote: "Beauce" },
+      { jobType: "PLOW", title: "Labour de printemps", rewardCrd: npcMissionReward("PLOW"), regionNote: "Iowa" },
+      { jobType: "SOW", title: "Semis maïs", rewardCrd: npcMissionReward("PLANT"), regionNote: "Beauce" },
+      { jobType: "FERTILIZE", title: "Épandage NPK", rewardCrd: npcMissionReward("FERTILIZE"), regionNote: "Iowa" },
+      { jobType: "TRANSPORT", title: "Transport grain → silo", rewardCrd: npcMissionReward("PLOW"), regionNote: "Beauce" },
     ];
     for (const j of jobs) await prisma.npcContract.create({ data: j });
+  }
+  // Recaler les lignes déjà ouvertes sur le barème (sinon 850 TRN fantômes restent).
+  for (const jobType of ["HARVEST", "PLOW", "SOW", "FERTILIZE", "TRANSPORT"] as const) {
+    const work = CONTRACT_WORK[jobType];
+    await prisma.npcContract.updateMany({
+      where: { status: "OPEN", jobType },
+      data: { rewardCrd: npcMissionReward(work) },
+    });
   }
 
   const zonesForWeather = await prisma.zone.findMany({ select: { code: true } });
@@ -1069,7 +1079,7 @@ app.post("/dev/grant", async (req, res) => {
 
   if (body.data.crd !== undefined) {
     await prisma.user.update({ where: { id: user.id }, data: { crd: body.data.crd } });
-    done.push(`trésorerie à ${Math.round(body.data.crd)} CRD`);
+    done.push(`trésorerie à ${Math.round(body.data.crd)} TRN`);
   }
   if (body.data.level !== undefined || body.data.xp !== undefined) {
     await prisma.user.update({
@@ -1566,7 +1576,7 @@ app.post("/auth/register", async (req, res) => {
       return;
     }
     if (msg === "INSUFFICIENT_FUNDS") {
-      res.status(402).json({ error: "CRD insuffisants" });
+      res.status(402).json({ error: "TRN insuffisants" });
       return;
     }
     if (typeof e === "object" && e && "code" in e && (e as { code: string }).code === "P2002") {
@@ -1724,7 +1734,7 @@ app.post("/parcels/:id/buy", async (req, res) => {
     return;
   }
   if (user.crd < quote.total) {
-    res.status(402).json({ error: `CRD insuffisants — ${quote.total} requis` });
+    res.status(402).json({ error: `TRN insuffisants — ${quote.total} requis` });
     return;
   }
 
@@ -1825,7 +1835,7 @@ app.post("/parcels/:id/contractor", async (req, res) => {
   const seeds = work === "PLANT" && crop ? CROP_DEFS[crop].seedCostPerCell * cells.length : 0;
   const total = service + seeds;
   if (user.crd < total) {
-    res.status(402).json({ error: `CRD insuffisants — ${total} requis` });
+    res.status(402).json({ error: `TRN insuffisants — ${total} requis` });
     return;
   }
 
@@ -2065,7 +2075,7 @@ app.post("/parcels/:id/plant", async (req, res) => {
   const seedCost = CROP_DEFS[body.data.crop].seedCostPerCell * body.data.cells.length;
   const cost = seedCost + (directSeed ? DIRECT_SEED_COST_PER_CELL * body.data.cells.length : 0);
   if (user.crd < cost) {
-    res.status(402).json({ error: "CRD insuffisants pour semences" });
+    res.status(402).json({ error: "TRN insuffisants pour semences" });
     return;
   }
 
@@ -2182,7 +2192,7 @@ app.post("/parcels/:id/fertilize", async (req, res) => {
   const cost = 10 * body.data.cells.length;
   const user = await prisma.user.findUnique({ where: { id: body.data.userId } });
   if (!user || user.crd < cost) {
-    res.status(402).json({ error: "CRD insuffisants" });
+    res.status(402).json({ error: "TRN insuffisants" });
     return;
   }
   let fertilized = 0;
@@ -2277,7 +2287,7 @@ app.post("/parcels/:id/plow", async (req, res) => {
   const cost = PLOW_COST_PER_CELL_SOIL * candidates.length;
   const user = await prisma.user.findUnique({ where: { id: body.data.userId } });
   if (!user || user.crd < cost) {
-    res.status(402).json({ error: `CRD insuffisants — ${cost} requis` });
+    res.status(402).json({ error: `TRN insuffisants — ${cost} requis` });
     return;
   }
 
@@ -2388,7 +2398,7 @@ app.post("/parcels/:id/stubble", async (req, res) => {
   const cost = STUBBLE_COST_PER_CELL * targets.length;
   const user = await prisma.user.findUnique({ where: { id: body.data.userId } });
   if (!user || user.crd < cost) {
-    res.status(402).json({ error: `CRD insuffisants — ${cost} requis` });
+    res.status(402).json({ error: `TRN insuffisants — ${cost} requis` });
     return;
   }
 
@@ -2640,7 +2650,7 @@ app.post("/parcels/:id/build", async (req, res) => {
   }
   const user = await prisma.user.findUnique({ where: { id: body.data.userId } });
   if (!user || user.crd < def.cost) {
-    res.status(402).json({ error: "CRD insuffisants" });
+    res.status(402).json({ error: "TRN insuffisants" });
     return;
   }
 
@@ -2702,7 +2712,7 @@ app.post("/buildings/:id/upgrade", async (req, res) => {
     return;
   }
   if (user.crd < cost) {
-    res.status(402).json({ error: `CRD insuffisants — ${cost} requis` });
+    res.status(402).json({ error: `TRN insuffisants — ${cost} requis` });
     return;
   }
 
@@ -3061,7 +3071,7 @@ app.post("/buildings/:id/animals", async (req, res) => {
   const cost = COW_PRICE * body.data.count;
   const user = await prisma.user.findUnique({ where: { id: body.data.userId } });
   if (!user || user.crd < cost) {
-    res.status(402).json({ error: `CRD insuffisants — ${cost} requis` });
+    res.status(402).json({ error: `TRN insuffisants — ${cost} requis` });
     return;
   }
 
@@ -3504,7 +3514,7 @@ app.post("/market/buy", async (req, res) => {
   const base = market?.price ?? GOOD_DEFS[body.data.commodity].basePrice;
   const cost = Math.round(dealerAskPrice(base) * body.data.tons);
   if (user.crd < cost) {
-    res.status(402).json({ error: `CRD insuffisants — ${cost} requis` });
+    res.status(402).json({ error: `TRN insuffisants — ${cost} requis` });
     return;
   }
   await prisma.$transaction(async (tx) => {
@@ -3603,7 +3613,7 @@ app.post("/machines/buy", async (req, res) => {
     return;
   }
   if (user.crd < def.cost) {
-    res.status(402).json({ error: "CRD insuffisants" });
+    res.status(402).json({ error: "TRN insuffisants" });
     return;
   }
   const bonuses = await getFarmBonuses(user.farm.id);
@@ -3651,11 +3661,17 @@ app.post("/machines/buy", async (req, res) => {
 });
 
 app.post("/machines/:id/repair", async (req, res) => {
-  const body = z.object({ userId: z.string() }).safeParse(req.body);
+  const body = z
+    .object({
+      userId: z.string(),
+      extent: z.enum(["half", "full"]).optional(),
+    })
+    .safeParse(req.body);
   if (!body.success) {
     res.status(400).json(body.error.flatten());
     return;
   }
+  const extent = body.data.extent ?? "full";
   const machine = await prisma.machine.findUnique({
     where: { id: req.params.id },
     include: { farm: { include: { user: true } } },
@@ -3673,18 +3689,23 @@ app.post("/machines/:id/repair", async (req, res) => {
     res.status(409).json({ error: "Déjà en parfait état" });
     return;
   }
-  if (machine.farm.user.specialization === "ETA") {
-    res.status(409).json({ error: "À l'atelier : graissez, nettoyez ou réparez à la main." });
+  const target =
+    extent === "half" ? repairHalfwayTarget(machine.condition) : 100;
+  if (target <= machine.condition + 0.05) {
+    res.status(409).json({ error: "Rien à gagner" });
     return;
   }
   const bonuses = await getFarmBonuses(machine.farmId);
   const quote = repairMachineCost({
     condition: machine.condition,
     repairCostPerPoint: def.repairCostPerPoint,
+    targetCondition: target,
     workshopDiscount: bonuses.repairDiscount,
   });
   if (machine.farm.user.crd < quote.cost) {
-    res.status(402).json({ error: `Réparation ${quote.cost} CRD — fonds insuffisants` });
+    res.status(402).json({
+      error: `Réparation ${quote.cost} TRN — fonds insuffisants. Rafistoler coûte moins.`,
+    });
     return;
   }
   await prisma.$transaction(async (tx) => {
@@ -3707,6 +3728,7 @@ app.post("/machines/:id/repair", async (req, res) => {
     machineId: machine.id,
     condition: quote.nextCondition,
     cost: quote.cost,
+    extent,
     discount: bonuses.repairDiscount,
   });
 });
@@ -3736,7 +3758,7 @@ app.post("/machines/:id/grease", async (req, res) => {
     return;
   }
   if (machine.farm.user.crd < GREASE_COST_CRD) {
-    res.status(402).json({ error: `Graissage ${GREASE_COST_CRD} CRD — fonds insuffisants` });
+    res.status(402).json({ error: `Graissage ${GREASE_COST_CRD} TRN — fonds insuffisants` });
     return;
   }
   await prisma.$transaction(async (tx) => {
@@ -3768,7 +3790,7 @@ app.post("/machines/:id/clean", async (req, res) => {
     return;
   }
   if (machine.farm.user.crd < CLEAN_COST_CRD) {
-    res.status(402).json({ error: `Nettoyage ${CLEAN_COST_CRD} CRD — fonds insuffisants` });
+    res.status(402).json({ error: `Nettoyage ${CLEAN_COST_CRD} TRN — fonds insuffisants` });
     return;
   }
   await prisma.$transaction(async (tx) => {
@@ -3829,7 +3851,7 @@ app.post("/machines/:id/service", async (req, res) => {
     workshopDiscount: bonuses.repairDiscount + etaCut,
   });
   if (machine.farm.user.crd < quote.cost) {
-    res.status(402).json({ error: `Réparation ${quote.cost} CRD — fonds insuffisants` });
+    res.status(402).json({ error: `Réparation ${quote.cost} TRN — fonds insuffisants` });
     return;
   }
   await prisma.$transaction(async (tx) => {
@@ -4326,7 +4348,7 @@ app.post("/market/listings/:id/cancel", async (req, res) => {
   res.json({ returned: listing.tons, commodity: listing.commodity });
 });
 
-/** Achat d'une annonce : les CRD passent au vendeur, la marchandise à l'acheteur. */
+/** Achat d'une annonce : les TRN passent au vendeur, la marchandise à l'acheteur. */
 app.post("/market/listings/:id/buy", async (req, res) => {
   const body = z.object({ userId: z.string() }).safeParse(req.body);
   if (!body.success) {
@@ -4353,7 +4375,7 @@ app.post("/market/listings/:id/buy", async (req, res) => {
   }
   const total = Math.round(listing.pricePerTon * listing.tons);
   if (buyer.crd < total) {
-    res.status(402).json({ error: `CRD insuffisants — ${total} requis` });
+    res.status(402).json({ error: `TRN insuffisants — ${total} requis` });
     return;
   }
   const proceeds = listingProceeds(listing.pricePerTon, listing.tons);
@@ -4529,7 +4551,7 @@ app.post("/inventory/dry", async (req, res) => {
     barnBonus: bonuses.softDryer,
   });
   if (dried.cost > user.crd) {
-    res.status(409).json({ error: "CRD insuffisants pour sécher" });
+    res.status(409).json({ error: "TRN insuffisants pour sécher" });
     return;
   }
   if (dried.reduction <= 0) {

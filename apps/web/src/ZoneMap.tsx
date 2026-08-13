@@ -83,7 +83,7 @@ export function ZoneMap({
             const isAllowed = isFree && (allowed == null || (p != null && allowed.has(p.id)));
             const selected = p != null && selectedParcelId === p.id;
             const title = p
-              ? `${p.label} · (${p.mapX},${p.mapY}) · ${p.landPrice} CRD` +
+              ? `${p.label} · (${p.mapX},${p.mapY}) · ${p.landPrice} TRN` +
                 (status === "mine" ? " · à toi" : status === "other" ? " · occupée" : isAllowed ? " · libre" : " · non disponible")
               : `Case vide (${x},${y})`;
 

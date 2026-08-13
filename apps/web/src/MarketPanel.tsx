@@ -321,7 +321,7 @@ export function MarketPanel({
                   </label>
 
                   <p className="market-course">
-                    Cours du jour : <strong>{price.price.toFixed(1)} CRD/t</strong>
+                    Cours du jour : <strong>{price.price.toFixed(1)} TRN/t</strong>
                   </p>
                   <PriceSparkline points={history} />
 
@@ -332,9 +332,9 @@ export function MarketPanel({
                         className={`channel-card ${q.channel === best?.channel ? "best" : ""}`}
                       >
                         <h3>{SALE_CHANNEL_LABELS[q.channel]}</h3>
-                        <p className="channel-price">{q.pricePerTon.toFixed(1)} CRD/t</p>
+                        <p className="channel-price">{q.pricePerTon.toFixed(1)} TRN/t</p>
                         <p className="channel-net">
-                          {q.net} CRD
+                          {q.net} TRN
                           {q.guaranteed ? (
                             <em className="sure">encaissé tout de suite</em>
                           ) : (
@@ -394,8 +394,8 @@ export function MarketPanel({
                               {GOOD_DEFS[l.commodity as TradeGood]?.name ?? l.commodity}
                             </strong>
                             <em>
-                              {l.tons.toFixed(2)} t à {l.pricePerTon.toFixed(0)} CRD/t ·{" "}
-                              {listingProceeds(l.pricePerTon, l.tons)} CRD net
+                              {l.tons.toFixed(2)} t à {l.pricePerTon.toFixed(0)} TRN/t ·{" "}
+                              {listingProceeds(l.pricePerTon, l.tons)} TRN net
                             </em>
                           </span>
                           <span className="listing-right">
@@ -431,13 +431,13 @@ export function MarketPanel({
                           {GOOD_DEFS[l.commodity as TradeGood]?.name ?? l.commodity}
                         </strong>
                         <em>
-                          {l.tons.toFixed(2)} t à {l.pricePerTon.toFixed(0)} CRD/t ·{" "}
+                          {l.tons.toFixed(2)} t à {l.pricePerTon.toFixed(0)} TRN/t ·{" "}
                           {Math.round(l.moisture * 100)} % humidité
                         </em>
                         <em className="listing-seller">{l.sellerName}</em>
                       </span>
                       <span className="listing-right">
-                        <strong>{l.total} CRD</strong>
+                        <strong>{l.total} TRN</strong>
                         <button
                           type="button"
                           className="channel-go"
@@ -489,7 +489,7 @@ function SupplyTab({
         <img className="build-art" src="/assets/items/hay-bales.webp" alt="" />
         <span className="build-text">
           <strong>{GOOD_DEFS.HAY.name}</strong>
-          <span>{unit.toFixed(1)} CRD/t</span>
+          <span>{unit.toFixed(1)} TRN/t</span>
         </span>
         <label className="supply-qty">
           <span>Quantité</span>
@@ -507,7 +507,7 @@ function SupplyTab({
           disabled={busy || crd < total}
           onClick={() => onBuy("HAY", tons)}
         >
-          Acheter · {total} CRD
+          Acheter · {total} TRN
         </button>
       </div>
     </div>
@@ -595,8 +595,8 @@ function FuturesTab({
 
       <p className="market-course">
         Cours du jour <strong>{spot.toFixed(1)}</strong> · garanti{" "}
-        <strong>{garanti.toFixed(1)} CRD/t</strong> · total{" "}
-        <strong>{Math.round(garanti * tons)} CRD</strong>
+        <strong>{garanti.toFixed(1)} TRN/t</strong> · total{" "}
+        <strong>{Math.round(garanti * tons)} TRN</strong>
       </p>
       <button
         type="button"
@@ -618,13 +618,13 @@ function FuturesTab({
             <li key={f.id}>
               <span>
                 {GOOD_DEFS[f.commodity as TradeGood]?.name ?? f.commodity} ·{" "}
-                {f.tons.toFixed(2)} t à {f.pricePerTon.toFixed(0)} CRD/t · échéance dans{" "}
+                {f.tons.toFixed(2)} t à {f.pricePerTon.toFixed(0)} TRN/t · échéance dans{" "}
                 {mins} min
                 {ecart !== null && (
                   <em className={ecart >= 0 ? "gain" : "loss"}>
                     {" "}
                     {ecart >= 0 ? "+" : ""}
-                    {ecart} CRD contre le comptant
+                    {ecart} TRN contre le comptant
                   </em>
                 )}
               </span>

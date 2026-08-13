@@ -16,6 +16,10 @@ export * from "./machine-care.js";
 export * from "./art-anchor.js";
 export * from "./play-guide.js";
 
+/** Monnaie du jeu : le terron (TRN). Le champ interne reste `crd`. */
+export const CURRENCY_CODE = "TRN";
+export const CURRENCY_NAME = "terron";
+
 import type { TradeGood } from "./goods.js";
 
 export type Specialization = "CEREALIER" | "ELEVEUR" | "ETA";
@@ -203,7 +207,7 @@ export type BuildingDef = {
  * @see docs/research/27_MOISTURE_DRYING.md
  */
 export const DRYING = {
-  /** CRD par tonne et par passe de séchage */
+  /** TRN par tonne et par passe de séchage */
   costPerTonPerPass: 12,
   /** Réduction d’humidité (fraction) par passe */
   moistureReductionPerPass: 0.06,
@@ -351,7 +355,7 @@ export function buildingLevelDef(level: number): BuildingLevelDef {
   return BUILDING_LEVELS[clamped - 1];
 }
 
-/** Coût en CRD pour passer un bâtiment au niveau suivant. */
+/** Coût en TRN pour passer un bâtiment au niveau suivant. */
 export function buildingUpgradeCost(type: BuildingType, currentLevel: number): number | null {
   if (currentLevel >= MAX_BUILDING_LEVEL) return null;
   const next = buildingLevelDef(currentLevel + 1);
@@ -405,7 +409,7 @@ export type MachineDef = {
   tier: number;
   /** Points de condition perdus par case travaillée */
   wearPerCell: number;
-  /** Coût CRD pour +1 point de condition */
+  /** Coût TRN pour +1 point de condition */
   repairCostPerPoint: number;
   minCondition: number;
   description: string;
@@ -418,11 +422,13 @@ export const MACHINE_DEFS: Record<MachineType, MachineDef> = {
   TRACTOR: {
     type: "TRACTOR",
     name: "Tracteur T1",
-    cost: 3200,
+    cost: 2800,
     tier: 1,
-    wearPerCell: 0.7,
-    repairCostPerPoint: 8,
-    minCondition: 12,
+    // ~2,5 tours de semis sur 12×12 avant le seuil. Avant : 0,7 × 144 = mort en un passage.
+    wearPerCell: 0.25,
+    // Révision complète ≈ 20 % de l'achat (560 TRN).
+    repairCostPerPoint: 6,
+    minCondition: 15,
     description: "Semis et travaux de base.",
     works: ["PLANT", "PLOW", "FERTILIZE"],
     isoColor: "green",
@@ -430,11 +436,12 @@ export const MACHINE_DEFS: Record<MachineType, MachineDef> = {
   HARVESTER: {
     type: "HARVESTER",
     name: "Moissonneuse T1",
-    cost: 4800,
+    cost: 4000,
     tier: 1,
-    wearPerCell: 1.1,
-    repairCostPerPoint: 12,
-    minCondition: 12,
+    // Une parcelle 12×12 : −46 pts, il en reste 54. Deuxième moisson puis rafistolage.
+    wearPerCell: 0.32,
+    repairCostPerPoint: 8,
+    minCondition: 15,
     description: "Récolte céréales.",
     works: ["HARVEST"],
     isoColor: "red-gold",
@@ -442,11 +449,11 @@ export const MACHINE_DEFS: Record<MachineType, MachineDef> = {
   SPREADER: {
     type: "SPREADER",
     name: "Épandeur T1",
-    cost: 1800,
+    cost: 1500,
     tier: 1,
-    wearPerCell: 0.45,
-    repairCostPerPoint: 6,
-    minCondition: 10,
+    wearPerCell: 0.2,
+    repairCostPerPoint: 3,
+    minCondition: 15,
     description: "Fertilisation plus efficace (−usure vs tracteur).",
     works: ["FERTILIZE"],
     isoColor: "amber",
@@ -454,18 +461,36 @@ export const MACHINE_DEFS: Record<MachineType, MachineDef> = {
   DISC_HARROW: {
     type: "DISC_HARROW",
     name: "Déchaumeur à disques",
-    cost: 2100,
+    cost: 1600,
     tier: 1,
-    // Travail superficiel à grand débit : il s'use bien moins qu'une charrue.
-    wearPerCell: 0.3,
-    repairCostPerPoint: 5,
-    minCondition: 10,
+    wearPerCell: 0.18,
+    repairCostPerPoint: 4,
+    minCondition: 15,
     description:
       "Incorpore les résidus après moisson : bonus de rendement, sans remettre le sol à zéro.",
     works: ["STUBBLE"],
     isoColor: "amber",
   },
 };
+
+/** Moitié du chemin vers le neuf : 0 % → 50 %, 40 % → 70 %. */
+export function repairHalfwayTarget(condition: number): number {
+  const c = Math.max(0, Math.min(100, condition));
+  return Math.round((c + (100 - c) / 2) * 100) / 100;
+}
+
+export function repairQuote(opts: {
+  condition: number;
+  repairCostPerPoint: number;
+  targetCondition?: number;
+  workshopDiscount?: number;
+}): { points: number; cost: number; nextCondition: number } {
+  const target = Math.min(100, opts.targetCondition ?? 100);
+  const points = Math.max(0, Math.round((target - opts.condition) * 100) / 100);
+  const discount = Math.min(0.4, Math.max(0, opts.workshopDiscount ?? 0));
+  const cost = Math.round(points * opts.repairCostPerPoint * (1 - discount) * 100) / 100;
+  return { points, cost, nextCondition: target };
+}
 
 /* ------------------------------------------------------------------ */
 /* Revente de matériel et de bâtiments                                 */
@@ -521,19 +546,20 @@ export const WORK_LABELS: Record<FarmWork, string> = {
  * Une ETA — Entreprise de Travaux Agricoles — vient travailler vos terres
  * avec SES machines. C'est la porte de sortie quand on n'a ni moissonneuse
  * ni les moyens d'en acheter une : on paie le service à la case, plus cher
- * que de le faire soi-même, mais sans immobiliser 4 800 CRD.
+ * que de le faire soi-même, mais sans immobiliser le prix de l'engin.
+
  * `[GD]`
  */
 export const CONTRACTOR_RATE_PER_CELL: Record<FarmWork, number> = {
-  PLANT: 22,
-  FERTILIZE: 16,
-  HARVEST: 38,
-  PLOW: 14,
-  STUBBLE: 9,
+  PLANT: 8,
+  FERTILIZE: 6,
+  HARVEST: 12,
+  PLOW: 5,
+  STUBBLE: 4,
 };
 
 /** Frais de déplacement, quel que soit le nombre de cases `[GD]` */
-export const CONTRACTOR_CALLOUT_FEE = 120;
+export const CONTRACTOR_CALLOUT_FEE = 80;
 
 /** Un ETA travaille moins bien qu'un propriétaire sur ses propres terres `[GD]` */
 export const CONTRACTOR_YIELD_MALUS = 0.06;
@@ -551,6 +577,14 @@ export function contractorQuote(work: FarmWork, cells: number): number {
  */
 export function contractorBreakEvenCells(work: FarmWork, machineCost: number): number {
   return Math.ceil(machineCost / CONTRACTOR_RATE_PER_CELL[work]);
+}
+
+export const NPC_MISSION_SHARE = 0.55;
+export const NPC_MISSION_CELLS = 10;
+
+/** Salaire d'un contrat PNJ : 55 % du devis client, pour N cases. */
+export function npcMissionReward(work: FarmWork): number {
+  return Math.round(contractorQuote(work, NPC_MISSION_CELLS) * NPC_MISSION_SHARE);
 }
 
 /** Mapping contrats NPC → type de travail machine */

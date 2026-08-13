@@ -94,7 +94,7 @@ export function harvestMoisture(weather?: WeatherState): number {
 }
 
 /**
- * Une ou plusieurs passes de séchage : coût CRD + baisse d’humidité.
+ * Une ou plusieurs passes de séchage : coût TRN + baisse d’humidité.
  * `barnBonus` si SILO / HAY_BARN (soft dryer) sur la ferme.
  */
 export function dryInventory(opts: {
@@ -252,18 +252,7 @@ export function applyMachineWear(opts: {
   return { condition, wearApplied };
 }
 
-export function repairMachineCost(opts: {
-  condition: number;
-  repairCostPerPoint: number;
-  targetCondition?: number;
-  workshopDiscount?: number;
-}): { points: number; cost: number; nextCondition: number } {
-  const target = Math.min(100, opts.targetCondition ?? 100);
-  const points = Math.max(0, Math.round((target - opts.condition) * 100) / 100);
-  const discount = Math.min(0.4, Math.max(0, opts.workshopDiscount ?? 0));
-  const cost = Math.round(points * opts.repairCostPerPoint * (1 - discount) * 100) / 100;
-  return { points, cost, nextCondition: target };
-}
+export { repairQuote as repairMachineCost, repairHalfwayTarget } from "@farmsim/shared";
 
 export function machineCanWork(condition: number, minCondition: number): boolean {
   return condition >= minCondition;

@@ -153,7 +153,7 @@ export function FieldDock({
               <button
                 type="button"
                 className={`chip ${directSeed ? "on" : ""}`}
-                title={`Semer dans les chaumes : +${DIRECT_SEED_COST_PER_CELL} CRD/case, −${Math.round(
+                title={`Semer dans les chaumes : +${DIRECT_SEED_COST_PER_CELL} TRN/case, −${Math.round(
                   DIRECT_SEED_YIELD_MALUS * 100,
                 )} % de rendement.`}
                 onClick={onDirectSeed}
@@ -225,12 +225,12 @@ export function FieldDock({
                 disabled={busy || selectedCount === 0 || crd < contractor.cost}
                 title={
                   contractor.hasMachine
-                    ? `Sous-traiter — ${contractor.cost} CRD`
-                    : `Pas la machine : une ETA le fait pour ${contractor.cost} CRD`
+                    ? `Sous-traiter — ${contractor.cost} TRN`
+                    : `Pas la machine : une ETA le fait pour ${contractor.cost} TRN`
                 }
                 onClick={onContractor}
               >
-                ETA · {contractor.cost}
+                ETA · {contractor.cost} TRN
               </button>
             )}
             {readyCount > 0 && (

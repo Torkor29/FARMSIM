@@ -177,11 +177,11 @@ export function LivestockPanel({
                 title={
                   room <= 0
                     ? "Bâtiment plein — agrandissez-le"
-                    : `Acheter une bête pour ${barn.cowPrice} CRD`
+                    : `Acheter une bête pour ${barn.cowPrice} TRN`
                 }
                 onClick={() => onBuyAnimals(barn.buildingId, 1)}
               >
-                +1 bête · {barn.cowPrice}
+                +1 bête · {barn.cowPrice} TRN
               </button>
 
               {herd && (

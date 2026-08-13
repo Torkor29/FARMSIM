@@ -11,6 +11,8 @@ import {
   buildingResaleValue,
   buildingUpgradeCost,
   contractorQuote,
+  repairHalfwayTarget,
+  repairQuote,
   isPaddockAdjacent,
   machineResaleValue,
   soilSummary,
@@ -37,8 +39,6 @@ import {
   GREASE_COST_CRD,
   CLEAN_COST_CRD,
   DIRT_DIRTY_THRESHOLD,
-  isBreakdownKind,
-  suggestedRepairKind,
 } from "@farmsim/shared";
 import { AuthScreen } from "./AuthScreen";
 import type { GrazingHerd, PreviewBuilding } from "./IsoFarmView";
@@ -302,7 +302,7 @@ function harvestGrainNote(r: {
 }): string {
   const total = r.totalTons != null ? r.totalTons.toFixed(2) : "";
   if (!r.soldTons) return `Récolte ${total} t`;
-  const money = r.soldRevenue ? ` · +${Math.round(r.soldRevenue)} CRD` : "";
+  const money = r.soldRevenue ? ` · +${Math.round(r.soldRevenue)} TRN` : "";
   if (r.soldReason === "NO_SILO") {
     return `Récolte ${total} t vendue au négociant (pas de silo)${money}`;
   }
@@ -462,7 +462,7 @@ export function App() {
     const me = await api<{ player: Player }>("/auth/me");
     if (me.player.grainDump && me.player.grainDump.soldTons > 0) {
       const dump = me.player.grainDump;
-      const money = dump.revenue ? ` · +${Math.round(dump.revenue)} CRD` : "";
+      const money = dump.revenue ? ` · +${Math.round(dump.revenue)} TRN` : "";
       flashToast(
         dump.reason === "NO_SILO"
           ? `Grain vendu au négociant (pas de silo)${money}`
@@ -541,7 +541,7 @@ export function App() {
         body: JSON.stringify({ commodity, tons, horizonH }),
       });
       await loadFutures();
-      flashToast(`Engagé ${tons} t à ${r.pricePerTon.toFixed(0)} CRD/t`);
+      flashToast(`Engagé ${tons} t à ${r.pricePerTon.toFixed(0)} TRN/t`);
     } catch (e) {
       flashToast(e instanceof Error ? e.message : String(e), true);
     } finally {
@@ -561,9 +561,9 @@ export function App() {
         r.outcome.delta === 0
           ? ""
           : r.outcome.better
-            ? ` · ${r.outcome.delta} CRD de mieux que le comptant`
-            : ` · ${Math.abs(r.outcome.delta)} CRD de moins que le comptant`;
-      flashToast(`Livré · +${r.revenue} CRD${verdict}`);
+            ? ` · ${r.outcome.delta} TRN de mieux que le comptant`
+            : ` · ${Math.abs(r.outcome.delta)} TRN de moins que le comptant`;
+      flashToast(`Livré · +${r.revenue} TRN${verdict}`);
     } catch (e) {
       flashToast(e instanceof Error ? e.message : String(e), true);
     } finally {
@@ -1124,7 +1124,7 @@ export function App() {
 
   /**
    * Emprise libre ET budget suffisant. Le fantôme rouge signalait déjà le
-   * manque de CRD, mais le clic partait quand même et le serveur répondait
+   * manque de TRN, mais le clic partait quand même et le serveur répondait
    * 402 : un aller-retour perdu, et une erreur rouge en console pour une
    * situation parfaitement prévisible côté client.
    */
@@ -1299,7 +1299,7 @@ export function App() {
           x + def.w > gw || y + def.h > gh
             ? "Emprise hors grille"
             : player.crd < def.cost
-              ? `CRD insuffisants (${def.cost})`
+              ? `TRN insuffisants (${def.cost})`
               : "Collision ou case occupée";
         flashToast(reason, true);
         return;
@@ -1312,7 +1312,7 @@ export function App() {
           method: "POST",
           body: JSON.stringify({ userId: player.id, type: buildType, x, y }),
         });
-        flashToast(`${def.name} placé · −${def.cost} CRD`);
+        flashToast(`${def.name} placé · −${def.cost} TRN`);
         playUiSound("place");
         await refreshPlayer();
         await loadParcel(activeParcelId);
@@ -1364,7 +1364,7 @@ export function App() {
     const needed: MachineType =
       work === "HARVEST" ? "HARVESTER" : work === "STUBBLE" ? "DISC_HARROW" : "TRACTOR";
     const hasMachine = (player?.farm?.machines ?? []).some(
-      (m) => m.type === needed && m.condition >= (MACHINE_DEFS[needed]?.minCondition ?? 12),
+      (m) => m.type === needed && m.condition >= (MACHINE_DEFS[needed]?.minCondition ?? 15),
     );
     return { work, hasMachine, cost: contractorQuote(work, selectedCells.length) };
   }, [tool, selectedCells.length, player?.farm?.machines]);
@@ -1389,7 +1389,7 @@ export function App() {
         },
       );
       const tons = r.totalTons ? ` · ${r.totalTons.toFixed(2)} t` : "";
-      flashToast(`ETA : ${WORK_LABELS[contractorOffer.work]} ×${r.cells}${tons} · −${r.cost} CRD`);
+      flashToast(`ETA : ${WORK_LABELS[contractorOffer.work]} ×${r.cells}${tons} · −${r.cost} TRN`);
       setSelectedCells([]);
       await refreshPlayer();
       await loadParcel(activeParcelId);
@@ -1506,7 +1506,7 @@ export function App() {
             ? ""
             : ` · fertilité ${fert > 0 ? "+" : "−"}${Math.abs(fert * 100).toFixed(1)} pt`;
         setMsg(
-          `Labouré ×${r.plowed} · −${r.cost} CRD${fertNote} · sol remis à zéro` + wearNote(r.machine),
+          `Labouré ×${r.plowed} · −${r.cost} TRN${fertNote} · sol remis à zéro` + wearNote(r.machine),
         );
       } else if (tool === "STUBBLE") {
         const r = await api<{
@@ -1524,7 +1524,7 @@ export function App() {
           body: JSON.stringify({ userId: player.id, cells: workCells }),
         });
         setMsg(
-          `Déchaumé ×${r.stubbled} · −${r.cost} CRD · +${Math.round(r.nextBonus * 100)} % sur la prochaine récolte` +
+          `Déchaumé ×${r.stubbled} · −${r.cost} TRN · +${Math.round(r.nextBonus * 100)} % sur la prochaine récolte` +
             wearNote(r.machine),
         );
       }
@@ -1605,7 +1605,7 @@ export function App() {
         method: "POST",
         body: JSON.stringify({ userId: player.id, commodity, tons }),
       });
-      flashToast(`Négociant : ${tons.toFixed(2)} t · +${r.revenue} CRD`);
+      flashToast(`Négociant : ${tons.toFixed(2)} t · +${r.revenue} TRN`);
       markGuideFlag("sold");
       await refreshPlayer();
       await refreshMeta();
@@ -1624,7 +1624,7 @@ export function App() {
         method: "POST",
         body: JSON.stringify({ userId: player.id, commodity, tons, pricePerTon }),
       });
-      flashToast(`Lot déposé à la criée · frais ${r.fee} CRD`);
+      flashToast(`Lot déposé à la criée · frais ${r.fee} TRN`);
       await refreshPlayer();
       await loadListings(player.id);
     } catch (e) {
@@ -1660,7 +1660,7 @@ export function App() {
         method: "POST",
         body: JSON.stringify({ userId: player.id }),
       });
-      flashToast(`Acheté ${r.bought.toFixed(2)} t · −${r.paid} CRD`);
+      flashToast(`Acheté ${r.bought.toFixed(2)} t · −${r.paid} TRN`);
       await refreshPlayer();
       await loadListings(player.id);
     } catch (e) {
@@ -1679,7 +1679,7 @@ export function App() {
         method: "POST",
         body: JSON.stringify({ userId: player.id, commodity, tons }),
       });
-      flashToast(`${r.bought} t de fourrage · −${r.cost} CRD`);
+      flashToast(`${r.bought} t de fourrage · −${r.cost} TRN`);
       await refreshPlayer();
     } catch (e) {
       flashToast(e instanceof Error ? e.message : String(e), true);
@@ -1698,7 +1698,7 @@ export function App() {
       });
       await refreshPlayer();
       await refreshMeta();
-      setMsg(`Vendu pour ${r.revenue} CRD`);
+      setMsg(`Vendu pour ${r.revenue} TRN`);
       markGuideFlag("sold");
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e));
@@ -1717,7 +1717,7 @@ export function App() {
       });
       await refreshPlayer();
       setMsg(
-        `Séché (−${(r.reduction * 100).toFixed(0)} pts) · ${(r.moisture * 100).toFixed(0)} % · −${r.cost} CRD`,
+        `Séché (−${(r.reduction * 100).toFixed(0)} pts) · ${(r.moisture * 100).toFixed(0)} % · −${r.cost} TRN`,
       );
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e));
@@ -1742,7 +1742,7 @@ export function App() {
       const wearNote = r.machine
         ? ` · ${r.machine.type} −${r.machine.wearApplied.toFixed(1)}%`
         : "";
-      setMsg(`Mission +${r.reward} CRD${wearNote}`);
+      setMsg(`Mission +${r.reward} TRN${wearNote}`);
       markGuideFlag("contract");
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e));
@@ -1779,7 +1779,7 @@ export function App() {
         `/buildings/${id}/upgrade`,
         { method: "POST", body: JSON.stringify({ userId: player.id }) },
       );
-      flashToast(`Niveau ${r.building.level} · ${r.levelName} — ${r.cost} CRD`);
+      flashToast(`Niveau ${r.building.level} · ${r.levelName} — ${r.cost} TRN`);
       await refreshPlayer();
       if (activeParcelId) await loadParcel(activeParcelId);
     } catch (e) {
@@ -1797,7 +1797,7 @@ export function App() {
         method: "POST",
         body: JSON.stringify({ userId: player.id, count }),
       });
-      flashToast(`+${r.added} bête(s) · −${r.cost} CRD`);
+      flashToast(`+${r.added} bête(s) · −${r.cost} TRN`);
       await refreshPlayer();
       if (activeParcelId) await loadLivestock(activeParcelId);
     } catch (e) {
@@ -1926,7 +1926,7 @@ export function App() {
         method: "POST",
         body: JSON.stringify({ userId: player.id }),
       });
-      flashToast(`${label} vendu · +${r.value} CRD`);
+      flashToast(`${label} vendu · +${r.value} TRN`);
       await refreshPlayer();
       if (activeParcelId) await loadParcel(activeParcelId);
     } catch (e) {
@@ -1956,7 +1956,7 @@ export function App() {
         method: "POST",
         body: JSON.stringify({ userId: player.id }),
       });
-      flashToast(`${label} démoli · +${r.value} CRD`);
+      flashToast(`${label} démoli · +${r.value} TRN`);
       await refreshPlayer();
       if (activeParcelId) await loadParcel(activeParcelId);
     } catch (e) {
@@ -1966,17 +1966,21 @@ export function App() {
     }
   }
 
-  async function repairMachine(id: string) {
+  async function repairMachine(id: string, extent: "half" | "full") {
     if (!player) return;
     setBusy(true);
     setErr(null);
     try {
       const r = await api<{ condition: number; cost: number }>(`/machines/${id}/repair`, {
         method: "POST",
-        body: JSON.stringify({ userId: player.id }),
+        body: JSON.stringify({ userId: player.id, extent }),
       });
       await refreshPlayer();
-      setMsg(`Réparé → ${r.condition.toFixed(0)}% (−${r.cost} CRD)`);
+      setMsg(
+        extent === "half"
+          ? `Rafistolé → ${r.condition.toFixed(0)}% (−${r.cost} TRN)`
+          : `Révisé → ${r.condition.toFixed(0)}% (−${r.cost} TRN)`,
+      );
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e));
     } finally {
@@ -1994,20 +1998,20 @@ export function App() {
           method: "POST",
           body: JSON.stringify({ userId: player.id }),
         });
-        setMsg(`Graissé · −${r.cost} CRD`);
+        setMsg(`Graissé · −${r.cost} TRN`);
       } else if (care.mode === "clean") {
         const r = await api<{ cost: number }>(`/machines/${care.machineId}/clean`, {
           method: "POST",
           body: JSON.stringify({ userId: player.id }),
         });
-        setMsg(`Nettoyé · −${r.cost} CRD`);
+        setMsg(`Nettoyé · −${r.cost} TRN`);
       } else {
         const kind = care.kind ?? "BELT";
         const r = await api<{ condition: number; cost: number }>(`/machines/${care.machineId}/service`, {
           method: "POST",
           body: JSON.stringify({ userId: player.id, kind }),
         });
-        setMsg(`Réparé → ${r.condition.toFixed(0)}% (−${r.cost} CRD)`);
+        setMsg(`Réparé → ${r.condition.toFixed(0)}% (−${r.cost} TRN)`);
       }
       setCare(null);
       await refreshPlayer();
@@ -2145,14 +2149,16 @@ export function App() {
             <span className="stat-xp" title="Niveau / expérience">
               Nv.{player.level} · {player.xp} XP
             </span>
-            <span className="gold">{Math.round(player.crd)} CRD</span>
+            <span className="gold" title="Terrons (TRN)">
+              {Math.round(player.crd)} TRN
+            </span>
             {player.bonuses && (
               <span className="stat-bonus">
                 grain {player.bonuses.storageGrain}t · +
                 {Math.round(player.bonuses.yieldBonus * 100)}%
               </span>
             )}
-            {/* Au téléphone, tout ce qui précède sauf les CRD passe dans un
+            {/* Au téléphone, tout ce qui précède sauf les TRN passe dans un
                 tiroir : le bandeau doit tenir sur une ligne. */}
             <button
               type="button"
@@ -2226,7 +2232,7 @@ export function App() {
             </div>
             <div>
               <dt>Trésorerie</dt>
-              <dd>{Math.round(player.crd)} CRD</dd>
+              <dd>{Math.round(player.crd)} TRN</dd>
             </div>
             {player.bonuses && (
               <div>
@@ -2358,7 +2364,7 @@ export function App() {
                 <span className="build-text">
                   <strong>{d.name}</strong>
                   <span>
-                    {d.w}×{d.h} · {d.cost} CRD
+                    {d.w}×{d.h} · {d.cost} TRN
                   </span>
                   <span className="muted tiny">{d.description}</span>
                 </span>
@@ -2397,7 +2403,7 @@ export function App() {
                       ) : blocked ? (
                         <span className="upgrade-locked">Nv. joueur {next?.requiredLevel}</span>
                       ) : player.crd < cost ? (
-                        <span className="upgrade-locked poor">{cost} CRD</span>
+                        <span className="upgrade-locked poor">{cost} TRN</span>
                       ) : (
                         <button
                           type="button"
@@ -2406,14 +2412,14 @@ export function App() {
                           title={`Passer au niveau ${lvl + 1} — ${buildingLevelDef(lvl + 1).name}`}
                           onClick={() => upgradeBuilding(b.id)}
                         >
-                          ↑ {cost} CRD
+                          ↑ {cost} TRN
                         </button>
                       )}
                       <button
                         type="button"
                         className="sell-btn"
                         disabled={busy}
-                        title={`Démolir et récupérer ${buildingResaleValue(b.type, lvl)} CRD`}
+                        title={`Démolir et récupérer ${buildingResaleValue(b.type, lvl)} TRN`}
                         onClick={() => sellBuilding(b.id, d.name)}
                       >
                         Démolir {buildingResaleValue(b.type, lvl)}
@@ -2467,16 +2473,33 @@ export function App() {
           <h3>Garage</h3>
           <p className="muted tiny">
             {player.specialization === "ETA"
-              ? "Graissez avant de partir, soufflez en rentrant. Une panne se répare à la main."
-              : "Semis / ferti → tracteur · Récolte → moissonneuse. Usure à chaque case."}
+              ? "Graissez avant de partir. Rafistoler ramène à mi-chemin du neuf, réviser remet à 100 %."
+              : "Rafistoler = moitié du neuf (moins cher). Réviser = 100 %. Usure à chaque case."}
           </p>
           <ul className="list">
             {(player.farm?.machines ?? []).map((m) => {
               const def = MACHINE_DEFS[m.type as MachineType];
-              const low = def ? m.condition < def.minCondition : m.condition < 12;
+              const low = def ? m.condition < def.minCondition : m.condition < 15;
               const dirty = (m.dirt ?? 0) >= DIRT_DIRTY_THRESHOLD;
               const panne = isBreakdownKind(m.breakdown) ? BREAKDOWN_LABELS[m.breakdown] : null;
               const eta = player.specialization === "ETA";
+              const halfTarget = repairHalfwayTarget(m.condition);
+              const halfQuote = def
+                ? repairQuote({
+                    condition: m.condition,
+                    repairCostPerPoint: def.repairCostPerPoint,
+                    targetCondition: halfTarget,
+                  })
+                : null;
+              const fullQuote = def
+                ? repairQuote({
+                    condition: m.condition,
+                    repairCostPerPoint: def.repairCostPerPoint,
+                    targetCondition: 100,
+                  })
+                : null;
+              const canHalf = Boolean(halfQuote && halfQuote.points > 0.5 && m.condition < 99.5);
+              const canFull = Boolean(fullQuote && fullQuote.points > 0.5 && m.condition < 99.5);
               return (
                 <li key={m.id}>
                   <span>
@@ -2490,12 +2513,12 @@ export function App() {
                     </div>
                   </span>
                   <span className="row-actions">
-                    {eta ? (
+                    {eta && (
                       <>
                         <button
                           type="button"
                           disabled={busy || (m.greased !== false && (m.greaseSkipStreak ?? 0) === 0)}
-                          title={`${GREASE_COST_CRD} CRD`}
+                          title={`${GREASE_COST_CRD} TRN`}
                           onClick={() => setCare({ mode: "grease", machineId: m.id })}
                         >
                           Graisser
@@ -2503,39 +2526,34 @@ export function App() {
                         <button
                           type="button"
                           disabled={busy || (m.dirt ?? 0) < 8}
-                          title={`${CLEAN_COST_CRD} CRD`}
+                          title={`${CLEAN_COST_CRD} TRN`}
                           onClick={() => setCare({ mode: "clean", machineId: m.id })}
                         >
                           Nettoyer
                         </button>
-                        <button
-                          type="button"
-                          disabled={busy || (!panne && m.condition >= 99.5)}
-                          onClick={() =>
-                            setCare({
-                              mode: "repair",
-                              machineId: m.id,
-                              kind: suggestedRepairKind(m.breakdown, m.condition),
-                            })
-                          }
-                        >
-                          Réparer
-                        </button>
                       </>
-                    ) : (
-                      <button
-                        type="button"
-                        disabled={busy || m.condition >= 99.5}
-                        onClick={() => repairMachine(m.id)}
-                      >
-                        Réparer
-                      </button>
                     )}
+                    <button
+                      type="button"
+                      disabled={busy || !canHalf || (halfQuote != null && player.crd < halfQuote.cost)}
+                      title={halfQuote ? `État → ${halfTarget.toFixed(0)} %` : ""}
+                      onClick={() => repairMachine(m.id, "half")}
+                    >
+                      Rafistoler {halfQuote ? `${halfQuote.cost} TRN` : ""}
+                    </button>
+                    <button
+                      type="button"
+                      disabled={busy || !canFull || (fullQuote != null && player.crd < fullQuote.cost)}
+                      title="Révision complète"
+                      onClick={() => repairMachine(m.id, "full")}
+                    >
+                      Réviser {fullQuote ? `${fullQuote.cost} TRN` : ""}
+                    </button>
                     <button
                       type="button"
                       className="sell-btn"
                       disabled={busy}
-                      title={`Reprise ${machineResaleValue(m.type as MachineType, m.condition)} CRD`}
+                      title={`Reprise ${machineResaleValue(m.type as MachineType, m.condition)} TRN`}
                       onClick={() => sellMachine(m.id, def?.name ?? m.type)}
                     >
                       Vendre {machineResaleValue(m.type as MachineType, m.condition)}
@@ -2563,7 +2581,7 @@ export function App() {
                   <img className="build-art" src={MACHINE_ART[t]} alt="" loading="lazy" />
                   <span className="build-text">
                     <strong>{d.name}</strong>
-                    <span>{d.cost} CRD</span>
+                    <span>{d.cost} TRN</span>
                     <span className="muted tiny">{d.description}</span>
                   </span>
                 </button>
@@ -2659,7 +2677,7 @@ export function App() {
                 <span>
                   <strong>{c.title}</strong>
                   <div className="muted tiny">
-                    {c.jobType} · {c.rewardCrd} CRD
+                    {c.jobType} · {c.rewardCrd} TRN
                   </div>
                 </span>
                 <button type="button" disabled={busy} onClick={() => acceptContract(c.id)}>
@@ -2726,7 +2744,7 @@ export function App() {
             {market.map((m) => (
               <li key={m.commodity}>
                 <span>
-                  {m.commodity} · {m.price.toFixed(1)} CRD/t
+                  {m.commodity} · {m.price.toFixed(1)} TRN/t
                 </span>
               </li>
             ))}

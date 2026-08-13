@@ -1,4 +1,4 @@
-import { DRYING } from "@farmsim/shared";
+import { DRYING, MACHINE_DEFS, contractorQuote, repairHalfwayTarget } from "@farmsim/shared";
 import {
   simulateCell,
   tickMarket,
@@ -115,6 +115,35 @@ describe("machines", () => {
   it("refuse le travail sous le seuil", () => {
     expect(machineCanWork(11, 12)).toBe(false);
     expect(machineCanWork(12, 12)).toBe(true);
+  });
+
+  it("rafistole à mi-chemin du neuf", () => {
+    expect(repairHalfwayTarget(0)).toBe(50);
+    expect(repairHalfwayTarget(40)).toBe(70);
+    const half = repairMachineCost({
+      condition: 0,
+      repairCostPerPoint: 8,
+      targetCondition: repairHalfwayTarget(0),
+    });
+    const full = repairMachineCost({ condition: 0, repairCostPerPoint: 8 });
+    expect(half.nextCondition).toBe(50);
+    expect(half.cost).toBe(full.cost / 2);
+  });
+
+  it("une moissonneuse T1 survit à une parcelle 12×12", () => {
+    const def = MACHINE_DEFS.HARVESTER;
+    const r = applyMachineWear({
+      condition: 100,
+      wearPerCell: def.wearPerCell,
+      cells: 12 * 12,
+    });
+    expect(r.condition).toBeGreaterThan(def.minCondition);
+    expect(def.repairCostPerPoint * 100).toBeLessThanOrEqual(def.cost * 0.25);
+  });
+
+  it("sous-traiter une parcelle entière coûte moins que l’engin", () => {
+    expect(contractorQuote("HARVEST", 144)).toBeLessThan(MACHINE_DEFS.HARVESTER.cost);
+    expect(contractorQuote("PLANT", 144)).toBeLessThan(MACHINE_DEFS.TRACTOR.cost);
   });
 });
 
