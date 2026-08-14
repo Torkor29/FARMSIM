@@ -120,6 +120,27 @@ describe("l'état de l'élevage se voit", () => {
   });
 });
 
+describe("le budget", () => {
+  it("une bête reste sous le plafond de triangles", () => {
+    // Le corps est une peau tendue sur des sections elliptiques, sans arête
+    // d'intersection — mais une peau se paie en secteurs. Huit bêtes par
+    // troupeau : le plafond est ce qui empêche la rondeur de manger la
+    // parcelle. Au champ, une bête fait quarante pixels de haut.
+    for (const kind of KINDS) {
+      const rig = createAnimalRig(kind);
+      let tris = 0;
+      rig.group.traverse((o) => {
+        const mesh = o as THREE.Mesh;
+        if (!mesh.isMesh) return;
+        const g = mesh.geometry;
+        tris += (g.index ? g.index.count : g.getAttribute("position").count) / 3;
+      });
+      rig.dispose();
+      expect(`${kind} ${tris < 7500}`).toBe(`${kind} true`);
+    }
+  });
+});
+
 describe("le squelette", () => {
   const COMMON = ["body", "neck", "head", "jaw", "tail", "legFL", "legFR"] as const;
 

@@ -133,7 +133,7 @@ function createMaterials(base: number, look: AnimalLook): Materials {
 /* Formes                                                              */
 /* ------------------------------------------------------------------ */
 
-function ell(rx: number, ry: number, rz: number, pos: Vec3, rot?: Vec3, seg = 14) {
+function ell(rx: number, ry: number, rz: number, pos: Vec3, rot?: Vec3, seg = 12) {
   const g = new THREE.SphereGeometry(1, seg, Math.max(8, Math.round(seg * 0.6)));
   g.scale(rx, ry, rz);
   return place(g, pos, rot);
@@ -143,12 +143,129 @@ function cap(r: number, length: number, pos: Vec3, rot?: Vec3, seg = 10) {
   return place(new THREE.CapsuleGeometry(r, Math.max(0.001, length), 3, seg), pos, rot);
 }
 
+/**
+ * Une station d'un fuselage : où l'on est le long de l'axe, et quel gabarit.
+ */
+type Station = {
+  /** Position le long de l'axe, l'avant vers +Z */
+  z: number;
+  /** Demi-largeur à cette station */
+  rx: number;
+  /** Demi-hauteur à cette station */
+  ry: number;
+  /** Décalage vertical de l'axe : c'est lui qui donne le dos et le ventre */
+  y?: number;
+};
+
+/** Catmull-Rom scalaire : une courbe qui passe par tous ses points. */
+function catmull(p0: number, p1: number, p2: number, p3: number, t: number): number {
+  const t2 = t * t;
+  const t3 = t2 * t;
+  return (
+    0.5 *
+    (2 * p1 + (-p0 + p2) * t + (2 * p0 - 5 * p1 + 4 * p2 - p3) * t2 + (-p0 + 3 * p1 - 3 * p2 + p3) * t3)
+  );
+}
+
+function splineAt(vals: number[], u: number): number {
+  const n = vals.length - 1;
+  const x = THREE.MathUtils.clamp(u, 0, 1) * n;
+  const i = Math.min(n - 1, Math.floor(x));
+  const t = x - i;
+  return catmull(vals[Math.max(0, i - 1)], vals[i], vals[i + 1], vals[Math.min(n, i + 2)], t);
+}
+
+/**
+ * Fuselage : une surface unique passant par une suite de gabarits.
+ *
+ * C'est la pièce maîtresse du rendu des bêtes. Un corps fait d'ellipsoïdes qui
+ * se recouvrent porte une arête à chaque intersection — la même cicatrice que
+ * le crâne et la mâchoire des personnages, et c'est elle qui donnait aux bêtes
+ * leur air « géométrique ». Une seule peau tendue sur des sections
+ * elliptiques, interpolées en Catmull-Rom, n'a rien à raccorder : le poitrail
+ * enfle, le flanc s'arrondit, la croupe redescend, sans une seule couture.
+ *
+ * Les deux extrémités se ferment en éventail sur un point : à condition que la
+ * première et la dernière station soient étroites, la fermeture ne se voit pas.
+ */
+function loft(
+  stations: Station[],
+  opts: { radial?: number; slices?: number; pos?: Vec3; rot?: Vec3 } = {},
+): THREE.BufferGeometry {
+  // La rondeur de la silhouette tient au nombre de secteurs ; le nombre de
+  // tranches ne fait qu'affiner un profil déjà lissé par la spline. Dix-huit
+  // sur vingt tiennent le rendu et divisent la facture par deux : au champ,
+  // une bête fait quarante pixels de haut.
+  const radial = opts.radial ?? 18;
+  const slices = opts.slices ?? 20;
+  const zs = stations.map((s) => s.z);
+  const rxs = stations.map((s) => s.rx);
+  const rys = stations.map((s) => s.ry);
+  const ys = stations.map((s) => s.y ?? 0);
+
+  const position: number[] = [];
+  const uv: number[] = [];
+  const index: number[] = [];
+
+  for (let i = 0; i <= slices; i++) {
+    const u = i / slices;
+    const z = splineAt(zs, u);
+    const rx = Math.max(0.0004, splineAt(rxs, u));
+    const ry = Math.max(0.0004, splineAt(rys, u));
+    const cy = splineAt(ys, u);
+    for (let j = 0; j < radial; j++) {
+      const a = (j / radial) * Math.PI * 2;
+      position.push(Math.cos(a) * rx, cy + Math.sin(a) * ry, z);
+      uv.push(j / radial, u);
+    }
+  }
+  for (let i = 0; i < slices; i++) {
+    for (let j = 0; j < radial; j++) {
+      const j2 = (j + 1) % radial;
+      const a = i * radial + j;
+      const b = i * radial + j2;
+      const c = (i + 1) * radial + j;
+      const d = (i + 1) * radial + j2;
+      index.push(a, b, c, b, d, c);
+    }
+  }
+
+  // Bouchons : un point au centre de chaque extrémité, et un éventail.
+  const capStart = position.length / 3;
+  position.push(0, splineAt(ys, 0), splineAt(zs, 0));
+  uv.push(0.5, 0);
+  const capEnd = position.length / 3;
+  position.push(0, splineAt(ys, 1), splineAt(zs, 1));
+  uv.push(0.5, 1);
+  for (let j = 0; j < radial; j++) {
+    const j2 = (j + 1) % radial;
+    index.push(capStart, j, j2);
+    const last = slices * radial;
+    index.push(capEnd, last + j2, last + j);
+  }
+
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute("position", new THREE.Float32BufferAttribute(position, 3));
+  geo.setAttribute("uv", new THREE.Float32BufferAttribute(uv, 2));
+  geo.setIndex(index);
+  geo.computeVertexNormals();
+  return place(geo, opts.pos ?? [0, 0, 0], opts.rot);
+}
+
 /** Membre fuselé, planté au sommet : la patte pivote à l'épaule. */
 function leg(rTop: number, rBottom: number, length: number) {
-  return mergeAll([
-    place(new THREE.CylinderGeometry(rTop, rBottom, length, 8), [0, -length / 2, 0]),
-    ell(rTop, rTop * 0.8, rTop, [0, 0, 0], undefined, 8),
-  ]);
+  // Un membre est aussi un fuselage : le canon se resserre sous le genou puis
+  // s'évase au boulet. Deux cylindres empilés laissaient une arête au milieu.
+  return loft(
+    [
+      { z: 0, rx: rTop * 0.92, ry: rTop * 0.92 },
+      { z: -length * 0.12, rx: rTop, ry: rTop },
+      { z: -length * 0.52, rx: (rTop + rBottom) * 0.46, ry: (rTop + rBottom) * 0.46 },
+      { z: -length * 0.86, rx: rBottom, ry: rBottom },
+      { z: -length, rx: rBottom * 1.12, ry: rBottom * 1.12 },
+    ],
+    { radial: 10, slices: 10, rot: [-HALF, 0, 0] },
+  );
 }
 
 /** Nœud du plan de montage : ses pièces par matière, et ses articulations. */
@@ -209,62 +326,114 @@ function addEyes(head: Node, gap: number, y: number, z: number, r: number) {
 function planCow(look: AnimalLook): { root: Node; base: number } {
   const root = new Node();
   const w = THREE.MathUtils.clamp(look.welfare ?? 1, 0, 1);
-  // Une bête mal tenue est creuse : le flanc rentre et l'échine ressort.
-  const flank = 0.19 - (1 - w) * 0.035;
+  // Une bête mal tenue est creuse : le flanc rentre et le dos se voûte.
+  const flank = 0.185 - (1 - w) * 0.03;
 
   const body = root.joint("body", [0, 0.44, 0]);
-  body.add("hide", ell(flank, 0.185, 0.32, [0, 0, 0], undefined, 16));
-  body.add("hide", ell(flank * 0.92, 0.17, 0.16, [0, 0.01, 0.22], undefined, 14));
-  // Taches : ce qui fait lire « vache laitière » avant même la forme.
-  body.add("hideDark", ell(0.11, 0.11, 0.13, [0.09, 0.08, 0.06], undefined, 10));
-  body.add("hideDark", ell(0.09, 0.09, 0.1, [-0.1, 0.02, -0.14], undefined, 10));
-  body.add("hideDark", ell(0.07, 0.08, 0.09, [0.06, -0.05, -0.2], undefined, 10));
-  // Échine saillante quand la bête est maigre.
-  if (w < 0.6) body.add("hideDark", ell(0.03, 0.03, 0.26, [0, 0.17, -0.02], undefined, 8));
+  // Un seul fuselage, de la croupe au poitrail : garrot marqué, flanc rond,
+  // ventre qui redescend. C'est la ligne du dos qui fait la vache.
+  body.add(
+    "hide",
+    loft([
+      { z: -0.33, rx: 0.05, ry: 0.05, y: 0.06 },
+      { z: -0.26, rx: 0.13, ry: 0.15, y: 0.03 },
+      { z: -0.12, rx: flank, ry: 0.185, y: -0.005 },
+      { z: 0.06, rx: flank * 0.99, ry: 0.185, y: -0.01 },
+      { z: 0.2, rx: flank * 0.93, ry: 0.175, y: 0.01 },
+      { z: 0.3, rx: 0.115, ry: 0.14, y: 0.035 },
+      { z: 0.36, rx: 0.045, ry: 0.055, y: 0.05 },
+    ]),
+  );
+  // Taches : ce qui fait lire « vache laitière » avant même la forme. Posées
+  // sur la peau, à peine plus grandes qu'elle, elles ne créent pas d'arête.
+  body.add("hideDark", ell(0.1, 0.1, 0.12, [0.085, 0.075, 0.05], undefined, 12));
+  body.add("hideDark", ell(0.085, 0.085, 0.095, [-0.095, 0.02, -0.14], undefined, 14));
+  body.add("hideDark", ell(0.065, 0.075, 0.085, [0.055, -0.045, -0.2], undefined, 14));
 
-  const neck = body.joint("neck", [0, 0.06, 0.3], [0.25, 0, 0]);
-  neck.add("hide", cap(0.085, 0.12, [0, 0, 0.06], [HALF, 0, 0]));
+  const neck = body.joint("neck", [0, 0.055, 0.28], [0.25, 0, 0]);
+  // Le cou s'évase franchement vers le poitrail : c'est ce raccord qui fait
+  // disparaître la jonction avec le corps.
+  neck.add(
+    "hide",
+    loft([
+      { z: -0.1, rx: 0.02, ry: 0.02 },
+      { z: -0.05, rx: 0.115, ry: 0.13 },
+      { z: 0.02, rx: 0.1, ry: 0.108 },
+      { z: 0.1, rx: 0.082, ry: 0.082 },
+      { z: 0.17, rx: 0.062, ry: 0.06 },
+      { z: 0.21, rx: 0.028, ry: 0.028 },
+    ]),
+  );
 
-  const head = neck.joint("head", [0, 0.02, 0.16], [-0.25, 0, 0]);
-  head.add("hide", ell(0.085, 0.09, 0.11, [0, 0, 0.05], undefined, 12));
-  head.add("hide", ell(0.062, 0.055, 0.07, [0, -0.025, 0.15], undefined, 10));
-  head.add("muzzle", ell(0.05, 0.042, 0.03, [0, -0.032, 0.2], undefined, 10));
-  addEyes(head, 0.07, 0.03, 0.09, 0.017);
+  const head = neck.joint("head", [0, 0.01, 0.17], [-0.25, 0, 0]);
+  // Crâne, chanfrein et mufle d'une seule pièce : le museau se détache par sa
+  // matière, pas par une couture.
+  head.add(
+    "hide",
+    loft([
+      { z: -0.06, rx: 0.04, ry: 0.05, y: 0.01 },
+      { z: 0.0, rx: 0.082, ry: 0.088, y: 0.005 },
+      { z: 0.07, rx: 0.075, ry: 0.075, y: -0.008 },
+      { z: 0.14, rx: 0.06, ry: 0.055, y: -0.024 },
+      { z: 0.19, rx: 0.052, ry: 0.045, y: -0.032 },
+      { z: 0.215, rx: 0.02, ry: 0.018, y: -0.034 },
+    ]),
+  );
+  head.add("muzzle", ell(0.05, 0.04, 0.028, [0, -0.032, 0.197], undefined, 12));
+  addEyes(head, 0.068, 0.028, 0.085, 0.017);
   for (const side of [-1, 1]) {
-    head.add("horn", place(new THREE.ConeGeometry(0.018, 0.06, 6), [side * 0.055, 0.1, 0.02], [0, 0, side * -0.6]));
+    head.add(
+      "horn",
+      loft(
+        [
+          { z: 0, rx: 0.017, ry: 0.017 },
+          { z: 0.035, rx: 0.012, ry: 0.012 },
+          { z: 0.06, rx: 0.004, ry: 0.004 },
+        ],
+        { radial: 9, slices: 8, pos: [side * 0.05, 0.09, 0.01], rot: [-HALF, 0, side * -0.6] },
+      ),
+    );
   }
-  const jaw = head.joint("jaw", [0, -0.04, 0.1]);
-  jaw.add("hide", ell(0.05, 0.026, 0.06, [0, 0, 0.04], undefined, 8));
+  const jaw = head.joint("jaw", [0, -0.035, 0.09]);
+  jaw.add("hide", ell(0.048, 0.024, 0.058, [0, 0, 0.045], undefined, 14));
   for (const side of [-1, 1]) {
-    const ear = head.joint(side < 0 ? "earL" : "earR", [side * 0.085, 0.055, 0.02]);
-    ear.add("hide", ell(0.018, 0.03, 0.05, [side * 0.02, 0, 0], [0, 0, side * -0.5], 8));
+    const ear = head.joint(side < 0 ? "earL" : "earR", [side * 0.078, 0.045, 0.01]);
+    ear.add("hide", ell(0.017, 0.028, 0.048, [side * 0.022, 0, 0], [0, 0, side * -0.5], 12));
   }
 
-  // Le pis se remplit entre deux traites : c'est la production en attente.
+  // Le pis se remplit entre deux traites : c'est la production en attente. Il
+  // pend **sous** le ventre — logé dans le corps, il ne se voyait pas.
   const full = THREE.MathUtils.clamp(look.yield ?? 0, 0, 1);
-  // Le pis pend **sous** le ventre : logé à l'intérieur de l'ellipsoïde du
-  // corps, il ne se voyait pas du tout, et une vache pleine ressemblait à une
-  // vache qu'on vient de traire.
-  const udder = body.joint("udder", [0, -0.175, -0.02]);
+  const udder = body.joint("udder", [0, -0.17, -0.02]);
   const size = 0.045 + full * 0.05;
-  udder.add("udder", ell(size * 1.1, size, size * 1.2, [0, -size * 0.5, 0], undefined, 10));
+  udder.add("udder", ell(size * 1.1, size, size * 1.2, [0, -size * 0.5, 0], undefined, 14));
   for (const side of [-1, 1]) {
-    udder.add("udder", cap(0.011, 0.022, [side * 0.03, -size * 1.35, 0.012]));
+    udder.add("udder", cap(0.011, 0.022, [side * 0.03, -size * 1.35, 0.012], undefined, 10));
   }
 
-  const tail = body.joint("tail", [0, 0.12, -0.3], [0.5, 0, 0]);
-  tail.add("hide", cap(0.016, 0.2, [0, -0.11, 0]));
-  tail.add("hideDark", ell(0.03, 0.05, 0.03, [0, -0.23, 0], undefined, 8));
+  const tail = body.joint("tail", [0, 0.1, -0.31], [0.5, 0, 0]);
+  tail.add(
+    "hide",
+    loft(
+      [
+        { z: 0, rx: 0.022, ry: 0.022 },
+        { z: 0.12, rx: 0.013, ry: 0.013 },
+        { z: 0.2, rx: 0.009, ry: 0.009 },
+      ],
+      { radial: 9, slices: 10, rot: [HALF, 0, 0] },
+    ),
+  );
+  tail.add("hideDark", ell(0.028, 0.05, 0.028, [0, -0.23, 0], undefined, 12));
 
   for (const [name, x, z] of [
-    ["legFL", -0.11, 0.19],
-    ["legFR", 0.11, 0.19],
-    ["legBL", -0.12, -0.2],
-    ["legBR", 0.12, -0.2],
+    ["legFL", -0.105, 0.18],
+    ["legFR", 0.105, 0.18],
+    ["legBL", -0.115, -0.2],
+    ["legBR", 0.115, -0.2],
   ] as const) {
-    const l = body.joint(name, [x, -0.11, z]);
-    l.add("hide", leg(0.045, 0.03, 0.28));
-    l.add("hoof", ell(0.036, 0.028, 0.042, [0, -0.3, 0.006], undefined, 8));
+    const l = body.joint(name, [x, -0.1, z]);
+    l.add("hide", leg(0.05, 0.028, 0.28));
+    l.add("hoof", ell(0.034, 0.03, 0.04, [0, -0.298, 0.006], undefined, 12));
   }
 
   return { root, base: 0xf0e6d2 };
@@ -276,58 +445,93 @@ function planSheep(look: AnimalLook): { root: Node; base: number } {
   const wool = THREE.MathUtils.clamp(look.yield ?? 0, 0, 1);
   // La toison est le stock de laine : elle gonfle jusqu'à la tonte, puis
   // repart de rien. Le corps dessous ne change pas.
-  const fleece = sheared ? 0 : 0.028 + wool * 0.05;
+  const fleece = sheared ? 0 : 0.03 + wool * 0.048;
 
   const body = root.joint("body", [0, 0.26, 0]);
-  body.add("hide", ell(0.13, 0.125, 0.21, [0, 0, 0], undefined, 14));
+  /**
+   * La toison **multiplie** le gabarit au lieu de s'y ajouter.
+   *
+   * Ajouté, l'épaisseur gonflait aussi les deux bouts du fuselage : la brebis
+   * devenait un tonneau à fonds plats. Multipliée, la laine épaissit le flanc
+   * et laisse les extrémités s'effiler.
+   */
+  const shape = (grow: number): Station[] => {
+    const k = 1 + grow;
+    return [
+      { z: -0.235, rx: 0.012, ry: 0.014, y: 0.035 },
+      { z: -0.21, rx: 0.06 * k, ry: 0.066 * k, y: 0.022 },
+      { z: -0.15, rx: 0.106 * k, ry: 0.108 * k, y: 0.006 },
+      { z: -0.05, rx: 0.128 * k, ry: 0.125 * k, y: 0 },
+      { z: 0.06, rx: 0.127 * k, ry: 0.126 * k, y: 0.004 },
+      { z: 0.15, rx: 0.104 * k, ry: 0.108 * k, y: 0.016 },
+      { z: 0.21, rx: 0.056 * k, ry: 0.062 * k, y: 0.03 },
+      { z: 0.235, rx: 0.012, ry: 0.014, y: 0.038 },
+    ];
+  };
+  body.add("hide", loft(shape(0)));
   if (fleece > 0) {
-    // Une toison n'est pas une sphère lisse : cinq bosses la font mèches.
-    body.add("wool", ell(0.13 + fleece, 0.125 + fleece, 0.21 + fleece, [0, 0.01, 0], undefined, 14));
+    body.add("wool", loft(shape(fleece / 0.128)));
+    // Une toison n'est pas une bille lisse : quelques bosses la font mèches.
     for (let i = 0; i < 5; i++) {
       const a = (i / 5) * Math.PI * 2;
       body.add(
         "wool",
         ell(
-          0.06 + fleece * 0.5,
           0.055 + fleece * 0.5,
-          0.06 + fleece * 0.5,
-          [Math.cos(a) * 0.09, 0.06 + (i % 2) * 0.05, Math.sin(a) * 0.15],
+          0.05 + fleece * 0.5,
+          0.055 + fleece * 0.5,
+          [Math.cos(a) * 0.085, 0.055 + (i % 2) * 0.045, Math.sin(a) * 0.14],
           undefined,
-          8,
+          12,
         ),
       );
     }
   }
 
-  const neck = body.joint("neck", [0, 0.05, 0.19], [0.3, 0, 0]);
-  neck.add("hide", cap(0.05, 0.06, [0, 0, 0.04], [HALF, 0, 0]));
-  if (fleece > 0) neck.add("wool", ell(0.062, 0.06, 0.06, [0, 0, 0.02], undefined, 8));
+  const neck = body.joint("neck", [0, 0.055, 0.19], [0.32, 0, 0]);
+  neck.add(
+    "hide",
+    loft([
+      { z: -0.04, rx: 0.022, ry: 0.022 },
+      { z: 0.01, rx: 0.056, ry: 0.058 },
+      { z: 0.08, rx: 0.048, ry: 0.05 },
+      { z: 0.12, rx: 0.022, ry: 0.022 },
+    ]),
+  );
+  if (fleece > 0) neck.add("wool", ell(0.062 + fleece * 0.4, 0.06 + fleece * 0.4, 0.06, [0, 0, 0.015], undefined, 14));
 
   const head = neck.joint("head", [0, 0, 0.1], [-0.3, 0, 0]);
-  head.add("hideDark", ell(0.05, 0.055, 0.07, [0, 0, 0.03], undefined, 10));
-  head.add("hideDark", ell(0.034, 0.03, 0.04, [0, -0.02, 0.09], undefined, 8));
-  addEyes(head, 0.042, 0.02, 0.055, 0.012);
-  const jaw = head.joint("jaw", [0, -0.03, 0.06]);
-  jaw.add("hideDark", ell(0.03, 0.018, 0.035, [0, 0, 0.02], undefined, 8));
+  head.add(
+    "hideDark",
+    loft([
+      { z: -0.04, rx: 0.024, ry: 0.03, y: 0.008 },
+      { z: 0.0, rx: 0.05, ry: 0.055, y: 0.004 },
+      { z: 0.05, rx: 0.044, ry: 0.044, y: -0.008 },
+      { z: 0.1, rx: 0.032, ry: 0.03, y: -0.02 },
+      { z: 0.12, rx: 0.013, ry: 0.012, y: -0.022 },
+    ]),
+  );
+  addEyes(head, 0.04, 0.018, 0.05, 0.012);
+  const jaw = head.joint("jaw", [0, -0.026, 0.055]);
+  jaw.add("hideDark", ell(0.028, 0.017, 0.034, [0, 0, 0.022], undefined, 12));
   for (const side of [-1, 1]) {
-    const ear = head.joint(side < 0 ? "earL" : "earR", [side * 0.05, 0.03, 0.01]);
-    ear.add("hideDark", ell(0.012, 0.018, 0.035, [side * 0.018, 0, 0], [0, 0, side * -0.8], 8));
+    const ear = head.joint(side < 0 ? "earL" : "earR", [side * 0.045, 0.025, 0.005]);
+    ear.add("hideDark", ell(0.011, 0.017, 0.034, [side * 0.018, 0, 0], [0, 0, side * -0.8], 10));
   }
 
-  const tail = body.joint("tail", [0, 0.08, -0.2], [0.4, 0, 0]);
-  tail.add(fleece > 0 ? "wool" : "hide", ell(0.03, 0.05, 0.03, [0, -0.04, 0], undefined, 8));
+  const tail = body.joint("tail", [0, 0.07, -0.21], [0.4, 0, 0]);
+  tail.add(fleece > 0 ? "wool" : "hide", ell(0.028, 0.045, 0.028, [0, -0.035, 0], undefined, 12));
 
   for (const [name, x, z] of [
-    ["legFL", -0.07, 0.12],
-    ["legFR", 0.07, 0.12],
-    ["legBL", -0.075, -0.13],
-    ["legBR", 0.075, -0.13],
+    ["legFL", -0.07, 0.11],
+    ["legFR", 0.07, 0.11],
+    ["legBL", -0.075, -0.12],
+    ["legBR", 0.075, -0.12],
   ] as const) {
-    const l = body.joint(name, [x, -0.08, z]);
-    // Une brebis a les pattes courtes, et la toison en cache la moitié. Trop
-    // longues, elle marchait sur des échasses.
-    l.add("hideDark", leg(0.026, 0.018, 0.14));
-    l.add("hoof", ell(0.022, 0.018, 0.026, [0, -0.155, 0.004], undefined, 8));
+    const l = body.joint(name, [x, -0.075, z]);
+    // Une brebis a les pattes courtes, et la toison en cache la moitié.
+    l.add("hideDark", leg(0.028, 0.017, 0.14));
+    l.add("hoof", ell(0.021, 0.018, 0.025, [0, -0.153, 0.004], undefined, 10));
   }
 
   return { root, base: 0xe8e0d0 };
@@ -337,52 +541,77 @@ function planPig(look: AnimalLook): { root: Node; base: number } {
   const root = new Node();
   const w = THREE.MathUtils.clamp(look.welfare ?? 1, 0, 1);
   // Un cochon bien nourri est rond ; un cochon mal tenu est étroit et ses
-  // côtes se marquent. C'est là que se lit son état, la couleur rose ne
-  // s'assombrissant presque pas.
-  const girth = 0.11 + w * 0.048;
+  // côtes se marquent. C'est là que se lit son état — le rose ne s'assombrit
+  // presque pas.
+  const girth = 0.108 + w * 0.045;
+  const depth = 0.098 + w * 0.03;
 
-  const body = root.joint("body", [0, 0.28, 0]);
-  body.add("hide", ell(girth, 0.1 + w * 0.03, 0.22, [0, 0, 0], undefined, 14));
+  const body = root.joint("body", [0, 0.27, 0]);
+  // Le cochon n'a pas de cou : le fuselage va de la croupe au groin d'un
+  // seul tenant, en s'épaississant vers l'avant.
+  body.add(
+    "hide",
+    loft([
+      { z: -0.25, rx: 0.045, ry: 0.05, y: 0.03 },
+      { z: -0.19, rx: girth * 0.78, ry: depth * 0.84, y: 0.012 },
+      { z: -0.05, rx: girth, ry: depth, y: 0 },
+      { z: 0.09, rx: girth * 0.97, ry: depth * 1.02, y: -0.004 },
+      { z: 0.2, rx: girth * 0.78, ry: depth * 0.85, y: 0.004 },
+      { z: 0.26, rx: 0.055, ry: 0.055, y: 0.006 },
+    ]),
+  );
+  body.add("hideDark", ell(0.065, 0.065, 0.075, [0.055, 0.045, -0.06], undefined, 14));
   if (w < 0.55) {
     for (let i = 0; i < 3; i++) {
-      body.add("hideDark", ell(0.008, 0.055, 0.012, [girth * 0.92, 0.01, 0.02 - i * 0.055], undefined, 6));
-      body.add("hideDark", ell(0.008, 0.055, 0.012, [-girth * 0.92, 0.01, 0.02 - i * 0.055], undefined, 6));
+      for (const side of [-1, 1]) {
+        body.add(
+          "hideDark",
+          ell(0.007, 0.05, 0.011, [side * girth * 0.9, 0.005, 0.02 - i * 0.055], undefined, 8),
+        );
+      }
     }
   }
-  body.add("hide", ell(girth * 0.85, 0.1, 0.1, [0, 0.005, 0.19], undefined, 12));
-  body.add("hideDark", ell(0.07, 0.07, 0.08, [0.06, 0.05, -0.06], undefined, 8));
 
-  const neck = body.joint("neck", [0, 0.02, 0.2], [0.2, 0, 0]);
-  const head = neck.joint("head", [0, 0, 0.05], [-0.2, 0, 0]);
-  head.add("hide", ell(0.075, 0.07, 0.085, [0, 0, 0.03], undefined, 12));
+  const neck = body.joint("neck", [0, 0.01, 0.2], [0.2, 0, 0]);
+  const head = neck.joint("head", [0, 0, 0.04], [-0.2, 0, 0]);
+  head.add(
+    "hide",
+    loft([
+      { z: -0.05, rx: 0.045, ry: 0.05, y: 0.005 },
+      { z: 0.0, rx: 0.075, ry: 0.07, y: 0 },
+      { z: 0.05, rx: 0.07, ry: 0.062, y: -0.008 },
+      { z: 0.095, rx: 0.045, ry: 0.042, y: -0.016 },
+      { z: 0.108, rx: 0.038, ry: 0.036, y: -0.017 },
+    ]),
+  );
   // Le groin : un disque franc, c'est la signature du cochon.
-  head.add("muzzle", place(new THREE.CylinderGeometry(0.036, 0.04, 0.035, 10), [0, -0.015, 0.1], [HALF, 0, 0]));
-  addEyes(head, 0.05, 0.025, 0.06, 0.012);
-  const jaw = head.joint("jaw", [0, -0.03, 0.06]);
-  jaw.add("hide", ell(0.04, 0.02, 0.04, [0, 0, 0.02], undefined, 8));
+  head.add("muzzle", place(new THREE.CylinderGeometry(0.036, 0.04, 0.03, 16), [0, -0.017, 0.112], [HALF, 0, 0]));
+  addEyes(head, 0.048, 0.022, 0.055, 0.012);
+  const jaw = head.joint("jaw", [0, -0.028, 0.055]);
+  jaw.add("hide", ell(0.038, 0.018, 0.038, [0, 0, 0.02], undefined, 12));
   for (const side of [-1, 1]) {
-    const ear = head.joint(side < 0 ? "earL" : "earR", [side * 0.055, 0.05, 0.01], [0.5, 0, 0]);
-    ear.add("hide", place(new THREE.ConeGeometry(0.03, 0.055, 6), [0, 0.01, 0], [0.4, 0, side * -0.35]));
+    const ear = head.joint(side < 0 ? "earL" : "earR", [side * 0.052, 0.048, 0.005], [0.5, 0, 0]);
+    ear.add("hide", place(new THREE.ConeGeometry(0.03, 0.055, 12), [0, 0.01, 0], [0.4, 0, side * -0.35]));
   }
 
   // La queue en tire-bouchon : trois anneaux suffisent à la lire.
-  const tail = body.joint("tail", [0, 0.08, -0.21]);
+  const tail = body.joint("tail", [0, 0.07, -0.22]);
   for (let i = 0; i < 3; i++) {
     tail.add(
       "hide",
-      place(new THREE.TorusGeometry(0.018, 0.006, 5, 10), [0, 0.012 * i, -0.008 * i], [0.4, HALF, 0]),
+      place(new THREE.TorusGeometry(0.017, 0.0055, 8, 14), [0, 0.012 * i, -0.008 * i], [0.4, HALF, 0]),
     );
   }
 
   for (const [name, x, z] of [
-    ["legFL", -0.075, 0.12],
-    ["legFR", 0.075, 0.12],
-    ["legBL", -0.08, -0.13],
-    ["legBR", 0.08, -0.13],
+    ["legFL", -0.07, 0.11],
+    ["legFR", 0.07, 0.11],
+    ["legBL", -0.075, -0.12],
+    ["legBR", 0.075, -0.12],
   ] as const) {
-    const l = body.joint(name, [x, -0.08, z]);
-    l.add("hide", leg(0.03, 0.022, 0.15));
-    l.add("hoof", ell(0.024, 0.02, 0.028, [0, -0.165, 0.004], undefined, 8));
+    const l = body.joint(name, [x, -0.075, z]);
+    l.add("hide", leg(0.032, 0.021, 0.145));
+    l.add("hoof", ell(0.023, 0.019, 0.027, [0, -0.158, 0.004], undefined, 10));
   }
 
   return { root, base: 0xe0a99a };
@@ -391,43 +620,57 @@ function planPig(look: AnimalLook): { root: Node; base: number } {
 function planHen(look: AnimalLook): { root: Node; base: number } {
   const root = new Node();
   const eggs = THREE.MathUtils.clamp(look.yield ?? 0, 0, 1);
+  const belly = 0.078 + eggs * 0.014;
 
   const body = root.joint("body", [0, 0.15, 0]);
-  // Une poule pleine est plus ronde : le ventre descend.
-  body.add("hide", ell(0.075, 0.08 + eggs * 0.014, 0.095, [0, 0, 0], undefined, 12));
-  body.add("hide", ell(0.055, 0.05, 0.05, [0, 0.03, -0.08], undefined, 8));
+  // Corps en goutte : large au poitrail, effilé vers la queue.
+  body.add(
+    "hide",
+    loft([
+      { z: -0.11, rx: 0.028, ry: 0.03, y: 0.035 },
+      { z: -0.06, rx: 0.058, ry: 0.058, y: 0.018 },
+      { z: 0.0, rx: 0.075, ry: belly, y: 0 },
+      { z: 0.055, rx: 0.066, ry: 0.072, y: 0.004 },
+      { z: 0.095, rx: 0.03, ry: 0.032, y: 0.02 },
+    ]),
+  );
 
-  const neck = body.joint("neck", [0, 0.05, 0.06], [-0.35, 0, 0]);
-  neck.add("hide", cap(0.03, 0.05, [0, 0.03, 0]));
+  const neck = body.joint("neck", [0, 0.05, 0.055], [-0.35, 0, 0]);
+  neck.add(
+    "hide",
+    loft([
+      { z: -0.02, rx: 0.02, ry: 0.02 },
+      { z: 0.02, rx: 0.034, ry: 0.034 },
+      { z: 0.06, rx: 0.03, ry: 0.03 },
+      { z: 0.08, rx: 0.018, ry: 0.018 },
+    ], { rot: [-HALF, 0, 0] }),
+  );
 
   const head = neck.joint("head", [0, 0.07, 0.01], [0.35, 0, 0]);
-  head.add("hide", ell(0.038, 0.04, 0.042, [0, 0, 0], undefined, 10));
-  head.add("comb", ell(0.012, 0.025, 0.03, [0, 0.04, 0.004], undefined, 6));
-  head.add("comb", ell(0.012, 0.018, 0.012, [0, -0.03, 0.022], undefined, 6));
-  addEyes(head, 0.03, 0.008, 0.02, 0.009);
-  const jaw = head.joint("jaw", [0, -0.008, 0.03]);
-  jaw.add("horn", place(new THREE.ConeGeometry(0.014, 0.035, 6), [0, 0, 0.012], [HALF, 0, 0]));
+  head.add("hide", ell(0.036, 0.038, 0.04, [0, 0, 0], undefined, 12));
+  head.add("comb", ell(0.011, 0.024, 0.028, [0, 0.038, 0.004], undefined, 10));
+  head.add("comb", ell(0.011, 0.017, 0.011, [0, -0.03, 0.02], undefined, 10));
+  addEyes(head, 0.029, 0.008, 0.019, 0.009);
+  const jaw = head.joint("jaw", [0, -0.008, 0.028]);
+  jaw.add("horn", place(new THREE.ConeGeometry(0.013, 0.034, 12), [0, 0, 0.012], [HALF, 0, 0]));
 
   for (const side of [-1, 1]) {
-    const wing = body.joint(side < 0 ? "wingL" : "wingR", [side * 0.07, 0.02, 0]);
-    wing.add("hide", ell(0.016, 0.055, 0.08, [side * 0.006, 0, 0], [0, 0, side * -0.15], 8));
+    const wing = body.joint(side < 0 ? "wingL" : "wingR", [side * 0.066, 0.015, 0]);
+    wing.add("hide", ell(0.015, 0.05, 0.075, [side * 0.006, 0, 0], [0, 0, side * -0.15], 12));
   }
 
-  const tail = body.joint("tail", [0, 0.06, -0.09], [-0.7, 0, 0]);
+  const tail = body.joint("tail", [0, 0.055, -0.095], [-0.7, 0, 0]);
   for (let i = 0; i < 3; i++) {
-    tail.add(
-      "hide",
-      ell(0.01, 0.045, 0.02, [(i - 1) * 0.016, 0.04, 0], [0, 0, (i - 1) * 0.25], 6),
-    );
+    tail.add("hide", ell(0.009, 0.042, 0.018, [(i - 1) * 0.015, 0.038, 0], [0, 0, (i - 1) * 0.25], 10));
   }
 
   for (const [name, x] of [
-    ["legFL", -0.03],
-    ["legFR", 0.03],
+    ["legFL", -0.028],
+    ["legFR", 0.028],
   ] as const) {
-    const l = body.joint(name, [x, -0.06, 0.01]);
-    l.add("horn", leg(0.009, 0.008, 0.07));
-    l.add("horn", ell(0.022, 0.006, 0.03, [0, -0.076, 0.012], undefined, 6));
+    const l = body.joint(name, [x, -0.058, 0.008]);
+    l.add("horn", leg(0.009, 0.0075, 0.068));
+    l.add("horn", ell(0.02, 0.006, 0.028, [0, -0.074, 0.012], undefined, 10));
   }
 
   return { root, base: 0xc9743d };
@@ -463,6 +706,28 @@ export function createAnimalRig(
   const height = box.max.y;
   const welfare = THREE.MathUtils.clamp(look.welfare ?? 1, 0, 1);
 
+  /**
+   * Jusqu'où le corps peut descendre avant que le ventre touche le sol.
+   *
+   * Une descente exprimée en pourcentage de la hauteur au garrot ne pouvait
+   * pas convenir : une brebis en toison est bien plus épaisse qu'une vache
+   * pour un garrot plus bas, et elle passait sous terre en se couchant. On
+   * mesure donc le dessous réel de la bête, toison comprise.
+   */
+  const bellyDrop = (() => {
+    const bodyJoint = joints.body;
+    if (!bodyJoint) return 0;
+    const local = new THREE.Box3();
+    for (const child of bodyJoint.children) {
+      const mesh = child as THREE.Mesh;
+      if (!mesh.isMesh) continue;
+      mesh.geometry.computeBoundingBox();
+      local.union(mesh.geometry.boundingBox!);
+    }
+    if (!Number.isFinite(local.min.y)) return 0;
+    return Math.max(0, bodyJoint.position.y + local.min.y);
+  })();
+
   const rest = (j?: THREE.Group) =>
     (j?.userData.rest as { x: number; y: number; z: number; py: number }) ?? {
       x: 0,
@@ -496,7 +761,7 @@ export function createAnimalRig(
       // le moindre affaissement lui enfonçait les sabots dans la terre. Le
       // mal-être se dit par la posture — dos voûté, tête basse — jamais par
       // l'altitude.
-      body.position.y = r.py - lie * (r.py * 0.42);
+      body.position.y = r.py - lie * bellyDrop * 0.94;
       body.rotation.x = r.x + g * 0.12 + lie * 0.06 + (1 - welfare) * 0.05;
       body.rotation.z = r.z + Math.sin(t * 0.5) * 0.015;
     }

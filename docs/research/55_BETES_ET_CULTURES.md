@@ -63,6 +63,29 @@ La foulée vient de la **distance parcourue**, comme les roues des engins :
 deux bêtes à la même vitesse posent le pied ensemble. Les pattes battent en
 diagonale — les quatre en phase donnent un jouet à ressort.
 
+## La peau, pas l'assemblage
+
+Premier jet : chaque bête était une union d'ellipsoïdes qui se recouvrent.
+Lisse en apparence, mais **chaque intersection laisse une arête** — la même
+cicatrice que le crâne et la mâchoire des personnages. C'est elle qui donnait
+aux bêtes leur air géométrique.
+
+Corps, cous, têtes, pattes et queues sont désormais des **fuselages** : une
+surface unique tendue sur une suite de sections elliptiques, interpolées en
+Catmull-Rom. Le garrot enfle, le flanc s'arrondit, la croupe redescend, sans
+une seule couture. Un membre est un fuselage lui aussi : le canon se resserre
+sous le genou puis s'évase au boulet, là où deux cylindres empilés laissaient
+une arête au milieu.
+
+La toison **multiplie** le gabarit au lieu de s'y ajouter. Ajoutée, l'épaisseur
+gonflait aussi les deux bouts du fuselage et la brebis devenait un tonneau à
+fonds plats.
+
+Une peau se paie en secteurs : dix-huit secteurs sur vingt tranches tiennent la
+rondeur et divisent la facture par deux — six mille cinq cents triangles pour
+une vache, contre onze mille au premier jet. Un test verrouille le plafond : au
+champ, une bête fait quarante pixels de haut, et il y en a huit par troupeau.
+
 ## Deux pièges payés au prix fort
 
 **Le garrot ne tient qu'à deux millimètres du sol.** Une première version
@@ -73,6 +96,12 @@ voûté et tête basse, jamais par l'altitude.
 **Une bête couchée ne broute pas.** Cumuler les deux poses enfonçait le museau
 sous la terre, le corps étant déjà au ras du sol. L'ampleur du pâturage est
 donc bornée par celle du coucher.
+
+La descente au repos a coûté la même leçon une troisième fois : exprimée en
+pourcentage de la hauteur au garrot, elle enfonçait la brebis sous terre — une
+toison est bien plus épaisse qu'un flanc de vache pour un garrot plus bas. On
+mesure donc le dessous réel de la bête, toison comprise, et elle descend
+jusqu'à poser le ventre, pas plus loin.
 
 Le pis a coûté le même genre d'erreur : logé à l'intérieur de l'ellipsoïde du
 corps, il ne se voyait pas, et une vache pleine ressemblait à une vache qu'on
