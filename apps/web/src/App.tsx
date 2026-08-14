@@ -419,6 +419,22 @@ export function App() {
    * ce qu'on est venu regarder.
    */
   const [sheet, setSheet] = useState<SheetKey | null>(null);
+  const [enterFor, setEnterFor] = useState<SheetKey | null>(null);
+  useEffect(() => {
+    if (!sheet) {
+      setEnterFor(null);
+      return;
+    }
+    setEnterFor(null);
+    let inner = 0;
+    const outer = requestAnimationFrame(() => {
+      inner = requestAnimationFrame(() => setEnterFor(sheet));
+    });
+    return () => {
+      cancelAnimationFrame(outer);
+      cancelAnimationFrame(inner);
+    };
+  }, [sheet]);
   /** Semer dans les chaumes plutôt que de travailler le sol au préalable */
   const [directSeed, setDirectSeed] = useState(false);
   const [buildType, setBuildType] = useState<BuildingType>("SILO");
@@ -1182,7 +1198,7 @@ export function App() {
 
   function panelClass(base: string, key: SheetKey): string {
     if (!isMobile) return `glass ${base}`;
-    return `glass ${base} sheet${sheet === key ? " open" : ""}`;
+    return `glass ${base} sheet${sheet === key ? " open" : ""}${enterFor === key ? " enter" : ""}`;
   }
 
   /**
@@ -3458,7 +3474,7 @@ export function App() {
       )}
 
       {isMobile && sheet === "MORE" && (
-        <nav className="more-strip" aria-label="Plus">
+        <nav className={`more-strip${enterFor === "MORE" ? " enter" : ""}`} aria-label="Plus">
           {SHEET_TABS.map((t) => {
             const disabled = t.key === "HERD" && !barns.length;
             return (
@@ -3499,7 +3515,7 @@ export function App() {
       {isMobile && sheet && sheet !== "MORE" && (
         <button
           type="button"
-          className="sheet-scrim"
+          className={`sheet-scrim${enterFor && enterFor !== "MORE" ? " enter" : ""}`}
           aria-label="Fermer le panneau"
           onClick={() => setSheet(null)}
         />

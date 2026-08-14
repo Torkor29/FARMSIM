@@ -1926,9 +1926,17 @@ button.ghost {
     /* Fermé par défaut : le tiroir n'existe que quand on l'appelle. */
     display: none;
     padding: 0.85rem 0.9rem 1rem;
-    animation: sheet-rise 0.34s cubic-bezier(0.22, 1, 0.36, 1);
   }
-  .game-stage.mobile .sheet.open { display: block; }
+  .game-stage.mobile .sheet.open {
+    display: block;
+    transform: translate3d(0, 75%, 0);
+    opacity: 0;
+  }
+  .game-stage.mobile .sheet.open.enter {
+    transform: translate3d(0, 0, 0);
+    opacity: 1;
+    transition: transform 0.48s cubic-bezier(0.16, 1, 0.3, 1), opacity 0.28s ease;
+  }
 
   .game-stage.mobile .sheet::before {
     content: "";
@@ -1966,7 +1974,11 @@ button.ghost {
     padding: 0;
     background: rgba(24, 44, 38, 0.32);
     backdrop-filter: blur(3px);
-    animation: scrim-in 0.22s ease;
+    opacity: 0;
+  }
+  .sheet-scrim.enter {
+    opacity: 1;
+    transition: opacity 0.28s ease;
   }
 
   /* —— Barre d'onglets : remplacée par Plus dans le dock —— */
@@ -2012,29 +2024,41 @@ button.ghost {
     border-radius: 18px;
     background: var(--bar);
     border: 1px solid var(--glass-border);
-    box-shadow: var(--sh-2);
-    backdrop-filter: blur(12px);
-    animation: more-rise 0.28s cubic-bezier(0.22, 1, 0.36, 1);
+    box-shadow: var(--sh-3);
+    backdrop-filter: blur(14px);
+    transform: translate3d(0, 130%, 0);
+    opacity: 0;
+  }
+  .more-strip.enter {
+    transform: translate3d(0, 0, 0);
+    opacity: 1;
+    transition: transform 0.42s cubic-bezier(0.16, 1, 0.3, 1), opacity 0.22s ease;
   }
   .more-item {
     display: grid;
     justify-items: center;
-    gap: 0.08rem;
-    min-height: 48px;
-    padding: 0.2rem 0.1rem;
+    gap: 0.12rem;
+    min-height: 52px;
+    padding: 0.35rem 0.1rem;
     border: 0;
     background: transparent;
-    border-radius: 12px;
-    animation: more-pop 0.32s cubic-bezier(0.22, 1, 0.36, 1) both;
+    border-radius: 14px;
+    opacity: 0;
+    transform: translateY(14px);
   }
-  .more-item:nth-child(1) { animation-delay: 0.03s; }
-  .more-item:nth-child(2) { animation-delay: 0.06s; }
-  .more-item:nth-child(3) { animation-delay: 0.09s; }
-  .more-item:nth-child(4) { animation-delay: 0.12s; }
-  .more-item:nth-child(5) { animation-delay: 0.15s; }
-  .more-item:nth-child(6) { animation-delay: 0.18s; }
+  .more-strip.enter .more-item {
+    opacity: 1;
+    transform: none;
+    transition: transform 0.38s cubic-bezier(0.16, 1, 0.3, 1), opacity 0.28s ease;
+  }
+  .more-strip.enter .more-item:nth-child(1) { transition-delay: 0.06s; }
+  .more-strip.enter .more-item:nth-child(2) { transition-delay: 0.1s; }
+  .more-strip.enter .more-item:nth-child(3) { transition-delay: 0.14s; }
+  .more-strip.enter .more-item:nth-child(4) { transition-delay: 0.18s; }
+  .more-strip.enter .more-item:nth-child(5) { transition-delay: 0.22s; }
+  .more-strip.enter .more-item:nth-child(6) { transition-delay: 0.26s; }
   .more-item:active { background: var(--sand); }
-  .more-item strong { font-size: 0.64rem; font-weight: 800; }
+  .more-item strong { font-size: 0.68rem; font-weight: 800; }
   .quest-chip-hud {
     padding: 0.35rem 0.65rem;
   }
