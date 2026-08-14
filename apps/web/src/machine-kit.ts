@@ -27,6 +27,7 @@ export const HALF = Math.PI / 2;
 /* ------------------------------------------------------------------ */
 
 export type MatKey =
+  /* — Machines ————————————————————————————————————————— */
   | "paint"
   | "paintDark"
   | "trim"
@@ -41,7 +42,30 @@ export type MatKey =
   | "tail"
   | "beacon"
   | "grain"
-  | "seat";
+  | "seat"
+  /* — Bâtiments ——————————————————————————————————————— */
+  /** Couverture : tuile, bac acier, ardoise */
+  | "roof"
+  /** Faîtage, rives, gouttières */
+  | "roofDark"
+  /** Bardage courant : planche, crépi, pierre */
+  | "wall"
+  /** Soubassement, poteaux, angles */
+  | "wallDark"
+  /** Charpente apparente, clôtures, portails */
+  | "timber"
+  /** Tôle ondulée galvanisée : cellule à grain, hangar */
+  | "corrugate"
+  /** Dalle, muret, auge */
+  | "concrete"
+  /** Vantail, porte coulissante */
+  | "door"
+  /** Paille, foin, litière */
+  | "hay"
+  /** Buisson de cour, herbe rase */
+  | "foliage"
+  /** Terre battue de la cour */
+  | "dirt";
 
 export type Palette = {
   /** Teinte de carrosserie */
@@ -95,7 +119,7 @@ export function createMaterials(pal: Palette, seed = 0, wear = 0): Materials {
     });
   const std = (p: THREE.MeshStandardMaterialParameters) => new THREE.MeshStandardMaterial(p);
 
-  return {
+  const machine = {
     paint: paint(pal.body),
     paintDark: paint(pal.bodyDark, 0.45),
     trim: paint(pal.trim, 0.42),
@@ -150,6 +174,125 @@ export function createMaterials(pal: Palette, seed = 0, wear = 0): Materials {
     }),
     grain: std({ color: pal.grain, metalness: 0.05, roughness: 0.85 }),
     seat: std({ color: 0x1f2226, metalness: 0.05, roughness: 0.85 }),
+  };
+
+  // Un engin ne bâtit rien : les clés de maçonnerie renvoient sur des matières
+  // qu'il possède déjà. Le registre reste complet — `Part` indexe par clé — sans
+  // fabriquer douze matériaux dont aucun tracteur ne se sert.
+  return {
+    ...machine,
+    roof: machine.trim,
+    roofDark: machine.paintDark,
+    wall: machine.paint,
+    wallDark: machine.paintDark,
+    timber: machine.cast,
+    corrugate: machine.steel,
+    concrete: machine.cast,
+    door: machine.trim,
+    hay: machine.grain,
+    foliage: machine.grain,
+    dirt: machine.cast,
+  };
+}
+
+/* ------------------------------------------------------------------ */
+/* Matières de bâtiment                                                */
+/* ------------------------------------------------------------------ */
+
+export type BuildingPalette = {
+  /** Couverture : tuile de terre cuite, bac acier laqué, ardoise */
+  roof: number;
+  /** Bardage courant : bardage bois, crépi, moellon */
+  wall: number;
+  /** Charpente et clôtures */
+  timber: number;
+  /** Tôle galvanisée, cuves, portes de hangar */
+  metal: number;
+};
+
+/**
+ * Jeu de matières d'un bâtiment.
+ *
+ * Un bâtiment ne brille pas comme une carrosserie : pas de vernis, des surfaces
+ * rugueuses, et une part de la lecture qui vient du contraste entre la
+ * couverture, le bardage et la charpente. `wear` marque l'âge — le bois grise,
+ * la tôle se ternit, le crépi se salit — et `seed` évite que deux hangars
+ * voisins soient la photocopie l'un de l'autre.
+ */
+export function createBuildingMaterials(
+  pal: BuildingPalette,
+  seed = 0,
+  wear = 0,
+): Materials {
+  const w = Math.max(0, Math.min(1, wear));
+  /** Gris de bois exposé : ce vers quoi toute matière extérieure tire. */
+  const WEATHERED = new THREE.Color(0x8d8477);
+  const jitter = ((Math.sin(seed * 12.9898) * 43758.5453) % 1) - 0.5;
+  const tint = (hex: number, amount = 1) => {
+    const c = new THREE.Color(hex);
+    if (seed) c.offsetHSL(0, 0, jitter * 0.045);
+    return c.lerp(WEATHERED, amount * w * 0.5);
+  };
+  const std = (p: THREE.MeshStandardMaterialParameters) => new THREE.MeshStandardMaterial(p);
+  const shade = (hex: number, amount: number) =>
+    new THREE.Color(hex).multiplyScalar(amount).getHex();
+
+  // La couverture est la seule surface qui accroche un peu la lumière : c'est
+  // ce qui distingue une tuile émaillée ou un bac acier d'un mur crépi.
+  const roof = std({
+    color: tint(pal.roof, 0.7),
+    metalness: 0.12,
+    roughness: 0.52 + w * 0.3,
+  });
+  const timber = std({ color: tint(pal.timber), metalness: 0.02, roughness: 0.86 + w * 0.1 });
+  const corrugate = std({
+    color: tint(pal.metal, 0.6),
+    metalness: 0.55 - w * 0.3,
+    roughness: 0.42 + w * 0.4,
+  });
+
+  return {
+    /* — Bâtiment ————————————————————————————————————————— */
+    roof,
+    roofDark: std({ color: tint(shade(pal.roof, 0.68), 0.7), metalness: 0.1, roughness: 0.6 }),
+    wall: std({ color: tint(pal.wall), metalness: 0, roughness: 0.9 }),
+    wallDark: std({ color: tint(shade(pal.wall, 0.74)), metalness: 0, roughness: 0.92 }),
+    timber,
+    corrugate,
+    concrete: std({ color: tint(0xb9b3a6, 0.4), metalness: 0, roughness: 0.95 }),
+    door: std({ color: tint(shade(pal.timber, 0.86)), metalness: 0.04, roughness: 0.8 }),
+    hay: std({ color: 0xd6bb70, metalness: 0, roughness: 1 }),
+    foliage: std({ color: 0x5f9b45, metalness: 0, roughness: 0.95 }),
+    dirt: std({ color: 0x9a7d55, metalness: 0, roughness: 1 }),
+    glass: std({
+      color: 0x9fd2e2,
+      metalness: 0.02,
+      roughness: 0.08,
+      transparent: true,
+      opacity: 0.42,
+      side: THREE.DoubleSide,
+    }),
+    lamp: std({
+      color: 0xfff4d2,
+      emissive: new THREE.Color(0xffe9a8),
+      emissiveIntensity: 0.7,
+      roughness: 0.22,
+    }),
+
+    /* — Clés de machine, sans emploi ici ——————————————————— */
+    paint: roof,
+    paintDark: roof,
+    trim: timber,
+    chrome: corrugate,
+    steel: corrugate,
+    cast: timber,
+    plastic: timber,
+    rubber: timber,
+    rim: corrugate,
+    tail: roof,
+    beacon: roof,
+    grain: timber,
+    seat: timber,
   };
 }
 
@@ -322,7 +465,20 @@ export type Role =
   | "tool"
   | "beacon"
   /** Sortie du pot : un nœud vide, d'où part la fumée */
-  | "exhaust";
+  | "exhaust"
+  /**
+   * Vantail de bâtiment. Le nœud pivote sur son bord : `pos` est le **gond**,
+   * pas le centre du panneau, sinon la porte tourne sur elle-même au lieu de
+   * s'ouvrir.
+   */
+  | "door"
+  /** Extracteur de toiture, girouette : tourne doucement, sans fin */
+  | "vane"
+  /**
+   * Seuil de bâtiment : nœud vide d'où sortent les bêtes. La vue s'en sert
+   * comme point de passage — sans lui, un troupeau traverse le mur.
+   */
+  | "threshold";
 
 /**
  * Nœud d'un plan de montage : ses pièces, fusionnées par matière à la
@@ -330,8 +486,15 @@ export type Role =
  */
 export class Part {
   private buckets = new Map<MatKey, THREE.BufferGeometry[]>();
-  private kids: { node: Part; pos: Vec3; rot?: Vec3; role?: Role; radius?: number; spin?: number }[] =
-    [];
+  private kids: {
+    node: Part;
+    pos: Vec3;
+    rot?: Vec3;
+    role?: Role;
+    radius?: number;
+    spin?: number;
+    slide?: number;
+  }[] = [];
 
   add(mat: MatKey, ...geos: THREE.BufferGeometry[]): this {
     const bucket = this.buckets.get(mat) ?? [];
@@ -340,7 +503,21 @@ export class Part {
     return this;
   }
 
-  child(pos: Vec3, opts: { rot?: Vec3; role?: Role; radius?: number; spin?: number } = {}): Part {
+  child(
+    pos: Vec3,
+    opts: {
+      rot?: Vec3;
+      role?: Role;
+      radius?: number;
+      spin?: number;
+      /**
+       * Course d'une pièce qui **coulisse** au lieu de pivoter : rideau
+       * métallique, porte de grange sur rail. Un rideau qu'on fait tourner sur
+       * son gond tourne sur lui-même, ce qui ne ressemble à rien.
+       */
+      slide?: number;
+    } = {},
+  ): Part {
     const node = new Part();
     this.kids.push({ node, pos, ...opts });
     return node;
@@ -372,6 +549,7 @@ export class Part {
       if (kid.rot) g.rotation.set(...kid.rot);
       if (kid.radius) g.userData.radius = kid.radius;
       if (kid.spin) g.userData.spin = kid.spin;
+      if (kid.slide) g.userData.slide = kid.slide;
       if (kid.role) {
         const list = roles.get(kid.role) ?? [];
         // Nommer les nœuds animés : c'est ce qui rend le modèle exploitable

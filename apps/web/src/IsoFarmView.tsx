@@ -1,7 +1,6 @@
 import { useEffect, useMemo, useRef } from "react";
 import * as THREE from "three";
 import {
-  BUILDING_ART,
   BUILDING_DEFS,
   RIPENESS_COLORS,
   artGroundFraction,
@@ -16,6 +15,7 @@ import {
 } from "@farmsim/shared";
 import { disposeRenderer, disposeThreeScene, markShared } from "./three-cleanup";
 import { applyHerdPose, meshForHerd } from "./animal-meshes";
+import { createBuildingRig, type BuildingRig } from "./buildings3d";
 import { createCropField } from "./crop-field";
 import type { CropShape } from "./crop-shapes";
 import { attachStudioEnvironment } from "./machine-kit";
@@ -72,6 +72,13 @@ export type IsoBuilding = {
   originY: number;
   /** 1 à 5 — le bâtiment grandit et se garnit à chaque palier */
   level?: number;
+  /**
+   * Quarts de tour, 0 à 3. La façade regarde `+z` au repos ; un quart impair
+   * permute largeur et profondeur de l'empreinte.
+   */
+  rotation?: number;
+  /** Bêtes dehors : les vantaux s'ouvrent et le troupeau franchit le seuil */
+  doorOpen?: boolean;
 };
 
 export type IsoSim = {
@@ -372,39 +379,6 @@ function buildingPalette(type: BuildingType): { body: number; roof: number; h: n
       return { body: 0x8a6f52, roof: 0x7a5c3a, h: 0.45 };
     default:
       return { body: WOOD_WARM, roof: ROOF_TEAL, h: 1 };
-  }
-}
-
-function makeBarnDoor(): THREE.Group {
-  const g = new THREE.Group();
-  const wood = new THREE.MeshLambertMaterial({ color: 0x6b4528, flatShading: true });
-  const dark = new THREE.MeshLambertMaterial({ color: 0x1a120c, flatShading: true });
-  const hole = new THREE.Mesh(new THREE.BoxGeometry(0.42, 0.55, 0.04), dark);
-  hole.position.set(0, 0.28, 0);
-  g.add(hole);
-  const left = new THREE.Mesh(new THREE.BoxGeometry(0.2, 0.52, 0.05), wood);
-  left.name = "left";
-  left.castShadow = true;
-  g.add(left);
-  const right = new THREE.Mesh(new THREE.BoxGeometry(0.2, 0.52, 0.05), wood);
-  right.name = "right";
-  right.castShadow = true;
-  g.add(right);
-  setBarnDoorOpen(g, 0);
-  return g;
-}
-
-function setBarnDoorOpen(g: THREE.Group, open: number): void {
-  const o = Math.max(0, Math.min(1, open));
-  const left = g.getObjectByName("left");
-  const right = g.getObjectByName("right");
-  if (left) {
-    left.position.set(-0.1 - o * 0.22, 0.28, 0.03 + o * 0.09);
-    left.rotation.y = o * 0.95;
-  }
-  if (right) {
-    right.position.set(0.1 + o * 0.22, 0.28, 0.03 + o * 0.09);
-    right.rotation.y = -o * 0.95;
   }
 }
 
@@ -809,8 +783,9 @@ export function IsoFarmView({
     /** Engins garés au parc — moteur coupé, roues immobiles */
     const vehicleRigs = new Map<string, MachineRig>();
     const buildingGroup = new THREE.Group();
-    buildingGroup.renderOrder = 2;
     world.add(buildingGroup);
+    /** Bâtiments montés : leurs vantaux et extracteurs sont animés à chaque image */
+    const buildingRigs: { rig: BuildingRig; id: string; type: BuildingType }[] = [];
 
     const workGroup = new THREE.Group();
     world.add(workGroup);
@@ -865,7 +840,11 @@ export function IsoFarmView({
     let grazeOutKey = "";
     const cowWalkers: {
       mesh: THREE.Group;
-      door: THREE.Vector3;
+      /** Place à l'intérieur du bâtiment : la bête y est masquée */
+      stall: THREE.Vector3;
+      /** Le seuil, franchi à l'aller comme au retour */
+      gate: THREE.Vector3;
+      /** Place dehors : le pré s'il existe, sinon la cour du bâtiment */
       paddock: THREE.Vector3;
       walkFrom: THREE.Vector3;
       walkTo: THREE.Vector3;
@@ -882,9 +861,6 @@ export function IsoFarmView({
       /** Cette bête-là se couche quand le troupeau rentre */
       rests: boolean;
     }[] = [];
-    const herdDoors: { mesh: THREE.Group; buildingId: string; open: number }[] = [];
-    const doorGroup = new THREE.Group();
-    world.add(doorGroup);
     const pickupGroup = new THREE.Group();
     world.add(pickupGroup);
     let pickupKey = "";
@@ -1111,6 +1087,11 @@ export function IsoFarmView({
       }
       vehicleRigs.clear();
       chimneyPos = null;
+      for (const b of buildingRigs) {
+        buildingGroup.remove(b.rig.group);
+        b.rig.dispose();
+      }
+      buildingRigs.length = 0;
       while (buildingGroup.children.length) {
         const c = buildingGroup.children[0];
         buildingGroup.remove(c);
@@ -1221,16 +1202,12 @@ export function IsoFarmView({
             map: look === "PLOWED" && cell?.kind === "EMPTY" ? plowedMap : null,
           });
           const mesh = new THREE.Mesh(tileGeo(cellSize), mat);
-          // Les cases d'emprise d'un bâtiment ne doivent pas former un muret.
-          // Les aires de parking, elles, restent à hauteur du champ : les
-          // engins 3D posent leurs pneus sur le dessus de la dalle.
-          if (cell?.kind === "BUILDING") {
-            mesh.scale.y = 0.22;
-            mesh.position.set(px, -0.07, pz);
-            mat.depthWrite = false;
-          } else {
-            mesh.position.set(px, 0, pz);
-          }
+          // Toutes les cases sont à la même hauteur, bâtiments compris. Elles
+          // étaient auparavant enfoncées de quatorze centimètres sous le champ
+          // pour ne pas former un muret derrière l'illustration : le creux se
+          // lisait comme un trou, et le bâtiment paraissait flotter au-dessus.
+          // Un volume posé sur la dalle n'a plus besoin de ce sacrifice.
+          mesh.position.set(px, 0, pz);
           mesh.receiveShadow = true;
           mesh.userData = { x, y, baseColor: col, isSelected: isSel };
           world.add(mesh);
@@ -1316,46 +1293,38 @@ export function IsoFarmView({
       buildSoilRelief(soilDetails, cellSize);
       cropField.setCells(cropStalks, cellSize);
 
+      // Les bâtiments : des volumes posés sur le terrain, plus des images
+      // collées face caméra. C'est ce qui règle d'un coup le hangar qui
+      // flottait — l'altitude n'est plus devinée en scannant un fichier, c'est
+      // la hauteur du sol — et ce qui rend l'orientation possible.
       for (const b of bs) {
         const def = BUILDING_DEFS[b.type];
-        const level = Math.max(1, Math.min(5, b.level ?? 1));
-        const cx = ox + (b.originX + (def.w - 1) / 2) * step;
-        const cz = oz + (b.originY + (def.h - 1) / 2) * step;
+        const quarters = ((b.rotation ?? 0) % 4 + 4) % 4;
+        // L'empreinte tourne avec le bâtiment : une case de plus en largeur
+        // devient une case de plus en profondeur.
+        const fw = quarters % 2 === 0 ? def.w : def.h;
+        const fh = quarters % 2 === 0 ? def.h : def.w;
+        const cx = ox + (b.originX + (fw - 1) / 2) * step;
+        const cz = oz + (b.originY + (fh - 1) / 2) * step;
 
-        // Ombre portée peinte au sol : une image plate posée dans une scène 3D
-        // flotte tant que rien ne l'y rattache. Ce disque sombre coûte un
-        // maillage et fait tout le travail.
-        const shadow = new THREE.Mesh(
-          new THREE.PlaneGeometry(def.w * step * 0.82, def.h * step * 0.82),
-          new THREE.MeshBasicMaterial({
-            color: 0x2c3b2a,
-            transparent: true,
-            opacity: 0.22,
-            depthWrite: false,
-          }),
-        );
-        shadow.rotation.x = -Math.PI / 2;
-        shadow.position.set(cx, 0.1, cz);
-        buildingGroup.add(shadow);
+        const rig = createBuildingRig(b.type, {
+          level: b.level ?? 1,
+          // Deux silos voisins ne doivent pas être la photocopie l'un de
+          // l'autre : la graine vient de la position, donc elle est stable.
+          seed: b.originX * 7.3 + b.originY * 3.1,
+          shadows: quality.shadows,
+        });
+        rig.group.scale.setScalar(cellSize);
+        rig.group.position.set(cx, MACHINE_GROUND, cz);
+        rig.group.rotation.y = quarters * (Math.PI / 2);
+        rig.group.userData.buildingId = b.id;
+        buildingGroup.add(rig.group);
+        buildingRigs.push({ rig, id: b.id, type: b.type });
 
-        // L'illustration elle-même. Le panneau fait face à la caméra, qui ne
-        // pivote jamais dans cette vue : l'image isométrique tombe donc juste.
-        // Chaque palier agrandit le bâtiment — la silhouette dessinée ne
-        // change pas, mais l'emprise visuelle dit le niveau.
-        const grow = 1 + (level - 1) * 0.1;
-        const spanX = (def.w + def.h) * step * 0.56 * grow;
-        const spanY = spanX * BUILDING_ART_RATIO;
-        // Le rang d'ancrage — pieds du bâtiment, pas le bas du cadre —
-        // repose sur les tuiles. Sinon l'illustration flotte : la dalle
-        // dessinée dans le webp se mettait au-dessus du sol 3D.
-        buildingGroup.add(
-          makeArtBillboard(BUILDING_ART[b.type], camera, cx, 0.1, cz, spanX, spanY),
-        );
-
-        // La maison d'exploitation fume : le conduit est dessiné sur
-        // l'illustration, la fumée se pose à son aplomb.
+        // La maison d'exploitation fume : le conduit fait partie du modèle,
+        // la fumée part donc de son aplomb exact, rotation comprise.
         if (b.type === "FARMHOUSE") {
-          chimneyPos = new THREE.Vector3(cx + spanX * 0.16, 0.1 + spanY * 0.74, cz - spanX * 0.1);
+          chimneyPos = new THREE.Vector3(cx, MACHINE_GROUND + rig.height * cellSize, cz);
         }
       }
 
@@ -1716,39 +1685,54 @@ export function IsoFarmView({
           disposeObject3D(w.mesh);
         }
         cowWalkers.length = 0;
-        while (doorGroup.children.length) {
-          const c = doorGroup.children[0];
-          doorGroup.remove(c);
-          disposeObject3D(c);
-        }
-        herdDoors.length = 0;
 
         for (const herd of herds) {
           const shown = Math.min(8, herd.animals);
           const kind = herd.kind ?? "COW";
-          const doorX = ox + (herd.barn.originX + herd.barn.w / 2) * step;
-          const doorZ = oz + (herd.barn.originY + herd.barn.h) * step + 0.08 * step;
-          const door = makeBarnDoor();
-          door.position.set(doorX, 0.1, doorZ);
-          door.scale.setScalar(cellSize * (kind === "HEN" ? 0.7 : 1));
-          setBarnDoorOpen(door, herd.out ? 1 : 0);
-          doorGroup.add(door);
-          herdDoors.push({ mesh: door, buildingId: herd.buildingId, open: herd.out ? 1 : 0 });
+          const barn = buildingRigs.find((b) => b.id === herd.buildingId)?.rig ?? null;
+          barn?.group.updateMatrixWorld(true);
+          // Le seuil appartient au bâtiment : il tourne avec lui, et il tient
+          // compte de la façade réelle. Une porte posée devant la case, comme
+          // avant, laissait les bêtes la traverser par l'arrière.
+          const gate = barn
+            ? barn.anchors("threshold")[0]?.getWorldPosition(new THREE.Vector3()) ?? null
+            : null;
+          const centre = new THREE.Vector3(
+            ox + (herd.barn.originX + (herd.barn.w - 1) / 2) * step,
+            0.1,
+            oz + (herd.barn.originY + (herd.barn.h - 1) / 2) * step,
+          );
+          const gx = gate?.x ?? centre.x;
+          const gz = gate?.z ?? centre.z + herd.barn.h * 0.4 * step;
+          // Direction de sortie : du centre du bâtiment vers son seuil. Elle
+          // suit donc la rotation, sans que la vue ait à la recalculer.
+          const outward = new THREE.Vector3(gx - centre.x, 0, gz - centre.z);
+          if (outward.lengthSq() < 1e-6) outward.set(0, 0, 1);
+          outward.normalize();
+          const side = new THREE.Vector3(outward.z, 0, -outward.x);
+          const hasPaddock = herd.paddock.w > 0 && herd.paddock.h > 0;
 
           for (let i = 0; i < shown; i++) {
-            const along = ((i % 4) - 1.5) * 0.28 * step;
-            const front = new THREE.Vector3(
-              doorX + along,
-              0.1,
-              doorZ + 0.22 * step + Math.floor(i / 4) * 0.2 * step,
-            );
-            const spreadX = (((i % 3) - 1) * 0.55 + (i * 0.13) % 0.4) * step;
-            const spreadZ = ((Math.floor(i / 3) - 1) * 0.55 + (i * 0.21) % 0.4) * step;
-            const paddock = new THREE.Vector3(
-              ox + (herd.paddock.originX + herd.paddock.w / 2) * step + spreadX,
-              0.1,
-              oz + (herd.paddock.originY + herd.paddock.h / 2) * step + spreadZ,
-            );
+            const rank = Math.floor(i / 4);
+            const along = ((i % 4) - 1.5) * 0.26 * step;
+            // Dedans : rangée de stalles derrière la façade. La bête y est
+            // masquée une fois la porte refermée.
+            const stall = new THREE.Vector3(gx, 0.1, gz)
+              .addScaledVector(outward, -0.35 * step - rank * 0.3 * step)
+              .addScaledVector(side, along);
+            const spreadX = (((i % 3) - 1) * 0.55 + ((i * 0.13) % 0.4)) * step;
+            const spreadZ = ((Math.floor(i / 3) - 1) * 0.55 + ((i * 0.21) % 0.4)) * step;
+            // Dehors : le pré s'il en existe un, sinon la cour du bâtiment —
+            // dans tous les cas, sur une case qui appartient à l'élevage.
+            const paddock = hasPaddock
+              ? new THREE.Vector3(
+                  ox + (herd.paddock.originX + (herd.paddock.w - 1) / 2) * step + spreadX,
+                  0.1,
+                  oz + (herd.paddock.originY + (herd.paddock.h - 1) / 2) * step + spreadZ,
+                )
+              : new THREE.Vector3(gx, 0.1, gz)
+                  .addScaledVector(outward, 0.12 * step + rank * 0.24 * step)
+                  .addScaledVector(side, along * 1.3);
             const mesh = meshForHerd(kind, Boolean(herd.sheared), {
               welfare: herd.welfare,
               // Chaque bête n'est pas au même point du cycle : sans ce décalage
@@ -1757,12 +1741,14 @@ export function IsoFarmView({
             });
             const base = kind === "HEN" ? 0.55 : kind === "SHEEP" ? 0.75 : 0.85;
             mesh.scale.setScalar(cellSize * base);
-            const here = herd.out ? paddock : front;
+            const here = herd.out ? paddock : stall;
             mesh.position.copy(here);
+            mesh.visible = Boolean(herd.out);
             grazeGroup.add(mesh);
             cowWalkers.push({
               mesh,
-              door: front.clone(),
+              stall: stall.clone(),
+              gate: new THREE.Vector3(gx, 0.1, gz).addScaledVector(side, along * 0.5),
               paddock: paddock.clone(),
               walkFrom: here.clone(),
               walkTo: here.clone(),
@@ -1795,8 +1781,11 @@ export function IsoFarmView({
             if (w.wantOut === nextOut) continue;
             w.wantOut = nextOut;
             w.walkFrom.set(w.mesh.position.x, 0.1, w.mesh.position.z);
-            w.walkTo.copy(nextOut ? w.paddock : w.door);
-            w.walkT0 = t + i * 0.38;
+            w.walkTo.copy(nextOut ? w.paddock : w.stall);
+            // Le troupeau s'écoule par la porte : chaque bête part un peu
+            // après la précédente, et la marche laisse le temps au vantail de
+            // s'ouvrir devant elle.
+            w.walkT0 = t + 0.45 + i * 0.38;
             w.walkDur = 2.6;
           }
         }
@@ -1839,7 +1828,18 @@ export function IsoFarmView({
         const progress = Math.min(1, Math.max(0, raw));
         const eased = progress * progress * (3 - 2 * progress);
         const walking = progress > 0.02 && progress < 0.98;
-        w.mesh.position.lerpVectors(w.walkFrom, w.walkTo, eased);
+        // Le trajet s'incurve vers le seuil : en ligne droite, une bête sort
+        // par le pignon. La porte est le point de passage, pas une décoration.
+        const u = eased;
+        const bend = 2 * (1 - u) * u;
+        w.mesh.position.set(
+          (1 - u) * w.walkFrom.x + u * w.walkTo.x + bend * (w.gate.x - (w.walkFrom.x + w.walkTo.x) / 2),
+          0.1,
+          (1 - u) * w.walkFrom.z + u * w.walkTo.z + bend * (w.gate.z - (w.walkFrom.z + w.walkTo.z) / 2),
+        );
+        // Une bête rentrée n'est pas plantée devant la grange : elle est
+        // dedans, donc invisible une fois le vantail refermé.
+        w.mesh.visible = w.wantOut || progress < 0.9;
         if (walking) {
           w.mesh.position.y = 0.1 + Math.abs(Math.sin(t * 9 + w.wander)) * 0.04 * step;
         } else if (w.wantOut) {
@@ -1861,19 +1861,18 @@ export function IsoFarmView({
           : new THREE.Vector3(w.wantOut ? 1 : 0.2, 0, w.wantOut ? 0.2 : 1);
         w.mesh.rotation.y = Math.atan2(dir.x, dir.z) + (walking ? Math.sin(t * 8 + w.wander) * 0.12 : 0);
         w.mesh.rotation.x = 0;
-        w.mesh.visible = true;
       }
 
-      for (const d of herdDoors) {
-        const mine = cowWalkers.filter((w) => w.buildingId === d.buildingId);
-        const want = mine.some((w) => {
+      // Les vantaux appartiennent au bâtiment : c'est lui qu'on ouvre, pas un
+      // panneau posé devant. Une porte reste ouverte tant qu'une bête est
+      // dehors ou en chemin, et se referme derrière la dernière rentrée.
+      for (const b of buildingRigs) {
+        const mine = cowWalkers.filter((w) => w.buildingId === b.id);
+        const open = mine.some((w) => {
           const p = Math.min(1, Math.max(0, (t - w.walkT0) / w.walkDur));
           return w.wantOut || p < 1;
-        })
-          ? 1
-          : 0;
-        d.open += (want - d.open) * Math.min(1, 0.08);
-        setBarnDoorOpen(d.mesh, d.open);
+        });
+        b.rig.update({ t, doorOpen: open ? 1 : 0 });
       }
 
       // Pulse cases (flash ~0.55s)

@@ -1,6 +1,7 @@
 import { useMemo, useState } from "react";
-import { CROP_CODES, type CropCode } from "@farmsim/shared";
+import { BUILDING_DEFS, CROP_CODES, type BuildingType, type CropCode } from "@farmsim/shared";
 import { AnimalView } from "./AnimalView";
+import { BuildingView } from "./BuildingView";
 import { CropView } from "./CropView";
 import type { CropShape } from "./crop-shapes";
 import type { AnimalKind } from "./animal-meshes";
@@ -236,21 +237,81 @@ function HerdBench() {
   );
 }
 
+/**
+ * Les treize bâtiments sur leur damier.
+ *
+ * La case de fond n'est pas décorative : elle donne l'empreinte déclarée. Un
+ * modèle qui la déborde, qui décolle ou qui s'enterre se voit ici sans qu'on
+ * ait à ouvrir la parcelle.
+ */
+function BuildingBench() {
+  const [level, setLevel] = useState(1);
+  const [rotation, setRotation] = useState(0);
+  const [open, setOpen] = useState(true);
+  const types = Object.keys(BUILDING_DEFS) as BuildingType[];
+
+  return (
+    <section className="atelier-farm">
+      <h2>Les bâtiments</h2>
+      <p>
+        La case brune sous chaque modèle est son empreinte déclarée. Rien ne doit en
+        sortir, rien ne doit flotter au-dessus.
+      </p>
+      <div className="atelier-controls">
+        {[1, 2, 3, 4, 5].map((l) => (
+          <label key={l}>
+            <input type="radio" name="lvl" checked={level === l} onChange={() => setLevel(l)} />
+            Niveau {l}
+          </label>
+        ))}
+        {[0, 1, 2, 3].map((r) => (
+          <label key={r}>
+            <input type="radio" name="rot" checked={rotation === r} onChange={() => setRotation(r)} />
+            {r * 90}°
+          </label>
+        ))}
+        <label>
+          <input type="checkbox" checked={open} onChange={(e) => setOpen(e.target.checked)} />
+          Portes ouvertes
+        </label>
+      </div>
+      <div className="atelier-grid">
+        {types.map((type) => (
+          <article className="atelier-card" key={type}>
+            <BuildingView type={type} level={level} rotation={rotation} open={open} height={300} />
+            <div className="atelier-meta">
+              <h2>{BUILDING_DEFS[type].name}</h2>
+              <p>
+                {BUILDING_DEFS[type].w}×{BUILDING_DEFS[type].h}
+              </p>
+            </div>
+          </article>
+        ))}
+      </div>
+    </section>
+  );
+}
+
 export function FarmShowcase() {
   const only = typeof location !== "undefined" ? new URLSearchParams(location.search).get("only") : null;
   return (
     <div className="atelier">
       <header className="atelier-head">
-        <h1>Atelier — cultures et bêtes</h1>
+        <h1>Atelier — cultures, bêtes et bâtiments</h1>
         <p>
-          Ce que la parcelle montre d'elle-même : la culture semée, son âge, et l'état
-          du troupeau. Page de travail, hors jeu.
+          Ce que la parcelle montre d'elle-même : la culture semée, son âge, l'état du
+          troupeau et l'aplomb du bâti. Page de travail, hors jeu.
         </p>
       </header>
       {only === "animals" && <AnimalBench />}
       {only === "brins" && <CropCloseUp />}
-      {only !== "herd" && only !== "animals" && only !== "brins" && <CropBench />}
-      {only !== "crops" && only !== "animals" && only !== "brins" && <HerdBench />}
+      {only === "buildings" && <BuildingBench />}
+      {only !== "herd" && only !== "animals" && only !== "brins" && only !== "buildings" && (
+        <CropBench />
+      )}
+      {only !== "crops" && only !== "animals" && only !== "brins" && only !== "buildings" && (
+        <HerdBench />
+      )}
     </div>
   );
 }
