@@ -31,6 +31,11 @@ Atelier du parc matériel 3D (hors jeu, pour juger les engins) :
 `http://localhost:5173/machines.html` — suffixer `?iso` n'affiche que la vue
 ferme, utile quand la machine à tester peine à faire tourner cinq canevas 3D.
 
+Atelier des cultures et des bêtes : `http://localhost:5173/farm.html` —
+`?only=crops` aligne les six cultures à trois âges, `?only=animals` met chaque
+bête sur un plateau dans tous ses états, `?only=herd` montre le troupeau qui
+sort et rentre de l'étable.
+
 Atelier des personnages : `http://localhost:5173/characters.html` — le
 catalogue de pièces, famille par famille (`?family=hat`, `beard`, `clothes`…),
 puis le menu de création. `?solo` n'affiche que le menu, pour juger un visage
