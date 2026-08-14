@@ -1,5 +1,7 @@
 import { useMemo, useState } from "react";
 import { CROP_CODES, type CropCode } from "@farmsim/shared";
+import { AnimalView } from "./AnimalView";
+import type { AnimalKind } from "./animal-meshes";
 import { IsoFarmView, type GrazingHerd, type IsoBuilding, type IsoCell, type IsoSim } from "./IsoFarmView";
 
 /**
@@ -66,6 +68,47 @@ function CropBench() {
   );
 }
 
+/**
+ * Chaque bête sur son plateau, dans les états que la simulation connaît.
+ *
+ * C'est la planche qui répond à la seule question qui vaille : est-ce qu'on
+ * voit qu'une bête va mal, et qu'elle a de quoi donner, sans ouvrir un menu ?
+ */
+function AnimalBench() {
+  const cases: { label: string; kind: AnimalKind; look: Parameters<typeof AnimalView>[0]["look"]; pose?: Partial<Parameters<typeof AnimalView>[0]> }[] = [
+    { label: "Vache — au mieux, pis plein", kind: "COW", look: { welfare: 1, yield: 1 } },
+    { label: "Vache — au mieux, fraîchement traite", kind: "COW", look: { welfare: 1, yield: 0 } },
+    { label: "Vache — mal tenue", kind: "COW", look: { welfare: 0.1, yield: 0.3 } },
+    { label: "Vache — au pré", kind: "COW", look: { welfare: 0.9, yield: 0.6 }, pose: { grazing: true } },
+    { label: "Vache — couchée à l'étable", kind: "COW", look: { welfare: 0.8, yield: 0.4 }, pose: { resting: true } },
+    { label: "Vache — en marche", kind: "COW", look: { welfare: 0.9, yield: 0.5 }, pose: { walking: true } },
+    { label: "Brebis — toison pleine", kind: "SHEEP", look: { welfare: 1, yield: 1 } },
+    { label: "Brebis — tondue", kind: "SHEEP", look: { welfare: 1, sheared: true } },
+    { label: "Brebis — mal tenue", kind: "SHEEP", look: { welfare: 0.1, yield: 0.5 } },
+    { label: "Poule — pond", kind: "HEN", look: { welfare: 1, yield: 1 } },
+    { label: "Poule — mal tenue", kind: "HEN", look: { welfare: 0.1, yield: 0.2 } },
+    { label: "Poule — au sol", kind: "HEN", look: { welfare: 1, yield: 0.6 }, pose: { grazing: true } },
+    { label: "Cochon — au mieux", kind: "PIG", look: { welfare: 1 } },
+    { label: "Cochon — mal tenu", kind: "PIG", look: { welfare: 0.1 } },
+  ];
+
+  return (
+    <section className="atelier-farm">
+      <h2>Les bêtes, état par état</h2>
+      <div className="atelier-grid">
+        {cases.map((c) => (
+          <article className="atelier-card" key={c.label}>
+            <AnimalView kind={c.kind} look={c.look} height={280} {...c.pose} />
+            <div className="atelier-meta">
+              <h2>{c.label}</h2>
+            </div>
+          </article>
+        ))}
+      </div>
+    </section>
+  );
+}
+
 /** Un troupeau, dedans ou dehors, tondu ou non. */
 function HerdBench() {
   const [kind, setKind] = useState<(typeof KINDS)[number]>("COW");
@@ -97,7 +140,7 @@ function HerdBench() {
         sheared,
         out,
         barn: { originX: 0, originY: 0, w: 2, h: 2 },
-        paddock: { originX: 2, originY: 2, w: 4, h: 4 },
+        paddock: { originX: 1, originY: 1, w: 4, h: 3 },
       },
     ],
     [kind, out, sheared],
@@ -149,8 +192,9 @@ export function FarmShowcase() {
           du troupeau. Page de travail, hors jeu.
         </p>
       </header>
-      {only !== "herd" && <CropBench />}
-      {only !== "crops" && <HerdBench />}
+      {only === "animals" && <AnimalBench />}
+      {only !== "herd" && only !== "animals" && <CropBench />}
+      {only !== "crops" && only !== "animals" && <HerdBench />}
     </div>
   );
 }

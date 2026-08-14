@@ -102,8 +102,16 @@ export type GrazingHerd = {
   buildingId: string;
   animals: number;
   kind?: AnimalKind | string;
-  /** Moutons tondus : le volume rétrécit jusqu'à la prochaine laine. */
+  /** Moutons tondus : la toison est partie, le corps dessous ne change pas. */
   sheared?: boolean;
+  /**
+   * Bien-être du lot, 0 à 1. Une bête mal tenue a le poil terne, l'échine
+   * creuse et la tête basse — c'est le seul endroit où l'élevage se lit sans
+   * ouvrir un menu.
+   */
+  welfare?: number;
+  /** Production en attente (lait, œufs, laine), 0 à 1 : le pis se remplit. */
+  yield?: number;
   /** Dehors dans l’enclos ; sinon collées à l’étable. */
   out?: boolean;
   barn: { originX: number; originY: number; w: number; h: number };
@@ -864,6 +872,12 @@ export function IsoFarmView({
       kind: string;
       buildingId: string;
       wantOut: boolean;
+      /** Distance parcourue, dans le repère du modèle : elle règle la foulée */
+      dist: number;
+      last: THREE.Vector3;
+      scale: number;
+      /** Cette bête-là se couche quand le troupeau rentre */
+      rests: boolean;
     }[] = [];
     const herdDoors: { mesh: THREE.Group; buildingId: string; open: number }[] = [];
     const doorGroup = new THREE.Group();
@@ -1732,10 +1746,14 @@ export function IsoFarmView({
               0.1,
               oz + (herd.paddock.originY + herd.paddock.h / 2) * step + spreadZ,
             );
-            const mesh = meshForHerd(kind, Boolean(herd.sheared));
+            const mesh = meshForHerd(kind, Boolean(herd.sheared), {
+              welfare: herd.welfare,
+              // Chaque bête n'est pas au même point du cycle : sans ce décalage
+              // huit pis identiques trahissent la copie.
+              yield: Math.max(0, Math.min(1, (herd.yield ?? 0) * (0.7 + ((i * 0.37) % 0.6)))),
+            });
             const base = kind === "HEN" ? 0.55 : kind === "SHEEP" ? 0.75 : 0.85;
-            const yScale = base * (kind === "SHEEP" && herd.sheared ? 0.75 : 1);
-            mesh.scale.set(cellSize * base, cellSize * yScale, cellSize * base);
+            mesh.scale.setScalar(cellSize * base);
             const here = herd.out ? paddock : front;
             mesh.position.copy(here);
             grazeGroup.add(mesh);
@@ -1751,6 +1769,14 @@ export function IsoFarmView({
               kind,
               buildingId: herd.buildingId,
               wantOut: Boolean(herd.out),
+              // Le pas se règle sur la distance parcourue, comme les roues des
+              // engins : deux bêtes à la même vitesse posent le pied ensemble.
+              dist: 0,
+              last: here.clone(),
+              scale: cellSize * base,
+              // À l'étable, une bête sur trois est couchée. Un troupeau
+              // entièrement debout dans le noir n'a jamais existé.
+              rests: i % 3 === 0,
             });
           }
         }
@@ -1822,7 +1848,11 @@ export function IsoFarmView({
         }
         const graze =
           w.wantOut && !walking ? Math.min(1, Math.max(0, (t - w.walkT0 - w.walkDur) / 0.4)) : 0;
-        applyHerdPose(w.mesh, w.kind, graze, walking, t, w.wander);
+        // Distance réellement parcourue, ramenée à l'échelle de la bête : la
+        // foulée est cotée dans le repère du modèle, pas dans celui du monde.
+        w.dist += w.mesh.position.distanceTo(w.last) / Math.max(0.0001, w.scale);
+        w.last.copy(w.mesh.position);
+        applyHerdPose(w.mesh, w.kind, graze, walking, t, w.wander, w.dist, w.rests && !w.wantOut);
         const dir = walking
           ? w.walkTo.clone().sub(w.walkFrom)
           : new THREE.Vector3(w.wantOut ? 1 : 0.2, 0, w.wantOut ? 0.2 : 1);

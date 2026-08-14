@@ -19,6 +19,7 @@ import {
   repairHalfwayTarget,
   repairQuote,
   isPaddockAdjacent,
+  welfareIndex,
   machineResaleValue,
   soilSummary,
   MAX_HARVESTS_BEFORE_PLOW,
@@ -986,6 +987,15 @@ export function App() {
         animals: herd.size,
         kind: herd.kind,
         sheared: herd.kind === "SHEEP" && !herd.canShear,
+        // Ce que la simulation sait déjà de l'élevage, la parcelle le montre :
+        // le poil terne et l'échine creuse d'un lot mal tenu, le pis plein
+        // d'un lot qu'on n'a pas trait. Ces deux jauges n'étaient visibles
+        // que dans un panneau.
+        welfare: Math.max(
+          0,
+          Math.min(1, welfareIndex(herd.happiness) - (herd.hungry ? 0.3 : 0) - (herd.atRisk ? 0.3 : 0)),
+        ),
+        yield: herd.collectProgress ?? 0,
         out: outside,
         barn: barnBox,
         paddock: paddockB
