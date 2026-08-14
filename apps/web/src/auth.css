@@ -433,37 +433,49 @@
   padding-top: 0.35rem;
 }
 
-/* Choix du métier */
+/* Choix du métier.
+
+   Les deux cartes s'étiraient sans plafond : sur un écran large elles
+   atteignaient six cents pixels de côté, et le portrait de cent quatre-vingts
+   pixels s'y noyait dans le vide. La grille est désormais bornée et centrée —
+   une carte de bulletin, pas une bannière. */
 .class-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(270px, 1fr));
-  gap: 0.9rem;
+  grid-template-columns: repeat(auto-fit, minmax(15rem, 22rem));
+  justify-content: center;
+  gap: 1rem;
 }
 .class-card {
   display: grid;
-  gap: 0.35rem;
+  gap: 0.3rem;
   text-align: left;
-  padding: 0.9rem 1rem 1.1rem;
+  padding: 0.75rem 0.9rem 0.95rem;
   border-radius: var(--r-lg);
   background: var(--paper);
   border: 2px solid var(--line);
   box-shadow: var(--sh-1);
   transition: border-color 0.2s ease, box-shadow 0.2s ease, transform 0.18s ease;
 }
+/* Le portrait tient la moitié haute et cadre le buste : à pied levé dans une
+   vignette de quatre cents pixels, on ne distinguait ni le visage ni la
+   tenue — c'est-à-dire rien de ce qu'on demande de choisir. */
+.class-card .lowpoly-char {
+  margin-bottom: 0.35rem;
+}
 .class-card:hover { box-shadow: var(--sh-2); }
 .class-card.on {
   border-color: var(--gold-500);
   box-shadow: 0 0 0 4px var(--gold-100), var(--sh-2);
 }
-.class-card h3 { font-size: 1.3rem; color: var(--teal-700); margin: 0; }
+.class-card h3 { font-size: 1.15rem; color: var(--teal-700); margin: 0; }
 .class-tag { margin: 0; color: var(--gold-700); font-weight: 700; font-size: 0.9rem; }
 .class-perks {
-  margin: 0.5rem 0 0;
+  margin: 0.35rem 0 0;
   padding: 0;
   list-style: none;
   display: grid;
-  gap: 0.28rem;
-  font-size: 0.86rem;
+  gap: 0.2rem;
+  font-size: 0.84rem;
 }
 .class-perks li { padding-left: 1.3rem; position: relative; color: var(--ink-soft); }
 .class-perks li::before {
@@ -475,7 +487,7 @@
 .class-perks .perk::before { content: "+"; color: var(--ok); }
 .class-perks .draw::before { content: "−"; color: var(--danger); }
 .class-machines {
-  margin: 0.55rem 0 0;
+  margin: 0.45rem 0 0;
   font-size: 0.82rem;
   font-weight: 700;
   color: var(--teal-500);

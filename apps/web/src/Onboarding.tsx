@@ -194,7 +194,13 @@ export function Onboarding({
                   }}
                   aria-pressed={active}
                 >
-                  <LowPolyCharacter code={code} active={active} height={185} />
+                  {/*
+                    Cadrage buste. En pied dans une vignette de cette taille, le
+                    personnage faisait cent quatre-vingts pixels de haut pour un
+                    visage de dix : on ne distinguait ni la tête ni la tenue,
+                    c'est-à-dire rien de ce qu'on demande de choisir.
+                  */}
+                  <LowPolyCharacter code={code} active={active} frame="bust" height={190} />
                   <h3>{p.name}</h3>
                   <p className="class-tag">{p.tagline}</p>
                   <ul className="class-perks">

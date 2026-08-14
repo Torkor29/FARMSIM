@@ -12,7 +12,7 @@ import {
   randomAppearance,
   type CharacterAppearance,
 } from "@farmsim/shared";
-import { createCharacterRig } from "../character-mesh";
+import { HAT_LINE, createCharacterRig, headGap, headHalfWidth } from "../character-mesh";
 
 /**
  * Le personnage, mesuré.
@@ -50,6 +50,151 @@ function vertsIn(root: THREE.Object3D, material: string): number {
 function vertsOf(rig: { group: THREE.Object3D }, material: string): number {
   return vertsIn(rig.group, material);
 }
+
+/**
+ * Sommets d'une ou plusieurs matières, ramenés dans le repère de la tête.
+ *
+ * C'est le repère où `headGap` et `faceZ` ont un sens : mesurer une barbe dans
+ * le repère du monde reviendrait à mesurer aussi la posture du personnage.
+ */
+function headVerts(appearance: CharacterAppearance, ...materials: string[]): THREE.Vector3[] {
+  const rig = createCharacterRig(appearance);
+  const head = rig.joints.head!;
+  rig.group.updateMatrixWorld(true);
+  const toHead = new THREE.Matrix4().copy(head.matrixWorld).invert();
+  const out: THREE.Vector3[] = [];
+  head.traverse((o) => {
+    const mesh = o as THREE.Mesh;
+    if (!mesh.isMesh || !materials.includes(mesh.name)) return;
+    const pos = mesh.geometry.getAttribute("position");
+    const m = new THREE.Matrix4().multiplyMatrices(toHead, mesh.matrixWorld);
+    for (let i = 0; i < pos.count; i++) {
+      out.push(new THREE.Vector3(pos.getX(i), pos.getY(i), pos.getZ(i)).applyMatrix4(m));
+    }
+  });
+  rig.dispose();
+  return out;
+}
+
+/**
+ * Le visage, au millimètre.
+ *
+ * Les reproches reçus sur le personnage — « c'est quoi ça », « bouche ouverte
+ * horrible », « tout se superpose » — décrivent tous la même faute : une pièce
+ * posée à une cote devinée au lieu d'être calée sur la surface du crâne. Elle
+ * saillit, elle flotte, ou elle traverse la pièce voisine. Ces tests mesurent
+ * ce que l'œil voit, pour que le défaut ne puisse pas revenir en silence.
+ */
+describe("les pièces du visage collent au crâne", () => {
+  it("la moustache ne saillit pas de la joue", () => {
+    // Elle lisait sa profondeur au **milieu** du visage alors qu'elle se pose
+    // de part et d'autre : deux millimètres et demi d'erreur suffisent à
+    // décoller un lobe de six.
+    const proud = headVerts(look({ beard: BEARDS.findIndex((b) => b.id === "moustache") }), "beard");
+    expect(proud.length).toBeGreaterThan(0);
+    const worst = Math.max(...proud.map((p) => headGap(p.x, p.y, p.z)));
+    expect(`saillie ${(worst * 1000).toFixed(1)} mm ${worst < 0.008}`).toBe(
+      `saillie ${(worst * 1000).toFixed(1)} mm true`,
+    );
+  });
+
+  it("la barbe pleine reste sur la mâchoire", () => {
+    const verts = headVerts(look({ beard: BEARDS.findIndex((b) => b.id === "full") }), "beard");
+    expect(verts.length).toBeGreaterThan(0);
+    // La coquille partait de l'équateur du crâne : elle prenait les joues
+    // entières et remontait jusqu'aux pommettes, d'où le pâté brun.
+    // Les yeux sont à 176 mm : une barbe qui les atteint n'est plus une barbe.
+    const top = Math.max(...verts.map((p) => p.y));
+    expect(`haut ${top.toFixed(3)} ${top < 0.172}`).toBe(`haut ${top.toFixed(3)} true`);
+    // Et elle ne fait pas le tour : le crâne va jusqu'à −158 mm en arrière,
+    // une barbe s'arrête à hauteur d'oreille.
+    const back = Math.min(...verts.map((p) => p.z));
+    expect(`arrière ${back.toFixed(3)} ${back > -0.05}`).toBe(`arrière ${back.toFixed(3)} true`);
+  });
+
+  it("la barbe épouse la peau sans s'en détacher", () => {
+    for (const b of BEARDS) {
+      if (b.id === "none") continue;
+      const verts = headVerts(look({ beard: BEARDS.indexOf(b) }), "beard");
+      // Le seuil laisse la place à l'épaisseur réelle d'une barbe pleine — un
+      // bon centimètre au menton. `headGap` normalise sur le plus grand rayon
+      // du crâne, donc majore d'un quart sur les côtés : ce qu'il mesure à
+      // seize millimètres en fait treize. Ce qu'on traque ici n'est pas
+      // l'épaisseur mais le **décollement** — une pièce posée à côté du visage.
+      const worst = Math.max(...verts.map((p) => headGap(p.x, p.y, p.z)));
+      expect(`${b.id} ${(worst * 1000).toFixed(1)} mm ${worst < 0.018}`).toBe(
+        `${b.id} ${(worst * 1000).toFixed(1)} mm true`,
+      );
+    }
+  });
+});
+
+describe("le chapeau se pose sur la tête", () => {
+  for (const h of HATS) {
+    if (h.id === "none") continue;
+    it(`${h.id} touche le crâne`, () => {
+      const verts = headVerts(look({ hat: HATS.indexOf(h) }), "hat", "hatDark");
+      expect(verts.length).toBeGreaterThan(0);
+      // Un chapeau taillé plus large que le crâne ne se pose pas : il flotte
+      // au-dessus, et l'entrée d'air se lit comme un défaut de montage. Le
+      // rayon de coiffe était codé en dur à 138 mm pour un crâne qui en fait
+      // 119 à cette hauteur.
+      const nearest = Math.min(...verts.map((p) => Math.abs(headGap(p.x, p.y, p.z))));
+      expect(`${h.id} jour ${(nearest * 1000).toFixed(1)} mm ${nearest < 0.008}`).toBe(
+        `${h.id} jour ${(nearest * 1000).toFixed(1)} mm true`,
+      );
+    });
+  }
+
+  it("la coiffe est cotée sur le crâne, pas devinée", () => {
+    // Le garde-fou du garde-fou : si la demi-largeur change, la valeur codée
+    // en dur qu'on vient de retirer ne doit pas revenir par la fenêtre.
+    expect(headHalfWidth(HAT_LINE)).toBeCloseTo(0.119, 3);
+  });
+
+  it("sous un chapeau, aucune mèche ne monte au-dessus de la coiffe", () => {
+    for (const h of HATS) {
+      if (h.id === "none") continue;
+      for (const hair of HAIRS) {
+        if (hair.id === "bald") continue;
+        const verts = headVerts(look({ hat: HATS.indexOf(h), hair: HAIRS.indexOf(hair) }), "hair");
+        if (!verts.length) continue;
+        // La queue de cheval partait à 272 mm quand le bord du canotier est à
+        // 213 : elle le traversait de part en part. Sous un chapeau, une mèche
+        // sort par le bas du bord, jamais par le dessus.
+        const top = Math.max(...verts.map((p) => p.y));
+        expect(`${h.id}+${hair.id} ${top.toFixed(3)} ${top < HAT_LINE + 0.012}`).toBe(
+          `${h.id}+${hair.id} ${top.toFixed(3)} true`,
+        );
+      }
+    }
+  });
+});
+
+describe("la bouche", () => {
+  it("aucune bouche ne dépasse du visage", () => {
+    for (const m of MOUTHS) {
+      const verts = headVerts(look({ mouth: MOUTHS.indexOf(m) }), "mouth", "lip", "teeth");
+      expect(verts.length).toBeGreaterThan(0);
+      const worst = Math.max(...verts.map((p) => headGap(p.x, p.y, p.z)));
+      expect(`${m.id} ${(worst * 1000).toFixed(1)} mm ${worst < 0.006}`).toBe(
+        `${m.id} ${(worst * 1000).toFixed(1)} mm true`,
+      );
+    }
+  });
+
+  it("la bouche ouverte est une bouche, pas un trou", () => {
+    const verts = headVerts(look({ mouth: MOUTHS.findIndex((m) => m.id === "open") }), "mouth");
+    const w = Math.max(...verts.map((p) => p.x)) - Math.min(...verts.map((p) => p.x));
+    const h = Math.max(...verts.map((p) => p.y)) - Math.min(...verts.map((p) => p.y));
+    // Elle était un ovale sombre de 46 × 56 mm plaqué sur un visage qui en
+    // fait 270 de haut : de loin, un trou noir au milieu de la figure. C'est
+    // la hauteur qui la trahissait — une bouche est large et mince.
+    expect(`${(w * 1000).toFixed(0)}×${(h * 1000).toFixed(0)} mm ${w < 0.06 && h < 0.026}`).toBe(
+      `${(w * 1000).toFixed(0)}×${(h * 1000).toFixed(0)} mm true`,
+    );
+  });
+});
 
 describe("aplomb", () => {
   it("le personnage pose ses semelles sur le sol", () => {
@@ -174,9 +319,11 @@ describe("les pièces choisies apparaissent vraiment", () => {
   });
 
   it("une barbe pleine met plus de poil qu'une moustache", () => {
+    // Le poil du visage a sa matière propre : mesuré sur « hair », la barbe se
+    // confondrait avec les sourcils et la coiffe.
     const full = createCharacterRig(look({ beard: BEARDS.length - 2, hair: HAIRS.length - 1 }));
     const tache = createCharacterRig(look({ beard: 2, hair: HAIRS.length - 1 }));
-    expect(vertsOf(full, "hair")).toBeGreaterThan(vertsOf(tache, "hair"));
+    expect(vertsOf(full, "beard")).toBeGreaterThan(vertsOf(tache, "beard"));
     full.dispose();
     tache.dispose();
   });

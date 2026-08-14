@@ -43,6 +43,8 @@ export type CharMat =
   | "skin"
   | "skinShade"
   | "hair"
+  /** Poil du visage : même teinte que les cheveux, mais mat et un ton plus bas */
+  | "beard"
   | "cloth"
   | "clothDark"
   | "accent"
@@ -116,6 +118,18 @@ export function createCharacterMaterials(look: CharacterAppearance): CharMateria
       sheen: 0.8,
       sheenRoughness: 0.35,
       sheenColor: shade(hairHex, 0.3),
+    }),
+    // Un poil de barbe est plus court et plus mat qu'un cheveu : le même
+    // brillant que la chevelure donnait un menton verni. Sa matière propre
+    // sert aussi à mesurer ce que la barbe couvre, indépendamment des
+    // sourcils et de la coiffe qui partagent la teinte.
+    beard: new THREE.MeshPhysicalMaterial({
+      color: shade(hairHex, -0.05),
+      roughness: 0.82,
+      metalness: 0,
+      sheen: 0.3,
+      sheenRoughness: 0.7,
+      sheenColor: shade(hairHex, 0.18),
     }),
     cloth: fabric(clothHex),
     clothDark: fabric(shade(clothHex, -0.11), 0.9),
@@ -427,11 +441,34 @@ function faceZ(x: number, y: number): number {
 }
 
 /** Demi-largeur de la tête à une hauteur donnée : où poser oreilles et coiffe. */
-function headHalfWidth(y: number): number {
+export function headHalfWidth(y: number): number {
   const v = (y - HEAD_C[1]) / HEAD_R[1];
   const s2 = 1 - v * v;
   return s2 <= 0 ? 0 : HEAD_R[0] * jawKx(y) * Math.sqrt(s2);
 }
+
+/**
+ * Écart d'un point à la surface du crâne, en mètres : positif dehors, négatif
+ * dedans, nul sur la peau.
+ *
+ * `faceZ` répond à « où est la surface **devant** », ce qui suffit à poser un
+ * œil ou une lèvre. Mais une barbe enveloppe la mâchoire, un chapeau ceint le
+ * crâne, une mèche passe derrière l'oreille : aucun de ces trois-là ne se juge
+ * sur un seul axe. C'est cette fonction qui permet de **mesurer** qu'une pièce
+ * colle au crâne au lieu de flotter dessus ou de s'y enfoncer — et donc de
+ * l'exiger par un test plutôt que de l'espérer.
+ */
+export function headGap(x: number, y: number, z: number): number {
+  const u = x / (HEAD_R[0] * jawKx(y));
+  const v = (y - HEAD_C[1]) / HEAD_R[1];
+  const w = (z - HEAD_C[2] - chinPush(y)) / (HEAD_R[2] * jawKz(y));
+  // Le rayon normalisé vaut 1 sur la peau ; ramené à l'échelle du crâne, son
+  // écart à 1 approche la distance réelle d'assez près pour trancher.
+  return (Math.hypot(u, v, w) - 1) * HEAD_R[1];
+}
+
+/** Hauteur de la ligne de coiffe, et rayon du crâne à cette hauteur. */
+export const HAT_LINE = 0.232;
 
 const LID_CLOSED = 1.72;
 /**
@@ -546,8 +583,12 @@ function addMouth(head: Node, look: CharacterAppearance) {
       const u = (i / 4) * 2 - 1;
       const x = u * half;
       const py = base - bow * (1 - u * u) + skew * u;
-      // Les coins rentrent dans la joue : une bouche ne s'arrête pas net.
-      pts.push([x, py, faceZ(x, py) - 0.008 - (1 - Math.abs(u)) * -0.004]);
+      // Le boudin est **enfoncé de son propre rayon** : sans quoi sa moitié
+      // avant sort de la joue, et une bouche large ressortait de sept
+      // millimètres. Les coins rentrent un peu plus — une bouche ne s'arrête
+      // pas net, elle se perd dans la commissure.
+      const sink = thickness + 0.001 + (1 - Math.abs(u)) * -0.0015;
+      pts.push([x, py, faceZ(x, py) - sink]);
     }
     head.add(mat, tube(pts, thickness, 7));
   };
@@ -567,11 +608,35 @@ function addMouth(head: Node, look: CharacterAppearance) {
     lipLine("mouth", 0.03, 0.006, 0.0026, y - 0.001, 0.009);
     head.add("skinShade", ell(0.009, 0.012, 0.007, [0.046, y + 0.017, faceZ(0.046, y + 0.017) - 0.014]));
   } else if (kind === "open") {
-    const g = new THREE.TorusGeometry(0.027, 0.0105, 6, 20);
-    g.scale(1, 1.2, 0.55);
-    head.add("lip", place(g, [0, y - 0.002, faceZ(0, y) - 0.006]));
-    head.add("mouth", ell(0.023, 0.028, 0.016, [0, y - 0.002, faceZ(0, y) - 0.018]));
-    head.add("teeth", ell(0.019, 0.006, 0.009, [0, y + 0.017, faceZ(0, y + 0.017) - 0.016]));
+    /*
+     * Bouche entrouverte : un **creux**, pas un volume rapporté.
+     *
+     * Le premier dessin plaquait un ellipsoïde sombre de 46 × 56 mm devant le
+     * visage — sur une figure de 270 mm de haut, un trou noir au milieu de la
+     * face, et le premier reproche du joueur. Le fond est maintenant en
+     * retrait de la surface, et l'ourlet des lèvres suit `faceZ` point par
+     * point : rien ne dépasse de la joue.
+     */
+    const half = 0.026;
+    const lift = 0.011;
+    for (const s of [1, -1]) {
+      const pts: Vec3[] = [];
+      for (let i = 0; i < 5; i++) {
+        const u = (i / 4) * 2 - 1;
+        const x = u * half;
+        // Lèvre haute au-dessus, lèvre basse en dessous : elles se rejoignent
+        // aux commissures, ce qui ferme l'ovale sans le dessiner en entier.
+        const py = y + s * lift * (1 - u * u) + 0.002 * s;
+        pts.push([x, py, faceZ(x, py) - 0.007]);
+      }
+      head.add("lip", tube(pts, s > 0 ? 0.0062 : 0.0072, 7));
+    }
+    // Le fond de la bouche, enfoncé : il ne se voit que par l'ouverture.
+    for (let i = 0; i < 3; i++) {
+      const x = (i - 1) * half * 0.5;
+      head.add("mouth", ell(half * 0.42, 0.011, 0.006, [x, y, faceZ(x, y) - 0.018]));
+    }
+    head.add("teeth", ell(0.017, 0.0045, 0.005, [0, y + 0.0075, faceZ(0, y + 0.0075) - 0.014]));
   } else {
     lipLine("lip", 0.034, 0.013, 0.0068, y + 0.007);
     lipLine("lip", 0.032, 0.005, 0.0078, y - 0.008);
@@ -688,35 +753,51 @@ function addHair(head: Node, look: CharacterAppearance, underHat: boolean) {
     return;
   }
 
+  /**
+   * Hauteur d'attache d'une coiffure nouée.
+   *
+   * Sous un chapeau, elle descend **sous la ligne de coiffe** : le chignon
+   * partait à 292 mm et la queue de cheval à 272 quand le bord du canotier est
+   * à 213, tous deux dans son rayon. Ils le traversaient de part en part —
+   * c'est le tube brun vertical qu'on voyait passer au milieu du visage.
+   */
+  const knot = underHat ? HAT_LINE - 0.03 : top - 0.03;
+
   if (kind === "bun") {
-    hair(ell(0.062, 0.06, 0.058, [0, top - 0.03, -0.14]));
-    hair(place(new THREE.TorusGeometry(0.057, 0.012, 6, 14), [0, top - 0.03, -0.14], [0.4, 0, 0]));
+    // Le chignon est volumineux : sous un chapeau il se noue plus bas encore,
+    // sur la nuque, sinon sa masse ressort par-dessus le bord.
+    const y0 = underHat ? HAT_LINE - 0.058 : knot;
+    const z = underHat ? -0.155 : -0.14;
+    hair(ell(0.058, 0.056, 0.054, [0, y0, z]));
+    hair(place(new THREE.TorusGeometry(0.053, 0.012, 6, 14), [0, y0, z], [0.4, 0, 0]));
     return;
   }
 
   if (kind === "ponytail") {
+    const y0 = underHat ? HAT_LINE - 0.045 : top - 0.05;
     hair(
       tube(
         [
-          [0, top - 0.05, -0.13],
-          [0, 0.19, -0.19],
+          [0, y0, -0.14],
+          [0, y0 - 0.075, -0.19],
           [0, 0.09, -0.205],
           [0, -0.005, -0.175],
         ],
-        0.032,
+        0.03,
         8,
       ),
     );
-    hair(place(new THREE.TorusGeometry(0.036, 0.011, 6, 12), [0, top - 0.05, -0.128], [HALF, 0, 0]));
+    hair(place(new THREE.TorusGeometry(0.034, 0.011, 6, 12), [0, y0, -0.135], [HALF, 0, 0]));
     return;
   }
 
   if (kind === "braids") {
+    const y0 = underHat ? HAT_LINE - 0.04 : 0.205;
     for (const side of [-1, 1]) {
       hair(
         tube(
           [
-            [side * 0.112, 0.205, -0.055],
+            [side * 0.112, y0, -0.055],
             [side * 0.136, 0.115, -0.088],
             [side * 0.14, 0.025, -0.09],
             [side * 0.132, -0.04, -0.07],
@@ -729,7 +810,7 @@ function addHair(head: Node, look: CharacterAppearance, underHat: boolean) {
       for (let i = 0; i < 3; i++) {
         hair(place(
           new THREE.TorusGeometry(0.028, 0.008, 5, 10),
-          [side * (0.12 + i * 0.008), 0.17 - i * 0.06, -0.08],
+          [side * (0.12 + i * 0.008), Math.min(y0 - 0.02, 0.17) - i * 0.06, -0.08],
           [HALF, 0, 0],
         ));
       }
@@ -748,42 +829,184 @@ function addHair(head: Node, look: CharacterAppearance, underHat: boolean) {
 function addBeard(head: Node, look: CharacterAppearance) {
   const kind = BEARDS[look.beard]?.id ?? "none";
   if (kind === "none") return;
-  const hair = (g: THREE.BufferGeometry) => head.add("hair", g);
 
+  const hair = (g: THREE.BufferGeometry) => head.add("beard", g);
+
+  /**
+   * Moustache : deux boudins suivant la lèvre supérieure.
+   *
+   * Chaque lobe lit sa profondeur **à sa propre abscisse**. La version d'avant
+   * lisait `faceZ(0, y)` — la surface au milieu du visage — pour deux pièces
+   * posées à vingt-trois millimètres de l'axe : le visage y est deux
+   * millimètres et demi plus en arrière, et les lobes ressortaient de six
+   * millimètres, comme deux billes collées sous le nez.
+   */
   const moustache = () => {
-    const y = 0.105;
+    const base = 0.104;
     for (const side of [-1, 1]) {
-      hair(ell(0.026, 0.011, 0.016, [side * 0.023, y, faceZ(0, y) - 0.012], [0, 0, side * 0.22]));
+      // Un boudin continu du philtrum à la commissure, plaqué point par point
+      // sur la surface. Deux ellipsoïdes posés côte à côte se lisaient comme
+      // deux haricots collés sous le nez.
+      const pts: Vec3[] = [];
+      for (let i = 0; i < 5; i++) {
+        const t = i / 4;
+        const x = side * (0.004 + t * 0.042);
+        const py = base - t * t * 0.016;
+        pts.push([x, py, faceZ(x, py) - 0.008]);
+      }
+      hair(tube(pts, 0.009, 7));
     }
   };
+
+  const soft = (v: number, w: number) => THREE.MathUtils.clamp(v / w, 0, 1);
+
   /**
-   * Coquille suivant la mâchoire, ouverte devant la bouche : une sphère
-   * tronquée en longitude comme en latitude, un peu plus grande que la
-   * mâchoire elle-même.
-   */
-  /**
-   * Coquille suivant le bas du visage.
+   * Masque d'une barbe qui couvre la mâchoire.
    *
-   * On repart de la forme de la tête, grossie de l'épaisseur du poil, et on ne
-   * garde que les triangles sous la pommette et devant l'oreille. Découper la
-   * vraie surface évite l'écueil du volume rapporté : la barbe épouse le
-   * menton exactement, quelle que soit la tête.
+   * `cheek` règle la hauteur atteinte sur le flanc. Au milieu du visage le
+   * poil s'arrête sous la lèvre, sur les flancs il monte jusqu'au favori : à
+   * hauteur constante — ce que faisait la première version, calée sur
+   * l'équateur du crâne — on n'obtient pas une barbe mais une cagoule, et le
+   * poil passe par-dessus le nez.
    */
-  const jawShell = (thickness: number) => {
-    const g = headShape(thickness, 26).toNonIndexed();
+  const jawMask = (cheek: number) => (x: number, y: number, z: number) => {
+    const LIP_LINE = 0.074;
+    const flank = THREE.MathUtils.clamp(Math.abs(x) / (HEAD_R[0] * 0.86), 0, 1);
+    const ceiling = LIP_LINE + (JAW_LINE + cheek - LIP_LINE) * Math.pow(flank, 0.7);
+    let c = soft(ceiling - y, 0.05);
+    c = Math.min(c, soft(z - (HEAD_C[2] - 0.02), 0.045));
+    c = Math.min(c, soft(y - (JAW_BOTTOM - 0.02), 0.025));
+    // La bouche reste libre : sans cette réserve le poil monte sur les
+    // commissures et avale les lèvres.
+    c = Math.min(c, soft(Math.hypot(x / 0.05, (y - 0.088) / 0.028) - 1, 0.7));
+    return c;
+  };
+
+  /**
+   * Masque des favoris : une bande étroite le long du flanc, de la tempe au
+   * bas de la joue. Empilés en ellipsoïdes, ils se lisaient comme un chapelet
+   * de perles posé à côté du visage.
+   */
+  const chopMask = (x: number, y: number, z: number) => {
+    const hw = headHalfWidth(y) || 1e-6;
+    // Le favori se tient sur les derniers dix pour cent de la largeur : à
+    // deux tiers, la bande couvrait la joue et n'était plus un favori mais une
+    // plaque.
+    let c = soft(Math.abs(x) / hw - 0.88, 0.09);
+    c = Math.min(c, soft(0.17 - y, 0.02));
+    c = Math.min(c, soft(y - 0.088, 0.028));
+    // Devant l'oreille, et pas plus avant que la pommette.
+    c = Math.min(c, soft(z - (HEAD_C[2] - 0.03), 0.03));
+    c = Math.min(c, soft(HEAD_C[2] + 0.085 - z, 0.03));
+    return c;
+  };
+
+  /**
+   * Masque du bouc : une touffe sur le menton, sous la lèvre. Empilé en
+   * ellipsoïdes, il se lisait — comme les favoris — en chapelet de perles.
+   */
+  const goateeMask = (x: number, y: number, z: number) => {
+    const r = Math.hypot(x / 0.04, (y - 0.032) / 0.05);
+    let c = soft(1 - r, 0.28);
+    c = Math.min(c, soft(z - (HEAD_C[2] + 0.01), 0.04));
+    return c;
+  };
+
+  /**
+   * Coquille de barbe, prise dans la surface du crâne.
+   *
+   * On repart de la forme de la tête : la barbe épouse ainsi le menton
+   * exactement, quelle que soit la tête. Deux choses se jouent ici.
+   *
+   * **Le dessin.** Le premier masque gardait tout ce qui a `y < 0.152`, or
+   * 0,152 est l'équateur du crâne, sa hauteur la plus large : la coquille
+   * prenait les joues entières jusqu'aux pommettes et courait presque jusqu'à
+   * la nuque — le pâté brun de la capture. Le contour suit maintenant le vrai
+   * galbe : bas sous la lèvre, haut sur les flancs jusqu'au favori, et une
+   * ouverture découpée autour de la bouche.
+   *
+   * **Le bord.** Découper des triangles dans une maille donne toujours un
+   * escalier, et il se voyait sur la joue. On ne découpe donc plus : c'est
+   * **l'épaisseur du poil** qui s'éteint sur le contour. Au bord, la coquille
+   * rejoint la peau et disparaît dedans — un dégradé, comme une vraie barbe,
+   * plutôt qu'une arête.
+   */
+  const jawShell = (thickness: number, mask: (x: number, y: number, z: number) => number) => {
+    // La finesse de la maille commande celle du contour : le bord de la barbe
+    // est une courbe découpée dedans, et à quarante-quatre secteurs il
+    // retombait en escalier sur la joue. La coquille n'est conservée qu'au
+    // quart de la sphère, le surcoût reste tenable.
+    const g = headShape(0, 72).toNonIndexed();
     const pos = g.attributes.position;
     const kept: number[] = [];
+
+    const coverage = mask;
+
+    /**
+     * Découpe du contour sur l'isoligne, et non sur la maille.
+     *
+     * Garder ou jeter des triangles entiers fait suivre au bord de la barbe
+     * les rangs de la sphère : un escalier de huit millimètres bien visible
+     * sur la joue. Chaque triangle à cheval est donc **recoupé** exactement là
+     * où la densité de poil tombe au seuil, par interpolation le long de ses
+     * arêtes. Le bord devient une courbe lisse sans qu'il faille densifier la
+     * maille. On a d'abord tenté de fondre la teinte du poil vers la peau sur
+     * le contour ; en vain, car un dégradé ne peut pas être plus fin qu'un
+     * rang de maille — soit il tient dans un rang et retombe en escalier, soit
+     * il s'étale et délave la barbe entière. Le contour exact suffit.
+     */
+    const TAU = 0.06;
+    /** Un sommet du découpage : sa position sur la peau, et sa densité. */
+    type Cut = { x: number; y: number; z: number; c: number };
+    const between = (a: Cut, b: Cut): Cut => {
+      const t = (TAU - a.c) / (b.c - a.c);
+      return {
+        x: a.x + (b.x - a.x) * t,
+        y: a.y + (b.y - a.y) * t,
+        z: a.z + (b.z - a.z) * t,
+        c: TAU,
+      };
+    };
+    const emit = (v: Cut) => {
+      // Déplacement radial depuis le centre du crâne : sur une forme quasi
+      // sphérique, c'est la normale à un cheveu près. Un demi-millimètre de
+      // garde même à densité nulle, sinon la coquille est coplanaire à la peau
+      // et les deux surfaces se disputent la profondeur.
+      const dx = v.x - HEAD_C[0];
+      const dy = v.y - HEAD_C[1];
+      const dz = v.z - HEAD_C[2];
+      const len = Math.hypot(dx, dy, dz) || 1;
+      const t = (thickness * v.c + 0.0006) / len;
+      kept.push(v.x + dx * t, v.y + dy * t, v.z + dz * t);
+    };
+
     for (let i = 0; i < pos.count; i += 3) {
-      let inside = 0;
+      const tri: Cut[] = [];
       for (let k = 0; k < 3; k++) {
+        const x = pos.getX(i + k);
         const y = pos.getY(i + k);
         const z = pos.getZ(i + k);
-        // Sous la ligne des pommettes, et pas sur la nuque.
-        if (y < 0.152 && z > HEAD_C[2] - 0.06) inside++;
+        tri.push({ x, y, z, c: coverage(x, y, z) });
       }
-      if (inside < 2) continue;
+      const inside = tri.filter((v) => v.c >= TAU).length;
+      if (inside === 0) continue;
+      if (inside === 3) {
+        for (const v of tri) emit(v);
+        continue;
+      }
+      // Triangle à cheval : on garde le polygone au-dessus du seuil, puis on
+      // le retriangule en éventail.
+      const poly: Cut[] = [];
       for (let k = 0; k < 3; k++) {
-        kept.push(pos.getX(i + k), pos.getY(i + k), pos.getZ(i + k));
+        const a = tri[k];
+        const b = tri[(k + 1) % 3];
+        if (a.c >= TAU) poly.push(a);
+        if (a.c >= TAU !== b.c >= TAU) poly.push(between(a, b));
+      }
+      for (let k = 1; k + 1 < poly.length; k++) {
+        emit(poly[0]);
+        emit(poly[k]);
+        emit(poly[k + 1]);
       }
     }
     g.dispose();
@@ -800,7 +1023,7 @@ function addBeard(head: Node, look: CharacterAppearance) {
   };
 
   if (kind === "stubble") {
-    hair(jawShell(0.004));
+    head.add("beard", jawShell(0.0035, jawMask(-0.014)));
     moustache();
     return;
   }
@@ -810,19 +1033,18 @@ function addBeard(head: Node, look: CharacterAppearance) {
   }
   if (kind === "goatee") {
     moustache();
-    const y = 0.042;
-    hair(ell(0.032, 0.044, 0.03, [0, y, faceZ(0, y) - 0.016]));
+    head.add("beard", jawShell(0.008, goateeMask));
     return;
   }
   if (kind === "chops") {
-    for (const side of [-1, 1]) {
-      hair(ell(0.018, 0.058, 0.038, [side * (headHalfWidth(0.135) - 0.012), 0.135, 0.0], [0, 0, side * -0.1]));
-    }
+    head.add("beard", jawShell(0.006, chopMask));
     return;
   }
-  // full
-  hair(jawShell(0.014));
-  hair(ell(0.046, 0.05, 0.042, [0, 0.028, faceZ(0, 0.028) - 0.016]));
+  // full : la coquille couvre la mâchoire, et le menton reçoit une seconde
+  // couche prise dans la même surface — plus épaisse, donc plus fournie là où
+  // une barbe l'est vraiment.
+  head.add("beard", jawShell(0.008, jawMask(0.0)));
+  head.add("beard", jawShell(0.013, goateeMask));
   moustache();
 }
 
@@ -835,14 +1057,19 @@ function addBeard(head: Node, look: CharacterAppearance) {
  * un chapeau. Les calots montent de là jusque vers 0,36 — le crâne culmine à
  * 0,318, il faut donc les loger au-dessus sans les faire flotter.
  */
-const HAT_Y = 0.232;
+const HAT_Y = HAT_LINE;
 
 function addHat(head: Node, look: CharacterAppearance) {
   const kind = HATS[look.hat]?.id ?? "none";
   if (kind === "none") return;
   const y = HAT_Y;
-  // Rayon de la tête à la ligne de coiffe : tout chapeau part de là.
-  const fit = 0.138;
+  /**
+   * Rayon de coiffe : celui du crâne à cette hauteur, plus l'épaisseur du
+   * tissu. Il était codé en dur à 138 mm pour un crâne qui en mesure 119 —
+   * dix-neuf millimètres de jour tout autour, et un chapeau plus large que le
+   * point le plus large de la tête. Il ne se posait pas, il flottait.
+   */
+  const fit = headHalfWidth(HAT_Y) + 0.004;
 
   if (kind === "straw") {
     // Bord tourné au tour, légèrement retombant : c'est la courbe qui fait le
