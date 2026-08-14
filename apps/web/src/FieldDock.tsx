@@ -31,6 +31,9 @@ type Props = {
   onContractor: () => void;
   onPublishLabor?: () => void;
   onSell: () => void;
+  onMore?: () => void;
+  moreOpen?: boolean;
+  hideQuest?: boolean;
   onGuide: () => void;
   desktopGarage?: boolean;
   desktopOffice?: boolean;
@@ -47,16 +50,25 @@ type Props = {
   mowReadyAll?: boolean;
 };
 
-const DOCK: { id: "SELECT" | "PLANT" | "HARVEST" | "SOIL" | "SELL"; label: string; icon: string }[] =
-  [
-    { id: "SELECT", label: "Voir", icon: "/assets/icons/tools/select.svg" },
-    { id: "PLANT", label: "Semer", icon: "/assets/icons/tools/plant.svg" },
-    { id: "HARVEST", label: "Récolte", icon: "/assets/icons/tools/harvest.svg" },
-    { id: "SOIL", label: "Sol", icon: "/assets/icons/tools/plow.svg" },
-    { id: "SELL", label: "Vendre", icon: "" },
-  ];
+type DockId = "SELECT" | "PLANT" | "HARVEST" | "SOIL" | "SELL" | "MORE";
 
-function dockOn(id: (typeof DOCK)[number]["id"], tool: Tool): boolean {
+const DESKTOP_DOCK: { id: DockId; label: string; icon: string }[] = [
+  { id: "SELECT", label: "Voir", icon: "/assets/icons/tools/select.svg" },
+  { id: "PLANT", label: "Semer", icon: "/assets/icons/tools/plant.svg" },
+  { id: "HARVEST", label: "Récolte", icon: "/assets/icons/tools/harvest.svg" },
+  { id: "SOIL", label: "Sol", icon: "/assets/icons/tools/plow.svg" },
+  { id: "SELL", label: "Vendre", icon: "" },
+];
+
+const MOBILE_DOCK: { id: DockId; label: string; icon: string }[] = [
+  { id: "PLANT", label: "Semer", icon: "/assets/icons/tools/plant.svg" },
+  { id: "HARVEST", label: "Récolte", icon: "/assets/icons/tools/harvest.svg" },
+  { id: "SOIL", label: "Sol", icon: "/assets/icons/tools/plow.svg" },
+  { id: "SELL", label: "Vendre", icon: "" },
+  { id: "MORE", label: "Plus", icon: "" },
+];
+
+function dockOn(id: DockId, tool: Tool): boolean {
   if (id === "SELECT") return tool === "SELECT";
   if (id === "PLANT") return isPlantTool(tool);
   if (id === "HARVEST") return tool === "HARVEST";
@@ -88,6 +100,9 @@ export function FieldDock({
   onContractor,
   onPublishLabor,
   onSell,
+  onMore,
+  moreOpen = false,
+  hideQuest = false,
   onGuide,
   desktopGarage,
   desktopOffice,
@@ -104,9 +119,14 @@ export function FieldDock({
   const plant = isPlantTool(tool);
   const soil = isSoilTool(tool);
   const work = isFieldWorkTool(tool);
-  const showTray = plant || soil || (work && selectedCount > 0) || readyCount > 0;
+  const harvestOn = tool === "HARVEST";
+  const showTray = plant || soil || (harvestOn && (selectedCount > 0 || readyCount > 0));
 
-  function pickDock(id: (typeof DOCK)[number]["id"]) {
+  function pickDock(id: DockId) {
+    if (id === "MORE") {
+      onMore?.();
+      return;
+    }
     if (id === "SELL") {
       onSell();
       return;
@@ -116,33 +136,40 @@ export function FieldDock({
       return;
     }
     if (id === "PLANT") {
-      if (!isPlantTool(tool)) onTool("PLANT_WHEAT");
+      if (isPlantTool(tool)) onTool("SELECT");
+      else onTool("PLANT_WHEAT");
       return;
     }
     if (id === "HARVEST") {
-      if (tool !== "HARVEST") onTool("HARVEST");
+      if (tool === "HARVEST") onTool("SELECT");
+      else onTool("HARVEST");
       return;
     }
-    if (id === "SOIL" && !isSoilTool(tool)) onTool("STUBBLE");
+    if (id === "SOIL") {
+      if (isSoilTool(tool)) onTool("SELECT");
+      else onTool("STUBBLE");
+    }
   }
 
   return (
     <div className="field-dock">
-      <button type="button" className="quest-chip" onClick={onGuide}>
-        <span className="quest-chip-mark" aria-hidden="true">
-          {allGoalsDone ? "★" : "➤"}
-        </span>
-        <span className="quest-chip-body">
-          <strong>{allGoalsDone ? "Guide de ferme" : "À faire"}</strong>
-          <span>
-            {allGoalsDone
-              ? "Tout est dans le recueil — cultures, bâtiments, métiers."
-              : objective
-                ? `${objective.title} · ${objective.unlock}`
-                : "Ouvrir le guide"}
+      {!hideQuest && (
+        <button type="button" className="quest-chip" onClick={onGuide}>
+          <span className="quest-chip-mark" aria-hidden="true">
+            {allGoalsDone ? "★" : "➤"}
           </span>
-        </span>
-      </button>
+          <span className="quest-chip-body">
+            <strong>{allGoalsDone ? "Guide de ferme" : "À faire"}</strong>
+            <span>
+              {allGoalsDone
+                ? "Tout est dans le recueil — cultures, bâtiments, métiers."
+                : objective
+                  ? `${objective.title} · ${objective.unlock}`
+                  : "Ouvrir le guide"}
+            </span>
+          </span>
+        </button>
+      )}
 
       {showTray && (
         <div className="dock-tray" role="toolbar" aria-label="Options de l’outil">
@@ -151,7 +178,7 @@ export function FieldDock({
           )}
 
           {plant && (
-            <div className="dock-chips">
+            <div className="dock-chips dock-chips-scroll">
               {(
                 [
                   ["PLANT_WHEAT", "Blé"],
@@ -171,16 +198,18 @@ export function FieldDock({
                   {label}
                 </button>
               ))}
-              <button
-                type="button"
-                className={`chip ${directSeed ? "on" : ""}`}
-                title={`Semer dans les chaumes : +${DIRECT_SEED_COST_PER_CELL} TRN/case, −${Math.round(
-                  DIRECT_SEED_YIELD_MALUS * 100,
-                )} % de rendement.`}
-                onClick={onDirectSeed}
-              >
-                Semis direct
-              </button>
+              {!isMobile && (
+                <button
+                  type="button"
+                  className={`chip ${directSeed ? "on" : ""}`}
+                  title={`Semer dans les chaumes : +${DIRECT_SEED_COST_PER_CELL} TRN/case, −${Math.round(
+                    DIRECT_SEED_YIELD_MALUS * 100,
+                  )} % de rendement.`}
+                  onClick={onDirectSeed}
+                >
+                  Semis direct
+                </button>
+              )}
             </div>
           )}
 
@@ -241,26 +270,18 @@ export function FieldDock({
                   : `Faire${plant ? ` ${plantCropLabel(tool)}` : ""} ×${selectedCount}`}
               </button>
             )}
-            {contractor && !visiting && (
-              <>
-                <p className="dock-hint">
-                  Un autre joueur le fera mieux. Si personne ne vient, on envoie quelqu’un.
-                </p>
-                {tool === "HARVEST" && !mowSelected && !contractor.hasMachine && (
-                  <p className="dock-hint">Demandez de l’aide, ou achetez la machine.</p>
-                )}
-                <button
-                  type="button"
-                  className="chip eta"
-                  disabled={busy || selectedCount === 0 || crd < contractor.cost}
-                  title={`Quelqu’un le fait pour vous — ${contractor.cost} TRN`}
-                  onClick={onContractor}
-                >
-                  Payer quelqu’un · {contractor.cost} TRN
-                </button>
-              </>
+            {contractor && !visiting && selectedCount > 0 && !isMobile && (
+              <button
+                type="button"
+                className="chip eta"
+                disabled={busy || crd < contractor.cost}
+                title={`Quelqu’un le fait pour vous — ${contractor.cost} TRN`}
+                onClick={onContractor}
+              >
+                Payer · {contractor.cost} TRN
+              </button>
             )}
-            {laborQuote != null && !visiting && onPublishLabor && (
+            {laborQuote != null && !visiting && selectedCount > 0 && onPublishLabor && !isMobile && (
               <button
                 type="button"
                 className="chip"
@@ -268,10 +289,10 @@ export function FieldDock({
                 title="Cet argent est mis de côté jusqu’à la fin (ou l’annulation)."
                 onClick={onPublishLabor}
               >
-                Demander de l’aide · {laborQuote} TRN
+                Aide · {laborQuote} TRN
               </button>
             )}
-            {readyCount > 0 && (
+            {harvestOn && readyCount > 0 && (
               <button
                 type="button"
                 className="chip go"
@@ -281,13 +302,20 @@ export function FieldDock({
                 {mowReadyAll ? `Tout faucher ×${readyCount}` : `Tout récolter ×${readyCount}`}
               </button>
             )}
+            <button
+              type="button"
+              className="chip"
+              onClick={() => onTool("SELECT")}
+            >
+              Masquer
+            </button>
           </div>
         </div>
       )}
 
       <div className="dock-bar" role="toolbar" aria-label="Outils de champ">
-        {DOCK.map((d) => {
-          const on = d.id === "SELL" ? false : dockOn(d.id, tool);
+        {(isMobile ? MOBILE_DOCK : DESKTOP_DOCK).map((d) => {
+          const on = d.id === "MORE" ? moreOpen : d.id === "SELL" ? false : dockOn(d.id, tool);
           return (
             <button
               key={d.id}
@@ -299,6 +327,10 @@ export function FieldDock({
               {d.id === "SELL" ? (
                 <span className="dock-emoji" aria-hidden="true">
                   💰
+                </span>
+              ) : d.id === "MORE" ? (
+                <span className="dock-emoji" aria-hidden="true">
+                  ＋
                 </span>
               ) : (
                 <img src={d.icon} alt="" width={22} height={22} />
@@ -348,7 +380,7 @@ export function FieldDock({
             )}
           </>
         )}
-        {showDev && (
+        {showDev && !isMobile && (
           <button type="button" className="dock-tool extra" onClick={onDev}>
             <span className="dock-emoji" aria-hidden="true">
               🛠

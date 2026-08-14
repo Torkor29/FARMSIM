@@ -177,6 +177,7 @@ import {
   type WeatherState,
   isBreakdownKind,
   GREASE_COST_CRD,
+  GREASE_FULL,
   CLEAN_COST_CRD,
   type BreakdownKind,
 } from "@farmsim/shared";
@@ -264,15 +265,18 @@ type FarmMachine = {
   condition: number;
   storedInBuildingId: string | null;
   greased?: boolean;
+  grease?: number;
   dirt?: number;
   greaseSkipStreak?: number;
   breakdown?: string | null;
 };
 
 function careOf(m: FarmMachine): MachineCareState {
+  const grease = m.grease ?? (m.greased === false ? 0 : GREASE_FULL);
   return {
     condition: m.condition,
-    greased: m.greased ?? true,
+    grease,
+    greased: grease > 0,
     dirt: m.dirt ?? 0,
     greaseSkipStreak: m.greaseSkipStreak ?? 0,
     breakdown: isBreakdownKind(m.breakdown) ? m.breakdown : null,
@@ -536,7 +540,7 @@ async function applyWearToMachine(
     wearPerCell: opts.def.wearPerCell,
     cells: opts.cells,
     inShed: Boolean(opts.machine.storedInBuildingId),
-    careMult: careWearMultiplier({ greased: care.greased, dirt: care.dirt }),
+    careMult: careWearMultiplier({ grease: care.grease, dirt: care.dirt }),
   });
   const after = applyJobCare(
     { ...care, condition: wear.condition },
@@ -547,6 +551,7 @@ async function applyWearToMachine(
     data: {
       condition: after.next.condition,
       greased: after.next.greased,
+      grease: after.next.grease ?? (after.next.greased ? GREASE_FULL : 0),
       dirt: after.next.dirt,
       greaseSkipStreak: after.next.greaseSkipStreak,
       breakdown: after.next.breakdown,
@@ -558,6 +563,7 @@ async function applyWearToMachine(
     breakdown: after.next.breakdown,
     dirt: after.next.dirt,
     greased: after.next.greased,
+    grease: after.next.grease,
     broke: after.broke,
   };
 }
@@ -1539,7 +1545,7 @@ app.post("/dev/grant", async (req, res) => {
   if (body.data.fixMachines && user.farm) {
     await prisma.machine.updateMany({
       where: { farmId: user.farm.id },
-      data: { condition: 100, greased: true, dirt: 0, greaseSkipStreak: 0, breakdown: null },
+      data: { condition: 100, greased: true, grease: GREASE_FULL, dirt: 0, greaseSkipStreak: 0, breakdown: null },
     });
     done.push("machines remises à neuf");
   }
@@ -5024,6 +5030,7 @@ app.post("/machines/:id/repair", async (req, res) => {
       data: {
         condition: quote.nextCondition,
         greased: true,
+        grease: GREASE_FULL,
         dirt: 0,
         greaseSkipStreak: 0,
         breakdown: null,
@@ -5059,8 +5066,13 @@ app.post("/machines/:id/grease", async (req, res) => {
     res.status(403).json({ error: "Machine non possédée" });
     return;
   }
-  if (machine.greased && machine.greaseSkipStreak === 0) {
-    res.status(409).json({ error: "Déjà graissé" });
+  const alreadyFull = (machine.grease ?? GREASE_FULL) >= GREASE_FULL - 0.5;
+  if (alreadyFull) {
+    await prisma.machine.update({
+      where: { id: machine.id },
+      data: { greased: true, grease: GREASE_FULL, greaseSkipStreak: 0 },
+    });
+    res.json({ machineId: machine.id, greased: true, grease: GREASE_FULL, cost: 0 });
     return;
   }
   if (machine.farm.user.crd < GREASE_COST_CRD) {
@@ -5074,10 +5086,10 @@ app.post("/machines/:id/grease", async (req, res) => {
     });
     await tx.machine.update({
       where: { id: machine.id },
-      data: { greased: true, greaseSkipStreak: 0 },
+      data: { greased: true, grease: GREASE_FULL, greaseSkipStreak: 0 },
     });
   });
-  res.json({ machineId: machine.id, greased: true, cost: GREASE_COST_CRD });
+  res.json({ machineId: machine.id, greased: true, grease: GREASE_FULL, cost: GREASE_COST_CRD });
 });
 
 app.post("/machines/:id/clean", async (req, res) => {
@@ -5170,6 +5182,7 @@ app.post("/machines/:id/service", async (req, res) => {
         condition: target,
         breakdown: null,
         greased: true,
+        grease: GREASE_FULL,
         greaseSkipStreak: 0,
       },
     });

@@ -290,6 +290,13 @@ html.playing .field-dock {
 }
 .stat-xp { color: var(--teal-500); }
 .gold { color: var(--gold-700) !important; }
+.gold.flash {
+  animation: wallet-flash 1.4s ease 2;
+}
+@keyframes wallet-flash {
+  0%, 100% { box-shadow: none; }
+  50% { box-shadow: 0 0 0 4px var(--gold-300); background: var(--gold-100); }
+}
 button.ghost {
   background: transparent;
   border: 1px solid var(--line);
@@ -1375,6 +1382,7 @@ button.ghost {
 .tick.flat { color: var(--muted); }
 .tick.weather-tick { color: var(--info); }
 .tick small { font-weight: 500; opacity: 0.85; }
+.ticker-track { display: contents; }
 .auth-tabs {
   display: flex;
   gap: 0.5rem;
@@ -1409,6 +1417,117 @@ button.ghost {
 }
 .resume-card strong { color: var(--gold-700); font-size: 0.95rem; }
 .resume-card button { min-height: 44px; justify-self: stretch; }
+.harvest-sold-banner {
+  justify-self: stretch;
+  margin: 0 0.5rem;
+  padding: 0.7rem 0.85rem;
+  border-radius: 14px;
+  background: var(--gold-100);
+  border: 1px solid var(--gold-300);
+  display: grid;
+  gap: 0.45rem;
+  box-shadow: var(--sh-1);
+}
+.harvest-sold-banner p {
+  margin: 0;
+  font-weight: 700;
+  font-size: 0.9rem;
+  line-height: 1.4;
+  color: var(--ink);
+}
+.harvest-sold-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+}
+.harvest-sold-actions button { min-height: 44px; }
+.sheet-head,
+.panel-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+.sheet-head h3,
+.panel-head h3 { margin: 0; }
+.sheet-close {
+  flex: none;
+  width: 36px;
+  height: 36px;
+  min-height: 36px;
+  padding: 0;
+  border-radius: 50%;
+  border: 1px solid var(--line);
+  background: var(--sand);
+  font-weight: 700;
+  font-size: 1.35rem;
+  line-height: 1;
+  color: var(--ink);
+}
+.machine-card {
+  display: grid;
+  gap: 0.5rem;
+}
+.machine-card-top {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+.machine-tag {
+  font-size: 0.72rem;
+  font-weight: 800;
+  color: var(--teal-700, #2a6b4f);
+}
+.machine-tag.warn { color: var(--danger); }
+.meters { display: grid; gap: 0.28rem; }
+.meter-row {
+  display: grid;
+  grid-template-columns: 3.6rem 1fr 2.2rem;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 0.72rem;
+  font-weight: 700;
+  color: var(--ink-soft);
+}
+.meter-row b { text-align: right; color: var(--ink); }
+.meter {
+  display: block;
+  height: 6px;
+  border-radius: 99px;
+  background: var(--sand);
+  overflow: hidden;
+}
+.meter > i {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, var(--teal-300, #7dbea8), var(--teal-500, #2e8e7a));
+}
+.meter.grease > i {
+  background: linear-gradient(90deg, var(--gold-300), var(--gold-500));
+}
+.meter.grease.low > i {
+  background: linear-gradient(90deg, #e0762f, #c94a2a);
+}
+.quest-chip-hud {
+  justify-self: stretch;
+  margin: 0 0.5rem;
+}
+.more-list { display: grid; gap: 0.4rem; }
+.more-item {
+  display: flex;
+  align-items: center;
+  gap: 0.7rem;
+  min-height: 52px;
+  padding: 0.7rem 0.85rem;
+  border-radius: 14px;
+  border: 1px solid var(--line);
+  background: var(--paper);
+  text-align: left;
+}
+.more-item strong { font-size: 1rem; }
+.more-item:disabled { opacity: 0.45; }
 .brush-group {
   display: inline-flex;
   gap: 0.25rem;
@@ -1432,7 +1551,9 @@ button.ghost {
   font-weight: 700;
   text-align: center;
   box-shadow: var(--sh-3);
-  pointer-events: none;
+  pointer-events: auto;
+  color: inherit;
+  font-family: inherit;
 }
 .toast.pop {
   animation: toast-pop 0.38s ease-out;
@@ -1684,6 +1805,7 @@ button.ghost {
   .stat-job,
   .stat-xp,
   .stat-bonus,
+  .stat-stock,
   .logout-btn { display: none; }
   .help-btn {
     display: grid;
@@ -1700,7 +1822,7 @@ button.ghost {
   }
   .hud-stats { flex-wrap: nowrap; gap: 0.3rem; }
   .stat-name {
-    max-width: 8rem;
+    max-width: 5.5rem;
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
@@ -1719,6 +1841,7 @@ button.ghost {
     min-width: 40px;
     min-height: 40px;
     padding: 0;
+    flex: none;
     border-radius: 12px;
     border: 1px solid var(--line);
     background: var(--paper);
@@ -1734,19 +1857,32 @@ button.ghost {
     justify-content: flex-start;
     max-width: none;
     margin: 0 0.5rem;
+    overflow: hidden;
+    pointer-events: none;
+  }
+  .ticker-track {
+    display: flex;
+    flex: 0 0 auto;
+    gap: 0.45rem;
+    padding-right: 0.8rem;
+    animation: ticker-scroll 32s linear infinite;
+  }
+  .market-ticker .tick { flex: 0 0 auto; }
+  @keyframes ticker-scroll {
+    from { transform: translateX(0); }
+    to { transform: translateX(-100%); }
+  }
+  .who-now-bar { display: none; }
+  .game-stage.mobile.tray-open .quest-chip-hud,
+  .game-stage.mobile.tray-open .harvest-sold-banner { display: none; }
+  .dock-chips-scroll {
+    flex-wrap: nowrap;
     overflow-x: auto;
     scrollbar-width: none;
-    touch-action: pan-x;
-    /* Le défilement suppose de pouvoir l'attraper. */
-    pointer-events: auto;
+    -webkit-overflow-scrolling: touch;
   }
-  .market-ticker::-webkit-scrollbar { display: none; }
-  .market-ticker .tick { flex: 0 0 auto; }
-  .who-now-bar {
-    justify-self: stretch;
-    margin: 0 0.5rem;
-    font-size: 0.76rem;
-  }
+  .dock-chips-scroll::-webkit-scrollbar { display: none; }
+  .dock-chips-scroll .chip { flex: 0 0 auto; }
   .hall-doors { gap: 0.45rem; }
   .hall-door { padding: 0.7rem 0.4rem 0.6rem; }
   .hall-door strong { font-size: 1.02rem; }
@@ -1775,11 +1911,11 @@ button.ghost {
     position: fixed;
     left: 0;
     right: 0;
-    /* Juste au-dessus de la barre d'onglets et de la barre d'action. */
-    bottom: calc(11.2rem + env(safe-area-inset-bottom));
+    /* Tiroir seul : la barre d’onglets a disparu, le dock se cache. */
+    bottom: calc(0.75rem + env(safe-area-inset-bottom));
     top: auto;
     width: auto;
-    max-height: min(52dvh, 460px);
+    max-height: min(48dvh, 420px);
     overflow-y: auto;
     -webkit-overflow-scrolling: touch;
     overscroll-behavior: contain;
@@ -1789,23 +1925,43 @@ button.ghost {
     box-shadow: 0 -10px 30px rgba(24, 44, 38, 0.22);
     /* Fermé par défaut : le tiroir n'existe que quand on l'appelle. */
     display: none;
-    animation: sheet-rise 0.22s ease;
+    padding: 0.85rem 0.9rem 1rem;
   }
-  .game-stage.mobile .sheet.open { display: block; }
+  .game-stage.mobile .sheet.open {
+    display: block;
+    transform: translate3d(0, 75%, 0);
+    opacity: 0;
+  }
+  .game-stage.mobile .sheet.open.enter {
+    transform: translate3d(0, 0, 0);
+    opacity: 1;
+    transition: transform 0.48s cubic-bezier(0.16, 1, 0.3, 1), opacity 0.28s ease;
+  }
 
-  /* Poignée : elle signale qu'on a affaire à un tiroir, pas à une carte. */
   .game-stage.mobile .sheet::before {
     content: "";
     display: block;
-    width: 38px;
-    height: 4px;
-    margin: 0 auto 0.6rem;
+    width: 32px;
+    height: 3px;
+    margin: 0 auto 0.7rem;
     border-radius: 999px;
-    background: rgba(34, 49, 44, 0.22);
+    background: rgba(34, 49, 44, 0.18);
   }
 
   @keyframes sheet-rise {
-    from { transform: translateY(14px); opacity: 0; }
+    from { transform: translateY(28px) scale(0.98); opacity: 0; }
+    to { transform: translateY(0) scale(1); opacity: 1; }
+  }
+  @keyframes scrim-in {
+    from { opacity: 0; }
+    to { opacity: 1; }
+  }
+  @keyframes more-rise {
+    from { transform: translateY(16px); opacity: 0; }
+    to { transform: translateY(0); opacity: 1; }
+  }
+  @keyframes more-pop {
+    from { transform: translateY(10px); opacity: 0; }
     to { transform: translateY(0); opacity: 1; }
   }
 
@@ -1816,26 +1972,17 @@ button.ghost {
     z-index: 11;
     border: 0;
     padding: 0;
-    background: rgba(24, 44, 38, 0.28);
-    backdrop-filter: blur(2px);
+    background: rgba(24, 44, 38, 0.32);
+    backdrop-filter: blur(3px);
+    opacity: 0;
+  }
+  .sheet-scrim.enter {
+    opacity: 1;
+    transition: opacity 0.28s ease;
   }
 
-  /* —— Barre d'onglets —— */
-  .tabbar {
-    position: fixed;
-    left: 0;
-    right: 0;
-    bottom: 0;
-    z-index: 14;
-    display: grid;
-    grid-auto-flow: column;
-    grid-auto-columns: 1fr;
-    gap: 0.2rem;
-    padding: 0.3rem 0.4rem calc(0.3rem + env(safe-area-inset-bottom));
-    background: var(--bar);
-    border-top: 1px solid var(--glass-border);
-    backdrop-filter: blur(12px);
-  }
+  /* —— Barre d'onglets : remplacée par Plus dans le dock —— */
+  .tabbar { display: none !important; }
   .tab {
     display: grid;
     justify-items: center;
@@ -1859,11 +2006,134 @@ button.ghost {
     right: 0.4rem;
     width: auto;
     transform: none;
-    bottom: calc(3.7rem + env(safe-area-inset-bottom));
+    bottom: calc(0.85rem + env(safe-area-inset-bottom));
   }
-  .dock-tool { min-height: 48px; }
-  .dock-label { font-size: 0.64rem; }
-  .chip { min-height: 44px; }
+  .game-stage.mobile.sheet-open .field-dock,
+  .game-stage.mobile.sheet-open .quest-chip-hud,
+  .game-stage.mobile.sheet-open .harvest-sold-banner { display: none; }
+  .more-strip {
+    position: fixed;
+    left: 0.4rem;
+    right: 0.4rem;
+    bottom: calc(5.1rem + env(safe-area-inset-bottom));
+    z-index: 13;
+    display: grid;
+    grid-template-columns: repeat(5, 1fr);
+    gap: 0.15rem;
+    padding: 0.28rem 0.3rem;
+    border-radius: 18px;
+    background: var(--bar);
+    border: 1px solid var(--glass-border);
+    box-shadow: var(--sh-3);
+    backdrop-filter: blur(14px);
+    transform: translate3d(0, 130%, 0);
+    opacity: 0;
+  }
+  .more-strip.enter {
+    transform: translate3d(0, 0, 0);
+    opacity: 1;
+    transition: transform 0.42s cubic-bezier(0.16, 1, 0.3, 1), opacity 0.22s ease;
+  }
+  .more-item {
+    display: grid;
+    justify-items: center;
+    gap: 0.12rem;
+    min-height: 52px;
+    padding: 0.35rem 0.1rem;
+    border: 0;
+    background: transparent;
+    border-radius: 14px;
+    opacity: 0;
+    transform: translateY(14px);
+  }
+  .more-strip.enter .more-item {
+    opacity: 1;
+    transform: none;
+    transition: transform 0.38s cubic-bezier(0.16, 1, 0.3, 1), opacity 0.28s ease;
+  }
+  .more-strip.enter .more-item:nth-child(1) { transition-delay: 0.06s; }
+  .more-strip.enter .more-item:nth-child(2) { transition-delay: 0.1s; }
+  .more-strip.enter .more-item:nth-child(3) { transition-delay: 0.14s; }
+  .more-strip.enter .more-item:nth-child(4) { transition-delay: 0.18s; }
+  .more-strip.enter .more-item:nth-child(5) { transition-delay: 0.22s; }
+  .more-strip.enter .more-item:nth-child(6) { transition-delay: 0.26s; }
+  .more-item:active { background: var(--sand); }
+  .more-item strong { font-size: 0.68rem; font-weight: 800; }
+  .quest-chip-hud {
+    padding: 0.35rem 0.65rem;
+  }
+  .quest-chip-hud .quest-chip-mark {
+    width: 1.5rem;
+    height: 1.5rem;
+    font-size: 0.75rem;
+  }
+  .game-stage.mobile .sheet-head,
+  .game-stage.mobile .panel-head {
+    position: sticky;
+    top: 0;
+    z-index: 1;
+    padding-bottom: 0.45rem;
+    margin-bottom: 0.35rem;
+    background: var(--paper, #fff);
+  }
+  .game-stage.mobile .sheet h3 {
+    font-size: 1.05rem;
+    letter-spacing: -0.02em;
+  }
+  .game-stage.mobile .sheet-lead { display: none; }
+  .game-stage.mobile .sheet-stats {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 0.35rem 0.7rem;
+  }
+  .game-stage.mobile .sheet-stats > div {
+    padding: 0.4rem 0.5rem;
+    border-radius: 10px;
+    background: var(--sand);
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 0.1rem;
+  }
+  .game-stage.mobile .sheet-stats dt { font-size: 0.68rem; }
+  .game-stage.mobile .sheet-stats dd { font-size: 0.86rem; }
+  .game-stage.mobile .machine-list { gap: 0.6rem; }
+  .game-stage.mobile .machine-card {
+    padding: 0.7rem 0.75rem;
+    border-radius: 14px;
+    background: var(--paper);
+    border: 1px solid var(--line);
+    box-shadow: var(--sh-1);
+  }
+  .game-stage.mobile .machine-card .row-actions {
+    justify-content: stretch;
+  }
+  .game-stage.mobile .machine-card .row-actions button {
+    flex: 1 1 calc(50% - 0.2rem);
+    min-height: 38px;
+    font-size: 0.72rem;
+    font-weight: 700;
+    border-radius: 10px;
+  }
+  .game-stage.mobile .build-item.art,
+  .game-stage.mobile .upgrade-item {
+    padding: 0.5rem 0.55rem;
+    border-radius: 12px;
+    background: var(--paper);
+    box-shadow: var(--sh-1);
+  }
+  .game-stage.mobile .job-card {
+    border-radius: 12px;
+    padding: 0.65rem 0.7rem;
+  }
+  .dock-tool { min-height: 56px; }
+  .dock-label { font-size: 0.75rem; }
+  .dock-tray {
+    gap: 0.25rem;
+    padding: 0.4rem 0.45rem;
+  }
+  .dock-tray .dock-hint,
+  .dock-tray .stroke-hint { display: none; }
+  .chip { min-height: 40px; padding: 0.3rem 0.6rem; }
   .action { min-height: 44px; padding: 0.5rem 0.7rem; }
 
   /* —— Modales : une feuille qui monte du bas, pas une carte flottante —— */
@@ -1899,10 +2169,8 @@ button.ghost {
 /* Un téléphone couché n'a presque pas de hauteur : le tiroir doit lui
    laisser voir la ferme malgré tout. */
 @media (max-width: 920px) and (max-height: 460px) {
-  .game-stage.mobile .sheet { max-height: 62dvh; bottom: calc(4.4rem + env(safe-area-inset-bottom)); }
-  .tab-label { display: none; }
-  .tab { min-height: 38px; }
-  .field-dock { bottom: calc(3rem + env(safe-area-inset-bottom)); }
+  .game-stage.mobile .sheet { max-height: 62dvh; bottom: calc(0.6rem + env(safe-area-inset-bottom)); }
+  .field-dock { bottom: calc(0.5rem + env(safe-area-inset-bottom)); }
 }
 
 /* —— Tutoriel pas-à-pas —— */

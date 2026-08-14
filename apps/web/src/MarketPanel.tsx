@@ -58,6 +58,8 @@ export type MarketDelivery = {
 
 type Props = {
   open: boolean;
+  startTab?: "BUY" | "SELL";
+  forcedSaleNote?: string | null;
   onClose: () => void;
   stock: StockItem[];
   listings: Listing[];
@@ -163,6 +165,8 @@ function DeliveryList({
 /** Hôtel des ventes : acheter ou vendre, comme à l’entrée. */
 export function MarketPanel({
   open,
+  startTab = "BUY",
+  forcedSaleNote = null,
   onClose,
   stock,
   listings,
@@ -187,7 +191,7 @@ export function MarketPanel({
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [tons, setTons] = useState(0);
   const [ask, setAsk] = useState(0);
-  const [tab, setTab] = useState<"BUY" | "SELL" | "MORE">("BUY");
+  const [tab, setTab] = useState<"BUY" | "SELL" | "MORE">(startTab);
   const [horizon, setHorizon] = useState<number>(3);
   const [good, setGood] = useState<TradeGood>("WHEAT");
   const [futTons, setFutTons] = useState(10);
@@ -203,6 +207,10 @@ export function MarketPanel({
   );
 
   const maxTons = useMemo(() => (item ? maxSelectableTons(item.qty) : 0), [item?.qty]);
+
+  useEffect(() => {
+    if (open) setTab(startTab);
+  }, [open, startTab]);
 
   useEffect(() => {
     if (!item) return;
@@ -328,7 +336,9 @@ export function MarketPanel({
         ) : tab === "SELL" ? (
           !stock.length ? (
             <>
-              <p className="market-empty">Rien à vendre. Récoltez d’abord, puis revenez ici.</p>
+              <p className="market-empty">
+                {forcedSaleNote ?? "Rien à vendre. Récoltez d’abord, puis revenez ici."}
+              </p>
               <DeliveryList
                 deliveries={deliveries}
                 busy={busy}

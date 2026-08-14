@@ -82,6 +82,7 @@ Chaque valeur chiffrée dans cette documentation est classée :
 | — | [51_ETA_MISSIONS.md](./51_ETA_MISSIONS.md) | L’ETA n’est pas un métier — missions d’appoint |
 | — | [52_MACHINES_3D.md](./52_MACHINES_3D.md) | Parc matériel 3D : engins détaillés, champ vivant, projections |
 | — | [53_BOUCLES_LIEES.md](./52_BOUCLES_LIEES.md) | Plan : cultures, poules/moutons, fumier, transport, halle |
+| — | [54_FONCTIONNEMENT_ET_AMELIORATIONS.md](./54_FONCTIONNEMENT_ET_AMELIORATIONS.md) | Boucle réelle, graisse, blé à 0, missions, barre mobile |
 
 ---
 
@@ -93,3 +94,4 @@ Chaque valeur chiffrée dans cette documentation est classée :
 4. Documents thématiques selon besoin
 5. `12_LEGAL_REGULATORY.md` avant toute décision cash-out / marketplace argent réel
 6. `51_ETA_MISSIONS.md` avant `49_TRIANGLE_METIERS.md` : l’ETA est un appoint, pas un troisième métier
+7. `54_FONCTIONNEMENT_ET_AMELIORATIONS.md` : ce qui cloche aujourd’hui (graisse, blé, missions, mobile)
