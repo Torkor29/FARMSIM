@@ -17,6 +17,7 @@ import {
 import { disposeRenderer, disposeThreeScene, markShared } from "./three-cleanup";
 import { applyHerdPose, meshForHerd } from "./animal-meshes";
 import { createCropField } from "./crop-field";
+import type { CropShape } from "./crop-shapes";
 import { attachStudioEnvironment } from "./machine-kit";
 import {
   createDustTrail,
@@ -919,8 +920,7 @@ export function IsoFarmView({
 
     /** Le relief du sol, reconstruit à chaque `layout()`. */
     const reliefGroup = new THREE.Group();
-    const earGroup = new THREE.Group();
-    world.add(reliefGroup, earGroup);
+    world.add(reliefGroup);
 
     /**
      * Donne du grain aux états du sol.
@@ -1046,49 +1046,6 @@ export function IsoFarmView({
      * dorés ; le maïs un seul, trapu. C'est le signal « récoltable » le plus
      * direct qu'on puisse donner sur la grille elle-même.
      */
-    function buildEars(spots: { px: number; pz: number; y: number; maize: boolean }[], size: number) {
-      while (earGroup.children.length) {
-        const c = earGroup.children[0];
-        earGroup.remove(c);
-        disposeObject3D(c);
-      }
-      if (!spots.length) return;
-
-      const m = new THREE.Matrix4();
-      for (const maize of [false, true]) {
-        const group = spots.filter((s) => s.maize === maize);
-        if (!group.length) continue;
-        const offsets: [number, number][] = maize
-          ? [[0, 0]]
-          : [
-              [-0.13, -0.08],
-              [0.13, 0.06],
-              [0, 0.16],
-            ];
-        const geo = maize
-          ? new THREE.BoxGeometry(size * 0.2, 0.2, size * 0.2)
-          : new THREE.BoxGeometry(size * 0.09, 0.15, size * 0.09);
-        const mesh = new THREE.InstancedMesh(
-          geo,
-          new THREE.MeshLambertMaterial({
-            color: maize ? 0xf0c33c : 0xe6c95f,
-            flatShading: true,
-          }),
-          group.length * offsets.length,
-        );
-        mesh.castShadow = true;
-        let i = 0;
-        for (const s of group) {
-          for (const [dx, dz] of offsets) {
-            m.makeTranslation(s.px + dx * size, s.y + 0.06, s.pz + dz * size);
-            mesh.setMatrixAt(i++, m);
-          }
-        }
-        mesh.instanceMatrix.needsUpdate = true;
-        earGroup.add(mesh);
-      }
-    }
-
     function cellWorldPos(x: number, y: number) {
       return { px: ox + x * step, pz: oz + y * step };
     }
@@ -1110,9 +1067,11 @@ export function IsoFarmView({
         px: number;
         pz: number;
         height: number;
+        shape: CropShape;
         color: number;
         density: number;
         droop: number;
+        ripe: number;
       }[] = [];
       const {
         gridW: gw,
@@ -1212,7 +1171,6 @@ export function IsoFarmView({
       /** Relief à semer sur les cases une fois la grille posée. */
       const soilDetails: { look: SoilLook; px: number; pz: number }[] = [];
       /** Épis des cultures arrivées à maturité. */
-      const ears: { px: number; pz: number; y: number; maize: boolean }[] = [];
 
       for (let y = 0; y < gh; y++) {
         for (let x = 0; x < gw; x++) {
@@ -1297,16 +1255,17 @@ export function IsoFarmView({
               px,
               pz,
               height: h,
+              // La silhouette nomme la culture : barbe pour l'orge, grappe
+              // jaune pour le colza, panache pour le maïs.
+              shape: (cell.crop as CropShape | undefined) ?? "WHEAT",
               color: cropColor(cell, sim),
               density: Math.max(0.15, 0.55 + fed * 0.45 - choked),
               droop,
+              // L'épi sort avec la maturité. Un cube doré était posé au-dessus
+              // de la case pour dire « prêt » ; un vrai épi qui grossit le dit
+              // aussi bien, et il fait partie de la plante.
+              ripe: lost ? 0.25 : Math.max(0, Math.min(1, (progress - 0.45) / 0.5)),
             });
-
-            // Épis : ils ne sortent qu'à maturité et signalent la récolte
-            // possible sans qu'il faille lire un panneau.
-            if (!lost && (sim?.sim.ready || cell.fieldStage === "READY")) {
-              ears.push({ px, pz, y: 0.1 + h, maize: tall });
-            }
           }
 
           if (cell?.kind === "VEHICLE") {
@@ -1338,7 +1297,6 @@ export function IsoFarmView({
       }
 
       buildSoilRelief(soilDetails, cellSize);
-      buildEars(ears, cellSize);
       cropField.setCells(cropStalks, cellSize);
 
       for (const b of bs) {

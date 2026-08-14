@@ -16,6 +16,13 @@ function cell(over: Partial<Cell> = {}): Cell {
   return { x: 0, y: 0, px: 0, pz: 0, height: 0.4, color: 0xe8c65c, ...over };
 }
 
+/** Le maillage instancié d'une espèce, s'il y en a un. */
+function meshOf(field: ReturnType<typeof createCropField>, kind: string) {
+  return field.object.children.find(
+    (o) => o.name === `crop-${kind}`,
+  ) as THREE.InstancedMesh | undefined;
+}
+
 describe("semis", () => {
   it("une case semée porte des brins, une case vide n'en porte aucun", () => {
     const field = createCropField(16);
@@ -25,13 +32,44 @@ describe("semis", () => {
     field.dispose();
   });
 
-  it("tout le champ tient dans un seul objet de scène", () => {
+  it("une culture ne coûte qu'un appel de rendu, quel que soit le nombre de cases", () => {
     const field = createCropField(16);
-    field.setCells([cell({ x: 0, y: 0 }), cell({ x: 1, y: 0 }), cell({ x: 2, y: 0 })], 1);
-    // Un maillage instancié, donc un appel de rendu, quel que soit le nombre
-    // de cases : c'est ce qui rend un champ dense soutenable.
-    expect((field.object as THREE.InstancedMesh).isInstancedMesh).toBe(true);
-    expect(field.object.children).toHaveLength(0);
+    field.setCells(
+      Array.from({ length: 12 }, (_, i) => cell({ x: i % 4, y: Math.floor(i / 4) })),
+      1,
+    );
+    // Un maillage instancié par espèce semée : c'est ce qui rend un champ
+    // dense soutenable. Douze cases de blé n'en font toujours qu'un.
+    expect(field.object.children).toHaveLength(1);
+    expect(meshOf(field, "WHEAT")!.isInstancedMesh).toBe(true);
+    field.dispose();
+  });
+
+  it("chaque culture a sa propre forme de brin", () => {
+    const field = createCropField(16);
+    field.setCells(
+      [
+        cell({ x: 0, y: 0, shape: "WHEAT" }),
+        cell({ x: 1, y: 0, shape: "BARLEY" }),
+        cell({ x: 2, y: 0, shape: "RAPE" }),
+      ],
+      1,
+    );
+    expect(field.object.children).toHaveLength(3);
+    const counts = ["WHEAT", "BARLEY", "RAPE"].map(
+      (k) => meshOf(field, k)!.geometry.getAttribute("position").count,
+    );
+    // Trois géométries identiques voudraient dire qu'on ne distingue les
+    // cultures qu'à la teinte — ce qui revient à ne pas les distinguer.
+    expect(new Set(counts).size).toBe(3);
+    field.dispose();
+  });
+
+  it("une case sait quelle culture elle porte", () => {
+    const field = createCropField(16);
+    field.setCells([cell({ x: 0, y: 0, shape: "MAIZE" })], 1);
+    expect(field.shapeAt(0, 0)).toBe("MAIZE");
+    expect(field.shapeAt(3, 3)).toBeNull();
     field.dispose();
   });
 
@@ -40,10 +78,10 @@ describe("semis", () => {
     const cells = [cell({ x: 1, y: 1 }), cell({ x: 2, y: 1 })];
     field.setCells(cells, 1);
     const first = new THREE.Matrix4();
-    (field.object as THREE.InstancedMesh).getMatrixAt(7, first);
+    meshOf(field, "WHEAT")!.getMatrixAt(7, first);
     field.setCells(cells, 1);
     const second = new THREE.Matrix4();
-    (field.object as THREE.InstancedMesh).getMatrixAt(7, second);
+    meshOf(field, "WHEAT")!.getMatrixAt(7, second);
     // La vue reconstruit sa scène à chaque rechargement de parcelle : si le
     // semis se redistribuait, le champ scintillerait.
     expect(second.elements).toEqual(first.elements);

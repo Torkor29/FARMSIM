@@ -1,6 +1,5 @@
 import * as THREE from "three";
-import { mergeGeometries } from "three/examples/jsm/utils/BufferGeometryUtils.js";
-import { markShared } from "./three-cleanup";
+import { CROP_ACCENT, CROP_DENSITY, cropShape, type CropShape } from "./crop-shapes";
 
 /**
  * Le champ — de vraies tiges, pas un pavé coloré par case.
@@ -11,9 +10,12 @@ import { markShared } from "./three-cleanup";
  *
  * Trois choix tiennent l'ensemble :
  *
- * 1. **Une seule `InstancedMesh` pour tout le champ.** Douze tiges par case,
- *    cent quarante-quatre cases : ~1 700 tiges en **un seul appel de rendu**.
- *    Une par maillage aurait mis la vue à genoux.
+ * 1. **Une `InstancedMesh` par espèce semée.** Quarante brins par case, cent
+ *    quarante-quatre cases : des milliers de tiges en un appel de rendu par
+ *    culture présente — au plus six, en pratique une ou deux. Un maillage par
+ *    tige aurait mis la vue à genoux ; un maillage unique pour tout le champ
+ *    interdisait de donner sa silhouette à chaque culture, et l'orge ne se
+ *    distinguait du blé que par sa teinte.
  * 2. **Le vent est calculé dans le nuancier**, pas sur le processeur : la
  *    tige se courbe en fonction du carré de sa hauteur — le pied reste planté,
  *    l'épi balaie. Deux sinusoïdes déphasées suffisent à casser la régularité.
@@ -39,6 +41,8 @@ type CellEntry = {
   pz: number;
   height: number;
   color: number;
+  /** Espèce semée : c'est elle qui choisit la forme du brin */
+  shape?: CropShape;
   /**
    * Densité du peuplement, 0 à 1. C'est le rendement attendu qui se voit :
    * une case fumée et désherbée est drue, une case affamée ou envahie est
@@ -50,10 +54,21 @@ type CellEntry = {
    * verser — c'est le signal qui doit alarmer avant que la perte soit actée.
    */
   droop?: number;
+  /**
+   * Avancement de l'épi, 0 à 1.
+   *
+   * L'épi, la gousse et la fleur ne sortent qu'à maturité : à zéro ils sont
+   * repliés contre la tige, à un ils sont formés. C'est ce qui remplace
+   * l'ancien cube doré posé au-dessus de la case — un vrai épi qui grossit dit
+   * la même chose sans rien ajouter à la scène.
+   */
+  ripe?: number;
 };
 
 export type CropField = {
   object: THREE.Object3D;
+  /** Espèce semée sur une case, ou `null` si elle n'est pas semée. */
+  shapeAt(x: number, y: number): CropShape | null;
   /** Redéfinit le champ. Les cases fauchées récemment gardent leur andain. */
   setCells(cells: CellEntry[], cellSize: number): void;
   /** Fauche une case : ses tiges se couchent à partir de `t`. */
@@ -68,125 +83,204 @@ export type CropField = {
 };
 
 /**
- * Un brin : une lame plate à trois segments — c'est elle qui se courbe — et
- * son épi en pointe. Quatorze faces en tout, hauteur unitaire, l'instance
- * l'étire à la hauteur voulue. Un chaume tourné en volume aurait coûté trois
- * fois plus pour un gain nul à cette échelle.
+ * Un lot d'instances : tout ce qui pousse d'une même espèce, en un appel de
+ * rendu. Le lot est recréé quand la parcelle demande plus de brins qu'il n'en
+ * tient — recréer coûte moins cher que de réserver six fois la place au cas où.
  */
-function stalkGeometry(): THREE.BufferGeometry {
-  const blade = new THREE.PlaneGeometry(0.045, 0.82, 1, 3);
-  blade.translate(0, 0.41, 0);
-  const ear = new THREE.ConeGeometry(0.022, 0.22, 4);
-  ear.translate(0, 0.88, 0);
-  const geo = mergeGeometries([blade.toNonIndexed(), ear.toNonIndexed()], false)!;
-  blade.dispose();
-  ear.dispose();
-  return markShared(geo);
-}
-
-let sharedStalk: THREE.BufferGeometry | null = null;
+type Bucket = {
+  kind: CropShape;
+  mesh: THREE.InstancedMesh;
+  material: THREE.Material;
+  cut: THREE.InstancedBufferAttribute;
+  phase: THREE.InstancedBufferAttribute;
+  droop: THREE.InstancedBufferAttribute;
+  ripe: THREE.InstancedBufferAttribute;
+  capacity: number;
+  count: number;
+};
 
 export function createCropField(maxCells: number): CropField {
-  if (!sharedStalk) sharedStalk = stalkGeometry();
-  const capacity = Math.max(1, maxCells * STALKS_PER_CELL);
+  const group = new THREE.Group();
+  group.name = "crop-field";
 
   const uniforms = {
     uTime: { value: 0 },
     uWind: { value: 0.5 },
   };
 
-  // Les lames sont plates : sans `DoubleSide`, la moitié du champ disparaît
-  // selon l'angle de la caméra.
-  const material = new THREE.MeshLambertMaterial({ flatShading: true, side: THREE.DoubleSide });
-  material.onBeforeCompile = (shader) => {
-    shader.uniforms.uTime = uniforms.uTime;
-    shader.uniforms.uWind = uniforms.uWind;
-    shader.vertexShader = shader.vertexShader
-      .replace(
-        "#include <common>",
-        `#include <common>
-         uniform float uTime;
-         uniform float uWind;
-         attribute float aCut;
-         attribute float aPhase;
-         attribute float aDroop;`,
-      )
-      .replace(
-        "#include <begin_vertex>",
-        `#include <begin_vertex>
-         // La courbure croît comme le carré de la hauteur : pied planté,
-         // épi qui balaie. Deux fréquences pour que la houle ne soit pas
-         // un métronome.
-         float h = clamp(transformed.y, 0.0, 1.2);
-         // Un brin qui ploie oscille moins : il n'a plus la raideur d'une
-         // tige verte.
-         float bend = uWind * h * h * (1.0 - aDroop * 0.6) *
-           (sin(uTime * 1.7 + aPhase) * 0.055 + sin(uTime * 3.3 + aPhase * 1.7) * 0.022);
-         transformed.x += bend;
-         transformed.z += bend * 0.45;
+  /**
+   * Nuancier commun à toutes les espèces.
+   *
+   * Le vent est calculé ici et non sur le processeur : la tige se courbe en
+   * fonction du carré de sa hauteur — le pied reste planté, l'épi balaie.
+   * `uAccent` peint les sommets marqués : épi, gousse, fleur.
+   */
+  function makeMaterial(kind: CropShape): THREE.Material {
+    // Les lames sont plates : sans `DoubleSide`, la moitié du champ disparaît
+    // selon l'angle de la caméra.
+    const material = new THREE.MeshLambertMaterial({ flatShading: true, side: THREE.DoubleSide });
+    const accent = { value: new THREE.Color(CROP_ACCENT[kind]) };
+    material.onBeforeCompile = (shader) => {
+      shader.uniforms.uTime = uniforms.uTime;
+      shader.uniforms.uWind = uniforms.uWind;
+      shader.uniforms.uAccent = accent;
+      shader.vertexShader = shader.vertexShader
+        .replace(
+          "#include <common>",
+          `#include <common>
+           uniform float uTime;
+           uniform float uWind;
+           uniform vec3 uAccent;
+           attribute float aCut;
+           attribute float aPhase;
+           attribute float aDroop;
+           attribute float aRipe;
+           attribute float aAccent;`,
+        )
+        .replace(
+          "#include <color_vertex>",
+          `#include <color_vertex>
+           // Épis, gousses et fleurs prennent la teinte de l'espèce ; la tige
+           // garde celle de la case, qui dit la maturité.
+           vColor.xyz = mix(vColor.xyz, uAccent, aAccent);`,
+        )
+        .replace(
+          "#include <begin_vertex>",
+          `#include <begin_vertex>
+           // L'épi, la gousse et la fleur sortent avec la maturité : avant
+           // l'heure ils sont repliés contre la tige, presque invisibles.
+           if (aAccent > 0.5) {
+             transformed.x *= aRipe;
+             transformed.z *= aRipe;
+             transformed.y = mix(transformed.y * 0.6, transformed.y, aRipe);
+           }
+           // La courbure croît comme le carré de la hauteur : pied planté,
+           // épi qui balaie. Deux fréquences pour que la houle ne soit pas
+           // un métronome.
+           float h = clamp(transformed.y, 0.0, 1.2);
+           // Un brin qui ploie oscille moins : il n'a plus la raideur d'une
+           // tige verte.
+           float bend = uWind * h * h * (1.0 - aDroop * 0.6) *
+             (sin(uTime * 1.7 + aPhase) * 0.055 + sin(uTime * 3.3 + aPhase * 1.7) * 0.022);
+           transformed.x += bend;
+           transformed.z += bend * 0.45;
 
-         // Affaissement : la tige s'arque et perd de la hauteur, sans tomber
-         // — la case reste récoltable, mais elle a mauvaise mine.
-         if (aDroop > 0.0) {
-           transformed.x += aDroop * 0.22 * h * h;
-           transformed.y -= aDroop * 0.14 * h;
-         }
+           // Affaissement : la tige s'arque et perd de la hauteur, sans tomber
+           // — la case reste récoltable, mais elle a mauvaise mine.
+           if (aDroop > 0.0) {
+             transformed.x += aDroop * 0.22 * h * h;
+             transformed.y -= aDroop * 0.14 * h;
+           }
 
-         // Fauche : la tige se couche vers l'avant en se tassant.
-         if (aCut >= 0.0) {
-           float k = clamp((uTime - aCut) / ${CUT_TIME.toFixed(2)}, 0.0, 1.0);
-           float fall = k * k * (3.0 - 2.0 * k);
-           transformed.y *= 1.0 - 0.86 * fall;
-           transformed.x += 0.42 * fall * h;
-           transformed.z += 0.12 * fall * h;
-         }`,
-      );
-  };
-  // Deux matériaux compilés séparément si la clé diffère : on la fixe pour que
-  // les tiges partagent un seul programme.
-  material.customProgramCacheKey = () => "crop-field";
+           // Fauche : la tige se couche vers l'avant en se tassant.
+           if (aCut >= 0.0) {
+             float k = clamp((uTime - aCut) / ${CUT_TIME.toFixed(2)}, 0.0, 1.0);
+             float fall = k * k * (3.0 - 2.0 * k);
+             transformed.y *= 1.0 - 0.86 * fall;
+             transformed.x += 0.42 * fall * h;
+             transformed.z += 0.12 * fall * h;
+           }`,
+        );
+    };
+    // Deux matériaux compilés séparément si la clé diffère : on la fixe par
+    // espèce pour que toutes les tiges d'une culture partagent un programme.
+    material.customProgramCacheKey = () => `crop-field:${kind}`;
+    return material;
+  }
 
-  const mesh = new THREE.InstancedMesh(sharedStalk, material, capacity);
-  mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
-  // Aucune ombre portée sur la végétation (charte §4.9) : quatre mille brins
-  // dans la passe d'ombre ne donneraient que du bruit.
-  mesh.castShadow = false;
-  mesh.receiveShadow = false;
-  mesh.frustumCulled = false;
-  mesh.count = 0;
+  const buckets = new Map<CropShape, Bucket>();
 
-  const cutAttr = new THREE.InstancedBufferAttribute(new Float32Array(capacity).fill(-1), 1);
-  const phaseAttr = new THREE.InstancedBufferAttribute(new Float32Array(capacity), 1);
-  const droopAttr = new THREE.InstancedBufferAttribute(new Float32Array(capacity), 1);
-  mesh.geometry.setAttribute("aCut", cutAttr);
-  mesh.geometry.setAttribute("aPhase", phaseAttr);
-  mesh.geometry.setAttribute("aDroop", droopAttr);
-  mesh.instanceColor = new THREE.InstancedBufferAttribute(new Float32Array(capacity * 3), 3);
+  function makeBucket(kind: CropShape, capacity: number): Bucket {
+    const material = makeMaterial(kind);
+    const mesh = new THREE.InstancedMesh(cropShape(kind), material, capacity);
+    mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+    // Aucune ombre portée sur la végétation (charte §4.9) : quatre mille brins
+    // dans la passe d'ombre ne donneraient que du bruit.
+    mesh.castShadow = false;
+    mesh.receiveShadow = false;
+    mesh.frustumCulled = false;
+    mesh.count = 0;
+    mesh.name = `crop-${kind}`;
+
+    const cut = new THREE.InstancedBufferAttribute(new Float32Array(capacity).fill(-1), 1);
+    const phase = new THREE.InstancedBufferAttribute(new Float32Array(capacity), 1);
+    const droop = new THREE.InstancedBufferAttribute(new Float32Array(capacity), 1);
+    const ripe = new THREE.InstancedBufferAttribute(new Float32Array(capacity).fill(1), 1);
+    mesh.geometry.setAttribute("aCut", cut);
+    mesh.geometry.setAttribute("aPhase", phase);
+    mesh.geometry.setAttribute("aDroop", droop);
+    mesh.geometry.setAttribute("aRipe", ripe);
+    mesh.instanceColor = new THREE.InstancedBufferAttribute(new Float32Array(capacity * 3), 3);
+    group.add(mesh);
+    return { kind, mesh, material, cut, phase, droop, ripe, capacity, count: 0 };
+  }
+
+  /**
+   * Lot d'une espèce, dimensionné pour `needed` brins.
+   *
+   * Les attributs d'instance vivent sur la géométrie **partagée** entre lots :
+   * on les repose donc à chaque `setCells`, avant de remplir. Sans cela, deux
+   * espèces à l'écran se disputeraient le même tampon de fauche.
+   */
+  function bucketFor(kind: CropShape, needed: number): Bucket {
+    let bucket = buckets.get(kind);
+    if (bucket && bucket.capacity < needed) {
+      group.remove(bucket.mesh);
+      bucket.mesh.dispose();
+      bucket.material.dispose();
+      buckets.delete(kind);
+      bucket = undefined;
+    }
+    if (!bucket) {
+      bucket = makeBucket(kind, Math.max(64, needed));
+      buckets.set(kind, bucket);
+    }
+    return bucket;
+  }
 
   /** Plage d'instances occupée par chaque case, pour la fauche. */
-  const ranges = new Map<string, { start: number; count: number }>();
+  const ranges = new Map<string, { shape: CropShape; start: number; count: number }>();
   /** Cases fauchées : l'andain doit survivre à une reconstruction du champ. */
   const cutCells = new Map<string, number>();
 
   const dummy = new THREE.Object3D();
   const color = new THREE.Color();
 
+  /** Nombre de brins semés sur une case, densité et espèce comprises. */
+  function plantedOn(cell: CellEntry): number {
+    const density = Math.max(0, Math.min(1, cell.density ?? 1));
+    const perCell = STALKS_PER_CELL * CROP_DENSITY[cell.shape ?? "WHEAT"];
+    return Math.max(6, Math.round(perCell * (0.34 + 0.66 * density)));
+  }
+
   return {
-    object: mesh,
+    object: group,
 
     setCells(cells, cellSize) {
       ranges.clear();
-      let i = 0;
+      // Un premier passage compte, un second remplit : c'est ce qui permet de
+      // dimensionner chaque lot exactement, sans réserver six fois la place.
+      const need = new Map<CropShape, number>();
       for (const cell of cells) {
+        const kind = cell.shape ?? "WHEAT";
+        need.set(kind, (need.get(kind) ?? 0) + plantedOn(cell));
+      }
+      for (const [kind, n] of need) bucketFor(kind, n).count = 0;
+      // Une espèce qui n'est plus semée garde son lot — la parcelle change
+      // souvent de culture — mais n'affiche plus rien.
+      for (const bucket of buckets.values()) if (!need.has(bucket.kind)) bucket.count = 0;
+
+      for (const cell of cells) {
+        const kind = cell.shape ?? "WHEAT";
+        const bucket = buckets.get(kind)!;
+        const { mesh } = bucket;
         const k = `${cell.x},${cell.y}`;
-        const start = i;
-        // La densité se traduit en nombre de brins : c'est ce qui fait qu'une
-        // parcelle bien menée se voit de loin, sans lire un chiffre.
-        const density = Math.max(0, Math.min(1, cell.density ?? 1));
-        const planted = Math.max(6, Math.round(STALKS_PER_CELL * (0.34 + 0.66 * density)));
-        for (let s = 0; s < planted && i < capacity; s++, i++) {
+        const start = bucket.count;
+        const planted = plantedOn(cell);
+        let i = start;
+        for (let s = 0; s < planted && i < bucket.capacity; s++, i++) {
           // Semis en quinconce, décalé au hasard mais toujours le même :
-          // deux passages de `layout()` ne doivent pas redistribuer le champ.
+          // deux passages de `setCells()` ne doivent pas redistribuer le champ.
           const noise = Math.sin((cell.x * 12.9 + cell.y * 78.2 + s * 37.7) * 1.7) * 43758.5453;
           const rx = (noise % 1) - 0.5;
           const rz = ((noise * 1.37) % 1) - 0.5;
@@ -203,25 +297,37 @@ export function createCropField(maxCells: number): CropField {
           dummy.rotation.set(0, noise % Math.PI, 0);
           // Un peuplement clairsemé est aussi plus chétif : la case affamée
           // n'a pas que des trous, elle a des brins courts.
-          const grow = (0.78 + Math.abs(rx) * 0.5) * (0.72 + density * 0.28);
+          const grow = (0.78 + Math.abs(rx) * 0.5) * (0.72 + Math.max(0, Math.min(1, cell.density ?? 1)) * 0.28);
           dummy.scale.set(1, cell.height * grow, 1);
           dummy.updateMatrix();
           mesh.setMatrixAt(i, dummy.matrix);
 
           color.setHex(cell.color).offsetHSL(0, 0, rx * 0.05);
           mesh.setColorAt(i, color);
-          phaseAttr.setX(i, (cell.px + cell.pz) * 1.6 + s * 0.7);
-          droopAttr.setX(i, Math.max(0, Math.min(1, cell.droop ?? 0)) * (0.7 + Math.abs(rz)));
-          cutAttr.setX(i, cutCells.get(k) ?? -1);
+          bucket.phase.setX(i, (cell.px + cell.pz) * 1.6 + s * 0.7);
+          bucket.droop.setX(i, Math.max(0, Math.min(1, cell.droop ?? 0)) * (0.7 + Math.abs(rz)));
+          // Un épi par brin ne mûrit pas exactement comme son voisin.
+          bucket.ripe.setX(i, Math.max(0, Math.min(1, (cell.ripe ?? 1) * (0.88 + Math.abs(rx) * 0.3))));
+          bucket.cut.setX(i, cutCells.get(k) ?? -1);
         }
-        ranges.set(k, { start, count: i - start });
+        bucket.count = i;
+        ranges.set(k, { shape: kind, start, count: i - start });
       }
-      mesh.count = i;
-      mesh.instanceMatrix.needsUpdate = true;
-      if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
-      cutAttr.needsUpdate = true;
-      phaseAttr.needsUpdate = true;
-      droopAttr.needsUpdate = true;
+
+      for (const bucket of buckets.values()) {
+        bucket.mesh.count = bucket.count;
+        bucket.mesh.instanceMatrix.needsUpdate = true;
+        if (bucket.mesh.instanceColor) bucket.mesh.instanceColor.needsUpdate = true;
+        bucket.cut.needsUpdate = true;
+        bucket.phase.needsUpdate = true;
+        bucket.droop.needsUpdate = true;
+        bucket.ripe.needsUpdate = true;
+      }
+    },
+
+    shapeAt(x, y) {
+      const range = ranges.get(`${x},${y}`);
+      return range && range.count > 0 ? range.shape : null;
     },
 
     stalkCount(x, y) {
@@ -238,12 +344,14 @@ export function createCropField(maxCells: number): CropField {
       cutCells.set(k, t);
       const range = ranges.get(k);
       if (!range) return;
+      const bucket = buckets.get(range.shape);
+      if (!bucket) return;
       for (let i = range.start; i < range.start + range.count; i++) {
         // Un léger décalage par tige : la coupe balaie la case au lieu de
         // tomber d'un bloc.
-        cutAttr.setX(i, t + (i - range.start) * 0.012);
+        bucket.cut.setX(i, t + (i - range.start) * 0.012);
       }
-      cutAttr.needsUpdate = true;
+      bucket.cut.needsUpdate = true;
     },
 
     update(t, wind) {
@@ -258,8 +366,12 @@ export function createCropField(maxCells: number): CropField {
     },
 
     dispose() {
-      material.dispose();
-      mesh.dispose();
+      for (const bucket of buckets.values()) {
+        bucket.material.dispose();
+        bucket.mesh.dispose();
+      }
+      buckets.clear();
+      group.clear();
       ranges.clear();
       cutCells.clear();
     },
