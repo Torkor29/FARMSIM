@@ -1304,19 +1304,60 @@ export function IsoFarmView({
      * données, et recadrer d'office renverrait le joueur au centre à chaque
      * fois — insupportable dès qu'on travaille sur un coin de la parcelle.
      */
+    /**
+     * Largeur des rails, lue sur la coquille.
+     *
+     * Le canevas couvre toute la fenêtre — sans quoi une couture de ciel
+     * apparaît sur les bords de la colonne centrale. Mais la parcelle, elle,
+     * doit tenir dans ce qui **reste visible** entre les rails : cadrée sur la
+     * fenêtre entière, elle passait derrière eux des deux côtés.
+     */
+    function railInsets(): { left: number; right: number } {
+      const shell = el.closest(".game-stage");
+      if (!shell) return { left: 0, right: 0 };
+      const css = getComputedStyle(shell);
+      const px = (v: string) => {
+        const n = Number.parseFloat(v);
+        return Number.isFinite(n) ? n : 0;
+      };
+      // Les rails vides ne réservent rien : on ne lit donc pas le jeton mais la
+      // colonne réellement occupée.
+      const cols = css.gridTemplateColumns.split(" ").map(px);
+      if (cols.length < 3) return { left: 0, right: cols.length === 2 ? cols[1] : 0 };
+      return { left: cols[0], right: cols[2] };
+    }
+
     function applyCamera() {
       const span = viewSpan;
-      const aspect = el.clientWidth / Math.max(1, el.clientHeight);
+      const w = Math.max(1, el.clientWidth);
+      const h = Math.max(1, el.clientHeight);
+      const aspect = w / h;
+      const rails = railInsets();
+      const stage = Math.max(120, w - rails.left - rails.right);
       // Le cadrage se réglait sur la hauteur seule. Sur un écran en portrait,
       // l'étendue horizontale — la hauteur multipliée par le rapport, donc
       // plus petite — ne suffisait pas à contenir la parcelle : on atterrissait
       // dans un coin, la grille coupée des deux côtés. On recule jusqu'à ce
-      // qu'elle tienne dans la dimension la plus étroite.
-      const frustum = (span * 0.72) / Math.min(1, aspect) / view.zoom;
+      // qu'elle tienne dans la dimension la plus étroite, puis on recule encore
+      // de ce que les rails mangent.
+      // La demi-largeur visible en unités monde vaut `frustum × aspect ×
+      // stage / w`, la demi-hauteur `frustum`. La parcelle doit tenir dans les
+      // deux, d'où ce seul rapport — le premier essai divisait par le rapport
+      // de la scène **et** remultipliait par celui de la fenêtre, ce qui
+      // reculait deux fois et réduisait la ferme de moitié.
+      // Six pour cent de marge quand c'est la largeur qui contraint : sinon la
+      // parcelle vient toucher le rail, et sa dernière colonne de cases passe
+      // sous le verre.
+      const frustum = (span * 0.72) / Math.min(1, (stage * 0.94) / h) / view.zoom;
       camera.left = -frustum * aspect;
       camera.right = frustum * aspect;
       camera.top = frustum;
       camera.bottom = -frustum;
+      // Recentrage sur la partie libre : avec un seul rail, le milieu de la
+      // fenêtre n'est pas le milieu de ce qu'on voit.
+      const shift = (rails.left - rails.right) / 2;
+      if (shift) camera.setViewOffset(w, h, -shift, 0, w, h);
+      else camera.clearViewOffset();
       camera.updateProjectionMatrix();
       camera.position.set(span * 0.95 + view.panX, span * 0.85, span * 0.95 + view.panZ);
       camera.lookAt(view.panX, 0, view.panZ);

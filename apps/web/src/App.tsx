@@ -85,6 +85,9 @@ import { DevPanel, type DevGrant } from "./DevPanel";
 import { NO_ALERTS, tabBadge, useAwayAlerts, useNotificationState, type FarmAlerts } from "./use-alerts";
 const API = "/api";
 
+/** Durée d'affichage d'un message passager — charte §8.1 #17. */
+const TOAST_MS = 3200;
+
 type SessionResume = {
   awayMs: number;
   awayLabel: string;
@@ -362,7 +365,7 @@ function harvestGrainNote(r: {
   if (!r.soldTons) return `Récolte ${total} t${hay}`;
   const money = r.soldRevenue ? ` · +${Math.round(r.soldRevenue)} TRN` : "";
   if (r.soldReason === "NO_SILO") {
-    return `Récolte ${total} t vendue tout de suite (pas de silo)${money}${hay}`;
+    return `Récolte ${total} t vendue au champ, faute de silo${money}${hay}`;
   }
   return `Récolte ${total} t · ${r.soldTons.toFixed(2)} t vendues (silo plein)${money}${hay}`;
 }
@@ -478,6 +481,7 @@ export function App() {
   const playHaulRef = useRef<(commodity?: string) => void>(() => undefined);
   const [hoverCell, setHoverCell] = useState<{ x: number; y: number } | null>(null);
   const [toastTick, setToastTick] = useState(0);
+  const [toastTone, setToastTone] = useState<"good" | "warn">("good");
   const [worldContinents, setWorldContinents] = useState<WorldContinent[]>([]);
   const [continentDetail, setContinentDetail] = useState<ContinentDetail | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
@@ -612,8 +616,9 @@ export function App() {
       const money = dump.revenue ? ` · +${Math.round(dump.revenue)} TRN` : "";
       flashToast(
         dump.reason === "NO_SILO"
-          ? `Grain vendu tout de suite (pas de silo)${money}`
-          : `Silo plein : ${dump.soldTons.toFixed(2)} t vendues tout de suite${money}`,
+          ? `${dump.soldTons.toFixed(1)} t vendues au champ, faute de silo${money}`
+          : `Silo plein : ${dump.soldTons.toFixed(1)} t vendues au champ${money}`,
+        "warn",
       );
       markGuideFlag("sold");
     }
@@ -1277,18 +1282,30 @@ export function App() {
   const notifications = useNotificationState();
   useAwayAlerts(alerts, notifications.state === "granted");
 
-  function flashToast(text: string, isError = false) {
-    if (isError) setErr(text);
-    else {
+  /**
+   * Un message passager, et son **ton**.
+   *
+   * Il n'y avait que deux tons — vert « bon coup » et rouge « raté ». Une
+   * vente forcée faute de silo s'affichait donc en vert, alors qu'elle
+   * signale précisément qu'on a perdu de l'argent. Le ton `warn` dit ce
+   * troisième cas : ça s'est fait, mais pas comme il aurait fallu.
+   */
+  function flashToast(text: string, isError: boolean | "warn" = false) {
+    if (isError === true) {
+      setErr(text);
+    } else {
       setErr(null);
       setMsg(text);
+      setToastTone(isError === "warn" ? "warn" : "good");
     }
     setToastTick((n) => n + 1);
   }
 
+  // Trois secondes deux, charte §8.1 #17 — et la barre de progression du toast
+  // lit la même durée, sinon elle ment sur le temps qu'il reste.
   useEffect(() => {
     if (!msg) return;
-    const t = window.setTimeout(() => setMsg(null), 2800);
+    const t = window.setTimeout(() => setMsg(null), TOAST_MS);
     return () => window.clearTimeout(t);
   }, [msg, toastTick]);
 
@@ -3008,8 +3025,9 @@ export function App() {
           )}
         </button>
         {(msg || err) && (
-          <div key={toastTick} className={`toast ${err ? "bad" : "good"} pop`}>
-            {err ?? msg}
+          <div key={toastTick} className={`toast ${err ? "bad" : toastTone}`} role="status">
+            <span>{err ?? msg}</span>
+            <i className="toast-bar" />
           </div>
         )}
       </div>
@@ -3083,184 +3101,7 @@ export function App() {
         </aside>
       )}
 
-      <aside className={panelClass("geo-panel", "INFO")} {...(isMobile ? sheetGesture : {})}>
-        <h3>{homeCity || zoneName}</h3>
-        <dl>
-          <div>
-            <dt>Région</dt>
-            <dd>{zoneName}</dd>
-          </div>
-          <div>
-            <dt>Continent</dt>
-            <dd>{continentName || "—"}</dd>
-          </div>
-          <div>
-            <dt>Climat</dt>
-            <dd title={koppen}>{climateLabel || koppen}</dd>
-          </div>
-          <div>
-            <dt>Saison</dt>
-            <dd>{SEASON_LABELS[season]}</dd>
-          </div>
-          <div>
-            <dt>Météo</dt>
-            <dd className="wx">{weatherLabel}</dd>
-          </div>
-          <div>
-            <dt>Fertilité</dt>
-            <dd>{Math.round((parcel?.fertility ?? 0.7) * 100)} %</dd>
-          </div>
-          <div>
-            <dt>Parcelle</dt>
-            <dd>
-              {PARCEL_HECTARES} Ha ({gw}×{gh})
-            </dd>
-          </div>
-        </dl>
-        <div className="progress">
-          <span style={{ width: `${Math.round(avgProgress * 100)}%` }} />
-        </div>
-        <p className="muted tiny">Occupation cultures · {Math.round(avgProgress * 100)}%</p>
 
-        {rotationAlert && (
-          <div className="harvest-alert warn">
-            <strong>
-              Même culture sur {rotationAlert.cells} case
-              {rotationAlert.cells > 1 ? "s" : ""}
-            </strong>
-            <span>
-              Jusqu’à −{rotationAlert.malus} % de rendement : les maladies du sol s’installent.
-              Alternez pour retrouver l’effet précédent.
-            </span>
-          </div>
-        )}
-        {harvestAlert && (
-          <div className={`harvest-alert ${harvestAlert.level}`}>
-            <strong>{harvestAlert.title}</strong>
-            <span>{harvestAlert.detail}</span>
-          </div>
-        )}
-
-        <h3 className="spaced">Mes parcelles</h3>
-        <div className="chip-row">
-          {ownedParcels.map((p) => (
-            <button
-              key={p.id}
-              type="button"
-              className={activeParcelId === p.id ? "chip on" : "chip"}
-              onClick={() => setActiveParcelId(p.id)}
-            >
-              {p.label}
-            </button>
-          ))}
-        </div>
-      </aside>
-
-      <aside className={panelClass("build-panel", "BUILD")} {...(isMobile ? sheetGesture : {})}>
-        <h3>Construire</h3>
-        <div className="build-list">
-          {(Object.keys(BUILDING_DEFS) as BuildingType[]).map((t) => {
-            const d = BUILDING_DEFS[t];
-            return (
-              <button
-                key={t}
-                type="button"
-                className={`build-item art ${tool === "BUILD" && buildType === t ? "on" : ""}`}
-                onClick={() => {
-                  setTool("BUILD");
-                  setBuildType(t);
-                  setSelectedCells([]);
-                }}
-              >
-                <img className="build-art" src={BUILDING_ART[t]} alt="" loading="lazy" />
-                <span className="build-text">
-                  <strong>{d.name}</strong>
-                  <span>
-                    {d.w}×{d.h} · {d.cost} TRN
-                  </span>
-                  <span className="muted tiny">{d.description}</span>
-                </span>
-              </button>
-            );
-          })}
-        </div>
-
-        {(parcel?.buildings?.length ?? 0) > 0 && (
-          <>
-            <h3 className="spaced">Améliorer</h3>
-            <div className="build-list">
-              {(parcel?.buildings ?? []).map((b) => {
-                const d = BUILDING_DEFS[b.type];
-                const lvl = b.level ?? 1;
-                const cost = buildingUpgradeCost(b.type, lvl);
-                const next = lvl < MAX_BUILDING_LEVEL ? buildingLevelDef(lvl + 1) : null;
-                const blocked = next ? player.level < next.requiredLevel : false;
-                // Le montant affiché est celui qu'on touchera vraiment : dans
-                // la fenêtre de regret, la démolition rend l'intégralité.
-                const age = b.createdAt ? Date.now() - Date.parse(b.createdAt) : undefined;
-                const refund = buildingResaleValue(b.type, lvl, age);
-                return (
-                  <div key={b.id} className="upgrade-item">
-                    <img className="build-art small" src={BUILDING_ART[b.type]} alt="" />
-                    <span className="build-text">
-                      <strong>{d.name}</strong>
-                      <span className="level-row">
-                        {Array.from({ length: MAX_BUILDING_LEVEL }, (_, i) => (
-                          <i key={i} className={`pip ${i < lvl ? "on" : ""}`} />
-                        ))}
-                        <em>
-                          Nv.{lvl} · {buildingLevelDef(lvl).name}
-                        </em>
-                      </span>
-                    </span>
-                    <span className="upgrade-actions">
-                      {cost === null ? (
-                        <span className="upgrade-max">Niveau max</span>
-                      ) : blocked ? (
-                        <span className="upgrade-locked">Nv. joueur {next?.requiredLevel}</span>
-                      ) : player.crd < cost ? (
-                        <span className="upgrade-locked poor">{cost} TRN</span>
-                      ) : (
-                        <button
-                          type="button"
-                          className="upgrade-btn"
-                          disabled={busy}
-                          title={`Passer au niveau ${lvl + 1} — ${buildingLevelDef(lvl + 1).name}`}
-                          onClick={() => upgradeBuilding(b.id)}
-                        >
-                          ↑ {cost} TRN
-                        </button>
-                      )}
-                      <button
-                        type="button"
-                        className="upgrade-btn"
-                        disabled={busy}
-                        title="Tourner d'un quart de tour"
-                        onClick={() => void rotateBuilding(b.id, d.name)}
-                      >
-                        ⟳
-                      </button>
-                      <button
-                        type="button"
-                        className={`sell-btn${age != null && withinRegret(age) ? " regret" : ""}`}
-                        disabled={busy}
-                        title={
-                          age != null && withinRegret(age)
-                            ? `Posé à l'instant — démolition intégralement remboursée (${refund} TRN)`
-                            : `Démolir et récupérer ${refund} TRN`
-                        }
-                        onClick={() => sellBuilding(b.id, d.name)}
-                      >
-                        Démolir {refund}
-                      </button>
-                    </span>
-                  </div>
-                );
-              })}
-            </div>
-          </>
-        )}
-      </aside>
 
       {/*
         Barre de pose. Elle n'apparaît qu'une fois la place retenue, et c'est
@@ -3301,6 +3142,400 @@ export function App() {
           </div>
         </div>
       )}
+
+
+      {/*
+        Les deux rails.
+
+        Les panneaux flottaient chacun en absolu, ancrés à des `top`/`bottom`
+        en rem : le garage et l'élevage démarraient l'un dans l'autre, les
+        missions percutaient le garage sous mille pixels de haut, et le bandeau
+        du haut leur passait dessus dès que les cotations passaient à la ligne.
+        Ils vivent maintenant dans deux colonnes qui défilent — la grille de
+        `.game-shell` réserve leur largeur, la scène 3D reste plein écran
+        derrière. Sur téléphone les rails s'effacent (`display: contents`) et
+        les panneaux redeviennent des tiroirs.
+      */}
+      <div className="rail rail-left">
+        {(isMobile ? sheet === "GARAGE" : showGarage) && (
+          <aside className={panelClass("garage-panel", "GARAGE")} {...(isMobile ? sheetGesture : {})}>
+            <h3>Garage</h3>
+            <p className="muted tiny">
+              Graissez et nettoyez : la machine s’use moins et récolte un peu plus.
+              Rafistoler ramène à mi-chemin, réviser remet à 100 %.
+            </p>
+            <ul className="list">
+              {(player.farm?.machines ?? []).map((m) => {
+                const def = MACHINE_DEFS[m.type as MachineType];
+                const low = def ? m.condition < def.minCondition : m.condition < 15;
+                const dirty = (m.dirt ?? 0) >= DIRT_DIRTY_THRESHOLD;
+                const panne = isBreakdownKind(m.breakdown) ? BREAKDOWN_LABELS[m.breakdown] : null;
+                const eta = true;
+                const halfTarget = repairHalfwayTarget(m.condition);
+                const halfQuote = def
+                  ? repairQuote({
+                      condition: m.condition,
+                      repairCostPerPoint: def.repairCostPerPoint,
+                      targetCondition: halfTarget,
+                    })
+                  : null;
+                const fullQuote = def
+                  ? repairQuote({
+                      condition: m.condition,
+                      repairCostPerPoint: def.repairCostPerPoint,
+                      targetCondition: 100,
+                    })
+                  : null;
+                const canHalf = Boolean(halfQuote && halfQuote.points > 0.5 && m.condition < 99.5);
+                const canFull = Boolean(fullQuote && fullQuote.points > 0.5 && m.condition < 99.5);
+                return (
+                  <li key={m.id}>
+                    <span>
+                      <strong>{def?.name ?? m.type}</strong>
+                      <div className={`muted tiny ${low || panne ? "warn" : ""}`}>
+                        État {m.condition.toFixed(0)}% ·{" "}
+                        {m.condition <= 0
+                          ? "HS"
+                          : m.condition < 15
+                            ? "à réparer"
+                            : m.condition < 40
+                              ? "usé"
+                              : m.condition < 70
+                                ? "correct"
+                                : m.condition < 90
+                                  ? "bon"
+                                  : "neuf"}
+                        {m.greased !== false && !dirty && !panne ? " · propre et graissé (+)" : ""}
+                        {m.greased === false ? " · pas graissé" : ""}
+                        {dirty ? " · sale" : ""}
+                        {panne ? ` · panne ${panne}` : ""}
+                        {m.storedInBuildingId ? " · hangar" : m.parkedParcelId ? " · parcelle" : ""}
+                      </div>
+                    </span>
+                    <span className="row-actions">
+                          <button
+                            type="button"
+                            disabled={busy || (m.greased !== false && (m.greaseSkipStreak ?? 0) === 0)}
+                            title={`${GREASE_COST_CRD} TRN`}
+                            onClick={() => setCare({ mode: "grease", machineId: m.id })}
+                          >
+                            Graisser
+                          </button>
+                          <button
+                            type="button"
+                            disabled={busy || (m.dirt ?? 0) < 8}
+                            title={`${CLEAN_COST_CRD} TRN`}
+                            onClick={() => setCare({ mode: "clean", machineId: m.id })}
+                          >
+                            Nettoyer
+                          </button>
+                      <button
+                        type="button"
+                        disabled={busy || !canHalf || (halfQuote != null && player.crd < halfQuote.cost)}
+                        title={halfQuote ? `État → ${halfTarget.toFixed(0)} %` : ""}
+                        onClick={() => repairMachine(m.id, "half")}
+                      >
+                        Rafistoler {halfQuote ? `${halfQuote.cost} TRN` : ""}
+                      </button>
+                      <button
+                        type="button"
+                        disabled={busy || !canFull || (fullQuote != null && player.crd < fullQuote.cost)}
+                        title="Révision complète"
+                        onClick={() => repairMachine(m.id, "full")}
+                      >
+                        Réviser {fullQuote ? `${fullQuote.cost} TRN` : ""}
+                      </button>
+                      <button
+                        type="button"
+                        className="sell-btn"
+                        disabled={busy}
+                        title={`Reprise ${machineResaleValue(m.type as MachineType, m.condition)} TRN`}
+                        onClick={() => sellMachine(m.id, def?.name ?? m.type)}
+                      >
+                        Vendre {machineResaleValue(m.type as MachineType, m.condition)}
+                      </button>
+                    </span>
+                  </li>
+                );
+              })}
+              {(player.farm?.machines.length ?? 0) === 0 && (
+                <li className="muted">Aucune machine</li>
+              )}
+            </ul>
+            <h3 className="spaced">Acheter</h3>
+            <div className="build-list">
+              {(Object.keys(MACHINE_DEFS) as MachineType[]).map((t) => {
+                const d = MACHINE_DEFS[t];
+                return (
+                  <button
+                    key={t}
+                    type="button"
+                    className="build-item art"
+                    disabled={busy}
+                    onClick={() => buyMachine(t)}
+                  >
+                    <img className="build-art" src={MACHINE_ART[t]} alt="" loading="lazy" />
+                    <span className="build-text">
+                      <strong>{d.name}</strong>
+                      <span>{d.cost} TRN</span>
+                      <span className="muted tiny">{d.description}</span>
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+          </aside>
+        )}
+        {(isMobile ? sheet === "HERD" : showHerd) && (
+        <LivestockPanel
+          className={panelClass("livestock-panel", "HERD")}
+          gesture={isMobile ? sheetGesture : undefined}
+          onClose={() => {
+            if (isMobile) setSheet(null);
+            else setShowHerd(false);
+          }}
+          barns={barns}
+          busy={busy}
+          crd={player.crd}
+          onBuyAnimals={buyAnimals}
+          onGraze={grazeHerd}
+          onFeed={feedHerd}
+          onMilk={milkHerd}
+          onCollectEggs={collectEggs}
+          onShear={shearHerd}
+          onSlaughter={slaughterHerd}
+          onSpreadManure={spreadManure}
+          onSellManure={sellManure}
+          hayTons={hayInStock}
+          maizeTons={maizeInStock}
+          barleyTons={barleyInStock}
+          wheatTons={wheatInStock}
+          onBuildPaddock={(yardType) => {
+            setTool("BUILD");
+            setBuildType(yardType);
+            setSelectedCells([]);
+            flashToast(
+              yardType === "PIG_YARD"
+                ? "Posez la courette contre un bord de la porcherie"
+                : yardType === "HEN_YARD"
+                  ? "Posez la courette contre un bord du poulailler"
+                  : "Posez l’enclos contre un bord de l’étable",
+            );
+          }}
+        />
+        )}
+        {(isMobile ? sheet === "OFFICE" : showEta) && (
+          <MissionsPanel
+            className={panelClass("eta-panel", "OFFICE")}
+            gesture={isMobile ? sheetGesture : undefined}
+            busy={busy}
+            onlinePlayers={onlinePlayers}
+            visitName={visitOrder?.clientName ?? null}
+            visitLeft={visitOrder?.remaining ?? null}
+            helpWanted={laborBoard}
+            myAsks={myPostedLabor}
+            solo={contracts}
+            onAcceptHelp={(id) => void acceptLaborOrder(id)}
+            onCancelAsk={(id) =>
+              void api(`/labor-orders/${id}/cancel`, {
+                method: "POST",
+                body: JSON.stringify({ userId: player.id }),
+              }).then(() => refreshMeta())
+            }
+            onAcceptSolo={(id) => acceptContract(id)}
+            locked={Boolean(visitOrder) || Boolean(activeMission)}
+            zones={zones.filter(
+              (z) =>
+                ownedParcels.length === 0 ||
+                ownedParcels.some((op) => op.zone?.code === z.code) ||
+                z.parcels.some((p) => expandableParcelIds.has(p.id)),
+            )}
+            myFarmId={player.farm?.id}
+            expandableIds={expandableParcelIds}
+            onBuyField={buyAdjacent}
+          />
+        )}
+      </div>
+
+      <div className="rail rail-right">
+        <aside className={panelClass("geo-panel", "INFO")} {...(isMobile ? sheetGesture : {})}>
+          <h3>{homeCity || zoneName}</h3>
+          <dl>
+            <div>
+              <dt>Région</dt>
+              <dd>{zoneName}</dd>
+            </div>
+            <div>
+              <dt>Continent</dt>
+              <dd>{continentName || "—"}</dd>
+            </div>
+            <div>
+              <dt>Climat</dt>
+              <dd title={koppen}>{climateLabel || koppen}</dd>
+            </div>
+            <div>
+              <dt>Saison</dt>
+              <dd>{SEASON_LABELS[season]}</dd>
+            </div>
+            <div>
+              <dt>Météo</dt>
+              <dd className="wx">{weatherLabel}</dd>
+            </div>
+            <div>
+              <dt>Fertilité</dt>
+              <dd>{Math.round((parcel?.fertility ?? 0.7) * 100)} %</dd>
+            </div>
+            <div>
+              <dt>Parcelle</dt>
+              <dd>
+                {PARCEL_HECTARES} Ha ({gw}×{gh})
+              </dd>
+            </div>
+          </dl>
+          <div className="progress">
+            <span style={{ width: `${Math.round(avgProgress * 100)}%` }} />
+          </div>
+          <p className="muted tiny">Occupation cultures · {Math.round(avgProgress * 100)}%</p>
+
+          {rotationAlert && (
+            <div className="harvest-alert warn">
+              <strong>
+                Même culture sur {rotationAlert.cells} case
+                {rotationAlert.cells > 1 ? "s" : ""}
+              </strong>
+              <span>
+                Jusqu’à −{rotationAlert.malus} % de rendement : les maladies du sol s’installent.
+                Alternez pour retrouver l’effet précédent.
+              </span>
+            </div>
+          )}
+          {harvestAlert && (
+            <div className={`harvest-alert ${harvestAlert.level}`}>
+              <strong>{harvestAlert.title}</strong>
+              <span>{harvestAlert.detail}</span>
+            </div>
+          )}
+
+          <h3 className="spaced">Mes parcelles</h3>
+          <div className="chip-row">
+            {ownedParcels.map((p) => (
+              <button
+                key={p.id}
+                type="button"
+                className={activeParcelId === p.id ? "chip on" : "chip"}
+                onClick={() => setActiveParcelId(p.id)}
+              >
+                {p.label}
+              </button>
+            ))}
+          </div>
+        </aside>
+        <aside className={panelClass("build-panel", "BUILD")} {...(isMobile ? sheetGesture : {})}>
+          <h3>Construire</h3>
+          <div className="build-list">
+            {(Object.keys(BUILDING_DEFS) as BuildingType[]).map((t) => {
+              const d = BUILDING_DEFS[t];
+              return (
+                <button
+                  key={t}
+                  type="button"
+                  className={`build-item art ${tool === "BUILD" && buildType === t ? "on" : ""}`}
+                  onClick={() => {
+                    setTool("BUILD");
+                    setBuildType(t);
+                    setSelectedCells([]);
+                  }}
+                >
+                  <img className="build-art" src={BUILDING_ART[t]} alt="" loading="lazy" />
+                  <span className="build-text">
+                    <strong>{d.name}</strong>
+                    <span>
+                      {d.w}×{d.h} · {d.cost} TRN
+                    </span>
+                    <span className="muted tiny">{d.description}</span>
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+
+          {(parcel?.buildings?.length ?? 0) > 0 && (
+            <>
+              <h3 className="spaced">Améliorer</h3>
+              <div className="build-list">
+                {(parcel?.buildings ?? []).map((b) => {
+                  const d = BUILDING_DEFS[b.type];
+                  const lvl = b.level ?? 1;
+                  const cost = buildingUpgradeCost(b.type, lvl);
+                  const next = lvl < MAX_BUILDING_LEVEL ? buildingLevelDef(lvl + 1) : null;
+                  const blocked = next ? player.level < next.requiredLevel : false;
+                  // Le montant affiché est celui qu'on touchera vraiment : dans
+                  // la fenêtre de regret, la démolition rend l'intégralité.
+                  const age = b.createdAt ? Date.now() - Date.parse(b.createdAt) : undefined;
+                  const refund = buildingResaleValue(b.type, lvl, age);
+                  return (
+                    <div key={b.id} className="upgrade-item">
+                      <img className="build-art small" src={BUILDING_ART[b.type]} alt="" />
+                      <span className="build-text">
+                        <strong>{d.name}</strong>
+                        <span className="level-row">
+                          {Array.from({ length: MAX_BUILDING_LEVEL }, (_, i) => (
+                            <i key={i} className={`pip ${i < lvl ? "on" : ""}`} />
+                          ))}
+                          <em>
+                            Nv.{lvl} · {buildingLevelDef(lvl).name}
+                          </em>
+                        </span>
+                      </span>
+                      <span className="upgrade-actions">
+                        {cost === null ? (
+                          <span className="upgrade-max">Niveau max</span>
+                        ) : blocked ? (
+                          <span className="upgrade-locked">Nv. joueur {next?.requiredLevel}</span>
+                        ) : player.crd < cost ? (
+                          <span className="upgrade-locked poor">{cost} TRN</span>
+                        ) : (
+                          <button
+                            type="button"
+                            className="upgrade-btn"
+                            disabled={busy}
+                            title={`Passer au niveau ${lvl + 1} — ${buildingLevelDef(lvl + 1).name}`}
+                            onClick={() => upgradeBuilding(b.id)}
+                          >
+                            ↑ {cost} TRN
+                          </button>
+                        )}
+                        <button
+                          type="button"
+                          className="upgrade-btn"
+                          disabled={busy}
+                          title="Tourner d'un quart de tour"
+                          onClick={() => void rotateBuilding(b.id, d.name)}
+                        >
+                          ⟳
+                        </button>
+                        <button
+                          type="button"
+                          className={`sell-btn${age != null && withinRegret(age) ? " regret" : ""}`}
+                          disabled={busy}
+                          title={
+                            age != null && withinRegret(age)
+                              ? `Posé à l'instant — démolition intégralement remboursée (${refund} TRN)`
+                              : `Démolir et récupérer ${refund} TRN`
+                          }
+                          onClick={() => sellBuilding(b.id, d.name)}
+                        >
+                          Démolir {refund}
+                        </button>
+                      </span>
+                    </div>
+                  );
+                })}
+              </div>
+            </>
+          )}
+        </aside>
+      </div>
 
       <FieldDock
         tool={tool}
@@ -3345,135 +3580,6 @@ export function App() {
         onDev={() => setShowDev(true)}
       />
 
-      {(isMobile ? sheet === "GARAGE" : showGarage) && (
-        <aside className={panelClass("garage-panel", "GARAGE")} {...(isMobile ? sheetGesture : {})}>
-          <h3>Garage</h3>
-          <p className="muted tiny">
-            Graissez et nettoyez : la machine s’use moins et récolte un peu plus.
-            Rafistoler ramène à mi-chemin, réviser remet à 100 %.
-          </p>
-          <ul className="list">
-            {(player.farm?.machines ?? []).map((m) => {
-              const def = MACHINE_DEFS[m.type as MachineType];
-              const low = def ? m.condition < def.minCondition : m.condition < 15;
-              const dirty = (m.dirt ?? 0) >= DIRT_DIRTY_THRESHOLD;
-              const panne = isBreakdownKind(m.breakdown) ? BREAKDOWN_LABELS[m.breakdown] : null;
-              const eta = true;
-              const halfTarget = repairHalfwayTarget(m.condition);
-              const halfQuote = def
-                ? repairQuote({
-                    condition: m.condition,
-                    repairCostPerPoint: def.repairCostPerPoint,
-                    targetCondition: halfTarget,
-                  })
-                : null;
-              const fullQuote = def
-                ? repairQuote({
-                    condition: m.condition,
-                    repairCostPerPoint: def.repairCostPerPoint,
-                    targetCondition: 100,
-                  })
-                : null;
-              const canHalf = Boolean(halfQuote && halfQuote.points > 0.5 && m.condition < 99.5);
-              const canFull = Boolean(fullQuote && fullQuote.points > 0.5 && m.condition < 99.5);
-              return (
-                <li key={m.id}>
-                  <span>
-                    <strong>{def?.name ?? m.type}</strong>
-                    <div className={`muted tiny ${low || panne ? "warn" : ""}`}>
-                      État {m.condition.toFixed(0)}% ·{" "}
-                      {m.condition <= 0
-                        ? "HS"
-                        : m.condition < 15
-                          ? "à réparer"
-                          : m.condition < 40
-                            ? "usé"
-                            : m.condition < 70
-                              ? "correct"
-                              : m.condition < 90
-                                ? "bon"
-                                : "neuf"}
-                      {m.greased !== false && !dirty && !panne ? " · propre et graissé (+)" : ""}
-                      {m.greased === false ? " · pas graissé" : ""}
-                      {dirty ? " · sale" : ""}
-                      {panne ? ` · panne ${panne}` : ""}
-                      {m.storedInBuildingId ? " · hangar" : m.parkedParcelId ? " · parcelle" : ""}
-                    </div>
-                  </span>
-                  <span className="row-actions">
-                        <button
-                          type="button"
-                          disabled={busy || (m.greased !== false && (m.greaseSkipStreak ?? 0) === 0)}
-                          title={`${GREASE_COST_CRD} TRN`}
-                          onClick={() => setCare({ mode: "grease", machineId: m.id })}
-                        >
-                          Graisser
-                        </button>
-                        <button
-                          type="button"
-                          disabled={busy || (m.dirt ?? 0) < 8}
-                          title={`${CLEAN_COST_CRD} TRN`}
-                          onClick={() => setCare({ mode: "clean", machineId: m.id })}
-                        >
-                          Nettoyer
-                        </button>
-                    <button
-                      type="button"
-                      disabled={busy || !canHalf || (halfQuote != null && player.crd < halfQuote.cost)}
-                      title={halfQuote ? `État → ${halfTarget.toFixed(0)} %` : ""}
-                      onClick={() => repairMachine(m.id, "half")}
-                    >
-                      Rafistoler {halfQuote ? `${halfQuote.cost} TRN` : ""}
-                    </button>
-                    <button
-                      type="button"
-                      disabled={busy || !canFull || (fullQuote != null && player.crd < fullQuote.cost)}
-                      title="Révision complète"
-                      onClick={() => repairMachine(m.id, "full")}
-                    >
-                      Réviser {fullQuote ? `${fullQuote.cost} TRN` : ""}
-                    </button>
-                    <button
-                      type="button"
-                      className="sell-btn"
-                      disabled={busy}
-                      title={`Reprise ${machineResaleValue(m.type as MachineType, m.condition)} TRN`}
-                      onClick={() => sellMachine(m.id, def?.name ?? m.type)}
-                    >
-                      Vendre {machineResaleValue(m.type as MachineType, m.condition)}
-                    </button>
-                  </span>
-                </li>
-              );
-            })}
-            {(player.farm?.machines.length ?? 0) === 0 && (
-              <li className="muted">Aucune machine</li>
-            )}
-          </ul>
-          <h3 className="spaced">Acheter</h3>
-          <div className="build-list">
-            {(Object.keys(MACHINE_DEFS) as MachineType[]).map((t) => {
-              const d = MACHINE_DEFS[t];
-              return (
-                <button
-                  key={t}
-                  type="button"
-                  className="build-item art"
-                  disabled={busy}
-                  onClick={() => buyMachine(t)}
-                >
-                  <img className="build-art" src={MACHINE_ART[t]} alt="" loading="lazy" />
-                  <span className="build-text">
-                    <strong>{d.name}</strong>
-                    <span>{d.cost} TRN</span>
-                    <span className="muted tiny">{d.description}</span>
-                  </span>
-                </button>
-              );
-            })}
-          </div>
-        </aside>
-      )}
 
       <MarketPanel
         open={showMarket}
@@ -3507,44 +3613,6 @@ export function App() {
         onTick={devTick}
       />
 
-      {(isMobile ? sheet === "HERD" : showHerd) && (
-      <LivestockPanel
-        className={panelClass("livestock-panel", "HERD")}
-        gesture={isMobile ? sheetGesture : undefined}
-        onClose={() => {
-          if (isMobile) setSheet(null);
-          else setShowHerd(false);
-        }}
-        barns={barns}
-        busy={busy}
-        crd={player.crd}
-        onBuyAnimals={buyAnimals}
-        onGraze={grazeHerd}
-        onFeed={feedHerd}
-        onMilk={milkHerd}
-        onCollectEggs={collectEggs}
-        onShear={shearHerd}
-        onSlaughter={slaughterHerd}
-        onSpreadManure={spreadManure}
-        onSellManure={sellManure}
-        hayTons={hayInStock}
-        maizeTons={maizeInStock}
-        barleyTons={barleyInStock}
-        wheatTons={wheatInStock}
-        onBuildPaddock={(yardType) => {
-          setTool("BUILD");
-          setBuildType(yardType);
-          setSelectedCells([]);
-          flashToast(
-            yardType === "PIG_YARD"
-              ? "Posez la courette contre un bord de la porcherie"
-              : yardType === "HEN_YARD"
-                ? "Posez la courette contre un bord du poulailler"
-                : "Posez l’enclos contre un bord de l’étable",
-          );
-        }}
-      />
-      )}
 
       {openBuilding && (
         <BuildingSheet
@@ -3595,37 +3663,6 @@ export function App() {
       <TutorialOverlay open={showTutorial} onClose={() => setShowTutorial(false)} />
       <PlayGuide open={showGuide} snapshot={guideSnapshot} onClose={() => setShowGuide(false)} />
 
-      {(isMobile ? sheet === "OFFICE" : showEta) && (
-        <MissionsPanel
-          className={panelClass("eta-panel", "OFFICE")}
-          gesture={isMobile ? sheetGesture : undefined}
-          busy={busy}
-          onlinePlayers={onlinePlayers}
-          visitName={visitOrder?.clientName ?? null}
-          visitLeft={visitOrder?.remaining ?? null}
-          helpWanted={laborBoard}
-          myAsks={myPostedLabor}
-          solo={contracts}
-          onAcceptHelp={(id) => void acceptLaborOrder(id)}
-          onCancelAsk={(id) =>
-            void api(`/labor-orders/${id}/cancel`, {
-              method: "POST",
-              body: JSON.stringify({ userId: player.id }),
-            }).then(() => refreshMeta())
-          }
-          onAcceptSolo={(id) => acceptContract(id)}
-          locked={Boolean(visitOrder) || Boolean(activeMission)}
-          zones={zones.filter(
-            (z) =>
-              ownedParcels.length === 0 ||
-              ownedParcels.some((op) => op.zone?.code === z.code) ||
-              z.parcels.some((p) => expandableParcelIds.has(p.id)),
-          )}
-          myFarmId={player.farm?.id}
-          expandableIds={expandableParcelIds}
-          onBuyField={buyAdjacent}
-        />
-      )}
 
       {isMobile && (
         <>

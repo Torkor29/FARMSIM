@@ -108,15 +108,51 @@ export function ZoneMap({
                 aria-label={title}
                 aria-pressed={selected}
               >
-                <span className="zone-cell-label">{p?.label ?? "·"}</span>
-                {p && isFree ? (
-                  <span className="zone-cell-price">{Math.round(p.landPrice)}</span>
-                ) : null}
+                {/*
+                  En version compacte la case ne porte aucun texte. Elle en
+                  portait deux — nom et prix — dans quarante-cinq pixels de
+                  large : chaque nom finissait tronqué à quatre lettres
+                  (« Clos d'… », « Cham… ») et le prix était illisible. La
+                  carte redevient une carte, et la liste ci-dessous dit ce
+                  qu'on achète.
+                */}
+                {compact ? null : (
+                  <>
+                    <span className="zone-cell-label">{p?.label ?? "·"}</span>
+                    {p && isFree ? (
+                      <span className="zone-cell-price">{Math.round(p.landPrice)}</span>
+                    ) : null}
+                  </>
+                )}
               </button>
             );
           }),
         )}
       </div>
+
+      {compact ? (
+        <ul className="zone-picks">
+          {zone.parcels
+            .filter((p) => statusOf(p, myFarmId) === "free" && (allowed == null || allowed.has(p.id)))
+            .sort((a, b) => a.landPrice - b.landPrice)
+            .map((p) => (
+              <li key={p.id}>
+                <button
+                  type="button"
+                  className={`zone-pick${selectedParcelId === p.id ? " on" : ""}`}
+                  disabled={!onSelect}
+                  onClick={() => onSelect?.(p.id)}
+                >
+                  <span className="zone-pick-name">{p.label}</span>
+                  <span className="zone-pick-price">{Math.round(p.landPrice)} TRN</span>
+                </button>
+              </li>
+            ))}
+          {zone.parcels.every(
+            (p) => statusOf(p, myFarmId) !== "free" || (allowed != null && !allowed.has(p.id)),
+          ) && <li className="muted tiny">Aucun champ libre attenant ici.</li>}
+        </ul>
+      ) : null}
 
       {showLegend ? (
         <ul className="zone-legend">

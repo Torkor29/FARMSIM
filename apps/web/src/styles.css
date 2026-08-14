@@ -40,6 +40,10 @@
   --r-lg: 24px;
   --r-pill: 999px;
 
+  /* Densité fluide et largeur des rails — charte §7.4. */
+  --gutter: clamp(0.6rem, 1.2vw, 1.1rem);
+  --rail-r: clamp(18rem, 26vw, 21rem);
+  --rail-l: 0px;
   --sh-1: 0 2px 6px rgba(34, 49, 44, 0.08);
   --sh-2: 0 8px 24px rgba(34, 49, 44, 0.12);
   --sh-3: 0 18px 48px rgba(34, 49, 44, 0.18);
@@ -113,15 +117,83 @@ html.playing #root {
 html.playing body {
   touch-action: none;
 }
+/*
+ * La coquille du jeu — charte §7.2.
+ *
+ * Six panneaux flottaient en absolu, ancrés à des `top`/`bottom` en rem : le
+ * garage (jusqu'à 480 px de haut, `top: 4.2rem`) et l'élevage (`top: 6.5rem`)
+ * démarraient l'un dans l'autre, les missions (`bottom: 5.2rem`, 420 px)
+ * percutaient le garage sous mille pixels de haut, et le bandeau du haut —
+ * dont la hauteur grandit avec le bandeau de visite et les cotations qui
+ * passent à la ligne — leur passait dessus dès qu'on rétrécissait.
+ *
+ * La grille ne fait que **réserver** la place des rails : la scène 3D reste
+ * plein écran derrière eux, comme le veut la charte. C'est ce qui permet de
+ * ranger les panneaux en colonnes sans rogner la ferme.
+ */
 .game-stage {
   position: relative;
   min-height: 100vh;
   width: 100%;
   overflow: hidden;
   touch-action: none;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  grid-template-areas: "top" "stage" "dock";
   background:
     radial-gradient(ellipse 90% 55% at 50% -10%, #bfe6f5 0%, transparent 60%),
     linear-gradient(180deg, #e6f4fb 0%, #f6efdd 100%);
+}
+
+/* —— Les rails ——
+   Une colonne qui défile, et non une pile de cartes flottantes. Vide, un rail
+   ne réserve rien : ouvrir le garage seul ne doit pas creuser une bande grise
+   à côté de la ferme. Sur téléphone ils s'effacent — les panneaux y sont des
+   tiroirs, et ce mécanisme-là marchait déjà. */
+.rail {
+  grid-area: left;
+  z-index: 4;
+  display: flex;
+  flex-direction: column;
+  gap: var(--gutter);
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: var(--gutter);
+  scrollbar-width: thin;
+}
+.rail-right { grid-area: right; }
+.rail:empty { display: none; }
+.rail > * { flex: 0 0 auto; }
+.game-stage.mobile .rail { display: contents; }
+
+/* Un seul rail tant que la ferme n'a pas la place pour deux : la colonne de
+   droite se partage en deux volets qui défilent séparément. */
+@media (min-width: 821px) {
+  .game-stage {
+    grid-template-columns: minmax(0, 1fr) var(--rail-r);
+    grid-template-rows: auto minmax(0, 1fr) minmax(0, 1fr) auto;
+    grid-template-areas:
+      "top   top"
+      "stage right"
+      "stage left"
+      "dock  dock";
+  }
+}
+@media (min-width: 1180px) {
+  :root {
+    --rail-l: clamp(16.5rem, 19vw, 19rem);
+    --rail-r: clamp(16.5rem, 19vw, 20rem);
+  }
+  .game-stage {
+    grid-template-columns: var(--rail-l) minmax(0, 1fr) var(--rail-r);
+    grid-template-rows: auto minmax(0, 1fr) auto;
+    grid-template-areas:
+      "top   top   top"
+      "left  stage right"
+      "dock  dock  dock";
+  }
 }
 html.playing .game-stage {
   position: fixed;
@@ -134,14 +206,8 @@ html.playing .iso-viewport {
   min-height: 0;
   height: 100%;
 }
-html.playing .hud-stack,
-html.playing .geo-panel,
-html.playing .build-panel,
-html.playing .eta-panel,
-html.playing .garage-panel,
-html.playing .field-dock {
-  position: fixed;
-}
+/* Plus rien à figer : la coquille occupe déjà la fenêtre entière, et chaque
+   pièce tient une rangée ou une colonne de sa grille. */
 html.playing .sheet,
 html.playing aside,
 html.playing .panel {
@@ -158,7 +224,13 @@ html.playing .field-dock {
   touch-action: manipulation;
 }
 
+/* La scène couvre **toute** la coquille, pas la seule colonne du milieu :
+   c'est la clé de la charte §7.2. Confinée à sa cellule, elle dessinait un
+   rectangle de ciel plus clair au milieu du fond, avec une couture visible
+   sur ses quatre bords — la grille réserve la place des rails, elle ne
+   découpe pas la ferme. */
 .iso-layer {
+  grid-area: 1 / 1 / -1 / -1;
   position: absolute;
   inset: 0;
   z-index: 0;
@@ -166,7 +238,7 @@ html.playing .field-dock {
 .iso-viewport {
   width: 100%;
   height: 100%;
-  min-height: 100vh;
+  min-height: 0;
 }
 .iso-viewport canvas {
   display: block;
@@ -190,10 +262,8 @@ html.playing .field-dock {
  * superposition structurellement impossible.
  */
 .hud-stack {
-  position: absolute;
-  top: 0;
-  left: 0;
-  right: 0;
+  grid-area: top;
+  position: relative;
   z-index: 5;
   display: grid;
   gap: 0.4rem;
@@ -295,39 +365,16 @@ button.ghost {
   border: 1px solid var(--line);
 }
 
-.geo-panel {
-  position: absolute;
-  top: 4.2rem;
-  right: 1rem;
-  width: min(260px, calc(100vw - 2rem));
-  z-index: 4;
-}
-.build-panel {
-  position: absolute;
-  bottom: 5.2rem;
-  right: 1rem;
-  width: min(240px, calc(100vw - 2rem));
-  max-height: min(42vh, 360px);
-  overflow: auto;
-  z-index: 4;
-}
-.eta-panel {
-  position: absolute;
-  bottom: 5.2rem;
-  left: 1rem;
-  width: min(300px, calc(100vw - 2rem));
-  max-height: min(50vh, 420px);
-  overflow: auto;
-  z-index: 4;
-}
-.garage-panel {
-  position: absolute;
-  top: 4.2rem;
-  left: 1rem;
-  width: min(280px, calc(100vw - 2rem));
-  max-height: min(55vh, 480px);
-  overflow: auto;
-  z-index: 4;
+/* Les panneaux ne se placent plus eux-mêmes : c'est le rail qui les range, et
+   la grille qui borne sa largeur. Chacun portait une ancre en rem et un
+   plafond en `vh` — c'est de là que venaient les recouvrements. */
+.geo-panel,
+.build-panel,
+.eta-panel,
+.garage-panel,
+.livestock-panel {
+  width: 100%;
+  min-width: 0;
 }
 .garage-panel h3, .eta-panel h3 {
   font-size: 0.95rem;
@@ -845,24 +892,26 @@ button.ghost {
   font-size: 0.88rem;
 }
 .job-grid { display: grid; gap: 0.55rem; }
+/* Le libellé et le bouton se disputaient la largeur du rail : « Récolter du
+   blé · 8 cases » se cassait en trois lignes autour d'un « Prendre » collé
+   contre lui. Ils s'empilent. */
 .job-card {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  gap: 0.6rem;
+  display: grid;
+  gap: 0.5rem;
   padding: 0.75rem 0.8rem;
   border-radius: var(--r-md);
   background: var(--paper);
   border: 2px solid var(--line);
+  min-width: 0;
 }
+.job-card > * { min-width: 0; }
+.job-card .sale-go { justify-self: stretch; text-align: center; }
 .job-card.big { box-shadow: var(--sh-1); }
 .job-card strong { display: block; font-size: 1.02rem; }
 .lot-grid { display: grid; gap: 0.55rem; }
 .lot-card {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  gap: 0.75rem;
+  display: grid;
+  gap: 0.5rem;
   padding: 0.75rem 0.85rem;
   border-radius: var(--r-md);
   background: var(--paper);
@@ -1028,13 +1077,6 @@ button.ghost {
 
 /* —— Élevage —— */
 .livestock-panel {
-  position: absolute;
-  left: 1rem;
-  top: 6.5rem;
-  z-index: 6;
-  width: min(280px, calc(100vw - 2rem));
-  max-height: 46vh;
-  overflow: auto;
   display: grid;
   gap: 0.6rem;
   align-content: start;
@@ -1174,9 +1216,11 @@ button.ghost {
 .upgrade-locked.poor { color: var(--danger); border-color: #e8b4ad; }
 
 .field-dock {
-  position: absolute;
+  grid-area: dock;
+  position: relative;
   left: 50%;
-  bottom: 1rem;
+  bottom: 0;
+  margin-top: -0.4rem;
   transform: translateX(-50%);
   z-index: 6;
   width: min(36rem, calc(100vw - 1.4rem));
@@ -1504,16 +1548,23 @@ html.playing .build-confirm { position: fixed; }
   border-right: 1px solid var(--glass-border);
   margin-right: 0.15rem;
 }
+/* —— Message passager — charte §8.1 #17 ——
+   Entrée par le haut, auto-fermeture à 3,2 s, et une barre fine qui montre le
+   temps qui reste. Il n'existait que deux tons — vert « bon coup » et rouge
+   « raté » : une vente forcée faute de silo s'affichait donc en vert, alors
+   qu'elle dit qu'on vient de perdre de l'argent. `warn` comble ce trou. */
 .toast {
-  position: relative;
-  top: auto;
-  left: auto;
-  transform: none;
-  justify-self: center;
-  z-index: 6;
-  max-width: min(28rem, calc(100vw - 1.5rem));
-  padding: 0.45rem 0.9rem;
-  border-radius: 10px;
+  /* Il surplombe le bandeau au lieu d'y prendre place : dans le flux, son
+     apparition allongeait la rangée du haut, la scène se recadrait, et la
+     ferme sautait à chaque message. */
+  position: absolute;
+  top: calc(100% + 0.15rem);
+  left: 50%;
+  z-index: 70;
+  overflow: hidden;
+  max-width: min(24rem, calc(100vw - 1.5rem));
+  padding: 0.5rem 0.95rem 0.62rem;
+  border-radius: var(--r-sm);
   background: var(--glass);
   border: 1px solid var(--glass-border);
   font-size: 0.86rem;
@@ -1521,26 +1572,35 @@ html.playing .build-confirm { position: fixed; }
   text-align: center;
   box-shadow: var(--sh-3);
   pointer-events: none;
+  transform: translateX(-50%);
+  animation: toast-in 0.3s cubic-bezier(0.34, 1.56, 0.64, 1);
 }
-.toast.pop {
-  animation: toast-pop 0.38s ease-out;
+@keyframes toast-in {
+  from { opacity: 0; transform: translate(-50%, -24px) scale(0.95); }
+  to { opacity: 1; transform: translate(-50%, 0) scale(1); }
 }
-@keyframes toast-pop {
-  0% {
-    opacity: 0;
-    transform: translateY(-6px) scale(0.96);
-  }
-  55% {
-    opacity: 1;
-    transform: translateY(2px) scale(1.02);
-  }
-  100% {
-    opacity: 1;
-    transform: translateY(0) scale(1);
-  }
+.toast-bar {
+  position: absolute;
+  left: 0;
+  bottom: 0;
+  height: 3px;
+  width: 100%;
+  transform-origin: left;
+  background: currentColor;
+  opacity: 0.5;
+  animation: toast-drain 3.2s linear forwards;
 }
-.toast.good { color: var(--ok); border-color: var(--teal-300); background: var(--teal-100); }
-.toast.bad { color: var(--danger); border-color: #f0b5ae; background: #fdecea; }
+@keyframes toast-drain {
+  from { transform: scaleX(1); }
+  to { transform: scaleX(0); }
+}
+.toast.good { color: var(--ok); border-color: color-mix(in srgb, var(--ok) 45%, transparent); }
+.toast.warn { color: var(--gold-700); border-color: color-mix(in srgb, var(--gold-500) 55%, transparent); }
+.toast.bad { color: var(--danger); border-color: color-mix(in srgb, var(--danger) 45%, transparent); }
+@media (prefers-reduced-motion: reduce) {
+  .toast { animation: none; transform: translateX(-50%); }
+  .toast-bar { animation-duration: 3.2s; }
+}
 
 .row { display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: center; }
 .parcel-map {
@@ -1589,11 +1649,43 @@ html.playing .build-confirm { position: fixed; }
   aspect-ratio: 4 / 3;
   max-height: 220px;
 }
+/* En version compacte la carte n'est plus qu'un repère de couleurs : elle
+   dit où sont les champs libres, la liste dit lesquels et à quel prix. */
 .zone-map.compact .zone-grid {
-  max-height: 140px;
+  max-height: 96px;
   aspect-ratio: auto;
-  min-height: 96px;
+  min-height: 54px;
+  gap: 3px;
 }
+.zone-picks {
+  list-style: none;
+  margin: 0.5rem 0 0;
+  padding: 0;
+  display: grid;
+  gap: 0.25rem;
+}
+.zone-pick {
+  width: 100%;
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.5rem;
+  padding: 0.4rem 0.55rem;
+  font-size: 0.84rem;
+  border-radius: var(--r-sm);
+  border: 1px solid var(--line);
+  background: var(--paper);
+}
+.zone-pick:hover:not(:disabled) { border-color: var(--accent); }
+.zone-pick.on { border-color: var(--gold-500); background: var(--gold-100); }
+.zone-pick-name {
+  font-weight: 700;
+  color: var(--teal-700);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.zone-pick-price { color: var(--gold-700); font-weight: 700; flex: 0 0 auto; }
 .zone-cell {
   position: relative;
   display: grid;
@@ -1704,21 +1796,31 @@ html.playing .build-confirm { position: fixed; }
 }
 .spe.active { border-color: var(--accent-hot); }
 .list { display: grid; gap: 0.4rem; margin: 0; padding: 0; list-style: none; }
+/* Une ligne de machine porte cinq boutons — graisser, nettoyer, rafistoler,
+   réviser, vendre — plus son état. Côte à côte dans une colonne de 280 px,
+   la largeur minimale du contenu dépassait celle du panneau : barre de
+   défilement horizontale, et libellés coupés en deux. L'état passe donc
+   au-dessus, les actions en dessous, chacun sur toute la largeur. */
 .list li {
-  display: flex;
-  justify-content: space-between;
-  gap: 0.5rem;
-  align-items: center;
-  padding: 0.45rem 0.55rem;
+  display: grid;
+  gap: 0.4rem;
+  padding: 0.5rem 0.6rem;
   border-radius: var(--r-sm);
   background: var(--sand);
   font-size: 0.86rem;
+  min-width: 0;
 }
+.list li > * { min-width: 0; }
 .row-actions {
   display: flex;
   flex-wrap: wrap;
-  gap: 0.35rem;
-  justify-content: flex-end;
+  gap: 0.3rem;
+}
+.row-actions button {
+  flex: 1 1 auto;
+  padding: 0.4rem 0.5rem;
+  font-size: 0.8rem;
+  white-space: nowrap;
 }
 .error { color: var(--danger); }
 .ok { color: var(--ok); }
