@@ -36,6 +36,9 @@ import {
   footprintCells,
   orientedFootprint,
   withinRegret,
+  levelProgress,
+  levelUnlocks,
+  type QuestView,
   currentObjective,
   evaluateObjectives,
   type GuideSnapshot,
@@ -445,6 +448,8 @@ export function App() {
   const [pendingBuild, setPendingBuild] = useState<{ x: number; y: number } | null>(null);
   /** Bâtiment ouvert dans sa fiche : améliorer, tourner, démolir, faire sortir */
   const [openBuildingId, setOpenBuildingId] = useState<string | null>(null);
+  /** Objectifs du joueur : l'avancement vient du serveur, pas du navigateur. */
+  const [quests, setQuests] = useState<QuestView[]>([]);
   const [selectedCells, setSelectedCells] = useState<{ x: number; y: number }[]>([]);
   const [msg, setMsg] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
@@ -1440,6 +1445,9 @@ export function App() {
   }, [tool, buildType, buildRotation, pendingBuild, hoverCell, grid, gw, gh, player?.crd]);
 
   /** Le bâtiment dont la fiche est ouverte, et le troupeau qu'il abrite. */
+  /** Où en est le joueur dans son palier — pour la jauge du bandeau. */
+  const xpHere = useMemo(() => levelProgress(player?.xp ?? 0), [player?.xp]);
+
   const openBuilding = useMemo(
     () => (parcel?.buildings ?? []).find((b) => b.id === openBuildingId) ?? null,
     [parcel?.buildings, openBuildingId],
@@ -2428,6 +2436,60 @@ export function App() {
     }
   }
 
+  const loadQuests = useCallback(async () => {
+    if (!player?.id) return;
+    try {
+      const r = await api<{ quests: QuestView[] }>(`/quests?userId=${player.id}`);
+      setQuests(r.quests);
+    } catch {
+      // Le carnet d'objectifs n'est pas vital : son absence ne doit pas
+      // empêcher de travailler la parcelle.
+    }
+  }, [player?.id]);
+
+  useEffect(() => {
+    void loadQuests();
+  }, [loadQuests, player?.xp]);
+
+  /**
+   * La montée de palier s'annonce.
+   *
+   * On la guette sur le niveau du joueur plutôt que dans la réponse de chaque
+   * route : le niveau peut monter en semant, en moissonnant, en vendant, en
+   * encaissant une quête — six endroits à ne pas oublier, contre une seule
+   * sentinelle ici.
+   */
+  const lastLevel = useRef<number | null>(null);
+  useEffect(() => {
+    const level = player?.level;
+    if (level == null) return;
+    const before = lastLevel.current;
+    lastLevel.current = level;
+    if (before == null || level <= before) return;
+    const opened = levelUnlocks().find((u) => u.level === level);
+    flashToast(opened ? `Niveau ${level} — ${opened.label}` : `Niveau ${level}`);
+    playUiSound("place");
+  }, [player?.level]);
+
+  async function claimQuest(id: string) {
+    if (!player) return;
+    setBusy(true);
+    try {
+      const r = await api<{ reward: { xp: number; crd: number } }>(`/quests/${id}/claim`, {
+        method: "POST",
+        body: JSON.stringify({ userId: player.id }),
+      });
+      flashToast(`Objectif tenu · +${r.reward.crd} TRN · +${r.reward.xp} XP`);
+      playUiSound("place");
+      await refreshPlayer();
+      await loadQuests();
+    } catch (e) {
+      flashToast(e instanceof Error ? e.message : String(e), true);
+    } finally {
+      setBusy(false);
+    }
+  }
+
   /** Rentrer le troupeau avant la fin de sa sortie. */
   async function shelterHerd(herdId: string) {
     if (!player) return;
@@ -2949,8 +3011,21 @@ export function App() {
           <div className="hud-stats">
             <span className="stat-name">{player.displayName}</span>
             <span className="stat-job">{SPECIALIZATION_LABELS[player.specialization]}</span>
-            <span className="stat-xp" title="Niveau / expérience">
+            <span
+              className="stat-xp"
+              title={
+                xpHere.toNext > 0
+                  ? `${xpHere.into} / ${xpHere.span} XP — encore ${xpHere.toNext} pour le niveau ${xpHere.level + 1}`
+                  : "Dernier palier atteint"
+              }
+            >
               Nv.{player.level} · {player.xp} XP
+              {/* Une jauge, sinon « 0 XP » ne dit pas où l'on en est. */}
+              <i
+                className="stat-xp-bar"
+                aria-hidden="true"
+                style={{ ["--fill" as string]: `${Math.round((xpHere.into / xpHere.span) * 100)}%` }}
+              />
             </span>
             <span className="gold" title="Terrons (TRN)">
               {Math.round(player.crd)} TRN
@@ -3353,6 +3428,8 @@ export function App() {
             myFarmId={player.farm?.id}
             expandableIds={expandableParcelIds}
             onBuyField={buyAdjacent}
+            quests={quests}
+            onClaimQuest={(id) => void claimQuest(id)}
           />
         )}
       </div>
@@ -3661,7 +3738,12 @@ export function App() {
       )}
 
       <TutorialOverlay open={showTutorial} onClose={() => setShowTutorial(false)} />
-      <PlayGuide open={showGuide} snapshot={guideSnapshot} onClose={() => setShowGuide(false)} />
+      <PlayGuide
+        open={showGuide}
+        snapshot={guideSnapshot}
+        xp={player.xp}
+        onClose={() => setShowGuide(false)}
+      />
 
 
       {isMobile && (

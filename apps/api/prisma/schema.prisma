@@ -85,6 +85,11 @@ model User {
   lastMarketJson String?
   /** Indices du créateur de perso (peau, chapeau, vêtements…) */
   appearanceJson String?
+  /// Compteurs cumulés de travail — cases semées, tonnes récoltées, bêtes
+  /// soignées. Les quêtes s'en déduisent au lieu d'entretenir un avancement
+  /// séparé, qui finirait par diverger. Une colonne JSON plutôt que quinze
+  /// colonnes entières : le jeu de compteurs bougera encore.
+  statsJson      String         @default("{}")
   lastParcelId   String?
   lastCellX      Int?
   lastCellY      Int?
@@ -99,6 +104,19 @@ model User {
   purchases      MarketListing[] @relation("Buying")
   deliveriesSold   Delivery[] @relation("DeliverySeller")
   deliveriesBought Delivery[] @relation("DeliveryBuyer")
+  questClaims      QuestClaim[]
+}
+
+/// Récompense de quête déjà encaissée. Seul l'encaissement se stocke :
+/// l'avancement, lui, se lit sur les compteurs, donc il ne peut pas mentir.
+model QuestClaim {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  questId   String
+  claimedAt DateTime @default(now())
+
+  @@unique([userId, questId])
 }
 
 model Session {

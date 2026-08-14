@@ -18,6 +18,8 @@ export * from "./play-guide.js";
 export * from "./appearance.js";
 export * from "./crops.js";
 export * from "./manure.js";
+export * from "./progression.js";
+export * from "./quests.js";
 
 /** Monnaie du jeu : le terron (TRN). Le champ interne reste `crd`. */
 export const CURRENCY_CODE = "TRN";

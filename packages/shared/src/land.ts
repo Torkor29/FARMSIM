@@ -402,7 +402,7 @@ export function canAcquire(state: AcquisitionState): { ok: boolean; reason?: Acq
  * Paliers de niveau §4.1 `[GD]`. Les rangs 11, 13 et 15, absents de la table
  * publiée, sont interpolés linéairement entre leurs voisins `[HYPOTHÈSE]`.
  */
-const PARCEL_LEVEL_GATES: readonly number[] = [
+export const PARCEL_LEVEL_GATES: readonly number[] = [
   1, 6, 10, 14, 18, 23, 28, 33, 39, 45, 51, 58, 65, 72, 78, 85,
 ];
 

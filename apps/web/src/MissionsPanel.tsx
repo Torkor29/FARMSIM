@@ -1,5 +1,12 @@
 import type { PointerEvent as ReactPointerEvent } from "react";
-import { CROP_DEFS, WORK_LABELS, type CropCode, type FarmWork } from "@farmsim/shared";
+import {
+  CROP_DEFS,
+  STAT_LABELS,
+  WORK_LABELS,
+  type CropCode,
+  type FarmWork,
+  type QuestView,
+} from "@farmsim/shared";
 import { ZoneMap, type ZoneMapZone } from "./ZoneMap";
 
 export type OnlinePeer = {
@@ -37,6 +44,9 @@ type ExpandZone = ZoneMapZone & { id: string; parcels: ZoneMapZone["parcels"] };
 
 type Props = {
   className?: string;
+  /** Objectifs du joueur, avec leur avancement */
+  quests?: QuestView[];
+  onClaimQuest?: (id: string) => void;
   gesture?: {
     onPointerDown?: (e: ReactPointerEvent<HTMLElement>) => void;
     onPointerUp?: (e: ReactPointerEvent<HTMLElement>) => void;
@@ -81,6 +91,8 @@ export function MissionsPanel({
   className,
   gesture,
   busy,
+  quests,
+  onClaimQuest,
   onlinePlayers,
   visitName,
   visitLeft,
@@ -103,6 +115,44 @@ export function MissionsPanel({
     <aside className={className} {...gesture}>
       <h3>Missions</h3>
       <p className="muted tiny">Aidez un voisin. On vous paie. Il faut la machine.</p>
+
+      {quests && quests.length > 0 && (
+        <section className="hall-block">
+          <h3 className="spaced">Vos objectifs</h3>
+          <ul className="quest-list">
+            {quests.map((q) => (
+              <li key={q.id} className={q.claimed ? "claimed" : q.done ? "done" : ""}>
+                <div className="quest-head">
+                  <strong>{q.title}</strong>
+                  <span className="quest-count">
+                    {q.progress} / {q.target} {STAT_LABELS[q.stat]}
+                  </span>
+                </div>
+                <div className="quest-bar" aria-hidden="true">
+                  <i style={{ width: `${Math.round((q.progress / q.target) * 100)}%` }} />
+                </div>
+                <p className="muted tiny">{q.hint}</p>
+                {q.claimed ? (
+                  <span className="quest-paid">Encaissé</span>
+                ) : q.done ? (
+                  <button
+                    type="button"
+                    className="sale-go"
+                    disabled={busy}
+                    onClick={() => onClaimQuest?.(q.id)}
+                  >
+                    Encaisser · {q.reward.crd} TRN + {q.reward.xp} XP
+                  </button>
+                ) : (
+                  <span className="muted tiny">
+                    Récompense : {q.reward.crd} TRN + {q.reward.xp} XP
+                  </span>
+                )}
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
 
       <section className="hall-block">
         <h3 className="spaced">Qui est connecté</h3>

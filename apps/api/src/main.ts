@@ -2,6 +2,7 @@ import express from "express";
 import cors from "cors";
 import {
   PrismaClient,
+  Prisma,
   CropCode,
   BuildingType,
   ContractJobType,
@@ -25,6 +26,19 @@ import {
   footprintCells,
   orientedFootprint,
   quarterTurns,
+  xpFor,
+  levelForXp,
+  levelProgress,
+  xpForLevel,
+  shortfall,
+  addStats,
+  readStats,
+  questsFor,
+  claimable,
+  QUEST_DEFS,
+  type XpEvent,
+  type XpContext,
+  type PlayerStats,
   DEFAULT_GRID,
   MACHINE_DEFS,
   CONTRACT_WORK,
@@ -44,6 +58,7 @@ import {
   estateBonuses,
   LAND_CAPS,
   LAND_STATUS_LABELS,
+  requiredLevelForParcel,
   type AcquisitionRule,
   buildingStatsAtLevel,
   buildingUpgradeCost,
@@ -365,7 +380,19 @@ type FieldAccess =
       parcel: NonNullable<Awaited<ReturnType<typeof loadParcelForWork>>>;
       machines: FarmMachine[];
       charge: boolean;
-      order: { id: string; remainingJson: string; work: string; crop: string | null; payoutCrd: number; escrowCrd: number; quoteCrd: number; clientId: string; providerId: string | null } | null;
+      order: {
+        id: string;
+        remainingJson: string;
+        /** Toutes les cases de la mission : c'est sur elles que se paie l'XP */
+        cellsJson: string;
+        work: string;
+        crop: string | null;
+        payoutCrd: number;
+        escrowCrd: number;
+        quoteCrd: number;
+        clientId: string;
+        providerId: string | null;
+      } | null;
     }
   | { ok: false; status: number; error: string };
 
@@ -424,6 +451,7 @@ async function resolveFieldAccess(opts: {
       quoteCrd: order.quoteCrd,
       clientId: order.clientId,
       providerId: order.providerId,
+      cellsJson: order.cellsJson,
     },
   };
 }
@@ -447,9 +475,16 @@ async function settleLaborProgress(
     data: { remainingJson: "[]", status: "COMPLETED", completedAt: new Date() },
   });
   if (order.providerId) {
+    await grantXp(
+      tx,
+      order.providerId,
+      "LABOR",
+      { cells: parseCellJson(order.cellsJson).length },
+      { contracts: 1 },
+    );
     await tx.user.update({
       where: { id: order.providerId },
-      data: { crd: { increment: order.payoutCrd }, xp: { increment: 15 } },
+      data: { crd: { increment: order.payoutCrd } },
     });
   }
   const rebate = Math.max(0, Math.round((order.quoteCrd - order.payoutCrd) * 100) / 100);
@@ -644,12 +679,30 @@ async function canVisitParcel(userId: string, parcelId: string) {
   return Boolean(order);
 }
 
+/**
+ * Motifs de refus d'achat.
+ *
+ * `LEVEL_TOO_LOW` est un gabarit : il se complète du palier requis et de
+ * l'expérience qui reste à gagner. « Votre niveau est trop bas » n'apprenait
+ * ni combien il faut, ni combien il manque — et le palier était de toute façon
+ * inatteignable, faute de progression.
+ */
 const ACQUISITION_ERRORS: Record<AcquisitionRule, string> = {
   LEVEL_TOO_LOW: "Votre niveau est trop bas pour une parcelle de plus",
   MAX_PARCELS_PER_PLAYER: `Plafond atteint : ${LAND_CAPS.global} parcelles maximum`,
   MAX_PARCELS_PER_REGION: `Plafond régional atteint : ${LAND_CAPS.perRegion} parcelles par région`,
   MAX_REGION_SHARE_PLAYER: `Vous détiendriez plus de ${Math.round(LAND_CAPS.regionSharePct * 100)} % de la région`,
 };
+
+/** Le motif de refus, complété du chiffre qui manque quand il s'agit du niveau. */
+function acquisitionRefusal(
+  reason: AcquisitionRule,
+  player: { level: number; xp: number },
+  ownedTotal: number,
+): string {
+  if (reason !== "LEVEL_TOO_LOW") return ACQUISITION_ERRORS[reason] ?? "Acquisition refusée";
+  return shortfall(player.xp, requiredLevelForParcel(ownedTotal + 1));
+}
 
 type OwnedParcel = { zoneId: string; mapX: number; mapY: number };
 
@@ -747,6 +800,57 @@ async function getFarmBonuses(farmId: string) {
     spoilageSlow: Math.min(SPOILAGE_SLOW_CAP, spoilageSlow),
     softDryer,
   };
+}
+
+/* ------------------------------------------------------------------ */
+/* Progression                                                          */
+/* ------------------------------------------------------------------ */
+
+/** Ce qu'une action rapporte, une fois le compte fait. */
+export type XpGain = {
+  xp: number;
+  level: number;
+  /** Niveau franchi à l'instant, pour l'annoncer */
+  levelUp: number | null;
+};
+
+/**
+ * Crédite le travail accompli.
+ *
+ * C'est le seul endroit qui écrit l'expérience. Avant, elle ne tombait qu'en
+ * trois points — mission `+15`, contrat `+15`, vente `+10` quel que soit le
+ * tonnage — et le **niveau ne se recalculait nulle part** : seul le triche-code
+ * du panneau de développement y touchait. Un joueur légitime restait donc Nv.1
+ * à vie devant des paliers de parcelle qui en demandaient six.
+ *
+ * Le helper fait trois choses indissociables : ajouter les points, en déduire
+ * le niveau, et incrémenter les compteurs cumulés dont vivent les quêtes — le
+ * même geste, comptabilisé une seule fois.
+ */
+async function grantXp(
+  tx: Prisma.TransactionClient,
+  userId: string,
+  event: XpEvent,
+  ctx: XpContext = {},
+  stats: PlayerStats = {},
+): Promise<XpGain> {
+  const before = await tx.user.findUnique({
+    where: { id: userId },
+    select: { xp: true, level: true, statsJson: true },
+  });
+  if (!before) return { xp: 0, level: 1, levelUp: null };
+  const gain = xpFor(event, ctx);
+  const total = before.xp + gain;
+  const level = levelForXp(total);
+  await tx.user.update({
+    where: { id: userId },
+    data: {
+      xp: total,
+      level,
+      statsJson: JSON.stringify(addStats(readStats(before.statsJson), stats)),
+    },
+  });
+  return { xp: gain, level, levelUp: level > before.level ? level : null };
 }
 
 /**
@@ -1889,12 +1993,16 @@ async function playerPayload(userId: string) {
     }
   }
   const bonuses = user.farm ? await getFarmBonuses(user.farm.id) : null;
-  const { accessCode: _omit, appearanceJson, ...safe } = user;
+  const { accessCode: _omit, appearanceJson, statsJson, ...safe } = user;
   void _omit;
   return {
     ...safe,
     appearance: appearanceFromJson(appearanceJson, playableSpec(user.specialization)),
     bonuses,
+    // La jauge du bandeau et le chapitre « Niveaux » du guide lisent ceci :
+    // sans la borne du palier, « 0 XP » ne dit pas où l'on en est.
+    progress: levelProgress(user.xp),
+    stats: readStats(statsJson),
     grainDump: grainDump && grainDump.soldTons > 0 ? grainDump : undefined,
   };
 }
@@ -2110,6 +2218,93 @@ app.get("/auth/me", async (req, res) => {
   }
   const player = await playerPayload(auth.user.id);
   res.json({ token: auth.session.token, player });
+});
+
+/* ------------------------------------------------------------------ */
+/* Quêtes                                                              */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Les objectifs du joueur et leur avancement.
+ *
+ * L'avancement n'est stocké nulle part : il se **déduit** des compteurs
+ * cumulés qu'alimente `grantXp`. Seul l'encaissement d'une récompense est
+ * enregistré, parce que c'est le seul fait qui ne se recalcule pas. Il n'y a
+ * donc rien à synchroniser — et donc rien qui puisse se désynchroniser, comme
+ * le faisaient les drapeaux rangés dans le stockage local du navigateur.
+ */
+app.get("/quests", async (req, res) => {
+  const userId = typeof req.query.userId === "string" ? req.query.userId : null;
+  if (!userId) {
+    res.status(400).json({ error: "userId requis" });
+    return;
+  }
+  const user = await prisma.user.findUnique({ where: { id: userId } });
+  if (!user) {
+    res.status(404).json({ error: "Joueur introuvable" });
+    return;
+  }
+  const claims = await prisma.questClaim.findMany({
+    where: { userId },
+    select: { questId: true },
+  });
+  const stats = readStats(user.statsJson);
+  res.json({
+    quests: questsFor(
+      playableSpec(user.specialization) ?? "CEREALIER",
+      user.level,
+      stats,
+      claims.map((c) => c.questId),
+    ),
+    stats,
+    xp: user.xp,
+    level: user.level,
+  });
+});
+
+/** Encaisser une quête tenue. Une fois, et pas deux. */
+app.post("/quests/:id/claim", async (req, res) => {
+  const body = z.object({ userId: z.string() }).safeParse(req.body);
+  if (!body.success) {
+    res.status(400).json(body.error.flatten());
+    return;
+  }
+  const def = QUEST_DEFS.find((q) => q.id === req.params.id);
+  if (!def) {
+    res.status(404).json({ error: "Objectif inconnu" });
+    return;
+  }
+  const user = await prisma.user.findUnique({ where: { id: body.data.userId } });
+  if (!user) {
+    res.status(404).json({ error: "Joueur introuvable" });
+    return;
+  }
+  const claims = await prisma.questClaim.findMany({
+    where: { userId: user.id },
+    select: { questId: true },
+  });
+  const open = claimable(
+    playableSpec(user.specialization) ?? "CEREALIER",
+    user.level,
+    readStats(user.statsJson),
+    claims.map((c) => c.questId),
+  );
+  if (!open.some((q) => q.id === def.id)) {
+    res.status(409).json({ error: "Objectif pas encore tenu, ou déjà encaissé" });
+    return;
+  }
+
+  const gain = await prisma.$transaction(async (tx) => {
+    // La contrainte d'unicité fait le gardien : deux clics simultanés ne
+    // peuvent pas encaisser deux fois.
+    await tx.questClaim.create({ data: { userId: user.id, questId: def.id } });
+    await tx.user.update({
+      where: { id: user.id },
+      data: { crd: { increment: def.reward.crd } },
+    });
+    return grantXp(tx, user.id, "QUEST", { reward: def.reward.xp });
+  });
+  res.json({ quest: def.id, reward: def.reward, gain });
 });
 
 /** Les autres fermes : qui est connecté, qui est passé récemment. */
@@ -2514,7 +2709,7 @@ app.post("/parcels/:id/buy", async (req, res) => {
     regionParcelCount: await prisma.parcel.count({ where: { zoneId: target.zoneId } }),
   });
   if (!gate.ok) {
-    res.status(403).json({ error: ACQUISITION_ERRORS[gate.reason!] ?? "Acquisition refusée" });
+    res.status(403).json({ error: acquisitionRefusal(gate.reason!, user, owned.length) });
     return;
   }
   if (user.crd < quote.total) {
@@ -2576,7 +2771,7 @@ app.get("/parcels/:id/quote", async (req, res) => {
     ...quote,
     taken: Boolean(target.farmId),
     canAcquire: gate.ok,
-    reason: gate.ok ? null : (ACQUISITION_ERRORS[gate.reason!] ?? "Acquisition refusée"),
+    reason: gate.ok ? null : acquisitionRefusal(gate.reason!, auth.user, owned.length),
     caps: LAND_CAPS,
   });
 });
@@ -2977,7 +3172,7 @@ app.post("/parcels/:id/plant", async (req, res) => {
   const now = Date.now();
   const growMs = cropGrowMs(plantCrop, 0);
   const last = body.data.cells[body.data.cells.length - 1];
-  const { wear, labor } = await prisma.$transaction(async (tx) => {
+  const { wear, labor, gain } = await prisma.$transaction(async (tx) => {
     if (access.charge) {
       await tx.user.update({ where: { id: user.id }, data: { crd: { decrement: cost } } });
     }
@@ -3025,7 +3220,16 @@ app.post("/parcels/:id/plant", async (req, res) => {
     const labor = access.order
       ? await settleLaborProgress(tx, access.order, body.data.cells)
       : null;
-    return { wear, labor };
+    // Le travail se paie en expérience, à la case. C'est ce qui manquait :
+    // l'XP ne tombait que sur trois gestes forfaitaires, jamais sur le champ.
+    const gain = await grantXp(
+      tx,
+      user.id,
+      "PLANT",
+      { cells: body.data.cells.length },
+      { cellsPlanted: body.data.cells.length },
+    );
+    return { wear, labor, gain };
   });
   await touchFieldPresence(user.id, parcel.id, last);
   res.json({
@@ -3035,6 +3239,7 @@ app.post("/parcels/:id/plant", async (req, res) => {
     }),
     machine: { id: picked.machine.id, type: picked.machine.type, ...wear },
     labor,
+    gain,
   });
 });
 
@@ -3082,7 +3287,7 @@ app.post("/parcels/:id/fertilize", async (req, res) => {
   }
   let fertilized = 0;
   const last = body.data.cells[body.data.cells.length - 1];
-  const { wear, labor } = await prisma.$transaction(async (tx) => {
+  const { wear, labor, gain } = await prisma.$transaction(async (tx) => {
     if (access.charge && cost > 0) {
       await tx.user.update({ where: { id: user.id }, data: { crd: { decrement: cost } } });
     }
@@ -3114,7 +3319,16 @@ app.post("/parcels/:id/fertilize", async (req, res) => {
     const labor = access.order
       ? await settleLaborProgress(tx, access.order, body.data.cells)
       : null;
-    return { wear, labor };
+    // Le travail se paie en expérience, à la case. C'est ce qui manquait :
+    // l'XP ne tombait que sur trois gestes forfaitaires, jamais sur le champ.
+    const gain = await grantXp(
+      tx,
+      user.id,
+      "FERTILIZE",
+      { cells: body.data.cells.length },
+      { cellsFertilized: body.data.cells.length },
+    );
+    return { wear, labor, gain };
   });
   await touchFieldPresence(user.id, parcel.id, last);
   res.json({
@@ -3125,6 +3339,7 @@ app.post("/parcels/:id/fertilize", async (req, res) => {
     cost,
     machine: { id: picked.machine.id, type: picked.machine.type, ...wear },
     labor,
+    gain,
   });
 });
 
@@ -3214,7 +3429,7 @@ app.post("/parcels/:id/plow", async (req, res) => {
     LOST_CROP_FERTILITY_MALUS * lostCount -
     PLOW_FERTILITY_GAIN * (candidates.length - lostCount);
   const worked = candidates.map((c) => ({ x: c.x, y: c.y }));
-  const { wear, labor } = await prisma.$transaction(async (tx) => {
+  const { wear, labor, gain } = await prisma.$transaction(async (tx) => {
     if (access.charge) {
       await tx.user.update({ where: { id: user.id }, data: { crd: { decrement: cost } } });
     }
@@ -3247,7 +3462,16 @@ app.post("/parcels/:id/plow", async (req, res) => {
       specialization: user.specialization,
     });
     const labor = access.order ? await settleLaborProgress(tx, access.order, worked) : null;
-    return { wear, labor };
+    // Le travail se paie en expérience, à la case. C'est ce qui manquait :
+    // l'XP ne tombait que sur trois gestes forfaitaires, jamais sur le champ.
+    const gain = await grantXp(
+      tx,
+      user.id,
+      "PLOW",
+      { cells: candidates.length },
+      { cellsPlowed: candidates.length },
+    );
+    return { wear, labor, gain };
   });
 
   await touchFieldPresence(user.id, parcel.id, worked[worked.length - 1]);
@@ -3258,6 +3482,7 @@ app.post("/parcels/:id/plow", async (req, res) => {
     fertilityDelta: Math.round(-malus * 1000) / 1000,
     machine: { id: picked.machine.id, type: picked.machine.type, ...wear },
     labor,
+    gain,
   });
 });
 
@@ -3333,7 +3558,7 @@ app.post("/parcels/:id/stubble", async (req, res) => {
   }
 
   const worked = targets.map((c) => ({ x: c.x, y: c.y }));
-  const { wear, labor } = await prisma.$transaction(async (tx) => {
+  const { wear, labor, gain } = await prisma.$transaction(async (tx) => {
     if (access.charge) {
       await tx.user.update({ where: { id: user.id }, data: { crd: { decrement: cost } } });
     }
@@ -3362,7 +3587,16 @@ app.post("/parcels/:id/stubble", async (req, res) => {
       specialization: user.specialization,
     });
     const labor = access.order ? await settleLaborProgress(tx, access.order, worked) : null;
-    return { wear, labor };
+    // Le travail se paie en expérience, à la case. C'est ce qui manquait :
+    // l'XP ne tombait que sur trois gestes forfaitaires, jamais sur le champ.
+    const gain = await grantXp(
+      tx,
+      user.id,
+      "STUBBLE",
+      { cells: targets.length },
+      { cellsStubbled: targets.length },
+    );
+    return { wear, labor, gain };
   });
 
   await touchFieldPresence(user.id, parcel.id, worked[worked.length - 1]);
@@ -3373,6 +3607,7 @@ app.post("/parcels/:id/stubble", async (req, res) => {
     nextBonus: residueBonus(targets[0].residuePasses + 1),
     machine: { id: picked.machine.id, type: picked.machine.type, ...wear },
     labor,
+    gain,
   });
 });
 
@@ -3557,7 +3792,7 @@ app.post("/parcels/:id/harvest", async (req, res) => {
     }
 
     if (harvested.length === 0) {
-      return { wear: null, mowWear: null, grain, labor: null };
+      return { wear: null, mowWear: null, grain, labor: null, gain: null };
     }
     const wear =
       pickedHarvest && grainCells > 0
@@ -3580,7 +3815,20 @@ app.post("/parcels/:id/harvest", async (req, res) => {
           })
         : null;
     const labor = access.order ? await settleLaborProgress(tx, access.order, harvestedCells) : null;
-    return { wear, mowWear, grain, labor };
+    // La moisson paie la surface parcourue **et** ce qu'elle a donné : c'est
+    // ce qui distingue un champ bien mené d'un champ affamé, alors qu'un
+    // forfait les payait pareil.
+    const tons = harvested.reduce((sum, h) => sum + h.tons, 0);
+    const gain = user
+      ? await grantXp(
+          tx,
+          user.id,
+          grainCells > 0 ? "HARVEST" : "MOW",
+          { cells: harvestedCells.length, tons },
+          { cellsHarvested: harvestedCells.length, tonsHarvested: tons },
+        )
+      : null;
+    return { wear, mowWear, grain, labor, gain };
   });
 
   if (harvested.length === 0) {
@@ -3611,6 +3859,7 @@ app.post("/parcels/:id/harvest", async (req, res) => {
       ? { id: shown.machine.id, type: shown.machine.type, ...shownWear }
       : null,
     labor: outcome.labor,
+    gain: outcome.gain,
   });
 });
 
@@ -3702,6 +3951,7 @@ app.post("/parcels/:id/build", async (req, res) => {
           data: { kind: "BUILDING", buildingId: b.id },
         });
       }
+      await grantXp(tx, user.id, "BUILD", { cost: def.cost }, { buildingsBuilt: 1 });
       return b;
     });
 
@@ -3804,7 +4054,7 @@ app.post("/buildings/:id/upgrade", async (req, res) => {
     return;
   }
   if (user.level < nextDef.requiredLevel) {
-    res.status(403).json({ error: `Niveau joueur ${nextDef.requiredLevel} requis` });
+    res.status(403).json({ error: shortfall(user.xp, nextDef.requiredLevel) });
     return;
   }
   if (user.crd < cost) {
@@ -3814,6 +4064,7 @@ app.post("/buildings/:id/upgrade", async (req, res) => {
 
   const updated = await prisma.$transaction(async (tx) => {
     await tx.user.update({ where: { id: user.id }, data: { crd: { decrement: cost } } });
+    await grantXp(tx, user.id, "UPGRADE", { cost }, { buildingsUpgraded: 1 });
     return tx.building.update({
       where: { id: building.id },
       data: { level: building.level + 1 },
@@ -4425,15 +4676,18 @@ app.post("/herds/:id/graze", async (req, res) => {
     res.status(409).json({ error: "Sortie impossible pour le moment" });
     return;
   }
-  await prisma.herd.update({
-    where: { id: herd.id },
-    data: {
-      lastGrazedAt: new Date(now),
-      grazingUntil: new Date(window.endsAt),
-      lastTickAt: new Date(now),
-    },
+  const gain = await prisma.$transaction(async (tx) => {
+    await tx.herd.update({
+      where: { id: herd.id },
+      data: {
+        lastGrazedAt: new Date(now),
+        grazingUntil: new Date(window.endsAt),
+        lastTickAt: new Date(now),
+      },
+    });
+    return grantXp(tx, body.data.userId, "GRAZE", {}, { grazings: 1 });
   });
-  res.json({ window, animals: window.animals });
+  res.json({ window, animals: window.animals, gain });
 });
 
 /**
@@ -4741,11 +4995,23 @@ app.post("/herds/:id/milk", async (req, res) => {
     return;
   }
 
-  await prisma.$transaction(async (tx) => {
+  const gain = await prisma.$transaction(async (tx) => {
     await addToStock(tx, herd.farmId, "MILK", hectolitres, 0, 3);
     await tx.herd.update({ where: { id: herd.id }, data: { lastMilkedAt: new Date(now) } });
+    return grantXp(
+      tx,
+      body.data.userId,
+      "COLLECT",
+      { animals: herd.size },
+      { animalsCollected: herd.size },
+    );
   });
-  res.json({ hectolitres, litres: Math.round(litres), cycles: Math.round(cycles * 100) / 100 });
+  res.json({
+    hectolitres,
+    litres: Math.round(litres),
+    cycles: Math.round(cycles * 100) / 100,
+    gain,
+  });
 });
 
 /** Ramassage : les œufs s'accumulent entre deux passages, et se perdent s'ils attendent. */
@@ -5182,7 +5448,7 @@ app.post("/machines/:id/grease", async (req, res) => {
     res.status(402).json({ error: `Graissage ${GREASE_COST_CRD} TRN — fonds insuffisants` });
     return;
   }
-  await prisma.$transaction(async (tx) => {
+  const gain = await prisma.$transaction(async (tx) => {
     await tx.user.update({
       where: { id: body.data.userId },
       data: { crd: { decrement: GREASE_COST_CRD } },
@@ -5191,8 +5457,15 @@ app.post("/machines/:id/grease", async (req, res) => {
       where: { id: machine.id },
       data: { greased: true, greaseSkipStreak: 0 },
     });
+    return grantXp(
+      tx,
+      body.data.userId,
+      "MACHINE_CARE",
+      { cost: GREASE_COST_CRD },
+      { machinesServiced: 1 },
+    );
   });
-  res.json({ machineId: machine.id, greased: true, cost: GREASE_COST_CRD });
+  res.json({ machineId: machine.id, greased: true, cost: GREASE_COST_CRD, gain });
 });
 
 app.post("/machines/:id/clean", async (req, res) => {
@@ -6027,18 +6300,25 @@ app.post("/market/sell", async (req, res) => {
     demandTons: tons * 0.9,
     stockTons: market.stockTons,
   });
-  const xpGain = Math.round(10 * (1 + bonuses.xpBonus));
-  const updated = await prisma.$transaction(async (tx) => {
+  // Le forfait de dix points payait pareil un sac et une remorque : c'est
+  // exactement ce qui donnait l'impression de gagner de l'XP sans rien faire.
+  const xpGain = Math.round(xpFor("SELL", { tons }) * (1 + bonuses.xpBonus));
+  const { user: updated, gain } = await prisma.$transaction(async (tx) => {
     await drawFromStock(tx, inv, tons);
+    // Le bonus de la maison d'exploitation s'applique en amont ; le helper
+    // reste le seul à écrire l'expérience, faute de quoi le niveau ne se
+    // recalculerait pas — c'était le défaut d'origine.
+    const g = await grantXp(tx, user.id, "SELL", { tons }, { tonsSold: tons });
+    const bonusXp = Math.max(0, xpGain - g.xp);
     const u = await tx.user.update({
       where: { id: user.id },
-      data: { crd: { increment: sale.revenue }, xp: { increment: xpGain } },
+      data: { crd: { increment: sale.revenue }, xp: { increment: bonusXp } },
     });
     await tx.marketPrice.update({
       where: { commodity: body.data.commodity },
       data: { price: tick.price, stockTons: tick.stockTons },
     });
-    return u;
+    return { user: u, gain: { ...g, xp: g.xp + bonusXp } };
   });
   res.json({
     revenue: sale.revenue,
@@ -6051,6 +6331,7 @@ app.post("/market/sell", async (req, res) => {
     market: tick,
     bonuses,
     channel: "MARKET",
+    gain,
   });
 });
 
@@ -6234,9 +6515,10 @@ app.post("/contracts/:id/complete", async (req, res) => {
       where: { id: contract.id },
       data: { status: "COMPLETED", completedAt: new Date() },
     });
+    await grantXp(tx, user.id, "CONTRACT", { cells: contract.cells }, { contracts: 1 });
     const u = await tx.user.update({
       where: { id: user.id },
-      data: { crd: { increment: reward }, xp: { increment: 15 } },
+      data: { crd: { increment: reward } },
     });
     return { user: u, reward, machine: { id: picked.machine.id, type: picked.machine.type, ...wear } };
   });

@@ -2,6 +2,9 @@ import { useState } from "react";
 import {
   GUIDE_CHAPTERS,
   evaluateObjectives,
+  levelProgress,
+  levelUnlocks,
+  xpForLevel,
   type GuideChapterId,
   type GuideSnapshot,
   type ObjectiveView,
@@ -10,11 +13,14 @@ import {
 type Props = {
   open: boolean;
   snapshot: GuideSnapshot;
+  /** Expérience cumulée du joueur, pour situer les paliers */
+  xp?: number;
   onClose: () => void;
 };
 
-const TABS: { id: "goals" | GuideChapterId; label: string }[] = [
+const TABS: { id: "goals" | "levels" | GuideChapterId; label: string }[] = [
   { id: "goals", label: "Objectifs" },
+  { id: "levels", label: "Niveaux" },
   { id: "crops", label: "Cultiver" },
   { id: "soil", label: "Sol" },
   { id: "goods", label: "Vendre" },
@@ -24,7 +30,7 @@ const TABS: { id: "goals" | GuideChapterId; label: string }[] = [
   { id: "triangle", label: "Métiers" },
 ];
 
-export function PlayGuide({ open, snapshot, onClose }: Props) {
+export function PlayGuide({ open, snapshot, xp = 0, onClose }: Props) {
   const [tab, setTab] = useState<(typeof TABS)[number]["id"]>("goals");
   if (!open) return null;
 
@@ -61,6 +67,8 @@ export function PlayGuide({ open, snapshot, onClose }: Props) {
         <div className="guide-body">
           {tab === "goals" ? (
             <GoalsPane goals={goals} current={current} />
+          ) : tab === "levels" ? (
+            <LevelsPane xp={xp} />
           ) : (
             chapter && (
               <>
@@ -125,6 +133,67 @@ function GoalsPane({
       <p className="guide-foot">
         {remaining ? `${remaining} objectif(s) devant vous.` : "Tous les objectifs de départ sont faits."}{" "}
         Le recueil reste là : cultures, bâtiments, ce que l’éleveur achète au céréalier, les travaux chez le voisin.
+      </p>
+    </>
+  );
+}
+
+/**
+ * Ce que chaque palier ouvre — la réponse à « on ne sait pas ce que le niveau
+ * donne ».
+ *
+ * La table n'est pas recopiée à la main : `levelUnlocks()` la **dérive** des
+ * paliers de parcelle et de bâtiment. Si une règle bouge, cette page bouge
+ * avec elle, au lieu de mentir poliment.
+ */
+function LevelsPane({ xp }: { xp: number }) {
+  const here = levelProgress(xp);
+  const unlocks = levelUnlocks();
+  const next = unlocks.find((u) => u.level > here.level) ?? null;
+
+  return (
+    <>
+      <div className="guide-now">
+        <p className="guide-kicker">Vous êtes</p>
+        <h3>Niveau {here.level}</h3>
+        <div className="level-bar" role="img" aria-label={`${here.into} sur ${here.span} points`}>
+          <i style={{ width: `${Math.round((here.into / here.span) * 100)}%` }} />
+        </div>
+        <p>
+          {here.toNext > 0
+            ? `${here.into} / ${here.span} XP — encore ${here.toNext} pour le niveau ${here.level + 1}.`
+            : "Dernier palier atteint."}
+        </p>
+        <p className="guide-unlock">
+          {next
+            ? `Prochaine ouverture au niveau ${next.level} : ${next.label}.`
+            : "Tout est ouvert."}
+        </p>
+      </div>
+
+      <p className="guide-lead">
+        Un niveau ouvre des portes, il ne rend pas plus fort : pas de bonus caché, pas de
+        pourcentage. C'est le matériel, la rotation et l'entretien qui font le rendement.
+      </p>
+
+      <ul className="guide-list levels">
+        {unlocks.map((u) => (
+          <li key={u.level} className={u.level <= here.level ? "done" : ""}>
+            <strong>
+              Niveau {u.level}
+              <em>{u.xp} XP</em>
+            </strong>
+            <span>{u.label}</span>
+            <small>{u.detail}</small>
+          </li>
+        ))}
+      </ul>
+
+      <p className="guide-foot">
+        L'expérience se gagne au travail : chaque case semée, labourée, nettoyée ou moissonnée,
+        chaque tonne récoltée puis vendue, chaque bête soignée, chaque bâtiment posé. Rien ne se
+        gagne à ne rien faire — et le niveau {unlocks[0]?.level ?? 3} demande déjà{" "}
+        {xpForLevel(unlocks[0]?.level ?? 3)} points.
       </p>
     </>
   );

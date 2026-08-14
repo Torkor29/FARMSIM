@@ -358,7 +358,64 @@ html.playing .field-dock {
   box-shadow: var(--sh-1);
   font-weight: 700;
 }
-.stat-xp { color: var(--teal-500); }
+/* La pastille d'expérience porte sa jauge : « 0 XP » ne disait pas où l'on en
+   était, ni ce qu'il restait à faire. */
+.stat-xp {
+  position: relative;
+  color: var(--teal-500);
+  overflow: hidden;
+}
+.stat-xp-bar {
+  position: absolute;
+  left: 0;
+  bottom: 0;
+  height: 3px;
+  width: var(--fill, 0%);
+  background: var(--teal-300);
+  border-radius: 0 2px 2px 0;
+  transition: width 0.4s ease-out;
+}
+
+/* —— Objectifs —— */
+.quest-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 0.5rem; }
+.quest-list li {
+  display: grid;
+  gap: 0.3rem;
+  padding: 0.6rem 0.7rem;
+  border-radius: var(--r-md);
+  background: var(--paper);
+  border: 2px solid var(--line);
+  min-width: 0;
+}
+.quest-list li.done { border-color: var(--gold-500); background: var(--gold-100); }
+.quest-list li.claimed { opacity: 0.62; }
+/* Titre au-dessus, compteur en dessous : côte à côte dans un rail de trois
+   cents pixels, le titre se cassait mot par mot et le compteur débordait de
+   la carte. */
+.quest-head { display: grid; gap: 0.1rem; min-width: 0; }
+.quest-head strong { font-size: 0.95rem; line-height: 1.25; }
+.quest-count { font-size: 0.76rem; color: var(--muted); }
+.quest-bar,
+.level-bar {
+  height: 6px;
+  border-radius: var(--r-pill);
+  background: var(--sand);
+  overflow: hidden;
+}
+.quest-bar i,
+.level-bar i {
+  display: block;
+  height: 100%;
+  background: linear-gradient(90deg, var(--teal-300), var(--teal-500));
+  transition: width 0.4s ease-out;
+}
+.quest-paid { font-size: 0.8rem; font-weight: 700; color: var(--ok); }
+.quest-list .sale-go { justify-self: stretch; text-align: center; }
+
+/* Table des paliers, dans le guide */
+.guide-list.levels li.done { opacity: 0.6; }
+.guide-list.levels strong { display: flex; justify-content: space-between; gap: 0.5rem; }
+.guide-list.levels em { font-style: normal; font-weight: 600; color: var(--gold-700); font-size: 0.82rem; }
 .gold { color: var(--gold-700) !important; }
 button.ghost {
   background: transparent;

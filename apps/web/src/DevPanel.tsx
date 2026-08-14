@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { SELLABLE_GOODS, GOOD_DEFS, type TradeGood } from "@farmsim/shared";
+import { SELLABLE_GOODS, GOOD_DEFS, xpForLevel, type TradeGood } from "@farmsim/shared";
 
 export type DevGrant = {
   crd?: number;
@@ -96,7 +96,10 @@ export function DevPanel({ open, onClose, busy, onGrant, onTick }: Props) {
               type="button"
               className="accent"
               disabled={busy}
-              onClick={() => onGrant({ level, xp: level * 250 })}
+              // L'expérience se lit sur la courbe, pas sur une constante d'affichage :
+              // « niveau 6, 1 500 XP » fabriquait un état que le jeu ne peut pas
+              // produire, et le refus d'achat de parcelle disait alors n'importe quoi.
+              onClick={() => onGrant({ level, xp: xpForLevel(level) })}
             >
               Appliquer
             </button>
