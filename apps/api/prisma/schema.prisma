@@ -239,6 +239,12 @@ model Building {
   level     Int          @default(1)
   originX   Int
   originY   Int
+  /// Quarts de tour, 0 à 3. Façade au sud au repos ; un quart impair permute
+  /// largeur et profondeur de l'emprise — voir `orientedFootprint`.
+  rotation  Int          @default(0)
+  /// Date de pose : elle ouvre la fenêtre de regret, pendant laquelle une
+  /// construction faite par erreur se démolit intégralement remboursée.
+  createdAt DateTime     @default(now())
   cells     ParcelCell[]
   storedMachines Machine[] @relation("StoredIn")
   herd      Herd?

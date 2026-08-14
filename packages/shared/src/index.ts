@@ -613,13 +613,30 @@ export function machineResaleValue(type: MachineType, condition: number): number
  * Prix de démolition d'un bâtiment, niveau compris : les agrandissements
  * payés se récupèrent en partie.
  */
-export function buildingResaleValue(type: BuildingType, level: number): number {
+export function buildingResaleValue(type: BuildingType, level: number, ageMs?: number): number {
   const base = BUILDING_DEFS[type].cost;
   let invested = base;
   for (let l = 2; l <= Math.max(1, Math.min(MAX_BUILDING_LEVEL, level)); l++) {
     invested += base * BUILDING_LEVELS[l - 1].upgradeCostMult;
   }
-  return Math.round(invested * BUILDING_RESALE_RATE);
+  const rate = withinRegret(ageMs) ? 1 : BUILDING_RESALE_RATE;
+  return Math.round(invested * rate);
+}
+
+/**
+ * Fenêtre de regret : un bâtiment tout juste posé se démolit **intégralement
+ * remboursé**.
+ *
+ * Un clic sur la parcelle en mode construction déclenchait la dépense sans
+ * confirmation : cinq silos pouvaient partir en cinq clics involontaires, et
+ * la seule sortie était la démolition à 55 %, soit près de trois mille TRN de
+ * perte sèche pour une maladresse. La confirmation de pose supprime la cause ;
+ * cette fenêtre rattrape ce qui passerait encore au travers.
+ */
+export const BUILDING_REGRET_MS = 3 * 60 * 1000;
+
+export function withinRegret(ageMs?: number): boolean {
+  return ageMs != null && ageMs >= 0 && ageMs < BUILDING_REGRET_MS;
 }
 
 /* ------------------------------------------------------------------ */
@@ -786,13 +803,43 @@ export function footprintCells(x: number, y: number, w: number, h: number) {
 }
 
 /**
+ * Emprise d'un bâtiment posé, quart de tour compris.
+ *
+ * Six des treize types ne sont pas carrés : un hangar 3×2 tourné d'un quart
+ * occupe 2×3. **Toute lecture d'emprise doit passer par ici** — la vérification
+ * de place, le marquage des cases, la borne de grille et l'adjacence d'un pré
+ * à son étable. Une seule de ces lectures laissée en `def.w × def.h` suffit à
+ * laisser bâtir deux constructions l'une sur l'autre.
+ */
+export function orientedFootprint(
+  type: BuildingType,
+  rotation = 0,
+): { w: number; h: number } {
+  const def = BUILDING_DEFS[type];
+  return quarterTurns(rotation) % 2 === 0
+    ? { w: def.w, h: def.h }
+    : { w: def.h, h: def.w };
+}
+
+/** Rotation ramenée à un quart de tour de 0 à 3, quelle que soit l'entrée. */
+export function quarterTurns(rotation: number | null | undefined): 0 | 1 | 2 | 3 {
+  const n = Math.round(rotation ?? 0);
+  return ((((n % 4) + 4) % 4) as 0 | 1 | 2 | 3);
+}
+
+/**
  * Durée de l'animation d'un travail, en millisecondes.
  *
  * L'écran effaçait l'engin au bout de neuf cents millisecondes fixes, quand la
  * vue 3D le faisait avancer d'une case toutes les 280 ms : un travail sur
  * neuf cases voyait donc sa machine s'évaporer au tiers du parcours. Les deux
  * côtés lisent désormais la même formule.
+ *
+ * La cadence est passée de 280 à 360 ms par case : à 280, la moissonneuse
+ * traversait la parcelle plus vite que l'œil ne suit l'andain, et le travail
+ * se lisait comme un effet plutôt que comme un chantier. Rien côté serveur ne
+ * dépend de cette durée — elle n'est que l'habillage d'une opération atomique.
  */
 export function workAnimationMs(cells: number): number {
-  return Math.max(700, cells * 280);
+  return Math.max(900, cells * 360);
 }

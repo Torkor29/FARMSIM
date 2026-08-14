@@ -1186,6 +1186,94 @@ button.ghost {
 }
 .field-dock > * { pointer-events: auto; }
 
+/* —— Barre de pose ——
+   Elle s'installe juste au-dessus du dock, là où l'œil revient après avoir
+   choisi sa case. C'est le seul endroit d'où part la dépense : un clic sur la
+   parcelle retient la place, il ne bâtit rien. */
+.build-confirm {
+  position: absolute;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 8;
+  width: min(34rem, calc(100vw - 1.4rem));
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  padding: 0.6rem 0.85rem;
+  animation: build-rise 0.18s ease-out;
+  /* Au-dessus du dock **et** de la puce « À faire » qui le coiffe : à
+     7,2 rem la barre recouvrait l'objectif du moment. */
+  bottom: 9.6rem;
+}
+html.playing .build-confirm { position: fixed; }
+.build-confirm-what { display: grid; line-height: 1.25; min-width: 0; }
+.build-confirm-what strong { font-family: "Baloo 2", sans-serif; color: var(--teal-700); }
+.build-confirm-what span { font-size: 0.8rem; color: var(--muted); }
+.build-confirm-actions { display: flex; gap: 0.4rem; flex-shrink: 0; }
+.build-confirm-actions button { padding: 0.5rem 0.8rem; font-size: 0.88rem; }
+@keyframes build-rise {
+  from { opacity: 0; transform: translate(-50%, 10px); }
+  to { opacity: 1; transform: translate(-50%, 0); }
+}
+/* Un bâtiment tout juste posé se démolit intégralement remboursé : le bouton
+   cesse d'être un avertissement rouge, c'est un rattrapage sans perte. */
+.sell-btn.regret {
+  border-color: var(--ok);
+  color: var(--ok);
+}
+
+/* —— Fiche d'un bâtiment ——
+   Ouverte en cliquant le bâtiment sur la parcelle, et non en le retrouvant
+   dans une liste latérale où deux silos se ressemblent. */
+.sheet-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  display: grid;
+  place-items: center;
+  background: rgba(20, 34, 30, 0.34);
+  padding: var(--gutter, 1rem);
+}
+.building-sheet {
+  width: min(26rem, 100%);
+  display: grid;
+  gap: 0.7rem;
+  padding: 1rem 1.1rem 1.15rem;
+  animation: build-rise 0.18s ease-out;
+}
+.building-sheet header { display: flex; align-items: flex-start; justify-content: space-between; gap: 0.5rem; }
+.building-sheet h3 { margin: 0; font-size: 1.25rem; color: var(--teal-700); }
+.building-sheet h4 { margin: 0 0 0.15rem; font-size: 1rem; color: var(--teal-700); }
+.building-sheet-sub { margin: 0.1rem 0 0; font-size: 0.8rem; color: var(--muted); }
+.building-sheet-desc { margin: 0; font-size: 0.9rem; color: var(--ink-soft); }
+.building-sheet-level { display: flex; align-items: center; gap: 0.5rem; }
+.building-sheet-level em { font-style: normal; font-size: 0.85rem; color: var(--muted); }
+.building-sheet-herd {
+  border-top: 1px solid var(--line);
+  border-bottom: 1px solid var(--line);
+  padding: 0.7rem 0;
+  display: grid;
+  gap: 0.45rem;
+}
+.building-sheet-herd p { margin: 0; font-size: 0.88rem; color: var(--ink-soft); }
+.building-sheet-actions { display: flex; flex-wrap: wrap; gap: 0.4rem; }
+.building-sheet-actions button { flex: 1 1 auto; min-width: 0; }
+.building-sheet-note { margin: 0; font-size: 0.8rem; color: var(--ok); }
+@media (max-width: 820px) {
+  .sheet-backdrop { place-items: end center; }
+  .building-sheet { width: 100%; }
+  .building-sheet-actions button { min-height: 44px; }
+}
+@media (max-width: 820px) {
+  .build-confirm {
+    bottom: calc(11.6rem + env(safe-area-inset-bottom));
+    flex-wrap: wrap;
+  }
+  .build-confirm-actions { width: 100%; }
+  .build-confirm-actions button { flex: 1; min-height: 44px; }
+}
+
 .quest-chip {
   display: flex;
   align-items: center;

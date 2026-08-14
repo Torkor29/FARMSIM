@@ -31,8 +31,14 @@ import { CROP_ACCENT, CROP_DENSITY, cropShape, type CropShape } from "./crop-sha
  * dans un aplat. Le coût tient parce que le brin est une lame plate.
  */
 const STALKS_PER_CELL = 46;
-/** Durée de la chute d'une tige fauchée, secondes */
-const CUT_TIME = 0.35;
+/**
+ * Durée de la chute d'une tige fauchée, secondes.
+ *
+ * Elle se règle sur l'allure de la machine : la coupe a suivi le ralentissement
+ * du chantier, faute de quoi les brins s'abattent d'un coup sec derrière un
+ * engin qui, lui, prend son temps.
+ */
+const CUT_TIME = 0.45;
 
 type CellEntry = {
   x: number;

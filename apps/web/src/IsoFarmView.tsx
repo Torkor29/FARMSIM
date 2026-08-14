@@ -149,7 +149,11 @@ export type PreviewBuilding = {
   type: BuildingType;
   originX: number;
   originY: number;
+  /** Quarts de tour, 0 à 3 */
+  rotation?: number;
   valid: boolean;
+  /** Place retenue et figée : le joueur doit encore confirmer la dépense */
+  pending?: boolean;
 };
 
 type Props = {
@@ -342,45 +346,6 @@ function cropColor(c: IsoCell, sim?: IsoSim): number {
   return g.lerp(r, Math.min(1, p)).getHex();
 }
 
-/**
- * Palette commune : toit vert sarcelle, murs bois miel, socle herbe — la
- * cohérence de la ferme vient du toit, la lecture du bâtiment vient du corps.
- */
-const ROOF_TEAL = 0x3f8f7a;
-const WOOD_WARM = 0xc79a5f;
-
-function buildingPalette(type: BuildingType): { body: number; roof: number; h: number } {
-  switch (type) {
-    case "SILO":
-      return { body: 0xd8dde2, roof: ROOF_TEAL, h: 2.4 };
-    case "HAY_BARN":
-      return { body: WOOD_WARM, roof: ROOF_TEAL, h: 1.2 };
-    case "MACHINE_SHED":
-      return { body: 0xe6dcc4, roof: ROOF_TEAL, h: 1.35 };
-    case "CATTLE_BARN":
-      return { body: 0xb07a4a, roof: ROOF_TEAL, h: 1.5 };
-    case "PIGSTY":
-      return { body: 0xa97a55, roof: ROOF_TEAL, h: 1.1 };
-    case "HENHOUSE":
-      return { body: 0xc4a06a, roof: ROOF_TEAL, h: 0.95 };
-    case "SHEEPFOLD":
-      return { body: 0xb08a5c, roof: ROOF_TEAL, h: 1.25 };
-    case "HEN_YARD":
-      return { body: 0x9bb56a, roof: 0x7a5c3a, h: 0.4 };
-    case "COLD_ROOM":
-      return { body: 0xc5d4dc, roof: ROOF_TEAL, h: 1.15 };
-    case "WORKSHOP":
-      return { body: 0xa8adb2, roof: ROOF_TEAL, h: 1.2 };
-    case "FARMHOUSE":
-      return { body: 0xf2e8d4, roof: ROOF_TEAL, h: 1.6 };
-    case "PADDOCK":
-      return { body: 0x8fcf6a, roof: WOOD_WARM, h: 0.5 };
-    case "PIG_YARD":
-      return { body: 0x8a6f52, roof: 0x7a5c3a, h: 0.45 };
-    default:
-      return { body: WOOD_WARM, roof: ROOF_TEAL, h: 1 };
-  }
-}
 
 /** Caisse d'œufs au pied du poulailler. */
 function makeEggCrate(): THREE.Group {
@@ -1557,7 +1522,7 @@ export function IsoFarmView({
 
     function syncPreviewFootprint() {
       const pb = dataRef.current.previewBuilding;
-      const pk = pb ? `${pb.type}:${pb.originX}:${pb.originY}:${pb.valid}` : "";
+      const pk = pb ? `${pb.type}:${pb.originX}:${pb.originY}:${pb.rotation ?? 0}:${pb.valid}:${pb.pending ? 1 : 0}` : "";
       if (pk === prevPreviewKey) return;
       prevPreviewKey = pk;
       while (previewGroup.children.length) {
@@ -1567,7 +1532,12 @@ export function IsoFarmView({
       }
       if (!pb) return;
 
+      // L'emprise du fantôme suit le quart de tour : sans cela le joueur
+      // valide une forme et en pose une autre.
+      const quarters = ((pb.rotation ?? 0) % 4 + 4) % 4;
       const def = BUILDING_DEFS[pb.type];
+      const fw = quarters % 2 === 0 ? def.w : def.h;
+      const fh = quarters % 2 === 0 ? def.h : def.w;
       const gap = 0.06;
       const col = pb.valid ? PREVIEW_OK : PREVIEW_BAD;
       const ghostMat = new THREE.MeshLambertMaterial({
@@ -1585,8 +1555,8 @@ export function IsoFarmView({
         depthWrite: false,
       });
 
-      for (let dy = 0; dy < def.h; dy++) {
-        for (let dx = 0; dx < def.w; dx++) {
+      for (let dy = 0; dy < fh; dy++) {
+        for (let dx = 0; dx < fw; dx++) {
           const cx = pb.originX + dx;
           const cy = pb.originY + dy;
           const { px, pz } = cellWorldPos(cx, cy);
@@ -1599,23 +1569,31 @@ export function IsoFarmView({
         }
       }
 
-      const bw = def.w * step - gap;
-      const bd = def.h * step - gap;
-      const centerX = ox + (pb.originX + (def.w - 1) / 2) * step;
-      const centerZ = oz + (pb.originY + (def.h - 1) / 2) * step;
-      const pal = buildingPalette(pb.type);
-      const shell = new THREE.Mesh(
-        new THREE.BoxGeometry(bw * 0.88, pal.h * 0.55, bd * 0.88),
-        new THREE.MeshLambertMaterial({
+      // Le fantôme est le vrai modèle, teinté : une boîte translucide ne dit
+      // ni de quel côté sera la façade ni ce qu'on est en train d'acheter.
+      const centerX = ox + (pb.originX + (fw - 1) / 2) * step;
+      const centerZ = oz + (pb.originY + (fh - 1) / 2) * step;
+      const ghost = createBuildingRig(pb.type, { level: 1, shadows: false });
+      // Les matières d'origine sont remplacées par la teinte du fantôme : il
+      // faut les libérer soi-même, `dispose()` du rig démonterait le groupe.
+      const spent = new Set<THREE.Material>();
+      ghost.group.traverse((o) => {
+        const mesh = o as THREE.Mesh;
+        if (!mesh.isMesh) return;
+        if (mesh.material instanceof THREE.Material) spent.add(mesh.material);
+        mesh.material = new THREE.MeshLambertMaterial({
           color: col,
           flatShading: true,
           transparent: true,
-          opacity: 0.28,
+          opacity: pb.pending ? 0.62 : 0.4,
           depthWrite: false,
-        }),
-      );
-      shell.position.set(centerX, pal.h * 0.28, centerZ);
-      previewGroup.add(shell);
+        });
+      });
+      for (const m of spent) m.dispose();
+      ghost.group.scale.setScalar(cellSize);
+      ghost.group.position.set(centerX, MACHINE_GROUND, centerZ);
+      ghost.group.rotation.y = quarters * (Math.PI / 2);
+      previewGroup.add(ghost.group);
     }
 
     /**
@@ -2190,7 +2168,7 @@ export function IsoFarmView({
       )
       .join("|");
     const b = buildings
-      .map((x) => `${x.id},${x.type},${x.level ?? 1},${x.originX},${x.originY}`)
+      .map((x) => `${x.id},${x.type},${x.level ?? 1},${x.originX},${x.originY},${x.rotation ?? 0}`)
       .join("|");
     // Le palier de maturité donne la couleur, la progression donne la hauteur
     // du plant. Cette dernière est continue : on l'arrondit au dixième, sans

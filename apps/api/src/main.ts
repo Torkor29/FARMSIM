@@ -23,6 +23,8 @@ import {
   SPECIALIZATION_LABELS,
   WORK_LABELS,
   footprintCells,
+  orientedFootprint,
+  quarterTurns,
   DEFAULT_GRID,
   MACHINE_DEFS,
   CONTRACT_WORK,
@@ -3633,6 +3635,8 @@ app.post("/parcels/:id/build", async (req, res) => {
       ]),
       x: z.number().int().min(0),
       y: z.number().int().min(0),
+      /** Quarts de tour, 0 à 3 */
+      rotation: z.number().int().min(0).max(3).optional(),
     })
     .safeParse(req.body);
   if (!body.success) {
@@ -3656,11 +3660,17 @@ app.post("/parcels/:id/build", async (req, res) => {
     res.status(403).json({ error: "Parcelle non possédée" });
     return;
   }
-  if (body.data.x + def.w > parcel.gridW || body.data.y + def.h > parcel.gridH) {
+  // L'emprise suit l'orientation : un hangar 3×2 tourné d'un quart occupe
+  // 2×3. Sans cette lecture, la borne de grille et le marquage des cases
+  // porteraient sur la mauvaise forme, et deux bâtiments pourraient se
+  // superposer.
+  const rotation = quarterTurns(body.data.rotation);
+  const foot = orientedFootprint(body.data.type as BuildingType, rotation);
+  if (body.data.x + foot.w > parcel.gridW || body.data.y + foot.h > parcel.gridH) {
     res.status(400).json({ error: "Emprise hors grille" });
     return;
   }
-  const cells = footprintCells(body.data.x, body.data.y, def.w, def.h);
+  const cells = footprintCells(body.data.x, body.data.y, foot.w, foot.h);
   for (const c of cells) {
     const cell = parcel.cells.find((p) => p.x === c.x && p.y === c.y);
     if (!cell || cell.kind !== "EMPTY") {
@@ -3683,6 +3693,7 @@ app.post("/parcels/:id/build", async (req, res) => {
           type: body.data.type as BuildingType,
           originX: body.data.x,
           originY: body.data.y,
+          rotation,
         },
       });
       for (const c of cells) {
@@ -3700,6 +3711,66 @@ app.post("/parcels/:id/build", async (req, res) => {
     const msg = e instanceof Error ? e.message : "Pose impossible";
     res.status(500).json({ error: `Impossible de poser ${def.name} — ${msg}` });
   }
+});
+
+/**
+ * Quart de tour d'un bâtiment déjà posé.
+ *
+ * L'orientation n'est pas qu'un effet : elle change l'emprise des types non
+ * carrés, donc la place occupée. On revalide donc entièrement la nouvelle
+ * forme — bornes de grille, et cases libres **hors** de celles que le bâtiment
+ * occupe déjà — avant de retourner quoi que ce soit.
+ */
+app.post("/buildings/:id/rotate", async (req, res) => {
+  const body = z
+    .object({ userId: z.string(), rotation: z.number().int().min(0).max(3).optional() })
+    .safeParse(req.body);
+  if (!body.success) {
+    res.status(400).json(body.error.flatten());
+    return;
+  }
+  const building = await prisma.building.findUnique({
+    where: { id: req.params.id },
+    include: { parcel: { include: { farm: true, cells: true } } },
+  });
+  if (!building?.parcel.farm || building.parcel.farm.userId !== body.data.userId) {
+    res.status(403).json({ error: "Bâtiment non possédé" });
+    return;
+  }
+  const next = quarterTurns(body.data.rotation ?? building.rotation + 1);
+  const foot = orientedFootprint(building.type as SharedBuildingType, next);
+  if (
+    building.originX + foot.w > building.parcel.gridW ||
+    building.originY + foot.h > building.parcel.gridH
+  ) {
+    res.status(409).json({ error: "Pas la place de tourner ici" });
+    return;
+  }
+  const wanted = footprintCells(building.originX, building.originY, foot.w, foot.h);
+  for (const c of wanted) {
+    const cell = building.parcel.cells.find((p) => p.x === c.x && p.y === c.y);
+    // La case peut être occupée par le bâtiment lui-même : il tourne sur
+    // place, il ne se pose pas à côté.
+    if (!cell || (cell.kind !== "EMPTY" && cell.buildingId !== building.id)) {
+      res.status(409).json({ error: `Pas la place de tourner — ${c.x},${c.y} occupée` });
+      return;
+    }
+  }
+
+  const updated = await prisma.$transaction(async (tx) => {
+    await tx.parcelCell.updateMany({
+      where: { buildingId: building.id },
+      data: { kind: "EMPTY", buildingId: null },
+    });
+    for (const c of wanted) {
+      await tx.parcelCell.update({
+        where: { parcelId_x_y: { parcelId: building.parcelId, x: c.x, y: c.y } },
+        data: { kind: "BUILDING", buildingId: building.id },
+      });
+    }
+    return tx.building.update({ where: { id: building.id }, data: { rotation: next } });
+  });
+  res.json({ building: updated });
 });
 
 /** Passage d'un bâtiment au palier suivant (5 niveaux au total). */
@@ -3786,24 +3857,26 @@ function collectClock(lastAt: Date | null, bornAt: Date, now: number) {
 
 /** Enclos collés à une étable, avec leur capacité de sortie cumulée. */
 function paddocksFor(
-  barn: { originX: number; originY: number; type: string },
-  buildings: { type: string; originX: number; originY: number }[],
+  barn: { originX: number; originY: number; type: string; rotation?: number },
+  buildings: { type: string; originX: number; originY: number; rotation?: number }[],
 ): { cells: number; capacity: number; yardType: SharedBuildingType } {
-  const barnDef = BUILDING_DEFS[barn.type as SharedBuildingType];
+  // L'adjacence se juge sur l'emprise **posée**, orientation comprise : une
+  // étable tournée d'un quart ne touche plus les mêmes cases, et son pré non
+  // plus. Lire `def.w × def.h` ici déclarerait collés deux bâtiments qui ne se
+  // touchent pas — ou l'inverse.
   const footprint = {
     originX: barn.originX,
     originY: barn.originY,
-    w: barnDef.w,
-    h: barnDef.h,
+    ...orientedFootprint(barn.type as SharedBuildingType, barn.rotation),
   };
   // Chaque espèce a son aire : pré, courette à porcs, courette à poules.
   const yardType = yardTypeForBarn(barn.type) as SharedBuildingType;
-  const def = BUILDING_DEFS[yardType];
   let cells = 0;
   for (const b of buildings) {
     if (b.type !== yardType) continue;
-    const other = { originX: b.originX, originY: b.originY, w: def.w, h: def.h };
-    if (isPaddockAdjacent(footprint, other)) cells += def.w * def.h;
+    const foot = orientedFootprint(yardType, b.rotation);
+    const other = { originX: b.originX, originY: b.originY, ...foot };
+    if (isPaddockAdjacent(footprint, other)) cells += foot.w * foot.h;
   }
   return { cells, capacity: paddockCapacity(cells), yardType };
 }
@@ -4364,6 +4437,41 @@ app.post("/herds/:id/graze", async (req, res) => {
 });
 
 /**
+ * Rentrer le troupeau avant la fin de sa sortie.
+ *
+ * La sortie ne savait qu'expirer d'elle-même : une fois les bêtes dehors, le
+ * joueur n'avait aucun moyen de les faire rentrer, alors qu'il peut vouloir
+ * les traire, les tondre, ou simplement fermer la grange avant l'orage. Le
+ * dernier passage au pré reste compté — rentrer n'annule pas la pâture déjà
+ * faite, sans quoi on pourrait sortir et rentrer en boucle pour la relancer.
+ */
+app.post("/herds/:id/shelter", async (req, res) => {
+  const body = z.object({ userId: z.string() }).safeParse(req.body);
+  if (!body.success) {
+    res.status(400).json(body.error.flatten());
+    return;
+  }
+  const herd = await prisma.herd.findUnique({
+    where: { id: req.params.id },
+    include: { farm: true },
+  });
+  if (!herd || herd.farm.userId !== body.data.userId) {
+    res.status(403).json({ error: "Troupeau non possédé" });
+    return;
+  }
+  const now = Date.now();
+  if (!herd.grazingUntil || herd.grazingUntil.getTime() <= now) {
+    res.status(409).json({ error: "Le troupeau est déjà à l'abri" });
+    return;
+  }
+  await prisma.herd.update({
+    where: { id: herd.id },
+    data: { grazingUntil: new Date(now), lastTickAt: new Date(now) },
+  });
+  res.json({ animals: herd.size });
+});
+
+/**
  * Marchandises que le joueur peut écouler. Restreindre les endpoints de vente
  * au blé et au maïs rendait le lait et la viande produisibles mais
  * invendables : ils s'accumulaient au silo sans débouché.
@@ -4876,7 +4984,14 @@ app.post("/buildings/:id/sell", async (req, res) => {
     res.status(403).json({ error: "Bâtiment non possédé" });
     return;
   }
-  const value = buildingResaleValue(building.type as SharedBuildingType, building.level);
+  // Fenêtre de regret : une construction toute fraîche se démolit intégralement
+  // remboursée. Passé ce délai, c'est un choix d'exploitation, pas une erreur
+  // de clic — et le taux de revente ordinaire s'applique.
+  const value = buildingResaleValue(
+    building.type as SharedBuildingType,
+    building.level,
+    Date.now() - building.createdAt.getTime(),
+  );
   await prisma.$transaction(async (tx) => {
     // Les engins rangés à l'intérieur ressortent, ils ne disparaissent pas
     // avec le hangar.

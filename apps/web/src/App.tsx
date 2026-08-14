@@ -34,6 +34,8 @@ import {
   WEATHER_LABELS,
   currentSeason,
   footprintCells,
+  orientedFootprint,
+  withinRegret,
   currentObjective,
   evaluateObjectives,
   type GuideSnapshot,
@@ -53,6 +55,7 @@ import {
 } from "@farmsim/shared";
 import { AuthScreen } from "./AuthScreen";
 import type { GrazingHerd, PreviewBuilding } from "./IsoFarmView";
+import { BuildingSheet } from "./BuildingSheet";
 import { ConfirmDialog, type ConfirmRequest } from "./ConfirmDialog";
 import { MachineCareOverlay, type CareMode } from "./MachineCareOverlay";
 import { MissionPlay, type MissionPlayContract } from "./MissionPlay";
@@ -118,6 +121,10 @@ type Building = {
   originX: number;
   originY: number;
   level?: number;
+  /** Quarts de tour, 0 à 3 */
+  rotation?: number;
+  /** Date de pose : elle ouvre la fenêtre de remboursement intégral */
+  createdAt?: string;
 };
 
 type Parcel = {
@@ -422,6 +429,19 @@ export function App() {
   /** Semer dans les chaumes plutôt que de travailler le sol au préalable */
   const [directSeed, setDirectSeed] = useState(false);
   const [buildType, setBuildType] = useState<BuildingType>("SILO");
+  /** Quarts de tour du bâtiment à poser, 0 à 3 — touche `R` ou bouton ⟳ */
+  const [buildRotation, setBuildRotation] = useState(0);
+  /**
+   * Place retenue mais pas encore payée.
+   *
+   * Un clic sur la parcelle déclenchait autrefois la dépense directement :
+   * cinq clics involontaires posaient cinq silos, et la seule sortie était de
+   * les démolir à perte. La pose se fait maintenant en deux temps — on retient
+   * la case, on la tourne si besoin, puis on confirme.
+   */
+  const [pendingBuild, setPendingBuild] = useState<{ x: number; y: number } | null>(null);
+  /** Bâtiment ouvert dans sa fiche : améliorer, tourner, démolir, faire sortir */
+  const [openBuildingId, setOpenBuildingId] = useState<string | null>(null);
   const [selectedCells, setSelectedCells] = useState<{ x: number; y: number }[]>([]);
   const [msg, setMsg] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
@@ -765,6 +785,34 @@ export function App() {
     }, 10000);
     return () => clearInterval(t);
   }, [refreshMeta, loadWorld, refreshPlayer]);
+
+  /**
+   * `R` tourne, `Échap` renonce.
+   *
+   * L'idiome est celui de tous les jeux de construction : on n'apprend pas une
+   * touche, on la connaît déjà. Les boutons de la barre de pose font la même
+   * chose, pour qui ne la connaît pas.
+   */
+  useEffect(() => {
+    if (tool !== "BUILD") return;
+    const onKey = (e: KeyboardEvent) => {
+      const el = e.target as HTMLElement | null;
+      if (el && /^(INPUT|TEXTAREA|SELECT)$/.test(el.tagName)) return;
+      if (e.key === "r" || e.key === "R") {
+        setBuildRotation((r) => (r + 1) % 4);
+      } else if (e.key === "Escape" && pendingBuild) {
+        setPendingBuild(null);
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [tool, pendingBuild]);
+
+  // Changer d'outil ou de bâtiment abandonne la place retenue : garder un
+  // fantôme de silo après être passé au poulailler poserait le mauvais.
+  useEffect(() => {
+    setPendingBuild(null);
+  }, [tool, buildType, activeParcelId]);
 
   useEffect(() => {
     setPrevPrices((prev) => {
@@ -1336,29 +1384,62 @@ export function App() {
    * 402 : un aller-retour perdu, et une erreur rouge en console pour une
    * situation parfaitement prévisible côté client.
    */
-  function canPlaceBuildingAt(x: number, y: number): boolean {
+  function canPlaceBuildingAt(x: number, y: number, rot = buildRotation): boolean {
     const def = BUILDING_DEFS[buildType];
-    if (x + def.w > gw || y + def.h > gh) return false;
+    // L'emprise suit le quart de tour : un hangar 3×2 tourné occupe 2×3.
+    const foot = orientedFootprint(buildType, rot);
+    if (x + foot.w > gw || y + foot.h > gh) return false;
     if ((player?.crd ?? 0) < def.cost) return false;
-    const footprint = footprintCells(x, y, def.w, def.h);
+    const footprint = footprintCells(x, y, foot.w, foot.h);
     return footprint.every((fc) => {
       const c = grid.find((cell) => cell.x === fc.x && cell.y === fc.y);
       return c?.kind === "EMPTY";
     });
   }
 
+  /**
+   * Le fantôme de pose.
+   *
+   * Tant qu'aucune place n'est retenue, il suit la souris. Dès que le joueur a
+   * cliqué, il se **fige** : c'est cette place-là qu'on tourne et qu'on
+   * confirme. Un clic ne dépense plus rien par lui-même — l'ancienne version
+   * postait aussitôt, et cinq clics involontaires posaient cinq silos.
+   */
   const previewBuilding = useMemo((): PreviewBuilding | null => {
-    if (tool !== "BUILD" || !hoverCell) return null;
+    if (tool !== "BUILD") return null;
+    const at = pendingBuild ?? hoverCell;
+    if (!at) return null;
     const def = BUILDING_DEFS[buildType];
-    const spaceOk = canPlaceBuildingAt(hoverCell.x, hoverCell.y);
+    const spaceOk = canPlaceBuildingAt(at.x, at.y);
     const moneyOk = (player?.crd ?? 0) >= def.cost;
     return {
       type: buildType,
-      originX: hoverCell.x,
-      originY: hoverCell.y,
+      originX: at.x,
+      originY: at.y,
+      rotation: buildRotation,
       valid: spaceOk && moneyOk,
+      pending: Boolean(pendingBuild),
     };
-  }, [tool, buildType, hoverCell, grid, gw, gh, player?.crd]);
+  }, [tool, buildType, buildRotation, pendingBuild, hoverCell, grid, gw, gh, player?.crd]);
+
+  /** Le bâtiment dont la fiche est ouverte, et le troupeau qu'il abrite. */
+  const openBuilding = useMemo(
+    () => (parcel?.buildings ?? []).find((b) => b.id === openBuildingId) ?? null,
+    [parcel?.buildings, openBuildingId],
+  );
+  const openBuildingHerd = useMemo(() => {
+    if (!openBuilding) return null;
+    const barn = barns.find((b) => b.buildingId === openBuilding.id);
+    if (!barn?.herd) return null;
+    return {
+      id: barn.herd.id,
+      size: barn.herd.size,
+      label: barn.herd.label,
+      out: Boolean(barn.herd.grazingUntil && barn.herd.grazingUntil > Date.now()),
+      canGraze: barn.canGraze,
+      grazeRefusal: barn.grazeRefusal,
+    };
+  }, [openBuilding, barns]);
 
   function brushCells(x: number, y: number): { x: number; y: number }[] {
     const cells: { x: number; y: number }[] = [];
@@ -1488,6 +1569,18 @@ export function App() {
     if (!player || !activeParcelId) return;
     playUiSound("click");
 
+    // Cliquer une construction ouvre sa fiche — c'est là qu'on la tourne, qu'on
+    // l'améliore, qu'on la démolit, et qu'on fait sortir ou rentrer les bêtes.
+    // Jusqu'ici un bâtiment n'était cliquable nulle part : tout passait par un
+    // panneau latéral où il fallait le retrouver dans une liste.
+    if (tool === "SELECT") {
+      const cell = grid.find((c) => c.x === x && c.y === y);
+      if (cell?.kind === "BUILDING" && cell.buildingId) {
+        setOpenBuildingId(cell.buildingId);
+        return;
+      }
+    }
+
     if (tool === "SELECT") {
       const block = brushCells(x, y);
       setSelectedCells(block);
@@ -1529,9 +1622,10 @@ export function App() {
         return;
       }
       const def = BUILDING_DEFS[buildType];
+      const foot = orientedFootprint(buildType, buildRotation);
       if (!canPlaceBuildingAt(x, y)) {
         const reason =
-          x + def.w > gw || y + def.h > gh
+          x + foot.w > gw || y + foot.h > gh
             ? "Emprise hors grille"
             : player.crd < def.cost
               ? `TRN insuffisants (${def.cost})`
@@ -1539,23 +1633,9 @@ export function App() {
         flashToast(reason, true);
         return;
       }
-      flashToast(`Placement ${def.name}…`);
-      setBusy(true);
-      setErr(null);
-      try {
-        await api(`/parcels/${activeParcelId}/build`, {
-          method: "POST",
-          body: JSON.stringify({ userId: player.id, type: buildType, x, y }),
-        });
-        flashToast(`${def.name} placé · −${def.cost} TRN`);
-        playUiSound("place");
-        await refreshPlayer();
-        await loadParcel(activeParcelId);
-      } catch (e) {
-        flashToast(e instanceof Error ? e.message : String(e), true);
-      } finally {
-        setBusy(false);
-      }
+      // Le clic **retient** la place, il ne dépense pas. La construction part
+      // du bouton « Construire », donc jamais par accident.
+      setPendingBuild({ x, y });
       return;
     }
 
@@ -2331,6 +2411,24 @@ export function App() {
     }
   }
 
+  /** Rentrer le troupeau avant la fin de sa sortie. */
+  async function shelterHerd(herdId: string) {
+    if (!player) return;
+    setBusy(true);
+    try {
+      const r = await api<{ animals: number }>(`/herds/${herdId}/shelter`, {
+        method: "POST",
+        body: JSON.stringify({ userId: player.id }),
+      });
+      flashToast(`${r.animals} bête(s) rentrent`);
+      if (activeParcelId) await loadLivestock(activeParcelId);
+    } catch (e) {
+      flashToast(e instanceof Error ? e.message : String(e), true);
+    } finally {
+      setBusy(false);
+    }
+  }
+
   /**
    * Distribue une ration complète : le joueur choisit l'aliment, pas la dose.
    * Le maïs nourrit mieux, mais c'est du maïs qu'il ne vendra pas.
@@ -2512,13 +2610,68 @@ export function App() {
 
   function sellBuilding(id: string, label: string) {
     if (!player) return;
+    const b = (parcel?.buildings ?? []).find((x) => x.id === id);
+    const fresh = withinRegret(b?.createdAt ? Date.now() - Date.parse(b.createdAt) : undefined);
     setConfirmRequest({
       title: `Démolir ${label} ?`,
-      detail: "Vous récupérez une partie des matériaux. Les niveaux payés sont perdus.",
+      // Une erreur de clic ne se paie pas : tant que la construction est
+      // fraîche, la démolition rend tout. Le dire ici évite l'hésitation.
+      detail: fresh
+        ? "Posé à l'instant : vous récupérez la totalité de la dépense."
+        : "Vous récupérez une partie des matériaux. Les niveaux payés sont perdus.",
       confirmLabel: "Démolir",
-      destructive: true,
+      destructive: !fresh,
       onConfirm: () => void doSellBuilding(id, label),
     });
+  }
+
+  /** Quart de tour d'un bâtiment déjà posé. */
+  async function rotateBuilding(id: string, label: string) {
+    if (!player) return;
+    setBusy(true);
+    setErr(null);
+    try {
+      await api(`/buildings/${id}/rotate`, {
+        method: "POST",
+        body: JSON.stringify({ userId: player.id }),
+      });
+      flashToast(`${label} tourné d'un quart`);
+      playUiSound("place");
+      if (activeParcelId) await loadParcel(activeParcelId);
+    } catch (e) {
+      flashToast(e instanceof Error ? e.message : String(e), true);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  /** Pose confirmée : c'est le seul endroit d'où part la dépense. */
+  async function confirmBuild() {
+    if (!player || !pendingBuild || !activeParcelId) return;
+    const def = BUILDING_DEFS[buildType];
+    setBusy(true);
+    setErr(null);
+    try {
+      await api(`/parcels/${activeParcelId}/build`, {
+        method: "POST",
+        body: JSON.stringify({
+          userId: player.id,
+          type: buildType,
+          x: pendingBuild.x,
+          y: pendingBuild.y,
+          rotation: buildRotation,
+        }),
+      });
+      flashToast(`${def.name} bâti · −${def.cost} TRN`);
+      playUiSound("place");
+      setPendingBuild(null);
+      await refreshPlayer();
+      await loadParcel(activeParcelId);
+    } catch (e) {
+      flashToast(e instanceof Error ? e.message : String(e), true);
+    } finally {
+      setBusy(false);
+    }
   }
 
   async function doSellBuilding(id: string, label: string) {
@@ -3042,6 +3195,10 @@ export function App() {
                 const cost = buildingUpgradeCost(b.type, lvl);
                 const next = lvl < MAX_BUILDING_LEVEL ? buildingLevelDef(lvl + 1) : null;
                 const blocked = next ? player.level < next.requiredLevel : false;
+                // Le montant affiché est celui qu'on touchera vraiment : dans
+                // la fenêtre de regret, la démolition rend l'intégralité.
+                const age = b.createdAt ? Date.now() - Date.parse(b.createdAt) : undefined;
+                const refund = buildingResaleValue(b.type, lvl, age);
                 return (
                   <div key={b.id} className="upgrade-item">
                     <img className="build-art small" src={BUILDING_ART[b.type]} alt="" />
@@ -3076,12 +3233,25 @@ export function App() {
                       )}
                       <button
                         type="button"
-                        className="sell-btn"
+                        className="upgrade-btn"
                         disabled={busy}
-                        title={`Démolir et récupérer ${buildingResaleValue(b.type, lvl)} TRN`}
+                        title="Tourner d'un quart de tour"
+                        onClick={() => void rotateBuilding(b.id, d.name)}
+                      >
+                        ⟳
+                      </button>
+                      <button
+                        type="button"
+                        className={`sell-btn${age != null && withinRegret(age) ? " regret" : ""}`}
+                        disabled={busy}
+                        title={
+                          age != null && withinRegret(age)
+                            ? `Posé à l'instant — démolition intégralement remboursée (${refund} TRN)`
+                            : `Démolir et récupérer ${refund} TRN`
+                        }
                         onClick={() => sellBuilding(b.id, d.name)}
                       >
-                        Démolir {buildingResaleValue(b.type, lvl)}
+                        Démolir {refund}
                       </button>
                     </span>
                   </div>
@@ -3091,6 +3261,46 @@ export function App() {
           </>
         )}
       </aside>
+
+      {/*
+        Barre de pose. Elle n'apparaît qu'une fois la place retenue, et c'est
+        d'elle seule que part la dépense : un clic sur la parcelle ne bâtit
+        plus rien tout seul. C'est la réponse directe aux cinq silos posés
+        par accident, sans moyen d'annuler.
+      */}
+      {pendingBuild && !visiting && (
+        <div className="build-confirm glass">
+          <div className="build-confirm-what">
+            <strong>{BUILDING_DEFS[buildType].name}</strong>
+            <span>
+              {orientedFootprint(buildType, buildRotation).w}×
+              {orientedFootprint(buildType, buildRotation).h} · case ({pendingBuild.x},
+              {pendingBuild.y})
+            </span>
+          </div>
+          <div className="build-confirm-actions">
+            <button
+              type="button"
+              className="ghost"
+              onClick={() => setBuildRotation((r) => (r + 1) % 4)}
+              title="Tourner d'un quart de tour (R)"
+            >
+              ⟳ Tourner
+            </button>
+            <button type="button" className="ghost" onClick={() => setPendingBuild(null)}>
+              Annuler
+            </button>
+            <button
+              type="button"
+              className="primary"
+              disabled={busy || !canPlaceBuildingAt(pendingBuild.x, pendingBuild.y)}
+              onClick={() => void confirmBuild()}
+            >
+              Construire · {BUILDING_DEFS[buildType].cost} TRN
+            </button>
+          </div>
+        </div>
+      )}
 
       <FieldDock
         tool={tool}
@@ -3334,6 +3544,26 @@ export function App() {
           );
         }}
       />
+      )}
+
+      {openBuilding && (
+        <BuildingSheet
+          building={openBuilding}
+          herd={openBuildingHerd}
+          playerLevel={player.level}
+          crd={player.crd}
+          busy={busy}
+          visiting={visiting}
+          onClose={() => setOpenBuildingId(null)}
+          onRotate={() => void rotateBuilding(openBuilding.id, BUILDING_DEFS[openBuilding.type].name)}
+          onUpgrade={() => void upgradeBuilding(openBuilding.id)}
+          onDemolish={() => {
+            setOpenBuildingId(null);
+            sellBuilding(openBuilding.id, BUILDING_DEFS[openBuilding.type].name);
+          }}
+          onGrazeOut={() => openBuildingHerd && void grazeHerd(openBuildingHerd.id)}
+          onShelter={() => openBuildingHerd && void shelterHerd(openBuildingHerd.id)}
+        />
       )}
 
       <ConfirmDialog request={confirmRequest} onCancel={() => setConfirmRequest(null)} />
