@@ -787,7 +787,10 @@ export function IsoFarmView({
     const cellMeshes = new Map<string, THREE.Mesh>();
     // Le champ entier tient dans un seul maillage instancié : les brins y
     // ondulent au vent et s'y couchent au passage de la moissonneuse.
-    const cropField = createCropField(400);
+    // Sur une machine qui peine, on éclaircit le semis plutôt que d'appauvrir
+    // la forme du brin : un champ moins dru reste un champ, un champ en
+    // bâtonnets n'en est plus un.
+    const cropField = createCropField(400, quality.shadows ? 1 : 0.62);
     world.add(cropField.object);
     /**
      * Matériaux de culture indexés par couleur. Les cases ne prennent qu'une

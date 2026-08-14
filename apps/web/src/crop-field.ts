@@ -30,7 +30,7 @@ import { CROP_ACCENT, CROP_DENSITY, cropShape, type CropShape } from "./crop-sha
  * parcelle lise comme une masse d'épis et non comme quelques piquets plantés
  * dans un aplat. Le coût tient parce que le brin est une lame plate.
  */
-const STALKS_PER_CELL = 40;
+const STALKS_PER_CELL = 46;
 /** Durée de la chute d'une tige fauchée, secondes */
 const CUT_TIME = 0.35;
 
@@ -99,9 +99,19 @@ type Bucket = {
   count: number;
 };
 
-export function createCropField(maxCells: number): CropField {
+/**
+ * @param density Facteur de peuplement, 1 = plein.
+ *
+ * Une parcelle pleine, c'est plusieurs milliers de brins finement découpés :
+ * c'est l'élément le plus cher de la vue, et c'est justement celui qu'on
+ * regarde. Sur une machine qui peine, on éclaircit le semis plutôt que
+ * d'appauvrir la forme — un champ moins dru reste un champ, un champ en
+ * bâtonnets n'en est plus un.
+ */
+export function createCropField(maxCells: number, density = 1): CropField {
   const group = new THREE.Group();
   group.name = "crop-field";
+  const sowing = Math.max(0.2, Math.min(1, density));
 
   const uniforms = {
     uTime: { value: 0 },
@@ -135,7 +145,8 @@ export function createCropField(maxCells: number): CropField {
            attribute float aPhase;
            attribute float aDroop;
            attribute float aRipe;
-           attribute float aAccent;`,
+           attribute float aAccent;
+           attribute float aLeaf;`,
         )
         .replace(
           "#include <color_vertex>",
@@ -155,15 +166,38 @@ export function createCropField(maxCells: number): CropField {
              transformed.y = mix(transformed.y * 0.6, transformed.y, aRipe);
            }
            // La courbure croît comme le carré de la hauteur : pied planté,
-           // épi qui balaie. Deux fréquences pour que la houle ne soit pas
-           // un métronome.
+           // épi qui balaie.
            float h = clamp(transformed.y, 0.0, 1.2);
+
+           // La rafale **roule** sur le champ au lieu de le secouer d'un
+           // bloc. La phase dépend de la position de la touffe dans le monde,
+           // projetée sur la direction du vent : la vague traverse la
+           // parcelle, comme une vraie risée sur du blé. C'est le seul détail
+           // qui distingue un champ d'un tapis de piquets qui vibrent.
+           vec2 cell = vec2(instanceMatrix[3].x, instanceMatrix[3].z);
+           float along = dot(cell, vec2(0.82, 0.57));
+           float gust = uTime * 1.35 - along * 0.9;
+           // Enveloppe lente : le vent vient par bouffées, il ne souffle pas
+           // à régime constant.
+           float swell = 0.55 + 0.45 * sin(uTime * 0.29 - along * 0.28);
+
            // Un brin qui ploie oscille moins : il n'a plus la raideur d'une
            // tige verte.
-           float bend = uWind * h * h * (1.0 - aDroop * 0.6) *
-             (sin(uTime * 1.7 + aPhase) * 0.055 + sin(uTime * 3.3 + aPhase * 1.7) * 0.022);
-           transformed.x += bend;
-           transformed.z += bend * 0.45;
+           float stiff = (1.0 - aDroop * 0.6);
+           float bend = uWind * h * h * stiff * swell *
+             (sin(gust) * 0.055 + sin(gust * 2.1 + aPhase) * 0.018);
+
+           // La feuille frissonne pour son compte : plus court, plus vif, et
+           // seulement au bout. Sans elle, toute la plante bouge d'une pièce.
+           float flutter = aLeaf * uWind * swell * h *
+             sin(uTime * 6.1 + aPhase * 2.3) * 0.012;
+
+           // L'épi est lourd : il suit la tige avec un temps de retard, ce qui
+           // lui donne son balancement propre.
+           float lag = aAccent * uWind * h * h * stiff * swell * sin(gust - 0.55) * 0.03;
+
+           transformed.x += bend + lag;
+           transformed.z += (bend + lag) * 0.45 + flutter;
 
            // Affaissement : la tige s'arque et perd de la hauteur, sans tomber
            // — la case reste récoltable, mais elle a mauvaise mine.
@@ -192,7 +226,12 @@ export function createCropField(maxCells: number): CropField {
 
   function makeBucket(kind: CropShape, capacity: number): Bucket {
     const material = makeMaterial(kind);
-    const mesh = new THREE.InstancedMesh(cropShape(kind), material, capacity);
+    // La forme du brin est partagée entre tous les champs, mais les attributs
+    // d'instance — fauche, maturité, affaissement — sont propres à **ce**
+    // champ. Les poser sur la géométrie partagée revenait à ce que deux champs
+    // à l'écran se volent leurs données : dans l'atelier, quatre blés et deux
+    // colzas se retrouvaient tous à la maturité du dernier construit.
+    const mesh = new THREE.InstancedMesh(cropShape(kind).clone(), material, capacity);
     mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
     // Aucune ombre portée sur la végétation (charte §4.9) : quatre mille brins
     // dans la passe d'ombre ne donneraient que du bruit.
@@ -246,11 +285,11 @@ export function createCropField(maxCells: number): CropField {
   const dummy = new THREE.Object3D();
   const color = new THREE.Color();
 
-  /** Nombre de brins semés sur une case, densité et espèce comprises. */
+  /** Nombre de brins semés sur une case, peuplement et espèce compris. */
   function plantedOn(cell: CellEntry): number {
-    const density = Math.max(0, Math.min(1, cell.density ?? 1));
-    const perCell = STALKS_PER_CELL * CROP_DENSITY[cell.shape ?? "WHEAT"];
-    return Math.max(6, Math.round(perCell * (0.34 + 0.66 * density)));
+    const perCell = STALKS_PER_CELL * CROP_DENSITY[cell.shape ?? "WHEAT"] * sowing;
+    const health = Math.max(0, Math.min(1, cell.density ?? 1));
+    return Math.max(5, Math.round(perCell * (0.34 + 0.66 * health)));
   }
 
   return {
@@ -368,6 +407,7 @@ export function createCropField(maxCells: number): CropField {
     dispose() {
       for (const bucket of buckets.values()) {
         bucket.material.dispose();
+        bucket.mesh.geometry.dispose();
         bucket.mesh.dispose();
       }
       buckets.clear();

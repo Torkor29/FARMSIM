@@ -1,5 +1,6 @@
 import * as THREE from "three";
 import { createCropField } from "../crop-field";
+import { cropShape, cropShapeHeight } from "../crop-shapes";
 
 /**
  * Le champ doit dire la vérité sur la parcelle.
@@ -139,6 +140,51 @@ describe("la fauche", () => {
     field.cut(0, 0, 9);
     expect(field.cutAt(0, 0)).toBe(1);
     field.dispose();
+  });
+});
+
+describe("le brin", () => {
+  it("porte des feuilles, un épi, et distingue les deux", () => {
+    // `aAccent` peint l'épi et le fait sortir à maturité ; `aLeaf` donne à la
+    // feuille son frisson propre. Sans ces deux marques, la plante bouge d'une
+    // pièce et le colza est un buisson uniformément jaune, tige comprise.
+    for (const kind of ["WHEAT", "BARLEY", "MAIZE", "PEA", "RAPE", "GRASS"] as const) {
+      const geo = cropShape(kind);
+      const accent = geo.getAttribute("aAccent");
+      const leafy = geo.getAttribute("aLeaf");
+      expect(`${kind} accent ${accent !== undefined}`).toBe(`${kind} accent true`);
+      let ears = 0;
+      let leaves = 0;
+      for (let i = 0; i < accent.count; i++) {
+        if (accent.getX(i) > 0.5) ears++;
+        if (leafy.getX(i) > 0.5) leaves++;
+      }
+      expect(`${kind} épi ${ears > 0}`).toBe(`${kind} épi true`);
+      expect(`${kind} feuille ${leaves > 0}`).toBe(`${kind} feuille true`);
+      // Un brin tout en épi n'aurait plus de plante autour.
+      expect(`${kind} mesure ${ears < accent.count * 0.8}`).toBe(`${kind} mesure true`);
+    }
+  });
+
+  it("reste sous le plafond de triangles", () => {
+    // Cinq mille brins par parcelle, contre huit bêtes : c'est l'élément le
+    // plus cher de la vue, et celui qu'on regarde le plus.
+    for (const kind of ["WHEAT", "BARLEY", "MAIZE", "PEA", "RAPE", "GRASS"] as const) {
+      const geo = cropShape(kind);
+      const n = geo.index ? geo.index.count : geo.getAttribute("position").count;
+      expect(`${kind} ${n / 3 < 120}`).toBe(`${kind} true`);
+    }
+  });
+
+  it("aucune culture ne dépasse ni ne rase le sol", () => {
+    // L'instance étire le brin à la hauteur voulue par la case. Le port propre
+    // à l'espèce se garde — un pois est plus bas qu'un blé, et doit le rester —
+    // mais aucune ne doit sortir du fuseau : trop haute elle masquerait
+    // l'engin au travail, trop basse elle disparaîtrait de la parcelle.
+    for (const kind of ["WHEAT", "BARLEY", "MAIZE", "PEA", "RAPE", "GRASS"] as const) {
+      const h = cropShapeHeight(kind);
+      expect(`${kind} ${h > 0.55 && h < 1.15}`).toBe(`${kind} true`);
+    }
   });
 });
 

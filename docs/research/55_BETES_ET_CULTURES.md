@@ -41,6 +41,44 @@ L'épi, la gousse et la fleur **sortent avec la maturité** : avant l'heure, ils
 sont repliés contre la tige. Le cube doré a disparu — un vrai épi qui grossit
 dit la même chose et fait partie de la plante.
 
+## Le brin, de près
+
+Premier jet : des rectangles plats et des cônes. Une culture s'y reconnaissait,
+mais aucune n'était belle — un rectangle de largeur constante ne ressemble à
+rien de vivant.
+
+Tout est désormais bâti sur un **ruban** : une lame effilée et courbée dont la
+largeur est donnée par une fonction de l'avancement. La même brique fait une
+feuille — large au tiers, pointue au bout, retombante — et un épi fuselé. La
+dentelure des grains vit dans cette fonction de largeur : elle ne coûte pas un
+sommet, et c'est pourtant elle qui fait lire « grains » plutôt que « cône ».
+
+Épis et fleurs sont **deux rubans croisés** à angle droit : de n'importe quel
+angle la paire donne du volume pour le prix de deux lames. Un épi tourné en
+volume coûterait dix fois plus pour un gain nul à la taille où on le regarde.
+
+Attention à la largeur : une parcelle ne fait masse que si les brins se
+recouvrent. Un jet intermédiaire avait des tiges de seize millimètres — trois
+fois plus fines que la lame qu'elles remplaçaient — et le champ s'était vidé,
+laissant voir la terre entre chaque pied.
+
+## Le vent
+
+Trois mouvements se superposent, tous calculés dans le nuancier :
+
+1. **La rafale roule sur le champ** au lieu de le secouer d'un bloc. La phase
+   dépend de la position de la touffe dans le monde, projetée sur la direction
+   du vent : la vague traverse la parcelle, comme une vraie risée sur du blé.
+   C'est le seul détail qui distingue un champ d'un tapis de piquets qui
+   vibrent. Une enveloppe lente par-dessus fait souffler le vent par bouffées.
+2. **La feuille frissonne pour son compte** — plus court, plus vif, et
+   seulement au bout. Sans elle, toute la plante bouge d'une pièce.
+3. **L'épi est lourd** : il suit la tige avec un temps de retard, ce qui lui
+   donne son balancement propre.
+
+S'y ajoutent l'affaissement de sur-maturité, la chute à la fauche, et la sortie
+de l'épi avec la maturité.
+
 ## Les bêtes
 
 Refaites au même vocabulaire que les personnages : ellipsoïdes et capsules,
@@ -108,8 +146,18 @@ corps, il ne se voyait pas, et une vache pleine ressemblait à une vache qu'on
 venait de traire. Il pend maintenant sous le ventre — et se rentre quand la
 bête se couche, sinon il traverse le sol.
 
+## Un piège d'instanciation
+
+La forme du brin est partagée entre tous les champs — c'est tout l'intérêt.
+Mais les attributs d'**instance** — fauche, maturité, affaissement — sont
+propres à chaque champ, et ils étaient posés sur cette géométrie partagée. Deux
+champs à l'écran se volaient donc leurs données : dans l'atelier, quatre blés
+et deux colzas se retrouvaient tous à la maturité du dernier construit. La
+géométrie est maintenant clonée par lot.
+
 ## L'atelier
 
-`farm.html` — trois planches. `?only=crops` aligne les six cultures à trois
+`farm.html` — quatre planches. `?only=crops` aligne les six cultures à trois
 âges ; `?only=animals` met chaque bête sur un plateau dans tous ses états ;
-`?only=herd` montre le troupeau qui sort et rentre de l'étable.
+`?only=brins` met chaque culture en gros plan, avec ce que la conduite y
+change ; `?only=herd` montre le troupeau qui sort et rentre de l'étable.

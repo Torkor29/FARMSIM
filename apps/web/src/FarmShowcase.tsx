@@ -1,6 +1,8 @@
 import { useMemo, useState } from "react";
 import { CROP_CODES, type CropCode } from "@farmsim/shared";
 import { AnimalView } from "./AnimalView";
+import { CropView } from "./CropView";
+import type { CropShape } from "./crop-shapes";
 import type { AnimalKind } from "./animal-meshes";
 import { IsoFarmView, type GrazingHerd, type IsoBuilding, type IsoCell, type IsoSim } from "./IsoFarmView";
 
@@ -65,6 +67,59 @@ function CropBench() {
         />
       </div>
     </section>
+  );
+}
+
+/** Chaque culture en gros plan, et ce qu'elle devient selon sa conduite. */
+function CropCloseUp() {
+  const shapes: [CropShape, string][] = [
+    ["WHEAT", "Blé"],
+    ["BARLEY", "Orge"],
+    ["MAIZE", "Maïs"],
+    ["PEA", "Pois"],
+    ["RAPE", "Colza"],
+    ["GRASS", "Herbe"],
+  ];
+  return (
+    <>
+      <section className="atelier-farm">
+        <h2>Le brin, de près</h2>
+        <p>
+          Ce qu'on ne voit pas au champ, où un brin fait dix pixels : le dessin de
+          l'épi, la retombée des feuilles, et la rafale qui roule sur la touffe.
+        </p>
+        <div className="atelier-grid">
+          {shapes.map(([shape, label]) => (
+            <article className="atelier-card" key={shape}>
+              <CropView shape={shape} height={300} />
+              <div className="atelier-meta">
+                <h2>{label}</h2>
+              </div>
+            </article>
+          ))}
+        </div>
+      </section>
+      <section className="atelier-farm">
+        <h2>Ce que la conduite change</h2>
+        <div className="atelier-grid">
+          {[
+            { label: "Blé en herbe", props: { shape: "WHEAT" as CropShape, ripe: 0 } },
+            { label: "Blé mûr", props: { shape: "WHEAT" as CropShape, ripe: 1 } },
+            { label: "Blé affamé", props: { shape: "WHEAT" as CropShape, density: 0.15 } },
+            { label: "Blé qui a passé son heure", props: { shape: "WHEAT" as CropShape, droop: 1 } },
+            { label: "Colza en bouton", props: { shape: "RAPE" as CropShape, ripe: 0 } },
+            { label: "Colza en fleur", props: { shape: "RAPE" as CropShape, ripe: 1 } },
+          ].map((c) => (
+            <article className="atelier-card" key={c.label}>
+              <CropView {...c.props} height={300} />
+              <div className="atelier-meta">
+                <h2>{c.label}</h2>
+              </div>
+            </article>
+          ))}
+        </div>
+      </section>
+    </>
   );
 }
 
@@ -193,8 +248,9 @@ export function FarmShowcase() {
         </p>
       </header>
       {only === "animals" && <AnimalBench />}
-      {only !== "herd" && only !== "animals" && <CropBench />}
-      {only !== "crops" && only !== "animals" && <HerdBench />}
+      {only === "brins" && <CropCloseUp />}
+      {only !== "herd" && only !== "animals" && only !== "brins" && <CropBench />}
+      {only !== "crops" && only !== "animals" && only !== "brins" && <HerdBench />}
     </div>
   );
 }

@@ -45,160 +45,232 @@ export const CROP_DENSITY: Record<CropShape, number> = {
   GRASS: 1.15,
 };
 
-/** Marque une pièce comme « accent » ou non, pour que la fusion garde l'info. */
-function tint(geo: THREE.BufferGeometry, accent: number): THREE.BufferGeometry {
+/**
+ * Rôle d'un sommet, transmis au nuancier.
+ *
+ * `accent` reçoit la couleur de l'espèce et ne sort qu'à maturité ; `leaf`
+ * reçoit un frisson propre, plus court et plus vif que la houle de la tige —
+ * c'est lui qui empêche un champ de bouger d'un seul bloc.
+ */
+type Role = { accent?: number; leaf?: number };
+
+function tag(geo: THREE.BufferGeometry, role: Role = {}): THREE.BufferGeometry {
   const flat = geo.index ? geo.toNonIndexed() : geo;
   if (flat !== geo) geo.dispose();
   const n = flat.getAttribute("position").count;
-  flat.setAttribute("aAccent", new THREE.Float32BufferAttribute(new Float32Array(n).fill(accent), 1));
+  flat.setAttribute(
+    "aAccent",
+    new THREE.Float32BufferAttribute(new Float32Array(n).fill(role.accent ?? 0), 1),
+  );
+  flat.setAttribute(
+    "aLeaf",
+    new THREE.Float32BufferAttribute(new Float32Array(n).fill(role.leaf ?? 0), 1),
+  );
   return flat;
 }
 
-/** Lame de feuille : un plan à trois segments, planté en bas, incliné. */
-function blade(
-  width: number,
-  height: number,
-  opts: { yaw?: number; lean?: number; y?: number; segments?: number } = {},
+type RibbonOpts = {
+  /** Recul du sommet vers l'arrière : c'est lui qui fait retomber la feuille */
+  curve?: number;
+  /** Perte de hauteur du sommet, quand la feuille s'arque */
+  droop?: number;
+  segments?: number;
+  yaw?: number;
+  /** Pied du ruban */
+  y?: number;
+  /** Écart latéral du pied */
+  x?: number;
+};
+
+/**
+ * Ruban : une lame effilée et courbée, d'un seul tenant.
+ *
+ * C'est la brique de toute la végétation. Un rectangle plat — ce qu'on avait —
+ * ne ressemble à rien de vivant : une feuille est large au tiers de sa
+ * longueur, pointue au bout, et elle retombe. La largeur est donnée par une
+ * fonction de l'avancement, ce qui permet aussi bien une feuille qu'un épi
+ * fuselé, pour le même prix de deux triangles par segment.
+ */
+function ribbon(
+  length: number,
+  widthAt: (t: number) => number,
+  opts: RibbonOpts = {},
 ): THREE.BufferGeometry {
-  const g = new THREE.PlaneGeometry(width, height, 1, opts.segments ?? 3);
-  g.translate(0, height / 2, 0);
-  if (opts.lean) {
-    // Courbure de la feuille : le sommet retombe. On déplace les sommets au
-    // lieu d'incliner la pièce, sinon le pied décolle du sol.
-    const pos = g.getAttribute("position");
-    for (let i = 0; i < pos.count; i++) {
-      const t = pos.getY(i) / height;
-      pos.setZ(i, pos.getZ(i) + opts.lean * t * t);
-      pos.setY(i, pos.getY(i) - opts.lean * 0.35 * t * t);
-    }
-    g.computeVertexNormals();
+  const seg = opts.segments ?? 5;
+  const curve = opts.curve ?? 0;
+  const droop = opts.droop ?? 0;
+  const position: number[] = [];
+  const uv: number[] = [];
+  const index: number[] = [];
+
+  for (let i = 0; i <= seg; i++) {
+    const t = i / seg;
+    const w = Math.max(0.0005, widthAt(t)) / 2;
+    const y = length * t - droop * t * t;
+    const z = curve * t * t;
+    position.push(-w, y, z, w, y, z);
+    uv.push(0, t, 1, t);
   }
-  if (opts.yaw) g.rotateY(opts.yaw);
-  if (opts.y) g.translate(0, opts.y, 0);
-  return g;
+  for (let i = 0; i < seg; i++) {
+    const a = i * 2;
+    index.push(a, a + 2, a + 1, a + 1, a + 2, a + 3);
+  }
+
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute("position", new THREE.Float32BufferAttribute(position, 3));
+  geo.setAttribute("uv", new THREE.Float32BufferAttribute(uv, 2));
+  geo.setIndex(index);
+  geo.computeVertexNormals();
+  if (opts.yaw) geo.rotateY(opts.yaw);
+  geo.translate(opts.x ?? 0, opts.y ?? 0, 0);
+  return geo;
 }
 
-/** Barbe d'épi : une aiguille fine, plantée en haut et fuyante. */
-function awn(length: number, yaw: number, tilt: number, y: number): THREE.BufferGeometry {
-  const g = new THREE.PlaneGeometry(0.007, length, 1, 1);
-  g.translate(0, length / 2, 0);
-  g.rotateX(tilt);
-  g.rotateY(yaw);
-  g.translate(0, y, 0);
-  return g;
+/**
+ * Deux rubans croisés à angle droit.
+ *
+ * Le tour de main classique de la végétation : de n'importe quel angle, la
+ * paire donne du volume pour le prix de deux lames. Un épi tourné en volume
+ * coûterait dix fois plus pour un gain nul à la taille où on le regarde.
+ */
+function crossed(
+  length: number,
+  widthAt: (t: number) => number,
+  opts: RibbonOpts = {},
+): THREE.BufferGeometry[] {
+  const yaw = opts.yaw ?? 0;
+  return [
+    ribbon(length, widthAt, { ...opts, yaw }),
+    ribbon(length, widthAt, { ...opts, yaw: yaw + Math.PI / 2 }),
+  ];
 }
 
-function spindle(radius: number, height: number, y: number, segments = 5): THREE.BufferGeometry {
-  const g = new THREE.CylinderGeometry(radius * 0.15, radius, height, segments, 1);
-  g.translate(0, y + height / 2, 0);
-  return g;
-}
+/** Profil d'une feuille : large au tiers, pointue au bout. */
+const leafProfile = (w: number) => (t: number) => w * Math.sin(Math.PI * Math.pow(t, 0.62));
 
-function stem(radius: number, height: number, segments = 4): THREE.BufferGeometry {
-  const g = new THREE.CylinderGeometry(radius * 0.6, radius, height, segments, 1);
-  g.translate(0, height / 2, 0);
-  return g;
-}
+/**
+ * Profil d'un épi : fuselé, et dentelé par les grains.
+ *
+ * La dentelure ne coûte rien — elle vit dans la fonction de largeur — et c'est
+ * pourtant elle qui fait lire « grains » plutôt que « cône ».
+ */
+const earProfile = (w: number, grains: number) => (t: number) =>
+  w * Math.sin(Math.PI * Math.pow(t, 0.75)) * (0.82 + 0.18 * Math.abs(Math.sin(t * Math.PI * grains)));
 
-function bead(radius: number, x: number, y: number, z: number): THREE.BufferGeometry {
-  const g = new THREE.IcosahedronGeometry(radius, 0);
-  g.translate(x, y, z);
-  return g;
-}
+/**
+ * Tige : à peine plus large au pied.
+ *
+ * Attention à la largeur : une parcelle ne fait masse que si les brins se
+ * recouvrent. Un premier jet avait des tiges de seize millimètres — trois fois
+ * plus fines que la lame qu'elles remplaçaient — et le champ s'était vidé,
+ * laissant voir la terre entre chaque pied.
+ */
+const stemProfile = (w: number) => (t: number) => w * (1.1 - 0.22 * t);
 
 function buildShape(kind: CropShape): THREE.BufferGeometry {
   const parts: THREE.BufferGeometry[] = [];
+  const stem = (h: number, w: number) => parts.push(tag(ribbon(h, stemProfile(w), { segments: 4 })));
+  const leaf = (h: number, w: number, o: RibbonOpts) =>
+    parts.push(tag(ribbon(h, leafProfile(w), { segments: 4, ...o }), { leaf: 1 }));
+  const head = (h: number, prof: (t: number) => number, o: RibbonOpts) => {
+    for (const g of crossed(h, prof, { segments: 6, ...o })) parts.push(tag(g, { accent: 1 }));
+  };
 
   if (kind === "WHEAT") {
-    // Paille droite, épi court et dense, barbes brèves.
-    parts.push(tint(blade(0.04, 0.72), 0));
-    parts.push(tint(blade(0.03, 0.3, { yaw: 1.1, lean: 0.05, y: 0.18 }), 0));
-    parts.push(tint(spindle(0.032, 0.24, 0.7, 5), 1));
-    for (let i = 0; i < 4; i++) {
-      parts.push(tint(awn(0.13, (i / 4) * Math.PI * 2, 0.3, 0.9), 1));
+    // Paille droite, épi court et dense, barbes brèves. La dentelure du profil
+    // dessine les grains sans coûter un sommet de plus.
+    stem(0.74, 0.046);
+    leaf(0.34, 0.082, { yaw: 1.1, curve: 0.06, droop: 0.04, y: 0.14 });
+    leaf(0.28, 0.072, { yaw: -1.5, curve: 0.05, droop: 0.03, y: 0.32 });
+    head(0.28, earProfile(0.062, 5), { y: 0.7 });
+    for (const yaw of [0.5, 2.1]) {
+      parts.push(tag(ribbon(0.15, () => 0.005, { yaw, curve: 0.05, y: 0.94, segments: 2 }), { accent: 1 }));
     }
   } else if (kind === "BARLEY") {
     // La barbe : des arêtes deux fois plus longues que l'épi, en éventail.
     // C'est à ça, et à rien d'autre, qu'on reconnaît de l'orge de loin.
-    parts.push(tint(blade(0.036, 0.6), 0));
-    parts.push(tint(blade(0.028, 0.26, { yaw: 0.9, lean: 0.06, y: 0.14 }), 0));
-    parts.push(tint(spindle(0.026, 0.2, 0.58, 5), 1));
-    for (let i = 0; i < 6; i++) {
-      parts.push(tint(awn(0.36, (i / 6) * Math.PI * 2 + 0.4, 0.22 + (i % 2) * 0.12, 0.74), 1));
+    stem(0.62, 0.044);
+    leaf(0.32, 0.078, { yaw: 0.9, curve: 0.06, droop: 0.04, y: 0.11 });
+    leaf(0.26, 0.066, { yaw: -1.4, curve: 0.05, droop: 0.03, y: 0.28 });
+    head(0.24, earProfile(0.05, 6), { y: 0.58 });
+    // Les arêtes s'écartent en éventail : une lame par direction, courbée.
+    for (const [yaw, curve] of [
+      [0.3, 0.1],
+      [1.7, 0.13],
+      [3.0, 0.09],
+      [4.4, 0.12],
+    ] as const) {
+      parts.push(
+        tag(ribbon(0.34, (t) => 0.0075 * (1 - t * 0.8), { yaw, curve, y: 0.74, segments: 3 }), {
+          accent: 1,
+        }),
+      );
     }
   } else if (kind === "MAIZE") {
     // Canne épaisse, longues feuilles retombantes, panicule au sommet.
-    parts.push(tint(stem(0.026, 0.92, 5), 0));
+    for (const g of crossed(0.94, stemProfile(0.03), { segments: 5 })) parts.push(tag(g));
     for (let i = 0; i < 4; i++) {
-      parts.push(
-        tint(
-          blade(0.075, 0.46, {
-            yaw: (i / 4) * Math.PI * 2 + 0.5,
-            lean: 0.17,
-            y: 0.2 + i * 0.13,
-            segments: 3,
-          }),
-          0,
-        ),
-      );
+      leaf(0.54, 0.115, {
+        yaw: (i / 4) * Math.PI * 2 + 0.5,
+        curve: 0.19,
+        droop: 0.16,
+        y: 0.2 + i * 0.13,
+        segments: 5,
+      });
     }
-    // Épi enveloppé, à mi-hauteur, et le plumet au-dessus de la canne.
-    parts.push(tint(spindle(0.05, 0.2, 0.4, 5), 1));
-    for (let i = 0; i < 3; i++) {
-      parts.push(tint(awn(0.16, (i / 3) * Math.PI * 2, 0.26, 0.9), 1));
+    // Épi enveloppé à mi-hauteur, plumet au-dessus de la canne.
+    head(0.26, earProfile(0.085, 3), { y: 0.36 });
+    for (const yaw of [0.2, 1.4, 2.6]) {
+      parts.push(tag(ribbon(0.2, (t) => 0.008 * (1 - t), { yaw, curve: 0.07, y: 0.92, segments: 3 }), {
+        accent: 1,
+      }));
     }
   } else if (kind === "PEA") {
     // Touffe basse : des folioles par paires, deux gousses, une vrille.
-    parts.push(tint(stem(0.012, 0.46, 4), 0));
+    stem(0.5, 0.032);
     for (let i = 0; i < 6; i++) {
-      parts.push(
-        tint(
-          blade(0.06, 0.13, {
-            yaw: (i / 6) * Math.PI * 2 + 0.3,
-            lean: 0.05,
-            y: 0.14 + (i % 3) * 0.12,
-          }),
-          0,
-        ),
-      );
+      leaf(0.17, 0.125, {
+        yaw: (i / 6) * Math.PI * 2 + 0.3,
+        curve: 0.05,
+        droop: 0.02,
+        y: 0.12 + (i % 3) * 0.12,
+        segments: 3,
+      });
     }
-    parts.push(tint(spindle(0.022, 0.16, 0.3, 4), 1));
-    const pod = spindle(0.02, 0.14, 0.22, 4);
-    pod.rotateZ(0.7);
-    pod.translate(0.05, 0.02, 0.03);
-    parts.push(tint(pod, 1));
-    parts.push(tint(awn(0.12, 0.7, 0.5, 0.44), 0));
+    head(0.19, earProfile(0.036, 3), { y: 0.28, yaw: 0.4 });
+    head(0.16, earProfile(0.032, 3), { y: 0.18, yaw: 2.2, curve: 0.05 });
+    // La vrille, qui dit « grimpant » d'un trait.
+    parts.push(tag(ribbon(0.14, () => 0.005, { yaw: 0.7, curve: 0.09, y: 0.46, segments: 3 })));
   } else if (kind === "RAPE") {
     // Tige haute qui se ramifie, grappe de fleurs jaunes au sommet.
-    parts.push(tint(stem(0.014, 0.66, 4), 0));
+    stem(0.68, 0.04);
     for (let i = 0; i < 3; i++) {
-      parts.push(
-        tint(blade(0.05, 0.2, { yaw: (i / 3) * Math.PI * 2, lean: 0.06, y: 0.16 + i * 0.14 }), 0),
-      );
+      leaf(0.27, 0.125, {
+        yaw: (i / 3) * Math.PI * 2,
+        curve: 0.07,
+        droop: 0.04,
+        y: 0.14 + i * 0.14,
+        segments: 4,
+      });
     }
-    // La grappe : des boutons en couronne, plus serrés vers le haut.
-    for (let i = 0; i < 7; i++) {
-      const a = (i / 7) * Math.PI * 2;
-      const r = 0.055 * (1 - i / 12);
-      parts.push(tint(bead(0.026, Math.cos(a) * r, 0.72 + (i % 3) * 0.055, Math.sin(a) * r), 1));
-    }
-    parts.push(tint(bead(0.03, 0, 0.9, 0), 1));
+    // La grappe : trois bouquets étagés, plus serrés vers le haut. Sept billes
+    // en icosaèdre coûtaient quatre fois plus pour une masse moins lisible.
+    head(0.24, leafProfile(0.115), { y: 0.62, segments: 5 });
+    head(0.14, leafProfile(0.075), { y: 0.8, yaw: 0.9, segments: 4 });
   } else {
-    // Herbe : une touffe de lames fines, sans épi. Un pré fauché doit se lire
-    // comme un tapis, pas comme un champ de céréale rasé.
+    // Herbe : une touffe de lames fines, sans épi. Un pré doit se lire comme
+    // un tapis, pas comme une céréale rasée.
     for (let i = 0; i < 5; i++) {
       const a = (i / 5) * Math.PI * 2 + 0.6;
-      parts.push(
-        tint(
-          blade(0.028, 0.68 + (i % 3) * 0.14, {
-            yaw: a,
-            lean: 0.1 + (i % 2) * 0.06,
-            segments: 3,
-          }),
-          i === 2 ? 1 : 0,
-        ),
-      );
+      leaf(0.72 + (i % 3) * 0.16, 0.062, {
+        yaw: a,
+        curve: 0.11 + (i % 2) * 0.05,
+        droop: 0.06,
+        segments: 4,
+      });
     }
+    // Une inflorescence discrète : l'herbe monte en graine avant la fauche.
+    parts.push(tag(ribbon(0.18, earProfile(0.022, 4), { y: 0.72, segments: 4 }), { accent: 1 }));
   }
 
   const merged = mergeGeometries(parts, false)!;
