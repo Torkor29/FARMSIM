@@ -295,11 +295,13 @@ model Machine {
   type               String
   tier               Int         @default(1)
   condition          Float       @default(100)
-  /** Graissé et prêt à partir. Consommé à chaque chantier. */
+  /** Encore vrai si la jauge n’est pas vide — dérivé de `grease`. */
   greased            Boolean     @default(true)
+  /** Jauge 0–100. Un champ entier n’en consomme qu’une partie. */
+  grease             Float       @default(100)
   /** 0–100, la boue du champ. Au-dessus de 25, l'usure double. */
   dirt               Float       @default(0)
-  /** Départs consécutifs sans graisser. À 1, le suivant est refusé. */
+  /** Départs à sec d’affilée. À 1, le suivant est refusé. */
   greaseSkipStreak   Int         @default(0)
   /** BELT, HYDRAULIC, ENGINE — null si ça roule */
   breakdown          String?

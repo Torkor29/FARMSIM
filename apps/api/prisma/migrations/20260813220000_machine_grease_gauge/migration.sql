@@ -1,0 +1,2 @@
+-- AlterTable
+ALTER TABLE "Machine" ADD COLUMN "grease" REAL NOT NULL DEFAULT 100;

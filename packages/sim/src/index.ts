@@ -12,6 +12,10 @@ import {
   NO_ROTATION,
   DIRT_DIRTY_THRESHOLD,
   DIRT_PER_CELL,
+  GREASE_FULL,
+  applyGreaseUse,
+  greaseIsEmpty,
+  greaseIsOk,
   REPAIR_RESTORE,
   type BreakdownKind,
   type RotationState,
@@ -265,25 +269,31 @@ export function machineCanWork(condition: number, minCondition: number): boolean
 export type MachineCareState = {
   condition: number;
   greased: boolean;
+  /** 0–100. Absent = plein si `greased`, vide sinon. */
+  grease?: number;
   dirt: number;
   greaseSkipStreak: number;
   breakdown: BreakdownKind | null;
 };
 
-export function careWearMultiplier(opts: { greased: boolean; dirt: number }): number {
+export function careWearMultiplier(opts: { greased?: boolean; grease?: number; dirt: number }): number {
   const clean = opts.dirt < DIRT_DIRTY_THRESHOLD;
-  if (opts.greased && clean) return 0.75;
+  const ok = opts.grease != null ? greaseIsOk(opts.grease) : Boolean(opts.greased);
+  const empty = opts.grease != null ? greaseIsEmpty(opts.grease) : opts.greased === false;
+  if (ok && clean) return 0.75;
   let m = 1;
-  if (!opts.greased) m *= 1.5;
+  if (empty) m *= 1.5;
   if (!clean) m *= 2;
   return m;
 }
 
 /** Propre et graissé : un peu plus de récolte. Sale et à sec : un peu moins. */
-export function careYieldBonus(opts: { greased: boolean; dirt: number }): number {
+export function careYieldBonus(opts: { greased?: boolean; grease?: number; dirt: number }): number {
   const clean = opts.dirt < DIRT_DIRTY_THRESHOLD;
-  if (opts.greased && clean) return 0.08;
-  if (!opts.greased && !clean) return -0.06;
+  const ok = opts.grease != null ? greaseIsOk(opts.grease) : Boolean(opts.greased);
+  const empty = opts.grease != null ? greaseIsEmpty(opts.grease) : opts.greased === false;
+  if (ok && clean) return 0.08;
+  if (empty && !clean) return -0.06;
   return 0;
 }
 
@@ -300,13 +310,16 @@ export function pickBreakdownKind(condition: number): BreakdownKind {
 
 export function breakdownChance(opts: {
   condition: number;
-  greased: boolean;
+  greased?: boolean;
+  grease?: number;
   dirt: number;
 }): number {
   if (opts.condition >= 50) return 0;
-  if (opts.greased && opts.dirt < DIRT_DIRTY_THRESHOLD) return 0;
+  const ok = opts.grease != null ? greaseIsOk(opts.grease) : Boolean(opts.greased);
+  const empty = opts.grease != null ? greaseIsEmpty(opts.grease) : opts.greased === false;
+  if (ok && opts.dirt < DIRT_DIRTY_THRESHOLD) return 0;
   let p = ((50 - opts.condition) / 50) * 0.35;
-  if (!opts.greased) p += 0.15;
+  if (empty) p += 0.15;
   if (opts.dirt >= 50) p += 0.15;
   return Math.round(Math.min(0.55, Math.max(0, p)) * 1000) / 1000;
 }
@@ -321,8 +334,9 @@ export function machineWorkBlock(
   if (!machineCanWork(state.condition, minCondition)) {
     return { code: "NEED_REPAIR", message: "Condition trop basse — réparez." };
   }
-  if (!state.greased && state.greaseSkipStreak >= 1) {
-    return { code: "NEED_GREASE", message: "Graissez avant de repartir." };
+  const empty = greaseIsEmpty(state.grease ?? (state.greased ? GREASE_FULL : 0));
+  if (empty && state.greaseSkipStreak >= 1) {
+    return { code: "NEED_GREASE", message: "Graisse vide — passez à l’atelier." };
   }
   return null;
 }
@@ -332,11 +346,15 @@ export function applyJobCare(
   opts: { work: string; cells: number; rng?: () => number },
 ): { next: MachineCareState; broke: boolean } {
   const rng = opts.rng ?? Math.random;
+  const current = state.grease ?? (state.greased ? GREASE_FULL : 0);
+  const grease = applyGreaseUse(current, opts.cells, state.dirt);
   const dirt = Math.min(100, Math.round((state.dirt + dirtFromWork(opts.work, opts.cells)) * 100) / 100);
-  const streak = state.greased ? 0 : state.greaseSkipStreak + 1;
+  const wasEmpty = greaseIsEmpty(current);
+  const empty = greaseIsEmpty(grease);
+  const streak = empty ? (wasEmpty ? state.greaseSkipStreak + 1 : 0) : 0;
   const chance = breakdownChance({
     condition: state.condition,
-    greased: state.greased,
+    grease,
     dirt: state.dirt,
   });
   const broke = rng() < chance;
@@ -345,7 +363,8 @@ export function applyJobCare(
     broke,
     next: {
       condition: state.condition,
-      greased: false,
+      grease,
+      greased: !empty,
       dirt,
       greaseSkipStreak: streak,
       breakdown,

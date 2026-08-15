@@ -54,6 +54,8 @@ import {
   type WeatherState,
   BREAKDOWN_LABELS,
   GREASE_COST_CRD,
+  GREASE_FULL,
+  GREASE_OK,
   CLEAN_COST_CRD,
   DIRT_DIRTY_THRESHOLD,
   isBreakdownKind,
@@ -196,6 +198,8 @@ type Player = {
       parkedParcelId?: string | null;
       storedInBuildingId?: string | null;
       greased?: boolean;
+      /** Niveau de graisse 0–100. Absent sur une base d'avant la jauge. */
+      grease?: number;
       dirt?: number;
       greaseSkipStreak?: number;
       breakdown?: string | null;
@@ -3388,6 +3392,10 @@ export function App() {
                 const low = def ? m.condition < def.minCondition : m.condition < 15;
                 const dirty = (m.dirt ?? 0) >= DIRT_DIRTY_THRESHOLD;
                 const panne = isBreakdownKind(m.breakdown) ? BREAKDOWN_LABELS[m.breakdown] : null;
+                // La graisse est une jauge et non un interrupteur : « pas
+                // graissé » n'apparaissait qu'une fois à sec, sans jamais
+                // prévenir. Le booléen reste le repli des bases d'avant.
+                const grease = m.grease ?? (m.greased === false ? 0 : GREASE_FULL);
                 const eta = true;
                 const halfTarget = repairHalfwayTarget(m.condition);
                 const halfQuote = def
@@ -3423,18 +3431,27 @@ export function App() {
                                 : m.condition < 90
                                   ? "bon"
                                   : "neuf"}
-                        {m.greased !== false && !dirty && !panne ? " · propre et graissé (+)" : ""}
-                        {m.greased === false ? " · pas graissé" : ""}
+                        {grease >= GREASE_OK && !dirty && !panne ? " · propre et graissé (+)" : ""}
                         {dirty ? " · sale" : ""}
                         {panne ? ` · panne ${panne}` : ""}
                         {m.storedInBuildingId ? " · hangar" : m.parkedParcelId ? " · parcelle" : ""}
+                      </div>
+                      <div
+                        className={`grease-gauge ${grease <= 0 ? "empty" : grease < GREASE_OK ? "low" : ""}`}
+                        title={`Graisse ${grease.toFixed(0)} % — à sec, l’usure grimpe de moitié`}
+                      >
+                        <span className="grease-label">Graisse</span>
+                        <span className="grease-track">
+                          <span className="grease-fill" style={{ width: `${Math.max(0, Math.min(100, grease))}%` }} />
+                        </span>
+                        <span className="grease-num">{grease.toFixed(0)}%</span>
                       </div>
                     </span>
                     <span className="row-actions">
                           <button
                             type="button"
-                            disabled={busy || (m.greased !== false && (m.greaseSkipStreak ?? 0) === 0)}
-                            title={`${GREASE_COST_CRD} TRN`}
+                            disabled={busy || grease >= GREASE_FULL - 0.5}
+                            title={`Refaire le plein de graisse · ${GREASE_COST_CRD} TRN`}
                             onClick={() => setCare({ mode: "grease", machineId: m.id })}
                           >
                             Graisser

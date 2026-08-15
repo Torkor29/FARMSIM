@@ -376,6 +376,40 @@ html.playing .field-dock {
   transition: width 0.4s ease-out;
 }
 
+/* —— Jauge de graisse (fiche machine du garage) ——
+   Un booléen ne prévenait jamais : la machine passait de « graissée » à « pas
+   graissée » sans transition, et l'usure grimpait déjà. Une jauge se lit à
+   l'avance. Le libellé est écrit en toutes lettres — la charte §7.7 interdit
+   l'icône seule. */
+.grease-gauge {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 0.4rem;
+  margin-top: 0.25rem;
+  font-size: 0.72rem;
+  color: var(--muted);
+}
+.grease-label { font-weight: 600; }
+.grease-num { font-variant-numeric: tabular-nums; font-weight: 700; }
+.grease-track {
+  height: 5px;
+  border-radius: 999px;
+  background: var(--sand-200);
+  overflow: hidden;
+}
+.grease-fill {
+  display: block;
+  height: 100%;
+  border-radius: 999px;
+  background: var(--gold-500);
+  transition: width 0.45s ease-out;
+}
+.grease-gauge.low .grease-fill { background: var(--gold-700); }
+.grease-gauge.low .grease-num { color: var(--gold-700); }
+.grease-gauge.empty .grease-fill { background: var(--danger); }
+.grease-gauge.empty .grease-num { color: var(--danger); }
+
 /* —— Objectifs —— */
 .quest-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 0.5rem; }
 .quest-list li {
