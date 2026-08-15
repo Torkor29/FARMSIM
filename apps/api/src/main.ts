@@ -237,6 +237,40 @@ import path from "node:path";
 
 const prisma = new PrismaClient();
 const app = express();
+
+/**
+ * Express 4 ne rattrape pas les rejets d'un gestionnaire `async`.
+ *
+ * Les quatre-vingt-six routes sont écrites en `async (req, res) => …` et
+ * quatre seulement portent un `try/catch`. Sur les autres, la moindre erreur
+ * — une contrainte de base, un débit refusé — produisait un rejet non capté :
+ * aucune réponse n'était envoyée, et le navigateur attendait jusqu'à
+ * expiration devant une ferme figée. Rien dans le journal côté client, et
+ * juste un avertissement de Node côté serveur.
+ *
+ * On enveloppe donc les méthodes de routage **avant** toute déclaration : le
+ * rejet part vers le gestionnaire d'erreurs, qui répond.
+ */
+for (const method of ["get", "post", "put", "delete", "patch"] as const) {
+  const original = app[method].bind(app) as (...a: unknown[]) => unknown;
+  (app as unknown as Record<string, unknown>)[method] = (path: unknown, ...handlers: unknown[]) =>
+    original(
+      path,
+      ...handlers.map((h) =>
+        typeof h === "function" && (h as { length: number }).length < 4
+          ? (req: express.Request, res: express.Response, next: express.NextFunction) => {
+              try {
+                const out = (h as (...a: unknown[]) => unknown)(req, res, next);
+                if (out instanceof Promise) out.catch(next);
+              } catch (e) {
+                next(e);
+              }
+            }
+          : h,
+      ),
+    );
+}
+
 app.use(cors());
 app.use(express.json());
 
@@ -251,6 +285,56 @@ app.use((req, _res, next) => {
     req.url = req.url.slice(4) || "/";
   }
   next();
+});
+
+/**
+ * Toute action se fait au nom du porteur du jeton, et de personne d'autre.
+ *
+ * Soixante-quinze des quatre-vingt-six routes lisaient le `userId` dans le
+ * corps de la requête et le croyaient sur parole — elles vérifiaient bien que
+ * la machine appartenait à ce `userId`, mais jamais que l'appelant *était* ce
+ * joueur. Et `/players`, publique, donne l'identifiant de chacun. Un visiteur
+ * sans compte pouvait donc vendre le tracteur d'un autre :
+ *
+ *     POST /machines/<id>/sell   { "userId": "<id lu dans /players>" }
+ *     → 200 { "sold": "TRACTOR", "value": 1540 }
+ *
+ * Corriger les soixante-quinze gestionnaires un par un aurait laissé passer
+ * le prochain. La règle vit donc ici, en amont : **dès qu'une requête porte un
+ * `userId`, il doit être celui de la session**. Les routes qui n'en portent
+ * pas — inscription, connexion, monde, cotations — ne sont pas concernées et
+ * restent ouvertes.
+ *
+ * Le client attache déjà son jeton à chaque appel (`api()`, App.tsx), et
+ * aucun appel ne contourne ce helper : aucun gestionnaire n'a besoin de
+ * changer.
+ */
+async function enforceIdentity(
+  req: express.Request,
+  res: express.Response,
+  next: express.NextFunction,
+) {
+  const claimed =
+    (typeof req.body?.userId === "string" ? req.body.userId : null) ??
+    (typeof req.query.userId === "string" ? req.query.userId : null);
+  if (!claimed) {
+    next();
+    return;
+  }
+  const auth = await userFromAuthHeader(req);
+  if (!auth) {
+    res.status(401).json({ error: "Session expirée — reconnectez-vous" });
+    return;
+  }
+  if (auth.user.id !== claimed) {
+    res.status(403).json({ error: "Action refusée : ce n'est pas votre compte" });
+    return;
+  }
+  next();
+}
+
+app.use((req, res, next) => {
+  enforceIdentity(req, res, next).catch(next);
 });
 
 const PORT = Number(process.env.PORT ?? 3001);
@@ -853,6 +937,49 @@ export type XpGain = {
   /** Niveau franchi à l'instant, pour l'annoncer */
   levelUp: number | null;
 };
+
+/** Refus de débit : le solde ne couvre plus la dépense au moment de payer. */
+class InsufficientFunds extends Error {
+  constructor(readonly needed: number) {
+    super(`TRN insuffisants — il en faut ${Math.ceil(needed)}`);
+    this.name = "InsufficientFunds";
+  }
+}
+
+/**
+ * Débite un joueur, **à la condition** qu'il ait de quoi payer.
+ *
+ * Les routes lisaient le solde, le comparaient au prix, puis débitaient sans
+ * condition. Entre la lecture et l'écriture, rien n'empêchait une autre
+ * requête de faire la même chose : huit constructions lancées ensemble avec
+ * 1 500 TRN en poche en payaient quatre à 1 200, et laissaient le compte à
+ * **−3 300 TRN**. Un double-clic un peu nerveux suffisait.
+ *
+ * La condition vit maintenant dans la clause `where` de l'écriture : la base
+ * ne décrémente que si le solde couvre encore la dépense, et l'on relit le
+ * nombre de lignes touchées pour savoir si le paiement a eu lieu. Zéro ligne
+ * = plus assez d'argent = on lève, ce qui annule la transaction entière et
+ * donc tout ce que la route avait déjà écrit.
+ *
+ * À n'appeler qu'à l'intérieur d'un `$transaction`, sans quoi l'annulation
+ * ne couvre pas le reste de la route.
+ */
+async function debit(
+  tx: Prisma.TransactionClient,
+  userId: string,
+  amount: number,
+): Promise<void> {
+  // Un montant non fini vient d'un calcul qui a débordé (un `tons` à 1e308
+  // suffit) : il ne doit pas se présenter au guichet, et surtout pas produire
+  // un refus qui annonce « Infinity requis ».
+  if (!Number.isFinite(amount)) throw new Error("Montant invalide");
+  if (!(amount > 0)) return;
+  const hit = await tx.user.updateMany({
+    where: { id: userId, crd: { gte: amount } },
+    data: { crd: { decrement: amount } },
+  });
+  if (hit.count === 0) throw new InsufficientFunds(amount);
+}
 
 /**
  * Crédite le travail accompli.
@@ -1842,10 +1969,12 @@ async function settleDueFutures() {
   for (const c of due) {
     const penalty = futuresPenalty(c.pricePerTon, c.tons);
     await prisma.$transaction(async (tx) => {
+      // Seul débit qui ne passe **pas** par `debit()` : une pénalité de
+      // contrat à terme non honoré peut légitimement creuser le compte. Une
+      // dette se rembourse, elle ne s'efface pas faute de trésorerie — et un
+      // débit conditionnel l'effacerait en silence.
       await tx.user.update({
         where: { id: c.sellerId },
-        // La trésorerie peut passer sous zéro : une dette se rembourse, elle
-        // ne s'efface pas parce qu'on n'a pas de quoi la payer.
         data: { crd: { decrement: penalty } },
       });
       await tx.futuresContract.update({
@@ -2024,7 +2153,25 @@ app.get("/sim/status", (_req, res) => {
     weatherLabels: WEATHER_LABELS,
   });
 });
-app.post("/sim/tick", async (_req, res) => {
+/**
+ * Avance le monde d'un cran, à la demande.
+ *
+ * Elle était **ouverte à tous, sans jeton** : un seul appel fait pousser les
+ * cultures, tourner la météo, bouger les cours, publier les chantiers des
+ * fermes voisines et régler les troupeaux. Répétée en boucle, elle vieillit
+ * la partie de tout le monde en quelques secondes — l'économie entière au
+ * bout d'un `curl`. C'est un outil de mise au point, il est traité comme tel.
+ */
+app.post("/sim/tick", async (req, res) => {
+  if (!DEV_TOOLS) {
+    res.status(404).json({ error: "Route inconnue" });
+    return;
+  }
+  const auth = await userFromAuthHeader(req);
+  if (!auth) {
+    res.status(401).json({ error: "Session requise" });
+    return;
+  }
   const result = await runWorldTick();
   res.json(result);
 });
@@ -2406,7 +2553,7 @@ app.post("/auth/register", async (req, res) => {
         if (!parcel) throw new Error("PARCEL_UNAVAILABLE");
         const fresh = await tx.user.findUnique({ where: { id: u.id } });
         if (!fresh || fresh.crd < parcel.landPrice) throw new Error("INSUFFICIENT_FUNDS");
-        await tx.user.update({ where: { id: u.id }, data: { crd: { decrement: parcel.landPrice } } });
+        await debit(tx, u.id, parcel.landPrice);
         await tx.parcel.update({ where: { id: parcel.id }, data: { farmId: farm.id } });
         const machine = await tx.machine.findFirst({ where: { farmId: farm.id } });
         if (machine) {
@@ -2987,10 +3134,7 @@ async function createLaborOrderForCells(opts: {
     };
   }
   const order = await prisma.$transaction(async (tx) => {
-    await tx.user.update({
-      where: { id: user.id },
-      data: { crd: { decrement: money.escrow } },
-    });
+    await debit(tx, user.id, money.escrow);
     return tx.laborOrder.create({
       data: {
         parcelId: parcel.id,
@@ -3214,10 +3358,7 @@ app.post("/parcels/:id/buy", async (req, res) => {
   }
 
   const updated = await prisma.$transaction(async (tx) => {
-    await tx.user.update({
-      where: { id: user.id },
-      data: { crd: { decrement: quote.total } },
-    });
+    await debit(tx, user.id, quote.total);
     await tx.parcel.update({
       where: { id: target.id },
       data: { farmId: user.farm!.id, landPrice: quote.marketValue },
@@ -3333,7 +3474,7 @@ app.post("/parcels/:id/contractor", async (req, res) => {
     }
     const growMs = cropGrowMs(crop, 0);
     await prisma.$transaction(async (tx) => {
-      await tx.user.update({ where: { id: user.id }, data: { crd: { decrement: total } } });
+      await debit(tx, user.id, total);
       for (const { x, y } of cells) {
         await tx.parcelCell.update({
           where: { parcelId_x_y: { parcelId: parcel.id, x, y } },
@@ -3367,7 +3508,7 @@ app.post("/parcels/:id/contractor", async (req, res) => {
     }
     const malus = LOST_CROP_FERTILITY_MALUS * lost.length;
     await prisma.$transaction(async (tx) => {
-      await tx.user.update({ where: { id: user.id }, data: { crd: { decrement: total } } });
+      await debit(tx, user.id, total);
       for (const cell of lost) {
         await tx.parcelCell.update({
           where: { id: cell.id },
@@ -3400,7 +3541,7 @@ app.post("/parcels/:id/contractor", async (req, res) => {
     const available = await parcelManureTons(parcel.id);
     const usedManure = needed > 0 && available >= needed;
     await prisma.$transaction(async (tx) => {
-      await tx.user.update({ where: { id: user.id }, data: { crd: { decrement: total } } });
+      await debit(tx, user.id, total);
       if (usedManure) await drawManureFromPits(tx, parcel.id, needed);
       for (const { x, y } of cropCells) {
         const cell = parcel.cells.find((c) => c.x === x && c.y === y);
@@ -3479,7 +3620,7 @@ app.post("/parcels/:id/contractor", async (req, res) => {
   const moisture = harvestMoisture(weather?.state as WeatherState | undefined);
 
   await prisma.$transaction(async (tx) => {
-    await tx.user.update({ where: { id: user.id }, data: { crd: { decrement: total } } });
+    await debit(tx, user.id, total);
     for (const cell of taken) {
       const next = afterTakeField(
         {
@@ -3680,7 +3821,7 @@ app.post("/parcels/:id/plant", async (req, res) => {
   const last = body.data.cells[body.data.cells.length - 1];
   const { wear, labor, gain } = await prisma.$transaction(async (tx) => {
     if (access.charge) {
-      await tx.user.update({ where: { id: user.id }, data: { crd: { decrement: cost } } });
+      await debit(tx, user.id, cost);
     }
     for (const { x, y } of body.data.cells) {
       const cell = parcel.cells.find((c) => c.x === x && c.y === y);
@@ -3795,7 +3936,7 @@ app.post("/parcels/:id/fertilize", async (req, res) => {
   const last = body.data.cells[body.data.cells.length - 1];
   const { wear, labor, gain } = await prisma.$transaction(async (tx) => {
     if (access.charge && cost > 0) {
-      await tx.user.update({ where: { id: user.id }, data: { crd: { decrement: cost } } });
+      await debit(tx, user.id, cost);
     }
     if (usedManure) await drawManureFromPits(tx, parcel.id, needed);
     for (const { x, y } of body.data.cells) {
@@ -3937,7 +4078,7 @@ app.post("/parcels/:id/plow", async (req, res) => {
   const worked = candidates.map((c) => ({ x: c.x, y: c.y }));
   const { wear, labor, gain } = await prisma.$transaction(async (tx) => {
     if (access.charge) {
-      await tx.user.update({ where: { id: user.id }, data: { crd: { decrement: cost } } });
+      await debit(tx, user.id, cost);
     }
     for (const cell of candidates) {
       await tx.parcelCell.update({
@@ -4069,7 +4210,7 @@ app.post("/parcels/:id/stubble", async (req, res) => {
   const worked = targets.map((c) => ({ x: c.x, y: c.y }));
   const { wear, labor, gain } = await prisma.$transaction(async (tx) => {
     if (access.charge) {
-      await tx.user.update({ where: { id: user.id }, data: { crd: { decrement: cost } } });
+      await debit(tx, user.id, cost);
     }
     for (const cell of targets) {
       const next = applyStubble({
@@ -4667,7 +4808,7 @@ app.post("/parcels/:id/build", async (req, res) => {
 
   try {
     const building = await prisma.$transaction(async (tx) => {
-      await tx.user.update({ where: { id: user.id }, data: { crd: { decrement: def.cost } } });
+      await debit(tx, user.id, def.cost);
       const b = await tx.building.create({
         data: {
           parcelId: parcel.id,
@@ -4795,7 +4936,7 @@ app.post("/buildings/:id/upgrade", async (req, res) => {
   }
 
   const updated = await prisma.$transaction(async (tx) => {
-    await tx.user.update({ where: { id: user.id }, data: { crd: { decrement: cost } } });
+    await debit(tx, user.id, cost);
     await grantXp(tx, user.id, "UPGRADE", { cost }, { buildingsUpgraded: 1 });
     return tx.building.update({
       where: { id: building.id },
@@ -5279,7 +5420,7 @@ app.post("/buildings/:id/animals", async (req, res) => {
     return;
   }
   await prisma.$transaction(async (tx) => {
-    await tx.user.update({ where: { id: user.id }, data: { crd: { decrement: cost } } });
+    await debit(tx, user.id, cost);
     if (building.herd) {
       // On achète du bétail déjà élevé : la moyenne d'âge du lot se déplace
       // vers celle des arrivantes, au prorata des effectifs.
@@ -5313,7 +5454,7 @@ app.post("/buildings/:id/animals", async (req, res) => {
 /** Vente locale : le fumier part au voisin, pas au silo ni au négociant. */
 app.post("/buildings/:id/manure/sell", async (req, res) => {
   const body = z
-    .object({ userId: z.string(), tons: z.number().positive().optional() })
+    .object({ userId: z.string(), tons: z.number().positive().max(100_000).optional() })
     .safeParse(req.body);
   if (!body.success) {
     res.status(400).json(body.error.flatten());
@@ -5912,7 +6053,7 @@ app.post("/market/buy", async (req, res) => {
     .object({
       userId: z.string(),
       commodity: z.enum(PURCHASABLE_GOODS as unknown as [TradeGood, ...TradeGood[]]),
-      tons: z.number().positive(),
+      tons: z.number().positive().max(100_000),
     })
     .safeParse(req.body);
   if (!body.success) {
@@ -5937,7 +6078,7 @@ app.post("/market/buy", async (req, res) => {
     return;
   }
   await prisma.$transaction(async (tx) => {
-    await tx.user.update({ where: { id: user.id }, data: { crd: { decrement: cost } } });
+    await debit(tx, user.id, cost);
     await addToStock(tx, user.farm!.id, body.data.commodity, body.data.tons, 0, 3);
   });
   res.json({ bought: body.data.tons, cost, pricePerTon: dealerAskPrice(base) });
@@ -6051,7 +6192,7 @@ app.post("/machines/buy", async (req, res) => {
     return;
   }
   const result = await prisma.$transaction(async (tx) => {
-    await tx.user.update({ where: { id: user.id }, data: { crd: { decrement: def.cost } } });
+    await debit(tx, user.id, def.cost);
     const machine = await tx.machine.create({
       data: {
         farmId: user.farm!.id,
@@ -6135,10 +6276,7 @@ app.post("/machines/:id/repair", async (req, res) => {
     return;
   }
   await prisma.$transaction(async (tx) => {
-    await tx.user.update({
-      where: { id: body.data.userId },
-      data: { crd: { decrement: quote.cost } },
-    });
+    await debit(tx, body.data.userId, quote.cost);
     await tx.machine.update({
       where: { id: machine.id },
       data: {
@@ -6189,10 +6327,7 @@ app.post("/machines/:id/grease", async (req, res) => {
     return;
   }
   const gain = await prisma.$transaction(async (tx) => {
-    await tx.user.update({
-      where: { id: body.data.userId },
-      data: { crd: { decrement: GREASE_COST_CRD } },
-    });
+    await debit(tx, body.data.userId, GREASE_COST_CRD);
     await tx.machine.update({
       where: { id: machine.id },
       data: { greased: true, grease: GREASE_FULL, greaseSkipStreak: 0 },
@@ -6234,10 +6369,7 @@ app.post("/machines/:id/clean", async (req, res) => {
     return;
   }
   await prisma.$transaction(async (tx) => {
-    await tx.user.update({
-      where: { id: body.data.userId },
-      data: { crd: { decrement: CLEAN_COST_CRD } },
-    });
+    await debit(tx, body.data.userId, CLEAN_COST_CRD);
     await tx.machine.update({
       where: { id: machine.id },
       data: { dirt: 0 },
@@ -6294,10 +6426,7 @@ app.post("/machines/:id/service", async (req, res) => {
     return;
   }
   await prisma.$transaction(async (tx) => {
-    await tx.user.update({
-      where: { id: body.data.userId },
-      data: { crd: { decrement: quote.cost } },
-    });
+    await debit(tx, body.data.userId, quote.cost);
     await tx.machine.update({
       where: { id: machine.id },
       data: {
@@ -6584,7 +6713,7 @@ app.post("/market/dealer", async (req, res) => {
     .object({
       userId: z.string(),
       commodity: sellableGood,
-      tons: z.number().positive(),
+      tons: z.number().positive().max(100_000),
     })
     .safeParse(req.body);
   if (!body.success) {
@@ -6669,8 +6798,8 @@ app.post("/market/listings", async (req, res) => {
     .object({
       userId: z.string(),
       commodity: sellableGood,
-      tons: z.number().positive(),
-      pricePerTon: z.number().positive(),
+      tons: z.number().positive().max(100_000),
+      pricePerTon: z.number().positive().max(1_000_000),
     })
     .safeParse(req.body);
   if (!body.success) {
@@ -6715,7 +6844,7 @@ app.post("/market/listings", async (req, res) => {
   const fee = listingFee(body.data.pricePerTon, tons);
   const listing = await prisma.$transaction(async (tx) => {
     await drawFromStock(tx, inv!, tons);
-    await tx.user.update({ where: { id: user.id }, data: { crd: { decrement: fee } } });
+    await debit(tx, user.id, fee);
     return tx.marketListing.create({
       data: {
         sellerId: user.id,
@@ -6827,7 +6956,7 @@ app.post("/market/listings/:id/buy", async (req, res) => {
       where: { id: listing.id },
       data: { status: "SOLD", buyerId: buyer.id, soldAt: new Date() },
     });
-    await tx.user.update({ where: { id: buyer.id }, data: { crd: { decrement: total } } });
+    await debit(tx, buyer.id, total);
     await tx.user.update({
       where: { id: listing.sellerId },
       data: { crd: { increment: proceeds } },
@@ -6889,10 +7018,7 @@ async function settleOverdueDeliveries() {
       if (!fresh || fresh.status !== "PENDING") return;
       const fee = Math.min(d.buyer.crd, d.autoFee);
       if (fee > 0) {
-        await tx.user.update({
-          where: { id: d.buyerId },
-          data: { crd: { decrement: fee } },
-        });
+        await debit(tx, d.buyerId, fee);
       }
       await fulfillDelivery(tx, fresh);
     });
@@ -6981,10 +7107,7 @@ app.post("/deliveries/:id/auto", async (req, res) => {
   await prisma.$transaction(async (tx) => {
     const fresh = await tx.delivery.findUnique({ where: { id: delivery.id } });
     if (!fresh || fresh.status !== "PENDING") throw new Error("DELIVERY_GONE");
-    await tx.user.update({
-      where: { id: delivery.buyerId },
-      data: { crd: { decrement: delivery.autoFee } },
-    });
+    await debit(tx, delivery.buyerId, delivery.autoFee);
     await fulfillDelivery(tx, fresh);
   });
   res.json({
@@ -6999,7 +7122,7 @@ app.post("/market/sell", async (req, res) => {
     .object({
       userId: z.string(),
       commodity: sellableGood,
-      tons: z.number().positive(),
+      tons: z.number().positive().max(100_000),
     })
     .safeParse(req.body);
   if (!body.success) {
@@ -7087,7 +7210,7 @@ app.post("/inventory/dry", async (req, res) => {
     .object({
       userId: z.string(),
       itemId: z.string(),
-      tons: z.number().positive().optional(),
+      tons: z.number().positive().max(100_000).optional(),
       passes: z.number().int().min(1).max(5).optional(),
     })
     .safeParse(req.body);
@@ -7153,11 +7276,9 @@ app.post("/inventory/dry", async (req, res) => {
         quality: nextMoisture <= DRYING.sellThreshold ? Math.max(inv.quality, 3) : inv.quality,
       },
     });
-    const u = await tx.user.update({
-      where: { id: user.id },
-      data: { crd: { decrement: dried.cost } },
-    });
-    return { item, crd: u.crd };
+    await debit(tx, user.id, dried.cost);
+    const u = await tx.user.findUnique({ where: { id: user.id }, select: { crd: true } });
+    return { item, crd: u?.crd ?? 0 };
   });
 
   res.json({
@@ -7300,6 +7421,25 @@ app.use(express.static(webDist));
 app.get("*", (_req, res) => {
   res.sendFile(path.join(webDist, "index.html"));
 });
+
+/**
+ * Dernier filet : toute erreur qui remonte d'une route répond quelque chose.
+ *
+ * Déclaré après les routes, comme l'exige Express, et avec quatre paramètres —
+ * c'est à cela qu'il reconnaît un gestionnaire d'erreurs.
+ */
+app.use(
+  (err: unknown, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
+    if (res.headersSent) return;
+    if (err instanceof InsufficientFunds) {
+      res.status(402).json({ error: err.message });
+      return;
+    }
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error("route failed:", msg);
+    res.status(500).json({ error: "Le serveur n'a pas pu traiter cette action" });
+  },
+);
 
 async function main() {
   await ensureSeed();
