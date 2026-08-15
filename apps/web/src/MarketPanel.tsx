@@ -525,9 +525,21 @@ export function MarketPanel({
               onAutoDeliverLot={onAutoDeliverLot}
             />
             {others.length === 0 ? (
-              <p className="market-empty">
-                Personne n’a rien mis en vitrine. Mettez le vôtre, ou revenez plus tard.
-              </p>
+              /* Charte §7.7 : un écran vide porte une image, une phrase qui
+                 explique, et l'action à faire — pas une ligne grise seule. */
+              <div className="market-empty">
+                <span className="market-empty-art" aria-hidden="true">
+                  🏷️
+                </span>
+                <strong>La vitrine est vide</strong>
+                <span>
+                  Personne ne vend pour l’instant. Mettez-y votre récolte, ou passez chez le
+                  négociant.
+                </span>
+                <button type="button" className="accent-btn" onClick={() => setTab("MORE")}>
+                  Voir le négociant
+                </button>
+              </div>
             ) : (
               <div className="sale-grid catalog">
                 {others.map((l) => (
@@ -559,11 +571,19 @@ export function MarketPanel({
                 ))}
               </div>
             )}
-            <p className="hall-more-link">
-              <button type="button" className="ghost tiny" onClick={() => setTab("MORE")}>
-                Acheter du fourrage, ou vendre une récolte pas encore mûre
-              </button>
-            </p>
+            {/* Une phrase entière dans un bouton de vingt-neuf pixels de haut :
+                ni cliquable au doigt, ni lisible comme une action. La phrase
+                devient l'explication, le bouton devient court.
+                Vitrine vide, l'état vide propose déjà le négociant : le
+                répéter deux fois dans le même écran ne l'aide pas. */}
+            {others.length > 0 && (
+              <p className="hall-more-link">
+                <span>Besoin de fourrage, ou d’écouler une récolte pas encore mûre ?</span>
+                <button type="button" className="ghost" onClick={() => setTab("MORE")}>
+                  Voir le négociant
+                </button>
+              </p>
+            )}
           </>
         )}
       </div>

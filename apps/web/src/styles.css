@@ -179,8 +179,8 @@ html.playing body {
 /* Un rail plus haut que l'écran se coupait net sur la dernière carte, sans
    rien dire qu'il y avait une suite. Le voile du bas la laisse deviner. */
 .rail {
-  -webkit-mask-image: linear-gradient(180deg, #000 calc(100% - 2.2rem), transparent);
-  mask-image: linear-gradient(180deg, #000 calc(100% - 2.2rem), transparent);
+  -webkit-mask-image: linear-gradient(180deg, #000 calc(100% - 1.3rem), transparent);
+  mask-image: linear-gradient(180deg, #000 calc(100% - 1.3rem), transparent);
 }
 .rail:not(:hover) { scrollbar-color: var(--line) transparent; }
 .rail > * { flex: 0 0 auto; }
@@ -894,12 +894,19 @@ button.ghost {
   border-radius: var(--r-lg);
   display: grid;
 }
+/* Sans retrait, l'en-tête touchait le haut de la feuille et rabotait le
+   « BIENVENUE » qui la coiffe. Le retrait vit sur le conteneur et non sur
+   chaque section : posé sur une section, il passe *sous* son fond, et le
+   bloc de l'état vide continuait d'aller d'un bord à l'autre. */
+.hall { padding: 1.1rem 1.2rem 1.2rem; }
+
 .market-head,
 .hall-head {
   display: flex;
   justify-content: space-between;
   align-items: center;
   gap: 1rem;
+  padding-bottom: 0.9rem;
 }
 .market-head h2,
 .hall-head h2 { margin: 0; color: var(--teal-700); font-size: 1.55rem; }
@@ -910,6 +917,7 @@ button.ghost {
   font-size: 0.72rem;
   font-weight: 800;
   letter-spacing: 0.08em;
+  line-height: 1.4;
   text-transform: uppercase;
   color: var(--gold-700);
 }
@@ -949,7 +957,18 @@ button.ghost {
   border-color: var(--gold-500);
   color: #3a2c07;
 }
-.hall-more-link { margin: 0.2rem 0 0; text-align: center; }
+/* L'explication en texte, l'action en bouton — et non la phrase entière
+   dans un bouton de vingt-neuf pixels. */
+.hall-more-link {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 0.6rem;
+  margin: 0.4rem 0 0;
+  color: var(--ink-soft);
+  font-size: 0.86rem;
+}
 .sale-grid { display: grid; gap: 0.65rem; }
 .sale-grid.catalog {
   grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
@@ -1095,14 +1114,23 @@ button.ghost {
   border-color: transparent;
   color: #fff;
 }
+/* Charte §7.7 : image, phrase, action. Une ligne grise seule laissait le
+   joueur devant un mur sans lui dire quoi faire. */
 .market-empty {
+  display: grid;
+  justify-items: center;
+  gap: 0.45rem;
   margin: 0;
-  padding: 1.5rem;
+  padding: 2rem 1.5rem;
   text-align: center;
-  color: var(--muted);
+  color: var(--ink-soft);
   background: var(--sand);
   border-radius: var(--r-md);
 }
+.market-empty-art { font-size: 2.4rem; line-height: 1; }
+.market-empty strong { font-size: 1.05rem; color: var(--ink); }
+.market-empty > span { max-width: 32rem; }
+.market-empty button { margin-top: 0.35rem; }
 .stock-row { display: flex; flex-wrap: wrap; gap: 0.45rem; }
 .stock-chip {
   display: grid;

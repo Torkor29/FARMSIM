@@ -3473,7 +3473,11 @@ export function App() {
                         title={halfQuote ? `État → ${halfTarget.toFixed(0)} %` : ""}
                         onClick={() => repairMachine(m.id, "half")}
                       >
-                        Rafistoler {halfQuote ? `${halfQuote.cost} TRN` : ""}
+                        {/* Sur une machine neuve les devis valent zéro : le
+                            bouton annonçait « Rafistoler 0 TRN », un prix nul
+                            pour un travail impossible. Il dit maintenant
+                            pourquoi il est éteint. */}
+                        {canHalf ? `Rafistoler ${halfQuote?.cost ?? 0} TRN` : "Rien à rafistoler"}
                       </button>
                       <button
                         type="button"
@@ -3481,7 +3485,7 @@ export function App() {
                         title="Révision complète"
                         onClick={() => repairMachine(m.id, "full")}
                       >
-                        Réviser {fullQuote ? `${fullQuote.cost} TRN` : ""}
+                        {canFull ? `Réviser ${fullQuote?.cost ?? 0} TRN` : "Déjà à neuf"}
                       </button>
                       <button
                         type="button"
