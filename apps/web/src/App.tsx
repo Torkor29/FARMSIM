@@ -279,6 +279,20 @@ async function api<T>(path: string, init?: RequestInit): Promise<T> {
   });
   const data = await res.json().catch(() => ({}));
   if (!res.ok) {
+    /*
+     * Jeton mort : on repart proprement à l'écran de connexion.
+     *
+     * Le serveur ne vérifiait la session que sur onze routes ; les autres
+     * acceptaient n'importe quel `userId`, si bien qu'un jeton expiré
+     * continuait de « marcher ». Maintenant qu'elles refusent toutes, ce
+     * chemin devient atteignable — et sans cela, le joueur restait devant une
+     * ferme vivante qui répondait « Session expirée » à chacun de ses gestes,
+     * sans qu'aucun ne lui propose de se reconnecter.
+     */
+    if (res.status === 401 && token) {
+      clearSession();
+      window.location.reload();
+    }
     const flat = data as { error?: string; formErrors?: string[]; fieldErrors?: Record<string, string[]> };
     const field = flat.fieldErrors
       ? Object.values(flat.fieldErrors).flat().find(Boolean)
