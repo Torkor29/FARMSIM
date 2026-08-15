@@ -6,5 +6,11 @@
     "module": "NodeNext",
     "moduleResolution": "NodeNext"
   },
-  "include": ["src"]
+  "include": ["src"],
+  // Les tests ne partent pas en production : ils sont exécutés par `tsx`, qui
+  // accepte `import.meta`, alors que ce projet compile en CommonJS — les y
+  // laisser faisait échouer `tsc -p tsconfig.json`, donc l'image Docker
+  // entière, sur « The 'import.meta' meta-property is not allowed in files
+  // which will build into CommonJS output ».
+  "exclude": ["src/__tests__"]
 }
