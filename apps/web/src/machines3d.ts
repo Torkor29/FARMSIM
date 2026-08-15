@@ -920,50 +920,76 @@ function buildForageHarvester(): Blueprint {
   root.add("chrome", cyl(0.034, 0.03, 0.05, 14, [-0.5, 1.0, -0.2], [0, 0, 0.2]));
   root.child([-0.5, 1.04, -0.2], { role: "exhaust" });
 
-  /* — Goulotte : le tube coudé qui crache le fourrage ————————— */
+  /* — Goulotte : ce qui fait reconnaître une ensileuse ——————— */
   //
-  // Elle part du haut de la caisse, monte en oblique et se termine par un
-  // déflecteur orienté vers l'arrière-gauche, là où roule la remorque.
-  root.add(
-    "paint",
-    roundedBox(0.5, 0.17, 0.19, 0.05, [-0.08, 0.86, -0.24], [0, 0.22, 0.46]),
-    roundedBox(0.34, 0.16, 0.18, 0.05, [-0.5, 1.05, -0.36], [0, 0.5, -0.1]),
-  );
+  // Première version : un caisson posé de biais sur le capot. Sur la planche
+  // de contact, on voyait « un tracteur orange avec une bosse » — la pièce ne
+  // partait de nulle part et n'allait nulle part. Une goulotte doit **décoller
+  // du corps, enjamber la machine et finir haut derrière**, sinon rien ne
+  // distingue l'engin d'un automoteur quelconque.
+  //
+  // Un tube suivant une courbe le dit d'un seul trait, là où des caisses
+  // aboutées laissaient des angles morts.
+  // Le plafond de hauteur du parc est à 1,2 : au-delà, un engin écrase la
+  // lecture de la parcelle, et le test le refuse. La goulotte gagne donc en
+  // **allonge** ce qu'elle ne prend pas en hauteur — c'est de toute façon la
+  // portée vers l'arrière qui la fait reconnaître, pas l'altitude.
+  const SPOUT: Vec3[] = [
+    [-0.02, 0.68, -0.12],
+    [-0.14, 0.9, -0.22],
+    [-0.36, 1.02, -0.34],
+    [-0.66, 1.04, -0.44],
+    [-0.95, 0.96, -0.5],
+  ];
+  root.add("paint", tube(SPOUT, 0.085, 8));
+  // Embase : la goulotte pivote sur une couronne, elle n'est pas soudée.
+  root.add("paintDark", cyl(0.13, 0.11, 0.09, 12, [-0.02, 0.66, -0.12]));
+  root.add("chrome", ring(0.115, 0.014, 12, Math.PI * 2, [-0.02, 0.72, -0.12], [HALF, 0, 0]));
+  // Déflecteur : le volet qui rabat le jet vers la remorque.
   root.add(
     "paintDark",
-    // Le déflecteur, plaque inclinée qui rabat le jet vers le bas.
-    roundedBox(0.2, 0.03, 0.2, 0.012, [-0.68, 1.04, -0.44], [0, 0.5, 0.55]),
+    roundedBox(0.22, 0.03, 0.24, 0.012, [-1.06, 0.9, -0.52], [0, 0.42, 0.55]),
   );
-  root.add("steel", cyl(0.02, 0.02, 0.22, 8, [-0.26, 0.98, -0.3], [0, 0, HALF]));
+  // Vérin de commande, entre le corps et le milieu de la flèche.
+  root.add("chrome", cyl(0.022, 0.022, 0.4, 8, [-0.3, 0.86, -0.08], [0, 0, -0.8]));
 
-  /* — Bec cueilleur : bâti bas, deux tambours à couteaux ————— */
-  const HEAD_X = 0.62;
+  /* — Bec cueilleur : large, et qu'on le voie ————————————————— */
+  //
+  // Le premier bec faisait 0,86 de large pour une machine de 1,8 : trois
+  // pointes maigres qui se perdaient sous la caisse. Un bec à maïs est la
+  // pièce **la plus large** de l'engin — il déborde des roues, sinon il ne
+  // ramasse rien et ne se voit pas.
+  const HEAD_X = 0.66;
+  const HEAD_W = 1.06;
   root.add(
     "paintDark",
-    roundedBox(0.24, 0.14, 0.86, 0.035, [HEAD_X, 0.2, 0]),
-    roundedBox(0.2, 0.22, 0.03, 0.015, [HEAD_X + 0.02, 0.3, 0.43], [0, 0, -0.12]),
-    roundedBox(0.2, 0.22, 0.03, 0.015, [HEAD_X + 0.02, 0.3, -0.43], [0, 0, -0.12]),
+    // Bâti : une auge basse qui court sur toute la largeur.
+    roundedBox(0.26, 0.17, HEAD_W, 0.04, [HEAD_X, 0.22, 0]),
+    // Joues verticales, qui ferment le bec à ses deux bouts.
+    roundedBox(0.24, 0.26, 0.035, 0.015, [HEAD_X, 0.34, HEAD_W / 2], [0, 0, -0.1]),
+    roundedBox(0.24, 0.26, 0.035, 0.015, [HEAD_X, 0.34, -HEAD_W / 2], [0, 0, -0.1]),
   );
   // Bras d'alimentation : ils relient le bec à la caisse, sinon il flotte.
   root.add(
     "cast",
-    roundedBox(0.24, 0.09, 0.1, 0.025, [HEAD_X - 0.2, 0.3, 0.18]),
-    roundedBox(0.24, 0.09, 0.1, 0.025, [HEAD_X - 0.2, 0.3, -0.18]),
+    roundedBox(0.3, 0.1, 0.11, 0.028, [HEAD_X - 0.24, 0.32, 0.2]),
+    roundedBox(0.3, 0.1, 0.11, 0.028, [HEAD_X - 0.24, 0.32, -0.2]),
   );
-  for (const z of [0.24, -0.24] as const) {
-    const drum = root.child([HEAD_X + 0.06, 0.24, z], { role: "reel", spin: z > 0 ? 1 : -1 });
-    drum.add("chrome", cyl(0.075, 0.075, 0.09, 12, [0, 0, 0]));
+  // Quatre tambours à couteaux, entraînés par la distance.
+  for (const z of [0.39, 0.13, -0.13, -0.39] as const) {
+    const drum = root.child([HEAD_X + 0.07, 0.27, z], { role: "reel", spin: z > 0 ? 1 : -1 });
+    drum.add("chrome", cyl(0.085, 0.085, 0.1, 12, [0, 0, 0]));
     for (let i = 0; i < 5; i++) {
       const a = (i / 5) * Math.PI * 2;
       drum.add(
         "steel",
-        box(0.09, 0.014, 0.05, [Math.cos(a) * 0.085, Math.sin(a) * 0.085, 0], [0, 0, a]),
+        box(0.1, 0.016, 0.055, [Math.cos(a) * 0.095, Math.sin(a) * 0.095, 0], [0, 0, a]),
       );
     }
   }
-  // Pointes de séparation : la dent de scie caractéristique d'un bec à maïs.
-  for (const z of [0.42, 0, -0.42] as const) {
-    root.add("plastic", cone(0.05, 0.24, 8, [HEAD_X + 0.2, 0.22, z], [0, 0, -HALF]));
+  // Pointes de séparation : la dent de scie qui dit « maïs » de loin.
+  for (const z of [HEAD_W / 2 - 0.06, 0.26, 0, -0.26, -(HEAD_W / 2 - 0.06)] as const) {
+    root.add("plastic", cone(0.055, 0.3, 8, [HEAD_X + 0.26, 0.23, z], [0, 0, -HALF]));
   }
 
   /* — Roues : motrices devant, directrices derrière ——————————— */
@@ -980,7 +1006,10 @@ function buildForageHarvester(): Blueprint {
   }
   steer.add("cast", cyl(0.03, 0.03, 0.36, 10, [0, 0, 0], [HALF, 0, 0]));
 
-  return { root, length: 1.8, hitch: [-0.85, 0.3, 0], eye: [0, 0, 0] };
+  // Bec élargi devant, goulotte qui porte loin derrière : l'engin mesure
+  // vraiment deux unités. La valeur sert au cadrage de l'atelier et au
+  // placement de la poussière — la laisser à 1,8 déréglerait les deux.
+  return { root, length: 2.05, hitch: [-0.85, 0.3, 0], eye: [0, 0, 0] };
 }
 
 /* ------------------------------------------------------------------ */
@@ -1017,8 +1046,16 @@ function blueprint(type: MachineType): Blueprint {
   return bp;
 }
 
-/** Outils traînés : sans moteur, il leur faut un tracteur. */
-const TOWED: MachineType[] = ["SPREADER", "DISC_HARROW"];
+/**
+ * Outils traînés : sans moteur, il leur faut un tracteur.
+ *
+ * La presse à balles manquait à l'appel. Elle est pourtant **bâtie** comme un
+ * outil traîné — origine sur l'anneau d'attelage, développement vers les X
+ * négatifs, béquille et cardan — mais elle était annoncée « automoteur » :
+ * l'atelier l'affichait plantée seule au milieu du pré, et rien ne l'attelait
+ * derrière un tracteur au champ.
+ */
+const TOWED: MachineType[] = ["SPREADER", "DISC_HARROW", "BALER"];
 
 export function isTowedImplement(type: MachineType): boolean {
   return TOWED.includes(type);

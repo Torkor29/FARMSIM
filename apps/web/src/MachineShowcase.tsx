@@ -36,7 +36,7 @@ export function MachineShowcase() {
       <header className="atelier-head">
         <h1>Atelier — parc matériel 3D</h1>
         <p>
-          Les quatre engins du jeu, montés en géométrie procédurale et animés par la
+          Les six engins du jeu, montés en géométrie procédurale et animés par la
           distance parcourue. Aucune texture : facettes, couleurs plates et lumière de
           fin d'après-midi, comme le reste de la ferme.
         </p>

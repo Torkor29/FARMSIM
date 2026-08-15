@@ -821,21 +821,45 @@ function buildBunkerSilo(w: number, d: number, lvl: number): Built {
   const pileL = (hw * 2 - wallT * 2) * Math.min(1, 0.5 + fill * 0.5);
   const pileH = wallH * (0.6 + fill * 0.55);
   const inner = wallZ - wallT / 2;
-  const pile = mound(inner, pileH, [-(hw - wallT) + pileL / 2, 0.04, 0]);
-  pile.scale(pileL / (2 * inner), 1, 1);
-  root.add("foliage", pile);
-  // Bâche : une seconde calotte, à peine plus grande, en teinte sombre.
-  const sheet = mound(inner + 0.01, pileH + 0.012, [-(hw - wallT) + pileL / 2, 0.045, 0]);
-  sheet.scale(pileL / (2 * (inner + 0.01)), 1, 1);
-  root.add("dirt", sheet);
+  /** Dos du silo : c'est de là que le tas commence. */
+  const dos = -(hw - wallT);
+
+  /**
+   * Un tas allongé entre les deux murs.
+   *
+   * La mise à l'échelle se fait **avant** la pose : après, elle multiplierait
+   * aussi la position, et le tas dériverait le long du couloir.
+   */
+  const tas = (lng: number, largeur: number, hgt: number, cx: number, cy: number) => {
+    const g = new THREE.SphereGeometry(1, 12, 6, 0, Math.PI * 2, 0, HALF);
+    g.scale(lng / 2, hgt, largeur);
+    return place(g, [cx, cy, 0]);
+  };
+
+  // L'ensilage lui-même : vert, sur toute la longueur.
+  root.add("foliage", tas(pileL, inner, pileH, dos + pileL / 2, 0.04));
+
+  // La bâche ne couvre que la partie tassée, et elle est **plus petite** que
+  // le tas : sinon elle l'avale entièrement et l'ouvrage vire au bac à sable.
+  // Ce qu'elle laisse voir n'est pas un oubli — c'est la face de coupe, à
+  // l'avant, là où le chargeur prélève, et un liseré vert sur les côtés.
+  const bacheL = pileL * 0.76;
+  root.add(
+    "roofDark",
+    tas(bacheL, inner * 0.93, pileH * 1.02, dos + bacheL / 2 + pileL * 0.02, 0.05),
+  );
+
   // Pneus qui lestent la bâche : le détail qui dit « silo » sans légende.
   for (let i = 0; i < 5; i++) {
     const t = (i + 0.5) / 5;
-    const x = -(hw - wallT) + pileL * t;
-    // Hauteur de la calotte en ce point, pour poser le pneu **dessus**.
+    const x = dos + pileL * 0.02 + bacheL * t;
+    // Hauteur de la bâche en ce point, pour poser le pneu **dessus**.
     const u = (t - 0.5) * 2;
-    const y = 0.045 + pileH * Math.sqrt(Math.max(0, 1 - u * u));
-    root.add("dirt", ring(0.05, 0.018, 8, Math.PI * 2, [x, y, (i % 2 ? 0.16 : -0.16)], [HALF, 0, 0]));
+    const y = 0.05 + pileH * 1.02 * Math.sqrt(Math.max(0, 1 - u * u));
+    root.add(
+      "timber",
+      ring(0.055, 0.02, 8, Math.PI * 2, [x, y + 0.01, i % 2 ? 0.2 : -0.2], [HALF, 0, 0]),
+    );
   }
 
   /* — Le seuil : par où le chargeur entre puiser ————————————— */
