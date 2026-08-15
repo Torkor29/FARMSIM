@@ -63,6 +63,9 @@ const PALETTES: Record<BuildingType, BuildingPalette> = {
   PIG_YARD: { roof: 0x9a5f3a, wall: 0xc2a377, timber: 0x8a6a45, metal: 0xa9b0b6 },
   HEN_YARD: { roof: 0xc0503a, wall: 0xc2a377, timber: 0x8a6a45, metal: 0xa9b0b6 },
   COLD_ROOM: { roof: 0x8f9aa4, wall: 0xe8ecef, timber: 0x6f5a3e, metal: 0x9aa2a9 },
+  // Silo couloir : du béton et une bâche, aucune toiture — la teinte
+  // « roof » ne sert qu'aux liserés d'arête.
+  BUNKER_SILO: { roof: 0x9aa0a6, wall: 0xd6d2c8, timber: 0x7d6a4a, metal: 0xa9b0b6 },
 };
 
 /* ------------------------------------------------------------------ */
@@ -758,6 +761,91 @@ function buildPigsty(w: number, d: number, lvl: number): Built {
  * objets qui disent l'usage. Le portail est un vantail articulé comme celui
  * d'une grange — les bêtes doivent pouvoir le franchir.
  */
+/**
+ * Silo couloir : deux murs de béton et un tas bâché entre eux.
+ *
+ * C'est le seul bâtiment **sans toit** du jeu, et c'est ce qui doit le rendre
+ * reconnaissable de loin : une auge ouverte, basse, dont on voit le contenu.
+ * Le tas est un `mound` aplati — une demi-sphère, jamais une sphère entière,
+ * sinon la moitié inférieure passe sous le sol et le bâtiment « flotte ».
+ *
+ * Le niveau se lit au remplissage et à la longueur des murs, pas à l'échelle.
+ */
+function buildBunkerSilo(w: number, d: number, lvl: number): Built {
+  const root = new Part();
+  const hw = (w - EDGE * 2) / 2;
+  const hd = (d - EDGE * 2) / 2;
+  const wallH = 0.34 + lvl * 0.02;
+  const wallT = 0.075;
+  /** Débord d'un contrefort au-delà de la face extérieure du mur. */
+  const butt = 0.07;
+
+  // Dalle : elle déborde des murs, c'est elle qui assied l'ouvrage.
+  slab(root, hw * 2, hd * 2, 0.045);
+
+  /* — Les deux murs latéraux, en L renversé (voile + semelle) ——— */
+  //
+  // Le mur est reculé de l'épaisseur du contrefort : c'est le contrefort, pas
+  // le voile, qui touche le bord de l'empreinte. Sans ce recul le bâtiment
+  // débordait de 13 cm sur la case voisine.
+  const wallZ = hd - wallT / 2 - butt;
+  for (const sz of [-1, 1] as const) {
+    const z = sz * wallZ;
+    root.add("concrete", box(hw * 2, wallH, wallT, [0, wallH / 2 + 0.04, z]));
+    // Contreforts extérieurs : un voile de béton nu se lit comme un carton.
+    for (const i of [-1, 0, 1] as const) {
+      root.add(
+        "concrete",
+        extrude(
+          [
+            [-butt, 0],
+            [butt, 0],
+            [0, wallH * 0.78],
+          ],
+          0.1,
+          [i * hw * 0.62, 0.04, z + sz * (wallT / 2)],
+          [0, HALF, 0],
+        ),
+      );
+    }
+    // Arête supérieure claire : elle détache le mur du tas.
+    root.add("wall", box(hw * 2, 0.03, wallT + 0.02, [0, wallH + 0.055, z]));
+  }
+
+  // Mur de fond : le couloir est fermé d'un côté, ouvert de l'autre.
+  root.add("concrete", box(wallT, wallH, hd * 2, [-(hw - wallT / 2), wallH / 2 + 0.04, 0]));
+  root.add("wall", box(wallT + 0.02, 0.03, hd * 2, [-(hw - wallT / 2), wallH + 0.055, 0]));
+
+  /* — Le tas d'ensilage, tassé entre les murs et bâché ————————— */
+  const fill = 0.45 + lvl * 0.1;
+  const pileL = (hw * 2 - wallT * 2) * Math.min(1, 0.5 + fill * 0.5);
+  const pileH = wallH * (0.6 + fill * 0.55);
+  const inner = wallZ - wallT / 2;
+  const pile = mound(inner, pileH, [-(hw - wallT) + pileL / 2, 0.04, 0]);
+  pile.scale(pileL / (2 * inner), 1, 1);
+  root.add("foliage", pile);
+  // Bâche : une seconde calotte, à peine plus grande, en teinte sombre.
+  const sheet = mound(inner + 0.01, pileH + 0.012, [-(hw - wallT) + pileL / 2, 0.045, 0]);
+  sheet.scale(pileL / (2 * (inner + 0.01)), 1, 1);
+  root.add("dirt", sheet);
+  // Pneus qui lestent la bâche : le détail qui dit « silo » sans légende.
+  for (let i = 0; i < 5; i++) {
+    const t = (i + 0.5) / 5;
+    const x = -(hw - wallT) + pileL * t;
+    // Hauteur de la calotte en ce point, pour poser le pneu **dessus**.
+    const u = (t - 0.5) * 2;
+    const y = 0.045 + pileH * Math.sqrt(Math.max(0, 1 - u * u));
+    root.add("dirt", ring(0.05, 0.018, 8, Math.PI * 2, [x, y, (i % 2 ? 0.16 : -0.16)], [HALF, 0, 0]));
+  }
+
+  /* — Le seuil : par où le chargeur entre puiser ————————————— */
+  root.add("dirt", box(0.3, 0.03, inner * 2, [hw - 0.15, 0.05, 0]));
+  root.child([hw - 0.1, 0, 0], { role: "threshold" });
+
+  yardDressing(root, w, d, 23);
+  return { root, height: wallH + 0.12 };
+}
+
 function buildYard(
   w: number,
   d: number,
@@ -856,6 +944,7 @@ const BUILDERS: Record<BuildingType, (w: number, d: number, lvl: number) => Buil
   PADDOCK: (w, d, l) => buildYard(w, d, l, "PADDOCK"),
   PIG_YARD: (w, d, l) => buildYard(w, d, l, "PIG_YARD"),
   HEN_YARD: (w, d, l) => buildYard(w, d, l, "HEN_YARD"),
+  BUNKER_SILO: buildBunkerSilo,
 };
 
 type Blueprint = Built & { w: number; d: number };

@@ -79,6 +79,10 @@ describe("pièces animées", () => {
     HARVESTER: ["wheel", "steer", "reel", "auger", "tool", "beacon", "exhaust"],
     SPREADER: ["wheel", "spinner"],
     DISC_HARROW: ["wheel", "gang", "tool"],
+    // La presse ramasse par un rouleau à dents, comme la moissonneuse
+    // rabat par son rabatteur : même rôle, même entraînement à la distance.
+    BALER: ["wheel", "reel", "beacon"],
+    FORAGE_HARVESTER: ["wheel", "steer", "reel", "beacon", "exhaust"],
   };
 
   for (const type of TYPES) {

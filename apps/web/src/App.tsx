@@ -14,6 +14,8 @@ import {
   MISSION_CELLS_MIN,
   MISSION_CELLS_MAX,
   laborEscrow,
+  SILAGE_MIN_PROGRESS,
+  DEFAULT_CONSIGNES,
   type CharacterAppearance,
   type FieldWorkerView,
   repairHalfwayTarget,
@@ -65,6 +67,7 @@ import { MissionPlay, type MissionPlayContract } from "./MissionPlay";
 import { LivestockPanel, type BarnState } from "./LivestockPanel";
 import { MarketPanel, type Listing, type MarketDelivery, type FuturesContract } from "./MarketPanel";
 import { MissionsPanel } from "./MissionsPanel";
+import { OfficePanel } from "./OfficePanel";
 import type { ContinentDetail, WorldContinent } from "./Onboarding";
 
 // Three.js pèse plus lourd que tout le reste de l'application réunie. L'écran
@@ -86,6 +89,7 @@ import { cropFromPlantTool, isPlantTool, isSoilTool, plantCropLabel, type Tool }
 import { useIsMobile } from "./use-media-query";
 import { DevPanel, type DevGrant } from "./DevPanel";
 import { NO_ALERTS, tabBadge, useAwayAlerts, useNotificationState, type FarmAlerts } from "./use-alerts";
+
 const API = "/api";
 
 /** Durée d'affichage d'un message passager — charte §8.1 #17. */
@@ -99,6 +103,8 @@ type SessionResume = {
   marketDelta: Record<string, number>;
   weatherStates: string[];
   hint: string;
+  absenceLog?: { at: string; text: string }[];
+  spent?: number;
 };
 
 type Cell = {
@@ -116,6 +122,8 @@ type Cell = {
   directSeeded?: boolean;
   lastCrop?: CropCode | null;
   cropStreak?: number;
+  strawTons?: number;
+  baleCount?: number;
   buildingId?: string | null;
   machineId?: string | null;
   machineType?: MachineType | null;
@@ -210,6 +218,14 @@ type Player = {
     reason: "NO_SILO" | "SILO_FULL" | null;
   };
   appearance?: CharacterAppearance;
+  consignes?: {
+    harvest: boolean;
+    stubble: boolean;
+    plow: boolean;
+    straw: boolean;
+    npcAllowed: boolean;
+    maxSpend: number;
+  };
 };
 
 type Contract = {
@@ -240,6 +256,7 @@ type LaborOrderView = {
   parcelLabel: string;
   zoneName: string;
   clientName: string;
+  npc?: boolean;
   expiresAt: string;
 };
 
@@ -466,6 +483,7 @@ export function App() {
   const [brush, setBrush] = useState<1 | 2 | 3>(1);
   const [prevPrices, setPrevPrices] = useState<Record<string, number>>({});
   const [resumeBanner, setResumeBanner] = useState<string | null>(null);
+  const [absenceLines, setAbsenceLines] = useState<string[]>([]);
   const [booting, setBooting] = useState(true);
   const [showSplash, setShowSplash] = useState(true);
   const [showTutorial, setShowTutorial] = useState(false);
@@ -519,6 +537,7 @@ export function App() {
     if (payload.resume && payload.resume.awayMs >= 30_000) {
       setResumeBanner(payload.resume.hint);
       setMsg(payload.resume.hint);
+      setAbsenceLines((payload.resume.absenceLog ?? []).map((l) => l.text));
     }
   }
 
@@ -859,6 +878,7 @@ export function App() {
         if (resume.awayMs >= 30_000) {
           setResumeBanner(resume.hint);
           setMsg(resume.hint);
+          setAbsenceLines((resume.absenceLog ?? []).map((l) => l.text));
         }
         await api("/session/heartbeat", { method: "POST", body: "{}" });
       })
@@ -1089,6 +1109,11 @@ export function App() {
     [player?.farm?.inventory],
   );
 
+  const silageInStock = useMemo(
+    () => (player?.farm?.inventory ?? []).find((i) => i.itemCode === "SILAGE")?.qty ?? 0,
+    [player?.farm?.inventory],
+  );
+
   /** Tonnage total en silo — affiché sur le bouton pour appeler à vendre. */
   const totalStockTons = useMemo(
     () => (player?.farm?.inventory ?? []).reduce((sum, i) => sum + i.qty, 0),
@@ -1099,6 +1124,24 @@ export function App() {
   const readyCellCount = useMemo(
     () => (parcelDetail?.cellSims ?? []).filter((s) => s.sim.ready && !s.sim.lost).length,
     [parcelDetail],
+  );
+
+  const silageReadyCount = useMemo(
+    () =>
+      (parcelDetail?.cellSims ?? []).filter((s) => {
+        const cell = (parcel?.cells ?? []).find((c) => c.x === s.x && c.y === s.y);
+        return cell?.crop === "MAIZE" && !s.sim.lost && s.sim.progress >= SILAGE_MIN_PROGRESS;
+      }).length,
+    [parcelDetail, parcel?.cells],
+  );
+
+  const strawCellCount = useMemo(
+    () => (parcel?.cells ?? []).filter((c) => (c.strawTons ?? 0) > 0).length,
+    [parcel?.cells],
+  );
+  const baleCellCount = useMemo(
+    () => (parcel?.cells ?? []).filter((c) => (c.baleCount ?? 0) > 0).length,
+    [parcel?.cells],
   );
 
   const guideSnapshot: GuideSnapshot = useMemo(() => {
@@ -1236,6 +1279,7 @@ export function App() {
     setPlayer(null);
     setParcelDetail(null);
     setResumeBanner(null);
+    setAbsenceLines([]);
     setActiveParcelId(null);
     setSheet(null);
   }
@@ -1713,14 +1757,28 @@ export function App() {
           ? selectedAreGrass
             ? "MOW"
             : "HARVEST"
-          : tool === "PLOW"
-            ? "PLOW"
-            : tool === "STUBBLE"
-              ? "STUBBLE"
-              : null;
+          : tool === "SILAGE"
+            ? "SILAGE"
+            : tool === "PLOW"
+              ? "PLOW"
+              : tool === "STUBBLE"
+                ? "STUBBLE"
+                : tool === "BALE"
+                  ? "BALE"
+                  : tool === "COLLECT"
+                    ? "COLLECT"
+                    : null;
     if (!work || !selectedCells.length) return null;
     const needed: MachineType =
-      work === "HARVEST" ? "HARVESTER" : work === "STUBBLE" ? "DISC_HARROW" : "TRACTOR";
+      work === "HARVEST"
+        ? "HARVESTER"
+        : work === "SILAGE"
+          ? "FORAGE_HARVESTER"
+          : work === "STUBBLE"
+            ? "DISC_HARROW"
+            : work === "BALE"
+              ? "BALER"
+              : "TRACTOR";
     const hasMachine = (player?.farm?.machines ?? []).some(
       (m) => m.type === needed && m.condition >= (MACHINE_DEFS[needed]?.minCondition ?? 15),
     );
@@ -1810,9 +1868,15 @@ export function App() {
 
   async function callContractor() {
     if (!player || !activeParcelId || !contractorOffer) return;
+    if (contractorOffer.work === "BALE" || contractorOffer.work === "COLLECT" || contractorOffer.work === "SILAGE") {
+      flashToast("Pour ça, publiez un chantier — pas d’entreprise instantanée", true);
+      return;
+    }
     setBusy(true);
     setErr(null);
     const workCells = selectedCells.slice();
+    // Pressage, ramassage et ensilage sont écartés juste au-dessus : ils
+    // passent par un chantier publié, jamais par l'entreprise instantanée.
     flashWork(
       contractorOffer.work === "HARVEST" ? "HARVESTER" : "TRACTOR",
       workCells,
@@ -1847,9 +1911,8 @@ export function App() {
 
   function workMachineForTool(t: Tool): MachineType {
     if (t === "HARVEST") return "HARVESTER";
-    // Le déchaumage se fait au déchaumeur à disques, seule machine que le
-    // serveur accepte pour ce travail. L'animation montrait pourtant un
-    // tracteur, alors que l'engin existait en modèle comme en illustration.
+    if (t === "SILAGE") return "FORAGE_HARVESTER";
+    if (t === "BALE") return "BALER";
     if (t === "STUBBLE") return "DISC_HARROW";
     if (t === "FERTILIZE") {
       const hasSpreader = player?.farm?.machines.some((m) => m.type === "SPREADER");
@@ -1985,6 +2048,48 @@ export function App() {
         markGuideFlag("harvested");
         if (r.soldTons) markGuideFlag("sold");
         labor = r.labor;
+      } else if (tool === "SILAGE") {
+        const r = await api<{
+          machine?: {
+            condition: number;
+            type: string;
+            broke?: boolean;
+            breakdown?: string | null;
+          };
+          totalTons?: number;
+          storedTons?: number;
+          labor?: { remaining: number; completed: boolean; payout?: number };
+        }>(`/parcels/${activeParcelId}/harvest`, {
+          method: "POST",
+          body: JSON.stringify({ userId: player.id, cells: workCells, mode: "SILAGE" }),
+        });
+        setMsg(`Ensilage ${r.totalTons?.toFixed(2) ?? "?"} t au silo` + wearNote(r.machine));
+        markGuideFlag("harvested");
+        labor = r.labor;
+      } else if (tool === "BALE") {
+        const r = await api<{
+          baled: number;
+          bales: number;
+          machine?: { condition: number; type: string };
+          labor?: { remaining: number; completed: boolean; payout?: number };
+        }>(`/parcels/${activeParcelId}/bale`, {
+          method: "POST",
+          body: JSON.stringify({ userId: player.id, cells: workCells }),
+        });
+        setMsg(`Pressé ×${r.baled} · ${r.bales} botte(s)` + wearNote(r.machine));
+        labor = r.labor;
+      } else if (tool === "COLLECT") {
+        const r = await api<{
+          collected: number;
+          tons: number;
+          machine?: { condition: number; type: string };
+          labor?: { remaining: number; completed: boolean; payout?: number };
+        }>(`/parcels/${activeParcelId}/collect`, {
+          method: "POST",
+          body: JSON.stringify({ userId: player.id, cells: workCells }),
+        });
+        setMsg(`Ramassé ${r.tons.toFixed(2)} t de paille`);
+        labor = r.labor;
       } else if (tool === "PLOW") {
         const r = await api<{
           plowed: number;
@@ -2062,19 +2167,26 @@ export function App() {
     setBusy(true);
     try {
       const readyCells =
-        (parcelDetail?.cellSims ?? [])
-          .filter((s) => s.sim.ready)
-          .map((s) => ({ x: s.x, y: s.y }))
-          .filter((c) =>
-            visiting && visitOrder
-              ? visitOrder.cellList.some((r) => r.x === c.x && r.y === c.y)
-              : true,
-          ) || [];
+        (tool === "SILAGE"
+          ? (parcelDetail?.cellSims ?? [])
+              .filter((s) => {
+                const cell = (parcel?.cells ?? []).find((c) => c.x === s.x && c.y === s.y);
+                return cell?.crop === "MAIZE" && !s.sim.lost && s.sim.progress >= SILAGE_MIN_PROGRESS;
+              })
+              .map((s) => ({ x: s.x, y: s.y }))
+          : (parcelDetail?.cellSims ?? [])
+              .filter((s) => s.sim.ready)
+              .map((s) => ({ x: s.x, y: s.y }))
+              .filter((c) =>
+                visiting && visitOrder
+                  ? visitOrder.cellList.some((r) => r.x === c.x && r.y === c.y)
+                  : true,
+              )) || [];
       if (readyCells.length) {
         flashWork(
-          readyAreGrass ? "TRACTOR" : "HARVESTER",
+          tool === "SILAGE" ? "FORAGE_HARVESTER" : readyAreGrass ? "TRACTOR" : "HARVESTER",
           readyCells,
-          readyAreGrass ? "mow" : "harvest",
+          tool === "SILAGE" ? undefined : readyAreGrass ? "mow" : "harvest",
         );
       }
       const r = await api<{
@@ -2090,9 +2202,10 @@ export function App() {
         body: JSON.stringify({
           userId: player.id,
           cells: visiting ? readyCells : undefined,
+          mode: tool === "SILAGE" ? "SILAGE" : "GRAIN",
         }),
       });
-      setMsg(harvestGrainNote(r));
+      setMsg(tool === "SILAGE" ? `Ensilage ${r.totalTons.toFixed(2)} t` : harvestGrainNote(r));
       markGuideFlag("harvested");
       if (r.soldTons) markGuideFlag("sold");
       if (r.labor?.completed) {
@@ -2512,7 +2625,10 @@ export function App() {
    * Distribue une ration complète : le joueur choisit l'aliment, pas la dose.
    * Le maïs nourrit mieux, mais c'est du maïs qu'il ne vendra pas.
    */
-  async function feedHerd(herdId: string, ration: "hay" | "maize" | "barley" | "wheat") {
+  async function feedHerd(
+    herdId: string,
+    ration: "hay" | "maize" | "barley" | "wheat" | "silage",
+  ) {
     if (!player) return;
     setBusy(true);
     try {
@@ -2526,7 +2642,9 @@ export function App() {
             ? barleyInStock
             : ration === "wheat"
               ? wheatInStock
-              : hayInStock;
+              : ration === "silage"
+                ? silageInStock
+                : hayInStock;
       const tons = Math.min(stock, wanted);
       const r = await api<{ units: number; quality: number }>(`/herds/${herdId}/feed`, {
         method: "POST",
@@ -2536,10 +2654,19 @@ export function App() {
           maizeTons: ration === "maize" ? tons : 0,
           barleyTons: ration === "barley" ? tons : 0,
           wheatTons: ration === "wheat" ? tons : 0,
+          silageTons: ration === "silage" ? tons : 0,
         }),
       });
       const label =
-        ration === "maize" ? "Maïs" : ration === "barley" ? "Orge" : ration === "wheat" ? "Blé" : "Fourrage";
+        ration === "maize"
+          ? "Maïs"
+          : ration === "barley"
+            ? "Orge"
+            : ration === "wheat"
+              ? "Blé"
+              : ration === "silage"
+                ? "Ensilage"
+                : "Fourrage";
       flashToast(`${label} distribué · ${tons.toFixed(1)} t · ${r.units} kg`);
       await refreshPlayer();
       if (activeParcelId) await loadLivestock(activeParcelId);
@@ -3114,7 +3241,23 @@ export function App() {
           <div className="resume-card glass">
             <strong>Pendant votre absence</strong>
             <p>{resumeBanner}</p>
-            <button type="button" className="accent" onClick={() => setResumeBanner(null)}>
+            {absenceLines.length > 0 && (
+              <ul className="list">
+                {absenceLines.map((line, i) => (
+                  <li key={i}>
+                    <span className="muted tiny">{line}</span>
+                  </li>
+                ))}
+              </ul>
+            )}
+            <button
+              type="button"
+              className="accent"
+              onClick={() => {
+                setResumeBanner(null);
+                setAbsenceLines([]);
+              }}
+            >
               J’ai vu
             </button>
           </div>
@@ -3623,6 +3766,9 @@ export function App() {
         busy={busy}
         selectedCount={selectedCells.length}
         readyCount={visiting ? Math.min(readyCellCount, visitOrder?.remaining ?? 0) : readyCellCount}
+        strawCount={strawCellCount}
+        baleCount={baleCellCount}
+        silageReadyCount={silageReadyCount}
         stockTons={totalStockTons}
         crd={player.crd}
         directSeed={directSeed}
@@ -3632,7 +3778,9 @@ export function App() {
         allGoalsDone={allGoalsDone}
         onTool={(t) => {
           const keep =
-            (isPlantTool(tool) && isPlantTool(t)) || (isSoilTool(tool) && isSoilTool(t));
+            (isPlantTool(tool) && isPlantTool(t)) ||
+            (isSoilTool(tool) && isSoilTool(t)) ||
+            ((tool === "HARVEST" || tool === "SILAGE") && (t === "HARVEST" || t === "SILAGE"));
           setTool(t);
           if (!keep && t !== "BUILD") setSelectedCells([]);
         }}
@@ -3745,12 +3893,59 @@ export function App() {
         onClose={() => setShowGuide(false)}
       />
 
+      <OfficePanel
+        open={isMobile ? sheet === "OFFICE" : showEta}
+        onClose={() => {
+          setShowEta(false);
+          setSheet(null);
+        }}
+        crd={player.crd}
+        consignes={player.consignes ?? DEFAULT_CONSIGNES}
+        busy={busy}
+        board={laborBoard}
+        posted={myPostedLabor}
+        active={visitOrder}
+        ghost={contracts}
+        takeLocked={Boolean(activeMission)}
+        onTake={(id) => void acceptLaborOrder(id)}
+        onCancelPosted={(id) =>
+          void api(`/labor-orders/${id}/cancel`, {
+            method: "POST",
+            body: JSON.stringify({ userId: player.id }),
+          })
+            .then(() => refreshMeta())
+            .catch((e) => flashToast(e instanceof Error ? e.message : String(e), true))
+        }
+        onAbandonActive={() => void abandonVisit()}
+        onTakeGhost={(id) => {
+          void acceptContract(id);
+          setShowEta(false);
+          setSheet(null);
+        }}
+        onSaveConsignes={async (next) => {
+          const r = await api<{ consignes: NonNullable<Player["consignes"]> }>("/me/consignes", {
+            method: "POST",
+            body: JSON.stringify(next),
+          });
+          setPlayer((p) => (p ? { ...p, consignes: r.consignes } : p));
+          flashToast("Consignes enregistrées");
+        }}
+        zones={zones.filter(
+          (z) =>
+            ownedParcels.length === 0 ||
+            ownedParcels.some((op) => op.zone?.code === z.code) ||
+            z.parcels.some((p) => expandableParcelIds.has(p.id)),
+        )}
+        myFarmId={player.farm?.id}
+        expandableIds={expandableParcelIds}
+        onBuyLand={buyAdjacent}
+      />
 
       {isMobile && (
         <>
           {/* Un voile referme le tiroir d'une tape hors de lui : sur un
               téléphone, chercher la bonne croix est une corvée. */}
-          {sheet && (
+          {sheet && sheet !== "OFFICE" && (
             <button
               type="button"
               className="sheet-scrim"

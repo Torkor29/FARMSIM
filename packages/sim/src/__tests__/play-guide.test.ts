@@ -66,9 +66,12 @@ describe("guide et objectifs", () => {
     const ids = GUIDE_CHAPTERS.map((c) => c.id);
     expect(ids).toEqual(["crops", "soil", "goods", "build", "machines", "herd", "triangle"]);
     const soon = GUIDE_CHAPTERS.flatMap((c) => c.entries).filter((e) => e.soon);
-    expect(soon.map((e) => e.id).sort()).toEqual(["SILAGE", "SLURRY", "STRAW"]);
+    // Paille et ensilage ne sont plus « bientôt » : la fusion les a livrés.
+    expect(soon.map((e) => e.id).sort()).toEqual(["SLURRY"]);
     const goods = GUIDE_CHAPTERS.find((c) => c.id === "goods");
     expect(goods?.entries.some((e) => e.id === "MANURE" && !e.soon)).toBe(true);
+    expect(goods?.entries.some((e) => e.id === "STRAW" && !e.soon)).toBe(true);
+    expect(goods?.entries.some((e) => e.id === "SILAGE" && !e.soon)).toBe(true);
   });
 
   it("explique qui utilise la production des autres", () => {

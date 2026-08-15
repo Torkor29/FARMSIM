@@ -50,7 +50,7 @@ export type BarnState = {
   } | null;
 };
 
-type FeedRation = "hay" | "maize" | "barley" | "wheat";
+type FeedRation = "hay" | "maize" | "barley" | "wheat" | "silage";
 
 type Props = {
   barns: BarnState[];
@@ -70,6 +70,7 @@ type Props = {
   maizeTons: number;
   barleyTons: number;
   wheatTons: number;
+  silageTons?: number;
   /** Permet à la coque mobile d'en faire un tiroir du bas */
   className?: string;
   onClose?: () => void;
@@ -98,6 +99,7 @@ export function LivestockPanel({
   maizeTons,
   barleyTons,
   wheatTons,
+  silageTons = 0,
   className = "glass livestock-panel",
   onClose,
   gesture,
@@ -380,6 +382,21 @@ export function LivestockPanel({
                   onClick={() => onFeed(herd.id, "wheat")}
                 >
                   Ration blé
+                </button>
+              )}
+
+              {herd && (
+                <button
+                  type="button"
+                  disabled={busy || silageTons <= 0}
+                  title={
+                    silageTons <= 0
+                      ? "Pas d’ensilage — récoltez le maïs plante entière"
+                      : "Ration d’hiver, plus énergétique que le grain"
+                  }
+                  onClick={() => onFeed(herd.id, "silage")}
+                >
+                  Ration ensilage
                 </button>
               )}
 

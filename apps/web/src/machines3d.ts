@@ -52,6 +52,17 @@ const PALETTES: Record<MachineType, Palette> = {
   HARVESTER: { body: 0xc42f22, bodyDark: 0x8e211a, trim: 0x24262a, rim: 0xe4b41c, grain: 0xdcb03c },
   SPREADER: { body: 0x8b9199, bodyDark: 0x5f656c, trim: 0x3f444a, rim: 0xe0ac1c, grain: 0xd9d3c4 },
   DISC_HARROW: { body: 0x9a5f33, bodyDark: 0x6f4322, trim: 0x53341b, rim: 0x8a5f38, grain: 0xd8c9a8 },
+  // Presse : le jaune-vert des constructeurs de fenaison, distinct du vert
+  // tracteur pour qu'un attelage se lise comme deux engins et non comme un.
+  BALER: { body: 0xb9c832, bodyDark: 0x7f8c22, trim: 0x3a3f22, rim: 0xd8d2c2, grain: 0xd9c47a },
+  // Ensileuse : l'orange des ensileuses automotrices.
+  FORAGE_HARVESTER: {
+    body: 0xd97a1e,
+    bodyDark: 0x9c5312,
+    trim: 0x2a2c30,
+    rim: 0xe4b41c,
+    grain: 0x9ec46a,
+  },
 };
 
 /* ------------------------------------------------------------------ */
@@ -705,6 +716,274 @@ function buildDiscHarrow(): Blueprint {
 }
 
 /* ------------------------------------------------------------------ */
+/* Presse à balles rondes                                              */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Outil traîné, comme l'épandeur et le déchaumeur : l'origine est l'anneau
+ * d'attelage, à la hauteur de chape partagée `y = 0.16`, et la machine se
+ * développe vers les X négatifs.
+ *
+ * La silhouette tient en trois volumes qu'on reconnaît de loin : le
+ * ramasseur bas à l'avant, la chambre de pressage cylindrique couchée en
+ * travers, et le hayon incliné à l'arrière. Le rouleau du ramasseur porte le
+ * rôle `reel` : il tourne avec l'avancement, comme le rabatteur de la
+ * moissonneuse.
+ */
+function buildBaler(): Blueprint {
+  const root = new Part();
+  const WHEEL_R = 0.16;
+  /** Centre de la chambre de pressage */
+  const CX = -0.62;
+  const CHAMBER_R = 0.32;
+  const CHAMBER_Y = WHEEL_R + CHAMBER_R + 0.05;
+
+  /* — Flèche, anneau, béquille ————————————————————————— */
+  root.add("paint", roundedBox(0.46, 0.08, 0.09, 0.025, [-0.2, 0.26, 0], [0, 0, -0.42]));
+  root.add("chrome", ring(0.042, 0.012, 12, Math.PI * 2, [0.01, 0.16, 0], [HALF, 0, 0]));
+  root.add(
+    "steel",
+    cyl(0.018, 0.018, 0.17, 8, [-0.13, 0.16, 0.07]),
+    roundedBox(0.07, 0.02, 0.07, 0.012, [-0.13, 0.08, 0.07]),
+  );
+  // Cardan : la prise de force entraîne le rotor, il faut la voir.
+  root.add("chrome", cyl(0.022, 0.022, 0.3, 8, [-0.2, 0.2, -0.05], [0, 0, 0.16]));
+
+  /* — Ramasseur : caisson bas, dents sur un rouleau tournant ——— */
+  root.add(
+    "paintDark",
+    roundedBox(0.26, 0.11, 0.62, 0.03, [CX + 0.4, 0.14, 0]),
+    // Les deux joues qui canalisent l'andain vers la chambre.
+    roundedBox(0.24, 0.16, 0.03, 0.02, [CX + 0.4, 0.2, 0.31], [0, 0, -0.1]),
+    roundedBox(0.24, 0.16, 0.03, 0.02, [CX + 0.4, 0.2, -0.31], [0, 0, -0.1]),
+  );
+  const pickup = root.child([CX + 0.42, 0.13, 0], { role: "reel", spin: 1 });
+  pickup.add("steel", cyl(0.045, 0.045, 0.56, 10, [0, 0, 0], [HALF, 0, 0]));
+  for (let i = 0; i < 6; i++) {
+    const a = (i / 6) * Math.PI * 2;
+    const bar: THREE.BufferGeometry[] = [];
+    for (let k = -2; k <= 2; k++) {
+      bar.push(
+        box(0.012, 0.072, 0.012, [Math.cos(a) * 0.072, Math.sin(a) * 0.072, k * 0.12], [a, 0, 0]),
+      );
+    }
+    pickup.add("chrome", ...bar);
+  }
+  // Roue de jauge : elle tient le ramasseur au ras du sol.
+  root.add("cast", cyl(0.02, 0.02, 0.1, 8, [CX + 0.56, 0.1, 0.3], [HALF, 0, 0]));
+  root
+    .child([CX + 0.56, 0.075, 0.34], { role: "wheel", radius: 0.075 })
+    .attach(wheelPart(0.075, 0.05, 8));
+
+  /* — Chambre de pressage : un cylindre couché, cerclé de rouleaux — */
+  root.add(
+    "paint",
+    lathe(
+      [
+        [0, -0.29],
+        [CHAMBER_R, -0.29],
+        [CHAMBER_R, 0.29],
+        [0, 0.29],
+      ],
+      18,
+      [CX, CHAMBER_Y, 0],
+      [HALF, 0, 0],
+    ),
+  );
+  root.add(
+    "rim",
+    ring(CHAMBER_R + 0.012, 0.018, 16, Math.PI * 2, [CX, CHAMBER_Y, 0.3], [0, 0, 0]),
+    ring(CHAMBER_R + 0.012, 0.018, 16, Math.PI * 2, [CX, CHAMBER_Y, -0.3], [0, 0, 0]),
+  );
+  // Bandes latérales : le contraste qui empêche le cylindre de paraître nu.
+  root.add(
+    "paintDark",
+    roundedBox(0.5, 0.05, 0.62, 0.02, [CX, CHAMBER_Y + CHAMBER_R - 0.03, 0]),
+    roundedBox(0.16, 0.14, 0.6, 0.03, [CX + CHAMBER_R - 0.02, CHAMBER_Y - 0.1, 0]),
+  );
+  // Compteur de balles et gyrophare : la presse travaille en aveugle.
+  root.add("plastic", roundedBox(0.09, 0.07, 0.05, 0.015, [CX + 0.12, CHAMBER_Y + 0.3, 0.3]));
+  root.child([CX - 0.1, CHAMBER_Y + 0.34, 0.26], { role: "beacon" });
+
+  /* — Hayon : le volet arrière par lequel la balle tombe ————— */
+  root.add(
+    "paint",
+    extrude(
+      [
+        [-0.34, 0.06],
+        [-0.02, 0.02],
+        [0.04, 0.44],
+        [-0.3, 0.5],
+      ],
+      0.58,
+      [CX - CHAMBER_R, CHAMBER_Y - 0.24, 0],
+      [0, HALF, 0],
+    ),
+  );
+  root.add(
+    "steel",
+    roundedBox(0.3, 0.03, 0.05, 0.012, [CX - CHAMBER_R - 0.16, CHAMBER_Y - 0.02, 0.29], [0, 0, 0.5]),
+    roundedBox(0.3, 0.03, 0.05, 0.012, [CX - CHAMBER_R - 0.16, CHAMBER_Y - 0.02, -0.29], [0, 0, 0.5]),
+  );
+  // Rampe de dépose : la balle roule au sol au lieu de tomber d'un mètre.
+  root.add(
+    "rim",
+    roundedBox(0.34, 0.035, 0.07, 0.015, [CX - CHAMBER_R - 0.16, WHEEL_R - 0.04, 0.2], [0, 0, -0.2]),
+    roundedBox(0.34, 0.035, 0.07, 0.015, [CX - CHAMBER_R - 0.16, WHEEL_R - 0.04, -0.2], [0, 0, -0.2]),
+  );
+
+  /* — Châssis et roues ————————————————————————————————— */
+  root.add(
+    "cast",
+    roundedBox(0.72, 0.07, 0.09, 0.02, [CX, WHEEL_R + 0.02, 0.24]),
+    roundedBox(0.72, 0.07, 0.09, 0.02, [CX, WHEEL_R + 0.02, -0.24]),
+    cyl(0.032, 0.032, 0.74, 10, [CX, WHEEL_R, 0], [HALF, 0, 0]),
+  );
+  for (const z of [0.37, -0.37] as const) {
+    root
+      .child([CX, WHEEL_R, z], { role: "wheel", radius: WHEEL_R })
+      .attach(wheelPart(WHEEL_R, 0.12, 11));
+  }
+
+  return { root, length: 1.35, hitch: [-1.25, 0.3, 0], eye: [0.01, 0.16, 0] };
+}
+
+/* ------------------------------------------------------------------ */
+/* Ensileuse automotrice                                               */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Automotrice, comme la moissonneuse : quatre roues dont deux directrices à
+ * l'arrière (rôle `steer`), et l'origine au centre de l'engin.
+ *
+ * Ce qui la distingue au premier coup d'œil, c'est la **goulotte** — le tube
+ * coudé qui crache le fourrage en l'air, tourné vers l'arrière-gauche. Le
+ * bec cueilleur à l'avant porte deux tambours à couteaux en rôle `reel`.
+ */
+function buildForageHarvester(): Blueprint {
+  const root = new Part();
+  const DRIVE_R = 0.24;
+  const STEER_R = 0.15;
+
+  /* — Caisse : profil trapu, capot moteur haut à l'arrière ————— */
+  root.add(
+    "paint",
+    extrude(
+      [
+        [-0.72, 0.32],
+        [0.3, 0.32],
+        [0.4, 0.4],
+        [0.4, 0.56],
+        [0.22, 0.64],
+        [-0.34, 0.66],
+        [-0.58, 0.62],
+        [-0.72, 0.5],
+      ],
+      0.52,
+      [0, 0, 0],
+    ),
+  );
+  root.add("paintDark", roundedBox(1.0, 0.09, 0.54, 0.03, [-0.16, 0.31, 0]));
+
+  /* — Cabine vitrée, avancée sur la gauche ————————————————— */
+  root.add(
+    "glass",
+    extrude(
+      [
+        [-0.16, 0.66],
+        [0.24, 0.66],
+        [0.24, 1.0],
+        [-0.16, 1.0],
+      ],
+      0.4,
+      [0, 0, 0.03],
+    ),
+  );
+  root.add(
+    "rim",
+    roundedBox(0.44, 0.035, 0.44, 0.015, [0.04, 1.02, 0.03]),
+    roundedBox(0.05, 0.36, 0.05, 0.018, [-0.17, 0.84, 0.23]),
+    roundedBox(0.05, 0.36, 0.05, 0.018, [0.25, 0.84, 0.23]),
+  );
+  root.child([0.04, 1.07, 0.03], { role: "beacon" });
+
+  /* — Moteur : grille, échappement vertical ————————————————— */
+  root.add("plastic", roundedBox(0.03, 0.2, 0.36, 0.03, [-0.73, 0.46, 0]));
+  const grid: THREE.BufferGeometry[] = [];
+  for (let i = 0; i < 5; i++) grid.push(box(0.012, 0.012, 0.32, [-0.745, 0.39 + i * 0.035, 0]));
+  root.add("steel", ...grid);
+  root.add(
+    "plastic",
+    cyl(0.03, 0.034, 0.32, 14, [-0.5, 0.82, -0.2]),
+    cyl(0.038, 0.038, 0.1, 14, [-0.5, 0.69, -0.2]),
+  );
+  root.add("chrome", cyl(0.034, 0.03, 0.05, 14, [-0.5, 1.0, -0.2], [0, 0, 0.2]));
+  root.child([-0.5, 1.04, -0.2], { role: "exhaust" });
+
+  /* — Goulotte : le tube coudé qui crache le fourrage ————————— */
+  //
+  // Elle part du haut de la caisse, monte en oblique et se termine par un
+  // déflecteur orienté vers l'arrière-gauche, là où roule la remorque.
+  root.add(
+    "paint",
+    roundedBox(0.5, 0.17, 0.19, 0.05, [-0.08, 0.86, -0.24], [0, 0.22, 0.46]),
+    roundedBox(0.34, 0.16, 0.18, 0.05, [-0.5, 1.05, -0.36], [0, 0.5, -0.1]),
+  );
+  root.add(
+    "paintDark",
+    // Le déflecteur, plaque inclinée qui rabat le jet vers le bas.
+    roundedBox(0.2, 0.03, 0.2, 0.012, [-0.68, 1.04, -0.44], [0, 0.5, 0.55]),
+  );
+  root.add("steel", cyl(0.02, 0.02, 0.22, 8, [-0.26, 0.98, -0.3], [0, 0, HALF]));
+
+  /* — Bec cueilleur : bâti bas, deux tambours à couteaux ————— */
+  const HEAD_X = 0.62;
+  root.add(
+    "paintDark",
+    roundedBox(0.24, 0.14, 0.86, 0.035, [HEAD_X, 0.2, 0]),
+    roundedBox(0.2, 0.22, 0.03, 0.015, [HEAD_X + 0.02, 0.3, 0.43], [0, 0, -0.12]),
+    roundedBox(0.2, 0.22, 0.03, 0.015, [HEAD_X + 0.02, 0.3, -0.43], [0, 0, -0.12]),
+  );
+  // Bras d'alimentation : ils relient le bec à la caisse, sinon il flotte.
+  root.add(
+    "cast",
+    roundedBox(0.24, 0.09, 0.1, 0.025, [HEAD_X - 0.2, 0.3, 0.18]),
+    roundedBox(0.24, 0.09, 0.1, 0.025, [HEAD_X - 0.2, 0.3, -0.18]),
+  );
+  for (const z of [0.24, -0.24] as const) {
+    const drum = root.child([HEAD_X + 0.06, 0.24, z], { role: "reel", spin: z > 0 ? 1 : -1 });
+    drum.add("chrome", cyl(0.075, 0.075, 0.09, 12, [0, 0, 0]));
+    for (let i = 0; i < 5; i++) {
+      const a = (i / 5) * Math.PI * 2;
+      drum.add(
+        "steel",
+        box(0.09, 0.014, 0.05, [Math.cos(a) * 0.085, Math.sin(a) * 0.085, 0], [0, 0, a]),
+      );
+    }
+  }
+  // Pointes de séparation : la dent de scie caractéristique d'un bec à maïs.
+  for (const z of [0.42, 0, -0.42] as const) {
+    root.add("plastic", cone(0.05, 0.24, 8, [HEAD_X + 0.2, 0.22, z], [0, 0, -HALF]));
+  }
+
+  /* — Roues : motrices devant, directrices derrière ——————————— */
+  root.add("cast", cyl(0.038, 0.038, 0.62, 10, [0.28, DRIVE_R, 0], [HALF, 0, 0]));
+  for (const z of [0.31, -0.31] as const) {
+    root
+      .child([0.28, DRIVE_R, z], { role: "wheel", radius: DRIVE_R })
+      .attach(wheelPart(DRIVE_R, 0.19, 14));
+    root.add("paint", shell(DRIVE_R + 0.03, 0.2, Math.PI * 0.1, Math.PI * 0.62, [0.28, DRIVE_R, z]));
+  }
+  const steer = root.child([-0.52, STEER_R, 0], { role: "steer" });
+  for (const z of [0.2, -0.2] as const) {
+    steer.child([0, 0, z], { role: "wheel", radius: STEER_R }).attach(wheelPart(STEER_R, 0.12, 10));
+  }
+  steer.add("cast", cyl(0.03, 0.03, 0.36, 10, [0, 0, 0], [HALF, 0, 0]));
+
+  return { root, length: 1.8, hitch: [-0.85, 0.3, 0], eye: [0, 0, 0] };
+}
+
+/* ------------------------------------------------------------------ */
 /* Plans de montage                                                    */
 /* ------------------------------------------------------------------ */
 
@@ -723,6 +1002,8 @@ const BUILDERS: Record<MachineType, () => Blueprint> = {
   HARVESTER: buildHarvester,
   SPREADER: buildSpreader,
   DISC_HARROW: buildDiscHarrow,
+  BALER: buildBaler,
+  FORAGE_HARVESTER: buildForageHarvester,
 };
 
 const blueprints = new Map<MachineType, Blueprint>();

@@ -62,6 +62,7 @@ enum BuildingType {
   PIG_YARD
   HEN_YARD
   COLD_ROOM
+  BUNKER_SILO
 }
 
 enum CellKind {
@@ -93,6 +94,9 @@ model User {
   lastParcelId   String?
   lastCellX      Int?
   lastCellY      Int?
+  isNpc          Boolean        @default(false)
+  consignesJson  String?
+  absenceLogJson String?
   createdAt      DateTime       @default(now())
   farm           Farm?
   contracts      NpcContract[]  @relation("Provider")
@@ -211,6 +215,9 @@ model ParcelCell {
   lastCrop         CropCode?
   /// Cycles consécutifs de cette même culture ; deux blés d'affilée se paient
   cropStreak       Int        @default(0)
+  strawTons        Float      @default(0)
+  baleCount        Int        @default(0)
+  plantedAsSilage  Boolean    @default(false)
 
   @@unique([parcelId, x, y])
 }

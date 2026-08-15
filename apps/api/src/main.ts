@@ -80,6 +80,20 @@ import {
   parseAppearance,
   FIELD_PRESENCE_TTL_MS,
   PLAYER_ONLINE_MS,
+  parseConsignes,
+  parseAbsenceLog,
+  DEFAULT_CONSIGNES,
+  CONSIGNE_AWAY_MS,
+  NPC_PARCEL_SHARE,
+  strawYieldFor,
+  balesFromStraw,
+  strawFromBales,
+  canSilageHarvest,
+  silageYieldTons,
+  WORLD_MARKET_GOODS,
+  PURCHASABLE_GOODS,
+  type Consignes,
+  type AbsenceLog,
   repairHalfwayTarget,
   type FarmWork,
   type Specialization,
@@ -308,6 +322,15 @@ function explainNoMachine(machines: FarmMachine[], work: FarmWork): string {
     if (work === "MOW") {
       return "Tracteur requis pour faucher l’herbe (condition trop basse ou absent) — achetez / réparez.";
     }
+    if (work === "SILAGE") {
+      return "Ensileuse requise (condition trop basse ou absente) — achetez / réparez.";
+    }
+    if (work === "BALE") {
+      return "Presse à balles requise (condition trop basse ou absente) — achetez / réparez.";
+    }
+    if (work === "COLLECT") {
+      return "Tracteur requis pour ramasser les bottes — achetez / réparez.";
+    }
     if (work === "STUBBLE") {
       return "Déchaumeur requis (condition trop basse ou absent) — achetez / réparez.";
     }
@@ -344,6 +367,16 @@ function pickMachineForWork(
     if (work === "FERTILIZE") {
       const ap = a.def.type === "SPREADER" ? 1 : 0;
       const bp = b.def.type === "SPREADER" ? 1 : 0;
+      if (ap !== bp) return bp - ap;
+    }
+    if (work === "BALE") {
+      const ap = a.def.type === "BALER" ? 1 : 0;
+      const bp = b.def.type === "BALER" ? 1 : 0;
+      if (ap !== bp) return bp - ap;
+    }
+    if (work === "SILAGE") {
+      const ap = a.def.type === "FORAGE_HARVESTER" ? 1 : 0;
+      const bp = b.def.type === "FORAGE_HARVESTER" ? 1 : 0;
       if (ap !== bp) return bp - ap;
     }
     return b.machine.condition - a.machine.condition;
@@ -512,8 +545,8 @@ function publicLaborOrder(o: {
   clientId: string;
   providerId: string | null;
   expiresAt: Date;
-  parcel?: { label: string; zone?: { name: string } | null; farm?: { user?: { displayName: string } | null } | null };
-  client?: { displayName: string };
+  parcel?: { label: string; zone?: { name: string } | null; farm?: { user?: { displayName: string; isNpc?: boolean } | null } | null };
+  client?: { displayName: string; isNpc?: boolean };
 }) {
   const cells = parseCellJson(o.cellsJson);
   const remaining = parseCellJson(o.remainingJson);
@@ -533,6 +566,7 @@ function publicLaborOrder(o: {
     parcelLabel: o.parcel?.label ?? "",
     zoneName: o.parcel?.zone?.name ?? "",
     clientName: o.client?.displayName ?? o.parcel?.farm?.user?.displayName ?? "Exploitant",
+    npc: Boolean(o.client?.isNpc ?? o.parcel?.farm?.user?.isNpc),
     expiresAt: o.expiresAt.toISOString(),
   };
 }
@@ -905,9 +939,311 @@ function makeMissionRow(job = MISSION_JOBS[Math.floor(Math.random() * MISSION_JO
 }
 
 async function topUpOpenMissions() {
-  const open = await prisma.npcContract.count({ where: { status: "OPEN" } });
-  for (let i = open; i < MISSION_OPEN_MAX; i++) {
-    await prisma.npcContract.create({ data: makeMissionRow() });
+  // Les contrats fantômes ne sont plus créés : la bourse pointe des parcelles réelles.
+}
+
+const NPC_FARM_NAMES = [
+  "Ferme Martin",
+  "Élevage Lefèvre",
+  "GAEC des Haies",
+  "Les Blés d’Or",
+  "Ferme du Tilleul",
+  "Élevage Moreau",
+  "La Prairie",
+  "Céréales Lambert",
+  "Ferme des Saules",
+  "Troupeau Roux",
+];
+
+function hash32(s: string): number {
+  let h = 2166136261;
+  for (let i = 0; i < s.length; i++) {
+    h ^= s.charCodeAt(i);
+    h = Math.imul(h, 16777619);
+  }
+  return h >>> 0;
+}
+
+async function placeNpcBuilding(
+  parcelId: string,
+  type: BuildingType,
+  originX: number,
+  originY: number,
+) {
+  const def = BUILDING_DEFS[type as SharedBuildingType];
+  const b = await prisma.building.create({
+    data: { parcelId, type, originX, originY },
+  });
+  for (const c of footprintCells(originX, originY, def.w, def.h)) {
+    await prisma.parcelCell.update({
+      where: { parcelId_x_y: { parcelId, x: c.x, y: c.y } },
+      data: { kind: "BUILDING", buildingId: b.id },
+    });
+  }
+  return b;
+}
+
+async function seedNpcFarms() {
+  const zones = await prisma.zone.findMany({
+    include: {
+      parcels: {
+        include: { farm: { include: { user: true } } },
+        orderBy: [{ mapY: "asc" }, { mapX: "asc" }],
+      },
+    },
+  });
+  for (const zone of zones) {
+    const target = Math.floor(zone.parcels.length * NPC_PARCEL_SHARE);
+    const npcCount = zone.parcels.filter((p) => p.farm?.user.isNpc).length;
+    const free = zone.parcels.filter((p) => !p.farmId);
+    const need = Math.max(0, target - npcCount);
+    if (!need || !free.length) continue;
+    const pick = [...free].sort((a, b) => hash32(a.id) - hash32(b.id)).slice(0, need);
+    for (const parcel of pick) {
+      const h = hash32(parcel.id);
+      const livestock = h % 5 === 0;
+      const name = NPC_FARM_NAMES[h % NPC_FARM_NAMES.length]!;
+      const email = `npc.${parcel.id}@farmsim.npc`;
+      const existing = await prisma.user.findUnique({ where: { email } });
+      if (existing) continue;
+      const spec = livestock ? "ELEVEUR" : "CEREALIER";
+      const user = await prisma.user.create({
+        data: {
+          email,
+          displayName: name,
+          specialization: spec,
+          accessCode: `npc-${parcel.id.slice(-8)}`,
+          crd: 48_000,
+          isNpc: true,
+          lastSeenAt: new Date(0),
+          consignesJson: JSON.stringify({
+            ...DEFAULT_CONSIGNES,
+            plow: false,
+            maxSpend: 2000,
+          }),
+        },
+      });
+      const farm = await prisma.farm.create({
+        data: { userId: user.id, name },
+      });
+      await prisma.parcel.update({ where: { id: parcel.id }, data: { farmId: farm.id } });
+      const tractor = await prisma.machine.create({
+        data: { farmId: farm.id, type: "TRACTOR", parkedParcelId: parcel.id },
+      });
+      await prisma.parcelCell.update({
+        where: {
+          parcelId_x_y: {
+            parcelId: parcel.id,
+            x: 0,
+            y: Math.max(0, parcel.gridH - 1),
+          },
+        },
+        data: { kind: "VEHICLE", machineId: tractor.id },
+      });
+      if (livestock) {
+        const barn = await placeNpcBuilding(parcel.id, "CATTLE_BARN", 8, 8);
+        await prisma.herd.create({
+          data: {
+            farmId: farm.id,
+            buildingId: barn.id,
+            kind: "COW",
+            size: 6,
+            happiness: 0.7,
+            feedStock: 800,
+            feedQuality: 0.2,
+            lastFedAt: new Date(),
+          },
+        });
+        await prisma.inventoryItem.create({
+          data: { farmId: farm.id, itemCode: "HAY", qty: 8, quality: 3, moisture: 0 },
+        });
+      } else {
+        const now = Date.now();
+        const growMs = CROP_DEFS.WHEAT.growMs;
+        const plantedAt = new Date(now - growMs * 0.9);
+        const readyAt = new Date(plantedAt.getTime() + growMs);
+        let planted = 0;
+        for (let y = 1; y < parcel.gridH - 1 && planted < 18; y++) {
+          for (let x = 1; x < parcel.gridW - 1 && planted < 18; x++) {
+            const cell = await prisma.parcelCell.findUnique({
+              where: { parcelId_x_y: { parcelId: parcel.id, x, y } },
+            });
+            if (!cell || cell.kind !== "EMPTY") continue;
+            await prisma.parcelCell.update({
+              where: { id: cell.id },
+              data: {
+                kind: "CROP",
+                crop: "WHEAT",
+                fieldStage: "GROWING",
+                plantedAt,
+                readyAt,
+              },
+            });
+            planted += 1;
+          }
+        }
+      }
+    }
+  }
+}
+
+async function publishFromConsignes() {
+  const cutoff = new Date(Date.now() - CONSIGNE_AWAY_MS);
+  const users = await prisma.user.findMany({
+    where: {
+      farm: { isNot: null },
+      OR: [{ isNpc: true }, { lastSeenAt: { lt: cutoff } }, { lastSeenAt: null }],
+    },
+    include: {
+      farm: { include: { parcels: { include: { cells: true } } } },
+    },
+  });
+  const now = Date.now();
+  for (const user of users) {
+    if (!user.farm) continue;
+    const consignes = parseConsignes(user.consignesJson);
+    const log = parseAbsenceLog(user.absenceLogJson);
+    const openCount = await prisma.laborOrder.count({
+      where: { clientId: user.id, status: { in: ["OPEN", "ACCEPTED"] } },
+    });
+    let slots = LABOR_OPEN_MAX_PER_CLIENT - openCount;
+    let budget = Math.max(0, consignes.maxSpend - log.spent);
+    if (slots <= 0 || budget <= 0) continue;
+
+    for (const parcel of user.farm.parcels) {
+      if (slots <= 0 || budget <= 0) break;
+      const busy = await occupiedLaborCells(parcel.id);
+      const bonuses = await getFarmBonuses(parcel.farmId!);
+      type Job = { work: FarmWork; cells: CellXY[] };
+      const jobs: Job[] = [];
+
+      if (consignes.harvest) {
+        const ready: CellXY[] = [];
+        const silage: CellXY[] = [];
+        for (const cell of parcel.cells) {
+          if (busy.has(`${cell.x},${cell.y}`)) continue;
+          if (cell.kind !== "CROP" || !cell.crop || !cell.plantedAt) continue;
+          const sim = simulateCell({
+            crop: cell.crop,
+            plantedAt: cell.plantedAt.getTime(),
+            now,
+            fertility: parcel.fertility,
+            weedsControlled: cell.weedsControlled,
+            fertilizedPasses: Math.min(2, cell.fertilizedPasses) as 0 | 1 | 2,
+            residuePasses: cell.residuePasses,
+            directSeeded: cell.directSeeded,
+            rotation: rotationOf(cell),
+            specialization: playableSpec(user.specialization),
+            buildingYieldBonus: bonuses.yieldBonus,
+          });
+          if (sim.lost) continue;
+          if (sim.ready) ready.push({ x: cell.x, y: cell.y });
+          else if (canSilageHarvest({ crop: cell.crop, progress: sim.progress })) {
+            silage.push({ x: cell.x, y: cell.y });
+          }
+        }
+        for (const batch of chunkCells(ready)) jobs.push({ work: "HARVEST", cells: batch });
+        for (const batch of chunkCells(silage)) jobs.push({ work: "SILAGE", cells: batch });
+      }
+      if (consignes.straw) {
+        const windrow = parcel.cells
+          .filter((c) => c.strawTons > 0 && c.baleCount <= 0 && !busy.has(`${c.x},${c.y}`))
+          .map((c) => ({ x: c.x, y: c.y }));
+        const bales = parcel.cells
+          .filter((c) => c.baleCount > 0 && !busy.has(`${c.x},${c.y}`))
+          .map((c) => ({ x: c.x, y: c.y }));
+        for (const batch of chunkCells(windrow)) jobs.push({ work: "BALE", cells: batch });
+        for (const batch of chunkCells(bales)) jobs.push({ work: "COLLECT", cells: batch });
+      }
+      if (consignes.stubble) {
+        const stub = parcel.cells
+          .filter(
+            (c) =>
+              c.hasStubble &&
+              c.strawTons <= 0 &&
+              c.baleCount <= 0 &&
+              !busy.has(`${c.x},${c.y}`),
+          )
+          .map((c) => ({ x: c.x, y: c.y }));
+        for (const batch of chunkCells(stub)) jobs.push({ work: "STUBBLE", cells: batch });
+      }
+      if (consignes.plow) {
+        const plow = parcel.cells
+          .filter(
+            (c) =>
+              (c.fieldStage === "SPOILED" || c.harvestsSincePlow >= MAX_HARVESTS_BEFORE_PLOW) &&
+              c.kind !== "BUILDING" &&
+              c.kind !== "VEHICLE" &&
+              !busy.has(`${c.x},${c.y}`),
+          )
+          .map((c) => ({ x: c.x, y: c.y }));
+        for (const batch of chunkCells(plow)) jobs.push({ work: "PLOW", cells: batch });
+      }
+
+      for (const job of jobs) {
+        if (slots <= 0 || budget <= 0) break;
+        const money = laborEscrow(job.work, job.cells.length, null, user.isNpc);
+        if (money.escrow > budget || money.escrow > user.crd) continue;
+        const created = await createLaborOrderForCells({
+          parcelId: parcel.id,
+          userId: user.id,
+          work: job.work,
+          cells: job.cells,
+          npcClient: user.isNpc,
+        });
+        if (!created.ok) continue;
+        slots -= 1;
+        budget -= created.escrow;
+        await appendAbsenceLog(
+          user.id,
+          `${WORK_LABELS[job.work]} publié · ${job.cells.length} cases · ${created.escrow} TRN`,
+          created.escrow,
+        );
+        const fresh = await prisma.user.findUnique({ where: { id: user.id }, select: { crd: true } });
+        if (fresh) user.crd = fresh.crd;
+        for (const c of job.cells) busy.add(`${c.x},${c.y}`);
+      }
+    }
+  }
+}
+
+async function tickNpcFarms() {
+  const npcs = await prisma.user.findMany({
+    where: { isNpc: true, specialization: "CEREALIER" },
+    include: { farm: { include: { parcels: { include: { cells: true } } } } },
+  });
+  const now = Date.now();
+  const growMs = CROP_DEFS.WHEAT.growMs;
+  for (const npc of npcs) {
+    if (!npc.farm) continue;
+    for (const parcel of npc.farm.parcels) {
+      const busy = await occupiedLaborCells(parcel.id);
+      const empty = parcel.cells.filter(
+        (c) =>
+          c.kind === "EMPTY" &&
+          !c.hasStubble &&
+          c.strawTons <= 0 &&
+          c.baleCount <= 0 &&
+          c.fieldStage !== "SPOILED" &&
+          !busy.has(`${c.x},${c.y}`),
+      );
+      const toPlant = empty.slice(0, 18);
+      for (const cell of toPlant) {
+        await prisma.parcelCell.update({
+          where: { id: cell.id },
+          data: {
+            kind: "CROP",
+            crop: "WHEAT",
+            fieldStage: "PLANTED",
+            plantedAt: new Date(now),
+            readyAt: new Date(now + growMs),
+            fertilizedPasses: 0,
+            weedsControlled: false,
+            directSeeded: false,
+          },
+        });
+      }
+    }
   }
 }
 
@@ -1005,26 +1341,14 @@ async function ensureSeed() {
 
   const leftover = await prisma.npcContract.findMany({
     where: { status: "OPEN" },
-    orderBy: { createdAt: "desc" },
-    skip: MISSION_OPEN_MAX,
   });
   if (leftover.length) {
-    await prisma.npcContract.deleteMany({ where: { id: { in: leftover.map((c) => c.id) } } });
-  }
-  const openJobs = await prisma.npcContract.findMany({ where: { status: "OPEN" } });
-  for (const c of openJobs) {
-    const work = CONTRACT_WORK[c.jobType as ContractJobType];
-    const cells = clampMissionCells(c.cells || 16);
-    await prisma.npcContract.update({
-      where: { id: c.id },
-      data: {
-        cells,
-        rewardCrd: missionPayout(work, cells, "NPC"),
-        title: c.title.includes("cases") ? c.title : `${c.title} · ${cells} cases`,
-      },
+    await prisma.npcContract.updateMany({
+      where: { id: { in: leftover.map((c) => c.id) } },
+      data: { status: "CANCELLED" },
     });
   }
-  await topUpOpenMissions();
+  await seedNpcFarms();
 
   const zonesForWeather = await prisma.zone.findMany({ select: { code: true } });
   for (const z of zonesForWeather) {
@@ -1416,7 +1740,7 @@ app.post("/futures", async (req, res) => {
     tons: body.data.tons,
     horizonH: body.data.horizonH,
     openContracts,
-    tradable: SELLABLE_GOODS,
+    tradable: WORLD_MARKET_GOODS,
   });
   if (!verdict.ok) {
     res.status(409).json({ error: FUTURES_REFUSAL_LABELS[verdict.reason!] });
@@ -1764,6 +2088,8 @@ async function runWorldTick() {
   await expireListings();
   await settleOverdueDeliveries();
   await expireLaborOrders();
+  await tickNpcFarms();
+  await publishFromConsignes();
   await runNpcBuyers();
   await spoilPerishables();
   await settleAllHerds();
@@ -1801,9 +2127,17 @@ async function runWorldTick() {
     const pressure = marketNpcPressure({ weatherStates: states });
     // Légère asymétrie blé / maïs
     const supply =
-      row.commodity === "MAIZE" ? Math.round(pressure.supplyTons * 1.05) : pressure.supplyTons;
+      GOOD_DEFS[row.commodity as TradeGood]?.localOnly
+        ? 0
+        : row.commodity === "MAIZE"
+          ? Math.round(pressure.supplyTons * 1.05)
+          : pressure.supplyTons;
     const demand =
-      row.commodity === "WHEAT" ? Math.round(pressure.demandTons * 1.05) : pressure.demandTons;
+      GOOD_DEFS[row.commodity as TradeGood]?.localOnly
+        ? 0
+        : row.commodity === "WHEAT"
+          ? Math.round(pressure.demandTons * 1.05)
+          : pressure.demandTons;
     const tick = tickMarket({
       commodity: row.commodity as TradeGood,
       price: row.price,
@@ -1941,7 +2275,7 @@ async function buildResumeForUser(userId: string) {
     })
   ).filter((h) => hungerPenalty({ feedStock: h.feedStock, herdSize: h.size }) > 0.3).length;
 
-  return buildSessionResume({
+  const resume = buildSessionResume({
     awayMs,
     cropsReady,
     cropsGrowing,
@@ -1952,6 +2286,13 @@ async function buildResumeForUser(userId: string) {
     marketNow,
     weatherStates: weather.map((w) => w.state),
   });
+  const log = parseAbsenceLog(user.absenceLogJson);
+  return {
+    ...resume,
+    absenceLog: log.lines,
+    spent: log.spent,
+    consignes: parseConsignes(user.consignesJson),
+  };
 }
 
 async function touchUserPresence(userId: string) {
@@ -1993,11 +2334,20 @@ async function playerPayload(userId: string) {
     }
   }
   const bonuses = user.farm ? await getFarmBonuses(user.farm.id) : null;
-  const { accessCode: _omit, appearanceJson, statsJson, ...safe } = user;
+  const {
+    accessCode: _omit,
+    appearanceJson,
+    statsJson,
+    consignesJson,
+    absenceLogJson,
+    ...safe
+  } = user;
   void _omit;
+  void absenceLogJson;
   return {
     ...safe,
     appearance: appearanceFromJson(appearanceJson, playableSpec(user.specialization)),
+    consignes: parseConsignes(consignesJson),
     bonuses,
     // La jauge du bandeau et le chapitre « Niveaux » du guide lisent ceci :
     // sans la borne du palier, « 0 XP » ne dit pas où l'on en est.
@@ -2206,6 +2556,10 @@ app.post("/auth/login", async (req, res) => {
   const resume = await buildResumeForUser(user.id);
   const token = await createSession(user.id);
   await touchUserPresence(user.id);
+  await prisma.user.update({
+    where: { id: user.id },
+    data: { absenceLogJson: JSON.stringify({ spent: 0, lines: [] } satisfies AbsenceLog) },
+  });
   const player = await playerPayload(user.id);
   res.json({ token, player, resume });
 });
@@ -2348,6 +2702,38 @@ app.patch("/me/appearance", async (req, res) => {
   res.json({ player, appearance });
 });
 
+app.post("/me/consignes", async (req, res) => {
+  const auth = await userFromAuthHeader(req);
+  if (!auth) {
+    res.status(401).json({ error: "Session invalide" });
+    return;
+  }
+  const body = z
+    .object({
+      harvest: z.boolean().optional(),
+      stubble: z.boolean().optional(),
+      plow: z.boolean().optional(),
+      straw: z.boolean().optional(),
+      npcAllowed: z.boolean().optional(),
+      maxSpend: z.number().min(0).max(20_000).optional(),
+    })
+    .safeParse(req.body);
+  if (!body.success) {
+    res.status(400).json(body.error.flatten());
+    return;
+  }
+  const next: Consignes = {
+    ...parseConsignes(auth.user.consignesJson),
+    ...body.data,
+    maxSpend: body.data.maxSpend != null ? Math.round(body.data.maxSpend) : parseConsignes(auth.user.consignesJson).maxSpend,
+  };
+  await prisma.user.update({
+    where: { id: auth.user.id },
+    data: { consignesJson: JSON.stringify(next) },
+  });
+  res.json({ consignes: next });
+});
+
 app.get("/session/resume", async (req, res) => {
   const auth = await userFromAuthHeader(req);
   if (!auth) {
@@ -2355,6 +2741,10 @@ app.get("/session/resume", async (req, res) => {
     return;
   }
   const resume = await buildResumeForUser(auth.user.id);
+  await prisma.user.update({
+    where: { id: auth.user.id },
+    data: { absenceLogJson: JSON.stringify({ spent: 0, lines: [] } satisfies AbsenceLog) },
+  });
   res.json(resume);
 });
 
@@ -2468,64 +2858,99 @@ app.post("/parcels/:id/presence", async (req, res) => {
   res.json({ ok: true, workers: await listFieldWorkers(req.params.id) });
 });
 
-app.post("/parcels/:id/labor-orders", async (req, res) => {
-  const body = z
-    .object({
-      userId: z.string(),
-      work: z.enum(["PLANT", "FERTILIZE", "HARVEST", "PLOW", "STUBBLE", "MOW"]),
-      crop: z.enum(CROP_CODES).optional(),
-      cells: z.array(z.object({ x: z.number().int(), y: z.number().int() })).min(1),
-    })
-    .safeParse(req.body);
-  if (!body.success) {
-    res.status(400).json(body.error.flatten());
-    return;
+function chunkCells(cells: CellXY[], size = 16): CellXY[][] {
+  const n = Math.max(MISSION_CELLS_MIN, Math.min(MISSION_CELLS_MAX, size));
+  const out: CellXY[][] = [];
+  for (let i = 0; i < cells.length; i += n) {
+    const slice = cells.slice(i, i + n);
+    if (slice.length >= MISSION_CELLS_MIN) out.push(slice);
   }
-  const n = body.data.cells.length;
-  if (n < MISSION_CELLS_MIN || n > MISSION_CELLS_MAX) {
-    res.status(400).json({
-      error: `Un travail fait ${MISSION_CELLS_MIN} à ${MISSION_CELLS_MAX} cases`,
-    });
-    return;
-  }
-  const parcel = await prisma.parcel.findUnique({
-    where: { id: req.params.id },
-    include: { farm: true, cells: true },
+  return out;
+}
+
+async function occupiedLaborCells(parcelId: string): Promise<Set<string>> {
+  const open = await prisma.laborOrder.findMany({
+    where: { parcelId, status: { in: ["OPEN", "ACCEPTED"] } },
+    select: { remainingJson: true },
   });
-  if (!parcel?.farm || parcel.farm.userId !== body.data.userId) {
-    res.status(403).json({ error: "Parcelle non possédée" });
-    return;
+  const keys = new Set<string>();
+  for (const o of open) {
+    for (const c of parseCellJson(o.remainingJson)) keys.add(`${c.x},${c.y}`);
   }
-  const unique = body.data.cells.filter(
+  return keys;
+}
+
+async function appendAbsenceLog(userId: string, text: string, spentDelta: number) {
+  const user = await prisma.user.findUnique({ where: { id: userId }, select: { absenceLogJson: true } });
+  const log = parseAbsenceLog(user?.absenceLogJson);
+  log.spent = Math.round((log.spent + spentDelta) * 100) / 100;
+  log.lines.push({ at: new Date().toISOString(), text });
+  if (log.lines.length > 24) log.lines = log.lines.slice(-24);
+  await prisma.user.update({
+    where: { id: userId },
+    data: { absenceLogJson: JSON.stringify(log) },
+  });
+}
+
+async function createLaborOrderForCells(opts: {
+  parcelId: string;
+  userId: string;
+  work: FarmWork;
+  crop?: CropCode | null;
+  cells: CellXY[];
+  npcClient?: boolean;
+}): Promise<
+  | { ok: true; order: ReturnType<typeof publicLaborOrder>; escrow: number }
+  | { ok: false; status: number; error: string }
+> {
+  const unique = opts.cells.filter(
     (c, i, arr) => arr.findIndex((o) => o.x === c.x && o.y === c.y) === i,
   );
+  const n = unique.length;
+  if (n < MISSION_CELLS_MIN || n > MISSION_CELLS_MAX) {
+    return { ok: false, status: 400, error: `Un chantier fait ${MISSION_CELLS_MIN} à ${MISSION_CELLS_MAX} cases` };
+  }
+  const parcel = await prisma.parcel.findUnique({
+    where: { id: opts.parcelId },
+    include: { farm: true, cells: true },
+  });
+  if (!parcel?.farm || parcel.farm.userId !== opts.userId) {
+    return { ok: false, status: 403, error: "Parcelle non possédée" };
+  }
   for (const { x, y } of unique) {
     const cell = parcel.cells.find((c) => c.x === x && c.y === y);
     if (!cell || cell.kind === "BUILDING" || cell.kind === "VEHICLE") {
-      res.status(409).json({ error: `Case ${x},${y} hors du travail` });
-      return;
+      return { ok: false, status: 409, error: `Case ${x},${y} hors du travail` };
     }
   }
   const openCount = await prisma.laborOrder.count({
-    where: { clientId: body.data.userId, status: { in: ["OPEN", "ACCEPTED"] } },
+    where: { clientId: opts.userId, status: { in: ["OPEN", "ACCEPTED"] } },
   });
   if (openCount >= LABOR_OPEN_MAX_PER_CLIENT) {
-    res.status(409).json({ error: `Au plus ${LABOR_OPEN_MAX_PER_CLIENT} demandes d’aide en même temps` });
-    return;
+    return {
+      ok: false,
+      status: 409,
+      error: `Au plus ${LABOR_OPEN_MAX_PER_CLIENT} demandes d’aide en même temps`,
+    };
   }
-  const crop = body.data.work === "PLANT" ? (body.data.crop ?? "WHEAT") : null;
-  const money = laborEscrow(body.data.work, unique.length, crop);
-  if (body.data.work === "FERTILIZE") {
+  const crop = opts.work === "PLANT" ? (opts.crop ?? "WHEAT") : null;
+  const money = laborEscrow(opts.work, unique.length, crop, Boolean(opts.npcClient));
+  // Le fumier déjà au bord du champ tient lieu d'engrais : on ne fait pas
+  // payer deux fois celui qui l'a produit.
+  if (opts.work === "FERTILIZE") {
     const available = await parcelManureTons(parcel.id);
     if (available >= manureNeededForCells(unique.length)) {
       money.extras = 0;
       money.escrow = money.quote;
     }
   }
-  const user = await prisma.user.findUnique({ where: { id: body.data.userId } });
+  const user = await prisma.user.findUnique({ where: { id: opts.userId } });
   if (!user || user.crd < money.escrow) {
-    res.status(402).json({ error: `Pas assez d’argent — ${money.escrow} TRN mis de côté` });
-    return;
+    return {
+      ok: false,
+      status: 402,
+      error: `Pas assez d’argent — ${money.escrow} TRN mis de côté`,
+    };
   }
   const order = await prisma.$transaction(async (tx) => {
     await tx.user.update({
@@ -2536,7 +2961,7 @@ app.post("/parcels/:id/labor-orders", async (req, res) => {
       data: {
         parcelId: parcel.id,
         clientId: user.id,
-        work: body.data.work,
+        work: opts.work,
         crop,
         cellsJson: JSON.stringify(unique),
         remainingJson: JSON.stringify(unique),
@@ -2549,7 +2974,44 @@ app.post("/parcels/:id/labor-orders", async (req, res) => {
       include: laborOrderInclude,
     });
   });
-  res.status(201).json({ order: publicLaborOrder(order), escrow: money.escrow });
+  return { ok: true, order: publicLaborOrder(order), escrow: money.escrow };
+}
+
+app.post("/parcels/:id/labor-orders", async (req, res) => {
+  const body = z
+    .object({
+      userId: z.string(),
+      work: z.enum([
+        "PLANT",
+        "FERTILIZE",
+        "HARVEST",
+        "PLOW",
+        "STUBBLE",
+        "MOW",
+        "BALE",
+        "COLLECT",
+        "SILAGE",
+      ]),
+      crop: z.enum(CROP_CODES).optional(),
+      cells: z.array(z.object({ x: z.number().int(), y: z.number().int() })).min(1),
+    })
+    .safeParse(req.body);
+  if (!body.success) {
+    res.status(400).json(body.error.flatten());
+    return;
+  }
+  const result = await createLaborOrderForCells({
+    parcelId: req.params.id,
+    userId: body.data.userId,
+    work: body.data.work,
+    crop: body.data.crop,
+    cells: body.data.cells,
+  });
+  if (!result.ok) {
+    res.status(result.status).json({ error: result.error });
+    return;
+  }
+  res.status(201).json({ order: result.order, escrow: result.escrow });
 });
 
 app.get("/labor-orders", async (req, res) => {
@@ -3040,6 +3502,7 @@ function afterTakeField(
     harvestsSincePlow: number;
   },
   now: number,
+  silage = false,
 ) {
   const nextCuts = Math.min(MAX_HARVESTS_BEFORE_PLOW, cell.harvestsSincePlow + 1);
   if (isMowCrop(cell.crop) && grassWillRegrow(nextCuts)) {
@@ -3057,9 +3520,15 @@ function afterTakeField(
         harvestsSincePlow: nextCuts,
         lastCrop: "GRASS" as CropCode,
         cropStreak: 1,
+        strawTons: 0,
+        baleCount: 0,
+        plantedAsSilage: false,
       },
     };
   }
+  // La moisson ne rend pas une case nue : elle laisse des chaumes qu'il faudra
+  // déchaumer ou labourer avant de resemer — et un andain de paille. Sauf
+  // ensilage : la plante est partie entière, il ne reste rien à presser.
   return {
     regrow: false as const,
     data: {
@@ -3072,6 +3541,9 @@ function afterTakeField(
       weedsControlled: false,
       hasStubble: true,
       harvestsSincePlow: nextCuts,
+      strawTons: strawYieldFor(cell.crop, silage),
+      baleCount: 0,
+      plantedAsSilage: false,
       ...rotationUpdate(cell, cell.crop),
     },
   };
@@ -3536,7 +4008,10 @@ app.post("/parcels/:id/stubble", async (req, res) => {
       residuePasses: cell.residuePasses,
       hasStubble: cell.hasStubble,
     });
-    if (verdict.ok) targets.push(cell);
+    if (verdict.ok) {
+      if (cell.baleCount > 0) continue;
+      targets.push(cell);
+    }
     else if (verdict.reason === "PLOW_REQUIRED") blockedByPlow += 1;
   }
 
@@ -3573,6 +4048,7 @@ app.post("/parcels/:id/stubble", async (req, res) => {
         data: {
           fieldStage: "PREPARED",
           hasStubble: false,
+          strawTons: 0,
           residuePasses: next.residuePasses,
           // Faux-semis : le déchaumage fait lever puis détruit les adventices.
           weedsControlled: true,
@@ -3616,17 +4092,28 @@ app.post("/parcels/:id/harvest", async (req, res) => {
     .object({
       userId: z.string(),
       cells: z.array(z.object({ x: z.number().int(), y: z.number().int() })).optional(),
+      mode: z.enum(["GRAIN", "SILAGE"]).optional(),
     })
     .safeParse(req.body);
   if (!body.success) {
     res.status(400).json(body.error.flatten());
     return;
   }
-  const access = await resolveHarvestOrMowAccess({
-    parcelId: req.params.id,
-    userId: body.data.userId,
-    cells: body.data.cells ?? [],
-  });
+  const silage = body.data.mode === "SILAGE";
+  // Une même route sert la moisson, la fauche et l'ensilage : l'ensilage se
+  // demande explicitement, la fauche se déduit de ce qui pousse sur la case.
+  const access = silage
+    ? await resolveFieldAccess({
+        parcelId: req.params.id,
+        userId: body.data.userId,
+        work: "SILAGE",
+        cells: body.data.cells ?? [],
+      })
+    : await resolveHarvestOrMowAccess({
+        parcelId: req.params.id,
+        userId: body.data.userId,
+        cells: body.data.cells ?? [],
+      });
   if (!access.ok) {
     res.status(access.status).json({ error: access.error });
     return;
@@ -3637,6 +4124,11 @@ app.post("/parcels/:id/harvest", async (req, res) => {
     return;
   }
   const farm = parcel.farm;
+  const pickedSilage = silage ? pickMachineForWork(access.machines, "SILAGE") : null;
+  if (silage && !pickedSilage) {
+    res.status(409).json({ error: explainNoMachine(access.machines, "SILAGE") });
+    return;
+  }
   const bonuses = await getFarmBonuses(parcel.farmId!);
   const weather = await prisma.weatherSnapshot.findFirst({ where: { zoneCode: parcel.zone.code } });
   const user = await prisma.user.findUnique({ where: { id: body.data.userId } });
@@ -3671,19 +4163,28 @@ app.post("/parcels/:id/harvest", async (req, res) => {
     if (isMowCrop(cell.crop)) previewGrass += 1;
     else previewGrain += 1;
   }
-  const pickedHarvest = previewGrain > 0 ? pickMachineForWork(access.machines, "HARVEST") : null;
-  const pickedMow = previewGrass > 0 ? pickMachineForWork(access.machines, "MOW") : null;
-  if (previewGrain > 0 && !pickedHarvest) {
+  // L'ensilage a sa propre machine, déjà vérifiée : la moissonneuse et le
+  // tracteur ne sont exigés que pour ce qui part en grain ou en fourrage.
+  const pickedHarvest =
+    !silage && previewGrain > 0 ? pickMachineForWork(access.machines, "HARVEST") : null;
+  const pickedMow =
+    !silage && previewGrass > 0 ? pickMachineForWork(access.machines, "MOW") : null;
+  if (!silage && previewGrain > 0 && !pickedHarvest) {
     res.status(409).json({ error: explainNoMachine(access.machines, "HARVEST") });
     return;
   }
-  if (previewGrass > 0 && !pickedMow) {
+  if (!silage && previewGrass > 0 && !pickedMow) {
     res.status(409).json({ error: explainNoMachine(access.machines, "MOW") });
     return;
   }
 
-  const harvested: { crop: CropCode; tons: number; moisturePenalty: number; moisture: number }[] =
-    [];
+  const harvested: {
+    crop: CropCode;
+    tons: number;
+    moisturePenalty: number;
+    moisture: number;
+    silage?: boolean;
+  }[] = [];
   const harvestedCells: CellXY[] = [];
   let lostCells = 0;
   let hayTons = 0;
@@ -3709,6 +4210,41 @@ app.post("/parcels/:id/harvest", async (req, res) => {
         weatherAtHarvest: weather?.state as WeatherState | undefined,
         cutsDone: grassCutsDone(cell),
       });
+      if (silage) {
+        if (!canSilageHarvest({ crop: cell.crop, progress: sim.progress, lost: sim.lost })) continue;
+        if (sim.lost) {
+          lostCells += 1;
+          await tx.parcelCell.update({
+            where: { id: cell.id },
+            data: { fieldStage: "SPOILED", ...rotationUpdate(cell, cell.crop) },
+          });
+          continue;
+        }
+        const grainEq = access.charge
+          ? sim.estimatedYieldTons
+          : sim.estimatedYieldTons * (1 - P2P_YIELD_MALUS);
+        const tons = silageYieldTons(grainEq, sim.progress);
+        harvested.push({
+          crop: cell.crop,
+          tons,
+          moisturePenalty: 0,
+          moisture: 0,
+          silage: true,
+        });
+        harvestedCells.push({ x: cell.x, y: cell.y });
+        const after = afterTakeField(
+          {
+            crop: cell.crop,
+            lastCrop: cell.lastCrop,
+            cropStreak: cell.cropStreak,
+            harvestsSincePlow: cell.harvestsSincePlow,
+          },
+          now,
+          true,
+        );
+        await tx.parcelCell.update({ where: { id: cell.id }, data: after.data });
+        continue;
+      }
       if (!sim.ready) continue;
       if (sim.lost) {
         lostCells += 1;
@@ -3756,6 +4292,7 @@ app.post("/parcels/:id/harvest", async (req, res) => {
 
     const byCrop = new Map<CropCode, { tons: number; wet: boolean; moistureSum: number }>();
     for (const h of harvested) {
+      if (h.silage) continue;
       const cur = byCrop.get(h.crop) ?? { tons: 0, wet: false, moistureSum: 0 };
       cur.tons += h.tons;
       cur.moistureSum += h.tons * h.moisture;
@@ -3778,9 +4315,13 @@ app.post("/parcels/:id/harvest", async (req, res) => {
         quality: wet ? 2 : 3,
       });
     }
+    const silageTons = harvested.filter((h) => h.silage).reduce((s, h) => s + h.tons, 0);
+    if (silageTons > 0) {
+      await addToStock(tx, parcel.farmId!, "SILAGE", silageTons, 0, 3);
+    }
     const grain =
       incomingGrain.length === 0
-        ? { soldTons: 0, storedTons: 0, revenue: 0, reason: null }
+        ? { soldTons: 0, storedTons: silage ? silageTons : 0, revenue: 0, reason: null }
         : await applyGrainCapacity(tx, {
             farmId: parcel.farmId!,
             userId: farm.userId,
@@ -3794,8 +4335,17 @@ app.post("/parcels/:id/harvest", async (req, res) => {
     if (harvested.length === 0) {
       return { wear: null, mowWear: null, grain, labor: null, gain: null };
     }
-    const wear =
-      pickedHarvest && grainCells > 0
+    // Trois machines possibles sur la même route : l'ensileuse use pour toutes
+    // les cases, la moissonneuse pour le grain, le tracteur pour l'herbe.
+    const wear = pickedSilage
+      ? await applyWearToMachine(tx, {
+          machine: pickedSilage.machine,
+          def: pickedSilage.def,
+          cells: harvested.length,
+          work: "SILAGE",
+          specialization: user?.specialization,
+        })
+      : pickedHarvest && grainCells > 0
         ? await applyWearToMachine(tx, {
             machine: pickedHarvest.machine,
             def: pickedHarvest.def,
@@ -3835,7 +4385,9 @@ app.post("/parcels/:id/harvest", async (req, res) => {
     res.status(409).json({
       error: lostCells
         ? `${lostCells} case(s) perdue(s) — trop tard pour récolter, il faut labourer`
-        : "Rien à récolter (pas prêt)",
+        : silage
+          ? "Rien à ensiler (maïs pas assez avancé)"
+          : "Rien à récolter (pas prêt)",
       lostCells,
     });
     return;
@@ -3863,6 +4415,151 @@ app.post("/parcels/:id/harvest", async (req, res) => {
   });
 });
 
+app.post("/parcels/:id/bale", async (req, res) => {
+  const body = z
+    .object({
+      userId: z.string(),
+      cells: z.array(z.object({ x: z.number().int(), y: z.number().int() })).optional(),
+    })
+    .safeParse(req.body);
+  if (!body.success) {
+    res.status(400).json(body.error.flatten());
+    return;
+  }
+  const access = await resolveFieldAccess({
+    parcelId: req.params.id,
+    userId: body.data.userId,
+    work: "BALE",
+    cells: body.data.cells ?? [],
+  });
+  if (!access.ok) {
+    res.status(access.status).json({ error: access.error });
+    return;
+  }
+  const parcel = access.parcel;
+  const picked = pickMachineForWork(access.machines, "BALE");
+  if (!picked) {
+    res.status(409).json({ error: explainNoMachine(access.machines, "BALE") });
+    return;
+  }
+  const remaining = access.order ? parseCellJson(access.order.remainingJson) : null;
+  const selection = body.data.cells
+    ? parcel.cells.filter((c) => body.data.cells!.some((t) => t.x === c.x && t.y === c.y))
+    : remaining
+      ? parcel.cells.filter((c) => remaining.some((t) => t.x === c.x && t.y === c.y))
+      : parcel.cells;
+  const targets = selection.filter((c) => c.strawTons > 0);
+  if (!targets.length) {
+    res.status(409).json({ error: "Aucun andain à presser" });
+    return;
+  }
+  const user = await prisma.user.findUnique({ where: { id: body.data.userId } });
+  const worked = targets.map((c) => ({ x: c.x, y: c.y }));
+  let bales = 0;
+  const { wear, labor } = await prisma.$transaction(async (tx) => {
+    for (const cell of targets) {
+      const n = balesFromStraw(cell.strawTons);
+      bales += n;
+      await tx.parcelCell.update({
+        where: { id: cell.id },
+        data: { strawTons: 0, baleCount: cell.baleCount + n },
+      });
+    }
+    const wear = await applyWearToMachine(tx, {
+      machine: picked.machine,
+      def: picked.def,
+      cells: targets.length,
+      work: "BALE",
+      specialization: user?.specialization,
+    });
+    const labor = access.order ? await settleLaborProgress(tx, access.order, worked) : null;
+    return { wear, labor };
+  });
+  if (user) await touchFieldPresence(user.id, parcel.id, worked[worked.length - 1]);
+  res.json({
+    baled: targets.length,
+    bales,
+    machine: { id: picked.machine.id, type: picked.machine.type, ...wear },
+    labor,
+  });
+});
+
+app.post("/parcels/:id/collect", async (req, res) => {
+  const body = z
+    .object({
+      userId: z.string(),
+      cells: z.array(z.object({ x: z.number().int(), y: z.number().int() })).optional(),
+    })
+    .safeParse(req.body);
+  if (!body.success) {
+    res.status(400).json(body.error.flatten());
+    return;
+  }
+  const access = await resolveFieldAccess({
+    parcelId: req.params.id,
+    userId: body.data.userId,
+    work: "COLLECT",
+    cells: body.data.cells ?? [],
+  });
+  if (!access.ok) {
+    res.status(access.status).json({ error: access.error });
+    return;
+  }
+  const parcel = access.parcel;
+  if (!parcel.farm) {
+    res.status(404).json({ error: "Parcelle introuvable" });
+    return;
+  }
+  const picked = pickMachineForWork(access.machines, "COLLECT");
+  if (!picked && !access.charge) {
+    res.status(409).json({ error: explainNoMachine(access.machines, "COLLECT") });
+    return;
+  }
+  const remaining = access.order ? parseCellJson(access.order.remainingJson) : null;
+  const selection = body.data.cells
+    ? parcel.cells.filter((c) => body.data.cells!.some((t) => t.x === c.x && t.y === c.y))
+    : remaining
+      ? parcel.cells.filter((c) => remaining.some((t) => t.x === c.x && t.y === c.y))
+      : parcel.cells;
+  const targets = selection.filter((c) => c.baleCount > 0);
+  if (!targets.length) {
+    res.status(409).json({ error: "Aucune botte à ramasser" });
+    return;
+  }
+  const user = await prisma.user.findUnique({ where: { id: body.data.userId } });
+  const worked = targets.map((c) => ({ x: c.x, y: c.y }));
+  let tons = 0;
+  const { wear, labor } = await prisma.$transaction(async (tx) => {
+    for (const cell of targets) {
+      tons += strawFromBales(cell.baleCount);
+      await tx.parcelCell.update({
+        where: { id: cell.id },
+        data: { baleCount: 0 },
+      });
+    }
+    await addToStock(tx, parcel.farmId!, "STRAW", tons, 0, 3);
+    const wear =
+      picked && user
+        ? await applyWearToMachine(tx, {
+            machine: picked.machine,
+            def: picked.def,
+            cells: targets.length,
+            work: "COLLECT",
+            specialization: user.specialization,
+          })
+        : null;
+    const labor = access.order ? await settleLaborProgress(tx, access.order, worked) : null;
+    return { wear, labor };
+  });
+  if (user) await touchFieldPresence(user.id, parcel.id, worked[worked.length - 1]);
+  res.json({
+    collected: targets.length,
+    tons: Math.round(tons * 1000) / 1000,
+    machine: picked && wear ? { id: picked.machine.id, type: picked.machine.type, ...wear } : null,
+    labor,
+  });
+});
+
 app.post("/parcels/:id/build", async (req, res) => {
   const body = z
     .object({
@@ -3881,6 +4578,7 @@ app.post("/parcels/:id/build", async (req, res) => {
         "PIG_YARD",
         "HEN_YARD",
         "COLD_ROOM",
+        "BUNKER_SILO",
       ]),
       x: z.number().int().min(0),
       y: z.number().int().min(0),
@@ -4889,14 +5587,15 @@ app.post("/herds/:id/feed", async (req, res) => {
       maizeTons: z.number().min(0).default(0),
       barleyTons: z.number().min(0).default(0),
       wheatTons: z.number().min(0).default(0),
+      silageTons: z.number().min(0).default(0),
     })
     .safeParse(req.body);
   if (!body.success) {
     res.status(400).json(body.error.flatten());
     return;
   }
-  const { hayTons, maizeTons, barleyTons, wheatTons } = body.data;
-  if (hayTons + maizeTons + barleyTons + wheatTons <= 0) {
+  const { hayTons, maizeTons, barleyTons, wheatTons, silageTons } = body.data;
+  if (hayTons + maizeTons + barleyTons + wheatTons + silageTons <= 0) {
     res.status(400).json({ error: "Indiquez une quantité à distribuer" });
     return;
   }
@@ -4912,6 +5611,7 @@ app.post("/herds/:id/feed", async (req, res) => {
   const maize = herd.farm.inventory.find((i) => i.itemCode === "MAIZE");
   const barley = herd.farm.inventory.find((i) => i.itemCode === "BARLEY");
   const wheat = herd.farm.inventory.find((i) => i.itemCode === "WHEAT");
+  const silage = herd.farm.inventory.find((i) => i.itemCode === "SILAGE");
   if (hayTons > (hay?.qty ?? 0)) {
     res.status(409).json({ error: "Fourrage insuffisant — achetez-en au négociant" });
     return;
@@ -4928,14 +5628,19 @@ app.post("/herds/:id/feed", async (req, res) => {
     res.status(409).json({ error: "Blé insuffisant" });
     return;
   }
+  if (silageTons > (silage?.qty ?? 0)) {
+    res.status(409).json({ error: "Ensilage insuffisant" });
+    return;
+  }
 
-  const units = feedUnits(hayTons, maizeTons, barleyTons, wheatTons);
-  const quality = rationQuality(hayTons, maizeTons, barleyTons, wheatTons);
+  const units = feedUnits(hayTons, maizeTons, barleyTons, wheatTons, silageTons);
+  const quality = rationQuality(hayTons, maizeTons, barleyTons, wheatTons, silageTons);
   await prisma.$transaction(async (tx) => {
     if (hayTons > 0 && hay) await drawFromStock(tx, hay, hayTons);
     if (maizeTons > 0 && maize) await drawFromStock(tx, maize, maizeTons);
     if (barleyTons > 0 && barley) await drawFromStock(tx, barley, barleyTons);
     if (wheatTons > 0 && wheat) await drawFromStock(tx, wheat, wheatTons);
+    if (silageTons > 0 && silage) await drawFromStock(tx, silage, silageTons);
     await tx.herd.update({
       where: { id: herd.id },
       data: {
@@ -5172,7 +5877,7 @@ app.post("/market/buy", async (req, res) => {
   const body = z
     .object({
       userId: z.string(),
-      commodity: z.enum(["HAY"]),
+      commodity: z.enum(PURCHASABLE_GOODS as unknown as [TradeGood, ...TradeGood[]]),
       tons: z.number().positive(),
     })
     .safeParse(req.body);
@@ -5283,7 +5988,7 @@ app.post("/machines/buy", async (req, res) => {
   const body = z
     .object({
       userId: z.string(),
-      type: z.enum(["TRACTOR", "HARVESTER", "SPREADER", "DISC_HARROW"]),
+      type: z.enum(["TRACTOR", "HARVESTER", "SPREADER", "DISC_HARROW", "BALER", "FORAGE_HARVESTER"]),
     })
     .safeParse(req.body);
   if (!body.success) {
@@ -6522,7 +7227,6 @@ app.post("/contracts/:id/complete", async (req, res) => {
     });
     return { user: u, reward, machine: { id: picked.machine.id, type: picked.machine.type, ...wear } };
   });
-  await topUpOpenMissions();
   res.json(result);
 });
 

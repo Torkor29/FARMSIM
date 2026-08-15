@@ -11,29 +11,29 @@ type Point = { at: string; price: number };
 
 type Props = {
   points: Point[];
-  /** Hauteur du tracé en pixels ; la largeur suit le conteneur */
   height?: number;
+  compact?: boolean;
 };
 
 const VIEW_W = 100;
 
-export function PriceSparkline({ points, height = 34 }: Props) {
+export function PriceSparkline({ points, height = 34, compact = false }: Props) {
   if (points.length < 2) {
-    return <div className="sparkline empty">Pas encore d’historique</div>;
+    return <div className={`sparkline empty ${compact ? "compact" : ""}`}>Pas encore d’historique</div>;
   }
 
   const prices = points.map((p) => p.price);
   const min = Math.min(...prices);
   const max = Math.max(...prices);
-  // Un cours parfaitement plat donnerait une division par zéro : on lui
-  // réserve une bande, ce qui le dessine au milieu plutôt qu'au bord.
   const span = max - min || Math.max(1, max * 0.02);
+  const h = compact ? 22 : height;
 
   const coords = points.map((p, i) => {
     const x = (i / (points.length - 1)) * VIEW_W;
-    const y = height - ((p.price - min) / span) * height;
+    const y = h - ((p.price - min) / span) * h;
     return `${x.toFixed(2)},${y.toFixed(2)}`;
   });
+  const area = `0,${h} ${coords.join(" ")} ${VIEW_W},${h}`;
 
   const first = prices[0];
   const last = prices[prices.length - 1];
@@ -42,21 +42,24 @@ export function PriceSparkline({ points, height = 34 }: Props) {
   const pct = `${change >= 0 ? "+" : ""}${(change * 100).toFixed(1)} %`;
 
   return (
-    <div className={`sparkline ${trend}`}>
+    <div className={`sparkline ${trend} ${compact ? "compact" : ""}`}>
       <svg
-        viewBox={`0 0 ${VIEW_W} ${height}`}
+        viewBox={`0 0 ${VIEW_W} ${h}`}
         preserveAspectRatio="none"
         role="img"
-        aria-label={`Cours sur la période : ${pct}, de ${first.toFixed(0)} à ${last.toFixed(0)} TRN la tonne`}
+        aria-label={`Cours : ${pct}, de ${first.toFixed(0)} à ${last.toFixed(0)} TRN la tonne`}
       >
+        <polygon points={area} className="spark-fill" />
         <polyline points={coords.join(" ")} fill="none" vectorEffect="non-scaling-stroke" />
       </svg>
-      <div className="sparkline-meta">
-        <span className="range">
-          {min.toFixed(0)} – {max.toFixed(0)}
-        </span>
-        <span className="change">{pct}</span>
-      </div>
+      {!compact && (
+        <div className="sparkline-meta">
+          <span className="range">
+            {min.toFixed(0)} – {max.toFixed(0)}
+          </span>
+          <span className="change">{pct}</span>
+        </div>
+      )}
     </div>
   );
 }

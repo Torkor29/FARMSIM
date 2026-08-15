@@ -21,7 +21,9 @@ export type TradeGood =
   | "HAY"
   | "EGGS"
   | "WOOL"
-  | "MANURE";
+  | "MANURE"
+  | "STRAW"
+  | "SILAGE";
 
 export type GoodDef = {
   code: TradeGood;
@@ -38,7 +40,8 @@ export type GoodDef = {
   perishable: boolean;
   /**
    * Reste sur la ferme, se vend au voisin : pas un cours mondial.
-   * Le négociant n'en fait pas commerce.
+   * Le négociant n'en fait pas commerce. L'ensilage et la paille suivent la
+   * même règle — sinon le pont céréalier–éleveur meurt.
    */
   localOnly?: boolean;
 };
@@ -138,6 +141,25 @@ export const GOOD_DEFS: Record<TradeGood, GoodDef> = {
     purchasable: false,
     perishable: false,
   },
+  STRAW: {
+    code: "STRAW",
+    name: "Paille",
+    unit: "t",
+    basePrice: 72,
+    sellable: true,
+    purchasable: true,
+    perishable: false,
+  },
+  SILAGE: {
+    code: "SILAGE",
+    name: "Ensilage",
+    unit: "t",
+    basePrice: 110,
+    sellable: true,
+    purchasable: false,
+    perishable: false,
+    localOnly: true,
+  },
   MANURE: {
     code: "MANURE",
     name: "Fumier",
@@ -163,12 +185,21 @@ export const GOOD_ICONS: Record<TradeGood, string> = {
   EGGS: "🥚",
   WOOL: "🧶",
   MANURE: "🟤",
+  STRAW: "🟨",
+  SILAGE: "🥬",
 };
 
 /** Marchandises à cours mondial — le fumier s'écoule au voisin, pas ici. */
 export const SELLABLE_GOODS = (Object.keys(GOOD_DEFS) as TradeGood[]).filter(
   (g) => GOOD_DEFS[g].sellable && !GOOD_DEFS[g].localOnly,
 );
+
+export const PURCHASABLE_GOODS = (Object.keys(GOOD_DEFS) as TradeGood[]).filter(
+  (g) => GOOD_DEFS[g].purchasable,
+);
+
+/** Marchandises à terme / carnet mondial — pas l’ensilage. */
+export const WORLD_MARKET_GOODS = SELLABLE_GOODS.filter((g) => !GOOD_DEFS[g].localOnly);
 
 /** Marge du négociant à l'achat : il vend plus cher qu'il ne rachète `[GD]` */
 export const DEALER_SELL_MARKUP = 1.25;
@@ -194,16 +225,24 @@ export const FEED_VALUE: Partial<Record<TradeGood, number>> = {
   MAIZE: 1.4,
   BARLEY: 1.2,
   WHEAT: 1.1,
+  SILAGE: 1.6,
 };
 
-/** Qualité de ration : 0 = que du foin, 1 = que du concentré. */
+/**
+ * Qualité de ration : 0 = que du foin, 1 = que du concentré.
+ *
+ * L'ensilage arrive **en cinquième position** et non en troisième : l'orge et
+ * le blé occupaient déjà les places 3 et 4, et les intervertir aurait fait
+ * passer silencieusement de l'orge pour de l'ensilage chez tous les appelants.
+ */
 export function rationQuality(
   hayTons: number,
   maizeTons: number,
   barleyTons = 0,
   wheatTons = 0,
+  silageTons = 0,
 ): number {
-  const concentrate = maizeTons + barleyTons + wheatTons;
+  const concentrate = maizeTons + barleyTons + wheatTons + silageTons;
   const total = hayTons + concentrate;
   if (total <= 0) return 0;
   return Math.max(0, Math.min(1, concentrate / total));
@@ -221,12 +260,14 @@ export function feedUnits(
   maizeTons: number,
   barleyTons = 0,
   wheatTons = 0,
+  silageTons = 0,
 ): number {
   return (
     (hayTons * (FEED_VALUE.HAY ?? 1) +
       maizeTons * (FEED_VALUE.MAIZE ?? 1) +
       barleyTons * (FEED_VALUE.BARLEY ?? 1.2) +
-      wheatTons * (FEED_VALUE.WHEAT ?? 1.1)) *
+      wheatTons * (FEED_VALUE.WHEAT ?? 1.1) +
+      silageTons * (FEED_VALUE.SILAGE ?? 1.6)) *
     1000
   );
 }

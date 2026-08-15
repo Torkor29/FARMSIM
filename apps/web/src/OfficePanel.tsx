@@ -1,0 +1,677 @@
+import { useEffect, useMemo, useState } from "react";
+import { WORK_LABELS, type FarmWork } from "@farmsim/shared";
+import { ZoneMap, type ZoneMapZone } from "./ZoneMap";
+
+export type OfficeLabor = {
+  id: string;
+  work: FarmWork;
+  crop: string | null;
+  cells: number;
+  remaining: number;
+  quoteCrd: number;
+  escrowCrd: number;
+  payoutCrd: number;
+  status: string;
+  parcelId: string;
+  parcelLabel: string;
+  zoneName: string;
+  clientName: string;
+  npc?: boolean;
+  expiresAt: string;
+};
+
+export type OfficeContract = {
+  id: string;
+  title: string;
+  jobType: string;
+  rewardCrd: number;
+  cells?: number;
+};
+
+export type OfficeConsignes = {
+  harvest: boolean;
+  stubble: boolean;
+  plow: boolean;
+  straw: boolean;
+  npcAllowed: boolean;
+  maxSpend: number;
+};
+
+type ZoneLike = ZoneMapZone & { id: string; parcels: ZoneMapZone["parcels"] };
+
+type Props = {
+  open: boolean;
+  onClose: () => void;
+  crd: number;
+  consignes: OfficeConsignes;
+  busy: boolean;
+  board: OfficeLabor[];
+  posted: OfficeLabor[];
+  active: OfficeLabor | null;
+  ghost: OfficeContract[];
+  takeLocked?: boolean;
+  onTake: (id: string) => void;
+  onCancelPosted: (id: string) => void;
+  onAbandonActive: () => void;
+  onTakeGhost: (id: string) => void;
+  onSaveConsignes: (next: OfficeConsignes) => Promise<void>;
+  zones: ZoneLike[];
+  myFarmId?: string;
+  expandableIds: ReadonlySet<string>;
+  onBuyLand: (parcelId: string) => void;
+};
+
+type Mode = "TAKE" | "MINE" | "CONSIGNES" | "LAND";
+type WorkCat = "ALL" | FarmWork;
+type SortKey = "payout" | "ttl" | "cells" | "client";
+
+const WORK_CATS: { id: WorkCat; label: string }[] = [
+  { id: "ALL", label: "Tous les chantiers" },
+  { id: "HARVEST", label: WORK_LABELS.HARVEST },
+  { id: "SILAGE", label: WORK_LABELS.SILAGE },
+  { id: "BALE", label: WORK_LABELS.BALE },
+  { id: "COLLECT", label: WORK_LABELS.COLLECT },
+  { id: "STUBBLE", label: WORK_LABELS.STUBBLE },
+  { id: "PLOW", label: WORK_LABELS.PLOW },
+  { id: "PLANT", label: WORK_LABELS.PLANT },
+  { id: "FERTILIZE", label: WORK_LABELS.FERTILIZE },
+];
+
+function ttlMs(iso: string): number {
+  const ms = new Date(iso).getTime() - Date.now();
+  return Number.isFinite(ms) ? ms : 0;
+}
+
+function ttlLabel(iso: string): string {
+  const ms = ttlMs(iso);
+  if (ms <= 0) return "expire";
+  const min = Math.round(ms / 60_000);
+  if (min < 60) return `${min} min`;
+  return `${Math.floor(min / 60)} h ${min % 60} min`;
+}
+
+function money(n: number): string {
+  return `${Math.round(n).toLocaleString("fr-FR")} TRN`;
+}
+
+function perCell(o: OfficeLabor): number {
+  return o.remaining > 0 ? o.payoutCrd / o.remaining : o.payoutCrd;
+}
+
+export function OfficePanel({
+  open,
+  onClose,
+  crd,
+  consignes,
+  busy,
+  board,
+  posted,
+  active,
+  ghost,
+  takeLocked = false,
+  onTake,
+  onCancelPosted,
+  onAbandonActive,
+  onTakeGhost,
+  onSaveConsignes,
+  zones,
+  myFarmId,
+  expandableIds,
+  onBuyLand,
+}: Props) {
+  const [mode, setMode] = useState<Mode>("TAKE");
+  const [cat, setCat] = useState<WorkCat>("ALL");
+  const [query, setQuery] = useState("");
+  const [sort, setSort] = useState<SortKey>("payout");
+  const [pickId, setPickId] = useState<string | null>(null);
+  const [ghostId, setGhostId] = useState<string | null>(null);
+
+  const escrow = useMemo(
+    () => posted.reduce((s, o) => s + (o.status === "OPEN" || o.status === "ACCEPTED" ? o.escrowCrd : 0), 0),
+    [posted],
+  );
+  const toEarn = useMemo(() => board.reduce((s, o) => s + o.payoutCrd, 0), [board]);
+  const cannotTake = busy || Boolean(active) || takeLocked;
+
+  const filtered = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    const rows = board.filter((o) => {
+      if (cat !== "ALL" && o.work !== cat) return false;
+      if (!q) return true;
+      const blob = `${WORK_LABELS[o.work]} ${o.clientName} ${o.parcelLabel} ${o.zoneName} ${o.crop ?? ""}`.toLowerCase();
+      return blob.includes(q);
+    });
+    const dir = sort === "client" ? 1 : -1;
+    return [...rows].sort((a, b) => {
+      if (sort === "payout") return (a.payoutCrd - b.payoutCrd) * dir;
+      if (sort === "cells") return (a.remaining - b.remaining) * dir;
+      if (sort === "ttl") return (ttlMs(a.expiresAt) - ttlMs(b.expiresAt)) * dir;
+      return a.clientName.localeCompare(b.clientName, "fr");
+    });
+  }, [board, cat, query, sort]);
+
+  const pick = filtered.find((o) => o.id === pickId) ?? filtered[0] ?? null;
+  const ghostPick = ghost.find((c) => c.id === ghostId) ?? ghost[0] ?? null;
+
+  useEffect(() => {
+    if (!open) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onClose();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [open, onClose]);
+
+  if (!open) return null;
+
+  return (
+    <div
+      className="hdv-backdrop hall-backdrop"
+      role="dialog"
+      aria-modal="true"
+      aria-label="Hôtel du travail"
+      onClick={(e) => {
+        if (e.target === e.currentTarget) onClose();
+      }}
+    >
+      <div className="hdv-shell hall-sheet glass" onClick={(e) => e.stopPropagation()}>
+        <header className="hdv-top">
+          <div className="hdv-brand">
+            <p className="hdv-kicker">Hôtel du travail</p>
+            <h2>Bourse des chantiers</h2>
+          </div>
+          <div className="hdv-purse">
+            <span>Caisse</span>
+            <strong>{money(crd)}</strong>
+            <em>séquestre {money(escrow)}</em>
+          </div>
+          <div className="hdv-purse alt">
+            <span>À gagner</span>
+            <strong className="gain">{money(toEarn)}</strong>
+            <em>{board.length} offre(s)</em>
+          </div>
+          <button type="button" className="ghost hdv-close" onClick={onClose}>
+            Fermer
+          </button>
+        </header>
+
+        <nav className="hdv-modes" aria-label="Modes">
+          {(
+            [
+              ["TAKE", `Prendre (${board.length})`],
+              ["MINE", `Mes offres (${posted.length + (active ? 1 : 0)})`],
+              ["CONSIGNES", "Consignes"],
+              ["LAND", "Terres"],
+            ] as const
+          ).map(([id, label]) => (
+            <button key={id} type="button" className={mode === id ? "on" : ""} onClick={() => setMode(id)}>
+              {label}
+            </button>
+          ))}
+        </nav>
+
+        {mode === "CONSIGNES" ? (
+          <div className="hdv-single">
+            <ConsignesForm consignes={consignes} busy={busy} onSave={onSaveConsignes} locked={escrow} crd={crd} />
+          </div>
+        ) : mode === "LAND" ? (
+          <div className="hdv-single">
+            <p className="hdv-muted">Parcelles adjacentes libres — cliquez pour acheter.</p>
+            <div className="zone-maps office-maps">
+              {zones.map((z) => (
+                <ZoneMap
+                  key={z.id}
+                  zone={z}
+                  myFarmId={myFarmId}
+                  selectableIds={expandableIds}
+                  onSelect={onBuyLand}
+                  compact
+                />
+              ))}
+            </div>
+            {expandableIds.size === 0 && <p className="hdv-empty">Aucune parcelle adjacente libre.</p>}
+          </div>
+        ) : mode === "MINE" ? (
+          <MineBody
+            active={active}
+            posted={posted}
+            ghost={ghost}
+            busy={busy}
+            cannotTake={cannotTake}
+            onAbandon={onAbandonActive}
+            onCancel={onCancelPosted}
+            onTakeGhost={onTakeGhost}
+            ghostPick={ghostPick}
+            setGhostId={setGhostId}
+          />
+        ) : (
+          <div className="hdv-body">
+            <aside className="hdv-cats" aria-label="Types de chantier">
+              <p>Travaux</p>
+              {WORK_CATS.map((c) => {
+                const n = c.id === "ALL" ? board.length : board.filter((o) => o.work === c.id).length;
+                if (c.id !== "ALL" && n === 0) return null;
+                return (
+                  <button
+                    key={c.id}
+                    type="button"
+                    className={cat === c.id ? "on" : ""}
+                    onClick={() => setCat(c.id)}
+                  >
+                    <span>{c.label}</span>
+                    <em>{n}</em>
+                  </button>
+                );
+              })}
+            </aside>
+
+            <section className="hdv-main">
+              {active && (
+                <div className="hdv-banner">
+                  <div>
+                    <strong>En cours · {WORK_LABELS[active.work]}</strong>
+                    <span>
+                      Chez {active.npc ? "une ferme voisine" : active.clientName} · {active.parcelLabel} ·{" "}
+                      {active.remaining} case(s)
+                    </span>
+                  </div>
+                  <button type="button" className="ghost" disabled={busy} onClick={onAbandonActive}>
+                    Lâcher
+                  </button>
+                </div>
+              )}
+              <div className="hdv-toolbar">
+                <input
+                  type="search"
+                  placeholder="Rechercher un chantier, un client, une parcelle…"
+                  value={query}
+                  onChange={(e) => setQuery(e.target.value)}
+                  aria-label="Recherche"
+                />
+                <span className="hdv-count">{filtered.length} offre(s)</span>
+              </div>
+              {filtered.length === 0 ? (
+                <p className="hdv-empty">Aucune offre dans ce rayon. Revenez un peu plus tard.</p>
+              ) : (
+                <div className="hdv-table-wrap">
+                  <table className="hdv-table">
+                    <thead>
+                      <tr>
+                        <th>Chantier</th>
+                        <th>
+                          <button type="button" className="hdv-sort" onClick={() => setSort("client")}>
+                            Client
+                          </button>
+                        </th>
+                        <th>
+                          <button type="button" className="hdv-sort" onClick={() => setSort("cells")}>
+                            Cases
+                          </button>
+                        </th>
+                        <th>
+                          <button type="button" className="hdv-sort" onClick={() => setSort("payout")}>
+                            Salaire
+                          </button>
+                        </th>
+                        <th>
+                          <button type="button" className="hdv-sort" onClick={() => setSort("ttl")}>
+                            Délai
+                          </button>
+                        </th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {filtered.map((o) => (
+                        <tr
+                          key={o.id}
+                          className={pick?.id === o.id ? "sel" : ""}
+                          onClick={() => setPickId(o.id)}
+                        >
+                          <td>
+                            <strong>{WORK_LABELS[o.work]}</strong>
+                            {o.npc && <em className="local-tag">voisin</em>}
+                            {o.crop ? <span className="hdv-sub">{o.crop}</span> : null}
+                          </td>
+                          <td>
+                            {o.npc ? "Ferme voisine" : o.clientName}
+                            <span className="hdv-sub">
+                              {o.parcelLabel}
+                              {o.zoneName ? ` · ${o.zoneName}` : ""}
+                            </span>
+                          </td>
+                          <td className="num">
+                            {o.remaining}/{o.cells}
+                          </td>
+                          <td className="num last">{money(o.payoutCrd)}</td>
+                          <td>{ttlLabel(o.expiresAt)}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </section>
+
+            <aside className="hdv-detail">
+              {pick ? (
+                <div className="hdv-card">
+                  <header>
+                    <h3>{WORK_LABELS[pick.work]}</h3>
+                    {pick.npc && <em className="local-tag">voisin</em>}
+                  </header>
+                  <dl className="hdv-quotes">
+                    <div>
+                      <dt>Salaire</dt>
+                      <dd>{money(pick.payoutCrd)}</dd>
+                    </div>
+                    <div>
+                      <dt>Par case</dt>
+                      <dd>{money(perCell(pick))}</dd>
+                    </div>
+                    <div>
+                      <dt>Restant</dt>
+                      <dd>
+                        {pick.remaining}/{pick.cells}
+                      </dd>
+                    </div>
+                    <div>
+                      <dt>Délai</dt>
+                      <dd>{ttlLabel(pick.expiresAt)}</dd>
+                    </div>
+                  </dl>
+                  <p>
+                    <strong>{pick.npc ? "Ferme voisine" : pick.clientName}</strong>
+                    <span className="hdv-sub">
+                      {pick.parcelLabel}
+                      {pick.zoneName ? ` · ${pick.zoneName}` : ""}
+                      {pick.crop ? ` · ${pick.crop}` : ""}
+                    </span>
+                  </p>
+                  <p className="hdv-muted">
+                    Vous y allez avec votre matériel. Paiement à l’encaissement, au retour. Appoint — pas une
+                    rente.
+                  </p>
+                  {cannotTake && active && (
+                    <p className="hdv-muted">Terminez ou lâchez le chantier en cours avant d’en prendre un autre.</p>
+                  )}
+                  <button
+                    type="button"
+                    className="accent"
+                    disabled={cannotTake}
+                    onClick={() => onTake(pick.id)}
+                  >
+                    Prendre · {money(pick.payoutCrd)}
+                  </button>
+                </div>
+              ) : (
+                <p className="hdv-empty">Sélectionnez une offre pour voir le détail.</p>
+              )}
+            </aside>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function MineBody({
+  active,
+  posted,
+  ghost,
+  busy,
+  cannotTake,
+  onAbandon,
+  onCancel,
+  onTakeGhost,
+  ghostPick,
+  setGhostId,
+}: {
+  active: OfficeLabor | null;
+  posted: OfficeLabor[];
+  ghost: OfficeContract[];
+  busy: boolean;
+  cannotTake: boolean;
+  onAbandon: () => void;
+  onCancel: (id: string) => void;
+  onTakeGhost: (id: string) => void;
+  ghostPick: OfficeContract | null;
+  setGhostId: (id: string) => void;
+}) {
+  const [sel, setSel] = useState<string | null>(active?.id ?? posted[0]?.id ?? null);
+  const row = posted.find((o) => o.id === sel) ?? posted[0] ?? null;
+
+  return (
+    <div className="hdv-body">
+      <aside className="hdv-cats">
+        <p>Carnet</p>
+        <button type="button" className={!ghost.length || sel ? "on" : ""} onClick={() => setSel(posted[0]?.id ?? active?.id ?? null)}>
+          <span>Mes publications</span>
+          <em>{posted.length}</em>
+        </button>
+        {ghost.length > 0 && (
+          <button type="button" className={!sel && ghostPick ? "on" : ""} onClick={() => setSel("")}>
+            <span>Ancien filet</span>
+            <em>{ghost.length}</em>
+          </button>
+        )}
+      </aside>
+      <section className="hdv-main">
+        {active && (
+          <div className="hdv-banner">
+            <div>
+              <strong>Mission en cours · {WORK_LABELS[active.work]}</strong>
+              <span>
+                {active.clientName} · {active.parcelLabel} · {active.remaining} case(s) · {money(active.payoutCrd)} à
+                l’arrivée
+              </span>
+            </div>
+            <button type="button" className="ghost" disabled={busy} onClick={onAbandon}>
+              Abandonner
+            </button>
+          </div>
+        )}
+        {sel !== "" ? (
+          posted.length === 0 ? (
+            <p className="hdv-empty">Vous n’avez rien publié. Au champ : sélectionnez, puis « Publier ».</p>
+          ) : (
+            <div className="hdv-table-wrap">
+              <table className="hdv-table">
+                <thead>
+                  <tr>
+                    <th>Chantier</th>
+                    <th>Parcelle</th>
+                    <th>État</th>
+                    <th>Séquestre</th>
+                    <th>Restant</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {posted.map((o) => (
+                    <tr key={o.id} className={row?.id === o.id ? "sel" : ""} onClick={() => setSel(o.id)}>
+                      <td>
+                        <strong>{WORK_LABELS[o.work]}</strong>
+                      </td>
+                      <td>{o.parcelLabel}</td>
+                      <td>{o.status === "ACCEPTED" ? "pris" : "ouvert"}</td>
+                      <td className="num loss">−{money(o.escrowCrd)}</td>
+                      <td className="num">
+                        {o.remaining}/{o.cells}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )
+        ) : (
+          <div className="hdv-table-wrap">
+            <table className="hdv-table">
+              <thead>
+                <tr>
+                  <th>Mission</th>
+                  <th>Type</th>
+                  <th>Cases</th>
+                  <th>Salaire</th>
+                </tr>
+              </thead>
+              <tbody>
+                {ghost.map((c) => (
+                  <tr
+                    key={c.id}
+                    className={ghostPick?.id === c.id ? "sel" : ""}
+                    onClick={() => setGhostId(c.id)}
+                  >
+                    <td>
+                      <strong>{c.title}</strong>
+                    </td>
+                    <td>{c.jobType}</td>
+                    <td className="num">{c.cells ?? "—"}</td>
+                    <td className="num last">{money(c.rewardCrd)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </section>
+      <aside className="hdv-detail">
+        {sel !== "" && row ? (
+          <div className="hdv-card">
+            <header>
+              <h3>{WORK_LABELS[row.work]}</h3>
+            </header>
+            <dl className="hdv-quotes">
+              <div>
+                <dt>Bloqué</dt>
+                <dd className="loss">−{money(row.escrowCrd)}</dd>
+              </div>
+              <div>
+                <dt>Devis</dt>
+                <dd>{money(row.quoteCrd)}</dd>
+              </div>
+              <div>
+                <dt>État</dt>
+                <dd>{row.status === "ACCEPTED" ? "pris" : "ouvert"}</dd>
+              </div>
+            </dl>
+            <p className="hdv-muted">
+              {row.parcelLabel} · {row.remaining} case(s). Annuler rembourse le séquestre tant que personne n’a
+              pris.
+            </p>
+            {row.status === "OPEN" && (
+              <button type="button" className="ghost" disabled={busy} onClick={() => onCancel(row.id)}>
+                Annuler · remboursement
+              </button>
+            )}
+          </div>
+        ) : ghostPick ? (
+          <div className="hdv-card">
+            <header>
+              <h3>{ghostPick.title}</h3>
+            </header>
+            <p className="hdv-muted">Ancien filet — plus de nouveaux contrats fantômes.</p>
+            <dl className="hdv-quotes">
+              <div>
+                <dt>Salaire</dt>
+                <dd>{money(ghostPick.rewardCrd)}</dd>
+              </div>
+              <div>
+                <dt>Cases</dt>
+                <dd>{ghostPick.cells ?? "—"}</dd>
+              </div>
+            </dl>
+            <button
+              type="button"
+              className="accent"
+              disabled={cannotTake}
+              onClick={() => onTakeGhost(ghostPick.id)}
+            >
+              Prendre
+            </button>
+          </div>
+        ) : (
+          <p className="hdv-empty">Rien à afficher.</p>
+        )}
+      </aside>
+    </div>
+  );
+}
+
+function ConsignesForm({
+  consignes,
+  busy,
+  onSave,
+  locked,
+  crd,
+}: {
+  consignes: OfficeConsignes;
+  busy: boolean;
+  onSave: (next: OfficeConsignes) => Promise<void>;
+  locked: number;
+  crd: number;
+}) {
+  const [draft, setDraft] = useState(consignes);
+  useEffect(() => {
+    setDraft(consignes);
+  }, [consignes]);
+
+  function toggle(key: keyof Omit<OfficeConsignes, "maxSpend">) {
+    setDraft((d) => ({ ...d, [key]: !d[key] }));
+  }
+
+  const rows: { key: keyof Omit<OfficeConsignes, "maxSpend">; title: string; hint: string }[] = [
+    { key: "harvest", title: "Publier la moisson", hint: "Dès qu’une case est mûre." },
+    { key: "straw", title: "Paille", hint: "Presser l’andain, ramasser les bottes." },
+    { key: "stubble", title: "Déchaumer", hint: "Après la moisson, quand plus rien n’attend au sol." },
+    { key: "plow", title: "Labourer", hint: "Seulement si le sol est épuisé ou la culture perdue." },
+    { key: "npcAllowed", title: "Filet voisin autorisé", hint: "Sinon personne peut ne pas prendre — la culture peut se perdre." },
+  ];
+
+  return (
+    <div className="consigne-form">
+      <p className="hdv-muted">
+        Si vous partez, les cases déjà engagées se publient toutes seules. Jamais de culture nouvelle.
+      </p>
+      <div className="consigne-budget">
+        <div>
+          <em>Disponible</em>
+          <strong>{money(crd)}</strong>
+        </div>
+        <div>
+          <em>Déjà bloqué</em>
+          <strong>{money(locked)}</strong>
+        </div>
+        <label>
+          <em>Plafond d’absence</em>
+          <input
+            type="number"
+            min={0}
+            max={20_000}
+            step={50}
+            value={draft.maxSpend}
+            onChange={(e) => setDraft((d) => ({ ...d, maxSpend: Math.max(0, Number(e.target.value)) }))}
+          />
+        </label>
+      </div>
+      <ul className="consigne-rows">
+        {rows.map((r) => (
+          <li key={r.key} className={!draft[r.key] && r.key === "npcAllowed" ? "warn" : ""}>
+            <label>
+              <input type="checkbox" checked={draft[r.key]} onChange={() => toggle(r.key)} />
+              <span>
+                <strong>{r.title}</strong>
+                <em>{r.hint}</em>
+              </span>
+            </label>
+          </li>
+        ))}
+      </ul>
+      {!draft.npcAllowed && (
+        <p className="consigne-alert">Sans filet, une culture mûre peut se perdre si personne ne prend.</p>
+      )}
+      <button type="button" className="accent" disabled={busy} onClick={() => void onSave(draft)}>
+        Enregistrer les consignes
+      </button>
+    </div>
+  );
+}

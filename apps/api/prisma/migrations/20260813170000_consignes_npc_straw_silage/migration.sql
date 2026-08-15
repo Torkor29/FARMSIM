@@ -1,0 +1,9 @@
+-- AlterTable
+ALTER TABLE "User" ADD COLUMN "isNpc" BOOLEAN NOT NULL DEFAULT false;
+ALTER TABLE "User" ADD COLUMN "consignesJson" TEXT;
+ALTER TABLE "User" ADD COLUMN "absenceLogJson" TEXT;
+
+-- AlterTable
+ALTER TABLE "ParcelCell" ADD COLUMN "strawTons" REAL NOT NULL DEFAULT 0;
+ALTER TABLE "ParcelCell" ADD COLUMN "baleCount" INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE "ParcelCell" ADD COLUMN "plantedAsSilage" BOOLEAN NOT NULL DEFAULT false;

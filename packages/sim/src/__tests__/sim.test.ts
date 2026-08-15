@@ -182,6 +182,22 @@ describe("missions d’appoint", () => {
     expect(money.escrow).toBe(money.quote + money.extras);
     expect(money.payout).toBeLessThan(money.quote);
   });
+
+  it("escrowe pressage et ensilage sans extras, paie 85 %", () => {
+    for (const work of ["BALE", "COLLECT", "SILAGE"] as const) {
+      const money = laborEscrow(work, 16);
+      expect(money.extras).toBe(0);
+      expect(money.escrow).toBe(money.quote);
+      expect(money.payout).toBeLessThan(money.quote);
+    }
+  });
+
+  it("fait payer un peu moins les fermes PNJ", () => {
+    const human = laborEscrow("HARVEST", 16);
+    const npc = laborEscrow("HARVEST", 16, null, true);
+    expect(npc.quote).toBeLessThan(human.quote);
+    expect(npc.payout).toBeLessThan(human.payout);
+  });
 });
 
 describe("apparence", () => {
