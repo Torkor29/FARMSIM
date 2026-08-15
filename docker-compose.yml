@@ -42,7 +42,11 @@ services:
       interval: 15s
       timeout: 5s
       retries: 5
-      start_period: 25s
+      # Le monde s'amorce avant que le port ne s'ouvre ; après une migration
+      # qui introduit une population nouvelle, ce premier démarrage se compte
+      # en minutes. Trop court, Docker déclarait le conteneur malade pendant
+      # qu'il travaillait.
+      start_period: 300s
 
 volumes:
   farmsim-data:

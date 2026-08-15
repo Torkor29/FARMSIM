@@ -59,15 +59,25 @@ else
   echo "WARN: volume /data introuvable sur le conteneur farmsim — vérifie docker-compose.yml" >&2
 fi
 
-echo "==> Attente health…"
+# Le serveur amorce le monde — régions, parcelles, fermes voisines — **avant**
+# d'ouvrir son port. Sur une base déjà en service, une migration qui introduit
+# une population nouvelle (les fermes PNJ, par exemple) la fait créer d'un coup
+# au démarrage suivant : plus d'un millier d'écritures en série. Cinquante
+# secondes n'y suffisaient pas, et le script déclarait en panne un conteneur
+# qui travaillait très bien. Ce coût n'est payé qu'une fois : au démarrage
+# d'après, l'amorçage constate que tout est en place et rend la main aussitôt.
+echo "==> Attente health… (le premier démarrage après migration peut être long)"
 ok=0
-for _ in $(seq 1 25); do
+for i in $(seq 1 150); do
   if curl -fsS "http://127.0.0.1:${FARMSIM_PORT:-8081}/api/health" >/tmp/farmsim-health.json 2>/dev/null; then
     ok=1
     break
   fi
+  # Un point toutes les dix secondes : on doit voir que ça avance.
+  if (( i % 5 == 0 )); then printf '.'; fi
   sleep 2
 done
+echo
 
 docker ps --filter name=farmsim --format 'table {{.Names}}\t{{.Status}}\t{{.Ports}}'
 
