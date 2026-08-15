@@ -1,6 +1,7 @@
 import {
   CROP_DEFS,
   cropGrowMs,
+  GOOD_DEFS,
   DRYING,
   MARKET_BOUNDS,
   MARKET_REVERSION,
@@ -427,10 +428,21 @@ export function buildSessionResume(opts: {
   if (opts.cropsGrowing > 0 && opts.cropsReady === 0) {
     parts.push(`${opts.cropsGrowing} culture(s) en croissance`);
   }
-  const movers = Object.entries(marketDelta).filter(([, d]) => Math.abs(d) >= 1);
+  // Le bilan s'adresse au joueur, pas au serveur : il lisait « WHEAT -6.5 ·
+  // MEAT -62.6 · RAPE +1.5 », neuf codes machine d'affilée. Et neuf lignes de
+  // cours, c'est un mur : seuls les trois plus gros mouvements se disent.
+  const movers = Object.entries(marketDelta)
+    .filter(([, d]) => Math.abs(d) >= 1)
+    .sort((a, b) => Math.abs(b[1]) - Math.abs(a[1]))
+    .slice(0, 3);
   if (movers.length) {
     parts.push(
-      movers.map(([c, d]) => `${c} ${d > 0 ? "+" : ""}${d.toFixed(1)}`).join(" · "),
+      movers
+        .map(([c, d]) => {
+          const name = GOOD_DEFS[c as TradeGood]?.name ?? c;
+          return `${name} ${d > 0 ? "+" : ""}${d.toFixed(1)}`;
+        })
+        .join(" · "),
     );
   }
   if (opts.weatherStates.some((w) => w === "STORM" || w === "RAIN")) {

@@ -453,6 +453,14 @@ export function App() {
    * ce qu'on est venu regarder.
    */
   const [sheet, setSheet] = useState<SheetKey | null>(null);
+  /**
+   * Le menu « Plus », sur téléphone.
+   *
+   * Les cinq panneaux occupaient une barre permanente sous celle des outils.
+   * Ils vivent maintenant dans un tiroir qu'on ouvre, et qui se referme dès
+   * qu'un panneau s'ouvre : jamais deux couches de menu à la fois.
+   */
+  const [moreOpen, setMoreOpen] = useState(false);
   /** Semer dans les chaumes plutôt que de travailler le sol au préalable */
   const [directSeed, setDirectSeed] = useState(false);
   const [buildType, setBuildType] = useState<BuildingType>("SILO");
@@ -3204,32 +3212,27 @@ export function App() {
           })}
           <span className="tick weather-tick">{weatherLabel}</span>
         </div>
-        <button
-          type="button"
-          className="who-now-bar"
-          onClick={() => {
-            if (isMobile) setSheet("OFFICE");
-            else setShowEta((v) => !v);
-          }}
-        >
-          {onlinePlayers.some((p) => p.online) ? (
-            <>
-              <i className="who-dot on" aria-hidden="true" />
-              {onlinePlayers
-                .filter((p) => p.online)
-                .map((p) => p.name)
-                .join(", ")}{" "}
-              {onlinePlayers.filter((p) => p.online).length > 1
-                ? "sont connectés"
-                : "est connecté"}
-            </>
-          ) : (
-            <>
-              <i className="who-dot" aria-hidden="true" />
-              Vous êtes seul pour l’instant
-            </>
-          )}
-        </button>
+        {/* Une rangée permanente occupée à dire qu'il n'y a personne : c'était
+            trente pixels de haut, à toutes les tailles, pour une information
+            nulle. Le bandeau n'apparaît que quand quelqu'un est vraiment là —
+            là, il vaut la place qu'il prend. */}
+        {onlinePlayers.some((p) => p.online) && (
+          <button
+            type="button"
+            className="who-now-bar"
+            onClick={() => {
+              if (isMobile) setSheet("OFFICE");
+              else setShowEta((v) => !v);
+            }}
+          >
+            <i className="who-dot on" aria-hidden="true" />
+            {onlinePlayers
+              .filter((p) => p.online)
+              .map((p) => p.name)
+              .join(", ")}{" "}
+            {onlinePlayers.filter((p) => p.online).length > 1 ? "sont connectés" : "est connecté"}
+          </button>
+        )}
         {(msg || err) && (
           <div key={toastTick} className={`toast ${err ? "bad" : toastTone}`} role="status">
             <span>{err ?? msg}</span>
@@ -3820,6 +3823,14 @@ export function App() {
         onDesktopHerd={() => setShowHerd((v) => !v)}
         showDev={devEnabled}
         onDev={() => setShowDev(true)}
+        moreOpen={moreOpen}
+        /* Refermé, « Plus » porte la somme de ce qui attend derrière lui :
+           sinon cacher les panneaux cacherait aussi leurs alertes. */
+        moreBadge={SHEET_TABS.reduce((n, t) => n + tabBadge(alerts, t.key), 0)}
+        onMore={() => {
+          setMoreOpen((v) => !v);
+          setSheet(null);
+        }}
       />
 
 
@@ -3962,38 +3973,51 @@ export function App() {
         <>
           {/* Un voile referme le tiroir d'une tape hors de lui : sur un
               téléphone, chercher la bonne croix est une corvée. */}
-          {sheet && sheet !== "OFFICE" && (
+          {(sheet && sheet !== "OFFICE") || moreOpen ? (
             <button
               type="button"
               className="sheet-scrim"
               aria-label="Fermer le panneau"
-              onClick={() => setSheet(null)}
+              onClick={() => {
+                setSheet(null);
+                setMoreOpen(false);
+              }}
             />
-          )}
-          <nav className="tabbar" aria-label="Panneaux">
-            {SHEET_TABS.map((t) => {
-              const disabled = t.key === "HERD" && !barns.length;
-              return (
-                <button
-                  key={t.key}
-                  type="button"
-                  className={`tab${sheet === t.key ? " on" : ""}`}
-                  disabled={disabled}
-                  title={disabled ? "Aucun bâtiment d’élevage sur la parcelle" : t.label}
-                  aria-pressed={sheet === t.key}
-                  onClick={() => setSheet((cur) => (cur === t.key ? null : t.key))}
-                >
-                  <span aria-hidden="true">{t.icon}</span>
-                  <span className="tab-label">{t.label}</span>
-                  {tabBadge(alerts, t.key) > 0 && (
-                    <span className="tab-badge" aria-label="à traiter">
-                      {tabBadge(alerts, t.key)}
+          ) : null}
+          {moreOpen && (
+            <nav className="tab-drawer" aria-label="Panneaux">
+              {SHEET_TABS.map((t, i) => {
+                const disabled = t.key === "HERD" && !barns.length;
+                const badge = tabBadge(alerts, t.key);
+                return (
+                  <button
+                    key={t.key}
+                    type="button"
+                    className={`tab${sheet === t.key ? " on" : ""}`}
+                    disabled={disabled}
+                    /* Entrée en cascade, 45 ms par carte — charte §8.1 #7. */
+                    style={{ animationDelay: `${i * 45}ms` }}
+                    title={disabled ? "Aucun bâtiment d’élevage sur la parcelle" : t.label}
+                    aria-pressed={sheet === t.key}
+                    onClick={() => {
+                      setSheet((cur) => (cur === t.key ? null : t.key));
+                      setMoreOpen(false);
+                    }}
+                  >
+                    <span className="tab-icon" aria-hidden="true">
+                      {t.icon}
                     </span>
-                  )}
-                </button>
-              );
-            })}
-          </nav>
+                    <span className="tab-label">{t.label}</span>
+                    {badge > 0 && (
+                      <span className="tab-badge" aria-label="à traiter">
+                        {badge}
+                      </span>
+                    )}
+                  </button>
+                );
+              })}
+            </nav>
+          )}
         </>
       )}
     </div>

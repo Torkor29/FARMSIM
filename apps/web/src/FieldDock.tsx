@@ -44,6 +44,15 @@ type Props = {
   onDesktopHerd?: () => void;
   showDev?: boolean;
   onDev?: () => void;
+  /**
+   * Sur téléphone, les panneaux tenaient dans une **seconde** barre collée
+   * sous celle-ci : onze boutons sur deux rangées, soit près d'un quart de
+   * l'écran mangé en permanence. Ils passent derrière une sixième case,
+   * « Plus », qui ouvre un tiroir.
+   */
+  moreOpen?: boolean;
+  moreBadge?: number;
+  onMore?: () => void;
   /** La sélection n'est que de l'herbe mûre : on fauche, on ne moissonne pas */
   mowSelected?: boolean;
   /** Toutes les cases prêtes sont de l'herbe */
@@ -104,6 +113,9 @@ export function FieldDock({
   onDesktopHerd,
   showDev,
   onDev,
+  moreOpen,
+  moreBadge = 0,
+  onMore,
   mowSelected = false,
   mowReadyAll = false,
 }: Props) {
@@ -395,6 +407,21 @@ export function FieldDock({
               </button>
             )}
           </>
+        )}
+        {isMobile && onMore && (
+          <button
+            type="button"
+            className={`dock-tool more ${moreOpen ? "on" : ""}`}
+            aria-pressed={moreOpen}
+            aria-expanded={moreOpen}
+            onClick={onMore}
+          >
+            <span className="dock-emoji" aria-hidden="true">
+              {moreOpen ? "✕" : "☰"}
+            </span>
+            <span className="dock-label">{moreOpen ? "Fermer" : "Plus"}</span>
+            {!moreOpen && moreBadge > 0 && <span className="dock-badge">{moreBadge}</span>}
+          </button>
         )}
         {showDev && (
           <button type="button" className="dock-tool extra" onClick={onDev}>

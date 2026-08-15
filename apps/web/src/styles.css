@@ -72,15 +72,26 @@ button, input, select {
   background: var(--paper);
   color: var(--ink);
   padding: 0.55rem 0.85rem;
+  /* Quarante-quatre pixels partout, souris comprise : c'est le plancher de
+     la charte §7.3, et il vaut aussi pour « Déconnexion » ou un nom de
+     parcelle, qui tombaient à quarante. */
+  min-height: 44px;
 }
 button {
   cursor: pointer;
   font-weight: 700;
   font-family: "Baloo 2", Nunito, sans-serif;
-  transition: transform 0.12s ease, box-shadow 0.18s ease, background 0.18s ease;
+  /* Charte §8.1 #1-3 : survol 120 ms sortant, pression 90 ms linéaire, et
+     un relâchement qui dépasse légèrement. Les trois durées diffèrent
+     exprès — une pression aussi lente qu'un survol donne un bouton mou. */
+  transition:
+    transform 0.12s cubic-bezier(0.16, 1, 0.3, 1),
+    box-shadow 0.18s ease,
+    background 0.18s ease,
+    filter 0.12s ease;
 }
-button:hover:not(:disabled) { transform: translateY(-1px); }
-button:active:not(:disabled) { transform: translateY(1px); }
+button:hover:not(:disabled) { transform: translateY(-2px); filter: brightness(1.05); }
+button:active:not(:disabled) { transform: translateY(2px); transition-duration: 0.09s; }
 button:disabled { opacity: 0.45; cursor: not-allowed; }
 input { min-width: 0; flex: 1; }
 input:focus-visible, button:focus-visible {
@@ -165,7 +176,27 @@ html.playing body {
 }
 .rail-right { grid-area: right; }
 .rail:empty { display: none; }
+/* Un rail plus haut que l'écran se coupait net sur la dernière carte, sans
+   rien dire qu'il y avait une suite. Le voile du bas la laisse deviner. */
+.rail {
+  -webkit-mask-image: linear-gradient(180deg, #000 calc(100% - 2.2rem), transparent);
+  mask-image: linear-gradient(180deg, #000 calc(100% - 2.2rem), transparent);
+}
+.rail:not(:hover) { scrollbar-color: var(--line) transparent; }
 .rail > * { flex: 0 0 auto; }
+/* Charte §8.1 #8 : un panneau entre en glissant depuis son bord, il
+   n'apparaît pas d'un coup au milieu de l'écran. Le sens dépend du rail —
+   à gauche on vient de la gauche. */
+.rail-left > * { animation: rail-in-left 0.28s cubic-bezier(0.16, 1, 0.3, 1) both; }
+.rail-right > * { animation: rail-in-right 0.28s cubic-bezier(0.16, 1, 0.3, 1) both; }
+@keyframes rail-in-left {
+  from { opacity: 0; transform: translateX(-18px); }
+  to { opacity: 1; transform: none; }
+}
+@keyframes rail-in-right {
+  from { opacity: 0; transform: translateX(18px); }
+  to { opacity: 1; transform: none; }
+}
 .game-stage.mobile .rail { display: contents; }
 
 /* Un seul rail tant que la ferme n'a pas la place pour deux : la colonne de
@@ -180,6 +211,10 @@ html.playing body {
       "stage left"
       "dock  dock";
   }
+  /* Les deux volets vides : la colonne entière revient à la ferme. */
+  .game-stage:has(.rail-left:empty):has(.rail-right:empty) {
+    grid-template-columns: minmax(0, 1fr) 0;
+  }
 }
 @media (min-width: 1180px) {
   :root {
@@ -193,6 +228,20 @@ html.playing body {
       "top   top   top"
       "left  stage right"
       "dock  dock  dock";
+  }
+  /* Un rail sans rien dedans rendait quand même sa colonne : sur 1920 px,
+     garage et élevage fermés, c'était près de trois cents pixels de vide à
+     gauche — et la ferme, décentrée d'autant, rapetissée pour rien. La
+     caméra lit `grid-template-columns` (`railInsets`), donc effondrer la
+     piste recadre la scène du même geste. */
+  .game-stage:has(.rail-left:empty) {
+    grid-template-columns: 0 minmax(0, 1fr) var(--rail-r);
+  }
+  .game-stage:has(.rail-right:empty) {
+    grid-template-columns: var(--rail-l) minmax(0, 1fr) 0;
+  }
+  .game-stage:has(.rail-left:empty):has(.rail-right:empty) {
+    grid-template-columns: 0 minmax(0, 1fr) 0;
   }
 }
 html.playing .game-stage {
@@ -219,7 +268,7 @@ html.playing .market-ticker {
 html.playing button,
 html.playing input,
 html.playing select,
-html.playing .tabbar,
+html.playing .tab-drawer,
 html.playing .field-dock {
   touch-action: manipulation;
 }
@@ -316,8 +365,12 @@ html.playing .field-dock {
 }
 .brand-mark { font-size: 1.4rem; color: var(--teal-700); }
 .help-btn {
-  width: 1.75rem;
-  height: 1.75rem;
+  /* Vingt-huit pixels : le doigt manquait la cible, et la souris devait
+     viser. Quarante-quatre est le plancher tactile de la charte §7.3. */
+  display: grid;
+  place-items: center;
+  width: 44px;
+  height: 44px;
   padding: 0;
   border-radius: 50%;
   border: 1px solid var(--glass-border);
@@ -374,6 +427,19 @@ html.playing .field-dock {
   background: var(--teal-300);
   border-radius: 0 2px 2px 0;
   transition: width 0.4s ease-out;
+}
+
+/* —— Entrées du tiroir « Plus » (charte §8.1 #7 et #9) ——
+   Le tiroir monte du bas, ses cases arrivent en cascade de 45 ms. Déclarées
+   hors de la requête média : une @keyframes imbriquée dans un @media n'est
+   pas visible depuis une règle déclarée ailleurs. */
+@keyframes drawer-rise {
+  from { opacity: 0; transform: translateY(14px) scale(0.98); }
+  to { opacity: 1; transform: none; }
+}
+@keyframes tab-pop {
+  from { opacity: 0; transform: translateY(10px); }
+  to { opacity: 1; transform: none; }
 }
 
 /* —— Jauge de graisse (fiche machine du garage) ——
@@ -1452,13 +1518,19 @@ html.playing .build-confirm { position: fixed; }
   font-size: 0.78rem;
   color: var(--gold-700);
 }
+/* « Semez 4 cases · La récolte, dès que les épis sont… » : la seule ligne
+   coupait l'information au moment de la donner. Deux lignes suffisent à la
+   dire en entier, et la hauteur reste stable. */
 .quest-chip-body span {
   font-size: 0.82rem;
   font-weight: 700;
   color: var(--ink);
-  white-space: nowrap;
+  line-height: 1.25;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  -webkit-box-orient: vertical;
   overflow: hidden;
-  text-overflow: ellipsis;
 }
 
 .dock-tray {
@@ -1584,16 +1656,32 @@ html.playing .build-confirm { position: fixed; }
   color: #ffffff;
 }
 
+/* —— Cotations ——
+   Treize marchandises et la météo : à la ligne, elles empilaient **quatre**
+   rangées au centre de l'écran, cent quatre-vingts pixels pris sur la ferme
+   juste au-dessus d'elle. Une seule ligne qui défile, à toutes les tailles.
+   Les deux voiles latéraux disent qu'il y a une suite — sans eux la ligne
+   paraît coupée net. */
 .market-ticker {
   position: relative;
   justify-self: center;
   display: flex;
-  flex-wrap: wrap;
-  justify-content: center;
+  flex-wrap: nowrap;
+  justify-content: flex-start;
   gap: 0.45rem;
-  max-width: min(720px, calc(100vw - 2rem));
-  pointer-events: none;
+  /* Sur 1920 px les quatorze cotations tiennent : les plafonner à
+     1024 px les faisait défiler pour rien. */
+  max-width: min(100rem, calc(100vw - 2rem));
+  padding-inline: 0.6rem;
+  overflow-x: auto;
+  scrollbar-width: none;
+  overscroll-behavior-x: contain;
+  pointer-events: auto;
+  -webkit-mask-image: linear-gradient(90deg, transparent, #000 1.4rem, #000 calc(100% - 1.4rem), transparent);
+  mask-image: linear-gradient(90deg, transparent, #000 1.4rem, #000 calc(100% - 1.4rem), transparent);
 }
+.market-ticker::-webkit-scrollbar { display: none; }
+.market-ticker .tick { flex: 0 0 auto; }
 .tick {
   font-size: 0.78rem;
   font-weight: 800;
@@ -1698,9 +1786,20 @@ html.playing .build-confirm { position: fixed; }
 .toast.good { color: var(--ok); border-color: color-mix(in srgb, var(--ok) 45%, transparent); }
 .toast.warn { color: var(--gold-700); border-color: color-mix(in srgb, var(--gold-500) 55%, transparent); }
 .toast.bad { color: var(--danger); border-color: color-mix(in srgb, var(--danger) 45%, transparent); }
+/* Charte §8.4. La règle ne couvrait que le toast : tout le reste — tiroirs,
+   rails, cascades — continuait de bouger pour qui demande l'inverse. */
 @media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
   .toast { animation: none; transform: translateX(-50%); }
-  .toast-bar { animation-duration: 3.2s; }
+  /* La barre du toast mesure un temps réel : elle doit garder sa durée,
+     sinon la notification se ferme sans que rien ne l'ait annoncé. */
+  .toast-bar { animation-duration: 3.2s !important; }
 }
 
 .row { display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: center; }
@@ -1779,12 +1878,12 @@ html.playing .build-confirm { position: fixed; }
 }
 .zone-pick:hover:not(:disabled) { border-color: var(--accent); }
 .zone-pick.on { border-color: var(--gold-500); background: var(--gold-100); }
+/* « Clos d'… », « Cham… » : les noms de parcelles étaient rabotés à quatre
+   lettres. La liste a la largeur d'un rail entier, elle peut les écrire. */
 .zone-pick-name {
   font-weight: 700;
   color: var(--teal-700);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  overflow-wrap: anywhere;
 }
 .zone-pick-price { color: var(--gold-700); font-weight: 700; flex: 0 0 auto; }
 .zone-cell {
@@ -1932,7 +2031,7 @@ html.playing .build-confirm { position: fixed; }
  * état retardataire — un basculement de fenêtre, l'émulateur d'appareil des
  * outils de développement — ne la laisse jamais apparaître sur grand écran.
  */
-.tabbar,
+.tab-drawer,
 .sheet-scrim,
 .profile-btn { display: none; }
 
@@ -1977,10 +2076,8 @@ html.playing .build-confirm { position: fixed; }
   .stat-bonus,
   .logout-btn { display: none; }
   .help-btn {
-    display: grid;
-    place-items: center;
-    min-width: 40px;
-    min-height: 40px;
+    min-width: 44px;
+    min-height: 44px;
     padding: 0;
     border-radius: 12px;
     border: 1px solid var(--line);
@@ -2007,8 +2104,9 @@ html.playing .build-confirm { position: fixed; }
   .profile-btn {
     display: grid;
     place-items: center;
-    min-width: 40px;
-    min-height: 40px;
+    /* Plancher tactile de la charte §7.3 : quarante, c'est déjà trop peu. */
+    min-width: 44px;
+    min-height: 44px;
     padding: 0;
     border-radius: 12px;
     border: 1px solid var(--line);
@@ -2021,18 +2119,11 @@ html.playing .build-confirm { position: fixed; }
      ferme. */
   .market-ticker {
     justify-self: stretch;
-    flex-wrap: nowrap;
-    justify-content: flex-start;
     max-width: none;
     margin: 0 0.5rem;
-    overflow-x: auto;
-    scrollbar-width: none;
+    /* Le défilement suppose de pouvoir l'attraper au doigt. */
     touch-action: pan-x;
-    /* Le défilement suppose de pouvoir l'attraper. */
-    pointer-events: auto;
   }
-  .market-ticker::-webkit-scrollbar { display: none; }
-  .market-ticker .tick { flex: 0 0 auto; }
   .who-now-bar {
     justify-self: stretch;
     margin: 0 0.5rem;
@@ -2111,46 +2202,69 @@ html.playing .build-confirm { position: fixed; }
     backdrop-filter: blur(2px);
   }
 
-  /* —— Barre d'onglets —— */
-  .tabbar {
+  /* —— Tiroir « Plus » ——
+     Cinq panneaux tenaient dans une seconde barre collée sous celle des
+     outils : onze boutons sur deux rangées, près d'un quart de l'écran pris
+     en permanence pour des panneaux fermés. Ils remontent maintenant dans un
+     tiroir, ouvert par la sixième case du dock, et refermé dès qu'on choisit.
+     Une seule couche de menu à la fois. */
+  .tab-drawer {
     position: fixed;
-    left: 0;
-    right: 0;
-    bottom: 0;
-    z-index: 14;
+    left: 0.5rem;
+    right: 0.5rem;
+    bottom: calc(4.9rem + env(safe-area-inset-bottom));
+    z-index: 15;
     display: grid;
-    grid-auto-flow: column;
-    grid-auto-columns: 1fr;
-    gap: 0.2rem;
-    padding: 0.3rem 0.4rem calc(0.3rem + env(safe-area-inset-bottom));
+    /* Les cinq panneaux sur une seule rangée. En `auto-fit`, « Missions »
+       restait seule sur une deuxième ligne avec trois trous à côté. */
+    grid-template-columns: repeat(5, minmax(0, 1fr));
+    gap: 0.4rem;
+    padding: 0.55rem;
+    border-radius: 20px;
     background: var(--bar);
-    border-top: 1px solid var(--glass-border);
-    backdrop-filter: blur(12px);
+    border: 1px solid var(--glass-border);
+    box-shadow: var(--sh-3);
+    backdrop-filter: blur(14px);
+    animation: drawer-rise 0.26s cubic-bezier(0.22, 1, 0.36, 1) both;
   }
   .tab {
     display: grid;
     justify-items: center;
-    gap: 0.1rem;
-    /* Quarante-quatre pixels : en deçà, le doigt manque la cible. */
-    min-height: 44px;
-    padding: 0.3rem 0.15rem;
-    border: 0;
-    border-radius: 12px;
-    background: transparent;
-    font-size: 1.05rem;
-    line-height: 1.1;
+    align-content: center;
+    gap: 0.22rem;
+    /* Cinquante-six pixels : la cible pouce de la charte §7.3, et non le
+       minimum absolu de quarante-quatre. */
+    min-height: 56px;
+    padding: 0.45rem 0.2rem;
+    border: 1px solid transparent;
+    border-radius: 14px;
+    background: var(--paper);
+    line-height: 1.15;
     color: var(--ink);
+    animation: tab-pop 0.22s cubic-bezier(0.22, 1, 0.36, 1) both;
   }
-  .tab.on { background: var(--teal-100, rgba(46, 142, 122, 0.16)); }
-  .tab-label { font-size: 0.62rem; font-weight: 700; letter-spacing: 0.01em; }
+  .tab-icon { font-size: 1.2rem; }
+  .tab.on { background: var(--teal-100, rgba(46, 142, 122, 0.16)); border-color: var(--teal-300); }
+  .tab:disabled { opacity: 0.45; }
+  /* La charte §7.7 interdit l'icône seule : le libellé ne rétrécit jamais
+     au point de disparaître. */
+  .tab-label {
+    font-size: 0.68rem;
+    font-weight: 700;
+    letter-spacing: 0;
+    /* « Troupeau » dans un cinquième de trois cent quatre-vingt-dix pixels :
+       la coupure de mot évite l'ellipse, la charte §7.7 exigeant le libellé. */
+    overflow-wrap: anywhere;
+    text-align: center;
+  }
 
-  /* —— Dock de champ : 5 outils étiquetés, jamais de défilement —— */
+  /* —— Dock de champ : six cases étiquetées, jamais de défilement —— */
   .field-dock {
     left: 0.4rem;
     right: 0.4rem;
     width: auto;
     transform: none;
-    bottom: calc(3.7rem + env(safe-area-inset-bottom));
+    bottom: calc(0.35rem + env(safe-area-inset-bottom));
   }
   .dock-tool { min-height: 48px; }
   .dock-label { font-size: 0.64rem; }
