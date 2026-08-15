@@ -1148,8 +1148,8 @@ async function publishFromConsignes() {
             silage.push({ x: cell.x, y: cell.y });
           }
         }
-        for (const batch of chunkCells(ready)) jobs.push({ work: "HARVEST", cells: batch });
-        for (const batch of chunkCells(silage)) jobs.push({ work: "SILAGE", cells: batch });
+        for (const batch of chunkCells(ready, seedOf(parcel.id))) jobs.push({ work: "HARVEST", cells: batch });
+        for (const batch of chunkCells(silage, seedOf(parcel.id))) jobs.push({ work: "SILAGE", cells: batch });
       }
       if (consignes.straw) {
         const windrow = parcel.cells
@@ -1158,8 +1158,8 @@ async function publishFromConsignes() {
         const bales = parcel.cells
           .filter((c) => c.baleCount > 0 && !busy.has(`${c.x},${c.y}`))
           .map((c) => ({ x: c.x, y: c.y }));
-        for (const batch of chunkCells(windrow)) jobs.push({ work: "BALE", cells: batch });
-        for (const batch of chunkCells(bales)) jobs.push({ work: "COLLECT", cells: batch });
+        for (const batch of chunkCells(windrow, seedOf(parcel.id))) jobs.push({ work: "BALE", cells: batch });
+        for (const batch of chunkCells(bales, seedOf(parcel.id))) jobs.push({ work: "COLLECT", cells: batch });
       }
       if (consignes.stubble) {
         const stub = parcel.cells
@@ -1171,7 +1171,7 @@ async function publishFromConsignes() {
               !busy.has(`${c.x},${c.y}`),
           )
           .map((c) => ({ x: c.x, y: c.y }));
-        for (const batch of chunkCells(stub)) jobs.push({ work: "STUBBLE", cells: batch });
+        for (const batch of chunkCells(stub, seedOf(parcel.id))) jobs.push({ work: "STUBBLE", cells: batch });
       }
       if (consignes.plow) {
         const plow = parcel.cells
@@ -1183,7 +1183,7 @@ async function publishFromConsignes() {
               !busy.has(`${c.x},${c.y}`),
           )
           .map((c) => ({ x: c.x, y: c.y }));
-        for (const batch of chunkCells(plow)) jobs.push({ work: "PLOW", cells: batch });
+        for (const batch of chunkCells(plow, seedOf(parcel.id))) jobs.push({ work: "PLOW", cells: batch });
       }
 
       for (const job of jobs) {
@@ -2864,14 +2864,42 @@ app.post("/parcels/:id/presence", async (req, res) => {
   res.json({ ok: true, workers: await listFieldWorkers(req.params.id) });
 });
 
-function chunkCells(cells: CellXY[], size = 16): CellXY[][] {
-  const n = Math.max(MISSION_CELLS_MIN, Math.min(MISSION_CELLS_MAX, size));
+/**
+ * Découpe une planche de cases en chantiers publiables.
+ *
+ * La taille était fixée à seize alors que la règle en autorise huit à
+ * vingt-quatre. Conséquence : chaque lot faisait exactement seize cases, donc
+ * rapportait exactement la même chose, et la bourse alignait vingt-quatre
+ * lignes « 16/16 · 203 TRN » indiscernables. La taille varie maintenant d'un
+ * lot à l'autre, ce qui fait varier la paie sans toucher au barème.
+ *
+ * La variation est **déterministe**, tirée de `seed` : une même parcelle
+ * redécoupée deux fois donne les mêmes lots. Un tirage au hasard ferait
+ * bouger les offres à chaque passage du générateur.
+ */
+function chunkCells(cells: CellXY[], seed = 0): CellXY[][] {
+  const SIZES = [MISSION_CELLS_MIN + 2, 14, MISSION_CELLS_MAX - 6, 11, MISSION_CELLS_MAX - 2];
   const out: CellXY[][] = [];
-  for (let i = 0; i < cells.length; i += n) {
+  let i = 0;
+  let k = Math.abs(Math.trunc(seed));
+  while (i < cells.length) {
+    const n = Math.max(
+      MISSION_CELLS_MIN,
+      Math.min(MISSION_CELLS_MAX, SIZES[k % SIZES.length]),
+    );
+    k += 1;
     const slice = cells.slice(i, i + n);
+    i += n;
     if (slice.length >= MISSION_CELLS_MIN) out.push(slice);
   }
   return out;
+}
+
+/** Graine stable tirée d'un identifiant : deux parcelles se découpent autrement. */
+function seedOf(id: string): number {
+  let h = 0;
+  for (let i = 0; i < id.length; i++) h = (h * 31 + id.charCodeAt(i)) | 0;
+  return h;
 }
 
 async function occupiedLaborCells(parcelId: string): Promise<Set<string>> {

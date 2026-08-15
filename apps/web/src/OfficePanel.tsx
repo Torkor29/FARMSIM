@@ -333,7 +333,15 @@ export function OfficePanel({
                             {o.crop ? <span className="hdv-sub">{o.crop}</span> : null}
                           </td>
                           <td>
-                            {o.npc ? "Ferme voisine" : o.clientName}
+                            {/* Les cent cinquante-sept fermes PNJ portent de
+                                vrais noms — « Élevage Lefèvre », « GAEC des
+                                Haies » — que l'API envoie fidèlement. Les
+                                remplacer tous par « Ferme voisine » faisait
+                                vingt-quatre lignes rigoureusement identiques
+                                d'un bout à l'autre du tableau. La pastille
+                                « voisin » suffit à dire que ce n'est pas un
+                                joueur. */}
+                            {o.clientName}
                             <span className="hdv-sub">
                               {o.parcelLabel}
                               {o.zoneName ? ` · ${o.zoneName}` : ""}
@@ -380,7 +388,8 @@ export function OfficePanel({
                     </div>
                   </dl>
                   <p>
-                    <strong>{pick.npc ? "Ferme voisine" : pick.clientName}</strong>
+                    <strong>{pick.clientName}</strong>
+                    {pick.npc && <em className="local-tag">voisin</em>}
                     <span className="hdv-sub">
                       {pick.parcelLabel}
                       {pick.zoneName ? ` · ${pick.zoneName}` : ""}
