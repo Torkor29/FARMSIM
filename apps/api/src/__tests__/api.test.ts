@@ -103,21 +103,40 @@ before(async () => {
   // pris, et la suite suivante testait sans le savoir un serveur fantôme.
   serveur = spawn("npx", ["tsx", "src/main.ts"], {
     cwd: API_DIR,
-    env: { ...process.env, DATABASE_URL: url, PORT: String(PORT), FARMSIM_DEV_TOOLS: "1" },
-    stdio: "ignore",
+    env: {
+      ...process.env,
+      DATABASE_URL: url,
+      PORT: String(PORT),
+      FARMSIM_DEV_TOOLS: "1",
+      // Sans cela, le démarrage sème cent cinquante fermes PNJ dont aucun test
+      // n'a besoin — deux minutes perdues sur une machine d'intégration.
+      FARMSIM_SKIP_NPC: "1",
+    },
+    stdio: ["ignore", "pipe", "pipe"],
     detached: true,
   });
-  // Le démarrage sème le monde entier : on attend qu'il réponde, sans deviner
-  // une durée qui serait fausse sur une machine plus lente.
-  const limite = Date.now() + 120_000;
+  // On garde ce que dit le serveur. `stdio: "ignore"` a coûté cher : quand le
+  // démarrage a fini par expirer en intégration, le message d'échec ne disait
+  // que « l'API n'a pas démarré », sans la moindre trace de la cause.
+  let journal = "";
+  const noter = (b: Buffer) => {
+    journal = (journal + b.toString()).slice(-4000);
+  };
+  serveur.stdout?.on("data", noter);
+  serveur.stderr?.on("data", noter);
+
+  const limite = Date.now() + 180_000;
   for (;;) {
+    if (serveur.exitCode !== null) {
+      throw new Error(`le serveur s'est arrêté (code ${serveur.exitCode}) :\n${journal}`);
+    }
     try {
       const r = await fetch(`${BASE}/health`);
       if (r.ok) break;
     } catch {
       /* pas encore là */
     }
-    if (Date.now() > limite) throw new Error("l'API n'a pas démarré en deux minutes");
+    if (Date.now() > limite) throw new Error(`l'API n'a pas démarré en trois minutes :\n${journal}`);
     await new Promise((r) => setTimeout(r, 500));
   }
 });

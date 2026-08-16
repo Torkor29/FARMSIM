@@ -1481,7 +1481,13 @@ async function ensureSeed() {
       data: { status: "CANCELLED" },
     });
   }
-  await seedNpcFarms();
+  // Semer cent cinquante fermes PNJ prend deux bonnes minutes sur une machine
+  // d'intégration à deux cœurs — assez pour que la suite de tests expire avant
+  // que le serveur ne réponde, et qu'un déploiement parfaitement sain soit
+  // refusé. Les tests d'API n'ont besoin d'aucun PNJ : ils peuvent s'en
+  // passer. Le drapeau n'existe que pour eux, et n'est jamais posé en
+  // production.
+  if (process.env.FARMSIM_SKIP_NPC !== "1") await seedNpcFarms();
 
   const zonesForWeather = await prisma.zone.findMany({ select: { code: true } });
   for (const z of zonesForWeather) {
