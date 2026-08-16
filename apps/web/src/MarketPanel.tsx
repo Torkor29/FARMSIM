@@ -298,6 +298,12 @@ export function MarketPanel({
           </button>
         </div>
 
+        {/* Le contenu de l'onglet défile ; l'en-tête et les deux portes ne
+            bougent pas. La feuille était en `overflow: hidden` : tout ce qui
+            dépassait 92 % de la hauteur d'écran était simplement coupé, sans
+            aucun moyen d'y accéder — sur téléphone, le formulaire des contrats
+            à terme commençait juste sous le bord. */}
+        <div className="hall-body">
         {tab === "MORE" ? (
           <div className="hall-more">
             <button type="button" className="ghost tiny" onClick={() => setTab("BUY")}>
@@ -586,6 +592,7 @@ export function MarketPanel({
             )}
           </>
         )}
+        </div>
       </div>
     </div>
   );

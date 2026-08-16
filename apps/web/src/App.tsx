@@ -863,11 +863,23 @@ export function App() {
     return () => window.removeEventListener("keydown", onKey);
   }, [tool, pendingBuild]);
 
-  // Changer d'outil ou de bâtiment abandonne la place retenue : garder un
-  // fantôme de silo après être passé au poulailler poserait le mauvais.
+  // Changer de bâtiment ne garde pas la place retenue — un fantôme de silo
+  // resté après le passage au poulailler poserait le mauvais. Mais on ne
+  // revient pas à rien pour autant : on propose aussitôt une place tenable,
+  // sans quoi choisir un bâtiment n'affichait rien du tout sur un écran sans
+  // survol, et il fallait deviner qu'il restait une case à toucher.
+  //
+  // La rotation n'est volontairement pas dans les dépendances : tourner doit
+  // faire pivoter le bâtiment sur place, pas le renvoyer au centre.
+  //
+  // Uniquement sans souris : sur un écran de bureau le survol montre déjà le
+  // fantôme à l'instant où l'on passe sur le champ, et le figer d'office
+  // retirerait ce suivi sans rien régler.
   useEffect(() => {
-    setPendingBuild(null);
-  }, [tool, buildType, activeParcelId]);
+    const propose = isMobile && tool === "BUILD" ? firstFreeSpot(buildType, buildRotation) : null;
+    setPendingBuild(propose);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tool, buildType, activeParcelId, isMobile]);
 
   useEffect(() => {
     setPrevPrices((prev) => {
@@ -1476,10 +1488,10 @@ export function App() {
    * 402 : un aller-retour perdu, et une erreur rouge en console pour une
    * situation parfaitement prévisible côté client.
    */
-  function canPlaceBuildingAt(x: number, y: number, rot = buildRotation): boolean {
-    const def = BUILDING_DEFS[buildType];
+  function canPlaceBuildingAt(x: number, y: number, rot = buildRotation, type = buildType): boolean {
+    const def = BUILDING_DEFS[type];
     // L'emprise suit le quart de tour : un hangar 3×2 tourné occupe 2×3.
-    const foot = orientedFootprint(buildType, rot);
+    const foot = orientedFootprint(type, rot);
     if (x + foot.w > gw || y + foot.h > gh) return false;
     if ((player?.crd ?? 0) < def.cost) return false;
     const footprint = footprintCells(x, y, foot.w, foot.h);
@@ -1487,6 +1499,42 @@ export function App() {
       const c = grid.find((cell) => cell.x === fc.x && cell.y === fc.y);
       return c?.kind === "EMPTY";
     });
+  }
+
+  /**
+   * Une place libre pour poser le fantôme dès le choix du bâtiment.
+   *
+   * Sans elle, choisir un bâtiment ne montrait rien : le fantôme suivait le
+   * survol de la souris, et un téléphone n'a pas de survol. Il fallait fermer
+   * le menu, puis toucher une case au hasard pour découvrir enfin ce qu'on
+   * achetait. On propose maintenant une place d'emblée — la plus proche du
+   * centre de la parcelle, là où on bâtit naturellement — que le joueur reste
+   * libre de déplacer d'une touche.
+   */
+  function firstFreeSpot(type: BuildingType, rot: number): { x: number; y: number } | null {
+    const foot = orientedFootprint(type, rot);
+    // Pas tout à fait le centre : en vue isométrique, l'axe vertical de
+    // l'écran suit x + y, et le bas de la parcelle passe sous la barre de
+    // confirmation, la puce « À faire » et le dock — près de 40 % de la
+    // hauteur sur un téléphone. Une proposition au centre géométrique
+    // atterrissait donc à demi cachée, précisément au moment où il faut
+    // regarder le bâtiment pour décider de le tourner. On recule des deux
+    // côtés à la fois, ce qui le remonte tout droit dans la partie dégagée.
+    const recul = 0.2;
+    const cx = Math.max(0, (gw - foot.w) / 2 - gw * recul);
+    const cy = Math.max(0, (gh - foot.h) / 2 - gh * recul);
+    let best: { x: number; y: number } | null = null;
+    let bestD = Infinity;
+    for (let y = 0; y + foot.h <= gh; y++) {
+      for (let x = 0; x + foot.w <= gw; x++) {
+        const d = (x - cx) ** 2 + (y - cy) ** 2;
+        if (d >= bestD) continue;
+        if (!canPlaceBuildingAt(x, y, rot, type)) continue;
+        best = { x, y };
+        bestD = d;
+      }
+    }
+    return best;
   }
 
   /**
@@ -3353,39 +3401,54 @@ export function App() {
         plus rien tout seul. C'est la réponse directe aux cinq silos posés
         par accident, sans moyen d'annuler.
       */}
-      {pendingBuild && !visiting && (
-        <div className="build-confirm glass">
-          <div className="build-confirm-what">
-            <strong>{BUILDING_DEFS[buildType].name}</strong>
-            <span>
-              {orientedFootprint(buildType, buildRotation).w}×
-              {orientedFootprint(buildType, buildRotation).h} · case ({pendingBuild.x},
-              {pendingBuild.y})
-            </span>
+      {pendingBuild && !visiting && (() => {
+        const def = BUILDING_DEFS[buildType];
+        const foot = orientedFootprint(buildType, buildRotation);
+        const placeOk = canPlaceBuildingAt(pendingBuild.x, pendingBuild.y);
+        // Un bouton grisé ne dit pas ce qui cloche. Les deux seuls empêchements
+        // possibles se nomment, et la barre le dit à la place du bouton.
+        const souci =
+          (player?.crd ?? 0) < def.cost
+            ? `Il vous manque ${def.cost - Math.round(player?.crd ?? 0)} TRN`
+            : !placeOk
+              ? "Place occupée — touchez une autre case"
+              : null;
+        return (
+          <div className={`build-confirm glass ${souci ? "blocked" : ""}`}>
+            <div className="build-confirm-what">
+              <img className="build-confirm-art" src={BUILDING_ART[buildType]} alt="" />
+              <span className="build-confirm-lines">
+                <strong>{def.name}</strong>
+                <span className="build-confirm-meta">
+                  {foot.w}×{foot.h} cases · face {["nord", "est", "sud", "ouest"][buildRotation % 4]}
+                </span>
+                {souci && <span className="build-confirm-why">{souci}</span>}
+              </span>
+            </div>
+            <div className="build-confirm-actions">
+              <button
+                type="button"
+                className="ghost build-turn"
+                onClick={() => setBuildRotation((r) => (r + 1) % 4)}
+                title="Tourner d'un quart de tour (R)"
+              >
+                <span aria-hidden="true">⟳</span> Tourner
+              </button>
+              <button type="button" className="ghost" onClick={() => setPendingBuild(null)}>
+                Annuler
+              </button>
+              <button
+                type="button"
+                className="primary build-go"
+                disabled={busy || !placeOk}
+                onClick={() => void confirmBuild()}
+              >
+                Construire <b>{def.cost} TRN</b>
+              </button>
+            </div>
           </div>
-          <div className="build-confirm-actions">
-            <button
-              type="button"
-              className="ghost"
-              onClick={() => setBuildRotation((r) => (r + 1) % 4)}
-              title="Tourner d'un quart de tour (R)"
-            >
-              ⟳ Tourner
-            </button>
-            <button type="button" className="ghost" onClick={() => setPendingBuild(null)}>
-              Annuler
-            </button>
-            <button
-              type="button"
-              className="primary"
-              disabled={busy || !canPlaceBuildingAt(pendingBuild.x, pendingBuild.y)}
-              onClick={() => void confirmBuild()}
-            >
-              Construire · {BUILDING_DEFS[buildType].cost} TRN
-            </button>
-          </div>
-        </div>
-      )}
+        );
+      })()}
 
 
       {/*
@@ -3707,6 +3770,10 @@ export function App() {
                     setTool("BUILD");
                     setBuildType(t);
                     setSelectedCells([]);
+                    // Le fantôme se pose tout seul (voir l'effet plus haut) ;
+                    // ici on s'efface, car le menu couvrait précisément la
+                    // ferme qu'il fallait regarder.
+                    if (isMobile) setSheet(null);
                   }}
                 >
                   <img className="build-art" src={BUILDING_ART[t]} alt="" loading="lazy" />

@@ -1662,27 +1662,47 @@ export function IsoFarmView({
         }
       }
 
-      // Le fantôme est le vrai modèle, teinté : une boîte translucide ne dit
-      // ni de quel côté sera la façade ni ce qu'on est en train d'acheter.
+      // Le fantôme est le vrai modèle, translucide.
+      //
+      // Il l'a longtemps été *repeint* : chaque matière remplacée par un seul
+      // vert plat. Le modèle était donc là, mais aplati en silhouette — on ne
+      // voyait ni la pente du toit, ni où était la façade, donc rien à quoi
+      // rattacher le bouton « Tourner ». On garde désormais les vraies
+      // matières, simplement rendues translucides et lavées vers la couleur de
+      // validité : le toit reste rouge, le bardage crème, et le vert (ou le
+      // rouge) ne fait que dire si la place convient.
       const centerX = ox + (pb.originX + (fw - 1) / 2) * step;
       const centerZ = oz + (pb.originY + (fh - 1) / 2) * step;
       const ghost = createBuildingRig(pb.type, { level: 1, shadows: false });
-      // Les matières d'origine sont remplacées par la teinte du fantôme : il
-      // faut les libérer soi-même, `dispose()` du rig démonterait le groupe.
-      const spent = new Set<THREE.Material>();
+      // Une place refusée doit se voir sans lire le texte : on lave fort vers
+      // le rouge. Une place valable garde ses couleurs, à peine verdies.
+      const lavage = pb.valid ? 0.22 : 0.6;
+      const teinte = new THREE.Color(col);
+      // Les matières sont mutualisées par le rig (une par matière, pas une par
+      // maillage) : on les remplace une seule fois chacune, sinon vingt
+      // maillages fabriquent vingt copies identiques.
+      const remplacees = new Map<THREE.Material, THREE.Material>();
       ghost.group.traverse((o) => {
         const mesh = o as THREE.Mesh;
-        if (!mesh.isMesh) return;
-        if (mesh.material instanceof THREE.Material) spent.add(mesh.material);
-        mesh.material = new THREE.MeshLambertMaterial({
-          color: col,
-          flatShading: true,
-          transparent: true,
-          opacity: pb.pending ? 0.62 : 0.4,
-          depthWrite: false,
-        });
+        if (!mesh.isMesh || !(mesh.material instanceof THREE.Material)) return;
+        const src = mesh.material;
+        let copie = remplacees.get(src);
+        if (!copie) {
+          const base = (src as THREE.MeshLambertMaterial).color?.clone() ?? new THREE.Color(col);
+          copie = new THREE.MeshLambertMaterial({
+            color: base.lerp(teinte, lavage),
+            flatShading: true,
+            transparent: true,
+            opacity: pb.pending ? 0.72 : 0.55,
+            // Sans écriture de profondeur, on voit à travers le bâtiment : les
+            // pièces du fond restent lisibles et la case visée dessous aussi.
+            depthWrite: false,
+          });
+          remplacees.set(src, copie);
+        }
+        mesh.material = copie;
       });
-      for (const m of spent) m.dispose();
+      for (const m of remplacees.keys()) m.dispose();
       ghost.group.scale.setScalar(cellSize);
       ghost.group.position.set(centerX, MACHINE_GROUND, centerZ);
       ghost.group.rotation.y = quarters * (Math.PI / 2);
