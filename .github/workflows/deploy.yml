@@ -76,6 +76,50 @@ jobs:
             echo "pret=oui" >> "$GITHUB_OUTPUT"
           fi
 
+      # « exit code 1 » au bout de cinq secondes ne dit pas *pourquoi* : port
+      # fermé, hôte injoignable, clé refusée ? Ces trois pannes se corrigent
+      # différemment. On les sépare avant d'essayer de se connecter.
+      - name: Diagnostiquer l'accès au serveur
+        if: steps.config.outputs.pret == 'oui'
+        env:
+          HOTE: ${{ secrets.VPS_HOST }}
+          PORT: ${{ secrets.VPS_PORT || 22 }}
+          CLE: ${{ secrets.VPS_SSH_KEY }}
+        run: |
+          echo "── Forme de l'adresse ──"
+          if printf '%s' "$HOTE" | grep -q ':'; then
+            echo "PROBLÈME : VPS_HOST ressemble à une adresse IPv6."
+            echo "Les machines GitHub n'ont pas d'IPv6 sortant. Il faut l'IPv4,"
+            echo "obtenue sur le serveur par :  curl -s -4 ifconfig.me"
+            exit 1
+          fi
+          echo "OK (pas d'IPv6)"
+
+          echo "── Forme de la clé ──"
+          if ! printf '%s' "$CLE" | head -n 1 | grep -q 'BEGIN'; then
+            echo "PROBLÈME : VPS_SSH_KEY ne commence pas par une ligne BEGIN."
+            echo "Collez la clé PRIVÉE entière, de -----BEGIN à -----END inclus."
+            exit 1
+          fi
+          # Une clé sans saut de ligne final est refusée par OpenSSH avec un
+          # « no key found » très peu parlant. C'est le piège classique quand
+          # on copie depuis un terminal mobile.
+          if [ -n "$(tail -c 1 <<< "$CLE")" ]; then
+            echo "AVERTISSEMENT : la clé n'a pas de saut de ligne final."
+            echo "Réenregistrez le secret en appuyant sur Entrée après -----END."
+          fi
+          echo "OK (forme plausible)"
+
+          echo "── Le port SSH répond-il ? ──"
+          if timeout 10 bash -c "cat < /dev/null > /dev/tcp/$HOTE/$PORT" 2>/dev/null; then
+            echo "OK : $HOTE:$PORT accepte les connexions."
+          else
+            echo "PROBLÈME : impossible d'ouvrir $HOTE:$PORT depuis GitHub."
+            echo "Soit l'adresse est fausse, soit un pare-feu bloque le port 22"
+            echo "aux adresses extérieures. Vérifiez :  sudo ufw status"
+            exit 1
+          fi
+
       - name: Ouvrir une session et lancer le script de déploiement
         if: steps.config.outputs.pret == 'oui'
         uses: appleboy/ssh-action@v1.2.0
