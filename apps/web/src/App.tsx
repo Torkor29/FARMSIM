@@ -3424,8 +3424,9 @@ export function App() {
                 </span>
                 {souci && <span className="build-confirm-why">{souci}</span>}
               </span>
-            </div>
-            <div className="build-confirm-actions">
+              {/* Tourner monte sur la ligne du titre : la place est libre à
+                  droite du nom, et chaque rangée de boutons en moins, c'est
+                  autant de ferme qui reste visible sous la barre. */}
               <button
                 type="button"
                 className="ghost build-turn"
@@ -3434,6 +3435,8 @@ export function App() {
               >
                 <span aria-hidden="true">⟳</span> Tourner
               </button>
+            </div>
+            <div className="build-confirm-actions">
               <button type="button" className="ghost" onClick={() => setPendingBuild(null)}>
                 Annuler
               </button>

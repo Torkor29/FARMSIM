@@ -1462,9 +1462,10 @@ button.ghost {
   left: 50%;
   transform: translateX(-50%);
   z-index: 8;
-  /* 34 rem coupaient « 2×2 cases · face nord » en deux lignes une fois la
-     vignette et les trois boutons posés sur la même barre. */
-  width: min(39rem, calc(100vw - 1.4rem));
+  /* Sur écran large tout tient sur une rangée : vignette, nom, orientation et
+     les trois boutons. À 39 rem le nom se faisait rogner en
+     « Maison d'exploita… » — c'est la seule chose qu'on ne peut pas deviner. */
+  width: min(46rem, calc(100vw - 1.4rem));
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -1478,7 +1479,8 @@ button.ghost {
 html.playing .build-confirm { position: fixed; }
 /* Une vignette, un nom, l'orientation en toutes lettres : de quoi savoir ce
    qu'on pose sans quitter la barre des yeux. */
-.build-confirm-what { display: flex; align-items: center; gap: 0.6rem; min-width: 0; }
+.build-confirm-what { display: flex; align-items: center; gap: 0.6rem; min-width: 0; flex: 1 1 auto; }
+.build-confirm-what .build-turn { margin-left: auto; flex: none; }
 .build-confirm-art {
   width: 42px;
   height: 42px;
@@ -1567,13 +1569,16 @@ html.playing .build-confirm { position: fixed; }
     flex-wrap: wrap;
     gap: 0.55rem;
   }
+  /* Deux rangées, pas trois. La barre mesurait cent cinquante pixels — sur un
+     écran de 720, c'est un cinquième de la parcelle qui passait dessous au
+     moment même où l'on regarde ce qu'on pose. Tourner remonte sur la ligne
+     du nom ; restent Annuler et Construire côte à côte, ce dernier plus large
+     puisque c'est la seule action qui dépense. */
   .build-confirm-actions { width: 100%; }
-  /* Tourner et Annuler se partagent la première ligne, Construire prend la
-     seconde en entier : c'est la seule action qui dépense, elle ne doit pas
-     être un bouton parmi trois de même taille. */
-  .build-confirm-actions { flex-wrap: wrap; }
-  .build-confirm-actions button { flex: 1 1 0; min-height: 44px; min-width: 0; }
-  .build-confirm-actions .build-go { flex: 1 0 100%; justify-content: center; font-size: 0.95rem; }
+  .build-confirm-actions button { min-height: 44px; min-width: 0; }
+  .build-confirm-actions .ghost { flex: 0 1 auto; }
+  .build-confirm-actions .build-go { flex: 1 1 auto; justify-content: center; font-size: 0.95rem; }
+  .build-confirm-what .build-turn { padding: 0.45rem 0.6rem; }
 }
 
 .quest-chip {
