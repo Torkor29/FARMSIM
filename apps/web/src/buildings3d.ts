@@ -99,11 +99,17 @@ function gableRoof(
   d: number,
   eaveY: number,
   rise: number,
-  opts: { overhang?: number; thick?: number; mat?: "roof" | "corrugate" } = {},
+  opts: { overhang?: number; thick?: number; mat?: "roof" | "corrugate"; z?: number } = {},
 ): number {
   const over = opts.overhang ?? 0.07;
   const thick = opts.thick ?? 0.045;
   const mat = opts.mat ?? "roof";
+  // Centre du corps de bâtiment sur l'axe avant-arrière. Toutes les granges
+  // sont centrées sur leur case, mais la porcherie a sa loge repoussée au fond
+  // pour dégager la courette : sans ce décalage, son toit se posait au milieu
+  // de la parcelle, à cheval sur le vide, et se lisait comme une dalle en
+  // lévitation à côté des murs.
+  const zc = opts.z ?? 0;
   const half = w / 2 + over;
   const len = Math.hypot(half, rise);
   const angle = Math.atan2(rise, half);
@@ -117,7 +123,7 @@ function gableRoof(
         len,
         thick,
         d + over * 2,
-        [(side * half) / 2 + (nx * thick) / 2, eaveY + rise / 2 + (ny * thick) / 2, 0],
+        [(side * half) / 2 + (nx * thick) / 2, eaveY + rise / 2 + (ny * thick) / 2, zc],
         [0, 0, -side * angle],
       ),
     );
@@ -125,7 +131,7 @@ function gableRoof(
   // Faîtière : la ligne sombre qui coiffe la rencontre des deux pentes.
   part.add(
     "roofDark",
-    box(0.07, 0.05, d + over * 2 + 0.02, [0, eaveY + rise + thick * 0.55, 0]),
+    box(0.07, 0.05, d + over * 2 + 0.02, [0, eaveY + rise + thick * 0.55, zc]),
   );
   return eaveY + rise;
 }
@@ -458,12 +464,47 @@ function buildHayBarn(w: number, d: number, lvl: number): Built {
   gableRoof(root, bw, bd, eave, rise, { mat: lvl >= 3 ? "corrugate" : "roof" });
   gableEnd(root, bw, eave, rise, -bd / 2 + 0.03, "wall");
   gableEnd(root, bw, eave, rise, bd / 2 - 0.03, "timber");
-  // Bottes de paille : un hangar à foin vide n'a aucun sens.
-  const rows = Math.min(3, 1 + Math.floor(lvl / 2));
-  for (let r = 0; r < rows; r++) {
-    for (let i = 0; i < 3; i++) {
-      const x = -bw / 2 + 0.18 + i * ((bw - 0.36) / 2);
-      root.add("hay", box(0.26, 0.17, 0.34, [x, 0.12 + r * 0.18, -bd / 4 + (r % 2) * 0.12]));
+  // Bottes de paille : un hangar à foin vide n'a aucun sens — et trois bottes
+  // de 26 cm posées en ligne dans une travée de 1,7 m n'en remplissaient pas
+  // le dixième, si bien que la grange se lisait comme un carport désert. On
+  // empile un vrai tas : la pile occupe le fond sur toute la largeur utile,
+  // avec des lits croisés et un dernier lit entamé — c'est ce qui distingue
+  // une réserve d'un décor.
+  const bl = 0.3;
+  const bh = 0.18;
+  const bt = 0.4;
+  const nx = Math.max(2, Math.floor((bw - 0.16) / bl));
+  // La pile occupe la profondeur jusqu'à laisser une allée de service devant :
+  // rangée au fond seulement, elle disparaissait sous la pente du toit et la
+  // grange se relisait vide depuis la façade ouverte.
+  const nz = Math.max(1, Math.floor((bd - 0.34) / bt));
+  const lits = Math.min(3, 1 + Math.ceil(lvl / 2));
+  const zFond = -bd / 2 + 0.08;
+  for (let r = 0; r < lits; r++) {
+    // Un lit sur deux compte une botte de moins : recentré, il se décale d'une
+    // demi-botte sur celui du dessous. C'est ainsi qu'on monte un tas qui
+    // tient, et ça évite une colonne de joints alignés sur toute la hauteur.
+    const cols = r % 2 ? nx - 1 : nx;
+    // Le lit du haut est entamé : on y a déjà puisé. Au dernier niveau la
+    // grange est pleine à ras — c'est là que se voit l'amélioration, la pile
+    // étant déjà plafonnée en hauteur par la panne.
+    const manque = r === lits - 1 && lvl < 5 ? Math.min(2, cols - 1) : 0;
+    for (let i = 0; i < cols - manque; i++) {
+      const x = -((cols - 1) * bl) / 2 + i * bl;
+      for (let k = 0; k < nz; k++) {
+        const z = zFond + bt / 2 + k * bt;
+        root.add("hay", box(bl - 0.012, bh - 0.01, bt - 0.014, [x, 0.04 + bh / 2 + r * bh, z]));
+      }
+    }
+  }
+  // Deux bottes rondes au sol dans l'allée : elles cassent l'orthogonalité de
+  // la pile et donnent l'échelle de la travée ouverte.
+  if (lvl >= 2) {
+    for (const [i, sx] of [-1, 1].entries()) {
+      root.add(
+        "hay",
+        cyl(0.13, 0.13, 0.32, 12, [sx * bw * 0.28, 0.04 + 0.13, bd / 2 - 0.19 - i * 0.05], [0, 0, HALF]),
+      );
     }
   }
   yardDressing(root, w, d, 11);
@@ -736,8 +777,11 @@ function buildPigsty(w: number, d: number, lvl: number): Built {
   for (const side of [-1, 1]) {
     claddedWall(root, pier, eave, 0.08, [(side * (dw + pier)) / 2, eave / 2, zc + bd / 2], undefined, 2);
   }
-  gableRoof(root, bw, bd, eave, rise, { mat: lvl >= 3 ? "corrugate" : "roof", overhang: 0.05 });
+  gableRoof(root, bw, bd, eave, rise, { mat: lvl >= 3 ? "corrugate" : "roof", overhang: 0.05, z: zc });
   gableEnd(root, bw, eave, rise, zc - bd / 2 + 0.035);
+  // Pignon de façade : sans lui, la loge restait ouverte sous les pentes
+  // au-dessus du linteau de porte, et on voyait le ciel à travers.
+  gableEnd(root, bw, eave, rise, zc + bd / 2 - 0.035, "timber");
   doorway(root, dw, 0.34, zc + bd / 2 + 0.045, { thick: 0.04 });
 
   // Muret de courette, auge et bauge : le sol d'un porc, c'est la moitié du sujet.
