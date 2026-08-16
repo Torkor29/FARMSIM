@@ -1,0 +1,98 @@
+# Déploiement automatique sur le VPS, à chaque poussée sur `main`.
+#
+# Jusqu'ici il fallait ouvrir une session SSH, coller une commande, puis lire
+# un mur de journaux pour savoir si ça avait marché — parfois depuis un
+# téléphone. Deux pannes de cette semaine (une migration cassée, une image qui
+# ne se construisait plus) ne se sont vues qu'à ce moment-là, alors que les
+# tests les auraient signalées avant.
+#
+# D'où l'ordre des deux étapes : on **vérifie d'abord, on déploie ensuite**.
+# Une poussée qui casse la compilation ou un test ne part jamais sur le
+# serveur, et le rapport est lisible dans l'onglet Actions plutôt que dans un
+# terminal mobile.
+name: Déploiement
+
+on:
+  push:
+    branches: [main]
+  # Permet aussi de relancer un déploiement à la main depuis l'onglet Actions,
+  # sans avoir à pousser un commit vide.
+  workflow_dispatch:
+
+concurrency:
+  # Deux poussées rapprochées ne doivent pas déployer en même temps : le
+  # second `docker compose up` couperait le premier en pleine migration.
+  group: deploiement-vps
+  cancel-in-progress: false
+
+jobs:
+  verifier:
+    name: Compiler et tester
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # Pas de version en dur : `pnpm/action-setup` lit le champ
+      # `packageManager` du package.json, seule source de vérité.
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      # Le client Prisma est nécessaire à la compilation de l'API.
+      - run: pnpm --filter @farmsim/api exec prisma generate
+
+      # `pnpm -r build` est exactement ce que lance le Dockerfile : si cette
+      # étape passe, l'image se construira. C'est la vérification qui manquait
+      # quand des fichiers de test ont fait échouer `tsc` en production.
+      - name: Construire (comme le Dockerfile)
+        run: pnpm -r build
+
+      - name: Tester les trois paquets
+        run: pnpm -r test
+
+  deployer:
+    name: Déployer sur le VPS
+    needs: verifier
+    runs-on: ubuntu-latest
+    steps:
+      # Sans les trois secrets, l'étape suivante échouerait sur une erreur de
+      # connexion incompréhensible. On le dit clairement, et on s'arrête là
+      # sans marquer le déploiement en échec : la vérification, elle, a bien
+      # eu lieu.
+      - name: Vérifier que le serveur est configuré
+        id: config
+        env:
+          HOTE: ${{ secrets.VPS_HOST }}
+        run: |
+          if [ -z "$HOTE" ]; then
+            echo "pret=non" >> "$GITHUB_OUTPUT"
+            echo "::notice::Secrets absents — ajoutez VPS_HOST, VPS_USER et VPS_SSH_KEY dans Settings › Secrets and variables › Actions. Rien n'a été déployé."
+          else
+            echo "pret=oui" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Ouvrir une session et lancer le script de déploiement
+        if: steps.config.outputs.pret == 'oui'
+        uses: appleboy/ssh-action@v1.2.0
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USER }}
+          key: ${{ secrets.VPS_SSH_KEY }}
+          port: ${{ secrets.VPS_PORT || 22 }}
+          # L'amorçage du monde peut prendre plusieurs minutes au premier
+          # démarrage suivant une migration : le script attend jusqu'à cinq
+          # minutes, la session doit lui laisser le temps.
+          command_timeout: 20m
+          script: |
+            set -euo pipefail
+            # Surtout **pas** `bash /opt/farmsim/scripts/vps-deploy.sh` : le
+            # script fait un `git reset --hard` sur le dépôt qui le contient,
+            # donc il se réécrit lui-même pendant que bash le lit ligne à
+            # ligne. On le prend depuis GitHub, comme la commande manuelle
+            # déjà éprouvée sur ce serveur.
+            sudo -n bash -c 'curl -fsSL https://raw.githubusercontent.com/Torkor29/FARMSIM/main/scripts/vps-deploy.sh | bash'
