@@ -1596,6 +1596,50 @@ export function App() {
     return cells;
   }
 
+  /** Les outils qui se tracent au doigt : ceux qui travaillent des cases. */
+  function isStrokeTool(t: Tool): boolean {
+    return (
+      isPlantTool(t) || t === "FERTILIZE" || t === "HARVEST" || t === "STUBBLE" || t === "PLOW"
+    );
+  }
+
+  function toolLabel(t: Tool): string {
+    if (isPlantTool(t)) return plantCropLabel(t);
+    if (t === "FERTILIZE") return "Engrais";
+    if (t === "PLOW") return "Labour";
+    if (t === "STUBBLE") return "Nettoyer";
+    return "Récolte";
+  }
+
+  /**
+   * Sélection retenue au début d'un tracé.
+   *
+   * Le tracé s'y **ajoute** au lieu de la remplacer : sans cela, commencer un
+   * second passage effaçait le premier, et il fallait tout refaire d'un seul
+   * geste continu.
+   */
+  const strokeBase = useRef<{ x: number; y: number }[]>([]);
+
+  /** Union de deux listes de cases, sans doublon, en gardant l'ordre. */
+  function mergeCells(
+    base: { x: number; y: number }[],
+    ajout: { x: number; y: number }[],
+  ): { x: number; y: number }[] {
+    const vus = new Set(base.map((c) => `${c.x},${c.y}`));
+    const out = [...base];
+    for (const c of ajout) {
+      // Le pinceau vaut aussi pour le tracé : à 2×2, le doigt peint quatre
+      // cases d'un coup, comme le fait un clic.
+      for (const b of brushCells(c.x, c.y)) {
+        const k = `${b.x},${b.y}`;
+        if (vus.has(k)) continue;
+        vus.add(k);
+        out.push(b);
+      }
+    }
+    return out;
+  }
+
   function toggleCell(x: number, y: number) {
     const block = brushCells(x, y);
     setSelectedCells((prev) => {
@@ -3157,7 +3201,20 @@ export function App() {
               workers={[]}
               weather={localWeather}
               strokeWork={visiting}
-              onStrokePreview={setSelectedCells}
+              // Chez soi, tout outil qui travaille des cases se trace au doigt.
+              // « Il faudrait pouvoir le glisser au lieu de devoir cliquer » :
+              // vingt-quatre touchers pour une bande de blé, c'était le geste
+              // le plus répété du jeu.
+              strokeSelect={!visiting && isStrokeTool(tool)}
+              onStrokeStart={() => {
+                strokeBase.current = selectedCells;
+              }}
+              onStrokePreview={(cells) => setSelectedCells(mergeCells(strokeBase.current, cells))}
+              onStrokeSelect={(cells) => {
+                const next = mergeCells(strokeBase.current, cells);
+                setSelectedCells(next);
+                flashToast(`${toolLabel(tool)} · ${next.length} case(s) sélectionnée(s)`);
+              }}
               onWorkStroke={(cells) => {
                 if (busy) return;
                 void runWorkOnCells(cells);

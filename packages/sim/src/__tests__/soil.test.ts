@@ -6,7 +6,9 @@ import {
   STUBBLE_COST_PER_CELL,
   applyHarvest,
   applyPlow,
+  applyRegrass,
   applyStubble,
+  canRegrass,
   canSow,
   canStubble,
   plowRequired,
@@ -165,5 +167,38 @@ describe("déchaumeur à disques", () => {
   it("ne sait ni semer ni récolter", () => {
     expect(MACHINE_DEFS.DISC_HARROW.works).not.toContain("PLANT");
     expect(MACHINE_DEFS.DISC_HARROW.works).not.toContain("HARVEST");
+  });
+});
+
+describe("remise en herbe", () => {
+  it("accepte une terre travaillée et nue", () => {
+    expect(canRegrass({ worked: true, hasCrop: false, hasStubble: false })).toBe(true);
+  });
+
+  it("refuse une case où quelque chose pousse", () => {
+    expect(canRegrass({ worked: true, hasCrop: true, hasStubble: false })).toBe(false);
+  });
+
+  it("refuse une case en chaumes — c’est un déchaumage qu’il lui faut", () => {
+    expect(canRegrass({ worked: true, hasCrop: false, hasStubble: true })).toBe(false);
+  });
+
+  it("refuse une prairie déjà en herbe : il n’y a rien à y faire", () => {
+    expect(canRegrass({ worked: false, hasCrop: false, hasStubble: false })).toBe(false);
+  });
+
+  it("remet le compteur de récoltes à zéro, comme un labour", () => {
+    const epuise: SoilState = {
+      harvestsSincePlow: MAX_HARVESTS_BEFORE_PLOW,
+      residuePasses: 2,
+      hasStubble: false,
+    };
+    expect(plowRequired(epuise)).toBe(true);
+    expect(plowRequired(applyRegrass())).toBe(false);
+  });
+
+  it("ne laisse ni chaumes ni résidus au crédit du semis suivant", () => {
+    expect(applyRegrass().hasStubble).toBe(false);
+    expect(applyRegrass().residuePasses).toBe(0);
   });
 });

@@ -111,6 +111,38 @@ export function canStubble(state: SoilState): { ok: boolean; reason?: SoilWorkRe
   return { ok: true };
 }
 
+/**
+ * Une terre travaillée peut-elle être remise en herbe ?
+ *
+ * Une parcelle labourée puis laissée là reste une bande de terre nue, et rien
+ * dans le jeu ne permettait d'y revenir : on avait beau ne plus vouloir la
+ * cultiver, elle restait marron pour toujours. C'est ce qu'un joueur a
+ * remarqué avant nous — « y'a un moyen une fois labourées que les terres
+ * redeviennent propres ? ». Il n'y en avait pas.
+ *
+ * La condition est simplement : rien ne pousse et il n'y a pas de chaumes.
+ * Avec des chaumes, c'est un déchaumage qu'il faut, pas une remise en herbe.
+ */
+export function canRegrass(state: {
+  hasStubble: boolean;
+  hasCrop: boolean;
+  worked: boolean;
+}): boolean {
+  return state.worked && !state.hasCrop && !state.hasStubble;
+}
+
+/**
+ * Le sol après une remise en herbe.
+ *
+ * Le couvert repart de zéro : ni chaumes, ni résidus à porter au crédit du
+ * prochain semis. En revanche le compteur de récoltes est remis à zéro — une
+ * jachère enherbée refait la structure du sol aussi bien qu'un labour, et
+ * c'est ce qui rend le geste utile plutôt que purement décoratif.
+ */
+export function applyRegrass(): SoilState {
+  return { harvestsSincePlow: 0, residuePasses: 0, hasStubble: false };
+}
+
 /** Le sol après un déchaumage : résidus incorporés, compteur inchangé. */
 export function applyStubble(state: SoilState): SoilState {
   return {

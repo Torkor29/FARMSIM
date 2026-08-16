@@ -412,8 +412,13 @@ function bin(part: Part, x: number, z: number, r: number, hgt: number): void {
 function buildSilo(w: number, d: number, lvl: number): Built {
   const root = new Part();
   slab(root, w - EDGE * 2, d - EDGE * 2);
-  const r = 0.3;
-  const hgt = 0.78 + lvl * 0.06;
+  // Un silo à grain doit dominer la cour : c'est la silhouette qu'on repère de
+  // loin. À 0,78 la cellule culminait à 1,14 alors que la maison
+  // d'exploitation monte à 1,24 — le silo passait *sous* le toit de la ferme,
+  // et se lisait comme deux bidons. Il la dépasse maintenant dès le premier
+  // niveau, et l'emprise reste très en deçà des deux cases (1,37 pour 2,00).
+  const r = 0.33;
+  const hgt = 1.06 + lvl * 0.07;
   // Le niveau se voit au nombre de cellules, pas à un facteur d'échelle : une
   // ferme qui grandit aligne des cellules, elle ne les gonfle pas.
   const spots: [number, number][] =

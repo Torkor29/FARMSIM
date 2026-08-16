@@ -189,8 +189,19 @@ type Props = {
    * Le clic sans glisser reste une sélection.
    */
   strokeWork?: boolean;
+  /**
+   * Chez soi : un doigt glisse et **sélectionne**, sans rien déclencher.
+   *
+   * Il fallait jusqu'ici toucher chaque case l'une après l'autre pour semer ou
+   * moissonner un carré — vingt-quatre gestes pour une bande de blé. Le tracé
+   * existait déjà, mais uniquement chez un voisin, où il travaille aussitôt.
+   */
+  strokeSelect?: boolean;
+  /** Début d'un tracé : le parent retient la sélection à laquelle l'ajouter. */
+  onStrokeStart?: () => void;
   onStrokePreview?: (cells: { x: number; y: number }[]) => void;
   onWorkStroke?: (cells: { x: number; y: number }[]) => void;
+  onStrokeSelect?: (cells: { x: number; y: number }[]) => void;
 };
 
 const SOIL = 0x9ac06a;
@@ -628,8 +639,11 @@ export function IsoFarmView({
   onCellClick,
   onCellHover,
   strokeWork = false,
+  strokeSelect = false,
+  onStrokeStart,
   onStrokePreview,
   onWorkStroke,
+  onStrokeSelect,
 }: Props) {
   const mountRef = useRef<HTMLDivElement>(null);
   const onClickRef = useRef(onCellClick);
@@ -638,10 +652,16 @@ export function IsoFarmView({
   onHoverRef.current = onCellHover;
   const strokeWorkRef = useRef(strokeWork);
   strokeWorkRef.current = strokeWork;
+  const strokeSelectRef = useRef(strokeSelect);
+  strokeSelectRef.current = strokeSelect;
+  const onStrokeStartRef = useRef(onStrokeStart);
+  onStrokeStartRef.current = onStrokeStart;
   const onStrokePreviewRef = useRef(onStrokePreview);
   onStrokePreviewRef.current = onStrokePreview;
   const onWorkStrokeRef = useRef(onWorkStroke);
   onWorkStrokeRef.current = onWorkStroke;
+  const onStrokeSelectRef = useRef(onStrokeSelect);
+  onStrokeSelectRef.current = onStrokeSelect;
   const layoutRef = useRef<(() => void) | null>(null);
   const weatherRef = useRef(weather);
   weatherRef.current = weather;
@@ -1507,6 +1527,17 @@ export function IsoFarmView({
       return Math.hypot(a.x - b.x, a.y - b.y);
     }
 
+    /** Un tracé est-il armé, quelle qu'en soit la suite ? */
+    function tracable(): boolean {
+      return strokeWorkRef.current || strokeSelectRef.current;
+    }
+
+    /** Milieu des deux doigts : c'est lui qui déplace la vue pendant un pincement. */
+    function pinchMid(): { x: number; y: number } {
+      const [a, b] = [...pointers.values()];
+      return { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
+    }
+
     function onPointerDown(ev: PointerEvent) {
       pointers.set(ev.pointerId, { x: ev.clientX, y: ev.clientY });
       renderer.domElement.setPointerCapture?.(ev.pointerId);
@@ -1514,9 +1545,13 @@ export function IsoFarmView({
       lastY = ev.clientY;
       dragged = false;
       clearStroke();
+      if (tracable()) onStrokeStartRef.current?.();
       if (pointers.size === 2) {
         pinchStart = pinchDistance();
         zoomStart = view.zoom;
+        const mid = pinchMid();
+        lastX = mid.x;
+        lastY = mid.y;
         // Un pincement n'est jamais un clic, même si les doigts bougent peu.
         dragged = true;
         clearStroke();
@@ -1535,9 +1570,19 @@ export function IsoFarmView({
       if (pointers.size >= 2) {
         ev.preventDefault();
         if (pinchStart > 0) setZoom((zoomStart * pinchDistance()) / pinchStart);
+        // Deux doigts déplacent aussi la vue, en suivant leur milieu. Sans
+        // cela, dès qu'un tracé est armé, plus rien ne cadrait la ferme : le
+        // doigt unique peignait, et le pincement ne savait que zoomer.
+        const mid = pinchMid();
+        panBy(mid.x - lastX, mid.y - lastY);
+        lastX = mid.x;
+        lastY = mid.y;
+        onHoverRef.current?.(null);
         return;
       }
 
+      const depuisX = lastX;
+      const depuisY = lastY;
       const dx = ev.clientX - lastX;
       const dy = ev.clientY - lastY;
       if (!dragged && Math.hypot(dx, dy) < DRAG_SLOP_PX) return;
@@ -1545,9 +1590,20 @@ export function IsoFarmView({
       lastX = ev.clientX;
       lastY = ev.clientY;
 
-      if (strokeWorkRef.current) {
-        setPointerFromEvent(ev);
-        addStrokeCell(raycastCell());
+      if (tracable()) {
+        // On retient les cases **traversées**, pas seulement celles où le doigt
+        // se trouve à chaque image : un glissement rapide franchit une case
+        // entière entre deux images et en sauterait la moitié. On échantillonne
+        // donc le segment tous les six pixels.
+        const rect = renderer.domElement.getBoundingClientRect();
+        const pas = Math.min(48, Math.max(1, Math.ceil(Math.hypot(dx, dy) / 6)));
+        for (let i = 1; i <= pas; i++) {
+          const px = depuisX + (dx * i) / pas;
+          const py = depuisY + (dy * i) / pas;
+          pointer.x = ((px - rect.left) / rect.width) * 2 - 1;
+          pointer.y = -((py - rect.top) / rect.height) * 2 + 1;
+          addStrokeCell(raycastCell());
+        }
         onHoverRef.current?.(null);
         return;
       }
@@ -1561,10 +1617,14 @@ export function IsoFarmView({
       renderer.domElement.releasePointerCapture?.(ev.pointerId);
       if (pointers.size < 2) pinchStart = 0;
       if (!had || pointers.size > 0) return;
-      if (strokeWorkRef.current && dragged && strokeCells.length) {
+      if (tracable() && dragged && strokeCells.length) {
         const done = strokeCells.slice();
         clearStroke();
-        onWorkStrokeRef.current?.(done);
+        // Chez un voisin, un tracé **travaille** aussitôt — c'est le contrat de
+        // la mission. Chez soi, il ne fait que **sélectionner** : la dépense
+        // reste au bouton d'action, comme pour un clic.
+        if (strokeWorkRef.current) onWorkStrokeRef.current?.(done);
+        else onStrokeSelectRef.current?.(done);
         return;
       }
       if (dragged) return;
@@ -1648,6 +1708,31 @@ export function IsoFarmView({
         depthWrite: false,
       });
 
+      /**
+       * Le côté de l'empreinte où donne la façade.
+       *
+       * Tous les modèles sont bâtis façade vers les z croissants — portes,
+       * seuils et auvents y sont posés. Après `quarters` quarts de tour, ce
+       * côté se retrouve ici, en pas de case.
+       *
+       * Sans ce repère, on lit mal l'orientation d'un modèle translucide vu de
+       * trois quarts, et on pose la grange dos à la cour sans s'en apercevoir.
+       * Un mot d'orientation dans la barre ne suffit pas : il faut le voir sur
+       * la parcelle, là où on regarde.
+       */
+      const devant = [
+        { dx: 0, dz: 1 },
+        { dx: 1, dz: 0 },
+        { dx: 0, dz: -1 },
+        { dx: -1, dz: 0 },
+      ][quarters];
+      const seuilMat = new THREE.MeshBasicMaterial({
+        color: pb.valid ? 0xffffff : col,
+        transparent: true,
+        opacity: 0.85,
+        depthWrite: false,
+      });
+
       for (let dy = 0; dy < fh; dy++) {
         for (let dx = 0; dx < fw; dx++) {
           const cx = pb.originX + dx;
@@ -1659,6 +1744,22 @@ export function IsoFarmView({
           const rim = new THREE.Mesh(new THREE.BoxGeometry(cellSize, 0.04, cellSize), edgeMat);
           rim.position.set(px, 0.26, pz);
           previewGroup.add(rim);
+          // Une case du bord avant reçoit son liseré : le seuil du bâtiment.
+          const bordAvant =
+            (devant.dx === 1 && dx === fw - 1) ||
+            (devant.dx === -1 && dx === 0) ||
+            (devant.dz === 1 && dy === fh - 1) ||
+            (devant.dz === -1 && dy === 0);
+          if (!bordAvant) continue;
+          const long = devant.dx ? 0.12 : cellSize * 0.8;
+          const large = devant.dx ? cellSize * 0.8 : 0.12;
+          const seuil = new THREE.Mesh(new THREE.BoxGeometry(long, 0.05, large), seuilMat);
+          seuil.position.set(
+            px + devant.dx * cellSize * 0.42,
+            0.3,
+            pz + devant.dz * cellSize * 0.42,
+          );
+          previewGroup.add(seuil);
         }
       }
 

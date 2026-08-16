@@ -101,7 +101,9 @@ import {
   LOST_CROP_FERTILITY_MALUS,
   plowRequired,
   canStubble,
+  canRegrass,
   applyStubble,
+  applyRegrass,
   residueBonus,
   PLOW_COST_PER_CELL_SOIL,
   PLOW_FERTILITY_GAIN,
@@ -4182,8 +4184,18 @@ app.post("/parcels/:id/stubble", async (req, res) => {
       : parcel.cells;
 
   const targets: (typeof selection)[number][] = [];
+  /**
+   * Cases à remettre en herbe : travaillées, nues, sans chaumes.
+   *
+   * Le même outil, le même bouton. Une terre labourée puis abandonnée restait
+   * marron indéfiniment, et « Nettoyer » la refusait avec « la case n'a pas de
+   * chaumes » — un refus juste, mais sans issue. Le déchaumeur sait aussi
+   * reprendre une terre nue et la remettre en herbe : c'est ce qu'il fait ici.
+   */
+  const enherber: (typeof selection)[number][] = [];
   let blockedByPlow = 0;
   for (const cell of selection) {
+    if (cell.kind !== "EMPTY") continue;
     const verdict = canStubble({
       harvestsSincePlow: cell.harvestsSincePlow,
       residuePasses: cell.residuePasses,
@@ -4192,11 +4204,24 @@ app.post("/parcels/:id/stubble", async (req, res) => {
     if (verdict.ok) {
       if (cell.baleCount > 0) continue;
       targets.push(cell);
+      continue;
     }
-    else if (verdict.reason === "PLOW_REQUIRED") blockedByPlow += 1;
+    if (verdict.reason === "PLOW_REQUIRED") {
+      blockedByPlow += 1;
+      continue;
+    }
+    if (
+      canRegrass({
+        hasStubble: cell.hasStubble,
+        hasCrop: Boolean(cell.crop),
+        worked: cell.fieldStage !== "EMPTY",
+      })
+    ) {
+      enherber.push(cell);
+    }
   }
 
-  if (!targets.length) {
+  if (!targets.length && !enherber.length) {
     res.status(409).json({
       error: blockedByPlow
         ? SOIL_WORK_REFUSAL_LABELS.PLOW_REQUIRED
@@ -4206,17 +4231,33 @@ app.post("/parcels/:id/stubble", async (req, res) => {
     return;
   }
 
-  const cost = STUBBLE_COST_PER_CELL * targets.length;
+  const cost = STUBBLE_COST_PER_CELL * (targets.length + enherber.length);
   const user = await prisma.user.findUnique({ where: { id: body.data.userId } });
   if (!user || (access.charge && user.crd < cost)) {
     res.status(402).json({ error: `TRN insuffisants — ${cost} requis` });
     return;
   }
 
-  const worked = targets.map((c) => ({ x: c.x, y: c.y }));
+  const worked = [...targets, ...enherber].map((c) => ({ x: c.x, y: c.y }));
   const { wear, labor, gain } = await prisma.$transaction(async (tx) => {
     if (access.charge) {
       await debit(tx, user.id, cost);
+    }
+    for (const cell of enherber) {
+      const next = applyRegrass();
+      await tx.parcelCell.update({
+        where: { id: cell.id },
+        data: {
+          fieldStage: "EMPTY",
+          hasStubble: false,
+          strawTons: 0,
+          harvestsSincePlow: next.harvestsSincePlow,
+          residuePasses: next.residuePasses,
+          // L'herbe reprend : la case n'est plus un lit de semence propre.
+          weedsControlled: false,
+          directSeeded: false,
+        },
+      });
     }
     for (const cell of targets) {
       const next = applyStubble({
@@ -4236,10 +4277,12 @@ app.post("/parcels/:id/stubble", async (req, res) => {
         },
       });
     }
+    // Remettre en herbe use la machine et paie l'expérience autant que
+    // déchaumer : c'est le même passage d'outil sur la même surface.
     const wear = await applyWearToMachine(tx, {
       machine: picked.machine,
       def: picked.def,
-      cells: targets.length,
+      cells: worked.length,
       work: "STUBBLE",
       specialization: user.specialization,
     });
@@ -4250,8 +4293,8 @@ app.post("/parcels/:id/stubble", async (req, res) => {
       tx,
       user.id,
       "STUBBLE",
-      { cells: targets.length },
-      { cellsStubbled: targets.length },
+      { cells: worked.length },
+      { cellsStubbled: worked.length },
     );
     return { wear, labor, gain };
   });
@@ -4259,9 +4302,12 @@ app.post("/parcels/:id/stubble", async (req, res) => {
   await touchFieldPresence(user.id, parcel.id, worked[worked.length - 1]);
   res.json({
     stubbled: targets.length,
+    regrassed: enherber.length,
     blockedByPlow,
     cost: access.charge ? cost : 0,
-    nextBonus: residueBonus(targets[0].residuePasses + 1),
+    // Sans déchaumage, il n'y a pas de résidus à porter au crédit du semis
+    // suivant : annoncer un bonus serait mentir.
+    nextBonus: targets.length ? residueBonus(targets[0].residuePasses + 1) : null,
     machine: { id: picked.machine.id, type: picked.machine.type, ...wear },
     labor,
     gain,
