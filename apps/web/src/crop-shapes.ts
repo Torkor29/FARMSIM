@@ -26,10 +26,23 @@ import { markShared } from "./three-cleanup";
 export type CropShape = "WHEAT" | "BARLEY" | "MAIZE" | "PEA" | "RAPE" | "GRASS";
 
 /** Couleur des épis, gousses, fleurs et panicules — le reste prend la teinte de la case. */
+/**
+ * Couleur des épis, gousses, fleurs et panicules — le reste prend la teinte
+ * de la case.
+ *
+ * Le blé, l'orge et le maïs tenaient dans **huit degrés de teinte** (43°, 47°,
+ * 51°) : sur une parcelle, trois beiges qu'on ne pouvait pas nommer. Ils
+ * s'écartent maintenant assez pour se reconnaître d'un coup d'œil, sans
+ * quitter le nuancier chaud de la moisson :
+ *
+ *   blé    doré franc      · l'épi mûr classique
+ *   orge   blond très pâle · presque blanc, et sa longue barbe le signe
+ *   maïs   panicule fauve  · sur une plante restée verte
+ */
 export const CROP_ACCENT: Record<CropShape, number> = {
-  WHEAT: 0xe3bf62,
-  BARLEY: 0xdfcb86,
-  MAIZE: 0xe7d98a,
+  WHEAT: 0xdba62c,
+  BARLEY: 0xf2e4b4,
+  MAIZE: 0xb8823a,
   PEA: 0x9fc65a,
   RAPE: 0xf5d417,
   GRASS: 0x8fbf5c,

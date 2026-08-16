@@ -238,10 +238,20 @@ type CropLook = {
 };
 
 const CROP_LOOK: Record<string, CropLook> = {
-  WHEAT: { grow: 0x7fbc4e, ready: 0xe8c65e, fullH: 0.7 },
-  MAIZE: { grow: 0x5aa63a, ready: 0xe8c65e, fullH: 0.98 },
-  PEA: { grow: 0x6bb84a, ready: 0xc6d45a, fullH: 0.55 },
-  BARLEY: { grow: 0x8cba4a, ready: 0xe6d27a, fullH: 0.58 },
+  // Six cultures, six couleurs qu'on doit pouvoir nommer de loin.
+  //
+  // Le blé et le maïs portaient **le même** `ready` (0xe8c65e), et l'orge n'en
+  // était qu'à quatre degrés de teinte : trois beiges indiscernables sur une
+  // parcelle. Ils s'écartent maintenant franchement — le blé va au doré chaud,
+  // l'orge au blond pâle, et le maïs **reste vert**, ce qu'il est réellement à
+  // la récolte : c'est la plante entière qu'on coupe, pas un épi mûr.
+  //
+  // Les jeunes pousses se séparent aussi : elles partaient toutes du même vert
+  // à huit degrés près, et un champ semé ne disait pas ce qu'il portait.
+  WHEAT: { grow: 0x8fc457, ready: 0xdcae3f, fullH: 0.7 },
+  MAIZE: { grow: 0x3f8f2c, ready: 0x74a83a, fullH: 0.98 },
+  PEA: { grow: 0x7cc86a, ready: 0xb9cf6a, fullH: 0.55 },
+  BARLEY: { grow: 0xa8c96a, ready: 0xefdca4, fullH: 0.58 },
   RAPE: { grow: 0x5aaa38, ready: 0xf2d429, fullH: 0.72 },
   GRASS: { grow: 0x4a9a36, ready: 0x5aad42, fullH: 0.38 },
 };
@@ -342,14 +352,30 @@ function makeFurrowMap(): THREE.CanvasTexture {
 function cropColor(c: IsoCell, sim?: IsoSim): number {
   if (c.kind !== "CROP") return SOIL_COLORS[soilLook(c)];
   const look = lookOf(c.crop);
-  // L'herbe reste verte à maturité : c'est du fourrage, pas un épi doré.
-  if (c.crop !== "GRASS" && sim?.sim.ripeness) return RIPENESS_COLORS[sim.sim.ripeness.stage];
   if (c.fieldStage === "SPOILED") return RIPENESS_COLORS.LOST;
-  if (c.fieldStage === "READY" || sim?.sim.ready) return look.ready;
-  const p = sim?.sim.progress ?? 0.3;
-  const g = new THREE.Color(look.grow);
-  const r = new THREE.Color(look.ready);
-  return g.lerp(r, Math.min(1, p)).getHex();
+
+  // La maturité **teinte** l'espèce, elle ne la remplace plus.
+  //
+  // Un champ mûr prenait `RIPENESS_COLORS[stage]` tel quel : la même couleur
+  // pour les six cultures, quelle que soit la plante. Blé, orge et maïs
+  // devenaient rigoureusement identiques au moment précis où le joueur a le
+  // plus besoin de les distinguer — celui de récolter.
+  //
+  // Le stade dit maintenant l'**état** — à point, qui passe, gâté — en tirant
+  // la couleur d'espèce vers la sienne, d'autant plus fort qu'on s'éloigne du
+  // point idéal. À `PEAK`, la plante garde sa couleur ; perdue, elle vire au
+  // gris-brun quelle qu'elle soit.
+  const etat = sim?.sim.ripeness?.stage;
+  const base = new THREE.Color(
+    c.fieldStage === "READY" || sim?.sim.ready
+      ? look.ready
+      : new THREE.Color(look.grow)
+          .lerp(new THREE.Color(look.ready), Math.min(1, sim?.sim.progress ?? 0.3))
+          .getHex(),
+  );
+  if (!etat || etat === "PEAK") return base.getHex();
+  const vers = { DECLINING: 0.4, POOR: 0.68, LOST: 0.9 }[etat] ?? 0;
+  return base.lerp(new THREE.Color(RIPENESS_COLORS[etat]), vers).getHex();
 }
 
 
