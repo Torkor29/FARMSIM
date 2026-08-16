@@ -1519,7 +1519,9 @@ html.playing .build-confirm { position: fixed; }
   gap: 0.65rem;
   width: 100%;
   text-align: left;
-  padding: 0.55rem 0.8rem;
+  /* Soixante-douze pixels en permanence pour un conseil : c'est cher payé
+     quand la ferme se bat pour la moitié de l'écran. */
+  padding: 0.4rem 0.7rem;
   border-radius: 16px;
   border: 1px solid var(--glass-border);
   background: var(--bar);
@@ -1528,8 +1530,8 @@ html.playing .build-confirm { position: fixed; }
 }
 .quest-chip-mark {
   flex: none;
-  width: 2rem;
-  height: 2rem;
+  width: 1.7rem;
+  height: 1.7rem;
   display: grid;
   place-items: center;
   border-radius: 10px;
@@ -1537,10 +1539,19 @@ html.playing .build-confirm { position: fixed; }
   color: #3a2c07;
   font-weight: 800;
 }
+/* Titre au-dessus, conseil en dessous : soixante-sept pixels permanents.
+   Sur une seule ligne — « À faire · Semez 4 cases… » — la puce en fait
+   quarante-deux, et dit exactement la même chose. */
 .quest-chip-body {
-  display: grid;
-  gap: 0.05rem;
+  display: flex;
+  align-items: baseline;
+  gap: 0.4rem;
   min-width: 0;
+}
+.quest-chip-body strong::after {
+  content: " ·";
+  color: var(--muted);
+  font-weight: 600;
 }
 .quest-chip-body strong {
   font-size: 0.78rem;
@@ -1550,21 +1561,29 @@ html.playing .build-confirm { position: fixed; }
    coupait l'information au moment de la donner. Deux lignes suffisent à la
    dire en entier, et la hauteur reste stable. */
 .quest-chip-body span {
-  font-size: 0.82rem;
+  font-size: 0.8rem;
   font-weight: 700;
   color: var(--ink);
-  line-height: 1.25;
-  display: -webkit-box;
-  -webkit-line-clamp: 2;
-  line-clamp: 2;
-  -webkit-box-orient: vertical;
+  line-height: 1.3;
+  min-width: 0;
+  /* Une ligne, et le débordement fondu plutôt que coupé net par une ellipse :
+     on lit le début de la phrase, on devine qu'elle continue, et le guide
+     l'affiche en entier d'une tape. */
+  white-space: nowrap;
   overflow: hidden;
+  -webkit-mask-image: linear-gradient(90deg, #000 calc(100% - 2rem), transparent);
+  mask-image: linear-gradient(90deg, #000 calc(100% - 2rem), transparent);
 }
 
+/* Deux rangées empilées — les options, puis le pinceau et l'action — pour
+   cent quinze pixels. Elles tiennent sur une seule : les options défilent
+   dans la colonne souple, l'action reste calée à droite, sous le pouce. */
 .dock-tray {
   display: grid;
-  gap: 0.35rem;
-  padding: 0.5rem 0.55rem;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 0.35rem 0.5rem;
+  padding: 0.4rem 0.5rem;
   border-radius: 16px;
   background: var(--bar);
   border: 1px solid var(--glass-border);
@@ -1573,6 +1592,7 @@ html.playing .build-confirm { position: fixed; }
 }
 .dock-tray .stroke-hint,
 .dock-tray .dock-hint {
+  grid-column: 1 / -1;
   margin: 0;
   width: 100%;
   font-size: 0.75rem;
@@ -1580,12 +1600,34 @@ html.playing .build-confirm { position: fixed; }
   color: var(--ink-soft);
   line-height: 1.3;
 }
+/* —— Plateau d'options ——
+   Les six cultures passaient à la ligne et le plateau occupait cent
+   soixante pixels : la ferme tombait à 52 % de l'écran dès qu'on choisissait
+   « Semer ». Une seule rangée qui défile, avec un voile à droite pour dire
+   qu'il y a une suite — la hauteur devient constante quel que soit le nombre
+   d'options, et les libellés restent entiers (charte §7.7). */
 .dock-chips {
   display: flex;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
   gap: 0.35rem;
+  overflow-x: auto;
+  scrollbar-width: none;
+  overscroll-behavior-x: contain;
+  padding-bottom: 0.1rem;
+  -webkit-mask-image: linear-gradient(90deg, #000 calc(100% - 1.6rem), transparent);
+  mask-image: linear-gradient(90deg, #000 calc(100% - 1.6rem), transparent);
 }
-.dock-chips-end { justify-content: flex-end; }
+.dock-chips::-webkit-scrollbar { display: none; }
+.dock-chips > * { flex: 0 0 auto; }
+/* La rangée d'action ne défile pas : « Faire ×14 » doit rester sous le doigt. */
+.dock-chips-end {
+  grid-column: 2;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  overflow: visible;
+  -webkit-mask-image: none;
+  mask-image: none;
+}
 .chip {
   min-height: 40px;
   padding: 0.35rem 0.75rem;

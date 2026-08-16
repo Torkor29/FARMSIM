@@ -176,8 +176,9 @@ export function FieldDock({
             <p className="stroke-hint">Glissez sur le champ · deux doigts pour bouger</p>
           )}
 
-          {plant && (
-            <div className="dock-chips">
+          <div className="dock-chips">
+            {plant && (
+              <>
               {(
                 [
                   ["PLANT_WHEAT", "Blé"],
@@ -205,13 +206,13 @@ export function FieldDock({
                 )} % de rendement.`}
                 onClick={onDirectSeed}
               >
-                Semis direct
-              </button>
-            </div>
-          )}
+                  Semis direct
+                </button>
+              </>
+            )}
 
-          {harvest && (
-            <div className="dock-chips">
+            {harvest && (
+              <>
               <button
                 type="button"
                 className={`chip ${tool === "HARVEST" ? "on" : ""}`}
@@ -225,13 +226,13 @@ export function FieldDock({
                 title="Maïs plante entière, plus tôt, plus de tonnage"
                 onClick={() => onTool("SILAGE")}
               >
-                Ensilage{silageReadyCount ? ` ×${silageReadyCount}` : ""}
-              </button>
-            </div>
-          )}
+                  Ensilage{silageReadyCount ? ` ×${silageReadyCount}` : ""}
+                </button>
+              </>
+            )}
 
-          {soil && (
-            <div className="dock-chips">
+            {soil && (
+              <>
               <button
                 type="button"
                 className={`chip ${tool === "STUBBLE" ? "on" : ""}`}
@@ -272,12 +273,14 @@ export function FieldDock({
                 className={`chip ${tool === "COLLECT" ? "on" : ""}`}
                 onClick={() => onTool("COLLECT")}
               >
-                Ramasser{baleCount ? ` ×${baleCount}` : ""}
-              </button>
-            </div>
-          )}
+                  Ramasser{baleCount ? ` ×${baleCount}` : ""}
+                </button>
+              </>
+            )}
 
-          <div className="dock-chips dock-chips-end">
+            {/* Le pinceau termine la même rangée : sur sa propre ligne il
+                coûtait une deuxième rangée, calé à droite avec l'action il
+                ne laissait qu'un tiers de largeur aux cultures. */}
             {([1, 2, 3] as const).map((n) => (
               <button
                 key={n}
@@ -289,6 +292,9 @@ export function FieldDock({
                 {n}×{n}
               </button>
             ))}
+          </div>
+
+          <div className="dock-chips dock-chips-end">
             {work && (
               <button
                 type="button"
@@ -302,23 +308,24 @@ export function FieldDock({
               </button>
             )}
             {contractor && !visiting && (
-              <>
-                <p className="dock-hint">
-                  Un autre joueur le fera mieux. Si personne ne vient, on envoie quelqu’un.
-                </p>
-                {tool === "HARVEST" && !mowSelected && !contractor.hasMachine && (
-                  <p className="dock-hint">Demandez de l’aide, ou achetez la machine.</p>
-                )}
-                <button
-                  type="button"
-                  className="chip eta"
-                  disabled={busy || selectedCount === 0 || crd < contractor.cost}
-                  title={`Quelqu’un le fait pour vous — ${contractor.cost} TRN`}
-                  onClick={onContractor}
-                >
-                  Payer quelqu’un · {contractor.cost} TRN
-                </button>
-              </>
+              /* Deux lignes de prose au-dessus de deux gros boutons, en
+                 permanence : sur un téléphone, ce seul bloc coûtait deux
+                 cents pixels et poussait la ferme sous le tiers de l'écran.
+                 L'explication passe dans l'infobulle du bouton — elle reste
+                 accessible, elle ne mange plus la parcelle. */
+              <button
+                type="button"
+                className="chip eta"
+                disabled={busy || selectedCount === 0 || crd < contractor.cost}
+                title={
+                  tool === "HARVEST" && !mowSelected && !contractor.hasMachine
+                    ? `Vous n’avez pas la machine : quelqu’un le fait pour vous — ${contractor.cost} TRN`
+                    : `Quelqu’un le fait pour vous, tout de suite — ${contractor.cost} TRN`
+                }
+                onClick={onContractor}
+              >
+                Payer · {contractor.cost} TRN
+              </button>
             )}
             {laborQuote != null && !visiting && onPublishLabor && (
               <button

@@ -3230,7 +3230,10 @@ export function App() {
             trente pixels de haut, à toutes les tailles, pour une information
             nulle. Le bandeau n'apparaît que quand quelqu'un est vraiment là —
             là, il vaut la place qu'il prend. */}
-        {onlinePlayers.some((p) => p.online) && (
+        {/* Se compter soi-même donnait « Mes est connecté » : une rangée
+            permanente de quarante pixels pour apprendre au joueur qu'il est
+            là. Le bandeau ne parle que des **autres**. */}
+        {onlinePlayers.some((p) => p.online && p.id !== player.id) && (
           <button
             type="button"
             className="who-now-bar"
@@ -3241,10 +3244,12 @@ export function App() {
           >
             <i className="who-dot on" aria-hidden="true" />
             {onlinePlayers
-              .filter((p) => p.online)
+              .filter((p) => p.online && p.id !== player.id)
               .map((p) => p.name)
               .join(", ")}{" "}
-            {onlinePlayers.filter((p) => p.online).length > 1 ? "sont connectés" : "est connecté"}
+            {onlinePlayers.filter((p) => p.online && p.id !== player.id).length > 1
+              ? "sont connectés"
+              : "est connecté"}
           </button>
         )}
         {(msg || err) && (
