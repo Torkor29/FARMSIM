@@ -8,15 +8,13 @@
  * @see docs/research/52_BOUCLES_LIEES.md
  */
 
+import { SPECIES } from "./species.js";
 import type { AnimalKind } from "./livestock.js";
 
 /** Tonnes de fumier par bête et par cycle `[GD]` */
-export const MANURE_PER_ANIMAL: Record<AnimalKind, number> = {
-  COW: 0.025,
-  PIG: 0.02,
-  SHEEP: 0.012,
-  HEN: 0.003,
-};
+export const MANURE_PER_ANIMAL: Record<AnimalKind, number> = Object.fromEntries(
+  Object.values(SPECIES).map((e) => [e.kind, e.manureTons]),
+) as Record<AnimalKind, number>;
 
 /**
  * La fosse tient environ cinq cycles d'un bâtiment plein.

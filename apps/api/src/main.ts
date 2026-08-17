@@ -5376,6 +5376,24 @@ async function settleHerd(
   });
   size = Math.max(0, size - toll.deaths);
 
+  // Plus une bête : le lot n'existe plus. Sans cela la ligne survivait à
+  // zéro, et le panneau continuait d'en parler — litière à refaire, traite
+  // possible — pour un troupeau mort. Seul l'abattage nettoyait jusqu'ici.
+  if (size <= 0) {
+    await prisma.herd.delete({ where: { id: herd.id } });
+    return {
+      happiness,
+      feedStock,
+      size: 0,
+      gestatingSince: null,
+      born,
+      died: toll.deaths,
+      avgAgeMs,
+      manureTons: pit.tons,
+      beddingTons,
+    };
+  }
+
   await prisma.herd.update({
     where: { id: herd.id },
     data: {

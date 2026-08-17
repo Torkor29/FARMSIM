@@ -24,6 +24,7 @@
  * @see docs/research/49_TRIANGLE_METIERS.md
  */
 
+import { SPECIES } from "./species.js";
 import type { AnimalKind } from "./livestock.js";
 
 /**
@@ -35,12 +36,9 @@ import type { AnimalKind } from "./livestock.js";
  * surface couchée, pas le poids vif — d'où une poule à peine plus économe
  * qu'un mouton rapportée à la bête.
  */
-export const BEDDING_PER_ANIMAL: Record<AnimalKind, number> = {
-  COW: 0.018,
-  PIG: 0.012,
-  SHEEP: 0.008,
-  HEN: 0.002,
-};
+export const BEDDING_PER_ANIMAL: Record<AnimalKind, number> = Object.fromEntries(
+  Object.values(SPECIES).map((e) => [e.kind, e.beddingTons]),
+) as Record<AnimalKind, number>;
 
 /**
  * Part de paille économisée quand les bêtes sont au pré `[GD]`.

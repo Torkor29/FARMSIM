@@ -151,7 +151,17 @@ export function LivestockPanel({
 
       {barns.map((barn) => {
         const def = BUILDING_DEFS[barn.type];
-        const herd = barn.herd;
+        /**
+         * Un lot vidé n'est plus un troupeau.
+         *
+         * Le panneau se contentait de l'existence de la ligne, sans regarder
+         * l'effectif. Un troupeau décimé par la faim n'étant supprimé que par
+         * l'abattage, on se retrouvait avec une étable à zéro bête qui
+         * réclamait de la litière — « les bêtes dorment sur le béton » — et
+         * offrait de traire. Le filet est ici ; la cause est corrigée côté
+         * serveur, qui supprime désormais la ligne à la dernière perte.
+         */
+        const herd = barn.herd && barn.herd.size > 0 ? barn.herd : null;
         const pct = herd ? Math.round(herd.happiness * 100) : 0;
         const outside = herd?.grazingUntil && herd.grazingUntil > Date.now();
         const room = barn.capacity - (herd?.size ?? 0);

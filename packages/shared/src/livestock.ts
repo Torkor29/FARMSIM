@@ -27,6 +27,20 @@
  */
 export type WeatherState = "CLEAR" | "CLOUDY" | "RAIN" | "STORM" | "SNOW";
 
+import { SPECIES } from "./species.js";
+
+/**
+ * Projette le profil de chaque espèce sur une table par espèce.
+ *
+ * `species.ts` n'importe de ce module que le **type** `AnimalKind`, effacé à
+ * la compilation : il n'y a donc pas de cycle au runtime.
+ */
+function mapSpecies<T>(pick: (s: (typeof SPECIES)[AnimalKind]) => T): Record<AnimalKind, T> {
+  const out = {} as Record<AnimalKind, T>;
+  for (const profil of Object.values(SPECIES)) out[profil.kind] = pick(profil);
+  return out;
+}
+
 /** Recopié de `index.js` (`MAX_BUILDING_LEVEL`) — à garder synchronisé. */
 export const MAX_BARN_LEVEL = 5;
 
@@ -89,38 +103,33 @@ function round1(value: number): number {
 
 export type AnimalKind = "COW" | "PIG" | "HEN" | "SHEEP";
 
+/**
+ * Tables par espèce — dérivées de `SPECIES`.
+ *
+ * Elles restent exportées parce que tout le jeu les appelle, mais elles ne
+ * sont plus une source de vérité : ajouter une espèce se fait dans
+ * `species.ts`, et rien d'autre n'est à retrouver.
+ */
+
 /** Dessin isométrique de la bête, pour l’UI — même principe que les bâtiments. */
-export const ANIMAL_ART: Record<AnimalKind, string> = {
-  COW: "/assets/animals/cow.svg",
-  PIG: "/assets/animals/pig.svg",
-  HEN: "/assets/animals/hen.svg",
-  SHEEP: "/assets/animals/sheep.svg",
-};
+export const ANIMAL_ART: Record<AnimalKind, string> = mapSpecies((s) => s.art);
 
 /** Pose tête au sol (pré), quand on a un second dessin. */
-export const ANIMAL_GRAZE_ART: Partial<Record<AnimalKind, string>> = {
-  COW: "/assets/animals/cow-graze.svg",
-};
+export const ANIMAL_GRAZE_ART: Partial<Record<AnimalKind, string>> = Object.fromEntries(
+  Object.values(SPECIES)
+    .filter((s) => s.grazeArt)
+    .map((s) => [s.kind, s.grazeArt!]),
+) as Partial<Record<AnimalKind, string>>;
 
 /** Éleveur débutant : quelques vaches, pas une étable vide. */
 export const STARTER_COW_COUNT = 3;
 /** Foin offert à l’installation, pour tenir le premier cycle. */
 export const STARTER_HAY_TONS = 2;
 
-export const ANIMAL_PRICE: Record<AnimalKind, number> = {
-  COW: 420,
-  PIG: 420,
-  HEN: 28,
-  SHEEP: 160,
-};
+export const ANIMAL_PRICE: Record<AnimalKind, number> = mapSpecies((s) => s.price);
 
 /** Ration de base par bête et par cycle, en kg `[GD]` */
-export const FEED_BASE: Record<AnimalKind, number> = {
-  COW: 14,
-  PIG: 14,
-  HEN: 2,
-  SHEEP: 8,
-};
+export const FEED_BASE: Record<AnimalKind, number> = mapSpecies((s) => s.feedKg);
 
 /**
  * Le nom de l'espèce, au pluriel.
@@ -128,12 +137,7 @@ export const FEED_BASE: Record<AnimalKind, number> = {
  * Il n'existait nulle part : l'interface disait « bêtes » partout, y compris
  * là où on achète. « Acheter des vaches » se comprend sans rien lire d'autre.
  */
-export const ANIMAL_PLURAL: Record<AnimalKind, string> = {
-  COW: "vaches",
-  PIG: "cochons",
-  HEN: "poules",
-  SHEEP: "moutons",
-};
+export const ANIMAL_PLURAL: Record<AnimalKind, string> = mapSpecies((s) => s.plural);
 
 export function kindForBarn(type: string): AnimalKind | null {
   if (type === "CATTLE_BARN") return "COW";
@@ -575,9 +579,7 @@ export const MEAT_BARN_LEVEL_STEP = 0.03;
  * stocké : la jauge *est* l'historique.
  */
 export function meatBaseKg(kind: AnimalKind = "COW"): number {
-  if (kind === "HEN") return 2.2;
-  if (kind === "SHEEP") return 42;
-  return MEAT_BASE_KG;
+  return SPECIES[kind].meatKg;
 }
 
 export function meatYield(input: {
