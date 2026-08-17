@@ -351,6 +351,38 @@ const PORT = Number(process.env.PORT ?? 3001);
  */
 const DEV_TOOLS = /^(1|true|yes|on)$/i.test(process.env.FARMSIM_DEV_TOOLS ?? "");
 
+/**
+ * Comptes autorisés à utiliser les outils de test **en production**.
+ *
+ * `FARMSIM_DEV_TOOLS=1` ouvre la triche à quiconque est connecté : c'est
+ * acceptable sur une installation locale, jamais sur un jeu public. Or on a
+ * besoin, sur le serveur en service, d'un compte capable de tout éprouver —
+ * une trésorerie illimitée, un niveau donné, des cultures mûres.
+ *
+ * D'où cette liste nominative : `FARMSIM_TESTERS=vous@exemple.fr`. Les outils
+ * restent introuvables (404) pour tous les autres, exactement comme avant.
+ */
+const TESTEURS = new Set(
+  (process.env.FARMSIM_TESTERS ?? "")
+    .split(",")
+    .map((e) => e.trim().toLowerCase())
+    .filter(Boolean),
+);
+
+/**
+ * L'appelant a-t-il droit aux outils de test ?
+ *
+ * Renvoie le compte, ou `null`. On répond volontairement 404 plutôt que 403
+ * aux autres : une route de triche ne doit pas même signaler qu'elle existe.
+ */
+async function testeurAutorisé(req: express.Request) {
+  const auth = await userFromAuthHeader(req);
+  if (!auth) return null;
+  if (DEV_TOOLS) return auth;
+  const email = auth.user.email?.toLowerCase();
+  return email && TESTEURS.has(email) ? auth : null;
+}
+
 async function createParcelGrid(parcelId: string, gridW: number, gridH: number) {
   const data = [];
   for (let y = 0; y < gridH; y++) {
@@ -2001,8 +2033,14 @@ async function settleDueFutures() {
 /* Outils de test — inertes sans FARMSIM_DEV_TOOLS                     */
 /* ------------------------------------------------------------------ */
 
-/** L'écran ne montre le panneau de test que si le serveur l'autorise. */
-app.get("/dev/status", (_req, res) => res.json({ enabled: DEV_TOOLS }));
+/**
+ * L'écran ne montre le panneau de test que si le serveur l'autorise **pour ce
+ * compte-là**. Un joueur ordinaire reçoit `false` sur le jeu public, même
+ * quand un compte de test existe.
+ */
+app.get("/dev/status", async (req, res) => {
+  res.json({ enabled: Boolean(await testeurAutorisé(req)) });
+});
 
 /**
  * Accorde ce qu'il faut pour éprouver une mécanique sans y passer l'après-midi.
@@ -2012,13 +2050,11 @@ app.get("/dev/status", (_req, res) => res.json({ enabled: DEV_TOOLS }));
  * frappe ne rende les cours du marché absurdes pour tout le monde.
  */
 app.post("/dev/grant", async (req, res) => {
-  if (!DEV_TOOLS) {
-    res.status(404).json({ error: "Outils de test désactivés" });
-    return;
-  }
-  const auth = await userFromAuthHeader(req);
+  const auth = await testeurAutorisé(req);
   if (!auth) {
-    res.status(401).json({ error: "Session invalide" });
+    // 404 et non 403 : une route de triche ne doit pas signaler qu'elle
+    // existe à celui qui n'y a pas droit.
+    res.status(404).json({ error: "Route inconnue" });
     return;
   }
   const body = z
@@ -2171,13 +2207,9 @@ app.get("/sim/status", (_req, res) => {
  * bout d'un `curl`. C'est un outil de mise au point, il est traité comme tel.
  */
 app.post("/sim/tick", async (req, res) => {
-  if (!DEV_TOOLS) {
-    res.status(404).json({ error: "Route inconnue" });
-    return;
-  }
-  const auth = await userFromAuthHeader(req);
+  const auth = await testeurAutorisé(req);
   if (!auth) {
-    res.status(401).json({ error: "Session requise" });
+    res.status(404).json({ error: "Route inconnue" });
     return;
   }
   const result = await runWorldTick();
