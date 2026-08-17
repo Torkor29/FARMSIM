@@ -122,6 +122,19 @@ export const FEED_BASE: Record<AnimalKind, number> = {
   SHEEP: 8,
 };
 
+/**
+ * Le nom de l'espèce, au pluriel.
+ *
+ * Il n'existait nulle part : l'interface disait « bêtes » partout, y compris
+ * là où on achète. « Acheter des vaches » se comprend sans rien lire d'autre.
+ */
+export const ANIMAL_PLURAL: Record<AnimalKind, string> = {
+  COW: "vaches",
+  PIG: "cochons",
+  HEN: "poules",
+  SHEEP: "moutons",
+};
+
 export function kindForBarn(type: string): AnimalKind | null {
   if (type === "CATTLE_BARN") return "COW";
   if (type === "PIGSTY") return "PIG";

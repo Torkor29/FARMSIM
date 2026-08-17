@@ -1335,6 +1335,61 @@ button.ghost {
 .paddock-note.none { background: var(--gold-100); color: var(--gold-700); }
 .barn-actions { display: flex; flex-wrap: wrap; gap: 0.35rem; }
 .barn-actions button { font-size: 0.74rem; padding: 0.35rem 0.6rem; }
+
+/* —— Achat de bêtes ——
+   C'est par là que démarre tout élevage. C'était un unique bouton « +1 bête »
+   noyé parmi Nourrir, Traire et Vendre, et grisé sans un mot dès qu'on n'avait
+   pas le compte. On lui donne son bloc, son compteur et sa raison de refus. */
+.herd-buy {
+  display: grid;
+  gap: 0.4rem;
+  padding: 0.55rem 0.6rem;
+  border-radius: var(--r-md);
+  border: 1px solid var(--gold-300, #e6c96b);
+  background: color-mix(in srgb, var(--gold-100, #fdf3d4) 55%, transparent);
+}
+.herd-buy-label { display: grid; gap: 0.1rem; font-size: 0.84rem; font-weight: 800; color: var(--teal-700); }
+.herd-buy-label em { font-style: normal; font-size: 0.72rem; font-weight: 600; color: var(--muted); }
+.herd-buy-row { display: flex; flex-wrap: wrap; align-items: center; gap: 0.4rem; }
+.herd-stepper {
+  display: flex;
+  align-items: center;
+  gap: 0.15rem;
+  flex: none;
+  border-radius: var(--r-pill);
+  border: 1px solid var(--line);
+  background: var(--paper);
+  padding: 0.1rem;
+}
+/* Quarante-quatre pixels : un compteur qu'on manque au doigt ne sert à rien. */
+.herd-stepper button {
+  min-width: 40px;
+  min-height: 40px;
+  padding: 0;
+  border: none;
+  background: transparent;
+  font-size: 1.1rem;
+  font-weight: 800;
+  color: var(--teal-700);
+}
+.herd-stepper b {
+  min-width: 2ch;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+  font-size: 1rem;
+}
+.herd-buy-go {
+  flex: 1 1 9rem;
+  min-height: 40px;
+  border-radius: var(--r-pill);
+  border: none;
+  background: linear-gradient(180deg, var(--gold-300), var(--gold-500));
+  color: #3a2c07;
+  font-size: 0.88rem;
+  font-weight: 800;
+}
+.herd-buy-go b { font-variant-numeric: tabular-nums; }
+.herd-buy-why { margin: 0; font-size: 0.76rem; font-weight: 700; color: var(--danger, #b4462f); }
 .accent-btn {
   background: linear-gradient(180deg, var(--teal-300), var(--teal-500));
   border-color: transparent;
@@ -2311,7 +2366,11 @@ html.playing .build-confirm { position: fixed; }
     bottom: calc(11.2rem + env(safe-area-inset-bottom));
     top: auto;
     width: auto;
-    max-height: min(52dvh, 460px);
+    /* 52 % laissaient une fiche d'étable coupée en deux : l'achat de bêtes,
+       qui est le premier geste d'un élevage, naissait sous le pli. Le tiroir
+       réserve déjà 11,2 rem sous lui pour le dock et la barre d'action ; à
+       64 % il reste de la marge au-dessus pour le bandeau. */
+    max-height: min(64dvh, 560px);
     overflow-y: auto;
     -webkit-overflow-scrolling: touch;
     overscroll-behavior: contain;

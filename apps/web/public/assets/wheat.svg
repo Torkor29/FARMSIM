@@ -1,11 +1,11 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" fill="none" aria-hidden="true">
-  <!-- FARMSIM CC0 placeholder  épis de blé -->
+  <!-- FARMSIM CC0 placeholder  Ã©pis de blÃ© -->
   <ellipse cx="32" cy="58" rx="10" ry="3" fill="#1a2a1a" opacity="0.3"/>
   <!-- tiges -->
   <path d="M28 58 Q27 40 30 18" stroke="#5a8a3a" stroke-width="2.5" stroke-linecap="round"/>
   <path d="M32 58 Q33 38 32 14" stroke="#6f9a45" stroke-width="2.5" stroke-linecap="round"/>
   <path d="M36 58 Q37 42 34 20" stroke="#5a8a3a" stroke-width="2.5" stroke-linecap="round"/>
-  <!-- épis -->
+  <!-- Ã©pis -->
   <g fill="#d4a84b">
     <ellipse cx="30" cy="16" rx="3.5" ry="6" transform="rotate(-8 30 16)"/>
     <ellipse cx="32" cy="12" rx="4" ry="7"/>

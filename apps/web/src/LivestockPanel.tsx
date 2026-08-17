@@ -1,9 +1,11 @@
-import type { PointerEvent as ReactPointerEvent } from "react";
+import { useState, type PointerEvent as ReactPointerEvent } from "react";
 import {
   ANIMAL_ART,
   ANIMAL_GRAZE_ART,
+  ANIMAL_PLURAL,
   BUILDING_ART,
   BUILDING_DEFS,
+  kindForBarn,
   type AnimalKind,
   type BuildingType,
 } from "@farmsim/shared";
@@ -104,6 +106,16 @@ export function LivestockPanel({
   onClose,
   gesture,
 }: Props) {
+  /**
+   * Combien de bêtes on s'apprête à acheter, par bâtiment.
+   *
+   * Il n'y avait qu'un bouton « +1 bête » : remplir une étable de douze places
+   * demandait douze touchers et douze allers-retours au serveur. L'API accepte
+   * cinquante bêtes d'un coup depuis toujours — c'est l'interface qui n'en
+   * proposait qu'une.
+   */
+  const [lots, setLots] = useState<Record<string, number>>({});
+
   if (!barns.length) return null;
 
   return (
@@ -116,9 +128,13 @@ export function LivestockPanel({
           </button>
         )}
       </div>
+      {/* Trois lignes d'explication en tête de panneau, c'est cent dix pixels
+          repris à chaque ouverture pour un texte qu'on ne lit qu'une fois — et
+          sur un téléphone, cela suffisait à repousser le bouton d'achat sous
+          le pli. On garde ce qui est actionnable, le reste est dans le guide. */}
       <p className="muted tiny">
-        Nourrissez, sortez, collectez. Un troupeau affamé s’effondre ; une aire
-        de sortie accolée au bâtiment le rend nettement plus productif.
+        Un troupeau affamé s’effondre ; une aire de sortie accolée le rend plus
+        productif.
       </p>
 
       {barns.map((barn) => {
@@ -127,7 +143,23 @@ export function LivestockPanel({
         const pct = herd ? Math.round(herd.happiness * 100) : 0;
         const outside = herd?.grazingUntil && herd.grazingUntil > Date.now();
         const room = barn.capacity - (herd?.size ?? 0);
-        const canBuy = room > 0 && crd >= barn.cowPrice;
+        // L'espèce se déduit du bâtiment, et non du troupeau : une étable vide
+        // n'a pas de troupeau, et c'est justement là qu'on achète.
+        const espece = kindForBarn(barn.type);
+        // Ce qu'on peut réellement s'offrir, borné par la place et par la
+        // caisse : le sélecteur ne propose jamais un achat qui sera refusé.
+        const abordables = Math.floor(crd / Math.max(1, barn.cowPrice));
+        const maxLot = Math.max(0, Math.min(room, abordables, 50));
+        const lot = Math.min(Math.max(1, lots[barn.buildingId] ?? 1), Math.max(1, maxLot));
+        const canBuy = maxLot >= 1;
+        // Un bouton grisé ne dit pas ce qui cloche, et sur un écran tactile il
+        // n'y a pas d'infobulle pour le rattraper. On nomme l'empêchement.
+        const empechement =
+          room <= 0
+            ? "Bâtiment plein — améliorez-le pour agrandir le troupeau"
+            : !canBuy
+              ? `Il vous manque ${barn.cowPrice - Math.floor(crd)} TRN pour une bête`
+              : null;
 
         return (
           <div key={barn.buildingId} className="barn-card">
@@ -311,19 +343,63 @@ export function LivestockPanel({
                 : `Aucun${barn.yardType === "PIG_YARD" || barn.yardType === "HEN_YARD" ? "e courette" : " enclos"} attenant — les bêtes restent enfermées`}
             </p>
 
+            {/* Achat de bêtes : c'est par là que démarre tout élevage, et
+                c'était une seule case grisée sans explication. */}
+            <div className="herd-buy">
+              <span className="herd-buy-label">
+                Acheter des {espece ? ANIMAL_PLURAL[espece] : "bêtes"}
+                <em>
+                  {barn.cowPrice} TRN pièce · {room} place{room > 1 ? "s" : ""} libre
+                  {room > 1 ? "s" : ""}
+                </em>
+              </span>
+              <div className="herd-buy-row">
+                <div className="herd-stepper">
+                  <button
+                    type="button"
+                    aria-label="Une bête de moins"
+                    disabled={busy || !canBuy || lot <= 1}
+                    onClick={() =>
+                      setLots((p) => ({ ...p, [barn.buildingId]: Math.max(1, lot - 1) }))
+                    }
+                  >
+                    −
+                  </button>
+                  <b>{canBuy ? lot : 0}</b>
+                  <button
+                    type="button"
+                    aria-label="Une bête de plus"
+                    disabled={busy || !canBuy || lot >= maxLot}
+                    onClick={() =>
+                      setLots((p) => ({ ...p, [barn.buildingId]: Math.min(maxLot, lot + 1) }))
+                    }
+                  >
+                    +
+                  </button>
+                </div>
+                {maxLot > 1 && (
+                  <button
+                    type="button"
+                    className="ghost tiny"
+                    disabled={busy || lot >= maxLot}
+                    onClick={() => setLots((p) => ({ ...p, [barn.buildingId]: maxLot }))}
+                  >
+                    Au max · {maxLot}
+                  </button>
+                )}
+                <button
+                  type="button"
+                  className="herd-buy-go"
+                  disabled={busy || !canBuy}
+                  onClick={() => onBuyAnimals(barn.buildingId, lot)}
+                >
+                  Acheter <b>{lot * barn.cowPrice} TRN</b>
+                </button>
+              </div>
+              {empechement && <p className="herd-buy-why">{empechement}</p>}
+            </div>
+
             <div className="barn-actions">
-              <button
-                type="button"
-                disabled={busy || !canBuy}
-                title={
-                  room <= 0
-                    ? "Bâtiment plein — agrandissez-le"
-                    : `Acheter une bête pour ${barn.cowPrice} TRN`
-                }
-                onClick={() => onBuyAnimals(barn.buildingId, 1)}
-              >
-                +1 bête · {barn.cowPrice} TRN
-              </button>
 
               {herd && (
                 <button
