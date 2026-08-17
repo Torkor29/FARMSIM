@@ -213,6 +213,10 @@ import {
   GREASE_FULL,
   CLEAN_COST_CRD,
   type BreakdownKind,
+  DEV_DISPLAY_CRD,
+  isDevEmail,
+  canAfford,
+  normalizeEmail,
 } from "@farmsim/shared";
 import {
   simulateCell,
@@ -359,15 +363,23 @@ const DEV_TOOLS = /^(1|true|yes|on)$/i.test(process.env.FARMSIM_DEV_TOOLS ?? "")
  * besoin, sur le serveur en service, d'un compte capable de tout éprouver —
  * une trésorerie illimitée, un niveau donné, des cultures mûres.
  *
- * D'où cette liste nominative : `FARMSIM_TESTERS=vous@exemple.fr`. Les outils
- * restent introuvables (404) pour tous les autres, exactement comme avant.
+ * Un compte est déjà inscrit dans le code (`juju.dolou@gmail.com`). D'autres
+ * s'ajoutent par `FARMSIM_TESTERS=vous@exemple.fr`. Les outils restent
+ * introuvables (404) pour tous les autres, exactement comme avant.
  */
-const TESTEURS = new Set(
-  (process.env.FARMSIM_TESTERS ?? "")
-    .split(",")
-    .map((e) => e.trim().toLowerCase())
-    .filter(Boolean),
-);
+const DEV_EMAILS_ENV = process.env.FARMSIM_TESTERS ?? "";
+
+function estCompteDev(email: string | null | undefined): boolean {
+  if (!email) return false;
+  return isDevEmail(email, DEV_EMAILS_ENV);
+}
+
+function peutPayer(
+  user: { email: string; crd: number },
+  cost: number,
+): boolean {
+  return canAfford(user, cost, DEV_EMAILS_ENV);
+}
 
 /**
  * L'appelant a-t-il droit aux outils de test ?
@@ -379,8 +391,7 @@ async function testeurAutorisé(req: express.Request) {
   const auth = await userFromAuthHeader(req);
   if (!auth) return null;
   if (DEV_TOOLS) return auth;
-  const email = auth.user.email?.toLowerCase();
-  return email && TESTEURS.has(email) ? auth : null;
+  return estCompteDev(auth.user.email) ? auth : null;
 }
 
 async function createParcelGrid(parcelId: string, gridW: number, gridH: number) {
@@ -1008,6 +1019,13 @@ async function debit(
   // un refus qui annonce « Infinity requis ».
   if (!Number.isFinite(amount)) throw new Error("Montant invalide");
   if (!(amount > 0)) return;
+  const owner = await tx.user.findUnique({
+    where: { id: userId },
+    select: { email: true },
+  });
+  // Compte dev : on n'écrit pas le débit. Le solde réel ne descend pas,
+  // et l'écran affiche ∞ plutôt qu'un chiffre qui fondrait à chaque achat.
+  if (owner && estCompteDev(owner.email)) return;
   const hit = await tx.user.updateMany({
     where: { id: userId, crd: { gte: amount } },
     data: { crd: { decrement: amount } },
@@ -2013,10 +2031,17 @@ async function settleDueFutures() {
       // contrat à terme non honoré peut légitimement creuser le compte. Une
       // dette se rembourse, elle ne s'efface pas faute de trésorerie — et un
       // débit conditionnel l'effacerait en silence.
-      await tx.user.update({
+      const seller = await tx.user.findUnique({
         where: { id: c.sellerId },
-        data: { crd: { decrement: penalty } },
+        select: { email: true },
       });
+      // Compte dev : pas de dette artificielle, la trésorerie reste illimitée.
+      if (!seller || !estCompteDev(seller.email)) {
+        await tx.user.update({
+          where: { id: c.sellerId },
+          data: { crd: { decrement: penalty } },
+        });
+      }
       await tx.futuresContract.update({
         where: { id: c.id },
         data: {
@@ -2537,8 +2562,12 @@ async function playerPayload(userId: string) {
   } = user;
   void _omit;
   void absenceLogJson;
+  const dev = estCompteDev(user.email);
   return {
     ...safe,
+    dev,
+    unlimitedCrd: dev,
+    crd: dev ? Math.max(user.crd, DEV_DISPLAY_CRD) : user.crd,
     appearance: appearanceFromJson(appearanceJson, playableSpec(user.specialization)),
     consignes: parseConsignes(consignesJson),
     bonuses,
@@ -2592,7 +2621,7 @@ app.post("/auth/register", async (req, res) => {
         const parcel = await tx.parcel.findFirst({ where: { id: parcelId, farmId: null } });
         if (!parcel) throw new Error("PARCEL_UNAVAILABLE");
         const fresh = await tx.user.findUnique({ where: { id: u.id } });
-        if (!fresh || fresh.crd < parcel.landPrice) throw new Error("INSUFFICIENT_FUNDS");
+        if (!fresh || !peutPayer(fresh, parcel.landPrice)) throw new Error("INSUFFICIENT_FUNDS");
         await debit(tx, u.id, parcel.landPrice);
         await tx.parcel.update({ where: { id: parcel.id }, data: { farmId: farm.id } });
         const machine = await tx.machine.findFirst({ where: { farmId: farm.id } });
@@ -2664,9 +2693,22 @@ app.post("/auth/register", async (req, res) => {
  * genre, laissée éteinte quelque part, finit par être rallumée un jour où
  * l'on a oublié pourquoi elle ne l'était pas.
  *
- * Pour éprouver le jeu, c'est `FARMSIM_TESTERS` qui sert désormais : les
- * outils de test ouverts à des comptes nommés, sur un compte ordinaire.
+ * Pour éprouver le jeu, c'est le compte développeur inscrit dans le code,
+ * plus `FARMSIM_TESTERS` : les outils de test ouverts à des comptes nommés,
+ * sur un compte ordinaire.
  */
+
+async function findUserByEmail(email: string) {
+  const trimmed = email.trim();
+  const exact = await prisma.user.findUnique({ where: { email: trimmed } });
+  if (exact) return exact;
+  const rows = await prisma.$queryRaw<{ id: string }[]>`
+    SELECT id FROM "User" WHERE lower("email") = ${normalizeEmail(trimmed)} LIMIT 1
+  `;
+  const id = rows[0]?.id;
+  if (!id) return null;
+  return prisma.user.findUnique({ where: { id } });
+}
 
 app.post("/auth/login", async (req, res) => {
   const body = z
@@ -2679,7 +2721,7 @@ app.post("/auth/login", async (req, res) => {
     res.status(400).json(body.error.flatten());
     return;
   }
-  const user = await prisma.user.findUnique({ where: { email: body.data.email } });
+  const user = await findUserByEmail(body.data.email);
   if (!user || user.accessCode !== body.data.accessCode) {
     res.status(401).json({ error: "Email ou code incorrect" });
     return;
@@ -3104,7 +3146,7 @@ async function createLaborOrderForCells(opts: {
     }
   }
   const user = await prisma.user.findUnique({ where: { id: opts.userId } });
-  if (!user || user.crd < money.escrow) {
+  if (!user || !peutPayer(user, money.escrow)) {
     return {
       ok: false,
       status: 402,
@@ -3330,7 +3372,7 @@ app.post("/parcels/:id/buy", async (req, res) => {
     res.status(403).json({ error: acquisitionRefusal(gate.reason!, user, owned.length) });
     return;
   }
-  if (user.crd < quote.total) {
+  if (!peutPayer(user, quote.total)) {
     res.status(402).json({ error: `TRN insuffisants — ${quote.total} requis` });
     return;
   }
@@ -3427,7 +3469,7 @@ app.post("/parcels/:id/contractor", async (req, res) => {
   const service = urgentContractorQuote(work, cells.length);
   const seeds = work === "PLANT" && crop ? CROP_DEFS[crop].seedCostPerCell * cells.length : 0;
   const total = service + seeds;
-  if (user.crd < total) {
+  if (!peutPayer(user, total)) {
     res.status(402).json({ error: `TRN insuffisants — ${total} requis` });
     return;
   }
@@ -3760,7 +3802,7 @@ app.post("/parcels/:id/plant", async (req, res) => {
   const directSeed = body.data.directSeed ?? false;
   const seedCost = CROP_DEFS[plantCrop].seedCostPerCell * body.data.cells.length;
   const cost = seedCost + (directSeed ? DIRECT_SEED_COST_PER_CELL * body.data.cells.length : 0);
-  if (access.charge && user.crd < cost) {
+  if (access.charge && !peutPayer(user, cost)) {
     res.status(402).json({ error: "TRN insuffisants pour semences" });
     return;
   }
@@ -3906,7 +3948,7 @@ app.post("/parcels/:id/fertilize", async (req, res) => {
   const usedManure = needed > 0 && available >= needed;
   const cost = usedManure || !access.charge ? 0 : 10 * body.data.cells.length;
   const user = await prisma.user.findUnique({ where: { id: body.data.userId } });
-  if (!user || (access.charge && user.crd < cost)) {
+  if (!user || (access.charge && !peutPayer(user, cost))) {
     res.status(402).json({ error: "TRN insuffisants" });
     return;
   }
@@ -4043,7 +4085,7 @@ app.post("/parcels/:id/plow", async (req, res) => {
   const lostCount = candidates.filter((c) => c.kind === "CROP").length;
   const cost = PLOW_COST_PER_CELL_SOIL * candidates.length;
   const user = await prisma.user.findUnique({ where: { id: body.data.userId } });
-  if (!user || (access.charge && user.crd < cost)) {
+  if (!user || (access.charge && !peutPayer(user, cost))) {
     res.status(402).json({ error: `TRN insuffisants — ${cost} requis` });
     return;
   }
@@ -4203,7 +4245,7 @@ app.post("/parcels/:id/stubble", async (req, res) => {
 
   const cost = STUBBLE_COST_PER_CELL * (targets.length + enherber.length);
   const user = await prisma.user.findUnique({ where: { id: body.data.userId } });
-  if (!user || (access.charge && user.crd < cost)) {
+  if (!user || (access.charge && !peutPayer(user, cost))) {
     res.status(402).json({ error: `TRN insuffisants — ${cost} requis` });
     return;
   }
@@ -4823,7 +4865,7 @@ app.post("/parcels/:id/build", async (req, res) => {
     }
   }
   const user = await prisma.user.findUnique({ where: { id: body.data.userId } });
-  if (!user || user.crd < def.cost) {
+  if (!user || !peutPayer(user, def.cost)) {
     res.status(402).json({ error: "TRN insuffisants" });
     return;
   }
@@ -4952,7 +4994,7 @@ app.post("/buildings/:id/upgrade", async (req, res) => {
     res.status(403).json({ error: shortfall(user.xp, nextDef.requiredLevel) });
     return;
   }
-  if (user.crd < cost) {
+  if (!peutPayer(user, cost)) {
     res.status(402).json({ error: `TRN insuffisants — ${cost} requis` });
     return;
   }
@@ -5439,7 +5481,7 @@ app.post("/buildings/:id/animals", async (req, res) => {
   }
   const cost = ANIMAL_PRICE[kind] * body.data.count;
   const user = await prisma.user.findUnique({ where: { id: body.data.userId } });
-  if (!user || user.crd < cost) {
+  if (!user || !peutPayer(user, cost)) {
     res.status(402).json({ error: `TRN insuffisants — ${cost} requis` });
     return;
   }
@@ -6097,7 +6139,7 @@ app.post("/market/buy", async (req, res) => {
   });
   const base = market?.price ?? GOOD_DEFS[body.data.commodity].basePrice;
   const cost = Math.round(dealerAskPrice(base) * body.data.tons);
-  if (user.crd < cost) {
+  if (!peutPayer(user, cost)) {
     res.status(402).json({ error: `TRN insuffisants — ${cost} requis` });
     return;
   }
@@ -6203,7 +6245,7 @@ app.post("/machines/buy", async (req, res) => {
     res.status(404).json({ error: "Ferme introuvable" });
     return;
   }
-  if (user.crd < def.cost) {
+  if (!peutPayer(user, def.cost)) {
     res.status(402).json({ error: "TRN insuffisants" });
     return;
   }
@@ -6293,7 +6335,7 @@ app.post("/machines/:id/repair", async (req, res) => {
     targetCondition: target,
     workshopDiscount: bonuses.repairDiscount,
   });
-  if (machine.farm.user.crd < quote.cost) {
+  if (!peutPayer(machine.farm.user, quote.cost)) {
     res.status(402).json({
       error: `Réparation ${quote.cost} TRN — fonds insuffisants. Rafistoler coûte moins.`,
     });
@@ -6346,7 +6388,7 @@ app.post("/machines/:id/grease", async (req, res) => {
     res.status(409).json({ error: "Déjà plein de graisse" });
     return;
   }
-  if (machine.farm.user.crd < GREASE_COST_CRD) {
+  if (!peutPayer(machine.farm.user, GREASE_COST_CRD)) {
     res.status(402).json({ error: `Graissage ${GREASE_COST_CRD} TRN — fonds insuffisants` });
     return;
   }
@@ -6388,7 +6430,7 @@ app.post("/machines/:id/clean", async (req, res) => {
     res.status(409).json({ error: "Déjà propre" });
     return;
   }
-  if (machine.farm.user.crd < CLEAN_COST_CRD) {
+  if (!peutPayer(machine.farm.user, CLEAN_COST_CRD)) {
     res.status(402).json({ error: `Nettoyage ${CLEAN_COST_CRD} TRN — fonds insuffisants` });
     return;
   }
@@ -6445,7 +6487,7 @@ app.post("/machines/:id/service", async (req, res) => {
     targetCondition: target,
     workshopDiscount: bonuses.repairDiscount,
   });
-  if (machine.farm.user.crd < quote.cost) {
+  if (!peutPayer(machine.farm.user, quote.cost)) {
     res.status(402).json({ error: `Réparation ${quote.cost} TRN — fonds insuffisants` });
     return;
   }
@@ -6858,7 +6900,7 @@ app.post("/market/listings", async (req, res) => {
     marketPrice: market.price,
     openListings,
     stockTons: inv?.qty ?? 0,
-    crd: user.crd,
+    crd: estCompteDev(user.email) ? DEV_DISPLAY_CRD : user.crd,
   });
   if (!verdict.ok) {
     res.status(409).json({ error: LISTING_REFUSAL_LABELS[verdict.reason!] });
@@ -6967,7 +7009,7 @@ app.post("/market/listings/:id/buy", async (req, res) => {
     return;
   }
   const total = Math.round(listing.pricePerTon * listing.tons);
-  if (buyer.crd < total) {
+  if (!peutPayer(buyer, total)) {
     res.status(402).json({ error: `TRN insuffisants — ${total} requis` });
     return;
   }
@@ -7040,7 +7082,7 @@ async function settleOverdueDeliveries() {
     await prisma.$transaction(async (tx) => {
       const fresh = await tx.delivery.findUnique({ where: { id: d.id } });
       if (!fresh || fresh.status !== "PENDING") return;
-      const fee = Math.min(d.buyer.crd, d.autoFee);
+      const fee = estCompteDev(d.buyer.email) ? 0 : Math.min(d.buyer.crd, d.autoFee);
       if (fee > 0) {
         await debit(tx, d.buyerId, fee);
       }
@@ -7124,7 +7166,7 @@ app.post("/deliveries/:id/auto", async (req, res) => {
     res.status(403).json({ error: "Seul l'acheteur peut faire livrer" });
     return;
   }
-  if (delivery.buyer.crd < delivery.autoFee) {
+  if (!peutPayer(delivery.buyer, delivery.autoFee)) {
     res.status(402).json({ error: `TRN insuffisants — ${delivery.autoFee} requis` });
     return;
   }

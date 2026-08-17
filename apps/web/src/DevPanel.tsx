@@ -25,10 +25,12 @@ const PRESETS = [10_000, 100_000, 1_000_000];
 /**
  * Panneau de test.
  *
- * Il n'existe que si le serveur l'autorise — variable `FARMSIM_DEV_TOOLS` —,
- * faute de quoi n'importe quel joueur se servirait. Son rôle est d'éprouver
- * une mécanique sans y passer l'après-midi : monter une trésorerie, amener un
- * champ à maturité, remplir une mangeoire.
+ * Il n'existe que si le serveur l'autorise pour **ce compte** — liste
+ * nominative, ou variable `FARMSIM_DEV_TOOLS` sur une install locale. Son
+ * rôle est d'éprouver une mécanique sans y passer l'après-midi : monter une
+ * trésorerie, amener un champ à maturité, remplir une mangeoire. Un compte
+ * développeur a déjà l'argent illimité : le reste du panneau sert à forcer
+ * un état (cultures mûres, machines neuves).
  */
 export function DevPanel({ open, onClose, busy, onGrant, onTick }: Props) {
   const [crd, setCrd] = useState(100_000);
@@ -48,8 +50,9 @@ export function DevPanel({ open, onClose, busy, onGrant, onTick }: Props) {
           </button>
         </header>
         <p className="muted tiny">
-          Ce panneau n’apparaît que sur une installation où les outils de test
-          sont activés. Il ne s’affichera pas en production.
+          Visible uniquement sur un compte développeur. La trésorerie de ce
+          compte ne descend jamais : les autres boutons forcent un état
+          (cultures mûres, machines neuves, stock).
         </p>
 
         <section className="dev-row">

@@ -230,7 +230,23 @@ type Player = {
     npcAllowed: boolean;
     maxSpend: number;
   };
+  /** Compte développeur : panneau Test et trésorerie illimitée. */
+  dev?: boolean;
+  unlimitedCrd?: boolean;
 };
+
+function hasUnlimitedFunds(player: Player | null | undefined): boolean {
+  return Boolean(player?.unlimitedCrd || player?.dev);
+}
+
+function canPay(player: Player | null | undefined, cost: number): boolean {
+  if (hasUnlimitedFunds(player)) return true;
+  return (player?.crd ?? 0) >= cost;
+}
+
+function walletLabel(player: Player): string {
+  return hasUnlimitedFunds(player) ? "∞ TRN" : `${Math.round(player.crd)} TRN`;
+}
 
 type Contract = {
   id: string;
@@ -689,10 +705,14 @@ export function App() {
   }, []);
 
   useEffect(() => {
+    if (player?.dev || player?.unlimitedCrd) {
+      setDevEnabled(true);
+      return;
+    }
     api<{ enabled: boolean }>("/dev/status")
       .then((r) => setDevEnabled(r.enabled))
       .catch(() => setDevEnabled(false));
-  }, []);
+  }, [player?.id, player?.dev, player?.unlimitedCrd]);
 
   async function devGrant(grant: DevGrant) {
     setBusy(true);
@@ -1494,7 +1514,7 @@ export function App() {
     // L'emprise suit le quart de tour : un hangar 3×2 tourné occupe 2×3.
     const foot = orientedFootprint(type, rot);
     if (x + foot.w > gw || y + foot.h > gh) return false;
-    if ((player?.crd ?? 0) < def.cost) return false;
+    if (!canPay(player, def.cost)) return false;
     const footprint = footprintCells(x, y, foot.w, foot.h);
     return footprint.every((fc) => {
       const c = grid.find((cell) => cell.x === fc.x && cell.y === fc.y);
@@ -1552,7 +1572,7 @@ export function App() {
     if (!at) return null;
     const def = BUILDING_DEFS[buildType];
     const spaceOk = canPlaceBuildingAt(at.x, at.y);
-    const moneyOk = (player?.crd ?? 0) >= def.cost;
+    const moneyOk = canPay(player, def.cost);
     return {
       type: buildType,
       originX: at.x,
@@ -1561,7 +1581,7 @@ export function App() {
       valid: spaceOk && moneyOk,
       pending: Boolean(pendingBuild),
     };
-  }, [tool, buildType, buildRotation, pendingBuild, hoverCell, grid, gw, gh, player?.crd]);
+  }, [tool, buildType, buildRotation, pendingBuild, hoverCell, grid, gw, gh, player?.crd, player?.dev, player?.unlimitedCrd]);
 
   /** Le bâtiment dont la fiche est ouverte, et le troupeau qu'il abrite. */
   /** Où en est le joueur dans son palier — pour la jauge du bandeau. */
@@ -1792,7 +1812,7 @@ export function App() {
         const reason =
           x + foot.w > gw || y + foot.h > gh
             ? "Emprise hors grille"
-            : player.crd < def.cost
+            : !canPay(player, def.cost)
               ? `TRN insuffisants (${def.cost})`
               : "Collision ou case occupée";
         flashToast(reason, true);
@@ -3262,8 +3282,8 @@ export function App() {
                 style={{ ["--fill" as string]: `${Math.round((xpHere.into / xpHere.span) * 100)}%` }}
               />
             </span>
-            <span className="gold" title="Terrons (TRN)">
-              {Math.round(player.crd)} TRN
+            <span className="gold" title={hasUnlimitedFunds(player) ? "Trésorerie illimitée (compte développeur)" : "Terrons (TRN)"}>
+              {walletLabel(player)}
             </span>
             {player.bonuses && (
               <span className="stat-bonus">
@@ -3388,8 +3408,14 @@ export function App() {
             </div>
             <div>
               <dt>Trésorerie</dt>
-              <dd>{Math.round(player.crd)} TRN</dd>
+              <dd>{walletLabel(player)}</dd>
             </div>
+            {hasUnlimitedFunds(player) && (
+              <div>
+                <dt>Compte</dt>
+                <dd>Développeur · argent illimité</dd>
+              </div>
+            )}
             {player.bonuses && (
               <div>
                 <dt>Bonus ferme</dt>
@@ -3588,7 +3614,7 @@ export function App() {
                           </button>
                       <button
                         type="button"
-                        disabled={busy || !canHalf || (halfQuote != null && player.crd < halfQuote.cost)}
+                        disabled={busy || !canHalf || (halfQuote != null && !canPay(player, halfQuote.cost))}
                         title={halfQuote ? `État → ${halfTarget.toFixed(0)} %` : ""}
                         onClick={() => repairMachine(m.id, "half")}
                       >
@@ -3600,7 +3626,7 @@ export function App() {
                       </button>
                       <button
                         type="button"
-                        disabled={busy || !canFull || (fullQuote != null && player.crd < fullQuote.cost)}
+                        disabled={busy || !canFull || (fullQuote != null && !canPay(player, fullQuote.cost))}
                         title="Révision complète"
                         onClick={() => repairMachine(m.id, "full")}
                       >
@@ -3865,7 +3891,7 @@ export function App() {
                           <span className="upgrade-max">Niveau max</span>
                         ) : blocked ? (
                           <span className="upgrade-locked">Nv. joueur {next?.requiredLevel}</span>
-                        ) : player.crd < cost ? (
+                        ) : !canPay(player, cost) ? (
                           <span className="upgrade-locked poor">{cost} TRN</span>
                         ) : (
                           <button
@@ -4149,6 +4175,22 @@ export function App() {
                   </button>
                 );
               })}
+              {devEnabled && (
+                <button
+                  type="button"
+                  className="tab"
+                  style={{ animationDelay: `${SHEET_TABS.length * 45}ms` }}
+                  onClick={() => {
+                    setShowDev(true);
+                    setMoreOpen(false);
+                  }}
+                >
+                  <span className="tab-icon" aria-hidden="true">
+                    🛠
+                  </span>
+                  <span className="tab-label">Test</span>
+                </button>
+              )}
             </nav>
           )}
         </>
