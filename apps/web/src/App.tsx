@@ -1153,6 +1153,12 @@ export function App() {
     [player?.farm?.inventory],
   );
 
+  /** Paille en silo : la litière du troupeau, achetée au céréalier ou pressée. */
+  const strawInStock = useMemo(
+    () => (player?.farm?.inventory ?? []).find((i) => i.itemCode === "STRAW")?.qty ?? 0,
+    [player?.farm?.inventory],
+  );
+
   /** Tonnage total en silo — affiché sur le bouton pour appeler à vendre. */
   const totalStockTons = useMemo(
     () => (player?.farm?.inventory ?? []).reduce((sum, i) => sum + i.qty, 0),
@@ -1675,6 +1681,31 @@ export function App() {
       setMsg(null);
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  /**
+   * Pailler l'étable.
+   *
+   * On ne passe pas de tonnage : le serveur étale ce qu'il faut pour le cycle,
+   * borné par la place et par le stock. Calculer des tonnes de paille de tête
+   * n'a aucun intérêt de jeu.
+   */
+  async function spreadBedding(herdId: string) {
+    if (!player) return;
+    setBusy(true);
+    try {
+      const r = await api<{ tons: number; beddingTons: number }>(`/herds/${herdId}/bedding`, {
+        method: "POST",
+        body: JSON.stringify({ userId: player.id }),
+      });
+      flashToast(`Litière refaite · ${r.tons.toFixed(2)} t de paille étalée`);
+      await refreshPlayer();
+      if (activeParcelId) await loadLivestock(activeParcelId);
+    } catch (e) {
+      flashToast(e instanceof Error ? e.message : String(e), true);
     } finally {
       setBusy(false);
     }
@@ -3665,6 +3696,8 @@ export function App() {
           onCollectEggs={collectEggs}
           onShear={shearHerd}
           onSlaughter={slaughterHerd}
+          onSpreadBedding={spreadBedding}
+          strawTons={strawInStock}
           onSpreadManure={spreadManure}
           onSellManure={sellManure}
           hayTons={hayInStock}

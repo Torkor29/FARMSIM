@@ -193,6 +193,12 @@ import {
   type AnimalKind,
   type TradeGood,
   manureProduced,
+  beddingBurn,
+  beddingCover,
+  beddingPenalty,
+  beddingManureMultiplier,
+  beddingNeed,
+  beddingCapacity,
   manurePitCapacity,
   addManureToPit,
   manureFill,
@@ -5107,6 +5113,7 @@ async function settleHerd(
     avgAgeMs: number;
     mortalityDebt: number;
     manureTons?: number;
+    beddingTons?: number;
   },
   paddockCapacityCells: number,
   now: number,
@@ -5121,6 +5128,7 @@ async function settleHerd(
   died: number;
   avgAgeMs: number;
   manureTons: number;
+  beddingTons: number;
 }> {
   const elapsedMs = Math.max(0, now - herd.lastTickAt.getTime());
   if (elapsedMs < 1000) {
@@ -5133,6 +5141,7 @@ async function settleHerd(
       died: 0,
       avgAgeMs: herd.avgAgeMs,
       manureTons: herd.manureTons ?? 0,
+      beddingTons: herd.beddingTons ?? 0,
     };
   }
 
@@ -5149,13 +5158,27 @@ async function settleHerd(
   });
   const feedStock = Math.max(0, herd.feedStock - burnt);
   const hunger = hungerPenalty({ feedStock, herdSize: herd.size, kind });
+  // La litière se salit au même rythme que la ration se mange. On mesure la
+  // couverture **après** consommation : c'est l'état dans lequel les bêtes
+  // viennent de passer la période, pas celui du début.
+  const beddingTons = Math.max(
+    0,
+    (herd.beddingTons ?? 0) -
+      beddingBurn({ kind, herdSize: herd.size, elapsedMs, cycleMs: LIVESTOCK_CYCLE_MS, grazing }),
+  );
+  const cover = beddingCover({ kind, herdSize: herd.size, stockTons: beddingTons });
+
   const pitCap = manurePitCapacity(kind, capacity);
-  const produced = manureProduced({
-    kind,
-    herdSize: herd.size,
-    elapsedMs,
-    cycleMs: LIVESTOCK_CYCLE_MS,
-  });
+  // La paille ne disparaît pas : elle passe dans le tas. C'est ce qui rend le
+  // paillage rentable au lieu d'être une taxe — l'éleveur achète de la paille
+  // au céréalier et lui revend du fumier.
+  const produced =
+    manureProduced({
+      kind,
+      herdSize: herd.size,
+      elapsedMs,
+      cycleMs: LIVESTOCK_CYCLE_MS,
+    }) * beddingManureMultiplier(cover);
   const pit = addManureToPit({
     current: herd.manureTons ?? 0,
     produced,
@@ -5170,6 +5193,7 @@ async function settleHerd(
     crowding: paddockCapacityCells > 0 ? herd.size / Math.max(1, paddockCapacityCells) : 1,
     elapsedMs,
     hunger: hunger + smell,
+    bedding: beddingPenalty(cover),
   });
 
   // Reproduction : une gestation démarre quand tout est réuni, et aboutit
@@ -5242,6 +5266,7 @@ async function settleHerd(
       avgAgeMs,
       mortalityDebt: toll.debt,
       manureTons: pit.tons,
+      beddingTons,
       lastTickAt: new Date(now),
     },
   });
@@ -5254,6 +5279,7 @@ async function settleHerd(
     died: toll.deaths,
     avgAgeMs,
     manureTons: pit.tons,
+    beddingTons,
   };
 }
 
@@ -5284,6 +5310,7 @@ app.get("/parcels/:id/livestock", async (req, res) => {
     let herdSize = b.herd?.size ?? 0;
     let gestatingSince: Date | null = b.herd?.gestatingSince ?? null;
     let manureTons = b.herd?.manureTons ?? 0;
+    let beddingTons = b.herd?.beddingTons ?? 0;
     if (b.herd) {
       const settled = await settleHerd(b.herd, paddock.capacity, now, b.level, capacity);
       happiness = settled.happiness;
@@ -5291,6 +5318,7 @@ app.get("/parcels/:id/livestock", async (req, res) => {
       herdSize = settled.size;
       gestatingSince = settled.gestatingSince;
       manureTons = settled.manureTons;
+      beddingTons = settled.beddingTons;
     }
     const pitCap = herdKind
       ? manurePitCapacity(herdKind, capacity)
@@ -5354,6 +5382,15 @@ app.get("/parcels/:id/livestock", async (req, res) => {
               return v.ok || !v.reason ? null : BREEDING_REFUSAL_LABELS[v.reason];
             })(),
             feedNeed: b.herd.size * feedPer,
+            // Litière : la part du besoin d'un cycle réellement couverte, et
+            // les tonnes qu'il faudrait pour la compléter. Le joueur ne doit
+            // pas avoir à calculer des tonnes de paille de tête.
+            beddingTons: Math.round(beddingTons * 100) / 100,
+            beddingNeed: beddingNeed(herdKind ?? "COW", herdSize),
+            beddingCap: beddingCapacity(herdKind ?? "COW", capacity),
+            beddingCover: Math.round(
+              beddingCover({ kind: herdKind ?? "COW", herdSize, stockTons: beddingTons }) * 100,
+            ) / 100,
             feedQuality: b.herd.feedQuality,
             hungry: hungerPenalty({
               feedStock,
@@ -5850,6 +5887,73 @@ app.post("/herds/:id/feed", async (req, res) => {
     });
   });
   res.json({ units: Math.round(units * 100) / 100, quality });
+});
+
+/**
+ * Pailler : la paille du céréalier devient la litière de l'éleveur.
+ *
+ * C'est la moitié aller du pont entre les deux métiers. Jusqu'ici la paille
+ * était produite à la moisson, pressable, vendable — et sans le moindre
+ * usage. Elle sert maintenant : une étable paillée garde ses bêtes de
+ * meilleure humeur, et **produit davantage de fumier**, que le céréalier
+ * rachètera. Chacun vit du déchet de l'autre.
+ */
+app.post("/herds/:id/bedding", async (req, res) => {
+  const body = z
+    .object({ userId: z.string(), tons: z.number().min(0).default(0) })
+    .safeParse(req.body);
+  if (!body.success) {
+    res.status(400).json(body.error.flatten());
+    return;
+  }
+  const herd = await prisma.herd.findUnique({
+    where: { id: req.params.id },
+    include: { farm: { include: { inventory: true } }, building: true },
+  });
+  if (!herd || herd.farm.userId !== body.data.userId) {
+    res.status(403).json({ error: "Troupeau non possédé" });
+    return;
+  }
+  const kind = herd.kind as AnimalKind;
+  const stats = buildingStatsAtLevel(herd.building.type as SharedBuildingType, herd.building.level);
+  const capacity = barnCapacity(herd.building.type, stats);
+  const plafond = beddingCapacity(kind, capacity);
+  const paille = herd.farm.inventory.find((i) => i.itemCode === "STRAW");
+  const enStock = paille?.qty ?? 0;
+
+  // Sans quantité, on paille ce qu'il faut : personne n'a envie de calculer
+  // des tonnes de paille à la main pour un geste qu'on répète chaque cycle.
+  const place = Math.max(0, plafond - herd.beddingTons);
+  const voulu = body.data.tons > 0 ? body.data.tons : Math.min(place, beddingNeed(kind, herd.size));
+  const tons = Math.round(Math.min(voulu, place, enStock) * 1000) / 1000;
+
+  if (place <= 0) {
+    res.status(409).json({ error: "Litière déjà complète" });
+    return;
+  }
+  if (enStock <= 0) {
+    res.status(409).json({
+      error: "Aucune paille en stock — achetez-en à un céréalier, ou pressez la vôtre",
+    });
+    return;
+  }
+  if (tons <= 0) {
+    res.status(400).json({ error: "Indiquez une quantité à étaler" });
+    return;
+  }
+
+  await prisma.$transaction(async (tx) => {
+    if (paille) await drawFromStock(tx, paille, tons);
+    await tx.herd.update({
+      where: { id: herd.id },
+      data: { beddingTons: herd.beddingTons + tons },
+    });
+  });
+  res.json({
+    tons,
+    beddingTons: Math.round((herd.beddingTons + tons) * 1000) / 1000,
+    capacity: plafond,
+  });
 });
 
 /** Traite : le lait s'accumule entre deux passages, et se perd s'il attend. */

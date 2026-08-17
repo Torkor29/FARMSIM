@@ -71,7 +71,18 @@ describe("fumier — épandage et vente", () => {
   it("paie le voisin au prix local, pas un cours mondial", () => {
     expect(manureSaleProceeds(2)).toBe(2 * MANURE_LOCAL_PRICE);
     expect(GOOD_DEFS.MANURE.localOnly).toBe(true);
-    expect(GOOD_DEFS.MANURE.purchasable).toBe(false);
+    // Il ne part pas à la bourse mondiale : un tas de fumier ne traverse pas
+    // le monde, et son prix reste un prix de voisin.
     expect(SELLABLE_GOODS).not.toContain("MANURE");
+  });
+
+  it("est désormais achetable — c'est le retour du pont vers le céréalier", () => {
+    // Ce fichier affirmait l'inverse, et c'était la moitié manquante du
+    // triangle des métiers. `manure.ts` s'ouvre pourtant sur « le pont retour
+    // de l'éleveur vers le céréalier » : avec `purchasable: false`, il n'y
+    // avait aucun pont. Le fumier ne pouvait fertiliser que les champs de
+    // celui qui l'avait produit, c'est-à-dire l'éleveur, qui n'en a pas
+    // l'usage — et le céréalier, qui en a besoin, ne pouvait pas en acheter.
+    expect(GOOD_DEFS.MANURE.purchasable).toBe(true);
   });
 });

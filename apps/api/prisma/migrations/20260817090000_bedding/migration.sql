@@ -1,0 +1,11 @@
+-- Litière : la paille du céréalier devient consommable par l'éleveur.
+--
+-- `ADD COLUMN` avec une valeur par défaut **constante** : c'est la seule forme
+-- que SQLite accepte sur une table déjà peuplée. Une constante littérale ne
+-- pose aucun problème ; c'est `DEFAULT CURRENT_TIMESTAMP` qui avait mis la
+-- production en échec (P3009) et qu'il ne faut jamais réécrire ici.
+--
+-- Les troupeaux existants démarrent donc sans litière. C'est voulu : la
+-- pénalité de bonheur est douce et progressive, et le joueur découvre le
+-- besoin dans la fiche de son étable plutôt qu'en voyant ses bêtes s'effondrer.
+ALTER TABLE "Herd" ADD COLUMN "beddingTons" REAL NOT NULL DEFAULT 0;

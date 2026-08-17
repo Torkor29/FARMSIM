@@ -49,6 +49,14 @@ export type BarnState = {
     manureCap?: number;
     manureFill?: number;
     smelly?: boolean;
+    /** Paille en litière, en tonnes */
+    beddingTons?: number;
+    /** Paille qu'il faut pour un cycle */
+    beddingNeed?: number;
+    /** Ce que la réserve peut contenir */
+    beddingCap?: number;
+    /** Part du besoin couverte, 0 à 1 */
+    beddingCover?: number;
   } | null;
 };
 
@@ -66,8 +74,10 @@ type Props = {
   onCollectEggs: (herdId: string) => void;
   onShear: (herdId: string) => void;
   onSlaughter: (herdId: string, count: number) => void;
+  onSpreadBedding: (herdId: string) => void;
   onSpreadManure: (buildingId: string) => void;
   onSellManure: (buildingId: string) => void;
+  strawTons: number;
   hayTons: number;
   maizeTons: number;
   barleyTons: number;
@@ -95,8 +105,10 @@ export function LivestockPanel({
   onCollectEggs,
   onShear,
   onSlaughter,
+  onSpreadBedding,
   onSpreadManure,
   onSellManure,
+  strawTons,
   hayTons,
   maizeTons,
   barleyTons,
@@ -317,6 +329,26 @@ export function LivestockPanel({
                 </dl>
 
                 <div className="feed-row">
+                  {(herd.beddingCover ?? 1) < 0.5 && (
+                    <p className="herd-alert">
+                      Litière à refaire : les bêtes dorment sur le béton, et la fosse
+                      se remplit moins vite.
+                    </p>
+                  )}
+                  <div className="feed-bar">
+                    <span
+                      className={`feed-fill ${(herd.beddingCover ?? 1) < 0.5 ? "low" : ""}`}
+                      style={{ width: `${Math.round((herd.beddingCover ?? 0) * 100)}%` }}
+                    />
+                  </div>
+                  <span className={`feed-label ${(herd.beddingCover ?? 1) < 0.5 ? "warn" : ""}`}>
+                    Litière · {(herd.beddingTons ?? 0).toFixed(2)} t
+                    {" · "}
+                    {(herd.beddingNeed ?? 0).toFixed(2)} t par cycle
+                  </span>
+                </div>
+
+                <div className="feed-row">
                   {herd.smelly && (
                     <p className="herd-alert">
                       La fosse est pleine : les bêtes sont moins bien. Épandez ou vendez.
@@ -400,6 +432,23 @@ export function LivestockPanel({
             </div>
 
             <div className="barn-actions">
+
+              {herd && (
+                <button
+                  type="button"
+                  disabled={busy || strawTons <= 0 || (herd.beddingCover ?? 0) >= 1}
+                  title={
+                    strawTons <= 0
+                      ? "Aucune paille — achetez-en à un céréalier, ou pressez la vôtre"
+                      : (herd.beddingCover ?? 0) >= 1
+                        ? "Litière déjà complète"
+                        : "Étaler de la paille sous les bêtes"
+                  }
+                  onClick={() => onSpreadBedding(herd.id)}
+                >
+                  Pailler
+                </button>
+              )}
 
               {herd && (
                 <button
