@@ -52,8 +52,11 @@ jobs:
       - name: Construire (comme le Dockerfile)
         run: pnpm -r build
 
-      - name: Tester les trois paquets
-        run: pnpm -r test
+      # `pnpm test` et non `pnpm -r test` : la racine ajoute l'exercice de
+      # restauration, qui n'appartient à aucun paquet du monorepo et serait
+      # sinon le seul filet du jeu à n'être jamais joué.
+      - name: Tester les trois paquets et l'exercice de restauration
+        run: pnpm test
 
   deployer:
     name: Déployer sur le VPS

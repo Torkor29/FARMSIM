@@ -1,0 +1,26 @@
+[Unit]
+# Sauvegarde quotidienne de la base FARMSIM.
+#
+# Installation, une seule fois, sur le VPS :
+#   sudo cp /opt/farmsim/deploy/farmsim-backup.{service,timer} /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now farmsim-backup.timer
+#
+# Contrôles :
+#   systemctl list-timers farmsim-backup.timer    # prochaine exécution
+#   journalctl -u farmsim-backup.service -n 40    # ce qu'a fait la dernière
+#   sudo systemctl start farmsim-backup.service   # en lancer une tout de suite
+Description=Sauvegarde de la base FARMSIM
+Documentation=file:///opt/farmsim/scripts/farmsim-backup.sh
+# Sans docker, le script ne peut rien faire — inutile de le réveiller avant.
+After=docker.service
+Requires=docker.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/env bash /opt/farmsim/scripts/farmsim-backup.sh quotidien
+# Deux semaines de sauvegardes quotidiennes : de quoi remonter avant un dégât
+# qu'on ne remarque pas le jour même, sans remplir le disque. À 16 Mo pièce,
+# cela représente environ 230 Mo.
+Environment=FARMSIM_BACKUP_KEEP=14
+Environment=FARMSIM_BACKUP_DIR=/var/backups/farmsim

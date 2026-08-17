@@ -42,6 +42,28 @@ cd "$APP_DIR"
 # --- .env ---
 [[ -f .env ]] || cp .env.example .env
 
+# --- sauvegarde avant migration ---
+#
+# Le conteneur applique « prisma migrate deploy » à son démarrage. Une
+# migration qui abîme les données au lieu d'échouer proprement est donc à un
+# `docker compose up` de distance, et il n'y aurait aucun retour en arrière.
+# On prend l'instantané **avant**, pendant que l'ancienne version tourne
+# encore.
+#
+# Au tout premier déploiement il n'y a pas encore de conteneur : on ne bloque
+# pas pour autant, il n'y a alors rien à perdre.
+if docker inspect farmsim >/dev/null 2>&1; then
+  echo "==> Sauvegarde avant migration"
+  if ! bash "$APP_DIR/scripts/farmsim-backup.sh" avant-deploi; then
+    echo "ERROR: la sauvegarde a échoué — déploiement interrompu." >&2
+    echo "       Rien n'a été touché ; le jeu tourne toujours sur l'ancienne" >&2
+    echo "       version. Corrigez la sauvegarde avant de recommencer." >&2
+    exit 1
+  fi
+else
+  echo "==> Premier déploiement : aucune base à sauvegarder"
+fi
+
 echo "==> Build & start"
 docker compose up -d --build --force-recreate
 

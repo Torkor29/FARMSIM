@@ -1,0 +1,17 @@
+[Unit]
+Description=Sauvegarde quotidienne de FARMSIM
+
+[Timer]
+# 3 h 20 UTC : la nuit pour l'essentiel des joueurs, et à une minute qui n'est
+# ni pile ni la demie — les heures rondes sont l'heure de pointe des tâches
+# planifiées de tout le serveur.
+OnCalendar=*-*-* 03:20:00
+# Une machine éteinte à l'heure dite ne doit pas simplement sauter son tour :
+# la sauvegarde se rattrape au démarrage suivant.
+Persistent=true
+# Jusqu'à cinq minutes de décalage aléatoire, pour ne pas heurter une autre
+# tâche qui viserait la même minute.
+RandomizedDelaySec=300
+
+[Install]
+WantedBy=timers.target
