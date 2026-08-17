@@ -1,6 +1,23 @@
+import { useState } from "react";
 import type { ObjectiveView } from "@farmsim/shared";
 import { DIRECT_SEED_COST_PER_CELL, DIRECT_SEED_YIELD_MALUS } from "@farmsim/shared";
 import { isFieldWorkTool, isPlantTool, isSoilTool, plantCropLabel, type Tool } from "./tools";
+import { BRUSH_SIZES, TOOL_GROUPS, groupOf, optionsFor } from "./ui/tool-options";
+
+/**
+ * Barre d'outils tactile.
+ *
+ * Elle ne sert plus **que** le téléphone : la souris a son propre rail
+ * (`ui/desktop/ToolRail`). C'est ce qui permet de la garder telle qu'elle
+ * était — elle marchait — sans qu'elle ait à porter en plus les besoins d'un
+ * écran de bureau, qui l'avaient rendue mauvaise pour les deux.
+ *
+ * Un seul défaut lui restait, mesuré : sa rangée d'options ne montrait que
+ * deux entrées sur dix sur un écran de 390 px, le reste défilant derrière un
+ * masque. Un doigt peut faire glisser cette rangée — contrairement à une
+ * souris — mais rien ne disait qu'il y avait une suite. Le bouton « ⋯ » la
+ * déplie donc en grille, et là tout est visible d'un coup.
+ */
 
 type ContractorOffer = {
   cost: number;
@@ -35,20 +52,14 @@ type Props = {
   onPublishLabor?: () => void;
   onSell: () => void;
   onGuide: () => void;
-  desktopGarage?: boolean;
-  desktopOffice?: boolean;
-  desktopHerd?: boolean;
   hasHerd?: boolean;
-  onDesktopGarage?: () => void;
-  onDesktopOffice?: () => void;
-  onDesktopHerd?: () => void;
   showDev?: boolean;
   onDev?: () => void;
   /**
-   * Sur téléphone, les panneaux tenaient dans une **seconde** barre collée
-   * sous celle-ci : onze boutons sur deux rangées, soit près d'un quart de
-   * l'écran mangé en permanence. Ils passent derrière une sixième case,
-   * « Plus », qui ouvre un tiroir.
+   * Les panneaux tenaient dans une **seconde** barre collée sous celle-ci :
+   * onze boutons sur deux rangées, soit près d'un quart de l'écran mangé en
+   * permanence. Ils passent derrière une sixième case, « Plus », qui ouvre un
+   * tiroir.
    */
   moreOpen?: boolean;
   moreBadge?: number;
@@ -58,23 +69,6 @@ type Props = {
   /** Toutes les cases prêtes sont de l'herbe */
   mowReadyAll?: boolean;
 };
-
-const DOCK: { id: "SELECT" | "PLANT" | "HARVEST" | "SOIL" | "SELL"; label: string; icon: string }[] =
-  [
-    { id: "SELECT", label: "Voir", icon: "/assets/icons/tools/select.svg" },
-    { id: "PLANT", label: "Semer", icon: "/assets/icons/tools/plant.svg" },
-    { id: "HARVEST", label: "Récolte", icon: "/assets/icons/tools/harvest.svg" },
-    { id: "SOIL", label: "Sol", icon: "/assets/icons/tools/plow.svg" },
-    { id: "SELL", label: "Vendre", icon: "" },
-  ];
-
-function dockOn(id: (typeof DOCK)[number]["id"], tool: Tool): boolean {
-  if (id === "SELECT") return tool === "SELECT";
-  if (id === "PLANT") return isPlantTool(tool);
-  if (id === "HARVEST") return tool === "HARVEST" || tool === "SILAGE";
-  if (id === "SOIL") return isSoilTool(tool);
-  return false;
-}
 
 export function FieldDock({
   tool,
@@ -104,13 +98,6 @@ export function FieldDock({
   onPublishLabor,
   onSell,
   onGuide,
-  desktopGarage,
-  desktopOffice,
-  desktopHerd,
-  hasHerd,
-  onDesktopGarage,
-  onDesktopOffice,
-  onDesktopHerd,
   showDev,
   onDev,
   moreOpen,
@@ -119,6 +106,11 @@ export function FieldDock({
   mowSelected = false,
   mowReadyAll = false,
 }: Props) {
+  /** Rangée d'options dépliée en grille : tout devient visible d'un coup. */
+  const [optionsOpen, setOptionsOpen] = useState(false);
+
+  const group = groupOf(tool);
+  const options = optionsFor(group);
   const plant = isPlantTool(tool);
   const soil = isSoilTool(tool);
   const harvest = tool === "HARVEST" || tool === "SILAGE";
@@ -132,24 +124,12 @@ export function FieldDock({
     strawCount > 0 ||
     baleCount > 0;
 
-  function pickDock(id: (typeof DOCK)[number]["id"]) {
-    if (id === "SELL") {
-      onSell();
-      return;
-    }
-    if (id === "SELECT") {
-      if (tool !== "SELECT") onTool("SELECT");
-      return;
-    }
-    if (id === "PLANT") {
-      if (!isPlantTool(tool)) onTool("PLANT_WHEAT");
-      return;
-    }
-    if (id === "HARVEST") {
-      if (tool !== "HARVEST" && tool !== "SILAGE") onTool("HARVEST");
-      return;
-    }
-    if (id === "SOIL" && !isSoilTool(tool)) onTool("STUBBLE");
+  /** Compteur collé à une option — « Presser ×12 ». */
+  function optionCount(t: Tool): number {
+    if (t === "BALE") return strawCount;
+    if (t === "COLLECT") return baleCount;
+    if (t === "SILAGE") return silageReadyCount;
+    return 0;
   }
 
   return (
@@ -171,122 +151,51 @@ export function FieldDock({
       </button>
 
       {showTray && (
-        <div className="dock-tray" role="toolbar" aria-label="Options de l’outil">
+        <div className={`dock-tray${optionsOpen ? " expanded" : ""}`} role="toolbar" aria-label="Options de l’outil">
           {isEta && work && (
             <p className="stroke-hint">Glissez sur le champ · deux doigts pour bouger</p>
           )}
 
           <div className="dock-chips">
-            {plant && (
-              <>
-              {(
-                [
-                  ["PLANT_WHEAT", "Blé"],
-                  ["PLANT_BARLEY", "Orge"],
-                  ["PLANT_MAIZE", "Maïs"],
-                  ["PLANT_RAPE", "Colza"],
-                  ["PLANT_PEA", "Pois"],
-                  ["PLANT_GRASS", "Herbe"],
-                ] as const
-              ).map(([t, label]) => (
+            {options.map((o) => {
+              const n = optionCount(o.tool);
+              return (
                 <button
-                  key={t}
+                  key={o.tool}
                   type="button"
-                  className={`chip ${tool === t ? "on" : ""}`}
-                  onClick={() => onTool(t)}
+                  className={`chip ${tool === o.tool ? "on" : ""}`}
+                  aria-pressed={tool === o.tool}
+                  onClick={() => onTool(o.tool)}
                 >
-                  {label}
+                  {o.label}
+                  {n > 0 ? ` ×${n}` : ""}
                 </button>
-              ))}
+              );
+            })}
+
+            {plant && (
               <button
                 type="button"
                 className={`chip ${directSeed ? "on" : ""}`}
+                aria-pressed={directSeed}
                 title={`Semer dans les chaumes : +${DIRECT_SEED_COST_PER_CELL} TRN/case, −${Math.round(
                   DIRECT_SEED_YIELD_MALUS * 100,
                 )} % de rendement.`}
                 onClick={onDirectSeed}
               >
-                  Semis direct
-                </button>
-              </>
-            )}
-
-            {harvest && (
-              <>
-              <button
-                type="button"
-                className={`chip ${tool === "HARVEST" ? "on" : ""}`}
-                onClick={() => onTool("HARVEST")}
-              >
-                Grain
+                Semis direct
               </button>
-              <button
-                type="button"
-                className={`chip ${tool === "SILAGE" ? "on" : ""}`}
-                title="Maïs plante entière, plus tôt, plus de tonnage"
-                onClick={() => onTool("SILAGE")}
-              >
-                  Ensilage{silageReadyCount ? ` ×${silageReadyCount}` : ""}
-                </button>
-              </>
-            )}
-
-            {soil && (
-              <>
-              <button
-                type="button"
-                className={`chip ${tool === "STUBBLE" ? "on" : ""}`}
-                onClick={() => onTool("STUBBLE")}
-              >
-                Nettoyer
-              </button>
-              <button
-                type="button"
-                className={`chip ${tool === "PLOW" ? "on" : ""}`}
-                onClick={() => onTool("PLOW")}
-              >
-                Labourer
-              </button>
-              <button
-                type="button"
-                className={`chip ${tool === "FERTILIZE" ? "on" : ""}`}
-                onClick={() => onTool("FERTILIZE")}
-              >
-                Engrais
-              </button>
-              <button
-                type="button"
-                className={`chip ${tool === "PARK" ? "on" : ""}`}
-                onClick={() => onTool("PARK")}
-              >
-                Garer
-              </button>
-              <button
-                type="button"
-                className={`chip ${tool === "BALE" ? "on" : ""}`}
-                onClick={() => onTool("BALE")}
-              >
-                Presser{strawCount ? ` ×${strawCount}` : ""}
-              </button>
-              <button
-                type="button"
-                className={`chip ${tool === "COLLECT" ? "on" : ""}`}
-                onClick={() => onTool("COLLECT")}
-              >
-                  Ramasser{baleCount ? ` ×${baleCount}` : ""}
-                </button>
-              </>
             )}
 
             {/* Le pinceau termine la même rangée : sur sa propre ligne il
-                coûtait une deuxième rangée, calé à droite avec l'action il
-                ne laissait qu'un tiers de largeur aux cultures. */}
-            {([1, 2, 3] as const).map((n) => (
+                coûtait une deuxième rangée. */}
+            {BRUSH_SIZES.map((n) => (
               <button
                 key={n}
                 type="button"
                 className={`chip brush ${brush === n ? "on" : ""}`}
                 aria-label={`Pinceau ${n} sur ${n}`}
+                aria-pressed={brush === n}
                 onClick={() => onBrush(n)}
               >
                 {n}×{n}
@@ -295,6 +204,19 @@ export function FieldDock({
           </div>
 
           <div className="dock-chips dock-chips-end">
+            {/* Deux options sur dix tenaient dans la rangée dès qu'une action
+                occupait la colonne de droite. Ce bouton la déplie. */}
+            {options.length > 0 && (
+              <button
+                type="button"
+                className={`chip dock-expand ${optionsOpen ? "on" : ""}`}
+                aria-expanded={optionsOpen}
+                aria-label={optionsOpen ? "Replier les options" : "Voir toutes les options"}
+                onClick={() => setOptionsOpen((v) => !v)}
+              >
+                {optionsOpen ? "▾" : "⋯"}
+              </button>
+            )}
             {work && (
               <button
                 type="button"
@@ -308,10 +230,7 @@ export function FieldDock({
               </button>
             )}
             {contractor && !visiting && (
-              /* Deux lignes de prose au-dessus de deux gros boutons, en
-                 permanence : sur un téléphone, ce seul bloc coûtait deux
-                 cents pixels et poussait la ferme sous le tiers de l'écran.
-                 L'explication passe dans l'infobulle du bouton — elle reste
+              /* L'explication passe dans l'infobulle du bouton — elle reste
                  accessible, elle ne mange plus la parcelle. */
               <button
                 type="button"
@@ -339,12 +258,7 @@ export function FieldDock({
               </button>
             )}
             {readyCount > 0 && (
-              <button
-                type="button"
-                className="chip go"
-                disabled={busy}
-                onClick={onHarvestAll}
-              >
+              <button type="button" className="chip go" disabled={busy} onClick={onHarvestAll}>
                 {mowReadyAll ? `Tout faucher ×${readyCount}` : `Tout récolter ×${readyCount}`}
               </button>
             )}
@@ -353,68 +267,35 @@ export function FieldDock({
       )}
 
       <div className="dock-bar" role="toolbar" aria-label="Outils de champ">
-        {DOCK.map((d) => {
-          const on = d.id === "SELL" ? false : dockOn(d.id, tool);
+        {TOOL_GROUPS.map((g) => {
+          const on = group === g.id;
           return (
             <button
-              key={d.id}
+              key={g.id}
               type="button"
-              className={`dock-tool ${on ? "on" : ""} ${d.id === "SELL" ? "sell" : ""}`}
+              className={`dock-tool ${on ? "on" : ""} ${g.id === "SELL" ? "sell" : ""}`}
               aria-pressed={on}
-              onClick={() => pickDock(d.id)}
+              onClick={() => {
+                if (g.id === "SELL") onSell();
+                else if (g.entry && !on) onTool(g.entry);
+              }}
             >
-              {d.id === "SELL" ? (
-                <span className="dock-emoji" aria-hidden="true">
-                  💰
-                </span>
+              {g.icon ? (
+                <img src={g.icon} alt="" width={22} height={22} />
               ) : (
-                <img src={d.icon} alt="" width={22} height={22} />
+                <span className="dock-emoji" aria-hidden="true">
+                  {g.emoji}
+                </span>
               )}
               <span className="dock-label">
-                {d.id === "SELL" && stockTons > 0 ? `${stockTons.toFixed(0)} t` : d.label}
+                {g.id === "SELL" && stockTons > 0 ? `${stockTons.toFixed(0)} t` : g.label}
               </span>
-              {d.id === "HARVEST" && readyCount > 0 && (
+              {g.id === "HARVEST" && readyCount > 0 && (
                 <span className="dock-badge">{readyCount}</span>
               )}
             </button>
           );
         })}
-        {!isMobile && (
-          <>
-            <button
-              type="button"
-              className={`dock-tool extra ${desktopGarage ? "on" : ""}`}
-              onClick={onDesktopGarage}
-            >
-              <span className="dock-emoji" aria-hidden="true">
-                🚜
-              </span>
-              <span className="dock-label">Garage</span>
-            </button>
-            <button
-              type="button"
-              className={`dock-tool extra ${desktopOffice ? "on" : ""}`}
-              onClick={onDesktopOffice}
-            >
-              <span className="dock-emoji" aria-hidden="true">
-                📋
-              </span>
-              <span className="dock-label">Missions</span>
-            </button>
-            {hasHerd && (
-              <button
-                type="button"
-                className={`dock-tool extra ${desktopHerd ? "on" : ""}`}
-                onClick={onDesktopHerd}
-              >
-                <span className="dock-emoji" aria-hidden="true">
-                  🐄
-                </span>
-                <span className="dock-label">Élevage</span>
-              </button>
-            )}
-          </>
-        )}
         {isMobile && onMore && (
           <button
             type="button"

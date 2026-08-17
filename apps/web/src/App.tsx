@@ -88,6 +88,22 @@ import { FieldDock } from "./FieldDock";
 import { PlayGuide } from "./PlayGuide";
 import { TOKEN_KEY, TUTORIAL_KEY, GUIDE_FLAGS_KEY } from "./storage-keys";
 import { cropFromPlantTool, isPlantTool, isSoilTool, plantCropLabel, type Tool } from "./tools";
+import {
+  DEFAULT_MODS,
+  applySelection,
+  expandBrush,
+  rectBetween,
+  type PointerMods,
+  type SelectMode,
+} from "./ui/selection";
+import { TOOL_GROUPS, groupOf, optionsFor } from "./ui/tool-options";
+import { ToolRail } from "./ui/desktop/ToolRail";
+import { SelectionBar } from "./ui/desktop/SelectionBar";
+import {
+  CellContextMenu,
+  type CellContext,
+  type CellContextItem,
+} from "./ui/desktop/CellContextMenu";
 import { useIsMobile } from "./use-media-query";
 import { DevPanel, type DevGrant } from "./DevPanel";
 import { NO_ALERTS, tabBadge, useAwayAlerts, useNotificationState, type FarmAlerts } from "./use-alerts";
@@ -545,6 +561,8 @@ export function App() {
   const haulReadyRef = useRef(false);
   const playHaulRef = useRef<(commodity?: string) => void>(() => undefined);
   const [hoverCell, setHoverCell] = useState<{ x: number; y: number } | null>(null);
+  /** Menu contextuel de case — bureau seulement, le doigt n'a pas de clic droit. */
+  const [cellMenu, setCellMenu] = useState<CellContext | null>(null);
   const [toastTick, setToastTick] = useState(0);
   const [toastTone, setToastTone] = useState<"good" | "warn">("good");
   const [worldContinents, setWorldContinents] = useState<WorldContinent[]>([]);
@@ -882,6 +900,88 @@ export function App() {
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [tool, pendingBuild]);
+
+  /**
+   * Raccourcis de bureau.
+   *
+   * Le jeu n'en avait que deux, `R` et `Échap`, et uniquement en mode
+   * construction : impossible de changer d'outil, de vider une sélection ou
+   * d'ouvrir un panneau sans la souris. Ils sont volontairement absents au
+   * téléphone — un clavier logiciel n'a pas de Ctrl, et rien ne doit changer
+   * de comportement selon qu'un clavier Bluetooth est branché ou non.
+   *
+   * Chaque touche est affichée quelque part dans l'interface : le rail porte
+   * les chiffres, la barre de sélection porte Entrée et Échap.
+   */
+  useEffect(() => {
+    if (isMobile || !player) return;
+    const onKey = (e: KeyboardEvent) => {
+      const el = e.target as HTMLElement | null;
+      if (el && /^(INPUT|TEXTAREA|SELECT)$/.test(el.tagName)) return;
+      if (el?.isContentEditable) return;
+
+      const ctrl = e.ctrlKey || e.metaKey;
+
+      // Ctrl+A : tout ce que l'outil courant peut travailler.
+      if (ctrl && (e.key === "a" || e.key === "A")) {
+        if (!isStrokeTool(tool) && tool !== "SILAGE") return;
+        e.preventDefault();
+        setSelectedCells(eligibleCells(tool));
+        return;
+      }
+      // Les autres raccourcis ne doivent jamais voler un Ctrl+C, Ctrl+R…
+      if (ctrl || e.altKey) return;
+
+      // Échap dégrade : d'abord le menu, puis la sélection, puis l'outil.
+      if (e.key === "Escape") {
+        if (cellMenu) setCellMenu(null);
+        else if (selectedCells.length) setSelectedCells([]);
+        else if (tool !== "SELECT") setTool("SELECT");
+        return;
+      }
+      if (e.key === "Enter") {
+        if (selectedCells.length && !busy) {
+          e.preventDefault();
+          runSelectionAction();
+        }
+        return;
+      }
+
+      const group = groupOf(tool);
+      const options = optionsFor(group);
+      // Q et E font défiler les options de la famille courante — c'est ce qui
+      // remplace, au clavier, la rangée horizontale devenue inatteignable.
+      if ((e.key === "q" || e.key === "e") && options.length > 1) {
+        const i = options.findIndex((o) => o.tool === tool);
+        const step = e.key === "e" ? 1 : -1;
+        const next = options[(i + step + options.length) % options.length];
+        if (next) setTool(next.tool);
+        return;
+      }
+      if (e.key === "[" || e.key === "]") {
+        setBrush((b) => {
+          const n = e.key === "]" ? b + 1 : b - 1;
+          return (Math.min(3, Math.max(1, n)) as 1 | 2 | 3);
+        });
+        return;
+      }
+
+      const digit = TOOL_GROUPS.find((g) => g.hotkey === e.key);
+      if (digit) {
+        if (digit.id === "SELL") setShowMarket(true);
+        else if (digit.entry) pickTool(digit.entry);
+        return;
+      }
+
+      if (e.key === "g" || e.key === "G") setShowGarage((v) => !v);
+      else if (e.key === "t" || e.key === "T") setShowEta((v) => !v);
+      else if (e.key === "m" || e.key === "M") setShowMarket((v) => !v);
+      else if (e.key === "?") setShowGuide(true);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isMobile, player?.id, tool, selectedCells, cellMenu, busy]);
 
   // Changer de bâtiment ne garde pas la place retenue — un fantôme de silo
   // resté après le passage au poulailler poserait le mauvais. Mais on ne
@@ -1624,54 +1724,66 @@ export function App() {
     );
   }
 
-  function toolLabel(t: Tool): string {
-    if (isPlantTool(t)) return plantCropLabel(t);
-    if (t === "FERTILIZE") return "Engrais";
-    if (t === "PLOW") return "Labour";
-    if (t === "STUBBLE") return "Nettoyer";
-    return "Récolte";
-  }
-
   /**
    * Sélection retenue au début d'un tracé.
    *
-   * Le tracé s'y **ajoute** au lieu de la remplacer : sans cela, commencer un
-   * second passage effaçait le premier, et il fallait tout refaire d'un seul
-   * geste continu.
+   * Le geste s'applique toujours à **cet** état, jamais au précédent aperçu :
+   * sinon un tracé additif se dédoublerait à chaque image, et un tracé qui
+   * retire effacerait sa propre trace au fur et à mesure. Le mode du geste
+   * (ajouter, retirer, remplacer) est décidé par `ui/selection`.
    */
   const strokeBase = useRef<{ x: number; y: number }[]>([]);
 
-  /** Union de deux listes de cases, sans doublon, en gardant l'ordre. */
-  function mergeCells(
-    base: { x: number; y: number }[],
-    ajout: { x: number; y: number }[],
-  ): { x: number; y: number }[] {
-    const vus = new Set(base.map((c) => `${c.x},${c.y}`));
-    const out = [...base];
-    for (const c of ajout) {
-      // Le pinceau vaut aussi pour le tracé : à 2×2, le doigt peint quatre
-      // cases d'un coup, comme le fait un clic.
-      for (const b of brushCells(c.x, c.y)) {
-        const k = `${b.x},${b.y}`;
-        if (vus.has(k)) continue;
-        vus.add(k);
-        out.push(b);
-      }
-    }
-    return out;
+  /**
+   * Dernière case posée : point d'ancrage de Maj+clic.
+   *
+   * C'est l'idiome de toutes les listes de bureau — cliquer, puis Maj+cliquer
+   * plus loin pour prendre tout ce qu'il y a entre les deux. Sur une grille,
+   * « entre les deux » est le rectangle plein.
+   */
+  const selectionAnchor = useRef<{ x: number; y: number } | null>(null);
+
+  /**
+   * Pose un lot de cases selon le mode du geste.
+   *
+   * Un seul chemin pour le clic, le tracé et Ctrl+A : c'est ce qui garantit
+   * que les trois se comportent pareil, ce qui n'était pas le cas avant —
+   * le clic basculait, le tracé ajoutait toujours, et rien ne retirait.
+   */
+  function commitSelection(block: { x: number; y: number }[], mode: SelectMode) {
+    setSelectedCells((prev) => applySelection(prev, block, mode));
   }
 
-  function toggleCell(x: number, y: number) {
-    const block = brushCells(x, y);
-    setSelectedCells((prev) => {
-      const allIn = block.every((c) => prev.some((s) => s.x === c.x && s.y === c.y));
-      if (allIn) return prev.filter((s) => !block.some((c) => c.x === s.x && c.y === s.y));
-      const next = [...prev];
-      for (const c of block) {
-        if (!next.some((s) => s.x === c.x && s.y === c.y)) next.push(c);
-      }
-      return next;
-    });
+  /**
+   * Change d'outil et décide du sort de la sélection.
+   *
+   * Passer de « Blé » à « Orge » garde les cases retenues — c'est le même
+   * geste, on change d'avis sur la graine. Passer de « Semer » à « Labourer »
+   * les vide : la sélection ne veut plus rien dire. Les deux coques appellent
+   * cette même fonction, sinon clavier et souris divergeraient.
+   */
+  function pickTool(t: Tool) {
+    const keep =
+      (isPlantTool(tool) && isPlantTool(t)) ||
+      (isSoilTool(tool) && isSoilTool(t)) ||
+      ((tool === "HARVEST" || tool === "SILAGE") && (t === "HARVEST" || t === "SILAGE"));
+    setTool(t);
+    if (!keep && t !== "BUILD") {
+      setSelectedCells([]);
+      selectionAnchor.current = null;
+    }
+  }
+
+  /** Cases éligibles à l'outil courant — sert à « Tout sélectionner ». */
+  function eligibleCells(t: Tool): { x: number; y: number }[] {
+    const out: { x: number; y: number }[] = [];
+    for (const c of grid) {
+      if (c.kind === "BUILDING" || c.kind === "VEHICLE") continue;
+      if (isPlantTool(t) && c.kind === "CROP") continue;
+      if ((t === "HARVEST" || t === "SILAGE") && c.kind !== "CROP") continue;
+      out.push({ x: c.x, y: c.y });
+    }
+    return out;
   }
 
   /** Crée le compte seul : le métier et la terre se choisissent juste après. */
@@ -1750,7 +1862,7 @@ export function App() {
     }
   }
 
-  async function applyToolOnCell(x: number, y: number) {
+  async function applyToolOnCell(x: number, y: number, mods: PointerMods = DEFAULT_MODS) {
     if (!player || !activeParcelId) return;
     playUiSound("click");
 
@@ -1780,24 +1892,15 @@ export function App() {
       tool === "STUBBLE" ||
       tool === "PLOW"
     ) {
-      const block = brushCells(x, y);
-      const allIn = block.every((c) => selectedCells.some((s) => s.x === c.x && s.y === c.y));
-      const nextCount = allIn
-        ? selectedCells.length -
-          block.filter((c) => selectedCells.some((s) => s.x === c.x && s.y === c.y)).length
-        : selectedCells.length +
-          block.filter((c) => !selectedCells.some((s) => s.x === c.x && s.y === c.y)).length;
-      toggleCell(x, y);
-      const label = isPlantTool(tool)
-        ? plantCropLabel(tool)
-        : tool === "FERTILIZE"
-          ? "Engrais"
-          : tool === "PLOW"
-            ? "Labour"
-            : tool === "STUBBLE"
-              ? "Nettoyer"
-              : "Récolte";
-      flashToast(`${label} · ${nextCount} case(s) sélectionnée(s)`);
+      // Maj+clic prend tout le rectangle depuis la dernière case posée. Sans
+      // ancre — premier clic de la partie — il n'y a rien à étendre, on pose.
+      const anchor = selectionAnchor.current;
+      const block =
+        mods.extend && anchor
+          ? expandBrush(rectBetween(anchor, { x, y }, gw, gh), brush, gw, gh)
+          : brushCells(x, y);
+      commitSelection(block, mods.mode);
+      if (!mods.extend) selectionAnchor.current = { x, y };
       return;
     }
 
@@ -1844,6 +1947,69 @@ export function App() {
         setBusy(false);
       }
     }
+  }
+
+  /**
+   * Clic droit sur une case — bureau seulement.
+   *
+   * Il ne duplique pas la barre d'outils : il propose ce qui est **propre à
+   * cette case-là**, c'est-à-dire ce qu'on ne peut pas faire autrement sans la
+   * retrouver dans une liste latérale.
+   */
+  function openCellMenu(cell: { x: number; y: number }, screen: { x: number; y: number }) {
+    if (isMobile) return;
+    const c = grid.find((g) => g.x === cell.x && g.y === cell.y);
+    const items: CellContextItem[] = [];
+
+    if (c?.kind === "BUILDING" && c.buildingId) {
+      const b = (parcel?.buildings ?? []).find((x) => x.id === c.buildingId);
+      items.push({
+        label: "Ouvrir la fiche",
+        hint: "Tourner, améliorer, démolir",
+        onPick: () => setOpenBuildingId(c.buildingId!),
+      });
+      if (b && !visiting) {
+        items.push({
+          label: "Tourner d’un quart",
+          onPick: () => void rotateBuilding(b.id, BUILDING_DEFS[b.type].name),
+        });
+      }
+    } else {
+      items.push({
+        label: "Ajouter à la sélection",
+        hint: "comme Ctrl+clic",
+        onPick: () => commitSelection(brushCells(cell.x, cell.y), "add"),
+      });
+      items.push({
+        label: "Retirer de la sélection",
+        hint: "comme Alt+clic",
+        disabled: selectedCells.length === 0,
+        onPick: () => commitSelection(brushCells(cell.x, cell.y), "remove"),
+      });
+      items.push({
+        label: "Sélectionner la ligne",
+        onPick: () =>
+          commitSelection(
+            Array.from({ length: gw }, (_, x) => ({ x, y: cell.y })),
+            "add",
+          ),
+      });
+      items.push({
+        label: "Sélectionner la colonne",
+        onPick: () =>
+          commitSelection(
+            Array.from({ length: gh }, (_, y) => ({ x: cell.x, y })),
+            "add",
+          ),
+      });
+    }
+    items.push({
+      label: "Vider la sélection",
+      disabled: selectedCells.length === 0,
+      onPick: () => setSelectedCells([]),
+    });
+
+    setCellMenu({ cell, screen, title: describeCell(cell.x, cell.y), items });
   }
 
   /** Le prestataire n'est proposé que là où il a un sens : sur du travail aux champs. */
@@ -3206,11 +3372,23 @@ export function App() {
               onStrokeStart={() => {
                 strokeBase.current = selectedCells;
               }}
-              onStrokePreview={(cells) => setSelectedCells(mergeCells(strokeBase.current, cells))}
-              onStrokeSelect={(cells) => {
-                const next = mergeCells(strokeBase.current, cells);
+              // L'aperçu part toujours de la sélection **d'avant le geste** :
+              // sinon un tracé en mode « retirer » mangerait sa propre trace au
+              // fur et à mesure, et un tracé additif se dédoublerait.
+              onStrokePreview={(cells, mods) =>
+                setSelectedCells(
+                  applySelection(strokeBase.current, expandBrush(cells, brush, gw, gh), mods.mode),
+                )
+              }
+              onStrokeSelect={(cells, mods) => {
+                const next = applySelection(
+                  strokeBase.current,
+                  expandBrush(cells, brush, gw, gh),
+                  mods.mode,
+                );
                 setSelectedCells(next);
-                flashToast(`${toolLabel(tool)} · ${next.length} case(s) sélectionnée(s)`);
+                const last = cells[cells.length - 1];
+                if (last) selectionAnchor.current = last;
               }}
               onWorkStroke={(cells) => {
                 if (busy) return;
@@ -3218,6 +3396,7 @@ export function App() {
               }}
               onCellClick={applyToolOnCell}
               onCellHover={setHoverCell}
+              onCellContext={openCellMenu}
             />
           </Suspense>
         ) : (
@@ -3263,6 +3442,53 @@ export function App() {
               ?
             </button>
           </div>
+          {/* Les panneaux vivaient dans la barre d'outils du bas, sur une
+              largeur de 576 px partagée avec les cinq outils de champ. Ils
+              remontent ici : c'est une navigation, pas un outil, et la barre
+              haute a de la place à revendre sur un écran de bureau. */}
+          {!isMobile && (
+            <nav className="hud-nav" aria-label="Panneaux">
+              <button
+                type="button"
+                className={`hud-nav-btn${showGarage ? " on" : ""}`}
+                aria-pressed={showGarage}
+                title="Garage — touche G"
+                onClick={() => setShowGarage((v) => !v)}
+              >
+                <span aria-hidden="true">🚜</span> Garage <kbd>G</kbd>
+              </button>
+              <button
+                type="button"
+                className={`hud-nav-btn${showEta ? " on" : ""}`}
+                aria-pressed={showEta}
+                title="Bureau et missions — touche T"
+                onClick={() => setShowEta((v) => !v)}
+              >
+                <span aria-hidden="true">📋</span> Bureau <kbd>T</kbd>
+              </button>
+              {barns.length > 0 && (
+                <button
+                  type="button"
+                  className={`hud-nav-btn${showHerd ? " on" : ""}`}
+                  aria-pressed={showHerd}
+                  title="Élevage"
+                  onClick={() => setShowHerd((v) => !v)}
+                >
+                  <span aria-hidden="true">🐄</span> Élevage
+                </button>
+              )}
+              {devEnabled && (
+                <button
+                  type="button"
+                  className="hud-nav-btn"
+                  title="Outils de test"
+                  onClick={() => setShowDev(true)}
+                >
+                  <span aria-hidden="true">🛠</span> Test
+                </button>
+              )}
+            </nav>
+          )}
           <div className="hud-stats">
             <span className="stat-name">{player.displayName}</span>
             <span className="stat-job">{SPECIALIZATION_LABELS[player.specialization]}</span>
@@ -3936,61 +4162,104 @@ export function App() {
         </aside>
       </div>
 
-      <FieldDock
-        tool={tool}
-        brush={brush}
-        isMobile={isMobile}
-        isEta={visiting}
-        visiting={visiting}
-        busy={busy}
-        selectedCount={selectedCells.length}
-        readyCount={visiting ? Math.min(readyCellCount, visitOrder?.remaining ?? 0) : readyCellCount}
-        strawCount={strawCellCount}
-        baleCount={baleCellCount}
-        silageReadyCount={silageReadyCount}
-        stockTons={totalStockTons}
-        crd={player.crd}
-        directSeed={directSeed}
-        contractor={visiting ? null : contractorOffer}
-        laborQuote={laborQuote}
-        objective={nextGoal}
-        allGoalsDone={allGoalsDone}
-        onTool={(t) => {
-          const keep =
-            (isPlantTool(tool) && isPlantTool(t)) ||
-            (isSoilTool(tool) && isSoilTool(t)) ||
-            ((tool === "HARVEST" || tool === "SILAGE") && (t === "HARVEST" || t === "SILAGE"));
-          setTool(t);
-          if (!keep && t !== "BUILD") setSelectedCells([]);
-        }}
-        onBrush={setBrush}
-        onDirectSeed={() => setDirectSeed((v) => !v)}
-        onConfirm={runSelectionAction}
-        onHarvestAll={harvestAll}
-        mowSelected={selectedAreGrass}
-        mowReadyAll={readyAreGrass}
-        onContractor={callContractor}
-        onPublishLabor={publishLaborOrder}
-        onSell={() => setShowMarket(true)}
-        onGuide={() => setShowGuide(true)}
-        desktopGarage={showGarage}
-        desktopOffice={showEta}
-        desktopHerd={showHerd}
-        hasHerd={barns.length > 0}
-        onDesktopGarage={() => setShowGarage((v) => !v)}
-        onDesktopOffice={() => setShowEta((v) => !v)}
-        onDesktopHerd={() => setShowHerd((v) => !v)}
-        showDev={devEnabled}
-        onDev={() => setShowDev(true)}
-        moreOpen={moreOpen}
-        /* Refermé, « Plus » porte la somme de ce qui attend derrière lui :
-           sinon cacher les panneaux cacherait aussi leurs alertes. */
-        moreBadge={SHEET_TABS.reduce((n, t) => n + tabBadge(alerts, t.key), 0)}
-        onMore={() => {
-          setMoreOpen((v) => !v);
-          setSheet(null);
-        }}
-      />
+      {/*
+        Les deux coques.
+
+        Le même état de jeu, deux interfaces qui ne partagent pas un pixel :
+        au doigt la barre du bas, qui marchait déjà et n'a pas bougé ; à la
+        souris un rail vertical qui montre **toutes** les options d'un coup, et
+        une barre de sélection pleine largeur. C'est l'aiguillage demandé —
+        `useIsMobile()` choisit une coque entière, jamais un attribut passé à
+        un composant qui bifurque huit fois à l'intérieur.
+      */}
+      {isMobile ? (
+        <FieldDock
+          tool={tool}
+          brush={brush}
+          isMobile={isMobile}
+          isEta={visiting}
+          visiting={visiting}
+          busy={busy}
+          selectedCount={selectedCells.length}
+          readyCount={
+            visiting ? Math.min(readyCellCount, visitOrder?.remaining ?? 0) : readyCellCount
+          }
+          strawCount={strawCellCount}
+          baleCount={baleCellCount}
+          silageReadyCount={silageReadyCount}
+          stockTons={totalStockTons}
+          crd={player.crd}
+          directSeed={directSeed}
+          contractor={visiting ? null : contractorOffer}
+          laborQuote={laborQuote}
+          objective={nextGoal}
+          allGoalsDone={allGoalsDone}
+          onTool={pickTool}
+          onBrush={setBrush}
+          onDirectSeed={() => setDirectSeed((v) => !v)}
+          onConfirm={runSelectionAction}
+          onHarvestAll={harvestAll}
+          mowSelected={selectedAreGrass}
+          mowReadyAll={readyAreGrass}
+          onContractor={callContractor}
+          onPublishLabor={publishLaborOrder}
+          onSell={() => setShowMarket(true)}
+          onGuide={() => setShowGuide(true)}
+          hasHerd={barns.length > 0}
+          showDev={devEnabled}
+          onDev={() => setShowDev(true)}
+          moreOpen={moreOpen}
+          /* Refermé, « Plus » porte la somme de ce qui attend derrière lui :
+             sinon cacher les panneaux cacherait aussi leurs alertes. */
+          moreBadge={SHEET_TABS.reduce((n, t) => n + tabBadge(alerts, t.key), 0)}
+          onMore={() => {
+            setMoreOpen((v) => !v);
+            setSheet(null);
+          }}
+        />
+      ) : (
+        <>
+          <ToolRail
+            tool={tool}
+            brush={brush}
+            directSeed={directSeed}
+            readyCount={
+              visiting ? Math.min(readyCellCount, visitOrder?.remaining ?? 0) : readyCellCount
+            }
+            strawCount={strawCellCount}
+            baleCount={baleCellCount}
+            silageReadyCount={silageReadyCount}
+            visiting={visiting}
+            onTool={pickTool}
+            onBrush={setBrush}
+            onDirectSeed={() => setDirectSeed((v) => !v)}
+            onMarket={() => setShowMarket(true)}
+            onGuide={() => setShowGuide(true)}
+          />
+          <SelectionBar
+            tool={tool}
+            selectedCount={selectedCells.length}
+            readyCount={
+              visiting ? Math.min(readyCellCount, visitOrder?.remaining ?? 0) : readyCellCount
+            }
+            busy={busy}
+            contractorCost={visiting ? null : (contractorOffer?.cost ?? null)}
+            contractorAffordable={canPay(player, contractorOffer?.cost ?? 0)}
+            laborQuote={laborQuote}
+            laborAffordable={canPay(player, laborQuote ?? 0)}
+            visiting={visiting}
+            mowSelected={selectedAreGrass}
+            mowReadyAll={readyAreGrass}
+            onConfirm={runSelectionAction}
+            onHarvestAll={harvestAll}
+            onContractor={callContractor}
+            onPublishLabor={publishLaborOrder}
+            onSelectAll={() => setSelectedCells(eligibleCells(tool))}
+            onClear={() => setSelectedCells([])}
+          />
+          <CellContextMenu context={cellMenu} onClose={() => setCellMenu(null)} />
+        </>
+      )}
 
 
       <MarketPanel

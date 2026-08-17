@@ -3355,3 +3355,534 @@ button.tiny {
   .hdv-cats button.on { box-shadow: inset 0 -3px 0 var(--gold-500); }
   .hdv-detail { border-left: 0; border-top: 1px solid var(--line); }
 }
+
+/* ==========================================================================
+   COQUE DE BUREAU
+   ==========================================================================
+
+   Tout ce qui suit ne s'applique **qu'**au-delà de 820 px. En dessous, la
+   coque tactile règne seule et rien ici ne la touche — c'est la condition
+   pour refondre le bureau sans risquer une régression au téléphone.
+
+   Rappel de ce qui était mesuré avant, sur le jeu en marche :
+
+     .field-dock            576 px de large, sur 1920 comme sur 2560
+     .dock-chips            450 px de boîte pour 625 px de contenu
+     .dock-chips (sélection) 103 px de boîte pour 625 px de contenu
+     rail gauche ouvert     8 303 px de contenu dans 811 px de hauteur
+     molette verticale      scrollLeft inchangé — options inatteignables
+
+   La barre du bas n'est pas élargie : elle est **tournée**. En colonne, dix
+   options tiennent sans défilement, sans masque et sans molette horizontale.
+   ========================================================================== */
+
+@media (min-width: 821px) {
+  /* La coque réserve une colonne à gauche pour le rail d'outils, et une
+     rangée en bas pour la barre de sélection. La scène reste plein écran
+     derrière : `.iso-layer` couvre toute la grille.
+
+     `:not(.mobile)` fait foi : c'est `useIsMobile()` qui tranche, et lui
+     seul. Un téléphone couché mesure 844 px de large — au-delà du seuil —
+     mais 390 px de haut : la requête média le prendrait pour un bureau,
+     la classe posée par React sait que non. Deux sources de vérité qui
+     divergent, c'est une disposition à moitié bureau et à moitié tactile. */
+  :root {
+    --tool-rail-w: clamp(11.5rem, 12vw, 13.5rem);
+  }
+  .game-stage:not(.mobile) {
+    grid-template-columns: var(--tool-rail-w) minmax(0, 1fr) var(--rail-r);
+    grid-template-rows: auto minmax(0, 1fr) minmax(0, 1fr) auto auto;
+    grid-template-areas:
+      "tools top    top"
+      "tools stage  right"
+      "tools stage  left"
+      "tools select select"
+      "tools dock   dock";
+  }
+  /* Les rails de panneaux se partagent la colonne de droite tant que la
+     ferme n'a pas la place pour deux colonnes. */
+  .game-stage:not(.mobile):has(.rail-left:empty):has(.rail-right:empty) {
+    grid-template-columns: var(--tool-rail-w) minmax(0, 1fr) 0;
+  }
+}
+
+@media (min-width: 1180px) {
+  .game-stage:not(.mobile) {
+    grid-template-columns: var(--tool-rail-w) var(--rail-l) minmax(0, 1fr) var(--rail-r);
+    grid-template-rows: auto minmax(0, 1fr) auto auto;
+    grid-template-areas:
+      "tools top    top    top"
+      "tools left   stage  right"
+      "tools select select select"
+      "tools dock   dock   dock";
+  }
+  .game-stage:not(.mobile):has(.rail-left:empty) {
+    grid-template-columns: var(--tool-rail-w) 0 minmax(0, 1fr) var(--rail-r);
+  }
+  .game-stage:not(.mobile):has(.rail-right:empty) {
+    grid-template-columns: var(--tool-rail-w) var(--rail-l) minmax(0, 1fr) 0;
+  }
+  .game-stage:not(.mobile):has(.rail-left:empty):has(.rail-right:empty) {
+    grid-template-columns: var(--tool-rail-w) 0 minmax(0, 1fr) 0;
+  }
+}
+
+/* —— Rail d'outils —— */
+.tool-rail {
+  grid-area: tools;
+  z-index: 6;
+  display: flex;
+  flex-direction: column;
+  gap: 0.55rem;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 0.6rem 0.55rem calc(0.6rem + env(safe-area-inset-bottom));
+  background: var(--bar);
+  border-right: 1px solid var(--glass-border);
+  backdrop-filter: blur(14px);
+  scrollbar-width: thin;
+}
+/* La barre de défilement du rail reste discrète mais **visible** : c'est
+   exactement ce qui manquait à l'ancienne rangée d'options, où
+   `scrollbar-width: none` cachait qu'il y avait une suite. */
+.tool-rail::-webkit-scrollbar { width: 8px; }
+.tool-rail::-webkit-scrollbar-thumb {
+  background: var(--line);
+  border-radius: 999px;
+}
+
+.tool-rail-groups,
+.tool-rail-options {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 0.2rem;
+}
+.tool-rail-groups { gap: 0.15rem; }
+
+.tool-rail-group,
+.tool-rail-option,
+.tool-rail-toggle {
+  position: relative;
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  text-align: left;
+  /* Une souris vise mieux qu'un doigt : 36 px suffisent ici, contre 44 au
+     téléphone. C'est ce gain qui permet de tout montrer sans défilement. */
+  min-height: 36px;
+  padding: 0.3rem 0.5rem;
+  border: 1px solid transparent;
+  border-radius: 9px;
+  background: transparent;
+  font-size: 0.86rem;
+  font-weight: 700;
+  color: var(--ink);
+}
+.tool-rail-group:hover:not(:disabled),
+.tool-rail-option:hover:not(:disabled),
+.tool-rail-toggle:hover:not(:disabled) {
+  background: var(--sand);
+  /* Pas de saut vertical dans une liste dense : le survol se lit à la
+     couleur, pas au déplacement. */
+  transform: none;
+  filter: none;
+}
+.tool-rail-group.on {
+  background: linear-gradient(180deg, var(--teal-300), var(--teal-500));
+  color: #fff;
+}
+.tool-rail-group.on .tool-rail-key { background: rgba(255, 255, 255, 0.22); color: #fff; }
+.tool-rail-icon { display: flex; width: 20px; justify-content: center; }
+.tool-rail-group.on .tool-rail-icon img { filter: brightness(2.2); }
+.tool-rail-emoji { font-size: 1rem; line-height: 1; }
+.tool-rail-name { flex: 1; min-width: 0; }
+
+.tool-rail-key {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.62rem;
+  font-weight: 700;
+  padding: 0.1em 0.34em;
+  border-radius: 4px;
+  background: var(--sand);
+  color: var(--muted);
+  border: 1px solid var(--line);
+}
+.tool-rail-key.inline { margin-left: 0.3rem; }
+
+.tool-rail-badge {
+  min-width: 1.15rem;
+  padding: 0 0.25rem;
+  border-radius: 999px;
+  background: var(--danger);
+  color: #fff;
+  font-size: 0.68rem;
+  font-weight: 800;
+  text-align: center;
+}
+
+.tool-rail-block {
+  border-top: 1px solid var(--line);
+  padding-top: 0.5rem;
+}
+.tool-rail-title {
+  margin: 0 0 0.35rem;
+  padding-left: 0.5rem;
+  font-family: Nunito, sans-serif;
+  font-size: 0.65rem;
+  font-weight: 800;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.tool-rail-option { font-weight: 600; font-size: 0.84rem; }
+.tool-rail-option.on {
+  background: var(--gold-100);
+  border-color: var(--gold-300);
+  color: var(--gold-700);
+  font-weight: 800;
+}
+.tool-rail-option-label { flex: 1; min-width: 0; }
+.tool-rail-option-count {
+  font-size: 0.7rem;
+  font-weight: 800;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+.tool-rail-option.on .tool-rail-option-count { color: var(--gold-700); }
+
+.tool-rail-toggle { font-size: 0.8rem; font-weight: 600; margin-top: 0.2rem; }
+.tool-rail-check {
+  display: grid;
+  place-items: center;
+  width: 16px;
+  height: 16px;
+  border-radius: 4px;
+  border: 1px solid var(--line);
+  background: var(--paper);
+  font-size: 0.7rem;
+  color: var(--teal-500);
+}
+.tool-rail-toggle.on { color: var(--teal-700); }
+.tool-rail-toggle.on .tool-rail-check {
+  background: var(--teal-500);
+  border-color: var(--teal-500);
+  color: #fff;
+}
+
+.tool-rail-brush { display: flex; gap: 0.25rem; padding: 0 0.15rem; }
+.tool-rail-brush-btn {
+  flex: 1;
+  min-height: 32px;
+  padding: 0.2rem 0;
+  border-radius: 8px;
+  border: 1px solid var(--line);
+  background: var(--paper);
+  font-size: 0.74rem;
+  font-weight: 700;
+}
+.tool-rail-brush-btn:hover:not(:disabled) { transform: none; filter: none; background: var(--sand); }
+.tool-rail-brush-btn.on {
+  background: linear-gradient(180deg, var(--teal-300), var(--teal-500));
+  border-color: transparent;
+  color: #fff;
+}
+
+.tool-rail-foot { margin-top: auto; padding-top: 0.6rem; border-top: 1px solid var(--line); }
+.tool-rail-help {
+  width: 100%;
+  min-height: 34px;
+  padding: 0.3rem 0.5rem;
+  border-radius: 9px;
+  border: 1px solid var(--line);
+  background: var(--paper);
+  font-size: 0.78rem;
+}
+.tool-rail-help:hover:not(:disabled) { transform: none; filter: none; background: var(--sand); }
+/* L'aide aux gestes : elle remplace la découverte par tâtonnement. Un
+   modificateur qu'on n'a jamais vu écrit n'est jamais essayé. */
+.tool-rail-hints {
+  margin: 0.55rem 0 0;
+  display: grid;
+  gap: 0.22rem;
+  font-size: 0.66rem;
+  color: var(--muted);
+}
+.tool-rail-hints > div { display: flex; gap: 0.3rem; align-items: baseline; }
+.tool-rail-hints dt { margin: 0; }
+.tool-rail-hints dd { margin: 0; }
+.tool-rail-hints kbd {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.6rem;
+  padding: 0.05em 0.28em;
+  border-radius: 3px;
+  background: var(--sand);
+  border: 1px solid var(--line);
+  color: var(--ink-soft);
+}
+
+/* —— Barre de sélection ——
+   Pleine largeur : c'est très exactement la place que l'ancienne barre de
+   576 px n'utilisait pas, et ce sont les libellés d'action qui, faute de
+   cette place, écrasaient la rangée d'options à 103 px. */
+.selection-bar {
+  grid-area: select;
+  z-index: 6;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.5rem 0.9rem;
+  margin: 0 var(--gutter) 0.35rem;
+  padding: 0.4rem 0.75rem;
+  border-radius: 12px;
+  background: var(--bar);
+  border: 1px solid var(--glass-border);
+  box-shadow: var(--sh-2);
+  backdrop-filter: blur(12px);
+}
+.selection-bar-count { display: flex; align-items: baseline; gap: 0.4rem; }
+.selection-bar-num {
+  font-family: "Baloo 2", Nunito, sans-serif;
+  font-size: 1.35rem;
+  font-weight: 800;
+  line-height: 1;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+.selection-bar-num.on { color: var(--gold-700); }
+.selection-bar-unit { font-size: 0.78rem; color: var(--ink-soft); font-weight: 700; }
+
+.selection-bar-picks { display: flex; gap: 0.3rem; }
+.selection-bar-link {
+  min-height: 30px;
+  padding: 0.2rem 0.5rem;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: transparent;
+  font-size: 0.76rem;
+  font-weight: 700;
+  color: var(--teal-700);
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+.selection-bar-link:hover:not(:disabled) {
+  transform: none;
+  filter: none;
+  background: var(--teal-100);
+}
+.selection-bar-link kbd,
+.selection-bar-go kbd {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.6rem;
+  padding: 0.05em 0.3em;
+  border-radius: 3px;
+  background: rgba(0, 0, 0, 0.08);
+  border: 0;
+}
+
+.selection-bar-actions {
+  margin-left: auto;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  align-items: center;
+}
+.selection-bar-go {
+  min-height: 38px;
+  padding: 0.35rem 0.9rem;
+  border-radius: 10px;
+  border: 0;
+  background: linear-gradient(180deg, var(--gold-300), var(--gold-500));
+  color: #3a2c07;
+  font-weight: 800;
+  font-size: 0.86rem;
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  /* Le libellé tient entier : « Semer Blé · 14 case(s) » ne se tronque plus. */
+  white-space: nowrap;
+}
+.selection-bar-go.ghost {
+  background: var(--paper);
+  border: 1px solid var(--line);
+  color: var(--ink);
+}
+.selection-bar-alt {
+  min-height: 38px;
+  padding: 0.35rem 0.8rem;
+  border-radius: 10px;
+  border: 1px solid var(--line);
+  background: var(--sand);
+  font-size: 0.82rem;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+/* —— Menu contextuel de case —— */
+.cell-menu {
+  position: fixed;
+  z-index: 40;
+  padding: 0.3rem;
+  border-radius: 12px;
+  background: var(--paper);
+  border: 1px solid var(--glass-border);
+  box-shadow: var(--sh-3);
+  display: grid;
+  gap: 0.1rem;
+  animation: cell-menu-in 0.12s ease-out;
+}
+@keyframes cell-menu-in {
+  from { opacity: 0; transform: scale(0.97); }
+  to { opacity: 1; transform: none; }
+}
+.cell-menu-head {
+  margin: 0;
+  padding: 0.3rem 0.5rem 0.4rem;
+  font-size: 0.7rem;
+  font-weight: 700;
+  color: var(--muted);
+  border-bottom: 1px solid var(--line);
+}
+.cell-menu-item {
+  display: grid;
+  gap: 0.05rem;
+  text-align: left;
+  min-height: 34px;
+  padding: 0.3rem 0.5rem;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  font-size: 0.82rem;
+  font-weight: 600;
+}
+.cell-menu-item:hover:not(:disabled) {
+  transform: none;
+  filter: none;
+  background: var(--teal-100);
+}
+.cell-menu-item small { font-size: 0.66rem; color: var(--muted); font-weight: 600; }
+.cell-menu-item.danger { color: var(--danger); }
+
+/* —— Navigation des panneaux, dans la barre haute —— */
+.hud-nav { display: flex; gap: 0.3rem; align-items: center; margin-left: 0.5rem; }
+.hud-nav-btn {
+  min-height: 34px;
+  padding: 0.25rem 0.6rem;
+  border-radius: 9px;
+  border: 1px solid var(--line);
+  background: var(--paper);
+  font-size: 0.78rem;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+.hud-nav-btn:hover:not(:disabled) { transform: none; filter: none; background: var(--sand); }
+.hud-nav-btn.on {
+  background: linear-gradient(180deg, var(--teal-300), var(--teal-500));
+  border-color: transparent;
+  color: #fff;
+}
+.hud-nav-btn kbd {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.58rem;
+  padding: 0.05em 0.28em;
+  border-radius: 3px;
+  background: var(--sand);
+  border: 1px solid var(--line);
+  color: var(--muted);
+}
+.hud-nav-btn.on kbd { background: rgba(255, 255, 255, 0.22); border-color: transparent; color: #fff; }
+
+/* Sur bureau, la barre du bas n'existe plus : c'est le rail qui la remplace.
+   Le repère d'objectif reste, seul, centré au-dessus de la barre de
+   sélection — il ne coûte plus une barre entière. */
+.game-stage:not(.mobile) .field-dock { display: none; }
+
+/* ==========================================================================
+   MOBILE — de 320 px au paysage
+   ==========================================================================
+   La coque tactile marchait à 390 px. Elle doit tenir de l'iPhone SE
+   (320 px) aux grands formats, et survivre au passage en paysage.
+   ========================================================================== */
+
+/* Rangée d'options dépliée en grille : au doigt, la rangée qui défile est
+   praticable, mais rien ne disait qu'il y avait une suite — deux options sur
+   dix étaient visibles. Dépliée, tout se voit d'un coup. */
+/* Gaine sur la classe, pas sur la largeur : un téléphone couché fait 844 px,
+   donc `max-width: 820px` ne l'attrapait pas et le dépliage n'y montrait que
+   six options sur dix. C'est le même piège que pour la coque — la largeur
+   seule ne dit pas si on tient un téléphone. */
+.game-stage.mobile .dock-tray.expanded .dock-chips {
+  flex-wrap: wrap;
+  overflow: visible;
+  -webkit-mask-image: none;
+  mask-image: none;
+  max-height: 40vh;
+  overflow-y: auto;
+}
+.game-stage.mobile .dock-tray.expanded { grid-template-columns: minmax(0, 1fr); }
+.game-stage.mobile .dock-tray.expanded .dock-chips-end {
+  grid-column: 1;
+  justify-content: flex-start;
+}
+.dock-expand { min-width: 2.6rem; font-weight: 800; }
+
+/* Couché, la largeur ne manque pas — c'est la hauteur. Le plateau déplié
+   s'étale donc sur toute la largeur du téléphone au lieu de rester dans les
+   576 px hérités du portrait. */
+.game-stage.mobile .field-dock { width: min(36rem, calc(100vw - 1.4rem)); }
+@media (max-height: 500px) {
+  .game-stage.mobile .field-dock { width: calc(100vw - 1.4rem); }
+  .game-stage.mobile .dock-tray.expanded .dock-chips { max-height: 34vh; }
+}
+
+/* Petits téléphones : 320–380 px. Sept cases dans la barre du bas tombaient
+   à 42 px chacune — sous le plancher tactile. On resserre le rembourrage
+   plutôt que les cibles, et le libellé rétrécit avant le bouton. */
+@media (max-width: 380px) {
+  /* Mesuré à 320 px : sept cases en colonnes égales tombaient à 41 px de
+     large, sous le plancher tactile de 44. On ne rétrécit pas la cible — on
+     passe à la ligne. Une barre sur deux rangées reste utilisable ; un bouton
+     de 41 px qu'on rate une fois sur trois, non. Avec six cases — le cas
+     normal, sans le bouton de test — tout tient sur une seule rangée. */
+  .dock-bar {
+    grid-auto-flow: row;
+    grid-template-columns: repeat(auto-fit, minmax(44px, 1fr));
+    gap: 0.15rem;
+    padding: 0.3rem 0.25rem;
+  }
+  .dock-tool { padding: 0.35rem 0.1rem 0.3rem; min-height: 50px; }
+  .dock-label { font-size: 0.6rem; letter-spacing: -0.01em; }
+  .dock-tool img { width: 20px; height: 20px; }
+  .field-dock { width: calc(100vw - 0.6rem); }
+  .chip { padding-inline: 0.55rem; font-size: 0.78rem; }
+  .quest-chip-body span { font-size: 0.68rem; }
+}
+
+/* Très petits écrans : on renonce au libellé du guide plutôt qu'à la lisibilité. */
+@media (max-width: 340px) {
+  .dock-label { font-size: 0.55rem; }
+  .quest-chip-body span {
+    display: -webkit-box;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 1;
+    line-clamp: 1;
+    overflow: hidden;
+  }
+}
+
+/* Paysage sur téléphone : la hauteur devient la ressource rare. La barre
+   d'objectif disparaît, le plateau d'options se resserre, et la scène garde
+   la moitié de l'écran. */
+@media (max-width: 920px) and (max-height: 460px) {
+  .quest-chip { display: none; }
+  .dock-tray { padding: 0.25rem 0.4rem; }
+  .dock-bar { padding: 0.25rem; }
+  .dock-tool { min-height: 44px; padding: 0.25rem 0.15rem; }
+  .dock-tray.expanded .dock-chips { max-height: 30vh; }
+}

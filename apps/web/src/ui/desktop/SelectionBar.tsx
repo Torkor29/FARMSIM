@@ -1,0 +1,161 @@
+/**
+ * Barre de sélection — coque de bureau.
+ *
+ * Avant elle, le nombre de cases retenues n'apparaissait que dans un message
+ * passager de 3,2 secondes, puis disparaissait : on ne pouvait pas savoir ce
+ * qu'on avait sélectionné sans re-cliquer. C'est le bug B-08 de l'audit.
+ *
+ * Elle occupe toute la largeur de l'écran, ce qui est précisément la place que
+ * l'ancienne barre de 576 px n'utilisait pas — les libellés d'action tiennent
+ * donc entiers, et ce sont eux qui poussaient les options hors de vue.
+ */
+
+import type { Tool } from "../../tools";
+import { isPlantTool, plantCropLabel } from "../../tools";
+
+type Props = {
+  tool: Tool;
+  selectedCount: number;
+  readyCount: number;
+  busy: boolean;
+  /** Devis d'un prestataire pour la sélection, s'il peut intervenir. */
+  contractorCost: number | null;
+  contractorAffordable: boolean;
+  /** Mise de côté demandée pour publier une offre d'aide. */
+  laborQuote: number | null;
+  laborAffordable: boolean;
+  visiting: boolean;
+  /** La sélection n'est que de l'herbe mûre : on fauche. */
+  mowSelected: boolean;
+  mowReadyAll: boolean;
+  onConfirm: () => void;
+  onHarvestAll: () => void;
+  onContractor: () => void;
+  onPublishLabor?: () => void;
+  onSelectAll: () => void;
+  onClear: () => void;
+};
+
+function actionLabel(tool: Tool, count: number, mow: boolean): string {
+  if (tool === "HARVEST" && mow) return `Faucher ${count} case(s)`;
+  if (isPlantTool(tool)) return `Semer ${plantCropLabel(tool)} · ${count} case(s)`;
+  if (tool === "FERTILIZE") return `Fertiliser ${count} case(s)`;
+  if (tool === "PLOW") return `Labourer ${count} case(s)`;
+  if (tool === "STUBBLE") return `Nettoyer ${count} case(s)`;
+  if (tool === "SILAGE") return `Ensiler ${count} case(s)`;
+  return `Récolter ${count} case(s)`;
+}
+
+/** L'outil courant agit-il sur une sélection ? */
+function actsOnSelection(tool: Tool): boolean {
+  return (
+    isPlantTool(tool) ||
+    tool === "FERTILIZE" ||
+    tool === "HARVEST" ||
+    tool === "SILAGE" ||
+    tool === "STUBBLE" ||
+    tool === "PLOW"
+  );
+}
+
+export function SelectionBar({
+  tool,
+  selectedCount,
+  readyCount,
+  busy,
+  contractorCost,
+  contractorAffordable,
+  laborQuote,
+  laborAffordable,
+  visiting,
+  mowSelected,
+  mowReadyAll,
+  onConfirm,
+  onHarvestAll,
+  onContractor,
+  onPublishLabor,
+  onSelectAll,
+  onClear,
+}: Props) {
+  const acts = actsOnSelection(tool);
+  const has = selectedCount > 0;
+  // Rien à dire : la barre s'efface plutôt que d'afficher « 0 case ».
+  if (!acts && readyCount === 0) return null;
+
+  return (
+    <div className="selection-bar" role="toolbar" aria-label="Sélection">
+      <div className="selection-bar-count">
+        <span className={`selection-bar-num${has ? " on" : ""}`}>{selectedCount}</span>
+        <span className="selection-bar-unit">
+          {selectedCount > 1 ? "cases retenues" : "case retenue"}
+        </span>
+      </div>
+
+      {acts && (
+        <div className="selection-bar-picks">
+          <button type="button" className="selection-bar-link" onClick={onSelectAll}>
+            Tout sélectionner <kbd>Ctrl A</kbd>
+          </button>
+          <button
+            type="button"
+            className="selection-bar-link"
+            disabled={!has}
+            onClick={onClear}
+          >
+            Vider <kbd>Échap</kbd>
+          </button>
+        </div>
+      )}
+
+      <div className="selection-bar-actions">
+        {acts && (
+          <button
+            type="button"
+            className="selection-bar-go"
+            disabled={busy || !has}
+            onClick={onConfirm}
+          >
+            {actionLabel(tool, selectedCount, mowSelected)}
+            <kbd>⏎</kbd>
+          </button>
+        )}
+        {contractorCost !== null && !visiting && (
+          <button
+            type="button"
+            className="selection-bar-alt"
+            disabled={busy || !has || !contractorAffordable}
+            title={
+              contractorAffordable
+                ? "Un prestataire le fait tout de suite, avec son matériel."
+                : "Trésorerie insuffisante pour ce devis."
+            }
+            onClick={onContractor}
+          >
+            Faire faire · {contractorCost} TRN
+          </button>
+        )}
+        {laborQuote !== null && !visiting && onPublishLabor && (
+          <button
+            type="button"
+            className="selection-bar-alt"
+            disabled={busy || !has || !laborAffordable}
+            title="La somme est mise de côté jusqu’à la fin du chantier, ou son annulation."
+            onClick={onPublishLabor}
+          >
+            Demander de l’aide · {laborQuote} TRN
+          </button>
+        )}
+        {readyCount > 0 && (
+          <button
+            type="button"
+            className="selection-bar-go ghost"
+            disabled={busy}
+            onClick={onHarvestAll}
+          >
+            {mowReadyAll ? `Tout faucher · ${readyCount}` : `Tout récolter · ${readyCount}`}
+          </button>
+        )}
+      </div>
+    </div>
+  );
+}

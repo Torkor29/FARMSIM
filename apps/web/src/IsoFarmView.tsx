@@ -30,6 +30,7 @@ import {
 import { createSpray } from "./particles";
 import { buildCharacter } from "./character-mesh";
 import { initialQuality, makeFrameGovernor, qualityForContext, type RenderQuality } from "./render-quality";
+import { DEFAULT_MODS, readMods, type PointerMods } from "./ui/selection";
 import type { CharacterAppearance } from "@farmsim/shared";
 
 export type IsoCell = {
@@ -182,8 +183,16 @@ type Props = {
   /** Personnages présents (propriétaire, prestataire en mission) */
   workers?: FieldWorker[];
   weather?: string;
-  onCellClick: (x: number, y: number) => void;
+  onCellClick: (x: number, y: number, mods: PointerMods) => void;
   onCellHover?: (cell: { x: number; y: number } | null) => void;
+  /**
+   * Clic droit sur une case — menu contextuel du jeu.
+   *
+   * Sans lui, le bouton droit tombait dans le même chemin que le gauche : il
+   * déplaçait la caméra **et** laissait le menu contextuel du navigateur
+   * s'ouvrir par-dessus la ferme.
+   */
+  onCellContext?: (cell: { x: number; y: number }, screen: { x: number; y: number }) => void;
   /**
    * ETA au champ : un doigt glisse et travaille, deux doigts cadrent.
    * Le clic sans glisser reste une sélection.
@@ -198,10 +207,10 @@ type Props = {
    */
   strokeSelect?: boolean;
   /** Début d'un tracé : le parent retient la sélection à laquelle l'ajouter. */
-  onStrokeStart?: () => void;
-  onStrokePreview?: (cells: { x: number; y: number }[]) => void;
+  onStrokeStart?: (mods: PointerMods) => void;
+  onStrokePreview?: (cells: { x: number; y: number }[], mods: PointerMods) => void;
   onWorkStroke?: (cells: { x: number; y: number }[]) => void;
-  onStrokeSelect?: (cells: { x: number; y: number }[]) => void;
+  onStrokeSelect?: (cells: { x: number; y: number }[], mods: PointerMods) => void;
 };
 
 const SOIL = 0x9ac06a;
@@ -270,7 +279,24 @@ const CROP_LOOK: Record<string, CropLook> = {
 function lookOf(crop?: CropCode | null): CropLook {
   return CROP_LOOK[crop ?? ""] ?? CROP_LOOK.WHEAT;
 }
-const SELECT_GLOW = 0x5ee08a;
+/**
+ * Teinte de sélection.
+ *
+ * C'était un vert (`0x5ee08a`) appliqué à 35 % sur une dalle… verte. Sur une
+ * capture à huit cases sélectionnées, on distinguait à peine quatre losanges :
+ * à la souris, sur un champ de cent quarante-quatre cases, le joueur ne savait
+ * pas ce qu'il venait de sélectionner. L'or du logo tranche sur toutes les
+ * teintes de sol du jeu — terre nue, culture jeune, culture mûre.
+ */
+const SELECT_GLOW = 0xffd24a;
+/**
+ * Les cases retenues se **soulèvent**.
+ *
+ * Une différence de couleur seule ne suffit ni à un daltonien, ni à un écran
+ * mal réglé, ni à un joueur qui regarde ailleurs. Un relief se lit d'un coup
+ * d'œil en vue isométrique, et il survit à n'importe quelle teinte de sol.
+ */
+const SELECT_LIFT = 0.08;
 const HOVER = 0x53c5f5;
 const PREVIEW_OK = 0x2fc46a;
 const PREVIEW_BAD = 0xef4444;
@@ -638,6 +664,7 @@ export function IsoFarmView({
   weather = "CLEAR",
   onCellClick,
   onCellHover,
+  onCellContext,
   strokeWork = false,
   strokeSelect = false,
   onStrokeStart,
@@ -650,6 +677,8 @@ export function IsoFarmView({
   onClickRef.current = onCellClick;
   const onHoverRef = useRef(onCellHover);
   onHoverRef.current = onCellHover;
+  const onContextRef = useRef(onCellContext);
+  onContextRef.current = onCellContext;
   const strokeWorkRef = useRef(strokeWork);
   strokeWorkRef.current = strokeWork;
   const strokeSelectRef = useRef(strokeSelect);
@@ -1384,19 +1413,35 @@ export function IsoFarmView({
      * doit tenir dans ce qui **reste visible** entre les rails : cadrée sur la
      * fenêtre entière, elle passait derrière eux des deux côtés.
      */
+    /**
+     * Largeur mangée par les panneaux, à gauche et à droite.
+     *
+     * On mesurait cela en découpant `grid-template-columns` et en prenant la
+     * première et la **troisième** valeur. C'était juste tant que la coquille
+     * avait exactement trois colonnes ; l'ajout du rail d'outils en a mis
+     * quatre, et la troisième valeur est alors devenue la scène elle-même —
+     * la caméra reculait comme si un panneau de mille pixels occupait la
+     * droite, et la ferme disparaissait.
+     *
+     * On lit désormais les panneaux **réellement affichés** : leur position
+     * décide de quel côté ils comptent. Aucune disposition future ne peut
+     * reproduire la panne, et un panneau vide ne réserve rien parce qu'il ne
+     * mesure rien.
+     */
     function railInsets(): { left: number; right: number } {
       const shell = el.closest(".game-stage");
       if (!shell) return { left: 0, right: 0 };
-      const css = getComputedStyle(shell);
-      const px = (v: string) => {
-        const n = Number.parseFloat(v);
-        return Number.isFinite(n) ? n : 0;
-      };
-      // Les rails vides ne réservent rien : on ne lit donc pas le jeton mais la
-      // colonne réellement occupée.
-      const cols = css.gridTemplateColumns.split(" ").map(px);
-      if (cols.length < 3) return { left: 0, right: cols.length === 2 ? cols[1] : 0 };
-      return { left: cols[0], right: cols[2] };
+      const box = shell.getBoundingClientRect();
+      const mid = box.left + box.width / 2;
+      let left = 0;
+      let right = 0;
+      for (const panel of shell.querySelectorAll(".tool-rail, .rail-left, .rail-right")) {
+        const r = panel.getBoundingClientRect();
+        if (r.width < 1 || r.height < 1) continue;
+        if (r.left + r.width / 2 < mid) left = Math.max(left, r.right - box.left);
+        else right = Math.max(right, box.right - r.left);
+      }
+      return { left, right };
     }
 
     function applyCamera() {
@@ -1482,13 +1527,58 @@ export function IsoFarmView({
     const strokeKeys = new Set<string>();
     const strokeCells: { x: number; y: number }[] = [];
 
+    /**
+     * Modificateurs du geste en cours, figés au moment où il commence.
+     *
+     * Relâcher Ctrl en cours de tracé ne doit pas transformer un ajout en
+     * remplacement à mi-parcours : le geste garde le sens qu'il avait quand
+     * le joueur l'a entamé.
+     */
+    let gestureMods: PointerMods = DEFAULT_MODS;
+
+    /**
+     * Ce geste-ci déplace la vue, quel que soit l'outil armé.
+     *
+     * Au doigt, deux doigts cadrent pendant qu'un seul peint. À la souris il
+     * n'existait aucun équivalent : dès qu'un outil de travail était armé, le
+     * clic gauche traçait et plus rien ne recadrait la ferme — il fallait
+     * repasser par « Voir ». Le bouton du milieu et la barre d'espace, deux
+     * idiomes que tout joueur de jeu de gestion connaît déjà, comblent ce
+     * trou sans coûter un bouton à l'écran.
+     */
+    let panGesture = false;
+    let spaceHeld = false;
+
+    function refreshCursor() {
+      renderer.domElement.style.cursor = spaceHeld ? "grab" : "crosshair";
+    }
+
+    function onSpaceDown(e: KeyboardEvent) {
+      if (e.code !== "Space" || spaceHeld) return;
+      const el2 = e.target as HTMLElement | null;
+      if (el2 && /^(INPUT|TEXTAREA|SELECT)$/.test(el2.tagName)) return;
+      spaceHeld = true;
+      refreshCursor();
+    }
+    function onSpaceUp(e: KeyboardEvent) {
+      if (e.code !== "Space") return;
+      spaceHeld = false;
+      refreshCursor();
+    }
+    // Une fenêtre qui perd le focus garde sinon la barre d'espace « enfoncée »
+    // pour toujours, et le clic gauche ne peint plus jamais.
+    function onBlur() {
+      spaceHeld = false;
+      refreshCursor();
+    }
+
     function addStrokeCell(cell: { x: number; y: number } | null) {
       if (!cell) return;
       const k = `${cell.x},${cell.y}`;
       if (strokeKeys.has(k)) return;
       strokeKeys.add(k);
       strokeCells.push(cell);
-      onStrokePreviewRef.current?.(strokeCells.slice());
+      onStrokePreviewRef.current?.(strokeCells.slice(), gestureMods);
     }
 
     function clearStroke() {
@@ -1529,6 +1619,7 @@ export function IsoFarmView({
 
     /** Un tracé est-il armé, quelle qu'en soit la suite ? */
     function tracable(): boolean {
+      if (panGesture) return false;
       return strokeWorkRef.current || strokeSelectRef.current;
     }
 
@@ -1539,13 +1630,20 @@ export function IsoFarmView({
     }
 
     function onPointerDown(ev: PointerEvent) {
+      const touch = ev.pointerType !== "mouse";
+      // Le bouton droit ne cadre pas et ne trace pas : il n'ouvre qu'un menu,
+      // depuis `contextmenu`. Le prendre ici le ferait aussi déplacer la vue.
+      if (!touch && ev.button === 2) return;
+      // Le bouton du milieu et la barre d'espace cadrent, toujours.
+      panGesture = !touch && (ev.button === 1 || spaceHeld);
+      gestureMods = readMods(ev, touch);
       pointers.set(ev.pointerId, { x: ev.clientX, y: ev.clientY });
       renderer.domElement.setPointerCapture?.(ev.pointerId);
       lastX = ev.clientX;
       lastY = ev.clientY;
       dragged = false;
       clearStroke();
-      if (tracable()) onStrokeStartRef.current?.();
+      if (tracable()) onStrokeStartRef.current?.(gestureMods);
       if (pointers.size === 2) {
         pinchStart = pinchDistance();
         zoomStart = view.zoom;
@@ -1617,20 +1715,22 @@ export function IsoFarmView({
       renderer.domElement.releasePointerCapture?.(ev.pointerId);
       if (pointers.size < 2) pinchStart = 0;
       if (!had || pointers.size > 0) return;
-      if (tracable() && dragged && strokeCells.length) {
+      const wasPan = panGesture;
+      panGesture = false;
+      if (!wasPan && tracable() && dragged && strokeCells.length) {
         const done = strokeCells.slice();
         clearStroke();
         // Chez un voisin, un tracé **travaille** aussitôt — c'est le contrat de
         // la mission. Chez soi, il ne fait que **sélectionner** : la dépense
         // reste au bouton d'action, comme pour un clic.
         if (strokeWorkRef.current) onWorkStrokeRef.current?.(done);
-        else onStrokeSelectRef.current?.(done);
+        else onStrokeSelectRef.current?.(done, gestureMods);
         return;
       }
-      if (dragged) return;
+      if (dragged || wasPan) return;
       setPointerFromEvent(ev);
       const cell = raycastCell();
-      if (cell) onClickRef.current(cell.x, cell.y);
+      if (cell) onClickRef.current(cell.x, cell.y, gestureMods);
     }
 
     function onPointerLeave() {
@@ -1649,13 +1749,34 @@ export function IsoFarmView({
       setZoom(view.zoom * (ev.deltaY < 0 ? 1.12 : 1 / 1.12));
     }
 
-    renderer.domElement.style.cursor = "crosshair";
+    /**
+     * Menu contextuel du jeu, à la place de celui du navigateur.
+     *
+     * Le bouton droit ouvrait jusqu'ici le menu « Enregistrer l'image sous… »
+     * de Chrome par-dessus la ferme, tout en déplaçant la caméra dans le même
+     * geste. Il désigne maintenant une case, et rien d'autre.
+     */
+    function onContextMenu(ev: MouseEvent) {
+      ev.preventDefault();
+      if (!onContextRef.current) return;
+      const rect = renderer.domElement.getBoundingClientRect();
+      pointer.x = ((ev.clientX - rect.left) / rect.width) * 2 - 1;
+      pointer.y = -((ev.clientY - rect.top) / rect.height) * 2 + 1;
+      const cell = raycastCell();
+      if (cell) onContextRef.current(cell, { x: ev.clientX, y: ev.clientY });
+    }
+
+    refreshCursor();
     // Sans cela, le navigateur intercepte le glissement pour faire défiler la
     // page et le zoom à deux doigts ne parvient jamais jusqu'ici.
     renderer.domElement.style.touchAction = "none";
     function onTouchMove(ev: TouchEvent) {
       if (ev.touches.length >= 2) ev.preventDefault();
     }
+    renderer.domElement.addEventListener("contextmenu", onContextMenu);
+    window.addEventListener("keydown", onSpaceDown);
+    window.addEventListener("keyup", onSpaceUp);
+    window.addEventListener("blur", onBlur);
     renderer.domElement.addEventListener("pointerdown", onPointerDown);
     renderer.domElement.addEventListener("pointermove", onPointerMove);
     renderer.domElement.addEventListener("pointerup", onPointerUp);
@@ -2081,7 +2202,7 @@ export function IsoFarmView({
       const hoverKey = hc ? key(hc.x, hc.y) : null;
       const selSet = new Set(sel.map((s) => key(s.x, s.y)));
       const hoverPulse = 0.45 + Math.sin(t * 7) * 0.18;
-      const selPulse = 0.35 + Math.sin(t * 4.5) * 0.12;
+      const selPulse = 0.55 + Math.sin(t * 4.5) * 0.14;
 
       syncPreviewFootprint();
 
@@ -2091,9 +2212,13 @@ export function IsoFarmView({
         const isSelected = mesh.userData.isSelected as boolean;
         tmpColor.setHex(base);
 
-        if (isSelected || selSet.has(k)) {
+        const picked = isSelected || selSet.has(k);
+        if (picked) {
           tmpColor.lerp(selectColor, selPulse);
         }
+        // Le relief suit la sélection. Écrire la même valeur à chaque image ne
+        // coûte rien — Three.js ne recalcule la matrice que si elle change.
+        mesh.position.y = picked ? SELECT_LIFT : 0;
         if (k === hoverKey) {
           tmpColor.lerp(hoverColor, hoverPulse);
         }
@@ -2339,6 +2464,10 @@ export function IsoFarmView({
       renderer.domElement.removeEventListener("pointerup", onPointerUp);
       renderer.domElement.removeEventListener("pointercancel", onPointerUp);
       renderer.domElement.removeEventListener("pointerleave", onPointerLeave);
+      renderer.domElement.removeEventListener("contextmenu", onContextMenu);
+      window.removeEventListener("keydown", onSpaceDown);
+      window.removeEventListener("keyup", onSpaceUp);
+      window.removeEventListener("blur", onBlur);
       renderer.domElement.removeEventListener("wheel", onWheel);
       renderer.domElement.removeEventListener("touchmove", onTouchMove);
       while (previewGroup.children.length) {
