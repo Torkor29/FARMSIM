@@ -15,10 +15,13 @@ import {
   canGraze,
   crowdingPenalty,
   feedConsumption,
+  grazeRefusalLabel,
+  grazeCooldownRemainingMs,
   grazingWaveCount,
   happinessLabel,
   happinessTarget,
   isPaddockAdjacent,
+  adjacentYardOrigins,
   meatYield,
   milkYield,
   paddockCapacity,
@@ -300,6 +303,44 @@ describe("sortie au pré — conditions d’autorisation", () => {
       expect(label.length).toBeGreaterThan(0);
     }
   });
+
+  it("refuse une deuxième sortie trop tôt, et le dit clairement", () => {
+    const now = 1_000_000;
+    expect(
+      canGraze({
+        paddock: enclos(),
+        animals: 4,
+        weather: clair,
+        lastGrazedAt: now - 4 * HOUR,
+        now,
+      }),
+    ).toEqual({ ok: false, reason: "TOO_SOON" });
+    expect(
+      canGraze({
+        paddock: enclos(),
+        animals: 4,
+        weather: clair,
+        lastGrazedAt: now - 21 * HOUR,
+        now,
+      }).ok,
+    ).toBe(true);
+    // Tant que les bêtes sont encore dehors, ce n’est pas « trop tôt ».
+    expect(
+      canGraze({
+        paddock: enclos(),
+        animals: 4,
+        weather: clair,
+        lastGrazedAt: now - 4 * HOUR,
+        now,
+        grazingUntil: now + HOUR,
+      }).ok,
+    ).toBe(true);
+    expect(
+      grazeRefusalLabel("TOO_SOON", { waitMs: 8 * 60_000 }),
+    ).toContain("8 min");
+    expect(grazeCooldownRemainingMs(now - 4 * HOUR, now)).toBeGreaterThan(0);
+    expect(grazeCooldownRemainingMs(now - 21 * HOUR, now)).toBe(0);
+  });
 });
 
 describe("production laitière — écart enfermé / au pré", () => {
@@ -484,6 +525,35 @@ describe("enclos — adjacence par bord commun", () => {
   it("est symétrique : l’ordre des deux emprises ne change rien", () => {
     const voisin = { originX: 13, originY: 11, w: 4, h: 4 };
     expect(isPaddockAdjacent(ETABLE, voisin)).toBe(isPaddockAdjacent(voisin, ETABLE));
+  });
+});
+
+describe("enclos — origines attenantes proposées", () => {
+  it("ne propose que des emprises vraiment collées à l’étable", () => {
+    const spots = adjacentYardOrigins(ETABLE, { w: 3, h: 3 });
+    expect(spots.length).toBeGreaterThan(0);
+    for (const s of spots) {
+      expect(isPaddockAdjacent(ETABLE, { originX: s.originX, originY: s.originY, w: 3, h: 3 })).toBe(
+        true,
+      );
+    }
+  });
+
+  it("place en tête le bord commun le plus long", () => {
+    const spots = adjacentYardOrigins(ETABLE, { w: 3, h: 3 });
+    expect(spots[0].shared).toBe(3);
+    expect(spots.every((s) => s.shared <= spots[0].shared)).toBe(true);
+  });
+
+  it("inclut les quatre côtés de l’étable", () => {
+    const spots = adjacentYardOrigins(ETABLE, { w: 3, h: 3 });
+    const sides = {
+      plusY: spots.some((s) => s.originY === ETABLE.originY + ETABLE.h),
+      minusY: spots.some((s) => s.originY === ETABLE.originY - 3),
+      plusX: spots.some((s) => s.originX === ETABLE.originX + ETABLE.w),
+      minusX: spots.some((s) => s.originX === ETABLE.originX - 3),
+    };
+    expect(sides).toEqual({ plusY: true, minusY: true, plusX: true, minusX: true });
   });
 });
 

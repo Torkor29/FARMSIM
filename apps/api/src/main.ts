@@ -185,7 +185,8 @@ import {
   type GrainForcedSaleReason,
   type GrainGood,
   settleSaleTons,
-  GRAZING_REFUSAL_LABELS,
+  grazeRefusalLabel,
+  grazeCooldownRemainingMs,
   LIVESTOCK_CYCLE_MS,
   collectProgress,
   collectReady,
@@ -5357,6 +5358,9 @@ app.get("/parcels/:id/livestock", async (req, res) => {
           weather: (weather?.state as WeatherState) ?? "CLEAR",
           kind: b.herd.kind as AnimalKind,
           paddockKind: kindForBarn(b.type) ?? "COW",
+          lastGrazedAt: b.herd.lastGrazedAt?.getTime() ?? null,
+          now,
+          grazingUntil: b.herd.grazingUntil?.getTime() ?? null,
         })
       // Étable vide : dire pourquoi, et non « pas d'enclos » — c'était faux, et
       // ça contredisait le bandeau vert affiché juste au-dessus.
@@ -5448,7 +5452,12 @@ app.get("/parcels/:id/livestock", async (req, res) => {
           }
         : null,
       canGraze: graze.ok,
-      grazeRefusal: graze.ok || !graze.reason ? null : GRAZING_REFUSAL_LABELS[graze.reason],
+      grazeRefusal:
+        graze.ok || !graze.reason
+          ? null
+          : grazeRefusalLabel(graze.reason, {
+              waitMs: grazeCooldownRemainingMs(b.herd?.lastGrazedAt?.getTime() ?? null, now),
+            }),
       cowPrice: herdKind ? ANIMAL_PRICE[herdKind] : ANIMAL_PRICE.COW,
     });
   }
@@ -5586,6 +5595,7 @@ app.post("/herds/:id/graze", async (req, res) => {
   const weather = await prisma.weatherSnapshot.findFirst({
     where: { zoneCode: herd.building.parcel.zone.code },
   });
+  const now = Date.now();
   const verdict = canGraze({
     paddock: {
       adjacent: paddock.capacity > 0,
@@ -5596,15 +5606,21 @@ app.post("/herds/:id/graze", async (req, res) => {
     weather: (weather?.state as WeatherState) ?? "CLEAR",
     kind: herd.kind as AnimalKind,
     paddockKind: kindForBarn(herd.building.type) ?? "COW",
+    lastGrazedAt: herd.lastGrazedAt?.getTime() ?? null,
+    now,
+    grazingUntil: herd.grazingUntil?.getTime() ?? null,
   });
   if (!verdict.ok) {
     res.status(409).json({
-      error: verdict.reason ? GRAZING_REFUSAL_LABELS[verdict.reason] : "Sortie impossible",
+      error: verdict.reason
+        ? grazeRefusalLabel(verdict.reason, {
+            waitMs: grazeCooldownRemainingMs(herd.lastGrazedAt?.getTime() ?? null, now),
+          })
+        : "Sortie impossible",
     });
     return;
   }
 
-  const now = Date.now();
   const window = planGrazing(
     now,
     {
@@ -5619,7 +5635,12 @@ app.post("/herds/:id/graze", async (req, res) => {
     { adjacent: true, cells: paddock.cells, capacity: paddock.capacity },
   );
   if (!window) {
-    res.status(409).json({ error: "Sortie impossible pour le moment" });
+    const wait = grazeCooldownRemainingMs(herd.lastGrazedAt?.getTime() ?? null, now);
+    res.status(409).json({
+      error: wait > 0
+        ? grazeRefusalLabel("TOO_SOON", { waitMs: wait })
+        : "Sortie impossible pour le moment",
+    });
     return;
   }
   const gain = await prisma.$transaction(async (tx) => {

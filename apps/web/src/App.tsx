@@ -21,6 +21,7 @@ import {
   repairHalfwayTarget,
   repairQuote,
   isPaddockAdjacent,
+  adjacentYardOrigins,
   welfareIndex,
   machineResaleValue,
   soilSummary,
@@ -507,6 +508,8 @@ export function App() {
   const [pendingBuild, setPendingBuild] = useState<{ x: number; y: number } | null>(null);
   /** Bâtiment ouvert dans sa fiche : améliorer, tourner, démolir, faire sortir */
   const [openBuildingId, setOpenBuildingId] = useState<string | null>(null);
+  /** Étable depuis laquelle on pose l'enclos : le fantôme se colle à son bord */
+  const [yardAnchorId, setYardAnchorId] = useState<string | null>(null);
   /** Objectifs du joueur : l'avancement vient du serveur, pas du navigateur. */
   const [quests, setQuests] = useState<QuestView[]>([]);
   const [selectedCells, setSelectedCells] = useState<{ x: number; y: number }[]>([]);
@@ -896,10 +899,25 @@ export function App() {
   // fantôme à l'instant où l'on passe sur le champ, et le figer d'office
   // retirerait ce suivi sans rien régler.
   useEffect(() => {
-    const propose = isMobile && tool === "BUILD" ? firstFreeSpot(buildType, buildRotation) : null;
+    if (tool !== "BUILD") {
+      setYardAnchorId(null);
+      setPendingBuild(null);
+      return;
+    }
+    // Enclos depuis une étable : coller le fantôme à un bord libre, même sur
+    // un écran avec souris — le survol au milieu de la parcelle poserait un
+    // pré isolé, donc inutile.
+    const fromBarn =
+      Boolean(yardAnchorId) &&
+      (buildType === "PADDOCK" || buildType === "PIG_YARD" || buildType === "HEN_YARD");
+    if (fromBarn) {
+      setPendingBuild(firstFreeSpot(buildType, buildRotation));
+      return;
+    }
+    const propose = isMobile ? firstFreeSpot(buildType, buildRotation) : null;
     setPendingBuild(propose);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [tool, buildType, activeParcelId, isMobile]);
+  }, [tool, buildType, activeParcelId, isMobile, yardAnchorId]);
 
   useEffect(() => {
     setPrevPrices((prev) => {
@@ -1528,12 +1546,28 @@ export function App() {
    * Sans elle, choisir un bâtiment ne montrait rien : le fantôme suivait le
    * survol de la souris, et un téléphone n'a pas de survol. Il fallait fermer
    * le menu, puis toucher une case au hasard pour découvrir enfin ce qu'on
-   * achetait. On propose maintenant une place d'emblée — la plus proche du
-   * centre de la parcelle, là où on bâtit naturellement — que le joueur reste
-   * libre de déplacer d'une touche.
+   * achetait. On propose maintenant une place d'emblée — collée à l'étable
+   * quand on construit un enclos depuis elle, sinon la plus proche du centre
+   * de la parcelle.
    */
   function firstFreeSpot(type: BuildingType, rot: number): { x: number; y: number } | null {
     const foot = orientedFootprint(type, rot);
+    const anchor = yardAnchorId
+      ? (parcel?.buildings ?? []).find((b) => b.id === yardAnchorId)
+      : null;
+    if (anchor && (type === "PADDOCK" || type === "PIG_YARD" || type === "HEN_YARD")) {
+      const barnBox = {
+        originX: anchor.originX,
+        originY: anchor.originY,
+        ...orientedFootprint(anchor.type, anchor.rotation ?? 0),
+      };
+      for (const spot of adjacentYardOrigins(barnBox, foot)) {
+        if (spot.originX < 0 || spot.originY < 0) continue;
+        if (canPlaceBuildingAt(spot.originX, spot.originY, rot, type)) {
+          return { x: spot.originX, y: spot.originY };
+        }
+      }
+    }
     // Pas tout à fait le centre : en vue isométrique, l'axe vertical de
     // l'écran suit x + y, et le bas de la parcelle passe sous la barre de
     // confirmation, la puce « À faire » et le dock — près de 40 % de la
@@ -1556,6 +1590,27 @@ export function App() {
       }
     }
     return best;
+  }
+
+  /**
+   * Pose d'un enclos depuis l'étable cliquée : on ouvre l'outil de
+   * construction collé à ce bâtiment-là, pas un fantôme au milieu du champ.
+   */
+  function startYardBuild(buildingId: string, yardType: BuildingType) {
+    setYardAnchorId(buildingId);
+    setOpenBuildingId(null);
+    setShowHerd(false);
+    if (isMobile) setSheet(null);
+    setTool("BUILD");
+    setBuildType(yardType);
+    setSelectedCells([]);
+    flashToast(
+      yardType === "PIG_YARD"
+        ? "Posez la courette contre un bord de la porcherie"
+        : yardType === "HEN_YARD"
+          ? "Posez la courette contre un bord du poulailler"
+          : "Posez l’enclos contre un bord de l’étable",
+    );
   }
 
   /**
@@ -1598,10 +1653,19 @@ export function App() {
     return {
       id: barn.herd.id,
       size: barn.herd.size,
+      kind: barn.herd.kind,
       label: barn.herd.label,
       out: Boolean(barn.herd.grazingUntil && barn.herd.grazingUntil > Date.now()),
       canGraze: barn.canGraze,
       grazeRefusal: barn.grazeRefusal,
+      hungry: barn.herd.hungry,
+      atRisk: barn.herd.atRisk,
+      canMilk: barn.herd.canMilk,
+      canCollectEggs: barn.herd.canCollectEggs,
+      canShear: barn.herd.canShear,
+      collectProgress: barn.herd.collectProgress,
+      milkPerCycle: barn.herd.milkPerCycle,
+      eggsPerCycle: barn.herd.eggsPerCycle,
     };
   }, [openBuilding, barns]);
 
@@ -3697,24 +3761,8 @@ export function App() {
           maizeTons={maizeInStock}
           barleyTons={barleyInStock}
           wheatTons={wheatInStock}
-          onBuildPaddock={(yardType) => {
-            setTool("BUILD");
-            setBuildType(yardType);
-            setSelectedCells([]);
-            // Second chemin vers la construction, et il avait été oublié : la
-            // feuille d'élevage restait ouverte par-dessus la scène, si bien
-            // qu'on ne voyait pas que la demande avait été prise en compte. Le
-            // fantôme se pose tout seul derrière (voir l'effet plus haut) —
-            // encore faut-il pouvoir le regarder.
-            if (isMobile) setSheet(null);
-            flashToast(
-              yardType === "PIG_YARD"
-                ? "Posez la courette contre un bord de la porcherie"
-                : yardType === "HEN_YARD"
-                  ? "Posez la courette contre un bord du poulailler"
-                  : "Posez l’enclos contre un bord de l’étable",
-            );
-          }}
+          silageTons={silageInStock}
+          onBuildPaddock={(yardType, buildingId) => startYardBuild(buildingId, yardType)}
         />
         )}
         {(isMobile ? sheet === "OFFICE" : showEta) && (
@@ -4043,6 +4091,27 @@ export function App() {
           }}
           onGrazeOut={() => openBuildingHerd && void grazeHerd(openBuildingHerd.id)}
           onShelter={() => openBuildingHerd && void shelterHerd(openBuildingHerd.id)}
+          hayTons={hayInStock}
+          maizeTons={maizeInStock}
+          barleyTons={barleyInStock}
+          silageTons={silageInStock}
+          onFeed={(ration) => openBuildingHerd && void feedHerd(openBuildingHerd.id, ration)}
+          onMilk={() => openBuildingHerd && void milkHerd(openBuildingHerd.id)}
+          onCollectEggs={() => openBuildingHerd && void collectEggs(openBuildingHerd.id)}
+          onShear={() => openBuildingHerd && void shearHerd(openBuildingHerd.id)}
+          canBuildYard={Boolean(
+            barns.find((b) => b.buildingId === openBuilding.id && b.paddockCapacity === 0),
+          )}
+          yardKind={
+            barns.find((b) => b.buildingId === openBuilding.id)?.yardType === "PIG_YARD" ||
+            barns.find((b) => b.buildingId === openBuilding.id)?.yardType === "HEN_YARD"
+              ? "yard"
+              : "paddock"
+          }
+          onBuildYard={() => {
+            const barn = barns.find((b) => b.buildingId === openBuilding.id);
+            if (barn) startYardBuild(barn.buildingId, barn.yardType);
+          }}
         />
       )}
 
