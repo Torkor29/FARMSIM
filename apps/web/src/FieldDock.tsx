@@ -121,7 +121,7 @@ export function FieldDock({
   const options = optionsFor(group);
   const plant = isPlantTool(tool);
   const soil = isSoilTool(tool);
-  const harvest = tool === "HARVEST" || tool === "SILAGE";
+  const harvest = tool === "HARVEST";
   const work = isFieldWorkTool(tool);
   const showTray =
     plant ||
@@ -136,7 +136,6 @@ export function FieldDock({
   function optionCount(t: Tool): number {
     if (t === "BALE") return strawCount;
     if (t === "COLLECT") return baleCount;
-    if (t === "SILAGE") return silageReadyCount;
     return 0;
   }
 
@@ -183,7 +182,7 @@ export function FieldDock({
 
             {/* L'andain n'a de sens que sur une moisson de pailleuse : ni sur
                 l'herbe, ni en ensilage, où la plante part entière. */}
-            {harvest && tool !== "SILAGE" && swathUseful && (
+            {harvest && swathUseful && (
               <button
                 type="button"
                 className={`chip ${keepSwath ? "on" : ""}`}

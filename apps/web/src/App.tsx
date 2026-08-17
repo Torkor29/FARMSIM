@@ -964,7 +964,7 @@ export function App() {
 
       // Ctrl+A : tout ce que l'outil courant peut travailler.
       if (ctrl && (e.key === "a" || e.key === "A")) {
-        if (!isStrokeTool(tool) && tool !== "SILAGE") return;
+        if (!isStrokeTool(tool)) return;
         e.preventDefault();
         setSelectedCells(eligibleCells(tool));
         return;
@@ -1340,6 +1340,21 @@ export function App() {
         return cell?.crop === "MAIZE" && !s.sim.lost && s.sim.progress >= SILAGE_MIN_PROGRESS;
       }).length,
     [parcelDetail, parcel?.cells],
+  );
+
+  /**
+   * L'ensileuse au hangar — c'est elle, et non un bouton, qui fait l'ensilage.
+   * Une machine en panne ou trop usée ne compte pas : le serveur la refuserait.
+   */
+  const hasForageHarvester = useMemo(
+    () =>
+      (player?.farm?.machines ?? []).some(
+        (m) =>
+          m.type === "FORAGE_HARVESTER" &&
+          !m.breakdown &&
+          m.condition >= (MACHINE_DEFS.FORAGE_HARVESTER?.minCondition ?? 15),
+      ),
+    [player?.farm?.machines],
   );
 
   const strawCellCount = useMemo(
@@ -1814,7 +1829,7 @@ export function App() {
     const keep =
       (isPlantTool(tool) && isPlantTool(t)) ||
       (isSoilTool(tool) && isSoilTool(t)) ||
-      ((tool === "HARVEST" || tool === "SILAGE") && (t === "HARVEST" || t === "SILAGE"));
+      (tool === "HARVEST" && t === "HARVEST");
     setTool(t);
     if (!keep && t !== "BUILD") {
       setSelectedCells([]);
@@ -1828,7 +1843,7 @@ export function App() {
     for (const c of grid) {
       if (c.kind === "BUILDING" || c.kind === "VEHICLE") continue;
       if (isPlantTool(t) && c.kind === "CROP") continue;
-      if ((t === "HARVEST" || t === "SILAGE") && c.kind !== "CROP") continue;
+      if (t === "HARVEST" && c.kind !== "CROP") continue;
       out.push({ x: c.x, y: c.y });
     }
     return out;
@@ -2130,9 +2145,7 @@ export function App() {
           ? selectedAreGrass
             ? "MOW"
             : "HARVEST"
-          : tool === "SILAGE"
-            ? "SILAGE"
-            : tool === "PLOW"
+          : tool === "PLOW"
               ? "PLOW"
               : tool === "STUBBLE"
                 ? "STUBBLE"
@@ -2145,9 +2158,7 @@ export function App() {
     const needed: MachineType =
       work === "HARVEST"
         ? "HARVESTER"
-        : work === "SILAGE"
-          ? "FORAGE_HARVESTER"
-          : work === "STUBBLE"
+        : work === "STUBBLE"
             ? "DISC_HARROW"
             : work === "BALE"
               ? "BALER"
@@ -2241,7 +2252,7 @@ export function App() {
 
   async function callContractor() {
     if (!player || !activeParcelId || !contractorOffer) return;
-    if (contractorOffer.work === "BALE" || contractorOffer.work === "COLLECT" || contractorOffer.work === "SILAGE") {
+    if (contractorOffer.work === "BALE" || contractorOffer.work === "COLLECT") {
       flashToast("Pour ça, publiez un chantier — pas d’entreprise instantanée", true);
       return;
     }
@@ -2284,7 +2295,6 @@ export function App() {
 
   function workMachineForTool(t: Tool): MachineType {
     if (t === "HARVEST") return "HARVESTER";
-    if (t === "SILAGE") return "FORAGE_HARVESTER";
     if (t === "BALE") return "BALER";
     if (t === "STUBBLE") return "DISC_HARROW";
     if (t === "FERTILIZE") {
@@ -2421,24 +2431,6 @@ export function App() {
         markGuideFlag("harvested");
         if (r.soldTons) markGuideFlag("sold");
         labor = r.labor;
-      } else if (tool === "SILAGE") {
-        const r = await api<{
-          machine?: {
-            condition: number;
-            type: string;
-            broke?: boolean;
-            breakdown?: string | null;
-          };
-          totalTons?: number;
-          storedTons?: number;
-          labor?: { remaining: number; completed: boolean; payout?: number };
-        }>(`/parcels/${activeParcelId}/harvest`, {
-          method: "POST",
-          body: JSON.stringify({ userId: player.id, cells: workCells, mode: "SILAGE" }),
-        });
-        setMsg(`Ensilage ${r.totalTons?.toFixed(2) ?? "?"} t au silo` + wearNote(r.machine));
-        markGuideFlag("harvested");
-        labor = r.labor;
       } else if (tool === "BALE") {
         const r = await api<{
           baled: number;
@@ -2539,27 +2531,28 @@ export function App() {
     if (!player || !activeParcelId) return;
     setBusy(true);
     try {
-      const readyCells =
-        (tool === "SILAGE"
-          ? (parcelDetail?.cellSims ?? [])
-              .filter((s) => {
-                const cell = (parcel?.cells ?? []).find((c) => c.x === s.x && c.y === s.y);
-                return cell?.crop === "MAIZE" && !s.sim.lost && s.sim.progress >= SILAGE_MIN_PROGRESS;
-              })
-              .map((s) => ({ x: s.x, y: s.y }))
-          : (parcelDetail?.cellSims ?? [])
-              .filter((s) => s.sim.ready)
-              .map((s) => ({ x: s.x, y: s.y }))
-              .filter((c) =>
-                visiting && visitOrder
-                  ? visitOrder.cellList.some((r) => r.x === c.x && r.y === c.y)
-                  : true,
-              )) || [];
+      // Le maïs bon à ensiler compte comme prêt **si l'on a l'ensileuse** :
+      // il se récolte avant maturité grain, et « Tout récolter » doit le
+      // prendre au lieu de le laisser sur pied. Sans la machine, il attend sa
+      // maturité comme n'importe quelle céréale.
+      const readyCells = (parcelDetail?.cellSims ?? [])
+        .filter((s) => {
+          if (s.sim.ready) return true;
+          if (!hasForageHarvester || s.sim.lost) return false;
+          const cell = (parcel?.cells ?? []).find((c) => c.x === s.x && c.y === s.y);
+          return cell?.crop === "MAIZE" && s.sim.progress >= SILAGE_MIN_PROGRESS;
+        })
+        .map((s) => ({ x: s.x, y: s.y }))
+        .filter((c) =>
+          visiting && visitOrder
+            ? visitOrder.cellList.some((r) => r.x === c.x && r.y === c.y)
+            : true,
+        );
       if (readyCells.length) {
         flashWork(
-          tool === "SILAGE" ? "FORAGE_HARVESTER" : readyAreGrass ? "TRACTOR" : "HARVESTER",
+          readyAreGrass ? "TRACTOR" : "HARVESTER",
           readyCells,
-          tool === "SILAGE" ? undefined : readyAreGrass ? "mow" : "harvest",
+          readyAreGrass ? "mow" : "harvest",
         );
       }
       const r = await api<{
@@ -2575,11 +2568,10 @@ export function App() {
         body: JSON.stringify({
           userId: player.id,
           cells: visiting ? readyCells : undefined,
-          mode: tool === "SILAGE" ? "SILAGE" : "GRAIN",
           swath: keepSwath,
         }),
       });
-      setMsg(tool === "SILAGE" ? `Ensilage ${r.totalTons.toFixed(2)} t` : harvestGrainNote(r));
+      setMsg(harvestGrainNote(r));
       markGuideFlag("harvested");
       if (r.soldTons) markGuideFlag("sold");
       if (r.labor?.completed) {
@@ -4327,7 +4319,6 @@ export function App() {
             }
             strawCount={strawCellCount}
             baleCount={baleCellCount}
-            silageReadyCount={silageReadyCount}
             visiting={visiting}
             onTool={pickTool}
             onBrush={setBrush}

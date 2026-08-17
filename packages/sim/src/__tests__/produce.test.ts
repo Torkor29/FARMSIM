@@ -47,9 +47,14 @@ describe("marchandises", () => {
     // une de ses grosses dépenses et que `manure.ts` s'annonce lui-même comme
     // « le pont retour de l'éleveur vers le céréalier ».
     //
+    // Les bottes ont rejoint la liste pour la même raison que la paille en
+    // vrac : c'est de la litière, donc un intrant pour l'éleveur qui n'a pas
+    // de céréales à lui. Un éleveur pouvait acheter du vrac mais pas des
+    // bottes, alors que c'est la forme sous laquelle la paille se transporte.
+    //
     // L'invariant que ce test défend n'a pas changé : on achète des intrants
     // (litière, fourrage, fertilisant), jamais ce qu'on est censé produire.
-    expect(achetables).toEqual(["HAY", "STRAW", "MANURE"]);
+    expect(achetables).toEqual(["HAY", "STRAW", "STRAW_BALE", "MANURE"]);
     for (const récolte of ["WHEAT", "MAIZE", "MILK", "MEAT"] as TradeGood[]) {
       expect(GOOD_DEFS[récolte].purchasable).toBe(false);
     }

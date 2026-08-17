@@ -200,6 +200,10 @@ export const MARKET_BOUNDS: Record<
   MEAT: { initial: 1450, min: 900, max: 2300, depth: 300 },
   HAY: { initial: 95, min: 60, max: 165, depth: 1500 },
   STRAW: { initial: 72, min: 45, max: 130, depth: 900 },
+  // Une botte pèse 0,35 t : à 32 TRN pièce, la tonne bottelée vaut ~91 TRN
+  // contre 72 en vrac. L'écart, c'est le travail de la presse — c'est lui qui
+  // rend la botteleuse rentable, sinon personne n'en achèterait.
+  STRAW_BALE: { initial: 32, min: 20, max: 58, depth: 2600 },
   // Carnet étroit à dessein : l'ensilage n'est pas un cours mondial liquide.
   SILAGE: { initial: 110, min: 80, max: 160, depth: 80 },
   // Marché plus étroit que le blé : un gros lot y pèse davantage.

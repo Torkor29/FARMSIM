@@ -43,7 +43,6 @@ type Props = {
   readyCount: number;
   strawCount: number;
   baleCount: number;
-  silageReadyCount: number;
   /** Chez un voisin : ni construction ni marché. */
   visiting: boolean;
   onTool: (t: Tool) => void;
@@ -60,10 +59,9 @@ function groupBadge(id: ToolGroup, readyCount: number): number {
 }
 
 /** Compteur collé à une option — « Presser ×12 ». */
-function optionCount(tool: Tool, straw: number, bales: number, silage: number): number {
+function optionCount(tool: Tool, straw: number, bales: number): number {
   if (tool === "BALE") return straw;
   if (tool === "COLLECT") return bales;
-  if (tool === "SILAGE") return silage;
   return 0;
 }
 
@@ -76,7 +74,6 @@ export function ToolRail({
   readyCount,
   strawCount,
   baleCount,
-  silageReadyCount,
   visiting,
   onTool,
   onBrush,
@@ -131,15 +128,15 @@ export function ToolRail({
         })}
       </ul>
 
-      {options.length > 0 && (
+      {(options.length > 0 || group === "HARVEST") && (
         <div className="tool-rail-block">
           <h4 className="tool-rail-title">
-            {group === "PLANT" ? "Culture" : group === "HARVEST" ? "Mode" : "Travail"}
+            {group === "PLANT" ? "Culture" : group === "HARVEST" ? "Andain" : "Travail"}
           </h4>
           <ul className="tool-rail-options">
             {options.map((o) => {
               const on = tool === o.tool;
-              const n = optionCount(o.tool, strawCount, baleCount, silageReadyCount);
+              const n = optionCount(o.tool, strawCount, baleCount);
               return (
                 <li key={o.tool}>
                   <button
@@ -170,10 +167,10 @@ export function ToolRail({
               Semis direct
             </button>
           )}
-          {/* L'andain ne se propose que là où il existe : sur de l'herbe, ou
-              en ensilage, la plante part entière et il ne reste rien à
-              presser. Une case à cocher sans effet est pire qu'absente. */}
-          {group === "HARVEST" && tool !== "SILAGE" && (
+          {/* L'andain ne se propose que là où il existe : sur de l'herbe la
+              plante part entière, il ne reste rien à presser. Une case à
+              cocher sans effet est pire qu'absente. */}
+          {group === "HARVEST" && (
             <button
               type="button"
               className={`tool-rail-toggle${keepSwath ? " on" : ""}`}

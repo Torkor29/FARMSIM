@@ -23,6 +23,7 @@ export type TradeGood =
   | "WOOL"
   | "MANURE"
   | "STRAW"
+  | "STRAW_BALE"
   | "SILAGE";
 
 export type GoodDef = {
@@ -150,6 +151,27 @@ export const GOOD_DEFS: Record<TradeGood, GoodDef> = {
     purchasable: true,
     perishable: false,
   },
+  /**
+   * Bottes de paille.
+   *
+   * Distinctes de la paille en vrac, et pas seulement pour le décor : le vrac
+   * est ce que laisse la moissonneuse, la botte est ce qu'on peut charger,
+   * empiler et revendre. C'est la presse qui fait passer de l'un à l'autre,
+   * et ce travail-là se paie — d'où un prix à la tonne plus élevé.
+   *
+   * L'unité est la **botte**, pas la tonne : c'est ainsi qu'on en parle au
+   * champ comme au marché. `BALE_TONS` fait la conversion partout où le
+   * tonnage compte (litière, fourrage).
+   */
+  STRAW_BALE: {
+    code: "STRAW_BALE",
+    name: "Bottes de paille",
+    unit: "bottes",
+    basePrice: 32,
+    sellable: true,
+    purchasable: true,
+    perishable: false,
+  },
   SILAGE: {
     code: "SILAGE",
     name: "Ensilage",
@@ -193,6 +215,7 @@ export const GOOD_ICONS: Record<TradeGood, string> = {
   WOOL: "🧶",
   MANURE: "🟤",
   STRAW: "🟨",
+  STRAW_BALE: "🧱",
   SILAGE: "🥬",
 };
 

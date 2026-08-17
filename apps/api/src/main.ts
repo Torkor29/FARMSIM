@@ -87,6 +87,7 @@ import {
   NPC_PARCEL_SHARE,
   strawYieldFor,
   balesFromStraw,
+  BALE_TONS,
   strawFromBales,
   canSilageHarvest,
   silageYieldTons,
@@ -4365,11 +4366,22 @@ app.post("/parcels/:id/harvest", async (req, res) => {
     res.status(400).json(body.error.flatten());
     return;
   }
-  const silage = body.data.mode === "SILAGE";
   const keepSwath = body.data.swath !== false;
-  // Une même route sert la moisson, la fauche et l'ensilage : l'ensilage se
-  // demande explicitement, la fauche se déduit de ce qui pousse sur la case.
-  const access = silage
+  /**
+   * L'ensilage n'est plus un bouton de menu : c'est **la machine qui décide**.
+   *
+   * Le joueur choisissait « Grain » ou « Ensilage » dans la barre d'outils,
+   * alors qu'aux champs on n'ensile pas parce qu'on l'a coché — on ensile
+   * parce qu'on a une ensileuse et du maïs. Le mode explicite reste accepté
+   * pour les appels internes (missions, consignes) qui, eux, savent ce qu'ils
+   * demandent ; sans lui, la décision se prend case par case plus bas.
+   */
+  const forcedSilage = body.data.mode === "SILAGE";
+  const forcedGrain = body.data.mode === "GRAIN";
+  // Une même route sert la moisson, la fauche et l'ensilage. La fauche comme
+  // l'ensilage se déduisent de ce qui pousse sur la case et de ce qu'on a au
+  // hangar : on résout donc l'accès sur la moisson, qui est le cas général.
+  const access = forcedSilage
     ? await resolveFieldAccess({
         parcelId: req.params.id,
         userId: body.data.userId,
@@ -4391,10 +4403,26 @@ app.post("/parcels/:id/harvest", async (req, res) => {
     return;
   }
   const farm = parcel.farm;
-  const pickedSilage = silage ? pickMachineForWork(access.machines, "SILAGE") : null;
-  if (silage && !pickedSilage) {
+  // L'ensileuse de la ferme, si elle existe et qu'elle tient debout. C'est
+  // elle, et rien d'autre, qui rend l'ensilage possible.
+  const pickedSilage = forcedGrain ? null : pickMachineForWork(access.machines, "SILAGE");
+  if (forcedSilage && !pickedSilage) {
     res.status(409).json({ error: explainNoMachine(access.machines, "SILAGE") });
     return;
+  }
+
+  /**
+   * Cette case part-elle en ensilage ?
+   *
+   * Trois conditions, toutes nécessaires : une ensileuse au hangar, du maïs
+   * sur la case, et une plante assez avancée. Le blé d'un joueur qui possède
+   * une ensileuse continue donc d'être moissonné en grain — la machine ne
+   * décide que là où elle sait travailler.
+   */
+  function cellGoesToSilage(crop: CropCode, progress: number, lost: boolean): boolean {
+    if (!pickedSilage) return false;
+    if (!forcedSilage && crop !== "MAIZE") return false;
+    return canSilageHarvest({ crop, progress, lost });
   }
   const bonuses = await getFarmBonuses(parcel.farmId!);
   const weather = await prisma.weatherSnapshot.findFirst({ where: { zoneCode: parcel.zone.code } });
@@ -4409,6 +4437,7 @@ app.post("/parcels/:id/harvest", async (req, res) => {
   const now = Date.now();
   let previewGrass = 0;
   let previewGrain = 0;
+  let previewSilage = 0;
   for (const cell of targets) {
     if (cell.kind !== "CROP" || !cell.crop || !cell.plantedAt) continue;
     const sim = simulateCell({
@@ -4426,22 +4455,33 @@ app.post("/parcels/:id/harvest", async (req, res) => {
       weatherAtHarvest: weather?.state as WeatherState | undefined,
       cutsDone: grassCutsDone(cell),
     });
+    // Le maïs qui part en ensilage se récolte avant maturité grain : il ne
+    // faut donc pas exiger `sim.ready` de lui, ni lui réclamer une
+    // moissonneuse. Sans cela, un joueur équipé de la seule ensileuse se
+    // voyait refuser sa propre récolte de maïs.
+    if (cellGoesToSilage(cell.crop, sim.progress, Boolean(sim.lost))) {
+      previewSilage += 1;
+      continue;
+    }
     if (!sim.ready || sim.lost) continue;
     if (isMowCrop(cell.crop)) previewGrass += 1;
     else previewGrain += 1;
   }
   // L'ensilage a sa propre machine, déjà vérifiée : la moissonneuse et le
   // tracteur ne sont exigés que pour ce qui part en grain ou en fourrage.
-  const pickedHarvest =
-    !silage && previewGrain > 0 ? pickMachineForWork(access.machines, "HARVEST") : null;
-  const pickedMow =
-    !silage && previewGrass > 0 ? pickMachineForWork(access.machines, "MOW") : null;
-  if (!silage && previewGrain > 0 && !pickedHarvest) {
+  const pickedHarvest = previewGrain > 0 ? pickMachineForWork(access.machines, "HARVEST") : null;
+  const pickedMow = previewGrass > 0 ? pickMachineForWork(access.machines, "MOW") : null;
+  if (previewGrain > 0 && !pickedHarvest) {
     res.status(409).json({ error: explainNoMachine(access.machines, "HARVEST") });
     return;
   }
-  if (!silage && previewGrass > 0 && !pickedMow) {
+  if (previewGrass > 0 && !pickedMow) {
     res.status(409).json({ error: explainNoMachine(access.machines, "MOW") });
+    return;
+  }
+  // Rien à faire du tout : le dire, plutôt que de rendre une récolte vide.
+  if (previewGrain + previewGrass + previewSilage === 0 && forcedSilage) {
+    res.status(409).json({ error: "Aucun maïs assez avancé pour l'ensilage" });
     return;
   }
 
@@ -4460,6 +4500,7 @@ app.post("/parcels/:id/harvest", async (req, res) => {
   const outcome = await prisma.$transaction(async (tx) => {
     let grainCells = 0;
     let grassCells = 0;
+    let silageCells = 0;
     for (const cell of targets) {
       if (cell.kind !== "CROP" || !cell.crop || !cell.plantedAt) continue;
       const sim = simulateCell({
@@ -4477,8 +4518,8 @@ app.post("/parcels/:id/harvest", async (req, res) => {
         weatherAtHarvest: weather?.state as WeatherState | undefined,
         cutsDone: grassCutsDone(cell),
       });
-      if (silage) {
-        if (!canSilageHarvest({ crop: cell.crop, progress: sim.progress, lost: sim.lost })) continue;
+      if (cellGoesToSilage(cell.crop, sim.progress, Boolean(sim.lost))) {
+        silageCells += 1;
         if (sim.lost) {
           lostCells += 1;
           await tx.parcelCell.update({
@@ -4590,7 +4631,7 @@ app.post("/parcels/:id/harvest", async (req, res) => {
     }
     const grain =
       incomingGrain.length === 0
-        ? { soldTons: 0, storedTons: silage ? silageTons : 0, revenue: 0, reason: null }
+        ? { soldTons: 0, storedTons: silageTons, revenue: 0, reason: null }
         : await applyGrainCapacity(tx, {
             farmId: parcel.farmId!,
             userId: farm.userId,
@@ -4606,15 +4647,22 @@ app.post("/parcels/:id/harvest", async (req, res) => {
     }
     // Trois machines possibles sur la même route : l'ensileuse use pour toutes
     // les cases, la moissonneuse pour le grain, le tracteur pour l'herbe.
-    const wear = pickedSilage
-      ? await applyWearToMachine(tx, {
-          machine: pickedSilage.machine,
-          def: pickedSilage.def,
-          cells: harvested.length,
-          work: "SILAGE",
-          specialization: user?.specialization,
-        })
-      : pickedHarvest && grainCells > 0
+    // Une même sélection peut mêler du maïs ensilé et du blé moissonné : chaque
+    // machine n'use que sur les cases qu'elle a réellement faites. L'ensileuse
+    // usait auparavant sur `harvested.length`, c'est-à-dire aussi sur les cases
+    // que la moissonneuse avait travaillées.
+    const silageWear =
+      pickedSilage && silageCells > 0
+        ? await applyWearToMachine(tx, {
+            machine: pickedSilage.machine,
+            def: pickedSilage.def,
+            cells: silageCells,
+            work: "SILAGE",
+            specialization: user?.specialization,
+          })
+        : null;
+    const grainWear =
+      pickedHarvest && grainCells > 0
         ? await applyWearToMachine(tx, {
             machine: pickedHarvest.machine,
             def: pickedHarvest.def,
@@ -4623,6 +4671,7 @@ app.post("/parcels/:id/harvest", async (req, res) => {
             specialization: user?.specialization,
           })
         : null;
+    const wear = silageWear ?? grainWear;
     const mowWear =
       pickedMow && grassCells > 0
         ? await applyWearToMachine(tx, {
@@ -4654,7 +4703,7 @@ app.post("/parcels/:id/harvest", async (req, res) => {
     res.status(409).json({
       error: lostCells
         ? `${lostCells} case(s) perdue(s) — trop tard pour récolter, il faut labourer`
-        : silage
+        : forcedSilage
           ? "Rien à ensiler (maïs pas assez avancé)"
           : "Rien à récolter (pas prêt)",
       lostCells,
@@ -4798,15 +4847,20 @@ app.post("/parcels/:id/collect", async (req, res) => {
   const user = await prisma.user.findUnique({ where: { id: body.data.userId } });
   const worked = targets.map((c) => ({ x: c.x, y: c.y }));
   let tons = 0;
+  let bales = 0;
   const { wear, labor } = await prisma.$transaction(async (tx) => {
     for (const cell of targets) {
+      bales += cell.baleCount;
       tons += strawFromBales(cell.baleCount);
       await tx.parcelCell.update({
         where: { id: cell.id },
         data: { baleCount: 0 },
       });
     }
-    await addToStock(tx, parcel.farmId!, "STRAW", tons, 0, 3);
+    // Ce qu'on charge, ce sont des bottes — pas un tas de vrac. Le stock les
+    // compte à l'unité ; `BALE_TONS` reste la conversion partout où c'est un
+    // tonnage qui compte (litière, ration).
+    await addToStock(tx, parcel.farmId!, "STRAW_BALE", bales, 0, 3);
     const wear =
       picked && user
         ? await applyWearToMachine(tx, {
@@ -4823,6 +4877,7 @@ app.post("/parcels/:id/collect", async (req, res) => {
   if (user) await touchFieldPresence(user.id, parcel.id, worked[worked.length - 1]);
   res.json({
     collected: targets.length,
+    bales,
     tons: Math.round(tons * 1000) / 1000,
     machine: picked && wear ? { id: picked.machine.id, type: picked.machine.type, ...wear } : null,
     labor,
@@ -5984,8 +6039,19 @@ app.post("/herds/:id/bedding", async (req, res) => {
   const stats = buildingStatsAtLevel(herd.building.type as SharedBuildingType, herd.building.level);
   const capacity = barnCapacity(herd.building.type, stats);
   const plafond = beddingCapacity(kind, capacity);
+  /**
+   * La litière se sert d'abord dans les bottes, puis dans le vrac.
+   *
+   * Le ramassage rentre désormais des **bottes** et non plus des tonnes de
+   * paille : ne lire que `STRAW` aurait laissé un éleveur avec un hangar
+   * plein de bottes et le message « aucune paille en stock ». Les bottes
+   * d'abord, parce que c'est ce qu'on a sous la main et que le vrac s'achète
+   * pour compléter.
+   */
+  const bottes = herd.farm.inventory.find((i) => i.itemCode === "STRAW_BALE");
   const paille = herd.farm.inventory.find((i) => i.itemCode === "STRAW");
-  const enStock = paille?.qty ?? 0;
+  const tonnesEnBottes = strawFromBales(bottes?.qty ?? 0);
+  const enStock = tonnesEnBottes + (paille?.qty ?? 0);
 
   // Sans quantité, on paille ce qu'il faut : personne n'a envie de calculer
   // des tonnes de paille à la main pour un geste qu'on répète chaque cycle.
@@ -6009,7 +6075,17 @@ app.post("/herds/:id/bedding", async (req, res) => {
   }
 
   await prisma.$transaction(async (tx) => {
-    if (paille) await drawFromStock(tx, paille, tons);
+    // On entame les bottes en premier, à la botte entière : une demi-botte
+    // étalée n'existe pas. Le vrac finit le compte.
+    let reste = tons;
+    if (bottes && tonnesEnBottes > 0) {
+      const prises = Math.min(bottes.qty, Math.ceil((reste - 1e-9) / BALE_TONS));
+      if (prises > 0) {
+        await drawFromStock(tx, bottes, prises);
+        reste = Math.max(0, reste - strawFromBales(prises));
+      }
+    }
+    if (reste > 1e-9 && paille) await drawFromStock(tx, paille, reste);
     await tx.herd.update({
       where: { id: herd.id },
       data: { beddingTons: herd.beddingTons + tons },

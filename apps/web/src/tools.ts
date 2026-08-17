@@ -10,7 +10,6 @@ export type Tool =
   | "PLANT_GRASS"
   | "FERTILIZE"
   | "HARVEST"
-  | "SILAGE"
   | "STUBBLE"
   | "PLOW"
   | "BALE"
@@ -23,7 +22,6 @@ export function isFieldWorkTool(t: Tool): boolean {
     isPlantTool(t) ||
     t === "FERTILIZE" ||
     t === "HARVEST" ||
-    t === "SILAGE" ||
     t === "STUBBLE" ||
     t === "PLOW" ||
     t === "BALE" ||

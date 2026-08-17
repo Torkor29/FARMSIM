@@ -53,10 +53,16 @@ export const PLANT_OPTIONS: ToolOption[] = [
   { tool: "PLANT_GRASS", label: "Herbe", hint: "Se fauche, nourrit le troupeau" },
 ];
 
-export const HARVEST_OPTIONS: ToolOption[] = [
-  { tool: "HARVEST", label: "Grain", hint: "Moisson classique, grain en silo" },
-  { tool: "SILAGE", label: "Ensilage", hint: "Maïs plante entière, plus tôt, plus de tonnage" },
-];
+/**
+ * La récolte n'a plus de « mode » à choisir.
+ *
+ * On y trouvait « Grain » et « Ensilage ». Mais aux champs on n'ensile pas
+ * parce qu'on l'a coché : on ensile parce qu'on a une ensileuse et du maïs.
+ * C'est donc le hangar qui décide, côté serveur, case par case — le maïs part
+ * en ensilage si l'ensileuse est là, en grain sinon, et le blé reste du blé
+ * dans les deux cas. Un choix de moins, et il n'en manque aucun.
+ */
+export const HARVEST_OPTIONS: ToolOption[] = [];
 
 export const SOIL_OPTIONS: ToolOption[] = [
   { tool: "STUBBLE", label: "Nettoyer", hint: "Déchaumage : enfouit les résidus" },
@@ -71,7 +77,7 @@ export const SOIL_OPTIONS: ToolOption[] = [
 export function groupOf(tool: Tool): ToolGroup | null {
   if (tool === "SELECT") return "SELECT";
   if (isPlantTool(tool)) return "PLANT";
-  if (tool === "HARVEST" || tool === "SILAGE") return "HARVEST";
+  if (tool === "HARVEST") return "HARVEST";
   if (isSoilTool(tool)) return "SOIL";
   return null;
 }

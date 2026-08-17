@@ -5,6 +5,9 @@ import {
   SILAGE_MIN_PROGRESS,
   STRAW_YIELD,
   balesFromStraw,
+  GOOD_DEFS,
+  MARKET_BOUNDS,
+  SELLABLE_GOODS,
   canSilageHarvest,
   leavesSwath,
   parseConsignes,
@@ -91,5 +94,32 @@ describe("andain laissé ou broyé", () => {
     expect(leavesSwath("GRASS")).toBe(false);
     expect(leavesSwath(null)).toBe(false);
     expect(leavesSwath(undefined)).toBe(false);
+  });
+});
+
+describe("bottes de paille comme marchandise", () => {
+  it("se vendent et s'achètent, contrairement à l'ensilage qui reste local", () => {
+    expect(GOOD_DEFS.STRAW_BALE.sellable).toBe(true);
+    expect(GOOD_DEFS.STRAW_BALE.purchasable).toBe(true);
+    expect(SELLABLE_GOODS).toContain("STRAW_BALE");
+  });
+
+  it("se comptent en bottes, pas en tonnes", () => {
+    // C'est ce qui les distingue du vrac à l'écran comme au marché : on
+    // charge un nombre de bottes, on ne pèse pas un tas.
+    expect(GOOD_DEFS.STRAW_BALE.unit).toBe("bottes");
+    expect(GOOD_DEFS.STRAW.unit).toBe("t");
+  });
+
+  it("valent plus cher la tonne que le vrac — la presse se paie", () => {
+    // Sans cet écart, botteler ne rapporterait rien et la presse à balles
+    // serait un achat perdu.
+    const tonneBottelee = GOOD_DEFS.STRAW_BALE.basePrice / BALE_TONS;
+    expect(tonneBottelee).toBeGreaterThan(GOOD_DEFS.STRAW.basePrice);
+  });
+
+  it("ont un cours amorçable par le marché", () => {
+    expect(MARKET_BOUNDS.STRAW_BALE.min).toBeLessThan(MARKET_BOUNDS.STRAW_BALE.initial);
+    expect(MARKET_BOUNDS.STRAW_BALE.max).toBeGreaterThan(MARKET_BOUNDS.STRAW_BALE.initial);
   });
 });

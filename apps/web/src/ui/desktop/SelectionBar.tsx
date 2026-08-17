@@ -42,7 +42,6 @@ function actionLabel(tool: Tool, count: number, mow: boolean): string {
   if (tool === "FERTILIZE") return `Fertiliser ${count} case(s)`;
   if (tool === "PLOW") return `Labourer ${count} case(s)`;
   if (tool === "STUBBLE") return `Nettoyer ${count} case(s)`;
-  if (tool === "SILAGE") return `Ensiler ${count} case(s)`;
   return `Récolter ${count} case(s)`;
 }
 
@@ -52,7 +51,6 @@ function actsOnSelection(tool: Tool): boolean {
     isPlantTool(tool) ||
     tool === "FERTILIZE" ||
     tool === "HARVEST" ||
-    tool === "SILAGE" ||
     tool === "STUBBLE" ||
     tool === "PLOW"
   );
