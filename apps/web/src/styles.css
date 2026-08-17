@@ -1610,6 +1610,14 @@ html.playing .build-confirm { position: fixed; }
   gap: 0.45rem;
 }
 .building-sheet-herd p { margin: 0; font-size: 0.88rem; color: var(--ink-soft); }
+.building-sheet-herd .graze-refusal,
+.building-sheet-herd .herd-alert {
+  padding: 0.4rem 0.55rem;
+  border-radius: var(--r-sm);
+  font-size: 0.82rem;
+  font-weight: 700;
+}
+.building-sheet-herd .graze-refusal { background: color-mix(in srgb, var(--danger, #c0392b) 12%, transparent); }
 .building-sheet-actions { display: flex; flex-wrap: wrap; gap: 0.4rem; }
 .building-sheet-actions button { flex: 1 1 auto; min-width: 0; }
 .building-sheet-note { margin: 0; font-size: 0.8rem; color: var(--ok); }

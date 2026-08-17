@@ -326,7 +326,14 @@ export type GrazingRefusal =
    * en vert puis « Aucun enclos accolé à l'étable » en rouge — deux phrases
    * contradictoires dont la seconde était simplement fausse.
    */
-  | "NO_ANIMALS";
+  | "NO_ANIMALS"
+  /**
+   * Une sortie par cycle : après une pâture, `planGrazing()` refuse pendant
+   * 20 h de jeu. Sans ce motif, le bouton restait actif et le serveur
+   * répondait « Sortie impossible pour le moment » — le joueur ne savait pas
+   * pourquoi ses vaches restaient enfermées.
+   */
+  | "TOO_SOON";
 
 /* ------------------------------------------------------------------ */
 /* Alimentation — la ration conditionne tout le reste                  */
@@ -399,12 +406,30 @@ export function feedBurn(input: {
 }
 
 export const GRAZING_REFUSAL_LABELS: Record<GrazingRefusal, string> = {
-  NO_PADDOCK: "Aucun enclos accolé à l’étable",
-  PADDOCK_FULL: "Enclos saturé",
-  BAD_WEATHER: "Météo impraticable",
-  WRONG_SPECIES: "Cette aire de sortie n’est pas faite pour cette espèce",
-  NO_ANIMALS: "Aucune bête à sortir",
+  NO_PADDOCK: "Il manque un enclos collé à l’étable.",
+  PADDOCK_FULL: "L’enclos est trop petit pour tout le troupeau.",
+  BAD_WEATHER: "Orage ou neige : les bêtes restent à l’abri.",
+  WRONG_SPECIES: "Cet enclos n’est pas fait pour ces bêtes.",
+  NO_ANIMALS: "Aucune bête à sortir.",
+  TOO_SOON: "Les bêtes viennent de rentrer — attendez un peu avant de les ressortir.",
 };
+
+/** Phrase affichée, avec le délai restant quand c’est trop tôt. */
+export function grazeRefusalLabel(
+  reason: GrazingRefusal,
+  extra?: { waitMs?: number },
+): string {
+  if (reason === "TOO_SOON") {
+    const wait = extra?.waitMs ?? 0;
+    if (wait > 0) {
+      const mins = Math.max(1, Math.ceil(wait / 60_000));
+      return mins <= 1
+        ? "Les bêtes viennent de rentrer — nouvelle sortie dans moins d’une minute."
+        : `Les bêtes viennent de rentrer — nouvelle sortie dans ${mins} min.`;
+    }
+  }
+  return GRAZING_REFUSAL_LABELS[reason];
+}
 
 /**
  * Une sortie est possible si — et seulement si — il existe un enclos adjacent,
@@ -420,6 +445,12 @@ export function canGraze(input: {
   kind?: AnimalKind;
   /** Espèce que l'aire de sortie accueille ; par défaut, des bovins */
   paddockKind?: AnimalKind;
+  /** Dernière sortie, pour le délai d’une pâture par cycle */
+  lastGrazedAt?: number | null;
+  /** Instant courant ; sans lui, le délai n’est pas jugé (tests d’adjacence) */
+  now?: number;
+  /** Fin de la sortie en cours : tant que les bêtes sont dehors, ce n’est pas « trop tôt » */
+  grazingUntil?: number | null;
 }): { ok: boolean; reason?: GrazingRefusal } {
   // Une vache ne se met pas dans une souille, un porc ne pâture pas : chaque
   // espèce a son aire de sortie.
@@ -433,7 +464,14 @@ export function canGraze(input: {
     return { ok: false, reason: "BAD_WEATHER" };
   }
   const free = input.paddock.capacity - Math.max(0, input.animalsOutside ?? 0);
-  if (input.animals <= 0 || free < input.animals) return { ok: false, reason: "PADDOCK_FULL" };
+  if (input.animals <= 0) return { ok: false, reason: "NO_ANIMALS" };
+  if (free < input.animals) return { ok: false, reason: "PADDOCK_FULL" };
+  if (input.now != null) {
+    const stillOut = (input.grazingUntil ?? 0) > input.now;
+    if (!stillOut && grazeCooldownRemainingMs(input.lastGrazedAt ?? null, input.now) > 0) {
+      return { ok: false, reason: "TOO_SOON" };
+    }
+  }
   return { ok: true };
 }
 
@@ -788,6 +826,15 @@ export const GRAZING = {
   /** Une sortie par cycle : en deçà, `planGrazing()` refuse `[GD]` */
   cooldownMs: 20 * HOUR_MS,
 } as const;
+
+/** Temps restant avant de pouvoir ressortir, 0 si c’est déjà possible. */
+export function grazeCooldownRemainingMs(
+  lastGrazedAt: number | null | undefined,
+  now: number,
+): number {
+  if (lastGrazedAt == null) return 0;
+  return Math.max(0, GRAZING.cooldownMs - (now - lastGrazedAt));
+}
 
 /**
  * Planifie la prochaine vague de sortie, ou `null` si elle est impossible.

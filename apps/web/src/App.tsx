@@ -1653,10 +1653,19 @@ export function App() {
     return {
       id: barn.herd.id,
       size: barn.herd.size,
+      kind: barn.herd.kind,
       label: barn.herd.label,
       out: Boolean(barn.herd.grazingUntil && barn.herd.grazingUntil > Date.now()),
       canGraze: barn.canGraze,
       grazeRefusal: barn.grazeRefusal,
+      hungry: barn.herd.hungry,
+      atRisk: barn.herd.atRisk,
+      canMilk: barn.herd.canMilk,
+      canCollectEggs: barn.herd.canCollectEggs,
+      canShear: barn.herd.canShear,
+      collectProgress: barn.herd.collectProgress,
+      milkPerCycle: barn.herd.milkPerCycle,
+      eggsPerCycle: barn.herd.eggsPerCycle,
     };
   }, [openBuilding, barns]);
 
@@ -3752,6 +3761,7 @@ export function App() {
           maizeTons={maizeInStock}
           barleyTons={barleyInStock}
           wheatTons={wheatInStock}
+          silageTons={silageInStock}
           onBuildPaddock={(yardType, buildingId) => startYardBuild(buildingId, yardType)}
         />
         )}
@@ -4081,6 +4091,14 @@ export function App() {
           }}
           onGrazeOut={() => openBuildingHerd && void grazeHerd(openBuildingHerd.id)}
           onShelter={() => openBuildingHerd && void shelterHerd(openBuildingHerd.id)}
+          hayTons={hayInStock}
+          maizeTons={maizeInStock}
+          barleyTons={barleyInStock}
+          silageTons={silageInStock}
+          onFeed={(ration) => openBuildingHerd && void feedHerd(openBuildingHerd.id, ration)}
+          onMilk={() => openBuildingHerd && void milkHerd(openBuildingHerd.id)}
+          onCollectEggs={() => openBuildingHerd && void collectEggs(openBuildingHerd.id)}
+          onShear={() => openBuildingHerd && void shearHerd(openBuildingHerd.id)}
           canBuildYard={Boolean(
             barns.find((b) => b.buildingId === openBuilding.id && b.paddockCapacity === 0),
           )}

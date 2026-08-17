@@ -15,6 +15,8 @@ import {
   canGraze,
   crowdingPenalty,
   feedConsumption,
+  grazeRefusalLabel,
+  grazeCooldownRemainingMs,
   grazingWaveCount,
   happinessLabel,
   happinessTarget,
@@ -300,6 +302,44 @@ describe("sortie au pré — conditions d’autorisation", () => {
     for (const label of Object.values(GRAZING_REFUSAL_LABELS)) {
       expect(label.length).toBeGreaterThan(0);
     }
+  });
+
+  it("refuse une deuxième sortie trop tôt, et le dit clairement", () => {
+    const now = 1_000_000;
+    expect(
+      canGraze({
+        paddock: enclos(),
+        animals: 4,
+        weather: clair,
+        lastGrazedAt: now - 4 * HOUR,
+        now,
+      }),
+    ).toEqual({ ok: false, reason: "TOO_SOON" });
+    expect(
+      canGraze({
+        paddock: enclos(),
+        animals: 4,
+        weather: clair,
+        lastGrazedAt: now - 21 * HOUR,
+        now,
+      }).ok,
+    ).toBe(true);
+    // Tant que les bêtes sont encore dehors, ce n’est pas « trop tôt ».
+    expect(
+      canGraze({
+        paddock: enclos(),
+        animals: 4,
+        weather: clair,
+        lastGrazedAt: now - 4 * HOUR,
+        now,
+        grazingUntil: now + HOUR,
+      }).ok,
+    ).toBe(true);
+    expect(
+      grazeRefusalLabel("TOO_SOON", { waitMs: 8 * 60_000 }),
+    ).toContain("8 min");
+    expect(grazeCooldownRemainingMs(now - 4 * HOUR, now)).toBeGreaterThan(0);
+    expect(grazeCooldownRemainingMs(now - 21 * HOUR, now)).toBe(0);
   });
 });
 

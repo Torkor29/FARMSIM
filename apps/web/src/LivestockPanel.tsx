@@ -576,7 +576,7 @@ export function LivestockPanel({
               )}
             </div>
 
-            {barn.grazeRefusal && barn.paddockCapacity > 0 && (
+            {barn.grazeRefusal && barn.paddockCapacity > 0 && !outside && (
               <p className="graze-refusal">{barn.grazeRefusal}</p>
             )}
           </div>
