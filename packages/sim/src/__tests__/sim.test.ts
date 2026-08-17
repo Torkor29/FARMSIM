@@ -1,4 +1,4 @@
-import { DRYING, MACHINE_DEFS, contractorQuote, missionPayout, urgentContractorQuote, CROP_DEFS, MISSION_OPEN_MAX, clampMissionCells, repairHalfwayTarget, laborEscrow, parseAppearance, defaultAppearance, SKIN_TONES, HATS } from "@farmsim/shared";
+import { DRYING, MACHINE_DEFS, contractorQuote, missionPayout, urgentContractorQuote, CONTRACTOR_YIELD_MALUS, NPC_ON_READY_YIELD_MALUS, CROP_DEFS, MISSION_OPEN_MAX, clampMissionCells, repairHalfwayTarget, laborEscrow, parseAppearance, defaultAppearance, SKIN_TONES, HATS } from "@farmsim/shared";
 import {
   simulateCell,
   tickMarket,
@@ -165,6 +165,11 @@ describe("missions d’appoint", () => {
     expect(urgentContractorQuote("HARVEST", 24)).toBe(
       Math.round(contractorQuote("HARVEST", 24) * 1.15),
     );
+  });
+
+  it("ampute davantage la récolte du PNJ engagé à maturité", () => {
+    expect(NPC_ON_READY_YIELD_MALUS).toBeGreaterThan(CONTRACTOR_YIELD_MALUS);
+    expect(NPC_ON_READY_YIELD_MALUS).toBeLessThan(0.3);
   });
 
   it("10 min de tableau (3 moissons) rapportent moins que 24 cases de blé", () => {

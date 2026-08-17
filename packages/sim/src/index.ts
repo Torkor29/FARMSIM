@@ -419,7 +419,7 @@ export function buildSessionResume(opts: {
   // Les mauvaises nouvelles d'abord : une perte découverte par hasard, une
   // heure plus tard, est bien plus frustrante qu'une perte annoncée.
   const lost = opts.cropsLost ?? 0;
-  if (lost > 0) parts.push(`${lost} culture(s) perdue(s) — à labourer`);
+  if (lost > 0) parts.push(`${lost} culture(s) à 10 % de rendement`);
   const declining = opts.cropsDeclining ?? 0;
   if (declining > 0) parts.push(`${declining} récolte(s) qui se dégradent`);
   const hungry = opts.herdsHungry ?? 0;

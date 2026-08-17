@@ -228,6 +228,7 @@ type Player = {
     plow: boolean;
     straw: boolean;
     npcAllowed: boolean;
+    npcHarvestOnReady: boolean;
     maxSpend: number;
   };
   /** Compte développeur : panneau Test et trésorerie illimitée. */
@@ -1379,8 +1380,7 @@ export function App() {
     let lost = 0;
     for (const s of sims) {
       const stage = s.sim.ripeness?.stage;
-      if (stage === "LOST") lost += 1;
-      else if (stage === "POOR" || stage === "DECLINING") urgent += 1;
+      if (stage === "POOR" || stage === "DECLINING" || stage === "LOST") urgent += 1;
       else if (s.sim.ready) ready += 1;
     }
     const herdsAtRisk = barns.filter((b) => b.herd?.atRisk).length;
@@ -1481,11 +1481,12 @@ export function App() {
       const ripe = sim?.sim.ripeness;
       if (ripe) {
         const keep = Math.round(ripe.yieldFactor * 100);
-        if (ripe.stage === "LOST") {
-          return `Case (${x},${y}) · ${crop} perdu — à labourer`;
+        if (ripe.msToNextStage == null) {
+          return `Case (${x},${y}) · ${crop} · ${ripe.label} · ${keep} % du rendement`;
         }
-        const mins = Math.max(1, Math.round(ripe.msToLoss / 60000));
-        return `Case (${x},${y}) · ${crop} · ${ripe.label} · ${keep} % du rendement · perdue dans ${mins} min`;
+        const mins = Math.max(1, Math.round(ripe.msToNextStage / 60_000));
+        const delay = mins >= 120 ? `${Math.round(mins / 60)} h` : `${mins} min`;
+        return `Case (${x},${y}) · ${crop} · ${ripe.label} · ${keep} % du rendement · prochain palier dans ${delay}`;
       }
       const prog = sim ? `${Math.round(sim.sim.progress * 100)}%` : "—";
       return `Case (${x},${y}) · ${crop} · en croissance ${prog} · ferti ${fert}`;

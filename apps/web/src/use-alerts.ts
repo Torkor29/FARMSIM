@@ -12,9 +12,9 @@ import { useEffect, useRef, useState } from "react";
 export type FarmAlerts = {
   /** Cases mûres à récolter */
   ready: number;
-  /** Cases qui se dégradent et seront bientôt perdues */
+  /** Cases dont le rendement a déjà commencé à baisser */
   urgent: number;
-  /** Cases déjà perdues, à libérer à la charrue */
+  /** Conservé pour le badge : plus de cultures « à labourer » par maturité */
   lost: number;
   /** Troupeaux qui commencent à perdre des bêtes */
   herdsAtRisk: number;
@@ -39,7 +39,7 @@ export function alertMessage(a: FarmAlerts): string | null {
         : `${a.herdsAtRisk} troupeaux dépérissent faute de ration`,
     );
   }
-  if (a.urgent) parts.push(`${a.urgent} case(s) sur le point d'être perdues`);
+  if (a.urgent) parts.push(`${a.urgent} case(s) dont le rendement baisse`);
   if (!parts.length) return null;
   return `Votre ferme réclame votre attention : ${parts.join(", ")}.`;
 }

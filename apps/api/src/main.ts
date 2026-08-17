@@ -65,7 +65,9 @@ import {
   buildingLevelDef,
   MAX_BUILDING_LEVEL,
   urgentContractorQuote,
+  contractorQuote,
   CONTRACTOR_YIELD_MALUS,
+  NPC_ON_READY_YIELD_MALUS,
   missionPayout,
   laborEscrow,
   LABOR_ORDER_TTL_MS,
@@ -98,6 +100,7 @@ import {
   type FarmWork,
   type Specialization,
   ripenessAt,
+  harvestGivesXp,
   LOST_CROP_FERTILITY_MALUS,
   plowRequired,
   canStubble,
@@ -1278,6 +1281,125 @@ async function seedNpcFarms() {
   }
 }
 
+/**
+ * PNJ engagé : il vient récolter pile à la maturité.
+ *
+ * Pas une mission voisine — un contrat d'avance. On paie le barème, on
+ * encaisse moins de grain, et on ne gagne pas d'XP. C'est le prix de
+ * partir sans rater la fenêtre.
+ */
+async function harvestReadyByHiredNpc() {
+  const users = await prisma.user.findMany({
+    where: { farm: { isNot: null }, isNpc: false },
+    include: {
+      farm: { include: { parcels: { include: { cells: true, zone: true } } } },
+    },
+  });
+  const now = Date.now();
+  for (const user of users) {
+    if (!user.farm) continue;
+    const consignes = parseConsignes(user.consignesJson);
+    if (!consignes.npcHarvestOnReady) continue;
+    const bonuses = await getFarmBonuses(user.farm.id);
+    for (const parcel of user.farm.parcels) {
+      const busy = await occupiedLaborCells(parcel.id);
+      const weather = await prisma.weatherSnapshot.findFirst({
+        where: { zoneCode: parcel.zone.code },
+      });
+      const peak: {
+        cell: (typeof parcel.cells)[number];
+        sim: ReturnType<typeof simulateCell>;
+      }[] = [];
+      for (const cell of parcel.cells) {
+        if (busy.has(`${cell.x},${cell.y}`)) continue;
+        if (cell.kind !== "CROP" || !cell.crop || !cell.plantedAt) continue;
+        const sim = simulateCell({
+          crop: cell.crop,
+          plantedAt: cell.plantedAt.getTime(),
+          now,
+          fertility: parcel.fertility,
+          weedsControlled: cell.weedsControlled,
+          fertilizedPasses: Math.min(2, cell.fertilizedPasses) as 0 | 1 | 2,
+          residuePasses: cell.residuePasses,
+          directSeeded: cell.directSeeded,
+          rotation: rotationOf(cell),
+          specialization: playableSpec(user.specialization),
+          buildingYieldBonus: bonuses.yieldBonus,
+          weatherAtHarvest: weather?.state as WeatherState | undefined,
+          cutsDone: grassCutsDone(cell),
+        });
+        if (!sim.ready || sim.lost) continue;
+        if ((sim.ripeness?.yieldFactor ?? 0) < 1 - 1e-9) continue;
+        peak.push({ cell, sim });
+      }
+      if (!peak.length) continue;
+      const grainN = peak.filter((p) => !isMowCrop(p.cell.crop)).length;
+      const grassN = peak.length - grainN;
+      const fee =
+        (grainN ? contractorQuote("HARVEST", grainN) : 0) +
+        (grassN ? contractorQuote("MOW", grassN) : 0);
+      if (!peutPayer(user, fee)) {
+        await appendAbsenceLog(
+          user.id,
+          `PNJ : pas assez de TRN pour récolter ${peak.length} case(s) à maturité`,
+          0,
+        );
+        continue;
+      }
+      const moisture = harvestMoisture(weather?.state as WeatherState | undefined);
+      let totalTons = 0;
+      let hayTons = 0;
+      await prisma.$transaction(async (tx) => {
+        await debit(tx, user.id, fee);
+        const incomingGrain: { code: GrainGood; tons: number; moisture: number; quality: number }[] = [];
+        const grainByCode = new Map<string, number>();
+        for (const { cell, sim } of peak) {
+          const tons = sim.estimatedYieldTons * (1 - NPC_ON_READY_YIELD_MALUS);
+          totalTons += tons;
+          const next = afterTakeField(
+            {
+              crop: cell.crop!,
+              lastCrop: cell.lastCrop,
+              cropStreak: cell.cropStreak,
+              harvestsSincePlow: cell.harvestsSincePlow,
+            },
+            now,
+          );
+          await tx.parcelCell.update({ where: { id: cell.id }, data: next.data });
+          const item = harvestItemCode(cell.crop!);
+          if (item === "HAY") {
+            hayTons += tons;
+          } else if (isGrainGood(item)) {
+            grainByCode.set(item, (grainByCode.get(item) ?? 0) + tons);
+          } else {
+            await addToStock(tx, user.farm!.id, item, tons, moisture, 3);
+          }
+        }
+        if (hayTons > 0) {
+          await addToStock(tx, user.farm!.id, "HAY", hayTons, 0, 3);
+        }
+        for (const [code, tons] of grainByCode) {
+          if (!isGrainGood(code)) continue;
+          incomingGrain.push({ code, tons, moisture, quality: 3 });
+        }
+        if (incomingGrain.length) {
+          await applyGrainCapacity(tx, {
+            farmId: user.farm!.id,
+            userId: user.id,
+            capacity: bonuses.storageGrain,
+            incoming: incomingGrain,
+          });
+        }
+      });
+      await appendAbsenceLog(
+        user.id,
+        `PNJ a récolté ${peak.length} case(s) pile à maturité · ${totalTons.toFixed(1)} t · −${Math.round(fee)} TRN · 0 XP`,
+        fee,
+      );
+    }
+  }
+}
+
 async function publishFromConsignes() {
   const cutoff = new Date(Date.now() - CONSIGNE_AWAY_MS);
   const users = await prisma.user.findMany({
@@ -2313,6 +2435,7 @@ async function runWorldTick() {
   await settleOverdueDeliveries();
   await expireLaborOrders();
   await tickNpcFarms();
+  await harvestReadyByHiredNpc();
   await publishFromConsignes();
   await runNpcBuyers();
   await spoilPerishables();
@@ -2460,7 +2583,6 @@ async function buildResumeForUser(userId: string) {
   const awayMs = Math.max(0, now - last);
   let cropsReady = 0;
   let cropsGrowing = 0;
-  let cropsLost = 0;
   let cropsDeclining = 0;
   for (const parcel of user.farm?.parcels ?? []) {
     for (const cell of parcel.cells) {
@@ -2478,8 +2600,7 @@ async function buildResumeForUser(userId: string) {
         specialization: playableSpec(user.specialization),
         cutsDone: grassCutsDone(cell),
       });
-      if (sim.lost) cropsLost += 1;
-      else if (sim.ripeness && sim.ripeness.stage !== "PEAK") cropsDeclining += 1;
+      if (sim.ripeness && sim.ripeness.stage !== "PEAK") cropsDeclining += 1;
       else if (sim.ready) cropsReady += 1;
       else cropsGrowing += 1;
     }
@@ -2503,7 +2624,7 @@ async function buildResumeForUser(userId: string) {
     awayMs,
     cropsReady,
     cropsGrowing,
-    cropsLost,
+    cropsLost: 0,
     cropsDeclining,
     herdsHungry,
     marketBefore,
@@ -2895,6 +3016,7 @@ app.post("/me/consignes", async (req, res) => {
       plow: z.boolean().optional(),
       straw: z.boolean().optional(),
       npcAllowed: z.boolean().optional(),
+      npcHarvestOnReady: z.boolean().optional(),
       maxSpend: z.number().min(0).max(20_000).optional(),
     })
     .safeParse(req.body);
@@ -4439,6 +4561,8 @@ app.post("/parcels/:id/harvest", async (req, res) => {
   const outcome = await prisma.$transaction(async (tx) => {
     let grainCells = 0;
     let grassCells = 0;
+    let xpCells = 0;
+    let xpTons = 0;
     for (const cell of targets) {
       if (cell.kind !== "CROP" || !cell.crop || !cell.plantedAt) continue;
       const sim = simulateCell({
@@ -4478,6 +4602,10 @@ app.post("/parcels/:id/harvest", async (req, res) => {
           silage: true,
         });
         harvestedCells.push({ x: cell.x, y: cell.y });
+        if (!sim.ripeness || harvestGivesXp(sim.ripeness.yieldFactor)) {
+          xpCells += 1;
+          xpTons += tons;
+        }
         const after = afterTakeField(
           {
             crop: cell.crop,
@@ -4514,6 +4642,10 @@ app.post("/parcels/:id/harvest", async (req, res) => {
         moisture,
       });
       harvestedCells.push({ x: cell.x, y: cell.y });
+      if (harvestGivesXp(sim.ripeness?.yieldFactor ?? 1)) {
+        xpCells += 1;
+        xpTons += tons;
+      }
       if (isMowCrop(cell.crop)) {
         grassCells += 1;
         hayTons += tons;
@@ -4620,7 +4752,7 @@ app.post("/parcels/:id/harvest", async (req, res) => {
           tx,
           user.id,
           grainCells > 0 ? "HARVEST" : "MOW",
-          { cells: harvestedCells.length, tons },
+          { cells: xpCells, tons: xpTons },
           { cellsHarvested: harvestedCells.length, tonsHarvested: tons },
         )
       : null;

@@ -61,4 +61,10 @@ describe("consignes", () => {
   it("cible un tiers des parcelles d’une région pour les PNJ", () => {
     expect(NPC_PARCEL_SHARE).toBeCloseTo(0.3, 5);
   });
+
+  it("n'active la récolte PNJ à maturité que si on l'a demandée", () => {
+    expect(DEFAULT_CONSIGNES.npcHarvestOnReady).toBe(false);
+    expect(parseConsignes("{}").npcHarvestOnReady).toBe(false);
+    expect(parseConsignes('{"npcHarvestOnReady":true}').npcHarvestOnReady).toBe(true);
+  });
 });
