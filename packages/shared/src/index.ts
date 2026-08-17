@@ -18,6 +18,7 @@ export * from "./play-guide.js";
 export * from "./appearance.js";
 export * from "./crops.js";
 export * from "./manure.js";
+export * from "./dev-accounts.js";
 export * from "./progression.js";
 export * from "./quests.js";
 export * from "./consignes.js";
