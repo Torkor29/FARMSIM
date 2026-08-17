@@ -216,6 +216,7 @@ import {
   DEV_DISPLAY_CRD,
   isDevEmail,
   canAfford,
+  hasUnlimitedCrd,
   normalizeEmail,
 } from "@farmsim/shared";
 import {
@@ -372,6 +373,11 @@ const DEV_EMAILS_ENV = process.env.FARMSIM_TESTERS ?? "";
 function estCompteDev(email: string | null | undefined): boolean {
   if (!email) return false;
   return isDevEmail(email, DEV_EMAILS_ENV);
+}
+
+function estArgentIllimite(email: string | null | undefined): boolean {
+  if (!email) return false;
+  return hasUnlimitedCrd(email);
 }
 
 function peutPayer(
@@ -1023,9 +1029,9 @@ async function debit(
     where: { id: userId },
     select: { email: true },
   });
-  // Compte dev : on n'écrit pas le débit. Le solde réel ne descend pas,
+  // Compte nominatif : on n'écrit pas le débit. Le solde réel ne descend pas,
   // et l'écran affiche ∞ plutôt qu'un chiffre qui fondrait à chaque achat.
-  if (owner && estCompteDev(owner.email)) return;
+  if (owner && estArgentIllimite(owner.email)) return;
   const hit = await tx.user.updateMany({
     where: { id: userId, crd: { gte: amount } },
     data: { crd: { decrement: amount } },
@@ -2036,7 +2042,7 @@ async function settleDueFutures() {
         select: { email: true },
       });
       // Compte dev : pas de dette artificielle, la trésorerie reste illimitée.
-      if (!seller || !estCompteDev(seller.email)) {
+      if (!seller || !estArgentIllimite(seller.email)) {
         await tx.user.update({
           where: { id: c.sellerId },
           data: { crd: { decrement: penalty } },
@@ -2563,11 +2569,12 @@ async function playerPayload(userId: string) {
   void _omit;
   void absenceLogJson;
   const dev = estCompteDev(user.email);
+  const unlimited = estArgentIllimite(user.email);
   return {
     ...safe,
     dev,
-    unlimitedCrd: dev,
-    crd: dev ? Math.max(user.crd, DEV_DISPLAY_CRD) : user.crd,
+    unlimitedCrd: unlimited,
+    crd: unlimited ? Math.max(user.crd, DEV_DISPLAY_CRD) : user.crd,
     appearance: appearanceFromJson(appearanceJson, playableSpec(user.specialization)),
     consignes: parseConsignes(consignesJson),
     bonuses,
@@ -6900,7 +6907,7 @@ app.post("/market/listings", async (req, res) => {
     marketPrice: market.price,
     openListings,
     stockTons: inv?.qty ?? 0,
-    crd: estCompteDev(user.email) ? DEV_DISPLAY_CRD : user.crd,
+    crd: estArgentIllimite(user.email) ? DEV_DISPLAY_CRD : user.crd,
   });
   if (!verdict.ok) {
     res.status(409).json({ error: LISTING_REFUSAL_LABELS[verdict.reason!] });
@@ -7082,7 +7089,7 @@ async function settleOverdueDeliveries() {
     await prisma.$transaction(async (tx) => {
       const fresh = await tx.delivery.findUnique({ where: { id: d.id } });
       if (!fresh || fresh.status !== "PENDING") return;
-      const fee = estCompteDev(d.buyer.email) ? 0 : Math.min(d.buyer.crd, d.autoFee);
+      const fee = estArgentIllimite(d.buyer.email) ? 0 : Math.min(d.buyer.crd, d.autoFee);
       if (fee > 0) {
         await debit(tx, d.buyerId, fee);
       }
