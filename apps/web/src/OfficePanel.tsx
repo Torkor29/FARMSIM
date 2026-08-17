@@ -34,6 +34,7 @@ export type OfficeConsignes = {
   plow: boolean;
   straw: boolean;
   npcAllowed: boolean;
+  npcHarvestOnReady: boolean;
   maxSpend: number;
 };
 
@@ -629,17 +630,24 @@ function ConsignesForm({
   }
 
   const rows: { key: keyof Omit<OfficeConsignes, "maxSpend">; title: string; hint: string }[] = [
-    { key: "harvest", title: "Publier la moisson", hint: "Dès qu’une case est mûre." },
+    {
+      key: "npcHarvestOnReady",
+      title: "Engager un PNJ à maturité",
+      hint: "Il vient récolter pile à l’heure. Moins de grain, pas d’XP.",
+    },
+    { key: "harvest", title: "Publier la moisson", hint: "Dès qu’une case est mûre, si vous n’êtes pas là." },
     { key: "straw", title: "Paille", hint: "Presser l’andain, ramasser les bottes." },
     { key: "stubble", title: "Déchaumer", hint: "Après la moisson, quand plus rien n’attend au sol." },
-    { key: "plow", title: "Labourer", hint: "Seulement si le sol est épuisé ou la culture perdue." },
-    { key: "npcAllowed", title: "Filet voisin autorisé", hint: "Sinon personne peut ne pas prendre — la culture peut se perdre." },
+    { key: "plow", title: "Labourer", hint: "Seulement si le sol est épuisé." },
+    { key: "npcAllowed", title: "Filet voisin autorisé", hint: "Sinon personne peut ne pas prendre — le rendement peut tomber à 10 %." },
   ];
 
   return (
     <div className="consigne-form">
       <p className="hdv-muted">
-        Si vous partez, les cases déjà engagées se publient toutes seules. Jamais de culture nouvelle.
+        Avant de partir, vous pouvez engager un PNJ : il récolte pile à
+        maturité, vous perdez du grain et toute l’XP. Le reste publie le
+        travail aux voisins. Jamais de culture nouvelle.
       </p>
       <div className="consigne-budget">
         <div>
@@ -676,7 +684,7 @@ function ConsignesForm({
         ))}
       </ul>
       {!draft.npcAllowed && (
-        <p className="consigne-alert">Sans filet, une culture mûre peut se perdre si personne ne prend.</p>
+        <p className="consigne-alert">Sans filet, une culture mûre peut descendre jusqu’à 10 % de rendement.</p>
       )}
       <button type="button" className="accent" disabled={busy} onClick={() => void onSave(draft)}>
         Enregistrer les consignes

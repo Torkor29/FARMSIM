@@ -1,16 +1,10 @@
 /**
  * Fenêtre de récolte : ce qui arrive à une culture qu'on laisse sur pied.
  *
- * Une parcelle mûre ne se conserve pas indéfiniment. Elle traverse quatre
- * paliers : un pic où le rendement est plein, une décote lente, une décote
- * brutale, puis la perte sèche — les grains versent, germent ou pourrissent,
- * et il ne reste qu'à passer le tracteur.
- *
- * Toutes les durées sont exprimées en multiples du temps de croissance de la
- * culture, jamais en minutes fixes : une culture lente doit tolérer une
- * négligence proportionnellement aussi longue qu'une culture rapide.
- *
- * @see docs/research/38_HARVEST_WINDOW.md
+ * Une parcelle mûre ne se conserve pas indéfiniment. Le rendement descend
+ * par paliers d'horloge réelle — pas en multiples de la croissance, trop
+ * courts pour qu'on ait le temps de revenir. On peut encore récolter à
+ * 10 %, même après un jour : il n'y a plus de perte sèche à labourer.
  */
 
 export type RipenessStage = "PEAK" | "DECLINING" | "POOR" | "LOST";
@@ -22,48 +16,75 @@ export type RipenessInfo = {
   yieldFactor: number;
   /** Temps restant avant le palier suivant, en ms. `null` au dernier palier. */
   msToNextStage: number | null;
-  /** Temps restant avant la perte totale, en ms. `0` si déjà perdue. */
+  /** Temps restant avant le plancher de 10 %, en ms. `0` si déjà atteint. */
   msToLoss: number;
-  /** Vrai quand seul le labour peut libérer la case */
+  /** Toujours faux : une culture trop mûre se récolte encore, plus mal. */
   needsPlowing: boolean;
 };
 
+const MIN = 60_000;
+const HOUR = 60 * MIN;
+
 /**
- * Bornes des paliers, en multiples de `growMs` écoulés **depuis la maturité**.
- * `[GD]`
+ * Bornes des paliers, en millisecondes **depuis la maturité**.
  *
- * Avec du blé (croissance 3 min) : plein rendement pendant 1 min 30,
- * dégradation jusqu'à 4 min 30, culture à l'agonie jusqu'à 7 min 30, perdue
- * au-delà. La fenêtre confortable est courte mais la perte totale demande une
- * vraie négligence.
+ * 100 % → 90 % (30 min) → 80 % (1 h) → 70 % (2 h) → 60 % (3 h) →
+ * 50 % (4 h, bloqué) → 10 % (24 h, définitif).
  */
-export const RIPENESS_WINDOW = {
-  /** Fin du plein rendement */
-  peakEnd: 0.5,
-  /** Fin de la décote lente */
-  decliningEnd: 1.5,
-  /** Fin de la décote brutale — au-delà, la culture est perdue */
-  poorEnd: 2.5,
+export const RIPENESS_MS = {
+  to90: 30 * MIN,
+  to80: 1 * HOUR,
+  to70: 2 * HOUR,
+  to60: 3 * HOUR,
+  to50: 4 * HOUR,
+  to10: 24 * HOUR,
 } as const;
 
-/** Rendement conservé à la fin de chaque palier `[GD]` */
+/** Rendement conservé à chaque palier. */
 export const RIPENESS_YIELD = {
   peak: 1,
-  /** À la fin de la décote lente : on a déjà perdu un tiers */
-  declining: 0.65,
-  /** À la fin de la décote brutale : il ne reste presque rien */
-  poor: 0.2,
-  lost: 0,
+  y90: 0.9,
+  y80: 0.8,
+  y70: 0.7,
+  y60: 0.6,
+  y50: 0.5,
+  floor: 0.1,
 } as const;
+
+/**
+ * En dessous de 70 %, récolter soi-même ne rapporte plus d'XP.
+ * À 70 % pile, l'XP tombe encore.
+ */
+export const HARVEST_XP_MIN_YIELD = RIPENESS_YIELD.y70;
+
+export function harvestGivesXp(yieldFactor: number): boolean {
+  return yieldFactor + 1e-9 >= HARVEST_XP_MIN_YIELD;
+}
+
+type RipenessStep = {
+  afterMs: number;
+  yieldFactor: number;
+  stage: RipenessStage;
+};
+
+const STEPS: readonly RipenessStep[] = [
+  { afterMs: 0, yieldFactor: RIPENESS_YIELD.peak, stage: "PEAK" },
+  { afterMs: RIPENESS_MS.to90, yieldFactor: RIPENESS_YIELD.y90, stage: "DECLINING" },
+  { afterMs: RIPENESS_MS.to80, yieldFactor: RIPENESS_YIELD.y80, stage: "DECLINING" },
+  { afterMs: RIPENESS_MS.to70, yieldFactor: RIPENESS_YIELD.y70, stage: "DECLINING" },
+  { afterMs: RIPENESS_MS.to60, yieldFactor: RIPENESS_YIELD.y60, stage: "POOR" },
+  { afterMs: RIPENESS_MS.to50, yieldFactor: RIPENESS_YIELD.y50, stage: "POOR" },
+  { afterMs: RIPENESS_MS.to10, yieldFactor: RIPENESS_YIELD.floor, stage: "LOST" },
+];
 
 export const RIPENESS_LABELS: Record<RipenessStage, string> = {
   PEAK: "À point",
   DECLINING: "Se dégrade",
-  POOR: "Presque perdue",
-  LOST: "Perdue — à labourer",
+  POOR: "Rendement faible",
+  LOST: "Laissée trop longtemps",
 };
 
-/** Teintes de la culture sur la grille, du blé mûr à la tige morte. */
+/** Teintes de la culture sur la grille, du blé mûr à la tige fatiguée. */
 export const RIPENESS_COLORS: Record<RipenessStage, number> = {
   PEAK: 0xe8c65e,
   DECLINING: 0xc99a45,
@@ -71,79 +92,41 @@ export const RIPENESS_COLORS: Record<RipenessStage, number> = {
   LOST: 0x6e6154,
 };
 
-function lerp(a: number, b: number, t: number): number {
-  return a + (b - a) * Math.min(1, Math.max(0, t));
-}
-
 /**
  * État d'une culture arrivée à maturité.
  *
  * @param readyAt  instant où la culture est devenue mûre
- * @param growMs   temps de croissance de la culture, qui donne l'échelle
+ * @param growMs   ignoré : la fenêtre est une horloge réelle, pas un multiple
  * @param now      instant courant
  */
 export function ripenessAt(readyAt: number, growMs: number, now: number): RipenessInfo {
-  const overMs = now - readyAt;
-  const scale = Math.max(1, growMs);
-  const over = overMs / scale;
-  const lossAt = readyAt + RIPENESS_WINDOW.poorEnd * scale;
-  const msToLoss = Math.max(0, lossAt - now);
-
-  if (over < RIPENESS_WINDOW.peakEnd) {
-    return {
-      stage: "PEAK",
-      label: RIPENESS_LABELS.PEAK,
-      yieldFactor: RIPENESS_YIELD.peak,
-      msToNextStage: readyAt + RIPENESS_WINDOW.peakEnd * scale - now,
-      msToLoss,
-      needsPlowing: false,
-    };
+  void growMs;
+  const overMs = Math.max(0, now - readyAt);
+  let current = STEPS[0]!;
+  let next: RipenessStep | null = STEPS[1] ?? null;
+  for (let i = 0; i < STEPS.length; i++) {
+    const step = STEPS[i]!;
+    if (overMs >= step.afterMs) {
+      current = step;
+      next = STEPS[i + 1] ?? null;
+    }
   }
-
-  if (over < RIPENESS_WINDOW.decliningEnd) {
-    const t =
-      (over - RIPENESS_WINDOW.peakEnd) /
-      (RIPENESS_WINDOW.decliningEnd - RIPENESS_WINDOW.peakEnd);
-    return {
-      stage: "DECLINING",
-      label: RIPENESS_LABELS.DECLINING,
-      yieldFactor: lerp(RIPENESS_YIELD.peak, RIPENESS_YIELD.declining, t),
-      msToNextStage: readyAt + RIPENESS_WINDOW.decliningEnd * scale - now,
-      msToLoss,
-      needsPlowing: false,
-    };
-  }
-
-  if (over < RIPENESS_WINDOW.poorEnd) {
-    const t =
-      (over - RIPENESS_WINDOW.decliningEnd) /
-      (RIPENESS_WINDOW.poorEnd - RIPENESS_WINDOW.decliningEnd);
-    return {
-      stage: "POOR",
-      label: RIPENESS_LABELS.POOR,
-      yieldFactor: lerp(RIPENESS_YIELD.declining, RIPENESS_YIELD.poor, t),
-      msToNextStage: lossAt - now,
-      msToLoss,
-      needsPlowing: false,
-    };
-  }
-
+  const floorAt = readyAt + RIPENESS_MS.to10;
   return {
-    stage: "LOST",
-    label: RIPENESS_LABELS.LOST,
-    yieldFactor: RIPENESS_YIELD.lost,
-    msToNextStage: null,
-    msToLoss: 0,
-    needsPlowing: true,
+    stage: current.stage,
+    label: RIPENESS_LABELS[current.stage],
+    yieldFactor: current.yieldFactor,
+    msToNextStage: next ? Math.max(0, readyAt + next.afterMs - now) : null,
+    msToLoss: Math.max(0, floorAt - now),
+    needsPlowing: false,
   };
 }
 
-/** Coût du labour d'une case perdue `[GD]` — moins qu'un semis, mais pas gratuit. */
+/** Coût du labour d'une case `[GD]` — moins qu'un semis, mais pas gratuit. */
 export const PLOW_COST_PER_CELL = 8;
 
 /**
  * Une parcelle laissée à l'abandon s'appauvrit : les adventices montent en
- * graine et le sol se tasse. Perdre une culture coûte donc au-delà de la
- * récolte manquée. `[GD]`
+ * graine et le sol se tasse. `[GD]`
  */
 export const LOST_CROP_FERTILITY_MALUS = 0.01;

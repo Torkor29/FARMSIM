@@ -264,7 +264,7 @@ export const GUIDE_CHAPTERS: GuideChapter[] = [
       {
         id: "plow",
         name: "Labour",
-        how: "Outil Sol → Labourer. Obligatoire après 3 récoltes, ou si la culture est perdue.",
+        how: "Outil Sol → Labourer. Obligatoire après 3 récoltes.",
         usedBy: "Tout le monde qui cultive. On peut payer quelqu’un à la case.",
       },
       {

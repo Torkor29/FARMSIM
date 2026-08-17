@@ -18,8 +18,13 @@ export type Consignes = {
   stubble: boolean;
   plow: boolean;
   straw: boolean;
-  /** Si personne ne prend, une culture peut se perdre. Affiché en rouge. */
+  /** Si personne ne prend, le rendement peut s'effondrer. Affiché en rouge. */
   npcAllowed: boolean;
+  /**
+   * Un PNJ vient récolter pile à la maturité.
+   * Moins de grain, 0 XP — pour partir sans rater la fenêtre.
+   */
+  npcHarvestOnReady: boolean;
   /** Plafond de dépense pour une absence, en TRN. */
   maxSpend: number;
 };
@@ -30,6 +35,7 @@ export const DEFAULT_CONSIGNES: Consignes = {
   plow: false,
   straw: true,
   npcAllowed: true,
+  npcHarvestOnReady: false,
   maxSpend: 500,
 };
 
@@ -56,6 +62,7 @@ export function parseConsignes(raw: string | null | undefined): Consignes {
       plow: v.plow === true,
       straw: v.straw !== false,
       npcAllowed: v.npcAllowed !== false,
+      npcHarvestOnReady: v.npcHarvestOnReady === true,
       maxSpend: Number.isFinite(maxSpend) ? Math.max(0, Math.round(maxSpend)) : DEFAULT_CONSIGNES.maxSpend,
     };
   } catch {

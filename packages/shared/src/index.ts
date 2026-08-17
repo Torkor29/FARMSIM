@@ -736,6 +736,12 @@ export const CONTRACTOR_CALLOUT_FEE = 80;
 /** Filet urgent PNJ : moins bon que soi-même, instantané `[GD]` */
 export const CONTRACTOR_YIELD_MALUS = 0.06;
 
+/**
+ * PNJ engagé pour récolter pile à maturité : on n'est pas là, il prend
+ * sa part. Moins de grain que soi-même, et pas d'XP.
+ */
+export const NPC_ON_READY_YIELD_MALUS = 0.15;
+
 /** Urgent PNJ (bouton « entreprise ») : le client paie le barème +15 % `[GD]` */
 export const URGENT_NPC_SURCHARGE = 0.15;
 
