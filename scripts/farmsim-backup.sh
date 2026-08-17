@@ -49,6 +49,11 @@ echo "    volume=$VOLUME  dépôt=$DEPOT  conserver=$GARDER"
 #
 # `--user 0:0` parce que l'image tourne normalement sous l'utilisateur farmsim
 # (uid 10001), qui n'a aucun droit sur le dossier de sauvegarde de l'hôte.
+#
+# `--disable-warning` fait taire l'avertissement « SQLite is an experimental
+# feature », que Node imprime à chaque appel. Il s'inscrivait dans le journal
+# systemd à chaque sauvegarde : du bruit qui finirait par masquer un vrai
+# avertissement, précisément là où on regarde quand quelque chose ne va pas.
 docker run --rm \
   --user 0:0 \
   -v "${VOLUME}:/data" \
@@ -59,7 +64,7 @@ docker run --rm \
   -e FARMSIM_BACKUP_KEEP="$GARDER" \
   -e FARMSIM_BACKUP_LABEL="$ETIQUETTE" \
   --entrypoint node \
-  "$IMAGE" /opt/farmsim-backup.mjs
+  "$IMAGE" --disable-warning=ExperimentalWarning /opt/farmsim-backup.mjs
 
 echo "==> Sauvegardes présentes :"
 ls -lh "$DEPOT" | tail -n +2 | awk '{print "    " $9 "  " $5}'
