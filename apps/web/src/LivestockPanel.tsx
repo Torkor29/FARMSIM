@@ -1,4 +1,5 @@
-import { useState, type PointerEvent as ReactPointerEvent } from "react";
+import { useMemo, useState, type PointerEvent as ReactPointerEvent } from "react";
+import { herdAlerts, type HerdAlert } from "./ui/herd-alerts";
 import {
   ANIMAL_ART,
   ANIMAL_GRAZE_ART,
@@ -57,6 +58,20 @@ export type BarnState = {
     beddingCap?: number;
     /** Part du besoin couverte, 0 à 1 */
     beddingCover?: number;
+    /* — Environnement — */
+    /** Où vit le lot, durablement. C'est la décision que le joueur n'avait pas. */
+    housing?: "INSIDE" | "OUTSIDE";
+    /** Température ressentie, bâtiment compris. */
+    tempC?: number;
+    /** Température dehors, pour comparer avant de sortir les bêtes. */
+    outdoorTempC?: number;
+    thermal?: number;
+    thermalAlert?: "none" | "warn" | "danger";
+    /** Herbe sur pied dans l'enclos, en tonnes. */
+    grassTons?: number;
+    grassCapacityTons?: number;
+    /** L'espèce tire-t-elle sa nourriture du pré ? */
+    grazes?: boolean;
   } | null;
 };
 
@@ -77,6 +92,8 @@ type Props = {
   onSpreadBedding: (herdId: string) => void;
   onSpreadManure: (buildingId: string) => void;
   onSellManure: (buildingId: string) => void;
+  /** Rentrer ou sortir le lot, durablement. */
+  onHousing: (herdId: string, housing: "INSIDE" | "OUTSIDE") => void;
   strawTons: number;
   hayTons: number;
   maizeTons: number;
@@ -108,6 +125,7 @@ export function LivestockPanel({
   onSpreadBedding,
   onSpreadManure,
   onSellManure,
+  onHousing,
   strawTons,
   hayTons,
   maizeTons,
@@ -118,6 +136,48 @@ export function LivestockPanel({
   onClose,
   gesture,
 }: Props) {
+  // Les alertes se déduisent de l'état — elles ne sont pas une donnée de plus
+  // à tenir à jour, donc elles ne peuvent pas mentir.
+  const alertes = useMemo(
+    () =>
+      herdAlerts(
+        barns.map((b) => ({
+          buildingId: b.buildingId,
+          name: BUILDING_DEFS[b.type].name,
+          paddockCapacity: b.paddockCapacity,
+          herd: b.herd as never,
+        })),
+      ),
+    [barns],
+  );
+
+  /** Exécute le geste que l'alerte propose, sans quitter la liste. */
+  function runAlert(a: HerdAlert) {
+    switch (a.action.kind) {
+      case "FEED":
+        onFeed(a.herdId, "hay");
+        return;
+      case "BEDDING":
+        onSpreadBedding(a.herdId);
+        return;
+      case "SHELTER":
+        onHousing(a.herdId, "INSIDE");
+        return;
+      case "GRAZE":
+        onHousing(a.herdId, "OUTSIDE");
+        return;
+      case "MANURE":
+        onSpreadManure(a.buildingId);
+        return;
+      case "COLLECT": {
+        const herd = barns.find((b) => b.herd?.id === a.herdId)?.herd;
+        if (herd?.canMilk) onMilk(a.herdId);
+        else if (herd?.canCollectEggs) onCollectEggs(a.herdId);
+        else if (herd?.canShear) onShear(a.herdId);
+        return;
+      }
+    }
+  }
   /**
    * Combien de bêtes on s'apprête à acheter, par bâtiment.
    *
@@ -149,6 +209,32 @@ export function LivestockPanel({
         productif.
       </p>
 
+      {/* Les alertes en tête, et actionnables : un clic fait le geste, il
+          n'emmène pas vers un écran où le chercher. Il n'existait qu'une
+          seule alerte d'élevage — « faute de ration » — et tout le reste
+          (litière, fosse, pré épuisé, bêtes qui grelottent) ne se découvrait
+          qu'en ouvrant le panneau. */}
+      {alertes.length > 0 && (
+        <ul className="herd-alerts">
+          {alertes.map((a) => (
+            <li key={a.id} className={`herd-alert-row ${a.level}`}>
+              <span className="herd-alert-icon" aria-hidden="true">
+                {a.icon}
+              </span>
+              <span className="herd-alert-text">{a.text}</span>
+              <button
+                type="button"
+                className="herd-alert-do"
+                disabled={busy}
+                onClick={() => runAlert(a)}
+              >
+                {a.actionLabel}
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+
       {barns.map((barn) => {
         const def = BUILDING_DEFS[barn.type];
         /**
@@ -163,7 +249,10 @@ export function LivestockPanel({
          */
         const herd = barn.herd && barn.herd.size > 0 ? barn.herd : null;
         const pct = herd ? Math.round(herd.happiness * 100) : 0;
-        const outside = herd?.grazingUntil && herd.grazingUntil > Date.now();
+        // Dehors se lit d'abord dans l'état durable ; la fenêtre de sortie ne
+        // sert plus qu'à jouer l'animation de la transition.
+        const outside =
+          herd?.housing === "OUTSIDE" || Boolean(herd?.grazingUntil && herd.grazingUntil > Date.now());
         const room = barn.capacity - (herd?.size ?? 0);
         // L'espèce se déduit du bâtiment, et non du troupeau : une étable vide
         // n'a pas de troupeau, et c'est justement là qu'on achète.
@@ -337,6 +426,30 @@ export function LivestockPanel({
                     <dd>{herd.meatAtSlaughter.toFixed(0)} kg</dd>
                   </div>
                 </dl>
+
+                {/* Ce que le lot vit vraiment : la température qu'il ressent
+                    et ce qu'il reste à brouter. Sans cela, le joueur subit la
+                    saison sans jamais la voir. */}
+                <p className="herd-env">
+                  <span>
+                    Ressenti{" "}
+                    <b className={(herd.tempC ?? 12) < 3 ? "cold" : (herd.tempC ?? 12) > 26 ? "hot" : ""}>
+                      {herd.tempC ?? "—"} °C
+                    </b>
+                    {herd.housing !== "OUTSIDE" && herd.outdoorTempC !== undefined
+                      ? ` (dehors ${herd.outdoorTempC} °C)`
+                      : ""}
+                  </span>
+                  <span>
+                    Ration <b>{Math.floor(herd.feedStock / Math.max(1, herd.feedNeed))} j</b>
+                  </span>
+                  {herd.grazes && barn.paddockCapacity > 0 && (
+                    <span>
+                      Pré <b>{(herd.grassTons ?? 0).toFixed(1)} t</b>
+                      {herd.grassCapacityTons ? ` / ${herd.grassCapacityTons} t` : ""}
+                    </span>
+                  )}
+                </p>
 
                 <div className="feed-row">
                   {(herd.beddingCover ?? 1) < 0.5 && (
@@ -620,15 +733,41 @@ export function LivestockPanel({
                     ? "Construire une courette"
                     : "Construire un enclos"}
                 </button>
-              ) : outside ? (
-                <span className="grazing-now">Dehors…</span>
+              ) : herd ? (
+                /* L'interrupteur, à la place de la séance de trois heures.
+                   « Dehors… » n'était même pas un bouton : un texte d'état
+                   coincé dans une rangée d'actions, tronqué à l'écran. */
+                <span className="housing-switch" role="group" aria-label="Lieu de vie">
+                  <button
+                    type="button"
+                    className={`housing-side${herd.housing !== "OUTSIDE" ? " on" : ""}`}
+                    aria-pressed={herd.housing !== "OUTSIDE"}
+                    disabled={busy}
+                    title="Les bêtes restent à l’étable : elles mangent la ration, à l’abri du temps."
+                    onClick={() => onHousing(herd.id, "INSIDE")}
+                  >
+                    Dedans
+                  </button>
+                  <button
+                    type="button"
+                    className={`housing-side${herd.housing === "OUTSIDE" ? " on" : ""}`}
+                    aria-pressed={herd.housing === "OUTSIDE"}
+                    disabled={busy || !barn.canGraze}
+                    title={
+                      barn.grazeRefusal ??
+                      "Les bêtes vivent au pré : elles s’y nourrissent tant qu’il y a de l’herbe, et subissent le temps qu’il fait."
+                    }
+                    onClick={() => onHousing(herd.id, "OUTSIDE")}
+                  >
+                    Dehors
+                  </button>
+                </span>
               ) : (
                 <button
                   type="button"
                   className="accent-btn"
-                  disabled={busy || !herd || !barn.canGraze}
-                  title={barn.grazeRefusal ?? "Laisser sortir les bêtes"}
-                  onClick={() => herd && onGraze(herd.id)}
+                  disabled
+                  title="Achetez des bêtes avant de les sortir"
                 >
                   Sortir les bêtes
                 </button>

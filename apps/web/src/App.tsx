@@ -3061,6 +3061,34 @@ export function App() {
     }
   }
 
+  /**
+   * Rentre ou sort le troupeau, durablement.
+   *
+   * Le seul geste que le joueur n'avait pas : « Sortir les bêtes » ouvrait
+   * une séance de trois heures, puis tout rentrait tout seul. C'est ici que
+   * se prend la décision « est-ce que je les laisse dehors ? », et le serveur
+   * répond avec la température, pour qu'elle ne soit pas prise à l'aveugle.
+   */
+  async function setHerdHousing(herdId: string, housing: "INSIDE" | "OUTSIDE") {
+    if (!player) return;
+    setBusy(true);
+    try {
+      const r = await api<{ housing: string; tempC: number | null; warning: string | null }>(
+        `/herds/${herdId}/housing`,
+        { method: "POST", body: JSON.stringify({ userId: player.id, housing }) },
+      );
+      const ou = r.housing === "OUTSIDE" ? "Bêtes sorties" : "Bêtes rentrées";
+      const temp = r.tempC !== null ? ` · ${r.tempC} °C` : "";
+      flashToast(r.warning ? `${ou}${temp} — ${r.warning}` : `${ou}${temp}`, r.warning ? "warn" : false);
+      await refreshPlayer();
+      if (activeParcelId) loadLivestock(activeParcelId);
+    } catch (e) {
+      flashToast(e instanceof Error ? e.message : String(e), true);
+    } finally {
+      setBusy(false);
+    }
+  }
+
   function spreadManure(_buildingId: string) {
     setTool("FERTILIZE");
     setSelectedCells([]);
@@ -4005,6 +4033,7 @@ export function App() {
           strawTons={strawInStock}
           onSpreadManure={spreadManure}
           onSellManure={sellManure}
+          onHousing={setHerdHousing}
           hayTons={hayInStock}
           maizeTons={maizeInStock}
           barleyTons={barleyInStock}

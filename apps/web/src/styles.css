@@ -3886,3 +3886,93 @@ button.tiny {
   .dock-tool { min-height: 44px; padding: 0.25rem 0.15rem; }
   .dock-tray.expanded .dock-chips { max-height: 30vh; }
 }
+
+/* ==========================================================================
+   ÉLEVAGE — alertes actionnables et lieu de vie
+   ==========================================================================
+   Il n'existait qu'une seule alerte d'élevage dans tout le jeu, « faute de
+   ration », et elle ne menait nulle part. Litière vide, fosse pleine, pré
+   épuisé, bêtes qui grelottent dehors : rien ne remontait, il fallait ouvrir
+   le panneau pour le découvrir.
+   ========================================================================== */
+
+.herd-alerts {
+  list-style: none;
+  margin: 0 0 0.7rem;
+  padding: 0;
+  display: grid;
+  gap: 0.3rem;
+}
+.herd-alert-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.4rem 0.55rem;
+  border-radius: 10px;
+  border: 1px solid var(--line);
+  background: var(--paper);
+  font-size: 0.82rem;
+  line-height: 1.3;
+}
+/* La gravité se lit au liseré **et** à l'icône : jamais à la couleur seule. */
+.herd-alert-row.danger { border-left: 3px solid var(--danger); background: #fdf1ef; }
+.herd-alert-row.warn { border-left: 3px solid var(--gold-500); background: var(--gold-100); }
+.herd-alert-row.info { border-left: 3px solid var(--teal-300); }
+.herd-alert-icon { font-size: 1rem; line-height: 1; flex: 0 0 auto; }
+.herd-alert-text { flex: 1; min-width: 0; font-weight: 600; color: var(--ink); }
+.herd-alert-do {
+  flex: 0 0 auto;
+  min-height: 34px;
+  padding: 0.25rem 0.7rem;
+  border-radius: 8px;
+  border: 1px solid var(--line);
+  background: var(--sand);
+  font-size: 0.78rem;
+  font-weight: 800;
+}
+.herd-alert-row.danger .herd-alert-do {
+  background: var(--danger);
+  border-color: transparent;
+  color: #fff;
+}
+
+/* —— Lieu de vie ——
+   « Dehors… » n'était même pas un bouton : un texte d'état coincé dans une
+   rangée d'actions, et tronqué à l'écran. C'est pourtant la décision centrale
+   de l'élevage — celle qui décide si le pré nourrit et si le froid mord. */
+.housing-switch {
+  display: inline-flex;
+  padding: 2px;
+  border-radius: 999px;
+  background: var(--sand);
+  border: 1px solid var(--line);
+}
+.housing-side {
+  min-height: 36px;
+  padding: 0.25rem 0.85rem;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  font-size: 0.8rem;
+  font-weight: 800;
+  color: var(--ink-soft);
+}
+.housing-side:hover:not(:disabled) { transform: none; filter: none; }
+.housing-side.on {
+  background: linear-gradient(180deg, var(--teal-300), var(--teal-500));
+  color: #fff;
+}
+.housing-side:disabled { opacity: 0.4; }
+
+/* Ce que le lot vit : température ressentie et herbe restante. */
+.herd-env {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem 0.7rem;
+  margin: 0.3rem 0 0.1rem;
+  font-size: 0.75rem;
+  color: var(--ink-soft);
+}
+.herd-env b { font-weight: 800; color: var(--ink); }
+.herd-env .cold { color: var(--info); }
+.herd-env .hot { color: var(--danger); }

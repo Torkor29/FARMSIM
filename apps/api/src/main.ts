@@ -6202,6 +6202,21 @@ app.post("/herds/:id/housing", async (req, res) => {
     const weather = (snap?.state as WeatherState) ?? "CLEAR";
     const tempC = outdoorTempC(season, weather);
     const risque = thermalPenalty({ kind: herd.kind as AnimalKind, tempC });
+    // La séance minutée n'est plus le mécanisme, mais elle reste la belle
+    // image : le troupeau franchit la porte et gagne le pré. On la déclenche
+    // à la transition, pour que la sortie se voie sur la ferme.
+    const window = planGrazing(Date.now(), herdForPlan(herd), {
+      adjacent: true,
+      cells: paddock.cells,
+      capacity: paddock.capacity,
+    });
+    await prisma.herd.update({
+      where: { id: herd.id },
+      data: {
+        grazingUntil: window ? new Date(window.endsAt) : new Date(Date.now() + 60_000),
+        lastGrazedAt: new Date(),
+      },
+    });
     res.json({
       housing: await setHousing(herd.id, "OUTSIDE"),
       tempC: Math.round(tempC),
@@ -6212,6 +6227,17 @@ app.post("/herds/:id/housing", async (req, res) => {
 
   res.json({ housing: await setHousing(herd.id, "INSIDE"), tempC: null, warning: null });
 });
+
+/** Le lot, réduit à ce dont `planGrazing` a besoin. */
+function herdForPlan(h: { size: number; lastGrazedAt: Date | null; kind: string }) {
+  return {
+    size: h.size,
+    // On ne fait pas jouer le délai de vingt heures ici : c'est l'animation
+    // qu'on déclenche, pas une ration de pâture à rationner.
+    lastGrazedAt: null,
+    kind: h.kind as AnimalKind,
+  } as Parameters<typeof planGrazing>[1];
+}
 
 async function setHousing(id: string, housing: Housing): Promise<Housing> {
   await prisma.herd.update({ where: { id }, data: { housing } });
