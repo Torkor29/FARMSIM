@@ -26,6 +26,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { élaguer, horodatage, instantané, sauvegarder, vérifier } from "../farmsim-backup.mjs";
+import { libres as terreLibre, purger as purgerEssais } from "../farmsim-purge-essais.mjs";
 
 const SCRIPTS = dirname(fileURLToPath(new URL("../farmsim-backup.mjs", import.meta.url)));
 
@@ -287,7 +288,7 @@ describe("scripts shell", () => {
   it("n’emploie que des noms de variables que bash accepte", () => {
     // Le garde-fou direct, en plus de l'exécution : un nom accentué passe le
     // contrôle de syntaxe et ne se voit qu'à l'usage, parfois en production.
-    for (const nom of ["farmsim-backup.sh", "farmsim-restore.sh", "vps-deploy.sh"]) {
+    for (const nom of ["farmsim-backup.sh", "farmsim-restore.sh", "farmsim-purge-essais.sh", "vps-deploy.sh"]) {
       const source = readFileSync(join(SCRIPTS, nom), "utf8");
       const fautifs = source
         .split("\n")
@@ -296,5 +297,143 @@ describe("scripts shell", () => {
         .map(([n, l]) => `${nom}:${n} ${l.trim()}`);
       assert.deepEqual(fautifs, []);
     }
+  });
+});
+
+/**
+ * Le ménage des comptes d'essai.
+ *
+ * `POST /auth/demo` attribue une parcelle définitivement, et rien ne la
+ * reprend — alors que le bouton qui l'appelle promet « effacée quand vous
+ * partez ». Ce script rend la terre. Il touche à des données de production, et
+ * la seule chose qui compte vraiment est ce qu'il **ne** doit **pas** faire :
+ * effleurer un vrai joueur, ou détruire une parcelle du monde.
+ */
+describe("purge des comptes d’essai", () => {
+  /** Un monde miniature : deux vrais joueurs, trois comptes d'essai. */
+  function fabriquerMonde(chemin) {
+    const db = new DatabaseSync(chemin);
+    db.exec(`
+      PRAGMA foreign_keys = ON;
+      CREATE TABLE "User" (id TEXT PRIMARY KEY, email TEXT, displayName TEXT, isNpc INTEGER DEFAULT 0, lastSeenAt INTEGER);
+      CREATE TABLE "Farm" (id TEXT PRIMARY KEY, userId TEXT NOT NULL REFERENCES "User"(id) ON DELETE RESTRICT);
+      CREATE TABLE "Parcel" (id TEXT PRIMARY KEY, farmId TEXT REFERENCES "Farm"(id) ON DELETE SET NULL);
+      CREATE TABLE "Building" (id TEXT PRIMARY KEY, parcelId TEXT NOT NULL REFERENCES "Parcel"(id) ON DELETE CASCADE);
+      CREATE TABLE "ParcelCell" (
+        id TEXT PRIMARY KEY, parcelId TEXT NOT NULL REFERENCES "Parcel"(id) ON DELETE CASCADE,
+        kind TEXT DEFAULT 'EMPTY', crop TEXT, fieldStage TEXT DEFAULT 'EMPTY',
+        plantedAt INTEGER, readyAt INTEGER, fertilizedPasses INTEGER DEFAULT 0,
+        weedsControlled INTEGER DEFAULT 0, harvestsSincePlow INTEGER DEFAULT 0,
+        residuePasses INTEGER DEFAULT 0, hasStubble INTEGER DEFAULT 0,
+        directSeeded INTEGER DEFAULT 0, lastCrop TEXT, cropStreak INTEGER DEFAULT 0,
+        strawTons REAL DEFAULT 0, baleCount INTEGER DEFAULT 0,
+        buildingId TEXT REFERENCES "Building"(id) ON DELETE SET NULL, machineId TEXT
+      );
+      CREATE TABLE "Machine" (id TEXT PRIMARY KEY, farmId TEXT NOT NULL REFERENCES "Farm"(id) ON DELETE RESTRICT);
+      CREATE TABLE "InventoryItem" (id TEXT PRIMARY KEY, farmId TEXT NOT NULL REFERENCES "Farm"(id) ON DELETE RESTRICT);
+    `);
+    const gens = [
+      ["vrai1", "jean@exemple.fr", 0],
+      ["vrai2", "marie@exemple.fr", 0],
+      ["npc1", "npc.x@farmsim.npc", 1],
+      ["ess1", "essai-aaa@essai.invalid", 0],
+      ["ess2", "essai-bbb@essai.invalid", 0],
+      ["ess3", "essai-ccc@essai.invalid", 0],
+    ];
+    for (const [id, email, npc] of gens) {
+      db.prepare('INSERT INTO "User" (id, email, displayName, isNpc, lastSeenAt) VALUES (?,?,?,?,?)').run(
+        id,
+        email,
+        id,
+        npc,
+        Date.now(),
+      );
+      db.prepare('INSERT INTO "Farm" (id, userId) VALUES (?,?)').run(`f-${id}`, id);
+      db.prepare('INSERT INTO "Parcel" (id, farmId) VALUES (?,?)').run(`p-${id}`, `f-${id}`);
+      db.prepare('INSERT INTO "Machine" (id, farmId) VALUES (?,?)').run(`m-${id}`, `f-${id}`);
+      db.prepare('INSERT INTO "InventoryItem" (id, farmId) VALUES (?,?)').run(`i-${id}`, `f-${id}`);
+      db.prepare('INSERT INTO "Building" (id, parcelId) VALUES (?,?)').run(`b-${id}`, `p-${id}`);
+      db.prepare(
+        'INSERT INTO "ParcelCell" (id, parcelId, kind, crop, fieldStage, buildingId) VALUES (?,?,?,?,?,?)',
+      ).run(`c-${id}`, `p-${id}`, "BUILDING", "WHEAT", "GROWING", `b-${id}`);
+    }
+    // Deux parcelles jamais attribuées.
+    db.prepare('INSERT INTO "Parcel" (id, farmId) VALUES (?, NULL)').run("p-libre1");
+    db.prepare('INSERT INTO "Parcel" (id, farmId) VALUES (?, NULL)').run("p-libre2");
+    db.close();
+  }
+
+  it("ne supprime rien tant qu’on ne le lui demande pas explicitement", () => {
+    const bac = mkdtempSync(join(tmpdir(), "farmsim-purge-"));
+    const chemin = join(bac, "monde.db");
+    fabriquerMonde(chemin);
+    const r = purgerEssais(chemin);
+    assert.equal(r.comptes, 3, "il doit voir les trois comptes d’essai");
+    assert.equal(r.parcelles, 3);
+    assert.equal(terreLibre(chemin).libres, 2, "et n’avoir rien libéré");
+    rmSync(bac, { recursive: true, force: true });
+  });
+
+  it("rend la terre sans jamais détruire une parcelle", () => {
+    const bac = mkdtempSync(join(tmpdir(), "farmsim-purge2-"));
+    const chemin = join(bac, "monde.db");
+    fabriquerMonde(chemin);
+    const avant = terreLibre(chemin);
+    purgerEssais(chemin, { vraiment: true });
+    const après = terreLibre(chemin);
+    assert.equal(après.total, avant.total, "le monde garde le même nombre de parcelles");
+    assert.equal(après.libres, 5, "les trois parcelles d’essai reviennent au pot");
+    rmSync(bac, { recursive: true, force: true });
+  });
+
+  it("n’effleure ni les vrais joueurs ni les fermes voisines", () => {
+    const bac = mkdtempSync(join(tmpdir(), "farmsim-purge3-"));
+    const chemin = join(bac, "monde.db");
+    fabriquerMonde(chemin);
+    purgerEssais(chemin, { vraiment: true });
+    const db = new DatabaseSync(chemin, { readOnly: true });
+    const n = (s) => Number(db.prepare(s).get().n);
+    assert.equal(n(`SELECT COUNT(*) n FROM "User" WHERE id IN ('vrai1','vrai2','npc1')`), 3);
+    assert.equal(n(`SELECT COUNT(*) n FROM "Farm" WHERE userId = 'vrai1'`), 1);
+    assert.equal(n(`SELECT COUNT(*) n FROM "Machine" WHERE farmId = 'f-vrai1'`), 1);
+    assert.equal(n(`SELECT COUNT(*) n FROM "Building" WHERE parcelId = 'p-vrai1'`), 1);
+    assert.equal(n(`SELECT COUNT(*) n FROM "User" WHERE email LIKE 'essai-%'`), 0);
+    assert.equal(db.prepare("PRAGMA foreign_key_check").all().length, 0, "aucune clé orpheline");
+    db.close();
+    rmSync(bac, { recursive: true, force: true });
+  });
+
+  it("rend une terre nue, et non un champ à moitié semé", () => {
+    const bac = mkdtempSync(join(tmpdir(), "farmsim-purge4-"));
+    const chemin = join(bac, "monde.db");
+    fabriquerMonde(chemin);
+    purgerEssais(chemin, { vraiment: true });
+    const db = new DatabaseSync(chemin, { readOnly: true });
+    // Le prochain arrivant ne doit pas hériter des bâtiments ni des cultures
+    // du joueur d'essai. C'est le piège de `Parcel → Farm ON DELETE SET NULL` :
+    // la parcelle se libère, mais garde tout son contenu.
+    const sales = Number(
+      db
+        .prepare(
+          `SELECT COUNT(*) n FROM "ParcelCell" c JOIN "Parcel" p ON p.id = c.parcelId
+           WHERE p.farmId IS NULL AND (c.kind != 'EMPTY' OR c.crop IS NOT NULL)`,
+        )
+        .get().n,
+    );
+    assert.equal(sales, 0, "toute terre libre doit être vierge");
+    assert.equal(Number(db.prepare(`SELECT COUNT(*) n FROM "Building"`).get().n), 3, "seuls les 3 bâtiments des comptes gardés restent");
+    db.close();
+    rmSync(bac, { recursive: true, force: true });
+  });
+
+  it("épargne les comptes d’essai encore récents quand on le demande", () => {
+    const bac = mkdtempSync(join(tmpdir(), "farmsim-purge5-"));
+    const chemin = join(bac, "monde.db");
+    fabriquerMonde(chemin);
+    // Tous ont été vus à l'instant : avec un seuil de 3 jours, aucun ne part.
+    const r = purgerEssais(chemin, { vraiment: true, jours: 3 });
+    assert.equal(r.comptes, 0);
+    assert.equal(terreLibre(chemin).libres, 2);
+    rmSync(bac, { recursive: true, force: true });
   });
 });

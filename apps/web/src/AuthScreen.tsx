@@ -166,8 +166,13 @@ export function AuthScreen({
             <button type="button" className="btn-ghost big" disabled={busy} onClick={onTryDemo}>
               Essayer sans compte
             </button>
+            {/* La phrase disait « effacée quand vous partez ». C'était faux :
+                rien n'efface ces fermes, et chacune retient définitivement une
+                parcelle du monde. Tant que ce n'est pas vrai côté serveur, on
+                ne le promet pas — on dit ce qui est. */}
             <span className="gate-demo-note">
-              Une ferme prête à jouer, effacée quand vous partez. Rien à remplir.
+              Une ferme prête à jouer, sans rien remplir. Créez un compte pour
+              la garder.
             </span>
           </div>
 
