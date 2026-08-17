@@ -19,6 +19,7 @@ import {
   happinessLabel,
   happinessTarget,
   isPaddockAdjacent,
+  adjacentYardOrigins,
   meatYield,
   milkYield,
   paddockCapacity,
@@ -484,6 +485,35 @@ describe("enclos — adjacence par bord commun", () => {
   it("est symétrique : l’ordre des deux emprises ne change rien", () => {
     const voisin = { originX: 13, originY: 11, w: 4, h: 4 };
     expect(isPaddockAdjacent(ETABLE, voisin)).toBe(isPaddockAdjacent(voisin, ETABLE));
+  });
+});
+
+describe("enclos — origines attenantes proposées", () => {
+  it("ne propose que des emprises vraiment collées à l’étable", () => {
+    const spots = adjacentYardOrigins(ETABLE, { w: 3, h: 3 });
+    expect(spots.length).toBeGreaterThan(0);
+    for (const s of spots) {
+      expect(isPaddockAdjacent(ETABLE, { originX: s.originX, originY: s.originY, w: 3, h: 3 })).toBe(
+        true,
+      );
+    }
+  });
+
+  it("place en tête le bord commun le plus long", () => {
+    const spots = adjacentYardOrigins(ETABLE, { w: 3, h: 3 });
+    expect(spots[0].shared).toBe(3);
+    expect(spots.every((s) => s.shared <= spots[0].shared)).toBe(true);
+  });
+
+  it("inclut les quatre côtés de l’étable", () => {
+    const spots = adjacentYardOrigins(ETABLE, { w: 3, h: 3 });
+    const sides = {
+      plusY: spots.some((s) => s.originY === ETABLE.originY + ETABLE.h),
+      minusY: spots.some((s) => s.originY === ETABLE.originY - 3),
+      plusX: spots.some((s) => s.originX === ETABLE.originX + ETABLE.w),
+      minusX: spots.some((s) => s.originX === ETABLE.originX - 3),
+    };
+    expect(sides).toEqual({ plusY: true, minusY: true, plusX: true, minusX: true });
   });
 });
 

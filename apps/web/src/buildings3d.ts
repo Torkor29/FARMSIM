@@ -556,9 +556,11 @@ function buildMachineShed(w: number, d: number, lvl: number): Built {
 /**
  * Grange d'élevage : c'est elle qui porte le troupeau.
  *
- * Deux vantaux articulés en façade, un seuil d'où sortent les bêtes, une
- * lucarne de fenil et un extracteur de toiture. Rien de tout cela n'est posé
- * devant le bâtiment : tout appartient au modèle et tourne avec lui.
+ * Deux vantaux en façade, et une baie sur chaque long pan : l'enclos se pose
+ * contre n'importe quel bord, et les bêtes doivent pouvoir le gagner sans
+ * traverser un mur plein. Un seuil par ouverture, une lucarne de fenil et un
+ * extracteur de toiture. Rien de tout cela n'est posé devant le bâtiment :
+ * tout appartient au modèle et tourne avec lui.
  */
 function buildLivestockBarn(
   w: number,
@@ -573,6 +575,7 @@ function buildLivestockBarn(
   const { eave, rise, doorW, doorH } = opts;
 
   const pier = (bw - doorW) / 2;
+  const sidePier = (bd - doorW) / 2;
   /**
    * Soubassement maçonné, puis bardage au-dessus.
    *
@@ -580,15 +583,20 @@ function buildLivestockBarn(
    * le plus gros bâtiment du jeu se lisait comme un carton posé sur l'herbe.
    * C'est le motif que porte déjà l'atelier, et il suffit à donner une assise.
    *
-   * Le soubassement s'interrompt au droit de la porte : un bourrelet de béton
-   * en travers du seuil ferait buter les bêtes qui sortent.
+   * Le soubassement s'interrompt au droit de chaque porte : un bourrelet de
+   * béton en travers du seuil ferait buter les bêtes qui sortent.
    */
   const socle = 0.14;
   const murH = eave - socle;
   root.add("wallDark", box(bw + 0.04, socle, 0.11, [0, socle / 2, -bd / 2]));
   for (const side of [-1, 1]) {
-    root.add("wallDark", box(0.11, socle, bd + 0.04, [(side * bw) / 2, socle / 2, 0]));
     root.add("wallDark", box(pier, socle, 0.11, [(side * (doorW + pier)) / 2, socle / 2, bd / 2]));
+    for (const along of [-1, 1]) {
+      root.add(
+        "wallDark",
+        box(0.11, socle, sidePier, [(side * bw) / 2, socle / 2, (along * (doorW + sidePier)) / 2]),
+      );
+    }
   }
 
   claddedWall(root, bw, murH, 0.08, [0, socle + murH / 2, -bd / 2], undefined, 6);
@@ -599,15 +607,30 @@ function buildLivestockBarn(
    * longs côtés reste ouvert pour que l'air passe au-dessus des bêtes. La
    * bande d'ombre qu'elle creuse casse le grand pan de bardage uni — le
    * bâtiment cesse d'être un parallélépipède et devient une étable.
+   *
+   * Au milieu de chaque long pan, le bardage s'interrompt : c'est la baie
+   * vers l'enclos. Sans elle, les vaches rentraient et sortaient par le mur.
    */
   const claire = 0.16;
   const bardage = murH - claire;
   for (const side of [-1, 1]) {
-    claddedWall(root, bd, bardage, 0.08, [(side * bw) / 2, socle + bardage / 2, 0], [0, HALF, 0], 5);
+    for (const along of [-1, 1]) {
+      claddedWall(
+        root,
+        sidePier,
+        bardage,
+        0.08,
+        [(side * bw) / 2, socle + bardage / 2, (along * (doorW + sidePier)) / 2],
+        [0, HALF, 0],
+        2,
+      );
+    }
     // Poteaux dans l'ouverture : la panne sablière doit bien reposer sur
-    // quelque chose, sinon la toiture flotte au-dessus d'un vide.
+    // quelque chose, sinon la toiture flotte au-dessus d'un vide. On saute
+    // le milieu : c'est là que s'ouvre la porte de pré.
     for (let i = 0; i < 5; i++) {
       const z = -bd / 2 + (bd * (i + 0.5)) / 5;
+      if (Math.abs(z) < doorW / 2 + 0.02) continue;
       root.add("timber", box(0.07, claire, 0.07, [(side * bw) / 2, socle + bardage + claire / 2, z]));
     }
     root.add("timber", box(0.1, 0.06, bd + 0.04, [(side * bw) / 2, eave - 0.03, 0]));
@@ -628,6 +651,12 @@ function buildLivestockBarn(
   gableEnd(root, bw, eave, rise, -bd / 2 + 0.04, "wall");
   gableEnd(root, bw, eave, rise, bd / 2 - 0.04, "wall");
   doorway(root, doorW, doorH, bd / 2 + 0.045);
+  // Baies latérales : le nœud est sur le mur, façade locale vers l'extérieur.
+  // Sans elles, un enclos posé sur le flanc voyait les bêtes traverser le bardage.
+  for (const side of [-1, 1]) {
+    const bay = root.child([(side * bw) / 2, 0, 0], { rot: [0, side * HALF, 0] });
+    doorway(bay, doorW, doorH, 0.045);
+  }
 
   if (opts.loft) {
     // Lucarne de fenil : la porte haute par où rentre le foin.

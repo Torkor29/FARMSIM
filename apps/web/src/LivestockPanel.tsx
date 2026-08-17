@@ -60,7 +60,7 @@ type Props = {
   crd: number;
   onBuyAnimals: (buildingId: string, count: number) => void;
   onGraze: (herdId: string) => void;
-  onBuildPaddock: (yardType: BuildingType) => void;
+  onBuildPaddock: (yardType: BuildingType, buildingId: string) => void;
   onFeed: (herdId: string, ration: FeedRation) => void;
   onMilk: (herdId: string) => void;
   onCollectEggs: (herdId: string) => void;
@@ -555,11 +555,11 @@ export function LivestockPanel({
                 <button
                   type="button"
                   className="accent-btn"
-                  onClick={() => onBuildPaddock(barn.yardType)}
+                  onClick={() => onBuildPaddock(barn.yardType, barn.buildingId)}
                 >
                   {barn.yardType === "PIG_YARD" || barn.yardType === "HEN_YARD"
-                    ? "Construire une courette"
-                    : "Construire un enclos"}
+                    ? "Construire une courette attenante"
+                    : "Construire enclos attenant"}
                 </button>
               ) : outside ? (
                 <span className="grazing-now">Dehors…</span>

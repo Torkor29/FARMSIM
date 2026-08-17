@@ -42,6 +42,14 @@ type Props = {
   onDemolish: () => void;
   onGrazeOut: () => void;
   onShelter: () => void;
+  /**
+   * Étable sans enclos collé : le geste naturel est de le construire depuis
+   * le bâtiment qu'on vient de cliquer, pas depuis un autre panneau.
+   */
+  canBuildYard?: boolean;
+  /** Pré ou courette, selon l'espèce logée ici */
+  yardKind?: "paddock" | "yard";
+  onBuildYard?: () => void;
 };
 
 /**
@@ -66,6 +74,9 @@ export function BuildingSheet({
   onDemolish,
   onGrazeOut,
   onShelter,
+  canBuildYard,
+  yardKind,
+  onBuildYard,
 }: Props) {
   const def = BUILDING_DEFS[building.type];
   const lvl = Math.max(1, Math.min(MAX_BUILDING_LEVEL, building.level ?? 1));
@@ -92,6 +103,19 @@ export function BuildingSheet({
         </header>
 
         <p className="building-sheet-desc">{def.description}</p>
+
+        {canBuildYard && onBuildYard && (
+          <div className="building-sheet-actions">
+            <button
+              type="button"
+              className="primary"
+              disabled={busy || visiting}
+              onClick={onBuildYard}
+            >
+              {yardKind === "yard" ? "Construire une courette attenante" : "Construire enclos attenant"}
+            </button>
+          </div>
+        )}
 
         <div className="building-sheet-level">
           <span className="level-row">

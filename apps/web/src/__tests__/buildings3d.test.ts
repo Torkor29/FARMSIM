@@ -102,8 +102,8 @@ describe("les pièces mobiles", () => {
       const rig = createBuildingRig(type);
       expect(rig.anchors("door").length).toBeGreaterThan(0);
       // Sans seuil, la vue n'a aucun point de passage : les bêtes sortent au
-      // travers du mur.
-      expect(rig.anchors("threshold").length).toBe(1);
+      // travers du mur. L'étable en a plusieurs : façade et longs pans.
+      expect(rig.anchors("threshold").length).toBeGreaterThan(0);
       rig.dispose();
     });
 
@@ -135,6 +135,19 @@ describe("les pièces mobiles", () => {
     // le mur du fond.
     expect(seuil.z).toBeGreaterThan(0.4);
     expect(seuil.z).toBeLessThan(BUILDING_DEFS.CATTLE_BARN.h / 2 + 0.35);
+    rig.dispose();
+  });
+
+  it("l'étable a une baie sur chaque long pan, pas seulement en façade", () => {
+    const rig = createBuildingRig("CATTLE_BARN");
+    rig.group.updateMatrixWorld(true);
+    const seuils = rig.anchors("threshold").map((n) => n.getWorldPosition(new THREE.Vector3()));
+    // Façade + deux flancs : un enclos collé sur le côté a enfin une porte.
+    expect(seuils.length).toBe(3);
+    const lateraux = seuils.filter((p) => Math.abs(p.x) > Math.abs(p.z));
+    expect(lateraux.length).toBe(2);
+    expect(lateraux.some((p) => p.x > 0.4)).toBe(true);
+    expect(lateraux.some((p) => p.x < -0.4)).toBe(true);
     rig.dispose();
   });
 

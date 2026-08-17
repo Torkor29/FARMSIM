@@ -1865,7 +1865,10 @@ export function IsoFarmView({
       // Troupeaux : deux poses, et une vraie marche entre la porte et le pré.
       const herds = dataRef.current.grazing ?? [];
       const nextIdKey = herds
-        .map((h) => `${h.buildingId}:${h.animals}:${h.kind ?? "COW"}:${h.sheared ? 1 : 0}`)
+        .map(
+          (h) =>
+            `${h.buildingId}:${h.animals}:${h.kind ?? "COW"}:${h.sheared ? 1 : 0}:${h.paddock.originX},${h.paddock.originY},${h.paddock.w}x${h.paddock.h}`,
+        )
         .join("|");
       const nextOutKey = herds.map((h) => `${h.buildingId}:${h.out ? 1 : 0}`).join("|");
 
@@ -1883,12 +1886,33 @@ export function IsoFarmView({
           const kind = herd.kind ?? "COW";
           const barn = buildingRigs.find((b) => b.id === herd.buildingId)?.rig ?? null;
           barn?.group.updateMatrixWorld(true);
-          // Le seuil appartient au bâtiment : il tourne avec lui, et il tient
-          // compte de la façade réelle. Une porte posée devant la case, comme
-          // avant, laissait les bêtes la traverser par l'arrière.
-          const gate = barn
-            ? barn.anchors("threshold")[0]?.getWorldPosition(new THREE.Vector3()) ?? null
+          // Le seuil appartient au bâtiment : il tourne avec lui. S'il y en a
+          // plusieurs (façade + longs pans), on prend celui qui donne sur le
+          // pré — sinon les bêtes sortent par une porte qui ne mène nulle part
+          // et traversent le mur du côté de l'enclos.
+          const thresholds = barn?.anchors("threshold") ?? [];
+          const hasPaddock = herd.paddock.w > 0 && herd.paddock.h > 0;
+          const paddockCenter = hasPaddock
+            ? new THREE.Vector3(
+                ox + (herd.paddock.originX + (herd.paddock.w - 1) / 2) * step,
+                0.1,
+                oz + (herd.paddock.originY + (herd.paddock.h - 1) / 2) * step,
+              )
             : null;
+          let gate: THREE.Vector3 | null = null;
+          if (thresholds.length === 1 || !paddockCenter) {
+            gate = thresholds[0]?.getWorldPosition(new THREE.Vector3()) ?? null;
+          } else if (thresholds.length > 1) {
+            let bestD = Infinity;
+            for (const node of thresholds) {
+              const p = node.getWorldPosition(new THREE.Vector3());
+              const d = p.distanceToSquared(paddockCenter);
+              if (d < bestD) {
+                bestD = d;
+                gate = p;
+              }
+            }
+          }
           const centre = new THREE.Vector3(
             ox + (herd.barn.originX + (herd.barn.w - 1) / 2) * step,
             0.1,
@@ -1902,7 +1926,6 @@ export function IsoFarmView({
           if (outward.lengthSq() < 1e-6) outward.set(0, 0, 1);
           outward.normalize();
           const side = new THREE.Vector3(outward.z, 0, -outward.x);
-          const hasPaddock = herd.paddock.w > 0 && herd.paddock.h > 0;
 
           for (let i = 0; i < shown; i++) {
             const rank = Math.floor(i / 4);
@@ -2020,15 +2043,23 @@ export function IsoFarmView({
         const progress = Math.min(1, Math.max(0, raw));
         const eased = progress * progress * (3 - 2 * progress);
         const walking = progress > 0.02 && progress < 0.98;
-        // Le trajet s'incurve vers le seuil : en ligne droite, une bête sort
-        // par le pignon. La porte est le point de passage, pas une décoration.
+        // Deux segments : stalle → seuil, puis seuil → pré. Une courbe qui
+        // ne faisait que s'infléchir vers la porte laissait encore les bêtes
+        // couper au plus court, à travers le bardage.
         const u = eased;
-        const bend = 2 * (1 - u) * u;
-        w.mesh.position.set(
-          (1 - u) * w.walkFrom.x + u * w.walkTo.x + bend * (w.gate.x - (w.walkFrom.x + w.walkTo.x) / 2),
-          0.1,
-          (1 - u) * w.walkFrom.z + u * w.walkTo.z + bend * (w.gate.z - (w.walkFrom.z + w.walkTo.z) / 2),
-        );
+        const gateT = 0.45;
+        let x: number;
+        let z: number;
+        if (u < gateT) {
+          const seg = u / gateT;
+          x = (1 - seg) * w.walkFrom.x + seg * w.gate.x;
+          z = (1 - seg) * w.walkFrom.z + seg * w.gate.z;
+        } else {
+          const seg = (u - gateT) / (1 - gateT);
+          x = (1 - seg) * w.gate.x + seg * w.walkTo.x;
+          z = (1 - seg) * w.gate.z + seg * w.walkTo.z;
+        }
+        w.mesh.position.set(x, 0.1, z);
         // Une bête rentrée n'est pas plantée devant la grange : elle est
         // dedans, donc invisible une fois le vantail refermé.
         w.mesh.visible = w.wantOut || progress < 0.9;
@@ -2049,7 +2080,7 @@ export function IsoFarmView({
         w.last.copy(w.mesh.position);
         applyHerdPose(w.mesh, w.kind, graze, walking, t, w.wander, w.dist, w.rests && !w.wantOut);
         const dir = walking
-          ? w.walkTo.clone().sub(w.walkFrom)
+          ? (eased < 0.45 ? w.gate.clone().sub(w.walkFrom) : w.walkTo.clone().sub(w.gate))
           : new THREE.Vector3(w.wantOut ? 1 : 0.2, 0, w.wantOut ? 0.2 : 1);
         w.mesh.rotation.y = Math.atan2(dir.x, dir.z) + (walking ? Math.sin(t * 8 + w.wander) * 0.12 : 0);
         w.mesh.rotation.x = 0;
