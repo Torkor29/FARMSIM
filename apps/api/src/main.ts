@@ -89,6 +89,18 @@ import {
   balesFromStraw,
   BALE_TONS,
   strawFromBales,
+  DEFAULT_HOUSING,
+  feltTempC,
+  grazePasture,
+  grazesForFood,
+  feedSavedByPasture,
+  parseHousing,
+  thermalPenalty,
+  thermalAlert,
+  outdoorTempC,
+  grassCapacity,
+  type Housing,
+  type Season,
   canSilageHarvest,
   silageYieldTons,
   WORLD_MARKET_GOODS,
@@ -5206,15 +5218,33 @@ async function drawManureFromPits(
  */
 async function settleAllHerds() {
   const herds = await prisma.herd.findMany({
-    include: { building: { include: { parcel: { include: { buildings: true } } } } },
+    include: {
+      building: {
+        include: { parcel: { include: { buildings: true, zone: true } } },
+      },
+    },
   });
   const now = Date.now();
+  // La météo se lit une fois pour toutes : une requête par troupeau ferait
+  // autant d'allers-retours que de fermes, à chaque tick.
+  const weathers = await prisma.weatherSnapshot.findMany();
+  const weatherByZone = new Map(weathers.map((w) => [w.zoneCode, w.state as WeatherState]));
+
   for (const herd of herds) {
     const barn = herd.building;
     const paddock = paddocksFor(barn, barn.parcel.buildings);
     const stats = buildingStatsAtLevel(barn.type as SharedBuildingType, barn.level);
     const capacity = barnCapacity(barn.type, stats);
-    await settleHerd(herd, paddock.capacity, now, barn.level, capacity);
+    // Saison et météo n'arrivaient jamais jusqu'ici : un hiver dehors valait
+    // un été dehors, et un orage n'était consulté qu'à l'ouverture de la porte.
+    const zone = barn.parcel.zone;
+    const season = currentSeason((zone?.hemisphere as Hemisphere) ?? "N", now);
+    const weather = weatherByZone.get(zone?.code ?? "") ?? "CLEAR";
+    await settleHerd(herd, paddock.capacity, now, barn.level, capacity, {
+      season,
+      weather,
+      paddockCells: paddock.cells,
+    });
   }
 }
 
@@ -5235,11 +5265,22 @@ async function settleHerd(
     mortalityDebt: number;
     manureTons?: number;
     beddingTons?: number;
+    housing?: string;
+    grassTons?: number;
   },
   paddockCapacityCells: number,
   now: number,
   barnLevel = 1,
   capacity = 0,
+  /**
+   * Environnement du lot.
+   *
+   * Facultatif pour que les appels d'avant — il en reste dans les routes —
+   * gardent exactement leur comportement : sans lui, on retombe sur un
+   * printemps par temps clair et un pré nul, ce qui reproduit l'ancien
+   * fonctionnement.
+   */
+  env?: { season: Season; weather: WeatherState; paddockCells: number },
 ): Promise<{
   happiness: number;
   feedStock: number;
@@ -5266,17 +5307,61 @@ async function settleHerd(
     };
   }
 
-  // Le troupeau puise dans la ration distribuée ; au pré, il se sert seul.
   const kind = herd.kind as AnimalKind;
-  const grazing = Boolean(herd.grazingUntil && herd.grazingUntil.getTime() > now);
-  const burnt = feedBurn({
+  const season = env?.season ?? "SPRING";
+  const weather = env?.weather ?? "CLEAR";
+  const paddockCells = env?.paddockCells ?? 0;
+
+  /**
+   * Le lot est-il dehors ?
+   *
+   * Le lieu de vie est désormais un **état** choisi par le joueur. La séance
+   * minutée d'avant subsiste et compte encore comme une sortie : elle est
+   * devenue l'animation de la transition, elle n'est plus le mécanisme.
+   */
+  const housing = parseHousing(herd.housing);
+  const grazing =
+    housing === "OUTSIDE" || Boolean(herd.grazingUntil && herd.grazingUntil.getTime() > now);
+
+  // Combien de bêtes tiennent réellement au pré : l'enclos borne le troupeau.
+  const outside = grazing ? Math.min(herd.size, Math.max(0, paddockCapacityCells)) : 0;
+  const cycles = elapsedMs / LIVESTOCK_CYCLE_MS;
+
+  /**
+   * L'herbe pousse et se broute.
+   *
+   * C'est ce qui remplace la remise forfaitaire de 35 % : un pré vert couvre
+   * tout le besoin des bêtes sorties, un pré épuisé — surpâturé, ou l'hiver —
+   * ne couvre rien et le troupeau retombe sur le stock du hangar.
+   */
+  const pasture = grazesForFood(kind)
+    ? grazePasture({
+        grassTons: herd.grassTons ?? 0,
+        paddockCells,
+        season,
+        animalsOutside: outside,
+        cycles,
+      })
+    : { grassTons: herd.grassTons ?? 0, eatenTons: 0, coverage: 0 };
+
+  const saved = feedSavedByPasture({
     herdSize: herd.size,
-    elapsedMs,
-    cycleMs: LIVESTOCK_CYCLE_MS,
-    grazing,
-    barnLevel,
-    kind,
+    animalsOutside: outside,
+    coverage: pasture.coverage,
   });
+
+  // La ration stockée n'est entamée que de ce que le pré n'a pas couvert.
+  const burnt =
+    feedBurn({
+      herdSize: herd.size,
+      elapsedMs,
+      cycleMs: LIVESTOCK_CYCLE_MS,
+      // Le forfait d'avant est neutralisé : c'est `saved` qui fait le travail.
+      grazing: false,
+      barnLevel,
+      kind,
+    }) *
+    (1 - saved);
   const feedStock = Math.max(0, herd.feedStock - burnt);
   const hunger = hungerPenalty({ feedStock, herdSize: herd.size, kind });
   // La litière se salit au même rythme que la ration se mange. On mesure la
@@ -5307,13 +5392,23 @@ async function settleHerd(
   });
   const smell = manureSmellPenalty(manureFill(pit.tons, pitCap));
 
+  /**
+   * Le froid mord — et la chaleur aussi.
+   *
+   * Aucune chaîne nouvelle : la pénalité entre par la même porte que la faim
+   * et la litière, et ressort donc en lait, en reproduction et, si l'on
+   * s'obstine, en mortalité.
+   */
+  const tempC = feltTempC({ kind, housing, season, weather, barnLevel });
+  const thermal = thermalPenalty({ kind, tempC });
+
   const happiness = tickHappiness({
     happiness: herd.happiness,
     hasPaddock: paddockCapacityCells > 0,
     grazedRecentlyMs: herd.lastGrazedAt ? now - herd.lastGrazedAt.getTime() : Number.MAX_SAFE_INTEGER,
     crowding: paddockCapacityCells > 0 ? herd.size / Math.max(1, paddockCapacityCells) : 1,
     elapsedMs,
-    hunger: hunger + smell,
+    hunger: hunger + smell + thermal,
     bedding: beddingPenalty(cover),
   });
 
@@ -5406,6 +5501,7 @@ async function settleHerd(
       mortalityDebt: toll.debt,
       manureTons: pit.tons,
       beddingTons,
+      grassTons: pasture.grassTons,
       lastTickAt: new Date(now),
     },
   });
@@ -5436,6 +5532,10 @@ app.get("/parcels/:id/livestock", async (req, res) => {
     where: { zoneCode: parcel.zone.code },
   });
   const now = Date.now();
+  // Saison et météo : elles décident du confort ressenti et de la pousse de
+  // l'herbe. Le panneau doit les voir, sans quoi le joueur subit sans savoir.
+  const saison = currentSeason((parcel.zone.hemisphere as Hemisphere) ?? "N", now);
+  const meteo = (weather?.state as WeatherState) ?? "CLEAR";
 
   const barns = [];
   for (const b of parcel.buildings) {
@@ -5444,6 +5544,16 @@ app.get("/parcels/:id/livestock", async (req, res) => {
     const stats = buildingStatsAtLevel(b.type as SharedBuildingType, b.level);
     const capacity = barnCapacity(b.type, stats);
     const herdKind = (b.herd?.kind as AnimalKind | undefined) ?? kindForBarn(b.type);
+    // Température ressentie par ce lot-ci : calculée une fois, relue trois
+    // fois plus bas. La recalculer à chaque champ rendait la charge utile
+    // illisible pour un gain nul.
+    const herdTempC = feltTempC({
+      kind: herdKind ?? "COW",
+      housing: parseHousing(b.herd?.housing),
+      season: saison,
+      weather: meteo,
+      barnLevel: b.level,
+    });
     let happiness = b.herd?.happiness ?? 0;
     let feedStock = b.herd?.feedStock ?? 0;
     let herdSize = b.herd?.size ?? 0;
@@ -5531,6 +5641,17 @@ app.get("/parcels/:id/livestock", async (req, res) => {
               beddingCover({ kind: herdKind ?? "COW", herdSize, stockTons: beddingTons }) * 100,
             ) / 100,
             feedQuality: b.herd.feedQuality,
+            /* — Environnement : ce que la simulation lit désormais — */
+            housing: parseHousing(b.herd.housing),
+            tempC: Math.round(herdTempC),
+            outdoorTempC: Math.round(outdoorTempC(saison, meteo)),
+            thermal: Math.round(thermalPenalty({ kind: herdKind ?? "COW", tempC: herdTempC }) * 100) / 100,
+            thermalAlert: thermalAlert(
+              thermalPenalty({ kind: herdKind ?? "COW", tempC: herdTempC }),
+            ),
+            grassTons: Math.round((b.herd.grassTons ?? 0) * 100) / 100,
+            grassCapacityTons: Math.round(grassCapacity(paddock.cells) * 100) / 100,
+            grazes: grazesForFood(herdKind ?? "COW"),
             hungry: hungerPenalty({
               feedStock,
               herdSize: b.herd.size,
@@ -6037,6 +6158,66 @@ app.post("/herds/:id/feed", async (req, res) => {
  * meilleure humeur, et **produit davantage de fumier**, que le céréalier
  * rachètera. Chacun vit du déchet de l'autre.
  */
+/**
+ * Rentrer ou sortir le troupeau, durablement.
+ *
+ * C'est la décision que le joueur n'avait pas : « Sortir les bêtes » ouvrait
+ * une séance de trois heures, puis tout le monde rentrait tout seul. Ici
+ * l'état persiste jusqu'à ce qu'on en change — et c'est lui que la simulation
+ * lit pour décider si le pré nourrit et si le froid mord.
+ */
+app.post("/herds/:id/housing", async (req, res) => {
+  const body = z
+    .object({ userId: z.string(), housing: z.enum(["INSIDE", "OUTSIDE"]) })
+    .safeParse(req.body);
+  if (!body.success) {
+    res.status(400).json(body.error.flatten());
+    return;
+  }
+  const herd = await prisma.herd.findUnique({
+    where: { id: req.params.id },
+    include: {
+      farm: true,
+      building: { include: { parcel: { include: { buildings: true, zone: true } } } },
+    },
+  });
+  if (!herd || herd.farm.userId !== body.data.userId) {
+    res.status(403).json({ error: "Troupeau non possédé" });
+    return;
+  }
+
+  if (body.data.housing === "OUTSIDE") {
+    const paddock = paddocksFor(herd.building, herd.building.parcel.buildings);
+    if (paddock.capacity <= 0) {
+      res.status(409).json({
+        error: "Aucune aire de sortie accolée — construisez un enclos",
+      });
+      return;
+    }
+    // On ne bloque pas la sortie par mauvais temps : c'est justement la
+    // décision qu'on veut rendre au joueur. On le prévient, il tranche.
+    const zone = herd.building.parcel.zone;
+    const season = currentSeason((zone?.hemisphere as Hemisphere) ?? "N", Date.now());
+    const snap = await prisma.weatherSnapshot.findFirst({ where: { zoneCode: zone?.code ?? "" } });
+    const weather = (snap?.state as WeatherState) ?? "CLEAR";
+    const tempC = outdoorTempC(season, weather);
+    const risque = thermalPenalty({ kind: herd.kind as AnimalKind, tempC });
+    res.json({
+      housing: await setHousing(herd.id, "OUTSIDE"),
+      tempC: Math.round(tempC),
+      warning: thermalAlert(risque) === "danger" ? "Dehors, les bêtes vont souffrir du temps" : null,
+    });
+    return;
+  }
+
+  res.json({ housing: await setHousing(herd.id, "INSIDE"), tempC: null, warning: null });
+});
+
+async function setHousing(id: string, housing: Housing): Promise<Housing> {
+  await prisma.herd.update({ where: { id }, data: { housing } });
+  return housing;
+}
+
 app.post("/herds/:id/bedding", async (req, res) => {
   const body = z
     .object({ userId: z.string(), tons: z.number().min(0).default(0) })

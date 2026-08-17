@@ -25,6 +25,7 @@ export * from "./quests.js";
 export * from "./consignes.js";
 export * from "./forage.js";
 export * from "./species.js";
+export * from "./husbandry.js";
 
 /** Monnaie du jeu : le terron (TRN). Le champ interne reste `crd`. */
 export const CURRENCY_CODE = "TRN";
