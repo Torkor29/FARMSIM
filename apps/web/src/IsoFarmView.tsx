@@ -28,6 +28,7 @@ import {
   type MachineRig,
 } from "./machines3d";
 import { createSpray } from "./particles";
+import { rectCells } from "./rect-select";
 import { buildCharacter } from "./character-mesh";
 import { initialQuality, makeFrameGovernor, qualityForContext, type RenderQuality } from "./render-quality";
 import type { CharacterAppearance } from "@farmsim/shared";
@@ -192,12 +193,12 @@ type Props = {
   /**
    * Chez soi : un doigt glisse et **sélectionne**, sans rien déclencher.
    *
-   * Il fallait jusqu'ici toucher chaque case l'une après l'autre pour semer ou
-   * moissonner un carré — vingt-quatre gestes pour une bande de blé. Le tracé
-   * existait déjà, mais uniquement chez un voisin, où il travaille aussitôt.
+   * Le geste est un rectangle : clic sur un coin, glissé jusqu'à l'opposé,
+   * toutes les cases entre les deux. Un tracé qui suivait le doigt faisait
+   * un serpent ; pour un champ, on veut un carré de la taille qu'on décide.
    */
   strokeSelect?: boolean;
-  /** Début d'un tracé : le parent retient la sélection à laquelle l'ajouter. */
+  /** Début d'un glissé : le parent peut figer l'état avant le rectangle. */
   onStrokeStart?: () => void;
   onStrokePreview?: (cells: { x: number; y: number }[]) => void;
   onWorkStroke?: (cells: { x: number; y: number }[]) => void;
@@ -1479,21 +1480,20 @@ export function IsoFarmView({
     let zoomStart = 1;
     let lastX = 0;
     let lastY = 0;
-    const strokeKeys = new Set<string>();
-    const strokeCells: { x: number; y: number }[] = [];
+    let strokeOrigin: { x: number; y: number } | null = null;
+    let strokeLast: { x: number; y: number } | null = null;
+    let strokeCells: { x: number; y: number }[] = [];
 
-    function addStrokeCell(cell: { x: number; y: number } | null) {
-      if (!cell) return;
-      const k = `${cell.x},${cell.y}`;
-      if (strokeKeys.has(k)) return;
-      strokeKeys.add(k);
-      strokeCells.push(cell);
+    function emitRect(a: { x: number; y: number }, b: { x: number; y: number }) {
+      const { gridW: gw, gridH: gh } = dataRef.current;
+      strokeCells = rectCells(a, b, gw, gh);
       onStrokePreviewRef.current?.(strokeCells.slice());
     }
 
     function clearStroke() {
-      strokeKeys.clear();
-      strokeCells.length = 0;
+      strokeOrigin = null;
+      strokeLast = null;
+      strokeCells = [];
     }
 
     /** Unités du monde parcourues par un pixel d'écran, au zoom courant. */
@@ -1545,7 +1545,12 @@ export function IsoFarmView({
       lastY = ev.clientY;
       dragged = false;
       clearStroke();
-      if (tracable()) onStrokeStartRef.current?.();
+      if (tracable()) {
+        setPointerFromEvent(ev);
+        strokeOrigin = raycastCell();
+        strokeLast = strokeOrigin;
+        onStrokeStartRef.current?.();
+      }
       if (pointers.size === 2) {
         pinchStart = pinchDistance();
         zoomStart = view.zoom;
@@ -1581,8 +1586,6 @@ export function IsoFarmView({
         return;
       }
 
-      const depuisX = lastX;
-      const depuisY = lastY;
       const dx = ev.clientX - lastX;
       const dy = ev.clientY - lastY;
       if (!dragged && Math.hypot(dx, dy) < DRAG_SLOP_PX) return;
@@ -1591,19 +1594,17 @@ export function IsoFarmView({
       lastY = ev.clientY;
 
       if (tracable()) {
-        // On retient les cases **traversées**, pas seulement celles où le doigt
-        // se trouve à chaque image : un glissement rapide franchit une case
-        // entière entre deux images et en sauterait la moitié. On échantillonne
-        // donc le segment tous les six pixels.
-        const rect = renderer.domElement.getBoundingClientRect();
-        const pas = Math.min(48, Math.max(1, Math.ceil(Math.hypot(dx, dy) / 6)));
-        for (let i = 1; i <= pas; i++) {
-          const px = depuisX + (dx * i) / pas;
-          const py = depuisY + (dy * i) / pas;
-          pointer.x = ((px - rect.left) / rect.width) * 2 - 1;
-          pointer.y = -((py - rect.top) / rect.height) * 2 + 1;
-          addStrokeCell(raycastCell());
+        // Rectangle : le premier coin est le clic, le second suit le doigt.
+        // On n'échantillonne plus le chemin — un glissement rapide allait
+        // jusqu'au coin opposé, et c'est tout le carré qu'on veut, pas le
+        // serpent entre les deux.
+        setPointerFromEvent(ev);
+        const cell = raycastCell();
+        if (cell) {
+          if (!strokeOrigin) strokeOrigin = cell;
+          strokeLast = cell;
         }
+        if (strokeOrigin && strokeLast) emitRect(strokeOrigin, strokeLast);
         onHoverRef.current?.(null);
         return;
       }
