@@ -21,12 +21,18 @@ describe("comptes développeurs", () => {
     expect(isDevEmail("carol@ferme.fr", extra)).toBe(false);
   });
 
-  it("ne débite jamais un compte dev, même à 0 TRN", () => {
+  it("ne débite jamais le compte nominatif, même à 0 TRN", () => {
     const dev = { email: DEV_OWNER_EMAIL, crd: 0 };
     expect(isDevAccount(dev)).toBe(true);
     expect(canAfford(dev, 50_000)).toBe(true);
     expect(canAfford({ email: "joueur@ferme.fr", crd: 100 }, 200)).toBe(false);
     expect(canAfford({ email: "joueur@ferme.fr", crd: 200 }, 200)).toBe(true);
+  });
+
+  it("laisse un testeur listé payer avec son vrai solde", () => {
+    const extra = "alice@ferme.fr";
+    expect(isDevEmail("alice@ferme.fr", extra)).toBe(true);
+    expect(canAfford({ email: "alice@ferme.fr", crd: 0 }, 10, extra)).toBe(false);
   });
 
   it("normalise les espaces", () => {

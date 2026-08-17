@@ -1,10 +1,13 @@
 /**
  * Comptes développeurs.
  *
- * Les outils de test et la trésorerie illimitée ne s'ouvrent pas à tout le
- * monde : une variable d'environnement globale (`FARMSIM_DEV_TOOLS`) le
- * ferait pour n'importe qui de connecté. On tient donc une liste nominative
- * d'adresses, plus celles passées par `FARMSIM_TESTERS`.
+ * Les outils de test ne s'ouvrent pas à tout le monde : une variable
+ * d'environnement globale (`FARMSIM_DEV_TOOLS`) le ferait pour n'importe qui
+ * de connecté. On tient donc une liste nominative d'adresses, plus celles
+ * passées par `FARMSIM_TESTERS`.
+ *
+ * La trésorerie illimitée, elle, n'appartient qu'au compte nominatif : un
+ * testeur listé dans l'environnement a le panneau Test, pas l'argent infini.
  */
 
 /** Compte de développement du jeu — trésorerie illimitée et panneau Test. */
@@ -46,11 +49,17 @@ export function isDevAccount(
   return Boolean(user.dev) || isDevEmail(user.email, extraEnv);
 }
 
+/** Trésorerie qui ne descend jamais : uniquement le compte nominatif. */
+export function hasUnlimitedCrd(email: string): boolean {
+  return normalizeEmail(email) === DEV_OWNER_EMAIL;
+}
+
 export function canAfford(
   user: { email: string; crd: number; dev?: boolean | null },
   cost: number,
   extraEnv?: string | null,
 ): boolean {
-  if (isDevAccount(user, extraEnv)) return true;
+  void extraEnv;
+  if (hasUnlimitedCrd(user.email)) return true;
   return user.crd >= cost;
 }
