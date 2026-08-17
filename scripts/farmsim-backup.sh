@@ -16,7 +16,7 @@
 #
 set -euo pipefail
 
-ÉTIQUETTE="${1:-}"
+ETIQUETTE="${1:-}"
 CONTENEUR="${FARMSIM_CONTAINER:-farmsim}"
 DEPOT="${FARMSIM_BACKUP_DIR:-/var/backups/farmsim}"
 GARDER="${FARMSIM_BACKUP_KEEP:-14}"
@@ -57,7 +57,7 @@ docker run --rm \
   -e FARMSIM_DB=/data/farmsim.db \
   -e FARMSIM_BACKUP_DIR=/sauvegardes \
   -e FARMSIM_BACKUP_KEEP="$GARDER" \
-  -e FARMSIM_BACKUP_LABEL="$ÉTIQUETTE" \
+  -e FARMSIM_BACKUP_LABEL="$ETIQUETTE" \
   --entrypoint node \
   "$IMAGE" /opt/farmsim-backup.mjs
 

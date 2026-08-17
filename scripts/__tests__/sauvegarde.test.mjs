@@ -11,10 +11,23 @@
 import { after, before, describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { DatabaseSync } from "node:sqlite";
-import { mkdtempSync, readdirSync, rmSync, statSync, writeFileSync, readFileSync, copyFileSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import {
+  chmodSync,
+  copyFileSync,
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { élaguer, horodatage, instantané, sauvegarder, vérifier } from "../farmsim-backup.mjs";
+
+const SCRIPTS = dirname(fileURLToPath(new URL("../farmsim-backup.mjs", import.meta.url)));
 
 let dossier;
 let base;
@@ -173,5 +186,115 @@ describe("restauration", () => {
     assert.equal(après, avant, "toutes les lignes doivent être revenues");
     assert.equal(crd, 700, "et leur contenu avec");
     rmSync(coffre, { recursive: true, force: true });
+  });
+});
+
+/**
+ * L'enveloppe shell, exécutée pour de vrai.
+ *
+ * Le premier lancement en production a échoué sur `ÉTIQUETTE=avant-deploi:
+ * command not found` : un nom de variable shell accentué. Bash n'accepte que
+ * `[A-Za-z_][A-Za-z0-9_]*`, si bien que la ligne n'était pas une affectation
+ * mais une commande inexistante.
+ *
+ * Rien ne pouvait l'attraper avant : `bash -n` la trouve syntaxiquement
+ * valide, et relire un script ne dit pas ce que bash en comprendra. La seule
+ * façon de le savoir est de **l'exécuter**. On lui donne donc un faux
+ * `docker` : le script déroule ses variables, ses contrôles et sa commande, et
+ * la moindre ligne qui n'est pas ce qu'on croit le fait tomber sous `set -e`.
+ */
+describe("scripts shell", () => {
+  /** Un dossier contenant un `docker` de pacotille, à mettre en tête du PATH. */
+  function fauxDocker(journal) {
+    const bac = mkdtempSync(join(tmpdir(), "farmsim-faux-"));
+    const chemin = join(bac, "docker");
+    writeFileSync(
+      chemin,
+      [
+        "#!/usr/bin/env bash",
+        `echo "$@" >> ${JSON.stringify(journal)}`,
+        // `inspect -f` sert deux questions : le volume monté sur /data, et
+        // l'image. On répond à chacune ce que le script attend.
+        'if [[ "$1" == "inspect" ]]; then',
+        '  if [[ "$*" == *Destination* ]]; then echo "farmsim-data"; else echo "farmsim-farmsim"; fi',
+        "  exit 0",
+        "fi",
+        "exit 0",
+        "",
+      ].join("\n"),
+    );
+    chmodSync(chemin, 0o755);
+    return bac;
+  }
+
+  it("se déroule en entier, étiquette comprise", () => {
+    const bac = mkdtempSync(join(tmpdir(), "farmsim-shell-"));
+    const journal = join(bac, "appels.txt");
+    const faux = fauxDocker(journal);
+    try {
+      execFileSync("bash", [join(SCRIPTS, "farmsim-backup.sh"), "avant-deploi"], {
+        env: { ...process.env, PATH: `${faux}:${process.env.PATH}`, FARMSIM_BACKUP_DIR: bac },
+        stdio: "pipe",
+      });
+      const appels = readFileSync(journal, "utf8");
+      assert.match(appels, /run --rm/, "le script doit avoir lancé le conteneur de sauvegarde");
+      assert.match(
+        appels,
+        /FARMSIM_BACKUP_LABEL=avant-deploi/,
+        "et lui avoir transmis l’étiquette reçue en argument",
+      );
+      assert.match(appels, /farmsim-data:\/data/, "avec le volume lu sur le conteneur");
+    } finally {
+      rmSync(bac, { recursive: true, force: true });
+      rmSync(faux, { recursive: true, force: true });
+    }
+  });
+
+  it("se déroule aussi sans étiquette", () => {
+    const bac = mkdtempSync(join(tmpdir(), "farmsim-shell2-"));
+    const journal = join(bac, "appels.txt");
+    const faux = fauxDocker(journal);
+    try {
+      execFileSync("bash", [join(SCRIPTS, "farmsim-backup.sh")], {
+        env: { ...process.env, PATH: `${faux}:${process.env.PATH}`, FARMSIM_BACKUP_DIR: bac },
+        stdio: "pipe",
+      });
+      assert.match(readFileSync(journal, "utf8"), /FARMSIM_BACKUP_LABEL=/);
+    } finally {
+      rmSync(bac, { recursive: true, force: true });
+      rmSync(faux, { recursive: true, force: true });
+    }
+  });
+
+  it("liste les sauvegardes sans rien restaurer quand on l’appelle sans argument", () => {
+    const bac = mkdtempSync(join(tmpdir(), "farmsim-shell3-"));
+    const journal = join(bac, "appels.txt");
+    const faux = fauxDocker(journal);
+    try {
+      const sortie = execFileSync("bash", [join(SCRIPTS, "farmsim-restore.sh")], {
+        env: { ...process.env, PATH: `${faux}:${process.env.PATH}`, FARMSIM_BACKUP_DIR: bac },
+        encoding: "utf8",
+      });
+      assert.match(sortie, /Sauvegardes disponibles/);
+      // Le point capital : sans argument, il ne doit toucher à rien.
+      assert.doesNotMatch(readFileSync(journal, "utf8"), /compose|run --rm/);
+    } finally {
+      rmSync(bac, { recursive: true, force: true });
+      rmSync(faux, { recursive: true, force: true });
+    }
+  });
+
+  it("n’emploie que des noms de variables que bash accepte", () => {
+    // Le garde-fou direct, en plus de l'exécution : un nom accentué passe le
+    // contrôle de syntaxe et ne se voit qu'à l'usage, parfois en production.
+    for (const nom of ["farmsim-backup.sh", "farmsim-restore.sh", "vps-deploy.sh"]) {
+      const source = readFileSync(join(SCRIPTS, nom), "utf8");
+      const fautifs = source
+        .split("\n")
+        .map((l, i) => [i + 1, l])
+        .filter(([, l]) => /^\s*[A-Za-z_][^\s=]*=/.test(l) && !/^\s*[A-Za-z_][A-Za-z0-9_]*=/.test(l))
+        .map(([n, l]) => `${nom}:${n} ${l.trim()}`);
+      assert.deepEqual(fautifs, []);
+    }
   });
 });
