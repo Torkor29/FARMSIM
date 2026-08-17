@@ -158,3 +158,22 @@ describe("outils de test en production", () => {
     assert.equal(r.statut, 404);
   });
 });
+
+describe("compte d'essai", () => {
+  /**
+   * La route est supprimée, pas éteinte.
+   *
+   * `POST /auth/demo` attribuait une parcelle du monde à chaque appel,
+   * définitivement, sans authentification ni limite : soixante comptes en
+   * 2,4 secondes, mesuré. Le monde ayant un nombre fixe de parcelles, il
+   * suffisait de quelques secondes pour qu'aucun nouveau joueur ne puisse
+   * plus s'installer.
+   *
+   * Ce test existe pour qu'elle ne revienne pas par mégarde — une route de ce
+   * genre se réintroduit facilement en reprenant un ancien morceau de code.
+   */
+  it("n'existe plus, et ne consomme donc plus de terre", async () => {
+    const r = await appel("/auth/demo", { methode: "POST" });
+    assert.equal(r.statut, 404, "la route d'essai doit avoir disparu");
+  });
+});

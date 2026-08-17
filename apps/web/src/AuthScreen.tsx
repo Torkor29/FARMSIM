@@ -14,8 +14,6 @@ type Props = {
   err: string | null;
   onRegister: () => void;
   onLogin: () => void;
-  /** Essai immédiat : une ferme jetable, sans formulaire */
-  onTryDemo: () => void;
 };
 
 /**
@@ -36,7 +34,6 @@ export function AuthScreen({
   err,
   onRegister,
   onLogin,
-  onTryDemo,
 }: Props) {
   const [showCode, setShowCode] = useState(false);
   const isRegister = authMode === "register";
@@ -160,21 +157,6 @@ export function AuthScreen({
                   : "Reprendre ma ferme"}
             </button>
           </form>
-
-          <div className="gate-demo">
-            <span className="gate-demo-sep">ou</span>
-            <button type="button" className="btn-ghost big" disabled={busy} onClick={onTryDemo}>
-              Essayer sans compte
-            </button>
-            {/* La phrase disait « effacée quand vous partez ». C'était faux :
-                rien n'efface ces fermes, et chacune retient définitivement une
-                parcelle du monde. Tant que ce n'est pas vrai côté serveur, on
-                ne le promet pas — on dit ce qui est. */}
-            <span className="gate-demo-note">
-              Une ferme prête à jouer, sans rien remplir. Créez un compte pour
-              la garder.
-            </span>
-          </div>
 
           <p className="gate-switch">
             {isRegister ? (

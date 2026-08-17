@@ -1680,29 +1680,6 @@ export function App() {
     }
   }
 
-  /**
-   * Essai sans compte : le serveur fabrique une identité jetable, avec une
-   * terre et un tracteur, et ouvre la session. Personne ne devrait avoir à
-   * remplir un formulaire pour voir à quoi ressemble le jeu.
-   */
-  async function tryDemo() {
-    setBusy(true);
-    setErr(null);
-    try {
-      const r = await api<{ token: string; player: Player; resume?: SessionResume }>(
-        "/auth/demo",
-        { method: "POST" },
-      );
-      applyAuth(r);
-      await Promise.all([refreshMeta(), loadWorld()]);
-      setMsg("Compte d'essai ouvert — rien n'est enregistré à votre nom.");
-    } catch (e) {
-      setErr(e instanceof Error ? e.message : String(e));
-    } finally {
-      setBusy(false);
-    }
-  }
-
   /** Fin de l'installation guidée : métier + parcelle offerte. */
   async function claimStarterParcel(opts: {
     specialization: Specialization;
@@ -3092,7 +3069,6 @@ export function App() {
       <AuthScreen
         authMode={authMode}
         onAuthModeChange={setAuthMode}
-        onTryDemo={tryDemo}
         name={name}
         onNameChange={setName}
         email={email}
