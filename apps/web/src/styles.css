@@ -4114,3 +4114,189 @@ button.tiny {
   }
   .season-layer.leaving { display: none; }
 }
+
+/* ==========================================================================
+   FENÊTRES DE BUREAU
+   ==========================================================================
+   Mesuré avant : rail Missions ouvert, 8 303 px de contenu dans une colonne
+   de 304 px de large et 811 px de haut, pendant que 1 296 px de ciel
+   restaient vides au centre. Les panneaux lourds sortent du rail.
+   ========================================================================== */
+
+.win-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 30;
+  display: grid;
+  place-items: center;
+  padding: clamp(0.75rem, 3vh, 2.5rem);
+  background: rgba(24, 44, 38, 0.34);
+  backdrop-filter: blur(3px);
+  animation: win-fade 0.14s ease-out;
+}
+@keyframes win-fade { from { opacity: 0; } to { opacity: 1; } }
+
+.win {
+  display: flex;
+  flex-direction: column;
+  width: min(1180px, 100%);
+  max-height: 100%;
+  border-radius: 18px;
+  background: var(--cream);
+  border: 1px solid var(--glass-border);
+  box-shadow: var(--sh-3);
+  overflow: hidden;
+  animation: win-rise 0.18s cubic-bezier(0.16, 1, 0.3, 1);
+}
+/* Large : les panneaux qui montrent des tableaux, pas des cartes empilées. */
+.win.wide { width: min(1440px, 100%); }
+@keyframes win-rise {
+  from { opacity: 0; transform: translateY(10px) scale(0.99); }
+  to { opacity: 1; transform: none; }
+}
+
+.win-head {
+  display: flex;
+  align-items: flex-start;
+  gap: 1rem;
+  padding: 0.9rem 1.1rem;
+  border-bottom: 1px solid var(--line);
+  background: var(--paper);
+}
+.win-title { flex: 1; min-width: 0; }
+.win-title h2 { margin: 0; font-size: 1.15rem; }
+.win-title p { margin: 0.1rem 0 0; font-size: 0.8rem; color: var(--muted); font-weight: 600; }
+.win-close {
+  flex: 0 0 auto;
+  min-height: 36px;
+  padding: 0.3rem 0.7rem;
+  border-radius: 9px;
+  border: 1px solid var(--line);
+  background: var(--sand);
+  font-size: 0.8rem;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+.win-close:hover:not(:disabled) { transform: none; filter: none; background: var(--gold-100); }
+.win-close kbd {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.6rem;
+  padding: 0.05em 0.3em;
+  border-radius: 3px;
+  background: var(--paper);
+  border: 1px solid var(--line);
+  color: var(--muted);
+}
+
+.win-body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 1rem 1.1rem calc(1rem + env(safe-area-inset-bottom));
+}
+.win-body::-webkit-scrollbar { width: 10px; }
+.win-body::-webkit-scrollbar-thumb { background: var(--line); border-radius: 999px; }
+
+/* Un panneau posé dans une fenêtre n'a plus besoin de sa coquille de rail :
+   ni verre, ni ombre, ni largeur imposée — la fenêtre s'en charge. */
+.win-body > .glass,
+.win-body > aside {
+  background: transparent;
+  border: 0;
+  box-shadow: none;
+  backdrop-filter: none;
+  padding: 0;
+  max-width: none;
+  width: 100%;
+}
+
+/* La place enfin disponible sert à quelque chose : les listes de troupeaux et
+   de machines s'étalent en grille au lieu de s'empiler dans une colonne. */
+.win-body .livestock-panel > .barn-card,
+.win-body .barn-card {
+  break-inside: avoid;
+}
+.win .win-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 22rem), 1fr));
+  gap: 0.9rem;
+  align-items: start;
+}
+
+/* —— Bandeau de cotations ——
+   Il défilait derrière un masque, sans barre de défilement : sur 1920 px la
+   dernière cotation était coupée et la molette verticale ne la ramenait pas.
+   Sur bureau il passe à la ligne — la place existe, il suffisait de la
+   prendre. */
+.game-stage:not(.mobile) .market-ticker {
+  flex-wrap: wrap;
+  overflow: visible;
+  -webkit-mask-image: none;
+  mask-image: none;
+  row-gap: 0.3rem;
+}
+
+/* —— Le rail gauche disparaît sur bureau ——
+   Ses trois panneaux — Garage, Élevage, Missions — sont devenus des fenêtres
+   larges, qui se posent en `position: fixed` par-dessus la ferme. La colonne
+   n'a donc plus rien à réserver : elle s'efface, et la scène récupère les
+   304 px qu'elle prenait. Au téléphone rien ne change : le rail y était déjà
+   en `display: contents` et les panneaux y restent des tiroirs.
+
+   Le titre du panneau fait double emploi avec celui de la fenêtre : on ne le
+   garde qu'au doigt, où il n'y a pas d'en-tête de fenêtre. */
+.game-stage:not(.mobile) .rail-left { display: contents; }
+.game-stage:not(.mobile) .only-mobile { display: none; }
+
+@media (min-width: 821px) {
+  .game-stage:not(.mobile) {
+    grid-template-columns: var(--tool-rail-w) minmax(0, 1fr) var(--rail-r);
+    grid-template-rows: auto minmax(0, 1fr) auto auto;
+    grid-template-areas:
+      "tools top    top"
+      "tools stage  right"
+      "tools select select"
+      "tools dock   dock";
+  }
+  .game-stage:not(.mobile):has(.rail-right:empty) {
+    grid-template-columns: var(--tool-rail-w) minmax(0, 1fr) 0;
+  }
+}
+
+@media (min-width: 1180px) {
+  .game-stage:not(.mobile) {
+    grid-template-columns: var(--tool-rail-w) minmax(0, 1fr) var(--rail-r);
+    grid-template-areas:
+      "tools top    top"
+      "tools stage  right"
+      "tools select select"
+      "tools dock   dock";
+  }
+  .game-stage:not(.mobile):has(.rail-right:empty) {
+    grid-template-columns: var(--tool-rail-w) minmax(0, 1fr) 0;
+  }
+}
+
+/* Les listes d'achat profitent de la largeur retrouvée : en colonne unique
+   dans une fenêtre de 1440 px, dix-neuf bâtiments faisaient encore deux mille
+   pixels de défilement pour rien. */
+.win-body .build-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 21rem), 1fr));
+  gap: 0.6rem;
+}
+.win-body .build-list > * { width: 100%; }
+
+/* Les cartes de machine et de troupeau s'alignent aussi, quand il y en a
+   plusieurs : c'est la comparaison qui compte, et elle demande de les voir
+   côte à côte plutôt que l'une sous l'autre. */
+.win-body .list {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 26rem), 1fr));
+  gap: 0.6rem;
+  list-style: none;
+  padding: 0;
+}

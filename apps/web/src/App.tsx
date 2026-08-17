@@ -101,6 +101,7 @@ import {
 import { TOOL_GROUPS, groupOf, optionsFor } from "./ui/tool-options";
 import { ToolRail } from "./ui/desktop/ToolRail";
 import { SelectionBar } from "./ui/desktop/SelectionBar";
+import { PanelHost } from "./ui/desktop/Window";
 import {
   CellContextMenu,
   type CellContext,
@@ -3899,9 +3900,17 @@ export function App() {
         les panneaux redeviennent des tiroirs.
       */}
       <div className="rail rail-left">
+        <PanelHost
+          mobile={isMobile}
+          open={showGarage}
+          title="Garage"
+          subtitle={`${(player.farm?.machines ?? []).length} machine(s)`}
+          width="wide"
+          onClose={() => setShowGarage(false)}
+        >
         {(isMobile ? sheet === "GARAGE" : showGarage) && (
           <aside className={panelClass("garage-panel", "GARAGE")} {...(isMobile ? sheetGesture : {})}>
-            <h3>Garage</h3>
+            <h3 className="only-mobile">Garage</h3>
             <p className="muted tiny">
               Graissez et nettoyez : la machine s’use moins et récolte un peu plus.
               Rafistoler ramène à mi-chemin, réviser remet à 100 %.
@@ -4045,6 +4054,16 @@ export function App() {
             </div>
           </aside>
         )}
+        </PanelHost>
+
+        <PanelHost
+          mobile={isMobile}
+          open={showHerd}
+          title="Élevage"
+          subtitle={`${barns.reduce((n, b) => n + (b.herd?.size ?? 0), 0)} bête(s) · ${barns.length} bâtiment(s)`}
+          width="wide"
+          onClose={() => setShowHerd(false)}
+        >
         {(isMobile ? sheet === "HERD" : showHerd) && (
         <LivestockPanel
           className={panelClass("livestock-panel", "HERD")}
@@ -4092,6 +4111,16 @@ export function App() {
           }}
         />
         )}
+        </PanelHost>
+
+        <PanelHost
+          mobile={isMobile}
+          open={showEta}
+          title="Missions"
+          subtitle={`${laborBoard.length} chantier(s) · ${contracts.length} solo`}
+          width="wide"
+          onClose={() => setShowEta(false)}
+        >
         {(isMobile ? sheet === "OFFICE" : showEta) && (
           <MissionsPanel
             className={panelClass("eta-panel", "OFFICE")}
@@ -4125,6 +4154,7 @@ export function App() {
             onClaimQuest={(id) => void claimQuest(id)}
           />
         )}
+        </PanelHost>
       </div>
 
       <div className="rail rail-right">
