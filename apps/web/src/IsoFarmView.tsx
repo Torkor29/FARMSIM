@@ -747,15 +747,30 @@ export function IsoFarmView({
       if (w === "SNOW") return 0xdce8f2;
       return 0xbfe4f5;
     };
-    scene.background = new THREE.Color(skyFor(weatherRef.current));
+    /**
+     * Le ciel n'appartient plus à la scène 3D.
+     *
+     * Elle peignait son propre fond opaque — une couleur par temps qu'il
+     * fait — ce qui masquait tout ce qu'on pouvait mettre derrière. Le décor
+     * saisonnier (`ui/SeasonSky`) vit maintenant sous le canevas, en CSS : il
+     * change avec la saison, il fait passer les nuages, et il ne coûte rien à
+     * la carte graphique, déjà occupée par la ferme.
+     *
+     * Le brouillard, lui, reste : c'est lui qui fond le bord de la parcelle
+     * dans le lointain, et il prend la teinte du ciel du moment pour que la
+     * jointure ne se voie pas.
+     */
+    scene.background = null;
     scene.fog = new THREE.Fog(skyFor(weatherRef.current), 34, 66);
 
     let quality = initialQuality();
-    const renderer = new THREE.WebGLRenderer({ antialias: quality.antialias, alpha: false });
+    const renderer = new THREE.WebGLRenderer({ antialias: quality.antialias, alpha: true });
     // Le contexte n'existe qu'une fois le rendu construit : c'est le premier
     // moment où l'on peut savoir qui rasterise, et le seul sans allouer de
     // contexte supplémentaire.
     quality = qualityForContext(renderer.getContext()) ?? quality;
+    // Transparent : ce qui n'est pas la ferme laisse voir le ciel saisonnier.
+    renderer.setClearColor(0x000000, 0);
     renderer.setPixelRatio(quality.pixelRatio);
     renderer.shadowMap.enabled = quality.shadows;
     // PCFSoftShadowMap est déprécié depuis r185 : le renderer le remplace de
@@ -1970,7 +1985,6 @@ export function IsoFarmView({
       timer.update();
       const t = timer.getElapsed();
       const sky = skyFor(weatherRef.current);
-      scene.background = new THREE.Color(sky);
       if (scene.fog instanceof THREE.Fog) scene.fog.color.setHex(sky);
       hexGroup.rotation.y = Math.sin(t * 0.05) * 0.02;
 

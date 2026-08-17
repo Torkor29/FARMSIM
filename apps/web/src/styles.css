@@ -3976,3 +3976,141 @@ button.tiny {
 .herd-env b { font-weight: 800; color: var(--ink); }
 .herd-env .cold { color: var(--info); }
 .herd-env .hot { color: var(--danger); }
+
+/* ==========================================================================
+   CIEL SAISONNIER
+   ==========================================================================
+   Le fond de la ferme était un dégradé fixe — deux couleurs codées en dur,
+   les mêmes en janvier et en juillet. La saison était calculée et écrite dans
+   le rail, mais jamais donnée à voir.
+
+   Tout est en CSS : la scène 3D occupe déjà la carte graphique, ce fond ne
+   doit rien lui prendre. Aucune animation ne tourne en continu au-delà de
+   nuages très lents, et `prefers-reduced-motion` les arrête.
+   ========================================================================== */
+
+.season-sky {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  overflow: hidden;
+  pointer-events: none;
+}
+
+.season-layer {
+  position: absolute;
+  inset: 0;
+  background:
+    radial-gradient(ellipse 90% 55% at 50% -10%, var(--sky-haze) 0%, transparent 62%),
+    linear-gradient(180deg, var(--sky-top) 0%, var(--sky-bottom) 100%);
+}
+
+/* Le fondu : l'ancienne saison s'efface pendant que la nouvelle apparaît. */
+.season-layer.entering { animation: season-in 1.5s ease both; }
+.season-layer.leaving { animation: season-out 1.5s ease both; }
+@keyframes season-in { from { opacity: 0; } to { opacity: 1; } }
+@keyframes season-out { from { opacity: 1; } to { opacity: 0; } }
+
+/* Le soleil se place dans le ciel **dégagé** : plus haut il passait derrière
+   le bandeau de cotations, plus à droite derrière le rail des panneaux. */
+.sky-sun {
+  position: absolute;
+  top: 15%;
+  right: 26%;
+  width: clamp(56px, 7vw, 104px);
+  aspect-ratio: 1;
+  border-radius: 50%;
+  background: var(--sky-sun);
+  box-shadow: 0 0 60px 24px var(--sky-sun-glow);
+}
+/* L'hiver a le soleil bas et pâle : il descend sur l'horizon. */
+.season-sky[data-season="WINTER"] .sky-sun { top: 26%; }
+.season-sky[data-season="SUMMER"] .sky-sun { top: 12%; }
+
+.sky-cloud {
+  position: absolute;
+  border-radius: 999px;
+  background: var(--sky-cloud);
+  opacity: var(--sky-cloud-opacity);
+  filter: blur(1px);
+}
+.sky-cloud::before,
+.sky-cloud::after {
+  content: "";
+  position: absolute;
+  border-radius: 999px;
+  background: inherit;
+}
+.sky-cloud.c1 {
+  top: 12%; left: -18%;
+  width: 190px; height: 46px;
+  animation: cloud-drift 190s linear infinite;
+}
+.sky-cloud.c1::before { top: -18px; left: 34px; width: 84px; height: 62px; }
+.sky-cloud.c1::after { top: -10px; right: 30px; width: 62px; height: 48px; }
+.sky-cloud.c2 {
+  top: 26%; left: -30%;
+  width: 140px; height: 36px;
+  animation: cloud-drift 260s linear infinite 40s;
+}
+.sky-cloud.c2::before { top: -14px; left: 26px; width: 66px; height: 48px; }
+.sky-cloud.c3 {
+  top: 5%; left: -45%;
+  width: 230px; height: 52px;
+  animation: cloud-drift 330s linear infinite 110s;
+}
+.sky-cloud.c3::before { top: -20px; left: 60px; width: 96px; height: 70px; }
+@keyframes cloud-drift {
+  from { transform: translateX(0); }
+  to { transform: translateX(180vw); }
+}
+
+/* —— Précipitations ——
+   Elles suivent la météo, pas le calendrier : il neige en hiver mais pas tous
+   les jours, et une averse d'été existe aussi. Deux dégradés répétés qui
+   défilent — pas une particule de plus à simuler. */
+.sky-precip {
+  position: absolute;
+  inset: -10% 0 0;
+  pointer-events: none;
+}
+.sky-precip.rain {
+  background-image: repeating-linear-gradient(
+    102deg,
+    rgba(255, 255, 255, 0.42) 0 1px,
+    transparent 1px 9px
+  );
+  animation: precip-fall 0.75s linear infinite;
+  opacity: 0.55;
+}
+.sky-precip.snow {
+  background-image:
+    radial-gradient(circle at 20% 20%, rgba(255, 255, 255, 0.9) 0 2px, transparent 2px),
+    radial-gradient(circle at 70% 60%, rgba(255, 255, 255, 0.75) 0 2px, transparent 2px);
+  background-size: 90px 90px, 130px 130px;
+  animation: precip-fall 7s linear infinite;
+  opacity: 0.8;
+}
+@keyframes precip-fall {
+  from { transform: translateY(-12%); }
+  to { transform: translateY(0); }
+}
+
+/* Le fond de la coquille laisse la place au ciel : il ne reste qu'un repli
+   pour la fraction de seconde où le composant n'est pas encore monté. */
+.game-stage:has(.season-sky) { background: var(--sky-bottom, #eef3f7); }
+
+/* Au téléphone il n'y a pas de rail à droite : le soleil retrouve le bord. */
+@media (max-width: 820px) {
+  .sky-sun { right: 12%; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sky-cloud,
+  .sky-precip,
+  .season-layer.entering,
+  .season-layer.leaving {
+    animation: none;
+  }
+  .season-layer.leaving { display: none; }
+}

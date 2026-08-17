@@ -44,6 +44,7 @@ import {
   currentObjective,
   evaluateObjectives,
   type GuideSnapshot,
+  type Season,
   type Specialization,
   CROP_DEFS,
   GOOD_DEFS,
@@ -105,7 +106,16 @@ import {
   type CellContext,
   type CellContextItem,
 } from "./ui/desktop/CellContextMenu";
+import { SEASON_NAMES, SeasonSky } from "./ui/SeasonSky";
 import { useIsMobile } from "./use-media-query";
+
+/** Ce que la saison change vraiment, en une phrase. */
+const SEASON_HINTS: Record<Season, string> = {
+  SPRING: "l'herbe repousse vite, les bêtes se nourrissent au pré",
+  SUMMER: "chaleur : surveillez les bêtes enfermées",
+  AUTUMN: "la pousse ralentit, constituez les stocks",
+  WINTER: "l'herbe ne pousse plus — rentrez les bêtes ou nourrissez-les",
+};
 import { DevPanel, type DevGrant } from "./DevPanel";
 import { NO_ALERTS, tabBadge, useAwayAlerts, useNotificationState, type FarmAlerts } from "./use-alerts";
 
@@ -601,6 +611,8 @@ export function App() {
   const [hoverCell, setHoverCell] = useState<{ x: number; y: number } | null>(null);
   /** Menu contextuel de case — bureau seulement, le doigt n'a pas de clic droit. */
   const [cellMenu, setCellMenu] = useState<CellContext | null>(null);
+  /** Saison affichée la dernière fois : sert à annoncer le passage. */
+  const lastSeasonRef = useRef<Season | null>(null);
   const [toastTick, setToastTick] = useState(0);
   const [toastTone, setToastTone] = useState<"good" | "warn">("good");
   const [worldContinents, setWorldContinents] = useState<WorldContinent[]>([]);
@@ -1224,6 +1236,24 @@ export function App() {
     weather.find((w) => w.zoneCode === zoneCode)?.state ??
     "CLEAR";
   const weatherLabel = WEATHER_LABELS[localWeather] ?? localWeather;
+
+  /**
+   * Annonce le passage d'une saison à l'autre.
+   *
+   * Le ciel change tout seul, mais un changement de décor sans un mot laisse
+   * douter de ce qu'on vient de voir — d'autant que la saison décide de la
+   * pousse de l'herbe et du froid que subissent les bêtes. On ne l'annonce
+   * pas au premier rendu : arriver en été n'est pas « passer à l'été ».
+   */
+  useEffect(() => {
+    if (!player) return;
+    const avant = lastSeasonRef.current;
+    lastSeasonRef.current = season;
+    if (avant === null || avant === season) return;
+    flashToast(`${SEASON_NAMES[season]} — ${SEASON_HINTS[season]}`);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [season, player?.id]);
+
   const avgProgress = useMemo(() => {
     const sims = parcelDetail?.cellSims ?? [];
     if (!sims.length) return 0;
@@ -3416,6 +3446,10 @@ export function App() {
 
   return (
     <div className={`game-stage${isMobile ? " mobile" : ""}`}>
+      {/* Le ciel, derrière la scène 3D. Le fond était un dégradé fixe : la
+          saison était calculée et écrite dans le rail, mais jamais donnée à
+          voir. */}
+      <SeasonSky season={season} weather={localWeather} />
       <div className="iso-layer">
         {parcel ? (
           <Suspense fallback={<SceneLoading label="Chargement de la ferme…" />}>
