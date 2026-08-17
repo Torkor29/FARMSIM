@@ -53,7 +53,17 @@ const PALETTES: Record<BuildingType, BuildingPalette> = {
   SILO: { roof: 0x2f7d6b, wall: 0xc8ccd0, timber: 0x8a704e, metal: 0xb6bcc2 },
   HAY_BARN: { roof: 0x2f7d6b, wall: 0xb0824c, timber: 0x8a5f38, metal: 0xa9b0b6 },
   MACHINE_SHED: { roof: 0x2f7d6b, wall: 0xc08a52, timber: 0x8a5f38, metal: 0xa9b0b6 },
-  CATTLE_BARN: { roof: 0x2f7d6b, wall: 0xb5793f, timber: 0x7d5330, metal: 0xa9b0b6 },
+  // Bardage éclairci, ossature assombrie.
+  //
+  // La grange était le seul gros bâtiment sans contraste : mur à 48 % de
+  // luminosité, bois à 34 %, toiture à 34 %. Quatorze points d'écart entre
+  // toutes ses matières — donc ni ossature, ni soubassement, ni rive visibles,
+  // et un parallélépipède uni de trois cases sur trois. La maison
+  // d'exploitation, qui se lit bien, en compte trente-huit à quarante-huit.
+  // On monte le bardage à 68 % et on descend l'ossature à 29 % : trente-neuf
+  // points, du même ordre que la maison, sans toucher à la toiture verte qui
+  // fait l'unité de la ferme.
+  CATTLE_BARN: { roof: 0x2f7d6b, wall: 0xd8b485, timber: 0x6b452a, metal: 0xa9b0b6 },
   PIGSTY: { roof: 0x9a5f3a, wall: 0xd6c6a8, timber: 0x8a6a45, metal: 0xa9b0b6 },
   HENHOUSE: { roof: 0xc0503a, wall: 0xdcc38c, timber: 0x8a6a45, metal: 0xa9b0b6 },
   SHEEPFOLD: { roof: 0x4f7f8c, wall: 0xc2a377, timber: 0x7d5330, metal: 0xa9b0b6 },
@@ -562,15 +572,57 @@ function buildLivestockBarn(
   const bd = d - EDGE * 2 - 0.12;
   const { eave, rise, doorW, doorH } = opts;
 
-  claddedWall(root, bw, eave, 0.08, [0, eave / 2, -bd / 2], undefined, 6);
-  claddedWall(root, bd, eave, 0.08, [-bw / 2, eave / 2, 0], [0, HALF, 0], 5);
-  claddedWall(root, bd, eave, 0.08, [bw / 2, eave / 2, 0], [0, HALF, 0], 5);
-  // Façade : deux trumeaux encadrant l'ouverture.
   const pier = (bw - doorW) / 2;
+  /**
+   * Soubassement maçonné, puis bardage au-dessus.
+   *
+   * Sans lui, la grange n'était que quatre grands pans de bois identiques :
+   * le plus gros bâtiment du jeu se lisait comme un carton posé sur l'herbe.
+   * C'est le motif que porte déjà l'atelier, et il suffit à donner une assise.
+   *
+   * Le soubassement s'interrompt au droit de la porte : un bourrelet de béton
+   * en travers du seuil ferait buter les bêtes qui sortent.
+   */
+  const socle = 0.14;
+  const murH = eave - socle;
+  root.add("wallDark", box(bw + 0.04, socle, 0.11, [0, socle / 2, -bd / 2]));
   for (const side of [-1, 1]) {
-    claddedWall(root, pier, eave, 0.08, [(side * (doorW + pier)) / 2, eave / 2, bd / 2], undefined, 2);
+    root.add("wallDark", box(0.11, socle, bd + 0.04, [(side * bw) / 2, socle / 2, 0]));
+    root.add("wallDark", box(pier, socle, 0.11, [(side * (doorW + pier)) / 2, socle / 2, bd / 2]));
+  }
+
+  claddedWall(root, bw, murH, 0.08, [0, socle + murH / 2, -bd / 2], undefined, 6);
+  /**
+   * Claire-voie sous les rives, sur les deux longs pans.
+   *
+   * C'est ce qui distingue une stabulation d'un hangar fermé : le haut des
+   * longs côtés reste ouvert pour que l'air passe au-dessus des bêtes. La
+   * bande d'ombre qu'elle creuse casse le grand pan de bardage uni — le
+   * bâtiment cesse d'être un parallélépipède et devient une étable.
+   */
+  const claire = 0.16;
+  const bardage = murH - claire;
+  for (const side of [-1, 1]) {
+    claddedWall(root, bd, bardage, 0.08, [(side * bw) / 2, socle + bardage / 2, 0], [0, HALF, 0], 5);
+    // Poteaux dans l'ouverture : la panne sablière doit bien reposer sur
+    // quelque chose, sinon la toiture flotte au-dessus d'un vide.
+    for (let i = 0; i < 5; i++) {
+      const z = -bd / 2 + (bd * (i + 0.5)) / 5;
+      root.add("timber", box(0.07, claire, 0.07, [(side * bw) / 2, socle + bardage + claire / 2, z]));
+    }
+    root.add("timber", box(0.1, 0.06, bd + 0.04, [(side * bw) / 2, eave - 0.03, 0]));
+  }
+  // Façade : deux trumeaux encadrant l'ouverture.
+  for (const side of [-1, 1]) {
+    claddedWall(root, pier, murH, 0.08, [(side * (doorW + pier)) / 2, socle + murH / 2, bd / 2], undefined, 2);
   }
   root.add("timber", box(bw + 0.1, 0.08, 0.1, [0, eave - 0.02, bd / 2]));
+  // Bandeau de rive tout autour : il pose une ligne d'ombre sous l'avancée de
+  // toit, sans quoi le bardage et la toiture se touchent sans transition.
+  root.add("timber", box(bw + 0.12, 0.05, 0.06, [0, eave + 0.01, -bd / 2 - 0.02]));
+  for (const side of [-1, 1]) {
+    root.add("timber", box(0.06, 0.05, bd + 0.12, [(side * (bw + 0.1)) / 2, eave + 0.01, 0]));
+  }
 
   const ridge = gableRoof(root, bw, bd, eave, rise, { mat: lvl >= 4 ? "corrugate" : "roof" });
   gableEnd(root, bw, eave, rise, -bd / 2 + 0.04, "wall");
@@ -593,6 +645,12 @@ function buildLivestockBarn(
     vane.add("corrugate", box(0.13, 0.012, 0.04, [0, 0.11, 0], [0, (i * Math.PI) / 4, 0.3]));
   }
   root.add("roofDark", cyl(0.05, 0.07, 0.06, 8, [0, ridge + 0.02, -bd * 0.16]));
+  // Deux lanterneaux le long du faîtage : ils cassent le grand pan de toiture,
+  // qui était sinon le plus vaste aplat uni de toute la ferme.
+  for (const z of [bd * 0.1, bd * 0.32]) {
+    root.add("chrome", box(0.26, 0.035, 0.16, [0, ridge - 0.01, z]));
+    root.add("roofDark", box(0.29, 0.02, 0.19, [0, ridge + 0.02, z]));
+  }
 
   if (lvl >= 5) solar(root, bw, bd, eave, rise, -bd * 0.18);
   yardDressing(root, w, d, 7);
@@ -930,6 +988,28 @@ function buildYard(
   const hd = (d - EDGE * 2) / 2;
   const ground = kind === "PADDOCK" ? "foliage" : "dirt";
   root.add(ground, box(hw * 2, 0.03, hd * 2, [0, 0.015, 0]));
+
+  /**
+   * Usure du sol : un pré n'est pas un aplat.
+   *
+   * Un unique rectangle vert vif se lisait comme un autocollant collé sur le
+   * champ. Les bêtes creusent un passage devant le portail et pèlent l'herbe
+   * là où elles piétinent : ce sont ces marques qui font croire à l'enclos.
+   */
+  const usure = (n: number) => {
+    const s = Math.sin((n + 17) * 91.7) * 24634.6345;
+    return s - Math.floor(s);
+  };
+  if (kind === "PADDOCK") {
+    // La coulée du portail : le chemin que les bêtes tracent en sortant.
+    root.add("dirt", box(0.32, 0.008, hd * 1.05, [0, 0.034, hd * 0.45]));
+    for (let i = 0; i < 5; i++) {
+      const x = (usure(i) - 0.5) * hw * 1.5;
+      const z = (usure(i + 9) - 0.5) * hd * 1.5;
+      const r = 0.07 + usure(i + 23) * 0.1;
+      root.add("dirt", box(r * 2, 0.006, r * 1.4, [x, 0.033, z], [0, usure(i + 31) * 3, 0]));
+    }
+  }
 
   const hgt = kind === "HEN_YARD" ? 0.26 : kind === "PIG_YARD" ? 0.24 : 0.32;
   const gateW = 0.46;

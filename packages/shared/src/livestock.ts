@@ -299,7 +299,21 @@ export function welfareIndex(happiness: number): number {
 export const GRAZING_BLOCKING_WEATHER: readonly WeatherState[] = ["STORM", "SNOW"];
 
 /** Motif de refus de sortie, tel qu'il s'affiche dans l'UI. */
-export type GrazingRefusal = "NO_PADDOCK" | "PADDOCK_FULL" | "BAD_WEATHER" | "WRONG_SPECIES";
+export type GrazingRefusal =
+  | "NO_PADDOCK"
+  | "PADDOCK_FULL"
+  | "BAD_WEATHER"
+  | "WRONG_SPECIES"
+  /**
+   * Étable vide.
+   *
+   * Ce motif manquait, et faute de mieux le serveur renvoyait `NO_PADDOCK`
+   * pour une étable sans bêtes. Le joueur qui venait de bâtir son enclos
+   * lisait donc, dans la même fiche, « Enclos de pâture attenant · 18 places »
+   * en vert puis « Aucun enclos accolé à l'étable » en rouge — deux phrases
+   * contradictoires dont la seconde était simplement fausse.
+   */
+  | "NO_ANIMALS";
 
 /* ------------------------------------------------------------------ */
 /* Alimentation — la ration conditionne tout le reste                  */
@@ -376,6 +390,7 @@ export const GRAZING_REFUSAL_LABELS: Record<GrazingRefusal, string> = {
   PADDOCK_FULL: "Enclos saturé",
   BAD_WEATHER: "Météo impraticable",
   WRONG_SPECIES: "Cette aire de sortie n’est pas faite pour cette espèce",
+  NO_ANIMALS: "Aucune bête à sortir",
 };
 
 /**

@@ -5339,7 +5339,9 @@ app.get("/parcels/:id/livestock", async (req, res) => {
           kind: b.herd.kind as AnimalKind,
           paddockKind: kindForBarn(b.type) ?? "COW",
         })
-      : { ok: false as const, reason: "NO_PADDOCK" as const };
+      // Étable vide : dire pourquoi, et non « pas d'enclos » — c'était faux, et
+      // ça contredisait le bandeau vert affiché juste au-dessus.
+      : { ok: false as const, reason: "NO_ANIMALS" as const };
 
     const feedPer = herdKind ? (FEED_BASE[herdKind] ?? HUNGER.unitsPerAnimalPerCycle) : HUNGER.unitsPerAnimalPerCycle;
     barns.push({

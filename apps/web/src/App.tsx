@@ -1079,21 +1079,22 @@ export function App() {
       const barnB = all.find((b) => b.id === barn.buildingId);
       if (!barnB) continue;
       const barnDef = BUILDING_DEFS[barnB.type];
+      // L'adjacence se juge sur l'emprise **posée**, orientation comprise —
+      // comme le fait déjà le serveur. Lire `def.w × def.h` déclarait collés
+      // deux bâtiments qui ne se touchent pas, ou l'inverse, dès qu'un des
+      // deux était tourné d'un quart : une porcherie 2×3 tournée occupe 3×2.
       const barnBox = {
         originX: barnB.originX,
         originY: barnB.originY,
-        w: barnDef.w,
-        h: barnDef.h,
+        ...orientedFootprint(barnB.type, barnB.rotation ?? 0),
       };
       const yardType = barn.yardType;
       const paddockB = all.find((b) => {
         if (b.type !== yardType) return false;
-        const d = BUILDING_DEFS[yardType];
         return isPaddockAdjacent(barnBox, {
           originX: b.originX,
           originY: b.originY,
-          w: d.w,
-          h: d.h,
+          ...orientedFootprint(yardType, b.rotation ?? 0),
         });
       });
       const outside = Boolean(herd.grazingUntil && herd.grazingUntil > now && paddockB);
@@ -3698,6 +3699,12 @@ export function App() {
             setTool("BUILD");
             setBuildType(yardType);
             setSelectedCells([]);
+            // Second chemin vers la construction, et il avait été oublié : la
+            // feuille d'élevage restait ouverte par-dessus la scène, si bien
+            // qu'on ne voyait pas que la demande avait été prise en compte. Le
+            // fantôme se pose tout seul derrière (voir l'effet plus haut) —
+            // encore faut-il pouvoir le regarder.
+            if (isMobile) setSheet(null);
             flashToast(
               yardType === "PIG_YARD"
                 ? "Posez la courette contre un bord de la porcherie"
