@@ -255,6 +255,14 @@ export function happinessTarget(input: {
   crowding: number;
   /** Pénalité de faim, cf. `hungerPenalty()` */
   hunger?: number;
+  /**
+   * Pénalité de litière, cf. `beddingPenalty()`.
+   *
+   * Facultative comme la faim : les fonctions de ce module restent pures et
+   * appelables sans, c'est le serveur qui la calcule. Une bête couchée sur le
+   * béton dort mal — moins grave que la faim, mais cela se voit sur le lait.
+   */
+  bedding?: number;
 }): number {
   const span = HAPPINESS.grazedCeiling - HAPPINESS.confinedFloor;
   const freshness = input.hasPaddock
@@ -263,7 +271,10 @@ export function happinessTarget(input: {
   const base = HAPPINESS.confinedFloor + span * freshness;
   // La faim passe avant le confort : une bête affamée ne se console pas d'un
   // beau pré, et la pénalité peut donc pousser sous le plancher.
-  const malus = crowdingPenalty(input.crowding) + Math.max(0, input.hunger ?? 0);
+  const malus =
+    crowdingPenalty(input.crowding) +
+    Math.max(0, input.hunger ?? 0) +
+    Math.max(0, input.bedding ?? 0);
   return clamp(base - malus, HAPPINESS.min, HAPPINESS.max);
 }
 
@@ -286,6 +297,8 @@ export function tickHappiness(input: {
   elapsedMs: number;
   /** Pénalité de faim, cf. `hungerPenalty()` */
   hunger?: number;
+  /** Pénalité de litière, cf. `beddingPenalty()` */
+  bedding?: number;
 }): number {
   const current = clamp(input.happiness, HAPPINESS.min, HAPPINESS.max);
   const hours = Math.max(0, input.elapsedMs) / HOUR_MS;

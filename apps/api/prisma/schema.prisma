@@ -254,6 +254,8 @@ model Herd {
   mortalityDebt Float     @default(0)
   /// Fosse à fumier, en tonnes — reste au bâtiment, pas au silo
   manureTons    Float     @default(0)
+  /// Paille en litière, en tonnes — le pont aller depuis le céréalier
+  beddingTons   Float     @default(0)
 }
 
 model Building {

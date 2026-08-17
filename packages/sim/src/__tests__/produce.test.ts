@@ -36,11 +36,23 @@ describe("marchandises", () => {
     expect(SELLABLE_GOODS).toContain("MEAT");
   });
 
-  it("ne laisse acheter que le fourrage au négociant", () => {
+  it("ne laisse acheter que les intrants, jamais sa propre production", () => {
     const achetables = (Object.keys(GOOD_DEFS) as TradeGood[]).filter(
       (g) => GOOD_DEFS[g].purchasable,
     );
-    expect(achetables).toEqual(["HAY", "STRAW"]);
+    // Le fumier a rejoint la liste, et c'est voulu. Il était `purchasable:
+    // false`, ce qui fermait le retour du pont entre les deux métiers : le
+    // fumier d'un éleveur ne pouvait fertiliser que ses propres champs, et un
+    // céréalier n'avait aucun moyen de s'en procurer — alors que l'engrais est
+    // une de ses grosses dépenses et que `manure.ts` s'annonce lui-même comme
+    // « le pont retour de l'éleveur vers le céréalier ».
+    //
+    // L'invariant que ce test défend n'a pas changé : on achète des intrants
+    // (litière, fourrage, fertilisant), jamais ce qu'on est censé produire.
+    expect(achetables).toEqual(["HAY", "STRAW", "MANURE"]);
+    for (const récolte of ["WHEAT", "MAIZE", "MILK", "MEAT"] as TradeGood[]) {
+      expect(GOOD_DEFS[récolte].purchasable).toBe(false);
+    }
   });
 
   it("fait vendre le négociant plus cher qu'il ne rachète", () => {

@@ -166,8 +166,15 @@ export const GOOD_DEFS: Record<TradeGood, GoodDef> = {
     unit: "t",
     basePrice: 55,
     sellable: true,
-    purchasable: false,
+    // Le céréalier doit pouvoir en acheter : c'est la moitié retour du pont
+    // entre les deux métiers. `purchasable: false` fermait la boucle — le
+    // fumier d'un éleveur ne pouvait fertiliser que ses propres champs, et un
+    // céréalier n'avait aucun moyen de s'en procurer, alors que l'engrais est
+    // une de ses grosses dépenses.
+    purchasable: true,
     perishable: false,
+    // Reste local : on ne fait pas traverser le monde à un tas de fumier, et
+    // le prix est un prix de voisin, pas un cours mondial.
     localOnly: true,
   },
 };

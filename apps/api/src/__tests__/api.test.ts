@@ -306,3 +306,131 @@ describe("entrées invalides", () => {
     }
   });
 });
+
+/**
+ * Litière : le pont aller du céréalier vers l'éleveur.
+ *
+ * La paille était produite à la moisson, pressable et vendable depuis
+ * longtemps — mais **rien ne la consommait**, alors que `forage.ts` l'annonçait
+ * lui-même comme « le pont céréalier ↔ éleveur (litière) ». Ces tests tiennent
+ * la route qui manquait, au niveau de la requête : ce sont les refus qui
+ * comptent le plus, puisque c'est là qu'on renseigne ou qu'on égare le joueur.
+ */
+describe("litière", () => {
+  /** Installe un éleveur, son étable et un troupeau. */
+  async function eleveurAvecEtable() {
+    const moi = await inscrire("Eleveur");
+    const monde = await appel("/world/AUR");
+    const regions = (monde.corps as unknown as {
+      regions: { parcels: { id: string; taken: boolean }[] }[];
+    }).regions;
+    let parcelId = "";
+    for (const r of regions) {
+      const libre = (r.parcels ?? []).find((p) => !p.taken);
+      if (libre) {
+        parcelId = libre.id;
+        break;
+      }
+    }
+    assert.ok(parcelId, "il faut une parcelle libre");
+    await appel("/world/claim", {
+      methode: "POST",
+      corps: { userId: moi.id, specialization: "ELEVEUR", parcelId },
+      jeton: moi.jeton,
+    });
+    await appel("/dev/grant", {
+      methode: "POST",
+      corps: { userId: moi.id, crd: 300_000 },
+      jeton: moi.jeton,
+    });
+    const me = await appel("/auth/me", { jeton: moi.jeton });
+    const pid = (me.corps as unknown as { player: { farm: { parcels: { id: string }[] } } }).player
+      .farm.parcels[0]!.id;
+    await appel(`/parcels/${pid}/build`, {
+      methode: "POST",
+      corps: { userId: moi.id, type: "CATTLE_BARN", x: 2, y: 2, rotation: 0 },
+      jeton: moi.jeton,
+    });
+    const el = await appel(`/parcels/${pid}/livestock`, { jeton: moi.jeton });
+    const barn = (el.corps as unknown as {
+      barns: { buildingId: string; herd: { id: string } | null }[];
+    }).barns[0]!;
+    if (!barn.herd) {
+      await appel(`/buildings/${barn.buildingId}/animals`, {
+        methode: "POST",
+        corps: { userId: moi.id, count: 4 },
+        jeton: moi.jeton,
+      });
+    }
+    const el2 = await appel(`/parcels/${pid}/livestock`, { jeton: moi.jeton });
+    const b2 = (el2.corps as unknown as {
+      barns: {
+        herd: { id: string; beddingTons?: number; beddingCover?: number; beddingNeed?: number } | null;
+      }[];
+    }).barns[0]!;
+    assert.ok(b2.herd, "l'étable doit héberger un troupeau");
+    return { moi, pid, herd: b2.herd! };
+  }
+
+  it("refuse de pailler sans paille, et dit où en trouver", async () => {
+    const { moi, herd } = await eleveurAvecEtable();
+    const r = await appel(`/herds/${herd.id}/bedding`, {
+      methode: "POST",
+      corps: { userId: moi.id },
+      jeton: moi.jeton,
+    });
+    assert.equal(r.statut, 409);
+    // Le message doit orienter : un refus qui ne dit pas quoi faire est un
+    // cul-de-sac, comme l'était « la case n'a pas de chaumes ».
+    assert.match(String((r.corps as { error?: string }).error), /paille/i);
+  });
+
+  it("étale la paille achetée, et remplit la litière", async () => {
+    const { moi, pid, herd } = await eleveurAvecEtable();
+    const achat = await appel("/market/buy", {
+      methode: "POST",
+      corps: { userId: moi.id, commodity: "STRAW", tons: 4 },
+      jeton: moi.jeton,
+    });
+    assert.equal(achat.statut, 200, `achat refusé : ${JSON.stringify(achat.corps)}`);
+
+    const r = await appel(`/herds/${herd.id}/bedding`, {
+      methode: "POST",
+      corps: { userId: moi.id },
+      jeton: moi.jeton,
+    });
+    assert.equal(r.statut, 200, JSON.stringify(r.corps));
+    const posée = (r.corps as { tons: number }).tons;
+    assert.ok(posée > 0, "il faut de la paille sur le sol");
+
+    const el = await appel(`/parcels/${pid}/livestock`, { jeton: moi.jeton });
+    const après = (el.corps as unknown as {
+      barns: { herd: { beddingCover?: number; beddingTons?: number } | null }[];
+    }).barns[0]!.herd!;
+    assert.equal(après.beddingCover, 1, "la litière doit être complète après un paillage");
+    assert.ok((après.beddingTons ?? 0) > 0);
+  });
+
+  it("n'accepte pas qu'un joueur paille l'étable d'un autre", async () => {
+    const { herd } = await eleveurAvecEtable();
+    const voisin = await inscrire("Curieux");
+    const r = await appel(`/herds/${herd.id}/bedding`, {
+      methode: "POST",
+      corps: { userId: voisin.id },
+      jeton: voisin.jeton,
+    });
+    assert.ok(r.statut === 403 || r.statut === 401, `${r.statut} — doit être refusé`);
+  });
+
+  it("achète du fumier : le retour du pont est ouvert", async () => {
+    // `MANURE` était `purchasable: false`, ce qui fermait la moitié retour :
+    // le céréalier ne pouvait pas se procurer le fumier de l'éleveur.
+    const { moi } = await eleveurAvecEtable();
+    const r = await appel("/market/buy", {
+      methode: "POST",
+      corps: { userId: moi.id, commodity: "MANURE", tons: 2 },
+      jeton: moi.jeton,
+    });
+    assert.equal(r.statut, 200, `le fumier doit être achetable : ${JSON.stringify(r.corps)}`);
+  });
+});
