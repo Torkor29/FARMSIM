@@ -35,6 +35,10 @@ type Props = {
   tool: Tool;
   brush: BrushSize;
   directSeed: boolean;
+  /** Laisser l'andain derrière la moissonneuse. */
+  keepSwath: boolean;
+  /** La culture sélectionnée laisse-t-elle de la paille ? L'herbe, non. */
+  swathUseful: boolean;
   /** Nombre de cases mûres, pour la pastille de la famille Récolte. */
   readyCount: number;
   strawCount: number;
@@ -45,6 +49,7 @@ type Props = {
   onTool: (t: Tool) => void;
   onBrush: (n: BrushSize) => void;
   onDirectSeed: () => void;
+  onKeepSwath: () => void;
   onMarket: () => void;
   onGuide: () => void;
 };
@@ -66,6 +71,8 @@ export function ToolRail({
   tool,
   brush,
   directSeed,
+  keepSwath,
+  swathUseful,
   readyCount,
   strawCount,
   baleCount,
@@ -74,6 +81,7 @@ export function ToolRail({
   onTool,
   onBrush,
   onDirectSeed,
+  onKeepSwath,
   onMarket,
   onGuide,
 }: Props) {
@@ -160,6 +168,28 @@ export function ToolRail({
                 {directSeed ? "✓" : ""}
               </span>
               Semis direct
+            </button>
+          )}
+          {/* L'andain ne se propose que là où il existe : sur de l'herbe, ou
+              en ensilage, la plante part entière et il ne reste rien à
+              presser. Une case à cocher sans effet est pire qu'absente. */}
+          {group === "HARVEST" && tool !== "SILAGE" && (
+            <button
+              type="button"
+              className={`tool-rail-toggle${keepSwath ? " on" : ""}`}
+              aria-pressed={keepSwath}
+              disabled={!swathUseful}
+              title={
+                swathUseful
+                  ? "Laisser la paille en andain derrière la machine, pour la presser ensuite en bottes. Décoché, elle est broyée et rendue au sol."
+                  : "Cette culture ne laisse pas de paille."
+              }
+              onClick={onKeepSwath}
+            >
+              <span className="tool-rail-check" aria-hidden="true">
+                {keepSwath && swathUseful ? "✓" : ""}
+              </span>
+              Laisser l’andain
             </button>
           )}
         </div>

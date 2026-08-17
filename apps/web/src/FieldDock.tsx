@@ -39,6 +39,10 @@ type Props = {
   stockTons: number;
   crd: number;
   directSeed: boolean;
+  /** Laisser l'andain derrière la moissonneuse. */
+  keepSwath: boolean;
+  /** La culture sélectionnée laisse-t-elle de la paille ? L'herbe, non. */
+  swathUseful: boolean;
   contractor: ContractorOffer | null;
   laborQuote?: number | null;
   objective: ObjectiveView | null;
@@ -46,6 +50,7 @@ type Props = {
   onTool: (t: Tool) => void;
   onBrush: (n: 1 | 2 | 3) => void;
   onDirectSeed: () => void;
+  onKeepSwath: () => void;
   onConfirm: () => void;
   onHarvestAll: () => void;
   onContractor: () => void;
@@ -85,6 +90,8 @@ export function FieldDock({
   stockTons,
   crd,
   directSeed,
+  keepSwath,
+  swathUseful,
   contractor,
   laborQuote = null,
   objective,
@@ -92,6 +99,7 @@ export function FieldDock({
   onTool,
   onBrush,
   onDirectSeed,
+  onKeepSwath,
   onConfirm,
   onHarvestAll,
   onContractor,
@@ -172,6 +180,20 @@ export function FieldDock({
                 </button>
               );
             })}
+
+            {/* L'andain n'a de sens que sur une moisson de pailleuse : ni sur
+                l'herbe, ni en ensilage, où la plante part entière. */}
+            {harvest && tool !== "SILAGE" && swathUseful && (
+              <button
+                type="button"
+                className={`chip ${keepSwath ? "on" : ""}`}
+                aria-pressed={keepSwath}
+                title="Laisser la paille en andain, pour la presser ensuite en bottes."
+                onClick={onKeepSwath}
+              >
+                Andain
+              </button>
+            )}
 
             {plant && (
               <button

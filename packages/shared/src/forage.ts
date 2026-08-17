@@ -30,8 +30,31 @@ export const STRAW_YIELD: Record<CropCode, number> = {
 /** Une botte pèse environ 350 kg. */
 export const BALE_TONS = 0.35;
 
-export function strawYieldFor(crop: CropCode | null | undefined, asSilage: boolean): number {
-  if (asSilage || !crop) return 0;
+/** Cette culture laisse-t-elle de quoi presser ? L'herbe, non. */
+export function leavesSwath(crop: CropCode | null | undefined): boolean {
+  if (!crop) return false;
+  return (STRAW_YIELD[crop] ?? 0) > 0;
+}
+
+/**
+ * Tonnage de paille laissé au sol par une case moissonnée.
+ *
+ * `keepSwath` est le choix du moissonneur, case par case : garder l'andain
+ * pour le presser plus tard, ou le broyer derrière la machine. Broyer ne
+ * rapporte rien tout de suite, mais rend la matière au sol et évite d'avoir à
+ * repasser deux fois (presse, puis ramassage) sur une parcelle dont on ne fera
+ * rien de la paille.
+ *
+ * Par défaut on garde : c'était le seul comportement possible jusqu'ici, et
+ * une valeur par défaut qui change le rendement d'une ferme existante serait
+ * une mauvaise surprise.
+ */
+export function strawYieldFor(
+  crop: CropCode | null | undefined,
+  asSilage: boolean,
+  keepSwath = true,
+): number {
+  if (asSilage || !crop || !keepSwath) return 0;
   return STRAW_YIELD[crop] ?? 0;
 }
 

@@ -3711,6 +3711,15 @@ function afterTakeField(
   },
   now: number,
   silage = false,
+  /**
+   * Garder l'andain derrière la machine, ou le broyer.
+   *
+   * Vrai par défaut : c'était le seul comportement possible jusqu'ici, et une
+   * valeur par défaut qui prive une ferme existante de sa paille serait une
+   * régression silencieuse pour tous les appels qui ne passent pas l'option
+   * (prestataire, consignes, missions).
+   */
+  keepSwath = true,
 ) {
   const nextCuts = Math.min(MAX_HARVESTS_BEFORE_PLOW, cell.harvestsSincePlow + 1);
   if (isMowCrop(cell.crop) && grassWillRegrow(nextCuts)) {
@@ -3749,7 +3758,7 @@ function afterTakeField(
       weedsControlled: false,
       hasStubble: true,
       harvestsSincePlow: nextCuts,
-      strawTons: strawYieldFor(cell.crop, silage),
+      strawTons: strawYieldFor(cell.crop, silage, keepSwath),
       baleCount: 0,
       plantedAsSilage: false,
       ...rotationUpdate(cell, cell.crop),
@@ -4345,6 +4354,11 @@ app.post("/parcels/:id/harvest", async (req, res) => {
       userId: z.string(),
       cells: z.array(z.object({ x: z.number().int(), y: z.number().int() })).optional(),
       mode: z.enum(["GRAIN", "SILAGE"]).optional(),
+      /**
+       * Laisser l'andain derrière la machine. Absent = on garde, pour que les
+       * anciens clients et les appels internes gardent leur comportement.
+       */
+      swath: z.boolean().optional(),
     })
     .safeParse(req.body);
   if (!body.success) {
@@ -4352,6 +4366,7 @@ app.post("/parcels/:id/harvest", async (req, res) => {
     return;
   }
   const silage = body.data.mode === "SILAGE";
+  const keepSwath = body.data.swath !== false;
   // Une même route sert la moisson, la fauche et l'ensilage : l'ensilage se
   // demande explicitement, la fauche se déduit de ce qui pousse sur la case.
   const access = silage
@@ -4534,6 +4549,8 @@ app.post("/parcels/:id/harvest", async (req, res) => {
           harvestsSincePlow: cell.harvestsSincePlow,
         },
         now,
+        false,
+        keepSwath,
       );
       if (next.regrow) grassRegrew += 1;
       await tx.parcelCell.update({

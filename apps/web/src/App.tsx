@@ -48,6 +48,7 @@ import {
   CROP_DEFS,
   GOOD_DEFS,
   isMowCrop,
+  leavesSwath,
   type CropCode,
   type BuildingType,
   type MachineType,
@@ -365,6 +366,34 @@ function keepIfSame<T>(prev: T, next: T): T {
   }
 }
 
+/**
+ * Faut-il barrer l'écran pour raconter l'absence ?
+ *
+ * Le seuil était de trente secondes, et le bilan s'affichait dans une fenêtre
+ * modale. En jouant, un simple aller-retour vers un autre onglet suffisait à
+ * décrocher un panneau bloquant plein écran intitulé « Pendant votre absence —
+ * Absent 38s », qu'il fallait acquitter d'un clic pour reprendre la partie.
+ *
+ * Deux conditions désormais, et non plus une. La durée seule ne justifie rien :
+ * revenir après une heure sur une ferme où rien n'a bougé ne mérite pas un
+ * barrage. Ce qui le mérite, c'est qu'il se soit **passé** quelque chose qu'on
+ * regretterait de manquer — une culture perdue, une dépense engagée par les
+ * consignes, une bête laissée sans ration. C'est ce que porte le journal
+ * d'absence.
+ */
+const RESUME_MODAL_MS = 10 * 60_000;
+const RESUME_TOAST_MS = 60_000;
+
+function resumeImportance(resume: SessionResume | null | undefined): "modale" | "toast" | "rien" {
+  if (!resume) return "rien";
+  const eventful = (resume.absenceLog?.length ?? 0) > 0 || (resume.spent ?? 0) > 0;
+  if (eventful && resume.awayMs >= RESUME_MODAL_MS) return "modale";
+  // Assez longtemps pour que le monde ait bougé, mais rien à acquitter : le
+  // message passe, il ne barre pas.
+  if (resume.awayMs >= RESUME_TOAST_MS) return "toast";
+  return "rien";
+}
+
 function clearSession() {
   localStorage.removeItem(TOKEN_KEY);
   localStorage.removeItem("farmsim_player");
@@ -509,6 +538,15 @@ export function App() {
   const [moreOpen, setMoreOpen] = useState(false);
   /** Semer dans les chaumes plutôt que de travailler le sol au préalable */
   const [directSeed, setDirectSeed] = useState(false);
+  /**
+   * Laisser l'andain derrière la moissonneuse.
+   *
+   * Vrai par défaut : c'est ce que le jeu faisait déjà, et une ferme qui
+   * comptait sur sa paille ne doit pas la perdre parce qu'une option est
+   * apparue. Sans andain, il n'y a rien à presser — donc pas de bottes, pas
+   * de litière, pas de vente de paille.
+   */
+  const [keepSwath, setKeepSwath] = useState(true);
   const [buildType, setBuildType] = useState<BuildingType>("SILO");
   /** Quarts de tour du bâtiment à poser, 0 à 3 — touche `R` ou bouton ⟳ */
   const [buildRotation, setBuildRotation] = useState(0);
@@ -594,10 +632,12 @@ export function App() {
       setActiveParcelId(payload.player.farm.parcels[0].id);
     }
     setPlayer(payload.player);
-    if (payload.resume && payload.resume.awayMs >= 30_000) {
-      setResumeBanner(payload.resume.hint);
-      setMsg(payload.resume.hint);
-      setAbsenceLines((payload.resume.absenceLog ?? []).map((l) => l.text));
+    const poids = resumeImportance(payload.resume);
+    if (poids === "modale") {
+      setResumeBanner(payload.resume!.hint);
+      setAbsenceLines((payload.resume!.absenceLog ?? []).map((l) => l.text));
+    } else if (poids === "toast") {
+      setMsg(payload.resume!.hint);
     }
   }
 
@@ -1033,10 +1073,12 @@ export function App() {
         }
         setPlayer(me.player);
         const resume = await api<SessionResume>("/session/resume");
-        if (resume.awayMs >= 30_000) {
+        const poids = resumeImportance(resume);
+        if (poids === "modale") {
           setResumeBanner(resume.hint);
-          setMsg(resume.hint);
           setAbsenceLines((resume.absenceLog ?? []).map((l) => l.text));
+        } else if (poids === "toast") {
+          setMsg(resume.hint);
         }
         await api("/session/heartbeat", { method: "POST", body: "{}" });
       })
@@ -2052,6 +2094,24 @@ export function App() {
     });
   }, [selectedCells, parcel?.cells]);
 
+  /**
+   * Y a-t-il de la paille à espérer ici ?
+   *
+   * L'option n'est proposée que si au moins une case concernée porte une
+   * culture pailleuse. Sur de l'herbe seule, cocher « laisser l'andain »
+   * n'aurait aucun effet — et un réglage sans effet fait douter de tous les
+   * autres. Faute de sélection, on regarde ce qui est mûr : c'est ce que
+   * « Tout récolter » va prendre.
+   */
+  const swathUsefulHere = useMemo(() => {
+    const cible = selectedCells.length
+      ? selectedCells.map((sel) => parcel?.cells?.find((c) => c.x === sel.x && c.y === sel.y))
+      : (parcelDetail?.cellSims ?? [])
+          .filter((s) => s.sim.ready)
+          .map((s) => parcel?.cells?.find((c) => c.x === s.x && c.y === s.y));
+    return cible.some((cell) => leavesSwath(cell?.crop));
+  }, [selectedCells, parcel?.cells, parcelDetail?.cellSims]);
+
   const readyAreGrass = useMemo(() => {
     const ready = (parcelDetail?.cellSims ?? []).filter((s) => s.sim.ready);
     if (!ready.length) return false;
@@ -2354,7 +2414,7 @@ export function App() {
           labor?: { remaining: number; completed: boolean; payout?: number };
         }>(`/parcels/${activeParcelId}/harvest`, {
           method: "POST",
-          body: JSON.stringify({ userId: player.id, cells: workCells }),
+          body: JSON.stringify({ userId: player.id, cells: workCells, swath: keepSwath }),
         });
         const lost = r.lostCells ? ` · ${r.lostCells} perdue(s)` : "";
         setMsg(harvestGrainNote(r) + lost + wearNote(r.machine));
@@ -2516,6 +2576,7 @@ export function App() {
           userId: player.id,
           cells: visiting ? readyCells : undefined,
           mode: tool === "SILAGE" ? "SILAGE" : "GRAIN",
+          swath: keepSwath,
         }),
       });
       setMsg(tool === "SILAGE" ? `Ensilage ${r.totalTons.toFixed(2)} t` : harvestGrainNote(r));
@@ -4223,6 +4284,8 @@ export function App() {
           stockTons={totalStockTons}
           crd={player.crd}
           directSeed={directSeed}
+          keepSwath={keepSwath}
+          swathUseful={swathUsefulHere}
           contractor={visiting ? null : contractorOffer}
           laborQuote={laborQuote}
           objective={nextGoal}
@@ -4230,6 +4293,7 @@ export function App() {
           onTool={pickTool}
           onBrush={setBrush}
           onDirectSeed={() => setDirectSeed((v) => !v)}
+          onKeepSwath={() => setKeepSwath((v) => !v)}
           onConfirm={runSelectionAction}
           onHarvestAll={harvestAll}
           mowSelected={selectedAreGrass}
@@ -4256,6 +4320,8 @@ export function App() {
             tool={tool}
             brush={brush}
             directSeed={directSeed}
+            keepSwath={keepSwath}
+            swathUseful={swathUsefulHere}
             readyCount={
               visiting ? Math.min(readyCellCount, visitOrder?.remaining ?? 0) : readyCellCount
             }
@@ -4266,6 +4332,7 @@ export function App() {
             onTool={pickTool}
             onBrush={setBrush}
             onDirectSeed={() => setDirectSeed((v) => !v)}
+            onKeepSwath={() => setKeepSwath((v) => !v)}
             onMarket={() => setShowMarket(true)}
             onGuide={() => setShowGuide(true)}
           />
