@@ -62,7 +62,12 @@ export const SEASON_TEMP_C: Record<Season, number> = {
   SPRING: 12,
   SUMMER: 24,
   AUTUMN: 11,
-  WINTER: 1,
+  // L'hiver était posé à +1 °C. Avec la neige (−9) on tombait à −8, soit
+  // trois degrés sous le confort d'une vache : une pénalité de 0,10 sur 0,45
+  // possible. Autant dire que laisser le troupeau dehors tout l'hiver ne
+  // coûtait presque rien, et la décision que le froid devait créer n'existait
+  // pas. Le test d'équilibrage l'a attrapé — pas une partie jouée.
+  WINTER: -2,
 };
 
 /** Écart apporté par le temps qu'il fait `[GD]`. */
@@ -110,8 +115,14 @@ export function feltTempC(input: {
 /** Pénalité de bien-être maximale imposée par le froid ou la chaleur `[GD]`. */
 export const THERMAL_MAX_PENALTY = 0.45;
 
-/** Écart, en degrés, au-delà duquel la pénalité est à son maximum `[GD]`. */
-export const THERMAL_FULL_SPAN_C = 14;
+/**
+ * Écart, en degrés, au-delà duquel la pénalité est à son maximum `[GD]`.
+ *
+ * Ramené de 14 à 12 : avec 14, il fallait un écart irréaliste pour approcher
+ * le maximum, et toute la plage utile se tassait dans le premier quart de
+ * l'échelle.
+ */
+export const THERMAL_FULL_SPAN_C = 12;
 
 /**
  * Pénalité de bien-être due à la température, entre 0 et `THERMAL_MAX_PENALTY`.
@@ -158,11 +169,29 @@ export const GRASS_GROWTH: Record<Season, number> = {
   WINTER: 0,
 };
 
-/** Réserve d'herbe maximale d'un enclos, en tonnes par case `[GD]`. */
-export const GRASS_MAX_PER_CELL = 0.5;
+/**
+ * Réserve d'herbe maximale d'un enclos, en tonnes par case `[GD]`.
+ *
+ * Ramenée de 0,5 à 0,35 : à 0,5, un enclos plein tenait plus de sept cycles
+ * d'hiver sur ses seules réserves, et la saison morte se traversait sans
+ * jamais toucher au hangar.
+ */
+export const GRASS_MAX_PER_CELL = 0.35;
 
-/** Herbe qu'une bête au pré prélève par cycle, en tonnes `[GD]`. */
-export const GRASS_INTAKE_TONS = 0.011;
+/**
+ * Herbe qu'une bête au pré prélève par cycle, en tonnes `[GD]`.
+ *
+ * Calée sur la charge : l'enclos accueille deux bêtes par case
+ * (`PADDOCK.capacityPerCell`), donc un enclos **plein** prélève
+ * `2 × 0,035 = 0,07 t` par case et par cycle — soit un peu moins que la
+ * pousse d'été (0,075) et un peu plus que celle d'automne (0,04).
+ *
+ * C'est ce calage qui fait exister la décision : à pleine charge, l'été passe
+ * tout juste, l'automne entame la réserve, l'hiver la vide. À 0,011, la
+ * pousse valait neuf fois l'ingéré et le pré était une source inépuisable —
+ * le surpâturage était théorique et l'hiver indolore.
+ */
+export const GRASS_INTAKE_TONS = 0.035;
 
 /** Capacité d'herbe d'un enclos, en tonnes. */
 export function grassCapacity(paddockCells: number): number {

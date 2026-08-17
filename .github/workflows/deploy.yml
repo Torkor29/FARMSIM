@@ -135,11 +135,23 @@ jobs:
           # démarrage suivant une migration : le script attend jusqu'à cinq
           # minutes, la session doit lui laisser le temps.
           command_timeout: 20m
+          # Le nom du site, pour que le script teste lui-même le passage par le
+          # portier commun. Sans lui il sautait sa vérification finale et
+          # annonçait « déployé » alors que seul le conteneur avait répondu,
+          # en local sur le VPS — le HTTPS public n'était jamais éprouvé.
+          # Une variable de dépôt le rend modifiable sans toucher au workflow ;
+          # à défaut, le domaine du fichier Caddy fait foi.
           script: |
             set -euo pipefail
+            DOMAINE='${{ vars.FARMSIM_DOMAIN || 'farming-navigator.com' }}'
             # Surtout **pas** `bash /opt/farmsim/scripts/vps-deploy.sh` : le
             # script fait un `git reset --hard` sur le dépôt qui le contient,
             # donc il se réécrit lui-même pendant que bash le lit ligne à
             # ligne. On le prend depuis GitHub, comme la commande manuelle
             # déjà éprouvée sur ce serveur.
-            sudo -n bash -c 'curl -fsSL https://raw.githubusercontent.com/Torkor29/FARMSIM/main/scripts/vps-deploy.sh | bash'
+            #
+            # Le domaine se passe **dans** la commande et non par
+            # l'environnement : `sudo --preserve-env` dépend de la politique
+            # sudoers du serveur et peut être refusé sans que rien ne le dise.
+            # Là, il n'y a rien à autoriser.
+            sudo -n bash -c "curl -fsSL https://raw.githubusercontent.com/Torkor29/FARMSIM/main/scripts/vps-deploy.sh | FARMSIM_DOMAIN='$DOMAINE' bash"
