@@ -2721,8 +2721,17 @@ export function IsoFarmView({
         for (const pile of piles) {
           if (pile.fill <= 0.02) continue;
           const mesh = makeManurePile(pile.fill);
-          const px = ox + (pile.originX + pile.w / 2) * step - 0.38 * step;
-          const pz = oz + (pile.originY + pile.h) * step + 0.08 * step;
+          /**
+           * Le tas se pose au **centre d'une case**, pas entre deux.
+           *
+           * Il était décalé de 0,38 case : posé à cheval, aucun clic ne
+           * pouvait le désigner — on touchait le tas et le jeu répondait
+           * « sol labouré », ce qui décrit la case voisine. Une chose qu'on
+           * voit doit occuper une case, sans quoi elle n'est pas dans le
+           * jeu, elle est dessus.
+           */
+          const px = ox + (pile.originX + 0.5) * step;
+          const pz = oz + (pile.originY + pile.h + 0.5) * step;
           mesh.position.set(px, 0.1, pz);
           mesh.scale.setScalar(cellSize);
           // Le tas brun n'a plus d'étiquette permanente : elle répondait à

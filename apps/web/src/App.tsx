@@ -1791,6 +1791,38 @@ export function App() {
   function describeCell(x: number, y: number): string {
     const cell = grid.find((c) => c.x === x && c.y === y);
     const sim = parcelDetail?.cellSims?.find((s) => s.x === x && s.y === y);
+
+    /**
+     * Ce qui **traîne** sur la case, avant ce qu'elle est.
+     *
+     * Un andain de paille et des bottes se voient de loin — ce sont les
+     * rectangles dorés du champ moissonné — et le clic n'en disait pas un mot :
+     * il répondait « chaumes · déchaumer ou labourer », qui décrit le sol et
+     * pas ce qui est posé dessus. On regarde donc d'abord ce qu'il y a à
+     * ramasser, puis l'état du sol.
+     */
+    // Le tas de fumier occupe la case sous le coin gauche de son bâtiment —
+    // même règle de calcul que la vue 3D, pour que le clic tombe sur ce qu'on
+    // voit. Il n'était descriptible par aucun geste.
+    const tas = barns.find((b) => {
+      const bd = (parcel?.buildings ?? []).find((x) => x.id === b.buildingId);
+      if (!bd || (b.herd?.manureFill ?? 0) <= 0.02) return false;
+      const def = BUILDING_DEFS[bd.type];
+      return bd.originX === x && bd.originY + def.h === y;
+    });
+    if (tas) {
+      const pct = Math.round((tas.herd?.manureFill ?? 0) * 100);
+      return `Fosse à fumier · ${pct} % · épandez-le sur vos champs ou vendez-le`;
+    }
+
+    if ((cell?.baleCount ?? 0) > 0) {
+      const n = cell?.baleCount ?? 0;
+      return `${n} botte${n > 1 ? "s" : ""} de paille · à charger`;
+    }
+    if ((cell?.strawTons ?? 0) > 0) {
+      return `Andain de paille · ${(cell?.strawTons ?? 0).toFixed(1)} t · à presser ou ramasser`;
+    }
+
     if (!cell || cell.kind === "EMPTY") {
       const soil = cell
         ? soilSummary({
