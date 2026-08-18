@@ -1553,6 +1553,114 @@ button.ghost {
   font-weight: 800;
   cursor: pointer;
 }
+/* ——————————————————————————————————————————————————————————————
+   L'activité de l'exploitation.
+
+   Le Bureau ne pouvait pas répondre à sa propre question — « comment se porte
+   mon activité ? » — parce que le jeu ne gardait qu'un solde. Cette vue lit le
+   journal des mouvements, et garde les deux sens séparés : un atelier à
+   l'équilibre n'est pas un atelier sans activité, et c'est justement l'écart
+   entre ce qu'il encaisse et ce qu'il coûte qui décide.
+   —————————————————————————————————————————————————————————————— */
+.activite { display: grid; gap: 0.9rem; }
+.activite-vide {
+  display: grid;
+  gap: 0.4rem;
+  padding: 2rem 1.2rem;
+  text-align: center;
+  color: var(--muted);
+}
+.activite-vide strong { color: var(--ink); font-size: 1rem; }
+.activite-vide p { margin: 0 auto; max-width: 34rem; font-size: 0.86rem; line-height: 1.5; }
+
+.activite-tete {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 12rem), 1fr));
+  gap: 1px;
+  background: var(--line);
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  overflow: hidden;
+}
+.activite-tete > div { background: var(--paper); padding: 0.7rem 0.85rem; }
+.activite-tete em {
+  font-style: normal;
+  font-size: 0.68rem;
+  font-weight: 800;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.activite-tete strong {
+  display: block;
+  font-size: 1.55rem;
+  font-weight: 800;
+  line-height: 1.15;
+  font-variant-numeric: tabular-nums;
+}
+.activite-tete span { font-size: 0.74rem; color: var(--muted); }
+.gain { color: var(--ok); }
+.perte { color: var(--danger); }
+
+.activite-titre {
+  margin: 0;
+  font-size: 0.68rem;
+  font-weight: 800;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.activite-postes { display: grid; gap: 0.55rem; margin: 0; padding: 0; list-style: none; }
+.activite-postes li {
+  display: grid;
+  gap: 0.2rem;
+  padding: 0.5rem 0.65rem;
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  background: var(--paper);
+}
+.activite-poste-tete { display: flex; justify-content: space-between; align-items: baseline; gap: 0.6rem; }
+.activite-poste-tete strong { font-size: 0.86rem; font-weight: 800; }
+.activite-poste-tete b { font-size: 0.9rem; font-weight: 800; font-variant-numeric: tabular-nums; }
+/* Deux barres et non une : ce qui rentre au-dessus, ce qui sort en dessous.
+   Une barre nette masquerait un atelier qui brasse beaucoup pour rien. */
+.activite-barres { display: grid; gap: 2px; }
+.activite-barres i {
+  display: block;
+  height: 4px;
+  min-width: 2px;
+  border-radius: var(--r-pill);
+  background: currentColor;
+}
+.activite-detail { font-size: 0.72rem; color: var(--muted); }
+
+.activite-lignes { display: grid; margin: 0; padding: 0; list-style: none; border: 1px solid var(--line); border-radius: var(--r-sm); overflow: hidden; }
+.activite-lignes li {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  align-items: baseline;
+  gap: 0.6rem;
+  padding: 0.42rem 0.65rem;
+  background: var(--paper);
+  border-bottom: 1px solid var(--line);
+  font-size: 0.82rem;
+}
+.activite-lignes li:last-child { border-bottom: 0; }
+.activite-poste-tag {
+  font-size: 0.64rem;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--teal-700);
+  background: var(--teal-100);
+  padding: 0.12rem 0.36rem;
+  border-radius: 3px;
+  white-space: nowrap;
+}
+.activite-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.activite-lignes b { font-weight: 800; font-variant-numeric: tabular-nums; }
+
 /* Ce que l'usure coûte, dit en clair sur la ligne de la machine. La perte
    existait dans la simulation sans apparaître nulle part — et une mécanique
    qu'on ne voit pas ne fait prendre aucune décision. */

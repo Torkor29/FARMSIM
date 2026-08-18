@@ -1,5 +1,13 @@
 import { useEffect, useMemo, useState } from "react";
-import { WORK_LABELS, type FarmWork } from "@farmsim/shared";
+import {
+  LEDGER_HINTS,
+  LEDGER_LABELS,
+  WORK_LABELS,
+  resultat,
+  totauxParPoste,
+  type FarmWork,
+  type LedgerLine,
+} from "@farmsim/shared";
 import { ZoneMap, type ZoneMapZone } from "./ZoneMap";
 
 export type OfficeLabor = {
@@ -59,9 +67,20 @@ type Props = {
   myFarmId?: string;
   expandableIds: ReadonlySet<string>;
   onBuyLand: (parcelId: string) => void;
+  /** Mouvements récents, du plus récent au plus ancien. */
+  ledger?: LedgerLine[];
+  ledgerJours?: number;
 };
 
-type Mode = "TAKE" | "MINE" | "CONSIGNES" | "LAND";
+/**
+ * « ACTIVITE » ouvre la nouvelle vue.
+ *
+ * Le Bureau ne pouvait pas répondre à sa propre question — « comment se porte
+ * mon activité ? » — parce que le jeu ne gardait qu'un solde : aucune écriture
+ * ne disait d'où venait un TRN ni où il était parti. Le journal existe
+ * désormais ; c'est ici qu'il se lit.
+ */
+type Mode = "ACTIVITE" | "TAKE" | "MINE" | "CONSIGNES" | "LAND";
 type WorkCat = "ALL" | FarmWork;
 type SortKey = "payout" | "ttl" | "cells" | "client";
 
@@ -76,6 +95,106 @@ const WORK_CATS: { id: WorkCat; label: string }[] = [
   { id: "PLANT", label: WORK_LABELS.PLANT },
   { id: "FERTILIZE", label: WORK_LABELS.FERTILIZE },
 ];
+
+/**
+ * L'activité de l'exploitation, par atelier.
+ *
+ * Ce que le joueur cherche ici n'est pas son solde — il l'a en permanence en
+ * haut de l'écran — mais **d'où il vient**. Les deux sens sont donc gardés
+ * séparés : un élevage qui encaisse neuf cents de lait et dépense neuf cents
+ * de fourrage n'est pas un élevage inactif, c'est un élevage qui ne gagne
+ * rien. Les deux se ressemblent au solde et n'ont rien à voir en gestion.
+ */
+function Activite({
+  lignes,
+  jours,
+  crd,
+  escrow,
+}: {
+  lignes: LedgerLine[];
+  jours: number;
+  crd: number;
+  escrow: number;
+}) {
+  const postes = totauxParPoste(lignes);
+  const total = resultat(lignes);
+
+  if (!lignes.length) {
+    return (
+      <div className="activite-vide">
+        <strong>Rien à montrer pour l’instant</strong>
+        <p>
+          Vendez une récolte, payez une révision, prenez un chantier : chaque
+          mouvement s’inscrit ici, et vous saurez enfin quel atelier vous
+          rapporte.
+        </p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="activite">
+      <div className="activite-tete">
+        <div>
+          <em>Sur {jours} jours</em>
+          <strong className={total.solde >= 0 ? "gain" : "perte"}>
+            {total.solde >= 0 ? "+" : "−"}
+            {money(Math.abs(total.solde))}
+          </strong>
+          <span>
+            {money(total.recettes)} encaissés · {money(total.depenses)} dépensés
+          </span>
+        </div>
+        <div>
+          <em>Caisse</em>
+          <strong>{money(crd)}</strong>
+          {escrow > 0 && <span>dont {money(escrow)} en séquestre</span>}
+        </div>
+      </div>
+
+      <h4 className="activite-titre">Par atelier</h4>
+      <ul className="activite-postes">
+        {postes.map((p) => {
+          // La barre compare les ateliers entre eux, pas au solde : c'est le
+          // poids relatif qui dit où passe l'argent.
+          const max = Math.max(...postes.map((x) => Math.max(x.recettes, x.depenses)), 1);
+          return (
+            <li key={p.poste}>
+              <div className="activite-poste-tete">
+                <strong title={LEDGER_HINTS[p.poste]}>{LEDGER_LABELS[p.poste]}</strong>
+                <b className={p.solde >= 0 ? "gain" : "perte"}>
+                  {p.solde >= 0 ? "+" : "−"}
+                  {money(Math.abs(p.solde))}
+                </b>
+              </div>
+              <div className="activite-barres" aria-hidden="true">
+                <i className="gain" style={{ width: `${(p.recettes / max) * 100}%` }} />
+                <i className="perte" style={{ width: `${(p.depenses / max) * 100}%` }} />
+              </div>
+              <span className="activite-detail">
+                {money(p.recettes)} encaissés · {money(p.depenses)} dépensés
+              </span>
+            </li>
+          );
+        })}
+      </ul>
+
+      <h4 className="activite-titre">Derniers mouvements</h4>
+      <ul className="activite-lignes">
+        {lignes.slice(0, 40).map((l, i) => (
+          <li key={`${l.at}-${i}`}>
+            <span className="activite-poste-tag">{LEDGER_LABELS[l.poste]}</span>
+            <span className="activite-label">{l.label}</span>
+            <b className={l.amount >= 0 ? "gain" : "perte"}>
+              {l.amount >= 0 ? "+" : "−"}
+              {money(Math.abs(l.amount))}
+            </b>
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
 
 function ttlMs(iso: string): number {
   const ms = new Date(iso).getTime() - Date.now();
@@ -118,8 +237,10 @@ export function OfficePanel({
   myFarmId,
   expandableIds,
   onBuyLand,
+  ledger = [],
+  ledgerJours = 7,
 }: Props) {
-  const [mode, setMode] = useState<Mode>("TAKE");
+  const [mode, setMode] = useState<Mode>("ACTIVITE");
   const [cat, setCat] = useState<WorkCat>("ALL");
   const [query, setQuery] = useState("");
   const [sort, setSort] = useState<SortKey>("payout");
@@ -198,6 +319,7 @@ export function OfficePanel({
         <nav className="hdv-modes" aria-label="Modes">
           {(
             [
+              ["ACTIVITE", "Activité"],
               ["TAKE", `Prendre (${board.length})`],
               ["MINE", `Mes offres (${posted.length + (active ? 1 : 0)})`],
               ["CONSIGNES", "Consignes"],
@@ -210,7 +332,11 @@ export function OfficePanel({
           ))}
         </nav>
 
-        {mode === "CONSIGNES" ? (
+        {mode === "ACTIVITE" ? (
+          <div className="hdv-single">
+            <Activite lignes={ledger} jours={ledgerJours} crd={crd} escrow={escrow} />
+          </div>
+        ) : mode === "CONSIGNES" ? (
           <div className="hdv-single">
             <ConsignesForm consignes={consignes} busy={busy} onSave={onSaveConsignes} locked={escrow} crd={crd} />
           </div>

@@ -231,6 +231,9 @@ import {
   type MachineType,
   type WeatherState,
   isBreakdownKind,
+  type LedgerPoste,
+  totauxParPoste,
+  resultat,
   conditionYieldFactor,
   GREASE_COST_CRD,
   GREASE_FULL,
@@ -677,17 +680,11 @@ async function settleLaborProgress(
       { cells: parseCellJson(order.cellsJson).length },
       { contracts: 1 },
     );
-    await tx.user.update({
-      where: { id: order.providerId },
-      data: { crd: { increment: order.payoutCrd } },
-    });
+    await crediter(tx, order.providerId, order.payoutCrd, "CHANTIERS", `Chantier ${WORK_LABELS[order.work as FarmWork] ?? order.work} livré`);
   }
   const rebate = Math.max(0, Math.round((order.quoteCrd - order.payoutCrd) * 100) / 100);
   if (rebate > 0) {
-    await tx.user.update({
-      where: { id: order.clientId },
-      data: { crd: { increment: rebate } },
-    });
+    await crediter(tx, order.clientId, rebate, "CHANTIERS", "Reliquat de chantier rendu");
   }
   return { remaining: 0, completed: true, payout: order.payoutCrd };
 }
@@ -744,10 +741,7 @@ async function expireLaborOrders() {
         where: { id: o.id },
         data: { status: "CANCELLED", providerId: null },
       });
-      await tx.user.update({
-        where: { id: o.clientId },
-        data: { crd: { increment: o.escrowCrd } },
-      });
+      await crediter(tx, o.clientId, o.escrowCrd, "CHANTIERS", "Chantier expiré — séquestre rendu");
     });
   }
 }
@@ -1038,10 +1032,70 @@ class InsufficientFunds extends Error {
  * À n'appeler qu'à l'intérieur d'un `$transaction`, sans quoi l'annulation
  * ne couvre pas le reste de la route.
  */
+/**
+ * Écrit un mouvement au journal.
+ *
+ * Appelée dans la même transaction que le mouvement de solde : le journal ne
+ * peut donc pas diverger du compte. Le montant est signé — négatif en sortie —
+ * pour qu'une somme donne directement le résultat de l'atelier.
+ *
+ * Les comptes nominatifs (argent illimité) n'écrivent rien : leur solde ne
+ * bouge pas, un journal en dirait le contraire.
+ */
+/**
+ * De quel atelier vient cette marchandise.
+ *
+ * Le joueur ne se demande pas « combien m'a rapporté le code MILK », il se
+ * demande si son élevage paie sa nourriture. Le poste suit donc l'atelier
+ * d'origine, pas la marchandise.
+ */
+function posteDeVente(commodity: string): LedgerPoste {
+  return ["MILK", "EGGS", "WOOL", "MEAT", "MANURE"].includes(commodity)
+    ? "ELEVAGE"
+    : "CULTURES";
+}
+
+async function ecrireJournal(
+  tx: Prisma.TransactionClient,
+  userId: string,
+  amount: number,
+  poste: LedgerPoste,
+  label: string,
+): Promise<void> {
+  if (!Number.isFinite(amount) || amount === 0) return;
+  const owner = await tx.user.findUnique({ where: { id: userId }, select: { email: true } });
+  if (owner && estArgentIllimite(owner.email)) return;
+  await tx.ledgerEntry.create({
+    data: { userId, amount: Math.round(amount * 100) / 100, poste, label },
+  });
+}
+
+/**
+ * Crédite un joueur, et l'inscrit au journal.
+ *
+ * Les crédits étaient dix-sept `crd: { increment }` disséminés dans le
+ * fichier. Passer par un point unique est ce qui rend le journal exhaustif
+ * sans avoir à s'en souvenir à chaque fois.
+ */
+async function crediter(
+  tx: Prisma.TransactionClient,
+  userId: string,
+  amount: number,
+  poste: LedgerPoste,
+  label: string,
+): Promise<void> {
+  if (!Number.isFinite(amount)) throw new Error("Montant invalide");
+  if (!(amount > 0)) return;
+  await tx.user.update({ where: { id: userId }, data: { crd: { increment: amount } } });
+  await ecrireJournal(tx, userId, amount, poste, label);
+}
+
 async function debit(
   tx: Prisma.TransactionClient,
   userId: string,
   amount: number,
+  poste?: LedgerPoste,
+  label?: string,
 ): Promise<void> {
   // Un montant non fini vient d'un calcul qui a débordé (un `tons` à 1e308
   // suffit) : il ne doit pas se présenter au guichet, et surtout pas produire
@@ -1060,6 +1114,7 @@ async function debit(
     data: { crd: { decrement: amount } },
   });
   if (hit.count === 0) throw new InsufficientFunds(amount);
+  if (poste && label) await ecrireJournal(tx, userId, -amount, poste, label);
 }
 
 /**
@@ -2017,7 +2072,7 @@ app.post("/futures/:id/deliver", async (req, res) => {
   const market = await prisma.marketPrice.findUnique({ where: { commodity: contract.commodity } });
   await prisma.$transaction(async (tx) => {
     await drawFromStock(tx, inv, tons);
-    await tx.user.update({ where: { id: user!.id }, data: { crd: { increment: revenue } } });
+    await crediter(tx, user!.id, revenue, posteDeVente(contract.commodity), `Contrat à terme — ${contract.commodity}, ${tons} t`);
     // La marchandise part sur le marché comme n'importe quelle vente.
     await tx.marketPrice.update({
       where: { commodity: contract.commodity },
@@ -2656,7 +2711,7 @@ app.post("/auth/register", async (req, res) => {
         if (!parcel) throw new Error("PARCEL_UNAVAILABLE");
         const fresh = await tx.user.findUnique({ where: { id: u.id } });
         if (!fresh || !peutPayer(fresh, parcel.landPrice)) throw new Error("INSUFFICIENT_FUNDS");
-        await debit(tx, u.id, parcel.landPrice);
+        await debit(tx, u.id, parcel.landPrice, "TERRES", "Parcelle de départ");
         await tx.parcel.update({ where: { id: parcel.id }, data: { farmId: farm.id } });
         const machine = await tx.machine.findFirst({ where: { farmId: farm.id } });
         if (machine) {
@@ -2859,10 +2914,7 @@ app.post("/quests/:id/claim", async (req, res) => {
     // La contrainte d'unicité fait le gardien : deux clics simultanés ne
     // peuvent pas encaisser deux fois.
     await tx.questClaim.create({ data: { userId: user.id, questId: def.id } });
-    await tx.user.update({
-      where: { id: user.id },
-      data: { crd: { increment: def.reward.crd } },
-    });
+    await crediter(tx, user.id, def.reward.crd, "PROGRESSION", `Objectif — ${def.title}`);
     return grantXp(tx, user.id, "QUEST", { reward: def.reward.xp });
   });
   res.json({ quest: def.id, reward: def.reward, gain });
@@ -3188,7 +3240,7 @@ async function createLaborOrderForCells(opts: {
     };
   }
   const order = await prisma.$transaction(async (tx) => {
-    await debit(tx, user.id, money.escrow);
+    await debit(tx, user.id, money.escrow, "CHANTIERS", `Chantier posté — ${WORK_LABELS[opts.work] ?? opts.work}`);
     return tx.laborOrder.create({
       data: {
         parcelId: parcel.id,
@@ -3339,10 +3391,7 @@ app.post("/labor-orders/:id/cancel", async (req, res) => {
       where: { id: order.id },
       data: { status: "CANCELLED" },
     });
-    await tx.user.update({
-      where: { id: order.clientId },
-      data: { crd: { increment: order.escrowCrd } },
-    });
+    await crediter(tx, order.clientId, order.escrowCrd, "CHANTIERS", "Chantier annulé — séquestre rendu");
   });
   res.json({ ok: true, refunded: order.escrowCrd });
 });
@@ -3412,7 +3461,7 @@ app.post("/parcels/:id/buy", async (req, res) => {
   }
 
   const updated = await prisma.$transaction(async (tx) => {
-    await debit(tx, user.id, quote.total);
+    await debit(tx, user.id, quote.total, "TERRES", `Achat de parcelle — ${target.label}`);
     await tx.parcel.update({
       where: { id: target.id },
       data: { farmId: user.farm!.id, landPrice: quote.marketValue },
@@ -3528,7 +3577,7 @@ app.post("/parcels/:id/contractor", async (req, res) => {
     }
     const growMs = cropGrowMs(crop, 0);
     await prisma.$transaction(async (tx) => {
-      await debit(tx, user.id, total);
+      await debit(tx, user.id, total, "CHANTIERS", "Prestataire — moisson");
       for (const { x, y } of cells) {
         await tx.parcelCell.update({
           where: { parcelId_x_y: { parcelId: parcel.id, x, y } },
@@ -3562,7 +3611,7 @@ app.post("/parcels/:id/contractor", async (req, res) => {
     }
     const malus = LOST_CROP_FERTILITY_MALUS * lost.length;
     await prisma.$transaction(async (tx) => {
-      await debit(tx, user.id, total);
+      await debit(tx, user.id, total, "CHANTIERS", "Prestataire — pressage");
       for (const cell of lost) {
         await tx.parcelCell.update({
           where: { id: cell.id },
@@ -3595,7 +3644,7 @@ app.post("/parcels/:id/contractor", async (req, res) => {
     const available = await parcelManureTons(parcel.id);
     const usedManure = needed > 0 && available >= needed;
     await prisma.$transaction(async (tx) => {
-      await debit(tx, user.id, total);
+      await debit(tx, user.id, total, "CHANTIERS", "Prestataire — ramassage");
       if (usedManure) await drawManureFromPits(tx, parcel.id, needed);
       for (const { x, y } of cropCells) {
         const cell = parcel.cells.find((c) => c.x === x && c.y === y);
@@ -3674,7 +3723,7 @@ app.post("/parcels/:id/contractor", async (req, res) => {
   const moisture = harvestMoisture(weather?.state as WeatherState | undefined);
 
   await prisma.$transaction(async (tx) => {
-    await debit(tx, user.id, total);
+    await debit(tx, user.id, total, "CHANTIERS", `Prestataire — ${WORK_LABELS[work] ?? work}`);
     for (const cell of taken) {
       const next = afterTakeField(
         {
@@ -3884,7 +3933,7 @@ app.post("/parcels/:id/plant", async (req, res) => {
   const last = body.data.cells[body.data.cells.length - 1];
   const { wear, labor, gain } = await prisma.$transaction(async (tx) => {
     if (access.charge) {
-      await debit(tx, user.id, cost);
+      await debit(tx, user.id, cost, "CULTURES", "Semences");
     }
     for (const { x, y } of body.data.cells) {
       const cell = parcel.cells.find((c) => c.x === x && c.y === y);
@@ -3999,7 +4048,7 @@ app.post("/parcels/:id/fertilize", async (req, res) => {
   const last = body.data.cells[body.data.cells.length - 1];
   const { wear, labor, gain } = await prisma.$transaction(async (tx) => {
     if (access.charge && cost > 0) {
-      await debit(tx, user.id, cost);
+      await debit(tx, user.id, cost, "CULTURES", "Fertilisation");
     }
     if (usedManure) await drawManureFromPits(tx, parcel.id, needed);
     for (const { x, y } of body.data.cells) {
@@ -4141,7 +4190,7 @@ app.post("/parcels/:id/plow", async (req, res) => {
   const worked = candidates.map((c) => ({ x: c.x, y: c.y }));
   const { wear, labor, gain } = await prisma.$transaction(async (tx) => {
     if (access.charge) {
-      await debit(tx, user.id, cost);
+      await debit(tx, user.id, cost, "CULTURES", "Labour");
     }
     for (const cell of candidates) {
       await tx.parcelCell.update({
@@ -4296,7 +4345,7 @@ app.post("/parcels/:id/stubble", async (req, res) => {
   const worked = [...targets, ...enherber].map((c) => ({ x: c.x, y: c.y }));
   const { wear, labor, gain } = await prisma.$transaction(async (tx) => {
     if (access.charge) {
-      await debit(tx, user.id, cost);
+      await debit(tx, user.id, cost, "CULTURES", "Déchaumage");
     }
     for (const cell of enherber) {
       const next = applyRegrass();
@@ -4988,7 +5037,7 @@ app.post("/parcels/:id/build", async (req, res) => {
 
   try {
     const building = await prisma.$transaction(async (tx) => {
-      await debit(tx, user.id, def.cost);
+      await debit(tx, user.id, def.cost, "BATIMENTS", `Construction — ${def.name}`);
       const b = await tx.building.create({
         data: {
           parcelId: parcel.id,
@@ -5116,7 +5165,7 @@ app.post("/buildings/:id/upgrade", async (req, res) => {
   }
 
   const updated = await prisma.$transaction(async (tx) => {
-    await debit(tx, user.id, cost);
+    await debit(tx, user.id, cost, "BATIMENTS", `Amélioration — ${BUILDING_DEFS[building.type as SharedBuildingType]?.name ?? building.type}`);
     await grantXp(tx, user.id, "UPGRADE", { cost }, { buildingsUpgraded: 1 });
     return tx.building.update({
       where: { id: building.id },
@@ -5784,7 +5833,7 @@ app.post("/buildings/:id/animals", async (req, res) => {
     return;
   }
   await prisma.$transaction(async (tx) => {
-    await debit(tx, user.id, cost);
+    await debit(tx, user.id, cost, "ELEVAGE", `Achat de ${body.data.count} bête${body.data.count > 1 ? "s" : ""}`);
     if (building.herd) {
       // On achète du bétail déjà élevé : la moyenne d'âge du lot se déplace
       // vers celle des arrivantes, au prorata des effectifs.
@@ -5847,10 +5896,7 @@ app.post("/buildings/:id/manure/sell", async (req, res) => {
       where: { id: building.herd!.id },
       data: { manureTons: Math.round((building.herd!.manureTons - tons) * 1000) / 1000 },
     });
-    await tx.user.update({
-      where: { id: body.data.userId },
-      data: { crd: { increment: proceeds } },
-    });
+    await crediter(tx, body.data.userId, proceeds, "ELEVAGE", "Vente de fumier au voisin");
   });
   res.json({ tons: Math.round(tons * 1000) / 1000, proceeds });
 });
@@ -6028,7 +6074,7 @@ async function creditForcedGrainSales(
     const pricePerTon = dealerPricePerTon(market.price) * keep;
     const rev = Math.round(pricePerTon * lot.tons);
     if (rev !== 0) {
-      await tx.user.update({ where: { id: opts.userId }, data: { crd: { increment: rev } } });
+      await crediter(tx, opts.userId, rev, posteDeVente(lot.commodity), `Vente au négociant — ${lot.commodity}, ${lot.tons} t`);
     }
     await tx.marketPrice.update({
       where: { commodity: lot.commodity },
@@ -6209,6 +6255,38 @@ app.post("/herds/:id/feed", async (req, res) => {
  * l'état persiste jusqu'à ce qu'on en change — et c'est lui que la simulation
  * lit pour décider si le pré nourrit et si le froid mord.
  */
+/**
+ * Le journal d'un joueur, et ses totaux par poste.
+ *
+ * Le Bureau ne pouvait pas répondre à « comment se porte mon activité ? » :
+ * le jeu ne gardait qu'un solde. Cette route rend les mouvements bruts et
+ * laisse le domaine (`totauxParPoste`) faire l'agrégation — de sorte que la
+ * même règle serve à l'écran et à un test.
+ */
+app.get("/players/:id/ledger", async (req, res) => {
+  const jours = Math.min(30, Math.max(1, Number(req.query.jours ?? 7)));
+  const depuis = new Date(Date.now() - jours * 24 * 60 * 60 * 1000);
+  const lignes = await prisma.ledgerEntry.findMany({
+    where: { userId: req.params.id, at: { gte: depuis } },
+    orderBy: { at: "desc" },
+    // Le Bureau montre les mouvements récents ; l'historique complet n'a pas
+    // à traverser le réseau pour être résumé.
+    take: 200,
+  });
+  const vues = lignes.map((l) => ({
+    amount: l.amount,
+    poste: l.poste as LedgerPoste,
+    label: l.label,
+    at: l.at.toISOString(),
+  }));
+  res.json({
+    lignes: vues,
+    postes: totauxParPoste(vues),
+    resultat: resultat(vues),
+    jours,
+  });
+});
+
 app.post("/herds/:id/housing", async (req, res) => {
   const body = z
     .object({ userId: z.string(), housing: z.enum(["INSIDE", "OUTSIDE"]) })
@@ -6642,7 +6720,7 @@ app.post("/market/buy", async (req, res) => {
     return;
   }
   await prisma.$transaction(async (tx) => {
-    await debit(tx, user.id, cost);
+    await debit(tx, user.id, cost, "INTRANTS", `Achat au négociant — ${body.data.commodity}, ${body.data.tons} t`);
     await addToStock(tx, user.farm!.id, body.data.commodity, body.data.tons, 0, 3);
   });
   res.json({ bought: body.data.tons, cost, pricePerTon: dealerAskPrice(base) });
@@ -6671,10 +6749,7 @@ app.post("/machines/:id/sell", async (req, res) => {
       data: { kind: "EMPTY", machineId: null },
     });
     await tx.machine.delete({ where: { id: machine.id } });
-    await tx.user.update({
-      where: { id: body.data.userId },
-      data: { crd: { increment: value } },
-    });
+    await crediter(tx, body.data.userId, value, "MACHINES", `Revente — ${MACHINE_DEFS[machine.type as MachineType]?.name ?? machine.type}`);
   });
   res.json({ sold: machine.type, value });
 });
@@ -6714,10 +6789,7 @@ app.post("/buildings/:id/sell", async (req, res) => {
       data: { kind: "EMPTY", buildingId: null },
     });
     await tx.building.delete({ where: { id: building.id } });
-    await tx.user.update({
-      where: { id: body.data.userId },
-      data: { crd: { increment: value } },
-    });
+    await crediter(tx, body.data.userId, value, "BATIMENTS", `Démolition — ${BUILDING_DEFS[building.type as SharedBuildingType]?.name ?? building.type}`);
   });
   const bonuses = await getFarmBonuses(building.parcel.farm.id);
   res.json({ sold: building.type, level: building.level, value, bonuses });
@@ -6756,7 +6828,7 @@ app.post("/machines/buy", async (req, res) => {
     return;
   }
   const result = await prisma.$transaction(async (tx) => {
-    await debit(tx, user.id, def.cost);
+    await debit(tx, user.id, def.cost, "MACHINES", `Achat — ${def.name}`);
     const machine = await tx.machine.create({
       data: {
         farmId: user.farm!.id,
@@ -6840,7 +6912,7 @@ app.post("/machines/:id/repair", async (req, res) => {
     return;
   }
   await prisma.$transaction(async (tx) => {
-    await debit(tx, body.data.userId, quote.cost);
+    await debit(tx, body.data.userId, quote.cost, "MACHINES", "Réparation");
     await tx.machine.update({
       where: { id: machine.id },
       data: {
@@ -6891,7 +6963,7 @@ app.post("/machines/:id/grease", async (req, res) => {
     return;
   }
   const gain = await prisma.$transaction(async (tx) => {
-    await debit(tx, body.data.userId, GREASE_COST_CRD);
+    await debit(tx, body.data.userId, GREASE_COST_CRD, "MACHINES", "Graissage");
     await tx.machine.update({
       where: { id: machine.id },
       data: { greased: true, grease: GREASE_FULL, greaseSkipStreak: 0 },
@@ -6933,7 +7005,7 @@ app.post("/machines/:id/clean", async (req, res) => {
     return;
   }
   await prisma.$transaction(async (tx) => {
-    await debit(tx, body.data.userId, CLEAN_COST_CRD);
+    await debit(tx, body.data.userId, CLEAN_COST_CRD, "MACHINES", "Lavage");
     await tx.machine.update({
       where: { id: machine.id },
       data: { dirt: 0 },
@@ -6990,7 +7062,7 @@ app.post("/machines/:id/service", async (req, res) => {
     return;
   }
   await prisma.$transaction(async (tx) => {
-    await debit(tx, body.data.userId, quote.cost);
+    await debit(tx, body.data.userId, quote.cost, "MACHINES", "Révision");
     await tx.machine.update({
       where: { id: machine.id },
       data: {
@@ -7169,10 +7241,7 @@ async function runNpcBuyers() {
         where: { id: listing.id },
         data: { status: "SOLD", soldAt: new Date(now) },
       });
-      await tx.user.update({
-        where: { id: listing.sellerId },
-        data: { crd: { increment: proceeds } },
-      });
+      await crediter(tx, listing.sellerId, proceeds, posteDeVente(listing.commodity), `Vente au carnet — ${listing.commodity}, ${listing.tons} t`);
       // Le courtier remet la marchandise en circulation : le carnet s'épaissit.
       await tx.marketPrice.update({
         where: { commodity: listing.commodity },
@@ -7315,7 +7384,7 @@ app.post("/market/dealer", async (req, res) => {
 
   await prisma.$transaction(async (tx) => {
     await drawFromStock(tx, inv, tons);
-    await tx.user.update({ where: { id: user.id }, data: { crd: { increment: revenue } } });
+    await crediter(tx, user.id, revenue, posteDeVente(body.data.commodity), `Vente au négociant — ${body.data.commodity}, ${tons} t`);
     // Le négociant revend au marché : le stock mondial monte, le cours cède.
     await tx.marketPrice.update({
       where: { commodity: body.data.commodity },
@@ -7520,11 +7589,8 @@ app.post("/market/listings/:id/buy", async (req, res) => {
       where: { id: listing.id },
       data: { status: "SOLD", buyerId: buyer.id, soldAt: new Date() },
     });
-    await debit(tx, buyer.id, total);
-    await tx.user.update({
-      where: { id: listing.sellerId },
-      data: { crd: { increment: proceeds } },
-    });
+    await debit(tx, buyer.id, total, "INTRANTS", `Achat au carnet — ${listing.commodity}, ${listing.tons} t`);
+    await crediter(tx, listing.sellerId, proceeds, posteDeVente(listing.commodity), `Vente au carnet — ${listing.commodity}, ${listing.tons} t`);
     // L'argent change de main tout de suite. Le stock, non : quelqu'un doit livrer.
     await tx.delivery.create({
       data: {
@@ -7748,6 +7814,7 @@ app.post("/market/sell", async (req, res) => {
       where: { id: user.id },
       data: { crd: { increment: sale.revenue }, xp: { increment: bonusXp } },
     });
+    await ecrireJournal(tx, user.id, sale.revenue, posteDeVente(body.data.commodity), `Vente au marché — ${body.data.commodity}, ${tons} t`);
     await tx.marketPrice.update({
       where: { commodity: body.data.commodity },
       data: { price: tick.price, stockTons: tick.stockTons },
@@ -7952,6 +8019,7 @@ app.post("/contracts/:id/complete", async (req, res) => {
       where: { id: user.id },
       data: { crd: { increment: reward } },
     });
+    await ecrireJournal(tx, user.id, reward, "PROGRESSION", `Contrat — ${contract.title}`);
     return { user: u, reward, machine: { id: picked.machine.id, type: picked.machine.type, ...wear } };
   });
   res.json(result);

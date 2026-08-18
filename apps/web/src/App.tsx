@@ -36,6 +36,7 @@ import {
   WEATHER_LABELS,
   currentSeason,
   conditionYieldFactor,
+  type LedgerLine,
   dayOfSeason,
   SEASON_DAYS,
   footprintCells,
@@ -596,6 +597,14 @@ export function App() {
     kind?: "BELT" | "HYDRAULIC" | "ENGINE";
   } | null>(null);
   const [showEta, setShowEta] = useState(false);
+  /**
+   * Le journal des mouvements, chargé à l'ouverture du Bureau.
+   *
+   * Il ne sert qu'à cet écran et ne change qu'au rythme des gestes du joueur :
+   * le tenir en permanence dans l'état ferait vivre une liste que personne ne
+   * regarde, et le recharger à chaque tick du monde n'apprendrait rien.
+   */
+  const [ledger, setLedger] = useState<LedgerLine[]>([]);
   const [showGarage, setShowGarage] = useState(false);
   const [showHerd, setShowHerd] = useState(false);
   const [weather, setWeather] = useState<WeatherSnap[]>([]);
@@ -1814,6 +1823,22 @@ export function App() {
   /** Le bâtiment dont la fiche est ouverte, et le troupeau qu'il abrite. */
   /** Où en est le joueur dans son palier — pour la jauge du bandeau. */
   const xpHere = useMemo(() => levelProgress(player?.xp ?? 0), [player?.xp]);
+
+  useEffect(() => {
+    if (!showEta || !player?.id) return;
+    let vivant = true;
+    void api(`/players/${player.id}/ledger?jours=7`)
+      .then((r) => {
+        const rep = r as { lignes?: LedgerLine[] };
+        if (vivant) setLedger(rep.lignes ?? []);
+      })
+      .catch(() => {
+        /* Le Bureau reste utilisable sans son journal : il n'en dépend pas. */
+      });
+    return () => {
+      vivant = false;
+    };
+  }, [showEta, player?.id]);
 
   const openBuilding = useMemo(
     () => (parcel?.buildings ?? []).find((b) => b.id === openBuildingId) ?? null,
@@ -4659,6 +4684,7 @@ export function App() {
         myFarmId={player.farm?.id}
         expandableIds={expandableParcelIds}
         onBuyLand={buyAdjacent}
+        ledger={ledger}
       />
 
       {isMobile && (

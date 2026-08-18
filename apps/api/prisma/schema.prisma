@@ -109,6 +109,7 @@ model User {
   deliveriesSold   Delivery[] @relation("DeliverySeller")
   deliveriesBought Delivery[] @relation("DeliveryBuyer")
   questClaims      QuestClaim[]
+  ledger         LedgerEntry[]
 }
 
 /// Récompense de quête déjà encaissée. Seul l'encaissement se stocke :
@@ -383,6 +384,35 @@ model MarketListing {
 }
 
 /// Achat à la criée : l'argent a changé de main, la marchandise est encore en route.
+/**
+ * Le journal des mouvements d'argent.
+ *
+ * Le jeu ne conservait qu'un solde, `User.crd`. Aucune écriture ne disait d'où
+ * venait un TRN ni où il était parti : le lait vendu, la révision payée, le
+ * chantier encaissé et la parcelle achetée se fondaient dans un même nombre.
+ * Le Bureau ne pouvait donc pas répondre à sa propre question — « comment se
+ * porte mon activité ? » — faute de la moindre donnée.
+ *
+ * Une ligne par mouvement, écrite dans la transaction qui bouge le solde :
+ * il n'y a rien à recalculer, donc rien qui puisse se désynchroniser. Le
+ * montant est signé — négatif pour une sortie — pour qu'une somme donne
+ * directement le résultat.
+ */
+model LedgerEntry {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  /** Montant signé : positif en recette, négatif en dépense. */
+  amount    Float
+  /** Poste comptable — voir `LEDGER_POSTES` côté domaine. */
+  poste     String
+  /** De quoi il s'agit, en clair : « Blé, 12 t » ou « Révision moissonneuse ». */
+  label     String
+  at        DateTime @default(now())
+
+  @@index([userId, at])
+}
+
 model Delivery {
   id          String   @id @default(cuid())
   sellerId    String
