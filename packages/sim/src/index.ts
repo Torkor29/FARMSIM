@@ -9,6 +9,10 @@ import {
   MARKET_KAPPA,
   MARKET_BOOK_WEIGHT,
   MARKET_ABSORB,
+  MARKET_SUPPLY_ELASTICITY,
+  MARKET_DEMAND_ELASTICITY,
+  MARKET_ELASTIC_FLOOR,
+  MARKET_ELASTIC_CEIL,
   type Season,
   residueBonus,
   ripenessAt,
@@ -700,19 +704,31 @@ export const NPC_BASE_DEMAND = 2;
  *
  * L'automne apporte les moissons du voisinage et fait céder les cours ; le
  * printemps est la soudure, où les greniers sont vides et les prix hauts.
- * Un écart d'environ 23 % sépare les deux, mesuré sur huit saisons.
+ * Les coefficients ont été élargis quand l'offre PNJ est devenue élastique :
+ * une offre qui se retire quand le cours cède amortit aussi la saison, et
+ * l'écart annuel était retombé à 19 %. À 0,82 / 1,18, l'équilibre mesuré
+ * saison par saison donne +17 % au printemps et −13 % à l'automne, soit un
+ * tiers d'écart du creux au sommet : vendre au bon moment est une décision.
  */
 export const NPC_SEASON_SUPPLY: Record<Season, number> = {
-  SPRING: 0.88,
+  SPRING: 0.82,
   SUMMER: 1,
-  AUTUMN: 1.12,
-  WINTER: 0.952,
+  AUTUMN: 1.18,
+  WINTER: 0.925,
 };
 
 export function marketNpcPressure(opts: {
   weatherStates: WeatherState[];
   /** Saison locale — c'est elle qui fait le cycle annuel des cours. */
   season?: Season;
+  /**
+   * Cours du jour et prix de référence de la denrée. Fournis ensemble, ils
+   * rendent les flux PNJ élastiques : c'est ce qui remplace le rappel décrété
+   * vers un prix fixe. Omis, on retombe sur des flux inélastiques — le cas
+   * des vieux tests et des denrées sans borne connue.
+   */
+  price?: number;
+  reference?: number;
   rng?: () => number;
 }): { supplyTons: number; demandTons: number } {
   const rnd = opts.rng ?? Math.random;
@@ -726,8 +742,29 @@ export function marketNpcPressure(opts: {
   const meteo = 1 - wetShare * 0.25 - stormShare * 0.3;
   const saison = NPC_SEASON_SUPPLY[opts.season ?? "SUMMER"];
 
-  const supplyTons = NPC_BASE_SUPPLY * saison * meteo * (0.8 + rnd() * 0.4);
-  const demandTons = NPC_BASE_DEMAND * (0.9 + rnd() * 0.2) + stormShare * 0.3;
+  /**
+   * Réponse au cours.
+   *
+   * Le marché ne revient pas à son prix de départ parce qu'on le lui ordonne,
+   * mais parce qu'à bas prix les vendeurs se retirent et les acheteurs
+   * reviennent. Ce sont deux courbes qui se croisent, et le point de
+   * croisement se déplace : une saison d'abondance, ou un domaine qui déverse
+   * sa moisson, le fait glisser vers le bas et l'y laisse.
+   *
+   * Les butées font le reste du travail : personne n'arrête complètement de
+   * produire, personne n'achète sans fin. Passé la butée, l'excédent reste sur
+   * le marché et le cours reste bas.
+   */
+  const ratio =
+    opts.price && opts.reference && opts.reference > 0 ? opts.price / opts.reference : 1;
+  const borne = (x: number): number =>
+    Math.min(MARKET_ELASTIC_CEIL, Math.max(MARKET_ELASTIC_FLOOR, x));
+  const offreElastique = borne(Math.pow(ratio, MARKET_SUPPLY_ELASTICITY));
+  const demandeElastique = borne(Math.pow(ratio, -MARKET_DEMAND_ELASTICITY));
+
+  const supplyTons = NPC_BASE_SUPPLY * saison * meteo * offreElastique * (0.8 + rnd() * 0.4);
+  const demandTons =
+    NPC_BASE_DEMAND * demandeElastique * (0.9 + rnd() * 0.2) + stormShare * 0.3;
   return {
     supplyTons: Math.max(0.2, Math.round(supplyTons * 100) / 100),
     demandTons: Math.max(0.2, Math.round(demandTons * 100) / 100),

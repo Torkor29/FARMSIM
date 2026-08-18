@@ -54,7 +54,13 @@ function anneeDeMarche(opts: { parcelles?: number; saisons?: number; graine?: nu
     if (opts.parcelles && i > 0 && i % TICKS_RECOLTE === 0) {
       stock += RECOLTE * opts.parcelles;
     }
-    const p = marketNpcPressure({ weatherStates: ["CLEAR"], season, rng: rnd });
+    const p = marketNpcPressure({
+      weatherStates: ["CLEAR"],
+      season,
+      price,
+      reference: B.initial,
+      rng: rnd,
+    });
     const out = tickMarket({
       commodity: "WHEAT",
       price,
@@ -108,11 +114,77 @@ describe("le marché sans joueur", () => {
     expect(battement).toBeLessThan(0.6);
   });
 
-  it("laisse un écart de prix vivre plus que deux minutes", () => {
-    // Demi-vie : c'est elle qui décide si « attendre un meilleur cours » est
-    // une stratégie ou de la patience. Elle valait 108 secondes.
+  it("ne tient pas debout grâce à un rappel décrété", () => {
+    /**
+     * La question de fond : *pourquoi* le cours reviendrait-il à 220 ?
+     *
+     * Il ne le devrait pas, et ce n'est plus ce qui se passe. Le rappel vers
+     * `initial` n'est plus qu'un garde-fou contre les murs `min`/`max` : sa
+     * demi-vie dépasse l'heure, quand une saison entière dure moins de deux
+     * heures. Ce qui ramène le cours, c'est l'offre PNJ qui se retire.
+     */
     const demiVieMin = (Math.log(2) / -Math.log(1 - MARKET_REVERSION)) * (SIM_TICK_MS / 60_000);
-    expect(demiVieMin).toBeGreaterThan(8);
+    expect(demiVieMin).toBeGreaterThan(60);
+  });
+});
+
+describe("ce qui ramène le cours, c’est l’offre, pas un décret", () => {
+  const B = MARKET_BOUNDS.WHEAT;
+  const flux = (price: number) =>
+    marketNpcPressure({
+      weatherStates: ["CLEAR"],
+      season: "SUMMER",
+      price,
+      reference: B.initial,
+      rng: () => 0.5,
+    });
+
+  it("un cours effondré fait fuir les vendeurs et venir les acheteurs", () => {
+    const bas = flux(B.initial * 0.6);
+    const ref = flux(B.initial);
+    expect(bas.supplyTons).toBeLessThan(ref.supplyTons);
+    expect(bas.demandTons).toBeGreaterThan(ref.demandTons);
+  });
+
+  it("un cours élevé fait sortir les greniers", () => {
+    const haut = flux(B.initial * 1.5);
+    const ref = flux(B.initial);
+    expect(haut.supplyTons).toBeGreaterThan(ref.supplyTons);
+    expect(haut.demandTons).toBeLessThan(ref.demandTons);
+  });
+
+  it("mais l’offre ne se retire jamais complètement", () => {
+    // Sans cette butée, inonder son marché n'aurait aucune conséquence : les
+    // voisins se retireraient à mesure et le prix ne bougerait pas.
+    const effondre = flux(B.min);
+    expect(effondre.supplyTons).toBeGreaterThan(0.3);
+  });
+
+  it("et un excédent qui dure tient le cours bas tant qu’il dure", () => {
+    /**
+     * L'inverse du rappel décrété : tant que le joueur déverse, le cours reste
+     * au fond. Il ne remonte que lorsqu'il arrête — parce que l'excédent s'est
+     * écoulé, pas parce qu'une constante l'a ramené chez lui.
+     */
+    const tourne = (n: number, etat: { p: number; s: number }, joueur: number) => {
+      for (let i = 0; i < n; i++) {
+        const p = flux(etat.p);
+        const out = tickMarket({
+          commodity: "WHEAT",
+          price: etat.p,
+          supplyTons: p.supplyTons + joueur,
+          demandTons: p.demandTons,
+          stockTons: etat.s,
+        });
+        etat = { p: out.price, s: out.stockTons };
+      }
+      return etat;
+    };
+    const calme = tourne(600, { p: B.initial, s: B.depth * 0.3 }, 0);
+    const noye = tourne(TICKS_SAISON, { ...calme }, 3);
+    expect(noye.p).toBeLessThan(calme.p * 0.75);
+    const apres = tourne(TICKS_SAISON, { ...noye }, 0);
+    expect(apres.p).toBeGreaterThan(noye.p * 1.2);
   });
 });
 
@@ -155,8 +227,12 @@ describe("la production du joueur pèse sur le cours", () => {
   it("un gros domaine fait céder son propre marché", () => {
     // La sanction du surproducteur, et la raison d'aller vendre ailleurs ou
     // de transformer plutôt que de tout écouler brut.
+    // Seuil descendu de 0,20 à 0,15 le jour où l'offre PNJ est devenue
+    // élastique : les voisins se retirent à mesure que le cours cède, et
+    // amortissent une partie du déversement. C'est le comportement voulu — la
+    // mesure est passée de 24 % à 18 %, l'intention tient.
     const gros = effet(20);
-    expect(gros).toBeGreaterThan(0.2);
+    expect(gros).toBeGreaterThan(0.15);
     expect(gros).toBeLessThan(0.5);
   });
 

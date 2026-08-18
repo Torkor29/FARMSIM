@@ -2433,7 +2433,16 @@ async function runWorldTick() {
   // cours sont uniques, ils ne peuvent pas suivre quatre calendriers à la fois.
   const saisonMarche = currentSeason("N", now);
   for (const row of prices) {
-    const pressure = marketNpcPressure({ weatherStates: states, season: saisonMarche });
+    // Le cours du jour entre dans le calcul des flux PNJ : c'est lui qui fait
+    // se retirer les vendeurs quand il cède, et revenir les acheteurs. Sans
+    // cette boucle, seul un rappel décrété ramenait le prix à son point de
+    // départ, quoi qu'ait fait le joueur.
+    const pressure = marketNpcPressure({
+      weatherStates: states,
+      season: saisonMarche,
+      price: row.price,
+      reference: MARKET_BOUNDS[row.commodity as TradeGood]?.initial,
+    });
     // Légère asymétrie blé / maïs. Les flux se comptent désormais en tonnes et
     // en dixièmes de tonne : les arrondir à l'entier effaçait l'asymétrie.
     const supply =

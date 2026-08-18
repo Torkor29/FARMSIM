@@ -255,21 +255,53 @@ export const MARKET_BOUNDS: Record<
 };
 
 /**
- * Force de rappel du cours vers son prix de référence, par tick `[GD]`.
+ * Garde-fou contre la dérive, par tick `[GD]`.
  *
- * Sans elle, le déséquilibre offre/demande poussait le prix dans la même
- * direction indéfiniment : blé, viande et fourrage finissaient collés à leur
- * plafond, et guetter le marché ne servait plus à rien.
+ * Ce n'est **pas** « le prix doit revenir à 220 ». Un cours n'a aucune raison
+ * de retrouver un chiffre décrété : ce qui le ramène, c'est que les vendeurs
+ * se retirent quand il baisse et que les acheteurs se pressent — ce travail-là
+ * est fait par l'élasticité de l'offre et de la demande PNJ, en aval.
  *
- * Ramenée de 0,12 à 0,015. À 0,12, un écart de prix était comblé de moitié en
- * **cent-huit secondes** : les cours ne s'écartaient jamais de plus de 29 %
- * quand leurs bornes en permettaient 150, et « attendre un meilleur cours »
- * n'était pas une stratégie mais deux minutes de patience. Le ressort était
- * si raide qu'il empêchait l'offre et la demande de dire quoi que ce soit.
- * À 0,015, la demi-vie passe à un quart d'heure : le marché a le temps
- * d'exprimer une saison.
+ * Il reste ce rappel très faible pour une seule raison, purement numérique :
+ * les bornes `min`/`max` sont des murs, et un déséquilibre minuscule mais
+ * constant finit par y coller le cours pour de bon. À 0,002, la demi-vie du
+ * rappel est de deux heures — assez pour décoller d'un mur, bien trop lent
+ * pour effacer une saison ou une année d'excédent.
+ *
+ * Historique : 0,12 à l'origine (demi-vie cent-huit secondes, le marché ne
+ * pouvait rien exprimer), puis 0,015 (un quart d'heure — mais c'était encore
+ * lui, et non l'offre, qui fixait le cours d'équilibre).
  */
-export const MARKET_REVERSION = 0.015;
+export const MARKET_REVERSION = 0.002;
+
+/**
+ * Élasticité-prix de l'offre PNJ `[GD]`.
+ *
+ * Quand le cours cède, les fermes voisines gardent leur récolte au silo, se
+ * tournent vers une autre culture, ou renoncent à semer la saison suivante :
+ * l'offre se retire. C'est **le** mécanisme de rappel du marché, et il a le
+ * bon goût d'avoir une limite — voir `MARKET_ELASTIC_FLOOR`.
+ */
+export const MARKET_SUPPLY_ELASTICITY = 0.7;
+
+/**
+ * Élasticité-prix de la demande PNJ `[GD]`, comptée négativement : un cours
+ * bas fait venir les acheteurs. Plus faible que celle de l'offre — on
+ * n'engraisse pas deux fois plus de bêtes parce que l'orge est bon marché.
+ */
+export const MARKET_DEMAND_ELASTICITY = 0.45;
+
+/**
+ * Bornes de la réponse élastique `[GD]`.
+ *
+ * L'offre ne tombe jamais à zéro et la demande n'est pas infinie : sans ces
+ * butées, un cours effondré ferait remonter le prix aussi vite qu'il est
+ * tombé, et un joueur qui inonde son marché n'en subirait aucune conséquence
+ * durable. C'est précisément ce qu'on veut éviter : noyer le blé doit faire
+ * mal longtemps.
+ */
+export const MARKET_ELASTIC_FLOOR = 0.45;
+export const MARKET_ELASTIC_CEIL = 1.7;
 
 /**
  * Profondeur minimale d'un marché, en fraction de sa profondeur nominale
