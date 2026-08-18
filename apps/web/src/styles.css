@@ -35,9 +35,17 @@
   --glass-border: rgba(26, 107, 90, 0.16);
   --bar: rgba(255, 255, 255, 0.93);
 
-  --r-sm: 10px;
-  --r-md: 16px;
-  --r-lg: 24px;
+  /* L'échelle des rayons, resserrée.
+     10 / 16 / 24 donnaient des coins très ronds partout, et la rondeur
+     uniforme est une des signatures du gabarit : tout y a la même douceur,
+     donc rien n'a de caractère. À 6 / 10 / 16, les cartes gardent leur
+     angle adouci — on ne bascule pas dans l'arête vive — mais les barres
+     du haut et les tiroirs cessent d'être des galets.
+     `--r-pill` ne bouge pas : il ne sert qu'aux pastilles et aux jauges,
+     et c'est justement sa forme ovale qui les distingue des cibles. */
+  --r-sm: 6px;
+  --r-md: 10px;
+  --r-lg: 16px;
   --r-pill: 999px;
 
   /* Densité fluide et largeur des rails — charte §7.4. */
@@ -1994,7 +2002,7 @@ html.playing .build-confirm { position: fixed; }
   grid-auto-columns: 1fr;
   gap: 0.3rem;
   padding: 0.4rem;
-  border-radius: 20px;
+  border-radius: 12px;
   background: var(--bar);
   border: 1px solid var(--glass-border);
   box-shadow: var(--sh-3);
@@ -2007,7 +2015,7 @@ html.playing .build-confirm { position: fixed; }
   gap: 0.12rem;
   min-height: 52px;
   padding: 0.4rem 0.2rem 0.35rem;
-  border-radius: 14px;
+  border-radius: 8px;
   background: transparent;
   border: 0;
   color: var(--ink);
@@ -2580,7 +2588,7 @@ html.playing .build-confirm { position: fixed; }
     overscroll-behavior: contain;
     z-index: 12;
     margin: 0 0.5rem;
-    border-radius: 18px 18px 12px 12px;
+    border-radius: 12px 12px 8px 8px;
     box-shadow: 0 -10px 30px rgba(24, 44, 38, 0.22);
     /* Fermé par défaut : le tiroir n'existe que quand on l'appelle. */
     display: none;
@@ -2633,7 +2641,7 @@ html.playing .build-confirm { position: fixed; }
     grid-template-columns: repeat(5, minmax(0, 1fr));
     gap: 0.4rem;
     padding: 0.55rem;
-    border-radius: 20px;
+    border-radius: 12px;
     background: var(--bar);
     border: 1px solid var(--glass-border);
     box-shadow: var(--sh-3);
@@ -2650,7 +2658,7 @@ html.playing .build-confirm { position: fixed; }
     min-height: 56px;
     padding: 0.45rem 0.2rem;
     border: 1px solid transparent;
-    border-radius: 14px;
+    border-radius: 8px;
     background: var(--paper);
     line-height: 1.15;
     color: var(--ink);
@@ -4345,7 +4353,7 @@ button.tiny {
   flex-direction: column;
   width: min(1180px, 100%);
   max-height: 100%;
-  border-radius: 18px;
+  border-radius: 12px;
   background: var(--cream);
   border: 1px solid var(--glass-border);
   box-shadow: var(--sh-3);
@@ -4419,9 +4427,77 @@ button.tiny {
 
 /* La place enfin disponible sert à quelque chose : les listes de troupeaux et
    de machines s'étalent en grille au lieu de s'empiler dans une colonne. */
+/* ——————————————————————————————————————————————————————————————
+   L'élevage sur bureau.
+
+   Le panneau a été rangé pour le téléphone : une colonne, des sections
+   empilées, tout ce qui se lit au pouce. Sorti dans la fenêtre de bureau,
+   il gardait cette colonne — mesuré : **une colonne de 1 349 px de large
+   pour 2 681 px de contenu**, dans une fenêtre haute de 772. Autrement dit
+   une ligne « Ration · 2 j » étalée sur mille trois cents pixels, et trois
+   écrans et demi de défilement pour deux étables.
+
+   C'est le défaut déjà corrigé pour les rails, revenu par l'autre bout :
+   là c'était trop étroit, ici c'est trop large. Une mise en page mobile
+   étirée n'est pas une mise en page de bureau.
+
+   Sur bureau, une fiche prend donc toute la largeur et **range ses sections
+   en trois colonnes**. Le lot, la production et les réserves se lisent
+   côte à côte, et une étable tient dans un écran.
+   —————————————————————————————————————————————————————————————— */
 .win-body .livestock-panel > .barn-card,
 .win-body .barn-card {
   break-inside: avoid;
+}
+.win-body .barn-card {
+  /* Colonnes typographiques plutôt que grille.
+     Avec une grille, les lignes s'alignent sur la colonne la plus haute :
+     « Le lot » tient huit mesures, « Production » en tient deux, et il restait
+     deux cent vingt pixels de vide sous la seconde. Les colonnes CSS laissent
+     le contenu **couler** — chaque bloc se pose là où il y a de la place, et
+     les hauteurs s'égalisent d'elles-mêmes.
+     `break-inside: avoid` interdit qu'une section soit coupée en deux entre
+     deux colonnes ; sans lui, le remède serait pire que le mal. */
+  display: block;
+  column-count: 3;
+  column-gap: 0.7rem;
+}
+.win-body .barn-card > * {
+  break-inside: avoid;
+  margin-bottom: 0.5rem;
+}
+/* Ce qui identifie l'étable et ce qui la résume traversent les colonnes : ce
+   sont les deux seules choses qui parlent du lot entier. */
+.win-body .barn-card > .barn-head,
+.win-body .barn-card > .barn-key {
+  column-span: all;
+}
+.win-body .barn-card > .barn-head {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+}
+/* La ligne des chiffres ne s'étire pas.
+   Sur mille trois cents pixels, « 19 » et « 68 % » se retrouvaient dans deux
+   cases de six cent cinquante, et la jauge de bien-être traversait l'écran
+   pour dire soixante-huit pour cent. Bornée, elle garde les proportions
+   qu'elle a au téléphone. */
+.win-body .barn-key { max-width: 34rem; }
+/* Les gestes : quatre boutons sur une rangée valent mieux qu'une colonne de
+   quatre, quand la place existe. */
+.win-body .barn-actions { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+
+/* Le titre du panneau doublait celui de la fenêtre : « Élevage » écrit deux
+   fois, à trente pixels l'un de l'autre. La fenêtre porte déjà le nom, le
+   sous-titre et le bouton de fermeture. */
+.win-body .panel-head { display: none; }
+
+/* Les alertes sur plusieurs colonnes : en pleine largeur, le geste se
+   retrouvait à mille trois cents pixels du texte qui l'explique. */
+.win-body .herd-alerts {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 26rem), 1fr));
+  gap: 0.4rem;
 }
 .win .win-grid {
   display: grid;

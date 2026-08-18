@@ -862,7 +862,7 @@ export function LivestockPanel({
 
 
             {herd && (
-              <section className="barn-part">
+              <section className="barn-part gestes">
                 <h4>Gestes</h4>
                 <div className="barn-actions">
                   {herd.kind === "COW" && (
