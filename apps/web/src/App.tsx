@@ -2841,6 +2841,23 @@ export function App() {
     }
   }
 
+  /**
+   * Quel lot attend sa ration.
+   *
+   * Posé quand le joueur part acheter depuis une alerte de faim, consommé dès
+   * que la marchandise arrive. Sans lui, l'achat s'arrêtait au silo.
+   */
+  const [nourrirApres, setNourrirApres] = useState<string | null>(null);
+
+  /** Ce que chaque denrée achetable vaut comme ration, si elle en est une. */
+  const RATION_DE: Partial<Record<TradeGood, "hay" | "maize" | "barley" | "wheat" | "silage">> = {
+    HAY: "hay",
+    MAIZE: "maize",
+    BARLEY: "barley",
+    WHEAT: "wheat",
+    SILAGE: "silage",
+  };
+
   /** Achat d'un intrant au négociant — du fourrage, pour l'instant. */
   async function buyInput(commodity: TradeGood, tons: number) {
     if (!player) return;
@@ -2850,8 +2867,20 @@ export function App() {
         method: "POST",
         body: JSON.stringify({ userId: player.id, commodity, tons }),
       });
-      flashToast(`${r.bought} t de fourrage · −${r.cost} TRN`);
+      const nom = GOOD_DEFS[commodity]?.name ?? commodity;
+      const ration = RATION_DE[commodity];
+      const pourLeLot = nourrirApres;
       await refreshPlayer();
+      if (pourLeLot && ration) {
+        // La marchandise est au silo : on enchaîne sur ce que le joueur
+        // voulait vraiment. `feedHerd` gère lui-même le `busy` et la quantité.
+        setNourrirApres(null);
+        setBusy(false);
+        await feedHerd(pourLeLot, ration, r.bought);
+        flashToast(`${r.bought} t de ${nom.toLowerCase()} · −${r.cost} TRN · distribué au troupeau`);
+        return;
+      }
+      flashToast(`${r.bought} t de ${nom.toLowerCase()} · −${r.cost} TRN`);
     } catch (e) {
       flashToast(e instanceof Error ? e.message : String(e), true);
     } finally {
@@ -3109,6 +3138,15 @@ export function App() {
   async function feedHerd(
     herdId: string,
     ration: "hay" | "maize" | "barley" | "wheat" | "silage",
+    /**
+     * Ce dont on dispose vraiment, quand l'appelant en sait plus que l'état.
+     *
+     * Après un achat, `player` n'a pas encore été rendu à nouveau : les stocks
+     * fermés dans cette closure valent encore zéro, et la distribution partait
+     * avec zéro tonne — refusée par le serveur. L'appelant passe donc ce qu'il
+     * vient d'acheter.
+     */
+    stockConnu?: number,
   ) {
     if (!player) return;
     setBusy(true);
@@ -3116,7 +3154,7 @@ export function App() {
       const barn = barns.find((b) => b.herd?.id === herdId);
       const size = barn?.herd?.size ?? 1;
       const wanted = Math.max(1, Math.ceil(size / 3));
-      const stock =
+      const stock = stockConnu ?? (
         ration === "maize"
           ? maizeInStock
           : ration === "barley"
@@ -3125,7 +3163,7 @@ export function App() {
               ? wheatInStock
               : ration === "silage"
                 ? silageInStock
-                : hayInStock;
+                : hayInStock);
       const tons = Math.min(stock, wanted);
       const r = await api<{ units: number; quality: number }>(`/herds/${herdId}/feed`, {
         method: "POST",
@@ -4205,7 +4243,12 @@ export function App() {
                               : null
                         }
                         hint={`Refaire le plein de graisse · ${GREASE_COST_CRD} TRN`}
-                        label="Graisser"
+                        label={
+                          <>
+                            <span>Graisser · {GREASE_COST_CRD} TRN</span>
+                            <em>ralentit l’usure</em>
+                          </>
+                        }
                         onDo={() => setCare({ mode: "grease", machineId: m.id })}
                         onExplain={(raison) => flashToast(raison, "warn")}
                       />
@@ -4219,7 +4262,12 @@ export function App() {
                               : null
                         }
                         hint={`${CLEAN_COST_CRD} TRN`}
-                        label="Nettoyer"
+                        label={
+                          <>
+                            <span>Nettoyer · {CLEAN_COST_CRD} TRN</span>
+                            <em>rend son rendement</em>
+                          </>
+                        }
                         onDo={() => setCare({ mode: "clean", machineId: m.id })}
                         onExplain={(raison) => flashToast(raison, "warn")}
                       />
@@ -4233,10 +4281,26 @@ export function App() {
                               : null
                         }
                         hint={halfQuote ? `État → ${halfTarget.toFixed(0)} %` : undefined}
-                        /* Sur une machine neuve les devis valent zéro : le
+                        /* « Rafistoler » et « Réviser » ne disaient pas ce
+                           qu'ils font ni en quoi ils diffèrent : deux verbes
+                           de garagiste, deux prix, et au joueur de deviner.
+                           Le bouton annonce maintenant l'état d'arrivée —
+                           c'est la seule chose qui distingue les deux.
+                           Sur une machine neuve les devis valent zéro : le
                            bouton annonçait « Rafistoler 0 TRN », un prix nul
                            pour un travail impossible. */
-                        label={canHalf ? `Rafistoler ${halfQuote?.cost ?? 0} TRN` : "Rien à rafistoler"}
+                        label={
+                          canHalf ? (
+                            <>
+                              <span>Réparer · {halfQuote?.cost ?? 0} TRN</span>
+                              <em>
+                                état {m.condition.toFixed(0)} → {halfTarget.toFixed(0)} %
+                              </em>
+                            </>
+                          ) : (
+                            "Rien à réparer"
+                          )
+                        }
                         onDo={() => repairMachine(m.id, "half")}
                         onExplain={(raison) => flashToast(raison, "warn")}
                       />
@@ -4250,7 +4314,16 @@ export function App() {
                               : null
                         }
                         hint="Révision complète"
-                        label={canFull ? `Réviser ${fullQuote?.cost ?? 0} TRN` : "Déjà à neuf"}
+                        label={
+                          canFull ? (
+                            <>
+                              <span>Remettre à neuf · {fullQuote?.cost ?? 0} TRN</span>
+                              <em>état {m.condition.toFixed(0)} → 100 %</em>
+                            </>
+                          ) : (
+                            "Déjà à neuf"
+                          )
+                        }
                         onDo={() => repairMachine(m.id, "full")}
                         onExplain={(raison) => flashToast(raison, "warn")}
                       />
@@ -4333,9 +4406,21 @@ export function App() {
              `title` n'est jamais lu, et le joueur ne voyait qu'une rangée de
              boutons gris qui ne répondaient pas. */
           onExplain={(raison) => flashToast(raison, "warn")}
-          onBuyFeed={() => {
-            // Le seul geste qui reste quand la réserve est vide : l'alerte y
-            // mène au lieu de distribuer du vide.
+          onBuyFeed={(herdId) => {
+            /**
+             * Acheter puis distribuer, sans y penser.
+             *
+             * Le seul geste qui reste quand la réserve est vide, c'est d'aller
+             * au négociant — l'alerte y mène au lieu de distribuer du vide.
+             * Mais l'achat s'arrêtait là : le fourrage entrait au silo et les
+             * bêtes continuaient de dépérir, parce qu'il fallait revenir
+             * appuyer sur « Nourrir ». Rien ne le disait, et le joueur en
+             * concluait — à raison — qu'il avait acheté pour rien.
+             *
+             * On retient donc le lot qui a demandé : dès que la marchandise
+             * arrive, la ration part.
+             */
+            setNourrirApres(herdId);
             if (isMobile) setSheet(null);
             setShowMarket(true);
           }}
@@ -4625,7 +4710,13 @@ export function App() {
 
       <MarketPanel
         open={showMarket}
-        onClose={() => setShowMarket(false)}
+        onClose={() => {
+          // Repartir sans rien acheter annule l'intention : sans cela, le
+          // prochain achat de fourrage, fait pour tout autre chose, serait
+          // versé d'office à un troupeau qu'on n'a plus en tête.
+          setNourrirApres(null);
+          setShowMarket(false);
+        }}
         stock={player.farm?.inventory ?? []}
         listings={listings}
         deliveries={deliveries}

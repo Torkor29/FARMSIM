@@ -316,6 +316,164 @@ describe("entrées invalides", () => {
  * la route qui manquait, au niveau de la requête : ce sont les refus qui
  * comptent le plus, puisque c'est là qu'on renseigne ou qu'on égare le joueur.
  */
+describe("lieu de vie", () => {
+  /**
+   * « Je dis de rentrer mes bêtes, ça met le message mais elles rentrent pas. »
+   *
+   * Deux sources pour un seul fait, et elles se contredisaient :
+   *
+   *  - la vue et le tick lisent `housing === "OUTSIDE" || grazingUntil > now` ;
+   *  - sortir le troupeau posait une fenêtre de pâture — c'est elle qui fait
+   *    franchir la porte à l'écran — et rentrer ne touchait que `housing`.
+   *
+   * La fenêtre continuait donc de courir : le message annonçait « bêtes
+   * rentrées » pendant qu'elles restaient au pré.
+   *
+   * Deuxième moitié du même défaut, côté panneau : `outsideCount` répond à
+   * « combien tiendraient dehors ? », pas à « combien y sont ? ». Il servait
+   * pourtant à écrire « 18 bêtes au pré, 1 à l'étable », qui restait affiché
+   * après avoir rentré le lot.
+   */
+  async function eleveurAvecEnclos() {
+    const moi = await inscrire("Berger");
+    const monde = await appel("/world/AUR");
+    const regions = (monde.corps as unknown as {
+      regions: { parcels: { id: string; taken: boolean }[] }[];
+    }).regions;
+    let parcelId = "";
+    for (const r of regions) {
+      const libre = (r.parcels ?? []).find((p) => !p.taken);
+      if (libre) {
+        parcelId = libre.id;
+        break;
+      }
+    }
+    assert.ok(parcelId, "il faut une parcelle libre");
+    await appel("/world/claim", {
+      methode: "POST",
+      corps: { userId: moi.id, specialization: "ELEVEUR", parcelId },
+      jeton: moi.jeton,
+    });
+    await appel("/dev/grant", {
+      methode: "POST",
+      corps: { userId: moi.id, crd: 300_000 },
+      jeton: moi.jeton,
+    });
+    const me = await appel("/auth/me", { jeton: moi.jeton });
+    const pid = (me.corps as unknown as { player: { farm: { parcels: { id: string }[] } } }).player
+      .farm.parcels[0]!.id;
+    await appel(`/parcels/${pid}/build`, {
+      methode: "POST",
+      corps: { userId: moi.id, type: "CATTLE_BARN", x: 2, y: 2, rotation: 0 },
+      jeton: moi.jeton,
+    });
+    /**
+     * L'enclos se pose sous **l'étable qui héberge le lot**, pas sous celle
+     * qu'on vient de bâtir : un éleveur démarre déjà avec un bâtiment, et
+     * poser l'enclos à côté du mauvais donnait une capacité nulle — le test
+     * échouait sur un décor, pas sur le défaut qu'il traque.
+     */
+    const el0 = await appel(`/parcels/${pid}/livestock`, { jeton: moi.jeton });
+    const avecLot = (el0.corps as unknown as {
+      barns: { buildingId: string; herd: { id: string } | null }[];
+    }).barns.find((b) => b.herd);
+    assert.ok(avecLot, "il faut une étable habitée");
+    const apres = await appel("/auth/me", { jeton: moi.jeton });
+    const bat = (apres.corps as unknown as {
+      player: {
+        farm: {
+          parcels: { buildings: { id: string; originX: number; originY: number }[] }[];
+        };
+      };
+    }).player.farm.parcels[0]!.buildings.find((b) => b.id === avecLot.buildingId)!;
+    // Une étable fait trois cases de haut : l'enclos se colle juste dessous.
+    const enclos = await appel(`/parcels/${pid}/build`, {
+      methode: "POST",
+      corps: {
+        userId: moi.id,
+        type: "PADDOCK",
+        x: bat.originX,
+        y: bat.originY + 3,
+        rotation: 0,
+      },
+      jeton: moi.jeton,
+    });
+    assert.equal(enclos.statut, 201, `enclos refusé : ${JSON.stringify(enclos.corps)}`);
+    return { moi, pid, herdId: avecLot.herd!.id, buildingId: avecLot.buildingId };
+  }
+
+  type Etat = {
+    housing: string;
+    grazingUntil: number | null;
+    outsideNow: number;
+    paddockCapacity: number;
+  };
+
+  async function etat(
+    pid: string,
+    buildingId: string,
+    jeton: string,
+  ): Promise<Etat> {
+    const el = await appel(`/parcels/${pid}/livestock`, { jeton });
+    const b = (el.corps as unknown as {
+      barns: {
+        buildingId: string;
+        paddockCapacity: number;
+        outsideNow?: number;
+        herd: { housing: string; grazingUntil: number | null } | null;
+      }[];
+    }).barns.find((x) => x.buildingId === buildingId)!;
+    return {
+      housing: b.herd!.housing,
+      grazingUntil: b.herd!.grazingUntil,
+      outsideNow: b.outsideNow ?? 0,
+      paddockCapacity: b.paddockCapacity,
+    };
+  }
+
+  it("rentrer le troupeau met fin à la séance de pâture", async () => {
+    const { moi, pid, herdId, buildingId } = await eleveurAvecEnclos();
+    const avant = await etat(pid, buildingId, moi.jeton);
+    assert.ok(avant.paddockCapacity > 0, "l'enclos doit être reconnu comme attenant");
+
+    const sortie = await appel(`/herds/${herdId}/housing`, {
+      methode: "POST",
+      corps: { userId: moi.id, housing: "OUTSIDE" },
+      jeton: moi.jeton,
+    });
+    assert.equal(sortie.statut, 200, JSON.stringify(sortie.corps));
+    const dehors = await etat(pid, buildingId, moi.jeton);
+    assert.equal(dehors.housing, "OUTSIDE");
+    assert.ok(dehors.grazingUntil, "sortir pose une fenêtre de pâture");
+    assert.ok(dehors.outsideNow > 0, "des bêtes doivent être comptées au pré");
+
+    await appel(`/herds/${herdId}/housing`, {
+      methode: "POST",
+      corps: { userId: moi.id, housing: "INSIDE" },
+      jeton: moi.jeton,
+    });
+    const dedans = await etat(pid, buildingId, moi.jeton);
+    assert.equal(dedans.housing, "INSIDE");
+    // Le cœur du défaut : sans cette remise à zéro, la vue gardait les bêtes
+    // au pré tant que la fenêtre courait, message contraire à l'appui.
+    assert.equal(dedans.grazingUntil, null, "rentrer doit clore la séance");
+    assert.equal(dedans.outsideNow, 0, "plus personne au pré une fois rentré");
+  });
+
+  it("distingue ce qui tiendrait dehors de ce qui y est", async () => {
+    const { moi, pid, herdId, buildingId } = await eleveurAvecEnclos();
+    const el = await appel(`/parcels/${pid}/livestock`, { jeton: moi.jeton });
+    const b = (el.corps as unknown as {
+      barns: { buildingId: string; outsideCount?: number; outsideNow?: number }[];
+    }).barns.find((x) => x.buildingId === buildingId)!;
+    // À l'étable : la capacité reste positive — c'est une réponse à « si je
+    // les sors » — mais personne n'est dehors.
+    assert.ok((b.outsideCount ?? 0) > 0, "la capacité de sortie doit rester lisible");
+    assert.equal(b.outsideNow ?? 0, 0);
+    void herdId;
+  });
+});
+
 describe("litière", () => {
   /** Installe un éleveur, son étable et un troupeau. */
   async function eleveurAvecEtable() {

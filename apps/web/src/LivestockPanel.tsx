@@ -36,8 +36,11 @@ export type BarnState = {
   canLiveOutside?: boolean;
   outsideRefusal?: string | null;
   /** Bêtes qui tiendront au pré, et celles qui resteront à l'étable. */
+  /** Combien **tiendraient** au pré. Une capacité, pas un état. */
   outsideCount?: number;
   shelteredCount?: number;
+  /** Combien y sont vraiment, maintenant. */
+  outsideNow?: number;
   yardType: BuildingType;
   herd: {
     id: string;
@@ -255,7 +258,15 @@ type Props = {
    * Ouvrir l'hôtel des ventes — la sortie de secours quand la réserve est
    * vide. Sans elle, l'alerte « le troupeau dépérit » ne menait nulle part.
    */
-  onBuyFeed?: () => void;
+  /**
+   * Aller acheter de quoi nourrir **ce** lot précis.
+   *
+   * L'identifiant compte : le joueur qui appuie sur « Acheter du fourrage »
+   * dans l'alerte « le troupeau dépérit » ne veut pas faire des courses, il
+   * veut nourrir ses bêtes. Sans l'identifiant, l'achat s'arrêtait au silo et
+   * il fallait revenir distribuer — un second geste que rien n'annonçait.
+   */
+  onBuyFeed?: (herdId: string) => void;
   /**
    * Dire au joueur ce qui empêche un geste. Sur un téléphone, c'est le seul
    * canal : l'attribut `title` n'y est jamais lu.
@@ -380,11 +391,11 @@ export function LivestockPanel({
       case "FEED": {
         const ration = premiereRationDisponible();
         if (ration) onFeed(a.herdId, ration);
-        else onBuyFeed?.();
+        else onBuyFeed?.(a.herdId);
         return;
       }
       case "BUY_FEED":
-        onBuyFeed?.();
+        onBuyFeed?.(a.herdId);
         return;
       case "BEDDING":
         onSpreadBedding(a.herdId);
@@ -793,11 +804,19 @@ export function LivestockPanel({
                 L'ancienne ligne affichait « Enclos saturé » en rouge pour un
                 enclos d'une place trop court : un constat sans issue, là où
                 la sortie était en fait possible pour tout le reste du lot. */}
+            {/* La ligne disait une capacité au présent de l'indicatif :
+                « 18 bêtes au pré, 1 à l'étable » restait affiché après avoir
+                rentré le troupeau. Elle raconte maintenant l'état réel, et ne
+                parle de la place manquante que si les bêtes sont dehors. */}
             {barn.paddockCapacity > 0 && barn.outsideRefusal ? (
               <p className="graze-refusal">{barn.outsideRefusal}</p>
+            ) : barn.paddockCapacity > 0 && (barn.outsideNow ?? 0) <= 0 ? (
+              <p className="graze-note">
+                Enclos de {barn.paddockCapacity} places · les bêtes sont à l’étable.
+              </p>
             ) : (barn.shelteredCount ?? 0) > 0 ? (
               <p className="graze-note">
-                Enclos de {barn.paddockCapacity} places : {barn.outsideCount} bêtes au pré,{" "}
+                Enclos de {barn.paddockCapacity} places : {barn.outsideNow} bêtes au pré,{" "}
                 {barn.shelteredCount} à l’étable. Agrandissez l’enclos pour sortir tout le lot.
               </p>
             ) : null}

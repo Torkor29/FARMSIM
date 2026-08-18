@@ -526,6 +526,49 @@ function makeEggCrate(): THREE.Group {
 }
 
 /** Ballot de laine près de la bergerie. */
+/**
+ * Une étiquette flottante, dessinée sur une toile.
+ *
+ * « Je comprends pas ce que c'est devant l'étable » : le tas de fumier, la
+ * caisse d'œufs et le ballot de laine apparaissent sur la ferme sans un mot.
+ * Ils ne sont pas cliquables — la vue ne sélectionne que des cases — donc
+ * rien, nulle part, ne dit ce qu'ils sont. Un panneau, et la question ne se
+ * pose plus.
+ *
+ * `sizeAttenuation: false` : l'étiquette garde la même taille à l'écran quel
+ * que soit le zoom, comme un panneau d'interface et non comme un objet du
+ * décor.
+ */
+function makeTag(texte: string): THREE.Sprite {
+  const dpi = 2;
+  const police = 30 * dpi;
+  const canvas = document.createElement("canvas");
+  const ctx = canvas.getContext("2d")!;
+  ctx.font = `700 ${police}px Signika, system-ui, sans-serif`;
+  const largeur = Math.ceil(ctx.measureText(texte).width) + 26 * dpi;
+  const hauteur = 46 * dpi;
+  canvas.width = largeur;
+  canvas.height = hauteur;
+  const c = canvas.getContext("2d")!;
+  c.font = `700 ${police}px Signika, system-ui, sans-serif`;
+  c.textBaseline = "middle";
+  const r = 12 * dpi;
+  c.fillStyle = "rgba(28, 46, 38, 0.86)";
+  c.beginPath();
+  c.roundRect(0, 0, largeur, hauteur, r);
+  c.fill();
+  c.fillStyle = "#f4efe3";
+  c.fillText(texte, 13 * dpi, hauteur / 2 + dpi);
+  const tex = new THREE.CanvasTexture(canvas);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  const sprite = new THREE.Sprite(
+    new THREE.SpriteMaterial({ map: tex, depthTest: false, transparent: true }),
+  );
+  sprite.renderOrder = 20;
+  sprite.scale.set((largeur / hauteur) * 0.34, 0.34, 1);
+  return sprite;
+}
+
 /** Tas brun à côté de l'étable : il grossit avec la fosse. */
 function makeManurePile(fill: number): THREE.Group {
   const g = new THREE.Group();
@@ -730,6 +773,18 @@ function disposeObject3D(obj: THREE.Object3D) {
       if (!o.geometry.userData.shared) o.geometry.dispose();
       if (Array.isArray(o.material)) o.material.forEach((m) => m.dispose());
       else (o.material as THREE.Material).dispose();
+    }
+    /**
+     * Les étiquettes sont des sprites, pas des maillages.
+     *
+     * Chacune porte une `CanvasTexture` qui lui est propre, et le tas de
+     * fumier se redessine à chaque changement de remplissage — c'est-à-dire
+     * souvent. Sans ces deux lignes, une texture s'accumulerait sur la carte
+     * graphique à chaque tick de la fosse.
+     */
+    if (o instanceof THREE.Sprite) {
+      o.material.map?.dispose();
+      o.material.dispose();
     }
   });
 }
@@ -2269,6 +2324,10 @@ export function IsoFarmView({
           const pz = oz + (sig.originY + sig.h) * step + 0.12 * step;
           mesh.position.set(px, 0.1, pz);
           mesh.scale.setScalar(cellSize);
+          // Une caisse posée sur l'herbe ne dit pas ce qu'elle contient.
+          const tag = makeTag(sig.kind === "eggs" ? "Œufs à ramasser" : "Laine à ramasser");
+          tag.position.set(px, 0.1 + 0.42 * cellSize, pz);
+          pickupGroup.add(tag);
           pickupGroup.add(mesh);
         }
         for (const pile of piles) {
@@ -2278,6 +2337,13 @@ export function IsoFarmView({
           const pz = oz + (pile.originY + pile.h) * step + 0.08 * step;
           mesh.position.set(px, 0.1, pz);
           mesh.scale.setScalar(cellSize);
+          // Le tas brun devant l'étable était la question numéro un du
+          // joueur : « je comprends pas ce que c'est ». Il le dit lui-même,
+          // avec le remplissage de la fosse, qui est la seule chose qu'on ait
+          // besoin de savoir — pleine, elle pèse sur le troupeau.
+          const tag = makeTag(`Fumier · ${Math.round(pile.fill * 100)} %`);
+          tag.position.set(px, 0.1 + 0.5 * cellSize, pz);
+          pickupGroup.add(tag);
           pickupGroup.add(mesh);
         }
       }

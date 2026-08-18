@@ -4972,3 +4972,19 @@ button.tiny {
   color: #fff;
 }
 .barn-tab.on em { color: rgba(255, 255, 255, 0.82); }
+
+
+/* Les gestes du Garage disent leur effet sous leur nom : « Réparer » et
+   « Remettre à neuf » ne se distinguaient que par un prix, et deux verbes de
+   garagiste ne suffisent pas à deviner lequel remet la machine à 100 %. */
+.row-actions button {
+  display: grid;
+  gap: 0.05rem;
+  line-height: 1.2;
+}
+.row-actions button em {
+  font-style: normal;
+  font-weight: 600;
+  font-size: 0.68rem;
+  opacity: 0.72;
+}

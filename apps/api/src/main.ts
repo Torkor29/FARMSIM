@@ -5799,9 +5799,23 @@ app.get("/parcels/:id/livestock", async (req, res) => {
       /* — Vivre dehors : la décision durable, et ce qu'elle donne — */
       canLiveOutside: dehors.ok,
       outsideRefusal: dehors.ok || !dehors.reason ? null : GRAZING_REFUSAL_LABELS[dehors.reason],
-      /** Bêtes qui tiendront au pré ; le reste attend son tour à l'étable. */
+      /**
+       * Bêtes qui **tiendraient** au pré ; le reste attendrait son tour à
+       * l'étable. C'est une capacité, pas un état : elle répond à « si je les
+       * sors, combien sortent ? ».
+       */
       outsideCount: dehors.animals,
       shelteredCount: dehors.sheltered,
+      /**
+       * Bêtes réellement dehors, à cet instant.
+       *
+       * Le panneau n'avait que la capacité et l'affichait comme un constat :
+       * « 18 bêtes au pré, 1 à l'étable » restait écrit après avoir rentré le
+       * troupeau, et le joueur en concluait — à raison — que le bouton n'avait
+       * rien fait. Le lieu de vie décide, la capacité borne.
+       */
+      outsideNow:
+        b.herd && parseHousing(b.herd.housing) === "OUTSIDE" ? dehors.animals : 0,
       cowPrice: herdKind ? ANIMAL_PRICE[herdKind] : ANIMAL_PRICE.COW,
     });
   }
@@ -6385,6 +6399,18 @@ app.post("/herds/:id/housing", async (req, res) => {
     return;
   }
 
+  /**
+   * Rentrer, c'est aussi mettre fin à la séance en cours.
+   *
+   * Le lieu de vie n'est qu'une moitié de la vérité : la vue et le tick lisent
+   * `housing === "OUTSIDE" || grazingUntil > maintenant`. Sortir le troupeau
+   * pose une fenêtre de pâture — c'est elle qui fait franchir la porte à
+   * l'écran. Rentrer ne posait que `housing = INSIDE` et laissait la fenêtre
+   * courir : le message annonçait « bêtes rentrées » pendant qu'elles
+   * restaient au pré, parfois de longues minutes. Deux sources pour un seul
+   * fait, et elles se contredisaient.
+   */
+  await prisma.herd.update({ where: { id: herd.id }, data: { grazingUntil: null } });
   res.json({ housing: await setHousing(herd.id, "INSIDE"), tempC: null, warning: null });
 });
 
