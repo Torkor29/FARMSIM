@@ -174,3 +174,46 @@ describe("la grille de la coquille de jeu", () => {
     }
   });
 });
+
+describe("les listes dans une fenêtre", () => {
+  /**
+   * Les panneaux ont été écrits pour un rail de 292 px. Devenus des fenêtres
+   * de 1440, ils gardaient leur colonne unique : le Bureau empilait 5 411 px
+   * de contenu dans 644 px de boîte — huit écrans et demi — dont 3 183 px pour
+   * vingt-quatre chantiers alignés à côté de 1 100 px de vide.
+   *
+   * La règle qui les met en colonnes doit rester **réversible** : le même
+   * balisage sert le tiroir du téléphone, où une seule colonne tient. C'est ce
+   * que garantissent `auto-fill` et le `min(100%, …)` — une colonne figée
+   * (`repeat(3, …)`) casserait le tactile sans qu'aucun test ne le voie.
+   */
+  const dansFenetre = toutes.filter(
+    (r) => r.selecteur.includes(".win-body") && declaration(r.corps, "grid-template-columns"),
+  );
+
+  it("existent — sinon personne ne met les listes en colonnes", () => {
+    expect(dansFenetre.length).toBeGreaterThanOrEqual(4);
+  });
+
+  it("s’adaptent à la largeur au lieu de la figer", () => {
+    /**
+     * Deux formes seulement sont acceptables :
+     *
+     * - `auto-fill` avec `min(100%, …)` — la liste choisit son nombre de
+     *   colonnes et retombe à une seule quand la place manque ;
+     * - un nombre fixe de colonnes **toutes en `minmax(0, …)`** — une rangée
+     *   de gestes, par exemple, dont les cases se compriment sans jamais
+     *   déborder. C'est le cas de `.barn-actions` et ses quatre boutons.
+     *
+     * Tout le reste — `repeat(3, 20rem)`, `1fr 1fr 1fr` — déborde au doigt.
+     */
+    const figees = dansFenetre
+      .map((r) => ({ sel: r.selecteur, val: declaration(r.corps, "grid-template-columns")! }))
+      .filter((d) => {
+        const adaptative = /auto-fill|auto-fit/.test(d.val) && /min\(\s*100%/.test(d.val);
+        const compressible = /^repeat\(\s*\d+\s*,\s*minmax\(\s*0/.test(d.val.trim());
+        return !adaptative && !compressible;
+      });
+    expect(figees).toEqual([]);
+  });
+});

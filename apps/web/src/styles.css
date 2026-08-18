@@ -4580,11 +4580,23 @@ button.tiny {
      le contenu **couler** — chaque bloc se pose là où il y a de la place, et
      les hauteurs s'égalisent d'elles-mêmes.
      `break-inside: avoid` interdit qu'une section soit coupée en deux entre
-     deux colonnes ; sans lui, le remède serait pire que le mal. */
+     deux colonnes ; sans lui, le remède serait pire que le mal.
+
+     `columns: 21rem` plutôt que `column-count: 3` : le nombre de colonnes se
+     déduit alors de la largeur réellement disponible. C'est ce qui permet de
+     poser deux étables côte à côte sans que chacune se retrouve à trois
+     colonnes de deux cent trente pixels — elles en prennent deux, et la
+     fenêtre reste à un écran au lieu de deux. */
   display: block;
-  column-count: 3;
+  columns: 21rem;
   column-gap: 0.7rem;
 }
+/* Essai mesuré, et rejeté : poser deux étables **côte à côte** dans une grille
+   de 32 rem. Chacune n'avait plus que deux colonnes internes au lieu de trois,
+   et passait de 528 à 1 114 px de haut — la fenêtre montait à 2,1 écrans au
+   lieu de 1,9. Deux cartes moitié moins larges et deux fois plus hautes, ce
+   n'est pas un gain. Une étable garde donc toute la largeur, et ce sont ses
+   colonnes internes qui se multiplient. */
 .win-body .barn-card > * {
   break-inside: avoid;
   margin-bottom: 0.5rem;
@@ -4726,15 +4738,40 @@ button.tiny {
    la disposition, elle, ne change pas. Un doublon n'est jamais neutre : c'est
    par là que les générations de règles se remettent à diverger. */
 
-/* Les listes d'achat profitent de la largeur retrouvée : en colonne unique
-   dans une fenêtre de 1440 px, dix-neuf bâtiments faisaient encore deux mille
-   pixels de défilement pour rien. */
+/* —— Toute liste devient une grille dans une fenêtre ——
+   Les panneaux ont été écrits pour un rail de 292 px de large. Devenus des
+   fenêtres de 1440 px, ils ont gardé leur colonne unique : mesuré sur le jeu
+   en marche, le Bureau empilait **5 411 px de contenu dans 644 px de boîte**,
+   soit huit écrans et demi de défilement, dont 3 183 px pour les vingt-quatre
+   chantiers et 1 697 px pour les onze objectifs — chacun sur une seule
+   colonne, à côté de 1 100 px de vide.
+
+   Toutes ces listes sont déjà des `display: grid` à une colonne implicite : il
+   suffit de leur donner des colonnes quand la place existe. `auto-fill` les
+   rend indifférentes à la largeur — la même règle sert la fenêtre de 1 440 px,
+   celle de 980 et le tiroir du téléphone, qui retombe à une colonne par le
+   `min(100%, …)`.
+
+   Les gabarits diffèrent parce que les cartes diffèrent : une vignette de
+   bâtiment se lit à 21 rem, une carte de machine avec ses jauges en réclame
+   26, une ligne de présence 15. */
 .win-body .build-list {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(min(100%, 21rem), 1fr));
   gap: 0.6rem;
 }
 .win-body .build-list > * { width: 100%; }
+.win-body .job-grid,
+.win-body .quest-list,
+.win-body .sale-grid,
+.win-body .zone-maps {
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 20rem), 1fr));
+  align-items: start;
+}
+.win-body .who-list,
+.win-body .consigne-rows {
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 15rem), 1fr));
+}
 
 /* Les cartes de machine et de troupeau s'alignent aussi, quand il y en a
    plusieurs : c'est la comparaison qui compte, et elle demande de les voir
@@ -4763,4 +4800,70 @@ button.tiny {
   font-weight: 700;
   font-style: normal;
   color: var(--danger, #b4462f);
+}
+
+
+/* —— Le choix de bâtiment, réduit à sa plus simple expression ——
+   Le rail affichait les dix-neuf vignettes du catalogue en permanence :
+   1 665 px de contenu dans une colonne de 292 px, et le rail entier à trois
+   écrans de défilement qu'on construise ou non. Il ne montre plus que le
+   bâtiment retenu et de quoi en changer ; le catalogue s'ouvre en fenêtre,
+   où il tient en quatre colonnes. */
+.build-choice {
+  display: grid;
+  gap: 0.5rem;
+}
+.build-current {
+  display: flex;
+  gap: 0.55rem;
+  align-items: flex-start;
+  padding: 0.5rem;
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  background: var(--paper);
+}
+.build-open {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  width: 100%;
+  padding: 0.55rem 0.7rem;
+  border-radius: var(--r-md);
+  border: 1px solid var(--teal-700);
+  background: var(--teal-700);
+  color: #fff;
+  font-weight: 800;
+  font-size: 0.85rem;
+  cursor: pointer;
+}
+.build-open:hover { filter: brightness(1.06); }
+.build-open em {
+  font-style: normal;
+  font-weight: 600;
+  font-size: 0.72rem;
+  opacity: 0.82;
+}
+
+
+/* —— Les longues listes deviennent des tableaux d'affichage ——
+   Vingt-quatre chantiers passés en quatre colonnes font encore 783 px, et le
+   Bureau reste à 2,9 écrans. Les mettre en colonne unique n'y changerait rien
+   et les cacher derrière un onglet reviendrait à les perdre. On les borne :
+   la liste garde sa place, on y défile à l'intérieur, et son entête reste
+   sous les yeux avec le compte — c'est le geste d'un tableau d'affichage,
+   pas d'un menu qui déborde.
+
+   `overscroll-behavior: contain` : sans lui, la molette arrivée en bas de la
+   liste continue dans la fenêtre derrière, et on perd l'entête qu'on lisait. */
+.win-body .hall-block > .job-grid,
+.win-body .hall-block > .quest-list {
+  max-height: 21rem;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 0.35rem;
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  background: color-mix(in srgb, var(--paper) 55%, transparent);
+  scrollbar-width: thin;
 }

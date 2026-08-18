@@ -105,7 +105,7 @@ import {
 import { TOOL_GROUPS, groupOf, optionsFor } from "./ui/tool-options";
 import { ToolRail } from "./ui/desktop/ToolRail";
 import { SelectionBar } from "./ui/desktop/SelectionBar";
-import { PanelHost } from "./ui/desktop/Window";
+import { PanelHost, Window } from "./ui/desktop/Window";
 import {
   CellContextMenu,
   type CellContext,
@@ -1599,6 +1599,24 @@ export function App() {
       if (from !== null && e.clientY - from > 60) setSheet(null);
     },
   };
+
+  /**
+   * Le catalogue de construction s'ouvre à la demande, sur bureau.
+   *
+   * Mesuré sur le jeu en marche : dix-neuf bâtiments en colonne unique dans un
+   * rail de 292 px, cela faisait **1 665 px** de contenu — et le rail entier
+   * 2 073 px pour 676 px de hauteur, trois écrans de défilement **en
+   * permanence**, qu'on construise ou non. Un catalogue n'est pas un HUD.
+   *
+   * Il ne peut pas devenir une fenêtre comme le Garage : on choisit un
+   * bâtiment, puis on le **pose sur la ferme** — une modale par-dessus le
+   * terrain rendrait le geste impossible. On sépare donc les deux temps : le
+   * choix est modal, la pose ne l'est pas. Le rail ne garde que le bâtiment
+   * retenu et de quoi en changer.
+   */
+  const [showBuildPicker, setShowBuildPicker] = useState(false);
+
+
 
   function panelClass(base: string, key: SheetKey): string {
     if (!isMobile) return `glass ${base}`;
@@ -3479,6 +3497,121 @@ export function App() {
     );
   }
 
+  /**
+   * « Améliorer » : la même description pour ses deux hôtes.
+   *
+   * Elle a quitté le rail pour la fenêtre — trois bâtiments y faisaient déjà
+   * 519 px et la liste grandit avec la ferme. Mais la fenêtre n'existe pas au
+   * doigt : sans cette variable partagée, le téléphone perdait purement et
+   * simplement l'amélioration, la rotation et la revente des bâtiments.
+   */
+  const blocAmeliorer = (parcel?.buildings?.length ?? 0) > 0 && (
+            <>
+              <h3 className="spaced">Améliorer</h3>
+              <div className="build-list">
+                {(parcel?.buildings ?? []).map((b) => {
+                  const d = BUILDING_DEFS[b.type];
+                  const lvl = b.level ?? 1;
+                  const cost = buildingUpgradeCost(b.type, lvl);
+                  const next = lvl < MAX_BUILDING_LEVEL ? buildingLevelDef(lvl + 1) : null;
+                  const blocked = next ? player.level < next.requiredLevel : false;
+                  // Le montant affiché est celui qu'on touchera vraiment : dans
+                  // la fenêtre de regret, la démolition rend l'intégralité.
+                  const age = b.createdAt ? Date.now() - Date.parse(b.createdAt) : undefined;
+                  const refund = buildingResaleValue(b.type, lvl, age);
+                  return (
+                    <div key={b.id} className="upgrade-item">
+                      <img className="build-art small" src={BUILDING_ART[b.type]} alt="" />
+                      <span className="build-text">
+                        <strong>{d.name}</strong>
+                        <span className="level-row">
+                          {Array.from({ length: MAX_BUILDING_LEVEL }, (_, i) => (
+                            <i key={i} className={`pip ${i < lvl ? "on" : ""}`} />
+                          ))}
+                          <em>
+                            Nv.{lvl} · {buildingLevelDef(lvl).name}
+                          </em>
+                        </span>
+                      </span>
+                      <span className="upgrade-actions">
+                        {cost === null ? (
+                          <span className="upgrade-max">Niveau max</span>
+                        ) : blocked ? (
+                          <span className="upgrade-locked">Nv. joueur {next?.requiredLevel}</span>
+                        ) : !canPay(player, cost) ? (
+                          <span className="upgrade-locked poor">{cost} TRN</span>
+                        ) : (
+                          <button
+                            type="button"
+                            className="upgrade-btn"
+                            disabled={busy}
+                            title={`Passer au niveau ${lvl + 1} — ${buildingLevelDef(lvl + 1).name}`}
+                            onClick={() => upgradeBuilding(b.id)}
+                          >
+                            ↑ {cost} TRN
+                          </button>
+                        )}
+                        <button
+                          type="button"
+                          className="upgrade-btn"
+                          disabled={busy}
+                          title="Tourner d'un quart de tour"
+                          onClick={() => void rotateBuilding(b.id, d.name)}
+                        >
+                          ⟳
+                        </button>
+                        <button
+                          type="button"
+                          className={`sell-btn${age != null && withinRegret(age) ? " regret" : ""}`}
+                          disabled={busy}
+                          title={
+                            age != null && withinRegret(age)
+                              ? `Posé à l'instant — démolition intégralement remboursée (${refund} TRN)`
+                              : `Démolir et récupérer ${refund} TRN`
+                          }
+                          onClick={() => sellBuilding(b.id, d.name)}
+                        >
+                          Démolir {refund}
+                        </button>
+                      </span>
+                    </div>
+                  );
+                })}
+              </div>
+            </>
+          );
+
+  /** Le catalogue de construction, décrit une fois pour ses deux hôtes. */
+  const catalogueBatiments = (Object.keys(BUILDING_DEFS) as BuildingType[]).map((t) => {
+    const d = BUILDING_DEFS[t];
+    return (
+      <button
+        key={t}
+        type="button"
+        className={`build-item art ${tool === "BUILD" && buildType === t ? "on" : ""}`}
+        onClick={() => {
+          setTool("BUILD");
+          setBuildType(t);
+          setSelectedCells([]);
+          // Le fantôme se pose tout seul (voir l'effet plus haut) ; ici on
+          // s'efface, car le menu couvrait précisément la ferme qu'il fallait
+          // regarder. Même raison sur bureau : le choix fait, la fenêtre part.
+          if (isMobile) setSheet(null);
+          setShowBuildPicker(false);
+        }}
+      >
+        <img className="build-art" src={BUILDING_ART[t]} alt="" loading="lazy" />
+        <span className="build-text">
+          <strong>{d.name}</strong>
+          <span>
+            {d.w}×{d.h} · {d.cost} TRN
+          </span>
+          <span className="muted tiny">{d.description}</span>
+        </span>
+      </button>
+    );
+  });
+
   // Pas encore de terre : on déroule l'installation guidée avant le jeu.
   if (!ownedParcels.length) {
     return (
@@ -4252,6 +4385,23 @@ export function App() {
         </PanelHost>
       </div>
 
+      {/* Le catalogue en grand, à la demande. `PanelHost` ne convient pas ici :
+          au doigt le catalogue vit déjà dans le tiroir du rail, il ne doit pas
+          exister en double. */}
+      {!isMobile && (
+        <Window
+          open={showBuildPicker}
+          title="Bâtiments"
+          subtitle={`${Object.keys(BUILDING_DEFS).length} bâtiments à poser · ${parcel?.buildings?.length ?? 0} sur la ferme`}
+          width="wide"
+          onClose={() => setShowBuildPicker(false)}
+        >
+          <h3 className="spaced">Construire</h3>
+          <div className="build-list">{catalogueBatiments}</div>
+          {blocAmeliorer}
+        </Window>
+      )}
+
       <div className="rail rail-right">
         <aside className={panelClass("geo-panel", "INFO")} {...(isMobile ? sheetGesture : {})}>
           <h3>{homeCity || zoneName}</h3>
@@ -4329,112 +4479,48 @@ export function App() {
         </aside>
         <aside className={panelClass("build-panel", "BUILD")} {...(isMobile ? sheetGesture : {})}>
           <h3>Construire</h3>
-          <div className="build-list">
-            {(Object.keys(BUILDING_DEFS) as BuildingType[]).map((t) => {
-              const d = BUILDING_DEFS[t];
-              return (
-                <button
-                  key={t}
-                  type="button"
-                  className={`build-item art ${tool === "BUILD" && buildType === t ? "on" : ""}`}
-                  onClick={() => {
-                    setTool("BUILD");
-                    setBuildType(t);
-                    setSelectedCells([]);
-                    // Le fantôme se pose tout seul (voir l'effet plus haut) ;
-                    // ici on s'efface, car le menu couvrait précisément la
-                    // ferme qu'il fallait regarder.
-                    if (isMobile) setSheet(null);
-                  }}
-                >
-                  <img className="build-art" src={BUILDING_ART[t]} alt="" loading="lazy" />
+          {/* Au doigt, le catalogue reste dans le tiroir : il y occupe tout
+              l'écran, ce qui est le bon geste sur un téléphone. Sur bureau il
+              passe dans une fenêtre, et le rail ne garde que le choix courant.
+              Voir `showBuildPicker` pour le pourquoi, plus haut. */}
+          {isMobile ? (
+            <div className="build-list">{catalogueBatiments}</div>
+          ) : (
+            <div className="build-choice">
+              {tool === "BUILD" && buildType ? (
+                <span className="build-current">
+                  <img className="build-art small" src={BUILDING_ART[buildType]} alt="" />
                   <span className="build-text">
-                    <strong>{d.name}</strong>
+                    <strong>{BUILDING_DEFS[buildType].name}</strong>
                     <span>
-                      {d.w}×{d.h} · {d.cost} TRN
+                      {BUILDING_DEFS[buildType].w}×{BUILDING_DEFS[buildType].h} ·{" "}
+                      {BUILDING_DEFS[buildType].cost} TRN
                     </span>
-                    <span className="muted tiny">{d.description}</span>
+                    <span className="muted tiny">Cliquez la ferme pour le poser.</span>
                   </span>
-                </button>
-              );
-            })}
-          </div>
-
-          {(parcel?.buildings?.length ?? 0) > 0 && (
-            <>
-              <h3 className="spaced">Améliorer</h3>
-              <div className="build-list">
-                {(parcel?.buildings ?? []).map((b) => {
-                  const d = BUILDING_DEFS[b.type];
-                  const lvl = b.level ?? 1;
-                  const cost = buildingUpgradeCost(b.type, lvl);
-                  const next = lvl < MAX_BUILDING_LEVEL ? buildingLevelDef(lvl + 1) : null;
-                  const blocked = next ? player.level < next.requiredLevel : false;
-                  // Le montant affiché est celui qu'on touchera vraiment : dans
-                  // la fenêtre de regret, la démolition rend l'intégralité.
-                  const age = b.createdAt ? Date.now() - Date.parse(b.createdAt) : undefined;
-                  const refund = buildingResaleValue(b.type, lvl, age);
-                  return (
-                    <div key={b.id} className="upgrade-item">
-                      <img className="build-art small" src={BUILDING_ART[b.type]} alt="" />
-                      <span className="build-text">
-                        <strong>{d.name}</strong>
-                        <span className="level-row">
-                          {Array.from({ length: MAX_BUILDING_LEVEL }, (_, i) => (
-                            <i key={i} className={`pip ${i < lvl ? "on" : ""}`} />
-                          ))}
-                          <em>
-                            Nv.{lvl} · {buildingLevelDef(lvl).name}
-                          </em>
-                        </span>
-                      </span>
-                      <span className="upgrade-actions">
-                        {cost === null ? (
-                          <span className="upgrade-max">Niveau max</span>
-                        ) : blocked ? (
-                          <span className="upgrade-locked">Nv. joueur {next?.requiredLevel}</span>
-                        ) : !canPay(player, cost) ? (
-                          <span className="upgrade-locked poor">{cost} TRN</span>
-                        ) : (
-                          <button
-                            type="button"
-                            className="upgrade-btn"
-                            disabled={busy}
-                            title={`Passer au niveau ${lvl + 1} — ${buildingLevelDef(lvl + 1).name}`}
-                            onClick={() => upgradeBuilding(b.id)}
-                          >
-                            ↑ {cost} TRN
-                          </button>
-                        )}
-                        <button
-                          type="button"
-                          className="upgrade-btn"
-                          disabled={busy}
-                          title="Tourner d'un quart de tour"
-                          onClick={() => void rotateBuilding(b.id, d.name)}
-                        >
-                          ⟳
-                        </button>
-                        <button
-                          type="button"
-                          className={`sell-btn${age != null && withinRegret(age) ? " regret" : ""}`}
-                          disabled={busy}
-                          title={
-                            age != null && withinRegret(age)
-                              ? `Posé à l'instant — démolition intégralement remboursée (${refund} TRN)`
-                              : `Démolir et récupérer ${refund} TRN`
-                          }
-                          onClick={() => sellBuilding(b.id, d.name)}
-                        >
-                          Démolir {refund}
-                        </button>
-                      </span>
-                    </div>
-                  );
-                })}
-              </div>
-            </>
+                </span>
+              ) : (
+                <p className="muted tiny">
+                  Choisissez un bâtiment, puis cliquez la case où le poser.
+                </p>
+              )}
+              <button
+                type="button"
+                className="build-open"
+                onClick={() => setShowBuildPicker(true)}
+              >
+                {tool === "BUILD" && buildType ? "Changer de bâtiment" : "Choisir un bâtiment"}
+                <em>{Object.keys(BUILDING_DEFS).length} bâtiments</em>
+              </button>
+            </div>
           )}
+
+          {/* « Améliorer » a suivi le catalogue dans la fenêtre sur bureau :
+              trois bâtiments y faisaient déjà 519 px, et la liste grandit
+              avec la ferme. Améliorer ne demande pas de viser une case, rien
+              n'oblige ce bloc à rester au-dessus du terrain. Au doigt, en
+              revanche, il n'y a pas de fenêtre : le tiroir le garde. */}
+          {isMobile && blocAmeliorer}
         </aside>
       </div>
 
