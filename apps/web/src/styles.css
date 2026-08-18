@@ -4883,3 +4883,92 @@ button.tiny {
   background: color-mix(in srgb, var(--paper) 55%, transparent);
   scrollbar-width: thin;
 }
+
+
+/* ==========================================================================
+   AU DOIGT : DES CIBLES QU'ON ATTEINT, ET DES ONGLETS QU'ON DEVINE
+   ==========================================================================
+
+   Relevé sur un iPhone simulé (390×844), panneau par panneau. La charte §7.3
+   pose un plancher de 44 px pour toute cible tactile ; trois familles
+   passaient dessous, et rien ne signalait que la barre d'onglets de la bourse
+   en cachait trois sur six.
+
+   La classe `.game-stage.mobile` fait foi — c'est `useIsMobile()` qui tranche.
+   Aucune requête média ne double cette décision : c'est la règle qu'on s'est
+   donnée après avoir vu une disposition à moitié bureau, à moitié tactile.
+   ========================================================================== */
+
+/* Le bouton de rotation d'un bâtiment mesurait 29 px de large pour 44 de
+   haut : la moitié d'un doigt. Il tient sur deux lignes plutôt que de
+   rétrécir. */
+.game-stage.mobile .upgrade-btn {
+  min-width: 44px;
+  min-height: 44px;
+}
+
+/* Les gestes des alertes d'élevage — « Acheter du fourrage », « Traire »,
+   « Épandre » — faisaient 34 px de haut. Ce sont précisément les boutons
+   qu'on vient chercher quand quelque chose ne va pas. */
+.game-stage.mobile .herd-alert-do {
+  min-height: 44px;
+  padding-inline: 0.7rem;
+}
+
+/* « Fermer » d'un bandeau d'alerte : 58×29. */
+.game-stage.mobile .ghost.tiny {
+  min-height: 44px;
+  min-width: 44px;
+}
+
+/* La barre d'onglets de la bourse : 684 px de contenu dans 388. Elle défile
+   déjà, mais rien ne le disait — « Mes offres », « Consignes » et « Terres »
+   étaient hors de l'écran sans le moindre indice. Le dégradé de bord est le
+   même que celui des cotations : le contenu s'efface au lieu de se couper
+   net, et l'œil comprend qu'il continue. */
+.game-stage.mobile .hdv-modes {
+  -webkit-mask-image: linear-gradient(90deg, #000 calc(100% - 2rem), transparent);
+  mask-image: linear-gradient(90deg, #000 calc(100% - 2rem), transparent);
+  scroll-snap-type: x proximity;
+}
+.game-stage.mobile .hdv-modes button { scroll-snap-align: start; flex: 0 0 auto; }
+
+
+/* Le sélecteur de bâtiment d'élevage, au doigt. Une rangée d'onglets, pas un
+   menu déroulant : le nombre de bêtes de chaque lot se lit sans ouvrir quoi
+   que ce soit, et c'est souvent la seule chose qu'on venait vérifier. */
+.barn-picker {
+  display: flex;
+  gap: 0.4rem;
+  overflow-x: auto;
+  scrollbar-width: none;
+  padding-bottom: 0.15rem;
+  margin-bottom: 0.5rem;
+}
+.barn-picker::-webkit-scrollbar { display: none; }
+.barn-tab {
+  flex: 0 0 auto;
+  display: grid;
+  gap: 0.1rem;
+  min-height: 44px;
+  padding: 0.35rem 0.75rem;
+  border-radius: var(--r-md);
+  border: 1px solid var(--line);
+  background: var(--paper);
+  font-weight: 700;
+  font-size: 0.82rem;
+  text-align: left;
+  cursor: pointer;
+}
+.barn-tab em {
+  font-style: normal;
+  font-weight: 600;
+  font-size: 0.7rem;
+  color: var(--muted);
+}
+.barn-tab.on {
+  background: var(--teal-700);
+  border-color: var(--teal-700);
+  color: #fff;
+}
+.barn-tab.on em { color: rgba(255, 255, 255, 0.82); }

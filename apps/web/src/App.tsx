@@ -105,6 +105,7 @@ import { TOOL_GROUPS, groupOf, optionsFor } from "./ui/tool-options";
 import { ToolRail } from "./ui/desktop/ToolRail";
 import { SelectionBar } from "./ui/desktop/SelectionBar";
 import { PanelHost, Window } from "./ui/desktop/Window";
+import { Geste } from "./ui/Geste";
 import {
   CellContextMenu,
   type CellContext,
@@ -4188,43 +4189,71 @@ export function App() {
                         <span className="grease-num">{grease.toFixed(0)}%</span>
                       </div>
                     </span>
+                    {/* Chacun de ces gestes se grisait en rangeant sa raison
+                        dans un `title` — invisible au doigt. Mesuré au
+                        téléphone : trente-deux boutons du seul Garage étaient
+                        muets. `Geste` les rend touchables : ils n'agissent
+                        pas, mais ils répondent. */}
                     <span className="row-actions">
-                          <button
-                            type="button"
-                            disabled={busy || grease >= GREASE_FULL - 0.5}
-                            title={`Refaire le plein de graisse · ${GREASE_COST_CRD} TRN`}
-                            onClick={() => setCare({ mode: "grease", machineId: m.id })}
-                          >
-                            Graisser
-                          </button>
-                          <button
-                            type="button"
-                            disabled={busy || (m.dirt ?? 0) < 8}
-                            title={`${CLEAN_COST_CRD} TRN`}
-                            onClick={() => setCare({ mode: "clean", machineId: m.id })}
-                          >
-                            Nettoyer
-                          </button>
-                      <button
-                        type="button"
-                        disabled={busy || !canHalf || (halfQuote != null && !canPay(player, halfQuote.cost))}
-                        title={halfQuote ? `État → ${halfTarget.toFixed(0)} %` : ""}
-                        onClick={() => repairMachine(m.id, "half")}
-                      >
-                        {/* Sur une machine neuve les devis valent zéro : le
-                            bouton annonçait « Rafistoler 0 TRN », un prix nul
-                            pour un travail impossible. Il dit maintenant
-                            pourquoi il est éteint. */}
-                        {canHalf ? `Rafistoler ${halfQuote?.cost ?? 0} TRN` : "Rien à rafistoler"}
-                      </button>
-                      <button
-                        type="button"
-                        disabled={busy || !canFull || (fullQuote != null && !canPay(player, fullQuote.cost))}
-                        title="Révision complète"
-                        onClick={() => repairMachine(m.id, "full")}
-                      >
-                        {canFull ? `Réviser ${fullQuote?.cost ?? 0} TRN` : "Déjà à neuf"}
-                      </button>
+                      <Geste
+                        busy={busy}
+                        blocage={
+                          grease >= GREASE_FULL - 0.5
+                            ? "Le graisseur est déjà au plein."
+                            : !canPay(player, GREASE_COST_CRD)
+                              ? `Il vous manque ${Math.ceil(GREASE_COST_CRD - player.crd)} TRN pour graisser.`
+                              : null
+                        }
+                        hint={`Refaire le plein de graisse · ${GREASE_COST_CRD} TRN`}
+                        label="Graisser"
+                        onDo={() => setCare({ mode: "grease", machineId: m.id })}
+                        onExplain={(raison) => flashToast(raison, "warn")}
+                      />
+                      <Geste
+                        busy={busy}
+                        blocage={
+                          (m.dirt ?? 0) < 8
+                            ? "Cette machine est propre — rien à nettoyer."
+                            : !canPay(player, CLEAN_COST_CRD)
+                              ? `Il vous manque ${Math.ceil(CLEAN_COST_CRD - player.crd)} TRN pour le nettoyage.`
+                              : null
+                        }
+                        hint={`${CLEAN_COST_CRD} TRN`}
+                        label="Nettoyer"
+                        onDo={() => setCare({ mode: "clean", machineId: m.id })}
+                        onExplain={(raison) => flashToast(raison, "warn")}
+                      />
+                      <Geste
+                        busy={busy}
+                        blocage={
+                          !canHalf
+                            ? "L’état est encore bon : il n’y a rien à rafistoler."
+                            : halfQuote != null && !canPay(player, halfQuote.cost)
+                              ? `Il vous manque ${Math.ceil(halfQuote.cost - player.crd)} TRN pour ce rafistolage.`
+                              : null
+                        }
+                        hint={halfQuote ? `État → ${halfTarget.toFixed(0)} %` : undefined}
+                        /* Sur une machine neuve les devis valent zéro : le
+                           bouton annonçait « Rafistoler 0 TRN », un prix nul
+                           pour un travail impossible. */
+                        label={canHalf ? `Rafistoler ${halfQuote?.cost ?? 0} TRN` : "Rien à rafistoler"}
+                        onDo={() => repairMachine(m.id, "half")}
+                        onExplain={(raison) => flashToast(raison, "warn")}
+                      />
+                      <Geste
+                        busy={busy}
+                        blocage={
+                          !canFull
+                            ? "Cette machine est déjà à neuf."
+                            : fullQuote != null && !canPay(player, fullQuote.cost)
+                              ? `Il vous manque ${Math.ceil(fullQuote.cost - player.crd)} TRN pour la révision.`
+                              : null
+                        }
+                        hint="Révision complète"
+                        label={canFull ? `Réviser ${fullQuote?.cost ?? 0} TRN` : "Déjà à neuf"}
+                        onDo={() => repairMachine(m.id, "full")}
+                        onExplain={(raison) => flashToast(raison, "warn")}
+                      />
                       <button
                         type="button"
                         className="sell-btn"
@@ -4280,6 +4309,7 @@ export function App() {
         <LivestockPanel
           className={panelClass("livestock-panel", "HERD")}
           gesture={isMobile ? sheetGesture : undefined}
+          unSeulBatiment={isMobile}
           onClose={() => {
             if (isMobile) setSheet(null);
             else setShowHerd(false);

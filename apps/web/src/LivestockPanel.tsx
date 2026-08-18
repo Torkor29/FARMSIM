@@ -6,6 +6,7 @@ import {
 } from "react";
 import { herdAlerts, type HerdAlert } from "./ui/herd-alerts";
 import { AlertIcon } from "./ui/AlertIcon";
+import { Geste } from "./ui/Geste";
 import {
   ANIMAL_ART,
   ANIMAL_GRAZE_ART,
@@ -233,57 +234,6 @@ const PRODUITS: {
   },
 ];
 
-/**
- * Un geste, et ce qui l'empêche — dit à voix haute.
- *
- * Tous les blocages du panneau étaient rangés dans l'attribut `title`.
- * Au téléphone, cet attribut **n'existe pas** : il n'y a pas de survol. Le
- * joueur avait donc sous les yeux une rangée de boutons gris, sans une ligne
- * pour dire lequel manquait de quoi, et ses touchers ne produisaient rien —
- * ce qui se raconte très exactement « peu importe où je clique, ça fait
- * rien ».
- *
- * Un geste empêché reste donc **touchable** : il ne s'exécute pas, mais il
- * répond. Il annonce ce qui manque, dans le bandeau, à l'endroit où le joueur
- * regarde déjà. `aria-disabled` plutôt que `disabled` : le lecteur d'écran
- * apprend qu'il est indisponible, et le doigt garde une cible qui parle.
- */
-function Geste({
-  label,
-  className,
-  busy,
-  blocage,
-  onDo,
-  onExplain,
-  hint,
-}: {
-  label: ReactNode;
-  className?: string;
-  busy: boolean;
-  /** Ce qui empêche, `null` si rien n'empêche. */
-  blocage: string | null;
-  onDo: () => void;
-  onExplain: (raison: string) => void;
-  /** Ce que le geste fait, quand il est possible — pour la souris. */
-  hint?: string;
-}) {
-  const empeche = blocage !== null;
-  return (
-    <button
-      type="button"
-      className={`${className ?? ""}${empeche ? " blocked" : ""}`.trim()}
-      // `busy` est le seul cas où l'on refuse vraiment le toucher : une
-      // requête est en vol, et un second envoi ferait double emploi.
-      disabled={busy}
-      aria-disabled={empeche}
-      title={blocage ?? hint}
-      onClick={() => (empeche ? onExplain(blocage) : onDo())}
-    >
-      {label}
-    </button>
-  );
-}
-
 type Props = {
   barns: BarnState[];
   busy: boolean;
@@ -324,6 +274,16 @@ type Props = {
     onPointerDown?: (e: ReactPointerEvent<HTMLElement>) => void;
     onPointerUp?: (e: ReactPointerEvent<HTMLElement>) => void;
   };
+  /**
+   * Un seul bâtiment à l'écran, avec de quoi passer de l'un à l'autre.
+   *
+   * Mesuré au téléphone : deux bâtiments faisaient **3 123 px** dans un tiroir
+   * de 538 — près de six écrans de défilement, et cela grandit d'une carte
+   * entière à chaque étable construite. Une fiche d'étable fait 1 277 px à
+   * elle seule ; on ne la lit pas en même temps qu'une autre sur 390 px de
+   * large. Sur bureau, la fenêtre les montre toutes : là, on compare.
+   */
+  unSeulBatiment?: boolean;
 };
 
 /** Panneau élevage : effectif, bien-être, sortie au pré. */
@@ -354,6 +314,7 @@ export function LivestockPanel({
   className = "glass livestock-panel",
   onClose,
   gesture,
+  unSeulBatiment = false,
 }: Props) {
   // Les alertes se déduisent de l'état — elles ne sont pas une donnée de plus
   // à tenir à jour, donc elles ne peuvent pas mentir.
@@ -402,6 +363,16 @@ export function LivestockPanel({
         return wheatTons;
     }
   }
+
+  /**
+   * Quel bâtiment est à l'écran, quand on n'en montre qu'un.
+   *
+   * On retient un identifiant, pas un rang : construire ou vendre une étable
+   * décale les rangs et ferait sauter la vue sur un autre lot.
+   */
+  const [batimentVu, setBatimentVu] = useState<string | null>(null);
+  const vu = barns.find((b) => b.buildingId === batimentVu) ?? barns[0] ?? null;
+  const barnsVus = unSeulBatiment && vu ? [vu] : barns;
 
   /** Exécute le geste que l'alerte propose, sans quitter la liste. */
   function runAlert(a: HerdAlert) {
@@ -491,7 +462,30 @@ export function LivestockPanel({
         </ul>
       )}
 
-      {barns.map((barn) => {
+      {/* Le sélecteur n'apparaît que s'il y a de quoi choisir. Un bâtiment
+          unique n'a pas besoin d'un onglet pour se désigner lui-même. */}
+      {unSeulBatiment && barns.length > 1 && (
+        <div className="barn-picker" role="tablist" aria-label="Bâtiments d’élevage">
+          {barns.map((b) => {
+            const n = b.herd?.size ?? 0;
+            return (
+              <button
+                key={b.buildingId}
+                type="button"
+                role="tab"
+                aria-selected={b.buildingId === (vu?.buildingId ?? null)}
+                className={`barn-tab${b.buildingId === (vu?.buildingId ?? null) ? " on" : ""}`}
+                onClick={() => setBatimentVu(b.buildingId)}
+              >
+                <span>{BUILDING_DEFS[b.type].name}</span>
+                <em>{n} bête{n > 1 ? "s" : ""}</em>
+              </button>
+            );
+          })}
+        </div>
+      )}
+
+      {barnsVus.map((barn) => {
         const def = BUILDING_DEFS[barn.type];
         /**
          * Un lot vidé n'est plus un troupeau.
