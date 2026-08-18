@@ -50,6 +50,42 @@ describe("images livrées", () => {
     expect(casses).toEqual([]);
   });
 
+  /**
+   * Le test précédent ne suffisait pas, et cinq dessins sont restés invisibles
+   * malgré lui.
+   *
+   * Il éprouvait le **codage** : les fichiers étaient bien de l'UTF-8, donc il
+   * passait. Mais ils contenaient l'octet `0x14` là où un point médian avait
+   * été perdu, et `0x19` là où une apostrophe l'avait été. Ces deux octets
+   * sont de l'UTF-8 parfaitement valide — et des caractères **interdits en
+   * XML**, y compris à l'intérieur d'un commentaire.
+   *
+   * Un navigateur applique la règle XML, pas la règle du codage : il rejette
+   * le document entier. Les huit SVG du jeu — les cinq bêtes, l'étable, le
+   * tracteur, le blé — ne se sont donc jamais affichés, et rien ne le disait :
+   * une `<img>` qui échoue ne lève aucune erreur, elle laisse un carré vide.
+   *
+   * On vérifie donc ici la règle que le navigateur applique réellement.
+   */
+  it("n’a aucun SVG qu’un navigateur refuserait de rendre", () => {
+    // XML n'admet, sous 0x20, que la tabulation, le saut de ligne et le
+    // retour chariot. Tout le reste invalide le document.
+    const interdits = /[\u0000-\u0008\u000B\u000C\u000E-\u001F]/;
+    const casses: { fichier: string; octets: string[] }[] = [];
+    for (const f of fichiers) {
+      if (!/\.svg$/i.test(f)) continue;
+      const texte = readFileSync(f, "utf8");
+      if (!interdits.test(texte)) continue;
+      casses.push({
+        fichier: f.slice(PUBLIC.length + 1),
+        octets: [...new Set([...texte].filter((c) => interdits.test(c)))].map(
+          (c) => "0x" + c.charCodeAt(0).toString(16).padStart(2, "0"),
+        ),
+      });
+    }
+    expect(casses).toEqual([]);
+  });
+
   it("sert une vignette existante pour chaque bâtiment", () => {
     const manquants = (Object.keys(BUILDING_DEFS) as BuildingType[])
       .map((t) => [t, BUILDING_ART[t]] as const)

@@ -1,5 +1,5 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" fill="none" aria-hidden="true">
-  <!-- FARMSIM CC0 placeholder  épis de blé -->
+  <!-- FARMSIM CC0 placeholder · épis de blé -->
   <ellipse cx="32" cy="58" rx="10" ry="3" fill="#1a2a1a" opacity="0.3"/>
   <!-- tiges -->
   <path d="M28 58 Q27 40 30 18" stroke="#5a8a3a" stroke-width="2.5" stroke-linecap="round"/>

@@ -1,5 +1,5 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" fill="none" aria-hidden="true">
-  <!-- FARMSIM CC0 placeholder  grange isométrique -->
+  <!-- FARMSIM CC0 placeholder · grange isométrique -->
   <ellipse cx="32" cy="56" rx="24" ry="5" fill="#1a2a1a" opacity="0.35"/>
   <!-- sol / base -->
   <path d="M10 42 L32 32 L54 42 L32 52 Z" fill="#6b5238"/>
