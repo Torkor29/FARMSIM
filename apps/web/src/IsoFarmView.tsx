@@ -92,6 +92,15 @@ export type IsoSim = {
     ready: boolean;
     ripeness?: { stage: RipenessStage } | null;
     lost?: boolean;
+    /**
+     * Instant de maturité, en millisecondes epoch.
+     *
+     * C'est lui qui permet à la jauge de pousse d'avancer **entre** deux
+     * sondages du serveur : la scène ne se reconstruit qu'à chaque dixième de
+     * progression, une jauge qui n'aurait que `progress` avancerait par
+     * à-coups de dix pour cent.
+     */
+    readyAt?: number;
   };
 };
 
@@ -526,6 +535,97 @@ function makeEggCrate(): THREE.Group {
 }
 
 /** Ballot de laine près de la bergerie. */
+/**
+ * Jauge de pousse : où en est ce carré de blé.
+ *
+ * Rien ne disait si une culture était à deux minutes ou à deux heures de la
+ * moisson. La couleur de la tige et la sortie de l'épi le racontent, mais de
+ * loin et sans échelle : on voit qu'elle mûrit, jamais qu'elle est « bientôt
+ * prête ».
+ *
+ * Une jauge par **parcelle semée**, pas par case : cent quarante-quatre
+ * jauges sur un champ seraient un grillage, et toutes diraient la même chose
+ * — les cases semées ensemble mûrissent ensemble. On regroupe donc par
+ * culture et par instant de maturité.
+ *
+ * Deux sprites sans texture : un fond et une barre. Sans `map`, il n'y a
+ * aucune image à charger ni à libérer, et la couleur suffit. `center` à zéro
+ * sur la barre : elle grandit vers la droite au lieu de s'étirer des deux
+ * côtés depuis son milieu.
+ */
+type GrowthBar = {
+  group: THREE.Group;
+  fill: THREE.Sprite;
+  fond: THREE.Sprite;
+  /** Maturité, en millisecondes epoch. */
+  readyAt: number;
+  /** Durée totale de la pousse, déduite de la progression observée. */
+  totalMs: number;
+  largeur: number;
+};
+
+function makeGrowthBar(largeur: number, hauteur: number): GrowthBar {
+  const group = new THREE.Group();
+  // Un liseré sombre derrière la jauge : posée sur un blé mûr, une barre
+  // dorée sur fond translucide disparaissait dans la couleur du champ.
+  const cadre = new THREE.Sprite(
+    new THREE.SpriteMaterial({
+      color: 0x0e1a15,
+      opacity: 0.45,
+      transparent: true,
+      depthTest: false,
+    }),
+  );
+  cadre.scale.set(largeur + hauteur * 0.5, hauteur * 1.55, 1);
+  cadre.renderOrder = 17;
+  const fond = new THREE.Sprite(
+    new THREE.SpriteMaterial({
+      color: 0x2a3f34,
+      opacity: 0.8,
+      transparent: true,
+      depthTest: false,
+    }),
+  );
+  fond.scale.set(largeur, hauteur, 1);
+  fond.renderOrder = 18;
+  group.add(cadre);
+  const fill = new THREE.Sprite(
+    new THREE.SpriteMaterial({ color: 0x7cc36b, transparent: true, depthTest: false }),
+  );
+  fill.center.set(0, 0.5);
+  fill.position.x = -largeur / 2;
+  fill.scale.set(largeur, hauteur * 0.72, 1);
+  fill.renderOrder = 19;
+  group.add(fond);
+  group.add(fill);
+  return { group, fill, fond, readyAt: 0, totalMs: 0, largeur };
+}
+
+/**
+ * Fait avancer une jauge, à l'instant présent.
+ *
+ * La progression se recalcule à partir de `readyAt` plutôt que de se recopier
+ * du serveur : la barre glisse alors en continu, à soixante images par
+ * seconde, au lieu d'avancer par paliers de dix pour cent.
+ *
+ * Le battement — une respiration lente, plus marquée une fois mûr — est ce
+ * qui distingue une jauge vivante d'un décor peint. Il reste discret : la
+ * ferme est le sujet, pas la jauge.
+ */
+function updateGrowthBar(bar: GrowthBar, now: number, t: number): void {
+  const p =
+    bar.totalMs > 0
+      ? Math.max(0, Math.min(1, 1 - (bar.readyAt - now) / bar.totalMs))
+      : 1;
+  const mur = p >= 0.999;
+  bar.fill.scale.x = Math.max(0.001, bar.largeur * p);
+  // Vert tant qu'elle pousse, or dès qu'elle est bonne à couper.
+  bar.fill.material.color.setHex(mur ? 0xf0c04a : p > 0.75 ? 0xc9cf5a : 0x7cc36b);
+  const souffle = mur ? 0.22 : 0.08;
+  bar.fill.material.opacity = 1 - souffle * (0.5 + 0.5 * Math.sin(t * (mur ? 3.4 : 1.6)));
+  bar.group.position.y = bar.group.userData.y0 + (mur ? Math.sin(t * 2.2) * 0.012 : 0);
+}
+
 /**
  * Une étiquette flottante, dessinée sur une toile.
  *
@@ -1106,6 +1206,11 @@ export function IsoFarmView({
     world.add(pickupGroup);
     let pickupKey = "";
 
+    /** Les jauges de pousse, une par parcelle semée. */
+    const growthGroup = new THREE.Group();
+    world.add(growthGroup);
+    let growthBars: GrowthBar[] = [];
+
     const farmerGroup = new THREE.Group();
     world.add(farmerGroup);
     const farmerMeshes = new Map<string, THREE.Group>();
@@ -1327,6 +1432,17 @@ export function IsoFarmView({
         droop: number;
         ripe: number;
       }[] = [];
+      /**
+       * Les cases semées ensemble, regroupées par culture et par échéance.
+       *
+       * La clé arrondit la maturité à la dizaine de secondes : deux cases
+       * semées du même geste partagent leur `readyAt` à la milliseconde près,
+       * mais deux semis séparés d'une minute doivent garder leur propre jauge.
+       */
+      const parcellesSemees = new Map<
+        string,
+        { sx: number; sz: number; n: number; readyAt: number; progress: number }
+      >();
       const {
         gridW: gw,
         gridH: gh,
@@ -1521,6 +1637,26 @@ export function IsoFarmView({
               // aussi bien, et il fait partie de la plante.
               ripe: lost ? 0.25 : Math.max(0, Math.min(1, (progress - 0.45) / 0.5)),
             });
+
+            // Une culture perdue n'a plus d'échéance à annoncer.
+            const echeance = sim?.sim.readyAt;
+            if (!lost && stage !== "LOST" && echeance) {
+              const cle = `${cell.crop ?? "?"}:${Math.round(echeance / 10_000)}`;
+              const acc = parcellesSemees.get(cle);
+              if (acc) {
+                acc.sx += px;
+                acc.sz += pz;
+                acc.n += 1;
+              } else {
+                parcellesSemees.set(cle, {
+                  sx: px,
+                  sz: pz,
+                  n: 1,
+                  readyAt: echeance,
+                  progress: sim?.sim.progress ?? 0,
+                });
+              }
+            }
           }
 
           if (cell?.kind === "VEHICLE") {
@@ -1553,6 +1689,34 @@ export function IsoFarmView({
 
       buildSoilRelief(soilDetails, cellSize);
       cropField.setCells(cropStalks, cellSize);
+
+      /**
+       * Poser les jauges, une par parcelle semée.
+       *
+       * La durée totale se déduit de ce qu'on observe : à cet instant il reste
+       * `readyAt − maintenant` pour couvrir `1 − progress` du chemin. C'est ce
+       * qui permet ensuite à la barre d'avancer seule, sans redemander au
+       * serveur — et donc de bouger vraiment, plutôt que de sauter d'un
+       * dixième toutes les vingt secondes.
+       */
+      for (const bar of growthBars) {
+        growthGroup.remove(bar.group);
+        disposeObject3D(bar.group);
+      }
+      growthBars = [];
+      const maintenant = Date.now();
+      for (const parc of parcellesSemees.values()) {
+        const reste = parc.readyAt - maintenant;
+        const part = Math.max(0.001, 1 - parc.progress);
+        const bar = makeGrowthBar(cellSize * 2.1, cellSize * 0.26);
+        bar.readyAt = parc.readyAt;
+        bar.totalMs = reste > 0 ? reste / part : 0;
+        const y0 = 0.1 + cellSize * 1.05;
+        bar.group.position.set(parc.sx / parc.n, y0, parc.sz / parc.n);
+        bar.group.userData.y0 = y0;
+        growthGroup.add(bar.group);
+        growthBars.push(bar);
+      }
 
       // Les bâtiments : des volumes posés sur le terrain, plus des images
       // collées face caméra. C'est ce qui règle d'un coup le hangar qui
@@ -2176,6 +2340,12 @@ export function IsoFarmView({
 
       // Le champ respire : la houle suit la météo.
       cropField.update(t, windFor(weatherRef.current));
+
+      // Les jauges avancent d'elles-mêmes : c'est leur raison d'être.
+      if (growthBars.length > 0) {
+        const now = Date.now();
+        for (const bar of growthBars) updateGrowthBar(bar, now, t);
+      }
 
       // Troupeaux : deux poses, et une vraie marche entre la porte et le pré.
       const herds = dataRef.current.grazing ?? [];
