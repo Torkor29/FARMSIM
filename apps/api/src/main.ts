@@ -2429,20 +2429,24 @@ async function runWorldTick() {
     demand: number;
   }[] = [];
 
+  // La saison de l'hémisphère nord sert de référence au marché mondial : les
+  // cours sont uniques, ils ne peuvent pas suivre quatre calendriers à la fois.
+  const saisonMarche = currentSeason("N", now);
   for (const row of prices) {
-    const pressure = marketNpcPressure({ weatherStates: states });
-    // Légère asymétrie blé / maïs
+    const pressure = marketNpcPressure({ weatherStates: states, season: saisonMarche });
+    // Légère asymétrie blé / maïs. Les flux se comptent désormais en tonnes et
+    // en dixièmes de tonne : les arrondir à l'entier effaçait l'asymétrie.
     const supply =
       GOOD_DEFS[row.commodity as TradeGood]?.localOnly
         ? 0
         : row.commodity === "MAIZE"
-          ? Math.round(pressure.supplyTons * 1.05)
+          ? pressure.supplyTons * 1.05
           : pressure.supplyTons;
     const demand =
       GOOD_DEFS[row.commodity as TradeGood]?.localOnly
         ? 0
         : row.commodity === "WHEAT"
-          ? Math.round(pressure.demandTons * 1.05)
+          ? pressure.demandTons * 1.05
           : pressure.demandTons;
     const tick = tickMarket({
       commodity: row.commodity as TradeGood,

@@ -231,27 +231,27 @@ export const MARKET_BOUNDS: Record<
   TradeGood,
   { initial: number; min: number; max: number; depth: number }
 > = {
-  WHEAT: { initial: 220, min: 120, max: 450, depth: 2000 },
-  MAIZE: { initial: 200, min: 100, max: 400, depth: 2000 },
+  WHEAT: { initial: 220, min: 120, max: 450, depth: 125 },
+  MAIZE: { initial: 200, min: 100, max: 400, depth: 125 },
   // Le lait varie peu : c'est un revenu régulier, pas un pari.
-  MILK: { initial: 42, min: 30, max: 62, depth: 800 },
-  MEAT: { initial: 1450, min: 900, max: 2300, depth: 300 },
-  HAY: { initial: 95, min: 60, max: 165, depth: 1500 },
-  STRAW: { initial: 72, min: 45, max: 130, depth: 900 },
+  MILK: { initial: 42, min: 30, max: 62, depth: 50 },
+  MEAT: { initial: 1450, min: 900, max: 2300, depth: 20 },
+  HAY: { initial: 95, min: 60, max: 165, depth: 94 },
+  STRAW: { initial: 72, min: 45, max: 130, depth: 56 },
   // Une botte pèse 0,35 t : à 32 TRN pièce, la tonne bottelée vaut ~91 TRN
   // contre 72 en vrac. L'écart, c'est le travail de la presse — c'est lui qui
   // rend la botteleuse rentable, sinon personne n'en achèterait.
-  STRAW_BALE: { initial: 32, min: 20, max: 58, depth: 2600 },
+  STRAW_BALE: { initial: 32, min: 20, max: 58, depth: 162 },
   // Carnet étroit à dessein : l'ensilage n'est pas un cours mondial liquide.
-  SILAGE: { initial: 110, min: 80, max: 160, depth: 80 },
+  SILAGE: { initial: 110, min: 80, max: 160, depth: 20 },
   // Marché plus étroit que le blé : un gros lot y pèse davantage.
-  PEA: { initial: 285, min: 170, max: 520, depth: 900 },
-  BARLEY: { initial: 195, min: 110, max: 380, depth: 1600 },
-  RAPE: { initial: 340, min: 210, max: 580, depth: 700 },
-  EGGS: { initial: 22, min: 12, max: 40, depth: 400 },
-  WOOL: { initial: 420, min: 260, max: 680, depth: 250 },
+  PEA: { initial: 285, min: 170, max: 520, depth: 56 },
+  BARLEY: { initial: 195, min: 110, max: 380, depth: 100 },
+  RAPE: { initial: 340, min: 210, max: 580, depth: 44 },
+  EGGS: { initial: 22, min: 12, max: 40, depth: 25 },
+  WOOL: { initial: 420, min: 260, max: 680, depth: 20 },
   // Coté pour l'affichage ; le fumier ne s'échange pas sur ce marché.
-  MANURE: { initial: 55, min: 40, max: 80, depth: 200 },
+  MANURE: { initial: 55, min: 40, max: 80, depth: 20 },
 };
 
 /**
@@ -259,10 +259,17 @@ export const MARKET_BOUNDS: Record<
  *
  * Sans elle, le déséquilibre offre/demande poussait le prix dans la même
  * direction indéfiniment : blé, viande et fourrage finissaient collés à leur
- * plafond, et guetter le marché ne servait plus à rien. Le rappel fait
- * respirer les cours autour de leur valeur fondamentale.
+ * plafond, et guetter le marché ne servait plus à rien.
+ *
+ * Ramenée de 0,12 à 0,015. À 0,12, un écart de prix était comblé de moitié en
+ * **cent-huit secondes** : les cours ne s'écartaient jamais de plus de 29 %
+ * quand leurs bornes en permettaient 150, et « attendre un meilleur cours »
+ * n'était pas une stratégie mais deux minutes de patience. Le ressort était
+ * si raide qu'il empêchait l'offre et la demande de dire quoi que ce soit.
+ * À 0,015, la demi-vie passe à un quart d'heure : le marché a le temps
+ * d'exprimer une saison.
  */
-export const MARKET_REVERSION = 0.12;
+export const MARKET_REVERSION = 0.015;
 
 /**
  * Profondeur minimale d'un marché, en fraction de sa profondeur nominale
@@ -270,6 +277,34 @@ export const MARKET_REVERSION = 0.12;
  * vente : il y a toujours des acheteurs quelque part.
  */
 export const MARKET_DEPTH_FLOOR = 0.3;
+
+/** Sensibilité du cours au déséquilibre, par tick `[GD]`. */
+export const MARKET_KAPPA = 0.02;
+
+/**
+ * Poids du carnet face au flux du jour `[GD]`.
+ *
+ * Ce qui dort dans le carnet pèse un peu moins que ce qui s'y présente
+ * aujourd'hui : un stock installé fait céder les cours durablement, une
+ * moisson isolée les fait céder d'un jour.
+ */
+export const MARKET_BOOK_WEIGHT = 0.5;
+
+/**
+ * Part du carnet écoulée à chaque tick `[GD]`.
+ *
+ * Cherchée par simulation, pas à l'estime : c'est elle qui décide du poids
+ * d'une ferme sur son marché. Trop lente, une seule parcelle faisait céder
+ * les cours de 8 % — un producteur isolé n'est pas censé faire le prix. Trop
+ * rapide, on retombait sur le défaut d'origine, où même vingt parcelles ne se
+ * voyaient pas.
+ *
+ * À 0,045, un excédent se résorbe de moitié en cinq minutes : une moisson est
+ * un événement de marché passager, un domaine qui produit sans cesse pèse
+ * durablement. Le réglage n'est pas sur le fil — 0,06 tient les mêmes
+ * intentions.
+ */
+export const MARKET_ABSORB = 0.045;
 
 export type BuildingDef = {
   type: BuildingType;

@@ -6,6 +6,10 @@ import {
   MARKET_BOUNDS,
   MARKET_REVERSION,
   MARKET_DEPTH_FLOOR,
+  MARKET_KAPPA,
+  MARKET_BOOK_WEIGHT,
+  MARKET_ABSORB,
+  type Season,
   residueBonus,
   ripenessAt,
   rotationFactor,
@@ -201,24 +205,49 @@ export type MarketTickResult = {
 
 export function tickMarket(input: MarketTickInput): MarketTickResult {
   const bounds = MARKET_BOUNDS[input.commodity];
-  const kappa = input.kappa ?? 0.08;
-  const normalize = Math.max(1, (input.demandTons + input.supplyTons) / 2);
-  const stockPressure = input.stockTons / normalize;
-  const imbalance =
-    (input.demandTons - input.supplyTons - stockPressure * 0.5) / normalize;
+  const kappa = input.kappa ?? MARKET_KAPPA;
+  /**
+   * Deux déséquilibres, chacun rapporté à sa propre échelle.
+   *
+   * L'ancienne formule divisait le **stock** par le **flux** — des tonnes par
+   * des tonnes-par-tick — et le terme de carnet, valant plusieurs dizaines,
+   * écrasait complètement le terme de flux, qui valait quelques centièmes.
+   * Le prix ne répondait donc jamais à l'offre et à la demande du jour.
+   *
+   * Ici le flux se compare au flux, et le carnet à la profondeur de référence :
+   * les deux termes sont sans dimension et du même ordre de grandeur.
+   */
+  const flux =
+    (input.demandTons - input.supplyTons) /
+    Math.max(0.5, (input.demandTons + input.supplyTons) / 2);
+  const carnet = (input.stockTons - bounds.depth * MARKET_DEPTH_FLOOR) / bounds.depth;
+  const imbalance = flux - carnet * MARKET_BOOK_WEIGHT;
   let price = input.price * (1 + kappa * imbalance);
   // Rappel vers le prix de référence : sans lui, un déséquilibre durable
   // poussait le cours jusqu'à sa borne et l'y laissait pour toujours.
   price += (bounds.initial - price) * MARKET_REVERSION;
   price = Math.min(bounds.max, Math.max(bounds.min, price));
 
-  // Le carnet ne se vide jamais complètement : il reste toujours des
-  // acheteurs, sans quoi la moindre vente subissait la décote maximale.
+  /**
+   * Le carnet s'écoule en proportion de ce qu'il contient.
+   *
+   * Il ne se vidait que par la différence entre demande et offre — un flux
+   * **fixe** d'environ quinze tonnes par tick. La moisson du joueur, elle,
+   * valait un sixième de tonne par tick : elle était donc effacée en trois
+   * ticks, quel que soit son domaine. C'est la raison de fond pour laquelle
+   * vingt parcelles ne déplaçaient pas le cours d'un centime.
+   *
+   * Un écoulement proportionnel change la nature de la chose : ce qui s'ajoute
+   * au carnet met d'autant plus de temps à partir qu'il y en a, et pèse sur le
+   * cours pendant tout ce temps. La demi-vie d'un excédent est d'environ vingt
+   * minutes — le temps qu'une moisson soit un événement de marché.
+   *
+   * Le carnet ne se vide jamais complètement pour autant : il reste toujours
+   * des acheteurs, sans quoi la moindre vente subirait la décote maximale.
+   */
   const floor = bounds.depth * MARKET_DEPTH_FLOOR;
-  const stockTons = Math.max(
-    floor,
-    input.stockTons + input.supplyTons - input.demandTons,
-  );
+  const apres = input.stockTons + input.supplyTons - input.demandTons;
+  const stockTons = Math.max(floor, apres - Math.max(0, apres - floor) * MARKET_ABSORB);
   return {
     price: Math.round(price * 100) / 100,
     stockTons: Math.round(stockTons * 100) / 100,
@@ -639,8 +668,51 @@ function weatherTransitions(
 }
 
 /** Pression NPC marché : offre/demande bruitée + boost offre si pluie large */
+/**
+ * Offre et demande des fermes voisines, par tick `[GD]`.
+ *
+ * Elles valaient 80 à 140 tonnes **par tick**, soit près de vingt mille
+ * tonnes à l'heure — quand une parcelle de blé du joueur en produit quarante.
+ * Le marché PNJ pesait donc **491 fois** une parcelle : mesuré, un domaine de
+ * vingt parcelles ne déplaçait pas le cours d'un centime. La production du
+ * joueur était branchée sur le prix, et noyée.
+ *
+ * Aucune formule ne corrigeait cela : c'était une affaire d'échelle. Les flux
+ * sont désormais de l'ordre de ce que produit une ferme, et le joueur devient
+ * un acteur de son marché — d'abord négligeable, puis pesant.
+ */
+export const NPC_BASE_SUPPLY = 2;
+
+/**
+ * La demande égale l'offre en moyenne : c'est la **saison** qui creuse
+ * l'excédent d'automne et la pénurie de printemps, pas un déséquilibre
+ * permanent qui ferait dériver le cours dans un seul sens.
+ */
+export const NPC_BASE_DEMAND = 2;
+
+/**
+ * Le cycle annuel de l'offre voisine `[GD]`.
+ *
+ * Il n'existait pas : la pression PNJ ne lisait que la météo, jamais la
+ * saison. Le marché n'avait donc aucune raison d'être meilleur un mois que
+ * l'autre, et la seule décision qu'un marché puisse offrir — engranger ou
+ * vendre tout de suite — n'existait pas.
+ *
+ * L'automne apporte les moissons du voisinage et fait céder les cours ; le
+ * printemps est la soudure, où les greniers sont vides et les prix hauts.
+ * Un écart d'environ 23 % sépare les deux, mesuré sur huit saisons.
+ */
+export const NPC_SEASON_SUPPLY: Record<Season, number> = {
+  SPRING: 0.88,
+  SUMMER: 1,
+  AUTUMN: 1.12,
+  WINTER: 0.952,
+};
+
 export function marketNpcPressure(opts: {
   weatherStates: WeatherState[];
+  /** Saison locale — c'est elle qui fait le cycle annuel des cours. */
+  season?: Season;
   rng?: () => number;
 }): { supplyTons: number; demandTons: number } {
   const rnd = opts.rng ?? Math.random;
@@ -649,11 +721,15 @@ export function marketNpcPressure(opts: {
     Math.max(1, opts.weatherStates.length);
   const stormShare =
     opts.weatherStates.filter((w) => w === "STORM").length / Math.max(1, opts.weatherStates.length);
-  // Pluie → récoltes plus difficiles → offre ↓ ; orage → choc offre ↓↓ ; demande stable bruitée
-  const supplyTons = 80 + rnd() * 60 - wetShare * 40 - stormShare * 50;
-  const demandTons = 90 + rnd() * 70 + stormShare * 20;
+
+  // Pluie → récoltes plus difficiles → offre ↓ ; orage → choc d'offre ↓↓.
+  const meteo = 1 - wetShare * 0.25 - stormShare * 0.3;
+  const saison = NPC_SEASON_SUPPLY[opts.season ?? "SUMMER"];
+
+  const supplyTons = NPC_BASE_SUPPLY * saison * meteo * (0.8 + rnd() * 0.4);
+  const demandTons = NPC_BASE_DEMAND * (0.9 + rnd() * 0.2) + stormShare * 0.3;
   return {
-    supplyTons: Math.max(10, Math.round(supplyTons)),
-    demandTons: Math.max(10, Math.round(demandTons)),
+    supplyTons: Math.max(0.2, Math.round(supplyTons * 100) / 100),
+    demandTons: Math.max(0.2, Math.round(demandTons * 100) / 100),
   };
 }
