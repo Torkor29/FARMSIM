@@ -15,7 +15,7 @@ import {
 } from "@farmsim/shared";
 import { disposeRenderer, disposeThreeScene, markShared } from "./three-cleanup";
 import { applyHerdPose, meshForHerd } from "./animal-meshes";
-import { createBuildingRig, type BuildingRig } from "./buildings3d";
+import { createBuildingRig, nearestThreshold, type BuildingRig } from "./buildings3d";
 import { createCropField } from "./crop-field";
 import type { CropShape } from "./crop-shapes";
 import { attachStudioEnvironment } from "./machine-kit";
@@ -2143,17 +2143,29 @@ export function IsoFarmView({
           const kind = herd.kind ?? "COW";
           const barn = buildingRigs.find((b) => b.id === herd.buildingId)?.rig ?? null;
           barn?.group.updateMatrixWorld(true);
-          // Le seuil appartient au bâtiment : il tourne avec lui, et il tient
-          // compte de la façade réelle. Une porte posée devant la case, comme
-          // avant, laissait les bêtes la traverser par l'arrière.
-          const gate = barn
-            ? barn.anchors("threshold")[0]?.getWorldPosition(new THREE.Vector3()) ?? null
-            : null;
           const centre = new THREE.Vector3(
             ox + (herd.barn.originX + (herd.barn.w - 1) / 2) * step,
             0.1,
             oz + (herd.barn.originY + (herd.barn.h - 1) / 2) * step,
           );
+          const hasPaddock = herd.paddock.w > 0 && herd.paddock.h > 0;
+          const pre = hasPaddock
+            ? new THREE.Vector3(
+                ox + (herd.paddock.originX + (herd.paddock.w - 1) / 2) * step,
+                0.1,
+                oz + (herd.paddock.originY + (herd.paddock.h - 1) / 2) * step,
+              )
+            : null;
+          // Les seuils appartiennent au bâtiment : ils tournent avec lui, et
+          // ils tiennent compte des ouvertures réelles. Une étable en porte
+          // trois — la façade et les deux flancs —, et l'enclos peut être de
+          // n'importe quel côté : on retient donc celui qui lui fait face.
+          // Prendre systématiquement le premier envoyait le troupeau dans le
+          // bardage dès que le pré n'était pas devant.
+          const seuils = barn
+            ? barn.anchors("threshold").map((a) => a.getWorldPosition(new THREE.Vector3()))
+            : [];
+          const gate = nearestThreshold(seuils, pre);
           const gx = gate?.x ?? centre.x;
           const gz = gate?.z ?? centre.z + herd.barn.h * 0.4 * step;
           // Direction de sortie : du centre du bâtiment vers son seuil. Elle
@@ -2162,7 +2174,6 @@ export function IsoFarmView({
           if (outward.lengthSq() < 1e-6) outward.set(0, 0, 1);
           outward.normalize();
           const side = new THREE.Vector3(outward.z, 0, -outward.x);
-          const hasPaddock = herd.paddock.w > 0 && herd.paddock.h > 0;
 
           for (let i = 0; i < shown; i++) {
             const rank = Math.floor(i / 4);
@@ -2176,12 +2187,8 @@ export function IsoFarmView({
             const spreadZ = ((Math.floor(i / 3) - 1) * 0.55 + ((i * 0.21) % 0.4)) * step;
             // Dehors : le pré s'il en existe un, sinon la cour du bâtiment —
             // dans tous les cas, sur une case qui appartient à l'élevage.
-            const paddock = hasPaddock
-              ? new THREE.Vector3(
-                  ox + (herd.paddock.originX + (herd.paddock.w - 1) / 2) * step + spreadX,
-                  0.1,
-                  oz + (herd.paddock.originY + (herd.paddock.h - 1) / 2) * step + spreadZ,
-                )
+            const paddock = pre
+              ? new THREE.Vector3(pre.x + spreadX, 0.1, pre.z + spreadZ)
               : new THREE.Vector3(gx, 0.1, gz)
                   .addScaledVector(outward, 0.12 * step + rank * 0.24 * step)
                   .addScaledVector(side, along * 1.3);

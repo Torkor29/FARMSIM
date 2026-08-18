@@ -4723,3 +4723,21 @@ button.tiny {
   list-style: none;
   padding: 0;
 }
+
+/* —— Pourquoi un bouton d'échange est gris ——
+   Un achat refusé faute d'argent n'affichait rien du tout : on appuyait, il ne
+   se passait rien, et on en concluait que le jeu était cassé. Les routes
+   d'achat et de vente fonctionnent — c'est la caisse qui ne suivait pas, et
+   personne ne le disait. Sur un écran tactile il n'y a même pas d'infobulle
+   pour le rattraper. */
+/* `.sale-pay em` fixe déjà une couleur passe-partout : sans ce second
+   sélecteur, l'avertissement héritait du gris de la mention voisine. */
+.supply-why,
+.sale-pay em.supply-why {
+  margin: 0.3rem 0 0;
+  grid-column: 1 / -1;
+  font-size: 0.76rem;
+  font-weight: 700;
+  font-style: normal;
+  color: var(--danger, #b4462f);
+}

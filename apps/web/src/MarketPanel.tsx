@@ -154,14 +154,19 @@ function DeliveryList({
                 J’apporte
               </button>
             ) : (
-              <button
-                type="button"
-                className="sale-go"
-                disabled={busy || crd < d.autoFee}
-                onClick={() => onAutoDeliverLot(d.id)}
-              >
-                Faire venir · {d.autoFee} TRN
-              </button>
+              <span className="sale-pay">
+                <button
+                  type="button"
+                  className="sale-go"
+                  disabled={busy || crd < d.autoFee}
+                  onClick={() => onAutoDeliverLot(d.id)}
+                >
+                  Faire venir · {d.autoFee} TRN
+                </button>
+                {crd < d.autoFee && (
+                  <em className="supply-why">Il vous manque {Math.ceil(d.autoFee - crd)} TRN</em>
+                )}
+              </span>
             )}
           </article>
         ))}
@@ -473,6 +478,15 @@ export function MarketPanel({
                         >
                           Mettre en vente
                         </button>
+                        {/* Mettre en vente coûte une commission d'avance :
+                            sans elle, le bouton restait gris sans raison
+                            visible. */}
+                        {tons > 0 && crd < listingFee(ask, tons) && (
+                          <p className="supply-why">
+                            Commission de {listingFee(ask, tons)} TRN à avancer — il vous en
+                            manque {Math.ceil(listingFee(ask, tons) - crd)}.
+                          </p>
+                        )}
                       </div>
                     )}
                   </div>
@@ -580,6 +594,9 @@ export function MarketPanel({
                       >
                         Acheter
                       </button>
+                      {crd < l.total && (
+                        <em className="supply-why">Il manque {Math.ceil(l.total - crd)} TRN</em>
+                      )}
                     </div>
                   </article>
                 ))}
@@ -656,6 +673,16 @@ function SupplyTab({
         >
           Acheter · {total} TRN
         </button>
+        {/* Un bouton grisé ne dit pas ce qui cloche, et sur un écran tactile
+            il n'y a pas d'infobulle pour le rattraper : on appuie, rien ne se
+            passe, et on conclut que le jeu est cassé. C'était le cas ici — la
+            route d'achat fonctionne, c'est la caisse qui ne suivait pas. */}
+        {crd < total && (
+          <p className="supply-why">
+            Il vous manque {Math.ceil(total - crd)} TRN — réduisez la quantité
+            ou vendez d’abord.
+          </p>
+        )}
       </div>
     </div>
   );

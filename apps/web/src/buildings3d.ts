@@ -287,12 +287,14 @@ function doorway(
   w: number,
   h: number,
   z: number,
-  opts: { thick?: number; dark?: boolean } = {},
+  opts: { thick?: number; dark?: boolean; blind?: boolean } = {},
 ): void {
   const thick = opts.thick ?? 0.05;
   const leaf = w / 2;
   // Le noir de l'ouverture : sans lui on voit le champ au travers de la grange.
-  part.add("wallDark", box(w, h, 0.04, [0, h / 2, z - 0.03]));
+  // Un portail de courette, lui, n'a rien derrière : le fond noir se verrait
+  // comme un mur plein dès que les vantaux s'écartent.
+  if (opts.blind !== false) part.add("wallDark", box(w, h, 0.04, [0, h / 2, z - 0.03]));
   for (const side of [-1, 1]) {
     const hinge = part.child([side * leaf, 0, z], { role: "door" });
     hinge.add("door", box(leaf, h, thick, [(-side * leaf) / 2, h / 2, 0]));
@@ -585,13 +587,6 @@ function buildLivestockBarn(
    */
   const socle = 0.14;
   const murH = eave - socle;
-  root.add("wallDark", box(bw + 0.04, socle, 0.11, [0, socle / 2, -bd / 2]));
-  for (const side of [-1, 1]) {
-    root.add("wallDark", box(0.11, socle, bd + 0.04, [(side * bw) / 2, socle / 2, 0]));
-    root.add("wallDark", box(pier, socle, 0.11, [(side * (doorW + pier)) / 2, socle / 2, bd / 2]));
-  }
-
-  claddedWall(root, bw, murH, 0.08, [0, socle + murH / 2, -bd / 2], undefined, 6);
   /**
    * Claire-voie sous les rives, sur les deux longs pans.
    *
@@ -602,8 +597,51 @@ function buildLivestockBarn(
    */
   const claire = 0.16;
   const bardage = murH - claire;
+  /**
+   * Porte sur chaque long pan.
+   *
+   * Un pré peut toucher l'étable par n'importe lequel de ses quatre côtés :
+   * avec la seule ouverture de façade, les bêtes sortaient au travers du
+   * bardage dès que l'enclos était sur le flanc. Chaque flanc porte donc sa
+   * propre ouverture, avec ses vantaux et son seuil ; c'est la vue qui choisit
+   * ensuite le seuil le plus proche de l'enclos.
+   *
+   * L'ouverture monte jusqu'à la claire-voie : au-dessus, il n'y a déjà plus
+   * de bardage à percer, seulement les poteaux qui portent la sablière.
+   */
+  const flancW = Math.min(doorW * 0.85, bd * 0.42);
+  const flancH = socle + bardage;
+  const trumeau = (bd - flancW) / 2;
+
   for (const side of [-1, 1]) {
-    claddedWall(root, bd, bardage, 0.08, [(side * bw) / 2, socle + bardage / 2, 0], [0, HALF, 0], 5);
+    // Le soubassement s'interrompt au droit de chacune des quatre portes.
+    root.add("wallDark", box(pier, socle, 0.11, [(side * (doorW + pier)) / 2, socle / 2, -bd / 2]));
+    for (const dir of [-1, 1]) {
+      root.add("wallDark", box(0.11, socle, trumeau + 0.02, [
+        (side * bw) / 2,
+        socle / 2,
+        dir * ((flancW + trumeau) / 2 + 0.01),
+      ]));
+    }
+    root.add("wallDark", box(pier, socle, 0.11, [(side * (doorW + pier)) / 2, socle / 2, bd / 2]));
+  }
+
+  // Pignon arrière : deux trumeaux encadrant sa porte, comme la façade.
+  for (const side of [-1, 1]) {
+    claddedWall(root, pier, murH, 0.08, [(side * (doorW + pier)) / 2, socle + murH / 2, -bd / 2], undefined, 2);
+  }
+  for (const side of [-1, 1]) {
+    for (const dir of [-1, 1]) {
+      claddedWall(
+        root,
+        trumeau,
+        bardage,
+        0.08,
+        [(side * bw) / 2, socle + bardage / 2, (dir * (flancW + trumeau)) / 2],
+        [0, HALF, 0],
+        2,
+      );
+    }
     // Poteaux dans l'ouverture : la panne sablière doit bien reposer sur
     // quelque chose, sinon la toiture flotte au-dessus d'un vide.
     for (let i = 0; i < 5; i++) {
@@ -617,6 +655,7 @@ function buildLivestockBarn(
     claddedWall(root, pier, murH, 0.08, [(side * (doorW + pier)) / 2, socle + murH / 2, bd / 2], undefined, 2);
   }
   root.add("timber", box(bw + 0.1, 0.08, 0.1, [0, eave - 0.02, bd / 2]));
+  root.add("timber", box(bw + 0.1, 0.08, 0.1, [0, eave - 0.02, -bd / 2]));
   // Bandeau de rive tout autour : il pose une ligne d'ombre sous l'avancée de
   // toit, sans quoi le bardage et la toiture se touchent sans transition.
   root.add("timber", box(bw + 0.12, 0.05, 0.06, [0, eave + 0.01, -bd / 2 - 0.02]));
@@ -628,6 +667,21 @@ function buildLivestockBarn(
   gableEnd(root, bw, eave, rise, -bd / 2 + 0.04, "wall");
   gableEnd(root, bw, eave, rise, bd / 2 - 0.04, "wall");
   doorway(root, doorW, doorH, bd / 2 + 0.045);
+  /**
+   * Les vantaux de flanc sont décrits dans le repère du mur puis rapportés
+   * avec lui : un quart de tour envoie le +z local sur le côté visé, si bien
+   * que `doorway` n'a rien à savoir de l'orientation. Ils viennent après la
+   * façade pour que le seuil de façade reste le premier de la liste — c'est
+   * celui qu'on prend par défaut faute d'enclos.
+   */
+  for (const side of [-1, 1]) {
+    const flanc = root.child([0, 0, 0], { rot: [0, side * HALF, 0] });
+    doorway(flanc, flancW, flancH, bw / 2 + 0.045);
+  }
+  // Et le pignon arrière : un enclos posé derrière l'étable est un cas aussi
+  // banal que les trois autres.
+  const arriere = root.child([0, 0, 0], { rot: [0, Math.PI, 0] });
+  doorway(arriere, doorW, doorH, bd / 2 + 0.045);
 
   if (opts.loft) {
     // Lucarne de fenil : la porte haute par où rentre le foin.
@@ -806,11 +860,33 @@ function buildHenhouse(w: number, d: number, lvl: number): Built {
   monoRoof(root, bw, bd, floor + hgt + 0.02, 0.14, { overhang: 0.09 });
   // Trappe et planche d'envol : le chemin des poules, à leur échelle. Le gond
   // est sur le côté du panneau, sinon la trappe tourne sur elle-même.
-  root.add("wallDark", box(0.12, 0.13, 0.03, [-bw * 0.2, floor + 0.07, bd / 2]));
-  const hatch = root.child([-bw * 0.2 - 0.065, floor + 0.07, bd / 2 + 0.02], { role: "door" });
-  hatch.add("door", box(0.13, 0.14, 0.03, [0.065, 0, 0]));
-  root.add("timber", box(0.14, 0.03, 0.34, [-bw * 0.2, floor * 0.62, bd / 2 + 0.16], [-0.5, 0, 0]));
-  root.child([-bw * 0.2, 0, bd / 2 + 0.3], { role: "threshold" });
+  /**
+   * Une trappe par face.
+   *
+   * Le parcours peut toucher le poulailler par n'importe lequel de ses quatre
+   * côtés ; avec la seule trappe de façade, les poules traversaient la cabane
+   * pour le rejoindre. Chaque face a donc sa trappe, sa planche d'envol et son
+   * seuil — la façade en premier, pour rester le passage par défaut.
+   */
+  const trappe = (part: Part, x: number, z: number): void => {
+    part.add("wallDark", box(0.12, 0.13, 0.03, [x, floor + 0.07, z]));
+    const hatch = part.child([x - 0.065, floor + 0.07, z + 0.02], { role: "door" });
+    hatch.add("door", box(0.13, 0.14, 0.03, [0.065, 0, 0]));
+    // Planche courte : à quatre faces, une planche d'envol trop longue fait
+    // déborder la cabane de son empreinte — le test de gabarit l'a attrapée.
+    part.add("timber", box(0.14, 0.03, 0.24, [x, floor * 0.62, z + 0.1], [-0.5, 0, 0]));
+    part.child([x, 0, z + 0.3], { role: "threshold" });
+  };
+  trappe(root, -bw * 0.2, bd / 2);
+  // Les trois autres faces, décrites dans leur propre repère puis tournées.
+  // Chaque trappe est décentrée pour ne pas tomber sur les pondoirs de
+  // l'arrière ni sur la fenêtre de côté.
+  const arriere = root.child([0, 0, 0], { rot: [0, Math.PI, 0] });
+  trappe(arriere, bw * 0.25, bd / 2);
+  for (const side of [-1, 1]) {
+    const face = root.child([0, 0, 0], { rot: [0, side * HALF, 0] });
+    trappe(face, bd * 0.22, bw / 2);
+  }
   // Pondoirs en saillie, et le perchoir : deux détails qui font le poulailler.
   root.add("wall", box(0.3, 0.16, 0.14, [bw * 0.1, floor + 0.12, -bd / 2 - 0.06]));
   root.add("roofDark", box(0.33, 0.03, 0.17, [bw * 0.1, floor + 0.21, -bd / 2 - 0.07], [-0.32, 0, 0]));
@@ -832,27 +908,52 @@ function buildPigsty(w: number, d: number, lvl: number): Built {
   const eave = 0.44;
   const rise = 0.16;
   // Loge basse au fond, courette murée devant : c'est la porcherie type.
-  claddedWall(root, bw, eave, 0.08, [0, eave / 2, zc - bd / 2], undefined, 4);
-  claddedWall(root, bd, eave, 0.08, [-bw / 2, eave / 2, zc], [0, HALF, 0], 3);
-  claddedWall(root, bd, eave, 0.08, [bw / 2, eave / 2, zc], [0, HALF, 0], 3);
   const dw = bw * 0.3;
   const pier = (bw - dw) / 2;
+  claddedWall(root, bd, eave, 0.08, [-bw / 2, eave / 2, zc], [0, HALF, 0], 3);
+  claddedWall(root, bd, eave, 0.08, [bw / 2, eave / 2, zc], [0, HALF, 0], 3);
   for (const side of [-1, 1]) {
     claddedWall(root, pier, eave, 0.08, [(side * (dw + pier)) / 2, eave / 2, zc + bd / 2], undefined, 2);
+    // Le fond de la loge est percé lui aussi : le parc peut être derrière.
+    claddedWall(root, pier, eave, 0.08, [(side * (dw + pier)) / 2, eave / 2, zc - bd / 2], undefined, 2);
   }
   gableRoof(root, bw, bd, eave, rise, { mat: lvl >= 3 ? "corrugate" : "roof", overhang: 0.05, z: zc });
-  gableEnd(root, bw, eave, rise, zc - bd / 2 + 0.035);
+  gableEnd(root, bw, eave, rise, zc - bd / 2 + 0.035, "timber");
   // Pignon de façade : sans lui, la loge restait ouverte sous les pentes
   // au-dessus du linteau de porte, et on voyait le ciel à travers.
   gableEnd(root, bw, eave, rise, zc + bd / 2 - 0.035, "timber");
   doorway(root, dw, 0.34, zc + bd / 2 + 0.045, { thick: 0.04 });
+  const fond = root.child([0, 0, 0], { rot: [0, Math.PI, 0] });
+  doorway(fond, dw, 0.34, -(zc - bd / 2) + 0.045, { thick: 0.04 });
 
   // Muret de courette, auge et bauge : le sol d'un porc, c'est la moitié du sujet.
   const yz = (d - EDGE * 2) / 2 - 0.06;
   const mur = 0.2;
-  root.add("wallDark", box(bw, mur, 0.07, [0, mur / 2, yz]));
+  /**
+   * La courette était close sur ses trois côtés, et le seuil de la loge tombe
+   * en plein dedans : les cochons franchissaient le muret pour rejoindre leur
+   * parc. Il lui faut donc ses propres portillons — un en face, un sur chaque
+   * côté — chacun avec son seuil, à l'air libre cette fois.
+   */
+  const portail = bw * 0.38;
+  const jambage = (bw - portail) / 2;
+  const flancL = yz - (zc + bd / 2);
+  const portillon = Math.min(portail, flancL * 0.44);
+  const jambageZ = (flancL - portillon) / 2;
   for (const side of [-1, 1]) {
-    root.add("wallDark", box(0.07, mur, yz - (zc + bd / 2), [(side * bw) / 2, mur / 2, (yz + zc + bd / 2) / 2]));
+    root.add("wallDark", box(jambage, mur, 0.07, [(side * (portail + jambage)) / 2, mur / 2, yz]));
+    for (const dir of [-1, 1]) {
+      root.add("wallDark", box(0.07, mur, jambageZ, [
+        (side * bw) / 2,
+        mur / 2,
+        (yz + zc + bd / 2) / 2 + (dir * (portillon + jambageZ)) / 2,
+      ]));
+    }
+  }
+  doorway(root, portail, mur, yz + 0.02, { thick: 0.04, blind: false });
+  for (const side of [-1, 1]) {
+    const cote = root.child([0, 0, (yz + zc + bd / 2) / 2], { rot: [0, side * HALF, 0] });
+    doorway(cote, portillon, mur, bw / 2 + 0.02, { thick: 0.04, blind: false });
   }
   root.add("dirt", box(bw - 0.14, 0.015, yz - (zc + bd / 2) - 0.1, [0, 0.048, (yz + zc + bd / 2) / 2]));
   root.add("concrete", box(0.44, 0.09, 0.14, [-bw * 0.2, 0.085, yz - 0.2]));
@@ -1125,6 +1226,25 @@ function blueprint(type: BuildingType, level: number): Blueprint {
 /* ------------------------------------------------------------------ */
 /* Rig                                                                 */
 /* ------------------------------------------------------------------ */
+
+/**
+ * Le seuil par lequel sortir pour rejoindre un point donné.
+ *
+ * Une étable a trois ouvertures — la façade et les deux flancs — et l'enclos
+ * peut la toucher par n'importe quel côté. Prendre systématiquement le premier
+ * seuil envoyait les bêtes traverser le bardage. Sans cible, on garde le
+ * premier : c'est la façade, par construction.
+ */
+export function nearestThreshold(
+  seuils: THREE.Vector3[],
+  cible: THREE.Vector3 | null,
+): THREE.Vector3 | null {
+  if (seuils.length === 0) return null;
+  if (!cible || seuils.length === 1) return seuils[0];
+  return seuils.reduce((best, s) =>
+    s.distanceToSquared(cible) < best.distanceToSquared(cible) ? s : best,
+  );
+}
 
 export type BuildingState = {
   /** Temps de scène, secondes */

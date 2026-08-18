@@ -1,6 +1,6 @@
 import * as THREE from "three";
 import { BUILDING_DEFS, type BuildingType } from "@farmsim/shared";
-import { createBuildingRig } from "../buildings3d";
+import { createBuildingRig, nearestThreshold } from "../buildings3d";
 
 /**
  * Les bâtiments, mesurés.
@@ -103,7 +103,7 @@ describe("les pièces mobiles", () => {
       expect(rig.anchors("door").length).toBeGreaterThan(0);
       // Sans seuil, la vue n'a aucun point de passage : les bêtes sortent au
       // travers du mur.
-      expect(rig.anchors("threshold").length).toBe(1);
+      expect(rig.anchors("threshold").length).toBeGreaterThan(0);
       rig.dispose();
     });
 
@@ -136,6 +136,98 @@ describe("les pièces mobiles", () => {
     expect(seuil.z).toBeGreaterThan(0.4);
     expect(seuil.z).toBeLessThan(BUILDING_DEFS.CATTLE_BARN.h / 2 + 0.35);
     rig.dispose();
+  });
+
+  it("une étable ouvre aussi ses deux flancs", () => {
+    // L'enclos peut toucher l'étable par n'importe quel côté. Avec la seule
+    // porte de façade, les bêtes traversaient le bardage pour rejoindre un pré
+    // latéral : il faut un seuil praticable sur chaque long pan.
+    for (const type of ["CATTLE_BARN", "SHEEPFOLD"] as BuildingType[]) {
+      const rig = createBuildingRig(type);
+      rig.group.updateMatrixWorld(true);
+      const def = BUILDING_DEFS[type];
+      const seuils = rig
+        .anchors("threshold")
+        .map((a) => a.getWorldPosition(new THREE.Vector3()));
+      expect(seuils.length).toBe(4);
+      // Le premier reste la façade : c'est le repli quand il n'y a pas d'enclos.
+      expect(seuils[0].z).toBeGreaterThan(0.4);
+      for (const sens of [-1, 1]) {
+        const flanc = seuils.find((s) => Math.sign(s.x) === sens && Math.abs(s.x) > 0.4);
+        expect(`${type} flanc ${sens} ${Boolean(flanc)}`).toBe(`${type} flanc ${sens} true`);
+        // Dehors, mais pas au-delà de la case voisine.
+        expect(Math.abs(flanc!.x)).toBeGreaterThan(def.w / 2 - 0.1);
+        expect(Math.abs(flanc!.x)).toBeLessThan(def.w / 2 + 0.35);
+        // Et centré sur le pan, sinon la bête sort par le coin.
+        expect(Math.abs(flanc!.z)).toBeLessThan(0.2);
+      }
+      rig.dispose();
+    }
+  });
+
+  it("le bardage est vraiment percé au droit des portes de flanc", () => {
+    // Un seuil devant un mur plein ne sert à rien : on vérifie qu'aucune
+    // paroi ne barre le passage à mi-hauteur de l'ouverture.
+    const rig = createBuildingRig("CATTLE_BARN");
+    rig.group.updateMatrixWorld(true);
+    // Tout le bardage d'un bâtiment est fondu en un seul maillage : c'est donc
+    // sommet par sommet qu'on regarde, et non par boîte englobante.
+    let barre = 0;
+    const p = new THREE.Vector3();
+    rig.group.traverse((o) => {
+      const mesh = o as THREE.Mesh;
+      if (!mesh.isMesh || mesh.name !== "wall") return;
+      const pos = mesh.geometry.getAttribute("position");
+      for (let i = 0; i < pos.count; i++) {
+        p.fromBufferAttribute(pos, i).applyMatrix4(mesh.matrixWorld);
+        // Le milieu d'un long pan, à hauteur de bête.
+        if (Math.abs(p.x) > 1.2 && Math.abs(p.z) < 0.2 && p.y > 0.05 && p.y < 0.4) barre++;
+      }
+    });
+    expect(barre).toBe(0);
+    rig.dispose();
+  });
+
+  it("le troupeau sort par le côté où se trouve l'enclos", () => {
+    /**
+     * Le vrai reproche : « elles sortent toujours alors qu'il n'y a pas de
+     * porte sur le côté ». On rejoue ici ce que fait la vue — les seuils lus
+     * en repère monde, l'enclos posé quelque part autour — pour les quatre
+     * orientations du bâtiment et les quatre positions possibles de l'enclos.
+     * Seize cas : dans chacun, le seuil retenu doit être du côté de l'enclos.
+     */
+    for (const type of SHELTERS) {
+      const rig = createBuildingRig(type);
+      for (let quart = 0; quart < 4; quart++) {
+        rig.group.rotation.y = (quart * Math.PI) / 2;
+        rig.group.updateMatrixWorld(true);
+        const seuils = rig
+          .anchors("threshold")
+          .map((a) => a.getWorldPosition(new THREE.Vector3()));
+        for (const [dx, dz] of [
+          [0, 1],
+          [1, 0],
+          [0, -1],
+          [-1, 0],
+        ]) {
+          // L'enclos, trois cases plus loin dans cette direction.
+          const pre = new THREE.Vector3(dx * 3, 0, dz * 3);
+          const gate = nearestThreshold(seuils, pre)!;
+          // Le seuil retenu doit pointer dans la direction de l'enclos : son
+          // produit scalaire avec elle doit être le plus grand de tous.
+          const vers = gate.x * dx + gate.z * dz;
+          const mieux = Math.max(...seuils.map((s) => s.x * dx + s.z * dz));
+          expect(`${type} q${quart} (${dx},${dz}) ${vers.toFixed(2)}`).toBe(
+            `${type} q${quart} (${dx},${dz}) ${mieux.toFixed(2)}`,
+          );
+          // Et il doit être franchement de ce côté-là, jamais à l'opposé.
+          expect(`${type} q${quart} (${dx},${dz}) ${vers > 0.4}`).toBe(
+            `${type} q${quart} (${dx},${dz}) true`,
+          );
+        }
+      }
+      rig.dispose();
+    }
   });
 
   it("l'extracteur de faîtage tourne", () => {
