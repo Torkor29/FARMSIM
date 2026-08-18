@@ -50,7 +50,7 @@
 
   /* Densité fluide et largeur des rails — charte §7.4. */
   --gutter: clamp(0.6rem, 1.2vw, 1.1rem);
-  --rail-r: clamp(18rem, 26vw, 21rem);
+  --rail-r: clamp(15rem, 26vw, 21rem);
   --rail-l: 0px;
   --sh-1: 0 2px 6px rgba(34, 49, 44, 0.08);
   --sh-2: 0 8px 24px rgba(34, 49, 44, 0.12);
@@ -215,49 +215,38 @@ html.playing body {
 }
 .game-stage.mobile .rail { display: contents; }
 
-/* Un seul rail tant que la ferme n'a pas la place pour deux : la colonne de
-   droite se partage en deux volets qui défilent séparément. */
-@media (min-width: 821px) {
-  .game-stage {
-    grid-template-columns: minmax(0, 1fr) var(--rail-r);
-    grid-template-rows: auto minmax(0, 1fr) minmax(0, 1fr) auto;
-    grid-template-areas:
-      "top   top"
-      "stage right"
-      "stage left"
-      "dock  dock";
-  }
-  /* Les deux volets vides : la colonne entière revient à la ferme. */
-  .game-stage:has(.rail-left:empty):has(.rail-right:empty) {
-    grid-template-columns: minmax(0, 1fr) 0;
-  }
-}
+/**
+ * Ici, **aucune** grille de bureau — seulement ses mesures.
+ *
+ * Trois générations de règles ont cohabité sur `.game-stage`, chacune écrite
+ * pour un état différent du jeu : celle-ci (deux rails, pas de rail d'outils),
+ * puis une à quatre colonnes avec le rail d'outils, puis celle de « LES
+ * PANNEAUX DEVIENNENT DES FENÊTRES », à trois colonnes, la seule encore juste.
+ *
+ * Elles ne se sont pas simplement empilées, elles se sont **mélangées** :
+ * chaque génération déclarait `grid-template-columns` et `grid-template-areas`
+ * avec des spécificités différentes, et les variantes `:has(.rail-left:empty)`
+ * — trois classes, parfois cinq — battaient les règles plus récentes mais plus
+ * simples. Le navigateur composait donc les colonnes d'une génération avec les
+ * zones d'une autre. Mesuré sur 1536 px, avec le panneau de construction
+ * ouvert :
+ *
+ *     colonnes  184px | 0px | 1060px | 292px   (génération à quatre colonnes)
+ *     zones     "tools stage right"            (génération à trois)
+ *
+ * `stage` tombait sur la colonne de 0 px, `right` récupérait le `1fr`, et la
+ * ferme se retrouvait dans une bande de 292 px à droite pendant que le menu
+ * de construction en faisait 1025. C'est le défaut qu'on voit sur la capture.
+ *
+ * La grille de bureau est définie **une fois**, et seulement sous
+ * `.game-stage:not(.mobile)` — voir « LES PANNEAUX DEVIENNENT DES FENÊTRES ».
+ * Rien ici ne doit la redéfinir, ni la compléter : deux sources de vérité
+ * pour une disposition, c'est exactement ce qui a produit cette capture.
+ */
 @media (min-width: 1180px) {
   :root {
     --rail-l: clamp(16.5rem, 19vw, 19rem);
     --rail-r: clamp(16.5rem, 19vw, 20rem);
-  }
-  .game-stage {
-    grid-template-columns: var(--rail-l) minmax(0, 1fr) var(--rail-r);
-    grid-template-rows: auto minmax(0, 1fr) auto;
-    grid-template-areas:
-      "top   top   top"
-      "left  stage right"
-      "dock  dock  dock";
-  }
-  /* Un rail sans rien dedans rendait quand même sa colonne : sur 1920 px,
-     garage et élevage fermés, c'était près de trois cents pixels de vide à
-     gauche — et la ferme, décentrée d'autant, rapetissée pour rien. La
-     caméra lit `grid-template-columns` (`railInsets`), donc effondrer la
-     piste recadre la scène du même geste. */
-  .game-stage:has(.rail-left:empty) {
-    grid-template-columns: 0 minmax(0, 1fr) var(--rail-r);
-  }
-  .game-stage:has(.rail-right:empty) {
-    grid-template-columns: var(--rail-l) minmax(0, 1fr) 0;
-  }
-  .game-stage:has(.rail-left:empty):has(.rail-right:empty) {
-    grid-template-columns: 0 minmax(0, 1fr) 0;
   }
 }
 html.playing .game-stage {
@@ -3745,42 +3734,33 @@ button.tiny {
   :root {
     --tool-rail-w: clamp(11.5rem, 12vw, 13.5rem);
   }
-  .game-stage:not(.mobile) {
-    grid-template-columns: var(--tool-rail-w) minmax(0, 1fr) var(--rail-r);
-    grid-template-rows: auto minmax(0, 1fr) minmax(0, 1fr) auto auto;
-    grid-template-areas:
-      "tools top    top"
-      "tools stage  right"
-      "tools stage  left"
-      "tools select select"
-      "tools dock   dock";
-  }
-  /* Les rails de panneaux se partagent la colonne de droite tant que la
-     ferme n'a pas la place pour deux colonnes. */
-  .game-stage:not(.mobile):has(.rail-left:empty):has(.rail-right:empty) {
-    grid-template-columns: var(--tool-rail-w) minmax(0, 1fr) 0;
-  }
-}
-
-@media (min-width: 1180px) {
-  .game-stage:not(.mobile) {
-    grid-template-columns: var(--tool-rail-w) var(--rail-l) minmax(0, 1fr) var(--rail-r);
-    grid-template-rows: auto minmax(0, 1fr) auto auto;
-    grid-template-areas:
-      "tools top    top    top"
-      "tools left   stage  right"
-      "tools select select select"
-      "tools dock   dock   dock";
-  }
-  .game-stage:not(.mobile):has(.rail-left:empty) {
-    grid-template-columns: var(--tool-rail-w) 0 minmax(0, 1fr) var(--rail-r);
-  }
-  .game-stage:not(.mobile):has(.rail-right:empty) {
-    grid-template-columns: var(--tool-rail-w) var(--rail-l) minmax(0, 1fr) 0;
-  }
-  .game-stage:not(.mobile):has(.rail-left:empty):has(.rail-right:empty) {
-    grid-template-columns: var(--tool-rail-w) 0 minmax(0, 1fr) 0;
-  }
+  /**
+   * La grille de bureau **n'est pas définie ici**.
+   *
+   * Elle l'a été, et c'est ce qui a mis la ferme dans un coin. Deux
+   * générations de règles cohabitaient : celle-ci, à quatre colonnes
+   * (`tools | rail-l | stage | rail-r`), écrite quand les panneaux tenaient
+   * dans deux rails ; et celle de « LES PANNEAUX DEVIENNENT DES FENÊTRES »,
+   * plus bas, à trois colonnes, écrite quand le rail gauche est devenu des
+   * fenêtres flottantes.
+   *
+   * Les deux déclaraient `grid-template-columns` **et** `grid-template-areas`,
+   * mais pas avec la même spécificité. Le sélecteur à quatre colonnes le plus
+   * fort — `:has(.rail-left:empty)`, cinq classes — gagnait sur les colonnes ;
+   * la règle à trois colonnes, plus tardive, gagnait sur les zones. Résultat
+   * mesuré au navigateur, sur 1536 px :
+   *
+   *     colonnes  184px | 0px | 1060px | 292px      (quatre)
+   *     zones     "tools stage right"               (trois)
+   *
+   * La zone `stage` tombait donc sur la colonne de 0 px, `right` héritait du
+   * `1fr` de 1060 px, et la quatrième colonne — les 292 px prévus pour le rail
+   * — ne servait à personne. Le panneau de construction faisait 1025 px de
+   * large et la ferme était réduite à la bande de droite.
+   *
+   * Une seule définition, un seul endroit. C'est la même règle que pour
+   * `.game-stage.mobile` : une disposition n'a qu'une source de vérité.
+   */
 }
 
 /* —— Rail d'outils —— */
@@ -4662,6 +4642,58 @@ button.tiny {
   row-gap: 0.3rem;
 }
 
+/* —— Le bandeau du haut, resserré ——
+   Mesuré sur 1536 px : `brand-row` 454 + `hud-nav` 284 + `hud-stats` 591,
+   plus les écarts, faisaient **1353 px** pour 1352 disponibles. Un pixel, et
+   le bandeau passait sur deux lignes ; avec les cotations qui repliaient de
+   leur côté, il mangeait 198 px de haut — un quart de l'écran, pour de
+   l'affichage. La ferme n'avait plus que 566 px.
+
+   Rien n'est retiré : tout est simplement à la bonne échelle pour une souris.
+   Les 44 px du bouton d'aide sont le plancher **tactile** de la charte §7.3 ;
+   au doigt il les garde, à la souris 34 suffisent. Après resserrage il reste
+   environ 140 px de marge, de quoi tenir jusque vers 1400 px de large. */
+.game-stage:not(.mobile) .hud-top {
+  padding: 0.45rem 0.9rem;
+  gap: 0.5rem;
+}
+.game-stage:not(.mobile) .brand-mark { font-size: 1.1rem; }
+.game-stage:not(.mobile) .brand-logo { width: 28px; height: 28px; }
+.game-stage:not(.mobile) .brand-row { gap: 0.4rem; }
+.game-stage:not(.mobile) .help-btn { width: 34px; height: 34px; font-size: 0.85rem; }
+.game-stage:not(.mobile) .mvp-badge { font-size: 0.6rem; padding: 0.1rem 0.32rem; }
+.game-stage:not(.mobile) .hud-stats { font-size: 0.8rem; gap: 0.35rem; }
+.game-stage:not(.mobile) .hud-stats > span { padding: 0.24rem 0.45rem; }
+.game-stage:not(.mobile) .hud-nav-btn { padding: 0.3rem 0.5rem; }
+
+/* Les cotations sur une seule ligne : quinze pastilles faisaient 1434 px
+   pour 1352 disponibles, donc une deuxième rangée de 34 px en permanence.
+   Resserrées, elles font environ 1150 px et tiennent. Le repli reste permis —
+   c'est ce qui garantit qu'aucune cotation ne se cache — mais il ne se
+   déclenche plus que sur les écrans étroits, là où il est justifié. */
+.game-stage:not(.mobile) .tick {
+  font-size: 0.72rem;
+  padding: 0.2rem 0.42rem;
+}
+.game-stage:not(.mobile) .market-ticker { gap: 0.3rem; padding-inline: 0.9rem; }
+.game-stage:not(.mobile) .hud-stack { gap: 0.25rem; }
+
+/* Sous 1400 px, le bandeau repassait sur deux lignes : 1177 px de contenu
+   pour 1128 disponibles sur un portable de 1280. Deux pastilles décoratives
+   s'effacent alors — le badge « MVP » et le métier, qui ne change jamais de
+   la partie. Le métier reste lisible dans le profil. La classe `:not(.mobile)`
+   continue de décider seule qui est un bureau ; cette requête ne fait
+   qu'ajuster un bureau étroit. */
+@media (max-width: 1400px) {
+  .game-stage:not(.mobile) .mvp-badge { display: none; }
+  .game-stage:not(.mobile) .hud-stats .stat-job { display: none; }
+}
+
+/* Le rail d'outils portait cinq boutons dans 184 px. À 152 px les libellés
+   tiennent toujours en entier — vérifié au navigateur — et la ferme récupère
+   la différence. */
+.game-stage:not(.mobile) { --tool-rail-w: clamp(9.5rem, 10vw, 11.5rem); }
+
 /* —— Le rail gauche disparaît sur bureau ——
    Ses trois panneaux — Garage, Élevage, Missions — sont devenus des fenêtres
    larges, qui se posent en `position: fixed` par-dessus la ferme. La colonne
@@ -4689,19 +4721,10 @@ button.tiny {
   }
 }
 
-@media (min-width: 1180px) {
-  .game-stage:not(.mobile) {
-    grid-template-columns: var(--tool-rail-w) minmax(0, 1fr) var(--rail-r);
-    grid-template-areas:
-      "tools top    top"
-      "tools stage  right"
-      "tools select select"
-      "tools dock   dock";
-  }
-  .game-stage:not(.mobile):has(.rail-right:empty) {
-    grid-template-columns: var(--tool-rail-w) minmax(0, 1fr) 0;
-  }
-}
+/* Pas de second bloc à 1180 px : il redisait mot pour mot la même grille.
+   C'est `--rail-r` qui s'élargit à cette taille, dans son propre `:root` —
+   la disposition, elle, ne change pas. Un doublon n'est jamais neutre : c'est
+   par là que les générations de règles se remettent à diverger. */
 
 /* Les listes d'achat profitent de la largeur retrouvée : en colonne unique
    dans une fenêtre de 1440 px, dix-neuf bâtiments faisaient encore deux mille
