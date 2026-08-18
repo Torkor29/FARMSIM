@@ -512,6 +512,30 @@ function cropColor(c: IsoCell, sim?: IsoSim): number {
   return base.lerp(new THREE.Color(RIPENESS_COLORS[etat]), vers).getHex();
 }
 
+/**
+ * Le sol d'une case cultivée — assombri, jamais de la couleur de la plante.
+ *
+ * Un champ mûr était un aplat de la teinte de la culture : sur du colza, un
+ * rectangle de jaune pur, et par-dessus des tiges du même jaune. Rien ne se
+ * détachait de rien, et le champ ne ressemblait plus à un champ mais à une
+ * case peinte.
+ *
+ * En vrai on voit le sol **entre** les rangs : une terre chaude et sombre.
+ * Le sol tire donc vers cette terre, et la plante garde sa couleur franche.
+ * L'écart entre les deux est ce qui donne du relief à un champ, et ce qui
+ * fait qu'on le reconnaît comme tel.
+ */
+const TERRE_SOUS_RANG = 0x8a6a44;
+
+function cropGroundColor(c: IsoCell, sim?: IsoSim): number {
+  const plante = new THREE.Color(cropColor(c, sim));
+  // Plus la culture est haute, plus le sol se devine, moins il compte : la
+  // part de terre monte avec la pousse.
+  const pousse = Math.min(1, sim?.sim.progress ?? 0);
+  const part = 0.34 + pousse * 0.22;
+  return plante.lerp(new THREE.Color(TERRE_SOUS_RANG), part).getHex();
+}
+
 
 /** Caisse d'œufs au pied du poulailler. */
 function makeEggCrate(): THREE.Group {
@@ -545,85 +569,91 @@ function makeEggCrate(): THREE.Group {
  *
  * Une jauge par **parcelle semée**, pas par case : cent quarante-quatre
  * jauges sur un champ seraient un grillage, et toutes diraient la même chose
- * — les cases semées ensemble mûrissent ensemble. On regroupe donc par
- * culture et par instant de maturité.
+ * — les cases semées ensemble mûrissent ensemble.
  *
- * Deux sprites sans texture : un fond et une barre. Sans `map`, il n'y a
- * aucune image à charger ni à libérer, et la couleur suffit. `center` à zéro
- * sur la barre : elle grandit vers la droite au lieu de s'étirer des deux
- * côtés depuis son milieu.
+ * **Dessinée sur une toile, pas assemblée en sprites.** Le premier jet
+ * empilait trois rectangles — cadre, fond, remplissage — et donnait à
+ * l'écran une dalle sombre surmontée d'une barre : trois blocs aux
+ * proportions fausses, impossibles à accorder. Une toile donne des bouts
+ * arrondis, une bordure d'un pixel et un rapport de forme qu'on maîtrise.
+ * Elle se redessine quand le pourcentage bouge d'un point — une cinquantaine
+ * de fois sur toute la pousse, pour une image de 128 × 18.
  */
 type GrowthBar = {
-  group: THREE.Group;
-  fill: THREE.Sprite;
-  fond: THREE.Sprite;
+  sprite: THREE.Sprite;
   /** Maturité, en millisecondes epoch. */
   readyAt: number;
   /** Durée totale de la pousse, déduite de la progression observée. */
   totalMs: number;
-  largeur: number;
+  /** Dernier pourcentage dessiné, pour ne pas repeindre à chaque image. */
+  dernier: number;
+  hauteurMonde: number;
 };
 
-function makeGrowthBar(largeur: number, hauteur: number): GrowthBar {
-  const group = new THREE.Group();
-  // Un liseré sombre derrière la jauge : posée sur un blé mûr, une barre
-  // dorée sur fond translucide disparaissait dans la couleur du champ.
-  const cadre = new THREE.Sprite(
-    new THREE.SpriteMaterial({
-      color: 0x0e1a15,
-      opacity: 0.45,
-      transparent: true,
-      depthTest: false,
-    }),
+const BAR_W = 128;
+const BAR_H = 18;
+
+function peindreJauge(canvas: HTMLCanvasElement, p: number): void {
+  const c = canvas.getContext("2d")!;
+  const r = BAR_H / 2;
+  c.clearRect(0, 0, BAR_W, BAR_H);
+  // Le rail : sombre et translucide, il tient la barre lisible sur un champ
+  // doré comme sur une herbe verte.
+  c.fillStyle = "rgba(18, 32, 26, 0.62)";
+  c.beginPath();
+  c.roundRect(0, 0, BAR_W, BAR_H, r);
+  c.fill();
+  c.strokeStyle = "rgba(255, 255, 255, 0.22)";
+  c.lineWidth = 1;
+  c.beginPath();
+  c.roundRect(0.5, 0.5, BAR_W - 1, BAR_H - 1, r);
+  c.stroke();
+  const marge = 3;
+  const plein = Math.max(BAR_H - marge * 2, (BAR_W - marge * 2) * p);
+  const mur = p >= 0.999;
+  c.fillStyle = mur ? "#f4c94e" : p > 0.75 ? "#cfd25c" : "#7cc36b";
+  c.beginPath();
+  c.roundRect(marge, marge, plein, BAR_H - marge * 2, (BAR_H - marge * 2) / 2);
+  c.fill();
+}
+
+function makeGrowthBar(hauteurMonde: number): GrowthBar {
+  const canvas = document.createElement("canvas");
+  canvas.width = BAR_W;
+  canvas.height = BAR_H;
+  peindreJauge(canvas, 0);
+  const tex = new THREE.CanvasTexture(canvas);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  const sprite = new THREE.Sprite(
+    new THREE.SpriteMaterial({ map: tex, transparent: true, depthTest: false }),
   );
-  cadre.scale.set(largeur + hauteur * 0.5, hauteur * 1.55, 1);
-  cadre.renderOrder = 17;
-  const fond = new THREE.Sprite(
-    new THREE.SpriteMaterial({
-      color: 0x2a3f34,
-      opacity: 0.8,
-      transparent: true,
-      depthTest: false,
-    }),
-  );
-  fond.scale.set(largeur, hauteur, 1);
-  fond.renderOrder = 18;
-  group.add(cadre);
-  const fill = new THREE.Sprite(
-    new THREE.SpriteMaterial({ color: 0x7cc36b, transparent: true, depthTest: false }),
-  );
-  fill.center.set(0, 0.5);
-  fill.position.x = -largeur / 2;
-  fill.scale.set(largeur, hauteur * 0.72, 1);
-  fill.renderOrder = 19;
-  group.add(fond);
-  group.add(fill);
-  return { group, fill, fond, readyAt: 0, totalMs: 0, largeur };
+  sprite.renderOrder = 18;
+  sprite.scale.set((BAR_W / BAR_H) * hauteurMonde, hauteurMonde, 1);
+  sprite.userData.canvas = canvas;
+  return { sprite, readyAt: 0, totalMs: 0, dernier: -1, hauteurMonde };
 }
 
 /**
  * Fait avancer une jauge, à l'instant présent.
  *
  * La progression se recalcule à partir de `readyAt` plutôt que de se recopier
- * du serveur : la barre glisse alors en continu, à soixante images par
- * seconde, au lieu d'avancer par paliers de dix pour cent.
+ * du serveur : la scène ne se reconstruit qu'à chaque dixième de progression,
+ * une jauge qui n'aurait que `progress` avancerait par à-coups de dix pour
+ * cent.
  *
- * Le battement — une respiration lente, plus marquée une fois mûr — est ce
- * qui distingue une jauge vivante d'un décor peint. Il reste discret : la
- * ferme est le sujet, pas la jauge.
+ * Le battement une fois mûre est le seul moment où la jauge réclame quelque
+ * chose ; tant qu'elle pousse, elle se tait.
  */
 function updateGrowthBar(bar: GrowthBar, now: number, t: number): void {
   const p =
-    bar.totalMs > 0
-      ? Math.max(0, Math.min(1, 1 - (bar.readyAt - now) / bar.totalMs))
-      : 1;
-  const mur = p >= 0.999;
-  bar.fill.scale.x = Math.max(0.001, bar.largeur * p);
-  // Vert tant qu'elle pousse, or dès qu'elle est bonne à couper.
-  bar.fill.material.color.setHex(mur ? 0xf0c04a : p > 0.75 ? 0xc9cf5a : 0x7cc36b);
-  const souffle = mur ? 0.22 : 0.08;
-  bar.fill.material.opacity = 1 - souffle * (0.5 + 0.5 * Math.sin(t * (mur ? 3.4 : 1.6)));
-  bar.group.position.y = bar.group.userData.y0 + (mur ? Math.sin(t * 2.2) * 0.012 : 0);
+    bar.totalMs > 0 ? Math.max(0, Math.min(1, 1 - (bar.readyAt - now) / bar.totalMs)) : 1;
+  const pct = Math.round(p * 100);
+  if (pct !== bar.dernier) {
+    bar.dernier = pct;
+    peindreJauge(bar.sprite.userData.canvas as HTMLCanvasElement, p);
+    (bar.sprite.material.map as THREE.CanvasTexture).needsUpdate = true;
+  }
+  bar.sprite.material.opacity = p >= 0.999 ? 0.82 + 0.18 * Math.sin(t * 3.2) : 0.92;
 }
 
 /**
@@ -1560,7 +1590,7 @@ export function IsoFarmView({
           // quelles cases traiter.
           const look = cell ? soilLook(cell) : "PLAIN";
           let col = look === "PLAIN" ? ((x + y) % 2 === 0 ? SOIL : SOIL_DARK) : SOIL_COLORS[look];
-          if (cell?.kind === "CROP") col = cropColor(cell, sim);
+          if (cell?.kind === "CROP") col = cropGroundColor(cell, sim);
           if (cell?.kind === "BUILDING") col = DIRT;
           if (cell?.kind === "VEHICLE") col = PARKING;
           if (cell?.manuredUntil && cell.manuredUntil > Date.now()) {
@@ -1630,7 +1660,11 @@ export function IsoFarmView({
               // jaune pour le colza, panache pour le maïs.
               shape: (cell.crop as CropShape | undefined) ?? "WHEAT",
               color: cropColor(cell, sim),
-              density: Math.max(0.15, 0.55 + fed * 0.45 - choked),
+              /* Un champ mûr est dense — c'est ce qui le distingue d'un semis
+                 clairsemé. La densité suivait la seule fertilisation ; elle
+                 suit aussi la pousse, sans quoi une moisson prête gardait
+                 l'allure d'un champ à peine levé. */
+              density: Math.max(0.15, 0.4 + progress * 0.35 + fed * 0.35 - choked),
               droop,
               // L'épi sort avec la maturité. Un cube doré était posé au-dessus
               // de la case pour dire « prêt » ; un vrai épi qui grossit le dit
@@ -1700,21 +1734,19 @@ export function IsoFarmView({
        * dixième toutes les vingt secondes.
        */
       for (const bar of growthBars) {
-        growthGroup.remove(bar.group);
-        disposeObject3D(bar.group);
+        growthGroup.remove(bar.sprite);
+        disposeObject3D(bar.sprite);
       }
       growthBars = [];
       const maintenant = Date.now();
       for (const parc of parcellesSemees.values()) {
         const reste = parc.readyAt - maintenant;
         const part = Math.max(0.001, 1 - parc.progress);
-        const bar = makeGrowthBar(cellSize * 2.1, cellSize * 0.26);
+        const bar = makeGrowthBar(cellSize * 0.3);
         bar.readyAt = parc.readyAt;
         bar.totalMs = reste > 0 ? reste / part : 0;
-        const y0 = 0.1 + cellSize * 1.05;
-        bar.group.position.set(parc.sx / parc.n, y0, parc.sz / parc.n);
-        bar.group.userData.y0 = y0;
-        growthGroup.add(bar.group);
+        bar.sprite.position.set(parc.sx / parc.n, 0.1 + cellSize * 0.95, parc.sz / parc.n);
+        growthGroup.add(bar.sprite);
         growthBars.push(bar);
       }
 
@@ -2507,13 +2539,11 @@ export function IsoFarmView({
           const pz = oz + (pile.originY + pile.h) * step + 0.08 * step;
           mesh.position.set(px, 0.1, pz);
           mesh.scale.setScalar(cellSize);
-          // Le tas brun devant l'étable était la question numéro un du
-          // joueur : « je comprends pas ce que c'est ». Il le dit lui-même,
-          // avec le remplissage de la fosse, qui est la seule chose qu'on ait
-          // besoin de savoir — pleine, elle pèse sur le troupeau.
-          const tag = makeTag(`Fumier · ${Math.round(pile.fill * 100)} %`);
-          tag.position.set(px, 0.1 + 0.5 * cellSize, pz);
-          pickupGroup.add(tag);
+          // Le tas brun n'a plus d'étiquette permanente : elle répondait à
+          // « je comprends pas ce que c'est » en accrochant un panneau sur la
+          // ferme, ce qui est cher payé pour une question qu'on ne se pose
+          // qu'une fois. C'est le clic qui répond maintenant, comme pour tout
+          // le reste — voir `describeCell`.
           pickupGroup.add(mesh);
         }
       }

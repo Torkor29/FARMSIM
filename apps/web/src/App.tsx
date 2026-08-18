@@ -1717,6 +1717,14 @@ export function App() {
     });
   }
 
+  /**
+   * Ce qu'il y a sur la case, dit dans cet ordre.
+   *
+   * La ligne commençait par « Case (6,3) · » — deux nombres qui n'apprennent
+   * rien, en tête de la seule phrase qui réponde à « qu'est-ce que j'ai semé
+   * ici ? ». Le sujet passe devant, les coordonnées disparaissent : on clique
+   * sur une case, on sait déjà laquelle.
+   */
   function describeCell(x: number, y: number): string {
     const cell = grid.find((c) => c.x === x && c.y === y);
     const sim = parcelDetail?.cellSims?.find((s) => s.x === x && s.y === y);
@@ -1728,7 +1736,7 @@ export function App() {
             hasStubble: cell.hasStubble ?? false,
           })
         : "vide";
-      return `Case (${x},${y}) · ${soil}`;
+      return soil;
     }
     if (cell.kind === "CROP") {
       const crop = cell.crop ? (CROP_DEFS[cell.crop]?.name ?? cell.crop) : "?";
@@ -1737,25 +1745,25 @@ export function App() {
       if (ripe) {
         const keep = Math.round(ripe.yieldFactor * 100);
         if (ripe.stage === "LOST") {
-          return `Case (${x},${y}) · ${crop} perdu — à labourer`;
+          return `${crop} perdu — à labourer`;
         }
         const mins = Math.max(1, Math.round(ripe.msToLoss / 60000));
-        return `Case (${x},${y}) · ${crop} · ${ripe.label} · ${keep} % du rendement · perdue dans ${mins} min`;
+        return `${crop} · ${ripe.label} · ${keep} % du rendement · perdu dans ${mins} min`;
       }
       const prog = sim ? `${Math.round(sim.sim.progress * 100)}%` : "—";
-      return `Case (${x},${y}) · ${crop} · en croissance ${prog} · ferti ${fert}`;
+      return `${crop} · en croissance ${prog} · ferti ${fert}`;
     }
     if (cell.kind === "BUILDING") {
       const b = parcel?.buildings?.find((bd) => bd.id === cell.buildingId);
       const name = b ? BUILDING_DEFS[b.type].name : "Bâtiment";
-      return `Case (${x},${y}) · ${name}`;
+      return name;
     }
     if (cell.kind === "VEHICLE") {
       const mType = cell.machineType ?? "TRACTOR";
       const name = MACHINE_DEFS[mType]?.name ?? mType;
-      return `Case (${x},${y}) · ${name} stationné`;
+      return `${name} · stationné`;
     }
-    return `Case (${x},${y}) · ${cell.kind}`;
+    return cell.kind;
   }
 
   /**

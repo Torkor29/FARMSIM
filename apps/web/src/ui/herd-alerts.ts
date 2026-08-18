@@ -208,9 +208,17 @@ export function herdAlerts(barns: BarnSnapshot[], stocks: FarmStocks = {}): Herd
         icon: "litiere",
         // Même règle que pour la ration : sans paille en réserve, « Pailler »
         // étale du vide. On dit alors ce qui manque, et où le trouver.
+        /**
+         * Dire le remède, pas seulement le mal.
+         *
+         * « Litière à refaire » annonce un devoir sans son mode d'emploi :
+         * on sait qu'il faut nettoyer l'étable, pas comment. Le geste est
+         * pourtant simple — étaler de la paille propre — et il tient dans la
+         * phrase.
+         */
         text: aDeLaPaille
-          ? `${barn.name} — litière à refaire`
-          : `${barn.name} — litière à refaire, et plus un brin de paille`,
+          ? `${barn.name} — litière sale, étalez de la paille propre`
+          : `${barn.name} — litière sale, et plus un brin de paille à étaler`,
         ...(aDeLaPaille
           ? { action: { kind: "BEDDING" as const }, actionLabel: "Pailler" }
           : { action: { kind: "BUY_FEED" as const }, actionLabel: "Acheter de la paille" }),
@@ -224,7 +232,8 @@ export function herdAlerts(barns: BarnSnapshot[], stocks: FarmStocks = {}): Herd
         id: `${herd.id}:manure`,
         level: "warn",
         icon: "fosse",
-        text: `${barn.name} — fosse pleine, l'odeur pèse sur le troupeau`,
+        // Même règle : où va le fumier, et pourquoi c'est une bonne nouvelle.
+        text: `${barn.name} — fosse pleine, épandez le fumier sur vos champs`,
         action: { kind: "MANURE" },
         actionLabel: "Épandre",
       });
