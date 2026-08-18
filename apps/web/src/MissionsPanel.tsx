@@ -65,6 +65,16 @@ type Props = {
   zones: ExpandZone[];
   myFarmId?: string;
   expandableIds: ReadonlySet<string>;
+  /**
+   * Ouvre la bourse des chantiers.
+   *
+   * Sur téléphone, l'onglet « Missions » ouvrait **deux surfaces à la fois** :
+   * ce tiroir, et la modale de la bourse par-dessus. Le joueur voyait donc la
+   * bourse, sans jamais savoir que le tiroir existait — quêtes et voisins
+   * compris. La bourse s'ouvre désormais d'ici, comme elle s'ouvre du bandeau
+   * sur bureau : un toucher, une surface.
+   */
+  onOpenBoard?: () => void;
   onBuyField: (parcelId: string) => void;
 };
 
@@ -107,6 +117,7 @@ export function MissionsPanel({
   myFarmId,
   expandableIds,
   onBuyField,
+  onOpenBoard,
 }: Props) {
   const live = onlinePlayers.filter((p) => p.online);
   const away = onlinePlayers.filter((p) => !p.online);
@@ -115,6 +126,21 @@ export function MissionsPanel({
     <aside className={className} {...gesture}>
       <h3>Missions</h3>
       <p className="muted tiny">Aidez un voisin. On vous paie. Il faut la machine.</p>
+
+      {onOpenBoard && (
+        <button type="button" className="board-open" onClick={onOpenBoard}>
+          <span>
+            <strong>Bourse des chantiers</strong>
+            <em>
+              {helpWanted.length > 0
+                ? `${helpWanted.length} chantier${helpWanted.length > 1 ? "s" : ""} à prendre`
+                : "Aucun chantier ouvert"}
+              {myAsks.length > 0 ? ` · ${myAsks.length} posté${myAsks.length > 1 ? "s" : ""}` : ""}
+            </em>
+          </span>
+          <span className="board-open-go" aria-hidden="true">→</span>
+        </button>
+      )}
 
       {quests && quests.length > 0 && (
         <section className="hall-block">

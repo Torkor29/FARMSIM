@@ -231,6 +231,7 @@ import {
   type MachineType,
   type WeatherState,
   isBreakdownKind,
+  conditionYieldFactor,
   GREASE_COST_CRD,
   GREASE_FULL,
   CLEAN_COST_CRD,
@@ -4550,7 +4551,9 @@ app.post("/parcels/:id/harvest", async (req, res) => {
         const grainEq = access.charge
           ? sim.estimatedYieldTons
           : sim.estimatedYieldTons * (1 - P2P_YIELD_MALUS);
-        const tons = silageYieldTons(grainEq, sim.progress);
+        // L'ensileuse s'use comme le reste : son état pèse sur ce qu'elle rentre.
+        const usure = pickedSilage ? conditionYieldFactor(pickedSilage.machine.condition) : 1;
+        const tons = silageYieldTons(grainEq, sim.progress) * usure;
         harvested.push({
           crop: cell.crop,
           tons,
@@ -4584,7 +4587,16 @@ app.post("/parcels/:id/harvest", async (req, res) => {
       const moisture = harvestMoisture(weather?.state as WeatherState | undefined);
       const picked = isMowCrop(cell.crop) ? pickedMow : pickedHarvest;
       const care = picked ? careOf(picked.machine) : null;
-      const careMult = care ? 1 + careYieldBonus(care) : 1;
+      /**
+       * Ce que l'engin ramasse vraiment.
+       *
+       * La graisse et la propreté agissaient déjà. L'usure, non : une
+       * moissonneuse au bout du rouleau rendait autant qu'une neuve, si bien
+       * qu'entretenir au-dessus du seuil de blocage ne servait à rien.
+       */
+      const careMult = care
+        ? (1 + careYieldBonus(care)) * conditionYieldFactor(picked!.machine.condition)
+        : 1;
       const tons =
         (access.charge ? sim.estimatedYieldTons : sim.estimatedYieldTons * (1 - P2P_YIELD_MALUS)) *
         careMult;

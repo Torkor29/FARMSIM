@@ -1553,6 +1553,41 @@ button.ghost {
   font-weight: 800;
   cursor: pointer;
 }
+/* Ce que l'usure coûte, dit en clair sur la ligne de la machine. La perte
+   existait dans la simulation sans apparaître nulle part — et une mécanique
+   qu'on ne voit pas ne fait prendre aucune décision. */
+.wear-cost { color: var(--danger); font-weight: 800; }
+
+/* Le raccourci vers la bourse, en tête du tiroir des missions. Il remplace
+   l'ouverture simultanée des deux panneaux : on voit d'abord ce que le tiroir
+   contient — quêtes, voisins — et l'on entre dans la bourse si on le veut. */
+.board-open {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.6rem;
+  width: 100%;
+  min-height: 52px;
+  padding: 0.55rem 0.7rem;
+  border: 1px solid var(--teal-300);
+  border-radius: var(--r-sm);
+  background: var(--teal-100);
+  color: var(--teal-700);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.board-open:hover { background: color-mix(in srgb, var(--teal-300) 40%, var(--paper)); }
+.board-open strong { display: block; font-size: 0.88rem; font-weight: 800; }
+.board-open em {
+  display: block;
+  font-style: normal;
+  font-size: 0.74rem;
+  font-weight: 600;
+  color: var(--ink-soft);
+}
+.board-open-go { font-size: 1.1rem; font-weight: 800; flex: 0 0 auto; }
+
 /* Un geste empêché : il se lit comme indisponible, mais il reste une cible.
    Touché, il dit ce qui manque au lieu de ne rien faire — le `title` où
    l'explication dormait n'existe pas sur un téléphone. */

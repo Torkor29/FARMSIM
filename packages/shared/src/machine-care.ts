@@ -92,6 +92,50 @@ export const MUD_POINTS: Array<{ x: number; y: number }> = [
   { x: 64, y: 40 },
 ];
 
+/**
+ * Plein régime au-dessus de ce niveau d'usure `[GD]`.
+ *
+ * Au-delà, entretenir davantage ne rapporte rien : il faut une plage où la
+ * machine est simplement bonne, sinon le joueur passe sa partie à l'atelier.
+ */
+export const CONDITION_FULL_POWER = 80;
+
+/** Ce qu'il reste de rendement sur une machine à bout de souffle `[GD]`. */
+export const CONDITION_WORST_FACTOR = 0.7;
+
+/**
+ * Ce que l'état de la machine fait perdre au chantier.
+ *
+ * La graisse et la saleté agissaient déjà sur le rendement — trois paliers,
+ * de +8 % à −6 %. **La condition, elle, n'entrait nulle part.** Une
+ * moissonneuse à 13 % ramassait autant, aussi vite, qu'une machine neuve :
+ * l'usure se calculait, se réparait, se payait, et ne coûtait jamais rien.
+ * Elle n'agissait que de deux façons, toutes deux tout-ou-rien — bloquer sous
+ * `minCondition`, et tirer au sort une panne sous 50 %.
+ *
+ * D'où : aucune raison d'entretenir au-dessus du seuil de blocage. On
+ * repoussait jusqu'à la panne, et la révision n'était pas un calcul mais une
+ * corvée.
+ *
+ * La perte est **continue et douce** : plein régime au-dessus de 80 %, puis
+ * une pente régulière jusqu'à −30 % à zéro. Aux valeurs qui comptent :
+ *
+ *     100 %  →  rendement plein
+ *      80 %  →  rendement plein
+ *      40 %  →  −15 %
+ *      20 %  →  −22 %
+ *      12 %  →  −25 %   (seuil de blocage d'une moissonneuse)
+ *
+ * C'est ce qui transforme la révision en arbitrage — « est-ce qu'elle se
+ * paie ? » — au lieu d'une case à cocher avant la panne.
+ */
+export function conditionYieldFactor(condition: number): number {
+  const c = Math.max(0, Math.min(100, condition));
+  if (c >= CONDITION_FULL_POWER) return 1;
+  const perte = (1 - CONDITION_WORST_FACTOR) * (c / CONDITION_FULL_POWER);
+  return Math.round((CONDITION_WORST_FACTOR + perte) * 1000) / 1000;
+}
+
 export function isBreakdownKind(v: string | null | undefined): v is BreakdownKind {
   return v === "BELT" || v === "HYDRAULIC" || v === "ENGINE";
 }

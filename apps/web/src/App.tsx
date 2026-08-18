@@ -35,6 +35,7 @@ import {
   SEASON_LABELS,
   WEATHER_LABELS,
   currentSeason,
+  conditionYieldFactor,
   dayOfSeason,
   SEASON_DAYS,
   footprintCells,
@@ -3655,7 +3656,7 @@ export function App() {
                 title="Bureau et missions — touche T"
                 onClick={() => setShowEta((v) => !v)}
               >
-                <span aria-hidden="true">📋</span> Bureau <kbd>T</kbd>
+                <img className="rail-icon" src="/assets/icons/nav/missions.svg" alt="" /> Bureau <kbd>T</kbd>
               </button>
               {barns.length > 0 && (
                 <button
@@ -3985,6 +3986,7 @@ export function App() {
                       targetCondition: 100,
                     })
                   : null;
+                const rendement = conditionYieldFactor(m.condition);
                 const canHalf = Boolean(halfQuote && halfQuote.points > 0.5 && m.condition < 99.5);
                 const canFull = Boolean(fullQuote && fullQuote.points > 0.5 && m.condition < 99.5);
                 return (
@@ -4004,6 +4006,15 @@ export function App() {
                                 : m.condition < 90
                                   ? "bon"
                                   : "neuf"}
+                        {/* Ce que l'usure coûte, en clair.
+                            La perte de rendement existait désormais dans la
+                            simulation, mais nulle part à l'écran : une
+                            mécanique qu'on ne voit pas ne décide de rien, et
+                            le joueur aurait continué de repousser la révision
+                            sans savoir ce qu'elle lui rapportait. */}
+                        {rendement < 1 && (
+                          <> · <b className="wear-cost">rendement −{Math.round((1 - rendement) * 100)} %</b></>
+                        )}
                         {grease >= GREASE_OK && !dirty && !panne ? " · propre et graissé (+)" : ""}
                         {dirty ? " · sale" : ""}
                         {panne ? ` · panne ${panne}` : ""}
@@ -4207,6 +4218,7 @@ export function App() {
             )}
             myFarmId={player.farm?.id}
             expandableIds={expandableParcelIds}
+            onOpenBoard={() => setShowEta(true)}
             onBuyField={buyAdjacent}
             quests={quests}
             onClaimQuest={(id) => void claimQuest(id)}
@@ -4597,12 +4609,16 @@ export function App() {
         onClose={() => setShowGuide(false)}
       />
 
+      {/* La bourse des chantiers s'ouvre par une décision, sur les deux
+          coques. Elle était liée à `sheet === "OFFICE"` sur téléphone, si bien
+          que l'onglet « Missions » ouvrait à la fois le tiroir des missions et
+          cette modale par-dessus : deux panneaux pour un toucher, dont l'un
+          restait invisible avec tout ce qu'il contenait. */}
       <OfficePanel
-        open={isMobile ? sheet === "OFFICE" : showEta}
-        onClose={() => {
-          setShowEta(false);
-          setSheet(null);
-        }}
+        open={showEta}
+        // Fermer la bourse ne ferme plus le tiroir : ce sont deux surfaces
+        // distinctes, et l'on revient au tiroir d'où l'on est parti.
+        onClose={() => setShowEta(false)}
         crd={player.crd}
         consignes={player.consignes ?? DEFAULT_CONSIGNES}
         busy={busy}
