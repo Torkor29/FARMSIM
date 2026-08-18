@@ -1,5 +1,7 @@
 /** Types & constantes partagés Farming Navigateur */
 
+import { GAME_DAY_MS } from "./time.js";
+
 export * from "./time.js";
 export * from "./world.js";
 export * from "./climate.js";
@@ -119,6 +121,27 @@ export const SPECIALIZATION_BONUSES: Record<
   ELEVEUR: { domain: "feedConversion", bonus: 0.02 },
 };
 
+/**
+ * Le catalogue des cultures.
+ *
+ * Les durées de pousse étaient des valeurs de mise au point — « 3 min MVP
+ * pour itérer », disait le commentaire, et elles y sont restées. Sur une
+ * parcelle de 12 × 12, cela faisait environ 6 200 TRN nets toutes les trois
+ * minutes, soit **124 000 TRN à l'heure**, quand une étable en coûte 2 800 :
+ * l'argent n'avait plus de poids, et aucune décision agricole n'en était une.
+ *
+ * Elles sont désormais comptées en **jours de jeu** (`GAME_DAY_MS`), et la
+ * saison en fait sept. Une céréale occupe donc la plus grande part de sa
+ * saison : semer devient un engagement, et le calendrier agricole existe.
+ *
+ * Deux garde-fous délibérés :
+ *
+ * - le **pois** reste court, pour qu'il y ait toujours une raison de revenir
+ *   dans le quart d'heure ;
+ * - la pousse se calcule depuis `plantedAt`, donc elle **court hors ligne**.
+ *   C'est ce qui rend des durées d'une heure confortables plutôt que
+ *   punitives : un champ semé avant de fermer l'onglet est mûr au retour.
+ */
 export const CROP_DEFS: Record<
   CropCode,
   {
@@ -136,14 +159,19 @@ export const CROP_DEFS: Record<
     code: "WHEAT",
     name: "Blé",
     yieldPerCell: 0.35,
-    growMs: 3 * 60 * 1000, // 3 min MVP pour itérer `[TEST]`
+    // Cinq jours de jeu : le blé occupe les cinq septièmes d'une saison. On
+    // sème au printemps et on moissonne avant l'automne — la phrase devient
+    // vraie au sens propre, alors qu'à trois minutes elle ne voulait rien dire.
+    growMs: 5 * GAME_DAY_MS,
     seedCostPerCell: 15,
   },
   MAIZE: {
     code: "MAIZE",
     name: "Maïs",
     yieldPerCell: 0.45,
-    growMs: 3.5 * 60 * 1000,
+    // La plus longue du catalogue : six jours sur sept. Qui plante du maïs
+    // engage sa saison, et c'est ce qui doit rendre le choix sérieux.
+    growMs: 6 * GAME_DAY_MS,
     seedCostPerCell: 18,
   },
   // Tête de rotation : le pois rapporte moins à la tonne, mais il laisse
@@ -153,29 +181,35 @@ export const CROP_DEFS: Record<
     code: "PEA",
     name: "Pois",
     yieldPerCell: 0.26,
-    growMs: 2.5 * 60 * 1000,
+    // Volontairement gardé court. Avec des céréales à plus d'une heure, il
+    // faut au moins une culture qui redonne une raison de revenir dans le
+    // quart d'heure — sans quoi un céréalier débutant, sans bêtes et sans
+    // grande surface, n'a strictement rien à faire de sa première heure.
+    growMs: Math.round(1.5 * GAME_DAY_MS),
     seedCostPerCell: 12,
   },
   BARLEY: {
     code: "BARLEY",
     name: "Orge",
     yieldPerCell: 0.32,
-    growMs: 160 * 1000,
+    growMs: 3 * GAME_DAY_MS,
     seedCostPerCell: 13,
   },
   RAPE: {
     code: "RAPE",
     name: "Colza",
     yieldPerCell: 0.22,
-    growMs: 200 * 1000,
+    growMs: 4 * GAME_DAY_MS,
     seedCostPerCell: 16,
   },
   GRASS: {
     code: "GRASS",
     name: "Herbe",
     yieldPerCell: 0.4,
-    growMs: 2 * 60 * 1000,
-    regrowMs: 80 * 1000,
+    growMs: 2 * GAME_DAY_MS,
+    // L'herbe déjà fauchée repart vite : c'est ce qui fait tenir un élevage
+    // sur ses propres fourrages sans immobiliser un champ toute la saison.
+    regrowMs: GAME_DAY_MS,
     seedCostPerCell: 8,
   },
 };

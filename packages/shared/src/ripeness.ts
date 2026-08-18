@@ -32,10 +32,15 @@ export type RipenessInfo = {
  * Bornes des paliers, en multiples de `growMs` écoulés **depuis la maturité**.
  * `[GD]`
  *
- * Avec du blé (croissance 3 min) : plein rendement pendant 1 min 30,
- * dégradation jusqu'à 4 min 30, culture à l'agonie jusqu'à 7 min 30, perdue
+ * Avec du blé (croissance 1 h 15) : plein rendement pendant 38 minutes,
+ * dégradation jusqu'à 1 h 53, culture à l'agonie jusqu'à 3 h 08, perdue
  * au-delà. La fenêtre confortable est courte mais la perte totale demande une
  * vraie négligence.
+ *
+ * Ces durées ont été multipliées par vingt-cinq sans qu'une ligne de ce
+ * fichier change : c'est tout l'intérêt de les avoir exprimées en multiples
+ * de `growMs`. Quand les cultures sont passées de trois minutes à plusieurs
+ * jours de jeu, la fenêtre de récolte a suivi seule.
  */
 export const RIPENESS_WINDOW = {
   /** Fin du plein rendement */

@@ -70,25 +70,24 @@ describe("orge, colza, herbe", () => {
   });
 
   it("rend l'herbe prête plus tôt au second cycle", () => {
-    const first = simulateCell({
-      crop: "GRASS",
+    /**
+     * L'instant d'observation était écrit en dur — 90 000 ms — parce qu'il
+     * tombait alors entre les deux durées de l'herbe (80 s et 120 s). Ces
+     * durées se comptent maintenant en jours de jeu, et l'instant figé ne
+     * tombait plus entre rien du tout. On le dérive des constantes : c'est
+     * l'écart entre première pousse et repousse qu'on veut éprouver, pas une
+     * valeur de mise au point.
+     */
+    const entreLesDeux = (cropGrowMs("GRASS", 1) + cropGrowMs("GRASS", 0)) / 2;
+    const commun = {
+      crop: "GRASS" as const,
       plantedAt: 0,
-      now: 90_000,
+      now: entreLesDeux,
       fertility: 0.7,
       weedsControlled: true,
-      fertilizedPasses: 1,
-      cutsDone: 0,
-    });
-    const next = simulateCell({
-      crop: "GRASS",
-      plantedAt: 0,
-      now: 90_000,
-      fertility: 0.7,
-      weedsControlled: true,
-      fertilizedPasses: 1,
-      cutsDone: 1,
-    });
-    expect(first.ready).toBe(false);
-    expect(next.ready).toBe(true);
+      fertilizedPasses: 1 as const,
+    };
+    expect(simulateCell({ ...commun, cutsDone: 0 }).ready).toBe(false);
+    expect(simulateCell({ ...commun, cutsDone: 1 }).ready).toBe(true);
   });
 });

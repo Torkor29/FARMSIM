@@ -25,29 +25,37 @@ describe("simulateCell", () => {
     fertilizedPasses: 2 as const,
   };
 
+  /**
+   * Les instants d'observation étaient écrits en dur à trois minutes — la
+   * durée de pousse du blé du temps où c'était une valeur de mise au point.
+   * Ils sont dérivés de la constante : c'est bien « après `growMs` » qu'on
+   * veut regarder, quelle que soit la valeur qu'elle prendra ensuite.
+   */
+  const MUR = CROP_DEFS.WHEAT.growMs;
+
   it("n’est pas prêt avant growMs", () => {
-    const r = simulateCell({ ...base, now: 60_000 });
+    const r = simulateCell({ ...base, now: MUR / 3 });
     expect(r.ready).toBe(false);
     expect(r.progress).toBeLessThan(1);
   });
 
   it("est prêt après growMs", () => {
-    const r = simulateCell({ ...base, now: 3 * 60 * 1000 });
+    const r = simulateCell({ ...base, now: MUR });
     expect(r.ready).toBe(true);
     expect(r.estimatedYieldTons).toBeGreaterThan(0.2);
   });
 
   it("applique un malus pluie", () => {
-    const dry = simulateCell({ ...base, now: 3 * 60 * 1000, weatherAtHarvest: "CLEAR" });
-    const wet = simulateCell({ ...base, now: 3 * 60 * 1000, weatherAtHarvest: "RAIN" });
+    const dry = simulateCell({ ...base, now: MUR, weatherAtHarvest: "CLEAR" });
+    const wet = simulateCell({ ...base, now: MUR, weatherAtHarvest: "RAIN" });
     expect(wet.estimatedYieldTons).toBeLessThan(dry.estimatedYieldTons);
   });
 
   it("applique bonus bâtiments plafonné", () => {
-    const baseY = simulateCell({ ...base, now: 3 * 60 * 1000 });
+    const baseY = simulateCell({ ...base, now: MUR });
     const buff = simulateCell({
       ...base,
-      now: 3 * 60 * 1000,
+      now: MUR,
       buildingYieldBonus: 0.05,
     });
     expect(buff.estimatedYieldTons).toBeGreaterThan(baseY.estimatedYieldTons);

@@ -12,6 +12,8 @@
  */
 
 import {
+  CROP_DEFS,
+  cropGrowMs,
   GAME_DAY_MS,
   LIVESTOCK_CYCLE_MS,
   SEASON_DAYS,
@@ -126,5 +128,55 @@ describe("le temps qu’il fait tient la journée", () => {
     for (let j = 0; j < 40; j++) {
       expect(weatherForDay("BWh", "SUMMER", "MER-DUNES", j)).not.toBe("SNOW");
     }
+  });
+});
+
+describe("le calendrier agricole", () => {
+  it("compte les pousses en jours de jeu, pas en minutes de mise au point", () => {
+    // Les durées étaient des valeurs de dégrossissage — « 3 min MVP pour
+    // itérer » — restées en place. Chacune doit maintenant être un nombre
+    // entier ou demi de journées, sinon c'est qu'on a reposé une constante.
+    for (const def of Object.values(CROP_DEFS)) {
+      const jours = def.growMs / GAME_DAY_MS;
+      expect(Math.abs(jours * 2 - Math.round(jours * 2))).toBeLessThan(0.01);
+    }
+  });
+
+  it("aucune culture ne dépasse sa saison", () => {
+    // Une culture plus longue qu'une saison ne pourrait jamais être semée et
+    // récoltée dans la même : le calendrier agricole cesserait d'exister.
+    for (const def of Object.values(CROP_DEFS)) {
+      expect(def.growMs).toBeLessThan(SEASON_DURATION_MS);
+    }
+  });
+
+  it("garde une culture courte, pour qu’il y ait toujours de quoi revenir", () => {
+    // Avec des céréales à plus d'une heure, un céréalier débutant sans bêtes
+    // n'aurait rien à faire de sa première heure de jeu. Le pois est le
+    // garde-fou : il tient sous deux jours.
+    const plusCourte = Math.min(...Object.values(CROP_DEFS).map((d) => d.growMs));
+    expect(plusCourte).toBeLessThanOrEqual(2 * GAME_DAY_MS);
+    expect(CROP_DEFS.PEA.growMs).toBe(plusCourte);
+  });
+
+  it("classe les cultures de la plus rapide à la plus lente, sans ex æquo", () => {
+    // Des durées égales rendraient le choix de culture arbitraire : c'est le
+    // temps d'immobilisation du champ qui doit faire l'arbitrage avec le
+    // rendement.
+    const durees = Object.values(CROP_DEFS).map((d) => d.growMs);
+    expect(new Set(durees).size).toBe(durees.length);
+  });
+
+  it("laisse l’herbe repartir plus vite qu’elle n’a poussé", () => {
+    expect(CROP_DEFS.GRASS.regrowMs).toBeLessThan(CROP_DEFS.GRASS.growMs);
+    expect(cropGrowMs("GRASS", 1)).toBe(CROP_DEFS.GRASS.regrowMs);
+    expect(cropGrowMs("GRASS", 0)).toBe(CROP_DEFS.GRASS.growMs);
+  });
+
+  it("le maïs est la culture qui engage le plus la saison", () => {
+    const parDuree = Object.values(CROP_DEFS).sort((a, b) => b.growMs - a.growMs);
+    expect(parDuree[0].code).toBe("MAIZE");
+    // Et il paie mieux à la case : le temps immobilisé doit se rémunérer.
+    expect(CROP_DEFS.MAIZE.yieldPerCell).toBeGreaterThan(CROP_DEFS.WHEAT.yieldPerCell);
   });
 });
