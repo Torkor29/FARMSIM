@@ -4764,13 +4764,29 @@ button.tiny {
 .win-body .job-grid,
 .win-body .quest-list,
 .win-body .sale-grid,
-.win-body .zone-maps {
+.win-body .zone-maps,
+.hdv-single .quest-list,
+.hdv-single .zone-maps {
   grid-template-columns: repeat(auto-fill, minmax(min(100%, 20rem), 1fr));
   align-items: start;
 }
 .win-body .who-list,
-.win-body .consigne-rows {
+.win-body .consigne-rows,
+.hdv-single .who-list {
   grid-template-columns: repeat(auto-fill, minmax(min(100%, 15rem), 1fr));
+}
+/* La bourse a sa propre coquille (`.hdv-*`), pas celle des fenêtres : les
+   mêmes listes y vivent, elles ont droit aux mêmes colonnes. Sans cela
+   l'onglet « Objectifs » défilait sur 3,3 écrans pour onze objectifs. */
+.hdv-single .quest-list,
+.hdv-single .who-list {
+  display: grid;
+  gap: 0.5rem;
+  align-items: start;
+}
+.objectifs {
+  display: grid;
+  gap: 0.9rem;
 }
 
 /* Les cartes de machine et de troupeau s'alignent aussi, quand il y en a

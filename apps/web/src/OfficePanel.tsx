@@ -5,10 +5,27 @@ import {
   WORK_LABELS,
   resultat,
   totauxParPoste,
+  STAT_LABELS,
   type FarmWork,
   type LedgerLine,
+  type QuestView,
 } from "@farmsim/shared";
 import { ZoneMap, type ZoneMapZone } from "./ZoneMap";
+
+export type OnlinePeer = {
+  id: string;
+  name: string;
+  online: boolean;
+  lastSeenAt: number | null;
+};
+
+function seenLabel(online: boolean, lastSeenAt: number | null): string {
+  if (online) return "connecté";
+  if (!lastSeenAt) return "pas encore vu";
+  const min = Math.max(1, Math.round((Date.now() - lastSeenAt) / 60_000));
+  if (min < 60) return `il y a ${min} min`;
+  return `il y a ${Math.round(min / 60)} h`;
+}
 
 export type OfficeLabor = {
   id: string;
@@ -70,6 +87,13 @@ type Props = {
   /** Mouvements récents, du plus récent au plus ancien. */
   ledger?: LedgerLine[];
   ledgerJours?: number;
+  /**
+   * Objectifs et voisinage — les deux seules choses que le Bureau montrait
+   * ailleurs. Voir l'onglet « Objectifs ».
+   */
+  quests?: QuestView[];
+  onClaimQuest?: (id: string) => void;
+  onlinePlayers?: OnlinePeer[];
 };
 
 /**
@@ -80,7 +104,7 @@ type Props = {
  * ne disait d'où venait un TRN ni où il était parti. Le journal existe
  * désormais ; c'est ici qu'il se lit.
  */
-type Mode = "ACTIVITE" | "TAKE" | "MINE" | "CONSIGNES" | "LAND";
+type Mode = "OBJECTIFS" | "ACTIVITE" | "TAKE" | "MINE" | "CONSIGNES" | "LAND";
 type WorkCat = "ALL" | FarmWork;
 type SortKey = "payout" | "ttl" | "cells" | "client";
 
@@ -233,6 +257,9 @@ export function OfficePanel({
   onAbandonActive,
   onTakeGhost,
   onSaveConsignes,
+  quests,
+  onClaimQuest,
+  onlinePlayers,
   zones,
   myFarmId,
   expandableIds,
@@ -273,6 +300,8 @@ export function OfficePanel({
 
   const pick = filtered.find((o) => o.id === pickId) ?? filtered[0] ?? null;
   const ghostPick = ghost.find((c) => c.id === ghostId) ?? ghost[0] ?? null;
+  /** Objectifs terminés mais pas encore encaissés : c'est ce qui mérite un chiffre. */
+  const aFaire = (quests ?? []).filter((q) => q.done && !q.claimed).length;
 
   useEffect(() => {
     if (!open) return;
@@ -319,6 +348,7 @@ export function OfficePanel({
         <nav className="hdv-modes" aria-label="Modes">
           {(
             [
+              ["OBJECTIFS", `Objectifs${aFaire > 0 ? ` (${aFaire})` : ""}`],
               ["ACTIVITE", "Activité"],
               ["TAKE", `Prendre (${board.length})`],
               ["MINE", `Mes offres (${posted.length + (active ? 1 : 0)})`],
@@ -332,7 +362,16 @@ export function OfficePanel({
           ))}
         </nav>
 
-        {mode === "ACTIVITE" ? (
+        {mode === "OBJECTIFS" ? (
+          <div className="hdv-single">
+            <Objectifs
+              quests={quests ?? []}
+              busy={busy}
+              onClaim={onClaimQuest}
+              pairs={onlinePlayers ?? []}
+            />
+          </div>
+        ) : mode === "ACTIVITE" ? (
           <div className="hdv-single">
             <Activite lignes={ledger} jours={ledgerJours} crd={crd} escrow={escrow} />
           </div>
@@ -807,6 +846,99 @@ function ConsignesForm({
       <button type="button" className="accent" disabled={busy} onClick={() => void onSave(draft)}>
         Enregistrer les consignes
       </button>
+    </div>
+  );
+}
+
+
+/**
+ * Objectifs et voisinage.
+ *
+ * Ces deux blocs vivaient dans un second panneau — `MissionsPanel` — qui
+ * s'ouvrait **en même temps** que cette bourse, sur la même touche. Le joueur
+ * avait donc deux fenêtres superposées, dont l'une répétait les chantiers, les
+ * offres postées et les terres que celle-ci montre déjà, mieux : mesuré,
+ * 5 411 px de contenu pour redire ce qui tenait ici en cinq onglets.
+ *
+ * Ne restaient en propre que la progression et la présence des voisins. Elles
+ * ont leur onglet, et le panneau en double a disparu.
+ */
+function Objectifs({
+  quests,
+  busy,
+  onClaim,
+  pairs,
+}: {
+  quests: QuestView[];
+  busy: boolean;
+  onClaim?: (id: string) => void;
+  pairs: OnlinePeer[];
+}) {
+  const live = pairs.filter((p) => p.online);
+  return (
+    <div className="objectifs">
+      <section className="hall-block">
+        <h3 className="spaced">Vos objectifs</h3>
+        {quests.length === 0 ? (
+          <p className="hdv-muted">Aucun objectif en cours.</p>
+        ) : (
+          <ul className="quest-list">
+            {quests.map((q) => (
+              <li key={q.id} className={q.claimed ? "claimed" : q.done ? "done" : ""}>
+                <div className="quest-head">
+                  <strong>{q.title}</strong>
+                  <span className="quest-count">
+                    {q.progress} / {q.target} {STAT_LABELS[q.stat]}
+                  </span>
+                </div>
+                <div className="quest-bar" aria-hidden="true">
+                  <i style={{ width: `${Math.round((q.progress / q.target) * 100)}%` }} />
+                </div>
+                <p className="muted tiny">{q.hint}</p>
+                {q.claimed ? (
+                  <span className="quest-paid">Encaissé</span>
+                ) : q.done ? (
+                  <button
+                    type="button"
+                    className="sale-go"
+                    disabled={busy}
+                    onClick={() => onClaim?.(q.id)}
+                  >
+                    Encaisser · {q.reward.crd} TRN + {q.reward.xp} XP
+                  </button>
+                ) : (
+                  <span className="muted tiny">
+                    Récompense : {q.reward.crd} TRN + {q.reward.xp} XP
+                  </span>
+                )}
+              </li>
+            ))}
+          </ul>
+        )}
+      </section>
+
+      <section className="hall-block">
+        <h3 className="spaced">Qui est connecté</h3>
+        {pairs.length === 0 ? (
+          <p className="who-empty">Personne d’autre n’a encore de compte ici.</p>
+        ) : live.length === 0 ? (
+          <p className="who-empty">Personne d’autre n’est connecté pour l’instant.</p>
+        ) : (
+          <ul className="who-list">
+            {pairs.map((p) => (
+              <li key={p.id}>
+                <span>
+                  <strong>{p.name}</strong>
+                </span>
+                <span className="muted tiny who-status">
+                  <i className={`who-dot ${p.online ? "on" : ""}`} aria-hidden="true" />
+                  {seenLabel(p.online, p.lastSeenAt)}
+                </span>
+              </li>
+            ))}
+          </ul>
+        )}
+      </section>
     </div>
   );
 }

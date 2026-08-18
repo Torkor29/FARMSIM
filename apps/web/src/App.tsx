@@ -74,7 +74,6 @@ import { MachineCareOverlay, type CareMode } from "./MachineCareOverlay";
 import { MissionPlay, type MissionPlayContract } from "./MissionPlay";
 import { LivestockPanel, type BarnState } from "./LivestockPanel";
 import { MarketPanel, type Listing, type MarketDelivery, type FuturesContract } from "./MarketPanel";
-import { MissionsPanel } from "./MissionsPanel";
 import { OfficePanel } from "./OfficePanel";
 import type { ContinentDetail, WorldContinent } from "./Onboarding";
 
@@ -3916,7 +3915,7 @@ export function App() {
             type="button"
             className="who-now-bar"
             onClick={() => {
-              if (isMobile) setSheet("OFFICE");
+              if (isMobile) setShowEta(true);
               else setShowEta((v) => !v);
             }}
           >
@@ -4340,49 +4339,14 @@ export function App() {
         )}
         </PanelHost>
 
-        <PanelHost
-          mobile={isMobile}
-          open={showEta}
-          title="Missions"
-          subtitle={`${laborBoard.length} chantier(s) · ${contracts.length} solo`}
-          width="wide"
-          onClose={() => setShowEta(false)}
-        >
-        {(isMobile ? sheet === "OFFICE" : showEta) && (
-          <MissionsPanel
-            className={panelClass("eta-panel", "OFFICE")}
-            gesture={isMobile ? sheetGesture : undefined}
-            busy={busy}
-            onlinePlayers={onlinePlayers}
-            visitName={visitOrder?.clientName ?? null}
-            visitLeft={visitOrder?.remaining ?? null}
-            helpWanted={laborBoard}
-            myAsks={myPostedLabor}
-            solo={contracts}
-            onAcceptHelp={(id) => void acceptLaborOrder(id)}
-            onCancelAsk={(id) =>
-              void api(`/labor-orders/${id}/cancel`, {
-                method: "POST",
-                body: JSON.stringify({ userId: player.id }),
-              }).then(() => refreshMeta())
-            }
-            onAcceptSolo={(id) => acceptContract(id)}
-            locked={Boolean(visitOrder) || Boolean(activeMission)}
-            zones={zones.filter(
-              (z) =>
-                ownedParcels.length === 0 ||
-                ownedParcels.some((op) => op.zone?.code === z.code) ||
-                z.parcels.some((p) => expandableParcelIds.has(p.id)),
-            )}
-            myFarmId={player.farm?.id}
-            expandableIds={expandableParcelIds}
-            onOpenBoard={() => setShowEta(true)}
-            onBuyField={buyAdjacent}
-            quests={quests}
-            onClaimQuest={(id) => void claimQuest(id)}
-          />
-        )}
-        </PanelHost>
+        {/* Le panneau « Missions » a été supprimé, pas déplacé.
+            Il s'ouvrait sur la même touche que la bourse des chantiers, donc
+            **en même temps** qu'elle : deux fenêtres superposées dont celle-ci
+            répétait les chantiers, les offres postées et les terres que la
+            bourse montre déjà, en mieux. Mesuré : 5 411 px de contenu pour
+            redire ce qui tient là-bas en cinq onglets. Ce qu'elle avait en
+            propre — les objectifs et la présence des voisins — a rejoint la
+            bourse sous l'onglet « Objectifs ». */}
       </div>
 
       {/* Le catalogue en grand, à la demande. `PanelHost` ne convient pas ici :
@@ -4771,6 +4735,9 @@ export function App() {
         expandableIds={expandableParcelIds}
         onBuyLand={buyAdjacent}
         ledger={ledger}
+        quests={quests}
+        onClaimQuest={(id) => void claimQuest(id)}
+        onlinePlayers={onlinePlayers}
       />
 
       {isMobile && (
@@ -4797,15 +4764,23 @@ export function App() {
                   <button
                     key={t.key}
                     type="button"
-                    className={`tab${sheet === t.key ? " on" : ""}`}
+                    className={`tab${(t.key === "OFFICE" ? showEta : sheet === t.key) ? " on" : ""}`}
                     disabled={disabled}
                     /* Entrée en cascade, 45 ms par carte — charte §8.1 #7. */
                     style={{ animationDelay: `${i * 45}ms` }}
                     title={disabled ? "Aucun bâtiment d’élevage sur la parcelle" : t.label}
-                    aria-pressed={sheet === t.key}
+                    aria-pressed={t.key === "OFFICE" ? showEta : sheet === t.key}
                     onClick={() => {
-                      setSheet((cur) => (cur === t.key ? null : t.key));
                       setMoreOpen(false);
+                      // « Missions » n'a plus de tiroir : son contenu a rejoint
+                      // la bourse des chantiers, qui le montrait déjà en
+                      // double. L'onglet ouvre donc directement la bourse.
+                      if (t.key === "OFFICE") {
+                        setSheet(null);
+                        setShowEta(true);
+                        return;
+                      }
+                      setSheet((cur) => (cur === t.key ? null : t.key));
                     }}
                   >
                     <img className="tab-icon" src={t.icon} alt="" aria-hidden="true" />
