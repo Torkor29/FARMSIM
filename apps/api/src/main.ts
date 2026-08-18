@@ -43,6 +43,8 @@ import {
   MACHINE_DEFS,
   CONTRACT_WORK,
   SIM_TICK_MS,
+  DELIVERY_TRAVEL_MS,
+  DELIVERY_AUTO_MS,
   WEATHER_LABELS,
   WORLD,
   CONTINENT_BY_CODE,
@@ -2478,6 +2480,16 @@ async function runWorldTick() {
   }
 
   await recordMarketHistory(marketOut);
+
+  /**
+   * Le filet des livraisons oubliées.
+   *
+   * Une marchandise payée ne doit jamais se perdre parce qu'on a fermé
+   * l'onglet. Passé `autoAt`, la caisse se range seule ; le geste reste le
+   * chemin normal, et le seul qui donne l'animation.
+   */
+  const oubliees = await prisma.supplyOrder.findMany({ where: { autoAt: { lte: new Date() } } });
+  for (const d of oubliees) await collectDelivery(d);
 
   lastSimTick = {
     at: new Date().toISOString(),
@@ -6729,6 +6741,116 @@ app.post("/herds/:id/slaughter", async (req, res) => {
 });
 
 /** Achat d'intrants au négociant — le fourrage, pour l'instant. */
+/**
+ * Le temps de route, réglable pour les tests.
+ *
+ * Douze secondes est le bon délai pour un joueur ; c'est une éternité dans une
+ * suite d'intégration, où deux tests achètent puis se servent aussitôt. La
+ * couture est explicite et ne sert qu'à cela : le comportement testé reste le
+ * même — on paie, la caisse arrive, il faut la rentrer —, seul le compte à
+ * rebours est raccourci.
+ */
+const TRAVEL_MS = Number(process.env.FARMSIM_DELIVERY_MS ?? DELIVERY_TRAVEL_MS);
+
+/**
+ * Où poser une caisse de livraison.
+ *
+ * Dans la cour, pas au milieu d'un champ : une case vide de la parcelle, la
+ * plus proche possible du bord d'entrée. On évite les cases déjà occupées par
+ * une autre livraison, sans quoi deux commandes passées coup sur coup se
+ * superposeraient et il n'y aurait qu'un objet à cliquer pour deux caisses.
+ */
+async function placeDelivery(
+  farmId: string,
+): Promise<{ parcelId: string; x: number; y: number } | null> {
+  const parcel = await prisma.parcel.findFirst({
+    where: { farmId },
+    include: { cells: true },
+  });
+  if (!parcel) return null;
+  const prises = new Set(
+    (await prisma.supplyOrder.findMany({ where: { farmId } })).map((d) => `${d.x},${d.y}`),
+  );
+  const libres = parcel.cells
+    .filter((c) => c.kind === "EMPTY" && !prises.has(`${c.x},${c.y}`))
+    // Le bord d'entrée est le coin bas-gauche de la parcelle : c'est de là que
+    // vient la route, et c'est là qu'on regarde quand on cherche une livraison.
+    .sort((a, b) => a.x + (parcel.gridH - b.y) - (b.x + (parcel.gridH - a.y)));
+  const c = libres[0];
+  return c ? { parcelId: parcel.id, x: c.x, y: c.y } : null;
+}
+
+/**
+ * Rentrer une caisse : la marchandise passe enfin au stock.
+ *
+ * Un seul chemin pour les deux cas — le geste du joueur et le filet
+ * automatique —, faute de quoi les deux finiraient par diverger sur ce qui
+ * compte : ce qui entre au silo.
+ */
+async function collectDelivery(d: {
+  id: string;
+  farmId: string;
+  commodity: string;
+  tons: number;
+}): Promise<void> {
+  await prisma.$transaction(async (tx) => {
+    await addToStock(tx, d.farmId, d.commodity as TradeGood, d.tons, 0, 3);
+    await tx.supplyOrder.delete({ where: { id: d.id } });
+  });
+}
+
+/** Les commandes en route ou posées dans la cour, pour une ferme. */
+app.get("/farms/:id/supplies", async (req, res) => {
+  const auth = await userFromAuthHeader(req);
+  if (!auth) {
+    res.status(401).json({ error: "Jeton requis" });
+    return;
+  }
+  const farm = await prisma.farm.findUnique({ where: { id: req.params.id } });
+  if (!farm || farm.userId !== auth.user.id) {
+    res.status(403).json({ error: "Ferme non possédée" });
+    return;
+  }
+  const list = await prisma.supplyOrder.findMany({
+    where: { farmId: farm.id },
+    orderBy: { arrivesAt: "asc" },
+  });
+  res.json({
+    supplies: list.map((d) => ({
+      id: d.id,
+      commodity: d.commodity,
+      tons: d.tons,
+      arrivesAt: d.arrivesAt.getTime(),
+      parcelId: d.parcelId,
+      x: d.x,
+      y: d.y,
+    })),
+  });
+});
+
+/** Rentrer une caisse : c'est le geste, et c'est lui qui verse au stock. */
+app.post("/supplies/:id/collect", async (req, res) => {
+  const auth = await userFromAuthHeader(req);
+  if (!auth) {
+    res.status(401).json({ error: "Jeton requis" });
+    return;
+  }
+  const d = await prisma.supplyOrder.findUnique({
+    where: { id: req.params.id },
+    include: { farm: true },
+  });
+  if (!d || d.farm.userId !== auth.user.id) {
+    res.status(403).json({ error: "Livraison inconnue" });
+    return;
+  }
+  if (d.arrivesAt.getTime() > Date.now()) {
+    res.status(409).json({ error: "Le camion n'est pas encore arrivé" });
+    return;
+  }
+  await collectDelivery(d);
+  res.json({ collected: d.commodity, tons: d.tons });
+});
+
 app.post("/market/buy", async (req, res) => {
   const body = z
     .object({
@@ -6758,11 +6880,41 @@ app.post("/market/buy", async (req, res) => {
     res.status(402).json({ error: `TRN insuffisants — ${cost} requis` });
     return;
   }
-  await prisma.$transaction(async (tx) => {
+  /**
+   * On paie tout de suite, on reçoit après.
+   *
+   * La marchandise n'entre pas au silo ici : elle part en camion. Tant que la
+   * caisse n'est pas rentrée, elle n'existe pas au stock — c'est ce qui donne
+   * son poids au geste, et ce qui rend la commande visible sur la ferme au
+   * lieu d'être un chiffre qui change quelque part.
+   */
+  const pose = await placeDelivery(user.farm.id);
+  if (!pose) {
+    res.status(409).json({ error: "Aucune place libre dans la cour pour livrer" });
+    return;
+  }
+  const maintenant = Date.now();
+  const commande = await prisma.$transaction(async (tx) => {
     await debit(tx, user.id, cost, "INTRANTS", `Achat au négociant — ${body.data.commodity}, ${body.data.tons} t`);
-    await addToStock(tx, user.farm!.id, body.data.commodity, body.data.tons, 0, 3);
+    return tx.supplyOrder.create({
+      data: {
+        farmId: user.farm!.id,
+        commodity: body.data.commodity,
+        tons: body.data.tons,
+        arrivesAt: new Date(maintenant + TRAVEL_MS),
+        autoAt: new Date(maintenant + TRAVEL_MS + DELIVERY_AUTO_MS),
+        parcelId: pose.parcelId,
+        x: pose.x,
+        y: pose.y,
+      },
+    });
   });
-  res.json({ bought: body.data.tons, cost, pricePerTon: dealerAskPrice(base) });
+  res.json({
+    bought: body.data.tons,
+    cost,
+    pricePerTon: dealerAskPrice(base),
+    delivery: { id: commande.id, arrivesAt: commande.arrivesAt.getTime() },
+  });
 });
 
 /** Reprise d'une machine — l'état conditionne le prix. */

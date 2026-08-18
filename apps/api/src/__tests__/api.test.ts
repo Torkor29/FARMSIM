@@ -111,6 +111,11 @@ before(async () => {
       // Sans cela, le démarrage sème cent cinquante fermes PNJ dont aucun test
       // n'a besoin — deux minutes perdues sur une machine d'intégration.
       FARMSIM_SKIP_NPC: "1",
+      // Le camion met douze secondes en jeu : c'est le bon délai pour un
+      // joueur, une éternité dans une suite d'intégration. On ne raccourcit
+      // que le compte à rebours — la caisse existe toujours, et il faut
+      // toujours la rentrer pour que la marchandise entre au stock.
+      FARMSIM_DELIVERY_MS: "0",
     },
     stdio: ["ignore", "pipe", "pipe"],
     detached: true,
@@ -316,6 +321,34 @@ describe("entrées invalides", () => {
  * la route qui manquait, au niveau de la requête : ce sont les refus qui
  * comptent le plus, puisque c'est là qu'on renseigne ou qu'on égare le joueur.
  */
+/**
+ * Commander au négociant **et** rentrer la caisse.
+ *
+ * L'achat ne verse plus au silo : il pose une caisse dans la cour, et c'est
+ * un second geste qui la range. Les tests qui achètent pour se servir juste
+ * après doivent donc faire les deux — c'est le parcours du joueur.
+ */
+async function commanderEtRentrer(
+  moi: { id: string; jeton: string },
+  farmId: string,
+  commodity: string,
+  tons: number,
+) {
+  const achat = await appel("/market/buy", {
+    methode: "POST",
+    corps: { userId: moi.id, commodity, tons },
+    jeton: moi.jeton,
+  });
+  assert.equal(achat.statut, 200, `achat refusé : ${JSON.stringify(achat.corps)}`);
+  const liste = await appel(`/farms/${farmId}/supplies`, { jeton: moi.jeton });
+  const caisses = (liste.corps as unknown as { supplies: { id: string }[] }).supplies;
+  assert.ok(caisses.length > 0, "l'achat doit poser une caisse dans la cour");
+  for (const c of caisses) {
+    const r = await appel(`/supplies/${c.id}/collect`, { methode: "POST", jeton: moi.jeton });
+    assert.equal(r.statut, 200, `rentrée refusée : ${JSON.stringify(r.corps)}`);
+  }
+}
+
 describe("lieu de vie", () => {
   /**
    * « Je dis de rentrer mes bêtes, ça met le message mais elles rentrent pas. »
@@ -527,7 +560,8 @@ describe("litière", () => {
       }[];
     }).barns[0]!;
     assert.ok(b2.herd, "l'étable doit héberger un troupeau");
-    return { moi, pid, herd: b2.herd! };
+    const farmId = (me.corps as unknown as { player: { farm: { id: string } } }).player.farm.id;
+    return { moi, pid, farmId, herd: b2.herd! };
   }
 
   it("refuse de pailler sans paille, et dit où en trouver", async () => {
@@ -544,13 +578,9 @@ describe("litière", () => {
   });
 
   it("étale la paille achetée, et remplit la litière", async () => {
-    const { moi, pid, herd } = await eleveurAvecEtable();
-    const achat = await appel("/market/buy", {
-      methode: "POST",
-      corps: { userId: moi.id, commodity: "STRAW", tons: 4 },
-      jeton: moi.jeton,
-    });
-    assert.equal(achat.statut, 200, `achat refusé : ${JSON.stringify(achat.corps)}`);
+    const { moi, pid, herd, farmId } = await eleveurAvecEtable();
+    // Acheter ne suffit plus : la paille arrive en caisse, il faut la rentrer.
+    await commanderEtRentrer(moi, farmId, "STRAW", 4);
 
     const r = await appel(`/herds/${herd.id}/bedding`, {
       methode: "POST",
@@ -590,5 +620,114 @@ describe("litière", () => {
       jeton: moi.jeton,
     });
     assert.equal(r.statut, 200, `le fumier doit être achetable : ${JSON.stringify(r.corps)}`);
+  });
+});
+
+describe("livraisons", () => {
+  /**
+   * L'achat versait la marchandise au silo dans la même milliseconde : on
+   * cliquait, un chiffre changeait quelque part, et rien ne se passait à
+   * l'écran. Une commande part maintenant en camion, se pose dans la cour, et
+   * n'entre au stock que lorsqu'on la rentre.
+   *
+   * Ce qui doit rester vrai, et que ces tests tiennent :
+   *
+   *  - on paie à la commande, mais on ne possède rien avant de l'avoir rentrée ;
+   *  - la caisse est posée sur une case libre de la parcelle ;
+   *  - deux commandes ne se superposent pas, sinon un seul objet à cliquer
+   *    répondrait pour deux caisses.
+   */
+  async function acheteur() {
+    const moi = await inscrire("Client");
+    const monde = await appel("/world/AUR");
+    const regions = (monde.corps as unknown as {
+      regions: { parcels: { id: string; taken: boolean }[] }[];
+    }).regions;
+    let parcelId = "";
+    for (const r of regions) {
+      const libre = (r.parcels ?? []).find((p) => !p.taken);
+      if (libre) { parcelId = libre.id; break; }
+    }
+    assert.ok(parcelId, "il faut une parcelle libre");
+    await appel("/world/claim", {
+      methode: "POST",
+      corps: { userId: moi.id, specialization: "CEREALIER", parcelId },
+      jeton: moi.jeton,
+    });
+    await appel("/dev/grant", {
+      methode: "POST",
+      corps: { userId: moi.id, crd: 300_000 },
+      jeton: moi.jeton,
+    });
+    const me = await appel("/auth/me", { jeton: moi.jeton });
+    const farm = (me.corps as unknown as { player: { farm: { id: string } } }).player.farm;
+    return { moi, farmId: farm.id };
+  }
+
+  const stockDe = async (moi: { id: string; jeton: string }, code: string) => {
+    const me = await appel("/auth/me", { jeton: moi.jeton });
+    const inv = (me.corps as unknown as {
+      player: { farm: { inventory: { itemCode: string; qty: number }[] } };
+    }).player.farm.inventory;
+    return inv.find((i) => i.itemCode === code)?.qty ?? 0;
+  };
+
+  it("payer ne suffit pas : la marchandise reste dehors tant qu'on ne la rentre pas", async () => {
+    const { moi, farmId } = await acheteur();
+    const avant = await stockDe(moi, "STRAW");
+    const achat = await appel("/market/buy", {
+      methode: "POST",
+      corps: { userId: moi.id, commodity: "STRAW", tons: 5 },
+      jeton: moi.jeton,
+    });
+    assert.equal(achat.statut, 200, JSON.stringify(achat.corps));
+    // Le cœur du changement : rien au silo, une caisse dans la cour.
+    assert.equal(await stockDe(moi, "STRAW"), avant, "le stock ne bouge pas à l'achat");
+
+    const liste = await appel(`/farms/${farmId}/supplies`, { jeton: moi.jeton });
+    const caisses = (liste.corps as unknown as {
+      supplies: { id: string; tons: number; x: number; y: number }[];
+    }).supplies;
+    assert.equal(caisses.length, 1);
+    assert.equal(caisses[0]!.tons, 5);
+
+    const r = await appel(`/supplies/${caisses[0]!.id}/collect`, {
+      methode: "POST",
+      jeton: moi.jeton,
+    });
+    assert.equal(r.statut, 200, JSON.stringify(r.corps));
+    assert.equal(await stockDe(moi, "STRAW"), avant + 5, "rentrer la caisse verse au stock");
+  });
+
+  it("deux commandes ne se posent pas sur la même case", async () => {
+    const { moi, farmId } = await acheteur();
+    for (const t of [2, 3]) {
+      await appel("/market/buy", {
+        methode: "POST",
+        corps: { userId: moi.id, commodity: "HAY", tons: t },
+        jeton: moi.jeton,
+      });
+    }
+    const liste = await appel(`/farms/${farmId}/supplies`, { jeton: moi.jeton });
+    const caisses = (liste.corps as unknown as {
+      supplies: { x: number; y: number }[];
+    }).supplies;
+    assert.equal(caisses.length, 2);
+    const cases = new Set(caisses.map((c) => `${c.x},${c.y}`));
+    assert.equal(cases.size, 2, "chaque caisse a sa case, sinon on n'en clique qu'une");
+  });
+
+  it("n'accepte pas qu'un joueur rentre la caisse d'un autre", async () => {
+    const { moi, farmId } = await acheteur();
+    await appel("/market/buy", {
+      methode: "POST",
+      corps: { userId: moi.id, commodity: "HAY", tons: 1 },
+      jeton: moi.jeton,
+    });
+    const liste = await appel(`/farms/${farmId}/supplies`, { jeton: moi.jeton });
+    const id = (liste.corps as unknown as { supplies: { id: string }[] }).supplies[0]!.id;
+    const autre = await inscrire("Voisin");
+    const r = await appel(`/supplies/${id}/collect`, { methode: "POST", jeton: autre.jeton });
+    assert.equal(r.statut, 403);
   });
 });

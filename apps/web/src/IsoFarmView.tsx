@@ -104,6 +104,22 @@ export type IsoSim = {
   };
 };
 
+/**
+ * Une caisse commandée au négociant, posée dans la cour.
+ *
+ * `arrivesAt` est dans le futur tant que le camion roule : on ne dessine rien
+ * avant. Le joueur voit donc apparaître sa commande, il ne la trouve pas déjà
+ * là — c'est toute la différence entre « recevoir » et « avoir ».
+ */
+export type SupplyCrate = {
+  id: string;
+  commodity: string;
+  tons: number;
+  arrivesAt: number;
+  x: number;
+  y: number;
+};
+
 export type ActiveWork = {
   type: MachineType;
   cells: { x: number; y: number }[];
@@ -185,6 +201,17 @@ type Props = {
   activeWork?: ActiveWork | null;
   /** Troupeaux dehors : une entrée par étable dont les bêtes pâturent */
   grazing?: GrazingHerd[];
+  /** Commandes livrées, posées dans la cour en attendant qu'on les rentre */
+  supplies?: SupplyCrate[];
+  /**
+   * Un transport en cours, du stockage vers un bâtiment.
+   *
+   * C'est le pendant du rangement : distribuer une ration, c'est sortir du
+   * fourrage du hangar et l'amener à l'étable. Le geste était instantané et
+   * invisible — un chiffre changeait dans un panneau. Une caisse qui traverse
+   * la cour dit la même chose, et la dit sur la ferme.
+   */
+  hauls?: { id: string; x: number; y: number; commodity: string }[];
   /** Caisse d'œufs / ballot de laine au pied du bâtiment */
   yardSignals?: YardSignal[];
   /** Tas de fumier à côté des bâtiments d'élevage */
@@ -536,6 +563,48 @@ function cropGroundColor(c: IsoCell, sim?: IsoSim): number {
   return plante.lerp(new THREE.Color(TERRE_SOUS_RANG), part).getHex();
 }
 
+
+/**
+ * La caisse d'une commande livrée.
+ *
+ * Une palette de bois, sanglée, avec un dessus de la couleur de la denrée :
+ * on reconnaît de loin qu'il s'agit de paille plutôt que de grain, sans
+ * étiquette accrochée sur la ferme.
+ */
+function makeSupplyCrate(couleur: number): THREE.Group {
+  const g = new THREE.Group();
+  const bois = new THREE.MeshLambertMaterial({ color: 0x8a6234, flatShading: true });
+  const sangle = new THREE.MeshLambertMaterial({ color: 0x4a3320, flatShading: true });
+  const dessus = new THREE.MeshLambertMaterial({ color: couleur, flatShading: true });
+  const palette = new THREE.Mesh(new THREE.BoxGeometry(0.4, 0.05, 0.34), bois);
+  palette.position.y = 0.025;
+  palette.castShadow = true;
+  g.add(palette);
+  const charge = new THREE.Mesh(new THREE.BoxGeometry(0.34, 0.2, 0.28), dessus);
+  charge.position.y = 0.15;
+  charge.castShadow = true;
+  g.add(charge);
+  for (const dx of [-0.1, 0.1]) {
+    const s = new THREE.Mesh(new THREE.BoxGeometry(0.03, 0.21, 0.29), sangle);
+    s.position.set(dx, 0.15, 0);
+    g.add(s);
+  }
+  return g;
+}
+
+/** La couleur du dessus d'une caisse, par denrée. */
+const SUPPLY_COLORS: Record<string, number> = {
+  STRAW: 0xe0c268,
+  STRAW_BALE: 0xe0c268,
+  HAY: 0xc9a94e,
+  SILAGE: 0x6f8f3f,
+  WHEAT: 0xdcae3f,
+  BARLEY: 0xe6d49a,
+  MAIZE: 0xe8c245,
+  PEA: 0x8fbf5c,
+  RAPE: 0xf2d429,
+  MANURE: 0x6b4a2c,
+};
 
 /** Caisse d'œufs au pied du poulailler. */
 function makeEggCrate(): THREE.Group {
@@ -932,6 +1001,8 @@ export function IsoFarmView({
   activeWork = null,
   grazing = [],
   yardSignals = [],
+  supplies = [],
+  hauls = [],
   manurePiles = [],
   workers = [],
   weather = "CLEAR",
@@ -991,6 +1062,8 @@ export function IsoFarmView({
     cells,
     buildings,
     cellSims,
+    supplies,
+    hauls,
     selected,
     hoverCell,
     previewBuilding,
@@ -1014,6 +1087,8 @@ export function IsoFarmView({
     activeWork,
     grazing,
     yardSignals,
+    supplies,
+    hauls,
     manurePiles,
     workers,
     gridW,
@@ -1240,6 +1315,47 @@ export function IsoFarmView({
     const growthGroup = new THREE.Group();
     world.add(growthGroup);
     let growthBars: GrowthBar[] = [];
+
+    /**
+     * Les caisses livrées, et celles qu'on est en train de rentrer.
+     *
+     * Le rangement n'est pas piloté par une propriété : c'est la **disparition**
+     * de la caisse de la liste qui le déclenche. L'application retire la
+     * commande dès le toucher, sans attendre le serveur ; la vue voit qu'une
+     * caisse qu'elle affichait n'est plus là et joue son vol vers le bâtiment
+     * qui la stocke. Un geste, une conséquence, aucun état à synchroniser.
+     */
+    const supplyGroup = new THREE.Group();
+    world.add(supplyGroup);
+    /**
+     * Vers quoi une caisse s'envole quand on la range.
+     *
+     * Le bâtiment de stockage le plus proche — un silo, un hangar, une grange.
+     * À défaut, la caisse monte et disparaît sur place : mieux vaut un
+     * escamotage franc qu'un vol vers un point arbitraire du terrain.
+     */
+    const storagePoint = (depuis: THREE.Vector3): THREE.Vector3 => {
+      const rangeurs = new Set(["GRAIN_SILO", "HAY_BARN", "MACHINE_SHED", "FARMHOUSE", "BARN"]);
+      let best: THREE.Vector3 | null = null;
+      let d2 = Infinity;
+      for (const b of dataRef.current.buildings ?? []) {
+        if (!rangeurs.has(b.type)) continue;
+        const def = BUILDING_DEFS[b.type];
+        const p = new THREE.Vector3(
+          ox + (b.originX + def.w / 2) * step,
+          0.3,
+          oz + (b.originY + def.h / 2) * step,
+        );
+        const dd = p.distanceToSquared(depuis);
+        if (dd < d2) { d2 = dd; best = p; }
+      }
+      return best ?? depuis.clone().setY(depuis.y + 1.2);
+    };
+    const crates = new Map<string, THREE.Group>();
+    /** Transports déjà lancés : un signal ne doit partir qu'une fois. */
+    const partis = new Set<string>();
+    type Vol = { mesh: THREE.Group; from: THREE.Vector3; to: THREE.Vector3; t0: number };
+    let vols: Vol[] = [];
 
     const farmerGroup = new THREE.Group();
     world.add(farmerGroup);
@@ -2508,6 +2624,76 @@ export function IsoFarmView({
       }
 
       const signals = dataRef.current.yardSignals ?? [];
+      /* —— Les caisses livrées ——
+         Elles ne passent pas par la reconstruction de scène : une commande
+         arrive et repart au rythme du joueur, pas à celui des dixièmes de
+         progression des cultures. On les tient donc à jour ici, chaque image. */
+      {
+        const maintenant = Date.now();
+        const attendues = (dataRef.current.supplies ?? []).filter(
+          (c) => c.arrivesAt <= maintenant,
+        );
+        const vues = new Set(attendues.map((c) => c.id));
+        for (const c of attendues) {
+          let mesh = crates.get(c.id);
+          if (!mesh) {
+            mesh = makeSupplyCrate(SUPPLY_COLORS[c.commodity] ?? 0xcbbf9a);
+            mesh.scale.setScalar(cellSize);
+            supplyGroup.add(mesh);
+            crates.set(c.id, mesh);
+            mesh.userData.pose = maintenant;
+          }
+          const px = ox + (c.x + 0.5) * step;
+          const pz = oz + (c.y + 0.5) * step;
+          // Elle tombe du ciel sur un tiers de seconde, puis rebondit une fois :
+          // c'est ce qui dit « on vient de la déposer » sans camion à animer.
+          const age = (maintenant - (mesh.userData.pose as number)) / 1000;
+          const chute = age < 0.34 ? (1 - age / 0.34) ** 2 * 1.6 * cellSize : 0;
+          const rebond = age >= 0.34 && age < 0.7 ? Math.sin((age - 0.34) / 0.36 * Math.PI) * 0.06 * cellSize : 0;
+          mesh.position.set(px, 0.1 + chute + rebond, pz);
+          // Un léger balancement tant qu'elle attend : elle réclame un geste.
+          mesh.rotation.y = Math.sin(t * 1.4 + c.x) * 0.08;
+        }
+        /* Les transports : du stockage vers le bâtiment qui reçoit. On les
+           lance une fois, à leur apparition, et on les oublie ensuite — la
+           liste côté application n'est qu'un signal de départ. */
+        for (const h of dataRef.current.hauls ?? []) {
+          if (partis.has(h.id)) continue;
+          partis.add(h.id);
+          const cible = new THREE.Vector3(ox + (h.x + 0.5) * step, 0.25, oz + (h.y + 0.5) * step);
+          const mesh = makeSupplyCrate(SUPPLY_COLORS[h.commodity] ?? 0xcbbf9a);
+          mesh.scale.setScalar(cellSize * 0.8);
+          supplyGroup.add(mesh);
+          vols.push({ mesh, from: storagePoint(cible), to: cible, t0: t });
+        }
+
+        for (const [id, mesh] of crates) {
+          if (vues.has(id)) continue;
+          crates.delete(id);
+          // Rangée : elle s'envole vers le bâtiment qui la stocke.
+          const cible = storagePoint(mesh.position);
+          vols.push({ mesh, from: mesh.position.clone(), to: cible, t0: t });
+        }
+        if (vols.length > 0) {
+          vols = vols.filter((v) => {
+            const u = Math.min(1, (t - v.t0) / 0.9);
+            const e = u * u * (3 - 2 * u);
+            v.mesh.position.lerpVectors(v.from, v.to, e);
+            // Une trajectoire en cloche : une caisse qui glisse au sol n'a pas
+            // l'air rangée, elle a l'air poussée.
+            v.mesh.position.y += Math.sin(e * Math.PI) * 0.9 * cellSize;
+            v.mesh.scale.setScalar(cellSize * (1 - e * 0.75));
+            v.mesh.rotation.y += 0.14;
+            if (u >= 1) {
+              supplyGroup.remove(v.mesh);
+              disposeObject3D(v.mesh);
+              return false;
+            }
+            return true;
+          });
+        }
+      }
+
       const piles = dataRef.current.manurePiles ?? [];
       const nextPickupKey = [
         ...signals.map((s) => `${s.kind}:${s.originX}:${s.originY}`),

@@ -67,6 +67,29 @@ export const WEATHER_LABELS: Record<WeatherState, string> = {
 /** Intervalle tick serveur MVP `[TEST]` */
 export const SIM_TICK_MS = 20_000;
 
+/**
+ * Le temps de route d'une commande au négociant `[GD]`.
+ *
+ * L'achat versait la marchandise au silo dans la même milliseconde : on
+ * cliquait, un chiffre changeait quelque part, et rien ne se passait à
+ * l'écran. Une ferme reçoit pourtant ses intrants, et ce temps-là fait partie
+ * du métier — on commande avant d'en avoir besoin.
+ *
+ * Douze secondes : assez pour qu'on voie le camion arriver et qu'on ait le
+ * sentiment d'avoir commandé, trop court pour qu'on aille faire autre chose.
+ * En dessous de dix, la caisse se pose avant qu'on ait fermé le marché.
+ */
+export const DELIVERY_TRAVEL_MS = 12_000;
+
+/**
+ * Passé ce délai, la caisse rentre toute seule.
+ *
+ * Une marchandise payée ne doit jamais se perdre parce qu'on a fermé
+ * l'onglet. Le geste reste le chemin normal — et le seul qui donne
+ * l'animation —, celui-ci n'est qu'un filet.
+ */
+export const DELIVERY_AUTO_MS = 3 * 60_000;
+
 export type ContractJobType =
   | "PLOW"
   | "SOW"

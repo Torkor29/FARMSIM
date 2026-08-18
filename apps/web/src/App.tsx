@@ -52,6 +52,7 @@ import {
   type Specialization,
   CROP_DEFS,
   GOOD_DEFS,
+  FEED_VALUE,
   isMowCrop,
   leavesSwath,
   type CropCode,
@@ -73,6 +74,7 @@ import { ConfirmDialog, type ConfirmRequest } from "./ConfirmDialog";
 import { MachineCareOverlay, type CareMode } from "./MachineCareOverlay";
 import { MissionPlay, type MissionPlayContract } from "./MissionPlay";
 import { LivestockPanel, type BarnState } from "./LivestockPanel";
+import type { SupplyCrate } from "./IsoFarmView";
 import { MarketPanel, type Listing, type MarketDelivery, type FuturesContract } from "./MarketPanel";
 import { OfficePanel } from "./OfficePanel";
 import type { ContinentDetail, WorldContinent } from "./Onboarding";
@@ -641,6 +643,41 @@ export function App() {
   const [continentDetail, setContinentDetail] = useState<ContinentDetail | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
   const [barns, setBarns] = useState<BarnState[]>([]);
+  /**
+   * Les commandes passées au négociant, en route ou posées dans la cour.
+   *
+   * L'achat ne verse plus au silo : il envoie un camion. La caisse existe donc
+   * sur la ferme, et c'est le joueur qui la rentre — voir `SupplyOrder` côté
+   * serveur pour le pourquoi.
+   */
+  const [supplies, setSupplies] = useState<SupplyCrate[]>([]);
+
+  /**
+   * Les transports en cours vers un bâtiment.
+   *
+   * Une entrée est un **signal de départ**, pas un état : la vue lance la
+   * caisse à son apparition et n'y revient plus. On les efface donc au bout
+   * d'une seconde et demie, le temps du vol, pour que la liste ne grossisse
+   * pas à chaque ration distribuée.
+   */
+  const [hauls, setHauls] = useState<{ id: string; x: number; y: number; commodity: string }[]>([]);
+
+  function lancerTransport(buildingId: string, commodity: string) {
+    const b = (parcel?.buildings ?? []).find((x) => x.id === buildingId);
+    if (!b) return;
+    const id = `${buildingId}:${Date.now()}`;
+    const def = BUILDING_DEFS[b.type];
+    setHauls((prev) => [
+      ...prev,
+      {
+        id,
+        x: b.originX + Math.floor(def.w / 2),
+        y: b.originY + Math.floor(def.h / 2),
+        commodity,
+      },
+    ]);
+    window.setTimeout(() => setHauls((prev) => prev.filter((h) => h.id !== id)), 1500);
+  }
   /** Cases assombries après un épandage de fumier, jusqu'à cette date. */
   const [manureStain, setManureStain] = useState<Record<string, number>>({});
   const [listings, setListings] = useState<Listing[]>([]);
@@ -787,6 +824,22 @@ export function App() {
     return me.player;
   }, [activeParcelId]);
 
+  /**
+   * Les commandes en cours, relues régulièrement.
+   *
+   * Un camion met douze secondes : il faut donc revenir voir. On sonde toutes
+   * les cinq secondes tant qu'il en reste une en route, et on s'arrête sinon —
+   * une ferme sans commande n'a aucune raison d'interroger le serveur.
+   */
+  const loadSupplies = useCallback(async (farmId: string) => {
+    try {
+      const r = await api<{ supplies: SupplyCrate[] }>(`/farms/${farmId}/supplies`);
+      setSupplies(r.supplies);
+    } catch {
+      setSupplies([]);
+    }
+  }, []);
+
   const loadLivestock = useCallback(async (parcelId: string) => {
     try {
       const r = await api<{ barns: BarnState[] }>(`/parcels/${parcelId}/livestock`);
@@ -795,6 +848,16 @@ export function App() {
       setBarns([]);
     }
   }, []);
+
+  const farmId = player?.farm?.id;
+  useEffect(() => {
+    if (!farmId) return;
+    void loadSupplies(farmId);
+    // On ne sonde que s'il y a de quoi attendre : soit une commande en route,
+    // soit une caisse posée qu'on n'a pas encore rentrée.
+    const t = window.setInterval(() => void loadSupplies(farmId), 5000);
+    return () => window.clearInterval(t);
+  }, [farmId, loadSupplies]);
 
   useEffect(() => {
     if (player?.dev || player?.unlimitedCrd) {
@@ -2073,6 +2136,31 @@ export function App() {
     }
   }
 
+  /**
+   * Rentrer une caisse livrée.
+   *
+   * On la retire de la liste **avant** la réponse du serveur : c'est ce retrait
+   * qui déclenche l'animation de rangement dans la vue 3D — la caisse s'envole
+   * vers le bâtiment qui la stocke. Attendre l'aller-retour réseau ferait
+   * démarrer le geste une demi-seconde après le doigt.
+   */
+  async function collectSupply(id: string) {
+    setSupplies((prev) => prev.filter((s) => s.id !== id));
+    try {
+      const r = await api<{ collected: string; tons: number }>(`/supplies/${id}/collect`, {
+        method: "POST",
+      });
+      const nom = GOOD_DEFS[r.collected as TradeGood]?.name ?? r.collected;
+      flashToast(`${r.tons} t de ${nom.toLowerCase()} rentrées`);
+      await refreshPlayer();
+    } catch (e) {
+      // Refusée — le camion n'était pas là, ou la caisse n'est plus : on
+      // remet la liste au clair plutôt que de laisser un trou.
+      if (farmId) void loadSupplies(farmId);
+      flashToast(e instanceof Error ? e.message : String(e), true);
+    }
+  }
+
   async function applyToolOnCell(x: number, y: number, mods: PointerMods = DEFAULT_MODS) {
     if (!player || !activeParcelId) return;
     playUiSound("click");
@@ -2081,6 +2169,17 @@ export function App() {
     // l'améliore, qu'on la démolit, et qu'on fait sortir ou rentrer les bêtes.
     // Jusqu'ici un bâtiment n'était cliquable nulle part : tout passait par un
     // panneau latéral où il fallait le retrouver dans une liste.
+    // Une caisse posée dans la cour se rentre d'un toucher, quel que soit
+    // l'outil en main : c'est le geste le plus évident du jeu, il ne doit pas
+    // demander de changer d'outil d'abord.
+    const caisse = supplies.find(
+      (c) => c.x === x && c.y === y && c.arrivesAt <= Date.now(),
+    );
+    if (caisse) {
+      void collectSupply(caisse.id);
+      return;
+    }
+
     if (tool === "SELECT") {
       const cell = grid.find((c) => c.x === x && c.y === y);
       if (cell?.kind === "BUILDING" && cell.buildingId) {
@@ -2857,6 +2956,15 @@ export function App() {
    */
   const [nourrirApres, setNourrirApres] = useState<string | null>(null);
 
+  /** La denrée derrière chaque ration — c'est elle qui porte la valeur nutritive. */
+  const RATION_GOOD: Record<"hay" | "maize" | "barley" | "wheat" | "silage", TradeGood> = {
+    hay: "HAY",
+    maize: "MAIZE",
+    barley: "BARLEY",
+    wheat: "WHEAT",
+    silage: "SILAGE",
+  };
+
   /** Ce que chaque denrée achetable vaut comme ration, si elle en est une. */
   const RATION_DE: Partial<Record<TradeGood, "hay" | "maize" | "barley" | "wheat" | "silage">> = {
     HAY: "hay",
@@ -3161,7 +3269,23 @@ export function App() {
     try {
       const barn = barns.find((b) => b.herd?.id === herdId);
       const size = barn?.herd?.size ?? 1;
-      const wanted = Math.max(1, Math.ceil(size / 3));
+      /**
+       * Ce qu'il manque, pas une tonne de plus.
+       *
+       * La quantité était `taille / 3` arrondie au supérieur : un chiffre
+       * commode qui ne regardait ni la faim du lot ni la valeur nutritive de
+       * la ration. Un troupeau presque rassasié recevait autant qu'un troupeau
+       * à jeun, et une tonne d'ensilage — soixante pour cent plus nourrissante
+       * que le foin — comptait comme une tonne de foin.
+       *
+       * On distribue donc le **manque** : le besoin du cycle moins ce qui
+       * reste dans la mangeoire, converti en tonnes par la valeur de la
+       * ration choisie. Un minimum d'une centaine de kilos, sans quoi un lot
+       * repu ferait des allers-retours pour rien.
+       */
+      const besoinKg = Math.max(0, (barn?.herd?.feedNeed ?? size * 14) - (barn?.herd?.feedStock ?? 0));
+      const valeur = FEED_VALUE[RATION_GOOD[ration]] ?? 1;
+      const wanted = Math.max(0.1, Math.round((besoinKg / 1000 / valeur) * 100) / 100);
       const stock = stockConnu ?? (
         ration === "maize"
           ? maizeInStock
@@ -3184,6 +3308,7 @@ export function App() {
           silageTons: ration === "silage" ? tons : 0,
         }),
       });
+      lancerTransport(barn?.buildingId ?? "", RATION_GOOD[ration]);
       const label =
         ration === "maize"
           ? "Maïs"
@@ -3790,6 +3915,8 @@ export function App() {
                 if (busy) return;
                 void runWorkOnCells(cells);
               }}
+              supplies={supplies}
+              hauls={hauls}
               onCellClick={applyToolOnCell}
               onCellHover={setHoverCell}
               onCellContext={openCellMenu}

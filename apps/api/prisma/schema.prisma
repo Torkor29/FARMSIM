@@ -134,14 +134,52 @@ model Session {
 }
 
 model Farm {
-  id        String          @id @default(cuid())
-  userId    String          @unique
-  user      User            @relation(fields: [userId], references: [id])
-  name      String
-  parcels   Parcel[]
-  inventory InventoryItem[]
-  machines  Machine[]
-  herds     Herd[]
+  id         String          @id @default(cuid())
+  userId     String          @unique
+  user       User            @relation(fields: [userId], references: [id])
+  name       String
+  parcels    Parcel[]
+  inventory  InventoryItem[]
+  machines   Machine[]
+  herds      Herd[]
+  supplies   SupplyOrder[]
+}
+
+/**
+ * Une commande passée au négociant, en route vers la ferme.
+ *
+ * L'achat versait la marchandise au silo dans la même milliseconde : on
+ * cliquait, un chiffre changeait quelque part, et rien ne se passait à
+ * l'écran. Une ferme reçoit pourtant ses intrants — un camion arrive, on
+ * décharge, on range. Ce temps-là existe maintenant : quelques secondes de
+ * route, une caisse posée dans la cour, et un geste pour la rentrer.
+ *
+ * Le nom : `Delivery` désignait déjà la livraison d'une vente entre joueurs.
+ * Une commande au négociant est autre chose — un intrant qu'on fait venir.
+ *
+ * La marchandise n'est **pas** au stock tant que la caisse n'est pas rentrée :
+ * c'est ce qui donne son poids au geste. Elle n'est jamais perdue pour autant
+ * — passé `autoAt`, le premier tick la range tout seul, et le joueur qui
+ * ferme l'onglet retrouve son achat.
+ */
+model SupplyOrder {
+  id        String   @id @default(cuid())
+  farmId    String
+  farm      Farm     @relation(fields: [farmId], references: [id], onDelete: Cascade)
+  /** Denrée commandée, code `TradeGood`. */
+  commodity String
+  tons      Float
+  /** Instant où le camion se pose dans la cour. */
+  arrivesAt DateTime
+  /** Passé cette date, la caisse se range seule : rien ne se perd. */
+  autoAt    DateTime
+  /** Case de la parcelle où la caisse est posée. */
+  parcelId  String
+  x         Int
+  y         Int
+  createdAt DateTime @default(now())
+
+  @@index([farmId, arrivesAt])
 }
 
 model Zone {
