@@ -65,6 +65,8 @@ import {
   GREASE_OK,
   CLEAN_COST_CRD,
   DIRT_DIRTY_THRESHOLD,
+  careWearMultiplier,
+  fieldsBeforeWorkshop,
   isBreakdownKind,
 } from "@farmsim/shared";
 import { AuthScreen } from "./AuthScreen";
@@ -4324,7 +4326,7 @@ export function App() {
             <h3 className="only-mobile">Garage</h3>
             <p className="muted tiny">
               Graissez et nettoyez : la machine s’use moins et récolte un peu plus.
-              Rafistoler ramène à mi-chemin, réviser remet à 100 %.
+              Réparer ramène à mi-chemin, remettre à neuf va jusqu’à 100 %.
             </p>
             <ul className="list">
               {(player.farm?.machines ?? []).map((m) => {
@@ -4353,6 +4355,17 @@ export function App() {
                     })
                   : null;
                 const rendement = conditionYieldFactor(m.condition);
+                const salete = Math.max(0, Math.min(100, m.dirt ?? 0));
+                const champsRestants = def
+                  ? fieldsBeforeWorkshop({
+                      condition: m.condition,
+                      minCondition: def.minCondition,
+                      wearPerCell: def.wearPerCell,
+                      cells: gw * gh,
+                      careMult: careWearMultiplier({ grease, dirt: salete }),
+                      inShed: Boolean(m.storedInBuildingId),
+                    })
+                  : 0;
                 const canHalf = Boolean(halfQuote && halfQuote.points > 0.5 && m.condition < 99.5);
                 const canFull = Boolean(fullQuote && fullQuote.points > 0.5 && m.condition < 99.5);
                 return (
@@ -4388,7 +4401,7 @@ export function App() {
                       </div>
                       <div
                         className={`grease-gauge ${grease <= 0 ? "empty" : grease < GREASE_OK ? "low" : ""}`}
-                        title={`Graisse ${grease.toFixed(0)} % — à sec, l’usure grimpe de moitié`}
+                        title={`Graisse ${grease.toFixed(0)} % — plus la jauge baisse, plus l’usure monte`}
                       >
                         <span className="grease-label">Graisse</span>
                         <span className="grease-track">
@@ -4396,6 +4409,31 @@ export function App() {
                         </span>
                         <span className="grease-num">{grease.toFixed(0)}%</span>
                       </div>
+                      {/* La saleté pesait plus lourd que la graisse sur l'usure
+                          et n'avait pourtant aucune jauge : elle n'apparaissait
+                          qu'en un mot, « sale », une fois le mal fait. Même
+                          gabarit que la graisse, remplissage inversé — ici
+                          c'est le vide qui est bon signe. */}
+                      <div
+                        className={`grease-gauge dirt-gauge ${dirty ? "empty" : salete >= DIRT_DIRTY_THRESHOLD / 2 ? "low" : ""}`}
+                        title={`Saleté ${salete.toFixed(0)} % — au-delà de ${DIRT_DIRTY_THRESHOLD} %, un nettoyage s’impose`}
+                      >
+                        <span className="grease-label">Saleté</span>
+                        <span className="grease-track">
+                          <span className="grease-fill" style={{ width: `${Math.max(0, Math.min(100, salete))}%` }} />
+                        </span>
+                        <span className="grease-num">{salete.toFixed(0)}%</span>
+                      </div>
+                      {/* La question que le joueur se pose avant de lancer un
+                          chantier — « est-ce que je peux y aller ? » — ne se
+                          déduisait d'aucun des chiffres affichés. */}
+                      {def && !panne && (
+                        <div className={`muted tiny ${champsRestants <= 1 ? "warn" : ""}`}>
+                          {champsRestants <= 0
+                            ? "Plus de quoi faire un champ entier — passez à l’atelier."
+                            : `Encore ${champsRestants} champ${champsRestants > 1 ? "s" : ""} entier${champsRestants > 1 ? "s" : ""} à ce rythme d’entretien.`}
+                        </div>
+                      )}
                     </span>
                     {/* Chacun de ces gestes se grisait en rangeant sa raison
                         dans un `title` — invisible au doigt. Mesuré au

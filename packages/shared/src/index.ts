@@ -732,6 +732,25 @@ export const DEFAULT_GRID = { w: 12, h: 12 } as const;
 /** Narratif : 12×12 ≈ 12–15 ha `[GD]` — voir `23_GRID_SIZING.md` */
 export const PARCEL_HECTARES = 14;
 
+/**
+ * Nombre de champs entiers qu'une machine bien tenue doit encaisser avant
+ * l'atelier `[GD]`.
+ *
+ * L'unité de jeu est le champ : « Tout sélectionner » travaille les 144 cases
+ * d'un coup, et c'est ainsi qu'on joue. L'usure était pourtant calibrée au
+ * geste — une moissonneuse à 4 000 TRN perdait 46 points par passage et se
+ * bloquait à la deuxième moisson. On ne décidait rien : on retournait à
+ * l'atelier entre chaque champ.
+ *
+ * Cinq champs, c'est la saison complète d'une parcelle (labour, semis,
+ * fertilisation, moisson, déchaumage) pour un tracteur, et quatre parcelles
+ * moissonnées d'affilée pour une moissonneuse. La révision redevient une
+ * décision qu'on prend, pas un péage qu'on paie.
+ *
+ * Sert de référence aux `wearPerCell` ci-dessous et au test qui les garde.
+ */
+export const WEAR_FIELDS_TARGET = 5;
+
 export type MachineType = "TRACTOR" | "HARVESTER" | "SPREADER" | "DISC_HARROW" | "BALER" | "FORAGE_HARVESTER";
 
 export type MachineDef = {
@@ -758,8 +777,9 @@ export const MACHINE_DEFS: Record<MachineType, MachineDef> = {
     name: "Tracteur T1",
     cost: 2800,
     tier: 1,
-    // ~2,5 tours de semis sur 12×12 avant le seuil. Avant : 0,7 × 144 = mort en un passage.
-    wearPerCell: 0.25,
+    // Cinq champs de 144 cases bien entretenus avant l'atelier (≈ 13 pts par
+    // passage). Avant : 0,25, soit deux passages — cf. WEAR_FIELDS_TARGET.
+    wearPerCell: 0.11,
     // Révision complète ≈ 20 % de l'achat (560 TRN).
     repairCostPerPoint: 6,
     minCondition: 15,
@@ -772,8 +792,9 @@ export const MACHINE_DEFS: Record<MachineType, MachineDef> = {
     name: "Moissonneuse T1",
     cost: 4000,
     tier: 1,
-    // Une parcelle 12×12 : −46 pts, il en reste 54. Deuxième moisson puis rafistolage.
-    wearPerCell: 0.32,
+    // La plus gourmande avec l'ensileuse : ~17 pts par champ, quatre moissons
+    // avant la révision. Avant : 0,32, soit deux moissons pour 4 000 TRN.
+    wearPerCell: 0.14,
     repairCostPerPoint: 8,
     minCondition: 15,
     description: "Récolte céréales.",
@@ -785,7 +806,7 @@ export const MACHINE_DEFS: Record<MachineType, MachineDef> = {
     name: "Épandeur T1",
     cost: 1500,
     tier: 1,
-    wearPerCell: 0.2,
+    wearPerCell: 0.09,
     repairCostPerPoint: 3,
     minCondition: 15,
     description: "Fertilisation plus efficace (−usure vs tracteur).",
@@ -797,7 +818,7 @@ export const MACHINE_DEFS: Record<MachineType, MachineDef> = {
     name: "Déchaumeur à disques",
     cost: 1600,
     tier: 1,
-    wearPerCell: 0.18,
+    wearPerCell: 0.08,
     repairCostPerPoint: 4,
     minCondition: 15,
     description:
@@ -810,7 +831,7 @@ export const MACHINE_DEFS: Record<MachineType, MachineDef> = {
     name: "Presse à balles",
     cost: 1800,
     tier: 1,
-    wearPerCell: 0.22,
+    wearPerCell: 0.1,
     repairCostPerPoint: 5,
     minCondition: 15,
     description: "Presse l’andain en bottes. Sans elle, la paille reste au champ.",
@@ -822,7 +843,7 @@ export const MACHINE_DEFS: Record<MachineType, MachineDef> = {
     name: "Ensileuse T1",
     cost: 4200,
     tier: 1,
-    wearPerCell: 0.34,
+    wearPerCell: 0.15,
     repairCostPerPoint: 9,
     minCondition: 15,
     description: "Récolte le maïs plante entière, plus tôt, plus de tonnage.",

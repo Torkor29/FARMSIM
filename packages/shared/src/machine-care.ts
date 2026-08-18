@@ -8,7 +8,16 @@ export const BREAKDOWN_LABELS: Record<BreakdownKind, string> = {
   ENGINE: "moteur",
 };
 
-export const DIRT_DIRTY_THRESHOLD = 25;
+/**
+ * Au-dessus, la machine est annoncée « sale » au joueur `[GD]`.
+ *
+ * Ce seuil valait 25 alors qu'un chantier de 144 cases en déposait 86 : la
+ * machine était donc sale **dès son premier champ**, définitivement, quoi que
+ * fasse le joueur. Un état permanent n'est pas un état. Avec les dépôts remis
+ * à l'échelle du chantier (~30 points par champ), 45 veut dire « tu as sauté
+ * un nettoyage », ce qui se répare et se voit venir.
+ */
+export const DIRT_DIRTY_THRESHOLD = 45;
 export const GREASE_COST_CRD = 12;
 /** Plein réservoir. Un champ 12×12 (~144 cases) en consomme ~36. */
 export const GREASE_FULL = 100;
@@ -40,14 +49,41 @@ export const CLEAN_COST_CRD = 18;
 /** Remise réparation atelier uniquement — plus de caste ETA `[GD]` */
 export const ETA_REPAIR_EXTRA_DISCOUNT = 0;
 
+/**
+ * Saleté déposée par case travaillée `[GD]`.
+ *
+ * Ces chiffres étaient calibrés pour le geste, pas pour le chantier. Sur un
+ * champ entier de 144 cases ils donnaient : semis 86, moisson 115, labour
+ * 173, **fertilisation 346** — c'est-à-dire la jauge saturée par un seul
+ * passage, et parfois par le tiers d'un passage.
+ *
+ * La graisse, elle, avait déjà été mise à l'échelle du chantier (un plein
+ * tient deux champs, il y a un test qui le dit). La saleté ne l'avait jamais
+ * été. C'est tout l'écart.
+ *
+ * Barème actuel, par champ de 144 cases : fauche 22, semis 29, moisson 35,
+ * déchaumage 37, labour 40, fertilisation 52. Trois champs environ entre deux
+ * coups de karcher, et la fertilisation reste le travail le plus salissant.
+ */
 export const DIRT_PER_CELL: Record<string, number> = {
-  PLANT: 0.6,
-  FERTILIZE: 2.4,
-  HARVEST: 0.8,
-  PLOW: 1.2,
-  STUBBLE: 1.1,
-  MOW: 0.7,
+  PLANT: 0.2,
+  FERTILIZE: 0.36,
+  HARVEST: 0.24,
+  PLOW: 0.28,
+  STUBBLE: 0.26,
+  MOW: 0.15,
+  // Trois travaux qui existaient dans `MachineDef.works` sans jamais avoir de
+  // ligne ici : ils retombaient sur le défaut de 0,8, c'est-à-dire 115 points
+  // par champ — une ensileuse ressortait crasseuse à 100 de chaque parcelle,
+  // nettoyée ou non. Le défaut est aligné sur la moyenne pour que l'oubli
+  // suivant coûte moins cher.
+  BALE: 0.22,
+  COLLECT: 0.18,
+  SILAGE: 0.3,
 };
+
+/** Travail sans barème connu — au niveau de la moyenne, pas au-dessus. */
+export const DIRT_PER_CELL_DEFAULT = 0.24;
 
 export const REPAIR_RESTORE: Record<
   BreakdownKind,
@@ -134,6 +170,89 @@ export function conditionYieldFactor(condition: number): number {
   if (c >= CONDITION_FULL_POWER) return 1;
   const perte = (1 - CONDITION_WORST_FACTOR) * (c / CONDITION_FULL_POWER);
   return Math.round((CONDITION_WORST_FACTOR + perte) * 1000) / 1000;
+}
+
+/** Part de graisse restante, 0 → 1, quelle que soit la forme de l'état. */
+function greaseFraction(opts: { greased?: boolean; grease?: number }): number {
+  const g = opts.grease != null ? opts.grease : opts.greased ? GREASE_FULL : 0;
+  return Math.max(0, Math.min(1, g / GREASE_FULL));
+}
+
+/** Part de propreté, 0 → 1. */
+function cleanFraction(dirt: number): number {
+  return Math.max(0, Math.min(1, 1 - dirt / 100));
+}
+
+/**
+ * Ce que l'entretien fait à l'usure `[GD]`.
+ *
+ * L'ancienne version était en marches : 0,75 si nickel, puis ×1,5 à sec et
+ * ×2 si sale, jusqu'à ×3. Deux défauts, et c'est le second qui rendait les
+ * tracteurs injouables.
+ *
+ * D'abord une **falaise invisible** : entre saleté 24 et saleté 25, la même
+ * action coûtait deux fois plus cher, sans que rien ne le dise. Ensuite, un
+ * chantier salissait bien au-delà du seuil (86 points pour un semis de 144
+ * cases contre un seuil à 25) : le joueur passait donc de ×0,75 à ×2 entre
+ * son premier et son deuxième champ. Un tracteur neuf tombait sous son seuil
+ * de blocage en deux passages, sans avoir rien fait de mal.
+ *
+ * La réponse est une **pente continue** sur les deux jauges :
+ *
+ *     graisse pleine, machine propre  →  ×0,80
+ *     jauges à moitié                 →  ×1,04
+ *     à sec et crasseuse              →  ×1,95
+ *
+ * L'écart utile est conservé — soigner sa machine vaut toujours près de la
+ * moitié de l'usure — mais il se gagne et se perd graduellement, et aucun
+ * point de bascule ne se cache entre deux chantiers.
+ */
+export function careWearMultiplier(opts: { greased?: boolean; grease?: number; dirt: number }): number {
+  const graisse = 1.3 - 0.5 * greaseFraction(opts);
+  const salete = 1.5 - 0.5 * cleanFraction(opts.dirt);
+  return Math.round(graisse * salete * 1000) / 1000;
+}
+
+/**
+ * Propre et graissé : un peu plus de récolte. Sale et à sec : un peu moins.
+ *
+ * Même pente continue que l'usure, et pour la même raison : le palier du
+ * milieu rendait le soin invisible sur une large plage. Extrêmes inchangés,
+ * +8 % nickel et −6 % à l'abandon.
+ */
+export function careYieldBonus(opts: { greased?: boolean; grease?: number; dirt: number }): number {
+  const soin = (greaseFraction(opts) + cleanFraction(opts.dirt)) / 2;
+  return Math.round((0.08 * soin - 0.06 * (1 - soin)) * 1000) / 1000;
+}
+
+/**
+ * Combien de champs entiers la machine peut encore encaisser, à son état
+ * d'entretien actuel `[GD]`.
+ *
+ * L'atelier affichait un pourcentage de condition et une jauge de graisse.
+ * Aucun des deux ne répond à la seule question que le joueur se pose avant de
+ * lancer un chantier — « est-ce que je peux y aller ? ». Le pourcentage ne se
+ * traduit en champs que si l'on connaît `wearPerCell`, la taille de la
+ * parcelle et le multiplicateur d'entretien ; personne ne fait ce calcul.
+ *
+ * Estimation volontairement pessimiste : elle suppose l'entretien figé à son
+ * niveau du moment, alors qu'il se dégrade en cours de route. Mieux vaut
+ * annoncer trois champs et en tenir quatre que l'inverse.
+ */
+export function fieldsBeforeWorkshop(opts: {
+  condition: number;
+  minCondition: number;
+  wearPerCell: number;
+  cells: number;
+  careMult?: number;
+  inShed?: boolean;
+}): number {
+  const marge = opts.condition - opts.minCondition;
+  if (marge <= 0) return 0;
+  const parChamp =
+    opts.wearPerCell * Math.max(1, opts.cells) * (opts.careMult ?? 1) * (opts.inShed ? 0.85 : 1);
+  if (parChamp <= 0) return Infinity;
+  return Math.floor(marge / parChamp);
 }
 
 export function isBreakdownKind(v: string | null | undefined): v is BreakdownKind {

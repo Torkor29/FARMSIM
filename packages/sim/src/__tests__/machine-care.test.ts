@@ -20,17 +20,51 @@ describe("entretien machines", () => {
     breakdown: null,
   };
 
-  it("double l'usure si la machine est sale, ×1,5 si à sec, −25 % si nickel", () => {
-    expect(careWearMultiplier({ grease: 100, dirt: 0 })).toBe(0.75);
-    expect(careWearMultiplier({ grease: 0, dirt: 0 })).toBe(1.5);
-    expect(careWearMultiplier({ grease: 100, dirt: 25 })).toBe(2);
-    expect(careWearMultiplier({ grease: 0, dirt: 25 })).toBe(3);
+  it("va de ×0,80 nickel à ×1,95 à l'abandon", () => {
+    expect(careWearMultiplier({ grease: 100, dirt: 0 })).toBe(0.8);
+    expect(careWearMultiplier({ grease: 0, dirt: 0 })).toBe(1.3);
+    expect(careWearMultiplier({ grease: 100, dirt: 100 })).toBe(1.2);
+    expect(careWearMultiplier({ grease: 0, dirt: 100 })).toBe(1.95);
+  });
+
+  it("monte sans marche d'escalier — c'est ce qui tuait les tracteurs", () => {
+    /**
+     * L'ancienne courbe sautait de ×0,75 à ×2 en franchissant saleté 25, et un
+     * seul champ en déposait 86 : le deuxième passage d'un tracteur neuf
+     * coûtait 2,7 fois le premier sans que rien ne l'annonce. Aucun point de
+     * la pente ne doit plus faire plus que quelques pour cent d'écart avec son
+     * voisin.
+     */
+    let precedent = careWearMultiplier({ grease: 100, dirt: 0 });
+    for (let d = 1; d <= 100; d++) {
+      const ici = careWearMultiplier({ grease: 100 - d, dirt: d });
+      expect(ici).toBeGreaterThan(precedent);
+      expect(ici / precedent).toBeLessThan(1.05);
+      precedent = ici;
+    }
   });
 
   it("donne un bonus de récolte si la machine est nickel", () => {
     expect(careYieldBonus({ grease: 100, dirt: 0 })).toBe(0.08);
-    expect(careYieldBonus({ grease: 0, dirt: 25 })).toBe(-0.06);
-    expect(careYieldBonus({ grease: 100, dirt: 25 })).toBe(0);
+    expect(careYieldBonus({ grease: 0, dirt: 100 })).toBe(-0.06);
+    // Le palier du milieu valait 0 sur une plage énorme : le soin n'y était
+    // ni récompensé ni puni, donc invisible. Il vaut désormais quelque chose.
+    expect(careYieldBonus({ grease: 100, dirt: 50 })).toBeGreaterThan(0);
+    expect(careYieldBonus({ grease: 100, dirt: 50 })).toBeLessThan(0.08);
+  });
+
+  it("salit un champ entier sans saturer la jauge", () => {
+    /**
+     * Le pendant du test de graisse plus bas, qui manquait. La graisse avait
+     * été mise à l'échelle du chantier ; la saleté était restée à l'échelle du
+     * geste, et un semis de 144 cases en déposait 86 pour un seuil à 25 — la
+     * machine était sale à vie dès son premier champ.
+     */
+    for (const work of ["PLANT", "FERTILIZE", "HARVEST", "PLOW", "STUBBLE", "MOW", "BALE", "COLLECT", "SILAGE"]) {
+      const depot = dirtFromWork(work, 144);
+      expect(depot).toBeGreaterThan(15);
+      expect(depot).toBeLessThan(60);
+    }
   });
 
   it("applique le multiplicateur à l'usure", () => {

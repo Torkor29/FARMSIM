@@ -28,6 +28,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { DIRT_DIRTY_THRESHOLD } from "@farmsim/shared";
 
 const API_DIR = fileURLToPath(new URL("../..", import.meta.url));
 const PORT = 3999;
@@ -729,5 +730,84 @@ describe("livraisons", () => {
     const autre = await inscrire("Voisin");
     const r = await appel(`/supplies/${id}/collect`, { methode: "POST", jeton: autre.jeton });
     assert.equal(r.statut, 403);
+  });
+});
+
+describe("usure au champ", () => {
+  /** Installe une ferme cérealière avec une parcelle et de quoi semer. */
+  async function cerealier() {
+    const moi = await inscrire("Laboureur");
+    const monde = await appel("/world/AUR");
+    const regions = (monde.corps as unknown as {
+      regions: { parcels: { id: string; taken: boolean }[] }[];
+    }).regions;
+    let parcelId = "";
+    for (const r of regions) {
+      const libre = (r.parcels ?? []).find((p) => !p.taken);
+      if (libre) {
+        parcelId = libre.id;
+        break;
+      }
+    }
+    assert.ok(parcelId, "il faut une parcelle libre pour ce test");
+    await appel("/world/claim", {
+      methode: "POST",
+      corps: { userId: moi.id, specialization: "CEREALIER", parcelId },
+      jeton: moi.jeton,
+    });
+    await appel("/dev/grant", {
+      methode: "POST",
+      corps: { userId: moi.id, crd: 200000 },
+      jeton: moi.jeton,
+    });
+    const me = await appel("/auth/me", { jeton: moi.jeton });
+    const ferme = (me.corps as unknown as {
+      player: { farm: { parcels: { id: string; gridW: number; gridH: number }[] } };
+    }).player.farm;
+    return { moi, parcelle: ferme.parcels[0]! };
+  }
+
+  /** Les cases semables de la parcelle — ce que vise « Tout sélectionner ». */
+  async function champEntier(parcelId: string) {
+    const r = await appel(`/parcels/${parcelId}`);
+    const cells = (r.corps as unknown as {
+      parcel: { cells: { x: number; y: number; kind: string }[] };
+    }).parcel.cells;
+    return cells.filter((c) => c.kind === "EMPTY").map((c) => ({ x: c.x, y: c.y }));
+  }
+
+  it("laisse le tracteur en bon état après un champ entier", async () => {
+    /**
+     * Le reproche d'un joueur, mesuré de bout en bout : « je lance un champ,
+     * faut déjà le réparer au max ». Il avait raison — un semis de 144 cases
+     * déposait 86 points de saleté pour un seuil à 25, franchir ce seuil
+     * doublait l'usure, et le tracteur neuf tombait sous son seuil de blocage
+     * au deuxième passage.
+     *
+     * Les tests de `packages/sim` fixent la formule ; celui-ci vérifie que
+     * c'est bien elle qui arrive jusqu'à la base, avec la vraie route et la
+     * vraie taille de parcelle.
+     */
+    const { moi, parcelle } = await cerealier();
+    const cases = await champEntier(parcelle.id);
+    // La ferme de départ occupe quelques cases ; le reste est le vrai champ.
+    assert.ok(cases.length > 120, `champ trop petit pour la mesure : ${cases.length} cases`);
+
+    const r = await appel(`/parcels/${parcelle.id}/plant`, {
+      methode: "POST",
+      corps: { userId: moi.id, crop: "WHEAT", cells: cases },
+      jeton: moi.jeton,
+    });
+    assert.equal(r.statut, 200, `semis refusé : ${JSON.stringify(r.corps)}`);
+    const machine = (r.corps as unknown as { machine: { condition: number; dirt: number } }).machine;
+
+    assert.ok(
+      machine.condition > 80,
+      `un champ entier laisse le tracteur à ${machine.condition} % — il devrait rester au-dessus de 80`,
+    );
+    assert.ok(
+      machine.dirt < DIRT_DIRTY_THRESHOLD,
+      `un seul champ salit la machine à ${machine.dirt}, au-delà du seuil « sale » (${DIRT_DIRTY_THRESHOLD})`,
+    );
   });
 });

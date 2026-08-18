@@ -480,6 +480,11 @@ html.playing .field-dock {
 .grease-gauge.low .grease-num { color: var(--gold-700); }
 .grease-gauge.empty .grease-fill { background: var(--danger); }
 .grease-gauge.empty .grease-num { color: var(--danger); }
+/* Même gabarit pour la saleté, sens inverse : ici la jauge pleine est le
+   mauvais signe, donc le remplissage part du brun et finit en alerte. */
+.dirt-gauge .grease-fill { background: var(--sand-500, #b39a76); }
+.dirt-gauge.low .grease-fill { background: var(--gold-700); }
+.dirt-gauge.low .grease-num { color: var(--gold-700); }
 
 /* —— Objectifs —— */
 .quest-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 0.5rem; }

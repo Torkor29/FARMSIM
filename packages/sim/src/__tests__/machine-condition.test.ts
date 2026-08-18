@@ -12,13 +12,14 @@
  * la forme de la perte, pour que ce calcul reste un calcul.
  */
 
-import { applyMachineWear, careYieldBonus, repairMachineCost } from "../index";
+import { applyMachineWear, careWearMultiplier, careYieldBonus, repairMachineCost } from "../index";
 import {
   CONDITION_FULL_POWER,
   CONDITION_WORST_FACTOR,
   CROP_DEFS,
   MACHINE_DEFS,
   MARKET_BOUNDS,
+  WEAR_FIELDS_TARGET,
   conditionYieldFactor,
 } from "@farmsim/shared";
 
@@ -69,56 +70,60 @@ describe("ce que ça change sur une vraie moissonneuse", () => {
   const def = MACHINE_DEFS.HARVESTER;
   const CASES = 12 * 12;
 
+  /** Une moisson de parcelle entière, machine tenue propre et graissée. */
+  function apresChamps(n: number): number {
+    let c = 100;
+    for (let i = 0; i < n; i++) {
+      c = applyMachineWear({
+        condition: c,
+        wearPerCell: def.wearPerCell,
+        cells: CASES,
+        careMult: careWearMultiplier({ grease: 100, dirt: 0 }),
+      }).condition;
+    }
+    return c;
+  }
+
   it("garde le plein rendement sur son premier champ", () => {
     // La perte ne doit pas se sentir dès le premier chantier d'une machine
     // neuve : ce serait punir l'usage même de l'engin qu'on vient de payer.
-    expect(conditionYieldFactor(100)).toBe(1);
+    expect(conditionYieldFactor(apresChamps(1))).toBe(1);
   });
 
-  it("se fait sentir dès le deuxième — l’usure est rapide sur cet engin", () => {
+  it("ne se dégrade qu'après plusieurs parcelles", () => {
     /**
-     * Prémisse à corriger, et c'est le test qui l'a signalée : je pensais
-     * l'usure lente et j'avais écrit « une saison d'oubli ». Mesuré, une
-     * moissonneuse perd **quarante-six points par champ de 144 cases**
-     * (`wearPerCell` 0,32). Ce n'est pas une dérive de saison, c'est un
-     * consommable de deux chantiers.
-     */
-    const apres1 = applyMachineWear({
-      condition: 100,
-      wearPerCell: def.wearPerCell,
-      cells: CASES,
-    }).condition;
-    expect(apres1).toBeLessThan(CONDITION_FULL_POWER);
-    expect(conditionYieldFactor(apres1)).toBeLessThan(1);
-
-    // Et le deuxième champ la met sous son seuil de blocage.
-    const apres2 = applyMachineWear({
-      condition: apres1,
-      wearPerCell: def.wearPerCell,
-      cells: CASES,
-    }).condition;
-    expect(apres2).toBeLessThan(def.minCondition);
-  });
-
-  it("rend la révision rentable, ce qui est tout l’objet du changement", () => {
-    /**
-     * Le chiffre qui décide. Après un champ, la machine tombe à 54 % : le
-     * champ suivant se récolterait à 90 % de rendement. Sur une parcelle de
-     * blé, les dix pour cent manquants valent plus que la révision.
+     * Prémisse corrigée, et deux fois plutôt qu'une.
      *
-     * Sans cette inégalité, entretenir resterait une corvée qu'on repousse
-     * jusqu'à la panne — l'état d'avant ce changement.
+     * Une première session avait écrit « une saison d'oubli », mesuré 46 points
+     * par champ, et conclu que l'engin était « un consommable de deux
+     * chantiers ». Elle a inscrit ce chiffre ici comme s'il était l'intention.
+     * Il ne l'était pas : c'était le symptôme. Un joueur l'a signalé dans ces
+     * termes — « je lance un champ, faut déjà le réparer au max ».
+     *
+     * La bonne échelle est le champ, pas la case, et la bonne cadence est la
+     * saison : plusieurs parcelles avant que l'usure ne se voie, la révision
+     * quand elle se voit. Voir `wear-cadence.test.ts` pour le détail.
      */
-    const apres1 = applyMachineWear({
-      condition: 100,
-      wearPerCell: def.wearPerCell,
-      cells: CASES,
-    }).condition;
+    // Mesuré : 16 points par parcelle bien tenue, contre 46 avant. La
+    // moissonneuse reste l'engin le plus gourmand du parc — elle sort du plein
+    // régime à la deuxième parcelle — mais elle en encaisse cinq d'affilée.
+    expect(conditionYieldFactor(apresChamps(1))).toBe(1);
+    expect(apresChamps(2)).toBeLessThan(CONDITION_FULL_POWER);
+    expect(apresChamps(WEAR_FIELDS_TARGET)).toBeGreaterThan(def.minCondition);
+  });
 
+  it("rend la révision rentable une fois l'engin réellement usé", () => {
+    /**
+     * Le chiffre qui décide. Ralentir l'usure ne doit pas rendre l'atelier
+     * facultatif : au moment où la machine arrive en bas, le rendement perdu
+     * sur le champ suivant doit dépasser la facture. Sans cette inégalité,
+     * entretenir redeviendrait une corvée qu'on repousse jusqu'à la panne.
+     */
+    const usee = def.minCondition + 5;
     const brut = CASES * CROP_DEFS.WHEAT.yieldPerCell * MARKET_BOUNDS.WHEAT.initial;
-    const perdu = brut * (1 - conditionYieldFactor(apres1));
+    const perdu = brut * (1 - conditionYieldFactor(usee));
     const revision = repairMachineCost({
-      condition: apres1,
+      condition: usee,
       repairCostPerPoint: def.repairCostPerPoint,
     }).cost;
 

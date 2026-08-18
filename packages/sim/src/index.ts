@@ -20,6 +20,7 @@ import {
   DIRECT_SEED_YIELD_MALUS,
   NO_ROTATION,
   DIRT_DIRTY_THRESHOLD,
+  DIRT_PER_CELL_DEFAULT,
   DIRT_PER_CELL,
   GREASE_FULL,
   applyGreaseUse,
@@ -295,6 +296,11 @@ export function applyMachineWear(opts: {
 }
 
 export { repairQuote as repairMachineCost, repairHalfwayTarget } from "@farmsim/shared";
+// Formules d'entretien : elles vivaient ici, `conditionYieldFactor` vivait
+// dans shared. Même sujet, deux paquets — et le web, qui ne dépend que de
+// shared, ne pouvait pas afficher ce que la simulation calculait. Elles sont
+// regroupées côté shared ; ce ré-export garde les appelants intacts.
+export { careWearMultiplier, careYieldBonus } from "@farmsim/shared";
 
 export function machineCanWork(condition: number, minCondition: number): boolean {
   return condition >= minCondition;
@@ -310,29 +316,8 @@ export type MachineCareState = {
   breakdown: BreakdownKind | null;
 };
 
-export function careWearMultiplier(opts: { greased?: boolean; grease?: number; dirt: number }): number {
-  const clean = opts.dirt < DIRT_DIRTY_THRESHOLD;
-  const ok = opts.grease != null ? greaseIsOk(opts.grease) : Boolean(opts.greased);
-  const empty = opts.grease != null ? greaseIsEmpty(opts.grease) : opts.greased === false;
-  if (ok && clean) return 0.75;
-  let m = 1;
-  if (empty) m *= 1.5;
-  if (!clean) m *= 2;
-  return m;
-}
-
-/** Propre et graissé : un peu plus de récolte. Sale et à sec : un peu moins. */
-export function careYieldBonus(opts: { greased?: boolean; grease?: number; dirt: number }): number {
-  const clean = opts.dirt < DIRT_DIRTY_THRESHOLD;
-  const ok = opts.grease != null ? greaseIsOk(opts.grease) : Boolean(opts.greased);
-  const empty = opts.grease != null ? greaseIsEmpty(opts.grease) : opts.greased === false;
-  if (ok && clean) return 0.08;
-  if (empty && !clean) return -0.06;
-  return 0;
-}
-
 export function dirtFromWork(work: string, cells: number): number {
-  const per = DIRT_PER_CELL[work] ?? 0.8;
+  const per = DIRT_PER_CELL[work] ?? DIRT_PER_CELL_DEFAULT;
   return Math.round(per * Math.max(0, cells) * 100) / 100;
 }
 
