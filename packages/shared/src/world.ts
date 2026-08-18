@@ -11,6 +11,7 @@
  */
 
 import { EXTRA_REGIONS } from "./climate.js";
+import { SEASON_DURATION_MS as SAISON_MS } from "./time.js";
 
 export type Hemisphere = "N" | "S";
 
@@ -553,21 +554,23 @@ export const REGION_BY_CODE: Record<string, RegionDef & { continent: ContinentDe
 /* Saisons                                                             */
 /* ------------------------------------------------------------------ */
 
-/** Durée d'une saison en temps réel `[GD]` — 4 saisons = 1 h de jeu */
-export const SEASON_DURATION_MS = 15 * 60 * 1000;
+/**
+ * La durée d'une saison vient maintenant de l'horloge commune.
+ *
+ * Elle était posée ici à quinze minutes — exactement la durée d'un cycle
+ * d'élevage, si bien qu'une saison durait un seul jour de jeu et l'année
+ * entière une heure. Elle vaut désormais une semaine de sept jours, définie
+ * une seule fois dans `time.ts` et dérivée partout ailleurs.
+ */
+export { SEASON_DURATION_MS, seasonProgress } from "./time.js";
 
 const SEASON_ORDER: Season[] = ["SPRING", "SUMMER", "AUTUMN", "WINTER"];
 
 /** Saison courante d'un hémisphère : le sud est décalé de deux saisons. */
 export function currentSeason(hemisphere: Hemisphere, now: number = Date.now()): Season {
-  const index = Math.floor(now / SEASON_DURATION_MS) % 4;
+  const index = Math.floor(now / SAISON_MS) % 4;
   const shifted = hemisphere === "S" ? (index + 2) % 4 : index;
   return SEASON_ORDER[shifted];
-}
-
-/** Part de la saison déjà écoulée, 0 → 1. */
-export function seasonProgress(now: number = Date.now()): number {
-  return (now % SEASON_DURATION_MS) / SEASON_DURATION_MS;
 }
 
 /** Facteur de rendement saisonnier `[TEST]` */

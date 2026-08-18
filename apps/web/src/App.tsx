@@ -35,6 +35,8 @@ import {
   SEASON_LABELS,
   WEATHER_LABELS,
   currentSeason,
+  dayOfSeason,
+  SEASON_DAYS,
   footprintCells,
   orientedFootprint,
   withinRegret,
@@ -1222,11 +1224,33 @@ export function App() {
   const koppen = parcel?.zone?.koppen ?? "Cfb";
   const homeCity = parcel?.zone?.city ?? ownedParcels[0]?.zone?.city ?? "";
   const climateLabel = parcel?.zone?.climateLabel ?? "";
+  /**
+   * L'horloge du jeu, relue chaque minute.
+   *
+   * La saison se calcule à partir de l'heure courante ; sans rien pour
+   * redessiner, elle ne changeait à l'écran qu'au prochain rafraîchissement
+   * venu d'ailleurs. Une minute suffit largement pour une journée de quinze.
+   */
+  const [horloge, setHorloge] = useState(() => Date.now());
+  useEffect(() => {
+    const t = setInterval(() => setHorloge(Date.now()), 60_000);
+    return () => clearInterval(t);
+  }, []);
+
   const continentName = parcel?.zone?.continentName ?? "";
   const homeContinentCode =
     parcel?.zone?.continentCode ?? ownedParcels[0]?.zone?.continentCode ?? null;
   const hemisphere = (parcel?.zone?.hemisphere as "N" | "S" | undefined) ?? "N";
-  const season = currentSeason(hemisphere);
+  const season = currentSeason(hemisphere, horloge);
+  /**
+   * Où l'on en est dans la saison — « jour 3 sur 7 ».
+   *
+   * Le rail n'affichait que le nom de la saison. Elle durait quinze minutes,
+   * soit un seul jour de jeu, et personne ne pouvait s'en rendre compte : on
+   * lisait « Été » puis « Automne » sans avoir rien fait entre les deux. Une
+   * saison d'une semaine ne se voit pas davantage si on ne la compte pas.
+   */
+  const jourDeSaison = dayOfSeason(horloge);
   const zoneCode =
     parcel?.zone?.code ??
     ownedParcels[0]?.zone?.code ??
@@ -1793,9 +1817,16 @@ export function App() {
       id: barn.herd.id,
       size: barn.herd.size,
       label: barn.herd.label,
-      out: Boolean(barn.herd.grazingUntil && barn.herd.grazingUntil > Date.now()),
-      canGraze: barn.canGraze,
-      grazeRefusal: barn.grazeRefusal,
+      // Le lieu de vie est un état durable ; la fenêtre de sortie ne sert plus
+      // qu'à jouer l'animation. La fiche lisait la seconde et affichait donc
+      // « les bêtes sont à l'intérieur » pour un troupeau qui vivait au pré.
+      out:
+        barn.herd.housing === "OUTSIDE" ||
+        Boolean(barn.herd.grazingUntil && barn.herd.grazingUntil > Date.now()),
+      canGraze: barn.canLiveOutside ?? barn.canGraze,
+      grazeRefusal: barn.outsideRefusal ?? barn.grazeRefusal,
+      outsideCount: barn.outsideCount,
+      shelteredCount: barn.shelteredCount,
     };
   }, [openBuilding, barns]);
 
@@ -3510,6 +3541,10 @@ export function App() {
               })}
               workers={[]}
               weather={localWeather}
+              /* La saison ne réglait que le ciel CSS ; la ferme, elle, était
+                 éclairée pareil toute l'année. C'est la lumière qui fait la
+                 différence entre un hiver et un été. */
+              season={season}
               strokeWork={visiting}
               // Chez soi, tout outil qui travaille des cases se trace au doigt.
               // « Il faudrait pouvoir le glisser au lieu de devoir cliquer » :
@@ -4087,10 +4122,24 @@ export function App() {
           onSpreadManure={spreadManure}
           onSellManure={sellManure}
           onHousing={setHerdHousing}
+          /* Un geste empêché doit dire pourquoi : au téléphone, l'attribut
+             `title` n'est jamais lu, et le joueur ne voyait qu'une rangée de
+             boutons gris qui ne répondaient pas. */
+          onExplain={(raison) => flashToast(raison, "warn")}
+          onBuyFeed={() => {
+            // Le seul geste qui reste quand la réserve est vide : l'alerte y
+            // mène au lieu de distribuer du vide.
+            if (isMobile) setSheet(null);
+            setShowMarket(true);
+          }}
           hayTons={hayInStock}
           maizeTons={maizeInStock}
           barleyTons={barleyInStock}
           wheatTons={wheatInStock}
+          /* Oublié au branchement : faute de valeur, le panneau retombait sur
+             son défaut de 0 et le bouton « Ration ensilage » restait gris même
+             avec un silo plein. */
+          silageTons={silageInStock}
           onBuildPaddock={(yardType) => {
             setTool("BUILD");
             setBuildType(yardType);
@@ -4175,7 +4224,9 @@ export function App() {
             </div>
             <div>
               <dt>Saison</dt>
-              <dd>{SEASON_LABELS[season]}</dd>
+              <dd>
+                {SEASON_LABELS[season]} · jour {jourDeSaison}/{SEASON_DAYS}
+              </dd>
             </div>
             <div>
               <dt>Météo</dt>
@@ -4494,8 +4545,12 @@ export function App() {
             setOpenBuildingId(null);
             sellBuilding(openBuilding.id, BUILDING_DEFS[openBuilding.type].name);
           }}
-          onGrazeOut={() => openBuildingHerd && void grazeHerd(openBuildingHerd.id)}
-          onShelter={() => openBuildingHerd && void shelterHerd(openBuildingHerd.id)}
+          /* Un seul mécanisme pour une seule décision : la fiche commande le
+             lieu de vie, comme l'interrupteur du panneau d'élevage. Elle
+             ouvrait auparavant une séance de trois heures, après quoi le
+             troupeau rentrait seul — deux comportements pour un même geste. */
+          onGrazeOut={() => openBuildingHerd && void setHerdHousing(openBuildingHerd.id, "OUTSIDE")}
+          onShelter={() => openBuildingHerd && void setHerdHousing(openBuildingHerd.id, "INSIDE")}
         />
       )}
 

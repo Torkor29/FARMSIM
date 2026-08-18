@@ -27,6 +27,7 @@ import {
   feltTempC,
   grassCapacity,
   grazePasture,
+  SEASON_DAYS,
   thermalPenalty,
   type Season,
 } from "@farmsim/shared";
@@ -72,7 +73,12 @@ function anneeAuPre(opts: { paddockCells: number; herdSize: number; cyclesParSai
 describe("une année au pré", () => {
   // Un enclos de 9 cases, un troupeau de 8 vaches : la taille d'un élevage de
   // début de partie, celle qu'un joueur rencontre en premier.
-  const annee = anneeAuPre({ paddockCells: 9, herdSize: 8, cyclesParSaison: 10 });
+  //
+  // Sept cycles par saison, parce qu'une saison fait désormais sept jours de
+  // jeu et qu'un cycle d'élevage fait un jour. Ce chiffre était pris au
+  // hasard quand les deux durées étaient égales — une saison valait alors un
+  // seul cycle, et ce fichier simulait une année qui n'existait pas.
+  const annee = anneeAuPre({ paddockCells: 9, herdSize: 8, cyclesParSaison: SEASON_DAYS });
   const par = (s: Season) => annee.find((x) => x.saison === s)!;
 
   it("l'été, le hangar ne sert à rien — c'est la promesse du pâturage", () => {

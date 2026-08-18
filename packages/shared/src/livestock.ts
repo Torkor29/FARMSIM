@@ -28,6 +28,7 @@
 export type WeatherState = "CLEAR" | "CLOUDY" | "RAIN" | "STORM" | "SNOW";
 
 import { SPECIES } from "./species.js";
+import { GAME_DAY_MS } from "./time.js";
 
 /**
  * Projette le profil de chaque espèce sur une table par espèce.
@@ -45,14 +46,19 @@ function mapSpecies<T>(pick: (s: (typeof SPECIES)[AnimalKind]) => T): Record<Ani
 export const MAX_BARN_LEVEL = 5;
 
 /**
- * Durée d'un cycle d'élevage `[GD]`.
+ * Durée d'un cycle d'élevage `[GD]` — un jour de jeu.
  *
- * Le temps du jeu est compressé : une culture mûrit en 3 minutes, une saison
- * dure 15 minutes. Un cycle d'élevage calé sur 24 h réelles rendrait le
- * bien-être animal strictement invisible — le joueur sortirait ses bêtes et
- * ne verrait jamais la jauge bouger. On l'aligne donc sur une saison.
+ * Le temps du jeu est compressé : un cycle calé sur 24 h réelles rendrait le
+ * bien-être animal strictement invisible, le joueur sortirait ses bêtes sans
+ * jamais voir la jauge bouger.
+ *
+ * Le commentaire disait « on l'aligne donc sur une saison », et c'était vrai :
+ * les deux constantes valaient quinze minutes chacune, dans deux fichiers
+ * différents. Une saison durait donc un cycle d'élevage — une traite par
+ * saison, et l'hiver passait avant qu'on l'ait vu venir. Le cycle est
+ * désormais **un jour**, et la saison une semaine de sept de ces jours.
  */
-export const LIVESTOCK_CYCLE_MS = 15 * 60 * 1000;
+export const LIVESTOCK_CYCLE_MS = GAME_DAY_MS;
 
 /** Traite / œufs / laine : prêt au bout de 15 % d’un cycle. */
 export const COLLECT_READY_RATIO = 0.15;
@@ -423,9 +429,45 @@ export const GRAZING_REFUSAL_LABELS: Record<GrazingRefusal, string> = {
   NO_ANIMALS: "Aucune bête à sortir",
 };
 
+/** Ce que vaut une demande de sortie, et combien de bêtes elle concerne. */
+export type GrazingVerdict = {
+  ok: boolean;
+  reason?: GrazingRefusal;
+  /** Bêtes qui sortiront réellement — jamais plus que la place disponible. */
+  animals: number;
+  /** Bêtes qui resteront à l'étable faute de place. */
+  sheltered: number;
+};
+
 /**
- * Une sortie est possible si — et seulement si — il existe un enclos adjacent,
- * qu'il reste de la place et que la météo le permet.
+ * Place laissée par l'enclos, et ce qu'on peut y mettre.
+ *
+ * **La sortie est partielle, pas tout ou rien.** Elle était refusée en bloc
+ * dès que le troupeau dépassait l'enclos d'une seule bête : dix-neuf vaches
+ * devant dix-huit places, et le bouton « Dehors » restait gris avec pour
+ * seule explication « Enclos saturé ». Le joueur n'avait aucun moyen de
+ * sortir son troupeau, ni rien qui lui dise qu'il lui manquait *une* place.
+ *
+ * Le pire est que la simulation, elle, savait déjà faire : `settleHerd`
+ * borne depuis toujours les bêtes au pré par `min(taille, capacité)`. Seul
+ * le garde-fou d'entrée refusait ce que le tick gérait sans peine.
+ */
+function paddockRoom(
+  paddock: PaddockState,
+  animals: number,
+  animalsOutside: number,
+): { animals: number; sheltered: number } {
+  const free = Math.max(0, paddock.capacity - Math.max(0, animalsOutside));
+  const sortent = Math.max(0, Math.min(animals, free));
+  return { animals: sortent, sheltered: Math.max(0, animals - sortent) };
+}
+
+/**
+ * Une sortie est possible s'il existe un enclos adjacent, qu'il y reste au
+ * moins une place et que la météo le permet.
+ *
+ * L'enclos plus petit que le troupeau ne refuse plus : il **borne**. On sort
+ * ce qui tient, on dit ce qui reste dedans.
  */
 export function canGraze(input: {
   paddock: PaddockState | null;
@@ -437,21 +479,55 @@ export function canGraze(input: {
   kind?: AnimalKind;
   /** Espèce que l'aire de sortie accueille ; par défaut, des bovins */
   paddockKind?: AnimalKind;
-}): { ok: boolean; reason?: GrazingRefusal } {
+}): GrazingVerdict {
+  const refus = (reason: GrazingRefusal): GrazingVerdict => ({
+    ok: false,
+    reason,
+    animals: 0,
+    sheltered: Math.max(0, input.animals),
+  });
   // Une vache ne se met pas dans une souille, un porc ne pâture pas : chaque
   // espèce a son aire de sortie.
-  if ((input.kind ?? "COW") !== (input.paddockKind ?? "COW")) {
-    return { ok: false, reason: "WRONG_SPECIES" };
-  }
-  if (input.paddock === null || !input.paddock.adjacent) {
-    return { ok: false, reason: "NO_PADDOCK" };
-  }
-  if (GRAZING_BLOCKING_WEATHER.includes(input.weather)) {
-    return { ok: false, reason: "BAD_WEATHER" };
-  }
-  const free = input.paddock.capacity - Math.max(0, input.animalsOutside ?? 0);
-  if (input.animals <= 0 || free < input.animals) return { ok: false, reason: "PADDOCK_FULL" };
-  return { ok: true };
+  if ((input.kind ?? "COW") !== (input.paddockKind ?? "COW")) return refus("WRONG_SPECIES");
+  if (input.paddock === null || !input.paddock.adjacent) return refus("NO_PADDOCK");
+  if (GRAZING_BLOCKING_WEATHER.includes(input.weather)) return refus("BAD_WEATHER");
+  if (input.animals <= 0) return refus("NO_ANIMALS");
+
+  const place = paddockRoom(input.paddock, input.animals, input.animalsOutside ?? 0);
+  if (place.animals <= 0) return refus("PADDOCK_FULL");
+  return { ok: true, ...place };
+}
+
+/**
+ * Le troupeau peut-il **vivre** dehors ?
+ *
+ * À distinguer de `canGraze()`, qui autorise une séance de pâture. Le lieu de
+ * vie est une décision durable, et elle ne se refuse pas pour le temps qu'il
+ * fait : c'est justement l'arbitrage qu'on rend au joueur — on l'avertit du
+ * froid, il tranche. L'interface se calait pourtant sur `canGraze()`, si bien
+ * qu'un jour de neige l'interrupteur « Dehors » était gris alors que le
+ * serveur, lui, aurait accepté. Deux règles pour une seule décision : le
+ * joueur voyait celle qui bloquait.
+ */
+export function canLiveOutside(input: {
+  paddock: PaddockState | null;
+  animals: number;
+  kind?: AnimalKind;
+  paddockKind?: AnimalKind;
+}): GrazingVerdict {
+  const refus = (reason: GrazingRefusal): GrazingVerdict => ({
+    ok: false,
+    reason,
+    animals: 0,
+    sheltered: Math.max(0, input.animals),
+  });
+  if ((input.kind ?? "COW") !== (input.paddockKind ?? "COW")) return refus("WRONG_SPECIES");
+  if (input.paddock === null || !input.paddock.adjacent) return refus("NO_PADDOCK");
+  if (input.animals <= 0) return refus("NO_ANIMALS");
+
+  const place = paddockRoom(input.paddock, input.animals, 0);
+  if (place.animals <= 0) return refus("PADDOCK_FULL");
+  return { ok: true, ...place };
 }
 
 /* ------------------------------------------------------------------ */

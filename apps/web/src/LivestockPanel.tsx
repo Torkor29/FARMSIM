@@ -1,4 +1,9 @@
-import { useMemo, useState, type PointerEvent as ReactPointerEvent } from "react";
+import {
+  useMemo,
+  useState,
+  type PointerEvent as ReactPointerEvent,
+  type ReactNode,
+} from "react";
 import { herdAlerts, type HerdAlert } from "./ui/herd-alerts";
 import {
   ANIMAL_ART,
@@ -21,6 +26,16 @@ export type BarnState = {
   cowPrice: number;
   canGraze: boolean;
   grazeRefusal: string | null;
+  /**
+   * Le troupeau peut-il vivre dehors ? Distinct de `canGraze` : une séance de
+   * pâture se refuse par mauvais temps, un lieu de vie non — c'est au joueur
+   * de trancher, on ne fait que l'avertir.
+   */
+  canLiveOutside?: boolean;
+  outsideRefusal?: string | null;
+  /** Bêtes qui tiendront au pré, et celles qui resteront à l'étable. */
+  outsideCount?: number;
+  shelteredCount?: number;
   yardType: BuildingType;
   herd: {
     id: string;
@@ -77,6 +92,118 @@ export type BarnState = {
 
 type FeedRation = "hay" | "maize" | "barley" | "wheat" | "silage";
 
+/**
+ * Le catalogue des rations — une table, plus six blocs recopiés.
+ *
+ * `especes` restreint la ration à ce qui la mange : le blé n'était proposé
+ * qu'aux poules et aux moutons, et cette règle vivait dans une condition JSX
+ * au milieu du rendu.
+ */
+const RATIONS: {
+  code: FeedRation;
+  label: string;
+  hint: string;
+  /** Ce qu'on dit quand le silo est vide — et où en trouver. */
+  manque: string;
+  especes?: string[];
+}[] = [
+  {
+    code: "hay",
+    label: "Fourrage",
+    hint: "La ration de base, achetable à l’hôtel des ventes",
+    manque: "Aucun fourrage en réserve — achetez-en à l’hôtel des ventes",
+  },
+  {
+    code: "silage",
+    label: "Ensilage",
+    hint: "Ration d’hiver, plus énergétique que le grain",
+    manque: "Pas d’ensilage — récoltez du maïs plante entière avec une ensileuse",
+  },
+  {
+    code: "maize",
+    label: "Maïs",
+    hint: "Plus nutritif, mais c’est du maïs qu’on ne vend pas",
+    manque: "Aucun maïs en silo — semez-en, ou achetez-en à l’hôtel des ventes",
+  },
+  {
+    code: "barley",
+    label: "Orge",
+    hint: "Concentré un peu moins riche que le maïs",
+    manque: "Aucune orge en silo — semez-en, surtout pour les cochons et les poules",
+  },
+  {
+    code: "wheat",
+    label: "Blé",
+    hint: "Un peu moins riche que l’orge",
+    manque: "Aucun blé en silo — semez-en pour les poules",
+    especes: ["HEN", "SHEEP"],
+  },
+];
+
+/**
+ * Ce qu'il reste à attendre avant la prochaine collecte.
+ *
+ * « Les vaches viennent d'être traites » ne dit pas s'il faut revenir dans une
+ * minute ou dans une heure. La progression était déjà dans la charge utile ;
+ * il ne restait qu'à la lire.
+ */
+function attente(progress: number | undefined): string {
+  const p = Math.max(0, Math.min(1, progress ?? 0));
+  const part = Math.round((1 - p) * 100);
+  return part <= 0 ? "un instant" : `${part} % du cycle`;
+}
+
+/**
+ * Un geste, et ce qui l'empêche — dit à voix haute.
+ *
+ * Tous les blocages du panneau étaient rangés dans l'attribut `title`.
+ * Au téléphone, cet attribut **n'existe pas** : il n'y a pas de survol. Le
+ * joueur avait donc sous les yeux une rangée de boutons gris, sans une ligne
+ * pour dire lequel manquait de quoi, et ses touchers ne produisaient rien —
+ * ce qui se raconte très exactement « peu importe où je clique, ça fait
+ * rien ».
+ *
+ * Un geste empêché reste donc **touchable** : il ne s'exécute pas, mais il
+ * répond. Il annonce ce qui manque, dans le bandeau, à l'endroit où le joueur
+ * regarde déjà. `aria-disabled` plutôt que `disabled` : le lecteur d'écran
+ * apprend qu'il est indisponible, et le doigt garde une cible qui parle.
+ */
+function Geste({
+  label,
+  className,
+  busy,
+  blocage,
+  onDo,
+  onExplain,
+  hint,
+}: {
+  label: ReactNode;
+  className?: string;
+  busy: boolean;
+  /** Ce qui empêche, `null` si rien n'empêche. */
+  blocage: string | null;
+  onDo: () => void;
+  onExplain: (raison: string) => void;
+  /** Ce que le geste fait, quand il est possible — pour la souris. */
+  hint?: string;
+}) {
+  const empeche = blocage !== null;
+  return (
+    <button
+      type="button"
+      className={`${className ?? ""}${empeche ? " blocked" : ""}`.trim()}
+      // `busy` est le seul cas où l'on refuse vraiment le toucher : une
+      // requête est en vol, et un second envoi ferait double emploi.
+      disabled={busy}
+      aria-disabled={empeche}
+      title={blocage ?? hint}
+      onClick={() => (empeche ? onExplain(blocage) : onDo())}
+    >
+      {label}
+    </button>
+  );
+}
+
 type Props = {
   barns: BarnState[];
   busy: boolean;
@@ -94,6 +221,16 @@ type Props = {
   onSellManure: (buildingId: string) => void;
   /** Rentrer ou sortir le lot, durablement. */
   onHousing: (herdId: string, housing: "INSIDE" | "OUTSIDE") => void;
+  /**
+   * Ouvrir l'hôtel des ventes — la sortie de secours quand la réserve est
+   * vide. Sans elle, l'alerte « le troupeau dépérit » ne menait nulle part.
+   */
+  onBuyFeed?: () => void;
+  /**
+   * Dire au joueur ce qui empêche un geste. Sur un téléphone, c'est le seul
+   * canal : l'attribut `title` n'y est jamais lu.
+   */
+  onExplain?: (raison: string) => void;
   strawTons: number;
   hayTons: number;
   maizeTons: number;
@@ -126,6 +263,8 @@ export function LivestockPanel({
   onSpreadManure,
   onSellManure,
   onHousing,
+  onBuyFeed,
+  onExplain = () => {},
   strawTons,
   hayTons,
   maizeTons,
@@ -147,15 +286,54 @@ export function LivestockPanel({
           paddockCapacity: b.paddockCapacity,
           herd: b.herd as never,
         })),
+        // Ce que la ferme a réellement sous la main : l'alerte propose de
+        // nourrir si quelque chose se distribue, et d'aller acheter sinon.
+        {
+          hasFeed: hayTons + maizeTons + barleyTons + wheatTons + silageTons > 0,
+          hasStraw: strawTons > 0,
+        },
       ),
-    [barns],
+    [barns, hayTons, maizeTons, barleyTons, wheatTons, silageTons, strawTons],
   );
+
+  /**
+   * La ration qu'on distribue quand l'alerte dit « Nourrir ».
+   *
+   * Elle envoyait toujours du foin. Un joueur qui avait trois tonnes de maïs
+   * et pas un brin de foin cliquait donc sur un bouton qui ne faisait rien,
+   * et l'alerte revenait au tick suivant.
+   */
+  function premiereRationDisponible(): FeedRation | null {
+    return RATIONS.find((r) => stockDe(r.code) > 0)?.code ?? null;
+  }
+
+  /** Ce qu'il reste de cette ration, en tonnes. */
+  function stockDe(code: FeedRation): number {
+    switch (code) {
+      case "hay":
+        return hayTons;
+      case "silage":
+        return silageTons;
+      case "maize":
+        return maizeTons;
+      case "barley":
+        return barleyTons;
+      case "wheat":
+        return wheatTons;
+    }
+  }
 
   /** Exécute le geste que l'alerte propose, sans quitter la liste. */
   function runAlert(a: HerdAlert) {
     switch (a.action.kind) {
-      case "FEED":
-        onFeed(a.herdId, "hay");
+      case "FEED": {
+        const ration = premiereRationDisponible();
+        if (ration) onFeed(a.herdId, ration);
+        else onBuyFeed?.();
+        return;
+      }
+      case "BUY_FEED":
+        onBuyFeed?.();
         return;
       case "BEDDING":
         onSpreadBedding(a.herdId);
@@ -557,135 +735,93 @@ export function LivestockPanel({
             <div className="barn-actions">
 
               {herd && (
-                <button
-                  type="button"
-                  disabled={busy || strawTons <= 0 || (herd.beddingCover ?? 0) >= 1}
-                  title={
+                <Geste
+                  busy={busy}
+                  label="Pailler"
+                  hint="Étaler de la paille sous les bêtes"
+                  blocage={
                     strawTons <= 0
-                      ? "Aucune paille — achetez-en à un céréalier, ou pressez la vôtre"
+                      ? "Aucune paille en réserve — achetez-en à l’hôtel des ventes, ou pressez la vôtre"
                       : (herd.beddingCover ?? 0) >= 1
-                        ? "Litière déjà complète"
-                        : "Étaler de la paille sous les bêtes"
+                        ? "La litière est déjà complète"
+                        : null
                   }
-                  onClick={() => onSpreadBedding(herd.id)}
-                >
-                  Pailler
-                </button>
+                  onDo={() => onSpreadBedding(herd.id)}
+                  onExplain={onExplain}
+                />
               )}
 
-              {herd && (
-                <button
-                  type="button"
-                  disabled={busy || hayTons <= 0}
-                  title={
-                    hayTons <= 0
-                      ? "Aucun fourrage — achetez-en à l’hôtel des ventes"
-                      : "Distribuer du fourrage"
-                  }
-                  onClick={() => onFeed(herd.id, "hay")}
-                >
-                  Nourrir
-                </button>
-              )}
-
-              {herd && (
-                <button
-                  type="button"
-                  disabled={busy || maizeTons <= 0}
-                  title={
-                    maizeTons <= 0
-                      ? "Aucun maïs en silo — il faut en cultiver"
-                      : "Ration au maïs : plus nutritive, mais c’est du maïs qu’on ne vend pas"
-                  }
-                  onClick={() => onFeed(herd.id, "maize")}
-                >
-                  Ration maïs
-                </button>
-              )}
-
-              {herd && (
-                <button
-                  type="button"
-                  disabled={busy || barleyTons <= 0}
-                  title={
-                    barleyTons <= 0
-                      ? "Aucune orge en silo — semez-en, surtout pour les cochons et les poules"
-                      : "Ration à l’orge : concentré un peu moins riche que le maïs"
-                  }
-                  onClick={() => onFeed(herd.id, "barley")}
-                >
-                  Ration orge
-                </button>
-              )}
-
-              {herd && (herd.kind === "HEN" || herd.kind === "SHEEP") && (
-                <button
-                  type="button"
-                  disabled={busy || wheatTons <= 0}
-                  title={
-                    wheatTons <= 0
-                      ? "Aucun blé en silo — semez-en pour les poules"
-                      : "Ration au blé : un peu moins riche que l’orge"
-                  }
-                  onClick={() => onFeed(herd.id, "wheat")}
-                >
-                  Ration blé
-                </button>
-              )}
-
-              {herd && (
-                <button
-                  type="button"
-                  disabled={busy || silageTons <= 0}
-                  title={
-                    silageTons <= 0
-                      ? "Pas d’ensilage — récoltez le maïs plante entière"
-                      : "Ration d’hiver, plus énergétique que le grain"
-                  }
-                  onClick={() => onFeed(herd.id, "silage")}
-                >
-                  Ration ensilage
-                </button>
-              )}
+              {/* Les rations, une seule fois.
+                  Elles étaient six blocs recopiés, à quatre lignes de `title`
+                  chacun ; et le tonnage disponible n'apparaissait nulle part,
+                  si bien qu'un bouton gris ne disait pas s'il manquait cent
+                  kilos ou tout le silo. Il est maintenant sur l'étiquette. */}
+              {herd &&
+                RATIONS.filter((r) => !r.especes || r.especes.includes(herd.kind)).map((r) => {
+                  const stock = stockDe(r.code);
+                  return (
+                    <Geste
+                      key={r.code}
+                      busy={busy}
+                      label={
+                        <>
+                          {r.label} <b>{stock.toFixed(1)} t</b>
+                        </>
+                      }
+                      hint={r.hint}
+                      blocage={stock <= 0 ? r.manque : null}
+                      onDo={() => onFeed(herd.id, r.code)}
+                      onExplain={onExplain}
+                    />
+                  );
+                })}
 
               {herd && herd.kind === "COW" && (
-                <button
-                  type="button"
+                <Geste
+                  busy={busy}
                   className="accent-btn"
-                  disabled={busy || !herd.canMilk}
-                  title={herd.canMilk ? "Traire le troupeau" : "Les vaches viennent d’être traites"}
-                  onClick={() => onMilk(herd.id)}
-                >
-                  Traire
-                </button>
+                  label="Traire"
+                  hint="Traire le troupeau"
+                  blocage={
+                    herd.canMilk
+                      ? null
+                      : `Les vaches viennent d’être traites — encore ${attente(herd.collectProgress)}`
+                  }
+                  onDo={() => onMilk(herd.id)}
+                  onExplain={onExplain}
+                />
               )}
 
               {herd && herd.kind === "HEN" && (
-                <button
-                  type="button"
+                <Geste
+                  busy={busy}
                   className="accent-btn"
-                  disabled={busy || !herd.canCollectEggs}
-                  title={
+                  label="Ramasser"
+                  hint="Ramasser les œufs"
+                  blocage={
                     herd.canCollectEggs
-                      ? "Ramasser les œufs"
-                      : "Les œufs viennent d’être ramassés"
+                      ? null
+                      : `Les œufs viennent d’être ramassés — encore ${attente(herd.collectProgress)}`
                   }
-                  onClick={() => onCollectEggs(herd.id)}
-                >
-                  Ramasser
-                </button>
+                  onDo={() => onCollectEggs(herd.id)}
+                  onExplain={onExplain}
+                />
               )}
 
               {herd && herd.kind === "SHEEP" && (
-                <button
-                  type="button"
+                <Geste
+                  busy={busy}
                   className="accent-btn"
-                  disabled={busy || !herd.canShear}
-                  title={herd.canShear ? "Tondre le lot" : "Les moutons viennent d’être tondus"}
-                  onClick={() => onShear(herd.id)}
-                >
-                  Tondre
-                </button>
+                  label="Tondre"
+                  hint="Tondre le lot"
+                  blocage={
+                    herd.canShear
+                      ? null
+                      : `Les moutons viennent d’être tondus — encore ${attente(herd.collectProgress)}`
+                  }
+                  onDo={() => onShear(herd.id)}
+                  onExplain={onExplain}
+                />
               )}
 
               {herd && (herd.manureTons ?? 0) > 0 && (
@@ -748,19 +884,24 @@ export function LivestockPanel({
                   >
                     Dedans
                   </button>
-                  <button
-                    type="button"
+                  {/* On se cale sur `canLiveOutside`, pas sur `canGraze` : le
+                      serveur n'exige qu'un enclos pour changer de lieu de vie.
+                      S'aligner sur la séance de pâture grisait le bouton les
+                      jours de neige, et dès que le troupeau dépassait l'enclos
+                      d'une seule bête. */}
+                  <Geste
+                    busy={busy}
                     className={`housing-side${herd.housing === "OUTSIDE" ? " on" : ""}`}
-                    aria-pressed={herd.housing === "OUTSIDE"}
-                    disabled={busy || !barn.canGraze}
-                    title={
-                      barn.grazeRefusal ??
-                      "Les bêtes vivent au pré : elles s’y nourrissent tant qu’il y a de l’herbe, et subissent le temps qu’il fait."
+                    label="Dehors"
+                    blocage={(barn.canLiveOutside ?? barn.canGraze) ? null : barn.outsideRefusal ?? "Sortie impossible"}
+                    hint={
+                      (barn.shelteredCount ?? 0) > 0
+                        ? `${barn.outsideCount} bêtes au pré, ${barn.shelteredCount} resteront à l’étable faute de place`
+                        : "Les bêtes vivent au pré : elles s’y nourrissent tant qu’il y a de l’herbe, et subissent le temps qu’il fait."
                     }
-                    onClick={() => onHousing(herd.id, "OUTSIDE")}
-                  >
-                    Dehors
-                  </button>
+                    onDo={() => onHousing(herd.id, "OUTSIDE")}
+                    onExplain={onExplain}
+                  />
                 </span>
               ) : (
                 <button
@@ -774,9 +915,18 @@ export function LivestockPanel({
               )}
             </div>
 
-            {barn.grazeRefusal && barn.paddockCapacity > 0 && (
-              <p className="graze-refusal">{barn.grazeRefusal}</p>
-            )}
+            {/* Ce qui empêche vraiment, puis ce qui se contente de limiter.
+                L'ancienne ligne affichait « Enclos saturé » en rouge pour un
+                enclos d'une place trop court : un constat sans issue, là où
+                la sortie était en fait possible pour tout le reste du lot. */}
+            {barn.paddockCapacity > 0 && barn.outsideRefusal ? (
+              <p className="graze-refusal">{barn.outsideRefusal}</p>
+            ) : (barn.shelteredCount ?? 0) > 0 ? (
+              <p className="graze-note">
+                Enclos de {barn.paddockCapacity} places : {barn.outsideCount} bêtes au pré,{" "}
+                {barn.shelteredCount} à l’étable. Agrandissez l’enclos pour sortir tout le lot.
+              </p>
+            ) : null}
           </div>
         );
       })}

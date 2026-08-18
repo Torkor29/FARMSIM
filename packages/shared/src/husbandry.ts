@@ -172,11 +172,21 @@ export const GRASS_GROWTH: Record<Season, number> = {
 /**
  * Réserve d'herbe maximale d'un enclos, en tonnes par case `[GD]`.
  *
- * Ramenée de 0,5 à 0,35 : à 0,5, un enclos plein tenait plus de sept cycles
- * d'hiver sur ses seules réserves, et la saison morte se traversait sans
- * jamais toucher au hangar.
+ * Descendue de 0,5 à 0,35, puis à 0,2, et les deux fois pour la même raison :
+ * une réserve trop grasse fait traverser l'hiver sans jamais ouvrir le
+ * hangar, et la décision « je rentre ou je nourris » n'existe plus.
+ *
+ * Le second ajustement est venu de l'allongement des saisons. Tant qu'une
+ * saison durait un seul cycle d'élevage, le test d'équilibrage simulait dix
+ * cycles d'hiver — un hiver imaginaire, dix fois trop long, que 0,35
+ * suffisait à vider. La saison fait maintenant sept jours pour de bon, et à
+ * 0,35 l'enclos finissait l'hiver encore à moitié plein.
+ *
+ * À 0,2, un enclos correctement chargé tient environ six jours de saison
+ * morte : le joueur voit sa réserve fondre du premier au dernier jour de
+ * l'hiver, et doit avoir tranché avant qu'elle touche le fond.
  */
-export const GRASS_MAX_PER_CELL = 0.35;
+export const GRASS_MAX_PER_CELL = 0.2;
 
 /**
  * Herbe qu'une bête au pré prélève par cycle, en tonnes `[GD]`.

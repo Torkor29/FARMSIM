@@ -44,6 +44,28 @@ describe("alertes d'élevage", () => {
     expect(a[a.length - 1].level).toBe("info");
   });
 
+  it("mène à l’hôtel des ventes quand il ne reste rien à distribuer", () => {
+    // « Nourrir » sur une réserve vide distribuait du vide : le bouton
+    // s'appuyait, l'alerte revenait, et rien n'expliquait pourquoi.
+    const a = herdAlerts([troupeau({ atRisk: true, hungry: true })], { hasFeed: false });
+    expect(a[0].action.kind).toBe("BUY_FEED");
+    expect(a[0].actionLabel).toMatch(/Acheter/);
+    expect(a[0].text).toMatch(/rien à distribuer/);
+  });
+
+  it("garde le geste de distribution tant qu’il reste de quoi", () => {
+    const a = herdAlerts([troupeau({ atRisk: true, hungry: true })], { hasFeed: true });
+    expect(a[0].action.kind).toBe("FEED");
+    expect(a[0].actionLabel).toBe("Nourrir");
+  });
+
+  it("applique la même règle à la litière", () => {
+    const sansPaille = herdAlerts([troupeau({ beddingCover: 0 })], { hasStraw: false });
+    expect(sansPaille[0].action.kind).toBe("BUY_FEED");
+    const avec = herdAlerts([troupeau({ beddingCover: 0 })], { hasStraw: true });
+    expect(avec[0].action.kind).toBe("BEDDING");
+  });
+
   it("ne double pas faim et mortalité — une seule alerte de ration", () => {
     const a = herdAlerts([troupeau({ atRisk: true, hungry: true })]);
     expect(a.filter((x) => x.action.kind === "FEED")).toHaveLength(1);

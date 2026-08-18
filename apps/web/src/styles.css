@@ -1335,6 +1335,15 @@ button.ghost {
 .paddock-note.none { background: var(--gold-100); color: var(--gold-700); }
 .barn-actions { display: flex; flex-wrap: wrap; gap: 0.35rem; }
 .barn-actions button { font-size: 0.74rem; padding: 0.35rem 0.6rem; }
+/* Un geste empêché : il se lit comme indisponible, mais il reste une cible.
+   Touché, il dit ce qui manque au lieu de ne rien faire — le `title` où
+   l'explication dormait n'existe pas sur un téléphone. */
+button.blocked {
+  opacity: 0.5;
+  filter: saturate(0.55);
+  cursor: help;
+}
+button.blocked:active { opacity: 0.72; }
 
 /* —— Achat de bêtes ——
    C'est par là que démarre tout élevage. C'était un unique bouton « +1 bête »
@@ -1402,6 +1411,8 @@ button.ghost {
   align-self: center;
 }
 .graze-refusal { margin: 0; font-size: 0.72rem; color: var(--danger); font-weight: 700; }
+/* Une limite n'est pas un refus : elle se lit, elle n'alarme pas. */
+.graze-note { margin: 0; font-size: 0.72rem; color: var(--muted); line-height: 1.35; }
 .feed-row { display: grid; gap: 0.15rem; }
 .feed-bar {
   height: 7px;

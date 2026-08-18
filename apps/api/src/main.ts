@@ -148,6 +148,7 @@ import {
   paddockCapacity,
   tickHappiness,
   canGraze,
+  canLiveOutside,
   planGrazing,
   milkYield,
   eggYield,
@@ -221,6 +222,8 @@ import {
   MANURE_FERTILITY_GAIN,
   currentSeason,
   seasonProgress,
+  gameDayIndex,
+  weatherForDay,
   pickWeather,
   climateYieldFactor,
   type Hemisphere,
@@ -2348,7 +2351,11 @@ async function runWorldTick() {
     const season = currentSeason((zone?.hemisphere as Hemisphere) ?? "N", now);
     // La météo suit le climat Köppen réel de la région et sa saison locale :
     // il ne peut pas neiger en Méridie l'été, ni faire sec en mousson.
-    const state = pickWeather(koppen, season, Math.random);
+    //
+    // Elle tient la journée. Tirée au sort à chaque tour, elle changeait
+    // toutes les vingt secondes : on passait du soleil à la neige et retour
+    // dans la même minute, et plus aucune saison n'était reconnaissable.
+    const state = weatherForDay(koppen, season, snap.zoneCode, gameDayIndex(now));
     const changed = state !== snap.state;
     if (changed) {
       await prisma.weatherSnapshot.update({ where: { id: snap.id }, data: { state } });
@@ -5588,7 +5595,25 @@ app.get("/parcels/:id/livestock", async (req, res) => {
         })
       // Étable vide : dire pourquoi, et non « pas d'enclos » — c'était faux, et
       // ça contredisait le bandeau vert affiché juste au-dessus.
-      : { ok: false as const, reason: "NO_ANIMALS" as const };
+      : { ok: false as const, reason: "NO_ANIMALS" as const, animals: 0, sheltered: 0 };
+
+    /**
+     * Le lieu de vie durable — l'autre verdict, et le seul que l'interrupteur
+     * « Dedans / Dehors » doit consulter. Il doit dire exactement ce que la
+     * route `/herds/:id/housing` acceptera : elle n'exige qu'un enclos.
+     */
+    const dehors = b.herd
+      ? canLiveOutside({
+          paddock: {
+            adjacent: paddock.capacity > 0,
+            cells: paddock.cells,
+            capacity: paddock.capacity,
+          },
+          animals: b.herd.size,
+          kind: b.herd.kind as AnimalKind,
+          paddockKind: kindForBarn(b.type) ?? "COW",
+        })
+      : { ok: false as const, reason: "NO_ANIMALS" as const, animals: 0, sheltered: 0 };
 
     const feedPer = herdKind ? (FEED_BASE[herdKind] ?? HUNGER.unitsPerAnimalPerCycle) : HUNGER.unitsPerAnimalPerCycle;
     barns.push({
@@ -5697,6 +5722,12 @@ app.get("/parcels/:id/livestock", async (req, res) => {
         : null,
       canGraze: graze.ok,
       grazeRefusal: graze.ok || !graze.reason ? null : GRAZING_REFUSAL_LABELS[graze.reason],
+      /* — Vivre dehors : la décision durable, et ce qu'elle donne — */
+      canLiveOutside: dehors.ok,
+      outsideRefusal: dehors.ok || !dehors.reason ? null : GRAZING_REFUSAL_LABELS[dehors.reason],
+      /** Bêtes qui tiendront au pré ; le reste attend son tour à l'étable. */
+      outsideCount: dehors.animals,
+      shelteredCount: dehors.sheltered,
       cowPrice: herdKind ? ANIMAL_PRICE[herdKind] : ANIMAL_PRICE.COW,
     });
   }
@@ -6217,10 +6248,36 @@ app.post("/herds/:id/housing", async (req, res) => {
         lastGrazedAt: new Date(),
       },
     });
+    // L'enclos plus petit que le troupeau ne refuse pas : il borne. Le tick
+    // sort ce qui tient, on annonce ici ce qui reste à l'étable.
+    const sortent = Math.min(herd.size, paddock.capacity);
+    const restent = Math.max(0, herd.size - sortent);
+    /**
+     * Sortir le troupeau compte, quel que soit le chemin.
+     *
+     * La mission « Faites sortir le troupeau cinq fois » comptait sur la seule
+     * route `/graze`. En faisant du lieu de vie le mécanisme, on lui avait
+     * coupé sa source : le joueur pouvait sortir ses bêtes tous les jours sans
+     * que le compteur bouge. C'est le même geste, il compte pareil.
+     */
+    const gain =
+      parseHousing(herd.housing) === "OUTSIDE"
+        ? null
+        : await prisma.$transaction((tx) =>
+            grantXp(tx, body.data.userId, "GRAZE", {}, { grazings: 1 }),
+          );
     res.json({
       housing: await setHousing(herd.id, "OUTSIDE"),
+      gain,
       tempC: Math.round(tempC),
-      warning: thermalAlert(risque) === "danger" ? "Dehors, les bêtes vont souffrir du temps" : null,
+      outside: sortent,
+      sheltered: restent,
+      warning:
+        thermalAlert(risque) === "danger"
+          ? "Dehors, les bêtes vont souffrir du temps"
+          : restent > 0
+            ? `${sortent} bêtes au pré, ${restent} restent à l’étable faute de place`
+            : null,
     });
     return;
   }

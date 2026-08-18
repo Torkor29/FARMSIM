@@ -200,6 +200,50 @@ export function pickWeather(koppen: string, season: Season, rng: () => number): 
   return "CLEAR";
 }
 
+/**
+ * Le temps qu'il fait ce jour-là, dans cette zone-là.
+ *
+ * La météo était retirée au sort **à chaque tour de simulation**, soit toutes
+ * les vingt secondes : il pouvait neiger, pleuvoir et faire grand soleil dans
+ * la même minute. Rien ne durait assez pour qu'on en tienne compte, et la
+ * saison n'y était plus lisible — un hiver ressemblait à un été parce que les
+ * deux clignotaient pareil.
+ *
+ * Le temps tient désormais **la journée**. On ne stocke rien de plus pour
+ * autant : la météo est une fonction pure de la zone et du quantième de jour,
+ * exactement comme la température est une fonction de la saison et du temps.
+ * Une valeur dérivée ne peut pas se désynchroniser, et ne coûte pas une
+ * colonne.
+ */
+export function weatherForDay(
+  koppen: string,
+  season: Season,
+  zoneCode: string,
+  dayIndex: number,
+): WeatherState {
+  return pickWeather(koppen, season, () => hasard(`${zoneCode}:${dayIndex}`));
+}
+
+/**
+ * Un tirage reproductible à partir d'un texte.
+ *
+ * Ce n'est pas un générateur de qualité cryptographique et n'a pas à l'être :
+ * on veut seulement que la même zone et le même jour redonnent le même ciel,
+ * sur le serveur comme dans un test.
+ */
+function hasard(graine: string): number {
+  let h = 2166136261;
+  for (let i = 0; i < graine.length; i++) {
+    h ^= graine.charCodeAt(i);
+    h = Math.imul(h, 16777619);
+  }
+  // On étale les bits de poids fort, que le FNV laisse peu mélangés.
+  h ^= h >>> 15;
+  h = Math.imul(h, 2246822507);
+  h ^= h >>> 13;
+  return (h >>> 0) / 4294967296;
+}
+
 /* ------------------------------------------------------------------ */
 /* 2 — Régions complémentaires                                         */
 /* ------------------------------------------------------------------ */

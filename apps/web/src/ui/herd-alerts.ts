@@ -16,6 +16,15 @@ export type HerdAlertLevel = "danger" | "warn" | "info";
 /** Ce que le joueur peut faire depuis l'alerte, sans aller le chercher. */
 export type HerdAlertAction =
   | { kind: "FEED" }
+  /**
+   * Aller chercher de quoi nourrir.
+   *
+   * Sans ce geste, l'alerte « le troupeau dépérit » proposait `[Nourrir]`
+   * même quand il ne restait pas un kilo de fourrage : le bouton distribuait
+   * du vide, et le joueur voyait la ligne rouge revenir sans comprendre. Une
+   * alerte doit mener quelque part — ici, à l'hôtel des ventes.
+   */
+  | { kind: "BUY_FEED" }
   | { kind: "BEDDING" }
   | { kind: "SHELTER" }
   | { kind: "GRAZE" }
@@ -75,9 +84,27 @@ export function feedDaysLeft(herd: { feedStock: number; feedNeed: number }): num
   return herd.feedStock / herd.feedNeed;
 }
 
+/** Ce que la ferme a en réserve, et qui décide du geste proposé. */
+export type FarmStocks = {
+  /** Y a-t-il quoi que ce soit à distribuer — foin, maïs, orge, blé, ensilage ? */
+  hasFeed?: boolean;
+  /** Reste-t-il de la paille pour la litière ? */
+  hasStraw?: boolean;
+};
+
 /** Toutes les alertes d'une parcelle, les plus graves en tête. */
-export function herdAlerts(barns: BarnSnapshot[]): HerdAlert[] {
+export function herdAlerts(barns: BarnSnapshot[], stocks: FarmStocks = {}): HerdAlert[] {
   const out: HerdAlert[] = [];
+  // Par défaut on suppose la réserve pleine : une alerte qui propose un geste
+  // impossible est pire qu'une alerte sans geste, mais l'inverse — refuser le
+  // geste par excès de prudence — l'est aussi.
+  const aDeLaRation = stocks.hasFeed !== false;
+  const aDeLaPaille = stocks.hasStraw !== false;
+
+  /** Le geste qui répond à la faim : distribuer, ou aller acheter. */
+  const gesteRation: { action: HerdAlertAction; actionLabel: string } = aDeLaRation
+    ? { action: { kind: "FEED" }, actionLabel: "Nourrir" }
+    : { action: { kind: "BUY_FEED" }, actionLabel: "Acheter du fourrage" };
 
   for (const barn of barns) {
     const herd = barn.herd;
@@ -94,9 +121,10 @@ export function herdAlerts(barns: BarnSnapshot[]): HerdAlert[] {
         id: `${herd.id}:risk`,
         level: "danger",
         icon: "💀",
-        text: `${barn.name} — le troupeau dépérit, des bêtes vont mourir`,
-        action: { kind: "FEED" },
-        actionLabel: "Nourrir",
+        text: aDeLaRation
+          ? `${barn.name} — le troupeau dépérit, des bêtes vont mourir`
+          : `${barn.name} — le troupeau dépérit, et il ne reste rien à distribuer`,
+        ...gesteRation,
       });
     } else if (herd.hungry) {
       const jours = feedDaysLeft(herd);
@@ -105,12 +133,12 @@ export function herdAlerts(barns: BarnSnapshot[]): HerdAlert[] {
         id: `${herd.id}:feed`,
         level: "warn",
         icon: "🌾",
-        text:
-          jours < 1
+        text: !aDeLaRation
+          ? `${barn.name} — plus rien en réserve pour la ration`
+          : jours < 1
             ? `${barn.name} — ration épuisée`
             : `${barn.name} — ${jours.toFixed(0)} jour(s) de ration`,
-        action: { kind: "FEED" },
-        actionLabel: "Nourrir",
+        ...gesteRation,
       });
     }
 
@@ -157,9 +185,14 @@ export function herdAlerts(barns: BarnSnapshot[]): HerdAlert[] {
         id: `${herd.id}:bedding`,
         level: "warn",
         icon: "🧹",
-        text: `${barn.name} — litière à refaire`,
-        action: { kind: "BEDDING" },
-        actionLabel: "Pailler",
+        // Même règle que pour la ration : sans paille en réserve, « Pailler »
+        // étale du vide. On dit alors ce qui manque, et où le trouver.
+        text: aDeLaPaille
+          ? `${barn.name} — litière à refaire`
+          : `${barn.name} — litière à refaire, et plus un brin de paille`,
+        ...(aDeLaPaille
+          ? { action: { kind: "BEDDING" as const }, actionLabel: "Pailler" }
+          : { action: { kind: "BUY_FEED" as const }, actionLabel: "Acheter de la paille" }),
       });
     }
 

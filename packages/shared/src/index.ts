@@ -1,5 +1,6 @@
 /** Types & constantes partagés Farming Navigateur */
 
+export * from "./time.js";
 export * from "./world.js";
 export * from "./climate.js";
 export * from "./land.js";

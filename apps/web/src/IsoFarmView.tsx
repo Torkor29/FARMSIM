@@ -183,6 +183,8 @@ type Props = {
   /** Personnages présents (propriétaire, prestataire en mission) */
   workers?: FieldWorker[];
   weather?: string;
+  /** Saison courante — elle règle la lumière de toute la scène. */
+  season?: string;
   onCellClick: (x: number, y: number, mods: PointerMods) => void;
   onCellHover?: (cell: { x: number; y: number } | null) => void;
   /**
@@ -288,6 +290,92 @@ function lookOf(crop?: CropCode | null): CropLook {
  * pas ce qu'il venait de sélectionner. L'or du logo tranche sur toutes les
  * teintes de sol du jeu — terre nue, culture jeune, culture mûre.
  */
+/**
+ * Le grain de lumière de chaque saison.
+ *
+ * Le ciel changeait de couleur derrière la ferme, mais la ferme, elle, était
+ * éclairée exactement pareil toute l'année : même soleil, même ambiante, même
+ * rebond. Un hiver et un été se ressemblaient donc « des masses », et le seul
+ * indice restait le mot écrit dans le rail.
+ *
+ * On ne retouche ni les géométries ni les matériaux — trop coûteux pour ce
+ * qu'on veut dire. On **règle la lumière**, ce qui repeint toute la scène d'un
+ * coup : un été franc et haut, un automne cuivré et rasant, un hiver bleu et
+ * bas, un printemps clair et vert.
+ */
+const SEASON_LIGHT: Record<
+  string,
+  {
+    /** Ciel et sol de la lumière hémisphérique. */
+    hemiSky: number;
+    hemiGround: number;
+    hemiIntensity: number;
+    ambient: number;
+    ambientIntensity: number;
+    sun: number;
+    sunIntensity: number;
+    /** Hauteur du soleil : un soleil d'hiver rase, un soleil d'été surplombe. */
+    sunHeight: number;
+    bounce: number;
+    bounceIntensity: number;
+  }
+> = {
+  SPRING: {
+    hemiSky: 0xffffff,
+    hemiGround: 0x9ec98a,
+    hemiIntensity: 1.25,
+    ambient: 0xfff6e4,
+    ambientIntensity: 0.65,
+    sun: 0xfff4dc,
+    sunIntensity: 1.5,
+    sunHeight: 24,
+    bounce: 0xc6e8ce,
+    bounceIntensity: 0.42,
+  },
+  SUMMER: {
+    hemiSky: 0xfff8e0,
+    hemiGround: 0x9ab87e,
+    hemiIntensity: 1.35,
+    ambient: 0xfff2d0,
+    ambientIntensity: 0.7,
+    // Le soleil d'été est blanc-doré et tape fort : les ombres sont courtes
+    // et dures, et les couleurs saturent.
+    sun: 0xfff0c4,
+    sunIntensity: 1.85,
+    sunHeight: 30,
+    bounce: 0xd8e8b8,
+    bounceIntensity: 0.38,
+  },
+  AUTUMN: {
+    hemiSky: 0xf6e2c0,
+    hemiGround: 0xa8894e,
+    hemiIntensity: 1.1,
+    ambient: 0xf7e2c0,
+    ambientIntensity: 0.6,
+    // Cuivré et rasant : c'est ce qui donne les longues ombres d'octobre.
+    sun: 0xffce7e,
+    sunIntensity: 1.35,
+    sunHeight: 15,
+    bounce: 0xd9b98a,
+    bounceIntensity: 0.4,
+  },
+  WINTER: {
+    hemiSky: 0xdce9f6,
+    hemiGround: 0xb8c4cc,
+    hemiIntensity: 1.05,
+    // L'hiver ne se joue pas seulement en intensité : c'est la **teinte** qui
+    // le dit. Tout passe au bleu, y compris le soleil, qui éclaire sans
+    // réchauffer et reste bas sur l'horizon.
+    ambient: 0xe4eef8,
+    ambientIntensity: 0.62,
+    sun: 0xe8f0fb,
+    sunIntensity: 1.15,
+    sunHeight: 12,
+    bounce: 0xc4d4e4,
+    bounceIntensity: 0.34,
+  },
+};
+
 const SELECT_GLOW = 0xffd24a;
 /**
  * Les cases retenues se **soulèvent**.
@@ -662,6 +750,7 @@ export function IsoFarmView({
   manurePiles = [],
   workers = [],
   weather = "CLEAR",
+  season = "SUMMER",
   onCellClick,
   onCellHover,
   onCellContext,
@@ -692,8 +781,26 @@ export function IsoFarmView({
   const onStrokeSelectRef = useRef(onStrokeSelect);
   onStrokeSelectRef.current = onStrokeSelect;
   const layoutRef = useRef<(() => void) | null>(null);
+  /** Repeint la scène quand la saison tourne, sans la reconstruire. */
+  const relightRef = useRef<((saison: string) => void) | null>(null);
+  const seasonAppliedRef = useRef<string | null>(null);
   const weatherRef = useRef(weather);
   weatherRef.current = weather;
+  const seasonRef = useRef(season);
+  seasonRef.current = season;
+
+  /**
+   * Rejoue le barème quand la saison tourne.
+   *
+   * La scène 3D est construite une seule fois ; sans cet effet, le grain de
+   * lumière resterait celui du jour où l'on est arrivé, et le passage de
+   * l'automne à l'hiver ne se verrait que dans le ciel CSS derrière.
+   */
+  useEffect(() => {
+    if (seasonAppliedRef.current === season) return;
+    relightRef.current?.(season);
+    seasonAppliedRef.current = season;
+  }, [season]);
 
   const dataRef = useRef({
     cells,
@@ -798,6 +905,24 @@ export function IsoFarmView({
     const bounce = new THREE.DirectionalLight(0xbfe0c8, 0.4);
     bounce.position.set(-10, 6, -8);
     scene.add(bounce);
+
+    /** Applique le barème de la saison à toutes les lumières d'un coup. */
+    const eclairerPour = (saison: string) => {
+      const g = SEASON_LIGHT[saison] ?? SEASON_LIGHT.SUMMER;
+      hemi.color.setHex(g.hemiSky);
+      hemi.groundColor.setHex(g.hemiGround);
+      hemi.intensity = g.hemiIntensity;
+      ambient.color.setHex(g.ambient);
+      ambient.intensity = g.ambientIntensity;
+      sun.color.setHex(g.sun);
+      sun.intensity = g.sunIntensity;
+      sun.position.set(14, g.sunHeight, 10);
+      bounce.color.setHex(g.bounce);
+      bounce.intensity = g.bounceIntensity;
+    };
+    eclairerPour(seasonRef.current);
+    seasonAppliedRef.current = seasonRef.current;
+    relightRef.current = eclairerPour;
 
     const hexGroup = new THREE.Group();
     hexGroup.position.y = -0.35;

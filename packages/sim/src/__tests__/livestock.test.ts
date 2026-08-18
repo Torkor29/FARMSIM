@@ -13,6 +13,7 @@ import {
   collectProgress,
   collectReady,
   canGraze,
+  canLiveOutside,
   crowdingPenalty,
   feedConsumption,
   grazingWaveCount,
@@ -217,18 +218,22 @@ describe("sortie au pré — conditions d’autorisation", () => {
   const clair: WeatherState = "CLEAR";
 
   it("autorise la sortie par beau temps avec un enclos adjacent", () => {
-    expect(canGraze({ paddock: enclos(), animals: 8, weather: clair })).toEqual({ ok: true });
+    expect(canGraze({ paddock: enclos(), animals: 8, weather: clair })).toEqual({
+      ok: true,
+      animals: 8,
+      sheltered: 0,
+    });
   });
 
   it("refuse la sortie sans enclos du tout", () => {
-    expect(canGraze({ paddock: null, animals: 4, weather: clair })).toEqual({
+    expect(canGraze({ paddock: null, animals: 4, weather: clair })).toMatchObject({
       ok: false,
       reason: "NO_PADDOCK",
     });
   });
 
   it("refuse la sortie si l’enclos n’est pas accolé à l’étable", () => {
-    expect(canGraze({ paddock: enclos({ adjacent: false }), animals: 4, weather: clair })).toEqual({
+    expect(canGraze({ paddock: enclos({ adjacent: false }), animals: 4, weather: clair })).toMatchObject({
       ok: false,
       reason: "NO_PADDOCK",
     });
@@ -236,7 +241,7 @@ describe("sortie au pré — conditions d’autorisation", () => {
 
   it("refuse la sortie par orage et par neige", () => {
     for (const meteo of ["STORM", "SNOW"] as WeatherState[]) {
-      expect(canGraze({ paddock: enclos(), animals: 4, weather: meteo })).toEqual({
+      expect(canGraze({ paddock: enclos(), animals: 4, weather: meteo })).toMatchObject({
         ok: false,
         reason: "BAD_WEATHER",
       });
@@ -249,20 +254,62 @@ describe("sortie au pré — conditions d’autorisation", () => {
     }
   });
 
-  it("refuse la sortie quand l’enclos est saturé", () => {
+  it("borne la sortie à la place disponible au lieu de la refuser", () => {
+    // L'enclos trop court refusait tout : dix-neuf bêtes devant dix-huit
+    // places, et le troupeau ne sortait pas du tout. Il borne désormais —
+    // ce qui tient sort, le reste attend, et le joueur sait combien.
     const petit = enclos({ cells: 6, capacity: paddockCapacity(6) });
-    expect(canGraze({ paddock: petit, animals: 12, weather: clair }).ok).toBe(true);
+    expect(canGraze({ paddock: petit, animals: 12, weather: clair })).toEqual({
+      ok: true,
+      animals: 12,
+      sheltered: 0,
+    });
     expect(canGraze({ paddock: petit, animals: 13, weather: clair })).toEqual({
+      ok: true,
+      animals: 12,
+      sheltered: 1,
+    });
+    expect(canGraze({ paddock: petit, animals: 4, animalsOutside: 10, weather: clair })).toEqual({
+      ok: true,
+      animals: 2,
+      sheltered: 2,
+    });
+  });
+
+  it("ne refuse que l’enclos réellement plein", () => {
+    const petit = enclos({ cells: 6, capacity: paddockCapacity(6) });
+    expect(canGraze({ paddock: petit, animals: 4, animalsOutside: 12, weather: clair })).toEqual({
       ok: false,
       reason: "PADDOCK_FULL",
+      animals: 0,
+      sheltered: 4,
     });
-    expect(
-      canGraze({ paddock: petit, animals: 4, animalsOutside: 10, weather: clair }),
-    ).toEqual({ ok: false, reason: "PADDOCK_FULL" });
+  });
+
+  it("le lieu de vie ne se refuse pas pour la météo — il s’avertit", () => {
+    // `canGraze` interdit la séance de pâture sous la neige ; vivre dehors
+    // reste la décision du joueur. L'interface se calait sur la première et
+    // grisait l'interrupteur un jour de neige, alors que le serveur, lui,
+    // acceptait : deux règles pour une seule décision.
+    const grand = enclos();
+    expect(canGraze({ paddock: grand, animals: 8, weather: "SNOW" }).ok).toBe(false);
+    expect(canLiveOutside({ paddock: grand, animals: 8 })).toEqual({
+      ok: true,
+      animals: 8,
+      sheltered: 0,
+    });
+  });
+
+  it("vivre dehors exige un enclos, et des bêtes", () => {
+    expect(canLiveOutside({ paddock: null, animals: 8 }).reason).toBe("NO_PADDOCK");
+    expect(canLiveOutside({ paddock: enclos(), animals: 0 }).reason).toBe("NO_ANIMALS");
+    expect(canLiveOutside({ paddock: enclos(), animals: 4, kind: "PIG" }).reason).toBe(
+      "WRONG_SPECIES",
+    );
   });
 
   it("refuse de sortir une espèce dans l’aire d’une autre", () => {
-    expect(canGraze({ paddock: enclos(), animals: 4, weather: clair, kind: "PIG" })).toEqual({
+    expect(canGraze({ paddock: enclos(), animals: 4, weather: clair, kind: "PIG" })).toMatchObject({
       ok: false,
       reason: "WRONG_SPECIES",
     });

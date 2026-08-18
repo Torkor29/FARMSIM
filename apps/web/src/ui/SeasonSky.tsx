@@ -44,41 +44,48 @@ type Palette = {
  */
 const PALETTES: Record<Season, Palette> = {
   SPRING: {
-    skyTop: "#bfe6f5",
-    skyBottom: "#eaf6e4",
-    haze: "#d8f0c9",
+    skyTop: "#9fd8ef",
+    skyBottom: "#e6f6d8",
+    haze: "#cdefb4",
     sun: "#ffe9a8",
     sunGlow: "rgba(255, 233, 168, 0.55)",
     cloud: "#ffffff",
     cloudOpacity: 0.75,
   },
   SUMMER: {
-    skyTop: "#8fd4f0",
-    skyBottom: "#f6efdd",
-    haze: "#ffeec2",
-    sun: "#ffd45e",
-    sunGlow: "rgba(255, 212, 94, 0.6)",
+    // Un bleu franc, saturé, et une brume dorée sur l'horizon : c'est ce
+    // qu'on doit reconnaître d'un coup d'œil, sans lire le mot « Été ».
+    skyTop: "#4db4e8",
+    skyBottom: "#ffeeb8",
+    haze: "#ffd98a",
+    sun: "#ffc93c",
+    sunGlow: "rgba(255, 201, 60, 0.7)",
     cloud: "#ffffff",
-    cloudOpacity: 0.45,
+    cloudOpacity: 0.35,
   },
   AUTUMN: {
-    skyTop: "#cfdcea",
-    skyBottom: "#f7e3c4",
-    haze: "#eccf9a",
-    sun: "#f6b45a",
-    sunGlow: "rgba(246, 180, 90, 0.5)",
-    cloud: "#f3f1ec",
-    cloudOpacity: 0.85,
+    skyTop: "#b9c6d8",
+    skyBottom: "#f2cf97",
+    haze: "#e0a862",
+    sun: "#ef9a42",
+    sunGlow: "rgba(239, 154, 66, 0.55)",
+    cloud: "#eae4d8",
+    cloudOpacity: 0.9,
   },
   WINTER: {
-    skyTop: "#cfdae6",
-    skyBottom: "#eef3f7",
-    haze: "#e8eef4",
+    /* Les quatre palettes étaient quatre nuances du même bleu pâle : l'hiver
+       et l'été ne se distinguaient « pas des masses », et c'était vrai — huit
+       points de teinte les séparaient. L'hiver descend maintenant dans les
+       gris-bleus froids, l'été monte dans les bleus saturés, et l'écart se
+       voit sans qu'on ait à le chercher. */
+    skyTop: "#8ea3b8",
+    skyBottom: "#dfe8f0",
+    haze: "#cfdae6",
     // Un soleil d'hiver est bas et pâle : il éclaire, il ne chauffe pas.
-    sun: "#fdf6e3",
-    sunGlow: "rgba(253, 246, 227, 0.45)",
-    cloud: "#ffffff",
-    cloudOpacity: 0.9,
+    sun: "#f4f7fb",
+    sunGlow: "rgba(244, 247, 251, 0.4)",
+    cloud: "#f4f8fc",
+    cloudOpacity: 0.95,
   },
 };
 
