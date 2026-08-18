@@ -161,6 +161,10 @@ import {
   kindForBarn,
   yardTypeForBarn,
   ANIMAL_PRICE,
+  YOUNG_PRICE_RATIO,
+  YOUNG_GROW_MS,
+  YOUNG_FEED_RATIO,
+  herdFeedNeed,
   STARTER_COW_COUNT,
   STARTER_HAY_TONS,
   FEED_BASE,
@@ -2490,6 +2494,46 @@ async function runWorldTick() {
    */
   const oubliees = await prisma.supplyOrder.findMany({ where: { autoAt: { lte: new Date() } } });
   for (const d of oubliees) await collectDelivery(d);
+
+  /**
+   * Les jeunes deviennent adultes.
+   *
+   * Rien à recalculer : ils étaient déjà comptés dans `size` et occupaient
+   * déjà leur place. Passer adulte, c'est simplement cesser d'être un jeune —
+   * on supprime le lot, et le troupeau se met à manger et à produire pour eux.
+   */
+  const grandis = await prisma.youngBatch.findMany({ where: { maturesAt: { lte: new Date() } } });
+  if (grandis.length > 0) {
+    await prisma.youngBatch.deleteMany({ where: { id: { in: grandis.map((b) => b.id) } } });
+  }
+
+  /**
+   * Un jeune mal nourri grandit plus lentement.
+   *
+   * C'est ce qui donne son risque à la voie économique. Acheter jeune revient
+   * beaucoup moins cher et ne coûte, en apparence, qu'un peu de patience : le
+   * lait auquel on renonce pendant la croissance vaut le quart de ce qu'on a
+   * économisé. Sans contrepartie, ce serait un choix évident, donc pas un
+   * choix.
+   *
+   * La contrepartie n'est pas un bouton de plus : c'est la même exigence que
+   * pour le reste du lot — nourrir. Une mangeoire vide et l'échéance recule
+   * d'autant, si bien qu'un éleveur négligent paie sa réduction en temps, et
+   * peut la payer très cher.
+   */
+  const affames = await prisma.herd.findMany({
+    where: { feedStock: { lte: 0 }, youngBatches: { some: {} } },
+    include: { youngBatches: true },
+  });
+  for (const lot of affames) {
+    for (const y of lot.youngBatches) {
+      if (y.maturesAt.getTime() <= Date.now()) continue;
+      await prisma.youngBatch.update({
+        where: { id: y.id },
+        data: { maturesAt: new Date(y.maturesAt.getTime() + SIM_TICK_MS) },
+      });
+    }
+  }
 
   lastSimTick = {
     at: new Date().toISOString(),
@@ -5360,6 +5404,14 @@ async function settleHerd(
     beddingTons?: number;
     housing?: string;
     grassTons?: number;
+    /**
+     * Jeunes du lot, comptés dans `size`.
+     *
+     * Ils mangent moins — c'est ce qui donne au pari « acheter jeune » un coût
+     * courant réduit. Facultatif : sans lui, on retombe sur un lot d'adultes,
+     * soit exactement l'ancien comportement.
+     */
+    young?: number;
   },
   paddockCapacityCells: number,
   now: number,
@@ -5444,9 +5496,19 @@ async function settleHerd(
   });
 
   // La ration stockée n'est entamée que de ce que le pré n'a pas couvert.
+  /**
+   * Les jeunes mangent moins.
+   *
+   * `feedBurn` raisonne en têtes ; on lui passe donc un effectif **équivalent
+   * adulte** — un veau vaut 0,45 vache à l'auge. Sans cela un troupeau de
+   * veaux coûtait autant à nourrir qu'un troupeau de vaches, et la moitié de
+   * l'intérêt du pari disparaissait.
+   */
+  const jeunes = Math.max(0, Math.min(herd.size, Math.floor(herd.young ?? 0)));
+  const bouchesAdultes = herd.size - jeunes + jeunes * YOUNG_FEED_RATIO;
   const burnt =
     feedBurn({
-      herdSize: herd.size,
+      herdSize: bouchesAdultes,
       elapsedMs,
       cycleMs: LIVESTOCK_CYCLE_MS,
       // Le forfait d'avant est neutralisé : c'est `saved` qui fait le travail.
@@ -5456,7 +5518,7 @@ async function settleHerd(
     }) *
     (1 - saved);
   const feedStock = Math.max(0, herd.feedStock - burnt);
-  const hunger = hungerPenalty({ feedStock, herdSize: herd.size, kind });
+  const hunger = hungerPenalty({ feedStock, herdSize: bouchesAdultes, kind });
   // La litière se salit au même rythme que la ration se mange. On mesure la
   // couverture **après** consommation : c'est l'état dans lequel les bêtes
   // viennent de passer la période, pas celui du début.
@@ -5615,7 +5677,11 @@ async function settleHerd(
 app.get("/parcels/:id/livestock", async (req, res) => {
   const parcel = await prisma.parcel.findUnique({
     where: { id: req.params.id },
-    include: { buildings: { include: { herd: true } }, zone: true, farm: true },
+    include: {
+      buildings: { include: { herd: { include: { youngBatches: true } } } },
+      zone: true,
+      farm: true,
+    },
   });
   if (!parcel) {
     res.status(404).json({ error: "Parcelle introuvable" });
@@ -5653,8 +5719,28 @@ app.get("/parcels/:id/livestock", async (req, res) => {
     let gestatingSince: Date | null = b.herd?.gestatingSince ?? null;
     let manureTons = b.herd?.manureTons ?? 0;
     let beddingTons = b.herd?.beddingTons ?? 0;
+    /**
+     * Les jeunes encore en croissance.
+     *
+     * On les compte au moment de la lecture plutôt que de tenir un compteur
+     * sur le troupeau : un lot arrivé à maturité entre deux ticks doit cesser
+     * de compter tout de suite, sans attendre le passage du tick.
+     */
+    const jeunes = (b.herd?.youngBatches ?? [])
+      .filter((y) => y.maturesAt.getTime() > now)
+      .reduce((n, y) => n + y.count, 0);
+    /** Le prochain lot à passer adulte, pour l'annoncer au joueur. */
+    const prochaineMaturite = (b.herd?.youngBatches ?? [])
+      .filter((y) => y.maturesAt.getTime() > now)
+      .sort((a, c) => a.maturesAt.getTime() - c.maturesAt.getTime())[0];
     if (b.herd) {
-      const settled = await settleHerd(b.herd, paddock.capacity, now, b.level, capacity);
+      const settled = await settleHerd(
+        { ...b.herd, young: jeunes },
+        paddock.capacity,
+        now,
+        b.level,
+        capacity,
+      );
       happiness = settled.happiness;
       feedStock = settled.feedStock;
       herdSize = settled.size;
@@ -5741,7 +5827,13 @@ app.get("/parcels/:id/livestock", async (req, res) => {
               });
               return v.ok || !v.reason ? null : BREEDING_REFUSAL_LABELS[v.reason];
             })(),
-            feedNeed: b.herd.size * feedPer,
+            /* Le besoin décompte les jeunes : ils mangent 45 % d'une ration.
+               Sans cela le panneau réclamait pour des veaux comme pour des
+               vaches, et la jauge de faim mentait. */
+            feedNeed: herdFeedNeed({ size: herdSize, young: jeunes, kind: herdKind ?? "COW" }),
+            /** Combien de jeunes, et quand le prochain lot passe adulte. */
+            young: jeunes,
+            youngMaturesAt: prochaineMaturite?.maturesAt.getTime() ?? null,
             // Litière : la part du besoin d'un cycle réellement couverte, et
             // les tonnes qu'il faudrait pour la compléter. Le joueur ne doit
             // pas avoir à calculer des tonnes de paille de tête.
@@ -5768,27 +5860,39 @@ app.get("/parcels/:id/livestock", async (req, res) => {
               herdSize: b.herd.size,
               kind: b.herd.kind as AnimalKind,
             }) > 0.05,
+            /* Un lot entièrement composé de jeunes n'a rien à donner : sans
+               ce garde, « traite prête » s'affichait sur une étable de veaux
+               et le geste ramenait zéro litre. */
             canMilk:
-              b.herd.kind === "COW" && collectClock(b.herd.lastMilkedAt, b.herd.bornAt, now).ready,
+              b.herd.kind === "COW" &&
+              herdSize - jeunes > 0 &&
+              collectClock(b.herd.lastMilkedAt, b.herd.bornAt, now).ready,
             canCollectEggs:
-              b.herd.kind === "HEN" && collectClock(b.herd.lastMilkedAt, b.herd.bornAt, now).ready,
+              b.herd.kind === "HEN" &&
+              herdSize - jeunes > 0 &&
+              collectClock(b.herd.lastMilkedAt, b.herd.bornAt, now).ready,
             canShear:
-              b.herd.kind === "SHEEP" && collectClock(b.herd.lastMilkedAt, b.herd.bornAt, now).ready,
+              b.herd.kind === "SHEEP" &&
+              herdSize - jeunes > 0 &&
+              collectClock(b.herd.lastMilkedAt, b.herd.bornAt, now).ready,
             collectProgress: collectClock(b.herd.lastMilkedAt, b.herd.bornAt, now).progress,
+            /* Un veau ne donne ni lait, ni œufs, ni laine : la production ne
+               compte que les adultes. C'est le prix du pari — on paie moins
+               cher, on attend une saison avant que la bête rapporte. */
             milkPerCycle: milkYield({
-              herdSize: b.herd.size,
+              herdSize: Math.max(0, herdSize - jeunes),
               happiness,
               barnLevel: b.level,
               feedQuality: b.herd.feedQuality,
             }),
             eggsPerCycle: eggYield({
-              herdSize: b.herd.size,
+              herdSize: Math.max(0, herdSize - jeunes),
               happiness,
               barnLevel: b.level,
               feedQuality: b.herd.feedQuality,
             }),
             woolPerShear: woolYield({
-              herdSize: b.herd.size,
+              herdSize: Math.max(0, herdSize - jeunes),
               happiness,
               barnLevel: b.level,
               feedQuality: b.herd.feedQuality,
@@ -5837,7 +5941,18 @@ app.get("/parcels/:id/livestock", async (req, res) => {
 /** Achat de bêtes pour une étable. */
 app.post("/buildings/:id/animals", async (req, res) => {
   const body = z
-    .object({ userId: z.string(), count: z.number().int().min(1).max(50) })
+    .object({
+      userId: z.string(),
+      count: z.number().int().min(1).max(50),
+      /**
+       * Acheter des jeunes plutôt que des adultes.
+       *
+       * Deux cinquièmes du prix, mais rien à traire avant une saison : c'est
+       * du capital contre du temps. Ils entrent dans la même étable — un
+       * second bâtiment n'aurait ajouté que de la comptabilité.
+       */
+      young: z.boolean().optional(),
+    })
     .safeParse(req.body);
   if (!body.success) {
     res.status(400).json(body.error.flatten());
@@ -5865,14 +5980,23 @@ app.post("/buildings/:id/animals", async (req, res) => {
     });
     return;
   }
-  const cost = ANIMAL_PRICE[kind] * body.data.count;
+  const jeune = body.data.young === true;
+  const cost = Math.round(
+    ANIMAL_PRICE[kind] * (jeune ? YOUNG_PRICE_RATIO : 1) * body.data.count,
+  );
   const user = await prisma.user.findUnique({ where: { id: body.data.userId } });
   if (!user || !peutPayer(user, cost)) {
     res.status(402).json({ error: `TRN insuffisants — ${cost} requis` });
     return;
   }
   await prisma.$transaction(async (tx) => {
-    await debit(tx, user.id, cost, "ELEVAGE", `Achat de ${body.data.count} bête${body.data.count > 1 ? "s" : ""}`);
+    await debit(
+      tx,
+      user.id,
+      cost,
+      "ELEVAGE",
+      `Achat de ${body.data.count} ${jeune ? "jeune" : "bête"}${body.data.count > 1 ? "s" : ""}`,
+    );
     if (building.herd) {
       // On achète du bétail déjà élevé : la moyenne d'âge du lot se déplace
       // vers celle des arrivantes, au prorata des effectifs.
@@ -5880,27 +6004,47 @@ app.post("/buildings/:id/animals", async (req, res) => {
         where: { id: building.herd.id },
         data: {
           size: current + body.data.count,
+          // Un jeune arrive sans âge : c'est ce qui fait qu'il pèse peu à
+          // l'abattage, et qu'attendre a une valeur.
           avgAgeMs: blendedAgeMs({
             herdSize: current,
             averageAgeMs: building.herd.avgAgeMs,
             added: body.data.count,
-            addedAgeMs: PURCHASED_AGE_MS,
+            addedAgeMs: jeune ? 0 : PURCHASED_AGE_MS,
           }),
         },
       });
+      if (jeune) {
+        await tx.youngBatch.create({
+          data: {
+            herdId: building.herd.id,
+            count: body.data.count,
+            maturesAt: new Date(Date.now() + YOUNG_GROW_MS),
+          },
+        });
+      }
     } else {
-      await tx.herd.create({
+      const lot = await tx.herd.create({
         data: {
           farmId: building.parcel.farm!.id,
           buildingId: building.id,
           kind,
           size: body.data.count,
-          avgAgeMs: PURCHASED_AGE_MS,
+          avgAgeMs: jeune ? 0 : PURCHASED_AGE_MS,
         },
       });
+      if (jeune) {
+        await tx.youngBatch.create({
+          data: {
+            herdId: lot.id,
+            count: body.data.count,
+            maturesAt: new Date(Date.now() + YOUNG_GROW_MS),
+          },
+        });
+      }
     }
   });
-  res.status(201).json({ added: body.data.count, cost });
+  res.status(201).json({ added: body.data.count, cost, young: jeune });
 });
 
 /** Vente locale : le fumier part au voisin, pas au silo ni au négociant. */

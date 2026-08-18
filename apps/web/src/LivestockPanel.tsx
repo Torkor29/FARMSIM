@@ -8,6 +8,8 @@ import { herdAlerts, type HerdAlert } from "./ui/herd-alerts";
 import { AlertIcon } from "./ui/AlertIcon";
 import { Geste } from "./ui/Geste";
 import {
+  YOUNG_PRICE_RATIO,
+  YOUNG_GROW_MS,
   ANIMAL_ART,
   ANIMAL_GRAZE_ART,
   ANIMAL_PLURAL,
@@ -51,6 +53,10 @@ export type BarnState = {
     grazingUntil: number | null;
     feedStock: number;
     feedNeed: number;
+    /** Jeunes du lot, comptés dans `size` — ils ne produisent pas encore. */
+    young?: number;
+    /** Quand le prochain lot de jeunes passe adulte. */
+    youngMaturesAt?: number | null;
     feedQuality: number;
     hungry: boolean;
     /** Le lot commence à perdre des bêtes : il faut agir maintenant */
@@ -241,7 +247,7 @@ type Props = {
   barns: BarnState[];
   busy: boolean;
   crd: number;
-  onBuyAnimals: (buildingId: string, count: number) => void;
+  onBuyAnimals: (buildingId: string, count: number, young?: boolean) => void;
   onGraze: (herdId: string) => void;
   onBuildPaddock: (yardType: BuildingType) => void;
   onFeed: (herdId: string, ration: FeedRation) => void;
@@ -382,6 +388,14 @@ export function LivestockPanel({
    * décale les rangs et ferait sauter la vue sur un autre lot.
    */
   const [batimentVu, setBatimentVu] = useState<string | null>(null);
+  /**
+   * Acheter jeune ou adulte, par bâtiment.
+   *
+   * Un choix, pas un onglet : la fiche garde un seul geste d'achat, et deux
+   * pastilles disent lequel on prend. C'est la consigne — de la profondeur,
+   * pas des boutons.
+   */
+  const [jeunes, setJeunes] = useState<Record<string, boolean>>({});
   const vu = barns.find((b) => b.buildingId === batimentVu) ?? barns[0] ?? null;
   const barnsVus = unSeulBatiment && vu ? [vu] : barns;
 
@@ -520,7 +534,13 @@ export function LivestockPanel({
         const espece = kindForBarn(barn.type);
         // Ce qu'on peut réellement s'offrir, borné par la place et par la
         // caisse : le sélecteur ne propose jamais un achat qui sera refusé.
-        const abordables = Math.floor(crd / Math.max(1, barn.cowPrice));
+        /* Le prix dépend de l'âge choisi : un jeune coûte deux cinquièmes.
+           Tout ce qui suit — ce qu'on peut s'offrir, le lot maximal, le total
+           annoncé — en découle, sinon le sélecteur proposerait un achat au
+           mauvais prix. */
+        const jeune = jeunes[barn.buildingId] === true;
+        const prixPiece = Math.round(barn.cowPrice * (jeune ? YOUNG_PRICE_RATIO : 1));
+        const abordables = Math.floor(crd / Math.max(1, prixPiece));
         const maxLot = Math.max(0, Math.min(room, abordables, 50));
         const lot = Math.min(Math.max(1, lots[barn.buildingId] ?? 1), Math.max(1, maxLot));
         const canBuy = maxLot >= 1;
@@ -567,6 +587,20 @@ export function LivestockPanel({
                       {herd.size}
                       <small> / {barn.capacity}</small>
                     </strong>
+                    {/* Le lot ne se lit pas d'un seul chiffre quand il mélange
+                        veaux et vaches : dire combien sont encore jeunes, et
+                        dans combien de temps le prochain passe adulte. */}
+                    {(herd.young ?? 0) > 0 && (
+                      <em className="herd-young">
+                        dont {herd.young} jeune{(herd.young ?? 0) > 1 ? "s" : ""}
+                        {herd.youngMaturesAt
+                          ? ` · adulte dans ${Math.max(
+                              1,
+                              Math.round((herd.youngMaturesAt - Date.now()) / 60000),
+                            )} min`
+                          : ""}
+                      </em>
+                    )}
                   </div>
                   <div className={pct >= 75 ? "bon" : pct >= 50 ? "moyen" : "mauvais"}>
                     <em>{herd.label}</em>
@@ -827,10 +861,35 @@ export function LivestockPanel({
               <span className="herd-buy-label">
                 Acheter des {espece ? ANIMAL_PLURAL[espece] : "bêtes"}
                 <em>
-                  {barn.cowPrice} TRN pièce · {room} place{room > 1 ? "s" : ""} libre
+                  {prixPiece} TRN pièce · {room} place{room > 1 ? "s" : ""} libre
                   {room > 1 ? "s" : ""}
                 </em>
               </span>
+              {/* Le pari : payer moins et attendre, ou payer plein et traire
+                  tout de suite. Deux pastilles, aucun écran de plus. */}
+              <div className="age-switch" role="group" aria-label="Âge des bêtes">
+                <button
+                  type="button"
+                  className={`age-side${!jeune ? " on" : ""}`}
+                  aria-pressed={!jeune}
+                  onClick={() => setJeunes((p) => ({ ...p, [barn.buildingId]: false }))}
+                >
+                  Adultes
+                  <em>{barn.cowPrice} TRN · produisent tout de suite</em>
+                </button>
+                <button
+                  type="button"
+                  className={`age-side${jeune ? " on" : ""}`}
+                  aria-pressed={jeune}
+                  onClick={() => setJeunes((p) => ({ ...p, [barn.buildingId]: true }))}
+                >
+                  Jeunes
+                  <em>
+                    {Math.round(barn.cowPrice * YOUNG_PRICE_RATIO)} TRN · adultes dans{" "}
+                    {Math.round(YOUNG_GROW_MS / 60000)} min
+                  </em>
+                </button>
+              </div>
               <div className="herd-buy-row">
                 <div className="herd-stepper">
                   <button
@@ -869,9 +928,9 @@ export function LivestockPanel({
                   type="button"
                   className="herd-buy-go"
                   disabled={busy || !canBuy}
-                  onClick={() => onBuyAnimals(barn.buildingId, lot)}
+                  onClick={() => onBuyAnimals(barn.buildingId, lot, jeune)}
                 >
-                  Acheter <b>{lot * barn.cowPrice} TRN</b>
+                  Acheter <b>{lot * prixPiece} TRN</b>
                 </button>
               </div>
               {empechement && <p className="herd-buy-why">{empechement}</p>}

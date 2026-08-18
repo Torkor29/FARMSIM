@@ -182,6 +182,29 @@ model SupplyOrder {
   @@index([farmId, arrivesAt])
 }
 
+/**
+ * Un lot de jeunes bêtes, et la date où il passe adulte.
+ *
+ * Un lot plutôt qu'un compteur sur le troupeau : deux achats faits à dix
+ * minutes d'intervalle ne mûrissent pas ensemble, et un compteur unique
+ * obligerait à choisir une date pour les deux — donc à mentir sur l'une.
+ *
+ * Les jeunes sont comptés dans `Herd.size` : ils occupent une place à
+ * l'étable et ils mangent. Ce qui les distingue, c'est qu'ils ne produisent
+ * rien et qu'ils mangent moins.
+ */
+model YoungBatch {
+  id        String   @id @default(cuid())
+  herdId    String
+  herd      Herd     @relation(fields: [herdId], references: [id], onDelete: Cascade)
+  count     Int
+  /** Instant où ce lot rejoint les adultes. */
+  maturesAt DateTime
+  createdAt DateTime @default(now())
+
+  @@index([herdId, maturesAt])
+}
+
 model Zone {
   id            String   @id @default(cuid())
   code          String   @unique
@@ -301,6 +324,8 @@ model Herd {
   manureTons    Float     @default(0)
   /// Paille en litière, en tonnes — le pont aller depuis le céréalier
   beddingTons   Float     @default(0)
+  /// Lots de jeunes en croissance ; ils comptent dans `size`
+  youngBatches  YoungBatch[]
 }
 
 model Building {

@@ -618,6 +618,68 @@ export function woolYield(input: {
   return Math.round(WOOL_BASE_PER_SHEEP * size * welfare * barn * feed * 1000) / 1000;
 }
 
+/* ==========================================================================
+   LES JEUNES BÊTES
+   ==========================================================================
+
+   Acheter une bête était une seule décision, et toujours la même : payer le
+   prix fort pour un animal productif immédiatement. Le jeune ouvre l'autre
+   voie — moins cher, mais improductif le temps qu'il grandisse. Du capital
+   contre du temps, l'arbitrage qui manquait à l'élevage.
+
+   Une seule étable pour les deux : veaux et vaches vivent ensemble, comme à
+   la ferme. Un second bâtiment n'aurait ajouté que de la comptabilité.
+
+   Et surtout : **aucun geste de plus**. Un jeune ne demande aucun soin
+   particulier. Il mange moins, il grandit, il devient adulte. C'est la
+   consigne qu'on s'est donnée — de la profondeur, pas des boutons.
+   ========================================================================== */
+
+/**
+ * Prix d'un jeune, en fraction du prix d'un adulte `[GD]`.
+ *
+ * Deux cinquièmes : assez bas pour que l'élevage soit une vraie stratégie de
+ * démarrage, assez haut pour que l'adulte reste le bon choix quand on a
+ * besoin de lait tout de suite. C'est le rapport à surveiller si l'un des
+ * deux chemins écrase l'autre.
+ */
+export const YOUNG_PRICE_RATIO = 0.4;
+
+/**
+ * Le temps qu'un jeune met à devenir adulte `[GD]`.
+ *
+ * Une saison entière — sept jours de jeu. Assez long pour qu'attendre coûte
+ * quelque chose, assez court pour qu'on voie l'arrivée à maturité dans une
+ * session.
+ */
+export const YOUNG_GROW_MS = 7 * LIVESTOCK_CYCLE_MS;
+
+/**
+ * Ce qu'un jeune mange, en fraction de la ration d'un adulte `[GD]`.
+ *
+ * Il mange moins, mais il mange : c'est ce qui fait qu'un troupeau de veaux
+ * n'est pas gratuit à entretenir, et que le pari a un coût courant.
+ */
+export const YOUNG_FEED_RATIO = 0.45;
+
+/**
+ * Besoin de ration d'un lot, jeunes compris `[GD]`.
+ *
+ * Le besoin se calculait sur l'effectif total, veaux et vaches confondus :
+ * un troupeau de jeunes réclamait autant qu'un troupeau d'adultes, ce qui
+ * effaçait la moitié de l'intérêt du pari.
+ */
+export function herdFeedNeed(input: {
+  size: number;
+  young?: number;
+  kind?: AnimalKind;
+}): number {
+  const par = FEED_BASE[input.kind ?? "COW"] ?? HUNGER.unitsPerAnimalPerCycle;
+  const jeunes = Math.max(0, Math.min(input.size, Math.floor(input.young ?? 0)));
+  const adultes = Math.max(0, input.size - jeunes);
+  return adultes * par + jeunes * par * YOUNG_FEED_RATIO;
+}
+
 /** Poids de carcasse d'un bovin adulte, en kg `[GD]` */
 export const MEAT_BASE_KG = 280;
 

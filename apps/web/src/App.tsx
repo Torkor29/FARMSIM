@@ -3172,15 +3172,18 @@ export function App() {
     }
   }
 
-  async function buyAnimals(buildingId: string, count: number) {
+  async function buyAnimals(buildingId: string, count: number, young = false) {
     if (!player) return;
     setBusy(true);
     try {
-      const r = await api<{ added: number; cost: number }>(`/buildings/${buildingId}/animals`, {
-        method: "POST",
-        body: JSON.stringify({ userId: player.id, count }),
-      });
-      flashToast(`+${r.added} bête(s) · −${r.cost} TRN`);
+      const r = await api<{ added: number; cost: number; young?: boolean }>(
+        `/buildings/${buildingId}/animals`,
+        {
+          method: "POST",
+          body: JSON.stringify({ userId: player.id, count, young }),
+        },
+      );
+      flashToast(`+${r.added} ${young ? "jeune(s)" : "bête(s)"} · −${r.cost} TRN`);
       await refreshPlayer();
       if (activeParcelId) await loadLivestock(activeParcelId);
     } catch (e) {
