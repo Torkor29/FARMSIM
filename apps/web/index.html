@@ -12,12 +12,12 @@
     <title>Farming Navigator</title>
     <link rel="icon" type="image/svg+xml" href="/logo.svg" />
     <link rel="apple-touch-icon" href="/logo.webp" />
-    <link rel="preconnect" href="https://fonts.googleapis.com" />
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-    <link
-      href="https://fonts.googleapis.com/css2?family=Baloo+2:wght@500;600;700;800&family=Nunito:wght@400;600;700;800&display=swap"
-      rel="stylesheet"
-    />
+    <!-- Les fontes sont servies par nous : voir public/assets/fonts/fontes.css.
+         Elles venaient de Google, ce qui plaçait deux résolutions DNS et un
+         aller-retour vers un tiers avant le premier mot lisible. -->
+    <link rel="preload" href="/assets/fonts/signika-latin.woff2" as="font" type="font/woff2" crossorigin />
+    <link rel="preload" href="/assets/fonts/baloo2-latin.woff2" as="font" type="font/woff2" crossorigin />
+    <link rel="stylesheet" href="/assets/fonts/fontes.css" />
   </head>
   <body>
     <div id="root"></div>

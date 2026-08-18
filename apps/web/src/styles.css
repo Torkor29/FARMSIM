@@ -48,7 +48,15 @@
   --sh-2: 0 8px 24px rgba(34, 49, 44, 0.12);
   --sh-3: 0 18px 48px rgba(34, 49, 44, 0.18);
 
-  font-family: Nunito, system-ui, sans-serif;
+  /* Signika remplace Nunito.
+     Nunito est le sans arrondi le plus répandu des interfaces engendrées : à
+     lui seul il donnait au jeu l'air d'un gabarit. Signika tient le même
+     registre — humaniste, chaleureux, sans angle dur — mais elle a été
+     dessinée pour la signalétique : elle est un peu plus étroite et un peu
+     plus tenue, ce qui fait entrer une ligne de plus par écran de téléphone
+     à taille égale. Baloo 2 ne bouge pas : c'est la voix des titres, et ce
+     n'était pas elle le problème. */
+  font-family: Signika, system-ui, sans-serif;
   color: var(--ink);
   background: var(--cream);
   line-height: 1.5;
@@ -58,7 +66,7 @@
 * { box-sizing: border-box; }
 body { margin: 0; min-height: 100vh; overflow-x: hidden; background: var(--cream); }
 h1, h2, h3, .brand, .brand-mark {
-  font-family: "Baloo 2", Nunito, system-ui, sans-serif;
+  font-family: "Baloo 2", Signika, system-ui, sans-serif;
   font-weight: 800;
   margin: 0 0 0.35rem;
   letter-spacing: -0.01em;
@@ -80,7 +88,7 @@ button, input, select {
 button {
   cursor: pointer;
   font-weight: 700;
-  font-family: "Baloo 2", Nunito, sans-serif;
+  font-family: "Baloo 2", Signika, sans-serif;
   /* Charte §8.1 #1-3 : survol 120 ms sortant, pression 90 ms linéaire, et
      un relâchement qui dépasse légèrement. Les trois durées diffèrent
      exprès — une pression aussi lente qu'un survol donne un bouton mou. */
@@ -812,7 +820,7 @@ button.ghost {
 .mission-progress {
   font-weight: 800;
   color: var(--teal-700);
-  font-family: "Baloo 2", Nunito, sans-serif;
+  font-family: "Baloo 2", Signika, sans-serif;
 }
 .mission-grid {
   display: grid;
@@ -1242,14 +1250,14 @@ button.ghost {
 .channel-net {
   margin: 0;
   display: grid;
-  font-family: "Baloo 2", Nunito, sans-serif;
+  font-family: "Baloo 2", Signika, sans-serif;
   font-size: 1.35rem;
   font-weight: 800;
   color: var(--gold-700);
 }
 .channel-net em {
   font-style: normal;
-  font-family: Nunito, sans-serif;
+  font-family: Signika, sans-serif;
   font-size: 0.7rem;
   font-weight: 700;
 }
@@ -2231,7 +2239,7 @@ html.playing .build-confirm { position: fixed; }
   gap: 0.35rem 0.75rem;
 }
 .zone-map-name {
-  font-family: "Baloo 2", Nunito, sans-serif;
+  font-family: "Baloo 2", Signika, sans-serif;
   font-size: 0.95rem;
   letter-spacing: -0.02em;
 }
@@ -3063,7 +3071,7 @@ button.tiny {
   color: var(--muted);
 }
 .hdv-purse strong {
-  font-family: "Baloo 2", Nunito, sans-serif;
+  font-family: "Baloo 2", Signika, sans-serif;
   font-size: 1.15rem;
   color: var(--teal-700);
 }
@@ -3306,7 +3314,7 @@ button.tiny {
 }
 .hdv-quotes dd {
   margin: 0;
-  font-family: "Baloo 2", Nunito, sans-serif;
+  font-family: "Baloo 2", Signika, sans-serif;
   font-size: 1.05rem;
   font-weight: 800;
   color: var(--teal-700);
@@ -3396,7 +3404,7 @@ button.tiny {
 }
 .hdv-channels span { display: grid; }
 .hdv-channels b {
-  font-family: "Baloo 2", Nunito, sans-serif;
+  font-family: "Baloo 2", Signika, sans-serif;
   font-size: 1.05rem;
   color: var(--gold-700);
 }
@@ -3472,7 +3480,7 @@ button.tiny {
   color: var(--muted);
 }
 .consigne-budget strong {
-  font-family: "Baloo 2", Nunito, sans-serif;
+  font-family: "Baloo 2", Signika, sans-serif;
   font-size: 1.25rem;
 }
 .consigne-rows {
@@ -3719,7 +3727,7 @@ button.tiny {
 .tool-rail-title {
   margin: 0 0 0.35rem;
   padding-left: 0.5rem;
-  font-family: Nunito, sans-serif;
+  font-family: Signika, sans-serif;
   font-size: 0.65rem;
   font-weight: 800;
   letter-spacing: 0.09em;
@@ -3833,7 +3841,7 @@ button.tiny {
 }
 .selection-bar-count { display: flex; align-items: baseline; gap: 0.4rem; }
 .selection-bar-num {
-  font-family: "Baloo 2", Nunito, sans-serif;
+  font-family: "Baloo 2", Signika, sans-serif;
   font-size: 1.35rem;
   font-weight: 800;
   line-height: 1;
@@ -4103,10 +4111,15 @@ button.tiny {
   line-height: 1.3;
 }
 /* La gravité se lit au liseré **et** à l'icône : jamais à la couleur seule. */
-.herd-alert-row.danger { border-left: 3px solid var(--danger); background: #fdf1ef; }
-.herd-alert-row.warn { border-left: 3px solid var(--gold-500); background: var(--gold-100); }
-.herd-alert-row.info { border-left: 3px solid var(--teal-300); }
-.herd-alert-icon { font-size: 1rem; line-height: 1; flex: 0 0 auto; }
+.herd-alert-row.danger { border-left: 3px solid var(--danger); background: #fdf1ef; color: var(--danger); }
+.herd-alert-row.warn { border-left: 3px solid var(--gold-500); background: var(--gold-100); color: var(--gold-700); }
+.herd-alert-row.info { border-left: 3px solid var(--teal-300); color: var(--teal-500); }
+/* Le glyphe prend la couleur de la gravité de l'alerte : rouge pour un
+   danger, or pour un avertissement, sarcelle pour une information. C'est la
+   ligne qui porte cette couleur, l'icône ne fait que l'hériter — aucune règle
+   ne la répète, et une gravité ajoutée demain sera juste sans y toucher. */
+.herd-alert-icon { width: 19px; height: 19px; flex: 0 0 auto; color: inherit; }
+
 .herd-alert-text { flex: 1; min-width: 0; font-weight: 600; color: var(--ink); }
 .herd-alert-do {
   flex: 0 0 auto;

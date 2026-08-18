@@ -13,6 +13,17 @@
 
 export type HerdAlertLevel = "danger" | "warn" | "info";
 
+/** Les motifs d'alerte que l'interface sait dessiner. */
+export type HerdAlertIcon =
+  | "risque"
+  | "ration"
+  | "froid"
+  | "chaud"
+  | "pre"
+  | "litiere"
+  | "fosse"
+  | "recolte";
+
 /** Ce que le joueur peut faire depuis l'alerte, sans aller le chercher. */
 export type HerdAlertAction =
   | { kind: "FEED" }
@@ -36,7 +47,17 @@ export type HerdAlert = {
   buildingId: string;
   herdId: string;
   level: HerdAlertLevel;
-  icon: string;
+  /**
+   * Le motif de l'alerte, et non son dessin.
+   *
+   * C'était un emoji — 💀, 🌾, 🧹. Trois défauts, dans cet ordre : le rendu
+   * change d'un système à l'autre et échappe donc au dessin du jeu ; la
+   * couleur est celle de la fonte d'emoji, jamais celle de la palette ; et
+   * c'est le signal le plus reconnaissable d'une interface qu'on n'a pas
+   * dessinée. Le domaine dit maintenant *de quoi il s'agit*, et l'interface
+   * choisit le trait.
+   */
+  icon: HerdAlertIcon;
   text: string;
   action: HerdAlertAction;
   actionLabel: string;
@@ -120,7 +141,7 @@ export function herdAlerts(barns: BarnSnapshot[], stocks: FarmStocks = {}): Herd
         ...base,
         id: `${herd.id}:risk`,
         level: "danger",
-        icon: "💀",
+        icon: "risque",
         text: aDeLaRation
           ? `${barn.name} — le troupeau dépérit, des bêtes vont mourir`
           : `${barn.name} — le troupeau dépérit, et il ne reste rien à distribuer`,
@@ -132,7 +153,7 @@ export function herdAlerts(barns: BarnSnapshot[], stocks: FarmStocks = {}): Herd
         ...base,
         id: `${herd.id}:feed`,
         level: "warn",
-        icon: "🌾",
+        icon: "ration",
         text: !aDeLaRation
           ? `${barn.name} — plus rien en réserve pour la ration`
           : jours < 1
@@ -148,7 +169,7 @@ export function herdAlerts(barns: BarnSnapshot[], stocks: FarmStocks = {}): Herd
         ...base,
         id: `${herd.id}:cold`,
         level: "danger",
-        icon: herd.tempC !== undefined && herd.tempC < 5 ? "❄️" : "🔥",
+        icon: herd.tempC !== undefined && herd.tempC < 5 ? "froid" : "chaud",
         text: `${barn.name} — ${herd.tempC ?? "?"} °C, les bêtes souffrent`,
         action: herd.housing === "OUTSIDE" ? { kind: "SHELTER" } : { kind: "GRAZE" },
         actionLabel: herd.housing === "OUTSIDE" ? "Rentrer" : "Sortir",
@@ -158,7 +179,7 @@ export function herdAlerts(barns: BarnSnapshot[], stocks: FarmStocks = {}): Herd
         ...base,
         id: `${herd.id}:chill`,
         level: "warn",
-        icon: "🌡️",
+        icon: herd.tempC !== undefined && herd.tempC < 5 ? "froid" : "chaud",
         text: `${barn.name} — ${herd.tempC ?? "?"} °C dehors, à surveiller`,
         action: { kind: "SHELTER" },
         actionLabel: "Rentrer",
@@ -171,7 +192,7 @@ export function herdAlerts(barns: BarnSnapshot[], stocks: FarmStocks = {}): Herd
         ...base,
         id: `${herd.id}:grass`,
         level: "warn",
-        icon: "🌱",
+        icon: "pre",
         text: `${barn.name} — pré épuisé, le troupeau puise dans le stock`,
         action: { kind: "SHELTER" },
         actionLabel: "Rentrer",
@@ -184,7 +205,7 @@ export function herdAlerts(barns: BarnSnapshot[], stocks: FarmStocks = {}): Herd
         ...base,
         id: `${herd.id}:bedding`,
         level: "warn",
-        icon: "🧹",
+        icon: "litiere",
         // Même règle que pour la ration : sans paille en réserve, « Pailler »
         // étale du vide. On dit alors ce qui manque, et où le trouver.
         text: aDeLaPaille
@@ -202,7 +223,7 @@ export function herdAlerts(barns: BarnSnapshot[], stocks: FarmStocks = {}): Herd
         ...base,
         id: `${herd.id}:manure`,
         level: "warn",
-        icon: "💩",
+        icon: "fosse",
         text: `${barn.name} — fosse pleine, l'odeur pèse sur le troupeau`,
         action: { kind: "MANURE" },
         actionLabel: "Épandre",
@@ -215,7 +236,7 @@ export function herdAlerts(barns: BarnSnapshot[], stocks: FarmStocks = {}): Herd
         ...base,
         id: `${herd.id}:collect`,
         level: "info",
-        icon: herd.canMilk ? "🥛" : herd.canCollectEggs ? "🥚" : "🧶",
+        icon: "recolte",
         text: `${barn.name} — ${herd.canMilk ? "traite" : herd.canCollectEggs ? "œufs" : "tonte"} prête`,
         action: { kind: "COLLECT" },
         actionLabel: herd.canMilk ? "Traire" : herd.canCollectEggs ? "Ramasser" : "Tondre",

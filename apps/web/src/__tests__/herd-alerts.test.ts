@@ -75,13 +75,13 @@ describe("alertes d'élevage", () => {
     const a = herdAlerts([troupeau({ housing: "OUTSIDE", thermalAlert: "danger", tempC: -8 })]);
     expect(a[0].action.kind).toBe("SHELTER");
     expect(a[0].actionLabel).toBe("Rentrer");
-    expect(a[0].icon).toBe("❄️");
+    expect(a[0].icon).toBe("froid");
   });
 
   it("propose de sortir quand c'est le bâtiment qui étouffe", () => {
     const a = herdAlerts([troupeau({ housing: "INSIDE", thermalAlert: "danger", tempC: 34 })]);
     expect(a[0].action.kind).toBe("GRAZE");
-    expect(a[0].icon).toBe("🔥");
+    expect(a[0].icon).toBe("chaud");
   });
 
   it("signale un pré épuisé, mais seulement aux bêtes qui broutent", () => {

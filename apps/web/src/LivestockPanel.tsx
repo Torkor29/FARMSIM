@@ -5,6 +5,7 @@ import {
   type ReactNode,
 } from "react";
 import { herdAlerts, type HerdAlert } from "./ui/herd-alerts";
+import { AlertIcon } from "./ui/AlertIcon";
 import {
   ANIMAL_ART,
   ANIMAL_GRAZE_ART,
@@ -475,9 +476,7 @@ export function LivestockPanel({
         <ul className="herd-alerts">
           {alertes.map((a) => (
             <li key={a.id} className={`herd-alert-row ${a.level}`}>
-              <span className="herd-alert-icon" aria-hidden="true">
-                {a.icon}
-              </span>
+              <AlertIcon name={a.icon} />
               <span className="herd-alert-text">{a.text}</span>
               <button
                 type="button"
