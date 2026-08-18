@@ -4376,28 +4376,221 @@ button.tiny {
   border-radius: 999px;
   background: inherit;
 }
+/* —— Vitesse des nuages ——
+   Ils mettaient de 190 à 330 secondes à traverser l'écran : à cette allure
+   rien ne bouge, on voit une image fixe. Trois à cinq fois plus vite, le ciel
+   respire — et la vitesse dit quelque chose : un ciel d'automne est un ciel
+   venté, un ciel d'été ne bouge pas d'un cheveu. */
+.season-sky { --cloud-speed: 1; }
+.season-sky[data-season="SPRING"] { --cloud-speed: 0.9; }
+.season-sky[data-season="SUMMER"] { --cloud-speed: 1.7; }
+.season-sky[data-season="AUTUMN"] { --cloud-speed: 0.5; }
+.season-sky[data-season="WINTER"] { --cloud-speed: 1.2; }
+
 .sky-cloud.c1 {
   top: 12%; left: -18%;
   width: 190px; height: 46px;
-  animation: cloud-drift 190s linear infinite;
+  animation: cloud-drift calc(58s * var(--cloud-speed)) linear infinite;
 }
 .sky-cloud.c1::before { top: -18px; left: 34px; width: 84px; height: 62px; }
 .sky-cloud.c1::after { top: -10px; right: 30px; width: 62px; height: 48px; }
 .sky-cloud.c2 {
   top: 26%; left: -30%;
   width: 140px; height: 36px;
-  animation: cloud-drift 260s linear infinite 40s;
+  animation: cloud-drift calc(82s * var(--cloud-speed)) linear infinite -20s;
 }
 .sky-cloud.c2::before { top: -14px; left: 26px; width: 66px; height: 48px; }
 .sky-cloud.c3 {
   top: 5%; left: -45%;
   width: 230px; height: 52px;
-  animation: cloud-drift 330s linear infinite 110s;
+  animation: cloud-drift calc(105s * var(--cloud-speed)) linear infinite -50s;
 }
 .sky-cloud.c3::before { top: -20px; left: 60px; width: 96px; height: 70px; }
 @keyframes cloud-drift {
   from { transform: translateX(0); }
   to { transform: translateX(180vw); }
+}
+
+/* ==========================================================================
+   LE MOTIF DE CHAQUE SAISON
+   ==========================================================================
+
+   Quatre palettes ne suffisaient pas à distinguer les saisons : le printemps
+   et l'hiver ont tous deux un ciel bleu clair, et une teinte demande qu'on
+   compare — or on ne compare pas, on regarde. Un **mouvement**, lui, se
+   reconnaît sans réfléchir : ce qui monte n'est pas ce qui tombe.
+
+   Chaque motif tient en deux nappes tuilées qui glissent à des vitesses
+   différentes. Deux nœuds pour cinquante pétales : la profondeur vient du
+   décalage de vitesse, pas du nombre d'éléments. Seules les quelques pièces
+   de premier plan sont de vrais éléments, parce qu'une nappe ne sait pas
+   faire tourner une feuille sur elle-même.
+
+   Rien d'autre que `transform` et `opacity` n'est animé — les deux seules
+   propriétés que le compositeur traite sans repasser par la mise en page.
+   ========================================================================== */
+
+.sky-drift {
+  position: absolute;
+  /* Débordement volontaire : la nappe se répète, elle doit pouvoir sortir du
+     cadre des deux côtés sans qu'on voie sa couture. */
+  inset: -60% -40%;
+  background-repeat: repeat;
+  will-change: transform;
+}
+
+/* —— Printemps : ce qui monte ——
+   Pétales et graines portés par l'air tiède. La diagonale ascendante est la
+   signature : rien d'autre dans le jeu ne va vers le haut. */
+.sky-drift.petals {
+  background-image:
+    radial-gradient(circle at 30% 30%, rgba(255, 233, 242, 0.95) 0 2.5px, transparent 3px),
+    radial-gradient(circle at 70% 65%, rgba(255, 255, 255, 0.8) 0 2px, transparent 2.5px);
+  background-size: 120px 150px, 190px 210px;
+}
+.sky-drift.petals.lente { animation: drift-up 26s linear infinite; opacity: 0.75; }
+.sky-drift.petals.vive {
+  animation: drift-up 15s linear infinite -7s;
+  opacity: 0.5;
+  transform: scale(1.4);
+}
+@keyframes drift-up {
+  from { translate: 0 0; }
+  to { translate: 140px -210px; }
+}
+
+/* Deux oiseaux qui traversent : ils reviennent au printemps, et c'est la
+   seule chose du ciel qui ait une intention. */
+.sky-bird {
+  position: absolute;
+  width: 16px;
+  height: 8px;
+  border-top: 2px solid rgba(60, 78, 92, 0.55);
+  border-radius: 50% 50% 0 0 / 100% 100% 0 0;
+  transform: rotate(-4deg);
+}
+.sky-bird::after {
+  content: "";
+  position: absolute;
+  inset: -2px -13px auto auto;
+  width: 14px;
+  height: 7px;
+  border-top: 2px solid rgba(60, 78, 92, 0.42);
+  border-radius: 50% 50% 0 0 / 100% 100% 0 0;
+}
+.sky-bird.b1 { top: 18%; left: -8%; animation: bird-cross 34s linear infinite; }
+.sky-bird.b2 { top: 27%; left: -14%; animation: bird-cross 46s linear infinite -16s; }
+@keyframes bird-cross {
+  from { translate: 0 0; }
+  to { translate: 130vw -6vh; }
+}
+
+/* —— Été : ce qui tremble ——
+   Pas une particule. Un ciel d'été est vide, et c'est précisément ce qui le
+   désigne : il ne reste que la chaleur au ras de l'horizon et l'éclat du
+   soleil qui bat. */
+.sky-heat {
+  position: absolute;
+  inset: auto 0 0;
+  height: 34%;
+  background: linear-gradient(180deg, transparent, rgba(255, 232, 168, 0.5));
+  filter: blur(6px);
+  animation: heat-shimmer 5.5s ease-in-out infinite;
+  will-change: transform;
+}
+@keyframes heat-shimmer {
+  0%, 100% { transform: translateX(-1.2%) scaleY(1); }
+  50% { transform: translateX(1.2%) scaleY(1.05); }
+}
+.sky-glare {
+  position: absolute;
+  top: 12%;
+  right: 26%;
+  width: clamp(56px, 7vw, 104px);
+  aspect-ratio: 1;
+  border-radius: 50%;
+  background: radial-gradient(circle, var(--sky-sun-glow) 0%, transparent 70%);
+  animation: glare-pulse 4.5s ease-in-out infinite;
+  will-change: transform, opacity;
+}
+@keyframes glare-pulse {
+  0%, 100% { transform: scale(1.6); opacity: 0.55; }
+  50% { transform: scale(2.5); opacity: 0.9; }
+}
+
+/* —— Automne : ce qui tombe de travers ——
+   Le vent pousse vers la gauche pendant que les feuilles descendent. La
+   diagonale est l'exact contraire de celle du printemps. */
+.sky-drift.leaves {
+  background-image:
+    radial-gradient(ellipse 3px 2px at 25% 30%, rgba(198, 108, 46, 0.9) 0 100%, transparent 100%),
+    radial-gradient(ellipse 2.5px 2px at 68% 70%, rgba(226, 160, 72, 0.85) 0 100%, transparent 100%);
+  background-size: 110px 130px, 170px 190px;
+}
+.sky-drift.leaves.lente { animation: drift-down 17s linear infinite; opacity: 0.85; }
+.sky-drift.leaves.vive {
+  animation: drift-down 10s linear infinite -4s;
+  opacity: 0.55;
+  transform: scale(1.5);
+}
+@keyframes drift-down {
+  from { translate: 0 0; }
+  to { translate: -120px 190px; }
+}
+
+/* Trois feuilles de premier plan, qui tournoient. Une nappe tuilée ne sait
+   pas faire ça, et c'est ce mouvement-là qu'on identifie comme une feuille. */
+.sky-leaf {
+  position: absolute;
+  width: 11px;
+  height: 8px;
+  border-radius: 60% 10% 60% 10%;
+  background: #c8702f;
+  will-change: transform;
+}
+.sky-leaf.f1 { top: -6%; left: 24%; background: #d8863a; animation: leaf-fall 13s linear infinite; }
+.sky-leaf.f2 { top: -8%; left: 58%; background: #b45f2a; animation: leaf-fall 17s linear infinite -6s; }
+.sky-leaf.f3 { top: -5%; left: 78%; background: #e0a552; animation: leaf-fall 11s linear infinite -9s; }
+@keyframes leaf-fall {
+  from { transform: translate(0, 0) rotate(0deg); opacity: 0; }
+  8% { opacity: 0.9; }
+  92% { opacity: 0.9; }
+  to { transform: translate(-22vw, 112vh) rotate(880deg); opacity: 0; }
+}
+
+/* —— Hiver : ce qui descend tout droit ——
+   La poudreuse d'un jour sans vent. Elle tombe même par beau temps : c'est la
+   saison, pas la météo — la neige d'averse, elle, reste dans `.sky-precip`. */
+.sky-drift.flakes {
+  background-image:
+    radial-gradient(circle at 40% 25%, rgba(255, 255, 255, 0.95) 0 2px, transparent 2.5px),
+    radial-gradient(circle at 75% 70%, rgba(255, 255, 255, 0.7) 0 1.5px, transparent 2px);
+  background-size: 130px 160px, 200px 230px;
+}
+.sky-drift.flakes.lente { animation: drift-straight 22s linear infinite; opacity: 0.7; }
+.sky-drift.flakes.vive {
+  animation: drift-straight 13s linear infinite -5s;
+  opacity: 0.45;
+  transform: scale(1.4);
+}
+@keyframes drift-straight {
+  from { translate: 0 0; }
+  to { translate: -18px 200px; }
+}
+
+/* Le givre au ras du sol : une brume froide qui stagne, l'inverse exact de
+   la chaleur d'été qui monte. */
+.sky-frost {
+  position: absolute;
+  inset: auto 0 0;
+  height: 28%;
+  background: linear-gradient(180deg, transparent, rgba(226, 236, 246, 0.65));
+  animation: frost-breathe 11s ease-in-out infinite;
+  will-change: opacity;
+}
+@keyframes frost-breathe {
+  0%, 100% { opacity: 0.7; }
+  50% { opacity: 1; }
 }
 
 /* —— Précipitations ——
@@ -4442,6 +4635,12 @@ button.tiny {
 
 @media (prefers-reduced-motion: reduce) {
   .sky-cloud,
+  .sky-drift,
+  .sky-bird,
+  .sky-heat,
+  .sky-glare,
+  .sky-leaf,
+  .sky-frost,
   .sky-precip,
   .season-layer.entering,
   .season-layer.leaving {

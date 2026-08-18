@@ -6,15 +6,25 @@
  * et déjà écrite dans le rail (« Saison · Été »), mais rien ne la donnait à
  * *voir*. On lisait la saison, on ne la sentait jamais.
  *
- * Trois choses ici, et rien de plus :
+ * Quatre choses ici, et rien de plus :
  *
  * - une palette par saison, du ciel au sol ;
  * - un astre et quelques nuages, qui changent d'allure avec elle ;
+ * - **un motif propre à chaque saison** : pétales qui montent, chaleur qui
+ *   tremble, feuilles qui tombent, poudreuse qui descend ;
  * - une transition d'une seconde et demie au changement de saison, pour que
  *   le passage se remarque sans interrompre la partie.
  *
- * Tout est en CSS et en SVG : aucun canevas de plus à peindre, aucun coût sur
- * la scène 3D qui, elle, occupe déjà le processeur graphique.
+ * Le motif est venu après coup, et c'est lui qui règle vraiment la question.
+ * Quatre palettes ne suffisaient pas : le printemps et l'hiver ont tous deux
+ * un ciel bleu clair, et la teinte seule demande qu'on compare — or on ne
+ * compare pas, on regarde. Un mouvement, lui, se reconnaît sans réfléchir :
+ * ce qui monte n'est pas ce qui tombe.
+ *
+ * Tout est en CSS : aucun canevas de plus à peindre, aucun coût sur la scène
+ * 3D qui, elle, occupe déjà le processeur graphique. Les motifs n'animent que
+ * `transform` et `opacity` — les deux seules propriétés que le compositeur
+ * traite sans repasser par la mise en page.
  */
 
 import { useEffect, useRef, useState } from "react";
@@ -44,13 +54,15 @@ type Palette = {
  */
 const PALETTES: Record<Season, Palette> = {
   SPRING: {
-    skyTop: "#9fd8ef",
-    skyBottom: "#e6f6d8",
-    haze: "#cdefb4",
-    sun: "#ffe9a8",
-    sunGlow: "rgba(255, 233, 168, 0.55)",
+    /* Un ciel lavé de pluie et un horizon vert tendre : le printemps se
+       reconnaît par le bas, là où tout reverdit. */
+    skyTop: "#7ec8e8",
+    skyBottom: "#dcf3bf",
+    haze: "#b6e893",
+    sun: "#fff0b4",
+    sunGlow: "rgba(255, 240, 180, 0.6)",
     cloud: "#ffffff",
-    cloudOpacity: 0.75,
+    cloudOpacity: 0.8,
   },
   SUMMER: {
     // Un bleu franc, saturé, et une brume dorée sur l'horizon : c'est ce
@@ -77,10 +89,16 @@ const PALETTES: Record<Season, Palette> = {
        et l'été ne se distinguaient « pas des masses », et c'était vrai — huit
        points de teinte les séparaient. L'hiver descend maintenant dans les
        gris-bleus froids, l'été monte dans les bleus saturés, et l'écart se
-       voit sans qu'on ait à le chercher. */
-    skyTop: "#8ea3b8",
-    skyBottom: "#dfe8f0",
-    haze: "#cfdae6",
+       voit sans qu'on ait à le chercher.
+
+       Deuxième passe : la couleur seule ne suffisait toujours pas, parce que
+       le printemps et l'hiver partagent un ciel bleu clair. Chaque saison a
+       donc reçu un **motif** — pétales, chaleur, feuilles, neige — et c'est
+       lui qu'on reconnaît avant la teinte. L'hiver vire ici au gris violacé,
+       qui n'appartient qu'à lui. */
+    skyTop: "#8497ad",
+    skyBottom: "#e2e6ee",
+    haze: "#c9d2e0",
     // Un soleil d'hiver est bas et pâle : il éclaire, il ne chauffe pas.
     sun: "#f4f7fb",
     sunGlow: "rgba(244, 247, 251, 0.4)",
@@ -147,11 +165,68 @@ export function SeasonSky({ season, weather }: Props) {
         <span className="sky-cloud c1" />
         <span className="sky-cloud c2" />
         <span className="sky-cloud c3" />
+        <Motif season={current} />
       </div>
       {/* Précipitations : elles suivent la météo, pas le calendrier. */}
       {neige && <div className="sky-precip snow" />}
       {pluie && <div className="sky-precip rain" />}
     </div>
+  );
+}
+
+/**
+ * Le motif de la saison.
+ *
+ * Deux nappes tuilées qui glissent à des vitesses différentes suffisent à
+ * donner de la profondeur, pour deux éléments seulement — c'est ce qui permet
+ * de faire tomber cinquante feuilles sans poser cinquante nœuds. Les quelques
+ * pièces « de premier plan » qui s'y ajoutent, elles, tournent sur
+ * elles-mêmes : une nappe ne sait pas faire tourbillonner une feuille.
+ */
+function Motif({ season }: { season: Season }) {
+  if (season === "SPRING") {
+    return (
+      <>
+        {/* Ce qui monte : pétales et graines portés par l'air tiède. */}
+        <span className="sky-drift petals lente" />
+        <span className="sky-drift petals vive" />
+        <span className="sky-bird b1" />
+        <span className="sky-bird b2" />
+      </>
+    );
+  }
+  if (season === "SUMMER") {
+    return (
+      <>
+        {/* Ce qui tremble : l'air chaud au ras de l'horizon, et l'éclat du
+            soleil qui bat lentement. Aucune particule — un ciel d'été est
+            vide, c'est justement ce qui le désigne. */}
+        <span className="sky-heat" />
+        <span className="sky-glare" />
+      </>
+    );
+  }
+  if (season === "AUTUMN") {
+    return (
+      <>
+        {/* Ce qui tombe, et de travers : le vent d'automne pousse vers la
+            gauche pendant que les feuilles descendent. */}
+        <span className="sky-drift leaves lente" />
+        <span className="sky-drift leaves vive" />
+        <span className="sky-leaf f1" />
+        <span className="sky-leaf f2" />
+        <span className="sky-leaf f3" />
+      </>
+    );
+  }
+  return (
+    <>
+      {/* Ce qui descend tout droit : la poudreuse d'un jour sans vent. Elle
+          existe même par beau temps — c'est l'hiver, pas la météo. */}
+      <span className="sky-drift flakes lente" />
+      <span className="sky-drift flakes vive" />
+      <span className="sky-frost" />
+    </>
   );
 }
 
