@@ -764,7 +764,11 @@ export function LivestockPanel({
                   title="Les bêtes restent à l’étable : elles mangent la ration, à l’abri du temps."
                   onClick={() => onHousing(herd.id, "INSIDE")}
                 >
-                  Dedans
+                  {/* « Dedans » / « Dehors » nommaient un état, pas un geste :
+                      devant deux moitiés dont l'une est allumée, on ne sait pas
+                      si l'on lit où sont les bêtes ou ce qui va leur arriver.
+                      Un bouton dit ce qu'il fait. */}
+                  Rentrer les bêtes
                 </button>
                 {/* On se cale sur `canLiveOutside`, pas sur `canGraze` : le
                     serveur n'exige qu'un enclos pour changer de lieu de vie.
@@ -774,7 +778,7 @@ export function LivestockPanel({
                 <Geste
                   busy={busy}
                   className={`housing-side${herd.housing === "OUTSIDE" ? " on" : ""}`}
-                  label="Dehors"
+                  label="Sortir les bêtes"
                   blocage={
                     (barn.canLiveOutside ?? barn.canGraze)
                       ? null

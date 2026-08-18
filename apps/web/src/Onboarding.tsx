@@ -13,7 +13,6 @@ import {
   type WeatherState,
 } from "@farmsim/shared";
 import { GlobeView, type GlobeContinent } from "./GlobeView";
-import { CharacterCreator } from "./CharacterCreator";
 import { LowPolyCharacter } from "./LowPolyCharacter";
 
 export type WorldContinent = GlobeContinent & {
@@ -84,11 +83,22 @@ type Props = {
   err: string | null;
 };
 
-type Step = 0 | 1 | 2 | 3 | 4;
+type Step = 0 | 1 | 2 | 3;
 
+/**
+ * Quatre étapes, plus cinq.
+ *
+ * « Votre personnage » proposait de composer un avatar pièce par pièce —
+ * chapeau, peau, visage, vêtements. On le voit de très loin, en vue
+ * isométrique, haut comme une case : rien de ce qu'on y choisissait ne se
+ * distinguait en jeu. C'était une étape de plus entre le joueur et sa ferme,
+ * pour un résultat invisible.
+ *
+ * Le personnage existe toujours et se dessine toujours : son apparence
+ * découle du métier choisi, qui, lui, veut dire quelque chose.
+ */
 const STEP_TITLES = [
   "Votre métier",
-  "Votre personnage",
   "Votre continent",
   "Votre terre",
   "Confirmation",
@@ -114,8 +124,14 @@ export function Onboarding({
 }: Props) {
   const [step, setStep] = useState<Step>(0);
   const [spe, setSpe] = useState<Specialization | null>(null);
-  const [appearance, setAppearance] = useState<CharacterAppearance>(() =>
-    defaultAppearance("CEREALIER"),
+  /**
+   * L'apparence découle du métier, elle ne se compose plus.
+   * Le personnage reste dessiné en jeu ; c'est la page de personnalisation qui
+   * a disparu, faute d'être visible à l'échelle où on le regarde.
+   */
+  const appearance = useMemo<CharacterAppearance>(
+    () => defaultAppearance(spe ?? "CEREALIER"),
+    [spe],
   );
   const [continentCode, setContinentCode] = useState<string | null>(null);
   const [regionCode, setRegionCode] = useState<string | null>(null);
@@ -154,7 +170,7 @@ export function Onboarding({
         <div>
           <h1 className="onb-title">Installation de votre ferme</h1>
           <p className="onb-sub">
-            Bienvenue {playerName} — cinq étapes et vous êtes aux commandes.
+            Bienvenue {playerName} — quatre étapes et vous êtes aux commandes.
           </p>
         </div>
       </header>
@@ -188,10 +204,7 @@ export function Onboarding({
                   key={code}
                   type="button"
                   className={`class-card ${active ? "on" : ""}`}
-                  onClick={() => {
-                    setSpe(code);
-                    setAppearance(defaultAppearance(code));
-                  }}
+                  onClick={() => setSpe(code)}
                   aria-pressed={active}
                 >
                   {/*
@@ -236,25 +249,7 @@ export function Onboarding({
         </section>
       )}
 
-      {step === 1 && spe && (
-        <section className="onb-body">
-          <p className="onb-lead">
-            C’est vous qu’on verra au champ, y compris chez le voisin si vous l’aidez. Chapeau,
-            peau, visage, vêtements : tout est en 3D, pièce par pièce.
-          </p>
-          <CharacterCreator spec={spe} appearance={appearance} onChange={setAppearance} />
-          <div className="onb-nav">
-            <button type="button" className="btn-ghost" onClick={() => goTo(0)}>
-              Retour
-            </button>
-            <button type="button" className="btn-primary big" onClick={() => goTo(2)}>
-              Continuer
-            </button>
-          </div>
-        </section>
-      )}
-
-      {step === 2 && (
+      {step === 1 && (
         <section className="onb-body">
           <p className="onb-lead">
             Faites tourner le globe et choisissez votre continent. Les saisons de
@@ -326,14 +321,14 @@ export function Onboarding({
             <p className="continent-desc">{continent.description}</p>
           )}
           <div className="onb-nav">
-            <button type="button" className="btn-ghost" onClick={() => goTo(1)}>
+            <button type="button" className="btn-ghost" onClick={() => goTo(0)}>
               Retour
             </button>
             <button
               type="button"
               className="btn-primary big"
               disabled={!continentCode}
-              onClick={() => goTo(3)}
+              onClick={() => goTo(2)}
             >
               Voir les régions
             </button>
@@ -341,7 +336,7 @@ export function Onboarding({
         </section>
       )}
 
-      {step === 3 && (
+      {step === 2 && (
         <section className="onb-body">
           <p className="onb-lead">
             Un continent se divise en <strong>régions</strong>, et chaque région est
@@ -493,14 +488,14 @@ export function Onboarding({
             </>
           )}
           <div className="onb-nav">
-            <button type="button" className="btn-ghost" onClick={() => goTo(2)}>
+            <button type="button" className="btn-ghost" onClick={() => goTo(1)}>
               Changer de continent
             </button>
             <button
               type="button"
               className="btn-primary big"
               disabled={!parcelId}
-              onClick={() => goTo(4)}
+              onClick={() => goTo(3)}
             >
               Choisir cette parcelle
             </button>
@@ -508,7 +503,7 @@ export function Onboarding({
         </section>
       )}
 
-      {step === 4 && spe && parcel && region && detail && (
+      {step === 3 && spe && parcel && region && detail && (
         <section className="onb-body">
           <div className="recap">
             <div className="recap-char">
@@ -564,7 +559,7 @@ export function Onboarding({
             </div>
           </div>
           <div className="onb-nav">
-            <button type="button" className="btn-ghost" onClick={() => goTo(3)}>
+            <button type="button" className="btn-ghost" onClick={() => goTo(2)}>
               Retour
             </button>
             <button
