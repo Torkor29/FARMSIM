@@ -1,0 +1,11 @@
+-- Trois types de bâtiment de plus.
+--
+-- SQLite n'a pas de type énuméré : Prisma les valide côté client et stocke du
+-- texte. Il n'y a donc **aucune structure à changer** ici — la colonne
+-- `Building.type` accepte déjà ces valeurs. Cette migration existe pour que
+-- l'historique reste lisible et que `migrate deploy` garde une trace du
+-- moment où le catalogue s'est élargi.
+--
+-- Rien à exécuter, donc : une requête neutre plutôt qu'un fichier vide, que
+-- certains outils refusent.
+SELECT 1;

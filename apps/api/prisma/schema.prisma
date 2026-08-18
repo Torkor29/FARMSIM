@@ -63,6 +63,11 @@ enum BuildingType {
   HEN_YARD
   COLD_ROOM
   BUNKER_SILO
+  /// Petits ouvrages : ils ne stockent rien, ils branchent un système sur un
+  /// autre. Voir `BUILDING_DEFS` côté domaine.
+  SOLAR_PANELS
+  WIND_TURBINE
+  BEEHIVE
 }
 
 enum CellKind {

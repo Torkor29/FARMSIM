@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 96 96" width="96" height="96">
+  <!-- Éolienne : un mât, trois pales, un socle posé sur l'herbe. -->
+  <g fill="none" fill-rule="evenodd">
+    <ellipse cx="48" cy="82" rx="26" ry="9" fill="#8fbf6a"/>
+    <path d="M45 80 51 80 49 32 47 32Z" fill="#e8edf2" stroke="#b6c2cc" stroke-width="1.5" stroke-linejoin="round"/>
+    <g stroke="#dfe7ee" stroke-width="6" stroke-linecap="round">
+      <path d="M48 30 48 8"/>
+      <path d="M48 30 67 42"/>
+      <path d="M48 30 29 42"/>
+    </g>
+    <g stroke="#b6c2cc" stroke-width="1.5">
+      <path d="M48 30 48 8"/>
+      <path d="M48 30 67 42"/>
+      <path d="M48 30 29 42"/>
+    </g>
+    <circle cx="48" cy="30" r="5" fill="#8ea3b8"/>
+    <path d="M38 84h20" stroke="#6b7a52" stroke-width="3" stroke-linecap="round"/>
+  </g>
+</svg>

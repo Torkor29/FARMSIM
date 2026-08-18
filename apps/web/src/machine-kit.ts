@@ -475,6 +475,13 @@ export type Role =
   /** Extracteur de toiture, girouette : tourne doucement, sans fin */
   | "vane"
   /**
+   * Rotor d'éolienne : tourne autour de l'axe **z**, pas de l'axe vertical.
+   *
+   * `vane` ne convenait pas — un extracteur de toiture tourne à plat, une
+   * hélice face au vent. Deux mouvements différents, deux rôles.
+   */
+  | "rotor"
+  /**
    * Seuil de bâtiment : nœud vide d'où sortent les bêtes. La vue s'en sert
    * comme point de passage — sans lui, un troupeau traverse le mur.
    */

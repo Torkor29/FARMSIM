@@ -111,7 +111,14 @@ export type BuildingType =
   | "PIG_YARD"
   | "HEN_YARD"
   | "COLD_ROOM"
-  | "BUNKER_SILO";
+  | "BUNKER_SILO"
+  /* —— Petits ouvrages ——
+     Ils ne stockent rien et n'abritent personne : ils branchent un système sur
+     un autre, pour un coût modeste. Aucun n'est obligatoire — une ferme sans
+     eux doit rester viable —, ce sont des paris de rentabilité. */
+  | "SOLAR_PANELS"
+  | "WIND_TURBINE"
+  | "BEEHIVE";
 
 export type CellKind = "EMPTY" | "CROP" | "BUILDING" | "VEHICLE";
 
@@ -382,6 +389,30 @@ export type BuildingDef = {
   /** Soft dryer — bonus réduction humidité au séchage `[GD]` */
   softDryer?: boolean;
   /**
+   * Part des frais d'entretien des machines évitée `[GD]`.
+   *
+   * Distinct de `repairDiscount`, qui porte sur les réparations : celui-ci
+   * couvre le courant — graissage, nettoyage, révision. C'est ce qui donne
+   * une raison d'acheter des panneaux quand on a beaucoup d'engins.
+   */
+  careDiscount?: number;
+  /**
+   * Séchage gratuit et accéléré `[GD]`.
+   *
+   * L'humidité à la récolte ampute la vente ; l'éolienne fait tourner le
+   * séchoir sans facture.
+   */
+  freeDrying?: boolean;
+  /**
+   * Portée de pollinisation, en cases `[GD]`.
+   *
+   * Le seul bonus du jeu qui dépende de **où** l'on pose le bâtiment. C'est
+   * ce qui fait de la disposition de la ferme une question.
+   */
+  pollinationRange?: number;
+  /** Rendement gagné sur les cultures pollinisées à portée `[GD]` */
+  pollinationBonus?: number;
+  /**
    * Part de la dégradation évitée sur les denrées périssables `[GD]`.
    *
    * Le lait perdait douze pour cent par cycle sans qu'aucun bâtiment n'y
@@ -557,6 +588,53 @@ export const BUILDING_DEFS: Record<BuildingType, BuildingDef> = {
     description: "Tasse l’ensilage et la paille. Sans lui, le fourrage d’hiver n’a pas de place.",
     storageHay: 50,
   },
+
+  /* ------------------------------------------------------------------ */
+  /* Petits ouvrages                                                     */
+  /* ------------------------------------------------------------------ */
+  /*
+   * Au-delà de quatre ou cinq bâtiments, construire cessait d'être une
+   * décision pour devenir une liste de courses : chacun débloquait une
+   * capacité, on les posait tous dans le même ordre. Ces trois-là ne
+   * débloquent rien. Ils branchent un système existant sur un autre, pour un
+   * coût modeste, et il faut calculer s'ils se rentabilisent.
+   *
+   * Trois règles qu'ils respectent :
+   *  - aucun n'est obligatoire, une ferme sans eux reste viable ;
+   *  - leur effet se lit dans le Bureau, poste par poste, donc se vérifie ;
+   *  - la ruche a une portée, donc un emplacement — le seul bâtiment du jeu
+   *    où *où* l'on pose compte.
+   */
+  SOLAR_PANELS: {
+    type: "SOLAR_PANELS",
+    name: "Panneaux solaires",
+    w: 2,
+    h: 2,
+    cost: 1500,
+    description:
+      "Le courant de la ferme. Graissage, nettoyage et révision coûtent 20 % de moins.",
+    careDiscount: 0.2,
+  },
+  WIND_TURBINE: {
+    type: "WIND_TURBINE",
+    name: "Éolienne",
+    w: 1,
+    h: 1,
+    cost: 2200,
+    description: "Fait tourner le séchoir sans facture. Le grain sèche gratuitement, et plus vite.",
+    freeDrying: true,
+  },
+  BEEHIVE: {
+    type: "BEEHIVE",
+    name: "Ruches",
+    w: 1,
+    h: 1,
+    cost: 800,
+    description:
+      "Pollinise colza et pois dans un rayon de quatre cases : +8 % de rendement. Placez-les au bon endroit.",
+    pollinationRange: 4,
+    pollinationBonus: 0.08,
+  },
 };
 
 /* ------------------------------------------------------------------ */
@@ -641,6 +719,12 @@ export const BUILDING_ART: Record<BuildingType, string> = {
   HEN_YARD: "/assets/buildings/pig-yard.webp",
   COLD_ROOM: "/assets/buildings/workshop.webp",
   BUNKER_SILO: "/assets/buildings/hay-barn.webp",
+  // Les trois petits ouvrages sont dessinés, pas photographiés : ils n'ont pas
+  // d'illustration isométrique, et un rendu vectoriel se lit mieux à leur
+  // taille — une ruche fait une case.
+  SOLAR_PANELS: "/assets/buildings/solar-panels.svg",
+  WIND_TURBINE: "/assets/buildings/wind-turbine.svg",
+  BEEHIVE: "/assets/buildings/beehive.svg",
 };
 
 export const DEFAULT_GRID = { w: 12, h: 12 } as const;

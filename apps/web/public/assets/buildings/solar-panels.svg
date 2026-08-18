@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 96 96" width="96" height="96">
+  <!-- Panneaux solaires : deux rangées inclinées sur leur bâti, vues en
+       isométrie comme le reste des bâtiments du catalogue. -->
+  <g fill="none" fill-rule="evenodd">
+    <path d="M8 62 48 84 88 62 48 40Z" fill="#8fbf6a"/>
+    <path d="M14 58 46 76 78 58 46 40Z" fill="#3d4a63"/>
+    <path d="M14 58 46 76 78 58 46 40Z" stroke="#26314a" stroke-width="2" stroke-linejoin="round"/>
+    <path d="M25 52 57 70M36 46 68 64M30 64 62 46" stroke="#5b6d90" stroke-width="2"/>
+    <path d="M46 76 46 84M30 68 30 74M62 68 62 74" stroke="#6b7a52" stroke-width="3" stroke-linecap="round"/>
+    <circle cx="72" cy="26" r="9" fill="#ffd45e"/>
+    <path d="M72 10v5M86 26h-5M62 16l3 3M82 16l-3 3" stroke="#ffd45e" stroke-width="3" stroke-linecap="round"/>
+  </g>
+</svg>

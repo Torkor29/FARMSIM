@@ -957,6 +957,43 @@ async function quoteParcel(
   };
 }
 
+/**
+ * Le coup de pouce des ruches sur une case, s'il y en a un.
+ *
+ * C'est le seul bonus du jeu qui dépende de **où** l'on a posé le bâtiment,
+ * et c'est tout l'intérêt : il donne une raison de réfléchir à la disposition
+ * de la ferme au lieu de poser les ouvrages n'importe où.
+ *
+ * Il ne porte que sur les cultures entomophiles — colza et pois. Une ruche
+ * n'aide pas un blé, qui se pollinise au vent ; prétendre le contraire ferait
+ * de la ruche un bonus universel, donc un achat évident.
+ *
+ * La distance se mesure de centre à centre en cases, en diagonale comprise :
+ * un cercle, pas un carré, sinon les coins porteraient plus loin que les
+ * côtés sans qu'on comprenne pourquoi.
+ */
+const POLLINATED: ReadonlySet<string> = new Set(["RAPE", "PEA"]);
+
+function pollinationBonusAt(
+  buildings: { type: string; originX: number; originY: number }[],
+  x: number,
+  y: number,
+  crop: string | null | undefined,
+): number {
+  if (!crop || !POLLINATED.has(crop)) return 0;
+  let best = 0;
+  for (const b of buildings) {
+    const def = BUILDING_DEFS[b.type as SharedBuildingType];
+    const portee = def?.pollinationRange ?? 0;
+    if (portee <= 0) continue;
+    const cx = b.originX + def.w / 2;
+    const cy = b.originY + def.h / 2;
+    const d = Math.hypot(x + 0.5 - cx, y + 0.5 - cy);
+    if (d <= portee) best = Math.max(best, def.pollinationBonus ?? 0);
+  }
+  return best;
+}
+
 async function getFarmBonuses(farmId: string) {
   const buildings = await prisma.building.findMany({
     where: { parcel: { farmId } },
@@ -971,6 +1008,9 @@ async function getFarmBonuses(farmId: string) {
   let xpBonus = 0;
   let softDryer = false;
   let spoilageSlow = 0;
+  /** Petits ouvrages : ils ne stockent rien, ils allègent ou accélèrent. */
+  let careDiscount = 0;
+  let freeDrying = false;
   for (const b of buildings) {
     if (!BUILDING_DEFS[b.type as SharedBuildingType]) continue;
     const stats = buildingStatsAtLevel(b.type as SharedBuildingType, b.level);
@@ -984,6 +1024,8 @@ async function getFarmBonuses(farmId: string) {
     xpBonus += stats.xpBonus ?? 0;
     spoilageSlow += stats.spoilageSlow ?? 0;
     if (stats.softDryer) softDryer = true;
+    careDiscount += BUILDING_DEFS[b.type as SharedBuildingType].careDiscount ?? 0;
+    if (BUILDING_DEFS[b.type as SharedBuildingType].freeDrying) freeDrying = true;
   }
   return {
     yieldBonus: Math.min(0.1, yieldBonus),
@@ -997,6 +1039,20 @@ async function getFarmBonuses(farmId: string) {
     // Plusieurs chambres aident, mais on ne conserve jamais indéfiniment.
     spoilageSlow: Math.min(SPOILAGE_SLOW_CAP, spoilageSlow),
     softDryer,
+    // Deux champs de panneaux aident, mais l'entretien n'est jamais gratuit :
+    // sans plafond, six ouvrages payaient les révisions à la place du joueur.
+    careDiscount: Math.min(0.45, careDiscount),
+    freeDrying,
+    /**
+     * Les ruches, avec leur position.
+     *
+     * Elles voyagent avec les bonus parce qu'elles en sont un — simplement un
+     * bonus qui dépend de l'endroit. Les remonter ici évite d'ajouter les
+     * bâtiments à quatre requêtes Prisma différentes pour une seule question.
+     */
+    hives: buildings
+      .filter((b) => (BUILDING_DEFS[b.type as SharedBuildingType]?.pollinationRange ?? 0) > 0)
+      .map((b) => ({ type: b.type, originX: b.originX, originY: b.originY })),
   };
 }
 
@@ -1409,7 +1465,9 @@ async function publishFromConsignes() {
             directSeeded: cell.directSeeded,
             rotation: rotationOf(cell),
             specialization: playableSpec(user.specialization),
-            buildingYieldBonus: bonuses.yieldBonus,
+            buildingYieldBonus:
+              bonuses.yieldBonus +
+              pollinationBonusAt(bonuses.hives, cell.x, cell.y, cell.crop),
           });
           if (sim.lost) continue;
           if (sim.ready) ready.push({ x: cell.x, y: cell.y });
@@ -3132,7 +3190,9 @@ app.get("/parcels/:id", async (req, res) => {
         residuePasses: c.residuePasses,
         directSeeded: c.directSeeded,
         rotation: rotationOf(c),
-        buildingYieldBonus: bonuses?.yieldBonus,
+        buildingYieldBonus:
+          (bonuses?.yieldBonus ?? 0) +
+          pollinationBonusAt(bonuses?.hives ?? [], c.x, c.y, c.crop),
         weatherAtHarvest: weather?.state as WeatherState | undefined,
         cutsDone: grassCutsDone(c),
       });
@@ -3768,7 +3828,8 @@ app.post("/parcels/:id/contractor", async (req, res) => {
       fertility: parcel.fertility,
       weedsControlled: cell.weedsControlled,
       fertilizedPasses: Math.min(2, cell.fertilizedPasses) as 0 | 1 | 2,
-      buildingYieldBonus: bonuses.yieldBonus,
+      buildingYieldBonus:
+        bonuses.yieldBonus + pollinationBonusAt(bonuses.hives, cell.x, cell.y, cell.crop),
       weatherAtHarvest: weather?.state as WeatherState | undefined,
       specialization: playableSpec(user.specialization),
       cutsDone: grassCutsDone(cell),
@@ -4589,7 +4650,8 @@ app.post("/parcels/:id/harvest", async (req, res) => {
       directSeeded: cell.directSeeded,
       rotation: rotationOf(cell),
       specialization: playableSpec(farm.user.specialization ?? user?.specialization),
-      buildingYieldBonus: bonuses.yieldBonus,
+      buildingYieldBonus:
+        bonuses.yieldBonus + pollinationBonusAt(bonuses.hives, cell.x, cell.y, cell.crop),
       weatherAtHarvest: weather?.state as WeatherState | undefined,
       cutsDone: grassCutsDone(cell),
     });
@@ -4652,7 +4714,8 @@ app.post("/parcels/:id/harvest", async (req, res) => {
         directSeeded: cell.directSeeded,
         rotation: rotationOf(cell),
         specialization: playableSpec(farm.user.specialization ?? user?.specialization),
-        buildingYieldBonus: bonuses.yieldBonus,
+        buildingYieldBonus:
+          bonuses.yieldBonus + pollinationBonusAt(bonuses.hives, cell.x, cell.y, cell.crop),
         weatherAtHarvest: weather?.state as WeatherState | undefined,
         cutsDone: grassCutsDone(cell),
       });
@@ -5037,22 +5100,17 @@ app.post("/parcels/:id/build", async (req, res) => {
   const body = z
     .object({
       userId: z.string(),
-      type: z.enum([
-        "SILO",
-        "HAY_BARN",
-        "MACHINE_SHED",
-        "CATTLE_BARN",
-        "PIGSTY",
-        "HENHOUSE",
-        "SHEEPFOLD",
-        "WORKSHOP",
-        "FARMHOUSE",
-        "PADDOCK",
-        "PIG_YARD",
-        "HEN_YARD",
-        "COLD_ROOM",
-        "BUNKER_SILO",
-      ]),
+      /**
+       * Les types viennent du catalogue, ils ne sont pas recopiés.
+       *
+       * Cette liste était écrite à la main : une seconde source de vérité à
+       * côté de `BUILDING_DEFS`. Trois bâtiments ajoutés au catalogue, et la
+       * route les refusait avec « Invalid enum value » — le catalogue les
+       * proposait à l'achat, le serveur ne les connaissait pas. C'est la même
+       * faute que la grille de bureau définie à deux endroits : dérivée, elle
+       * ne peut plus diverger.
+       */
+      type: z.enum(Object.keys(BUILDING_DEFS) as [string, ...string[]]),
       x: z.number().int().min(0),
       y: z.number().int().min(0),
       /** Quarts de tour, 0 à 3 */
@@ -5067,7 +5125,8 @@ app.post("/parcels/:id/build", async (req, res) => {
     });
     return;
   }
-  const def = BUILDING_DEFS[body.data.type];
+  const typeDemande = body.data.type as SharedBuildingType;
+  const def = BUILDING_DEFS[typeDemande];
   if (!def) {
     res.status(400).json({ error: "Bâtiment inconnu" });
     return;
@@ -7278,6 +7337,18 @@ async function loadOwnedMachine(id: string, userId: string) {
   return machine;
 }
 
+/**
+ * Ce que coûte un entretien, panneaux solaires déduits.
+ *
+ * Un seul endroit pour la remise : trois routes facturent l'entretien —
+ * graissage, nettoyage, révision — et trois calculs séparés finiraient par
+ * diverger sur ce qui compte, le prix payé.
+ */
+async function careCost(farmId: string, base: number): Promise<number> {
+  const b = await getFarmBonuses(farmId);
+  return Math.max(1, Math.round(base * (1 - b.careDiscount)));
+}
+
 app.post("/machines/:id/grease", async (req, res) => {
   const body = z.object({ userId: z.string() }).safeParse(req.body);
   if (!body.success) {
@@ -7293,12 +7364,13 @@ app.post("/machines/:id/grease", async (req, res) => {
     res.status(409).json({ error: "Déjà plein de graisse" });
     return;
   }
-  if (!peutPayer(machine.farm.user, GREASE_COST_CRD)) {
-    res.status(402).json({ error: `Graissage ${GREASE_COST_CRD} TRN — fonds insuffisants` });
+  const prixGraissage = await careCost(machine.farmId, GREASE_COST_CRD);
+  if (!peutPayer(machine.farm.user, prixGraissage)) {
+    res.status(402).json({ error: `Graissage ${prixGraissage} TRN — fonds insuffisants` });
     return;
   }
   const gain = await prisma.$transaction(async (tx) => {
-    await debit(tx, body.data.userId, GREASE_COST_CRD, "MACHINES", "Graissage");
+    await debit(tx, body.data.userId, prixGraissage, "MACHINES", "Graissage");
     await tx.machine.update({
       where: { id: machine.id },
       data: { greased: true, grease: GREASE_FULL, greaseSkipStreak: 0 },
@@ -7335,18 +7407,19 @@ app.post("/machines/:id/clean", async (req, res) => {
     res.status(409).json({ error: "Déjà propre" });
     return;
   }
-  if (!peutPayer(machine.farm.user, CLEAN_COST_CRD)) {
-    res.status(402).json({ error: `Nettoyage ${CLEAN_COST_CRD} TRN — fonds insuffisants` });
+  const prixLavage = await careCost(machine.farmId, CLEAN_COST_CRD);
+  if (!peutPayer(machine.farm.user, prixLavage)) {
+    res.status(402).json({ error: `Nettoyage ${prixLavage} TRN — fonds insuffisants` });
     return;
   }
   await prisma.$transaction(async (tx) => {
-    await debit(tx, body.data.userId, CLEAN_COST_CRD, "MACHINES", "Lavage");
+    await debit(tx, body.data.userId, prixLavage, "MACHINES", "Lavage");
     await tx.machine.update({
       where: { id: machine.id },
       data: { dirt: 0 },
     });
   });
-  res.json({ machineId: machine.id, dirt: 0, cost: CLEAN_COST_CRD });
+  res.json({ machineId: machine.id, dirt: 0, cost: prixLavage });
 });
 
 app.post("/machines/:id/service", async (req, res) => {
@@ -7392,12 +7465,18 @@ app.post("/machines/:id/service", async (req, res) => {
     targetCondition: target,
     workshopDiscount: bonuses.repairDiscount,
   });
-  if (!peutPayer(machine.farm.user, quote.cost)) {
-    res.status(402).json({ error: `Réparation ${quote.cost} TRN — fonds insuffisants` });
+  /**
+   * Atelier et panneaux se cumulent, mais sur des choses différentes :
+   * l'atelier négocie la pièce, les panneaux paient le courant. Les deux
+   * remises s'appliquent donc l'une après l'autre, et non l'une ou l'autre.
+   */
+  const prixRevision = Math.max(1, Math.round(quote.cost * (1 - bonuses.careDiscount)));
+  if (!peutPayer(machine.farm.user, prixRevision)) {
+    res.status(402).json({ error: `Réparation ${prixRevision} TRN — fonds insuffisants` });
     return;
   }
   await prisma.$transaction(async (tx) => {
-    await debit(tx, body.data.userId, quote.cost, "MACHINES", "Révision");
+    await debit(tx, body.data.userId, prixRevision, "MACHINES", "Révision");
     await tx.machine.update({
       where: { id: machine.id },
       data: {
@@ -7412,7 +7491,7 @@ app.post("/machines/:id/service", async (req, res) => {
   res.json({
     machineId: machine.id,
     condition: target,
-    cost: quote.cost,
+    cost: prixRevision,
     kind,
     breakdown: null,
   });
@@ -8212,12 +8291,20 @@ app.post("/inventory/dry", async (req, res) => {
   }
   const bonuses = await getFarmBonuses(user.farm.id);
   const passes = body.data.passes ?? 1;
-  const dried = dryInventory({
+  const brut = dryInventory({
     moisture: inv.moisture,
     tons,
     passes,
     barnBonus: bonuses.softDryer,
   });
+  /**
+   * L'éolienne fait tourner le séchoir sans facture.
+   *
+   * Elle ne touche ni à la quantité séchée ni au temps : elle enlève le coût.
+   * L'humidité ampute la vente, sécher la rattrape, et cet ouvrage rend le
+   * rattrapage gratuit — ce qui vaut d'autant plus qu'on moissonne humide.
+   */
+  const dried = bonuses.freeDrying ? { ...brut, cost: 0 } : brut;
   if (dried.cost > user.crd) {
     res.status(409).json({ error: "TRN insuffisants pour sécher" });
     return;

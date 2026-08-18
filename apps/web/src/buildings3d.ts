@@ -76,6 +76,11 @@ const PALETTES: Record<BuildingType, BuildingPalette> = {
   // Silo couloir : du béton et une bâche, aucune toiture — la teinte
   // « roof » ne sert qu'aux liserés d'arête.
   BUNKER_SILO: { roof: 0x9aa0a6, wall: 0xd6d2c8, timber: 0x7d6a4a, metal: 0xa9b0b6 },
+  // Les petits ouvrages : un bleu ardoise pour les modules, un blanc cassé
+  // pour l'éolienne, un bois miel pour les ruches.
+  SOLAR_PANELS: { roof: 0x2f3a4f, wall: 0x33405a, timber: 0x7d6a4a, metal: 0xaeb6c0 },
+  WIND_TURBINE: { roof: 0xe8edf2, wall: 0xeef2f6, timber: 0x8a704e, metal: 0xc3ccd4 },
+  BEEHIVE: { roof: 0x7a5630, wall: 0xdda94f, timber: 0x8a6234, metal: 0xa9b0b6 },
 };
 
 /* ------------------------------------------------------------------ */
@@ -1182,6 +1187,97 @@ function buildYard(
 /* Plans de montage                                                    */
 /* ------------------------------------------------------------------ */
 
+/**
+ * Panneaux solaires : un bâti incliné, deux rangées de modules.
+ *
+ * L'inclinaison est ce qui les nomme : posés à plat, ils se lisent comme une
+ * dalle. Ils regardent vers `+z`, comme les façades du jeu.
+ */
+function buildSolarPanels(w: number, d: number, lvl: number): Built {
+  const root = new Part();
+  const hw = (w - EDGE * 2) / 2;
+  const hd = (d - EDGE * 2) / 2;
+  slab(root, hw * 2, hd * 2, 0.03);
+  const rangs = 2;
+  const pente = -0.42;
+  for (let i = 0; i < rangs; i++) {
+    const z = -hd + hd * (0.6 + i * 1.2);
+    // Pieds : sans eux le panneau flotte au-dessus de sa dalle.
+    for (const sx of [-1, 1] as const) {
+      root.add("timber", box(0.05, 0.16, 0.05, [sx * hw * 0.6, 0.08, z + 0.06]));
+  root.add("timber", box(0.05, 0.34, 0.05, [sx * hw * 0.6, 0.17, z - 0.1]));
+    }
+    /* Relevé de 22 à 28 cm : la traverse basse du cadre passait sous le
+       niveau du sol une fois le panneau incliné, et le test d'aplomb l'a
+       attrapée. Un bâtiment qui s'enfonce laisse voir le vide sous la ferme. */
+    const panneau = root.child([0, 0.28, z], { rot: [pente, 0, 0] });
+    panneau.add("wallDark", box(hw * 1.5, 0.03, hd * 0.62, [0, 0, 0]));
+    // Les traverses du cadre : c'est ce qui distingue un panneau d'une ardoise.
+    for (const dx of [-0.25, 0.25]) {
+      panneau.add("corrugate", box(0.02, 0.035, hd * 0.62, [dx * hw, 0.01, 0]));
+    }
+    panneau.add("corrugate", box(hw * 1.52, 0.02, 0.03, [0, 0.02, hd * 0.24]));
+  }
+  // Le coffret électrique, plus fourni à mesure qu'on améliore l'ouvrage.
+  /* Le coffret grandit avec le niveau ; sa hauteur **et** son centre doivent
+     suivre, sinon il s'enfonce d'autant dans la dalle. Le test d'aplomb l'a
+     attrapé à −1 cm au niveau 2 : c'est exactement la moitié du centimètre
+     ajouté à chaque palier. */
+  const coffret = 0.18 + lvl * 0.01;
+  root.add("corrugate", box(0.12, coffret, 0.09, [hw * 0.8, coffret / 2, -hd * 0.7]));
+  yardDressing(root, w, d, 31);
+  return { root, height: 0.4 };
+}
+
+/**
+ * Éolienne : un mât, trois pales, et un rotor qui tourne.
+ *
+ * Le rotor porte le rôle `rotor` : c'est la vue qui le fait tourner, comme
+ * elle ouvre les vantaux d'une étable. Une éolienne à l'arrêt est un mât.
+ */
+function buildWindTurbine(w: number, d: number, lvl: number): Built {
+  const root = new Part();
+  const hw = (w - EDGE * 2) / 2;
+  const hd = (d - EDGE * 2) / 2;
+  slab(root, hw * 1.2, hd * 1.2, 0.05);
+  const haut = 1.15 + lvl * 0.06;
+  root.add("concrete", cyl(0.09, 0.055, haut, 12, [0, haut / 2 + 0.03, 0], [0, 0, 0]));
+  root.add("corrugate", box(0.11, 0.1, 0.16, [0, haut + 0.05, 0]));
+  const rotor = root.child([0, haut + 0.05, 0.09], { role: "rotor" });
+  for (let i = 0; i < 3; i++) {
+    const pale = rotor.child([0, 0, 0], { rot: [0, 0, (i * Math.PI * 2) / 3] });
+    // La pale s'affine vers la pointe : un rectangle tourne comme un carton.
+    /* Pales raccourcies : à 0,5 + 0,16 le rotor faisait 1,17 unité de large
+       dans une case d'une unité, et le test de gabarit l'a attrapé. Une
+       éolienne qui déborde masque les cases voisines. */
+    pale.add("wall", box(0.04, 0.32, 0.012, [0, 0.18, 0]));
+    pale.add("wall", box(0.022, 0.1, 0.01, [0, 0.39, 0]));
+  }
+  rotor.add("corrugate", cyl(0.04, 0.04, 0.05, 10, [0, 0, 0], [HALF, 0, 0]));
+  yardDressing(root, w, d, 17);
+  return { root, height: haut + 0.6 };
+}
+
+/** Ruches : deux corps empilés, leur toit, et la planche d'envol. */
+function buildBeehive(w: number, d: number, lvl: number): Built {
+  const root = new Part();
+  const hw = (w - EDGE * 2) / 2;
+  const hd = (d - EDGE * 2) / 2;
+  slab(root, hw * 1.6, hd * 1.6, 0.03);
+  const corps = 1 + Math.min(2, Math.floor(lvl / 2));
+  let y = 0.05;
+  for (let i = 0; i < corps + 1; i++) {
+    root.add("wall", box(0.34, 0.13, 0.3, [0, y + 0.065, 0]));
+    root.add("timber", box(0.36, 0.02, 0.32, [0, y + 0.13, 0]));
+    y += 0.14;
+  }
+  // Toit débordant et planche d'envol : c'est à ça qu'on reconnaît une ruche.
+  root.add("roofDark", box(0.4, 0.04, 0.36, [0, y + 0.02, 0]));
+  root.add("timber", box(0.3, 0.02, 0.09, [0, 0.06, 0.18], [-0.25, 0, 0]));
+  yardDressing(root, w, d, 43);
+  return { root, height: y + 0.1 };
+}
+
 const BUILDERS: Record<BuildingType, (w: number, d: number, lvl: number) => Built> = {
   SILO: buildSilo,
   HAY_BARN: buildHayBarn,
@@ -1199,6 +1295,9 @@ const BUILDERS: Record<BuildingType, (w: number, d: number, lvl: number) => Buil
   PIG_YARD: (w, d, l) => buildYard(w, d, l, "PIG_YARD"),
   HEN_YARD: (w, d, l) => buildYard(w, d, l, "HEN_YARD"),
   BUNKER_SILO: buildBunkerSilo,
+  SOLAR_PANELS: buildSolarPanels,
+  WIND_TURBINE: buildWindTurbine,
+  BEEHIVE: buildBeehive,
 };
 
 type Blueprint = Built & { w: number; d: number };
@@ -1330,6 +1429,10 @@ export function createBuildingRig(
         else d.node.rotation.y = d.swing * open * 1.25;
       }
       for (const v of roles.get("vane") ?? []) v.rotation.y = state.t * 1.1;
+      // L'hélice tourne face au vent, donc autour de z. Plus vite qu'une
+      // girouette : c'est ce qui la fait lire comme une machine et non comme
+      // un ornement.
+      for (const r of roles.get("rotor") ?? []) r.rotation.z = state.t * 1.9;
     },
     dispose() {
       // Les géométries sont mises en cache et partagées entre bâtiments : seuls

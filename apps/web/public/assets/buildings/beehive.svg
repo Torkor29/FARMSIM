@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 96 96" width="96" height="96">
+  <!-- Ruches : deux hausses empilées, leur toit, et une abeille en vol. -->
+  <g fill="none" fill-rule="evenodd">
+    <ellipse cx="48" cy="82" rx="28" ry="9" fill="#8fbf6a"/>
+    
+    <rect x="26" y="56" width="44" height="16" rx="2" fill="#d9a34e" stroke="#a97a2f" stroke-width="2"/>
+    <rect x="29" y="40" width="38" height="16" rx="2" fill="#e8b862" stroke="#a97a2f" stroke-width="2"/>
+    <path d="M22 40 48 26 74 40Z" fill="#8a6234" stroke="#6b4a26" stroke-width="2" stroke-linejoin="round"/>
+    <path d="M40 66h16" stroke="#6b4a26" stroke-width="3" stroke-linecap="round"/>
+    <g transform="translate(72 30)">
+      <ellipse cx="0" cy="0" rx="5" ry="3.5" fill="#f2c14e" stroke="#8a6234" stroke-width="1.5"/>
+      <path d="M-2 0h4" stroke="#8a6234" stroke-width="1.5"/>
+      <path d="M-1 -3q-3-5-6-2M1 -3q3-5 6-2" stroke="#cfe3f2" stroke-width="1.5" fill="none"/>
+    </g>
+  </g>
+</svg>
