@@ -436,12 +436,21 @@ function writeGuideFlags(next: GuideFlags) {
 /** Tiroirs du bas, sur petit écran. */
 type SheetKey = "INFO" | "BUILD" | "GARAGE" | "OFFICE" | "HERD" | "PROFILE";
 
+/**
+ * Les cinq onglets du bas.
+ *
+ * Leurs icônes étaient des emoji — 🌾 🏗️ 🐄 🚜 🤝 — alors que les outils, eux,
+ * avaient de vrais dessins depuis toujours (`/assets/icons/tools/*.svg`). Les
+ * cinq boutons les plus vus du jeu, présents sur chaque écran, étaient donc
+ * les seuls dont l'apparence dépendait du téléphone du joueur : ronds et
+ * brillants sur iPhone, plats sur Android, et jamais dans la palette.
+ */
 const SHEET_TABS: { key: SheetKey; label: string; icon: string }[] = [
-  { key: "INFO", label: "Parcelle", icon: "🌾" },
-  { key: "BUILD", label: "Bâtir", icon: "🏗️" },
-  { key: "HERD", label: "Troupeau", icon: "🐄" },
-  { key: "GARAGE", label: "Garage", icon: "🚜" },
-  { key: "OFFICE", label: "Missions", icon: "🤝" },
+  { key: "INFO", label: "Parcelle", icon: "/assets/icons/nav/parcelle.svg" },
+  { key: "BUILD", label: "Bâtir", icon: "/assets/icons/nav/batir.svg" },
+  { key: "HERD", label: "Troupeau", icon: "/assets/icons/nav/troupeau.svg" },
+  { key: "GARAGE", label: "Garage", icon: "/assets/icons/nav/garage.svg" },
+  { key: "OFFICE", label: "Missions", icon: "/assets/icons/nav/missions.svg" },
 ];
 
 function wearNote(machine?: {
@@ -3637,7 +3646,7 @@ export function App() {
                 title="Garage — touche G"
                 onClick={() => setShowGarage((v) => !v)}
               >
-                <span aria-hidden="true">🚜</span> Garage <kbd>G</kbd>
+                <img className="rail-icon" src="/assets/icons/nav/garage.svg" alt="" /> Garage <kbd>G</kbd>
               </button>
               <button
                 type="button"
@@ -3656,7 +3665,7 @@ export function App() {
                   title="Élevage"
                   onClick={() => setShowHerd((v) => !v)}
                 >
-                  <span aria-hidden="true">🐄</span> Élevage
+                  <img className="rail-icon" src="/assets/icons/nav/troupeau.svg" alt="" /> Élevage
                 </button>
               )}
               {devEnabled && (
@@ -4671,9 +4680,7 @@ export function App() {
                       setMoreOpen(false);
                     }}
                   >
-                    <span className="tab-icon" aria-hidden="true">
-                      {t.icon}
-                    </span>
+                    <img className="tab-icon" src={t.icon} alt="" aria-hidden="true" />
                     <span className="tab-label">{t.label}</span>
                     {badge > 0 && (
                       <span className="tab-badge" aria-label="à traiter">

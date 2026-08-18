@@ -98,8 +98,18 @@ function goodName(code: string): string {
   return GOOD_DEFS[code as TradeGood]?.name ?? code;
 }
 
-function goodIcon(code: string): string {
-  return GOOD_ICONS[code as TradeGood] ?? "📦";
+/**
+ * Le dessin d'une marchandise.
+ *
+ * Le repli était l'emoji 📦 — un carton, pour une marchandise inconnue. Comme
+ * `GOOD_ICONS` couvre par construction toutes les marchandises du jeu (le type
+ * l'impose), ce repli ne se déclenchait jamais ; il ne servait qu'à faire
+ * passer le typage. On le remplace par le sac de grain, qui au moins reste
+ * dans la famille si un code inattendu remontait un jour du serveur.
+ */
+function GoodIcon({ code, size = 20 }: { code: string; size?: number }) {
+  const src = GOOD_ICONS[code as TradeGood] ?? "/assets/icons/goods/wheat.svg";
+  return <img className="good-icon" src={src} alt="" width={size} height={size} aria-hidden="true" />;
 }
 
 function qualityOf(code: string, tons: number, moisture: number, quality: number): string {
@@ -130,7 +140,7 @@ function DeliveryList({
         {pending.map((d) => (
           <article key={d.id} className="sale-card route">
             <span className="sale-icon" aria-hidden="true">
-              {goodIcon(d.commodity)}
+              <GoodIcon code={d.commodity} />
             </span>
             <div className="sale-body">
               <strong>{goodName(d.commodity)}</strong>
@@ -281,7 +291,7 @@ export function MarketPanel({
             className={`hall-door buy ${tab === "BUY" ? "on" : ""}`}
             onClick={() => setTab("BUY")}
           >
-            <span aria-hidden="true">🛒</span>
+            <img className="hall-door-icon" src="/assets/icons/goods/straw-bale.svg" alt="" aria-hidden="true" />
             <strong>Acheter</strong>
             <em>{others.length ? `${others.length} en vitrine` : "Rien en vitrine"}</em>
           </button>
@@ -292,7 +302,7 @@ export function MarketPanel({
             className={`hall-door sell ${tab === "SELL" ? "on" : ""}`}
             onClick={() => setTab("SELL")}
           >
-            <span aria-hidden="true">💰</span>
+            <img className="hall-door-icon" src="/assets/icons/nav/marche.svg" alt="" aria-hidden="true" />
             <strong>Vendre</strong>
             <em>{stock.length ? "Votre stock" : "Rien à vendre"}</em>
           </button>
@@ -357,7 +367,7 @@ export function MarketPanel({
                       onClick={() => setSelectedId(s.id)}
                     >
                       <strong>
-                        {goodIcon(s.itemCode)} {goodName(s.itemCode)}
+                        <GoodIcon code={s.itemCode} /> {goodName(s.itemCode)}
                       </strong>
                       <span>
                         {s.qty.toFixed(2)} {GOOD_DEFS[s.itemCode as TradeGood]?.unit ?? "t"}
@@ -497,7 +507,7 @@ export function MarketPanel({
                     {mine.map((l) => (
                       <article key={l.id} className="sale-card mine">
                         <span className="sale-icon" aria-hidden="true">
-                          {goodIcon(l.commodity)}
+                          <GoodIcon code={l.commodity} />
                         </span>
                         <div className="sale-body">
                           <strong>{goodName(l.commodity)}</strong>
@@ -534,9 +544,7 @@ export function MarketPanel({
               /* Charte §7.7 : un écran vide porte une image, une phrase qui
                  explique, et l'action à faire — pas une ligne grise seule. */
               <div className="market-empty">
-                <span className="market-empty-art" aria-hidden="true">
-                  🏷️
-                </span>
+                <img className="market-empty-art" src="/assets/icons/nav/marche.svg" alt="" aria-hidden="true" />
                 <strong>La vitrine est vide</strong>
                 <span>
                   Personne ne vend pour l’instant. Mettez-y votre récolte, ou passez chez le
@@ -551,7 +559,7 @@ export function MarketPanel({
                 {others.map((l) => (
                   <article key={l.id} className="sale-card catalog">
                     <span className="sale-icon" aria-hidden="true">
-                      {goodIcon(l.commodity)}
+                      <GoodIcon code={l.commodity} />
                     </span>
                     <div className="sale-body">
                       <strong>{goodName(l.commodity)}</strong>
@@ -624,7 +632,7 @@ function SupplyTab({
       <p className="hall-lead">Pas de foin chez vous ? On en vend ici, un peu plus cher.</p>
       <div className="supply-card">
         <span className="sale-icon" aria-hidden="true">
-          {GOOD_ICONS.HAY}
+          <GoodIcon code="HAY" />
         </span>
         <span className="build-text">
           <strong>{GOOD_DEFS.HAY.name}</strong>
@@ -697,7 +705,7 @@ function FuturesTab({
           <select value={good} onChange={(e) => setGood(e.target.value as TradeGood)}>
             {SELLABLE_GOODS.map((g) => (
               <option key={g} value={g}>
-                {GOOD_ICONS[g]} {GOOD_DEFS[g].name}
+                <GoodIcon code={g} /> {GOOD_DEFS[g].name}
               </option>
             ))}
           </select>

@@ -202,21 +202,37 @@ export const GOOD_DEFS: Record<TradeGood, GoodDef> = {
 };
 
 /** Icône pour l’hôtel des ventes — un dessin, pas un code machine. */
+/**
+ * Le dessin de chaque marchandise.
+ *
+ * C'étaient des emoji, et trois d'entre eux n'étaient même pas des objets :
+ * 🟢 pour le pois, 🟤 pour le fumier, 🟨 pour la paille — des **carrés de
+ * couleur**, dans un jeu qui dessine ses tracteurs, ses bâtiments et ses
+ * bêtes.
+ *
+ * Pire pour qui joue : le blé et l'orge portaient tous deux 🌾. Ils étaient
+ * donc indiscernables dans la liste de stock, c'est-à-dire précisément là où
+ * l'on compare ce que l'on possède avant de vendre.
+ *
+ * Ce sont maintenant des chemins vers des dessins de la même famille que les
+ * outils et la navigation. L'orge se reconnaît à ses barbes, la paille à ses
+ * ficelles, l'ensilage à son enrubannage vert face à la balle de foin dorée.
+ */
 export const GOOD_ICONS: Record<TradeGood, string> = {
-  WHEAT: "🌾",
-  BARLEY: "🌾",
-  MAIZE: "🌽",
-  RAPE: "🌼",
-  PEA: "🟢",
-  HAY: "🌿",
-  MILK: "🥛",
-  MEAT: "🥩",
-  EGGS: "🥚",
-  WOOL: "🧶",
-  MANURE: "🟤",
-  STRAW: "🟨",
-  STRAW_BALE: "🧱",
-  SILAGE: "🥬",
+  WHEAT: "/assets/icons/goods/wheat.svg",
+  BARLEY: "/assets/icons/goods/barley.svg",
+  MAIZE: "/assets/icons/goods/maize.svg",
+  RAPE: "/assets/icons/goods/rape.svg",
+  PEA: "/assets/icons/goods/pea.svg",
+  HAY: "/assets/icons/goods/hay.svg",
+  MILK: "/assets/icons/goods/milk.svg",
+  MEAT: "/assets/icons/goods/meat.svg",
+  EGGS: "/assets/icons/goods/eggs.svg",
+  WOOL: "/assets/icons/goods/wool.svg",
+  MANURE: "/assets/icons/goods/manure.svg",
+  STRAW: "/assets/icons/goods/straw.svg",
+  STRAW_BALE: "/assets/icons/goods/straw-bale.svg",
+  SILAGE: "/assets/icons/goods/silage.svg",
 };
 
 /** Marchandises à cours mondial — le fumier s'écoule au voisin, pas ici. */

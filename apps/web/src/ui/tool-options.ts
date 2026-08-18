@@ -21,8 +21,6 @@ export type ToolGroupDef = {
   id: ToolGroup;
   label: string;
   icon: string;
-  /** Emoji de repli quand il n'y a pas d'icône dessinée. */
-  emoji?: string;
   /** Touche du clavier de bureau. Jamais affichée au téléphone. */
   hotkey: string;
   /** Outil armé quand on entre dans la famille. */
@@ -34,7 +32,9 @@ export const TOOL_GROUPS: ToolGroupDef[] = [
   { id: "PLANT", label: "Semer", icon: "/assets/icons/tools/plant.svg", hotkey: "2", entry: "PLANT_WHEAT" },
   { id: "HARVEST", label: "Récolte", icon: "/assets/icons/tools/harvest.svg", hotkey: "3", entry: "HARVEST" },
   { id: "SOIL", label: "Sol", icon: "/assets/icons/tools/plow.svg", hotkey: "4", entry: "STUBBLE" },
-  { id: "SELL", label: "Marché", icon: "", emoji: "💰", hotkey: "5" },
+  // Le seul outil qui n'avait pas de dessin retombait sur un emoji, au milieu
+  // de quatre voisins illustrés. Il en a un maintenant, dans la même famille.
+  { id: "SELL", label: "Marché", icon: "/assets/icons/nav/marche.svg", hotkey: "5" },
 ];
 
 export type ToolOption = {

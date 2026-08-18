@@ -1,6 +1,7 @@
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
-import { ANIMAL_ART, ANIMAL_GRAZE_ART, BUILDING_ART, BUILDING_DEFS, type BuildingType } from "@farmsim/shared";
+import { ANIMAL_ART, ANIMAL_GRAZE_ART, BUILDING_ART, BUILDING_DEFS, GOOD_ICONS, type BuildingType } from "@farmsim/shared";
+import { TOOL_GROUPS } from "../ui/tool-options";
 
 // Les tests tournent en modules ES : pas de `__dirname`. Jest les lance depuis
 // la racine du paquet, c'est-à-dire `apps/web`.
@@ -99,6 +100,45 @@ describe("images livrées", () => {
         }
       })
       .map(([t]) => t);
+    expect(manquants).toEqual([]);
+  });
+
+  /**
+   * Les marchandises, la navigation et les outils sont désormais dessinés —
+   * plus un seul emoji sur ces trois familles. Un chemin faux ne lèverait rien
+   * à l'exécution : `<img>` échoue en silence et laisse un carré vide, comme
+   * les huit SVG invalides restés invisibles pendant des mois.
+   */
+  it("sert un dessin existant pour chaque marchandise", () => {
+    const manquants = (Object.entries(GOOD_ICONS) as [string, string][])
+      .filter(([, url]) => {
+        // Un emoji qui reviendrait ici échouerait sur `statSync` — mais autant
+        // le nommer, l'erreur sera plus claire que « fichier introuvable ».
+        if (!url.startsWith("/assets/")) return true;
+        try {
+          statSync(join(PUBLIC, url.slice(1)));
+          return false;
+        } catch {
+          return true;
+        }
+      })
+      .map(([code]) => code);
+    expect(manquants).toEqual([]);
+  });
+
+  it("sert un dessin existant pour chaque outil et chaque onglet", () => {
+    const urls = TOOL_GROUPS.map((g) => g.icon);
+    // Aucun outil ne doit retomber sur rien : le repli en emoji a été retiré,
+    // donc une icône vide afficherait une image cassée au lieu d'un caractère.
+    expect(urls.filter((u) => !u)).toEqual([]);
+    const manquants = urls.filter((url) => {
+      try {
+        statSync(join(PUBLIC, url.replace(/^\//, "")));
+        return false;
+      } catch {
+        return true;
+      }
+    });
     expect(manquants).toEqual([]);
   });
 

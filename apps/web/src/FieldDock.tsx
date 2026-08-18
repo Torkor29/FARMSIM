@@ -301,13 +301,7 @@ export function FieldDock({
                 else if (g.entry && !on) onTool(g.entry);
               }}
             >
-              {g.icon ? (
-                <img src={g.icon} alt="" width={22} height={22} />
-              ) : (
-                <span className="dock-emoji" aria-hidden="true">
-                  {g.emoji}
-                </span>
-              )}
+              <img src={g.icon} alt="" width={22} height={22} />
               <span className="dock-label">
                 {g.id === "SELL" && stockTons > 0 ? `${stockTons.toFixed(0)} t` : g.label}
               </span>

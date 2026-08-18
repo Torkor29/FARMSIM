@@ -594,7 +594,7 @@ button.ghost {
 .chip {
   font-size: 0.78rem;
   padding: 0.3rem 0.55rem;
-  border-radius: var(--r-pill);
+  border-radius: var(--r-sm);
   background: var(--sand);
   border: 1px solid var(--line);
 }
@@ -670,7 +670,7 @@ button.ghost {
 }
 .upgrade-btn {
   padding: 0.35rem 0.6rem;
-  border-radius: var(--r-pill);
+  border-radius: var(--r-sm);
   font-size: 0.74rem;
   background: linear-gradient(180deg, var(--gold-300), var(--gold-500));
   border: none;
@@ -690,7 +690,7 @@ button.ghost {
 }
 .sell-btn {
   padding: 0.3rem 0.55rem;
-  border-radius: var(--r-pill);
+  border-radius: var(--r-sm);
   border: 1px solid #e0b5ad;
   background: #fdeeeb;
   color: #a8382a;
@@ -868,7 +868,7 @@ button.ghost {
 }
 .confirm-go {
   border: none;
-  border-radius: var(--r-pill);
+  border-radius: var(--r-sm);
   padding: 0.55rem 1.2rem;
   background: linear-gradient(180deg, var(--teal-300), var(--teal-500));
   color: #fff;
@@ -1031,7 +1031,7 @@ button.ghost {
 .sale-pay em { font-style: normal; font-size: 0.72rem; color: var(--muted); }
 .sale-go {
   border: none;
-  border-radius: var(--r-pill);
+  border-radius: var(--r-sm);
   padding: 0.55rem 1rem;
   background: linear-gradient(180deg, var(--gold-300), var(--gold-500));
   color: #3a2c07;
@@ -1117,7 +1117,7 @@ button.ghost {
 }
 .lot-go {
   border: none;
-  border-radius: var(--r-pill);
+  border-radius: var(--r-sm);
   padding: 0.5rem 0.95rem;
   background: linear-gradient(180deg, var(--gold-300), var(--gold-500));
   color: #3a2c07;
@@ -1125,7 +1125,7 @@ button.ghost {
 }
 .market-tabs { display: flex; gap: 0.4rem; flex-wrap: wrap; }
 .market-tab {
-  border-radius: var(--r-pill);
+  border-radius: var(--r-sm);
   padding: 0.45rem 1rem;
   background: var(--sand);
   border: 1px solid var(--line);
@@ -1268,7 +1268,7 @@ button.ghost {
 .ask-field input { padding: 0.35rem 0.5rem; }
 .channel-go {
   margin-top: 0.35rem;
-  border-radius: var(--r-pill);
+  border-radius: var(--r-sm);
   border: none;
   padding: 0.5rem 0.9rem;
   background: linear-gradient(180deg, var(--gold-300), var(--gold-500));
@@ -1548,6 +1548,14 @@ button.ghost {
 /* Un geste empêché : il se lit comme indisponible, mais il reste une cible.
    Touché, il dit ce qui manque au lieu de ne rien faire — le `title` où
    l'explication dormait n'existe pas sur un téléphone. */
+/* Les dessins de marchandises et de navigation, à la place des emoji : il leur
+   faut une taille et un alignement sur la ligne de texte, là où un caractère
+   se posait tout seul sur sa ligne de base. */
+.good-icon { vertical-align: -0.22em; flex: 0 0 auto; }
+.hall-door-icon { width: 30px; height: 30px; display: block; margin: 0 auto; }
+.market-empty-art { width: 46px; height: 46px; display: block; margin: 0 auto 0.4rem; }
+.rail-icon { width: 18px; height: 18px; vertical-align: -0.2em; margin-right: 0.15rem; }
+
 button.blocked {
   opacity: 0.5;
   filter: saturate(0.55);
@@ -1957,7 +1965,7 @@ html.playing .build-confirm { position: fixed; }
 .chip {
   min-height: 40px;
   padding: 0.35rem 0.75rem;
-  border-radius: 999px;
+  border-radius: var(--r-sm);
   background: var(--sand);
   border: 1px solid var(--line);
   font-size: 0.82rem;
@@ -2648,7 +2656,8 @@ html.playing .build-confirm { position: fixed; }
     color: var(--ink);
     animation: tab-pop 0.22s cubic-bezier(0.22, 1, 0.36, 1) both;
   }
-  .tab-icon { font-size: 1.2rem; }
+  /* Le dessin remplace l'emoji : il lui faut une taille, pas un corps. */
+  .tab-icon { width: 22px; height: 22px; display: block; }
   .tab.on { background: var(--teal-100, rgba(46, 142, 122, 0.16)); border-color: var(--teal-300); }
   .tab:disabled { opacity: 0.45; }
   /* La charte §7.7 interdit l'icône seule : le libellé ne rétrécit jamais
@@ -2847,7 +2856,7 @@ html.playing .build-confirm { position: fixed; }
   flex: 0 0 auto;
   min-height: 36px;
   padding: 0.3rem 0.7rem;
-  border-radius: 999px;
+  border-radius: var(--r-sm);
   background: var(--sand);
   font-size: 0.78rem;
 }

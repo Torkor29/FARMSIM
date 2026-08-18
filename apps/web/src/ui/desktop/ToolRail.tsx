@@ -109,11 +109,7 @@ export function ToolRail({
                 }}
               >
                 <span className="tool-rail-icon" aria-hidden="true">
-                  {g.icon ? (
-                    <img src={g.icon} alt="" width={20} height={20} />
-                  ) : (
-                    <span className="tool-rail-emoji">{g.emoji}</span>
-                  )}
+                  <img src={g.icon} alt="" width={20} height={20} />
                 </span>
                 <span className="tool-rail-name">{g.label}</span>
                 {/* Le raccourci s'affiche : on n'apprend pas une touche
