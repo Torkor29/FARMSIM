@@ -1,0 +1,20 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 96 96" width="96" height="96">
+  <!-- Moulin : la tour, ses ailes, et un sac de farine au pied. -->
+  <g fill="none" fill-rule="evenodd">
+    <ellipse cx="48" cy="84" rx="30" ry="9" fill="#8fbf6a"/>
+    <path d="M36 78 40 40h16l4 38z" fill="#e6ddc9" stroke="#7d6f5a" stroke-width="2" stroke-linejoin="round"/>
+    <path d="M34 40 48 26 62 40Z" fill="#8a6234" stroke="#6b4a26" stroke-width="2" stroke-linejoin="round"/>
+    <!-- Les ailes : quatre bras et leurs toiles, ce qui fait le moulin. -->
+    <g stroke="#6b4a26" stroke-width="2" stroke-linecap="round">
+      <path d="M48 44 24 30M48 44 72 58M48 44 62 20M48 44 34 68"/>
+    </g>
+    <g fill="#cdd6da" stroke="#6b4a26" stroke-width="1.5">
+      <path d="M27 27 34 31 31 36 24 32z"/>
+      <path d="M69 61 62 57 65 52 72 56z"/>
+      <path d="M60 22 56 29 51 26 55 19z"/>
+      <path d="M36 66 40 59 45 62 41 69z"/>
+    </g>
+    <circle cx="48" cy="44" r="3" fill="#8a6234"/>
+    <path d="M62 68h10l1 10H61z" fill="#fdfaf2" stroke="#7d6f5a" stroke-width="2" stroke-linejoin="round"/>
+  </g>
+</svg>

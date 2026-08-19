@@ -81,6 +81,10 @@ const PALETTES: Record<BuildingType, BuildingPalette> = {
   SOLAR_PANELS: { roof: 0x2f3a4f, wall: 0x33405a, timber: 0x7d6a4a, metal: 0xaeb6c0 },
   WIND_TURBINE: { roof: 0xe8edf2, wall: 0xeef2f6, timber: 0x8a704e, metal: 0xc3ccd4 },
   BEEHIVE: { roof: 0x7a5630, wall: 0xdda94f, timber: 0x8a6234, metal: 0xa9b0b6 },
+  // Les deux ateliers : le blanc lavable et l'inox d'une laiterie, la
+  // pierre claire et le bois goudronné d'un moulin.
+  DAIRY: { roof: 0x8794a0, wall: 0xf1eee6, timber: 0x7d6f5a, metal: 0xcdd6da },
+  MILL: { roof: 0x53381f, wall: 0xe2d8c2, timber: 0x8a6234, metal: 0xa9b0b6 },
 };
 
 /* ------------------------------------------------------------------ */
@@ -1278,6 +1282,166 @@ function buildBeehive(w: number, d: number, lvl: number): Built {
   return { root, height: y + 0.1 };
 }
 
+/**
+ * Laiterie : un bâtiment bas, lavable, et ses cuves.
+ *
+ * Tout le reste de la ferme est bardé de bois. Ici, des murs maçonnés lissés
+ * et de l'inox — c'est ce contraste, et non un détail de plus, qui fait qu'on
+ * la reconnaît de loin sans lire son étiquette. Les cuves sont dehors, le long
+ * du pignon : le seul atelier dont on devine le contenu sans entrer.
+ */
+function buildDairy(w: number, d: number, lvl: number): Built {
+  const root = new Part();
+  slab(root, w - EDGE * 2, d - EDGE * 2, 0.05);
+  // Le corps est décalé vers -x : la bande dégagée porte les cuves, qui
+  // doivent rester dehors et lisibles.
+  const cx = -0.14;
+  const bw = w - EDGE * 2 - 0.42;
+  const bd = d - EDGE * 2 - 0.14;
+  const eave = 0.46 + lvl * 0.015;
+  const rise = 0.2;
+
+  /*
+   * Murs pleins, sans montants ni lisses.
+   *
+   * `claddedWall` habille tous les autres bâtiments de bois apparent ; ici il
+   * donnait exactement ce qu'il fallait éviter — une grange de plus. Une
+   * laiterie est un volume lisse qu'on lave au jet, et la seule modénature est
+   * la plinthe carrelée du bas des murs.
+   */
+  const murH = eave - 0.12;
+  const murY = 0.12 + murH / 2;
+  root.add("wallDark", box(bw + 0.06, 0.12, bd + 0.06, [cx, 0.1, 0]));
+  root.add("wall", box(bw, murH, bd, [cx, murY, 0]));
+  // Bandeau de rive : la ligne d'ombre qui sépare le mur de la toiture.
+  root.add("chrome", box(bw + 0.05, 0.035, bd + 0.05, [cx, 0.12 + murH, 0]));
+
+  // Le corps est décalé, donc la toiture aussi : posée sur la case, elle
+  // déborderait d'un côté et laisserait l'autre mur à découvert.
+  const sous = root.child([cx, 0, 0]);
+  const ridge = gableRoof(sous, bw, bd, eave, rise, { overhang: 0.07, mat: "corrugate" });
+  gableEnd(sous, bw, eave, rise, -bd / 2 + 0.02, "wall");
+  gableEnd(sous, bw, eave, rise, bd / 2 - 0.02, "wall");
+  doorway(sous, bw * 0.4, murH - 0.08, bd / 2 + 0.02, { dark: true });
+  root.child([cx, 0, bd / 2 + 0.2], { role: "threshold" });
+  for (const z of [-bd * 0.24, bd * 0.24]) {
+    window_(sous, 0.19, 0.15, [-bw / 2 - 0.02, 0.12 + murH * 0.6, z], [0, HALF, 0]);
+  }
+  // Lanterneau de faîtage : une laiterie évacue sa vapeur.
+  root.add("chrome", box(0.22, 0.05, 0.3, [cx, ridge - 0.01, -bd * 0.1]));
+  root.add("roofDark", box(0.26, 0.03, 0.34, [cx, ridge + 0.02, -bd * 0.1]));
+
+  /*
+   * Les cuves. Le palier en ajoute : agrandir sa laiterie se voit de loin, et
+   * c'est le seul bâtiment dont on lit le niveau sans cliquer dessus.
+   */
+  const cuves = 2 + Math.min(2, Math.floor((lvl - 1) / 2));
+  const x0 = cx + bw / 2 + 0.24;
+  for (let i = 0; i < cuves; i++) {
+    const z = -bd / 2 + 0.18 + (i * (bd - 0.36)) / Math.max(1, cuves - 1);
+    root.add("concrete", box(0.24, 0.06, 0.24, [x0, 0.06, z]));
+    root.add("chrome", cyl(0.095, 0.095, 0.4, 14, [x0, 0.29, z]));
+    // Le dôme et son évent : sans eux, une cuve reste un tuyau coupé net.
+    root.add("chrome", cyl(0.095, 0.045, 0.06, 14, [x0, 0.52, z]));
+    root.add("steel", cyl(0.016, 0.016, 0.07, 6, [x0, 0.58, z]));
+    // Colliers de trappe et de vidange.
+    root.add("steel", ring(0.099, 0.009, 12, Math.PI * 2, [x0, 0.4, z], [HALF, 0, 0]));
+    root.add("steel", ring(0.099, 0.009, 12, Math.PI * 2, [x0, 0.16, z], [HALF, 0, 0]));
+  }
+  // La ligne de lait : elle court des cuves au mur, en hauteur.
+  root.add("chrome", cyl(0.018, 0.018, bd - 0.3, 8, [x0, 0.56, 0], [HALF, 0, 0]));
+  root.add("chrome", cyl(0.018, 0.018, 0.24, 8, [x0 - 0.12, 0.56, 0], [0, 0, HALF]));
+
+  // Quai de chargement : le lait entre, le fromage sort.
+  root.add("concrete", box(bw * 0.66, 0.1, 0.18, [cx, 0.06, bd / 2 + 0.11]));
+  root.add("steel", box(bw * 0.66, 0.02, 0.03, [cx, 0.11, bd / 2 + 0.2]));
+  yardDressing(root, w, d, 11);
+  return { root, height: ridge + 0.1 };
+}
+
+/**
+ * Moulin : une tour et ses ailes.
+ *
+ * Deux choses le font lire, et aucune n'est le fût — un cylindre posé dans un
+ * champ, c'est un silo. Ce sont **l'élancement**, plus haut que large, et la
+ * **toile** des ailes, qui doit couvrir assez de surface pour accrocher la
+ * lumière : une aile réduite à sa latte disparaît à quarante pixels.
+ *
+ * Les ailes portent le rôle `rotor`, qui tourne autour de l'axe z comme
+ * l'hélice de l'éolienne. `vane` tourne à plat, et des ailes qui balaient
+ * l'horizontale ne se lisent plus comme un moulin.
+ */
+function buildMill(w: number, d: number, lvl: number): Built {
+  const root = new Part();
+  slab(root, w - EDGE * 2, d - EDGE * 2, 0.05);
+  // Fût étroit : c'est le rapport hauteur/largeur qui distingue un moulin d'un
+  // silo, bien plus que la calotte ou la porte.
+  const r = 0.31;
+  const h = 0.92 + lvl * 0.035;
+
+  root.add("concrete", cyl(r + 0.07, r + 0.11, 0.08, 16, [0, 0.06, 0]));
+  root.add("wall", cyl(r * 0.72, r, h, 16, [0, 0.07 + h / 2, 0]));
+  // Trois bandeaux de pierre : ils donnent les étages, donc l'échelle.
+  for (const f of [0.3, 0.55, 0.8]) {
+    const rr = r - (r - r * 0.72) * f;
+    root.add("wallDark", ring(rr + 0.013, 0.015, 16, Math.PI * 2, [0, 0.07 + h * f, 0], [HALF, 0, 0]));
+  }
+  // Calotte tournante : haute et débordante, sinon la tour se termine à plat
+  // et retombe dans la silhouette du silo.
+  const capH = 0.3;
+  const capY = 0.07 + h;
+  root.add("roofDark", cyl(r * 0.86, r * 0.9, 0.05, 16, [0, capY + 0.025, 0]));
+  root.add("roof", cone(r * 0.86, capH, 16, [0, capY + 0.05 + capH / 2, 0]));
+
+  // La queue : la perche qui oriente la calotte au vent. Elle casse la
+  // symétrie du fût, et c'est elle qui dit que le toit tourne.
+  root.add("timber", box(0.035, 0.035, 0.62, [0, capY + 0.02, -r * 1.1], [0.55, 0, 0]));
+  root.add("timber", box(0.035, 0.18, 0.035, [0, 0.07 + h * 0.62, -r * 1.5]));
+
+  doorway(root, 0.24, 0.34, r * 0.86, { thick: 0.04, dark: true });
+  root.child([0, 0, r + 0.24], { role: "threshold" });
+  for (const [a, f] of [
+    [1.0, 0.4],
+    [-1.4, 0.62],
+    [2.6, 0.84],
+  ] as [number, number][]) {
+    const rr = r - (r - r * 0.72) * f;
+    root.add("door", box(0.09, 0.12, 0.03, [Math.sin(a) * rr, 0.07 + h * f, Math.cos(a) * rr], [0, a, 0]));
+  }
+
+  // L'arbre sort de la calotte ; le moyeu est en avant, dégagé du fût.
+  const axe = capY + capH * 0.42;
+  root.add("timber", cyl(0.05, 0.05, r * 2.2, 8, [0, axe, r * 0.75], [HALF, 0, 0]));
+  const moyeu = root.child([0, axe, r * 1.7], { role: "rotor" });
+  moyeu.add("timber", cyl(0.06, 0.06, 0.09, 8, [0, 0, 0], [HALF, 0, 0]));
+  // Longueur d'aile : bornée par la case, mais surtout par la hauteur de
+  // l'arbre — une aile plus longue que haute laboure la cour à chaque tour.
+  const bras = Math.min(Math.min(w, d) / 2 - 0.14, axe - 0.1);
+  for (let i = 0; i < 4; i++) {
+    const aile = moyeu.child([0, 0, 0], { rot: [0, 0, (i / 4) * Math.PI * 2] });
+    aile.add("timber", box(0.045, bras, 0.03, [0, bras / 2, 0]));
+    /*
+     * La toile, d'un seul côté de la latte comme sur une aile gréée. Large :
+     * c'est la seule surface du modèle qui prenne la lumière en tournant, et
+     * une bande étroite ne se voyait tout simplement pas.
+     */
+    aile.add("wall", box(0.19, bras * 0.62, 0.01, [0.115, bras * 0.6, 0.025]));
+    for (let j = 0; j < 4; j++) {
+      aile.add("timber", box(0.2, 0.018, 0.018, [0.115, bras * (0.32 + j * 0.19), 0.025]));
+    }
+  }
+
+  // Sacs de farine au pied : la production se voit sans ouvrir le stock.
+  for (const [dx, dz] of [
+    [-0.34, r + 0.2],
+    [-0.2, r + 0.3],
+  ] as [number, number][]) {
+    root.add("hay", box(0.12, 0.14, 0.1, [dx, 0.07, dz], [0, 0.4, 0]));
+  }
+  yardDressing(root, w, d, 13);
+  return { root, height: capY + 0.05 + capH + 0.05 };
+}
+
 const BUILDERS: Record<BuildingType, (w: number, d: number, lvl: number) => Built> = {
   SILO: buildSilo,
   HAY_BARN: buildHayBarn,
@@ -1298,6 +1462,8 @@ const BUILDERS: Record<BuildingType, (w: number, d: number, lvl: number) => Buil
   SOLAR_PANELS: buildSolarPanels,
   WIND_TURBINE: buildWindTurbine,
   BEEHIVE: buildBeehive,
+  DAIRY: buildDairy,
+  MILL: buildMill,
 };
 
 type Blueprint = Built & { w: number; d: number };

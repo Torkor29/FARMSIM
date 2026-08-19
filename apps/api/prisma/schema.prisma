@@ -68,6 +68,10 @@ enum BuildingType {
   SOLAR_PANELS
   WIND_TURBINE
   BEEHIVE
+  /// Ateliers de transformation : ils consomment une marchandise et en rendent
+  /// une autre, plus chère. Voir `RECIPES` côté domaine.
+  DAIRY
+  MILL
 }
 
 enum CellKind {
@@ -379,6 +383,10 @@ model Building {
   /// Date de pose : elle ouvre la fenêtre de regret, pendant laquelle une
   /// construction faite par erreur se démolit intégralement remboursée.
   createdAt DateTime     @default(now())
+  /// Dernier arrêté de transformation, pour les ateliers. La production se
+  /// calcule sur le temps écoulé depuis cette date : sans elle, un atelier
+  /// produirait au rythme des connexions du joueur.
+  processedAt DateTime?
   cells     ParcelCell[]
   storedMachines Machine[] @relation("StoredIn")
   herd      Herd?

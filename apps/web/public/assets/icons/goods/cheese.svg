@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48" fill="none" aria-hidden="true">
+  <ellipse cx="24" cy="43.5" rx="12" ry="2" fill="currentColor" opacity="0.18"/>
+  <!-- Une pointe de meule vue de trois quarts : la croûte dessus, la pâte devant. -->
+  <path d="M7 33 39 20v9l-32 13z" fill="#e0b13a" stroke="#1a6b5a" stroke-width="2" stroke-linejoin="round"/>
+  <path d="M7 33 39 20 27 13 7 24z" fill="#f0d27a" stroke="#1a6b5a" stroke-width="2" stroke-linejoin="round"/>
+  <!-- Les yeux du fromage : ce qui le distingue d'un coin de beurre. -->
+  <circle cx="16" cy="28" r="2.6" fill="#c9a227"/>
+  <circle cx="26" cy="23" r="2" fill="#c9a227"/>
+  <circle cx="19" cy="36" r="2.2" fill="#c9a227"/>
+</svg>

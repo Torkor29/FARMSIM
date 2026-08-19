@@ -12,6 +12,8 @@
 
 export type TradeGood =
   | "WHEAT"
+  | "CHEESE"
+  | "FLOUR"
   | "MAIZE"
   | "PEA"
   | "BARLEY"
@@ -182,6 +184,40 @@ export const GOOD_DEFS: Record<TradeGood, GoodDef> = {
     perishable: false,
     localOnly: true,
   },
+  /*
+   * Les deux produits transformés.
+   *
+   * Ils ont leur propre cours, avec leur propre profondeur de marché : écouler
+   * du fromage fait baisser le fromage. C'est ce qui empêche l'atelier d'être
+   * une pompe à argent — une flambée du lait peut rendre la vente brute plus
+   * rentable que la transformation.
+   */
+  CHEESE: {
+    code: "CHEESE",
+    name: "Fromage",
+    unit: "t",
+    // Cent hectolitres de lait valent 4 200 : la transformation ajoute la
+    // moitié, ce qui paie la laiterie en une année de jeu sans la rendre
+    // gratuite. C'est aussi la marchandise la plus chère du marché, comme
+    // dans la vraie vie — un fromage affiné n'est pas une commodité.
+    basePrice: 6300,
+    sellable: true,
+    purchasable: false,
+    // Un fromage se garde : c'est même la raison d'être de l'affinage. Le lait
+    // perd 12 % par jour, le fromage rien — et c'est là, plus que dans la
+    // marge, que se trouve l'intérêt d'une laiterie quand le cours est bas.
+    perishable: false,
+  },
+  FLOUR: {
+    code: "FLOUR",
+    name: "Farine",
+    unit: "t",
+    // Une tonne trois de blé vaut 293 : la mouture ajoute un bon tiers.
+    basePrice: 400,
+    sellable: true,
+    purchasable: false,
+    perishable: false,
+  },
   MANURE: {
     code: "MANURE",
     name: "Fumier",
@@ -233,6 +269,8 @@ export const GOOD_ICONS: Record<TradeGood, string> = {
   STRAW: "/assets/icons/goods/straw.svg",
   STRAW_BALE: "/assets/icons/goods/straw-bale.svg",
   SILAGE: "/assets/icons/goods/silage.svg",
+  CHEESE: "/assets/icons/goods/cheese.svg",
+  FLOUR: "/assets/icons/goods/flour.svg",
 };
 
 /** Marchandises à cours mondial — le fumier s'écoule au voisin, pas ici. */

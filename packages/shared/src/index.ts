@@ -2,6 +2,7 @@
 
 import { GAME_DAY_MS } from "./time.js";
 import { MACHINE_END_OF_LIFE_HOURS } from "./machine-care.js";
+import { RECIPES, type ProcessingKind } from "./processing.js";
 
 export * from "./ledger.js";
 export * from "./time.js";
@@ -22,6 +23,7 @@ export * from "./calendar.js";
 export * from "./fuel.js";
 export * from "./weeds.js";
 export * from "./credit.js";
+export * from "./processing.js";
 export * from "./art-anchor.js";
 export * from "./play-guide.js";
 export * from "./appearance.js";
@@ -124,7 +126,9 @@ export type BuildingType =
      eux doit rester viable —, ce sont des paris de rentabilité. */
   | "SOLAR_PANELS"
   | "WIND_TURBINE"
-  | "BEEHIVE";
+  | "BEEHIVE"
+  | "DAIRY"
+  | "MILL";
 
 export type CellKind = "EMPTY" | "CROP" | "BUILDING" | "VEHICLE";
 
@@ -295,6 +299,10 @@ export const MARKET_BOUNDS: Record<
   EGGS: { initial: 22, min: 12, max: 40, depth: 25 },
   WOOL: { initial: 420, min: 260, max: 680, depth: 20 },
   // Coté pour l'affichage ; le fumier ne s'échange pas sur ce marché.
+  // Profondeur faible : un marché de niche se sature vite, et c'est ce qui
+  // empêche de transformer sans fin sans regarder le cours.
+  CHEESE: { initial: 6300, min: 4100, max: 10500, depth: 18 },
+  FLOUR: { initial: 400, min: 250, max: 690, depth: 30 },
   MANURE: { initial: 55, min: 40, max: 80, depth: 20 },
 };
 
@@ -410,6 +418,8 @@ export type BuildingDef = {
    * une raison d'acheter des panneaux quand on a beaucoup d'engins.
    */
   careDiscount?: number;
+  /** Atelier de transformation hébergé, s'il y en a un. */
+  processing?: ProcessingKind;
   /**
    * Séchage gratuit et accéléré `[GD]`.
    *
@@ -649,11 +659,49 @@ export const BUILDING_DEFS: Record<BuildingType, BuildingDef> = {
     pollinationRange: 4,
     pollinationBonus: 0.08,
   },
+  /*
+   * Les deux ateliers de transformation.
+   *
+   * Deux, pas dix. Une chaîne de production complète transformerait la ferme
+   * en usine à clics, alors que deux suffisent à poser la question :
+   * transformer, ou vendre brut au cours du jour.
+   */
+  DAIRY: {
+    type: "DAIRY",
+    name: "Laiterie",
+    w: 2,
+    h: 2,
+    cost: 13000,
+    description:
+      "Transforme le lait en fromage, cent hectolitres pour une tonne. Le fromage ne s'abîme pas, lui — et elle travaille pendant que vous êtes ailleurs.",
+    processing: "DAIRY",
+  },
+  MILL: {
+    type: "MILL",
+    name: "Moulin",
+    w: 2,
+    h: 2,
+    cost: 4000,
+    description:
+      "Moud le blé en farine, quatre tonnes pour trois. Un bon tiers de valeur en plus, si le cours suit.",
+    processing: "MILL",
+  },
 };
 
 /* ------------------------------------------------------------------ */
 /* Niveaux de bâtiment                                                 */
 /* ------------------------------------------------------------------ */
+
+/**
+ * Les bâtiments qui transforment.
+ *
+ * Dérivé de `BUILDING_DEFS`, jamais recopié : une liste tenue à la main à côté
+ * des définitions finit toujours par en diverger, et c'est le genre d'oubli
+ * qui se manifeste par un atelier qui ne produit rien sans dire pourquoi.
+ */
+export const PROCESSING_BUILDINGS = (Object.keys(BUILDING_DEFS) as BuildingType[]).filter(
+  (t) => BUILDING_DEFS[t].processing,
+);
 
 export const MAX_BUILDING_LEVEL = 5;
 
@@ -694,6 +742,21 @@ export function buildingUpgradeCost(type: BuildingType, currentLevel: number): n
   if (currentLevel >= MAX_BUILDING_LEVEL) return null;
   const next = buildingLevelDef(currentLevel + 1);
   return Math.round(BUILDING_DEFS[type].cost * next.upgradeCostMult);
+}
+
+/**
+ * Débit d'un atelier à un niveau donné, en unités d'entrée par jour.
+ *
+ * Le palier passe par `capacityMult`, l'échelle commune à toutes les capacités
+ * du jeu — un silo, une étable et une laiterie grandissent du même pas. Un
+ * atelier avec sa propre échelle de paliers aurait fini par diverger de la
+ * grille de coûts qui, elle, n'en a qu'une.
+ */
+export function processingThroughput(type: BuildingType, level: number): number {
+  const kind = BUILDING_DEFS[type].processing;
+  if (!kind) return 0;
+  const mult = buildingLevelDef(level).capacityMult;
+  return Math.round(RECIPES[kind].inputPerDay * mult * 100) / 100;
 }
 
 /** Capacités et bonus d'un bâtiment à un niveau donné. */
@@ -739,6 +802,8 @@ export const BUILDING_ART: Record<BuildingType, string> = {
   SOLAR_PANELS: "/assets/buildings/solar-panels.svg",
   WIND_TURBINE: "/assets/buildings/wind-turbine.svg",
   BEEHIVE: "/assets/buildings/beehive.svg",
+  DAIRY: "/assets/buildings/dairy.svg",
+  MILL: "/assets/buildings/mill.svg",
 };
 
 export const DEFAULT_GRID = { w: 12, h: 12 } as const;

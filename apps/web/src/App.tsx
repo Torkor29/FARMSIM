@@ -97,7 +97,7 @@ import { MissionPlay, type MissionPlayContract } from "./MissionPlay";
 import { LivestockPanel, type BarnState } from "./LivestockPanel";
 import type { SupplyCrate } from "./IsoFarmView";
 import { MarketPanel, type Listing, type MarketDelivery, type FuturesContract } from "./MarketPanel";
-import { OfficePanel, type CreditView } from "./OfficePanel";
+import { OfficePanel, type CreditView, type ProcessingView } from "./OfficePanel";
 import type { ContinentDetail, WorldContinent } from "./Onboarding";
 
 // Three.js pèse plus lourd que tout le reste de l'application réunie. L'écran
@@ -657,6 +657,7 @@ export function App() {
   const cuveL = player?.farm?.fuelL ?? 0;
   /** L'état de la ligne de crédit, rechargé à l'ouverture du Bureau. */
   const [credit, setCredit] = useState<CreditView | null>(null);
+  const [ateliers, setAteliers] = useState<ProcessingView[]>([]);
   const [care, setCare] = useState<{
     mode: CareMode;
     machineId: string;
@@ -3300,6 +3301,19 @@ export function App() {
     }
   }
 
+  /** Ce que font les ateliers de transformation, et à quelle marge. */
+  async function loadAteliers() {
+    if (!player) return;
+    try {
+      const r = await api<{ ateliers: ProcessingView[] }>(
+        `/farm/processing?userId=${player.id}`,
+      );
+      setAteliers(r.ateliers);
+    } catch {
+      /* une ferme sans atelier n'a rien à montrer ici */
+    }
+  }
+
   async function borrow(amount: number) {
     if (!player) return;
     setBusy(true);
@@ -3775,7 +3789,10 @@ export function App() {
      couru pendant qu'on jouait doit se voir en arrivant. */
   useEffect(() => {
     const ouvert = isMobile ? sheet === "OFFICE" : showEta;
-    if (ouvert) void loadCredit();
+    if (ouvert) {
+      void loadCredit();
+      void loadAteliers();
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [showEta, sheet, isMobile, player?.id]);
 
@@ -5577,6 +5594,7 @@ export function App() {
         credit={credit}
         onLoan={(n) => void borrow(n)}
         onRepay={(n) => void repay(n)}
+        ateliers={ateliers}
         open={showEta}
         // Fermer la bourse ne ferme plus le tiroir : ce sont deux surfaces
         // distinctes, et l'on revient au tiroir d'où l'on est parti.

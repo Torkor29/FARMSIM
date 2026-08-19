@@ -251,6 +251,12 @@ import {
   TIER_LABELS,
   jobDurationMs,
   fuelForJob,
+  MARKET_DEPTH_FLOOR,
+  PROCESSING_BUILDINGS,
+  RECIPES,
+  processRun,
+  processingMargin,
+  processingThroughput,
   farmEquity,
   borrowingRoom,
   creditCeiling,
@@ -857,6 +863,60 @@ async function tickDebtInterest() {
           label: "Intérêts de la ligne de crédit",
         },
       });
+    });
+  }
+}
+
+/* ------------------------------------------------------------------ */
+/* Ateliers de transformation                                          */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Fait tourner les laiteries et les moulins.
+ *
+ * Au tick monde, comme les intérêts : un atelier travaille pendant que le
+ * joueur est ailleurs, c'est tout son intérêt. Le calculer à l'affichage le
+ * ferait dépendre du nombre de fois qu'on ouvre l'écran.
+ *
+ * Trois choses le bornent, et ce sont elles qui font la décision : le débit du
+ * bâtiment, la matière en stock, et le cours du produit fini — qui baisse
+ * quand on en écoule.
+ */
+async function tickProcessing() {
+  const ateliers = await prisma.building.findMany({
+    where: { type: { in: PROCESSING_BUILDINGS } },
+    include: { parcel: { select: { farmId: true } } },
+  });
+  const now = new Date();
+  for (const b of ateliers) {
+    const def = BUILDING_DEFS[b.type as BuildingType];
+    if (!def.processing || !b.parcel.farmId) continue;
+    const recette = RECIPES[def.processing];
+    const depuis = b.processedAt ?? b.createdAt;
+    const stock = await prisma.inventoryItem.findFirst({
+      where: { farmId: b.parcel.farmId, itemCode: recette.input },
+    });
+    if (!stock || stock.qty <= 0) {
+      // Un atelier à vide ne met rien de côté : sans cette remise à l'heure,
+      // une laiterie sans lait accumulerait des semaines de capacité et
+      // convertirait tout un silo à la première traite.
+      await prisma.building.update({ where: { id: b.id }, data: { processedAt: now } });
+      continue;
+    }
+    const run = processRun({
+      kind: def.processing,
+      perDay: processingThroughput(b.type as BuildingType, b.level),
+      elapsedMs: now.getTime() - depuis.getTime(),
+      stockIn: stock.qty,
+    });
+    // Rien de produit alors qu'il y a de la matière : le temps écoulé ne fait
+    // pas encore une unité entière. On garde l'arrêté d'avant, sinon le
+    // compteur repart à zéro à chaque tour et l'atelier ne produit jamais.
+    if (run.produced <= 0) continue;
+    await prisma.$transaction(async (tx) => {
+      await drawFromStock(tx, stock, run.consumed);
+      await addToStock(tx, b.parcel.farmId!, recette.output, run.produced);
+      await tx.building.update({ where: { id: b.id }, data: { processedAt: now } });
     });
   }
 }
@@ -2074,7 +2134,19 @@ async function ensureSeed() {
         data: {
           commodity: code,
           price: MARKET_BOUNDS[code].initial,
-          stockTons: 2000,
+          /*
+           * Le carnet part à son point neutre, pas à un chiffre rond.
+           *
+           * Deux mille tonnes pour tout le monde, c'était plus de quarante
+           * fois la profondeur du lait et seize fois celle du blé : dès le
+           * premier tour de simulation, le terme de carnet écrasait le prix
+           * contre sa borne basse. Un monde neuf ouvrait donc avec toutes ses
+           * marchandises au plus bas, ce qui n'est le reflet d'aucune offre.
+           *
+           * `depth * MARKET_DEPTH_FLOOR` est exactement le stock pour lequel
+           * le carnet est à l'équilibre — voir `stepMarket`.
+           */
+          stockTons: Math.round(MARKET_BOUNDS[code].depth * MARKET_DEPTH_FLOOR * 100) / 100,
         },
       });
     }
@@ -2892,6 +2964,8 @@ async function runWorldTick() {
   // Les faire courir à l'affichage les ferait dépendre du nombre de fois où
   // le joueur ouvre son Bureau.
   await tickDebtInterest();
+  // Les ateliers tournent aussi hors connexion : c'est tout leur intérêt.
+  await tickProcessing();
   const zones = await prisma.zone.findMany();
   const snapshots = await prisma.weatherSnapshot.findMany();
   const weatherOut: { zoneCode: string; state: string; changed: boolean }[] = [];
@@ -4584,6 +4658,66 @@ app.post("/farm/fuel", async (req, res) => {
 });
 
 /** L'état de la ligne de crédit, tel que le Bureau le montre. */
+/**
+ * Ce que font les ateliers, et si ça vaut le coup aujourd'hui.
+ *
+ * La marge est le seul chiffre qui compte : sans elle, le joueur ne peut pas
+ * savoir que sa laiterie travaille à perte parce que le lait a flambé.
+ */
+app.get("/farm/processing", async (req, res) => {
+  const userId = String(req.query.userId ?? "");
+  if (!userId) {
+    res.status(400).json({ error: "userId requis" });
+    return;
+  }
+  const user = await prisma.user.findUnique({
+    where: { id: userId },
+    include: {
+      farm: {
+        include: {
+          inventory: true,
+          parcels: { include: { buildings: true } },
+        },
+      },
+    },
+  });
+  if (!user?.farm) {
+    res.status(404).json({ error: "Ferme introuvable" });
+    return;
+  }
+  const prix = await prisma.marketPrice.findMany();
+  const cours = (code: string) => prix.find((p) => p.commodity === code)?.price ?? 0;
+  const ateliers = user.farm.parcels
+    .flatMap((p) => p.buildings)
+    .filter((b) => BUILDING_DEFS[b.type as BuildingType].processing)
+    .map((b) => {
+      const kind = BUILDING_DEFS[b.type as BuildingType].processing!;
+      const recette = RECIPES[kind];
+      const perDay = processingThroughput(b.type as BuildingType, b.level);
+      const stockIn = user.farm!.inventory.find((i) => i.itemCode === recette.input)?.qty ?? 0;
+      const inputPrice = cours(recette.input);
+      const outputPrice = cours(recette.output);
+      return {
+        buildingId: b.id,
+        kind,
+        name: recette.name,
+        level: b.level,
+        input: recette.input,
+        output: recette.output,
+        ratio: recette.ratio,
+        perDay,
+        stockIn: Math.round(stockIn * 100) / 100,
+        inputPrice,
+        outputPrice,
+        margin: processingMargin({ kind, inputPrice, outputPrice }),
+        // Ce qu'il reste à traiter au rythme du bâtiment : « trois jours de
+        // travail devant elle » se lit mieux qu'un débit par jour.
+        daysOfWork: Math.round((stockIn / Math.max(0.01, perDay)) * 10) / 10,
+      };
+    });
+  res.json({ ateliers });
+});
+
 app.get("/farm/credit", async (req, res) => {
   const userId = String(req.query.userId ?? "");
   if (!userId) {

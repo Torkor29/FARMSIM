@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48" fill="none" aria-hidden="true">
+  <ellipse cx="24" cy="43.5" rx="11" ry="2" fill="currentColor" opacity="0.18"/>
+  <!-- Un sac de papier, col roulé : la silhouette qu'on reconnaît de loin. -->
+  <path d="M13 18h22l2 22a2 2 0 0 1-2 2.2H13A2 2 0 0 1 11 40z" fill="#fdfaf2" stroke="#1a6b5a" stroke-width="2" stroke-linejoin="round"/>
+  <path d="M13 18c2-3 5-4 11-4s9 1 11 4z" fill="#f4e9d4" stroke="#1a6b5a" stroke-width="2" stroke-linejoin="round"/>
+  <!-- Un épi sur l'étiquette : c'est du blé moulu, pas du sable. -->
+  <path d="M24 26v9" stroke="#74c3a9" stroke-width="2.4" stroke-linecap="round"/>
+  <path d="M24 28c-2.6 0-4-1.4-4-3 2.6 0 4 1.4 4 3zM24 28c2.6 0 4-1.4 4-3-2.6 0-4 1.4-4 3zM24 33c-2.6 0-4-1.4-4-3 2.6 0 4 1.4 4 3zM24 33c2.6 0 4-1.4 4-3-2.6 0-4 1.4-4 3z" fill="#74c3a9"/>
+</svg>

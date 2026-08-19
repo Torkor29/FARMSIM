@@ -349,6 +349,16 @@ export const GUIDE_CHAPTERS: GuideChapter[] = [
         usedBy: "Éleveur (énergie d’hiver). Missions d’ensilage.",
       },
       goodEntry(
+        "CHEESE",
+        "Ne se récolte pas : il se fabrique. Bâtissez une laiterie, elle transforme votre lait toute seule, cent hectolitres pour la tonne. Il ne s’abîme pas, contrairement au lait.",
+        "Marché. Éleveur : la façon de ne plus regarder son lait se gâter.",
+      ),
+      goodEntry(
+        "FLOUR",
+        "Sortie du moulin, quatre tonnes de blé pour trois de farine. Le moulin puise dans votre silo pendant que vous êtes ailleurs.",
+        "Marché. Céréalier : un tiers de valeur en plus, si le cours de la farine suit.",
+      ),
+      goodEntry(
         "MANURE",
         "Reste à côté du bâtiment. Épandez-le (outil Ferti) ou vendez-le au voisin. Fosse pleine : les bêtes sont moins bien.",
         "Céréalier (azote). Éleveur (doit vider la fosse). On le vend au voisin, pas à l’hôtel des ventes.",
@@ -378,6 +388,18 @@ export const GUIDE_CHAPTERS: GuideChapter[] = [
         name: "Hangar paille / foin · 900 TRN · 2×2",
         how: "Stocke fourrages, séchage doux.",
         usedBy: "Éleveur. Céréalier qui vendra du foin et de la paille.",
+      },
+      {
+        id: "DAIRY",
+        name: "Laiterie · 13 000 TRN · 2×2",
+        how: "Transforme 25 hL de lait par jour en fromage. Elle travaille pendant que vous êtes ailleurs, et le fromage ne se gâte pas.",
+        usedBy: "Éleveur installé. Regardez la marge au Bureau : si le lait flambe, elle travaille à perte.",
+      },
+      {
+        id: "MILL",
+        name: "Moulin · 4 000 TRN · 2×2",
+        how: "Moud 2 t de blé par jour en farine. Il puise dans le silo, donc il en faut un.",
+        usedBy: "Céréalier installé. Un tiers de valeur en plus sur ce qu’il moud.",
       },
       {
         id: "MACHINE_SHED",

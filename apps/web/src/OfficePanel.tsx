@@ -12,6 +12,8 @@ import {
   type FarmWork,
   type LedgerLine,
   type QuestView,
+  GOOD_DEFS,
+  type TradeGood,
 } from "@farmsim/shared";
 import { ZoneMap, type ZoneMapZone } from "./ZoneMap";
 
@@ -101,6 +103,25 @@ type Props = {
   credit?: CreditView | null;
   onLoan?: (amount: number) => void;
   onRepay?: (amount: number) => void;
+  /** Ce que transforment les ateliers, et si ça paie au cours du jour. */
+  ateliers?: ProcessingView[];
+};
+
+/** Un atelier de transformation, vu du Bureau. */
+export type ProcessingView = {
+  buildingId: string;
+  kind: string;
+  name: string;
+  level: number;
+  input: TradeGood;
+  output: TradeGood;
+  ratio: number;
+  perDay: number;
+  stockIn: number;
+  inputPrice: number;
+  outputPrice: number;
+  margin: number;
+  daysOfWork: number;
 };
 
 /** Ce que la banque renvoie sur l'état d'une exploitation. */
@@ -160,6 +181,7 @@ function Activite({
   credit,
   onLoan,
   onRepay,
+  ateliers,
 }: {
   lignes: LedgerLine[];
   jours: number;
@@ -169,6 +191,7 @@ function Activite({
   credit?: CreditView | null;
   onLoan?: (amount: number) => void;
   onRepay?: (amount: number) => void;
+  ateliers?: ProcessingView[];
 }) {
   const postes = totauxParPoste(lignes);
   const total = resultat(lignes);
@@ -278,6 +301,49 @@ function Activite({
         </>
       )}
 
+      {ateliers && ateliers.length > 0 && (
+        <>
+          {/* Les ateliers de transformation.
+              Un seul chiffre compte vraiment : la marge au cours du jour. Sans
+              elle, rien ne dit qu'une laiterie travaille à perte parce que le
+              lait a flambé — et elle continuerait sagement à en faire du
+              fromage moins cher que sa matière. */}
+          <h4 className="activite-titre">Transformation</h4>
+          <ul className="ateliers">
+            {ateliers.map((a) => {
+              const perte = a.margin <= 0;
+              const aVide = a.stockIn <= 0;
+              return (
+                <li key={a.buildingId} className={perte ? "perte-marge" : undefined}>
+                  <div className="atelier-tete">
+                    <strong>
+                      {a.name} <small>n{a.level}</small>
+                    </strong>
+                    <b className={perte ? "perte" : "gain"}>
+                      {perte ? "" : "+"}
+                      {Math.round(a.margin * 100)} %
+                    </b>
+                  </div>
+                  <span className="atelier-flux">
+                    {a.perDay} {GOOD_DEFS[a.input].unit} de {GOOD_DEFS[a.input].name.toLowerCase()}{" "}
+                    par jour → {Math.round((a.perDay / a.ratio) * 100) / 100}{" "}
+                    {GOOD_DEFS[a.output].unit} de {GOOD_DEFS[a.output].name.toLowerCase()}
+                  </span>
+                  <span className="atelier-etat">
+                    {aVide
+                      ? `À l’arrêt — plus de ${GOOD_DEFS[a.input].name.toLowerCase()} en stock`
+                      : `${a.stockIn} ${GOOD_DEFS[a.input].unit} en stock, ${a.daysOfWork} j de travail devant`}
+                    {perte
+                      ? ` · à perte : ${money(a.ratio * a.inputPrice)} de matière pour ${money(a.outputPrice)}`
+                      : ""}
+                  </span>
+                </li>
+              );
+            })}
+          </ul>
+        </>
+      )}
+
       <h4 className="activite-titre">Par atelier</h4>
       <ul className="activite-postes">
         {postes.map((p) => {
@@ -365,6 +431,7 @@ export function OfficePanel({
   credit,
   onLoan,
   onRepay,
+  ateliers,
   zones,
   myFarmId,
   expandableIds,
@@ -487,6 +554,7 @@ export function OfficePanel({
               credit={credit}
               onLoan={onLoan}
               onRepay={onRepay}
+              ateliers={ateliers}
             />
           </div>
         ) : mode === "CONSIGNES" ? (

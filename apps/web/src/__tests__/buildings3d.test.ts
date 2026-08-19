@@ -238,6 +238,43 @@ describe("les pièces mobiles", () => {
     expect(rig.anchors("vane")[0].rotation.y).not.toBeCloseTo(a, 3);
     rig.dispose();
   });
+
+  it("les ailes du moulin tournent debout, pas à plat", () => {
+    // Le piège est d'accrocher les ailes au rôle `vane`, qui existait déjà :
+    // elles balaieraient alors l'horizontale, et le moulin se lirait comme un
+    // manège. C'est `rotor` qu'il faut — l'axe z, comme une hélice.
+    const rig = createBuildingRig("MILL");
+    expect(rig.anchors("vane").length).toBe(0);
+    const ailes = rig.anchors("rotor");
+    expect(ailes.length).toBeGreaterThan(0);
+    rig.update({ t: 0 });
+    const a = ailes[0].rotation.z;
+    rig.update({ t: 2 });
+    expect(ailes[0].rotation.z).not.toBeCloseTo(a, 3);
+    rig.dispose();
+  });
+
+  it("les ailes du moulin ne labourent pas la cour", () => {
+    /**
+     * Une aile est un rayon : ce qui la borne, ce n'est pas la case mais la
+     * hauteur de son arbre. Trop longue, elle passe sous le sol à chaque tour
+     * — et comme elle tourne, la boîte englobante au repos ne le dit pas
+     * forcément. On la mesure donc en la faisant tourner.
+     */
+    for (const level of [1, 3, 5]) {
+      const rig = createBuildingRig("MILL", { level });
+      let bas = Infinity;
+      for (const t of [0, 0.4, 0.8, 1.2, 1.6, 2, 2.4, 2.8]) {
+        rig.update({ t });
+        rig.group.updateMatrixWorld(true);
+        bas = Math.min(bas, new THREE.Box3().setFromObject(rig.group).min.y);
+      }
+      expect(`MILL n${level} bas=${bas.toFixed(3)} ${bas > -0.005}`).toBe(
+        `MILL n${level} bas=${bas.toFixed(3)} true`,
+      );
+      rig.dispose();
+    }
+  });
 });
 
 describe("le niveau se voit", () => {
