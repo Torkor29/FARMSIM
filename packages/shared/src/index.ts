@@ -1,6 +1,7 @@
 /** Types & constantes partagés Farming Navigateur */
 
 import { GAME_DAY_MS } from "./time.js";
+import { MACHINE_END_OF_LIFE_HOURS } from "./machine-care.js";
 
 export * from "./ledger.js";
 export * from "./time.js";
@@ -776,14 +777,6 @@ export function conditionPerHour(lifeHours: number): number {
   return lifeHours > 0 ? 100 / lifeHours : 0;
 }
 
-/**
- * Heures au-delà desquelles la cote d'un engin ne descend plus `[GD]`.
- *
- * Il reste toujours quelque chose à reprendre — la casse, les pièces. C'est
- * aussi ce qui rend le matériel d'occasion intéressant : une vieille machine
- * bien tenue est un vrai bon plan, pas un piège.
- */
-export const MACHINE_END_OF_LIFE_HOURS = 1500;
 
 export type MachineType = "TRACTOR" | "HARVESTER" | "SPREADER" | "DISC_HARROW" | "BALER" | "FORAGE_HARVESTER";
 

@@ -246,6 +246,7 @@ import {
   totauxParPoste,
   resultat,
   conditionYieldFactor,
+  machineAgeYieldFactor,
   GREASE_COST_CRD,
   GREASE_FULL,
   CLEAN_COST_CRD,
@@ -4746,8 +4747,12 @@ app.post("/parcels/:id/harvest", async (req, res) => {
         const grainEq = access.charge
           ? sim.estimatedYieldTons
           : sim.estimatedYieldTons * (1 - P2P_YIELD_MALUS);
-        // L'ensileuse s'use comme le reste : son état pèse sur ce qu'elle rentre.
-        const usure = pickedSilage ? conditionYieldFactor(pickedSilage.machine.condition) : 1;
+        // L'ensileuse s'use comme le reste : son état pèse sur ce qu'elle
+        // rentre, et ses heures aussi — celles-là ne se réparent pas.
+        const usure = pickedSilage
+          ? conditionYieldFactor(pickedSilage.machine.condition) *
+            machineAgeYieldFactor(pickedSilage.machine.hours ?? 0)
+          : 1;
         const tons = silageYieldTons(grainEq, sim.progress) * usure;
         harvested.push({
           crop: cell.crop,
@@ -4785,12 +4790,19 @@ app.post("/parcels/:id/harvest", async (req, res) => {
       /**
        * Ce que l'engin ramasse vraiment.
        *
-       * La graisse et la propreté agissaient déjà. L'usure, non : une
-       * moissonneuse au bout du rouleau rendait autant qu'une neuve, si bien
-       * qu'entretenir au-dessus du seuil de blocage ne servait à rien.
+       * Trois choses, et chacune a manqué à son tour. La graisse et la
+       * propreté agissaient déjà. La condition, non : une moissonneuse au bout
+       * du rouleau rendait autant qu'une neuve, si bien qu'entretenir
+       * au-dessus du seuil de blocage ne servait à rien.
+       *
+       * Les heures non plus, et c'était le trou du marché de l'occasion : une
+       * machine de 1 500 h remise à neuf ramassait comme une neuve. On
+       * achetait moins cher sans rien perdre. Ce facteur-là ne se répare pas.
        */
       const careMult = care
-        ? (1 + careYieldBonus(care)) * conditionYieldFactor(picked!.machine.condition)
+        ? (1 + careYieldBonus(care)) *
+          conditionYieldFactor(picked!.machine.condition) *
+          machineAgeYieldFactor(picked!.machine.hours ?? 0)
         : 1;
       const tons =
         (access.charge ? sim.estimatedYieldTons : sim.estimatedYieldTons * (1 - P2P_YIELD_MALUS)) *

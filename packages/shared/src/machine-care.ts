@@ -251,6 +251,47 @@ export function hoursBeforeWorkshop(opts: {
   return Math.round(marge / parHeure);
 }
 
+/**
+ * Heures au-delà desquelles la cote d'un engin ne descend plus `[GD]`.
+ *
+ * Il reste toujours quelque chose à reprendre — la casse, les pièces. C'est
+ * aussi ce qui rend le matériel d'occasion intéressant : une vieille machine
+ * bien tenue est un vrai bon plan, pas un piège.
+ */
+export const MACHINE_END_OF_LIFE_HOURS = 1500;
+
+/**
+ * Ce que les heures retirent au rendement, définitivement `[GD]`.
+ *
+ * `conditionYieldFactor` punit le manque d'entretien, et l'atelier le répare.
+ * Les heures, elles, ne se réparent pas — et jusqu'ici elles ne coûtaient rien
+ * en jeu, seulement à la revente. Une moissonneuse de 1 500 h remise à neuf
+ * ramassait donc exactement autant qu'une neuve, ce qui laissait le marché de
+ * l'occasion sans contrepartie : on achetait moins cher, sans rien perdre.
+ *
+ * Un joueur l'a formulé comme la règle à trouver : une machine d'occasion doit
+ * rendre « moins vite ou avec un malus sur le rendement, mais pas assez grave
+ * pour que ça punisse trop », et l'affaire doit rester meilleure que faire
+ * venir une entreprise.
+ *
+ * D'où une pente très douce, plafonnée à −8 % en fin de vie :
+ *
+ *     0 h    →  rendement plein
+ *   300 h    →  −1,6 %      (occasion récente)
+ *   600 h    →  −3,2 %      (occasion courante)
+ *  1500 h +  →  −8 %        (bon pour la casse)
+ *
+ * Le repère : faire moissonner un champ par une entreprise coûte 22 % de sa
+ * valeur, service et malus compris. Même à −8 %, posséder reste très loin
+ * devant — c'est ce qui garde l'occasion attractive plutôt que piégeuse.
+ */
+export const MACHINE_AGE_YIELD_MALUS = 0.08;
+
+export function machineAgeYieldFactor(hours: number): number {
+  const part = Math.max(0, Math.min(1, hours / MACHINE_END_OF_LIFE_HOURS));
+  return Math.round((1 - MACHINE_AGE_YIELD_MALUS * part) * 1000) / 1000;
+}
+
 export function isBreakdownKind(v: string | null | undefined): v is BreakdownKind {
   return v === "BELT" || v === "HYDRAULIC" || v === "ENGINE";
 }

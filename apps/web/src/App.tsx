@@ -68,6 +68,7 @@ import {
   careWearMultiplier,
   hoursBeforeWorkshop,
   jobHours,
+  machineAgeYieldFactor,
   machineDealerValue,
   MACHINE_LISTING_MIN_RATE,
   MACHINE_LISTING_MAX_RATE,
@@ -4442,7 +4443,9 @@ export function App() {
             <h3 className="only-mobile">Garage</h3>
             <p className="muted tiny">
               Graissez et nettoyez : la machine s’use moins et récolte un peu plus.
-              Réparer ramène à mi-chemin, remettre à neuf va jusqu’à 100 %.
+              Réparer ramène à mi-chemin, remettre à neuf va jusqu’à 100 %. Le
+              compteur horaire, lui, ne se répare pas : c’est ce qui fixe la cote
+              d’un engin et ce qui rend l’occasion moins chère.
             </p>
             <ul className="list">
               {(player.farm?.machines ?? []).map((m) => {
@@ -4473,6 +4476,7 @@ export function App() {
                 const rendement = conditionYieldFactor(m.condition);
                 const salete = Math.max(0, Math.min(100, m.dirt ?? 0));
                 const compteur = m.hours ?? 0;
+                const ageFactor = machineAgeYieldFactor(compteur);
                 const heuresRestantes = def
                   ? hoursBeforeWorkshop({
                       condition: m.condition,
@@ -4560,6 +4564,12 @@ export function App() {
                       <div className="muted tiny">
                         Compteur <b>{compteur.toFixed(0)} h</b>
                         {def && ` · ${heuresParChamp.toFixed(1)} h par champ entier`}
+                        {/* Le malus d'âge ne se répare pas : s'il n'était pas
+                            écrit ici, le joueur réviserait sa machine en
+                            croyant récupérer un rendement qui ne revient pas. */}
+                        {ageFactor < 1 && (
+                          <> · <b className="wear-cost">−{Math.round((1 - ageFactor) * 100)} % d’usure moteur</b></>
+                        )}
                       </div>
                       {def && !panne && (
                         <div className={`muted tiny ${champsRestants <= 1 ? "warn" : ""}`}>
@@ -4718,6 +4728,11 @@ export function App() {
                         <strong>{l.name}</strong>
                         <div className="muted tiny">
                           {l.hours.toFixed(0)} h au compteur · état {l.condition.toFixed(0)} %
+                          {/* Ce qu'un acheteur doit savoir avant de payer : les
+                              heures coûtent du rendement, et la révision ne les
+                              efface pas. */}
+                          {machineAgeYieldFactor(l.hours) < 1 &&
+                            ` · rendement −${Math.round((1 - machineAgeYieldFactor(l.hours)) * 100)} %`}
                           {l.breakdown ? " · en panne" : ""}
                           {mien ? " · votre annonce" : ` · ${l.seller?.displayName ?? "un voisin"}`}
                         </div>

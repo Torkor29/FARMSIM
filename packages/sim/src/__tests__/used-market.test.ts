@@ -9,6 +9,14 @@
  */
 
 import {
+  CONTRACTOR_YIELD_MALUS,
+  CROP_DEFS,
+  DEFAULT_GRID,
+  MACHINE_AGE_YIELD_MALUS,
+  MARKET_BOUNDS,
+  conditionYieldFactor,
+  contractorQuote,
+  machineAgeYieldFactor,
   MACHINE_DEFS,
   MACHINE_DEALER_RATE,
   MACHINE_END_OF_LIFE_HOURS,
@@ -81,5 +89,76 @@ describe("cote d'une machine d'occasion", () => {
       const def = MACHINE_DEFS[type];
       expect(machineResaleValue(type, { condition: 100, hours: 0 })).toBeLessThan(def.cost * 0.6);
     }
+  });
+});
+
+describe("ce qu'une machine d'occasion fait perdre au champ", () => {
+  const CHAMP = DEFAULT_GRID.w * DEFAULT_GRID.h;
+  const brut = CHAMP * CROP_DEFS.WHEAT.yieldPerCell * MARKET_BOUNDS.WHEAT.initial;
+
+  it("ne coûte rien à zéro heure et plafonne à −8 %", () => {
+    expect(machineAgeYieldFactor(0)).toBe(1);
+    expect(machineAgeYieldFactor(MACHINE_END_OF_LIFE_HOURS)).toBeCloseTo(
+      1 - MACHINE_AGE_YIELD_MALUS,
+      3,
+    );
+    // Au-delà de la fin de vie, on ne s'enfonce pas davantage.
+    expect(machineAgeYieldFactor(MACHINE_END_OF_LIFE_HOURS * 4)).toBe(
+      machineAgeYieldFactor(MACHINE_END_OF_LIFE_HOURS),
+    );
+  });
+
+  it("descend sans marche d'escalier", () => {
+    let precedent = 1;
+    for (let h = 50; h <= MACHINE_END_OF_LIFE_HOURS; h += 50) {
+      const ici = machineAgeYieldFactor(h);
+      expect(ici).toBeLessThan(precedent);
+      expect(precedent - ici).toBeLessThan(0.01);
+      precedent = ici;
+    }
+  });
+
+  it("ne se répare pas — c'est ce qui la distingue de la condition", () => {
+    /**
+     * Le trou que ce facteur bouche. Sans lui, un acheteur prenait une
+     * moissonneuse de 1 500 h à 660 TRN, la révisait, et ramassait autant
+     * qu'avec une neuve à 4 000 TRN.
+     */
+    const revisee = conditionYieldFactor(100) * machineAgeYieldFactor(1500);
+    const neuve = conditionYieldFactor(100) * machineAgeYieldFactor(0);
+    expect(revisee).toBeLessThan(neuve);
+  });
+
+  it("reste très loin devant l'entreprise, même en fin de vie", () => {
+    /**
+     * La contrainte posée par le joueur : « que ça tienne par rapport à un pnj
+     * qui vient récolter ». Mesuré, faire moissonner un champ par une
+     * entreprise coûte 22 % de sa valeur — service plus malus de rendement.
+     * Même une machine bonne pour la casse doit rester nettement meilleure,
+     * sinon l'occasion serait un piège et la cote plancher un mensonge.
+     */
+    const entreprise =
+      contractorQuote("HARVEST", CHAMP) + brut * CONTRACTOR_YIELD_MALUS;
+    const epave = brut * MACHINE_AGE_YIELD_MALUS;
+    expect(epave).toBeLessThan(entreprise / 2);
+  });
+
+  it("garde le malus léger sur l'occasion courante", () => {
+    // « Pas assez grave pour que ça punisse trop » : une occasion de 600 h ne
+    // doit pas coûter plus de quelques pour cent.
+    expect(1 - machineAgeYieldFactor(600)).toBeLessThan(0.04);
+  });
+
+  it("laisse l'occasion se rentabiliser en un champ ou deux", () => {
+    /**
+     * Le calcul que fait le joueur : acheter d'occasion plutôt que d'appeler
+     * l'entreprise. Une moissonneuse à 600 h doit se payer très vite.
+     */
+    const cote = machineResaleValue("HARVESTER", { condition: 100, hours: 600 });
+    const parChamp =
+      contractorQuote("HARVEST", CHAMP) +
+      brut * CONTRACTOR_YIELD_MALUS -
+      brut * (1 - machineAgeYieldFactor(600));
+    expect(cote / parChamp).toBeLessThan(2);
   });
 });

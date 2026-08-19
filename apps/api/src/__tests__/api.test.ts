@@ -28,13 +28,35 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { DIRT_DIRTY_THRESHOLD, machineResaleValue } from "@farmsim/shared";
+import {
+  DIRT_DIRTY_THRESHOLD,
+  MACHINE_AGE_YIELD_MALUS,
+  MACHINE_END_OF_LIFE_HOURS,
+  machineResaleValue,
+} from "@farmsim/shared";
 
 const API_DIR = fileURLToPath(new URL("../..", import.meta.url));
 const PORT = 3999;
 const BASE = `http://127.0.0.1:${PORT}`;
 
 let serveur: ChildProcess | null = null;
+/** Base du serveur de test — sert aux montages qu'aucune route ne permet. */
+let fichierDb = "";
+
+/**
+ * Écrit directement en base, pour poser un état que le jeu met des heures à
+ * produire. Réservé aux montages de test : vieillir une machine de 1 500 h ne
+ * s'obtient par aucune route, et le faire en jouant ferait varier du même coup
+ * la condition et la saleté — donc mesurerait autre chose.
+ */
+function prismaExec(sql: string) {
+  execFileSync("npx", ["prisma", "db", "execute", "--stdin", "--schema", "prisma/schema.prisma"], {
+    cwd: API_DIR,
+    env: { ...process.env, DATABASE_URL: `file:${fichierDb}` },
+    input: sql,
+    stdio: ["pipe", "ignore", "ignore"],
+  });
+}
 let dossier = "";
 
 /** Appel HTTP, avec jeton facultatif. */
@@ -94,6 +116,7 @@ before(async () => {
 
   dossier = mkdtempSync(join(tmpdir(), "farmsim-api-"));
   const url = `file:${join(dossier, "test.db")}`;
+  fichierDb = join(dossier, "test.db");
   execFileSync("npx", ["prisma", "migrate", "deploy"], {
     cwd: API_DIR,
     env: { ...process.env, DATABASE_URL: url },
@@ -993,5 +1016,112 @@ describe("marché de l'occasion", () => {
     const apres = (await argent(v.jeton)).player.crd;
     assert.equal(Math.round(apres - avant), Math.round(reprise));
     assert.ok(reprise < machineResaleValue("TRACTOR", { condition: 100, hours: 0 }));
+  });
+});
+
+describe("les heures pèsent sur la récolte", () => {
+  /**
+   * Le trou que ce test garde fermé : sans malus d'âge, une moissonneuse de
+   * 1 500 h remise à neuf ramassait autant qu'une neuve. On achetait
+   * d'occasion moins cher, sans jamais rien perdre — le marché de l'occasion
+   * n'avait donc pas de contrepartie.
+   *
+   * Le facteur vit dans `packages/shared` et ses formes sont tenues par
+   * `used-market.test.ts` ; ici on vérifie qu'il arrive bien jusqu'aux tonnes,
+   * par la vraie route de moisson.
+   */
+  async function moissonne(heuresCompteur: number) {
+    const moi = await inscrire("Moissonneur");
+    const monde = await appel("/world/AUR");
+    const regions = (monde.corps as unknown as {
+      regions: { parcels: { id: string; taken: boolean }[] }[];
+    }).regions;
+    let parcelId = "";
+    for (const r of regions) {
+      const libre = (r.parcels ?? []).find((p) => !p.taken);
+      if (libre) {
+        parcelId = libre.id;
+        break;
+      }
+    }
+    assert.ok(parcelId, "il faut une parcelle libre");
+    await appel("/world/claim", {
+      methode: "POST",
+      corps: { userId: moi.id, specialization: "CEREALIER", parcelId },
+      jeton: moi.jeton,
+    });
+    await appel("/dev/grant", {
+      methode: "POST",
+      corps: { userId: moi.id, crd: 200000, level: 20 },
+      jeton: moi.jeton,
+    });
+    await appel("/machines/buy", {
+      methode: "POST",
+      corps: { userId: moi.id, type: "HARVESTER" },
+      jeton: moi.jeton,
+    });
+
+    const me = await appel("/auth/me", { jeton: moi.jeton });
+    const ferme = (me.corps as unknown as {
+      player: { farm: { parcels: { id: string }[]; machines: { id: string; type: string }[] } };
+    }).player.farm;
+    const parcelle = ferme.parcels[0]!;
+    const moissonneuse = ferme.machines.find((m) => m.type === "HARVESTER")!;
+
+    // On vieillit l'engin directement en base : c'est le seul moyen d'isoler
+    // l'effet des heures sans faire varier aussi la condition et la saleté.
+    prismaExec(
+      `UPDATE Machine SET hours = ${heuresCompteur}, condition = 100, grease = 100, dirt = 0 WHERE id = '${moissonneuse.id}'`,
+    );
+
+    const cellsR = await appel(`/parcels/${parcelle.id}`);
+    const cells = (cellsR.corps as unknown as {
+      parcel: { cells: { x: number; y: number; kind: string }[] };
+    }).parcel.cells
+      .filter((c) => c.kind === "EMPTY")
+      .map((c) => ({ x: c.x, y: c.y }));
+
+    await appel(`/parcels/${parcelle.id}/plant`, {
+      methode: "POST",
+      corps: { userId: moi.id, crop: "WHEAT", cells },
+      jeton: moi.jeton,
+    });
+    await appel("/dev/grant", {
+      methode: "POST",
+      corps: { userId: moi.id, ripenAll: true },
+      jeton: moi.jeton,
+    });
+    const r = await appel(`/parcels/${parcelle.id}/harvest`, {
+      methode: "POST",
+      corps: { userId: moi.id, cells },
+      jeton: moi.jeton,
+    });
+    assert.equal(r.statut, 200, `moisson refusée : ${JSON.stringify(r.corps)}`);
+    const lots = (r.corps as unknown as { harvested: { tons: number }[] }).harvested;
+    return lots.reduce((a, l) => a + l.tons, 0);
+  }
+
+  it("fait moins rendre une moissonneuse usée, révisée ou non", async () => {
+    /**
+     * L'assertion porte sur le **rapport attendu**, pas sur un simple « moins
+     * que » : les deux fermes tombent sur des parcelles différentes, dont la
+     * fertilité varie d'environ un pour cent. Une comparaison lâche passait
+     * donc au vert même avec le malus désactivé — vérifié en le mettant à zéro.
+     *
+     * La tolérance couvre ce bruit sans couvrir l'effet mesuré, qui est huit
+     * fois plus grand.
+     */
+    const neuve = await moissonne(0);
+    const usee = await moissonne(MACHINE_END_OF_LIFE_HOURS);
+    assert.ok(neuve > 0, "la moissonneuse neuve n'a rien ramassé");
+
+    const rapport = usee / neuve;
+    const attendu = 1 - MACHINE_AGE_YIELD_MALUS;
+    assert.ok(
+      Math.abs(rapport - attendu) < 0.03,
+      `1 500 h au compteur donnent un rapport de ${rapport.toFixed(3)} au lieu de ${attendu} (${usee.toFixed(2)} t contre ${neuve.toFixed(2)} t)`,
+    );
+    // « Pas assez grave pour que ça punisse trop. »
+    assert.ok(1 - rapport < 0.1, `écart de ${(100 * (1 - rapport)).toFixed(1)} %`);
   });
 });
