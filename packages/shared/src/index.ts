@@ -733,23 +733,57 @@ export const DEFAULT_GRID = { w: 12, h: 12 } as const;
 export const PARCEL_HECTARES = 14;
 
 /**
- * Nombre de champs entiers qu'une machine bien tenue doit encaisser avant
- * l'atelier `[GD]`.
+ * Le compteur horaire, et ce qu'il remplace `[GD]`.
  *
- * L'unité de jeu est le champ : « Tout sélectionner » travaille les 144 cases
- * d'un coup, et c'est ainsi qu'on joue. L'usure était pourtant calibrée au
- * geste — une moissonneuse à 4 000 TRN perdait 46 points par passage et se
- * bloquait à la deuxième moisson. On ne décidait rien : on retournait à
- * l'atelier entre chaque champ.
+ * L'usure se comptait en cases travaillées. Deux choses clochaient, et la
+ * seconde abîmait l'économie entière.
  *
- * Cinq champs, c'est la saison complète d'une parcelle (labour, semis,
- * fertilisation, moisson, déchaumage) pour un tracteur, et quatre parcelles
- * moissonnées d'affilée pour une moissonneuse. La révision redevient une
- * décision qu'on prend, pas un péage qu'on paie.
+ * La case n'est pas une unité que le joueur ressent : il travaille des champs,
+ * et il pense en saisons. Surtout, le barème donnait une révision complète de
+ * tracteur — 600 TRN — tous les cinq champs, pour un engin qui en coûte 2 800.
+ * Sur sa vie, la machine se payait plusieurs fois en réparations. Aucun bien
+ * d'équipement ne fonctionne comme ça, et un joueur l'a dit dans ces termes :
+ * « un tracteur ça meurt pas en 2 jours ».
  *
- * Sert de référence aux `wearPerCell` ci-dessous et au test qui les garde.
+ * L'usure se compte donc désormais en **heures de travail**, comme sur un
+ * vrai compteur horaire. Deux quantités distinctes, toutes deux honnêtes :
+ *
+ *   `hours`      monotone, ne recule jamais, pas même après une révision.
+ *                C'est l'âge de l'engin, et c'est lui qui fixe sa cote.
+ *   `condition`  l'usure depuis la dernière remise en état, que l'atelier
+ *                répare.
+ *
+ * C'est exactement la distinction du matériel réel : un tracteur de 2 000 h
+ * révisé à neuf roule comme un neuf, mais ne se revend pas comme un neuf.
  */
-export const WEAR_FIELDS_TARGET = 5;
+
+/** Surface d'une case, en hectares — 12×12 cases pour 14 ha. */
+export const HECTARES_PER_CELL = PARCEL_HECTARES / (DEFAULT_GRID.w * DEFAULT_GRID.h);
+
+/**
+ * Heures au compteur pour un chantier `[GD]`.
+ *
+ * Un champ entier de 14 ha demande deux à cinq heures selon l'engin : ce sont
+ * des ordres de grandeur agricoles réels, et c'est ce qui rend le compteur
+ * lisible — « 47 h » veut dire quelque chose.
+ */
+export function jobHours(hoursPerHectare: number, cells: number): number {
+  return Math.round(hoursPerHectare * Math.max(0, cells) * HECTARES_PER_CELL * 100) / 100;
+}
+
+/** Points de condition perdus par heure de travail, au soin neutre. */
+export function conditionPerHour(lifeHours: number): number {
+  return lifeHours > 0 ? 100 / lifeHours : 0;
+}
+
+/**
+ * Heures au-delà desquelles la cote d'un engin ne descend plus `[GD]`.
+ *
+ * Il reste toujours quelque chose à reprendre — la casse, les pièces. C'est
+ * aussi ce qui rend le matériel d'occasion intéressant : une vieille machine
+ * bien tenue est un vrai bon plan, pas un piège.
+ */
+export const MACHINE_END_OF_LIFE_HOURS = 1500;
 
 export type MachineType = "TRACTOR" | "HARVESTER" | "SPREADER" | "DISC_HARROW" | "BALER" | "FORAGE_HARVESTER";
 
@@ -758,8 +792,14 @@ export type MachineDef = {
   name: string;
   cost: number;
   tier: number;
-  /** Points de condition perdus par case travaillée */
-  wearPerCell: number;
+  /** Heures au compteur par hectare travaillé — ordre de grandeur réel */
+  hoursPerHectare: number;
+  /**
+   * Heures de travail pour user 100 points de condition, au soin neutre.
+   * C'est la durée entre deux remises à neuf, pas la durée de vie de l'engin :
+   * un tracteur enchaîne plusieurs révisions avant de finir à la casse.
+   */
+  lifeHours: number;
   /** Coût TRN pour +1 point de condition */
   repairCostPerPoint: number;
   minCondition: number;
@@ -777,9 +817,10 @@ export const MACHINE_DEFS: Record<MachineType, MachineDef> = {
     name: "Tracteur T1",
     cost: 2800,
     tier: 1,
-    // Cinq champs de 144 cases bien entretenus avant l'atelier (≈ 13 pts par
-    // passage). Avant : 0,25, soit deux passages — cf. WEAR_FIELDS_TARGET.
-    wearPerCell: 0.11,
+    // 4,9 h pour un champ de 14 ha : un semis réel, à la louche. 700 h entre
+    // deux révisions, soit environ 140 champs — un tracteur, ça dure.
+    hoursPerHectare: 0.35,
+    lifeHours: 700,
     // Révision complète ≈ 20 % de l'achat (560 TRN).
     repairCostPerPoint: 6,
     minCondition: 15,
@@ -792,9 +833,10 @@ export const MACHINE_DEFS: Record<MachineType, MachineDef> = {
     name: "Moissonneuse T1",
     cost: 4000,
     tier: 1,
-    // La plus gourmande avec l'ensileuse : ~17 pts par champ, quatre moissons
-    // avant la révision. Avant : 0,32, soit deux moissons pour 4 000 TRN.
-    wearPerCell: 0.14,
+    // Une moissonneuse travaille moins d'heures par an qu'un tracteur, et les
+    // use plus vite : 480 h entre deux révisions, ~115 champs moissonnés.
+    hoursPerHectare: 0.3,
+    lifeHours: 480,
     repairCostPerPoint: 8,
     minCondition: 15,
     description: "Récolte céréales.",
@@ -806,7 +848,8 @@ export const MACHINE_DEFS: Record<MachineType, MachineDef> = {
     name: "Épandeur T1",
     cost: 1500,
     tier: 1,
-    wearPerCell: 0.09,
+    hoursPerHectare: 0.15,
+    lifeHours: 800,
     repairCostPerPoint: 3,
     minCondition: 15,
     description: "Fertilisation plus efficace (−usure vs tracteur).",
@@ -818,7 +861,8 @@ export const MACHINE_DEFS: Record<MachineType, MachineDef> = {
     name: "Déchaumeur à disques",
     cost: 1600,
     tier: 1,
-    wearPerCell: 0.08,
+    hoursPerHectare: 0.2,
+    lifeHours: 900,
     repairCostPerPoint: 4,
     minCondition: 15,
     description:
@@ -831,7 +875,8 @@ export const MACHINE_DEFS: Record<MachineType, MachineDef> = {
     name: "Presse à balles",
     cost: 1800,
     tier: 1,
-    wearPerCell: 0.1,
+    hoursPerHectare: 0.28,
+    lifeHours: 750,
     repairCostPerPoint: 5,
     minCondition: 15,
     description: "Presse l’andain en bottes. Sans elle, la paille reste au champ.",
@@ -843,7 +888,8 @@ export const MACHINE_DEFS: Record<MachineType, MachineDef> = {
     name: "Ensileuse T1",
     cost: 4200,
     tier: 1,
-    wearPerCell: 0.15,
+    hoursPerHectare: 0.35,
+    lifeHours: 450,
     repairCostPerPoint: 9,
     minCondition: 15,
     description: "Récolte le maïs plante entière, plus tôt, plus de tonnage.",
@@ -885,13 +931,77 @@ export const MACHINE_RESALE_RATE = 0.55;
 export const BUILDING_RESALE_RATE = 0.4;
 
 /**
- * Prix de reprise d'une machine. L'état compte pour moitié : une machine
- * ruinée ne vaut presque plus rien, une machine neuve garde l'essentiel de
- * la décote de base.
+ * Ce que le concessionnaire retient en plus, pour une reprise immédiate `[GD]`.
+ *
+ * Il paie moins que la valeur du marché, et c'est la contrepartie du service :
+ * l'argent tombe tout de suite, sans attendre qu'un joueur passe. Vendre à la
+ * cote demande de la patience ; brader au concessionnaire n'en demande pas.
  */
-export function machineResaleValue(type: MachineType, condition: number): number {
-  const wear = Math.max(0, Math.min(100, condition)) / 100;
-  return Math.round(MACHINE_DEFS[type].cost * MACHINE_RESALE_RATE * (0.45 + wear * 0.55));
+export const MACHINE_DEALER_RATE = 0.7;
+
+/** Durée d'une annonce d'occasion. Passé ce délai, l'engin revient au vendeur. */
+export const MACHINE_LISTING_TTL_MS = 48 * 60 * 60 * 1000;
+
+/** Garde-fou de prix : on ne brade ni ne délire sur la cote. */
+export const MACHINE_LISTING_MIN_RATE = 0.25;
+export const MACHINE_LISTING_MAX_RATE = 2;
+
+/**
+ * Ce que l'âge retire à une machine, indépendamment de son état `[GD]`.
+ *
+ * Les heures ne se réparent pas. Un tracteur de 1 200 h remis à neuf roule
+ * comme un neuf mais ne se revend pas comme un neuf, et c'est ce que cette
+ * courbe traduit : elle descend jusqu'à un plancher, jamais jusqu'à zéro.
+ * Sans plancher, le matériel d'occasion serait un piège plutôt qu'une bonne
+ * affaire.
+ */
+export function machineAgeFactor(hours: number): number {
+  const h = Math.max(0, Math.min(MACHINE_END_OF_LIFE_HOURS, hours));
+  const part = h / MACHINE_END_OF_LIFE_HOURS;
+  return Math.round((1 - 0.7 * part) * 1000) / 1000;
+}
+
+/**
+ * Cote d'une machine d'occasion — le prix qu'elle vaut entre joueurs.
+ *
+ * Deux facteurs qui ne disent pas la même chose : les **heures** sont l'âge,
+ * définitif ; la **condition** est l'entretien, réparable. C'est ce qui donne
+ * son intérêt au marché de l'occasion — une vieille machine bien tenue vaut
+ * mieux qu'une jeune machine ruinée, et le prix le dit.
+ *
+ * La signature accepte encore un simple nombre pour la condition afin de ne
+ * pas casser les appels d'avant le compteur horaire ; sans heures, la machine
+ * est traitée comme neuve.
+ */
+export function machineResaleValue(
+  type: MachineType,
+  state: number | { condition: number; hours?: number },
+): number {
+  const condition = typeof state === "number" ? state : state.condition;
+  const hours = typeof state === "number" ? 0 : (state.hours ?? 0);
+  const etat = Math.max(0, Math.min(100, condition)) / 100;
+  /* La condition pèse peu, et c'est voulu — un test l'a imposé.
+     À 0,55 de poids, réviser un tracteur coûtait 510 TRN et en ajoutait 720 à
+     sa cote : acheter une épave, la réviser, la revendre était une machine à
+     fabriquer de l'argent. Le défaut est antérieur au compteur horaire, mais
+     il ne se voyait pas tant que la condition faisait seule le prix.
+     Économiquement, c'est aussi le bon sens : un défaut réparable ne devrait
+     pas décoter beaucoup, puisque l'acheteur peut le réparer. Ce qui ne se
+     rattrape pas — les heures — doit dominer. */
+  return Math.round(
+    MACHINE_DEFS[type].cost *
+      MACHINE_RESALE_RATE *
+      machineAgeFactor(hours) *
+      (0.7 + etat * 0.3),
+  );
+}
+
+/** Ce que le concessionnaire propose, tout de suite et sans négocier. */
+export function machineDealerValue(
+  type: MachineType,
+  state: number | { condition: number; hours?: number },
+): number {
+  return Math.round(machineResaleValue(type, state) * MACHINE_DEALER_RATE);
 }
 
 /**

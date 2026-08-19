@@ -28,7 +28,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { DIRT_DIRTY_THRESHOLD } from "@farmsim/shared";
+import { DIRT_DIRTY_THRESHOLD, machineResaleValue } from "@farmsim/shared";
 
 const API_DIR = fileURLToPath(new URL("../..", import.meta.url));
 const PORT = 3999;
@@ -776,6 +776,22 @@ describe("usure au champ", () => {
     return cells.filter((c) => c.kind === "EMPTY").map((c) => ({ x: c.x, y: c.y }));
   }
 
+  it("avance le compteur horaire du temps réellement passé", async () => {
+    // Le compteur est la nouvelle échelle : il doit correspondre au chantier,
+    // pas à un nombre abstrait. Un champ de 14 ha, c'est quelques heures.
+    const { moi, parcelle } = await cerealier();
+    const cases = await champEntier(parcelle.id);
+    const r = await appel(`/parcels/${parcelle.id}/plant`, {
+      methode: "POST",
+      corps: { userId: moi.id, crop: "WHEAT", cells: cases },
+      jeton: moi.jeton,
+    });
+    assert.equal(r.statut, 200, `semis refusé : ${JSON.stringify(r.corps)}`);
+    const m = (r.corps as unknown as { machine: { hours: number; hoursWorked: number } }).machine;
+    assert.ok(m.hoursWorked > 1.5 && m.hoursWorked < 6, `chantier de ${m.hoursWorked} h`);
+    assert.ok(Math.abs(m.hours - m.hoursWorked) < 0.01, "un engin neuf part de zéro heure");
+  });
+
   it("laisse le tracteur en bon état après un champ entier", async () => {
     /**
      * Le reproche d'un joueur, mesuré de bout en bout : « je lance un champ,
@@ -809,5 +825,173 @@ describe("usure au champ", () => {
       machine.dirt < DIRT_DIRTY_THRESHOLD,
       `un seul champ salit la machine à ${machine.dirt}, au-delà du seuil « sale » (${DIRT_DIRTY_THRESHOLD})`,
     );
+  });
+});
+
+describe("marché de l'occasion", () => {
+  /** Une ferme installée, avec de quoi acheter. */
+  async function ferme(nom: string) {
+    const moi = await inscrire(nom);
+    const monde = await appel("/world/AUR");
+    const regions = (monde.corps as unknown as {
+      regions: { parcels: { id: string; taken: boolean }[] }[];
+    }).regions;
+    let parcelId = "";
+    for (const r of regions) {
+      const libre = (r.parcels ?? []).find((p) => !p.taken);
+      if (libre) {
+        parcelId = libre.id;
+        break;
+      }
+    }
+    assert.ok(parcelId, "il faut une parcelle libre");
+    await appel("/world/claim", {
+      methode: "POST",
+      corps: { userId: moi.id, specialization: "CEREALIER", parcelId },
+      jeton: moi.jeton,
+    });
+    await appel("/dev/grant", { methode: "POST", corps: { userId: moi.id, crd: 50000 }, jeton: moi.jeton });
+    const me = await appel("/auth/me", { jeton: moi.jeton });
+    const p = (me.corps as unknown as {
+      player: { crd: number; farm: { id: string; machines: { id: string; type: string }[] } };
+    }).player;
+    return { ...moi, crd: p.crd, machines: p.farm.machines };
+  }
+
+  const argent = async (jeton: string) =>
+    (await appel("/auth/me", { jeton })).corps as unknown as { player: { crd: number } };
+
+  it("sort l'engin de la ferme dès la mise en vente", async () => {
+    /**
+     * Le point qui décide de tout le reste : l'annonce *est* la machine
+     * pendant sa durée. Sans ça, on continuerait de labourer avec un tracteur
+     * qu'on est en train de vendre, et deux exemplaires existeraient à la
+     * fois — celui de la ferme et celui de l'annonce.
+     */
+    const v = await ferme("Vendeur");
+    const tracteur = v.machines.find((m) => m.type === "TRACTOR")!;
+    const r = await appel(`/machines/${tracteur.id}/list`, {
+      methode: "POST",
+      corps: { userId: v.id, priceCrd: 800 },
+      jeton: v.jeton,
+    });
+    assert.equal(r.statut, 201, `mise en vente refusée : ${JSON.stringify(r.corps)}`);
+
+    const apres = (await appel("/auth/me", { jeton: v.jeton })).corps as unknown as {
+      player: { farm: { machines: { id: string }[] } };
+    };
+    assert.ok(
+      !apres.player.farm.machines.some((m) => m.id === tracteur.id),
+      "le tracteur mis en vente est encore au garage",
+    );
+  });
+
+  it("refuse un prix hors des bornes de la cote", async () => {
+    // Sans bornes, la criée sert à se transférer de l'argent entre comptes.
+    const v = await ferme("Malin");
+    const tracteur = v.machines.find((m) => m.type === "TRACTOR")!;
+    const r = await appel(`/machines/${tracteur.id}/list`, {
+      methode: "POST",
+      corps: { userId: v.id, priceCrd: 999999 },
+      jeton: v.jeton,
+    });
+    assert.equal(r.statut, 409, `un prix délirant a été accepté : ${JSON.stringify(r.corps)}`);
+  });
+
+  it("transfère l'engin et l'argent, état compris", async () => {
+    const v = await ferme("Cede");
+    const a = await ferme("Reprend");
+    const tracteur = v.machines.find((m) => m.type === "TRACTOR")!;
+
+    const pose = await appel(`/machines/${tracteur.id}/list`, {
+      methode: "POST",
+      corps: { userId: v.id, priceCrd: 700 },
+      jeton: v.jeton,
+    });
+    assert.equal(pose.statut, 201);
+    const annonce = (pose.corps as unknown as { listing: { id: string } }).listing;
+
+    const avantV = (await argent(v.jeton)).player.crd;
+    const avantA = (await argent(a.jeton)).player.crd;
+
+    const achat = await appel(`/machines/listings/${annonce.id}/buy`, {
+      methode: "POST",
+      corps: { userId: a.id },
+      jeton: a.jeton,
+    });
+    assert.equal(achat.statut, 201, `achat refusé : ${JSON.stringify(achat.corps)}`);
+
+    const apresV = (await argent(v.jeton)).player.crd;
+    const apresA = (await argent(a.jeton)).player.crd;
+    assert.equal(Math.round(apresV - avantV), 700, "le vendeur n'a pas été payé");
+    assert.equal(Math.round(avantA - apresA), 700, "l'acheteur n'a pas été débité");
+
+    const parc = (await appel("/auth/me", { jeton: a.jeton })).corps as unknown as {
+      player: { farm: { machines: { type: string }[] } };
+    };
+    assert.equal(
+      parc.player.farm.machines.filter((m) => m.type === "TRACTOR").length,
+      2,
+      "l'acheteur devrait avoir son tracteur de départ plus celui d'occasion",
+    );
+  });
+
+  it("ne vend pas deux fois la même machine", async () => {
+    const v = await ferme("Unique");
+    const a = await ferme("Premier");
+    const b = await ferme("Second");
+    const tracteur = v.machines.find((m) => m.type === "TRACTOR")!;
+    const pose = await appel(`/machines/${tracteur.id}/list`, {
+      methode: "POST",
+      corps: { userId: v.id, priceCrd: 700 },
+      jeton: v.jeton,
+    });
+    const annonce = (pose.corps as unknown as { listing: { id: string } }).listing;
+
+    const [r1, r2] = await Promise.all([
+      appel(`/machines/listings/${annonce.id}/buy`, { methode: "POST", corps: { userId: a.id }, jeton: a.jeton }),
+      appel(`/machines/listings/${annonce.id}/buy`, { methode: "POST", corps: { userId: b.id }, jeton: b.jeton }),
+    ]);
+    const reussites = [r1, r2].filter((r) => r.statut === 201).length;
+    assert.equal(reussites, 1, `deux acheteurs sont repartis avec le même tracteur (${r1.statut}/${r2.statut})`);
+  });
+
+  it("rend l'engin au vendeur qui retire son annonce", async () => {
+    const v = await ferme("Regret");
+    const tracteur = v.machines.find((m) => m.type === "TRACTOR")!;
+    const pose = await appel(`/machines/${tracteur.id}/list`, {
+      methode: "POST",
+      corps: { userId: v.id, priceCrd: 700 },
+      jeton: v.jeton,
+    });
+    const annonce = (pose.corps as unknown as { listing: { id: string } }).listing;
+    const r = await appel(`/machines/listings/${annonce.id}/cancel`, {
+      methode: "POST",
+      corps: { userId: v.id },
+      jeton: v.jeton,
+    });
+    assert.equal(r.statut, 200, `retrait refusé : ${JSON.stringify(r.corps)}`);
+    const parc = (await appel("/auth/me", { jeton: v.jeton })).corps as unknown as {
+      player: { farm: { machines: { type: string }[] } };
+    };
+    assert.ok(parc.player.farm.machines.some((m) => m.type === "TRACTOR"), "le tracteur n'est pas revenu");
+  });
+
+  it("fait payer moins au concessionnaire qu'entre joueurs", async () => {
+    // L'arbitrage que le joueur a demandé : l'argent tout de suite, ou le bon
+    // prix mais il faut attendre.
+    const v = await ferme("Presse");
+    const tracteur = v.machines.find((m) => m.type === "TRACTOR")!;
+    const avant = (await argent(v.jeton)).player.crd;
+    const r = await appel(`/machines/${tracteur.id}/sell`, {
+      methode: "POST",
+      corps: { userId: v.id },
+      jeton: v.jeton,
+    });
+    assert.equal(r.statut, 200);
+    const reprise = (r.corps as unknown as { value: number }).value;
+    const apres = (await argent(v.jeton)).player.crd;
+    assert.equal(Math.round(apres - avant), Math.round(reprise));
+    assert.ok(reprise < machineResaleValue("TRACTOR", { condition: 100, hours: 0 }));
   });
 });

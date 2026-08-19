@@ -1,4 +1,4 @@
-import { DRYING, MACHINE_DEFS, contractorQuote, missionPayout, urgentContractorQuote, CROP_DEFS, MISSION_OPEN_MAX, clampMissionCells, repairHalfwayTarget, laborEscrow, parseAppearance, defaultAppearance, SKIN_TONES, HATS } from "@farmsim/shared";
+import { DRYING, MACHINE_DEFS, contractorQuote, missionPayout, urgentContractorQuote, CROP_DEFS, MISSION_OPEN_MAX, clampMissionCells, repairHalfwayTarget, laborEscrow, parseAppearance, defaultAppearance, SKIN_TONES, HATS, jobHours } from "@farmsim/shared";
 import {
   simulateCell,
   tickMarket,
@@ -95,15 +95,16 @@ describe("sellToMarket", () => {
 });
 
 describe("machines", () => {
-  it("applique l’usure par cases", () => {
-    const r = applyMachineWear({ condition: 100, wearPerCell: 1, cells: 10 });
+  it("applique l’usure par heures de travail", () => {
+    // 100 h de vie pour 100 points : une heure vaut un point.
+    const r = applyMachineWear({ condition: 100, hours: 10, lifeHours: 100 });
     expect(r.condition).toBe(90);
     expect(r.wearApplied).toBe(10);
   });
 
   it("réduit l’usure en hangar", () => {
-    const base = applyMachineWear({ condition: 100, wearPerCell: 1, cells: 10 });
-    const shed = applyMachineWear({ condition: 100, wearPerCell: 1, cells: 10, inShed: true });
+    const base = applyMachineWear({ condition: 100, hours: 10, lifeHours: 100 });
+    const shed = applyMachineWear({ condition: 100, hours: 10, lifeHours: 100, inShed: true });
     expect(shed.wearApplied).toBeLessThan(base.wearApplied);
   });
 
@@ -140,8 +141,8 @@ describe("machines", () => {
     const def = MACHINE_DEFS.HARVESTER;
     const r = applyMachineWear({
       condition: 100,
-      wearPerCell: def.wearPerCell,
-      cells: 12 * 12,
+      hours: jobHours(def.hoursPerHectare, 12 * 12),
+      lifeHours: def.lifeHours,
     });
     expect(r.condition).toBeGreaterThan(def.minCondition);
     expect(def.repairCostPerPoint * 100).toBeLessThanOrEqual(def.cost * 0.25);

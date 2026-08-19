@@ -226,33 +226,29 @@ export function careYieldBonus(opts: { greased?: boolean; grease?: number; dirt:
 }
 
 /**
- * Combien de champs entiers la machine peut encore encaisser, à son état
- * d'entretien actuel `[GD]`.
+ * Combien d'heures de travail la machine peut encore encaisser avant
+ * l'atelier, à son entretien du moment `[GD]`.
  *
  * L'atelier affichait un pourcentage de condition et une jauge de graisse.
- * Aucun des deux ne répond à la seule question que le joueur se pose avant de
- * lancer un chantier — « est-ce que je peux y aller ? ». Le pourcentage ne se
- * traduit en champs que si l'on connaît `wearPerCell`, la taille de la
- * parcelle et le multiplicateur d'entretien ; personne ne fait ce calcul.
+ * Aucun des deux ne répond à la seule question qu'on se pose avant de lancer
+ * un chantier — « est-ce que je peux y aller ? ».
  *
  * Estimation volontairement pessimiste : elle suppose l'entretien figé à son
- * niveau du moment, alors qu'il se dégrade en cours de route. Mieux vaut
- * annoncer trois champs et en tenir quatre que l'inverse.
+ * niveau du moment, alors qu'il se dégrade en cours de route.
  */
-export function fieldsBeforeWorkshop(opts: {
+export function hoursBeforeWorkshop(opts: {
   condition: number;
   minCondition: number;
-  wearPerCell: number;
-  cells: number;
+  lifeHours: number;
   careMult?: number;
   inShed?: boolean;
 }): number {
   const marge = opts.condition - opts.minCondition;
   if (marge <= 0) return 0;
-  const parChamp =
-    opts.wearPerCell * Math.max(1, opts.cells) * (opts.careMult ?? 1) * (opts.inShed ? 0.85 : 1);
-  if (parChamp <= 0) return Infinity;
-  return Math.floor(marge / parChamp);
+  const parHeure =
+    (100 / Math.max(1, opts.lifeHours)) * (opts.careMult ?? 1) * (opts.inShed ? 0.85 : 1);
+  if (parHeure <= 0) return Infinity;
+  return Math.round(marge / parHeure);
 }
 
 export function isBreakdownKind(v: string | null | undefined): v is BreakdownKind {

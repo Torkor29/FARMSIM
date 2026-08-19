@@ -111,6 +111,8 @@ model User {
   listings       MarketListing[] @relation("Selling")
   futures        FuturesContract[] @relation("Futures")
   purchases      MarketListing[] @relation("Buying")
+  machinesListed MachineListing[] @relation("SellingMachines")
+  machinesBought MachineListing[] @relation("BuyingMachines")
   deliveriesSold   Delivery[] @relation("DeliverySeller")
   deliveriesBought Delivery[] @relation("DeliveryBuyer")
   questClaims      QuestClaim[]
@@ -372,11 +374,17 @@ model Machine {
   type               String
   tier               Int         @default(1)
   condition          Float       @default(100)
+  /**
+   * Compteur horaire. Monotone : il ne recule pas, pas même après une
+   * révision. `condition` dit l'entretien, `hours` dit l'âge — et c'est l'âge
+   * qui fixe la cote à la revente.
+   */
+  hours              Float       @default(0)
   /** Encore vrai si la jauge n’est pas vide — dérivé de `grease`. */
   greased            Boolean     @default(true)
   /** Jauge 0–100. Un champ entier n’en consomme qu’une partie. */
   grease             Float       @default(100)
-  /** 0–100, la boue du champ. Au-dessus de 25, l'usure double. */
+  /** 0–100, la boue du champ. Plus elle monte, plus l'usure grimpe. */
   dirt               Float       @default(0)
   /** Départs à sec d’affilée. À 1, le suivant est refusé. */
   greaseSkipStreak   Int         @default(0)
@@ -387,6 +395,39 @@ model Machine {
   storedInBuildingId String?
   storedInBuilding   Building?   @relation("StoredIn", fields: [storedInBuildingId], references: [id])
   cell               ParcelCell?
+}
+
+/**
+ * Une machine d'occasion en vente entre joueurs.
+ *
+ * L'engin quitte réellement la ferme quand on le met en vente : la ligne
+ * ci-dessous *est* la machine pendant l'annonce. C'est ce qui empêche de
+ * continuer à labourer avec un tracteur qu'on est en train de vendre, et ce
+ * qui garantit qu'un seul exemplaire existe à tout instant.
+ *
+ * L'état voyage avec la machine — compteur, condition, graisse, saleté. Un
+ * acheteur reprend l'engin tel quel, ce qui donne son sens au prix affiché.
+ */
+model MachineListing {
+  id          String    @id @default(cuid())
+  sellerId    String
+  seller      User      @relation("SellingMachines", fields: [sellerId], references: [id], onDelete: Cascade)
+  type        String
+  tier        Int       @default(1)
+  hours       Float     @default(0)
+  condition   Float     @default(100)
+  grease      Float     @default(100)
+  dirt        Float     @default(0)
+  breakdown   String?
+  priceCrd    Float
+  status      String    @default("OPEN")
+  createdAt   DateTime  @default(now())
+  expiresAt   DateTime
+  buyerId     String?
+  buyer       User?     @relation("BuyingMachines", fields: [buyerId], references: [id])
+  soldAt      DateTime?
+
+  @@index([status, type])
 }
 
 model MarketPrice {

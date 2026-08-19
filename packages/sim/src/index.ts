@@ -20,6 +20,7 @@ import {
   DIRECT_SEED_YIELD_MALUS,
   NO_ROTATION,
   DIRT_DIRTY_THRESHOLD,
+  conditionPerHour,
   DIRT_PER_CELL_DEFAULT,
   DIRT_PER_CELL,
   GREASE_FULL,
@@ -274,23 +275,31 @@ export function sellToMarket(opts: {
   };
 }
 
-/** Usure machine après N cases. Hangar = −15 % usure `[GD]`. ETA presta = −10 % usure. */
+/**
+ * Usure d'une machine après N heures de travail. Hangar = −15 % `[GD]`.
+ *
+ * Prend des **heures**, plus des cases : l'usure d'un moteur suit le temps
+ * qu'il tourne, pas la surface qu'il survole. C'est aussi la seule échelle où
+ * le joueur peut juger — « 4,9 h pour ce champ, il m'en reste 620 avant la
+ * révision » se comprend, « 0,11 point par case » non.
+ */
 export function applyMachineWear(opts: {
   condition: number;
-  wearPerCell: number;
-  cells: number;
+  /** Heures de ce chantier — voir `jobHours`. */
+  hours: number;
+  /** Heures de travail pour user 100 points, au soin neutre. */
+  lifeHours: number;
   inShed?: boolean;
   etaBonus?: boolean;
-  /** Multiplicateur entretien (pas graissé, sale) */
+  /** Multiplicateur entretien (graisse, saleté) */
   careMult?: number;
 }): { condition: number; wearApplied: number } {
   let mult = 1;
   if (opts.inShed) mult *= 0.85;
   if (opts.etaBonus) mult *= 0.9;
-  const care = Math.max(0.5, opts.careMult ?? 1);
-  mult *= care;
+  mult *= Math.max(0.5, opts.careMult ?? 1);
   const wearApplied =
-    Math.round(opts.wearPerCell * Math.max(0, opts.cells) * mult * 100) / 100;
+    Math.round(conditionPerHour(opts.lifeHours) * Math.max(0, opts.hours) * mult * 100) / 100;
   const condition = Math.max(0, Math.round((opts.condition - wearApplied) * 100) / 100);
   return { condition, wearApplied };
 }

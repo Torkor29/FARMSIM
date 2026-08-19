@@ -19,7 +19,7 @@ import {
   CROP_DEFS,
   MACHINE_DEFS,
   MARKET_BOUNDS,
-  WEAR_FIELDS_TARGET,
+  jobHours,
   conditionYieldFactor,
 } from "@farmsim/shared";
 
@@ -76,8 +76,8 @@ describe("ce que ça change sur une vraie moissonneuse", () => {
     for (let i = 0; i < n; i++) {
       c = applyMachineWear({
         condition: c,
-        wearPerCell: def.wearPerCell,
-        cells: CASES,
+        hours: jobHours(def.hoursPerHectare, CASES),
+        lifeHours: def.lifeHours,
         careMult: careWearMultiplier({ grease: 100, dirt: 0 }),
       }).condition;
     }
@@ -104,12 +104,13 @@ describe("ce que ça change sur une vraie moissonneuse", () => {
      * saison : plusieurs parcelles avant que l'usure ne se voie, la révision
      * quand elle se voit. Voir `wear-cadence.test.ts` pour le détail.
      */
-    // Mesuré : 16 points par parcelle bien tenue, contre 46 avant. La
-    // moissonneuse reste l'engin le plus gourmand du parc — elle sort du plein
-    // régime à la deuxième parcelle — mais elle en encaisse cinq d'affilée.
+    // Mesuré : 0,7 point par parcelle bien tenue, contre 46 au départ. La
+    // moissonneuse reste l'engin le plus gourmand du parc, mais il lui faut
+    // des dizaines de champs pour seulement sortir du plein régime.
     expect(conditionYieldFactor(apresChamps(1))).toBe(1);
-    expect(apresChamps(2)).toBeLessThan(CONDITION_FULL_POWER);
-    expect(apresChamps(WEAR_FIELDS_TARGET)).toBeGreaterThan(def.minCondition);
+    expect(apresChamps(20)).toBeGreaterThan(CONDITION_FULL_POWER);
+    expect(apresChamps(40)).toBeLessThan(CONDITION_FULL_POWER);
+    expect(apresChamps(100)).toBeGreaterThan(def.minCondition);
   });
 
   it("rend la révision rentable une fois l'engin réellement usé", () => {

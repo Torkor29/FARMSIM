@@ -161,7 +161,8 @@ describe("déchaumeur à disques", () => {
   });
 
   it("s’use moins qu’un tracteur, puisqu’il travaille en surface", () => {
-    expect(MACHINE_DEFS.DISC_HARROW.wearPerCell).toBeLessThan(MACHINE_DEFS.TRACTOR.wearPerCell);
+    // À heures égales : sa vie utile est plus longue que celle du tracteur.
+    expect(MACHINE_DEFS.DISC_HARROW.lifeHours).toBeGreaterThan(MACHINE_DEFS.TRACTOR.lifeHours);
   });
 
   it("ne sait ni semer ni récolter", () => {

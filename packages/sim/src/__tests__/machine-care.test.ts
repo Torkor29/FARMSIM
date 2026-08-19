@@ -68,11 +68,11 @@ describe("entretien machines", () => {
   });
 
   it("applique le multiplicateur à l'usure", () => {
-    const base = applyMachineWear({ condition: 100, wearPerCell: 1, cells: 10 });
+    const base = applyMachineWear({ condition: 100, hours: 10, lifeHours: 100 });
     const dirty = applyMachineWear({
       condition: 100,
-      wearPerCell: 1,
-      cells: 10,
+      hours: 10,
+      lifeHours: 100,
       careMult: 2,
     });
     expect(dirty.wearApplied).toBe(base.wearApplied * 2);

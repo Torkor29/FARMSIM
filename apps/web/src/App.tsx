@@ -66,7 +66,11 @@ import {
   CLEAN_COST_CRD,
   DIRT_DIRTY_THRESHOLD,
   careWearMultiplier,
-  fieldsBeforeWorkshop,
+  hoursBeforeWorkshop,
+  jobHours,
+  machineDealerValue,
+  MACHINE_LISTING_MIN_RATE,
+  MACHINE_LISTING_MAX_RATE,
   isBreakdownKind,
 } from "@farmsim/shared";
 import { AuthScreen } from "./AuthScreen";
@@ -217,6 +221,20 @@ type Zone = {
   parcels: Parcel[];
 };
 
+/** Une machine d'occasion en vente, telle que la renvoie l'API. */
+type MachineListing = {
+  id: string;
+  sellerId: string;
+  seller?: { id: string; displayName: string } | null;
+  type: string;
+  name: string;
+  hours: number;
+  condition: number;
+  priceCrd: number;
+  quote: number;
+  breakdown?: string | null;
+};
+
 type Player = {
   id: string;
   displayName: string;
@@ -231,6 +249,8 @@ type Player = {
       id: string;
       type: string;
       condition: number;
+      /** Compteur horaire. Absent sur une base d'avant le compteur. */
+      hours?: number;
       parkedParcelId?: string | null;
       storedInBuildingId?: string | null;
       greased?: boolean;
@@ -595,6 +615,7 @@ export function App() {
   const [msg, setMsg] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [machineListings, setMachineListings] = useState<MachineListing[]>([]);
   const [care, setCare] = useState<{
     mode: CareMode;
     machineId: string;
@@ -3501,15 +3522,110 @@ export function App() {
     }
   }
 
-  function sellMachine(id: string, label: string) {
+  function sellMachine(id: string, label: string, reprise: number) {
     if (!player) return;
     setConfirmRequest({
-      title: `Vendre ${label} ?`,
-      detail: "La reprise dépend de l’état de la machine. Elle quitte le garage définitivement.",
-      confirmLabel: "Vendre",
+      title: `Reprise de ${label} ?`,
+      detail: `Le concessionnaire en donne ${reprise} TRN, tout de suite. C’est moins que la cote entre joueurs : c’est le prix de ne pas attendre. L’engin quitte le garage définitivement.`,
+      confirmLabel: "Reprendre",
       destructive: true,
       onConfirm: () => void doSellMachine(id, label),
     });
+  }
+
+  /**
+   * Mise en vente d'occasion.
+   *
+   * L'engin quitte la ferme dès l'annonce publiée — c'est ce qui empêche de
+   * continuer à labourer avec un tracteur qu'on est en train de vendre, et ce
+   * qui garantit qu'un seul exemplaire existe à tout instant.
+   */
+  function listMachine(id: string, label: string, cote: number) {
+    if (!player) return;
+    const min = Math.round(cote * MACHINE_LISTING_MIN_RATE);
+    const max = Math.round(cote * MACHINE_LISTING_MAX_RATE);
+    setConfirmRequest({
+      title: `Mettre ${label} en vente ?`,
+      detail: `Cote ${cote} TRN. Vous fixerez un prix entre ${min} et ${max} TRN. L’engin quitte la ferme le temps de l’annonce et revient si personne ne l’achète.`,
+      confirmLabel: `Publier à ${cote} TRN`,
+      onConfirm: () => void doListMachine(id, label, cote),
+    });
+  }
+
+  async function doListMachine(id: string, label: string, priceCrd: number) {
+    if (!player) return;
+    setBusy(true);
+    setErr(null);
+    try {
+      await api(`/machines/${id}/list`, {
+        method: "POST",
+        body: JSON.stringify({ userId: player.id, priceCrd }),
+      });
+      flashToast(`${label} en vente · ${priceCrd} TRN`);
+      await refreshPlayer();
+      await loadMachineListings();
+      if (activeParcelId) await loadParcel(activeParcelId);
+    } catch (e) {
+      flashToast(e instanceof Error ? e.message : String(e), true);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  /* Le marché d'occasion se recharge à l'ouverture du garage : une annonce
+     vendue entre-temps ne doit pas rester affichée comme disponible. */
+  useEffect(() => {
+    const ouvert = isMobile ? sheet === "GARAGE" : showGarage;
+    if (ouvert) void loadMachineListings();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [showGarage, sheet, isMobile]);
+
+  async function loadMachineListings() {
+    try {
+      const r = await api<{ listings: MachineListing[] }>("/machines/listings");
+      setMachineListings(r.listings ?? []);
+    } catch {
+      /* le marché d'occasion est un bonus : son absence ne bloque pas le garage */
+    }
+  }
+
+  async function buyUsedMachine(listingId: string, label: string) {
+    if (!player) return;
+    setBusy(true);
+    setErr(null);
+    try {
+      await api(`/machines/listings/${listingId}/buy`, {
+        method: "POST",
+        body: JSON.stringify({ userId: player.id }),
+      });
+      flashToast(`${label} acheté d’occasion`);
+      await refreshPlayer();
+      await loadMachineListings();
+      if (activeParcelId) await loadParcel(activeParcelId);
+    } catch (e) {
+      flashToast(e instanceof Error ? e.message : String(e), true);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function cancelMachineListing(listingId: string) {
+    if (!player) return;
+    setBusy(true);
+    try {
+      await api(`/machines/listings/${listingId}/cancel`, {
+        method: "POST",
+        body: JSON.stringify({ userId: player.id }),
+      });
+      flashToast("Annonce retirée");
+      await refreshPlayer();
+      await loadMachineListings();
+      if (activeParcelId) await loadParcel(activeParcelId);
+    } catch (e) {
+      flashToast(e instanceof Error ? e.message : String(e), true);
+    } finally {
+      setBusy(false);
+    }
   }
 
   async function doSellMachine(id: string, label: string) {
@@ -4356,16 +4472,27 @@ export function App() {
                   : null;
                 const rendement = conditionYieldFactor(m.condition);
                 const salete = Math.max(0, Math.min(100, m.dirt ?? 0));
-                const champsRestants = def
-                  ? fieldsBeforeWorkshop({
+                const compteur = m.hours ?? 0;
+                const heuresRestantes = def
+                  ? hoursBeforeWorkshop({
                       condition: m.condition,
                       minCondition: def.minCondition,
-                      wearPerCell: def.wearPerCell,
-                      cells: gw * gh,
+                      lifeHours: def.lifeHours,
                       careMult: careWearMultiplier({ grease, dirt: salete }),
                       inShed: Boolean(m.storedInBuildingId),
                     })
                   : 0;
+                const heuresParChamp = def ? jobHours(def.hoursPerHectare, gw * gh) : 0;
+                const champsRestants =
+                  heuresParChamp > 0 ? Math.floor(heuresRestantes / heuresParChamp) : 0;
+                const cote = machineResaleValue(m.type as MachineType, {
+                  condition: m.condition,
+                  hours: compteur,
+                });
+                const reprise = machineDealerValue(m.type as MachineType, {
+                  condition: m.condition,
+                  hours: compteur,
+                });
                 const canHalf = Boolean(halfQuote && halfQuote.points > 0.5 && m.condition < 99.5);
                 const canFull = Boolean(fullQuote && fullQuote.points > 0.5 && m.condition < 99.5);
                 return (
@@ -4427,11 +4554,18 @@ export function App() {
                       {/* La question que le joueur se pose avant de lancer un
                           chantier — « est-ce que je peux y aller ? » — ne se
                           déduisait d'aucun des chiffres affichés. */}
+                      {/* Le compteur horaire, comme sur un vrai engin : il ne
+                          recule pas, pas même après une révision, et c'est lui
+                          qui fixe la cote à la revente. */}
+                      <div className="muted tiny">
+                        Compteur <b>{compteur.toFixed(0)} h</b>
+                        {def && ` · ${heuresParChamp.toFixed(1)} h par champ entier`}
+                      </div>
                       {def && !panne && (
                         <div className={`muted tiny ${champsRestants <= 1 ? "warn" : ""}`}>
                           {champsRestants <= 0
                             ? "Plus de quoi faire un champ entier — passez à l’atelier."
-                            : `Encore ${champsRestants} champ${champsRestants > 1 ? "s" : ""} entier${champsRestants > 1 ? "s" : ""} à ce rythme d’entretien.`}
+                            : `Encore ${heuresRestantes} h de travail, soit ${champsRestants} champ${champsRestants > 1 ? "s" : ""} entier${champsRestants > 1 ? "s" : ""} à ce rythme d’entretien.`}
                         </div>
                       )}
                     </span>
@@ -4535,14 +4669,26 @@ export function App() {
                         onDo={() => repairMachine(m.id, "full")}
                         onExplain={(raison) => flashToast(raison, "warn")}
                       />
+                      {/* Deux sorties, et c'est un vrai arbitrage : l'argent
+                          tout de suite en reprise, ou la cote pleine mais il
+                          faut qu'un joueur passe. */}
                       <button
                         type="button"
                         className="sell-btn"
                         disabled={busy}
-                        title={`Reprise ${machineResaleValue(m.type as MachineType, m.condition)} TRN`}
-                        onClick={() => sellMachine(m.id, def?.name ?? m.type)}
+                        title={`Le concessionnaire reprend tout de suite, sous la cote (${cote} TRN)`}
+                        onClick={() => sellMachine(m.id, def?.name ?? m.type, reprise)}
                       >
-                        Vendre {machineResaleValue(m.type as MachineType, m.condition)}
+                        Reprise · {reprise} TRN
+                      </button>
+                      <button
+                        type="button"
+                        className="ghost-btn"
+                        disabled={busy}
+                        title={`Cote ${cote} TRN — l’engin quitte la ferme le temps de l’annonce`}
+                        onClick={() => listMachine(m.id, def?.name ?? m.type, cote)}
+                      >
+                        Mettre en vente · cote {cote} TRN
                       </button>
                     </span>
                   </li>
@@ -4552,7 +4698,63 @@ export function App() {
                 <li className="muted">Aucune machine</li>
               )}
             </ul>
-            <h3 className="spaced">Acheter</h3>
+            {/* Le marché de l'occasion. Il précède le neuf : c'est là que
+                démarre un joueur sans trésorerie, et c'est la sortie qui donne
+                sa valeur au compteur horaire. */}
+            <h3 className="spaced">Occasion</h3>
+            {machineListings.length === 0 ? (
+              <p className="muted tiny">
+                Aucune annonce pour l’instant. Le matériel mis en vente par les autres
+                fermes apparaît ici, avec son compteur et sa cote.
+              </p>
+            ) : (
+              <ul className="list used-list">
+                {machineListings.map((l) => {
+                  const mien = l.sellerId === player.id;
+                  const affaire = l.priceCrd <= l.quote;
+                  return (
+                    <li key={l.id}>
+                      <span>
+                        <strong>{l.name}</strong>
+                        <div className="muted tiny">
+                          {l.hours.toFixed(0)} h au compteur · état {l.condition.toFixed(0)} %
+                          {l.breakdown ? " · en panne" : ""}
+                          {mien ? " · votre annonce" : ` · ${l.seller?.displayName ?? "un voisin"}`}
+                        </div>
+                        <div className={`muted tiny ${affaire ? "wear-cost" : ""}`}>
+                          {l.priceCrd} TRN — cote {l.quote} TRN
+                          {affaire ? " (sous la cote)" : " (au-dessus de la cote)"}
+                        </div>
+                      </span>
+                      {mien ? (
+                        <button
+                          type="button"
+                          className="ghost-btn"
+                          disabled={busy}
+                          onClick={() => void cancelMachineListing(l.id)}
+                        >
+                          Retirer
+                        </button>
+                      ) : (
+                        <button
+                          type="button"
+                          disabled={busy || player.crd < l.priceCrd}
+                          title={
+                            player.crd < l.priceCrd
+                              ? "TRN insuffisants"
+                              : `Reprend l’engin tel quel : ${l.hours.toFixed(0)} h, état ${l.condition.toFixed(0)} %`
+                          }
+                          onClick={() => void buyUsedMachine(l.id, l.name)}
+                        >
+                          Acheter · {l.priceCrd} TRN
+                        </button>
+                      )}
+                    </li>
+                  );
+                })}
+              </ul>
+            )}
+            <h3 className="spaced">Acheter neuf</h3>
             <div className="build-list">
               {(Object.keys(MACHINE_DEFS) as MachineType[]).map((t) => {
                 const d = MACHINE_DEFS[t];

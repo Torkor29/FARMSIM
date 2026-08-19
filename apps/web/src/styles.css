@@ -486,6 +486,13 @@ html.playing .field-dock {
 .dirt-gauge.low .grease-fill { background: var(--gold-700); }
 .dirt-gauge.low .grease-num { color: var(--gold-700); }
 
+/* —— Marché de l'occasion (garage) ——
+   Même gabarit que la liste des machines possédées : c'est la même chose vue
+   de l'autre côté, et deux mises en page pour un même objet se paient en
+   confusion. */
+.used-list > li { align-items: start; }
+.used-list .wear-cost { font-weight: 700; }
+
 /* —— Objectifs —— */
 .quest-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 0.5rem; }
 .quest-list li {

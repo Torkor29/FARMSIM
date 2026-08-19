@@ -145,6 +145,11 @@ import {
   DEALER_MIN_TONS,
   volumeSlippage,
   machineResaleValue,
+  machineDealerValue,
+  jobHours,
+  MACHINE_LISTING_TTL_MS,
+  MACHINE_LISTING_MIN_RATE,
+  MACHINE_LISTING_MAX_RATE,
   buildingResaleValue,
   isPaddockAdjacent,
   paddockCapacity,
@@ -461,6 +466,8 @@ type FarmMachine = {
   id: string;
   type: string;
   condition: number;
+  /** Compteur horaire. Absent sur les bases d'avant la migration. */
+  hours?: number;
   storedInBuildingId: string | null;
   greased?: boolean;
   grease?: number;
@@ -764,10 +771,13 @@ async function applyWearToMachine(
   },
 ) {
   const care = careOf(opts.machine);
+  // Le compteur avance du temps réellement passé au champ ; il ne recule
+  // jamais, pas même après une révision. C'est lui qui vieillit l'engin.
+  const heures = jobHours(opts.def.hoursPerHectare, opts.cells);
   const wear = applyMachineWear({
     condition: opts.machine.condition,
-    wearPerCell: opts.def.wearPerCell,
-    cells: opts.cells,
+    hours: heures,
+    lifeHours: opts.def.lifeHours,
     inShed: Boolean(opts.machine.storedInBuildingId),
     careMult: careWearMultiplier({ grease: care.grease, dirt: care.dirt }),
   });
@@ -775,10 +785,12 @@ async function applyWearToMachine(
     { ...care, condition: wear.condition },
     { work: opts.work, cells: opts.cells },
   );
+  const compteur = Math.round(((opts.machine.hours ?? 0) + heures) * 100) / 100;
   await tx.machine.update({
     where: { id: opts.machine.id },
     data: {
       condition: after.next.condition,
+      hours: compteur,
       greased: after.next.greased,
       grease: after.next.grease ?? (after.next.greased ? GREASE_FULL : 0),
       dirt: after.next.dirt,
@@ -788,6 +800,8 @@ async function applyWearToMachine(
   });
   return {
     ...wear,
+    hoursWorked: heures,
+    hours: compteur,
     condition: after.next.condition,
     breakdown: after.next.breakdown,
     dirt: after.next.dirt,
@@ -7135,7 +7149,12 @@ app.post("/machines/:id/sell", async (req, res) => {
     res.status(403).json({ error: "Machine non possédée" });
     return;
   }
-  const value = machineResaleValue(machine.type as MachineType, machine.condition);
+  // Reprise immédiate : le concessionnaire paie moins que la cote entre
+  // joueurs, et c'est le prix de ne pas attendre.
+  const value = machineDealerValue(machine.type as MachineType, {
+    condition: machine.condition,
+    hours: machine.hours,
+  });
   await prisma.$transaction(async (tx) => {
     // Libérer la case si l'engin était stationné sur la parcelle.
     await tx.parcelCell.updateMany({
@@ -7143,9 +7162,251 @@ app.post("/machines/:id/sell", async (req, res) => {
       data: { kind: "EMPTY", machineId: null },
     });
     await tx.machine.delete({ where: { id: machine.id } });
-    await crediter(tx, body.data.userId, value, "MACHINES", `Revente — ${MACHINE_DEFS[machine.type as MachineType]?.name ?? machine.type}`);
+    await crediter(tx, body.data.userId, value, "MACHINES", `Reprise concessionnaire — ${MACHINE_DEFS[machine.type as MachineType]?.name ?? machine.type}`);
   });
   res.json({ sold: machine.type, value });
+});
+
+/* ------------------------------------------------------------------ */
+/* Marché de l'occasion                                                 */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Pose une machine sur une ferme et la gare si une case est libre.
+ *
+ * Partagé par l'achat d'occasion et le retrait d'annonce : les deux font
+ * exactement la même chose, et les avoir écrits deux fois aurait garanti
+ * qu'ils divergent.
+ */
+async function installMachine(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  tx: any,
+  farmId: string,
+  etat: {
+    type: string;
+    tier: number;
+    hours: number;
+    condition: number;
+    grease: number;
+    dirt: number;
+    breakdown: string | null;
+  },
+) {
+  const machine = await tx.machine.create({
+    data: {
+      farmId,
+      type: etat.type,
+      tier: etat.tier,
+      hours: etat.hours,
+      condition: etat.condition,
+      grease: etat.grease,
+      greased: etat.grease > 0,
+      dirt: etat.dirt,
+      breakdown: etat.breakdown,
+    },
+  });
+  // `Parcel` n'a pas de `createdAt` : trier dessus renvoyait un 500 muet.
+  const parcel = await tx.parcel.findFirst({ where: { farmId }, orderBy: { id: "asc" } });
+  if (parcel) {
+    const free = await tx.parcelCell.findFirst({
+      where: { parcelId: parcel.id, kind: "EMPTY" },
+      orderBy: [{ y: "desc" }, { x: "asc" }],
+    });
+    if (free) {
+      await tx.machine.update({ where: { id: machine.id }, data: { parkedParcelId: parcel.id } });
+      await tx.parcelCell.update({
+        where: { id: free.id },
+        data: { kind: "VEHICLE", machineId: machine.id },
+      });
+    }
+  }
+  return machine;
+}
+
+/** Les annonces périmées rendent l'engin à son vendeur. */
+async function expireMachineListings() {
+  const perimees = await prisma.machineListing.findMany({
+    where: { status: "OPEN", expiresAt: { lte: new Date() } },
+    include: { seller: { include: { farm: true } } },
+  });
+  for (const a of perimees) {
+    await prisma.$transaction(async (tx) => {
+      await tx.machineListing.update({ where: { id: a.id }, data: { status: "EXPIRED" } });
+      if (a.seller?.farm) await installMachine(tx, a.seller.farm.id, a);
+    });
+  }
+}
+
+/** Le marché de l'occasion, cote comprise pour que le prix se juge. */
+app.get("/machines/listings", async (_req, res) => {
+  await expireMachineListings();
+  const listings = await prisma.machineListing.findMany({
+    where: { status: "OPEN" },
+    orderBy: { createdAt: "desc" },
+    take: 60,
+    include: { seller: { select: { id: true, displayName: true } } },
+  });
+  res.json({
+    listings: listings.map((l) => ({
+      ...l,
+      // La cote voyage avec l'annonce : sans elle, « 900 TRN » ne se juge pas.
+      quote: machineResaleValue(l.type as MachineType, { condition: l.condition, hours: l.hours }),
+      name: MACHINE_DEFS[l.type as MachineType]?.name ?? l.type,
+    })),
+  });
+});
+
+/** Mettre une de ses machines en vente. L'engin quitte la ferme sur-le-champ. */
+app.post("/machines/:id/list", async (req, res) => {
+  const body = z
+    .object({ userId: z.string(), priceCrd: z.number().positive().max(1_000_000) })
+    .safeParse(req.body);
+  if (!body.success) {
+    res.status(400).json(body.error.flatten());
+    return;
+  }
+  const machine = await prisma.machine.findUnique({
+    where: { id: req.params.id },
+    include: { farm: true },
+  });
+  if (!machine?.farm || machine.farm.userId !== body.data.userId) {
+    res.status(403).json({ error: "Machine non possédée" });
+    return;
+  }
+  const def = MACHINE_DEFS[machine.type as MachineType];
+  if (!def) {
+    res.status(400).json({ error: "Type de machine inconnu" });
+    return;
+  }
+  const cote = machineResaleValue(machine.type as MachineType, {
+    condition: machine.condition,
+    hours: machine.hours,
+  });
+  // Un prix libre, mais pas n'importe lequel : sans bornes, la criée sert à
+  // se transférer de l'argent entre comptes plutôt qu'à vendre du matériel.
+  const min = Math.round(cote * MACHINE_LISTING_MIN_RATE);
+  const max = Math.round(cote * MACHINE_LISTING_MAX_RATE);
+  if (body.data.priceCrd < min || body.data.priceCrd > max) {
+    res.status(409).json({ error: `Prix hors bornes — entre ${min} et ${max} TRN (cote ${cote})` });
+    return;
+  }
+  const listing = await prisma.$transaction(async (tx) => {
+    await tx.parcelCell.updateMany({
+      where: { machineId: machine.id },
+      data: { kind: "EMPTY", machineId: null },
+    });
+    await tx.machine.delete({ where: { id: machine.id } });
+    return tx.machineListing.create({
+      data: {
+        sellerId: body.data.userId,
+        type: machine.type,
+        tier: machine.tier,
+        hours: machine.hours,
+        condition: machine.condition,
+        grease: machine.grease,
+        dirt: machine.dirt,
+        breakdown: machine.breakdown,
+        priceCrd: body.data.priceCrd,
+        expiresAt: new Date(Date.now() + MACHINE_LISTING_TTL_MS),
+      },
+    });
+  });
+  res.status(201).json({ listing, quote: cote });
+});
+
+/** Retirer son annonce — l'engin revient à la ferme. */
+app.post("/machines/listings/:id/cancel", async (req, res) => {
+  const body = z.object({ userId: z.string() }).safeParse(req.body);
+  if (!body.success) {
+    res.status(400).json(body.error.flatten());
+    return;
+  }
+  const listing = await prisma.machineListing.findUnique({
+    where: { id: req.params.id },
+    include: { seller: { include: { farm: { include: { machines: true } } } } },
+  });
+  if (!listing || listing.sellerId !== body.data.userId) {
+    res.status(403).json({ error: "Annonce non possédée" });
+    return;
+  }
+  if (listing.status !== "OPEN") {
+    res.status(409).json({ error: "Annonce déjà close" });
+    return;
+  }
+  const farm = listing.seller?.farm;
+  if (!farm) {
+    res.status(404).json({ error: "Ferme introuvable" });
+    return;
+  }
+  const bonuses = await getFarmBonuses(farm.id);
+  if (farm.machines.length >= bonuses.machineSlots) {
+    res.status(409).json({ error: "Slots machines pleins — faites de la place avant de retirer l'annonce." });
+    return;
+  }
+  await prisma.$transaction(async (tx) => {
+    await tx.machineListing.update({ where: { id: listing.id }, data: { status: "CANCELLED" } });
+    await installMachine(tx, farm.id, listing);
+  });
+  res.json({ cancelled: listing.id });
+});
+
+/** Acheter une machine d'occasion. */
+app.post("/machines/listings/:id/buy", async (req, res) => {
+  const body = z.object({ userId: z.string() }).safeParse(req.body);
+  if (!body.success) {
+    res.status(400).json(body.error.flatten());
+    return;
+  }
+  await expireMachineListings();
+  const listing = await prisma.machineListing.findUnique({ where: { id: req.params.id } });
+  if (!listing || listing.status !== "OPEN") {
+    res.status(404).json({ error: "Annonce introuvable ou déjà vendue" });
+    return;
+  }
+  if (listing.sellerId === body.data.userId) {
+    res.status(409).json({ error: "On n'achète pas sa propre annonce" });
+    return;
+  }
+  const user = await prisma.user.findUnique({
+    where: { id: body.data.userId },
+    include: { farm: { include: { machines: true } } },
+  });
+  if (!user?.farm) {
+    res.status(404).json({ error: "Ferme introuvable" });
+    return;
+  }
+  const bonuses = await getFarmBonuses(user.farm.id);
+  if (user.farm.machines.length >= bonuses.machineSlots) {
+    res.status(409).json({
+      error: `Slots machines pleins (${bonuses.machineSlots}). Construisez un hangar matériel.`,
+    });
+    return;
+  }
+  if (!peutPayer(user, listing.priceCrd)) {
+    res.status(402).json({ error: "TRN insuffisants" });
+    return;
+  }
+  const nom = MACHINE_DEFS[listing.type as MachineType]?.name ?? listing.type;
+  const machine = await prisma.$transaction(async (tx) => {
+    // La vente se clôt dans la même écriture que le débit : deux acheteurs
+    // simultanés ne peuvent pas repartir chacun avec le même tracteur.
+    const prise = await tx.machineListing.updateMany({
+      where: { id: listing.id, status: "OPEN" },
+      data: { status: "SOLD", buyerId: user.id, soldAt: new Date() },
+    });
+    if (prise.count === 0) throw new Error("ANNONCE_DEJA_VENDUE");
+    await debit(tx, user.id, listing.priceCrd, "MACHINES", `Achat d'occasion — ${nom}`);
+    await crediter(tx, listing.sellerId, listing.priceCrd, "MACHINES", `Vente d'occasion — ${nom}`);
+    return installMachine(tx, user.farm!.id, listing);
+  }).catch((e) => {
+    if (e instanceof Error && e.message === "ANNONCE_DEJA_VENDUE") return null;
+    throw e;
+  });
+  if (!machine) {
+    res.status(409).json({ error: "Annonce déjà vendue" });
+    return;
+  }
+  res.status(201).json({ machine });
 });
 
 /** Démolition d'un bâtiment — les niveaux payés se récupèrent en partie. */
