@@ -25,7 +25,8 @@
  * `index.ts` réexporte l'ensemble du domaine. Toute évolution doit rester
  * synchronisée avec `WeatherState` (même convention que `climate.ts`).
  */
-export type WeatherState = "CLEAR" | "CLOUDY" | "RAIN" | "STORM" | "SNOW";
+export type { WeatherState } from "./climate.js";
+import type { WeatherState } from "./climate.js";
 
 import { SPECIES } from "./species.js";
 import { GAME_DAY_MS } from "./time.js";

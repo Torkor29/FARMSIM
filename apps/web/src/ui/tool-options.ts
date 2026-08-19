@@ -12,7 +12,8 @@
  * écran tactile et un écran de bureau.
  */
 
-import { isPlantTool, isSoilTool, type Tool } from "../tools";
+import { canSowInSeason, windowLabel, type Season } from "@farmsim/shared";
+import { cropFromPlantTool, isPlantTool, isSoilTool, type Tool } from "../tools";
 
 /** Famille d'outils : ce que porte la barre principale. */
 export type ToolGroup = "SELECT" | "PLANT" | "HARVEST" | "SOIL" | "SELL";
@@ -42,6 +43,8 @@ export type ToolOption = {
   label: string;
   /** Infobulle de bureau — le survol n'existe pas au doigt. */
   hint?: string;
+  /** Hors fenêtre de semis : le geste sera refusé, autant le dire avant. */
+  outOfSeason?: boolean;
 };
 
 export const PLANT_OPTIONS: ToolOption[] = [
@@ -82,12 +85,27 @@ export function groupOf(tool: Tool): ToolGroup | null {
   return null;
 }
 
-/** Options de la famille — liste vide pour celles qui n'en ont pas. */
-export function optionsFor(group: ToolGroup | null): ToolOption[] {
-  if (group === "PLANT") return PLANT_OPTIONS;
+/**
+ * Options de la famille — liste vide pour celles qui n'en ont pas.
+ *
+ * La saison est annotée ici plutôt que dans chacun des deux rendus — le rail
+ * de bureau et le dock mobile. Un joueur ne doit pas apprendre la fenêtre de
+ * semis en se faisant refuser son champ ; il doit la voir sur le bouton, avec
+ * la saison où revenir.
+ */
+export function optionsFor(group: ToolGroup | null, season?: Season): ToolOption[] {
   if (group === "HARVEST") return HARVEST_OPTIONS;
   if (group === "SOIL") return SOIL_OPTIONS;
-  return [];
+  if (group !== "PLANT") return [];
+  if (!season) return PLANT_OPTIONS;
+  return PLANT_OPTIONS.map((o) => {
+    const crop = cropFromPlantTool(o.tool);
+    if (!crop) return o;
+    const verdict = canSowInSeason(crop, season);
+    return verdict.ok
+      ? { ...o, hint: `${o.hint} · se sème ${windowLabel(crop)}` }
+      : { ...o, outOfSeason: true, hint: verdict.reason };
+  });
 }
 
 /** Tailles de pinceau proposées partout. */

@@ -18,6 +18,7 @@ export * from "./breeding.js";
 export * from "./rotation.js";
 export * from "./futures.js";
 export * from "./machine-care.js";
+export * from "./calendar.js";
 export * from "./art-anchor.js";
 export * from "./play-guide.js";
 export * from "./appearance.js";
@@ -55,7 +56,8 @@ export type FieldStage =
   | "SPOILED"
   | "HARVESTED";
 
-export type WeatherState = "CLEAR" | "CLOUDY" | "RAIN" | "STORM" | "SNOW";
+export type { WeatherState } from "./climate.js";
+import type { WeatherState } from "./climate.js";
 
 export const WEATHER_LABELS: Record<WeatherState, string> = {
   CLEAR: "Clair",

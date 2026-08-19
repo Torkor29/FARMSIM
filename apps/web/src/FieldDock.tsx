@@ -1,6 +1,6 @@
 import { useState } from "react";
 import type { ObjectiveView } from "@farmsim/shared";
-import { DIRECT_SEED_COST_PER_CELL, DIRECT_SEED_YIELD_MALUS } from "@farmsim/shared";
+import { DIRECT_SEED_COST_PER_CELL, DIRECT_SEED_YIELD_MALUS , type Season } from "@farmsim/shared";
 import { isFieldWorkTool, isPlantTool, isSoilTool, plantCropLabel, type Tool } from "./tools";
 import { BRUSH_SIZES, TOOL_GROUPS, groupOf, optionsFor } from "./ui/tool-options";
 
@@ -26,6 +26,8 @@ type ContractorOffer = {
 
 type Props = {
   tool: Tool;
+  /** Saison courante : elle décide des cultures semables. */
+  season: Season;
   brush: 1 | 2 | 3;
   isMobile: boolean;
   isEta: boolean;
@@ -77,6 +79,7 @@ type Props = {
 
 export function FieldDock({
   tool,
+  season,
   brush,
   isMobile,
   isEta,
@@ -118,7 +121,7 @@ export function FieldDock({
   const [optionsOpen, setOptionsOpen] = useState(false);
 
   const group = groupOf(tool);
-  const options = optionsFor(group);
+  const options = optionsFor(group, season);
   const plant = isPlantTool(tool);
   const soil = isSoilTool(tool);
   const harvest = tool === "HARVEST";

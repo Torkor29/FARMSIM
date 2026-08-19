@@ -20,6 +20,11 @@ import {
   DIRECT_SEED_YIELD_MALUS,
   NO_ROTATION,
   DIRT_DIRTY_THRESHOLD,
+  GAME_DAY_MS,
+  currentSeason,
+  growthRate,
+  weatherForDay,
+  type Hemisphere,
   conditionPerHour,
   DIRT_PER_CELL_DEFAULT,
   DIRT_PER_CELL,
@@ -36,6 +41,15 @@ import {
   type Specialization,
   type WeatherState,
 } from "@farmsim/shared";
+
+/**
+ * Plafond de l'intégration, en jours de jeu.
+ *
+ * Une culture oubliée est perdue bien avant — la fenêtre de récolte y veille.
+ * Ce garde-fou n'existe que pour qu'une date aberrante en base ne fasse pas
+ * boucler une requête indéfiniment.
+ */
+const MAX_GROWTH_DAYS = 400;
 
 export type CellSimInput = {
   crop: CropCode;
@@ -56,6 +70,12 @@ export type CellSimInput = {
   rotation?: RotationState;
   /** Coupes déjà faites (herbe) : la suivante pousse plus vite */
   cutsDone?: number;
+  /* -- Calendrier cultural. Absents : la pousse redevient un simple délai. -- */
+  /** Hémisphère de la parcelle */
+  hemisphere?: Hemisphere;
+  /** Köppen de la zone, pour la météo du jour */
+  koppen?: string;
+  zoneCode?: string;
 };
 
 export type CellSimResult = {
@@ -161,12 +181,127 @@ export function mergeMoisture(
   );
 }
 
+/**
+ * Combien de jours de croissance une culture a réellement gagnés.
+ *
+ * On ne compte plus le temps qui passe, on compte le temps qui **pousse**.
+ * Chaque jour de jeu vaut ce que la saison et le ciel de ce jour-là
+ * autorisent : une journée de gel ne fait pas avancer un maïs, une pluie de
+ * printemps fait plus qu'une journée.
+ *
+ * Météo et saison étant toutes deux des fonctions pures du calendrier, cette
+ * intégration est déterministe et reproductible. On peut donc la projeter en
+ * avant pour annoncer une date de maturité exacte, qui ne sera jamais
+ * démentie — c'est ce qui évite d'ajouter la moindre colonne ou le moindre
+ * tick.
+ *
+ * Sans zone climatique on retombe sur la seule saison ; sans saison du tout —
+ * les rares appels de test qui ne fournissent pas d'horloge — on retombe sur
+ * l'ancien comportement, jour pour jour.
+ */
+export function integrateGrowth(opts: {
+  crop: CropCode;
+  plantedAt: number;
+  until: number;
+  /** Hémisphère de la parcelle : le sud est décalé de deux saisons. */
+  hemisphere?: Hemisphere;
+  /** Classification Köppen de la zone, pour la météo du jour. */
+  koppen?: string;
+  zoneCode?: string;
+}): number {
+  if (!opts.hemisphere) return Math.max(0, opts.until - opts.plantedAt);
+  const debut = Math.max(0, opts.plantedAt);
+  const fin = Math.max(debut, opts.until);
+  let acquis = 0;
+  let curseur = debut;
+  // Bornée : une culture oubliée une année entière est perdue bien avant, et
+  // une boucle non bornée sur une date aberrante gèlerait la requête.
+  let gardeFou = 0;
+  while (curseur < fin && gardeFou < MAX_GROWTH_DAYS) {
+    const jour = Math.floor(curseur / GAME_DAY_MS);
+    const finDuJour = (jour + 1) * GAME_DAY_MS;
+    const tranche = Math.min(fin, finDuJour) - curseur;
+    const saison = currentSeason(opts.hemisphere, curseur);
+    const ciel =
+      opts.koppen && opts.zoneCode
+        ? weatherForDay(opts.koppen, saison, opts.zoneCode, jour)
+        : undefined;
+    acquis += tranche * growthRate(opts.crop, saison, ciel);
+    curseur = Math.min(fin, finDuJour);
+    gardeFou += 1;
+  }
+  return acquis;
+}
+
+/**
+ * Quand cette culture sera-t-elle mûre ?
+ *
+ * On avance jour par jour jusqu'à ce que le cumul atteigne le temps de pousse
+ * de la culture, puis on interpole dans la journée pour ne pas arrondir la
+ * date à la journée entière.
+ */
+export function projectReadyAt(opts: {
+  crop: CropCode;
+  plantedAt: number;
+  growMs: number;
+  hemisphere?: Hemisphere;
+  koppen?: string;
+  zoneCode?: string;
+}): number {
+  if (!opts.hemisphere) return opts.plantedAt + opts.growMs;
+  let acquis = 0;
+  let curseur = opts.plantedAt;
+  for (let i = 0; i < MAX_GROWTH_DAYS; i++) {
+    const jour = Math.floor(curseur / GAME_DAY_MS);
+    const finDuJour = (jour + 1) * GAME_DAY_MS;
+    const tranche = finDuJour - curseur;
+    const saison = currentSeason(opts.hemisphere, curseur);
+    const ciel =
+      opts.koppen && opts.zoneCode
+        ? weatherForDay(opts.koppen, saison, opts.zoneCode, jour)
+        : undefined;
+    const vitesse = growthRate(opts.crop, saison, ciel);
+    const gain = tranche * vitesse;
+    if (acquis + gain >= opts.growMs) {
+      // Vitesse nulle : la culture n'avance pas ce jour-là, on passe au
+      // suivant plutôt que de diviser par zéro.
+      if (vitesse <= 0) {
+        curseur = finDuJour;
+        continue;
+      }
+      return Math.round(curseur + (opts.growMs - acquis) / vitesse);
+    }
+    acquis += gain;
+    curseur = finDuJour;
+  }
+  return curseur;
+}
+
 export function simulateCell(input: CellSimInput): CellSimResult {
   const def = CROP_DEFS[input.crop];
   const growMs = cropGrowMs(input.crop, input.cutsDone ?? 0);
-  const readyAt = input.plantedAt + growMs;
-  const progress = Math.min(1, Math.max(0, (input.now - input.plantedAt) / growMs));
-  const ready = input.now >= readyAt;
+  // La maturité n'est plus une échéance posée au semis mais le point où le
+  // cumul de croissance atteint le temps de pousse. Sans horloge de zone,
+  // `integrateGrowth` rend le temps brut : l'ancien comportement, à
+  // l'identique, pour les appels qui ne connaissent pas la parcelle.
+  const readyAt = projectReadyAt({
+    crop: input.crop,
+    plantedAt: input.plantedAt,
+    growMs,
+    hemisphere: input.hemisphere,
+    koppen: input.koppen,
+    zoneCode: input.zoneCode,
+  });
+  const acquis = integrateGrowth({
+    crop: input.crop,
+    plantedAt: input.plantedAt,
+    until: input.now,
+    hemisphere: input.hemisphere,
+    koppen: input.koppen,
+    zoneCode: input.zoneCode,
+  });
+  const progress = Math.min(1, Math.max(0, acquis / growMs));
+  const ready = acquis >= growMs;
   const mgmt = managementFactor(input);
   const wet = moisturePenalty(input.weatherAtHarvest);
   const climate = weatherYieldFactor(input.weatherAtHarvest);

@@ -29,6 +29,12 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
+  PLANTING_WINDOW,
+  SEASON_DURATION_MS,
+  canSowInSeason,
+  currentSeason,
+  type CropCode,
+  type Season,
   DIRT_DIRTY_THRESHOLD,
   MACHINE_AGE_YIELD_MALUS,
   MACHINE_END_OF_LIFE_HOURS,
@@ -1123,5 +1129,138 @@ describe("les heures pèsent sur la récolte", () => {
     );
     // « Pas assez grave pour que ça punisse trop. »
     assert.ok(1 - rapport < 0.1, `écart de ${(100 * (1 - rapport)).toFixed(1)} %`);
+  });
+});
+
+describe("calendrier cultural", () => {
+  /**
+   * La saison décide de deux choses : si l'on a le droit de semer, et à quelle
+   * vitesse ça pousse. Avant, elle ne décidait de rien — `readyAt` valait
+   * `now + growMs` et `cropGrowMs()` ne prenait ni saison ni région.
+   *
+   * Les formes du modèle sont tenues par `crop-calendar.test.ts` ; ici on
+   * vérifie que la règle arrive jusqu'aux routes, pour le joueur comme pour
+   * l'entreprise qu'il pourrait payer pour la contourner.
+   */
+  async function fermeSemable() {
+    const moi = await inscrire("Semeur");
+    const monde = await appel("/world/AUR");
+    const regions = (monde.corps as unknown as {
+      regions: { parcels: { id: string; taken: boolean }[] }[];
+    }).regions;
+    let parcelId = "";
+    for (const r of regions) {
+      const libre = (r.parcels ?? []).find((p) => !p.taken);
+      if (libre) {
+        parcelId = libre.id;
+        break;
+      }
+    }
+    assert.ok(parcelId, "il faut une parcelle libre");
+    await appel("/world/claim", {
+      methode: "POST",
+      corps: { userId: moi.id, specialization: "CEREALIER", parcelId },
+      jeton: moi.jeton,
+    });
+    await appel("/dev/grant", {
+      methode: "POST",
+      corps: { userId: moi.id, crd: 200000, level: 20 },
+      jeton: moi.jeton,
+    });
+    const me = await appel("/auth/me", { jeton: moi.jeton });
+    const ferme = (me.corps as unknown as {
+      player: { farm: { parcels: { id: string; zone?: { hemisphere?: string } }[] } };
+    }).player.farm;
+    const parcelle = ferme.parcels[0]!;
+    const det = await appel(`/parcels/${parcelle.id}`);
+    const cells = (det.corps as unknown as {
+      parcel: { cells: { x: number; y: number; kind: string }[] };
+    }).parcel.cells
+      .filter((c) => c.kind === "EMPTY")
+      .map((c) => ({ x: c.x, y: c.y }));
+    return { moi, parcelle, cells };
+  }
+
+  /** La saison du serveur, telle que le joueur la voit dans le monde. */
+  function saisonCourante(): Season {
+    return currentSeason("N", Date.now());
+  }
+
+  it("accepte une culture de saison et refuse l'autre", async () => {
+    const { moi, parcelle, cells } = await fermeSemable();
+    const saison = saisonCourante();
+    const dedans = (Object.keys(PLANTING_WINDOW) as CropCode[]).find(
+      (c) => canSowInSeason(c, saison).ok,
+    );
+    const dehors = (Object.keys(PLANTING_WINDOW) as CropCode[]).find(
+      (c) => !canSowInSeason(c, saison).ok,
+    );
+    assert.ok(dedans, "il doit toujours rester une culture semable");
+    assert.ok(dehors, "et une hors saison, sinon la règle ne dit rien");
+
+    const refus = await appel(`/parcels/${parcelle.id}/plant`, {
+      methode: "POST",
+      corps: { userId: moi.id, crop: dehors, cells: cells.slice(0, 4) },
+      jeton: moi.jeton,
+    });
+    assert.equal(refus.statut, 409, `${dehors} semé en ${saison} aurait dû être refusé`);
+    // Le refus doit dire quand revenir : une règle qu'on devine n'est pas une
+    // décision.
+    const message = (refus.corps as unknown as { error: string }).error;
+    assert.match(message, /sème/, `message peu utile : ${message}`);
+
+    const ok = await appel(`/parcels/${parcelle.id}/plant`, {
+      methode: "POST",
+      corps: { userId: moi.id, crop: dedans, cells: cells.slice(0, 4) },
+      jeton: moi.jeton,
+    });
+    assert.equal(ok.statut, 200, `${dedans} refusé en ${saison} : ${JSON.stringify(ok.corps)}`);
+  });
+
+  it("ne laisse pas l'entreprise contourner le calendrier", async () => {
+    // Payer un prestataire pour semer hors saison viderait la règle de son sens.
+    const { moi, parcelle, cells } = await fermeSemable();
+    const dehors = (Object.keys(PLANTING_WINDOW) as CropCode[]).find(
+      (c) => !canSowInSeason(c, saisonCourante()).ok,
+    )!;
+    const r = await appel(`/parcels/${parcelle.id}/contractor`, {
+      methode: "POST",
+      corps: { userId: moi.id, work: "PLANT", crop: dehors, cells: cells.slice(0, 4) },
+      jeton: moi.jeton,
+    });
+    assert.equal(r.statut, 409, `l'entreprise a semé hors saison : ${JSON.stringify(r.corps)}`);
+  });
+
+  it("annonce une maturité qui tient compte de la saison", async () => {
+    /**
+     * La date renvoyée n'est plus `semis + temps de pousse` mais une
+     * projection intégrée. Elle doit rester exacte : météo et saison étant des
+     * fonctions pures du calendrier, une culture semée maintenant a une date
+     * de maturité calculable et définitive.
+     */
+    const { moi, parcelle, cells } = await fermeSemable();
+    const saison = saisonCourante();
+    const crop = (Object.keys(PLANTING_WINDOW) as CropCode[]).find(
+      (c) => canSowInSeason(c, saison).ok,
+    )!;
+    const avant = Date.now();
+    const r = await appel(`/parcels/${parcelle.id}/plant`, {
+      methode: "POST",
+      corps: { userId: moi.id, crop, cells: cells.slice(0, 4) },
+      jeton: moi.jeton,
+    });
+    assert.equal(r.statut, 200, `semis refusé : ${JSON.stringify(r.corps)}`);
+    const parcelleApres = (r.corps as unknown as {
+      parcel: { cells: { crop: string | null; readyAt: string | null }[] };
+    }).parcel;
+    const semee = parcelleApres.cells.find((c) => c.crop === crop && c.readyAt);
+    assert.ok(semee?.readyAt, "aucune case semée n'a de date de maturité");
+    const pret = new Date(semee!.readyAt!).getTime();
+    assert.ok(pret > avant, "la maturité doit être dans le futur");
+    // Bornée : une culture qui n'arriverait jamais à maturité serait un piège.
+    assert.ok(
+      pret - avant < 8 * SEASON_DURATION_MS,
+      `maturité annoncée dans ${(pret - avant) / SEASON_DURATION_MS} saisons`,
+    );
   });
 });

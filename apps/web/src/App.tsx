@@ -5041,6 +5041,7 @@ export function App() {
       {isMobile ? (
         <FieldDock
           tool={tool}
+          season={season}
           brush={brush}
           isMobile={isMobile}
           isEta={visiting}
@@ -5090,6 +5091,7 @@ export function App() {
         <>
           <ToolRail
             tool={tool}
+            season={season}
             brush={brush}
             directSeed={directSeed}
             keepSwath={keepSwath}

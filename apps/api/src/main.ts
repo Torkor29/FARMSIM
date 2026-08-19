@@ -232,6 +232,8 @@ import {
   manureSaleProceeds,
   MANURE_FERTILITY_GAIN,
   currentSeason,
+  canSowInSeason,
+  GAME_DAY_MS,
   seasonProgress,
   gameDayIndex,
   weatherForDay,
@@ -259,6 +261,8 @@ import {
 } from "@farmsim/shared";
 import {
   simulateCell,
+  projectReadyAt,
+  integrateGrowth,
   sellToMarket,
   tickMarket,
   applyMachineWear,
@@ -476,6 +480,27 @@ type FarmMachine = {
   greaseSkipStreak?: number;
   breakdown?: string | null;
 };
+
+/**
+ * Le climat d'une parcelle, sous la forme que la simulation attend.
+ *
+ * Six appels à `simulateCell` doivent désormais transmettre l'hémisphère et
+ * la zone, faute de quoi la pousse retombe silencieusement sur l'ancien
+ * minuteur. Les répartir à la main aurait garanti qu'un site diverge : un
+ * champ semé au même instant aurait mûri à deux dates selon la route qui
+ * l'observe.
+ */
+function climatDe(parcel: {
+  zone?: { koppen: string; code: string; hemisphere: string } | null;
+}): { hemisphere?: Hemisphere; koppen?: string; zoneCode?: string } {
+  const z = parcel.zone;
+  if (!z) return {};
+  return {
+    hemisphere: z.hemisphere === "S" ? "S" : "N",
+    koppen: z.koppen,
+    zoneCode: z.code,
+  };
+}
 
 function careOf(m: FarmMachine): MachineCareState {
   const grease = m.grease ?? (m.greased === false ? 0 : GREASE_FULL);
@@ -1441,7 +1466,7 @@ async function publishFromConsignes() {
       OR: [{ isNpc: true }, { lastSeenAt: { lt: cutoff } }, { lastSeenAt: null }],
     },
     include: {
-      farm: { include: { parcels: { include: { cells: true } } } },
+      farm: { include: { parcels: { include: { cells: true, zone: true } } } },
     },
   });
   const now = Date.now();
@@ -1470,6 +1495,7 @@ async function publishFromConsignes() {
           if (busy.has(`${cell.x},${cell.y}`)) continue;
           if (cell.kind !== "CROP" || !cell.crop || !cell.plantedAt) continue;
           const sim = simulateCell({
+            ...climatDe(parcel),
             crop: cell.crop,
             plantedAt: cell.plantedAt.getTime(),
             now,
@@ -1558,7 +1584,7 @@ async function publishFromConsignes() {
 async function tickNpcFarms() {
   const npcs = await prisma.user.findMany({
     where: { isNpc: true, specialization: "CEREALIER" },
-    include: { farm: { include: { parcels: { include: { cells: true } } } } },
+    include: { farm: { include: { parcels: { include: { cells: true, zone: true } } } } },
   });
   const now = Date.now();
   const growMs = CROP_DEFS.WHEAT.growMs;
@@ -1575,6 +1601,12 @@ async function tickNpcFarms() {
           c.fieldStage !== "SPOILED" &&
           !busy.has(`${c.x},${c.y}`),
       );
+      // Les PNJ suivent le même calendrier que les joueurs : sans cela ils
+      // sèmeraient du blé toute l'année et l'offre du marché ne connaîtrait
+      // plus les saisons.
+      const climat = climatDe(parcel);
+      if (!canSowInSeason("WHEAT", currentSeason(climat.hemisphere ?? "N", now)).ok) continue;
+      const pretLe = projectReadyAt({ crop: "WHEAT", plantedAt: now, growMs, ...climat });
       const toPlant = empty.slice(0, 18);
       for (const cell of toPlant) {
         await prisma.parcelCell.update({
@@ -1584,7 +1616,7 @@ async function tickNpcFarms() {
             crop: "WHEAT",
             fieldStage: "PLANTED",
             plantedAt: new Date(now),
-            readyAt: new Date(now + growMs),
+            readyAt: new Date(pretLe),
             fertilizedPasses: 0,
             weedsControlled: false,
             directSeeded: false,
@@ -2298,22 +2330,37 @@ app.post("/dev/grant", async (req, res) => {
     done.push(`${body.data.stock.tons} t de ${body.data.stock.commodity}`);
   }
   if (body.data.ripenAll && user.farm) {
-    // On recule la date de semis : la maturité se déduit du temps écoulé, il
-    // n'y a pas d'état « mûr » à forcer.
-    const parcelIds = user.farm.parcels.map((p) => p.id);
+    /**
+     * On recule la date de semis, parce qu'il n'existe pas d'état « mûr » à
+     * forcer : la maturité se déduit de la culture.
+     *
+     * Reculer de `growMs` suffisait tant que la pousse était un compte à
+     * rebours. Depuis le calendrier cultural elle s'intègre jour par jour, et
+     * une case reculée de cinq jours en plein hiver n'a gagné qu'un jour et
+     * demi de croissance : l'outil rendait des champs qui n'étaient pas prêts.
+     * On remonte donc jusqu'à ce que le **cumul** atteigne le temps de pousse.
+     */
+    const parcels = await prisma.parcel.findMany({
+      where: { farmId: user.farm.id },
+      include: { zone: true },
+    });
+    const climatParParcelle = new Map(parcels.map((p) => [p.id, climatDe(p)]));
     const cells = await prisma.parcelCell.findMany({
-      where: { parcelId: { in: parcelIds }, kind: "CROP", crop: { not: null } },
+      where: { parcelId: { in: parcels.map((p) => p.id) }, kind: "CROP", crop: { not: null } },
     });
     const now = Date.now();
     for (const c of cells) {
-      const grow = cropGrowMs(c.crop as CropCode, grassCutsDone(c));
+      const crop = c.crop as CropCode;
+      const grow = cropGrowMs(crop, grassCutsDone(c));
+      const climat = climatParParcelle.get(c.parcelId) ?? {};
+      let semis = now - grow;
+      for (let i = 0; i < 60; i++) {
+        if (integrateGrowth({ crop, plantedAt: semis, until: now, ...climat }) >= grow) break;
+        semis -= GAME_DAY_MS;
+      }
       await prisma.parcelCell.update({
         where: { id: c.id },
-        data: {
-          plantedAt: new Date(now - grow),
-          readyAt: new Date(now),
-          fieldStage: "READY",
-        },
+        data: { plantedAt: new Date(semis), readyAt: new Date(now), fieldStage: "READY" },
       });
     }
     done.push(`${cells.length} case(s) à maturité`);
@@ -2673,7 +2720,7 @@ async function buildResumeForUser(userId: string) {
     include: {
       farm: {
         include: {
-          parcels: { include: { cells: true } },
+          parcels: { include: { cells: true, zone: true } },
         },
       },
     },
@@ -2690,6 +2737,7 @@ async function buildResumeForUser(userId: string) {
     for (const cell of parcel.cells) {
       if (cell.kind !== "CROP" || !cell.crop || !cell.plantedAt) continue;
       const sim = simulateCell({
+        ...climatDe(parcel),
         crop: cell.crop,
         plantedAt: cell.plantedAt.getTime(),
         now,
@@ -3196,6 +3244,7 @@ app.get("/parcels/:id", async (req, res) => {
   for (const c of parcel.cells) {
     if (c.kind === "CROP" && c.crop && c.plantedAt) {
       const sim = simulateCell({
+        ...climatDe(parcel),
         crop: c.crop,
         plantedAt: c.plantedAt.getTime(),
         now,
@@ -3720,6 +3769,15 @@ app.post("/parcels/:id/contractor", async (req, res) => {
       }
     }
     const growMs = cropGrowMs(crop, 0);
+    const climat = climatDe(parcel);
+    const fenetre = canSowInSeason(crop, currentSeason(climat.hemisphere ?? "N", now));
+    if (!fenetre.ok) {
+      // L'entreprise ne sème pas hors saison non plus : la payer pour
+      // contourner le calendrier viderait la règle de son sens.
+      res.status(409).json({ error: fenetre.reason, window: fenetre.window });
+      return;
+    }
+    const pretLe = projectReadyAt({ crop, plantedAt: now, growMs, ...climat });
     await prisma.$transaction(async (tx) => {
       await debit(tx, user.id, total, "CHANTIERS", "Prestataire — moisson");
       for (const { x, y } of cells) {
@@ -3730,7 +3788,7 @@ app.post("/parcels/:id/contractor", async (req, res) => {
             crop,
             fieldStage: "PLANTED",
             plantedAt: new Date(now),
-            readyAt: new Date(now + growMs),
+            readyAt: new Date(pretLe),
             fertilizedPasses: 0,
             weedsControlled: false,
           },
@@ -3837,6 +3895,7 @@ app.post("/parcels/:id/contractor", async (req, res) => {
   for (const cell of ready) {
     if (work === "MOW" && !isMowCrop(cell.crop)) continue;
     const sim = simulateCell({
+      ...climatDe(parcel),
       crop: cell.crop!,
       plantedAt: cell.plantedAt!.getTime(),
       now,
@@ -4075,6 +4134,18 @@ app.post("/parcels/:id/plant", async (req, res) => {
 
   const now = Date.now();
   const growMs = cropGrowMs(plantCrop, 0);
+  /* Le calendrier cultural. La saison décide de deux choses : si l'on a le
+     droit de semer, et à quelle vitesse ça poussera. La date de maturité
+     n'est donc plus `now + growMs` mais une projection — exacte, parce que
+     météo et saison sont des fonctions pures du calendrier. */
+  const climat = climatDe(parcel);
+  const saison = currentSeason(climat.hemisphere ?? "N", now);
+  const fenetre = canSowInSeason(plantCrop, saison);
+  if (!fenetre.ok) {
+    res.status(409).json({ error: fenetre.reason, window: fenetre.window, season: saison });
+    return;
+  }
+  const pretLe = projectReadyAt({ crop: plantCrop, plantedAt: now, growMs, ...climat });
   const last = body.data.cells[body.data.cells.length - 1];
   const { wear, labor, gain } = await prisma.$transaction(async (tx) => {
     if (access.charge) {
@@ -4092,7 +4163,7 @@ app.post("/parcels/:id/plant", async (req, res) => {
           crop: plantCrop,
           fieldStage: "PLANTED",
           plantedAt: new Date(now),
-          readyAt: new Date(now + growMs),
+          readyAt: new Date(pretLe),
           fertilizedPasses: 0,
           weedsControlled: false,
           directSeeded: directSeed,
@@ -4655,6 +4726,7 @@ app.post("/parcels/:id/harvest", async (req, res) => {
   for (const cell of targets) {
     if (cell.kind !== "CROP" || !cell.crop || !cell.plantedAt) continue;
     const sim = simulateCell({
+      ...climatDe(parcel),
       crop: cell.crop,
       plantedAt: cell.plantedAt.getTime(),
       now,
@@ -4719,6 +4791,7 @@ app.post("/parcels/:id/harvest", async (req, res) => {
     for (const cell of targets) {
       if (cell.kind !== "CROP" || !cell.crop || !cell.plantedAt) continue;
       const sim = simulateCell({
+        ...climatDe(parcel),
         crop: cell.crop,
         plantedAt: cell.plantedAt.getTime(),
         now,

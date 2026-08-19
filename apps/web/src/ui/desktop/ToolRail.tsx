@@ -1,3 +1,4 @@
+import type { Season } from "@farmsim/shared";
 /**
  * Rail d'outils — coque de bureau.
  *
@@ -33,6 +34,8 @@ import {
 
 type Props = {
   tool: Tool;
+  /** Saison courante : elle décide des cultures semables. */
+  season: Season;
   brush: BrushSize;
   directSeed: boolean;
   /** Laisser l'andain derrière la moissonneuse. */
@@ -67,6 +70,7 @@ function optionCount(tool: Tool, straw: number, bales: number): number {
 
 export function ToolRail({
   tool,
+  season,
   brush,
   directSeed,
   keepSwath,
@@ -83,7 +87,7 @@ export function ToolRail({
   onGuide,
 }: Props) {
   const group = groupOf(tool);
-  const options = optionsFor(group);
+  const options = optionsFor(group, season);
   // Le pinceau ne concerne que les outils qui travaillent des cases : le
   // proposer sous « Voir » n'aurait aucun effet, et un réglage sans effet est
   // pire qu'un réglage absent.
@@ -137,7 +141,7 @@ export function ToolRail({
                 <li key={o.tool}>
                   <button
                     type="button"
-                    className={`tool-rail-option${on ? " on" : ""}`}
+                    className={`tool-rail-option${on ? " on" : ""}${o.outOfSeason ? " out-of-season" : ""}`}
                     aria-pressed={on}
                     title={o.hint}
                     onClick={() => onTool(o.tool)}

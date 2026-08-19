@@ -18,7 +18,16 @@ import type { RegionDef, Season } from "./world.js";
  * `index.ts` réexporte le monde. Toute évolution doit rester synchronisée
  * avec `WeatherState`.
  */
-type WeatherState = "CLEAR" | "CLOUDY" | "RAIN" | "STORM" | "SNOW";
+/**
+ * Le temps qu'il fait.
+ *
+ * Cette union était écrite trois fois à l'identique — ici, dans `index.ts` et
+ * dans `livestock.ts` — pour la seule raison qu'aucun des trois ne voulait
+ * dépendre des autres. Trois sources de vérité pour un même type finissent
+ * toujours par diverger d'un membre. Elle vit désormais dans le module du
+ * climat, qui est son sujet, et les autres la ré-exportent.
+ */
+export type WeatherState = "CLEAR" | "CLOUDY" | "RAIN" | "STORM" | "SNOW";
 
 type WeatherOdds = Record<WeatherState, number>;
 

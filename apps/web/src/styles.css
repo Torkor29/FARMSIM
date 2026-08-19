@@ -486,6 +486,15 @@ html.playing .field-dock {
 .dirt-gauge.low .grease-fill { background: var(--gold-700); }
 .dirt-gauge.low .grease-num { color: var(--gold-700); }
 
+/* —— Culture hors saison ——
+   Le bouton reste cliquable : on n'apprend pas une règle sur une cible morte.
+   Il dit seulement qu'il refusera, et son infobulle dit quand revenir. */
+.tool-rail-option.out-of-season .tool-rail-option-label {
+  opacity: 0.5;
+  text-decoration: line-through;
+  text-decoration-thickness: 1px;
+}
+
 /* —— Marché de l'occasion (garage) ——
    Même gabarit que la liste des machines possédées : c'est la même chose vue
    de l'autre côté, et deux mises en page pour un même objet se paient en
