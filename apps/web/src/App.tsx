@@ -94,7 +94,7 @@ import { BuildingSheet } from "./BuildingSheet";
 import { ConfirmDialog, type ConfirmRequest } from "./ConfirmDialog";
 import { MachineCareOverlay, type CareMode } from "./MachineCareOverlay";
 import { MissionPlay, type MissionPlayContract } from "./MissionPlay";
-import { LivestockPanel, type BarnState } from "./LivestockPanel";
+import { LivestockPanel, type BarnState, type OrphanYard } from "./LivestockPanel";
 import type { SupplyCrate } from "./IsoFarmView";
 import { MarketPanel, type Listing, type MarketDelivery, type FuturesContract } from "./MarketPanel";
 import { OfficePanel, type CreditView, type ProcessingView } from "./OfficePanel";
@@ -710,6 +710,7 @@ export function App() {
   const [continentDetail, setContinentDetail] = useState<ContinentDetail | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
   const [barns, setBarns] = useState<BarnState[]>([]);
+  const [orphanYards, setOrphanYards] = useState<OrphanYard[]>([]);
   /**
    * Les commandes passées au négociant, en route ou posées dans la cour.
    *
@@ -909,10 +910,14 @@ export function App() {
 
   const loadLivestock = useCallback(async (parcelId: string) => {
     try {
-      const r = await api<{ barns: BarnState[] }>(`/parcels/${parcelId}/livestock`);
+      const r = await api<{ barns: BarnState[]; orphanYards?: OrphanYard[] }>(
+        `/parcels/${parcelId}/livestock`,
+      );
       setBarns((prev) => keepIfSame(prev, r.barns));
+      setOrphanYards((prev) => keepIfSame(prev, r.orphanYards ?? []));
     } catch {
       setBarns([]);
+      setOrphanYards([]);
     }
   }, []);
 
@@ -5140,6 +5145,7 @@ export function App() {
         >
         {(isMobile ? sheet === "HERD" : showHerd) && (
         <LivestockPanel
+          orphanYards={orphanYards}
           className={panelClass("livestock-panel", "HERD")}
           gesture={isMobile ? sheetGesture : undefined}
           unSeulBatiment={isMobile}

@@ -243,8 +243,18 @@ const PRODUITS: {
   },
 ];
 
+/** Une aire de sortie qui ne touche aucun abri — donc qui ne sert à rien. */
+export type OrphanYard = {
+  buildingId: string;
+  type: string;
+  name: string;
+  needs: string[];
+};
+
 type Props = {
   barns: BarnState[];
+  /** Enclos posés seuls : ils n'apparaissaient sur aucun écran. */
+  orphanYards?: OrphanYard[];
   busy: boolean;
   crd: number;
   onBuyAnimals: (buildingId: string, count: number, young?: boolean) => void;
@@ -306,6 +316,7 @@ type Props = {
 /** Panneau élevage : effectif, bien-être, sortie au pré. */
 export function LivestockPanel({
   barns,
+  orphanYards,
   busy,
   crd,
   onBuyAnimals,
@@ -441,8 +452,11 @@ export function LivestockPanel({
    * proposait qu'une.
    */
   const [lots, setLots] = useState<Record<string, number>>({});
+  const orphelins = orphanYards ?? [];
 
-  if (!barns.length) return null;
+  // Un joueur qui n'a qu'une courette orpheline n'avait aucun panneau, donc
+  // aucune explication : c'est précisément le cas qu'il faut couvrir.
+  if (!barns.length && !orphelins.length) return null;
 
   return (
     <aside className={className} {...gesture}>
@@ -462,6 +476,26 @@ export function LivestockPanel({
         Un troupeau affamé s’effondre ; une aire de sortie accolée le rend plus
         productif.
       </p>
+      {orphelins.length > 0 && (
+        /* L'enclos posé seul.
+           Il était payé, muet et invisible : l'écran ne listait que les abris,
+           et l'achat de bêtes répondait « ce bâtiment n'héberge pas
+           d'animaux » sans dire ce qu'il fallait faire. On nomme donc ce qui
+           manque, là où le joueur vient chercher ses bêtes. */
+        <ul className="enclos-orphelins">
+          {orphelins.map((y) => (
+            <li key={y.buildingId}>
+              <strong>{y.name}</strong>
+              <span>
+                Seule, elle n’accueille aucune bête. Il lui faut{" "}
+                {y.needs.length > 1 ? y.needs.join(" ou ") : y.needs[0]} juste à côté, emprises
+                jointives.
+              </span>
+            </li>
+          ))}
+        </ul>
+      )}
+
 
       {/* Les alertes en tête, et actionnables : un clic fait le geste, il
           n'emmène pas vers un écran où le chercher. Il n'existait qu'une
@@ -775,9 +809,16 @@ export function LivestockPanel({
             )}
 
             <p className={`paddock-note ${barn.paddockCapacity > 0 ? "ok" : "none"}`}>
-              {barn.paddockCapacity > 0
-                ? `${BUILDING_DEFS[barn.yardType].name} attenant · ${barn.paddockCapacity} places de sortie`
-                : `Aucun${barn.yardType === "PIG_YARD" || barn.yardType === "HEN_YARD" ? "e courette" : " enclos"} attenant — les bêtes restent enfermées`}
+              {(() => {
+                /* L'accord se lit sur la définition du bâtiment, il ne se
+                   redevine pas ici : la phrase énumérait les types féminins à
+                   la main, ce qui était faux dès qu'on en ajoutait un. */
+                const aire = BUILDING_DEFS[barn.yardType];
+                const e = aire.article === "une" ? "e" : "";
+                return barn.paddockCapacity > 0
+                  ? `${aire.name} attenant${e} · ${barn.paddockCapacity} places de sortie`
+                  : `Aucun${e} ${aire.name.toLowerCase()} attenant${e} — les bêtes restent enfermées`;
+              })()}
             </p>
 
             {/* Le lieu de vie d'abord : c'est la décision, pas un geste parmi

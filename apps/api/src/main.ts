@@ -152,6 +152,9 @@ import {
   MACHINE_LISTING_MAX_RATE,
   buildingResaleValue,
   isPaddockAdjacent,
+  YARD_BUILDINGS,
+  barnsForYard,
+  buildingWithArticle,
   paddockCapacity,
   tickHappiness,
   canGraze,
@@ -6279,6 +6282,49 @@ app.post("/parcels/:id/build", async (req, res) => {
       return;
     }
   }
+
+  /*
+   * Une aire de sortie ne vaut que collée à son abri.
+   *
+   * Elle était acceptée n'importe où, débitée sans un mot, et n'apparaissait
+   * ensuite sur aucun écran : ni dans l'Élevage, qui ne liste que les abris,
+   * ni à l'achat de bêtes, qui répond « ce bâtiment n'héberge pas d'animaux ».
+   * Le joueur repartait avec une construction payée, muette et inutile — et
+   * rien ne lui disait qu'il lui manquait la porcherie.
+   *
+   * On refuse donc au moment où c'est encore réparable, en nommant ce qui
+   * manque. Poser l'abri d'abord est aussi l'ordre réel : on ne bâtit pas une
+   * courette pour des porcs qu'on ne peut pas encore acheter.
+   */
+  if (YARD_BUILDINGS.includes(typeDemande)) {
+    const abris = barnsForYard(typeDemande);
+    const voisins = await prisma.building.findMany({
+      where: { parcelId: parcel.id, type: { in: abris } },
+    });
+    const pose = { originX: body.data.x, originY: body.data.y, w: foot.w, h: foot.h };
+    const colle = voisins.some((b) =>
+      isPaddockAdjacent(
+        {
+          originX: b.originX,
+          originY: b.originY,
+          ...orientedFootprint(b.type as SharedBuildingType, b.rotation),
+        },
+        pose,
+      ),
+    );
+    if (!colle) {
+      const noms = abris.map(buildingWithArticle);
+      const liste =
+        noms.length > 1 ? `${noms.slice(0, -1).join(", ")} ou ${noms[noms.length - 1]}` : noms[0];
+      res.status(409).json({
+        error: voisins.length
+          ? `${def.name} : elle se colle à ${liste}. La vôtre est trop loin — les emprises doivent se toucher.`
+          : `${def.name} : posez d'abord ${liste}. Seule, elle n'accueille aucune bête.`,
+      });
+      return;
+    }
+  }
+
   const user = await prisma.user.findUnique({ where: { id: body.data.userId } });
   if (!user || !peutPayer(user, def.cost)) {
     res.status(402).json({ error: "TRN insuffisants" });
@@ -7116,7 +7162,45 @@ app.get("/parcels/:id/livestock", async (req, res) => {
       cowPrice: herdKind ? ANIMAL_PRICE[herdKind] : ANIMAL_PRICE.COW,
     });
   }
-  res.json({ barns, weather: weather?.state ?? "CLEAR" });
+  /*
+   * Les aires de sortie qui ne touchent aucun abri.
+   *
+   * L'écran ne listait que les abris, si bien qu'une courette posée seule
+   * n'apparaissait nulle part : payée, muette, invisible. Il est désormais
+   * impossible d'en poser une orpheline, mais il en reste des anciennes — et
+   * démolir un abri en recrée. Une ligne qui dit ce qui manque vaut mieux
+   * qu'un bâtiment qu'on cherche à comprendre.
+   */
+  const orphanYards = parcel.buildings
+    .filter((b) => YARD_BUILDINGS.includes(b.type as SharedBuildingType))
+    .filter((y) => {
+      const abris = barnsForYard(y.type as SharedBuildingType);
+      const foot = {
+        originX: y.originX,
+        originY: y.originY,
+        ...orientedFootprint(y.type as SharedBuildingType, y.rotation),
+      };
+      return !parcel.buildings.some(
+        (b) =>
+          abris.includes(b.type as SharedBuildingType) &&
+          isPaddockAdjacent(
+            {
+              originX: b.originX,
+              originY: b.originY,
+              ...orientedFootprint(b.type as SharedBuildingType, b.rotation),
+            },
+            foot,
+          ),
+      );
+    })
+    .map((y) => ({
+      buildingId: y.id,
+      type: y.type,
+      name: BUILDING_DEFS[y.type as SharedBuildingType].name,
+      needs: barnsForYard(y.type as SharedBuildingType).map(buildingWithArticle),
+    }));
+
+  res.json({ barns, orphanYards, weather: weather?.state ?? "CLEAR" });
 });
 
 /** Achat de bêtes pour une étable. */

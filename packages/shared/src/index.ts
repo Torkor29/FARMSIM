@@ -3,6 +3,7 @@
 import { GAME_DAY_MS } from "./time.js";
 import { MACHINE_END_OF_LIFE_HOURS } from "./machine-care.js";
 import { RECIPES, type ProcessingKind } from "./processing.js";
+import { kindForBarn, yardTypeForBarn } from "./livestock.js";
 
 export * from "./ledger.js";
 export * from "./time.js";
@@ -421,6 +422,14 @@ export type BuildingDef = {
   /** Atelier de transformation hébergé, s'il y en a un. */
   processing?: ProcessingKind;
   /**
+   * Article indéfini du nom, pour les phrases qui le citent.
+   *
+   * « il faut d'abord porcherie » ne se lit pas. Le genre est une propriété du
+   * nom : il se déclare donc à côté de lui, et non dans la tournure qui
+   * l'emploie, sinon chaque message devra le redeviner. Vaut « un » par défaut.
+   */
+  article?: "un" | "une";
+  /**
    * Séchage gratuit et accéléré `[GD]`.
    *
    * L'humidité à la récolte ampute la vente ; l'éolienne fait tourner le
@@ -516,6 +525,7 @@ export const BUILDING_DEFS: Record<BuildingType, BuildingDef> = {
   },
   CATTLE_BARN: {
     type: "CATTLE_BARN",
+    article: "une",
     name: "Étable bovins",
     w: 3,
     h: 3,
@@ -526,6 +536,7 @@ export const BUILDING_DEFS: Record<BuildingType, BuildingDef> = {
   },
   PIGSTY: {
     type: "PIGSTY",
+    article: "une",
     name: "Porcherie",
     w: 2,
     h: 3,
@@ -544,6 +555,7 @@ export const BUILDING_DEFS: Record<BuildingType, BuildingDef> = {
   },
   SHEEPFOLD: {
     type: "SHEEPFOLD",
+    article: "une",
     name: "Bergerie",
     w: 3,
     h: 2,
@@ -580,6 +592,7 @@ export const BUILDING_DEFS: Record<BuildingType, BuildingDef> = {
   },
   PADDOCK: {
     type: "PADDOCK",
+    article: "un",
     name: "Enclos de pâture",
     w: 3,
     h: 3,
@@ -588,6 +601,7 @@ export const BUILDING_DEFS: Record<BuildingType, BuildingDef> = {
   },
   PIG_YARD: {
     type: "PIG_YARD",
+    article: "une",
     name: "Courette à porcs",
     w: 2,
     h: 3,
@@ -597,6 +611,7 @@ export const BUILDING_DEFS: Record<BuildingType, BuildingDef> = {
   },
   HEN_YARD: {
     type: "HEN_YARD",
+    article: "une",
     name: "Courette à poules",
     w: 2,
     h: 3,
@@ -668,6 +683,7 @@ export const BUILDING_DEFS: Record<BuildingType, BuildingDef> = {
    */
   DAIRY: {
     type: "DAIRY",
+    article: "une",
     name: "Laiterie",
     w: 2,
     h: 2,
@@ -691,6 +707,40 @@ export const BUILDING_DEFS: Record<BuildingType, BuildingDef> = {
 /* ------------------------------------------------------------------ */
 /* Niveaux de bâtiment                                                 */
 /* ------------------------------------------------------------------ */
+
+/**
+ * Les abris qui hébergent des bêtes, et les aires de sortie qui vont avec.
+ *
+ * Tout est dérivé de `kindForBarn` et `yardTypeForBarn` : une liste tenue à la
+ * main finirait par mentir le jour où l'on ajoute une espèce, et c'est
+ * exactement le genre d'oubli qui se manifeste par un bâtiment qu'on paie et
+ * qui ne sert à rien.
+ */
+export const SHELTER_BUILDINGS = (Object.keys(BUILDING_DEFS) as BuildingType[]).filter(
+  (t) => kindForBarn(t) !== null,
+);
+
+/** Le nom d'un bâtiment précédé de son article : « une porcherie ». */
+export function buildingWithArticle(type: BuildingType): string {
+  const def = BUILDING_DEFS[type];
+  return `${def.article ?? "un"} ${def.name.toLowerCase()}`;
+}
+
+/** Prés et courettes : les bâtiments qui ne valent que collés à un abri. */
+export const YARD_BUILDINGS = [
+  ...new Set(SHELTER_BUILDINGS.map((t) => yardTypeForBarn(t) as BuildingType)),
+];
+
+/**
+ * Les abris auxquels une aire de sortie donnée peut se coller.
+ *
+ * Sert d'abord à le **dire** : une courette posée loin de toute porcherie
+ * était acceptée sans un mot, débitée, et n'apparaissait ensuite sur aucun
+ * écran. Le joueur avait payé pour un bâtiment invisible.
+ */
+export function barnsForYard(yard: BuildingType): BuildingType[] {
+  return SHELTER_BUILDINGS.filter((t) => yardTypeForBarn(t) === yard);
+}
 
 /**
  * Les bâtiments qui transforment.
