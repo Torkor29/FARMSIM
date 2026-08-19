@@ -251,6 +251,13 @@ import {
   TIER_LABELS,
   jobDurationMs,
   fuelForJob,
+  farmEquity,
+  borrowingRoom,
+  creditCeiling,
+  creditHealth,
+  seasonInterest,
+  accrueInterest,
+  LOAN_MIN_CRD,
   fuelCost,
   FUEL_TANK_L,
   type MachineDef,
@@ -725,6 +732,133 @@ async function loadParcelForWork(parcelId: string) {
     where: { id: parcelId },
     include: { farm: { include: { machines: true, user: true } }, cells: true, zone: true },
   });
+}
+
+/* ------------------------------------------------------------------ */
+/* Banque                                                              */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Ce que vaut une exploitation si l'on arrête tout.
+ *
+ * La terre à sa valeur de marché, les bâtiments à leur prix de démolition, le
+ * matériel à sa cote d'occasion, les stocks au cours du jour. C'est l'assiette
+ * de la ligne de crédit : une banque prête sur ce qu'elle peut reprendre.
+ */
+async function capitauxPropres(userId: string): Promise<{
+  equity: number;
+  landCrd: number;
+  buildingsCrd: number;
+  machinesCrd: number;
+  stockCrd: number;
+  cashCrd: number;
+  debtCrd: number;
+}> {
+  const user = await prisma.user.findUnique({
+    where: { id: userId },
+    include: {
+      farm: {
+        include: {
+          machines: true,
+          inventory: true,
+          parcels: { include: { buildings: true } },
+        },
+      },
+    },
+  });
+  const vide = {
+    equity: 0,
+    landCrd: 0,
+    buildingsCrd: 0,
+    machinesCrd: 0,
+    stockCrd: 0,
+    cashCrd: 0,
+    debtCrd: 0,
+  };
+  if (!user?.farm) return vide;
+
+  const landCrd = user.farm.parcels.reduce((n, p) => n + (p.landPrice ?? 0), 0);
+  const buildingsCrd = user.farm.parcels.reduce(
+    (n, p) =>
+      n +
+      p.buildings.reduce(
+        (m, b) => m + buildingResaleValue(b.type as BuildingType, b.level),
+        0,
+      ),
+    0,
+  );
+  const machinesCrd = user.farm.machines.reduce(
+    (n, m) =>
+      n +
+      machineResaleValue(m.type as MachineType, {
+        condition: m.condition,
+        hours: m.hours,
+        tier: m.tier,
+      }),
+    0,
+  );
+  const prix = await prisma.marketPrice.findMany();
+  const stockCrd = user.farm.inventory.reduce((n, i) => {
+    const p = prix.find((x) => x.commodity === i.itemCode);
+    return n + (p ? i.qty * p.price : 0);
+  }, 0);
+
+  const debtCrd = user.farm.debtCrd;
+  return {
+    landCrd,
+    buildingsCrd,
+    machinesCrd,
+    stockCrd: Math.round(stockCrd * 100) / 100,
+    cashCrd: user.crd,
+    debtCrd,
+    equity: farmEquity({
+      landCrd,
+      buildingsCrd,
+      machinesCrd,
+      stockCrd,
+      cashCrd: user.crd,
+      debtCrd,
+    }),
+  };
+}
+
+/**
+ * Fait courir les intérêts sur toutes les lignes tirées.
+ *
+ * Au tick monde, et non à la lecture : les intérêts **modifient** la dette, ce
+ * n'est pas une valeur dérivée. Les faire courir à chaque affichage les ferait
+ * dépendre du nombre de fois où le joueur ouvre son Bureau.
+ */
+async function tickDebtInterest() {
+  const endettees = await prisma.farm.findMany({
+    where: { debtCrd: { gt: 0 } },
+    select: { id: true, userId: true, debtCrd: true, debtAt: true },
+  });
+  const now = new Date();
+  for (const f of endettees) {
+    const depuis = f.debtAt?.getTime() ?? now.getTime();
+    const { interest, debtCrd } = accrueInterest({
+      debtCrd: f.debtCrd,
+      elapsedMs: now.getTime() - depuis,
+    });
+    if (interest <= 0.01) {
+      if (!f.debtAt) await prisma.farm.update({ where: { id: f.id }, data: { debtAt: now } });
+      continue;
+    }
+    await prisma.$transaction(async (tx) => {
+      await tx.farm.update({ where: { id: f.id }, data: { debtCrd, debtAt: now } });
+      // L'intérêt est une charge : il apparaît au journal même s'il ne sort pas
+      // de la trésorerie, sinon le Bureau ne dirait pas ce qu'il coûte.
+      await tx.ledgerEntry.create({
+        data: {
+          userId: f.userId,
+          amount: -interest,
+          poste: "BANQUE",
+          label: "Intérêts de la ligne de crédit",
+        },
+      });
+    });
+  }
 }
 
 /* ------------------------------------------------------------------ */
@@ -2754,6 +2888,10 @@ async function runWorldTick() {
   await spoilPerishables();
   await settleAllHerds();
   await settleDueFutures();
+  // Les intérêts modifient la dette : ils courent au tick, pas à la lecture.
+  // Les faire courir à l'affichage les ferait dépendre du nombre de fois où
+  // le joueur ouvre son Bureau.
+  await tickDebtInterest();
   const zones = await prisma.zone.findMany();
   const snapshots = await prisma.weatherSnapshot.findMany();
   const weatherOut: { zoneCode: string; state: string; changed: boolean }[] = [];
@@ -4443,6 +4581,99 @@ app.post("/farm/fuel", async (req, res) => {
     });
   });
   res.json({ fuelL: apres.fuelL, liters: litres, cost: cout });
+});
+
+/** L'état de la ligne de crédit, tel que le Bureau le montre. */
+app.get("/farm/credit", async (req, res) => {
+  const userId = String(req.query.userId ?? "");
+  if (!userId) {
+    res.status(400).json({ error: "userId requis" });
+    return;
+  }
+  const bilan = await capitauxPropres(userId);
+  res.json({
+    ...bilan,
+    ceiling: creditCeiling(bilan.equity),
+    room: borrowingRoom({ equity: bilan.equity, debtCrd: bilan.debtCrd }),
+    seasonInterest: seasonInterest(bilan.debtCrd),
+    health: creditHealth({ equity: bilan.equity, debtCrd: bilan.debtCrd }),
+  });
+});
+
+/** Tirer sur la ligne. */
+app.post("/farm/loan", async (req, res) => {
+  const body = z
+    .object({ userId: z.string(), amount: z.number().min(LOAN_MIN_CRD).max(1_000_000) })
+    .safeParse(req.body);
+  if (!body.success) {
+    res.status(400).json(body.error.flatten());
+    return;
+  }
+  const bilan = await capitauxPropres(body.data.userId);
+  const room = borrowingRoom({ equity: bilan.equity, debtCrd: bilan.debtCrd });
+  if (body.data.amount > room) {
+    res.status(409).json({
+      error: `La banque s'arrête à ${Math.floor(room)} TRN — vos capitaux propres ne portent pas davantage.`,
+      room,
+      ceiling: creditCeiling(bilan.equity),
+    });
+    return;
+  }
+  const user = await prisma.user.findUnique({
+    where: { id: body.data.userId },
+    include: { farm: true },
+  });
+  if (!user?.farm) {
+    res.status(404).json({ error: "Ferme introuvable" });
+    return;
+  }
+  const apres = await prisma.$transaction(async (tx) => {
+    await crediter(tx, user.id, body.data.amount, "BANQUE", "Tirage sur la ligne de crédit");
+    return tx.farm.update({
+      where: { id: user.farm!.id },
+      // La date d'arrêté part de maintenant : les intérêts ne courent pas sur
+      // un capital qui n'était pas encore prêté.
+      data: { debtCrd: { increment: body.data.amount }, debtAt: new Date() },
+    });
+  });
+  res.status(201).json({ debtCrd: apres.debtCrd, borrowed: body.data.amount });
+});
+
+/** Rembourser, en tout ou en partie. */
+app.post("/farm/repay", async (req, res) => {
+  const body = z
+    .object({ userId: z.string(), amount: z.number().positive().max(1_000_000) })
+    .safeParse(req.body);
+  if (!body.success) {
+    res.status(400).json(body.error.flatten());
+    return;
+  }
+  const user = await prisma.user.findUnique({
+    where: { id: body.data.userId },
+    include: { farm: true },
+  });
+  if (!user?.farm) {
+    res.status(404).json({ error: "Ferme introuvable" });
+    return;
+  }
+  if (user.farm.debtCrd <= 0) {
+    res.status(409).json({ error: "Rien à rembourser" });
+    return;
+  }
+  // On ne rembourse jamais plus qu'on ne doit, ni plus qu'on n'a.
+  const montant = Math.min(body.data.amount, user.farm.debtCrd, user.crd);
+  if (montant <= 0) {
+    res.status(402).json({ error: "TRN insuffisants" });
+    return;
+  }
+  const apres = await prisma.$transaction(async (tx) => {
+    await debit(tx, user.id, montant, "BANQUE", "Remboursement de la ligne de crédit");
+    return tx.farm.update({
+      where: { id: user.farm!.id },
+      data: { debtCrd: { decrement: montant }, debtAt: new Date() },
+    });
+  });
+  res.json({ debtCrd: Math.max(0, apres.debtCrd), repaid: montant });
 });
 
 /** Les chantiers en cours d'une parcelle — pour l'écran et les reprises. */

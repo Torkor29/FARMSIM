@@ -97,7 +97,7 @@ import { MissionPlay, type MissionPlayContract } from "./MissionPlay";
 import { LivestockPanel, type BarnState } from "./LivestockPanel";
 import type { SupplyCrate } from "./IsoFarmView";
 import { MarketPanel, type Listing, type MarketDelivery, type FuturesContract } from "./MarketPanel";
-import { OfficePanel } from "./OfficePanel";
+import { OfficePanel, type CreditView } from "./OfficePanel";
 import type { ContinentDetail, WorldContinent } from "./Onboarding";
 
 // Three.js pèse plus lourd que tout le reste de l'application réunie. L'écran
@@ -655,6 +655,8 @@ export function App() {
   /** Palier montré au catalogue — un seul réglage pour toute la liste. */
   const [tierAchat, setTierAchat] = useState<Tier>(1);
   const cuveL = player?.farm?.fuelL ?? 0;
+  /** L'état de la ligne de crédit, rechargé à l'ouverture du Bureau. */
+  const [credit, setCredit] = useState<CreditView | null>(null);
   const [care, setCare] = useState<{
     mode: CareMode;
     machineId: string;
@@ -3289,6 +3291,51 @@ export function App() {
   }
 
   /** Remplir la cuve. Le prix suit la région, comme les cours. */
+  async function loadCredit() {
+    if (!player) return;
+    try {
+      setCredit(await api<CreditView>(`/farm/credit?userId=${player.id}`));
+    } catch {
+      /* la banque est un écran de plus : son absence ne bloque pas le Bureau */
+    }
+  }
+
+  async function borrow(amount: number) {
+    if (!player) return;
+    setBusy(true);
+    try {
+      await api("/farm/loan", {
+        method: "POST",
+        body: JSON.stringify({ userId: player.id, amount }),
+      });
+      flashToast(`Emprunté ${Math.round(amount)} TRN`);
+      await refreshPlayer();
+      await loadCredit();
+    } catch (e) {
+      flashToast(e instanceof Error ? e.message : String(e), true);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function repay(amount: number) {
+    if (!player) return;
+    setBusy(true);
+    try {
+      const r = await api<{ repaid: number }>("/farm/repay", {
+        method: "POST",
+        body: JSON.stringify({ userId: player.id, amount }),
+      });
+      flashToast(`Remboursé ${Math.round(r.repaid)} TRN`);
+      await refreshPlayer();
+      await loadCredit();
+    } catch (e) {
+      flashToast(e instanceof Error ? e.message : String(e), true);
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function buyFuel(liters: number) {
     if (!player) return;
     setBusy(true);
@@ -3724,6 +3771,14 @@ export function App() {
 
   /* Le marché d'occasion se recharge à l'ouverture du garage : une annonce
      vendue entre-temps ne doit pas rester affichée comme disponible. */
+  /* La ligne de crédit se recharge à l'ouverture du Bureau : une dette qui a
+     couru pendant qu'on jouait doit se voir en arrivant. */
+  useEffect(() => {
+    const ouvert = isMobile ? sheet === "OFFICE" : showEta;
+    if (ouvert) void loadCredit();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [showEta, sheet, isMobile, player?.id]);
+
   useEffect(() => {
     const ouvert = isMobile ? sheet === "GARAGE" : showGarage;
     if (ouvert) void loadMachineListings();
@@ -5519,6 +5574,9 @@ export function App() {
           cette modale par-dessus : deux panneaux pour un toucher, dont l'un
           restait invisible avec tout ce qu'il contenait. */}
       <OfficePanel
+        credit={credit}
+        onLoan={(n) => void borrow(n)}
+        onRepay={(n) => void repay(n)}
         open={showEta}
         // Fermer la bourse ne ferme plus le tiroir : ce sont deux surfaces
         // distinctes, et l'on revient au tiroir d'où l'on est parti.

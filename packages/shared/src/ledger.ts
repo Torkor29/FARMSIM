@@ -21,7 +21,9 @@ export type LedgerPoste =
   | "TERRES"
   | "CHANTIERS"
   | "INTRANTS"
-  | "PROGRESSION";
+  | "PROGRESSION"
+  /** Intérêts, tirages et remboursements de la ligne de crédit. */
+  | "BANQUE";
 
 export const LEDGER_POSTES: LedgerPoste[] = [
   "CULTURES",
@@ -32,6 +34,7 @@ export const LEDGER_POSTES: LedgerPoste[] = [
   "CHANTIERS",
   "INTRANTS",
   "PROGRESSION",
+  "BANQUE",
 ];
 
 export const LEDGER_LABELS: Record<LedgerPoste, string> = {
@@ -43,6 +46,7 @@ export const LEDGER_LABELS: Record<LedgerPoste, string> = {
   CHANTIERS: "Chantiers",
   INTRANTS: "Intrants",
   PROGRESSION: "Progression",
+  BANQUE: "Banque",
 };
 
 /** Ce que chaque poste recouvre, pour l'infobulle du Bureau. */
@@ -55,6 +59,7 @@ export const LEDGER_HINTS: Record<LedgerPoste, string> = {
   CHANTIERS: "Travail pris chez les voisins, travail fait faire",
   INTRANTS: "Fourrage, paille, engrais achetés",
   PROGRESSION: "Récompenses de quêtes et de contrats",
+  BANQUE: "Tirages, remboursements et intérêts de la ligne de crédit",
 };
 
 export type LedgerLine = {

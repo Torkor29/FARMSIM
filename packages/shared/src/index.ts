@@ -21,6 +21,7 @@ export * from "./machine-care.js";
 export * from "./calendar.js";
 export * from "./fuel.js";
 export * from "./weeds.js";
+export * from "./credit.js";
 export * from "./art-anchor.js";
 export * from "./play-guide.js";
 export * from "./appearance.js";

@@ -158,6 +158,10 @@ model Farm {
    * chantier, sans ajouter la moindre décision.
    */
   fuelL      Float           @default(1200)
+  /** Solde dû à la banque. Les intérêts courent dessus, chaque jour. */
+  debtCrd    Float           @default(0)
+  /** Dernière écriture d'intérêts — sert de point de départ au calcul. */
+  debtAt     DateTime?
 }
 
 /**

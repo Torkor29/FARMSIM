@@ -486,6 +486,38 @@ html.playing .field-dock {
 .dirt-gauge.low .grease-fill { background: var(--gold-700); }
 .dirt-gauge.low .grease-num { color: var(--gold-700); }
 
+/* —— Banque (Bureau) ——
+   Trois chiffres et une jauge : ce qu'on possède, ce qu'on doit, ce qu'on peut
+   encore tirer. La jauge est la seule chose qui se lit d'un coup d'œil, donc
+   c'est elle qui porte la couleur d'alerte. */
+.banque {
+  display: grid;
+  gap: 0.7rem;
+  padding: 0.9rem 1rem 1rem;
+  background: var(--sand);
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  margin-bottom: 1rem;
+}
+.banque-chiffres {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(11rem, 1fr));
+  gap: 0.8rem;
+}
+.banque-chiffres em { display: block; font-style: normal; font-size: 0.72rem; color: var(--muted); }
+.banque-chiffres strong { display: block; font-size: 1.15rem; font-variant-numeric: tabular-nums; }
+.banque-chiffres span { font-size: 0.74rem; color: var(--muted); }
+.banque-jauge {
+  height: 6px;
+  border-radius: 999px;
+  background: var(--sand-200, rgba(0, 0, 0, 0.08));
+  overflow: hidden;
+}
+.banque-part { display: block; height: 100%; border-radius: 999px; background: var(--ok); }
+.banque-part.tendue { background: var(--accent-hot); }
+.banque-part.saturee { background: var(--danger); }
+.banque-gestes { display: flex; flex-wrap: wrap; gap: 0.4rem; }
+
 /* —— Chantier en cours ——
    Un travail qui dure sans rien afficher se lit comme une panne. La barre est
    posée au-dessus du dock, là où l'œil revient entre deux gestes. */

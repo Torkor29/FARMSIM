@@ -2,6 +2,9 @@ import { useEffect, useMemo, useState } from "react";
 import {
   LEDGER_HINTS,
   LEDGER_LABELS,
+  CREDIT_HEALTH_LABELS,
+  seasonInterest,
+  type CreditHealth,
   WORK_LABELS,
   resultat,
   totauxParPoste,
@@ -94,6 +97,25 @@ type Props = {
   quests?: QuestView[];
   onClaimQuest?: (id: string) => void;
   onlinePlayers?: OnlinePeer[];
+  /** L'état de la ligne de crédit — capitaux propres, plafond, dette. */
+  credit?: CreditView | null;
+  onLoan?: (amount: number) => void;
+  onRepay?: (amount: number) => void;
+};
+
+/** Ce que la banque renvoie sur l'état d'une exploitation. */
+export type CreditView = {
+  equity: number;
+  landCrd: number;
+  buildingsCrd: number;
+  machinesCrd: number;
+  stockCrd: number;
+  cashCrd: number;
+  debtCrd: number;
+  ceiling: number;
+  room: number;
+  seasonInterest: number;
+  health: CreditHealth;
 };
 
 /**
@@ -134,16 +156,24 @@ function Activite({
   jours,
   crd,
   escrow,
+  busy,
+  credit,
+  onLoan,
+  onRepay,
 }: {
   lignes: LedgerLine[];
   jours: number;
   crd: number;
   escrow: number;
+  busy: boolean;
+  credit?: CreditView | null;
+  onLoan?: (amount: number) => void;
+  onRepay?: (amount: number) => void;
 }) {
   const postes = totauxParPoste(lignes);
   const total = resultat(lignes);
 
-  if (!lignes.length) {
+  if (!lignes.length && !credit) {
     return (
       <div className="activite-vide">
         <strong>Rien à montrer pour l’instant</strong>
@@ -175,6 +205,78 @@ function Activite({
           {escrow > 0 && <span>dont {money(escrow)} en séquestre</span>}
         </div>
       </div>
+
+      {credit && (
+        <>
+          {/* La banque.
+              Placée avant les ateliers : la première question d'un exploitant
+              endetté n'est pas « qu'est-ce qui rapporte » mais « où j'en
+              suis ». */}
+          <h4 className="activite-titre">Banque</h4>
+          <div className="banque">
+            <div className="banque-chiffres">
+              <div>
+                <em>Capitaux propres</em>
+                <strong>{money(credit.equity)}</strong>
+                <span>
+                  terres {money(credit.landCrd)} · bâti {money(credit.buildingsCrd)} · matériel{" "}
+                  {money(credit.machinesCrd)}
+                </span>
+              </div>
+              <div>
+                <em>Dette</em>
+                <strong className={credit.debtCrd > 0 ? "perte" : ""}>{money(credit.debtCrd)}</strong>
+                <span>
+                  {credit.debtCrd > 0
+                    ? `${money(credit.seasonInterest)} d’intérêts par saison`
+                    : "ligne intacte"}
+                </span>
+              </div>
+              <div>
+                <em>Encore empruntable</em>
+                <strong>{money(credit.room)}</strong>
+                <span>
+                  plafond {money(credit.ceiling)} · {CREDIT_HEALTH_LABELS[credit.health]}
+                </span>
+              </div>
+            </div>
+            <div className="banque-jauge" aria-hidden="true">
+              <span
+                className={`banque-part ${credit.health.toLowerCase()}`}
+                style={{
+                  width: `${Math.max(0, Math.min(100, credit.ceiling > 0 ? (credit.debtCrd / credit.ceiling) * 100 : 0))}%`,
+                }}
+              />
+            </div>
+            <div className="banque-gestes">
+              {[2000, 5000, 10000].map((n) => (
+                <button
+                  key={n}
+                  type="button"
+                  disabled={busy || !onLoan || credit.room < n}
+                  title={
+                    credit.room < n
+                      ? `La banque s’arrête à ${money(credit.room)}`
+                      : `Emprunter ${money(n)} — ${money(seasonInterest(n))} d’intérêts par saison`
+                  }
+                  onClick={() => onLoan?.(n)}
+                >
+                  Emprunter {money(n)}
+                </button>
+              ))}
+              <button
+                type="button"
+                className="ghost"
+                disabled={busy || !onRepay || credit.debtCrd <= 0 || crd <= 0}
+                title="Rembourser autant que la caisse le permet"
+                onClick={() => onRepay?.(Math.min(credit.debtCrd, crd))}
+              >
+                Rembourser {money(Math.min(credit.debtCrd, crd))}
+              </button>
+            </div>
+          </div>
+        </>
+      )}
 
       <h4 className="activite-titre">Par atelier</h4>
       <ul className="activite-postes">
@@ -260,6 +362,9 @@ export function OfficePanel({
   quests,
   onClaimQuest,
   onlinePlayers,
+  credit,
+  onLoan,
+  onRepay,
   zones,
   myFarmId,
   expandableIds,
@@ -373,7 +478,16 @@ export function OfficePanel({
           </div>
         ) : mode === "ACTIVITE" ? (
           <div className="hdv-single">
-            <Activite lignes={ledger} jours={ledgerJours} crd={crd} escrow={escrow} />
+            <Activite
+              lignes={ledger}
+              jours={ledgerJours}
+              crd={crd}
+              escrow={escrow}
+              busy={busy}
+              credit={credit}
+              onLoan={onLoan}
+              onRepay={onRepay}
+            />
           </div>
         ) : mode === "CONSIGNES" ? (
           <div className="hdv-single">
