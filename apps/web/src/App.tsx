@@ -69,6 +69,8 @@ import {
   hoursBeforeWorkshop,
   jobHours,
   machineAgeYieldFactor,
+  fuelCost,
+  FUEL_TANK_L,
   machineLifeHours,
   machineHoursPerHectare,
   machinePower,
@@ -256,6 +258,8 @@ type Player = {
   crd: number;
   farm: {
     id: string;
+    /** Gazole en cuve, en litres. */
+    fuelL?: number;
     parcels: Parcel[];
     machines: {
       id: string;
@@ -648,6 +652,7 @@ export function App() {
   } | null>(null);
   /** Palier montré au catalogue — un seul réglage pour toute la liste. */
   const [tierAchat, setTierAchat] = useState<Tier>(1);
+  const cuveL = player?.farm?.fuelL ?? 0;
   const [care, setCare] = useState<{
     mode: CareMode;
     machineId: string;
@@ -3255,6 +3260,25 @@ export function App() {
     }
   }
 
+  /** Remplir la cuve. Le prix suit la région, comme les cours. */
+  async function buyFuel(liters: number) {
+    if (!player) return;
+    setBusy(true);
+    setErr(null);
+    try {
+      const r = await api<{ fuelL: number; liters: number; cost: number }>("/farm/fuel", {
+        method: "POST",
+        body: JSON.stringify({ userId: player.id, liters }),
+      });
+      flashToast(`${Math.round(r.liters)} L de gazole · −${Math.round(r.cost)} TRN`);
+      await refreshPlayer();
+    } catch (e) {
+      flashToast(e instanceof Error ? e.message : String(e), true);
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function buyMachine(type: MachineType, tier: Tier = 1) {
     if (!player) return;
     setBusy(true);
@@ -4827,6 +4851,49 @@ export function App() {
             {/* Le marché de l'occasion. Il précède le neuf : c'est là que
                 démarre un joueur sans trésorerie, et c'est la sortie qui donne
                 sa valeur au compteur horaire. */}
+            {/* La cuve.
+                Elle est au garage plutôt qu'au marché parce que c'est là qu'on
+                pense au matériel — et parce qu'un chantier refusé faute de
+                gazole renvoie ici. */}
+            <h3 className="spaced">Gazole</h3>
+            <div className="grease-gauge" title={`Cuve ${Math.round(cuveL)} L sur ${FUEL_TANK_L} L`}>
+              <span className="grease-label">Cuve</span>
+              <span className="grease-track">
+                <span
+                  className="grease-fill"
+                  style={{ width: `${Math.max(0, Math.min(100, (cuveL / FUEL_TANK_L) * 100))}%` }}
+                />
+              </span>
+              <span className="grease-num">{Math.round(cuveL)} L</span>
+            </div>
+            <p className="muted tiny">
+              Chaque chantier fait son plein ici. Un tracteur surdimensionné pour son outil
+              tourne au ralenti et brûle davantage — atteler juste, c’est ce qui se voit sur
+              cette jauge.
+            </p>
+            <div className="build-choice">
+              {[500, 1500, FUEL_TANK_L].map((l) => {
+                const place = Math.max(0, FUEL_TANK_L - cuveL);
+                const litres = Math.min(l, place);
+                const prix = fuelCost(litres, 1);
+                return (
+                  <button
+                    key={l}
+                    type="button"
+                    disabled={busy || litres <= 0 || player.crd < prix}
+                    title={
+                      litres <= 0
+                        ? "Cuve déjà pleine"
+                        : `${Math.round(litres)} L pour environ ${Math.round(prix)} TRN`
+                    }
+                    onClick={() => void buyFuel(l)}
+                  >
+                    +{l === FUEL_TANK_L ? "plein" : `${l} L`}
+                  </button>
+                );
+              })}
+            </div>
+
             <h3 className="spaced">Occasion</h3>
             {machineListings.length === 0 ? (
               <p className="muted tiny">

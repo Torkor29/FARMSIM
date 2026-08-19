@@ -243,6 +243,9 @@ import {
   machineCost,
   TIER_LABELS,
   jobDurationMs,
+  fuelForJob,
+  fuelCost,
+  FUEL_TANK_L,
   type MachineDef,
   type Tier,
   seasonProgress,
@@ -710,6 +713,24 @@ async function loadParcelForWork(parcelId: string) {
  * qu'on veut vérifier.
  */
 const JOB_SPEED = Math.max(1, Number(process.env.FARMSIM_JOB_SPEED ?? 1));
+
+/**
+ * Gazole d'un chantier, en litres.
+ *
+ * C'est le porteur qui brûle : un outil n'a pas de moteur. Pour un automoteur,
+ * la charge vaut un — il est par définition dimensionné pour lui-même.
+ */
+function gazoleChantier(rig: Rig, cells: number): number {
+  const heures = jobHours(machineHoursPerHectare(rig.def.type, rig.tier), cells);
+  const porteur = rig.tractor
+    ? { type: rig.tractor.type as MachineType, tier: tierOf(rig.tractor) }
+    : { type: rig.def.type, tier: rig.tier };
+  const dispo = machinePower(porteur.type, porteur.tier);
+  const besoin = rig.tractor
+    ? machineRequiredHp(rig.def.type, rig.tier)
+    : dispo;
+  return fuelForJob({ powerHp: dispo, requiredHp: besoin, hours: heures });
+}
 
 /** Durée réelle d'un chantier, attelage et surface compris. */
 function dureeChantier(rig: Rig, cells: number): number {
@@ -4286,8 +4307,28 @@ app.post("/parcels/:id/jobs", async (req, res) => {
   }
 
   const duree = dureeChantier(picked, cells.length);
+  /* Le plein se fait au départ, pas à l'arrivée : le gazole part dans le
+     réservoir au moment où l'engin quitte la cour. Un chantier abandonné le
+     rend, puisqu'il n'a rien brûlé. */
+  const gazole = gazoleChantier(picked, cells.length);
+  const cuve = await prisma.farm.findUnique({
+    where: { id: parcel.farmId! },
+    select: { fuelL: true },
+  });
+  if ((cuve?.fuelL ?? 0) < gazole) {
+    res.status(409).json({
+      error: `Pas assez de gazole — ${Math.ceil(gazole)} L nécessaires, ${Math.floor(cuve?.fuelL ?? 0)} L en cuve.`,
+      needL: Math.ceil(gazole),
+      haveL: Math.floor(cuve?.fuelL ?? 0),
+    });
+    return;
+  }
   const endsAt = new Date(Date.now() + duree);
   const job = await prisma.$transaction(async (tx) => {
+    await tx.farm.update({
+      where: { id: parcel.farmId! },
+      data: { fuelL: { decrement: gazole } },
+    });
     const created = await tx.fieldJob.create({
       data: {
         parcelId: parcel.id,
@@ -4297,6 +4338,7 @@ app.post("/parcels/:id/jobs", async (req, res) => {
         crop: crop ?? null,
         machineId: picked.machine.id,
         tractorId: picked.tractor?.id ?? null,
+        fuelL: gazole,
         endsAt,
       },
     });
@@ -4315,10 +4357,56 @@ app.post("/parcels/:id/jobs", async (req, res) => {
       crop: crop ?? null,
       endsAt: job.endsAt,
       durationMs: duree,
+      fuelL: gazole,
       machine: { id: picked.machine.id, type: picked.machine.type, tier: picked.tier },
       tractor: picked.tractor ? { id: picked.tractor.id, type: picked.tractor.type } : null,
     },
   });
+});
+
+/**
+ * Remplir la cuve.
+ *
+ * Le prix suit la région, comme le reste : une ferme éloignée paie son gazole
+ * plus cher, et c'est la même logique que pour les cours.
+ */
+app.post("/farm/fuel", async (req, res) => {
+  const body = z
+    .object({ userId: z.string(), liters: z.number().positive().max(FUEL_TANK_L) })
+    .safeParse(req.body);
+  if (!body.success) {
+    res.status(400).json(body.error.flatten());
+    return;
+  }
+  const user = await prisma.user.findUnique({
+    where: { id: body.data.userId },
+    include: { farm: { include: { parcels: { include: { zone: true } } } } },
+  });
+  if (!user?.farm) {
+    res.status(404).json({ error: "Ferme introuvable" });
+    return;
+  }
+  // On ne verse pas à côté : la commande est ramenée à ce qui tient en cuve.
+  const place = Math.max(0, FUEL_TANK_L - user.farm.fuelL);
+  const litres = Math.min(body.data.liters, place);
+  if (litres <= 0) {
+    res.status(409).json({ error: "Cuve déjà pleine" });
+    return;
+  }
+  const mult = user.farm.parcels[0]?.zone?.priceMult ?? 1;
+  const cout = fuelCost(litres, mult);
+  if (!peutPayer(user, cout)) {
+    res.status(402).json({ error: `TRN insuffisants — ${cout} requis` });
+    return;
+  }
+  const apres = await prisma.$transaction(async (tx) => {
+    await debit(tx, user.id, cout, "MACHINES", `Gazole — ${Math.round(litres)} L`);
+    return tx.farm.update({
+      where: { id: user.farm!.id },
+      data: { fuelL: { increment: litres } },
+    });
+  });
+  res.json({ fuelL: apres.fuelL, liters: litres, cost: cout });
 });
 
 /** Les chantiers en cours d'une parcelle — pour l'écran et les reprises. */
@@ -4359,8 +4447,16 @@ app.post("/jobs/:id/cancel", async (req, res) => {
     await tx.fieldJob.update({ where: { id: job.id }, data: { status: "CANCELLED" } });
     const ids = [job.machineId, job.tractorId].filter(Boolean) as string[];
     await tx.machine.updateMany({ where: { id: { in: ids } }, data: { busyUntil: null } });
+    // Le plein retourne à la cuve : l'engin n'est pas parti.
+    const parcelle = await tx.parcel.findUnique({ where: { id: job.parcelId } });
+    if (parcelle?.farmId && job.fuelL > 0) {
+      await tx.farm.update({
+        where: { id: parcelle.farmId },
+        data: { fuelL: { increment: job.fuelL } },
+      });
+    }
   });
-  res.json({ cancelled: job.id });
+  res.json({ cancelled: job.id, fuelBackL: job.fuelL });
 });
 
 app.post("/parcels/:id/plant", async (req, res) => {

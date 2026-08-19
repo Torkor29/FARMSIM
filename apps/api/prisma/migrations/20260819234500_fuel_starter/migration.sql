@@ -1,0 +1,11 @@
+-- La dotation de départ passe de 600 à 1 200 L.
+--
+-- Six cents litres ne couvraient pas une saison complète — semis, moisson et
+-- labour en brûlent 481 — et une ferme neuve tombait à sec au milieu de son
+-- premier cycle. Dans sa propre migration : celle qui a créé la colonne est
+-- déjà appliquée et ne se rejouera pas.
+--
+-- SQLite ne sait pas modifier un DEFAULT sans reconstruire la table. On ne
+-- touche donc qu'aux fermes existantes qui n'ont pas encore entamé leur cuve ;
+-- le nouveau défaut vaut pour les fermes créées ensuite, via le schéma.
+UPDATE "Farm" SET "fuelL" = 1200 WHERE "fuelL" >= 600;

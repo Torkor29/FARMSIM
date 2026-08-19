@@ -19,6 +19,7 @@ export * from "./rotation.js";
 export * from "./futures.js";
 export * from "./machine-care.js";
 export * from "./calendar.js";
+export * from "./fuel.js";
 export * from "./art-anchor.js";
 export * from "./play-guide.js";
 export * from "./appearance.js";

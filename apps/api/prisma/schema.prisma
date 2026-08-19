@@ -150,6 +150,14 @@ model Farm {
   machines   Machine[]
   herds      Herd[]
   supplies   SupplyOrder[]
+  /**
+   * Gazole en cuve, en litres.
+   *
+   * Une seule jauge pour toute la ferme : les chantiers y puisent. Un
+   * réservoir par engin aurait ajouté un « faire le plein » par machine et par
+   * chantier, sans ajouter la moindre décision.
+   */
+  fuelL      Float           @default(1200)
 }
 
 /**
@@ -463,6 +471,8 @@ model FieldJob {
   crop      String?
   machineId String
   tractorId String?
+  /** Gazole engagé au départ ; rendu si le chantier est abandonné. */
+  fuelL     Float    @default(0)
   startedAt DateTime @default(now())
   endsAt    DateTime
   /** RUNNING · DONE · CANCELLED */

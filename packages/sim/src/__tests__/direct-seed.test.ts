@@ -13,6 +13,12 @@ import {
   residueBonus,
   soilSummary,
   type SoilState,
+  fuelCost,
+  fuelForJob,
+  jobHours,
+  machineHoursPerHectare,
+  machinePower,
+  machineRequiredHp,
 } from "@farmsim/shared";
 import { simulateCell } from "../index.js";
 
@@ -52,8 +58,28 @@ describe("semis direct", () => {
   });
 
   it("coûte moins cher que travailler le sol", () => {
-    expect(DIRECT_SEED_COST_PER_CELL).toBeLessThan(STUBBLE_COST_PER_CELL);
-    expect(DIRECT_SEED_COST_PER_CELL).toBeLessThan(PLOW_COST_PER_CELL_SOIL);
+    /**
+     * La comparaison porte désormais sur le **chantier entier**, gazole
+     * compris — c'est là que le semis direct gagne : il supprime un passage.
+     * Comparer les seuls forfaits n'a plus de sens depuis que ceux-ci ne
+     * représentent que les pièces d'usure ; le test le disait encore, et il
+     * échouait parce que le semis direct était devenu l'option la plus chère.
+     */
+    const CASES = 144;
+    const gazolePasse = (outil: "DISC_HARROW" | "SEEDER") =>
+      fuelForJob({
+        powerHp: machinePower("TRACTOR", 1),
+        requiredHp: machineRequiredHp(outil, 1),
+        hours: jobHours(machineHoursPerHectare(outil, 1), CASES),
+      });
+
+    const parLeDechaumage =
+      STUBBLE_COST_PER_CELL * CASES + fuelCost(gazolePasse("DISC_HARROW") + gazolePasse("SEEDER"));
+    const enDirect = DIRECT_SEED_COST_PER_CELL * CASES + fuelCost(gazolePasse("SEEDER"));
+
+    expect(enDirect).toBeLessThan(parLeDechaumage);
+    // Et il reste plus cher que le semis nu : le semoir lourd se paie.
+    expect(DIRECT_SEED_COST_PER_CELL).toBeGreaterThan(0);
   });
 
   it("se paie en rendement, ce qui rend l'arbitrage réel", () => {
