@@ -65,7 +65,6 @@ describe("rotation des cultures", () => {
       // l'effet mesuré ici.
       now: 3 * 60 * 1000,
       fertility: 0.7,
-      weedsControlled: true,
       fertilizedPasses: 1 as const,
     };
     const fresh = simulateCell(base);

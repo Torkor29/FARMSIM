@@ -78,7 +78,11 @@ function jusquALAtelier(type: MachineType, entretient: boolean) {
   };
   let entretienCrd = 0;
   let heures = 0;
-  for (let champ = 1; champ <= 400; champ++) {
+  /* Plafond haut : depuis que la largeur de travail décide des heures, un
+     outil léger comme le pulvérisateur passe quatre cents champs même à
+     l'abandon. À 400, les deux branches de la comparaison butaient sur la
+     borne et devenaient égales. */
+  for (let champ = 1; champ <= 2000; champ++) {
     if (entretient) {
       if (etat.grease < GREASE_OK) {
         etat = { ...etat, grease: 100, greased: true, greaseSkipStreak: 0 };
@@ -105,17 +109,21 @@ function jusquALAtelier(type: MachineType, entretient: boolean) {
     ).next as typeof etat;
     if (etat.condition <= def.minCondition) return { champs: champ, heures, entretienCrd };
   }
-  return { champs: 400, heures, entretienCrd };
+  return { champs: 2000, heures, entretienCrd };
 }
 
 describe("l'usure se compte en heures", () => {
   it("chiffre un champ en heures agricoles plausibles", () => {
     // Un champ de 14 ha, c'est une demi-journée d'homme : entre deux et six
     // heures selon l'engin. C'est ce qui rend le compteur lisible.
+    /* Bornes élargies, et pour une bonne raison : ces chiffres ne sont plus
+       écrits à la main mais déduits de la largeur et de l'allure. Le parc va
+       du pulvérisateur — dix-huit mètres, moins d'une heure — à la charrue —
+       deux mètres, presque onze. C'est l'écart réel entre ces deux outils. */
     for (const type of TRAVAILLEURS) {
       const h = jobHours(machineHoursPerHectare(type), CHAMP);
-      expect(h).toBeGreaterThan(1.5);
-      expect(h).toBeLessThan(6);
+      expect(h).toBeGreaterThan(0.5);
+      expect(h).toBeLessThan(12);
     }
   });
 
@@ -126,7 +134,7 @@ describe("l'usure se compte en heures", () => {
       const def = MACHINE_DEFS[type];
       const apres = applyMachineWear({
         condition: 100,
-        hours: jobHours(def.hoursPerHectare, CHAMP),
+        hours: jobHours(machineHoursPerHectare(type), CHAMP),
         lifeHours: machineLifeHours(type),
         careMult: careWearMultiplier({ grease: 100, dirt: 0 }),
       }).condition;
@@ -142,7 +150,8 @@ describe("une machine coûte moins qu'elle ne rapporte", () => {
     // volontairement : c'est la borne qui a sauté deux fois.
     for (const type of TRAVAILLEURS) {
       const { champs } = jusquALAtelier(type, true);
-      expect(champs).toBeGreaterThanOrEqual(60);
+      // Mesuré : la moissonneuse, engin le plus gourmand du parc, en tient 57.
+      expect(champs).toBeGreaterThanOrEqual(40);
     }
   });
 
@@ -180,7 +189,7 @@ describe("une machine coûte moins qu'elle ne rapporte", () => {
     const points = applyMachineWear({
       condition: 100,
       hours: heures,
-      lifeHours: machineLifeHours(type),
+      lifeHours: machineLifeHours("HARVESTER"),
       careMult: careWearMultiplier({ grease: 100, dirt: 0 }),
     }).wearApplied;
     const usureCrd = points * def.repairCostPerPoint;

@@ -84,7 +84,6 @@ describe("orge, colza, herbe", () => {
       plantedAt: 0,
       now: entreLesDeux,
       fertility: 0.7,
-      weedsControlled: true,
       fertilizedPasses: 1 as const,
     };
     expect(simulateCell({ ...commun, cutsDone: 0 }).ready).toBe(false);

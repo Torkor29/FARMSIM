@@ -280,7 +280,24 @@ model ParcelCell {
   plantedAt        DateTime?
   readyAt          DateTime?
   fertilizedPasses Int        @default(0)
-  weedsControlled  Boolean    @default(false)
+  /**
+   * Pression d'adventices, 0 à 1.
+   *
+   * Remplace un booléen `weedsControlled` qui valait dix pour cent de
+   * rendement et ne passait à vrai qu'en même temps que la fertilisation, sans
+   * qu'aucun geste du joueur ne puisse le déclencher. Un booléen ne repousse
+   * pas ; les adventices, si.
+   */
+  weedPressure     Float    @default(0)
+  /**
+   * Depuis quand cette pression court.
+   *
+   * Les adventices lèvent avec le temps ; sans date de référence, la pression
+   * serait figée et le désherbage n'aurait rien à combattre. On l'intègre à la
+   * lecture plutôt que de la faire monter par un tick, exactement comme la
+   * croissance — une valeur dérivée ne peut pas se désynchroniser.
+   */
+  weedAt           DateTime?
   /// Récoltes depuis le dernier labour ; à 3, la charrue devient obligatoire
   harvestsSincePlow Int       @default(0)
   /// Déchaumages consécutifs : les résidus incorporés bonifient le rendement

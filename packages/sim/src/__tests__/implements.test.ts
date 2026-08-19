@@ -85,9 +85,15 @@ describe("la largeur fait la vitesse", () => {
   });
 
   it("chiffre un champ entier en heures agricoles plausibles", () => {
+    /*
+     * Une demi-heure de plancher, pas une heure : une rampe de dix-huit mètres
+     * traverse quatorze hectares en moins d'une heure, et c'est exactement ce
+     * qui fait d'un passage de pulvérisateur un geste qu'on peut se permettre
+     * en cours de campagne.
+     */
     for (const t of TOUS.filter((x) => MACHINE_DEFS[x].kind !== "TRACTOR")) {
       const h = jobHours(machineHoursPerHectare(t), 144);
-      expect(h).toBeGreaterThan(1);
+      expect(h).toBeGreaterThan(0.5);
       expect(h).toBeLessThan(15);
     }
   });

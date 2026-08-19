@@ -21,7 +21,6 @@ describe("simulateCell", () => {
     crop: "WHEAT" as const,
     plantedAt: 0,
     fertility: 0.8,
-    weedsControlled: true,
     fertilizedPasses: 2 as const,
   };
 

@@ -88,6 +88,7 @@ export type XpEvent =
   | "FERTILIZE"
   | "PLOW"
   | "STUBBLE"
+  | "WEED"
   | "HARVEST"
   | "MOW"
   | "GRAZE"
@@ -131,6 +132,9 @@ export const XP_TABLE: Record<XpEvent, (ctx: XpContext) => number> = {
   // Le labour est le travail le plus lourd de la rotation.
   PLOW: (c) => cells(c) * 2,
   STUBBLE: (c) => cells(c),
+  // Un passage de pulvérisateur vaut un passage de déchaumeur : même surface
+  // couverte, même geste appris.
+  WEED: (c) => cells(c),
   // La moisson paie deux fois : la surface parcourue, et ce qu'elle a donné.
   // C'est ce qui distingue un champ bien mené d'un champ affamé.
   HARVEST: (c) => cells(c) * 2 + Math.round(tons(c) * 8),

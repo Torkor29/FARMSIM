@@ -20,6 +20,7 @@ export * from "./futures.js";
 export * from "./machine-care.js";
 export * from "./calendar.js";
 export * from "./fuel.js";
+export * from "./weeds.js";
 export * from "./art-anchor.js";
 export * from "./play-guide.js";
 export * from "./appearance.js";
@@ -150,6 +151,7 @@ export const MACHINE_ART: Record<MachineType, string> = {
   PLOUGH: "/assets/vehicles/harrow.webp",
   SEEDER: "/assets/vehicles/spreader.webp",
   MOWER: "/assets/vehicles/harrow.webp",
+  SPRAYER: "/assets/vehicles/spreader.webp",
   BALER: "/assets/vehicles/harrow.webp",
   TRAILER: "/assets/vehicles/spreader.webp",
 };
@@ -797,6 +799,7 @@ export type MachineType =
   | "SPREADER"
   | "DISC_HARROW"
   | "MOWER"
+  | "SPRAYER"
   | "BALER"
   | "TRAILER";
 
@@ -887,7 +890,16 @@ export type MachineDef = {
   minCondition: number;
   description: string;
   works: Array<
-    "PLANT" | "FERTILIZE" | "HARVEST" | "PLOW" | "STUBBLE" | "MOW" | "BALE" | "COLLECT" | "SILAGE"
+    | "PLANT"
+    | "FERTILIZE"
+    | "HARVEST"
+    | "PLOW"
+    | "STUBBLE"
+    | "MOW"
+    | "BALE"
+    | "COLLECT"
+    | "SILAGE"
+    | "WEED"
   >;
   /** Teinte iso HUD (réf. IsoFarmView) */
   isoColor: "green" | "red-gold" | "amber";
@@ -1033,6 +1045,23 @@ export const MACHINE_DEFS: Record<MachineType, MachineDef> = {
     minCondition: 15,
     description: "Presse l’andain en bottes. Sans elle, la paille reste au champ.",
     works: ["BALE"],
+    isoColor: "amber",
+  },
+  SPRAYER: {
+    type: "SPRAYER",
+    kind: "IMPLEMENT",
+    name: "Pulvérisateur",
+    cost: 2100,
+    requiredHp: 60,
+    // Une rampe de dix-huit mètres : le désherbage est un passage rapide, et
+    // c'est ce qui le rend jouable — on ne perd pas sa campagne à le faire.
+    widthM: 18,
+    speedKmh: 12,
+    lifeHours: 850,
+    repairCostPerPoint: 4,
+    minCondition: 15,
+    description: "Désherbe la culture en place. Rapide, mais la chimie se paie.",
+    works: ["WEED"],
     isoColor: "amber",
   },
   TRAILER: {
@@ -1282,7 +1311,8 @@ export type FarmWork =
   | "MOW"
   | "BALE"
   | "COLLECT"
-  | "SILAGE";
+  | "SILAGE"
+  | "WEED";
 
 /** Libellés en langage ordinaire : le joueur n'est pas censé connaître le jargon. */
 export const WORK_LABELS: Record<FarmWork, string> = {
@@ -1295,6 +1325,7 @@ export const WORK_LABELS: Record<FarmWork, string> = {
   BALE: "Presser les bottes",
   COLLECT: "Ramasser les bottes",
   SILAGE: "Ensiler",
+  WEED: "Désherber",
 };
 
 /**
@@ -1311,6 +1342,7 @@ export const CONTRACTOR_RATE_PER_CELL: Record<FarmWork, number> = {
   BALE: 7,
   COLLECT: 3,
   SILAGE: 14,
+  WEED: 5,
 };
 
 /** Frais de déplacement, quel que soit le nombre de cases `[GD]` */

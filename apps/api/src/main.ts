@@ -234,6 +234,13 @@ import {
   currentSeason,
   canSowInSeason,
   GAME_DAY_MS,
+  weedsAtSowing,
+  weedsAfterSoilWork,
+  weedPressureAfter,
+  clampWeeds,
+  WEED_AFTER_SPRAY,
+  WEED_AFTER_PLOW,
+  HERBICIDE_COST_PER_CELL,
   asTier,
   machinePower,
   machineRequiredHp,
@@ -530,6 +537,27 @@ function climatDe(parcel: {
   };
 }
 
+/**
+ * Pression d'adventices **effective** d'une case.
+ *
+ * Le stock ne porte que la valeur du dernier geste — semis, déchaumage,
+ * labour, pulvérisateur — et la date à laquelle il a eu lieu. Ce qui a poussé
+ * depuis s'intègre à la lecture, comme la croissance : pas de tick à faire
+ * courir sur toutes les cases, et aucune valeur dérivée qui puisse se
+ * désynchroniser de sa source.
+ */
+function pressionAdventices(
+  cell: { weedPressure: number; weedAt: Date | null },
+  season?: Season,
+): number {
+  if (!cell.weedAt) return clampWeeds(cell.weedPressure);
+  return weedPressureAfter({
+    start: cell.weedPressure,
+    elapsedMs: Date.now() - cell.weedAt.getTime(),
+    season,
+  });
+}
+
 function careOf(m: FarmMachine): MachineCareState {
   const grease = m.grease ?? (m.greased === false ? 0 : GREASE_FULL);
   return {
@@ -797,6 +825,14 @@ async function checkFieldJob(opts: {
   if (!cellsSubset(opts.cells, parseCellJson(job.cellsJson))) {
     return { ok: false, status: 409, error: "Ces cases ne font pas partie du chantier" };
   }
+  /* Le chantier est consommé ici, dès qu'il est honoré — pas à la fin du
+     travail.
+     Fermer plus tard laissait un chantier ouvert chaque fois que la route
+     refusait après le sas : « rien à récolter », « rien à désherber ». Les
+     cases et l'attelage restaient verrouillés, et aucun écran ne permettait
+     d'annuler. Libérer tout de suite coûte le chantier en cas de refus tardif ;
+     ne pas libérer coûtait la parcelle. */
+  await closeFieldJob(job.id);
   return { ok: true, job: { id: job.id } };
 }
 
@@ -1691,7 +1727,7 @@ async function publishFromConsignes() {
             plantedAt: cell.plantedAt.getTime(),
             now,
             fertility: parcel.fertility,
-            weedsControlled: cell.weedsControlled,
+            weedPressure: pressionAdventices(cell, currentSeason(climatDe(parcel).hemisphere ?? "N", Date.now())),
             fertilizedPasses: Math.min(2, cell.fertilizedPasses) as 0 | 1 | 2,
             residuePasses: cell.residuePasses,
             directSeeded: cell.directSeeded,
@@ -1809,7 +1845,7 @@ async function tickNpcFarms() {
             plantedAt: new Date(now),
             readyAt: new Date(pretLe),
             fertilizedPasses: 0,
-            weedsControlled: false,
+            weedPressure: 0,
             directSeeded: false,
           },
         });
@@ -2938,7 +2974,7 @@ async function buildResumeForUser(userId: string) {
         plantedAt: cell.plantedAt.getTime(),
         now,
         fertility: parcel.fertility,
-        weedsControlled: cell.weedsControlled,
+        weedPressure: pressionAdventices(cell, currentSeason(climatDe(parcel).hemisphere ?? "N", Date.now())),
         fertilizedPasses: Math.min(2, cell.fertilizedPasses) as 0 | 1 | 2,
         residuePasses: cell.residuePasses,
         directSeeded: cell.directSeeded,
@@ -3443,7 +3479,7 @@ app.get("/parcels/:id", async (req, res) => {
         plantedAt: c.plantedAt.getTime(),
         now,
         fertility: parcel.fertility,
-        weedsControlled: c.weedsControlled,
+        weedPressure: pressionAdventices(c, currentSeason(climatDe(parcel).hemisphere ?? "N", Date.now())),
         fertilizedPasses: Math.min(2, c.fertilizedPasses) as 0 | 1 | 2,
         residuePasses: c.residuePasses,
         directSeeded: c.directSeeded,
@@ -3984,7 +4020,7 @@ app.post("/parcels/:id/contractor", async (req, res) => {
             plantedAt: new Date(now),
             readyAt: new Date(pretLe),
             fertilizedPasses: 0,
-            weedsControlled: false,
+            weedPressure: 0,
           },
         });
       }
@@ -4018,7 +4054,7 @@ app.post("/parcels/:id/contractor", async (req, res) => {
             plantedAt: null,
             readyAt: null,
             fertilizedPasses: 0,
-            weedsControlled: false,
+            weedPressure: 0,
           },
         });
       }
@@ -4049,7 +4085,7 @@ app.post("/parcels/:id/contractor", async (req, res) => {
           where: { parcelId_x_y: { parcelId: parcel.id, x, y } },
           data: {
             fertilizedPasses: Math.min(2, cell.fertilizedPasses + 1),
-            weedsControlled: true,
+            weedPressure: 0,
           },
         });
       }
@@ -4094,7 +4130,7 @@ app.post("/parcels/:id/contractor", async (req, res) => {
       plantedAt: cell.plantedAt!.getTime(),
       now,
       fertility: parcel.fertility,
-      weedsControlled: cell.weedsControlled,
+      weedPressure: pressionAdventices(cell, currentSeason(climatDe(parcel).hemisphere ?? "N", Date.now())),
       fertilizedPasses: Math.min(2, cell.fertilizedPasses) as 0 | 1 | 2,
       buildingYieldBonus:
         bonuses.yieldBonus + pollinationBonusAt(bonuses.hives, cell.x, cell.y, cell.crop),
@@ -4200,7 +4236,7 @@ function afterTakeField(
         plantedAt: new Date(now),
         readyAt: new Date(now + cropGrowMs("GRASS", nextCuts)),
         fertilizedPasses: 0,
-        weedsControlled: false,
+        weedPressure: 0,
         hasStubble: false,
         harvestsSincePlow: nextCuts,
         lastCrop: "GRASS" as CropCode,
@@ -4223,7 +4259,7 @@ function afterTakeField(
       plantedAt: null,
       readyAt: null,
       fertilizedPasses: 0,
-      weedsControlled: false,
+      weedPressure: 0,
       hasStubble: true,
       harvestsSincePlow: nextCuts,
       strawTons: strawYieldFor(cell.crop, silage, keepSwath),
@@ -4257,7 +4293,7 @@ app.post("/parcels/:id/jobs", async (req, res) => {
   const body = z
     .object({
       userId: z.string(),
-      work: z.enum(["PLANT", "FERTILIZE", "HARVEST", "PLOW", "STUBBLE", "MOW", "BALE", "COLLECT", "SILAGE"]),
+      work: z.enum(["PLANT", "FERTILIZE", "HARVEST", "PLOW", "STUBBLE", "MOW", "BALE", "COLLECT", "SILAGE", "WEED"]),
       cells: z.array(z.object({ x: z.number().int(), y: z.number().int() })).min(1),
       crop: z.enum(CROP_CODES).optional(),
     })
@@ -4588,7 +4624,16 @@ app.post("/parcels/:id/plant", async (req, res) => {
           plantedAt: new Date(now),
           readyAt: new Date(pretLe),
           fertilizedPasses: 0,
-          weedsControlled: false,
+          /* Ce que le précédent lègue. Sans travail du sol, les graines
+             d'adventices restent en place : c'est le vrai coût agronomique du
+             semis direct, et il manquait. */
+          weedAt: new Date(now),
+          weedPressure: weedsAtSowing({
+            carried: directSeed
+              ? weedsAfterSoilWork("DIRECT_SEED", cell?.weedPressure ?? 0)
+              : (cell?.weedPressure ?? 0),
+            sameCropAgain: cell?.lastCrop === plantCrop,
+          }),
           directSeeded: directSeed,
           ...(soil
             ? {
@@ -4629,11 +4674,6 @@ app.post("/parcels/:id/plant", async (req, res) => {
     return { wear, labor, gain };
   });
   await touchFieldPresence(user.id, parcel.id, last);
-  /* Le chantier est honoré : on le clôt et l'attelage rentre. Placé
-     après le travail et non après le sas, pour qu'un refus tardif —
-     « rien à récolter » — laisse le chantier ouvert plutôt que de le
-     consommer pour rien. */
-  await closeFieldJob(chantier.job?.id);
   res.json({
     parcel: await prisma.parcel.findUnique({
       where: { id: parcel.id },
@@ -4715,7 +4755,9 @@ app.post("/parcels/:id/fertilize", async (req, res) => {
       if (!cell || cell.kind !== "CROP" || cell.fertilizedPasses >= 2) continue;
       await tx.parcelCell.update({
         where: { id: cell.id },
-        data: { fertilizedPasses: { increment: 1 }, weedsControlled: true },
+        // La fertilisation ne désherbe plus au passage : c'était la confusion
+        // de deux opérations réelles distinctes, épandeur et pulvérisateur.
+        data: { fertilizedPasses: { increment: 1 } },
       });
       fertilized += 1;
     }
@@ -4748,11 +4790,6 @@ app.post("/parcels/:id/fertilize", async (req, res) => {
     return { wear, labor, gain };
   });
   await touchFieldPresence(user.id, parcel.id, last);
-  /* Le chantier est honoré : on le clôt et l'attelage rentre. Placé
-     après le travail et non après le sas, pour qu'un refus tardif —
-     « rien à récolter » — laisse le chantier ouvert plutôt que de le
-     consommer pour rien. */
-  await closeFieldJob(chantier.job?.id);
   res.json({
     ok: true,
     fertilized,
@@ -4881,7 +4918,11 @@ app.post("/parcels/:id/plow", async (req, res) => {
           plantedAt: null,
           readyAt: null,
           fertilizedPasses: 0,
-          weedsControlled: false,
+          /* Le labour enfouit tout. `soil.ts` l'affirmait déjà — « il
+             décompacte et enfouit la pression d'adventices » — sans que rien
+             ne l'implémente. */
+          weedPressure: WEED_AFTER_PLOW,
+          weedAt: new Date(),
           hasStubble: false,
           harvestsSincePlow: 0,
           residuePasses: 0,
@@ -4912,11 +4953,6 @@ app.post("/parcels/:id/plow", async (req, res) => {
   });
 
   await touchFieldPresence(user.id, parcel.id, worked[worked.length - 1]);
-  /* Le chantier est honoré : on le clôt et l'attelage rentre. Placé
-     après le travail et non après le sas, pour qu'un refus tardif —
-     « rien à récolter » — laisse le chantier ouvert plutôt que de le
-     consommer pour rien. */
-  await closeFieldJob(chantier.job?.id);
   res.json({
     plowed: candidates.length,
     lostCleared: lostCount,
@@ -5057,7 +5093,7 @@ app.post("/parcels/:id/stubble", async (req, res) => {
           harvestsSincePlow: next.harvestsSincePlow,
           residuePasses: next.residuePasses,
           // L'herbe reprend : la case n'est plus un lit de semence propre.
-          weedsControlled: false,
+          weedPressure: 0,
           directSeeded: false,
         },
       });
@@ -5075,8 +5111,11 @@ app.post("/parcels/:id/stubble", async (req, res) => {
           hasStubble: false,
           strawTons: 0,
           residuePasses: next.residuePasses,
-          // Faux-semis : le déchaumage fait lever puis détruit les adventices.
-          weedsControlled: true,
+          /* Faux-semis : le déchaumage fait lever les graines puis les détruit
+             aussitôt. `soil.ts` l'affirmait déjà en toutes lettres — « il
+             détruit les adventices » — sans que rien ne l'implémente. */
+          weedPressure: weedsAfterSoilWork("STUBBLE", pressionAdventices(cell)),
+          weedAt: new Date(),
         },
       });
     }
@@ -5102,11 +5141,6 @@ app.post("/parcels/:id/stubble", async (req, res) => {
   });
 
   await touchFieldPresence(user.id, parcel.id, worked[worked.length - 1]);
-  /* Le chantier est honoré : on le clôt et l'attelage rentre. Placé
-     après le travail et non après le sas, pour qu'un refus tardif —
-     « rien à récolter » — laisse le chantier ouvert plutôt que de le
-     consommer pour rien. */
-  await closeFieldJob(chantier.job?.id);
   res.json({
     stubbled: targets.length,
     regrassed: enherber.length,
@@ -5234,7 +5268,7 @@ app.post("/parcels/:id/harvest", async (req, res) => {
       plantedAt: cell.plantedAt.getTime(),
       now,
       fertility: parcel.fertility,
-      weedsControlled: cell.weedsControlled,
+      weedPressure: pressionAdventices(cell, currentSeason(climatDe(parcel).hemisphere ?? "N", Date.now())),
       fertilizedPasses: Math.min(2, cell.fertilizedPasses) as 0 | 1 | 2,
       residuePasses: cell.residuePasses,
       directSeeded: cell.directSeeded,
@@ -5299,7 +5333,7 @@ app.post("/parcels/:id/harvest", async (req, res) => {
         plantedAt: cell.plantedAt.getTime(),
         now,
         fertility: parcel.fertility,
-        weedsControlled: cell.weedsControlled,
+        weedPressure: pressionAdventices(cell, currentSeason(climatDe(parcel).hemisphere ?? "N", Date.now())),
         fertilizedPasses: Math.min(2, cell.fertilizedPasses) as 0 | 1 | 2,
         residuePasses: cell.residuePasses,
         directSeeded: cell.directSeeded,
@@ -5525,11 +5559,6 @@ app.post("/parcels/:id/harvest", async (req, res) => {
   if (user && last) await touchFieldPresence(user.id, parcel.id, last);
   const shown = pickedHarvest ?? pickedMow;
   const shownWear = outcome.wear ?? outcome.mowWear;
-  /* Le chantier est honoré : on le clôt et l'attelage rentre. Placé
-     après le travail et non après le sas, pour qu'un refus tardif —
-     « rien à récolter » — laisse le chantier ouvert plutôt que de le
-     consommer pour rien. */
-  await closeFieldJob(chantier.job?.id);
   res.json({
     harvested,
     lostCells,
@@ -5546,6 +5575,100 @@ app.post("/parcels/:id/harvest", async (req, res) => {
       : null,
     labor: outcome.labor,
     gain: outcome.gain,
+  });
+});
+
+/**
+ * Désherber la culture en place.
+ *
+ * Le geste n'existait pas. `weedsControlled` valait dix pour cent de rendement
+ * et ne passait à vrai qu'en même temps que la fertilisation, en silence : deux
+ * opérations réelles distinctes — épandeur et pulvérisateur — confondues, et un
+ * bonus que personne ne pouvait ni voir ni viser.
+ */
+app.post("/parcels/:id/weed", async (req, res) => {
+  const body = z
+    .object({
+      userId: z.string(),
+      /** Chantier arrivé à échéance — sans lui, le travail ne part pas. */
+      jobId: z.string().optional(),
+      cells: z.array(z.object({ x: z.number().int(), y: z.number().int() })).min(1),
+    })
+    .safeParse(req.body);
+  if (!body.success) {
+    res.status(400).json(body.error.flatten());
+    return;
+  }
+  const access = await resolveFieldAccess({
+    parcelId: req.params.id,
+    userId: body.data.userId,
+    work: "WEED",
+    cells: body.data.cells,
+  });
+  if (!access.ok) {
+    res.status(access.status).json({ error: access.error });
+    return;
+  }
+  const chantier = await checkFieldJob({
+    jobId: body.data.jobId,
+    userId: body.data.userId,
+    parcelId: req.params.id,
+    works: ["WEED"],
+    cells: body.data.cells,
+  });
+  if (!chantier.ok) {
+    res.status(chantier.status).json({ error: chantier.error, endsAt: chantier.endsAt });
+    return;
+  }
+  const parcel = access.parcel;
+  const picked = pickMachineForWork(access.machines, "WEED");
+  if (!picked) {
+    res.status(409).json({ error: explainNoMachine(access.machines, "WEED") });
+    return;
+  }
+  // On ne traite que ce qui pousse : pulvériser une case nue ne fait rien.
+  const cibles = body.data.cells.filter(({ x, y }) => {
+    const cell = parcel.cells.find((c) => c.x === x && c.y === y);
+    return Boolean(cell && cell.kind === "CROP" && pressionAdventices(cell) > WEED_AFTER_SPRAY);
+  });
+  if (!cibles.length) {
+    res.status(409).json({ error: "Rien à désherber : ces cases sont déjà propres." });
+    return;
+  }
+  const cout = access.charge ? HERBICIDE_COST_PER_CELL * cibles.length : 0;
+  const user = await prisma.user.findUnique({ where: { id: body.data.userId } });
+  if (!user || (access.charge && !peutPayer(user, cout))) {
+    res.status(402).json({ error: `TRN insuffisants — ${cout} requis` });
+    return;
+  }
+  const { wear, labor, gain } = await prisma.$transaction(async (tx) => {
+    if (cout > 0) await debit(tx, user.id, cout, "CULTURES", "Herbicide");
+    for (const { x, y } of cibles) {
+      const cell = parcel.cells.find((c) => c.x === x && c.y === y)!;
+      await tx.parcelCell.update({
+        where: { id: cell.id },
+        data: { weedPressure: WEED_AFTER_SPRAY, weedAt: new Date() },
+      });
+    }
+    const wear = await applyWearToMachine(tx, {
+      rig: picked,
+      cells: cibles.length,
+      work: "WEED",
+      specialization: user.specialization,
+    });
+    const labor = access.order
+      ? await settleLaborProgress(tx, access.order, body.data.cells)
+      : null;
+    const gain = await grantXp(tx, user.id, "WEED", { cells: cibles.length }, {});
+    return { wear, labor, gain };
+  });
+  res.json({
+    ok: true,
+    weeded: cibles.length,
+    cost: cout,
+    machine: { id: picked.machine.id, type: picked.machine.type, ...wear },
+    labor,
+    gain,
   });
 });
 
@@ -5625,11 +5748,6 @@ app.post("/parcels/:id/bale", async (req, res) => {
     return { wear, labor };
   });
   if (user) await touchFieldPresence(user.id, parcel.id, worked[worked.length - 1]);
-  /* Le chantier est honoré : on le clôt et l'attelage rentre. Placé
-     après le travail et non après le sas, pour qu'un refus tardif —
-     « rien à récolter » — laisse le chantier ouvert plutôt que de le
-     consommer pour rien. */
-  await closeFieldJob(chantier.job?.id);
   res.json({
     baled: targets.length,
     bales,
@@ -5726,11 +5844,6 @@ app.post("/parcels/:id/collect", async (req, res) => {
     return { wear, labor };
   });
   if (user) await touchFieldPresence(user.id, parcel.id, worked[worked.length - 1]);
-  /* Le chantier est honoré : on le clôt et l'attelage rentre. Placé
-     après le travail et non après le sas, pour qu'un refus tardif —
-     « rien à récolter » — laisse le chantier ouvert plutôt que de le
-     consommer pour rien. */
-  await closeFieldJob(chantier.job?.id);
   res.json({
     collected: targets.length,
     bales,

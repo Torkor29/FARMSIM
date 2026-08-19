@@ -133,7 +133,6 @@ describe("effet sur le rendement", () => {
     plantedAt: 0,
     now: 3 * 60 * 1000,
     fertility: 0.8,
-    weedsControlled: true,
     fertilizedPasses: 2 as const,
   };
 

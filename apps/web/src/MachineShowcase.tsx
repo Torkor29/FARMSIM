@@ -137,7 +137,7 @@ function FarmPreview() {
             crop: "WHEAT",
             fieldStage: "READY",
             fertilizedPasses: x <= 1 ? 2 : x <= 3 ? 1 : 0,
-            weedsControlled: x <= 3,
+            weedPressure: x <= 3 ? 0 : 0.7,
           });
         else out.push({ x, y, kind: "EMPTY" });
       }

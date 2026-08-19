@@ -43,7 +43,8 @@ export type IsoCell = {
   /** Chaumes après moisson : la case n'est pas semable en l'état */
   hasStubble?: boolean;
   /** Désherbage fait ; sans lui, les adventices concurrencent la culture */
-  weedsControlled?: boolean;
+  /** Pression d'adventices, 0 à 1 : le peuplement s'en ressent. */
+  weedPressure?: number;
   /** Déchaumages consécutifs — le sol s'assombrit à mesure qu'il s'enrichit */
   residuePasses?: number;
   strawTons?: number;
@@ -1760,7 +1761,10 @@ export function IsoFarmView({
             // désherbage font le peuplement ; la sur-maturité fait ployer les
             // tiges avant que la perte soit actée.
             const fed = Math.min(2, cell.fertilizedPasses ?? 0) / 2;
-            const choked = cell.weedsControlled === false ? 0.45 : 0;
+            // L'étouffement suivait un booléen : le champ était sain ou
+            // envahi, sans milieu. Il suit maintenant la pression, donc il se
+            // dégrade sous les yeux du joueur au lieu de basculer.
+            const choked = Math.min(1, Math.max(0, cell.weedPressure ?? 0)) * 0.55;
             // Les quatre paliers de maturité du jeu : à son heure la tige
             // est droite, passé l'heure elle ploie, perdue elle verse.
             const stage = sim?.sim.ripeness?.stage;
@@ -3120,7 +3124,7 @@ export function IsoFarmView({
     const c = cells
       .map(
         (x) =>
-          `${x.x},${x.y},${x.kind},${x.crop ?? ""},${x.fieldStage ?? ""},${x.machineType ?? ""},${x.hasStubble ? 1 : 0},${x.residuePasses ?? 0},${x.weedsControlled ? 1 : 0},${x.harvestsSincePlow ?? 0},${Math.round((x.strawTons ?? 0) * 10)},${x.baleCount ?? 0}`,
+          `${x.x},${x.y},${x.kind},${x.crop ?? ""},${x.fieldStage ?? ""},${x.machineType ?? ""},${x.hasStubble ? 1 : 0},${x.residuePasses ?? 0},${Math.round((x.weedPressure ?? 0) * 10)},${x.harvestsSincePlow ?? 0},${Math.round((x.strawTons ?? 0) * 10)},${x.baleCount ?? 0}`,
       )
       .join("|");
     const b = buildings

@@ -90,6 +90,9 @@ describe("pièces animées", () => {
     // Les disques d'un lamier tournent à la prise de force, comme les
     // assiettes d'un épandeur — même rôle, même entraînement au régime.
     MOWER: ["wheel", "tool", "spinner"],
+    // La rampe se replie en transport : c'est son geste, comme les corps d'une
+    // charrue qui remontent.
+    SPRAYER: ["wheel", "tool"],
     // Une remorque ne travaille pas la terre : elle porte. Pas de rôle `tool`.
     TRAILER: ["wheel"],
   };

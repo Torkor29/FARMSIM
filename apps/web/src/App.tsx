@@ -71,6 +71,7 @@ import {
   machineAgeYieldFactor,
   fuelCost,
   FUEL_TANK_L,
+  weedLabel,
   machineLifeHours,
   machineHoursPerHectare,
   machinePower,
@@ -174,7 +175,8 @@ type Cell = {
   harvestsSincePlow?: number;
   residuePasses?: number;
   hasStubble?: boolean;
-  weedsControlled?: boolean;
+  /** Pression d'adventices, 0 à 1. */
+  weedPressure?: number;
   directSeeded?: boolean;
   lastCrop?: CropCode | null;
   cropStreak?: number;
@@ -1908,7 +1910,13 @@ export function App() {
         return `${crop} · ${ripe.label} · ${keep} % du rendement · perdu dans ${mins} min`;
       }
       const prog = sim ? `${Math.round(sim.sim.progress * 100)}%` : "—";
-      return `${crop} · en croissance ${prog} · ferti ${fert}`;
+      /* L'état d'enherbement se dit ici, sinon les dix pour cent de rendement
+         qu'il coûte restent invisibles — c'était tout le problème du booléen
+         qu'il remplace. */
+      const herbe = cell.weedPressure && cell.weedPressure > 0.15
+        ? ` · ${weedLabel(cell.weedPressure)}`
+        : "";
+      return `${crop} · en croissance ${prog} · ferti ${fert}${herbe}`;
     }
     if (cell.kind === "BUILDING") {
       const b = parcel?.buildings?.find((bd) => bd.id === cell.buildingId);
@@ -2609,15 +2617,22 @@ export function App() {
     }
   }
 
+  /**
+   * L'engin qu'on voit partir au champ.
+   *
+   * Cette fonction listait les correspondances à la main, avec les hypothèses
+   * du tracteur à tout faire — « fertiliser, c'est un tracteur si l'on n'a pas
+   * d'épandeur ». Depuis la séparation porteur / outil, un travail appartient à
+   * exactement un outil, et le catalogue le dit déjà : le déduire évite qu'un
+   * nouvel outil arrive sans que l'écran le sache.
+   */
   function workMachineForTool(t: Tool): MachineType {
-    if (t === "HARVEST") return "HARVESTER";
-    if (t === "BALE") return "BALER";
-    if (t === "STUBBLE") return "DISC_HARROW";
-    if (t === "FERTILIZE") {
-      const hasSpreader = player?.farm?.machines.some((m) => m.type === "SPREADER");
-      return hasSpreader ? "SPREADER" : "TRACTOR";
-    }
-    return "TRACTOR";
+    const work = workOfTool(t);
+    if (!work) return "TRACTOR";
+    const outil = (Object.keys(MACHINE_DEFS) as MachineType[]).find((m) =>
+      MACHINE_DEFS[m].works.includes(work as never),
+    );
+    return outil ?? "TRACTOR";
   }
 
   function flashWork(
@@ -2680,6 +2695,7 @@ export function App() {
     if (t === "FERTILIZE") return "FERTILIZE";
     if (t === "PLOW") return "PLOW";
     if (t === "STUBBLE") return "STUBBLE";
+    if (t === "WEED") return "WEED";
     if (t === "BALE") return "BALE";
     if (t === "COLLECT") return "COLLECT";
     if (t === "HARVEST") return selectedAreGrass ? "MOW" : "HARVEST";
@@ -2760,6 +2776,18 @@ export function App() {
           `Semé ${CROP_DEFS[crop].name} ×${workCells.length}${directSeed ? " en direct" : ""}` +
             wearNote(r.machine),
         );
+        labor = r.labor;
+      } else if (tool === "WEED") {
+        const r = await api<{
+          weeded: number;
+          cost: number;
+          machine?: { condition: number; type: string; broke?: boolean; breakdown?: string | null };
+          labor?: LaborBit;
+        }>(`/parcels/${activeParcelId}/weed`, {
+          method: "POST",
+          body: JSON.stringify({ userId: player.id, jobId, cells: workCells }),
+        });
+        setMsg(`Désherbé ×${r.weeded} · −${Math.round(r.cost)} TRN` + wearNote(r.machine));
         labor = r.labor;
       } else if (tool === "FERTILIZE") {
         const r = await api<{

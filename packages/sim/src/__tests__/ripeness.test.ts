@@ -103,7 +103,6 @@ describe("fenêtre de récolte — effet sur la simulation", () => {
     crop: "WHEAT" as const,
     plantedAt: 0,
     fertility: 0.8,
-    weedsControlled: true,
     fertilizedPasses: 2 as const,
   };
   const growMs = CROP_DEFS.WHEAT.growMs;
@@ -145,7 +144,6 @@ describe("fenêtre de récolte — effet sur la simulation", () => {
       ...base,
       fertility: 0.3,
       fertilizedPasses: 0,
-      weedsControlled: false,
       now: growMs * 2,
     });
     expect(soignee.estimatedYieldTons).toBeGreaterThan(negligee.estimatedYieldTons);

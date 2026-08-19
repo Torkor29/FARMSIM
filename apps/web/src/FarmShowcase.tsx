@@ -30,7 +30,7 @@ function CropBench() {
           crop: CROP_CODES[x],
           fieldStage: "READY",
           fertilizedPasses: 2,
-          weedsControlled: true,
+          weedPressure: 0,
         });
       }
     }

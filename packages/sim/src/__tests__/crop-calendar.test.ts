@@ -182,7 +182,6 @@ describe("ce que la simulation en fait", () => {
       plantedAt: hiver,
       now: hiver + trois,
       fertility: 0.5,
-      weedsControlled: false,
       fertilizedPasses: 0,
       hemisphere: "N",
     });
@@ -191,7 +190,6 @@ describe("ce que la simulation en fait", () => {
       plantedAt: debutDe("SUMMER"),
       now: debutDe("SUMMER") + trois,
       fertility: 0.5,
-      weedsControlled: false,
       fertilizedPasses: 0,
       hemisphere: "N",
     });

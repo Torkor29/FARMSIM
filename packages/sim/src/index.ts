@@ -20,6 +20,7 @@ import {
   DIRECT_SEED_YIELD_MALUS,
   NO_ROTATION,
   DIRT_DIRTY_THRESHOLD,
+  weedYieldFactor,
   GAME_DAY_MS,
   currentSeason,
   growthRate,
@@ -56,7 +57,8 @@ export type CellSimInput = {
   plantedAt: number;
   now: number;
   fertility: number;
-  weedsControlled: boolean;
+  /** Pression d'adventices de la case, 0 à 1. */
+  weedPressure?: number;
   fertilizedPasses: 0 | 1 | 2;
   specialization?: Specialization;
   weatherAtHarvest?: WeatherState;
@@ -95,7 +97,12 @@ function managementFactor(input: CellSimInput): number {
   let f = 0.55;
   f += Math.min(1, Math.max(0, input.fertility)) * 0.2;
   f += input.fertilizedPasses * 0.115;
-  f += input.weedsControlled ? 0.1 : 0;
+  /* Les adventices ne sont plus un interrupteur.
+     `weedsControlled` valait dix pour cent de rendement et ne se déclenchait
+     qu'en même temps que la fertilisation, en silence : le joueur n'apprenait
+     jamais que ces dix pour cent existaient, et n'avait aucun geste pour les
+     obtenir. La pression, elle, monte toute seule et se combat. */
+  f *= weedYieldFactor(input.weedPressure);
   if (input.specialization === "CEREALIER") f *= 1.02;
   const b = Math.min(0.1, Math.max(0, input.buildingYieldBonus ?? 0));
   f *= 1 + b;

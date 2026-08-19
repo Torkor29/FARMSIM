@@ -58,6 +58,8 @@ const PALETTES: Record<MachineType, Palette> = {
   SEEDER: { body: 0x2f6fa8, bodyDark: 0x1f4d76, trim: 0x2a3138, rim: 0xd8d2c2, grain: 0xd9c47a },
   // Faucheuse : le gris-vert des faneuses, proche du tracteur sans s'y fondre.
   MOWER: { body: 0x5f8f4a, bodyDark: 0x3f6432, trim: 0x2c3a26, rim: 0xd8d2c2, grain: 0x9ec46a },
+  // Pulvérisateur : le blanc-crème des cuves, qui tranche sur tout le reste.
+  SPRAYER: { body: 0xd8d4c4, bodyDark: 0x9d9a8c, trim: 0x3f4a52, rim: 0xd8d2c2, grain: 0x9ec46a },
   // Remorque : la tôle peinte et le bois des ridelles.
   TRAILER: { body: 0x7b8794, bodyDark: 0x545e69, trim: 0x3a4149, rim: 0x8b5a2b, grain: 0xd9c47a },
   // Presse : le jaune-vert des constructeurs de fenaison, distinct du vert
@@ -1263,6 +1265,73 @@ function buildTrailer(): Blueprint {
   return { root, length: 1.35, hitch: [-1.2, 0.3, 0], eye: [0.01, 0.16, 0] };
 }
 
+
+/* ------------------------------------------------------------------ */
+/* Pulvérisateur                                                       */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Cuve sur châssis, rampe déployée de part et d'autre.
+ *
+ * C'est l'engin le plus large du parc et il doit se lire comme tel : la rampe
+ * porte le rôle `tool`, donc elle se relève en transport et redescend au
+ * travail — le geste qui distingue un pulvérisateur d'une citerne à roues.
+ */
+function buildSprayer(): Blueprint {
+  const root = new Part();
+  const WHEEL_R = 0.16;
+  const CX = -0.52;
+
+  /* — Timon, anneau, béquille — la chape commune à tous les outils —— */
+  root.add("rim", roundedBox(0.44, 0.07, 0.08, 0.02, [-0.19, 0.25, 0], [0, 0, -0.44]));
+  root.add("chrome", ring(0.042, 0.012, 12, Math.PI * 2, [0.01, 0.16, 0], [HALF, 0, 0]));
+  root.add("steel", cyl(0.018, 0.018, 0.16, 8, [-0.12, 0.16, 0.07]));
+
+  /* — Châssis ————————————————————————————————— */
+  root.add(
+    "rim",
+    roundedBox(0.68, 0.07, 0.09, 0.02, [CX, 0.3, 0.2]),
+    roundedBox(0.68, 0.07, 0.09, 0.02, [CX, 0.3, -0.2]),
+    roundedBox(0.09, 0.07, 0.48, 0.02, [CX + 0.3, 0.3, 0]),
+  );
+
+  /* — Cuve : un cylindre couché, la forme qui dit « liquide » ————— */
+  root.add("paint", cyl(0.22, 0.22, 0.62, 14, [CX, 0.55, 0], [0, 0, HALF]));
+  root.add("paintDark", cyl(0.225, 0.225, 0.05, 14, [CX + 0.3, 0.55, 0], [0, 0, HALF]));
+  // Jauge de niveau : on juge une cuve à ce qu'il lui reste dedans.
+  root.add("chrome", roundedBox(0.04, 0.3, 0.02, 0.008, [CX + 0.32, 0.55, 0.06], [0, 0, 0.2]));
+  root.add("steel", cyl(0.05, 0.05, 0.05, 10, [CX, 0.78, 0]));
+
+  /* — Rampe : centre et deux volets, très large ——————————————— */
+  const rampe = root.child([CX - 0.36, 0, 0], { role: "tool" });
+  rampe.add("paintDark", roundedBox(0.06, 0.05, 0.34, 0.012, [0, 0.42, 0]));
+  for (const cote of [1, -1]) {
+    // Le volet part du centre et file vers l'extérieur : c'est cette longueur
+    // qui fait les dix-huit mètres annoncés au catalogue.
+    rampe.add(
+      "steel",
+      roundedBox(0.045, 0.035, 0.52, 0.01, [0, 0.42, cote * 0.42]),
+      roundedBox(0.03, 0.025, 0.3, 0.008, [0, 0.5, cote * 0.3]),
+    );
+    // Buses régulièrement espacées, dirigées vers le sol.
+    for (let i = 0; i < 5; i++) {
+      const z = cote * (0.2 + i * 0.12);
+      rampe.add("chrome", cone(0.016, 0.05, 6, [0, 0.38, z], [Math.PI, 0, 0]));
+    }
+    // Haubans : sans eux la rampe ressemble à un fil tendu.
+    rampe.add("steel", cyl(0.008, 0.008, 0.4, 6, [0, 0.47, cote * 0.24], [cote * 0.42, 0, 0]));
+  }
+
+  /* — Roues ———————————————————————————————————— */
+  for (const z of [0.28, -0.28]) {
+    root
+      .child([CX, WHEEL_R, z], { role: "wheel", radius: WHEEL_R })
+      .attach(wheelPart(WHEEL_R, 0.11, 10));
+  }
+
+  return { root, length: 1.15, hitch: [-1.0, 0.3, 0], eye: [0.01, 0.16, 0] };
+}
+
 const BUILDERS: Record<MachineType, () => Blueprint> = {
   TRACTOR: buildTractor,
   HARVESTER: buildHarvester,
@@ -1272,6 +1341,7 @@ const BUILDERS: Record<MachineType, () => Blueprint> = {
   SPREADER: buildSpreader,
   DISC_HARROW: buildDiscHarrow,
   MOWER: buildMower,
+  SPRAYER: buildSprayer,
   BALER: buildBaler,
   TRAILER: buildTrailer,
 };
@@ -1302,6 +1372,7 @@ const TOWED: MachineType[] = [
   "SPREADER",
   "DISC_HARROW",
   "MOWER",
+  "SPRAYER",
   "BALER",
   "TRAILER",
 ];

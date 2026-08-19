@@ -12,6 +12,7 @@ export type Tool =
   | "HARVEST"
   | "STUBBLE"
   | "PLOW"
+  | "WEED"
   | "BALE"
   | "COLLECT"
   | "BUILD"
@@ -24,6 +25,7 @@ export function isFieldWorkTool(t: Tool): boolean {
     t === "HARVEST" ||
     t === "STUBBLE" ||
     t === "PLOW" ||
+    t === "WEED" ||
     t === "BALE" ||
     t === "COLLECT"
   );
@@ -41,7 +43,15 @@ export function isPlantTool(t: Tool): boolean {
 }
 
 export function isSoilTool(t: Tool): boolean {
-  return t === "FERTILIZE" || t === "STUBBLE" || t === "PLOW" || t === "PARK" || t === "BALE" || t === "COLLECT";
+  return (
+    t === "FERTILIZE" ||
+    t === "STUBBLE" ||
+    t === "PLOW" ||
+    t === "WEED" ||
+    t === "PARK" ||
+    t === "BALE" ||
+    t === "COLLECT"
+  );
 }
 
 export function cropFromPlantTool(t: Tool): CropCode | null {
