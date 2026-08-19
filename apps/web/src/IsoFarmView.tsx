@@ -130,6 +130,12 @@ export type ActiveWork = {
   /** Livraison : tracteur + remorque, sans toucher aux cultures */
   haul?: boolean;
   cargo?: string;
+  /**
+   * Durée du chantier côté serveur. L'engin doit mettre exactement ce
+   * temps-là à traverser le champ : sinon une moissonneuse T3, deux fois plus
+   * rapide au compteur, le traverserait comme une T1.
+   */
+  durationMs?: number;
 };
 
 /** Un troupeau au pré : de quelle étable il sort, et vers quel enclos. */
@@ -2871,7 +2877,7 @@ export function IsoFarmView({
       }
       if (workRig && workPath.length) {
         const dt = delta / 1000;
-        const duration = workAnimationMs(workPath.length) / 1000;
+        const duration = workAnimationMs(workPath.length, aw?.durationMs) / 1000;
         const raw = Math.min(1, (t - workStartRef.current) / duration);
         // Démarrage et arrêt adoucis : un engin ne passe pas de zéro à sa
         // vitesse de travail en une image. Les roues suivent la distance,

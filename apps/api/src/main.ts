@@ -242,6 +242,7 @@ import {
   machineHoursPerHectare,
   machineCost,
   TIER_LABELS,
+  jobDurationMs,
   type MachineDef,
   type Tier,
   seasonProgress,
@@ -492,6 +493,8 @@ type FarmMachine = {
   type: string;
   /** Palier de l'engin — la colonne existait sans jamais servir. */
   tier?: number;
+  /** Occupée par un chantier jusqu'à cette heure. */
+  busyUntil?: Date | null;
   condition: number;
   /** Compteur horaire. Absent sur les bases d'avant la migration. */
   hours?: number;
@@ -602,8 +605,10 @@ function explainNoMachine(machines: FarmMachine[], work: FarmWork): string {
  * mieux entretenu.
  */
 function pickMachineForWork(machines: FarmMachine[], work: FarmWork): Rig | null {
+  const libre = (m: FarmMachine) => !m.busyUntil || m.busyUntil.getTime() <= Date.now();
   const tracteurs = machines
     .filter((m) => MACHINE_DEFS[m.type as MachineType]?.kind === "TRACTOR")
+    .filter(libre)
     .filter((m) => !machineWorkBlock(careOf(m), MACHINE_DEFS[m.type as MachineType].minCondition))
     .sort(
       (a, b) =>
@@ -615,6 +620,7 @@ function pickMachineForWork(machines: FarmMachine[], work: FarmWork): Rig | null
   for (const m of machines) {
     const def = MACHINE_DEFS[m.type as MachineType];
     if (!def || !def.works.includes(work)) continue;
+    if (!libre(m)) continue;
     if (machineWorkBlock(careOf(m), def.minCondition)) continue;
     const tier = tierOf(m);
     if (def.kind === "IMPLEMENT") {
@@ -687,6 +693,101 @@ async function loadParcelForWork(parcelId: string) {
   return prisma.parcel.findUnique({
     where: { id: parcelId },
     include: { farm: { include: { machines: true, user: true } }, cells: true, zone: true },
+  });
+}
+
+/* ------------------------------------------------------------------ */
+/* Chantiers qui durent                                                 */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Accélérateur de test.
+ *
+ * Sept minutes de labour sont le bon rythme pour un joueur et une éternité
+ * dans une suite d'intégration. C'est un **diviseur**, pas une durée fixe :
+ * une première version écrasait la durée à une constante, ce qui supprimait du
+ * même coup la proportionnalité à la surface et à l'outil — précisément ce
+ * qu'on veut vérifier.
+ */
+const JOB_SPEED = Math.max(1, Number(process.env.FARMSIM_JOB_SPEED ?? 1));
+
+/** Durée réelle d'un chantier, attelage et surface compris. */
+function dureeChantier(rig: Rig, cells: number): number {
+  const reel = jobDurationMs(jobHours(machineHoursPerHectare(rig.def.type, rig.tier), cells));
+  return Math.max(1, Math.round(reel / JOB_SPEED));
+}
+
+/** Les cases déjà prises par un chantier en cours sur cette parcelle. */
+async function occupiedJobCells(parcelId: string): Promise<Set<string>> {
+  const jobs = await prisma.fieldJob.findMany({
+    where: { parcelId, status: "RUNNING" },
+    select: { cellsJson: true },
+  });
+  const pris = new Set<string>();
+  for (const j of jobs) for (const c of parseCellJson(j.cellsJson)) pris.add(`${c.x},${c.y}`);
+  return pris;
+}
+
+/**
+ * Le chantier est-il arrivé à son terme, et couvre-t-il bien ce travail ?
+ *
+ * C'est le sas par lequel passent tous les travaux de champ. Sans lui, il
+ * suffirait d'appeler la route directement pour effacer l'attente — et
+ * l'attente est précisément ce qui donne sa valeur à un outil plus large.
+ */
+type JobVerdict =
+  | { ok: true; job: { id: string } | null }
+  | { ok: false; status: number; error: string; endsAt?: Date };
+
+async function checkFieldJob(opts: {
+  jobId?: string;
+  userId: string;
+  parcelId: string;
+  works: FarmWork[];
+  cells: CellXY[];
+}): Promise<JobVerdict> {
+  if (!opts.jobId) {
+    return {
+      ok: false,
+      status: 409,
+      error: "Il faut lancer le chantier avant de le terminer.",
+    };
+  }
+  const job = await prisma.fieldJob.findUnique({ where: { id: opts.jobId } });
+  if (!job || job.userId !== opts.userId || job.parcelId !== opts.parcelId) {
+    return { ok: false, status: 404, error: "Chantier introuvable" };
+  }
+  if (job.status !== "RUNNING") {
+    return { ok: false, status: 409, error: "Chantier déjà terminé" };
+  }
+  if (!opts.works.includes(job.work as FarmWork)) {
+    return { ok: false, status: 409, error: "Ce chantier ne portait pas sur ce travail" };
+  }
+  if (job.endsAt.getTime() > Date.now()) {
+    return {
+      ok: false,
+      status: 425,
+      error: "Chantier encore en cours",
+      endsAt: job.endsAt,
+    };
+  }
+  // On ne travaille que les cases réservées : sans quoi on lancerait un
+  // chantier sur quatre cases pour en labourer cent quarante-quatre.
+  if (!cellsSubset(opts.cells, parseCellJson(job.cellsJson))) {
+    return { ok: false, status: 409, error: "Ces cases ne font pas partie du chantier" };
+  }
+  return { ok: true, job: { id: job.id } };
+}
+
+/** Clôt le chantier et rend l'attelage à son propriétaire. */
+async function closeFieldJob(jobId: string | null | undefined) {
+  if (!jobId) return;
+  const job = await prisma.fieldJob.findUnique({ where: { id: jobId } });
+  if (!job) return;
+  await prisma.$transaction(async (tx) => {
+    await tx.fieldJob.update({ where: { id: jobId }, data: { status: "DONE" } });
+    const ids = [job.machineId, job.tractorId].filter(Boolean) as string[];
+    await tx.machine.updateMany({ where: { id: { in: ids } }, data: { busyUntil: null } });
   });
 }
 
@@ -4124,10 +4225,150 @@ async function resolveHarvestOrMowAccess(opts: {
   return harvest;
 }
 
+/**
+ * Lancer un chantier.
+ *
+ * Tout est vérifié ici — l'attelage, les cases, la saison — pour que le joueur
+ * sache tout de suite si son champ partira, plutôt qu'au bout de sept minutes
+ * d'attente.
+ */
+app.post("/parcels/:id/jobs", async (req, res) => {
+  const body = z
+    .object({
+      userId: z.string(),
+      work: z.enum(["PLANT", "FERTILIZE", "HARVEST", "PLOW", "STUBBLE", "MOW", "BALE", "COLLECT", "SILAGE"]),
+      cells: z.array(z.object({ x: z.number().int(), y: z.number().int() })).min(1),
+      crop: z.enum(CROP_CODES).optional(),
+    })
+    .safeParse(req.body);
+  if (!body.success) {
+    res.status(400).json(body.error.flatten());
+    return;
+  }
+  const { work, cells, crop } = body.data;
+  const access = await resolveFieldAccess({
+    parcelId: req.params.id,
+    userId: body.data.userId,
+    work,
+    cells,
+  });
+  if (!access.ok) {
+    res.status(access.status).json({ error: access.error });
+    return;
+  }
+  const parcel = access.parcel;
+
+  // Une case déjà réservée par un autre chantier ne peut pas partir deux fois.
+  const pris = await occupiedJobCells(parcel.id);
+  const conflit = cells.find((c) => pris.has(`${c.x},${c.y}`));
+  if (conflit) {
+    res.status(409).json({ error: `Case ${conflit.x},${conflit.y} déjà sur un chantier en cours` });
+    return;
+  }
+
+  if (work === "PLANT") {
+    if (!crop) {
+      res.status(400).json({ error: "Culture manquante" });
+      return;
+    }
+    const saison = currentSeason(climatDe(parcel).hemisphere ?? "N", Date.now());
+    const fenetre = canSowInSeason(crop, saison);
+    if (!fenetre.ok) {
+      res.status(409).json({ error: fenetre.reason, window: fenetre.window, season: saison });
+      return;
+    }
+  }
+
+  const picked = pickMachineForWork(access.machines, work);
+  if (!picked) {
+    res.status(409).json({ error: explainNoMachine(access.machines, work) });
+    return;
+  }
+
+  const duree = dureeChantier(picked, cells.length);
+  const endsAt = new Date(Date.now() + duree);
+  const job = await prisma.$transaction(async (tx) => {
+    const created = await tx.fieldJob.create({
+      data: {
+        parcelId: parcel.id,
+        userId: body.data.userId,
+        work,
+        cellsJson: JSON.stringify(cells),
+        crop: crop ?? null,
+        machineId: picked.machine.id,
+        tractorId: picked.tractor?.id ?? null,
+        endsAt,
+      },
+    });
+    // L'attelage part au champ : il ne peut ni repartir sur un autre travail,
+    // ni se vendre pendant ce temps-là.
+    const ids = [picked.machine.id, picked.tractor?.id].filter(Boolean) as string[];
+    await tx.machine.updateMany({ where: { id: { in: ids } }, data: { busyUntil: endsAt } });
+    return created;
+  });
+
+  res.status(201).json({
+    job: {
+      id: job.id,
+      work,
+      cells,
+      crop: crop ?? null,
+      endsAt: job.endsAt,
+      durationMs: duree,
+      machine: { id: picked.machine.id, type: picked.machine.type, tier: picked.tier },
+      tractor: picked.tractor ? { id: picked.tractor.id, type: picked.tractor.type } : null,
+    },
+  });
+});
+
+/** Les chantiers en cours d'une parcelle — pour l'écran et les reprises. */
+app.get("/parcels/:id/jobs", async (req, res) => {
+  const jobs = await prisma.fieldJob.findMany({
+    where: { parcelId: req.params.id, status: "RUNNING" },
+    orderBy: { endsAt: "asc" },
+  });
+  res.json({
+    jobs: jobs.map((j) => ({
+      id: j.id,
+      work: j.work,
+      crop: j.crop,
+      cells: parseCellJson(j.cellsJson),
+      startedAt: j.startedAt,
+      endsAt: j.endsAt,
+    })),
+  });
+});
+
+/** Abandonner un chantier — l'attelage rentre, rien n'a été fait. */
+app.post("/jobs/:id/cancel", async (req, res) => {
+  const body = z.object({ userId: z.string() }).safeParse(req.body);
+  if (!body.success) {
+    res.status(400).json(body.error.flatten());
+    return;
+  }
+  const job = await prisma.fieldJob.findUnique({ where: { id: req.params.id } });
+  if (!job || job.userId !== body.data.userId) {
+    res.status(404).json({ error: "Chantier introuvable" });
+    return;
+  }
+  if (job.status !== "RUNNING") {
+    res.status(409).json({ error: "Chantier déjà terminé" });
+    return;
+  }
+  await prisma.$transaction(async (tx) => {
+    await tx.fieldJob.update({ where: { id: job.id }, data: { status: "CANCELLED" } });
+    const ids = [job.machineId, job.tractorId].filter(Boolean) as string[];
+    await tx.machine.updateMany({ where: { id: { in: ids } }, data: { busyUntil: null } });
+  });
+  res.json({ cancelled: job.id });
+});
+
 app.post("/parcels/:id/plant", async (req, res) => {
   const body = z
     .object({
       userId: z.string(),
+      /** Chantier arrivé à échéance — sans lui, le travail ne part pas. */
+      jobId: z.string().optional(),
       crop: z.enum(CROP_CODES),
       cells: z.array(z.object({ x: z.number().int(), y: z.number().int() })).min(1),
       /** Semer dans les chaumes, sans travail du sol préalable */
@@ -4146,6 +4387,20 @@ app.post("/parcels/:id/plant", async (req, res) => {
   });
   if (!access.ok) {
     res.status(access.status).json({ error: access.error });
+    return;
+  }
+  /* Le sas du chantier. Un travail de champ ne s'exécute qu'au terme du
+     chantier qui l'a réservé : appeler la route directement effacerait
+     l'attente, et l'attente est ce qui donne sa valeur à un outil plus large. */
+  const chantier = await checkFieldJob({
+    jobId: body.data.jobId,
+    userId: body.data.userId,
+    parcelId: req.params.id,
+    works: ["PLANT"],
+    cells: body.data.cells ?? [],
+  });
+  if (!chantier.ok) {
+    res.status(chantier.status).json({ error: chantier.error, endsAt: chantier.endsAt });
     return;
   }
   const parcel = access.parcel;
@@ -4278,6 +4533,11 @@ app.post("/parcels/:id/plant", async (req, res) => {
     return { wear, labor, gain };
   });
   await touchFieldPresence(user.id, parcel.id, last);
+  /* Le chantier est honoré : on le clôt et l'attelage rentre. Placé
+     après le travail et non après le sas, pour qu'un refus tardif —
+     « rien à récolter » — laisse le chantier ouvert plutôt que de le
+     consommer pour rien. */
+  await closeFieldJob(chantier.job?.id);
   res.json({
     parcel: await prisma.parcel.findUnique({
       where: { id: parcel.id },
@@ -4293,6 +4553,8 @@ app.post("/parcels/:id/fertilize", async (req, res) => {
   const body = z
     .object({
       userId: z.string(),
+      /** Chantier arrivé à échéance — sans lui, le travail ne part pas. */
+      jobId: z.string().optional(),
       cells: z.array(z.object({ x: z.number().int(), y: z.number().int() })).min(1),
     })
     .safeParse(req.body);
@@ -4308,6 +4570,20 @@ app.post("/parcels/:id/fertilize", async (req, res) => {
   });
   if (!access.ok) {
     res.status(access.status).json({ error: access.error });
+    return;
+  }
+  /* Le sas du chantier. Un travail de champ ne s'exécute qu'au terme du
+     chantier qui l'a réservé : appeler la route directement effacerait
+     l'attente, et l'attente est ce qui donne sa valeur à un outil plus large. */
+  const chantier = await checkFieldJob({
+    jobId: body.data.jobId,
+    userId: body.data.userId,
+    parcelId: req.params.id,
+    works: ["FERTILIZE"],
+    cells: body.data.cells ?? [],
+  });
+  if (!chantier.ok) {
+    res.status(chantier.status).json({ error: chantier.error, endsAt: chantier.endsAt });
     return;
   }
   const parcel = access.parcel;
@@ -4376,6 +4652,11 @@ app.post("/parcels/:id/fertilize", async (req, res) => {
     return { wear, labor, gain };
   });
   await touchFieldPresence(user.id, parcel.id, last);
+  /* Le chantier est honoré : on le clôt et l'attelage rentre. Placé
+     après le travail et non après le sas, pour qu'un refus tardif —
+     « rien à récolter » — laisse le chantier ouvert plutôt que de le
+     consommer pour rien. */
+  await closeFieldJob(chantier.job?.id);
   res.json({
     ok: true,
     fertilized,
@@ -4397,6 +4678,8 @@ app.post("/parcels/:id/plow", async (req, res) => {
   const body = z
     .object({
       userId: z.string(),
+      /** Chantier arrivé à échéance — sans lui, le travail ne part pas. */
+      jobId: z.string().optional(),
       cells: z.array(z.object({ x: z.number().int(), y: z.number().int() })).optional(),
     })
     .safeParse(req.body);
@@ -4412,6 +4695,20 @@ app.post("/parcels/:id/plow", async (req, res) => {
   });
   if (!access.ok) {
     res.status(access.status).json({ error: access.error });
+    return;
+  }
+  /* Le sas du chantier. Un travail de champ ne s'exécute qu'au terme du
+     chantier qui l'a réservé : appeler la route directement effacerait
+     l'attente, et l'attente est ce qui donne sa valeur à un outil plus large. */
+  const chantier = await checkFieldJob({
+    jobId: body.data.jobId,
+    userId: body.data.userId,
+    parcelId: req.params.id,
+    works: ["PLOW"],
+    cells: body.data.cells ?? [],
+  });
+  if (!chantier.ok) {
+    res.status(chantier.status).json({ error: chantier.error, endsAt: chantier.endsAt });
     return;
   }
   const parcel = access.parcel;
@@ -4519,6 +4816,11 @@ app.post("/parcels/:id/plow", async (req, res) => {
   });
 
   await touchFieldPresence(user.id, parcel.id, worked[worked.length - 1]);
+  /* Le chantier est honoré : on le clôt et l'attelage rentre. Placé
+     après le travail et non après le sas, pour qu'un refus tardif —
+     « rien à récolter » — laisse le chantier ouvert plutôt que de le
+     consommer pour rien. */
+  await closeFieldJob(chantier.job?.id);
   res.json({
     plowed: candidates.length,
     lostCleared: lostCount,
@@ -4539,6 +4841,8 @@ app.post("/parcels/:id/stubble", async (req, res) => {
   const body = z
     .object({
       userId: z.string(),
+      /** Chantier arrivé à échéance — sans lui, le travail ne part pas. */
+      jobId: z.string().optional(),
       cells: z.array(z.object({ x: z.number().int(), y: z.number().int() })).optional(),
     })
     .safeParse(req.body);
@@ -4554,6 +4858,20 @@ app.post("/parcels/:id/stubble", async (req, res) => {
   });
   if (!access.ok) {
     res.status(access.status).json({ error: access.error });
+    return;
+  }
+  /* Le sas du chantier. Un travail de champ ne s'exécute qu'au terme du
+     chantier qui l'a réservé : appeler la route directement effacerait
+     l'attente, et l'attente est ce qui donne sa valeur à un outil plus large. */
+  const chantier = await checkFieldJob({
+    jobId: body.data.jobId,
+    userId: body.data.userId,
+    parcelId: req.params.id,
+    works: ["STUBBLE"],
+    cells: body.data.cells ?? [],
+  });
+  if (!chantier.ok) {
+    res.status(chantier.status).json({ error: chantier.error, endsAt: chantier.endsAt });
     return;
   }
   const parcel = access.parcel;
@@ -4688,6 +5006,11 @@ app.post("/parcels/:id/stubble", async (req, res) => {
   });
 
   await touchFieldPresence(user.id, parcel.id, worked[worked.length - 1]);
+  /* Le chantier est honoré : on le clôt et l'attelage rentre. Placé
+     après le travail et non après le sas, pour qu'un refus tardif —
+     « rien à récolter » — laisse le chantier ouvert plutôt que de le
+     consommer pour rien. */
+  await closeFieldJob(chantier.job?.id);
   res.json({
     stubbled: targets.length,
     regrassed: enherber.length,
@@ -4706,6 +5029,8 @@ app.post("/parcels/:id/harvest", async (req, res) => {
   const body = z
     .object({
       userId: z.string(),
+      /** Chantier arrivé à échéance — sans lui, le travail ne part pas. */
+      jobId: z.string().optional(),
       cells: z.array(z.object({ x: z.number().int(), y: z.number().int() })).optional(),
       mode: z.enum(["GRAIN", "SILAGE"]).optional(),
       /**
@@ -4748,6 +5073,20 @@ app.post("/parcels/:id/harvest", async (req, res) => {
       });
   if (!access.ok) {
     res.status(access.status).json({ error: access.error });
+    return;
+  }
+  /* Le sas du chantier. Un travail de champ ne s'exécute qu'au terme du
+     chantier qui l'a réservé : appeler la route directement effacerait
+     l'attente, et l'attente est ce qui donne sa valeur à un outil plus large. */
+  const chantier = await checkFieldJob({
+    jobId: body.data.jobId,
+    userId: body.data.userId,
+    parcelId: req.params.id,
+    works: ["HARVEST", "MOW", "SILAGE"],
+    cells: body.data.cells ?? [],
+  });
+  if (!chantier.ok) {
+    res.status(chantier.status).json({ error: chantier.error, endsAt: chantier.endsAt });
     return;
   }
   const parcel = access.parcel;
@@ -5090,6 +5429,11 @@ app.post("/parcels/:id/harvest", async (req, res) => {
   if (user && last) await touchFieldPresence(user.id, parcel.id, last);
   const shown = pickedHarvest ?? pickedMow;
   const shownWear = outcome.wear ?? outcome.mowWear;
+  /* Le chantier est honoré : on le clôt et l'attelage rentre. Placé
+     après le travail et non après le sas, pour qu'un refus tardif —
+     « rien à récolter » — laisse le chantier ouvert plutôt que de le
+     consommer pour rien. */
+  await closeFieldJob(chantier.job?.id);
   res.json({
     harvested,
     lostCells,
@@ -5113,6 +5457,8 @@ app.post("/parcels/:id/bale", async (req, res) => {
   const body = z
     .object({
       userId: z.string(),
+      /** Chantier arrivé à échéance — sans lui, le travail ne part pas. */
+      jobId: z.string().optional(),
       cells: z.array(z.object({ x: z.number().int(), y: z.number().int() })).optional(),
     })
     .safeParse(req.body);
@@ -5128,6 +5474,20 @@ app.post("/parcels/:id/bale", async (req, res) => {
   });
   if (!access.ok) {
     res.status(access.status).json({ error: access.error });
+    return;
+  }
+  /* Le sas du chantier. Un travail de champ ne s'exécute qu'au terme du
+     chantier qui l'a réservé : appeler la route directement effacerait
+     l'attente, et l'attente est ce qui donne sa valeur à un outil plus large. */
+  const chantier = await checkFieldJob({
+    jobId: body.data.jobId,
+    userId: body.data.userId,
+    parcelId: req.params.id,
+    works: ["BALE"],
+    cells: body.data.cells ?? [],
+  });
+  if (!chantier.ok) {
+    res.status(chantier.status).json({ error: chantier.error, endsAt: chantier.endsAt });
     return;
   }
   const parcel = access.parcel;
@@ -5169,6 +5529,11 @@ app.post("/parcels/:id/bale", async (req, res) => {
     return { wear, labor };
   });
   if (user) await touchFieldPresence(user.id, parcel.id, worked[worked.length - 1]);
+  /* Le chantier est honoré : on le clôt et l'attelage rentre. Placé
+     après le travail et non après le sas, pour qu'un refus tardif —
+     « rien à récolter » — laisse le chantier ouvert plutôt que de le
+     consommer pour rien. */
+  await closeFieldJob(chantier.job?.id);
   res.json({
     baled: targets.length,
     bales,
@@ -5181,6 +5546,8 @@ app.post("/parcels/:id/collect", async (req, res) => {
   const body = z
     .object({
       userId: z.string(),
+      /** Chantier arrivé à échéance — sans lui, le travail ne part pas. */
+      jobId: z.string().optional(),
       cells: z.array(z.object({ x: z.number().int(), y: z.number().int() })).optional(),
     })
     .safeParse(req.body);
@@ -5196,6 +5563,20 @@ app.post("/parcels/:id/collect", async (req, res) => {
   });
   if (!access.ok) {
     res.status(access.status).json({ error: access.error });
+    return;
+  }
+  /* Le sas du chantier. Un travail de champ ne s'exécute qu'au terme du
+     chantier qui l'a réservé : appeler la route directement effacerait
+     l'attente, et l'attente est ce qui donne sa valeur à un outil plus large. */
+  const chantier = await checkFieldJob({
+    jobId: body.data.jobId,
+    userId: body.data.userId,
+    parcelId: req.params.id,
+    works: ["COLLECT"],
+    cells: body.data.cells ?? [],
+  });
+  if (!chantier.ok) {
+    res.status(chantier.status).json({ error: chantier.error, endsAt: chantier.endsAt });
     return;
   }
   const parcel = access.parcel;
@@ -5249,6 +5630,11 @@ app.post("/parcels/:id/collect", async (req, res) => {
     return { wear, labor };
   });
   if (user) await touchFieldPresence(user.id, parcel.id, worked[worked.length - 1]);
+  /* Le chantier est honoré : on le clôt et l'attelage rentre. Placé
+     après le travail et non après le sas, pour qu'un refus tardif —
+     « rien à récolter » — laisse le chantier ouvert plutôt que de le
+     consommer pour rien. */
+  await closeFieldJob(chantier.job?.id);
   res.json({
     collected: targets.length,
     bales,
@@ -7297,6 +7683,10 @@ app.post("/machines/:id/sell", async (req, res) => {
     res.status(403).json({ error: "Machine non possédée" });
     return;
   }
+  if (machine.busyUntil && machine.busyUntil.getTime() > Date.now()) {
+    res.status(409).json({ error: "Cet engin est au champ — attendez la fin du chantier." });
+    return;
+  }
   // Reprise immédiate : le concessionnaire paie moins que la cote entre
   // joueurs, et c'est le prix de ne pas attendre.
   const value = machineDealerValue(machine.type as MachineType, {
@@ -7424,6 +7814,10 @@ app.post("/machines/:id/list", async (req, res) => {
   const def = MACHINE_DEFS[machine.type as MachineType];
   if (!def) {
     res.status(400).json({ error: "Type de machine inconnu" });
+    return;
+  }
+  if (machine.busyUntil && machine.busyUntil.getTime() > Date.now()) {
+    res.status(409).json({ error: "Cet engin est au champ — attendez la fin du chantier." });
     return;
   }
   const cote = machineResaleValue(machine.type as MachineType, {

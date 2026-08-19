@@ -1087,6 +1087,34 @@ export function machineHoursPerHectare(type: MachineType, tier: Tier = 1): numbe
   return hoursPerHectare(machineWidth(type, tier), def.speedKmh);
 }
 
+/**
+ * Durée réelle d'un chantier `[GD]`.
+ *
+ * Un chantier cessait d'être instantané au moment où les heures sont devenues
+ * réelles : un labour de quatorze hectares demande onze heures de tracteur, un
+ * épandage une seule. Les faire tenir dans le même clic effaçait précisément
+ * ce que la largeur de travail venait d'apporter.
+ *
+ * L'échelle n'est pas un nouveau réglage : elle se déduit de l'horloge du jeu.
+ * Une journée dure `GAME_DAY_MS`, donc une heure de travail vaut un
+ * vingt-quatrième de journée. Aux valeurs qui comptent, avec une journée de
+ * quinze minutes :
+ *
+ *     épandage d'un champ   1,2 h  →  45 s
+ *     semis                 4,4 h  →  2 min 45
+ *     moisson               6,9 h  →  4 min 20
+ *     labour               10,9 h  →  6 min 50
+ *
+ * Assez long pour qu'un outil plus large se sente, assez court pour qu'on
+ * n'abandonne pas la partie en attendant. Et l'attente n'immobilise que
+ * l'attelage : le reste de la ferme continue de tourner.
+ */
+export const GAME_HOURS_PER_DAY = 24;
+
+export function jobDurationMs(hours: number): number {
+  return Math.round((Math.max(0, hours) / GAME_HOURS_PER_DAY) * GAME_DAY_MS);
+}
+
 /** Un tracteur peut-il tirer cet outil ? */
 export function canPull(
   tractor: { type: MachineType; tier: Tier },
@@ -1451,13 +1479,17 @@ export function quarterTurns(rotation: number | null | undefined): 0 | 1 | 2 | 3
  * L'écran effaçait l'engin au bout de neuf cents millisecondes fixes, quand la
  * vue 3D le faisait avancer d'une case toutes les 280 ms : un travail sur
  * neuf cases voyait donc sa machine s'évaporer au tiers du parcours. Les deux
- * côtés lisent désormais la même formule.
+ * côtés lisent la même formule.
  *
- * La cadence est passée de 280 à 360 ms par case : à 280, la moissonneuse
- * traversait la parcelle plus vite que l'œil ne suit l'andain, et le travail
- * se lisait comme un effet plutôt que comme un chantier. Rien côté serveur ne
- * dépend de cette durée — elle n'est que l'habillage d'une opération atomique.
+ * Cette formule n'est plus qu'un **repli**. Un chantier a maintenant une durée
+ * réelle côté serveur, et c'est elle que l'engin doit mettre à traverser le
+ * champ : sinon une moissonneuse T3, deux fois plus rapide au compteur,
+ * traverserait la parcelle exactement comme une T1. On ne retombe ici que
+ * pour les gestes qui n'ouvrent pas de chantier — livraisons, visites.
  */
-export function workAnimationMs(cells: number): number {
+export function workAnimationMs(cells: number, jobMs?: number): number {
+  // Un plancher reste nécessaire : à deux cases, un chantier réel dure une
+  // demi-seconde, et l'œil ne verrait qu'un clignotement.
+  if (jobMs && jobMs > 0) return Math.max(900, jobMs);
   return Math.max(900, cells * 360);
 }

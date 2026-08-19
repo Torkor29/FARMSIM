@@ -253,6 +253,7 @@ model Parcel {
   laborOrders LaborOrder[]
 
   @@unique([zoneId, mapX, mapY])
+  fieldJobs     FieldJob[]
 }
 
 model ParcelCell {
@@ -380,6 +381,11 @@ model Machine {
    * qui fixe la cote à la revente.
    */
   hours              Float       @default(0)
+  /**
+   * Occupée jusqu'à cette heure par un chantier en cours. Un engin au champ ne
+   * peut ni repartir sur un autre travail, ni se vendre.
+   */
+  busyUntil          DateTime?
   /** Encore vrai si la jauge n’est pas vide — dérivé de `grease`. */
   greased            Boolean     @default(true)
   /** Jauge 0–100. Un champ entier n’en consomme qu’une partie. */
@@ -428,6 +434,42 @@ model MachineListing {
   soldAt      DateTime?
 
   @@index([status, type])
+}
+
+/**
+ * Un chantier en cours.
+ *
+ * Les travaux étaient instantanés : on cliquait, le champ était labouré. Ça
+ * tenait tant que rien ne disait combien de temps ça prend — mais depuis que
+ * les heures sont réelles, un labour de quatorze hectares demande onze heures
+ * de tracteur et un épandage une seule. Les faire tenir dans le même clic
+ * effaçait exactement ce que la largeur de travail venait d'apporter.
+ *
+ * Le chantier réserve : ses cases ne peuvent pas être reprises par un autre
+ * travail, et son attelage est immobilisé jusqu'à `endsAt`. Le travail lui-même
+ * s'exécute à l'échéance, par la route habituelle — c'est ce qui évite de
+ * dupliquer mille lignes d'effets agronomiques dans un second chemin qui
+ * finirait par diverger du premier.
+ */
+model FieldJob {
+  id        String   @id @default(cuid())
+  parcelId  String
+  parcel    Parcel   @relation(fields: [parcelId], references: [id], onDelete: Cascade)
+  userId    String
+  work      String
+  /** Cases réservées, au même format que les ordres de chantier. */
+  cellsJson String
+  /** Culture à semer, pour un chantier de semis. */
+  crop      String?
+  machineId String
+  tractorId String?
+  startedAt DateTime @default(now())
+  endsAt    DateTime
+  /** RUNNING · DONE · CANCELLED */
+  status    String   @default("RUNNING")
+
+  @@index([parcelId, status])
+  @@index([userId, status])
 }
 
 model MarketPrice {

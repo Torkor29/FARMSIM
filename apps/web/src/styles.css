@@ -486,6 +486,57 @@ html.playing .field-dock {
 .dirt-gauge.low .grease-fill { background: var(--gold-700); }
 .dirt-gauge.low .grease-num { color: var(--gold-700); }
 
+/* —— Chantier en cours ——
+   Un travail qui dure sans rien afficher se lit comme une panne. La barre est
+   posée au-dessus du dock, là où l'œil revient entre deux gestes. */
+.chantier-bar {
+  /* Ancré à la fenêtre, pas à un parent. En `absolute`, le bandeau se calait
+     sur le premier ancêtre positionné — qui n'est pas le dock — et atterrissait
+     au milieu du champ. Vu à l'écran avant de livrer. */
+  position: fixed;
+  left: 50%;
+  bottom: 4.6rem;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  padding: 0.4rem 0.75rem;
+  border-radius: var(--r-pill);
+  background: var(--bar);
+  border: 1px solid var(--glass-border);
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.12);
+  font-size: 0.78rem;
+  white-space: nowrap;
+  z-index: 6;
+}
+.chantier-nom { font-weight: 600; }
+.chantier-reste { font-variant-numeric: tabular-nums; color: var(--muted); }
+.chantier-piste {
+  width: clamp(5rem, 18vw, 11rem);
+  height: 5px;
+  border-radius: 999px;
+  background: var(--sand-200, var(--sand));
+  overflow: hidden;
+}
+.chantier-avance {
+  display: block;
+  height: 100%;
+  width: 100%;
+  border-radius: 999px;
+  background: var(--accent);
+  transform-origin: left center;
+  animation: chantier-avance linear forwards;
+}
+@keyframes chantier-avance {
+  from { transform: scaleX(0); }
+  to { transform: scaleX(1); }
+}
+/* L'animation porte l'information : sans elle, la barre pleine dirait « fini »
+   alors que le chantier commence. On la remplace par un remplissage figé. */
+@media (prefers-reduced-motion: reduce) {
+  .chantier-avance { animation: none; transform: scaleX(0.5); }
+}
+
 /* —— Culture hors saison ——
    Le bouton reste cliquable : on n'apprend pas une règle sur une cible morte.
    Il dit seulement qu'il refusera, et son infobulle dit quand revenir. */

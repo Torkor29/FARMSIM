@@ -493,6 +493,15 @@ const SHEET_TABS: { key: SheetKey; label: string; icon: string }[] = [
   { key: "OFFICE", label: "Missions", icon: "/assets/icons/nav/missions.svg" },
 ];
 
+/** Temps restant d'un chantier, en clair. */
+function formatChantierReste(endsAt: number, now: number): string {
+  const reste = Math.max(0, endsAt - now);
+  if (reste < 1000) return "terminé";
+  const s = Math.ceil(reste / 1000);
+  if (s < 60) return `${s} s`;
+  return `${Math.floor(s / 60)} min ${String(s % 60).padStart(2, "0")}`;
+}
+
 function wearNote(machine?: {
   type?: string;
   condition?: number;
@@ -630,6 +639,13 @@ export function App() {
   const [err, setErr] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [machineListings, setMachineListings] = useState<MachineListing[]>([]);
+  /** Chantier en cours — ce que la ferme est en train de faire, et jusqu'à quand. */
+  const [chantier, setChantier] = useState<{
+    work: FarmWork;
+    cells: { x: number; y: number }[];
+    endsAt: number;
+    durationMs: number;
+  } | null>(null);
   /** Palier montré au catalogue — un seul réglage pour toute la liste. */
   const [tierAchat, setTierAchat] = useState<Tier>(1);
   const [care, setCare] = useState<{
@@ -666,6 +682,8 @@ export function App() {
     cut?: "harvest" | "mow";
     haul?: boolean;
     cargo?: string;
+    /** Durée du chantier : l'engin doit traverser le champ en ce temps-là. */
+    durationMs?: number;
   } | null>(null);
   const haulPendingRef = useRef<Set<string>>(new Set());
   const haulSeenRef = useRef<Set<string>>(new Set());
@@ -2601,19 +2619,31 @@ export function App() {
     type: MachineType,
     cells: { x: number; y: number }[],
     cut?: "harvest" | "mow",
-    extra?: { haul?: boolean; cargo?: string },
+    extra?: { haul?: boolean; cargo?: string; jobMs?: number },
   ) {
     setPulseCells(cells);
     // L'engin envoyé au chantier est celui du garage : il arrive avec son
     // usure, visible sur sa carrosserie.
     const used = (player?.farm?.machines ?? []).find((m) => m.type === type);
-    setActiveWork({ type, cells, cut, haul: extra?.haul, cargo: extra?.cargo, condition: used?.condition });
+    // La traversée dure exactement ce que dure le chantier. Sans cela, une
+    // moissonneuse T3 — deux fois plus rapide au compteur — traverserait le
+    // champ comme une T1, et le palier ne se verrait nulle part.
+    const duree = workAnimationMs(cells.length, extra?.jobMs);
+    setActiveWork({
+      type,
+      cells,
+      cut,
+      haul: extra?.haul,
+      cargo: extra?.cargo,
+      condition: used?.condition,
+      durationMs: duree,
+    });
     // Un peu de marge sur la durée du parcours : l'engin doit atteindre la
     // dernière case avant qu'on ne l'efface.
     window.setTimeout(() => {
       setPulseCells([]);
       setActiveWork(null);
-    }, workAnimationMs(cells.length) + 250);
+    }, duree + 250);
   }
 
   /** Tracteur + remorque sur la parcelle d’arrivée, comme chez le voisin. */
@@ -2639,6 +2669,48 @@ export function App() {
   }
   playHaulRef.current = flashDeliveryArrival;
 
+  /** Travail de champ correspondant à l'outil en main. */
+  function workOfTool(t: Tool): FarmWork | null {
+    if (isPlantTool(t)) return "PLANT";
+    if (t === "FERTILIZE") return "FERTILIZE";
+    if (t === "PLOW") return "PLOW";
+    if (t === "STUBBLE") return "STUBBLE";
+    if (t === "BALE") return "BALE";
+    if (t === "COLLECT") return "COLLECT";
+    if (t === "HARVEST") return selectedAreGrass ? "MOW" : "HARVEST";
+    return null;
+  }
+
+  /**
+   * Ouvre un chantier et attend qu'il soit fait.
+   *
+   * Un travail de champ ne part plus au clic : il réserve ses cases, immobilise
+   * son attelage, et prend le temps que sa largeur de travail impose. Tout est
+   * vérifié à l'ouverture — l'attelage, la saison, les cases — pour que le
+   * joueur sache tout de suite si son champ partira, plutôt qu'au bout de sept
+   * minutes d'attente.
+   */
+  async function ouvrirChantier(
+    work: FarmWork,
+    cells: { x: number; y: number }[],
+    crop?: CropCode,
+  ): Promise<{ id: string; durationMs: number } | null> {
+    if (!player || !activeParcelId) return null;
+    const r = await api<{ job: { id: string; endsAt: string; durationMs: number } }>(
+      `/parcels/${activeParcelId}/jobs`,
+      {
+        method: "POST",
+        body: JSON.stringify({ userId: player.id, work, cells, ...(crop ? { crop } : {}) }),
+      },
+    );
+    const fin = new Date(r.job.endsAt).getTime();
+    setChantier({ work, cells, endsAt: fin, durationMs: r.job.durationMs });
+    const reste = fin - Date.now();
+    if (reste > 0) await new Promise((resolve) => window.setTimeout(resolve, reste + 60));
+    setChantier(null);
+    return { id: r.job.id, durationMs: r.job.durationMs };
+  }
+
   async function runWorkOnCells(cells: { x: number; y: number }[]) {
     if (!player || !activeParcelId || !cells.length || busy) return;
     setBusy(true);
@@ -2646,14 +2718,24 @@ export function App() {
     const workCells = cells.slice();
     const plantCrop = cropFromPlantTool(tool);
     const harvestCut = tool === "HARVEST" ? (selectedAreGrass ? "mow" : "harvest") : undefined;
-    flashWork(
-      tool === "HARVEST" && selectedAreGrass ? "TRACTOR" : workMachineForTool(tool),
-      workCells,
-      harvestCut,
-    );
     type LaborBit = { remaining: number; completed: boolean; payout?: number };
     let labor: LaborBit | undefined;
+    let jobId: string | undefined;
     try {
+      const work = workOfTool(tool);
+      if (work) {
+        const chantierOuvert = await ouvrirChantier(work, workCells, plantCrop ?? undefined);
+        if (!chantierOuvert) return;
+        jobId = chantierOuvert.id;
+        // L'engin traverse le champ pendant que le chantier tourne : c'est la
+        // même durée des deux côtés, pas deux horloges qui divergent.
+        flashWork(
+          tool === "HARVEST" && selectedAreGrass ? "TRACTOR" : workMachineForTool(tool),
+          workCells,
+          harvestCut,
+          { jobMs: chantierOuvert.durationMs },
+        );
+      }
       if (plantCrop) {
         const crop = plantCrop;
         const r = await api<{
@@ -2667,7 +2749,7 @@ export function App() {
           labor?: LaborBit;
         }>(`/parcels/${activeParcelId}/plant`, {
           method: "POST",
-          body: JSON.stringify({ userId: player.id, crop, cells: workCells, directSeed }),
+          body: JSON.stringify({ userId: player.id, jobId, crop, cells: workCells, directSeed }),
         });
         setMsg(
           `Semé ${CROP_DEFS[crop].name} ×${workCells.length}${directSeed ? " en direct" : ""}` +
@@ -2686,7 +2768,7 @@ export function App() {
           usedManure?: boolean;
         }>(`/parcels/${activeParcelId}/fertilize`, {
           method: "POST",
-          body: JSON.stringify({ userId: player.id, cells: workCells }),
+          body: JSON.stringify({ userId: player.id, jobId, cells: workCells }),
         });
         setMsg((r.usedManure ? "Fumier épandu" : "Fertilisé") + wearNote(r.machine));
         if (r.usedManure) {
@@ -2717,7 +2799,7 @@ export function App() {
           labor?: { remaining: number; completed: boolean; payout?: number };
         }>(`/parcels/${activeParcelId}/harvest`, {
           method: "POST",
-          body: JSON.stringify({ userId: player.id, cells: workCells, swath: keepSwath }),
+          body: JSON.stringify({ userId: player.id, jobId, cells: workCells, swath: keepSwath }),
         });
         const lost = r.lostCells ? ` · ${r.lostCells} perdue(s)` : "";
         setMsg(harvestGrainNote(r) + lost + wearNote(r.machine));
@@ -2732,7 +2814,7 @@ export function App() {
           labor?: { remaining: number; completed: boolean; payout?: number };
         }>(`/parcels/${activeParcelId}/bale`, {
           method: "POST",
-          body: JSON.stringify({ userId: player.id, cells: workCells }),
+          body: JSON.stringify({ userId: player.id, jobId, cells: workCells }),
         });
         setMsg(`Pressé ×${r.baled} · ${r.bales} botte(s)` + wearNote(r.machine));
         labor = r.labor;
@@ -2744,7 +2826,7 @@ export function App() {
           labor?: { remaining: number; completed: boolean; payout?: number };
         }>(`/parcels/${activeParcelId}/collect`, {
           method: "POST",
-          body: JSON.stringify({ userId: player.id, cells: workCells }),
+          body: JSON.stringify({ userId: player.id, jobId, cells: workCells }),
         });
         setMsg(`Ramassé ${r.tons.toFixed(2)} t de paille`);
         labor = r.labor;
@@ -2762,7 +2844,7 @@ export function App() {
           labor?: { remaining: number; completed: boolean; payout?: number };
         }>(`/parcels/${activeParcelId}/plow`, {
           method: "POST",
-          body: JSON.stringify({ userId: player.id, cells: workCells }),
+          body: JSON.stringify({ userId: player.id, jobId, cells: workCells }),
         });
         const fert = r.fertilityDelta;
         const fertNote =
@@ -2787,7 +2869,7 @@ export function App() {
           labor?: { remaining: number; completed: boolean; payout?: number };
         }>(`/parcels/${activeParcelId}/stubble`, {
           method: "POST",
-          body: JSON.stringify({ userId: player.id, cells: workCells }),
+          body: JSON.stringify({ userId: player.id, jobId, cells: workCells }),
         });
         setMsg(
           `Sol nettoyé ×${r.stubbled} · −${r.cost} TRN · +${Math.round(r.nextBonus * 100)} % sur la prochaine récolte` +
@@ -5124,6 +5206,24 @@ export function App() {
         `useIsMobile()` choisit une coque entière, jamais un attribut passé à
         un composant qui bifurque huit fois à l'intérieur.
       */}
+      {/* Le chantier en cours.
+            Un travail qui prend sept minutes sans rien afficher se lit comme
+            une panne. La barre dit ce qui se fait, sur combien de cases, et
+            combien de temps il reste. */}
+      {chantier && (
+        <div className="chantier-bar" role="status" aria-live="polite">
+          <span className="chantier-nom">
+            {WORK_LABELS[chantier.work] ?? chantier.work} · {chantier.cells.length} cases
+            </span>
+          <span className="chantier-piste">
+            <span
+              className="chantier-avance"
+              style={{ animationDuration: `${Math.max(1, chantier.durationMs)}ms` }}
+            />
+            </span>
+          <span className="chantier-reste">{formatChantierReste(chantier.endsAt, horloge)}</span>
+          </div>
+        )}
       {isMobile ? (
         <FieldDock
           tool={tool}

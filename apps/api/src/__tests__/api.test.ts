@@ -89,12 +89,64 @@ async function appel(
   return { statut: r.status, corps: corps as Record<string, never> };
 }
 
+/**
+ * Une culture semable maintenant.
+ *
+ * Deux tests codaient « blé » en dur. Ils passaient l'hiver et échouaient
+ * l'été : le blé est une céréale d'hiver, et la saison du serveur suit
+ * l'horloge réelle. Un test dont le résultat dépend du jour où on le lance
+ * n'est pas un test.
+ */
+function cropDeSaison(): CropCode {
+  const saison = currentSeason("N", Date.now());
+  return (Object.keys(PLANTING_WINDOW) as CropCode[]).find((c) => canSowInSeason(c, saison).ok)!;
+}
+
+/**
+ * Lance un chantier puis exécute le travail.
+ *
+ * Un travail de champ ne s'exécute plus directement : il faut d'abord réserver
+ * ses cases et son attelage. Les tests passent par le même sas que le joueur —
+ * seule l'attente est mise à zéro par `FARMSIM_JOB_MS`.
+ */
+async function travailler(
+  parcelId: string,
+  route: string,
+  work: string,
+  moi: { id: string; jeton: string },
+  cells: { x: number; y: number }[],
+  extra: Record<string, unknown> = {},
+) {
+  const lance = await appel(`/parcels/${parcelId}/jobs`, {
+    methode: "POST",
+    corps: { userId: moi.id, work, cells, ...(extra.crop ? { crop: extra.crop } : {}) },
+    jeton: moi.jeton,
+  });
+  if (lance.statut !== 201) return lance;
+  const job = (lance.corps as unknown as { job: { id: string; endsAt: string } }).job;
+  const jobId = job.id;
+  // On attend vraiment la fin du chantier, comme le ferait un joueur.
+  const reste = new Date(job.endsAt).getTime() - Date.now();
+  if (reste > 0) await new Promise((r) => setTimeout(r, reste + 30));
+  return appel(`/parcels/${parcelId}/${route}`, {
+    methode: "POST",
+    corps: { userId: moi.id, cells, jobId, ...extra },
+    jeton: moi.jeton,
+  });
+}
+
 /** Inscrit un joueur et renvoie son jeton, son identifiant et sa ferme. */
 async function inscrire(nom: string) {
   const r = await appel("/auth/register", {
     methode: "POST",
     corps: {
-      email: `${nom}-${Date.now()}-${Math.random().toString(36).slice(2)}@test.fr`,
+      // Le nom sert d'adresse : un accent ou une espace la rendait invalide, et
+      // le test échouait sur l'inscription plutôt que sur ce qu'il mesurait.
+      email: `${nom
+        .normalize("NFD")
+        .replace(/[\u0300-\u036f]/g, "")
+        .replace(/[^a-zA-Z0-9]/g, "")
+        .toLowerCase()}-${Date.now()}-${Math.random().toString(36).slice(2)}@test.fr`,
       displayName: nom,
       specialization: "CEREALIER",
       accessCode: "ferme",
@@ -147,6 +199,11 @@ before(async () => {
       // que le compte à rebours — la caisse existe toujours, et il faut
       // toujours la rentrer pour que la marchandise entre au stock.
       FARMSIM_DELIVERY_MS: "0",
+      /* Les chantiers tournent deux cents fois plus vite qu'en jeu : un champ
+         entier labouré passe de sept minutes à deux secondes. C'est un
+         diviseur et non une durée fixe, pour que l'attente reste
+         proportionnelle à la surface et à l'outil — c'est ce qu'on vérifie. */
+      FARMSIM_JOB_SPEED: "200",
     },
     stdio: ["ignore", "pipe", "pipe"],
     detached: true,
@@ -811,11 +868,7 @@ describe("usure au champ", () => {
     // pas à un nombre abstrait. Un champ de 14 ha, c'est quelques heures.
     const { moi, parcelle } = await cerealier();
     const cases = await champEntier(parcelle.id);
-    const r = await appel(`/parcels/${parcelle.id}/plant`, {
-      methode: "POST",
-      corps: { userId: moi.id, crop: "WHEAT", cells: cases },
-      jeton: moi.jeton,
-    });
+    const r = await travailler(parcelle.id, "plant", "PLANT", { id: moi.id, jeton: moi.jeton }, cases, { crop: cropDeSaison() });
     assert.equal(r.statut, 200, `semis refusé : ${JSON.stringify(r.corps)}`);
     const m = (r.corps as unknown as { machine: { hours: number; hoursWorked: number } }).machine;
     assert.ok(m.hoursWorked > 1.5 && m.hoursWorked < 6, `chantier de ${m.hoursWorked} h`);
@@ -839,11 +892,7 @@ describe("usure au champ", () => {
     // La ferme de départ occupe quelques cases ; le reste est le vrai champ.
     assert.ok(cases.length > 120, `champ trop petit pour la mesure : ${cases.length} cases`);
 
-    const r = await appel(`/parcels/${parcelle.id}/plant`, {
-      methode: "POST",
-      corps: { userId: moi.id, crop: "WHEAT", cells: cases },
-      jeton: moi.jeton,
-    });
+    const r = await travailler(parcelle.id, "plant", "PLANT", { id: moi.id, jeton: moi.jeton }, cases, { crop: cropDeSaison() });
     assert.equal(r.statut, 200, `semis refusé : ${JSON.stringify(r.corps)}`);
     const machine = (r.corps as unknown as { machine: { condition: number; dirt: number } }).machine;
 
@@ -1088,21 +1137,13 @@ describe("les heures pèsent sur la récolte", () => {
       .filter((c) => c.kind === "EMPTY")
       .map((c) => ({ x: c.x, y: c.y }));
 
-    await appel(`/parcels/${parcelle.id}/plant`, {
-      methode: "POST",
-      corps: { userId: moi.id, crop: "WHEAT", cells },
-      jeton: moi.jeton,
-    });
+    await travailler(parcelle.id, "plant", "PLANT", moi, cells, { crop: cropDeSaison() });
     await appel("/dev/grant", {
       methode: "POST",
       corps: { userId: moi.id, ripenAll: true },
       jeton: moi.jeton,
     });
-    const r = await appel(`/parcels/${parcelle.id}/harvest`, {
-      methode: "POST",
-      corps: { userId: moi.id, cells },
-      jeton: moi.jeton,
-    });
+    const r = await travailler(parcelle.id, "harvest", "HARVEST", moi, cells);
     assert.equal(r.statut, 200, `moisson refusée : ${JSON.stringify(r.corps)}`);
     const lots = (r.corps as unknown as { harvested: { tons: number }[] }).harvested;
     return lots.reduce((a, l) => a + l.tons, 0);
@@ -1199,22 +1240,14 @@ describe("calendrier cultural", () => {
     assert.ok(dedans, "il doit toujours rester une culture semable");
     assert.ok(dehors, "et une hors saison, sinon la règle ne dit rien");
 
-    const refus = await appel(`/parcels/${parcelle.id}/plant`, {
-      methode: "POST",
-      corps: { userId: moi.id, crop: dehors, cells: cells.slice(0, 4) },
-      jeton: moi.jeton,
-    });
+    const refus = await travailler(parcelle.id, "plant", "PLANT", { id: moi.id, jeton: moi.jeton }, cells.slice(0, 4), { crop: dehors });
     assert.equal(refus.statut, 409, `${dehors} semé en ${saison} aurait dû être refusé`);
     // Le refus doit dire quand revenir : une règle qu'on devine n'est pas une
     // décision.
     const message = (refus.corps as unknown as { error: string }).error;
     assert.match(message, /sème/, `message peu utile : ${message}`);
 
-    const ok = await appel(`/parcels/${parcelle.id}/plant`, {
-      methode: "POST",
-      corps: { userId: moi.id, crop: dedans, cells: cells.slice(0, 4) },
-      jeton: moi.jeton,
-    });
+    const ok = await travailler(parcelle.id, "plant", "PLANT", { id: moi.id, jeton: moi.jeton }, cells.slice(0, 4), { crop: dedans });
     assert.equal(ok.statut, 200, `${dedans} refusé en ${saison} : ${JSON.stringify(ok.corps)}`);
   });
 
@@ -1245,11 +1278,7 @@ describe("calendrier cultural", () => {
       (c) => canSowInSeason(c, saison).ok,
     )!;
     const avant = Date.now();
-    const r = await appel(`/parcels/${parcelle.id}/plant`, {
-      methode: "POST",
-      corps: { userId: moi.id, crop, cells: cells.slice(0, 4) },
-      jeton: moi.jeton,
-    });
+    const r = await travailler(parcelle.id, "plant", "PLANT", moi, cells.slice(0, 4), { crop });
     assert.equal(r.statut, 200, `semis refusé : ${JSON.stringify(r.corps)}`);
     const parcelleApres = (r.corps as unknown as {
       parcel: { cells: { crop: string | null; readyAt: string | null }[] };
@@ -1310,12 +1339,6 @@ describe("porteur et outils", () => {
     return { moi, parcelle: f.parcels[0]!, machines: f.machines, cells };
   }
 
-  /** La culture semable à la saison courante — le calendrier reste maître. */
-  function cropDeSaison(): CropCode {
-    const saison = currentSeason("N", Date.now());
-    return (Object.keys(PLANTING_WINDOW) as CropCode[]).find((c) => canSowInSeason(c, saison).ok)!;
-  }
-
   it("livre une ferme neuve avec de quoi travailler", async () => {
     // Un tracteur seul ne fait plus rien : sans outil, la première parcelle
     // resterait en friche et l'accueil serait un mur.
@@ -1336,11 +1359,7 @@ describe("porteur et outils", () => {
     });
     assert.equal(vente.statut, 200, `revente refusée : ${JSON.stringify(vente.corps)}`);
 
-    const r = await appel(`/parcels/${parcelle.id}/plant`, {
-      methode: "POST",
-      corps: { userId: moi.id, crop: cropDeSaison(), cells: cells.slice(0, 4) },
-      jeton: moi.jeton,
-    });
+    const r = await travailler(parcelle.id, "plant", "PLANT", { id: moi.id, jeton: moi.jeton }, cells.slice(0, 4), { crop: cropDeSaison() });
     assert.equal(r.statut, 409, "un tracteur seul a semé");
     const message = (r.corps as unknown as { error: string }).error;
     // Trois causes possibles — outil absent, outil en panne, tracteur trop
@@ -1355,11 +1374,7 @@ describe("porteur et outils", () => {
      * chargée de la ferme, exactement comme sur une vraie exploitation.
      */
     const { moi, parcelle, machines, cells } = await ferme("Attelage");
-    const r = await appel(`/parcels/${parcelle.id}/plant`, {
-      methode: "POST",
-      corps: { userId: moi.id, crop: cropDeSaison(), cells },
-      jeton: moi.jeton,
-    });
+    const r = await travailler(parcelle.id, "plant", "PLANT", moi, cells, { crop: cropDeSaison() });
     assert.equal(r.statut, 200, `semis refusé : ${JSON.stringify(r.corps)}`);
 
     const apres = (await appel("/auth/me", { jeton: moi.jeton })).corps as unknown as {
@@ -1394,6 +1409,192 @@ describe("porteur et outils", () => {
     assert.ok(
       apres.farm.machines.some((m) => m.type === "TRACTOR" && m.tier === 3),
       "le palier n'a pas été enregistré",
+    );
+  });
+});
+
+describe("un chantier prend du temps", () => {
+  /**
+   * Les travaux étaient instantanés : on cliquait, le champ était labouré. Ça
+   * tenait tant que rien ne disait combien de temps ça prend — mais depuis que
+   * les heures sont réelles, un labour de quatorze hectares demande onze heures
+   * de tracteur et un épandage une seule. Les faire tenir dans le même clic
+   * effaçait exactement ce que la largeur de travail venait d'apporter.
+   *
+   * L'attente elle-même est mise à zéro ici (`FARMSIM_JOB_MS`) : ce qu'on
+   * vérifie, c'est le sas — qu'on ne puisse pas travailler sans chantier, que
+   * l'attelage soit immobilisé, et que les cases soient réservées.
+   */
+  async function fermeAuChamp(nom: string) {
+    const moi = await inscrire(nom);
+    const monde = await appel("/world/AUR");
+    const regions = (monde.corps as unknown as {
+      regions: { parcels: { id: string; taken: boolean }[] }[];
+    }).regions;
+    let parcelId = "";
+    for (const r of regions) {
+      const libre = (r.parcels ?? []).find((p) => !p.taken);
+      if (libre) {
+        parcelId = libre.id;
+        break;
+      }
+    }
+    assert.ok(parcelId, "il faut une parcelle libre");
+    await appel("/world/claim", {
+      methode: "POST",
+      corps: { userId: moi.id, specialization: "CEREALIER", parcelId },
+      jeton: moi.jeton,
+    });
+    await appel("/dev/grant", {
+      methode: "POST",
+      corps: { userId: moi.id, crd: 200000, level: 20 },
+      jeton: moi.jeton,
+    });
+    const me = await appel("/auth/me", { jeton: moi.jeton });
+    const parcelle = (me.corps as unknown as {
+      player: { farm: { parcels: { id: string }[] } };
+    }).player.farm.parcels[0]!;
+    const det = await appel(`/parcels/${parcelle.id}`);
+    const cells = (det.corps as unknown as {
+      parcel: { cells: { x: number; y: number; kind: string }[] };
+    }).parcel.cells
+      .filter((c) => c.kind === "EMPTY")
+      .map((c) => ({ x: c.x, y: c.y }));
+    return { moi, parcelle, cells };
+  }
+
+  it("refuse un travail qu'aucun chantier n'a lancé", async () => {
+    // Sans ce sas, il suffirait d'appeler la route pour effacer l'attente — et
+    // l'attente est ce qui donne sa valeur à un outil plus large.
+    const { moi, parcelle, cells } = await fermeAuChamp("Pressé");
+    const r = await appel(`/parcels/${parcelle.id}/plant`, {
+      methode: "POST",
+      corps: { userId: moi.id, crop: cropDeSaison(), cells: cells.slice(0, 4) },
+      jeton: moi.jeton,
+    });
+    assert.equal(r.statut, 409, "un semis est parti sans chantier");
+    assert.match((r.corps as unknown as { error: string }).error, /chantier/i);
+  });
+
+  it("annonce une durée proportionnelle à la surface et à l'outil", async () => {
+    /**
+     * On mesure la durée annoncée, pas l'attente : le raccourci de test met
+     * l'horloge à zéro, mais la route renvoie toujours ce que le chantier
+     * aurait coûté en vrai.
+     */
+    const { moi, parcelle, cells } = await fermeAuChamp("Chronomètre");
+    const petit = await appel(`/parcels/${parcelle.id}/jobs`, {
+      methode: "POST",
+      corps: { userId: moi.id, work: "PLOW", cells: cells.slice(0, 4) },
+      jeton: moi.jeton,
+    });
+    assert.equal(petit.statut, 201, `chantier refusé : ${JSON.stringify(petit.corps)}`);
+    const jobPetit = (petit.corps as unknown as { job: { id: string; durationMs: number } }).job;
+
+    await appel(`/jobs/${jobPetit.id}/cancel`, {
+      methode: "POST",
+      corps: { userId: moi.id },
+      jeton: moi.jeton,
+    });
+
+    const grand = await appel(`/parcels/${parcelle.id}/jobs`, {
+      methode: "POST",
+      corps: { userId: moi.id, work: "PLOW", cells: cells.slice(0, 40) },
+      jeton: moi.jeton,
+    });
+    const jobGrand = (grand.corps as unknown as { job: { durationMs: number } }).job;
+    assert.ok(
+      jobGrand.durationMs > jobPetit.durationMs * 5,
+      `dix fois plus de cases pour ${jobGrand.durationMs} ms contre ${jobPetit.durationMs} ms`,
+    );
+  });
+
+  it("immobilise l'attelage pendant le chantier", async () => {
+    // Un tracteur au champ ne peut ni repartir sur un autre travail, ni se
+    // vendre : sans ça, un seul engin ferait toute la ferme à la fois.
+    const { moi, parcelle, cells } = await fermeAuChamp("Occupé");
+    const lance = await appel(`/parcels/${parcelle.id}/jobs`, {
+      methode: "POST",
+      corps: { userId: moi.id, work: "PLOW", cells: cells.slice(0, 8) },
+      jeton: moi.jeton,
+    });
+    assert.equal(lance.statut, 201);
+
+    const parc = (await appel("/auth/me", { jeton: moi.jeton })).corps as unknown as {
+      player: { farm: { machines: { id: string; type: string; busyUntil: string | null }[] } };
+    };
+    const tracteur = parc.player.farm.machines.find((m) => m.type === "TRACTOR")!;
+    const charrue = parc.player.farm.machines.find((m) => m.type === "PLOUGH")!;
+    assert.ok(tracteur.busyUntil, "le tracteur n'est pas marqué au champ");
+    assert.ok(charrue.busyUntil, "la charrue n'est pas marquée au champ");
+
+    const vente = await appel(`/machines/${tracteur.id}/sell`, {
+      methode: "POST",
+      corps: { userId: moi.id },
+      jeton: moi.jeton,
+    });
+    assert.equal(vente.statut, 409, "on a vendu un tracteur parti au champ");
+  });
+
+  it("réserve ses cases : deux chantiers ne se marchent pas dessus", async () => {
+    const { moi, parcelle, cells } = await fermeAuChamp("Doublon");
+    const a = await appel(`/parcels/${parcelle.id}/jobs`, {
+      methode: "POST",
+      corps: { userId: moi.id, work: "PLOW", cells: cells.slice(0, 6) },
+      jeton: moi.jeton,
+    });
+    assert.equal(a.statut, 201);
+    const b = await appel(`/parcels/${parcelle.id}/jobs`, {
+      methode: "POST",
+      corps: { userId: moi.id, work: "PLOW", cells: cells.slice(4, 10) },
+      jeton: moi.jeton,
+    });
+    assert.equal(b.statut, 409, "deux chantiers se sont partagé les mêmes cases");
+  });
+
+  it("rend l'attelage quand on abandonne", async () => {
+    const { moi, parcelle, cells } = await fermeAuChamp("Renonce");
+    const lance = await appel(`/parcels/${parcelle.id}/jobs`, {
+      methode: "POST",
+      corps: { userId: moi.id, work: "PLOW", cells: cells.slice(0, 6) },
+      jeton: moi.jeton,
+    });
+    const jobId = (lance.corps as unknown as { job: { id: string } }).job.id;
+    const r = await appel(`/jobs/${jobId}/cancel`, {
+      methode: "POST",
+      corps: { userId: moi.id },
+      jeton: moi.jeton,
+    });
+    assert.equal(r.statut, 200, `abandon refusé : ${JSON.stringify(r.corps)}`);
+
+    const parc = (await appel("/auth/me", { jeton: moi.jeton })).corps as unknown as {
+      player: { farm: { machines: { type: string; busyUntil: string | null }[] } };
+    };
+    assert.ok(
+      parc.player.farm.machines.every((m) => !m.busyUntil),
+      "l'attelage est resté bloqué après un abandon",
+    );
+  });
+
+  it("libère l'attelage une fois le travail fait", async () => {
+    const { moi, parcelle, cells } = await fermeAuChamp("Fini");
+    const r = await travailler(parcelle.id, "plant", "PLANT", moi, cells.slice(0, 6), {
+      crop: cropDeSaison(),
+    });
+    assert.equal(r.statut, 200, `semis refusé : ${JSON.stringify(r.corps)}`);
+
+    const parc = (await appel("/auth/me", { jeton: moi.jeton })).corps as unknown as {
+      player: { farm: { machines: { busyUntil: string | null }[] } };
+    };
+    assert.ok(
+      parc.player.farm.machines.every((m) => !m.busyUntil),
+      "l'attelage est resté au champ après la fin du travail",
+    );
+    const restants = await appel(`/parcels/${parcelle.id}/jobs`);
+    assert.equal(
+      (restants.corps as unknown as { jobs: unknown[] }).jobs.length,
+      0,
+      "le chantier n'a pas été clos",
     );
   });
 });
