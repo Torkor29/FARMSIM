@@ -217,3 +217,89 @@ describe("les listes dans une fenêtre", () => {
     expect(figees).toEqual([]);
   });
 });
+
+/**
+ * Les motifs saisonniers.
+ *
+ * Ce bloc existe à cause d'une phrase : « j'avais pas capté que c'était des
+ * feuilles d'automne ». Le motif était une `radial-gradient` de 3 px sur 2,
+ * à bord dur, **une par tuile** — donc des taches orange alignées sur un
+ * réseau parfaitement régulier. Ce qu'on voyait n'était pas une chute de
+ * feuilles mais une trame, du genre qu'on prend pour un défaut d'écran.
+ *
+ * Un motif dont on ne reconnaît pas le sujet a raté son seul travail : il est
+ * là parce que le printemps et l'hiver partagent le même ciel bleu et que la
+ * teinte seule demande qu'on compare. Trois exigences le tiennent désormais,
+ * et aucune n'est une question de goût.
+ */
+describe("les motifs du ciel", () => {
+  const NAPPES = [".sky-drift.petals", ".sky-drift.leaves", ".sky-drift.flakes"];
+  const couches = (base: string) =>
+    ["lente", "vive"].map((v) => {
+      const sel = `${base}.${v}`;
+      const r = regles(CSS).find((x) => x.selecteur === sel);
+      expect(`${sel} déclarée : ${Boolean(r)}`).toBe(`${sel} déclarée : true`);
+      return r!;
+    });
+
+  for (const base of NAPPES) {
+    it(`${base} dessine une forme, pas un point`, () => {
+      for (const c of couches(base)) {
+        const img = declaration(c.corps, "background-image") ?? "";
+        // Une silhouette, donc un tracé. Un dégradé radial ne peut produire
+        // qu'une tache ronde : c'est exactement ce qu'on ne veut plus.
+        expect(`${c.selecteur} tracé=${img.includes("%3Cpath")}`).toBe(
+          `${c.selecteur} tracé=true`,
+        );
+        expect(`${c.selecteur} gradient=${/radial-gradient/.test(img)}`).toBe(
+          `${c.selecteur} gradient=false`,
+        );
+      }
+    });
+
+    it(`${base} pose plusieurs marques par tuile`, () => {
+      /**
+       * Une seule marque par tuile aligne tout sur un réseau, et le réseau se
+       * voit avant le motif. Plusieurs marques placées irrégulièrement dans
+       * la même tuile cassent l'alignement sans coûter un nœud de plus.
+       */
+      for (const c of couches(base)) {
+        const img = declaration(c.corps, "background-image") ?? "";
+        const marques = (img.match(/%3Cg transform=/g) ?? []).length;
+        expect(`${c.selecteur} ${marques} marques`).toBe(`${c.selecteur} ${marques} marques`);
+        expect(marques).toBeGreaterThanOrEqual(4);
+      }
+    });
+
+    it(`${base} superpose deux trames différentes`, () => {
+      /**
+       * Les deux nappes donnaient la profondeur par `transform: scale()` : la
+       * même trame, en plus gros. Les deux réseaux coïncidaient donc, et
+       * l'agrandissement ne faisait que rendre l'alignement plus lisible.
+       * Deux `background-size` distincts font le même travail sans cela.
+       */
+      const [lente, vive] = couches(base);
+      const tailles = [lente, vive].map((c) => declaration(c.corps, "background-size"));
+      expect(tailles[0]).toBeDefined();
+      expect(tailles[1]).not.toBe(tailles[0]);
+      for (const c of [lente, vive]) {
+        // La déclaration CSS, pas le corps entier : les tuiles SVG portent
+        // elles-mêmes des `scale()`, qui sont légitimes — ce sont eux qui
+        // donnent aux marques leurs tailles inégales.
+        const t = declaration(c.corps, "transform");
+        expect(`${c.selecteur} transform=${t}`).toBe(`${c.selecteur} transform=null`);
+      }
+    });
+  }
+
+  it("la feuille de premier plan a la même silhouette que la nappe", () => {
+    // L'œil va toujours à l'intrus : un pâté arrondi posé à côté de vraies
+    // feuilles était la seule chose qu'on remarquait.
+    for (const sel of [".sky-leaf.f1", ".sky-leaf.f2", ".sky-leaf.f3"]) {
+      const r = regles(CSS).find((x) => x.selecteur === sel);
+      expect(`${sel} déclarée : ${Boolean(r)}`).toBe(`${sel} déclarée : true`);
+      const img = declaration(r!.corps, "background-image") ?? "";
+      expect(`${sel} tracé=${img.includes("%3Cpath")}`).toBe(`${sel} tracé=true`);
+    }
+  });
+});

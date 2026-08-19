@@ -4540,23 +4540,25 @@ button.tiny {
      cadre des deux côtés sans qu'on voie sa couture. */
   inset: -60% -40%;
   background-repeat: repeat;
-  will-change: transform;
+  /* C'est `translate` qui est animé, pas `transform` : le nommer précisément
+     évite au compositeur de reprojeter la couche à chaque image. */
+  will-change: translate;
 }
 
 /* —— Printemps : ce qui monte ——
    Pétales et graines portés par l'air tiède. La diagonale ascendante est la
    signature : rien d'autre dans le jeu ne va vers le haut. */
-.sky-drift.petals {
-  background-image:
-    radial-gradient(circle at 30% 30%, rgba(255, 233, 242, 0.95) 0 2.5px, transparent 3px),
-    radial-gradient(circle at 70% 65%, rgba(255, 255, 255, 0.8) 0 2px, transparent 2.5px);
-  background-size: 120px 150px, 190px 210px;
+.sky-drift.petals.lente {
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='250' height='300' viewBox='0 0 250 300'%3E%3Cg transform='translate(36 32) rotate(28) scale(0.95)' opacity='0.95'%3E%3Cpath d='M12 5c4.6 2.8 5 8.4 0 12.4-5-4-4.6-9.6 0-12.4z' fill='%23ffc9dd'/%3E%3C/g%3E%3Cg transform='translate(170 84) rotate(-52) scale(0.78)' opacity='0.85'%3E%3Cpath d='M12 5c4.6 2.8 5 8.4 0 12.4-5-4-4.6-9.6 0-12.4z' fill='%23ffffff'/%3E%3C/g%3E%3Cg transform='translate(88 152) rotate(74) scale(0.68)' opacity='0.78'%3E%3Cpath d='M12 5c4.6 2.8 5 8.4 0 12.4-5-4-4.6-9.6 0-12.4z' fill='%23ffeccb'/%3E%3C/g%3E%3Cg transform='translate(222 192) rotate(-16) scale(0.86)' opacity='0.92'%3E%3Cpath d='M12 5c4.6 2.8 5 8.4 0 12.4-5-4-4.6-9.6 0-12.4z' fill='%23ffc9dd'/%3E%3C/g%3E%3Cg transform='translate(52 244) rotate(-68) scale(0.62)' opacity='0.72'%3E%3Cpath d='M12 5c4.6 2.8 5 8.4 0 12.4-5-4-4.6-9.6 0-12.4z' fill='%23ffffff'/%3E%3C/g%3E%3Cg transform='translate(150 282) rotate(40) scale(0.8)' opacity='0.88'%3E%3Cpath d='M12 5c4.6 2.8 5 8.4 0 12.4-5-4-4.6-9.6 0-12.4z' fill='%23ffeccb'/%3E%3C/g%3E%3C/svg%3E");
+  background-size: 250px 300px;
+  animation: drift-up 26s linear infinite;
+  opacity: 0.9;
 }
-.sky-drift.petals.lente { animation: drift-up 26s linear infinite; opacity: 0.75; }
 .sky-drift.petals.vive {
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='185' height='225' viewBox='0 0 185 225'%3E%3Cg transform='translate(128 28) rotate(-40) scale(0.6)' opacity='0.7'%3E%3Cpath d='M12 5c4.6 2.8 5 8.4 0 12.4-5-4-4.6-9.6 0-12.4z' fill='%23ffffff'/%3E%3C/g%3E%3Cg transform='translate(34 98) rotate(62) scale(0.52)' opacity='0.6'%3E%3Cpath d='M12 5c4.6 2.8 5 8.4 0 12.4-5-4-4.6-9.6 0-12.4z' fill='%23ffc9dd'/%3E%3C/g%3E%3Cg transform='translate(162 148) rotate(18) scale(0.46)' opacity='0.52'%3E%3Cpath d='M12 5c4.6 2.8 5 8.4 0 12.4-5-4-4.6-9.6 0-12.4z' fill='%23ffeccb'/%3E%3C/g%3E%3Cg transform='translate(76 200) rotate(-74) scale(0.56)' opacity='0.64'%3E%3Cpath d='M12 5c4.6 2.8 5 8.4 0 12.4-5-4-4.6-9.6 0-12.4z' fill='%23ffffff'/%3E%3C/g%3E%3C/svg%3E");
+  background-size: 185px 225px;
   animation: drift-up 15s linear infinite -7s;
-  opacity: 0.5;
-  transform: scale(1.4);
+  opacity: 0.65;
 }
 @keyframes drift-up {
   from { translate: 0 0; }
@@ -4625,17 +4627,17 @@ button.tiny {
 /* —— Automne : ce qui tombe de travers ——
    Le vent pousse vers la gauche pendant que les feuilles descendent. La
    diagonale est l'exact contraire de celle du printemps. */
-.sky-drift.leaves {
-  background-image:
-    radial-gradient(ellipse 3px 2px at 25% 30%, rgba(198, 108, 46, 0.9) 0 100%, transparent 100%),
-    radial-gradient(ellipse 2.5px 2px at 68% 70%, rgba(226, 160, 72, 0.85) 0 100%, transparent 100%);
-  background-size: 110px 130px, 170px 190px;
+.sky-drift.leaves.lente {
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='300' height='360' viewBox='0 0 300 360'%3E%3Cg transform='translate(34 28) rotate(22) scale(0.62)' opacity='0.95'%3E%3Cpath d='M12 1.6c5.7 4.5 6.3 12.6 0 19.2-6.3-6.6-5.7-14.7 0-19.2z' fill='%23c96a2c'/%3E%3Cpath d='M12 4v15.5' stroke='%238a4420' stroke-width='1' stroke-linecap='round' opacity='.55'/%3E%3Cpath d='M12 20.8c0 1.6-.5 2.6-1.4 3.2' stroke='%23c96a2c' stroke-width='1.3' stroke-linecap='round' fill='none'/%3E%3C/g%3E%3Cg transform='translate(196 74) rotate(-47) scale(0.5)' opacity='0.85'%3E%3Cpath d='M12 1.6c5.7 4.5 6.3 12.6 0 19.2-6.3-6.6-5.7-14.7 0-19.2z' fill='%23dd9440'/%3E%3Cpath d='M12 4v15.5' stroke='%238a4420' stroke-width='1' stroke-linecap='round' opacity='.55'/%3E%3Cpath d='M12 20.8c0 1.6-.5 2.6-1.4 3.2' stroke='%23dd9440' stroke-width='1.3' stroke-linecap='round' fill='none'/%3E%3C/g%3E%3Cg transform='translate(108 142) rotate(71) scale(0.44)' opacity='0.75'%3E%3Cpath d='M12 1.6c5.7 4.5 6.3 12.6 0 19.2-6.3-6.6-5.7-14.7 0-19.2z' fill='%23a8502a'/%3E%3Cpath d='M12 4v15.5' stroke='%238a4420' stroke-width='1' stroke-linecap='round' opacity='.55'/%3E%3Cpath d='M12 20.8c0 1.6-.5 2.6-1.4 3.2' stroke='%23a8502a' stroke-width='1.3' stroke-linecap='round' fill='none'/%3E%3C/g%3E%3Cg transform='translate(256 188) rotate(-19) scale(0.56)' opacity='0.9'%3E%3Cpath d='M12 1.6c5.7 4.5 6.3 12.6 0 19.2-6.3-6.6-5.7-14.7 0-19.2z' fill='%23e8b45c'/%3E%3Cpath d='M12 4v15.5' stroke='%238a4420' stroke-width='1' stroke-linecap='round' opacity='.55'/%3E%3Cpath d='M12 20.8c0 1.6-.5 2.6-1.4 3.2' stroke='%23e8b45c' stroke-width='1.3' stroke-linecap='round' fill='none'/%3E%3C/g%3E%3Cg transform='translate(62 246) rotate(-63) scale(0.4)' opacity='0.7'%3E%3Cpath d='M12 1.6c5.7 4.5 6.3 12.6 0 19.2-6.3-6.6-5.7-14.7 0-19.2z' fill='%23dd9440'/%3E%3Cpath d='M12 4v15.5' stroke='%238a4420' stroke-width='1' stroke-linecap='round' opacity='.55'/%3E%3Cpath d='M12 20.8c0 1.6-.5 2.6-1.4 3.2' stroke='%23dd9440' stroke-width='1.3' stroke-linecap='round' fill='none'/%3E%3C/g%3E%3Cg transform='translate(172 302) rotate(38) scale(0.52)' opacity='0.88'%3E%3Cpath d='M12 1.6c5.7 4.5 6.3 12.6 0 19.2-6.3-6.6-5.7-14.7 0-19.2z' fill='%23c96a2c'/%3E%3Cpath d='M12 4v15.5' stroke='%238a4420' stroke-width='1' stroke-linecap='round' opacity='.55'/%3E%3Cpath d='M12 20.8c0 1.6-.5 2.6-1.4 3.2' stroke='%23c96a2c' stroke-width='1.3' stroke-linecap='round' fill='none'/%3E%3C/g%3E%3Cg transform='translate(272 330) rotate(96) scale(0.36)' opacity='0.62'%3E%3Cpath d='M12 1.6c5.7 4.5 6.3 12.6 0 19.2-6.3-6.6-5.7-14.7 0-19.2z' fill='%23a8502a'/%3E%3Cpath d='M12 4v15.5' stroke='%238a4420' stroke-width='1' stroke-linecap='round' opacity='.55'/%3E%3Cpath d='M12 20.8c0 1.6-.5 2.6-1.4 3.2' stroke='%23a8502a' stroke-width='1.3' stroke-linecap='round' fill='none'/%3E%3C/g%3E%3C/svg%3E");
+  background-size: 300px 360px;
+  animation: drift-down 17s linear infinite;
+  opacity: 0.95;
 }
-.sky-drift.leaves.lente { animation: drift-down 17s linear infinite; opacity: 0.85; }
 .sky-drift.leaves.vive {
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='230' height='270' viewBox='0 0 230 270'%3E%3Cg transform='translate(152 22) rotate(-34) scale(0.4)' opacity='0.72'%3E%3Cpath d='M12 1.6c5.7 4.5 6.3 12.6 0 19.2-6.3-6.6-5.7-14.7 0-19.2z' fill='%23dd9440'/%3E%3Cpath d='M12 4v15.5' stroke='%238a4420' stroke-width='1' stroke-linecap='round' opacity='.55'/%3E%3Cpath d='M12 20.8c0 1.6-.5 2.6-1.4 3.2' stroke='%23dd9440' stroke-width='1.3' stroke-linecap='round' fill='none'/%3E%3C/g%3E%3Cg transform='translate(46 96) rotate(58) scale(0.34)' opacity='0.6'%3E%3Cpath d='M12 1.6c5.7 4.5 6.3 12.6 0 19.2-6.3-6.6-5.7-14.7 0-19.2z' fill='%23c96a2c'/%3E%3Cpath d='M12 4v15.5' stroke='%238a4420' stroke-width='1' stroke-linecap='round' opacity='.55'/%3E%3Cpath d='M12 20.8c0 1.6-.5 2.6-1.4 3.2' stroke='%23c96a2c' stroke-width='1.3' stroke-linecap='round' fill='none'/%3E%3C/g%3E%3Cg transform='translate(198 148) rotate(13) scale(0.3)' opacity='0.55'%3E%3Cpath d='M12 1.6c5.7 4.5 6.3 12.6 0 19.2-6.3-6.6-5.7-14.7 0-19.2z' fill='%23e8b45c'/%3E%3Cpath d='M12 4v15.5' stroke='%238a4420' stroke-width='1' stroke-linecap='round' opacity='.55'/%3E%3Cpath d='M12 20.8c0 1.6-.5 2.6-1.4 3.2' stroke='%23e8b45c' stroke-width='1.3' stroke-linecap='round' fill='none'/%3E%3C/g%3E%3Cg transform='translate(96 214) rotate(-78) scale(0.38)' opacity='0.66'%3E%3Cpath d='M12 1.6c5.7 4.5 6.3 12.6 0 19.2-6.3-6.6-5.7-14.7 0-19.2z' fill='%23a8502a'/%3E%3Cpath d='M12 4v15.5' stroke='%238a4420' stroke-width='1' stroke-linecap='round' opacity='.55'/%3E%3Cpath d='M12 20.8c0 1.6-.5 2.6-1.4 3.2' stroke='%23a8502a' stroke-width='1.3' stroke-linecap='round' fill='none'/%3E%3C/g%3E%3Cg transform='translate(210 246) rotate(44) scale(0.28)' opacity='0.5'%3E%3Cpath d='M12 1.6c5.7 4.5 6.3 12.6 0 19.2-6.3-6.6-5.7-14.7 0-19.2z' fill='%23dd9440'/%3E%3Cpath d='M12 4v15.5' stroke='%238a4420' stroke-width='1' stroke-linecap='round' opacity='.55'/%3E%3Cpath d='M12 20.8c0 1.6-.5 2.6-1.4 3.2' stroke='%23dd9440' stroke-width='1.3' stroke-linecap='round' fill='none'/%3E%3C/g%3E%3C/svg%3E");
+  background-size: 230px 270px;
   animation: drift-down 10s linear infinite -4s;
-  opacity: 0.55;
-  transform: scale(1.5);
+  opacity: 0.7;
 }
 @keyframes drift-down {
   from { translate: 0 0; }
@@ -4646,15 +4648,30 @@ button.tiny {
    pas faire ça, et c'est ce mouvement-là qu'on identifie comme une feuille. */
 .sky-leaf {
   position: absolute;
-  width: 11px;
-  height: 8px;
-  border-radius: 60% 10% 60% 10%;
-  background: #c8702f;
+  /* Même silhouette que la nappe, au même dessin : un pâté arrondi posé à
+     côté de vraies feuilles est la seule chose que l'œil remarque. */
+  width: 15px;
+  height: 20px;
+  background-repeat: no-repeat;
+  background-position: center;
+  background-size: contain;
   will-change: transform;
 }
-.sky-leaf.f1 { top: -6%; left: 24%; background: #d8863a; animation: leaf-fall 13s linear infinite; }
-.sky-leaf.f2 { top: -8%; left: 58%; background: #b45f2a; animation: leaf-fall 17s linear infinite -6s; }
-.sky-leaf.f3 { top: -5%; left: 78%; background: #e0a552; animation: leaf-fall 11s linear infinite -9s; }
+.sky-leaf.f1 {
+  top: -6%; left: 24%;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='24' height='24' viewBox='0 0 24 24'%3E%3Cpath d='M12 1.6c5.7 4.5 6.3 12.6 0 19.2-6.3-6.6-5.7-14.7 0-19.2z' fill='%23d8863a'/%3E%3Cpath d='M12 4v15.5' stroke='%238a4420' stroke-width='1' stroke-linecap='round' opacity='.55'/%3E%3Cpath d='M12 20.8c0 1.6-.5 2.6-1.4 3.2' stroke='%23d8863a' stroke-width='1.3' stroke-linecap='round' fill='none'/%3E%3C/svg%3E");
+  animation: leaf-fall 13s linear infinite;
+}
+.sky-leaf.f2 {
+  top: -8%; left: 58%;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='24' height='24' viewBox='0 0 24 24'%3E%3Cpath d='M12 1.6c5.7 4.5 6.3 12.6 0 19.2-6.3-6.6-5.7-14.7 0-19.2z' fill='%23b45f2a'/%3E%3Cpath d='M12 4v15.5' stroke='%237a3a18' stroke-width='1' stroke-linecap='round' opacity='.55'/%3E%3Cpath d='M12 20.8c0 1.6-.5 2.6-1.4 3.2' stroke='%23b45f2a' stroke-width='1.3' stroke-linecap='round' fill='none'/%3E%3C/svg%3E");
+  animation: leaf-fall 17s linear infinite -6s;
+}
+.sky-leaf.f3 {
+  top: -5%; left: 78%;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='24' height='24' viewBox='0 0 24 24'%3E%3Cpath d='M12 1.6c5.7 4.5 6.3 12.6 0 19.2-6.3-6.6-5.7-14.7 0-19.2z' fill='%23e0a552'/%3E%3Cpath d='M12 4v15.5' stroke='%239a5326' stroke-width='1' stroke-linecap='round' opacity='.55'/%3E%3Cpath d='M12 20.8c0 1.6-.5 2.6-1.4 3.2' stroke='%23e0a552' stroke-width='1.3' stroke-linecap='round' fill='none'/%3E%3C/svg%3E");
+  animation: leaf-fall 11s linear infinite -9s;
+}
 @keyframes leaf-fall {
   from { transform: translate(0, 0) rotate(0deg); opacity: 0; }
   8% { opacity: 0.9; }
@@ -4665,17 +4682,17 @@ button.tiny {
 /* —— Hiver : ce qui descend tout droit ——
    La poudreuse d'un jour sans vent. Elle tombe même par beau temps : c'est la
    saison, pas la météo — la neige d'averse, elle, reste dans `.sky-precip`. */
-.sky-drift.flakes {
-  background-image:
-    radial-gradient(circle at 40% 25%, rgba(255, 255, 255, 0.95) 0 2px, transparent 2.5px),
-    radial-gradient(circle at 75% 70%, rgba(255, 255, 255, 0.7) 0 1.5px, transparent 2px);
-  background-size: 130px 160px, 200px 230px;
+.sky-drift.flakes.lente {
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='300' height='350' viewBox='0 0 300 350'%3E%3Cg transform='translate(44 40) rotate(12) scale(0.55)' opacity='0.9'%3E%3Cg stroke='%23ffffff' stroke-width='1.5' stroke-linecap='round' fill='none'%3E%3Cpath d='M12 4v16M4.9 8l14.2 8M4.9 16l14.2-8'/%3E%3Cpath d='M9 6l3 2 3-2M9 18l3-2 3 2'/%3E%3C/g%3E%3C/g%3E%3Cg transform='translate(194 86) rotate(-24) scale(0.42)' opacity='0.72'%3E%3Cg stroke='%23ffffff' stroke-width='1.5' stroke-linecap='round' fill='none'%3E%3Cpath d='M12 4v16M4.9 8l14.2 8M4.9 16l14.2-8'/%3E%3Cpath d='M9 6l3 2 3-2M9 18l3-2 3 2'/%3E%3C/g%3E%3C/g%3E%3Cg transform='translate(104 176) rotate(38) scale(0.36)' opacity='0.6'%3E%3Cg stroke='%23ffffff' stroke-width='1.5' stroke-linecap='round' fill='none'%3E%3Cpath d='M12 4v16M4.9 8l14.2 8M4.9 16l14.2-8'/%3E%3Cpath d='M9 6l3 2 3-2M9 18l3-2 3 2'/%3E%3C/g%3E%3C/g%3E%3Cg transform='translate(258 214) rotate(6) scale(0.5)' opacity='0.82'%3E%3Cg stroke='%23ffffff' stroke-width='1.5' stroke-linecap='round' fill='none'%3E%3Cpath d='M12 4v16M4.9 8l14.2 8M4.9 16l14.2-8'/%3E%3Cpath d='M9 6l3 2 3-2M9 18l3-2 3 2'/%3E%3C/g%3E%3C/g%3E%3Cg transform='translate(66 282) rotate(-14) scale(0.32)' opacity='0.55'%3E%3Cg stroke='%23ffffff' stroke-width='1.5' stroke-linecap='round' fill='none'%3E%3Cpath d='M12 4v16M4.9 8l14.2 8M4.9 16l14.2-8'/%3E%3Cpath d='M9 6l3 2 3-2M9 18l3-2 3 2'/%3E%3C/g%3E%3C/g%3E%3Cg transform='translate(176 322) rotate(26) scale(0.46)' opacity='0.76'%3E%3Cg stroke='%23ffffff' stroke-width='1.5' stroke-linecap='round' fill='none'%3E%3Cpath d='M12 4v16M4.9 8l14.2 8M4.9 16l14.2-8'/%3E%3Cpath d='M9 6l3 2 3-2M9 18l3-2 3 2'/%3E%3C/g%3E%3C/g%3E%3C/svg%3E");
+  background-size: 300px 350px;
+  animation: drift-straight 22s linear infinite;
+  opacity: 0.9;
 }
-.sky-drift.flakes.lente { animation: drift-straight 22s linear infinite; opacity: 0.7; }
 .sky-drift.flakes.vive {
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='220' height='260' viewBox='0 0 220 260'%3E%3Cg transform='translate(150 26) rotate(-18) scale(0.34)' opacity='0.58'%3E%3Cg stroke='%23ffffff' stroke-width='1.5' stroke-linecap='round' fill='none'%3E%3Cpath d='M12 4v16M4.9 8l14.2 8M4.9 16l14.2-8'/%3E%3Cpath d='M9 6l3 2 3-2M9 18l3-2 3 2'/%3E%3C/g%3E%3C/g%3E%3Cg transform='translate(42 102) rotate(30) scale(0.28)' opacity='0.46'%3E%3Cg stroke='%23ffffff' stroke-width='1.5' stroke-linecap='round' fill='none'%3E%3Cpath d='M12 4v16M4.9 8l14.2 8M4.9 16l14.2-8'/%3E%3Cpath d='M9 6l3 2 3-2M9 18l3-2 3 2'/%3E%3C/g%3E%3C/g%3E%3Cg transform='translate(192 158) rotate(8) scale(0.24)' opacity='0.38'%3E%3Cg stroke='%23ffffff' stroke-width='1.5' stroke-linecap='round' fill='none'%3E%3Cpath d='M12 4v16M4.9 8l14.2 8M4.9 16l14.2-8'/%3E%3Cpath d='M9 6l3 2 3-2M9 18l3-2 3 2'/%3E%3C/g%3E%3C/g%3E%3Cg transform='translate(90 226) rotate(-30) scale(0.3)' opacity='0.5'%3E%3Cg stroke='%23ffffff' stroke-width='1.5' stroke-linecap='round' fill='none'%3E%3Cpath d='M12 4v16M4.9 8l14.2 8M4.9 16l14.2-8'/%3E%3Cpath d='M9 6l3 2 3-2M9 18l3-2 3 2'/%3E%3C/g%3E%3C/g%3E%3C/svg%3E");
+  background-size: 220px 260px;
   animation: drift-straight 13s linear infinite -5s;
-  opacity: 0.45;
-  transform: scale(1.4);
+  opacity: 0.62;
 }
 @keyframes drift-straight {
   from { translate: 0 0; }
