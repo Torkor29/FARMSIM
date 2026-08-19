@@ -52,6 +52,14 @@ const PALETTES: Record<MachineType, Palette> = {
   HARVESTER: { body: 0xc42f22, bodyDark: 0x8e211a, trim: 0x24262a, rim: 0xe4b41c, grain: 0xdcb03c },
   SPREADER: { body: 0x8b9199, bodyDark: 0x5f656c, trim: 0x3f444a, rim: 0xe0ac1c, grain: 0xd9d3c4 },
   DISC_HARROW: { body: 0x9a5f33, bodyDark: 0x6f4322, trim: 0x53341b, rim: 0x8a5f38, grain: 0xd8c9a8 },
+  // Charrue : la fonte nue et le rouge sombre des charruiers.
+  PLOUGH: { body: 0x9d3b2c, bodyDark: 0x6d2820, trim: 0x44342e, rim: 0x8d8f92, grain: 0x8a6a44 },
+  // Semoir : le bleu des semoirs, qui ne se confond avec aucun autre outil.
+  SEEDER: { body: 0x2f6fa8, bodyDark: 0x1f4d76, trim: 0x2a3138, rim: 0xd8d2c2, grain: 0xd9c47a },
+  // Faucheuse : le gris-vert des faneuses, proche du tracteur sans s'y fondre.
+  MOWER: { body: 0x5f8f4a, bodyDark: 0x3f6432, trim: 0x2c3a26, rim: 0xd8d2c2, grain: 0x9ec46a },
+  // Remorque : la tôle peinte et le bois des ridelles.
+  TRAILER: { body: 0x7b8794, bodyDark: 0x545e69, trim: 0x3a4149, rim: 0x8b5a2b, grain: 0xd9c47a },
   // Presse : le jaune-vert des constructeurs de fenaison, distinct du vert
   // tracteur pour qu'un attelage se lise comme deux engins et non comme un.
   BALER: { body: 0xb9c832, bodyDark: 0x7f8c22, trim: 0x3a3f22, rim: 0xd8d2c2, grain: 0xd9c47a },
@@ -1026,13 +1034,246 @@ type Blueprint = {
   eye: Vec3;
 };
 
+
+/* ------------------------------------------------------------------ */
+/* Charrue                                                             */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Trois corps portés sous une poutre, plus une roue de jauge.
+ *
+ * C'est l'outil le plus lent du parc, et le modèle doit le dire : étroit,
+ * bas sur terre, tout en fonte. Les corps descendent au travail et se
+ * relèvent en transport — d'où le rôle `tool` sur chacun.
+ */
+function buildPlough(): Blueprint {
+  const root = new Part();
+  const WHEEL_R = 0.15;
+
+  /* — Timon, anneau, béquille — même chape que les autres outils —— */
+  root.add("paint", roundedBox(0.46, 0.08, 0.09, 0.025, [-0.18, 0.28, 0], [0, 0, -0.6]));
+  root.add("chrome", ring(0.042, 0.012, 12, Math.PI * 2, [0.01, 0.16, 0], [HALF, 0, 0]));
+  root.add("steel", cyl(0.018, 0.018, 0.18, 8, [-0.13, 0.17, 0.07]));
+
+  /* — Poutre maîtresse : une charrue, c'est d'abord ça —————— */
+  root.add("paint", roundedBox(0.86, 0.1, 0.11, 0.025, [-0.72, 0.44, 0]));
+  root.add("paintDark", roundedBox(0.1, 0.16, 0.1, 0.02, [-0.36, 0.36, 0]));
+
+  /* — Trois corps décalés, soc et versoir ——————————————— */
+  for (let i = 0; i < 3; i++) {
+    const x = -0.46 - i * 0.28;
+    const z = 0.13 - i * 0.13;
+    const corps = root.child([x, 0, z], { role: "tool" });
+    // Étançon : le bras vertical qui descend de la poutre au soc.
+    corps.add("paintDark", roundedBox(0.06, 0.3, 0.055, 0.015, [0, 0.3, 0]));
+    // Versoir : une tôle vrillée. Deux plans suffisent à la lire de loin.
+    corps.add(
+      "cast",
+      roundedBox(0.24, 0.19, 0.03, 0.01, [-0.06, 0.15, -0.05], [0, 0.34, 0.5]),
+      roundedBox(0.2, 0.03, 0.14, 0.01, [-0.03, 0.07, -0.02], [0.3, 0.2, 0]),
+    );
+    // Soc : la pointe qui entre en terre.
+    corps.add("chrome", cone(0.05, 0.13, 6, [0.07, 0.055, 0.01], [0, 0, -HALF]));
+  }
+
+  /* — Roue de jauge, à l'arrière ——————————————————————— */
+  root
+    .child([-1.06, WHEEL_R, -0.2], { role: "wheel", radius: WHEEL_R })
+    .attach(wheelPart(WHEEL_R, 0.1, 10));
+  root.add("steel", roundedBox(0.06, 0.26, 0.06, 0.015, [-1.06, 0.32, -0.2]));
+
+  return { root, length: 1.2, hitch: [-1.15, 0.3, 0], eye: [0.01, 0.16, 0] };
+}
+
+/* ------------------------------------------------------------------ */
+/* Semoir                                                              */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Trémie sur châssis, rampe de descentes et disques ouvreurs.
+ *
+ * Les ouvreurs portent le rôle `tool` : relevés en transport, en terre au
+ * travail. C'est le geste qui distingue un semoir d'une caisse à roues.
+ */
+function buildSeeder(): Blueprint {
+  const root = new Part();
+  const WHEEL_R = 0.16;
+  const CX = -0.5;
+
+  root.add("rim", roundedBox(0.42, 0.07, 0.08, 0.02, [-0.19, 0.25, 0], [0, 0, -0.44]));
+  root.add("chrome", ring(0.042, 0.012, 12, Math.PI * 2, [0.01, 0.16, 0], [HALF, 0, 0]));
+  root.add("steel", cyl(0.018, 0.018, 0.16, 8, [-0.12, 0.16, 0.07]));
+
+  /* — Châssis —————————————————————————————————— */
+  root.add(
+    "rim",
+    roundedBox(0.66, 0.07, 0.09, 0.02, [CX, 0.3, 0.21]),
+    roundedBox(0.66, 0.07, 0.09, 0.02, [CX, 0.3, -0.21]),
+    roundedBox(0.09, 0.07, 0.5, 0.02, [CX + 0.28, 0.3, 0]),
+  );
+
+  /* — Trémie : caisse évasée, couvercle bombé ————————————— */
+  root.add(
+    "paint",
+    extrude(
+      [
+        [-0.16, 0.33],
+        [0.16, 0.33],
+        [0.3, 0.72],
+        [-0.3, 0.72],
+      ],
+      0.54,
+      [CX, 0, 0],
+      [0, HALF, 0],
+    ),
+  );
+  root.add("paintDark", roundedBox(0.64, 0.05, 0.58, 0.02, [CX, 0.74, 0]));
+  // Hublot de niveau : un semoir se juge à ce qu'il lui reste dedans.
+  root.add("chrome", roundedBox(0.06, 0.2, 0.02, 0.008, [CX + 0.31, 0.55, 0]));
+
+  /* — Rampe de descentes et ouvreurs ——————————————————— */
+  const rampe = root.child([CX - 0.36, 0, 0], { role: "tool" });
+  rampe.add("paintDark", roundedBox(0.07, 0.06, 0.62, 0.015, [0, 0.28, 0]));
+  for (let i = 0; i < 5; i++) {
+    const z = -0.26 + i * 0.13;
+    rampe.add("steel", cyl(0.012, 0.012, 0.22, 6, [0, 0.19, z]));
+    rampe.add("chrome", lathe(
+      [
+        [0.02, 0.006],
+        [0.075, 0.002],
+        [0.075, -0.008],
+        [0.02, -0.012],
+      ],
+      12,
+      [-0.02, 0.08, z],
+      [HALF, 0, 0.22],
+    ));
+  }
+
+  /* — Roues ———————————————————————————————————— */
+  for (const z of [0.3, -0.3]) {
+    root
+      .child([CX + 0.06, WHEEL_R, z], { role: "wheel", radius: WHEEL_R })
+      .attach(wheelPart(WHEEL_R, 0.12, 10));
+  }
+
+  return { root, length: 1.15, hitch: [-1.0, 0.3, 0], eye: [0.01, 0.16, 0] };
+}
+
+/* ------------------------------------------------------------------ */
+/* Faucheuse                                                           */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Lamier à disques, porté de biais derrière le tracteur.
+ *
+ * Les disques tournent à la prise de force — même rôle `spinner` que les
+ * assiettes d'un épandeur : vite, régulièrement, et figés à l'arrêt.
+ */
+function buildMower(): Blueprint {
+  const root = new Part();
+  const WHEEL_R = 0.14;
+
+  root.add("paint", roundedBox(0.44, 0.075, 0.085, 0.02, [-0.18, 0.26, 0], [0, 0, -0.5]));
+  root.add("chrome", ring(0.042, 0.012, 12, Math.PI * 2, [0.01, 0.16, 0], [HALF, 0, 0]));
+  root.add("steel", cyl(0.018, 0.018, 0.16, 8, [-0.12, 0.16, 0.07]));
+
+  /* — Bâti et suspension du lamier ————————————————————— */
+  root.add("paint", roundedBox(0.34, 0.09, 0.1, 0.02, [-0.46, 0.4, 0]));
+  root.add("steel", cyl(0.016, 0.016, 0.3, 8, [-0.58, 0.4, 0.16], [0, 0, 0.5]));
+
+  /* — Lamier : la barre et ses disques ————————————————— */
+  const lamier = root.child([-0.76, 0, 0], { role: "tool" });
+  lamier.add("paintDark", roundedBox(0.16, 0.07, 0.66, 0.02, [0, 0.13, 0]));
+  lamier.add("steel", roundedBox(0.2, 0.03, 0.7, 0.01, [0, 0.07, 0]));
+  for (let i = 0; i < 4; i++) {
+    const z = -0.24 + i * 0.16;
+    const disque = lamier.child([0, 0.17, z], { role: "spinner", spin: i % 2 ? 1 : -1 });
+    disque.add("chrome", cyl(0.075, 0.075, 0.014, 12, [0, 0, 0]));
+    // Deux couteaux par disque, articulés en bout : la signature d'un lamier.
+    for (const a of [0, Math.PI]) {
+      disque.add("steel", roundedBox(0.055, 0.008, 0.02, 0.004,
+        [Math.cos(a) * 0.08, -0.008, Math.sin(a) * 0.08], [0, -a, 0]));
+    }
+  }
+  // Patins d'usure : ce qui fait glisser la barre sur le sol sans la planter.
+  lamier.add("cast", roundedBox(0.22, 0.03, 0.07, 0.012, [0, 0.03, 0.28]),
+    roundedBox(0.22, 0.03, 0.07, 0.012, [0, 0.03, -0.28]));
+
+  /* — Roue de report ——————————————————————————————— */
+  root
+    .child([-0.5, WHEEL_R, -0.3], { role: "wheel", radius: WHEEL_R })
+    .attach(wheelPart(WHEEL_R, 0.1, 8));
+  root.add("steel", roundedBox(0.055, 0.24, 0.055, 0.014, [-0.5, 0.3, -0.3]));
+
+  return { root, length: 1.0, hitch: [-0.95, 0.3, 0], eye: [0.01, 0.16, 0] };
+}
+
+/* ------------------------------------------------------------------ */
+/* Remorque                                                            */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Benne sur deux essieux.
+ *
+ * Elle n'a pas d'outil : une remorque ne travaille pas la terre, elle porte.
+ * D'où l'absence de rôle `tool`, et des ridelles qui se lisent de loin.
+ */
+function buildTrailer(): Blueprint {
+  const root = new Part();
+  const WHEEL_R = 0.16;
+  const CX = -0.62;
+
+  root.add("rim", roundedBox(0.44, 0.07, 0.08, 0.02, [-0.2, 0.24, 0], [0, 0, -0.36]));
+  root.add("chrome", ring(0.042, 0.012, 12, Math.PI * 2, [0.01, 0.16, 0], [HALF, 0, 0]));
+  root.add("steel", cyl(0.018, 0.018, 0.16, 8, [-0.13, 0.16, 0.07]));
+
+  /* — Châssis ————————————————————————————————— */
+  root.add(
+    "rim",
+    roundedBox(0.98, 0.08, 0.1, 0.02, [CX, 0.3, 0.22]),
+    roundedBox(0.98, 0.08, 0.1, 0.02, [CX, 0.3, -0.22]),
+  );
+
+  /* — Benne : plancher et quatre ridelles ————————————————— */
+  root.add("paint", roundedBox(1.0, 0.05, 0.56, 0.015, [CX, 0.37, 0]));
+  root.add(
+    "paint",
+    roundedBox(1.0, 0.22, 0.045, 0.015, [CX, 0.5, 0.27]),
+    roundedBox(1.0, 0.22, 0.045, 0.015, [CX, 0.5, -0.27]),
+    roundedBox(0.045, 0.22, 0.56, 0.015, [CX - 0.5, 0.5, 0]),
+    roundedBox(0.045, 0.22, 0.56, 0.015, [CX + 0.5, 0.5, 0]),
+  );
+  // Montants : sans eux les ridelles ressemblent à du carton.
+  for (const x of [CX - 0.28, CX, CX + 0.28]) {
+    root.add("paintDark",
+      roundedBox(0.035, 0.24, 0.05, 0.01, [x, 0.5, 0.28]),
+      roundedBox(0.035, 0.24, 0.05, 0.01, [x, 0.5, -0.28]));
+  }
+
+  /* — Deux essieux ——————————————————————————————— */
+  for (const x of [CX - 0.2, CX + 0.2]) {
+    for (const z of [0.29, -0.29]) {
+      root
+        .child([x, WHEEL_R, z], { role: "wheel", radius: WHEEL_R })
+        .attach(wheelPart(WHEEL_R, 0.11, 10));
+    }
+  }
+
+  return { root, length: 1.35, hitch: [-1.2, 0.3, 0], eye: [0.01, 0.16, 0] };
+}
+
 const BUILDERS: Record<MachineType, () => Blueprint> = {
   TRACTOR: buildTractor,
   HARVESTER: buildHarvester,
+  FORAGE_HARVESTER: buildForageHarvester,
+  PLOUGH: buildPlough,
+  SEEDER: buildSeeder,
   SPREADER: buildSpreader,
   DISC_HARROW: buildDiscHarrow,
+  MOWER: buildMower,
   BALER: buildBaler,
-  FORAGE_HARVESTER: buildForageHarvester,
+  TRAILER: buildTrailer,
 };
 
 const blueprints = new Map<MachineType, Blueprint>();
@@ -1055,7 +1296,15 @@ function blueprint(type: MachineType): Blueprint {
  * l'atelier l'affichait plantée seule au milieu du pré, et rien ne l'attelait
  * derrière un tracteur au champ.
  */
-const TOWED: MachineType[] = ["SPREADER", "DISC_HARROW", "BALER"];
+const TOWED: MachineType[] = [
+  "PLOUGH",
+  "SEEDER",
+  "SPREADER",
+  "DISC_HARROW",
+  "MOWER",
+  "BALER",
+  "TRAILER",
+];
 
 export function isTowedImplement(type: MachineType): boolean {
   return TOWED.includes(type);

@@ -1,4 +1,4 @@
-import { DRYING, MACHINE_DEFS, contractorQuote, missionPayout, urgentContractorQuote, CROP_DEFS, MISSION_OPEN_MAX, clampMissionCells, repairHalfwayTarget, laborEscrow, parseAppearance, defaultAppearance, SKIN_TONES, HATS, jobHours } from "@farmsim/shared";
+import { DRYING, MACHINE_DEFS, contractorQuote, missionPayout, urgentContractorQuote, CROP_DEFS, MISSION_OPEN_MAX, clampMissionCells, repairHalfwayTarget, laborEscrow, parseAppearance, defaultAppearance, SKIN_TONES, HATS, jobHours, machineHoursPerHectare, machineLifeHours } from "@farmsim/shared";
 import {
   simulateCell,
   tickMarket,
@@ -141,8 +141,8 @@ describe("machines", () => {
     const def = MACHINE_DEFS.HARVESTER;
     const r = applyMachineWear({
       condition: 100,
-      hours: jobHours(def.hoursPerHectare, 12 * 12),
-      lifeHours: def.lifeHours,
+      hours: jobHours(machineHoursPerHectare("HARVESTER"), 12 * 12),
+      lifeHours: machineLifeHours("HARVESTER"),
     });
     expect(r.condition).toBeGreaterThan(def.minCondition);
     expect(def.repairCostPerPoint * 100).toBeLessThanOrEqual(def.cost * 0.25);

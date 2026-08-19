@@ -20,6 +20,8 @@ import {
   MACHINE_DEFS,
   MARKET_BOUNDS,
   jobHours,
+  machineHoursPerHectare,
+  machineLifeHours,
   conditionYieldFactor,
 } from "@farmsim/shared";
 
@@ -76,8 +78,8 @@ describe("ce que ça change sur une vraie moissonneuse", () => {
     for (let i = 0; i < n; i++) {
       c = applyMachineWear({
         condition: c,
-        hours: jobHours(def.hoursPerHectare, CASES),
-        lifeHours: def.lifeHours,
+        hours: jobHours(machineHoursPerHectare("HARVESTER"), CASES),
+        lifeHours: machineLifeHours("HARVESTER"),
         careMult: careWearMultiplier({ grease: 100, dirt: 0 }),
       }).condition;
     }
@@ -104,13 +106,19 @@ describe("ce que ça change sur une vraie moissonneuse", () => {
      * saison : plusieurs parcelles avant que l'usure ne se voie, la révision
      * quand elle se voit. Voir `wear-cadence.test.ts` pour le détail.
      */
-    // Mesuré : 0,7 point par parcelle bien tenue, contre 46 au départ. La
-    // moissonneuse reste l'engin le plus gourmand du parc, mais il lui faut
-    // des dizaines de champs pour seulement sortir du plein régime.
+    /*
+     * Mesuré : 1,16 point par parcelle bien tenue, contre 46 au départ.
+     *
+     * Le chiffre a bougé une seconde fois en devenant plus juste : les heures
+     * par hectare ne sont plus écrites à la main mais déduites de la largeur
+     * de coupe et de la vitesse d'avancement. Une moissonneuse de 4,20 m à
+     * 6 km/h met sept heures pour quatorze hectares — c'est un chantier réel,
+     * pas un nombre choisi.
+     */
     expect(conditionYieldFactor(apresChamps(1))).toBe(1);
-    expect(apresChamps(20)).toBeGreaterThan(CONDITION_FULL_POWER);
-    expect(apresChamps(40)).toBeLessThan(CONDITION_FULL_POWER);
-    expect(apresChamps(100)).toBeGreaterThan(def.minCondition);
+    expect(apresChamps(15)).toBeGreaterThan(CONDITION_FULL_POWER);
+    expect(apresChamps(20)).toBeLessThan(CONDITION_FULL_POWER);
+    expect(apresChamps(60)).toBeGreaterThan(def.minCondition);
   });
 
   it("rend la révision rentable une fois l'engin réellement usé", () => {

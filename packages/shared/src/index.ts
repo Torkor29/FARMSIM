@@ -140,10 +140,17 @@ export const SPECIALIZATION_SHORT: Record<Specialization, string> = {
 export const MACHINE_ART: Record<MachineType, string> = {
   TRACTOR: "/assets/vehicles/tractor.webp",
   HARVESTER: "/assets/vehicles/harvester.webp",
+  FORAGE_HARVESTER: "/assets/vehicles/harvester.webp",
   SPREADER: "/assets/vehicles/spreader.webp",
   DISC_HARROW: "/assets/vehicles/harrow.webp",
+  // Les quatre outils nouveaux partagent les vignettes existantes : une
+  // illustration approximative vaut mieux qu'une case vide, et le rendu 3D
+  // du garage montre de toute façon le vrai engin.
+  PLOUGH: "/assets/vehicles/harrow.webp",
+  SEEDER: "/assets/vehicles/spreader.webp",
+  MOWER: "/assets/vehicles/harrow.webp",
   BALER: "/assets/vehicles/harrow.webp",
-  FORAGE_HARVESTER: "/assets/vehicles/harvester.webp",
+  TRAILER: "/assets/vehicles/spreader.webp",
 };
 
 /** Bonus spé max ≤ +10 % — valeurs de départ faibles `[GD]` */
@@ -780,20 +787,99 @@ export function conditionPerHour(lifeHours: number): number {
 }
 
 
-export type MachineType = "TRACTOR" | "HARVESTER" | "SPREADER" | "DISC_HARROW" | "BALER" | "FORAGE_HARVESTER";
+export type MachineType =
+  | "TRACTOR"
+  | "HARVESTER"
+  | "FORAGE_HARVESTER"
+  | "PLOUGH"
+  | "SEEDER"
+  | "SPREADER"
+  | "DISC_HARROW"
+  | "MOWER"
+  | "BALER"
+  | "TRAILER";
+
+/**
+ * Porteur, outil, automoteur `[GD]`.
+ *
+ * C'est la structure qui définit le genre, et elle manquait : un seul
+ * « Tracteur T1 » semait, labourait, fertilisait, fauchait et ramassait les
+ * bottes. Acheter un tracteur débloquait cinq travaux d'un coup, et il ne
+ * restait ensuite plus rien à convoiter — la documentation du projet le dit
+ * pourtant elle-même, *le matériel est la vraie progression, pas un niveau
+ * RPG*.
+ *
+ * Un tracteur n'est désormais que de la **puissance**. C'est l'outil attelé
+ * qui fait le travail, et il faut assez de chevaux pour le tirer. La
+ * moissonneuse et l'ensileuse restent des automoteurs : elles se suffisent.
+ */
+export type MachineKind = "TRACTOR" | "IMPLEMENT" | "SELF_PROPELLED";
+
+/**
+ * Rendement de chantier `[RÉEL]`.
+ *
+ * Aucun engin ne travaille à sa largeur théorique : demi-tours en bout de
+ * champ, recouvrements, remplissages. Quatre-vingts pour cent est l'ordre de
+ * grandeur retenu partout en machinisme agricole.
+ */
+export const FIELD_EFFICIENCY = 0.8;
+
+/**
+ * Heures par hectare, déduites de la largeur et de la vitesse `[RÉEL]`.
+ *
+ * C'est la formule du machinisme, pas une invention : un outil de `l` mètres
+ * avançant à `v` km/h couvre `l × v / 10` hectares à l'heure, dont on ne garde
+ * que le rendement de chantier.
+ *
+ * Elle remplace un `hoursPerHectare` écrit à la main pour chaque engin. Ce
+ * n'est pas qu'une question d'élégance : c'est ce qui donne un sens aux
+ * paliers. Un outil plus large ne récolte pas *mieux*, il récolte plus
+ * **vite** — et le temps gagné est ce qui permet de rattraper la fenêtre de
+ * récolte.
+ */
+export function hoursPerHectare(widthM: number, speedKmh: number): number {
+  const haParHeure = (Math.max(0.1, widthM) * Math.max(1, speedKmh) * FIELD_EFFICIENCY) / 10;
+  return Math.round((1 / haParHeure) * 1000) / 1000;
+}
+
+export type Tier = 1 | 2 | 3;
+export const MACHINE_TIERS: readonly Tier[] = [1, 2, 3];
+
+/**
+ * Ce qu'un palier change `[GD]`.
+ *
+ * Le palier est un **modificateur**, pas un nouveau type de machine. Les six
+ * engins portaient tous `tier: 1` et la colonne existait déjà sans servir à
+ * rien ; trois tailles par famille valent mieux que trois catalogues, autant
+ * pour l'équilibrage que pour le rendu 3D — un modèle par famille, mis à
+ * l'échelle.
+ *
+ * La puissance requise monte avec la largeur, et c'est la boucle de
+ * progression : une charrue plus large ne se tire pas avec le tracteur d'hier.
+ */
+export const TIER_SCALE: Record<Tier, { width: number; power: number; cost: number; life: number }> = {
+  1: { width: 1, power: 1, cost: 1, life: 1 },
+  2: { width: 1.6, power: 1.45, cost: 2.3, life: 1.25 },
+  3: { width: 2.4, power: 2, cost: 4.5, life: 1.5 },
+};
+
+export const TIER_LABELS: Record<Tier, string> = { 1: "T1", 2: "T2", 3: "T3" };
 
 export type MachineDef = {
   type: MachineType;
+  kind: MachineKind;
   name: string;
+  /** Prix du palier 1 ; les suivants en dérivent. */
   cost: number;
-  tier: number;
-  /** Heures au compteur par hectare travaillé — ordre de grandeur réel */
-  hoursPerHectare: number;
-  /**
-   * Heures de travail pour user 100 points de condition, au soin neutre.
-   * C'est la durée entre deux remises à neuf, pas la durée de vie de l'engin :
-   * un tracteur enchaîne plusieurs révisions avant de finir à la casse.
-   */
+  /** Chevaux disponibles (porteur, automoteur) au palier 1 */
+  powerHp?: number;
+  /** Chevaux nécessaires pour le tirer (outil) au palier 1 */
+  requiredHp?: number;
+  /** Largeur de travail en mètres, palier 1 */
+  widthM: number;
+  /** Vitesse de travail en km/h — propre à l'engin, elle ne change pas avec le palier */
+  speedKmh: number;
+  /** Heures de travail pour user 100 points de condition, au soin neutre */
   lifeHours: number;
   /** Coût TRN pour +1 point de condition */
   repairCostPerPoint: number;
@@ -809,54 +895,107 @@ export type MachineDef = {
 export const MACHINE_DEFS: Record<MachineType, MachineDef> = {
   TRACTOR: {
     type: "TRACTOR",
-    name: "Tracteur T1",
+    kind: "TRACTOR",
+    name: "Tracteur",
     cost: 2800,
-    tier: 1,
-    // 4,9 h pour un champ de 14 ha : un semis réel, à la louche. 700 h entre
-    // deux révisions, soit environ 140 champs — un tracteur, ça dure.
-    hoursPerHectare: 0.35,
+    powerHp: 90,
+    // Un tracteur seul ne travaille pas : il tire. Sa largeur est celle de
+    // l'outil qu'il porte, d'où zéro ici et aucun travail à son nom.
+    widthM: 0,
+    speedKmh: 10,
     lifeHours: 700,
-    // Révision complète ≈ 20 % de l'achat (560 TRN).
     repairCostPerPoint: 6,
     minCondition: 15,
-    description: "Semis, travaux de base et fauche de l’herbe. Ramasse aussi les bottes.",
-    works: ["PLANT", "PLOW", "FERTILIZE", "MOW", "COLLECT"],
+    description: "Ne travaille pas seul : il tire les outils. Sa puissance décide de ce qu’il peut atteler.",
+    works: [],
     isoColor: "green",
   },
   HARVESTER: {
     type: "HARVESTER",
-    name: "Moissonneuse T1",
+    kind: "SELF_PROPELLED",
+    name: "Moissonneuse",
     cost: 4000,
-    tier: 1,
-    // Une moissonneuse travaille moins d'heures par an qu'un tracteur, et les
-    // use plus vite : 480 h entre deux révisions, ~115 champs moissonnés.
-    hoursPerHectare: 0.3,
+    powerHp: 200,
+    widthM: 4.2,
+    speedKmh: 6,
     lifeHours: 480,
     repairCostPerPoint: 8,
     minCondition: 15,
-    description: "Récolte céréales.",
+    description: "Automoteur : récolte les céréales sans tracteur.",
     works: ["HARVEST"],
     isoColor: "red-gold",
   },
+  FORAGE_HARVESTER: {
+    type: "FORAGE_HARVESTER",
+    kind: "SELF_PROPELLED",
+    name: "Ensileuse",
+    cost: 4200,
+    powerHp: 260,
+    widthM: 3,
+    speedKmh: 8,
+    lifeHours: 450,
+    repairCostPerPoint: 9,
+    minCondition: 15,
+    description: "Automoteur : récolte le maïs plante entière, plus tôt, plus de tonnage.",
+    works: ["SILAGE"],
+    isoColor: "red-gold",
+  },
+  PLOUGH: {
+    type: "PLOUGH",
+    kind: "IMPLEMENT",
+    // Le travail le plus lent du parc, et c'est exact : une charrue est étroite
+    // et tire lourd. C'est ce qui fait de son palier l'achat qui se sent le plus.
+    name: "Charrue",
+    cost: 1400,
+    requiredHp: 90,
+    widthM: 2,
+    speedKmh: 8,
+    lifeHours: 850,
+    repairCostPerPoint: 4,
+    minCondition: 15,
+    description: "Retourne la terre en profondeur : remet le sol à neuf, efface les résidus.",
+    works: ["PLOW"],
+    isoColor: "amber",
+  },
+  SEEDER: {
+    type: "SEEDER",
+    kind: "IMPLEMENT",
+    name: "Semoir",
+    cost: 1900,
+    requiredHp: 70,
+    widthM: 4,
+    speedKmh: 10,
+    lifeHours: 800,
+    repairCostPerPoint: 4,
+    minCondition: 15,
+    description: "Met la graine en terre. Sans lui, le tracteur ne sème rien.",
+    works: ["PLANT"],
+    isoColor: "amber",
+  },
   SPREADER: {
     type: "SPREADER",
-    name: "Épandeur T1",
+    kind: "IMPLEMENT",
+    name: "Épandeur",
     cost: 1500,
-    tier: 1,
-    hoursPerHectare: 0.15,
+    requiredHp: 50,
+    // Douze mètres de nappe : l'outil le plus rapide du parc, ce qui est vrai.
+    widthM: 12,
+    speedKmh: 12,
     lifeHours: 800,
     repairCostPerPoint: 3,
     minCondition: 15,
-    description: "Fertilisation plus efficace (−usure vs tracteur).",
+    description: "Épand l’engrais et le fumier sur une large nappe.",
     works: ["FERTILIZE"],
     isoColor: "amber",
   },
   DISC_HARROW: {
     type: "DISC_HARROW",
+    kind: "IMPLEMENT",
     name: "Déchaumeur à disques",
     cost: 1600,
-    tier: 1,
-    hoursPerHectare: 0.2,
+    requiredHp: 80,
+    widthM: 3,
+    speedKmh: 11,
     lifeHours: 900,
     repairCostPerPoint: 4,
     minCondition: 15,
@@ -865,12 +1004,29 @@ export const MACHINE_DEFS: Record<MachineType, MachineDef> = {
     works: ["STUBBLE"],
     isoColor: "amber",
   },
+  MOWER: {
+    type: "MOWER",
+    kind: "IMPLEMENT",
+    name: "Faucheuse",
+    cost: 1200,
+    requiredHp: 60,
+    widthM: 3,
+    speedKmh: 12,
+    lifeHours: 800,
+    repairCostPerPoint: 3,
+    minCondition: 15,
+    description: "Fauche l’herbe et la met en andain.",
+    works: ["MOW"],
+    isoColor: "amber",
+  },
   BALER: {
     type: "BALER",
+    kind: "IMPLEMENT",
     name: "Presse à balles",
     cost: 1800,
-    tier: 1,
-    hoursPerHectare: 0.28,
+    requiredHp: 70,
+    widthM: 2.2,
+    speedKmh: 9,
     lifeHours: 750,
     repairCostPerPoint: 5,
     minCondition: 15,
@@ -878,20 +1034,75 @@ export const MACHINE_DEFS: Record<MachineType, MachineDef> = {
     works: ["BALE"],
     isoColor: "amber",
   },
-  FORAGE_HARVESTER: {
-    type: "FORAGE_HARVESTER",
-    name: "Ensileuse T1",
-    cost: 4200,
-    tier: 1,
-    hoursPerHectare: 0.35,
-    lifeHours: 450,
-    repairCostPerPoint: 9,
-    minCondition: 15,
-    description: "Récolte le maïs plante entière, plus tôt, plus de tonnage.",
-    works: ["SILAGE"],
-    isoColor: "red-gold",
+  TRAILER: {
+    type: "TRAILER",
+    kind: "IMPLEMENT",
+    name: "Remorque",
+    cost: 900,
+    requiredHp: 60,
+    widthM: 2.5,
+    speedKmh: 14,
+    lifeHours: 1100,
+    repairCostPerPoint: 2,
+    minCondition: 10,
+    description: "Ramasse les bottes au champ et les rentre.",
+    works: ["COLLECT"],
+    isoColor: "amber",
   },
 };
+
+/* ------------------------------------------------------------------ */
+/* Ce qu'un engin vaut à son palier                                    */
+/* ------------------------------------------------------------------ */
+
+/** Largeur de travail effective, palier compris. */
+export function machineWidth(type: MachineType, tier: Tier = 1): number {
+  return Math.round(MACHINE_DEFS[type].widthM * TIER_SCALE[tier].width * 100) / 100;
+}
+
+/** Chevaux disponibles, palier compris. `0` pour un outil. */
+export function machinePower(type: MachineType, tier: Tier = 1): number {
+  return Math.round((MACHINE_DEFS[type].powerHp ?? 0) * TIER_SCALE[tier].power);
+}
+
+/** Chevaux exigés pour tirer cet outil, palier compris. `0` pour un porteur. */
+export function machineRequiredHp(type: MachineType, tier: Tier = 1): number {
+  return Math.round((MACHINE_DEFS[type].requiredHp ?? 0) * TIER_SCALE[tier].power);
+}
+
+/** Prix catalogue au palier demandé. */
+export function machineCost(type: MachineType, tier: Tier = 1): number {
+  return Math.round(MACHINE_DEFS[type].cost * TIER_SCALE[tier].cost);
+}
+
+/** Heures entre deux révisions, palier compris — un gros engin dure plus longtemps. */
+export function machineLifeHours(type: MachineType, tier: Tier = 1): number {
+  return Math.round(MACHINE_DEFS[type].lifeHours * TIER_SCALE[tier].life);
+}
+
+/** Heures par hectare de cet engin, à ce palier. */
+export function machineHoursPerHectare(type: MachineType, tier: Tier = 1): number {
+  const def = MACHINE_DEFS[type];
+  if (def.kind === "TRACTOR") return 0;
+  return hoursPerHectare(machineWidth(type, tier), def.speedKmh);
+}
+
+/** Un tracteur peut-il tirer cet outil ? */
+export function canPull(
+  tractor: { type: MachineType; tier: Tier },
+  implement: { type: MachineType; tier: Tier },
+): boolean {
+  return machinePower(tractor.type, tractor.tier) >= machineRequiredHp(implement.type, implement.tier);
+}
+
+export function isTier(v: number): v is Tier {
+  return v === 1 || v === 2 || v === 3;
+}
+
+/** Palier lu depuis la base, borné : une valeur aberrante ne doit rien casser. */
+export function asTier(v: number | null | undefined): Tier {
+  return isTier(v ?? 1) ? ((v ?? 1) as Tier) : 1;
+}
 
 /** Moitié du chemin vers le neuf : 0 % → 50 %, 40 % → 70 %. */
 export function repairHalfwayTarget(condition: number): number {
@@ -970,10 +1181,13 @@ export function machineAgeFactor(hours: number): number {
  */
 export function machineResaleValue(
   type: MachineType,
-  state: number | { condition: number; hours?: number },
+  state: number | { condition: number; hours?: number; tier?: number },
 ): number {
   const condition = typeof state === "number" ? state : state.condition;
   const hours = typeof state === "number" ? 0 : (state.hours ?? 0);
+  // Le palier fait le prix d'abord : un tracteur T3 neuf ne se revend pas au
+  // prix d'un T1 neuf. On part donc du prix catalogue de son palier.
+  const tier = typeof state === "number" ? 1 : asTier(state.tier);
   const etat = Math.max(0, Math.min(100, condition)) / 100;
   /* La condition pèse peu, et c'est voulu — un test l'a imposé.
      À 0,55 de poids, réviser un tracteur coûtait 510 TRN et en ajoutait 720 à
@@ -984,17 +1198,14 @@ export function machineResaleValue(
      pas décoter beaucoup, puisque l'acheteur peut le réparer. Ce qui ne se
      rattrape pas — les heures — doit dominer. */
   return Math.round(
-    MACHINE_DEFS[type].cost *
-      MACHINE_RESALE_RATE *
-      machineAgeFactor(hours) *
-      (0.7 + etat * 0.3),
+    machineCost(type, tier) * MACHINE_RESALE_RATE * machineAgeFactor(hours) * (0.7 + etat * 0.3),
   );
 }
 
 /** Ce que le concessionnaire propose, tout de suite et sans négocier. */
 export function machineDealerValue(
   type: MachineType,
-  state: number | { condition: number; hours?: number },
+  state: number | { condition: number; hours?: number; tier?: number },
 ): number {
   return Math.round(machineResaleValue(type, state) * MACHINE_DEALER_RATE);
 }

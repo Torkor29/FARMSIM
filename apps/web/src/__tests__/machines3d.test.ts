@@ -83,6 +83,15 @@ describe("pièces animées", () => {
     // rabat par son rabatteur : même rôle, même entraînement à la distance.
     BALER: ["wheel", "reel", "beacon"],
     FORAGE_HARVESTER: ["wheel", "steer", "reel", "beacon", "exhaust"],
+    // Les corps de charrue descendent et se relèvent : c'est le geste qui la
+    // distingue d'une poutre traînée.
+    PLOUGH: ["wheel", "tool"],
+    SEEDER: ["wheel", "tool"],
+    // Les disques d'un lamier tournent à la prise de force, comme les
+    // assiettes d'un épandeur — même rôle, même entraînement au régime.
+    MOWER: ["wheel", "tool", "spinner"],
+    // Une remorque ne travaille pas la terre : elle porte. Pas de rôle `tool`.
+    TRAILER: ["wheel"],
   };
 
   for (const type of TYPES) {

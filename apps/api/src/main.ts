@@ -234,6 +234,16 @@ import {
   currentSeason,
   canSowInSeason,
   GAME_DAY_MS,
+  asTier,
+  machinePower,
+  machineRequiredHp,
+  machineWidth,
+  machineLifeHours,
+  machineHoursPerHectare,
+  machineCost,
+  TIER_LABELS,
+  type MachineDef,
+  type Tier,
   seasonProgress,
   gameDayIndex,
   weatherForDay,
@@ -467,9 +477,21 @@ function farmInclude() {
   } as const;
 }
 
+/**
+ * Le parc minimum d'une ferme neuve.
+ *
+ * Depuis la séparation porteur / outil, un tracteur ne sème ni ne laboure. La
+ * liste vit ici pour que l'inscription et la reprise de parcelle ne puissent
+ * pas diverger — deux endroits créent une ferme, et l'un des deux finirait
+ * par oublier un outil.
+ */
+const STARTER_MACHINES: MachineType[] = ["TRACTOR", "SEEDER", "PLOUGH"];
+
 type FarmMachine = {
   id: string;
   type: string;
+  /** Palier de l'engin — la colonne existait sans jamais servir. */
+  tier?: number;
   condition: number;
   /** Compteur horaire. Absent sur les bases d'avant la migration. */
   hours?: number;
@@ -514,78 +536,106 @@ function careOf(m: FarmMachine): MachineCareState {
   };
 }
 
+/**
+ * Un attelage prêt à travailler : l'outil, et le tracteur qui le tire.
+ *
+ * `tractor` est nul pour un automoteur — moissonneuse, ensileuse — qui se
+ * suffit à lui-même.
+ */
+type Rig = {
+  machine: FarmMachine;
+  def: MachineDef;
+  tier: Tier;
+  tractor: FarmMachine | null;
+};
+
+function tierOf(m: FarmMachine): Tier {
+  return asTier(m.tier);
+}
+
+/**
+ * Pourquoi ce travail ne peut pas se faire.
+ *
+ * Trois causes possibles depuis la séparation porteur / outil, et le joueur
+ * doit savoir laquelle : il n'a pas l'outil, il ne l'a pas en état, ou il n'a
+ * pas de tracteur assez puissant pour le tirer. Un message unique le
+ * laisserait acheter le mauvais engin.
+ */
 function explainNoMachine(machines: FarmMachine[], work: FarmWork): string {
-  const capable = machines.filter((m) => {
-    const def = MACHINE_DEFS[m.type as MachineType];
-    return Boolean(def?.works.includes(work));
-  });
-  if (!capable.length) {
-    if (work === "HARVEST") {
-      return "Moissonneuse requise (condition trop basse ou absente) — achetez / réparez.";
-    }
-    if (work === "MOW") {
-      return "Tracteur requis pour faucher l’herbe (condition trop basse ou absent) — achetez / réparez.";
-    }
-    if (work === "SILAGE") {
-      return "Ensileuse requise (condition trop basse ou absente) — achetez / réparez.";
-    }
-    if (work === "BALE") {
-      return "Presse à balles requise (condition trop basse ou absente) — achetez / réparez.";
-    }
-    if (work === "COLLECT") {
-      return "Tracteur requis pour ramasser les bottes — achetez / réparez.";
-    }
-    if (work === "STUBBLE") {
-      return "Déchaumeur requis (condition trop basse ou absent) — achetez / réparez.";
-    }
-    if (work === "FERTILIZE") {
-      return "Tracteur ou épandeur requis (condition OK) pour fertiliser.";
-    }
-    return "Tracteur requis (condition trop basse ou absent) — achetez / réparez.";
+  const outils = (Object.keys(MACHINE_DEFS) as MachineType[]).filter((t) =>
+    MACHINE_DEFS[t].works.includes(work),
+  );
+  const possedes = machines.filter((m) => outils.includes(m.type as MachineType));
+  if (!possedes.length) {
+    const noms = outils.map((t) => MACHINE_DEFS[t].name).join(" ou ");
+    return `${noms} requis pour ce travail — passez au garage.`;
   }
-  for (const m of capable) {
+  for (const m of possedes) {
     const def = MACHINE_DEFS[m.type as MachineType];
-    if (!def) continue;
     const block = machineWorkBlock(careOf(m), def.minCondition);
-    if (block) return block.message;
+    if (block) return `${def.name} : ${block.message}`;
+  }
+  // L'outil est là et en état : il manque donc de quoi le tirer.
+  const manquant = possedes[0]!;
+  const def = MACHINE_DEFS[manquant.type as MachineType];
+  if (def.kind === "IMPLEMENT") {
+    const ch = machineRequiredHp(def.type, tierOf(manquant));
+    const meilleur = machines
+      .filter((m) => MACHINE_DEFS[m.type as MachineType]?.kind === "TRACTOR")
+      .reduce((max, m) => Math.max(max, machinePower(m.type as MachineType, tierOf(m))), 0);
+    return meilleur === 0
+      ? `${def.name} prêt, mais aucun tracteur pour le tirer (${ch} ch nécessaires).`
+      : `${def.name} demande ${ch} ch — votre meilleur tracteur en donne ${meilleur}.`;
   }
   return "Aucune machine en état pour ce travail — achetez / réparez.";
 }
 
-/** Choisit une machine capable du travail, condition OK, pas en panne. */
-function pickMachineForWork(
-  machines: FarmMachine[],
-  work: FarmWork,
-): { machine: FarmMachine; def: (typeof MACHINE_DEFS)[MachineType] } | null {
-  const candidates = machines
-    .map((m) => {
-      const def = MACHINE_DEFS[m.type as MachineType];
-      if (!def || !def.works.includes(work)) return null;
-      if (machineWorkBlock(careOf(m), def.minCondition)) return null;
-      return { machine: m, def };
-    })
-    .filter(Boolean) as { machine: FarmMachine; def: (typeof MACHINE_DEFS)[MachineType] }[];
+/**
+ * Choisit l'attelage qui fera le travail.
+ *
+ * Le jeu attelle **tout seul**, et c'est un choix de conception : la décision
+ * intéressante est de savoir quel matériel posséder, pas lequel accrocher
+ * derrière quoi avant chaque passage. Atteler à la main n'ajouterait que des
+ * clics.
+ *
+ * À matériel égal on prend le plus large — c'est le plus rapide — puis le
+ * mieux entretenu.
+ */
+function pickMachineForWork(machines: FarmMachine[], work: FarmWork): Rig | null {
+  const tracteurs = machines
+    .filter((m) => MACHINE_DEFS[m.type as MachineType]?.kind === "TRACTOR")
+    .filter((m) => !machineWorkBlock(careOf(m), MACHINE_DEFS[m.type as MachineType].minCondition))
+    .sort(
+      (a, b) =>
+        machinePower(b.type as MachineType, tierOf(b)) -
+        machinePower(a.type as MachineType, tierOf(a)),
+    );
 
-  if (!candidates.length) return null;
-  candidates.sort((a, b) => {
-    if (work === "FERTILIZE") {
-      const ap = a.def.type === "SPREADER" ? 1 : 0;
-      const bp = b.def.type === "SPREADER" ? 1 : 0;
-      if (ap !== bp) return bp - ap;
+  const candidats: Rig[] = [];
+  for (const m of machines) {
+    const def = MACHINE_DEFS[m.type as MachineType];
+    if (!def || !def.works.includes(work)) continue;
+    if (machineWorkBlock(careOf(m), def.minCondition)) continue;
+    const tier = tierOf(m);
+    if (def.kind === "IMPLEMENT") {
+      const besoin = machineRequiredHp(def.type, tier);
+      const porteur = tracteurs.find(
+        (t) => machinePower(t.type as MachineType, tierOf(t)) >= besoin,
+      );
+      if (!porteur) continue;
+      candidats.push({ machine: m, def, tier, tractor: porteur });
+    } else {
+      candidats.push({ machine: m, def, tier, tractor: null });
     }
-    if (work === "BALE") {
-      const ap = a.def.type === "BALER" ? 1 : 0;
-      const bp = b.def.type === "BALER" ? 1 : 0;
-      if (ap !== bp) return bp - ap;
-    }
-    if (work === "SILAGE") {
-      const ap = a.def.type === "FORAGE_HARVESTER" ? 1 : 0;
-      const bp = b.def.type === "FORAGE_HARVESTER" ? 1 : 0;
-      if (ap !== bp) return bp - ap;
-    }
+  }
+  if (!candidats.length) return null;
+  candidats.sort((a, b) => {
+    const la = machineWidth(a.def.type, a.tier);
+    const lb = machineWidth(b.def.type, b.tier);
+    if (la !== lb) return lb - la;
     return b.machine.condition - a.machine.condition;
   });
-  return candidates[0];
+  return candidats[0]!;
 }
 
 type CellXY = { x: number; y: number };
@@ -789,51 +839,64 @@ async function applyWearToMachine(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   tx: any,
   opts: {
-    machine: FarmMachine;
-    def: (typeof MACHINE_DEFS)[MachineType];
+    rig: Rig;
     cells: number;
     work: FarmWork;
     specialization?: string;
   },
 ) {
-  const care = careOf(opts.machine);
-  // Le compteur avance du temps réellement passé au champ ; il ne recule
-  // jamais, pas même après une révision. C'est lui qui vieillit l'engin.
-  const heures = jobHours(opts.def.hoursPerHectare, opts.cells);
-  const wear = applyMachineWear({
-    condition: opts.machine.condition,
-    hours: heures,
-    lifeHours: opts.def.lifeHours,
-    inShed: Boolean(opts.machine.storedInBuildingId),
-    careMult: careWearMultiplier({ grease: care.grease, dirt: care.dirt }),
-  });
-  const after = applyJobCare(
-    { ...care, condition: wear.condition },
-    { work: opts.work, cells: opts.cells },
-  );
-  const compteur = Math.round(((opts.machine.hours ?? 0) + heures) * 100) / 100;
-  await tx.machine.update({
-    where: { id: opts.machine.id },
-    data: {
-      condition: after.next.condition,
-      hours: compteur,
-      greased: after.next.greased,
-      grease: after.next.grease ?? (after.next.greased ? GREASE_FULL : 0),
-      dirt: after.next.dirt,
-      greaseSkipStreak: after.next.greaseSkipStreak,
-      breakdown: after.next.breakdown,
-    },
-  });
+  const { machine, def, tier, tractor } = opts.rig;
+  /* Les heures du chantier viennent de l'outil : c'est sa largeur qui décide
+     du temps passé. Le tracteur en prend autant — il a tiré pendant tout ce
+     temps-là — ce qui fait de lui la machine au compteur le plus chargé de la
+     ferme, exactement comme sur une vraie exploitation. */
+  const heures = jobHours(machineHoursPerHectare(def.type, tier), opts.cells);
+
+  async function user(m: FarmMachine, t: MachineType, ti: Tier) {
+    const care = careOf(m);
+    const wear = applyMachineWear({
+      condition: m.condition,
+      hours: heures,
+      lifeHours: machineLifeHours(t, ti),
+      inShed: Boolean(m.storedInBuildingId),
+      careMult: careWearMultiplier({ grease: care.grease, dirt: care.dirt }),
+    });
+    // Les deux pièces traversent le même champ : elles se salissent pareil,
+    // et chacune a sa jauge et son nettoyage. Posséder plus de matériel coûte
+    // plus d'entretien — c'est le prix d'un parc, pas un oubli.
+    const after = applyJobCare({ ...care, condition: wear.condition }, {
+      work: opts.work,
+      cells: opts.cells,
+    });
+    const compteur = Math.round(((m.hours ?? 0) + heures) * 100) / 100;
+    await tx.machine.update({
+      where: { id: m.id },
+      data: {
+        condition: after.next.condition,
+        hours: compteur,
+        greased: after.next.greased,
+        grease: after.next.grease ?? (after.next.greased ? GREASE_FULL : 0),
+        dirt: after.next.dirt,
+        greaseSkipStreak: after.next.greaseSkipStreak,
+        breakdown: after.next.breakdown,
+      },
+    });
+    return { wear, after, compteur };
+  }
+
+  const outil = await user(machine, def.type, tier);
+  if (tractor) await user(tractor, tractor.type as MachineType, tierOf(tractor));
+
   return {
-    ...wear,
+    ...outil.wear,
     hoursWorked: heures,
-    hours: compteur,
-    condition: after.next.condition,
-    breakdown: after.next.breakdown,
-    dirt: after.next.dirt,
-    greased: after.next.greased,
-    grease: after.next.grease,
-    broke: after.broke,
+    hours: outil.compteur,
+    condition: outil.after.next.condition,
+    breakdown: outil.after.next.breakdown,
+    dirt: outil.after.next.dirt,
+    greased: outil.after.next.greased,
+    grease: outil.after.next.grease,
+    broke: outil.after.broke,
   };
 }
 
@@ -1041,7 +1104,13 @@ async function getFarmBonuses(farmId: string) {
   let yieldBonus = 0;
   let storageGrain = 0;
   let storageHay = 5;
-  let machineSlots = 2;
+  /* Places sans hangar. Deux suffisaient quand un seul tracteur faisait tout ;
+     depuis la séparation porteur / outil, le parc minimum d'une ferme qui
+     tourne en compte trois — tracteur, semoir, charrue — et la ferme neuve
+     dépassait donc son plafond dès l'inscription. Cinq laissent la place
+     d'ajouter un déchaumeur et un outil de son choix avant que le hangar
+     matériel devienne le prochain achat. */
+  let machineSlots = 5;
   let cattleSlots = 0;
   let pigSlots = 0;
   let repairDiscount = 0;
@@ -1979,9 +2048,14 @@ app.post("/world/claim", async (req, res) => {
       }
 
       if (farm.machines.length === 0) {
-        await tx.machine.create({ data: { type: "TRACTOR", tier: 1, farmId: farm.id } });
-        // Le céréalier démarre avec le déchaumeur, pas la moissonneuse :
-        // la première récolte passe par le Bureau.
+        /* Un tracteur seul ne fait plus rien : il tire. Le parc de départ doit
+           donc porter de quoi travailler, sinon la première parcelle reste en
+           friche. Semoir et charrue sont le minimum pour boucler un cycle —
+           la moissonneuse, elle, se gagne : la première récolte passe par le
+           Bureau, comme avant. */
+        for (const type of STARTER_MACHINES) {
+          await tx.machine.create({ data: { type, tier: 1, farmId: farm.id } });
+        }
         if (body.data.specialization === "CEREALIER") {
           await tx.machine.create({
             data: { type: "DISC_HARROW", tier: 1, farmId: farm.id },
@@ -2890,9 +2964,7 @@ app.post("/auth/register", async (req, res) => {
           userId: u.id,
           name: `Ferme ${displayName}`,
           machines: {
-            create: specialization
-              ? [{ type: "TRACTOR", tier: 1 }]
-              : [],
+            create: specialization ? STARTER_MACHINES.map((type) => ({ type, tier: 1 })) : [],
           },
         },
       });
@@ -4186,8 +4258,7 @@ app.post("/parcels/:id/plant", async (req, res) => {
       });
     }
     const wear = await applyWearToMachine(tx, {
-      machine: picked.machine,
-      def: picked.def,
+      rig: picked,
       cells: body.data.cells.length,
       work: "PLANT",
       specialization: user.specialization,
@@ -4285,8 +4356,7 @@ app.post("/parcels/:id/fertilize", async (req, res) => {
       });
     }
     const wear = await applyWearToMachine(tx, {
-      machine: picked.machine,
-      def: picked.def,
+      rig: picked,
       cells: Math.max(1, fertilized),
       work: "FERTILIZE",
       specialization: user.specialization,
@@ -4430,8 +4500,7 @@ app.post("/parcels/:id/plow", async (req, res) => {
       data: { fertility: Math.max(0.2, Math.min(0.99, parcel.fertility - malus)) },
     });
     const wear = await applyWearToMachine(tx, {
-      machine: picked.machine,
-      def: picked.def,
+      rig: picked,
       cells: candidates.length,
       work: "PLOW",
       specialization: user.specialization,
@@ -4600,8 +4669,7 @@ app.post("/parcels/:id/stubble", async (req, res) => {
     // Remettre en herbe use la machine et paie l'expérience autant que
     // déchaumer : c'est le même passage d'outil sur la même surface.
     const wear = await applyWearToMachine(tx, {
-      machine: picked.machine,
-      def: picked.def,
+      rig: picked,
       cells: worked.length,
       work: "STUBBLE",
       specialization: user.specialization,
@@ -4965,8 +5033,7 @@ app.post("/parcels/:id/harvest", async (req, res) => {
     const silageWear =
       pickedSilage && silageCells > 0
         ? await applyWearToMachine(tx, {
-            machine: pickedSilage.machine,
-            def: pickedSilage.def,
+            rig: pickedSilage,
             cells: silageCells,
             work: "SILAGE",
             specialization: user?.specialization,
@@ -4975,8 +5042,7 @@ app.post("/parcels/:id/harvest", async (req, res) => {
     const grainWear =
       pickedHarvest && grainCells > 0
         ? await applyWearToMachine(tx, {
-            machine: pickedHarvest.machine,
-            def: pickedHarvest.def,
+            rig: pickedHarvest,
             cells: grainCells,
             work: "HARVEST",
             specialization: user?.specialization,
@@ -4986,8 +5052,7 @@ app.post("/parcels/:id/harvest", async (req, res) => {
     const mowWear =
       pickedMow && grassCells > 0
         ? await applyWearToMachine(tx, {
-            machine: pickedMow.machine,
-            def: pickedMow.def,
+            rig: pickedMow,
             cells: grassCells,
             work: "MOW",
             specialization: user?.specialization,
@@ -5095,8 +5160,7 @@ app.post("/parcels/:id/bale", async (req, res) => {
       });
     }
     const wear = await applyWearToMachine(tx, {
-      machine: picked.machine,
-      def: picked.def,
+      rig: picked,
       cells: targets.length,
       work: "BALE",
       specialization: user?.specialization,
@@ -5175,8 +5239,7 @@ app.post("/parcels/:id/collect", async (req, res) => {
     const wear =
       picked && user
         ? await applyWearToMachine(tx, {
-            machine: picked.machine,
-            def: picked.def,
+            rig: picked,
             cells: targets.length,
             work: "COLLECT",
             specialization: user.specialization,
@@ -7539,7 +7602,11 @@ app.post("/machines/buy", async (req, res) => {
   const body = z
     .object({
       userId: z.string(),
-      type: z.enum(["TRACTOR", "HARVESTER", "SPREADER", "DISC_HARROW", "BALER", "FORAGE_HARVESTER"]),
+      // Dérivé du catalogue : une liste écrite à la main ici serait une
+      // deuxième source de vérité, et c'est exactement ce qui avait rendu
+      // trois bâtiments inachetables après leur ajout.
+      type: z.enum(Object.keys(MACHINE_DEFS) as [MachineType, ...MachineType[]]),
+      tier: z.number().int().min(1).max(3).optional(),
     })
     .safeParse(req.body);
   if (!body.success) {
@@ -7547,6 +7614,8 @@ app.post("/machines/buy", async (req, res) => {
     return;
   }
   const def = MACHINE_DEFS[body.data.type];
+  const tier = asTier(body.data.tier);
+  const prix = machineCost(def.type, tier);
   const user = await prisma.user.findUnique({
     where: { id: body.data.userId },
     include: { farm: { include: { machines: true, parcels: { include: { buildings: true } } } } },
@@ -7555,7 +7624,7 @@ app.post("/machines/buy", async (req, res) => {
     res.status(404).json({ error: "Ferme introuvable" });
     return;
   }
-  if (!peutPayer(user, def.cost)) {
+  if (!peutPayer(user, prix)) {
     res.status(402).json({ error: "TRN insuffisants" });
     return;
   }
@@ -7568,14 +7637,9 @@ app.post("/machines/buy", async (req, res) => {
     return;
   }
   const result = await prisma.$transaction(async (tx) => {
-    await debit(tx, user.id, def.cost, "MACHINES", `Achat — ${def.name}`);
+    await debit(tx, user.id, prix, "MACHINES", `Achat — ${def.name} ${TIER_LABELS[tier]}`);
     const machine = await tx.machine.create({
-      data: {
-        farmId: user.farm!.id,
-        type: def.type,
-        tier: def.tier,
-        condition: 100,
-      },
+      data: { farmId: user.farm!.id, type: def.type, tier, condition: 100 },
     });
     const firstParcel = user.farm!.parcels[0];
     if (firstParcel) {
@@ -8772,8 +8836,7 @@ app.post("/contracts/:id/complete", async (req, res) => {
   const reward = missionPayout(work, cells, "NPC");
   const result = await prisma.$transaction(async (tx) => {
     const wear = await applyWearToMachine(tx, {
-      machine: picked.machine,
-      def: picked.def,
+      rig: picked,
       cells,
       work,
       specialization: user.specialization,

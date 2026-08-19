@@ -29,6 +29,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
+  machineCost,
   PLANTING_WINDOW,
   SEASON_DURATION_MS,
   canSowInSeason,
@@ -1261,6 +1262,138 @@ describe("calendrier cultural", () => {
     assert.ok(
       pret - avant < 8 * SEASON_DURATION_MS,
       `maturité annoncée dans ${(pret - avant) / SEASON_DURATION_MS} saisons`,
+    );
+  });
+});
+
+describe("porteur et outils", () => {
+  /**
+   * Un tracteur ne sème plus : il tire. Les formes du modèle sont tenues par
+   * `implements.test.ts` ; ici on vérifie que la règle arrive jusqu'aux routes
+   * — le parc de départ, le refus quand l'outil manque, et le palier à l'achat.
+   */
+  async function ferme(nom: string) {
+    const moi = await inscrire(nom);
+    const monde = await appel("/world/AUR");
+    const regions = (monde.corps as unknown as {
+      regions: { parcels: { id: string; taken: boolean }[] }[];
+    }).regions;
+    let parcelId = "";
+    for (const r of regions) {
+      const libre = (r.parcels ?? []).find((p) => !p.taken);
+      if (libre) {
+        parcelId = libre.id;
+        break;
+      }
+    }
+    assert.ok(parcelId, "il faut une parcelle libre");
+    await appel("/world/claim", {
+      methode: "POST",
+      corps: { userId: moi.id, specialization: "CEREALIER", parcelId },
+      jeton: moi.jeton,
+    });
+    await appel("/dev/grant", {
+      methode: "POST",
+      corps: { userId: moi.id, crd: 500000, level: 20 },
+      jeton: moi.jeton,
+    });
+    const me = await appel("/auth/me", { jeton: moi.jeton });
+    const f = (me.corps as unknown as {
+      player: { farm: { parcels: { id: string }[]; machines: { id: string; type: string; tier: number }[] } };
+    }).player.farm;
+    const det = await appel(`/parcels/${f.parcels[0]!.id}`);
+    const cells = (det.corps as unknown as {
+      parcel: { cells: { x: number; y: number; kind: string }[] };
+    }).parcel.cells
+      .filter((c) => c.kind === "EMPTY")
+      .map((c) => ({ x: c.x, y: c.y }));
+    return { moi, parcelle: f.parcels[0]!, machines: f.machines, cells };
+  }
+
+  /** La culture semable à la saison courante — le calendrier reste maître. */
+  function cropDeSaison(): CropCode {
+    const saison = currentSeason("N", Date.now());
+    return (Object.keys(PLANTING_WINDOW) as CropCode[]).find((c) => canSowInSeason(c, saison).ok)!;
+  }
+
+  it("livre une ferme neuve avec de quoi travailler", async () => {
+    // Un tracteur seul ne fait plus rien : sans outil, la première parcelle
+    // resterait en friche et l'accueil serait un mur.
+    const { machines } = await ferme("Debutant");
+    const types = machines.map((m) => m.type);
+    assert.ok(types.includes("TRACTOR"), `parc de départ : ${types.join(", ")}`);
+    assert.ok(types.includes("SEEDER"), `pas de semoir : ${types.join(", ")}`);
+    assert.ok(types.includes("PLOUGH"), `pas de charrue : ${types.join(", ")}`);
+  });
+
+  it("refuse de semer quand le semoir est vendu, et dit lequel manque", async () => {
+    const { moi, parcelle, machines, cells } = await ferme("SansSemoir");
+    const semoir = machines.find((m) => m.type === "SEEDER")!;
+    const vente = await appel(`/machines/${semoir.id}/sell`, {
+      methode: "POST",
+      corps: { userId: moi.id },
+      jeton: moi.jeton,
+    });
+    assert.equal(vente.statut, 200, `revente refusée : ${JSON.stringify(vente.corps)}`);
+
+    const r = await appel(`/parcels/${parcelle.id}/plant`, {
+      methode: "POST",
+      corps: { userId: moi.id, crop: cropDeSaison(), cells: cells.slice(0, 4) },
+      jeton: moi.jeton,
+    });
+    assert.equal(r.statut, 409, "un tracteur seul a semé");
+    const message = (r.corps as unknown as { error: string }).error;
+    // Trois causes possibles — outil absent, outil en panne, tracteur trop
+    // faible : le message doit dire laquelle, sinon on achète le mauvais engin.
+    assert.match(message, /Semoir/i, `message peu utile : ${message}`);
+  });
+
+  it("use le tracteur en même temps que l'outil qu'il tire", async () => {
+    /**
+     * Le tracteur a tiré pendant tout le chantier : son compteur doit avancer
+     * autant que celui de l'outil. C'est ce qui fait de lui la machine la plus
+     * chargée de la ferme, exactement comme sur une vraie exploitation.
+     */
+    const { moi, parcelle, machines, cells } = await ferme("Attelage");
+    const r = await appel(`/parcels/${parcelle.id}/plant`, {
+      methode: "POST",
+      corps: { userId: moi.id, crop: cropDeSaison(), cells },
+      jeton: moi.jeton,
+    });
+    assert.equal(r.statut, 200, `semis refusé : ${JSON.stringify(r.corps)}`);
+
+    const apres = (await appel("/auth/me", { jeton: moi.jeton })).corps as unknown as {
+      player: { farm: { machines: { type: string; hours: number }[] } };
+    };
+    const tracteur = apres.player.farm.machines.find((m) => m.type === "TRACTOR")!;
+    const semoir = apres.player.farm.machines.find((m) => m.type === "SEEDER")!;
+    const charrue = apres.player.farm.machines.find((m) => m.type === "PLOUGH")!;
+    assert.ok(semoir.hours > 0, "le semoir n'a pas tourné");
+    assert.ok(
+      Math.abs(tracteur.hours - semoir.hours) < 0.01,
+      `tracteur ${tracteur.hours} h contre semoir ${semoir.hours} h`,
+    );
+    assert.equal(charrue.hours, 0, "la charrue n'a pas participé au semis");
+  });
+
+  it("vend un palier supérieur à son prix, plus large et plus exigeant", async () => {
+    const { moi } = await ferme("Investisseur");
+    const avant = ((await appel("/auth/me", { jeton: moi.jeton })).corps as unknown as {
+      player: { crd: number };
+    }).player.crd;
+    const r = await appel("/machines/buy", {
+      methode: "POST",
+      corps: { userId: moi.id, type: "TRACTOR", tier: 3 },
+      jeton: moi.jeton,
+    });
+    assert.equal(r.statut, 201, `achat refusé : ${JSON.stringify(r.corps)}`);
+    const apres = ((await appel("/auth/me", { jeton: moi.jeton })).corps as unknown as {
+      player: { crd: number; farm: { machines: { type: string; tier: number }[] } };
+    }).player;
+    assert.equal(Math.round(avant - apres.crd), machineCost("TRACTOR", 3));
+    assert.ok(
+      apres.farm.machines.some((m) => m.type === "TRACTOR" && m.tier === 3),
+      "le palier n'a pas été enregistré",
     );
   });
 });

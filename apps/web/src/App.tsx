@@ -69,6 +69,17 @@ import {
   hoursBeforeWorkshop,
   jobHours,
   machineAgeYieldFactor,
+  machineLifeHours,
+  machineHoursPerHectare,
+  machinePower,
+  machineWidth,
+  machineRequiredHp,
+  machineCost,
+  asTier,
+  TIER_LABELS,
+  MACHINE_TIERS,
+  canPull,
+  type Tier,
   machineDealerValue,
   MACHINE_LISTING_MIN_RATE,
   MACHINE_LISTING_MAX_RATE,
@@ -252,6 +263,8 @@ type Player = {
       condition: number;
       /** Compteur horaire. Absent sur une base d'avant le compteur. */
       hours?: number;
+      /** Palier 1 à 3 : il décide de la largeur, de la puissance et du prix. */
+      tier?: number;
       parkedParcelId?: string | null;
       storedInBuildingId?: string | null;
       greased?: boolean;
@@ -617,6 +630,8 @@ export function App() {
   const [err, setErr] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [machineListings, setMachineListings] = useState<MachineListing[]>([]);
+  /** Palier montré au catalogue — un seul réglage pour toute la liste. */
+  const [tierAchat, setTierAchat] = useState<Tier>(1);
   const [care, setCare] = useState<{
     mode: CareMode;
     machineId: string;
@@ -3158,18 +3173,18 @@ export function App() {
     }
   }
 
-  async function buyMachine(type: MachineType) {
+  async function buyMachine(type: MachineType, tier: Tier = 1) {
     if (!player) return;
     setBusy(true);
     setErr(null);
     try {
       await api(`/machines/buy`, {
         method: "POST",
-        body: JSON.stringify({ userId: player.id, type }),
+        body: JSON.stringify({ userId: player.id, type, tier }),
       });
       await refreshPlayer();
       if (activeParcelId) await loadParcel(activeParcelId);
-      setMsg(`${MACHINE_DEFS[type].name} acheté`);
+      setMsg(`${MACHINE_DEFS[type].name} ${TIER_LABELS[tier]} acheté`);
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e));
     } finally {
@@ -4477,32 +4492,45 @@ export function App() {
                 const salete = Math.max(0, Math.min(100, m.dirt ?? 0));
                 const compteur = m.hours ?? 0;
                 const ageFactor = machineAgeYieldFactor(compteur);
+                const palier = asTier(m.tier);
                 const heuresRestantes = def
                   ? hoursBeforeWorkshop({
                       condition: m.condition,
                       minCondition: def.minCondition,
-                      lifeHours: def.lifeHours,
+                      lifeHours: machineLifeHours(m.type as MachineType, palier),
                       careMult: careWearMultiplier({ grease, dirt: salete }),
                       inShed: Boolean(m.storedInBuildingId),
                     })
                   : 0;
-                const heuresParChamp = def ? jobHours(def.hoursPerHectare, gw * gh) : 0;
+                const heuresParChamp = def
+                  ? jobHours(machineHoursPerHectare(m.type as MachineType, palier), gw * gh)
+                  : 0;
                 const champsRestants =
                   heuresParChamp > 0 ? Math.floor(heuresRestantes / heuresParChamp) : 0;
-                const cote = machineResaleValue(m.type as MachineType, {
-                  condition: m.condition,
-                  hours: compteur,
-                });
-                const reprise = machineDealerValue(m.type as MachineType, {
-                  condition: m.condition,
-                  hours: compteur,
-                });
+                const etat = { condition: m.condition, hours: compteur, tier: palier };
+                const cote = machineResaleValue(m.type as MachineType, etat);
+                const reprise = machineDealerValue(m.type as MachineType, etat);
                 const canHalf = Boolean(halfQuote && halfQuote.points > 0.5 && m.condition < 99.5);
                 const canFull = Boolean(fullQuote && fullQuote.points > 0.5 && m.condition < 99.5);
                 return (
                   <li key={m.id}>
                     <span>
-                      <strong>{def?.name ?? m.type}</strong>
+                      <strong>
+                        {def?.name ?? m.type} {TIER_LABELS[palier]}
+                      </strong>
+                      {/* Ce qui décide de tout depuis la séparation porteur /
+                          outil : les chevaux d'un tracteur, la largeur d'un
+                          outil. Sans ces deux nombres, on ne peut pas savoir
+                          si un achat sera tractable. */}
+                      {def && (
+                        <div className="muted tiny">
+                          {def.kind === "TRACTOR"
+                            ? `Porteur · ${machinePower(m.type as MachineType, palier)} ch`
+                            : def.kind === "SELF_PROPELLED"
+                              ? `Automoteur · ${machineWidth(m.type as MachineType, palier)} m de largeur`
+                              : `Outil · ${machineWidth(m.type as MachineType, palier)} m · demande ${machineRequiredHp(m.type as MachineType, palier)} ch`}
+                        </div>
+                      )}
                       <div className={`muted tiny ${low || panne ? "warn" : ""}`}>
                         État {m.condition.toFixed(0)}% ·{" "}
                         {m.condition <= 0
@@ -4563,7 +4591,11 @@ export function App() {
                           qui fixe la cote à la revente. */}
                       <div className="muted tiny">
                         Compteur <b>{compteur.toFixed(0)} h</b>
-                        {def && ` · ${heuresParChamp.toFixed(1)} h par champ entier`}
+                        {/* Un porteur n'a pas de cadence à lui : il prend celle
+                            de l'outil qu'il tire. Afficher « 0,0 h par champ »
+                            puis « plus de quoi faire un champ » sur un tracteur
+                            neuf était un mensonge pur et simple. */}
+                        {heuresParChamp > 0 && ` · ${heuresParChamp.toFixed(1)} h par champ entier`}
                         {/* Le malus d'âge ne se répare pas : s'il n'était pas
                             écrit ici, le joueur réviserait sa machine en
                             croyant récupérer un rendement qui ne revient pas. */}
@@ -4572,10 +4604,12 @@ export function App() {
                         )}
                       </div>
                       {def && !panne && (
-                        <div className={`muted tiny ${champsRestants <= 1 ? "warn" : ""}`}>
-                          {champsRestants <= 0
-                            ? "Plus de quoi faire un champ entier — passez à l’atelier."
-                            : `Encore ${heuresRestantes} h de travail, soit ${champsRestants} champ${champsRestants > 1 ? "s" : ""} entier${champsRestants > 1 ? "s" : ""} à ce rythme d’entretien.`}
+                        <div className={`muted tiny ${heuresRestantes <= 20 ? "warn" : ""}`}>
+                          {heuresRestantes <= 0
+                            ? "À bout de course — passez à l’atelier."
+                            : heuresParChamp > 0
+                              ? `Encore ${heuresRestantes} h de travail, soit ${champsRestants} champ${champsRestants > 1 ? "s" : ""} entier${champsRestants > 1 ? "s" : ""} à ce rythme d’entretien.`
+                              : `Encore ${heuresRestantes} h de travail à ce rythme d’entretien.`}
                         </div>
                       )}
                     </span>
@@ -4770,21 +4804,73 @@ export function App() {
               </ul>
             )}
             <h3 className="spaced">Acheter neuf</h3>
+            {/* Le catalogue se lit désormais en trois tailles. Un palier plus
+                haut ne travaille pas mieux : il travaille plus large, donc plus
+                vite — et il demande un tracteur qui suive. */}
+            <p className="muted tiny">
+              Palier affiché : <strong>{TIER_LABELS[tierAchat]}</strong>. Un outil plus large va
+              plus vite, mais exige plus de chevaux.
+            </p>
+            <div className="age-switch" role="group" aria-label="Palier de matériel">
+              {MACHINE_TIERS.map((t) => (
+                <button
+                  key={t}
+                  type="button"
+                  className={tierAchat === t ? "on" : ""}
+                  aria-pressed={tierAchat === t}
+                  onClick={() => setTierAchat(t)}
+                >
+                  {TIER_LABELS[t]}
+                </button>
+              ))}
+            </div>
             <div className="build-list">
               {(Object.keys(MACHINE_DEFS) as MachineType[]).map((t) => {
                 const d = MACHINE_DEFS[t];
+                const prix = machineCost(t, tierAchat);
+                const largeur = machineWidth(t, tierAchat);
+                const besoin = machineRequiredHp(t, tierAchat);
+                // Un outil qu'aucun tracteur de la ferme ne peut tirer reste
+                // achetable — on prépare parfois son parc — mais il le dit.
+                const tractable =
+                  d.kind !== "IMPLEMENT" ||
+                  (player.farm?.machines ?? []).some(
+                    (m) =>
+                      MACHINE_DEFS[m.type as MachineType]?.kind === "TRACTOR" &&
+                      canPull(
+                        { type: m.type as MachineType, tier: asTier(m.tier) },
+                        { type: t, tier: tierAchat },
+                      ),
+                  );
                 return (
                   <button
                     key={t}
                     type="button"
                     className="build-item art"
-                    disabled={busy}
-                    onClick={() => buyMachine(t)}
+                    disabled={busy || player.crd < prix}
+                    title={
+                      player.crd < prix
+                        ? `TRN insuffisants — ${prix} requis`
+                        : tractable
+                          ? d.description
+                          : `Aucun de vos tracteurs ne donne les ${besoin} ch nécessaires`
+                    }
+                    onClick={() => buyMachine(t, tierAchat)}
                   >
                     <img className="build-art" src={MACHINE_ART[t]} alt="" loading="lazy" />
                     <span className="build-text">
-                      <strong>{d.name}</strong>
-                      <span>{d.cost} TRN</span>
+                      <strong>
+                        {d.name} {TIER_LABELS[tierAchat]}
+                      </strong>
+                      <span>{prix} TRN</span>
+                      <span className="muted tiny">
+                        {d.kind === "TRACTOR"
+                          ? `${machinePower(t, tierAchat)} ch`
+                          : d.kind === "SELF_PROPELLED"
+                            ? `${largeur} m · automoteur`
+                            : `${largeur} m · ${besoin} ch requis`}
+                        {!tractable ? " · rien pour le tirer" : ""}
+                      </span>
                       <span className="muted tiny">{d.description}</span>
                     </span>
                   </button>
