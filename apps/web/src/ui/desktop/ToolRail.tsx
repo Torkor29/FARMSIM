@@ -54,6 +54,23 @@ type Props = {
   onKeepSwath: () => void;
   onMarket: () => void;
   onGuide: () => void;
+  /**
+   * Les panneaux de l'exploitation.
+   *
+   * Ils vivaient dans la barre du haut, en petits boutons au milieu du nom du
+   * jeu, du niveau et de la bourse. Un testeur l'a dit sans détour : « les
+   * menus sont toujours en haut, c'est pas très visible… pourquoi ce n'est pas
+   * à gauche ? ». Ils descendent ici, au-dessus des outils : une seule colonne
+   * d'où l'on ouvre tout, au lieu de deux endroits à connaître.
+   */
+  panneaux: {
+    id: string;
+    label: string;
+    icon?: string;
+    hotkey?: string;
+    on: boolean;
+    onOpen: () => void;
+  }[];
 };
 
 /** Ce que la famille affiche en pastille, s'il y a lieu. */
@@ -85,6 +102,7 @@ export function ToolRail({
   onKeepSwath,
   onMarket,
   onGuide,
+  panneaux,
 }: Props) {
   const group = groupOf(tool);
   const options = optionsFor(group, season);
@@ -94,8 +112,39 @@ export function ToolRail({
   const showBrush = group === "PLANT" || group === "HARVEST" || group === "SOIL";
 
   return (
-    <nav className="tool-rail" aria-label="Outils de champ">
-      <ul className="tool-rail-groups">
+    <nav className="tool-rail" aria-label="Outils et panneaux">
+      {panneaux.length > 0 && (
+        <div className="tool-rail-block">
+          <h4 className="tool-rail-title">Mon exploitation</h4>
+          <ul className="tool-rail-groups">
+            {panneaux.map((p) => (
+              <li key={p.id}>
+                <button
+                  type="button"
+                  className={`tool-rail-group${p.on ? " on" : ""}`}
+                  aria-pressed={p.on}
+                  title={p.hotkey ? `${p.label} — touche ${p.hotkey}` : p.label}
+                  onClick={p.onOpen}
+                >
+                  <span className="tool-rail-icon" aria-hidden="true">
+                    {p.icon ? <img src={p.icon} alt="" width={20} height={20} /> : "?"}
+                  </span>
+                  <span className="tool-rail-name">{p.label}</span>
+                  {p.hotkey && (
+                    <kbd className="tool-rail-key" aria-hidden="true">
+                      {p.hotkey}
+                    </kbd>
+                  )}
+                </button>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+
+      <div className="tool-rail-block">
+        <h4 className="tool-rail-title">Aux champs</h4>
+        <ul className="tool-rail-groups">
         {TOOL_GROUPS.map((g) => {
           if (g.id === "SELL" && visiting) return null;
           const on = group === g.id;
@@ -124,9 +173,10 @@ export function ToolRail({
                 {badge > 0 && <span className="tool-rail-badge">{badge}</span>}
               </button>
             </li>
-          );
-        })}
-      </ul>
+            );
+          })}
+        </ul>
+      </div>
 
       {(options.length > 0 || group === "HARVEST") && (
         <div className="tool-rail-block">

@@ -8,10 +8,14 @@ import {
   isPerishable,
   spoilageWarning,
   dealerAskPrice,
+  DEALER_SELL_MARKUP,
   listingFee,
   quoteAllChannels,
   maxSelectableTons,
   SELLABLE_GOODS,
+  PURCHASABLE_GOODS,
+  DEALER_INPUT_USE,
+  futuresPenalty,
   futuresPrice,
   FUTURES_HORIZONS_H,
   FUTURES_DISCOUNT,
@@ -206,7 +210,9 @@ export function MarketPanel({
   const [horizon, setHorizon] = useState<number>(3);
   const [good, setGood] = useState<TradeGood>("WHEAT");
   const [futTons, setFutTons] = useState(10);
-  const [hayTons, setHayTons] = useState(5);
+  // Une quantité par intrant : le négociant en vend quatre, et saisir « 12 »
+  // pour de la paille ne doit pas changer la ligne du foin.
+  const [inputTons, setInputTons] = useState<Partial<Record<TradeGood, number>>>({});
 
   const item = useMemo(
     () => stock.find((s) => s.id === selectedId) ?? stock[0] ?? null,
@@ -328,8 +334,8 @@ export function MarketPanel({
               marketPrices={marketPrices}
               crd={crd}
               busy={busy}
-              tons={hayTons}
-              onTons={setHayTons}
+              tons={inputTons}
+              onTons={(g, n) => setInputTons((t) => ({ ...t, [g]: n }))}
               onBuy={onBuyInput}
             />
             <FuturesTab
@@ -634,56 +640,69 @@ function SupplyTab({
   marketPrices: { commodity: string; price: number }[];
   crd: number;
   busy: boolean;
-  tons: number;
-  onTons: (n: number) => void;
+  tons: Partial<Record<TradeGood, number>>;
+  onTons: (good: TradeGood, n: number) => void;
   onBuy: (commodity: TradeGood, tons: number) => void;
 }) {
-  const base =
-    marketPrices.find((m) => m.commodity === "HAY")?.price ?? GOOD_DEFS.HAY.basePrice;
-  const unit = dealerAskPrice(base);
-  const total = Math.round(unit * tons);
-
   return (
     <div className="supply-tab">
-      <h3>Fourrage pour les bêtes</h3>
-      <p className="hall-lead">Pas de foin chez vous ? On en vend ici, un peu plus cher.</p>
-      <div className="supply-card">
-        <span className="sale-icon" aria-hidden="true">
-          <GoodIcon code="HAY" />
-        </span>
-        <span className="build-text">
-          <strong>{GOOD_DEFS.HAY.name}</strong>
-          <span>{unit.toFixed(1)} TRN/t</span>
-        </span>
-        <label className="supply-qty">
-          <span>Combien (tonnes)</span>
-          <input
-            type="number"
-            min={1}
-            step={1}
-            value={tons}
-            onChange={(e) => onTons(Math.max(1, Number(e.target.value)))}
-          />
-        </label>
-        <button
-          type="button"
-          className="channel-go"
-          disabled={busy || crd < total}
-          onClick={() => onBuy("HAY", tons)}
-        >
-          Acheter · {total} TRN
-        </button>
-        {/* Un bouton grisé ne dit pas ce qui cloche, et sur un écran tactile
-            il n'y a pas d'infobulle pour le rattraper : on appuie, rien ne se
-            passe, et on conclut que le jeu est cassé. C'était le cas ici — la
-            route d'achat fonctionne, c'est la caisse qui ne suivait pas. */}
-        {crd < total && (
-          <p className="supply-why">
-            Il vous manque {Math.ceil(total - crd)} TRN — réduisez la quantité
-            ou vendez d’abord.
-          </p>
-        )}
-      </div>
+      <h3>Acheter au négociant</h3>
+      <p className="hall-lead">
+        Achat direct au négociant, pas une annonce d’un autre joueur : servi à
+        la demande, en quantité libre, à {Math.round((DEALER_SELL_MARKUP - 1) * 100)} %
+        au-dessus du cours du jour. Vous payez maintenant ; un camion dépose la
+        caisse dans votre cour, et c’est en la rentrant qu’elle entre au stock.
+      </p>
+      {PURCHASABLE_GOODS.map((good) => {
+        const def = GOOD_DEFS[good];
+        const base =
+          marketPrices.find((m) => m.commodity === good)?.price ?? def.basePrice;
+        const unit = dealerAskPrice(base);
+        const qty = tons[good] ?? 5;
+        const total = Math.round(unit * qty);
+        return (
+          <div className="supply-card" key={good}>
+            <span className="sale-icon" aria-hidden="true">
+              <GoodIcon code={good} />
+            </span>
+            <span className="build-text">
+              <strong>{def.name}</strong>
+              <span>
+                {unit.toFixed(1)} TRN/{def.unit}
+              </span>
+              <em className="supply-use">{DEALER_INPUT_USE[good]}</em>
+            </span>
+            <label className="supply-qty">
+              <span>Combien ({def.unit})</span>
+              <input
+                type="number"
+                min={1}
+                step={1}
+                value={qty}
+                onChange={(e) => onTons(good, Math.max(1, Number(e.target.value)))}
+              />
+            </label>
+            <button
+              type="button"
+              className="channel-go"
+              disabled={busy || crd < total}
+              onClick={() => onBuy(good, qty)}
+            >
+              Acheter · {total} TRN
+            </button>
+            {/* Un bouton grisé ne dit pas ce qui cloche, et sur un écran tactile
+                il n'y a pas d'infobulle pour le rattraper : on appuie, rien ne se
+                passe, et on conclut que le jeu est cassé. C'était le cas ici — la
+                route d'achat fonctionne, c'est la caisse qui ne suivait pas. */}
+            {crd < total && (
+              <p className="supply-why">
+                Il vous manque {Math.ceil(total - crd)} TRN — réduisez la quantité
+                ou vendez d’abord.
+              </p>
+            )}
+          </div>
+        );
+      })}
     </div>
   );
 }
@@ -721,9 +740,21 @@ function FuturesTab({
   return (
     <div className="futures-tab">
       <h3>Vendre une récolte pas encore mûre</h3>
+      {/* « Ça coûte 20 % de plus » ne voulait rien dire : rien ne coûte plus
+          cher, et le chiffre tombait sans que personne sache d'où il sortait.
+          C'est une pénalité — une part de la valeur du contrat, prélevée si
+          l'échéance passe sans livraison —, et elle se chiffre en TRN sur le
+          contrat qu'on est en train de composer. */}
       <p className="hall-lead">
-        Le prix est fixé aujourd’hui. Si vous ne livrez pas à temps, ça coûte{" "}
-        {Math.round(FUTURES_PENALTY_RATE * 100)} % de plus.
+        Vous bloquez dès maintenant le prix d’une récolte que vous n’avez pas
+        encore. L’acheteur porte le risque à votre place : il prend une décote
+        au passage, d’autant plus forte que l’échéance est lointaine.
+      </p>
+      <p className="hall-lead danger">
+        Engagement ferme : si l’échéance passe sans livraison, vous payez une
+        pénalité de {Math.round(FUTURES_PENALTY_RATE * 100)} % de la valeur du
+        contrat — {futuresPenalty(garanti, tons)} TRN pour celui-ci. Elle peut
+        mettre votre compte à découvert.
       </p>
 
       <div className="futures-form">

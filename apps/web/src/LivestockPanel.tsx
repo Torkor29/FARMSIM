@@ -120,9 +120,9 @@ const RATIONS: {
 }[] = [
   {
     code: "hay",
-    label: "Fourrage",
+    label: "Foin",
     hint: "La ration de base, achetable à l’hôtel des ventes",
-    manque: "Aucun fourrage en réserve — achetez-en à l’hôtel des ventes",
+    manque: "Aucun foin en réserve — achetez-en à l’hôtel des ventes",
   },
   {
     code: "silage",

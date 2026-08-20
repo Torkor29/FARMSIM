@@ -101,7 +101,17 @@ export const GOOD_DEFS: Record<TradeGood, GoodDef> = {
   },
   HAY: {
     code: "HAY",
-    name: "Fourrage",
+    /**
+     * « Foin », pas « Fourrage ».
+     *
+     * « Fourrage » est la **catégorie** — foin, ensilage, maïs, orge et blé en
+     * font tous partie —, et l'employer comme nom de produit rendait la liste
+     * de rations incompréhensible : on y lisait « Fourrage » à côté
+     * d'« Ensilage » et de « Maïs » sans pouvoir deviner ce que c'était. Le
+     * guide de jeu écrivait déjà les deux mots pour la même chose dans une
+     * seule phrase.
+     */
+    name: "Foin",
     unit: "t",
     basePrice: 95,
     sellable: true,
@@ -281,6 +291,25 @@ export const SELLABLE_GOODS = (Object.keys(GOOD_DEFS) as TradeGood[]).filter(
 export const PURCHASABLE_GOODS = (Object.keys(GOOD_DEFS) as TradeGood[]).filter(
   (g) => GOOD_DEFS[g].purchasable,
 );
+
+/**
+ * À quoi sert chaque intrant que le négociant vend.
+ *
+ * Le rayon n'en proposait qu'un — le foin —, si bien que la paille passait
+ * pour introuvable alors qu'elle est en vente, et que l'alerte de litière
+ * renvoie justement ici. Et le seul article affiché s'appelait « Fourrage »,
+ * un mot de catégorie : on demandait ce que c'était.
+ *
+ * La table vit ici, à côté de `PURCHASABLE_GOODS`, pour qu'un test puisse
+ * exiger qu'elles restent d'accord : rendre une marchandise achetable sans
+ * dire à quoi elle sert remettrait un code machine dans le rayon.
+ */
+export const DEALER_INPUT_USE: Partial<Record<TradeGood, string>> = {
+  HAY: "La ration de base, pour toutes les espèces.",
+  STRAW: "La litière à étaler dans les bâtiments.",
+  STRAW_BALE: "La même paille, déjà pressée : plus chère, mais elle se stocke.",
+  MANURE: "L'engrais organique, à épandre sur les champs.",
+};
 
 /** Marchandises à terme / carnet mondial — pas l’ensilage. */
 export const WORLD_MARKET_GOODS = SELLABLE_GOODS.filter((g) => !GOOD_DEFS[g].localOnly);

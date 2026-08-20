@@ -526,7 +526,7 @@ export const GUIDE_CHAPTERS: GuideChapter[] = [
       {
         id: "feed",
         name: "Nourrir",
-        how: "Fourrage, ensilage, maïs, orge ou blé. Les poules aiment l’orge et le blé ; les moutons, le foin.",
+        how: "Foin, ensilage, maïs, orge ou blé. Les poules aiment l’orge et le blé ; les moutons, le foin.",
         usedBy: "Éleveur. Céréalier : débouché pour le grain et l’herbe.",
       },
       {

@@ -7765,7 +7765,7 @@ app.post("/herds/:id/feed", async (req, res) => {
   const wheat = herd.farm.inventory.find((i) => i.itemCode === "WHEAT");
   const silage = herd.farm.inventory.find((i) => i.itemCode === "SILAGE");
   if (hayTons > (hay?.qty ?? 0)) {
-    res.status(409).json({ error: "Fourrage insuffisant — achetez-en au négociant" });
+    res.status(409).json({ error: "Réserve insuffisante — achetez de quoi nourrir au négociant" });
     return;
   }
   if (maizeTons > (maize?.qty ?? 0)) {

@@ -1050,6 +1050,16 @@ button.ghost {
   color: var(--ink-soft);
   line-height: 1.4;
 }
+/* Une clause d'engagement — la pénalité d'un contrat à terme — n'a pas le même
+   poids qu'une phrase d'accueil : elle se lit avant de signer, pas après. */
+.hall-lead.danger {
+  padding: 0.45rem 0.6rem;
+  border-radius: var(--r-sm, 6px);
+  border-left: 3px solid var(--danger, #b4462f);
+  background: color-mix(in srgb, var(--danger, #b4462f) 8%, transparent);
+  color: var(--ink);
+  font-weight: 600;
+}
 .hall-block { display: grid; gap: 0.45rem; }
 .hall-block h3 { margin: 0; font-size: 0.95rem; }
 .hall-doors {
@@ -1907,6 +1917,14 @@ button.blocked:active { opacity: 0.72; }
 .supply-qty { display: grid; gap: 0.1rem; font-size: 0.72rem; color: var(--muted); }
 .supply-qty input { width: 5rem; padding: 0.35rem 0.5rem; }
 .supply-card .build-text { min-width: 0; }
+/* À quoi sert l'intrant. « Fourrage » seul ne disait rien à qui découvre le
+   jeu — la ligne d'usage est ce qui distingue une liste de codes d'un rayon. */
+.supply-use {
+  font-style: normal;
+  font-size: 0.74rem;
+  color: var(--muted);
+  line-height: 1.3;
+}
 /* Quatre colonnes — vignette, nom, saisie, bouton — ne tiennent pas dans la
    largeur d'un téléphone : la colonne souple s'écrasait à zéro et le prix
    passait sous l'étiquette « Combien (tonnes) ». Le nom garde sa ligne, la
@@ -3967,6 +3985,12 @@ button.tiny {
 .tool-rail-block {
   border-top: 1px solid var(--line);
   padding-top: 0.5rem;
+}
+/* Le premier bloc — les panneaux de l'exploitation — n'a rien au-dessus de
+   lui : un filet en haut du rail ne sépare rien. */
+.tool-rail-block:first-child {
+  border-top: 0;
+  padding-top: 0;
 }
 .tool-rail-title {
   margin: 0 0 0.35rem;

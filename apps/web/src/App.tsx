@@ -3602,7 +3602,7 @@ export function App() {
               ? "Blé"
               : ration === "silage"
                 ? "Ensilage"
-                : "Fourrage";
+                : "Foin";
       flashToast(`${label} distribué · ${tons.toFixed(1)} t · ${r.units} kg`);
       await refreshPlayer();
       if (activeParcelId) await loadLivestock(activeParcelId);
@@ -4355,53 +4355,10 @@ export function App() {
               ?
             </button>
           </div>
-          {/* Les panneaux vivaient dans la barre d'outils du bas, sur une
-              largeur de 576 px partagée avec les cinq outils de champ. Ils
-              remontent ici : c'est une navigation, pas un outil, et la barre
-              haute a de la place à revendre sur un écran de bureau. */}
-          {!isMobile && (
-            <nav className="hud-nav" aria-label="Panneaux">
-              <button
-                type="button"
-                className={`hud-nav-btn${showGarage ? " on" : ""}`}
-                aria-pressed={showGarage}
-                title="Garage — touche G"
-                onClick={() => setShowGarage((v) => !v)}
-              >
-                <img className="rail-icon" src="/assets/icons/nav/garage.svg" alt="" /> Garage <kbd>G</kbd>
-              </button>
-              <button
-                type="button"
-                className={`hud-nav-btn${showEta ? " on" : ""}`}
-                aria-pressed={showEta}
-                title="Bureau et missions — touche T"
-                onClick={() => setShowEta((v) => !v)}
-              >
-                <img className="rail-icon" src="/assets/icons/nav/missions.svg" alt="" /> Bureau <kbd>T</kbd>
-              </button>
-              {barns.length > 0 && (
-                <button
-                  type="button"
-                  className={`hud-nav-btn${showHerd ? " on" : ""}`}
-                  aria-pressed={showHerd}
-                  title="Élevage"
-                  onClick={() => setShowHerd((v) => !v)}
-                >
-                  <img className="rail-icon" src="/assets/icons/nav/troupeau.svg" alt="" /> Élevage
-                </button>
-              )}
-              {devEnabled && (
-                <button
-                  type="button"
-                  className="hud-nav-btn"
-                  title="Outils de test"
-                  onClick={() => setShowDev(true)}
-                >
-                  <span aria-hidden="true">🛠</span> Test
-                </button>
-              )}
-            </nav>
-          )}
+          {/* Les boutons de panneaux ont quitté cette barre pour le rail de
+              gauche : ils s'y perdaient entre le nom du jeu, le niveau et la
+              bourse, et un testeur a demandé pourquoi ils n'étaient pas à
+              gauche avec le reste des commandes. Voir `ToolRail`. */}
           <div className="hud-stats">
             <span className="stat-name">{player.displayName}</span>
             <span className="stat-job">{SPECIALIZATION_LABELS[player.specialization]}</span>
@@ -5345,51 +5302,61 @@ export function App() {
             ))}
           </div>
         </aside>
-        <aside className={panelClass("build-panel", "BUILD")} {...(isMobile ? sheetGesture : {})}>
-          <h3>Construire</h3>
-          {/* Au doigt, le catalogue reste dans le tiroir : il y occupe tout
-              l'écran, ce qui est le bon geste sur un téléphone. Sur bureau il
-              passe dans une fenêtre, et le rail ne garde que le choix courant.
-              Voir `showBuildPicker` pour le pourquoi, plus haut. */}
-          {isMobile ? (
-            <div className="build-list">{catalogueBatiments}</div>
-          ) : (
-            <div className="build-choice">
-              {tool === "BUILD" && buildType ? (
-                <span className="build-current">
-                  <img className="build-art small" src={BUILDING_ART[buildType]} alt="" />
-                  <span className="build-text">
-                    <strong>{BUILDING_DEFS[buildType].name}</strong>
-                    <span>
-                      {BUILDING_DEFS[buildType].w}×{BUILDING_DEFS[buildType].h} ·{" "}
-                      {BUILDING_DEFS[buildType].cost} TRN
-                    </span>
-                    <span className="muted tiny">Cliquez la ferme pour le poser.</span>
-                  </span>
-                </span>
-              ) : (
-                <p className="muted tiny">
-                  Choisissez un bâtiment, puis cliquez la case où le poser.
-                </p>
-              )}
-              <button
-                type="button"
-                className="build-open"
-                onClick={() => setShowBuildPicker(true)}
-              >
-                {tool === "BUILD" && buildType ? "Changer de bâtiment" : "Choisir un bâtiment"}
-                <em>{Object.keys(BUILDING_DEFS).length} bâtiments</em>
-              </button>
-            </div>
-          )}
+        {/* Au doigt seulement.
 
-          {/* « Améliorer » a suivi le catalogue dans la fenêtre sur bureau :
-              trois bâtiments y faisaient déjà 519 px, et la liste grandit
-              avec la ferme. Améliorer ne demande pas de viser une case, rien
-              n'oblige ce bloc à rester au-dessus du terrain. Au doigt, en
-              revanche, il n'y a pas de fenêtre : le tiroir le garde. */}
-          {isMobile && blocAmeliorer}
-        </aside>
+            Sur bureau, cette carte était le seul menu du jeu qu'on n'ouvrait
+            pas : elle restait plantée dans le rail de droite pendant que
+            Garage, Bureau et Élevage s'ouvraient depuis un bouton. « Ça n'a
+            aucun sens » — et c'est vrai. Le bouton « Construire » du rail de
+            gauche ouvre désormais directement le catalogue, comme les autres.
+            Au doigt la carte reste : c'est elle qui porte le tiroir. */}
+        {isMobile && (
+          <aside className={panelClass("build-panel", "BUILD")} {...(isMobile ? sheetGesture : {})}>
+            <h3>Construire</h3>
+            {/* Au doigt, le catalogue reste dans le tiroir : il y occupe tout
+                l'écran, ce qui est le bon geste sur un téléphone. Sur bureau il
+                passe dans une fenêtre, et le rail ne garde que le choix courant.
+                Voir `showBuildPicker` pour le pourquoi, plus haut. */}
+            {isMobile ? (
+              <div className="build-list">{catalogueBatiments}</div>
+            ) : (
+              <div className="build-choice">
+                {tool === "BUILD" && buildType ? (
+                  <span className="build-current">
+                    <img className="build-art small" src={BUILDING_ART[buildType]} alt="" />
+                    <span className="build-text">
+                      <strong>{BUILDING_DEFS[buildType].name}</strong>
+                      <span>
+                        {BUILDING_DEFS[buildType].w}×{BUILDING_DEFS[buildType].h} ·{" "}
+                        {BUILDING_DEFS[buildType].cost} TRN
+                      </span>
+                      <span className="muted tiny">Cliquez la ferme pour le poser.</span>
+                    </span>
+                  </span>
+                ) : (
+                  <p className="muted tiny">
+                    Choisissez un bâtiment, puis cliquez la case où le poser.
+                  </p>
+                )}
+                <button
+                  type="button"
+                  className="build-open"
+                  onClick={() => setShowBuildPicker(true)}
+                >
+                  {tool === "BUILD" && buildType ? "Changer de bâtiment" : "Choisir un bâtiment"}
+                  <em>{Object.keys(BUILDING_DEFS).length} bâtiments</em>
+                </button>
+              </div>
+            )}
+
+            {/* « Améliorer » a suivi le catalogue dans la fenêtre sur bureau :
+                trois bâtiments y faisaient déjà 519 px, et la liste grandit
+                avec la ferme. Améliorer ne demande pas de viser une case, rien
+                n'oblige ce bloc à rester au-dessus du terrain. Au doigt, en
+                revanche, il n'y a pas de fenêtre : le tiroir le garde. */}
+            {isMobile && blocAmeliorer}
+          </aside>
+        )}
       </div>
 
       {/*
@@ -5490,6 +5457,52 @@ export function App() {
             onKeepSwath={() => setKeepSwath((v) => !v)}
             onMarket={() => setShowMarket(true)}
             onGuide={() => setShowGuide(true)}
+            panneaux={[
+              {
+                id: "BUILD",
+                label: "Construire",
+                icon: "/assets/icons/nav/batir.svg",
+                on: showBuildPicker,
+                onOpen: () => setShowBuildPicker((v) => !v),
+              },
+              {
+                id: "GARAGE",
+                label: "Garage",
+                icon: "/assets/icons/nav/garage.svg",
+                hotkey: "G",
+                on: showGarage,
+                onOpen: () => setShowGarage((v) => !v),
+              },
+              {
+                id: "OFFICE",
+                label: "Bureau",
+                icon: "/assets/icons/nav/missions.svg",
+                hotkey: "T",
+                on: showEta,
+                onOpen: () => setShowEta((v) => !v),
+              },
+              ...(barns.length > 0
+                ? [
+                    {
+                      id: "HERD",
+                      label: "Élevage",
+                      icon: "/assets/icons/nav/troupeau.svg",
+                      on: showHerd,
+                      onOpen: () => setShowHerd((v) => !v),
+                    },
+                  ]
+                : []),
+              ...(devEnabled
+                ? [
+                    {
+                      id: "DEV",
+                      label: "Test",
+                      on: false,
+                      onOpen: () => setShowDev(true),
+                    },
+                  ]
+                : []),
+            ]}
           />
           <SelectionBar
             tool={tool}
