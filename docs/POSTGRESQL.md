@@ -55,9 +55,19 @@ dépôt.
 
 ```bash
 cd /opt/farmsim
-echo "FARMSIM_DB_PASSWORD=$(openssl rand -base64 24 | tr -d '/+=')" | sudo tee -a .env
+echo "FARMSIM_DB_PASSWORD=$(openssl rand -base64 24 | tr -d '/+=')" | sudo tee -a .env > /dev/null
 sudo chmod 600 .env
 ```
+
+> `> /dev/null` n'est pas décoratif : `tee` écrit dans le fichier **et** sur le
+> terminal. Sans cette redirection, le mot de passe s'affiche à l'écran — et
+> finit dans la première capture qu'on envoie pour demander de l'aide. C'est
+> arrivé. Pour le remplacer :
+>
+> ```bash
+> sudo sed -i '/^FARMSIM_DB_PASSWORD=/d' .env
+> echo "FARMSIM_DB_PASSWORD=$(openssl rand -base64 24 | tr -d '/+=')" | sudo tee -a .env > /dev/null
+> ```
 
 Si le déploiement a déjà échoué faute de ce mot de passe, relancez-le
 simplement une fois posé :
@@ -71,11 +81,41 @@ sudo docker compose up -d --build
 C'est **l'étape à ne pas rater** : c'est ce fichier qui porte vos données de
 l'autre côté. Le volume existe toujours, même s'il n'est plus monté.
 
+**Trouvez d'abord son vrai nom.** Docker Compose préfixe les volumes du nom du
+projet : le volume déclaré `farmsim-data` s'appelle en réalité
+`farmsim_farmsim-data` sur le serveur.
+
+Ce détail n'est pas cosmétique : `docker run -v farmsim-data:/data`, avec un nom
+qui n'existe pas, **crée un volume vide sans rien dire** et monte celui-là. La
+copie échoue alors sur un « No such file or directory » qui laisse croire que
+les données ont disparu. Elles n'ont pas bougé — on regardait au mauvais
+endroit.
+
 ```bash
-sudo docker run --rm -v farmsim-data:/data -v /tmp:/sortie alpine \
+sudo docker volume ls | grep -i farmsim
+```
+
+Puis, pour voir lequel contient la base :
+
+```bash
+for v in $(sudo docker volume ls -q | grep -i farmsim); do
+  echo "── $v"
+  sudo docker run --rm -v "$v":/d alpine ls -la /d
+done
+```
+
+Celui qui contient `farmsim.db` est le bon. On en sort le fichier :
+
+```bash
+VOL=farmsim_farmsim-data   # ← le nom relevé ci-dessus
+sudo docker run --rm -v "$VOL":/data -v /tmp:/sortie alpine \
   cp /data/farmsim.db /sortie/farmsim-avant-bascule.db
 ls -lh /tmp/farmsim-avant-bascule.db
 ```
+
+Si un volume vide `farmsim-data` traîne — créé par une commande qui visait le
+mauvais nom —, il se supprime sans risque une fois qu'on a vérifié qu'il ne
+contient rien.
 
 ## 4 — Vérifier que la nouvelle base est debout
 
