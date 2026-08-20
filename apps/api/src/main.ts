@@ -24,6 +24,9 @@ import {
   SPECIALIZATION_LABELS,
   WORK_LABELS,
   footprintCells,
+  overlapsYard,
+  isYardCell,
+  YARD_REFUSAL,
   orientedFootprint,
   quarterTurns,
   xpFor,
@@ -5115,6 +5118,13 @@ app.post("/parcels/:id/plant", async (req, res) => {
       res.status(409).json({ error: `Case ${x},${y} non libre` });
       return;
     }
+    // On ne sème pas la cour : c'est là que les camions déposent, et une case
+    // cultivée n'accepte plus de livraison. Sans ce refus, il suffisait de
+    // semer partout pour se retrouver dans l'impasse qu'on vient de corriger.
+    if (isYardCell(x, y, parcel.gridH)) {
+      res.status(409).json({ error: `Case ${x},${y} — ${YARD_REFUSAL}` });
+      return;
+    }
     if (directSeed) {
       // Le semis direct exige des chaumes : sans eux, c'est un semis ordinaire
       // et le joueur paierait le surcoût du semoir lourd pour rien.
@@ -6467,6 +6477,22 @@ app.post("/parcels/:id/build", async (req, res) => {
     res.status(400).json({ error: "Emprise hors grille" });
     return;
   }
+  /*
+   * La cour reste libre.
+   *
+   * Les livraisons s'y posent, et elles n'ont nulle part ailleurs où aller. La
+   * laisser bâtir menait droit au blocage constaté : plus une case libre, donc
+   * plus aucun achat possible — on ne pouvait plus rien commander parce qu'on
+   * avait bien joué.
+   *
+   * Le refus tombe **avant** le débit : un bâtiment payé qu'on ne peut pas
+   * poser est exactement l'accident qu'on cherche à éviter.
+   */
+  if (overlapsYard({ x: body.data.x, y: body.data.y, w: foot.w, h: foot.h }, parcel.gridH)) {
+    res.status(409).json({ error: YARD_REFUSAL });
+    return;
+  }
+
   const cells = footprintCells(body.data.x, body.data.y, foot.w, foot.h);
   for (const c of cells) {
     const cell = parcel.cells.find((p) => p.x === c.x && p.y === c.y);
@@ -8514,7 +8540,16 @@ async function placeDelivery(
     // Le bord d'entrée est le coin bas-gauche de la parcelle : c'est de là que
     // vient la route, et c'est là qu'on regarde quand on cherche une livraison.
     .sort((a, b) => a.x + (parcel.gridH - b.y) - (b.x + (parcel.gridH - a.y)));
-  const c = libres[0];
+  /*
+   * La cour d'abord, le reste ensuite.
+   *
+   * La cour est réservée aux livraisons — on n'y bâtit ni n'y sème —, donc
+   * elle a presque toujours de la place. Le repli sur une case libre
+   * quelconque reste utile pour les grosses commandes qui la saturent, et pour
+   * les fermes créées avant que la cour n'existe.
+   */
+  const dansLaCour = libres.filter((c) => isYardCell(c.x, c.y, parcel.gridH));
+  const c = dansLaCour[0] ?? libres[0];
   return c ? { parcelId: parcel.id, x: c.x, y: c.y } : null;
 }
 
@@ -8628,7 +8663,10 @@ app.post("/market/buy", async (req, res) => {
    */
   const pose = await placeDelivery(user.farm.id);
   if (!pose) {
-    res.status(409).json({ error: "Aucune place libre dans la cour pour livrer" });
+    res.status(409).json({
+      error:
+        "La cour est encombrée — rentrez les caisses déjà livrées avant d'en commander d'autres.",
+    });
     return;
   }
   const maintenant = Date.now();

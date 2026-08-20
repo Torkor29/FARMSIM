@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef } from "react";
 import * as THREE from "three";
 import {
+  isYardCell,
   BUILDING_DEFS,
   RIPENESS_COLORS,
   artGroundFraction,
@@ -432,6 +433,14 @@ const HOVER = 0x53c5f5;
 const PREVIEW_OK = 0x2fc46a;
 const PREVIEW_BAD = 0xef4444;
 const DIRT = 0xa4835c;
+
+/**
+ * La cour de ferme — terre battue, plus grise que la terre travaillée.
+ *
+ * Elle doit se distinguer de `DIRT`, qui entoure les bâtiments, sans quoi on
+ * ne saurait pas où finit la cour et où commence le pourtour d'un hangar.
+ */
+const COUR = 0x8d8271;
 const PULSE = 0xfff2b0;
 
 
@@ -1716,6 +1725,13 @@ export function IsoFarmView({
           if (cell?.kind === "CROP") col = cropGroundColor(cell, sim);
           if (cell?.kind === "BUILDING") col = DIRT;
           if (cell?.kind === "VEHICLE") col = PARKING;
+          /* La cour, en terre battue.
+             C'est là que les camions déposent, et on n'y bâtit ni n'y sème.
+             Une règle qu'on ne voit pas au sol se découvre par un refus : le
+             joueur vise la case, se fait dire non, et ne comprend pas
+             pourquoi. Elle se lit donc, comme une cour se lit dans une vraie
+             ferme — à sa terre nue. */
+          if (isYardCell(x, y, gh)) col = COUR;
           if (cell?.manuredUntil && cell.manuredUntil > Date.now()) {
             const stain = new THREE.Color(col).lerp(new THREE.Color(0x3d2918), 0.45);
             col = stain.getHex();

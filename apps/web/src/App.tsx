@@ -55,6 +55,8 @@ import {
   CROP_DEFS,
   GOOD_DEFS,
   FEED_VALUE,
+  overlapsYard,
+  YARD_REFUSAL,
   rationToServe,
   isMowCrop,
   leavesSwath,
@@ -1963,6 +1965,9 @@ export function App() {
     // L'emprise suit le quart de tour : un hangar 3×2 tourné occupe 2×3.
     const foot = orientedFootprint(type, rot);
     if (x + foot.w > gw || y + foot.h > gh) return false;
+    // La cour est réservée aux livraisons : le fantôme doit le refuser ici,
+    // sinon on ne découvre la règle qu'au moment où le serveur dit non.
+    if (overlapsYard({ x, y, w: foot.w, h: foot.h }, gh)) return false;
     if (!canPay(player, def.cost)) return false;
     const footprint = footprintCells(x, y, foot.w, foot.h);
     return footprint.every((fc) => {
@@ -4654,8 +4659,10 @@ export function App() {
         const souci =
           (player?.crd ?? 0) < def.cost
             ? `Il vous manque ${def.cost - Math.round(player?.crd ?? 0)} TRN`
-            : !placeOk
-              ? "Place occupée — touchez une autre case"
+            : overlapsYard({ x: pendingBuild.x, y: pendingBuild.y, w: foot.w, h: foot.h }, gh)
+              ? YARD_REFUSAL
+              : !placeOk
+                ? "Place occupée — touchez une autre case"
               : null;
         return (
           <div className={`build-confirm glass ${souci ? "blocked" : ""}`}>

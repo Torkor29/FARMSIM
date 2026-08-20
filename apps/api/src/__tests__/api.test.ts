@@ -27,6 +27,7 @@ import { execFileSync } from "node:child_process";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { creerBaseTest, supprimerBaseTest, type BaseTest } from "./base-test.js";
+import { DEFAULT_GRID, isYardCell } from "@farmsim/shared";
 import {
   machineCost,
   PLANTING_WINDOW,
@@ -850,13 +851,22 @@ describe("usure au champ", () => {
     return { moi, parcelle: ferme.parcels[0]! };
   }
 
-  /** Les cases semables de la parcelle — ce que vise « Tout sélectionner ». */
+  /**
+   * Les cases **semables** de la parcelle — ce que vise « Tout sélectionner ».
+   *
+   * La cour de ferme en est exclue : c'est là que les camions déposent, et on
+   * n'y sème pas. Sans cette exclusion, « tout le champ » comprenait la cour et
+   * le semis se faisait refuser — ce qui est exactement le comportement voulu,
+   * mais fait échouer des tests qui mesurent tout autre chose.
+   */
   async function champEntier(parcelId: string) {
     const r = await appel(`/parcels/${parcelId}`);
-    const cells = (r.corps as unknown as {
-      parcel: { cells: { x: number; y: number; kind: string }[] };
-    }).parcel.cells;
-    return cells.filter((c) => c.kind === "EMPTY").map((c) => ({ x: c.x, y: c.y }));
+    const parcel = (r.corps as unknown as {
+      parcel: { gridH: number; cells: { x: number; y: number; kind: string }[] };
+    }).parcel;
+    return parcel.cells
+      .filter((c) => c.kind === "EMPTY" && !isYardCell(c.x, c.y, parcel.gridH))
+      .map((c) => ({ x: c.x, y: c.y }));
   }
 
   it("avance le compteur horaire du temps réellement passé", async () => {
@@ -1132,9 +1142,10 @@ describe("les heures pèsent sur la récolte", () => {
 
     const cellsR = await appel(`/parcels/${parcelle.id}`);
     const cells = (cellsR.corps as unknown as {
-      parcel: { cells: { x: number; y: number; kind: string }[] };
+      parcel: { gridH: number; cells: { x: number; y: number; kind: string }[] };
     }).parcel.cells
-      .filter((c) => c.kind === "EMPTY")
+      // La cour de ferme n'est pas semable : les camions y déposent.
+      .filter((c) => c.kind === "EMPTY" && !isYardCell(c.x, c.y, DEFAULT_GRID.h))
       .map((c) => ({ x: c.x, y: c.y }));
 
     await travailler(parcelle.id, "plant", "PLANT", moi, cells, { crop: cropDeSaison() });
@@ -1216,9 +1227,10 @@ describe("calendrier cultural", () => {
     const parcelle = ferme.parcels[0]!;
     const det = await appel(`/parcels/${parcelle.id}`);
     const cells = (det.corps as unknown as {
-      parcel: { cells: { x: number; y: number; kind: string }[] };
+      parcel: { gridH: number; cells: { x: number; y: number; kind: string }[] };
     }).parcel.cells
-      .filter((c) => c.kind === "EMPTY")
+      // La cour de ferme n'est pas semable : les camions y déposent.
+      .filter((c) => c.kind === "EMPTY" && !isYardCell(c.x, c.y, DEFAULT_GRID.h))
       .map((c) => ({ x: c.x, y: c.y }));
     return { moi, parcelle, cells };
   }
@@ -1332,9 +1344,10 @@ describe("porteur et outils", () => {
     }).player.farm;
     const det = await appel(`/parcels/${f.parcels[0]!.id}`);
     const cells = (det.corps as unknown as {
-      parcel: { cells: { x: number; y: number; kind: string }[] };
+      parcel: { gridH: number; cells: { x: number; y: number; kind: string }[] };
     }).parcel.cells
-      .filter((c) => c.kind === "EMPTY")
+      // La cour de ferme n'est pas semable : les camions y déposent.
+      .filter((c) => c.kind === "EMPTY" && !isYardCell(c.x, c.y, DEFAULT_GRID.h))
       .map((c) => ({ x: c.x, y: c.y }));
     return { moi, parcelle: f.parcels[0]!, machines: f.machines, cells };
   }
@@ -1458,9 +1471,10 @@ describe("un chantier prend du temps", () => {
     }).player.farm.parcels[0]!;
     const det = await appel(`/parcels/${parcelle.id}`);
     const cells = (det.corps as unknown as {
-      parcel: { cells: { x: number; y: number; kind: string }[] };
+      parcel: { gridH: number; cells: { x: number; y: number; kind: string }[] };
     }).parcel.cells
-      .filter((c) => c.kind === "EMPTY")
+      // La cour de ferme n'est pas semable : les camions y déposent.
+      .filter((c) => c.kind === "EMPTY" && !isYardCell(c.x, c.y, DEFAULT_GRID.h))
       .map((c) => ({ x: c.x, y: c.y }));
     return { moi, parcelle, cells };
   }
