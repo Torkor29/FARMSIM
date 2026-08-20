@@ -27,7 +27,7 @@ import { execFileSync } from "node:child_process";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { creerBaseTest, supprimerBaseTest, type BaseTest } from "./base-test.js";
-import { DEFAULT_GRID, isYardCell, formatRecovery, isRecoveryCode } from "@farmsim/shared";
+import { formatRecovery, isRecoveryCode } from "@farmsim/shared";
 import {
   machineCost,
   PLANTING_WINDOW,
@@ -875,7 +875,7 @@ describe("usure au champ", () => {
       parcel: { gridH: number; cells: { x: number; y: number; kind: string }[] };
     }).parcel;
     return parcel.cells
-      .filter((c) => c.kind === "EMPTY" && !isYardCell(c.x, c.y, parcel.gridH))
+      .filter((c) => c.kind === "EMPTY")
       .map((c) => ({ x: c.x, y: c.y }));
   }
 
@@ -1154,8 +1154,7 @@ describe("les heures pèsent sur la récolte", () => {
     const cells = (cellsR.corps as unknown as {
       parcel: { gridH: number; cells: { x: number; y: number; kind: string }[] };
     }).parcel.cells
-      // La cour de ferme n'est pas semable : les camions y déposent.
-      .filter((c) => c.kind === "EMPTY" && !isYardCell(c.x, c.y, DEFAULT_GRID.h))
+      .filter((c) => c.kind === "EMPTY")
       .map((c) => ({ x: c.x, y: c.y }));
 
     await travailler(parcelle.id, "plant", "PLANT", moi, cells, { crop: cropDeSaison() });
@@ -1239,8 +1238,7 @@ describe("calendrier cultural", () => {
     const cells = (det.corps as unknown as {
       parcel: { gridH: number; cells: { x: number; y: number; kind: string }[] };
     }).parcel.cells
-      // La cour de ferme n'est pas semable : les camions y déposent.
-      .filter((c) => c.kind === "EMPTY" && !isYardCell(c.x, c.y, DEFAULT_GRID.h))
+      .filter((c) => c.kind === "EMPTY")
       .map((c) => ({ x: c.x, y: c.y }));
     return { moi, parcelle, cells };
   }
@@ -1356,8 +1354,7 @@ describe("porteur et outils", () => {
     const cells = (det.corps as unknown as {
       parcel: { gridH: number; cells: { x: number; y: number; kind: string }[] };
     }).parcel.cells
-      // La cour de ferme n'est pas semable : les camions y déposent.
-      .filter((c) => c.kind === "EMPTY" && !isYardCell(c.x, c.y, DEFAULT_GRID.h))
+      .filter((c) => c.kind === "EMPTY")
       .map((c) => ({ x: c.x, y: c.y }));
     return { moi, parcelle: f.parcels[0]!, machines: f.machines, cells };
   }
@@ -1483,8 +1480,7 @@ describe("un chantier prend du temps", () => {
     const cells = (det.corps as unknown as {
       parcel: { gridH: number; cells: { x: number; y: number; kind: string }[] };
     }).parcel.cells
-      // La cour de ferme n'est pas semable : les camions y déposent.
-      .filter((c) => c.kind === "EMPTY" && !isYardCell(c.x, c.y, DEFAULT_GRID.h))
+      .filter((c) => c.kind === "EMPTY")
       .map((c) => ({ x: c.x, y: c.y }));
     return { moi, parcelle, cells };
   }

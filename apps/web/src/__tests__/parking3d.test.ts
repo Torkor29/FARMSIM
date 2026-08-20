@@ -1,5 +1,5 @@
 import * as THREE from "three";
-import { parkingLayout, parkingSlot } from "@farmsim/shared";
+import { YARD_PLACES, YARD_SIZE, parkingLayout, parkingSlot } from "@farmsim/shared";
 import { createParkingRig } from "../parking3d";
 
 /**
@@ -43,16 +43,43 @@ describe("la cour de stationnement en volume", () => {
     expect(box.min.y).toBeLessThan(0);
   });
 
-  it("tient dans son emprise, chemin d'accès compris", () => {
+  it("tient dans son emprise : le parc, l'aire de livraison et le chemin", () => {
     for (const parc of [1, 6]) {
       const plan = parkingLayout(parc);
       const box = bounds(parc);
       const w = box.max.x - box.min.x;
       const d = box.max.z - box.min.z;
-      // Le chemin saille vers le champ, d'où la tolérance sur x seulement.
+      // Le chemin saille vers le champ, d'où la tolérance sur x.
       expect(`${parc} ${w <= plan.w + 1.1}`).toBe(`${parc} true`);
-      expect(`${parc} ${d <= plan.d + 0.4}`).toBe(`${parc} true`);
+      // En travers, la cour vaut le parc plus l'aire de livraison accolée.
+      expect(`${parc} ${d <= plan.d + YARD_SIZE.d + 0.4}`).toBe(`${parc} true`);
+      expect(`${parc} ${d > plan.d}`).toBe(`${parc} true`);
     }
+  });
+
+  it("offre les dix places de livraison, hors du champ", () => {
+    const plan = parkingLayout(2);
+    const rig = createParkingRig(plan);
+    expect(rig.deliveries).toHaveLength(YARD_PLACES);
+    const vues = new Set(rig.deliveries.map((s) => `${s.x.toFixed(3)},${s.z.toFixed(3)}`));
+    // Deux caisses au même endroit, ce serait un objet cliquable pour deux.
+    expect(vues.size).toBe(YARD_PLACES);
+    // L'aire est accolée au parc, pas dessus : elle vit au-delà de son bord.
+    for (const s of rig.deliveries) {
+      expect(s.z).toBeLessThan(-plan.d / 2);
+    }
+    rig.dispose();
+  });
+
+  it("ouvre la cour en face de l'aire de livraison", () => {
+    const plan = parkingLayout(4);
+    const rig = createParkingRig(plan);
+    // C'est là que la haie se fend : le passage doit tomber devant les caisses,
+    // pas devant les engins garés.
+    const zs = rig.deliveries.map((s) => s.z);
+    expect(rig.gateZ).toBeGreaterThanOrEqual(Math.min(...zs) - YARD_SIZE.d);
+    expect(rig.gateZ).toBeLessThanOrEqual(Math.max(...zs) + YARD_SIZE.d);
+    rig.dispose();
   });
 
   it("garde les engins nez vers le champ", () => {

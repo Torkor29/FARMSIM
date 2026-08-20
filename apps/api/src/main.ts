@@ -24,9 +24,8 @@ import {
   SPECIALIZATION_LABELS,
   WORK_LABELS,
   footprintCells,
-  overlapsYard,
-  isYardCell,
-  YARD_REFUSAL,
+  freeYardSlot,
+  YARD_FULL,
   orientedFootprint,
   quarterTurns,
   xpFor,
@@ -2443,9 +2442,9 @@ app.get("/world/:continent", async (req, res) => {
 /**
  * Coin libre pour poser l'étable de départ.
  *
- * Elle évitait le tracteur, qui occupait alors une case. Le parc est sorti de
- * la grille : reste la cour de ferme, où les camions déposent et où l'on ne
- * bâtit pas.
+ * Elle évitait le tracteur et la cour de livraison, qui occupaient alors des
+ * cases. L'un comme l'autre sont sortis de la grille : les quatre coins sont
+ * désormais également valables.
  */
 function findStarterBarnSpot(gridW: number, gridH: number): { x: number; y: number } | null {
   const w = BUILDING_DEFS.CATTLE_BARN.w;
@@ -2458,7 +2457,6 @@ function findStarterBarnSpot(gridW: number, gridH: number): { x: number; y: numb
   ];
   for (const c of candidates) {
     if (c.x + w > gridW || c.y + h > gridH) continue;
-    if (overlapsYard({ x: c.x, y: c.y, w, h }, gridH)) continue;
     return c;
   }
   return null;
@@ -5181,13 +5179,6 @@ app.post("/parcels/:id/plant", async (req, res) => {
       res.status(409).json({ error: `Case ${x},${y} non libre` });
       return;
     }
-    // On ne sème pas la cour : c'est là que les camions déposent, et une case
-    // cultivée n'accepte plus de livraison. Sans ce refus, il suffisait de
-    // semer partout pour se retrouver dans l'impasse qu'on vient de corriger.
-    if (isYardCell(x, y, parcel.gridH)) {
-      res.status(409).json({ error: `Case ${x},${y} — ${YARD_REFUSAL}` });
-      return;
-    }
     if (directSeed) {
       // Le semis direct exige des chaumes : sans eux, c'est un semis ordinaire
       // et le joueur paierait le surcoût du semoir lourd pour rien.
@@ -6551,11 +6542,6 @@ app.post("/parcels/:id/build", async (req, res) => {
    * Le refus tombe **avant** le débit : un bâtiment payé qu'on ne peut pas
    * poser est exactement l'accident qu'on cherche à éviter.
    */
-  if (overlapsYard({ x: body.data.x, y: body.data.y, w: foot.w, h: foot.h }, parcel.gridH)) {
-    res.status(409).json({ error: YARD_REFUSAL });
-    return;
-  }
-
   const cells = footprintCells(body.data.x, body.data.y, foot.w, foot.h);
   for (const c of cells) {
     const cell = parcel.cells.find((p) => p.x === c.x && p.y === c.y);
@@ -8582,38 +8568,22 @@ const TRAVEL_MS = Number(process.env.FARMSIM_DELIVERY_MS ?? DELIVERY_TRAVEL_MS);
 /**
  * Où poser une caisse de livraison.
  *
- * Dans la cour, pas au milieu d'un champ : une case vide de la parcelle, la
- * plus proche possible du bord d'entrée. On évite les cases déjà occupées par
- * une autre livraison, sans quoi deux commandes passées coup sur coup se
- * superposeraient et il n'y aurait qu'un objet à cliquer pour deux caisses.
+ * Sur une des dix places de la cour, qui est **hors** de la grille : `x` et `y`
+ * ne désignent plus une case de champ mais une place de dépôt. Une caisse ne
+ * peut donc plus tomber au milieu du blé, et cultiver toute sa terre ne bloque
+ * plus les achats.
+ *
+ * On évite les places déjà prises : deux commandes passées coup sur coup se
+ * superposeraient, et il n'y aurait qu'un objet à cliquer pour deux caisses.
  */
 async function placeDelivery(
   farmId: string,
 ): Promise<{ parcelId: string; x: number; y: number } | null> {
-  const parcel = await prisma.parcel.findFirst({
-    where: { farmId },
-    include: { cells: true },
-  });
+  const parcel = await prisma.parcel.findFirst({ where: { farmId } });
   if (!parcel) return null;
-  const prises = new Set(
-    (await prisma.supplyOrder.findMany({ where: { farmId } })).map((d) => `${d.x},${d.y}`),
-  );
-  const libres = parcel.cells
-    .filter((c) => c.kind === "EMPTY" && !prises.has(`${c.x},${c.y}`))
-    // Le bord d'entrée est le coin bas-gauche de la parcelle : c'est de là que
-    // vient la route, et c'est là qu'on regarde quand on cherche une livraison.
-    .sort((a, b) => a.x + (parcel.gridH - b.y) - (b.x + (parcel.gridH - a.y)));
-  /*
-   * La cour d'abord, le reste ensuite.
-   *
-   * La cour est réservée aux livraisons — on n'y bâtit ni n'y sème —, donc
-   * elle a presque toujours de la place. Le repli sur une case libre
-   * quelconque reste utile pour les grosses commandes qui la saturent, et pour
-   * les fermes créées avant que la cour n'existe.
-   */
-  const dansLaCour = libres.filter((c) => isYardCell(c.x, c.y, parcel.gridH));
-  const c = dansLaCour[0] ?? libres[0];
-  return c ? { parcelId: parcel.id, x: c.x, y: c.y } : null;
+  const prises = await prisma.supplyOrder.findMany({ where: { farmId } });
+  const place = freeYardSlot(prises.map((d) => ({ x: d.x, y: d.y })));
+  return place ? { parcelId: parcel.id, x: place.x, y: place.y } : null;
 }
 
 /**
@@ -8726,10 +8696,7 @@ app.post("/market/buy", async (req, res) => {
    */
   const pose = await placeDelivery(user.farm.id);
   if (!pose) {
-    res.status(409).json({
-      error:
-        "La cour est encombrée — rentrez les caisses déjà livrées avant d'en commander d'autres.",
-    });
+    res.status(409).json({ error: YARD_FULL });
     return;
   }
   const maintenant = Date.now();

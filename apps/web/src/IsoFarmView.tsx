@@ -1,8 +1,8 @@
 import { useEffect, useMemo, useRef } from "react";
 import * as THREE from "three";
 import {
-  isYardCell,
   parkingLayout,
+  YARD_W,
   BUILDING_DEFS,
   RIPENESS_COLORS,
   artGroundFraction,
@@ -221,6 +221,13 @@ type Props = {
   grazing?: GrazingHerd[];
   /** Commandes livrées, posées dans la cour en attendant qu'on les rentre */
   supplies?: SupplyCrate[];
+  /**
+   * Rentrer une caisse d'un clic dessus.
+   *
+   * La cour est hors grille : une caisse n'a plus de case, donc le clic sur le
+   * sol ne peut plus la trouver. C'est l'objet lui-même qu'on vise.
+   */
+  onCollectSupply?: (id: string) => void;
   /**
    * Un transport en cours, du stockage vers un bâtiment.
    *
@@ -444,13 +451,6 @@ const PREVIEW_OK = 0x2fc46a;
 const PREVIEW_BAD = 0xef4444;
 const DIRT = 0xa4835c;
 
-/**
- * La cour de ferme — terre battue, plus grise que la terre travaillée.
- *
- * Elle doit se distinguer de `DIRT`, qui entoure les bâtiments, sans quoi on
- * ne saurait pas où finit la cour et où commence le pourtour d'un hangar.
- */
-const COUR = 0x8d8271;
 const PULSE = 0xfff2b0;
 
 
@@ -1028,6 +1028,7 @@ export function IsoFarmView({
   grazing = [],
   yardSignals = [],
   supplies = [],
+  onCollectSupply,
   hauls = [],
   manurePiles = [],
   workers = [],
@@ -1061,6 +1062,8 @@ export function IsoFarmView({
   onStrokePreviewRef.current = onStrokePreview;
   const onWorkStrokeRef = useRef(onWorkStroke);
   onWorkStrokeRef.current = onWorkStroke;
+  const onCollectSupplyRef = useRef(onCollectSupply);
+  onCollectSupplyRef.current = onCollectSupply;
   const onStrokeSelectRef = useRef(onStrokeSelect);
   onStrokeSelectRef.current = onStrokeSelect;
   const layoutRef = useRef<(() => void) | null>(null);
@@ -1410,6 +1413,12 @@ export function IsoFarmView({
     const parkingGroup = new THREE.Group();
     world.add(parkingGroup);
     let parkingRig: ParkingRig | null = null;
+    /** Places de livraison, en coordonnées monde : c'est là que tombent les caisses. */
+    let deliverySpots: { x: number; z: number }[] = [];
+    /** Hauteur du dessus de dalle de la cour, échelle monde. */
+    let yardDeck = 0;
+    /** Où la haie doit s'ouvrir, en z monde. */
+    let parkingGateZ = 0;
     /**
      * Débord de la cour à l'ouest de l'île, en unités monde.
      *
@@ -1423,6 +1432,8 @@ export function IsoFarmView({
     const pointer = new THREE.Vector2();
     /** Uniquement les dalles de sol — les engins ne bloquent pas le clic */
     const pickables: THREE.Object3D[] = [];
+    /** Les caisses livrées : elles se visent directement, hors de la grille. */
+    const crateTargets: THREE.Object3D[] = [];
 
     /**
      * Cadrage choisi par le joueur, conservé d'une reconstruction de scène à
@@ -1627,6 +1638,12 @@ export function IsoFarmView({
       rig.group.position.set(cx, 0, cz);
       parkingGroup.add(rig.group);
       parkingRig = rig;
+      yardDeck = rig.deck * cellSize;
+      parkingGateZ = cz + rig.gateZ * cellSize;
+      deliverySpots = rig.deliveries.map((s) => ({
+        x: cx + s.x * cellSize,
+        z: cz + s.z * cellSize,
+      }));
 
       parked.forEach((machine, i) => {
         const slot = rig.slots[i];
@@ -1741,29 +1758,59 @@ export function IsoFarmView({
       platform.scale.set(gw * step + 1.4, 1, gh * step + 1.4);
       platform.position.set(0, -0.28, 0);
 
+      // La cour d'abord : c'est elle qui dit où la haie doit s'ouvrir.
+      buildParking();
+
       const hedgeH = 0.55;
       const hedgeT = 0.28;
       const hw = gw * step + 0.9;
       const hh = gh * step + 0.9;
-      const hedges = [
-        new THREE.BoxGeometry(hw, hedgeH, hedgeT),
-        new THREE.BoxGeometry(hw, hedgeH, hedgeT),
-        new THREE.BoxGeometry(hedgeT, hedgeH, hh),
-        new THREE.BoxGeometry(hedgeT, hedgeH, hh),
+      /**
+       * La haie, fendue à l'ouest.
+       *
+       * « Laisser une ouverture entre la parcelle et le parking pour aller
+       * chercher ses livraisons » : une haie continue faisait de la cour un
+       * enclos voisin sans porte. Le pan ouest est donc coupé en deux tronçons
+       * qui réservent le passage, en face du chemin de la cour.
+       */
+      const passage = 1.5;
+      const passageZ = parkingGateZ;
+      const ouestAvant = Math.max(0, passageZ - passage / 2 + hh / 2);
+      const ouestApres = Math.max(0, hh / 2 - (passageZ + passage / 2));
+      const hedges: [THREE.BoxGeometry, [number, number, number]][] = [
+        [new THREE.BoxGeometry(hw, hedgeH, hedgeT), [0, 0.15, -hh / 2]],
+        [new THREE.BoxGeometry(hw, hedgeH, hedgeT), [0, 0.15, hh / 2]],
+        [new THREE.BoxGeometry(hedgeT, hedgeH, hh), [hw / 2, 0.15, 0]],
       ];
-      const hedgesPos = [
-        [0, 0.15, -hh / 2],
-        [0, 0.15, hh / 2],
-        [-hw / 2, 0.15, 0],
-        [hw / 2, 0.15, 0],
-      ] as const;
-      hedges.forEach((geo, i) => {
+      if (ouestAvant > 0.05) {
+        hedges.push([
+          new THREE.BoxGeometry(hedgeT, hedgeH, ouestAvant),
+          [-hw / 2, 0.15, -hh / 2 + ouestAvant / 2],
+        ]);
+      }
+      if (ouestApres > 0.05) {
+        hedges.push([
+          new THREE.BoxGeometry(hedgeT, hedgeH, ouestApres),
+          [-hw / 2, 0.15, hh / 2 - ouestApres / 2],
+        ]);
+      }
+      for (const [geo, [px, py, pz]] of hedges) {
         const m = new THREE.Mesh(geo, hedgeMat);
-        const [px, py, pz] = hedgesPos[i];
         m.position.set(px, py, pz);
         m.castShadow = true;
         fenceGroup.add(m);
-      });
+      }
+      // Deux montants de part et d'autre du passage : sans eux, la haie
+      // s'interrompt sans raison lisible et l'ouverture passe pour un trou.
+      for (const side of [-1, 1]) {
+        const pilier = new THREE.Mesh(
+          new THREE.BoxGeometry(hedgeT * 1.2, hedgeH * 1.15, hedgeT * 1.2),
+          hedgeMat,
+        );
+        pilier.position.set(-hw / 2, 0.15, passageZ + (side * passage) / 2);
+        pilier.castShadow = true;
+        fenceGroup.add(pilier);
+      }
       // Les arbres étaient deux cubes empilés, ce qui jurait franchement avec
       // des bâtiments dessinés. Ils reçoivent leur illustration, comme le
       // reste de la carte.
@@ -1808,13 +1855,6 @@ export function IsoFarmView({
           let col = look === "PLAIN" ? ((x + y) % 2 === 0 ? SOIL : SOIL_DARK) : SOIL_COLORS[look];
           if (cell?.kind === "CROP") col = cropGroundColor(cell, sim);
           if (cell?.kind === "BUILDING") col = DIRT;
-          /* La cour, en terre battue.
-             C'est là que les camions déposent, et on n'y bâtit ni n'y sème.
-             Une règle qu'on ne voit pas au sol se découvre par un refus : le
-             joueur vise la case, se fait dire non, et ne comprend pas
-             pourquoi. Elle se lit donc, comme une cour se lit dans une vraie
-             ferme — à sa terre nue. */
-          if (isYardCell(x, y, gh)) col = COUR;
           if (cell?.manuredUntil && cell.manuredUntil > Date.now()) {
             const stain = new THREE.Color(col).lerp(new THREE.Color(0x3d2918), 0.45);
             col = stain.getHex();
@@ -1920,8 +1960,6 @@ export function IsoFarmView({
 
         }
       }
-
-      buildParking();
 
       for (const worker of dataRef.current.workers) {
         const mesh = buildCharacter(worker.appearance, { spec: worker.specialization, prop: false });
@@ -2092,6 +2130,15 @@ export function IsoFarmView({
     const ro = new ResizeObserver(resize);
     ro.observe(el);
     resize();
+
+    /** La caisse sous le curseur, s'il y en a une. */
+    function raycastCrate(): string | null {
+      if (!crateTargets.length) return null;
+      raycaster.setFromCamera(pointer, camera);
+      const hits = raycaster.intersectObjects(crateTargets, true);
+      const id = hits[0]?.object.userData?.supplyId;
+      return typeof id === "string" ? id : null;
+    }
 
     function raycastCell(): { x: number; y: number } | null {
       raycaster.setFromCamera(pointer, camera);
@@ -2331,6 +2378,14 @@ export function IsoFarmView({
       }
       if (dragged || wasPan) return;
       setPointerFromEvent(ev);
+      // Une caisse passe avant le sol : elle est posée hors de la grille, et
+      // c'est le geste le plus évident du jeu — il ne doit pas demander de
+      // changer d'outil d'abord.
+      const caisse = raycastCrate();
+      if (caisse) {
+        onCollectSupplyRef.current?.(caisse);
+        return;
+      }
       const cell = raycastCell();
       if (cell) onClickRef.current(cell.x, cell.y, gestureMods);
     }
@@ -2737,15 +2792,24 @@ export function IsoFarmView({
             supplyGroup.add(mesh);
             crates.set(c.id, mesh);
             mesh.userData.pose = maintenant;
+            mesh.userData.supplyId = c.id;
+            mesh.traverse((o) => {
+              o.userData.supplyId = c.id;
+            });
+            crateTargets.push(mesh);
           }
-          const px = ox + (c.x + 0.5) * step;
-          const pz = oz + (c.y + 0.5) * step;
+          // `x` et `y` d'une livraison désignent une place de la cour, hors
+          // grille : plus une case de champ. Sans place connue — une commande
+          // d'avant la sortie de la cour —, on la pose devant l'ouverture.
+          const place = deliverySpots[c.y * YARD_W + c.x] ?? deliverySpots[0];
+          const px = place ? place.x : ox - step;
+          const pz = place ? place.z : parkingGateZ;
           // Elle tombe du ciel sur un tiers de seconde, puis rebondit une fois :
           // c'est ce qui dit « on vient de la déposer » sans camion à animer.
           const age = (maintenant - (mesh.userData.pose as number)) / 1000;
           const chute = age < 0.34 ? (1 - age / 0.34) ** 2 * 1.6 * cellSize : 0;
           const rebond = age >= 0.34 && age < 0.7 ? Math.sin((age - 0.34) / 0.36 * Math.PI) * 0.06 * cellSize : 0;
-          mesh.position.set(px, 0.1 + chute + rebond, pz);
+          mesh.position.set(px, yardDeck + 0.02 + chute + rebond, pz);
           // Un léger balancement tant qu'elle attend : elle réclame un geste.
           mesh.rotation.y = Math.sin(t * 1.4 + c.x) * 0.08;
         }
@@ -2765,6 +2829,8 @@ export function IsoFarmView({
         for (const [id, mesh] of crates) {
           if (vues.has(id)) continue;
           crates.delete(id);
+          const rang = crateTargets.indexOf(mesh);
+          if (rang >= 0) crateTargets.splice(rang, 1);
           // Rangée : elle s'envole vers le bâtiment qui la stocke.
           const cible = storagePoint(mesh.position);
           vols.push({ mesh, from: mesh.position.clone(), to: cible, t0: t });

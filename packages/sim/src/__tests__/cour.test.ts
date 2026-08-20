@@ -1,59 +1,79 @@
 import {
   DEFAULT_GRID,
   YARD_H,
+  YARD_PLACES,
+  YARD_SIZE,
+  YARD_SLOT,
   YARD_W,
-  isYardCell,
-  overlapsYard,
-  yardCells,
+  freeYardSlot,
+  isYardSlot,
+  yardSlotOffset,
+  yardSlots,
 } from "@farmsim/shared";
 
 /**
  * La cour de ferme.
  *
- * Les livraisons se posaient sur n'importe quelle case libre. Une ferme bien
- * bâtie n'en a plus une seule, et l'achat devenait alors impossible : le jeu
- * punissait le développement de la ferme.
+ * Les livraisons se posaient sur n'importe quelle case libre : une ferme bien
+ * bâtie n'en avait plus une seule, et l'achat devenait impossible. La cour a
+ * d'abord réservé dix cases dans la grille — au prix de dix cases de blé et
+ * d'un camion qui déchargeait au milieu du champ. Elle est maintenant **hors**
+ * de la grille : dix places à côté de la parcelle.
  */
 describe("la cour de ferme", () => {
-  const H = DEFAULT_GRID.h;
-
-  it("fait bien dix cases, comme annoncé", () => {
+  it("offre bien dix places, comme annoncé", () => {
     expect(YARD_W * YARD_H).toBe(10);
-    expect(yardCells(H)).toHaveLength(10);
+    expect(YARD_PLACES).toBe(10);
+    expect(yardSlots()).toHaveLength(10);
   });
 
-  it("se tient au bord d'entrée, en bas à gauche", () => {
-    for (const c of yardCells(H)) {
-      expect(`${c.x},${c.y} ${c.x < YARD_W && c.y >= H - YARD_H}`).toBe(`${c.x},${c.y} true`);
+  it("ne prend plus une seule case de champ", () => {
+    // Le champ entier redevient cultivable : c'est tout l'objet de la sortie
+    // de la cour. Aucune place ne porte de coordonnée de grille.
+    for (const s of yardSlots()) {
+      expect(isYardSlot(s)).toBe(true);
     }
-    expect(isYardCell(0, H - 1, H)).toBe(true);
-    expect(isYardCell(YARD_W - 1, H - YARD_H, H)).toBe(true);
+    expect(DEFAULT_GRID.w * DEFAULT_GRID.h).toBe(144);
   });
 
-  it("laisse le reste du champ libre", () => {
-    expect(isYardCell(YARD_W, H - 1, H)).toBe(false);
-    expect(isYardCell(0, H - YARD_H - 1, H)).toBe(false);
-    expect(isYardCell(6, 6, H)).toBe(false);
-    // Elle ne prend pas la moitié du champ : moins de sept pour cent.
-    const part = (YARD_W * YARD_H) / (DEFAULT_GRID.w * DEFAULT_GRID.h);
-    expect(part).toBeLessThan(0.08);
+  it("rejette une place qui n'existe pas", () => {
+    expect(isYardSlot({ x: -1, y: 0 })).toBe(false);
+    expect(isYardSlot({ x: YARD_W, y: 0 })).toBe(false);
+    expect(isYardSlot({ x: 0, y: YARD_H })).toBe(false);
+    expect(isYardSlot({ x: 1.5, y: 0 })).toBe(false);
   });
 
-  it("refuse une emprise qui mord dessus, même d'une seule case", () => {
-    // Un bâtiment 3×3 posé juste au-dessus la touche par son coin bas-gauche.
-    expect(overlapsYard({ x: YARD_W - 1, y: H - YARD_H, w: 3, h: 3 }, H)).toBe(true);
-    expect(overlapsYard({ x: 0, y: H - 1, w: 1, h: 1 }, H)).toBe(true);
+  it("remplit la cour place par place, sans jamais superposer", () => {
+    const prises: { x: number; y: number }[] = [];
+    for (let i = 0; i < YARD_PLACES; i++) {
+      const libre = freeYardSlot(prises);
+      expect(libre).not.toBeNull();
+      // Deux commandes coup sur coup ne doivent pas tomber au même endroit :
+      // il n'y aurait qu'un objet à cliquer pour deux caisses.
+      expect(prises.some((p) => p.x === libre!.x && p.y === libre!.y)).toBe(false);
+      prises.push(libre!);
+    }
+    expect(freeYardSlot(prises)).toBeNull();
   });
 
-  it("laisse passer ce qui est à côté", () => {
-    // Collé à droite de la cour, et collé au-dessus : les deux doivent passer.
-    expect(overlapsYard({ x: YARD_W, y: H - YARD_H, w: 3, h: 2 }, H)).toBe(false);
-    expect(overlapsYard({ x: 0, y: H - YARD_H - 3, w: 3, h: 3 }, H)).toBe(false);
+  it("rend une place dès qu'une caisse est rentrée", () => {
+    const toutes = yardSlots();
+    const saufUne = toutes.slice(1);
+    expect(freeYardSlot(saufUne)).toEqual(toutes[0]);
   });
 
-  it("suit la hauteur de la grille, quelle qu'elle soit", () => {
-    // Une parcelle plus haute garde sa cour en bas, pas au milieu.
-    expect(isYardCell(0, 19, 20)).toBe(true);
-    expect(isYardCell(0, 11, 20)).toBe(false);
+  it("garde chaque place sur le béton de l'aire", () => {
+    for (const s of yardSlots()) {
+      const { dx, dz } = yardSlotOffset(s);
+      expect(Math.abs(dx) + YARD_SLOT / 2).toBeLessThanOrEqual(YARD_SIZE.w / 2);
+      expect(Math.abs(dz) + YARD_SLOT / 2).toBeLessThanOrEqual(YARD_SIZE.d / 2);
+    }
+  });
+
+  it("place la première rangée du côté du champ", () => {
+    // On sort par l'ouverture et on tombe sur la rangée qu'on remplit d'abord.
+    const premiere = yardSlotOffset({ x: 0, y: 0 });
+    const seconde = yardSlotOffset({ x: 0, y: 1 });
+    expect(premiere.dx).toBeGreaterThan(seconde.dx);
   });
 });

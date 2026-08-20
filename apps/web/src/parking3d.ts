@@ -1,5 +1,14 @@
 import * as THREE from "three";
-import { BAY_ACROSS, BAY_ALONG, parkingSlot, type ParkingLayout } from "@farmsim/shared";
+import {
+  BAY_ACROSS,
+  BAY_ALONG,
+  YARD_SIZE,
+  YARD_SLOT,
+  parkingSlot,
+  yardSlotOffset,
+  yardSlots,
+  type ParkingLayout,
+} from "@farmsim/shared";
 import { Part, box, createBuildingMaterials, cyl, type Role } from "./machine-kit";
 
 /**
@@ -15,6 +24,11 @@ import { Part, box, createBuildingMaterials, cyl, type Role } from "./machine-ki
  * **bordure** de trottoir, un **chemin** qui la raccorde au champ, et deux
  * repères verticaux — mât d'éclairage et panneau — sans quoi une dalle vue de
  * trois quarts reste un rectangle plat.
+ *
+ * La cour porte deux aires accolées : le **parc**, où dorment les engins, et
+ * l'**aire de livraison**, dix places où les camions déposent. Une seule
+ * plateforme pour les deux, et un chemin unique vers l'ouverture de la haie —
+ * c'est une cour de ferme, pas deux parkings côte à côte.
  *
  * Repère local : `x` = axe des engins (le champ est vers +x), `z` = travers,
  * `y` = hauteur, sol à `y = 0`, une unité = une case.
@@ -36,8 +50,12 @@ export type ParkingRig = {
   group: THREE.Group;
   /** Hauteur du dessus de dalle : c'est là que posent les pneus. */
   deck: number;
-  /** Centre de chaque place, en unités locales — l'appelant y pose ses engins. */
+  /** Centre de chaque place de parc, en unités locales. */
   slots: { x: number; z: number }[];
+  /** Centre des dix places de livraison, indexées comme `yardSlots()`. */
+  deliveries: { x: number; z: number }[];
+  /** Décalage en z de l'aire de livraison : c'est là que débouche l'ouverture. */
+  gateZ: number;
   /** Cap des engins garés, radians : tous nez vers le champ. */
   heading: number;
   dispose(): void;
@@ -118,14 +136,48 @@ export function createParkingRig(
   }
 
   /**
+   * L'aire de livraison : dix places, accolées au parc.
+   *
+   * « Il faudrait presque que de base, la map ait genre 10 cases en rectangle
+   * hors du champ, c'est là que tu reçois. » Les voici — même dalle, même
+   * bordure, mais des emplacements peints en carré plutôt qu'en couloir : on
+   * y pose des caisses, on n'y recule pas une remorque.
+   */
+  const livZ = -(d / 2 + YARD_SIZE.d / 2);
+  const livX = w / 2 - YARD_SIZE.w / 2;
+  root.add("dirt", box(YARD_SIZE.w + 0.34, BASE, YARD_SIZE.d + 0.34, [livX, -BASE / 2 + 0.001, livZ]));
+  root.add("foliage", box(YARD_SIZE.w + 0.3, 0.03, YARD_SIZE.d + 0.3, [livX, 0.015, livZ]));
+  root.add("concrete", box(YARD_SIZE.w, SLAB, YARD_SIZE.d, [livX, SLAB / 2, livZ]));
+  root.add("wallDark", box(0.08, kerb, YARD_SIZE.d, [livX - YARD_SIZE.w / 2 + 0.04, kerb / 2, livZ]));
+  root.add(
+    "wallDark",
+    box(YARD_SIZE.w, kerb, 0.08, [livX, kerb / 2, livZ - YARD_SIZE.d / 2 + 0.04]),
+  );
+
+  const deliveries: { x: number; z: number }[] = [];
+  for (const slot of yardSlots()) {
+    const { dx, dz } = yardSlotOffset(slot);
+    const cxSlot = livX + dx;
+    const czSlot = livZ + dz;
+    deliveries.push({ x: cxSlot, z: czSlot });
+    // Emplacement peint : quatre traits, pour qu'une place vide se voie aussi.
+    const cote = YARD_SLOT * 0.82;
+    paint(cote, 0.045, cxSlot, czSlot - cote / 2);
+    paint(cote, 0.045, cxSlot, czSlot + cote / 2);
+    paint(0.045, cote, cxSlot - cote / 2, czSlot);
+    paint(0.045, cote, cxSlot + cote / 2, czSlot);
+  }
+
+  /**
    * Chemin d'accès vers le champ.
    *
-   * Sans lui, la cour est une île à côté d'une île : on ne comprend pas que
-   * les engins en sortent pour aller travailler.
+   * Il débouche sur l'aire de livraison, pas sur le parc : c'est par là qu'on
+   * sort du champ pour aller chercher ses caisses, et la haie s'ouvre en face.
+   * Sans lui, la cour est une île à côté d'une île.
    */
-  const path = 0.9;
-  root.add("dirt", box(0.75, BASE * 0.9, path, [w / 2 + 0.34, -BASE * 0.45 + 0.001, 0]));
-  root.add("concrete", box(0.78, 0.04, path * 0.82, [w / 2 + 0.32, 0.02, 0]));
+  const path = 1.2;
+  root.add("dirt", box(0.75, BASE * 0.9, path, [w / 2 + 0.34, -BASE * 0.45 + 0.001, livZ]));
+  root.add("concrete", box(0.78, 0.04, path * 0.82, [w / 2 + 0.32, 0.02, livZ]));
 
   /**
    * Mât d'éclairage et panneau.
@@ -161,6 +213,8 @@ export function createParkingRig(
     group,
     deck: SLAB,
     slots,
+    deliveries,
+    gateZ: livZ,
     // Les engins regardent le champ : leur modèle pointe vers +x, le champ est
     // à l'est, donc aucun quart de tour à appliquer.
     heading: 0,
