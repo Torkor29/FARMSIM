@@ -93,7 +93,7 @@ import {
   MACHINE_LISTING_MAX_RATE,
   isBreakdownKind,
 } from "@farmsim/shared";
-import { AuthScreen } from "./AuthScreen";
+import { AuthScreen, RecoveryNotice, type AuthMode } from "./AuthScreen";
 import type { GrazingHerd, PreviewBuilding } from "./IsoFarmView";
 import { BuildingSheet } from "./BuildingSheet";
 import { ConfirmDialog, type ConfirmRequest } from "./ConfirmDialog";
@@ -572,7 +572,11 @@ export function App() {
   const [visitOrder, setVisitOrder] = useState<LaborOrderView | null>(null);
   const [activeMission, setActiveMission] = useState<MissionPlayContract | null>(null);
   const [player, setPlayer] = useState<Player | null>(null);
-  const [authMode, setAuthMode] = useState<"register" | "login">("register");
+  const [authMode, setAuthMode] = useState<AuthMode>("register");
+  /** Ce que le joueur tape dans l'écran d'oubli. */
+  const [recoveryInput, setRecoveryInput] = useState("");
+  /** Le code que le serveur vient de remettre, à montrer une seule fois. */
+  const [recoveryCode, setRecoveryCode] = useState<string | null>(null);
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [accessCode, setAccessCode] = useState("ferme");
@@ -2168,18 +2172,21 @@ export function App() {
     setBusy(true);
     setErr(null);
     try {
-      const r = await api<{ token: string; player: Player; resume?: SessionResume }>(
-        "/auth/register",
-        {
-          method: "POST",
-          body: JSON.stringify({
-            email,
-            displayName: name.trim(),
-            accessCode: accessCode || "ferme",
-          }),
-        },
-      );
+      const r = await api<{
+        token: string;
+        player: Player;
+        resume?: SessionResume;
+        recoveryCode?: string;
+      }>("/auth/register", {
+        method: "POST",
+        body: JSON.stringify({
+          email,
+          displayName: name.trim(),
+          accessCode: accessCode || "ferme",
+        }),
+      });
       applyAuth(r);
+      if (r.recoveryCode) setRecoveryCode(r.recoveryCode);
       await Promise.all([refreshMeta(), loadWorld()]);
       setMsg(null);
     } catch (e) {
@@ -2246,17 +2253,57 @@ export function App() {
     setErr(null);
     try {
       if (!email) throw new Error("Email requis");
-      const r = await api<{ token: string; player: Player; resume?: SessionResume }>(
-        "/auth/login",
-        {
-          method: "POST",
-          body: JSON.stringify({ email, accessCode: accessCode || "ferme" }),
-        },
-      );
+      const r = await api<{
+        token: string;
+        player: Player;
+        resume?: SessionResume;
+        recoveryCode?: string;
+      }>("/auth/login", {
+        method: "POST",
+        body: JSON.stringify({ email, accessCode: accessCode || "ferme" }),
+      });
       await loadWorld().catch(() => undefined);
       applyAuth(r);
+      // Compte créé avant que le code de secours existe : le serveur vient
+      // d'en remettre un. C'est la seule occasion de le montrer.
+      if (r.recoveryCode) setRecoveryCode(r.recoveryCode);
       await refreshMeta();
       if (!r.resume || r.resume.awayMs < 30_000) setMsg("Connexion OK");
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  /**
+   * Code d'accès oublié : le code de secours en choisit un nouveau.
+   *
+   * La reprise en main est complète — le serveur ferme les sessions ouvertes
+   * avec l'ancien code et en rend un neuf ici. Le joueur entre donc
+   * directement dans sa ferme, sans avoir à se reconnecter derrière.
+   */
+  async function recover() {
+    setBusy(true);
+    setErr(null);
+    try {
+      const r = await api<{
+        token: string;
+        player: Player;
+        resume?: SessionResume;
+        recoveryCode?: string;
+      }>("/auth/recover", {
+        method: "POST",
+        body: JSON.stringify({ email, recoveryCode: recoveryInput, accessCode }),
+      });
+      await loadWorld().catch(() => undefined);
+      applyAuth(r);
+      setRecoveryInput("");
+      // Le code qui vient de servir est brûlé : celui-ci le remplace.
+      if (r.recoveryCode) setRecoveryCode(r.recoveryCode);
+      await refreshMeta();
+      setMsg("Nouveau code d'accès enregistré");
+      setAuthMode("login");
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e));
     } finally {
@@ -4133,21 +4180,33 @@ export function App() {
 
   if (!player) {
     return (
-      <AuthScreen
-        authMode={authMode}
-        onAuthModeChange={setAuthMode}
-        name={name}
-        onNameChange={setName}
-        email={email}
-        onEmailChange={setEmail}
-        accessCode={accessCode}
-        onAccessCodeChange={setAccessCode}
-        busy={busy}
-        msg={msg}
-        err={err}
-        onRegister={register}
-        onLogin={login}
-      />
+      <>
+        <AuthScreen
+          authMode={authMode}
+          onAuthModeChange={(m) => {
+            setAuthMode(m);
+            setErr(null);
+            setMsg(null);
+          }}
+          name={name}
+          onNameChange={setName}
+          email={email}
+          onEmailChange={setEmail}
+          accessCode={accessCode}
+          onAccessCodeChange={setAccessCode}
+          recoveryInput={recoveryInput}
+          onRecoveryInputChange={setRecoveryInput}
+          busy={busy}
+          msg={msg}
+          err={err}
+          onRegister={register}
+          onLogin={login}
+          onRecover={recover}
+        />
+        {recoveryCode && (
+          <RecoveryNotice code={recoveryCode} onClose={() => setRecoveryCode(null)} />
+        )}
+      </>
     );
   }
 
@@ -4550,6 +4609,12 @@ export function App() {
           </div>
         )}
       </div>
+
+      {/* Le code de secours passe **devant** le bilan d'absence : il ne se
+          redemande pas, alors que le bilan se relit dans le journal. */}
+      {recoveryCode && (
+        <RecoveryNotice code={recoveryCode} onClose={() => setRecoveryCode(null)} />
+      )}
 
       {/* Le bilan d'absence annonce parfois huit cultures perdues : il mérite
           d'être lu, donc acquitté, plutôt que de flotter sur la ferme. */}

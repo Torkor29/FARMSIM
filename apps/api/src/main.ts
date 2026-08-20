@@ -305,6 +305,8 @@ import {
   canAfford,
   hasUnlimitedCrd,
   normalizeEmail,
+  RECOVERY_REFUSAL,
+  isRecoveryCode,
 } from "@farmsim/shared";
 import {
   simulateCell,
@@ -332,6 +334,7 @@ import { randomBytes, randomUUID } from "crypto";
 import path from "node:path";
 import { existsSync } from "node:fs";
 import { BAREMES, Limiteur, classer, cleAppelant } from "./rate-limit.js";
+import { empreinteSecours, nouveauCodeSecours, secoursCorrespond } from "./recovery.js";
 
 /**
  * Ce processus sert-il aussi le front construit ?
@@ -3261,6 +3264,23 @@ async function createSession(userId: string) {
   return token;
 }
 
+/**
+ * Remettre un code de secours au compte, et n'en garder que l'empreinte.
+ *
+ * Le clair remonte une fois — dans la réponse HTTP qui suit — puis n'existe
+ * plus nulle part : ni en base, ni dans les journaux. C'est le prix du
+ * mécanisme, et c'est aussi ce qui le rend utile ; un code que le serveur
+ * pourrait relire ne protégerait rien.
+ */
+async function remettreCodeSecours(userId: string): Promise<string> {
+  const code = nouveauCodeSecours();
+  await prisma.user.update({
+    where: { id: userId },
+    data: { recoveryHash: empreinteSecours(userId, code), recoveryAt: new Date() },
+  });
+  return code;
+}
+
 async function userFromAuthHeader(req: express.Request) {
   const header = req.headers.authorization;
   if (!header?.startsWith("Bearer ")) return null;
@@ -3396,6 +3416,10 @@ async function playerPayload(userId: string) {
   const bonuses = user.farm ? await getFarmBonuses(user.farm.id) : null;
   const {
     accessCode: _omit,
+    // L'empreinte du code de secours ne sort pas du serveur. Elle ne rend
+    // pas le code, mais elle permet de vérifier une supposition hors ligne :
+    // la donner au navigateur transformerait 80 bits en cible.
+    recoveryHash: _secours,
     appearanceJson,
     statsJson,
     consignesJson,
@@ -3403,6 +3427,7 @@ async function playerPayload(userId: string) {
     ...safe
   } = user;
   void _omit;
+  void _secours;
   void absenceLogJson;
   const dev = estCompteDev(user.email);
   const unlimited = estArgentIllimite(user.email);
@@ -3499,6 +3524,10 @@ app.post("/auth/register", async (req, res) => {
       token,
       player,
       accessCodeHint: accessCode ?? "ferme",
+      // Remis une seule fois, ici. Il n'y a pas d'envoi d'e-mail sur ce
+      // serveur : sans ce code noté quelque part, un code d'accès oublié
+      // signifie une ferme perdue.
+      recoveryCode: await remettreCodeSecours(user.id),
       resume: await buildResumeForUser(user.id),
     });
   } catch (e) {
@@ -3575,7 +3604,68 @@ app.post("/auth/login", async (req, res) => {
     data: { absenceLogJson: JSON.stringify({ spent: 0, lines: [] } satisfies AbsenceLog) },
   });
   const player = await playerPayload(user.id);
-  res.json({ token, player, resume });
+  /*
+   * Rattrapage des comptes créés avant le mécanisme.
+   *
+   * Ils n'ont pas de code de secours et ne peuvent donc pas se dépanner. On
+   * leur en remet un à la première connexion réussie — le seul moment où
+   * l'on est sûr d'avoir affaire au propriétaire du compte, puisqu'il vient
+   * de donner son code d'accès. Pas de script de rattrapage en base : celui
+   * qui ne se reconnecte jamais n'a de toute façon rien à récupérer.
+   */
+  const recoveryCode = user.recoveryHash ? undefined : await remettreCodeSecours(user.id);
+  res.json({ token, player, resume, recoveryCode });
+});
+
+/**
+ * Code d'accès oublié.
+ *
+ * Le joueur donne son adresse et le code de secours qu'il a noté, et choisit
+ * un nouveau code d'accès. Trois précautions :
+ *
+ * - **le refus est muet** — adresse inconnue et mauvais code rendent le même
+ *   message, sinon l'écran devient un annuaire des comptes qui jouent ;
+ * - **le code de secours est brûlé** — un nouveau est remis dans la foulée,
+ *   pour qu'un bout de papier retrouvé dans six mois ne rouvre pas la ferme ;
+ * - **les sessions ouvertes tombent** — si quelqu'un d'autre était entré avec
+ *   l'ancien code, changer ce code doit le mettre dehors, sans quoi la
+ *   reprise en main est une illusion.
+ *
+ * Le seau `AUTH` de la limite de débit couvre cette route (`/auth/…`) : dix
+ * essais, puis un toutes les trente secondes.
+ */
+app.post("/auth/recover", async (req, res) => {
+  const body = z
+    .object({
+      email: z.string().email(),
+      recoveryCode: z.string().min(1).max(64),
+      accessCode: z.string().min(3).max(32),
+    })
+    .safeParse(req.body);
+  if (!body.success) {
+    res.status(400).json(body.error.flatten());
+    return;
+  }
+  if (!isRecoveryCode(body.data.recoveryCode)) {
+    res.status(401).json({ error: RECOVERY_REFUSAL });
+    return;
+  }
+  const user = await findUserByEmail(body.data.email);
+  if (!user || !secoursCorrespond(user.recoveryHash, user.id, body.data.recoveryCode)) {
+    res.status(401).json({ error: RECOVERY_REFUSAL });
+    return;
+  }
+  await prisma.session.deleteMany({ where: { userId: user.id } });
+  await prisma.user.update({
+    where: { id: user.id },
+    data: { accessCode: body.data.accessCode },
+  });
+  const recoveryCode = await remettreCodeSecours(user.id);
+  const resume = await buildResumeForUser(user.id);
+  const token = await createSession(user.id);
+  await touchUserPresence(user.id);
+  const player = await playerPayload(user.id);
+  res.json({ token, player, resume, recoveryCode });
 });
 
 app.get("/auth/me", async (req, res) => {

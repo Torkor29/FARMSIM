@@ -25,6 +25,13 @@ describe("classement des routes", () => {
     assert.ok(BAREMES.INSCRIPTION.parSeconde > BAREMES.AUTH.parSeconde);
   });
 
+  it("range l'oubli de code avec la connexion, pas avec l'écriture ordinaire", () => {
+    // `/auth/recover` change le code d'accès d'un compte : c'est une porte
+    // d'entrée. Dans le seau d'écriture, elle aurait accepté soixante essais
+    // d'affilée puis deux par seconde.
+    assert.equal(classer("POST", "/auth/recover"), "AUTH");
+  });
+
   it("sépare la lecture de l'écriture", () => {
     assert.equal(classer("GET", "/players"), "LECTURE");
     assert.equal(classer("POST", "/market/buy"), "ECRITURE");

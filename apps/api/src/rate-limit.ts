@@ -66,8 +66,15 @@ export const BAREMES: Record<ClasseRoute, Bareme> = {
   LECTURE: { capacite: 120, parSeconde: 5 },
 };
 
-/** Chemins de connexion, reconnus sans préfixe `/api`. */
-const CHEMINS_AUTH = ["/auth/login", "/auth/code"];
+/**
+ * Chemins de connexion, reconnus sans préfixe `/api`.
+ *
+ * `/auth/recover` en fait partie : il change le code d'accès d'un compte sur
+ * présentation du seul code de secours. Laissé dans le seau d'écriture
+ * ordinaire, il offrirait soixante essais d'affilée puis deux par seconde —
+ * un débit qu'on ne concède pas à une porte d'entrée, même bien fermée.
+ */
+const CHEMINS_AUTH = ["/auth/login", "/auth/code", "/auth/recover"];
 const CHEMINS_INSCRIPTION = ["/auth/register"];
 
 /** À quelle classe appartient une requête. */

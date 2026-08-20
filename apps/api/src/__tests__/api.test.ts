@@ -27,7 +27,7 @@ import { execFileSync } from "node:child_process";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { creerBaseTest, supprimerBaseTest, type BaseTest } from "./base-test.js";
-import { DEFAULT_GRID, isYardCell } from "@farmsim/shared";
+import { DEFAULT_GRID, isYardCell, formatRecovery, isRecoveryCode } from "@farmsim/shared";
 import {
   machineCost,
   PLANTING_WINDOW,
@@ -152,8 +152,18 @@ async function inscrire(nom: string) {
     },
   });
   assert.equal(r.statut, 201, `inscription refusée : ${JSON.stringify(r.corps)}`);
-  const b = r.corps as unknown as { token: string; player: { id: string; farm: { machines: { id: string }[] } } };
-  return { jeton: b.token, id: b.player.id, machines: b.player.farm.machines };
+  const b = r.corps as unknown as {
+    token: string;
+    recoveryCode?: string;
+    player: { id: string; email: string; farm: { machines: { id: string }[] } };
+  };
+  return {
+    jeton: b.token,
+    id: b.player.id,
+    email: b.player.email,
+    secours: b.recoveryCode,
+    machines: b.player.farm.machines,
+  };
 }
 
 before(async () => {
@@ -1718,5 +1728,125 @@ describe("un chantier prend du temps", () => {
       0,
       "le chantier n'a pas été clos",
     );
+  });
+});
+
+/* ------------------------------------------------------------------ */
+/* Code d'accès oublié                                                 */
+/* ------------------------------------------------------------------ */
+
+describe("code de secours", () => {
+  it("est remis à l'inscription, une seule fois", async () => {
+    const moi = await inscrire("Secours Neuf");
+    assert.ok(moi.secours, "l'inscription doit remettre un code de secours");
+    assert.ok(isRecoveryCode(moi.secours!));
+
+    // Se reconnecter ne doit **pas** en redonner un : sinon le code noté par
+    // le joueur cesserait de valoir à chaque visite.
+    const r = await appel("/auth/login", {
+      methode: "POST",
+      corps: { email: moi.email, accessCode: "ferme" },
+    });
+    assert.equal(r.statut, 200);
+    assert.equal((r.corps as { recoveryCode?: string }).recoveryCode, undefined);
+  });
+
+  it("rouvre la ferme et pose un code d'accès neuf", async () => {
+    const moi = await inscrire("Secours Oubli");
+    const r = await appel("/auth/recover", {
+      methode: "POST",
+      corps: {
+        email: moi.email,
+        // Recopié comme sur un carnet : tirets, minuscules.
+        recoveryCode: formatRecovery(moi.secours!).toLowerCase(),
+        accessCode: "nouveau-code",
+      },
+    });
+    assert.equal(r.statut, 200, JSON.stringify(r.corps));
+    const b = r.corps as { token: string; player: { id: string }; recoveryCode?: string };
+    assert.equal(b.player.id, moi.id, "c'est bien la même ferme");
+
+    // L'ancien code ne vaut plus, le nouveau vaut.
+    const ancien = await appel("/auth/login", {
+      methode: "POST",
+      corps: { email: moi.email, accessCode: "ferme" },
+    });
+    assert.equal(ancien.statut, 401);
+    const neuf = await appel("/auth/login", {
+      methode: "POST",
+      corps: { email: moi.email, accessCode: "nouveau-code" },
+    });
+    assert.equal(neuf.statut, 200);
+  });
+
+  it("brûle le code utilisé et en remet un autre", async () => {
+    // Un bout de papier retrouvé dans six mois ne doit pas rouvrir la ferme.
+    const moi = await inscrire("Secours Brule");
+    const un = await appel("/auth/recover", {
+      methode: "POST",
+      corps: { email: moi.email, recoveryCode: moi.secours, accessCode: "code-un" },
+    });
+    assert.equal(un.statut, 200);
+    const suivant = (un.corps as { recoveryCode?: string }).recoveryCode;
+    assert.ok(suivant && suivant !== moi.secours, "un code neuf doit être remis");
+
+    const rejoue = await appel("/auth/recover", {
+      methode: "POST",
+      corps: { email: moi.email, recoveryCode: moi.secours, accessCode: "code-deux" },
+    });
+    assert.equal(rejoue.statut, 401);
+
+    const bon = await appel("/auth/recover", {
+      methode: "POST",
+      corps: { email: moi.email, recoveryCode: suivant, accessCode: "code-trois" },
+    });
+    assert.equal(bon.statut, 200);
+  });
+
+  it("met dehors les sessions ouvertes avec l'ancien code", async () => {
+    // Sans cela, reprendre la main sur son compte serait une illusion : celui
+    // qui était entré avec l'ancien code y resterait jusqu'à l'expiration.
+    const moi = await inscrire("Secours Dehors");
+    const avant = await appel("/auth/me", { jeton: moi.jeton });
+    assert.equal(avant.statut, 200);
+
+    const r = await appel("/auth/recover", {
+      methode: "POST",
+      corps: { email: moi.email, recoveryCode: moi.secours, accessCode: "code-repris" },
+    });
+    assert.equal(r.statut, 200);
+
+    const apres = await appel("/auth/me", { jeton: moi.jeton });
+    assert.equal(apres.statut, 401);
+  });
+
+  it("refuse sans dire si l'adresse existe", async () => {
+    const moi = await inscrire("Secours Muet");
+    const faux = await appel("/auth/recover", {
+      methode: "POST",
+      corps: {
+        email: moi.email,
+        recoveryCode: "ZZZZ-ZZZZ-ZZZZ-ZZZZ",
+        accessCode: "peu-importe",
+      },
+    });
+    const inconnu = await appel("/auth/recover", {
+      methode: "POST",
+      corps: {
+        email: `personne-${Date.now()}@test.fr`,
+        recoveryCode: "ZZZZ-ZZZZ-ZZZZ-ZZZZ",
+        accessCode: "peu-importe",
+      },
+    });
+    assert.equal(faux.statut, inconnu.statut);
+    assert.deepEqual(faux.corps, inconnu.corps);
+    assert.equal(faux.statut, 401);
+
+    // Et le compte visé n'a pas bougé.
+    const encore = await appel("/auth/login", {
+      methode: "POST",
+      corps: { email: moi.email, accessCode: "ferme" },
+    });
+    assert.equal(encore.statut, 200);
   });
 });

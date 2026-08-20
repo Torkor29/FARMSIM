@@ -105,6 +105,13 @@ model User {
   crd            Float          @default(12000)
   /** Code d’accès MVP (pas un vrai hash — démo locale) */
   accessCode     String         @default("ferme")
+  /// Empreinte du code de secours (SHA-256 salé par l'id), jamais le code.
+  /// Nul tant que le compte n'en a pas reçu : les comptes créés avant que le
+  /// mécanisme existe s'en voient remettre un à leur prochaine connexion.
+  recoveryHash   String?
+  /// Date du dernier code de secours remis. Sert à dire au joueur depuis
+  /// quand celui qu'il a noté est valable.
+  recoveryAt     DateTime?
   lastSeenAt     DateTime?
   lastMarketJson String?
   /** Indices du créateur de perso (peau, chapeau, vêtements…) */
