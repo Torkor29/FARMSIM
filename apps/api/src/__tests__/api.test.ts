@@ -107,7 +107,7 @@ function cropDeSaison(): CropCode {
  *
  * Un travail de champ ne s'exécute plus directement : il faut d'abord réserver
  * ses cases et son attelage. Les tests passent par le même sas que le joueur —
- * seule l'attente est mise à zéro par `FARMSIM_JOB_MS`.
+ * seule l'attente est raccourcie, par `FARMSIM_JOB_SPEED`.
  */
 async function travailler(
   parcelId: string,
@@ -198,6 +198,10 @@ before(async () => {
       // la même adresse : c'est le profil même que la limite de débit arrête.
       // C'est `debit.test.ts` qui l'éprouve, limite activée.
       FARMSIM_RATE_LIMIT: "off",
+      // Les chantiers durent des heures de tracteur : à vitesse réelle, la
+      // suite passerait son temps à attendre. On les accélère fortement — le
+      // sas, lui, est éprouvé tel quel.
+      FARMSIM_JOB_SPEED: "100000",
       // Le camion met douze secondes en jeu : c'est le bon délai pour un
       // joueur, une éternité dans une suite d'intégration. On ne raccourcit
       // que le compte à rebours — la caisse existe toujours, et il faut
@@ -1425,9 +1429,11 @@ describe("un chantier prend du temps", () => {
    * de tracteur et un épandage une seule. Les faire tenir dans le même clic
    * effaçait exactement ce que la largeur de travail venait d'apporter.
    *
-   * L'attente elle-même est mise à zéro ici (`FARMSIM_JOB_MS`) : ce qu'on
-   * vérifie, c'est le sas — qu'on ne puisse pas travailler sans chantier, que
-   * l'attelage soit immobilisé, et que les cases soient réservées.
+   * L'attente est raccourcie par `FARMSIM_JOB_SPEED` (posé au démarrage du
+   * serveur de test) : ce qu'on vérifie, c'est le sas — qu'on ne puisse pas
+   * travailler sans chantier, que l'attelage soit immobilisé, et que les cases
+   * soient réservées. Le commentaire nommait ici `FARMSIM_JOB_MS`, qui n'a
+   * jamais existé : les chantiers duraient donc leur temps réel.
    */
   async function fermeAuChamp(nom: string) {
     const moi = await inscrire(nom);
@@ -1526,7 +1532,7 @@ describe("un chantier prend du temps", () => {
       jeton: moi.jeton,
     });
     assert.equal(ouvert.statut, 201, `chantier refusé : ${JSON.stringify(ouvert.corps)}`);
-    const job = (ouvert.corps as unknown as { job: { id: string } }).job;
+    const job = (ouvert.corps as unknown as { job: { id: string; endsAt: string } }).job;
 
     const pendant = await appel("/auth/me", { jeton: moi.jeton });
     const cuvePendant = (pendant.corps as unknown as {
@@ -1534,12 +1540,28 @@ describe("un chantier prend du temps", () => {
     }).player.farm.fuelL;
     assert.ok(cuvePendant < cuveAvant, "le plein aurait dû partir au départ de la cour");
 
+    /*
+      Attendre la fin du chantier, comme le fait `travailler()`.
+
+      Ce test-ci ouvrait le chantier à la main et appelait la moisson dans la
+      foulée : le sas répondait alors « chantier encore en cours » (425) au
+      lieu du refus qu'on voulait mesurer. La course ne se voyait pas sur une
+      machine rapide, et tombait sur l'intégration continue — le pire endroit
+      pour l'apprendre, puisqu'elle y bloque le déploiement.
+    */
+    const reste = new Date(job.endsAt).getTime() - Date.now();
+    if (reste > 0) await new Promise((r) => setTimeout(r, reste + 30));
+
     const travail = await appel(`/parcels/${parcelle.id}/harvest`, {
       methode: "POST",
       corps: { userId: moi.id, jobId: job.id, cells: lot },
       jeton: moi.jeton,
     });
-    assert.equal(travail.statut, 409, "une moisson sur des cases vides devrait être refusée");
+    assert.equal(
+      travail.statut,
+      409,
+      `une moisson sur des cases vides devrait être refusée : ${JSON.stringify(travail.corps)}`,
+    );
 
     // Le remboursement suit la réponse : on laisse le serveur la terminer.
     await new Promise((r) => setTimeout(r, 400));
