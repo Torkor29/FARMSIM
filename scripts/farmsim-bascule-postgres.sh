@@ -95,16 +95,26 @@ fi
 dire "Base d'arrivée : schéma=${SCHEMA_PRESENT:-0} · joueurs réels=${JOUEURS}"
 
 if [[ "${JOUEURS:-0}" -gt 0 && "$VRAIMENT" != "--vraiment" ]]; then
+  echo >&2
+  echo "ERREUR : la base PostgreSQL contient déjà ${JOUEURS} compte(s) réel(s) :" >&2
+  # On les **nomme**. « Il y a des joueurs » ne permet pas de décider ; voir
+  # que ce sont trois adresses tapées au hasard aujourd'hui, si. C'est
+  # exactement la question que se pose celui qui lit ce message : est-ce que
+  # ce sont mes données, ou des essais ?
+  pg psql "$URL_JEU" -c \
+    'SELECT email, "displayName", "createdAt" FROM "User" WHERE COALESCE("isNpc", false) = false ORDER BY "createdAt"' >&2 || true
   cat >&2 <<TXT
-ERREUR : la base PostgreSQL contient déjà ${JOUEURS} joueur(s) réel(s).
 
-Ce script remplace tout : si ces comptes ont joué depuis la bascule, leur
-travail serait perdu. Deux possibilités :
+Ce script remplace tout : si ces comptes ont joué depuis, leur travail sera
+perdu. Regardez la liste ci-dessus et tranchez :
 
-  - la bascule a déjà eu lieu — il n'y a rien à faire ;
-  - ce sont des comptes d'essai créés depuis, et vous acceptez de les perdre :
+  - vous y reconnaissez votre compte d'avant la bascule
+    → elle a déjà eu lieu, il n'y a rien à faire ;
 
-      sudo bash $0 --vraiment
+  - ce sont des comptes d'essai créés depuis, et vous acceptez de les perdre
+    → sudo bash $0 --vraiment
+
+Dans tous les cas, l'ancienne base SQLite reste intacte sur son volume.
 TXT
   exit 1
 fi
