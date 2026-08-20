@@ -103,7 +103,7 @@ export const OBJECTIVE_DEFS: ObjectiveDef[] = [
   },
   {
     id: "stubble",
-    title: "Nettoyez le sol après la récolte",
+    title: "Déchaumez après la récolte",
     hint: "Outil Sol → Déchaumer sur les chaumes. Sans ça, on ne resème pas.",
     unlock: "Un nouveau cycle de culture",
     spec: "CEREALIER",

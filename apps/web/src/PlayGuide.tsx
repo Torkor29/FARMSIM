@@ -190,7 +190,7 @@ function LevelsPane({ xp }: { xp: number }) {
       </ul>
 
       <p className="guide-foot">
-        L'expérience se gagne au travail : chaque case semée, labourée, nettoyée ou moissonnée,
+        L'expérience se gagne au travail : chaque case semée, labourée, déchaumée ou moissonnée,
         chaque tonne récoltée puis vendue, chaque bête soignée, chaque bâtiment posé. Rien ne se
         gagne à ne rien faire — et le niveau {unlocks[0]?.level ?? 3} demande déjà{" "}
         {xpForLevel(unlocks[0]?.level ?? 3)} points.

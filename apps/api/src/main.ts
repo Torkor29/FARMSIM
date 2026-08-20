@@ -69,6 +69,8 @@ import {
   buildingLevelDef,
   MAX_BUILDING_LEVEL,
   urgentContractorQuote,
+  URGENT_CONTRACTOR_WORKS,
+  LABOR_ORDER_WORKS,
   CONTRACTOR_YIELD_MALUS,
   missionPayout,
   laborEscrow,
@@ -1043,9 +1045,82 @@ function dureeChantier(rig: Rig, cells: number): number {
 }
 
 /** Les cases déjà prises par un chantier en cours sur cette parcelle. */
+/**
+ * Le délai au bout duquel un chantier jamais réclamé est tenu pour abandonné.
+ *
+ * Un chantier reste `RUNNING` jusqu'à ce que la route de travail vienne le
+ * consommer. Si cet appel n'arrive jamais — onglet fermé, réseau coupé, ou
+ * simplement un travail refusé après l'ouverture — le chantier restait
+ * `RUNNING` **pour toujours**, et ses cases avec lui. « Case 5,9 déjà sur un
+ * chantier en cours » alors qu'aucun chantier ne tourne : c'était un fantôme
+ * d'il y a des heures, et rien dans le jeu ne permettait de le déloger.
+ *
+ * Le délai est large exprès. Le client réclame son travail dans la seconde
+ * qui suit la fin ; mais un téléphone qui se met en veille suspend ses
+ * minuteries, et le joueur qui revient doit retrouver son chantier. Cinq
+ * minutes couvrent largement une reprise, et laissent le fantôme se dissiper
+ * tout seul.
+ */
+const JOB_ABANDON_GRACE_MS = 5 * 60_000;
+
+/**
+ * Libère les chantiers que personne n'est venu réclamer.
+ *
+ * L'attelage rentre et le gazole retourne à la cuve : rien n'a été appliqué
+ * au champ, le joueur n'a donc rien à payer. C'est exactement ce que fait un
+ * abandon, à ceci près que personne ne l'a demandé.
+ *
+ * Appelé au fil de l'eau plutôt que par une tâche de fond : les deux routes
+ * qui regardent les chantiers d'une parcelle passent ici d'abord, ce qui
+ * suffit à ce qu'un fantôme ne survive jamais à la visite suivante.
+ */
+async function libererChantiersAbandonnes(parcelId: string): Promise<void> {
+  const morts = await prisma.fieldJob.findMany({
+    where: {
+      parcelId,
+      status: "RUNNING",
+      endsAt: { lt: new Date(Date.now() - JOB_ABANDON_GRACE_MS) },
+    },
+  });
+  if (!morts.length) return;
+  const parcelle = await prisma.parcel.findUnique({
+    where: { id: parcelId },
+    select: { farmId: true },
+  });
+  const gazole = morts.reduce((somme, j) => somme + (j.fuelL ?? 0), 0);
+  const attelages = morts
+    .flatMap((j) => [j.machineId, j.tractorId])
+    .filter(Boolean) as string[];
+  await prisma.$transaction(async (tx) => {
+    await tx.fieldJob.updateMany({
+      where: { id: { in: morts.map((j) => j.id) } },
+      data: { status: "CANCELLED" },
+    });
+    await tx.machine.updateMany({ where: { id: { in: attelages } }, data: { busyUntil: null } });
+    if (parcelle?.farmId && gazole > 0) {
+      await tx.farm.update({
+        where: { id: parcelle.farmId },
+        data: { fuelL: { increment: gazole } },
+      });
+    }
+  });
+}
+
+/**
+ * Les cases qu'un chantier tient réservées, en ce moment.
+ *
+ * « En ce moment » compte : un chantier dont l'heure de fin est passée depuis
+ * longtemps ne tient plus rien, qu'il ait été réclamé ou non. Le filtre sur
+ * le temps double `libererChantiersAbandonnes` à dessein — même si le ménage
+ * n'a pas encore eu lieu, un fantôme ne bloque pas le champ.
+ */
 async function occupiedJobCells(parcelId: string): Promise<Set<string>> {
   const jobs = await prisma.fieldJob.findMany({
-    where: { parcelId, status: "RUNNING" },
+    where: {
+      parcelId,
+      status: "RUNNING",
+      endsAt: { gte: new Date(Date.now() - JOB_ABANDON_GRACE_MS) },
+    },
     select: { cellsJson: true },
   });
   const pris = new Set<string>();
@@ -4081,17 +4156,7 @@ app.post("/parcels/:id/labor-orders", async (req, res) => {
   const body = z
     .object({
       userId: z.string(),
-      work: z.enum([
-        "PLANT",
-        "FERTILIZE",
-        "HARVEST",
-        "PLOW",
-        "STUBBLE",
-        "MOW",
-        "BALE",
-        "COLLECT",
-        "SILAGE",
-      ]),
+      work: z.enum(LABOR_ORDER_WORKS),
       crop: z.enum(CROP_CODES).optional(),
       cells: z.array(z.object({ x: z.number().int(), y: z.number().int() })).min(1),
     })
@@ -4340,7 +4405,9 @@ app.post("/parcels/:id/contractor", async (req, res) => {
   const body = z
     .object({
       userId: z.string(),
-      work: z.enum(["PLANT", "FERTILIZE", "HARVEST", "PLOW", "MOW"]),
+      // La liste vit dans `shared` : l'écran s'en sert pour décider s'il
+      // propose le bouton, la route pour décider si elle l'accepte.
+      work: z.enum(URGENT_CONTRACTOR_WORKS),
       crop: z.enum(CROP_CODES).optional(),
       cells: z.array(z.object({ x: z.number().int(), y: z.number().int() })).min(1),
     })
@@ -4745,12 +4812,12 @@ app.post("/parcels/:id/jobs", async (req, res) => {
     res.status(400).json(body.error.flatten());
     return;
   }
-  const { work, cells, crop } = body.data;
+  const { work, cells: demandees, crop } = body.data;
   const access = await resolveFieldAccess({
     parcelId: req.params.id,
     userId: body.data.userId,
     work,
-    cells,
+    cells: demandees,
   });
   if (!access.ok) {
     res.status(access.status).json({ error: access.error });
@@ -4758,11 +4825,28 @@ app.post("/parcels/:id/jobs", async (req, res) => {
   }
   const parcel = access.parcel;
 
-  // Une case déjà réservée par un autre chantier ne peut pas partir deux fois.
+  /*
+   * Une case déjà réservée ne part pas deux fois — mais elle ne fait pas
+   * capoter le reste.
+   *
+   * Le refus portait sur le lot entier : une seule case retenue ailleurs, et
+   * la sélection de soixante-treize était rejetée, à charge pour le joueur de
+   * deviner laquelle retirer. « Si j'ai quelque chose en cours, ignore les
+   * cases concernées » — c'est la seule issue qui ne demande rien à personne.
+   * On garde ce qui peut partir, on dit combien on a laissé.
+   */
+  await libererChantiersAbandonnes(parcel.id);
   const pris = await occupiedJobCells(parcel.id);
-  const conflit = cells.find((c) => pris.has(`${c.x},${c.y}`));
-  if (conflit) {
-    res.status(409).json({ error: `Case ${conflit.x},${conflit.y} déjà sur un chantier en cours` });
+  const cells = demandees.filter((c) => !pris.has(`${c.x},${c.y}`));
+  const ignorees = demandees.length - cells.length;
+  if (!cells.length) {
+    res.status(409).json({
+      error:
+        demandees.length === 1
+          ? "Cette case est déjà sur un chantier en cours."
+          : "Toutes ces cases sont déjà sur un chantier en cours.",
+      skipped: ignorees,
+    });
     return;
   }
 
@@ -4845,7 +4929,10 @@ app.post("/parcels/:id/jobs", async (req, res) => {
     job: {
       id: job.id,
       work,
+      // Les cases **retenues**, qui ne sont pas forcément celles demandées :
+      // c'est cette liste-là que la route de travail acceptera.
       cells,
+      skipped: ignorees,
       crop: crop ?? null,
       endsAt: job.endsAt,
       durationMs: duree,
@@ -5056,6 +5143,7 @@ app.post("/farm/repay", async (req, res) => {
 
 /** Les chantiers en cours d'une parcelle — pour l'écran et les reprises. */
 app.get("/parcels/:id/jobs", async (req, res) => {
+  await libererChantiersAbandonnes(req.params.id);
   const jobs = await prisma.fieldJob.findMany({
     where: { parcelId: req.params.id, status: "RUNNING" },
     orderBy: { endsAt: "asc" },
@@ -5644,7 +5732,7 @@ app.post("/parcels/:id/stubble", async (req, res) => {
    * Cases à remettre en herbe : travaillées, nues, sans chaumes.
    *
    * Le même outil, le même bouton. Une terre labourée puis abandonnée restait
-   * marron indéfiniment, et « Nettoyer » la refusait avec « la case n'a pas de
+   * marron indéfiniment, et « Déchaumer » la refusait avec « la case n'a pas de
    * chaumes » — un refus juste, mais sans issue. Le déchaumeur sait aussi
    * reprendre une terre nue et la remettre en herbe : c'est ce qu'il fait ici.
    */

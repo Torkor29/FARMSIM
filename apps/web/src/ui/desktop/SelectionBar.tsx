@@ -11,7 +11,7 @@
  */
 
 import type { Tool } from "../../tools";
-import { isPlantTool, plantCropLabel } from "../../tools";
+import { toolActionLabel } from "../../tools";
 import { actsOnSelection } from "../tool-options";
 
 type Props = {
@@ -27,6 +27,14 @@ type Props = {
   /** Mise de côté demandée pour publier une offre d'aide. */
   laborQuote: number | null;
   laborAffordable: boolean;
+  /**
+   * Pourquoi « Demander de l'aide » n'est pas là.
+   *
+   * Un bouton qui disparaît sans un mot se lit comme une panne. L'entraide ne
+   * se demande qu'entre 8 et 24 cases : c'est une règle, pas un défaut, mais
+   * encore faut-il l'écrire.
+   */
+  laborBlocage?: string | null;
   visiting: boolean;
   /** La sélection n'est que de l'herbe mûre : on fauche. */
   mowSelected: boolean;
@@ -47,18 +55,6 @@ type Props = {
   onClear: () => void;
 };
 
-function actionLabel(tool: Tool, count: number, mow: boolean): string {
-  if (tool === "HARVEST" && mow) return `Faucher ${count} case(s)`;
-  if (isPlantTool(tool)) return `Semer ${plantCropLabel(tool)} · ${count} case(s)`;
-  if (tool === "FERTILIZE") return `Fertiliser ${count} case(s)`;
-  if (tool === "PLOW") return `Labourer ${count} case(s)`;
-  if (tool === "STUBBLE") return `Déchaumer ${count} case(s)`;
-  if (tool === "WEED") return `Désherber ${count} case(s)`;
-  if (tool === "BALE") return `Presser ${count} case(s)`;
-  if (tool === "COLLECT") return `Ramasser ${count} case(s)`;
-  return `Récolter ${count} case(s)`;
-}
-
 
 
 export function SelectionBar({
@@ -71,6 +67,7 @@ export function SelectionBar({
   contractorBlocage,
   laborQuote,
   laborAffordable,
+  laborBlocage,
   visiting,
   mowSelected,
   mowReadyAll,
@@ -121,7 +118,7 @@ export function SelectionBar({
             title={machineManquante ?? undefined}
             onClick={onConfirm}
           >
-            {actionLabel(tool, selectedCount, mowSelected)}
+            {toolActionLabel(tool, selectedCount, mowSelected)}
             <kbd>⏎</kbd>
           </button>
         )}
@@ -152,6 +149,7 @@ export function SelectionBar({
             Demander de l’aide · {laborQuote} TRN
           </button>
         )}
+        {laborBlocage && <span className="selection-bar-note">{laborBlocage}</span>}
         {readyCount > 0 && (
           <button
             type="button"

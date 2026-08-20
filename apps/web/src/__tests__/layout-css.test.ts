@@ -114,7 +114,32 @@ function declaration(corps: string, prop: string): string | null {
 }
 
 const toutes = regles(CSS);
-const coquille = toutes.filter((r) => /\.game-stage(?![\w-])/.test(r.selecteur));
+
+/**
+ * Le dernier compound d'un sélecteur : l'élément qu'il vise réellement.
+ *
+ * `.game-stage.mobile .dock-tray` **mentionne** la coquille mais vise le
+ * plateau d'outils. Filtrer sur la simple mention mettait donc la grille du
+ * plateau — deux colonnes, options et action — dans le même sac que celle de
+ * la coquille, et le test refusait une grille interne parfaitement légitime
+ * au motif que la coquille n'en a qu'une ou trois. On compare ce qui est
+ * comparable : les règles qui posent la grille **de la coquille**.
+ */
+function cible(selecteur: string): string {
+  // Les parenthèses peuvent contenir des espaces (`:has(.a .b)`) : on les
+  // neutralise avant de découper sur les combinateurs.
+  let profondeur = 0;
+  let masque = "";
+  for (const c of selecteur) {
+    if (c === "(") profondeur++;
+    if (c === ")") profondeur--;
+    masque += profondeur > 0 && /\s/.test(c) ? "\u0000" : c;
+  }
+  const dernier = masque.split(/[\s>+~]+/).filter(Boolean).pop() ?? "";
+  return dernier.replace(/\u0000/g, " ");
+}
+
+const coquille = toutes.filter((r) => /\.game-stage(?![\w-])/.test(cible(r.selecteur)));
 
 describe("la grille de la coquille de jeu", () => {
   const avecZones = coquille.filter((r) => declaration(r.corps, "grid-template-areas"));
@@ -301,5 +326,50 @@ describe("les motifs du ciel", () => {
       const img = declaration(r!.corps, "background-image") ?? "";
       expect(`${sel} tracé=${img.includes("%3Cpath")}`).toBe(`${sel} tracé=true`);
     }
+  });
+});
+
+/**
+ * Ce qui flotte au-dessus du dock doit rester au-dessus du dock.
+ *
+ * Signalé en partie : « je peux pas déchaumer, rien, tout se grise ». Rien
+ * n'était cassé — un chantier tournait. Un déchaumage de 73 cases dure une
+ * minute quarante, une presse deux minutes cinquante, et pendant tout ce
+ * temps `busy` grise chaque bouton d'action. La barre qui l'explique existait
+ * : « Déchaumer · 73 cases », une jauge, le temps restant. Elle était ancrée à
+ * la fenêtre, à `bottom: 4.6rem` — une hauteur de dock devinée une fois. Le
+ * dock tactile en fait treize, porte le même plan (`z-index: 6`) et vient
+ * après dans le document : il se dessinait par-dessus. La seule chose qui
+ * expliquait l'écran gris passait donc sous l'écran gris, et le joueur ne
+ * voyait qu'une interface morte.
+ *
+ * Une distance devinée entre deux éléments qui grandissent chacun de leur
+ * côté ne tient jamais longtemps. Empilé dans le dock, le bandeau ne peut
+ * plus être recouvert et il n'y a plus de hauteur à deviner.
+ */
+describe("le bandeau de chantier", () => {
+  const flottant = toutes.find((r) => r.selecteur === ".chantier-bar");
+  const empile = toutes.find((r) => /\.field-dock\s+\.chantier-bar/.test(r.selecteur));
+
+  it("existe sous les deux formes : flottante et empilée", () => {
+    expect(`flottant=${Boolean(flottant)} empilé=${Boolean(empile)}`).toBe(
+      "flottant=true empilé=true",
+    );
+  });
+
+  it("ne garde aucune hauteur devinée une fois empilé", () => {
+    // C'est **la** règle : dans la pile, plus de `position: fixed` et plus de
+    // `bottom` — donc plus rien à faire coïncider avec la taille du dock.
+    expect(declaration(empile!.corps, "position")).toBe("static");
+    expect(declaration(empile!.corps, "bottom")).toBe("auto");
+  });
+
+  it("ne se laisse pas recouvrir par le dock quand il flotte", () => {
+    // Hors de la pile, il reste ancré à la fenêtre : son plan doit alors être
+    // au moins celui du dock, sinon on retombe sur le même recouvrement.
+    const dock = toutes.find((r) => r.selecteur === ".field-dock");
+    const planBandeau = Number(declaration(flottant!.corps, "z-index") ?? 0);
+    const planDock = Number(declaration(dock!.corps, "z-index") ?? 0);
+    expect(`${planBandeau} >= ${planDock}`).toBe(`${planBandeau} >= ${planBandeau}`);
   });
 });

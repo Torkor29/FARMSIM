@@ -1,7 +1,7 @@
-import { useState } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import type { ObjectiveView } from "@farmsim/shared";
 import { DIRECT_SEED_COST_PER_CELL, DIRECT_SEED_YIELD_MALUS , type Season } from "@farmsim/shared";
-import { isFieldWorkTool, isPlantTool, isSoilTool, plantCropLabel, type Tool } from "./tools";
+import { isFieldWorkTool, isPlantTool, isSoilTool, toolBareVerb, toolVerb, type Tool } from "./tools";
 import { BRUSH_SIZES, TOOL_GROUPS, groupOf, optionsFor } from "./ui/tool-options";
 
 /**
@@ -20,7 +20,14 @@ import { BRUSH_SIZES, TOOL_GROUPS, groupOf, optionsFor } from "./ui/tool-options
  */
 
 type ContractorOffer = {
-  cost: number;
+  /**
+   * Le devis, ou `null` quand l'entreprise ne prend pas ce travail-là.
+   *
+   * Elle ne vient ni presser, ni ramasser, ni déchaumer. Le bouton était
+   * rendu quand même, avec un prix, et refusait au doigt. Sans prix, pas de
+   * bouton — c'est « Demander de l'aide » qui prend le relais.
+   */
+  cost: number | null;
   hasMachine: boolean;
 };
 
@@ -29,6 +36,8 @@ type Props = {
   /** Saison courante : elle décide des cultures semables. */
   season: Season;
   brush: 1 | 2 | 3;
+  /** Le glissé prend un rectangle plein plutôt que la trace du doigt. */
+  dragRect?: boolean;
   isMobile: boolean;
   isEta: boolean;
   visiting?: boolean;
@@ -39,7 +48,17 @@ type Props = {
   baleCount?: number;
   silageReadyCount?: number;
   stockTons: number;
-  crd: number;
+  /**
+   * Peut-on payer ? La question, pas la somme.
+   *
+   * Le dock recevait la trésorerie brute et comparait lui-même `crd < coût`.
+   * Un compte à trésorerie illimitée porte `crd` à zéro et un drapeau à côté :
+   * l'en-tête affichait « ∞ TRN » pendant que « Payer · 428 TRN » restait
+   * grisé, sans un mot pour dire pourquoi. La barre de bureau, elle, passait
+   * déjà par `canPay`. Une seule règle, décidée en amont, pour les deux.
+   */
+  contractorAffordable: boolean;
+  laborAffordable: boolean;
   directSeed: boolean;
   /** Laisser l'andain derrière la moissonneuse. */
   keepSwath: boolean;
@@ -55,10 +74,13 @@ type Props = {
   machineManquante?: string | null;
   contractor: ContractorOffer | null;
   laborQuote?: number | null;
+  /** Pourquoi « Demander de l'aide » est absent, s'il l'est pour une raison. */
+  laborBlocage?: string | null;
   objective: ObjectiveView | null;
   allGoalsDone: boolean;
   onTool: (t: Tool) => void;
   onBrush: (n: 1 | 2 | 3) => void;
+  onDragRect: () => void;
   onDirectSeed: () => void;
   onKeepSwath: () => void;
   onConfirm: () => void;
@@ -79,6 +101,15 @@ type Props = {
   moreOpen?: boolean;
   moreBadge?: number;
   onMore?: () => void;
+  /**
+   * Bandeau du chantier en cours, empilé au-dessus du plateau.
+   *
+   * Il flottait, ancré à la fenêtre, à une hauteur de dock devinée une fois
+   * pour toutes. Ce dock-ci en fait le triple et se dessine après lui : le
+   * seul texte qui expliquait pourquoi tous les boutons étaient gris passait
+   * dessous. Dans la pile, il ne peut plus être recouvert.
+   */
+  chantierBar?: ReactNode;
   /** La sélection n'est que de l'herbe mûre : on fauche, on ne moissonne pas */
   mowSelected?: boolean;
   /** Toutes les cases prêtes sont de l'herbe */
@@ -89,6 +120,7 @@ export function FieldDock({
   tool,
   season,
   brush,
+  dragRect = false,
   isMobile,
   isEta,
   visiting = false,
@@ -99,17 +131,20 @@ export function FieldDock({
   baleCount = 0,
   silageReadyCount = 0,
   stockTons,
-  crd,
+  contractorAffordable,
+  laborAffordable,
   directSeed,
   keepSwath,
   swathUseful,
   machineManquante,
   contractor,
   laborQuote = null,
+  laborBlocage = null,
   objective,
   allGoalsDone,
   onTool,
   onBrush,
+  onDragRect,
   onDirectSeed,
   onKeepSwath,
   onConfirm,
@@ -123,11 +158,37 @@ export function FieldDock({
   moreOpen,
   moreBadge = 0,
   onMore,
+  chantierBar,
   mowSelected = false,
   mowReadyAll = false,
 }: Props) {
   /** Rangée d'options dépliée en grille : tout devient visible d'un coup. */
   const [optionsOpen, setOptionsOpen] = useState(false);
+
+  /**
+   * Ramener sous les yeux l'outil qui vient d'être armé.
+   *
+   * Toucher « Sol » arme le déchaumage — la deuxième option sur six. Mais la
+   * rangée reste au début, et sur un écran de 390 px il n'y entrait qu'une
+   * seule pastille : le joueur voyait « Désherber », éteint, et concluait que
+   * rien ne s'était armé. « Je peux pas déchaumer, rien. » L'outil en main
+   * doit être visible, toujours ; c'est la seule façon de savoir ce que fera
+   * le prochain geste sur le champ.
+   */
+  const rail = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    const arme = rail.current?.querySelector<HTMLElement>("[data-armed='true']");
+    // `scrollIntoView` ferait aussi défiler la page entière sur iOS : on ne
+    // bouge que le rail, et seulement s'il défile vraiment.
+    if (!arme || !rail.current) return;
+    const boite = rail.current.getBoundingClientRect();
+    const cible = arme.getBoundingClientRect();
+    if (cible.left >= boite.left && cible.right <= boite.right) return;
+    rail.current.scrollTo({
+      left: rail.current.scrollLeft + (cible.left - boite.left) - 8,
+      behavior: "smooth",
+    });
+  }, [tool, optionsOpen]);
 
   const group = groupOf(tool);
   const options = optionsFor(group, season);
@@ -151,8 +212,49 @@ export function FieldDock({
     return 0;
   }
 
+  /**
+   * Pourquoi le bouton d'action ne part pas — écrit, pas seulement survolé.
+   *
+   * Le motif du refus ne vivait que dans l'attribut `title` du bouton grisé.
+   * Un doigt ne survole rien : au téléphone, cette phrase n'a jamais été lue
+   * par personne. Le joueur voyait trois boutons pâles et aucune explication —
+   * « tout se grise ». Elle passe donc en clair sous la rangée, à l'endroit où
+   * la consigne de tracé s'affiche déjà.
+   */
+  function raisonDuGrisage(): string | null {
+    // Un chantier en cours grise **tous** les boutons d'action à la fois, le
+    // temps qu'il dure — plusieurs minutes sur un grand champ. Le bandeau
+    // au-dessus dit lequel et pour combien de temps : inutile de le répéter.
+    if (chantierBar) return null;
+    if (!work) return null;
+    if (selectedCount === 0) {
+      // Le bouton est gris parce qu'il n'y a rien à travailler : ce n'est pas
+      // une panne, c'est un geste qui manque. Autant le demander.
+      return `Touchez le champ pour choisir les cases à ${toolBareVerb(tool, mowSelected).toLowerCase()}.`;
+    }
+    if (!machineManquante) return laborBlocage;
+    /*
+     * La machine manque. Reste à dire par où sortir — et ce n'est pas la même
+     * porte selon le travail : l'entreprise de dépannage vient labourer ou
+     * moissonner dans l'heure, mais elle ne vient ni presser ni ramasser. Ces
+     * deux-là passent par l'entraide, qui a ses propres bornes. Nommer la
+     * porte qui est **à l'écran**, jamais une autre.
+     */
+    const sortie =
+      contractor && contractor.cost !== null
+        ? " Sinon, « Payer » fait venir quelqu’un avec la sienne."
+        : laborQuote !== null
+          ? " Sinon, « Demander de l’aide » la confie à un autre joueur."
+          : laborBlocage
+            ? ` ${laborBlocage}`
+            : "";
+    return `${machineManquante}${sortie}`;
+  }
+  const blocage = raisonDuGrisage();
+
   return (
     <div className="field-dock">
+      {chantierBar}
       <button type="button" className="quest-chip" onClick={onGuide}>
         <span className="quest-chip-mark" aria-hidden="true">
           {allGoalsDone ? "★" : "➤"}
@@ -174,8 +276,9 @@ export function FieldDock({
           {isEta && work && (
             <p className="stroke-hint">Glissez sur le champ · deux doigts pour bouger</p>
           )}
+          {blocage && <p className="dock-hint">{blocage}</p>}
 
-          <div className="dock-chips">
+          <div className="dock-chips" ref={rail}>
             {options.map((o) => {
               const n = optionCount(o.tool);
               return (
@@ -184,6 +287,7 @@ export function FieldDock({
                   type="button"
                   className={`chip ${tool === o.tool ? "on" : ""}`}
                   aria-pressed={tool === o.tool}
+                  data-armed={tool === o.tool}
                   onClick={() => onTool(o.tool)}
                 >
                   {o.label}
@@ -217,6 +321,25 @@ export function FieldDock({
                 onClick={onDirectSeed}
               >
                 Semis direct
+              </button>
+            )}
+
+            {/* Deux façons de glisser, et il fallait les deux : la trace du
+                doigt pour suivre une bordure, le rectangle pour prendre une
+                bande d'un coin à l'autre sans repasser sur chaque case. */}
+            {work && (
+              <button
+                type="button"
+                className={`chip ${dragRect ? "on" : ""}`}
+                aria-pressed={dragRect}
+                title={
+                  dragRect
+                    ? "Le glissé prend le rectangle entre les deux coins."
+                    : "Le glissé suit le doigt, case par case."
+                }
+                onClick={onDragRect}
+              >
+                {dragRect ? "▦ Rectangle" : "✎ Trace"}
               </button>
             )}
 
@@ -258,18 +381,19 @@ export function FieldDock({
                 title={machineManquante ?? undefined}
                 onClick={onConfirm}
               >
-                {tool === "HARVEST" && mowSelected
-                  ? `Faucher ×${selectedCount}`
-                  : `Faire${plant ? ` ${plantCropLabel(tool)}` : ""} ×${selectedCount}`}
+                {/* « Faire ×12 » ne disait pas ce qu'on allait faire : le
+                    verbe de l'outil le dit, et c'est le même mot que sur le
+                    bureau. */}
+                {`${toolVerb(tool, mowSelected)} ×${selectedCount}`}
               </button>
             )}
-            {contractor && !visiting && (
+            {contractor && contractor.cost !== null && !visiting && (
               /* L'explication passe dans l'infobulle du bouton — elle reste
                  accessible, elle ne mange plus la parcelle. */
               <button
                 type="button"
                 className="chip eta"
-                disabled={busy || selectedCount === 0 || crd < contractor.cost}
+                disabled={busy || selectedCount === 0 || !contractorAffordable}
                 title={
                   tool === "HARVEST" && !mowSelected && !contractor.hasMachine
                     ? `Vous n’avez pas la machine : quelqu’un le fait pour vous — ${contractor.cost} TRN`
@@ -284,7 +408,7 @@ export function FieldDock({
               <button
                 type="button"
                 className="chip"
-                disabled={busy || crd < laborQuote}
+                disabled={busy || !laborAffordable}
                 title="Cet argent est mis de côté jusqu’à la fin (ou l’annulation)."
                 onClick={onPublishLabor}
               >

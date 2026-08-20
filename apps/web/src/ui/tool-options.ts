@@ -74,7 +74,7 @@ export const SOIL_OPTIONS: ToolOption[] = [
   {
     tool: "WEED",
     label: "Désherber",
-    hint: "Pulvérisateur : nettoie la culture en place, sans la retourner",
+    hint: "Pulvérisateur : élimine les adventices sans toucher à la culture",
   },
   { tool: "STUBBLE", label: "Déchaumer", hint: "Enfouit les résidus après la moisson" },
   { tool: "PLOW", label: "Labourer", hint: "Remet le compteur de récoltes à zéro" },
