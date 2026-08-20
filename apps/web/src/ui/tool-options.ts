@@ -32,7 +32,7 @@ export const TOOL_GROUPS: ToolGroupDef[] = [
   { id: "SELECT", label: "Voir", icon: "/assets/icons/tools/select.svg", hotkey: "1", entry: "SELECT" },
   { id: "PLANT", label: "Semer", icon: "/assets/icons/tools/plant.svg", hotkey: "2", entry: "PLANT_WHEAT" },
   /* L'ordre suit la saison, pas l'ordre d'écriture du code : on prépare le
-     sol, on sème, on récolte, on nettoie — et on vend. « Récolte » se trouvait
+     sol, on sème, on récolte, on déchaume — et on vend. « Récolte » se trouvait
      avant « Sol », ce qui plaçait la moisson avant le labour. */
   { id: "SOIL", label: "Sol", icon: "/assets/icons/tools/plow.svg", hotkey: "3", entry: "STUBBLE" },
   { id: "HARVEST", label: "Récolte", icon: "/assets/icons/tools/harvest.svg", hotkey: "4", entry: "HARVEST" },
@@ -74,9 +74,9 @@ export const SOIL_OPTIONS: ToolOption[] = [
   {
     tool: "WEED",
     label: "Désherber",
-    hint: "Pulvérisateur : nettoie la culture en place, sans la retourner",
+    hint: "Pulvérisateur : élimine les adventices sans toucher à la culture",
   },
-  { tool: "STUBBLE", label: "Nettoyer", hint: "Déchaumage : enfouit les résidus" },
+  { tool: "STUBBLE", label: "Déchaumer", hint: "Enfouit les résidus de la récolte précédente" },
   { tool: "PLOW", label: "Labourer", hint: "Remet le compteur de récoltes à zéro" },
   { tool: "FERTILIZE", label: "Engrais", hint: "Relève la fertilité de la case" },
   { tool: "BALE", label: "Presser", hint: "Met la paille en bottes" },

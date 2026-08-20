@@ -1678,7 +1678,7 @@ export function App() {
         title: `${stubble.length} case(s) en chaumes`,
         detail: mustPlow
           ? `${mustPlow} exigent la charrue : trois récoltes sans labour.`
-          : "Nettoyez le sol pour le rendement, labourez pour repartir à neuf, ou semez direct.",
+          : "Déchaumez pour le rendement, labourez pour repartir à neuf, ou semez direct.",
       };
     }
     if (poor || declining) {
@@ -3004,7 +3004,7 @@ export function App() {
           body: JSON.stringify({ userId: player.id, jobId, cells: workCells }),
         });
         setMsg(
-          `Sol nettoyé ×${r.stubbled} · −${r.cost} TRN · +${Math.round(r.nextBonus * 100)} % sur la prochaine récolte` +
+          `Sol déchaumé ×${r.stubbled} · −${r.cost} TRN · +${Math.round(r.nextBonus * 100)} % sur la prochaine récolte` +
             wearNote(r.machine),
         );
         labor = r.labor;

@@ -11,7 +11,7 @@
  */
 
 import type { Tool } from "../../tools";
-import { isPlantTool, plantCropLabel } from "../../tools";
+import { isFieldWorkTool, toolActionLabel } from "../../tools";
 
 type Props = {
   tool: Tool;
@@ -46,24 +46,18 @@ type Props = {
   onClear: () => void;
 };
 
-function actionLabel(tool: Tool, count: number, mow: boolean): string {
-  if (tool === "HARVEST" && mow) return `Faucher ${count} case(s)`;
-  if (isPlantTool(tool)) return `Semer ${plantCropLabel(tool)} · ${count} case(s)`;
-  if (tool === "FERTILIZE") return `Fertiliser ${count} case(s)`;
-  if (tool === "PLOW") return `Labourer ${count} case(s)`;
-  if (tool === "STUBBLE") return `Nettoyer ${count} case(s)`;
-  return `Récolter ${count} case(s)`;
-}
-
-/** L'outil courant agit-il sur une sélection ? */
+/**
+ * L'outil courant agit-il sur une sélection ?
+ *
+ * La liste était écrite à la main et il en manquait trois — désherber, presser,
+ * ramasser. La barre disparaissait donc entièrement dès qu'on armait l'un
+ * d'eux : plus de compteur, plus de « Tout sélectionner », plus de bouton pour
+ * lancer le travail. Les cases se retenaient bien, mais rien ne le montrait et
+ * rien ne pouvait les envoyer. C'est la même question que « est-ce un travail
+ * de champ ? » : autant la poser une seule fois, là où elle est déjà répondue.
+ */
 function actsOnSelection(tool: Tool): boolean {
-  return (
-    isPlantTool(tool) ||
-    tool === "FERTILIZE" ||
-    tool === "HARVEST" ||
-    tool === "STUBBLE" ||
-    tool === "PLOW"
-  );
+  return isFieldWorkTool(tool);
 }
 
 export function SelectionBar({
@@ -126,7 +120,7 @@ export function SelectionBar({
             title={machineManquante ?? undefined}
             onClick={onConfirm}
           >
-            {actionLabel(tool, selectedCount, mowSelected)}
+            {toolActionLabel(tool, selectedCount, mowSelected)}
             <kbd>⏎</kbd>
           </button>
         )}

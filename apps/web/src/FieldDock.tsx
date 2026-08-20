@@ -1,7 +1,7 @@
 import { useState } from "react";
 import type { ObjectiveView } from "@farmsim/shared";
 import { DIRECT_SEED_COST_PER_CELL, DIRECT_SEED_YIELD_MALUS , type Season } from "@farmsim/shared";
-import { isFieldWorkTool, isPlantTool, isSoilTool, plantCropLabel, type Tool } from "./tools";
+import { isFieldWorkTool, isPlantTool, isSoilTool, toolVerb, type Tool } from "./tools";
 import { BRUSH_SIZES, TOOL_GROUPS, groupOf, optionsFor } from "./ui/tool-options";
 
 /**
@@ -258,9 +258,10 @@ export function FieldDock({
                 title={machineManquante ?? undefined}
                 onClick={onConfirm}
               >
-                {tool === "HARVEST" && mowSelected
-                  ? `Faucher ×${selectedCount}`
-                  : `Faire${plant ? ` ${plantCropLabel(tool)}` : ""} ×${selectedCount}`}
+                {/* « Faire ×12 » ne disait pas ce qu'on allait faire : le
+                    verbe de l'outil le dit, et c'est le même mot que sur le
+                    bureau. */}
+                {`${toolVerb(tool, mowSelected)} ×${selectedCount}`}
               </button>
             )}
             {contractor && !visiting && (

@@ -5644,7 +5644,7 @@ app.post("/parcels/:id/stubble", async (req, res) => {
    * Cases à remettre en herbe : travaillées, nues, sans chaumes.
    *
    * Le même outil, le même bouton. Une terre labourée puis abandonnée restait
-   * marron indéfiniment, et « Nettoyer » la refusait avec « la case n'a pas de
+   * marron indéfiniment, et « Déchaumer » la refusait avec « la case n'a pas de
    * chaumes » — un refus juste, mais sans issue. Le déchaumeur sait aussi
    * reprendre une terre nue et la remettre en herbe : c'est ce qu'il fait ici.
    */

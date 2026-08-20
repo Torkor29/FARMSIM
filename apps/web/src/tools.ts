@@ -70,3 +70,31 @@ export function plantCropLabel(t: Tool): string {
   if (t === "PLANT_GRASS") return "Herbe";
   return "Blé";
 }
+
+/**
+ * Le geste que fait l'outil, dit comme au champ.
+ *
+ * Le bureau et le téléphone nommaient l'action chacun de son côté : la barre
+ * de sélection listait les outils à la main et retombait sur « Récolter », le
+ * dock disait « Faire ». « Presser », « Ramasser » et « Désherber » n'étaient
+ * donc jamais annoncés par leur nom. Ici, à côté de la liste des outils, un
+ * oubli se voit — et se teste.
+ */
+export function toolVerb(t: Tool, mow = false): string {
+  if (isPlantTool(t)) return `Semer ${plantCropLabel(t)}`;
+  if (t === "HARVEST") return mow ? "Faucher" : "Récolter";
+  if (t === "FERTILIZE") return "Fertiliser";
+  if (t === "PLOW") return "Labourer";
+  // On ne nettoie pas un champ : on le déchaume. Le mot juste est celui du
+  // métier, pas celui du ménage.
+  if (t === "STUBBLE") return "Déchaumer";
+  if (t === "WEED") return "Désherber";
+  if (t === "BALE") return "Presser";
+  if (t === "COLLECT") return "Ramasser";
+  return "Travailler";
+}
+
+/** Le même geste, avec le nombre de cases — libellé du bouton de bureau. */
+export function toolActionLabel(t: Tool, count: number, mow = false): string {
+  return `${toolVerb(t, mow)} · ${count} case(s)`;
+}

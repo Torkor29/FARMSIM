@@ -40,7 +40,7 @@ export const STAT_LABELS: Record<StatKey, string> = {
   cellsPlanted: "cases semées",
   cellsFertilized: "cases fertilisées",
   cellsPlowed: "cases labourées",
-  cellsStubbled: "cases nettoyées",
+  cellsStubbled: "cases déchaumées",
   cellsHarvested: "cases moissonnées",
   tonsHarvested: "tonnes récoltées",
   tonsSold: "tonnes vendues",
@@ -108,7 +108,7 @@ export const QUEST_DEFS: QuestDef[] = [
   {
     id: "clean-ground",
     title: "Rendre le sol",
-    hint: "Nettoyez trente cases de chaumes après la moisson.",
+    hint: "Déchaumez trente cases après la moisson.",
     stat: "cellsStubbled",
     target: 30,
     level: 2,
