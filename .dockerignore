@@ -1,0 +1,37 @@
+# Ce qui ne doit pas entrer dans l'image.
+#
+# Ce fichier manquait, et cela a mis le jeu en panne. L'étape de construction
+# fait `COPY . .` : sans exclusion, elle recopie le dossier du serveur
+# **par-dessus** le `node_modules` que `pnpm install` venait d'installer dans
+# l'étape précédente. Un `node_modules` incomplet traînant sur le VPS suffit
+# alors à écraser les binaires de Prisma — d'où le conteneur qui redémarrait en
+# boucle sur « Could not find schema-engine binary ».
+#
+# Et un second défaut, plus discret : `COPY . .` embarquait aussi le `.env` du
+# serveur, mot de passe de la base compris, dans une couche de l'image.
+
+# Les dépendances viennent de l'étape `deps`, jamais de l'hôte.
+node_modules
+**/node_modules
+
+# Les secrets ne montent pas dans une image.
+.env
+.env.*
+!.env.example
+
+# Reconstruits par `pnpm -r build` : les recopier ne fait que ralentir la
+# construction et risquer d'embarquer un binaire périmé.
+dist
+**/dist
+*.tsbuildinfo
+**/*.tsbuildinfo
+
+# L'historique git pèse lourd et ne sert à rien dans l'image.
+.git
+.github
+
+# Bases locales de développement, journaux, dossiers d'atelier.
+**/*.db
+**/*.db-wal
+**/*.db-shm
+*.log

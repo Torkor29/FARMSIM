@@ -24,6 +24,29 @@ COPY . .
 RUN pnpm --filter @farmsim/api exec prisma generate
 RUN pnpm -r build
 
+# Le moteur de schéma, mis à un endroit fixe et **vérifié ici**.
+#
+# `prisma migrate deploy` le cherche dans l'arborescence pnpm, à un chemin qui
+# contient le numéro de version du paquet. En production le conteneur a
+# redémarré en boucle sur « Could not find schema-engine binary » : le jeu
+# était en panne, et la seule trace était dans les journaux du conteneur.
+#
+# Deux corrections en une :
+#   - on le copie sous un nom stable et on le désigne par
+#     `PRISMA_SCHEMA_ENGINE_BINARY`, donc plus aucune dépendance à un chemin
+#     qui bouge avec les versions ;
+#   - `test -n` fait **échouer la construction** s'il est introuvable. Une
+#     image qui ne peut pas migrer ne doit pas exister, plutôt que d'être
+#     découverte au démarrage sur le serveur.
+RUN set -eu; \
+  moteur="$(find /app/node_modules -type f -name 'schema-engine-*' | head -1)"; \
+  test -n "$moteur" || { echo "ERREUR : moteur de schéma Prisma introuvable dans node_modules." >&2; exit 1; }; \
+  mkdir -p /moteurs; \
+  cp "$moteur" /moteurs/schema-engine; \
+  chmod 0755 /moteurs/schema-engine; \
+  echo "moteur de schéma : $moteur"
+
+
 FROM base AS runner
 ENV NODE_ENV=production
 ENV PORT=8080
@@ -48,9 +71,10 @@ RUN apt-get update \
      > /etc/apt/sources.list.d/pgdg.list \
   && apt-get update \
   && apt-get install -y --no-install-recommends postgresql-client-16 \
-  && apt-get purge -y curl gnupg \
-  && apt-get autoremove -y \
   && rm -rf /var/lib/apt/lists/*
+# `apt-get purge curl gnupg` + `autoremove` faisaient gagner quelques
+# mégaoctets et pouvaient emporter une bibliothèque dont autre chose dépend.
+# Le jeu ne tient pas à ces mégaoctets ; il tient à démarrer.
 
 RUN groupadd --gid 10001 farmsim \
   && useradd --uid 10001 --gid farmsim --shell /usr/sbin/nologin --create-home farmsim
@@ -59,6 +83,10 @@ RUN groupadd --gid 10001 farmsim \
 # paquets d'un même monorepo par des liens symboliques relatifs (vers
 # node_modules/.pnpm à la racine) — cherry-picker des sous-dossiers casserait
 # ces liens de façon peu évidente. C'est le même choix que sur Comptap.
+COPY --from=build /moteurs/schema-engine /usr/local/bin/schema-engine
+# Prisma prend ce chemin plutôt que d'aller le chercher dans node_modules.
+ENV PRISMA_SCHEMA_ENGINE_BINARY=/usr/local/bin/schema-engine
+
 COPY --from=build --chown=farmsim:farmsim /app/node_modules ./node_modules
 COPY --from=build --chown=farmsim:farmsim /app/apps ./apps
 COPY --from=build --chown=farmsim:farmsim /app/packages ./packages
