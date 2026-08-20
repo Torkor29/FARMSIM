@@ -175,6 +175,7 @@ import {
   YOUNG_GROW_MS,
   YOUNG_FEED_RATIO,
   herdFeedNeed,
+  troughCapacity,
   STARTER_COW_COUNT,
   STARTER_HAY_TONS,
   FEED_BASE,
@@ -7766,6 +7767,38 @@ app.post("/herds/:id/feed", async (req, res) => {
 
   const units = feedUnits(hayTons, maizeTons, barleyTons, wheatTons, silageTons);
   const quality = rationQuality(hayTons, maizeTons, barleyTons, wheatTons, silageTons);
+  /**
+   * La mangeoire a un fond.
+   *
+   * Une distribution couvre désormais un jour réel, soit quatre-vingt-seize
+   * cycles : sans plafond, un clic de trop viderait le silo pour laisser
+   * l'élevage tourner seul une saison. Le refus est explicite plutôt que
+   * silencieux — on ne prend pas le grain d'un joueur pour le jeter.
+   */
+  const maintenant = Date.now();
+  // Somme des **bêtes**, pas des lots : un lot de six veaux mange comme six.
+  const jeunesEnCours = (
+    await prisma.youngBatch.findMany({
+      where: { herdId: herd.id, maturesAt: { gt: new Date(maintenant) } },
+      select: { count: true },
+    })
+  ).reduce((n, y) => n + y.count, 0);
+  const besoinParCycle = herdFeedNeed({
+    size: herd.size,
+    young: jeunesEnCours,
+    kind: (herd.kind as AnimalKind) ?? "COW",
+  });
+  const capacite = troughCapacity(besoinParCycle);
+  if (herd.feedStock + units > capacite * 1.02) {
+    const reste = Math.max(0, capacite - herd.feedStock);
+    res.status(409).json({
+      error:
+        reste < 1
+          ? "La mangeoire est pleine — revenez quand les bêtes auront mangé"
+          : `La mangeoire ne peut plus recevoir que ${Math.floor(reste)} kg`,
+    });
+    return;
+  }
   await prisma.$transaction(async (tx) => {
     if (hayTons > 0 && hay) await drawFromStock(tx, hay, hayTons);
     if (maizeTons > 0 && maize) await drawFromStock(tx, maize, maizeTons);
@@ -7986,7 +8019,14 @@ app.post("/herds/:id/bedding", async (req, res) => {
   // Sans quantité, on paille ce qu'il faut : personne n'a envie de calculer
   // des tonnes de paille à la main pour un geste qu'on répète chaque cycle.
   const place = Math.max(0, plafond - herd.beddingTons);
-  const voulu = body.data.tons > 0 ? body.data.tons : Math.min(place, beddingNeed(kind, herd.size));
+  /**
+   * Sans tonnage demandé, on **refait le lit** au lieu d'en remettre un cycle.
+   *
+   * Le geste servait une seule journée de jeu, soit un quart d'heure : le
+   * bouton « Pailler » était à cliquer trois fois par heure. La litière tient
+   * maintenant un jour réel, et « refaire la litière » veut dire la refaire.
+   */
+  const voulu = body.data.tons > 0 ? body.data.tons : place;
   const tons = Math.round(Math.min(voulu, place, enStock) * 1000) / 1000;
 
   if (place <= 0) {

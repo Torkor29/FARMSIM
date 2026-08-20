@@ -13,12 +13,43 @@ import {
   ANIMAL_ART,
   ANIMAL_GRAZE_ART,
   ANIMAL_PLURAL,
+  feedAutonomyMs,
+  rationCycles,
+  troughCapacity,
   BUILDING_ART,
   BUILDING_DEFS,
   kindForBarn,
   type AnimalKind,
   type BuildingType,
 } from "@farmsim/shared";
+
+/**
+ * Une durée réelle, dite comme on la dit à voix haute.
+ *
+ * « 0 j » pour un quart d'heure restant ne prévient de rien ; « 15 min » si.
+ */
+/**
+ * Un débit par cycle, dit par jour réel.
+ *
+ * « 248 L par cycle » ne veut rien dire pour qui joue : un cycle est un jour
+ * de jeu, c'est-à-dire un quart d'heure d'horloge. On multiplie donc par le
+ * nombre de cycles que contient une journée réelle, la seule dont le joueur
+ * dispose pour planifier.
+ */
+function parJourReel(parCycle: number): number {
+  return parCycle * rationCycles();
+}
+
+function dureeReelle(ms: number): string {
+  const minutes = Math.floor(ms / 60000);
+  if (minutes < 1) return "à sec";
+  if (minutes < 60) return `${minutes} min`;
+  const heures = Math.floor(minutes / 60);
+  if (heures < 24) return `${heures} h`;
+  const jours = Math.floor(heures / 24);
+  const reste = heures % 24;
+  return reste > 0 ? `${jours} j ${reste} h` : `${jours} j`;
+}
 
 export type BarnState = {
   buildingId: string;
@@ -227,13 +258,13 @@ const PRODUITS: {
     espece: "COW",
     nom: "Lait",
     pret: (h) => h.canMilk,
-    rendement: (h) => `${h.milkPerCycle.toFixed(0)} L par cycle`,
+    rendement: (h) => `${parJourReel(h.milkPerCycle).toFixed(0)} L par jour`,
   },
   {
     espece: "HEN",
     nom: "Œufs",
     pret: (h) => Boolean(h.canCollectEggs),
-    rendement: (h) => `${(h.eggsPerCycle ?? 0).toFixed(1)} caisse par cycle`,
+    rendement: (h) => `${parJourReel(h.eggsPerCycle ?? 0).toFixed(0)} caisses par jour`,
   },
   {
     espece: "SHEEP",
@@ -656,13 +687,26 @@ export function LivestockPanel({
                 <section className="barn-part">
                   <h4>Le lot</h4>
                   <div className="mesures">
+                    {/* L'autonomie se lit en heures **réelles**.
+                        Elle s'affichait en jours de jeu — quinze minutes pièce
+                        —, si bien qu'un « 1 j » se comprenait comme une
+                        journée entière quand il valait un quart d'heure. Le
+                        joueur revenait le lendemain devant un troupeau
+                        affamé sans comprendre. */}
                     <Mesure
                       nom="Ration"
-                      valeur={`${Math.floor(herd.feedStock / Math.max(1, herd.feedNeed))} j`}
-                      part={herd.feedStock / Math.max(1, herd.feedNeed)}
+                      valeur={dureeReelle(
+                        feedAutonomyMs({
+                          besoinParCycle: herd.feedNeed,
+                          feedStock: herd.feedStock,
+                        }),
+                      )}
+                      part={
+                        herd.feedStock / Math.max(1, troughCapacity(herd.feedNeed))
+                      }
                       ton={herd.hungry ? "alerte" : "normal"}
                       detail={
-                        herd.feedQuality > 0.5 ? "au maïs, rendement maximal" : "au fourrage"
+                        herd.feedQuality > 0.5 ? "au maïs, rendement maximal" : "au foin"
                       }
                     />
                     <Mesure
@@ -670,7 +714,7 @@ export function LivestockPanel({
                       valeur={`${(herd.beddingTons ?? 0).toFixed(2)} t`}
                       part={herd.beddingCover ?? 0}
                       ton={(herd.beddingCover ?? 1) < 0.5 ? "alerte" : "normal"}
-                      detail={`${(herd.beddingNeed ?? 0).toFixed(2)} t par cycle`}
+                      detail={`${parJourReel(herd.beddingNeed ?? 0).toFixed(1)} t par jour`}
                     />
                     <Mesure
                       nom="Fosse"

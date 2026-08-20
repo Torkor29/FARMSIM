@@ -13,6 +13,7 @@ import {
   quoteAllChannels,
   maxSelectableTons,
   SELLABLE_GOODS,
+  SALE_CHANNEL_LABELS,
   PURCHASABLE_GOODS,
   DEALER_INPUT_USE,
   futuresPenalty,
@@ -443,12 +444,16 @@ export function MarketPanel({
                   <div className="channel-grid hall-sell">
                     {marketQ && (
                       <div className="channel-card">
-                        <h3>Vendre tout de suite</h3>
+                        <h3>{SALE_CHANNEL_LABELS.MARKET}</h3>
                         <p className="channel-net">
                           {marketQ.net} TRN
                           <em className="sure">argent maintenant</em>
                         </p>
-                        <p className="channel-note">Le prix du jour. C’est vendu.</p>
+                        {/* La note du canal vient du domaine : elle dit qui
+                            achète et pourquoi le prix diffère. Elle était
+                            réécrite ici en « Le prix du jour. C'est vendu. »,
+                            qui ne dit ni l'un ni l'autre. */}
+                        <p className="channel-note">{marketQ.note}</p>
                         <button
                           type="button"
                           className="channel-go"
@@ -461,7 +466,7 @@ export function MarketPanel({
                     )}
                     {listQ && (
                       <div className="channel-card">
-                        <h3>Mettre en vitrine</h3>
+                        <h3>{SALE_CHANNEL_LABELS.LISTING}</h3>
                         <p className="channel-net">
                           {listQ.net} TRN
                           <em className="risky">si un joueur achète</em>
@@ -496,17 +501,21 @@ export function MarketPanel({
                       </div>
                     )}
                   </div>
+                  {/* Le troisième acheteur, dit comme les deux autres.
+                      « Vendre à tout prix » ne nommait personne : on encaissait
+                      40 % de moins sans savoir que c'était un PNJ de secours,
+                      et on croyait à une panne du marché. */}
                   {dealerQ && (
                     <p className="market-rules">
-                      Besoin d’argent tout de suite, même moins ?{" "}
                       <button
                         type="button"
                         className="ghost tiny"
                         disabled={busy || tons <= 0}
                         onClick={() => act("DEALER")}
                       >
-                        Vendre à tout prix · {dealerQ.net} TRN
-                      </button>
+                        {SALE_CHANNEL_LABELS.DEALER} · {dealerQ.net} TRN
+                      </button>{" "}
+                      <span className="channel-note">{dealerQ.note}</span>
                     </p>
                   )}
                 </>

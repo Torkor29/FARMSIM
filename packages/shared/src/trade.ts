@@ -21,16 +21,19 @@ import type { TradeGood } from "./goods.js";
 
 export type SaleChannel = "DEALER" | "MARKET" | "LISTING";
 
+/**
+ * Les trois débouchés, nommés par **qui achète**.
+ *
+ * « Vendre à tout prix » ne disait pas à qui ni pourquoi c'était moins cher :
+ * on cliquait, on encaissait 40 % de moins, et on cherchait la panne. Deux des
+ * trois canaux sont des PNJ — le négociant qui passe à la ferme, et le cours
+ * mondial —, le troisième est la vitrine entre joueurs. Le dire est le
+ * minimum : c'est de là que vient tout l'écart de prix.
+ */
 export const SALE_CHANNEL_LABELS: Record<SaleChannel, string> = {
-  DEALER: "Vendre à tout prix",
-  MARKET: "Vendre maintenant",
+  DEALER: "Vendre au négociant",
+  MARKET: "Vendre au cours",
   LISTING: "Proposer aux joueurs",
-};
-
-export const SALE_CHANNEL_HINTS: Record<SaleChannel, string> = {
-  DEALER: "On vous paie moins, mais c’est immédiat",
-  MARKET: "Le prix du jour, tout de suite",
-  LISTING: "Vous choisissez le prix. Un autre joueur doit acheter",
 };
 
 /* ------------------------------------------------------------------ */
@@ -47,6 +50,14 @@ export const DEALER_RATIO = 0.6;
 
 /** Le négociant refuse les lots ridicules : il se déplace `[GD]` */
 export const DEALER_MIN_TONS = 0.05;
+
+export const SALE_CHANNEL_HINTS: Record<SaleChannel, string> = {
+  DEALER: `Un marchand PNJ passe prendre le lot tout de suite, à ${Math.round(
+    DEALER_RATIO * 100,
+  )} % du cours. Filet de sécurité, jamais le bon prix.`,
+  MARKET: "Le cours mondial du jour, encaissé aussitôt. Un gros lot le fait baisser.",
+  LISTING: "Vous fixez le prix, mais il faut qu'un autre joueur l'achète.",
+};
 
 export function dealerPricePerTon(marketPrice: number): number {
   return Math.round(marketPrice * DEALER_RATIO * 100) / 100;

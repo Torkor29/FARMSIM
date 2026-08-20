@@ -61,6 +61,80 @@ export const MAX_BARN_LEVEL = 5;
  */
 export const LIVESTOCK_CYCLE_MS = GAME_DAY_MS;
 
+/**
+ * Ce qu'une distribution doit couvrir : **un jour réel** `[GD]`.
+ *
+ * Le cycle d'élevage vaut un jour de jeu, soit **quinze minutes réelles**. La
+ * distribution servait exactement un cycle : il fallait donc revenir nourrir
+ * ses bêtes toutes les quinze minutes, sous peine de les voir dépérir. C'est
+ * intenable pour qui joue le soir après le travail, et c'est le reproche tel
+ * qu'il a été formulé : « la ration devrait être pour un jour réel, beaucoup
+ * trop compliqué à gérer sinon ».
+ *
+ * Rien n'est déséquilibré pour autant : la consommation par cycle ne bouge
+ * pas, seule la **granularité** du geste change. Sur vingt-quatre heures on
+ * dépense la même chose ; on le fait en une fois au lieu de quatre-vingt-seize.
+ */
+export const RATION_REAL_MS = 24 * 60 * 60 * 1000;
+
+/**
+ * Capacité de la mangeoire, en jours réels `[GD]`.
+ *
+ * Deux jours, pas plus : la mangeoire garde de l'avance pour qui passe un jour
+ * sans se connecter, sans permettre de vider le silo d'un clic et de laisser
+ * l'élevage tourner seul une saison entière. Au-delà, le fourrage se gâte —
+ * c'est aussi ce qui se passe dans une vraie auge.
+ */
+export const TROUGH_REAL_DAYS = 2;
+
+/** Nombre de cycles couverts par un jour réel. */
+export function rationCycles(cycleMs = LIVESTOCK_CYCLE_MS): number {
+  return Math.max(1, RATION_REAL_MS / Math.max(1, cycleMs));
+}
+
+/**
+ * Ce que la mangeoire peut contenir, en unités nutritives.
+ *
+ * `besoinParCycle` est le besoin d'un cycle pour ce lot — c'est ce que le
+ * serveur publie sous `feedNeed`.
+ */
+export function troughCapacity(besoinParCycle: number, cycleMs = LIVESTOCK_CYCLE_MS): number {
+  return Math.max(0, besoinParCycle) * rationCycles(cycleMs) * TROUGH_REAL_DAYS;
+}
+
+/**
+ * Ce qu'il faut distribuer maintenant pour tenir un jour réel, en unités.
+ *
+ * Ce qui reste dans l'auge est déduit : un lot presque repu ne reçoit pas
+ * autant qu'un lot à jeun.
+ */
+export function rationToServe(input: {
+  besoinParCycle: number;
+  feedStock: number;
+  cycleMs?: number;
+}): number {
+  const cible = Math.max(0, input.besoinParCycle) * rationCycles(input.cycleMs);
+  return Math.max(0, cible - Math.max(0, input.feedStock));
+}
+
+/**
+ * Autonomie restante, en **millisecondes réelles**.
+ *
+ * L'écran affichait « 0 j » et le joueur comprenait « zéro jour réel », alors
+ * qu'il s'agissait de jours de jeu de quinze minutes. On compte donc dans
+ * l'unité qui sert à décider quand revenir : l'horloge murale.
+ */
+export function feedAutonomyMs(input: {
+  besoinParCycle: number;
+  feedStock: number;
+  cycleMs?: number;
+}): number {
+  const besoin = Math.max(0, input.besoinParCycle);
+  if (besoin <= 0) return 0;
+  const cycles = Math.max(0, input.feedStock) / besoin;
+  return cycles * (input.cycleMs ?? LIVESTOCK_CYCLE_MS);
+}
+
 /** Traite / œufs / laine : prêt au bout de 15 % d’un cycle. */
 export const COLLECT_READY_RATIO = 0.15;
 

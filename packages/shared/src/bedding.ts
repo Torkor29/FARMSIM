@@ -26,6 +26,7 @@
 
 import { SPECIES } from "./species.js";
 import type { AnimalKind } from "./livestock.js";
+import { rationCycles } from "./livestock.js";
 
 /**
  * Tonnes de paille par bête et par cycle `[GD]`.
@@ -49,8 +50,20 @@ export const BEDDING_PER_ANIMAL: Record<AnimalKind, number> = Object.fromEntries
  */
 export const BEDDING_GRAZING_SAVING = 0.5;
 
-/** Le tas de paille tient environ trois cycles d'un bâtiment plein `[GD]`. */
-export const BEDDING_STORE_CYCLES = 3;
+/**
+ * La litière d'un bâtiment plein tient **un jour réel** `[GD]`.
+ *
+ * Elle tenait trois cycles, soit quarante-cinq minutes d'horloge : il fallait
+ * repailler trois fois par heure de jeu. C'est le même reproche que pour la
+ * ration — « beaucoup trop compliqué à gérer sinon » —, et il vaut identique
+ * ici, la paille se salissant au même rythme que le fourrage se mange.
+ *
+ * La consommation par cycle ne bouge pas : seule la profondeur du lit change,
+ * donc la fréquence du geste. Sur vingt-quatre heures, la même paille.
+ */
+export const BEDDING_STORE_REAL_DAYS = 1;
+
+export const BEDDING_STORE_CYCLES = rationCycles() * BEDDING_STORE_REAL_DAYS;
 
 /** Pénalité maximale de bonheur, litière absente `[GD]` */
 export const BEDDING_PENALTY_MAX = 0.2;

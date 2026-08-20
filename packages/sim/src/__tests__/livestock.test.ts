@@ -1,4 +1,8 @@
 import {
+  rationToServe,
+  feedAutonomyMs,
+  troughCapacity,
+  TROUGH_REAL_DAYS,
   FEED_GRAZING_RATIO,
   GRAZING,
   GRAZING_REFUSAL_LABELS,
@@ -690,5 +694,44 @@ describe("barre de lait", () => {
     const readyAt = born + LIVESTOCK_CYCLE_MS * 0.15;
     expect(collectReady(born, born, readyAt)).toBe(true);
     expect(collectProgress(born, born, readyAt)).toBe(1);
+  });
+});
+
+/**
+ * La ration se compte en temps réel, pas en temps de jeu.
+ *
+ * Un cycle d'élevage vaut un jour de jeu, soit quinze minutes d'horloge. La
+ * distribution servait exactement un cycle : il fallait revenir nourrir ses
+ * bêtes tous les quarts d'heure, faute de quoi le lot dépérissait. L'écran
+ * disait « 1 j » et le joueur comprenait « une journée ».
+ */
+describe("une ration tient un jour réel", () => {
+  const BESOIN = 98; // sept vaches à 14 kg
+
+  it("couvre vingt-quatre heures d'horloge, pas quinze minutes", () => {
+    const servie = rationToServe({ besoinParCycle: BESOIN, feedStock: 0 });
+    const tenue = feedAutonomyMs({ besoinParCycle: BESOIN, feedStock: servie });
+    expect(Math.round(tenue / 3_600_000)).toBe(24);
+  });
+
+  it("déduit ce qui reste dans l'auge", () => {
+    const pleine = rationToServe({ besoinParCycle: BESOIN, feedStock: 0 });
+    const demi = rationToServe({ besoinParCycle: BESOIN, feedStock: pleine / 2 });
+    expect(Math.round(demi)).toBe(Math.round(pleine / 2));
+    // Un lot déjà servi ne redemande rien.
+    expect(rationToServe({ besoinParCycle: BESOIN, feedStock: pleine })).toBe(0);
+  });
+
+  it("ne laisse pas vider le silo dans l'auge", () => {
+    const capacite = troughCapacity(BESOIN);
+    const uneRation = rationToServe({ besoinParCycle: BESOIN, feedStock: 0 });
+    // La mangeoire garde de l'avance, mais pas une saison entière.
+    expect(capacite).toBeGreaterThan(uneRation);
+    expect(capacite / uneRation).toBe(TROUGH_REAL_DAYS);
+    expect(Math.round(feedAutonomyMs({ besoinParCycle: BESOIN, feedStock: capacite }) / 3_600_000)).toBe(48);
+  });
+
+  it("un lot sans besoin n'a pas d'autonomie infinie", () => {
+    expect(feedAutonomyMs({ besoinParCycle: 0, feedStock: 500 })).toBe(0);
   });
 });

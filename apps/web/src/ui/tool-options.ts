@@ -31,8 +31,11 @@ export type ToolGroupDef = {
 export const TOOL_GROUPS: ToolGroupDef[] = [
   { id: "SELECT", label: "Voir", icon: "/assets/icons/tools/select.svg", hotkey: "1", entry: "SELECT" },
   { id: "PLANT", label: "Semer", icon: "/assets/icons/tools/plant.svg", hotkey: "2", entry: "PLANT_WHEAT" },
-  { id: "HARVEST", label: "Récolte", icon: "/assets/icons/tools/harvest.svg", hotkey: "3", entry: "HARVEST" },
-  { id: "SOIL", label: "Sol", icon: "/assets/icons/tools/plow.svg", hotkey: "4", entry: "STUBBLE" },
+  /* L'ordre suit la saison, pas l'ordre d'écriture du code : on prépare le
+     sol, on sème, on récolte, on nettoie — et on vend. « Récolte » se trouvait
+     avant « Sol », ce qui plaçait la moisson avant le labour. */
+  { id: "SOIL", label: "Sol", icon: "/assets/icons/tools/plow.svg", hotkey: "3", entry: "STUBBLE" },
+  { id: "HARVEST", label: "Récolte", icon: "/assets/icons/tools/harvest.svg", hotkey: "4", entry: "HARVEST" },
   // Le seul outil qui n'avait pas de dessin retombait sur un emoji, au milieu
   // de quatre voisins illustrés. Il en a un maintenant, dans la même famille.
   { id: "SELL", label: "Marché", icon: "/assets/icons/nav/marche.svg", hotkey: "5" },

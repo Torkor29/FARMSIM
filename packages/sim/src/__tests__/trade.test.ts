@@ -1,4 +1,5 @@
 import {
+  SALE_CHANNEL_HINTS,
   DEALER_RATIO,
   LISTING_COMMISSION_RATE,
   LISTING_FEE_RATE,
@@ -212,6 +213,32 @@ describe("comparaison des canaux", () => {
   it("ne propose rien de négatif sur un lot minuscule", () => {
     for (const q of quoteAllChannels({ ...base, tons: 0.05 })) {
       expect(q.pricePerTon).toBeGreaterThan(0);
+    }
+  });
+});
+
+/**
+ * Qui achète, et pourquoi le prix change.
+ *
+ * « Vendre à tout prix » ne nommait personne : on encaissait 40 % de moins
+ * sans savoir que le lot partait à un PNJ de secours, et on cherchait la
+ * panne. Chaque canal doit dire son acheteur.
+ */
+describe("chaque débouché nomme son acheteur", () => {
+  it("le négociant est annoncé comme un PNJ, et sa décote est chiffrée", () => {
+    const note = SALE_CHANNEL_HINTS.DEALER;
+    expect(note).toMatch(/PNJ/);
+    // Le pourcentage vient de la constante : il ne peut pas se désynchroniser.
+    expect(note).toContain(`${Math.round(DEALER_RATIO * 100)} %`);
+  });
+
+  it("la vitrine dit qu'il faut un joueur en face", () => {
+    expect(SALE_CHANNEL_HINTS.LISTING).toMatch(/joueur/);
+  });
+
+  it("aucun libellé ne cache l'acheteur derrière « à tout prix »", () => {
+    for (const c of Object.keys(SALE_CHANNEL_LABELS) as (keyof typeof SALE_CHANNEL_LABELS)[]) {
+      expect(`${c} ${SALE_CHANNEL_LABELS[c]}`).not.toMatch(/à tout prix/);
     }
   });
 });

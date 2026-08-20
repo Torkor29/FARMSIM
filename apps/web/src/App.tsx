@@ -55,6 +55,7 @@ import {
   CROP_DEFS,
   GOOD_DEFS,
   FEED_VALUE,
+  rationToServe,
   isMowCrop,
   leavesSwath,
   type CropCode,
@@ -3643,7 +3644,18 @@ export function App() {
        * ration choisie. Un minimum d'une centaine de kilos, sans quoi un lot
        * repu ferait des allers-retours pour rien.
        */
-      const besoinKg = Math.max(0, (barn?.herd?.feedNeed ?? size * 14) - (barn?.herd?.feedStock ?? 0));
+      /**
+       * Une distribution = **un jour réel**, pas un cycle.
+       *
+       * Un cycle vaut quinze minutes réelles : servir un cycle obligeait à
+       * revenir toutes les quinze minutes sous peine de voir le lot dépérir.
+       * On sert donc de quoi tenir vingt-quatre heures d'horloge, ce qui reste
+       * dans l'auge déduit. La consommation, elle, n'a pas bougé d'un kilo.
+       */
+      const besoinKg = rationToServe({
+        besoinParCycle: barn?.herd?.feedNeed ?? size * 14,
+        feedStock: barn?.herd?.feedStock ?? 0,
+      });
       const valeur = FEED_VALUE[RATION_GOOD[ration]] ?? 1;
       const wanted = Math.max(0.1, Math.round((besoinKg / 1000 / valeur) * 100) / 100);
       const stock = stockConnu ?? (
