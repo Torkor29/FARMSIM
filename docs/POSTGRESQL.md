@@ -20,151 +20,80 @@ pour trois raisons qui se voient déjà :
    attendue, et un `0` là où un booléen l'est. C'est ainsi qu'une erreur de
    conversion se serait vue en 1970 plutôt qu'au moment de l'écrire.
 
-## Ce qui se passe au moment de la poussée
+## En une commande
 
-Toute poussée sur `main` redéploie le VPS toute seule. Le déploiement monte
-PostgreSQL, construit la nouvelle image, et le jeu applique ses migrations à son
-démarrage : il repart donc **sur une base vide**, le temps que vous transfériez
-les données.
-
-Rien n'est perdu pendant ce moment-là. L'ancien volume `farmsim-data` n'est plus
-monté, mais il **n'est pas supprimé** : vos données sont dedans, intactes, et
-c'est de là qu'on va les tirer.
-
-Comptez une dizaine de minutes entre le déploiement et la fin du transfert.
-
----
-
-## 1 — Sauvegarder l'ancienne base, et faire le ménage
-
-À faire de préférence **avant** la poussée, tant que l'ancien jeu tourne. Si
-c'est déjà déployé, sautez à l'étape 2 : le volume est toujours là.
+Le déploiement a monté PostgreSQL et le jeu tourne — sur une base vide, le temps
+de lui verser la ferme d'avant. Vos données n'ont pas bougé : elles sont sur
+l'ancien volume, que rien ne supprime.
 
 ```bash
-cd /opt/farmsim
-sudo bash scripts/farmsim-backup.sh avant-postgres
-sudo bash scripts/farmsim-purge-essais.sh            # à blanc, montre ce qui partirait
-sudo bash scripts/farmsim-purge-essais.sh --vraiment # pour de bon
+sudo bash /opt/farmsim/scripts/farmsim-bascule-postgres.sh
 ```
 
-## 2 — Le mot de passe de la nouvelle base
+Le script fait tout : il retrouve l'ancienne base sur son volume, en sort le
+fichier, arrête le jeu (la base reste debout), sauvegarde ce qu'il s'apprête à
+remplacer, remet le schéma à neuf, transfère, redémarre et attend que la santé
+revienne au vert.
 
-Sans lui, `docker compose` refuse de démarrer — c'est voulu : une base de
-production ne doit pas pouvoir tourner avec un mot de passe deviné depuis le
-dépôt.
+Il est écrit pour être difficile à rater :
 
-```bash
-cd /opt/farmsim
-echo "FARMSIM_DB_PASSWORD=$(openssl rand -base64 24 | tr -d '/+=')" | sudo tee -a .env > /dev/null
-sudo chmod 600 .env
-```
+- **il refuse d'écraser une base qui contient de vrais joueurs.** Si la bascule
+  a déjà eu lieu, ou si des comptes ont joué depuis, il s'arrête et le dit. Pour
+  passer outre — en connaissance de cause — : `--vraiment` ;
+- **il vérifie le fichier source** avant de toucher à quoi que ce soit ;
+- **le transfert recompte les deux côtés** et échoue si un seul nombre diffère ;
+- **l'ancienne base n'est jamais modifiée.**
 
-> `> /dev/null` n'est pas décoratif : `tee` écrit dans le fichier **et** sur le
-> terminal. Sans cette redirection, le mot de passe s'affiche à l'écran — et
-> finit dans la première capture qu'on envoie pour demander de l'aide. C'est
-> arrivé. Pour le remplacer :
->
-> ```bash
-> sudo sed -i '/^FARMSIM_DB_PASSWORD=/d' .env
-> echo "FARMSIM_DB_PASSWORD=$(openssl rand -base64 24 | tr -d '/+=')" | sudo tee -a .env > /dev/null
-> ```
+Il est relançable : s'il s'arrête en route, on corrige et on relance.
 
-Si le déploiement a déjà échoué faute de ce mot de passe, relancez-le
-simplement une fois posé :
+## Si vous préférez le faire à la main
 
-```bash
-sudo docker compose up -d --build
-```
+Les étapes que le script enchaîne, dans l'ordre — utiles pour comprendre, ou
+pour reprendre au milieu.
 
-## 3 — Sortir le fichier de l'ancienne base
+### 1 — Retrouver le volume et en sortir le fichier
 
-C'est **l'étape à ne pas rater** : c'est ce fichier qui porte vos données de
-l'autre côté. Le volume existe toujours, même s'il n'est plus monté.
-
-**Trouvez d'abord son vrai nom.** Docker Compose préfixe les volumes du nom du
-projet : le volume déclaré `farmsim-data` s'appelle en réalité
-`farmsim_farmsim-data` sur le serveur.
-
-Ce détail n'est pas cosmétique : `docker run -v farmsim-data:/data`, avec un nom
-qui n'existe pas, **crée un volume vide sans rien dire** et monte celui-là. La
-copie échoue alors sur un « No such file or directory » qui laisse croire que
-les données ont disparu. Elles n'ont pas bougé — on regardait au mauvais
-endroit.
-
-```bash
-sudo docker volume ls | grep -i farmsim
-```
-
-Puis, pour voir lequel contient la base :
+Compose préfixe ses volumes du nom du projet : `farmsim-data` s'appelle en
+réalité `farmsim_farmsim-data`. Ce détail n'est pas cosmétique — `docker run -v`
+avec un nom inexistant **crée un volume vide sans rien dire** et monte celui-là,
+d'où un « No such file or directory » qui laisse croire que tout a disparu.
 
 ```bash
 for v in $(sudo docker volume ls -q | grep -i farmsim); do
-  echo "── $v"
-  sudo docker run --rm -v "$v":/d alpine ls -la /d
+  echo "-- $v"; sudo docker run --rm -v "$v":/d alpine ls -la /d
 done
 ```
 
-Celui qui contient `farmsim.db` est le bon. On en sort le fichier :
+Puis, avec le bon nom :
 
 ```bash
-VOL=farmsim_farmsim-data   # ← le nom relevé ci-dessus
+VOL=farmsim_farmsim-data
 sudo docker run --rm -v "$VOL":/data -v /tmp:/sortie alpine \
   cp /data/farmsim.db /sortie/farmsim-avant-bascule.db
-ls -lh /tmp/farmsim-avant-bascule.db
 ```
 
-Si un volume vide `farmsim-data` traîne — créé par une commande qui visait le
-mauvais nom —, il se supprime sans risque une fois qu'on a vérifié qu'il ne
-contient rien.
-
-## 4 — Vérifier que la nouvelle base est debout
-
-```bash
-cd /opt/farmsim
-sudo docker compose ps          # farmsim-db doit être « healthy »
-```
-
-## 5 — Arrêter le jeu et transférer les données
-
-Le jeu seulement : la base reste debout pour recevoir le transfert, et plus
-personne n'écrit pendant l'opération.
+### 2 — Arrêter le jeu, remettre la base à neuf, transférer
 
 ```bash
 cd /opt/farmsim
 sudo docker compose stop farmsim
-
 MDP=$(grep FARMSIM_DB_PASSWORD .env | cut -d= -f2-)
-sudo docker run --rm \
-  --network container:farmsim-db \
-  -v /tmp:/entree \
-  -v /opt/farmsim/scripts:/scripts:ro \
-  --entrypoint node \
-  farmsim-farmsim --disable-warning=ExperimentalWarning \
-  /scripts/farmsim-vers-postgres.mjs \
-  /entree/farmsim-avant-bascule.db \
+
+sudo docker exec farmsim-db psql "postgresql://farmsim:${MDP}@127.0.0.1:5432/postgres" \
+  -c "DROP DATABASE IF EXISTS farmsim WITH (FORCE)" -c "CREATE DATABASE farmsim OWNER farmsim"
+
+sudo docker run --rm --network container:farmsim-db \
+  -e DATABASE_URL="postgresql://farmsim:${MDP}@127.0.0.1:5432/farmsim" \
+  --entrypoint sh farmsim-farmsim -c "./node_modules/.bin/prisma migrate deploy"
+
+sudo docker run --rm --network container:farmsim-db \
+  -v /tmp:/entree -v /opt/farmsim/scripts:/scripts:ro \
+  --entrypoint node farmsim-farmsim --disable-warning=ExperimentalWarning \
+  /scripts/farmsim-vers-postgres.mjs /entree/farmsim-avant-bascule.db \
   "postgresql://farmsim:${MDP}@127.0.0.1:5432/farmsim"
 ```
 
-Le script affiche le compte de chaque table, **recompte de l'autre côté**, et
-refuse de se dire réussi si un seul nombre diffère. Il refuse aussi d'écrire
-dans une base qui contient déjà des lignes : relancer par erreur ne peut pas
-doubler les données.
-
-Si le transfert refuse parce que la base n'est pas vide (le jeu a eu le temps de
-semer un monde neuf), on la remet à zéro et on recommence :
-
-```bash
-sudo docker compose stop farmsim
-MDP=$(grep FARMSIM_DB_PASSWORD /opt/farmsim/.env | cut -d= -f2-)
-sudo docker exec farmsim-db psql "postgresql://farmsim:${MDP}@127.0.0.1:5432/postgres" \
-  -c "DROP DATABASE farmsim WITH (FORCE)" -c "CREATE DATABASE farmsim OWNER farmsim"
-sudo docker compose up -d farmsim   # recrée le schéma
-sleep 30
-sudo docker compose stop farmsim
-# puis relancer le transfert ci-dessus
-```
-
-## 6 — Rallumer et regarder
+### 3 — Rallumer et regarder
 
 ```bash
 sudo docker compose up -d
@@ -174,7 +103,7 @@ curl -fsS http://127.0.0.1:8081/api/health
 Puis ouvrez le jeu et vérifiez trois choses à l'œil : votre compte existe,
 votre ferme est là avec ses bâtiments, et votre argent est le bon.
 
-## 7 — La première sauvegarde PostgreSQL
+## La première sauvegarde PostgreSQL
 
 ```bash
 sudo bash /opt/farmsim/scripts/farmsim-backup.sh apres-bascule
