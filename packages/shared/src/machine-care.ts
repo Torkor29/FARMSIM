@@ -305,3 +305,46 @@ export function suggestedRepairKind(
   if (condition < 45) return "HYDRAULIC";
   return "BELT";
 }
+
+
+/* ------------------------------------------------------------------ */
+/* Ce qui empêche une machine de travailler                            */
+/* ------------------------------------------------------------------ */
+
+export function machineCanWork(condition: number, minCondition: number): boolean {
+  return condition >= minCondition;
+}
+
+/** L'état d'entretien d'un engin, tel que l'écran comme la simulation le lisent. */
+export type MachineCareState = {
+  condition: number;
+  greased: boolean;
+  /** 0–100. Absent = plein si `greased`, vide sinon. */
+  grease?: number;
+  dirt: number;
+  greaseSkipStreak: number;
+  breakdown: BreakdownKind | null;
+};
+
+/**
+ * Ce qui cloue un engin à la cour, ou rien.
+ *
+ * Vivait côté simulation, donc hors de portée de l'écran — qui ne pouvait pas
+ * dire avant le clic ce que le serveur répondrait après.
+ */
+export function machineWorkBlock(
+  state: MachineCareState,
+  minCondition: number,
+): { code: "BROKEN" | "NEED_GREASE" | "NEED_REPAIR"; message: string } | null {
+  if (state.breakdown) {
+    return { code: "BROKEN", message: "En panne — réparez à l'atelier." };
+  }
+  if (!machineCanWork(state.condition, minCondition)) {
+    return { code: "NEED_REPAIR", message: "Condition trop basse — réparez." };
+  }
+  const empty = greaseIsEmpty(state.grease ?? (state.greased ? GREASE_FULL : 0));
+  if (empty && state.greaseSkipStreak >= 1) {
+    return { code: "NEED_GREASE", message: "Graisse vide — passez à l\u2019atelier." };
+  }
+  return null;
+}

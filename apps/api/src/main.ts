@@ -152,6 +152,8 @@ import {
   MACHINE_LISTING_MAX_RATE,
   buildingResaleValue,
   isPaddockAdjacent,
+  explainNoMachine as explainNoMachineShared,
+  type MachineForWork,
   YARD_BUILDINGS,
   barnsForYard,
   buildingWithArticle,
@@ -606,38 +608,15 @@ function tierOf(m: FarmMachine): Tier {
 /**
  * Pourquoi ce travail ne peut pas se faire.
  *
- * Trois causes possibles depuis la séparation porteur / outil, et le joueur
- * doit savoir laquelle : il n'a pas l'outil, il ne l'a pas en état, ou il n'a
- * pas de tracteur assez puissant pour le tirer. Un message unique le
- * laisserait acheter le mauvais engin.
+ * La règle vit désormais dans le domaine : l'écran doit pouvoir dire avant le
+ * clic ce que cette route répondrait après. Ici on ne fait que garantir une
+ * phrase, là où l'appelant en attend toujours une.
  */
 function explainNoMachine(machines: FarmMachine[], work: FarmWork): string {
-  const outils = (Object.keys(MACHINE_DEFS) as MachineType[]).filter((t) =>
-    MACHINE_DEFS[t].works.includes(work),
+  return (
+    explainNoMachineShared(machines as unknown as MachineForWork[], work) ??
+    "Aucune machine en état pour ce travail — achetez / réparez."
   );
-  const possedes = machines.filter((m) => outils.includes(m.type as MachineType));
-  if (!possedes.length) {
-    const noms = outils.map((t) => MACHINE_DEFS[t].name).join(" ou ");
-    return `${noms} requis pour ce travail — passez au garage.`;
-  }
-  for (const m of possedes) {
-    const def = MACHINE_DEFS[m.type as MachineType];
-    const block = machineWorkBlock(careOf(m), def.minCondition);
-    if (block) return `${def.name} : ${block.message}`;
-  }
-  // L'outil est là et en état : il manque donc de quoi le tirer.
-  const manquant = possedes[0]!;
-  const def = MACHINE_DEFS[manquant.type as MachineType];
-  if (def.kind === "IMPLEMENT") {
-    const ch = machineRequiredHp(def.type, tierOf(manquant));
-    const meilleur = machines
-      .filter((m) => MACHINE_DEFS[m.type as MachineType]?.kind === "TRACTOR")
-      .reduce((max, m) => Math.max(max, machinePower(m.type as MachineType, tierOf(m))), 0);
-    return meilleur === 0
-      ? `${def.name} prêt, mais aucun tracteur pour le tirer (${ch} ch nécessaires).`
-      : `${def.name} demande ${ch} ch — votre meilleur tracteur en donne ${meilleur}.`;
-  }
-  return "Aucune machine en état pour ce travail — achetez / réparez.";
 }
 
 /**

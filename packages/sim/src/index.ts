@@ -453,19 +453,11 @@ export { repairQuote as repairMachineCost, repairHalfwayTarget } from "@farmsim/
 // regroupées côté shared ; ce ré-export garde les appelants intacts.
 export { careWearMultiplier, careYieldBonus } from "@farmsim/shared";
 
-export function machineCanWork(condition: number, minCondition: number): boolean {
-  return condition >= minCondition;
-}
-
-export type MachineCareState = {
-  condition: number;
-  greased: boolean;
-  /** 0–100. Absent = plein si `greased`, vide sinon. */
-  grease?: number;
-  dirt: number;
-  greaseSkipStreak: number;
-  breakdown: BreakdownKind | null;
-};
+// Déplacés côté shared : l'écran doit pouvoir dire, avant le clic, ce que le
+// serveur répondrait après. Ce ré-export garde les appelants intacts, et
+// l'import ramène les noms dans la portée de ce module.
+import { machineCanWork, machineWorkBlock, type MachineCareState } from "@farmsim/shared";
+export { machineCanWork, machineWorkBlock, type MachineCareState };
 
 export function dirtFromWork(work: string, cells: number): number {
   const per = DIRT_PER_CELL[work] ?? DIRT_PER_CELL_DEFAULT;
@@ -494,22 +486,6 @@ export function breakdownChance(opts: {
   return Math.round(Math.min(0.55, Math.max(0, p)) * 1000) / 1000;
 }
 
-export function machineWorkBlock(
-  state: MachineCareState,
-  minCondition: number,
-): { code: "BROKEN" | "NEED_GREASE" | "NEED_REPAIR"; message: string } | null {
-  if (state.breakdown) {
-    return { code: "BROKEN", message: "En panne — réparez à l'atelier." };
-  }
-  if (!machineCanWork(state.condition, minCondition)) {
-    return { code: "NEED_REPAIR", message: "Condition trop basse — réparez." };
-  }
-  const empty = greaseIsEmpty(state.grease ?? (state.greased ? GREASE_FULL : 0));
-  if (empty && state.greaseSkipStreak >= 1) {
-    return { code: "NEED_GREASE", message: "Graisse vide — passez à l’atelier." };
-  }
-  return null;
-}
 
 export function applyJobCare(
   state: MachineCareState,

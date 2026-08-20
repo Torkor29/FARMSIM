@@ -5,6 +5,8 @@ import {
   BUILDING_DEFS,
   MACHINE_ART,
   MACHINE_DEFS,
+  explainNoMachine,
+  type MachineForWork,
   MAX_BUILDING_LEVEL,
   WORK_LABELS,
   buildingLevelDef,
@@ -2478,6 +2480,21 @@ export function App() {
     });
   }, [parcelDetail?.cellSims, parcel?.cells]);
 
+  /**
+   * Combien de cases de la sélection répondent à un critère de maturité.
+   *
+   * Le nombre de cases mûres affiché est celui de la **parcelle** ; la route,
+   * elle, ne juge que la sélection. « Récolter 4 cases » restait donc actif sur
+   * quatre cases vertes, et refusait en 409 après le chantier.
+   */
+  const dansSelection = useCallback(
+    (predicat: (s: { ready: boolean; lost?: boolean }) => boolean) =>
+      (parcelDetail?.cellSims ?? []).filter(
+        (c) => selectedCells.some((sel) => sel.x === c.x && sel.y === c.y) && predicat(c.sim),
+      ).length,
+    [parcelDetail?.cellSims, selectedCells],
+  );
+
   const contractorOffer = useMemo(() => {
     const work: FarmWork | null = isPlantTool(tool)
       ? "PLANT"
@@ -2508,8 +2525,51 @@ export function App() {
     const hasMachine = (player?.farm?.machines ?? []).some(
       (m) => m.type === needed && m.condition >= (MACHINE_DEFS[needed]?.minCondition ?? 15),
     );
-    return { work, hasMachine, cost: urgentContractorQuote(work, selectedCells.length) };
-  }, [tool, selectedCells.length, selectedAreGrass, player?.farm?.machines]);
+    /*
+     * Ce qui empêcherait le prestataire d'intervenir.
+     *
+     * Il vient avec son matériel : la question n'est donc pas le garage mais
+     * la sélection. « Faire faire » restait cliquable sur des cases où il n'y
+     * avait rien à récolter, et le devis payé partait en 409.
+     */
+    const blocage =
+      work === "HARVEST" || work === "MOW"
+        ? dansSelection((sim) => sim.ready && !sim.lost) === 0
+          ? "Rien de mûr dans la sélection — le prestataire n’aurait rien à récolter."
+          : null
+        : work === "PLOW"
+          ? dansSelection((sim) => Boolean(sim.lost)) === 0
+            ? "Aucune culture perdue à labourer dans la sélection."
+            : null
+          : null;
+    return {
+      work,
+      hasMachine,
+      blocage,
+      cost: urgentContractorQuote(work, selectedCells.length),
+    };
+  }, [tool, selectedCells, selectedAreGrass, player?.farm?.machines, dansSelection]);
+
+  /**
+   * Ce qui manque au parc pour l'outil en main.
+   *
+   * Même fonction que le serveur — c'est le point : l'écran doit dire avant le
+   * clic ce que la route répondrait après, mot pour mot. Un débutant pouvait
+   * lancer sept travaux sur dix qui ne pouvaient que refuser en 409.
+   */
+  const machineManquante = useMemo(() => {
+    const work = workOfTool(tool);
+    if (!work) return null;
+    const parc = explainNoMachine((player?.farm?.machines ?? []) as MachineForWork[], work);
+    if (parc) return parc;
+    // La machine est là ; reste à savoir si la sélection a de quoi l'occuper.
+    if ((work === "HARVEST" || work === "MOW") && selectedCells.length) {
+      if (dansSelection((sim) => sim.ready && !sim.lost) === 0) {
+        return "Rien de mûr dans la sélection.";
+      }
+    }
+    return null;
+  }, [tool, player?.farm?.machines, selectedCells.length, dansSelection]);
 
   const laborQuote = useMemo(() => {
     if (visiting || !contractorOffer) return null;
@@ -2974,13 +3034,28 @@ export function App() {
             ? visitOrder.cellList.some((r) => r.x === c.x && r.y === c.y)
             : true,
         );
-      if (readyCells.length) {
-        flashWork(
-          readyAreGrass ? "TRACTOR" : "HARVESTER",
-          readyCells,
-          readyAreGrass ? "mow" : "harvest",
-        );
+      if (!readyCells.length) {
+        setMsg("Rien n'est mûr sur cette parcelle.");
+        return;
       }
+      /*
+       * Le chantier d'abord, comme pour n'importe quel travail.
+       *
+       * « Tout récolter » appelait la route directement. Depuis que les travaux
+       * passent par un sas, elle répondait « Il faut lancer le chantier avant
+       * de le terminer » — le bouton ne pouvait plus aboutir, quel que soit
+       * l'état du champ. Il faut aussi nommer les cases : le sas ne travaille
+       * que celles qu'il a réservées.
+       */
+      const work: FarmWork = readyAreGrass ? "MOW" : "HARVEST";
+      const chantier = await ouvrirChantier(work, readyCells);
+      if (!chantier) return;
+      flashWork(
+        readyAreGrass ? "TRACTOR" : "HARVESTER",
+        readyCells,
+        readyAreGrass ? "mow" : "harvest",
+        { jobMs: chantier.durationMs },
+      );
       const r = await api<{
         totalTons: number;
         soldTons?: number;
@@ -2993,7 +3068,8 @@ export function App() {
         method: "POST",
         body: JSON.stringify({
           userId: player.id,
-          cells: visiting ? readyCells : undefined,
+          jobId: chantier.id,
+          cells: readyCells,
           swath: keepSwath,
         }),
       });
@@ -5389,6 +5465,7 @@ export function App() {
         )}
       {isMobile ? (
         <FieldDock
+          machineManquante={machineManquante}
           tool={tool}
           season={season}
           brush={brush}
@@ -5506,6 +5583,7 @@ export function App() {
           />
           <SelectionBar
             tool={tool}
+            machineManquante={machineManquante}
             selectedCount={selectedCells.length}
             readyCount={
               visiting ? Math.min(readyCellCount, visitOrder?.remaining ?? 0) : readyCellCount
@@ -5513,6 +5591,7 @@ export function App() {
             busy={busy}
             contractorCost={visiting ? null : (contractorOffer?.cost ?? null)}
             contractorAffordable={canPay(player, contractorOffer?.cost ?? 0)}
+            contractorBlocage={visiting ? null : (contractorOffer?.blocage ?? null)}
             laborQuote={laborQuote}
             laborAffordable={canPay(player, laborQuote ?? 0)}
             visiting={visiting}

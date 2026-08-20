@@ -21,6 +21,8 @@ type Props = {
   /** Devis d'un prestataire pour la sélection, s'il peut intervenir. */
   contractorCost: number | null;
   contractorAffordable: boolean;
+  /** Ce qui empêche le prestataire d'intervenir sur cette sélection. */
+  contractorBlocage?: string | null;
   /** Mise de côté demandée pour publier une offre d'aide. */
   laborQuote: number | null;
   laborAffordable: boolean;
@@ -28,6 +30,14 @@ type Props = {
   /** La sélection n'est que de l'herbe mûre : on fauche. */
   mowSelected: boolean;
   mowReadyAll: boolean;
+  /**
+   * Ce qui manque au parc pour ce travail, ou `null` s'il est faisable.
+   *
+   * Sans cela le bouton partait quel que soit le garage : un débutant, dont le
+   * parc n'a que tracteur, semoir et charrue, pouvait lancer sept travaux sur
+   * dix qui ne pouvaient que refuser en 409.
+   */
+  machineManquante?: string | null;
   onConfirm: () => void;
   onHarvestAll: () => void;
   onContractor: () => void;
@@ -63,11 +73,13 @@ export function SelectionBar({
   busy,
   contractorCost,
   contractorAffordable,
+  contractorBlocage,
   laborQuote,
   laborAffordable,
   visiting,
   mowSelected,
   mowReadyAll,
+  machineManquante,
   onConfirm,
   onHarvestAll,
   onContractor,
@@ -110,7 +122,8 @@ export function SelectionBar({
           <button
             type="button"
             className="selection-bar-go"
-            disabled={busy || !has}
+            disabled={busy || !has || Boolean(machineManquante)}
+            title={machineManquante ?? undefined}
             onClick={onConfirm}
           >
             {actionLabel(tool, selectedCount, mowSelected)}
@@ -121,11 +134,12 @@ export function SelectionBar({
           <button
             type="button"
             className="selection-bar-alt"
-            disabled={busy || !has || !contractorAffordable}
+            disabled={busy || !has || !contractorAffordable || Boolean(contractorBlocage)}
             title={
-              contractorAffordable
+              contractorBlocage ??
+              (contractorAffordable
                 ? "Un prestataire le fait tout de suite, avec son matériel."
-                : "Trésorerie insuffisante pour ce devis."
+                : "Trésorerie insuffisante pour ce devis.")
             }
             onClick={onContractor}
           >

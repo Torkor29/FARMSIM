@@ -4,6 +4,12 @@ import { GAME_DAY_MS } from "./time.js";
 import { MACHINE_END_OF_LIFE_HOURS } from "./machine-care.js";
 import { RECIPES, type ProcessingKind } from "./processing.js";
 import { kindForBarn, yardTypeForBarn } from "./livestock.js";
+import {
+  GREASE_FULL,
+  machineWorkBlock,
+  type BreakdownKind,
+  type MachineCareState,
+} from "./machine-care.js";
 
 export * from "./ledger.js";
 export * from "./time.js";
@@ -708,6 +714,93 @@ export const BUILDING_DEFS: Record<BuildingType, BuildingDef> = {
 /* Niveaux de bâtiment                                                 */
 /* ------------------------------------------------------------------ */
 
+/** Un engin, réduit à ce qu'il faut pour juger s'il peut travailler. */
+export type MachineForWork = {
+  type: MachineType;
+  tier?: number;
+  condition: number;
+  greased?: boolean;
+  grease?: number;
+  dirt?: number;
+  greaseSkipStreak?: number;
+  breakdown?: string | null;
+};
+
+function careDe(m: MachineForWork): MachineCareState {
+  const grease = m.grease ?? (m.greased === false ? 0 : GREASE_FULL);
+  return {
+    condition: m.condition,
+    grease,
+    greased: grease > 0,
+    dirt: m.dirt ?? 0,
+    greaseSkipStreak: m.greaseSkipStreak ?? 0,
+    breakdown: (["BELT", "HYDRAULIC", "ENGINE"] as const).includes(
+      m.breakdown as never,
+    )
+      ? (m.breakdown as BreakdownKind)
+      : null,
+  };
+}
+
+/**
+ * Pourquoi ce travail ne peut pas se faire, ou `null` s'il le peut.
+ *
+ * Trois causes depuis la séparation porteur / outil, et le joueur doit savoir
+ * laquelle : il n'a pas l'outil, il ne l'a pas en état, ou il n'a pas de
+ * tracteur assez puissant pour le tirer. Un message unique le laisserait
+ * acheter le mauvais engin.
+ *
+ * Vivait côté serveur, donc l'écran ne pouvait rien en dire : un débutant, dont
+ * le parc n'a que tracteur, semoir et charrue, pouvait cliquer Récolte, Faucher,
+ * Engrais, Presser, Ramasser, Ensiler et Déchaumer — sept outils sur dix qui ne
+ * pouvaient que refuser. Ici, les deux côtés donnent la même phrase, et l'écran
+ * la donne avant le clic.
+ */
+export function explainNoMachine(
+  machines: MachineForWork[],
+  work: FarmWork,
+): string | null {
+  const outils = (Object.keys(MACHINE_DEFS) as MachineType[]).filter((t) =>
+    MACHINE_DEFS[t].works.includes(work as never),
+  );
+  if (!outils.length) return null;
+  const possedes = machines.filter((m) => outils.includes(m.type));
+  if (!possedes.length) {
+    const noms = outils.map((t) => machineWithArticle(t)).join(" ou ");
+    return `Il faut ${noms} pour ce travail — passez au garage.`;
+  }
+  for (const m of possedes) {
+    const def = MACHINE_DEFS[m.type];
+    const block = machineWorkBlock(careDe(m), def.minCondition);
+    if (block) return `${def.name} : ${block.message}`;
+  }
+  // L'outil est là et en état : il manque donc de quoi le tirer.
+  const outil = possedes[0]!;
+  const def = MACHINE_DEFS[outil.type];
+  if (def.kind === "IMPLEMENT") {
+    const ch = machineRequiredHp(def.type, asTier(outil.tier ?? 1));
+    const tracteurs = machines.filter((m) => MACHINE_DEFS[m.type]?.kind === "TRACTOR");
+    const meilleur = tracteurs.reduce(
+      (max, m) => Math.max(max, machinePower(m.type, asTier(m.tier ?? 1))),
+      0,
+    );
+    if (meilleur === 0) {
+      return `${def.name} prêt, mais aucun tracteur pour le tirer (${ch} ch nécessaires).`;
+    }
+    if (meilleur < ch) {
+      return `${def.name} demande ${ch} ch — votre meilleur tracteur en donne ${meilleur}.`;
+    }
+    return null;
+  }
+  return null;
+}
+
+/** Le nom d'un engin précédé de son article : « une moissonneuse ». */
+export function machineWithArticle(type: MachineType): string {
+  const def = MACHINE_DEFS[type];
+  return `${def.article ?? "un"} ${def.name.toLowerCase()}`;
+}
+
 /**
  * Les abris qui hébergent des bêtes, et les aires de sortie qui vont avec.
  *
@@ -989,6 +1082,8 @@ export type MachineDef = {
   type: MachineType;
   kind: MachineKind;
   name: string;
+  /** Article indéfini du nom : « une moissonneuse ». Vaut « un » par défaut. */
+  article?: "un" | "une";
   /** Prix du palier 1 ; les suivants en dérivent. */
   cost: number;
   /** Chevaux disponibles (porteur, automoteur) au palier 1 */
@@ -1041,6 +1136,7 @@ export const MACHINE_DEFS: Record<MachineType, MachineDef> = {
   },
   HARVESTER: {
     type: "HARVESTER",
+    article: "une",
     kind: "SELF_PROPELLED",
     name: "Moissonneuse",
     cost: 4000,
@@ -1056,6 +1152,7 @@ export const MACHINE_DEFS: Record<MachineType, MachineDef> = {
   },
   FORAGE_HARVESTER: {
     type: "FORAGE_HARVESTER",
+    article: "une",
     kind: "SELF_PROPELLED",
     name: "Ensileuse",
     cost: 4200,
@@ -1071,6 +1168,7 @@ export const MACHINE_DEFS: Record<MachineType, MachineDef> = {
   },
   PLOUGH: {
     type: "PLOUGH",
+    article: "une",
     kind: "IMPLEMENT",
     // Le travail le plus lent du parc, et c'est exact : une charrue est étroite
     // et tire lourd. C'est ce qui fait de son palier l'achat qui se sent le plus.
@@ -1135,6 +1233,7 @@ export const MACHINE_DEFS: Record<MachineType, MachineDef> = {
   },
   MOWER: {
     type: "MOWER",
+    article: "une",
     kind: "IMPLEMENT",
     name: "Faucheuse",
     cost: 1200,
@@ -1150,6 +1249,7 @@ export const MACHINE_DEFS: Record<MachineType, MachineDef> = {
   },
   BALER: {
     type: "BALER",
+    article: "une",
     kind: "IMPLEMENT",
     name: "Presse à balles",
     cost: 1800,
@@ -1182,6 +1282,7 @@ export const MACHINE_DEFS: Record<MachineType, MachineDef> = {
   },
   TRAILER: {
     type: "TRAILER",
+    article: "une",
     kind: "IMPLEMENT",
     name: "Remorque",
     cost: 900,

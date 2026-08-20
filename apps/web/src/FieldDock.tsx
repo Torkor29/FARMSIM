@@ -45,6 +45,14 @@ type Props = {
   keepSwath: boolean;
   /** La culture sélectionnée laisse-t-elle de la paille ? L'herbe, non. */
   swathUseful: boolean;
+  /**
+   * Ce qui manque au parc pour ce travail, ou `null` s'il est faisable.
+   *
+   * Sans cela le bouton partait quel que soit le garage : un débutant, dont le
+   * parc n'a que tracteur, semoir et charrue, pouvait lancer sept travaux sur
+   * dix qui ne pouvaient que refuser.
+   */
+  machineManquante?: string | null;
   contractor: ContractorOffer | null;
   laborQuote?: number | null;
   objective: ObjectiveView | null;
@@ -95,6 +103,7 @@ export function FieldDock({
   directSeed,
   keepSwath,
   swathUseful,
+  machineManquante,
   contractor,
   laborQuote = null,
   objective,
@@ -245,7 +254,8 @@ export function FieldDock({
               <button
                 type="button"
                 className="chip go"
-                disabled={busy || selectedCount === 0}
+                disabled={busy || selectedCount === 0 || Boolean(machineManquante)}
+                title={machineManquante ?? undefined}
                 onClick={onConfirm}
               >
                 {tool === "HARVEST" && mowSelected
