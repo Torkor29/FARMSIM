@@ -401,6 +401,79 @@ export function happinessTarget(input: {
 }
 
 /**
+ * Pourquoi le lot va mal — et quoi faire.
+ *
+ * « Elles sont stressées pour quoi ? » L'écran affichait un pourcentage et
+ * rien d'autre : le joueur voyait la note sans jamais la copie. Or les quatre
+ * causes sont connues au moment où la cible est calculée — c'est exactement
+ * la même arithmétique, lue à l'envers.
+ *
+ * Le coût est exprimé en points de bien-être, ce qui permet de les classer :
+ * une bête affamée ne se console pas d'un beau pré, et il faut le dire dans
+ * cet ordre-là.
+ */
+export type WelfareCause = {
+  code: "SORTIE" | "SURPEUPLEMENT" | "FAIM" | "LITIERE";
+  /** Ce que cette cause coûte, en points de cible (0 à 1) */
+  cout: number;
+  /** Le constat */
+  texte: string;
+  /** Le geste qui l'efface */
+  remede: string;
+};
+
+/** En deçà, la cause ne vaut pas la peine d'être nommée. */
+const CAUSE_MIN = 0.02;
+
+export function welfareReasons(input: {
+  hasPaddock: boolean;
+  grazedRecentlyMs: number;
+  crowding: number;
+  hunger?: number;
+  bedding?: number;
+}): WelfareCause[] {
+  const span = HAPPINESS.grazedCeiling - HAPPINESS.confinedFloor;
+  const freshness = input.hasPaddock
+    ? clamp(1 - Math.max(0, input.grazedRecentlyMs) / HAPPINESS.grazeMemoryMs, 0, 1)
+    : 0;
+
+  const causes: WelfareCause[] = [
+    {
+      code: "SORTIE",
+      // Tout ce qui sépare le lot du plafond, faute de sortie fraîche.
+      cout: span * (1 - freshness),
+      texte: input.hasPaddock
+        ? "Enfermées depuis trop longtemps"
+        : "Jamais dehors — aucun enclos attenant",
+      remede: input.hasPaddock
+        ? "Sortez-les au pré"
+        : "Construisez un enclos collé au bâtiment",
+    },
+    {
+      code: "SURPEUPLEMENT",
+      cout: crowdingPenalty(input.crowding),
+      texte: "Trop serrées pour la place disponible",
+      remede: "Agrandissez le bâtiment ou l'enclos, ou vendez quelques bêtes",
+    },
+    {
+      code: "FAIM",
+      cout: Math.max(0, input.hunger ?? 0),
+      texte: "Affamées — la mangeoire est vide",
+      remede: "Distribuez une ration",
+    },
+    {
+      code: "LITIERE",
+      cout: Math.max(0, input.bedding ?? 0),
+      texte: "Couchées sur le béton — litière sale",
+      remede: "Étalez de la paille",
+    },
+  ];
+
+  // La plus coûteuse d'abord : c'est celle par laquelle il faut commencer.
+  return causes.filter((c) => c.cout >= CAUSE_MIN).sort((a, b) => b.cout - a.cout);
+}
+
+/**
  * Fait dériver le bonheur d'un lot sur `elapsedMs`.
  *
  * Relaxation exponentielle `h' = cible + (h − cible) × e^(−Δt/τ)` : elle est

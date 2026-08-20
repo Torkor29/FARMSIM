@@ -1,4 +1,5 @@
 import {
+  welfareReasons,
   autoCollects,
   AUTO_COLLECT_LEVEL,
   collectCapCycles,
@@ -770,5 +771,50 @@ describe("la cuve de production", () => {
   it("plafonne quand même : il reste une raison de revenir", () => {
     expect(Number.isFinite(collectCapCycles())).toBe(true);
     expect(collectCapCycles()).toBeGreaterThan(2);
+  });
+});
+
+/**
+ * La jauge de bien-être doit dire pourquoi.
+ *
+ * « Elles sont stressées pour quoi ? » L'écran donnait la note sans la copie.
+ */
+describe("les causes du stress", () => {
+  const bien = { hasPaddock: true, grazedRecentlyMs: 0, crowding: 0.5, hunger: 0, bedding: 0 };
+
+  it("ne reproche rien à un lot qui va bien", () => {
+    expect(welfareReasons(bien)).toEqual([]);
+  });
+
+  it("nomme l'absence d'enclos, et dit quoi construire", () => {
+    const causes = welfareReasons({ ...bien, hasPaddock: false });
+    expect(causes[0].code).toBe("SORTIE");
+    expect(causes[0].remede).toMatch(/enclos/i);
+  });
+
+  it("met la faim avant le confort", () => {
+    // Une bête affamée ne se console pas d'un beau pré : l'ordre d'affichage
+    // doit dire par quoi commencer.
+    const causes = welfareReasons({ ...bien, hunger: 0.5, bedding: 0.1 });
+    expect(causes.map((c) => c.code)).toEqual(["FAIM", "LITIERE"]);
+  });
+
+  it("classe toujours de la plus coûteuse à la moindre", () => {
+    const causes = welfareReasons({
+      ...bien,
+      hasPaddock: false,
+      crowding: 2,
+      hunger: 0.2,
+      bedding: 0.05,
+    });
+    const couts = causes.map((c) => c.cout);
+    expect(couts).toEqual([...couts].sort((a, b) => b - a));
+    expect(causes.length).toBe(4);
+  });
+
+  it("chaque cause porte un geste, pas seulement un constat", () => {
+    for (const c of welfareReasons({ ...bien, hasPaddock: false, crowding: 2, hunger: 0.3, bedding: 0.2 })) {
+      expect(`${c.code} ${c.remede.length > 10}`).toBe(`${c.code} true`);
+    }
   });
 });

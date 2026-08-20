@@ -16,6 +16,7 @@ import {
   feedAutonomyMs,
   rationCycles,
   autoCollects,
+  type WelfareCause,
   troughCapacity,
   BUILDING_ART,
   BUILDING_DEFS,
@@ -96,6 +97,8 @@ export type BarnState = {
     young?: number;
     /** Quand le prochain lot de jeunes passe adulte. */
     youngMaturesAt?: number | null;
+    /** Pourquoi le lot va mal, et quoi faire — calculé par le serveur. */
+    welfareCauses?: WelfareCause[];
     feedQuality: number;
     hungry: boolean;
     /** Le lot commence à perdre des bêtes : il faut agir maintenant */
@@ -666,11 +669,15 @@ export function LivestockPanel({
                     {(herd.young ?? 0) > 0 && (
                       <em className="herd-young">
                         dont {herd.young} jeune{(herd.young ?? 0) > 1 ? "s" : ""}
+                        {/* « 45 minutes de quoi, IRL ou en jeu ? » — la
+                            question s'est posée, et elle était légitime : le
+                            jeu compte en jours de quinze minutes, donc un
+                            nombre nu ne veut rien dire. Celui-ci est en temps
+                            réel, et le dit. */}
                         {herd.youngMaturesAt
-                          ? ` · adulte dans ${Math.max(
-                              1,
-                              Math.round((herd.youngMaturesAt - Date.now()) / 60000),
-                            )} min`
+                          ? ` · adulte dans ${dureeReelle(
+                              Math.max(0, herd.youngMaturesAt - Date.now()),
+                            )} (temps réel)`
                           : ""}
                       </em>
                     )}
@@ -686,6 +693,22 @@ export function LivestockPanel({
                     </span>
                   </div>
                 </div>
+
+                {/* La copie, pas seulement la note.
+                    « Elles sont stressées pour quoi ? » — l'écran donnait un
+                    pourcentage et rien d'autre. Les causes viennent du serveur,
+                    classées par ce qu'elles coûtent : on commence par la
+                    première. */}
+                {(herd.welfareCauses?.length ?? 0) > 0 && (
+                  <ul className="welfare-why">
+                    {herd.welfareCauses!.map((c) => (
+                      <li key={c.code}>
+                        <b>{c.texte}</b>
+                        <span>{c.remede}</span>
+                      </li>
+                    ))}
+                  </ul>
+                )}
 
                 {/* Les cinq mesures du lot.
                     Chacune occupait une barre pleine largeur **plus** sa ligne
@@ -979,7 +1002,7 @@ export function LivestockPanel({
                   Jeunes
                   <em>
                     {Math.round(barn.cowPrice * YOUNG_PRICE_RATIO)} TRN · adultes dans{" "}
-                    {Math.round(YOUNG_GROW_MS / 60000)} min
+                    {dureeReelle(YOUNG_GROW_MS)} réelles
                   </em>
                 </button>
               </div>

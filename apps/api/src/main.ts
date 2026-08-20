@@ -230,6 +230,7 @@ import {
   beddingBurn,
   beddingCover,
   beddingPenalty,
+  welfareReasons,
   beddingManureMultiplier,
   beddingNeed,
   beddingCapacity,
@@ -7342,6 +7343,34 @@ app.get("/parcels/:id/livestock", async (req, res) => {
               herdSize: b.herd.size,
               kind: b.herd.kind as AnimalKind,
             }) > 0.05,
+            /*
+              Pourquoi le lot va mal, et quoi faire.
+
+              « Elles sont stressées pour quoi ? » L'écran donnait la note sans
+              jamais la copie. Les causes sont calculées ici, avec **les mêmes
+              entrées** que la dérive du bien-être — les recalculer côté écran
+              les aurait laissées diverger au premier changement de règle.
+            */
+            welfareCauses: welfareReasons({
+              hasPaddock: paddock.capacity > 0,
+              grazedRecentlyMs: b.herd.lastGrazedAt
+                ? now - b.herd.lastGrazedAt.getTime()
+                : Number.MAX_SAFE_INTEGER,
+              crowding:
+                paddock.capacity > 0 ? b.herd.size / Math.max(1, paddock.capacity) : 1,
+              hunger: hungerPenalty({
+                feedStock,
+                herdSize: b.herd.size,
+                kind: b.herd.kind as AnimalKind,
+              }),
+              bedding: beddingPenalty(
+                beddingCover({
+                  kind: b.herd.kind as AnimalKind,
+                  herdSize: b.herd.size,
+                  stockTons: b.herd.beddingTons ?? 0,
+                }),
+              ),
+            }),
             /* Un lot entièrement composé de jeunes n'a rien à donner : sans
                ce garde, « traite prête » s'affichait sur une étable de veaux
                et le geste ramenait zéro litre. */

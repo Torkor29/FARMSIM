@@ -1938,6 +1938,26 @@ button.blocked:active { opacity: 0.72; }
   line-height: 1.35;
   color: var(--ink);
 }
+/* La copie, pas seulement la note. La jauge de bien-être affichait un
+   pourcentage et rien d'autre — « elles sont stressées pour quoi ? ». Chaque
+   cause dit le constat, puis le geste qui l'efface. */
+.welfare-why {
+  margin: 0.5rem 0 0;
+  padding: 0;
+  list-style: none;
+  display: grid;
+  gap: 0.3rem;
+}
+.welfare-why li {
+  display: grid;
+  gap: 0.05rem;
+  padding: 0.35rem 0.55rem;
+  border-radius: var(--r-sm, 6px);
+  border-left: 3px solid var(--gold-500, #d9a441);
+  background: color-mix(in srgb, var(--gold-500, #d9a441) 12%, transparent);
+}
+.welfare-why b { font-size: 0.8rem; }
+.welfare-why span { font-size: 0.74rem; color: var(--muted); }
 /* Quatre colonnes — vignette, nom, saisie, bouton — ne tiennent pas dans la
    largeur d'un téléphone : la colonne souple s'écrasait à zéro et le prix
    passait sous l'étiquette « Combien (tonnes) ». Le nom garde sa ligne, la
