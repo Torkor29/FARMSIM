@@ -104,7 +104,7 @@ export const OBJECTIVE_DEFS: ObjectiveDef[] = [
   {
     id: "stubble",
     title: "Nettoyez le sol après la récolte",
-    hint: "Outil Sol → Nettoyer sur les chaumes. Sans ça, on ne resème pas.",
+    hint: "Outil Sol → Déchaumer sur les chaumes. Sans ça, on ne resème pas.",
     unlock: "Un nouveau cycle de culture",
     spec: "CEREALIER",
     check: (s) => s.hasHarvested && s.stubbleCells === 0,
@@ -502,7 +502,7 @@ export const GUIDE_CHAPTERS: GuideChapter[] = [
         id: "DISC_HARROW",
         name: "Déchaumeur · 1 600 TRN",
         how: "Enterre les chaumes.",
-        usedBy: "Céréalier. Pour nettoyer le sol après la récolte.",
+        usedBy: "Céréalier. Pour déchaumer après la récolte.",
       },
       {
         id: "BALER",

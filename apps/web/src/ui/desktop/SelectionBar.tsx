@@ -12,6 +12,7 @@
 
 import type { Tool } from "../../tools";
 import { isPlantTool, plantCropLabel } from "../../tools";
+import { actsOnSelection } from "../tool-options";
 
 type Props = {
   tool: Tool;
@@ -51,20 +52,14 @@ function actionLabel(tool: Tool, count: number, mow: boolean): string {
   if (isPlantTool(tool)) return `Semer ${plantCropLabel(tool)} · ${count} case(s)`;
   if (tool === "FERTILIZE") return `Fertiliser ${count} case(s)`;
   if (tool === "PLOW") return `Labourer ${count} case(s)`;
-  if (tool === "STUBBLE") return `Nettoyer ${count} case(s)`;
+  if (tool === "STUBBLE") return `Déchaumer ${count} case(s)`;
+  if (tool === "WEED") return `Désherber ${count} case(s)`;
+  if (tool === "BALE") return `Presser ${count} case(s)`;
+  if (tool === "COLLECT") return `Ramasser ${count} case(s)`;
   return `Récolter ${count} case(s)`;
 }
 
-/** L'outil courant agit-il sur une sélection ? */
-function actsOnSelection(tool: Tool): boolean {
-  return (
-    isPlantTool(tool) ||
-    tool === "FERTILIZE" ||
-    tool === "HARVEST" ||
-    tool === "STUBBLE" ||
-    tool === "PLOW"
-  );
-}
+
 
 export function SelectionBar({
   tool,

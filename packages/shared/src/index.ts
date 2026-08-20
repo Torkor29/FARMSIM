@@ -1541,7 +1541,7 @@ export const WORK_LABELS: Record<FarmWork, string> = {
   FERTILIZE: "Mettre de l’engrais",
   HARVEST: "Récolter",
   PLOW: "Labourer",
-  STUBBLE: "Nettoyer le sol",
+  STUBBLE: "Déchaumer",
   MOW: "Faucher",
   BALE: "Presser les bottes",
   COLLECT: "Ramasser les bottes",

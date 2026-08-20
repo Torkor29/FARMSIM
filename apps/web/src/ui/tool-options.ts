@@ -13,7 +13,7 @@
  */
 
 import { canSowInSeason, windowLabel, type Season } from "@farmsim/shared";
-import { cropFromPlantTool, isPlantTool, isSoilTool, type Tool } from "../tools";
+import { cropFromPlantTool, isFieldWorkTool, isPlantTool, isSoilTool, type Tool } from "../tools";
 
 /** Famille d'outils : ce que porte la barre principale. */
 export type ToolGroup = "SELECT" | "PLANT" | "HARVEST" | "SOIL" | "SELL";
@@ -32,7 +32,7 @@ export const TOOL_GROUPS: ToolGroupDef[] = [
   { id: "SELECT", label: "Voir", icon: "/assets/icons/tools/select.svg", hotkey: "1", entry: "SELECT" },
   { id: "PLANT", label: "Semer", icon: "/assets/icons/tools/plant.svg", hotkey: "2", entry: "PLANT_WHEAT" },
   /* L'ordre suit la saison, pas l'ordre d'écriture du code : on prépare le
-     sol, on sème, on récolte, on nettoie — et on vend. « Récolte » se trouvait
+     sol, on sème, on récolte, on déchaume — et on vend. « Récolte » se trouvait
      avant « Sol », ce qui plaçait la moisson avant le labour. */
   { id: "SOIL", label: "Sol", icon: "/assets/icons/tools/plow.svg", hotkey: "3", entry: "STUBBLE" },
   { id: "HARVEST", label: "Récolte", icon: "/assets/icons/tools/harvest.svg", hotkey: "4", entry: "HARVEST" },
@@ -76,7 +76,7 @@ export const SOIL_OPTIONS: ToolOption[] = [
     label: "Désherber",
     hint: "Pulvérisateur : nettoie la culture en place, sans la retourner",
   },
-  { tool: "STUBBLE", label: "Nettoyer", hint: "Déchaumage : enfouit les résidus" },
+  { tool: "STUBBLE", label: "Déchaumer", hint: "Enfouit les résidus après la moisson" },
   { tool: "PLOW", label: "Labourer", hint: "Remet le compteur de récoltes à zéro" },
   { tool: "FERTILIZE", label: "Engrais", hint: "Relève la fertilité de la case" },
   { tool: "BALE", label: "Presser", hint: "Met la paille en bottes" },
@@ -118,3 +118,15 @@ export function optionsFor(group: ToolGroup | null, season?: Season): ToolOption
 /** Tailles de pinceau proposées partout. */
 export const BRUSH_SIZES = [1, 2, 3] as const;
 export type BrushSize = (typeof BRUSH_SIZES)[number];
+
+/**
+ * L'outil courant agit-il sur une sélection de cases ?
+ *
+ * La barre de bureau portait sa propre liste, où la presse, le ramassage et le
+ * désherbage manquaient : on sélectionnait des cases et aucun bouton « Faire »
+ * n'apparaissait. C'est la même question que « le champ accepte-t-il ce clic »,
+ * donc la même réponse — il n'existe plus qu'une liste.
+ */
+export function actsOnSelection(tool: Tool): boolean {
+  return isFieldWorkTool(tool);
+}

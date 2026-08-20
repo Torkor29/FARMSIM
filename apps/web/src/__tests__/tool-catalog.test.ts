@@ -1,4 +1,5 @@
 import {
+  actsOnSelection,
   HARVEST_OPTIONS,
   PLANT_OPTIONS,
   SOIL_OPTIONS,
@@ -31,6 +32,15 @@ describe("le catalogue d'outils", () => {
       // `isFieldWorkTool` commande à la fois le clic sur une case, le tracé au
       // doigt et le Ctrl+A : un outil hors de cette porte est inerte.
       expect(`${tool} ${isFieldWorkTool(tool)}`).toBe(`${tool} true`);
+    }
+  });
+
+  it("donne un bouton d'action à chaque outil, sur la coque de bureau", () => {
+    // Second visage du même défaut : le clic posait bien la sélection, mais la
+    // barre de bureau portait sa propre liste et n'affichait aucun « Faire »
+    // pour la presse ni le ramassage. On sélectionnait, et rien ne partait.
+    for (const tool of tousLesOutils) {
+      expect(`${tool} ${actsOnSelection(tool)}`).toBe(`${tool} true`);
     }
   });
 
