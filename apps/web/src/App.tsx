@@ -118,7 +118,14 @@ import { TutorialOverlay } from "./TutorialOverlay";
 import { FieldDock } from "./FieldDock";
 import { PlayGuide } from "./PlayGuide";
 import { TOKEN_KEY, TUTORIAL_KEY, GUIDE_FLAGS_KEY } from "./storage-keys";
-import { cropFromPlantTool, isPlantTool, isSoilTool, plantCropLabel, type Tool } from "./tools";
+import {
+  cropFromPlantTool,
+  isFieldWorkTool,
+  isPlantTool,
+  isSoilTool,
+  plantCropLabel,
+  type Tool,
+} from "./tools";
 import {
   DEFAULT_MODS,
   applySelection,
@@ -1150,7 +1157,7 @@ export function App() {
 
       // Ctrl+A : tout ce que l'outil courant peut travailler.
       if (ctrl && (e.key === "a" || e.key === "A")) {
-        if (!isStrokeTool(tool)) return;
+        if (!isFieldWorkTool(tool)) return;
         e.preventDefault();
         setSelectedCells(eligibleCells(tool));
         return;
@@ -2097,13 +2104,6 @@ export function App() {
     return cells;
   }
 
-  /** Les outils qui se tracent au doigt : ceux qui travaillent des cases. */
-  function isStrokeTool(t: Tool): boolean {
-    return (
-      isPlantTool(t) || t === "FERTILIZE" || t === "HARVEST" || t === "STUBBLE" || t === "PLOW"
-    );
-  }
-
   /**
    * Sélection retenue au début d'un tracé.
    *
@@ -2161,6 +2161,11 @@ export function App() {
       if (c.kind === "BUILDING" || c.kind === "VEHICLE") continue;
       if (isPlantTool(t) && c.kind === "CROP") continue;
       if (t === "HARVEST" && c.kind !== "CROP") continue;
+      // Presser, ramasser et désherber ne concernent qu'une poignée de cases :
+      // tout sélectionner enverrait le reste au serveur pour se faire refuser.
+      if (t === "BALE" && (c.strawTons ?? 0) <= 0) continue;
+      if (t === "COLLECT" && (c.baleCount ?? 0) <= 0) continue;
+      if (t === "WEED" && (c.weedPressure ?? 0) <= 0) continue;
       out.push({ x: c.x, y: c.y });
     }
     return out;
@@ -2359,13 +2364,7 @@ export function App() {
       return;
     }
 
-    if (
-      isPlantTool(tool) ||
-      tool === "FERTILIZE" ||
-      tool === "HARVEST" ||
-      tool === "STUBBLE" ||
-      tool === "PLOW"
-    ) {
+    if (isFieldWorkTool(tool)) {
       // Maj+clic prend tout le rectangle depuis la dernière case posée. Sans
       // ancre — premier clic de la partie — il n'y a rien à étendre, on pose.
       const anchor = selectionAnchor.current;
@@ -4401,7 +4400,7 @@ export function App() {
               // « Il faudrait pouvoir le glisser au lieu de devoir cliquer » :
               // vingt-quatre touchers pour une bande de blé, c'était le geste
               // le plus répété du jeu.
-              strokeSelect={!visiting && isStrokeTool(tool)}
+              strokeSelect={!visiting && isFieldWorkTool(tool)}
               onStrokeStart={() => {
                 strokeBase.current = selectedCells;
               }}
