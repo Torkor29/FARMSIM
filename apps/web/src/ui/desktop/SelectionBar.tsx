@@ -11,7 +11,8 @@
  */
 
 import type { Tool } from "../../tools";
-import { isFieldWorkTool, toolActionLabel } from "../../tools";
+import { toolActionLabel } from "../../tools";
+import { actsOnSelection } from "../tool-options";
 
 type Props = {
   tool: Tool;
@@ -54,19 +55,7 @@ type Props = {
   onClear: () => void;
 };
 
-/**
- * L'outil courant agit-il sur une sélection ?
- *
- * La liste était écrite à la main et il en manquait trois — désherber, presser,
- * ramasser. La barre disparaissait donc entièrement dès qu'on armait l'un
- * d'eux : plus de compteur, plus de « Tout sélectionner », plus de bouton pour
- * lancer le travail. Les cases se retenaient bien, mais rien ne le montrait et
- * rien ne pouvait les envoyer. C'est la même question que « est-ce un travail
- * de champ ? » : autant la poser une seule fois, là où elle est déjà répondue.
- */
-function actsOnSelection(tool: Tool): boolean {
-  return isFieldWorkTool(tool);
-}
+
 
 export function SelectionBar({
   tool,
