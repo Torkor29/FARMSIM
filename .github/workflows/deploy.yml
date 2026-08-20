@@ -29,8 +29,50 @@ jobs:
   verifier:
     name: Compiler et tester
     runs-on: ubuntu-latest
+
+    # Une vraie base, pas une imitation.
+    #
+    # Le jeu tournait sur SQLite ; il tourne sur PostgreSQL. Des suites qui
+    # continueraient à s'exécuter sur un fichier ne prouveraient plus rien de
+    # ce qui tourne en production : les types ne sont pas les mêmes (les dates,
+    # les booléens), les contraintes ne se comportent pas pareil, et le SQL
+    # écrit à la main non plus — c'est ainsi qu'un `UPDATE Machine` sans
+    # guillemets passait ici et échouait là-bas.
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: farmsim
+          POSTGRES_PASSWORD: farmsim-local
+          POSTGRES_DB: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U farmsim"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+
+    env:
+      # Les suites créent chacune leur base jetable sur ce serveur, et la
+      # détruisent en partant.
+      FARMSIM_TEST_PG: postgresql://farmsim:farmsim-local@127.0.0.1:5432/postgres
+
     steps:
       - uses: actions/checkout@v4
+
+      # `pg_dump`, `pg_restore` et `psql` en version 16 : le client livré par
+      # défaut sur les exécuteurs GitHub est plus ancien que le serveur, et
+      # `pg_dump` refuse net de travailler dans ce sens. C'est l'exercice de
+      # restauration qui en a besoin.
+      - name: Installer le client PostgreSQL 16
+        run: |
+          sudo sh -c 'echo "deb https://apt.postgresql.org/pub/repos/apt $(lsb_release -cs)-pgdg main" > /etc/apt/sources.list.d/pgdg.list'
+          curl -fsSL https://www.postgresql.org/media/keys/ACCC4CF8.asc | sudo gpg --dearmor -o /usr/share/keyrings/pgdg.gpg
+          sudo sed -i 's|deb |deb [signed-by=/usr/share/keyrings/pgdg.gpg] |' /etc/apt/sources.list.d/pgdg.list
+          sudo apt-get update
+          sudo apt-get install -y postgresql-client-16
+          psql --version
 
       # Pas de version en dur : `pnpm/action-setup` lit le champ
       # `packageManager` du package.json, seule source de vérité.

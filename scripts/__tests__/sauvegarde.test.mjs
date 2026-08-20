@@ -3,23 +3,26 @@
  *
  * Une sauvegarde qu'on n'a jamais restaurée n'est pas une sauvegarde : c'est un
  * fichier dont on espère quelque chose. Ces tests fabriquent une base, la
- * sauvegardent pendant qu'on écrit dedans, la détruisent, la restaurent, et
- * vérifient que les lignes sont revenues. Ils vérifient aussi le cas qui compte
- * le plus le jour venu : qu'une sauvegarde abîmée est **refusée** au lieu
- * d'être conservée avec la date du jour.
+ * sauvegardent, la détruisent **entièrement**, la restaurent, et vérifient que
+ * les lignes sont revenues avec leur contenu. Ils vérifient aussi le cas qui
+ * compte le plus le jour venu : qu'une sauvegarde abîmée est **refusée** au
+ * lieu d'être conservée avec la date du jour.
+ *
+ * Depuis le passage à PostgreSQL, tout cela s'éprouve contre un vrai serveur :
+ * `FARMSIM_TEST_PG` dit lequel. Une suite qui tournerait encore sur SQLite ne
+ * prouverait plus rien de ce qui sauvegarde la production.
  */
 import { after, before, describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { DatabaseSync } from "node:sqlite";
 import { execFileSync } from "node:child_process";
+import { randomBytes } from "node:crypto";
 import {
   chmodSync,
-  copyFileSync,
   mkdtempSync,
   readFileSync,
   readdirSync,
   rmSync,
-  statSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -30,93 +33,136 @@ import { libres as terreLibre, purger as purgerEssais } from "../farmsim-purge-e
 
 const SCRIPTS = dirname(fileURLToPath(new URL("../farmsim-backup.mjs", import.meta.url)));
 
+const ADMIN =
+  process.env.FARMSIM_TEST_PG ?? "postgresql://farmsim:farmsim-local@127.0.0.1:5432/postgres";
+
+function urlVers(base) {
+  const u = new URL(ADMIN);
+  u.pathname = `/${base}`;
+  return u.toString();
+}
+
+function psql(url, sql) {
+  return execFileSync("psql", [url, "-v", "ON_ERROR_STOP=1", "-tA", "-c", sql], {
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "pipe"],
+  }).trim();
+}
+
 let dossier;
-let base;
+let nomBase;
+let url;
 
 /** Une base minimale qui a les tables que la sauvegarde juge vitales. */
-function fabriquerBase(chemin, joueurs = 40) {
-  const db = new DatabaseSync(chemin);
-  db.exec(`
-    CREATE TABLE IF NOT EXISTS "User" (id INTEGER PRIMARY KEY, nom TEXT, crd REAL);
-    CREATE TABLE IF NOT EXISTS "Farm" (id INTEGER PRIMARY KEY, userId INTEGER);
-    CREATE TABLE IF NOT EXISTS "Parcel" (id INTEGER PRIMARY KEY, farmId INTEGER);
-  `);
-  // WAL : c'est le mode qui piège une sauvegarde par simple copie de fichier,
-  // puisque les transactions validées vivent alors hors du .db.
-  db.exec("PRAGMA journal_mode = WAL");
-  const insU = db.prepare('INSERT INTO "User" (id, nom, crd) VALUES (?, ?, ?)');
-  const insF = db.prepare('INSERT INTO "Farm" (id, userId) VALUES (?, ?)');
-  const insP = db.prepare('INSERT INTO "Parcel" (id, farmId) VALUES (?, ?)');
-  for (let i = 1; i <= joueurs; i++) {
-    insU.run(i, `Joueur ${i}`, i * 100);
-    insF.run(i, i);
-    insP.run(i, i);
+function remplir(cible, joueurs = 40) {
+  psql(
+    cible,
+    `CREATE TABLE IF NOT EXISTS "User" (id INT PRIMARY KEY, nom TEXT, crd DOUBLE PRECISION);
+     CREATE TABLE IF NOT EXISTS "Farm" (id INT PRIMARY KEY, "userId" INT);
+     CREATE TABLE IF NOT EXISTS "Parcel" (id INT PRIMARY KEY, "farmId" INT);`,
+  );
+  if (joueurs > 0) {
+    const u = [];
+    const f = [];
+    const p = [];
+    for (let i = 1; i <= joueurs; i++) {
+      u.push(`(${i}, 'Joueur ${i}', ${i * 100})`);
+      f.push(`(${i}, ${i})`);
+      p.push(`(${i}, ${i})`);
+    }
+    psql(
+      cible,
+      `INSERT INTO "User" VALUES ${u.join(",")};
+       INSERT INTO "Farm" VALUES ${f.join(",")};
+       INSERT INTO "Parcel" VALUES ${p.join(",")};`,
+    );
   }
-  db.close();
+}
+
+function creer(prefixe, joueurs = 40) {
+  const nom = `farmsim_t_${prefixe}_${randomBytes(5).toString("hex")}`;
+  psql(ADMIN, `CREATE DATABASE "${nom}"`);
+  remplir(urlVers(nom), joueurs);
+  return nom;
+}
+
+function detruire(nom) {
+  try {
+    psql(ADMIN, `DROP DATABASE IF EXISTS "${nom}" WITH (FORCE)`);
+  } catch {
+    /* le ménage ne doit pas faire échouer une suite qui a réussi */
+  }
 }
 
 before(() => {
   dossier = mkdtempSync(join(tmpdir(), "farmsim-sauv-"));
-  base = join(dossier, "farmsim.db");
-  fabriquerBase(base);
+  nomBase = creer("base");
+  url = urlVers(nomBase);
 });
 
 after(() => {
   if (dossier) rmSync(dossier, { recursive: true, force: true });
+  detruire(nomBase);
 });
 
 describe("instantané", () => {
-  it("produit un fichier relisible, et en compte le contenu", () => {
-    const dest = join(dossier, "copie-1.db");
-    const r = instantané(base, dest);
-    assert.equal(r.integrité, "ok");
+  it("produit un fichier restaurable, et en compte le contenu", () => {
+    const dest = join(dossier, "copie-1.dump");
+    const r = instantané(url, dest);
+    // « restaurée » et non « ok » : la vérification ne relit pas le fichier,
+    // elle le remonte dans une base neuve. C'est la seule preuve qui vaille.
+    assert.equal(r.integrité, "restaurée");
     assert.equal(r.lignes.User, 40);
     assert.equal(r.lignes.Parcel, 40);
     assert.ok(r.octets > 0);
   });
 
-  it("emporte ce qui n’est encore que dans le journal WAL", () => {
-    // C'est tout l'intérêt de VACUUM INTO : une copie du seul fichier .db
-    // laisserait ces vingt lignes derrière elle.
-    const db = new DatabaseSync(base);
-    db.exec("PRAGMA journal_mode = WAL");
-    const ins = db.prepare('INSERT INTO "User" (id, nom, crd) VALUES (?, ?, ?)');
-    for (let i = 41; i <= 60; i++) ins.run(i, `Tardif ${i}`, 1);
-    // Volontairement : pas de checkpoint. Les lignes sont validées mais
-    // n'ont pas encore été reversées dans le .db principal.
-    db.close({ allowRemainingOpenStatements: true });
-
-    const dest = join(dossier, "copie-wal.db");
-    const r = instantané(base, dest);
-    assert.equal(r.lignes.User, 60, "les lignes du WAL doivent être dans la sauvegarde");
+  it("emporte ce qui vient d’être écrit", () => {
+    psql(
+      url,
+      `INSERT INTO "User" SELECT g, 'Tardif ' || g, 1 FROM generate_series(41, 60) g`,
+    );
+    const dest = join(dossier, "copie-2.dump");
+    const r = instantané(url, dest);
+    assert.equal(r.lignes.User, 60, "les lignes validées doivent être dans la sauvegarde");
   });
 
   it("refuse une base dont une table vitale est vide", () => {
-    const vide = join(dossier, "vide.db");
-    fabriquerBase(vide, 0);
-    assert.throws(() => instantané(vide, join(dossier, "copie-vide.db")), /table User/);
+    const vide = creer("vide", 0);
+    try {
+      assert.throws(() => instantané(urlVers(vide), join(dossier, "copie-vide.dump")), /table User/);
+    } finally {
+      detruire(vide);
+    }
   });
 });
 
 describe("vérification", () => {
   it("rejette un fichier corrompu", () => {
-    const abimé = join(dossier, "abime.db");
-    const bon = join(dossier, "bon.db");
-    instantané(base, bon);
-    // On écrase le milieu du fichier : l'en-tête reste crédible, les pages non.
+    const abimé = join(dossier, "abime.dump");
+    const bon = join(dossier, "bon.dump");
+    instantané(url, bon);
+    // On écrase le milieu du fichier : l'en-tête reste crédible, les données
+    // non. C'est exactement ce qu'un disque en fin de vie produit.
     const octets = readFileSync(bon);
-    octets.fill(0x7a, Math.floor(octets.length / 2), Math.floor(octets.length / 2) + 2048);
+    // On abîme un quart du fichier, à partir du milieu : une taille fixe
+    // dépasserait la fin d'une petite sauvegarde de test.
+    const debut = Math.floor(octets.length / 2);
+    octets.fill(0x7a, debut, debut + Math.floor(octets.length / 4));
     writeFileSync(abimé, octets);
-    assert.throws(() => vérifier(abimé), /corrompue|vide|SQLITE|malformed|database/i);
+    assert.throws(() => vérifier(abimé, url), /./);
   });
 
   it("n’abandonne jamais un fichier douteux sur le disque", () => {
-    const vide = join(dossier, "vide2.db");
-    fabriquerBase(vide, 0);
+    const vide = creer("vide2", 0);
     const cible = mkdtempSync(join(tmpdir(), "farmsim-jetable-"));
-    assert.throws(() => sauvegarder({ source: vide, dossier: cible }));
-    assert.deepEqual(readdirSync(cible), [], "le fichier raté doit avoir été effacé");
-    rmSync(cible, { recursive: true, force: true });
+    try {
+      assert.throws(() => sauvegarder({ url: urlVers(vide), dossier: cible }));
+      assert.deepEqual(readdirSync(cible), [], "le fichier raté doit avoir été effacé");
+    } finally {
+      rmSync(cible, { recursive: true, force: true });
+      detruire(vide);
+    }
   });
 });
 
@@ -124,14 +170,14 @@ describe("rotation", () => {
   it("ne garde que les plus récentes", () => {
     const cible = mkdtempSync(join(tmpdir(), "farmsim-rot-"));
     for (const jour of ["01", "02", "03", "04", "05"]) {
-      writeFileSync(join(cible, `farmsim-2026-01-${jour}T000000Z.db`), "x");
+      writeFileSync(join(cible, `farmsim-2026-01-${jour}T000000Z.dump`), "x");
     }
     const r = élaguer(cible, 3);
     assert.equal(r.gardées, 3);
     assert.deepEqual(readdirSync(cible).sort(), [
-      "farmsim-2026-01-03T000000Z.db",
-      "farmsim-2026-01-04T000000Z.db",
-      "farmsim-2026-01-05T000000Z.db",
+      "farmsim-2026-01-03T000000Z.dump",
+      "farmsim-2026-01-04T000000Z.dump",
+      "farmsim-2026-01-05T000000Z.dump",
     ]);
     rmSync(cible, { recursive: true, force: true });
   });
@@ -141,17 +187,17 @@ describe("rotation", () => {
     // et les sauvegardes étiquetées ne doivent pas s'accumuler sans fin.
     const cible = mkdtempSync(join(tmpdir(), "farmsim-etiq-"));
     for (const jour of ["01", "02", "03", "04"]) {
-      writeFileSync(join(cible, `farmsim-2026-01-${jour}T000000Z.db`), "x");
-      writeFileSync(join(cible, `farmsim-2026-01-${jour}T010000Z-avant-deploi.db`), "x");
+      writeFileSync(join(cible, `farmsim-2026-01-${jour}T000000Z.dump`), "x");
+      writeFileSync(join(cible, `farmsim-2026-01-${jour}T010000Z-avant-deploi.dump`), "x");
     }
     const r = élaguer(cible, 2);
     const restants = readdirSync(cible).sort();
     assert.equal(r.gardées, 4, "deux de chaque groupe");
     assert.deepEqual(restants, [
-      "farmsim-2026-01-03T000000Z.db",
-      "farmsim-2026-01-03T010000Z-avant-deploi.db",
-      "farmsim-2026-01-04T000000Z.db",
-      "farmsim-2026-01-04T010000Z-avant-deploi.db",
+      "farmsim-2026-01-03T000000Z.dump",
+      "farmsim-2026-01-03T010000Z-avant-deploi.dump",
+      "farmsim-2026-01-04T000000Z.dump",
+      "farmsim-2026-01-04T010000Z-avant-deploi.dump",
     ]);
     rmSync(cible, { recursive: true, force: true });
   });
@@ -166,27 +212,33 @@ describe("rotation", () => {
 
 describe("restauration", () => {
   it("rend les données après une perte totale", () => {
+    const perdue = creer("perte");
     const coffre = mkdtempSync(join(tmpdir(), "farmsim-coffre-"));
-    const r = sauvegarder({ source: base, dossier: coffre, garder: 5 });
-    const avant = r.lignes.User;
+    try {
+      const r = sauvegarder({ url: urlVers(perdue), dossier: coffre, garder: 5 });
+      const avant = r.lignes.User;
 
-    // La catastrophe : le volume est perdu.
-    rmSync(base, { force: true });
-    rmSync(`${base}-wal`, { force: true });
-    rmSync(`${base}-shm`, { force: true });
-    assert.throws(() => statSync(base));
+      // La catastrophe : la base entière disparaît. Pas une table, pas une
+      // ligne — la base.
+      psql(ADMIN, `DROP DATABASE "${perdue}" WITH (FORCE)`);
+      assert.throws(() => psql(urlVers(perdue), "SELECT 1"));
 
-    // La restauration, telle que la fait `farmsim-restore.sh` : on remet le
-    // fichier en place, sans journal résiduel.
-    copyFileSync(r.fichier, base);
+      // La restauration, telle que la fait `farmsim-restore.sh`.
+      psql(ADMIN, `CREATE DATABASE "${perdue}"`);
+      execFileSync(
+        "pg_restore",
+        ["--dbname", urlVers(perdue), "--no-owner", "--no-privileges", "--exit-on-error", r.fichier],
+        { stdio: ["ignore", "ignore", "pipe"] },
+      );
 
-    const db = new DatabaseSync(base, { readOnly: true });
-    const après = Number(db.prepare('SELECT COUNT(*) AS n FROM "User"').get().n);
-    const crd = Number(db.prepare('SELECT crd FROM "User" WHERE id = 7').get().crd);
-    db.close();
-    assert.equal(après, avant, "toutes les lignes doivent être revenues");
-    assert.equal(crd, 700, "et leur contenu avec");
-    rmSync(coffre, { recursive: true, force: true });
+      const après = Number(psql(urlVers(perdue), `SELECT COUNT(*) FROM "User"`));
+      const crd = Number(psql(urlVers(perdue), `SELECT crd FROM "User" WHERE id = 7`));
+      assert.equal(après, avant, "toutes les lignes doivent être revenues");
+      assert.equal(crd, 700, "et leur contenu avec");
+    } finally {
+      rmSync(coffre, { recursive: true, force: true });
+      detruire(perdue);
+    }
   });
 });
 
@@ -214,10 +266,15 @@ describe("scripts shell", () => {
       [
         "#!/usr/bin/env bash",
         `echo "$@" >> ${JSON.stringify(journal)}`,
-        // `inspect -f` sert deux questions : le volume monté sur /data, et
-        // l'image. On répond à chacune ce que le script attend.
-        'if [[ "$1" == "inspect" ]]; then',
-        '  if [[ "$*" == *Destination* ]]; then echo "farmsim-data"; else echo "farmsim-farmsim"; fi',
+        // `inspect -f` sert à connaître l'image du jeu.
+        'if [[ "$1" == "inspect" ]]; then echo "farmsim-farmsim"; exit 0; fi',
+        // `exec ... printenv` sert à lire les identifiants sur le conteneur de
+        // base, pour que le mot de passe ne figure nulle part dans le dépôt.
+        'if [[ "$1" == "exec" ]]; then',
+        '  case "$*" in',
+        '    *POSTGRES_USER*) echo "farmsim" ;;',
+        '    *POSTGRES_PASSWORD*) echo "mot-de-passe-de-test" ;;',
+        "  esac",
         "  exit 0",
         "fi",
         "exit 0",
@@ -244,7 +301,17 @@ describe("scripts shell", () => {
         /FARMSIM_BACKUP_LABEL=avant-deploi/,
         "et lui avoir transmis l’étiquette reçue en argument",
       );
-      assert.match(appels, /farmsim-data:\/data/, "avec le volume lu sur le conteneur");
+      // Le conteneur de sauvegarde partage le réseau de la base : c'est ainsi
+      // qu'il la joint sans qu'aucun port ne soit ouvert sur l'hôte.
+      assert.match(appels, /--network container:farmsim-db/, "sur le réseau de la base");
+      assert.match(
+        appels,
+        /DATABASE_URL=postgresql:\/\/farmsim@127\.0\.0\.1:5432\/farmsim/,
+        "avec l’identifiant lu sur le conteneur de base",
+      );
+      // Le mot de passe vient du conteneur, pas du dépôt : le test le prouve
+      // en donnant une valeur reconnaissable au faux `docker`.
+      assert.match(appels, /PGPASSWORD=mot-de-passe-de-test/, "sans mot de passe en dur");
     } finally {
       rmSync(bac, { recursive: true, force: true });
       rmSync(faux, { recursive: true, force: true });

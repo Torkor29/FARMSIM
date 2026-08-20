@@ -9,10 +9,9 @@
 import { after, before, describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync, spawn, type ChildProcess } from "node:child_process";
-import { mkdtempSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { creerBaseTest, supprimerBaseTest, type BaseTest } from "./base-test.js";
 
 import { BAREMES } from "../rate-limit.js";
 
@@ -21,16 +20,11 @@ const PORT = 3997;
 const BASE = `http://127.0.0.1:${PORT}`;
 
 let serveur: ChildProcess | null = null;
-let dossier = "";
+let base: BaseTest | null = null;
 
 before(async () => {
-  dossier = mkdtempSync(join(tmpdir(), "farmsim-debit-"));
-  const url = `file:${join(dossier, "test.db")}`;
-  execFileSync("npx", ["prisma", "migrate", "deploy"], {
-    cwd: API_DIR,
-    env: { ...process.env, DATABASE_URL: url },
-    stdio: "ignore",
-  });
+  base = creerBaseTest("debit");
+  const url = base.url;
   serveur = spawn("npx", ["tsx", "src/main.ts"], {
     cwd: API_DIR,
     env: { ...process.env, DATABASE_URL: url, PORT: String(PORT), FARMSIM_SKIP_NPC: "1" },
@@ -68,7 +62,7 @@ after(() => {
       serveur.kill("SIGKILL");
     }
   }
-  if (dossier) rmSync(dossier, { recursive: true, force: true });
+  supprimerBaseTest(base);
 });
 
 describe("la limite de débit est branchée", () => {

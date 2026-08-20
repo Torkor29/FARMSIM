@@ -16,12 +16,52 @@
 name: farmsim
 
 services:
+  # ——————————————————————————————————————————————————————————————————————
+  # La base.
+  #
+  # Le jeu a vécu sur un fichier SQLite. C'était le bon choix pour démarrer et
+  # le mauvais pour durer : un seul écrivain à la fois, aucune sauvegarde à
+  # chaud digne de ce nom, et des types si permissifs qu'une date pouvait
+  # tomber en 1970 sans que rien ne proteste.
+  #
+  # Le conteneur n'expose **aucun port sur l'hôte** : seul le jeu lui parle,
+  # par le réseau interne de la pile. Une base de données ouverte sur Internet
+  # est la première chose qu'un balayage automatique trouve.
+  # ——————————————————————————————————————————————————————————————————————
+  db:
+    container_name: farmsim-db
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: farmsim
+      POSTGRES_USER: farmsim
+      # Obligatoire, sans valeur par défaut : une base de production ne doit
+      # pas pouvoir démarrer avec un mot de passe deviné depuis ce fichier.
+      POSTGRES_PASSWORD: ${FARMSIM_DB_PASSWORD:?renseignez FARMSIM_DB_PASSWORD dans .env}
+      # Les données du jeu sont en français : sans cela, tris et comparaisons
+      # se feraient en C et « Étable » passerait après « Zone ».
+      LANG: fr_FR.UTF-8
+    volumes:
+      - farmsim-pg:/var/lib/postgresql/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U farmsim -d farmsim"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+
   farmsim:
     container_name: farmsim
     build: .
     ports:
       - "${FARMSIM_BIND:-0.0.0.0}:${FARMSIM_PORT:-8081}:8080"
+    depends_on:
+      db:
+        # Le jeu applique ses migrations au démarrage : il doit trouver une
+        # base qui répond, pas un conteneur qui vient d'être créé.
+        condition: service_healthy
     environment:
+      DATABASE_URL: "postgresql://farmsim:${FARMSIM_DB_PASSWORD:?renseignez FARMSIM_DB_PASSWORD dans .env}@db:5432/farmsim?schema=public&connection_limit=10"
       # Comptes autorisés aux outils de test sur le jeu public, séparés par des
       # virgules. Vide par défaut : sans valeur dans `.env`, personne n'y a
       # droit et les routes de triche répondent 404 à tout le monde.
@@ -31,8 +71,6 @@ services:
       # rendrait cette bévue possible en une ligne, un soir. Sur une
       # installation locale on lance l'API à la main, sans Docker.
       FARMSIM_TESTERS: "${FARMSIM_TESTERS:-}"
-    volumes:
-      - farmsim-data:/data
     tmpfs:
       - /tmp:size=64M,mode=1777
     read_only: true
@@ -59,4 +97,8 @@ services:
       start_period: 300s
 
 volumes:
+  farmsim-pg:
+  # L'ancien volume SQLite. Il n'est plus monté, mais **on ne le supprime
+  # pas** : c'est la seule copie des données d'avant la bascule tant que la
+  # nouvelle base n'a pas fait ses preuves. Voir docs/POSTGRESQL.md.
   farmsim-data:

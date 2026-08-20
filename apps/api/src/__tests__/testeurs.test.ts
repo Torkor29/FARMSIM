@@ -19,10 +19,9 @@
 import { after, before, describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync, spawn, type ChildProcess } from "node:child_process";
-import { mkdtempSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { creerBaseTest, supprimerBaseTest, type BaseTest } from "./base-test.js";
 
 const API_DIR = fileURLToPath(new URL("../..", import.meta.url));
 const PORT = 3998;
@@ -30,7 +29,7 @@ const BASE = `http://127.0.0.1:${PORT}`;
 const TESTEUR = "patron@farmsim.test";
 
 let serveur: ChildProcess | null = null;
-let dossier = "";
+let base: BaseTest | null = null;
 
 async function appel(
   chemin: string,
@@ -64,13 +63,8 @@ async function inscrire(email: string) {
 }
 
 before(async () => {
-  dossier = mkdtempSync(join(tmpdir(), "farmsim-testeurs-"));
-  const url = `file:${join(dossier, "test.db")}`;
-  execFileSync("npx", ["prisma", "migrate", "deploy"], {
-    cwd: API_DIR,
-    env: { ...process.env, DATABASE_URL: url },
-    stdio: "ignore",
-  });
+  base = creerBaseTest("testeurs");
+  const url = base.url;
   serveur = spawn("npx", ["tsx", "src/main.ts"], {
     cwd: API_DIR,
     env: {
@@ -120,7 +114,7 @@ after(() => {
       serveur.kill("SIGKILL");
     }
   }
-  if (dossier) rmSync(dossier, { recursive: true, force: true });
+  supprimerBaseTest(base);
 });
 
 describe("outils de test en production", () => {

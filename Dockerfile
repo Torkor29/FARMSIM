@@ -27,14 +27,33 @@ RUN pnpm -r build
 FROM base AS runner
 ENV NODE_ENV=production
 ENV PORT=8080
-ENV DATABASE_URL="file:/data/farmsim.db"
+# Aucune valeur par défaut : la base vient de l'orchestration (docker-compose),
+# et un défaut ici ferait démarrer le jeu sur une base fantôme le jour où la
+# variable manque, au lieu de refuser bruyamment.
 ENV WEB_DIST_DIR=/app/apps/web/dist
 WORKDIR /app
 
+# Le client PostgreSQL, dans la version **du serveur**.
+#
+# `pg_dump` refuse net de travailler contre un serveur plus récent que lui, et
+# Debian bookworm n'apporte que la 15 : sans le dépôt officiel, la sauvegarde
+# échouerait le jour où on en aurait besoin — c'est-à-dire trop tard pour s'en
+# apercevoir. C'est cette image qui fait tourner `farmsim-backup.mjs`, dans un
+# conteneur jetable, et elle a donc besoin de pg_dump, pg_restore et psql.
+RUN apt-get update \
+  && apt-get install -y --no-install-recommends ca-certificates curl gnupg \
+  && curl -fsSL https://www.postgresql.org/media/keys/ACCC4CF8.asc \
+     | gpg --dearmor -o /usr/share/keyrings/pgdg.gpg \
+  && echo "deb [signed-by=/usr/share/keyrings/pgdg.gpg] https://apt.postgresql.org/pub/repos/apt bookworm-pgdg main" \
+     > /etc/apt/sources.list.d/pgdg.list \
+  && apt-get update \
+  && apt-get install -y --no-install-recommends postgresql-client-16 \
+  && apt-get purge -y curl gnupg \
+  && apt-get autoremove -y \
+  && rm -rf /var/lib/apt/lists/*
+
 RUN groupadd --gid 10001 farmsim \
-  && useradd --uid 10001 --gid farmsim --shell /usr/sbin/nologin --create-home farmsim \
-  && mkdir -p /data \
-  && chown -R farmsim:farmsim /data
+  && useradd --uid 10001 --gid farmsim --shell /usr/sbin/nologin --create-home farmsim
 
 # Copie du workspace complet plutôt que de morceaux choisis : pnpm relie les
 # paquets d'un même monorepo par des liens symboliques relatifs (vers
@@ -46,7 +65,9 @@ COPY --from=build --chown=farmsim:farmsim /app/packages ./packages
 
 USER farmsim
 EXPOSE 8080
-VOLUME ["/data"]
+# Plus de volume de données : la base vit dans son propre conteneur. Le jeu
+# n'écrit plus rien sur disque, ce qui laisse enfin son système de fichiers
+# entièrement en lecture seule.
 WORKDIR /app/apps/api
 
 # « migrate deploy » applique les migrations déjà écrites dans le dépôt sans
