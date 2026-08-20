@@ -34,8 +34,28 @@ export type PointerMods = {
 
 export const DEFAULT_MODS: PointerMods = { mode: "replace", extend: false };
 
-/** Mods d'un geste tactile : additif, comme avant — rien ne doit changer au doigt. */
+/**
+ * Toucher une case au doigt : additif.
+ *
+ * C'est ce qui permet de composer une sélection case par case, sans Ctrl.
+ */
 export const TOUCH_MODS: PointerMods = { mode: "add", extend: false };
+
+/**
+ * **Glisser** au doigt : remplace.
+ *
+ * Signalé en jouant : « j'ai sélectionné qu'en bas mais ça m'a sélectionné en
+ * haut aussi, je sais pas pourquoi, c'est pas la première fois ». Le haut
+ * venait d'un geste précédent : au doigt, tout était additif, donc la
+ * sélection ne pouvait que grossir — et la coque tactile n'offrait aucun
+ * bouton pour la vider. On finissait par labourer soixante-dix-huit cases en
+ * croyant en avoir pris vingt.
+ *
+ * Un glissé délimite une zone : c'est **celle-là** qu'on veut, comme dans
+ * n'importe quelle liste ou tableur. Le toucher reste additif, il garde donc
+ * de quoi composer une sélection à la main.
+ */
+export const TOUCH_STROKE_MODS: PointerMods = { mode: "replace", extend: false };
 
 export function cellKey(c: Cell): string {
   return `${c.x},${c.y}`;

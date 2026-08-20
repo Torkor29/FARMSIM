@@ -33,7 +33,13 @@ import {
 import { createSpray } from "./particles";
 import { buildCharacter } from "./character-mesh";
 import { initialQuality, makeFrameGovernor, qualityForContext, type RenderQuality } from "./render-quality";
-import { DEFAULT_MODS, readMods, rectBetween, type PointerMods } from "./ui/selection";
+import {
+  DEFAULT_MODS,
+  readMods,
+  rectBetween,
+  TOUCH_STROKE_MODS,
+  type PointerMods,
+} from "./ui/selection";
 import type { CharacterAppearance } from "@farmsim/shared";
 
 export type IsoCell = {
@@ -2198,6 +2204,19 @@ export function IsoFarmView({
     let gestureMods: PointerMods = DEFAULT_MODS;
 
     /**
+     * Les mods d'un **glissé**, qui ne sont pas ceux d'un toucher.
+     *
+     * Au doigt, un toucher ajoute — c'est ce qui permet de composer une
+     * sélection case par case — mais un glissé délimite une zone, et c'est
+     * celle-là qu'on veut. Tant que les deux partageaient les mêmes mods, la
+     * sélection tactile ne pouvait que grossir d'un geste à l'autre.
+     */
+    let gestureTouch = false;
+    function strokeMods(): PointerMods {
+      return gestureTouch ? TOUCH_STROKE_MODS : gestureMods;
+    }
+
+    /**
      * Ce geste-ci déplace la vue, quel que soit l'outil armé.
      *
      * Au doigt, deux doigts cadrent pendant qu'un seul peint. À la souris il
@@ -2242,7 +2261,7 @@ export function IsoFarmView({
       if (strokeKeys.has(k)) return;
       strokeKeys.add(k);
       strokeCells.push(cell);
-      onStrokePreviewRef.current?.(strokeCells.slice(), gestureMods);
+      onStrokePreviewRef.current?.(strokeCells.slice(), strokeMods());
     }
 
     /**
@@ -2261,7 +2280,7 @@ export function IsoFarmView({
         strokeKeys.add(`${c.x},${c.y}`);
         strokeCells.push(c);
       }
-      onStrokePreviewRef.current?.(strokeCells.slice(), gestureMods);
+      onStrokePreviewRef.current?.(strokeCells.slice(), strokeMods());
     }
 
     function clearStroke() {
@@ -2321,6 +2340,7 @@ export function IsoFarmView({
       // Le bouton du milieu et la barre d'espace cadrent, toujours.
       panGesture = !touch && (ev.button === 1 || spaceHeld);
       gestureMods = readMods(ev, touch);
+      gestureTouch = touch;
       pointers.set(ev.pointerId, { x: ev.clientX, y: ev.clientY });
       renderer.domElement.setPointerCapture?.(ev.pointerId);
       lastX = ev.clientX;
@@ -2423,7 +2443,7 @@ export function IsoFarmView({
         // la mission. Chez soi, il ne fait que **sélectionner** : la dépense
         // reste au bouton d'action, comme pour un clic.
         if (strokeWorkRef.current) onWorkStrokeRef.current?.(done);
-        else onStrokeSelectRef.current?.(done, gestureMods);
+        else onStrokeSelectRef.current?.(done, strokeMods());
         return;
       }
       if (dragged || wasPan) return;
