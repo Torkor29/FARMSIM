@@ -4325,6 +4325,30 @@ export function App() {
     );
   }
 
+  /**
+   * Bandeau du chantier en cours — écrit une fois, accroché à deux endroits.
+   *
+   * Les deux coques ne le posent pas au même endroit : le bureau le laisse
+   * flotter au-dessus de sa barre de sélection, où rien ne le recouvre ; le
+   * téléphone l'empile dans son dock, parce que ce dock fait treize rem de
+   * haut et passait par-dessus. Le contenu, lui, est le même — d'où une seule
+   * écriture.
+   */
+  const chantierBar = chantier ? (
+    <div className="chantier-bar" role="status" aria-live="polite">
+      <span className="chantier-nom">
+        {WORK_LABELS[chantier.work] ?? chantier.work} · {chantier.cells.length} cases
+      </span>
+      <span className="chantier-piste">
+        <span
+          className="chantier-avance"
+          style={{ animationDuration: `${Math.max(1, chantier.durationMs)}ms` }}
+        />
+      </span>
+      <span className="chantier-reste">{formatChantierReste(chantier.endsAt, horloge)}</span>
+    </div>
+  ) : null;
+
   return (
     <div className={`game-stage${isMobile ? " mobile" : ""}`}>
       {/* Le ciel, derrière la scène 3D. Le fond était un dégradé fixe : la
@@ -5513,23 +5537,19 @@ export function App() {
       {/* Le chantier en cours.
             Un travail qui prend sept minutes sans rien afficher se lit comme
             une panne. La barre dit ce qui se fait, sur combien de cases, et
-            combien de temps il reste. */}
-      {chantier && (
-        <div className="chantier-bar" role="status" aria-live="polite">
-          <span className="chantier-nom">
-            {WORK_LABELS[chantier.work] ?? chantier.work} · {chantier.cells.length} cases
-            </span>
-          <span className="chantier-piste">
-            <span
-              className="chantier-avance"
-              style={{ animationDuration: `${Math.max(1, chantier.durationMs)}ms` }}
-            />
-            </span>
-          <span className="chantier-reste">{formatChantierReste(chantier.endsAt, horloge)}</span>
-          </div>
-        )}
+            combien de temps il reste.
+
+            Au doigt, elle ne flotte plus : elle entre dans la pile du dock.
+            Flottante, elle était calée à `bottom: 4.6rem` — une hauteur de
+            dock devinée une fois. Le dock tactile en fait treize, et il
+            se dessine par-dessus (même plan, plus loin dans le document).
+            La seule chose qui expliquait l'écran gris passait donc **sous**
+            l'écran gris. Empilée, elle ne peut plus être recouverte, et la
+            hauteur du dock n'a plus besoin d'être devinée. */}
+      {!isMobile && chantierBar}
       {isMobile ? (
         <FieldDock
+          chantierBar={chantierBar}
           machineManquante={machineManquante}
           tool={tool}
           season={season}
@@ -5546,7 +5566,8 @@ export function App() {
           baleCount={baleCellCount}
           silageReadyCount={silageReadyCount}
           stockTons={totalStockTons}
-          crd={player.crd}
+          contractorAffordable={canPay(player, contractorOffer?.cost ?? 0)}
+          laborAffordable={canPay(player, laborQuote ?? 0)}
           directSeed={directSeed}
           keepSwath={keepSwath}
           swathUseful={swathUsefulHere}

@@ -541,6 +541,18 @@ html.playing .field-dock {
   white-space: nowrap;
   z-index: 6;
 }
+/* Empilé dans le dock tactile, le bandeau n'a plus à s'ancrer à la fenêtre :
+   c'est la grille du dock qui le place. Il garde son apparence, il perd
+   seulement le `bottom: 4.6rem` qui le faisait passer sous une barre trois
+   fois plus haute que la valeur devinée. */
+.field-dock .chantier-bar {
+  position: static;
+  left: auto;
+  bottom: auto;
+  transform: none;
+  justify-self: center;
+  max-width: 100%;
+}
 .chantier-nom { font-weight: 600; }
 .chantier-reste { font-variant-numeric: tabular-nums; color: var(--muted); }
 .chantier-piste {
@@ -4328,6 +4340,34 @@ button.tiny {
   justify-content: flex-start;
 }
 .dock-expand { min-width: 2.6rem; font-weight: 800; }
+
+/* —— La colonne d'action ne doit pas manger la rangée d'options ——
+   `grid-template-columns: minmax(0, 1fr) auto` laisse l'action prendre tout
+   ce qu'il lui faut, et ce qu'il lui faut grandit avec le nombre de boutons.
+   Mesuré sur un iPhone de 390 px, outil « Sol » armé, 73 cases retenues :
+   « ⋯ » + « Déchaumer ×73 » + « Payer · 428 TRN » occupaient 272 px, laissant
+   90 px aux options — de quoi en montrer **une** sur six. Le joueur voyait la
+   première, éteinte, et pas celle qu'il venait d'armer.
+
+   Un plancher de 9,5 rem sur la colonne des options : deux pastilles entières
+   plus le voile qui annonce la suite. L'action garde le reste et passe à la
+   ligne quand elle ne tient plus — la hauteur ne bouge que là où le contenu
+   l'exige, pas en permanence. */
+.game-stage.mobile .dock-tray:not(.expanded) {
+  grid-template-columns: minmax(9.5rem, 1fr) auto;
+}
+.game-stage.mobile .dock-tray:not(.expanded) .dock-chips-end {
+  max-width: 100%;
+  row-gap: 0.3rem;
+}
+@media (max-width: 380px) {
+  /* 320 px : deux pastilles ne tiennent plus à côté d'un bouton d'action.
+     On garde le plancher à une pastille et demie plutôt que de rogner la
+     cible tactile de l'action. */
+  .game-stage.mobile .dock-tray:not(.expanded) {
+    grid-template-columns: minmax(7rem, 1fr) auto;
+  }
+}
 
 /* Couché, la largeur ne manque pas — c'est la hauteur. Le plateau déplié
    s'étale donc sur toute la largeur du téléphone au lieu de rester dans les

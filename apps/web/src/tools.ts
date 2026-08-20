@@ -78,10 +78,11 @@ export function plantCropLabel(t: Tool): string {
  * de sélection listait les outils à la main et retombait sur « Récolter », le
  * dock disait « Faire ». « Presser », « Ramasser » et « Désherber » n'étaient
  * donc jamais annoncés par leur nom. Ici, à côté de la liste des outils, un
- * oubli se voit — et se teste.
+ * oubli se voit — et se teste. Le verbe nu sert aux phrases (« les cases à
+ * semer »), celui d'en dessous aux boutons (« Semer Blé ×12 »).
  */
-export function toolVerb(t: Tool, mow = false): string {
-  if (isPlantTool(t)) return `Semer ${plantCropLabel(t)}`;
+export function toolBareVerb(t: Tool, mow = false): string {
+  if (isPlantTool(t)) return "Semer";
   if (t === "HARVEST") return mow ? "Faucher" : "Récolter";
   if (t === "FERTILIZE") return "Fertiliser";
   if (t === "PLOW") return "Labourer";
@@ -92,6 +93,12 @@ export function toolVerb(t: Tool, mow = false): string {
   if (t === "BALE") return "Presser";
   if (t === "COLLECT") return "Ramasser";
   return "Travailler";
+}
+
+/** Le geste **et** sa culture : « Semer Blé » sur le bouton d'action. */
+export function toolVerb(t: Tool, mow = false): string {
+  const verbe = toolBareVerb(t, mow);
+  return isPlantTool(t) ? `${verbe} ${plantCropLabel(t)}` : verbe;
 }
 
 /** Le même geste, avec le nombre de cases — libellé du bouton de bureau. */
