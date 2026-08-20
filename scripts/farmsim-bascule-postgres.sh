@@ -30,6 +30,27 @@ PORT="${FARMSIM_PORT:-8081}"
 dire() { echo "==> $*"; }
 mourir() { echo "ERREUR : $*" >&2; exit 1; }
 
+# Le jeu est-il arrêté de notre fait, en ce moment ?
+JEU_ARRETE=0
+
+# Quoi qu'il arrive, le jeu redémarre.
+#
+# Ce script arrête le conteneur au milieu, et `set -e` le fait sortir au
+# premier faux pas. C'est arrivé — une date illisible dans la source — et le
+# jeu est resté éteint jusqu'à ce que quelqu'un s'en aperçoive. Une bascule
+# qui échoue doit coûter une bascule, pas une coupure de service.
+au_retour() {
+  local code=$?
+  if [[ "$JEU_ARRETE" == "1" ]]; then
+    echo >&2
+    echo "==> Bascule interrompue : le jeu est remis en service." >&2
+    docker compose up -d >/dev/null 2>&1 || \
+      echo "    (échec du redémarrage — lancez : sudo docker compose up -d)" >&2
+  fi
+  exit "$code"
+}
+trap au_retour EXIT
+
 command -v docker >/dev/null 2>&1 || mourir "docker introuvable — ce script se lance sur l'hôte du jeu."
 [[ -d "$APP_DIR" ]] || mourir "$APP_DIR introuvable."
 cd "$APP_DIR"
@@ -124,6 +145,7 @@ fi
 # ————————————————————————————————————————————————————————————————
 dire "Arrêt du jeu (la base reste debout)"
 docker compose stop "$CONTENEUR" >/dev/null
+JEU_ARRETE=1
 
 if [[ "$SCHEMA_PRESENT" == "1" ]]; then
   dire "Sauvegarde de ce qui va être remplacé"
@@ -159,6 +181,7 @@ pg node --disable-warning=ExperimentalWarning \
 # ————————————————————————————————————————————————————————————————
 dire "Redémarrage"
 docker compose up -d >/dev/null
+JEU_ARRETE=0
 
 dire "Attente de la santé…"
 for i in $(seq 1 90); do

@@ -7,7 +7,7 @@
     "dev:web": "pnpm --filter @farmsim/web dev",
     "build": "pnpm -r build",
     "test": "pnpm -r test && pnpm test:scripts",
-    "test:scripts": "node --test scripts/__tests__/sauvegarde.test.mjs",
+    "test:scripts": "node --test scripts/__tests__/*.test.mjs",
     "test:sim": "pnpm --filter @farmsim/sim test",
     "lint": "pnpm -r lint"
   },

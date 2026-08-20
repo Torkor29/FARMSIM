@@ -30,7 +30,8 @@
 
 import { DatabaseSync } from "node:sqlite";
 import { execFileSync } from "node:child_process";
-import { closeSync, openSync, rmSync, writeSync } from "node:fs";
+import { closeSync, openSync, realpathSync, rmSync, writeSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -129,15 +130,67 @@ function typesColonnes(url, table) {
   return types;
 }
 
+/**
+ * Une date SQLite, en millisecondes depuis 1970 — ou `null` si ce n'en est pas une.
+ *
+ * Une colonne de date ne contient pas toujours ce qu'on croit. Prisma écrit
+ * des millisecondes, mais `ALTER TABLE … ADD COLUMN "createdAt" DATETIME NOT
+ * NULL DEFAULT CURRENT_TIMESTAMP` **remplit les lignes existantes** avec le
+ * texte `2026-08-14 12:00:00`. Une même colonne porte alors deux formes : des
+ * nombres pour les lignes récentes, du texte pour les anciennes.
+ *
+ * C'est ce qui a fait échouer le transfert : `Number("2026-08-14 12:00:00")`
+ * vaut NaN, et `to_timestamp(NaN / 1000.0)` fait lire `NaN` à PostgreSQL comme
+ * un nom de colonne — d'où l'énigmatique « column "nan" does not exist ».
+ *
+ * `CURRENT_TIMESTAMP` est en temps universel dans SQLite : on ajoute le `Z`
+ * qui manque, faute de quoi JavaScript lirait la chaîne dans le fuseau de la
+ * machine et déplacerait toutes ces dates d'une ou deux heures.
+ */
+function epochMs(valeur) {
+  if (valeur instanceof Date) {
+    const t = valeur.getTime();
+    return Number.isFinite(t) ? t : null;
+  }
+  if (typeof valeur === "bigint") return Number(valeur);
+  if (typeof valeur === "number") return Number.isFinite(valeur) ? valeur : null;
+  const texte = String(valeur).trim();
+  if (texte === "") return null;
+  if (/^-?\d+(\.\d+)?$/.test(texte)) return Number(texte);
+  const iso = texte.includes("T") ? texte : texte.replace(" ", "T");
+  const zone = /([zZ]|[+-]\d{2}:?\d{2})$/.test(iso) ? iso : `${iso}Z`;
+  const t = Date.parse(zone);
+  return Number.isFinite(t) ? t : null;
+}
+
 /** Une cellule SQLite, écrite dans le type que PostgreSQL attend. */
-function cellule(valeur, type) {
+function cellule(valeur, type, ou = "?") {
   if (valeur === null || valeur === undefined) return "NULL";
   if (type && type.startsWith("timestamp")) {
+    const ms = epochMs(valeur);
+    if (ms === null) {
+      // On s'arrête ici plutôt que d'écrire NULL ou 1970 : une date illisible
+      // est un défaut de la source qu'il faut voir, pas arrondir en silence.
+      throw new Error(
+        `date illisible en ${ou} : ${JSON.stringify(valeur)} — ` +
+          "corrigez la ligne dans la base source avant de relancer",
+      );
+    }
     // `to_timestamp` prend des secondes ; SQLite garde des millisecondes.
-    return `to_timestamp(${Number(valeur)} / 1000.0)`;
+    return `to_timestamp(${ms} / 1000.0)`;
   }
-  if (type === "boolean") return Number(valeur) ? "TRUE" : "FALSE";
+  if (type === "boolean") return vrai(valeur) ? "TRUE" : "FALSE";
   return litteral(valeur);
+}
+
+/**
+ * Un booléen SQLite. Même piège que les dates, en moins bruyant : `Number("t")`
+ * vaut NaN, donc faux — un booléen stocké en texte se serait retourné sans
+ * qu'aucune erreur ne le signale.
+ */
+function vrai(valeur) {
+  if (typeof valeur === "string") return /^(1|t|true|yes|y|on)$/i.test(valeur.trim());
+  return Boolean(Number(valeur));
 }
 
 function transferer(fichierDb, url) {
@@ -189,20 +242,39 @@ function transferer(fichierDb, url) {
       continue;
     }
     const types = typesColonnes(url, table);
-    const colonnes = Object.keys(lignes[0]);
+    /*
+     * On n'écrit que les colonnes que la base d'arrivée connaît.
+     *
+     * Le schéma a bougé entre les deux : une colonne abandonnée depuis
+     * survit dans le vieux fichier SQLite, et l'insérer ferait échouer la
+     * table entière sur un « column … does not exist ». À l'inverse, une
+     * colonne neuve absente de la source prend simplement sa valeur par
+     * défaut — c'est ce qui fait qu'un compte transféré reçoit son code de
+     * secours à sa première connexion.
+     */
+    const toutes = Object.keys(lignes[0]);
+    const colonnes = toutes.filter((c) => types.has(c));
+    const ignorees = toutes.filter((c) => !types.has(c));
+    if (colonnes.length === 0) {
+      throw new Error(`aucune colonne de « ${table} » n'existe dans la base d'arrivée`);
+    }
     const entete = colonnes.map((c) => `"${c}"`).join(", ");
 
     for (let i = 0; i < lignes.length; i += PAQUET) {
       const tranche = lignes.slice(i, i + PAQUET);
       const valeurs = tranche
         .map((ligne) => {
-          const cellules = colonnes.map((c) => cellule(ligne[c], types.get(c)));
+          const cellules = colonnes.map((c) => cellule(ligne[c], types.get(c), `${table}.${c}`));
           return `(${cellules.join(", ")})`;
         })
         .join(",\n");
       ecrire(`INSERT INTO "${table}" (${entete}) VALUES\n${valeurs};`);
     }
-    rapport.push({ table, lues: lignes.length });
+    rapport.push({
+      table,
+      lues: lignes.length,
+      ...(ignorees.length ? { note: `colonnes ignorées : ${ignorees.join(", ")}` } : {}),
+    });
   }
 
   ecrire("COMMIT;");
@@ -239,32 +311,50 @@ function verifier(fichierDb, url, rapport) {
   return ecarts;
 }
 
-const [fichierDb, urlArg] = process.argv.slice(2);
-const url = urlArg ?? process.env.DATABASE_URL;
-if (!fichierDb || !url) {
-  console.error(
-    "usage : farmsim-vers-postgres.mjs <fichier.db> <postgresql://...>\n" +
-      "        (l'URL peut aussi venir de DATABASE_URL)",
+export { cellule, epochMs, litteral, vrai };
+
+/*
+ * Ce fichier est à la fois un outil et un module.
+ *
+ * Les tests importent `cellule` et `epochMs` — c'est là que se cachait le
+ * défaut qui a arrêté la bascule, et il ne se voit qu'en éprouvant ces
+ * fonctions sur les deux formes de date que porte la base. Sans cette garde,
+ * les importer lancerait le transfert.
+ */
+const LANCE_DIRECTEMENT =
+  process.argv[1] !== undefined &&
+  realpathSync(process.argv[1]) === fileURLToPath(import.meta.url);
+
+if (LANCE_DIRECTEMENT) {
+  const [fichierDb, urlArg] = process.argv.slice(2);
+  const url = urlArg ?? process.env.DATABASE_URL;
+  if (!fichierDb || !url) {
+    console.error(
+      "usage : farmsim-vers-postgres.mjs <fichier.db> <postgresql://...>\n" +
+        "        (l'URL peut aussi venir de DATABASE_URL)",
+    );
+    process.exit(2);
+  }
+
+  const rapport = transferer(fichierDb, url);
+  const ecarts = verifier(fichierDb, url, rapport);
+
+  rapport.sort((a, b) => TABLES.indexOf(a.table) - TABLES.indexOf(b.table));
+  for (const r of rapport) {
+    console.log(
+      `${r.table.padEnd(18)} ${String(r.lues).padStart(7)}${r.note ? `  (${r.note})` : ""}`,
+    );
+  }
+  const total = rapport.reduce((n, r) => n + r.lues, 0);
+  console.log(`${"TOTAL".padEnd(18)} ${String(total).padStart(7)}`);
+
+  if (ecarts.length) {
+    console.error("\nTRANSFERT REFUSÉ — la base d'arrivée ne correspond pas :");
+    for (const e of ecarts) console.error(`  - ${e}`);
+    process.exit(1);
+  }
+  console.log(
+    "\nTransfert vérifié : mêmes comptes de part et d'autre, et les clés étrangères\n" +
+      "ont été respectées à l'insertion — elles n'ont jamais été suspendues.",
   );
-  process.exit(2);
 }
-
-const rapport = transferer(fichierDb, url);
-const ecarts = verifier(fichierDb, url, rapport);
-
-rapport.sort((a, b) => TABLES.indexOf(a.table) - TABLES.indexOf(b.table));
-for (const r of rapport) {
-  console.log(`${r.table.padEnd(18)} ${String(r.lues).padStart(7)}${r.note ? `  (${r.note})` : ""}`);
-}
-const total = rapport.reduce((n, r) => n + r.lues, 0);
-console.log(`${"TOTAL".padEnd(18)} ${String(total).padStart(7)}`);
-
-if (ecarts.length) {
-  console.error("\nTRANSFERT REFUSÉ — la base d'arrivée ne correspond pas :");
-  for (const e of ecarts) console.error(`  - ${e}`);
-  process.exit(1);
-}
-console.log(
-  "\nTransfert vérifié : mêmes comptes de part et d'autre, et les clés étrangères\n" +
-    "ont été respectées à l'insertion — elles n'ont jamais été suspendues.",
-);
