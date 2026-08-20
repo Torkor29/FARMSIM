@@ -50,9 +50,25 @@ cd "$APP_DIR"
 # On prend l'instantané **avant**, pendant que l'ancienne version tourne
 # encore.
 #
-# Au tout premier déploiement il n'y a pas encore de conteneur : on ne bloque
-# pas pour autant, il n'y a alors rien à perdre.
-if docker inspect farmsim >/dev/null 2>&1; then
+# Deux cas où il n'y a rien à sauvegarder, et où bloquer n'aurait aucun sens :
+#
+#  - **le tout premier déploiement**, où aucun conteneur n'existe encore ;
+#  - **le premier déploiement d'après la bascule vers PostgreSQL**, où le
+#    script de sauvegarde est déjà le nouveau — il cherche `farmsim-db` — mais
+#    où ce conteneur n'a encore jamais été créé. C'est arrivé, et le
+#    déploiement s'est bloqué net : le garde-fou « pas de déploiement sans
+#    sauvegarde » réclamait une sauvegarde d'une base qui n'existait pas.
+#
+# Dans les deux cas on continue, en le disant fort. Partout ailleurs, une
+# sauvegarde qui échoue arrête tout : c'est le seul filet avant une migration.
+if ! docker inspect farmsim >/dev/null 2>&1; then
+  echo "==> Premier déploiement : aucune base à sauvegarder"
+elif ! docker inspect farmsim-db >/dev/null 2>&1; then
+  echo "==> Bascule vers PostgreSQL : la nouvelle base n'existe pas encore."
+  echo "    Aucune sauvegarde possible ici — l'ancienne base SQLite reste"
+  echo "    intacte sur le volume farmsim-data, et c'est elle le filet."
+  echo "    Voir docs/POSTGRESQL.md pour le transfert des données."
+else
   echo "==> Sauvegarde avant migration"
   if ! bash "$APP_DIR/scripts/farmsim-backup.sh" avant-deploi; then
     echo "ERROR: la sauvegarde a échoué — déploiement interrompu." >&2
@@ -60,8 +76,6 @@ if docker inspect farmsim >/dev/null 2>&1; then
     echo "       version. Corrigez la sauvegarde avant de recommencer." >&2
     exit 1
   fi
-else
-  echo "==> Premier déploiement : aucune base à sauvegarder"
 fi
 
 echo "==> Build & start"

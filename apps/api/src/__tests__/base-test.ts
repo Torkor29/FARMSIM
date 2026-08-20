@@ -44,8 +44,35 @@ export type BaseTest = {
   nom: string;
 };
 
+/**
+ * Le serveur répond-il ? Et si non, le dire une fois, clairement.
+ *
+ * Sans ce contrôle, un PostgreSQL éteint donnait quarante lignes de « test did
+ * not finish before its parent and was cancelled » : le vrai message, une
+ * connexion refusée, était noyé au milieu. On perd dix minutes à chercher un
+ * bogue dans le jeu avant de comprendre qu'aucune base ne tourne.
+ */
+function exigerServeur(): void {
+  try {
+    execFileSync("psql", [ADMIN, "-v", "ON_ERROR_STOP=1", "-tAc", "SELECT 1"], {
+      stdio: ["ignore", "ignore", "ignore"],
+    });
+  } catch {
+    throw new Error(
+      `PostgreSQL ne répond pas sur ${ADMIN.replace(/:[^:@/]*@/, ":***@")}.\n` +
+        "Les suites d'intégration ont besoin d'une vraie base depuis que le jeu\n" +
+        "a quitté SQLite. Le plus court, sans rien installer :\n\n" +
+        "  docker run -d --name farmsim-pg -p 5432:5432 \\\n" +
+        "    -e POSTGRES_USER=farmsim -e POSTGRES_PASSWORD=farmsim-local \\\n" +
+        "    -e POSTGRES_DB=postgres postgres:16-alpine\n\n" +
+        "Ou pointez FARMSIM_TEST_PG sur un serveur existant.",
+    );
+  }
+}
+
 /** Crée une base vide et y applique les migrations. */
 export function creerBaseTest(prefixe: string): BaseTest {
+  exigerServeur();
   const nom = `farmsim_${prefixe}_${randomBytes(6).toString("hex")}`;
   admin(`CREATE DATABASE "${nom}"`);
   const url = urlPour(nom);
