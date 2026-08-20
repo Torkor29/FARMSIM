@@ -13,6 +13,8 @@ import {
   buildingResaleValue,
   buildingUpgradeCost,
   urgentContractorQuote,
+  acceptsUrgentContractor,
+  acceptsLaborOrder,
   MISSION_CELLS_MIN,
   MISSION_CELLS_MAX,
   laborEscrow,
@@ -124,6 +126,7 @@ import {
   isPlantTool,
   isSoilTool,
   plantCropLabel,
+  toolBareVerb,
   type Tool,
 } from "./tools";
 import {
@@ -2563,11 +2566,23 @@ export function App() {
             ? "Aucune culture perdue à labourer dans la sélection."
             : null
           : null;
+    /*
+     * Le prix, ou rien du tout.
+     *
+     * L'entreprise de dépannage ne prend pas le déchaumage, la presse ni le
+     * ramassage — c'est l'entraide entre joueurs qui les prend. On chiffrait
+     * quand même, et le bouton « Payer · 428 TRN » s'affichait sur une presse
+     * pour ne pouvoir que refuser : par un message pour la presse, par une
+     * erreur de validation informe pour le déchaumage. Un bouton qui ne peut
+     * qu'échouer ne doit pas exister ; `cost: null` l'efface des deux coques.
+     */
     return {
       work,
       hasMachine,
       blocage,
-      cost: urgentContractorQuote(work, selectedCells.length),
+      cost: acceptsUrgentContractor(work)
+        ? urgentContractorQuote(work, selectedCells.length)
+        : null,
     };
   }, [tool, selectedCells, selectedAreGrass, player?.farm?.machines, dansSelection]);
 
@@ -2599,6 +2614,26 @@ export function App() {
     const crop: CropCode | undefined = cropFromPlantTool(tool) ?? undefined;
     return laborEscrow(contractorOffer.work, n, crop).escrow;
   }, [visiting, contractorOffer, selectedCells.length, tool]);
+
+  /**
+   * Pourquoi « Demander de l'aide » n'est pas sur l'écran.
+   *
+   * L'entraide ne se demande qu'entre 8 et 24 cases. Au-delà, le bouton
+   * disparaît — sans un mot. Avec 73 cases retenues, une presse et pas de
+   * presse au garage, le joueur se retrouvait donc devant un bouton grisé,
+   * aucun recours visible, et un message qui lui disait de « publier un
+   * chantier » : un mot qui n'est écrit nulle part dans le jeu, pour un
+   * bouton qui n'était pas à l'écran. On dit le nombre, et la borne.
+   */
+  const laborBlocage = useMemo(() => {
+    if (visiting || !contractorOffer || laborQuote !== null) return null;
+    if (!acceptsLaborOrder(contractorOffer.work)) return null;
+    const n = selectedCells.length;
+    if (!n || (n >= MISSION_CELLS_MIN && n <= MISSION_CELLS_MAX)) return null;
+    return n < MISSION_CELLS_MIN
+      ? `L’entraide se demande à partir de ${MISSION_CELLS_MIN} cases — vous en avez retenu ${n}.`
+      : `L’entraide se demande par ${MISSION_CELLS_MAX} cases au plus — vous en avez retenu ${n}.`;
+  }, [visiting, contractorOffer, laborQuote, selectedCells.length]);
 
   async function publishLaborOrder() {
     if (!player || !activeParcelId || !contractorOffer || laborQuote == null) return;
@@ -2675,8 +2710,15 @@ export function App() {
 
   async function callContractor() {
     if (!player || !activeParcelId || !contractorOffer) return;
-    if (contractorOffer.work === "BALE" || contractorOffer.work === "COLLECT") {
-      flashToast("Pour ça, publiez un chantier — pas d’entreprise instantanée", true);
+    if (contractorOffer.cost === null) {
+      // Ne devrait plus être atteignable — le bouton n'est plus rendu dans ce
+      // cas. Si ça arrive quand même, on nomme le bouton qui, lui, marche,
+      // au lieu de parler d'un « chantier à publier » qui ne s'appelle comme
+      // ça nulle part dans le jeu.
+      flashToast(
+        `Personne ne vient ${toolBareVerb(tool, selectedAreGrass).toLowerCase()} dans l’heure — passez par « Demander de l’aide ».`,
+        true,
+      );
       return;
     }
     setBusy(true);
@@ -5573,6 +5615,7 @@ export function App() {
           swathUseful={swathUsefulHere}
           contractor={visiting ? null : contractorOffer}
           laborQuote={laborQuote}
+          laborBlocage={laborBlocage}
           objective={nextGoal}
           allGoalsDone={allGoalsDone}
           onTool={pickTool}
@@ -5680,6 +5723,7 @@ export function App() {
             contractorBlocage={visiting ? null : (contractorOffer?.blocage ?? null)}
             laborQuote={laborQuote}
             laborAffordable={canPay(player, laborQuote ?? 0)}
+            laborBlocage={laborBlocage}
             visiting={visiting}
             mowSelected={selectedAreGrass}
             mowReadyAll={readyAreGrass}

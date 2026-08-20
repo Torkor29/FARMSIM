@@ -20,7 +20,14 @@ import { BRUSH_SIZES, TOOL_GROUPS, groupOf, optionsFor } from "./ui/tool-options
  */
 
 type ContractorOffer = {
-  cost: number;
+  /**
+   * Le devis, ou `null` quand l'entreprise ne prend pas ce travail-là.
+   *
+   * Elle ne vient ni presser, ni ramasser, ni déchaumer. Le bouton était
+   * rendu quand même, avec un prix, et refusait au doigt. Sans prix, pas de
+   * bouton — c'est « Demander de l'aide » qui prend le relais.
+   */
+  cost: number | null;
   hasMachine: boolean;
 };
 
@@ -65,6 +72,8 @@ type Props = {
   machineManquante?: string | null;
   contractor: ContractorOffer | null;
   laborQuote?: number | null;
+  /** Pourquoi « Demander de l'aide » est absent, s'il l'est pour une raison. */
+  laborBlocage?: string | null;
   objective: ObjectiveView | null;
   allGoalsDone: boolean;
   onTool: (t: Tool) => void;
@@ -126,6 +135,7 @@ export function FieldDock({
   machineManquante,
   contractor,
   laborQuote = null,
+  laborBlocage = null,
   objective,
   allGoalsDone,
   onTool,
@@ -217,12 +227,23 @@ export function FieldDock({
       // une panne, c'est un geste qui manque. Autant le demander.
       return `Touchez le champ pour choisir les cases à ${toolBareVerb(tool, mowSelected).toLowerCase()}.`;
     }
-    if (!machineManquante) return null;
-    // La machine manque, mais un prestataire vient avec la sienne : le joueur
-    // n'est pas dans une impasse, il ne le sait simplement pas.
-    return contractor
-      ? `${machineManquante} Sinon, « Payer » fait venir quelqu’un avec la sienne.`
-      : machineManquante;
+    if (!machineManquante) return laborBlocage;
+    /*
+     * La machine manque. Reste à dire par où sortir — et ce n'est pas la même
+     * porte selon le travail : l'entreprise de dépannage vient labourer ou
+     * moissonner dans l'heure, mais elle ne vient ni presser ni ramasser. Ces
+     * deux-là passent par l'entraide, qui a ses propres bornes. Nommer la
+     * porte qui est **à l'écran**, jamais une autre.
+     */
+    const sortie =
+      contractor && contractor.cost !== null
+        ? " Sinon, « Payer » fait venir quelqu’un avec la sienne."
+        : laborQuote !== null
+          ? " Sinon, « Demander de l’aide » la confie à un autre joueur."
+          : laborBlocage
+            ? ` ${laborBlocage}`
+            : "";
+    return `${machineManquante}${sortie}`;
   }
   const blocage = raisonDuGrisage();
 
@@ -342,7 +363,7 @@ export function FieldDock({
                 {`${toolVerb(tool, mowSelected)} ×${selectedCount}`}
               </button>
             )}
-            {contractor && !visiting && (
+            {contractor && contractor.cost !== null && !visiting && (
               /* L'explication passe dans l'infobulle du bouton — elle reste
                  accessible, elle ne mange plus la parcelle. */
               <button

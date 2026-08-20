@@ -69,6 +69,8 @@ import {
   buildingLevelDef,
   MAX_BUILDING_LEVEL,
   urgentContractorQuote,
+  URGENT_CONTRACTOR_WORKS,
+  LABOR_ORDER_WORKS,
   CONTRACTOR_YIELD_MALUS,
   missionPayout,
   laborEscrow,
@@ -4081,17 +4083,7 @@ app.post("/parcels/:id/labor-orders", async (req, res) => {
   const body = z
     .object({
       userId: z.string(),
-      work: z.enum([
-        "PLANT",
-        "FERTILIZE",
-        "HARVEST",
-        "PLOW",
-        "STUBBLE",
-        "MOW",
-        "BALE",
-        "COLLECT",
-        "SILAGE",
-      ]),
+      work: z.enum(LABOR_ORDER_WORKS),
       crop: z.enum(CROP_CODES).optional(),
       cells: z.array(z.object({ x: z.number().int(), y: z.number().int() })).min(1),
     })
@@ -4340,7 +4332,9 @@ app.post("/parcels/:id/contractor", async (req, res) => {
   const body = z
     .object({
       userId: z.string(),
-      work: z.enum(["PLANT", "FERTILIZE", "HARVEST", "PLOW", "MOW"]),
+      // La liste vit dans `shared` : l'écran s'en sert pour décider s'il
+      // propose le bouton, la route pour décider si elle l'accepte.
+      work: z.enum(URGENT_CONTRACTOR_WORKS),
       crop: z.enum(CROP_CODES).optional(),
       cells: z.array(z.object({ x: z.number().int(), y: z.number().int() })).min(1),
     })

@@ -4164,6 +4164,14 @@ button.tiny {
 .selection-bar-num.on { color: var(--gold-700); }
 .selection-bar-unit { font-size: 0.78rem; color: var(--ink-soft); font-weight: 700; }
 
+/* Une règle du jeu, pas une panne : l'entraide se demande par lots de 8 à 24
+   cases. Le bouton disparaissait sans un mot au-delà. */
+.selection-bar-note {
+  font-size: 0.76rem;
+  color: var(--ink-soft);
+  max-width: 22rem;
+  line-height: 1.3;
+}
 .selection-bar-picks { display: flex; gap: 0.3rem; }
 .selection-bar-link {
   min-height: 30px;

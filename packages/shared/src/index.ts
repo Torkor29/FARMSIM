@@ -1587,6 +1587,57 @@ export function urgentContractorQuote(work: FarmWork, cells: number): number {
 }
 
 /**
+ * Les travaux que l'entreprise de dépannage prend au pied levé.
+ *
+ * Elle ne prend pas tout : ni le déchaumage, ni la presse, ni le ramassage,
+ * ni l'ensilage. C'est un choix de jeu — ces travaux-là passent par
+ * l'entraide entre joueurs, qui est la boucle qu'on veut faire vivre.
+ *
+ * Cette liste vivait en deux exemplaires : une énumération Zod côté serveur,
+ * et une cascade de `? :` côté écran qui, elle, proposait le bouton pour
+ * trois travaux de plus. Le joueur voyait donc « Payer · 428 TRN » sur une
+ * presse, appuyait, et se faisait renvoyer — par un message pour le
+ * déchaumage, par une erreur de validation informe pour les deux autres. Deux
+ * listes qui prétendent dire la même chose finissent toujours par diverger ;
+ * il n'y en a plus qu'une, et les deux côtés la lisent.
+ */
+export const URGENT_CONTRACTOR_WORKS = [
+  "PLANT",
+  "FERTILIZE",
+  "HARVEST",
+  "PLOW",
+  "MOW",
+] as const satisfies readonly FarmWork[];
+
+/** L'entreprise instantanée prend-elle ce travail ? */
+export function acceptsUrgentContractor(work: FarmWork): boolean {
+  return (URGENT_CONTRACTOR_WORKS as readonly FarmWork[]).includes(work);
+}
+
+/**
+ * Les travaux qu'on peut confier à un autre joueur.
+ *
+ * Plus large que la liste ci-dessus : c'est justement là que passent la
+ * presse et le ramassage.
+ */
+export const LABOR_ORDER_WORKS = [
+  "PLANT",
+  "FERTILIZE",
+  "HARVEST",
+  "PLOW",
+  "STUBBLE",
+  "MOW",
+  "BALE",
+  "COLLECT",
+  "SILAGE",
+] as const satisfies readonly FarmWork[];
+
+/** L'entraide entre joueurs prend-elle ce travail ? */
+export function acceptsLaborOrder(work: FarmWork): boolean {
+  return (LABOR_ORDER_WORKS as readonly FarmWork[]).includes(work);
+}
+
+/**
  * À partir de combien de cases posséder sa propre machine devient rentable.
  * Sert à afficher un conseil honnête au joueur plutôt qu'à lui vendre du
  * service à perte.

@@ -26,6 +26,14 @@ type Props = {
   /** Mise de côté demandée pour publier une offre d'aide. */
   laborQuote: number | null;
   laborAffordable: boolean;
+  /**
+   * Pourquoi « Demander de l'aide » n'est pas là.
+   *
+   * Un bouton qui disparaît sans un mot se lit comme une panne. L'entraide ne
+   * se demande qu'entre 8 et 24 cases : c'est une règle, pas un défaut, mais
+   * encore faut-il l'écrire.
+   */
+  laborBlocage?: string | null;
   visiting: boolean;
   /** La sélection n'est que de l'herbe mûre : on fauche. */
   mowSelected: boolean;
@@ -70,6 +78,7 @@ export function SelectionBar({
   contractorBlocage,
   laborQuote,
   laborAffordable,
+  laborBlocage,
   visiting,
   mowSelected,
   mowReadyAll,
@@ -151,6 +160,7 @@ export function SelectionBar({
             Demander de l’aide · {laborQuote} TRN
           </button>
         )}
+        {laborBlocage && <span className="selection-bar-note">{laborBlocage}</span>}
         {readyCount > 0 && (
           <button
             type="button"
