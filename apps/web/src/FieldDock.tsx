@@ -81,6 +81,7 @@ type Props = {
   onTool: (t: Tool) => void;
   onBrush: (n: 1 | 2 | 3) => void;
   onDragRect: () => void;
+  onClearSelection: () => void;
   onDirectSeed: () => void;
   onKeepSwath: () => void;
   onConfirm: () => void;
@@ -145,6 +146,7 @@ export function FieldDock({
   onTool,
   onBrush,
   onDragRect,
+  onClearSelection,
   onDirectSeed,
   onKeepSwath,
   onConfirm,
@@ -371,6 +373,19 @@ export function FieldDock({
                 onClick={() => setOptionsOpen((v) => !v)}
               >
                 {optionsOpen ? "▾" : "⋯"}
+              </button>
+            )}
+            {/* Vider la sélection : la coque tactile n'avait aucun moyen de le
+                faire. Un toucher ajoute, un glissé remplace — mais rien ne
+                permettait de repartir de zéro sans travailler le champ. */}
+            {work && selectedCount > 0 && (
+              <button
+                type="button"
+                className="chip"
+                onClick={onClearSelection}
+                title="Repartir d’une sélection vide"
+              >
+                Vider ×{selectedCount}
               </button>
             )}
             {work && (

@@ -679,6 +679,8 @@ export function App() {
     cells: { x: number; y: number }[];
     endsAt: number;
     durationMs: number;
+    /** L'engin que le chantier a sorti du garage — c'est celui du joueur. */
+    machine?: MachineType;
   } | null>(null);
   /** Palier montré au catalogue — un seul réglage pour toute la liste. */
   const [tierAchat, setTierAchat] = useState<Tier>(1);
@@ -2938,6 +2940,7 @@ export function App() {
         durationMs: number;
         cells: { x: number; y: number }[];
         skipped?: number;
+        machine?: { id: string; type: MachineType };
       };
     }>(`/parcels/${activeParcelId}/jobs`, {
       method: "POST",
@@ -2961,7 +2964,13 @@ export function App() {
           : `${r.job.skipped} cases déjà sur un chantier — laissées de côté.`,
       );
     }
-    setChantier({ work, cells: retenues, endsAt: fin, durationMs: r.job.durationMs });
+    setChantier({
+      work,
+      cells: retenues,
+      endsAt: fin,
+      durationMs: r.job.durationMs,
+      machine: r.job.machine?.type,
+    });
     return { id: r.job.id, durationMs: r.job.durationMs, endsAt: fin, cells: retenues };
   }
 
@@ -4507,7 +4516,13 @@ export function App() {
     <div className="chantier-bar" role="status" aria-live="polite">
       <span className="chantier-nom">
         {horloge - (chantier.endsAt - chantier.durationMs) < jobArrivalMs(chantier.durationMs)
-          ? "Le matériel arrive au champ…"
+          ? /*
+             * « Le matériel arrive au champ » se lisait comme une livraison :
+             * « pourquoi pour labourer j'ai besoin de recevoir du matériel ? »
+             * Rien n'arrive de l'extérieur — c'est la charrue du joueur qui
+             * sort de sa cour. On la nomme, et le trajet devient le sien.
+             */
+            `${MACHINE_DEFS[chantier.machine ?? "TRACTOR"]?.name ?? "L’attelage"} en route vers le champ…`
           : `${WORK_LABELS[chantier.work] ?? chantier.work} · ${chantier.cells.length} cases`}
       </span>
       <span className="chantier-piste">
@@ -5728,6 +5743,10 @@ export function App() {
           brush={brush}
           dragRect={dragRect}
           onDragRect={() => setDragRect((v) => !v)}
+          onClearSelection={() => {
+            setSelectedCells([]);
+            selectionAnchor.current = null;
+          }}
           isMobile={isMobile}
           isEta={visiting}
           visiting={visiting}
