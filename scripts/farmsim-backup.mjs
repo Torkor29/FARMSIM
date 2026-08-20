@@ -49,7 +49,36 @@ function psql(url, sql) {
   }).trim();
 }
 
+/**
+ * Erreur distincte : il n'y a **rien** à sauvegarder.
+ *
+ * Ce n'est pas la même chose qu'une sauvegarde ratée. Une base sans schéma —
+ * fraîchement créée, jamais migrée — ne contient rien à perdre, et refuser de
+ * continuer pour cela bloque précisément le déploiement qui va l'initialiser.
+ * C'est arrivé pendant la bascule : le jeu était en panne, et le garde-fou
+ * « pas de déploiement sans sauvegarde » empêchait le correctif de partir.
+ *
+ * Une base **migrée mais vide de joueurs**, elle, reste une erreur franche :
+ * là, quelque chose a été perdu.
+ */
+export class RienASauvegarder extends Error {}
+
+/** La base a-t-elle seulement ses tables ? */
+function schemaPresent(url) {
+  const n = psql(
+    url,
+    `SELECT COUNT(*) FROM information_schema.tables
+       WHERE table_schema = 'public' AND table_name IN (${TABLES_VITALES.map((t) => `'${t}'`).join(",")})`,
+  );
+  return Number(n) === TABLES_VITALES.length;
+}
+
 export function instantané(url, destination) {
+  if (!schemaPresent(url)) {
+    throw new RienASauvegarder(
+      "la base n'a pas encore de schéma — rien à sauvegarder",
+    );
+  }
   execFileSync(
     "pg_dump",
     [url, "--format=custom", "--compress=6", "--no-owner", "--no-privileges", "--file", destination],
@@ -179,6 +208,11 @@ if (estAppeléDirectement) {
     console.log(`   ${mo} Mo · ${compte}`);
     console.log(`   ${r.gardées} sauvegarde(s) conservée(s), ${r.effacées.length} effacée(s)`);
   } catch (e) {
+    if (e instanceof RienASauvegarder) {
+      // Code 3 : « rien à sauvegarder », que l'appelant distingue d'un échec.
+      console.log(`RIEN À SAUVEGARDER — ${e.message}`);
+      process.exit(3);
+    }
     console.error(`ÉCHEC de la sauvegarde : ${e instanceof Error ? e.message : e}`);
     process.exit(1);
   }

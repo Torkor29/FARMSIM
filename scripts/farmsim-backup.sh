@@ -80,7 +80,19 @@ docker run --rm \
   -e FARMSIM_BACKUP_KEEP="$GARDER" \
   -e FARMSIM_BACKUP_LABEL="$ETIQUETTE" \
   --entrypoint node \
-  "$IMAGE" /opt/farmsim-backup.mjs
+  "$IMAGE" /opt/farmsim-backup.mjs || CODE=$?
+CODE="${CODE:-0}"
+
+# Code 3 : la base n'a pas encore de schéma, il n'y a rien à perdre. On le dit
+# et on rend la main sans échouer — sans quoi le garde-fou « pas de
+# déploiement sans sauvegarde » bloquerait le déploiement qui doit justement
+# initialiser cette base. Tout autre code reste un échec.
+if [[ "$CODE" == "3" ]]; then
+  echo "==> Base pas encore initialisée : rien à sauvegarder, on continue."
+  exit 0
+elif [[ "$CODE" != "0" ]]; then
+  exit "$CODE"
+fi
 
 echo "==> Sauvegardes présentes :"
 ls -lh "$DEPOT" | tail -n +2 | awk '{print "    " $9 "  " $5}'

@@ -28,7 +28,14 @@ import {
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { élaguer, horodatage, instantané, sauvegarder, vérifier } from "../farmsim-backup.mjs";
+import {
+  RienASauvegarder,
+  élaguer,
+  horodatage,
+  instantané,
+  sauvegarder,
+  vérifier,
+} from "../farmsim-backup.mjs";
 import { libres as terreLibre, purger as purgerEssais } from "../farmsim-purge-essais.mjs";
 
 const SCRIPTS = dirname(fileURLToPath(new URL("../farmsim-backup.mjs", import.meta.url)));
@@ -127,10 +134,37 @@ describe("instantané", () => {
     assert.equal(r.lignes.User, 60, "les lignes validées doivent être dans la sauvegarde");
   });
 
+  it("distingue « rien à sauvegarder » d'un échec", () => {
+    /**
+     * Une base sans schéma — fraîchement créée, jamais migrée — ne contient
+     * rien à perdre. Le dire par une erreur ordinaire bloquait le déploiement
+     * qui devait justement l'initialiser : le jeu est resté en panne pendant
+     * que le garde-fou « pas de déploiement sans sauvegarde » retenait le
+     * correctif. Ce cas a maintenant son propre type, et son propre code de
+     * sortie.
+     */
+    const neuve = `farmsim_t_neuve_${randomBytes(5).toString("hex")}`;
+    psql(ADMIN, `CREATE DATABASE "${neuve}"`);
+    try {
+      assert.throws(
+        () => instantané(urlVers(neuve), join(dossier, "copie-neuve.dump")),
+        RienASauvegarder,
+      );
+    } finally {
+      detruire(neuve);
+    }
+  });
+
   it("refuse une base dont une table vitale est vide", () => {
     const vide = creer("vide", 0);
     try {
-      assert.throws(() => instantané(urlVers(vide), join(dossier, "copie-vide.dump")), /table User/);
+      // Le schéma est là, les joueurs ont disparu : c'est une perte, pas un
+      // « rien à sauvegarder ». La distinction est tout l'enjeu.
+      assert.throws(() => instantané(urlVers(vide), join(dossier, "copie-vide.dump")), (e) => {
+        assert.ok(!(e instanceof RienASauvegarder), "une base vidée n'est pas une base neuve");
+        assert.match(String(e.message), /table User/);
+        return true;
+      });
     } finally {
       detruire(vide);
     }
