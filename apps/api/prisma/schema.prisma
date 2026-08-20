@@ -1,5 +1,19 @@
 generator client {
   provider = "prisma-client-js"
+  /**
+   * La cible est nommée, pas devinée.
+   *
+   * `native` seul demande le moteur de la machine qui **génère**. En image
+   * multi-étapes, cela suffisait tant que génération et exécution partageaient
+   * la même base ; le jour où ce n'est plus vrai, le conteneur démarre, ne
+   * trouve pas `libquery_engine-…so.node`, et redémarre en boucle — c'est
+   * arrivé en production, jeu à l'arrêt.
+   *
+   * `debian-openssl-3.0.x` est la cible de `node:22-bookworm-slim`, l'image
+   * d'exécution. On la nomme donc explicitement, en plus de `native` qui sert
+   * aux postes de développement.
+   */
+  binaryTargets = ["native", "debian-openssl-3.0.x"]
 }
 
 datasource db {

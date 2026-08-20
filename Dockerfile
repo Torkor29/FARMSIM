@@ -24,7 +24,17 @@ COPY . .
 RUN pnpm --filter @farmsim/api exec prisma generate
 RUN pnpm -r build
 
-# Le moteur de schéma, mis à un endroit fixe et **vérifié ici**.
+# Les deux moteurs de Prisma, vérifiés ici plutôt qu'en production.
+#
+# Il y en a deux, et ils tombent en panne séparément : le **moteur de requête**
+# (`libquery_engine`) que le client charge pour parler à la base, et le
+# **moteur de schéma** (`schema-engine`) dont `migrate deploy` a besoin. Chacun
+# des deux a manqué à son tour, chaque fois découvert par un conteneur qui
+# redémarrait en boucle avec le jeu à l'arrêt.
+#
+# Une image incapable de démarrer ne doit pas exister : ces deux contrôles font
+# **échouer la construction**, où le message se lit, plutôt que le démarrage,
+# où il se perd dans un journal.
 #
 # `prisma migrate deploy` le cherche dans l'arborescence pnpm, à un chemin qui
 # contient le numéro de version du paquet. En production le conteneur a
@@ -39,6 +49,9 @@ RUN pnpm -r build
 #     image qui ne peut pas migrer ne doit pas exister, plutôt que d'être
 #     découverte au démarrage sur le serveur.
 RUN set -eu; \
+  requete="$(find /app/node_modules -type f -name 'libquery_engine-*.so.node' -path '*/.prisma/client/*' | head -1)"; \
+  test -n "$requete" || { echo "ERREUR : moteur de requête Prisma absent du client généré." >&2; exit 1; }; \
+  echo "moteur de requête : $requete"; \
   moteur="$(find /app/node_modules -type f -name 'schema-engine-*' | head -1)"; \
   test -n "$moteur" || { echo "ERREUR : moteur de schéma Prisma introuvable dans node_modules." >&2; exit 1; }; \
   mkdir -p /moteurs; \
