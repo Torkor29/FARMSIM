@@ -982,7 +982,7 @@ async function occupiedJobCells(parcelId: string): Promise<Set<string>> {
  * l'attente est précisément ce qui donne sa valeur à un outil plus large.
  */
 type JobVerdict =
-  | { ok: true; job: { id: string } | null }
+  | { ok: true; job: { id: string; fuelL: number; parcelId: string } | null }
   | { ok: false; status: number; error: string; endsAt?: Date };
 
 async function checkFieldJob(opts: {
@@ -1030,7 +1030,47 @@ async function checkFieldJob(opts: {
      d'annuler. Libérer tout de suite coûte le chantier en cas de refus tardif ;
      ne pas libérer coûtait la parcelle. */
   await closeFieldJob(job.id);
-  return { ok: true, job: { id: job.id } };
+  return { ok: true, job: { id: job.id, fuelL: job.fuelL, parcelId: job.parcelId } };
+}
+
+/**
+ * Rend le gazole d'un chantier qui n'a finalement rien fait.
+ *
+ * Le plein part au départ de la cour. Quand la route de travail refuse ensuite
+ * — « rien n'est mûr », « rien à presser » — l'engin n'a rien labouré et le
+ * joueur perdait le carburant d'une sélection mal choisie. Le sas ne peut pas
+ * tout prévoir sans simuler : ce qu'il ne prévoit pas, il le rembourse.
+ */
+async function rendreGazole(job: { id: string; fuelL: number; parcelId: string } | null) {
+  if (!job?.fuelL) return;
+  const parcel = await prisma.parcel.findUnique({
+    where: { id: job.parcelId },
+    select: { farmId: true },
+  });
+  if (!parcel?.farmId) return;
+  await prisma.farm.update({
+    where: { id: parcel.farmId },
+    data: { fuelL: { increment: job.fuelL } },
+  });
+}
+
+/**
+ * Accroche le remboursement à la réponse : tout refus rend le gazole.
+ *
+ * Les routes de travail refusent en une vingtaine d'endroits — pas de
+ * machine, pas d'argent, rien de mûr, case occupée. Les traiter un par un
+ * aurait garanti l'oubli du vingt-et-unième. Le critère qui compte n'est
+ * pas *où* l'on refuse mais *qu'on* refuse : c'est donc au code de retour
+ * qu'on se raccroche, une fois par route.
+ */
+function gazoleSiRefus(
+  res: express.Response,
+  job: { id: string; fuelL: number; parcelId: string } | null,
+): void {
+  if (!job?.fuelL) return;
+  res.on("finish", () => {
+    if (res.statusCode >= 400) void rendreGazole(job);
+  });
 }
 
 /** Clôt le chantier et rend l'attelage à son propriétaire. */
@@ -4504,6 +4544,56 @@ async function resolveHarvestOrMowAccess(opts: {
  * sache tout de suite si son champ partira, plutôt qu'au bout de sept minutes
  * d'attente.
  */
+/**
+ * Y a-t-il seulement de quoi travailler sur ces cases ?
+ *
+ * Le sas vérifiait l'accès, les conflits, la fenêtre de semis, l'attelage et
+ * le gazole — tout sauf **la seule chose que le joueur regarde**. On pouvait
+ * donc lancer un labour sur de la terre nue : le chantier partait, l'engin
+ * traversait le champ, et sept minutes plus tard la route de labour répondait
+ * « rien à labourer ». Le refus était juste, il arrivait simplement après le
+ * travail.
+ *
+ * Ne sont traités ici que les cas où l'on peut conclure **sans simuler** :
+ * le labour et le désherbage. Les autres travaux gardent leur refus tardif,
+ * dont le gazole est désormais rendu.
+ *
+ * Renvoie `null` quand il y a de quoi faire, ou la phrase du refus.
+ */
+function rienAFaire(
+  work: FarmWork,
+  cells: CellXY[],
+  parcel: { cells: { x: number; y: number; kind: string; hasStubble: boolean; fieldStage: string }[] },
+  season?: Season,
+): string | null {
+  const vues = cells
+    .map(({ x, y }) => parcel.cells.find((c) => c.x === x && c.y === y))
+    .filter(Boolean) as (typeof parcel.cells)[number][];
+
+  if (work === "PLOW") {
+    // Même règle que la route de labour : chaumes, culture perdue, ou sol qui
+    // réclame la charrue. Ce qui suit ne dépend que de l'état stocké.
+    const bons = vues.filter(
+      (c) => c.hasStubble || c.fieldStage === "SPOILED" || c.kind === "CROP",
+    );
+    if (bons.length) return null;
+    const ailleurs = parcel.cells.filter((c) => c.hasStubble || c.fieldStage === "SPOILED").length;
+    return ailleurs
+      ? `Rien à labourer dans la sélection — ${ailleurs} case(s) attendent la charrue ailleurs sur la parcelle`
+      : "Rien à labourer : aucune case ne porte de chaumes ni de culture perdue";
+  }
+
+  if (work === "WEED") {
+    const bons = vues.filter(
+      (c) => c.kind === "CROP" && pressionAdventices(c as never, season) > WEED_AFTER_SPRAY,
+    );
+    if (bons.length) return null;
+    return "Rien à désherber : ces cases sont déjà propres.";
+  }
+
+  return null;
+}
+
 app.post("/parcels/:id/jobs", async (req, res) => {
   const body = z
     .object({
@@ -4549,6 +4639,19 @@ app.post("/parcels/:id/jobs", async (req, res) => {
       res.status(409).json({ error: fenetre.reason, window: fenetre.window, season: saison });
       return;
     }
+  }
+
+  /* Avant l'attelage et avant le plein : un chantier qui n'a rien à faire ne
+     doit pas partir. Le refus existait déjà, il arrivait après le travail. */
+  const vide = rienAFaire(
+    work,
+    cells,
+    parcel,
+    currentSeason(climatDe(parcel).hemisphere ?? "N", Date.now()),
+  );
+  if (vide) {
+    res.status(409).json({ error: vide });
+    return;
   }
 
   const picked = pickMachineForWork(access.machines, work);
@@ -4903,6 +5006,8 @@ app.post("/parcels/:id/plant", async (req, res) => {
     res.status(chantier.status).json({ error: chantier.error, endsAt: chantier.endsAt });
     return;
   }
+  // Refusé plus loin ? L'engin n'aura rien fait : le plein lui est rendu.
+  gazoleSiRefus(res, chantier.job);
   const parcel = access.parcel;
   const user = await prisma.user.findUnique({ where: { id: body.data.userId } });
   if (!user) {
@@ -5090,6 +5195,8 @@ app.post("/parcels/:id/fertilize", async (req, res) => {
     res.status(chantier.status).json({ error: chantier.error, endsAt: chantier.endsAt });
     return;
   }
+  // Refusé plus loin ? L'engin n'aura rien fait : le plein lui est rendu.
+  gazoleSiRefus(res, chantier.job);
   const parcel = access.parcel;
   const picked = pickMachineForWork(access.machines, "FERTILIZE");
   if (!picked) {
@@ -5212,6 +5319,8 @@ app.post("/parcels/:id/plow", async (req, res) => {
     res.status(chantier.status).json({ error: chantier.error, endsAt: chantier.endsAt });
     return;
   }
+  // Refusé plus loin ? L'engin n'aura rien fait : le plein lui est rendu.
+  gazoleSiRefus(res, chantier.job);
   const parcel = access.parcel;
   const picked = pickMachineForWork(access.machines, "PLOW");
   if (!picked) {
@@ -5374,6 +5483,8 @@ app.post("/parcels/:id/stubble", async (req, res) => {
     res.status(chantier.status).json({ error: chantier.error, endsAt: chantier.endsAt });
     return;
   }
+  // Refusé plus loin ? L'engin n'aura rien fait : le plein lui est rendu.
+  gazoleSiRefus(res, chantier.job);
   const parcel = access.parcel;
   const picked = pickMachineForWork(access.machines, "STUBBLE");
   if (!picked) {
@@ -5587,6 +5698,8 @@ app.post("/parcels/:id/harvest", async (req, res) => {
     res.status(chantier.status).json({ error: chantier.error, endsAt: chantier.endsAt });
     return;
   }
+  // Refusé plus loin ? L'engin n'aura rien fait : le plein lui est rendu.
+  gazoleSiRefus(res, chantier.job);
   const parcel = access.parcel;
   if (!parcel.farm) {
     res.status(404).json({ error: "Parcelle introuvable" });
@@ -5988,6 +6101,8 @@ app.post("/parcels/:id/weed", async (req, res) => {
     res.status(chantier.status).json({ error: chantier.error, endsAt: chantier.endsAt });
     return;
   }
+  // Refusé plus loin ? L'engin n'aura rien fait : le plein lui est rendu.
+  gazoleSiRefus(res, chantier.job);
   const parcel = access.parcel;
   const picked = pickMachineForWork(access.machines, "WEED");
   if (!picked) {
@@ -6077,6 +6192,8 @@ app.post("/parcels/:id/bale", async (req, res) => {
     res.status(chantier.status).json({ error: chantier.error, endsAt: chantier.endsAt });
     return;
   }
+  // Refusé plus loin ? L'engin n'aura rien fait : le plein lui est rendu.
+  gazoleSiRefus(res, chantier.job);
   const parcel = access.parcel;
   const picked = pickMachineForWork(access.machines, "BALE");
   if (!picked) {
@@ -6161,6 +6278,8 @@ app.post("/parcels/:id/collect", async (req, res) => {
     res.status(chantier.status).json({ error: chantier.error, endsAt: chantier.endsAt });
     return;
   }
+  // Refusé plus loin ? L'engin n'aura rien fait : le plein lui est rendu.
+  gazoleSiRefus(res, chantier.job);
   const parcel = access.parcel;
   if (!parcel.farm) {
     res.status(404).json({ error: "Parcelle introuvable" });
@@ -8540,7 +8659,7 @@ app.post("/machines/listings/:id/cancel", async (req, res) => {
   }
   const bonuses = await getFarmBonuses(farm.id);
   if (farm.machines.length >= bonuses.machineSlots) {
-    res.status(409).json({ error: "Slots machines pleins — faites de la place avant de retirer l'annonce." });
+    res.status(409).json({ error: await garagePleinMessage(farm.id, bonuses.machineSlots) });
     return;
   }
   await prisma.$transaction(async (tx) => {
@@ -8578,7 +8697,7 @@ app.post("/machines/listings/:id/buy", async (req, res) => {
   const bonuses = await getFarmBonuses(user.farm.id);
   if (user.farm.machines.length >= bonuses.machineSlots) {
     res.status(409).json({
-      error: `Slots machines pleins (${bonuses.machineSlots}). Construisez un hangar matériel.`,
+      error: await garagePleinMessage(user.farm.id, bonuses.machineSlots),
     });
     return;
   }
@@ -8650,6 +8769,23 @@ app.post("/buildings/:id/sell", async (req, res) => {
   res.json({ sold: building.type, level: building.level, value, bonuses });
 });
 
+/**
+ * Ce qu'on répond à qui n'a plus de place au garage.
+ *
+ * « Construisez un hangar matériel » était le conseil dans tous les cas, y
+ * compris à qui en a déjà un — et qui ne pouvait donc rien en faire. Le geste
+ * utile dépend de ce que la ferme possède déjà.
+ */
+async function garagePleinMessage(farmId: string, slots: number): Promise<string> {
+  const hangars = await prisma.building.count({
+    where: { parcel: { farmId }, type: "MACHINE_SHED" },
+  });
+  const geste = hangars
+    ? "agrandissez votre hangar matériel, bâtissez-en un second, ou revendez un engin"
+    : "bâtissez un hangar matériel, ou revendez un engin";
+  return `Garage plein — ${slots} emplacements. Pour en avoir plus, ${geste}.`;
+}
+
 app.post("/machines/buy", async (req, res) => {
   const body = z
     .object({
@@ -8684,7 +8820,7 @@ app.post("/machines/buy", async (req, res) => {
   const owned = user.farm.machines.length;
   if (owned >= bonuses.machineSlots) {
     res.status(409).json({
-      error: `Slots machines pleins (${bonuses.machineSlots}). Construisez un hangar matériel.`,
+      error: await garagePleinMessage(user.farm.id, bonuses.machineSlots),
     });
     return;
   }

@@ -654,6 +654,16 @@ export function App() {
   } | null>(null);
   /** Palier montré au catalogue — un seul réglage pour toute la liste. */
   const [tierAchat, setTierAchat] = useState<Tier>(1);
+  /**
+   * Les places de garage, lues là où le serveur les compte.
+   *
+   * Le catalogue proposait chaque engin quel que soit le parc, et le clic
+   * revenait en 409 « Slots machines pleins ». Une place qui manque se sait
+   * avant de cliquer, exactement comme un TRN qui manque.
+   */
+  const parcMachines = player?.farm?.machines?.length ?? 0;
+  const slotsMachines = player?.bonuses?.machineSlots ?? 0;
+  const placeAuGarage = parcMachines < slotsMachines;
   const cuveL = player?.farm?.fuelL ?? 0;
   /** L'état de la ligne de crédit, rechargé à l'ouverture du Bureau. */
   const [credit, setCredit] = useState<CreditView | null>(null);
@@ -5078,6 +5088,13 @@ export function App() {
                 </button>
               ))}
             </div>
+            {/* Le compte des places, avant le catalogue : c'est la contrainte
+                qui décide de tout ce qui suit. */}
+            <p className={`muted tiny${placeAuGarage ? "" : " perte"}`}>
+              {placeAuGarage
+                ? `${parcMachines}/${slotsMachines} emplacements occupés`
+                : `Garage plein — ${parcMachines}/${slotsMachines}. Bâtissez ou agrandissez un hangar matériel, ou revendez un engin.`}
+            </p>
             <div className="build-list">
               {(Object.keys(MACHINE_DEFS) as MachineType[]).map((t) => {
                 const d = MACHINE_DEFS[t];
@@ -5101,13 +5118,19 @@ export function App() {
                     key={t}
                     type="button"
                     className="build-item art"
-                    disabled={busy || player.crd < prix}
+                    /* Le garage plein grisait le bouton nulle part : le
+                       catalogue proposait chaque engin, et le clic revenait en
+                       409 « Slots machines pleins ». Une place manquante se
+                       sait avant de cliquer, comme un TRN manquant. */
+                    disabled={busy || player.crd < prix || !placeAuGarage}
                     title={
-                      player.crd < prix
-                        ? `TRN insuffisants — ${prix} requis`
-                        : tractable
-                          ? d.description
-                          : `Aucun de vos tracteurs ne donne les ${besoin} ch nécessaires`
+                      !placeAuGarage
+                        ? `Garage plein — ${parcMachines}/${slotsMachines} emplacements. Agrandissez ou bâtissez un hangar matériel, ou revendez un engin.`
+                        : player.crd < prix
+                          ? `TRN insuffisants — ${prix} requis`
+                          : tractable
+                            ? d.description
+                            : `Aucun de vos tracteurs ne donne les ${besoin} ch nécessaires`
                     }
                     onClick={() => buyMachine(t, tierAchat)}
                   >
