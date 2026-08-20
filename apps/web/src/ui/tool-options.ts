@@ -79,7 +79,6 @@ export const SOIL_OPTIONS: ToolOption[] = [
   { tool: "STUBBLE", label: "Nettoyer", hint: "Déchaumage : enfouit les résidus" },
   { tool: "PLOW", label: "Labourer", hint: "Remet le compteur de récoltes à zéro" },
   { tool: "FERTILIZE", label: "Engrais", hint: "Relève la fertilité de la case" },
-  { tool: "PARK", label: "Garer", hint: "Range une machine sur la case" },
   { tool: "BALE", label: "Presser", hint: "Met la paille en bottes" },
   { tool: "COLLECT", label: "Ramasser", hint: "Rentre les bottes au hangar" },
 ];

@@ -15,8 +15,7 @@ export type Tool =
   | "WEED"
   | "BALE"
   | "COLLECT"
-  | "BUILD"
-  | "PARK";
+  | "BUILD";
 
 export function isFieldWorkTool(t: Tool): boolean {
   return (
@@ -48,7 +47,6 @@ export function isSoilTool(t: Tool): boolean {
     t === "STUBBLE" ||
     t === "PLOW" ||
     t === "WEED" ||
-    t === "PARK" ||
     t === "BALE" ||
     t === "COLLECT"
   );

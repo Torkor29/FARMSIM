@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef } from "react";
 import * as THREE from "three";
 import {
   isYardCell,
+  parkingLayout,
   BUILDING_DEFS,
   RIPENESS_COLORS,
   artGroundFraction,
@@ -17,6 +18,7 @@ import {
 import { disposeRenderer, disposeThreeScene, markShared } from "./three-cleanup";
 import { applyHerdPose, meshForHerd } from "./animal-meshes";
 import { createBuildingRig, nearestThreshold, type BuildingRig } from "./buildings3d";
+import { createParkingRig, type ParkingRig } from "./parking3d";
 import { createCropField } from "./crop-field";
 import type { CropShape } from "./crop-shapes";
 import { attachStudioEnvironment } from "./machine-kit";
@@ -192,6 +194,14 @@ export type PreviewBuilding = {
   pending?: boolean;
 };
 
+/** Un engin au parc : ce qu'il faut pour le dessiner, rien de plus. */
+export type ParkedMachine = {
+  id: string;
+  type: MachineType;
+  /** État 0 à 100 : il se lit sur la carrosserie */
+  condition?: number | null;
+};
+
 type Props = {
   gridW: number;
   gridH: number;
@@ -226,6 +236,14 @@ type Props = {
   manurePiles?: ManurePile[];
   /** Personnages présents (propriétaire, prestataire en mission) */
   workers?: FieldWorker[];
+  /**
+   * Engins garés à la ferme.
+   *
+   * Ils ne sont plus posés sur une case : la cour de stationnement est hors de
+   * la grille, à l'ouest de l'île. Une machine au hangar ou en plein travail
+   * n'est pas dans cette liste.
+   */
+  parked?: ParkedMachine[];
   weather?: string;
   /** Saison courante — elle règle la lumière de toute la scène. */
   season?: string;
@@ -275,12 +293,6 @@ const MACHINE_GROUND = TILE_TOP - 0.012;
  */
 const MACHINE_SCALE = 0.72;
 
-/**
- * Cap d'un engin garé : un quart de tour, pour qu'il présente son flanc et sa
- * cabine au joueur plutôt que son capot.
- */
-const PARK_HEADING = -Math.PI / 2;
-
 /** Écart d'angle ramené dans ]−π, π] — sinon un passage par ±π braque à fond. */
 function shortestAngle(a: number): number {
   return Math.atan2(Math.sin(a), Math.cos(a));
@@ -294,8 +306,6 @@ function windFor(weather: string): number {
   if (weather === "SNOW") return 0.45;
   return 0.55;
 }
-/** Aire de parking : terre tassée, pas un carré d'herbe au milieu du champ. */
-const PARKING = 0x6a5538;
 
 type CropLook = {
   grow: number;
@@ -1021,6 +1031,7 @@ export function IsoFarmView({
   hauls = [],
   manurePiles = [],
   workers = [],
+  parked = [],
   weather = "CLEAR",
   season = "SUMMER",
   onCellClick,
@@ -1089,6 +1100,7 @@ export function IsoFarmView({
     yardSignals,
     manurePiles,
     workers,
+    parked,
     gridW,
     gridH,
   });
@@ -1107,6 +1119,7 @@ export function IsoFarmView({
     hauls,
     manurePiles,
     workers,
+    parked,
     gridW,
     gridH,
   };
@@ -1387,6 +1400,25 @@ export function IsoFarmView({
     const fenceGroup = new THREE.Group();
     world.add(fenceGroup);
 
+    /**
+     * La cour de stationnement, hors grille.
+     *
+     * Elle vit à côté de l'île et non dedans : les engins garés ne prennent
+     * plus une case de champ, et le tracteur ne se retrouve plus planté au
+     * milieu du blé.
+     */
+    const parkingGroup = new THREE.Group();
+    world.add(parkingGroup);
+    let parkingRig: ParkingRig | null = null;
+    /**
+     * Débord de la cour à l'ouest de l'île, en unités monde.
+     *
+     * Le cadrage se réglait sur la seule grille : la cour, posée en dehors,
+     * serait tombée hors champ. On vise donc le milieu de l'ensemble, et on
+     * recule d'autant — pas davantage, sinon le champ rapetisse pour rien.
+     */
+    let parkingOverhang = 0;
+
     const raycaster = new THREE.Raycaster();
     const pointer = new THREE.Vector2();
     /** Uniquement les dalles de sol — les engins ne bloquent pas le clic */
@@ -1571,6 +1603,53 @@ export function IsoFarmView({
       return { px: ox + x * step, pz: oz + y * step };
     }
 
+    /**
+     * Monte la cour de stationnement et y range le parc.
+     *
+     * Elle se pose **contre** l'île, au sud-ouest, dans le prolongement de la
+     * cour de ferme où arrivent les camions : c'est le coin d'où l'on entre.
+     * Le chemin d'accès du modèle vient mordre le bord de l'île, sinon la cour
+     * se lit comme un radeau à la dérive.
+     */
+    function buildParking() {
+      const { parked, gridW: gw, gridH: gh } = dataRef.current;
+      const plan = parkingLayout(parked.length);
+      const rig = createParkingRig(plan, { shadows: quality.shadows });
+      rig.group.scale.setScalar(cellSize);
+
+      const ileOuest = -(gw * step + 1.4) / 2;
+      const ileSud = (gh * step + 1.4) / 2;
+      // Le chemin du modèle saille de 0,72 case au-delà de la dalle : on cale
+      // la cour pour qu'il rejoigne exactement le bord de l'île.
+      parkingOverhang = (0.72 + plan.w) * cellSize;
+      const cx = ileOuest - (0.72 + plan.w / 2) * cellSize;
+      const cz = ileSud - (plan.d / 2) * cellSize;
+      rig.group.position.set(cx, 0, cz);
+      parkingGroup.add(rig.group);
+      parkingRig = rig;
+
+      parked.forEach((machine, i) => {
+        const slot = rig.slots[i];
+        if (!slot) return;
+        const mRig = createMachineRig(machine.type, {
+          seed: i * 7 + 13,
+          shadows: quality.shadows,
+          condition: machine.condition ?? undefined,
+        });
+        mRig.group.scale.setScalar(cellSize * MACHINE_SCALE);
+        // Un parc rangé au cordeau sonne faux : chaque engin est de travers de
+        // quelques degrés, toujours les mêmes.
+        mRig.group.rotation.y = rig.heading + Math.sin(i * 3.7) * 0.06;
+        mRig.group.position.set(
+          cx + slot.x * cellSize,
+          rig.deck * cellSize,
+          cz + slot.z * cellSize,
+        );
+        world.add(mRig.group);
+        vehicleRigs.set(machine.id, mRig);
+      });
+    }
+
     function clearWorkVehicle() {
       if (workRig) {
         workGroup.remove(workRig.group);
@@ -1625,6 +1704,11 @@ export function IsoFarmView({
         rig.dispose();
       }
       vehicleRigs.clear();
+      if (parkingRig) {
+        parkingGroup.remove(parkingRig.group);
+        parkingRig.dispose();
+        parkingRig = null;
+      }
       chimneyPos = null;
       for (const b of buildingRigs) {
         buildingGroup.remove(b.rig.group);
@@ -1724,7 +1808,6 @@ export function IsoFarmView({
           let col = look === "PLAIN" ? ((x + y) % 2 === 0 ? SOIL : SOIL_DARK) : SOIL_COLORS[look];
           if (cell?.kind === "CROP") col = cropGroundColor(cell, sim);
           if (cell?.kind === "BUILDING") col = DIRT;
-          if (cell?.kind === "VEHICLE") col = PARKING;
           /* La cour, en terre battue.
              C'est là que les camions déposent, et on n'y bâtit ni n'y sème.
              Une règle qu'on ne voit pas au sol se découvre par un refus : le
@@ -1835,25 +1918,10 @@ export function IsoFarmView({
             }
           }
 
-          if (cell?.kind === "VEHICLE") {
-            const mType = (cell.machineType as MachineType) || "TRACTOR";
-            // Au parc, un outil est dételé : c'est ainsi qu'on le distingue du
-            // même outil au travail, accroché derrière son tracteur.
-            const rig = createMachineRig(mType, {
-              seed: x * 7 + y * 13,
-              shadows: quality.shadows,
-              condition: cell.machineCondition ?? undefined,
-            });
-            rig.group.scale.setScalar(cellSize * MACHINE_SCALE);
-            // Un parc rangé au cordeau sonne faux : chaque engin est posé de
-            // travers de quelques degrés, toujours les mêmes.
-            rig.group.rotation.y = PARK_HEADING + Math.sin(x * 3.7 + y * 1.9) * 0.5;
-            rig.group.position.set(px, MACHINE_GROUND, pz);
-            world.add(rig.group);
-            vehicleRigs.set(key(x, y), rig);
-          }
         }
       }
+
+      buildParking();
 
       for (const worker of dataRef.current.workers) {
         const mesh = buildCharacter(worker.appearance, { spec: worker.specialization, prop: false });
@@ -1927,7 +1995,7 @@ export function IsoFarmView({
         }
       }
 
-      viewSpan = Math.max(gw, gh) * step;
+      viewSpan = Math.max(gw * step + parkingOverhang, gh * step);
       applyCamera();
     }
 
@@ -2009,8 +2077,9 @@ export function IsoFarmView({
       if (shift) camera.setViewOffset(w, h, -shift, 0, w, h);
       else camera.clearViewOffset();
       camera.updateProjectionMatrix();
-      camera.position.set(span * 0.95 + view.panX, span * 0.85, span * 0.95 + view.panZ);
-      camera.lookAt(view.panX, 0, view.panZ);
+      const cibleX = view.panX - parkingOverhang / 2;
+      camera.position.set(span * 0.95 + cibleX, span * 0.85, span * 0.95 + view.panZ);
+      camera.lookAt(cibleX, 0, view.panZ);
     }
 
     function resize() {
@@ -3162,8 +3231,11 @@ export function IsoFarmView({
       .join("|");
     const sel = selected.map((x) => `${x.x},${x.y}`).join("|");
     const w = workers.map((x) => x.id).join("|");
-    return `${gridW}x${gridH}#${c}#${b}#${s}#${sel}#${w}`;
-  }, [cells, buildings, cellSims, selected, workers, gridW, gridH]);
+    // Le parc fait partie du décor : une machine achetée doit apparaître sur la
+    // cour sans attendre qu'une case du champ change.
+    const p = parked.map((x) => `${x.id}:${x.type}:${Math.round((x.condition ?? 100) / 5)}`).join("|");
+    return `${gridW}x${gridH}#${c}#${b}#${s}#${sel}#${w}#${p}`;
+  }, [cells, buildings, cellSims, selected, workers, parked, gridW, gridH]);
 
   useEffect(() => {
     layoutRef.current?.();

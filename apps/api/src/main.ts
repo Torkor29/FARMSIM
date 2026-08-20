@@ -1945,16 +1945,6 @@ async function seedNpcFarms() {
       const tractor = await prisma.machine.create({
         data: { farmId: farm.id, type: "TRACTOR", parkedParcelId: parcel.id },
       });
-      await prisma.parcelCell.update({
-        where: {
-          parcelId_x_y: {
-            parcelId: parcel.id,
-            x: 0,
-            y: Math.max(0, parcel.gridH - 1),
-          },
-        },
-        data: { kind: "VEHICLE", machineId: tractor.id },
-      });
       if (livestock) {
         const barn = await placeNpcBuilding(parcel.id, "CATTLE_BARN", 8, 8);
         await prisma.herd.create({
@@ -2450,13 +2440,14 @@ app.get("/world/:continent", async (req, res) => {
   });
 });
 
-/** Coin opposé au tracteur, pour poser l’étable de départ sans collision. */
-function findStarterBarnSpot(
-  gridW: number,
-  gridH: number,
-  tractorX: number,
-  tractorY: number,
-): { x: number; y: number } | null {
+/**
+ * Coin libre pour poser l'étable de départ.
+ *
+ * Elle évitait le tracteur, qui occupait alors une case. Le parc est sorti de
+ * la grille : reste la cour de ferme, où les camions déposent et où l'on ne
+ * bâtit pas.
+ */
+function findStarterBarnSpot(gridW: number, gridH: number): { x: number; y: number } | null {
   const w = BUILDING_DEFS.CATTLE_BARN.w;
   const h = BUILDING_DEFS.CATTLE_BARN.h;
   const candidates = [
@@ -2467,10 +2458,8 @@ function findStarterBarnSpot(
   ];
   for (const c of candidates) {
     if (c.x + w > gridW || c.y + h > gridH) continue;
-    const hitsTractor = footprintCells(c.x, c.y, w, h).some(
-      (p) => p.x === tractorX && p.y === tractorY,
-    );
-    if (!hitsTractor) return c;
+    if (overlapsYard({ x: c.x, y: c.y, w, h }, gridH)) continue;
+    return c;
   }
   return null;
 }
@@ -2552,26 +2541,20 @@ app.post("/world/claim", async (req, res) => {
 
       await tx.parcel.update({ where: { id: parcel.id }, data: { farmId: farm.id } });
 
-      const tractorX = 0;
-      const tractorY = Math.max(0, parcel.gridH - 1);
       const tractor = await tx.machine.findFirst({
         where: { farmId: farm.id, type: "TRACTOR" },
       });
       if (tractor) {
+        // Le tracteur se range sur la cour de stationnement, hors grille : il
+        // ne prend plus la case du coin, et le champ reste entier.
         await tx.machine.update({
           where: { id: tractor.id },
           data: { parkedParcelId: parcel.id },
         });
-        await tx.parcelCell.update({
-          where: {
-            parcelId_x_y: { parcelId: parcel.id, x: tractorX, y: tractorY },
-          },
-          data: { kind: "VEHICLE", machineId: tractor.id },
-        });
       }
 
       if (body.data.specialization === "ELEVEUR") {
-        const barnSpot = findStarterBarnSpot(parcel.gridW, parcel.gridH, tractorX, tractorY);
+        const barnSpot = findStarterBarnSpot(parcel.gridW, parcel.gridH);
         if (barnSpot) {
           const barnDef = BUILDING_DEFS.CATTLE_BARN;
           const cells = footprintCells(barnSpot.x, barnSpot.y, barnDef.w, barnDef.h);
@@ -3495,16 +3478,6 @@ app.post("/auth/register", async (req, res) => {
           await tx.machine.update({
             where: { id: machine.id },
             data: { parkedParcelId: parcel.id },
-          });
-          await tx.parcelCell.update({
-            where: {
-              parcelId_x_y: {
-                parcelId: parcel.id,
-                x: 0,
-                y: Math.max(0, parcel.gridH - 1),
-              },
-            },
-            data: { kind: "VEHICLE", machineId: machine.id },
           });
         }
       }
@@ -8861,17 +8834,9 @@ async function installMachine(
   // `Parcel` n'a pas de `createdAt` : trier dessus renvoyait un 500 muet.
   const parcel = await tx.parcel.findFirst({ where: { farmId }, orderBy: { id: "asc" } });
   if (parcel) {
-    const free = await tx.parcelCell.findFirst({
-      where: { parcelId: parcel.id, kind: "EMPTY" },
-      orderBy: [{ y: "desc" }, { x: "asc" }],
-    });
-    if (free) {
-      await tx.machine.update({ where: { id: machine.id }, data: { parkedParcelId: parcel.id } });
-      await tx.parcelCell.update({
-        where: { id: free.id },
-        data: { kind: "VEHICLE", machineId: machine.id },
-      });
-    }
+    // La cour de stationnement est hors grille : plus besoin de chercher une
+    // case libre, et un achat ne peut plus être bloqué par une ferme pleine.
+    await tx.machine.update({ where: { id: machine.id }, data: { parkedParcelId: parcel.id } });
   }
   return machine;
 }
@@ -9169,20 +9134,10 @@ app.post("/machines/buy", async (req, res) => {
     });
     const firstParcel = user.farm!.parcels[0];
     if (firstParcel) {
-      const free = await tx.parcelCell.findFirst({
-        where: { parcelId: firstParcel.id, kind: "EMPTY" },
-        orderBy: [{ y: "desc" }, { x: "asc" }],
+      await tx.machine.update({
+        where: { id: machine.id },
+        data: { parkedParcelId: firstParcel.id },
       });
-      if (free) {
-        await tx.machine.update({
-          where: { id: machine.id },
-          data: { parkedParcelId: firstParcel.id },
-        });
-        await tx.parcelCell.update({
-          where: { id: free.id },
-          data: { kind: "VEHICLE", machineId: machine.id },
-        });
-      }
     }
     return machine;
   });
@@ -9438,8 +9393,11 @@ app.post("/machines/:id/park", async (req, res) => {
     .object({
       userId: z.string(),
       parcelId: z.string(),
-      x: z.number().int(),
-      y: z.number().int(),
+      // La cour de stationnement est hors grille : la case n'a plus de sens.
+      // On tolère encore `x` et `y` pour ne pas casser un client ouvert avant
+      // la mise à jour, mais on ne s'en sert plus.
+      x: z.number().int().optional(),
+      y: z.number().int().optional(),
     })
     .safeParse(req.body);
   if (!body.success) {
@@ -9462,14 +9420,8 @@ app.post("/machines/:id/park", async (req, res) => {
     res.status(403).json({ error: "Parcelle non possédée" });
     return;
   }
-  const cell = parcel.cells.find((c) => c.x === body.data.x && c.y === body.data.y);
-  if (!cell || cell.kind !== "EMPTY") {
-    res.status(409).json({ error: "Case non libre" });
-    return;
-  }
-
   await prisma.$transaction(async (tx) => {
-    // clear old cell
+    // Une machine rangée jusqu'ici sur une case rend sa terre au champ.
     if (machine.cell) {
       await tx.parcelCell.updateMany({
         where: { machineId: machine.id },
@@ -9482,10 +9434,6 @@ app.post("/machines/:id/park", async (req, res) => {
         parkedParcelId: parcel.id,
         storedInBuildingId: null,
       },
-    });
-    await tx.parcelCell.update({
-      where: { id: cell.id },
-      data: { kind: "VEHICLE", machineId: machine.id },
     });
   });
 

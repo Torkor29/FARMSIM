@@ -22,6 +22,7 @@ export * from "./soil.js";
 export * from "./trade.js";
 export * from "./goods.js";
 export * from "./cour.js";
+export * from "./parking.js";
 export * from "./storage.js";
 export * from "./breeding.js";
 export * from "./rotation.js";

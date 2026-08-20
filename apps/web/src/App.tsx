@@ -1375,24 +1375,28 @@ export function App() {
   const gh = parcel?.gridH ?? 12;
   const grid = useMemo(() => {
     const cells = parcel?.cells ?? [];
-    const machines = visiting
-      ? (parcel?.machines ?? [])
-      : (player?.farm?.machines ?? []);
-    return cells.map((c) => {
-      const stained = { ...c, manuredUntil: manureStain[`${c.x},${c.y}`] };
-      if (c.kind !== "VEHICLE" || !c.machineId) return stained;
-      const m = machines.find((x) => x.id === c.machineId);
-      return {
-        ...stained,
-        machineType: (m?.type as MachineType | undefined) ?? "TRACTOR",
-        // L'état part jusqu'à la vue : une machine fatiguée se ternit sur le
-        // champ, sans qu'il faille ouvrir le garage.
+    return cells.map((c) => ({ ...c, manuredUntil: manureStain[`${c.x},${c.y}`] }));
+  }, [parcel?.cells, manureStain]);
+
+  /**
+   * Le parc de la ferme, tel qu'il se voit sur la cour.
+   *
+   * Un engin garé occupait une case de champ ; il est maintenant rangé sur une
+   * aire hors grille. Seule exception : la machine rentrée au hangar, qui est
+   * sous un toit et n'a rien à faire dehors.
+   */
+  const parkedMachines = useMemo(() => {
+    const machines = visiting ? (parcel?.machines ?? []) : (player?.farm?.machines ?? []);
+    return machines
+      .filter((m) => !(m as { storedInBuildingId?: string | null }).storedInBuildingId)
+      .map((m) => ({
+        id: m.id,
+        type: (m.type as MachineType) ?? "TRACTOR",
         // Sur la parcelle d'un voisin, l'API ne donne que le type : l'état
         // reste au propriétaire, et la machine s'affiche alors comme neuve.
-        machineCondition: (m as { condition?: number } | undefined)?.condition,
-      };
-    });
-  }, [parcel?.cells, parcel?.machines, player?.farm?.machines, visiting, manureStain]);
+        condition: (m as { condition?: number }).condition,
+      }));
+  }, [parcel?.machines, player?.farm?.machines, visiting]);
   const zoneName = parcel?.zone?.name ?? ownedParcels[0]?.zone?.name ?? "Votre région";
   const koppen = parcel?.zone?.koppen ?? "Cfb";
   const homeCity = parcel?.zone?.city ?? ownedParcels[0]?.zone?.city ?? "";
@@ -2412,26 +2416,6 @@ export function App() {
       return;
     }
 
-    if (tool === "PARK") {
-      flashToast("Stationnement…");
-      setBusy(true);
-      setErr(null);
-      try {
-        const free = player.farm?.machines.find((m) => !m.parkedParcelId && !m.storedInBuildingId);
-        if (!free) throw new Error("Aucun véhicule libre à stationner");
-        await api(`/machines/${free.id}/park`, {
-          method: "POST",
-          body: JSON.stringify({ userId: player.id, parcelId: activeParcelId, x, y }),
-        });
-        flashToast("Véhicule stationné");
-        await refreshPlayer();
-        await loadParcel(activeParcelId);
-      } catch (e) {
-        flashToast(e instanceof Error ? e.message : String(e), true);
-      } finally {
-        setBusy(false);
-      }
-    }
   }
 
   /**
@@ -4421,6 +4405,7 @@ export function App() {
                 return out;
               })}
               workers={[]}
+              parked={parkedMachines}
               weather={localWeather}
               /* La saison ne réglait que le ciel CSS ; la ferme, elle, était
                  éclairée pareil toute l'année. C'est la lumière qui fait la
