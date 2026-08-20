@@ -1792,6 +1792,33 @@ export function quarterTurns(rotation: number | null | undefined): 0 | 1 | 2 | 3
  * traverserait la parcelle exactement comme une T1. On ne retombe ici que
  * pour les gestes qui n'ouvrent pas de chantier — livraisons, visites.
  */
+/**
+ * Le temps que met le matériel à rejoindre le champ, en début de chantier.
+ *
+ * Vu en jouant : « le chrono s'écoule, puis le véhicule apparaît à la fin du
+ * chrono ». L'engin ne traversait pas le champ pendant le travail, il arrivait
+ * une fois tout fini — l'écran montrait donc une attente sans rien, puis un
+ * passage sans attente. C'est corrigé côté écran : la traversée occupe
+ * maintenant tout le chantier.
+ *
+ * Reste ce que le joueur avait lui-même mis derrière l'attente : « t'as mis
+ * tout ce temps à amener le matos au champ, puis tu presses ». Ce début-là a
+ * donc un nom. Une part du chantier, bornée des deux côtés : sur un gros
+ * champ, on ne va pas regarder « le matériel arrive » pendant une minute ;
+ * sur un tout petit, l'arrivée ne doit pas manger la moitié du travail.
+ */
+export const JOB_ARRIVAL_SHARE = 0.15;
+export const JOB_ARRIVAL_MIN_MS = 1_500;
+export const JOB_ARRIVAL_MAX_MS = 6_000;
+
+export function jobArrivalMs(durationMs: number): number {
+  if (durationMs <= 0) return 0;
+  const part = durationMs * JOB_ARRIVAL_SHARE;
+  return Math.round(
+    Math.min(durationMs / 2, JOB_ARRIVAL_MAX_MS, Math.max(JOB_ARRIVAL_MIN_MS, part)),
+  );
+}
+
 export function workAnimationMs(cells: number, jobMs?: number): number {
   // Un plancher reste nécessaire : à deux cases, un chantier réel dure une
   // demi-seconde, et l'œil ne verrait qu'un clignotement.

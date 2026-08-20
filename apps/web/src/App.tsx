@@ -13,6 +13,7 @@ import {
   buildingResaleValue,
   buildingUpgradeCost,
   urgentContractorQuote,
+  jobArrivalMs,
   acceptsUrgentContractor,
   acceptsLaborOrder,
   MISSION_CELLS_MIN,
@@ -1422,6 +1423,23 @@ export function App() {
     return () => clearInterval(t);
   }, []);
 
+  /**
+   * Pendant un chantier, l'horloge bat à la seconde.
+   *
+   * Le compte à rebours du bandeau lisait la même horloge que les saisons —
+   * relue chaque minute. Sur un chantier d'une minute quarante, il affichait
+   * donc « 1 min 40 » d'un bout à l'autre, puis « terminé ». Un temps qui ne
+   * descend pas ne se lit pas comme une attente, mais comme un blocage. La
+   * seconde ne bat que le temps du chantier : hors de là, rien à redessiner.
+   */
+  const chantierEnCours = Boolean(chantier);
+  useEffect(() => {
+    if (!chantierEnCours) return;
+    setHorloge(Date.now());
+    const t = setInterval(() => setHorloge(Date.now()), 1_000);
+    return () => clearInterval(t);
+  }, [chantierEnCours]);
+
   const continentName = parcel?.zone?.continentName ?? "";
   const homeContinentCode =
     parcel?.zone?.continentCode ?? ownedParcels[0]?.zone?.continentCode ?? null;
@@ -2751,8 +2769,7 @@ export function App() {
       await loadParcel(activeParcelId);
     } catch (e) {
       flashToast(e instanceof Error ? e.message : String(e), true);
-      setPulseCells([]);
-      setActiveWork(null);
+      stopWork();
     } finally {
       setBusy(false);
     }
@@ -2776,13 +2793,23 @@ export function App() {
     return outil ?? "TRACTOR";
   }
 
+  /**
+   * Minuteries de l'engin au travail.
+   *
+   * Deux chantiers lancés coup sur coup partageaient les mêmes minuteries
+   * anonymes : celle du premier effaçait l'engin du second en plein parcours.
+   * On les garde pour pouvoir les annuler.
+   */
+  const workTimers = useRef<number[]>([]);
+
   function flashWork(
     type: MachineType,
     cells: { x: number; y: number }[],
     cut?: "harvest" | "mow",
-    extra?: { haul?: boolean; cargo?: string; jobMs?: number },
+    extra?: { haul?: boolean; cargo?: string; jobMs?: number; delayMs?: number },
   ) {
-    setPulseCells(cells);
+    for (const t of workTimers.current) window.clearTimeout(t);
+    workTimers.current = [];
     // L'engin envoyé au chantier est celui du garage : il arrive avec son
     // usure, visible sur sa carrosserie.
     const used = (player?.farm?.machines ?? []).find((m) => m.type === type);
@@ -2790,21 +2817,52 @@ export function App() {
     // moissonneuse T3 — deux fois plus rapide au compteur — traverserait le
     // champ comme une T1, et le palier ne se verrait nulle part.
     const duree = workAnimationMs(cells.length, extra?.jobMs);
-    setActiveWork({
-      type,
-      cells,
-      cut,
-      haul: extra?.haul,
-      cargo: extra?.cargo,
-      condition: used?.condition,
-      durationMs: duree,
-    });
-    // Un peu de marge sur la durée du parcours : l'engin doit atteindre la
-    // dernière case avant qu'on ne l'efface.
-    window.setTimeout(() => {
-      setPulseCells([]);
-      setActiveWork(null);
-    }, duree + 250);
+    /*
+     * Le temps d'amener le matériel.
+     *
+     * Le champ ne s'allume pas non plus pendant ce temps-là : « le matériel
+     * arrive au champ » et un engin déjà en train de presser, ce serait dire
+     * une chose et en montrer une autre. Les cases s'allument quand l'engin
+     * y entre.
+     */
+    const partir = () => {
+      setPulseCells(cells);
+      setActiveWork({
+        type,
+        cells,
+        cut,
+        haul: extra?.haul,
+        cargo: extra?.cargo,
+        condition: used?.condition,
+        durationMs: duree,
+      });
+      // Un peu de marge sur la durée du parcours : l'engin doit atteindre la
+      // dernière case avant qu'on ne l'efface.
+      workTimers.current.push(
+        window.setTimeout(() => {
+          setPulseCells([]);
+          setActiveWork(null);
+        }, duree + 250),
+      );
+    };
+    const attente = Math.max(0, extra?.delayMs ?? 0);
+    if (attente === 0) partir();
+    else workTimers.current.push(window.setTimeout(partir, attente));
+  }
+
+  /**
+   * Rappeler l'engin — y compris celui qui n'est pas encore entré.
+   *
+   * Un travail refusé après l'ouverture du chantier laissait sinon arriver,
+   * quelques secondes plus tard, une machine dont le travail n'aura pas lieu :
+   * elle attend son tour dans une minuterie, et remettre l'état à zéro ne la
+   * retient pas.
+   */
+  function stopWork() {
+    for (const t of workTimers.current) window.clearTimeout(t);
+    workTimers.current = [];
+    setPulseCells([]);
+    setActiveWork(null);
   }
 
   /** Tracteur + remorque sur la parcelle d’arrivée, comme chez le voisin. */
@@ -2856,7 +2914,7 @@ export function App() {
     work: FarmWork,
     cells: { x: number; y: number }[],
     crop?: CropCode,
-  ): Promise<{ id: string; durationMs: number } | null> {
+  ): Promise<{ id: string; durationMs: number; endsAt: number } | null> {
     if (!player || !activeParcelId) return null;
     const r = await api<{ job: { id: string; endsAt: string; durationMs: number } }>(
       `/parcels/${activeParcelId}/jobs`,
@@ -2867,10 +2925,25 @@ export function App() {
     );
     const fin = new Date(r.job.endsAt).getTime();
     setChantier({ work, cells, endsAt: fin, durationMs: r.job.durationMs });
-    const reste = fin - Date.now();
+    return { id: r.job.id, durationMs: r.job.durationMs, endsAt: fin };
+  }
+
+  /**
+   * Attendre la fin du chantier — **après** avoir lancé l'engin.
+   *
+   * L'attente vivait dans `ouvrirChantier`, qui ne rendait la main qu'une fois
+   * le travail terminé. L'animation, appelée juste après, ne partait donc
+   * qu'à ce moment-là : « le chrono s'écoule, puis le véhicule apparaît à la
+   * fin du chrono ». On voyait une attente sans engin, puis un engin sans
+   * attente — exactement l'inverse de ce qui se passe dans un champ.
+   *
+   * Ouvrir et attendre sont deux gestes séparés : entre les deux, l'appelant
+   * met l'engin en route, et il traverse pendant tout le chrono.
+   */
+  async function attendreChantier(endsAt: number): Promise<void> {
+    const reste = endsAt - Date.now();
     if (reste > 0) await new Promise((resolve) => window.setTimeout(resolve, reste + 60));
     setChantier(null);
-    return { id: r.job.id, durationMs: r.job.durationMs };
   }
 
   async function runWorkOnCells(cells: { x: number; y: number }[]) {
@@ -2889,14 +2962,22 @@ export function App() {
         const chantierOuvert = await ouvrirChantier(work, workCells, plantCrop ?? undefined);
         if (!chantierOuvert) return;
         jobId = chantierOuvert.id;
-        // L'engin traverse le champ pendant que le chantier tourne : c'est la
-        // même durée des deux côtés, pas deux horloges qui divergent.
+        /*
+         * L'engin part **avec** le chrono, pas après lui.
+         *
+         * Le début du chrono, c'est le matériel qui arrive au champ : le
+         * bandeau le dit, et l'engin n'entre qu'ensuite. Il traverse alors
+         * tout le reste du chantier — même durée des deux côtés, pas deux
+         * horloges qui divergent.
+         */
+        const arrivee = jobArrivalMs(chantierOuvert.durationMs);
         flashWork(
           tool === "HARVEST" && selectedAreGrass ? "TRACTOR" : workMachineForTool(tool),
           workCells,
           harvestCut,
-          { jobMs: chantierOuvert.durationMs },
+          { jobMs: chantierOuvert.durationMs - arrivee, delayMs: arrivee },
         );
+        await attendreChantier(chantierOuvert.endsAt);
       }
       if (plantCrop) {
         const crop = plantCrop;
@@ -3065,9 +3146,12 @@ export function App() {
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e));
       flashToast(e instanceof Error ? e.message : String(e), true);
-      setPulseCells([]);
-      setActiveWork(null);
+      stopWork();
     } finally {
+      // Le bandeau ne survit jamais à la sortie : ouvrir et attendre étant
+      // deux gestes séparés, un échec entre les deux le laisserait sinon
+      // tourner à vide jusqu'au prochain chantier.
+      setChantier(null);
       setBusy(false);
     }
   }
@@ -3113,12 +3197,14 @@ export function App() {
       const work: FarmWork = readyAreGrass ? "MOW" : "HARVEST";
       const chantier = await ouvrirChantier(work, readyCells);
       if (!chantier) return;
+      const arrivee = jobArrivalMs(chantier.durationMs);
       flashWork(
         readyAreGrass ? "TRACTOR" : "HARVESTER",
         readyCells,
         readyAreGrass ? "mow" : "harvest",
-        { jobMs: chantier.durationMs },
+        { jobMs: chantier.durationMs - arrivee, delayMs: arrivee },
       );
+      await attendreChantier(chantier.endsAt);
       const r = await api<{
         totalTons: number;
         soldTons?: number;
@@ -3149,9 +3235,9 @@ export function App() {
       await loadParcel(activeParcelId);
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e));
-      setPulseCells([]);
-      setActiveWork(null);
+      stopWork();
     } finally {
+      setChantier(null);
       setBusy(false);
     }
   }
@@ -4379,7 +4465,9 @@ export function App() {
   const chantierBar = chantier ? (
     <div className="chantier-bar" role="status" aria-live="polite">
       <span className="chantier-nom">
-        {WORK_LABELS[chantier.work] ?? chantier.work} · {chantier.cells.length} cases
+        {horloge - (chantier.endsAt - chantier.durationMs) < jobArrivalMs(chantier.durationMs)
+          ? "Le matériel arrive au champ…"
+          : `${WORK_LABELS[chantier.work] ?? chantier.work} · ${chantier.cells.length} cases`}
       </span>
       <span className="chantier-piste">
         <span
