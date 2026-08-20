@@ -38,6 +38,23 @@ export const BAYS_PER_ROW = 5;
  */
 export const MIN_BAYS = 4;
 
+/**
+ * La cour s'agrandit par paires.
+ *
+ * Elle pourrait suivre le parc à la place près, mais une place qui apparaît
+ * seule au moment de l'achat ne se remarque pas : elle est aussitôt occupée.
+ * En ajoutant deux places d'un coup, il en reste toujours une de libre, et
+ * l'agrandissement **se voit** — c'est ce qui dit au joueur que sa cour a
+ * grandi avec sa ferme, sans qu'il ait rien eu à acheter.
+ *
+ * Car rien ne s'achète ici, et c'est délibéré : refuser une machine faute de
+ * place répéterait le défaut qu'on vient de corriger sur les livraisons, où
+ * bien jouer finissait par bloquer les achats. La décision payante existe
+ * déjà, et elle est ailleurs — le hangar matériel, qui abrite les engins et
+ * les use moins vite.
+ */
+export const BAY_STEP = 2;
+
 export type ParkingLayout = {
   /** Places dessinées, toujours au moins `MIN_BAYS` */
   bays: number;
@@ -57,11 +74,12 @@ const MARGIN = 0.3;
 /**
  * Dimensionne la cour pour un parc donné.
  *
- * L'aire grandit avec le parc, jamais l'inverse : une machine vendue ne fait
- * pas rétrécir le béton sous les autres au prochain rendu.
+ * Les places se créent toutes seules, par paires, et gratuitement : la cour
+ * suit la ferme au lieu de la freiner.
  */
 export function parkingLayout(machines: number): ParkingLayout {
-  const bays = Math.max(MIN_BAYS, Math.max(0, Math.floor(machines)));
+  const parc = Math.max(0, Math.floor(machines));
+  const bays = Math.max(MIN_BAYS, Math.ceil(parc / BAY_STEP) * BAY_STEP);
   const perRow = Math.min(bays, BAYS_PER_ROW);
   const rows = Math.ceil(bays / perRow);
   return {

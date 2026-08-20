@@ -4863,7 +4863,20 @@ export function App() {
                         {grease >= GREASE_OK && !dirty && !panne ? " · propre et graissé (+)" : ""}
                         {dirty ? " · sale" : ""}
                         {panne ? ` · panne ${panne}` : ""}
-                        {m.storedInBuildingId ? " · hangar" : m.parkedParcelId ? " · parcelle" : ""}
+                        {/* Où dort l'engin décide de sa longévité : sous un toit
+                            il s'use 15 % moins vite. La règle existait dans la
+                            simulation sans jamais s'afficher — donc elle ne
+                            décidait de rien. */}
+                        {m.storedInBuildingId ? (
+                          <>
+                            {" · "}
+                            <b title="Sous un toit : 15 % d’usure en moins">à l’abri</b>
+                          </>
+                        ) : (
+                          <span title="Dehors, la machine s’use 15 % plus vite qu’au hangar">
+                            {" · à la cour"}
+                          </span>
+                        )}
                       </div>
                       <div
                         className={`grease-gauge ${grease <= 0 ? "empty" : grease < GREASE_OK ? "low" : ""}`}

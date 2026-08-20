@@ -529,7 +529,8 @@ export const BUILDING_DEFS: Record<BuildingType, BuildingDef> = {
     w: 3,
     h: 2,
     cost: 1500,
-    description: "Range jusqu’à 6 engins sans occuper la cour.",
+    description:
+      "Range jusqu’à 6 engins à l’abri : sous un toit, une machine s’use 15 % moins vite qu’à la cour.",
     machineSlots: 6,
   },
   CATTLE_BARN: {

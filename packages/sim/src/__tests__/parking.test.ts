@@ -2,6 +2,7 @@ import {
   BAYS_PER_ROW,
   BAY_ACROSS,
   BAY_ALONG,
+  BAY_STEP,
   MIN_BAYS,
   parkingLayout,
   parkingSlot,
@@ -18,19 +19,48 @@ describe("la cour de stationnement", () => {
   it("dessine au moins quatre places, même pour un seul tracteur", () => {
     expect(parkingLayout(0).bays).toBe(MIN_BAYS);
     expect(parkingLayout(1).bays).toBe(MIN_BAYS);
-    expect(parkingLayout(MIN_BAYS + 3).bays).toBe(MIN_BAYS + 3);
   });
 
-  it("empile une seconde rangée plutôt que de s'allonger sans fin", () => {
-    const petite = parkingLayout(BAYS_PER_ROW);
-    expect(petite.rows).toBe(1);
-    expect(petite.perRow).toBe(BAYS_PER_ROW);
+  it("s'agrandit par paires, et garde toujours une place d'avance", () => {
+    // Une place ajoutée seule est occupée aussitôt : l'agrandissement ne se
+    // verrait pas. Par deux, il en reste une de libre après l'achat.
+    for (const parc of [5, 6, 7, 8, 9]) {
+      const { bays } = parkingLayout(parc);
+      expect(`${parc} places=${bays} ${bays % BAY_STEP === 0}`).toBe(
+        `${parc} places=${bays} true`,
+      );
+      expect(bays).toBeGreaterThanOrEqual(parc);
+    }
+    expect(parkingLayout(5).bays).toBe(6);
+    expect(parkingLayout(6).bays).toBe(6);
+    expect(parkingLayout(7).bays).toBe(8);
+  });
 
-    const grande = parkingLayout(BAYS_PER_ROW + 1);
-    expect(grande.rows).toBe(2);
-    // L'aire s'épaissit vers l'ouest, elle ne s'étire pas davantage.
-    expect(grande.d).toBe(petite.d);
-    expect(grande.w).toBeGreaterThan(petite.w);
+  it("ne refuse jamais une machine : la cour suit le parc", () => {
+    // Aucune place ne s'achète. Un parc de trente engins a trente places, et
+    // acheter ne peut donc pas échouer faute de cour.
+    for (const parc of [1, 12, 30]) {
+      expect(parkingLayout(parc).bays).toBeGreaterThanOrEqual(parc);
+    }
+  });
+
+  it("empile une rangée de plus plutôt que de s'allonger sans fin", () => {
+    // Une fois la rangée pleine, la cour s'épaissit vers l'ouest : allongée
+    // sans fin, elle sortirait du cadrage avant la dixième machine.
+    const pleine = parkingLayout(BAYS_PER_ROW * 2);
+    expect(pleine.perRow).toBe(BAYS_PER_ROW);
+    expect(pleine.rows).toBe(2);
+
+    const grande = parkingLayout(BAYS_PER_ROW * 2 + 2);
+    expect(grande.rows).toBe(3);
+    expect(grande.d).toBe(pleine.d);
+    expect(grande.w).toBeGreaterThan(pleine.w);
+  });
+
+  it("ne met jamais plus de cinq places dans une rangée", () => {
+    for (const parc of [1, 4, 6, 9, 14, 40]) {
+      expect(parkingLayout(parc).perRow).toBeLessThanOrEqual(BAYS_PER_ROW);
+    }
   });
 
   it("ne fait jamais se chevaucher deux places", () => {
