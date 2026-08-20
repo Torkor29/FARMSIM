@@ -1925,6 +1925,19 @@ button.blocked:active { opacity: 0.72; }
   color: var(--muted);
   line-height: 1.3;
 }
+/* Ce qu'un palier de bâtiment a acheté, dit à l'endroit où la corvée se
+   faisait. On améliore, on revient traire par habitude, et sans cette ligne on
+   ne voit jamais ce qu'on a payé. */
+.geste-auto {
+  margin: 0 0 0.5rem;
+  padding: 0.4rem 0.6rem;
+  border-radius: var(--r-sm, 6px);
+  border-left: 3px solid var(--teal-500, #2f7d6b);
+  background: color-mix(in srgb, var(--teal-500, #2f7d6b) 10%, transparent);
+  font-size: 0.78rem;
+  line-height: 1.35;
+  color: var(--ink);
+}
 /* Quatre colonnes — vignette, nom, saisie, bouton — ne tiennent pas dans la
    largeur d'un téléphone : la colonne souple s'écrasait à zéro et le prix
    passait sous l'étiquette « Combien (tonnes) ». Le nom garde sa ligne, la

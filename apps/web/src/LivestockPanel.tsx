@@ -15,6 +15,7 @@ import {
   ANIMAL_PLURAL,
   feedAutonomyMs,
   rationCycles,
+  autoCollects,
   troughCapacity,
   BUILDING_ART,
   BUILDING_DEFS,
@@ -28,6 +29,13 @@ import {
  *
  * « 0 j » pour un quart d'heure restant ne prévient de rien ; « 15 min » si.
  */
+/** Ce que la mécanisation prend en charge, par espèce. */
+const RAMASSAGE_AUTO: Partial<Record<AnimalKind, string>> = {
+  COW: "Traite automatique",
+  HEN: "Ramassage automatique des œufs",
+  SHEEP: "Tonte automatique",
+};
+
 /**
  * Un débit par cycle, dit par jour réel.
  *
@@ -1025,6 +1033,16 @@ export function LivestockPanel({
             {herd && (
               <section className="barn-part gestes">
                 <h4>Gestes</h4>
+                {/* Ce que le palier a acheté, dit à l'endroit où la corvée se
+                    faisait. Sans cette ligne, on améliore le bâtiment, on
+                    revient traire par habitude, et on ne voit jamais ce qu'on
+                    a payé. */}
+                {autoCollects(barn.level) && RAMASSAGE_AUTO[herd.kind as AnimalKind] && (
+                  <p className="geste-auto">
+                    {RAMASSAGE_AUTO[herd.kind as AnimalKind]} — le bâtiment s’en charge seul, en
+                    continu. Le bouton reste là pour vider la cuve tout de suite.
+                  </p>
+                )}
                 <div className="barn-actions">
                   {herd.kind === "COW" && (
                     <Geste

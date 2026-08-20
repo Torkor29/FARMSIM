@@ -135,6 +135,43 @@ export function feedAutonomyMs(input: {
   return cycles * (input.cycleMs ?? LIVESTOCK_CYCLE_MS);
 }
 
+/**
+ * À partir de quel niveau le bâtiment ramasse la production tout seul `[GD]`.
+ *
+ * « J'ai mis l'étable niveau 2 mais je dois toujours me taper le lait à traire
+ * moi-même. » Le reproche est juste : améliorer un bâtiment coûtait cher et ne
+ * changeait rien à la corvée. Or la traite se refait toutes les quinze minutes
+ * réelles — c'est le rythme d'un cycle —, ce qui condamne à revenir sans
+ * cesse ou à perdre du lait.
+ *
+ * Le premier palier installe donc **la salle de traite** : au-delà, le lait,
+ * les œufs et la laine tombent au silo à chaque tick, sans un clic. Le niveau 1
+ * garde le geste à la main, ce qui lui donne enfin une raison d'être amélioré.
+ */
+export const AUTO_COLLECT_LEVEL = 2;
+
+/** Le bâtiment ramasse-t-il tout seul, à ce niveau ? */
+export function autoCollects(barnLevel: number): boolean {
+  return Math.round(barnLevel) >= AUTO_COLLECT_LEVEL;
+}
+
+/**
+ * Ce que la cuve peut accumuler avant que la production ne soit perdue,
+ * en cycles `[GD]`.
+ *
+ * Le plafond était de **deux cycles**, soit trente minutes d'horloge : passé ce
+ * délai, tout ce que les bêtes produisaient disparaissait sans un mot. Le même
+ * défaut que la ration, vu de l'autre côté — une journée de travail ou une nuit
+ * de sommeil suffisait à tout perdre.
+ *
+ * La cuve tient maintenant un jour réel. Une ferme qu'on visite une fois par
+ * jour ne perd donc rien ; au-delà, la production plafonne, ce qui garde une
+ * raison de revenir.
+ */
+export function collectCapCycles(cycleMs = LIVESTOCK_CYCLE_MS): number {
+  return rationCycles(cycleMs);
+}
+
 /** Traite / œufs / laine : prêt au bout de 15 % d’un cycle. */
 export const COLLECT_READY_RATIO = 0.15;
 

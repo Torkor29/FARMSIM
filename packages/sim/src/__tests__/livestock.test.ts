@@ -1,4 +1,8 @@
 import {
+  autoCollects,
+  AUTO_COLLECT_LEVEL,
+  collectCapCycles,
+  LIVESTOCK_CYCLE_MS,
   rationToServe,
   feedAutonomyMs,
   troughCapacity,
@@ -8,7 +12,6 @@ import {
   GRAZING_REFUSAL_LABELS,
   HAPPINESS,
   HAPPINESS_LABELS,
-  LIVESTOCK_CYCLE_MS,
   LIVESTOCK_HOUR_MS,
   MEAT_MATURITY_MS,
   MILK_BASE_PER_COW,
@@ -733,5 +736,39 @@ describe("une ration tient un jour réel", () => {
 
   it("un lot sans besoin n'a pas d'autonomie infinie", () => {
     expect(feedAutonomyMs({ besoinParCycle: 0, feedStock: 500 })).toBe(0);
+  });
+});
+
+/**
+ * Améliorer un bâtiment doit se sentir.
+ *
+ * « J'ai mis l'étable niveau 2 mais je dois toujours me taper le lait à traire
+ * moi-même. » Le palier coûtait cher et ne changeait rien à la corvée — d'autant
+ * que la traite se refait toutes les quinze minutes réelles.
+ */
+describe("la mécanisation d'un bâtiment", () => {
+  it("ne ramasse pas toute seule au niveau le plus rustique", () => {
+    expect(autoCollects(1)).toBe(false);
+  });
+
+  it("ramasse dès le premier palier, et à tous les suivants", () => {
+    for (let n = AUTO_COLLECT_LEVEL; n <= 5; n++) {
+      expect(`niveau ${n} ${autoCollects(n)}`).toBe(`niveau ${n} true`);
+    }
+  });
+});
+
+describe("la cuve de production", () => {
+  it("tient un jour réel, et non une demi-heure", () => {
+    // Le plafond valait deux cycles, soit trente minutes d'horloge : passé ce
+    // délai, tout ce que les bêtes produisaient disparaissait sans un mot. Une
+    // nuit de sommeil suffisait à tout perdre.
+    const heures = (collectCapCycles() * LIVESTOCK_CYCLE_MS) / 3_600_000;
+    expect(Math.round(heures)).toBe(24);
+  });
+
+  it("plafonne quand même : il reste une raison de revenir", () => {
+    expect(Number.isFinite(collectCapCycles())).toBe(true);
+    expect(collectCapCycles()).toBeGreaterThan(2);
   });
 });

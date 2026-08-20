@@ -218,6 +218,9 @@ import {
   settleSaleTons,
   GRAZING_REFUSAL_LABELS,
   LIVESTOCK_CYCLE_MS,
+  autoCollects,
+  collectCapCycles,
+  COLLECT_READY_RATIO,
   collectProgress,
   collectReady,
   MEAT_MATURITY_MS,
@@ -6793,12 +6796,75 @@ async function settleAllHerds() {
     const zone = barn.parcel.zone;
     const season = currentSeason((zone?.hemisphere as Hemisphere) ?? "N", now);
     const weather = weatherByZone.get(zone?.code ?? "") ?? "CLEAR";
-    await settleHerd(herd, paddock.capacity, now, barn.level, capacity, {
+    const apres = await settleHerd(herd, paddock.capacity, now, barn.level, capacity, {
       season,
       weather,
       paddockCells: paddock.cells,
     });
+    // La salle de traite fait son travail, que le joueur regarde ou non.
+    await ramasserAutomatiquement(herd, barn.level, apres.size, now);
   }
+}
+
+/**
+ * Ramasse la production d'un lot quand le bâtiment est mécanisé.
+ *
+ * Le reproche était direct : « j'ai mis l'étable niveau 2 mais je dois toujours
+ * me taper le lait à traire moi-même ». Améliorer coûtait cher et ne changeait
+ * rien à la corvée — d'autant que la traite se refait toutes les quinze minutes
+ * réelles. À partir du premier palier, le lait, les œufs et la laine tombent
+ * donc au silo tout seuls.
+ *
+ * Le calcul est **exactement** celui des routes manuelles : même rendement,
+ * même plafond de cuve, même horodatage. Automatiser ne doit rien changer à ce
+ * qu'on récolte, seulement au nombre de clics.
+ */
+async function ramasserAutomatiquement(
+  herd: {
+    id: string;
+    farmId: string;
+    kind: string;
+    happiness: number;
+    feedQuality: number;
+    lastMilkedAt: Date | null;
+    bornAt: Date;
+  },
+  barnLevel: number,
+  taille: number,
+  now: number,
+): Promise<void> {
+  if (!autoCollects(barnLevel) || taille <= 0) return;
+
+  const since = herd.lastMilkedAt?.getTime() ?? herd.bornAt.getTime();
+  const cycles = Math.min(collectCapCycles(), (now - since) / LIVESTOCK_CYCLE_MS);
+  // Le même seuil qu'à la main : on ne trait pas un lot qui vient de l'être.
+  if (cycles < COLLECT_READY_RATIO) return;
+
+  const commun = {
+    herdSize: taille,
+    happiness: herd.happiness,
+    barnLevel,
+    feedQuality: herd.feedQuality,
+  };
+  let bien: TradeGood | null = null;
+  let quantite = 0;
+  if (herd.kind === "COW") {
+    bien = "MILK";
+    // Le lait se compte en hectolitres au silo : cent litres la tonne d'échange.
+    quantite = Math.round(((milkYield(commun) * cycles) / 100) * 1000) / 1000;
+  } else if (herd.kind === "HEN") {
+    bien = "EGGS";
+    quantite = Math.round(eggYield(commun) * cycles * 100) / 100;
+  } else if (herd.kind === "SHEEP") {
+    bien = "WOOL";
+    quantite = Math.round(woolYield(commun) * cycles * 1000) / 1000;
+  }
+  if (!bien || quantite <= 0) return;
+
+  await prisma.$transaction(async (tx) => {
+    await addToStock(tx, herd.farmId, bien, quantite, 0, 3);
+    await tx.herd.update({ where: { id: herd.id }, data: { lastMilkedAt: new Date(now) } });
+  });
 }
 
 /** Fait vieillir le bonheur d'un troupeau jusqu'à maintenant. */
@@ -8184,7 +8250,9 @@ app.post("/herds/:id/milk", async (req, res) => {
 
   const now = Date.now();
   const since = herd.lastMilkedAt?.getTime() ?? herd.bornAt.getTime();
-  const cycles = Math.min(2, (now - since) / LIVESTOCK_CYCLE_MS);
+  // La cuve tient un jour réel, plus trente minutes : au-delà de deux cycles,
+  // tout ce que les bêtes produisaient disparaissait sans un mot.
+  const cycles = Math.min(collectCapCycles(), (now - since) / LIVESTOCK_CYCLE_MS);
   if (cycles < 0.15) {
     const wait = Math.ceil(((0.15 - cycles) * LIVESTOCK_CYCLE_MS) / 1000);
     res.status(409).json({ error: `Les vaches viennent d'être traites — ${wait} s` });
@@ -8250,7 +8318,9 @@ app.post("/herds/:id/collect-eggs", async (req, res) => {
 
   const now = Date.now();
   const since = herd.lastMilkedAt?.getTime() ?? herd.bornAt.getTime();
-  const cycles = Math.min(2, (now - since) / LIVESTOCK_CYCLE_MS);
+  // La cuve tient un jour réel, plus trente minutes : au-delà de deux cycles,
+  // tout ce que les bêtes produisaient disparaissait sans un mot.
+  const cycles = Math.min(collectCapCycles(), (now - since) / LIVESTOCK_CYCLE_MS);
   if (cycles < 0.15) {
     const wait = Math.ceil(((0.15 - cycles) * LIVESTOCK_CYCLE_MS) / 1000);
     res.status(409).json({ error: `Les œufs viennent d'être ramassés — ${wait} s` });
@@ -8302,7 +8372,9 @@ app.post("/herds/:id/shear", async (req, res) => {
 
   const now = Date.now();
   const since = herd.lastMilkedAt?.getTime() ?? herd.bornAt.getTime();
-  const cycles = Math.min(2, (now - since) / LIVESTOCK_CYCLE_MS);
+  // La cuve tient un jour réel, plus trente minutes : au-delà de deux cycles,
+  // tout ce que les bêtes produisaient disparaissait sans un mot.
+  const cycles = Math.min(collectCapCycles(), (now - since) / LIVESTOCK_CYCLE_MS);
   if (cycles < 0.15) {
     const wait = Math.ceil(((0.15 - cycles) * LIVESTOCK_CYCLE_MS) / 1000);
     res.status(409).json({ error: `Les moutons viennent d'être tondus — ${wait} s` });
