@@ -1648,6 +1648,29 @@ describe("un chantier prend du temps", () => {
     });
     assert.equal(lance.statut, 201);
 
+    /*
+     * On fige le chantier au champ, au lieu de courir après lui.
+     *
+     * `FARMSIM_JOB_SPEED` ramène un semis de huit cases à environ une seconde,
+     * et ce test fait encore deux allers-retours HTTP avant de vendre. Sur un
+     * exécuteur chargé, le chantier finissait dans l'intervalle : l'attelage
+     * était rentré, la vente passait, et le test échouait sans que rien ne
+     * soit cassé. Un test d'invariant qui dépend de la vitesse de la machine
+     * ne prouve rien — et celui-ci gardait la porte du déploiement.
+     *
+     * Ce qu'on veut vérifier n'est pas « le chantier dure-t-il assez
+     * longtemps » mais « un attelage parti au champ se vend-il ». On pose donc
+     * l'état voulu, et on l'éprouve.
+     */
+    const jobId = (lance.corps as unknown as { job: { id: string } }).job.id;
+    const loin = new Date(Date.now() + 60 * 60_000).toISOString();
+    prismaExec(`UPDATE "FieldJob" SET "endsAt" = '${loin}' WHERE id = '${jobId}';`);
+    prismaExec(
+      `UPDATE "Machine" SET "busyUntil" = '${loin}' WHERE id IN (` +
+        `SELECT "machineId" FROM "FieldJob" WHERE id = '${jobId}' ` +
+        `UNION SELECT "tractorId" FROM "FieldJob" WHERE id = '${jobId}');`,
+    );
+
     const parc = (await appel("/auth/me", { jeton: moi.jeton })).corps as unknown as {
       player: { farm: { machines: { id: string; type: string; busyUntil: string | null }[] } };
     };
