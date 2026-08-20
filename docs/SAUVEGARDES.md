@@ -1,8 +1,13 @@
 # Sauvegardes — ce qu'il faut taper
 
-Tout FARMSIM tient dans un fichier : `/data/farmsim.db`, sur le volume Docker
-`farmsim-data`. Comptes, fermes, parcelles, argent, troupeaux. S'il disparaît,
-tout disparaît.
+Tout FARMSIM tient dans une base PostgreSQL, portée par le conteneur
+`farmsim-db` et son volume `farmsim-pg`. Comptes, fermes, parcelles, argent,
+troupeaux. Si ce volume disparaît, tout disparaît.
+
+Les sauvegardes sont des fichiers `.dump` (format `pg_dump` custom, compressé)
+dans `/var/backups/farmsim`. Chacune est **vérifiée en étant restaurée pour de
+bon** dans une base jetable avant d'être conservée : une sauvegarde qu'on n'a
+jamais relue n'est pas une sauvegarde, c'est une intention.
 
 Ce document est fait pour être lu **le jour où ça va mal**, souvent depuis un
 téléphone. Les explications sont dans les scripts ; ici, il n'y a que des
@@ -56,14 +61,14 @@ conservées, soit environ 230 Mo et deux semaines de recul.
 
 ```bash
 sudo bash /opt/farmsim/scripts/farmsim-restore.sh              # 1. lister
-sudo bash /opt/farmsim/scripts/farmsim-restore.sh farmsim-2026-08-17T032000Z.db
+sudo bash /opt/farmsim/scripts/farmsim-restore.sh farmsim-2026-08-17T032000Z.dump
 ```
 
 Le script demande de taper `RESTAURER` en toutes lettres. Avant d'écraser
 quoi que ce soit, il :
 
 1. **relit la sauvegarde** et refuse de continuer si elle est abîmée ou vide ;
-2. **met la base actuelle de côté** sous `avant-restauration-<date>.db` — si
+2. **met la base actuelle de côté** sous `avant-restauration-<date>.dump` — si
    l'on s'aperçoit qu'on a restauré la mauvaise, on peut revenir ;
 3. arrête le jeu, remplace le fichier, redémarre, et attend que
    `/api/health` réponde.
@@ -92,12 +97,14 @@ est donc toujours réversible.
 
 | Quoi | Où |
 |---|---|
-| L'instantané emporte le journal WAL | `scripts/__tests__/sauvegarde.test.mjs` |
+| L'instantané emporte ce qui vient d'être écrit | `scripts/__tests__/sauvegarde.test.mjs` |
+| La sauvegarde est **restaurée** avant d'être gardée | idem |
 | Une sauvegarde corrompue est refusée | idem |
 | Une sauvegarde vide est refusée | idem |
 | Un fichier raté n'est jamais laissé sur le disque | idem |
 | La rotation ne garde que les plus récentes | idem |
-| **Une restauration après perte totale rend les données** | idem |
+| **Une restauration après perte totale de la base rend les données** | idem |
+| L'enveloppe shell ne met aucun mot de passe en dur | idem |
 
 Ces tests tournent à chaque intégration, avant chaque déploiement. C'est
 volontaire : une sauvegarde qu'on n'a jamais restaurée n'est pas une
@@ -105,17 +112,25 @@ sauvegarde, c'est un fichier dont on espère quelque chose.
 
 ---
 
-## Pourquoi `VACUUM INTO` et pas une copie
+## Pourquoi `pg_dump` et pas une copie des fichiers
 
-Copier `farmsim.db` pendant que le jeu tourne donne une base éventuellement
-corrompue : on peut attraper une écriture à moitié faite. Et en mode WAL, les
-transactions validées vivent dans un fichier `-wal` séparé — une copie du seul
-`.db` les laisserait derrière elle, sans que rien ne le signale.
+Copier le répertoire de données de PostgreSQL pendant que le jeu tourne donne
+une base éventuellement incohérente : on attrape des pages écrites à des
+instants différents, et rien ne le signale au moment de la copie.
 
-`VACUUM INTO` passe par le moteur SQLite : il écrit un fichier neuf et
-cohérent, WAL compris, sans interrompre les joueurs. C'est ce que fait
-`scripts/farmsim-backup.mjs`, et c'est cette propriété que teste
-« emporte ce qui n'est encore que dans le journal WAL ».
+`pg_dump` passe par le moteur : il lit dans une transaction, à un instant
+unique, sans interrompre les joueurs. Le format « custom » (`-Fc`) est
+compressé et se restaure table par table au besoin — ce qu'un fichier SQL à
+plat ne permet pas.
+
+## Pourquoi la sauvegarde est restaurée avant d'être gardée
+
+`scripts/farmsim-backup.mjs` ne se contente pas de lire le sommaire de
+l'archive : il la **restaure dans une base jetable**, y compte les tables
+vitales, puis jette la base. C'est plus long, et c'est la seule vérification
+qui prouve ce qu'on veut savoir — que le fichier est restaurable le jour où
+tout aura brûlé. Une sauvegarde qui échoue à ce contrôle est effacée : un
+fichier corrompu portant la date du jour est pire que pas de fichier.
 
 ---
 

@@ -1,4 +1,10 @@
 #!/usr/bin/env bash
+#
+# ⚠ Ce script ne s'applique qu'à l'**ancienne base SQLite**, celle du volume
+# `farmsim-data`. Il a servi une dernière fois juste avant la bascule vers
+# PostgreSQL (voir docs/POSTGRESQL.md) ; les comptes d'essai n'existent plus
+# depuis, la route qui les créait ayant été supprimée. Il est conservé tant que
+# l'ancien volume l'est.
 # Rend au monde les parcelles retenues par les comptes d'essai.
 #
 #   sudo bash scripts/farmsim-purge-essais.sh              # dit ce qu'il ferait

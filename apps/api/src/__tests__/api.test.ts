@@ -24,10 +24,9 @@ import { after, before, describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { spawn, type ChildProcess } from "node:child_process";
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { creerBaseTest, supprimerBaseTest, type BaseTest } from "./base-test.js";
 import {
   machineCost,
   PLANTING_WINDOW,
@@ -48,7 +47,7 @@ const BASE = `http://127.0.0.1:${PORT}`;
 
 let serveur: ChildProcess | null = null;
 /** Base du serveur de test — sert aux montages qu'aucune route ne permet. */
-let fichierDb = "";
+let base: BaseTest | null = null;
 
 /**
  * Écrit directement en base, pour poser un état que le jeu met des heures à
@@ -59,12 +58,11 @@ let fichierDb = "";
 function prismaExec(sql: string) {
   execFileSync("npx", ["prisma", "db", "execute", "--stdin", "--schema", "prisma/schema.prisma"], {
     cwd: API_DIR,
-    env: { ...process.env, DATABASE_URL: `file:${fichierDb}` },
+    env: { ...process.env, DATABASE_URL: base!.url },
     input: sql,
     stdio: ["pipe", "ignore", "ignore"],
   });
 }
-let dossier = "";
 
 /** Appel HTTP, avec jeton facultatif. */
 async function appel(
@@ -173,14 +171,8 @@ before(async () => {
     /* personne ne répond : c'est ce qu'on veut */
   }
 
-  dossier = mkdtempSync(join(tmpdir(), "farmsim-api-"));
-  const url = `file:${join(dossier, "test.db")}`;
-  fichierDb = join(dossier, "test.db");
-  execFileSync("npx", ["prisma", "migrate", "deploy"], {
-    cwd: API_DIR,
-    env: { ...process.env, DATABASE_URL: url },
-    stdio: "ignore",
-  });
+  base = creerBaseTest("api");
+  const url = base.url;
   // `detached` place le serveur dans son propre groupe de processus. Sans
   // cela, tuer l'enfant laissait vivre le node petit-fils : le port restait
   // pris, et la suite suivante testait sans le savoir un serveur fantôme.
@@ -198,10 +190,6 @@ before(async () => {
       // la même adresse : c'est le profil même que la limite de débit arrête.
       // C'est `debit.test.ts` qui l'éprouve, limite activée.
       FARMSIM_RATE_LIMIT: "off",
-      // Les chantiers durent des heures de tracteur : à vitesse réelle, la
-      // suite passerait son temps à attendre. On les accélère fortement — le
-      // sas, lui, est éprouvé tel quel.
-      FARMSIM_JOB_SPEED: "100000",
       // Le camion met douze secondes en jeu : c'est le bon délai pour un
       // joueur, une éternité dans une suite d'intégration. On ne raccourcit
       // que le compte à rebours — la caisse existe toujours, et il faut
@@ -250,7 +238,7 @@ after(() => {
       serveur.kill("SIGKILL");
     }
   }
-  if (dossier) rmSync(dossier, { recursive: true, force: true });
+  supprimerBaseTest(base);
 });
 
 describe("identité", () => {
@@ -1134,8 +1122,12 @@ describe("les heures pèsent sur la récolte", () => {
 
     // On vieillit l'engin directement en base : c'est le seul moyen d'isoler
     // l'effet des heures sans faire varier aussi la condition et la saleté.
+    // Les identifiants sont entre guillemets : PostgreSQL replie les noms nus
+    // en minuscules, si bien que `Machine` y désignait une table `machine` qui
+    // n'existe pas. SQLite passait, lui, sans rien dire.
     prismaExec(
-      `UPDATE Machine SET hours = ${heuresCompteur}, condition = 100, grease = 100, dirt = 0 WHERE id = '${moissonneuse.id}'`,
+      `UPDATE "Machine" SET "hours" = ${heuresCompteur}, "condition" = 100,` +
+        ` "grease" = 100, "dirt" = 0 WHERE "id" = '${moissonneuse.id}'`,
     );
 
     const cellsR = await appel(`/parcels/${parcelle.id}`);
