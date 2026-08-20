@@ -33,7 +33,7 @@ import {
 import { createSpray } from "./particles";
 import { buildCharacter } from "./character-mesh";
 import { initialQuality, makeFrameGovernor, qualityForContext, type RenderQuality } from "./render-quality";
-import { DEFAULT_MODS, readMods, type PointerMods } from "./ui/selection";
+import { DEFAULT_MODS, readMods, rectBetween, type PointerMods } from "./ui/selection";
 import type { CharacterAppearance } from "@farmsim/shared";
 
 export type IsoCell = {
@@ -277,6 +277,15 @@ type Props = {
    * existait déjà, mais uniquement chez un voisin, où il travaille aussitôt.
    */
   strokeSelect?: boolean;
+  /**
+   * Le glissé dessine un rectangle plein, pas la trace du doigt.
+   *
+   * « Quand je glisse le doigt j'aimerais pouvoir faire aussi un carré, pas
+   * juste des zigzags. » Une bande de blé se prend en deux coins ; la trace
+   * libre oblige à repasser sur chaque case, et le moindre écart du doigt se
+   * voit dans la sélection.
+   */
+  strokeRect?: boolean;
   /** Début d'un tracé : le parent retient la sélection à laquelle l'ajouter. */
   onStrokeStart?: (mods: PointerMods) => void;
   onStrokePreview?: (cells: { x: number; y: number }[], mods: PointerMods) => void;
@@ -1040,6 +1049,7 @@ export function IsoFarmView({
   onCellContext,
   strokeWork = false,
   strokeSelect = false,
+  strokeRect = false,
   onStrokeStart,
   onStrokePreview,
   onWorkStroke,
@@ -1056,6 +1066,8 @@ export function IsoFarmView({
   strokeWorkRef.current = strokeWork;
   const strokeSelectRef = useRef(strokeSelect);
   strokeSelectRef.current = strokeSelect;
+  const strokeRectRef = useRef(strokeRect);
+  strokeRectRef.current = strokeRect;
   const onStrokeStartRef = useRef(onStrokeStart);
   onStrokeStartRef.current = onStrokeStart;
   const onStrokePreviewRef = useRef(onStrokePreview);
@@ -2221,6 +2233,9 @@ export function IsoFarmView({
       refreshCursor();
     }
 
+    /** Premier coin d'un glissé en rectangle — la case où le doigt s'est posé. */
+    let strokeAnchor: { x: number; y: number } | null = null;
+
     function addStrokeCell(cell: { x: number; y: number } | null) {
       if (!cell) return;
       const k = `${cell.x},${cell.y}`;
@@ -2230,9 +2245,29 @@ export function IsoFarmView({
       onStrokePreviewRef.current?.(strokeCells.slice(), gestureMods);
     }
 
+    /**
+     * Repose tout le tracé sur le rectangle des deux coins.
+     *
+     * Un rectangle n'est pas une trace qu'on allonge : c'est une forme qui se
+     * redessine en entier à chaque image, sinon reculer le doigt laisserait
+     * derrière lui les cases du plus grand rectangle atteint.
+     */
+    function setStrokeRect(corner: { x: number; y: number } | null) {
+      if (!strokeAnchor || !corner) return;
+      const bloc = rectBetween(strokeAnchor, corner, dataRef.current.gridW, dataRef.current.gridH);
+      strokeKeys.clear();
+      strokeCells.length = 0;
+      for (const c of bloc) {
+        strokeKeys.add(`${c.x},${c.y}`);
+        strokeCells.push(c);
+      }
+      onStrokePreviewRef.current?.(strokeCells.slice(), gestureMods);
+    }
+
     function clearStroke() {
       strokeKeys.clear();
       strokeCells.length = 0;
+      strokeAnchor = null;
     }
 
     /** Unités du monde parcourues par un pixel d'écran, au zoom courant. */
@@ -2292,7 +2327,13 @@ export function IsoFarmView({
       lastY = ev.clientY;
       dragged = false;
       clearStroke();
-      if (tracable()) onStrokeStartRef.current?.(gestureMods);
+      if (tracable()) {
+        // Le coin du rectangle se fige ici : c'est la case sous le doigt au
+        // moment où il se pose, pas celle qu'il atteindra ensuite.
+        setPointerFromEvent(ev);
+        strokeAnchor = raycastCell();
+        onStrokeStartRef.current?.(gestureMods);
+      }
       if (pointers.size === 2) {
         pinchStart = pinchDistance();
         zoomStart = view.zoom;
@@ -2338,6 +2379,15 @@ export function IsoFarmView({
       lastY = ev.clientY;
 
       if (tracable()) {
+        if (strokeRectRef.current) {
+          // Deux coins suffisent : seule compte la case sous le doigt
+          // maintenant. Rien à échantillonner, et aucun écart de trajet ne se
+          // voit dans la sélection.
+          setPointerFromEvent(ev);
+          setStrokeRect(raycastCell());
+          onHoverRef.current?.(null);
+          return;
+        }
         // On retient les cases **traversées**, pas seulement celles où le doigt
         // se trouve à chaque image : un glissement rapide franchit une case
         // entière entre deux images et en sauterait la moitié. On échantillonne

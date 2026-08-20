@@ -659,6 +659,16 @@ export function App() {
   /** Objectifs du joueur : l'avancement vient du serveur, pas du navigateur. */
   const [quests, setQuests] = useState<QuestView[]>([]);
   const [selectedCells, setSelectedCells] = useState<{ x: number; y: number }[]>([]);
+  /**
+   * Le glissé prend un rectangle plein plutôt que la trace du doigt.
+   *
+   * « Quand je glisse le doigt j'aimerais pouvoir faire aussi un carré, pas
+   * juste des zigzags. » Une bande se prend en deux coins ; suivre le doigt
+   * case par case oblige à repasser partout, et le moindre écart se voit.
+   * Les deux gestes restent utiles — la trace suit une bordure, le rectangle
+   * prend un bloc — donc c'est une bascule, pas un remplacement.
+   */
+  const [dragRect, setDragRect] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -2914,18 +2924,45 @@ export function App() {
     work: FarmWork,
     cells: { x: number; y: number }[],
     crop?: CropCode,
-  ): Promise<{ id: string; durationMs: number; endsAt: number } | null> {
+  ): Promise<{
+    id: string;
+    durationMs: number;
+    endsAt: number;
+    cells: { x: number; y: number }[];
+  } | null> {
     if (!player || !activeParcelId) return null;
-    const r = await api<{ job: { id: string; endsAt: string; durationMs: number } }>(
-      `/parcels/${activeParcelId}/jobs`,
-      {
-        method: "POST",
-        body: JSON.stringify({ userId: player.id, work, cells, ...(crop ? { crop } : {}) }),
-      },
-    );
+    const r = await api<{
+      job: {
+        id: string;
+        endsAt: string;
+        durationMs: number;
+        cells: { x: number; y: number }[];
+        skipped?: number;
+      };
+    }>(`/parcels/${activeParcelId}/jobs`, {
+      method: "POST",
+      body: JSON.stringify({ userId: player.id, work, cells, ...(crop ? { crop } : {}) }),
+    });
     const fin = new Date(r.job.endsAt).getTime();
-    setChantier({ work, cells, endsAt: fin, durationMs: r.job.durationMs });
-    return { id: r.job.id, durationMs: r.job.durationMs, endsAt: fin };
+    /*
+     * Le chantier dit quelles cases il a retenues.
+     *
+     * Elles ne sont pas forcément celles demandées : une case déjà prise par
+     * un autre chantier est laissée de côté plutôt que de faire refuser tout
+     * le lot. C'est cette liste-là qu'il faut travailler et animer — envoyer
+     * les cases demandées ferait refuser le travail au motif qu'elles ne font
+     * pas partie du chantier.
+     */
+    const retenues = r.job.cells?.length ? r.job.cells : cells;
+    if (r.job.skipped) {
+      flashToast(
+        r.job.skipped === 1
+          ? "1 case déjà sur un chantier — laissée de côté."
+          : `${r.job.skipped} cases déjà sur un chantier — laissées de côté.`,
+      );
+    }
+    setChantier({ work, cells: retenues, endsAt: fin, durationMs: r.job.durationMs });
+    return { id: r.job.id, durationMs: r.job.durationMs, endsAt: fin, cells: retenues };
   }
 
   /**
@@ -2950,7 +2987,9 @@ export function App() {
     if (!player || !activeParcelId || !cells.length || busy) return;
     setBusy(true);
     setErr(null);
-    const workCells = cells.slice();
+    // Réaffecté juste après l'ouverture du chantier : seules les cases qu'il a
+    // retenues partent au travail.
+    let workCells = cells.slice();
     const plantCrop = cropFromPlantTool(tool);
     const harvestCut = tool === "HARVEST" ? (selectedAreGrass ? "mow" : "harvest") : undefined;
     type LaborBit = { remaining: number; completed: boolean; payout?: number };
@@ -2962,6 +3001,7 @@ export function App() {
         const chantierOuvert = await ouvrirChantier(work, workCells, plantCrop ?? undefined);
         if (!chantierOuvert) return;
         jobId = chantierOuvert.id;
+        workCells = chantierOuvert.cells;
         /*
          * L'engin part **avec** le chrono, pas après lui.
          *
@@ -3197,10 +3237,11 @@ export function App() {
       const work: FarmWork = readyAreGrass ? "MOW" : "HARVEST";
       const chantier = await ouvrirChantier(work, readyCells);
       if (!chantier) return;
+      const cellsDuChantier = chantier.cells;
       const arrivee = jobArrivalMs(chantier.durationMs);
       flashWork(
         readyAreGrass ? "TRACTOR" : "HARVESTER",
-        readyCells,
+        cellsDuChantier,
         readyAreGrass ? "mow" : "harvest",
         { jobMs: chantier.durationMs - arrivee, delayMs: arrivee },
       );
@@ -3218,7 +3259,7 @@ export function App() {
         body: JSON.stringify({
           userId: player.id,
           jobId: chantier.id,
-          cells: readyCells,
+          cells: cellsDuChantier,
           swath: keepSwath,
         }),
       });
@@ -4555,6 +4596,7 @@ export function App() {
               // vingt-quatre touchers pour une bande de blé, c'était le geste
               // le plus répété du jeu.
               strokeSelect={!visiting && isFieldWorkTool(tool)}
+              strokeRect={dragRect}
               onStrokeStart={() => {
                 strokeBase.current = selectedCells;
               }}
@@ -5684,6 +5726,8 @@ export function App() {
           tool={tool}
           season={season}
           brush={brush}
+          dragRect={dragRect}
+          onDragRect={() => setDragRect((v) => !v)}
           isMobile={isMobile}
           isEta={visiting}
           visiting={visiting}
@@ -5736,6 +5780,8 @@ export function App() {
             tool={tool}
             season={season}
             brush={brush}
+            dragRect={dragRect}
+            onDragRect={() => setDragRect((v) => !v)}
             directSeed={directSeed}
             keepSwath={keepSwath}
             swathUseful={swathUsefulHere}

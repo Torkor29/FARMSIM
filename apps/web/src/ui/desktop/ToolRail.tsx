@@ -50,6 +50,9 @@ type Props = {
   visiting: boolean;
   onTool: (t: Tool) => void;
   onBrush: (n: BrushSize) => void;
+  /** Le glissé prend un rectangle plein plutôt que la trace du pointeur. */
+  dragRect: boolean;
+  onDragRect: () => void;
   onDirectSeed: () => void;
   onKeepSwath: () => void;
   onMarket: () => void;
@@ -89,6 +92,8 @@ export function ToolRail({
   tool,
   season,
   brush,
+  dragRect,
+  onDragRect,
   directSeed,
   keepSwath,
   swathUseful,
@@ -261,6 +266,25 @@ export function ToolRail({
               </button>
             ))}
           </div>
+          {/* Deux façons de glisser, et il fallait les deux : la trace pour
+              suivre une bordure, le rectangle pour prendre une bande d'un coin
+              à l'autre sans repasser sur chaque case. */}
+          <button
+            type="button"
+            className={`tool-rail-toggle${dragRect ? " on" : ""}`}
+            aria-pressed={dragRect}
+            title={
+              dragRect
+                ? "Le glissé prend le rectangle entre les deux coins."
+                : "Le glissé suit le pointeur, case par case."
+            }
+            onClick={onDragRect}
+          >
+            <span className="tool-rail-check" aria-hidden="true">
+              {dragRect ? "✓" : ""}
+            </span>
+            Glisser en rectangle
+          </button>
         </div>
       )}
 

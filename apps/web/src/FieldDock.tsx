@@ -36,6 +36,8 @@ type Props = {
   /** Saison courante : elle décide des cultures semables. */
   season: Season;
   brush: 1 | 2 | 3;
+  /** Le glissé prend un rectangle plein plutôt que la trace du doigt. */
+  dragRect?: boolean;
   isMobile: boolean;
   isEta: boolean;
   visiting?: boolean;
@@ -78,6 +80,7 @@ type Props = {
   allGoalsDone: boolean;
   onTool: (t: Tool) => void;
   onBrush: (n: 1 | 2 | 3) => void;
+  onDragRect: () => void;
   onDirectSeed: () => void;
   onKeepSwath: () => void;
   onConfirm: () => void;
@@ -117,6 +120,7 @@ export function FieldDock({
   tool,
   season,
   brush,
+  dragRect = false,
   isMobile,
   isEta,
   visiting = false,
@@ -140,6 +144,7 @@ export function FieldDock({
   allGoalsDone,
   onTool,
   onBrush,
+  onDragRect,
   onDirectSeed,
   onKeepSwath,
   onConfirm,
@@ -316,6 +321,25 @@ export function FieldDock({
                 onClick={onDirectSeed}
               >
                 Semis direct
+              </button>
+            )}
+
+            {/* Deux façons de glisser, et il fallait les deux : la trace du
+                doigt pour suivre une bordure, le rectangle pour prendre une
+                bande d'un coin à l'autre sans repasser sur chaque case. */}
+            {work && (
+              <button
+                type="button"
+                className={`chip ${dragRect ? "on" : ""}`}
+                aria-pressed={dragRect}
+                title={
+                  dragRect
+                    ? "Le glissé prend le rectangle entre les deux coins."
+                    : "Le glissé suit le doigt, case par case."
+                }
+                onClick={onDragRect}
+              >
+                {dragRect ? "▦ Rectangle" : "✎ Trace"}
               </button>
             )}
 
