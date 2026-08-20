@@ -81,6 +81,10 @@ before(async () => {
       FARMSIM_DEV_TOOLS: "",
       FARMSIM_TESTERS: `  ${TESTEUR.toUpperCase()} , `,
       FARMSIM_SKIP_NPC: "1",
+      // Cette suite crée des dizaines de comptes en quelques secondes depuis
+      // la même adresse : c'est le profil même que la limite de débit arrête.
+      // C'est `debit.test.ts` qui l'éprouve, limite activée.
+      FARMSIM_RATE_LIMIT: "off",
     },
     stdio: ["ignore", "pipe", "pipe"],
     detached: true,

@@ -323,6 +323,29 @@ import {
 } from "@farmsim/sim";
 import { randomBytes, randomUUID } from "crypto";
 import path from "node:path";
+import { existsSync } from "node:fs";
+import { BAREMES, Limiteur, classer, cleAppelant } from "./rate-limit.js";
+
+/**
+ * Ce processus sert-il aussi le front construit ?
+ *
+ * En production oui — même conteneur, mêmes ports —, et les fichiers du front
+ * n'ont alors pas le préfixe `/api`. En développement Vite s'en charge, et
+ * tout ce qui arrive ici est un appel de jeu.
+ */
+const SERT_LE_FRONT = existsSync(
+  path.join(process.env.WEB_DIST_DIR ?? path.join(__dirname, "web"), "index.html"),
+);
+
+declare global {
+  // eslint-disable-next-line @typescript-eslint/no-namespace
+  namespace Express {
+    interface Request {
+      /** Vrai pour un appel de jeu, faux pour un fichier du front. */
+      estApi?: boolean;
+    }
+  }
+}
 
 const prisma = new PrismaClient();
 const app = express();
@@ -360,6 +383,14 @@ for (const method of ["get", "post", "put", "delete", "patch"] as const) {
     );
 }
 
+/**
+ * Derrière le portier commun (Caddy), l'adresse du client arrive dans
+ * `X-Forwarded-For` : sans ce réglage, tous les joueurs partagent l'adresse du
+ * proxy et se limiteraient les uns les autres. Un seul saut est déclaré — le
+ * portier —, et l'en-tête n'est cru que pour ce saut-là.
+ */
+app.set("trust proxy", Number(process.env.FARMSIM_TRUST_PROXY ?? 1));
+
 app.use(cors());
 app.use(express.json());
 
@@ -372,6 +403,13 @@ app.use(express.json());
 app.use((req, _res, next) => {
   if (req.url.startsWith("/api/") || req.url === "/api") {
     req.url = req.url.slice(4) || "/";
+    req.estApi = true;
+  } else {
+    // En développement, Vite sert le front et réécrit `/api/x` en `/x` avant
+    // de relayer : tout ce qui arrive ici est un appel de jeu. En production,
+    // le même processus sert aussi les fichiers du front, et eux ne portent
+    // pas le préfixe.
+    req.estApi = !SERT_LE_FRONT;
   }
   next();
 });
@@ -424,6 +462,58 @@ async function enforceIdentity(
 
 app.use((req, res, next) => {
   enforceIdentity(req, res, next).catch(next);
+});
+
+/**
+ * Limitation de débit — cf. `rate-limit.ts` pour le pourquoi et les barèmes.
+ *
+ * Placée après la réécriture `/api` et après l'identité, donc avant toutes les
+ * routes : une règle en amont ne peut pas oublier la prochaine route ajoutée,
+ * là où cent quatre gestionnaires à modifier en auraient laissé passer.
+ *
+ * `estApi` distingue un appel de jeu d'un fichier du front : la page en tire
+ * des dizaines d'un coup au chargement, et les compter comme des appels
+ * ferait refuser sa propre page au joueur.
+ */
+const limiteur = new Limiteur();
+setInterval(() => limiteur.purge(), 60_000).unref();
+
+/**
+ * Débrayage — **pour les tests, jamais en production**.
+ *
+ * Une suite d'intégration crée des dizaines de comptes en quelques secondes
+ * depuis la même adresse : c'est exactement le profil que la limite arrête. Le
+ * débrayage est donc explicite, bruyant au démarrage, et `debit.test.ts` tourne
+ * sans lui — c'est lui qui prouve que le garde-fou fonctionne.
+ */
+const DEBIT_LIBRE = /^(0|off|false|no)$/i.test(process.env.FARMSIM_RATE_LIMIT ?? "");
+if (DEBIT_LIBRE) {
+  console.warn(
+    "LIMITE DE DÉBIT DÉSACTIVÉE — le code d'accès se devine en boucle. Retirez FARMSIM_RATE_LIMIT en production.",
+  );
+}
+
+app.use((req, res, next) => {
+  if (DEBIT_LIBRE || !req.estApi || req.path === "/health") {
+    next();
+    return;
+  }
+  const classe = classer(req.method, req.path);
+  const verdict = limiteur.autorise(
+    `${classe}|${cleAppelant({ authorization: req.headers.authorization, ip: req.ip })}`,
+    BAREMES[classe],
+  );
+  if (verdict.ok) {
+    next();
+    return;
+  }
+  res.setHeader("Retry-After", String(verdict.attendreS));
+  res.status(429).json({
+    error:
+      classe === "AUTH"
+        ? `Trop d'essais — réessayez dans ${verdict.attendreS} s`
+        : `Vous allez trop vite — reprenez dans ${verdict.attendreS} s`,
+  });
 });
 
 const PORT = Number(process.env.PORT ?? 3001);
