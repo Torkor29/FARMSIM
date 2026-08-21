@@ -1,5 +1,4 @@
 import { useState } from "react";
-import { SkillTree, type SkillView } from "./SkillTree";
 import {
   GUIDE_CHAPTERS,
   evaluateObjectives,
@@ -16,14 +15,20 @@ type Props = {
   snapshot: GuideSnapshot;
   /** Expérience cumulée du joueur, pour situer les paliers */
   xp?: number;
-  /** L'arbre, tel que le serveur l'a résolu. L'écran ne recalcule rien. */
-  skills?: SkillView[];
   onClose: () => void;
 };
 
-const TABS: { id: "goals" | "levels" | "skills" | GuideChapterId; label: string }[] = [
+/*
+ * Les compétences ont quitté ce recueil.
+ *
+ * Elles n'y étaient pas à leur place : le guide se **consulte** — comment on
+ * sème, ce que l'éleveur achète au céréalier — tandis que l'arbre est un état
+ * de la partie, qu'on suit. Et la fenêtre du guide, large de 560 px pour une
+ * colonne de texte, écrasait quatre branches côte à côte. Elles ont désormais
+ * leur propre écran, appelé depuis le milieu du bandeau : voir `SkillsScreen`.
+ */
+const TABS: { id: "goals" | "levels" | GuideChapterId; label: string }[] = [
   { id: "goals", label: "Objectifs" },
-  { id: "skills", label: "Compétences" },
   { id: "levels", label: "Niveaux" },
   { id: "crops", label: "Cultiver" },
   { id: "soil", label: "Sol" },
@@ -34,7 +39,7 @@ const TABS: { id: "goals" | "levels" | "skills" | GuideChapterId; label: string 
   { id: "triangle", label: "Métiers" },
 ];
 
-export function PlayGuide({ open, snapshot, xp = 0, skills = [], onClose }: Props) {
+export function PlayGuide({ open, snapshot, xp = 0, onClose }: Props) {
   const [tab, setTab] = useState<(typeof TABS)[number]["id"]>("goals");
   if (!open) return null;
 
@@ -69,9 +74,7 @@ export function PlayGuide({ open, snapshot, xp = 0, skills = [], onClose }: Prop
         </nav>
 
         <div className="guide-body">
-          {tab === "skills" ? (
-            <SkillTree skills={skills} />
-          ) : tab === "goals" ? (
+          {tab === "goals" ? (
             <GoalsPane goals={goals} current={current} />
           ) : tab === "levels" ? (
             <LevelsPane xp={xp} />

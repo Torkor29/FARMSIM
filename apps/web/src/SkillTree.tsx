@@ -20,7 +20,7 @@
  * donc de l'appareil.
  */
 
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useLayoutEffect, useMemo, useRef, useState } from "react";
 import {
   BRANCH_ICON_FILES,
   BRANCH_LABELS,
@@ -28,6 +28,7 @@ import {
   type SkillBranch,
   type SkillEffectKind,
 } from "@farmsim/shared";
+import { effectText } from "./skill-effects";
 
 export type SkillConditionView = {
   have?: number;
@@ -49,31 +50,6 @@ export type SkillView = {
   progress: SkillConditionView[];
   requires: string[];
 };
-
-/** Ce que chaque levier fait, dit au joueur — jamais le nom technique. */
-const EFFECT_LABELS: Record<SkillEffectKind, (v: string) => string> = {
-  CROP_YIELD: (v) => `+${v} de rendement des cultures`,
-  FUEL_USE: (v) => `−${v} de gazole sur les chantiers`,
-  WEAR: (v) => `−${v} d’usure du matériel`,
-  REPAIR_COST: (v) => `−${v} sur les réparations`,
-  WORK_SPEED: (v) => `−${v} sur la durée des chantiers`,
-  MILK_YIELD: (v) => `+${v} de production laitière`,
-  EGG_YIELD: (v) => `+${v} de ponte`,
-  WOOL_YIELD: (v) => `+${v} de laine`,
-  FEED_USE: (v) => `−${v} de ration consommée`,
-  ANIMAL_HAPPINESS: (v) => `+${v} de bien-être du troupeau`,
-  STORAGE_GRAIN: (v) => `+${v} de stockage du grain`,
-  SPOILAGE_SLOW: (v) => `−${v} de dégradation au stock`,
-  SALE_PRICE: (v) => `+${v} sur le prix de vente`,
-};
-
-function effectText(e: { kind: SkillEffectKind; value: number }): string {
-  // Le stockage se compte en tonnes, tout le reste en pourcentage : afficher
-  // « +0,2 % de stockage » pour vingt tonnes n'aurait aucun sens.
-  const valeur =
-    e.kind === "STORAGE_GRAIN" ? `${Math.round(e.value)} t` : `${Math.round(e.value * 100)} %`;
-  return EFFECT_LABELS[e.kind](valeur);
-}
 
 const TIER_LABELS: Record<1 | 2 | 3 | 4, string> = {
   1: "Base",
@@ -211,8 +187,6 @@ export function SkillTree({ skills }: { skills: SkillView[] }) {
     return out;
   }, [visibles]);
 
-  const ouvertes = skills.filter((s) => s.unlocked).length;
-
   /**
    * Trace les liens à partir des positions **mesurées**.
    *
@@ -262,18 +236,8 @@ export function SkillTree({ skills }: { skills: SkillView[] }) {
 
   return (
     <div className="sk-tree">
-      <header className="sk-head">
-        <p className="sk-intro">
-          Rien ne se choisit et rien ne se dépense : les compétences s’ouvrent en travaillant.
-          Aucune n’est réservée à un métier — plus vous pratiquez une activité, plus la ferme y
-          devient bonne.
-        </p>
-        <p className="sk-total">
-          <strong>{ouvertes}</strong>
-          <span> / {skills.length} acquises</span>
-        </p>
-      </header>
-
+      {/* Le compte des acquises a rejoint l'en-tête de l'écran : il y est vrai
+          quel que soit l'onglet, alors qu'ici il n'existait que sur l'arbre. */}
       <div className="sk-filters" role="tablist" aria-label="Branches">
         <button
           type="button"
