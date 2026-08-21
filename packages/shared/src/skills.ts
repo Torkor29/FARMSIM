@@ -220,8 +220,30 @@ export type SkillDef = {
   branch: SkillBranch;
   /** Profondeur dans la branche : 1 s'ouvre tôt, 4 est un aboutissement. */
   tier: 1 | 2 | 3 | 4;
+  /**
+   * Nom du dessin, sans chemin ni extension.
+   *
+   * Le module reste ignorant de l'endroit où vivent les fichiers : c'est
+   * l'écran qui sait qu'ils sont sous `/assets/icons/skills`. Sans quoi une
+   * réorganisation des dossiers ferait bouger le règlement du jeu.
+   */
+  icon: string;
   condition: SkillCondition;
   effects: SkillEffect[];
+};
+
+/** Où vivent les dessins. Un seul endroit à changer si les dossiers bougent. */
+export const SKILL_ICON_DIR = "/assets/icons/skills";
+
+export function skillIconSrc(icon: string): string {
+  return `${SKILL_ICON_DIR}/${icon}.svg`;
+}
+
+export const BRANCH_ICON_FILES: Record<SkillBranch, string> = {
+  FIELD: "branch-field",
+  LIVESTOCK: "branch-livestock",
+  MACHINE: "branch-machine",
+  TRADE: "branch-trade",
 };
 
 export type SkillId =
@@ -321,6 +343,7 @@ export const SKILL_DEFS: SkillDef[] = [
     description: "À force de passer le semoir, on ne perd plus une graine en bout de rang.",
     branch: "FIELD",
     tier: 1,
+    icon: "seed",
     condition: stat("cellsPlanted", 24),
     effects: [{ kind: "CROP_YIELD", value: 0.01 }],
   },
@@ -330,6 +353,7 @@ export const SKILL_DEFS: SkillDef[] = [
     description: "On garde les meilleurs lots pour ressemer. Le champ lève plus dru.",
     branch: "FIELD",
     tier: 2,
+    icon: "seed-plus",
     condition: all(after("SOWING_BASICS"), stat("cellsPlanted", 150), owns("SEEDER")),
     effects: [{ kind: "CROP_YIELD", value: 0.02 }],
   },
@@ -339,6 +363,7 @@ export const SKILL_DEFS: SkillDef[] = [
     description: "Profondeur, densité, date : plus rien n'est laissé au hasard.",
     branch: "FIELD",
     tier: 3,
+    icon: "seed-plus",
     condition: all(after("IMPROVED_SEED"), stat("cellsPlanted", 600), owns("SEEDER", 2)),
     effects: [{ kind: "CROP_YIELD", value: 0.03 }],
   },
@@ -348,6 +373,7 @@ export const SKILL_DEFS: SkillDef[] = [
     description: "Les résidus rentrent au lieu de sécher sur place.",
     branch: "FIELD",
     tier: 1,
+    icon: "harrow",
     condition: stat("cellsStubbled", 30),
     effects: [{ kind: "CROP_YIELD", value: 0.01 }],
   },
@@ -357,6 +383,7 @@ export const SKILL_DEFS: SkillDef[] = [
     description: "La paille enfouie au bon moment nourrit la terre au lieu de l'étouffer.",
     branch: "FIELD",
     tier: 2,
+    icon: "harrow",
     condition: all(after("STUBBLE_WORK"), stat("cellsStubbled", 250), owns("DISC_HARROW")),
     effects: [{ kind: "CROP_YIELD", value: 0.02 }],
   },
@@ -366,6 +393,7 @@ export const SKILL_DEFS: SkillDef[] = [
     description: "Le trait est droit, la raie est propre, le sol repart à neuf.",
     branch: "FIELD",
     tier: 1,
+    icon: "plough",
     condition: stat("cellsPlowed", 40),
     effects: [{ kind: "FUEL_USE", value: 0.03 }],
   },
@@ -375,6 +403,7 @@ export const SKILL_DEFS: SkillDef[] = [
     description: "On descend là où il faut, et pas plus bas : le gazole suit.",
     branch: "FIELD",
     tier: 2,
+    icon: "plough",
     condition: all(after("PLOUGHING"), stat("cellsPlowed", 300), owns("PLOUGH", 2)),
     effects: [
       { kind: "FUEL_USE", value: 0.05 },
@@ -387,6 +416,7 @@ export const SKILL_DEFS: SkillDef[] = [
     description: "On apporte ce qui manque, quand ça manque.",
     branch: "FIELD",
     tier: 1,
+    icon: "fertiliser",
     condition: stat("cellsFertilized", 30),
     effects: [{ kind: "CROP_YIELD", value: 0.01 }],
   },
@@ -396,6 +426,7 @@ export const SKILL_DEFS: SkillDef[] = [
     description: "Le fumier du troupeau part au champ au lieu de s'entasser dans la cour.",
     branch: "FIELD",
     tier: 3,
+    icon: "fertiliser",
     // La première passerelle entre les deux mondes : elle ne s'ouvre qu'à qui
     // cultive **et** élève. C'est l'inverse exact d'un choix exclusif.
     condition: all(after("FERTILISING"), stat("cellsFertilized", 200), herd(4)),
@@ -407,6 +438,7 @@ export const SKILL_DEFS: SkillDef[] = [
     description: "On passe avant que l'adventice monte en graine.",
     branch: "FIELD",
     tier: 1,
+    icon: "sprayer",
     condition: all(stat("cellsWeeded", 20), owns("SPRAYER")),
     effects: [{ kind: "CROP_YIELD", value: 0.01 }],
   },
@@ -416,6 +448,7 @@ export const SKILL_DEFS: SkillDef[] = [
     description: "Faux-semis, rotation, pulvérisateur : trois leviers plutôt qu'un.",
     branch: "FIELD",
     tier: 3,
+    icon: "sprayer",
     condition: all(after("WEED_CONTROL"), stat("cellsWeeded", 150), after("ROTATION")),
     effects: [{ kind: "CROP_YIELD", value: 0.02 }],
   },
@@ -425,6 +458,7 @@ export const SKILL_DEFS: SkillDef[] = [
     description: "Céréale, légumineuse, oléagineux : le sol ne s'épuise plus sur un seul poste.",
     branch: "FIELD",
     tier: 2,
+    icon: "rotation",
     condition: all(stat("cellsPlanted", 200), stat("cellsHarvested", 120)),
     effects: [{ kind: "CROP_YIELD", value: 0.02 }],
   },
@@ -434,6 +468,7 @@ export const SKILL_DEFS: SkillDef[] = [
     description: "La parcelle se lit comme un carnet : on sait ce qu'elle va donner avant de semer.",
     branch: "FIELD",
     tier: 4,
+    icon: "agronomy",
     condition: all(after("SOWING_MASTERY"), after("ROTATION"), after("RESIDUE_MASTERY"), stat("tonsHarvested", 800)),
     effects: [{ kind: "CROP_YIELD", value: 0.03 }],
   },
@@ -447,6 +482,7 @@ export const SKILL_DEFS: SkillDef[] = [
     description: "Sortir, rentrer, compter : le geste devient une habitude.",
     branch: "LIVESTOCK",
     tier: 1,
+    icon: "herd",
     condition: all(herd(1), stat("grazings", 5)),
     effects: [{ kind: "ANIMAL_HAPPINESS", value: 0.02 }],
   },
@@ -456,6 +492,7 @@ export const SKILL_DEFS: SkillDef[] = [
     description: "Foin, céréale, ensilage : chacun sa part, rien ne se gaspille.",
     branch: "LIVESTOCK",
     tier: 2,
+    icon: "feed",
     condition: all(after("ANIMAL_KEEPING"), stat("feedings", 20)),
     effects: [{ kind: "FEED_USE", value: 0.05 }],
   },
@@ -465,6 +502,7 @@ export const SKILL_DEFS: SkillDef[] = [
     description: "La ration suit la saison et l'état des bêtes, pas le calendrier.",
     branch: "LIVESTOCK",
     tier: 3,
+    icon: "feed",
     condition: all(after("FEED_PLAN"), stat("feedings", 120), any(has("BUNKER_SILO"), has("HAY_BARN", 3))),
     effects: [
       { kind: "FEED_USE", value: 0.08 },
@@ -477,6 +515,7 @@ export const SKILL_DEFS: SkillDef[] = [
     description: "Litière propre, place à l'auge, accès au pré : des bêtes calmes produisent mieux.",
     branch: "LIVESTOCK",
     tier: 2,
+    icon: "comfort",
     condition: all(after("ANIMAL_KEEPING"), stat("grazings", 40), any(has("PADDOCK"), has("CATTLE_BARN", 2))),
     effects: [{ kind: "ANIMAL_HAPPINESS", value: 0.04 }],
   },
@@ -486,6 +525,7 @@ export const SKILL_DEFS: SkillDef[] = [
     description: "Deux passages par jour, sans énerver personne.",
     branch: "LIVESTOCK",
     tier: 1,
+    icon: "milk",
     condition: all(herd(1, "COW"), stat("animalsCollected", 10)),
     effects: [{ kind: "MILK_YIELD", value: 0.03 }],
   },
@@ -495,6 +535,7 @@ export const SKILL_DEFS: SkillDef[] = [
     description: "Refroidissement, hygiène, régularité : le litre gagne en valeur.",
     branch: "LIVESTOCK",
     tier: 3,
+    icon: "milk",
     condition: all(after("MILKING"), stat("hlCollected", 200), has("DAIRY")),
     effects: [
       { kind: "MILK_YIELD", value: 0.06 },
@@ -507,6 +548,7 @@ export const SKILL_DEFS: SkillDef[] = [
     description: "Lumière, calme, ramassage régulier : la ponte suit.",
     branch: "LIVESTOCK",
     tier: 2,
+    icon: "egg",
     condition: all(herd(6, "HEN"), has("HENHOUSE")),
     effects: [{ kind: "EGG_YIELD", value: 0.05 }],
   },
@@ -516,6 +558,7 @@ export const SKILL_DEFS: SkillDef[] = [
     description: "La tonte au bon moment donne une laine propre et longue.",
     branch: "LIVESTOCK",
     tier: 2,
+    icon: "wool",
     condition: all(herd(6, "SHEEP"), has("SHEEPFOLD")),
     effects: [{ kind: "WOOL_YIELD", value: 0.05 }],
   },
@@ -525,6 +568,7 @@ export const SKILL_DEFS: SkillDef[] = [
     description: "Un atelier qui valorise la céréale de la ferme au lieu de la vendre brute.",
     branch: "LIVESTOCK",
     tier: 2,
+    icon: "pig",
     condition: all(herd(6, "PIG"), has("PIGSTY")),
     effects: [{ kind: "FEED_USE", value: 0.04 }],
   },
@@ -534,6 +578,7 @@ export const SKILL_DEFS: SkillDef[] = [
     description: "Conduire trente bêtes n'est pas conduire trois : il faut de la méthode.",
     branch: "LIVESTOCK",
     tier: 3,
+    icon: "herd",
     condition: all(after("HERD_COMFORT"), herd(30)),
     effects: [{ kind: "ANIMAL_HAPPINESS", value: 0.03 }],
   },
@@ -543,6 +588,7 @@ export const SKILL_DEFS: SkillDef[] = [
     description: "On voit la bête qui couve quelque chose avant qu'elle ne le montre.",
     branch: "LIVESTOCK",
     tier: 4,
+    icon: "stockman",
     condition: all(after("FEED_MASTERY"), after("LARGE_HERD"), stat("animalsCollected", 400)),
     effects: [
       { kind: "ANIMAL_HAPPINESS", value: 0.03 },
@@ -559,6 +605,7 @@ export const SKILL_DEFS: SkillDef[] = [
     description: "Un coup d'œil aux niveaux avant de partir, et la panne n'arrive pas.",
     branch: "MACHINE",
     tier: 1,
+    icon: "wrench",
     condition: stat("machinesServiced", 3),
     effects: [{ kind: "WEAR", value: 0.04 }],
   },
@@ -568,6 +615,7 @@ export const SKILL_DEFS: SkillDef[] = [
     description: "Tous les points, à chaque chantier. C'est long, ça double la vie d'un outil.",
     branch: "MACHINE",
     tier: 2,
+    icon: "grease",
     condition: all(after("MACHINE_UPKEEP"), stat("machinesServiced", 20)),
     effects: [{ kind: "WEAR", value: 0.08 }],
   },
@@ -577,6 +625,7 @@ export const SKILL_DEFS: SkillDef[] = [
     description: "On répare soi-même ce qui ne demande pas le concessionnaire.",
     branch: "MACHINE",
     tier: 3,
+    icon: "workshop",
     condition: all(after("GREASE_ROUTINE"), has("WORKSHOP"), stat("machinesServiced", 60)),
     effects: [{ kind: "REPAIR_COST", value: 0.1 }],
   },
@@ -586,6 +635,7 @@ export const SKILL_DEFS: SkillDef[] = [
     description: "Le bon régime, la bonne vitesse : le réservoir dure plus longtemps.",
     branch: "MACHINE",
     tier: 2,
+    icon: "fuel",
     condition: hours(60),
     effects: [{ kind: "FUEL_USE", value: 0.05 }],
   },
@@ -595,6 +645,7 @@ export const SKILL_DEFS: SkillDef[] = [
     description: "Les demi-tours se font sans temps mort. Le chantier avance.",
     branch: "MACHINE",
     tier: 3,
+    icon: "steering",
     condition: all(after("FUEL_DISCIPLINE"), hours(250)),
     effects: [{ kind: "WORK_SPEED", value: 0.06 }],
   },
@@ -604,6 +655,7 @@ export const SKILL_DEFS: SkillDef[] = [
     description: "Chaque outil part quand il faut, et rentre avant d'être à bout.",
     branch: "MACHINE",
     tier: 4,
+    icon: "steering",
     condition: all(after("WORKSHOP_HAND"), after("SEASONED_DRIVER"), hours(600)),
     effects: [
       { kind: "WEAR", value: 0.08 },
@@ -616,6 +668,7 @@ export const SKILL_DEFS: SkillDef[] = [
     description: "Un parc abrité et rangé s'use moins et se sort plus vite.",
     branch: "MACHINE",
     tier: 2,
+    icon: "shed",
     condition: all(has("MACHINE_SHED"), stat("machinesServiced", 10)),
     effects: [{ kind: "WEAR", value: 0.05 }],
   },
@@ -629,6 +682,7 @@ export const SKILL_DEFS: SkillDef[] = [
     description: "Régler le bec de coupe, et laisser moins de grain derrière soi.",
     branch: "TRADE",
     tier: 1,
+    icon: "combine",
     condition: stat("cellsHarvested", 30),
     effects: [{ kind: "CROP_YIELD", value: 0.01 }],
   },
@@ -638,6 +692,7 @@ export const SKILL_DEFS: SkillDef[] = [
     description: "On moissonne au bon degré d'humidité, pas au bon moment de la semaine.",
     branch: "TRADE",
     tier: 3,
+    icon: "combine",
     condition: all(after("HARVEST_BASICS"), stat("tonsHarvested", 400), owns("HARVESTER", 2)),
     effects: [{ kind: "CROP_YIELD", value: 0.02 }],
   },
@@ -647,6 +702,7 @@ export const SKILL_DEFS: SkillDef[] = [
     description: "Ventiler, surveiller, ne pas mélanger les lots.",
     branch: "TRADE",
     tier: 2,
+    icon: "silo",
     condition: all(has("SILO"), stat("tonsHarvested", 100)),
     effects: [
       { kind: "STORAGE_GRAIN", value: 20 },
@@ -659,6 +715,7 @@ export const SKILL_DEFS: SkillDef[] = [
     description: "Le grain attend le bon cours sans perdre un point de qualité.",
     branch: "TRADE",
     tier: 3,
+    icon: "silo",
     condition: all(after("GRAIN_STORAGE"), has("SILO", 3), stat("tonsHarvested", 500)),
     effects: [
       { kind: "STORAGE_GRAIN", value: 40 },
@@ -671,6 +728,7 @@ export const SKILL_DEFS: SkillDef[] = [
     description: "On connaît la saison où le cours monte, et on attend.",
     branch: "TRADE",
     tier: 2,
+    icon: "market",
     condition: stat("tonsSold", 120),
     effects: [{ kind: "SALE_PRICE", value: 0.02 }],
   },
@@ -680,6 +738,7 @@ export const SKILL_DEFS: SkillDef[] = [
     description: "Le camion est chargé plein, le contrat est lu jusqu'au bout.",
     branch: "TRADE",
     tier: 3,
+    icon: "handshake",
     condition: all(after("MARKET_SENSE"), stat("tonsSold", 600), stat("contracts", 10)),
     effects: [{ kind: "SALE_PRICE", value: 0.03 }],
   },
@@ -689,6 +748,7 @@ export const SKILL_DEFS: SkillDef[] = [
     description: "Les livraisons s'enchaînent sans qu'une remorque attende dans la cour.",
     branch: "TRADE",
     tier: 2,
+    icon: "truck",
     condition: all(stat("deliveries", 15), owns("TRAILER")),
     effects: [{ kind: "WORK_SPEED", value: 0.04 }],
   },
@@ -703,6 +763,7 @@ export const SKILL_DEFS: SkillDef[] = [
       "Les quatre branches tiennent ensemble. La ferme ne dépend plus d'un seul atelier — c'est là que le métier commence vraiment.",
     branch: "TRADE",
     tier: 4,
+    icon: "star",
     // Le sommet exige les quatre sommets. C'est le contraire d'un choix de
     // classe : on ne l'atteint qu'en ayant tout pratiqué.
     condition: all(after("AGRONOMY"), after("STOCKMANSHIP"), after("FLEET_MASTERY"), after("NEGOTIATION")),
