@@ -40,12 +40,34 @@ describe("guide et objectifs", () => {
     expect(currentObjective(s)?.id).toBe("silo");
   });
 
-  it("ne propose le pois qu'au céréalier, l'étable qu'à l'éleveur", () => {
-    expect(objectivesFor("CEREALIER").some((o) => o.id === "pea")).toBe(true);
-    expect(objectivesFor("ELEVEUR").some((o) => o.id === "barn")).toBe(true);
-    expect(objectivesFor("CEREALIER").some((o) => o.id === "barn")).toBe(false);
-    expect(objectivesFor("CEREALIER").some((o) => o.id === "workshop")).toBe(true);
-    expect(objectivesFor("ELEVEUR").some((o) => o.id === "contract")).toBe(true);
+  /**
+   * Le guide ne cache plus la moitié du jeu.
+   *
+   * Il filtrait ses consignes par métier : un céréalier ne voyait jamais
+   * l'objectif « bâtir une étable », alors que **rien** ne l'empêchait d'en
+   * bâtir une — le choix d'inscription ne verrouillait aucune mécanique, il
+   * ne masquait que les consignes. C'était le pire des deux mondes :
+   * l'impression d'une classe, sans la substance d'une classe.
+   *
+   * Les deux voies s'affichent donc pour tout le monde, et c'est en jouant que
+   * le joueur décide de la sienne.
+   */
+  it("propose les deux voies à tout le monde", () => {
+    for (const spec of ["CEREALIER", "ELEVEUR"] as const) {
+      const ids = objectivesFor(spec).map((o) => o.id);
+      expect(`${spec} pois=${ids.includes("pea")}`).toBe(`${spec} pois=true`);
+      expect(`${spec} étable=${ids.includes("barn")}`).toBe(`${spec} étable=true`);
+      expect(`${spec} atelier=${ids.includes("workshop")}`).toBe(`${spec} atelier=true`);
+      expect(`${spec} contrat=${ids.includes("contract")}`).toBe(`${spec} contrat=true`);
+    }
+  });
+
+  it("donne exactement la même liste aux deux métiers", () => {
+    // La preuve que le filtre a bien disparu, et pas seulement qu'il laisse
+    // passer les quatre objectifs qu'on a nommés au-dessus.
+    expect(objectivesFor("CEREALIER").map((o) => o.id)).toEqual(
+      objectivesFor("ELEVEUR").map((o) => o.id),
+    );
   });
 
   it("compte le poulailler et la bergerie comme bâtiment d'élevage", () => {

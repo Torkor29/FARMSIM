@@ -41,6 +41,13 @@ import {
   type XpEvent,
   type XpContext,
   type PlayerStats,
+  type SkillSnapshot,
+  type SkillBonuses,
+  emptySnapshot,
+  evaluateSkills,
+  noSkillBonuses,
+  bonusesFor,
+  STAT_LABELS,
   DEFAULT_GRID,
   MACHINE_DEFS,
   CONTRACT_WORK,
@@ -617,6 +624,14 @@ function farmInclude() {
  * par oublier un outil.
  */
 const STARTER_MACHINES: MachineType[] = ["TRACTOR", "SEEDER", "PLOUGH"];
+
+/**
+ * Le parc de départ, identique pour tous.
+ *
+ * Le déchaumeur en fait partie : sans lui, on ne peut pas resemer après la
+ * première moisson, et c'est la toute première consigne du guide.
+ */
+const STARTER_KIT: MachineType[] = [...STARTER_MACHINES, "DISC_HARROW"];
 
 type FarmMachine = {
   id: string;
@@ -1646,10 +1661,82 @@ function pollinationBonusAt(
   return best;
 }
 
+/**
+ * L'instantané dont vit l'arbre de compétences.
+ *
+ * Un seul aller-retour en base, et il ne lit que ce que les conditions ont le
+ * droit de regarder. C'est le pendant serveur de `SkillSnapshot` : tout ce qui
+ * n'est pas ici ne peut pas devenir une condition, et c'est exactement la
+ * garantie qu'on veut — un compteur qu'on ne sait pas lire est un verrou que
+ * le joueur ne peut pas ouvrir.
+ */
+async function getSkillSnapshot(userId: string): Promise<SkillSnapshot> {
+  const user = await prisma.user.findUnique({
+    where: { id: userId },
+    select: {
+      xp: true,
+      level: true,
+      statsJson: true,
+      farm: {
+        select: {
+          machines: { select: { type: true, tier: true, hours: true } },
+          herds: { select: { kind: true, size: true } },
+          parcels: { select: { buildings: { select: { type: true, level: true } } } },
+        },
+      },
+    },
+  });
+  if (!user) return emptySnapshot();
+  const buildings = (user.farm?.parcels ?? []).flatMap((p) =>
+    p.buildings.map((b) => ({ type: b.type as SharedBuildingType, level: b.level })),
+  );
+  return {
+    stats: readStats(user.statsJson),
+    level: levelForXp(user.xp),
+    buildings,
+    machines: (user.farm?.machines ?? []).map((m) => ({
+      type: m.type as MachineType,
+      tier: m.tier ?? 1,
+      hours: m.hours ?? 0,
+    })),
+    herds: (user.farm?.herds ?? []).map((h) => ({
+      species: (h.kind ?? "COW") as AnimalKind,
+      size: h.size ?? 0,
+    })),
+  };
+}
+
+/**
+ * Les bonus de compétences d'un joueur.
+ *
+ * Volontairement séparé de `getFarmBonuses`, qui ne connaît qu'une ferme : les
+ * compétences dépendent aussi du **joueur** — de ce qu'il a fait, pas
+ * seulement de ce qu'il possède. Les deux enveloppes se cumulent chez
+ * l'appelant, chacune avec son propre plafond.
+ */
+async function getSkillBonuses(userId: string): Promise<SkillBonuses> {
+  return bonusesFor(await getSkillSnapshot(userId));
+}
+
 async function getFarmBonuses(farmId: string) {
   const buildings = await prisma.building.findMany({
     where: { parcel: { farmId } },
   });
+  /*
+   * Les compétences voyagent avec les bonus de bâtiments.
+   *
+   * Elles ne s'y **mélangent** pas — chaque enveloppe garde son plafond — mais
+   * elles empruntent le même chemin. Les cinq endroits qui simulent une case
+   * lisent déjà `bonuses` ; leur faire chercher les compétences ailleurs, ce
+   * serait cinq fils à tirer et un oubli garanti au sixième.
+   */
+  const proprietaire = await prisma.farm.findUnique({
+    where: { id: farmId },
+    select: { userId: true },
+  });
+  const skills = proprietaire?.userId
+    ? await getSkillBonuses(proprietaire.userId)
+    : noSkillBonuses();
   let yieldBonus = 0;
   let storageGrain = 0;
   let storageHay = 5;
@@ -1686,8 +1773,10 @@ async function getFarmBonuses(farmId: string) {
     if (BUILDING_DEFS[b.type as SharedBuildingType].freeDrying) freeDrying = true;
   }
   return {
+    /** Les compétences du propriétaire, chacune déjà bornée. */
+    skills,
     yieldBonus: Math.min(0.1, yieldBonus),
-    storageGrain,
+    storageGrain: storageGrain + skills.STORAGE_GRAIN,
     storageHay,
     machineSlots,
     cattleSlots,
@@ -2117,6 +2206,7 @@ async function publishFromConsignes() {
             buildingYieldBonus:
               bonuses.yieldBonus +
               pollinationBonusAt(bonuses.hives, cell.x, cell.y, cell.crop),
+            skillYieldBonus: bonuses.skills.CROP_YIELD,
           });
           if (sim.lost) continue;
           if (sim.ready) ready.push({ x: cell.x, y: cell.y });
@@ -2602,13 +2692,18 @@ app.post("/world/claim", async (req, res) => {
            friche. Semoir et charrue sont le minimum pour boucler un cycle —
            la moissonneuse, elle, se gagne : la première récolte passe par le
            Bureau, comme avant. */
-        for (const type of STARTER_MACHINES) {
+        /*
+         * Le même parc pour tout le monde.
+         *
+         * Le déchaumeur n'allait qu'au céréalier. Un éleveur qui décidait de
+         * cultiver — ce que rien ne lui interdisait — se retrouvait donc sans
+         * l'outil que le guide lui réclamait dès la première récolte, sans
+         * qu'aucun écran ne lui dise pourquoi. Le choix d'inscription ne
+         * verrouillait aucune règle ; il ne creusait qu'un écart de matériel,
+         * silencieux et définitif.
+         */
+        for (const type of STARTER_KIT) {
           await tx.machine.create({ data: { type, tier: 1, farmId: farm.id } });
-        }
-        if (body.data.specialization === "CEREALIER") {
-          await tx.machine.create({
-            data: { type: "DISC_HARROW", tier: 1, farmId: farm.id },
-          });
         }
       }
 
@@ -2626,7 +2721,15 @@ app.post("/world/claim", async (req, res) => {
         });
       }
 
-      if (body.data.specialization === "ELEVEUR") {
+      /*
+       * L'étable de départ, pour tout le monde aussi.
+       *
+       * C'est la moitié du jeu : la laisser derrière un choix d'inscription,
+       * c'était demander au joueur de parier sur ce qui lui plairait avant
+       * d'avoir rien essayé. Trois vaches ne font pas un élevage — elles font
+       * découvrir qu'il en existe un, et la branche s'ouvre en les menant.
+       */
+      {
         const barnSpot = findStarterBarnSpot(parcel.gridW, parcel.gridH);
         if (barnSpot) {
           const barnDef = BUILDING_DEFS.CATTLE_BARN;
@@ -3535,7 +3638,15 @@ app.post("/auth/register", async (req, res) => {
           userId: u.id,
           name: `Ferme ${displayName}`,
           machines: {
-            create: specialization ? STARTER_MACHINES.map((type) => ({ type, tier: 1 })) : [],
+            /*
+             * Le parc de départ se crée à **deux** endroits — ici, et à la
+             * prise de parcelle. Les deux doivent poser le même kit, sinon
+             * celui qui passe en premier décide, et l'autre ne fait rien : sa
+             * garde `machines.length === 0` est déjà fausse. C'est ce qui
+             * privait de déchaumeur tous ceux qui s'inscrivaient avec une
+             * parcelle.
+             */
+            create: specialization ? STARTER_KIT.map((type) => ({ type, tier: 1 })) : [],
           },
         },
       });
@@ -3955,6 +4066,7 @@ app.get("/parcels/:id", async (req, res) => {
         buildingYieldBonus:
           (bonuses?.yieldBonus ?? 0) +
           pollinationBonusAt(bonuses?.hives ?? [], c.x, c.y, c.crop),
+        skillYieldBonus: bonuses?.skills.CROP_YIELD ?? 0,
         weatherAtHarvest: weather?.state as WeatherState | undefined,
         cutsDone: grassCutsDone(c),
       });
@@ -4611,6 +4723,7 @@ app.post("/parcels/:id/contractor", async (req, res) => {
       fertilizedPasses: Math.min(2, cell.fertilizedPasses) as 0 | 1 | 2,
       buildingYieldBonus:
         bonuses.yieldBonus + pollinationBonusAt(bonuses.hives, cell.x, cell.y, cell.crop),
+      skillYieldBonus: bonuses.skills.CROP_YIELD,
       weatherAtHarvest: weather?.state as WeatherState | undefined,
       specialization: playableSpec(user.specialization),
       cutsDone: grassCutsDone(cell),
@@ -5156,6 +5269,33 @@ app.post("/farm/repay", async (req, res) => {
     });
   });
   res.json({ debtCrd: Math.max(0, apres.debtCrd), repaid: montant });
+});
+
+/**
+ * L'arbre de compétences d'un joueur, tel qu'il s'affiche.
+ *
+ * Le serveur envoie l'état **calculé**, pas les définitions : l'écran ne
+ * refait aucun calcul, il dessine. C'est ce qui garantit qu'un joueur ne voit
+ * jamais « débloquée » une compétence que le serveur tient pour fermée — le
+ * défaut classique d'un arbre qui vit des deux côtés.
+ */
+app.get("/players/:id/skills", async (req, res) => {
+  const snap = await getSkillSnapshot(req.params.id);
+  const states = evaluateSkills(snap, (s) => STAT_LABELS[s] ?? String(s));
+  res.json({
+    skills: states.map((s) => ({
+      id: s.def.id,
+      name: s.def.name,
+      description: s.def.description,
+      branch: s.def.branch,
+      tier: s.def.tier,
+      unlocked: s.unlocked,
+      ratio: Math.round(s.ratio * 1000) / 1000,
+      effects: s.def.effects,
+      progress: s.progress,
+    })),
+    bonuses: bonusesFor(snap),
+  });
 });
 
 /** Les chantiers en cours d'une parcelle — pour l'écran et les reprises. */
@@ -6000,6 +6140,7 @@ app.post("/parcels/:id/harvest", async (req, res) => {
       specialization: playableSpec(farm.user.specialization ?? user?.specialization),
       buildingYieldBonus:
         bonuses.yieldBonus + pollinationBonusAt(bonuses.hives, cell.x, cell.y, cell.crop),
+      skillYieldBonus: bonuses.skills.CROP_YIELD,
       weatherAtHarvest: weather?.state as WeatherState | undefined,
       cutsDone: grassCutsDone(cell),
     });
@@ -6065,6 +6206,7 @@ app.post("/parcels/:id/harvest", async (req, res) => {
         specialization: playableSpec(farm.user.specialization ?? user?.specialization),
         buildingYieldBonus:
           bonuses.yieldBonus + pollinationBonusAt(bonuses.hives, cell.x, cell.y, cell.crop),
+        skillYieldBonus: bonuses.skills.CROP_YIELD,
         weatherAtHarvest: weather?.state as WeatherState | undefined,
         cutsDone: grassCutsDone(cell),
       });
@@ -6385,7 +6527,13 @@ app.post("/parcels/:id/weed", async (req, res) => {
     const labor = access.order
       ? await settleLaborProgress(tx, access.order, body.data.cells)
       : null;
-    const gain = await grantXp(tx, user.id, "WEED", { cells: cibles.length }, {});
+    const gain = await grantXp(
+      tx,
+      user.id,
+      "WEED",
+      { cells: cibles.length },
+      { cellsWeeded: cibles.length },
+    );
     return { wear, labor, gain };
   });
   res.json({
@@ -8178,6 +8326,15 @@ app.post("/herds/:id/feed", async (req, res) => {
         lastFedAt: new Date(),
       },
     });
+    /*
+     * Distribuer une ration comptait pour rien.
+     *
+     * Ni expérience, ni compteur — alors que `XP_TABLE.FEED` existait et que
+     * la quête « Nourrir le troupeau » attendait dix rations. Elle ne pouvait
+     * donc **jamais** se terminer : le seul compteur qu'elle lisait n'était
+     * écrit nulle part. Un verrou sans serrure.
+     */
+    await grantXp(tx, body.data.userId, "FEED", {}, { feedings: 1 });
   });
   res.json({ units: Math.round(units * 100) / 100, quality });
 });
@@ -8490,7 +8647,9 @@ app.post("/herds/:id/milk", async (req, res) => {
       body.data.userId,
       "COLLECT",
       { animals: herd.size },
-      { animalsCollected: herd.size },
+      // Le volume compte autant que le nombre de bêtes : trois vaches bien
+      // menées ne valent pas trois vaches affamées, et rien ne le mesurait.
+      { animalsCollected: herd.size, hlCollected: hectolitres },
     );
   });
   res.json({

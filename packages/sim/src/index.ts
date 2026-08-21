@@ -64,6 +64,14 @@ export type CellSimInput = {
   weatherAtHarvest?: WeatherState;
   /** Bonus bâtiments ferme (ex. 0.03) */
   buildingYieldBonus?: number;
+  /**
+   * Bonus de compétences, **enveloppe séparée**.
+   *
+   * Il ne se mélange pas à celui des bâtiments : chacun a son plafond. Une
+   * enveloppe unique qu'on relèverait pour loger les compétences dévaluerait
+   * d'un coup tous les bâtiments déjà construits.
+   */
+  skillYieldBonus?: number;
   /** Déchaumages consécutifs avant ce semis — les résidus nourrissent le sol */
   residuePasses?: number;
   /** Semé dans les chaumes, sans travail du sol préalable */
@@ -103,9 +111,22 @@ function managementFactor(input: CellSimInput): number {
      jamais que ces dix pour cent existaient, et n'avait aucun geste pour les
      obtenir. La pression, elle, monte toute seule et se combat. */
   f *= weedYieldFactor(input.weedPressure);
-  if (input.specialization === "CEREALIER") f *= 1.02;
+  /*
+   * Le métier ne donne plus de rendement.
+   *
+   * Un céréalier touchait +2 % sur toutes ses cultures, en silence : rien ne
+   * l'affichait, et un éleveur ne pouvait pas l'obtenir puisque le choix se
+   * faisait à l'inscription et ne se reprenait jamais. C'était le seul endroit
+   * du jeu où la spécialisation donnait un vrai avantage chiffré — et donc le
+   * seul endroit où elle enfermait vraiment.
+   *
+   * Ce que ces 2 % récompensaient — savoir mener une culture — se gagne
+   * maintenant en semant : c'est `SOWING_BASICS`, puis la branche entière.
+   */
   const b = Math.min(0.1, Math.max(0, input.buildingYieldBonus ?? 0));
   f *= 1 + b;
+  // Les compétences, avec leur propre plafond.
+  f *= 1 + Math.min(0.15, Math.max(0, input.skillYieldBonus ?? 0));
   // Les résidus de la récolte précédente, incorporés au déchaumeur, se
   // décomposent et nourrissent la culture en place.
   f *= 1 + residueBonus(input.residuePasses ?? 0);

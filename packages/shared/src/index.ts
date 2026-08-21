@@ -42,6 +42,7 @@ export * from "./bedding.js";
 export * from "./dev-accounts.js";
 export * from "./progression.js";
 export * from "./quests.js";
+export * from "./skills.js";
 export * from "./consignes.js";
 export * from "./forage.js";
 export * from "./species.js";

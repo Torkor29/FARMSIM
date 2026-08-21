@@ -5522,3 +5522,145 @@ button.tiny {
 }
 .enclos-orphelins strong { font-size: 0.9rem; }
 .enclos-orphelins span { font-size: 0.76rem; color: var(--muted); }
+
+/* ==========================================================================
+   ARBRE DE COMPÉTENCES
+   Rien ne s'y dépense et rien ne s'y choisit : l'écran doit donc répondre à
+   une seule question — « qu'est-ce que je suis en train d'ouvrir ? ». D'où la
+   jauge chiffrée sur chaque condition plutôt qu'un cadenas muet.
+   ========================================================================== */
+.skill-intro {
+  margin: 0 0 0.9rem;
+  font-size: 0.92rem;
+  line-height: 1.5;
+  opacity: 0.85;
+}
+
+.skill-branches {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  margin-bottom: 1rem;
+}
+.skill-branch {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.4rem 0.7rem;
+  border: 1px solid rgba(0, 0, 0, 0.12);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.6);
+  font: inherit;
+  font-size: 0.85rem;
+  cursor: pointer;
+}
+.skill-branch.on {
+  background: #2f6f4e;
+  border-color: #2f6f4e;
+  color: #fff;
+}
+.skill-branch-count {
+  font-variant-numeric: tabular-nums;
+  opacity: 0.7;
+  font-size: 0.8em;
+}
+
+.skill-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 0.7rem;
+  /* Une seule colonne au téléphone : les conditions chiffrées doivent tenir
+     sur une ligne, sinon la jauge se replie sous son libellé. */
+  grid-template-columns: 1fr;
+}
+@media (min-width: 720px) {
+  .skill-list { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+
+.skill-card {
+  border: 1px solid rgba(0, 0, 0, 0.1);
+  border-radius: 12px;
+  padding: 0.75rem 0.85rem;
+  background: rgba(255, 255, 255, 0.5);
+  /* Une compétence fermée s'efface sans disparaître : on doit pouvoir lire ce
+     qu'elle demande, c'est tout l'intérêt de l'afficher. */
+  opacity: 0.72;
+}
+.skill-card.on {
+  opacity: 1;
+  border-color: rgba(47, 111, 78, 0.45);
+  background: rgba(47, 111, 78, 0.07);
+}
+.skill-card-head {
+  display: flex;
+  align-items: baseline;
+  gap: 0.45rem;
+}
+.skill-card-title {
+  display: flex;
+  align-items: baseline;
+  gap: 0.45rem;
+  flex-wrap: wrap;
+}
+.skill-card-tier {
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  opacity: 0.6;
+}
+.skill-card-desc {
+  margin: 0.35rem 0 0.5rem;
+  font-size: 0.86rem;
+  line-height: 1.45;
+  opacity: 0.85;
+}
+.skill-effects {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 0.15rem;
+  font-size: 0.83rem;
+  color: #2f6f4e;
+}
+.skill-conds {
+  list-style: none;
+  margin: 0.55rem 0 0;
+  padding: 0.55rem 0 0;
+  border-top: 1px dashed rgba(0, 0, 0, 0.12);
+  display: grid;
+  gap: 0.35rem;
+}
+.skill-cond {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.4rem;
+  font-size: 0.82rem;
+}
+.skill-cond.done { opacity: 0.6; }
+.skill-cond-body { flex: 1; min-width: 0; }
+.skill-cond-label { font-variant-numeric: tabular-nums; }
+.skill-cond-bar {
+  display: block;
+  height: 4px;
+  margin-top: 0.25rem;
+  border-radius: 999px;
+  background: rgba(0, 0, 0, 0.1);
+  overflow: hidden;
+}
+.skill-cond-fill {
+  display: block;
+  height: 100%;
+  background: #2f6f4e;
+}
+
+@media (prefers-color-scheme: dark) {
+  .skill-branch { background: rgba(255, 255, 255, 0.08); border-color: rgba(255, 255, 255, 0.16); }
+  .skill-card { background: rgba(255, 255, 255, 0.05); border-color: rgba(255, 255, 255, 0.12); }
+  .skill-card.on { background: rgba(120, 200, 150, 0.12); border-color: rgba(120, 200, 150, 0.4); }
+  .skill-effects { color: #86d3a5; }
+  .skill-cond-fill { background: #86d3a5; }
+  .skill-cond-bar { background: rgba(255, 255, 255, 0.14); }
+}

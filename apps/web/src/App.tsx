@@ -118,6 +118,7 @@ const Onboarding = lazy(() => import("./Onboarding").then((m) => ({ default: m.O
 import { SplashScreen } from "./SplashScreen";
 import { TutorialOverlay } from "./TutorialOverlay";
 import { FieldDock } from "./FieldDock";
+import type { SkillView } from "./SkillTree";
 import { PlayGuide } from "./PlayGuide";
 import { TOKEN_KEY, TUTORIAL_KEY, GUIDE_FLAGS_KEY } from "./storage-keys";
 import {
@@ -668,6 +669,15 @@ export function App() {
    * prend un bloc — donc c'est une bascule, pas un remplacement.
    */
   const [dragRect, setDragRect] = useState(false);
+  /**
+   * L'arbre de compétences, tel que le serveur l'a résolu.
+   *
+   * Il se relit à l'ouverture du guide plutôt qu'en permanence : une
+   * compétence s'ouvre au terme d'un travail, pas entre deux images, et
+   * interroger le serveur à chaque rendu pour une donnée qui bouge trois fois
+   * par heure serait du gaspillage pur.
+   */
+  const [skills, setSkills] = useState<SkillView[]>([]);
   const [msg, setMsg] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -1443,6 +1453,29 @@ export function App() {
    * descend pas ne se lit pas comme une attente, mais comme un blocage. La
    * seconde ne bat que le temps du chantier : hors de là, rien à redessiner.
    */
+  /*
+   * L'arbre se relit à l'ouverture du guide.
+   *
+   * Quatre boutons l'ouvrent — le chip du dock, le rail, une touche, un lien.
+   * Charger depuis chacun d'eux, c'était garantir l'oubli du cinquième : on
+   * écoute donc l'état, pas le geste.
+   */
+  useEffect(() => {
+    if (!showGuide || !player) return;
+    let vivant = true;
+    void api<{ skills: SkillView[] }>(`/players/${player.id}/skills`)
+      .then((r) => {
+        if (vivant) setSkills(r.skills ?? []);
+      })
+      .catch(() => {
+        /* Le guide reste lisible sans l'arbre : ses autres onglets ne
+           dépendent pas du serveur. Un échec ne doit pas fermer la fenêtre. */
+      });
+    return () => {
+      vivant = false;
+    };
+  }, [showGuide, player?.id, player?.xp]);
+
   const chantierEnCours = Boolean(chantier);
   useEffect(() => {
     if (!chantierEnCours) return;
@@ -5984,6 +6017,7 @@ export function App() {
         open={showGuide}
         snapshot={guideSnapshot}
         xp={player.xp}
+        skills={skills}
         onClose={() => setShowGuide(false)}
       />
 

@@ -32,6 +32,25 @@ export type PlayerStats = {
   feedings?: number;
   deliveries?: number;
   contracts?: number;
+  /**
+   * Cases désherbées.
+   *
+   * Le pulvérisateur travaillait sans rien compter : la route accordait bien
+   * de l'expérience, mais n'incrémentait aucun compteur. Il n'y avait donc
+   * aucun moyen d'asseoir une quête ou une compétence sur le désherbage.
+   */
+  cellsWeeded?: number;
+  /**
+   * Hectolitres de lait rentrés.
+   *
+   * La traite ne comptait que les **bêtes** traites, jamais le volume. Un
+   * élevage de trois vaches bien menées comptait donc autant qu'un élevage de
+   * trois vaches affamées, et la production laitière — ce que le joueur
+   * regarde vraiment — n'était mesurée nulle part.
+   */
+  hlCollected?: number;
+  /** Bêtes achetées, cumulées : ce qui est passé par la ferme. */
+  animalsBought?: number;
 };
 
 export type StatKey = keyof PlayerStats;
@@ -52,6 +71,9 @@ export const STAT_LABELS: Record<StatKey, string> = {
   feedings: "rations distribuées",
   deliveries: "livraisons",
   contracts: "missions terminées",
+  cellsWeeded: "cases désherbées",
+  hlCollected: "hectolitres de lait",
+  animalsBought: "bêtes achetées",
 };
 
 export type QuestDef = {
@@ -224,7 +246,19 @@ export function questsFor(
   claimed: ReadonlySet<string> | readonly string[] = [],
 ): QuestView[] {
   const taken = claimed instanceof Set ? claimed : new Set(claimed);
-  return QUEST_DEFS.filter((q) => (!q.spec || q.spec === spec) && q.level <= level).map((q) => {
+  /*
+   * Plus de filtre par métier.
+   *
+   * `spec` cachait la moitié du carnet à chacun : un céréalier ne voyait
+   * jamais les quêtes d'élevage, alors que **rien** ne l'empêchait de bâtir
+   * une étable. Le choix de départ ne verrouillait aucune mécanique — il ne
+   * masquait que les consignes, ce qui est le pire des deux mondes :
+   * l'impression d'une classe, sans la substance d'une classe.
+   *
+   * Le champ reste dans les définitions : il dit désormais « de quel côté
+   * penche cette quête », ce qui sert à la ranger, pas à la refuser.
+   */
+  return QUEST_DEFS.filter((q) => q.level <= level).map((q) => {
     const progress = Math.max(0, stats[q.stat] ?? 0);
     return {
       ...q,
