@@ -1,12 +1,10 @@
 import { useEffect, useMemo, useState } from "react";
 import {
-  CLASS_PROFILES,
   DIFFICULTY_LABELS,
   SEASON_LABELS,
   WEATHER_LABELS,
   defaultAppearance,
   type CharacterAppearance,
-  type ClassProfile,
   type Difficulty,
   type Season,
   type Specialization,
@@ -83,22 +81,28 @@ type Props = {
   err: string | null;
 };
 
-type Step = 0 | 1 | 2 | 3;
+type Step = 0 | 1 | 2;
 
 /**
- * Quatre étapes, plus cinq.
+ * Trois étapes — il y en a eu cinq.
  *
- * « Votre personnage » proposait de composer un avatar pièce par pièce —
- * chapeau, peau, visage, vêtements. On le voit de très loin, en vue
- * isométrique, haut comme une case : rien de ce qu'on y choisissait ne se
- * distinguait en jeu. C'était une étape de plus entre le joueur et sa ferme,
- * pour un résultat invisible.
+ * « Votre personnage » proposait de composer un avatar pièce par pièce. On le
+ * voit de très loin, haut comme une case : rien de ce qu'on y choisissait ne
+ * se distinguait en jeu. Cette étape-là est tombée la première.
  *
- * Le personnage existe toujours et se dessine toujours : son apparence
- * découle du métier choisi, qui, lui, veut dire quelque chose.
+ * Le métier a disparu ensuite.
+ *
+ * On demandait « céréalier ou éleveur » avant que le joueur ait vu un champ,
+ * et la fiche promettait « +2 % de rendement sur toutes les cultures ». Ce
+ * bonus n'existe plus : il était le seul avantage chiffré du choix, invisible
+ * en jeu et impossible à obtenir pour l'autre métier. L'écran continuait donc
+ * à vendre une chose que le jeu ne fait plus.
+ *
+ * Ce que le métier prétendait décider se gagne maintenant en jouant, dans
+ * l'arbre de compétences — et rien n'y est réservé à une voie. Il ne restait
+ * qu'une étape qui demandait de parier avant d'avoir joué.
  */
 const STEP_TITLES = [
-  "Votre métier",
   "Votre continent",
   "Votre terre",
   "Confirmation",
@@ -123,16 +127,15 @@ export function Onboarding({
   err,
 }: Props) {
   const [step, setStep] = useState<Step>(0);
-  const [spe, setSpe] = useState<Specialization | null>(null);
   /**
-   * L'apparence découle du métier, elle ne se compose plus.
-   * Le personnage reste dessiné en jeu ; c'est la page de personnalisation qui
-   * a disparu, faute d'être visible à l'échelle où on le regarde.
+   * Le personnage garde une allure, mais elle ne se choisit plus.
+   *
+   * On le voit de très loin, haut comme une case : ni la tenue ni le visage ne
+   * se distinguent en jeu. C'est ce constat qui avait déjà supprimé la page de
+   * personnalisation ; il vaut tout autant pour la tenue de métier.
    */
-  const appearance = useMemo<CharacterAppearance>(
-    () => defaultAppearance(spe ?? "CEREALIER"),
-    [spe],
-  );
+  const spe: Specialization = "CEREALIER";
+  const appearance = useMemo<CharacterAppearance>(() => defaultAppearance(spe), []);
   const [continentCode, setContinentCode] = useState<string | null>(null);
   const [regionCode, setRegionCode] = useState<string | null>(null);
   const [parcelId, setParcelId] = useState<string | null>(null);
@@ -157,7 +160,9 @@ export function Onboarding({
   );
   const continent = continents.find((c) => c.code === continentCode) ?? null;
 
-  const suggested = spe ? CLASS_PROFILES[spe].suggestedContinents : [];
+  // Plus de métier pour suggérer un continent : le joueur choisit sa terre
+  // sur ce qu'elle vaut, pas sur ce qu'un métier lui souffle.
+  const suggested: string[] = [];
 
   function goTo(next: Step) {
     setStep(next);
@@ -170,7 +175,7 @@ export function Onboarding({
         <div>
           <h1 className="onb-title">Installation de votre ferme</h1>
           <p className="onb-sub">
-            Bienvenue {playerName} — quatre étapes et vous êtes aux commandes.
+            Bienvenue {playerName} — trois étapes et vous êtes aux commandes.
           </p>
         </div>
       </header>
@@ -190,66 +195,6 @@ export function Onboarding({
       {err && <p className="gate-alert bad">{err}</p>}
 
       {step === 0 && (
-        <section className="onb-body">
-          <p className="onb-lead">
-            Deux métiers : céréalier ou éleveur. Pendant que ça pousse, vous pouvez aller aider
-            un voisin — on vous paie.
-          </p>
-          <div className="class-grid">
-            {(Object.keys(CLASS_PROFILES) as ClassProfile["code"][]).map((code) => {
-              const p = CLASS_PROFILES[code];
-              const active = spe === code;
-              return (
-                <button
-                  key={code}
-                  type="button"
-                  className={`class-card ${active ? "on" : ""}`}
-                  onClick={() => setSpe(code)}
-                  aria-pressed={active}
-                >
-                  {/*
-                    Cadrage buste. En pied dans une vignette de cette taille, le
-                    personnage faisait cent quatre-vingts pixels de haut pour un
-                    visage de dix : on ne distinguait ni la tête ni la tenue,
-                    c'est-à-dire rien de ce qu'on demande de choisir.
-                  */}
-                  <LowPolyCharacter code={code} active={active} frame="bust" height={190} />
-                  <h3>{p.name}</h3>
-                  <p className="class-tag">{p.tagline}</p>
-                  <ul className="class-perks">
-                    {p.perks.map((x) => (
-                      <li key={x} className="perk">
-                        {x}
-                      </li>
-                    ))}
-                    {p.drawbacks.map((x) => (
-                      <li key={x} className="draw">
-                        {x}
-                      </li>
-                    ))}
-                  </ul>
-                  <p className="class-machines">
-                    Départ : {p.startingMachines.join(" + ")}
-                  </p>
-                </button>
-              );
-            })}
-          </div>
-          <div className="onb-nav">
-            <span />
-            <button
-              type="button"
-              className="btn-primary big"
-              disabled={!spe}
-              onClick={() => goTo(1)}
-            >
-              Continuer
-            </button>
-          </div>
-        </section>
-      )}
-
-      {step === 1 && (
         <section className="onb-body">
           <p className="onb-lead">
             Faites tourner le globe et choisissez votre continent. Les saisons de
@@ -328,7 +273,7 @@ export function Onboarding({
               type="button"
               className="btn-primary big"
               disabled={!continentCode}
-              onClick={() => goTo(2)}
+              onClick={() => goTo(1)}
             >
               Voir les régions
             </button>
@@ -336,7 +281,7 @@ export function Onboarding({
         </section>
       )}
 
-      {step === 2 && (
+      {step === 1 && (
         <section className="onb-body">
           <p className="onb-lead">
             Un continent se divise en <strong>régions</strong>, et chaque région est
@@ -488,14 +433,14 @@ export function Onboarding({
             </>
           )}
           <div className="onb-nav">
-            <button type="button" className="btn-ghost" onClick={() => goTo(1)}>
+            <button type="button" className="btn-ghost" onClick={() => goTo(0)}>
               Changer de continent
             </button>
             <button
               type="button"
               className="btn-primary big"
               disabled={!parcelId}
-              onClick={() => goTo(3)}
+              onClick={() => goTo(2)}
             >
               Choisir cette parcelle
             </button>
@@ -503,7 +448,7 @@ export function Onboarding({
         </section>
       )}
 
-      {step === 3 && spe && parcel && region && detail && (
+      {step === 2 && parcel && region && detail && (
         <section className="onb-body">
           <div className="recap">
             <div className="recap-char">
@@ -512,10 +457,6 @@ export function Onboarding({
             <div className="recap-info">
               <h2>Tout est prêt</h2>
               <dl className="recap-list">
-                <div>
-                  <dt>Métier</dt>
-                  <dd>{CLASS_PROFILES[spe].name}</dd>
-                </div>
                 <div>
                   <dt>Continent</dt>
                   <dd>
@@ -559,7 +500,7 @@ export function Onboarding({
             </div>
           </div>
           <div className="onb-nav">
-            <button type="button" className="btn-ghost" onClick={() => goTo(2)}>
+            <button type="button" className="btn-ghost" onClick={() => goTo(1)}>
               Retour
             </button>
             <button

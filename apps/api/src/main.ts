@@ -5315,6 +5315,14 @@ app.post("/farm/repay", async (req, res) => {
  * jamais « débloquée » une compétence que le serveur tient pour fermée — le
  * défaut classique d'un arbre qui vit des deux côtés.
  */
+/** Les compétences dont une condition dépend — pour dessiner les liens. */
+function prerequisSkills(cond: unknown): string[] {
+  if (!cond || typeof cond !== "object") return [];
+  const c = cond as { kind?: string; skill?: string; of?: unknown[] };
+  if (c.kind === "skill" && c.skill) return [c.skill];
+  return (c.of ?? []).flatMap((sous) => prerequisSkills(sous));
+}
+
 app.get("/players/:id/skills", async (req, res) => {
   const snap = await getSkillSnapshot(req.params.id);
   const states = evaluateSkills(snap, (s) => STAT_LABELS[s] ?? String(s));
@@ -5325,6 +5333,10 @@ app.get("/players/:id/skills", async (req, res) => {
       description: s.def.description,
       branch: s.def.branch,
       tier: s.def.tier,
+      icon: s.def.icon,
+      // Les prérequis remontent tels quels : c'est ce qui permet à l'écran de
+      // tracer les liens de l'arbre sans reconstruire les conditions.
+      requires: prerequisSkills(s.def.condition),
       unlocked: s.unlocked,
       ratio: Math.round(s.ratio * 1000) / 1000,
       effects: s.def.effects,
