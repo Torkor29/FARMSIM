@@ -77,6 +77,7 @@ import {
   buildingLevelDef,
   MAX_BUILDING_LEVEL,
   urgentContractorQuote,
+  contractorTotal,
   URGENT_CONTRACTOR_WORKS,
   LABOR_ORDER_WORKS,
   CONTRACTOR_YIELD_MALUS,
@@ -1775,6 +1776,8 @@ async function getFarmBonuses(farmId: string) {
   /** Petits ouvrages : ils ne stockent rien, ils allègent ou accélèrent. */
   let careDiscount = 0;
   let freeDrying = false;
+  /** Part du séchage payée par le courant produit sur la ferme. */
+  let dryingDiscount = 0;
   for (const b of buildings) {
     if (!BUILDING_DEFS[b.type as SharedBuildingType]) continue;
     const stats = buildingStatsAtLevel(b.type as SharedBuildingType, b.level);
@@ -1789,6 +1792,7 @@ async function getFarmBonuses(farmId: string) {
     spoilageSlow += stats.spoilageSlow ?? 0;
     if (stats.softDryer) softDryer = true;
     careDiscount += BUILDING_DEFS[b.type as SharedBuildingType].careDiscount ?? 0;
+    dryingDiscount += BUILDING_DEFS[b.type as SharedBuildingType].dryingDiscount ?? 0;
     if (BUILDING_DEFS[b.type as SharedBuildingType].freeDrying) freeDrying = true;
   }
   return {
@@ -1813,6 +1817,9 @@ async function getFarmBonuses(farmId: string) {
     // Deux champs de panneaux aident, mais l'entretien n'est jamais gratuit :
     // sans plafond, six ouvrages payaient les révisions à la place du joueur.
     careDiscount: Math.min(0.45, careDiscount),
+    // Deux champs de panneaux ne font pas sécher deux fois moins cher : le
+    // séchoir ne consomme qu'une fois. L'éolienne, elle, va jusqu'à zéro.
+    dryingDiscount: Math.min(0.75, dryingDiscount),
     freeDrying,
     /**
      * Les ruches, avec leur position.
@@ -4585,9 +4592,9 @@ app.post("/parcels/:id/contractor", async (req, res) => {
     return;
   }
 
-  const service = urgentContractorQuote(work, cells.length);
-  const seeds = work === "PLANT" && crop ? CROP_DEFS[crop].seedCostPerCell * cells.length : 0;
-  const total = service + seeds;
+  // La même fonction que le bouton : c'est ce qui garantit que le prix
+  // affiché est le prix débité. Ils divergeaient de la valeur des semences.
+  const { service, supplies: seeds, total } = contractorTotal(work, cells.length, crop);
   if (!peutPayer(user, total)) {
     res.status(402).json({ error: `TRN insuffisants — ${total} requis` });
     return;
@@ -10528,13 +10535,21 @@ app.post("/inventory/dry", async (req, res) => {
     barnBonus: bonuses.softDryer,
   });
   /**
-   * L'éolienne fait tourner le séchoir sans facture.
+   * Le courant produit sur la ferme paie le séchoir.
    *
-   * Elle ne touche ni à la quantité séchée ni au temps : elle enlève le coût.
-   * L'humidité ampute la vente, sécher la rattrape, et cet ouvrage rend le
-   * rattrapage gratuit — ce qui vaut d'autant plus qu'on moissonne humide.
+   * C'est la seule dépense électrique du jeu — tout le reste brûle du gazole —
+   * et donc le seul poste que produire du courant peut alléger. Les panneaux
+   * en prennent la moitié, ils ne donnent rien la nuit ; l'éolienne le prend
+   * en entier, le vent souffle aussi à trois heures du matin.
+   *
+   * Ni l'un ni l'autre ne touche à la quantité séchée ou au temps : ils
+   * enlèvent le coût. L'humidité ampute la vente, sécher la rattrape, et ces
+   * ouvrages rendent le rattrapage bon marché — ce qui vaut d'autant plus
+   * qu'on moissonne humide.
    */
-  const dried = bonuses.freeDrying ? { ...brut, cost: 0 } : brut;
+  const dried = bonuses.freeDrying
+    ? { ...brut, cost: 0 }
+    : { ...brut, cost: Math.round(brut.cost * (1 - bonuses.dryingDiscount)) };
   if (dried.cost > user.crd) {
     res.status(409).json({ error: "TRN insuffisants pour sécher" });
     return;
