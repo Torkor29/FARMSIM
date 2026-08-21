@@ -11,7 +11,7 @@
  * à stocker, à loger, ou à devenir indispensable, c'est ici qu'on le verra.
  */
 
-import { BUILDING_DEFS, CLEAN_COST_CRD, GREASE_COST_CRD } from "@farmsim/shared";
+import { BUILDING_DEFS, CLEAN_COST_CRD, DRYING, GREASE_COST_CRD } from "@farmsim/shared";
 
 const PETITS = ["SOLAR_PANELS", "WIND_TURBINE", "BEEHIVE"] as const;
 
@@ -48,19 +48,40 @@ describe("les petits ouvrages", () => {
     }
   });
 
-  it("les panneaux se remboursent en entretiens, pas en une saison", () => {
+  it("l'atelier se rembourse en entretiens, pas en une saison", () => {
     /**
-     * Le calcul que le joueur doit pouvoir faire : à 20 % de remise sur un
-     * graissage et un nettoyage, combien d'entretiens avant d'être rentré dans
-     * ses frais ? Assez pour que ce soit un pari sur la taille du parc — trop
-     * peu, l'achat serait évident ; trop, personne n'y toucherait.
+     * Le calcul que le joueur doit pouvoir faire : à cette remise sur un
+     * graissage et un nettoyage, combien d'entretiens avant d'être rentré
+     * dans ses frais ? Assez pour que ce soit un pari sur la taille du parc —
+     * trop peu, l'achat serait évident ; trop, personne n'y toucherait.
+     *
+     * La remise appartenait aux panneaux solaires, où elle n'avait aucun sens
+     * : le soleil n'a jamais fait baisser le prix d'un bidon de graisse. Elle
+     * est passée à l'atelier, qui est l'endroit où l'on graisse et où l'on
+     * révise. Le calcul, lui, n'a pas bougé.
      */
-    const remise = BUILDING_DEFS.SOLAR_PANELS.careDiscount ?? 0;
+    const remise = BUILDING_DEFS.WORKSHOP.careDiscount ?? 0;
     expect(remise).toBeGreaterThan(0.1);
     const economieParEntretien = (GREASE_COST_CRD + CLEAN_COST_CRD) * remise;
-    const entretiens = BUILDING_DEFS.SOLAR_PANELS.cost / economieParEntretien;
+    const entretiens = BUILDING_DEFS.WORKSHOP.cost / economieParEntretien;
     expect(entretiens).toBeGreaterThan(50);
     expect(entretiens).toBeLessThan(600);
+  });
+
+  it("les ouvrages électriques se remboursent en tonnes séchées", () => {
+    /**
+     * Panneaux et éolienne font du courant, et le seul poste d'énergie chiffré
+     * du jeu est le séchage du grain. Le calcul que le joueur doit pouvoir
+     * faire est donc : combien de tonnes à sécher avant d'être rentré dans mes
+     * frais ? Quelques centaines — l'affaire d'une ou deux bonnes moissons
+     * humides, pas d'un après-midi, et pas d'une vie non plus.
+     */
+    for (const t of ["SOLAR_PANELS", "WIND_TURBINE"] as const) {
+      const remise = BUILDING_DEFS[t].dryingDiscount ?? 0;
+      expect(remise).toBeGreaterThan(0.1);
+      const tonnes = BUILDING_DEFS[t].cost / (DRYING.costPerTonPerPass * remise);
+      expect({ t, rembourse: tonnes > 200 && tonnes < 2000 }).toEqual({ t, rembourse: true });
+    }
   });
 
   it("la ruche porte à quelques cases, pas sur toute la parcelle", () => {

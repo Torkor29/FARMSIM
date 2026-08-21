@@ -28,6 +28,10 @@ type ContractorOffer = {
    * bouton — c'est « Demander de l'aide » qui prend le relais.
    */
   cost: number | null;
+  /** La part main-d'œuvre, quand on veut détailler la facture. */
+  service?: number | null;
+  /** Les intrants à la charge du client — semence, engrais. Nuls ailleurs. */
+  inputs?: number;
   hasMachine: boolean;
 };
 
@@ -409,14 +413,28 @@ export function FieldDock({
                 type="button"
                 className="chip eta"
                 disabled={busy || selectedCount === 0 || !contractorAffordable}
+                /*
+                 * L'infobulle détaille, parce que les deux boutons voisins se
+                 * ressemblaient au point qu'un testeur a demandé lequel était
+                 * quoi. Ce qui les sépare n'est pas le prix mais le **qui** et
+                 * le **quand** : une entreprise vient tout de suite et se paie
+                 * cher, un joueur vient dans l'heure et coûte moins.
+                 */
                 title={
-                  tool === "HARVEST" && !mowSelected && !contractor.hasMachine
-                    ? `Vous n’avez pas la machine : quelqu’un le fait pour vous — ${contractor.cost} TRN`
-                    : `Quelqu’un le fait pour vous, tout de suite — ${contractor.cost} TRN`
+                  [
+                    "Une entreprise vient le faire, tout de suite.",
+                    contractor.inputs
+                      ? `${contractor.service} TRN de prestation + ${contractor.inputs} d’intrants` +
+                        " (semence ou engrais, comme si vous le faisiez vous-même)."
+                      : `${contractor.cost} TRN de prestation.`,
+                    tool === "HARVEST" && !mowSelected && !contractor.hasMachine
+                      ? "Vous n’avez pas la machine — elle vient avec la sienne."
+                      : "Elle vient avec sa machine.",
+                  ].join(" ")
                 }
                 onClick={onContractor}
               >
-                Payer · {contractor.cost} TRN
+                Une entreprise · {contractor.cost} TRN
               </button>
             )}
             {laborQuote != null && !visiting && onPublishLabor && (
@@ -424,10 +442,14 @@ export function FieldDock({
                 type="button"
                 className="chip"
                 disabled={busy || !laborAffordable}
-                title="Cet argent est mis de côté jusqu’à la fin (ou l’annulation)."
+                title={
+                  "Vous passez une annonce aux autres joueurs, à votre prix. Il s’ouvre une" +
+                  " fenêtre pour l’écrire — celui-ci n’est qu’un repère. L’argent est mis de" +
+                  " côté jusqu’à la fin, et rendu si personne ne vient."
+                }
                 onClick={onPublishLabor}
               >
-                Demander de l’aide · {laborQuote} TRN
+                Demander à un joueur · ~{laborQuote} TRN
               </button>
             )}
             {readyCount > 0 && (

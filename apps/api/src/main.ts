@@ -76,7 +76,7 @@ import {
   buildingUpgradeCost,
   buildingLevelDef,
   MAX_BUILDING_LEVEL,
-  urgentContractorQuote,
+  urgentContractorBill,
   URGENT_CONTRACTOR_WORKS,
   LABOR_ORDER_WORKS,
   CONTRACTOR_YIELD_MALUS,
@@ -1774,7 +1774,8 @@ async function getFarmBonuses(farmId: string) {
   let spoilageSlow = 0;
   /** Petits ouvrages : ils ne stockent rien, ils allègent ou accélèrent. */
   let careDiscount = 0;
-  let freeDrying = false;
+  /** Ce que le courant produit sur la ferme couvre de la facture de séchage. */
+  let dryingDiscount = 0;
   for (const b of buildings) {
     if (!BUILDING_DEFS[b.type as SharedBuildingType]) continue;
     const stats = buildingStatsAtLevel(b.type as SharedBuildingType, b.level);
@@ -1789,7 +1790,7 @@ async function getFarmBonuses(farmId: string) {
     spoilageSlow += stats.spoilageSlow ?? 0;
     if (stats.softDryer) softDryer = true;
     careDiscount += BUILDING_DEFS[b.type as SharedBuildingType].careDiscount ?? 0;
-    if (BUILDING_DEFS[b.type as SharedBuildingType].freeDrying) freeDrying = true;
+    dryingDiscount += BUILDING_DEFS[b.type as SharedBuildingType].dryingDiscount ?? 0;
   }
   return {
     /** Les compétences du propriétaire, chacune déjà bornée. */
@@ -1813,7 +1814,9 @@ async function getFarmBonuses(farmId: string) {
     // Deux champs de panneaux aident, mais l'entretien n'est jamais gratuit :
     // sans plafond, six ouvrages payaient les révisions à la place du joueur.
     careDiscount: Math.min(0.45, careDiscount),
-    freeDrying,
+    // Panneaux et éolienne s'additionnent, jamais jusqu'à la gratuité : il
+    // reste toujours une facture, parce qu'il en reste toujours une.
+    dryingDiscount: Math.min(DRYING.discountCap, dryingDiscount),
     /**
      * Les ruches, avec leur position.
      *
@@ -4213,6 +4216,8 @@ async function createLaborOrderForCells(opts: {
   crop?: CropCode | null;
   cells: CellXY[];
   npcClient?: boolean;
+  /** Le prix proposé par le client. Absent : le repère du jeu. */
+  offerCrd?: number;
 }): Promise<
   | { ok: true; order: ReturnType<typeof publicLaborOrder>; escrow: number }
   | { ok: false; status: number; error: string }
@@ -4265,7 +4270,15 @@ async function createLaborOrderForCells(opts: {
     };
   }
   const crop = opts.work === "PLANT" ? (opts.crop ?? "WHEAT") : null;
-  const money = laborEscrow(opts.work, unique.length, crop, Boolean(opts.npcClient));
+  // Le prix appartient au client : c'est lui qui passe l'annonce. Le PNJ, qui
+  // n'a pas de clavier, s'en remet au repère du jeu.
+  const money = laborEscrow(
+    opts.work,
+    unique.length,
+    crop,
+    Boolean(opts.npcClient),
+    opts.npcClient ? undefined : opts.offerCrd,
+  );
   // Le fumier déjà au bord du champ tient lieu d'engrais : on ne fait pas
   // payer deux fois celui qui l'a produit.
   if (opts.work === "FERTILIZE") {
@@ -4312,6 +4325,16 @@ app.post("/parcels/:id/labor-orders", async (req, res) => {
       work: z.enum(LABOR_ORDER_WORKS),
       crop: z.enum(CROP_CODES).optional(),
       cells: z.array(z.object({ x: z.number().int(), y: z.number().int() })).min(1),
+      /*
+       * Le prix que le client propose aux autres joueurs.
+       *
+       * Facultatif : sans lui, le repère du jeu s'applique — c'est ce que
+       * font les anciens clients et les PNJ. Les bornes sont vérifiées ici,
+       * pas seulement à l'écran : `clampLaborOffer` ramène dans la fourchette
+       * plutôt que de refuser, pour qu'un chiffre extrême ne fasse pas perdre
+       * la sélection.
+       */
+      offerCrd: z.number().int().positive().max(1_000_000).optional(),
     })
     .safeParse(req.body);
   if (!body.success) {
@@ -4324,6 +4347,7 @@ app.post("/parcels/:id/labor-orders", async (req, res) => {
     work: body.data.work,
     crop: body.data.crop,
     cells: body.data.cells,
+    offerCrd: body.data.offerCrd,
   });
   if (!result.ok) {
     res.status(result.status).json({ error: result.error });
@@ -4585,9 +4609,9 @@ app.post("/parcels/:id/contractor", async (req, res) => {
     return;
   }
 
-  const service = urgentContractorQuote(work, cells.length);
-  const seeds = work === "PLANT" && crop ? CROP_DEFS[crop].seedCostPerCell * cells.length : 0;
-  const total = service + seeds;
+  // Même fonction que l'écran : c'est ce qui garantit que le prix annoncé
+  // avant le clic est celui qui sera prélevé après.
+  const { service, inputs, total } = urgentContractorBill(work, cells.length, crop);
   if (!peutPayer(user, total)) {
     res.status(402).json({ error: `TRN insuffisants — ${total} requis` });
     return;
@@ -4638,7 +4662,7 @@ app.post("/parcels/:id/contractor", async (req, res) => {
         });
       }
     });
-    res.json({ work, cells: cells.length, cost: total, service, seeds });
+    res.json({ work, cells: cells.length, cost: total, service, inputs });
     return;
   }
 
@@ -10557,13 +10581,18 @@ app.post("/inventory/dry", async (req, res) => {
     barnBonus: bonuses.softDryer,
   });
   /**
-   * L'éolienne fait tourner le séchoir sans facture.
+   * Le courant produit sur la ferme allège la facture de séchage.
    *
-   * Elle ne touche ni à la quantité séchée ni au temps : elle enlève le coût.
-   * L'humidité ampute la vente, sécher la rattrape, et cet ouvrage rend le
-   * rattrapage gratuit — ce qui vaut d'autant plus qu'on moissonne humide.
+   * Il ne touche ni à la quantité séchée ni au temps — seulement au coût.
+   * L'humidité ampute la vente, sécher la rattrape, et les panneaux comme
+   * l'éolienne rendent le rattrapage moins cher, d'autant plus qu'on moissonne
+   * humide. Moins cher, jamais gratuit : `DRYING.discountCap` garde une
+   * facture, sans quoi le poste cesserait d'être une décision.
    */
-  const dried = bonuses.freeDrying ? { ...brut, cost: 0 } : brut;
+  const dried = {
+    ...brut,
+    cost: Math.round(brut.cost * (1 - bonuses.dryingDiscount)),
+  };
   if (dried.cost > user.crd) {
     res.status(409).json({ error: "TRN insuffisants pour sécher" });
     return;

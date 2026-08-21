@@ -445,7 +445,16 @@ export type BuildingDef = {
    * L'humidité à la récolte ampute la vente ; l'éolienne fait tourner le
    * séchoir sans facture.
    */
-  freeDrying?: boolean;
+  /**
+   * Part de la facture de séchage que l'ouvrage couvre.
+   *
+   * Remplace `freeDrying`. Un ouvrage à 2 200 TRN qui supprimait entièrement
+   * le poste d'énergie de la ferme, pour toujours, n'était ni réaliste ni
+   * tenable : une éolienne de ferme allège la facture, elle ne l'abolit pas.
+   * Plusieurs sources s'additionnent, sous le plafond `DRYING.discountCap` —
+   * il reste toujours une facture, parce qu'il en reste toujours une.
+   */
+  dryingDiscount?: number;
   /**
    * Portée de pollinisation, en cases `[GD]`.
    *
@@ -482,6 +491,14 @@ export const DRYING = {
   sellThreshold: 0.14,
   /** Malus prix si humidité > seuil */
   sellPenaltyAbove: 0.15,
+  /**
+   * Ce que le courant de la ferme peut couvrir, au mieux.
+   *
+   * Panneaux et éolienne s'additionnent, mais jamais jusqu'à la gratuité :
+   * une ferme achète toujours une part de son courant, et un poste de dépense
+   * qui disparaît cesse d'être une décision.
+   */
+  discountCap: 0.5,
 } as const;
 
 /** Une ligne pour une offre : combien, et pourquoi ça vaut moins. */
@@ -589,8 +606,12 @@ export const BUILDING_DEFS: Record<BuildingType, BuildingDef> = {
     w: 2,
     h: 2,
     cost: 1100,
-    description: "Répare moins cher.",
+    // La remise d'entretien arrive des panneaux solaires, où elle n'avait
+    // aucun sens. Un atelier est l'endroit où l'on graisse et où l'on révise :
+    // c'est le seul bâtiment du jeu dont on attend qu'il allège ce poste.
+    description: "Répare moins cher, et l’entretien courant aussi.",
     repairDiscount: 0.1,
+    careDiscount: 0.2,
   },
   FARMHOUSE: {
     type: "FARMHOUSE",
@@ -655,15 +676,32 @@ export const BUILDING_DEFS: Record<BuildingType, BuildingDef> = {
    *  - la ruche a une portée, donc un emplacement — le seul bâtiment du jeu
    *    où *où* l'on pose compte.
    */
+  /*
+   * Les deux ouvrages qui font du courant.
+   *
+   * Ils promettaient n'importe quoi. Les panneaux annonçaient « graissage,
+   * nettoyage et révision 20 % moins cher » — le soleil n'a jamais fait
+   * baisser le prix d'un bidon de graisse ni l'heure d'un mécanicien ; cette
+   * remise-là appartient à l'atelier, où elle est passée. L'éolienne
+   * annonçait « fait tourner le séchoir sans facture, et plus vite » : le
+   * séchoir n'existe pas comme bâtiment — c'est le silo qui sèche — et le
+   * code ne touchait ni à la vitesse ni à la quantité, seulement au coût. La
+   * moitié de la phrase était fausse.
+   *
+   * Ce qu'ils font vraiment, tous les deux, c'est du courant. Le seul poste
+   * d'énergie chiffré du jeu est le séchage du grain, à 12 TRN la tonne et
+   * par passe : c'est donc là qu'ils agissent, et nulle part ailleurs. La
+   * différence entre les deux est celle du monde réel — le soleil s'arrête la
+   * nuit, le vent non.
+   */
   SOLAR_PANELS: {
     type: "SOLAR_PANELS",
     name: "Panneaux solaires",
     w: 2,
     h: 2,
     cost: 1500,
-    description:
-      "Le courant de la ferme. Graissage, nettoyage et révision coûtent 20 % de moins.",
-    careDiscount: 0.2,
+    description: "Du courant tant qu’il fait jour : le séchage du grain coûte 20 % de moins.",
+    dryingDiscount: 0.2,
   },
   WIND_TURBINE: {
     type: "WIND_TURBINE",
@@ -671,8 +709,9 @@ export const BUILDING_DEFS: Record<BuildingType, BuildingDef> = {
     w: 1,
     h: 1,
     cost: 2200,
-    description: "Fait tourner le séchoir sans facture. Le grain sèche gratuitement, et plus vite.",
-    freeDrying: true,
+    description:
+      "Du courant jour et nuit, même sous la pluie : le séchage du grain coûte 35 % de moins.",
+    dryingDiscount: 0.35,
   },
   BEEHIVE: {
     type: "BEEHIVE",
@@ -1587,6 +1626,8 @@ export function urgentContractorQuote(work: FarmWork, cells: number): number {
   return Math.round(contractorQuote(work, cells) * (1 + URGENT_NPC_SURCHARGE));
 }
 
+
+
 /**
  * Les travaux que l'entreprise de dépannage prend au pied levé.
  *
@@ -1708,30 +1749,122 @@ export const LABOR_ORDER_TTL_MS = 45 * 60 * 1000;
 export const LABOR_OPEN_MAX_PER_CLIENT = 3;
 export const FERTILIZE_COST_PER_CELL = 10;
 
+/**
+ * Les intrants — ce que le client paie parce que ça reste dans son champ.
+ *
+ * La semence est semée chez lui, l'engrais épandu chez lui : il les paie déjà
+ * quand il travaille lui-même (routes `/plant` et `/fertilize`), et il n'y a
+ * aucune raison qu'il cesse de les payer parce qu'un autre tient le volant.
+ *
+ * Le labour et le déchaumage y figuraient aussi, à 12 et 5 TRN la case. Ce
+ * n'étaient pas des intrants : rien ne reste dans le champ, et cet argent
+ * n'allait à personne — le prestataire est payé à part, le reliquat est rendu
+ * au client, ces extras-là étaient simplement détruits. Ils gonflaient la
+ * demande d'aide de 288 TRN sur un labour de vingt-quatre cases, la rendant
+ * deux fois plus chère que la même besogne confiée à une entreprise. Ils sont
+ * partis : le gazole du prestataire est dans son prix, et c'est lui qui le
+ * brûle.
+ */
 export function laborExtras(work: FarmWork, cells: number, crop?: CropCode | null): number {
   const n = Math.max(0, cells);
   if (work === "PLANT") return (crop ? CROP_DEFS[crop].seedCostPerCell : 15) * n;
   if (work === "FERTILIZE") return FERTILIZE_COST_PER_CELL * n;
-  if (work === "PLOW") return 12 * n;
-  if (work === "STUBBLE") return 5 * n;
   return 0;
 }
+/**
+ * La facture complète d'une prestation urgente — main-d'œuvre **et** intrants.
+ *
+ * Elle existe parce que les deux côtés ne comptaient pas la même chose. La
+ * route ajoutait la semence au devis ; l'écran affichait le devis seul. Sur
+ * 134 cases de maïs, le bouton annonçait « 1 325 TRN » et le serveur
+ * prélevait 3 737 : la semence, 2 412 TRN, n'apparaissait nulle part avant le
+ * clic.
+ *
+ * L'effet de bord était pire que l'écart. À côté, « Demander de l'aide »
+ * affiche depuis toujours sa consigne **complète**, semence comprise — 3 564
+ * TRN pour le même travail. Les deux boutons semblaient donc dire que le
+ * prestataire coûtait deux fois et demie moins cher que l'entraide, alors
+ * qu'il coûte **plus** : c'est tout le sens des 15 % d'urgence. Le joueur
+ * lisait exactement l'inverse de la règle du jeu.
+ *
+ * Une seule fonction, appelée des deux côtés : c'est le principe déjà tenu
+ * par `laborEscrow`, et la seule façon de garantir que l'écran annonce ce que
+ * la route prélèvera.
+ */
+export function urgentContractorBill(
+  work: FarmWork,
+  cells: number,
+  crop?: CropCode | null,
+): { service: number; inputs: number; total: number } {
+  const service = urgentContractorQuote(work, cells);
+  /*
+   * Le prestataire vient avec sa machine, jamais avec les intrants : le grain
+   * semé et l'engrais épandu sont ceux du client, et c'est lui qui les paie —
+   * exactement comme lorsqu'il travaille seul.
+   *
+   * `laborExtras` plutôt qu'un calcul local : la route ne comptait que la
+   * semence, si bien que faire fertiliser par une entreprise ne coûtait pas
+   * d'engrais du tout, alors que le demander à un joueur en coûtait 600 sur
+   * soixante cases. Deux tables d'intrants, deux réponses différentes à la
+   * même question. Il n'y en a plus qu'une.
+   */
+  const inputs = laborExtras(work, cells, crop);
+  return { service, inputs, total: service + inputs };
+}
 
+/**
+ * Le prix qu'on propose par défaut à l'ouverture du champ de saisie.
+ *
+ * Ce n'est **pas** un tarif : c'est un repère. Demander de l'aide, c'est
+ * envoyer une annonce aux autres joueurs, et le prix d'une annonce appartient
+ * à celui qui la passe. Le jeu suggère ce que la besogne vaut à peu près —
+ * le barème de l'entreprise, moins la marge qu'on ne paie pas en se passant
+ * d'elle — puis se tait.
+ */
+export function suggestedLaborOffer(work: FarmWork, cells: number): number {
+  return Math.max(1, Math.round(contractorQuote(work, cellsAPayer(cells)) * MISSION_P2P_SHARE));
+}
+
+/**
+ * Les bornes du prix libre.
+ *
+ * Libre ne veut pas dire sans garde-fou : à un TRN personne ne vient, et une
+ * annonce à cent fois le prix est une façon de déplacer de l'argent entre deux
+ * comptes complices plutôt qu'une demande de travail. On borne large — de la
+ * moitié au quintuple du repère — et on laisse le joueur décider dedans.
+ */
+export function laborOfferBounds(work: FarmWork, cells: number): { min: number; max: number } {
+  const repere = suggestedLaborOffer(work, cells);
+  return { min: Math.max(1, Math.round(repere * 0.5)), max: repere * 5 };
+}
+
+export function clampLaborOffer(work: FarmWork, cells: number, offer: number): number {
+  const { min, max } = laborOfferBounds(work, cells);
+  return Math.max(min, Math.min(max, Math.round(offer)));
+}
+
+/**
+ * Ce que coûte une demande d'aide : le prix qu'on offre, plus les intrants.
+ *
+ * Les deux parts ne se négocient pas de la même façon. Le **prix** est celui
+ * que le client écrit, et il va en entier au joueur qui prend le chantier :
+ * ce qu'on offre est ce qu'on paie, sans commission invisible. Les
+ * **intrants** ne se discutent pas — c'est la semence du champ.
+ */
 export function laborEscrow(
   work: FarmWork,
   cells: number,
   crop?: CropCode | null,
   npcClient = false,
+  offer?: number,
 ): { quote: number; extras: number; escrow: number; payout: number } {
   const n = cellsAPayer(cells);
-  const quote = Math.round(contractorQuote(work, n) * (npcClient ? 0.88 : 1));
+  const quote =
+    offer !== undefined
+      ? clampLaborOffer(work, n, offer)
+      : Math.round(suggestedLaborOffer(work, n) * (npcClient ? 0.88 : 1));
   const extras = laborExtras(work, n, crop);
-  return {
-    quote,
-    extras,
-    escrow: quote + extras,
-    payout: Math.round(quote * MISSION_P2P_SHARE),
-  };
+  return { quote, extras, escrow: quote + extras, payout: quote };
 }
 
 /** @deprecated préférer missionPayout(work, cells, "NPC") */

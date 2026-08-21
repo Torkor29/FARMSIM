@@ -50,7 +50,10 @@ describe("le prix de l’entraide", () => {
      */
     const q = (n: number) => laborEscrow("STUBBLE", n).quote;
     const marge = (a: number, b: number) => (q(b) - q(a)) / (b - a);
-    expect(marge(24, 48)).toBeCloseTo(marge(24, 144), 6);
+    // Le devis est arrondi au TRN entier : sur vingt-quatre cases, cet
+    // arrondi pèse jusqu'à 0,04 TRN par case. La tolérance couvre l'arrondi,
+    // pas un changement de tarif — qui se compterait en dixièmes.
+    expect(marge(24, 48)).toBeCloseTo(marge(24, 144), 1);
   });
 
   it("paie l’aidant à proportion, lui aussi", () => {

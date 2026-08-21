@@ -184,19 +184,35 @@ describe("missions d’appoint", () => {
     expect(board).toBeLessThan(cultureNet);
   });
 
-  it("escrowe devis + extras, paie 85 % du devis seulement", () => {
+  /*
+   * Le devis d'entraide retenait 15 % au passage : le client mettait de côté
+   * `quote`, l'aidant en touchait 85 %, et le reliquat retournait au client.
+   *
+   * Le prix se fixe désormais à la main — c'est une annonce passée aux autres
+   * joueurs, et son prix appartient à celui qui la passe. Une commission
+   * invisible ferait mentir le chiffre à l'instant même où on le tape : ce
+   * qu'on offre est ce que l'aidant touche.
+   */
+  it("escrowe le prix offert plus les intrants, et le verse en entier", () => {
     const money = laborEscrow("HARVEST", 16);
-    expect(money.payout).toBe(missionPayout("HARVEST", 16, "P2P"));
     expect(money.escrow).toBe(money.quote + money.extras);
-    expect(money.payout).toBeLessThan(money.quote);
+    expect(money.payout).toBe(money.quote);
   });
 
-  it("escrowe pressage et ensilage sans extras, paie 85 %", () => {
+  it("escrowe pressage et ensilage sans intrants", () => {
     for (const work of ["BALE", "COLLECT", "SILAGE"] as const) {
       const money = laborEscrow(work, 16);
       expect(money.extras).toBe(0);
       expect(money.escrow).toBe(money.quote);
-      expect(money.payout).toBeLessThan(money.quote);
+      expect(money.payout).toBe(money.quote);
+    }
+  });
+
+  it("verse au prestataire exactement ce que le client a écrit", () => {
+    for (const offre of [120, 500, 2000]) {
+      const money = laborEscrow("HARVEST", 16, null, false, offre);
+      expect(money.payout).toBe(money.quote);
+      expect(money.escrow - money.extras).toBe(money.payout);
     }
   });
 

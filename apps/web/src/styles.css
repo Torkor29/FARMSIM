@@ -1054,6 +1054,65 @@ button.ghost {
   border-color: transparent;
 }
 .confirm-detail { margin: 0; color: var(--ink-soft); font-size: 0.9rem; }
+/* —— Le prix qu'on propose ——
+   La fenêtre d'annonce d'entraide. Le champ de saisie porte tout le sens de
+   l'écran : il est donc grand, et le détail de ce qui sera mis de côté se lit
+   sous lui, en clair — le prix d'un côté, les intrants de l'autre, jamais
+   fondus ensemble. C'est cette confusion-là qui faisait paraître l'entraide
+   deux fois plus chère qu'elle ne l'est. */
+.offer-card { width: min(28rem, 100%); }
+.offer-field {
+  display: grid;
+  gap: 0.3rem;
+  margin: 0.9rem 0 0.35rem;
+}
+.offer-field span {
+  font-size: 0.78rem;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.offer-field input {
+  width: 100%;
+  min-height: 48px;
+  padding: 0.4rem 0.7rem;
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  background: var(--paper);
+  font: inherit;
+  font-size: 1.3rem;
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+  color: var(--teal-700);
+}
+.offer-field input:focus-visible { outline: 2px solid var(--teal-300); outline-offset: 1px; }
+.offer-hint { margin: 0.3rem 0 0; font-size: 0.78rem; line-height: 1.4; color: var(--muted); }
+.offer-bill {
+  margin: 0.8rem 0 0;
+  padding: 0.6rem 0.75rem;
+  border-radius: var(--r-md);
+  background: var(--sand);
+  display: grid;
+  gap: 0.25rem;
+  font-size: 0.85rem;
+}
+.offer-bill > div { display: flex; justify-content: space-between; gap: 0.6rem; }
+.offer-bill dt { color: var(--ink-soft); }
+.offer-bill dd { margin: 0; font-variant-numeric: tabular-nums; font-weight: 700; }
+.offer-total {
+  margin-top: 0.2rem;
+  padding-top: 0.35rem;
+  border-top: 1px dashed var(--line);
+}
+.offer-total dd { color: var(--teal-700); }
+.offer-warn {
+  margin: 0.55rem 0 0;
+  font-size: 0.82rem;
+  font-weight: 700;
+  color: var(--danger);
+}
+
 .confirm-actions {
   display: flex;
   justify-content: flex-end;

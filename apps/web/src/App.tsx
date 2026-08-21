@@ -12,7 +12,7 @@ import {
   buildingLevelDef,
   buildingResaleValue,
   buildingUpgradeCost,
-  urgentContractorQuote,
+  urgentContractorBill,
   jobArrivalMs,
   acceptsUrgentContractor,
   acceptsLaborOrder,
@@ -121,6 +121,7 @@ import { FieldDock } from "./FieldDock";
 import type { SkillView } from "./SkillTree";
 import { PlayGuide } from "./PlayGuide";
 import { SkillsScreen, type SkillBonusView } from "./SkillsScreen";
+import { LaborOfferDialog } from "./LaborOfferDialog";
 import { TOKEN_KEY, TUTORIAL_KEY, GUIDE_FLAGS_KEY } from "./storage-keys";
 import {
   cropFromPlantTool,
@@ -737,6 +738,8 @@ export function App() {
   const [showGuide, setShowGuide] = useState(false);
   /** Les compétences ont leur propre porte, au milieu du bandeau. */
   const [showSkills, setShowSkills] = useState(false);
+  /** La demande d'aide en cours de rédaction — le prix est au joueur. */
+  const [offreAide, setOffreAide] = useState(false);
   const [guideFlags, setGuideFlags] = useState(() => readGuideFlags());
   const [pulseCells, setPulseCells] = useState<{ x: number; y: number }[]>([]);
   const [activeWork, setActiveWork] = useState<{
@@ -2648,13 +2651,27 @@ export function App() {
      * erreur de validation informe pour le déchaumage. Un bouton qui ne peut
      * qu'échouer ne doit pas exister ; `cost: null` l'efface des deux coques.
      */
+    /*
+     * Le devis, semence comprise.
+     *
+     * Il ne l'était pas : l'écran affichait la seule main-d'œuvre pendant que
+     * la route ajoutait la semence. Sur 134 cases de maïs, le bouton annonçait
+     * 1 325 TRN et le serveur en prélevait 3 737 — et, à côté, « Demander de
+     * l'aide » affichait 3 564, sa consigne complète. Les deux boutons
+     * donnaient donc à lire l'inverse de la règle : le prestataire y semblait
+     * deux fois et demie moins cher que l'entraide, alors qu'il coûte plus.
+     */
+    const facture =
+      acceptsUrgentContractor(work) && selectedCells.length
+        ? urgentContractorBill(work, selectedCells.length, cropFromPlantTool(tool) ?? undefined)
+        : null;
     return {
       work,
       hasMachine,
       blocage,
-      cost: acceptsUrgentContractor(work)
-        ? urgentContractorQuote(work, selectedCells.length)
-        : null,
+      service: facture?.service ?? null,
+      inputs: facture?.inputs ?? 0,
+      cost: facture?.total ?? null,
     };
   }, [tool, selectedCells, selectedAreGrass, player?.farm?.machines, dansSelection]);
 
@@ -2679,6 +2696,10 @@ export function App() {
     return null;
   }, [tool, player?.farm?.machines, selectedCells.length, dansSelection]);
 
+  /*
+   * Ce que le bouton annonce n'est plus un tarif mais un **repère** : le prix
+   * se fixe dans la fenêtre qui suit, et c'est le joueur qui l'écrit.
+   */
   const laborQuote = useMemo(() => {
     if (visiting || !contractorOffer) return null;
     const n = selectedCells.length;
@@ -2705,7 +2726,7 @@ export function App() {
     return `L’entraide se demande à partir de ${MISSION_CELLS_MIN} cases — vous en avez retenu ${n}.`;
   }, [visiting, contractorOffer, laborQuote, selectedCells.length]);
 
-  async function publishLaborOrder() {
+  async function publishLaborOrder(offerCrd: number) {
     if (!player || !activeParcelId || !contractorOffer || laborQuote == null) return;
     setBusy(true);
     try {
@@ -2717,6 +2738,7 @@ export function App() {
           work: contractorOffer.work,
           crop,
           cells: selectedCells,
+          offerCrd,
         }),
       });
       flashToast("Cet argent est bloqué jusqu’à la fin (ou l’annulation).");
@@ -5870,7 +5892,7 @@ export function App() {
           mowSelected={selectedAreGrass}
           mowReadyAll={readyAreGrass}
           onContractor={callContractor}
-          onPublishLabor={publishLaborOrder}
+          onPublishLabor={() => setOffreAide(true)}
           onSell={() => setShowMarket(true)}
           onGuide={() => setShowGuide(true)}
           hasHerd={barns.length > 0}
@@ -5975,7 +5997,7 @@ export function App() {
             onConfirm={runSelectionAction}
             onHarvestAll={harvestAll}
             onContractor={callContractor}
-            onPublishLabor={publishLaborOrder}
+            onPublishLabor={() => setOffreAide(true)}
             onSelectAll={() => setSelectedCells(eligibleCells(tool))}
             onClear={() => setSelectedCells([])}
           />
@@ -6080,6 +6102,21 @@ export function App() {
         xp={player.xp}
         onClose={() => setShowGuide(false)}
       />
+      {contractorOffer && (
+        <LaborOfferDialog
+          open={offreAide}
+          work={contractorOffer.work}
+          cells={selectedCells.length}
+          crop={cropFromPlantTool(tool) ?? undefined}
+          purse={player.crd}
+          busy={busy}
+          onCancel={() => setOffreAide(false)}
+          onConfirm={(prix) => {
+            setOffreAide(false);
+            void publishLaborOrder(prix);
+          }}
+        />
+      )}
       <SkillsScreen
         open={showSkills}
         skills={skills}
