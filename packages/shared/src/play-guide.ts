@@ -170,7 +170,10 @@ export const OBJECTIVE_DEFS: ObjectiveDef[] = [
 ];
 
 export function objectivesFor(spec: Specialization): ObjectiveDef[] {
-  return OBJECTIVE_DEFS.filter((o) => !o.spec || o.spec === spec);
+  // Les deux voies s'affichent pour tout le monde : le joueur choisit en
+  // jouant, pas à l'inscription. Voir `objectivesFor` côté quêtes.
+  void spec;
+  return OBJECTIVE_DEFS;
 }
 
 export function evaluateObjectives(snap: GuideSnapshot): ObjectiveView[] {

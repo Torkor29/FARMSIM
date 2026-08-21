@@ -357,11 +357,14 @@ describe("argent", () => {
     const reussis = (await Promise.all(tirs)).filter((r) => r.statut < 400).length;
     const apres = await appel("/auth/me", { jeton: f.jeton });
     const joueur = (apres.corps as unknown as {
-      player: { crd: number; farm: { parcels: { buildings: unknown[] }[] } };
+      player: { crd: number; farm: { parcels: { buildings: { type: string }[] }[] } };
     }).player;
 
     assert.equal(reussis, 1, `${reussis} constructions acceptées au lieu d'une`);
-    assert.equal(joueur.farm.parcels[0]!.buildings.length, 1, "un seul bâtiment doit exister");
+    // On compte les silos, pas les bâtiments : l'étable de départ en est un,
+    // et elle est maintenant posée pour tout le monde.
+    const silos = joueur.farm.parcels[0]!.buildings.filter((b) => b.type === "SILO").length;
+    assert.equal(silos, 1, `${silos} silos posés au lieu d'un`);
     assert.ok(joueur.crd >= 0, `la trésorerie ne doit jamais passer sous zéro (${joueur.crd})`);
   });
 
@@ -375,10 +378,11 @@ describe("argent", () => {
     assert.equal(r.statut, 402);
     const apres = await appel("/auth/me", { jeton: f.jeton });
     const joueur = (apres.corps as unknown as {
-      player: { crd: number; farm: { parcels: { buildings: unknown[] }[] } };
+      player: { crd: number; farm: { parcels: { buildings: { type: string }[] }[] } };
     }).player;
     assert.equal(joueur.crd, 10, "un refus ne doit rien débiter");
-    assert.equal(joueur.farm.parcels[0]!.buildings.length, 0, "un refus ne doit rien poser");
+    const silos = joueur.farm.parcels[0]!.buildings.filter((b) => b.type === "SILO").length;
+    assert.equal(silos, 0, "un refus ne doit rien poser");
   });
 });
 
@@ -1975,5 +1979,144 @@ describe("code de secours", () => {
       corps: { email: moi.email, accessCode: "ferme" },
     });
     assert.equal(encore.statut, 200);
+  });
+});
+
+/**
+ * L'arbre de compétences, de bout en bout.
+ *
+ * Le module `skills` est éprouvé à part, sur des instantanés fabriqués. Ce qui
+ * se joue **ici** est l'autre moitié, celle qu'un test unitaire ne peut pas
+ * voir : est-ce que travailler dans le jeu fait vraiment bouger les compteurs
+ * dont l'arbre vit ?
+ *
+ * C'est la question qui compte. Le jeu portait déjà un compteur mort —
+ * `feedings`, que la quête « Nourrir le troupeau » attendait et que personne
+ * n'incrémentait : un verrou sans serrure, invisible tant qu'on ne joue pas.
+ */
+describe("les compétences suivent le vrai jeu", () => {
+  async function fermeNeuve(nom: string) {
+    const moi = await inscrire(nom);
+    const monde = await appel("/world/AUR");
+    const regions = (monde.corps as unknown as {
+      regions: { parcels: { id: string; taken: boolean }[] }[];
+    }).regions;
+    let parcelId = "";
+    for (const r of regions) {
+      const libre = (r.parcels ?? []).find((p) => !p.taken);
+      if (libre) {
+        parcelId = libre.id;
+        break;
+      }
+    }
+    assert.ok(parcelId, "il faut une parcelle libre");
+    await appel("/world/claim", {
+      methode: "POST",
+      corps: { userId: moi.id, specialization: "CEREALIER", parcelId },
+      jeton: moi.jeton,
+    });
+    const detail = await appel(`/parcels/${parcelId}`, { jeton: moi.jeton });
+    const parcelle = (detail.corps as unknown as { parcel: { id: string; cells: CellXY[] } }).parcel;
+    return { moi, parcelle };
+  }
+
+  async function arbre(moi: { id: string; jeton: string }) {
+    const r = await appel(`/players/${moi.id}/skills`, { jeton: moi.jeton });
+    assert.equal(r.statut, 200, `arbre indisponible : ${JSON.stringify(r.corps)}`);
+    return (r.corps as unknown as {
+      skills: { id: string; unlocked: boolean; progress: { have?: number; need?: number }[] }[];
+    }).skills;
+  }
+
+  it("part de zéro et n'invente rien", async () => {
+    const { moi } = await fermeNeuve("ArbreNeuf");
+    const skills = await arbre(moi);
+    assert.ok(skills.length > 20, "l'arbre doit être conséquent");
+    assert.equal(
+      skills.filter((s) => s.unlocked).length,
+      0,
+      "une ferme neuve ne débloque rien",
+    );
+  });
+
+  it("ouvre une compétence en travaillant vraiment le champ", async () => {
+    const { moi, parcelle } = await fermeNeuve("ArbreSemis");
+    const cells = parcelle.cells.filter((c) => c.kind === "EMPTY").slice(0, 24);
+    assert.ok(cells.length >= 24, "il faut vingt-quatre cases libres");
+
+    const avant = await arbre(moi);
+    assert.equal(avant.find((s) => s.id === "SOWING_BASICS")?.unlocked, false);
+
+    // On sème pour de vrai, par le même sas que le joueur.
+    const r = await travailler(parcelle.id, "plant", "PLANT", moi, cells, {
+      crop: cropDeSaison(),
+    });
+    assert.equal(r.statut, 200, `semis refusé : ${JSON.stringify(r.corps)}`);
+
+    const apres = await arbre(moi);
+    assert.equal(
+      apres.find((s) => s.id === "SOWING_BASICS")?.unlocked,
+      true,
+      "semer vingt-quatre cases n'a pas ouvert le tour de main du semis",
+    );
+  });
+
+  it("survit au redémarrage : l'état se recalcule, il ne se perd pas", async () => {
+    /*
+     * Rien n'est stocké — c'est le principe. Ce test le vérifie autrement
+     * qu'en relisant la même réponse : le compteur, lui, est bien en base, et
+     * c'est de lui que l'arbre se déduit à chaque appel. Deux lectures
+     * séparées par d'autres écritures doivent donner le même verdict.
+     */
+    const { moi, parcelle } = await fermeNeuve("ArbrePersiste");
+    const cells = parcelle.cells.filter((c) => c.kind === "EMPTY").slice(0, 24);
+    await travailler(parcelle.id, "plant", "PLANT", moi, cells, { crop: cropDeSaison() });
+
+    const un = await arbre(moi);
+    const moi2 = await appel("/auth/me", { jeton: moi.jeton });
+    assert.equal(moi2.statut, 200);
+    const deux = await arbre(moi);
+    assert.deepEqual(
+      un.map((s) => `${s.id}:${s.unlocked}`),
+      deux.map((s) => `${s.id}:${s.unlocked}`),
+      "l'arbre a changé sans que rien ne se passe",
+    );
+  });
+
+  it("chiffre la progression avec les vrais compteurs du serveur", async () => {
+    const { moi, parcelle } = await fermeNeuve("ArbreJauge");
+    const cells = parcelle.cells.filter((c) => c.kind === "EMPTY").slice(0, 10);
+    await travailler(parcelle.id, "plant", "PLANT", moi, cells, { crop: cropDeSaison() });
+
+    const skills = await arbre(moi);
+    const semis = skills.find((s) => s.id === "SOWING_BASICS")!;
+    assert.equal(semis.unlocked, false);
+    // Dix cases semées sur les vingt-quatre demandées : c'est ce que le joueur
+    // doit lire, et ça vient du compteur réel, pas d'une estimation.
+    assert.equal(semis.progress[0]?.have, 10);
+    assert.equal(semis.progress[0]?.need, 24);
+  });
+
+  it("donne à tout le monde de quoi cultiver ET de quoi élever", async () => {
+    /*
+     * Le déchaumeur n'allait qu'au céréalier, l'étable qu'à l'éleveur. Un
+     * joueur qui changeait d'avis se retrouvait sans l'outil que le guide lui
+     * réclamait, sans qu'aucun écran ne lui dise pourquoi.
+     */
+    const { moi } = await fermeNeuve("ArbreKit");
+    const me = await appel("/auth/me", { jeton: moi.jeton });
+    const player = (me.corps as unknown as {
+      player: {
+        farm: { machines: { type: string }[]; parcels: { buildings: { type: string }[] }[] };
+      };
+    }).player;
+    const parc = player.farm.machines.map((m) => m.type);
+    for (const outil of ["TRACTOR", "SEEDER", "PLOUGH", "DISC_HARROW"]) {
+      assert.ok(parc.includes(outil), `${outil} manque au parc de départ`);
+    }
+    // L'étable se lit dans les bâtiments : `/auth/me` ne remonte pas les
+    // troupeaux, et c'est le bâtiment qui ouvre la branche élevage.
+    const batis = player.farm.parcels.flatMap((p) => p.buildings.map((b) => b.type));
+    assert.ok(batis.includes("CATTLE_BARN"), `l'étable de départ manque (${batis.join(", ")})`);
   });
 });

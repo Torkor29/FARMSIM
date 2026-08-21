@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { SkillTree, type SkillView } from "./SkillTree";
 import {
   GUIDE_CHAPTERS,
   evaluateObjectives,
@@ -15,11 +16,14 @@ type Props = {
   snapshot: GuideSnapshot;
   /** Expérience cumulée du joueur, pour situer les paliers */
   xp?: number;
+  /** L'arbre, tel que le serveur l'a résolu. L'écran ne recalcule rien. */
+  skills?: SkillView[];
   onClose: () => void;
 };
 
-const TABS: { id: "goals" | "levels" | GuideChapterId; label: string }[] = [
+const TABS: { id: "goals" | "levels" | "skills" | GuideChapterId; label: string }[] = [
   { id: "goals", label: "Objectifs" },
+  { id: "skills", label: "Compétences" },
   { id: "levels", label: "Niveaux" },
   { id: "crops", label: "Cultiver" },
   { id: "soil", label: "Sol" },
@@ -30,7 +34,7 @@ const TABS: { id: "goals" | "levels" | GuideChapterId; label: string }[] = [
   { id: "triangle", label: "Métiers" },
 ];
 
-export function PlayGuide({ open, snapshot, xp = 0, onClose }: Props) {
+export function PlayGuide({ open, snapshot, xp = 0, skills = [], onClose }: Props) {
   const [tab, setTab] = useState<(typeof TABS)[number]["id"]>("goals");
   if (!open) return null;
 
@@ -65,7 +69,9 @@ export function PlayGuide({ open, snapshot, xp = 0, onClose }: Props) {
         </nav>
 
         <div className="guide-body">
-          {tab === "goals" ? (
+          {tab === "skills" ? (
+            <SkillTree skills={skills} />
+          ) : tab === "goals" ? (
             <GoalsPane goals={goals} current={current} />
           ) : tab === "levels" ? (
             <LevelsPane xp={xp} />

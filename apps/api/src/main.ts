@@ -41,6 +41,14 @@ import {
   type XpEvent,
   type XpContext,
   type PlayerStats,
+  type SkillSnapshot,
+  type SkillBonuses,
+  emptySnapshot,
+  evaluateSkills,
+  noSkillBonuses,
+  SKILL_EFFECT_CAPS,
+  bonusesFor,
+  STAT_LABELS,
   DEFAULT_GRID,
   MACHINE_DEFS,
   CONTRACT_WORK,
@@ -617,6 +625,14 @@ function farmInclude() {
  * par oublier un outil.
  */
 const STARTER_MACHINES: MachineType[] = ["TRACTOR", "SEEDER", "PLOUGH"];
+
+/**
+ * Le parc de départ, identique pour tous.
+ *
+ * Le déchaumeur en fait partie : sans lui, on ne peut pas resemer après la
+ * première moisson, et c'est la toute première consigne du guide.
+ */
+const STARTER_KIT: MachineType[] = [...STARTER_MACHINES, "DISC_HARROW"];
 
 type FarmMachine = {
   id: string;
@@ -1395,6 +1411,21 @@ async function applyWearToMachine(
   },
 ) {
   const { machine, def, tier, tractor } = opts.rig;
+  /*
+   * Le soin apporté au matériel ralentit son usure.
+   *
+   * Résolu ici, et pas chez les appelants : ils sont douze, un par travail de
+   * champ. Leur demander de porter les compétences, ce serait douze occasions
+   * d'en oublier une — et l'oubli ne se verrait pas, l'usure baisserait
+   * simplement moins vite sur ce travail-là.
+   */
+  const proprio = await tx.machine.findUnique({
+    where: { id: machine.id },
+    select: { farm: { select: { userId: true } } },
+  });
+  const soin = proprio?.farm?.userId
+    ? await getSkillBonuses(proprio.farm.userId)
+    : noSkillBonuses();
   /* Les heures du chantier viennent de l'outil : c'est sa largeur qui décide
      du temps passé. Le tracteur en prend autant — il a tiré pendant tout ce
      temps-là — ce qui fait de lui la machine au compteur le plus chargé de la
@@ -1408,7 +1439,10 @@ async function applyWearToMachine(
       hours: heures,
       lifeHours: machineLifeHours(t, ti),
       inShed: Boolean(m.storedInBuildingId),
-      careMult: careWearMultiplier({ grease: care.grease, dirt: care.dirt }),
+      // L'entretien et le savoir-faire se multiplient : une machine graissée
+      // par quelqu'un qui sait s'y prendre s'use moins que la somme des deux.
+      careMult:
+        careWearMultiplier({ grease: care.grease, dirt: care.dirt }) * (1 - soin.WEAR),
     });
     // Les deux pièces traversent le même champ : elles se salissent pareil,
     // et chacune a sa jauge et son nettoyage. Posséder plus de matériel coûte
@@ -1646,10 +1680,82 @@ function pollinationBonusAt(
   return best;
 }
 
+/**
+ * L'instantané dont vit l'arbre de compétences.
+ *
+ * Un seul aller-retour en base, et il ne lit que ce que les conditions ont le
+ * droit de regarder. C'est le pendant serveur de `SkillSnapshot` : tout ce qui
+ * n'est pas ici ne peut pas devenir une condition, et c'est exactement la
+ * garantie qu'on veut — un compteur qu'on ne sait pas lire est un verrou que
+ * le joueur ne peut pas ouvrir.
+ */
+async function getSkillSnapshot(userId: string): Promise<SkillSnapshot> {
+  const user = await prisma.user.findUnique({
+    where: { id: userId },
+    select: {
+      xp: true,
+      level: true,
+      statsJson: true,
+      farm: {
+        select: {
+          machines: { select: { type: true, tier: true, hours: true } },
+          herds: { select: { kind: true, size: true } },
+          parcels: { select: { buildings: { select: { type: true, level: true } } } },
+        },
+      },
+    },
+  });
+  if (!user) return emptySnapshot();
+  const buildings = (user.farm?.parcels ?? []).flatMap((p) =>
+    p.buildings.map((b) => ({ type: b.type as SharedBuildingType, level: b.level })),
+  );
+  return {
+    stats: readStats(user.statsJson),
+    level: levelForXp(user.xp),
+    buildings,
+    machines: (user.farm?.machines ?? []).map((m) => ({
+      type: m.type as MachineType,
+      tier: m.tier ?? 1,
+      hours: m.hours ?? 0,
+    })),
+    herds: (user.farm?.herds ?? []).map((h) => ({
+      species: (h.kind ?? "COW") as AnimalKind,
+      size: h.size ?? 0,
+    })),
+  };
+}
+
+/**
+ * Les bonus de compétences d'un joueur.
+ *
+ * Volontairement séparé de `getFarmBonuses`, qui ne connaît qu'une ferme : les
+ * compétences dépendent aussi du **joueur** — de ce qu'il a fait, pas
+ * seulement de ce qu'il possède. Les deux enveloppes se cumulent chez
+ * l'appelant, chacune avec son propre plafond.
+ */
+async function getSkillBonuses(userId: string): Promise<SkillBonuses> {
+  return bonusesFor(await getSkillSnapshot(userId));
+}
+
 async function getFarmBonuses(farmId: string) {
   const buildings = await prisma.building.findMany({
     where: { parcel: { farmId } },
   });
+  /*
+   * Les compétences voyagent avec les bonus de bâtiments.
+   *
+   * Elles ne s'y **mélangent** pas — chaque enveloppe garde son plafond — mais
+   * elles empruntent le même chemin. Les cinq endroits qui simulent une case
+   * lisent déjà `bonuses` ; leur faire chercher les compétences ailleurs, ce
+   * serait cinq fils à tirer et un oubli garanti au sixième.
+   */
+  const proprietaire = await prisma.farm.findUnique({
+    where: { id: farmId },
+    select: { userId: true },
+  });
+  const skills = proprietaire?.userId
+    ? await getSkillBonuses(proprietaire.userId)
+    : noSkillBonuses();
   let yieldBonus = 0;
   let storageGrain = 0;
   let storageHay = 5;
@@ -1686,8 +1792,10 @@ async function getFarmBonuses(farmId: string) {
     if (BUILDING_DEFS[b.type as SharedBuildingType].freeDrying) freeDrying = true;
   }
   return {
+    /** Les compétences du propriétaire, chacune déjà bornée. */
+    skills,
     yieldBonus: Math.min(0.1, yieldBonus),
-    storageGrain,
+    storageGrain: storageGrain + skills.STORAGE_GRAIN,
     storageHay,
     machineSlots,
     cattleSlots,
@@ -1695,7 +1803,12 @@ async function getFarmBonuses(farmId: string) {
     repairDiscount: Math.min(0.3, repairDiscount),
     xpBonus: Math.min(0.1, xpBonus),
     // Plusieurs chambres aident, mais on ne conserve jamais indéfiniment.
-    spoilageSlow: Math.min(SPOILAGE_SLOW_CAP, spoilageSlow),
+    // Les compétences s'ajoutent après le plafond des bâtiments : chacune des
+    // deux enveloppes garde la sienne, et ni l'une ni l'autre n'écrase l'autre.
+    spoilageSlow: Math.min(
+      SPOILAGE_SLOW_CAP + SKILL_EFFECT_CAPS.SPOILAGE_SLOW,
+      Math.min(SPOILAGE_SLOW_CAP, spoilageSlow) + skills.SPOILAGE_SLOW,
+    ),
     softDryer,
     // Deux champs de panneaux aident, mais l'entretien n'est jamais gratuit :
     // sans plafond, six ouvrages payaient les révisions à la place du joueur.
@@ -2117,6 +2230,7 @@ async function publishFromConsignes() {
             buildingYieldBonus:
               bonuses.yieldBonus +
               pollinationBonusAt(bonuses.hives, cell.x, cell.y, cell.crop),
+            skillYieldBonus: bonuses.skills.CROP_YIELD,
           });
           if (sim.lost) continue;
           if (sim.ready) ready.push({ x: cell.x, y: cell.y });
@@ -2602,13 +2716,18 @@ app.post("/world/claim", async (req, res) => {
            friche. Semoir et charrue sont le minimum pour boucler un cycle —
            la moissonneuse, elle, se gagne : la première récolte passe par le
            Bureau, comme avant. */
-        for (const type of STARTER_MACHINES) {
+        /*
+         * Le même parc pour tout le monde.
+         *
+         * Le déchaumeur n'allait qu'au céréalier. Un éleveur qui décidait de
+         * cultiver — ce que rien ne lui interdisait — se retrouvait donc sans
+         * l'outil que le guide lui réclamait dès la première récolte, sans
+         * qu'aucun écran ne lui dise pourquoi. Le choix d'inscription ne
+         * verrouillait aucune règle ; il ne creusait qu'un écart de matériel,
+         * silencieux et définitif.
+         */
+        for (const type of STARTER_KIT) {
           await tx.machine.create({ data: { type, tier: 1, farmId: farm.id } });
-        }
-        if (body.data.specialization === "CEREALIER") {
-          await tx.machine.create({
-            data: { type: "DISC_HARROW", tier: 1, farmId: farm.id },
-          });
         }
       }
 
@@ -2626,7 +2745,15 @@ app.post("/world/claim", async (req, res) => {
         });
       }
 
-      if (body.data.specialization === "ELEVEUR") {
+      /*
+       * L'étable de départ, pour tout le monde aussi.
+       *
+       * C'est la moitié du jeu : la laisser derrière un choix d'inscription,
+       * c'était demander au joueur de parier sur ce qui lui plairait avant
+       * d'avoir rien essayé. Trois vaches ne font pas un élevage — elles font
+       * découvrir qu'il en existe un, et la branche s'ouvre en les menant.
+       */
+      {
         const barnSpot = findStarterBarnSpot(parcel.gridW, parcel.gridH);
         if (barnSpot) {
           const barnDef = BUILDING_DEFS.CATTLE_BARN;
@@ -3535,7 +3662,15 @@ app.post("/auth/register", async (req, res) => {
           userId: u.id,
           name: `Ferme ${displayName}`,
           machines: {
-            create: specialization ? STARTER_MACHINES.map((type) => ({ type, tier: 1 })) : [],
+            /*
+             * Le parc de départ se crée à **deux** endroits — ici, et à la
+             * prise de parcelle. Les deux doivent poser le même kit, sinon
+             * celui qui passe en premier décide, et l'autre ne fait rien : sa
+             * garde `machines.length === 0` est déjà fausse. C'est ce qui
+             * privait de déchaumeur tous ceux qui s'inscrivaient avec une
+             * parcelle.
+             */
+            create: specialization ? STARTER_KIT.map((type) => ({ type, tier: 1 })) : [],
           },
         },
       });
@@ -3955,6 +4090,7 @@ app.get("/parcels/:id", async (req, res) => {
         buildingYieldBonus:
           (bonuses?.yieldBonus ?? 0) +
           pollinationBonusAt(bonuses?.hives ?? [], c.x, c.y, c.crop),
+        skillYieldBonus: bonuses?.skills.CROP_YIELD ?? 0,
         weatherAtHarvest: weather?.state as WeatherState | undefined,
         cutsDone: grassCutsDone(c),
       });
@@ -4611,6 +4747,7 @@ app.post("/parcels/:id/contractor", async (req, res) => {
       fertilizedPasses: Math.min(2, cell.fertilizedPasses) as 0 | 1 | 2,
       buildingYieldBonus:
         bonuses.yieldBonus + pollinationBonusAt(bonuses.hives, cell.x, cell.y, cell.crop),
+      skillYieldBonus: bonuses.skills.CROP_YIELD,
       weatherAtHarvest: weather?.state as WeatherState | undefined,
       specialization: playableSpec(user.specialization),
       cutsDone: grassCutsDone(cell),
@@ -4899,11 +5036,23 @@ app.post("/parcels/:id/jobs", async (req, res) => {
     return;
   }
 
-  const duree = dureeChantier(picked, cells.length);
+  /*
+   * Le tour de main du chauffeur se voit sur le chrono et sur la cuve.
+   *
+   * `WORK_SPEED` et `FUEL_USE` sont des fractions **retirées** : une conduite
+   * économe ne rend pas le gazole gratuit, elle en brûle moins. Les deux
+   * plafonds valent 15 et 20 %, ce qui laisse la largeur de travail décider de
+   * l'essentiel — c'est le matériel qui fait le rendement, pas l'habitude.
+   */
+  const competences = await getSkillBonuses(body.data.userId);
+  const duree = Math.max(
+    1,
+    Math.round(dureeChantier(picked, cells.length) * (1 - competences.WORK_SPEED)),
+  );
   /* Le plein se fait au départ, pas à l'arrivée : le gazole part dans le
      réservoir au moment où l'engin quitte la cour. Un chantier abandonné le
      rend, puisqu'il n'a rien brûlé. */
-  const gazole = gazoleChantier(picked, cells.length);
+  const gazole = gazoleChantier(picked, cells.length) * (1 - competences.FUEL_USE);
   const cuve = await prisma.farm.findUnique({
     where: { id: parcel.farmId! },
     select: { fuelL: true },
@@ -5156,6 +5305,33 @@ app.post("/farm/repay", async (req, res) => {
     });
   });
   res.json({ debtCrd: Math.max(0, apres.debtCrd), repaid: montant });
+});
+
+/**
+ * L'arbre de compétences d'un joueur, tel qu'il s'affiche.
+ *
+ * Le serveur envoie l'état **calculé**, pas les définitions : l'écran ne
+ * refait aucun calcul, il dessine. C'est ce qui garantit qu'un joueur ne voit
+ * jamais « débloquée » une compétence que le serveur tient pour fermée — le
+ * défaut classique d'un arbre qui vit des deux côtés.
+ */
+app.get("/players/:id/skills", async (req, res) => {
+  const snap = await getSkillSnapshot(req.params.id);
+  const states = evaluateSkills(snap, (s) => STAT_LABELS[s] ?? String(s));
+  res.json({
+    skills: states.map((s) => ({
+      id: s.def.id,
+      name: s.def.name,
+      description: s.def.description,
+      branch: s.def.branch,
+      tier: s.def.tier,
+      unlocked: s.unlocked,
+      ratio: Math.round(s.ratio * 1000) / 1000,
+      effects: s.def.effects,
+      progress: s.progress,
+    })),
+    bonuses: bonusesFor(snap),
+  });
 });
 
 /** Les chantiers en cours d'une parcelle — pour l'écran et les reprises. */
@@ -6000,6 +6176,7 @@ app.post("/parcels/:id/harvest", async (req, res) => {
       specialization: playableSpec(farm.user.specialization ?? user?.specialization),
       buildingYieldBonus:
         bonuses.yieldBonus + pollinationBonusAt(bonuses.hives, cell.x, cell.y, cell.crop),
+      skillYieldBonus: bonuses.skills.CROP_YIELD,
       weatherAtHarvest: weather?.state as WeatherState | undefined,
       cutsDone: grassCutsDone(cell),
     });
@@ -6065,6 +6242,7 @@ app.post("/parcels/:id/harvest", async (req, res) => {
         specialization: playableSpec(farm.user.specialization ?? user?.specialization),
         buildingYieldBonus:
           bonuses.yieldBonus + pollinationBonusAt(bonuses.hives, cell.x, cell.y, cell.crop),
+        skillYieldBonus: bonuses.skills.CROP_YIELD,
         weatherAtHarvest: weather?.state as WeatherState | undefined,
         cutsDone: grassCutsDone(cell),
       });
@@ -6385,7 +6563,13 @@ app.post("/parcels/:id/weed", async (req, res) => {
     const labor = access.order
       ? await settleLaborProgress(tx, access.order, body.data.cells)
       : null;
-    const gain = await grantXp(tx, user.id, "WEED", { cells: cibles.length }, {});
+    const gain = await grantXp(
+      tx,
+      user.id,
+      "WEED",
+      { cells: cibles.length },
+      { cellsWeeded: cibles.length },
+    );
     return { wear, labor, gain };
   });
   res.json({
@@ -7075,6 +7259,14 @@ async function settleHerd(
      * soit exactement l'ancien comportement.
      */
     young?: number;
+    /**
+     * La ferme à qui appartient le lot.
+     *
+     * Elle sert à retrouver les compétences de l'éleveur. Facultative :
+     * absente, le lot se comporte comme avant, ce qui garde les tests de
+     * troupeau indépendants du système de compétences.
+     */
+    farmId?: string;
   },
   paddockCapacityCells: number,
   now: number,
@@ -7100,6 +7292,20 @@ async function settleHerd(
   manureTons: number;
   beddingTons: number;
 }> {
+  /*
+   * Les compétences de l'éleveur, résolues ici plutôt qu'aux appelants.
+   *
+   * `settleHerd` a deux appelants aujourd'hui et en aura trois demain : leur
+   * demander de porter les compétences, c'est garantir l'oubli du troisième.
+   * On les cherche donc là où on s'en sert.
+   */
+  const proprietaire = herd.farmId
+    ? await prisma.farm.findUnique({ where: { id: herd.farmId }, select: { userId: true } })
+    : null;
+  const competencesEleveur = proprietaire?.userId
+    ? await getSkillBonuses(proprietaire.userId)
+    : noSkillBonuses();
+
   const elapsedMs = Math.max(0, now - herd.lastTickAt.getTime());
   if (elapsedMs < 1000) {
     return {
@@ -7179,7 +7385,15 @@ async function settleHerd(
       barnLevel,
       kind,
     }) *
-    (1 - saved);
+    (1 - saved) *
+    /*
+     * Une ration mieux calculée se gaspille moins.
+     *
+     * L'économie se **multiplie** avec celle du pâturage au lieu de s'y
+     * ajouter : deux fractions qu'on additionne finissent par dépasser un, et
+     * un troupeau qui ne mange plus rien n'est plus un troupeau.
+     */
+    (1 - competencesEleveur.FEED_USE);
   const feedStock = Math.max(0, herd.feedStock - burnt);
   const hunger = hungerPenalty({ feedStock, herdSize: bouchesAdultes, kind });
   // La litière se salit au même rythme que la ration se mange. On mesure la
@@ -7226,7 +7440,15 @@ async function settleHerd(
     grazedRecentlyMs: herd.lastGrazedAt ? now - herd.lastGrazedAt.getTime() : Number.MAX_SAFE_INTEGER,
     crowding: paddockCapacityCells > 0 ? herd.size / Math.max(1, paddockCapacityCells) : 1,
     elapsedMs,
-    hunger: hunger + smell + thermal,
+    /*
+     * L'œil de l'éleveur **allège la peine**, il ne fabrique pas du bonheur.
+     *
+     * Retirer une pénalité plutôt qu'ajouter des points garde la hiérarchie
+     * intacte : un troupeau affamé reste malheureux quel que soit le
+     * savoir-faire, et la ration continue de décider. Un bonus additif, lui,
+     * aurait fini par masquer la faim.
+     */
+    hunger: Math.max(0, (hunger + smell + thermal) * (1 - competencesEleveur.ANIMAL_HAPPINESS)),
     bedding: beddingPenalty(cover),
   });
 
@@ -8178,6 +8400,15 @@ app.post("/herds/:id/feed", async (req, res) => {
         lastFedAt: new Date(),
       },
     });
+    /*
+     * Distribuer une ration comptait pour rien.
+     *
+     * Ni expérience, ni compteur — alors que `XP_TABLE.FEED` existait et que
+     * la quête « Nourrir le troupeau » attendait dix rations. Elle ne pouvait
+     * donc **jamais** se terminer : le seul compteur qu'elle lisait n'était
+     * écrit nulle part. Un verrou sans serrure.
+     */
+    await grantXp(tx, body.data.userId, "FEED", {}, { feedings: 1 });
   });
   res.json({ units: Math.round(units * 100) / 100, quality });
 });
@@ -8468,12 +8699,22 @@ app.post("/herds/:id/milk", async (req, res) => {
     return;
   }
 
-  const perCycle = milkYield({
-    herdSize: herd.size,
-    happiness: herd.happiness,
-    barnLevel: herd.building.level,
-    feedQuality: herd.feedQuality,
-  });
+  /*
+   * Le métier de l'éleveur se voit au litre.
+   *
+   * La compétence multiplie ce que le troupeau donne — elle ne le remplace
+   * pas : une bête mal nourrie dans une étable de fortune produira toujours
+   * peu, quel que soit le savoir-faire. C'est bien ce qu'on veut, sinon la
+   * ration et le bâtiment cesseraient de compter.
+   */
+  const laitier = await getSkillBonuses(body.data.userId);
+  const perCycle =
+    milkYield({
+      herdSize: herd.size,
+      happiness: herd.happiness,
+      barnLevel: herd.building.level,
+      feedQuality: herd.feedQuality,
+    }) * (1 + laitier.MILK_YIELD);
   // Le lait se compte en hectolitres au silo : cent litres la tonne d'échange.
   const litres = perCycle * cycles;
   const hectolitres = Math.round((litres / 100) * 1000) / 1000;
@@ -8490,7 +8731,9 @@ app.post("/herds/:id/milk", async (req, res) => {
       body.data.userId,
       "COLLECT",
       { animals: herd.size },
-      { animalsCollected: herd.size },
+      // Le volume compte autant que le nombre de bêtes : trois vaches bien
+      // menées ne valent pas trois vaches affamées, et rien ne le mesurait.
+      { animalsCollected: herd.size, hlCollected: hectolitres },
     );
   });
   res.json({
@@ -8536,12 +8779,14 @@ app.post("/herds/:id/collect-eggs", async (req, res) => {
     return;
   }
 
-  const perCycle = eggYield({
-    herdSize: herd.size,
-    happiness: herd.happiness,
-    barnLevel: herd.building.level,
-    feedQuality: herd.feedQuality,
-  });
+  const avicole = await getSkillBonuses(body.data.userId);
+  const perCycle =
+    eggYield({
+      herdSize: herd.size,
+      happiness: herd.happiness,
+      barnLevel: herd.building.level,
+      feedQuality: herd.feedQuality,
+    }) * (1 + avicole.EGG_YIELD);
   const crates = Math.round(perCycle * cycles * 100) / 100;
   if (crates <= 0) {
     res.status(409).json({ error: "Rien à ramasser : le lot ne pond pas" });
@@ -8590,12 +8835,14 @@ app.post("/herds/:id/shear", async (req, res) => {
     return;
   }
 
-  const perCycle = woolYield({
-    herdSize: herd.size,
-    happiness: herd.happiness,
-    barnLevel: herd.building.level,
-    feedQuality: herd.feedQuality,
-  });
+  const ovin = await getSkillBonuses(body.data.userId);
+  const perCycle =
+    woolYield({
+      herdSize: herd.size,
+      happiness: herd.happiness,
+      barnLevel: herd.building.level,
+      feedQuality: herd.feedQuality,
+    }) * (1 + ovin.WOOL_YIELD);
   const tons = Math.round(perCycle * cycles * 1000) / 1000;
   if (tons <= 0) {
     res.status(409).json({ error: "Rien à tondre : le lot ne produit pas" });
@@ -9309,7 +9556,11 @@ async function loadOwnedMachine(id: string, userId: string) {
  */
 async function careCost(farmId: string, base: number): Promise<number> {
   const b = await getFarmBonuses(farmId);
-  return Math.max(1, Math.round(base * (1 - b.careDiscount)));
+  // Deux remises qui se cumulent sans se confondre : l'atelier et le tour de
+  // main. Le prix ne descend jamais sous un TRN — un entretien gratuit ferait
+  // disparaître la décision qu'il représente.
+  const remise = Math.min(0.75, b.careDiscount + b.skills.REPAIR_COST);
+  return Math.max(1, Math.round(base * (1 - remise)));
 }
 
 app.post("/machines/:id/grease", async (req, res) => {
@@ -9749,7 +10000,10 @@ app.post("/market/dealer", async (req, res) => {
     return;
   }
   const keep = 1 - moistureSellPenalty(inv.moisture);
-  const pricePerTon = dealerPricePerTon(market.price) * keep;
+  // Le négociant paie moins, mais il paie aussi le tour de main : sans cela,
+  // vendre au négociant contournerait la compétence au lieu de la subir.
+  const marchand = await getSkillBonuses(body.data.userId);
+  const pricePerTon = dealerPricePerTon(market.price) * keep * (1 + marchand.SALE_PRICE);
   const revenue = Math.round(pricePerTon * tons);
 
   await prisma.$transaction(async (tx) => {
@@ -10158,9 +10412,17 @@ app.post("/market/sell", async (req, res) => {
   // Écouler un gros lot d'un coup fait plonger le cours obtenu : c'est ce qui
   // rend l'étalement des ventes — ou la criée — réellement plus rentable.
   const slippage = volumeSlippage(tons, market.stockTons);
+  /*
+   * Le négoce se paie sur le prix obtenu, pas sur le cours.
+   *
+   * La compétence agit **après** la décote de volume et celle d'humidité :
+   * savoir vendre ne répare pas un lot mouillé ni une remorque écoulée d'un
+   * coup. Elle récompense la conduite du marché, pas l'étourderie.
+   */
+  const negoce = await getSkillBonuses(body.data.userId);
   const sale = sellToMarket({
     tons: tons,
-    price: marketPricePerTon(market.price, tons, market.stockTons),
+    price: marketPricePerTon(market.price, tons, market.stockTons) * (1 + negoce.SALE_PRICE),
     moisturePenalty,
   });
   const tick = tickMarket({
