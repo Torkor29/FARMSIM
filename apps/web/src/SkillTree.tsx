@@ -11,16 +11,30 @@
  * Une liste répond à « qu'est-ce que j'ai ? ». Un arbre répond à « où est-ce
  * que je vais ? », qui est la seule question intéressante quand rien ne se
  * dépense et que tout se mérite. On dessine donc les quatre branches côte à
- * côte, les paliers en profondeur, et les liens de prérequis entre les
- * cartes — pour qu'on voie d'un coup d'œil ce qui ouvre quoi.
+ * côte et les paliers en profondeur.
  *
- * Les liens sont tracés en SVG **derrière** les cartes, à partir de leurs
- * positions réelles mesurées après rendu. Les calculer d'avance supposerait
- * de connaître la hauteur des cartes, qui dépend du texte, donc de la police,
- * donc de l'appareil.
+ * ## Les liens ne sont plus tracés — ils sont nommés
+ *
+ * Ils l'étaient : des courbes SVG entre les centres des cartes, calculées sur
+ * leurs positions mesurées. Le résultat était illisible, et le graphe explique
+ * pourquoi. Sur vingt-neuf liens, **deux** relient des cartes voisines. Vingt-
+ * quatre sautent par-dessus une à huit cartes : entre deux centres alignés
+ * dans la même colonne, la courbe dégénère en un trait vertical qui traverse
+ * tout ce qui se trouve entre les deux. Et trois traversent jusqu'à trois
+ * colonnes, en grandes arabesques au travers de l'écran.
+ *
+ * Aucun tracé entre centres ne peut être propre sur ces données — ce n'était
+ * pas une question de courbure, mais de graphe.
+ *
+ * Alors chaque carte dit **de qui elle vient**, par son nom : « après
+ * Labour ». C'est plus précis qu'un trait, qui apprend seulement que quelque
+ * chose est relié ; ici on sait quoi. Les paliers, eux, sont marqués par des
+ * bandeaux dans la colonne, ce qui rend la profondeur de l'arbre sans rien
+ * dessiner. Plus de mesure, plus de `ResizeObserver`, plus de recalcul à
+ * chaque carte dépliée.
  */
 
-import { useCallback, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useMemo, useState } from "react";
 import {
   BRANCH_ICON_FILES,
   BRANCH_LABELS,
@@ -88,21 +102,18 @@ function ConditionLine({ c }: { c: SkillConditionView }) {
  */
 function SkillNode({
   s,
-  refFor,
+  apres,
   open,
   onToggle,
 }: {
   s: SkillView;
-  refFor: (id: string, el: HTMLElement | null) => void;
+  /** Les compétences dont celle-ci descend, par leur nom. */
+  apres: string[];
   open: boolean;
   onToggle: () => void;
 }) {
   return (
-    <li
-      className={`sk-node${s.unlocked ? " on" : ""}${open ? " open" : ""}`}
-      ref={(el) => refFor(s.id, el)}
-      data-skill={s.id}
-    >
+    <li className={`sk-node${s.unlocked ? " on" : ""}${open ? " open" : ""}`} data-skill={s.id}>
       <button
         type="button"
         className="sk-node-head"
@@ -129,7 +140,11 @@ function SkillNode({
         </span>
         <span className="sk-node-text">
           <strong>{s.name}</strong>
-          <span className="sk-node-tier">{TIER_LABELS[s.tier]}</span>
+          {/* Le palier est écrit une fois pour toutes en tête de section : le
+              répéter sur chaque carte prenait la ligne qui manquait ici. */}
+          {apres.length > 0 && (
+            <span className="sk-node-after">après {apres.join(", ")}</span>
+          )}
         </span>
         <span className="sk-node-state" aria-hidden="true">
           {s.unlocked ? "✓" : `${Math.round(s.ratio * 100)} %`}
@@ -163,76 +178,38 @@ export function SkillTree({ skills }: { skills: SkillView[] }) {
   const [focus, setFocus] = useState<SkillBranch | "ALL">("ALL");
   const [open, setOpen] = useState<string | null>(null);
 
-  const scene = useRef<HTMLDivElement | null>(null);
-  const nodes = useRef(new Map<string, HTMLElement>());
-  const [liens, setLiens] = useState<{ id: string; d: string; on: boolean }[]>([]);
-
-  const refFor = useCallback((id: string, el: HTMLElement | null) => {
-    if (el) nodes.current.set(id, el);
-    else nodes.current.delete(id);
-  }, []);
+  /** De l'identifiant au nom : c'est ce qui permet de dire « après Labour ». */
+  const nomDe = useMemo(() => new Map(skills.map((s) => [s.id, s.name])), [skills]);
 
   const visibles = useMemo(
     () => (focus === "ALL" ? skills : skills.filter((s) => s.branch === focus)),
     [skills, focus],
   );
 
+  /**
+   * Une colonne par branche, découpée en paliers.
+   *
+   * Le palier était écrit sur chaque carte ; il l'est maintenant une fois, en
+   * tête de section. C'est la même information, dite une fois au lieu de
+   * treize, et elle rend la profondeur de l'arbre — ce que les liens tracés
+   * étaient censés faire.
+   */
   const parBranche = useMemo(() => {
-    const out = new Map<SkillBranch, SkillView[]>();
-    for (const b of BRANCHES) out.set(b, []);
-    for (const s of visibles) out.get(s.branch)?.push(s);
-    // Dans une colonne, on descend par palier : c'est le sens de lecture de
-    // l'arbre, et il doit correspondre au sens des liens.
-    for (const [, liste] of out) liste.sort((a, b) => a.tier - b.tier || a.name.localeCompare(b.name));
+    const out = new Map<SkillBranch, { tier: 1 | 2 | 3 | 4; liste: SkillView[] }[]>();
+    for (const b of BRANCHES) {
+      const liste = visibles
+        .filter((s) => s.branch === b)
+        .sort((a, z) => a.tier - z.tier || a.name.localeCompare(z.name));
+      const paliers: { tier: 1 | 2 | 3 | 4; liste: SkillView[] }[] = [];
+      for (const s of liste) {
+        const dernier = paliers[paliers.length - 1];
+        if (dernier && dernier.tier === s.tier) dernier.liste.push(s);
+        else paliers.push({ tier: s.tier, liste: [s] });
+      }
+      out.set(b, paliers);
+    }
     return out;
   }, [visibles]);
-
-  /**
-   * Trace les liens à partir des positions **mesurées**.
-   *
-   * On relit après chaque changement de filtre ou de carte dépliée : une carte
-   * qui s'ouvre pousse toutes celles du dessous, et un lien qui pointerait
-   * encore vers l'ancienne position se verrait immédiatement.
-   */
-  useLayoutEffect(() => {
-    const hote = scene.current;
-    if (!hote) return;
-    const calc = () => {
-      const base = hote.getBoundingClientRect();
-      const out: { id: string; d: string; on: boolean }[] = [];
-      for (const s of visibles) {
-        const cible = nodes.current.get(s.id);
-        if (!cible) continue;
-        for (const req of s.requires) {
-          const source = nodes.current.get(req);
-          if (!source) continue;
-          const a = source.getBoundingClientRect();
-          const b = cible.getBoundingClientRect();
-          const x1 = a.left - base.left + a.width / 2;
-          const y1 = a.top - base.top + a.height;
-          const x2 = b.left - base.left + b.width / 2;
-          const y2 = b.top - base.top;
-          // Une courbe douce plutôt qu'un trait brisé : sur une colonne, deux
-          // liens droits se superposent et deviennent illisibles.
-          const m = (y1 + y2) / 2;
-          out.push({
-            id: `${req}->${s.id}`,
-            d: `M${x1},${y1} C${x1},${m} ${x2},${m} ${x2},${y2}`,
-            on: skills.find((x) => x.id === req)?.unlocked === true && s.unlocked,
-          });
-        }
-      }
-      setLiens(out);
-    };
-    calc();
-    const ro = new ResizeObserver(calc);
-    ro.observe(hote);
-    window.addEventListener("resize", calc);
-    return () => {
-      ro.disconnect();
-      window.removeEventListener("resize", calc);
-    };
-  }, [visibles, open, focus, skills]);
 
   return (
     <div className="sk-tree">
@@ -270,38 +247,42 @@ export function SkillTree({ skills }: { skills: SkillView[] }) {
         })}
       </div>
 
-      <div className="sk-scene" ref={scene}>
-        {/* Les liens passent derrière les cartes, jamais dessus. */}
-        <svg className="sk-links" aria-hidden="true">
-          {liens.map((l) => (
-            <path key={l.id} d={l.d} className={l.on ? "sk-link on" : "sk-link"} />
-          ))}
-        </svg>
-
+      <div className="sk-scene">
         <div className="sk-columns">
           {BRANCHES.filter((b) => (parBranche.get(b)?.length ?? 0) > 0).map((b) => {
-            const liste = parBranche.get(b) ?? [];
-            const n = liste.filter((s) => s.unlocked).length;
+            const paliers = parBranche.get(b) ?? [];
+            const cartes = paliers.flatMap((p) => p.liste);
+            const n = cartes.filter((s) => s.unlocked).length;
             return (
               <section className="sk-col" key={b}>
                 <h3 className="sk-col-head">
                   <img src={skillIconSrc(BRANCH_ICON_FILES[b])} alt="" width={22} height={22} />
                   <span>{BRANCH_LABELS[b]}</span>
                   <span className="sk-col-count">
-                    {n}/{liste.length}
+                    {n}/{cartes.length}
                   </span>
                 </h3>
-                <ul className="sk-nodes">
-                  {liste.map((s) => (
-                    <SkillNode
-                      key={s.id}
-                      s={s}
-                      refFor={refFor}
-                      open={open === s.id}
-                      onToggle={() => setOpen((o) => (o === s.id ? null : s.id))}
-                    />
-                  ))}
-                </ul>
+                {paliers.map((palier) => (
+                  <div className="sk-tier" key={palier.tier}>
+                    <p className="sk-tier-head">
+                      <span>{TIER_LABELS[palier.tier]}</span>
+                      <i aria-hidden="true" />
+                    </p>
+                    <ul className="sk-nodes">
+                      {palier.liste.map((s) => (
+                        <SkillNode
+                          key={s.id}
+                          s={s}
+                          apres={s.requires
+                            .map((id) => nomDe.get(id))
+                            .filter((x): x is string => Boolean(x))}
+                          open={open === s.id}
+                          onToggle={() => setOpen((o) => (o === s.id ? null : s.id))}
+                        />
+                      ))}
+                    </ul>
+                  </div>
+                ))}
               </section>
             );
           })}

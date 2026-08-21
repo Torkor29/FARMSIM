@@ -10253,10 +10253,34 @@ app.post("/market/listings/:id/buy", async (req, res) => {
   });
 });
 
+/**
+ * Une livraison arrive à destination.
+ *
+ * Trois chemins y mènent, et ils ne se valent pas : le vendeur atèle et
+ * conduit lui-même, l'acheteur paie un voisin auto pour aller chercher, ou le
+ * délai expire et un voisin auto y va d'office. Le grain arrive dans les trois
+ * cas — le **travail** n'est fait par le vendeur que dans le premier.
+ *
+ * D'où `parLeVendeur`. La compétence « Logistique » attend quinze livraisons ;
+ * compter celles qu'un voisin a faites à sa place récompenserait le fait de ne
+ * pas les faire, à rebours de toute la règle de l'arbre — on n'y gagne qu'en
+ * pratiquant. Le compteur est écrit ici plutôt que dans la route, parce que
+ * c'est ici que la livraison aboutit vraiment : les trois chemins passent par
+ * cette fonction, et un quatrième y passerait aussi.
+ */
 async function fulfillDelivery(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   tx: any,
-  delivery: { id: string; buyerFarmId: string; commodity: string; tons: number; moisture: number; quality: number },
+  delivery: {
+    id: string;
+    sellerId: string;
+    buyerFarmId: string;
+    commodity: string;
+    tons: number;
+    moisture: number;
+    quality: number;
+  },
+  opts: { parLeVendeur?: boolean } = {},
 ) {
   await addToStock(
     tx,
@@ -10270,6 +10294,9 @@ async function fulfillDelivery(
     where: { id: delivery.id },
     data: { status: "DELIVERED", deliveredAt: new Date() },
   });
+  if (opts.parLeVendeur) {
+    await grantXp(tx, delivery.sellerId, "DELIVER", { tons: delivery.tons }, { deliveries: 1 });
+  }
 }
 
 /** TTL écoulé : un voisin auto livre, et facture l'acheteur. */
@@ -10342,7 +10369,9 @@ app.post("/deliveries/:id/deliver", async (req, res) => {
   await prisma.$transaction(async (tx) => {
     const fresh = await tx.delivery.findUnique({ where: { id: delivery.id } });
     if (!fresh || fresh.status !== "PENDING") throw new Error("DELIVERY_GONE");
-    await fulfillDelivery(tx, fresh);
+    // Le vendeur mène la remorque lui-même : c'est ce geste-là que
+    // « Logistique » compte.
+    await fulfillDelivery(tx, fresh, { parLeVendeur: true });
   });
   res.json({ delivered: delivery.tons, commodity: delivery.commodity });
 });
