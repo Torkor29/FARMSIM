@@ -101,24 +101,51 @@ describe("l’entrée de l’arbre : ce que le joueur fait", () => {
   });
 
   it("compte chaque geste au moment où il est fait", () => {
-    // Un compteur n'est honnête que s'il est écrit là où le geste a lieu. On
-    // vérifie l'appariement du compteur et de l'évènement d'expérience, qui
-    // nomme l'action : semer écrit `cellsPlanted`, vendre écrit `tonsSold`.
+    /*
+     * Un compteur n'est honnête que s'il est écrit **là où le geste a lieu**.
+     * Rien n'empêcherait d'incrémenter `tonsSold` en distribuant du foin : le
+     * test précédent, qui cherche seulement une écriture quelque part, serait
+     * satisfait, la compétence s'ouvrirait sur la mauvaise activité, et le
+     * joueur n'y comprendrait rien.
+     *
+     * On apparie donc chaque compteur à l'évènement d'expérience qui nomme
+     * l'action. Les quinze y passent : c'est la table de correspondance entre
+     * ce que l'arbre demande et ce que le jeu fait faire.
+     */
     const attendus: [StatKey, RegExp][] = [
       ["cellsPlanted", /"PLANT"/],
       ["cellsPlowed", /"PLOW"/],
       ["cellsStubbled", /"STUBBLE"/],
       ["cellsFertilized", /"FERTILIZE"/],
+      ["cellsWeeded", /"WEED"/],
       ["cellsHarvested", /"HARVEST"/],
       ["tonsHarvested", /"HARVEST"/],
       ["tonsSold", /"SELL"/],
+      ["deliveries", /"DELIVER"/],
       ["feedings", /"FEED"/],
+      ["grazings", /"GRAZE"/],
+      ["animalsCollected", /"COLLECT"/],
+      ["hlCollected", /"COLLECT"/],
+      ["machinesServiced", /"MACHINE_CARE"/],
+      // Deux gestes différents nourrissent le même compteur : le chantier pris
+      // chez le voisin et la mission du bureau. Les deux sont des missions
+      // terminées — le libellé du compteur le dit — et l'un ou l'autre suffit.
+      ["contracts", /"LABOR"|"CONTRACT"/],
     ];
+
+    // Garde-fou : la table doit couvrir **tous** les compteurs que l'arbre
+    // interroge. Sans ça, ajouter une condition sur un nouveau compteur
+    // passerait sous le radar de ce test-ci.
+    const couverts = new Set(attendus.map(([s]) => s));
+    const oublies = [...compteursLus().keys()].filter((s) => !couverts.has(s));
+    expect(oublies).toEqual([]);
+
     const mal: string[] = [];
     for (const [stat, evenement] of attendus) {
-      const appel = appelsGrantXp(SERVEUR).find((a) => new RegExp(`\\b${stat}\\s*:`).test(a));
-      if (!appel) mal.push(`${stat} : jamais écrit`);
-      else if (!evenement.test(appel)) mal.push(`${stat} : écrit hors de ${evenement.source}`);
+      const appels = appelsGrantXp(SERVEUR).filter((a) => new RegExp(`\\b${stat}\\s*:`).test(a));
+      if (!appels.length) mal.push(`${stat} : jamais écrit`);
+      else if (!appels.some((a) => evenement.test(a)))
+        mal.push(`${stat} : écrit hors de ${evenement.source}`);
     }
     expect(mal).toEqual([]);
   });
