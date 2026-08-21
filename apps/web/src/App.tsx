@@ -120,6 +120,7 @@ import { TutorialOverlay } from "./TutorialOverlay";
 import { FieldDock } from "./FieldDock";
 import type { SkillView } from "./SkillTree";
 import { PlayGuide } from "./PlayGuide";
+import { SkillsScreen, type SkillBonusView } from "./SkillsScreen";
 import { TOKEN_KEY, TUTORIAL_KEY, GUIDE_FLAGS_KEY } from "./storage-keys";
 import {
   cropFromPlantTool,
@@ -678,6 +679,8 @@ export function App() {
    * par heure serait du gaspillage pur.
    */
   const [skills, setSkills] = useState<SkillView[]>([]);
+  /** Les leviers déjà cumulés, bornés par le serveur — l'onglet « avantages ». */
+  const [skillBonuses, setSkillBonuses] = useState<SkillBonusView | null>(null);
   const [msg, setMsg] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -732,6 +735,8 @@ export function App() {
   const [showSplash, setShowSplash] = useState(true);
   const [showTutorial, setShowTutorial] = useState(false);
   const [showGuide, setShowGuide] = useState(false);
+  /** Les compétences ont leur propre porte, au milieu du bandeau. */
+  const [showSkills, setShowSkills] = useState(false);
   const [guideFlags, setGuideFlags] = useState(() => readGuideFlags());
   const [pulseCells, setPulseCells] = useState<{ x: number; y: number }[]>([]);
   const [activeWork, setActiveWork] = useState<{
@@ -1234,6 +1239,7 @@ export function App() {
       if (e.key === "g" || e.key === "G") setShowGarage((v) => !v);
       else if (e.key === "t" || e.key === "T") setShowEta((v) => !v);
       else if (e.key === "m" || e.key === "M") setShowMarket((v) => !v);
+      else if (e.key === "c" || e.key === "C") setShowSkills((v) => !v);
       else if (e.key === "?") setShowGuide(true);
     };
     window.addEventListener("keydown", onKey);
@@ -1454,27 +1460,31 @@ export function App() {
    * seconde ne bat que le temps du chantier : hors de là, rien à redessiner.
    */
   /*
-   * L'arbre se relit à l'ouverture du guide.
+   * L'arbre se relit à l'ouverture de l'écran des compétences.
    *
-   * Quatre boutons l'ouvrent — le chip du dock, le rail, une touche, un lien.
-   * Charger depuis chacun d'eux, c'était garantir l'oubli du cinquième : on
+   * Plusieurs gestes l'ouvrent — l'onglet du bandeau, une touche, un lien.
+   * Charger depuis chacun d'eux, c'était garantir l'oubli du suivant : on
    * écoute donc l'état, pas le geste.
    */
   useEffect(() => {
-    if (!showGuide || !player) return;
+    if (!showSkills || !player) return;
     let vivant = true;
-    void api<{ skills: SkillView[] }>(`/players/${player.id}/skills`)
+    void api<{ skills: SkillView[]; bonuses?: SkillBonusView }>(`/players/${player.id}/skills`)
       .then((r) => {
-        if (vivant) setSkills(r.skills ?? []);
+        if (!vivant) return;
+        setSkills(r.skills ?? []);
+        // Le serveur borne déjà chaque levier : l'écran affiche sa somme, il
+        // n'en refait pas une deuxième qui pourrait diverger.
+        setSkillBonuses(r.bonuses ?? null);
       })
       .catch(() => {
-        /* Le guide reste lisible sans l'arbre : ses autres onglets ne
-           dépendent pas du serveur. Un échec ne doit pas fermer la fenêtre. */
+        /* L'écran reste ouvert et le dit : refermer la fenêtre sur un échec
+           réseau ferait croire à un clic manqué. */
       });
     return () => {
       vivant = false;
     };
-  }, [showGuide, player?.id, player?.xp]);
+  }, [showSkills, player?.id, player?.xp]);
 
   const chantierEnCours = Boolean(chantier);
   useEffect(() => {
@@ -4719,6 +4729,45 @@ export function App() {
               ?
             </button>
           </div>
+          {/*
+            L'onglet des compétences, au milieu du bandeau.
+
+            Il est seul à cet endroit, et c'est voulu : le milieu du haut est
+            la place la plus visible de l'écran, celle qu'on ne donne pas à un
+            panneau de plus. L'arbre y avait droit — c'est la progression de la
+            partie, la seule chose qu'un joueur consulte pour savoir où il en
+            est. Les autres panneaux restent dans le rail, où ils sont chez
+            eux.
+          */}
+          <div className="hud-center">
+            <button
+              type="button"
+              className={`skills-tab${showSkills ? " on" : ""}`}
+              aria-haspopup="dialog"
+              aria-expanded={showSkills}
+              title="Compétences (C)"
+              onClick={() => setShowSkills((v) => !v)}
+            >
+              <img
+                className="skills-tab-icon"
+                src="/assets/icons/skills/star.svg"
+                alt=""
+                width={20}
+                height={20}
+              />
+              <span className="skills-tab-label">Compétences</span>
+              {/* Le compte n'apparaît qu'une fois l'arbre lu : afficher
+                  « 0 / 39 » avant la première réponse du serveur annoncerait
+                  une ferme sans aucun acquis, ce qui est faux dès le deuxième
+                  chantier. */}
+              {skills.length > 0 && (
+                <span className="skills-tab-count">
+                  {skills.filter((s) => s.unlocked).length}/{skills.length}
+                </span>
+              )}
+            </button>
+          </div>
+
           {/* Les boutons de panneaux ont quitté cette barre pour le rail de
               gauche : ils s'y perdaient entre le nom du jeu, le niveau et la
               bourse, et un testeur a demandé pourquoi ils n'étaient pas à
@@ -6017,8 +6066,13 @@ export function App() {
         open={showGuide}
         snapshot={guideSnapshot}
         xp={player.xp}
-        skills={skills}
         onClose={() => setShowGuide(false)}
+      />
+      <SkillsScreen
+        open={showSkills}
+        skills={skills}
+        bonuses={skillBonuses}
+        onClose={() => setShowSkills(false)}
       />
 
       {/* La bourse des chantiers s'ouvre par une décision, sur les deux
