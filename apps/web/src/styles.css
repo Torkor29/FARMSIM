@@ -402,15 +402,25 @@ html.playing .field-dock {
   background: var(--sand);
 }
 /* —— L'onglet des compétences ——
-   Au milieu du bandeau, et seul à cet endroit. Il a la forme d'un onglet
-   plutôt que d'une pastille : un onglet annonce une page, une pastille
-   annonce une valeur. Ce qui s'ouvre ici est bien un écran entier, pas un
-   tiroir de plus.
+   Au milieu du bandeau, et seul à cet endroit.
+
+   Un rectangle aux bords légèrement arrondis, pas une pastille et pas une
+   languette : les pastilles du bandeau annoncent des valeurs qu'on surveille
+   (les TRN, l'expérience), et une forme différente dit qu'ici on n'a pas
+   affaire à une valeur mais à une porte. `--r-md` — dix pixels — suffit à
+   marquer l'écart sans basculer dans l'ovale.
 
    Les marges automatiques le centrent **entre** les deux blocs du bandeau —
    jamais par-dessus, quelle que soit la longueur du nom du joueur. Le
    commentaire « Le milieu, mesuré », plus bas, dit pourquoi ce n'est pas un
-   centrage absolu. */
+   centrage absolu.
+
+   Verticalement, il est centré dans le bandeau et non collé en haut : le
+   remplissage de la barre lui laisse une douzaine de pixels sous le bord de
+   l'écran. C'est un écart voulu, et il est **sûr par construction** — l'onglet
+   reste une case de la ligne du bandeau, il ne peut donc pas descendre sur les
+   cotations du jour, qui sont la rangée suivante de la pile. Un décalage posé
+   à la main l'aurait permis dès que le bandeau change de hauteur. */
 .hud-center {
   display: flex;
   align-items: center;
@@ -420,16 +430,19 @@ html.playing .field-dock {
 .skills-tab {
   display: inline-flex;
   align-items: center;
-  gap: 0.45rem;
+  gap: 0.5rem;
   /* Plancher tactile de la charte §7.3. */
   min-height: 44px;
-  padding: 0.35rem 0.95rem;
-  border: 1px solid var(--glass-border);
-  border-top-width: 3px;
-  border-top-color: var(--gold-500);
-  border-radius: 4px 4px var(--r-lg) var(--r-lg);
-  background: linear-gradient(180deg, var(--paper), var(--sand));
-  box-shadow: var(--sh-1);
+  padding: 0.4rem 1rem;
+  /* L'or du logo, en fond très pâle et en liseré : c'est ce qui distingue la
+     porte des compteurs blancs alignés à sa droite. Un rectangle blanc de
+     plus se serait fondu dans la rangée des pastilles. */
+  border: 1px solid var(--gold-300);
+  border-radius: var(--r-md);
+  background: linear-gradient(180deg, var(--paper), var(--gold-100));
+  /* Le liseré clair en haut de la boîte donne le relief que le fond seul ne
+     donne pas : sans lui, le rectangle paraît imprimé sur la barre. */
+  box-shadow: var(--sh-1), inset 0 1px 0 rgba(255, 255, 255, 0.8);
   color: var(--teal-700);
   font: inherit;
   font-weight: 800;
@@ -438,21 +451,31 @@ html.playing .field-dock {
   cursor: pointer;
   transition: transform 0.14s ease, box-shadow 0.14s ease, background 0.14s ease;
 }
-.skills-tab:hover { background: linear-gradient(180deg, var(--paper), var(--gold-100)); }
-.skills-tab:active { transform: translateY(1px); }
+.skills-tab:hover {
+  background: linear-gradient(180deg, var(--paper), var(--gold-300));
+  border-color: var(--gold-500);
+  box-shadow: var(--sh-2), inset 0 1px 0 rgba(255, 255, 255, 0.85);
+}
+.skills-tab:active { transform: translateY(1px); box-shadow: var(--sh-1); }
 .skills-tab.on {
   background: linear-gradient(180deg, var(--teal-300), var(--teal-500));
   border-color: transparent;
-  border-top-color: var(--gold-300);
   color: #fff;
-  box-shadow: var(--sh-2);
+  box-shadow: var(--sh-2), inset 0 1px 0 rgba(255, 255, 255, 0.28);
 }
-.skills-tab-icon { opacity: 0.85; flex: none; }
-.skills-tab.on .skills-tab-icon { filter: brightness(0) invert(1); opacity: 1; }
+/* L'étoile porte l'or de la charte — c'est le seul point de couleur chaude du
+   bandeau, et il désigne la porte. */
+.skills-tab-icon { flex: none; color: var(--gold-500); }
+.skills-tab.on .skills-tab-icon { color: var(--gold-300); }
 .skills-tab-count {
-  padding: 0.08rem 0.4rem;
-  border-radius: var(--r-pill);
-  background: var(--gold-100);
+  padding: 0.1rem 0.4rem;
+  /* Un rectangle dans un rectangle : la pastille ovale rappelait les
+     compteurs du bandeau, dont l'onglet cherche justement à se distinguer. */
+  border-radius: var(--r-sm);
+  /* Blanc, et non or pâle : sur un fond déjà doré, la pastille d'or se
+     confondait avec la boîte et le compte devenait illisible. */
+  background: var(--paper);
+  border: 1px solid rgba(201, 162, 39, 0.35);
   color: var(--gold-700);
   font-size: 0.72rem;
   font-variant-numeric: tabular-nums;
@@ -2865,9 +2888,8 @@ html.playing .build-confirm { position: fixed; }
      quarante-quatre pixels restent quarante-quatre pixels. */
   .skills-tab {
     min-width: 44px;
-    padding: 0.3rem 0.5rem;
-    gap: 0.3rem;
-    border-radius: 4px 4px 12px 12px;
+    padding: 0.3rem 0.55rem;
+    gap: 0.35rem;
   }
   .skills-tab-label { display: none; }
 
@@ -5872,7 +5894,9 @@ button.tiny {
 .skills-nav button {
   min-height: 38px;
   padding: 0.35rem 1rem;
-  border-radius: var(--r-sm);
+  /* Le même rayon que l'onglet du bandeau et que les cartes : une seule
+     rondeur pour tout l'écran, sinon chaque bloc a l'air venu d'ailleurs. */
+  border-radius: var(--r-md);
   background: var(--sand);
   font-size: 0.86rem;
   font-weight: 700;

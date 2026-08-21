@@ -4748,13 +4748,25 @@ export function App() {
               title="Compétences (C)"
               onClick={() => setShowSkills((v) => !v)}
             >
-              <img
+              {/* L'étoile est tracée ici plutôt que chargée en `<img>` : une
+                  image ne peut pas suivre `currentColor`, et il fallait donc
+                  la teindre au filtre — un noir qu'on éclaircit n'est jamais
+                  tout à fait la couleur voulue. Tracée, elle prend l'or de la
+                  charte, et le blanc quand l'onglet est ouvert. */}
+              <svg
                 className="skills-tab-icon"
-                src="/assets/icons/skills/star.svg"
-                alt=""
-                width={20}
-                height={20}
-              />
+                viewBox="0 0 24 24"
+                width={18}
+                height={18}
+                fill="none"
+                stroke="currentColor"
+                strokeWidth={1.8}
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                aria-hidden="true"
+              >
+                <path d="m12 2.5 2.9 6 6.6.9-4.8 4.6 1.2 6.5L12 17.4 6.1 20.5l1.2-6.5L2.5 9.4l6.6-.9z" />
+              </svg>
               <span className="skills-tab-label">Compétences</span>
               {/* Le compte n'apparaît qu'une fois l'arbre lu : afficher
                   « 0 / 39 » avant la première réponse du serveur annoncerait

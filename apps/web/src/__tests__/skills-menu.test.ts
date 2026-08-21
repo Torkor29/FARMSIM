@@ -67,6 +67,23 @@ describe("la porte des compétences", () => {
     expect(CSS).not.toMatch(/\.hud-center \{[^}]*position:\s*absolute/);
   });
 
+  it("reste un rectangle posé dans la ligne du bandeau", () => {
+    /*
+     * « Rectangle, bords légèrement arrondis, au milieu, un tout petit poil
+     * écarté du haut mais pas trop pour ne pas empiéter sur les cours du
+     * jour. » L'écart vient du remplissage de la barre — mesuré : 12 px sous
+     * le bord de l'écran, 16 px au-dessus des cotations. Il est sûr par
+     * construction tant que l'onglet reste une case de la ligne du bandeau :
+     * les cotations sont la **rangée suivante** de `.hud-stack`, et seules une
+     * sortie du flux ou une marge négative pourraient l'y faire descendre.
+     */
+    const regle = CSS.match(/\n\.skills-tab \{([^}]*)\}/);
+    expect(regle).not.toBeNull();
+    expect(regle![1]).toMatch(/border-radius:\s*var\(--r-md\)/);
+    expect(regle![1]).not.toMatch(/position:\s*(absolute|fixed)/);
+    expect(regle![1]).not.toMatch(/margin[\w-]*:\s*-/);
+  });
+
   it("ne coûte pas une deuxième ligne au bandeau", () => {
     /*
      * L'onglet ajoute environ 200 px à une ligne qui n'en avait pas dix de
