@@ -2868,7 +2868,6 @@ html.playing .build-confirm { position: fixed; }
   .brand-mark,
   .hud-top .tagline,
   .mvp-badge,
-  .stat-job,
   .stat-xp,
   .stat-bonus,
   .logout-btn { display: none; }
@@ -5267,7 +5266,6 @@ button.tiny {
    c'est la porte qui reste. */
 @media (max-width: 1600px) {
   .game-stage:not(.mobile) .mvp-badge { display: none; }
-  .game-stage:not(.mobile) .hud-stats .stat-job { display: none; }
 }
 
 /* Plus bas encore, l'onglet lui-même se resserre : il perd son libellé et

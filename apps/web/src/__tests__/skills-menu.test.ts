@@ -139,3 +139,27 @@ describe("les avantages, tels qu’on les présente", () => {
     expect(orphelins).toEqual([]);
   });
 });
+
+/**
+ * Le métier ne s'affiche plus nulle part.
+ *
+ * Il ne verrouillait déjà aucune mécanique, et l'arbre lui a retiré son
+ * dernier effet — un bonus de rendement de +2 % invisible à l'écran et
+ * impossible à obtenir pour l'autre voie. Continuer à l'annoncer à côté du
+ * niveau laissait croire qu'il décide encore de quelque chose, ce qui est
+ * exactement l'impression qu'on vient de défaire.
+ *
+ * Le test regarde les deux endroits où il se montrait — le bandeau de bureau
+ * et la fiche de profil du téléphone — et le style resté derrière. Une règle
+ * CSS orpheline ne casse rien, mais elle raconte que l'élément existe encore.
+ */
+describe("le métier retiré de l’écran", () => {
+  it("ne paraît plus dans le bandeau ni dans la fiche de profil", () => {
+    expect(APP.includes("SPECIALIZATION_LABELS")).toBe(false);
+    expect(APP.includes("stat-job")).toBe(false);
+  });
+
+  it("ne laisse pas de style orphelin derrière lui", () => {
+    expect(CSS.includes("stat-job")).toBe(false);
+  });
+});

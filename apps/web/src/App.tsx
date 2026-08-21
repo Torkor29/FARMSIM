@@ -1,6 +1,5 @@
 import { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
 import {
-  SPECIALIZATION_LABELS,
   BUILDING_ART,
   BUILDING_DEFS,
   MACHINE_ART,
@@ -4786,7 +4785,16 @@ export function App() {
               gauche avec le reste des commandes. Voir `ToolRail`. */}
           <div className="hud-stats">
             <span className="stat-name">{player.displayName}</span>
-            <span className="stat-job">{SPECIALIZATION_LABELS[player.specialization]}</span>
+            {/*
+              Le métier a quitté le bandeau en même temps qu'il a quitté le jeu.
+              Il ne verrouillait déjà aucune mécanique, et l'arbre de
+              compétences lui a retiré son dernier effet — un bonus de rendement
+              de +2 % qui ne s'affichait nulle part et qu'un éleveur ne pouvait
+              pas obtenir. Continuer à l'annoncer à côté du niveau laissait
+              croire qu'il décide encore de quelque chose, ce qui est
+              exactement l'impression qu'on vient de défaire : ce que la ferme
+              sait faire se lit dans « Compétences », au centre.
+            */}
             <span
               className="stat-xp"
               title={
@@ -4923,10 +4931,6 @@ export function App() {
         <aside className={panelClass("profile-panel", "PROFILE")} {...(isMobile ? sheetGesture : {})}>
           <h3>{player.displayName}</h3>
           <dl>
-            <div>
-              <dt>Métier</dt>
-              <dd>{SPECIALIZATION_LABELS[player.specialization]}</dd>
-            </div>
             <div>
               <dt>Niveau</dt>
               <dd>
