@@ -39,21 +39,22 @@ export const BAYS_PER_ROW = 5;
 export const MIN_BAYS = 4;
 
 /**
- * La cour s'agrandit par paires.
+ * La cour montre les places qu'on a le droit d'occuper — ni plus, ni moins.
  *
- * Elle pourrait suivre le parc à la place près, mais une place qui apparaît
- * seule au moment de l'achat ne se remarque pas : elle est aussitôt occupée.
- * En ajoutant deux places d'un coup, il en reste toujours une de libre, et
- * l'agrandissement **se voit** — c'est ce qui dit au joueur que sa cour a
- * grandi avec sa ferme, sans qu'il ait rien eu à acheter.
+ * Elle a d'abord suivi le **parc**, en s'agrandissant par paires pour que
+ * l'agrandissement se voie. Sauf qu'une place libre est une promesse, et
+ * celle-là ne pouvait pas être tenue : le nombre d'engins est plafonné
+ * ailleurs, par le garage. Le joueur voyait donc une place vide, allait
+ * acheter, et se faisait refuser au motif qu'il lui faut un hangar. « Le
+ * parking s'agrandit pour rien, car tu ne peux pas l'utiliser. »
  *
- * Car rien ne s'achète ici, et c'est délibéré : refuser une machine faute de
- * place répéterait le défaut qu'on vient de corriger sur les livraisons, où
- * bien jouer finissait par bloquer les achats. La décision payante existe
- * déjà, et elle est ailleurs — le hangar matériel, qui abrite les engins et
- * les use moins vite.
+ * La cour se dimensionne donc sur la **capacité**, pas sur ce qui y est garé.
+ * Une place vide veut alors dire ce qu'elle a toujours eu l'air de dire :
+ * il reste de la place pour un engin de plus. Et la cour ne s'agrandit plus
+ * toute seule — elle s'agrandit quand on bâtit le hangar, ce qui rend la
+ * dépense visible au lieu de la laisser abstraite.
  */
-export const BAY_STEP = 2;
+export const BAY_STEP = 1;
 
 export type ParkingLayout = {
   /** Places dessinées, toujours au moins `MIN_BAYS` */
@@ -72,14 +73,15 @@ export type ParkingLayout = {
 const MARGIN = 0.3;
 
 /**
- * Dimensionne la cour pour un parc donné.
+ * Dimensionne la cour pour une **capacité** donnée.
  *
- * Les places se créent toutes seules, par paires, et gratuitement : la cour
- * suit la ferme au lieu de la freiner.
+ * L'argument n'est pas le nombre d'engins garés mais le nombre qu'on a le
+ * droit de posséder — les places du garage, hangar compris. C'est ce qui fait
+ * qu'une place vide est une place réellement disponible.
  */
-export function parkingLayout(machines: number): ParkingLayout {
-  const parc = Math.max(0, Math.floor(machines));
-  const bays = Math.max(MIN_BAYS, Math.ceil(parc / BAY_STEP) * BAY_STEP);
+export function parkingLayout(slots: number): ParkingLayout {
+  const capacite = Math.max(0, Math.floor(slots));
+  const bays = Math.max(MIN_BAYS, Math.ceil(capacite / BAY_STEP) * BAY_STEP);
   const perRow = Math.min(bays, BAYS_PER_ROW);
   const rows = Math.ceil(bays / perRow);
   return {

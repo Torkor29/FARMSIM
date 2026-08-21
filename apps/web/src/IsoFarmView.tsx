@@ -257,6 +257,8 @@ type Props = {
    * n'est pas dans cette liste.
    */
   parked?: ParkedMachine[];
+  /** Places du garage — hangar compris. C'est elle que la cour dessine. */
+  machineSlots?: number;
   weather?: string;
   /** Saison courante — elle règle la lumière de toute la scène. */
   season?: string;
@@ -1048,6 +1050,7 @@ export function IsoFarmView({
   manurePiles = [],
   workers = [],
   parked = [],
+  machineSlots = 0,
   weather = "CLEAR",
   season = "SUMMER",
   onCellClick,
@@ -1122,6 +1125,7 @@ export function IsoFarmView({
     manurePiles,
     workers,
     parked,
+    machineSlots,
     gridW,
     gridH,
   });
@@ -1141,6 +1145,7 @@ export function IsoFarmView({
     manurePiles,
     workers,
     parked,
+    machineSlots,
     gridW,
     gridH,
   };
@@ -1641,8 +1646,10 @@ export function IsoFarmView({
      * se lit comme un radeau à la dérive.
      */
     function buildParking() {
-      const { parked, gridW: gw, gridH: gh } = dataRef.current;
-      const plan = parkingLayout(parked.length);
+      const { parked, machineSlots, gridW: gw, gridH: gh } = dataRef.current;
+      // La cour se dessine sur la capacité du garage, pas sur ce qui y est
+      // garé : une place vide doit être une place qu'on peut vraiment occuper.
+      const plan = parkingLayout(Math.max(parked.length, machineSlots));
       const rig = createParkingRig(plan, { shadows: quality.shadows });
       rig.group.scale.setScalar(cellSize);
 

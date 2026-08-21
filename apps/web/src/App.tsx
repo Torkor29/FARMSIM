@@ -17,7 +17,6 @@ import {
   acceptsUrgentContractor,
   acceptsLaborOrder,
   MISSION_CELLS_MIN,
-  MISSION_CELLS_MAX,
   laborEscrow,
   SILAGE_MIN_PROGRESS,
   DEFAULT_CONSIGNES,
@@ -2640,7 +2639,7 @@ export function App() {
   const laborQuote = useMemo(() => {
     if (visiting || !contractorOffer) return null;
     const n = selectedCells.length;
-    if (n < MISSION_CELLS_MIN || n > MISSION_CELLS_MAX) return null;
+    if (n < MISSION_CELLS_MIN) return null;
     const crop: CropCode | undefined = cropFromPlantTool(tool) ?? undefined;
     return laborEscrow(contractorOffer.work, n, crop).escrow;
   }, [visiting, contractorOffer, selectedCells.length, tool]);
@@ -2659,10 +2658,8 @@ export function App() {
     if (visiting || !contractorOffer || laborQuote !== null) return null;
     if (!acceptsLaborOrder(contractorOffer.work)) return null;
     const n = selectedCells.length;
-    if (!n || (n >= MISSION_CELLS_MIN && n <= MISSION_CELLS_MAX)) return null;
-    return n < MISSION_CELLS_MIN
-      ? `L’entraide se demande à partir de ${MISSION_CELLS_MIN} cases — vous en avez retenu ${n}.`
-      : `L’entraide se demande par ${MISSION_CELLS_MAX} cases au plus — vous en avez retenu ${n}.`;
+    if (!n || n >= MISSION_CELLS_MIN) return null;
+    return `L’entraide se demande à partir de ${MISSION_CELLS_MIN} cases — vous en avez retenu ${n}.`;
   }, [visiting, contractorOffer, laborQuote, selectedCells.length]);
 
   async function publishLaborOrder() {
@@ -4600,6 +4597,7 @@ export function App() {
               })}
               workers={[]}
               parked={parkedMachines}
+              machineSlots={slotsMachines}
               weather={localWeather}
               /* La saison ne réglait que le ciel CSS ; la ferme, elle, était
                  éclairée pareil toute l'année. C'est la lumière qui fait la

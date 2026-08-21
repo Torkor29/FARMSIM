@@ -4085,8 +4085,25 @@ async function createLaborOrderForCells(opts: {
     (c, i, arr) => arr.findIndex((o) => o.x === c.x && o.y === c.y) === i,
   );
   const n = unique.length;
-  if (n < MISSION_CELLS_MIN || n > MISSION_CELLS_MAX) {
-    return { ok: false, status: 400, error: `Un chantier fait ${MISSION_CELLS_MIN} à ${MISSION_CELLS_MAX} cases` };
+  /*
+   * Plus de plafond sur ce qu'un joueur demande pour son propre champ.
+   *
+   * Les vingt-quatre cases étaient le calibre des offres **PNJ** — la taille
+   * à laquelle on découpe le tableau pour qu'un chantier se prenne entre deux
+   * travaux. Rien ne justifiait de l'imposer à quelqu'un qui veut faire
+   * déchaumer sa parcelle : « il ne faut pas que ça soit limité à 24 cases ».
+   *
+   * Le plancher reste : en dessous de huit cases, une demande d'entraide coûte
+   * plus de dérangement qu'elle ne rend service, et rien n'empêcherait d'en
+   * publier trente d'une case. Le prix, lui, suit désormais le travail réel —
+   * sans quoi lever le plafond ferait travailler l'aidant à perte.
+   */
+  if (n < MISSION_CELLS_MIN) {
+    return {
+      ok: false,
+      status: 400,
+      error: `Un chantier fait ${MISSION_CELLS_MIN} cases au minimum`,
+    };
   }
   const parcel = await prisma.parcel.findUnique({
     where: { id: opts.parcelId },
