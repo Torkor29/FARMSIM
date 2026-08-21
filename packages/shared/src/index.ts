@@ -1654,14 +1654,38 @@ export const MISSION_NPC_SHARE = 0.55;
 export const MISSION_P2P_SHARE = 0.85;
 
 export const MISSION_CELLS_MIN = 8;
+/**
+ * Taille d'un chantier **proposé par un PNJ**.
+ *
+ * C'est un calibre de génération, pas une limite de jeu : les offres du
+ * tableau sont découpées à cette taille pour qu'un joueur puisse en prendre
+ * une entre deux travaux. Ça n'a jamais eu à s'appliquer à ce qu'un joueur
+ * demande sur **son** champ — voir `clampMissionCells`.
+ */
 export const MISSION_CELLS_MAX = 24;
 export const MISSION_CELL_CHOICES = [8, 12, 16, 18, 24] as const;
 /** Au plus 3 chantiers ouverts à la fois (anti-rente) `[GD]` */
 export const MISSION_OPEN_MAX = 3;
 
+/**
+ * Ramène une taille dans le calibre des offres **PNJ**.
+ *
+ * À ne jamais appliquer à un prix : c'était le cas, et ça faisait un trou.
+ * `laborEscrow` écrêtait à vingt-quatre cases avant de chiffrer, si bien
+ * qu'une demande d'entraide plus grande aurait été payée au tarif de
+ * vingt-quatre — l'aidant labourait cent quarante-quatre cases pour le prix
+ * de vingt-quatre. Tant que la route refusait au-delà de vingt-quatre, le
+ * trou restait fermé par accident ; il s'ouvrait à la seconde où l'on levait
+ * la limite. Le prix suit maintenant le travail réel, partout.
+ */
 export function clampMissionCells(cells: number): number {
   const n = Math.round(cells);
   return Math.max(MISSION_CELLS_MIN, Math.min(MISSION_CELLS_MAX, n));
+}
+
+/** Le nombre de cases qui compte pour un prix : celui qu'on travaille. */
+function cellsAPayer(cells: number): number {
+  return Math.max(1, Math.round(cells));
 }
 
 /**
@@ -1673,7 +1697,7 @@ export function missionPayout(
   cells: number,
   kind: MissionKind = "NPC",
 ): number {
-  const n = clampMissionCells(cells);
+  const n = cellsAPayer(cells);
   const share = kind === "P2P" ? MISSION_P2P_SHARE : MISSION_NPC_SHARE;
   return Math.round(contractorQuote(work, n) * share);
 }
@@ -1698,7 +1722,7 @@ export function laborEscrow(
   crop?: CropCode | null,
   npcClient = false,
 ): { quote: number; extras: number; escrow: number; payout: number } {
-  const n = clampMissionCells(cells);
+  const n = cellsAPayer(cells);
   const quote = Math.round(contractorQuote(work, n) * (npcClient ? 0.88 : 1));
   const extras = laborExtras(work, n, crop);
   return {

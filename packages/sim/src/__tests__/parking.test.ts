@@ -21,27 +21,41 @@ describe("la cour de stationnement", () => {
     expect(parkingLayout(1).bays).toBe(MIN_BAYS);
   });
 
-  it("s'agrandit par paires, et garde toujours une place d'avance", () => {
-    // Une place ajoutée seule est occupée aussitôt : l'agrandissement ne se
-    // verrait pas. Par deux, il en reste une de libre après l'achat.
-    for (const parc of [5, 6, 7, 8, 9]) {
-      const { bays } = parkingLayout(parc);
-      expect(`${parc} places=${bays} ${bays % BAY_STEP === 0}`).toBe(
-        `${parc} places=${bays} true`,
+  /**
+   * Une place vide est une promesse, et elle doit être tenue.
+   *
+   * La cour suivait le **parc**, en s'agrandissant par paires pour que
+   * l'agrandissement se voie — il restait donc toujours une place libre après
+   * un achat. Sauf que le nombre d'engins est plafonné ailleurs, par le
+   * garage : cette place libre ne pouvait pas être occupée. Le joueur la
+   * voyait, allait acheter, et se faisait refuser au motif qu'il lui faut un
+   * hangar. « Le parking s'agrandit pour rien, car tu ne peux pas
+   * l'utiliser. »
+   *
+   * La cour se dimensionne maintenant sur la **capacité**. Elle ne dit plus
+   * que ce qu'elle peut tenir.
+   */
+  it("dessine exactement les places qu'on a le droit d'occuper", () => {
+    for (const places of [5, 6, 7, 11, 30]) {
+      expect(`capacité ${places} → ${parkingLayout(places).bays}`).toBe(
+        `capacité ${places} → ${places}`,
       );
-      expect(bays).toBeGreaterThanOrEqual(parc);
     }
-    expect(parkingLayout(5).bays).toBe(6);
-    expect(parkingLayout(6).bays).toBe(6);
-    expect(parkingLayout(7).bays).toBe(8);
   });
 
-  it("ne refuse jamais une machine : la cour suit le parc", () => {
-    // Aucune place ne s'achète. Un parc de trente engins a trente places, et
-    // acheter ne peut donc pas échouer faute de cour.
-    for (const parc of [1, 12, 30]) {
-      expect(parkingLayout(parc).bays).toBeGreaterThanOrEqual(parc);
-    }
+  it("ne promet aucune place au-delà de la capacité", () => {
+    // Le défaut exact du signalement : à cinq places de garage, la cour en
+    // montrait six. La sixième ne servait à rien — l'achat était refusé.
+    expect(parkingLayout(5).bays).toBe(5);
+    expect(parkingLayout(7).bays).toBe(7);
+  });
+
+  it("ne s'agrandit plus toute seule — il faut bâtir le hangar", () => {
+    // La capacité de départ, puis celle qu'ouvre un hangar : c'est la
+    // construction qui fait grandir la cour, et ça se voit.
+    const depart = parkingLayout(5).bays;
+    const avecHangar = parkingLayout(11).bays;
+    expect(avecHangar).toBeGreaterThan(depart);
   });
 
   it("empile une rangée de plus plutôt que de s'allonger sans fin", () => {
