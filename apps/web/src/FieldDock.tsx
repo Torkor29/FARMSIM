@@ -416,7 +416,9 @@ export function FieldDock({
                 }
                 onClick={onContractor}
               >
-                Payer · {contractor.cost} TRN
+                {/* Qui fait le travail, en deux mots : au doigt, l'infobulle
+                    n'existe pas, donc le libellé doit se suffire. */}
+                Entreprise · {contractor.cost} TRN
               </button>
             )}
             {laborQuote != null && !visiting && onPublishLabor && (
@@ -427,7 +429,7 @@ export function FieldDock({
                 title="Cet argent est mis de côté jusqu’à la fin (ou l’annulation)."
                 onClick={onPublishLabor}
               >
-                Demander de l’aide · {laborQuote} TRN
+                Un joueur · {laborQuote} TRN
               </button>
             )}
             {readyCount > 0 && (

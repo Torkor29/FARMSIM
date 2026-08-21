@@ -11,7 +11,7 @@ import {
   buildingLevelDef,
   buildingResaleValue,
   buildingUpgradeCost,
-  urgentContractorQuote,
+  contractorTotal,
   jobArrivalMs,
   acceptsUrgentContractor,
   acceptsLaborOrder,
@@ -2651,8 +2651,16 @@ export function App() {
       work,
       hasMachine,
       blocage,
+      /*
+       * Le prix **complet**, semences comprises.
+       *
+       * Le bouton annonçait le seul service et le serveur débitait le service
+       * plus le sac : « Faire faire · 1 325 TRN » puis, au clic, « TRN
+       * insuffisants — 3 737 requis ». Les deux côtés lisent désormais la
+       * même fonction.
+       */
       cost: acceptsUrgentContractor(work)
-        ? urgentContractorQuote(work, selectedCells.length)
+        ? contractorTotal(work, selectedCells.length, cropFromPlantTool(tool)).total
         : null,
     };
   }, [tool, selectedCells, selectedAreGrass, player?.farm?.machines, dansSelection]);

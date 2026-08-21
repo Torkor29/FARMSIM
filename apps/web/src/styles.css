@@ -6061,3 +6061,15 @@ button.tiny {
 
 @media (prefers-reduced-motion: reduce) { .skills-tab { transition: none; } }
 
+
+/* Les deux façons de déléguer se ressemblaient trait pour trait : deux
+   boutons, deux prix, et rien qui dise qui fait le travail. Le sous-titre le
+   dit — une entreprise vient tout de suite, un joueur vient quand il passe. */
+.selection-bar-alt-main { display: block; }
+.selection-bar-alt-sub {
+  display: block;
+  font-size: 0.72rem;
+  font-weight: 400;
+  opacity: 0.7;
+  margin-top: 0.1rem;
+}

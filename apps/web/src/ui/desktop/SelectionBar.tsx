@@ -130,12 +130,20 @@ export function SelectionBar({
             title={
               contractorBlocage ??
               (contractorAffordable
-                ? "Un prestataire le fait tout de suite, avec son matériel."
+                ? "Une entreprise de dépannage vient tout de suite, avec son matériel. Le travail est fait dès le clic. Prix ferme, semences comprises."
                 : "Trésorerie insuffisante pour ce devis.")
             }
             onClick={onContractor}
           >
-            Faire faire · {contractorCost} TRN
+            {/*
+              « Faire faire » et « Demander de l'aide » ne disaient pas qui
+              fait le travail : « c'est quoi la différence ici ? Le deuxième
+              PNJ et le troisième un joueur ? ». C'est exactement ça, et rien
+              ne l'écrivait — deux boutons côte à côte, deux prix, aucun
+              indice. Le sous-titre le dit maintenant.
+            */}
+            <span className="selection-bar-alt-main">Faire faire · {contractorCost} TRN</span>
+            <span className="selection-bar-alt-sub">Une entreprise, tout de suite</span>
           </button>
         )}
         {laborQuote !== null && !visiting && onPublishLabor && (
@@ -143,10 +151,11 @@ export function SelectionBar({
             type="button"
             className="selection-bar-alt"
             disabled={busy || !has || !laborAffordable}
-            title="La somme est mise de côté jusqu’à la fin du chantier, ou son annulation."
+            title="Un autre joueur prend le chantier quand il le voit. Moins cher qu'une entreprise, mais il faut attendre que quelqu'un l'accepte. La somme est mise de côté jusqu'à la fin du chantier, ou son annulation."
             onClick={onPublishLabor}
           >
-            Demander de l’aide · {laborQuote} TRN
+            <span className="selection-bar-alt-main">Demander de l’aide · {laborQuote} TRN</span>
+            <span className="selection-bar-alt-sub">Un joueur, quand il passe</span>
           </button>
         )}
         {laborBlocage && <span className="selection-bar-note">{laborBlocage}</span>}

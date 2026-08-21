@@ -429,6 +429,14 @@ export type BuildingDef = {
    * une raison d'acheter des panneaux quand on a beaucoup d'engins.
    */
   careDiscount?: number;
+  /**
+   * Part du coût de séchage prise en charge par le courant de la ferme.
+   *
+   * Le séchoir est le seul poste du jeu qui brûle de l'électricité : c'est
+   * donc le seul que produire du courant peut alléger. Il manquait, et faute
+   * de lui les panneaux solaires remisaient… le graissage.
+   */
+  dryingDiscount?: number;
   /** Atelier de transformation hébergé, s'il y en a un. */
   processing?: ProcessingKind;
   /**
@@ -589,8 +597,12 @@ export const BUILDING_DEFS: Record<BuildingType, BuildingDef> = {
     w: 2,
     h: 2,
     cost: 1100,
-    description: "Répare moins cher.",
+    description:
+      "Répare moins cher, et l'entretien courant — graissage, nettoyage, révision — coûte 20 % de moins.",
     repairDiscount: 0.1,
+    // La remise d'entretien vient des panneaux solaires, où elle n'avait
+    // aucun sens : c'est ici qu'on entretient, pas sous les panneaux.
+    careDiscount: 0.2,
   },
   FARMHOUSE: {
     type: "FARMHOUSE",
@@ -655,6 +667,21 @@ export const BUILDING_DEFS: Record<BuildingType, BuildingDef> = {
    *  - la ruche a une portée, donc un emplacement — le seul bâtiment du jeu
    *    où *où* l'on pose compte.
    */
+  /*
+   * Les deux producteurs de courant.
+   *
+   * Ils remisaient « graissage, nettoyage et révision » — un lien inventé :
+   * produire de l'électricité ne rend pas la graisse moins chère. Le testeur
+   * l'a dit sans détour, et il a raison.
+   *
+   * Le séchoir, lui, tourne bel et bien au courant. C'est même la seule
+   * dépense électrique de la ferme : le reste brûle du gazole. Les deux
+   * ouvrages allègent donc le séchage, chacun à sa mesure — le soleil ne
+   * donne rien la nuit, le vent souffle aussi à trois heures du matin.
+   *
+   * La remise d'entretien n'a pas disparu : elle est passée à l'atelier, qui
+   * est l'endroit où l'on entretient.
+   */
   SOLAR_PANELS: {
     type: "SOLAR_PANELS",
     name: "Panneaux solaires",
@@ -662,8 +689,8 @@ export const BUILDING_DEFS: Record<BuildingType, BuildingDef> = {
     h: 2,
     cost: 1500,
     description:
-      "Le courant de la ferme. Graissage, nettoyage et révision coûtent 20 % de moins.",
-    careDiscount: 0.2,
+      "Alimentent le séchoir du silo en journée : le séchage du grain coûte moitié moins.",
+    dryingDiscount: 0.5,
   },
   WIND_TURBINE: {
     type: "WIND_TURBINE",
@@ -671,7 +698,8 @@ export const BUILDING_DEFS: Record<BuildingType, BuildingDef> = {
     w: 1,
     h: 1,
     cost: 2200,
-    description: "Fait tourner le séchoir sans facture. Le grain sèche gratuitement, et plus vite.",
+    description:
+      "Alimente le séchoir du silo jour et nuit : le séchage du grain ne coûte plus rien.",
     freeDrying: true,
   },
   BEEHIVE: {
@@ -1585,6 +1613,35 @@ export function contractorQuote(work: FarmWork, cells: number): number {
 /** Devis urgent PNJ : barème client majoré. L'argent sort de l'économie joueur. */
 export function urgentContractorQuote(work: FarmWork, cells: number): number {
   return Math.round(contractorQuote(work, cells) * (1 + URGENT_NPC_SURCHARGE));
+}
+
+/**
+ * Ce que « Faire faire » coûte **vraiment**, consommables compris.
+ *
+ * Le bouton annonçait le seul service : « Faire faire · 1 325 TRN » sur cent
+ * trente-quatre cases de maïs. Le serveur, lui, débitait le service **plus les
+ * semences** — 3 737 TRN. Un joueur avec mille quatre cents TRN cliquait donc
+ * un prix qu'il pouvait payer et se faisait répondre qu'il lui en fallait le
+ * triple.
+ *
+ * Pire : à côté, « Demander de l'aide » affichait 3 564 TRN, semences
+ * comprises. Les deux prix n'étaient pas comparables — l'un cachait la moitié
+ * de la facture —, ce qui faisait passer l'entraide pour trois fois plus chère
+ * alors qu'elle est en réalité **moins chère** que le dépannage.
+ *
+ * Les deux côtés lisent maintenant cette fonction. C'est la seule façon de
+ * garantir que le prix affiché est le prix débité.
+ */
+export function contractorTotal(
+  work: FarmWork,
+  cells: number,
+  crop?: CropCode | null,
+): { service: number; supplies: number; total: number } {
+  const service = urgentContractorQuote(work, cells);
+  // Le prestataire vient avec son matériel, pas avec la semence : le sac
+  // reste à la charge du donneur d'ordre, exactement comme pour l'entraide.
+  const supplies = work === "PLANT" && crop ? CROP_DEFS[crop].seedCostPerCell * Math.max(0, cells) : 0;
+  return { service, supplies, total: service + supplies };
 }
 
 /**

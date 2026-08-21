@@ -48,17 +48,44 @@ describe("les petits ouvrages", () => {
     }
   });
 
-  it("les panneaux se remboursent en entretiens, pas en une saison", () => {
+  /**
+   * Les deux producteurs alimentent le séchoir, et rien d'autre.
+   *
+   * Ils remisaient « graissage, nettoyage et révision » — un lien inventé, et
+   * le testeur l'a relevé : produire du courant ne rend pas la graisse moins
+   * chère. Le séchoir, lui, tourne bel et bien au courant, et c'est la seule
+   * dépense électrique de la ferme : tout le reste brûle du gazole.
+   */
+  it("les producteurs de courant n'allègent que le séchage", () => {
+    for (const t of ["SOLAR_PANELS", "WIND_TURBINE"] as const) {
+      const d = BUILDING_DEFS[t];
+      expect(`${t} entretien=${d.careDiscount ?? 0}`).toBe(`${t} entretien=0`);
+      expect(`${t} réparation=${d.repairDiscount ?? 0}`).toBe(`${t} réparation=0`);
+      const seche = (d.dryingDiscount ?? 0) > 0 || d.freeDrying === true;
+      expect(`${t} sèche=${seche}`).toBe(`${t} sèche=true`);
+    }
+  });
+
+  it("range le soleil sous le vent : la nuit, un panneau ne donne rien", () => {
+    // L'échelle doit se lire sans documentation : le moins cher prend une
+    // part, le plus cher prend tout. Si les deux faisaient la même chose,
+    // l'éolienne ne se vendrait jamais.
+    expect(BUILDING_DEFS.SOLAR_PANELS.freeDrying ?? false).toBe(false);
+    expect(BUILDING_DEFS.WIND_TURBINE.freeDrying).toBe(true);
+    expect(BUILDING_DEFS.SOLAR_PANELS.cost).toBeLessThan(BUILDING_DEFS.WIND_TURBINE.cost);
+  });
+
+  it("remise l'entretien là où l'on entretient", () => {
     /**
-     * Le calcul que le joueur doit pouvoir faire : à 20 % de remise sur un
-     * graissage et un nettoyage, combien d'entretiens avant d'être rentré dans
-     * ses frais ? Assez pour que ce soit un pari sur la taille du parc — trop
-     * peu, l'achat serait évident ; trop, personne n'y toucherait.
+     * La remise n'a pas disparu, elle a déménagé : l'atelier est l'endroit du
+     * jeu où l'on graisse, nettoie et révise. Le calcul que le joueur doit
+     * pouvoir faire tient toujours — combien d'entretiens avant d'être rentré
+     * dans ses frais ? Assez pour que ce soit un pari sur la taille du parc.
      */
-    const remise = BUILDING_DEFS.SOLAR_PANELS.careDiscount ?? 0;
+    const remise = BUILDING_DEFS.WORKSHOP.careDiscount ?? 0;
     expect(remise).toBeGreaterThan(0.1);
     const economieParEntretien = (GREASE_COST_CRD + CLEAN_COST_CRD) * remise;
-    const entretiens = BUILDING_DEFS.SOLAR_PANELS.cost / economieParEntretien;
+    const entretiens = BUILDING_DEFS.WORKSHOP.cost / economieParEntretien;
     expect(entretiens).toBeGreaterThan(50);
     expect(entretiens).toBeLessThan(600);
   });
