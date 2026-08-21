@@ -5703,20 +5703,10 @@ button.tiny {
 .sk-filter.on img { opacity: 1; filter: brightness(0) invert(1); }
 .sk-filter-count { font-variant-numeric: tabular-nums; opacity: 0.65; font-size: 0.8em; }
 
-/* La scène porte les liens ; elle doit donc être le repère des positions. */
-.sk-scene { position: relative; }
-.sk-links {
-  position: absolute;
-  inset: 0;
-  width: 100%;
-  height: 100%;
-  pointer-events: none;
-  overflow: visible;
-}
-.sk-link { fill: none; stroke: var(--sk-trait); stroke-width: 2; stroke-dasharray: 4 4; }
-/* Un lien entre deux acquis devient plein : le chemin déjà parcouru se lit
-   sans avoir à comparer les cartes une à une. */
-.sk-link.on { stroke: var(--sk-vert); stroke-dasharray: none; opacity: 0.5; }
+/* Les liens tracés ont disparu : sur vingt-neuf, deux seulement reliaient des
+   cartes voisines, les autres sautaient par-dessus une à huit cartes ou
+   traversaient trois colonnes. Chaque carte nomme désormais sa provenance —
+   voir `.sk-node-after` — et les paliers portent la profondeur. */
 
 .sk-columns {
   position: relative;
@@ -5738,6 +5728,26 @@ button.tiny {
 }
 .sk-col-head img { opacity: 0.8; }
 .sk-col-count { margin-left: auto; font-variant-numeric: tabular-nums; opacity: 0.6; font-size: 0.85em; }
+
+/* —— Le bandeau de palier ——
+   Le palier était répété sous chaque nom de carte. Écrit une fois en tête de
+   section, il dit la même chose treize fois moins, et il rend la profondeur de
+   la branche : c'est le travail que les liens tracés faisaient mal. Le filet
+   qui prolonge le mot tient la colonne visuellement, sans traverser personne. */
+.sk-tier + .sk-tier { margin-top: 0.85rem; }
+.sk-tier-head {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin: 0 0 0.4rem;
+  font-size: 0.66rem;
+  font-weight: 800;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  color: var(--sk-vert);
+  opacity: 0.75;
+}
+.sk-tier-head i { flex: 1; height: 1px; background: var(--sk-trait); }
 
 .sk-nodes { list-style: none; margin: 0; padding: 0; display: grid; gap: 0.55rem; }
 
@@ -5775,7 +5785,16 @@ button.tiny {
 
 .sk-node-text { display: grid; min-width: 0; }
 .sk-node-text strong { font-size: 0.9rem; line-height: 1.25; }
-.sk-node-tier { font-size: 0.68rem; text-transform: uppercase; letter-spacing: 0.05em; opacity: 0.55; }
+/* D'où vient la compétence, par son nom — l'information qu'un trait ne
+   donnait pas. Elle s'enroule plutôt que de se couper : « Agriculteur
+   complet » descend de quatre compétences, et les nommer toutes est
+   exactement ce qu'on vient lire. */
+.sk-node-after {
+  font-size: 0.7rem;
+  line-height: 1.3;
+  opacity: 0.62;
+  font-style: italic;
+}
 .sk-node-state { margin-left: auto; font-size: 0.78rem; font-variant-numeric: tabular-nums; opacity: 0.7; flex: none; }
 .sk-node.on .sk-node-state { color: var(--sk-vert); font-weight: 700; }
 
