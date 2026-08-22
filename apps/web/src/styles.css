@@ -2870,6 +2870,10 @@ html.playing .build-confirm { position: fixed; }
   .mvp-badge,
   .stat-xp,
   .stat-bonus,
+  /* Le nom du joueur quitte le bandeau : il est déjà en tête du tiroir
+     profil, que le ☰ ouvre d'un doigt. Le garder ici coûtait soixante pixels
+     de largeur pour dire au joueur comment il s'appelle. */
+  .stat-name,
   .logout-btn { display: none; }
   .help-btn {
     min-width: 44px;
@@ -6073,6 +6077,115 @@ button.tiny {
   opacity: 0.7;
   margin-top: 0.1rem;
 }
+/* —— Le bas de l'écran, resserré ——
+   Trois cartes empilées — objectif, options, outils — chacune avec sa marge,
+   son cadre et son rembourrage. Mesuré sur 390 px : 197 px de hauteur, soit
+   près du quart de l'écran, dont une bonne part en vide entre les cartes.
+
+   On ne retire aucun bouton et on ne descend pas sous le plancher tactile de
+   44 px : on rapproche les cartes, on réduit les rembourrages et on rend au
+   pictogramme la place que prenait son cadre. Le contenu est identique. */
+.game-stage.mobile .field-dock { gap: 0.22rem; }
+.game-stage.mobile .quest-chip {
+  gap: 0.5rem;
+  padding: 0.28rem 0.55rem;
+  border-radius: 13px;
+}
+.game-stage.mobile .quest-chip-mark { width: 1.4rem; height: 1.4rem; border-radius: 8px; font-size: 0.8rem; }
+.game-stage.mobile .quest-chip-body strong { font-size: 0.7rem; }
+.game-stage.mobile .quest-chip-body span { font-size: 0.72rem; line-height: 1.22; }
+.game-stage.mobile .dock-tray { padding: 0.28rem 0.4rem; gap: 0.25rem 0.4rem; border-radius: 13px; }
+.game-stage.mobile .dock-bar { padding: 0.2rem 0.2rem; gap: 0.1rem; border-radius: 13px; }
+/* 46 px, pas 40 : la cible reste au-dessus du plancher tactile. Ce qu'on
+   récupère, c'est le rembourrage autour du pictogramme, pas la cible. */
+.game-stage.mobile .dock-tool { min-height: 46px; padding: 0.28rem 0.1rem 0.24rem; gap: 0.08rem; }
+.game-stage.mobile .dock-label { font-size: 0.58rem; }
+
+/* —— Les puces du bandeau, sur téléphone ——
+   Cotations, météo et voisins tenaient chacun dans un bandeau pleine largeur.
+   Mesuré sur 390 px : trente pixels pour les cours, quarante-quatre pour la
+   présence, en permanence, pour des informations qu'on consulte entre deux
+   gestes et non pendant. Ils sont devenus trois puces de la ligne du haut ;
+   la première déplie la liste entière. */
+.hud-puce {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.22rem;
+  /* Rétrécissables, et c'est la clé : en `flex: none` elles poussaient le ☰
+     hors de l'écran dès que la trésorerie s'allongeait — mesuré sur un compte
+     à 200 000 TRN, le bouton du profil sortait du cadre et devenait
+     intouchable. Ce qui doit toujours rester joignable ne rétrécit pas ; ce
+     qui informe, si. */
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  height: 1.9rem;
+  padding: 0 0.45rem;
+  border: 1px solid var(--glass-border);
+  border-radius: 999px;
+  background: var(--bar);
+  color: var(--ink);
+  font: inherit;
+  font-size: 0.72rem;
+  font-weight: 700;
+  line-height: 1;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.hud-puce-icone { width: 1.05rem; height: 1.05rem; flex: none; }
+.hud-puce-val { color: var(--teal-700); }
+.hud-puce small { font-weight: 700; }
+.hud-puce small.up { color: var(--vert-500, #4f9d4f); }
+.hud-puce small.down { color: var(--rouge-500, #c8593f); }
+.hud-puce small.flat { color: var(--muted); }
+.cours-puce.on { background: var(--teal-700); color: #fff; border-color: transparent; }
+.cours-puce.on .hud-puce-val, .cours-puce.on small { color: inherit; }
+.meteo-puce { cursor: default; color: var(--ink-soft); font-weight: 600; }
+.voisins-puce { gap: 0.3rem; }
+
+/* L'ordre dans lequel les puces cèdent la place, du plus sacrifiable au moins.
+   Le ☰ et le « ? » ne cèdent jamais : ce sont des portes, pas des nouvelles.
+
+   `min-width: 0` sur le bandeau lui-même n'est pas décoratif : mesuré, il
+   faisait 492 px de large dans un écran de 390 et poussait le ☰ hors du
+   cadre. Un élément de grille garde `min-width: auto` par défaut, donc refuse
+   de descendre sous la largeur de son contenu — les puces avaient beau être
+   rétrécissables, la boîte qui les tient ne l'était pas. */
+.hud-top,
+.hud-stats { min-width: 0; }
+.game-stage.mobile .hud-stats .gold { flex: none; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.game-stage.mobile .profile-btn,
+.game-stage.mobile .help-btn { flex: none; }
+/* La météo ne se laisse pas couper : « Nua… » informe moins que rien. Elle a
+   donc un plancher, et c'est le « ? » qui a cédé sa place — il ouvrait le
+   même guide que le ☰ et que la puce d'objectif, trois portes pour une
+   pièce. */
+.meteo-puce { flex: none; }
+.game-stage.mobile .help-btn { display: none; }
+.cours-puce { flex-shrink: 2; }
+.voisins-puce { flex: none; }
+
+/* Le tiroir : la liste des cours, dépliée sous le bandeau, sans rien pousser.
+   Elle flotte au-dessus du champ le temps qu'on la lise, puis se referme. */
+.market-ticker.tiroir {
+  position: fixed;
+  top: calc(3.1rem + env(safe-area-inset-top));
+  left: 0.5rem;
+  right: 0.5rem;
+  z-index: 30;
+  max-width: none;
+  margin: 0;
+  padding: 0.4rem 0.5rem;
+  border-radius: var(--r-md);
+  background: var(--bar);
+  border: 1px solid var(--glass-border);
+  box-shadow: var(--sh-2);
+  backdrop-filter: blur(12px);
+  flex-wrap: wrap;
+  overflow: visible;
+  animation: build-rise 0.16s ease-out;
+}
+
 /* —— Calendrier des cultures ——
    Le pendant clair du calendrier de Farming Simulator : mêmes deux bandes,
    même lecture d'un coup d'œil, mais dans la crème et la sarcelle du jeu

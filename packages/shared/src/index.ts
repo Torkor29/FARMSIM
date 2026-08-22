@@ -84,6 +84,35 @@ export const WEATHER_LABELS: Record<WeatherState, string> = {
   SNOW: "Neige",
 };
 
+/**
+ * La météo en cinq lettres, pour les bandeaux étroits du téléphone.
+ *
+ * « Nuageux » tronqué donnait « Nua… », ce qui informe moins que rien : le
+ * joueur voit qu'on lui cache quelque chose sans savoir quoi. Mieux vaut un
+ * mot entier plus court qu'un mot long coupé.
+ */
+export const WEATHER_SHORT: Record<WeatherState, string> = {
+  CLEAR: "Clair",
+  CLOUDY: "Gris",
+  RAIN: "Pluie",
+  STORM: "Orage",
+  SNOW: "Neige",
+};
+
+/**
+ * Une somme en TRN, écrite court quand elle est longue.
+ *
+ * « 200000 TRN » débordait de sa puce et se faisait couper en « 200000… »,
+ * qui perd à la fois l'unité et l'ordre de grandeur. On abrège au millier
+ * au-delà de dix mille : « 200 k TRN » tient, et se lit.
+ */
+export function formatTerrons(crd: number): string {
+  const n = Math.round(crd);
+  if (Math.abs(n) >= 1_000_000) return `${(n / 1_000_000).toFixed(n % 1_000_000 === 0 ? 0 : 1)} M TRN`;
+  if (Math.abs(n) >= 10_000) return `${Math.round(n / 1000)} k TRN`;
+  return `${n} TRN`;
+}
+
 /** Intervalle tick serveur MVP `[TEST]` */
 export const SIM_TICK_MS = 20_000;
 

@@ -36,7 +36,10 @@ import {
   type TradeGood,
   PARCEL_HECTARES,
   SEASON_LABELS,
+  GOOD_ICONS,
   WEATHER_LABELS,
+  WEATHER_SHORT,
+  formatTerrons,
   currentSeason,
   conditionYieldFactor,
   type LedgerLine,
@@ -336,7 +339,7 @@ function canPay(player: Player | null | undefined, cost: number): boolean {
 }
 
 function walletLabel(player: Player): string {
-  return hasUnlimitedFunds(player) ? "∞ TRN" : `${Math.round(player.crd)} TRN`;
+  return hasUnlimitedFunds(player) ? "∞ TRN" : formatTerrons(player.crd);
 }
 
 type Contract = {
@@ -767,6 +770,8 @@ export function App() {
   const [orphanYards, setOrphanYards] = useState<OrphanYard[]>([]);
   /** Le calendrier des cultures, ouvert depuis la pastille en bas à droite. */
   const [showCalendrier, setShowCalendrier] = useState(false);
+  /** Le tiroir des cotations, sur téléphone seulement. */
+  const [showCours, setShowCours] = useState(false);
   /**
    * Les commandes passées au négociant, en route ou posées dans la cour.
    *
@@ -1520,6 +1525,51 @@ export function App() {
     weather.find((w) => w.zoneCode === zoneCode)?.state ??
     "CLEAR";
   const weatherLabel = WEATHER_LABELS[localWeather] ?? localWeather;
+  const weatherCourt = WEATHER_SHORT[localWeather] ?? weatherLabel;
+
+  /**
+   * Les cotations, écrites une fois pour deux endroits.
+   *
+   * Bandeau permanent sur écran large, tiroir dépliable au doigt : c'est le
+   * même contenu, et il ne doit exister qu'en un exemplaire — deux listes de
+   * cours écrites côte à côte finiraient par diverger.
+   */
+  const cotations = market.map((m) => {
+    const prev = prevPrices[m.commodity] ?? m.price;
+    const delta = m.price - prev;
+    const cls = delta > 0.05 ? "up" : delta < -0.05 ? "down" : "flat";
+    return (
+      <span key={m.commodity} className={`tick ${cls}`}>
+        {GOOD_DEFS[m.commodity as TradeGood]?.name ?? m.commodity} {m.price.toFixed(1)}
+        <small>
+          {delta > 0.05 ? " ▲" : delta < -0.05 ? " ▼" : " ·"}
+          {Math.abs(delta) > 0.05 ? Math.abs(delta).toFixed(1) : ""}
+        </small>
+      </span>
+    );
+  });
+
+  /**
+   * La cotation qui a le plus bougé — celle que porte la puce du bandeau.
+   *
+   * Une puce ne peut en montrer qu'une ; autant que ce soit celle qui vaut
+   * qu'on ouvre le tiroir. À marché calme, la première de la liste fait
+   * l'affaire : elle dit au moins que les cours sont là.
+   */
+  const coursVedette = market.reduce<
+    { code: TradeGood; nom: string; prix: number; delta: number } | null
+  >((meilleur, m) => {
+    const delta = m.price - (prevPrices[m.commodity] ?? m.price);
+    const code = m.commodity as TradeGood;
+    const nom = GOOD_DEFS[code]?.name ?? m.commodity;
+    if (!meilleur || Math.abs(delta) > Math.abs(meilleur.delta)) {
+      return { code, nom, prix: m.price, delta };
+    }
+    return meilleur;
+  }, null);
+
+  /** Les autres joueurs présents — jamais soi-même. */
+  const voisinsEnLigne = onlinePlayers.filter((p) => p.online && p.id !== player?.id);
 
   /**
    * Annonce le passage d'une saison à l'autre.
@@ -4833,6 +4883,56 @@ export function App() {
             )}
             {/* Au téléphone, tout ce qui précède sauf les TRN passe dans un
                 tiroir : le bandeau doit tenir sur une ligne. */}
+            {/*
+              Les deux puces du téléphone : cotations et voisins.
+
+              Elles remplacent deux bandeaux pleine largeur — trente et
+              quarante-quatre pixels de hauteur, en permanence — par deux
+              boutons de la ligne qui existe déjà. Le contenu n'a pas bougé
+              d'un mot : la première déplie la liste des cours, la seconde
+              ouvre la même vue des voisins qu'avant.
+            */}
+            {isMobile && coursVedette && (
+              <button
+                type="button"
+                className={`hud-puce cours-puce${showCours ? " on" : ""}`}
+                aria-expanded={showCours}
+                title={`${coursVedette.nom} · ${coursVedette.prix.toFixed(1)} TRN — voir toutes les cotations`}
+                onClick={() => setShowCours((v) => !v)}
+              >
+                {/* Le pictogramme, pas le nom : « Bottes de paille » se faisait
+                    couper en « Bottes … », qui ne dit plus de quoi il s'agit.
+                    Une image de vingt pixels le dit en entier, et ne coupe
+                    jamais. Le nom complet reste dans l'infobulle et dans le
+                    tiroir. */}
+                {GOOD_ICONS[coursVedette.code] && (
+                  <img className="hud-puce-icone" src={GOOD_ICONS[coursVedette.code]} alt="" />
+                )}
+                <span className="hud-puce-val">{coursVedette.prix.toFixed(0)}</span>
+                <small className={coursVedette.delta > 0.05 ? "up" : coursVedette.delta < -0.05 ? "down" : "flat"}>
+                  {coursVedette.delta > 0.05 ? "▲" : coursVedette.delta < -0.05 ? "▼" : "·"}
+                </small>
+              </button>
+            )}
+            {isMobile && (
+              <span className="hud-puce meteo-puce" title={`Météo · ${weatherLabel}`}>
+                {weatherCourt}
+              </span>
+            )}
+            {isMobile && voisinsEnLigne.length > 0 && (
+              <button
+                type="button"
+                className="hud-puce voisins-puce"
+                title={`${voisinsEnLigne.map((p) => p.name).join(", ")} — ${
+                  voisinsEnLigne.length > 1 ? "connectés" : "connecté"
+                }`}
+                aria-label={`${voisinsEnLigne.length} voisin${voisinsEnLigne.length > 1 ? "s" : ""} en ligne`}
+                onClick={() => setShowEta(true)}
+              >
+                <i className="who-dot on" aria-hidden="true" />
+                {voisinsEnLigne.length}
+              </button>
+            )}
             <button
               type="button"
               className="profile-btn"
@@ -4851,23 +4951,22 @@ export function App() {
           </div>
         </header>
 
-        <div className="market-ticker">
-          {market.map((m) => {
-            const prev = prevPrices[m.commodity] ?? m.price;
-            const delta = m.price - prev;
-            const cls = delta > 0.05 ? "up" : delta < -0.05 ? "down" : "flat";
-            return (
-              <span key={m.commodity} className={`tick ${cls}`}>
-                {GOOD_DEFS[m.commodity as TradeGood]?.name ?? m.commodity} {m.price.toFixed(1)}
-                <small>
-                  {delta > 0.05 ? " ▲" : delta < -0.05 ? " ▼" : " ·"}
-                  {Math.abs(delta) > 0.05 ? Math.abs(delta).toFixed(1) : ""}
-                </small>
-              </span>
-            );
-          })}
-          <span className="tick weather-tick">{weatherLabel}</span>
-        </div>
+        {/*
+          Les cotations : bandeau permanent sur écran large, tiroir au doigt.
+
+          Mesurées sur un téléphone de 390 px, elles coûtaient trente pixels de
+          hauteur en permanence pour une information qu'on consulte avant de
+          vendre, pas pendant qu'on laboure. Elles sont devenues une puce du
+          bandeau — celle qui bouge le plus, chiffre et flèche — et la liste
+          entière se déplie d'un doigt. Rien n'a disparu : le même contenu, à
+          la demande.
+        */}
+        {!isMobile && <div className="market-ticker">{cotations}</div>}
+        {isMobile && showCours && (
+          <div className="market-ticker tiroir" role="region" aria-label="Cotations">
+            {cotations}
+          </div>
+        )}
         {/* Une rangée permanente occupée à dire qu'il n'y a personne : c'était
             trente pixels de haut, à toutes les tailles, pour une information
             nulle. Le bandeau n'apparaît que quand quelqu'un est vraiment là —
@@ -4875,23 +4974,15 @@ export function App() {
         {/* Se compter soi-même donnait « Mes est connecté » : une rangée
             permanente de quarante pixels pour apprendre au joueur qu'il est
             là. Le bandeau ne parle que des **autres**. */}
-        {onlinePlayers.some((p) => p.online && p.id !== player.id) && (
+        {!isMobile && onlinePlayers.some((p) => p.online && p.id !== player.id) && (
           <button
             type="button"
             className="who-now-bar"
-            onClick={() => {
-              if (isMobile) setShowEta(true);
-              else setShowEta((v) => !v);
-            }}
+            onClick={() => setShowEta((v) => !v)}
           >
             <i className="who-dot on" aria-hidden="true" />
-            {onlinePlayers
-              .filter((p) => p.online && p.id !== player.id)
-              .map((p) => p.name)
-              .join(", ")}{" "}
-            {onlinePlayers.filter((p) => p.online && p.id !== player.id).length > 1
-              ? "sont connectés"
-              : "est connecté"}
+            {voisinsEnLigne.map((p) => p.name).join(", ")}{" "}
+            {voisinsEnLigne.length > 1 ? "sont connectés" : "est connecté"}
           </button>
         )}
         {(msg || err) && (
