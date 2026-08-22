@@ -40,7 +40,7 @@ import {
   conditionYieldFactor,
   type LedgerLine,
   dayOfSeason,
-  SEASON_DAYS,
+  seasonLengthDays,
   footprintCells,
   orientedFootprint,
   withinRegret,
@@ -114,6 +114,7 @@ const IsoFarmView = lazy(() =>
 const Onboarding = lazy(() => import("./Onboarding").then((m) => ({ default: m.Onboarding })));
 import { SplashScreen } from "./SplashScreen";
 import { TutorialOverlay } from "./TutorialOverlay";
+import { CropCalendarPanel } from "./CropCalendarPanel";
 import { FieldDock } from "./FieldDock";
 import { PlayGuide } from "./PlayGuide";
 import { TOKEN_KEY, TUTORIAL_KEY, GUIDE_FLAGS_KEY } from "./storage-keys";
@@ -723,6 +724,8 @@ export function App() {
   const [detailLoading, setDetailLoading] = useState(false);
   const [barns, setBarns] = useState<BarnState[]>([]);
   const [orphanYards, setOrphanYards] = useState<OrphanYard[]>([]);
+  /** Le calendrier des cultures, ouvert depuis la pastille en bas à droite. */
+  const [showCalendrier, setShowCalendrier] = useState(false);
   /**
    * Les commandes passées au négociant, en route ou posées dans la cour.
    *
@@ -5322,7 +5325,7 @@ export function App() {
             <div>
               <dt>Saison</dt>
               <dd>
-                {SEASON_LABELS[season]} · jour {jourDeSaison}/{SEASON_DAYS}
+                {SEASON_LABELS[season]} · jour {jourDeSaison}/{seasonLengthDays(season)}
               </dd>
             </div>
             <div>
@@ -5581,7 +5584,32 @@ export function App() {
                 : []),
             ]}
           />
-          <SelectionBar
+          {/* Le calendrier des cultures.
+            En bas à droite, hors du dock centré : c'est une consultation, pas
+            un geste de la boucle. La pastille porte la couleur de la saison du
+            jour, de sorte qu'on sait où l'on en est sans même l'ouvrir. */}
+        <button
+          type="button"
+          className="calendrier-ouvrir"
+          aria-expanded={showCalendrier}
+          title={`Calendrier des cultures — ${SEASON_LABELS[season]}`}
+          onClick={() => setShowCalendrier((v) => !v)}
+        >
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true">
+            <rect x="3" y="5" width="18" height="16" rx="3" />
+            <path d="M3 10h18M8 3v4M16 3v4" strokeLinecap="round" />
+            <path d="M7.5 14h3M13.5 14h3M7.5 17.5h3" strokeLinecap="round" />
+          </svg>
+          <span className={`saison-puce s-${season.toLowerCase()}`} aria-hidden="true" />
+        </button>
+        {showCalendrier && (
+          <CropCalendarPanel
+            hemisphere={hemisphere}
+            onClose={() => setShowCalendrier(false)}
+          />
+        )}
+
+        <SelectionBar
             tool={tool}
             machineManquante={machineManquante}
             selectedCount={selectedCells.length}

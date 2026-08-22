@@ -26,7 +26,7 @@ import {
   SIM_TICK_MS,
   type Season,
 } from "@farmsim/shared";
-import { marketNpcPressure, tickMarket } from "../index";
+import { NPC_BASE_SUPPLY, marketNpcPressure, tickMarket } from "../index";
 
 const TICKS_SAISON = Math.round(SEASON_DURATION_MS / SIM_TICK_MS);
 const TICKS_RECOLTE = Math.round(CROP_DEFS.WHEAT.growMs / SIM_TICK_MS);
@@ -157,7 +157,10 @@ describe("ce qui ramène le cours, c’est l’offre, pas un décret", () => {
     // Sans cette butée, inonder son marché n'aurait aucune conséquence : les
     // voisins se retireraient à mesure et le prix ne bougerait pas.
     const effondre = flux(B.min);
-    expect(effondre.supplyTons).toBeGreaterThan(0.3);
+    // Rapporté au flux nominal, pas à un tonnage par tick : les flux PNJ sont
+    // désormais exprimés par jour de jeu, et un seuil absolu par tick ne
+    // voudrait plus rien dire à cette échelle.
+    expect(effondre.supplyTons).toBeGreaterThan(NPC_BASE_SUPPLY * 0.15);
   });
 
   it("et un excédent qui dure tient le cours bas tant qu’il dure", () => {

@@ -11,7 +11,7 @@
  */
 
 import { EXTRA_REGIONS } from "./climate.js";
-import { SEASON_DURATION_MS as SAISON_MS } from "./time.js";
+import { seasonOfWeekday, weekdayIndex } from "./time.js";
 
 export type Hemisphere = "N" | "S";
 
@@ -568,9 +568,15 @@ const SEASON_ORDER: Season[] = ["SPRING", "SUMMER", "AUTUMN", "WINTER"];
 
 /** Saison courante d'un hémisphère : le sud est décalé de deux saisons. */
 export function currentSeason(hemisphere: Hemisphere, now: number = Date.now()): Season {
-  const index = Math.floor(now / SAISON_MS) % 4;
-  const shifted = hemisphere === "S" ? (index + 2) % 4 : index;
-  return SEASON_ORDER[shifted];
+  /*
+   * La saison se lit sur le calendrier réel, plus sur un compteur.
+   *
+   * Elle tournait sur une horloge à elle, sans coïncider avec quoi que ce soit :
+   * un joueur qui revenait le lendemain ne savait pas où il en était. Elle suit
+   * désormais les jours de la semaine — l'hiver le dimanche — si bien que
+   * chacun sait la saison sans ouvrir le jeu.
+   */
+  return seasonOfWeekday(weekdayIndex(now), hemisphere);
 }
 
 /** Facteur de rendement saisonnier `[TEST]` */

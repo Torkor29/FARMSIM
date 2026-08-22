@@ -39,16 +39,23 @@ describe("monde", () => {
 });
 
 describe("saisons", () => {
+  /** Un lundi à minuit UTC : l'année de jeu commence au printemps. */
+  const LUNDI = Date.UTC(2026, 7, 24);
+  const JOUR = 24 * 60 * 60 * 1000;
+
   it("inverse les saisons entre les deux hémisphères", () => {
-    const now = 0;
-    expect(currentSeason("N", now)).toBe("SPRING");
-    expect(currentSeason("S", now)).toBe("AUTUMN");
+    expect(currentSeason("N", LUNDI)).toBe("SPRING");
+    expect(currentSeason("S", LUNDI)).toBe("AUTUMN");
   });
 
-  it("avance d’une saison à chaque palier", () => {
-    expect(currentSeason("N", SEASON_DURATION_MS)).toBe("SUMMER");
-    expect(currentSeason("N", SEASON_DURATION_MS * 2)).toBe("AUTUMN");
-    expect(currentSeason("N", SEASON_DURATION_MS * 4)).toBe("SPRING");
+  it("avance d’une saison au fil de la semaine", () => {
+    // Deux jours réels par saison pleine, un seul pour l'hiver.
+    expect(currentSeason("N", LUNDI)).toBe("SPRING");
+    expect(currentSeason("N", LUNDI + JOUR * 2)).toBe("SUMMER");
+    expect(currentSeason("N", LUNDI + JOUR * 4)).toBe("AUTUMN");
+    expect(currentSeason("N", LUNDI + JOUR * 6)).toBe("WINTER");
+    // Et la semaine suivante recommence.
+    expect(currentSeason("N", LUNDI + JOUR * 7)).toBe("SPRING");
   });
 
   it("distribue une probabilité météo complète", () => {

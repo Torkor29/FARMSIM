@@ -12,6 +12,7 @@
  */
 
 import {
+  SEASON_DURATION_MS,
   ANIMAL_PRICE,
   GOOD_DEFS,
   LIVESTOCK_CYCLE_MS,
@@ -81,11 +82,17 @@ describe("acheter jeune ou adulte", () => {
   });
 
   it("la croissance dure une saison, pas une soirée ni une semaine", () => {
-    const minutes = YOUNG_GROW_MS / 60_000;
-    // Assez long pour qu'attendre coûte, assez court pour qu'on voie
-    // l'arrivée à maturité dans une session de jeu.
-    expect(minutes).toBeGreaterThan(60);
-    expect(minutes).toBeLessThan(240);
+    /*
+     * Mesuré en saisons, pas en minutes réelles.
+     *
+     * L'assertion comptait des minutes, ce qui la liait à l'échelle du temps
+     * réel — laquelle a changé le jour où l'année est tombée sur la semaine.
+     * Ce qu'on veut dire n'a pourtant jamais été « entre une et quatre
+     * heures » : c'est « à peu près une saison », et ça se dit en saisons.
+     */
+    const saisons = YOUNG_GROW_MS / SEASON_DURATION_MS;
+    expect(saisons).toBeGreaterThan(0.5);
+    expect(saisons).toBeLessThan(1.5);
   });
 
   it("engraisser pour la viande reste un chemin plus lent que le lait", () => {
