@@ -6077,6 +6077,85 @@ button.tiny {
   opacity: 0.7;
   margin-top: 0.1rem;
 }
+/* —— Les cours du jour, en tête du marché ——
+   Ils occupaient un bandeau permanent en haut de la ferme : trente pixels de
+   hauteur, sur bureau comme au téléphone, pour une information qu'on consulte
+   avant de vendre. Elle est ici, à côté du bouton qui vend. */
+.cotations { margin: 0 0 0.6rem; }
+.cotations h4 {
+  margin: 0 0 0.35rem;
+  font-size: 0.78rem;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.cotations-grille {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(9.5rem, 1fr));
+  gap: 0.3rem;
+}
+.cote {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 0.3rem;
+  padding: 0.28rem 0.45rem;
+  border-radius: var(--r-sm);
+  background: var(--sand);
+  border: 1px solid var(--line);
+  font-size: 0.78rem;
+}
+.cote b { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cote i { font-style: normal; font-weight: 800; color: var(--ink); }
+.cote em { font-style: normal; font-size: 0.7rem; font-weight: 700; }
+.cote.up em { color: var(--vert-500, #4f9d4f); }
+.cote.down em { color: var(--rouge-500, #c8593f); }
+.cote.flat em { color: var(--muted); }
+
+/* —— Le plateau d'outils, au doigt : tout visible, rien à faire défiler ——
+
+   Mesuré sur un téléphone de 390 px, l'outil « Semer » armé : treize boutons,
+   **trois** visibles. La rangée d'options faisait 196 px de large pour 684 px
+   de contenu, le reste derrière un défilement horizontal que rien n'annonce —
+   Colza, Pois, Herbe, les pinceaux, et jusqu'au bouton d'action lui-même.
+   « Sol » faisait pire : deux sur douze. Le bouton « ⋯ » censé déplier la
+   suite était lui-même hors du cadre.
+
+   Deux rangées qui se disputent une ligne, c'est un combat perdu : chaque
+   bouton d'action gagné est une option perdue. On empile donc, et on enroule.
+   Le plateau est plus haut de deux rangées quand un outil est armé — c'est le
+   prix de pouvoir choisir sa culture, et il ne se paie que là. En vue simple,
+   l'écran reste dégagé. */
+.game-stage.mobile .dock-tray {
+  grid-template-columns: minmax(0, 1fr);
+}
+.game-stage.mobile .dock-chips {
+  flex-wrap: wrap;
+  overflow: visible;
+  -webkit-mask-image: none;
+  mask-image: none;
+  row-gap: 0.28rem;
+}
+.game-stage.mobile .dock-chips-end {
+  grid-column: 1;
+  justify-content: flex-start;
+  border-top: 1px solid var(--glass-border);
+  padding-top: 0.32rem;
+  margin-top: 0.06rem;
+}
+/* L'action passe devant : c'est elle qu'on cherche, et elle prend la place
+   qui reste sur sa rangée. */
+.game-stage.mobile .dock-chips-end .chip.go { flex: 1 1 8rem; justify-content: center; }
+/* Rien ne se cache plus : le bouton qui dépliait n'a plus d'objet. */
+.game-stage.mobile .dock-expand { display: none; }
+/* Des pastilles un peu plus serrées : quatre par rangée plutôt que trois. */
+.game-stage.mobile .dock-chips .chip {
+  min-height: 40px;
+  padding: 0.3rem 0.6rem;
+  font-size: 0.78rem;
+}
+.game-stage.mobile .dock-chips .chip.brush { padding-inline: 0.5rem; }
+
 /* —— Le bas de l'écran, resserré ——
    Trois cartes empilées — objectif, options, outils — chacune avec sa marge,
    son cadre et son rembourrage. Mesuré sur 390 px : 197 px de hauteur, soit

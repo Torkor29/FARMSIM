@@ -68,6 +68,15 @@ type Props = {
   listings: Listing[];
   deliveries: MarketDelivery[];
   marketPrices: { commodity: string; price: number; stockTons: number }[];
+  /**
+   * Les cours du tour précédent, pour dire dans quel sens ça bouge.
+   *
+   * Ils vivaient dans un bandeau permanent en haut de l'écran — trente pixels
+   * de hauteur en permanence, sur bureau comme au téléphone, pour une
+   * information qu'on consulte **avant de vendre**. Elle est donc ici, dans le
+   * marché, à côté du bouton qui vend.
+   */
+  prevPrices?: Record<string, number>;
   crd: number;
   busy: boolean;
   onSellDealer: (commodity: TradeGood, tons: number) => void;
@@ -184,6 +193,7 @@ function DeliveryList({
 export function MarketPanel({
   open,
   onClose,
+  prevPrices = {},
   stock,
   listings,
   deliveries,
@@ -326,6 +336,32 @@ export function MarketPanel({
             aucun moyen d'y accéder — sur téléphone, le formulaire des contrats
             à terme commençait juste sous le bord. */}
         <div className="hall-body">
+        {/* Les cotations du jour, en tête : c'est la première question qu'on
+            se pose en entrant au marché, et la seule raison pour laquelle
+            elles occupaient jusqu'ici un bandeau permanent sur la ferme. */}
+        {marketPrices.length > 0 && (
+          <section className="cotations" aria-label="Cours du jour">
+            <h4>Cours du jour</h4>
+            <div className="cotations-grille">
+              {marketPrices.map((m) => {
+                const avant = prevPrices[m.commodity] ?? m.price;
+                const ecart = m.price - avant;
+                const sens = ecart > 0.05 ? "up" : ecart < -0.05 ? "down" : "flat";
+                return (
+                  <span key={m.commodity} className={`cote ${sens}`}>
+                    <GoodIcon code={m.commodity} />
+                    <b>{goodName(m.commodity)}</b>
+                    <i>{m.price.toFixed(0)}</i>
+                    <em>
+                      {sens === "up" ? "▲" : sens === "down" ? "▼" : "·"}
+                      {Math.abs(ecart) > 0.05 ? Math.abs(ecart).toFixed(1) : ""}
+                    </em>
+                  </span>
+                );
+              })}
+            </div>
+          </section>
+        )}
         {tab === "MORE" ? (
           <div className="hall-more">
             <button type="button" className="ghost tiny" onClick={() => setTab("BUY")}>

@@ -38,23 +38,36 @@ function regle(selecteur: string): string | null {
 }
 
 describe("les cotations", () => {
-  it("ne sont plus un bandeau permanent au doigt", () => {
-    expect(APP).toMatch(/\{!isMobile && <div className="market-ticker">\{cotations\}<\/div>\}/);
-    expect(APP).toMatch(/isMobile && showCours &&/);
+  const MARCHE = fs.readFileSync("src/MarketPanel.tsx", "utf8");
+
+  it("ont quitté la ferme pour le marché", () => {
+    /*
+     * Un bandeau permanent en haut de l'écran — trente pixels de hauteur, sur
+     * bureau comme au téléphone — pour une information qu'on consulte **avant
+     * de vendre**, pas pendant qu'on laboure. Première correction : une puce
+     * dépliable au doigt, mais le bandeau restait sur écran large, où il
+     * mangeait autant de place pour la même raison. Elles sont maintenant là
+     * où sert le prix : à côté du bouton qui vend.
+     */
+    expect(APP).not.toMatch(/className="market-ticker"/);
+    expect(APP).not.toMatch(/cours-puce/);
+    expect(MARCHE).toMatch(/className="cotations"/);
   });
 
-  it("n’existent qu’en un exemplaire", () => {
-    // Deux listes de cours écrites côte à côte finiraient par diverger : le
-    // bandeau du bureau et le tiroir du téléphone rendent la même variable.
-    expect(APP.match(/className={`tick \$\{cls\}`}/g)?.length ?? 0).toBe(1);
-    expect(APP.match(/\{cotations\}/g)?.length ?? 0).toBe(2);
+  it("disent dans quel sens ça bouge", () => {
+    // Un prix sans son écart ne dit pas s'il faut vendre aujourd'hui ou
+    // attendre : c'est la moitié de l'information.
+    expect(MARCHE).toMatch(/prevPrices/);
+    expect(MARCHE).toMatch(/ecart > 0\.05 \? "up"/);
   });
 
-  it("tiennent dans une puce qui ne coupe jamais un nom", () => {
-    // « Bottes de paille » tronqué en « Bottes … » ne dit plus de quoi il
-    // s'agit ; le pictogramme, lui, tient toujours.
-    expect(APP).toMatch(/hud-puce-icone/);
-    expect(APP).not.toMatch(/hud-puce-nom/);
+  it("reçoivent bien les cours de la veille", () => {
+    expect(APP).toMatch(/<MarketPanel\s+prevPrices=\{prevPrices\}/);
+  });
+
+  it("montrent toutes les denrées, pas une vedette", () => {
+    // La puce n'en montrait qu'une, faute de place. Le panneau les a toutes.
+    expect(MARCHE).toMatch(/marketPrices\.map\(\(m\) => \{/);
   });
 });
 
