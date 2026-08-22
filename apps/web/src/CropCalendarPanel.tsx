@@ -40,6 +40,14 @@ function estCreux(season: Season): boolean {
   return season === "WINTER";
 }
 
+/** Les saisons en trois lettres, pour les colonnes étroites du téléphone. */
+const SEASON_COURT: Record<Season, string> = {
+  SPRING: "Prin.",
+  SUMMER: "Été",
+  AUTUMN: "Aut.",
+  WINTER: "Hiv.",
+};
+
 export function CropCalendarPanel({ hemisphere = "N", onClose }: Props) {
   const lignes = cropCalendar(hemisphere);
   const aujourdHui = weekdayIndex();
@@ -103,9 +111,23 @@ export function CropCalendarPanel({ hemisphere = "N", onClose }: Props) {
                 j === aujourdHui ? " aujourdhui" : ""
               }`}
             >
-              <em>{SEASON_LABELS[saison]}</em>
+              {/* Deux écritures de la même chose, et la feuille de style choisit.
+                Sur téléphone, sept colonnes de « Printemps » se chevauchaient
+                jusqu'à devenir illisibles ; les abréger dans le composant
+                plutôt que les rogner au CSS garde le mot entier là où il
+                tient. Même raison pour « aujourd'hui », qui débordait de sa
+                colonne. */}
+              <em>
+                <span className="long">{SEASON_LABELS[saison]}</span>
+                <span className="court">{SEASON_COURT[saison]}</span>
+              </em>
               <strong>{WEEKDAY_SHORT[j]}</strong>
-              {j === aujourdHui && <span className="calendrier-marque">aujourd’hui</span>}
+              {j === aujourdHui && (
+                <span className="calendrier-marque">
+                  <span className="long">aujourd’hui</span>
+                  <span className="court">auj.</span>
+                </span>
+              )}
             </div>
           );
         })}

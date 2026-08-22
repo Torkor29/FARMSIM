@@ -6209,6 +6209,48 @@ button.tiny {
   .calendrier-nom strong { font-size: 0.74rem; }
   .calendrier-tete p { display: none; }
 }
+
+/* Sur téléphone, le calendrier n'est pas collé à la fenêtre mais posé **dans
+   la case du champ**.
+
+   Fixé au bas de l'écran, le bouton tombait exactement sur le dock : mesuré,
+   il couvrait la droite de « Plus ». Le reculer de quelques rem aurait marché
+   ce jour-là et cassé le lendemain — le dock change de hauteur selon qu'un
+   chantier tourne ou non, et une valeur devinée ne suit pas. En le rendant
+   membre de la zone `stage`, la grille s'en charge : il s'arrête là où le
+   champ s'arrête, quelle que soit la hauteur du dock. Même raison pour le
+   panneau, qui débordait sur la barre d'objectif. */
+.game-stage.mobile .calendrier-ouvrir,
+.game-stage.mobile .calendrier {
+  position: relative;
+  grid-area: stage;
+  align-self: end;
+  right: auto;
+  bottom: auto;
+}
+.game-stage.mobile .calendrier-ouvrir {
+  justify-self: end;
+  /* 1.1rem, pas 0.5 : le dock remonte de 0.4rem dans la zone du champ
+     (`margin-top: -0.4rem`), et à 0.5rem le bouton mordait encore de quatre
+     pixels sur la barre d'objectif. */
+  margin: 0 0.6rem 1.1rem 0;
+  width: 2.7rem;
+  height: 2.7rem;
+}
+/* Le mot long sur écran large, l'abrégé sur téléphone — jamais les deux. */
+.calendrier-jour .court,
+.calendrier-marque .court { display: none; }
+.game-stage.mobile .calendrier-jour .long,
+.game-stage.mobile .calendrier-marque .long { display: none; }
+.game-stage.mobile .calendrier-jour .court,
+.game-stage.mobile .calendrier-marque .court { display: inline; }
+
+.game-stage.mobile .calendrier {
+  justify-self: stretch;
+  width: auto;
+  margin: 0 0.5rem 1.1rem;
+  max-height: 100%;
+}
 /* La réponse à la question qui amène ici : « je sème quoi aujourd'hui ? ». */
 .calendrier-aujourdhui {
   margin: 0.3rem 0 0;

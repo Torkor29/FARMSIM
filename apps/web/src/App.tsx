@@ -5970,31 +5970,6 @@ export function App() {
                 : []),
             ]}
           />
-          {/* Le calendrier des cultures.
-            En bas à droite, hors du dock centré : c'est une consultation, pas
-            un geste de la boucle. La pastille porte la couleur de la saison du
-            jour, de sorte qu'on sait où l'on en est sans même l'ouvrir. */}
-        <button
-          type="button"
-          className="calendrier-ouvrir"
-          aria-expanded={showCalendrier}
-          title={`Calendrier des cultures — ${SEASON_LABELS[season]}`}
-          onClick={() => setShowCalendrier((v) => !v)}
-        >
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true">
-            <rect x="3" y="5" width="18" height="16" rx="3" />
-            <path d="M3 10h18M8 3v4M16 3v4" strokeLinecap="round" />
-            <path d="M7.5 14h3M13.5 14h3M7.5 17.5h3" strokeLinecap="round" />
-          </svg>
-          <span className={`saison-puce s-${season.toLowerCase()}`} aria-hidden="true" />
-        </button>
-        {showCalendrier && (
-          <CropCalendarPanel
-            hemisphere={hemisphere}
-            onClose={() => setShowCalendrier(false)}
-          />
-        )}
-
         <SelectionBar
             tool={tool}
             machineManquante={machineManquante}
@@ -6021,6 +5996,34 @@ export function App() {
           />
           <CellContextMenu context={cellMenu} onClose={() => setCellMenu(null)} />
         </>
+      )}
+      {/* Le calendrier des cultures.
+        **Hors** du choix mobile / bureau, et c'est le fond du sujet : posé dans
+        la branche de bureau, le bouton n'existait tout simplement pas sur
+        téléphone — j'avais écrit une règle d'affichage étroite pour un panneau
+        qu'aucun doigt ne pouvait ouvrir. Savoir ce qui se sème aujourd'hui est
+        une question qu'on se pose d'autant plus qu'on joue par petites visites,
+        c'est-à-dire précisément sur mobile.
+
+        En bas à droite, hors du dock : c'est une consultation, pas un geste de
+        la boucle. La pastille porte la couleur de la saison du jour, de sorte
+        qu'on sait où l'on en est sans même l'ouvrir. */}
+      <button
+        type="button"
+        className="calendrier-ouvrir"
+        aria-expanded={showCalendrier}
+        title={`Calendrier des cultures — ${SEASON_LABELS[season]}`}
+        onClick={() => setShowCalendrier((v) => !v)}
+      >
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true">
+          <rect x="3" y="5" width="18" height="16" rx="3" />
+          <path d="M3 10h18M8 3v4M16 3v4" strokeLinecap="round" />
+          <path d="M7.5 14h3M13.5 14h3M7.5 17.5h3" strokeLinecap="round" />
+        </svg>
+        <span className={`saison-puce s-${season.toLowerCase()}`} aria-hidden="true" />
+      </button>
+      {showCalendrier && (
+        <CropCalendarPanel hemisphere={hemisphere} onClose={() => setShowCalendrier(false)} />
       )}
 
 
