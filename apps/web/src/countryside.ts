@@ -2,35 +2,57 @@
  * La campagne, en volumes.
  *
  * La ferme flottait : une dalle de terre posée sur rien, quatre arbres, et le
- * ciel tout autour. Ce module lui met un pays sous les pieds — un sol qui va
- * jusqu'à la brume, une route qui descend vers le reste du monde avec des
- * voitures dessus, et les champs des voisins qui vivent leur propre saison.
+ * ciel tout autour. Ce module lui met un pays sous les pieds.
  *
- * Il ne décide de rien : le plan vient de `countryside-plan`, qui est de
- * l'arithmétique testable. Ici on ne fait que poser des volumes et les
- * animer.
+ * ## Un monde bombé, et pas une nappe
+ *
+ * Le sol s'incurve vers le bas à mesure qu'on s'éloigne. Ce n'est pas une
+ * coquetterie : une nappe plate infinie remplit tout l'écran et fait
+ * disparaître le ciel — c'était le reproche. Bombée, elle a une crête, donc un
+ * horizon, donc du ciel au-dessus ; et au-delà de la dernière herbe il y a une
+ * plage puis la mer, comme sur le globe du choix de région.
+ *
+ * ## Des voisins, pas des tapis
+ *
+ * Les parcelles alentour sont bâties dans le même langage que celle du
+ * joueur — une dalle de terre, un damier de cases, une haie autour, parfois un
+ * bâtiment au bord. Peintes en rectangles de couleur posés sur l'herbe, elles
+ * se lisaient comme du papier découpé.
  *
  * ## Le budget
  *
- * Tout ce qui ne bouge pas est fondu dans **une seule géométrie** par famille
- * — un maillage pour le sol, un pour l'ensemble des champs, un pour la route.
- * Une vingtaine de champs qui seraient vingt maillages coûteraient vingt
- * appels de dessin par image, sur un téléphone qui peine déjà. Ce qui bouge —
- * voitures, engins — reste séparé, forcément, mais se compte sur les doigts
- * d'une main.
+ * Tout ce qui ne bouge pas est fondu dans **un** maillage par famille : le
+ * monde, les parcelles, la route, les bosquets. Douze parcelles de trente
+ * cases feraient trois cent soixante volumes ; elles en font un. Ce qui bouge —
+ * voitures, engins — reste séparé et se compte sur les doigts d'une main.
  */
 
 import * as THREE from "three";
 import type { Season } from "@farmsim/shared";
 import { createMachineRig, type MachineRig } from "./machines3d";
 import {
+  ajouterArbre,
+  ajouterBoite,
+  ajouterGrange,
+  verserTransforme,
+  CARROSSERIES,
+  eclaircir,
+  maillageFacette,
+  makeVoiture,
+} from "./decor3d";
+import {
   couleurChamp,
+  creux,
+  DEMI_ROUTE,
+  empriseParcelle,
   etatChamp,
   grainerDe,
+  LARGEUR_PLAGE,
+  pente,
   planCampagne,
   suite,
-  type ChampVoisin,
   type OptionsPlan,
+  type ParcelleVoisine,
   type PlanCampagne,
   type PointPlan,
 } from "./countryside-plan";
@@ -38,19 +60,10 @@ import {
 export type OptionsCampagne = OptionsPlan & {
   /** Ombres portées : suit le réglage de la vue. */
   shadows?: boolean;
-  /**
-   * Réglage sobre : moins de champs, moins de voitures, pas d'engin voisin.
-   * Sur un rasteriseur logiciel, chaque volume se paie en millisecondes.
-   */
+  /** Réglage sobre : moins de parcelles, moins de voitures, un seul engin. */
   sobre?: boolean;
-  /** Altitude du sol de la campagne — sous le niveau de l'île. */
+  /** Altitude du sol au centre — sous le niveau de l'île du joueur. */
   y?: number;
-  /**
-   * Comment dessiner un arbre. Fourni par la vue plutôt que codé ici : les
-   * arbres du jeu sont des illustrations tournées vers la caméra, et la
-   * caméra n'a rien à faire dans ce module.
-   */
-  faireArbre?: (x: number, z: number, taille: number) => THREE.Object3D | null;
 };
 
 export type Campagne = {
@@ -59,62 +72,66 @@ export type Campagne = {
   plan: PlanCampagne;
   /** Anime voitures et engins. `t` en secondes de scène. */
   update(t: number): void;
-  /** Le jour et la saison décident de l'aspect des champs voisins. */
+  /** Le jour et la saison décident de l'aspect des parcelles voisines. */
   setJour(jourDeJeu: number, saison: Season): void;
   dispose(): void;
 };
 
 /* ------------------------------------------------------------------ */
-/* Petits outils de géométrie                                          */
+/* Le relief                                                           */
 /* ------------------------------------------------------------------ */
 
-/** Un quadrilatère horizontal, en deux triangles, poussé dans les tableaux. */
-function quad(
-  pos: number[],
-  col: number[],
-  a: PointPlan,
-  b: PointPlan,
-  c: PointPlan,
-  d: PointPlan,
-  y: number,
-  teinte: THREE.Color,
-): void {
-  /*
-   * L'ordre compte, et il m'a coûté une passe : écrit `a, b, c` puis
-   * `a, c, d`, le produit vectoriel des arêtes pointe vers **le bas**. Le sol
-   * et les dix-neuf champs étaient bien là, dans la bonne couleur, face
-   * cachée — éliminés au rendu et éclairés par en dessous. On parcourt donc le
-   * quadrilatère dans l'autre sens.
-   */
-  const p = [a, c, b, a, d, c];
-  for (const s of p) {
-    pos.push(s.x, y, s.z);
-    col.push(teinte.r, teinte.g, teinte.b);
-  }
+/** Le pas d'une case, comme sur la parcelle du joueur. */
+const PAS_CASE = 1.06;
+
+/** Épaisseur de la dalle de terre sous une parcelle voisine. */
+const EPAISSEUR_DALLE = 0.3;
+
+/**
+ * Le trait de côte : un rayon qui ondule doucement avec l'azimut.
+ *
+ * Un disque parfait se voit pour ce qu'il est. Deux harmoniques suffisent à
+ * faire une île, et restent lisses — une côte dentelée accrocherait l'œil plus
+ * que le sujet.
+ */
+function rayonCote(angle: number, rayon: number, phase: number): number {
+  return rayon * (1 + 0.07 * Math.sin(3 * angle + phase) + 0.04 * Math.sin(5 * angle - phase));
 }
 
-/** Un rectangle orienté, décrit par son centre, sa taille et son cap. */
-function rectangle(
-  cx: number,
-  cz: number,
-  w: number,
-  d: number,
-  cap: number,
-): [PointPlan, PointPlan, PointPlan, PointPlan] {
-  const co = Math.cos(cap);
-  const si = Math.sin(cap);
-  const coin = (sx: number, sz: number): PointPlan => ({
-    x: cx + ((sx * w) / 2) * co - ((sz * d) / 2) * si,
-    z: cz + ((sx * w) / 2) * si + ((sz * d) / 2) * co,
-  });
-  return [coin(-1, -1), coin(1, -1), coin(1, 1), coin(-1, 1)];
+/* ------------------------------------------------------------------ */
+/* Le long de la route                                                 */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Redécoupe une polyligne en segments courts.
+ *
+ * Indispensable dès que le sol est bombé : un ruban tendu entre deux points
+ * distants de vingt unités est une **corde**, et le terrain, concave, passe
+ * au-dessus d'elle en son milieu. Mesuré à l'écran, la route disparaissait
+ * par morceaux — enterrée d'un bon décimètre au centre de chaque long
+ * segment, visible seulement près de ses extrémités.
+ */
+export function densifier(pts: PointPlan[], pas: number): PointPlan[] {
+  const out: PointPlan[] = [pts[0]!];
+  for (let i = 0; i + 1 < pts.length; i++) {
+    const p = pts[i]!;
+    const q = pts[i + 1]!;
+    const l = Math.hypot(q.x - p.x, q.z - p.z);
+    const n = Math.max(1, Math.ceil(l / pas));
+    for (let k = 1; k <= n; k++) {
+      out.push({ x: p.x + ((q.x - p.x) * k) / n, z: p.z + ((q.z - p.z) * k) / n });
+    }
+  }
+  return out;
 }
 
 /** Longueurs cumulées d'une polyligne. */
 function cumul(points: PointPlan[]): number[] {
   const out = [0];
   for (let i = 1; i < points.length; i++) {
-    out.push(out[i - 1]! + Math.hypot(points[i]!.x - points[i - 1]!.x, points[i]!.z - points[i - 1]!.z));
+    out.push(
+      out[i - 1]! + Math.hypot(points[i]!.x - points[i - 1]!.x, points[i]!.z - points[i - 1]!.z),
+    );
   }
   return out;
 }
@@ -140,266 +157,356 @@ export function surLaRoute(
   };
 }
 
-/** Un maillage à couleurs de sommets, plat et sans reflet. */
-function maillage(pos: number[], col: number[], shadows: boolean): THREE.Mesh {
-  const geo = new THREE.BufferGeometry();
-  geo.setAttribute("position", new THREE.Float32BufferAttribute(pos, 3));
-  geo.setAttribute("color", new THREE.Float32BufferAttribute(col, 3));
-  geo.computeVertexNormals();
-  const mat = new THREE.MeshLambertMaterial({ vertexColors: true, flatShading: true });
-  const mesh = new THREE.Mesh(geo, mat);
-  mesh.receiveShadow = shadows;
-  return mesh;
-}
-
-/* ------------------------------------------------------------------ */
-/* Une voiture                                                         */
-/* ------------------------------------------------------------------ */
-
-const CARROSSERIES = [0xd0563f, 0x3f6fd0, 0xe4e0d4, 0x4b8a5c, 0xe0aa3c, 0x6d6f75];
-
 /**
- * Une voiture de campagne, low-poly.
+ * Un quadrilatère horizontal, en deux triangles.
  *
- * Cinq boîtes : caisse, pavillon, quatre roues fondues en deux essieux, et
- * deux feux. À cette distance, personne ne compte les portes — ce qu'on doit
- * lire, c'est qu'une chose colorée avance sur le ruban gris.
+ * L'ordre compte, et il m'a coûté une passe : écrit `a, b, c` puis `a, c, d`,
+ * le produit vectoriel des arêtes pointe vers **le bas**. Le sol entier était
+ * là, dans la bonne couleur, face cachée. On parcourt donc dans l'autre sens.
  */
-export function faireVoiture(couleur: number, shadows: boolean): THREE.Group {
-  const g = new THREE.Group();
-  const peinture = new THREE.MeshLambertMaterial({ color: couleur, flatShading: true });
-  const vitre = new THREE.MeshLambertMaterial({ color: 0x2b3742, flatShading: true });
-  const gomme = new THREE.MeshLambertMaterial({ color: 0x24262a, flatShading: true });
-
-  const caisse = new THREE.Mesh(new THREE.BoxGeometry(0.6, 0.22, 1.3), peinture);
-  caisse.position.y = 0.26;
-  caisse.castShadow = shadows;
-  g.add(caisse);
-
-  const pavillon = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.2, 0.64), vitre);
-  pavillon.position.set(0, 0.4, -0.05);
-  pavillon.castShadow = shadows;
-  g.add(pavillon);
-
-  for (const z of [-0.42, 0.42]) {
-    const essieu = new THREE.Mesh(new THREE.BoxGeometry(0.66, 0.18, 0.2), gomme);
-    essieu.position.set(0, 0.1, z);
-    g.add(essieu);
+function quad(
+  pos: number[],
+  col: number[],
+  a: [number, number, number],
+  b: [number, number, number],
+  c: [number, number, number],
+  d: [number, number, number],
+  teinte: THREE.Color,
+): void {
+  for (const s of [a, c, b, a, d, c]) {
+    pos.push(s[0], s[1], s[2]);
+    col.push(teinte.r, teinte.g, teinte.b);
   }
-  const feux = new THREE.Mesh(
-    new THREE.BoxGeometry(0.46, 0.08, 0.05),
-    new THREE.MeshBasicMaterial({ color: 0xffe9a8 }),
-  );
-  feux.position.set(0, 0.22, 0.66);
-  g.add(feux);
-  return g;
 }
 
 /* ------------------------------------------------------------------ */
 /* La campagne                                                         */
 /* ------------------------------------------------------------------ */
 
-/**
- * Largeur de la chaussée, en unités monde.
- *
- * Une case de champ fait une unité. À 2,6 — la première valeur — la
- * départementale avait la largeur de deux tracteurs et demi et se lisait comme
- * une autoroute passant devant la ferme. Une voie et demie, c'est une route de
- * campagne.
- */
-const LARGEUR_ROUTE = 1.55;
+/** Objets de travail réutilisés à chaque image — n'allouer que si nécessaire. */
+const _lacet = new THREE.Euler();
+const _qLacet = new THREE.Quaternion();
 
 export function createCountryside(o: OptionsCampagne): Campagne {
   const shadows = o.shadows ?? false;
   const sobre = o.sobre ?? false;
-  const y = o.y ?? -0.5;
-  const plan = planCampagne({ ...o, champsVises: o.champsVises ?? (sobre ? 11 : 19) });
+  const y0 = o.y ?? -0.5;
+  const plan = planCampagne({
+    ...o,
+    parcellesVisees: o.parcellesVisees ?? (sobre ? 8 : 12),
+  });
   const rnd = suite(grainerDe(o.graine + ":volumes"));
+  const phaseCote = rnd() * Math.PI * 2;
 
   const object = new THREE.Group();
+  object.name = "campagne";
   const aJeter: (THREE.BufferGeometry | THREE.Material)[] = [];
-  const jetable = <T extends THREE.Mesh>(m: T): T => {
-    aJeter.push(m.geometry);
-    aJeter.push(m.material as THREE.Material);
+  const garder = <T extends THREE.Mesh>(m: T): T => {
+    aJeter.push(m.geometry, m.material as THREE.Material);
     return m;
   };
+  /** L'altitude du sol à une distance donnée du centre. */
+  const sol = (r: number) => y0 + creux(r);
 
-  /* —— Le sol ——
-     Un damier de quads aux verts légèrement différents. Une seule nappe unie
-     se lit comme un fond d'écran ; ce sont les écarts de teinte qui donnent
-     l'impression de prés et de talus. */
+  /**
+   * L'assiette d'un objet posé au sol : la rotation qui l'aligne sur la pente.
+   *
+   * Le monde est bombé ; posé à plat dessus, un objet décolle d'un bord et
+   * s'enterre de l'autre. L'axe de bascule est la tangente au cercle qui passe
+   * sous lui — c'est le seul autour duquel une pente radiale se rattrape.
+   */
+  const assiette = (x: number, z: number): THREE.Quaternion => {
+    const r = Math.hypot(x, z);
+    if (r < 1e-4) return new THREE.Quaternion();
+    const phi = Math.atan2(z, x);
+    const axe = new THREE.Vector3(-Math.sin(phi), 0, Math.cos(phi));
+    return new THREE.Quaternion().setFromAxisAngle(axe, Math.atan(pente(r)));
+  };
+
+  /* —— Le monde : terre, plage, mer ——
+     Une grille radiale plutôt qu'un damier : c'est elle qui permet de courber
+     proprement, de découper une côte et de garder des triangles réguliers
+     jusqu'au large. */
   {
-    const e = plan.etendue;
-    const pas = 7.5;
-    const pos: number[] = [];
-    const col: number[] = [];
+    const secteurs = sobre ? 48 : 72;
+    const anneauxTerre = sobre ? 14 : 20;
+    const anneauxMer = sobre ? 5 : 8;
+    const posT: number[] = [];
+    const colT: number[] = [];
+    const posM: number[] = [];
+    const colM: number[] = [];
     const teinte = new THREE.Color();
-    for (let x = -e; x < e; x += pas) {
-      for (let z = -e; z < e; z += pas) {
-        // ±7 % et non ±14 : à la première valeur, les losanges du damier se
-        // lisaient un par un, comme un carrelage mal posé plutôt qu'un pré.
-        const v = 0.93 + rnd() * 0.14;
-        // Le pré du fond est plus sourd que les cultures : c'est ce qui fait
-        // ressortir les champs. À la même teinte, la campagne se lisait comme
-        // une nappe unie où rien ne se détachait.
-        teinte.setHex(0x669d55).multiplyScalar(v);
-        quad(
-          pos, col,
-          { x, z }, { x: x + pas, z }, { x: x + pas, z: z + pas }, { x, z: z + pas },
-          y, teinte,
-        );
+    const HERBE = 0x6aa259;
+    const SABLE = 0xe3d3a4;
+    const ECUME = 0xd9ecef;
+    const MER = 0x4e8fa8;
+    const MER_LOIN = 0x3d7791;
+
+    const pt = (angle: number, r: number): [number, number, number] => [
+      Math.cos(angle) * r,
+      sol(r),
+      Math.sin(angle) * r,
+    ];
+
+    /**
+     * Un anneau entre deux azimuts, dans le bon sens.
+     *
+     * Un seul point d'entrée, et c'est délibéré : écrits à la main, les
+     * quatre anneaux — terre, plage, écume, mer — étaient tous enroulés à
+     * l'envers. Sur une grille radiale, parcourir « intérieur puis
+     * extérieur » tourne dans l'autre sens que sur un damier, et les six
+     * mille sommets du monde regardaient le fond de la mer. Ici, l'ordre est
+     * écrit une fois.
+     */
+    const anneau = (
+      posN: number[], colN: number[],
+      a0: number, a1: number,
+      rIn0: number, rOut0: number, rIn1: number, rOut1: number,
+      teinte: THREE.Color,
+    ) => {
+      // Au pôle, le bord intérieur se réduit à un point : le quadrilatère y
+      // dégénère en un triangle plus un autre d'aire nulle, dont la normale
+      // vaut zéro. Un triangle franc plutôt qu'un quadrilatère plat.
+      if (rIn0 < 1e-6 && rIn1 < 1e-6) {
+        for (const v of [pt(a1, rOut1), pt(a0, rOut0), [0, sol(0), 0] as [number, number, number]]) {
+          posN.push(v[0], v[1], v[2]);
+          colN.push(teinte.r, teinte.g, teinte.b);
+        }
+        return;
+      }
+      quad(posN, colN, pt(a0, rOut0), pt(a1, rOut1), pt(a1, rIn1), pt(a0, rIn0), teinte);
+    };
+
+    for (let s = 0; s < secteurs; s++) {
+      const a0 = (s / secteurs) * Math.PI * 2;
+      const a1 = ((s + 1) / secteurs) * Math.PI * 2;
+      const cote0 = rayonCote(a0, plan.rayonTerre, phaseCote);
+      const cote1 = rayonCote(a1, plan.rayonTerre, phaseCote);
+      // La terre, du centre à la côte.
+      for (let k = 0; k < anneauxTerre; k++) {
+        const t0 = k / anneauxTerre;
+        const t1 = (k + 1) / anneauxTerre;
+        // Les anneaux se resserrent vers le large : la courbure y est plus
+        // forte, et des quadrilatères réguliers y feraient des marches.
+        const e0 = t0 * t0 * 0.4 + t0 * 0.6;
+        const e1 = t1 * t1 * 0.4 + t1 * 0.6;
+        const plage = LARGEUR_PLAGE;
+        const r00 = e0 * (cote0 - plage);
+        const r01 = e1 * (cote0 - plage);
+        const r10 = e0 * (cote1 - plage);
+        const r11 = e1 * (cote1 - plage);
+        teinte.setHex(HERBE).multiplyScalar(0.93 + rnd() * 0.14);
+        anneau(posT, colT, a0, a1, r00, r01, r10, r11, teinte);
+      }
+      // La plage.
+      teinte.setHex(SABLE).multiplyScalar(0.96 + rnd() * 0.08);
+      anneau(
+        posT, colT, a0, a1,
+        cote0 - LARGEUR_PLAGE, cote0, cote1 - LARGEUR_PLAGE, cote1, teinte,
+      );
+      // L'écume, puis la mer qui s'assombrit vers le large.
+      teinte.setHex(ECUME);
+      anneau(posM, colM, a0, a1, cote0, cote0 + 0.9, cote1, cote1 + 0.9, teinte);
+      for (let k = 0; k < anneauxMer; k++) {
+        const u0 = k / anneauxMer;
+        const u1 = (k + 1) / anneauxMer;
+        const r0 = cote0 + 0.9 + u0 * u0 * (plan.rayonMer - cote0);
+        const r1 = cote0 + 0.9 + u1 * u1 * (plan.rayonMer - cote0);
+        const q0 = cote1 + 0.9 + u0 * u0 * (plan.rayonMer - cote1);
+        const q1 = cote1 + 0.9 + u1 * u1 * (plan.rayonMer - cote1);
+        teinte.setHex(k < 2 ? MER : MER_LOIN).multiplyScalar(0.97 + rnd() * 0.06);
+        anneau(posM, colM, a0, a1, r0, r1, q0, q1, teinte);
       }
     }
-    const sol = jetable(maillage(pos, col, shadows));
-    sol.name = "campagne-sol";
-    object.add(sol);
+    object.add(garder(maillageFacette(posT, colT, { recoit: shadows, nom: "campagne-sol" })));
+    object.add(garder(maillageFacette(posM, colM, { nom: "campagne-mer" })));
   }
 
-  /* —— Les champs des voisins ——
-     Tous dans un seul maillage, reconstruit quand le jour change. Chaque champ
-     est une nappe unie plus une poignée de bandes plus sombres : les sillons.
-     Ce sont eux qui font qu'un champ ressemble à un champ et pas à un
-     rectangle de couleur. */
-  const groupeChamps = new THREE.Group();
-  groupeChamps.name = "campagne-champs";
-  object.add(groupeChamps);
-  let maillageChamps: THREE.Mesh | null = null;
+  /* —— Les parcelles des voisins ——
+     Le même langage que l'île du joueur : une dalle de terre, un damier de
+     cases, une haie autour. Refaites quand le jour change, pas plus souvent. */
+  const groupeParcelles = new THREE.Group();
+  groupeParcelles.name = "campagne-parcelles";
+  object.add(groupeParcelles);
+  let nappeParcelles: THREE.Mesh | null = null;
   let jourPose = Number.NaN;
   let saisonPosee: Season | null = null;
 
-  function poserChamps(jour: number, saison: Season): void {
+  function poserParcelles(jour: number, saison: Season): void {
     if (jour === jourPose && saison === saisonPosee) return;
     jourPose = jour;
     saisonPosee = saison;
-    if (maillageChamps) {
-      groupeChamps.remove(maillageChamps);
-      maillageChamps.geometry.dispose();
-      (maillageChamps.material as THREE.Material).dispose();
+    if (nappeParcelles) {
+      groupeParcelles.remove(nappeParcelles);
+      nappeParcelles.geometry.dispose();
+      (nappeParcelles.material as THREE.Material).dispose();
     }
     const pos: number[] = [];
     const col: number[] = [];
-    const teinte = new THREE.Color();
-    for (const champ of plan.champs) {
-      const etat = etatChamp(champ, jour, saison);
-      const base = couleurChamp(champ.culture, etat);
-      const [a, b, c, d] = rectangle(champ.x, champ.z, champ.w, champ.d, champ.sillons);
-      teinte.setHex(base);
-      quad(pos, col, a, b, c, d, y + 0.03, teinte);
+    const TERRE_DALLE = 0x8a6b4a;
+    const HAIE = 0x5c9a52;
+    const posL: number[] = [];
+    const colL: number[] = [];
+    const mat = new THREE.Matrix4();
+    const ech = new THREE.Vector3(1, 1, 1);
+    const centre = new THREE.Vector3();
+    for (const p of plan.parcelles) {
+      const grain = suite(grainerDe(p.id));
+      const etat = etatChamp(p, jour, saison);
+      const base = couleurChamp(p.culture, etat);
+      const emprise = empriseParcelle(p);
 
       /*
-       * La bordure : une bande d'herbe rase autour du champ.
+       * Bâtie à plat dans son repère à elle, puis posée d'un bloc.
        *
-       * Sans elle, deux champs voisins se touchaient bord à bord et le
-       * paysage ressemblait à un aplat de papiers découpés. Une campagne, ce
-       * sont d'abord des limites — talus, haies, chemins de terre.
+       * Construite directement en coordonnées du monde, la parcelle restait un
+       * plateau horizontal sur un sol bombé : son bord aval s'enfonçait, son
+       * bord amont décollait, et il en sortait une grande dalle de terre en
+       * biais, visible de loin. Ici elle épouse la pente.
        */
-      const [ba, bb, bc, bd] = rectangle(champ.x, champ.z, champ.w + 0.7, champ.d + 0.7, champ.sillons);
-      teinte.setHex(0x4e8043);
-      quad(pos, col, ba, bb, bc, bd, y + 0.02, teinte);
+      posL.length = 0;
+      colL.length = 0;
 
-      // Les sillons : des bandes plus sombres, dans le sens du travail.
-      const nSillons = Math.max(3, Math.round(champ.d / 0.9));
-      const contraste = etat === "LABOUR" || etat === "SEMIS" ? 0.7 : 0.85;
-      for (let i = 0; i < nSillons; i += 2) {
-        const t0 = -champ.d / 2 + (i * champ.d) / nSillons;
-        const t1 = t0 + champ.d / nSillons;
-        const bande = rectangle(
-          champ.x, champ.z, champ.w,
-          t1 - t0, champ.sillons,
-        );
-        // On replace la bande à sa hauteur dans le champ.
-        const dx = -Math.sin(champ.sillons) * ((t0 + t1) / 2);
-        const dz = Math.cos(champ.sillons) * ((t0 + t1) / 2);
-        const decale = bande.map((p) => ({ x: p.x + dx, z: p.z + dz })) as [
-          PointPlan, PointPlan, PointPlan, PointPlan,
-        ];
-        teinte.setHex(base).multiplyScalar(contraste);
-        quad(pos, col, decale[0], decale[1], decale[2], decale[3], y + 0.05, teinte);
+      // La dalle de terre, qui donne son talus à la parcelle.
+      ajouterBoite(
+        posL, colL, 0, -EPAISSEUR_DALLE / 2, 0,
+        emprise.w, EPAISSEUR_DALLE, emprise.d, TERRE_DALLE,
+      );
+
+      // Le damier de cases.
+      const droit = Math.abs(Math.cos(p.cap)) > 0.5;
+      const nx = droit ? p.gw : p.gh;
+      const nz = droit ? p.gh : p.gw;
+      const ox = -((nx - 1) * PAS_CASE) / 2;
+      const oz = -((nz - 1) * PAS_CASE) / 2;
+      for (let i = 0; i < nx; i++) {
+        for (let k = 0; k < nz; k++) {
+          // Une teinte par case, très légèrement différente : un aplat parfait
+          // se lit comme une nappe, pas comme un champ.
+          const teinte = eclaircir(base, (grain() - 0.5) * 0.12);
+          ajouterBoite(posL, colL, ox + i * PAS_CASE, 0.09, oz + k * PAS_CASE, 1, 0.18, 1, teinte);
+        }
       }
+
+      // La haie, sur les quatre bords.
+      const hw = emprise.w;
+      const hd = emprise.d;
+      const ep = 0.22;
+      for (const [dx, dz, w, dd] of [
+        [0, -hd / 2, hw, ep],
+        [0, hd / 2, hw, ep],
+        [-hw / 2, 0, ep, hd],
+        [hw / 2, 0, ep, hd],
+      ] as const) {
+        ajouterBoite(posL, colL, dx, 0.24, dz, w, 0.4, dd, HAIE);
+      }
+
+      // Parfois une grange au bord : c'est elle qui fait la ferme du voisin
+      // plutôt qu'un simple champ.
+      if (p.batiment) {
+        const bx = (hw / 2 - 1.5) * (grain() < 0.5 ? -1 : 1);
+        const bz = (hd / 2 - 1.2) * (grain() < 0.5 ? -1 : 1);
+        ajouterGrange(posL, colL, bx, 0.18, bz, p.cap, grainerDe(p.id + ":grange"));
+      }
+
+      mat.compose(
+        centre.set(p.x, sol(Math.hypot(p.x, p.z)), p.z),
+        assiette(p.x, p.z),
+        ech,
+      );
+      verserTransforme(pos, col, posL, colL, mat);
     }
-    maillageChamps = maillage(pos, col, shadows);
-    maillageChamps.name = "campagne-champs-nappe";
-    groupeChamps.add(maillageChamps);
+    nappeParcelles = maillageFacette(pos, col, {
+      shadows,
+      recoit: shadows,
+      nom: "campagne-parcelles-nappe",
+    });
+    groupeParcelles.add(nappeParcelles);
   }
 
-  /* —— La route ——
-     Un ruban de quads le long de la polyligne, bordé de deux accotements plus
-     clairs, avec une ligne médiane pointillée. */
+  /* —— La route et sa desserte —— */
   const pointsRoute = plan.route;
   const longueurs = cumul(pointsRoute);
   {
     const pos: number[] = [];
     const col: number[] = [];
-    const bitume = new THREE.Color(0x59595c);
-    const accotement = new THREE.Color(0x8f8b6e);
-    const ligne = new THREE.Color(0xd9d5c4);
-    const normale = (i: number): PointPlan => {
-      const p = pointsRoute[Math.max(0, i - 1)]!;
-      const q = pointsRoute[Math.min(pointsRoute.length - 1, i + 1)]!;
-      const dx = q.x - p.x;
-      const dz = q.z - p.z;
-      const l = Math.hypot(dx, dz) || 1;
-      return { x: -dz / l, z: dx / l };
-    };
-    for (let i = 0; i + 1 < pointsRoute.length; i++) {
-      const p = pointsRoute[i]!;
-      const q = pointsRoute[i + 1]!;
-      const np = normale(i);
-      const nq = normale(i + 1);
-      const bord = (
-        pt: PointPlan, n: PointPlan, k: number,
-      ): PointPlan => ({ x: pt.x + n.x * k, z: pt.z + n.z * k });
-      const h = LARGEUR_ROUTE / 2;
-      quad(pos, col, bord(p, np, -h), bord(q, nq, -h), bord(q, nq, h), bord(p, np, h), y + 0.06, bitume);
-      for (const s of [-1, 1]) {
-        /*
-         * Toujours du décalage le plus petit vers le plus grand.
-         *
-         * Écrit « du bord de chaussée vers l'extérieur », l'accotement de
-         * gauche parcourait le quadrilatère dans l'autre sens — décalage
-         * négatif — et se retrouvait face au sol. Trente sommets sur deux cent
-         * soixante-dix, invisibles à l'œil sur une bande d'un tiers d'unité,
-         * mais éclairés par en dessous.
-         */
-        const lo = Math.min(s * h, s * (h + 0.34));
-        const hi = Math.max(s * h, s * (h + 0.34));
-        quad(
-          pos, col,
-          bord(p, np, lo), bord(q, nq, lo),
-          bord(q, nq, hi), bord(p, np, hi),
-          y + 0.045, accotement,
-        );
+    const bitume = new THREE.Color(0x4f4f54);
+    const accotement = new THREE.Color(0x9a9070);
+    const ligne = new THREE.Color(0xdedac9);
+    const gravier = new THREE.Color(0xb5a687);
+    const hSol = (x: number, z: number) => sol(Math.hypot(x, z)) + 0.05;
+
+    const ruban = (pts: PointPlan[], demi: number, teinte: THREE.Color, bord: THREE.Color | null) => {
+      const normale = (i: number): PointPlan => {
+        const p = pts[Math.max(0, i - 1)]!;
+        const q = pts[Math.min(pts.length - 1, i + 1)]!;
+        const dx = q.x - p.x;
+        const dz = q.z - p.z;
+        const l = Math.hypot(dx, dz) || 1;
+        return { x: -dz / l, z: dx / l };
+      };
+      for (let i = 0; i + 1 < pts.length; i++) {
+        const p = pts[i]!;
+        const q = pts[i + 1]!;
+        // Deux points confondus donneraient un ruban d'aire nulle, dont la
+        // normale n'existe pas.
+        if (Math.hypot(q.x - p.x, q.z - p.z) < 1e-6) continue;
+        const np = normale(i);
+        const nq = normale(i + 1);
+        const c = (pt: PointPlan, nn: PointPlan, k: number): [number, number, number] => {
+          const x = pt.x + nn.x * k;
+          const z = pt.z + nn.z * k;
+          return [x, hSol(x, z), z];
+        };
+        quad(pos, col, c(p, np, -demi), c(q, nq, -demi), c(q, nq, demi), c(p, np, demi), teinte);
+        if (!bord) continue;
+        for (const s of [-1, 1]) {
+          // Toujours du décalage le plus petit vers le plus grand : écrit
+          // « du bord vers l'extérieur », l'accotement de gauche parcourait le
+          // quadrilatère à l'envers et se retrouvait face au sol.
+          const lo = Math.min(s * demi, s * (demi + 0.42));
+          const hi = Math.max(s * demi, s * (demi + 0.42));
+          quad(pos, col, c(p, np, lo), c(q, nq, lo), c(q, nq, hi), c(p, np, hi), bord);
+        }
       }
-    }
+    };
+
+    ruban(densifier(pointsRoute, 1.6), DEMI_ROUTE - 0.42, bitume, accotement);
+    ruban(densifier(plan.desserte, 1.6), 0.9, gravier, null);
+
     // La médiane, en pointillés : deux mètres de trait, trois de vide.
     const total = longueurs[longueurs.length - 1]!;
-    for (let s = 2; s < total - 2; s += 4) {
+    for (let s = 2; s < total - 2; s += 5) {
       const a = surLaRoute(pointsRoute, longueurs, s);
       const b = surLaRoute(pointsRoute, longueurs, s + 2);
       const dx = b.x - a.x;
       const dz = b.z - a.z;
       const l = Math.hypot(dx, dz) || 1;
-      const n = { x: -dz / l, z: dx / l };
+      const nn = { x: -dz / l, z: dx / l };
       const k = 0.07;
-      quad(
-        pos, col,
-        { x: a.x - n.x * k, z: a.z - n.z * k },
-        { x: b.x - n.x * k, z: b.z - n.z * k },
-        { x: b.x + n.x * k, z: b.z + n.z * k },
-        { x: a.x + n.x * k, z: a.z + n.z * k },
-        y + 0.07, ligne,
-      );
+      const c = (p: { x: number; z: number }, signe: number): [number, number, number] => {
+        const x = p.x + nn.x * k * signe;
+        const z = p.z + nn.z * k * signe;
+        return [x, hSol(x, z) + 0.012, z];
+      };
+      quad(pos, col, c(a, -1), c(b, -1), c(b, 1), c(a, 1), ligne);
     }
-    const ruban = jetable(maillage(pos, col, shadows));
-    ruban.name = "campagne-route";
-    object.add(ruban);
+    object.add(garder(maillageFacette(pos, col, { nom: "campagne-route" })));
   }
 
-  /* —— Les arbres —— */
-  if (o.faireArbre) {
+  /* —— Les bosquets —— */
+  {
+    const pos: number[] = [];
+    const col: number[] = [];
     for (const a of plan.arbres) {
-      const noeud = o.faireArbre(a.x, a.z, a.taille);
-      if (noeud) object.add(noeud);
+      const r = Math.hypot(a.x, a.z);
+      // Un arbre reste droit — un arbre penché a l'air ivre — mais on l'enfonce
+      // de ce que la pente ferait décoller son pied côté aval.
+      const enfoncement = Math.abs(pente(r)) * 0.5 + 0.05;
+      ajouterArbre(pos, col, a.x, sol(r) - enfoncement, a.z, a.taille, a.graine);
+    }
+    if (pos.length) {
+      object.add(garder(maillageFacette(pos, col, { shadows, nom: "campagne-arbres" })));
     }
   }
 
@@ -407,58 +514,52 @@ export function createCountryside(o: OptionsCampagne): Campagne {
      Elles bouclent sur la route, à des vitesses et des départs différents, et
      dans les deux sens. Une file qui roule au même pas se lit comme un
      convoi ; ce qu'on veut, c'est une départementale. */
-  type Voiture = { group: THREE.Group; s0: number; vitesse: number; sens: 1 | -1 };
+  type Voiture = { group: THREE.Group; s0: number; vitesse: number; sens: 1 | -1; voie: number };
   const voitures: Voiture[] = [];
   const longueurTotale = longueurs[longueurs.length - 1]!;
   const combien = sobre ? 2 : 4;
   for (let i = 0; i < combien; i++) {
     const sens: 1 | -1 = i % 2 === 0 ? 1 : -1;
-    const g = faireVoiture(CARROSSERIES[Math.floor(rnd() * CARROSSERIES.length)]!, shadows);
-    // Chacune sur sa voie, décalée d'un demi-quart de chaussée.
-    g.name = "campagne-voiture";
-    g.userData.voie = sens * (LARGEUR_ROUTE / 4);
+    const g = makeVoiture(CARROSSERIES[Math.floor(rnd() * CARROSSERIES.length)]!, shadows);
     object.add(g);
+    for (const enfant of g.children) if (enfant instanceof THREE.Mesh) garder(enfant);
     voitures.push({
       group: g,
       s0: (longueurTotale * i) / combien + rnd() * 6,
       vitesse: 4.2 + rnd() * 2.4,
       sens,
+      voie: sens * ((DEMI_ROUTE - 0.42) / 2),
     });
-    for (const enfant of g.children) {
-      if (enfant instanceof THREE.Mesh) jetable(enfant);
-    }
   }
 
   /* —— Les engins des voisins ——
      Le vrai modèle du jeu, tracteur et outil attelés : un tracteur de décor
-     dessiné à part finirait par ne plus ressembler à celui du garage. Ils font
-     des allers-retours dans le sens des sillons de leur champ. */
-  type Engin = { rig: MachineRig; champ: ChampVoisin; vitesse: number; phase: number };
+     dessiné à part finirait par ne plus ressembler à celui du garage. */
+  type Engin = { rig: MachineRig; p: ParcelleVoisine; vitesse: number; phase: number };
   const engins: Engin[] = [];
   {
     /*
      * Un engin en réglage sobre, deux sinon — jamais zéro.
      *
-     * La première version les supprimait entièrement dès que la vue passait
-     * en sobre. C'était traiter le voisin au travail comme une garniture,
-     * alors que c'est précisément ce qui distingue une campagne d'un fond
-     * d'écran ; et le réglage sobre s'enclenche justement sur les appareils
-     * modestes, c'est-à-dire chez la plupart des joueurs. On paie un modèle
-     * complet plutôt que deux, et on garde le mouvement.
+     * La première version les supprimait entièrement en sobre. C'était traiter
+     * le voisin au travail comme une garniture, alors que c'est précisément ce
+     * qui distingue une campagne d'un fond d'écran ; et le réglage sobre
+     * s'enclenche justement sur les appareils modestes, c'est-à-dire chez la
+     * plupart des joueurs.
      */
     const outils = ["PLOUGH", "SEEDER", "DISC_HARROW"] as const;
-    for (const champ of plan.champs.filter((c) => c.travaille).slice(0, sobre ? 1 : 2)) {
+    for (const p of plan.parcelles.filter((c) => c.travaille).slice(0, sobre ? 2 : 3)) {
       const rig = createMachineRig(outils[Math.floor(rnd() * outils.length)]!, {
         towed: true,
         shadows,
-        seed: grainerDe(champ.id) % 97,
+        seed: grainerDe(p.id) % 97,
       });
+      rig.group.name = "campagne-engin";
       // Même échelle que les engins garés : un tracteur de voisin plus gros
       // que celui du garage trahirait aussitôt le décor.
-      rig.group.name = "campagne-engin";
       rig.group.scale.setScalar(0.72);
       object.add(rig.group);
-      engins.push({ rig, champ, vitesse: 1.5 + rnd() * 0.8, phase: rnd() * 10 });
+      engins.push({ rig, p, vitesse: 1.5 + rnd() * 0.8, phase: rnd() * 10 });
     }
   }
 
@@ -466,59 +567,65 @@ export function createCountryside(o: OptionsCampagne): Campagne {
     for (const v of voitures) {
       const s = v.s0 + t * v.vitesse * v.sens;
       const p = surLaRoute(pointsRoute, longueurs, s);
-      const voie = v.group.userData.voie as number;
       const nx = Math.cos(p.cap);
       const nz = -Math.sin(p.cap);
-      v.group.position.set(p.x + nx * voie, y + 0.06, p.z + nz * voie);
-      v.group.rotation.y = v.sens > 0 ? p.cap : p.cap + Math.PI;
+      const x = p.x + nx * v.voie;
+      const z = p.z + nz * v.voie;
+      v.group.position.set(x, sol(Math.hypot(x, z)) + 0.05, z);
+      // L'assiette d'abord, le cap ensuite : à plat sur un monde bombé, la
+      // voiture montrait le dessous de son châssis dans les descentes.
+      _lacet.set(0, v.sens > 0 ? p.cap : p.cap + Math.PI, 0);
+      v.group.quaternion.copy(assiette(x, z)).multiply(_qLacet.setFromEuler(_lacet));
     }
     for (const e of engins) {
       /*
        * Un aller-retour dans le sens des sillons.
        *
-       * L'onde triangulaire donne une passe, un demi-tour, une passe en
-       * sens inverse — et le cap suit le sens de marche, sans quoi l'engin
+       * L'onde triangulaire donne une passe, un demi-tour, une passe en sens
+       * inverse — et le cap suit le sens de marche, sans quoi l'engin
        * reculerait la moitié du temps.
        */
-      const course = Math.max(2, e.champ.w - 1.2);
+      const emprise = empriseParcelle(e.p);
+      const course = Math.max(2, emprise.w - 1.6);
       const cycle = (course * 2) / e.vitesse;
       const u = (((t + e.phase) % cycle) + cycle) % cycle;
       const aller = u < cycle / 2;
-      const avance = aller ? (u / (cycle / 2)) : 1 - (u - cycle / 2) / (cycle / 2);
+      const avance = aller ? u / (cycle / 2) : 1 - (u - cycle / 2) / (cycle / 2);
       const long = -course / 2 + avance * course;
-      // Le rang change à chaque passe : l'engin descend le champ.
+      // Le rang change à chaque passe : l'engin descend la parcelle.
       const passe = Math.floor((t + e.phase) / cycle);
-      const rangs = Math.max(2, Math.round(e.champ.d / 1.6));
-      const trav = -e.champ.d / 2 + 0.8 + ((passe % rangs) * (e.champ.d - 1.6)) / rangs;
-      const co = Math.cos(e.champ.sillons);
-      const si = Math.sin(e.champ.sillons);
-      e.rig.group.position.set(
-        e.champ.x + long * co - trav * si,
-        y + 0.05,
-        e.champ.z + long * si + trav * co,
-      );
-      e.rig.group.rotation.y = -e.champ.sillons + (aller ? Math.PI / 2 : -Math.PI / 2);
+      const rangs = Math.max(2, Math.round(emprise.d / 1.6));
+      const trav = -emprise.d / 2 + 1 + ((passe % rangs) * (emprise.d - 2)) / rangs;
+      const ex = e.p.x + long;
+      const ez = e.p.z + trav;
+      // Même assiette que la parcelle qu'il laboure : sinon l'engin flotte
+      // au-dessus d'un côté du champ et s'enfonce dans l'autre.
+      e.rig.group.position.set(ex, sol(Math.hypot(e.p.x, e.p.z)) + 0.16, ez);
+      _lacet.set(0, aller ? Math.PI / 2 : -Math.PI / 2, 0);
+      e.rig.group.quaternion
+        .copy(assiette(e.p.x, e.p.z))
+        .multiply(_qLacet.setFromEuler(_lacet));
       e.rig.update({ t, distance: t * e.vitesse, working: true });
     }
   }
 
   function setJour(jourDeJeu: number, saison: Season): void {
-    poserChamps(Math.floor(jourDeJeu), saison);
+    poserParcelles(Math.floor(jourDeJeu), saison);
   }
 
   function dispose(): void {
     for (const e of engins) e.rig.dispose();
     engins.length = 0;
-    if (maillageChamps) {
-      maillageChamps.geometry.dispose();
-      (maillageChamps.material as THREE.Material).dispose();
-      maillageChamps = null;
+    if (nappeParcelles) {
+      nappeParcelles.geometry.dispose();
+      (nappeParcelles.material as THREE.Material).dispose();
+      nappeParcelles = null;
     }
     for (const r of aJeter) r.dispose();
     aJeter.length = 0;
     object.clear();
   }
 
-  poserChamps(0, "SUMMER");
+  poserParcelles(0, "SUMMER");
   return { object, plan, update, setJour, dispose };
 }

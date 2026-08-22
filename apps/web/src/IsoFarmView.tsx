@@ -21,6 +21,7 @@ import { applyHerdPose, meshForHerd } from "./animal-meshes";
 import { createBuildingRig, nearestThreshold, type BuildingRig } from "./buildings3d";
 import { createParkingRig, type ParkingRig } from "./parking3d";
 import { createCountryside, type Campagne } from "./countryside";
+import { makeArbre } from "./decor3d";
 import { createCropField } from "./crop-field";
 import type { CropShape } from "./crop-shapes";
 import { attachStudioEnvironment } from "./machine-kit";
@@ -1195,7 +1196,15 @@ export function IsoFarmView({
      * jointure ne se voie pas.
      */
     scene.background = null;
-    scene.fog = new THREE.Fog(skyFor(weatherRef.current), 34, 66);
+    /*
+     * La brume porte sur un monde, plus sur une île.
+     *
+     * Réglée de 34 à 66, elle avalait tout ce qui dépassait la haie — donc la
+     * campagne entière et la mer avec. Elle commence maintenant au-delà des
+     * terres et s'achève au large : le voisinage reste net, et c'est l'horizon
+     * qui se dissout dans le ciel plutôt qu'une ligne franche.
+     */
+    scene.fog = new THREE.Fog(skyFor(weatherRef.current), 48, 132);
 
     let quality = initialQuality();
     const renderer = new THREE.WebGLRenderer({ antialias: quality.antialias, alpha: true });
@@ -1840,8 +1849,6 @@ export function IsoFarmView({
           // Le pied de la dalle : la campagne passe dessous, de sorte que
           // l'île garde son talus de terre au lieu de flotter.
           y: -0.46,
-          faireArbre: (x, z, taille) =>
-            makeArtBillboard("/assets/decor/tree.webp", camera, x, -0.44, z, taille * 0.9, taille * 1.2),
         });
         campagneGroup.add(campagne.object);
       }
@@ -1918,7 +1925,18 @@ export function IsoFarmView({
         shade.position.set(tx, 0.02, tz);
         fenceGroup.add(shade);
 
-        fenceGroup.add(makeArtBillboard("/assets/decor/tree.webp", camera, tx, 0, tz, 1.5, 2));
+        /*
+         * Un arbre en volume, taillé dans la même facette que les bâtiments.
+         *
+         * C'étaient des illustrations plates tournées vers la caméra. Ça
+         * passait tant qu'elles décoraient quatre coins ; à côté d'une
+         * campagne entière d'arbres en volume, elles se voyaient pour ce
+         * qu'elles sont — des autocollants sans épaisseur, dont l'ombre au sol
+         * ne correspond à rien.
+         */
+        const arbre = makeArbre(2.1, ((tx * 31 + tz * 17) | 0) >>> 0, quality.shadows);
+        arbre.position.set(tx, 0, tz);
+        fenceGroup.add(arbre);
       }
 
       /** Relief à semer sur les cases une fois la grille posée. */

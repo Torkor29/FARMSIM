@@ -5,10 +5,10 @@
  *
  * La parcelle du joueur flottait dans le ciel : une dalle de terre, quatre
  * arbres, et plus rien au-delà. Ce module décide **ce qu'il y a autour** — les
- * champs des voisins, la route qui descend vers le reste du monde, les
- * bosquets — sans toucher à Trois. C'est de l'arithmétique : on peut donc le
- * mesurer, et un champ qui chevauche la cour ou une route qui traverse le blé
- * se voient dans un test plutôt qu'à l'écran.
+ * parcelles des voisins, la route qui descend vers le reste du monde, les
+ * bosquets, le trait de côte — sans toucher à Trois. C'est de l'arithmétique :
+ * on peut donc le mesurer, et une parcelle qui chevauche la cour ou une route
+ * qui coupe le parking se voient dans un test plutôt qu'à l'écran.
  *
  * ## Ce qui est tiré au sort, et ce qui ne l'est pas
  *
@@ -19,17 +19,16 @@
  *
  * ## Ce qui bouge avec le temps
  *
- * L'état d'un champ voisin — labouré, semé, en pousse, mûr, en chaume — n'est
- * pas stocké : il se **déduit** du jour de jeu, exactement comme la saison et
- * la pousse du joueur. Pas de tic-tac, pas de dérive, et un voisin qui
- * moissonne le fait le même jour pour tout le monde. L'hiver, plus rien ne
- * mûrit chez le voisin non plus : sa terre est en chaume ou déjà retournée,
- * comme la nôtre.
+ * L'état d'une parcelle voisine — labourée, semée, en pousse, mûre, en
+ * chaume — n'est pas stocké : il se **déduit** du jour de jeu, exactement comme
+ * la saison et la pousse du joueur. Pas de tic-tac, pas de dérive, et un
+ * voisin qui moissonne le fait le même jour pour tout le monde. L'hiver, plus
+ * rien ne mûrit chez le voisin non plus.
  */
 
 import type { Season } from "@farmsim/shared";
 
-/** Ce qu'on voit dans un champ voisin. */
+/** Ce qu'on voit dans une parcelle voisine. */
 export type EtatChamp =
   /** Terre retournée, sillons francs. */
   | "LABOUR"
@@ -47,32 +46,46 @@ export type EtatChamp =
 /** Les cultures du voisinage — celles du jeu, plus le tournesol pour l'œil. */
 export type CultureVoisine = "BLE" | "ORGE" | "COLZA" | "MAIS" | "HERBE" | "TOURNESOL";
 
-export type ChampVoisin = {
+/**
+ * Une parcelle de voisin.
+ *
+ * Décrite en **cases**, comme celle du joueur, et non en mètres : c'est ce qui
+ * permet de la dessiner dans le même langage — une dalle de terre, un damier
+ * de cases, une haie autour — plutôt qu'en rectangle de couleur posé sur
+ * l'herbe. Un voisin doit ressembler à une ferme, pas à un tapis.
+ */
+export type ParcelleVoisine = {
   id: string;
-  /** Centre du champ, en unités monde. */
+  /** Centre, en unités monde. */
   x: number;
   z: number;
-  /** Emprise. */
-  w: number;
-  d: number;
-  /** Orientation des sillons : 0 le long de X, π/2 le long de Z. */
-  sillons: number;
+  /** Taille en cases. */
+  gw: number;
+  gh: number;
+  /** Orientation du damier : 0 ou un quart de tour. */
+  cap: number;
   culture: CultureVoisine;
-  /** Décalage du champ dans le cycle cultural, en jours de jeu. */
+  /** Décalage dans le cycle cultural, en jours de jeu. */
   decalage: number;
   /** Un engin y travaille-t-il ? */
   travaille: boolean;
+  /** Un bâtiment de ferme au bord — toutes les parcelles n'en ont pas. */
+  batiment: boolean;
 };
 
 export type PointPlan = { x: number; z: number };
 
 export type PlanCampagne = {
-  champs: ChampVoisin[];
-  /** La route, du portail de la cour jusqu'à l'horizon. */
+  parcelles: ParcelleVoisine[];
+  /** La route, du bord de la cour jusqu'à la côte. */
   route: PointPlan[];
-  arbres: { x: number; z: number; taille: number }[];
-  /** Demi-étendue du sol, en unités monde. */
-  etendue: number;
+  /** L'amorce qui relie le portail de la cour à la route. */
+  desserte: PointPlan[];
+  arbres: { x: number; z: number; taille: number; graine: number }[];
+  /** Rayon des terres émergées. */
+  rayonTerre: number;
+  /** Rayon jusqu'où va la mer. */
+  rayonMer: number;
 };
 
 export type OptionsPlan = {
@@ -81,15 +94,60 @@ export type OptionsPlan = {
   /** Demi-emprise de l'île du joueur, marges comprises. */
   ileDemiLargeur: number;
   ileDemiProfondeur: number;
-  /** Portail de la cour : c'est de là que part la route. */
+  /** Portail de la cour : c'est de là que part la desserte. */
   portail: PointPlan;
-  /** Emprise de la cour, à ne pas cultiver. */
+  /** Emprise de la cour, à ne pas cultiver ni traverser. */
   cour: { x: number; z: number; w: number; d: number };
-  /** Combien de champs viser. Le réglage sobre en demande moins. */
-  champsVises?: number;
-  /** Demi-étendue du sol. */
-  etendue?: number;
+  /** Combien de parcelles viser. Le réglage sobre en demande moins. */
+  parcellesVisees?: number;
+  /** Rayon des terres. */
+  rayonTerre?: number;
 };
+
+/* ------------------------------------------------------------------ */
+/* Les dimensions du monde                                             */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Rayon des terres émergées, en unités monde.
+ *
+ * Le sol s'incurve vers le bas à mesure qu'on s'éloigne ; à trente-quatre
+ * unités, sa crête arrive juste sous le haut du cadre sur écran large. Plus
+ * loin, la côte passerait derrière l'horizon et on ne verrait plus le ciel —
+ * ce qui était le reproche : « on ne voit plus le ciel ».
+ */
+export const RAYON_TERRE = 34;
+
+/** Jusqu'où va la mer avant que la brume ne l'avale entièrement. */
+export const RAYON_MER = 95;
+
+/**
+ * Courbure du monde : creusement, en unités, par unité de distance au carré.
+ *
+ * C'est elle qui arrondit l'horizon. Choisie pour que la crête du sol — le
+ * point le plus haut à l'écran — tombe vers trente-sept unités : assez loin
+ * pour que toute la campagne tienne devant, assez près pour laisser du ciel.
+ */
+export const COURBURE = 0.0085;
+
+/** L'altitude du sol à une distance donnée du centre. */
+export function creux(rayon: number): number {
+  return -COURBURE * rayon * rayon;
+}
+
+/**
+ * La pente du sol à une distance donnée — sa dérivée.
+ *
+ * C'est elle qui donne l'assiette d'une parcelle, d'une voiture ou d'un engin.
+ * Posés à plat sur un monde bombé, ils décollaient d'un bord et s'enterraient
+ * de l'autre.
+ */
+export function pente(rayon: number): number {
+  return -2 * COURBURE * rayon;
+}
+
+/** Largeur de la plage entre la dernière herbe et la première vague. */
+export const LARGEUR_PLAGE = 2.4;
 
 /* ------------------------------------------------------------------ */
 /* Le hasard qui n'en est pas un                                       */
@@ -122,7 +180,7 @@ export function suite(graine: number): () => number {
 /* ------------------------------------------------------------------ */
 
 /**
- * Le cycle d'un champ voisin, en jours de jeu.
+ * Le cycle d'une parcelle voisine, en jours de jeu.
  *
  * Vingt jours pour cinq états : quatre jours chacun, soit un jour réel par
  * état. Un voisin change donc d'aspect une fois par jour réel — assez pour
@@ -135,29 +193,26 @@ export const CYCLE_VOISIN = 20;
  * Jusqu'où un engin de voisin mérite d'être dessiné, en unités monde.
  *
  * Au-delà, il fait deux pixels et son mouvement ressemble à un scintillement.
- * Mieux vaut un champ tranquille qu'un tracteur qu'on devine.
  */
 export const PORTEE_ENGIN = 30;
 
-/**
- * Demi-étendue du sol par défaut, en unités monde.
- *
- * Assez loin pour que la brume avale le bord avant qu'on le voie : le
- * brouillard de la scène s'épaissit de 34 à 66 unités de la caméra, et un sol
- * qui s'arrêterait à quarante montrerait sa lisière en plein cadre.
- */
-export const ETENDUE_PAR_DEFAUT = 72;
+/** Combien de voisins travaillent en même temps, au plus. */
+export const ENGINS_MAX = 3;
 
 const ORDRE: EtatChamp[] = ["LABOUR", "SEMIS", "POUSSE", "MUR", "CHAUME"];
 
 /**
- * L'état d'un champ voisin, déduit du jour.
+ * L'état d'une parcelle voisine, déduit du jour.
  *
  * L'hiver ne mûrit rien : chez le voisin comme chez le joueur, la terre est en
  * chaume ou déjà retournée pour l'année suivante. Laisser un champ d'or à côté
  * d'une parcelle gelée dirait que les saisons ne s'appliquent qu'au joueur.
  */
-export function etatChamp(champ: ChampVoisin, jourDeJeu: number, saison: Season): EtatChamp {
+export function etatChamp(
+  champ: Pick<ParcelleVoisine, "culture" | "decalage">,
+  jourDeJeu: number,
+  saison: Season,
+): EtatChamp {
   if (champ.culture === "HERBE") return "JACHERE";
   const phase = (((jourDeJeu + champ.decalage) % CYCLE_VOISIN) + CYCLE_VOISIN) % CYCLE_VOISIN;
   const etat = ORDRE[Math.floor(phase / (CYCLE_VOISIN / ORDRE.length))]!;
@@ -175,12 +230,12 @@ const TEINTES: Record<CultureVoisine, { pousse: number; mur: number }> = {
   HERBE: { pousse: 0x7cc36a, mur: 0x7cc36a },
 };
 
-/** Terre retournée. */
-const TERRE = 0x7a5a3e;
-/** Chaume après la moisson. */
-const CHAUME = 0xd3bc85;
+/** Terre retournée — celle des cases labourées du joueur. */
+const TERRE = 0x593a20;
+/** Chaume après la moisson — celui du joueur. */
+const CHAUME = 0xe3cf98;
 /** Herbe rase d'une jachère. */
-const JACHERE = 0x87bb6f;
+const JACHERE = 0x9ac06a;
 
 /** Mélange deux couleurs empaquetées, `t` de 0 à 1. */
 export function melanger(a: number, b: number, t: number): number {
@@ -193,7 +248,7 @@ export function melanger(a: number, b: number, t: number): number {
   return m(16) | m(8) | m(0);
 }
 
-/** La couleur d'un champ, par culture et par état. */
+/** La couleur d'une case, par culture et par état. */
 export function couleurChamp(culture: CultureVoisine, etat: EtatChamp): number {
   const t = TEINTES[culture];
   switch (etat) {
@@ -201,7 +256,7 @@ export function couleurChamp(culture: CultureVoisine, etat: EtatChamp): number {
       return TERRE;
     // Semé, la terre domine encore : on voit les rangs, pas la culture.
     case "SEMIS":
-      return melanger(TERRE, t.pousse, 0.3);
+      return melanger(TERRE, t.pousse, 0.35);
     case "POUSSE":
       return t.pousse;
     case "MUR":
@@ -214,7 +269,7 @@ export function couleurChamp(culture: CultureVoisine, etat: EtatChamp): number {
 }
 
 /* ------------------------------------------------------------------ */
-/* Le placement                                                        */
+/* Géométrie de placement                                              */
 /* ------------------------------------------------------------------ */
 
 type Boite = { x: number; z: number; w: number; d: number };
@@ -233,12 +288,10 @@ export function distanceAuSegment(x: number, z: number, p: PointPlan, q: PointPl
   const dz = q.z - p.z;
   const l2 = dx * dx + dz * dz;
   const t = l2 === 0 ? 0 : Math.min(1, Math.max(0, ((x - p.x) * dx + (z - p.z) * dz) / l2));
-  const cx = p.x + t * dx;
-  const cz = p.z + t * dz;
-  return Math.hypot(x - cx, z - cz);
+  return Math.hypot(x - (p.x + t * dx), z - (p.z + t * dz));
 }
 
-/** Distance d'un point à la polyligne de la route. */
+/** Distance d'un point à une polyligne. */
 export function distanceALaRoute(x: number, z: number, route: PointPlan[]): number {
   let d = Infinity;
   for (let i = 0; i + 1 < route.length; i++) {
@@ -247,135 +300,174 @@ export function distanceALaRoute(x: number, z: number, route: PointPlan[]): numb
   return d;
 }
 
+/** Emprise au sol d'une parcelle, hors haie. */
+export function empriseParcelle(p: ParcelleVoisine): Boite {
+  const pas = 1.06;
+  const l = p.gw * pas + 1.1;
+  const h = p.gh * pas + 1.1;
+  const droit = Math.abs(Math.cos(p.cap)) > 0.5;
+  return { x: p.x, z: p.z, w: droit ? l : h, d: droit ? h : l };
+}
+
 /**
- * La route, du portail de la cour à l'horizon.
+ * L'azimut de la cour vue du centre de la ferme.
  *
- * Elle part du portail, longe l'île par l'ouest, puis descend vers le coin bas
- * de l'écran. En vue isométrique, « descendre » veut dire croître en x **et**
- * en z à la fois : la caméra regarde l'origine depuis (+x, +y, +z), de sorte
- * que ces deux axes viennent tous deux vers le spectateur. Une route qui
- * suivrait un seul axe monterait de biais et sortirait par le côté.
+ * C'est le secteur qu'on laisse vide : « il en faut tout autour sauf côté
+ * parking ». Une parcelle plantée derrière la cour se retrouverait à moitié
+ * cachée par elle, et l'entrée de la ferme perdrait son dégagement.
+ */
+export function azimutCour(o: OptionsPlan): number {
+  return Math.atan2(o.cour.z, o.cour.x);
+}
+
+/** Écart angulaire signé, ramené dans [-π, π]. */
+export function ecartAngle(a: number, b: number): number {
+  let d = a - b;
+  while (d > Math.PI) d -= 2 * Math.PI;
+  while (d < -Math.PI) d += 2 * Math.PI;
+  return d;
+}
+
+/** Demi-ouverture du secteur laissé libre devant la cour. */
+export const SECTEUR_COUR = Math.PI / 4;
+
+/* ------------------------------------------------------------------ */
+/* La route                                                            */
+/* ------------------------------------------------------------------ */
+
+/** Demi-largeur de la chaussée, accotements compris. */
+export const DEMI_ROUTE = 1.12;
+
+/**
+ * La route, du haut de la carte jusqu'à la côte.
+ *
+ * Elle passe **à côté** de la cour, jamais dessus : la première version la
+ * calait sur le bord de l'île, si bien qu'elle traversait le parking de part
+ * en part — « la route coupe le parking, c'est pas beau ». Le couloir se règle
+ * maintenant sur le bord extérieur de la cour, plus la demi-chaussée et une
+ * marge.
+ *
+ * En vue isométrique, « descendre » veut dire croître en x **et** en z à la
+ * fois : la caméra regarde l'origine depuis (+x, +y, +z), de sorte que ces
+ * deux axes viennent tous deux vers le spectateur.
  */
 export function tracerRoute(o: OptionsPlan): PointPlan[] {
-  const etendue = o.etendue ?? ETENDUE_PAR_DEFAUT;
   const rnd = suite(grainerDe(o.graine + ":route"));
-  const largeurIle = o.ileDemiLargeur;
-  // Un couloir à l'ouest de l'île, assez loin pour ne pas raser la haie.
-  const couloirX = Math.min(o.portail.x, -largeurIle) - 3.4 - rnd() * 1.2;
-  const depart: PointPlan = { x: o.portail.x, z: o.portail.z };
-  const pts: PointPlan[] = [
-    // Un bout de chemin qui remonte derrière la cour : la route continue
-    // au-delà du portail, elle ne naît pas de lui.
-    { x: couloirX - 6, z: depart.z - o.ileDemiProfondeur - 14 },
-    { x: couloirX, z: depart.z - o.ileDemiProfondeur * 0.6 },
-    { x: couloirX, z: depart.z },
-    { x: couloirX + 1.2, z: depart.z + o.ileDemiProfondeur * 0.7 },
+  const bordCour = o.cour.x - o.cour.w / 2;
+  const couloirX = Math.min(bordCour, -o.ileDemiLargeur) - DEMI_ROUTE - 1.6 - rnd() * 0.8;
+  const z0 = o.cour.z;
+  const rayon = o.rayonTerre ?? RAYON_TERRE;
+  return [
+    { x: couloirX - 5, z: z0 - o.ileDemiProfondeur - rayon * 0.7 },
+    { x: couloirX - 0.6, z: z0 - o.ileDemiProfondeur * 0.8 },
+    { x: couloirX, z: z0 + 1 },
+    { x: couloirX + 1.6, z: z0 + o.ileDemiProfondeur * 0.9 },
+    { x: couloirX + 7, z: z0 + o.ileDemiProfondeur + 8 },
+    { x: couloirX + rayon * 0.85, z: z0 + rayon * 0.85 },
   ];
-  // Puis la descente vers le monde : x et z croissent ensemble.
-  const bas = { x: couloirX + 10, z: depart.z + o.ileDemiProfondeur + 10 };
-  pts.push(bas);
-  pts.push({ x: bas.x + etendue * 0.8, z: bas.z + etendue * 0.8 });
-  return pts;
 }
+
+/**
+ * La desserte : le bout de chemin qui relie le portail de la cour à la route.
+ *
+ * Sans elle, la ferme donnait sur une départementale qu'elle ne touchait pas —
+ * une route qui passe devant chez vous sans que rien n'y mène.
+ */
+export function tracerDesserte(o: OptionsPlan, route: PointPlan[]): PointPlan[] {
+  const portail = { x: o.cour.x - o.cour.w / 2, z: o.portail.z };
+  // Le point de la route le plus proche du portail, à la perpendiculaire.
+  let meilleur = route[0]!;
+  let d = Infinity;
+  for (let i = 0; i + 1 < route.length; i++) {
+    const p = route[i]!;
+    const q = route[i + 1]!;
+    const dx = q.x - p.x;
+    const dz = q.z - p.z;
+    const l2 = dx * dx + dz * dz || 1;
+    const t = Math.min(1, Math.max(0, ((portail.x - p.x) * dx + (portail.z - p.z) * dz) / l2));
+    const c = { x: p.x + t * dx, z: p.z + t * dz };
+    const dist = Math.hypot(portail.x - c.x, portail.z - c.z);
+    if (dist < d) {
+      d = dist;
+      meilleur = c;
+    }
+  }
+  return [portail, meilleur];
+}
+
+/* ------------------------------------------------------------------ */
+/* Le plan complet                                                     */
+/* ------------------------------------------------------------------ */
 
 /**
  * Le plan complet.
  *
- * Les champs se posent sur un damier lâche autour de l'île, chaque case
- * recevant un rectangle de taille et de position tirées au sort dans des
- * bornes. Une case est abandonnée si son champ touche l'île, la cour ou la
- * route : mieux vaut un trou d'herbe qu'un champ qui traverse le bitume.
- *
- * La densité penche vers le bas de l'écran — la direction (+x, +z) — parce que
- * c'est là qu'il y a de la place à l'image : derrière la ferme, tout est
- * écrasé par la perspective et se perd dans la brume.
+ * Les parcelles se posent en couronne autour de l'île, une par secteur
+ * angulaire, sauf devant la cour. Chaque secteur a droit à plusieurs essais de
+ * rayon et de taille : un seul tirage et le secteur était perdu dès que le
+ * premier rectangle mordait sur l'île, ce qui laissait des trous béants.
  */
 export function planCampagne(o: OptionsPlan): PlanCampagne {
-  const etendue = o.etendue ?? ETENDUE_PAR_DEFAUT;
-  const vises = o.champsVises ?? 18;
+  const rayonTerre = o.rayonTerre ?? RAYON_TERRE;
+  const vises = o.parcellesVisees ?? 12;
   const rnd = suite(grainerDe(o.graine));
   const route = tracerRoute(o);
+  const desserte = tracerDesserte(o, route);
 
   const ile: Boite = {
     x: 0,
     z: 0,
-    w: o.ileDemiLargeur * 2 + 2.5,
-    d: o.ileDemiProfondeur * 2 + 2.5,
+    w: o.ileDemiLargeur * 2,
+    d: o.ileDemiProfondeur * 2,
   };
   const cour: Boite = { ...o.cour };
+  const versCour = azimutCour(o);
 
   const cultures: CultureVoisine[] = ["BLE", "ORGE", "COLZA", "MAIS", "TOURNESOL", "HERBE"];
-  const champs: ChampVoisin[] = [];
-  /*
-   * Le pas du damier des champs.
-   *
-   * Treize à la première passe : la ferme se retrouvait au centre d'une
-   * clairière, le premier voisin à treize unités d'une île qui en fait sept de
-   * demi-largeur. Dix rapproche la campagne sans coller les champs à la haie —
-   * la marge de 1,5 unité du test de chevauchement s'en charge.
-   */
-  const pas = 10;
-  const portee = Math.ceil((etendue - 6) / pas);
+  const parcelles: ParcelleVoisine[] = [];
 
-  const cases: { cx: number; cz: number; poids: number }[] = [];
-  for (let i = -portee; i <= portee; i++) {
-    for (let k = -portee; k <= portee; k++) {
-      const cx = i * pas;
-      const cz = k * pas;
-      if (Math.hypot(cx, cz) > etendue - 8) continue;
-      if (Math.abs(cx) < ile.w / 2 && Math.abs(cz) < ile.d / 2) continue;
-      /*
-       * L'ordre de remplissage : le plus près d'abord, le bas de l'écran
-       * ensuite.
-       *
-       * Première version : un « poids » qui ne tenait qu'au bas de l'écran,
-       * et un tri décroissant dessus. Ce n'était pas un penchant, c'était un
-       * ordre strict — mesuré, les dix-neuf champs partaient tous dans le coin
-       * le plus éloigné et il n'en restait **aucun** à moins de vingt-deux
-       * unités de la ferme. Le voisinage était bien là, entièrement hors du
-       * cadre.
-       *
-       * La distance mène donc le tri, et le penchant vers le bas ne fait plus
-       * que départager : à distance comparable, on peuple d'abord ce qui se
-       * voit.
-       */
-      cases.push({ cx, cz, poids: Math.hypot(cx, cz) - 0.18 * (cx + cz) });
-    }
-  }
-  cases.sort((a, b) => a.poids - b.poids);
+  /* Les secteurs, dans l'ordre du plus visible au moins.
+     En vue isométrique, le bas de l'écran est la direction (+x, +z) : c'est
+     là qu'il y a de la place à l'image, et donc là qu'on peuple d'abord. */
+  const secteurs: number[] = [];
+  const n = 16;
+  for (let i = 0; i < n; i++) secteurs.push((i / n) * Math.PI * 2 - Math.PI);
+  secteurs.sort((a, b) => Math.cos(b - Math.PI / 4) - Math.cos(a - Math.PI / 4));
 
-  for (const c of cases) {
-    if (champs.length >= vises) break;
-    /*
-     * Quatre essais par case du damier, pas un seul.
-     *
-     * Avec un seul tirage et une secousse de quelques dixièmes, une case dont
-     * le premier rectangle mordait sur l'île était perdue : le voisinage
-     * commençait à vingt unités de la ferme et laissait une clairière autour
-     * d'elle. Quatre essais, avec une vraie secousse, permettent au champ de
-     * se glisser dans le coin libre au lieu d'abandonner la case.
-     */
-    for (let essai = 0; essai < 4; essai++) {
-      const w = 5 + rnd() * 5;
-      const d = 4.5 + rnd() * 5;
-      const x = c.cx + (rnd() - 0.5) * pas * 0.7;
-      const z = c.cz + (rnd() - 0.5) * pas * 0.7;
-      const boite: Boite = { x, z, w, d };
-      if (seChevauchent(boite, ile, 1.2)) continue;
-      if (seChevauchent(boite, cour, 1.2)) continue;
-      if (distanceALaRoute(x, z, route) < Math.max(w, d) / 2 + 2.2) continue;
-      if (champs.some((autre) => seChevauchent(boite, autre, 0.9))) continue;
-      champs.push({
-        id: `voisin-${champs.length}`,
-        x,
-        z,
-        w,
-        d,
-        sillons: rnd() < 0.5 ? 0 : Math.PI / 2,
+  for (const angle of secteurs) {
+    if (parcelles.length >= vises) break;
+    if (Math.abs(ecartAngle(angle, versCour)) < SECTEUR_COUR) continue;
+    for (let essai = 0; essai < 5; essai++) {
+      const gw = 4 + Math.floor(rnd() * 5);
+      const gh = 4 + Math.floor(rnd() * 4);
+      const cap = rnd() < 0.5 ? 0 : Math.PI / 2;
+      const rayon = 12 + rnd() * (rayonTerre - 20);
+      const gigue = (rnd() - 0.5) * 0.34;
+      const p: ParcelleVoisine = {
+        id: `voisin-${parcelles.length}`,
+        x: Math.cos(angle + gigue) * rayon,
+        z: Math.sin(angle + gigue) * rayon,
+        gw,
+        gh,
+        cap,
         culture: cultures[Math.floor(rnd() * cultures.length)]!,
         decalage: Math.floor(rnd() * CYCLE_VOISIN),
         travaille: false,
-      });
+        batiment: rnd() < 0.34,
+      };
+      const boite = empriseParcelle(p);
+      // La côte : une parcelle ne pend pas au-dessus de la mer.
+      if (Math.hypot(p.x, p.z) + Math.max(boite.w, boite.d) / 2 > rayonTerre - LARGEUR_PLAGE - 1) {
+        continue;
+      }
+      if (seChevauchent(boite, ile, 2.2)) continue;
+      if (seChevauchent(boite, cour, 2.2)) continue;
+      if (distanceALaRoute(p.x, p.z, route) < Math.max(boite.w, boite.d) / 2 + DEMI_ROUTE + 1) {
+        continue;
+      }
+      if (distanceALaRoute(p.x, p.z, desserte) < Math.max(boite.w, boite.d) / 2 + 1.4) continue;
+      if (parcelles.some((autre) => seChevauchent(boite, empriseParcelle(autre), 1.4))) continue;
+      parcelles.push(p);
       break;
     }
   }
@@ -383,41 +475,40 @@ export function planCampagne(o: OptionsPlan): PlanCampagne {
   /*
    * Qui travaille aujourd'hui.
    *
-   * Deux engins au plus, et **là où on les verra**.
+   * Trois engins, et **là où on les verra**.
    *
-   * Première version : « les cinq champs les plus proches », puis un tirage
-   * parmi eux. Elle a placé un tracteur à quarante unités de l'origine — le
-   * plus proche des cinq n'est proche que des quatre autres. Une borne
-   * relative ne dit rien tant qu'on n'a pas dit de quoi ; celle-ci est
-   * absolue.
+   * Être proche ne suffit pas : en vue isométrique, la moitié de ce qui est
+   * proche tombe derrière la ferme ou sous le rail de gauche. Le score écarte
+   * aussi ce qui part sur les côtés — `|x − z|` — parce que la droite de
+   * l'écran est mangée par le panneau de parcelle. Deux engins seulement, et
+   * six clichés sur six n'en montraient aucun : ils tombaient tous hors cadre.
    *
-   * Deuxième version, corrigée mais toujours fausse à l'écran : les deux
-   * engins tombaient derrière la ferme, cachés par le rail de gauche. Être
-   * proche ne suffit pas — en vue isométrique, la moitié de ce qui est proche
-   * est hors cadre. Le même penchant vers le bas de l'écran que pour les
-   * champs, et le choix devient déterministe plutôt que tiré au sort : les
-   * deux meilleurs, pas deux au hasard parmi cinq.
+   * Le choix est déterministe : les meilleurs, pas des tirés au sort.
    */
-  const visible = (c: ChampVoisin) => Math.hypot(c.x, c.z) - 0.35 * (c.x + c.z);
-  const proches = [...champs]
-    .filter((c) => c.culture !== "HERBE" && Math.hypot(c.x, c.z) <= PORTEE_ENGIN)
+  const visible = (p: ParcelleVoisine) =>
+    Math.hypot(p.x, p.z) - 0.5 * (p.x + p.z) + 0.25 * Math.abs(p.x - p.z);
+  const candidats = parcelles
+    .filter((p) => p.culture !== "HERBE" && Math.hypot(p.x, p.z) <= PORTEE_ENGIN)
     .sort((a, b) => visible(a) - visible(b));
-  for (const c of proches.slice(0, 2)) c.travaille = true;
+  for (const p of candidats.slice(0, ENGINS_MAX)) p.travaille = true;
 
-  /* Les bosquets : dans les coins de champ et le long de la route. */
-  const arbres: { x: number; z: number; taille: number }[] = [];
-  for (let i = 0; i < 34; i++) {
+  /* Les bosquets : dans les interstices, jamais sur une parcelle ni sur la
+     route, et jamais les pieds dans l'eau. */
+  const arbres: { x: number; z: number; taille: number; graine: number }[] = [];
+  for (let i = 0; i < 90 && arbres.length < 30; i++) {
     const a = rnd() * Math.PI * 2;
-    const r = 12 + rnd() * (etendue - 16);
+    const r = 11 + rnd() * (rayonTerre - LARGEUR_PLAGE - 12);
     const x = Math.cos(a) * r;
     const z = Math.sin(a) * r;
-    const boite: Boite = { x, z, w: 1.6, d: 1.6 };
-    if (seChevauchent(boite, ile, 1)) continue;
-    if (seChevauchent(boite, cour, 1)) continue;
-    if (distanceALaRoute(x, z, route) < 3) continue;
-    if (champs.some((c) => seChevauchent(boite, c, 0.2))) continue;
-    arbres.push({ x, z, taille: 1.5 + rnd() * 1.4 });
+    const boite: Boite = { x, z, w: 1.8, d: 1.8 };
+    if (seChevauchent(boite, ile, 1.2)) continue;
+    if (seChevauchent(boite, cour, 1.2)) continue;
+    if (distanceALaRoute(x, z, route) < DEMI_ROUTE + 1.4) continue;
+    if (distanceALaRoute(x, z, desserte) < 1.6) continue;
+    if (parcelles.some((p) => seChevauchent(boite, empriseParcelle(p), 0.5))) continue;
+    if (arbres.some((t) => Math.hypot(t.x - x, t.z - z) < 2.2)) continue;
+    arbres.push({ x, z, taille: 1.6 + rnd() * 1.5, graine: Math.floor(rnd() * 1e9) });
   }
 
-  return { champs, route, arbres, etendue };
+  return { parcelles, route, desserte, arbres, rayonTerre, rayonMer: RAYON_MER };
 }

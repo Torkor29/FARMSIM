@@ -1,6 +1,7 @@
 import * as THREE from "three";
-import { createCountryside, faireVoiture, surLaRoute } from "../countryside";
-import { planCampagne, type OptionsPlan } from "../countryside-plan";
+import { createCountryside, surLaRoute } from "../countryside";
+import { makeVoiture } from "../decor3d";
+import { RAYON_TERRE, creux, empriseParcelle, planCampagne, type OptionsPlan } from "../countryside-plan";
 
 /**
  * La campagne, en volumes.
@@ -45,55 +46,109 @@ describe("le sol", () => {
   it("regarde vers le ciel", () => {
     /*
      * Le défaut exact, et il ne se voyait qu'à l'écran : `a, b, c` puis
-     * `a, c, d` donne des normales vers le bas. Le sol et les dix-neuf champs
-     * étaient éliminés au rendu et éclairés par en dessous.
-     */
-    /*
-     * On ne mesure que les nappes que ce module fabrique — sol, champs,
-     * route. Première version : `traverse` sur tout le groupe, et les deux
-     * modèles de tracteur, riches de milliers de sommets tournés dans toutes
-     * les directions, noyaient les quelques centaines du sol. Le test
-     * échouait sur un sol pourtant correct : la prémisse était fausse, pas le
-     * code.
+     * `a, c, d` donne des normales vers le bas. Le sol entier était éliminé au
+     * rendu et éclairé par en dessous.
+     *
+     * On ne mesure que les nappes horizontales — sol, mer, route. Les
+     * parcelles ont des talus et des haies, les arbres des troncs : leurs
+     * flancs regardent ailleurs, et c'est normal.
      */
     const c = createCountryside({ ...OPTIONS, sobre: true });
-    const nappes: THREE.Mesh[] = [];
-    c.object.traverse((o) => {
-      if (o instanceof THREE.Mesh && o.name.startsWith("campagne-")) nappes.push(o);
-    });
-    expect(nappes.map((m) => m.name).sort()).toEqual([
-      "campagne-champs-nappe",
-      "campagne-route",
-      "campagne-sol",
-    ]);
-    let sommets = 0;
-    let versLeHaut = 0;
-    for (const m of nappes) {
-      const n = m.geometry.getAttribute("normal");
-      if (!n) continue;
-      for (let i = 0; i < n.count; i++) {
-        sommets++;
-        if (n.getY(i) > 0.5) versLeHaut++;
-      }
+    const mesurer = (nom: string) => {
+      const m = c.object.getObjectByName(nom) as THREE.Mesh | undefined;
+      expect(m).toBeDefined();
+      const n = m!.geometry.getAttribute("normal");
+      let mini = 1;
+      for (let i = 0; i < n.count; i++) mini = Math.min(mini, n.getY(i));
+      return { n: n.count, mini };
+    };
+    // La terre et la route sont douces : leur normale reste franchement
+    // verticale partout.
+    for (const nom of ["campagne-sol", "campagne-route"]) {
+      const r = mesurer(nom);
+      expect(r.n).toBeGreaterThan(60);
+      expect(r.mini).toBeGreaterThan(0.5);
     }
-    expect(sommets).toBeGreaterThan(1000);
-    expect(versLeHaut).toBe(sommets);
+    // Le large plonge : au dernier anneau, la pente passe soixante degrés et
+    // la normale bascule sous 0,5. Ce qu'il ne faut jamais, c'est qu'elle
+    // passe **sous zéro** — là, la face est retournée.
+    const mer = mesurer("campagne-mer");
+    expect(mer.n).toBeGreaterThan(300);
+    expect(mer.mini).toBeGreaterThan(0);
     c.dispose();
   });
 
-  it("reste plat : rien ne dépasse du plan du sol", () => {
-    const c = createCountryside({ ...OPTIONS, y: -0.46 });
-    for (const enfant of c.object.children) {
-      if (enfant.type !== "Mesh") continue;
-      const b = boite(enfant);
-      expect(b.max.y).toBeLessThan(-0.3);
-      expect(b.min.y).toBeGreaterThan(-0.6);
+  it("s’incurve vers le bas, et pas sous la ferme", () => {
+    /*
+     * C'est la courbure qui rend un horizon, donc du ciel au-dessus : à plat,
+     * le sol remplissait l'écran et le ciel avait disparu. Mais elle doit
+     * rester invisible sous la ferme, sinon celle-ci aurait l'air de glisser
+     * sur un dôme.
+     */
+    const c = createCountryside({ ...OPTIONS, y: -0.46, sobre: true });
+    const solMesh = c.object.getObjectByName("campagne-sol") as THREE.Mesh;
+    const p = solMesh.geometry.getAttribute("position");
+    let prochePlusBas = 0;
+    let loinPlusBas = 0;
+    for (let i = 0; i < p.count; i++) {
+      const r = Math.hypot(p.getX(i), p.getZ(i));
+      const y = p.getY(i);
+      if (r < 10) prochePlusBas = Math.min(prochePlusBas, y);
+      if (r > RAYON_TERRE - 6) loinPlusBas = Math.min(loinPlusBas, y);
     }
+    expect(prochePlusBas).toBeGreaterThan(-1.6);
+    expect(loinPlusBas).toBeLessThan(-6);
+    c.dispose();
+  });
+
+  it("borde la terre d’une plage puis d’une mer", () => {
+    // « Comme un globe où on voit la mer à l'horizon et le ciel. »
+    const c = createCountryside({ ...OPTIONS, sobre: true });
+    const mer = c.object.getObjectByName("campagne-mer") as THREE.Mesh;
+    expect(mer).toBeDefined();
+    mer.updateMatrixWorld(true);
+    const b = new THREE.Box3().setFromObject(mer);
+    // La mer commence au-delà des terres et va bien plus loin.
+    expect(Math.max(b.max.x, b.max.z)).toBeGreaterThan(c.plan.rayonTerre * 2);
     c.dispose();
   });
 });
 
 describe("la route", () => {
+  it("colle au relief plutôt que de le couper en corde", () => {
+    /*
+     * Le défaut, vu à l'écran : la route disparaissait par morceaux. Ses
+     * segments faisaient jusqu'à vingt unités, et un ruban tendu entre deux
+     * points est une corde — le sol, concave, passait au-dessus d'elle en son
+     * milieu et l'enterrait. On la redécoupe donc court.
+     */
+    const c = createCountryside({ ...OPTIONS, sobre: true });
+    const route = c.object.getObjectByName("campagne-route") as THREE.Mesh;
+    const p = route.geometry.getAttribute("position");
+    let plusLong = 0;
+    for (let i = 0; i + 2 < p.count; i += 3) {
+      for (const [u, v] of [[0, 1], [1, 2], [2, 0]] as const) {
+        plusLong = Math.max(
+          plusLong,
+          Math.hypot(p.getX(i + u) - p.getX(i + v), p.getZ(i + u) - p.getZ(i + v)),
+        );
+      }
+    }
+    expect(plusLong).toBeLessThan(3);
+    c.dispose();
+  });
+
+  it("ne s’enterre nulle part", () => {
+    const c = createCountryside({ ...OPTIONS, y: -0.46, sobre: true });
+    const route = c.object.getObjectByName("campagne-route") as THREE.Mesh;
+    const p = route.geometry.getAttribute("position");
+    for (let i = 0; i < p.count; i++) {
+      const r = Math.hypot(p.getX(i), p.getZ(i));
+      expect(p.getY(i)).toBeGreaterThan(-0.46 + creux(r) - 0.001);
+    }
+    c.dispose();
+  });
+
   it("place un point et un cap à n’importe quelle abscisse", () => {
     const plan = planCampagne(OPTIONS);
     const pts = plan.route;
@@ -158,7 +213,7 @@ describe("les voitures", () => {
   });
 
   it("tiennent debout, roues au sol", () => {
-    const g = faireVoiture(0xd0563f, false);
+    const g = makeVoiture(0xd0563f, false);
     const b = boite(g);
     expect(b.min.y).toBeGreaterThanOrEqual(0);
     expect(b.max.y).toBeLessThan(0.7);
@@ -170,7 +225,7 @@ describe("les voitures", () => {
 describe("les engins des voisins", () => {
   it("labourent leur champ et pas le pré d’à côté", () => {
     const c = createCountryside({ ...OPTIONS, sobre: false });
-    const actifs = c.plan.champs.filter((ch) => ch.travaille);
+    const actifs = c.plan.parcelles.filter((ch) => ch.travaille);
     expect(actifs.length).toBeGreaterThanOrEqual(1);
     // Les engins sont les seuls groupes profonds hors voitures : on les
     // retrouve par leur position, qui doit tomber dans un champ au travail.
@@ -180,8 +235,8 @@ describe("les engins des voisins", () => {
         const dedans = c.object.children.filter(
           (o) =>
             o.name === "campagne-engin" &&
-            Math.abs(o.position.x - ch.x) < ch.w / 2 + 1.5 &&
-            Math.abs(o.position.z - ch.z) < ch.d / 2 + 1.5,
+            Math.abs(o.position.x - ch.x) < empriseParcelle(ch).w / 2 + 2 &&
+            Math.abs(o.position.z - ch.z) < empriseParcelle(ch).d / 2 + 2,
         );
         expect(dedans.length).toBeGreaterThanOrEqual(1);
       }
@@ -201,9 +256,9 @@ describe("les engins des voisins", () => {
     const sobre = createCountryside({ ...OPTIONS, sobre: true });
     const engins = (c: { object: THREE.Object3D }) =>
       c.object.children.filter((o) => o.name === "campagne-engin").length;
-    expect(engins(riche)).toBe(2);
-    expect(engins(sobre)).toBe(1);
-    expect(sobre.plan.champs.length).toBeLessThan(riche.plan.champs.length);
+    expect(engins(riche)).toBe(3);
+    expect(engins(sobre)).toBe(2);
+    expect(sobre.plan.parcelles.length).toBeLessThan(riche.plan.parcelles.length);
     riche.dispose();
     sobre.dispose();
   });
@@ -231,9 +286,9 @@ describe("le jour qui passe", () => {
   it("ne refait rien quand rien n’a changé", () => {
     const c = createCountryside(OPTIONS);
     c.setJour(4, "SPRING");
-    const avant = c.object.getObjectByName("campagne-champs-nappe");
+    const avant = c.object.getObjectByName("campagne-parcelles-nappe");
     c.setJour(4, "SPRING");
-    expect(c.object.getObjectByName("campagne-champs-nappe")).toBe(avant);
+    expect(c.object.getObjectByName("campagne-parcelles-nappe")).toBe(avant);
     c.dispose();
   });
 });
