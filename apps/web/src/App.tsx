@@ -4645,6 +4645,7 @@ export function App() {
         {parcel ? (
           <Suspense fallback={<SceneLoading label="Chargement de la ferme…" />}>
             <IsoFarmView
+              parcelId={activeParcelId ?? ""}
               gridW={gw}
               gridH={gh}
               cells={grid}

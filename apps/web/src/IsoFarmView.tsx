@@ -13,12 +13,14 @@ import {
   type BuildingType,
   type CropCode,
   type MachineType,
+  gameDayIndex,
   type RipenessStage,
 } from "@farmsim/shared";
 import { disposeRenderer, disposeThreeScene, markShared } from "./three-cleanup";
 import { applyHerdPose, meshForHerd } from "./animal-meshes";
 import { createBuildingRig, nearestThreshold, type BuildingRig } from "./buildings3d";
 import { createParkingRig, type ParkingRig } from "./parking3d";
+import { createCountryside, type Campagne } from "./countryside";
 import { createCropField } from "./crop-field";
 import type { CropShape } from "./crop-shapes";
 import { attachStudioEnvironment } from "./machine-kit";
@@ -209,6 +211,15 @@ export type ParkedMachine = {
 };
 
 type Props = {
+  /**
+   * De quoi tirer la campagne alentour.
+   *
+   * Le décor des voisins descend d'une graine : deux joueurs qui regardent la
+   * même ferme doivent voir les mêmes champs, et les revoir demain. Sans
+   * identifiant stable, le voisinage se redessinerait à chaque rechargement,
+   * et ce ne serait plus un lieu.
+   */
+  parcelId?: string;
   gridW: number;
   gridH: number;
   cells: IsoCell[];
@@ -1032,6 +1043,7 @@ function disposeObject3D(obj: THREE.Object3D) {
 }
 
 export function IsoFarmView({
+  parcelId = "",
   gridW,
   gridH,
   cells,
@@ -1203,7 +1215,23 @@ export function IsoFarmView({
     const plowedMap = makeFurrowMap();
     plowedMap.anisotropy = Math.min(8, renderer.capabilities.getMaxAnisotropy());
 
-    const camera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0.1, 100);
+    /*
+     * Les plans de coupe portent sur un pays, plus sur une île.
+     *
+     * Avec un plan lointain à cent et une caméra posée à une trentaine
+     * d'unités de la ferme, la campagne se faisait couper net : le sol, qui
+     * s'étend à soixante-douze unités, passait **derrière** la caméra du côté
+     * du spectateur, et dépassait les cent unités de l'autre. Le paysage
+     * s'arrêtait en plein cadre, sur une ligne droite.
+     *
+     * Le plan proche est donc **négatif**. Une projection orthographique le
+     * permet, et c'est ce qu'il fallait : reculer la caméra aurait marché
+     * aussi — l'échelle n'y dépend pas de la distance — mais le brouillard,
+     * lui, se mesure depuis elle. Reculée de deux cents unités, la caméra
+     * noyait le monde entier dans la brume ; l'écran devenait une nappe grise.
+     * Le plan proche négatif ne déplace rien.
+     */
+    const camera = new THREE.OrthographicCamera(-1, 1, 1, -1, -400, 600);
     camera.position.set(18, 16, 18);
     camera.lookAt(0, 0, 0);
 
@@ -1239,22 +1267,18 @@ export function IsoFarmView({
     seasonAppliedRef.current = seasonRef.current;
     relightRef.current = eclairerPour;
 
-    const hexGroup = new THREE.Group();
-    hexGroup.position.y = -0.35;
-    const hexMat = new THREE.MeshLambertMaterial({ color: 0x74ad63, flatShading: true });
-    const hexEdge = new THREE.MeshLambertMaterial({ color: 0x86bd71, flatShading: true });
-    for (let q = -5; q <= 5; q++) {
-      for (let r = -4; r <= 4; r++) {
-        if (Math.abs(q) + Math.abs(r) + Math.abs(-q - r) > 10) continue;
-        const mesh = new THREE.Mesh(groundHexGeometry(), (q + r) % 2 === 0 ? hexMat : hexEdge);
-        const x = 1.8 * (q + r / 2);
-        const z = 1.55 * r;
-        mesh.position.set(x, 0, z);
-        mesh.receiveShadow = true;
-        hexGroup.add(mesh);
-      }
-    }
-    scene.add(hexGroup);
+    /*
+     * Le sol de la campagne remplace le damier hexagonal.
+     *
+     * Ce damier faisait vingt-cinq unités de large et se cachait entièrement
+     * **sous** la dalle de la ferme : il ne se voyait nulle part, et la
+     * parcelle donnait l'impression de flotter dans le ciel. Ce qui l'entoure
+     * maintenant va jusqu'à la brume. Voir `countryside`.
+     */
+    const campagneGroup = new THREE.Group();
+    scene.add(campagneGroup);
+    let campagne: Campagne | null = null;
+    let campagneCle = "";
 
     const world = new THREE.Group();
     scene.add(world);
@@ -1436,6 +1460,8 @@ export function IsoFarmView({
     const parkingGroup = new THREE.Group();
     world.add(parkingGroup);
     let parkingRig: ParkingRig | null = null;
+    /** Emprise de la cour en coordonnées monde, renseignée par `buildParking`. */
+    let courBoite = { x: 0, z: 0, w: 0, d: 0 };
     /** Places de livraison, en coordonnées monde : c'est là que tombent les caisses. */
     let deliverySpots: { x: number; z: number }[] = [];
     /** Hauteur du dessus de dalle de la cour, échelle monde. */
@@ -1663,6 +1689,9 @@ export function IsoFarmView({
       rig.group.position.set(cx, 0, cz);
       parkingGroup.add(rig.group);
       parkingRig = rig;
+      // L'emprise de la cour, retenue pour la campagne : c'est le seul endroit
+      // qui la connaît, et un champ de voisin ne doit pas s'y poser.
+      courBoite = { x: cx, z: cz, w: plan.w * cellSize, d: plan.d * cellSize };
       yardDeck = rig.deck * cellSize;
       parkingGateZ = cz + rig.gateZ * cellSize;
       deliverySpots = rig.deliveries.map((s) => ({
@@ -1785,6 +1814,37 @@ export function IsoFarmView({
 
       // La cour d'abord : c'est elle qui dit où la haie doit s'ouvrir.
       buildParking();
+
+      /*
+       * Puis la campagne, qui a besoin de savoir où sont l'île et la cour.
+       *
+       * Elle ne se refait pas à chaque `layout()` : celui-ci tourne à chaque
+       * redimensionnement de la fenêtre et à chaque changement de donnée, et
+       * reconstruire vingt champs pour un pixel de large de plus serait payer
+       * cher un décor qui n'a pas bougé. La clé dit ce dont le décor dépend
+       * vraiment — la taille de l'île, la place de la cour, la parcelle.
+       */
+      const cle = `${gw}x${gh}|${courBoite.x.toFixed(2)},${courBoite.z.toFixed(2)},${courBoite.w.toFixed(2)},${courBoite.d.toFixed(2)}|${parcelId}`;
+      if (cle !== campagneCle) {
+        campagneCle = cle;
+        campagne?.dispose();
+        campagneGroup.clear();
+        campagne = createCountryside({
+          graine: parcelId || `${gw}x${gh}`,
+          ileDemiLargeur: (gw * step + 1.4) / 2,
+          ileDemiProfondeur: (gh * step + 1.4) / 2,
+          portail: { x: courBoite.x, z: parkingGateZ },
+          cour: courBoite,
+          shadows: quality.shadows,
+          sobre: !quality.shadows,
+          // Le pied de la dalle : la campagne passe dessous, de sorte que
+          // l'île garde son talus de terre au lieu de flotter.
+          y: -0.46,
+          faireArbre: (x, z, taille) =>
+            makeArtBillboard("/assets/decor/tree.webp", camera, x, -0.44, z, taille * 0.9, taille * 1.2),
+        });
+        campagneGroup.add(campagne.object);
+      }
 
       const hedgeH = 0.55;
       const hedgeT = 0.28;
@@ -2129,7 +2189,15 @@ export function IsoFarmView({
       // Six pour cent de marge quand c'est la largeur qui contraint : sinon la
       // parcelle vient toucher le rail, et sa dernière colonne de cases passe
       // sous le verre.
-      const frustum = (span * 0.72) / Math.min(1, (stage * 0.94) / h) / view.zoom;
+      /*
+       * 0,79 plutôt que 0,72 : la ferme est désormais posée dans un pays, et
+       * un cadrage collé à la haie n'en montrait rien — un test au 1536 × 864
+       * ne laissait voir qu'un seul champ de voisin, coupé, dans un coin. Un
+       * recul de dix pour cent dégage un anneau de campagne sur écran large
+       * sans rendre la parcelle petite au téléphone, où la place est ce qu'on
+       * vient justement de lui rendre. Le zoom du joueur reste souverain.
+       */
+      const frustum = (span * 0.79) / Math.min(1, (stage * 0.94) / h) / view.zoom;
       camera.left = -frustum * aspect;
       camera.right = frustum * aspect;
       camera.top = frustum;
@@ -2705,7 +2773,12 @@ export function IsoFarmView({
       const t = timer.getElapsed();
       const sky = skyFor(weatherRef.current);
       if (scene.fog instanceof THREE.Fog) scene.fog.color.setHex(sky);
-      hexGroup.rotation.y = Math.sin(t * 0.05) * 0.02;
+      // La campagne suit le jour et la saison : un voisin moissonne le même
+      // jour pour tout le monde, et l'hiver gèle ses champs comme les nôtres.
+      if (campagne) {
+        campagne.setJour(gameDayIndex(), seasonRef.current as never);
+        campagne.update(t);
+      }
 
       // Engins garés : moteur coupé. Ni roue, ni gyrophare, ni flottement —
       // c'est le contraste avec l'engin au travail qui dit lequel est occupé.
@@ -3320,6 +3393,11 @@ export function IsoFarmView({
         previewGroup.remove(c);
         disposeObject3D(c);
       }
+      // La campagne : deux modèles d'engin, quatre voitures et trois nappes.
+      // Sans cela, chaque changement de parcelle en laissait un jeu derrière.
+      campagne?.dispose();
+      campagne = null;
+      scene.remove(campagneGroup);
       clearWorkVehicle();
       workDust.dispose();
       workSmoke.dispose();
