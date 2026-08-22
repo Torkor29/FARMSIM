@@ -82,10 +82,8 @@ export type PlanCampagne = {
   /** L'amorce qui relie le portail de la cour à la route. */
   desserte: PointPlan[];
   arbres: { x: number; z: number; taille: number; graine: number }[];
-  /** Rayon des terres émergées. */
+  /** Jusqu'où va la campagne. */
   rayonTerre: number;
-  /** Rayon jusqu'où va la mer. */
-  rayonMer: number;
 };
 
 export type OptionsPlan = {
@@ -109,17 +107,24 @@ export type OptionsPlan = {
 /* ------------------------------------------------------------------ */
 
 /**
- * Rayon des terres émergées, en unités monde.
+ * Jusqu'où va la campagne, en unités monde.
  *
- * Le sol s'incurve vers le bas à mesure qu'on s'éloigne ; à trente-quatre
- * unités, sa crête arrive juste sous le haut du cadre sur écran large. Plus
- * loin, la côte passerait derrière l'horizon et on ne verrait plus le ciel —
- * ce qui était le reproche : « on ne voit plus le ciel ».
+ * Plus loin que ce qu'on en voit, et c'est voulu : le sol s'incurve, sa crête
+ * tombe vers trente-sept unités, et tout ce qui est au-delà passe derrière
+ * cette crête. C'est elle, l'horizon — une courbe, parce qu'un cercle vu de
+ * biais en est une. On garde de la terre derrière pour que la brume ait de
+ * quoi la fondre dans le ciel plutôt que de la couper net.
  */
-export const RAYON_TERRE = 34;
+export const RAYON_TERRE = 55;
 
-/** Jusqu'où va la mer avant que la brume ne l'avale entièrement. */
-export const RAYON_MER = 95;
+/**
+ * Jusqu'où s'installent les voisins.
+ *
+ * Bien en deçà de l'horizon : une parcelle à quarante unités est un timbre
+ * qu'on ne distingue plus, et le tracteur qui la travaille, un pixel qui
+ * tremble.
+ */
+export const RAYON_VOISINS = 28;
 
 /**
  * Courbure du monde : creusement, en unités, par unité de distance au carré.
@@ -145,9 +150,6 @@ export function creux(rayon: number): number {
 export function pente(rayon: number): number {
   return -2 * COURBURE * rayon;
 }
-
-/** Largeur de la plage entre la dernière herbe et la première vague. */
-export const LARGEUR_PLAGE = 2.4;
 
 /* ------------------------------------------------------------------ */
 /* Le hasard qui n'en est pas un                                       */
@@ -363,7 +365,8 @@ export function tracerRoute(o: OptionsPlan): PointPlan[] {
     { x: couloirX, z: z0 + 1 },
     { x: couloirX + 1.6, z: z0 + o.ileDemiProfondeur * 0.9 },
     { x: couloirX + 7, z: z0 + o.ileDemiProfondeur + 8 },
-    { x: couloirX + rayon * 0.85, z: z0 + rayon * 0.85 },
+    // Elle sort du cadre par-dessus la crête, elle ne s'arrête nulle part.
+    { x: couloirX + rayon * 0.7, z: z0 + rayon * 0.7 },
   ];
 }
 
@@ -441,7 +444,7 @@ export function planCampagne(o: OptionsPlan): PlanCampagne {
       const gw = 4 + Math.floor(rnd() * 5);
       const gh = 4 + Math.floor(rnd() * 4);
       const cap = rnd() < 0.5 ? 0 : Math.PI / 2;
-      const rayon = 12 + rnd() * (rayonTerre - 20);
+      const rayon = 12 + rnd() * (RAYON_VOISINS - 12);
       const gigue = (rnd() - 0.5) * 0.34;
       const p: ParcelleVoisine = {
         id: `voisin-${parcelles.length}`,
@@ -456,10 +459,6 @@ export function planCampagne(o: OptionsPlan): PlanCampagne {
         batiment: rnd() < 0.34,
       };
       const boite = empriseParcelle(p);
-      // La côte : une parcelle ne pend pas au-dessus de la mer.
-      if (Math.hypot(p.x, p.z) + Math.max(boite.w, boite.d) / 2 > rayonTerre - LARGEUR_PLAGE - 1) {
-        continue;
-      }
       if (seChevauchent(boite, ile, 2.2)) continue;
       if (seChevauchent(boite, cour, 2.2)) continue;
       if (distanceALaRoute(p.x, p.z, route) < Math.max(boite.w, boite.d) / 2 + DEMI_ROUTE + 1) {
@@ -495,9 +494,11 @@ export function planCampagne(o: OptionsPlan): PlanCampagne {
   /* Les bosquets : dans les interstices, jamais sur une parcelle ni sur la
      route, et jamais les pieds dans l'eau. */
   const arbres: { x: number; z: number; taille: number; graine: number }[] = [];
-  for (let i = 0; i < 90 && arbres.length < 30; i++) {
+  for (let i = 0; i < 160 && arbres.length < 46; i++) {
     const a = rnd() * Math.PI * 2;
-    const r = 11 + rnd() * (rayonTerre - LARGEUR_PLAGE - 12);
+    // Les bosquets vont plus loin que les parcelles : c'est ce qui donne de la
+    // profondeur entre le dernier voisin et l'horizon.
+    const r = 11 + rnd() * (RAYON_VOISINS + 14);
     const x = Math.cos(a) * r;
     const z = Math.sin(a) * r;
     const boite: Boite = { x, z, w: 1.8, d: 1.8 };
@@ -510,5 +511,5 @@ export function planCampagne(o: OptionsPlan): PlanCampagne {
     arbres.push({ x, z, taille: 1.6 + rnd() * 1.5, graine: Math.floor(rnd() * 1e9) });
   }
 
-  return { parcelles, route, desserte, arbres, rayonTerre, rayonMer: RAYON_MER };
+  return { parcelles, route, desserte, arbres, rayonTerre };
 }

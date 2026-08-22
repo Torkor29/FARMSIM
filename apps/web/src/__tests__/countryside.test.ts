@@ -62,19 +62,17 @@ describe("le sol", () => {
       for (let i = 0; i < n.count; i++) mini = Math.min(mini, n.getY(i));
       return { n: n.count, mini };
     };
-    // La terre et la route sont douces : leur normale reste franchement
-    // verticale partout.
+    /*
+     * La terre et la route restent douces : leur normale ne bascule jamais.
+     * Au bord du monde, la courbure finit par passer soixante degrés et la
+     * normale descend sous 0,5 — mais ce qui compte, c'est qu'elle ne passe
+     * **jamais sous zéro** : là, la face serait retournée.
+     */
     for (const nom of ["campagne-sol", "campagne-route"]) {
       const r = mesurer(nom);
       expect(r.n).toBeGreaterThan(60);
-      expect(r.mini).toBeGreaterThan(0.5);
+      expect(r.mini).toBeGreaterThan(0);
     }
-    // Le large plonge : au dernier anneau, la pente passe soixante degrés et
-    // la normale bascule sous 0,5. Ce qu'il ne faut jamais, c'est qu'elle
-    // passe **sous zéro** — là, la face est retournée.
-    const mer = mesurer("campagne-mer");
-    expect(mer.n).toBeGreaterThan(300);
-    expect(mer.mini).toBeGreaterThan(0);
     c.dispose();
   });
 
@@ -101,15 +99,36 @@ describe("le sol", () => {
     c.dispose();
   });
 
-  it("borde la terre d’une plage puis d’une mer", () => {
-    // « Comme un globe où on voit la mer à l'horizon et le ciel. »
+  it("laisse la crête faire l’horizon, et du ciel au-dessus", () => {
+    /*
+     * « Un peu arrondi à l'horizon en haut, et il y a le ciel. »
+     *
+     * Une première version avait pris l'image du globe au pied de la lettre et
+     * planté une plage et une mer autour de la ferme. On est à la campagne :
+     * ce qu'il fallait retenir de l'image, c'est la rondeur. Le sol s'incurve,
+     * sa crête fait la ligne d'horizon, et tout ce qui est derrière passe
+     * dessous.
+     */
     const c = createCountryside({ ...OPTIONS, sobre: true });
-    const mer = c.object.getObjectByName("campagne-mer") as THREE.Mesh;
-    expect(mer).toBeDefined();
-    mer.updateMatrixWorld(true);
-    const b = new THREE.Box3().setFromObject(mer);
-    // La mer commence au-delà des terres et va bien plus loin.
-    expect(Math.max(b.max.x, b.max.z)).toBeGreaterThan(c.plan.rayonTerre * 2);
+    expect(c.object.getObjectByName("campagne-mer")).toBeUndefined();
+    const solMesh = c.object.getObjectByName("campagne-sol") as THREE.Mesh;
+    const p = solMesh.geometry.getAttribute("position");
+    // La hauteur à l'écran, en projection isométrique : c'est elle qui décide
+    // de ce qu'on voit. Elle doit culminer **avant** le bord du monde.
+    let crete = -Infinity;
+    let rCrete = 0;
+    let bord = 0;
+    for (let i = 0; i < p.count; i++) {
+      const r = Math.hypot(p.getX(i), p.getZ(i));
+      const haut = -0.381 * (p.getX(i) + p.getZ(i)) + 0.842 * p.getY(i);
+      if (haut > crete) {
+        crete = haut;
+        rCrete = r;
+      }
+      bord = Math.max(bord, r);
+    }
+    expect(rCrete).toBeGreaterThan(20);
+    expect(rCrete).toBeLessThan(bord * 0.85);
     c.dispose();
   });
 });

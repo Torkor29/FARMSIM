@@ -2,7 +2,7 @@ import type { Season } from "@farmsim/shared";
 import {
   CYCLE_VOISIN,
   DEMI_ROUTE,
-  LARGEUR_PLAGE,
+  RAYON_VOISINS,
   RAYON_TERRE,
   SECTEUR_COUR,
   azimutCour,
@@ -121,18 +121,19 @@ describe("le placement des voisins", () => {
     }
   });
 
-  it("garde tout le monde sur la terre ferme", () => {
-    // Une parcelle qui pend au-dessus de la mer, ou un arbre les pieds dans
-    // l'eau, se verraient au premier coup d'œil.
+  it("garde les voisins à portée de vue", () => {
+    /*
+     * Bien en deçà de l'horizon. Une parcelle à quarante unités est un timbre
+     * qu'on ne distingue plus, et le tracteur qui la travaille, un pixel qui
+     * tremble. La campagne, elle, continue derrière — ce sont les bosquets qui
+     * font la profondeur.
+     */
     for (const p of plan.parcelles) {
-      const e = empriseParcelle(p);
-      expect(Math.hypot(p.x, p.z) + Math.max(e.w, e.d) / 2).toBeLessThan(
-        plan.rayonTerre - LARGEUR_PLAGE,
-      );
+      expect(Math.hypot(p.x, p.z)).toBeLessThanOrEqual(RAYON_VOISINS);
     }
-    for (const a of plan.arbres) {
-      expect(Math.hypot(a.x, a.z)).toBeLessThan(plan.rayonTerre - LARGEUR_PLAGE);
-    }
+    const plusLoin = Math.max(...plan.arbres.map((a) => Math.hypot(a.x, a.z)));
+    expect(plusLoin).toBeGreaterThan(RAYON_VOISINS);
+    for (const a of plan.arbres) expect(Math.hypot(a.x, a.z)).toBeLessThan(plan.rayonTerre);
   });
 
   it("varie les tailles plutôt que de répéter un carré", () => {

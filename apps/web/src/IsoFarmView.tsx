@@ -1200,11 +1200,12 @@ export function IsoFarmView({
      * La brume porte sur un monde, plus sur une île.
      *
      * Réglée de 34 à 66, elle avalait tout ce qui dépassait la haie — donc la
-     * campagne entière et la mer avec. Elle commence maintenant au-delà des
-     * terres et s'achève au large : le voisinage reste net, et c'est l'horizon
-     * qui se dissout dans le ciel plutôt qu'une ligne franche.
+     * campagne entière. Les bornes suivent maintenant les distances mesurées
+     * depuis la caméra : les parcelles voisines tombent entre 39 et 50 unités,
+     * la crête de l'horizon vers 61. Rien ne se voile avant les voisins, et la
+     * crête se dissout dans le ciel au lieu d'y découper une arête verte.
      */
-    scene.fog = new THREE.Fog(skyFor(weatherRef.current), 48, 132);
+    scene.fog = new THREE.Fog(skyFor(weatherRef.current), 46, 92);
 
     let quality = initialQuality();
     const renderer = new THREE.WebGLRenderer({ antialias: quality.antialias, alpha: true });

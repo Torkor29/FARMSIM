@@ -47,7 +47,6 @@ import {
   empriseParcelle,
   etatChamp,
   grainerDe,
-  LARGEUR_PLAGE,
   pente,
   planCampagne,
   suite,
@@ -88,13 +87,13 @@ const PAS_CASE = 1.06;
 const EPAISSEUR_DALLE = 0.3;
 
 /**
- * Le trait de côte : un rayon qui ondule doucement avec l'azimut.
+ * Le bord du monde : un rayon qui ondule doucement avec l'azimut.
  *
- * Un disque parfait se voit pour ce qu'il est. Deux harmoniques suffisent à
- * faire une île, et restent lisses — une côte dentelée accrocherait l'œil plus
- * que le sujet.
+ * Un disque parfait se voit pour ce qu'il est, même noyé de brume. Deux
+ * harmoniques suffisent, et restent lisses — un bord dentelé accrocherait
+ * l'œil plus que le sujet.
  */
-function rayonCote(angle: number, rayon: number, phase: number): number {
+function rayonBord(angle: number, rayon: number, phase: number): number {
   return rayon * (1 + 0.07 * Math.sin(3 * angle + phase) + 0.04 * Math.sin(5 * angle - phase));
 }
 
@@ -223,24 +222,23 @@ export function createCountryside(o: OptionsCampagne): Campagne {
     return new THREE.Quaternion().setFromAxisAngle(axe, Math.atan(pente(r)));
   };
 
-  /* —— Le monde : terre, plage, mer ——
+  /* —— Le monde ——
      Une grille radiale plutôt qu'un damier : c'est elle qui permet de courber
-     proprement, de découper une côte et de garder des triangles réguliers
-     jusqu'au large. */
+     proprement et de garder des triangles réguliers jusqu'à l'horizon.
+
+     Il n'y a ni plage ni mer. La première version en avait mis, en prenant
+     « comme un globe où on voit la mer » pour une consigne alors que c'était
+     une image : on est à la campagne. Ce qui restait juste dans l'image, c'est
+     la rondeur — le sol s'incurve, sa crête fait l'horizon, et la brume la
+     fond dans le ciel. */
   {
     const secteurs = sobre ? 48 : 72;
-    const anneauxTerre = sobre ? 14 : 20;
-    const anneauxMer = sobre ? 5 : 8;
+    const anneaux = sobre ? 18 : 26;
     const posT: number[] = [];
     const colT: number[] = [];
-    const posM: number[] = [];
-    const colM: number[] = [];
     const teinte = new THREE.Color();
     const HERBE = 0x6aa259;
-    const SABLE = 0xe3d3a4;
-    const ECUME = 0xd9ecef;
-    const MER = 0x4e8fa8;
-    const MER_LOIN = 0x3d7791;
+    const HERBE_LOIN = 0x76a862;
 
     const pt = (angle: number, r: number): [number, number, number] => [
       Math.cos(angle) * r,
@@ -252,74 +250,51 @@ export function createCountryside(o: OptionsCampagne): Campagne {
      * Un anneau entre deux azimuts, dans le bon sens.
      *
      * Un seul point d'entrée, et c'est délibéré : écrits à la main, les
-     * quatre anneaux — terre, plage, écume, mer — étaient tous enroulés à
-     * l'envers. Sur une grille radiale, parcourir « intérieur puis
-     * extérieur » tourne dans l'autre sens que sur un damier, et les six
-     * mille sommets du monde regardaient le fond de la mer. Ici, l'ordre est
-     * écrit une fois.
+     * anneaux étaient enroulés à l'envers. Sur une grille radiale, parcourir
+     * « intérieur puis extérieur » tourne dans l'autre sens que sur un
+     * damier, et les six mille sommets du monde regardaient le sous-sol.
      */
     const anneau = (
-      posN: number[], colN: number[],
       a0: number, a1: number,
       rIn0: number, rOut0: number, rIn1: number, rOut1: number,
-      teinte: THREE.Color,
+      teint: THREE.Color,
     ) => {
       // Au pôle, le bord intérieur se réduit à un point : le quadrilatère y
       // dégénère en un triangle plus un autre d'aire nulle, dont la normale
       // vaut zéro. Un triangle franc plutôt qu'un quadrilatère plat.
       if (rIn0 < 1e-6 && rIn1 < 1e-6) {
         for (const v of [pt(a1, rOut1), pt(a0, rOut0), [0, sol(0), 0] as [number, number, number]]) {
-          posN.push(v[0], v[1], v[2]);
-          colN.push(teinte.r, teinte.g, teinte.b);
+          posT.push(v[0], v[1], v[2]);
+          colT.push(teint.r, teint.g, teint.b);
         }
         return;
       }
-      quad(posN, colN, pt(a0, rOut0), pt(a1, rOut1), pt(a1, rIn1), pt(a0, rIn0), teinte);
+      quad(posT, colT, pt(a0, rOut0), pt(a1, rOut1), pt(a1, rIn1), pt(a0, rIn0), teint);
     };
 
     for (let s = 0; s < secteurs; s++) {
       const a0 = (s / secteurs) * Math.PI * 2;
       const a1 = ((s + 1) / secteurs) * Math.PI * 2;
-      const cote0 = rayonCote(a0, plan.rayonTerre, phaseCote);
-      const cote1 = rayonCote(a1, plan.rayonTerre, phaseCote);
-      // La terre, du centre à la côte.
-      for (let k = 0; k < anneauxTerre; k++) {
-        const t0 = k / anneauxTerre;
-        const t1 = (k + 1) / anneauxTerre;
-        // Les anneaux se resserrent vers le large : la courbure y est plus
-        // forte, et des quadrilatères réguliers y feraient des marches.
-        const e0 = t0 * t0 * 0.4 + t0 * 0.6;
-        const e1 = t1 * t1 * 0.4 + t1 * 0.6;
-        const plage = LARGEUR_PLAGE;
-        const r00 = e0 * (cote0 - plage);
-        const r01 = e1 * (cote0 - plage);
-        const r10 = e0 * (cote1 - plage);
-        const r11 = e1 * (cote1 - plage);
-        teinte.setHex(HERBE).multiplyScalar(0.93 + rnd() * 0.14);
-        anneau(posT, colT, a0, a1, r00, r01, r10, r11, teinte);
-      }
-      // La plage.
-      teinte.setHex(SABLE).multiplyScalar(0.96 + rnd() * 0.08);
-      anneau(
-        posT, colT, a0, a1,
-        cote0 - LARGEUR_PLAGE, cote0, cote1 - LARGEUR_PLAGE, cote1, teinte,
-      );
-      // L'écume, puis la mer qui s'assombrit vers le large.
-      teinte.setHex(ECUME);
-      anneau(posM, colM, a0, a1, cote0, cote0 + 0.9, cote1, cote1 + 0.9, teinte);
-      for (let k = 0; k < anneauxMer; k++) {
-        const u0 = k / anneauxMer;
-        const u1 = (k + 1) / anneauxMer;
-        const r0 = cote0 + 0.9 + u0 * u0 * (plan.rayonMer - cote0);
-        const r1 = cote0 + 0.9 + u1 * u1 * (plan.rayonMer - cote0);
-        const q0 = cote1 + 0.9 + u0 * u0 * (plan.rayonMer - cote1);
-        const q1 = cote1 + 0.9 + u1 * u1 * (plan.rayonMer - cote1);
-        teinte.setHex(k < 2 ? MER : MER_LOIN).multiplyScalar(0.97 + rnd() * 0.06);
-        anneau(posM, colM, a0, a1, r0, r1, q0, q1, teinte);
+      // Le bord du monde ondule doucement : un disque parfait se voit pour ce
+      // qu'il est, même noyé de brume.
+      const bord0 = rayonBord(a0, plan.rayonTerre, phaseCote);
+      const bord1 = rayonBord(a1, plan.rayonTerre, phaseCote);
+      for (let k = 0; k < anneaux; k++) {
+        const t0 = k / anneaux;
+        const t1 = (k + 1) / anneaux;
+        // Les anneaux se resserrent vers la crête : c'est là que la courbure
+        // se voit, et des quadrilatères réguliers y feraient des marches.
+        const e0 = t0 * t0 * 0.45 + t0 * 0.55;
+        const e1 = t1 * t1 * 0.45 + t1 * 0.55;
+        // Les prés du fond tirent vers le gris-vert : c'est la perspective
+        // aérienne qui donne la distance, avant même la brume.
+        teinte
+          .setHex(t0 > 0.55 ? HERBE_LOIN : HERBE)
+          .multiplyScalar(0.93 + rnd() * 0.14);
+        anneau(a0, a1, e0 * bord0, e1 * bord0, e0 * bord1, e1 * bord1, teinte);
       }
     }
     object.add(garder(maillageFacette(posT, colT, { recoit: shadows, nom: "campagne-sol" })));
-    object.add(garder(maillageFacette(posM, colM, { nom: "campagne-mer" })));
   }
 
   /* —— Les parcelles des voisins ——
