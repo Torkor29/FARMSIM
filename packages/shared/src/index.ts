@@ -1,6 +1,6 @@
 /** Types & constantes partagés Farming Navigateur */
 
-import { GAME_DAY_MS } from "./time.js";
+import { GAME_DAY_MS, JOB_MS_PER_GAME_HOUR } from "./time.js";
 import { MACHINE_END_OF_LIFE_HOURS } from "./machine-care.js";
 import { RECIPES, type ProcessingKind } from "./processing.js";
 import { kindForBarn, yardTypeForBarn } from "./livestock.js";
@@ -33,6 +33,7 @@ export * from "./fuel.js";
 export * from "./weeds.js";
 export * from "./credit.js";
 export * from "./processing.js";
+export * from "./crop-calendar.js";
 export * from "./art-anchor.js";
 export * from "./play-guide.js";
 export * from "./appearance.js";
@@ -85,6 +86,20 @@ export const WEATHER_LABELS: Record<WeatherState, string> = {
 
 /** Intervalle tick serveur MVP `[TEST]` */
 export const SIM_TICK_MS = 20_000;
+
+/**
+ * Taux par tick correspondant à une demi-vie donnée, en **jours de jeu**.
+ *
+ * Une décroissance écrite « tant par tick » est un piège : elle dépend à la
+ * fois du pas de simulation et de la durée d'un jour. Les deux ont changé au
+ * moins une fois chacun. Écrire la demi-vie et en déduire le pas rend le
+ * réglage lisible — « un excédent se résorbe de moitié en huit heures de jeu »
+ * — et insensible au reste.
+ */
+export function tauxParTick(halfLifeDays: number, tickMs: number = SIM_TICK_MS): number {
+  const demiVie = Math.max(1, halfLifeDays * GAME_DAY_MS);
+  return 1 - Math.pow(2, -tickMs / demiVie);
+}
 
 /**
  * Le temps de route d'une commande au négociant `[GD]`.
@@ -219,9 +234,10 @@ export const CROP_DEFS: Record<
     code: "WHEAT",
     name: "Blé",
     yieldPerCell: 0.35,
-    // Cinq jours de jeu : le blé occupe les cinq septièmes d'une saison. On
-    // sème au printemps et on moissonne avant l'automne — la phrase devient
-    // vraie au sens propre, alors qu'à trois minutes elle ne voulait rien dire.
+    // Cinq jours de jeu, soit trente heures réelles. Céréale d'hiver : semée
+    // vendredi ou samedi, elle passe le dimanche au ralenti et se moissonne le
+    // lundi. C'est l'arc que le calendrier montre, et il n'y est pas dessiné —
+    // il est calculé avec cette valeur-ci.
     growMs: 5 * GAME_DAY_MS,
     seedCostPerCell: 15,
   },
@@ -229,8 +245,9 @@ export const CROP_DEFS: Record<
     code: "MAIZE",
     name: "Maïs",
     yieldPerCell: 0.45,
-    // La plus longue du catalogue : six jours sur sept. Qui plante du maïs
-    // engage sa saison, et c'est ce qui doit rendre le choix sérieux.
+    // La plus longue du catalogue : six jours de jeu, un jour et demi réel.
+    // Qui plante du maïs engage son printemps, et c'est ce qui doit rendre le
+    // choix sérieux.
     growMs: 6 * GAME_DAY_MS,
     seedCostPerCell: 18,
   },
@@ -335,7 +352,18 @@ export const MARKET_BOUNDS: Record<
  * pouvait rien exprimer), puis 0,015 (un quart d'heure — mais c'était encore
  * lui, et non l'offre, qui fixait le cours d'équilibre).
  */
-export const MARKET_REVERSION = 0.002;
+export const MARKET_REVERSION_HALFLIFE_DAYS = 8;
+
+/**
+ * Part du rappel appliquée à chaque tick.
+ *
+ * Dérivée de la demi-vie, et non posée en dur : elle valait 0,002 par tick,
+ * calibrée à l'époque où un jour de jeu durait quinze minutes. Le jour est
+ * passé à six heures pour que l'année tombe sur la semaine réelle, et ce même
+ * 0,002 par tick aurait effacé une année d'excédent en une soirée. Ce qui doit
+ * rester constant, c'est la demi-vie **en temps de jeu** — pas le pas.
+ */
+export const MARKET_REVERSION = tauxParTick(MARKET_REVERSION_HALFLIFE_DAYS);
 
 /**
  * Élasticité-prix de l'offre PNJ `[GD]`.
@@ -373,8 +401,19 @@ export const MARKET_ELASTIC_CEIL = 1.7;
  */
 export const MARKET_DEPTH_FLOOR = 0.3;
 
-/** Sensibilité du cours au déséquilibre, par tick `[GD]`. */
-export const MARKET_KAPPA = 0.02;
+/**
+ * Sensibilité du cours au déséquilibre, par **jour de jeu** `[GD]`.
+ *
+ * Elle était écrite par tick, et c'est le dernier taux du marché à l'avoir
+ * été. Un prix qui bouge « de tant par tick » avance d'autant plus vite dans
+ * une saison qu'il y a de ticks dedans : le jour de jeu passant de quinze
+ * minutes à six heures, le cours réagissait vingt-quatre fois plus par saison
+ * et se collait à ses bornes en une journée.
+ */
+export const MARKET_KAPPA_PER_DAY = 0.9;
+
+/** La même sensibilité ramenée au pas de simulation. */
+export const MARKET_KAPPA = (MARKET_KAPPA_PER_DAY * SIM_TICK_MS) / GAME_DAY_MS;
 
 /**
  * Poids du carnet face au flux du jour `[GD]`.
@@ -399,7 +438,10 @@ export const MARKET_BOOK_WEIGHT = 0.5;
  * durablement. Le réglage n'est pas sur le fil — 0,06 tient les mêmes
  * intentions.
  */
-export const MARKET_ABSORB = 0.045;
+export const MARKET_ABSORB_HALFLIFE_DAYS = 1 / 3;
+
+/** Part du carnet écoulée à chaque tick, dérivée de la demi-vie. */
+export const MARKET_ABSORB = tauxParTick(MARKET_ABSORB_HALFLIFE_DAYS);
 
 export type BuildingDef = {
   type: BuildingType;
@@ -1375,10 +1417,12 @@ export function machineHoursPerHectare(type: MachineType, tier: Tier = 1): numbe
  * épandage une seule. Les faire tenir dans le même clic effaçait précisément
  * ce que la largeur de travail venait d'apporter.
  *
- * L'échelle n'est pas un nouveau réglage : elle se déduit de l'horloge du jeu.
- * Une journée dure `GAME_DAY_MS`, donc une heure de travail vaut un
- * vingt-quatrième de journée. Aux valeurs qui comptent, avec une journée de
- * quinze minutes :
+ * L'échelle a **sa propre horloge**, `JOB_MS_PER_GAME_HOUR`, et c'est le seul
+ * endroit du jeu où c'est le cas. Elle se déduisait du jour de jeu ; le jour
+ * est passé de quinze minutes à six heures pour que l'année tombe sur la
+ * semaine réelle, et ce même labour serait devenu une attente de trois heures
+ * devant l'écran. On ne fait pas patienter un joueur à l'échelle où poussent
+ * les cultures. Aux valeurs qui comptent, inchangées :
  *
  *     épandage d'un champ   1,2 h  →  45 s
  *     semis                 4,4 h  →  2 min 45
@@ -1392,7 +1436,7 @@ export function machineHoursPerHectare(type: MachineType, tier: Tier = 1): numbe
 export const GAME_HOURS_PER_DAY = 24;
 
 export function jobDurationMs(hours: number): number {
-  return Math.round((Math.max(0, hours) / GAME_HOURS_PER_DAY) * GAME_DAY_MS);
+  return Math.round(Math.max(0, hours) * JOB_MS_PER_GAME_HOUR);
 }
 
 /** Un tracteur peut-il tirer cet outil ? */

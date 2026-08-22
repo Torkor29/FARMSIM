@@ -22,6 +22,7 @@ import {
   DIRT_DIRTY_THRESHOLD,
   weedYieldFactor,
   GAME_DAY_MS,
+  SIM_TICK_MS,
   currentSeason,
   growthRate,
   weatherForDay,
@@ -42,6 +43,9 @@ import {
   type Specialization,
   type WeatherState,
 } from "@farmsim/shared";
+
+/** Part d'un jour de jeu que couvre un tick de simulation. */
+const PART_DE_JOUR = SIM_TICK_MS / GAME_DAY_MS;
 
 /**
  * Plafond de l'intégration, en jours de jeu.
@@ -386,9 +390,19 @@ export function tickMarket(input: MarketTickInput): MarketTickResult {
    * Ici le flux se compare au flux, et le carnet à la profondeur de référence :
    * les deux termes sont sans dimension et du même ordre de grandeur.
    */
+  /*
+   * Le plancher du dénominateur suit l'échelle des flux.
+   *
+   * Une demi-tonne en dur : elle ne mordait jamais tant qu'un tick portait
+   * deux tonnes de flux PNJ. Les flux étant désormais exprimés par jour de
+   * jeu, un tick n'en porte plus qu'un millième — le plancher devenait le
+   * dénominateur pour de bon, et la moisson d'une seule parcelle produisait
+   * un déséquilibre quarante fois trop grand. Le garde-fou doit protéger de
+   * la division par zéro, pas redéfinir l'échelle.
+   */
   const flux =
     (input.demandTons - input.supplyTons) /
-    Math.max(0.5, (input.demandTons + input.supplyTons) / 2);
+    Math.max(0.5 * PART_DE_JOUR, (input.demandTons + input.supplyTons) / 2);
   const carnet = (input.stockTons - bounds.depth * MARKET_DEPTH_FLOOR) / bounds.depth;
   const imbalance = flux - carnet * MARKET_BOOK_WEIGHT;
   let price = input.price * (1 + kappa * imbalance);
@@ -818,14 +832,29 @@ function weatherTransitions(
  * sont désormais de l'ordre de ce que produit une ferme, et le joueur devient
  * un acteur de son marché — d'abord négligeable, puis pesant.
  */
-export const NPC_BASE_SUPPLY = 2;
+export const NPC_SUPPLY_PER_DAY = 90;
+
+/**
+ * Ce que les voisins mettent au marché à chaque tick.
+ *
+ * Dérivé du volume **par jour de jeu**, et non posé par tick : écrit par tick,
+ * le flux dépendait à la fois du pas de simulation et de la durée d'un jour.
+ * Le jour est passé de quinze minutes à six heures pour que l'année tombe sur
+ * la semaine réelle — les voisins auraient produit vingt-quatre fois plus par
+ * saison, et la moisson du joueur aurait de nouveau été noyée. C'est
+ * exactement le défaut d'origine, par une autre porte.
+ */
+export const NPC_BASE_SUPPLY = (NPC_SUPPLY_PER_DAY * SIM_TICK_MS) / GAME_DAY_MS;
 
 /**
  * La demande égale l'offre en moyenne : c'est la **saison** qui creuse
  * l'excédent d'automne et la pénurie de printemps, pas un déséquilibre
  * permanent qui ferait dériver le cours dans un seul sens.
  */
-export const NPC_BASE_DEMAND = 2;
+export const NPC_DEMAND_PER_DAY = 90;
+
+/** Idem côté demande, dérivée du volume par jour de jeu. */
+export const NPC_BASE_DEMAND = (NPC_DEMAND_PER_DAY * SIM_TICK_MS) / GAME_DAY_MS;
 
 /**
  * Le cycle annuel de l'offre voisine `[GD]`.
@@ -897,9 +926,19 @@ export function marketNpcPressure(opts: {
 
   const supplyTons = NPC_BASE_SUPPLY * saison * meteo * offreElastique * (0.8 + rnd() * 0.4);
   const demandTons =
-    NPC_BASE_DEMAND * demandeElastique * (0.9 + rnd() * 0.2) + stormShare * 0.3;
+    NPC_BASE_DEMAND * demandeElastique * (0.9 + rnd() * 0.2) +
+    stormShare * 0.3 * PART_DE_JOUR;
+  /*
+   * Le plancher suit la même échelle que le flux.
+   *
+   * Il valait deux dixièmes de tonne par tick, ce qui tenait tant qu'un tick
+   * pesait un quarante-cinquième de journée. À l'échelle actuelle il aurait
+   * dépassé le flux lui-même et serait devenu le régime normal du marché :
+   * plus personne n'aurait été élastique.
+   */
+  const plancher = 0.2 * PART_DE_JOUR;
   return {
-    supplyTons: Math.max(0.2, Math.round(supplyTons * 100) / 100),
-    demandTons: Math.max(0.2, Math.round(demandTons * 100) / 100),
+    supplyTons: Math.max(plancher, Math.round(supplyTons * 1e6) / 1e6),
+    demandTons: Math.max(plancher, Math.round(demandTons * 1e6) / 1e6),
   };
 }

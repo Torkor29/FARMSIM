@@ -28,11 +28,29 @@ import {
   type Season,
 } from "@farmsim/shared";
 
-/** Instant du premier jour de la saison demandée, hémisphère nord. */
+/**
+ * Instant du premier jour de la saison demandée, hémisphère nord.
+ *
+ * L'année tombe sur la semaine réelle : lundi et mardi font le printemps,
+ * mercredi et jeudi l'été, vendredi et samedi l'automne, et l'hiver tient dans
+ * le dimanche. On part donc d'un lundi à minuit UTC et on compte les jours.
+ */
+const LUNDI = Date.UTC(2026, 7, 24);
+const JOUR_REEL = 24 * 60 * 60 * 1000;
+const PREMIER_JOUR: Record<Season, number> = { SPRING: 0, SUMMER: 2, AUTUMN: 4, WINTER: 6 };
+
 function debutDe(saison: Season, cycle = 0): number {
-  const ordre: Season[] = ["SPRING", "SUMMER", "AUTUMN", "WINTER"];
-  return (cycle * 4 + ordre.indexOf(saison)) * SEASON_DURATION_MS;
+  return LUNDI + (cycle * 7 + PREMIER_JOUR[saison]) * JOUR_REEL;
 }
+
+/**
+ * La plus courte des saisons, en jours de jeu.
+ *
+ * L'hiver ne dure qu'un jour réel, soit quatre jours de jeu. Toute mesure qui
+ * veut rester *dans* une saison doit tenir là-dedans — sans quoi elle déborde
+ * sur la suivante et mesure autre chose que ce qu'elle croit.
+ */
+const DANS_UNE_SAISON = 4 * GAME_DAY_MS;
 
 const CULTURES = Object.keys(CROP_SEASONALITY) as CropCode[];
 
@@ -106,11 +124,20 @@ describe("intégration jour par jour", () => {
      * débordait de trois jours sur le printemps et rendait dix fois trop. Le
      * modèle était juste, la prémisse du test ne l'était pas.
      */
-    const cinq = 5 * GAME_DAY_MS;
     const ete = debutDe("SUMMER");
     const hiver = debutDe("WINTER");
-    const enEte = integrateGrowth({ crop: "MAIZE", plantedAt: ete, until: ete + cinq, ...nord });
-    const enHiver = integrateGrowth({ crop: "MAIZE", plantedAt: hiver, until: hiver + cinq, ...nord });
+    const enEte = integrateGrowth({
+      crop: "MAIZE",
+      plantedAt: ete,
+      until: ete + DANS_UNE_SAISON,
+      ...nord,
+    });
+    const enHiver = integrateGrowth({
+      crop: "MAIZE",
+      plantedAt: hiver,
+      until: hiver + DANS_UNE_SAISON,
+      ...nord,
+    });
     expect(enEte).toBeGreaterThan(enHiver * 10);
   });
 

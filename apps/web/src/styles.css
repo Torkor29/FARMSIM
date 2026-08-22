@@ -6073,3 +6073,147 @@ button.tiny {
   opacity: 0.7;
   margin-top: 0.1rem;
 }
+/* —— Calendrier des cultures ——
+   Le pendant clair du calendrier de Farming Simulator : mêmes deux bandes,
+   même lecture d'un coup d'œil, mais dans la crème et la sarcelle du jeu
+   plutôt que dans son noir. Les colonnes sont les sept jours de la semaine,
+   parce que l'année de jeu en fait une — le joueur n'a rien à convertir. */
+.calendrier-ouvrir {
+  position: fixed;
+  right: max(0.9rem, env(safe-area-inset-right));
+  bottom: max(0.9rem, env(safe-area-inset-bottom));
+  z-index: 45;
+  display: grid;
+  place-items: center;
+  width: 3rem;
+  height: 3rem;
+  padding: 0;
+  border-radius: var(--r-md);
+  background: var(--bar);
+  border: 1px solid var(--glass-border);
+  box-shadow: var(--sh-2);
+  backdrop-filter: blur(12px);
+  color: var(--teal-500);
+  cursor: pointer;
+}
+.calendrier-ouvrir:hover { background: var(--paper); }
+.calendrier-ouvrir svg { width: 1.35rem; height: 1.35rem; }
+/* La pastille de saison : on sait quel jour on est sans ouvrir le panneau. */
+.calendrier-ouvrir .saison-puce {
+  position: absolute;
+  right: -0.15rem;
+  top: -0.15rem;
+  width: 0.85rem;
+  height: 0.85rem;
+  border-radius: 50%;
+  border: 2px solid var(--bar);
+}
+.saison-puce.s-spring { background: #7cc36a; }
+.saison-puce.s-summer { background: var(--gold-500); }
+.saison-puce.s-autumn { background: #d08a3c; }
+.saison-puce.s-winter { background: #9fc3d8; }
+
+.calendrier {
+  position: fixed;
+  right: max(0.9rem, env(safe-area-inset-right));
+  bottom: calc(4.3rem + env(safe-area-inset-bottom));
+  z-index: 46;
+  width: min(52rem, calc(100vw - 1.8rem));
+  max-height: min(34rem, calc(100vh - 7rem));
+  overflow: auto;
+  padding: 0.9rem 1rem 1.1rem;
+  border-radius: var(--r-lg);
+  background: var(--bar);
+  border: 1px solid var(--glass-border);
+  box-shadow: var(--sh-3, 0 12px 32px rgba(20, 40, 34, 0.18));
+  backdrop-filter: blur(14px);
+  animation: build-rise 0.18s ease-out;
+}
+.calendrier-tete {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+  margin-bottom: 0.8rem;
+}
+.calendrier-tete h3 { margin: 0 0 0.15rem; font-size: 1.05rem; }
+.calendrier-tete p { margin: 0; max-width: 46ch; }
+.calendrier-legende { display: flex; align-items: center; gap: 0.7rem; font-size: 0.76rem; }
+.calendrier-legende span { display: inline-flex; align-items: center; gap: 0.3rem; }
+.pastille { width: 0.75rem; height: 0.45rem; border-radius: 999px; display: inline-block; }
+.pastille.semis { background: #7cc36a; }
+.pastille.recolte { background: #d0743c; }
+
+.calendrier-grille {
+  display: grid;
+  grid-template-columns: minmax(7rem, 9rem) repeat(var(--jours), minmax(0, 1fr));
+  gap: 2px;
+  align-items: stretch;
+}
+.calendrier-coin { grid-column: 1; }
+.calendrier-jour {
+  display: grid;
+  justify-items: center;
+  gap: 0.05rem;
+  padding: 0.3rem 0.1rem 0.35rem;
+  border-radius: var(--r-sm, 6px) var(--r-sm, 6px) 0 0;
+  font-size: 0.7rem;
+  line-height: 1.1;
+}
+.calendrier-jour em { font-style: normal; font-size: 0.6rem; color: var(--muted); }
+.calendrier-jour strong { font-size: 0.72rem; letter-spacing: 0.04em; }
+/* Chaque saison porte sa teinte, très diluée : c'est un fond, pas un signal. */
+.calendrier-jour.s-spring { background: rgba(124, 195, 106, 0.14); }
+.calendrier-jour.s-summer { background: rgba(201, 162, 39, 0.14); }
+.calendrier-jour.s-autumn { background: rgba(208, 138, 60, 0.14); }
+.calendrier-jour.s-winter { background: rgba(159, 195, 216, 0.18); }
+.calendrier-jour.aujourdhui { outline: 2px solid var(--teal-500); outline-offset: -2px; }
+.calendrier-marque {
+  font-size: 0.55rem;
+  color: var(--teal-500);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.calendrier-ligne { display: contents; }
+.calendrier-nom {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  padding: 0.3rem 0.5rem 0.3rem 0.1rem;
+  min-height: 2.1rem;
+}
+.calendrier-nom img { width: 1.35rem; height: 1.35rem; flex: none; }
+.calendrier-nom span { display: grid; line-height: 1.15; }
+.calendrier-nom strong { font-size: 0.82rem; }
+.calendrier-nom em { font-style: normal; font-size: 0.66rem; color: var(--muted); }
+
+.calendrier-case {
+  display: grid;
+  align-content: center;
+  gap: 3px;
+  padding: 0.35rem 0.15rem;
+  background: var(--sand);
+  border-radius: 3px;
+}
+/* L'hiver reste visible mais éteint : ce n'est pas un trou, c'est un repos. */
+.calendrier-case.creux { background: rgba(159, 195, 216, 0.16); }
+.calendrier-case.aujourdhui { box-shadow: inset 0 0 0 2px rgba(26, 107, 90, 0.35); }
+.barre { display: block; height: 0.4rem; border-radius: 999px; }
+.barre.semis { background: #7cc36a; }
+.barre.recolte { background: #d0743c; }
+
+@media (max-width: 640px) {
+  .calendrier { width: calc(100vw - 1rem); right: 0.5rem; padding: 0.75rem 0.6rem 0.9rem; }
+  .calendrier-grille { grid-template-columns: minmax(5.2rem, 6.5rem) repeat(var(--jours), minmax(0, 1fr)); }
+  .calendrier-nom strong { font-size: 0.74rem; }
+  .calendrier-tete p { display: none; }
+}
+/* La réponse à la question qui amène ici : « je sème quoi aujourd'hui ? ». */
+.calendrier-aujourdhui {
+  margin: 0.3rem 0 0;
+  font-size: 0.8rem;
+  color: var(--ink-soft);
+  max-width: 46ch;
+}
+.calendrier-aujourdhui strong { color: var(--teal-500); }

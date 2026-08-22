@@ -1,4 +1,5 @@
 import {
+  LIVESTOCK_CYCLE_MS,
   DEALER_SELL_MARKUP,
   FEED_GRAZING_RATIO,
   GOOD_DEFS,
@@ -16,7 +17,15 @@ import {
   type TradeGood,
 } from "@farmsim/shared";
 
-const CYCLE = 15 * 60 * 1000;
+/*
+ * Le cycle d'élevage, lu à la source.
+ *
+ * Il était recopié — « 15 * 60 * 1000 » — et c'est précisément la faute que
+ * `time.test.ts` existe pour attraper. Le jour de jeu est passé à six heures
+ * pour que l'année tombe sur la semaine réelle, et cette copie a continué de
+ * valoir un quart d'heure : les âges testés ne voulaient plus rien dire.
+ */
+const CYCLE = LIVESTOCK_CYCLE_MS;
 
 describe("marchandises", () => {
   it("donne des bornes de cours à chaque marchandise échangée", () => {
