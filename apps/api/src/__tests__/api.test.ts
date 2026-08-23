@@ -2139,3 +2139,166 @@ describe("les compétences suivent le vrai jeu", () => {
     assert.ok(batis.includes("CATTLE_BARN"), `l'étable de départ manque (${batis.join(", ")})`);
   });
 });
+
+describe("le voisinage d’une parcelle", () => {
+  /**
+   * La campagne 3D inventait ses voisins à partir d'une graine : des cultures
+   * tirées au sort sur des parcelles sans identifiant, qu'on ne pouvait donc
+   * ni regarder vraiment ni acheter. Or la carte existe, et trente pour cent
+   * de ses parcelles appartiennent déjà à des fermes PNJ.
+   *
+   * Cette route est la jointure entre les deux. Ce qu'on vérifie ici, c'est
+   * qu'elle rend bien **la carte** — et pas un décor de plus.
+   */
+  async function fermeAvecVoisins(nom: string) {
+    const moi = await inscrire(nom);
+    const monde = await appel("/world/AUR");
+    const regions = (monde.corps as unknown as {
+      regions: { parcels: { id: string; taken: boolean }[] }[];
+    }).regions;
+    let parcelId = "";
+    for (const r of regions) {
+      const libre = (r.parcels ?? []).find((p) => !p.taken);
+      if (libre) {
+        parcelId = libre.id;
+        break;
+      }
+    }
+    assert.ok(parcelId, "il faut une parcelle libre");
+    await appel("/world/claim", {
+      methode: "POST",
+      corps: { userId: moi.id, specialization: "CEREALIER", parcelId },
+      jeton: moi.jeton,
+    });
+    const r = await appel(`/parcels/${parcelId}/voisinage`, { jeton: moi.jeton });
+    assert.equal(r.statut, 200, JSON.stringify(r.corps));
+    return {
+      moi,
+      parcelId,
+      vue: r.corps as unknown as {
+        centre: { id: string; mapX: number; mapY: number };
+        zone: { code: string; mapW: number; mapH: number };
+        parcelles: {
+          id: string;
+          col: number;
+          rang: number;
+          mapX: number;
+          mapY: number;
+          statut: string;
+          culture: string | null;
+          partCultivee: number;
+          batiments: unknown[];
+          cheptel: { kind: string; size: number }[];
+          prix: number | null;
+          achetable: boolean;
+        }[];
+      },
+    };
+  }
+
+  it("rend de vraies parcelles de la carte, pas un décor", async () => {
+    const { parcelId, vue } = await fermeAvecVoisins("Voisin Un");
+    assert.ok(vue.parcelles.length >= 4, `trop peu de voisins : ${vue.parcelles.length}`);
+    // Chacune porte l'identifiant qui permettra de l'acheter.
+    for (const p of vue.parcelles) assert.match(p.id, /^[a-z0-9]+$/i);
+    const centre = vue.parcelles.find((p) => p.id === parcelId);
+    assert.ok(centre, "la parcelle du joueur doit figurer dans sa propre trame");
+    assert.equal(centre.statut, "MOI");
+  });
+
+  it("centre la trame sur la ferme du joueur", async () => {
+    /*
+     * La case (0, 0) est la sienne. Si les deux axes ne pointaient pas dans le
+     * même sens que ceux de la vue, la campagne serait le miroir de la carte —
+     * et la parcelle qu'on croit acheter à droite arriverait à gauche.
+     */
+    const { parcelId, vue } = await fermeAvecVoisins("Voisin Deux");
+    const centre = vue.parcelles.find((p) => p.id === parcelId)!;
+    assert.equal(centre.col, 0);
+    assert.equal(centre.rang, 0);
+    for (const p of vue.parcelles) {
+      assert.equal(p.col, p.mapX - vue.centre.mapX);
+      assert.equal(p.rang, p.mapY - vue.centre.mapY);
+    }
+  });
+
+  it("ne sort jamais de la commune", async () => {
+    // Au-delà de la zone il n'y a pas de parcelle : c'est ce qui donne au pays
+    // un bord crédible, bois et prés, plutôt qu'un damier sans fin.
+    const { vue } = await fermeAvecVoisins("Voisin Trois");
+    for (const p of vue.parcelles) {
+      assert.ok(p.mapX >= 0 && p.mapX < vue.zone.mapW, `mapX hors zone : ${p.mapX}`);
+      assert.ok(p.mapY >= 0 && p.mapY < vue.zone.mapH, `mapY hors zone : ${p.mapY}`);
+    }
+  });
+
+  it("montre ce qui pousse vraiment sur une parcelle", async () => {
+    /*
+     * Ce que la route doit prouver : elle lit **les cases de la base**, et non
+     * un décor tiré au sort. On sème donc pour de bon, et on regarde si la
+     * trame le rapporte.
+     *
+     * Le serveur de test tourne avec `FARMSIM_SKIP_NPC=1` — les fermes PNJ,
+     * qui peuplent trente pour cent de chaque commune en vrai, n'y sont pas
+     * semées, et il n'y a donc pas de voisin cultivé sur qui compter. La
+     * parcelle du joueur passe par exactement le même résumé.
+     */
+    const { moi, parcelId, vue } = await fermeAvecVoisins("Voisin Quatre");
+    const avant = vue.parcelles.find((p) => p.id === parcelId)!;
+    assert.equal(avant.culture, null, "une parcelle neuve ne cultive rien");
+    assert.equal(avant.partCultivee, 0);
+
+    const cases = [
+      { x: 3, y: 3 },
+      { x: 4, y: 3 },
+      { x: 5, y: 3 },
+    ];
+    const crop = cropDeSaison();
+    await travailler(parcelId, "plow", "PLOW", moi, cases);
+    const seme = await travailler(parcelId, "plant", "PLANT", moi, cases, { crop });
+    assert.equal(seme.statut, 200, JSON.stringify(seme.corps));
+
+    const apres = await appel(`/parcels/${parcelId}/voisinage`, { jeton: moi.jeton });
+    const trame = (apres.corps as unknown as { parcelles: typeof vue.parcelles }).parcelles;
+    const mienne = trame.find((p) => p.id === parcelId)!;
+    assert.equal(mienne.culture, crop);
+    assert.ok(mienne.partCultivee > 0 && mienne.partCultivee <= 1, `part : ${mienne.partCultivee}`);
+    // Trois cases sur cent quarante-quatre : la part doit rester une part, et
+    // non un booléen déguisé.
+    assert.ok(mienne.partCultivee < 0.1, `part trop grande : ${mienne.partCultivee}`);
+  });
+
+  it("ne chiffre que ce qui est réellement à vendre", async () => {
+    /*
+     * Le devis coûte quatre comptages : le calculer pour toute la commune
+     * afficherait des prix que le joueur ne peut pas payer, sur des parcelles
+     * qu'il ne peut pas acheter. Seule une parcelle libre **et mitoyenne** en
+     * reçoit un.
+     */
+    const { parcelId, vue } = await fermeAvecVoisins("Voisin Cinq");
+    const moi = vue.parcelles.find((p) => p.id === parcelId)!;
+    for (const p of vue.parcelles) {
+      const collee = Math.abs(p.mapX - moi.mapX) + Math.abs(p.mapY - moi.mapY) === 1;
+      if (p.prix !== null) {
+        assert.equal(p.statut, "LIBRE", `${p.id} chiffrée alors qu'elle est ${p.statut}`);
+        assert.ok(collee, `${p.id} chiffrée alors qu'elle n'est pas mitoyenne`);
+        assert.ok(p.prix > 0);
+      }
+    }
+  });
+
+  it("refuse à qui n’a pas de session", async () => {
+    const monde = await appel("/world/AUR");
+    const id = (monde.corps as unknown as {
+      regions: { parcels: { id: string }[] }[];
+    }).regions[0]!.parcels[0]!.id;
+    const r = await appel(`/parcels/${id}/voisinage`);
+    assert.equal(r.statut, 401);
+  });
+
+  it("répond proprement sur une parcelle qui n’existe pas", async () => {
+    const moi = await inscrire("Voisin Six");
+    const r = await appel("/parcels/inexistante/voisinage", { jeton: moi.jeton });
+    assert.equal(r.statut, 404);
+  });
+});

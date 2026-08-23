@@ -36,6 +36,7 @@ import {
   addStats,
   readStats,
   questsFor,
+  caseDeTrame,
   claimable,
   QUEST_DEFS,
   type XpEvent,
@@ -71,6 +72,7 @@ import {
   LAND_CAPS,
   LAND_STATUS_LABELS,
   requiredLevelForParcel,
+  resumerChamp,
   type AcquisitionRule,
   buildingStatsAtLevel,
   buildingUpgradeCost,
@@ -269,6 +271,7 @@ import {
   machineRequiredHp,
   machineWidth,
   machineLifeHours,
+  mitoyennes,
   machineHoursPerHectare,
   machineCost,
   TIER_LABELS,
@@ -285,6 +288,7 @@ import {
   creditCeiling,
   creditHealth,
   seasonInterest,
+  statutParcelle,
   accrueInterest,
   LOAN_MIN_CRD,
   fuelCost,
@@ -4582,6 +4586,160 @@ app.get("/parcels/:id/quote", async (req, res) => {
     canAcquire: gate.ok,
     reason: gate.ok ? null : acquisitionRefusal(gate.reason!, auth.user, owned.length),
     caps: LAND_CAPS,
+  });
+});
+
+/**
+ * Le voisinage d'une parcelle : la campagne, telle qu'elle est en base.
+ *
+ * La vue 3D inventait ses voisins à partir d'une graine — des cultures
+ * tirées au sort, des états tirés au sort, des bâtiments tirés au sort. Ces
+ * parcelles-là n'avaient pas d'identifiant : on ne pouvait donc ni les
+ * regarder vraiment, ni les acheter. Or la carte existe, et trente pour cent
+ * de ses parcelles appartiennent déjà à des fermes PNJ qui ont leurs cases
+ * semées, leurs étables et leurs troupeaux.
+ *
+ * Cette route est la jointure. Elle ne simule rien et n'écrit rien : elle rend
+ * la trame de la commune autour d'une parcelle, avec de quoi la dessiner et de
+ * quoi la convoiter.
+ *
+ * Le devis n'accompagne que ce qui est réellement achetable — parcelle libre
+ * et mitoyenne d'une des siennes. Le calculer pour toute la commune coûterait
+ * quatre comptages par case, pour un prix que le joueur ne pourrait pas payer.
+ */
+app.get("/parcels/:id/voisinage", async (req, res) => {
+  const auth = await userFromAuthHeader(req);
+  if (!auth) {
+    res.status(401).json({ error: "Session invalide" });
+    return;
+  }
+  const rayon = Math.max(1, Math.min(4, Number(req.query.rayon ?? 3) || 3));
+
+  const centre = await prisma.parcel.findUnique({
+    where: { id: req.params.id },
+    include: { zone: true },
+  });
+  if (!centre) {
+    res.status(404).json({ error: "Parcelle introuvable" });
+    return;
+  }
+
+  const [farm, autour] = await Promise.all([
+    prisma.farm.findUnique({ where: { userId: auth.user.id }, include: { parcels: true } }),
+    prisma.parcel.findMany({
+      where: {
+        zoneId: centre.zoneId,
+        mapX: { gte: centre.mapX - rayon, lte: centre.mapX + rayon },
+        mapY: { gte: centre.mapY - rayon, lte: centre.mapY + rayon },
+      },
+      include: {
+        cells: { select: { kind: true, crop: true, fieldStage: true } },
+        buildings: {
+          select: { id: true, type: true, level: true, originX: true, originY: true, rotation: true },
+        },
+        farm: {
+          select: {
+            id: true,
+            name: true,
+            user: { select: { displayName: true, isNpc: true } },
+            herds: { select: { kind: true, size: true, buildingId: true } },
+          },
+        },
+      },
+      orderBy: [{ mapY: "asc" }, { mapX: "asc" }],
+    }),
+  ]);
+
+  const owned = farm?.parcels ?? [];
+  const monFarmId = farm?.id ?? null;
+  /*
+   * Une parcelle n'est proposée à l'achat que si elle touche une des siennes
+   * par un côté. C'est la règle du devis — il compte les bordures mitoyennes
+   * — et la seule qui donne un sens au fait de racheter « celle d'à côté ».
+   */
+  const collee = (p: { mapX: number; mapY: number }) =>
+    owned.some((o) => o.zoneId === centre.zoneId && mitoyennes(o, p));
+
+  const regionParcelCount = await prisma.parcel.count({ where: { zoneId: centre.zoneId } });
+  const gate = canAcquire({
+    playerLevel: auth.user.level,
+    ownedTotal: owned.length,
+    ownedInRegion: owned.filter((p) => p.zoneId === centre.zoneId).length,
+    regionParcelCount,
+  });
+
+  const parcelles = await Promise.all(
+    autour.map(async (p) => {
+      const { col, rang } = caseDeTrame(centre, p);
+      const statut = statutParcelle(p, p.farm?.user ?? null, monFarmId);
+      const champ = resumerChamp(p.cells, p.gridW * p.gridH);
+      /*
+       * Le cheptel de **cette** parcelle, et non celui de la ferme : un
+       * éleveur qui possède trois parcelles n'a pas ses vaches sur les trois.
+       * Le troupeau tient à un bâtiment, et le bâtiment à une parcelle.
+       */
+      const ici = new Set(p.buildings.map((b) => b.id));
+      const cheptel = (p.farm?.herds ?? [])
+        .filter((h) => ici.has(h.buildingId))
+        .map((h) => ({ kind: h.kind, size: h.size }));
+
+      const libreEtCollee = statut === "LIBRE" && collee(p);
+      const devis = libreEtCollee
+        ? await quoteParcel({ ...p, zone: centre.zone }, owned, auth.user.level)
+        : null;
+
+      return {
+        id: p.id,
+        label: p.label,
+        col,
+        rang,
+        mapX: p.mapX,
+        mapY: p.mapY,
+        gridW: p.gridW,
+        gridH: p.gridH,
+        fertility: p.fertility,
+        accessIndex: p.accessIndex,
+        statut,
+        proprietaire: p.farm?.user?.displayName ?? null,
+        exploitation: p.farm?.name ?? null,
+        culture: champ.culture,
+        stade: champ.stade,
+        partCultivee: champ.partCultivee,
+        batiments: p.buildings.map((b) => ({
+          type: b.type,
+          level: b.level,
+          x: b.originX,
+          y: b.originY,
+          rotation: b.rotation,
+        })),
+        cheptel,
+        landPrice: p.landPrice,
+        prix: devis?.total ?? null,
+        achetable: Boolean(devis) && gate.ok,
+        refus:
+          libreEtCollee && !gate.ok
+            ? acquisitionRefusal(gate.reason!, auth.user, owned.length)
+            : null,
+      };
+    }),
+  );
+
+  res.json({
+    centre: {
+      id: centre.id,
+      mapX: centre.mapX,
+      mapY: centre.mapY,
+      gridW: centre.gridW,
+      gridH: centre.gridH,
+    },
+    zone: {
+      code: centre.zone.code,
+      name: centre.zone.name,
+      mapW: centre.zone.mapW,
+      mapH: centre.zone.mapH,
+    },
+    rayon,
+    parcelles,
   });
 });
 
