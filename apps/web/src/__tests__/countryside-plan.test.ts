@@ -202,13 +202,41 @@ describe("la trame des voisins", () => {
 
   it("met des voisins au travail, mais pas tout le village", () => {
     const actifs = plan.parcelles.filter((p) => p.travaille);
-    expect(actifs.length).toBe(ENGINS_MAX);
+    expect(actifs.length).toBeGreaterThan(0);
+    expect(actifs.length).toBeLessThanOrEqual(ENGINS_MAX);
     for (const p of actifs) {
-      // Un tracteur à quarante unités est un pixel qui tremble, pas un voisin.
-      expect(Math.hypot(p.x, p.z)).toBeLessThan(34);
       // Et jamais dans une prairie : on ne laboure pas la jachère.
       expect(p.culture).not.toBe("HERBE");
     }
+  });
+
+  it("n’envoie jamais un engin travailler hors du cadre", () => {
+    /*
+     * Le tri rangeait les candidats du meilleur au pire, et prenait le
+     * meilleur même quand il était mauvais. Mesuré en jeu sur une ferme dont
+     * aucun voisin proche n'est cultivé : l'engin partait à deux cases de là,
+     * à demi sorti de l'écran, et toute l'animation — la manœuvre en
+     * fourrière, la terre qui change — s'exécutait où personne ne la voit.
+     */
+    for (const p of plan.parcelles.filter((x) => x.travaille)) {
+      expect(Math.abs(p.col) + Math.abs(p.rang)).toBeLessThanOrEqual(2);
+      expect(Math.hypot(p.x, p.z)).toBeLessThanOrEqual(1.7 * plan.pas);
+    }
+  });
+
+  it("préfère n’en envoyer aucun plutôt qu’un trop loin", () => {
+    // Une commune dont le seul champ cultivé est à trois cases : personne ne
+    // travaille, et c'est la bonne réponse.
+    const loin = planCampagne({
+      ...OPTIONS,
+      colonnes: 3,
+      rangs: 3,
+      voisins: undefined,
+    });
+    const proches = loin.parcelles.filter(
+      (p) => p.travaille && Math.hypot(p.x, p.z) > 1.7 * loin.pas,
+    );
+    expect(proches).toHaveLength(0);
   });
 
   it("se resserre en réglage sobre", () => {

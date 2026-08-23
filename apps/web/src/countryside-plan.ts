@@ -656,6 +656,18 @@ export function planCampagne(o: OptionsPlan): PlanCampagne {
     // On ne laboure ni la prairie, ni la terre d'un autre joueur — ni la
     // sienne : c'est le joueur qui travaille ses parcelles à lui.
     .filter((p) => p.culture !== "HERBE" && p.reel?.statut !== "MOI" && p.reel?.statut !== "JOUEUR")
+    /*
+     * Et jamais au-delà des parcelles mitoyennes.
+     *
+     * Le tri seul ne suffisait pas : il rangeait les candidats du meilleur au
+     * pire, mais prenait le meilleur même quand il était mauvais. Mesuré en
+     * jeu sur une ferme dont aucun voisin proche n'est cultivé, l'engin
+     * partait travailler à deux cases de là, à demi sorti du cadre — toute
+     * l'animation, la manœuvre en fourrière et la terre qui change,
+     * s'exécutait là où personne ne la voit. Mieux vaut pas de tracteur qu'un
+     * tracteur hors champ.
+     */
+    .filter((p) => Math.hypot(p.x, p.z) <= 1.7 * pas)
     .sort((a, b) => visible(a) - visible(b));
   for (const p of candidats.slice(0, ENGINS_MAX)) p.travaille = true;
 

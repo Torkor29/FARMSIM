@@ -1,5 +1,13 @@
 import * as THREE from "three";
-import { createCountryside, graduation, marcheVoiture, surLaRoute } from "../countryside";
+import {
+  DEMI_TOUR,
+  createCountryside,
+  coteTravail,
+  cycleTravail,
+  graduation,
+  marcheVoiture,
+  surLaRoute,
+} from "../countryside";
 import { makeVoiture } from "../decor3d";
 import {
   empriseParcelle,
@@ -353,6 +361,144 @@ describe("les engins des voisins", () => {
         expect(chez).toHaveLength(1);
       }
     }
+    c.dispose();
+  });
+
+  it("tournent en fourrière plutôt que de repartir en arrière", () => {
+    /*
+     * Le défaut, et c'est lui que « les animations sont mauvaises » visait :
+     * l'engin faisait un aller-retour sur une onde triangulaire. Il arrivait
+     * au bout du champ, s'arrêtait net, et repartait sur exactement la même
+     * ligne, outil posé. Un tracteur ne fait pas ça — il relève, il tourne, il
+     * redescend sur la ligne d'à côté.
+     */
+    const o = { cote: coteTravail(EMPRISE), rangs: 6, largeur: 1.8, vitesse: 1.8 };
+    const tPasse = o.cote / o.vitesse;
+
+    // En passe : outil posé, cap tenu, pas de braquage.
+    const enPasse = cycleTravail(tPasse * 0.5, o);
+    expect(enPasse.travaille).toBe(true);
+    expect(enPasse.braquage).toBe(0);
+    expect(Math.abs(enPasse.cap)).toBeCloseTo(Math.PI / 2, 6);
+
+    // En fourrière : outil relevé, et l'on braque.
+    const enTour = cycleTravail(tPasse + DEMI_TOUR / 2, o);
+    expect(enTour.travaille).toBe(false);
+    expect(Math.abs(enTour.braquage)).toBeGreaterThan(0.5);
+  });
+
+  it("changent de ligne à chaque passe, sans jamais reprendre la même", () => {
+    const o = { cote: coteTravail(EMPRISE), rangs: 6, largeur: 1.8, vitesse: 1.8 };
+    const parPasse = o.cote / o.vitesse + DEMI_TOUR;
+    const lignes = new Set<string>();
+    for (let k = 0; k < o.rangs; k++) {
+      lignes.add(cycleTravail(k * parPasse + 0.5, o).z.toFixed(3));
+    }
+    expect(lignes.size).toBe(o.rangs);
+  });
+
+  it("repartent dans l’autre sens après le demi-tour", () => {
+    // Sans quoi il y aurait un retour à vide au bout de chaque ligne, ce qui
+    // n'est pas ainsi qu'on travaille un champ.
+    const o = { cote: coteTravail(EMPRISE), rangs: 6, largeur: 1.8, vitesse: 1.8 };
+    const parPasse = o.cote / o.vitesse + DEMI_TOUR;
+    expect(cycleTravail(0.5, o).cap).toBeCloseTo(Math.PI / 2, 6);
+    expect(cycleTravail(parPasse + 0.5, o).cap).toBeCloseTo(-Math.PI / 2, 6);
+  });
+
+  it("ne sautent jamais : la trajectoire reste continue", () => {
+    /*
+     * C'est le vrai test du demi-tour. Une manœuvre écrite de travers se voit
+     * comme une téléportation d'un bout du champ à l'autre — et c'est
+     * exactement ce que faisait l'onde triangulaire au changement de rang.
+     */
+    const o = { cote: coteTravail(EMPRISE), rangs: 6, largeur: 1.8, vitesse: 1.8 };
+    const dt = 0.05;
+    let avant = cycleTravail(0, o);
+    for (let t = dt; t < 200; t += dt) {
+      const p = cycleTravail(t, o);
+      const bond = Math.hypot(p.x - avant.x, p.z - avant.z);
+      // À deux unités par seconde, un pas de cinquante millisecondes fait dix
+      // centimètres. Le double laisse la place au demi-tour, pas à un saut.
+      expect(bond).toBeLessThan(0.25);
+      avant = p;
+    }
+  });
+
+  it("ne sortent jamais de leur parcelle", () => {
+    /*
+     * La borne qui compte. Les manœuvres débordent du bout des passes — la
+     * fourrière, et un peu plus quand l'engin s'écarte pour se réaligner —
+     * mais jamais de la parcelle : un tracteur de voisin qui traverse le champ
+     * d'à côté ou le chemin défait toute la trame.
+     */
+    const o = { cote: coteTravail(EMPRISE), rangs: 6, largeur: 1.8, vitesse: 1.8 };
+    const demi = EMPRISE / 2;
+    for (let t = 0; t < 400; t += 0.11) {
+      const p = cycleTravail(t, o);
+      expect(Math.abs(p.x)).toBeLessThan(demi);
+      expect(Math.abs(p.z)).toBeLessThan(demi);
+    }
+  });
+
+  it("relèvent l’outil dès qu’ils quittent la ligne", () => {
+    // Un outil qui reste posé pendant la manœuvre laboure la fourrière en
+    // travers, et le demi-tour ne se lit plus comme une manœuvre.
+    const o = { cote: coteTravail(EMPRISE), rangs: 6, largeur: 1.8, vitesse: 1.8 };
+    for (let t = 0; t < 400; t += 0.11) {
+      const p = cycleTravail(t, o);
+      if (!p.travaille) continue;
+      // En travail, il est exactement sur une ligne de la trame.
+      const ligne = (p.z + ((o.rangs - 1) * o.largeur) / 2) / o.largeur;
+      expect(Math.abs(ligne - Math.round(ligne))).toBeLessThan(1e-6);
+      expect(Math.abs(p.x)).toBeLessThanOrEqual(o.cote / 2 + 1e-9);
+    }
+  });
+
+  it("avancent toujours, et bouclent proprement", () => {
+    const o = { cote: coteTravail(EMPRISE), rangs: 6, largeur: 1.8, vitesse: 1.8 };
+    const parPasse = o.cote / o.vitesse + DEMI_TOUR;
+    let precedent = -1;
+    for (let t = 0; t < o.rangs * parPasse - 0.01; t += 0.3) {
+      const a = cycleTravail(t, o).avancement;
+      expect(a).toBeGreaterThanOrEqual(precedent - 1e-9);
+      expect(a).toBeLessThanOrEqual(1);
+      precedent = a;
+    }
+    expect(cycleTravail(0, o).avancement).toBe(0);
+  });
+
+  it("laissent la terre travaillée derrière eux", () => {
+    /*
+     * « Un tracteur qui laboure sans que rien ne change ne travaille pas, il
+     * fait les cent pas. » Les bandes sont bâties d'avance et dévoilées au fur
+     * et à mesure : régler une plage de dessin ne coûte rien.
+     */
+    const c = createCountryside({ ...OPTIONS, sobre: false });
+    const sillons = c.object.children.filter((o) => o.name === "campagne-sillons");
+    expect(sillons.length).toBeGreaterThanOrEqual(1);
+    const geo = (sillons[0] as THREE.Mesh).geometry;
+    const total = geo.getAttribute("position").count;
+
+    /*
+     * Chaque engin part avec sa propre phase — deux voisins qui laboureraient
+     * au même instant se verraient. On balaie donc le cycle plutôt que de
+     * regarder un instant précis.
+     */
+    const vus = new Set<number>();
+    for (let t = 0; t < 400; t += 2) {
+      c.update(t);
+      const n = geo.drawRange.count;
+      expect(n).toBeGreaterThanOrEqual(0);
+      expect(n).toBeLessThanOrEqual(total);
+      // Une bande entière ou rien : jamais un triangle esseulé.
+      expect(n % 6).toBe(0);
+      vus.add(n);
+    }
+    // La terre change vraiment derrière lui — et le champ finit par être fait.
+    expect(vus.size).toBeGreaterThan(8);
+    expect(Math.max(...vus)).toBe(total);
+    expect(Math.min(...vus)).toBe(0);
     c.dispose();
   });
 

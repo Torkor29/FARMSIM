@@ -48,6 +48,7 @@ import {
 import { creerVoisinDetaille, type VoisinDetaille } from "./voisin3d";
 import {
   couleurChamp,
+  type EtatChamp,
   DEMI_ROUTE,
   etatChamp,
   grainerDe,
@@ -107,6 +108,14 @@ export const DETAILS_MAX = 3;
  * distingue plus.
  */
 export const PORTEE_DETAIL = 1.6;
+
+/**
+ * Les états où la terre se voit — donc où un labour laisse une trace.
+ *
+ * Sur un champ debout, la bande de terre fraîche passerait sous les brins et
+ * ne se remarquerait pas ; et l'on ne laboure pas une culture sur pied.
+ */
+const TERRE_VISIBLE = new Set<EtatChamp>(["LABOUR", "CHAUME", "JACHERE", "SEMIS"]);
 
 /** Épaisseur de la dalle de terre sous une parcelle voisine. */
 const EPAISSEUR_DALLE = 0.3;
@@ -234,6 +243,165 @@ export function marcheVoiture(pFerme: number, creux = 0.45, largeur = 0.12): (q:
     const a = bornes[i]!;
     const b = bornes[i + 1]!;
     return (i + (b > a ? (k - a) / (b - a) : 0)) / N;
+  };
+}
+
+/**
+ * Le pas d'un engin au travail dans son champ.
+ *
+ * Coordonnées locales à la parcelle, centre en (0, 0).
+ */
+export type PasDeTravail = {
+  x: number;
+  z: number;
+  /** Cap, radians, dans la convention du jeu : `atan2(dx, dz)`. */
+  cap: number;
+  /** Outil posé. Faux pendant le demi-tour : on relève en fourrière. */
+  travaille: boolean;
+  /** Braquage, de −1 (gauche) à 1 (droite). */
+  braquage: number;
+  /** Part du champ déjà travaillée, de 0 à 1. */
+  avancement: number;
+};
+
+/** Durée d'un demi-tour en bout de champ, secondes. */
+export const DEMI_TOUR = 3.2;
+
+/**
+ * Durée du retour à la première ligne, une fois le champ fini.
+ *
+ * Plus long qu'un demi-tour parce que le trajet l'est : à durée égale, l'engin
+ * traversait la parcelle deux fois plus vite qu'il ne la travaille, et le
+ * saut de vitesse se voyait plus que la manœuvre.
+ */
+export const RETOUR = DEMI_TOUR * 2.4;
+
+/**
+ * Ce qu'on laisse tout autour du champ, en unités monde.
+ *
+ * On ne laboure pas jusqu'à la haie : il faut de quoi tourner. Cette marge
+ * n'est donc pas une précaution de dessin, c'est la fourrière — et elle est
+ * aussi ce qui garde les manœuvres à l'intérieur de la parcelle. Mesuré sans
+ * elle : la courbe de retour dépassait le bord d'un centimètre et demi, et
+ * l'engin roulait sur le chemin.
+ */
+export const MARGE_FOURRIERE = 3;
+
+/** La longueur travaillée d'un champ, fourrière déduite. */
+export function coteTravail(emprise: number): number {
+  return Math.max(2, emprise - MARGE_FOURRIERE);
+}
+
+/**
+ * Le cycle de travail d'un engin : des passes, et des demi-tours.
+ *
+ * La version d'avant faisait un aller-retour sur une onde triangulaire : le
+ * tracteur atteignait le bout du champ, s'arrêtait net et repartait en marche
+ * arrière visuelle, outil posé, sur exactement la même ligne. C'était le fond
+ * du reproche « les animations sont mauvaises » — pas le modèle, le mouvement.
+ *
+ * Ici il fait ce que fait un tracteur : il tire une passe à vitesse de
+ * travail, **relève l'outil**, tourne en fourrière par un demi-cercle qui
+ * déborde du champ, redescend l'outil et repart sur la ligne d'à côté. Le
+ * demi-tour est lissé aux deux bouts — un braquage qui claque se voit plus
+ * qu'il ne raconte.
+ */
+export function cycleTravail(
+  t: number,
+  o: { cote: number; rangs: number; largeur: number; vitesse: number },
+): PasDeTravail {
+  const rangs = Math.max(1, Math.round(o.rangs));
+  const tPasse = Math.max(0.1, o.cote / Math.max(0.1, o.vitesse));
+  const parPasse = tPasse + DEMI_TOUR;
+  // La dernière passe se termine par un retour, plus long qu'un demi-tour.
+  const avantDerniere = (rangs - 1) * parPasse;
+  const cycle = avantDerniere + tPasse + RETOUR;
+  const u = ((t % cycle) + cycle) % cycle;
+  const dansLaTrame = u < avantDerniere;
+  const passe = dansLaTrame ? Math.floor(u / parPasse) : rangs - 1;
+  const dans = u - passe * parPasse;
+  // Une passe sur deux dans l'autre sens : c'est ce qui fait des allers-retours
+  // et non un retour à vide au bout de chaque ligne.
+  const sens = passe % 2 === 0 ? 1 : -1;
+  const z = -((rangs - 1) * o.largeur) / 2 + passe * o.largeur;
+
+  if (dans < tPasse) {
+    const p = dans / tPasse;
+    return {
+      x: sens * (-o.cote / 2 + p * o.cote),
+      z,
+      cap: sens > 0 ? Math.PI / 2 : -Math.PI / 2,
+      travaille: true,
+      braquage: 0,
+      avancement: (passe + p) / rangs,
+    };
+  }
+
+  const q = (dans - tPasse) / (passe < rangs - 1 ? DEMI_TOUR : RETOUR);
+  const lisse = Math.min(1, q * q * (3 - 2 * q));
+  const bout = (sens * o.cote) / 2;
+
+  if (passe < rangs - 1) {
+    /*
+     * Le demi-tour : un demi-cercle qui déborde du bout du champ, de rayon la
+     * moitié de l'écartement — c'est la manœuvre réelle, et c'est elle qui
+     * donne la fourrière, cette bande de terre tassée au bout des parcelles.
+     */
+    const angle = -Math.PI / 2 + lisse * Math.PI;
+    const r = o.largeur / 2;
+    return {
+      x: bout + sens * r * Math.cos(angle),
+      z: z + r + r * Math.sin(angle),
+      cap: Math.atan2(-sens * Math.sin(angle), Math.cos(angle)),
+      travaille: false,
+      braquage: sens * Math.sin(lisse * Math.PI),
+      avancement: (passe + 1) / rangs,
+    };
+  }
+
+  /*
+   * La dernière passe finie, il rentre.
+   *
+   * Sans ce retour, le cycle repartait de la première ligne et l'engin s'y
+   * **téléportait** : mesuré, un bond de dix unités d'un bout du champ à
+   * l'autre, une fois par cycle. Et son demi-tour visait un rang qui n'existe
+   * pas, donc il sortait de la parcelle par le bas.
+   *
+   * Le trajet est une courbe d'Hermite : elle part dans l'axe de la dernière
+   * passe et arrive dans l'axe de la première, si bien que ni la position ni
+   * le cap ne sautent aux raccords. Un segment droit aurait fait pivoter
+   * l'engin sur place à chaque bout.
+   */
+  const z0 = -((rangs - 1) * o.largeur) / 2;
+  const p0x = bout;
+  const p0z = z;
+  const p1x = -o.cote / 2;
+  const p1z = z0;
+  /*
+   * La raideur des tangentes règle le ventre de la courbe. À neuf dixièmes de
+   * la distance, mesuré, l'engin débordait du bout du champ d'une unité — plus
+   * que la fourrière elle-même. À moins de la moitié, le ventre tient dedans.
+   */
+  const portee = Math.hypot(p1x - p0x, p1z - p0z) * 0.45;
+  // Tangentes : le sens de la dernière passe au départ, celui de la première
+  // à l'arrivée. Les passes courent le long des `x`.
+  const t0x = sens * portee;
+  const t1x = portee;
+  const h00 = 2 * lisse ** 3 - 3 * lisse ** 2 + 1;
+  const h10 = lisse ** 3 - 2 * lisse ** 2 + lisse;
+  const h01 = -2 * lisse ** 3 + 3 * lisse ** 2;
+  const h11 = lisse ** 3 - lisse ** 2;
+  const d00 = 6 * lisse ** 2 - 6 * lisse;
+  const d10 = 3 * lisse ** 2 - 4 * lisse + 1;
+  const d01 = -6 * lisse ** 2 + 6 * lisse;
+  const d11 = 3 * lisse ** 2 - 2 * lisse;
+  return {
+    x: h00 * p0x + h10 * t0x + h01 * p1x + h11 * t1x,
+    z: h00 * p0z + h01 * p1z,
+    cap: Math.atan2(d00 * p0x + d10 * t0x + d01 * p1x + d11 * t1x, d00 * p0z + d01 * p1z),
+    travaille: false,
+    braquage: 0,
+    avancement: 1,
   };
 }
 
@@ -580,7 +748,18 @@ export function createCountryside(o: OptionsCampagne): Campagne {
   /* —— Les engins des voisins ——
      Le vrai modèle du jeu, tracteur et outil attelés : un tracteur de décor
      dessiné à part finirait par ne plus ressembler à celui du garage. */
-  type Engin = { rig: MachineRig; p: ParcelleVoisine; vitesse: number; phase: number };
+  type Engin = {
+    rig: MachineRig;
+    p: ParcelleVoisine;
+    vitesse: number;
+    phase: number;
+    /** Le nombre de passes que le champ demande, largeur d'outil comprise. */
+    rangs: number;
+    /** La terre retournée derrière lui, dévoilée au fur et à mesure. */
+    sillons: THREE.Mesh;
+    /** Sommets par passe, pour régler la plage de dessin. */
+    parPasse: number;
+  };
   const engins: Engin[] = [];
   {
     /*
@@ -604,7 +783,81 @@ export function createCountryside(o: OptionsCampagne): Campagne {
       // que celui du garage trahirait aussitôt le décor.
       rig.group.scale.setScalar(0.72);
       object.add(rig.group);
-      engins.push({ rig, p, vitesse: 1.5 + rnd() * 0.8, phase: rnd() * 10 });
+
+      /*
+       * La terre qu'il laisse derrière lui.
+       *
+       * Un tracteur qui laboure sans que rien ne change ne travaille pas, il
+       * fait les cent pas — c'était le défaut. Les bandes sont toutes bâties
+       * d'avance, dans l'ordre où l'engin les prend, et l'on ne dévoile que
+       * celles qu'il a faites : régler une plage de dessin ne coûte rien, là
+       * où reconstruire un maillage par image coûterait la fluidité.
+       */
+      const cote = coteTravail(plan.emprise);
+      const largeur = 1.8;
+      const rangs = Math.max(2, Math.round(cote / largeur));
+      const segments = 8;
+      const posS: number[] = [];
+      const colS: number[] = [];
+      /*
+       * La couleur de la terre fraîche se tire de celle du champ, assombrie.
+       *
+       * Une teinte fixe ne marchait pas : posée sur un champ déjà labouré —
+       * brun sur brun — la bande était invisible, et le tracteur avait l'air
+       * de ne rien faire. Vérifié à l'écran. Assombrir ce qui est là garantit
+       * le contraste quel que soit l'état du champ, et dit la bonne chose :
+       * une terre qu'on vient de retourner est plus sombre et plus humide que
+       * sa voisine.
+       */
+      const terre = new THREE.Color(
+        eclaircir(couleurChamp(p.culture, p.etat ?? "POUSSE"), -0.42),
+      );
+      for (let k = 0; k < rangs; k++) {
+        const sens = k % 2 === 0 ? 1 : -1;
+        const zc = p.z - ((rangs - 1) * largeur) / 2 + k * largeur;
+        for (let i = 0; i < segments; i++) {
+          // Dans le sens de marche : la bande se dévoile derrière la roue et
+          // non d'un bout figé de la parcelle.
+          const a = sens * (-cote / 2 + (i / segments) * cote);
+          const b = sens * (-cote / 2 + ((i + 1) / segments) * cote);
+          const x0 = p.x + Math.min(a, b);
+          const x1 = p.x + Math.max(a, b);
+          quad(
+            posS, colS,
+            [x0, y0 + HAUT_CASE + 0.006, zc - largeur / 2],
+            [x1, y0 + HAUT_CASE + 0.006, zc - largeur / 2],
+            [x1, y0 + HAUT_CASE + 0.006, zc + largeur / 2],
+            [x0, y0 + HAUT_CASE + 0.006, zc + largeur / 2],
+            terre,
+          );
+        }
+      }
+      /*
+       * Les sillons ne se dessinent que là où la terre se voit.
+       *
+       * Sous un blé sur pied, la bande passe **sous** les brins et ne se
+       * remarque pas — vérifié à l'écran : le tracteur traversait un champ de
+       * maïs mûr sans que rien ne change derrière lui. Et c'est logique : on
+       * ne laboure pas une culture debout. Sur un champ debout l'engin fait
+       * autre chose — un passage de traitement — et ne retourne rien.
+       */
+      const nu = p.etat === undefined || TERRE_VISIBLE.has(p.etat);
+      const sillons = maillageFacette(nu ? posS : [], nu ? colS : [], {
+        recoit: shadows,
+        nom: "campagne-sillons",
+      });
+      sillons.geometry.setDrawRange(0, 0);
+      object.add(garder(sillons));
+
+      engins.push({
+        rig,
+        p,
+        vitesse: 1.5 + rnd() * 0.8,
+        phase: rnd() * 10,
+        rangs,
+        sillons,
+        parPasse: segments * 6,
+      });
     }
   }
 
@@ -631,28 +884,28 @@ export function createCountryside(o: OptionsCampagne): Campagne {
     }
     for (const e of engins) {
       /*
-       * Un aller-retour dans le sens des sillons, à l'intérieur de la parcelle.
-       *
-       * L'onde triangulaire donne une passe, un demi-tour, une passe en sens
-       * inverse — et le cap suit le sens de marche, sans quoi l'engin
-       * reculerait la moitié du temps. Il ne sort jamais de son champ : c'est
-       * ce qui manquait à la version d'avant, où les tracteurs faisaient des
-       * allers-retours d'un bout à l'autre de la campagne.
+       * Des passes et des demi-tours, dans son champ, et la terre change
+       * derrière lui. Voir `cycleTravail` — c'est là qu'est la manœuvre.
        */
-      const cote = plan.emprise - 2.2;
-      const cycle = (cote * 2) / e.vitesse;
-      const u = (((t + e.phase) % cycle) + cycle) % cycle;
-      const aller = u < cycle / 2;
-      const avance = aller ? u / (cycle / 2) : 1 - (u - cycle / 2) / (cycle / 2);
-      const long = -cote / 2 + avance * cote;
-      // Le rang change à chaque passe : l'engin descend la parcelle.
-      const passe = Math.floor((t + e.phase) / cycle);
-      const rangs = Math.max(2, Math.round(cote / 1.8));
-      const trav = -cote / 2 + ((((passe % rangs) + rangs) % rangs) * cote) / (rangs - 1 || 1);
-      e.rig.group.position.set(e.p.x + long, y0 + 0.06, e.p.z + trav);
-      _lacet.set(0, aller ? Math.PI / 2 : -Math.PI / 2, 0);
+      const pas = cycleTravail(t + e.phase, {
+        cote: coteTravail(plan.emprise),
+        rangs: e.rangs,
+        largeur: 1.8,
+        vitesse: e.vitesse,
+      });
+      e.rig.group.position.set(e.p.x + pas.x, y0 + 0.06, e.p.z + pas.z);
+      _lacet.set(0, pas.cap, 0);
       e.rig.group.quaternion.setFromEuler(_lacet);
-      e.rig.update({ t, distance: t * e.vitesse, working: true });
+      e.rig.update({
+        t,
+        distance: t * e.vitesse,
+        working: pas.travaille,
+        steer: pas.braquage,
+      });
+      // Un tracteur qui laboure sans que rien ne change ne travaille pas : il
+      // fait les cent pas. La bande faite reste faite.
+      const faites = Math.round(pas.avancement * e.rangs * (e.parPasse / 6)) * 6;
+      e.sillons.geometry.setDrawRange(0, faites);
     }
   }
 
