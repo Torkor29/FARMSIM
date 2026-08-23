@@ -1,5 +1,5 @@
 import * as THREE from "three";
-import { createCountryside, graduation, surLaRoute } from "../countryside";
+import { createCountryside, graduation, marcheVoiture, surLaRoute } from "../countryside";
 import { makeVoiture } from "../decor3d";
 import {
   empriseParcelle,
@@ -224,13 +224,16 @@ describe("la route", () => {
 });
 
 describe("les voitures", () => {
+  /** Les voitures visibles à un instant donné, avec leur position. */
+  function passage(c: ReturnType<typeof createCountryside>, t: number): THREE.Object3D[] {
+    c.update(t);
+    return c.object.children.filter((o) => o.name === "campagne-voiture" && o.visible);
+  }
+
   it("roulent sur la chaussée, pas dans le pré", () => {
     const c = createCountryside(OPTIONS);
-    const voitures = c.object.children.filter((o) => o.name === "campagne-voiture");
-    expect(voitures.length).toBeGreaterThanOrEqual(3);
-    for (const t of [0, 3, 11, 47, 300]) {
-      c.update(t);
-      for (const v of voitures) {
+    for (let t = 0; t < 200; t += 1.7) {
+      for (const v of passage(c, t)) {
         expect(Math.abs(v.position.z - c.plan.routeZ)).toBeLessThan(1.1);
       }
     }
@@ -240,29 +243,82 @@ describe("les voitures", () => {
   it("passent devant la ferme, et non au bout du monde", () => {
     /*
      * Défaut mesuré en jeu : la route traverse tout le sol — cent soixante
-     * unités — et quatre voitures réparties dessus passaient l'essentiel de
-     * leur temps hors cadre. Six captures d'affilée n'en montraient aucune.
-     * Elles bouclent maintenant sur la portion qui peut être à l'écran.
+     * unités — et les voitures réparties dessus passaient l'essentiel de leur
+     * temps hors cadre. Six captures d'affilée n'en montraient aucune. Elles
+     * bouclent maintenant sur la portion qui peut être à l'écran.
      */
     const c = createCountryside(OPTIONS);
-    const voitures = c.object.children.filter((o) => o.name === "campagne-voiture");
-    let vues = 0;
-    for (let t = 0; t < 90; t += 1.5) {
-      c.update(t);
-      if (voitures.some((v) => Math.abs(v.position.x) < 30)) vues++;
+    let devant = 0;
+    for (let t = 0; t < 400; t += 1.5) {
+      if (passage(c, t).some((v) => Math.abs(v.position.x) < 25)) devant++;
     }
-    expect(vues).toBeGreaterThan(45);
+    expect(devant).toBeGreaterThan(60);
     c.dispose();
   });
 
-  it("avancent vraiment", () => {
+  it("laissent la route vide la moitié du temps", () => {
+    /*
+     * « Moins de voitures doivent passer sur la route. » Cinq voitures en file
+     * continue faisaient un périphérique. Une départementale de commune est
+     * vide la plupart du temps, et c'est le vide qui rend le passage
+     * remarquable — le nombre de véhicules compte moins que le silence entre
+     * deux.
+     */
     const c = createCountryside(OPTIONS);
-    const v = c.object.children.find((o) => o.name === "campagne-voiture")!;
-    c.update(0);
-    const depart = v.position.clone();
-    c.update(2);
-    expect(depart.distanceTo(v.position)).toBeGreaterThan(4);
+    const total = c.object.children.filter((o) => o.name === "campagne-voiture").length;
+    expect(total).toBe(2);
+
+    let vide = 0;
+    let pas = 0;
+    for (let t = 0; t < 600; t += 1) {
+      pas++;
+      if (passage(c, t).length === 0) vide++;
+    }
+    expect(vide / pas).toBeGreaterThan(0.25);
+    // Mais pas déserte non plus : une route où il ne passe jamais rien ne vit
+    // pas davantage qu'une file ininterrompue.
+    expect(vide / pas).toBeLessThan(0.8);
     c.dispose();
+  });
+
+  it("ne restent jamais à l’arrêt sur la chaussée", () => {
+    // Entre deux passages, la voiture n'attend pas au bout de la fenêtre :
+    // elle n'est plus là. Garée, elle se verrait au dézoom.
+    const c = createCountryside(OPTIONS);
+    const suivi = new Map<THREE.Object3D, THREE.Vector3>();
+    for (let t = 0; t < 300; t += 0.5) {
+      for (const v of passage(c, t)) {
+        const avant = suivi.get(v);
+        if (avant) expect(avant.distanceTo(v.position)).toBeGreaterThan(0.2);
+        suivi.set(v, v.position.clone());
+      }
+      for (const v of c.object.children) {
+        if (v.name === "campagne-voiture" && !v.visible) suivi.delete(v);
+      }
+    }
+    c.dispose();
+  });
+
+  it("ralentissent devant la ferme et reprennent après", () => {
+    /*
+     * La rampe linéaire est ce qui faisait « mauvais et pas beau », bien plus
+     * que le nombre de polygones : une voiture qui traverse le cadre à vitesse
+     * rigoureusement constante se lit comme un objet tiré par une ficelle.
+     */
+    const marche = marcheVoiture(0.5);
+    const pas = 0.02;
+    const vitesse = (q: number) => (marche(q + pas) - marche(q)) / pas;
+    expect(vitesse(0.49)).toBeLessThan(vitesse(0.05) * 0.8);
+    expect(vitesse(0.49)).toBeLessThan(vitesse(0.93) * 0.8);
+    // Et jamais d'arrêt ni de marche arrière : la marche reste croissante.
+    let precedent = -1;
+    for (let q = 0; q <= 1.0001; q += 0.01) {
+      const x = marche(q);
+      expect(x).toBeGreaterThan(precedent);
+      precedent = x;
+    }
+    expect(marche(0)).toBeCloseTo(0, 6);
+    expect(marche(1)).toBeCloseTo(1, 6);
   });
 
   it("tiennent debout, roues au sol", () => {

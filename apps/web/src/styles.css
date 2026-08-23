@@ -6451,3 +6451,81 @@ button.tiny {
   max-width: 46ch;
 }
 .calendrier-aujourdhui strong { color: var(--teal-500); }
+
+/* ------------------------------------------------------------------ */
+/* Revenir sur sa ferme                                                */
+/* ------------------------------------------------------------------ */
+
+/* La vue peut maintenant parcourir toute la commune : sans repère, on finit
+   par ne plus savoir où est sa propre ferme, et rien ne l'y ramène. Le bouton
+   n'apparaît qu'une fois la vue vraiment éloignée — permanent, il ne
+   servirait à rien neuf fois sur dix et on cesserait de le voir. */
+.iso-viewport {
+  position: relative;
+}
+/* Posé à côté du calendrier, et pour la même raison que lui : la coquille
+   sait où s'arrête le champ, la vue non.
+
+   Mesuré, dans la vue : en bas à gauche il tombait sous `.tool-rail`, en bas à
+   droite sous `.rail-right` — les deux recouvrent la toile sur écran large et
+   interceptent le pointeur. Le bouton s'affichait parfaitement et ne se
+   cliquait jamais. */
+.vue-recentrer {
+  position: fixed;
+  right: calc(max(0.9rem, env(safe-area-inset-right)) + 3.5rem);
+  bottom: max(0.9rem, env(safe-area-inset-bottom));
+  z-index: 45;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  padding: 0.5rem 0.8rem 0.5rem 0.6rem;
+  border-radius: var(--r-md);
+  background: var(--bar);
+  border: 1px solid var(--glass-border);
+  box-shadow: var(--sh-2);
+  backdrop-filter: blur(12px);
+  color: var(--teal-500);
+  font: inherit;
+  font-size: 0.82rem;
+  font-weight: 600;
+  cursor: pointer;
+  /* Absent, et non transparent : un bouton invisible mais cliquable avale les
+     glissés de caméra dans le coin bas-gauche de la vue. */
+  opacity: 0;
+  visibility: hidden;
+  transform: translateY(0.4rem);
+  transition: opacity 160ms ease, transform 160ms ease, visibility 160ms;
+}
+.vue-recentrer.visible {
+  opacity: 1;
+  visibility: visible;
+  transform: none;
+}
+.vue-recentrer:hover { background: var(--paper); }
+.vue-recentrer svg { width: 1.05rem; height: 1.05rem; }
+
+@media (prefers-reduced-motion: reduce) {
+  .vue-recentrer { transition: opacity 1ms linear, visibility 1ms; transform: none; }
+}
+
+/* Sur téléphone, l'icône seule : le dock occupe déjà le bas de l'écran, et le
+   mot n'y tient pas sans mordre dessus. */
+/* Sur téléphone, membre de la zone `stage` comme le calendrier : la grille le
+   pose là où le champ s'arrête, quelle que soit la hauteur du dock — laquelle
+   change selon qu'un chantier tourne ou non. Une valeur devinée marcherait un
+   jour et casserait le lendemain. */
+.game-stage.mobile .vue-recentrer {
+  position: relative;
+  grid-area: stage;
+  align-self: end;
+  justify-self: end;
+  right: auto;
+  bottom: auto;
+  /* La marge du calendrier, plus sa largeur, plus l'écart entre les deux. */
+  margin: 0 4.1rem 1.1rem 0;
+  padding: 0;
+  width: 2.7rem;
+  height: 2.7rem;
+  justify-content: center;
+}
+.game-stage.mobile .vue-recentrer span { display: none; }

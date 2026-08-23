@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef } from "react";
+import { useEffect, useMemo, useRef, type MutableRefObject } from "react";
 import * as THREE from "three";
 import {
   parkingLayout,
@@ -21,6 +21,14 @@ import { applyHerdPose, meshForHerd } from "./animal-meshes";
 import { createBuildingRig, nearestThreshold, type BuildingRig } from "./buildings3d";
 import { createParkingRig, type ParkingRig } from "./parking3d";
 import { createCountryside, type Campagne } from "./countryside";
+import {
+  bornesDeplacement,
+  elastique,
+  horsBornes,
+  pasRetour,
+  retenir,
+  type Bornes,
+} from "./cadrage";
 import { makeArbre } from "./decor3d";
 import { createCropField } from "./crop-field";
 import type { CropShape } from "./crop-shapes";
@@ -221,6 +229,18 @@ type Props = {
    * et ce ne serait plus un lieu.
    */
   parcelId?: string;
+  /**
+   * La télécommande de la caméra, tenue par la coquille.
+   *
+   * Le bouton « ma ferme » ne peut pas vivre dans la vue : les deux rails
+   * recouvrent la toile sur écran large et interceptent le pointeur, si bien
+   * qu'un bouton posé dans un coin s'affiche parfaitement et ne se clique
+   * jamais — mesuré. Il vit donc dans la coquille, avec le calendrier, et
+   * commande la vue par ici.
+   */
+  controle?: MutableRefObject<{ recentrer(): void } | null>;
+  /** Prévient quand la vue s'éloigne de la ferme, ou y revient. */
+  onEgare?: (egare: boolean) => void;
   gridW: number;
   gridH: number;
   cells: IsoCell[];
@@ -1045,6 +1065,8 @@ function disposeObject3D(obj: THREE.Object3D) {
 
 export function IsoFarmView({
   parcelId = "",
+  controle,
+  onEgare,
   gridW,
   gridH,
   cells,
@@ -1103,6 +1125,22 @@ export function IsoFarmView({
   const layoutRef = useRef<(() => void) | null>(null);
   /** Repeint la scène quand la saison tourne, sans la reconstruire. */
   const relightRef = useRef<((saison: string) => void) | null>(null);
+  /*
+   * Le recentrage se commande de l'extérieur.
+   *
+   * Le bouton a d'abord vécu dans la vue elle-même. Mesuré en jeu : posé en
+   * bas à gauche il tombait sous le rail d'outils, en bas à droite sous le
+   * rail de panneaux — les deux recouvrent la toile sur écran large et
+   * interceptent le pointeur. Il vit donc là où vit déjà le bouton du
+   * calendrier, dans la coquille, qui sait se placer.
+   *
+   * L'état « la vue s'est éloignée » vient de la boucle d'image, d'où le
+   * miroir en `ref` : sans lui on demanderait un rendu React soixante fois
+   * par seconde pour un booléen qui ne change qu'aux bouts du geste.
+   */
+  const egareRef = useRef(false);
+  const onEgareRef = useRef(onEgare);
+  onEgareRef.current = onEgare;
   const seasonAppliedRef = useRef<string | null>(null);
   const weatherRef = useRef(weather);
   weatherRef.current = weather;
@@ -1505,6 +1543,16 @@ export function IsoFarmView({
      */
     const view = { zoom: 1, panX: 0, panZ: 0 };
     let viewSpan = 12;
+    /*
+     * Jusqu'où la vue peut aller. Recalculé par `layout()` à partir du monde
+     * réellement rendu — l'île, la cour et les parcelles voisines — et non
+     * plus d'un multiple de la taille de l'île.
+     */
+    let bornesVue: Bornes = { xMin: 0, xMax: 0, zMin: 0, zMax: 0 };
+    /* Le doigt est-il encore posé ? Tant qu'il l'est, on ne rappelle pas. */
+    let tientLaVue = false;
+    /* Un retour demandé — le bouton « ma ferme ». Glissé, il s'annule. */
+    let retourVers: { x: number; z: number } | null = null;
 
     let cellSize = 1;
     let step = 1.06;
@@ -1862,6 +1910,24 @@ export function IsoFarmView({
           y: -0.46,
         });
         campagneGroup.add(campagne.object);
+      }
+
+      /*
+       * Les bornes de déplacement suivent le monde, pas l'île.
+       *
+       * L'enveloppe de tout ce qui est rendu — l'île, la cour et chaque
+       * parcelle voisine — élargie d'une demi-parcelle pour qu'on puisse
+       * **centrer** la plus lointaine et pas seulement l'amener au bord.
+       */
+      {
+        const ile = { x: 0, z: 0, w: gw * step + 1.4, d: gh * step + 1.4 };
+        const boites = [ile, courBoite];
+        if (campagne) {
+          for (const v of campagne.plan.parcelles) {
+            boites.push({ x: v.x, z: v.z, w: campagne.plan.emprise, d: campagne.plan.emprise });
+          }
+        }
+        bornesVue = bornesDeplacement(boites, ile.w / 2);
       }
 
       const hedgeH = 0.55;
@@ -2237,9 +2303,17 @@ export function IsoFarmView({
       if (shift) camera.setViewOffset(w, h, -shift, 0, w, h);
       else camera.clearViewOffset();
       camera.updateProjectionMatrix();
-      const cibleX = view.panX - parkingOverhang / 2;
-      camera.position.set(span * 0.95 + cibleX, span * 0.85, span * 0.95 + view.panZ);
-      camera.lookAt(cibleX, 0, view.panZ);
+      /*
+       * La vue affichée n'est pas la vue demandée : au-delà des bornes du
+       * monde, le dépassement est comprimé. `view.panX` garde la demande
+       * brute, sans quoi comprimer une valeur déjà comprimée à chaque image
+       * ferait dépendre la résistance de la cadence de l'écran.
+       */
+      const vueX = elastique(view.panX, bornesVue.xMin, bornesVue.xMax);
+      const vueZ = elastique(view.panZ, bornesVue.zMin, bornesVue.zMax);
+      const cibleX = vueX - parkingOverhang / 2;
+      camera.position.set(span * 0.95 + cibleX, span * 0.85, span * 0.95 + vueZ);
+      camera.lookAt(cibleX, 0, vueZ);
     }
 
     function resize() {
@@ -2353,6 +2427,10 @@ export function IsoFarmView({
     // pour toujours, et le clic gauche ne peint plus jamais.
     function onBlur() {
       spaceHeld = false;
+      // La fenêtre perd le focus au milieu d'un glissé — changement d'onglet,
+      // appel entrant : le `pointerup` n'arrivera jamais, et sans cela la vue
+      // resterait tirée hors de ses bornes jusqu'au prochain geste.
+      tientLaVue = false;
       refreshCursor();
     }
 
@@ -2405,12 +2483,19 @@ export function IsoFarmView({
       dragRight.setFromMatrixColumn(camera.matrix, 0).setY(0).normalize();
       dragUp.setFromMatrixColumn(camera.matrix, 1).setY(0).normalize();
       const k = worldPerPixel();
+      // Le geste l'emporte sur le retour en cours : une vue qui continue de
+      // glisser toute seule sous le doigt est insupportable.
+      retourVers = null;
       view.panX -= dragRight.x * dxPx * k + dragUp.x * -dyPx * k;
       view.panZ -= dragRight.z * dxPx * k + dragUp.z * -dyPx * k;
-      // Sans borne, on perd la ferme de vue et plus rien ne la ramène.
-      const limit = viewSpan * 0.9;
-      view.panX = Math.max(-limit, Math.min(limit, view.panX));
-      view.panZ = Math.max(-limit, Math.min(limit, view.panZ));
+      /*
+       * On ne coupe pas au bord, on retient : la compression a lieu à
+       * l'affichage, et ici on se contente de brider la demande brute pour
+       * qu'un long glissement n'accumule pas des centaines d'unités que le
+       * rappel devrait ensuite retraverser.
+       */
+      view.panX = retenir(view.panX, bornesVue.xMin, bornesVue.xMax);
+      view.panZ = retenir(view.panZ, bornesVue.zMin, bornesVue.zMax);
       applyCamera();
     }
 
@@ -2437,6 +2522,7 @@ export function IsoFarmView({
     }
 
     function onPointerDown(ev: PointerEvent) {
+      tientLaVue = true;
       const touch = ev.pointerType !== "mouse";
       // Le bouton droit ne cadre pas et ne trace pas : il n'ouvre qu'un menu,
       // depuis `contextmenu`. Le prendre ici le ferait aussi déplacer la vue.
@@ -2536,6 +2622,10 @@ export function IsoFarmView({
     function onPointerUp(ev: PointerEvent) {
       const had = pointers.delete(ev.pointerId);
       renderer.domElement.releasePointerCapture?.(ev.pointerId);
+      // Dès le dernier doigt levé, la vue redevient libre de revenir dans ses
+      // bornes. `pointercancel` passe aussi par ici, et c'est voulu : un geste
+      // interrompu par le système ne doit pas laisser la vue coincée dehors.
+      if (pointers.size === 0) tientLaVue = false;
       if (pointers.size < 2) pinchStart = 0;
       if (!had || pointers.size > 0) return;
       const wasPan = panGesture;
@@ -2779,6 +2869,17 @@ export function IsoFarmView({
         else if (mats) mats.needsUpdate = true;
       });
     };
+    /* Ramène la vue sur la ferme, en glissant plutôt qu'en sautant : un saut
+       fait perdre le fil de là d'où l'on venait. */
+    if (controle) {
+      controle.current = {
+        recentrer() {
+          tientLaVue = false;
+          retourVers = { x: 0, z: 0 };
+        },
+      };
+    }
+
     const governor = makeFrameGovernor(applyQuality);
     let lastFrame = 0;
 
@@ -2797,6 +2898,36 @@ export function IsoFarmView({
       const delta = lastFrame ? now - lastFrame : 16;
       lastFrame = now;
       governor(delta);
+
+      /*
+       * Le rappel, une fois le doigt levé.
+       *
+       * Tant qu'on tient la vue, elle reste où on l'a tirée : rappeler sous le
+       * doigt donnerait une image qui se débat contre le geste.
+       */
+      if (!tientLaVue) {
+        const vise = retourVers;
+        if (vise) {
+          view.panX = pasRetour(view.panX, vise.x, delta, 190);
+          view.panZ = pasRetour(view.panZ, vise.z, delta, 190);
+          if (view.panX === vise.x && view.panZ === vise.z) retourVers = null;
+          applyCamera();
+        } else {
+          const { dehors, cibleX, cibleZ } = horsBornes(view.panX, view.panZ, bornesVue);
+          if (dehors) {
+            view.panX = pasRetour(view.panX, cibleX, delta);
+            view.panZ = pasRetour(view.panZ, cibleZ, delta);
+            applyCamera();
+          }
+        }
+        // Le bouton n'existe que quand il sert à quelque chose. Le seuil est
+        // large : à une demi-parcelle près, la ferme est encore au centre.
+        const loin = Math.hypot(view.panX, view.panZ) > 7;
+        if (loin !== egareRef.current) {
+          egareRef.current = loin;
+          onEgareRef.current?.(loin);
+        }
+      }
 
       timer.update();
       const t = timer.getElapsed();
@@ -3405,6 +3536,12 @@ export function IsoFarmView({
     return () => {
       cancelAnimationFrame(raf);
       layoutRef.current = null;
+      if (controle) controle.current = null;
+      // La vue disparaît : le bouton de recentrage n'a plus rien à commander.
+      if (egareRef.current) {
+        egareRef.current = false;
+        onEgareRef.current?.(false);
+      }
       ro.disconnect();
       renderer.domElement.removeEventListener("pointerdown", onPointerDown);
       renderer.domElement.removeEventListener("pointermove", onPointerMove);

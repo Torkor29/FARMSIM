@@ -594,6 +594,14 @@ export function App() {
   const [email, setEmail] = useState("");
   const [accessCode, setAccessCode] = useState("ferme");
   const [activeParcelId, setActiveParcelId] = useState<string | null>(null);
+  /*
+   * La caméra parcourt maintenant toute la commune, et non plus le tour de
+   * l'île : sans repère, on finit par ne plus savoir où est sa propre ferme.
+   * La commande vit ici et non dans la vue — les rails recouvrent la toile et
+   * un bouton posé dans un coin de celle-ci ne se clique jamais.
+   */
+  const vueControle = useRef<{ recentrer(): void } | null>(null);
+  const [vueEgaree, setVueEgaree] = useState(false);
   const [parcelDetail, setParcelDetail] = useState<{
     parcel: Parcel;
     bonuses: Player["bonuses"];
@@ -4603,6 +4611,8 @@ export function App() {
           <Suspense fallback={<SceneLoading label="Chargement de la ferme…" />}>
             <IsoFarmView
               parcelId={activeParcelId ?? ""}
+              controle={vueControle}
+              onEgare={setVueEgaree}
               gridW={gw}
               gridH={gh}
               cells={grid}
@@ -6017,6 +6027,23 @@ export function App() {
         En bas à droite, hors du dock : c'est une consultation, pas un geste de
         la boucle. La pastille porte la couleur de la saison du jour, de sorte
         qu'on sait où l'on en est sans même l'ouvrir. */}
+      {/* Revenir sur sa ferme. Il n'apparaît qu'une fois la vue vraiment
+          éloignée : permanent, il ne servirait à rien neuf fois sur dix, et on
+          cesserait de le voir. */}
+      <button
+        type="button"
+        className={`vue-recentrer${vueEgaree ? " visible" : ""}`}
+        onClick={() => vueControle.current?.recentrer()}
+        tabIndex={vueEgaree ? 0 : -1}
+        aria-hidden={!vueEgaree}
+        title="Revenir sur ma ferme"
+      >
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" aria-hidden="true">
+          <circle cx="12" cy="12" r="4" />
+          <path d="M12 2v3M12 19v3M2 12h3M19 12h3" strokeLinecap="round" />
+        </svg>
+        <span>Ma ferme</span>
+      </button>
       <button
         type="button"
         className="calendrier-ouvrir"

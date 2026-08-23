@@ -171,6 +171,44 @@ export function graduation(min: number, max: number, fin: number, facteur = 1.14
   return [...new Set(out)].sort((a, b) => a - b);
 }
 
+/**
+ * La marche d'une voiture le long de la fenêtre de trafic.
+ *
+ * Rend une fonction qui va du temps normalisé — zéro à l'entrée, un à la
+ * sortie — à la position normalisée. Ce n'est délibérément pas l'identité :
+ * la voiture **ralentit en passant devant la ferme** et reprend après.
+ *
+ * C'est le correctif du reproche « les animations sont mauvaises ». Une
+ * voiture qui traverse le cadre à vitesse rigoureusement constante se lit
+ * comme un objet tiré par une ficelle, quel que soit le soin mis au modèle.
+ * Une rampe linéaire, l'œil ne la pardonne pas.
+ *
+ * On intègre le profil de vitesse une fois, à la construction, plutôt que de
+ * l'appliquer par image : appliquer un facteur à la vitesse image par image
+ * ferait dépendre la position du pas de temps, et deux machines n'auraient pas
+ * la même route.
+ */
+export function marcheVoiture(pFerme: number, creux = 0.45, largeur = 0.12): (q: number) => number {
+  const N = 48;
+  const bornes = new Float64Array(N + 1);
+  for (let i = 0; i < N; i++) {
+    const p = (i + 0.5) / N;
+    const d = (p - pFerme) / largeur;
+    // Le temps de franchir la tranche, c'est l'inverse de la vitesse.
+    bornes[i + 1] = bornes[i]! + 1 / (1 - creux * Math.exp(-0.5 * d * d));
+  }
+  const total = bornes[N]!;
+  for (let i = 0; i <= N; i++) bornes[i] = bornes[i]! / total;
+  return (q) => {
+    const k = Math.min(1, Math.max(0, q));
+    let i = 0;
+    while (i < N - 1 && bornes[i + 1]! < k) i++;
+    const a = bornes[i]!;
+    const b = bornes[i + 1]!;
+    return (i + (b > a ? (k - a) / (b - a) : 0)) / N;
+  };
+}
+
 /* ------------------------------------------------------------------ */
 /* La campagne                                                         */
 /* ------------------------------------------------------------------ */
@@ -436,15 +474,27 @@ export function createCountryside(o: OptionsCampagne): Campagne {
      Elles bouclent sur la route, à des vitesses et des départs différents, et
      dans les deux sens. Une file qui roule au même pas se lit comme un
      convoi ; ce qu'on veut, c'est une départementale. */
-  type Voiture = { group: THREE.Group; s0: number; vitesse: number; sens: 1 | -1; voie: number };
+  type Voiture = {
+    group: THREE.Group;
+    /** Durée d'un passage devant la ferme, en secondes. */
+    passage: number;
+    /** Le cycle entier : le passage, puis l'attente hors champ. */
+    cycle: number;
+    /** Décalage du départ dans le cycle. */
+    depart: number;
+    /** Du temps normalisé à la position normalisée. Voir `marcheVoiture`. */
+    marche: (q: number) => number;
+    sens: 1 | -1;
+    voie: number;
+  };
   const voitures: Voiture[] = [];
   const longueurTotale = longueurs[longueurs.length - 1]!;
   /*
    * Le circuit du trafic, et non la route entière.
    *
    * La route traverse tout le sol — cent soixante unités — pour ne jamais
-   * s'arrêter en plein champ. Quatre voitures réparties sur cette longueur
-   * passent donc l'essentiel de leur temps hors cadre : mesuré en jeu, aucune
+   * s'arrêter en plein champ. Des voitures réparties sur cette longueur
+   * passeraient l'essentiel de leur temps hors cadre : mesuré en jeu, aucune
    * n'était visible sur six captures d'affilée. Elles bouclent sur la portion
    * qui peut être à l'écran, et la route garde sa longueur.
    */
@@ -453,16 +503,31 @@ export function createCountryside(o: OptionsCampagne): Campagne {
   // parallèle à l'axe des `x`, l'arc s'y confond avec l'abscisse.
   const sCentre = -pointsRoute[0]!.x;
   const sDebut = Math.max(0, Math.min(longueurTotale - FENETRE, sCentre - FENETRE / 2));
-  const combien = sobre ? 3 : 5;
-  for (let i = 0; i < combien; i++) {
-    const sens: 1 | -1 = i % 2 === 0 ? 1 : -1;
+  const pFerme = Math.min(0.9, Math.max(0.1, (sCentre - sDebut) / FENETRE));
+  const marches = { 1: marcheVoiture(pFerme), [-1]: marcheVoiture(1 - pFerme) } as const;
+  /*
+   * Deux voitures, et de longs silences.
+   *
+   * Il y en avait cinq, en file continue : sur une départementale de campagne,
+   * cela fait un périphérique. Une route de commune est vide la plupart du
+   * temps — et c'est le vide qui rend le passage remarquable. Chaque voiture
+   * traverse, puis disparaît une demi-minute avant de revenir ; comme les deux
+   * cycles n'ont pas la même durée, elles ne se croisent jamais au même
+   * endroit.
+   */
+  for (let i = 0; i < 2; i++) {
+    const sens: 1 | -1 = i === 0 ? 1 : -1;
     const g = makeVoiture(CARROSSERIES[Math.floor(rnd() * CARROSSERIES.length)]!, shadows);
+    g.visible = false;
     object.add(g);
     for (const enfant of g.children) if (enfant instanceof THREE.Mesh) garder(enfant);
+    const passage = FENETRE / (4.6 + rnd() * 2.2);
     voitures.push({
       group: g,
-      s0: (FENETRE * i) / combien + rnd() * 8,
-      vitesse: 4.2 + rnd() * 2.4,
+      passage,
+      cycle: passage + 26 + rnd() * 22,
+      depart: rnd() * 40,
+      marche: marches[sens],
       sens,
       voie: sens * ((DEMI_ROUTE - 0.42) / 2),
     });
@@ -501,8 +566,17 @@ export function createCountryside(o: OptionsCampagne): Campagne {
 
   function update(t: number): void {
     for (const v of voitures) {
-      const parcouru = v.s0 + t * v.vitesse * v.sens;
-      const s = sDebut + (((parcouru % FENETRE) + FENETRE) % FENETRE);
+      const u = (((t - v.depart) % v.cycle) + v.cycle) % v.cycle;
+      if (u > v.passage) {
+        // Entre deux passages elle n'attend pas au bout de la fenêtre : elle
+        // n'est plus là. Une voiture à l'arrêt sur la chaussée se voit au
+        // dézoom, et rien ne l'expliquerait.
+        v.group.visible = false;
+        continue;
+      }
+      v.group.visible = true;
+      const avance = v.marche(u / v.passage);
+      const s = sDebut + FENETRE * (v.sens > 0 ? avance : 1 - avance);
       const p = surLaRoute(pointsRoute, longueurs, s);
       const nx = Math.cos(p.cap);
       const nz = -Math.sin(p.cap);
