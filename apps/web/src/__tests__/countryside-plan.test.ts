@@ -1,6 +1,10 @@
 import type { Season } from "@farmsim/shared";
 import {
   CYCLE_VOISIN,
+  cultureDe,
+  etatDepuisStade,
+  orientationTrame,
+  tourner,
   DEMI_ROUTE,
   ENGINS_MAX,
   LARGEUR_CHEMIN,
@@ -18,6 +22,7 @@ import {
   versEcranBas,
   versEcranDroite,
   type OptionsPlan,
+  type VoisinReel,
 } from "../countryside-plan";
 
 /**
@@ -448,5 +453,253 @@ describe("les couleurs", () => {
     // Hors bornes : on borne plutôt que de produire une couleur impossible.
     expect(melanger(0x102030, 0x405060, -3)).toBe(0x102030);
     expect(melanger(0x102030, 0x405060, 9)).toBe(0x405060);
+  });
+});
+
+describe("la commune, quand la carte a répondu", () => {
+  /*
+   * Le cœur du changement. Les voisins étaient tirés d'une graine : des
+   * cultures inventées sur des parcelles sans identifiant, qu'on ne pouvait ni
+   * regarder vraiment ni acheter. Ils viennent maintenant du cadastre.
+   */
+  function voisin(col: number, rang: number, p: Partial<VoisinReel> = {}): VoisinReel {
+    return {
+      id: `p-${col}-${rang}`,
+      label: `Champ ${col}·${rang}`,
+      col,
+      rang,
+      statut: "PNJ",
+      proprietaire: "Ferme Duval",
+      exploitation: "Duval",
+      culture: "WHEAT",
+      stade: "GROWING",
+      partCultivee: 1,
+      fertility: 0.7,
+      batiments: [],
+      cheptel: [],
+      prix: null,
+      achetable: false,
+      refus: null,
+      ...p,
+    };
+  }
+
+  const commune: VoisinReel[] = [
+    voisin(0, 0, { statut: "MOI", culture: null, stade: null, partCultivee: 0 }),
+    voisin(1, 0, { culture: "BARLEY", stade: "READY" }),
+    voisin(0, 1, { statut: "LIBRE", culture: null, stade: null, partCultivee: 0, prix: 40_000, achetable: true }),
+    voisin(1, 1, { culture: "MAIZE", stade: "PLANTED", batiments: [{ type: "SILO", level: 1, x: 2, y: 2, rotation: 0 }] }),
+    voisin(-1, 1, { culture: "RAPE", stade: "HARVESTED" }),
+  ];
+
+  it("pose exactement les parcelles du cadastre, et pas d’autres", () => {
+    const plan = planCampagne({ ...OPTIONS, voisins: commune });
+    const posees = new Set(plan.parcelles.map((p) => p.id));
+    // La sienne n'est pas un voisin : elle est déjà dessinée.
+    expect(posees.has("p-0-0")).toBe(false);
+    for (const v of commune.filter((v) => v.col !== 0 || v.rang !== 0)) {
+      expect(posees.has(v.id)).toBe(true);
+    }
+    expect(plan.parcelles.length).toBe(commune.length - 1);
+  });
+
+  it("garde l’identifiant : c’est lui qui permettra de l’acheter", () => {
+    const plan = planCampagne({ ...OPTIONS, voisins: commune });
+    for (const p of plan.parcelles) {
+      expect(p.reel).toBeDefined();
+      expect(p.id).toBe(p.reel!.id);
+      expect(p.reel!.prix === null || p.reel!.prix > 0).toBe(true);
+    }
+  });
+
+  it("les pose sur la trame, à leur case", () => {
+    const plan = planCampagne({ ...OPTIONS, voisins: commune });
+    for (const p of plan.parcelles) {
+      expect(p.x).toBeCloseTo(p.col * plan.pas, 9);
+      expect(p.z).toBeCloseTo(p.rang * plan.pas, 9);
+    }
+  });
+
+  it("peint ce que le voisin cultive, et non un tirage", () => {
+    const plan = planCampagne({ ...OPTIONS, voisins: commune });
+    const parId = new Map(plan.parcelles.map((p) => [p.id, p]));
+    expect(parId.get("p-1-0")!.culture).toBe("ORGE");
+    expect(parId.get("p-1-0")!.etat).toBe("MUR");
+    expect(parId.get("p-1-1")!.culture).toBe("MAIS");
+    expect(parId.get("p-1-1")!.etat).toBe("SEMIS");
+    expect(parId.get("p--1-1")!.etat).toBe("CHAUME");
+  });
+
+  it("n’invente pas de grange là où il n’y a pas de bâtiment", () => {
+    // Le décor en posait une sur trois parcelles au hasard. Ici la grange dit
+    // quelque chose de vrai : il y a un ouvrage sur cette parcelle-là.
+    const plan = planCampagne({ ...OPTIONS, voisins: commune });
+    const parId = new Map(plan.parcelles.map((p) => [p.id, p]));
+    expect(parId.get("p-1-1")!.batiment).toBe(true);
+    expect(parId.get("p-1-0")!.batiment).toBe(false);
+  });
+
+  it("ne fait travailler ni ma terre ni celle d’un autre joueur", () => {
+    /*
+     * Un tracteur PNJ sur la parcelle du joueur laisserait croire que
+     * quelqu'un d'autre y travaille ; sur celle d'un autre joueur, il
+     * raconterait une activité qui n'a pas lieu.
+     */
+    const mixte = [
+      ...commune,
+      voisin(2, 0, { statut: "JOUEUR", proprietaire: "Camille" }),
+      voisin(0, 2, { statut: "MOI" }),
+    ];
+    const plan = planCampagne({ ...OPTIONS, voisins: mixte });
+    for (const p of plan.parcelles.filter((x) => x.travaille)) {
+      expect(["PNJ", "LIBRE"]).toContain(p.reel!.statut);
+    }
+  });
+
+  it("s’arrête où la commune s’arrête", () => {
+    /*
+     * Une zone fait quatre à six parcelles de large : le damier de décor, qui
+     * en posait sept sur sept, débordait largement. Au-delà de la frontière il
+     * n'y a pas de parcelle, et c'est ce qui donne au pays un bord crédible.
+     */
+    const petite = planCampagne({ ...OPTIONS, voisins: [voisin(1, 0), voisin(0, 1)] });
+    expect(petite.parcelles.length).toBe(2);
+    const decor = planCampagne(OPTIONS);
+    expect(decor.parcelles.length).toBeGreaterThan(petite.parcelles.length);
+  });
+
+  it("retombe sur le décor tant que la carte n’a rien dit", () => {
+    // La vue doit se monter sans réseau : une liste vide n'est pas une commune
+    // vide, c'est une commune qu'on ne connaît pas encore.
+    expect(planCampagne({ ...OPTIONS, voisins: [] }).parcelles.length).toBe(0);
+    expect(planCampagne(OPTIONS).parcelles.length).toBeGreaterThan(6);
+  });
+
+  it("ne pose rien par-dessus la cour ni en travers du chemin", () => {
+    // Les règles géométriques valent aussi pour les parcelles réelles : une
+    // case du cadastre tombée sur la cour se dessinerait à travers le parking.
+    const partout: VoisinReel[] = [];
+    for (let col = -3; col <= 3; col++) {
+      for (let rang = -3; rang <= 3; rang++) partout.push(voisin(col, rang));
+    }
+    const plan = planCampagne({ ...OPTIONS, voisins: partout });
+    for (const p of plan.parcelles) {
+      expect(seChevauchent(empriseParcelle(p, plan.emprise), OPTIONS.cour)).toBe(false);
+      expect(Math.abs(p.z - plan.routeZ)).toBeGreaterThanOrEqual(EMPRISE / 2 + DEMI_ROUTE);
+      expect(versEcranBas(p.x, p.z) - plan.emprise).toBeGreaterThanOrEqual(plan.sol.uMin);
+    }
+  });
+});
+
+describe("l’orientation de la commune", () => {
+  /*
+   * En isométrique, tout ce qui est en amont de la ferme sort par le haut du
+   * cadre : seul le quartier aval se dessine. Or la ferme du joueur n'est pas
+   * au milieu de sa commune — elle peut être dans n'importe quel coin.
+   *
+   * Mesuré en jeu avant ce correctif : seize parcelles autour de la ferme,
+   * deux dessinées, parce qu'elles s'étendaient toutes en amont.
+   */
+  function communeVers(dx: number, dz: number, n = 4) {
+    const cases: { col: number; rang: number }[] = [{ col: 0, rang: 0 }];
+    for (let k = 1; k <= n; k++) cases.push({ col: dx * k, rang: dz * k });
+    return cases;
+  }
+
+  it("tourne la carte pour amener les voisins dans le cadre", () => {
+    for (const [dx, dz] of [[1, 0], [-1, 0], [0, 1], [0, -1], [-1, -1]] as const) {
+      const cases = communeVers(dx, dz);
+      const quart = orientationTrame(cases);
+      const avals = cases
+        .map((c) => tourner(c, quart))
+        .filter((c) => (c.col !== 0 || c.rang !== 0) && c.col + c.rang >= 0);
+      expect(avals.length).toBe(cases.length - 1);
+    }
+  });
+
+  it("choisit toujours le même quart pour la même commune", () => {
+    // Le pays ne doit pas pivoter sous les pieds du joueur d'un
+    // rafraîchissement à l'autre.
+    const cases = communeVers(-1, -1);
+    expect(orientationTrame(cases)).toBe(orientationTrame([...cases].reverse()));
+  });
+
+  it("tourne, et ne retourne jamais", () => {
+    /*
+     * Une symétrie amènerait autant de parcelles dans le cadre, et ferait du
+     * paysage le miroir du plan du Bureau : la parcelle qu'on croit acheter à
+     * droite arriverait à gauche.
+     *
+     * Une rotation conserve l'orientation, donc le produit vectoriel de deux
+     * vecteurs de la trame. C'est ce qu'on vérifie.
+     */
+    for (const quart of [0, 1, 2, 3] as const) {
+      const a = tourner({ col: 1, rang: 0 }, quart);
+      const b = tourner({ col: 0, rang: 1 }, quart);
+      expect(a.col * b.rang - a.rang * b.col).toBe(1);
+    }
+  });
+
+  it("conserve la mitoyenneté", () => {
+    // Deux parcelles voisines sur la carte doivent le rester dans le paysage,
+    // sans quoi le damier se disloquerait.
+    for (const quart of [0, 1, 2, 3] as const) {
+      const a = tourner({ col: 2, rang: 3 }, quart);
+      const b = tourner({ col: 3, rang: 3 }, quart);
+      expect(Math.abs(a.col - b.col) + Math.abs(a.rang - b.rang)).toBe(1);
+    }
+  });
+
+  it("place la ferme au centre, quel que soit le quart", () => {
+    for (const quart of [0, 1, 2, 3] as const) {
+      expect(tourner({ col: 0, rang: 0 }, quart)).toEqual({ col: 0, rang: 0 });
+    }
+  });
+});
+
+describe("de la carte au décor", () => {
+  it("traduit chaque culture du jeu", () => {
+    expect(cultureDe("WHEAT")).toBe("BLE");
+    expect(cultureDe("BARLEY")).toBe("ORGE");
+    expect(cultureDe("RAPE")).toBe("COLZA");
+    expect(cultureDe("MAIZE")).toBe("MAIS");
+    expect(cultureDe("PEA")).toBe("POIS");
+    expect(cultureDe("GRASS")).toBe("HERBE");
+  });
+
+  it("met une culture inconnue en herbe plutôt que de perdre le champ", () => {
+    // Une culture ajoutée au jeu ne doit pas faire disparaître une parcelle du
+    // paysage en attendant qu'on lui trouve une teinte.
+    expect(cultureDe("QUINOA")).toBe("HERBE");
+    expect(cultureDe(null)).toBe("HERBE");
+    expect(cultureDe(undefined)).toBe("HERBE");
+  });
+
+  it("traduit chaque stade en ce qu’on en voit", () => {
+    expect(etatDepuisStade("PREPARED", 1)).toBe("LABOUR");
+    expect(etatDepuisStade("PLANTED", 1)).toBe("SEMIS");
+    expect(etatDepuisStade("GROWING", 1)).toBe("POUSSE");
+    expect(etatDepuisStade("READY", 1)).toBe("MUR");
+    expect(etatDepuisStade("HARVESTED", 1)).toBe("CHAUME");
+    // Gâtée sur pied : même chaume. Ce qui l'en distingue est une affaire de
+    // comptabilité, pas de couleur.
+    expect(etatDepuisStade("SPOILED", 1)).toBe("CHAUME");
+  });
+
+  it("laisse en herbe ce qui n’est pas semé", () => {
+    expect(etatDepuisStade("GROWING", 0)).toBe("JACHERE");
+    expect(etatDepuisStade(null, 0)).toBe("JACHERE");
+    expect(etatDepuisStade("EMPTY", 1)).toBe("JACHERE");
+  });
+
+  it("donne une teinte à chaque culture, pois compris", () => {
+    for (const c of ["BLE", "ORGE", "COLZA", "MAIS", "POIS", "TOURNESOL", "HERBE"] as const) {
+      for (const e of ETATS) {
+        const t = couleurChamp(c, e as never);
+        expect(Number.isInteger(t)).toBe(true);
+        expect(t).toBeGreaterThanOrEqual(0);
+        expect(t).toBeLessThanOrEqual(0xffffff);
+      }
+    }
   });
 });

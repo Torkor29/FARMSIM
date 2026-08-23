@@ -317,7 +317,12 @@ export function createCountryside(o: OptionsCampagne): Campagne {
 
     for (const p of plan.parcelles) {
       const grain = suite(grainerDe(p.id));
-      const base = couleurChamp(p.culture, etatChamp(p, jour, saison));
+      /*
+       * L'état lu sur la carte l'emporte sur le cycle déduit du jour : quand
+       * on sait ce que le voisin a semé, il n'y a plus rien à deviner. Le
+       * cycle ne sert qu'aux parcelles de décor, au-delà de la commune.
+       */
+      const base = couleurChamp(p.culture, p.etat ?? etatChamp(p, jour, saison));
 
       // La dalle de terre, qui donne son talus à la parcelle — la même que
       // celle de l'île, pour que la campagne ne soit pas un étage plus bas.

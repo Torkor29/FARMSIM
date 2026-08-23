@@ -97,6 +97,7 @@ import {
 } from "@farmsim/shared";
 import { AuthScreen, RecoveryNotice, type AuthMode } from "./AuthScreen";
 import type { GrazingHerd, PreviewBuilding } from "./IsoFarmView";
+import type { VoisinReel } from "./countryside-plan";
 import { BuildingSheet } from "./BuildingSheet";
 import { ConfirmDialog, type ConfirmRequest } from "./ConfirmDialog";
 import { MachineCareOverlay, type CareMode } from "./MachineCareOverlay";
@@ -602,6 +603,14 @@ export function App() {
    */
   const vueControle = useRef<{ recentrer(): void } | null>(null);
   const [vueEgaree, setVueEgaree] = useState(false);
+  /*
+   * Le cadastre autour de la ferme.
+   *
+   * Vide, la campagne retombe sur son damier de décor — c'est ce qu'on voit le
+   * temps que la route réponde, et cela évite que la vue dépende du réseau
+   * pour se monter.
+   */
+  const [voisinage, setVoisinage] = useState<VoisinReel[]>([]);
   const [parcelDetail, setParcelDetail] = useState<{
     parcel: Parcel;
     bonuses: Player["bonuses"];
@@ -1138,6 +1147,19 @@ export function App() {
     setParcelDetail((prev) => keepIfSame(prev, d));
   }, []);
 
+  /*
+   * La commune autour de la parcelle.
+   *
+   * Elle se recharge bien plus lentement que la parcelle — un voisin change de
+   * culture une fois par jour de jeu, pas toutes les quatre secondes, et le
+   * décor se reconstruit à chaque changement. `keepIfSame` fait le reste : une
+   * réponse identique ne déclenche aucun rendu.
+   */
+  const loadVoisinage = useCallback(async (id: string) => {
+    const d = await api<{ parcelles: VoisinReel[] }>(`/parcels/${id}/voisinage`);
+    setVoisinage((prev) => keepIfSame(prev, d.parcelles));
+  }, []);
+
   useEffect(() => {
     refreshMeta().catch((e) => setErr(String(e.message ?? e)));
     loadWorld().catch(() => undefined);
@@ -1357,6 +1379,19 @@ export function App() {
     }, 4000);
     return () => clearInterval(t);
   }, [activeParcelId, loadParcel, loadLivestock]);
+
+  useEffect(() => {
+    if (!activeParcelId) {
+      setVoisinage([]);
+      return;
+    }
+    // La commune change de parcelle : on repart de rien plutôt que de laisser
+    // un instant les voisins de l'ancienne autour de la nouvelle.
+    setVoisinage([]);
+    loadVoisinage(activeParcelId).catch(() => undefined);
+    const t = setInterval(() => loadVoisinage(activeParcelId).catch(() => undefined), 45_000);
+    return () => clearInterval(t);
+  }, [activeParcelId, loadVoisinage]);
 
   useEffect(() => {
     if (!player || !activeParcelId) return;
@@ -4613,6 +4648,7 @@ export function App() {
               parcelId={activeParcelId ?? ""}
               controle={vueControle}
               onEgare={setVueEgaree}
+              voisinage={voisinage}
               gridW={gw}
               gridH={gh}
               cells={grid}

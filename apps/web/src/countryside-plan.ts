@@ -56,7 +56,70 @@ export type EtatChamp =
   | "JACHERE";
 
 /** Les cultures du voisinage — celles du jeu, plus le tournesol pour l'œil. */
-export type CultureVoisine = "BLE" | "ORGE" | "COLZA" | "MAIS" | "HERBE" | "TOURNESOL";
+export type CultureVoisine =
+  | "BLE"
+  | "ORGE"
+  | "COLZA"
+  | "MAIS"
+  | "POIS"
+  | "HERBE"
+  | "TOURNESOL";
+
+/**
+ * Du code de culture de la base à celle qu'on sait peindre.
+ *
+ * Le tournesol n'a pas de code : il n'existe que dans le décor, pour que la
+ * campagne ne soit pas six nuances de la même chose. Tout le reste vient de la
+ * carte, et une culture inconnue tombe sur la jachère plutôt que de faire
+ * disparaître le champ.
+ */
+export function cultureDe(code: string | null | undefined): CultureVoisine {
+  switch (code) {
+    case "WHEAT":
+      return "BLE";
+    case "BARLEY":
+      return "ORGE";
+    case "RAPE":
+      return "COLZA";
+    case "MAIZE":
+      return "MAIS";
+    case "PEA":
+      return "POIS";
+    default:
+      return "HERBE";
+  }
+}
+
+/**
+ * De l'avancement d'un champ à ce qu'on en voit.
+ *
+ * Une parcelle qui n'a rien de semé n'est pas « en jachère » pour autant : si
+ * elle a été travaillée elle est en terre nue, sinon elle est en herbe. La
+ * part emblavée tranche — c'est elle qui dit si le voisin exploite ou laisse.
+ */
+export function etatDepuisStade(
+  stade: string | null | undefined,
+  partCultivee: number,
+): EtatChamp {
+  if (partCultivee <= 0) return "JACHERE";
+  switch (stade) {
+    case "PREPARED":
+      return "LABOUR";
+    case "PLANTED":
+      return "SEMIS";
+    case "GROWING":
+      return "POUSSE";
+    case "READY":
+      return "MUR";
+    case "HARVESTED":
+    // Une récolte gâtée sur pied laisse le même chaume qu'une moisson : ce
+    // qui la distingue est une affaire de comptabilité, pas de couleur.
+    case "SPOILED":
+      return "CHAUME";
+    default:
+      return "JACHERE";
+  }
+}
 
 /**
  * Une parcelle de voisin.
@@ -79,6 +142,42 @@ export type ParcelleVoisine = {
   travaille: boolean;
   /** Une grange au bord — toutes les parcelles n'en ont pas. */
   batiment: boolean;
+  /**
+   * Ce que la carte en dit, quand la carte a répondu.
+   *
+   * Absent, la parcelle est du décor : sa culture et son état descendent de la
+   * graine et du calendrier, comme avant. C'est ce qui s'affiche le temps que
+   * la route réponde, et au-delà de la commune — là où il n'y a pas de
+   * parcelle du tout, seulement des terres d'ailleurs.
+   */
+  reel?: VoisinReel;
+  /** L'état lu sur la carte. Il l'emporte sur le cycle déduit du jour. */
+  etat?: EtatChamp;
+};
+
+/**
+ * Une parcelle du cadastre, telle que `/parcels/:id/voisinage` la rend.
+ *
+ * C'est la fin des voisins inventés : ces parcelles-là ont un identifiant, un
+ * propriétaire et un prix, et ce sont celles que le joueur pourra racheter.
+ */
+export type VoisinReel = {
+  id: string;
+  label: string;
+  col: number;
+  rang: number;
+  statut: "MOI" | "PNJ" | "JOUEUR" | "LIBRE";
+  proprietaire: string | null;
+  exploitation: string | null;
+  culture: string | null;
+  stade: string | null;
+  partCultivee: number;
+  fertility: number;
+  batiments: { type: string; level: number; x: number; y: number; rotation: number }[];
+  cheptel: { kind: string; size: number }[];
+  prix: number | null;
+  achetable: boolean;
+  refus: string | null;
 };
 
 export type PointPlan = { x: number; z: number };
@@ -121,6 +220,15 @@ export type OptionsPlan = {
   colonnes?: number;
   /** Rangs devant et derrière. */
   rangs?: number;
+  /**
+   * La commune, si on l'a reçue.
+   *
+   * Fournie, elle remplace intégralement le damier tiré au sort : on pose
+   * exactement ces parcelles-là, à leur case, avec leur culture et leur état.
+   * Absente, on retombe sur le décor — le temps que la route réponde, et pour
+   * que la vue se monte sans réseau.
+   */
+  voisins?: readonly VoisinReel[];
 };
 
 /* ------------------------------------------------------------------ */
@@ -242,6 +350,7 @@ const TEINTES: Record<CultureVoisine, { pousse: number; mur: number }> = {
   ORGE: { pousse: 0x9dc763, mur: 0xd6ba63 },
   COLZA: { pousse: 0x74b357, mur: 0xf0cf3c },
   MAIS: { pousse: 0x6fb04a, mur: 0xc7a03f },
+  POIS: { pousse: 0x86c46f, mur: 0xb9c473 },
   TOURNESOL: { pousse: 0x6faa4b, mur: 0xeebe2e },
   HERBE: { pousse: 0x7cc36a, mur: 0x7cc36a },
 };
@@ -342,6 +451,71 @@ export function couloirRoute(o: OptionsPlan): number {
 }
 
 /* ------------------------------------------------------------------ */
+/* L'orientation de la commune                                         */
+/* ------------------------------------------------------------------ */
+
+/**
+ * De quel quart de tour poser la carte sur la trame.
+ *
+ * En vue isométrique, tout ce qui est en amont de la ferme sort par le haut du
+ * cadre : la campagne ne peut montrer que le quartier **aval**, celui où
+ * `col + rang` croît. Or la ferme du joueur n'est pas au milieu de sa commune
+ * — elle peut être dans n'importe quel coin. Posée telle quelle, une ferme du
+ * bord sud n'aurait aucun voisin visible : mesuré en jeu, seize parcelles
+ * existaient autour et deux se dessinaient.
+ *
+ * On tourne donc la carte d'un quart de tour ou trois pour amener le gros de
+ * la commune dans le quartier visible. C'est une **rotation** et jamais une
+ * symétrie : le plan du Bureau et le paysage doivent rester superposables à
+ * une rotation près, sinon la parcelle qu'on croit acheter à droite arriverait
+ * à gauche.
+ *
+ * Le choix ne dépend que de la place du joueur dans sa commune : il ne change
+ * donc pas d'un rafraîchissement à l'autre, et le pays ne pivote pas sous les
+ * pieds.
+ */
+export function orientationTrame(cases: readonly { col: number; rang: number }[]): 0 | 1 | 2 | 3 {
+  let meilleur: 0 | 1 | 2 | 3 = 0;
+  let record = -1;
+  for (const quart of [0, 1, 2, 3] as const) {
+    let vus = 0;
+    for (const c of cases) {
+      const t = tourner(c, quart);
+      if (t.col === 0 && t.rang === 0) continue;
+      if (t.col + t.rang >= 0) vus++;
+    }
+    if (vus > record) {
+      record = vus;
+      meilleur = quart;
+    }
+  }
+  return meilleur;
+}
+
+/**
+ * Un quart de tour dans le plan de la trame.
+ *
+ * Le `+ 0` n'est pas décoratif : `-0` traverse les comparaisons de valeur du
+ * langage sans se faire remarquer, puis ressort dans une clé de reconstruction
+ * ou une comparaison stricte, où il ne vaut plus tout à fait zéro.
+ */
+export function tourner(
+  c: { col: number; rang: number },
+  quart: 0 | 1 | 2 | 3,
+): { col: number; rang: number } {
+  switch (quart) {
+    case 1:
+      return { col: -c.rang + 0, rang: c.col + 0 };
+    case 2:
+      return { col: -c.col + 0, rang: -c.rang + 0 };
+    case 3:
+      return { col: c.rang + 0, rang: -c.col + 0 };
+    default:
+      return { col: c.col + 0, rang: c.rang + 0 };
+  }
+}
+
+/* ------------------------------------------------------------------ */
 /* Le plan complet                                                     */
 /* ------------------------------------------------------------------ */
 
@@ -369,37 +543,78 @@ export function planCampagne(o: OptionsPlan): PlanCampagne {
   const cultures: CultureVoisine[] = ["BLE", "ORGE", "COLZA", "MAIS", "TOURNESOL", "HERBE"];
   const parcelles: ParcelleVoisine[] = [];
 
-  for (let rang = -rangs; rang <= rangs; rang++) {
-    for (let col = -colonnes; col <= colonnes; col++) {
-      if (col === 0 && rang === 0) continue;
+  /**
+   * Une case de la trame peut-elle porter une parcelle ?
+   *
+   * Le coin amont décide, et c'est lui qui vide l'amont : une case dont le
+   * coin dépasse la lisière se terminerait dans le vide, et l'on verrait la
+   * tranche du monde par-dessus.
+   */
+  const posable = (x: number, z: number): boolean => {
+    const boite: Boite = { x, z, w: emprise, d: emprise };
+    if (versEcranBas(x, z) - emprise < sol.uMin) return false;
+    if (versEcranBas(x, z) + emprise > sol.uMax - MARGE_LISIERE) return false;
+    if (Math.abs(versEcranDroite(x, z)) + emprise > sol.vMax - MARGE_LISIERE) return false;
+    if (seChevauchent(boite, cour, 0.4)) return false;
+    if (seChevauchent(boite, joueur, 0.4)) return false;
+    // Le chemin passe dans un couloir de trame : une parcelle ne peut pas y
+    // être, mais on le vérifie plutôt que de le supposer.
+    return Math.abs(z - routeZ) >= emprise / 2 + DEMI_ROUTE;
+  };
+
+  if (o.voisins) {
+    /*
+     * La commune a répondu : on pose exactement ses parcelles, à leur case.
+     *
+     * Rien n'est tiré au sort ici, et c'est tout l'objet du changement — les
+     * champs alentour sont ceux du cadastre, avec leur propriétaire et leur
+     * prix. Là où la commune s'arrête, il n'y a pas de parcelle : c'est ce qui
+     * donne au pays un bord crédible plutôt qu'un damier sans fin.
+     */
+    const quart = orientationTrame(o.voisins);
+    for (const brut of o.voisins) {
+      if (brut.col === 0 && brut.rang === 0) continue;
+      const v = brut;
+      const { col, rang } = tourner(brut, quart);
       const x = col * pas;
       const z = rang * pas;
-      const boite: Boite = { x, z, w: emprise, d: emprise };
-      /*
-       * Le coin amont de la parcelle, à l'écran. C'est lui qui décide, et
-       * c'est aussi lui qui vide l'amont : une case dont le coin dépasse la
-       * lisière se terminerait dans le vide, et l'on verrait la tranche du
-       * monde par-dessus.
-       */
-      if (versEcranBas(x, z) - emprise < sol.uMin) continue;
-      if (versEcranBas(x, z) + emprise > sol.uMax - MARGE_LISIERE) continue;
-      if (Math.abs(versEcranDroite(x, z)) + emprise > sol.vMax - MARGE_LISIERE) continue;
-      if (seChevauchent(boite, cour, 0.4)) continue;
-      if (seChevauchent(boite, joueur, 0.4)) continue;
-      // Le chemin passe dans un couloir de trame : une parcelle ne peut pas y
-      // être, mais on le vérifie plutôt que de le supposer.
-      if (Math.abs(z - routeZ) < emprise / 2 + DEMI_ROUTE) continue;
+      if (!posable(x, z)) continue;
+      const grain = suite(grainerDe(v.id));
       parcelles.push({
-        id: `voisin-${col}-${rang}`,
+        id: v.id,
         col,
         rang,
         x,
         z,
-        culture: cultures[Math.floor(rnd() * cultures.length)]!,
-        decalage: Math.floor(rnd() * CYCLE_VOISIN),
+        culture: cultureDe(v.culture),
+        // Le cycle ne sert plus qu'aux parcelles de décor ; on garde un
+        // décalage stable pour que rien ne clignote si la carte se tait.
+        decalage: Math.floor(grain() * CYCLE_VOISIN),
         travaille: false,
-        batiment: rnd() < 0.3,
+        batiment: v.batiments.length > 0,
+        reel: v,
+        etat: etatDepuisStade(v.stade, v.partCultivee),
       });
+    }
+  } else {
+    for (let rang = -rangs; rang <= rangs; rang++) {
+      for (let col = -colonnes; col <= colonnes; col++) {
+        if (col === 0 && rang === 0) continue;
+        const x = col * pas;
+        const z = rang * pas;
+        if (!posable(x, z)) continue;
+        parcelles.push({
+          id: `voisin-${col}-${rang}`,
+          col,
+          rang,
+          x,
+          z,
+          culture: cultures[Math.floor(rnd() * cultures.length)]!,
+          decalage: Math.floor(rnd() * CYCLE_VOISIN),
+          travaille: false,
+          batiment: rnd() < 0.3,
+        });
+      }
     }
   }
 
@@ -413,7 +628,9 @@ export function planCampagne(o: OptionsPlan): PlanCampagne {
   const visible = (p: ParcelleVoisine) =>
     Math.hypot(p.x, p.z) - 0.4 * versEcranBas(p.x, p.z);
   const candidats = parcelles
-    .filter((p) => p.culture !== "HERBE")
+    // On ne laboure ni la prairie, ni la terre d'un autre joueur — ni la
+    // sienne : c'est le joueur qui travaille ses parcelles à lui.
+    .filter((p) => p.culture !== "HERBE" && p.reel?.statut !== "MOI" && p.reel?.statut !== "JOUEUR")
     .sort((a, b) => visible(a) - visible(b));
   for (const p of candidats.slice(0, ENGINS_MAX)) p.travaille = true;
 

@@ -21,6 +21,7 @@ import { applyHerdPose, meshForHerd } from "./animal-meshes";
 import { createBuildingRig, nearestThreshold, type BuildingRig } from "./buildings3d";
 import { createParkingRig, type ParkingRig } from "./parking3d";
 import { createCountryside, type Campagne } from "./countryside";
+import type { VoisinReel } from "./countryside-plan";
 import {
   bornesDeplacement,
   elastique,
@@ -241,6 +242,13 @@ type Props = {
   controle?: MutableRefObject<{ recentrer(): void } | null>;
   /** Prévient quand la vue s'éloigne de la ferme, ou y revient. */
   onEgare?: (egare: boolean) => void;
+  /**
+   * La commune, telle que `/parcels/:id/voisinage` la rend.
+   *
+   * Vide, la campagne retombe sur son damier de décor : c'est ce qu'on voit le
+   * temps que la route réponde, et la vue se monte donc sans réseau.
+   */
+  voisinage?: readonly VoisinReel[];
   gridW: number;
   gridH: number;
   cells: IsoCell[];
@@ -1067,6 +1075,7 @@ export function IsoFarmView({
   parcelId = "",
   controle,
   onEgare,
+  voisinage,
   gridW,
   gridH,
   cells,
@@ -1141,6 +1150,16 @@ export function IsoFarmView({
   const egareRef = useRef(false);
   const onEgareRef = useRef(onEgare);
   onEgareRef.current = onEgare;
+  /*
+   * Le grand effet de montage ne dépend de rien : il ne tourne qu'une fois, et
+   * `layout()` vit dans sa fermeture. Une propriété lue directement y serait
+   * donc figée à sa valeur du premier rendu — la campagne resterait à jamais
+   * celle du damier de décor, quoi que la route réponde ensuite.
+   */
+  const voisinageRef = useRef(voisinage);
+  voisinageRef.current = voisinage;
+  const parcelIdRef = useRef(parcelId);
+  parcelIdRef.current = parcelId;
   const seasonAppliedRef = useRef<string | null>(null);
   const weatherRef = useRef(weather);
   weatherRef.current = weather;
@@ -1887,13 +1906,24 @@ export function IsoFarmView({
        * cher un décor qui n'a pas bougé. La clé dit ce dont le décor dépend
        * vraiment — la taille de l'île, la place de la cour, la parcelle.
        */
-      const cle = `${gw}x${gh}|${courBoite.x.toFixed(2)},${courBoite.z.toFixed(2)},${courBoite.w.toFixed(2)},${courBoite.d.toFixed(2)}|${parcelId}`;
+      /*
+       * La clé dit ce dont le décor dépend vraiment. Le voisinage y entre par
+       * ce qui se **voit** — la case, la culture, l'état, le bâti — et non par
+       * la réponse entière : le prix d'une parcelle change avec le patrimoine
+       * du joueur, et reconstruire trente champs parce qu'un devis a bougé de
+       * deux euros serait payer cher un décor qui n'a pas changé.
+       */
+      const voisins = voisinageRef.current;
+      const empreinteVoisins = (voisins ?? [])
+        .map((v) => `${v.col},${v.rang}:${v.culture ?? "-"}:${v.stade ?? "-"}:${v.batiments.length}:${v.statut}`)
+        .join("|");
+      const cle = `${gw}x${gh}|${courBoite.x.toFixed(2)},${courBoite.z.toFixed(2)},${courBoite.w.toFixed(2)},${courBoite.d.toFixed(2)}|${parcelIdRef.current}|${empreinteVoisins}`;
       if (cle !== campagneCle) {
         campagneCle = cle;
         campagne?.dispose();
         campagneGroup.clear();
         campagne = createCountryside({
-          graine: parcelId || `${gw}x${gh}`,
+          graine: parcelIdRef.current || `${gw}x${gh}`,
           /*
            * Les voisins ont exactement l'emprise de l'île du joueur, et se
            * posent sur la même trame : ce sont les parcelles qu'il pourra
@@ -1902,6 +1932,7 @@ export function IsoFarmView({
            */
           emprise: Math.max(gw, gh) * step + 1.4,
           cases: Math.max(gw, gh),
+          voisins: voisins?.length ? voisins : undefined,
           cour: courBoite,
           shadows: quality.shadows,
           sobre: !quality.shadows,
@@ -3621,8 +3652,14 @@ export function IsoFarmView({
     // Le parc fait partie du décor : une machine achetée doit apparaître sur la
     // cour sans attendre qu'une case du champ change.
     const p = parked.map((x) => `${x.id}:${x.type}:${Math.round((x.condition ?? 100) / 5)}`).join("|");
-    return `${gridW}x${gridH}#${c}#${b}#${s}#${sel}#${w}#${p}`;
-  }, [cells, buildings, cellSims, selected, workers, parked, gridW, gridH]);
+    // La commune fait partie de la scène depuis qu'elle est réelle : sans elle
+    // ici, la campagne resterait le décor tiré au sort jusqu'au prochain coup
+    // de bêche du joueur.
+    const v = (voisinage ?? [])
+      .map((x) => `${x.col},${x.rang}:${x.culture ?? "-"}:${x.stade ?? "-"}:${x.statut}`)
+      .join("|");
+    return `${gridW}x${gridH}#${c}#${b}#${s}#${sel}#${w}#${p}#${v}`;
+  }, [cells, buildings, cellSims, selected, workers, parked, gridW, gridH, voisinage]);
 
   useEffect(() => {
     layoutRef.current?.();
