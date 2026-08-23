@@ -320,6 +320,27 @@ export function coteTravail(emprise: number): number {
 }
 
 /**
+ * Le lacet à donner au modèle d'un engin qui va dans la direction `cap`.
+ *
+ * Deux conventions se croisent ici, et leur rencontre silencieuse est ce qui
+ * faisait rouler les tracteurs de voisin **en crabe** : capot vers le rang
+ * d'à côté pendant qu'ils descendaient leur ligne. Rien dans la trajectoire
+ * n'était faux — c'est bien ce qui rendait le défaut si difficile à situer.
+ *
+ * La campagne raisonne en relèvement, `atan2(dx, dz)` : c'est ce que rend la
+ * route, et c'est ce qu'attendent les carrosseries de `decor3d`, bâties vers
+ * les Z. Les machines de `machines3d`, elles, sont bâties vers les X — nez en
+ * `+X`, outil traîné vers les `−X`. Un quart de tour d'écart, exactement.
+ *
+ * On ne corrige donc pas le cap dans `cycleTravail` : il y est juste, et la
+ * route s'en sert. On traduit ici, une fois, à l'endroit où le modèle est
+ * posé — et le nom dit de quoi il s'agit.
+ */
+export function lacetEngin(cap: number): number {
+  return cap - Math.PI / 2;
+}
+
+/**
  * Le cycle de travail d'un engin : des passes, et des demi-tours.
  *
  * La version d'avant faisait un aller-retour sur une onde triangulaire : le
@@ -422,12 +443,31 @@ export function cycleTravail(
   const d10 = 3 * lisse ** 2 - 4 * lisse + 1;
   const d01 = -6 * lisse ** 2 + 6 * lisse;
   const d11 = 3 * lisse ** 2 - 2 * lisse;
+  const vx = d00 * p0x + d10 * t0x + d01 * p1x + d11 * t1x;
+  const vz = d00 * p0z + d01 * p1z;
+  /*
+   * Les roues avant suivent la courbe qu'elles décrivent.
+   *
+   * Ce retour annonçait un braquage nul, et l'engin traversait tout le champ
+   * en S avec les roues rigoureusement droites : la seule manœuvre qu'on voie
+   * en entier, et la seule où rien ne braquait. On tire donc l'angle de la
+   * courbure signée de la trajectoire, ramenée à l'échelle du demi-tour — où
+   * un rayon de `largeur / 2` vaut braquage à fond.
+   */
+  const a00 = 12 * lisse - 6;
+  const a10 = 6 * lisse - 4;
+  const a01 = -12 * lisse + 6;
+  const a11 = 6 * lisse - 2;
+  const ax = a00 * p0x + a10 * t0x + a01 * p1x + a11 * t1x;
+  const az = a00 * p0z + a01 * p1z;
+  const v2 = vx * vx + vz * vz;
+  const courbure = v2 > 1e-9 ? (vx * az - vz * ax) / v2 ** 1.5 : 0;
   return {
     x: h00 * p0x + h10 * t0x + h01 * p1x + h11 * t1x,
     z: h00 * p0z + h01 * p1z,
-    cap: Math.atan2(d00 * p0x + d10 * t0x + d01 * p1x + d11 * t1x, d00 * p0z + d01 * p1z),
+    cap: Math.atan2(vx, vz),
     travaille: false,
-    braquage: 0,
+    braquage: Math.max(-1, Math.min(1, courbure * (o.largeur / 2))),
     avancement: 1,
   };
 }
@@ -865,6 +905,10 @@ export function createCountryside(o: OptionsCampagne): Campagne {
     sillons: THREE.Mesh;
     /** Sommets par passe, pour régler la plage de dessin. */
     parPasse: number;
+    /** Odomètre : ce que le sol a défilé sous lui, en unités monde. */
+    parcouru: number;
+    dernierX: number;
+    dernierZ: number;
   };
   const engins: Engin[] = [];
   {
@@ -963,6 +1007,9 @@ export function createCountryside(o: OptionsCampagne): Campagne {
         rangs,
         sillons,
         parPasse: segments * 6,
+        parcouru: 0,
+        dernierX: p.x,
+        dernierZ: p.z,
       });
     }
   }
@@ -999,19 +1046,57 @@ export function createCountryside(o: OptionsCampagne): Campagne {
         largeur: 1.8,
         vitesse: e.vitesse,
       });
-      e.rig.group.position.set(e.p.x + pas.x, y0 + 0.06, e.p.z + pas.z);
-      _lacet.set(0, pas.cap, 0);
+      const px = e.p.x + pas.x;
+      const pz = e.p.z + pas.z;
+      /*
+       * L'odomètre, et non l'horloge.
+       *
+       * `t × vitesse` faisait tourner les roues au régime de travail quoi que
+       * l'engin fasse. Or il ralentit dans les manœuvres — un demi-tour, c'est
+       * deux mètres quatre-vingts en trois secondes — et les pneus patinaient
+       * de deux fois et demie pendant tout le virage. La distance réellement
+       * parcourue entraîne roues, disques et rabatteur, exactement comme sur
+       * l'engin du joueur.
+       *
+       * Les pas d'une unité et plus ne comptent pas : à la première image on
+       * part du centre de la parcelle, et une fenêtre remise au premier plan
+       * après un temps d'arrêt rattrape tout son retard d'un coup. Ni l'un ni
+       * l'autre n'est un tour de roue.
+       */
+      const bond = Math.hypot(px - e.dernierX, pz - e.dernierZ);
+      if (bond < 1) e.parcouru += bond;
+      e.dernierX = px;
+      e.dernierZ = pz;
+      // Les pneus mordent d'un cheveu dans la terre : posés pile au sommet des
+      // cases, ils laissent un interstice et l'engin a l'air de flotter. Même
+      // règle et même valeur que sur la parcelle du joueur.
+      e.rig.group.position.set(px, y0 + HAUT_CASE - 0.012, pz);
+      _lacet.set(0, lacetEngin(pas.cap), 0);
       e.rig.group.quaternion.setFromEuler(_lacet);
       e.rig.update({
         t,
-        distance: t * e.vitesse,
+        distance: e.parcouru,
         working: pas.travaille,
         steer: pas.braquage,
       });
-      // Un tracteur qui laboure sans que rien ne change ne travaille pas : il
-      // fait les cent pas. La bande faite reste faite.
+      /*
+       * La bande faite reste faite — vraiment, et pas seulement le temps d'un
+       * tour.
+       *
+       * L'avancement redescend à zéro quand l'engin repart de la première
+       * ligne, et la plage de dessin le suivait : tout le champ labouré
+       * disparaissait **en une image**, une fois par cycle. Une terre qui se
+       * délaboure toute seule, c'est le genre de saut qu'on prend pour un
+       * défaut d'affichage — et c'en était un.
+       *
+       * Le labour est un état du champ, pas une étape de l'animation : il ne
+       * s'efface qu'au changement de jour, quand la parcelle est redessinée
+       * avec sa nouvelle saison.
+       */
       const faites = Math.round(pas.avancement * e.rangs * (e.parPasse / 6)) * 6;
-      e.sillons.geometry.setDrawRange(0, faites);
+      if (faites > e.sillons.geometry.drawRange.count) {
+        e.sillons.geometry.setDrawRange(0, faites);
+      }
     }
   }
 
@@ -1064,7 +1149,13 @@ export function createCountryside(o: OptionsCampagne): Campagne {
   }
 
   function setJour(jourDeJeu: number, saison: Season): void {
-    poserParcelles(Math.floor(jourDeJeu), saison);
+    const jour = Math.floor(jourDeJeu);
+    // Jour neuf, terre neuve : c'est le seul moment où le labour d'hier
+    // s'efface, et il s'efface avec le reste de la parcelle qu'on redessine.
+    if (jour !== jourPose || saison !== saisonPosee) {
+      for (const e of engins) e.sillons.geometry.setDrawRange(0, 0);
+    }
+    poserParcelles(jour, saison);
   }
 
   function dispose(): void {

@@ -487,20 +487,36 @@ describe("les engins des voisins", () => {
      * au même instant se verraient. On balaie donc le cycle plutôt que de
      * regarder un instant précis.
      */
+    // Rien de fait tant que rien n'a roulé.
+    expect(geo.drawRange.count).toBe(0);
     const vus = new Set<number>();
+    let avant = 0;
     for (let t = 0; t < 400; t += 2) {
       c.update(t);
       const n = geo.drawRange.count;
-      expect(n).toBeGreaterThanOrEqual(0);
       expect(n).toBeLessThanOrEqual(total);
       // Une bande entière ou rien : jamais un triangle esseulé.
       expect(n % 6).toBe(0);
+      /*
+       * Et jamais en arrière. L'avancement, lui, redescend à zéro quand
+       * l'engin repart de la première ligne : la plage de dessin le suivait,
+       * et tout le champ labouré s'effaçait **en une image**, une fois par
+       * cycle. Une terre qui se délaboure toute seule se lit comme un défaut
+       * d'affichage. Le labour est un état du champ, pas une étape de la
+       * boucle.
+       */
+      expect(n).toBeGreaterThanOrEqual(avant);
+      avant = n;
       vus.add(n);
     }
     // La terre change vraiment derrière lui — et le champ finit par être fait.
     expect(vus.size).toBeGreaterThan(8);
     expect(Math.max(...vus)).toBe(total);
-    expect(Math.min(...vus)).toBe(0);
+
+    // Jour neuf, terre neuve : c'est le seul moment où le labour s'efface,
+    // et il s'efface avec la parcelle qu'on redessine.
+    c.setJour(1, "AUTUMN");
+    expect(geo.drawRange.count).toBe(0);
     c.dispose();
   });
 
@@ -521,6 +537,116 @@ describe("les engins des voisins", () => {
     expect(sobre.plan.parcelles.length).toBeLessThan(riche.plan.parcelles.length);
     riche.dispose();
     sobre.dispose();
+  });
+
+  /**
+   * Le nez dans le sens de la marche.
+   *
+   * Le reproche : « les animations des tracteurs des champs buggent alors que
+   * nos animations sont bien ». Elles l'étaient : l'engin suivait la bonne
+   * trajectoire, avec les bons demi-tours, mais **en crabe** — le capot vers
+   * le rang d'à côté pendant qu'il descendait la ligne. Deux conventions de
+   * cap se croisaient sans le dire. La route et les voitures portent un
+   * relèvement (`atan2(dx, dz)`, carrosserie bâtie vers les Z), les machines
+   * sont bâties vers les X : un quart de tour d'écart, invisible au calcul
+   * puisque la position, elle, était juste.
+   *
+   * On ne teste donc pas le cap rendu — on teste ce qui se voit : que l'axe
+   * du modèle et le déplacement pointent du même côté.
+   */
+  function alignement(c: ReturnType<typeof createCountryside>, t: number, dt: number) {
+    const avant = new THREE.Vector3();
+    c.update(t);
+    const engin = c.object.children.find((o) => o.name === "campagne-engin")!;
+    avant.copy(engin.position);
+    const nez = new THREE.Vector3(1, 0, 0).applyQuaternion(engin.quaternion).setY(0);
+    c.update(t + dt);
+    const pas = engin.position.clone().sub(avant).setY(0);
+    const long = pas.length();
+    return { cos: long < 1e-6 ? 1 : nez.normalize().dot(pas.normalize()), long };
+  }
+
+  it("roulent le nez en avant, et non en crabe", () => {
+    const c = createCountryside(OPTIONS);
+    for (let t = 0; t < 240; t += 0.7) {
+      const { cos, long } = alignement(c, t, 0.05);
+      // On tolère le braquage d'un demi-tour, pas un quart de tour d'écart.
+      expect(cos).toBeGreaterThan(0.6);
+      expect(long).toBeLessThan(0.4);
+    }
+    c.dispose();
+  });
+
+  it("roulent sur la terre, sans y être enfoncés", () => {
+    /*
+     * Le dessus des cases est monté quand on leur a donné du volume ; l'engin,
+     * lui, est resté à son ancienne altitude et labourait à mi-roue dans la
+     * terre. Même règle que sur la parcelle du joueur : les pneus mordent d'un
+     * centimètre dans la dalle, pas davantage — pile au sommet, il flotte.
+     */
+    const y0 = -0.46;
+    const c = createCountryside({ ...OPTIONS, y: y0 });
+    const dessus = y0 + CASE_EP / 2;
+    c.update(3);
+    for (const e of c.object.children.filter((o) => o.name === "campagne-engin")) {
+      expect(dessus - e.position.y).toBeGreaterThan(0);
+      expect(dessus - e.position.y).toBeLessThan(0.02);
+    }
+    c.dispose();
+  });
+
+  it("font tourner les roues à la vitesse du sol", () => {
+    /*
+     * La distance passée au modèle entraîne roues, disques et rabatteur. Elle
+     * valait `t × vitesse` : une horloge, pas un odomètre. Or l'engin ne roule
+     * pas à vitesse constante — il ralentit dans les manœuvres, et le retour à
+     * la première ligne traverse tout le champ en prenant son temps. Les roues
+     * tournaient donc au régime de travail pendant que le sol défilait à une
+     * autre allure : un patinage, et c'est justement le moment où l'engin
+     * traverse le cadre entier.
+     *
+     * On mesure la seule chose qui se voit : ce que la roue a déroulé contre
+     * ce que le sol a défilé.
+     */
+    const c = createCountryside(OPTIONS);
+    const engin = c.object.children.find((o) => o.name === "campagne-engin")!;
+    let roue: THREE.Object3D | null = null;
+    engin.traverse((o) => {
+      if (!roue && typeof o.userData.radius === "number") roue = o;
+    });
+    expect(roue).not.toBeNull();
+    const r = (roue as unknown as THREE.Object3D).userData.radius as number;
+
+    c.update(0);
+    let sol = engin.position.clone();
+    let angle = (roue as unknown as THREE.Object3D).rotation.z;
+    let deroule = 0;
+    let parcouru = 0;
+    const fenetre: [number, number][] = [];
+    for (let t = 0.05; t < 90; t += 0.05) {
+      c.update(t);
+      const p = engin.position;
+      parcouru += Math.hypot(p.x - sol.x, p.z - sol.z);
+      sol = p.clone();
+      const a = (roue as unknown as THREE.Object3D).rotation.z;
+      deroule += Math.abs(a - angle) * r;
+      angle = a;
+      /*
+       * Fenêtre glissante d'une demi-seconde, et non cumul depuis le départ :
+       * c'est **pendant** la manœuvre que la roue s'emballe, et une moyenne
+       * sur tout le cycle noie ces trois secondes dans les vingt autres. Le
+       * défaut, mesuré ainsi : deux fois et demie trop vite en fourrière.
+       */
+      fenetre.push([parcouru, deroule]);
+      if (fenetre.length > 10) fenetre.shift();
+      if (fenetre.length === 10) {
+        const sol = parcouru - fenetre[0]![0];
+        const roule = deroule - fenetre[0]![1];
+        if (sol > 0.05) expect(Math.abs(roule - sol) / sol).toBeLessThan(0.2);
+      }
+    }
+    expect(parcouru).toBeGreaterThan(10);
+    c.dispose();
   });
 });
 
