@@ -1,27 +1,35 @@
 import * as THREE from "three";
-import { createCountryside, surLaRoute } from "../countryside";
+import { createCountryside, graduation, surLaRoute } from "../countryside";
 import { makeVoiture } from "../decor3d";
-import { RAYON_TERRE, creux, empriseParcelle, planCampagne, type OptionsPlan } from "../countryside-plan";
+import {
+  empriseParcelle,
+  horizonPour,
+  planCampagne,
+  versEcranBas,
+  versEcranDroite,
+  type OptionsPlan,
+} from "../countryside-plan";
 
 /**
  * La campagne, en volumes.
  *
  * Le plan est de l'arithmétique et se vérifie ailleurs. Ici on mesure ce qui
- * sort de Trois : que le sol existe et couvre l'horizon, qu'un engin de voisin
- * reste dans son champ au lieu de labourer le pré, qu'une voiture suit la
- * route au lieu de rouler à côté, et que tout se libère quand la vue se
- * démonte.
+ * sort de Trois : que le sol existe et regarde le ciel, qu'il s'arrête sur une
+ * ligne droite **à l'écran** pour laisser une bande de ciel, qu'un engin de
+ * voisin reste dans son champ au lieu de labourer le pré, et qu'une voiture
+ * passe devant la ferme au lieu de tourner hors cadre.
  *
  * Le premier défaut trouvé ici ne se voyait pas au calcul : les quadrilatères
  * du sol étaient enroulés à l'envers, normales vers le bas. Le pays entier
- * était là, dans la bonne couleur, face cachée.
+ * était là, dans la bonne couleur, face cachée — et l'on voyait le ciel entre
+ * les parcelles.
  */
+
+const EMPRISE = 14.12;
 
 const OPTIONS: OptionsPlan = {
   graine: "clos-d-orme",
-  ileDemiLargeur: 7,
-  ileDemiProfondeur: 7,
-  portail: { x: -10.5, z: 3 },
+  emprise: EMPRISE,
   cour: { x: -11.5, z: 2.5, w: 6, d: 9 },
 };
 
@@ -30,154 +38,172 @@ function boite(o: THREE.Object3D): THREE.Box3 {
   return new THREE.Box3().setFromObject(o);
 }
 
+/** La hauteur d'un point à l'écran, en projection isométrique. */
+function hautEcran(x: number, y: number, z: number): number {
+  return -0.381 * (x + z) + 0.842 * y;
+}
+
 describe("le sol", () => {
-  it("s’étend jusqu’à la brume, tout autour", () => {
+  it("dépasse le cadre de tous les côtés sauf en amont", () => {
+    /*
+     * Trois bords sur quatre doivent rester hors champ au zoom le plus large,
+     * sans quoi on verrait la tranche du monde. Le quatrième — l'amont — est
+     * précisément celui qu'on veut voir : c'est l'horizon.
+     */
     const c = createCountryside(OPTIONS);
     const b = boite(c.object);
-    // Le brouillard de la scène s'épaissit jusqu'à 66 unités : en deçà de
-    // cinquante, la lisière du monde se verrait en plein cadre.
-    expect(b.min.x).toBeLessThan(-50);
-    expect(b.max.x).toBeGreaterThan(50);
-    expect(b.min.z).toBeLessThan(-50);
-    expect(b.max.z).toBeGreaterThan(50);
+    expect(b.min.x).toBeLessThan(-60);
+    expect(b.max.x).toBeGreaterThan(60);
+    expect(b.min.z).toBeLessThan(-60);
+    expect(b.max.z).toBeGreaterThan(60);
     c.dispose();
   });
 
   it("regarde vers le ciel", () => {
     /*
      * Le défaut exact, et il ne se voyait qu'à l'écran : `a, b, c` puis
-     * `a, c, d` donne des normales vers le bas. Le sol entier était éliminé au
-     * rendu et éclairé par en dessous.
+     * `a, c, d` donne des normales vers le bas. Ici il s'était reproduit d'une
+     * autre façon — le passage du repère de l'écran (u, v) à celui du monde
+     * renverse l'orientation, si bien qu'un quadrilatère écrit dans le bon
+     * ordre en sortait retourné.
      *
-     * On ne mesure que les nappes horizontales — sol, mer, route. Les
-     * parcelles ont des talus et des haies, les arbres des troncs : leurs
-     * flancs regardent ailleurs, et c'est normal.
+     * On ne mesure que les nappes horizontales — sol, route. Les parcelles ont
+     * des talus et des haies, les arbres des troncs : leurs flancs regardent
+     * ailleurs, et c'est normal.
      */
     const c = createCountryside({ ...OPTIONS, sobre: true });
-    const mesurer = (nom: string) => {
+    for (const nom of ["campagne-sol", "campagne-route"]) {
       const m = c.object.getObjectByName(nom) as THREE.Mesh | undefined;
       expect(m).toBeDefined();
       const n = m!.geometry.getAttribute("normal");
+      expect(n.count).toBeGreaterThan(60);
       let mini = 1;
       for (let i = 0; i < n.count; i++) mini = Math.min(mini, n.getY(i));
-      return { n: n.count, mini };
-    };
-    /*
-     * La terre et la route restent douces : leur normale ne bascule jamais.
-     * Au bord du monde, la courbure finit par passer soixante degrés et la
-     * normale descend sous 0,5 — mais ce qui compte, c'est qu'elle ne passe
-     * **jamais sous zéro** : là, la face serait retournée.
-     */
-    for (const nom of ["campagne-sol", "campagne-route"]) {
-      const r = mesurer(nom);
-      expect(r.n).toBeGreaterThan(60);
-      expect(r.mini).toBeGreaterThan(0);
+      expect(mini).toBeGreaterThan(0.99);
     }
     c.dispose();
   });
 
-  it("s’incurve vers le bas, et pas sous la ferme", () => {
-    /*
-     * C'est la courbure qui rend un horizon, donc du ciel au-dessus : à plat,
-     * le sol remplissait l'écran et le ciel avait disparu. Mais elle doit
-     * rester invisible sous la ferme, sinon celle-ci aurait l'air de glisser
-     * sur un dôme.
-     */
+  it("est plat : plus de globe", () => {
+    // La vue est isométrique ; un sol bombé y fait une bosse et non un globe.
     const c = createCountryside({ ...OPTIONS, y: -0.46, sobre: true });
-    const solMesh = c.object.getObjectByName("campagne-sol") as THREE.Mesh;
-    const p = solMesh.geometry.getAttribute("position");
-    let prochePlusBas = 0;
-    let loinPlusBas = 0;
-    for (let i = 0; i < p.count; i++) {
-      const r = Math.hypot(p.getX(i), p.getZ(i));
-      const y = p.getY(i);
-      if (r < 10) prochePlusBas = Math.min(prochePlusBas, y);
-      if (r > RAYON_TERRE - 6) loinPlusBas = Math.min(loinPlusBas, y);
-    }
-    expect(prochePlusBas).toBeGreaterThan(-1.6);
-    expect(loinPlusBas).toBeLessThan(-6);
+    const p = (c.object.getObjectByName("campagne-sol") as THREE.Mesh).geometry.getAttribute(
+      "position",
+    );
+    for (let i = 0; i < p.count; i++) expect(p.getY(i)).toBeCloseTo(-0.46, 6);
     c.dispose();
   });
 
-  it("laisse la crête faire l’horizon, et du ciel au-dessus", () => {
+  it("s’arrête sur une horizontale à l’écran, et laisse du ciel au-dessus", () => {
     /*
-     * « Un peu arrondi à l'horizon en haut, et il y a le ciel. »
+     * Le cœur de la refonte. Une emprise rectangulaire en x/z donnait un coin
+     * de terre en haut d'un côté du cadre et du ciel de l'autre : le monde
+     * s'arrêtait en diagonale. Le sol est un losange, donc un rectangle à
+     * l'écran, et son bord amont est droit.
      *
-     * Une première version avait pris l'image du globe au pied de la lettre et
-     * planté une plage et une mer autour de la ferme. On est à la campagne :
-     * ce qu'il fallait retenir de l'image, c'est la rondeur. Le sol s'incurve,
-     * sa crête fait la ligne d'horizon, et tout ce qui est derrière passe
-     * dessous.
+     * Le seuil : la lisière doit rester sous le haut du cadre, qui tient à
+     * dix-huit unités monde au cadrage par défaut.
      */
     const c = createCountryside({ ...OPTIONS, sobre: true });
-    expect(c.object.getObjectByName("campagne-mer")).toBeUndefined();
-    const solMesh = c.object.getObjectByName("campagne-sol") as THREE.Mesh;
-    const p = solMesh.geometry.getAttribute("position");
-    // La hauteur à l'écran, en projection isométrique : c'est elle qui décide
-    // de ce qu'on voit. Elle doit culminer **avant** le bord du monde.
-    let crete = -Infinity;
-    let rCrete = 0;
-    let bord = 0;
+    const p = (c.object.getObjectByName("campagne-sol") as THREE.Mesh).geometry.getAttribute(
+      "position",
+    );
+    let hautMax = -Infinity;
+    let vMin = Infinity;
+    let vMax = -Infinity;
     for (let i = 0; i < p.count; i++) {
-      const r = Math.hypot(p.getX(i), p.getZ(i));
-      const haut = -0.381 * (p.getX(i) + p.getZ(i)) + 0.842 * p.getY(i);
-      if (haut > crete) {
-        crete = haut;
-        rCrete = r;
-      }
-      bord = Math.max(bord, r);
+      hautMax = Math.max(hautMax, hautEcran(p.getX(i), p.getY(i), p.getZ(i)));
     }
-    expect(rCrete).toBeGreaterThan(20);
-    expect(rCrete).toBeLessThan(bord * 0.85);
+    /*
+     * Le bord amont est une ligne de `u` constant, et le sol est plat : tous
+     * ses sommets sont donc exactement à la même hauteur d'écran, et ils
+     * couvrent toute la largeur. C'est cette seconde moitié qui compte — une
+     * emprise rectangulaire en x/z aurait bien un point le plus haut, mais un
+     * seul : le coin.
+     */
+    let auBord = 0;
+    for (let i = 0; i < p.count; i++) {
+      if (hautEcran(p.getX(i), p.getY(i), p.getZ(i)) < hautMax - 1e-4) continue;
+      auBord++;
+      const v = versEcranDroite(p.getX(i), p.getZ(i));
+      vMin = Math.min(vMin, v);
+      vMax = Math.max(vMax, v);
+      expect(versEcranBas(p.getX(i), p.getZ(i))).toBeCloseTo(c.plan.sol.uMin, 3);
+    }
+    expect(auBord).toBeGreaterThan(20);
+    expect(vMax - vMin).toBeGreaterThan(150);
+    // Et cette ligne reste dans le cadre, ciel compris.
+    expect(hautMax).toBeGreaterThan(8);
+    expect(hautMax).toBeLessThan(15);
     c.dispose();
+  });
+
+  it("gradue sa maille : fine sous la ferme, large au loin", () => {
+    /*
+     * Le sol s'étend à cent cinquante unités pour ne jamais montrer son bord.
+     * Pavé régulier à quatre unités, il ferait des dizaines de milliers de
+     * quadrilatères pour du pré que personne ne regarde.
+     */
+    const g = graduation(-30, 150, 4.2);
+    expect(g[0]).toBe(-30);
+    expect(g[g.length - 1]).toBe(150);
+    expect(g).toContain(0);
+    for (let i = 1; i < g.length; i++) expect(g[i]!).toBeGreaterThan(g[i - 1]!);
+    const pres = g.filter((x) => Math.abs(x) < 12);
+    const loin = g.filter((x) => x > 100);
+    expect(pres.length).toBeGreaterThan(loin.length);
+    expect(g.length).toBeLessThan(50);
   });
 });
 
 describe("la route", () => {
-  it("colle au relief plutôt que de le couper en corde", () => {
+  it("longe la cour sans la couper", () => {
     /*
-     * Le défaut, vu à l'écran : la route disparaissait par morceaux. Ses
-     * segments faisaient jusqu'à vingt unités, et un ruban tendu entre deux
-     * points est une corde — le sol, concave, passait au-dessus d'elle en son
-     * milieu et l'enterrait. On la redécoupe donc court.
+     * « La route coupe le parking » : elle se calait sur l'île sans regarder
+     * la cour, qui déborde à l'ouest. Elle suit maintenant un couloir de la
+     * trame, et un couloir est vide par construction.
      */
-    const c = createCountryside({ ...OPTIONS, sobre: true });
-    const route = c.object.getObjectByName("campagne-route") as THREE.Mesh;
-    const p = route.geometry.getAttribute("position");
-    let plusLong = 0;
-    for (let i = 0; i + 2 < p.count; i += 3) {
-      for (const [u, v] of [[0, 1], [1, 2], [2, 0]] as const) {
-        plusLong = Math.max(
-          plusLong,
-          Math.hypot(p.getX(i + u) - p.getX(i + v), p.getZ(i + u) - p.getZ(i + v)),
-        );
-      }
+    const plan = planCampagne(OPTIONS);
+    const cour = OPTIONS.cour;
+    expect(plan.routeZ).toBeGreaterThan(cour.z + cour.d / 2);
+    for (const p of plan.route) {
+      expect(Math.abs(p.z - cour.z) - cour.d / 2).toBeGreaterThan(0);
     }
-    expect(plusLong).toBeLessThan(3);
-    c.dispose();
+    // Et elle ne traverse aucune parcelle voisine.
+    for (const p of plan.parcelles) {
+      expect(Math.abs(p.z - plan.routeZ)).toBeGreaterThan(plan.emprise / 2);
+    }
   });
 
-  it("ne s’enterre nulle part", () => {
-    const c = createCountryside({ ...OPTIONS, y: -0.46, sobre: true });
-    const route = c.object.getObjectByName("campagne-route") as THREE.Mesh;
-    const p = route.geometry.getAttribute("position");
-    for (let i = 0; i < p.count; i++) {
-      const r = Math.hypot(p.getX(i), p.getZ(i));
-      expect(p.getY(i)).toBeGreaterThan(-0.46 + creux(r) - 0.001);
+  it("part de la cour, sans détour", () => {
+    // La desserte relie la sortie de la cour au chemin : deux points, tout
+    // droit. Une amorce qui longe l'île avant de descendre se lit comme une
+    // erreur de tracé.
+    const plan = planCampagne(OPTIONS);
+    expect(plan.desserte).toHaveLength(2);
+    expect(plan.desserte[0]!.x).toBeCloseTo(OPTIONS.cour.x, 6);
+    expect(plan.desserte[1]!.x).toBeCloseTo(OPTIONS.cour.x, 6);
+    expect(plan.desserte[1]!.z).toBeCloseTo(plan.routeZ, 6);
+  });
+
+  it("ne s’arrête jamais dans le cadre", () => {
+    // Un ruban qui se termine en plein pré se voit ; la route va donc d'un
+    // bord du sol à l'autre.
+    const plan = planCampagne(OPTIONS);
+    for (const p of plan.route) {
+      const dedans =
+        Math.abs(versEcranDroite(p.x, p.z)) < plan.sol.vMax - 0.01 &&
+        versEcranBas(p.x, p.z) > plan.sol.uMin + 0.01 &&
+        versEcranBas(p.x, p.z) < plan.sol.uMax - 0.01;
+      expect(dedans).toBe(false);
     }
-    c.dispose();
   });
 
   it("place un point et un cap à n’importe quelle abscisse", () => {
     const plan = planCampagne(OPTIONS);
     const pts = plan.route;
-    const longueurs = [0];
-    for (let i = 1; i < pts.length; i++) {
-      longueurs.push(
-        longueurs[i - 1]! + Math.hypot(pts[i]!.x - pts[i - 1]!.x, pts[i]!.z - pts[i - 1]!.z),
-      );
-    }
-    const total = longueurs[longueurs.length - 1]!;
+    const longueurs = [0, Math.hypot(pts[1]!.x - pts[0]!.x, pts[1]!.z - pts[0]!.z)];
+    const total = longueurs[1]!;
     for (const s of [0, total / 3, total - 0.01, total * 2.5, -total * 1.5]) {
       const p = surLaRoute(pts, longueurs, s);
       expect(Number.isFinite(p.x)).toBe(true);
@@ -187,17 +213,10 @@ describe("la route", () => {
   });
 
   it("boucle proprement : le tour complet ramène au départ", () => {
-    // Les voitures avancent sans fin sur une abscisse qui croît. Sans repli
-    // propre, elles disparaîtraient au bout de la polyligne.
     const plan = planCampagne(OPTIONS);
     const pts = plan.route;
-    const longueurs = [0];
-    for (let i = 1; i < pts.length; i++) {
-      longueurs.push(
-        longueurs[i - 1]! + Math.hypot(pts[i]!.x - pts[i - 1]!.x, pts[i]!.z - pts[i - 1]!.z),
-      );
-    }
-    const total = longueurs[longueurs.length - 1]!;
+    const total = Math.hypot(pts[1]!.x - pts[0]!.x, pts[1]!.z - pts[0]!.z);
+    const longueurs = [0, total];
     const a = surLaRoute(pts, longueurs, 7);
     const b = surLaRoute(pts, longueurs, 7 + total);
     expect(Math.hypot(a.x - b.x, a.z - b.z)).toBeLessThan(1e-6);
@@ -208,16 +227,31 @@ describe("les voitures", () => {
   it("roulent sur la chaussée, pas dans le pré", () => {
     const c = createCountryside(OPTIONS);
     const voitures = c.object.children.filter((o) => o.name === "campagne-voiture");
-    expect(voitures.length).toBeGreaterThanOrEqual(2);
+    expect(voitures.length).toBeGreaterThanOrEqual(3);
     for (const t of [0, 3, 11, 47, 300]) {
       c.update(t);
       for (const v of voitures) {
-        const d = distanceALaPolyligne(v.position.x, v.position.z, c.plan.route);
-        // Une voie et demie de large : au-delà d'un mètre de l'axe, la
-        // voiture est sur le bas-côté.
-        expect(d).toBeLessThan(1.1);
+        expect(Math.abs(v.position.z - c.plan.routeZ)).toBeLessThan(1.1);
       }
     }
+    c.dispose();
+  });
+
+  it("passent devant la ferme, et non au bout du monde", () => {
+    /*
+     * Défaut mesuré en jeu : la route traverse tout le sol — cent soixante
+     * unités — et quatre voitures réparties dessus passaient l'essentiel de
+     * leur temps hors cadre. Six captures d'affilée n'en montraient aucune.
+     * Elles bouclent maintenant sur la portion qui peut être à l'écran.
+     */
+    const c = createCountryside(OPTIONS);
+    const voitures = c.object.children.filter((o) => o.name === "campagne-voiture");
+    let vues = 0;
+    for (let t = 0; t < 90; t += 1.5) {
+      c.update(t);
+      if (voitures.some((v) => Math.abs(v.position.x) < 30)) vues++;
+    }
+    expect(vues).toBeGreaterThan(45);
     c.dispose();
   });
 
@@ -226,7 +260,7 @@ describe("les voitures", () => {
     const v = c.object.children.find((o) => o.name === "campagne-voiture")!;
     c.update(0);
     const depart = v.position.clone();
-    c.update(5);
+    c.update(2);
     expect(depart.distanceTo(v.position)).toBeGreaterThan(4);
     c.dispose();
   });
@@ -246,24 +280,27 @@ describe("les engins des voisins", () => {
     const c = createCountryside({ ...OPTIONS, sobre: false });
     const actifs = c.plan.parcelles.filter((ch) => ch.travaille);
     expect(actifs.length).toBeGreaterThanOrEqual(1);
-    // Les engins sont les seuls groupes profonds hors voitures : on les
-    // retrouve par leur position, qui doit tomber dans un champ au travail.
+    const engins = c.object.children.filter((o) => o.name === "campagne-engin");
+    expect(engins.length).toBeGreaterThanOrEqual(1);
     for (const t of [0, 2, 6, 13, 29, 120]) {
       c.update(t);
-      for (const ch of actifs) {
-        const dedans = c.object.children.filter(
-          (o) =>
-            o.name === "campagne-engin" &&
-            Math.abs(o.position.x - ch.x) < empriseParcelle(ch).w / 2 + 2 &&
-            Math.abs(o.position.z - ch.z) < empriseParcelle(ch).d / 2 + 2,
-        );
-        expect(dedans.length).toBeGreaterThanOrEqual(1);
+      for (const e of engins) {
+        // Chaque engin doit tomber dans **une** parcelle au travail : c'est ce
+        // qui manquait quand ils faisaient des allers-retours d'un bout à
+        // l'autre de la campagne.
+        const chez = actifs.filter((ch) => {
+          const b = empriseParcelle(ch, c.plan.emprise);
+          return (
+            Math.abs(e.position.x - b.x) < b.w / 2 && Math.abs(e.position.z - b.z) < b.d / 2
+          );
+        });
+        expect(chez).toHaveLength(1);
       }
     }
     c.dispose();
   });
 
-  it("se réduisent à un seul en réglage sobre, jamais à zéro", () => {
+  it("se réduisent en réglage sobre, jamais à zéro", () => {
     /*
      * Un modèle complet de tracteur se paie en millisecondes par image sur un
      * rasteriseur logiciel — mais le réglage sobre s'enclenche précisément sur
@@ -275,11 +312,48 @@ describe("les engins des voisins", () => {
     const sobre = createCountryside({ ...OPTIONS, sobre: true });
     const engins = (c: { object: THREE.Object3D }) =>
       c.object.children.filter((o) => o.name === "campagne-engin").length;
-    expect(engins(riche)).toBe(3);
-    expect(engins(sobre)).toBe(2);
+    expect(engins(riche)).toBe(2);
+    expect(engins(sobre)).toBe(1);
     expect(sobre.plan.parcelles.length).toBeLessThan(riche.plan.parcelles.length);
     riche.dispose();
     sobre.dispose();
+  });
+});
+
+describe("les parcelles voisines", () => {
+  it("sont bâties comme celle du joueur, à sa taille", () => {
+    /*
+     * « Les parcelles des PNJ doivent être sous la même forme que nous et
+     * collées, de la même taille. » Ce sont les parcelles qu'on pourra
+     * racheter : elles doivent déjà être à la bonne échelle.
+     */
+    const c = createCountryside(OPTIONS);
+    expect(c.plan.emprise).toBe(EMPRISE);
+    for (const p of c.plan.parcelles) {
+      expect(p.x).toBeCloseTo(p.col * c.plan.pas, 6);
+      expect(p.z).toBeCloseTo(p.rang * c.plan.pas, 6);
+    }
+    c.dispose();
+  });
+
+  it("tiennent entièrement sur la terre ferme", () => {
+    const c = createCountryside(OPTIONS);
+    for (const p of c.plan.parcelles) {
+      expect(versEcranBas(p.x, p.z) - c.plan.emprise).toBeGreaterThanOrEqual(c.plan.sol.uMin);
+    }
+    c.dispose();
+  });
+
+  it("laissent l’amont au pré : c’est là qu’est le ciel", () => {
+    // Un rang de voisins en amont pousserait la lisière hors du cadre.
+    const plan = planCampagne(OPTIONS);
+    expect(plan.sol.uMin).toBe(-horizonPour(EMPRISE));
+    for (const p of plan.parcelles) expect(p.col + p.rang).toBeGreaterThanOrEqual(0);
+    // Mais il y en a bien de chaque côté et en aval.
+    expect(plan.parcelles.some((p) => p.col > 0)).toBe(true);
+    expect(plan.parcelles.some((p) => p.rang > 0)).toBe(true);
+    expect(plan.parcelles.some((p) => p.col < 0)).toBe(true);
+    expect(plan.parcelles.some((p) => p.rang < 0)).toBe(true);
   });
 });
 
@@ -319,23 +393,3 @@ describe("le démontage", () => {
     expect(c.object.children.length).toBe(0);
   });
 });
-
-/** Distance d'un point à une polyligne, pour les assertions ci-dessus. */
-function distanceALaPolyligne(
-  x: number,
-  z: number,
-  pts: { x: number; z: number }[],
-): number {
-  let best = Infinity;
-  for (let i = 0; i + 1 < pts.length; i++) {
-    const p = pts[i]!;
-    const q = pts[i + 1]!;
-    const dx = q.x - p.x;
-    const dz = q.z - p.z;
-    const l2 = dx * dx + dz * dz;
-    const t = l2 === 0 ? 0 : Math.min(1, Math.max(0, ((x - p.x) * dx + (z - p.z) * dz) / l2));
-    best = Math.min(best, Math.hypot(x - (p.x + t * dx), z - (p.z + t * dz)));
-  }
-  return best;
-}
-

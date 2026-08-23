@@ -2,25 +2,22 @@ import type { Season } from "@farmsim/shared";
 import {
   CYCLE_VOISIN,
   DEMI_ROUTE,
-  RAYON_VOISINS,
-  RAYON_TERRE,
-  SECTEUR_COUR,
-  azimutCour,
+  ENGINS_MAX,
+  LARGEUR_CHEMIN,
   couleurChamp,
-  creux,
-  distanceALaRoute,
-  ecartAngle,
+  couloirRoute,
   empriseParcelle,
   etatChamp,
   grainerDe,
+  horizonPour,
   melanger,
   planCampagne,
   seChevauchent,
   suite,
-  tracerDesserte,
-  tracerRoute,
+  surLeSol,
+  versEcranBas,
+  versEcranDroite,
   type OptionsPlan,
-  type ParcelleVoisine,
 } from "../countryside-plan";
 
 /**
@@ -30,13 +27,21 @@ import {
  * arbres, et le vide. Ce qui l'entoure maintenant est calculé — donc
  * vérifiable. Une parcelle posée sur la cour, une route qui coupe le parking
  * ou un décor qui change à chaque rechargement se voient ici, pas à l'écran.
+ *
+ * Deux exigences nouvelles portent la plupart des assertions :
+ *
+ * - les voisins sont **jointifs et de la taille du joueur** — ce sont les
+ *   parcelles qu'il pourra racheter ;
+ * - le sol s'arrête sur une **horizontale à l'écran**, pour qu'il reste du
+ *   ciel en haut du cadre.
  */
+
+/** L'emprise réelle d'une parcelle de douze cases, talus compris. */
+const EMPRISE = 12 * 1.06 + 1.4;
 
 const OPTIONS: OptionsPlan = {
   graine: "clos-d-orme",
-  ileDemiLargeur: 7,
-  ileDemiProfondeur: 7,
-  portail: { x: -10.5, z: 3 },
+  emprise: EMPRISE,
   cour: { x: -11.5, z: 2.5, w: 6, d: 9 },
 };
 
@@ -55,6 +60,19 @@ describe("la graine", () => {
     expect(JSON.stringify(a.parcelles)).not.toBe(JSON.stringify(b.parcelles));
   });
 
+  it("garde la trame, et ne tire au sort que ce qui pousse dessus", () => {
+    /*
+     * C'est tout le changement. Les emplacements étaient tirés au sort et le
+     * résultat se lisait en jeu : « les champs sont complètement dispersés ici
+     * ou là ». Seules les cultures bougent d'une ferme à l'autre.
+     */
+    const a = planCampagne(OPTIONS);
+    const b = planCampagne({ ...OPTIONS, graine: "terre-d-orme" });
+    expect(a.parcelles.map((p) => `${p.col},${p.rang}`)).toEqual(
+      b.parcelles.map((p) => `${p.col},${p.rang}`),
+    );
+  });
+
   it("tire des nombres bien répartis entre zéro et un", () => {
     const r = suite(grainerDe("essai"));
     const tirages = Array.from({ length: 400 }, r);
@@ -65,49 +83,54 @@ describe("la graine", () => {
   });
 });
 
-describe("le placement des voisins", () => {
+describe("la trame des voisins", () => {
   const plan = planCampagne(OPTIONS);
 
-  it("pose assez de parcelles pour peupler la couronne", () => {
+  it("pose assez de parcelles pour peupler le tour de la ferme", () => {
     expect(plan.parcelles.length).toBeGreaterThanOrEqual(8);
   });
 
-  it("n’en pose aucune sur la ferme ni sur la cour", () => {
-    const ile = { x: 0, z: 0, w: OPTIONS.ileDemiLargeur * 2, d: OPTIONS.ileDemiProfondeur * 2 };
-    for (const p of plan.parcelles) {
-      expect(seChevauchent(empriseParcelle(p), ile)).toBe(false);
-      expect(seChevauchent(empriseParcelle(p), OPTIONS.cour)).toBe(false);
-    }
-  });
-
-  it("laisse le devant de la cour dégagé", () => {
+  it("les fait toutes de la taille de celle du joueur", () => {
     /*
-     * « Il en faut tout autour sauf côté parking. » Une parcelle plantée
-     * derrière la cour se retrouverait à moitié cachée par elle, et l'entrée
-     * de la ferme perdrait son dégagement.
+     * « Les parcelles des PNJ doivent être sous la même forme que nous et
+     * collées, de la même taille, juste ils les gèrent indépendamment, et ça
+     * sera les parcelles qu'on pourra racheter. » Une parcelle rachetée ne
+     * doit rien avoir à changer de forme pour venir se coller à la sienne.
      */
-    const vers = azimutCour(OPTIONS);
+    expect(plan.emprise).toBe(EMPRISE);
+    expect(plan.pas).toBe(EMPRISE + LARGEUR_CHEMIN);
     for (const p of plan.parcelles) {
-      const angle = Math.atan2(p.z, p.x);
-      expect(Math.abs(ecartAngle(angle, vers))).toBeGreaterThanOrEqual(SECTEUR_COUR);
+      const e = empriseParcelle(p, plan.emprise);
+      expect(e.w).toBe(EMPRISE);
+      expect(e.d).toBe(EMPRISE);
     }
   });
 
-  it("en met tout de même de tous les autres côtés", () => {
-    // Le reproche inverse serait aussi vrai : une campagne massée d'un seul
-    // côté n'entoure rien du tout.
-    const quadrants = new Set(
-      plan.parcelles.map((p) => `${p.x > 0 ? "e" : "o"}${p.z > 0 ? "s" : "n"}`),
-    );
-    expect(quadrants.size).toBeGreaterThanOrEqual(3);
+  it("les pose sur la trame, sans jamais s’en écarter", () => {
+    for (const p of plan.parcelles) {
+      expect(p.x).toBeCloseTo(p.col * plan.pas, 9);
+      expect(p.z).toBeCloseTo(p.rang * plan.pas, 9);
+      expect(Number.isInteger(p.col)).toBe(true);
+      expect(Number.isInteger(p.rang)).toBe(true);
+    }
   });
 
-  it("n’en pose aucune en travers de la route ni de la desserte", () => {
+  it("les colle : un chemin les sépare, pas un pré", () => {
+    // Jointives à la largeur du chemin près — c'est ce qui fait un damier de
+    // campagne et non un semis d'îlots.
+    const proches = plan.parcelles.filter((p) => Math.abs(p.col) + Math.abs(p.rang) === 1);
+    expect(proches.length).toBeGreaterThanOrEqual(2);
+    for (const p of proches) {
+      const ecart = Math.max(Math.abs(p.x), Math.abs(p.z)) - EMPRISE;
+      expect(ecart).toBeCloseTo(LARGEUR_CHEMIN, 9);
+    }
+  });
+
+  it("n’en pose aucune sur la ferme ni sur la cour", () => {
+    const ile = { x: 0, z: 0, w: EMPRISE, d: EMPRISE };
     for (const p of plan.parcelles) {
-      const e = empriseParcelle(p);
-      const marge = Math.max(e.w, e.d) / 2;
-      expect(distanceALaRoute(p.x, p.z, plan.route)).toBeGreaterThan(marge);
-      expect(distanceALaRoute(p.x, p.z, plan.desserte)).toBeGreaterThan(marge);
+      expect(seChevauchent(empriseParcelle(p, plan.emprise), ile)).toBe(false);
+      expect(seChevauchent(empriseParcelle(p, plan.emprise), OPTIONS.cour)).toBe(false);
     }
   });
 
@@ -115,31 +138,52 @@ describe("le placement des voisins", () => {
     for (let i = 0; i < plan.parcelles.length; i++) {
       for (let k = i + 1; k < plan.parcelles.length; k++) {
         expect(
-          seChevauchent(empriseParcelle(plan.parcelles[i]!), empriseParcelle(plan.parcelles[k]!)),
+          seChevauchent(
+            empriseParcelle(plan.parcelles[i]!, plan.emprise),
+            empriseParcelle(plan.parcelles[k]!, plan.emprise),
+          ),
         ).toBe(false);
       }
     }
   });
 
-  it("garde les voisins à portée de vue", () => {
-    /*
-     * Bien en deçà de l'horizon. Une parcelle à quarante unités est un timbre
-     * qu'on ne distingue plus, et le tracteur qui la travaille, un pixel qui
-     * tremble. La campagne, elle, continue derrière — ce sont les bosquets qui
-     * font la profondeur.
-     */
-    for (const p of plan.parcelles) {
-      expect(Math.hypot(p.x, p.z)).toBeLessThanOrEqual(RAYON_VOISINS);
-    }
-    const plusLoin = Math.max(...plan.arbres.map((a) => Math.hypot(a.x, a.z)));
-    expect(plusLoin).toBeGreaterThan(RAYON_VOISINS);
-    for (const a of plan.arbres) expect(Math.hypot(a.x, a.z)).toBeLessThan(plan.rayonTerre);
+  it("en met de tous les côtés visibles", () => {
+    // Une campagne massée d'un seul côté n'entoure rien du tout.
+    const cotes = new Set(
+      plan.parcelles.map((p) => `${p.col > 0 ? "e" : p.col < 0 ? "o" : "-"}${p.rang > 0 ? "s" : p.rang < 0 ? "n" : "-"}`),
+    );
+    expect(cotes.size).toBeGreaterThanOrEqual(5);
   });
 
-  it("varie les tailles plutôt que de répéter un carré", () => {
-    const aires = plan.parcelles.map((p) => p.gw * p.gh);
-    expect(Math.max(...aires) / Math.min(...aires)).toBeGreaterThan(1.5);
-    expect(new Set(plan.parcelles.map((p) => p.cap)).size).toBe(2);
+  it("laisse l’amont au pré : c’est là qu’est le ciel", () => {
+    /*
+     * Mesuré en jeu, et c'est le compromis du cadrage : un rang de voisins
+     * derrière la ferme repousse la lisière — et surtout la cime de ses
+     * arbres — hors du haut du cadre. Le reproche revenait aussitôt : « on
+     * voit plus le ciel ». En amont il y a donc un pré, puis le bois.
+     */
+    expect(plan.sol.uMin).toBe(-horizonPour(EMPRISE));
+    for (const p of plan.parcelles) {
+      expect(versEcranBas(p.x, p.z) - plan.emprise).toBeGreaterThanOrEqual(plan.sol.uMin);
+    }
+  });
+
+  it("tient chaque parcelle entièrement sur la terre ferme", () => {
+    for (const p of plan.parcelles) {
+      for (const dx of [-1, 1]) {
+        for (const dz of [-1, 1]) {
+          const x = p.x + (dx * EMPRISE) / 2;
+          const z = p.z + (dz * EMPRISE) / 2;
+          expect(surLeSol(plan.sol, x, z)).toBe(true);
+        }
+      }
+    }
+  });
+
+  it("n’en pose aucune en travers de la route", () => {
+    for (const p of plan.parcelles) {
+      expect(Math.abs(p.z - plan.routeZ)).toBeGreaterThanOrEqual(EMPRISE / 2 + DEMI_ROUTE);
+    }
   });
 
   it("donne un bâtiment à certaines et pas à toutes", () => {
@@ -152,15 +196,46 @@ describe("le placement des voisins", () => {
 
   it("met des voisins au travail, mais pas tout le village", () => {
     const actifs = plan.parcelles.filter((p) => p.travaille);
-    expect(actifs.length).toBeGreaterThanOrEqual(2);
-    expect(actifs.length).toBeLessThanOrEqual(3);
+    expect(actifs.length).toBe(ENGINS_MAX);
     for (const p of actifs) {
       // Un tracteur à quarante unités est un pixel qui tremble, pas un voisin.
       expect(Math.hypot(p.x, p.z)).toBeLessThan(34);
-      // Et être proche ne suffit pas : derrière la ferme, la moitié de ce qui
-      // est proche tombe hors cadre, ou sous le rail de gauche.
-      expect(p.x + p.z).toBeGreaterThan(0);
+      // Et jamais dans une prairie : on ne laboure pas la jachère.
+      expect(p.culture).not.toBe("HERBE");
     }
+  });
+
+  it("se resserre en réglage sobre", () => {
+    const sobre = planCampagne({ ...OPTIONS, colonnes: 2, rangs: 2 });
+    expect(sobre.parcelles.length).toBeLessThan(plan.parcelles.length);
+    expect(sobre.parcelles.length).toBeGreaterThanOrEqual(6);
+  });
+});
+
+describe("le repère de l’écran", () => {
+  it("fait descendre `u` et aller `v` à droite", () => {
+    // En vue isométrique la caméra regarde depuis (+x, +y, +z) : les deux axes
+    // du monde descendent ensemble à l'écran, et leur différence file de côté.
+    expect(versEcranBas(1, 1)).toBeGreaterThan(versEcranBas(0, 0));
+    expect(versEcranDroite(1, -1)).toBeGreaterThan(versEcranDroite(0, 0));
+    expect(versEcranDroite(1, 1)).toBe(0);
+  });
+
+  it("borne le sol de trois côtés hors cadre, et d’un seul dedans", () => {
+    const plan = planCampagne(OPTIONS);
+    // Le zoom le plus large montre une cinquantaine d'unités : les trois
+    // autres bords doivent rester bien au-delà.
+    expect(plan.sol.uMax).toBeGreaterThan(120);
+    expect(plan.sol.vMax).toBeGreaterThan(100);
+    expect(-plan.sol.uMin).toBeLessThan(40);
+  });
+
+  it("dit ce qui est sur la terre ferme", () => {
+    const plan = planCampagne(OPTIONS);
+    expect(surLeSol(plan.sol, 0, 0)).toBe(true);
+    // Loin en amont : au-delà de la lisière, il n'y a plus rien.
+    expect(surLeSol(plan.sol, -40, -40)).toBe(false);
+    expect(surLeSol(plan.sol, 200, -200)).toBe(false);
   });
 });
 
@@ -169,92 +244,132 @@ describe("la route", () => {
 
   it("ne coupe pas le parking", () => {
     /*
-     * Le reproche exact : « la route coupe le parking, c'est pas beau ». Elle
-     * se calait sur le bord de l'île, sans regarder la cour, et la traversait
-     * de part en part. Le couloir se règle maintenant sur le bord extérieur de
-     * la cour, plus la demi-chaussée.
+     * Le reproche exact, deux fois de suite : « la route coupe le parking ».
+     * Elle se calait sur le bord de l'île sans regarder la cour, qui déborde
+     * à l'ouest. Elle suit maintenant un couloir de la trame, choisi au sud de
+     * la cour — et un couloir de trame est vide par construction.
      */
     const c = OPTIONS.cour;
-    for (let i = 0; i + 1 < plan.route.length; i++) {
-      for (let t = 0; t <= 1; t += 0.02) {
-        const p = plan.route[i]!;
-        const q = plan.route[i + 1]!;
-        const x = p.x + (q.x - p.x) * t;
-        const z = p.z + (q.z - p.z) * t;
-        const dedans =
-          Math.abs(x - c.x) < c.w / 2 + DEMI_ROUTE && Math.abs(z - c.z) < c.d / 2 + DEMI_ROUTE;
-        expect(dedans).toBe(false);
-      }
+    for (let t = 0; t <= 1; t += 0.01) {
+      const p = plan.route[0]!;
+      const q = plan.route[1]!;
+      const x = p.x + (q.x - p.x) * t;
+      const z = p.z + (q.z - p.z) * t;
+      const dedans =
+        Math.abs(x - c.x) < c.w / 2 + DEMI_ROUTE && Math.abs(z - c.z) < c.d / 2 + DEMI_ROUTE;
+      expect(dedans).toBe(false);
     }
   });
 
   it("ne traverse jamais l’île du joueur", () => {
-    for (let i = 0; i + 1 < plan.route.length; i++) {
-      for (let t = 0; t <= 1; t += 0.02) {
-        const p = plan.route[i]!;
-        const q = plan.route[i + 1]!;
-        const x = p.x + (q.x - p.x) * t;
-        const z = p.z + (q.z - p.z) * t;
-        const dedans =
-          Math.abs(x) < OPTIONS.ileDemiLargeur + DEMI_ROUTE &&
-          Math.abs(z) < OPTIONS.ileDemiProfondeur + DEMI_ROUTE;
-        expect(dedans).toBe(false);
+    expect(Math.abs(plan.routeZ)).toBeGreaterThan(EMPRISE / 2 + DEMI_ROUTE);
+  });
+
+  it("passe au ras de la sortie de la cour, pas un rang plus loin", () => {
+    /*
+     * Deux dixièmes de marge de sécurité suffisaient à faire sauter le chemin
+     * d'un rang entier : il partait alors se perdre dans le coin bas de
+     * l'écran, à seize unités de la sortie qu'il dessert. Le couloir laisse
+     * exactement la place, et c'est voulu.
+     */
+    const cour = OPTIONS.cour;
+    const jeu = plan.routeZ - DEMI_ROUTE - (cour.z + cour.d / 2);
+    expect(jeu).toBeGreaterThan(0);
+    expect(jeu).toBeLessThan(LARGEUR_CHEMIN);
+  });
+
+  it("choisit son couloir où que soit la cour", () => {
+    for (const cour of [
+      { x: -11.5, z: 2.5, w: 6, d: 9 },
+      { x: 0, z: -9, w: 5, d: 4 },
+      { x: 9, z: 0, w: 4, d: 12 },
+      { x: -20, z: 20, w: 7, d: 7 },
+    ]) {
+      const o = { ...OPTIONS, cour };
+      const z = couloirRoute(o);
+      expect(z - DEMI_ROUTE).toBeGreaterThanOrEqual(cour.z + cour.d / 2);
+      // Toujours dans un couloir, jamais sur une parcelle.
+      const p = planCampagne(o);
+      for (const q of p.parcelles) {
+        expect(Math.abs(q.z - z)).toBeGreaterThanOrEqual(EMPRISE / 2 + DEMI_ROUTE);
       }
     }
   });
 
-  it("descend vers le monde plutôt que de filer de biais", () => {
-    // Les deux axes croissent ensemble : c'est ce qui fait « descendre » à
-    // l'écran. Un seul axe et la route sortirait par le côté.
-    const debut = plan.route[0]!;
-    const fin = plan.route[plan.route.length - 1]!;
-    expect(fin.x).toBeGreaterThan(debut.x);
-    expect(fin.z).toBeGreaterThan(debut.z);
+  it("va d’un bord du sol à l’autre", () => {
+    // Un ruban qui s'arrête en plein pré se voit. Ses deux extrémités doivent
+    // être hors de l'emprise, donc hors cadre.
+    for (const p of plan.route) {
+      expect(surLeSol(plan.sol, p.x + Math.sign(p.x) * 0.01, p.z)).toBe(false);
+    }
+    expect(Math.hypot(plan.route[1]!.x - plan.route[0]!.x, 0)).toBeGreaterThan(100);
   });
 
-  it("va d’un bord de l’île à l’autre, jusqu’à la côte", () => {
-    const loin = Math.max(...plan.route.map((p) => Math.hypot(p.x, p.z)));
-    expect(loin).toBeGreaterThan(plan.rayonTerre * 0.7);
-  });
-
-  it("est reliée à la cour par une desserte", () => {
+  it("est reliée à la cour par une desserte courte et droite", () => {
     /*
      * Sans elle, la ferme donnait sur une départementale qu'elle ne touchait
      * pas — une route qui passe devant chez vous sans que rien n'y mène.
      */
-    expect(plan.desserte.length).toBe(2);
-    const [portail, jonction] = plan.desserte;
-    expect(Math.abs(portail!.x - (OPTIONS.cour.x - OPTIONS.cour.w / 2))).toBeLessThan(0.01);
-    expect(distanceALaRoute(jonction!.x, jonction!.z, plan.route)).toBeLessThan(0.01);
-    // Courte : c'est une amorce, pas une seconde route.
-    expect(Math.hypot(portail!.x - jonction!.x, portail!.z - jonction!.z)).toBeLessThan(8);
-  });
-
-  it("existe même quand le portail est ailleurs", () => {
-    for (const portail of [{ x: 8, z: -4 }, { x: 0, z: 9 }, { x: -12, z: 0 }]) {
-      const o = { ...OPTIONS, portail };
-      const r = tracerRoute(o);
-      expect(r.length).toBeGreaterThanOrEqual(4);
-      expect(tracerDesserte(o, r).length).toBe(2);
-    }
+    expect(plan.desserte).toHaveLength(2);
+    const [sortie, jonction] = plan.desserte;
+    expect(sortie!.x).toBeCloseTo(OPTIONS.cour.x, 9);
+    expect(jonction!.x).toBeCloseTo(OPTIONS.cour.x, 9);
+    expect(jonction!.z).toBeCloseTo(plan.routeZ, 9);
+    expect(Math.abs(jonction!.z - sortie!.z)).toBeLessThan(LARGEUR_CHEMIN + 1);
   });
 });
 
-describe("le monde bombé", () => {
-  it("s’enfonce à mesure qu’on s’éloigne", () => {
-    // C'est cette courbure qui rend un horizon, donc du ciel au-dessus. À
-    // plat, le sol remplit l'écran et le ciel disparaît — le reproche.
-    // `toBeCloseTo` et non `toBe` : `-0.0085 * 0 * 0` vaut moins zéro, que
-    // `Object.is` distingue de zéro.
-    expect(creux(0)).toBeCloseTo(0, 10);
-    expect(creux(10)).toBeLessThan(creux(0));
-    expect(creux(RAYON_TERRE)).toBeLessThan(creux(10));
+describe("les bosquets", () => {
+  const plan = planCampagne(OPTIONS);
+
+  it("terminent le monde : une lisière au bord amont", () => {
+    /*
+     * La lisière n'est pas décorative — c'est elle qui cache l'arête du sol.
+     * Sans elle, le monde s'arrêtait sur une ligne franche en plein cadre.
+     */
+    const lisiere = plan.arbres.filter((a) => versEcranBas(a.x, a.z) < plan.sol.uMin + 5.2);
+    expect(lisiere.length).toBeGreaterThan(30);
+    // Et elle est large : elle doit couvrir tout le haut du cadre.
+    const v = lisiere.map((a) => versEcranDroite(a.x, a.z));
+    expect(Math.max(...v)).toBeGreaterThan(50);
+    expect(Math.min(...v)).toBeLessThan(-50);
   });
 
-  it("reste imperceptible sous la ferme", () => {
-    // Une ferme posée sur un dôme visible aurait l'air de glisser. À dix
-    // unités du centre, le creux doit rester sous le décimètre de jeu.
-    expect(Math.abs(creux(10))).toBeLessThan(1);
+  it("restent bas à l’horizon, hauts près de la ferme", () => {
+    /*
+     * Un arbre posé à l'horizon monte à l'écran de presque toute sa hauteur.
+     * Une futaie s'y faisait couper net par le haut du cadre, et la bande de
+     * ciel disparaissait avec elle.
+     */
+    const loin = plan.arbres.filter((a) => versEcranBas(a.x, a.z) < plan.sol.uMin + 5.2);
+    const pres = plan.arbres.filter((a) => versEcranBas(a.x, a.z) > plan.sol.uMin + 8);
+    const moyenne = (xs: number[]) => xs.reduce((s, x) => s + x, 0) / xs.length;
+    expect(pres.length).toBeGreaterThan(5);
+    expect(moyenne(loin.map((a) => a.taille))).toBeLessThan(moyenne(pres.map((a) => a.taille)));
+  });
+
+  it("meublent le pré d’amont plutôt que de le laisser nu", () => {
+    // Vide, la bande d'herbe entre la dernière haie et le bois se lit comme un
+    // trou dans le décor : un grand vert uni juste au-dessus de la ferme.
+    const pre = plan.arbres.filter((a) => {
+      const u = versEcranBas(a.x, a.z);
+      return u > plan.sol.uMin + 5.2 && u < -EMPRISE;
+    });
+    expect(pre.length).toBeGreaterThan(8);
+  });
+
+  it("n’en plante ni sur la route, ni sur la ferme, ni dans un champ", () => {
+    for (const a of plan.arbres) {
+      expect(Math.abs(a.z - plan.routeZ)).toBeGreaterThan(DEMI_ROUTE);
+      expect(seChevauchent({ x: a.x, z: a.z, w: 1, d: 1 }, { x: 0, z: 0, w: EMPRISE, d: EMPRISE })).toBe(false);
+      for (const p of plan.parcelles) {
+        expect(seChevauchent({ x: a.x, z: a.z, w: 1, d: 1 }, empriseParcelle(p, plan.emprise))).toBe(false);
+      }
+    }
+  });
+
+  it("les garde tous sur la terre ferme", () => {
+    for (const a of plan.arbres) expect(surLeSol(plan.sol, a.x, a.z)).toBe(true);
   });
 });
 
@@ -333,19 +448,5 @@ describe("les couleurs", () => {
     // Hors bornes : on borne plutôt que de produire une couleur impossible.
     expect(melanger(0x102030, 0x405060, -3)).toBe(0x102030);
     expect(melanger(0x102030, 0x405060, 9)).toBe(0x405060);
-  });
-});
-
-describe("l’emprise d’une parcelle", () => {
-  it("tourne avec le damier", () => {
-    const base: ParcelleVoisine = {
-      id: "t", x: 0, z: 0, gw: 8, gh: 4, cap: 0,
-      culture: "BLE", decalage: 0, travaille: false, batiment: false,
-    };
-    const droite = empriseParcelle(base);
-    const tournee = empriseParcelle({ ...base, cap: Math.PI / 2 });
-    expect(droite.w).toBeGreaterThan(droite.d);
-    expect(tournee.d).toBeGreaterThan(tournee.w);
-    expect(droite.w).toBeCloseTo(tournee.d, 6);
   });
 });

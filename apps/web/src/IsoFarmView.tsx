@@ -1200,10 +1200,13 @@ export function IsoFarmView({
      * La brume porte sur un monde, plus sur une île.
      *
      * Réglée de 34 à 66, elle avalait tout ce qui dépassait la haie — donc la
-     * campagne entière. Les bornes suivent maintenant les distances mesurées
-     * depuis la caméra : les parcelles voisines tombent entre 39 et 50 unités,
-     * la crête de l'horizon vers 61. Rien ne se voile avant les voisins, et la
-     * crête se dissout dans le ciel au lieu d'y découper une arête verte.
+     * campagne entière. Les bornes suivent les distances mesurées depuis la
+     * caméra : les parcelles voisines tombent entre 39 et 50 unités, la
+     * lisière vers 45. Rien ne se voile avant les voisins, et la lisière
+     * reste nette — c'est elle qui fait la ligne d'horizon, et un horizon
+     * délavé ne tient pas le haut du cadre. Ce qui s'étend derrière, jusqu'à
+     * cent cinquante unités, se dissout au contraire complètement : ce sol-là
+     * n'est là que pour n'avoir jamais de bord visible au dézoom.
      */
     scene.fog = new THREE.Fog(skyFor(weatherRef.current), 46, 92);
 
@@ -1283,7 +1286,9 @@ export function IsoFarmView({
      * Ce damier faisait vingt-cinq unités de large et se cachait entièrement
      * **sous** la dalle de la ferme : il ne se voyait nulle part, et la
      * parcelle donnait l'impression de flotter dans le ciel. Ce qui l'entoure
-     * maintenant va jusqu'à la brume. Voir `countryside`.
+     * maintenant est un damier de parcelles voisines, à la taille de la
+     * sienne, sur un sol plat qui s'arrête sur une lisière. Voir
+     * `countryside`.
      */
     const campagneGroup = new THREE.Group();
     scene.add(campagneGroup);
@@ -1841,9 +1846,14 @@ export function IsoFarmView({
         campagneGroup.clear();
         campagne = createCountryside({
           graine: parcelId || `${gw}x${gh}`,
-          ileDemiLargeur: (gw * step + 1.4) / 2,
-          ileDemiProfondeur: (gh * step + 1.4) / 2,
-          portail: { x: courBoite.x, z: parkingGateZ },
+          /*
+           * Les voisins ont exactement l'emprise de l'île du joueur, et se
+           * posent sur la même trame : ce sont les parcelles qu'il pourra
+           * racheter, et une parcelle rachetée ne doit rien avoir à changer
+           * de forme pour venir se coller à la sienne.
+           */
+          emprise: Math.max(gw, gh) * step + 1.4,
+          cases: Math.max(gw, gh),
           cour: courBoite,
           shadows: quality.shadows,
           sobre: !quality.shadows,
