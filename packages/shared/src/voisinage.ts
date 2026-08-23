@@ -25,6 +25,7 @@
  */
 
 import type { CropCode } from "./crops.js";
+import type { BuildingType } from "./index.js";
 
 /** L'état d'avancement d'une case, tel que la base le stocke. */
 export type StadeChamp =
@@ -150,4 +151,95 @@ export function caseDeTrame(
   cible: { mapX: number; mapY: number },
 ): { col: number; rang: number } {
   return { col: cible.mapX - centre.mapX, rang: cible.mapY - centre.mapY };
+}
+
+/* ------------------------------------------------------------------ */
+/* De quoi est faite une ferme de voisin                               */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Les corps de ferme possibles.
+ *
+ * Le semeur d'avant faisait « soit une étable, soit du blé ». Mesuré sur le
+ * monde installé : cent soixante-dix parcelles PNJ, quarante-trois avec un
+ * bâtiment, cent vingt-sept avec des cultures, quarante-trois avec des bêtes,
+ * et **zéro** avec les trois. Trois exploitations sur quatre n'avaient pas un
+ * seul ouvrage — d'où des voisins qui, vus du champ, n'avaient rien dessus.
+ *
+ * Une exploitation de commune, c'est de la polyculture-élevage : une maison,
+ * un hangar, du grain en terre, souvent quelques bêtes. Les compositions
+ * ci-dessous couvrent ce qu'on croise vraiment, et la maison est partout —
+ * c'est elle qui fait qu'on habite là plutôt qu'on y passe.
+ */
+export const CORPS_DE_FERME: readonly (readonly BuildingType[])[] = [
+  ["FARMHOUSE", "MACHINE_SHED", "SILO"],
+  ["FARMHOUSE", "CATTLE_BARN", "HAY_BARN"],
+  ["FARMHOUSE", "MACHINE_SHED", "HAY_BARN", "SILO"],
+  ["FARMHOUSE", "SHEEPFOLD", "HAY_BARN"],
+  ["FARMHOUSE", "SILO", "BUNKER_SILO"],
+  ["FARMHOUSE", "HENHOUSE", "MACHINE_SHED"],
+  ["FARMHOUSE", "PIGSTY", "HAY_BARN"],
+  ["FARMHOUSE", "MACHINE_SHED", "WORKSHOP", "SILO"],
+];
+
+/** Le cheptel qu'abrite un bâtiment d'élevage, s'il en abrite un. */
+export const CHEPTEL_DE: Partial<Record<BuildingType, { kind: string; size: number }>> = {
+  CATTLE_BARN: { kind: "COW", size: 6 },
+  SHEEPFOLD: { kind: "SHEEP", size: 14 },
+  HENHOUSE: { kind: "HEN", size: 22 },
+  PIGSTY: { kind: "PIG", size: 9 },
+};
+
+/**
+ * Le corps de ferme d'une parcelle, tiré de son identifiant.
+ *
+ * Déterministe : deux voisins ne se ressemblent pas, et chacun reste le même
+ * d'une visite à l'autre. Un décor qui change à chaque rechargement ne serait
+ * pas un lieu.
+ */
+export function corpsDeFerme(parcelId: string): readonly BuildingType[] {
+  return CORPS_DE_FERME[grainerVoisin(parcelId) % CORPS_DE_FERME.length]!;
+}
+
+/**
+ * Ce que le voisin a semé, et où il en est.
+ *
+ * La commune doit montrer des blés mûrs à côté de maïs qui lèvent : une
+ * culture et une avance tirées de la parcelle, jamais de l'horloge, sinon tout
+ * le canton mûrit le même jour.
+ */
+export function cultureNpc(parcelId: string): {
+  crop: CropCode;
+  avance: number;
+  stade: StadeChamp;
+} {
+  const h = grainerVoisin(parcelId);
+  const choix: CropCode[] = ["WHEAT", "BARLEY", "RAPE", "MAIZE", "PEA"];
+  /*
+   * Décalage **non signé**. Écrit `h >> 5`, le décalage repasse l'entier en
+   * trente-deux bits signés : au-delà de deux milliards — une graine sur deux
+   * — le reste devenait négatif, l'avance aussi, et la culture se retrouvait
+   * semée dans le futur. Le test l'a attrapé, pas l'œil.
+   */
+  const avance = 0.15 + ((h >>> 5) % 80) / 100;
+  return {
+    crop: choix[h % choix.length]!,
+    avance,
+    stade: avance >= 1 ? "READY" : avance > 0.25 ? "GROWING" : "PLANTED",
+  };
+}
+
+/**
+ * Hachage d'identifiant — FNV-1a.
+ *
+ * Le même que celui du décor côté vue, et c'est voulu : la graine d'une
+ * parcelle doit donner la même chose des deux côtés du réseau.
+ */
+export function grainerVoisin(texte: string): number {
+  let h = 0x811c9dc5;
+  for (let i = 0; i < texte.length; i++) {
+    h ^= texte.charCodeAt(i);
+    h = Math.imul(h, 0x01000193);
+  }
+  return h >>> 0;
 }

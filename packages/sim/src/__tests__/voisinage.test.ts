@@ -1,5 +1,9 @@
 import {
+  CHEPTEL_DE,
+  CORPS_DE_FERME,
   caseDeTrame,
+  corpsDeFerme,
+  cultureNpc,
   mitoyennes,
   resumerChamp,
   statutParcelle,
@@ -156,5 +160,104 @@ describe("de la carte à la trame", () => {
     expect(caseDeTrame({ mapX: 3, mapY: 1 }, { mapX: 4, mapY: 1 })).toEqual({ col: 1, rang: 0 });
     expect(caseDeTrame({ mapX: 3, mapY: 1 }, { mapX: 3, mapY: 2 })).toEqual({ col: 0, rang: 1 });
     expect(caseDeTrame({ mapX: 3, mapY: 1 }, { mapX: 1, mapY: 0 })).toEqual({ col: -2, rang: -1 });
+  });
+});
+
+describe("de quoi est faite une ferme de voisin", () => {
+  /*
+   * Le semeur d'avant faisait « soit une étable, soit du blé ». Mesuré sur le
+   * monde installé : cent soixante-dix parcelles PNJ, quarante-trois avec un
+   * bâtiment, cent vingt-sept avec des cultures, quarante-trois avec des
+   * bêtes, et **zéro** avec les trois. Trois exploitations sur quatre
+   * n'avaient pas un seul ouvrage — d'où des voisins qui, vus du champ,
+   * n'avaient rien dessus.
+   */
+  const parcelles = Array.from({ length: 200 }, (_, i) => `cmt61q8${i.toString(36)}0x7d81`);
+
+  it("donne à chacune un corps de ferme, jamais un champ nu", () => {
+    for (const id of parcelles) {
+      const corps = corpsDeFerme(id);
+      expect(corps.length).toBeGreaterThanOrEqual(3);
+      // La maison est partout : c'est elle qui fait qu'on habite là plutôt
+      // qu'on y passe.
+      expect(corps).toContain("FARMHOUSE");
+    }
+  });
+
+  it("ne fait pas de toutes les fermes la même", () => {
+    const vues = new Set(parcelles.map((id) => corpsDeFerme(id).join("+")));
+    expect(vues.size).toBeGreaterThanOrEqual(CORPS_DE_FERME.length - 1);
+  });
+
+  it("garde la même ferme d’une visite à l’autre", () => {
+    // Un décor qui change à chaque rechargement ne serait pas un lieu.
+    for (const id of parcelles.slice(0, 20)) {
+      expect(corpsDeFerme(id)).toEqual(corpsDeFerme(id));
+    }
+  });
+
+  it("met des bêtes dans une bonne moitié des communes", () => {
+    /*
+     * « Le PNJ a des bâtiments, des bêtes, des céréales, tout. » Pas toutes :
+     * un céréalier n'a pas de vaches. Mais assez pour qu'un tour de commune en
+     * croise.
+     */
+    const avecCheptel = parcelles.filter((id) =>
+      corpsDeFerme(id).some((t) => CHEPTEL_DE[t]),
+    );
+    const part = avecCheptel.length / parcelles.length;
+    expect(part).toBeGreaterThan(0.35);
+    expect(part).toBeLessThan(0.75);
+  });
+
+  it("ne met jamais deux troupeaux dans la même ferme", () => {
+    // Le troupeau coûte au tic du monde, pas le bâtiment : on peuple le
+    // premier bâtiment d'élevage et l'on s'arrête là.
+    for (const corps of CORPS_DE_FERME) {
+      expect(corps.filter((t) => CHEPTEL_DE[t]).length).toBeLessThanOrEqual(1);
+    }
+  });
+
+  it("chaque bâtiment d’élevage abrite une espèce du jeu", () => {
+    for (const [type, profil] of Object.entries(CHEPTEL_DE)) {
+      expect(["COW", "SHEEP", "HEN", "PIG"]).toContain(profil!.kind);
+      expect(profil!.size).toBeGreaterThan(0);
+      expect(CORPS_DE_FERME.some((c) => c.includes(type as never))).toBe(true);
+    }
+  });
+});
+
+describe("ce que sème un voisin", () => {
+  const parcelles = Array.from({ length: 300 }, (_, i) => `parcelle-${i}`);
+
+  it("varie les cultures d’une parcelle à l’autre", () => {
+    const vues = new Set(parcelles.map((id) => cultureNpc(id).crop));
+    expect(vues.size).toBeGreaterThanOrEqual(4);
+  });
+
+  it("échelonne les avances : la commune ne mûrit pas d’un bloc", () => {
+    /*
+     * Le semeur d'avant plantait tout au même instant, à quatre-vingt-dix pour
+     * cent de la pousse : le canton entier était mûr le même jour, ce qui ne
+     * ressemble à rien. L'avance vient de la parcelle, pas de l'horloge.
+     */
+    const stades = new Set(parcelles.map((id) => cultureNpc(id).stade));
+    expect(stades.size).toBeGreaterThanOrEqual(2);
+    const avances = parcelles.map((id) => cultureNpc(id).avance);
+    expect(Math.min(...avances)).toBeLessThan(0.35);
+    expect(Math.max(...avances)).toBeGreaterThan(0.8);
+  });
+
+  it("ne sème jamais hors du cycle", () => {
+    for (const id of parcelles) {
+      const { avance, stade } = cultureNpc(id);
+      expect(avance).toBeGreaterThan(0);
+      expect(avance).toBeLessThanOrEqual(1);
+      expect(["PLANTED", "GROWING", "READY"]).toContain(stade);
+    }
+  });
+
+  it("rend le même champ à la même parcelle", () => {
+    expect(cultureNpc("abc")).toEqual(cultureNpc("abc"));
   });
 });

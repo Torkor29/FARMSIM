@@ -7,8 +7,20 @@
 
 export const CONSIGNE_AWAY_MS = 180_000;
 
-/** ~30 % des parcelles libres d’une région, fermes PNJ réelles. */
-export const NPC_PARCEL_SHARE = 0.3;
+/**
+ * Part de la commune tenue par des exploitants PNJ.
+ *
+ * Trente pour cent laissaient sept parcelles sur dix sans personne dessus :
+ * vu du champ, le voisinage était un damier vide, et le reproche revenait —
+ * « le PNJ a des bâtiments des bêtes céréales tout ». Une commune, c'est de la
+ * terre exploitée ; les parcelles libres en sont l'exception, pas la règle.
+ *
+ * La moitié, et pas davantage : le joueur ne peut posséder que quarante pour
+ * cent d'une région (`LAND_CAPS.regionSharePct`), et il doit rester plus de
+ * terre à vendre que ce plafond — sans quoi on lui montrerait une limite qu'il
+ * ne pourrait jamais atteindre.
+ */
+export const NPC_PARCEL_SHARE = 0.5;
 
 /** Les fermes PNJ paient un peu moins que le barème joueur. */
 export const NPC_LABOR_QUOTE_MULT = 0.88;

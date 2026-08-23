@@ -7,6 +7,7 @@ import {
   BuildingType,
   ContractJobType,
   CellKind,
+  FieldStage,
 } from "@prisma/client";
 import { z } from "zod";
 import {
@@ -36,8 +37,12 @@ import {
   addStats,
   readStats,
   questsFor,
+  CHEPTEL_DE,
   caseDeTrame,
   claimable,
+  corpsDeFerme,
+  cultureNpc,
+  grainerVoisin,
   QUEST_DEFS,
   type XpEvent,
   type XpContext,
@@ -2090,10 +2095,193 @@ async function placeNpcBuilding(
   for (const c of footprintCells(originX, originY, def.w, def.h)) {
     await prisma.parcelCell.update({
       where: { parcelId_x_y: { parcelId, x: c.x, y: c.y } },
-      data: { kind: "BUILDING", buildingId: b.id },
+      // La culture qui s'y trouvait s'efface : une case bâtie ne porte plus de
+      // blé, et laisser la trace en base ferait mentir tout ce qui la relit.
+      data: { kind: "BUILDING", buildingId: b.id, crop: null, fieldStage: "EMPTY" },
     });
   }
   return b;
+}
+
+/**
+ * Pose le corps de ferme d'un voisin le long d'un bord de sa parcelle.
+ *
+ * Le long d'un bord, et non au milieu : c'est ainsi qu'on bâtit, pour ne pas
+ * couper le champ en deux. On balaie les origines possibles et l'on garde la
+ * première qui tient sur des cases libres — l'ordre venant de la parcelle,
+ * deux voisins n'ont pas leur cour au même endroit.
+ */
+async function poserCorpsDeFerme(parcel: {
+  id: string;
+  gridW: number;
+  gridH: number;
+}): Promise<{ type: SharedBuildingType; id: string }[]> {
+  const h = hash32(parcel.id);
+  const corps = corpsDeFerme(parcel.id);
+  // Le bord retenu : haut, bas, gauche ou droite. La ferme se lit alors comme
+  // une cour rangée, et non comme des ouvrages semés dans le champ.
+  const bord = (h >> 3) % 4;
+  /*
+   * Seuls les ouvrages et les engins bloquent une place, pas les cultures.
+   *
+   * Mesuré : la première version évitait toute case non vide, or les champs
+   * des voisins sont emblavés d'un bord à l'autre — quatre-vingt-seize
+   * parcelles n'ont donc reçu aucun bâtiment, et la passe les reprenait à
+   * chaque démarrage sans jamais aboutir. Un corps de ferme est là avant le
+   * blé : la culture lui cède la place.
+   */
+  const prises = new Set<string>();
+  const occupe = await prisma.parcelCell.findMany({
+    where: { parcelId: parcel.id, kind: { in: ["BUILDING", "VEHICLE"] } },
+    select: { x: true, y: true },
+  });
+  for (const c of occupe) prises.add(`${c.x},${c.y}`);
+
+  const poses: { type: SharedBuildingType; id: string }[] = [];
+  for (const type of corps) {
+    const def = BUILDING_DEFS[type];
+    let place: { x: number; y: number } | null = null;
+    // On longe le bord choisi, en partant d'un décalage propre à la parcelle.
+    const longueur = bord < 2 ? parcel.gridW : parcel.gridH;
+    const depart = h % Math.max(1, longueur);
+    for (let k = 0; k < longueur && !place; k++) {
+      const i = (depart + k) % longueur;
+      const x = bord === 0 || bord === 1 ? i : bord === 2 ? 0 : parcel.gridW - def.w;
+      const y = bord === 0 ? 0 : bord === 1 ? parcel.gridH - def.h : i;
+      if (x < 0 || y < 0 || x + def.w > parcel.gridW || y + def.h > parcel.gridH) continue;
+      const cases = footprintCells(x, y, def.w, def.h);
+      if (cases.some((c) => prises.has(`${c.x},${c.y}`))) continue;
+      place = { x, y };
+      for (const c of cases) prises.add(`${c.x},${c.y}`);
+    }
+    if (!place) continue;
+    const b = await placeNpcBuilding(parcel.id, type, place.x, place.y);
+    poses.push({ type, id: b.id });
+  }
+  return poses;
+}
+
+/**
+ * Sème le champ d'un voisin sur tout ce qui reste libre.
+ *
+ * Dix-huit cases sur cent quarante-quatre — ce que faisait l'ancien semeur —
+ * laissent une parcelle vide à neuf dixièmes. Un exploitant emblave son champ.
+ * La culture et son avance viennent de la parcelle : la commune doit montrer
+ * des blés mûrs à côté de maïs qui lèvent, pas un damier synchronisé.
+ */
+async function semerChampNpc(
+  parcel: { id: string; gridW: number; gridH: number },
+  /**
+   * Semis de reprise, après moisson.
+   *
+   * Le premier semis échelonne les avances pour que la commune ne mûrisse pas
+   * d'un bloc. Une reprise, elle, part de zéro : un champ qu'on vient de
+   * moissonner et de ressemer n'est pas mûr le lendemain.
+   */
+  reprise = false,
+) {
+  const { crop, avance, stade } = cultureNpc(parcel.id);
+  const growMs = CROP_DEFS[crop].growMs;
+  const pousse = reprise ? 0.02 + (grainerVoisin(parcel.id) % 12) / 100 : avance;
+  const plantedAt = new Date(Date.now() - growMs * pousse);
+  const readyAt = new Date(plantedAt.getTime() + growMs);
+  await prisma.parcelCell.updateMany({
+    where: { parcelId: parcel.id, kind: "EMPTY" },
+    data: {
+      kind: "CROP",
+      crop,
+      fieldStage: (reprise ? "PLANTED" : stade) as FieldStage,
+      plantedAt,
+      readyAt,
+    },
+  });
+}
+
+/**
+ * Garnit les fermes PNJ qui manquent de quelque chose.
+ *
+ * Séparé de la création : le monde déjà installé compte des centaines de
+ * fermes pauvres, et il n'y a aucune raison de les laisser telles quelles en
+ * attendant une remise à zéro. Chaque passe ne travaille que sur ce qui
+ * manque, si bien qu'au démarrage suivant les requêtes ne rendent plus rien et
+ * ne coûtent plus rien.
+ */
+/**
+ * Combien de tics entre deux tours de ressemis.
+ *
+ * Un voisin qui vient de moissonner laisse un chaume : c'est juste, et ça se
+ * regarde. Mais s'il ne resème jamais, la commune se vide champ par champ, et
+ * après quelques jours de serveur il ne reste qu'un damier nu — précisément ce
+ * qu'on vient de corriger. Cinq minutes d'intervalle : assez pour qu'une
+ * jachère se voie, assez peu pour qu'on ne joue jamais devant un désert.
+ */
+const TICS_ENTRE_RESSEMIS = 15;
+let ticsDepuisRessemis = 0;
+
+/**
+ * Remet en culture les champs de voisins qui viennent d'être moissonnés.
+ *
+ * La garniture du démarrage ne suffisait pas : les consignes font moissonner
+ * les PNJ au fil des tics, et leurs parcelles retombaient à vide jusqu'au
+ * prochain redémarrage du serveur. Mesuré après quelques minutes de tic :
+ * douze parcelles déjà nues.
+ */
+async function ressemerVoisinage() {
+  if (++ticsDepuisRessemis < TICS_ENTRE_RESSEMIS) return;
+  ticsDepuisRessemis = 0;
+  const nus = await prisma.parcel.findMany({
+    where: { farm: { user: { isNpc: true } }, cells: { none: { kind: "CROP" } } },
+    select: { id: true, gridW: true, gridH: true },
+  });
+  for (const parcel of nus) await semerChampNpc(parcel, true);
+}
+
+async function garnirFermesNpc() {
+  const sansBatiment = await prisma.parcel.findMany({
+    where: { farm: { user: { isNpc: true } }, buildings: { none: {} } },
+    select: { id: true, gridW: true, gridH: true, farmId: true },
+  });
+  for (const parcel of sansBatiment) {
+    const poses = await poserCorpsDeFerme(parcel);
+    /*
+     * Un bâtiment d'élevage sans bête est un décor. On peuple donc celui qui
+     * vient d'être posé — et un seul : c'est le troupeau qui coûte au tic du
+     * monde, pas le bâtiment.
+     */
+    for (const b of poses) {
+      const profil = CHEPTEL_DE[b.type];
+      if (!profil || !parcel.farmId) continue;
+      const deja = await prisma.herd.findFirst({ where: { buildingId: b.id } });
+      if (deja) continue;
+      await prisma.herd.create({
+        data: {
+          farmId: parcel.farmId,
+          buildingId: b.id,
+          kind: profil.kind,
+          size: profil.size,
+          happiness: 0.72,
+          // Mangeoire pleine : un troupeau affamé entre dans les balayages du
+          // tic, et deux cents voisins affamés le paieraient cher.
+          feedStock: 900,
+          feedQuality: 0.35,
+          lastFedAt: new Date(),
+        },
+      });
+      break;
+    }
+  }
+
+  const sansCulture = await prisma.parcel.findMany({
+    where: { farm: { user: { isNpc: true } }, cells: { none: { kind: "CROP" } } },
+    select: { id: true, gridW: true, gridH: true },
+  });
+  for (const parcel of sansCulture) await semerChampNpc(parcel);
+
+  if (sansBatiment.length || sansCulture.length) {
+    console.log(
+      `Voisinage garni : ${sansBatiment.length} corps de ferme, ${sansCulture.length} champs semés`,
+    );
+  }
 }
 
 async function seedNpcFarms() {
@@ -2140,54 +2328,24 @@ async function seedNpcFarms() {
         data: { userId: user.id, name },
       });
       await prisma.parcel.update({ where: { id: parcel.id }, data: { farmId: farm.id } });
-      const tractor = await prisma.machine.create({
+      await prisma.machine.create({
         data: { farmId: farm.id, type: "TRACTOR", parkedParcelId: parcel.id },
       });
+      // Le foin sert au troupeau que la garniture posera, s'il y en a un.
       if (livestock) {
-        const barn = await placeNpcBuilding(parcel.id, "CATTLE_BARN", 8, 8);
-        await prisma.herd.create({
-          data: {
-            farmId: farm.id,
-            buildingId: barn.id,
-            kind: "COW",
-            size: 6,
-            happiness: 0.7,
-            feedStock: 800,
-            feedQuality: 0.2,
-            lastFedAt: new Date(),
-          },
-        });
         await prisma.inventoryItem.create({
           data: { farmId: farm.id, itemCode: "HAY", qty: 8, quality: 3, moisture: 0 },
         });
-      } else {
-        const now = Date.now();
-        const growMs = CROP_DEFS.WHEAT.growMs;
-        const plantedAt = new Date(now - growMs * 0.9);
-        const readyAt = new Date(plantedAt.getTime() + growMs);
-        let planted = 0;
-        for (let y = 1; y < parcel.gridH - 1 && planted < 18; y++) {
-          for (let x = 1; x < parcel.gridW - 1 && planted < 18; x++) {
-            const cell = await prisma.parcelCell.findUnique({
-              where: { parcelId_x_y: { parcelId: parcel.id, x, y } },
-            });
-            if (!cell || cell.kind !== "EMPTY") continue;
-            await prisma.parcelCell.update({
-              where: { id: cell.id },
-              data: {
-                kind: "CROP",
-                crop: "WHEAT",
-                fieldStage: "GROWING",
-                plantedAt,
-                readyAt,
-              },
-            });
-            planted += 1;
-          }
-        }
       }
+      /*
+       * Le contenu de la ferme — bâtiments, cultures, cheptel — est posé par
+       * `garnirFermesNpc`, en une passe qui rattrape aussi les fermes déjà en
+       * base. Le faire ici seulement laissait des centaines d'exploitations
+       * pauvres dans tout monde installé avant ce changement.
+       */
     }
   }
+  await garnirFermesNpc();
 }
 
 async function publishFromConsignes() {
@@ -3301,6 +3459,7 @@ async function runWorldTick() {
   await expireLaborOrders();
   await tickNpcFarms();
   await publishFromConsignes();
+  await ressemerVoisinage();
   await runNpcBuyers();
   await spoilPerishables();
   await settleAllHerds();

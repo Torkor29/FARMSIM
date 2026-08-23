@@ -1,6 +1,7 @@
 import {
   BALE_TONS,
   DEFAULT_CONSIGNES,
+  LAND_CAPS,
   NPC_PARCEL_SHARE,
   SILAGE_MIN_PROGRESS,
   STRAW_YIELD,
@@ -62,8 +63,20 @@ describe("consignes", () => {
     expect(parseConsignes("{}").maxSpend).toBe(DEFAULT_CONSIGNES.maxSpend);
   });
 
-  it("cible un tiers des parcelles d’une région pour les PNJ", () => {
-    expect(NPC_PARCEL_SHARE).toBeCloseTo(0.3, 5);
+  it("peuple la commune sans fermer le marché de la terre", () => {
+    /*
+     * Deux exigences qui se tirent dessus, et le chiffre est leur compromis —
+     * non l'inverse. Le test disait « un tiers » et recopiait la constante : il
+     * ne vérifiait rien qu'elle-même.
+     *
+     * Trop peu d'exploitants, et le voisinage est un damier vide : à trente
+     * pour cent, sept parcelles sur dix n'avaient personne dessus, et c'est ce
+     * qu'on voyait depuis le champ. Trop, et il reste moins de terre à vendre
+     * que le joueur n'a le droit d'en posséder — on lui montrerait un plafond
+     * qu'il ne pourrait jamais atteindre.
+     */
+    expect(NPC_PARCEL_SHARE).toBeGreaterThanOrEqual(0.45);
+    expect(1 - NPC_PARCEL_SHARE).toBeGreaterThan(LAND_CAPS.regionSharePct);
   });
 });
 
