@@ -100,6 +100,7 @@ import type { GrazingHerd, PreviewBuilding } from "./IsoFarmView";
 import type { VoisinReel } from "./countryside-plan";
 import { BuildingSheet } from "./BuildingSheet";
 import { ConfirmDialog, type ConfirmRequest } from "./ConfirmDialog";
+import { ParcelleVoisineSheet } from "./ParcelleVoisineSheet";
 import { MachineCareOverlay, type CareMode } from "./MachineCareOverlay";
 import { MissionPlay, type MissionPlayContract } from "./MissionPlay";
 import { LivestockPanel, type BarnState, type OrphanYard } from "./LivestockPanel";
@@ -611,6 +612,8 @@ export function App() {
    * pour se monter.
    */
   const [voisinage, setVoisinage] = useState<VoisinReel[]>([]);
+  /* La fiche ouverte en cliquant sur un champ de voisin, s'il y en a une. */
+  const [voisinOuvert, setVoisinOuvert] = useState<VoisinReel | null>(null);
   const [parcelDetail, setParcelDetail] = useState<{
     parcel: Parcel;
     bonuses: Player["bonuses"];
@@ -4649,6 +4652,7 @@ export function App() {
               controle={vueControle}
               onEgare={setVueEgaree}
               voisinage={voisinage}
+              onVoisinClick={setVoisinOuvert}
               gridW={gw}
               gridH={gh}
               cells={grid}
@@ -6163,6 +6167,17 @@ export function App() {
         />
       )}
 
+      {/* On achetait la terre dans un plan du Bureau, sans l'avoir jamais vue.
+          Ici on l'achète parce qu'on l'a regardée. */}
+      <ParcelleVoisineSheet
+        voisin={voisinOuvert}
+        enCours={busy}
+        onAcheter={async (id) => {
+          await buyAdjacent(id);
+          setVoisinOuvert(null);
+        }}
+        onFermer={() => setVoisinOuvert(null)}
+      />
       <ConfirmDialog request={confirmRequest} onCancel={() => setConfirmRequest(null)} />
       {care && player && (() => {
         const m = player.farm?.machines.find((x) => x.id === care.machineId);

@@ -21,7 +21,7 @@ import { applyHerdPose, meshForHerd } from "./animal-meshes";
 import { createBuildingRig, nearestThreshold, type BuildingRig } from "./buildings3d";
 import { createParkingRig, type ParkingRig } from "./parking3d";
 import { createCountryside, type Campagne } from "./countryside";
-import type { VoisinReel } from "./countryside-plan";
+import { parcelleSous, type VoisinReel } from "./countryside-plan";
 import {
   bornesDeplacement,
   elastique,
@@ -249,6 +249,8 @@ type Props = {
    * temps que la route réponde, et la vue se monte donc sans réseau.
    */
   voisinage?: readonly VoisinReel[];
+  /** Un champ de voisin a été touché : la coquille en ouvre la fiche. */
+  onVoisinClick?: (voisin: VoisinReel) => void;
   gridW: number;
   gridH: number;
   cells: IsoCell[];
@@ -1076,6 +1078,7 @@ export function IsoFarmView({
   controle,
   onEgare,
   voisinage,
+  onVoisinClick,
   gridW,
   gridH,
   cells,
@@ -1160,6 +1163,8 @@ export function IsoFarmView({
   voisinageRef.current = voisinage;
   const parcelIdRef = useRef(parcelId);
   parcelIdRef.current = parcelId;
+  const onVoisinRef = useRef(onVoisinClick);
+  onVoisinRef.current = onVoisinClick;
   const seasonAppliedRef = useRef<string | null>(null);
   const weatherRef = useRef(weather);
   weatherRef.current = weather;
@@ -2377,6 +2382,27 @@ export function IsoFarmView({
       return null;
     }
 
+    /**
+     * La parcelle voisine sous le curseur, s'il y en a une.
+     *
+     * Les trente champs alentour tiennent dans **un** maillage : il n'y a donc
+     * rien à interroger objet par objet. On croise la nappe, et la case se
+     * déduit du point touché — la trame est régulière, c'est une division.
+     *
+     * Le maillage sert de masque autant que de cible : croiser un plan infini
+     * rendrait aussi une parcelle quand le doigt est sur l'île du joueur, sur
+     * la cour ou dans le ciel.
+     */
+    function raycastVoisin(): VoisinReel | null {
+      if (!campagne) return null;
+      const nappe = campagne.object.getObjectByName("campagne-parcelles-nappe");
+      if (!nappe) return null;
+      raycaster.setFromCamera(pointer, camera);
+      const hit = raycaster.intersectObject(nappe, false)[0];
+      if (!hit) return null;
+      return parcelleSous(campagne.plan, hit.point.x, hit.point.z)?.reel ?? null;
+    }
+
     function setPointerFromEvent(ev: PointerEvent) {
       const rect = renderer.domElement.getBoundingClientRect();
       pointer.x = ((ev.clientX - rect.left) / rect.width) * 2 - 1;
@@ -2682,7 +2708,15 @@ export function IsoFarmView({
         return;
       }
       const cell = raycastCell();
-      if (cell) onClickRef.current(cell.x, cell.y, gestureMods);
+      if (cell) {
+        onClickRef.current(cell.x, cell.y, gestureMods);
+        return;
+      }
+      // Hors de sa grille : peut-être un champ de voisin. C'est le seul geste
+      // qui porte au-delà de l'île, et il ne coûte rien puisqu'on n'y arrive
+      // qu'après avoir manqué toutes les cases.
+      const voisin = raycastVoisin();
+      if (voisin) onVoisinRef.current?.(voisin);
     }
 
     function onPointerLeave() {

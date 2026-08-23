@@ -411,6 +411,31 @@ export function empriseParcelle(p: Pick<ParcelleVoisine, "x" | "z">, emprise: nu
   return { x: p.x, z: p.z, w: emprise, d: emprise };
 }
 
+/**
+ * La parcelle voisine sous un point du sol, s'il y en a une.
+ *
+ * Les trente champs alentour tiennent dans un seul maillage : il n'y a rien à
+ * interroger objet par objet, et la trame étant régulière, la case se déduit
+ * d'une division. Le `round` et non le `floor` : les centres sont sur les
+ * multiples du pas, pas les coins.
+ *
+ * Rendre la case ne suffit pas — il faut vérifier qu'on est bien **dans** la
+ * parcelle et non dans le chemin qui la borde, sinon un clic sur l'herbe entre
+ * deux champs ouvrirait la fiche de l'un d'eux.
+ */
+export function parcelleSous(
+  plan: Pick<PlanCampagne, "parcelles" | "pas" | "emprise">,
+  x: number,
+  z: number,
+): ParcelleVoisine | null {
+  const col = Math.round(x / plan.pas);
+  const rang = Math.round(z / plan.pas);
+  const p = plan.parcelles.find((c) => c.col === col && c.rang === rang);
+  if (!p) return null;
+  const demi = plan.emprise / 2;
+  return Math.abs(x - p.x) <= demi && Math.abs(z - p.z) <= demi ? p : null;
+}
+
 /** Un point est-il sur la terre ferme ? */
 export function surLeSol(sol: EmpriseSol, x: number, z: number): boolean {
   const u = versEcranBas(x, z);

@@ -4,6 +4,7 @@ import {
   cultureDe,
   etatDepuisStade,
   orientationTrame,
+  parcelleSous,
   tourner,
   DEMI_ROUTE,
   ENGINS_MAX,
@@ -701,5 +702,48 @@ describe("de la carte au décor", () => {
         expect(t).toBeLessThanOrEqual(0xffffff);
       }
     }
+  });
+});
+
+describe("viser un champ de voisin", () => {
+  /*
+   * C'est ce qui rend l'achat possible dans le paysage plutôt que dans un plan
+   * du Bureau : on clique sur le champ, on lit sa fiche, on l'achète. Les
+   * trente champs tiennent dans un seul maillage, donc la case se déduit du
+   * point touché — et c'est là qu'un arrondi de travers coûterait cher.
+   */
+  const plan = planCampagne(OPTIONS);
+
+  it("trouve la parcelle dont on a touché le centre", () => {
+    for (const p of plan.parcelles) {
+      expect(parcelleSous(plan, p.x, p.z)?.id).toBe(p.id);
+    }
+  });
+
+  it("la trouve encore près de ses bords", () => {
+    for (const p of plan.parcelles) {
+      const d = plan.emprise / 2 - 0.05;
+      for (const [dx, dz] of [[-d, -d], [d, -d], [d, d], [-d, d]] as const) {
+        expect(parcelleSous(plan, p.x + dx, p.z + dz)?.id).toBe(p.id);
+      }
+    }
+  });
+
+  it("ne rend rien pour un clic dans le chemin", () => {
+    /*
+     * Le `round` seul suffirait à trouver la case, mais l'herbe entre deux
+     * champs appartient à la case la plus proche : sans vérifier qu'on est
+     * bien **dans** la parcelle, un clic sur le chemin ouvrirait la fiche du
+     * champ d'à côté.
+     */
+    const p = plan.parcelles[0]!;
+    const juste = plan.emprise / 2 + LARGEUR_CHEMIN / 2;
+    expect(parcelleSous(plan, p.x + juste, p.z)).toBeNull();
+    expect(parcelleSous(plan, p.x, p.z + juste)).toBeNull();
+  });
+
+  it("ne rend rien sur la ferme du joueur ni au loin", () => {
+    expect(parcelleSous(plan, 0, 0)).toBeNull();
+    expect(parcelleSous(plan, 900, -900)).toBeNull();
   });
 });
