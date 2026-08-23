@@ -45,6 +45,7 @@ import {
   maillageFacette,
   makeVoiture,
 } from "./decor3d";
+import { creerVoisinDetaille, type VoisinDetaille } from "./voisin3d";
 import {
   couleurChamp,
   DEMI_ROUTE,
@@ -77,8 +78,35 @@ export type Campagne = {
   update(t: number): void;
   /** Le jour et la saison décident de l'aspect des parcelles voisines. */
   setJour(jourDeJeu: number, saison: Season): void;
+  /**
+   * Où le joueur regarde, en unités monde.
+   *
+   * C'est ce qui décide des parcelles à détailler. Appelé à chaque
+   * déplacement de caméra ; le travail n'a lieu que si le choix change.
+   */
+  setCentreVue(x: number, z: number): void;
   dispose(): void;
 };
+
+/**
+ * Combien de parcelles passent en détail plein à la fois.
+ *
+ * Trois, et une seule en réglage sobre. Ce n'est pas une estimation prudente :
+ * un champ détaillé, ce sont plusieurs milliers de brins instanciés, les vrais
+ * modèles de bâtiment et cinq bêtes articulées. Trente parcelles à ce régime
+ * feraient de la campagne le poste le plus cher de la vue, loin devant la
+ * ferme du joueur — qui est pourtant ce qu'on regarde.
+ */
+export const DETAILS_MAX = 3;
+
+/**
+ * Au-delà de cette distance du regard, une parcelle reste en nappe.
+ *
+ * Sans elle, les trois plus proches passeraient en détail même quand le joueur
+ * regarde à l'autre bout de la commune : on paierait des brins qu'on ne
+ * distingue plus.
+ */
+export const PORTEE_DETAIL = 1.6;
 
 /** Épaisseur de la dalle de terre sous une parcelle voisine. */
 const EPAISSEUR_DALLE = 0.3;
@@ -299,6 +327,17 @@ export function createCountryside(o: OptionsCampagne): Campagne {
   /** Le pas d'une case, déduit de l'emprise : le damier remplit la parcelle. */
   const pasCase = (plan.emprise - 1.4) / cases;
 
+  /*
+   * Les parcelles montrées en détail plein, par identifiant.
+   *
+   * La nappe fusionnée continue de porter leur dalle, leur damier et leur
+   * haie — c'est le sol du champ, et il ne coûte rien. Ce qu'elle ne dessine
+   * plus pour elles, c'est la grange générique : le détail pose les vrais
+   * bâtiments, aux vraies places, et deux granges superposées se verraient.
+   */
+  const detailles = new Map<string, VoisinDetaille>();
+  let clefDetail = "";
+
   function poserParcelles(jour: number, saison: Season): void {
     if (jour === jourPose && saison === saisonPosee) return;
     jourPose = jour;
@@ -372,7 +411,7 @@ export function createCountryside(o: OptionsCampagne): Campagne {
 
       // Parfois une grange au bord : c'est elle qui fait la ferme du voisin
       // plutôt qu'un simple champ.
-      if (p.batiment) {
+      if (p.batiment && !detailles.has(p.id)) {
         const bx = p.x + (emprise / 2 - 1.5) * (grain() < 0.5 ? -1 : 1);
         const bz = p.z + (emprise / 2 - 1.4) * (grain() < 0.5 ? -1 : 1);
         ajouterGrange(pos, col, bx, y0 + 0.02, bz, grain() < 0.5 ? 0 : Math.PI / 2, grainerDe(p.id + ":grange"));
@@ -570,6 +609,7 @@ export function createCountryside(o: OptionsCampagne): Campagne {
   }
 
   function update(t: number): void {
+    for (const d of detailles.values()) d.update(t, 0.4);
     for (const v of voitures) {
       const u = (((t - v.depart) % v.cycle) + v.cycle) % v.cycle;
       if (u > v.passage) {
@@ -616,11 +656,61 @@ export function createCountryside(o: OptionsCampagne): Campagne {
     }
   }
 
+  /**
+   * Choisit les parcelles à détailler d'après le point regardé.
+   *
+   * Ne fait rien tant que le choix ne change pas : ce point bouge à chaque
+   * image pendant un glissement, et reconstruire trois champs soixante fois
+   * par seconde ferait de la fluidité le prix du déplacement.
+   */
+  function setCentreVue(x: number, z: number): void {
+    const portee = plan.pas * PORTEE_DETAIL;
+    const combien = sobre ? 1 : DETAILS_MAX;
+    const choisies = plan.parcelles
+      .filter((p) => p.reel && Math.hypot(p.x - x, p.z - z) <= portee)
+      .sort((a, b) => Math.hypot(a.x - x, a.z - z) - Math.hypot(b.x - x, b.z - z))
+      .slice(0, combien);
+    const clef = choisies.map((p) => p.id).join("|");
+    if (clef === clefDetail) return;
+    clefDetail = clef;
+
+    const garder = new Set(choisies.map((p) => p.id));
+    for (const [id, d] of detailles) {
+      if (garder.has(id)) continue;
+      object.remove(d.object);
+      d.dispose();
+      detailles.delete(id);
+    }
+    for (const p of choisies) {
+      if (detailles.has(p.id)) continue;
+      const d = creerVoisinDetaille({
+        parcelle: p,
+        emprise: plan.emprise,
+        cases,
+        y: y0 + HAUT_CASE,
+        shadows,
+        sobre,
+      });
+      object.add(d.object);
+      detailles.set(p.id, d);
+    }
+    // La nappe portait peut-être une grange générique là où le détail vient
+    // d'en poser une vraie : on la refait.
+    const jour = jourPose;
+    const saison = saisonPosee;
+    if (Number.isFinite(jour) && saison) {
+      jourPose = Number.NaN;
+      poserParcelles(jour, saison);
+    }
+  }
+
   function setJour(jourDeJeu: number, saison: Season): void {
     poserParcelles(Math.floor(jourDeJeu), saison);
   }
 
   function dispose(): void {
+    for (const d of detailles.values()) d.dispose();
+    detailles.clear();
     for (const e of engins) e.rig.dispose();
     engins.length = 0;
     if (nappeParcelles) {
@@ -634,5 +724,6 @@ export function createCountryside(o: OptionsCampagne): Campagne {
   }
 
   poserParcelles(0, "SUMMER");
-  return { object, plan, update, setJour, dispose };
+  setCentreVue(0, 0);
+  return { object, plan, update, setJour, setCentreVue, dispose };
 }

@@ -3002,6 +3002,18 @@ export function IsoFarmView({
       // jour pour tout le monde, et l'hiver gèle ses champs comme les nôtres.
       if (campagne) {
         campagne.setJour(gameDayIndex(), seasonRef.current as never);
+        /*
+         * Ce que le joueur regarde décide de ce qui passe en détail plein.
+         * On passe le point visé et non la position brute : au-delà des
+         * bornes la vue est comprimée, et détailler ce qu'on ne voit pas
+         * serait payer pour rien. `setCentreVue` ne travaille que si le choix
+         * change — appelé à chaque image, il ne coûte qu'un tri de trente
+         * distances.
+         */
+        campagne.setCentreVue(
+          elastique(view.panX, bornesVue.xMin, bornesVue.xMax),
+          elastique(view.panZ, bornesVue.zMin, bornesVue.zMax),
+        );
         campagne.update(t);
       }
 
