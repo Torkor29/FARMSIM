@@ -155,13 +155,22 @@ export function ajouterGrange(
   z: number,
   rotY: number,
   graine: number,
+  /**
+   * Emprise réelle, quand on la connaît.
+   *
+   * Sans elle, chaque ferme voisine avait la même grange tirée au sort, à la
+   * même place inventée. Les ouvrages du cadastre ont une taille et une
+   * position : un silo n'a pas la carrure d'un poulailler, et le donner à voir
+   * est la moitié de ce qui distingue une exploitation d'une autre.
+   */
+  taille?: { l: number; prof: number; h: number },
 ): void {
   const rnd = suite(graine >>> 0);
   const mur = MURS[Math.floor(rnd() * MURS.length)]!;
   const toit = TOITS[Math.floor(rnd() * TOITS.length)]!;
-  const l = 1.9 + rnd() * 0.5;
-  const prof = 1.3 + rnd() * 0.3;
-  const h = 0.74 + rnd() * 0.16;
+  const l = taille ? taille.l : 1.9 + rnd() * 0.5;
+  const prof = taille ? taille.prof : 1.3 + rnd() * 0.3;
+  const h = taille ? taille.h : 0.74 + rnd() * 0.16;
 
   ajouterBoite(pos, col, x, y + h / 2, z, l, h, prof, mur, rotY);
   // Un soubassement plus sombre : la ligne d'ombre au pied du mur.
@@ -198,6 +207,64 @@ export function ajouterGrange(
     x + Math.cos(rotY) * (l / 2), y + h * 0.34, z - Math.sin(rotY) * (l / 2),
     0.07, h * 0.62, prof * 0.34, eclaircir(toit, -0.2), rotY,
   );
+}
+
+/** Robes : brun-noir de la vache, laine sale du mouton, rose du cochon. */
+const ROBES: Record<string, { corps: number; tete: number }> = {
+  COW: { corps: 0x6b4a35, tete: 0xf0ece2 },
+  SHEEP: { corps: 0xe8e3d5, tete: 0x3b3733 },
+  PIG: { corps: 0xd9a29a, tete: 0xc98d86 },
+  HEN: { corps: 0xd8d2c6, tete: 0xc2452f },
+};
+
+/**
+ * Une bête au pré, en volumes fusionnés.
+ *
+ * Rien à voir avec les modèles articulés du troupeau du joueur : ceux-là ont
+ * des pattes qui se croisent et une tête qui broute, et chacun coûte un appel
+ * de rendu. Il en faut ici sur toutes les parcelles d'élevage à la fois, y
+ * compris celles du fond — une silhouette juste, fondue dans le maillage de la
+ * campagne, dit « il y a des bêtes » pour le prix de sept pavés.
+ *
+ * Les parcelles proches, elles, reçoivent les vrais modèles : voir `voisin3d`.
+ */
+export function ajouterBete(
+  pos: number[],
+  col: number[],
+  x: number,
+  y: number,
+  z: number,
+  rotY: number,
+  espece: string,
+  taille = 1,
+): void {
+  const robe = ROBES[espece] ?? ROBES.COW!;
+  const petite = espece === "HEN";
+  const l = (petite ? 0.28 : 0.86) * taille;
+  const larg = (petite ? 0.2 : 0.4) * taille;
+  const h = (petite ? 0.22 : 0.42) * taille;
+  const patte = (petite ? 0.12 : 0.34) * taille;
+  const sol = y + patte;
+
+  ajouterBoite(pos, col, x, sol + h / 2, z, l, h, larg, robe.corps, rotY);
+  // La tête, avancée et un peu plus basse : c'est l'inclinaison qui fait
+  // qu'une bête broute plutôt qu'elle ne pose.
+  const av = Math.cos(rotY) * (l / 2);
+  const avz = -Math.sin(rotY) * (l / 2);
+  ajouterBoite(
+    pos, col,
+    x + av, sol + h * 0.42, z + avz,
+    l * 0.34, h * 0.62, larg * 0.72, robe.tete, rotY,
+  );
+  if (petite) return;
+  // Quatre pattes, en croix sous le corps.
+  for (const dl of [-0.32, 0.32]) {
+    for (const dt of [-0.28, 0.28]) {
+      const px = x + Math.cos(rotY) * (l * dl) - Math.sin(rotY) * (larg * dt);
+      const pz = z - Math.sin(rotY) * (l * dl) - Math.cos(rotY) * (larg * dt);
+      ajouterBoite(pos, col, px, y + patte / 2, pz, 0.09 * taille, patte, 0.09 * taille, eclaircir(robe.corps, -0.3));
+    }
+  }
 }
 
 /**

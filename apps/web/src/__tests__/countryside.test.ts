@@ -1,5 +1,7 @@
 import * as THREE from "three";
 import {
+  CASE_EP,
+  DALLE_HAUT,
   DEMI_TOUR,
   createCountryside,
   coteTravail,
@@ -523,6 +525,62 @@ describe("les engins des voisins", () => {
 });
 
 describe("les parcelles voisines", () => {
+  it("ont le damier en volume, comme celui du joueur", () => {
+    /*
+     * Le reproche, dit trois fois : « ça doit ressembler à la nôtre, les cases
+     * doivent être semblables ». Il tenait à un seul chiffre — la dalle
+     * culminait deux centimètres **au-dessus** des cases, et le damier entier
+     * était enterré dans le talus. On ne voyait qu'un aplat de terre, là où le
+     * joueur a cent quarante-quatre pavés dont la tranche dessine la grille.
+     *
+     * Ce test compte ces pavés. Un aplat n'en a pas.
+     */
+    const y0 = -0.46;
+    const c = createCountryside({ ...OPTIONS, y: y0 });
+    const nappe = c.object.getObjectByName("campagne-parcelles-nappe") as THREE.Mesh;
+    const p = nappe.geometry.getAttribute("position");
+    // Hauteurs distinctes trouvées dans la nappe : un damier plat n'en a
+    // qu'une pour ses cases, un damier en volume en a deux — dessus, dessous.
+    const niveaux = new Set<string>();
+    for (let i = 0; i < p.count; i++) niveaux.add(p.getY(i).toFixed(3));
+    expect(niveaux.size).toBeGreaterThan(4);
+
+    /*
+     * Et l'invariant qui avait cédé : le dessus des cases doit dominer le
+     * dessus de la dalle. Deux centimètres dans l'autre sens, et tout le
+     * damier disparaît sous la terre.
+     */
+    expect(CASE_EP / 2).toBeGreaterThan(DALLE_HAUT);
+    const dessusCase = y0 + CASE_EP / 2;
+    let auDessus = 0;
+    for (let i = 0; i < p.count; i++) {
+      if (Math.abs(p.getY(i) - dessusCase) < 1e-3) auDessus++;
+    }
+    // Quatre sommets par case au moins, sur des dizaines de parcelles.
+    expect(auDessus).toBeGreaterThan(1000);
+    c.dispose();
+  });
+
+  it("tiennent dans un budget de sommets, et en un seul maillage", () => {
+    /*
+     * Le damier en volume multiplie les sommets par six. Mesuré : cent
+     * quarante-cinq mille pour vingt-sept parcelles, dans **un** appel de
+     * rendu — ce qu'une carte encaisse sans broncher. Ce garde-fou est là pour
+     * que ça reste vrai : c'est le genre de chiffre qui triple sans qu'on s'en
+     * aperçoive, et le premier à en souffrir est le téléphone.
+     */
+    const riche = createCountryside(OPTIONS);
+    const nappe = riche.object.getObjectByName("campagne-parcelles-nappe") as THREE.Mesh;
+    expect(nappe.geometry.getAttribute("position").count).toBeLessThan(220_000);
+    riche.dispose();
+
+    // En réglage sobre, on retombe sur des aplats : dix fois moins.
+    const sobre = createCountryside({ ...OPTIONS, sobre: true });
+    const plate = sobre.object.getObjectByName("campagne-parcelles-nappe") as THREE.Mesh;
+    expect(plate.geometry.getAttribute("position").count).toBeLessThan(30_000);
+    sobre.dispose();
+  });
+
   it("sont bâties comme celle du joueur, à sa taille", () => {
     /*
      * « Les parcelles des PNJ doivent être sous la même forme que nous et

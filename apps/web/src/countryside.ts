@@ -34,10 +34,11 @@
  */
 
 import * as THREE from "three";
-import type { Season } from "@farmsim/shared";
+import { BUILDING_DEFS, type BuildingType, type Season } from "@farmsim/shared";
 import { createMachineRig, type MachineRig } from "./machines3d";
 import {
   ajouterArbre,
+  ajouterBete,
   ajouterBoite,
   ajouterGrange,
   CARROSSERIES,
@@ -117,11 +118,37 @@ export const PORTEE_DETAIL = 1.6;
  */
 const TERRE_VISIBLE = new Set<EtatChamp>(["LABOUR", "CHAUME", "JACHERE", "SEMIS"]);
 
-/** Épaisseur de la dalle de terre sous une parcelle voisine. */
-const EPAISSEUR_DALLE = 0.3;
+/**
+ * La géométrie d'une parcelle voisine, copiée sur celle du joueur.
+ *
+ * Ces trois nombres sont ceux de la vue ferme — `TILE_THICK`, l'épaisseur de
+ * la plateforme, l'écart entre deux cases. Ils ne sont pas approchés à l'œil :
+ * « ça doit ressembler à la nôtre » veut dire les mêmes volumes, et une case
+ * de voisin plus mince ou plus jointive que la sienne se remarque d'un coup
+ * d'œil.
+ *
+ * Le défaut d'avant tenait à un seul de ces chiffres. La dalle culminait à
+ * `y0 + 0,04` et les cases étaient posées à `y0 + 0,02` : **le damier entier
+ * était enterré dans le talus**, et l'on ne voyait qu'un aplat de terre. Les
+ * cultures et les sillons, posés à la même hauteur, l'étaient aussi. D'où
+ * cette règle, désormais explicite : la surface du champ est `y0`, tout le
+ * reste s'y rapporte, et la dalle passe dessous.
+ */
+export const CASE_EP = 0.18;
+export const DALLE_EP = 0.45;
+export const DALLE_HAUT = -0.055;
 
-/** Hauteur à laquelle flotte une case cultivée au-dessus de sa dalle. */
-const HAUT_CASE = 0.02;
+/** Écart entre deux cases, comme sur la grille du joueur. */
+const JOINT = 0.06;
+
+/**
+ * Le dessus d'une case : c'est là que se posent les cultures et les sillons.
+ *
+ * Une case est un pavé centré sur la surface du champ — la moitié dépasse.
+ * Écrit en dur ailleurs, ce demi-centimètre de trop enterrait les brins dans
+ * la terre.
+ */
+const HAUT_CASE = CASE_EP / 2 + 0.004;
 
 /* ------------------------------------------------------------------ */
 /* Le long de la route                                                 */
@@ -531,23 +558,28 @@ export function createCountryside(o: OptionsCampagne): Campagne {
        */
       const base = couleurChamp(p.culture, p.etat ?? etatChamp(p, jour, saison));
 
-      // La dalle de terre, qui donne son talus à la parcelle — la même que
-      // celle de l'île, pour que la campagne ne soit pas un étage plus bas.
+      // Le talus de terre qui porte le champ — la plateforme de l'île, à
+      // l'identique, et posée sous la surface plutôt qu'au travers.
       ajouterBoite(
-        pos, col, p.x, y0 - EPAISSEUR_DALLE / 2 + 0.02, p.z,
-        emprise, EPAISSEUR_DALLE + 0.04, emprise, TERRE_DALLE,
+        pos, col, p.x, y0 + DALLE_HAUT - DALLE_EP / 2, p.z,
+        emprise, DALLE_EP, emprise, TERRE_DALLE,
       );
 
       /*
-       * Le damier, en quadrilatères plats et non en pavés.
+       * Le damier, en **pavés** et non en aplats.
        *
-       * Trente parcelles de cent quarante-quatre cases : en volumes, c'est un
-       * million de sommets pour un décor qu'on regarde de loin. À plat, c'est
-       * trente mille, et à cette distance la tranche d'une case ne se voit pas.
+       * Une case du joueur est un volume de dix-huit centimètres d'épaisseur :
+       * c'est sa tranche, prise de biais par la lumière, qui dessine la
+       * grille. Peintes à plat, les cases du voisin ne montraient qu'un
+       * dégradé de teintes — et l'on voyait bien que ce n'était pas le même
+       * champ. Quarante parcelles de cent quarante-quatre pavés font cent
+       * cinquante mille sommets dans **un** maillage : un seul appel de rendu,
+       * ce que la carte encaisse sans broncher. En réglage sobre on retombe
+       * sur des aplats, où c'est la cadence qui prime.
        */
-      const y = y0 + HAUT_CASE;
       const o0 = -((cases - 1) * pasCase) / 2;
-      const demi = pasCase * 0.46;
+      const taille = pasCase - JOINT;
+      const demi = taille / 2;
       for (let i = 0; i < cases; i++) {
         for (let k = 0; k < cases; k++) {
           const cx = p.x + o0 + i * pasCase;
@@ -555,34 +587,108 @@ export function createCountryside(o: OptionsCampagne): Campagne {
           // Une teinte par case, très légèrement différente : un aplat parfait
           // se lit comme une nappe, pas comme un champ.
           teinte.setHex(eclaircir(base, (grain() - 0.5) * 0.12));
-          quad(
-            pos, col,
-            [cx - demi, y, cz - demi],
-            [cx + demi, y, cz - demi],
-            [cx + demi, y, cz + demi],
-            [cx - demi, y, cz + demi],
-            teinte,
-          );
+          if (sobre) {
+            quad(
+              pos, col,
+              [cx - demi, y0 + CASE_EP / 2, cz - demi],
+              [cx + demi, y0 + CASE_EP / 2, cz - demi],
+              [cx + demi, y0 + CASE_EP / 2, cz + demi],
+              [cx - demi, y0 + CASE_EP / 2, cz + demi],
+              teinte,
+            );
+          } else {
+            ajouterBoite(pos, col, cx, y0, cz, taille, CASE_EP, taille, teinte.getHex());
+          }
         }
       }
 
-      // La haie, sur les quatre bords.
-      const ep = 0.24;
+      // La haie, sur les quatre bords, à la hauteur de celle de l'île.
+      const bordHaie = (emprise - 0.5) / 2;
+      const ep = 0.28;
       for (const [dx, dz, w, dd] of [
-        [0, -emprise / 2, emprise, ep],
-        [0, emprise / 2, emprise, ep],
-        [-emprise / 2, 0, ep, emprise],
-        [emprise / 2, 0, ep, emprise],
+        [0, -bordHaie, bordHaie * 2, ep],
+        [0, bordHaie, bordHaie * 2, ep],
+        [-bordHaie, 0, ep, bordHaie * 2],
+        [bordHaie, 0, ep, bordHaie * 2],
       ] as const) {
-        ajouterBoite(pos, col, p.x + dx, y0 + 0.2, p.z + dz, w, 0.4, dd, HAIE);
+        ajouterBoite(pos, col, p.x + dx, y0 + 0.15, p.z + dz, w, 0.55, dd, HAIE);
       }
 
-      // Parfois une grange au bord : c'est elle qui fait la ferme du voisin
-      // plutôt qu'un simple champ.
-      if (p.batiment && !detailles.has(p.id)) {
-        const bx = p.x + (emprise / 2 - 1.5) * (grain() < 0.5 ? -1 : 1);
-        const bz = p.z + (emprise / 2 - 1.4) * (grain() < 0.5 ? -1 : 1);
-        ajouterGrange(pos, col, bx, y0 + 0.02, bz, grain() < 0.5 ? 0 : Math.PI / 2, grainerDe(p.id + ":grange"));
+      /*
+       * Les bâtiments du cadastre, à leur emprise et à leur place.
+       *
+       * Une grange générique tirée au sort dans un coin racontait la même
+       * chose de toutes les fermes. Ici un silo n'a pas la carrure d'un
+       * poulailler, et l'étable est là où l'exploitant l'a bâtie.
+       *
+       * Les parcelles détaillées reçoivent les vrais modèles — voir
+       * `voisin3d` — et sont donc sautées ici, sinon deux bâtiments se
+       * superposeraient.
+       */
+      if (!detailles.has(p.id)) {
+        for (const b of p.reel?.batiments ?? []) {
+          const def = BUILDING_DEFS[b.type as BuildingType];
+          if (!def) continue;
+          const quarts = (((b.rotation ?? 0) % 4) + 4) % 4;
+          const fw = quarts % 2 === 0 ? def.w : def.h;
+          const fh = quarts % 2 === 0 ? def.h : def.w;
+          ajouterGrange(
+            pos, col,
+            p.x + o0 + (b.x + (fw - 1) / 2) * pasCase,
+            y0 + CASE_EP / 2,
+            p.z + o0 + (b.y + (fh - 1) / 2) * pasCase,
+            quarts * (Math.PI / 2),
+            grainerDe(`${p.id}:${b.x},${b.y}`),
+            /*
+             * La hauteur suit le **petit** côté, pas la surface. Réglée sur la
+             * largeur, une étable de quatre cases sur trois sortait longue et
+             * plate comme un quai de gare : c'est la profondeur qui donne sa
+             * carrure à un bâtiment agricole, parce que c'est elle qui porte
+             * la charpente.
+             */
+            {
+              l: fw * pasCase,
+              prof: fh * pasCase,
+              h: 0.5 + Math.min(fw, fh) * pasCase * 0.42,
+            },
+          );
+        }
+        // Faute de cadastre — au-delà de la commune — on garde la grange de
+        // décor : une ferme sans un seul bâtiment n'a l'air de rien.
+        if (!p.reel && p.batiment) {
+          ajouterGrange(
+            pos, col,
+            p.x + (emprise / 2 - 1.5) * (grain() < 0.5 ? -1 : 1),
+            y0 + CASE_EP / 2,
+            p.z + (emprise / 2 - 1.4) * (grain() < 0.5 ? -1 : 1),
+            grain() < 0.5 ? 0 : Math.PI / 2,
+            grainerDe(p.id + ":grange"),
+          );
+        }
+
+        /*
+         * Et le cheptel, sur toutes les parcelles d'élevage.
+         *
+         * Il n'apparaissait que sur les trois parcelles détaillées : une ferme
+         * laitière du fond n'avait pas une bête. Des silhouettes fondues dans
+         * le maillage coûtent sept pavés chacune, et disent la même chose à
+         * cette distance.
+         */
+        for (const troupeau of p.reel?.cheptel ?? []) {
+          const combien = Math.min(4, troupeau.size);
+          for (let i = 0; i < combien; i++) {
+            const a = grain() * Math.PI * 2;
+            const r = emprise * (0.1 + grain() * 0.22);
+            ajouterBete(
+              pos, col,
+              p.x + Math.cos(a) * r,
+              y0 + CASE_EP / 2,
+              p.z + Math.sin(a) * r,
+              grain() * Math.PI * 2,
+              troupeau.kind,
+            );
+          }
+        }
       }
     }
     nappeParcelles = maillageFacette(pos, col, {
