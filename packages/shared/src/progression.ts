@@ -113,7 +113,7 @@ export type XpContext = {
   tons?: number;
   /** Bêtes concernées */
   animals?: number;
-  /** Dépense engagée, en TRN */
+  /** Dépense engagée, en € */
   cost?: number;
   /** Récompense annoncée d'une quête */
   reward?: number;

@@ -1,7 +1,7 @@
 /**
  * Le journal, et la question à laquelle il sert à répondre.
  *
- * Le jeu ne gardait qu'un solde. Savoir qu'on a quatorze mille TRN n'apprend
+ * Le jeu ne gardait qu'un solde. Savoir qu'on a quatorze mille € n'apprend
  * ni si l'élevage paie sa nourriture, ni si la sous-traitance rapporte plus
  * qu'elle ne coûte, ni si une machine mérite d'être gardée — c'est-à-dire
  * aucune des vraies décisions de gestion. Le Bureau affichait donc des

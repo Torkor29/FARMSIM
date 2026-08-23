@@ -31,7 +31,7 @@ export const MANURE_PER_CELL = 0.04;
  */
 export const MANURE_FERTILITY_GAIN = 0.006;
 
-/** Prix local au voisin, en TRN / t — pas un cours mondial `[GD]` */
+/** Prix local au voisin, en € / t — pas un cours mondial `[GD]` */
 export const MANURE_LOCAL_PRICE = 55;
 
 /** À partir de ce remplissage, l'odeur commence `[GD]` */

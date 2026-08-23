@@ -39,7 +39,7 @@ export type SpeciesProfile = {
   manureTons: number;
 
   /* — Économie — */
-  /** Prix d'achat d'une bête, en TRN. */
+  /** Prix d'achat d'une bête, en €. */
   price: number;
   /** Poids de carcasse d'un adulte, en kg. */
   meatKg: number;
@@ -86,7 +86,8 @@ export const SPECIES: Record<AnimalKind, SpeciesProfile> = {
     feedKg: 14,
     beddingTons: 0.018,
     manureTons: 0.025,
-    price: 420,
+    // Prix réel : une vache laitière prête à vêler vaut de 1 500 à 1 900 €.
+    price: 1650,
     meatKg: 280,
     gestationCycles: 8,
     litterSize: 1,
@@ -104,7 +105,9 @@ export const SPECIES: Record<AnimalKind, SpeciesProfile> = {
     feedKg: 14,
     beddingTons: 0.012,
     manureTons: 0.02,
-    price: 420,
+    // Prix réel : un porcelet de huit semaines vaut 60 à 90 €. Le prix du jeu
+    // achète un animal déjà lancé, d'où la valeur plus haute.
+    price: 180,
     meatKg: 280,
     gestationCycles: 4,
     litterSize: 4,
@@ -122,7 +125,8 @@ export const SPECIES: Record<AnimalKind, SpeciesProfile> = {
     feedKg: 2,
     beddingTons: 0.002,
     manureTons: 0.003,
-    price: 28,
+    // Prix réel : une poule pondeuse prête à pondre vaut 6 à 9 €.
+    price: 8,
     meatKg: 2.2,
     gestationCycles: 2,
     litterSize: 6,
@@ -138,7 +142,9 @@ export const SPECIES: Record<AnimalKind, SpeciesProfile> = {
     feedKg: 8,
     beddingTons: 0.008,
     manureTons: 0.012,
-    price: 160,
+    // Prix réel : une brebis vaut 150 à 200 €. Le seul de la table qui était
+    // déjà juste.
+    price: 170,
     meatKg: 42,
     gestationCycles: 5,
     litterSize: 1,

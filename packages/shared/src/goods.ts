@@ -83,7 +83,8 @@ export const GOOD_DEFS: Record<TradeGood, GoodDef> = {
     code: "MEAT",
     name: "Viande",
     unit: "t",
-    basePrice: 1450,
+    // Prix réel : 2 600 à 3 000 € la tonne de bovin vif.
+    basePrice: 2800,
     sellable: true,
     purchasable: false,
     perishable: true,
@@ -131,7 +132,8 @@ export const GOOD_DEFS: Record<TradeGood, GoodDef> = {
     code: "RAPE",
     name: "Colza",
     unit: "t",
-    basePrice: 340,
+    // Prix réel : 440 à 500 € la tonne selon la campagne.
+    basePrice: 460,
     sellable: true,
     purchasable: false,
     perishable: false,
@@ -188,7 +190,9 @@ export const GOOD_DEFS: Record<TradeGood, GoodDef> = {
     code: "SILAGE",
     name: "Ensilage",
     unit: "t",
-    basePrice: 110,
+    // Prix réel : 40 à 55 € la tonne bord de silo — c'est un fourrage, pas
+    // une denrée de vente ; il valait deux fois et demie son prix.
+    basePrice: 48,
     sellable: true,
     purchasable: false,
     perishable: false,
@@ -232,7 +236,8 @@ export const GOOD_DEFS: Record<TradeGood, GoodDef> = {
     code: "MANURE",
     name: "Fumier",
     unit: "t",
-    basePrice: 55,
+    // Prix réel : 10 à 18 € la tonne rendue au champ.
+    basePrice: 14,
     sellable: true,
     // Le céréalier doit pouvoir en acheter : c'est la moitié retour du pont
     // entre les deux métiers. `purchasable: false` fermait la boucle — le

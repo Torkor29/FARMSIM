@@ -164,7 +164,7 @@ export function harvestMoisture(weather?: WeatherState): number {
 }
 
 /**
- * Une ou plusieurs passes de séchage : coût TRN + baisse d’humidité.
+ * Une ou plusieurs passes de séchage : coût € + baisse d’humidité.
  * `barnBonus` si SILO / HAY_BARN (soft dryer) sur la ferme.
  */
 export function dryInventory(opts: {

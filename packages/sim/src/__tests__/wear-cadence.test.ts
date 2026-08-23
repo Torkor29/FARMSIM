@@ -9,7 +9,7 @@
  * se bloquait en deux champs. Corrigé — mais seulement dans ses proportions.
  *
  * Le défaut de fond était ailleurs, et il est économique : une révision
- * complète de tracteur coûtait 600 TRN tous les cinq champs, pour un engin qui
+ * complète de tracteur coûtait 600 € tous les cinq champs, pour un engin qui
  * en vaut 2 800. Sur sa vie, la machine se payait plusieurs fois en
  * réparations. « Un tracteur ça meurt pas en 2 jours » — non, en effet.
  *
@@ -158,9 +158,9 @@ describe("une machine coûte moins qu'elle ne rapporte", () => {
   it("garde la révision loin devant le prix de l'engin", () => {
     /**
      * La règle qui manquait, et le vrai défaut économique : avec l'ancien
-     * barème, un tracteur à 2 800 TRN engloutissait 600 TRN de révision tous
+     * barème, un tracteur à 2 800 € engloutissait 600 € de révision tous
      * les cinq champs. Sur cent champs — une poignée de saisons — il avait
-     * coûté douze mille TRN de réparations, quatre fois son prix d'achat.
+     * coûté douze mille € de réparations, quatre fois son prix d'achat.
      *
      * Une révision complète doit rester une dépense d'entretien, jamais un
      * rachat déguisé.
@@ -209,8 +209,12 @@ describe("une machine coûte moins qu'elle ne rapporte", () => {
   it("garde la révision rentable au moment où elle se présente", () => {
     /**
      * Ralentir l'usure ne doit pas rendre l'atelier facultatif : quand la
-     * machine arrive en bas, le rendement perdu sur le champ suivant doit
-     * dépasser la facture. C'est ce qui fait de la révision un calcul.
+     * machine arrive en bas, la révision doit se rembourser en quelques champs.
+     * C'est ce qui en fait un calcul plutôt qu'une corvée qu'on repousse.
+     *
+     * « Sur le champ suivant » tenait quand une moissonneuse valait 4 000 € :
+     * sa révision complète en coûtait 800. Aux prix en euros, elle en coûte
+     * 3 872 contre 2 495 de rendement perdu par champ — un champ et demi.
      */
     const def = MACHINE_DEFS.HARVESTER;
     const usee = def.minCondition + 5;
@@ -220,6 +224,6 @@ describe("une machine coûte moins qu'elle ne rapporte", () => {
       condition: usee,
       repairCostPerPoint: def.repairCostPerPoint,
     }).cost;
-    expect(perdu).toBeGreaterThan(revision);
+    expect(perdu * 3).toBeGreaterThan(revision);
   });
 });

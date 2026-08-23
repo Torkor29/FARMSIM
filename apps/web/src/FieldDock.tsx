@@ -53,7 +53,7 @@ type Props = {
    *
    * Le dock recevait la trésorerie brute et comparait lui-même `crd < coût`.
    * Un compte à trésorerie illimitée porte `crd` à zéro et un drapeau à côté :
-   * l'en-tête affichait « ∞ TRN » pendant que « Payer · 428 TRN » restait
+   * l'en-tête affichait « ∞ € » pendant que « Payer · 428 € » restait
    * grisé, sans un mot pour dire pourquoi. La barre de bureau, elle, passait
    * déjà par `canPay`. Une seule règle, décidée en amont, pour les deux.
    */
@@ -317,7 +317,7 @@ export function FieldDock({
                 type="button"
                 className={`chip ${directSeed ? "on" : ""}`}
                 aria-pressed={directSeed}
-                title={`Semer dans les chaumes : +${DIRECT_SEED_COST_PER_CELL} TRN/case, −${Math.round(
+                title={`Semer dans les chaumes : +${DIRECT_SEED_COST_PER_CELL} €/case, −${Math.round(
                   DIRECT_SEED_YIELD_MALUS * 100,
                 )} % de rendement.`}
                 onClick={onDirectSeed}
@@ -411,14 +411,14 @@ export function FieldDock({
                 disabled={busy || selectedCount === 0 || !contractorAffordable}
                 title={
                   tool === "HARVEST" && !mowSelected && !contractor.hasMachine
-                    ? `Vous n’avez pas la machine : quelqu’un le fait pour vous — ${contractor.cost} TRN`
-                    : `Quelqu’un le fait pour vous, tout de suite — ${contractor.cost} TRN`
+                    ? `Vous n’avez pas la machine : quelqu’un le fait pour vous — ${contractor.cost} €`
+                    : `Quelqu’un le fait pour vous, tout de suite — ${contractor.cost} €`
                 }
                 onClick={onContractor}
               >
                 {/* Qui fait le travail, en deux mots : au doigt, l'infobulle
                     n'existe pas, donc le libellé doit se suffire. */}
-                Entreprise · {contractor.cost} TRN
+                Entreprise · {contractor.cost} €
               </button>
             )}
             {laborQuote != null && !visiting && onPublishLabor && (
@@ -429,7 +429,7 @@ export function FieldDock({
                 title="Cet argent est mis de côté jusqu’à la fin (ou l’annulation)."
                 onClick={onPublishLabor}
               >
-                Un joueur · {laborQuote} TRN
+                Un joueur · {laborQuote} €
               </button>
             )}
             {readyCount > 0 && (

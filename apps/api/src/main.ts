@@ -1849,7 +1849,7 @@ export type XpGain = {
 /** Refus de débit : le solde ne couvre plus la dépense au moment de payer. */
 class InsufficientFunds extends Error {
   constructor(readonly needed: number) {
-    super(`TRN insuffisants — il en faut ${Math.ceil(needed)}`);
+    super(`€ insuffisants — il en faut ${Math.ceil(needed)}`);
     this.name = "InsufficientFunds";
   }
 }
@@ -1860,8 +1860,8 @@ class InsufficientFunds extends Error {
  * Les routes lisaient le solde, le comparaient au prix, puis débitaient sans
  * condition. Entre la lecture et l'écriture, rien n'empêchait une autre
  * requête de faire la même chose : huit constructions lancées ensemble avec
- * 1 500 TRN en poche en payaient quatre à 1 200, et laissaient le compte à
- * **−3 300 TRN**. Un double-clic un peu nerveux suffisait.
+ * 1 500 € en poche en payaient quatre à 1 200, et laissaient le compte à
+ * **−3 300 €**. Un double-clic un peu nerveux suffisait.
  *
  * La condition vit maintenant dans la clause `where` de l'écriture : la base
  * ne décrémente que si le solde couvre encore la dépense, et l'on relit le
@@ -2299,7 +2299,7 @@ async function publishFromConsignes() {
         budget -= created.escrow;
         await appendAbsenceLog(
           user.id,
-          `${WORK_LABELS[job.work]} publié · ${job.cells.length} cases · ${created.escrow} TRN`,
+          `${WORK_LABELS[job.work]} publié · ${job.cells.length} cases · ${created.escrow} €`,
           created.escrow,
         );
         const fresh = await prisma.user.findUnique({ where: { id: user.id }, select: { crd: true } });
@@ -2457,6 +2457,34 @@ async function ensureSeed() {
           stockTons: Math.round(MARKET_BOUNDS[code].depth * MARKET_DEPTH_FLOOR * 100) / 100,
         },
       });
+      continue;
+    }
+
+    /*
+     * Un cours sorti de ses bornes est ramené dedans — et lui seul.
+     *
+     * Le semis ne créait que ce qui manquait : un monde déjà ouvert gardait
+     * ses prix pour toujours. Quand le colza, l'ensilage, la viande et le
+     * fumier sont passés à leur vrai cours en euros, la partie en cours a
+     * continué de coter les anciens : l'ensilage à 110 € la tonne quand son
+     * plafond venait de tomber à 70.
+     *
+     * On ne réécrit pas les prix à chaque démarrage pour autant : un cours qui
+     * a bougé de lui-même, c'est le marché qui travaille, et l'effacer serait
+     * pire que le laisser. Seul ce qui est hors des bornes est recalé — ce que
+     * les bornes veulent dire, précisément.
+     */
+    const bornes = MARKET_BOUNDS[code];
+    if (existing.price < bornes.min || existing.price > bornes.max) {
+      const recale = Math.min(bornes.max, Math.max(bornes.min, bornes.initial));
+      await prisma.marketPrice.update({
+        where: { commodity: code },
+        data: { price: recale },
+      });
+      console.log(
+        `Cours ${code} recalé : ${existing.price} € était hors des bornes ` +
+          `[${bornes.min} ; ${bornes.max}] — remis à ${recale} €.`,
+      );
     }
   }
 
@@ -3064,7 +3092,7 @@ app.post("/dev/grant", async (req, res) => {
 
   if (body.data.crd !== undefined) {
     await prisma.user.update({ where: { id: user.id }, data: { crd: body.data.crd } });
-    done.push(`trésorerie à ${Math.round(body.data.crd)} TRN`);
+    done.push(`trésorerie à ${Math.round(body.data.crd)} €`);
   }
   if (body.data.level !== undefined || body.data.xp !== undefined) {
     await prisma.user.update({
@@ -3725,7 +3753,7 @@ app.post("/auth/register", async (req, res) => {
       return;
     }
     if (msg === "INSUFFICIENT_FUNDS") {
-      res.status(402).json({ error: "TRN insuffisants" });
+      res.status(402).json({ error: "€ insuffisants" });
       return;
     }
     if (typeof e === "object" && e && "code" in e && (e as { code: string }).code === "P2002") {
@@ -4157,7 +4185,7 @@ app.post("/parcels/:id/presence", async (req, res) => {
  * La taille était fixée à seize alors que la règle en autorise huit à
  * vingt-quatre. Conséquence : chaque lot faisait exactement seize cases, donc
  * rapportait exactement la même chose, et la bourse alignait vingt-quatre
- * lignes « 16/16 · 203 TRN » indiscernables. La taille varie maintenant d'un
+ * lignes « 16/16 · 203 € » indiscernables. La taille varie maintenant d'un
  * lot à l'autre, ce qui fait varier la paie sans toucher au barème.
  *
  * La variation est **déterministe**, tirée de `seed` : une même parcelle
@@ -4287,7 +4315,7 @@ async function createLaborOrderForCells(opts: {
     return {
       ok: false,
       status: 402,
-      error: `Pas assez d’argent — ${money.escrow} TRN mis de côté`,
+      error: `Pas assez d’argent — ${money.escrow} € mis de côté`,
     };
   }
   const order = await prisma.$transaction(async (tx) => {
@@ -4497,7 +4525,7 @@ app.post("/parcels/:id/buy", async (req, res) => {
     return;
   }
   if (!peutPayer(user, quote.total)) {
-    res.status(402).json({ error: `TRN insuffisants — ${quote.total} requis` });
+    res.status(402).json({ error: `€ insuffisants — ${quote.total} requis` });
     return;
   }
 
@@ -4596,7 +4624,7 @@ app.post("/parcels/:id/contractor", async (req, res) => {
   // affiché est le prix débité. Ils divergeaient de la valeur des semences.
   const { service, supplies: seeds, total } = contractorTotal(work, cells.length, crop);
   if (!peutPayer(user, total)) {
-    res.status(402).json({ error: `TRN insuffisants — ${total} requis` });
+    res.status(402).json({ error: `€ insuffisants — ${total} requis` });
     return;
   }
 
@@ -5148,7 +5176,7 @@ app.post("/farm/fuel", async (req, res) => {
   const mult = user.farm.parcels[0]?.zone?.priceMult ?? 1;
   const cout = fuelCost(litres, mult);
   if (!peutPayer(user, cout)) {
-    res.status(402).json({ error: `TRN insuffisants — ${cout} requis` });
+    res.status(402).json({ error: `€ insuffisants — ${cout} requis` });
     return;
   }
   const apres = await prisma.$transaction(async (tx) => {
@@ -5251,7 +5279,7 @@ app.post("/farm/loan", async (req, res) => {
   const room = borrowingRoom({ equity: bilan.equity, debtCrd: bilan.debtCrd });
   if (body.data.amount > room) {
     res.status(409).json({
-      error: `La banque s'arrête à ${Math.floor(room)} TRN — vos capitaux propres ne portent pas davantage.`,
+      error: `La banque s'arrête à ${Math.floor(room)} € — vos capitaux propres ne portent pas davantage.`,
       room,
       ceiling: creditCeiling(bilan.equity),
     });
@@ -5301,7 +5329,7 @@ app.post("/farm/repay", async (req, res) => {
   // On ne rembourse jamais plus qu'on ne doit, ni plus qu'on n'a.
   const montant = Math.min(body.data.amount, user.farm.debtCrd, user.crd);
   if (montant <= 0) {
-    res.status(402).json({ error: "TRN insuffisants" });
+    res.status(402).json({ error: "€ insuffisants" });
     return;
   }
   const apres = await prisma.$transaction(async (tx) => {
@@ -5469,7 +5497,7 @@ app.post("/parcels/:id/plant", async (req, res) => {
   const seedCost = CROP_DEFS[plantCrop].seedCostPerCell * body.data.cells.length;
   const cost = seedCost + (directSeed ? DIRECT_SEED_COST_PER_CELL * body.data.cells.length : 0);
   if (access.charge && !peutPayer(user, cost)) {
-    res.status(402).json({ error: "TRN insuffisants pour semences" });
+    res.status(402).json({ error: "€ insuffisants pour semences" });
     return;
   }
 
@@ -5653,7 +5681,7 @@ app.post("/parcels/:id/fertilize", async (req, res) => {
   const cost = usedManure || !access.charge ? 0 : 10 * body.data.cells.length;
   const user = await prisma.user.findUnique({ where: { id: body.data.userId } });
   if (!user || (access.charge && !peutPayer(user, cost))) {
-    res.status(402).json({ error: "TRN insuffisants" });
+    res.status(402).json({ error: "€ insuffisants" });
     return;
   }
   let fertilized = 0;
@@ -5809,7 +5837,7 @@ app.post("/parcels/:id/plow", async (req, res) => {
   const cost = PLOW_COST_PER_CELL_SOIL * candidates.length;
   const user = await prisma.user.findUnique({ where: { id: body.data.userId } });
   if (!user || (access.charge && !peutPayer(user, cost))) {
-    res.status(402).json({ error: `TRN insuffisants — ${cost} requis` });
+    res.status(402).json({ error: `€ insuffisants — ${cost} requis` });
     return;
   }
 
@@ -5990,7 +6018,7 @@ app.post("/parcels/:id/stubble", async (req, res) => {
   const cost = STUBBLE_COST_PER_CELL * (targets.length + enherber.length);
   const user = await prisma.user.findUnique({ where: { id: body.data.userId } });
   if (!user || (access.charge && !peutPayer(user, cost))) {
-    res.status(402).json({ error: `TRN insuffisants — ${cost} requis` });
+    res.status(402).json({ error: `€ insuffisants — ${cost} requis` });
     return;
   }
 
@@ -6561,7 +6589,7 @@ app.post("/parcels/:id/weed", async (req, res) => {
   const cout = access.charge ? HERBICIDE_COST_PER_CELL * cibles.length : 0;
   const user = await prisma.user.findUnique({ where: { id: body.data.userId } });
   if (!user || (access.charge && !peutPayer(user, cout))) {
-    res.status(402).json({ error: `TRN insuffisants — ${cout} requis` });
+    res.status(402).json({ error: `€ insuffisants — ${cout} requis` });
     return;
   }
   const { wear, labor, gain } = await prisma.$transaction(async (tx) => {
@@ -6903,7 +6931,7 @@ app.post("/parcels/:id/build", async (req, res) => {
 
   const user = await prisma.user.findUnique({ where: { id: body.data.userId } });
   if (!user || !peutPayer(user, def.cost)) {
-    res.status(402).json({ error: "TRN insuffisants" });
+    res.status(402).json({ error: "€ insuffisants" });
     return;
   }
 
@@ -7032,7 +7060,7 @@ app.post("/buildings/:id/upgrade", async (req, res) => {
     return;
   }
   if (!peutPayer(user, cost)) {
-    res.status(402).json({ error: `TRN insuffisants — ${cost} requis` });
+    res.status(402).json({ error: `€ insuffisants — ${cost} requis` });
     return;
   }
 
@@ -7956,7 +7984,7 @@ app.post("/buildings/:id/animals", async (req, res) => {
   );
   const user = await prisma.user.findUnique({ where: { id: body.data.userId } });
   if (!user || !peutPayer(user, cost)) {
-    res.status(402).json({ error: `TRN insuffisants — ${cost} requis` });
+    res.status(402).json({ error: `€ insuffisants — ${cost} requis` });
     return;
   }
   await prisma.$transaction(async (tx) => {
@@ -9054,7 +9082,7 @@ app.post("/market/buy", async (req, res) => {
   const base = market?.price ?? GOOD_DEFS[body.data.commodity].basePrice;
   const cost = Math.round(dealerAskPrice(base) * body.data.tons);
   if (!peutPayer(user, cost)) {
-    res.status(402).json({ error: `TRN insuffisants — ${cost} requis` });
+    res.status(402).json({ error: `€ insuffisants — ${cost} requis` });
     return;
   }
   /**
@@ -9205,7 +9233,7 @@ app.get("/machines/listings", async (_req, res) => {
   res.json({
     listings: listings.map((l) => ({
       ...l,
-      // La cote voyage avec l'annonce : sans elle, « 900 TRN » ne se juge pas.
+      // La cote voyage avec l'annonce : sans elle, « 900 € » ne se juge pas.
       quote: machineResaleValue(l.type as MachineType, { condition: l.condition, hours: l.hours }),
       name: MACHINE_DEFS[l.type as MachineType]?.name ?? l.type,
     })),
@@ -9247,7 +9275,7 @@ app.post("/machines/:id/list", async (req, res) => {
   const min = Math.round(cote * MACHINE_LISTING_MIN_RATE);
   const max = Math.round(cote * MACHINE_LISTING_MAX_RATE);
   if (body.data.priceCrd < min || body.data.priceCrd > max) {
-    res.status(409).json({ error: `Prix hors bornes — entre ${min} et ${max} TRN (cote ${cote})` });
+    res.status(409).json({ error: `Prix hors bornes — entre ${min} et ${max} € (cote ${cote})` });
     return;
   }
   const listing = await prisma.$transaction(async (tx) => {
@@ -9343,7 +9371,7 @@ app.post("/machines/listings/:id/buy", async (req, res) => {
     return;
   }
   if (!peutPayer(user, listing.priceCrd)) {
-    res.status(402).json({ error: "TRN insuffisants" });
+    res.status(402).json({ error: "€ insuffisants" });
     return;
   }
   const nom = MACHINE_DEFS[listing.type as MachineType]?.name ?? listing.type;
@@ -9454,7 +9482,7 @@ app.post("/machines/buy", async (req, res) => {
     return;
   }
   if (!peutPayer(user, prix)) {
-    res.status(402).json({ error: "TRN insuffisants" });
+    res.status(402).json({ error: "€ insuffisants" });
     return;
   }
   const bonuses = await getFarmBonuses(user.farm.id);
@@ -9530,7 +9558,7 @@ app.post("/machines/:id/repair", async (req, res) => {
   });
   if (!peutPayer(machine.farm.user, quote.cost)) {
     res.status(402).json({
-      error: `Réparation ${quote.cost} TRN — fonds insuffisants. Rafistoler coûte moins.`,
+      error: `Réparation ${quote.cost} € — fonds insuffisants. Rafistoler coûte moins.`,
     });
     return;
   }
@@ -9576,7 +9604,7 @@ async function loadOwnedMachine(id: string, userId: string) {
 async function careCost(farmId: string, base: number): Promise<number> {
   const b = await getFarmBonuses(farmId);
   // Deux remises qui se cumulent sans se confondre : l'atelier et le tour de
-  // main. Le prix ne descend jamais sous un TRN — un entretien gratuit ferait
+  // main. Le prix ne descend jamais sous un € — un entretien gratuit ferait
   // disparaître la décision qu'il représente.
   const remise = Math.min(0.75, b.careDiscount + b.skills.REPAIR_COST);
   return Math.max(1, Math.round(base * (1 - remise)));
@@ -9599,7 +9627,7 @@ app.post("/machines/:id/grease", async (req, res) => {
   }
   const prixGraissage = await careCost(machine.farmId, GREASE_COST_CRD);
   if (!peutPayer(machine.farm.user, prixGraissage)) {
-    res.status(402).json({ error: `Graissage ${prixGraissage} TRN — fonds insuffisants` });
+    res.status(402).json({ error: `Graissage ${prixGraissage} € — fonds insuffisants` });
     return;
   }
   const gain = await prisma.$transaction(async (tx) => {
@@ -9642,7 +9670,7 @@ app.post("/machines/:id/clean", async (req, res) => {
   }
   const prixLavage = await careCost(machine.farmId, CLEAN_COST_CRD);
   if (!peutPayer(machine.farm.user, prixLavage)) {
-    res.status(402).json({ error: `Nettoyage ${prixLavage} TRN — fonds insuffisants` });
+    res.status(402).json({ error: `Nettoyage ${prixLavage} € — fonds insuffisants` });
     return;
   }
   await prisma.$transaction(async (tx) => {
@@ -9705,7 +9733,7 @@ app.post("/machines/:id/service", async (req, res) => {
    */
   const prixRevision = Math.max(1, Math.round(quote.cost * (1 - bonuses.careDiscount)));
   if (!peutPayer(machine.farm.user, prixRevision)) {
-    res.status(402).json({ error: `Réparation ${prixRevision} TRN — fonds insuffisants` });
+    res.status(402).json({ error: `Réparation ${prixRevision} € — fonds insuffisants` });
     return;
   }
   await prisma.$transaction(async (tx) => {
@@ -10193,7 +10221,7 @@ app.post("/market/listings/:id/cancel", async (req, res) => {
   res.json({ returned: listing.tons, commodity: listing.commodity });
 });
 
-/** Achat d'une annonce : les TRN passent au vendeur, la marchandise à l'acheteur. */
+/** Achat d'une annonce : les € passent au vendeur, la marchandise à l'acheteur. */
 app.post("/market/listings/:id/buy", async (req, res) => {
   const body = z.object({ userId: z.string() }).safeParse(req.body);
   if (!body.success) {
@@ -10220,7 +10248,7 @@ app.post("/market/listings/:id/buy", async (req, res) => {
   }
   const total = Math.round(listing.pricePerTon * listing.tons);
   if (!peutPayer(buyer, total)) {
-    res.status(402).json({ error: `TRN insuffisants — ${total} requis` });
+    res.status(402).json({ error: `€ insuffisants — ${total} requis` });
     return;
   }
   const proceeds = listingProceeds(listing.pricePerTon, listing.tons);
@@ -10374,7 +10402,7 @@ app.post("/deliveries/:id/auto", async (req, res) => {
     return;
   }
   if (!peutPayer(delivery.buyer, delivery.autoFee)) {
-    res.status(402).json({ error: `TRN insuffisants — ${delivery.autoFee} requis` });
+    res.status(402).json({ error: `€ insuffisants — ${delivery.autoFee} requis` });
     return;
   }
   await prisma.$transaction(async (tx) => {
@@ -10551,7 +10579,7 @@ app.post("/inventory/dry", async (req, res) => {
     ? { ...brut, cost: 0 }
     : { ...brut, cost: Math.round(brut.cost * (1 - bonuses.dryingDiscount)) };
   if (dried.cost > user.crd) {
-    res.status(409).json({ error: "TRN insuffisants pour sécher" });
+    res.status(409).json({ error: "€ insuffisants pour sécher" });
     return;
   }
   if (dried.reduction <= 0) {

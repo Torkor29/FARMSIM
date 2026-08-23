@@ -823,12 +823,20 @@ export function woolYield(input: {
 /**
  * Prix d'un jeune, en fraction du prix d'un adulte `[GD]`.
  *
- * Deux cinquièmes : assez bas pour que l'élevage soit une vraie stratégie de
- * démarrage, assez haut pour que l'adulte reste le bon choix quand on a
- * besoin de lait tout de suite. C'est le rapport à surveiller si l'un des
- * deux chemins écrase l'autre.
+ * Trois cinquièmes : assez bas pour que l'élevage soit une vraie stratégie de
+ * démarrage, assez haut pour que l'adulte reste le bon choix quand on a besoin
+ * de lait tout de suite. C'est le rapport à surveiller si l'un des deux
+ * chemins écrase l'autre.
+ *
+ * Il valait deux cinquièmes, calé sur une vache à 420 €. Passée à son prix
+ * réel — 1 650 € —, l'économie du jeune a quadruplé sans que le lait auquel on
+ * renonce pendant sa croissance ne bouge d'un centime : mesuré, il n'en
+ * représentait plus que 8 %, et acheter jeune devenait le seul choix sensé.
+ *
+ * Trois cinquièmes est aussi le vrai rapport : une génisse prête à vêler vaut
+ * les deux tiers d'une vache en lactation, pas le tiers.
  */
-export const YOUNG_PRICE_RATIO = 0.4;
+export const YOUNG_PRICE_RATIO = 0.6;
 
 /**
  * Le temps qu'un jeune met à devenir adulte `[GD]`.

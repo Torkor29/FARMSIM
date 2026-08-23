@@ -142,7 +142,7 @@ export function SelectionBar({
               ne l'écrivait — deux boutons côte à côte, deux prix, aucun
               indice. Le sous-titre le dit maintenant.
             */}
-            <span className="selection-bar-alt-main">Faire faire · {contractorCost} TRN</span>
+            <span className="selection-bar-alt-main">Faire faire · {contractorCost} €</span>
             <span className="selection-bar-alt-sub">Une entreprise, tout de suite</span>
           </button>
         )}
@@ -154,7 +154,7 @@ export function SelectionBar({
             title="Un autre joueur prend le chantier quand il le voit. Moins cher qu'une entreprise, mais il faut attendre que quelqu'un l'accepte. La somme est mise de côté jusqu'à la fin du chantier, ou son annulation."
             onClick={onPublishLabor}
           >
-            <span className="selection-bar-alt-main">Demander de l’aide · {laborQuote} TRN</span>
+            <span className="selection-bar-alt-main">Demander de l’aide · {laborQuote} €</span>
             <span className="selection-bar-alt-sub">Un joueur, quand il passe</span>
           </button>
         )}

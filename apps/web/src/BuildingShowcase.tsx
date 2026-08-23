@@ -136,7 +136,7 @@ export function BuildingShowcase() {
                 <h2>{def.name}</h2>
                 <p>{def.description}</p>
                 <p className="atelier-tags">
-                  {f.w}×{f.h} cases · {def.cost} TRN
+                  {f.w}×{f.h} cases · {def.cost} €
                 </p>
               </div>
             </article>

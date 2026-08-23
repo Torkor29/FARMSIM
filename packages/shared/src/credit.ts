@@ -33,8 +33,14 @@ import { GAME_DAY_MS, SEASON_DAYS } from "./time.js";
  */
 export const LOAN_EQUITY_RATIO = 0.6;
 
-/** Plancher de la ligne `[GD]` : une ferme neuve doit pouvoir démarrer. */
-export const LOAN_FLOOR_CRD = 3000;
+/**
+ * Plancher de la ligne, en euros : une ferme neuve doit pouvoir démarrer.
+ *
+ * Trois mille suffisaient quand une charrue en valait 1 400. Aux prix réels,
+ * ils n'achètent plus rien : le plancher se cale sur le premier outil dont un
+ * débutant a besoin, la charrue, plus de quoi semer derrière.
+ */
+export const LOAN_FLOOR_CRD = 10000;
 
 /**
  * Intérêt par jour de jeu `[GD]`.
@@ -42,7 +48,7 @@ export const LOAN_FLOOR_CRD = 3000;
  * Une demi-part de pour cent. Le taux paraît énorme rapporté à l'année réelle,
  * et il l'est — mais une année de jeu dure sept heures. Ce qui compte est ce
  * que le joueur ressent à l'échelle où il décide : **3,5 % par saison**. Sur
- * dix mille TRN empruntés, la saison coûte 350 TRN quand elle en rapporte
+ * dix mille € empruntés, la saison coûte 350 € quand elle en rapporte
  * environ 2 300. Assez pour peser sur le calcul, jamais pour l'écraser.
  */
 export const LOAN_DAILY_RATE = 0.005;

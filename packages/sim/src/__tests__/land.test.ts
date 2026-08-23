@@ -7,7 +7,10 @@ import {
   LAND_CYCLE_MS,
   LAND_CYCLES_PER_SEASON,
   LAND_PRICE_CEIL_MULT,
+  LAND_BASE_PER_HA,
+  LAND_PARCEL_HA,
   LAND_PRICE_FLOOR_MULT,
+  LAND_PRICE_ROUNDING,
   LAND_REFERENCE_PRICE,
   LAND_STATUS_LABELS,
   LAND_TAX_MULT_CAP,
@@ -172,8 +175,15 @@ describe("valeur publique (marketValue)", () => {
       neighborDensity: 0,
       occupancy: 0,
     });
-    // 0,45 × 5 880 = 2 646, remonté au multiple de 50 supérieur.
-    expect(pire).toBe(2650);
+    /*
+     * Le plancher se calcule, il ne se recopie pas. Écrit « 2 650 » en dur, ce
+     * test disait le prix d'hier plutôt que la règle : il a sauté au premier
+     * changement d'échelle, alors que la règle, elle, n'avait pas bougé.
+     */
+    const plancher =
+      Math.ceil((LAND_PRICE_FLOOR_MULT * LAND_REFERENCE_PRICE) / LAND_PRICE_ROUNDING) *
+      LAND_PRICE_ROUNDING;
+    expect(pire).toBe(plancher);
     expect(pire).toBeGreaterThanOrEqual(LAND_PRICE_FLOOR_MULT * LAND_REFERENCE_PRICE);
   });
 
@@ -220,9 +230,9 @@ describe("décomposition du prix (breakdown)", () => {
     }
   });
 
-  it("part du prix de référence de 5 880 CRD", () => {
+  it("part du prix de référence, qui est la surface fois le prix de l’hectare", () => {
     expect(askPrice(BEAUCE).breakdown.base).toBe(LAND_REFERENCE_PRICE);
-    expect(LAND_REFERENCE_PRICE).toBe(5880);
+    expect(LAND_REFERENCE_PRICE).toBe(LAND_BASE_PER_HA * LAND_PARCEL_HA);
   });
 
   it("expose la valeur de chacun des sept facteurs", () => {

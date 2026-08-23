@@ -13,7 +13,7 @@ import type { Tool } from "../tools";
  *
  * Signalé en jouant, capture à l'appui : « Pour ça, publiez un chantier — pas
  * d'entreprise instantanée ». Le joueur avait armé la presse, retenu ses
- * cases, et appuyé sur « Payer · 428 TRN » — le seul bouton actif à l'écran.
+ * cases, et appuyé sur « Payer · 428 € » — le seul bouton actif à l'écran.
  *
  * Deux listes prétendaient dire qui prend quel travail : une énumération côté
  * serveur (cinq travaux) et une cascade de conditions côté écran (huit). Le

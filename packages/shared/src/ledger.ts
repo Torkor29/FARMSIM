@@ -1,7 +1,7 @@
 /**
  * Les postes du journal.
  *
- * Un solde ne dit rien. Savoir qu'on a 14 000 TRN n'apprend ni si l'élevage
+ * Un solde ne dit rien. Savoir qu'on a 14 000 € n'apprend ni si l'élevage
  * paie sa nourriture, ni si la sous-traitance rapporte plus qu'elle ne coûte,
  * ni si une machine mérite d'être gardée. Ce sont pourtant les seules vraies
  * décisions de gestion du jeu, et aucune n'était possible : rien n'était

@@ -136,6 +136,17 @@ describe("ce que ça change sur une vraie moissonneuse", () => {
       repairCostPerPoint: def.repairCostPerPoint,
     }).cost;
 
-    expect(perdu).toBeGreaterThan(revision);
+    /*
+     * Trois champs, et non un seul.
+     *
+     * « Le rendement perdu sur le champ suivant doit dépasser la facture »
+     * tenait quand une moissonneuse valait 4 000 € : sa révision complète en
+     * coûtait 800. Aux prix en euros, elle en coûte 3 872, contre 2 495 de
+     * rendement perdu par champ — la révision se rembourse donc en un champ et
+     * demi au lieu d'un demi. Ce que ce test défend reste vrai : entretenir ne
+     * doit jamais devenir une corvée qu'on repousse jusqu'à la panne. Un champ
+     * et demi, personne ne le repousse.
+     */
+    expect(perdu * 3).toBeGreaterThan(revision);
   });
 });

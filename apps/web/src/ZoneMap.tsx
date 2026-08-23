@@ -83,7 +83,7 @@ export function ZoneMap({
             const isAllowed = isFree && (allowed == null || (p != null && allowed.has(p.id)));
             const selected = p != null && selectedParcelId === p.id;
             const title = p
-              ? `${p.label} · (${p.mapX},${p.mapY}) · ${p.landPrice} TRN` +
+              ? `${p.label} · (${p.mapX},${p.mapY}) · ${p.landPrice} €` +
                 (status === "mine" ? " · à toi" : status === "other" ? " · occupée" : isAllowed ? " · libre" : " · non disponible")
               : `Case vide (${x},${y})`;
 
@@ -144,7 +144,7 @@ export function ZoneMap({
                   onClick={() => onSelect?.(p.id)}
                 >
                   <span className="zone-pick-name">{p.label}</span>
-                  <span className="zone-pick-price">{Math.round(p.landPrice)} TRN</span>
+                  <span className="zone-pick-price">{Math.round(p.landPrice)} €</span>
                 </button>
               </li>
             ))}

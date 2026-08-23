@@ -11,6 +11,7 @@ import {
   type MachineCareState,
 } from "./machine-care.js";
 
+export * from "./euros.js";
 export * from "./ledger.js";
 export * from "./time.js";
 export * from "./world.js";
@@ -31,11 +32,11 @@ export * from "./machine-care.js";
 export * from "./calendar.js";
 export * from "./fuel.js";
 export * from "./weeds.js";
+export * from "./play-guide.js";
 export * from "./credit.js";
 export * from "./processing.js";
 export * from "./crop-calendar.js";
 export * from "./art-anchor.js";
-export * from "./play-guide.js";
 export * from "./appearance.js";
 export * from "./crops.js";
 export * from "./manure.js";
@@ -50,11 +51,11 @@ export * from "./species.js";
 export * from "./husbandry.js";
 export * from "./recovery.js";
 
-/** Monnaie du jeu : le terron (TRN). Le champ interne reste `crd`. */
-export const CURRENCY_CODE = "TRN";
+/** Monnaie du jeu : le terron (€). Le champ interne reste `crd`. */
+export const CURRENCY_CODE = "€";
 export const CURRENCY_NAME = "terron";
 
-import type { TradeGood } from "./goods.js";
+import { GOOD_DEFS, type TradeGood } from "./goods.js";
 
 export type Specialization = "CEREALIER" | "ELEVEUR";
 
@@ -99,19 +100,6 @@ export const WEATHER_SHORT: Record<WeatherState, string> = {
   SNOW: "Neige",
 };
 
-/**
- * Une somme en TRN, écrite court quand elle est longue.
- *
- * « 200000 TRN » débordait de sa puce et se faisait couper en « 200000… »,
- * qui perd à la fois l'unité et l'ordre de grandeur. On abrège au millier
- * au-delà de dix mille : « 200 k TRN » tient, et se lit.
- */
-export function formatTerrons(crd: number): string {
-  const n = Math.round(crd);
-  if (Math.abs(n) >= 1_000_000) return `${(n / 1_000_000).toFixed(n % 1_000_000 === 0 ? 0 : 1)} M TRN`;
-  if (Math.abs(n) >= 10_000) return `${Math.round(n / 1000)} k TRN`;
-  return `${n} TRN`;
-}
 
 /** Intervalle tick serveur MVP `[TEST]` */
 export const SIM_TICK_MS = 20_000;
@@ -230,8 +218,8 @@ export const SPECIALIZATION_BONUSES: Record<
  *
  * Les durées de pousse étaient des valeurs de mise au point — « 3 min MVP
  * pour itérer », disait le commentaire, et elles y sont restées. Sur une
- * parcelle de 12 × 12, cela faisait environ 6 200 TRN nets toutes les trois
- * minutes, soit **124 000 TRN à l'heure**, quand une étable en coûte 2 800 :
+ * parcelle de 12 × 12, cela faisait environ 6 200 € nets toutes les trois
+ * minutes, soit **124 000 € à l'heure**, quand une étable en coûte 2 800 :
  * l'argent n'avait plus de poids, et aucune décision agricole n'en était une.
  *
  * Elles sont désormais comptées en **jours de jeu** (`GAME_DAY_MS`), et la
@@ -332,36 +320,59 @@ export function cropGrowMs(crop: CropCode, cutsDone = 0): number {
  * y figurer : le tick de marché les parcourt sans distinction, et une entrée
  * manquante produirait un prix `NaN`.
  */
+/**
+ * L'amplitude et la profondeur de chaque marché.
+ *
+ * **Le prix, lui, n'est pas ici** : il vit dans `GOOD_DEFS.basePrice`, et
+ * `MARKET_BOUNDS.initial` s'en déduit. C'était une deuxième table de prix,
+ * écrite à côté de la première — le blé y valait 220 aux deux endroits, ce qui
+ * marchait tant que personne n'en changeait qu'un. Passé le colza, l'ensilage
+ * et le fumier à leur vrai cours dans `GOOD_DEFS`, le marché du jeu a continué
+ * de coter les anciens : l'un des deux mentait, et rien ne le disait.
+ *
+ * Ce qui reste propre à chaque denrée, ce sont les **rapports** : jusqu'où le
+ * cours peut descendre (`bas`) et monter (`haut`) par rapport à son prix de
+ * référence, et la profondeur du carnet. Ceux-là décrivent la volatilité et la
+ * liquidité, pas le niveau des prix — ils ne bougent pas quand un cours bouge.
+ */
+const AMPLITUDES: Record<TradeGood, { bas: number; haut: number; depth: number }> = {
+  WHEAT: { bas: 0.55, haut: 2.05, depth: 125 },
+  MAIZE: { bas: 0.5, haut: 2.0, depth: 125 },
+  // Le lait varie peu : c'est un revenu régulier, pas un pari.
+  MILK: { bas: 0.71, haut: 1.48, depth: 50 },
+  MEAT: { bas: 0.62, haut: 1.59, depth: 20 },
+  HAY: { bas: 0.63, haut: 1.74, depth: 94 },
+  STRAW: { bas: 0.62, haut: 1.81, depth: 56 },
+  // Une botte pèse 0,35 t : à son prix, la tonne bottelée vaut sensiblement
+  // plus que le vrac. L'écart, c'est le travail de la presse — c'est lui qui
+  // rend la botteleuse rentable, sinon personne n'en achèterait.
+  STRAW_BALE: { bas: 0.62, haut: 1.81, depth: 162 },
+  // Carnet étroit à dessein : l'ensilage n'est pas un cours mondial liquide.
+  SILAGE: { bas: 0.73, haut: 1.45, depth: 20 },
+  // Marché plus étroit que le blé : un gros lot y pèse davantage.
+  PEA: { bas: 0.6, haut: 1.82, depth: 56 },
+  BARLEY: { bas: 0.56, haut: 1.95, depth: 100 },
+  RAPE: { bas: 0.62, haut: 1.71, depth: 44 },
+  EGGS: { bas: 0.55, haut: 1.82, depth: 25 },
+  WOOL: { bas: 0.62, haut: 1.62, depth: 20 },
+  // Profondeur faible : un marché de niche se sature vite, et c'est ce qui
+  // empêche de transformer sans fin sans regarder le cours.
+  CHEESE: { bas: 0.65, haut: 1.67, depth: 18 },
+  FLOUR: { bas: 0.62, haut: 1.73, depth: 30 },
+  // Coté pour l'affichage ; le fumier ne s'échange pas sur ce marché.
+  MANURE: { bas: 0.73, haut: 1.45, depth: 20 },
+};
+
 export const MARKET_BOUNDS: Record<
   TradeGood,
   { initial: number; min: number; max: number; depth: number }
-> = {
-  WHEAT: { initial: 220, min: 120, max: 450, depth: 125 },
-  MAIZE: { initial: 200, min: 100, max: 400, depth: 125 },
-  // Le lait varie peu : c'est un revenu régulier, pas un pari.
-  MILK: { initial: 42, min: 30, max: 62, depth: 50 },
-  MEAT: { initial: 1450, min: 900, max: 2300, depth: 20 },
-  HAY: { initial: 95, min: 60, max: 165, depth: 94 },
-  STRAW: { initial: 72, min: 45, max: 130, depth: 56 },
-  // Une botte pèse 0,35 t : à 32 TRN pièce, la tonne bottelée vaut ~91 TRN
-  // contre 72 en vrac. L'écart, c'est le travail de la presse — c'est lui qui
-  // rend la botteleuse rentable, sinon personne n'en achèterait.
-  STRAW_BALE: { initial: 32, min: 20, max: 58, depth: 162 },
-  // Carnet étroit à dessein : l'ensilage n'est pas un cours mondial liquide.
-  SILAGE: { initial: 110, min: 80, max: 160, depth: 20 },
-  // Marché plus étroit que le blé : un gros lot y pèse davantage.
-  PEA: { initial: 285, min: 170, max: 520, depth: 56 },
-  BARLEY: { initial: 195, min: 110, max: 380, depth: 100 },
-  RAPE: { initial: 340, min: 210, max: 580, depth: 44 },
-  EGGS: { initial: 22, min: 12, max: 40, depth: 25 },
-  WOOL: { initial: 420, min: 260, max: 680, depth: 20 },
-  // Coté pour l'affichage ; le fumier ne s'échange pas sur ce marché.
-  // Profondeur faible : un marché de niche se sature vite, et c'est ce qui
-  // empêche de transformer sans fin sans regarder le cours.
-  CHEESE: { initial: 6300, min: 4100, max: 10500, depth: 18 },
-  FLOUR: { initial: 400, min: 250, max: 690, depth: 30 },
-  MANURE: { initial: 55, min: 40, max: 80, depth: 20 },
-};
+> = Object.fromEntries(
+  (Object.keys(AMPLITUDES) as TradeGood[]).map((g) => {
+    const a = AMPLITUDES[g];
+    const initial = GOOD_DEFS[g].basePrice;
+    return [g, { initial, min: Math.round(initial * a.bas), max: Math.round(initial * a.haut), depth: a.depth }];
+  }),
+) as Record<TradeGood, { initial: number; min: number; max: number; depth: number }>;
 
 /**
  * Garde-fou contre la dérive, par tick `[GD]`.
@@ -549,7 +560,7 @@ export type BuildingDef = {
  * @see docs/research/27_MOISTURE_DRYING.md
  */
 export const DRYING = {
-  /** TRN par tonne et par passe de séchage */
+  /** € par tonne et par passe de séchage */
   costPerTonPerPass: 12,
   /** Réduction d’humidité (fraction) par passe */
   moistureReductionPerPass: 0.06,
@@ -587,7 +598,8 @@ export const BUILDING_DEFS: Record<BuildingType, BuildingDef> = {
     name: "Silo à grain",
     w: 2,
     h: 2,
-    cost: 1200,
+    // Prix réel : silo à grain métallique de 200 t.
+    cost: 9500,
     description: "Sans lui, le grain se vend au champ. Avec lui : stockage, séchage.",
     storageGrain: 40,
     yieldBonus: 0.01,
@@ -598,7 +610,8 @@ export const BUILDING_DEFS: Record<BuildingType, BuildingDef> = {
     name: "Hangar paille / foin",
     w: 2,
     h: 2,
-    cost: 900,
+    // Prix réel : hangar de stockage fourrage, bardage tôle.
+    cost: 6800,
     description: "Stocke bottes et fourrages ; séchage soft.",
     storageHay: 30,
     softDryer: true,
@@ -608,7 +621,8 @@ export const BUILDING_DEFS: Record<BuildingType, BuildingDef> = {
     name: "Hangar matériel",
     w: 3,
     h: 2,
-    cost: 1500,
+    // Prix réel : hangar matériel de 300 m².
+    cost: 11500,
     description:
       "Range jusqu’à 6 engins à l’abri : sous un toit, une machine s’use 15 % moins vite qu’à la cour.",
     machineSlots: 6,
@@ -619,7 +633,8 @@ export const BUILDING_DEFS: Record<BuildingType, BuildingDef> = {
     name: "Étable bovins",
     w: 3,
     h: 3,
-    cost: 2800,
+    // Prix réel : stabulation pour une trentaine de bovins.
+    cost: 26000,
     description: "Bâtiment élevage bovin (slots).",
     cattleSlots: 12,
     yieldBonus: 0.01,
@@ -630,7 +645,8 @@ export const BUILDING_DEFS: Record<BuildingType, BuildingDef> = {
     name: "Porcherie",
     w: 2,
     h: 3,
-    cost: 2200,
+    // Prix réel : porcherie d'engraissement.
+    cost: 19000,
     description: "Bâtiment élevage porcin (slots).",
     pigSlots: 20,
   },
@@ -639,7 +655,8 @@ export const BUILDING_DEFS: Record<BuildingType, BuildingDef> = {
     name: "Poulailler",
     w: 2,
     h: 2,
-    cost: 1400,
+    // Prix réel : poulailler de plein air.
+    cost: 7200,
     description: "Petit, pas cher. Le revenu, c’est l’œuf.",
     henSlots: 24,
   },
@@ -649,7 +666,8 @@ export const BUILDING_DEFS: Record<BuildingType, BuildingDef> = {
     name: "Bergerie",
     w: 3,
     h: 2,
-    cost: 2000,
+    // Prix réel : bergerie.
+    cost: 15000,
     description: "Les moutons vivent surtout dehors. On tond la laine.",
     sheepSlots: 16,
   },
@@ -658,7 +676,8 @@ export const BUILDING_DEFS: Record<BuildingType, BuildingDef> = {
     name: "Chambre froide",
     w: 2,
     h: 2,
-    cost: 2600,
+    // Prix réel : chambre froide de ferme.
+    cost: 9000,
     description: "Ralentit la dégradation du lait, de la viande et des œufs.",
     spoilageSlow: 0.4,
   },
@@ -667,7 +686,11 @@ export const BUILDING_DEFS: Record<BuildingType, BuildingDef> = {
     name: "Atelier",
     w: 2,
     h: 2,
-    cost: 1100,
+    // Prix réel : atelier équipé.
+    // Aménagement d'un atelier dans un bâtiment existant — établi,
+    // outillage, compresseur. Il se rembourse en remises d'entretien : à
+    // 6 000 € il en demandait mille, ce qu'aucune ferme ne fait.
+    cost: 3500,
     description:
       "Répare moins cher, et l'entretien courant — graissage, nettoyage, révision — coûte 20 % de moins.",
     repairDiscount: 0.1,
@@ -680,7 +703,8 @@ export const BUILDING_DEFS: Record<BuildingType, BuildingDef> = {
     name: "Maison d’exploitation",
     w: 2,
     h: 2,
-    cost: 2000,
+    // Prix réel : bâtiment d'exploitation.
+    cost: 18000,
     description: "HQ — léger bonus XP.",
     xpBonus: 0.02,
   },
@@ -690,7 +714,8 @@ export const BUILDING_DEFS: Record<BuildingType, BuildingDef> = {
     name: "Enclos de pâture",
     w: 3,
     h: 3,
-    cost: 1210,
+    // Prix réel : clôture et abreuvoir sur 3 ha.
+    cost: 2400,
     description: "Collé à une étable ou une bergerie : les bêtes sortent, elles sont plus heureuses.",
   },
   PIG_YARD: {
@@ -700,7 +725,8 @@ export const BUILDING_DEFS: Record<BuildingType, BuildingDef> = {
     w: 2,
     h: 3,
     // Moins chère que l'enclos : une souille close, pas une prairie.
-    cost: 780,
+    // Prix réel : courette bétonnée.
+    cost: 1800,
     description: "Collée à une porcherie, elle laisse les porcs fouir dehors : moins de stress, plus de viande.",
   },
   HEN_YARD: {
@@ -709,7 +735,8 @@ export const BUILDING_DEFS: Record<BuildingType, BuildingDef> = {
     name: "Courette à poules",
     w: 2,
     h: 3,
-    cost: 520,
+    // Prix réel : parcours grillagé.
+    cost: 1150,
     description: "Collée au poulailler : les poules picorent dehors, elles pondent mieux.",
   },
   BUNKER_SILO: {
@@ -717,7 +744,8 @@ export const BUILDING_DEFS: Record<BuildingType, BuildingDef> = {
     name: "Silo couloir",
     w: 3,
     h: 2,
-    cost: 1400,
+    // Prix réel : silo couloir en béton.
+    cost: 5000,
     description: "Tasse l’ensilage et la paille. Sans lui, le fourrage d’hiver n’a pas de place.",
     storageHay: 50,
   },
@@ -758,7 +786,8 @@ export const BUILDING_DEFS: Record<BuildingType, BuildingDef> = {
     name: "Panneaux solaires",
     w: 2,
     h: 2,
-    cost: 1500,
+    // Prix réel : 36 kWc en toiture.
+    cost: 7500,
     description:
       "Alimentent le séchoir du silo en journée : le séchage du grain coûte moitié moins.",
     dryingDiscount: 0.5,
@@ -768,7 +797,8 @@ export const BUILDING_DEFS: Record<BuildingType, BuildingDef> = {
     name: "Éolienne",
     w: 1,
     h: 1,
-    cost: 2200,
+    // Prix réel : petit aérogénérateur de ferme.
+    cost: 13000,
     description:
       "Alimente le séchoir du silo jour et nuit : le séchage du grain ne coûte plus rien.",
     freeDrying: true,
@@ -778,7 +808,8 @@ export const BUILDING_DEFS: Record<BuildingType, BuildingDef> = {
     name: "Ruches",
     w: 1,
     h: 1,
-    cost: 800,
+    // Prix réel : dix ruches équipées.
+    cost: 1300,
     description:
       "Pollinise colza et pois dans un rayon de quatre cases : +8 % de rendement. Placez-les au bon endroit.",
     pollinationRange: 4,
@@ -797,7 +828,8 @@ export const BUILDING_DEFS: Record<BuildingType, BuildingDef> = {
     name: "Laiterie",
     w: 2,
     h: 2,
-    cost: 13000,
+    // Prix réel : atelier de transformation laitière.
+    cost: 28000,
     description:
       "Transforme le lait en fromage, cent hectolitres pour une tonne. Le fromage ne s'abîme pas, lui — et elle travaille pendant que vous êtes ailleurs.",
     processing: "DAIRY",
@@ -807,7 +839,8 @@ export const BUILDING_DEFS: Record<BuildingType, BuildingDef> = {
     name: "Moulin",
     w: 2,
     h: 2,
-    cost: 4000,
+    // Prix réel : moulin à farine de ferme.
+    cost: 13000,
     description:
       "Moud le blé en farine, quatre tonnes pour trois. Un bon tiers de valeur en plus, si le cours suit.",
     processing: "MILL",
@@ -984,7 +1017,7 @@ export function buildingLevelDef(level: number): BuildingLevelDef {
   return BUILDING_LEVELS[clamped - 1];
 }
 
-/** Coût en TRN pour passer un bâtiment au niveau suivant. */
+/** Coût en € pour passer un bâtiment au niveau suivant. */
 export function buildingUpgradeCost(type: BuildingType, currentLevel: number): number | null {
   if (currentLevel >= MAX_BUILDING_LEVEL) return null;
   const next = buildingLevelDef(currentLevel + 1);
@@ -1066,7 +1099,7 @@ export const PARCEL_HECTARES = 14;
  *
  * La case n'est pas une unité que le joueur ressent : il travaille des champs,
  * et il pense en saisons. Surtout, le barème donnait une révision complète de
- * tracteur — 600 TRN — tous les cinq champs, pour un engin qui en coûte 2 800.
+ * tracteur — 600 € — tous les cinq champs, pour un engin qui en coûte 2 800.
  * Sur sa vie, la machine se payait plusieurs fois en réparations. Aucun bien
  * d'équipement ne fonctionne comme ça, et un joueur l'a dit dans ces termes :
  * « un tracteur ça meurt pas en 2 jours ».
@@ -1200,7 +1233,7 @@ export type MachineDef = {
   speedKmh: number;
   /** Heures de travail pour user 100 points de condition, au soin neutre */
   lifeHours: number;
-  /** Coût TRN pour +1 point de condition */
+  /** Coût € pour +1 point de condition */
   repairCostPerPoint: number;
   minCondition: number;
   description: string;
@@ -1220,19 +1253,80 @@ export type MachineDef = {
   isoColor: "green" | "red-gold" | "amber";
 };
 
+/**
+ * Part de la valeur d'un engin que coûte une remise à neuf complète.
+ *
+ * Vingt-deux pour cent : c'est, à la main, ce que valaient déjà les onze
+ * `repairCostPerPoint` écrits en dur — de 17 % pour la presse à 29 % pour la
+ * charrue, moyenne 22,5. Le rapport était juste ; c'est le prix des engins qui
+ * ne l'était pas, et les réparations sont restées sur l'ancienne échelle
+ * pendant que le matériel passait à la vraie. Résultat mesuré : l'atelier, qui
+ * se rembourse en économies d'entretien, demandait deux mille cinq cents
+ * révisions au lieu de deux cents.
+ *
+ * Dérivé du prix, il ne peut plus décrocher.
+ */
+export const PART_REVISION_COMPLETE = 0.22;
+
+/** Coût d'un point de condition, pour un engin de ce prix. */
+export function reparationParPoint(prix: number): number {
+  return Math.round(((prix * PART_REVISION_COMPLETE) / 100) * 10) / 10;
+}
+
+/**
+ * Le prix de chaque engin, en euros, au premier palier.
+ *
+ * Écrit ici et nulle part ailleurs : la table des engins le lit pour son
+ * `cost` **et** pour en dériver le coût de réparation. Recopié aux deux
+ * endroits, il aurait fini par différer — c'est exactement ce qui était arrivé
+ * entre le prix des machines et celui de leurs révisions.
+ *
+ * ## L'ancre : le capital par hectare, pas le prix du neuf
+ *
+ * Première tentative : les prix du marché de l'occasion — tracteur 90 ch à
+ * 30 000, moissonneuse à 78 000. Vrais prix, mauvaise ancre. Une exploitation
+ * de quatorze hectares n'achète pas une moissonneuse de 78 000 € : elle n'en
+ * achète aucune, elle appelle une entreprise. Mesuré, le matériel d'occasion
+ * ne se rentabilisait plus qu'au bout de quinze moissons, et une révision de
+ * moissonneuse coûtait cinq fois le rendement qu'elle rattrapait.
+ *
+ * L'ancre juste est le **capital matériel par hectare** : une exploitation
+ * française y consacre de deux à trois mille euros l'hectare. Sur quatorze
+ * hectares, cela fait un parc de trente-cinq mille euros — c'est-à-dire du
+ * matériel ancien, étroit, de petite exploitation. C'est exactement ce que le
+ * joueur possède, et c'est ce que ces prix décrivent.
+ *
+ * Les rapports entre engins, eux, restent ceux du vrai marché : une
+ * moissonneuse vaut une fois et demie le tracteur, une charrue le cinquième.
+ */
+export const PRIX_ENGINS: Record<MachineType, number> = {
+  TRACTOR: 14000,
+  HARVESTER: 22000,
+  FORAGE_HARVESTER: 31000,
+  PLOUGH: 3100,
+  SEEDER: 4600,
+  SPREADER: 2300,
+  DISC_HARROW: 3300,
+  MOWER: 1900,
+  BALER: 6100,
+  SPRAYER: 3900,
+  TRAILER: 2600,
+};
+
 export const MACHINE_DEFS: Record<MachineType, MachineDef> = {
   TRACTOR: {
     type: "TRACTOR",
     kind: "TRACTOR",
     name: "Tracteur",
-    cost: 2800,
+    // Prix réel : tracteur 90 ch d'occasion révisé.
+    cost: PRIX_ENGINS.TRACTOR,
     powerHp: 90,
     // Un tracteur seul ne travaille pas : il tire. Sa largeur est celle de
     // l'outil qu'il porte, d'où zéro ici et aucun travail à son nom.
     widthM: 0,
     speedKmh: 10,
     lifeHours: 700,
-    repairCostPerPoint: 6,
+    repairCostPerPoint: reparationParPoint(PRIX_ENGINS.TRACTOR),
     minCondition: 15,
     description: "Ne travaille pas seul : il tire les outils. Sa puissance décide de ce qu’il peut atteler.",
     works: [],
@@ -1243,12 +1337,13 @@ export const MACHINE_DEFS: Record<MachineType, MachineDef> = {
     article: "une",
     kind: "SELF_PROPELLED",
     name: "Moissonneuse",
-    cost: 4000,
+    // Prix réel : moissonneuse-batteuse d'occasion, coupe de 4,5 m.
+    cost: PRIX_ENGINS.HARVESTER,
     powerHp: 200,
     widthM: 4.2,
     speedKmh: 6,
     lifeHours: 480,
-    repairCostPerPoint: 8,
+    repairCostPerPoint: reparationParPoint(PRIX_ENGINS.HARVESTER),
     minCondition: 15,
     description: "Automoteur : récolte les céréales sans tracteur.",
     works: ["HARVEST"],
@@ -1259,12 +1354,13 @@ export const MACHINE_DEFS: Record<MachineType, MachineDef> = {
     article: "une",
     kind: "SELF_PROPELLED",
     name: "Ensileuse",
-    cost: 4200,
+    // Prix réel : ensileuse automotrice d'occasion.
+    cost: PRIX_ENGINS.FORAGE_HARVESTER,
     powerHp: 260,
     widthM: 3,
     speedKmh: 8,
     lifeHours: 450,
-    repairCostPerPoint: 9,
+    repairCostPerPoint: reparationParPoint(PRIX_ENGINS.FORAGE_HARVESTER),
     minCondition: 15,
     description: "Automoteur : récolte le maïs plante entière, plus tôt, plus de tonnage.",
     works: ["SILAGE"],
@@ -1277,12 +1373,13 @@ export const MACHINE_DEFS: Record<MachineType, MachineDef> = {
     // Le travail le plus lent du parc, et c'est exact : une charrue est étroite
     // et tire lourd. C'est ce qui fait de son palier l'achat qui se sent le plus.
     name: "Charrue",
-    cost: 1400,
+    // Prix réel : charrue 4 corps.
+    cost: PRIX_ENGINS.PLOUGH,
     requiredHp: 90,
     widthM: 2,
     speedKmh: 8,
     lifeHours: 850,
-    repairCostPerPoint: 4,
+    repairCostPerPoint: reparationParPoint(PRIX_ENGINS.PLOUGH),
     minCondition: 15,
     description: "Retourne la terre en profondeur : remet le sol à neuf, efface les résidus.",
     works: ["PLOW"],
@@ -1292,12 +1389,13 @@ export const MACHINE_DEFS: Record<MachineType, MachineDef> = {
     type: "SEEDER",
     kind: "IMPLEMENT",
     name: "Semoir",
-    cost: 1900,
+    // Prix réel : semoir en ligne de 3 m.
+    cost: PRIX_ENGINS.SEEDER,
     requiredHp: 70,
     widthM: 4,
     speedKmh: 10,
     lifeHours: 800,
-    repairCostPerPoint: 4,
+    repairCostPerPoint: reparationParPoint(PRIX_ENGINS.SEEDER),
     minCondition: 15,
     description: "Met la graine en terre. Sans lui, le tracteur ne sème rien.",
     works: ["PLANT"],
@@ -1307,13 +1405,14 @@ export const MACHINE_DEFS: Record<MachineType, MachineDef> = {
     type: "SPREADER",
     kind: "IMPLEMENT",
     name: "Épandeur",
-    cost: 1500,
+    // Prix réel : épandeur à engrais porté.
+    cost: PRIX_ENGINS.SPREADER,
     requiredHp: 50,
     // Douze mètres de nappe : l'outil le plus rapide du parc, ce qui est vrai.
     widthM: 12,
     speedKmh: 12,
     lifeHours: 800,
-    repairCostPerPoint: 3,
+    repairCostPerPoint: reparationParPoint(PRIX_ENGINS.SPREADER),
     minCondition: 15,
     description: "Épand l’engrais et le fumier sur une large nappe.",
     works: ["FERTILIZE"],
@@ -1323,12 +1422,13 @@ export const MACHINE_DEFS: Record<MachineType, MachineDef> = {
     type: "DISC_HARROW",
     kind: "IMPLEMENT",
     name: "Déchaumeur à disques",
-    cost: 1600,
+    // Prix réel : déchaumeur à disques de 3 m.
+    cost: PRIX_ENGINS.DISC_HARROW,
     requiredHp: 80,
     widthM: 3,
     speedKmh: 11,
     lifeHours: 900,
-    repairCostPerPoint: 4,
+    repairCostPerPoint: reparationParPoint(PRIX_ENGINS.DISC_HARROW),
     minCondition: 15,
     description:
       "Incorpore les résidus après moisson : bonus de rendement, sans remettre le sol à zéro.",
@@ -1340,12 +1440,13 @@ export const MACHINE_DEFS: Record<MachineType, MachineDef> = {
     article: "une",
     kind: "IMPLEMENT",
     name: "Faucheuse",
-    cost: 1200,
+    // Prix réel : faucheuse à disques portée.
+    cost: PRIX_ENGINS.MOWER,
     requiredHp: 60,
     widthM: 3,
     speedKmh: 12,
     lifeHours: 800,
-    repairCostPerPoint: 3,
+    repairCostPerPoint: reparationParPoint(PRIX_ENGINS.MOWER),
     minCondition: 15,
     description: "Fauche l’herbe et la met en andain.",
     works: ["MOW"],
@@ -1356,12 +1457,13 @@ export const MACHINE_DEFS: Record<MachineType, MachineDef> = {
     article: "une",
     kind: "IMPLEMENT",
     name: "Presse à balles",
-    cost: 1800,
+    // Prix réel : presse à balles rondes.
+    cost: PRIX_ENGINS.BALER,
     requiredHp: 70,
     widthM: 2.2,
     speedKmh: 9,
     lifeHours: 750,
-    repairCostPerPoint: 5,
+    repairCostPerPoint: reparationParPoint(PRIX_ENGINS.BALER),
     minCondition: 15,
     description: "Presse l’andain en bottes. Sans elle, la paille reste au champ.",
     works: ["BALE"],
@@ -1371,14 +1473,15 @@ export const MACHINE_DEFS: Record<MachineType, MachineDef> = {
     type: "SPRAYER",
     kind: "IMPLEMENT",
     name: "Pulvérisateur",
-    cost: 2100,
+    // Prix réel : pulvérisateur porté de 1 000 L.
+    cost: PRIX_ENGINS.SPRAYER,
     requiredHp: 60,
     // Une rampe de dix-huit mètres : le désherbage est un passage rapide, et
     // c'est ce qui le rend jouable — on ne perd pas sa campagne à le faire.
     widthM: 18,
     speedKmh: 12,
     lifeHours: 850,
-    repairCostPerPoint: 4,
+    repairCostPerPoint: reparationParPoint(PRIX_ENGINS.SPRAYER),
     minCondition: 15,
     description: "Désherbe la culture en place. Rapide, mais la chimie se paie.",
     works: ["WEED"],
@@ -1389,12 +1492,13 @@ export const MACHINE_DEFS: Record<MachineType, MachineDef> = {
     article: "une",
     kind: "IMPLEMENT",
     name: "Remorque",
-    cost: 900,
+    // Prix réel : remorque agricole de 10 t.
+    cost: PRIX_ENGINS.TRAILER,
     requiredHp: 60,
     widthM: 2.5,
     speedKmh: 14,
     lifeHours: 1100,
-    repairCostPerPoint: 2,
+    repairCostPerPoint: reparationParPoint(PRIX_ENGINS.TRAILER),
     minCondition: 10,
     description: "Ramasse les bottes au champ et les rentre.",
     works: ["COLLECT"],
@@ -1571,7 +1675,7 @@ export function machineResaleValue(
   const tier = typeof state === "number" ? 1 : asTier(state.tier);
   const etat = Math.max(0, Math.min(100, condition)) / 100;
   /* La condition pèse peu, et c'est voulu — un test l'a imposé.
-     À 0,55 de poids, réviser un tracteur coûtait 510 TRN et en ajoutait 720 à
+     À 0,55 de poids, réviser un tracteur coûtait 510 € et en ajoutait 720 à
      sa cote : acheter une épave, la réviser, la revendre était une machine à
      fabriquer de l'argent. Le défaut est antérieur au compteur horaire, mais
      il ne se voyait pas tant que la condition faisait seule le prix.
@@ -1611,7 +1715,7 @@ export function buildingResaleValue(type: BuildingType, level: number, ageMs?: n
  *
  * Un clic sur la parcelle en mode construction déclenchait la dépense sans
  * confirmation : cinq silos pouvaient partir en cinq clics involontaires, et
- * la seule sortie était la démolition à 55 %, soit près de trois mille TRN de
+ * la seule sortie était la démolition à 55 %, soit près de trois mille € de
  * perte sèche pour une maladresse. La confirmation de pose supprime la cause ;
  * cette fenêtre rattrape ce qui passerait encore au travers.
  */
@@ -1691,13 +1795,13 @@ export function urgentContractorQuote(work: FarmWork, cells: number): number {
 /**
  * Ce que « Faire faire » coûte **vraiment**, consommables compris.
  *
- * Le bouton annonçait le seul service : « Faire faire · 1 325 TRN » sur cent
+ * Le bouton annonçait le seul service : « Faire faire · 1 325 € » sur cent
  * trente-quatre cases de maïs. Le serveur, lui, débitait le service **plus les
- * semences** — 3 737 TRN. Un joueur avec mille quatre cents TRN cliquait donc
+ * semences** — 3 737 €. Un joueur avec mille quatre cents € cliquait donc
  * un prix qu'il pouvait payer et se faisait répondre qu'il lui en fallait le
  * triple.
  *
- * Pire : à côté, « Demander de l'aide » affichait 3 564 TRN, semences
+ * Pire : à côté, « Demander de l'aide » affichait 3 564 €, semences
  * comprises. Les deux prix n'étaient pas comparables — l'un cachait la moitié
  * de la facture —, ce qui faisait passer l'entraide pour trois fois plus chère
  * alors qu'elle est en réalité **moins chère** que le dépannage.
@@ -1726,7 +1830,7 @@ export function contractorTotal(
  *
  * Cette liste vivait en deux exemplaires : une énumération Zod côté serveur,
  * et une cascade de `? :` côté écran qui, elle, proposait le bouton pour
- * trois travaux de plus. Le joueur voyait donc « Payer · 428 TRN » sur une
+ * trois travaux de plus. Le joueur voyait donc « Payer · 428 € » sur une
  * presse, appuyait, et se faisait renvoyer — par un message pour le
  * déchaumage, par une erreur de validation informe pour les deux autres. Deux
  * listes qui prétendent dire la même chose finissent toujours par diverger ;

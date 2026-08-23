@@ -144,7 +144,7 @@ export type CreditView = {
  *
  * Le Bureau ne pouvait pas répondre à sa propre question — « comment se porte
  * mon activité ? » — parce que le jeu ne gardait qu'un solde : aucune écriture
- * ne disait d'où venait un TRN ni où il était parti. Le journal existe
+ * ne disait d'où venait un € ni où il était parti. Le journal existe
  * désormais ; c'est ici qu'il se lit.
  */
 type Mode = "OBJECTIFS" | "ACTIVITE" | "TAKE" | "MINE" | "CONSIGNES" | "LAND";
@@ -402,7 +402,7 @@ function ttlLabel(iso: string): string {
 }
 
 function money(n: number): string {
-  return `${Math.round(n).toLocaleString("fr-FR")} TRN`;
+  return `${Math.round(n).toLocaleString("fr-FR")} €`;
 }
 
 function perCell(o: OfficeLabor): number {
@@ -1086,11 +1086,11 @@ function Objectifs({
                     disabled={busy}
                     onClick={() => onClaim?.(q.id)}
                   >
-                    Encaisser · {q.reward.crd} TRN + {q.reward.xp} XP
+                    Encaisser · {q.reward.crd} € + {q.reward.xp} XP
                   </button>
                 ) : (
                   <span className="muted tiny">
-                    Récompense : {q.reward.crd} TRN + {q.reward.xp} XP
+                    Récompense : {q.reward.crd} € + {q.reward.xp} XP
                   </span>
                 )}
               </li>

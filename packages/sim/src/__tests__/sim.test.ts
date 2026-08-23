@@ -1,4 +1,4 @@
-import { DRYING, MACHINE_DEFS, contractorQuote, missionPayout, urgentContractorQuote, CROP_DEFS, MISSION_OPEN_MAX, clampMissionCells, repairHalfwayTarget, laborEscrow, parseAppearance, defaultAppearance, SKIN_TONES, HATS, jobHours, machineHoursPerHectare, machineLifeHours } from "@farmsim/shared";
+import { DRYING, MACHINE_DEFS, contractorQuote, missionPayout, urgentContractorQuote, CROP_DEFS, MISSION_OPEN_MAX, clampMissionCells, repairHalfwayTarget, laborEscrow, parseAppearance, defaultAppearance, SKIN_TONES, HATS, jobHours, machineHoursPerHectare, machineLifeHours, MARKET_BOUNDS } from "@farmsim/shared";
 import {
   simulateCell,
   tickMarket,
@@ -70,19 +70,22 @@ describe("tickMarket", () => {
       demandTons: 500,
       stockTons: 50,
     });
-    expect(r.price).toBeGreaterThan(220);
+    expect(r.price).toBeGreaterThan(MARKET_BOUNDS.WHEAT.initial);
   });
 
   it("reste dans les bornes", () => {
+    // Le plafond se lit dans la table ; écrit « 450 » en dur, ce test disait
+    // le chiffre d'hier — il a sauté quand la borne s'est mise à se déduire du
+    // prix de référence au lieu d'être recopiée à côté de lui.
     const r = tickMarket({
       commodity: "WHEAT",
-      price: 220,
+      price: MARKET_BOUNDS.WHEAT.initial,
       supplyTons: 0,
       demandTons: 10_000,
       stockTons: 0,
       kappa: 1,
     });
-    expect(r.price).toBeLessThanOrEqual(450);
+    expect(r.price).toBeLessThanOrEqual(MARKET_BOUNDS.WHEAT.max);
   });
 });
 

@@ -21,7 +21,7 @@ describe("comptes développeurs", () => {
     expect(isDevEmail("carol@ferme.fr", extra)).toBe(false);
   });
 
-  it("ne débite jamais le compte nominatif, même à 0 TRN", () => {
+  it("ne débite jamais le compte nominatif, même à 0 €", () => {
     const dev = { email: DEV_OWNER_EMAIL, crd: 0 };
     expect(isDevAccount(dev)).toBe(true);
     expect(canAfford(dev, 50_000)).toBe(true);

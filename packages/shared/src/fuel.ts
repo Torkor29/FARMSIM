@@ -3,7 +3,7 @@
  *
  * Le mot n'apparaissait nulle part dans le code, alors que c'est le premier
  * poste variable d'une exploitation réelle et un pilier du genre. Les travaux
- * coûtaient un forfait par case — douze TRN pour un labour, cinq pour un
+ * coûtaient un forfait par case — douze € pour un labour, cinq pour un
  * déchaumage — qui mélangeait semences, carburant et main-d'œuvre en un seul
  * nombre opaque : le joueur ne savait ni ce qu'il payait, ni comment le
  * réduire.

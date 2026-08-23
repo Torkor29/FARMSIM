@@ -39,8 +39,11 @@ describe("poules et moutons — bâtiments", () => {
   });
 
   it("vend les poules et les moutons moins cher que les bovins", () => {
-    expect(ANIMAL_PRICE.HEN).toBe(28);
-    expect(ANIMAL_PRICE.SHEEP).toBe(160);
+    // Le chiffre exact se lit dans la table ; ce qui compte ici est l'ordre.
+    // Écrit « 28 » en dur, ce test disait le prix d'hier plutôt que la règle,
+    // et il a sauté au premier passage aux euros.
+    expect(ANIMAL_PRICE.HEN).toBeLessThan(ANIMAL_PRICE.SHEEP / 5);
+    expect(ANIMAL_PRICE.SHEEP).toBeLessThan(ANIMAL_PRICE.COW / 4);
     expect(ANIMAL_PRICE.HEN).toBeLessThan(ANIMAL_PRICE.COW);
     expect(ANIMAL_PRICE.SHEEP).toBeLessThan(ANIMAL_PRICE.COW);
   });

@@ -3,7 +3,7 @@
  *
  * `forage.ts` l'annonçait depuis le début : « la paille est le pont céréalier
  * ↔ éleveur (litière) ». La paille était bien produite à la moisson, pressable
- * en bottes, vendable à 72 TRN la tonne — mais **rien ne la consommait**. Elle
+ * en bottes, vendable à 72 € la tonne — mais **rien ne la consommait**. Elle
  * n'entrait dans aucune ration, aucune mécanique. Le céréalier la vendait donc
  * à un marché anonyme, et l'éleveur n'avait aucune raison d'en acheter : deux
  * métiers côte à côte, jamais clients l'un de l'autre.

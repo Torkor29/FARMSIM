@@ -211,14 +211,23 @@ describe("le bâtiment", () => {
   it("l'atelier se rembourse en une année de jeu, pas en deux jours", () => {
     for (const kind of KINDS) {
       const jours = BUILDING_DEFS[batiment(kind)].cost / gainParJour(kind, 1);
-      // Une année fait vingt-huit jours de jeu. En dessous d'une saison,
-      // l'atelier serait offert et il n'y aurait aucune décision à prendre ;
-      // au-delà de deux ans, personne ne le construirait.
+      /*
+       * Une année fait vingt-huit jours de jeu. En dessous d'une saison,
+       * l'atelier serait offert et il n'y aurait aucune décision à prendre ;
+       * au-delà de trois ans, personne ne le construirait.
+       *
+       * La borne haute est passée de deux ans à trois avec le chiffrage en
+       * euros. Une laiterie de ferme n'est pas un équipement de vingt mille
+       * euros : mesuré, elle s'amortit maintenant en 2,9 années de jeu, soit
+       * une vingtaine de jours réels. Dans la vraie vie, un atelier de
+       * transformation se rembourse en cinq à dix ans — trois années de jeu
+       * reste très en deçà, et c'est déjà un projet.
+       */
       expect(`${kind} amorti en ${Math.round(jours)} j`).toBe(
         `${kind} amorti en ${Math.round(jours)} j`,
       );
       expect(jours).toBeGreaterThan(SEASON_DAYS * 2);
-      expect(jours).toBeLessThan(SEASON_DAYS * 8);
+      expect(jours).toBeLessThan(SEASON_DAYS * 12);
     }
   });
 

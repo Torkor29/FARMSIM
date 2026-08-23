@@ -147,7 +147,7 @@ export function BuildingSheet({
               }
               onClick={onUpgrade}
             >
-              ↑ Améliorer · {cost} TRN
+              ↑ Améliorer · {cost} €
             </button>
           )}
           <button
@@ -156,7 +156,7 @@ export function BuildingSheet({
             disabled={busy || visiting}
             onClick={onDemolish}
           >
-            {fresh ? `Annuler · +${refund} TRN` : `Démolir · +${refund} TRN`}
+            {fresh ? `Annuler · +${refund} €` : `Démolir · +${refund} €`}
           </button>
         </div>
         {fresh && (

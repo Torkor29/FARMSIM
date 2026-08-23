@@ -7,7 +7,7 @@
  *
  * 1. **Le négociant** rachète tout, tout de suite, à un prix volontairement
  *    bas. C'est le plancher : on ne se retrouve jamais avec un silo plein et
- *    zéro TRN.
+ *    zéro €.
  * 2. **Le cours mondial** paie le prix du jour, mais écouler un gros volume
  *    fait plonger ce prix — vendre en une fois coûte cher.
  * 3. **La criée** laisse fixer son prix et attendre un acheteur. Meilleur
@@ -172,7 +172,7 @@ export const LISTING_REFUSAL_LABELS: Record<ListingRefusal, string> = {
   PRICE_TOO_HIGH: "Prix irréaliste : personne n’achètera",
   TOO_MANY_LISTINGS: `Vous avez déjà ${MAX_OPEN_LISTINGS} annonces en cours`,
   NOT_ENOUGH_STOCK: "Stock insuffisant",
-  CANNOT_AFFORD_FEE: "TRN insuffisants pour les frais de dépôt",
+  CANNOT_AFFORD_FEE: "€ insuffisants pour les frais de dépôt",
 };
 
 export function canList(input: {
@@ -303,7 +303,7 @@ export function quoteAllChannels(input: {
       pricePerTon: Math.round(ask * 100) / 100,
       net: listingProceeds(ask, input.tons) - listingFee(ask, input.tons),
       guaranteed: false,
-      note: `Frais ${listingFee(ask, input.tons)} TRN · commission ${Math.round(LISTING_COMMISSION_RATE * 100)} %`,
+      note: `Frais ${listingFee(ask, input.tons)} € · commission ${Math.round(LISTING_COMMISSION_RATE * 100)} %`,
     },
   ];
 }

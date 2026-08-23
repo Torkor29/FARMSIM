@@ -39,7 +39,7 @@ import {
   GOOD_ICONS,
   WEATHER_LABELS,
   WEATHER_SHORT,
-  formatTerrons,
+  formatEurosCourt,
   currentSeason,
   conditionYieldFactor,
   type LedgerLine,
@@ -339,7 +339,7 @@ function canPay(player: Player | null | undefined, cost: number): boolean {
 }
 
 function walletLabel(player: Player): string {
-  return hasUnlimitedFunds(player) ? "∞ TRN" : formatTerrons(player.crd);
+  return hasUnlimitedFunds(player) ? "∞ €" : formatEurosCourt(player.crd);
 }
 
 type Contract = {
@@ -557,7 +557,7 @@ function harvestGrainNote(r: {
   const total = r.totalTons != null ? r.totalTons.toFixed(2) : "";
   const hay = r.hayTons ? ` · foin ${r.hayTons.toFixed(2)} t` : "";
   if (!r.soldTons) return `Récolte ${total} t${hay}`;
-  const money = r.soldRevenue ? ` · +${Math.round(r.soldRevenue)} TRN` : "";
+  const money = r.soldRevenue ? ` · +${Math.round(r.soldRevenue)} €` : "";
   if (r.soldReason === "NO_SILO") {
     return `Récolte ${total} t vendue au champ, faute de silo${money}${hay}`;
   }
@@ -704,7 +704,7 @@ export function App() {
    *
    * Le catalogue proposait chaque engin quel que soit le parc, et le clic
    * revenait en 409 « Slots machines pleins ». Une place qui manque se sait
-   * avant de cliquer, exactement comme un TRN qui manque.
+   * avant de cliquer, exactement comme un € qui manque.
    */
   const parcMachines = player?.farm?.machines?.length ?? 0;
   const slotsMachines = player?.bonuses?.machineSlots ?? 0;
@@ -935,7 +935,7 @@ export function App() {
     const me = await api<{ player: Player }>("/auth/me");
     if (me.player.grainDump && me.player.grainDump.soldTons > 0) {
       const dump = me.player.grainDump;
-      const money = dump.revenue ? ` · +${Math.round(dump.revenue)} TRN` : "";
+      const money = dump.revenue ? ` · +${Math.round(dump.revenue)} €` : "";
       flashToast(
         dump.reason === "NO_SILO"
           ? `${dump.soldTons.toFixed(1)} t vendues au champ, faute de silo${money}`
@@ -1049,7 +1049,7 @@ export function App() {
         body: JSON.stringify({ commodity, tons, horizonH }),
       });
       await loadFutures();
-      flashToast(`Engagé ${tons} t à ${r.pricePerTon.toFixed(0)} TRN/t`);
+      flashToast(`Engagé ${tons} t à ${r.pricePerTon.toFixed(0)} €/t`);
     } catch (e) {
       flashToast(e instanceof Error ? e.message : String(e), true);
     } finally {
@@ -1069,9 +1069,9 @@ export function App() {
         r.outcome.delta === 0
           ? ""
           : r.outcome.better
-            ? ` · ${r.outcome.delta} TRN de mieux que le comptant`
-            : ` · ${Math.abs(r.outcome.delta)} TRN de moins que le comptant`;
-      flashToast(`Livré · +${r.revenue} TRN${verdict}`);
+            ? ` · ${r.outcome.delta} € de mieux que le comptant`
+            : ` · ${Math.abs(r.outcome.delta)} € de moins que le comptant`;
+      flashToast(`Livré · +${r.revenue} €${verdict}`);
     } catch (e) {
       flashToast(e instanceof Error ? e.message : String(e), true);
     } finally {
@@ -2053,7 +2053,7 @@ export function App() {
 
   /**
    * Emprise libre ET budget suffisant. Le fantôme rouge signalait déjà le
-   * manque de TRN, mais le clic partait quand même et le serveur répondait
+   * manque de €, mais le clic partait quand même et le serveur répondait
    * 402 : un aller-retour perdu, et une erreur rouge en console pour une
    * situation parfaitement prévisible côté client.
    */
@@ -2473,7 +2473,7 @@ export function App() {
           x + foot.w > gw || y + foot.h > gh
             ? "Emprise hors grille"
             : !canPay(player, def.cost)
-              ? `TRN insuffisants (${def.cost})`
+              ? `€ insuffisants (${def.cost})`
               : "Collision ou case occupée";
         flashToast(reason, true);
         return;
@@ -2652,7 +2652,7 @@ export function App() {
      *
      * L'entreprise de dépannage ne prend pas le déchaumage, la presse ni le
      * ramassage — c'est l'entraide entre joueurs qui les prend. On chiffrait
-     * quand même, et le bouton « Payer · 428 TRN » s'affichait sur une presse
+     * quand même, et le bouton « Payer · 428 € » s'affichait sur une presse
      * pour ne pouvoir que refuser : par un message pour la presse, par une
      * erreur de validation informe pour le déchaumage. Un bouton qui ne peut
      * qu'échouer ne doit pas exister ; `cost: null` l'efface des deux coques.
@@ -2665,7 +2665,7 @@ export function App() {
        * Le prix **complet**, semences comprises.
        *
        * Le bouton annonçait le seul service et le serveur débitait le service
-       * plus le sac : « Faire faire · 1 325 TRN » puis, au clic, « TRN
+       * plus le sac : « Faire faire · 1 325 € » puis, au clic, « €
        * insuffisants — 3 737 requis ». Les deux côtés lisent désormais la
        * même fonction.
        */
@@ -2832,7 +2832,7 @@ export function App() {
         },
       );
       const tons = r.totalTons ? ` · ${r.totalTons.toFixed(2)} t` : "";
-      flashToast(`C’est fait : ${WORK_LABELS[contractorOffer.work]} ×${r.cells}${tons} · −${r.cost} TRN`);
+      flashToast(`C’est fait : ${WORK_LABELS[contractorOffer.work]} ×${r.cells}${tons} · −${r.cost} €`);
       setSelectedCells([]);
       await refreshPlayer();
       await loadParcel(activeParcelId);
@@ -3115,7 +3115,7 @@ export function App() {
           method: "POST",
           body: JSON.stringify({ userId: player.id, jobId, cells: workCells }),
         });
-        setMsg(`Désherbé ×${r.weeded} · −${Math.round(r.cost)} TRN` + wearNote(r.machine));
+        setMsg(`Désherbé ×${r.weeded} · −${Math.round(r.cost)} €` + wearNote(r.machine));
         labor = r.labor;
       } else if (tool === "FERTILIZE") {
         const r = await api<{
@@ -3213,7 +3213,7 @@ export function App() {
             ? ""
             : ` · fertilité ${fert > 0 ? "+" : "−"}${Math.abs(fert * 100).toFixed(1)} pt`;
         setMsg(
-          `Labouré ×${r.plowed} · −${r.cost} TRN${fertNote} · sol remis à zéro` + wearNote(r.machine),
+          `Labouré ×${r.plowed} · −${r.cost} €${fertNote} · sol remis à zéro` + wearNote(r.machine),
         );
         labor = r.labor;
       } else if (tool === "STUBBLE") {
@@ -3233,7 +3233,7 @@ export function App() {
           body: JSON.stringify({ userId: player.id, jobId, cells: workCells }),
         });
         setMsg(
-          `Sol déchaumé ×${r.stubbled} · −${r.cost} TRN · +${Math.round(r.nextBonus * 100)} % sur la prochaine récolte` +
+          `Sol déchaumé ×${r.stubbled} · −${r.cost} € · +${Math.round(r.nextBonus * 100)} % sur la prochaine récolte` +
             wearNote(r.machine),
         );
         labor = r.labor;
@@ -3242,7 +3242,7 @@ export function App() {
       await refreshPlayer();
       await loadParcel(activeParcelId);
       if (labor?.completed) {
-        flashToast(`Chantier terminé · +${Math.round(labor.payout ?? 0)} TRN`);
+        flashToast(`Chantier terminé · +${Math.round(labor.payout ?? 0)} €`);
         setVisitOrder(null);
         const home = player.farm?.parcels[0]?.id;
         if (home) setActiveParcelId(home);
@@ -3333,7 +3333,7 @@ export function App() {
       markGuideFlag("harvested");
       if (r.soldTons) markGuideFlag("sold");
       if (r.labor?.completed) {
-        flashToast(`Chantier terminé · +${Math.round(r.labor.payout ?? 0)} TRN`);
+        flashToast(`Chantier terminé · +${Math.round(r.labor.payout ?? 0)} €`);
         setVisitOrder(null);
         const home = player.farm?.parcels[0]?.id;
         if (home) setActiveParcelId(home);
@@ -3377,7 +3377,7 @@ export function App() {
         method: "POST",
         body: JSON.stringify({ userId: player.id, commodity, tons }),
       });
-      flashToast(`Négociant : ${tons.toFixed(2)} t · +${r.revenue} TRN`);
+      flashToast(`Négociant : ${tons.toFixed(2)} t · +${r.revenue} €`);
       markGuideFlag("sold");
       await refreshPlayer();
       await refreshMeta();
@@ -3396,7 +3396,7 @@ export function App() {
         method: "POST",
         body: JSON.stringify({ userId: player.id, commodity, tons, pricePerTon }),
       });
-      flashToast(`Lot mis en vente · frais ${r.fee} TRN`);
+      flashToast(`Lot mis en vente · frais ${r.fee} €`);
       await refreshPlayer();
       await loadListings(player.id);
     } catch (e) {
@@ -3472,7 +3472,7 @@ export function App() {
           body: JSON.stringify({ userId: player.id }),
         },
       );
-      flashToast(`Arrivé · −${r.autoFee} TRN`);
+      flashToast(`Arrivé · −${r.autoFee} €`);
       haulSeenRef.current.add(id);
       flashDeliveryArrival(r.commodity);
       await refreshPlayer();
@@ -3529,10 +3529,10 @@ export function App() {
         setNourrirApres(null);
         setBusy(false);
         await feedHerd(pourLeLot, ration, r.bought);
-        flashToast(`${r.bought} t de ${nom.toLowerCase()} · −${r.cost} TRN · distribué au troupeau`);
+        flashToast(`${r.bought} t de ${nom.toLowerCase()} · −${r.cost} € · distribué au troupeau`);
         return;
       }
-      flashToast(`${r.bought} t de ${nom.toLowerCase()} · −${r.cost} TRN`);
+      flashToast(`${r.bought} t de ${nom.toLowerCase()} · −${r.cost} €`);
     } catch (e) {
       flashToast(e instanceof Error ? e.message : String(e), true);
     } finally {
@@ -3550,7 +3550,7 @@ export function App() {
       });
       await refreshPlayer();
       await refreshMeta();
-      setMsg(`Vendu pour ${r.revenue} TRN`);
+      setMsg(`Vendu pour ${r.revenue} €`);
       markGuideFlag("sold");
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e));
@@ -3569,7 +3569,7 @@ export function App() {
       });
       await refreshPlayer();
       setMsg(
-        `Séché (−${(r.reduction * 100).toFixed(0)} pts) · ${(r.moisture * 100).toFixed(0)} % · −${r.cost} TRN`,
+        `Séché (−${(r.reduction * 100).toFixed(0)} pts) · ${(r.moisture * 100).toFixed(0)} % · −${r.cost} €`,
       );
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e));
@@ -3611,7 +3611,7 @@ export function App() {
       const wearNote = r.machine
         ? ` · ${r.machine.type} −${r.machine.wearApplied.toFixed(1)}%`
         : "";
-      flashToast(`Chantier honoré · +${r.reward} TRN${wearNote}`);
+      flashToast(`Chantier honoré · +${r.reward} €${wearNote}`);
       setActiveMission(null);
       markGuideFlag("contract");
     } catch (e) {
@@ -3669,7 +3669,7 @@ export function App() {
         method: "POST",
         body: JSON.stringify({ userId: player.id, amount }),
       });
-      flashToast(`Emprunté ${Math.round(amount)} TRN`);
+      flashToast(`Emprunté ${Math.round(amount)} €`);
       await refreshPlayer();
       await loadCredit();
     } catch (e) {
@@ -3687,7 +3687,7 @@ export function App() {
         method: "POST",
         body: JSON.stringify({ userId: player.id, amount }),
       });
-      flashToast(`Remboursé ${Math.round(r.repaid)} TRN`);
+      flashToast(`Remboursé ${Math.round(r.repaid)} €`);
       await refreshPlayer();
       await loadCredit();
     } catch (e) {
@@ -3706,7 +3706,7 @@ export function App() {
         method: "POST",
         body: JSON.stringify({ userId: player.id, liters }),
       });
-      flashToast(`${Math.round(r.liters)} L de gazole · −${Math.round(r.cost)} TRN`);
+      flashToast(`${Math.round(r.liters)} L de gazole · −${Math.round(r.cost)} €`);
       await refreshPlayer();
     } catch (e) {
       flashToast(e instanceof Error ? e.message : String(e), true);
@@ -3743,7 +3743,7 @@ export function App() {
         `/buildings/${id}/upgrade`,
         { method: "POST", body: JSON.stringify({ userId: player.id }) },
       );
-      flashToast(`Niveau ${r.building.level} · ${r.levelName} — ${r.cost} TRN`);
+      flashToast(`Niveau ${r.building.level} · ${r.levelName} — ${r.cost} €`);
       await refreshPlayer();
       if (activeParcelId) await loadParcel(activeParcelId);
     } catch (e) {
@@ -3764,7 +3764,7 @@ export function App() {
           body: JSON.stringify({ userId: player.id, count, young }),
         },
       );
-      flashToast(`+${r.added} ${young ? "jeune(s)" : "bête(s)"} · −${r.cost} TRN`);
+      flashToast(`+${r.added} ${young ? "jeune(s)" : "bête(s)"} · −${r.cost} €`);
       await refreshPlayer();
       if (activeParcelId) await loadLivestock(activeParcelId);
     } catch (e) {
@@ -3834,7 +3834,7 @@ export function App() {
         method: "POST",
         body: JSON.stringify({ userId: player.id }),
       });
-      flashToast(`Objectif tenu · +${r.reward.crd} TRN · +${r.reward.xp} XP`);
+      flashToast(`Objectif tenu · +${r.reward.crd} € · +${r.reward.xp} XP`);
       playUiSound("place");
       await refreshPlayer();
       await loadQuests();
@@ -4016,7 +4016,7 @@ export function App() {
         `/buildings/${buildingId}/manure/sell`,
         { method: "POST", body: JSON.stringify({ userId: player.id }) },
       );
-      flashToast(`Fumier vendu au voisin · ${r.tons.toFixed(2)} t · +${r.proceeds} TRN`);
+      flashToast(`Fumier vendu au voisin · ${r.tons.toFixed(2)} t · +${r.proceeds} €`);
       await refreshPlayer();
       if (activeParcelId) await loadLivestock(activeParcelId);
     } catch (e) {
@@ -4095,7 +4095,7 @@ export function App() {
     if (!player) return;
     setConfirmRequest({
       title: `Reprise de ${label} ?`,
-      detail: `Le concessionnaire en donne ${reprise} TRN, tout de suite. C’est moins que la cote entre joueurs : c’est le prix de ne pas attendre. L’engin quitte le garage définitivement.`,
+      detail: `Le concessionnaire en donne ${reprise} €, tout de suite. C’est moins que la cote entre joueurs : c’est le prix de ne pas attendre. L’engin quitte le garage définitivement.`,
       confirmLabel: "Reprendre",
       destructive: true,
       onConfirm: () => void doSellMachine(id, label),
@@ -4115,8 +4115,8 @@ export function App() {
     const max = Math.round(cote * MACHINE_LISTING_MAX_RATE);
     setConfirmRequest({
       title: `Mettre ${label} en vente ?`,
-      detail: `Cote ${cote} TRN. Vous fixerez un prix entre ${min} et ${max} TRN. L’engin quitte la ferme le temps de l’annonce et revient si personne ne l’achète.`,
-      confirmLabel: `Publier à ${cote} TRN`,
+      detail: `Cote ${cote} €. Vous fixerez un prix entre ${min} et ${max} €. L’engin quitte la ferme le temps de l’annonce et revient si personne ne l’achète.`,
+      confirmLabel: `Publier à ${cote} €`,
       onConfirm: () => void doListMachine(id, label, cote),
     });
   }
@@ -4130,7 +4130,7 @@ export function App() {
         method: "POST",
         body: JSON.stringify({ userId: player.id, priceCrd }),
       });
-      flashToast(`${label} en vente · ${priceCrd} TRN`);
+      flashToast(`${label} en vente · ${priceCrd} €`);
       await refreshPlayer();
       await loadMachineListings();
       if (activeParcelId) await loadParcel(activeParcelId);
@@ -4217,7 +4217,7 @@ export function App() {
         method: "POST",
         body: JSON.stringify({ userId: player.id }),
       });
-      flashToast(`${label} vendu · +${r.value} TRN`);
+      flashToast(`${label} vendu · +${r.value} €`);
       await refreshPlayer();
       if (activeParcelId) await loadParcel(activeParcelId);
     } catch (e) {
@@ -4281,7 +4281,7 @@ export function App() {
           rotation: buildRotation,
         }),
       });
-      flashToast(`${def.name} bâti · −${def.cost} TRN`);
+      flashToast(`${def.name} bâti · −${def.cost} €`);
       playUiSound("place");
       setPendingBuild(null);
       await refreshPlayer();
@@ -4302,7 +4302,7 @@ export function App() {
         method: "POST",
         body: JSON.stringify({ userId: player.id }),
       });
-      flashToast(`${label} démoli · +${r.value} TRN`);
+      flashToast(`${label} démoli · +${r.value} €`);
       await refreshPlayer();
       if (activeParcelId) await loadParcel(activeParcelId);
     } catch (e) {
@@ -4324,8 +4324,8 @@ export function App() {
       await refreshPlayer();
       setMsg(
         extent === "half"
-          ? `Rafistolé → ${r.condition.toFixed(0)}% (−${r.cost} TRN)`
-          : `Révisé → ${r.condition.toFixed(0)}% (−${r.cost} TRN)`,
+          ? `Rafistolé → ${r.condition.toFixed(0)}% (−${r.cost} €)`
+          : `Révisé → ${r.condition.toFixed(0)}% (−${r.cost} €)`,
       );
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e));
@@ -4344,20 +4344,20 @@ export function App() {
           method: "POST",
           body: JSON.stringify({ userId: player.id }),
         });
-        setMsg(`Graissé · −${r.cost} TRN`);
+        setMsg(`Graissé · −${r.cost} €`);
       } else if (care.mode === "clean") {
         const r = await api<{ cost: number }>(`/machines/${care.machineId}/clean`, {
           method: "POST",
           body: JSON.stringify({ userId: player.id }),
         });
-        setMsg(`Nettoyé · −${r.cost} TRN`);
+        setMsg(`Nettoyé · −${r.cost} €`);
       } else {
         const kind = care.kind ?? "BELT";
         const r = await api<{ condition: number; cost: number }>(`/machines/${care.machineId}/service`, {
           method: "POST",
           body: JSON.stringify({ userId: player.id, kind }),
         });
-        setMsg(`Réparé → ${r.condition.toFixed(0)}% (−${r.cost} TRN)`);
+        setMsg(`Réparé → ${r.condition.toFixed(0)}% (−${r.cost} €)`);
       }
       setCare(null);
       await refreshPlayer();
@@ -4455,7 +4455,7 @@ export function App() {
                         ) : blocked ? (
                           <span className="upgrade-locked">Nv. joueur {next?.requiredLevel}</span>
                         ) : !canPay(player, cost) ? (
-                          <span className="upgrade-locked poor">{cost} TRN</span>
+                          <span className="upgrade-locked poor">{cost} €</span>
                         ) : (
                           <button
                             type="button"
@@ -4464,7 +4464,7 @@ export function App() {
                             title={`Passer au niveau ${lvl + 1} — ${buildingLevelDef(lvl + 1).name}`}
                             onClick={() => upgradeBuilding(b.id)}
                           >
-                            ↑ {cost} TRN
+                            ↑ {cost} €
                           </button>
                         )}
                         <button
@@ -4482,8 +4482,8 @@ export function App() {
                           disabled={busy}
                           title={
                             age != null && withinRegret(age)
-                              ? `Posé à l'instant — démolition intégralement remboursée (${refund} TRN)`
-                              : `Démolir et récupérer ${refund} TRN`
+                              ? `Posé à l'instant — démolition intégralement remboursée (${refund} €)`
+                              : `Démolir et récupérer ${refund} €`
                           }
                           onClick={() => sellBuilding(b.id, d.name)}
                         >
@@ -4520,7 +4520,7 @@ export function App() {
         <span className="build-text">
           <strong>{d.name}</strong>
           <span>
-            {d.w}×{d.h} · {d.cost} TRN
+            {d.w}×{d.h} · {d.cost} €
           </span>
           <span className="muted tiny">{d.description}</span>
         </span>
@@ -4720,7 +4720,7 @@ export function App() {
             <strong>Chez {homeOwner ?? visitOrder.clientName}</strong>
             <span>
               {WORK_LABELS[visitOrder.work]} · {visitOrder.remaining} case(s) · {visitOrder.payoutCrd}{" "}
-              TRN
+              €
             </span>
             <button type="button" className="chip" onClick={goHome}>
               Rentrer
@@ -4830,7 +4830,7 @@ export function App() {
                 style={{ ["--fill" as string]: `${Math.round((xpHere.into / xpHere.span) * 100)}%` }}
               />
             </span>
-            <span className="gold" title={hasUnlimitedFunds(player) ? "Trésorerie illimitée (compte développeur)" : "Terrons (TRN)"}>
+            <span className="gold" title={hasUnlimitedFunds(player) ? "Trésorerie illimitée (compte développeur)" : "Terrons (€)"}>
               {walletLabel(player)}
             </span>
             {player.bonuses && (
@@ -4839,7 +4839,7 @@ export function App() {
                 {Math.round(player.bonuses.yieldBonus * 100)}%
               </span>
             )}
-            {/* Au téléphone, tout ce qui précède sauf les TRN passe dans un
+            {/* Au téléphone, tout ce qui précède sauf les € passe dans un
                 tiroir : le bandeau doit tenir sur une ligne. */}
             {/*
               Les deux puces du téléphone : cotations et voisins.
@@ -5020,7 +5020,7 @@ export function App() {
         // possibles se nomment, et la barre le dit à la place du bouton.
         const souci =
           (player?.crd ?? 0) < def.cost
-            ? `Il vous manque ${def.cost - Math.round(player?.crd ?? 0)} TRN`
+            ? `Il vous manque ${def.cost - Math.round(player?.crd ?? 0)} €`
             : !placeOk
               ? "Place occupée — touchez une autre case"
               : null;
@@ -5057,7 +5057,7 @@ export function App() {
                 disabled={busy || !placeOk}
                 onClick={() => void confirmBuild()}
               >
-                Construire <b>{def.cost} TRN</b>
+                Construire <b>{def.cost} €</b>
               </button>
             </div>
           </div>
@@ -5271,13 +5271,13 @@ export function App() {
                           grease >= GREASE_FULL - 0.5
                             ? "Le graisseur est déjà au plein."
                             : !canPay(player, GREASE_COST_CRD)
-                              ? `Il vous manque ${Math.ceil(GREASE_COST_CRD - player.crd)} TRN pour graisser.`
+                              ? `Il vous manque ${Math.ceil(GREASE_COST_CRD - player.crd)} € pour graisser.`
                               : null
                         }
-                        hint={`Refaire le plein de graisse · ${GREASE_COST_CRD} TRN`}
+                        hint={`Refaire le plein de graisse · ${GREASE_COST_CRD} €`}
                         label={
                           <>
-                            <span>Graisser · {GREASE_COST_CRD} TRN</span>
+                            <span>Graisser · {GREASE_COST_CRD} €</span>
                             <em>ralentit l’usure</em>
                           </>
                         }
@@ -5290,13 +5290,13 @@ export function App() {
                           (m.dirt ?? 0) < 8
                             ? "Cette machine est propre — rien à nettoyer."
                             : !canPay(player, CLEAN_COST_CRD)
-                              ? `Il vous manque ${Math.ceil(CLEAN_COST_CRD - player.crd)} TRN pour le nettoyage.`
+                              ? `Il vous manque ${Math.ceil(CLEAN_COST_CRD - player.crd)} € pour le nettoyage.`
                               : null
                         }
-                        hint={`${CLEAN_COST_CRD} TRN`}
+                        hint={`${CLEAN_COST_CRD} €`}
                         label={
                           <>
-                            <span>Nettoyer · {CLEAN_COST_CRD} TRN</span>
+                            <span>Nettoyer · {CLEAN_COST_CRD} €</span>
                             <em>rend son rendement</em>
                           </>
                         }
@@ -5309,7 +5309,7 @@ export function App() {
                           !canHalf
                             ? "L’état est encore bon : il n’y a rien à rafistoler."
                             : halfQuote != null && !canPay(player, halfQuote.cost)
-                              ? `Il vous manque ${Math.ceil(halfQuote.cost - player.crd)} TRN pour ce rafistolage.`
+                              ? `Il vous manque ${Math.ceil(halfQuote.cost - player.crd)} € pour ce rafistolage.`
                               : null
                         }
                         hint={halfQuote ? `État → ${halfTarget.toFixed(0)} %` : undefined}
@@ -5319,12 +5319,12 @@ export function App() {
                            Le bouton annonce maintenant l'état d'arrivée —
                            c'est la seule chose qui distingue les deux.
                            Sur une machine neuve les devis valent zéro : le
-                           bouton annonçait « Rafistoler 0 TRN », un prix nul
+                           bouton annonçait « Rafistoler 0 € », un prix nul
                            pour un travail impossible. */
                         label={
                           canHalf ? (
                             <>
-                              <span>Réparer · {halfQuote?.cost ?? 0} TRN</span>
+                              <span>Réparer · {halfQuote?.cost ?? 0} €</span>
                               <em>
                                 état {m.condition.toFixed(0)} → {halfTarget.toFixed(0)} %
                               </em>
@@ -5342,14 +5342,14 @@ export function App() {
                           !canFull
                             ? "Cette machine est déjà à neuf."
                             : fullQuote != null && !canPay(player, fullQuote.cost)
-                              ? `Il vous manque ${Math.ceil(fullQuote.cost - player.crd)} TRN pour la révision.`
+                              ? `Il vous manque ${Math.ceil(fullQuote.cost - player.crd)} € pour la révision.`
                               : null
                         }
                         hint="Révision complète"
                         label={
                           canFull ? (
                             <>
-                              <span>Remettre à neuf · {fullQuote?.cost ?? 0} TRN</span>
+                              <span>Remettre à neuf · {fullQuote?.cost ?? 0} €</span>
                               <em>état {m.condition.toFixed(0)} → 100 %</em>
                             </>
                           ) : (
@@ -5366,19 +5366,19 @@ export function App() {
                         type="button"
                         className="sell-btn"
                         disabled={busy}
-                        title={`Le concessionnaire reprend tout de suite, sous la cote (${cote} TRN)`}
+                        title={`Le concessionnaire reprend tout de suite, sous la cote (${cote} €)`}
                         onClick={() => sellMachine(m.id, def?.name ?? m.type, reprise)}
                       >
-                        Reprise · {reprise} TRN
+                        Reprise · {reprise} €
                       </button>
                       <button
                         type="button"
                         className="ghost-btn"
                         disabled={busy}
-                        title={`Cote ${cote} TRN — l’engin quitte la ferme le temps de l’annonce`}
+                        title={`Cote ${cote} € — l’engin quitte la ferme le temps de l’annonce`}
                         onClick={() => listMachine(m.id, def?.name ?? m.type, cote)}
                       >
-                        Mettre en vente · cote {cote} TRN
+                        Mettre en vente · cote {cote} €
                       </button>
                     </span>
                   </li>
@@ -5424,7 +5424,7 @@ export function App() {
                     title={
                       litres <= 0
                         ? "Cuve déjà pleine"
-                        : `${Math.round(litres)} L pour environ ${Math.round(prix)} TRN`
+                        : `${Math.round(litres)} L pour environ ${Math.round(prix)} €`
                     }
                     onClick={() => void buyFuel(l)}
                   >
@@ -5460,7 +5460,7 @@ export function App() {
                           {mien ? " · votre annonce" : ` · ${l.seller?.displayName ?? "un voisin"}`}
                         </div>
                         <div className={`muted tiny ${affaire ? "wear-cost" : ""}`}>
-                          {l.priceCrd} TRN — cote {l.quote} TRN
+                          {l.priceCrd} € — cote {l.quote} €
                           {affaire ? " (sous la cote)" : " (au-dessus de la cote)"}
                         </div>
                       </span>
@@ -5479,12 +5479,12 @@ export function App() {
                           disabled={busy || player.crd < l.priceCrd}
                           title={
                             player.crd < l.priceCrd
-                              ? "TRN insuffisants"
+                              ? "€ insuffisants"
                               : `Reprend l’engin tel quel : ${l.hours.toFixed(0)} h, état ${l.condition.toFixed(0)} %`
                           }
                           onClick={() => void buyUsedMachine(l.id, l.name)}
                         >
-                          Acheter · {l.priceCrd} TRN
+                          Acheter · {l.priceCrd} €
                         </button>
                       )}
                     </li>
@@ -5546,13 +5546,13 @@ export function App() {
                     /* Le garage plein grisait le bouton nulle part : le
                        catalogue proposait chaque engin, et le clic revenait en
                        409 « Slots machines pleins ». Une place manquante se
-                       sait avant de cliquer, comme un TRN manquant. */
+                       sait avant de cliquer, comme un € manquant. */
                     disabled={busy || player.crd < prix || !placeAuGarage}
                     title={
                       !placeAuGarage
                         ? `Garage plein — ${parcMachines}/${slotsMachines} emplacements. Agrandissez ou bâtissez un hangar matériel, ou revendez un engin.`
                         : player.crd < prix
-                          ? `TRN insuffisants — ${prix} requis`
+                          ? `€ insuffisants — ${prix} requis`
                           : tractable
                             ? d.description
                             : `Aucun de vos tracteurs ne donne les ${besoin} ch nécessaires`
@@ -5564,7 +5564,7 @@ export function App() {
                       <strong>
                         {d.name} {TIER_LABELS[tierAchat]}
                       </strong>
-                      <span>{prix} TRN</span>
+                      <span>{prix} €</span>
                       <span className="muted tiny">
                         {d.kind === "TRACTOR"
                           ? `${machinePower(t, tierAchat)} ch`
@@ -5796,7 +5796,7 @@ export function App() {
                       <strong>{BUILDING_DEFS[buildType].name}</strong>
                       <span>
                         {BUILDING_DEFS[buildType].w}×{BUILDING_DEFS[buildType].h} ·{" "}
-                        {BUILDING_DEFS[buildType].cost} TRN
+                        {BUILDING_DEFS[buildType].cost} €
                       </span>
                       <span className="muted tiny">Cliquez la ferme pour le poser.</span>
                     </span>

@@ -121,8 +121,8 @@ describe("ce qu'une machine d'occasion fait perdre au champ", () => {
   it("ne se répare pas — c'est ce qui la distingue de la condition", () => {
     /**
      * Le trou que ce facteur bouche. Sans lui, un acheteur prenait une
-     * moissonneuse de 1 500 h à 660 TRN, la révisait, et ramassait autant
-     * qu'avec une neuve à 4 000 TRN.
+     * moissonneuse de 1 500 h à 660 €, la révisait, et ramassait autant
+     * qu'avec une neuve à 4 000 €.
      */
     const revisee = conditionYieldFactor(100) * machineAgeYieldFactor(1500);
     const neuve = conditionYieldFactor(100) * machineAgeYieldFactor(0);
@@ -149,16 +149,23 @@ describe("ce qu'une machine d'occasion fait perdre au champ", () => {
     expect(1 - machineAgeYieldFactor(600)).toBeLessThan(0.04);
   });
 
-  it("laisse l'occasion se rentabiliser en un champ ou deux", () => {
+  it("laisse l'occasion se rentabiliser en quelques champs", () => {
     /**
      * Le calcul que fait le joueur : acheter d'occasion plutôt que d'appeler
-     * l'entreprise. Une moissonneuse à 600 h doit se payer très vite.
+     * l'entreprise.
+     *
+     * « Un champ ou deux » datait d'une moissonneuse à 4 000 €. Aux prix en
+     * euros, la cote d'une machine à 600 heures se rembourse en 4,1 champs —
+     * cinq jours réels de travail sur une parcelle. C'est une décision, ce
+     * qu'un champ et demi n'était pas ; et c'est encore neuf fois plus rapide
+     * que dans la réalité, où une moissonneuse d'occasion met une quarantaine
+     * de moissons à battre l'entreprise sur quatorze hectares.
      */
     const cote = machineResaleValue("HARVESTER", { condition: 100, hours: 600 });
     const parChamp =
       contractorQuote("HARVEST", CHAMP) +
       brut * CONTRACTOR_YIELD_MALUS -
       brut * (1 - machineAgeYieldFactor(600));
-    expect(cote / parChamp).toBeLessThan(2);
+    expect(cote / parChamp).toBeLessThan(6);
   });
 });

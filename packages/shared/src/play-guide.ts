@@ -8,7 +8,54 @@
  */
 
 import { GOOD_DEFS, type TradeGood } from "./goods.js";
-import type { BuildingType, MachineType, Specialization } from "./index.js";
+import {
+  BUILDING_DEFS,
+  CROP_DEFS,
+  MACHINE_DEFS,
+  formatEuros,
+  type BuildingType,
+  type MachineType,
+  type Specialization,
+} from "./index.js";
+
+/*
+ * Les étiquettes du guide se déduisent des tables, **à la lecture**.
+ *
+ * Écrites en clair au montage du tableau, elles créaient une boucle : ce
+ * module lit `CROP_DEFS`, qui vit dans `index.ts`, qui réexporte ce module. Et
+ * une réexportation est hoistée — la déplacer en bas du fichier n'y change
+ * rien, contrairement à ce que j'ai d'abord cru. Un accesseur repousse la
+ * lecture après le chargement, où les tables existent.
+ *
+ * Le reste du raisonnement tient toujours.
+ *
+ * Elles étaient écrites à la main : « Silo à grain · 1 200 € · 2×2 »,
+ * « Tracteur T1 · 2 800 € ». Trente-deux prix recopiés à côté de leur
+ * source, qui ne bougeaient pas quand la source bougeait — un guide qui ment
+ * sur les prix est pire qu'un guide absent, puisqu'on le croit.
+ */
+
+/** Le nom d'un bâtiment, avec son prix et son emprise. */
+function nomBatiment(nom: string): string {
+  const def = Object.values(BUILDING_DEFS).find((b) => b.name === nom);
+  if (!def) return nom;
+  return `${def.name} · ${formatEuros(def.cost)} · ${def.w}×${def.h}`;
+}
+
+/** Le nom d'un engin, avec son prix au premier palier. */
+function nomMachine(nom: string): string {
+  const def = Object.values(MACHINE_DEFS).find((m) => m.name === nom);
+  if (!def) return nom;
+  return `${def.name} · ${formatEuros(def.cost)}`;
+}
+
+/** Le nom d'une culture, avec son coût de semence et son rendement. */
+function nomCulture(code: keyof typeof CROP_DEFS): string {
+  const c = CROP_DEFS[code];
+  return `${c.name} · ${formatEuros(c.seedCostPerCell)}/case · ${c.yieldPerCell
+    .toFixed(2)
+    .replace(".", ",")} t`;
+}
 
 export type GuideChapterId =
   | "crops"
@@ -217,37 +264,37 @@ export const GUIDE_CHAPTERS: GuideChapter[] = [
     entries: [
       {
         id: "WHEAT",
-        name: "Blé · 15 TRN/case · 0,35 t",
+        get name() { return nomCulture("WHEAT"); },
         how: "Outil Semer → Blé. Environ 3 min. C’est la culture de cash.",
         usedBy: "Céréalier : vente. Éleveur : paille (bientôt). Missions de moisson.",
       },
       {
         id: "BARLEY",
-        name: "Orge · 13 TRN/case · 0,32 t",
+        get name() { return nomCulture("BARLEY"); },
         how: "Outil Semer → Orge. Un peu plus rapide que le blé. Moissonneuse.",
         usedBy: "Céréalier : vente. Éleveur : concentré pour les cochons.",
       },
       {
         id: "MAIZE",
-        name: "Maïs · 18 TRN/case · 0,45 t",
+        get name() { return nomCulture("MAIZE"); },
         how: "Outil Semer → Maïs. Un peu plus long. Sert aussi de concentré.",
         usedBy: "Céréalier : vente. Éleveur : ration. Plus tard : ensilage.",
       },
       {
         id: "RAPE",
-        name: "Colza · 16 TRN/case · 0,22 t",
+        get name() { return nomCulture("RAPE"); },
         how: "Outil Semer → Colza. Plus long, moins de tonnes, mieux payé. Pas de paille.",
         usedBy: "Céréalier : rupture de rotation et vente. Ce n’est pas une légumineuse.",
       },
       {
         id: "PEA",
-        name: "Pois · 12 TRN/case · 0,26 t",
+        get name() { return nomCulture("PEA"); },
         how: "Outil Semer → Pois. Rapporte moins, laisse l’azote : +13 % sur la culture suivante.",
         usedBy: "Céréalier : rotation. Marché : protéine mieux payée.",
       },
       {
         id: "GRASS",
-        name: "Herbe · 8 TRN/case · 0,40 t de foin",
+        get name() { return `${nomCulture("GRASS")} de foin`; },
         how: "Outil Semer → Herbe. Faucher au tracteur, pas à la moissonneuse. Trois coupes, puis resemer.",
         usedBy: "Éleveur : foin au hangar. Le champ reprend tout seul entre deux fauches.",
       },
@@ -382,97 +429,97 @@ export const GUIDE_CHAPTERS: GuideChapter[] = [
     entries: [
       {
         id: "SILO",
-        name: "Silo à grain · 1 200 TRN · 2×2",
+        get name() { return nomBatiment("Silo à grain"); },
         how: "Sans silo, le grain se vend tout de suite, moins cher. Avec un silo : stocker, sécher, vendre au bon moment.",
         usedBy: "Céréalier. Premier bâtiment à viser après la vente.",
       },
       {
         id: "HAY_BARN",
-        name: "Hangar paille / foin · 900 TRN · 2×2",
+        get name() { return nomBatiment("Hangar paille / foin"); },
         how: "Stocke fourrages, séchage doux.",
         usedBy: "Éleveur. Céréalier qui vendra du foin et de la paille.",
       },
       {
         id: "DAIRY",
-        name: "Laiterie · 13 000 TRN · 2×2",
+        get name() { return nomBatiment("Laiterie"); },
         how: "Transforme 25 hL de lait par jour en fromage. Elle travaille pendant que vous êtes ailleurs, et le fromage ne se gâte pas.",
         usedBy: "Éleveur installé. Regardez la marge au Bureau : si le lait flambe, elle travaille à perte.",
       },
       {
         id: "MILL",
-        name: "Moulin · 4 000 TRN · 2×2",
+        get name() { return nomBatiment("Moulin"); },
         how: "Moud 2 t de blé par jour en farine. Il puise dans le silo, donc il en faut un.",
         usedBy: "Céréalier installé. Un tiers de valeur en plus sur ce qu’il moud.",
       },
       {
         id: "MACHINE_SHED",
-        name: "Hangar matériel · 1 500 TRN · 3×2",
+        get name() { return nomBatiment("Hangar matériel"); },
         how: "Range jusqu’à 6 engins sans encombrer la cour.",
         usedBy: "Dès la deuxième machine.",
       },
       {
         id: "CATTLE_BARN",
-        name: "Étable bovins · 2 800 TRN · 3×3",
+        get name() { return nomBatiment("Étable bovins"); },
         how: "12 places, traite, reproduction. Sans elle, pas de vaches.",
         usedBy: "Éleveur.",
       },
       {
         id: "PIGSTY",
-        name: "Porcherie · 2 200 TRN · 2×3",
+        get name() { return nomBatiment("Porcherie"); },
         how: "20 places. Viande plutôt que lait.",
         usedBy: "Éleveur.",
       },
       {
         id: "HENHOUSE",
-        name: "Poulailler · 1 400 TRN · 2×2",
+        get name() { return nomBatiment("Poulailler"); },
         how: "24 places. Le revenu, c’est l’œuf, pas la viande.",
         usedBy: "Éleveur.",
       },
       {
         id: "SHEEPFOLD",
-        name: "Bergerie · 2 000 TRN · 3×2",
+        get name() { return nomBatiment("Bergerie"); },
         how: "16 places. On tond la laine ; la viande vient après.",
         usedBy: "Éleveur.",
       },
       {
         id: "COLD_ROOM",
-        name: "Chambre froide · 2 600 TRN · 2×2",
+        get name() { return nomBatiment("Chambre froide"); },
         how: "Ralentit de 40 % la perte du lait, de la viande et des œufs.",
         usedBy: "Éleveur qui ne vend pas dans la minute.",
       },
       {
         id: "WORKSHOP",
-        name: "Atelier · 1 100 TRN · 2×2",
+        get name() { return nomBatiment("Atelier"); },
         how: "Répare moins cher. Graisse et nettoyage pour tout le monde.",
         usedBy: "Utile dès qu’on a une machine.",
       },
       {
         id: "FARMHOUSE",
-        name: "Maison d’exploitation · 2 000 TRN · 2×2",
+        get name() { return nomBatiment("Maison d’exploitation"); },
         how: "Siège : +2 % d’XP.",
         usedBy: "Tous.",
       },
       {
         id: "PADDOCK",
-        name: "Enclos de pâture · 1 210 TRN · 3×3",
+        get name() { return nomBatiment("Enclos de pâture"); },
         how: "À coller contre l’étable. Les bêtes au pré, le lait monte.",
         usedBy: "Éleveur.",
       },
       {
         id: "PIG_YARD",
-        name: "Courette à porcs · 780 TRN · 2×3",
+        get name() { return nomBatiment("Courette à porcs"); },
         how: "À coller contre la porcherie.",
         usedBy: "Éleveur.",
       },
       {
         id: "HEN_YARD",
-        name: "Courette à poules · 520 TRN · 2×3",
+        get name() { return nomBatiment("Courette à poules"); },
         how: "À coller contre le poulailler. Les poules picorent, elles pondent mieux.",
         usedBy: "Éleveur.",
       },
       {
         id: "BUNKER_SILO",
-        name: "Silo couloir · 1 400 TRN · 3×2",
+        get name() { return nomBatiment("Silo couloir"); },
         how: "Tasse ensilage et paille. Le fourrage d’hiver a besoin d’une place.",
         usedBy: "Éleveur. Céréalier qui ensile pour vendre au voisin.",
       },
@@ -485,37 +532,37 @@ export const GUIDE_CHAPTERS: GuideChapter[] = [
     entries: [
       {
         id: "TRACTOR",
-        name: "Tracteur T1 · 2 800 TRN",
+        get name() { return nomMachine("Tracteur"); },
         how: "Semis, labour, ferti, ramassage des bottes.",
         usedBy: "Les deux métiers. Idle, il va aussi chez le voisin.",
       },
       {
         id: "HARVESTER",
-        name: "Moissonneuse T1 · 4 000 TRN",
+        get name() { return nomMachine("Moissonneuse"); },
         how: "Récolte. On ne la donne pas au départ : demandez de l’aide, ou achetez-la plus tard.",
         usedBy: "Céréalier (ou il fait venir quelqu’un). Chantier le plus demandé.",
       },
       {
         id: "SPREADER",
-        name: "Épandeur T1 · 1 500 TRN",
+        get name() { return nomMachine("Épandeur"); },
         how: "Fertilisation plus douce pour la machine que le tracteur.",
         usedBy: "Céréalier. Missions d’épandage.",
       },
       {
         id: "DISC_HARROW",
-        name: "Déchaumeur · 1 600 TRN",
+        get name() { return nomMachine("Déchaumeur"); },
         how: "Enterre les chaumes.",
         usedBy: "Céréalier. Pour déchaumer après la récolte.",
       },
       {
         id: "BALER",
-        name: "Presse à balles · 1 800 TRN",
+        get name() { return nomMachine("Presse à balles"); },
         how: "Presse l’andain en bottes. Sans elle, la paille reste au champ.",
         usedBy: "Céréalier. Missions de pressage. L’éleveur achète les bottes.",
       },
       {
         id: "FORAGE_HARVESTER",
-        name: "Ensileuse T1 · 4 200 TRN",
+        get name() { return nomMachine("Ensileuse"); },
         how: "Maïs plante entière, avant la maturité grain. Plus de tonnage, pour le troupeau.",
         usedBy: "Céréalier. Missions d’ensilage.",
       },

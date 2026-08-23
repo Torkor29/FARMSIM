@@ -1,7 +1,7 @@
 /**
  * Courbe des cours passés, en pleine largeur d'une ligne de texte.
  *
- * Sans mémoire des prix, une cotation ne veut rien dire : 265 TRN la tonne
+ * Sans mémoire des prix, une cotation ne veut rien dire : 265 € la tonne
  * est une bonne affaire ou une braderie selon d'où le cours vient. Le tracé
  * ne cherche pas la précision — pas d'axes, pas de graduations — mais la
  * forme : ça monte, ça descend, ça stagne.
@@ -47,7 +47,7 @@ export function PriceSparkline({ points, height = 34, compact = false }: Props) 
         viewBox={`0 0 ${VIEW_W} ${h}`}
         preserveAspectRatio="none"
         role="img"
-        aria-label={`Cours : ${pct}, de ${first.toFixed(0)} à ${last.toFixed(0)} TRN la tonne`}
+        aria-label={`Cours : ${pct}, de ${first.toFixed(0)} à ${last.toFixed(0)} € la tonne`}
       >
         <polygon points={area} className="spark-fill" />
         <polyline points={coords.join(" ")} fill="none" vectorEffect="non-scaling-stroke" />

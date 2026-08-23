@@ -20,7 +20,7 @@ export type Consignes = {
   straw: boolean;
   /** Si personne ne prend, une culture peut se perdre. Affiché en rouge. */
   npcAllowed: boolean;
-  /** Plafond de dépense pour une absence, en TRN. */
+  /** Plafond de dépense pour une absence, en €. */
   maxSpend: number;
 };
 

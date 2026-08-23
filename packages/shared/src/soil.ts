@@ -51,7 +51,7 @@ export const RESIDUE_YIELD_BONUS: readonly number[] = [0, 0.05, 0.09];
 /**
  * Coût du déchaumage, par case `[GD]`.
  *
- * Ce forfait valait cinq TRN quand il tenait lieu de tout : gazole,
+ * Ce forfait valait cinq € quand il tenait lieu de tout : gazole,
  * main-d'œuvre, pièces d'usure, en un seul nombre que le joueur ne pouvait ni
  * décomposer ni réduire. Le gazole étant désormais compté à part et facturé
  * sur la cuve, il ne reste ici que ce qu'il représentait vraiment en plus —
@@ -62,12 +62,12 @@ export const STUBBLE_COST_PER_CELL = 1;
 /**
  * Coût du labour, par case `[GD]`.
  *
- * Douze TRN la case faisaient 1 716 TRN pour une parcelle entière — de loin le
+ * Douze € la case faisaient 1 716 € pour une parcelle entière — de loin le
  * poste le plus lourd d'une saison, sans que rien n'explique pourquoi. Le
  * gazole prend le relais et se voit : un labour de champ entier brûle 176 L,
- * soit 281 TRN, et ce chiffre-là se réduit en attelant juste.
+ * soit 281 €, et ce chiffre-là se réduit en attelant juste.
  *
- * Il reste deux TRN la case pour les socs, qui sont de vraies pièces d'usure —
+ * Il reste deux € la case pour les socs, qui sont de vraies pièces d'usure —
  * une charrue en mange un jeu par campagne.
  */
 export const PLOW_COST_PER_CELL_SOIL = 2;
@@ -107,7 +107,7 @@ export function plowRequired(state: Pick<SoilState, "harvestsSincePlow">): boole
  * de résidus. On paie donc un peu plus la graine mise en terre — mais on
  * économise **tout un passage**, gazole compris.
  *
- * Trois TRN étaient calés sur des forfaits de travail du sol qui valaient
+ * Trois € étaient calés sur des forfaits de travail du sol qui valaient
  * alors cinq et douze. Ceux-ci sont tombés à un et deux, le gazole ayant pris
  * le relais : à trois, le semis direct devenait l'option la plus chère du jeu,
  * ce qui retournait exactement sa raison d'être. Un test l'a signalé.

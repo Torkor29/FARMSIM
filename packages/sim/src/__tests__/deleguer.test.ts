@@ -5,14 +5,14 @@ import { contractorTotal, laborEscrow, urgentContractorQuote, CROP_DEFS } from "
  *
  * Signalé en jouant : « les prix PNJ / pour faire faire sont toujours
  * aberrants et semblent redondants ». Sur cent trente-quatre cases de maïs,
- * l'écran proposait « Faire faire · 1 325 TRN » à côté de « Demander de l'aide
- * · 3 564 TRN ». Trois fois moins cher pour le même travail : de quoi croire
+ * l'écran proposait « Faire faire · 1 325 € » à côté de « Demander de l'aide
+ * · 3 564 € ». Trois fois moins cher pour le même travail : de quoi croire
  * que l'entraide n'a aucun intérêt.
  *
  * Les deux prix n'étaient tout simplement pas comparables. Le premier annonçait
  * le **service seul** ; le second, le service **plus les semences**. Le serveur,
- * lui, débitait les semences dans les deux cas — 3 737 TRN pour le dépannage.
- * Le bouton sous-facturait donc de deux mille TRN, et le clic répondait « TRN
+ * lui, débitait les semences dans les deux cas — 3 737 € pour le dépannage.
+ * Le bouton sous-facturait donc de deux mille €, et le clic répondait « €
  * insuffisants ».
  *
  * Une fois les deux devis mis sur le même pied, le classement s'inverse :

@@ -104,7 +104,7 @@ describe("le bandeau du haut", () => {
   });
 
   it("n’écrit pas une somme qu’il devra couper", () => {
-    expect(APP).toMatch(/return hasUnlimitedFunds\(player\) \? "∞ TRN" : formatTerrons\(player\.crd\)/);
+    expect(APP).toMatch(/return hasUnlimitedFunds\(player\) \? "∞ €" : formatEurosCourt\(player\.crd\)/);
   });
 
   it("laisse le guide joignable bien que le « ? » s’efface", () => {

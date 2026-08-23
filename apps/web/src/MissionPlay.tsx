@@ -68,7 +68,7 @@ export function MissionPlay({ contract, busy = false, onCancel, onDone }: Props)
       <div className="care-card glass mission-card" onClick={(e) => e.stopPropagation()}>
         <h3 id="mission-title">{contract.title}</h3>
         <p className="care-machine">
-          {WORK_LABELS[contract.work]} · {contract.rewardCrd} TRN
+          {WORK_LABELS[contract.work]} · {contract.rewardCrd} €
         </p>
         <p className="muted tiny">
           Glissez sur les cases. Un travail à la fois — vos cultures poussent chez vous.
@@ -98,7 +98,7 @@ export function MissionPlay({ contract, busy = false, onCancel, onDone }: Props)
             Laisser
           </button>
           <button type="button" className="go" disabled={!finished || busy} onClick={onDone}>
-            Encaisser {contract.rewardCrd} TRN
+            Encaisser {contract.rewardCrd} €
           </button>
         </div>
       </div>

@@ -12,7 +12,11 @@
  */
 
 import {
+  BUILDING_DEFS,
   GAME_DAY_MS,
+  GOOD_DEFS,
+  LAND_BASE_PER_HA,
+  PARCEL_HECTARES,
   LOAN_DAILY_RATE,
   LOAN_EQUITY_RATIO,
   LOAN_FLOOR_CRD,
@@ -28,20 +32,38 @@ import {
   seasonInterest,
 } from "@farmsim/shared";
 
-/** Une ferme installée : une parcelle, quelques bâtiments, le parc de base. */
+/**
+ * Une ferme installée, chiffrée sur les tables du jeu.
+ *
+ * Elle portait des montants écrits à la main — 9 000 de terre, 4 000 de
+ * matériel — qui décrivaient l'échelle d'avant les euros. Ils ne voulaient
+ * plus rien dire une fois les prix passés au réel : une exploitation dont tout
+ * le parc vaut 4 000 € n'est pas « installée », elle n'existe pas.
+ *
+ * Trois parcelles, le hangar et le silo, le parc de départ complet et un peu
+ * de grain en stock : c'est l'exploitation qui peut envisager une moissonneuse
+ * de palier deux, ce que ce fichier sert précisément à vérifier.
+ */
 const INSTALLEE = {
-  landCrd: 9000,
-  buildingsCrd: 3000,
-  machinesCrd: 4000,
-  stockCrd: 800,
-  cashCrd: 1200,
+  landCrd: LAND_BASE_PER_HA * PARCEL_HECTARES * 3,
+  buildingsCrd: BUILDING_DEFS.SILO.cost + BUILDING_DEFS.MACHINE_SHED.cost,
+  machinesCrd:
+    MACHINE_DEFS.TRACTOR.cost + MACHINE_DEFS.SEEDER.cost + MACHINE_DEFS.PLOUGH.cost,
+  stockCrd: 10 * GOOD_DEFS.WHEAT.basePrice,
+  cashCrd: 3000,
   debtCrd: 0,
 };
 
 describe("les capitaux propres portent la ligne", () => {
   it("comptent tout l'actif, moins ce qu'on doit", () => {
     const net = farmEquity(INSTALLEE);
-    expect(net).toBe(9000 + 3000 + 4000 + 800 + 1200);
+    expect(net).toBe(
+      INSTALLEE.landCrd +
+        INSTALLEE.buildingsCrd +
+        INSTALLEE.machinesCrd +
+        INSTALLEE.stockCrd +
+        INSTALLEE.cashCrd,
+    );
     expect(farmEquity({ ...INSTALLEE, debtCrd: 5000 })).toBe(net - 5000);
   });
 
@@ -99,9 +121,9 @@ describe("on peut se surendetter — c'est tout l'intérêt", () => {
 
   it("pèse sur la saison sans l'écraser", () => {
     /**
-     * Le chiffre que le joueur ressent. Sur dix mille TRN empruntés, la saison
+     * Le chiffre que le joueur ressent. Sur dix mille € empruntés, la saison
      * doit coûter assez pour entrer dans le calcul — une saison sur une
-     * parcelle rapporte environ 2 300 TRN — et jamais assez pour la manger.
+     * parcelle rapporte environ 2 300 € — et jamais assez pour la manger.
      */
     const cout = seasonInterest(10000);
     expect(cout).toBeGreaterThan(150);

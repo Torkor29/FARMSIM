@@ -20,8 +20,18 @@ import type { Hemisphere } from "./world.js";
 /* Constantes de référence                                             */
 /* ------------------------------------------------------------------ */
 
-/** Prix de référence surfacique `[GD]` */
-export const LAND_BASE_PER_HA = 420;
+/**
+ * Prix de référence surfacique, en euros par hectare.
+ *
+ * Prix réel : la terre agricole française vaut autour de 6 000 € l'hectare en
+ * moyenne, moins en zone d'élevage, beaucoup plus en vigne. On retient 5 200,
+ * milieu de fourchette pour de la grande culture.
+ *
+ * Elle valait 420, soit deux tonnes de blé l'hectare — une parcelle entière
+ * s'achetait avec une demi-moisson, et acheter de la terre n'était donc pas
+ * une décision.
+ */
+export const LAND_BASE_PER_HA = 5200;
 
 /** Surface d'une parcelle 12×12 `[GD]` — figé par `23_GRID_SIZING.md` */
 export const LAND_PARCEL_HA = 14;

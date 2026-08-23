@@ -3,7 +3,7 @@
  *
  * Le mot n'apparaissait nulle part dans le code, alors que c'est le premier
  * poste variable d'une exploitation réelle. Les travaux coûtaient un forfait
- * par case — douze TRN pour un labour — qui mélangeait carburant, main-d'œuvre
+ * par case — douze € pour un labour — qui mélangeait carburant, main-d'œuvre
  * et pièces d'usure en un seul nombre que le joueur ne pouvait ni décomposer
  * ni réduire.
  *
@@ -78,7 +78,7 @@ describe("la consommation suit la charge", () => {
 describe("ce que ça pèse dans une saison", () => {
   it("reste un poste sensible sans étrangler la ferme", () => {
     /**
-     * Un champ de blé rapporte environ onze mille TRN bruts. Le gazole d'un
+     * Un champ de blé rapporte environ onze mille € bruts. Le gazole d'un
      * labour doit se sentir — c'est le poste qu'on cherche à réduire — sans
      * dépasser ce que la parcelle rapporte.
      */
@@ -90,7 +90,7 @@ describe("ce que ça pèse dans une saison", () => {
 
   it("a remplacé le forfait opaque, pas doublé la note", () => {
     /**
-     * Douze TRN la case faisaient 1 728 TRN pour une parcelle entière, de loin
+     * Douze € la case faisaient 1 728 € pour une parcelle entière, de loin
      * le poste le plus lourd d'une saison sans que rien n'explique pourquoi.
      * Le gazole prend le relais : il doit coûter moins que ce qu'il remplace,
      * sinon on aurait simplement renchéri le labour.

@@ -29,6 +29,8 @@ import { fileURLToPath } from "node:url";
 import { creerBaseTest, supprimerBaseTest, type BaseTest } from "./base-test.js";
 import { formatRecovery, isRecoveryCode } from "@farmsim/shared";
 import {
+  BUILDING_DEFS,
+  MACHINE_DEFS,
   machineCost,
   PLANTING_WINDOW,
   SEASON_DURATION_MS,
@@ -343,10 +345,16 @@ describe("argent", () => {
   }
 
   it("ne laisse pas huit dépenses simultanées passer avec l'argent d'une seule", async () => {
-    // Un silo coûte 1 200 : avec 1 500 en poche, une seule construction doit
-    // aboutir. Avant correction, quatre passaient et le compte finissait à
-    // −3 300 TRN.
-    const f = await fermeAvec(1500);
+    /*
+     * Juste de quoi en payer un seul : c'est ce qui met la concurrence à
+     * l'épreuve. Avant correction, quatre passaient et le compte finissait
+     * dans le rouge.
+     *
+     * La somme se déduit du prix du silo. Écrite « 1 500 » en dur, elle valait
+     * pour un silo à 1 200 ; passée aux euros, elle n'en payait plus aucun et
+     * le test mesurait zéro construction au lieu d'une.
+     */
+    const f = await fermeAvec(Math.round(BUILDING_DEFS.SILO.cost * 1.25));
     const tirs = Array.from({ length: 8 }, (_, i) =>
       appel(`/parcels/${f.parcelId}/build`, {
         methode: "POST",
@@ -964,6 +972,17 @@ describe("marché de l'occasion", () => {
   const argent = async (jeton: string) =>
     (await appel("/auth/me", { jeton })).corps as unknown as { player: { crd: number } };
 
+  /**
+   * Un prix d'annonce que la cote accepte, pour un tracteur de départ.
+   *
+   * Les tests posaient « 700 » ou « 800 », qui étaient de bons prix quand un
+   * tracteur en valait 2 800. Passés aux euros, ils tombent sous le plancher
+   * de la cote et le serveur refuse par un 409 — un chiffre recopié qui décrit
+   * le prix d'hier, pas la règle. La moitié du prix catalogue tient dans les
+   * bornes quel que soit le barème.
+   */
+  const prixAnnonce = (_: unknown): number => Math.round(MACHINE_DEFS.TRACTOR.cost * 0.5);
+
   it("sort l'engin de la ferme dès la mise en vente", async () => {
     /**
      * Le point qui décide de tout le reste : l'annonce *est* la machine
@@ -975,7 +994,7 @@ describe("marché de l'occasion", () => {
     const tracteur = v.machines.find((m) => m.type === "TRACTOR")!;
     const r = await appel(`/machines/${tracteur.id}/list`, {
       methode: "POST",
-      corps: { userId: v.id, priceCrd: 800 },
+      corps: { userId: v.id, priceCrd: prixAnnonce(v) },
       jeton: v.jeton,
     });
     assert.equal(r.statut, 201, `mise en vente refusée : ${JSON.stringify(r.corps)}`);
@@ -1008,7 +1027,7 @@ describe("marché de l'occasion", () => {
 
     const pose = await appel(`/machines/${tracteur.id}/list`, {
       methode: "POST",
-      corps: { userId: v.id, priceCrd: 700 },
+      corps: { userId: v.id, priceCrd: prixAnnonce(v) },
       jeton: v.jeton,
     });
     assert.equal(pose.statut, 201);
@@ -1026,8 +1045,8 @@ describe("marché de l'occasion", () => {
 
     const apresV = (await argent(v.jeton)).player.crd;
     const apresA = (await argent(a.jeton)).player.crd;
-    assert.equal(Math.round(apresV - avantV), 700, "le vendeur n'a pas été payé");
-    assert.equal(Math.round(avantA - apresA), 700, "l'acheteur n'a pas été débité");
+    assert.equal(Math.round(apresV - avantV), prixAnnonce(v), "le vendeur n'a pas été payé");
+    assert.equal(Math.round(avantA - apresA), prixAnnonce(v), "l'acheteur n'a pas été débité");
 
     const parc = (await appel("/auth/me", { jeton: a.jeton })).corps as unknown as {
       player: { farm: { machines: { type: string }[] } };
@@ -1046,7 +1065,7 @@ describe("marché de l'occasion", () => {
     const tracteur = v.machines.find((m) => m.type === "TRACTOR")!;
     const pose = await appel(`/machines/${tracteur.id}/list`, {
       methode: "POST",
-      corps: { userId: v.id, priceCrd: 700 },
+      corps: { userId: v.id, priceCrd: prixAnnonce(v) },
       jeton: v.jeton,
     });
     const annonce = (pose.corps as unknown as { listing: { id: string } }).listing;
@@ -1064,7 +1083,7 @@ describe("marché de l'occasion", () => {
     const tracteur = v.machines.find((m) => m.type === "TRACTOR")!;
     const pose = await appel(`/machines/${tracteur.id}/list`, {
       methode: "POST",
-      corps: { userId: v.id, priceCrd: 700 },
+      corps: { userId: v.id, priceCrd: prixAnnonce(v) },
       jeton: v.jeton,
     });
     const annonce = (pose.corps as unknown as { listing: { id: string } }).listing;

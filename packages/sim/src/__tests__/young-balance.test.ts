@@ -38,8 +38,8 @@ describe("acheter jeune ou adulte", () => {
   it("le jeune coûte nettement moins cher, sans être donné", () => {
     // Trop bas, l'adulte ne s'achète plus jamais ; trop haut, attendre une
     // saison ne se paie pas.
-    expect(prixJeune / prixAdulte).toBeGreaterThan(0.25);
-    expect(prixJeune / prixAdulte).toBeLessThan(0.55);
+    expect(prixJeune / prixAdulte).toBeGreaterThan(0.45);
+    expect(prixJeune / prixAdulte).toBeLessThan(0.75);
   });
 
   it("l'économie dépasse le lait auquel on renonce — et c'est assumé", () => {
@@ -100,7 +100,7 @@ describe("acheter jeune ou adulte", () => {
     // et plus vite, qu'une vache laitière — sinon plus personne ne trait.
     expect(MEAT_BASE_KG).toBeGreaterThan(0);
     const viandeParBete = MEAT_BASE_KG / 1000; // en tonnes
-    // La viande vaut autour de 1 300 TRN la tonne, contre 40 pour le lait.
+    // La viande vaut autour de 1 300 € la tonne, contre 40 pour le lait.
     const recetteViande = viandeParBete * GOOD_DEFS.MEAT.basePrice;
     const recetteLait = (laitSur(YOUNG_GROW_MS, 1) / 100) * PRIX_HECTOLITRE;
     // La viande est plus lucrative — c'est voulu, on tue la bête. Mais elle

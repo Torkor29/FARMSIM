@@ -626,7 +626,7 @@ export function LivestockPanel({
           room <= 0
             ? "Bâtiment plein — améliorez-le pour agrandir le troupeau"
             : !canBuy
-              ? `Il vous manque ${barn.cowPrice - Math.floor(crd)} TRN pour une bête`
+              ? `Il vous manque ${barn.cowPrice - Math.floor(crd)} € pour une bête`
               : null;
 
         return (
@@ -977,7 +977,7 @@ export function LivestockPanel({
               <span className="herd-buy-label">
                 Acheter des {espece ? ANIMAL_PLURAL[espece] : "bêtes"}
                 <em>
-                  {prixPiece} TRN pièce · {room} place{room > 1 ? "s" : ""} libre
+                  {prixPiece} € pièce · {room} place{room > 1 ? "s" : ""} libre
                   {room > 1 ? "s" : ""}
                 </em>
               </span>
@@ -991,7 +991,7 @@ export function LivestockPanel({
                   onClick={() => setJeunes((p) => ({ ...p, [barn.buildingId]: false }))}
                 >
                   Adultes
-                  <em>{barn.cowPrice} TRN · produisent tout de suite</em>
+                  <em>{barn.cowPrice} € · produisent tout de suite</em>
                 </button>
                 <button
                   type="button"
@@ -1001,7 +1001,7 @@ export function LivestockPanel({
                 >
                   Jeunes
                   <em>
-                    {Math.round(barn.cowPrice * YOUNG_PRICE_RATIO)} TRN · adultes dans{" "}
+                    {Math.round(barn.cowPrice * YOUNG_PRICE_RATIO)} € · adultes dans{" "}
                     {dureeReelle(YOUNG_GROW_MS)} réelles
                   </em>
                 </button>
@@ -1046,7 +1046,7 @@ export function LivestockPanel({
                   disabled={busy || !canBuy}
                   onClick={() => onBuyAnimals(barn.buildingId, lot, jeune)}
                 >
-                  Acheter <b>{lot * prixPiece} TRN</b>
+                  Acheter <b>{lot * prixPiece} €</b>
                 </button>
               </div>
               {empechement && <p className="herd-buy-why">{empechement}</p>}

@@ -32,7 +32,7 @@ describe("les petits ouvrages", () => {
   });
 
   it("tiennent dans un coin de la ferme", () => {
-    // Une ruche qui prendrait 3×3 se paierait en terrain, pas en TRN.
+    // Une ruche qui prendrait 3×3 se paierait en terrain, pas en €.
     for (const t of PETITS) {
       const d = BUILDING_DEFS[t];
       expect({ t, cases: d.w * d.h }).toEqual({ t, cases: d.w * d.h });

@@ -175,10 +175,10 @@ function DeliveryList({
                   disabled={busy || crd < d.autoFee}
                   onClick={() => onAutoDeliverLot(d.id)}
                 >
-                  Faire venir · {d.autoFee} TRN
+                  Faire venir · {d.autoFee} €
                 </button>
                 {crd < d.autoFee && (
-                  <em className="supply-why">Il vous manque {Math.ceil(d.autoFee - crd)} TRN</em>
+                  <em className="supply-why">Il vous manque {Math.ceil(d.autoFee - crd)} €</em>
                 )}
               </span>
             )}
@@ -297,7 +297,7 @@ export function MarketPanel({
             <p className="hall-kicker">Bienvenue</p>
             <h2>Hôtel des ventes</h2>
             <p className="hall-wallet">
-              Vous avez <strong>{Math.round(crd)} TRN</strong>
+              Vous avez <strong>{Math.round(crd)} €</strong>
             </p>
           </div>
           <button type="button" className="ghost" onClick={onClose}>
@@ -473,7 +473,7 @@ export function MarketPanel({
                   </label>
 
                   <p className="market-course">
-                    Prix du jour : <strong>{price.price.toFixed(0)} TRN / {GOOD_DEFS[item.itemCode as TradeGood]?.unit ?? "t"}</strong>
+                    Prix du jour : <strong>{price.price.toFixed(0)} € / {GOOD_DEFS[item.itemCode as TradeGood]?.unit ?? "t"}</strong>
                   </p>
                   <PriceSparkline points={history} />
 
@@ -482,7 +482,7 @@ export function MarketPanel({
                       <div className="channel-card">
                         <h3>{SALE_CHANNEL_LABELS.MARKET}</h3>
                         <p className="channel-net">
-                          {marketQ.net} TRN
+                          {marketQ.net} €
                           <em className="sure">argent maintenant</em>
                         </p>
                         {/* La note du canal vient du domaine : elle dit qui
@@ -504,11 +504,11 @@ export function MarketPanel({
                       <div className="channel-card">
                         <h3>{SALE_CHANNEL_LABELS.LISTING}</h3>
                         <p className="channel-net">
-                          {listQ.net} TRN
+                          {listQ.net} €
                           <em className="risky">si un joueur achète</em>
                         </p>
                         <label className="ask-field">
-                          <span>Votre prix (TRN / {GOOD_DEFS[item.itemCode as TradeGood]?.unit ?? "t"})</span>
+                          <span>Votre prix (€ / {GOOD_DEFS[item.itemCode as TradeGood]?.unit ?? "t"})</span>
                           <input
                             type="number"
                             min={1}
@@ -530,7 +530,7 @@ export function MarketPanel({
                             visible. */}
                         {tons > 0 && crd < listingFee(ask, tons) && (
                           <p className="supply-why">
-                            Commission de {listingFee(ask, tons)} TRN à avancer — il vous en
+                            Commission de {listingFee(ask, tons)} € à avancer — il vous en
                             manque {Math.ceil(listingFee(ask, tons) - crd)}.
                           </p>
                         )}
@@ -549,7 +549,7 @@ export function MarketPanel({
                         disabled={busy || tons <= 0}
                         onClick={() => act("DEALER")}
                       >
-                        {SALE_CHANNEL_LABELS.DEALER} · {dealerQ.net} TRN
+                        {SALE_CHANNEL_LABELS.DEALER} · {dealerQ.net} €
                       </button>{" "}
                       <span className="channel-note">{dealerQ.note}</span>
                     </p>
@@ -578,7 +578,7 @@ export function MarketPanel({
                           <strong>{goodName(l.commodity)}</strong>
                           <span>{qualityOf(l.commodity, l.tons, l.moisture, l.quality)}</span>
                           <em>
-                            {l.pricePerTon.toFixed(0)} TRN · encore{" "}
+                            {l.pricePerTon.toFixed(0)} € · encore{" "}
                             {Math.max(0, Math.round(l.expiresInMs / 60000))} min
                           </em>
                         </div>
@@ -632,9 +632,9 @@ export function MarketPanel({
                       <em>Chez {l.sellerName}</em>
                     </div>
                     <div className="sale-pay">
-                      <strong>{l.total} TRN</strong>
+                      <strong>{l.total} €</strong>
                       <em>
-                        {l.pricePerTon.toFixed(0)} TRN /{" "}
+                        {l.pricePerTon.toFixed(0)} € /{" "}
                         {GOOD_DEFS[l.commodity as TradeGood]?.unit ?? "t"}
                       </em>
                       <button
@@ -646,7 +646,7 @@ export function MarketPanel({
                         Acheter
                       </button>
                       {crd < l.total && (
-                        <em className="supply-why">Il manque {Math.ceil(l.total - crd)} TRN</em>
+                        <em className="supply-why">Il manque {Math.ceil(l.total - crd)} €</em>
                       )}
                     </div>
                   </article>
@@ -713,7 +713,7 @@ function SupplyTab({
             <span className="build-text">
               <strong>{def.name}</strong>
               <span>
-                {unit.toFixed(1)} TRN/{def.unit}
+                {unit.toFixed(1)} €/{def.unit}
               </span>
               <em className="supply-use">{DEALER_INPUT_USE[good]}</em>
             </span>
@@ -733,7 +733,7 @@ function SupplyTab({
               disabled={busy || crd < total}
               onClick={() => onBuy(good, qty)}
             >
-              Acheter · {total} TRN
+              Acheter · {total} €
             </button>
             {/* Un bouton grisé ne dit pas ce qui cloche, et sur un écran tactile
                 il n'y a pas d'infobulle pour le rattraper : on appuie, rien ne se
@@ -741,7 +741,7 @@ function SupplyTab({
                 route d'achat fonctionne, c'est la caisse qui ne suivait pas. */}
             {crd < total && (
               <p className="supply-why">
-                Il vous manque {Math.ceil(total - crd)} TRN — réduisez la quantité
+                Il vous manque {Math.ceil(total - crd)} € — réduisez la quantité
                 ou vendez d’abord.
               </p>
             )}
@@ -788,7 +788,7 @@ function FuturesTab({
       {/* « Ça coûte 20 % de plus » ne voulait rien dire : rien ne coûte plus
           cher, et le chiffre tombait sans que personne sache d'où il sortait.
           C'est une pénalité — une part de la valeur du contrat, prélevée si
-          l'échéance passe sans livraison —, et elle se chiffre en TRN sur le
+          l'échéance passe sans livraison —, et elle se chiffre en € sur le
           contrat qu'on est en train de composer. */}
       <p className="hall-lead">
         Vous bloquez dès maintenant le prix d’une récolte que vous n’avez pas
@@ -798,7 +798,7 @@ function FuturesTab({
       <p className="hall-lead danger">
         Engagement ferme : si l’échéance passe sans livraison, vous payez une
         pénalité de {Math.round(FUTURES_PENALTY_RATE * 100)} % de la valeur du
-        contrat — {futuresPenalty(garanti, tons)} TRN pour celui-ci. Elle peut
+        contrat — {futuresPenalty(garanti, tons)} € pour celui-ci. Elle peut
         mettre votre compte à découvert.
       </p>
 
@@ -837,8 +837,8 @@ function FuturesTab({
 
       <p className="market-course">
         Prix du jour <strong>{spot.toFixed(1)}</strong> · prix fixé{" "}
-        <strong>{garanti.toFixed(1)} TRN/t</strong> · total{" "}
-        <strong>{Math.round(garanti * tons)} TRN</strong>
+        <strong>{garanti.toFixed(1)} €/t</strong> · total{" "}
+        <strong>{Math.round(garanti * tons)} €</strong>
       </p>
       <button
         type="button"
@@ -860,12 +860,12 @@ function FuturesTab({
             <li key={f.id}>
               <span>
                 {GOOD_DEFS[f.commodity as TradeGood]?.name ?? f.commodity} · {f.tons.toFixed(2)} t à{" "}
-                {f.pricePerTon.toFixed(0)} TRN/t · encore {mins} min
+                {f.pricePerTon.toFixed(0)} €/t · encore {mins} min
                 {ecart !== null && (
                   <em className={ecart >= 0 ? "gain" : "loss"}>
                     {" "}
                     {ecart >= 0 ? "+" : ""}
-                    {ecart} TRN contre le prix du jour
+                    {ecart} € contre le prix du jour
                   </em>
                 )}
               </span>
