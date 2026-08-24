@@ -39,7 +39,7 @@ describe("le cadrage iso d'un engin", () => {
 
   it("garde une marge : les coins ne collent pas au bord", () => {
     const box = new THREE.Box3(new THREE.Vector3(-1, 0, -0.5), new THREE.Vector3(1, 1, 0.5));
-    const { frustum } = isoOrthoFrustum(box, 1.8, 1.36);
+    const { frustum } = isoOrthoFrustum(box, 1.8, 1.5);
     const serre = isoOrthoFrustum(box, 1.8, 1).frustum;
     expect(frustum).toBeGreaterThan(serre);
     expect(frustum / serre).toBeGreaterThan(1.2);
@@ -56,7 +56,7 @@ describe("le cadrage iso d'un engin", () => {
       p.applyMatrix4(cam.matrixWorldInverse);
       minHeadroom = Math.min(minHeadroom, fit.top - p.y);
     }
-    expect(minHeadroom / viewH).toBeGreaterThan(0.1);
+    expect(minHeadroom / viewH).toBeGreaterThan(0.12);
   });
 
   it("cadre une Coupe T1 entière dans la fiche, toit compris", () => {
@@ -89,7 +89,7 @@ describe("le cadrage iso d'un engin", () => {
         minHeadroom = Math.min(minHeadroom, fit.top - p.y);
       }
     }
-    expect(minHeadroom / viewH).toBeGreaterThan(0.1);
+    expect(minHeadroom / viewH).toBeGreaterThan(0.12);
     expect(viewW / viewH).toBeCloseTo(FICHE_ASPECT, 5);
     rig.dispose();
   });

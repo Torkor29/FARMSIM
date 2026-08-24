@@ -11,19 +11,23 @@ export type IsoOrthoFit = {
   frustum: number;
 };
 
+/** Échantillons de lacet : un cran de trop et un gyrophare passe au-dessus. */
+const YAWS = 16;
+
 /**
  * Fenêtre ortho pour qu'un engin tienne dans la vignette, y compris quand
  * le plateau tourne.
  *
  * Un cadrage symétrique autour de l'origine caméra (`±max |y|`) collait le
  * toit au bord : en iso, la trémie (loin, en haut) n'est pas en face de la
- * coupe (près, en bas). On cadre donc le **rectangle projeté**, centré, avec
- * une marge — pas un frustum calé sur le plus grand |y|.
+ * coupe (près, en bas). On cadre le **rectangle projeté**, centré, avec une
+ * marge — et un peu plus de ciel que de sol, parce que le socle remplit déjà
+ * le bas.
  */
 export function isoOrthoFrustum(
   box: THREE.Box3,
   aspect: number,
-  pad = 1.36,
+  pad = 1.5,
 ): IsoOrthoFit {
   const center = box.getCenter(new THREE.Vector3());
   const lookAtY = center.y;
@@ -47,8 +51,8 @@ export function isoOrthoFrustum(
   let maxX = -Infinity;
   let minY = Infinity;
   let maxY = -Infinity;
-  for (let k = 0; k < 8; k++) {
-    const yaw = (k / 8) * Math.PI * 2;
+  for (let k = 0; k < YAWS; k++) {
+    const yaw = (k / YAWS) * Math.PI * 2;
     const cy = Math.cos(yaw);
     const sy = Math.sin(yaw);
     for (const c of corners) {
@@ -71,12 +75,18 @@ export function isoOrthoFrustum(
   if (halfW / halfH > a) halfH = halfW / a;
   else halfW = halfH * a;
 
+  // Plus de ciel que de terre : le socle occupe déjà le bas, c'est le toit
+  // qui passait au-dessus du cadre quand le plateau tournait.
+  const sky = halfH * 0.16;
+  halfH += sky / 2;
+  halfW = halfH * a;
+
   return {
     lookAtY,
     left: cx - halfW,
     right: cx + halfW,
-    top: cyCam + halfH,
-    bottom: cyCam - halfH,
+    top: cyCam + halfH + sky / 2,
+    bottom: cyCam - halfH + sky / 2,
     frustum: halfH,
   };
 }

@@ -29,6 +29,7 @@ describe("la fiche des paliers d'engins", () => {
     expect(app).toContain("MachineTierPips");
     expect(sheet).toContain("MACHINE_TIERS.map");
     expect(sheet).toContain("height={320}");
+    expect(sheet).toContain("machine-sheet-tiers");
     expect(css).toContain("min-height: 320px");
   });
 });

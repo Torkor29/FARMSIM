@@ -2290,6 +2290,31 @@ html.playing .build-confirm { position: fixed; }
   min-height: 320px;
 }
 .machine-sheet-art .machine-view3d { height: 320px; }
+.machine-sheet-tiers {
+  position: absolute;
+  left: 0.45rem;
+  right: 0.45rem;
+  bottom: 0.45rem;
+  margin: 0;
+  z-index: 2;
+  background: rgba(255, 255, 255, 0.92);
+  box-shadow: 0 4px 14px rgba(40, 32, 18, 0.12);
+}
+.machine-sheet-tiers button {
+  min-height: 36px;
+  padding: 0.25rem 0.2rem;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  font-size: 0.78rem;
+  font-weight: 800;
+  color: var(--teal-700);
+  cursor: pointer;
+}
+.machine-sheet-tiers button.on {
+  background: var(--teal-500);
+  color: #fff;
+}
 .machine-view3d { width: 100%; }
 .machine-view3d canvas { display: block; width: 100% !important; height: 100% !important; }
 .machine-sheet-stats {

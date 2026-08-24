@@ -218,31 +218,32 @@ export function MachineSheet({
         <div className="machine-sheet-body">
         <div className="machine-sheet-art">
           <MachineView3D type={type} tier={shownTier} height={320} turntable />
+          {preview.mode === "buy" ? (
+            <div className="age-switch machine-sheet-tiers" role="group" aria-label="Palier de matériel">
+              {MACHINE_TIERS.map((t) => (
+                <button
+                  key={t}
+                  type="button"
+                  className={tierAchat === t ? "on" : ""}
+                  aria-pressed={tierAchat === t}
+                  title={TIER_ROLE_LABELS[t]}
+                  onClick={() => setTierAchat(t)}
+                >
+                  {TIER_LABELS[t]}
+                </button>
+              ))}
+            </div>
+          ) : null}
         </div>
 
-        {preview.mode === "buy" ? (
-          <div className="age-switch" role="group" aria-label="Palier de matériel">
-            {MACHINE_TIERS.map((t) => (
-              <button
-                key={t}
-                type="button"
-                className={tierAchat === t ? "on" : ""}
-                aria-pressed={tierAchat === t}
-                title={TIER_ROLE_LABELS[t]}
-                onClick={() => setTierAchat(t)}
-              >
-                {TIER_LABELS[t]}
-              </button>
-            ))}
-          </div>
-        ) : (
+        {preview.mode !== "buy" ? (
           <div className="building-sheet-level">
             <MachineTierPips
               tier={preview.currentTier}
               next={preview.mode === "upgrade" ? next : undefined}
             />
           </div>
-        )}
+        ) : null}
 
         <p className="building-sheet-desc">{fiche.bonus}</p>
 
