@@ -1340,6 +1340,90 @@ describe("calendrier cultural", () => {
       `maturité annoncée dans ${(pret - avant) / SEASON_DURATION_MS} saisons`,
     );
   });
+
+  it("sème chaque culture de saison, à la main comme par l'entreprise", async () => {
+    /*
+     * Strea : le maïs à la main ne partait pas, « faire faire » si. Le
+     * calendrier n'était pas en cause — le prestataire plantait sur les
+     * chaumes, le joueur non. On vérifie ici que **toutes** les cultures
+     * ouvertes aujourd'hui passent les deux chemins.
+     */
+    const { moi, parcelle, cells } = await fermeSemable();
+    const saison = saisonCourante();
+    const cultures = (Object.keys(PLANTING_WINDOW) as CropCode[]).filter(
+      (c) => canSowInSeason(c, saison).ok,
+    );
+    assert.ok(cultures.length >= 1, "il doit rester une culture semable");
+    assert.ok(cells.length >= cultures.length * 8, `pas assez de cases : ${cells.length}`);
+
+    for (let i = 0; i < cultures.length; i++) {
+      const crop = cultures[i]!;
+      const main = cells.slice(i * 4, i * 4 + 4);
+      const r = await travailler(parcelle.id, "plant", "PLANT", moi, main, { crop });
+      assert.equal(r.statut, 200, `${crop} à la main refusé : ${JSON.stringify(r.corps)}`);
+      const semees = (
+        r.corps as unknown as { parcel: { cells: { crop: string | null }[] } }
+      ).parcel.cells.filter((c) => c.crop === crop);
+      assert.ok(semees.length >= 4, `${crop} : ${semees.length} cases semées`);
+    }
+
+    const base = cultures.length * 4;
+    for (let i = 0; i < cultures.length; i++) {
+      const crop = cultures[i]!;
+      const lot = cells.slice(base + i * 4, base + i * 4 + 4);
+      const r = await appel(`/parcels/${parcelle.id}/contractor`, {
+        methode: "POST",
+        corps: { userId: moi.id, work: "PLANT", crop, cells: lot },
+        jeton: moi.jeton,
+      });
+      assert.equal(r.statut, 200, `${crop} par l'entreprise refusé : ${JSON.stringify(r.corps)}`);
+    }
+  });
+
+  it("sème sur les chaumes, à la main comme le prestataire", async () => {
+    /*
+     * Après une moisson, la case porte des chaumes. Le prestataire y semait
+     * quand même ; le joueur attendait la fin du chantier pour s'entendre
+     * dire « déchaumez ». Les deux sèmes désormais en direct.
+     */
+    const { moi, parcelle, cells } = await fermeSemable();
+    const crop = cropDeSaison();
+    const lot = cells.slice(0, 4);
+    for (const c of lot) {
+      prismaExec(
+        `UPDATE "ParcelCell" SET "hasStubble" = true, "harvestsSincePlow" = 1 ` +
+          `WHERE "parcelId" = '${parcelle.id}' AND x = ${c.x} AND y = ${c.y};`,
+      );
+    }
+
+    const main = await travailler(parcelle.id, "plant", "PLANT", moi, lot, { crop });
+    assert.equal(main.statut, 200, `semis joueur sur chaumes : ${JSON.stringify(main.corps)}`);
+    const corps = main.corps as unknown as {
+      directSeeded?: boolean;
+      parcel: { cells: { x: number; y: number; crop: string | null; hasStubble: boolean; directSeeded: boolean }[] };
+    };
+    assert.equal(corps.directSeeded, true, "le semis sur chaumes n'est pas marqué en direct");
+    for (const c of lot) {
+      const cell = corps.parcel.cells.find((x) => x.x === c.x && x.y === c.y);
+      assert.equal(cell?.crop, crop);
+      assert.equal(cell?.hasStubble, false, "les chaumes devraient être percées");
+      assert.equal(cell?.directSeeded, true);
+    }
+
+    const lot2 = cells.slice(4, 8);
+    for (const c of lot2) {
+      prismaExec(
+        `UPDATE "ParcelCell" SET "hasStubble" = true, "harvestsSincePlow" = 1 ` +
+          `WHERE "parcelId" = '${parcelle.id}' AND x = ${c.x} AND y = ${c.y};`,
+      );
+    }
+    const eta = await appel(`/parcels/${parcelle.id}/contractor`, {
+      methode: "POST",
+      corps: { userId: moi.id, work: "PLANT", crop, cells: lot2 },
+      jeton: moi.jeton,
+    });
+    assert.equal(eta.statut, 200, `semis prestataire sur chaumes : ${JSON.stringify(eta.corps)}`);
+  });
 });
 
 describe("porteur et outils", () => {
@@ -2280,11 +2364,68 @@ describe("le voisinage d’une parcelle", () => {
     for (const p of vue.parcelles) {
       const collee = Math.abs(p.mapX - moi.mapX) + Math.abs(p.mapY - moi.mapY) === 1;
       if (p.prix !== null) {
-        assert.equal(p.statut, "LIBRE", `${p.id} chiffrée alors qu'elle est ${p.statut}`);
+        assert.ok(
+          p.statut === "LIBRE" || p.statut === "PNJ",
+          `${p.id} chiffrée alors qu'elle est ${p.statut}`,
+        );
         assert.ok(collee, `${p.id} chiffrée alors qu'elle n'est pas mitoyenne`);
         assert.ok(p.prix > 0);
       }
     }
+  });
+
+  it("laisse racheter la parcelle d'un voisin PNJ", async () => {
+    /*
+     * La moitié de la commune est déjà exploitée. Sans rachat, les quatre
+     * voisins d'une ferme de départ sont souvent occupés, et le joueur
+     * demande « est-ce qu'on va pouvoir acheter les parcelles voisines
+     * bientôt ? ». On rachète au PNJ, jamais à un autre joueur.
+     */
+    const { moi, parcelId, vue } = await fermeAvecVoisins("Voisin Sept");
+    const chezMoi = vue.parcelles.find((p) => p.id === parcelId)!;
+    const voisine = vue.parcelles.find(
+      (p) =>
+        p.statut === "LIBRE" &&
+        Math.abs(p.mapX - chezMoi.mapX) + Math.abs(p.mapY - chezMoi.mapY) === 1,
+    );
+    assert.ok(voisine, "il faut une parcelle libre mitoyenne pour le test");
+
+    const npc = await inscrire("Exploitant Npc");
+    await appel("/world/claim", {
+      methode: "POST",
+      corps: { userId: npc.id, specialization: "CEREALIER", parcelId: voisine.id },
+      jeton: npc.jeton,
+    });
+    prismaExec(`UPDATE "User" SET "isNpc" = true WHERE id = '${npc.id}';`);
+
+    await appel("/dev/grant", {
+      methode: "POST",
+      corps: { userId: moi.id, crd: 400000, level: 20 },
+      jeton: moi.jeton,
+    });
+
+    const apres = await appel(`/parcels/${parcelId}/voisinage`, { jeton: moi.jeton });
+    assert.equal(apres.statut, 200);
+    const fiche = (
+      apres.corps as unknown as {
+        parcelles: { id: string; statut: string; prix: number | null; achetable: boolean }[];
+      }
+    ).parcelles.find((p) => p.id === voisine.id);
+    assert.equal(fiche?.statut, "PNJ");
+    assert.ok(fiche?.prix && fiche.prix > 0, "le devis du voisin PNJ manque");
+    assert.equal(fiche?.achetable, true);
+
+    const achat = await appel(`/parcels/${voisine.id}/buy`, {
+      methode: "POST",
+      corps: { userId: moi.id },
+      jeton: moi.jeton,
+    });
+    assert.equal(achat.statut, 200, `rachat PNJ refusé : ${JSON.stringify(achat.corps)}`);
+    const me = await appel("/auth/me", { jeton: moi.jeton });
+    const ids = (
+      me.corps as unknown as { player: { farm: { parcels: { id: string }[] } } }
+    ).player.farm.parcels.map((p) => p.id);
+    assert.ok(ids.includes(voisine.id), "la parcelle rachetée n'est pas à la ferme");
   });
 
   it("refuse à qui n’a pas de session", async () => {

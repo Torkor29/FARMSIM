@@ -1,5 +1,5 @@
 import { useEffect, useRef } from "react";
-import { CROP_DEFS, SPECIES, formatEuros, type CropCode } from "@farmsim/shared";
+import { CROP_DEFS, SPECIES, formatEuros, peutRacheter, type CropCode } from "@farmsim/shared";
 import type { VoisinReel } from "./countryside-plan";
 
 /**
@@ -66,19 +66,20 @@ export function ParcelleVoisineSheet({ voisin, enCours = false, onAcheter, onFer
 
   const culture = nomCulture(voisin.culture);
   const stade = voisin.stade ? STADES[voisin.stade] : null;
-  const aVendre = voisin.statut === "LIBRE";
+  const aVendre = peutRacheter(voisin.statut);
 
   /*
-   * Le titre dit d'abord à qui c'est. C'est la première question qu'on se pose
-   * devant le champ du voisin, et celle qui décide de tout le reste : une
-   * parcelle libre s'achète, celle d'un exploitant ne s'achète pas.
+   * Le titre dit d'abord à qui c'est. Une parcelle libre s'achète, un voisin
+   * PNJ cède la sienne, un autre joueur ne s'expulse pas.
    */
   const tenue =
     voisin.statut === "MOI"
       ? "À moi"
       : voisin.statut === "LIBRE"
         ? "À vendre"
-        : (voisin.proprietaire ?? "Exploitée");
+        : voisin.statut === "PNJ"
+          ? `${voisin.proprietaire ?? "Voisin"} · à vendre`
+          : (voisin.proprietaire ?? "Exploitée");
 
   return (
     <div
@@ -154,7 +155,11 @@ export function ParcelleVoisineSheet({ voisin, enCours = false, onAcheter, onFer
                     disabled={enCours}
                     onClick={() => onAcheter(voisin.id)}
                   >
-                    {enCours ? "Achat en cours…" : "Acheter cette parcelle"}
+                    {enCours
+                      ? "Achat en cours…"
+                      : voisin.statut === "PNJ"
+                        ? "Racheter cette parcelle"
+                        : "Acheter cette parcelle"}
                   </button>
                 ) : (
                   <p className="voisin-refus">{voisin.refus ?? "Pas encore accessible."}</p>

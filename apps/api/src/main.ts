@@ -145,8 +145,8 @@ import {
   STUBBLE_COST_PER_CELL,
   SOIL_WORK_REFUSAL_LABELS,
   MAX_HARVESTS_BEFORE_PLOW,
-  canDirectSeed,
   applyDirectSeed,
+  sowingPlan,
   DIRECT_SEED_COST_PER_CELL,
   DIRECT_SEED_FERTILITY_GAIN,
   nextRotation,
@@ -277,6 +277,7 @@ import {
   machineWidth,
   machineLifeHours,
   mitoyennes,
+  peutRacheter,
   machineHoursPerHectare,
   machineCost,
   TIER_LABELS,
@@ -294,6 +295,7 @@ import {
   creditHealth,
   seasonInterest,
   statutParcelle,
+  type SowingPlanRefusal,
   accrueInterest,
   LOAN_MIN_CRD,
   fuelCost,
@@ -2694,11 +2696,27 @@ app.get("/zones", async (_req, res) => {
           farmId: true,
           gridW: true,
           gridH: true,
+          farm: { select: { user: { select: { isNpc: true } } } },
         },
       },
     },
   });
-  res.json(zones);
+  res.json(
+    zones.map((z) => ({
+      ...z,
+      parcels: z.parcels.map((p) => ({
+        id: p.id,
+        label: p.label,
+        mapX: p.mapX,
+        mapY: p.mapY,
+        landPrice: p.landPrice,
+        farmId: p.farmId,
+        gridW: p.gridW,
+        gridH: p.gridH,
+        npc: Boolean(p.farm?.user.isNpc),
+      })),
+    })),
+  );
 });
 
 app.get("/meta/classes", (_req, res) => res.json(CLASS_PROFILES));
@@ -4659,9 +4677,15 @@ app.post("/parcels/:id/buy", async (req, res) => {
   }
   const target = await prisma.parcel.findUnique({
     where: { id: req.params.id },
-    include: { zone: true },
+    include: { zone: true, farm: { include: { user: true } } },
   });
-  if (!target || target.farmId) {
+  if (!target) {
+    res.status(404).json({ error: "Parcelle introuvable" });
+    return;
+  }
+  /* Libre, ou cédée par un PNJ. Un autre joueur, jamais. */
+  const npcCede = Boolean(target.farm?.user.isNpc);
+  if (target.farmId && !npcCede) {
     res.status(409).json({ error: "Parcelle indisponible" });
     return;
   }
@@ -4694,6 +4718,28 @@ app.post("/parcels/:id/buy", async (req, res) => {
 
   const updated = await prisma.$transaction(async (tx) => {
     await debit(tx, user.id, quote.total, "TERRES", `Achat de parcelle — ${target.label}`);
+    if (npcCede && target.farmId) {
+      const batis = await tx.building.findMany({
+        where: { parcelId: target.id },
+        select: { id: true },
+      });
+      const ids = batis.map((b) => b.id);
+      if (ids.length) {
+        await tx.herd.updateMany({
+          where: { buildingId: { in: ids } },
+          data: { farmId: user.farm!.id },
+        });
+        // Les engins du voisin restent les siens : on les sort du hangar.
+        await tx.machine.updateMany({
+          where: { storedInBuildingId: { in: ids } },
+          data: { storedInBuildingId: null, parkedParcelId: null },
+        });
+      }
+      await tx.machine.updateMany({
+        where: { parkedParcelId: target.id, farmId: target.farmId },
+        data: { parkedParcelId: null },
+      });
+    }
     await tx.parcel.update({
       where: { id: target.id },
       data: { farmId: user.farm!.id, landPrice: quote.marketValue },
@@ -4763,8 +4809,9 @@ app.get("/parcels/:id/quote", async (req, res) => {
  * quoi la convoiter.
  *
  * Le devis n'accompagne que ce qui est réellement achetable — parcelle libre
- * et mitoyenne d'une des siennes. Le calculer pour toute la commune coûterait
- * quatre comptages par case, pour un prix que le joueur ne pourrait pas payer.
+ * ou PNJ, mitoyenne d'une des siennes. Le calculer pour toute la commune
+ * coûterait quatre comptages par case, pour un prix que le joueur ne pourrait
+ * pas payer.
  */
 app.get("/parcels/:id/voisinage", async (req, res) => {
   const auth = await userFromAuthHeader(req);
@@ -4842,8 +4889,8 @@ app.get("/parcels/:id/voisinage", async (req, res) => {
         .filter((h) => ici.has(h.buildingId))
         .map((h) => ({ kind: h.kind, size: h.size }));
 
-      const libreEtCollee = statut === "LIBRE" && collee(p);
-      const devis = libreEtCollee
+      const rachetable = peutRacheter(statut) && collee(p);
+      const devis = rachetable
         ? await quoteParcel({ ...p, zone: centre.zone }, owned, auth.user.level)
         : null;
 
@@ -4876,7 +4923,7 @@ app.get("/parcels/:id/voisinage", async (req, res) => {
         prix: devis?.total ?? null,
         achetable: Boolean(devis) && gate.ok,
         refus:
-          libreEtCollee && !gate.ok
+          rachetable && !gate.ok
             ? acquisitionRefusal(gate.reason!, auth.user, owned.length)
             : null,
       };
@@ -4956,12 +5003,10 @@ app.post("/parcels/:id/contractor", async (req, res) => {
       res.status(400).json({ error: "Culture requise pour un semis" });
       return;
     }
-    for (const { x, y } of cells) {
-      const cell = parcel.cells.find((c) => c.x === x && c.y === y);
-      if (!cell || cell.kind !== "EMPTY") {
-        res.status(409).json({ error: `Case ${x},${y} non libre` });
-        return;
-      }
+    const sol = planSemisLot(cells, parcel.cells);
+    if (!sol.ok) {
+      res.status(409).json({ error: sol.error });
+      return;
     }
     const growMs = cropGrowMs(crop, 0);
     const climat = climatDe(parcel);
@@ -4973,11 +5018,13 @@ app.post("/parcels/:id/contractor", async (req, res) => {
       return;
     }
     const pretLe = projectReadyAt({ crop, plantedAt: now, growMs, ...climat });
+    const enDirect = sol.plans.some((p) => p.directSeed);
     await prisma.$transaction(async (tx) => {
       await debit(tx, user.id, total, "CHANTIERS", "Prestataire — moisson");
-      for (const { x, y } of cells) {
+      for (const plan of sol.plans) {
+        const soil = plan.directSeed ? applyDirectSeed(plan.cell) : null;
         await tx.parcelCell.update({
-          where: { parcelId_x_y: { parcelId: parcel.id, x, y } },
+          where: { parcelId_x_y: { parcelId: parcel.id, x: plan.x, y: plan.y } },
           data: {
             kind: "CROP",
             crop,
@@ -4985,8 +5032,28 @@ app.post("/parcels/:id/contractor", async (req, res) => {
             plantedAt: new Date(now),
             readyAt: new Date(pretLe),
             fertilizedPasses: 0,
-            weedPressure: 0,
+            weedAt: new Date(now),
+            weedPressure: weedsAtSowing({
+              carried: plan.directSeed
+                ? weedsAfterSoilWork("DIRECT_SEED", plan.cell.weedPressure ?? 0)
+                : (plan.cell.weedPressure ?? 0),
+              sameCropAgain: plan.cell.lastCrop === crop,
+            }),
+            directSeeded: plan.directSeed,
+            ...(soil
+              ? {
+                  harvestsSincePlow: soil.harvestsSincePlow,
+                  residuePasses: soil.residuePasses,
+                  hasStubble: soil.hasStubble,
+                }
+              : {}),
           },
+        });
+      }
+      if (enDirect) {
+        await tx.parcel.update({
+          where: { id: parcel.id },
+          data: { fertility: Math.min(1, parcel.fertility + DIRECT_SEED_FERTILITY_GAIN) },
         });
       }
     });
@@ -5271,6 +5338,49 @@ async function resolveHarvestOrMowAccess(opts: {
  *
  * Renvoie `null` quand il y a de quoi faire, ou la phrase du refus.
  */
+function sowingRefusalFr(x: number, y: number, reason: SowingPlanRefusal): string {
+  if (reason === "OCCUPIED") return `Case ${x},${y} non libre`;
+  if (reason === "PLOW_REQUIRED") {
+    return `Case ${x},${y} : sol trop tassé — le semis direct ne décompacte pas, il faut labourer`;
+  }
+  return `Case ${x},${y} : pas de chaumes — semez normalement`;
+}
+
+type SowableCell = {
+  x: number;
+  y: number;
+  kind: string;
+  hasStubble: boolean;
+  harvestsSincePlow: number;
+  residuePasses: number;
+  weedPressure?: number;
+  lastCrop?: string | null;
+};
+
+/**
+ * Décision de semis, case par case.
+ *
+ * Le prestataire et le joueur lisaient deux règles : l'un plantait sur les
+ * chaumes, l'autre se faisait renvoyer après le chantier. Une seule fonction
+ * tranche, et les deux routes s'y tiennent.
+ */
+function planSemisLot(
+  cells: CellXY[],
+  parcelCells: SowableCell[],
+):
+  | { ok: true; plans: { x: number; y: number; directSeed: boolean; cell: SowableCell }[] }
+  | { ok: false; error: string } {
+  const plans: { x: number; y: number; directSeed: boolean; cell: SowableCell }[] = [];
+  for (const { x, y } of cells) {
+    const cell = parcelCells.find((c) => c.x === x && c.y === y);
+    if (!cell) return { ok: false, error: `Case ${x},${y} non libre` };
+    const plan = sowingPlan(cell);
+    if (!plan.ok) return { ok: false, error: sowingRefusalFr(x, y, plan.reason) };
+    plans.push({ x, y, directSeed: plan.directSeed, cell });
+  }
+  return { ok: true, plans };
+}
+
 function rienAFaire(
   work: FarmWork,
   cells: CellXY[],
@@ -5300,6 +5410,12 @@ function rienAFaire(
     );
     if (bons.length) return null;
     return "Rien à désherber : ces cases sont déjà propres.";
+  }
+
+  if (work === "PLANT") {
+    const bons = vues.filter((c) => c.kind === "EMPTY");
+    if (bons.length) return null;
+    return "Rien à semer : ces cases ne sont pas libres.";
   }
 
   return null;
@@ -5365,6 +5481,13 @@ app.post("/parcels/:id/jobs", async (req, res) => {
     const fenetre = canSowInSeason(crop, saison);
     if (!fenetre.ok) {
       res.status(409).json({ error: fenetre.reason, window: fenetre.window, season: saison });
+      return;
+    }
+    // Sol : on refuse tout de suite, pas après le chrono. Semer sur des
+    // chaumes part en semis direct ; un sol trop tassé, lui, demande la charrue.
+    const sol = planSemisLot(cells, parcel.cells);
+    if (!sol.ok) {
+      res.status(409).json({ error: sol.error });
       return;
     }
   }
@@ -5810,41 +5933,17 @@ app.post("/parcels/:id/plant", async (req, res) => {
     res.status(409).json({ error: `Ce travail demande du ${access.order.crop}` });
     return;
   }
-  const directSeed = body.data.directSeed ?? false;
+  const sol = planSemisLot(body.data.cells, parcel.cells);
+  if (!sol.ok) {
+    res.status(409).json({ error: sol.error });
+    return;
+  }
   const seedCost = CROP_DEFS[plantCrop].seedCostPerCell * body.data.cells.length;
-  const cost = seedCost + (directSeed ? DIRECT_SEED_COST_PER_CELL * body.data.cells.length : 0);
+  const directCells = sol.plans.filter((p) => p.directSeed).length;
+  const cost = seedCost + DIRECT_SEED_COST_PER_CELL * directCells;
   if (access.charge && !peutPayer(user, cost)) {
     res.status(402).json({ error: "€ insuffisants pour semences" });
     return;
-  }
-
-  for (const { x, y } of body.data.cells) {
-    const cell = parcel.cells.find((c) => c.x === x && c.y === y);
-    if (!cell || cell.kind !== "EMPTY") {
-      res.status(409).json({ error: `Case ${x},${y} non libre` });
-      return;
-    }
-    if (directSeed) {
-      // Le semis direct exige des chaumes : sans eux, c'est un semis ordinaire
-      // et le joueur paierait le surcoût du semoir lourd pour rien.
-      const verdict = canDirectSeed(cell);
-      if (!verdict.ok) {
-        res.status(409).json({
-          error:
-            verdict.reason === "PLOW_REQUIRED"
-              ? `Case ${x},${y} : sol trop tassé — le semis direct ne décompacte pas, il faut labourer`
-              : `Case ${x},${y} : pas de chaumes — semez normalement`,
-        });
-        return;
-      }
-    } else if (cell.hasStubble) {
-      res.status(409).json({
-        error: plowRequired(cell)
-          ? `Case ${x},${y} : sol épuisé, il faut labourer`
-          : `Case ${x},${y} : chaumes en place — déchaumez, labourez ou semez direct`,
-      });
-      return;
-    }
   }
 
   const now = Date.now();
@@ -5866,13 +5965,13 @@ app.post("/parcels/:id/plant", async (req, res) => {
     if (access.charge) {
       await debit(tx, user.id, cost, "CULTURES", "Semences");
     }
-    for (const { x, y } of body.data.cells) {
-      const cell = parcel.cells.find((c) => c.x === x && c.y === y);
+    for (const plan of sol.plans) {
+      const cell = plan.cell;
       // Le semis direct perce les chaumes : la case est semée sans qu'aucun
       // outil ne soit passé, et le sol garde son tassement.
-      const soil = directSeed && cell ? applyDirectSeed(cell) : null;
+      const soil = plan.directSeed ? applyDirectSeed(cell) : null;
       await tx.parcelCell.update({
-        where: { parcelId_x_y: { parcelId: parcel.id, x, y } },
+        where: { parcelId_x_y: { parcelId: parcel.id, x: plan.x, y: plan.y } },
         data: {
           kind: "CROP",
           crop: plantCrop,
@@ -5885,12 +5984,12 @@ app.post("/parcels/:id/plant", async (req, res) => {
              semis direct, et il manquait. */
           weedAt: new Date(now),
           weedPressure: weedsAtSowing({
-            carried: directSeed
-              ? weedsAfterSoilWork("DIRECT_SEED", cell?.weedPressure ?? 0)
-              : (cell?.weedPressure ?? 0),
-            sameCropAgain: cell?.lastCrop === plantCrop,
+            carried: plan.directSeed
+              ? weedsAfterSoilWork("DIRECT_SEED", cell.weedPressure ?? 0)
+              : (cell.weedPressure ?? 0),
+            sameCropAgain: cell.lastCrop === plantCrop,
           }),
-          directSeeded: directSeed,
+          directSeeded: plan.directSeed,
           ...(soil
             ? {
                 harvestsSincePlow: soil.harvestsSincePlow,
@@ -5901,7 +6000,7 @@ app.post("/parcels/:id/plant", async (req, res) => {
         },
       });
     }
-    if (directSeed) {
+    if (directCells) {
       // La couverture permanente protège de l'érosion : le sol s'en trouve un
       // peu mieux, ce qui compense en partie la perte de rendement.
       await tx.parcel.update({
@@ -5938,6 +6037,7 @@ app.post("/parcels/:id/plant", async (req, res) => {
     machine: { id: picked.machine.id, type: picked.machine.type, ...wear },
     labor,
     gain,
+    directSeeded: directCells > 0,
   });
 });
 

@@ -216,9 +216,40 @@ export function applyDirectSeed(state: SoilState): SoilState {
 /**
  * Peut-on semer sur cette case sans autre forme de procès ? Des chaumes
  * imposent un choix préalable : les travailler, ou semer directement dedans.
+ *
+ * C'est la question **agronomique** (le sol est-il nu ?). Le geste « Semer »
+ * du joueur, lui, répond avec `sowingPlan` : sur des chaumes encore labourables
+ * il sème en direct plutôt que de refuser.
  */
 export function canSow(state: SoilState): boolean {
   return !state.hasStubble;
+}
+
+/** Pourquoi le semis d'une case est refusé. */
+export type SowingPlanRefusal = "OCCUPIED" | "PLOW_REQUIRED" | "NO_STUBBLE";
+
+export type SowingPlan =
+  | { ok: true; directSeed: boolean }
+  | { ok: false; reason: SowingPlanRefusal };
+
+/**
+ * Comment semer cette case, pour le geste « Semer ».
+ *
+ * Le prestataire plantait sur les chaumes ; le joueur se faisait refuser
+ * après le chantier. Les deux chemins lisent désormais la même décision :
+ *
+ * - terre nue → semis ordinaire ;
+ * - chaumes, sol encore labourable → semis direct ;
+ * - sol trop tassé → labour obligatoire, prestataire compris ;
+ * - case occupée → refus.
+ */
+export function sowingPlan(cell: { kind: string } & SoilState): SowingPlan {
+  if (cell.kind !== "EMPTY") return { ok: false, reason: "OCCUPIED" };
+  if (cell.hasStubble) {
+    if (plowRequired(cell)) return { ok: false, reason: "PLOW_REQUIRED" };
+    return { ok: true, directSeed: true };
+  }
+  return { ok: true, directSeed: false };
 }
 
 /** Résumé lisible de l'état du sol, pour l'affichage. */

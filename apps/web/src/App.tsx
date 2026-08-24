@@ -226,6 +226,8 @@ type Parcel = {
   mapY: number;
   landPrice: number;
   farmId?: string | null;
+  /** Ferme PNJ : rachetable, contrairement à celle d'un autre joueur. */
+  npc?: boolean;
   gridW: number;
   gridH: number;
   fertility?: number;
@@ -1425,7 +1427,7 @@ export function App() {
     () =>
       zones.flatMap((z) =>
         z.parcels
-          .filter((p) => !p.farmId)
+          .filter((p) => !p.farmId || p.npc)
           .map((p) => ({ ...p, zone: { code: z.code, name: z.name, koppen: z.koppen } })),
       ),
     [zones],
@@ -1438,12 +1440,12 @@ export function App() {
   const homeOwner =
     parcelDetail?.parcel?.farm?.user?.displayName ?? visitOrder?.clientName ?? null;
 
-  /** Adjacent free parcels for expansion (all free if no land yet). */
+  /** Adjacent buyable parcels for expansion (all truly free if no land yet). */
   const expandableParcelIds = useMemo(() => {
     const ids = freeParcels
       .filter((fp) =>
         ownedParcels.length === 0
-          ? true
+          ? !fp.farmId
           : ownedParcels.some(
               (op) =>
                 op.zone?.code === fp.zone?.code &&
@@ -3142,6 +3144,7 @@ export function App() {
             breakdown?: string | null;
           };
           labor?: LaborBit;
+          directSeeded?: boolean;
         }>(`/parcels/${activeParcelId}/plant`, {
           method: "POST",
           body: JSON.stringify({
@@ -3153,7 +3156,7 @@ export function App() {
           }),
         });
         setMsg(
-          `Semé ${CROP_DEFS[crop].name} ×${workCells.length}${sowingDirect ? " en direct" : ""}` +
+          `Semé ${CROP_DEFS[crop].name} ×${workCells.length}${r.directSeeded || sowingDirect ? " en direct" : ""}` +
             wearNote(r.machine),
         );
         labor = r.labor;
