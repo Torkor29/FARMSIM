@@ -1,7 +1,6 @@
 import { useEffect, useState } from "react";
 import { createPortal } from "react-dom";
 import {
-  MACHINE_ART,
   MACHINE_DEFS,
   MACHINE_STAR_LABELS,
   MACHINE_TIERS,
@@ -218,8 +217,7 @@ export function MachineSheet({
 
         <div className="machine-sheet-body">
         <div className="machine-sheet-art">
-          <MachineView3D type={type} tier={shownTier} height={188} turntable />
-          <img className="machine-sheet-thumb" src={MACHINE_ART[type]} alt="" />
+          <MachineView3D type={type} tier={shownTier} height={260} turntable />
         </div>
 
         {preview.mode === "buy" ? (
