@@ -143,36 +143,23 @@ export function ParcelleVoisineSheet({ voisin, enCours = false, onAcheter, onFer
 
         {aVendre ? (
           <div className="voisin-marche">
-            {voisin.prix !== null ? (
-              <>
-                <p className="voisin-prix">{formatEuros(voisin.prix)}</p>
-                {voisin.achetable ? (
-                  <button
-                    ref={premier}
-                    type="button"
-                    className="voisin-acheter"
-                    disabled={enCours}
-                    onClick={() => onAcheter(voisin.id)}
-                  >
-                    {enCours
-                      ? "Achat en cours…"
-                      : voisin.statut === "PNJ"
-                        ? "Racheter cette parcelle"
-                        : "Acheter cette parcelle"}
-                  </button>
-                ) : (
-                  <p className="voisin-refus">{voisin.refus ?? "Pas encore accessible."}</p>
-                )}
-              </>
+            {voisin.prix !== null && <p className="voisin-prix">{formatEuros(voisin.prix)}</p>}
+            {voisin.achetable ? (
+              <button
+                ref={premier}
+                type="button"
+                className="voisin-acheter"
+                disabled={enCours}
+                onClick={() => onAcheter(voisin.id)}
+              >
+                {enCours
+                  ? "Achat en cours…"
+                  : voisin.statut === "PNJ"
+                    ? "Racheter cette parcelle"
+                    : "Acheter cette parcelle"}
+              </button>
             ) : (
-              /*
-               * Le devis ne se calcule que pour les parcelles mitoyennes : il
-               * coûte quatre comptages, et une commune entière chiffrée
-               * afficherait des prix pour des terres qu'on ne peut pas acheter.
-               */
-              <p className="voisin-refus">
-                Trop loin de vos terres. On n'agrandit qu'en s'étendant de proche en proche.
-              </p>
+              <p className="voisin-refus">{voisin.refus ?? "Pas encore accessible."}</p>
             )}
           </div>
         ) : voisin.statut === "MOI" ? (

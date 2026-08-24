@@ -143,9 +143,8 @@ describe("à qui est cette parcelle", () => {
 describe("la mitoyenneté", () => {
   it("compte les côtés, pas les coins", () => {
     /*
-     * La règle du jeu, pas une commodité : le devis compte les **bordures**
-     * mitoyennes, et deux parcelles qui ne se touchent que par un coin n'en
-     * partagent aucune.
+     * Le devis compte les **bordures** mitoyennes : deux parcelles qui ne se
+     * touchent que par un coin n'en partagent aucune. Ça pondère le prix.
      */
     const moi = { mapX: 2, mapY: 3 };
     expect(mitoyennes(moi, { mapX: 3, mapY: 3 })).toBe(true);

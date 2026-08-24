@@ -2423,26 +2423,54 @@ describe("le voisinage d’une parcelle", () => {
     assert.ok(mienne.partCultivee < 0.1, `part trop grande : ${mienne.partCultivee}`);
   });
 
-  it("ne chiffre que ce qui est réellement à vendre", async () => {
+  it("chiffre toute parcelle libre ou PNJ du voisinage, même non mitoyenne", async () => {
     /*
-     * Le devis coûte quatre comptages : le calculer pour toute la commune
-     * afficherait des prix que le joueur ne peut pas payer, sur des parcelles
-     * qu'il ne peut pas acheter. Seule une parcelle libre **et mitoyenne** en
-     * reçoit un.
+     * On agrandit dans le voisinage, pas seulement collé. L'adjacence reste un
+     * facteur de prix ; elle ne cache plus le devis. Un autre joueur, jamais.
      */
     const { parcelId, vue } = await fermeAvecVoisins("Voisin Cinq");
     const moi = vue.parcelles.find((p) => p.id === parcelId)!;
+    let loin = 0;
     for (const p of vue.parcelles) {
-      const collee = Math.abs(p.mapX - moi.mapX) + Math.abs(p.mapY - moi.mapY) === 1;
-      if (p.prix !== null) {
-        assert.ok(
-          p.statut === "LIBRE" || p.statut === "PNJ",
-          `${p.id} chiffrée alors qu'elle est ${p.statut}`,
-        );
-        assert.ok(collee, `${p.id} chiffrée alors qu'elle n'est pas mitoyenne`);
-        assert.ok(p.prix > 0);
+      if (p.statut === "LIBRE" || p.statut === "PNJ") {
+        assert.ok(p.prix !== null && p.prix > 0, `${p.id} ${p.statut} sans devis`);
+        const collee = Math.abs(p.mapX - moi.mapX) + Math.abs(p.mapY - moi.mapY) === 1;
+        if (!collee && p.id !== parcelId) loin += 1;
+      } else {
+        assert.equal(p.prix, null, `${p.id} chiffrée alors qu'elle est ${p.statut}`);
       }
     }
+    assert.ok(loin > 0, "le voisinage doit contenir une parcelle rachetable non mitoyenne");
+  });
+
+  it("laisse acheter une parcelle libre même non mitoyenne", async () => {
+    const { moi, parcelId, vue } = await fermeAvecVoisins("Voisin Loin");
+    const chezMoi = vue.parcelles.find((p) => p.id === parcelId)!;
+    const loin = vue.parcelles.find(
+      (p) =>
+        p.statut === "LIBRE" &&
+        p.id !== parcelId &&
+        Math.abs(p.mapX - chezMoi.mapX) + Math.abs(p.mapY - chezMoi.mapY) > 1,
+    );
+    assert.ok(loin, "il faut une parcelle libre non mitoyenne pour le test");
+
+    await appel("/dev/grant", {
+      methode: "POST",
+      corps: { userId: moi.id, crd: 400000, level: 20 },
+      jeton: moi.jeton,
+    });
+
+    const achat = await appel(`/parcels/${loin.id}/buy`, {
+      methode: "POST",
+      corps: { userId: moi.id },
+      jeton: moi.jeton,
+    });
+    assert.equal(achat.statut, 200, `achat loin refusé : ${JSON.stringify(achat.corps)}`);
+    const me = await appel("/auth/me", { jeton: moi.jeton });
+    const ids = (
+      me.corps as unknown as { player: { farm: { parcels: { id: string }[] } } }
+    ).player.farm.parcels.map((p) => p.id);
+    assert.ok(ids.includes(loin.id), "la parcelle non mitoyenne n'est pas à la ferme");
   });
 
   it("laisse racheter la parcelle d'un voisin PNJ", async () => {

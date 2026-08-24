@@ -276,7 +276,6 @@ import {
   machineRequiredHp,
   machineWidth,
   machineLifeHours,
-  mitoyennes,
   peutRacheter,
   machineHoursPerHectare,
   machineCost,
@@ -1602,24 +1601,43 @@ function acquisitionRefusal(
 
 type OwnedParcel = { zoneId: string; mapX: number; mapY: number };
 
+type QuoteCounts = {
+  regionTotal: number;
+  regionTaken: number;
+  continentTotal: number;
+  continentTaken: number;
+};
+
+type QuoteTarget = {
+  id: string;
+  zoneId: string;
+  mapX: number;
+  mapY: number;
+  fertility: number;
+  accessIndex: number;
+  zone: { koppen: string; continentCode: string };
+};
+
+async function loadQuoteCounts(zoneId: string, continentCode: string): Promise<QuoteCounts> {
+  const [regionTotal, regionTaken, continentTotal, continentTaken] = await Promise.all([
+    prisma.parcel.count({ where: { zoneId } }),
+    prisma.parcel.count({ where: { zoneId, farmId: { not: null } } }),
+    prisma.parcel.count({ where: { zone: { continentCode } } }),
+    prisma.parcel.count({
+      where: { zone: { continentCode }, farmId: { not: null } },
+    }),
+  ]);
+  return { regionTotal, regionTaken, continentTotal, continentTaken };
+}
+
 /**
  * Valorisation d'une parcelle : la valeur publique sert à la taxe et à
  * l'affichage, le prix demandé ajoute l'adjacence et l'escalade patrimoniale
- * propres à l'acheteur.
+ * propres à l'acheteur. Les comptages région / continent se partagent entre
+ * toutes les parcelles d'une même commune.
  */
-async function quoteParcel(
-  target: { id: string; zoneId: string; mapX: number; mapY: number; fertility: number; accessIndex: number; zone: { koppen: string; continentCode: string } },
-  owned: OwnedParcel[],
-  _playerLevel: number,
-) {
-  const [regionTotal, regionTaken, continentTotal, continentTaken] = await Promise.all([
-    prisma.parcel.count({ where: { zoneId: target.zoneId } }),
-    prisma.parcel.count({ where: { zoneId: target.zoneId, farmId: { not: null } } }),
-    prisma.parcel.count({ where: { zone: { continentCode: target.zone.continentCode } } }),
-    prisma.parcel.count({
-      where: { zone: { continentCode: target.zone.continentCode }, farmId: { not: null } },
-    }),
-  ]);
+function quoteFromCounts(target: QuoteTarget, owned: OwnedParcel[], counts: QuoteCounts) {
+  const { regionTotal, regionTaken, continentTotal, continentTaken } = counts;
 
   const neighborDensity = regionTotal > 0 ? regionTaken / regionTotal : 0;
   const occupancy = continentTotal > 0 ? continentTaken / continentTotal : 0;
@@ -1653,6 +1671,14 @@ async function quoteParcel(
     neighborDensity,
     occupancy,
   };
+}
+
+async function quoteParcel(target: QuoteTarget, owned: OwnedParcel[], _playerLevel: number) {
+  return quoteFromCounts(
+    target,
+    owned,
+    await loadQuoteCounts(target.zoneId, target.zone.continentCode),
+  );
 }
 
 /**
@@ -4744,7 +4770,7 @@ app.post("/labor-orders/:id/abandon", async (req, res) => {
   res.json({ order: publicLaborOrder(updated) });
 });
 
-/** Achat parcelle adjacente (ou 1ʳᵉ parcelle si ferme sans terre) */
+/** Achat d'une parcelle libre ou cédée par un PNJ (jamais un autre joueur). */
 app.post("/parcels/:id/buy", async (req, res) => {
   const body = z.object({ userId: z.string() }).safeParse(req.body);
   if (!body.success) {
@@ -4884,10 +4910,9 @@ app.get("/parcels/:id/quote", async (req, res) => {
  * la trame de la commune autour d'une parcelle, avec de quoi la dessiner et de
  * quoi la convoiter.
  *
- * Le devis n'accompagne que ce qui est réellement achetable — parcelle libre
- * ou PNJ, mitoyenne d'une des siennes. Le calculer pour toute la commune
- * coûterait quatre comptages par case, pour un prix que le joueur ne pourrait
- * pas payer.
+ * Le devis accompagne toute parcelle libre ou PNJ du voisinage. L'adjacence
+ * pondère le prix (bordures mitoyennes), elle ne verrouille plus l'achat.
+ * Les quatre comptages région / continent se font une fois pour la commune.
  */
 app.get("/parcels/:id/voisinage", async (req, res) => {
   const auth = await userFromAuthHeader(req);
@@ -4934,24 +4959,15 @@ app.get("/parcels/:id/voisinage", async (req, res) => {
 
   const owned = farm?.parcels ?? [];
   const monFarmId = farm?.id ?? null;
-  /*
-   * Une parcelle n'est proposée à l'achat que si elle touche une des siennes
-   * par un côté. C'est la règle du devis — il compte les bordures mitoyennes
-   * — et la seule qui donne un sens au fait de racheter « celle d'à côté ».
-   */
-  const collee = (p: { mapX: number; mapY: number }) =>
-    owned.some((o) => o.zoneId === centre.zoneId && mitoyennes(o, p));
-
-  const regionParcelCount = await prisma.parcel.count({ where: { zoneId: centre.zoneId } });
+  const counts = await loadQuoteCounts(centre.zoneId, centre.zone.continentCode);
   const gate = canAcquire({
     playerLevel: auth.user.level,
     ownedTotal: owned.length,
     ownedInRegion: owned.filter((p) => p.zoneId === centre.zoneId).length,
-    regionParcelCount,
+    regionParcelCount: counts.regionTotal,
   });
 
-  const parcelles = await Promise.all(
-    autour.map(async (p) => {
+  const parcelles = autour.map((p) => {
       const { col, rang } = caseDeTrame(centre, p);
       const statut = statutParcelle(p, p.farm?.user ?? null, monFarmId);
       const champ = resumerChamp(p.cells, p.gridW * p.gridH);
@@ -4965,10 +4981,8 @@ app.get("/parcels/:id/voisinage", async (req, res) => {
         .filter((h) => ici.has(h.buildingId))
         .map((h) => ({ kind: h.kind, size: h.size }));
 
-      const rachetable = peutRacheter(statut) && collee(p);
-      const devis = rachetable
-        ? await quoteParcel({ ...p, zone: centre.zone }, owned, auth.user.level)
-        : null;
+      const rachetable = peutRacheter(statut);
+      const devis = rachetable ? quoteFromCounts({ ...p, zone: centre.zone }, owned, counts) : null;
 
       return {
         id: p.id,
@@ -5003,8 +5017,7 @@ app.get("/parcels/:id/voisinage", async (req, res) => {
             ? acquisitionRefusal(gate.reason!, auth.user, owned.length)
             : null,
       };
-    }),
-  );
+  });
 
   res.json({
     centre: {

@@ -1435,18 +1435,12 @@ export function App() {
   const homeOwner =
     parcelDetail?.parcel?.farm?.user?.displayName ?? visitOrder?.clientName ?? null;
 
-  /** Adjacent buyable parcels for expansion (all truly free if no land yet). */
+  /** Parcelles libres ou PNJ des régions déjà exploitées — tout le voisinage, pas seulement collé. */
   const expandableParcelIds = useMemo(() => {
+    const ownedZones = new Set(ownedParcels.map((op) => op.zone?.code));
     const ids = freeParcels
       .filter((fp) =>
-        ownedParcels.length === 0
-          ? !fp.farmId
-          : ownedParcels.some(
-              (op) =>
-                op.zone?.code === fp.zone?.code &&
-                ((Math.abs(op.mapX - fp.mapX) === 1 && op.mapY === fp.mapY) ||
-                  (Math.abs(op.mapY - fp.mapY) === 1 && op.mapX === fp.mapX)),
-            ),
+        ownedParcels.length === 0 ? !fp.farmId : ownedZones.has(fp.zone?.code),
       )
       .map((p) => p.id);
     return new Set(ids);

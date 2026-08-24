@@ -129,6 +129,9 @@ export function statutParcelle(
  * Libre, oui. Tenue par un PNJ, oui — c'est tout l'intérêt d'avoir des
  * voisins exploitants plutôt qu'un damier figé. Tenue par un autre joueur,
  * jamais : on n'expulse personne.
+ *
+ * L'adjacence n'entre pas ici. On achète dans le voisinage, pas seulement
+ * collé : les bordures mitoyennes restent un facteur de **prix**.
  */
 export function peutRacheter(statut: StatutParcelle): boolean {
   return statut === "LIBRE" || statut === "PNJ";
@@ -137,9 +140,9 @@ export function peutRacheter(statut: StatutParcelle): boolean {
 /**
  * Deux parcelles se touchent-elles par un côté ?
  *
- * En diagonale ne compte pas, et c'est la règle du jeu et non une commodité :
- * le devis d'achat compte les **bordures** mitoyennes, et deux parcelles qui
- * ne se touchent que par un coin n'en partagent aucune.
+ * En diagonale ne compte pas. Le devis d'achat compte les **bordures**
+ * mitoyennes : deux parcelles qui ne se touchent que par un coin n'en
+ * partagent aucune. Ça pondère le prix, ça ne verrouille plus l'achat.
  */
 export function mitoyennes(
   a: { mapX: number; mapY: number },
