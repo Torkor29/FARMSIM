@@ -1150,9 +1150,11 @@ describe("les heures pèsent sur la récolte", () => {
       corps: { userId: moi.id, specialization: "CEREALIER", parcelId },
       jeton: moi.jeton,
     });
+    // La Coupe T1 vaut 200 000 € : avec exactement ça, il ne restait rien
+    // pour les semences, et la moisson échouait sur un champ vide.
     await appel("/dev/grant", {
       methode: "POST",
-      corps: { userId: moi.id, crd: 200000, level: 20 },
+      corps: { userId: moi.id, crd: 500000, level: 20 },
       jeton: moi.jeton,
     });
     await appel("/machines/buy", {
@@ -1185,7 +1187,8 @@ describe("les heures pèsent sur la récolte", () => {
       .filter((c) => c.kind === "EMPTY")
       .map((c) => ({ x: c.x, y: c.y }));
 
-    await travailler(parcelle.id, "plant", "PLANT", moi, cells, { crop: cropDeSaison() });
+    const semis = await travailler(parcelle.id, "plant", "PLANT", moi, cells, { crop: cropDeSaison() });
+    assert.equal(semis.statut, 200, `semis refusé : ${JSON.stringify(semis.corps)}`);
     await appel("/dev/grant", {
       methode: "POST",
       corps: { userId: moi.id, ripenAll: true },
@@ -1453,9 +1456,10 @@ describe("porteur et outils", () => {
       corps: { userId: moi.id, specialization: "CEREALIER", parcelId },
       jeton: moi.jeton,
     });
+    // Un T5 tracteur coûte 920 000 € : 500 000 € ne suffisaient plus.
     await appel("/dev/grant", {
       methode: "POST",
-      corps: { userId: moi.id, crd: 500000, level: 20 },
+      corps: { userId: moi.id, crd: 2_000_000, level: 20 },
       jeton: moi.jeton,
     });
     const me = await appel("/auth/me", { jeton: moi.jeton });
