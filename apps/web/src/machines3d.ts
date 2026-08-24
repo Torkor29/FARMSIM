@@ -154,11 +154,12 @@ function addTrackRoller(parent: Part, pos: Vec3, radius: number, width: number):
 
 /**
  * Un train de chenilles, lu de loin : deux pignons acier, galets, bande
- * continue et patins à crampons. Le bas des patins pose au sol — pas les
- * pignons, légèrement relevés, comme sur une vraie Terra Trac / Quadtrac.
+ * de patins. Le bas des patins pose au sol — pas les pignons, légèrement
+ * relevés.
  *
- * C’est ça qui fait un T5, pas un jumelage de plus : la bande noire longue,
- * les galets, le flanc.
+ * Le flanc n’est **pas** un pavé de caoutchouc qui remplit le stade : ça
+ * collait les quatre trains en deux barres noires. Le bogie reste creux,
+ * les patins dessinent l’ovale, les galets se voient au milieu.
  */
 function addCrawlerTrack(
   parent: Part,
@@ -168,64 +169,64 @@ function addCrawlerTrack(
   radius: number,
   width: number,
 ): void {
-  const padH = 0.028;
-  const lift = 0.02;
+  const padH = 0.022;
+  const lift = 0.012;
   const sy = radius + lift;
   for (const dx of [span / 2, -span / 2] as const) {
     parent
       .child([x + dx, sy, z], { role: "wheel", radius })
-      .attach(crawlerSprocket(radius, width * 0.72));
+      .attach(crawlerSprocket(radius, width * 0.7));
   }
-  // Bâti du bogie, longeron, tendeur.
+  // Bâti du bogie : plus court que la bande, pour laisser voir les pignons.
   parent.add(
     "paintDark",
-    roundedBox(span + radius * 0.4, radius * 0.78, width * 0.42, 0.04, [x, sy + radius * 0.06, z]),
+    roundedBox(span * 0.82, radius * 0.72, width * 0.38, 0.03, [x, sy + radius * 0.08, z]),
   );
   parent.add(
     "cast",
-    cyl(0.03, 0.03, span * 0.86, 8, [x, sy * 0.9, z], [0, 0, HALF]),
-    roundedBox(0.08, radius * 0.5, width * 0.5, 0.02, [x + span / 2 + radius * 0.15, sy, z]),
+    cyl(0.026, 0.026, span * 0.78, 8, [x, sy * 0.92, z], [0, 0, HALF]),
+    roundedBox(0.07, radius * 0.42, width * 0.42, 0.018, [x + span / 2 + radius * 0.08, sy, z]),
   );
-  parent.add(
-    "paint",
-    roundedBox(span * 0.62, 0.05, width * 0.78, 0.016, [x, sy + radius * 0.68, z]),
-    roundedBox(0.09, 0.07, width * 0.55, 0.02, [x - span * 0.12, sy + radius * 0.55, z]),
-  );
+  // Capot de bogie, posé sur le train — plus un ventre qui flotte au-dessus.
+  parent.add("paint", roundedBox(span * 0.72, 0.04, width * 0.72, 0.014, [x, sy + radius * 0.62, z]));
   // Galets porteurs au sol — c’est le train, pas deux pignons seuls.
-  const nRoll = Math.max(3, Math.round(span / 0.15));
-  const rollR = radius * 0.36;
+  const nRoll = Math.max(3, Math.round(span / 0.16));
+  const rollR = radius * 0.34;
   for (let i = 0; i < nRoll; i++) {
     const t = (i + 1) / (nRoll + 1);
     const rx = x - span / 2 + t * span;
-    addTrackRoller(parent, [rx, rollR + lift * 0.45, z], rollR, width * 0.8);
+    addTrackRoller(parent, [rx, rollR + lift * 0.4, z], rollR, width * 0.78);
   }
-  // Galets de retour, sous le brin supérieur.
-  const nRet = Math.max(2, Math.round(span / 0.28));
+  const nRet = Math.max(2, Math.round(span / 0.3));
   for (let i = 0; i < nRet; i++) {
     const t = (i + 1) / (nRet + 1);
     const rx = x - span / 2 + t * span;
     parent.add(
       "cast",
-      cyl(radius * 0.22, radius * 0.22, width * 0.55, 10, [rx, sy + radius * 0.52, z], [HALF, 0, 0]),
+      cyl(radius * 0.2, radius * 0.2, width * 0.5, 10, [rx, sy + radius * 0.48, z], [HALF, 0, 0]),
     );
   }
-  // Flancs + bande continue : sans eux, en iso, on ne lit qu’une file de roues.
+  // Brins haut et bas : la bande, pas le remplissage du stade.
   parent.add(
     "rubber",
-    roundedBox(span + radius * 1.75, radius * 1.55, 0.028, 0.012, [x, sy, z + width * 0.5]),
-    roundedBox(span + radius * 1.75, radius * 1.55, 0.028, 0.012, [x, sy, z - width * 0.5]),
-    roundedBox(span, 0.03, width * 0.94, 0.008, [x, lift + 0.002, z]),
-    roundedBox(span, 0.03, width * 0.94, 0.008, [x, sy + radius, z]),
+    roundedBox(span, padH, width * 0.96, 0.006, [x, lift, z]),
+    roundedBox(span, padH, width * 0.96, 0.006, [x, sy + radius, z]),
   );
-  // Guide central, entre les dents du pignon.
+  // Chant du brin, tout mince — assez pour lire la bande de profil, pas un slab.
+  parent.add(
+    "rubber",
+    roundedBox(span, padH * 1.4, 0.014, 0.004, [x, lift + padH * 0.2, z + width * 0.48]),
+    roundedBox(span, padH * 1.4, 0.014, 0.004, [x, lift + padH * 0.2, z - width * 0.48]),
+    roundedBox(span, padH * 1.4, 0.014, 0.004, [x, sy + radius - padH * 0.2, z + width * 0.48]),
+    roundedBox(span, padH * 1.4, 0.014, 0.004, [x, sy + radius - padH * 0.2, z - width * 0.48]),
+  );
   parent.add(
     "paintDark",
-    roundedBox(span + radius * 0.2, radius * 0.22, 0.04, 0.01, [x, sy - radius * 0.15, z]),
+    roundedBox(span * 0.7, radius * 0.18, 0.032, 0.008, [x, sy - radius * 0.12, z]),
   );
-  // Patins à crampons tout autour du stade — c’est la chenille.
   const peri = 2 * span + Math.PI * 2 * radius;
-  const nPads = Math.max(22, Math.round(peri / 0.058));
-  const padL = (peri / nPads) * 0.86;
+  const nPads = Math.max(24, Math.round(peri / 0.05));
+  const padL = (peri / nPads) * 0.84;
   const pads: THREE.BufferGeometry[] = [];
   const grousers: THREE.BufferGeometry[] = [];
   for (let i = 0; i < nPads; i++) {
@@ -252,10 +253,9 @@ function addCrawlerTrack(
       py = sy + Math.sin(a) * radius;
       rotZ = a + HALF;
     }
-    pads.push(roundedBox(padL, padH, width, 0.005, [px, py, z], [0, 0, rotZ]));
-    // Crampon qui déborde en largeur, pas vers le sol : lu de profil.
+    pads.push(roundedBox(padL, padH, width, 0.004, [px, py, z], [0, 0, rotZ]));
     grousers.push(
-      roundedBox(padL * 0.42, padH * 0.7, width * 1.16, 0.004, [px, py, z], [0, 0, rotZ]),
+      roundedBox(padL * 0.4, padH * 0.55, width * 1.12, 0.003, [px, py, z], [0, 0, rotZ]),
     );
   }
   parent.add("rubber", ...pads, ...grousers);
@@ -545,23 +545,31 @@ function buildTractor(tier: MachineTier = 1): Blueprint {
 
   /* — Trains roulants ————————————————————————————————— */
   if (tracks) {
-    // 9RX : quatre chenilles de même taille, châssis rigide — pas un Quadtrac
-    // aux trains avant plus petits, ni un T4 jumelé agrandi.
-    const zTrack = 0.52;
-    addCrawlerTrack(root, -0.3, zTrack, 0.84, 0.19, 0.23);
-    addCrawlerTrack(root, -0.3, -zTrack, 0.84, 0.19, 0.23);
-    const steer = root.child([0.5, 0, 0], { role: "steer" });
-    addCrawlerTrack(steer, 0, zTrack - 0.04, 0.84, 0.19, 0.23);
-    addCrawlerTrack(steer, 0, -(zTrack - 0.04), 0.84, 0.19, 0.23);
-    root.add("cast", roundedBox(1.12, 0.1, 0.58, 0.03, [0.1, 0.14, 0]));
-    root.add("paintDark", roundedBox(0.36, 0.16, 1.0, 0.03, [-0.3, 0.24, 0]));
-    root.add("paint", roundedBox(0.22, 0.18, 0.34, 0.04, [0.58, 0.44, 0]));
+    // 9RX : quatre chenilles de même taille, **séparées**. Les trains avant
+    // et arrière ne se recouvrent plus — sinon on lit deux barres, pas quatre
+    // bogies. Le châssis descend jusqu’aux capots de bogie.
+    const span = 0.64;
+    const radius = 0.168;
+    const width = 0.2;
+    const zTrack = 0.44;
+    const rearX = -0.42;
+    const frontX = 0.48;
+    const trackTop = radius + 0.012 + radius * 0.62;
+    addCrawlerTrack(root, rearX, zTrack, span, radius, width);
+    addCrawlerTrack(root, rearX, -zTrack, span, radius, width);
+    const steer = root.child([frontX, 0, 0], { role: "steer" });
+    addCrawlerTrack(steer, 0, zTrack, span, radius, width);
+    addCrawlerTrack(steer, 0, -zTrack, span, radius, width);
+    root.add("cast", roundedBox(1.02, 0.09, zTrack * 2 - width * 0.35, 0.03, [0.04, 0.2, 0]));
+    root.add("paintDark", roundedBox(0.2, 0.12, zTrack * 2 + width * 0.15, 0.03, [rearX, 0.24, 0]));
+    root.add("paint", roundedBox(0.2, 0.16, 0.32, 0.04, [0.62, 0.42, 0]));
     for (const z of [zTrack, -zTrack] as const) {
-      root.add("paint", roundedBox(0.74, 0.055, 0.26, 0.02, [-0.3, 0.44, z]));
-      root.add("steel", roundedBox(0.1, 0.18, 0.07, 0.015, [-0.08, 0.3, z * 0.7]));
+      root.add("paint", roundedBox(span * 0.88, 0.045, width + 0.03, 0.016, [rearX, trackTop, z]));
+      root.add("steel", roundedBox(0.09, 0.14, 0.055, 0.012, [rearX + 0.06, 0.26, z * 0.62]));
     }
-    for (const z of [zTrack - 0.04, -(zTrack - 0.04)] as const) {
-      steer.add("paint", roundedBox(0.74, 0.05, 0.26, 0.02, [0, 0.44, z]));
+    for (const z of [zTrack, -zTrack] as const) {
+      steer.add("paint", roundedBox(span * 0.88, 0.045, width + 0.03, 0.016, [0, trackTop, z]));
+      steer.add("steel", roundedBox(0.09, 0.14, 0.055, 0.012, [-0.04, 0.26, z * 0.62]));
     }
   } else {
     for (const z of rearTrack) {
@@ -580,7 +588,7 @@ function buildTractor(tier: MachineTier = 1): Blueprint {
     }
   }
 
-  return { root, length: tracks ? 2.05 : 1.35, hitch: [-0.64, 0.16, 0], eye: [0, 0, 0] };
+  return { root, length: tracks ? 1.95 : 1.35, hitch: [-0.64, 0.16, 0], eye: [0, 0, 0] };
 }
 
 /* ------------------------------------------------------------------ */
@@ -763,31 +771,32 @@ function buildHarvester(tier: MachineTier = 1): Blueprint {
     ),
   );
   // Auge de vis d'alimentation, au fond du bec
-  header.add("paintDark", cyl(0.1, 0.1, 1.02 * hs, 14, [0.04, 0.26, 0], [HALF, 0, 0]));
-  header.add("rim", roundedBox(0.12, 0.045, 1.08 * hs, 0.018, [0.34, 0.15, 0]));
-  const nSections = Math.round(15 * hs);
+  header.add("paintDark", cyl(0.1, 0.1, headerW * 0.92, 14, [0.04, 0.26, 0], [HALF, 0, 0]));
+  header.add("rim", roundedBox(0.12, 0.045, headerW * 0.98, 0.018, [0.34, 0.15, 0]));
+  const nSections = Math.max(8, Math.round(headerW / 0.08));
   const sections: THREE.BufferGeometry[] = [];
   for (let i = 0; i < nSections; i++) {
-    sections.push(cone(0.032, 0.07, 4, [0.41, 0.15, (-0.49 + i * 0.07) * hs], [0, 0, -HALF]));
+    const z = nSections === 1 ? 0 : -headerW * 0.46 + (i / (nSections - 1)) * headerW * 0.92;
+    sections.push(cone(0.032, 0.07, 4, [0.41, 0.15, z], [0, 0, -HALF]));
   }
   header.add("steel", ...sections);
   // Diviseurs et bras de rabatteur
-  for (const z of [0.56 * hs, -0.56 * hs] as const) {
+  for (const z of [headerW * 0.48, -headerW * 0.48] as const) {
     header.add("rim", cone(0.07, 0.28, 6, [0.24, 0.22, z], [0, 0, -HALF]));
-    header.add("paintDark", roundedBox(0.3, 0.05, 0.05, 0.018, [0.06, 0.54, z * 0.78]));
+    header.add("paintDark", roundedBox(0.3, 0.05, 0.05, 0.018, [0.06, 0.54, z * 0.82]));
   }
 
   const reel = header.child([0.2, 0.54, 0], { role: "reel", radius: 0.15 });
   const bats: THREE.BufferGeometry[] = [];
   const tines: THREE.BufferGeometry[] = [];
-  const nTines = Math.max(5, Math.round(5 * hs));
+  const nTines = Math.max(5, Math.round(headerW / 0.22));
   for (let i = 0; i < 5; i++) {
     const a = (i / 5) * Math.PI * 2;
     const bx = Math.cos(a) * 0.14;
     const by = Math.sin(a) * 0.14;
-    bats.push(roundedBox(0.035, 0.035, 0.92 * hs, 0.012, [bx, by, 0]));
+    bats.push(roundedBox(0.035, 0.035, headerW * 0.84, 0.012, [bx, by, 0]));
     for (let j = 0; j < nTines; j++) {
-      const zTine = nTines === 5 ? -0.38 + j * 0.19 : ((j / (nTines - 1)) * 0.76 - 0.38) * hs;
+      const zTine = nTines === 1 ? 0 : -headerW * 0.4 + (j / (nTines - 1)) * headerW * 0.8;
       tines.push(cyl(0.006, 0.004, 0.09, 5, [bx * 1.16, by * 1.16 - 0.03, zTine], [0, 0, a]));
     }
   }
@@ -825,12 +834,19 @@ function buildHarvester(tier: MachineTier = 1): Blueprint {
 
   /* — Trains roulants ————————————————————————————————— */
   if (tier >= 5) {
-    // Terra Trac intégral : deux longues motrices, deux directrices derrière.
-    addCrawlerTrack(root, 0.08, 0.44, 0.84, 0.168, 0.22);
-    addCrawlerTrack(root, 0.08, -0.44, 0.84, 0.168, 0.22);
-    root.add("paintDark", roundedBox(0.62, 0.12, 0.62, 0.03, [0.08, 0.3, 0]));
-    for (const z of [0.44, -0.44] as const) {
-      root.add("paint", roundedBox(0.7, 0.05, 0.24, 0.02, [0.08, 0.42, z]));
+    // Terra Trac : motrices sous la caisse, directrices distinctes derrière.
+    // Un trou entre les deux trains — sinon ça se lit comme une seule bande.
+    const driveSpan = 0.7;
+    const driveR = 0.155;
+    const driveW = 0.2;
+    const zTrack = 0.42;
+    addCrawlerTrack(root, 0.06, zTrack, driveSpan, driveR, driveW);
+    addCrawlerTrack(root, 0.06, -zTrack, driveSpan, driveR, driveW);
+    root.add("paintDark", roundedBox(0.55, 0.1, zTrack * 2 - 0.12, 0.03, [0.06, 0.26, 0]));
+    const driveTop = driveR + 0.012 + driveR * 0.62;
+    for (const z of [zTrack, -zTrack] as const) {
+      root.add("paint", roundedBox(driveSpan * 0.86, 0.045, driveW + 0.02, 0.016, [0.06, driveTop, z]));
+      root.add("steel", roundedBox(0.08, 0.12, 0.05, 0.012, [0.06, 0.24, z * 0.58]));
     }
     // Broyeur de paille : le T5 n’a plus un capot nu à l’arrière.
     root.add("cast", roundedBox(0.16, 0.14, 0.5, 0.03, [-0.9, 0.32, 0]));
@@ -839,11 +855,15 @@ function buildHarvester(tier: MachineTier = 1): Blueprint {
       spin.add("steel", cyl(0.06, 0.06, 0.04, 10, [0, 0, 0], [HALF, 0, 0]));
       spin.add("rim", roundedBox(0.12, 0.016, 0.016, 0.004, [0, 0, 0]));
     }
-    const steer = root.child([-0.72, 0, 0], { role: "steer" });
-    addCrawlerTrack(steer, 0, 0.44, 0.78, 0.16, 0.21);
-    addCrawlerTrack(steer, 0, -0.44, 0.78, 0.16, 0.21);
-    for (const z of [0.44, -0.44] as const) {
-      steer.add("paint", roundedBox(0.66, 0.045, 0.22, 0.016, [0, 0.38, z]));
+    const rearSpan = 0.52;
+    const rearR = 0.138;
+    const rearW = 0.18;
+    const steer = root.child([-0.8, 0, 0], { role: "steer" });
+    addCrawlerTrack(steer, 0, zTrack, rearSpan, rearR, rearW);
+    addCrawlerTrack(steer, 0, -zTrack, rearSpan, rearR, rearW);
+    const rearTop = rearR + 0.012 + rearR * 0.62;
+    for (const z of [zTrack, -zTrack] as const) {
+      steer.add("paint", roundedBox(rearSpan * 0.86, 0.04, rearW + 0.02, 0.014, [0, rearTop, z]));
     }
   } else {
     const driveZs = tier >= 4 ? ([0.22, 0.38, -0.22, -0.38] as const) : ([0.28, -0.28] as const);
@@ -1561,17 +1581,27 @@ function buildForageHarvester(tier: MachineTier = 1): Blueprint {
 
   /* — Roues : motrices devant, directrices derrière ——————————— */
   if (tier >= 5) {
-    addCrawlerTrack(root, 0.24, 0.44, 0.78, 0.16, 0.21);
-    addCrawlerTrack(root, 0.24, -0.44, 0.78, 0.16, 0.21);
-    root.add("paintDark", roundedBox(0.56, 0.12, 0.58, 0.03, [0.24, 0.28, 0]));
-    for (const z of [0.44, -0.44] as const) {
-      root.add("paint", roundedBox(0.66, 0.05, 0.22, 0.02, [0.24, 0.4, z]));
+    const driveSpan = 0.66;
+    const driveR = 0.15;
+    const driveW = 0.19;
+    const zTrack = 0.42;
+    addCrawlerTrack(root, 0.16, zTrack, driveSpan, driveR, driveW);
+    addCrawlerTrack(root, 0.16, -zTrack, driveSpan, driveR, driveW);
+    root.add("paintDark", roundedBox(0.5, 0.1, zTrack * 2 - 0.12, 0.03, [0.16, 0.24, 0]));
+    const driveTop = driveR + 0.012 + driveR * 0.62;
+    for (const z of [zTrack, -zTrack] as const) {
+      root.add("paint", roundedBox(driveSpan * 0.86, 0.045, driveW + 0.02, 0.016, [0.16, driveTop, z]));
+      root.add("steel", roundedBox(0.08, 0.12, 0.05, 0.012, [0.16, 0.22, z * 0.58]));
     }
-    const steer = root.child([-0.62, 0, 0], { role: "steer" });
-    addCrawlerTrack(steer, 0, 0.42, 0.72, 0.152, 0.2);
-    addCrawlerTrack(steer, 0, -0.42, 0.72, 0.152, 0.2);
-    for (const z of [0.42, -0.42] as const) {
-      steer.add("paint", roundedBox(0.6, 0.045, 0.22, 0.016, [0, 0.36, z]));
+    const rearSpan = 0.5;
+    const rearR = 0.135;
+    const rearW = 0.175;
+    const steer = root.child([-0.72, 0, 0], { role: "steer" });
+    addCrawlerTrack(steer, 0, zTrack, rearSpan, rearR, rearW);
+    addCrawlerTrack(steer, 0, -zTrack, rearSpan, rearR, rearW);
+    const rearTop = rearR + 0.012 + rearR * 0.62;
+    for (const z of [zTrack, -zTrack] as const) {
+      steer.add("paint", roundedBox(rearSpan * 0.86, 0.04, rearW + 0.02, 0.014, [0, rearTop, z]));
     }
   } else {
     const driveZs = tier >= 4 ? ([0.24, 0.4, -0.24, -0.4] as const) : ([0.31, -0.31] as const);

@@ -126,6 +126,21 @@ describe("pièces animées", () => {
     t5.dispose();
   });
 
+  it("un tracteur T5 a quatre bogies distincts, pas deux barres fusionnées", () => {
+    const rig = createMachineRig("TRACTOR", { shadows: false, tier: 5 });
+    const xs = rig.anchors("wheel").map((w) => {
+      const p = new THREE.Vector3();
+      w.getWorldPosition(p);
+      return p.x;
+    });
+    const rear = xs.filter((x) => x < 0);
+    const front = xs.filter((x) => x > 0);
+    expect(rear.length).toBeGreaterThan(0);
+    expect(front.length).toBeGreaterThan(0);
+    expect(Math.max(...rear)).toBeLessThan(Math.min(...front) - 0.1);
+    rig.dispose();
+  });
+
   it("un outil dételé n'a pas de pot d'échappement", () => {
     const rig = createMachineRig("DISC_HARROW", { shadows: false });
     expect(rig.exhaust).toBeNull();
@@ -316,6 +331,14 @@ describe("cinq paliers, cinq silhouettes", () => {
       return box.max.z - box.min.z;
     };
     expect(w(t5)).toBeGreaterThan(w(t1));
+    const xs = t5.anchors("wheel").map((node) => {
+      const p = new THREE.Vector3();
+      node.getWorldPosition(p);
+      return p.x;
+    });
+    expect(Math.max(...xs.filter((x) => x < -0.4))).toBeLessThan(
+      Math.min(...xs.filter((x) => x > -0.35)) - 0.08,
+    );
     t1.dispose();
     t4.dispose();
     t5.dispose();
