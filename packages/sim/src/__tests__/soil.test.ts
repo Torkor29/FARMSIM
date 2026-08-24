@@ -12,6 +12,7 @@ import {
   canSow,
   canStubble,
   plowRequired,
+  sowingPlan,
   residueBonus,
   soilSummary,
   type SoilState,
@@ -30,6 +31,27 @@ describe("état du sol", () => {
   it("interdit de semer sur des chaumes", () => {
     expect(canSow(NEUF)).toBe(true);
     expect(canSow(applyHarvest(NEUF))).toBe(false);
+  });
+
+  it("laisse le geste Semer percer les chaumes en semis direct", () => {
+    /*
+     * `canSow` dit si le sol est nu. Le bouton Semer, lui, ne doit pas
+     * échouer là où le prestataire réussissait : sur des chaumes encore
+     * labourables, on sème en direct.
+     */
+    const chaumes = { kind: "EMPTY" as const, ...applyHarvest(NEUF) };
+    expect(sowingPlan(chaumes)).toEqual({ ok: true, directSeed: true });
+    expect(sowingPlan({ kind: "EMPTY", ...NEUF })).toEqual({ ok: true, directSeed: false });
+    expect(sowingPlan({ kind: "CROP", ...NEUF }).ok).toBe(false);
+  });
+
+  it("refuse le semis, même en direct, quand la charrue est due", () => {
+    let sol: SoilState = NEUF;
+    for (let i = 0; i < MAX_HARVESTS_BEFORE_PLOW; i++) sol = applyHarvest(sol);
+    expect(sowingPlan({ kind: "EMPTY", ...sol })).toEqual({
+      ok: false,
+      reason: "PLOW_REQUIRED",
+    });
   });
 
   it("rend la case semable après déchaumage comme après labour", () => {

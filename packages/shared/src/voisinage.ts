@@ -124,6 +124,17 @@ export function statutParcelle(
 }
 
 /**
+ * Cette parcelle se rachète-t-elle ?
+ *
+ * Libre, oui. Tenue par un PNJ, oui — c'est tout l'intérêt d'avoir des
+ * voisins exploitants plutôt qu'un damier figé. Tenue par un autre joueur,
+ * jamais : on n'expulse personne.
+ */
+export function peutRacheter(statut: StatutParcelle): boolean {
+  return statut === "LIBRE" || statut === "PNJ";
+}
+
+/**
  * Deux parcelles se touchent-elles par un côté ?
  *
  * En diagonale ne compte pas, et c'est la règle du jeu et non une commodité :

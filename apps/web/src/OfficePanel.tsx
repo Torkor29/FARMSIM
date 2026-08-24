@@ -563,7 +563,7 @@ export function OfficePanel({
           </div>
         ) : mode === "LAND" ? (
           <div className="hdv-single">
-            <p className="hdv-muted">Parcelles adjacentes libres — cliquez pour acheter.</p>
+            <p className="hdv-muted">Parcelles adjacentes libres ou cédées par un voisin — cliquez pour acheter.</p>
             <div className="zone-maps office-maps">
               {zones.map((z) => (
                 <ZoneMap
@@ -576,7 +576,7 @@ export function OfficePanel({
                 />
               ))}
             </div>
-            {expandableIds.size === 0 && <p className="hdv-empty">Aucune parcelle adjacente libre.</p>}
+            {expandableIds.size === 0 && <p className="hdv-empty">Aucune parcelle adjacente à racheter.</p>}
           </div>
         ) : mode === "MINE" ? (
           <MineBody

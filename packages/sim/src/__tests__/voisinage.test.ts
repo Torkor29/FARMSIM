@@ -5,6 +5,7 @@ import {
   corpsDeFerme,
   cultureNpc,
   mitoyennes,
+  peutRacheter,
   resumerChamp,
   statutParcelle,
   type CaseResumable,
@@ -118,6 +119,13 @@ describe("à qui est cette parcelle", () => {
      */
     expect(statutParcelle({ farmId: "f2" }, { isNpc: true }, "f1")).toBe("PNJ");
     expect(statutParcelle({ farmId: "f3" }, { isNpc: false }, "f1")).toBe("JOUEUR");
+  });
+
+  it("se rachète au PNJ et à la terre libre, jamais à un autre joueur", () => {
+    expect(peutRacheter("LIBRE")).toBe(true);
+    expect(peutRacheter("PNJ")).toBe(true);
+    expect(peutRacheter("JOUEUR")).toBe(false);
+    expect(peutRacheter("MOI")).toBe(false);
   });
 
   it("appelle libre ce qui n’a pas de ferme", () => {

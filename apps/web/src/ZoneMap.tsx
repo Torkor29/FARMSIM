@@ -5,6 +5,8 @@ export type ZoneMapParcel = {
   mapY: number;
   landPrice: number;
   farmId?: string | null;
+  /** Exploitant PNJ : on peut racheter, contrairement à un autre joueur. */
+  npc?: boolean;
 };
 
 export type ZoneMapZone = {
@@ -31,13 +33,18 @@ export type ZoneMapProps = {
   showLegend?: boolean;
 };
 
-type CellStatus = "free" | "mine" | "other" | "empty";
+type CellStatus = "free" | "mine" | "npc" | "other" | "empty";
 
 function statusOf(p: ZoneMapParcel | undefined, myFarmId?: string | null): CellStatus {
   if (!p) return "empty";
   if (!p.farmId) return "free";
   if (myFarmId && p.farmId === myFarmId) return "mine";
+  if (p.npc) return "npc";
   return "other";
+}
+
+function isBuyableStatus(status: CellStatus): boolean {
+  return status === "free" || status === "npc";
 }
 
 function toSet(ids?: ReadonlySet<string> | readonly string[] | null): Set<string> | null {
@@ -79,12 +86,22 @@ export function ZoneMap({
           Array.from({ length: zone.mapW }, (_, x) => {
             const p = byCoord.get(`${x},${y}`);
             const status = statusOf(p, myFarmId);
-            const isFree = status === "free";
+            const isFree = isBuyableStatus(status);
             const isAllowed = isFree && (allowed == null || (p != null && allowed.has(p.id)));
             const selected = p != null && selectedParcelId === p.id;
             const title = p
               ? `${p.label} · (${p.mapX},${p.mapY}) · ${p.landPrice} €` +
-                (status === "mine" ? " · à toi" : status === "other" ? " · occupée" : isAllowed ? " · libre" : " · non disponible")
+                (status === "mine"
+                  ? " · à toi"
+                  : status === "other"
+                    ? " · occupée"
+                    : status === "npc"
+                      ? isAllowed
+                        ? " · voisin, à racheter"
+                        : " · voisin"
+                      : isAllowed
+                        ? " · libre"
+                        : " · non disponible")
               : `Case vide (${x},${y})`;
 
             return (
@@ -133,7 +150,7 @@ export function ZoneMap({
       {compact ? (
         <ul className="zone-picks">
           {zone.parcels
-            .filter((p) => statusOf(p, myFarmId) === "free" && (allowed == null || allowed.has(p.id)))
+            .filter((p) => isBuyableStatus(statusOf(p, myFarmId)) && (allowed == null || allowed.has(p.id)))
             .sort((a, b) => a.landPrice - b.landPrice)
             .map((p) => (
               <li key={p.id}>
@@ -149,8 +166,8 @@ export function ZoneMap({
               </li>
             ))}
           {zone.parcels.every(
-            (p) => statusOf(p, myFarmId) !== "free" || (allowed != null && !allowed.has(p.id)),
-          ) && <li className="muted tiny">Aucun champ libre attenant ici.</li>}
+            (p) => !isBuyableStatus(statusOf(p, myFarmId)) || (allowed != null && !allowed.has(p.id)),
+          ) && <li className="muted tiny">Aucun champ à racheter attenant ici.</li>}
         </ul>
       ) : null}
 
@@ -158,6 +175,9 @@ export function ZoneMap({
         <ul className="zone-legend">
           <li>
             <i className="swatch st-free" /> Libre
+          </li>
+          <li>
+            <i className="swatch st-npc" /> Voisin
           </li>
           <li>
             <i className="swatch st-mine" /> À toi
