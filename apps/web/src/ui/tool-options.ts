@@ -36,9 +36,9 @@ export const TOOL_GROUPS: ToolGroupDef[] = [
      avant « Sol », ce qui plaçait la moisson avant le labour. */
   { id: "SOIL", label: "Sol", icon: "/assets/icons/tools/plow.svg", hotkey: "3", entry: "STUBBLE" },
   { id: "HARVEST", label: "Récolte", icon: "/assets/icons/tools/harvest.svg", hotkey: "4", entry: "HARVEST" },
-  // Le seul outil qui n'avait pas de dessin retombait sur un emoji, au milieu
-  // de quatre voisins illustrés. Il en a un maintenant, dans la même famille.
-  { id: "SELL", label: "Marché", icon: "/assets/icons/nav/marche.svg", hotkey: "5" },
+  // Le panneau s'intitule « Hôtel des ventes ». « Marché » ne s'y lit nulle
+  // part, et le tonnage à la place du mot laissait un sac € sans menu.
+  { id: "SELL", label: "Ventes", icon: "/assets/icons/nav/marche.svg", hotkey: "5" },
 ];
 
 export type ToolOption = {

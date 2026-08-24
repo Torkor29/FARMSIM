@@ -78,7 +78,7 @@ describe("le catalogue d'outils", () => {
   it("range les options sous les bonnes familles", () => {
     expect(optionsFor("PLANT").length).toBeGreaterThan(0);
     expect(optionsFor("SOIL").length).toBeGreaterThan(0);
-    // « Voir » et « Marché » n'arment aucun travail : elles n'ont rien à dire.
+    // « Voir » et « Ventes » n'arment aucun travail : elles n'ont rien à dire.
     expect(optionsFor("SELECT")).toHaveLength(0);
     expect(optionsFor("SELL")).toHaveLength(0);
   });

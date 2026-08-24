@@ -5945,7 +5945,6 @@ export function App() {
           strawCount={strawCellCount}
           baleCount={baleCellCount}
           silageReadyCount={silageReadyCount}
-          stockTons={totalStockTons}
           contractorAffordable={canPay(player, contractorOffer?.cost ?? 0)}
           laborAffordable={canPay(player, laborQuote ?? 0)}
           keepSwath={keepSwath}

@@ -46,7 +46,6 @@ type Props = {
   strawCount?: number;
   baleCount?: number;
   silageReadyCount?: number;
-  stockTons: number;
   /**
    * Peut-on payer ? La question, pas la somme.
    *
@@ -136,7 +135,6 @@ export function FieldDock({
   strawCount = 0,
   baleCount = 0,
   silageReadyCount = 0,
-  stockTons,
   contractorAffordable,
   laborAffordable,
   keepSwath,
@@ -448,11 +446,6 @@ export function FieldDock({
               type="button"
               className={`dock-tool ${on ? "on" : ""} ${g.id === "SELL" ? "sell" : ""}`}
               aria-pressed={on}
-              aria-label={
-                g.id === "SELL" && stockTons > 0
-                  ? `Marché — ${stockTons.toFixed(0)} t en stock`
-                  : g.label
-              }
               onClick={() => {
                 if (g.id === "SELL") onSell();
                 else if (g.entry && !on) onTool(g.entry);
@@ -462,9 +455,6 @@ export function FieldDock({
               <span className="dock-label">{g.label}</span>
               {g.id === "HARVEST" && readyCount > 0 && (
                 <span className="dock-badge">{readyCount}</span>
-              )}
-              {g.id === "SELL" && stockTons > 0 && (
-                <span className="dock-badge stock">{stockTons.toFixed(0)} t</span>
               )}
             </button>
           );
