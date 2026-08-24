@@ -54,6 +54,23 @@ body {
   gap: 8px;
 }
 
+.atelier-controls button {
+  border: 1px solid var(--sand-300);
+  background: var(--cream-50);
+  color: var(--ink);
+  font: inherit;
+  font-weight: 700;
+  padding: 4px 10px;
+  border-radius: 8px;
+  cursor: pointer;
+}
+
+.atelier-controls button.on {
+  background: var(--teal-600);
+  border-color: var(--teal-600);
+  color: #fff;
+}
+
 .atelier-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));

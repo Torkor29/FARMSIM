@@ -1,6 +1,6 @@
 import { useEffect, useRef } from "react";
 import * as THREE from "three";
-import type { MachineType } from "@farmsim/shared";
+import type { MachineType, MachineTier } from "@farmsim/shared";
 import { attachStudioEnvironment } from "./machine-kit";
 import { createDustTrail, createMachineRig, isTowedImplement } from "./machines3d";
 import { disposeRenderer, disposeThreeScene } from "./three-cleanup";
@@ -17,6 +17,8 @@ type Props = {
   towed?: boolean;
   /** Tour de plateau : l'engin pivote pour se montrer sous toutes ses faces */
   turntable?: boolean;
+  /** Palier catalogue : un T5 n’est pas un T1 agrandi. */
+  tier?: MachineTier;
 };
 
 /**
@@ -32,6 +34,7 @@ export function MachineView3D({
   speed = 1.6,
   towed = false,
   turntable = true,
+  tier = 1,
 }: Props) {
   const hostRef = useRef<HTMLDivElement | null>(null);
   const liveRef = useRef({ working, speed, turntable });
@@ -83,7 +86,7 @@ export function MachineView3D({
     const turn = new THREE.Group();
     scene.add(turn);
 
-    const rig = createMachineRig(type, { towed: towed && isTowedImplement(type), seed: 3 });
+    const rig = createMachineRig(type, { towed: towed && isTowedImplement(type), seed: 3, tier });
     turn.add(rig.group);
 
     // Le socle suit la taille de l'engin : un attelage de deux mètres ne se
@@ -151,7 +154,7 @@ export function MachineView3D({
       disposeThreeScene(scene);
       disposeRenderer(renderer, host);
     };
-  }, [type, height, towed]);
+  }, [type, height, towed, tier]);
 
   return <div className="machine-view3d" ref={hostRef} style={{ height }} aria-hidden="true" />;
 }
