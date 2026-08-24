@@ -548,28 +548,29 @@ function buildTractor(tier: MachineTier = 1): Blueprint {
     // 9RX : quatre chenilles de même taille, **séparées**. Les trains avant
     // et arrière ne se recouvrent plus — sinon on lit deux barres, pas quatre
     // bogies. Le châssis descend jusqu’aux capots de bogie.
-    const span = 0.64;
-    const radius = 0.168;
-    const width = 0.2;
-    const zTrack = 0.44;
-    const rearX = -0.42;
-    const frontX = 0.48;
+    const span = 0.58;
+    const radius = 0.165;
+    const width = 0.195;
+    const zTrack = 0.42;
+    const rearX = -0.48;
+    const frontX = 0.5;
     const trackTop = radius + 0.012 + radius * 0.62;
     addCrawlerTrack(root, rearX, zTrack, span, radius, width);
     addCrawlerTrack(root, rearX, -zTrack, span, radius, width);
-    const steer = root.child([frontX, 0, 0], { role: "steer" });
-    addCrawlerTrack(steer, 0, zTrack, span, radius, width);
-    addCrawlerTrack(steer, 0, -zTrack, span, radius, width);
-    root.add("cast", roundedBox(1.02, 0.09, zTrack * 2 - width * 0.35, 0.03, [0.04, 0.2, 0]));
-    root.add("paintDark", roundedBox(0.2, 0.12, zTrack * 2 + width * 0.15, 0.03, [rearX, 0.24, 0]));
-    root.add("paint", roundedBox(0.2, 0.16, 0.32, 0.04, [0.62, 0.42, 0]));
+    // 9RX : châssis rigide. Les chenilles avant ne braquent pas comme des
+    // pneus — sinon elles se recouvrent des arrière dès que le plateau tourne.
+    addCrawlerTrack(root, frontX, zTrack, span, radius, width);
+    addCrawlerTrack(root, frontX, -zTrack, span, radius, width);
+    root.child([frontX, 0, 0], { role: "steer" });
+    root.add("cast", roundedBox(1.08, 0.09, zTrack * 2 - width * 0.3, 0.03, [0.02, 0.2, 0]));
+    root.add("paintDark", roundedBox(0.18, 0.12, zTrack * 2 + width * 0.2, 0.03, [rearX, 0.24, 0]));
+    root.add("paintDark", roundedBox(0.18, 0.12, zTrack * 2 + width * 0.2, 0.03, [frontX, 0.24, 0]));
+    root.add("paint", roundedBox(0.2, 0.16, 0.32, 0.04, [0.64, 0.42, 0]));
     for (const z of [zTrack, -zTrack] as const) {
       root.add("paint", roundedBox(span * 0.88, 0.045, width + 0.03, 0.016, [rearX, trackTop, z]));
-      root.add("steel", roundedBox(0.09, 0.14, 0.055, 0.012, [rearX + 0.06, 0.26, z * 0.62]));
-    }
-    for (const z of [zTrack, -zTrack] as const) {
-      steer.add("paint", roundedBox(span * 0.88, 0.045, width + 0.03, 0.016, [0, trackTop, z]));
-      steer.add("steel", roundedBox(0.09, 0.14, 0.055, 0.012, [-0.04, 0.26, z * 0.62]));
+      root.add("paint", roundedBox(span * 0.88, 0.045, width + 0.03, 0.016, [frontX, trackTop, z]));
+      root.add("steel", roundedBox(0.08, 0.14, 0.05, 0.012, [rearX + 0.04, 0.26, z * 0.58]));
+      root.add("steel", roundedBox(0.08, 0.14, 0.05, 0.012, [frontX - 0.04, 0.26, z * 0.58]));
     }
   } else {
     for (const z of rearTrack) {
