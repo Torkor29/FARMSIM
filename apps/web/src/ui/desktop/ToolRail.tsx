@@ -37,7 +37,6 @@ type Props = {
   /** Saison courante : elle décide des cultures semables. */
   season: Season;
   brush: BrushSize;
-  dragRect: boolean;
   /** Laisser l'andain derrière la moissonneuse. */
   keepSwath: boolean;
   /** La culture sélectionnée laisse-t-elle de la paille ? L'herbe, non. */
