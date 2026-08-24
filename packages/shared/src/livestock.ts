@@ -15,7 +15,8 @@
  * état lent (constantes de temps de 12 h à 36 h). Un joueur ne peut donc pas
  * « faire sortir les vaches juste avant la traite » pour rafler le bonus : il
  * doit tenir un régime de sorties sur plusieurs jours. Inversement, oublier
- * ses bêtes trois jours ne les ruine pas, ça les ramène au plancher.
+ * le pré trois jours ne les ruine pas : ça les ramène au plancher de l'étable,
+ * qui reste confortable si les besoins sont remplis.
  *
  * @see docs/research/07_ANIMAL_SYSTEM.md
  */
@@ -317,43 +318,56 @@ export type PaddockState = {
 /**
  * Constantes de dérive du bien-être `[GD]`.
  *
- * Le plancher de 0,35 n'est pas 0 à dessein : une vache correctement nourrie
- * dans une étable propre n'est pas maltraitée, elle est juste *sans plus*. Le
- * zéro est réservé au surpeuplement, qui seul peut pousser la cible **sous**
- * le plancher — c'est le seul cas de figure vraiment punitif.
+ * Une vache nourrie, paillée et à l'aise dans son étable n'est **pas**
+ * stressée : le plancher (0,78) est celui d'un élevage correctement tenu
+ * dedans. Le pré n'est pas une obligation, c'est un **bonus** — il pousse
+ * la cible vers 0,95, plus de lait, moins de fourrage. Oublier de sortir
+ * les bêtes fait seulement redescendre à ce plancher, jamais sous.
+ *
+ * Le vrai stress a des causes visibles : faim, litière, hygiène, densité
+ * réelle du bâtiment, froid ou chaleur. Seules elles peuvent pousser sous
+ * le plancher.
  */
 export const HAPPINESS = {
   /** Bornes dures de la jauge */
   min: 0,
   max: 1,
-  /** Cible d'une bête qui ne sort jamais `[GD]` */
-  confinedFloor: 0.35,
-  /** Cible d'une bête sortie du jour, enclos non saturé `[GD]` */
+  /** Cible d'une bête bien tenue à l'étable, sans bonus de pâture `[GD]` */
+  confinedFloor: 0.78,
+  /** Cible d'une bête au pré, place et conditions correctes `[GD]` */
   grazedCeiling: 0.95,
   /**
    * Constante de temps de la **baisse**, en heures `[TEST]`. Volontairement
-   * lente : 36 h ⇒ il faut ~3 jours sans sortie pour retomber au plancher.
+   * lente : 36 h ⇒ il faut ~3 jours sans sortie pour redescendre au plancher
+   * de l'étable (perdre le bonus, pas s'effondrer).
    */
   decayTauH: 36,
   /** Constante de temps de la **hausse**, en heures `[TEST]` — 3× plus rapide */
   riseTauH: 12,
   /**
-   * Mémoire de la dernière sortie `[GD]`. Au-delà de 48 h, la cible est
-   * redescendue au plancher : le rythme attendu est « une sortie par cycle ».
+   * Mémoire de la dernière sortie `[GD]`. Au-delà de 48 h, le bonus de pâture
+   * s'est éteint : on est revenu au plancher de l'étable, pas au stress.
    */
   grazeMemoryMs: 48 * HOUR_MS,
-  /** Taux d'occupation de l'enclos toléré sans stress `[TEST]` */
-  crowdingComfort: 0.85,
-  /** Taux d'occupation où le stress est maximal `[TEST]` */
-  crowdingCritical: 1.5,
+  /**
+   * Occupation du **bâtiment** encore confortable `[TEST]`.
+   *
+   * 80 % : 30 vaches dans une étable de 55 places (~55 %) restent largement
+   * à l'aise. On ne commence à serrer qu'en approchant du plein.
+   */
+  crowdingComfort: 0.8,
+  /** Occupation où le manque d'espace est maximal — le bâtiment plein `[TEST]` */
+  crowdingCritical: 1,
   /** Pénalité maximale de surpeuplement, en points de cible `[GD]` */
   crowdingPenaltyMax: 0.3,
 } as const;
 
 /**
- * Pénalité de surpeuplement `∈ [0 ; 0,30]`, linéaire entre 85 % et 150 %
- * d'occupation. En dessous de 85 %, aucune pénalité : le joueur n'a pas à
- * calculer au ras des places disponibles pour être optimal.
+ * Pénalité de surpeuplement `∈ [0 ; 0,30]`.
+ *
+ * `crowding` est l'occupation du **lieu de vie actuel** : places de l'étable
+ * quand le lot est dedans, places de l'enclos quand il vit dehors. En
+ * dessous de 80 %, aucune pénalité — 30 / 55 n'est pas un entassement.
  */
 export function crowdingPenalty(crowding: number): number {
   const excess = Math.max(0, crowding) - HAPPINESS.crowdingComfort;
@@ -362,18 +376,54 @@ export function crowdingPenalty(crowding: number): number {
   return HAPPINESS.crowdingPenaltyMax * clamp(excess / span, 0, 1);
 }
 
+/** Occupation d'un bâtiment, `effectif / places`. */
+export function barnOccupancy(size: number, slots: number): number {
+  if (slots <= 0) return size > 0 ? 1 : 0;
+  return Math.max(0, size) / slots;
+}
+
+/** Comment l'espace se lit, pour l'écran. */
+export type SpaceComfort = "spacious" | "comfortable" | "tight" | "full";
+
+export const SPACE = {
+  /** 30 / 55 ≈ 0,55 : encore à l'aise */
+  spaciousMax: 0.62,
+  /** Jusqu'ici, pas de pénalité de densité */
+  comfortableMax: HAPPINESS.crowdingComfort,
+  /** Au-delà, le bâtiment est trop plein */
+  tightMax: 0.94,
+} as const;
+
+export function spaceComfort(occupancy: number): SpaceComfort {
+  const o = Math.max(0, occupancy);
+  if (o <= SPACE.spaciousMax) return "spacious";
+  if (o <= SPACE.comfortableMax) return "comfortable";
+  if (o <= SPACE.tightMax) return "tight";
+  return "full";
+}
+
+export const SPACE_COMFORT_LABELS: Record<SpaceComfort, string> = {
+  spacious: "à l’aise",
+  comfortable: "correct",
+  tight: "un peu serré",
+  full: "trop plein",
+};
+
 /**
  * Cible de bonheur vers laquelle le lot dérive, à conditions constantes.
  *
- * Sans enclos adjacent, la cible est le plancher, point. Avec enclos, elle
- * décroît linéairement du plafond vers le plancher au fil de l'oubli, sur
- * `grazeMemoryMs`.
+ * L'étable bien tenue vise le plancher haut : nourriture, litière et espace
+ * suffisent. Le pré (lieu de vie dehors, ou souvenir d'une sortie récente)
+ * ajoute un bonus jusqu'au plafond. Rester dedans n'est pas une faute.
  */
 export function happinessTarget(input: {
   hasPaddock: boolean;
   /** Ancienneté de la dernière sortie, en ms (`+∞` si jamais sortie) */
   grazedRecentlyMs: number;
-  /** Effectif / capacité de l'enclos */
+  /**
+   * Occupation du lieu de vie actuel (étable si dedans, enclos si dehors).
+   * 30 / 55 ≈ 0,55 : pas de pénalité.
+   */
   crowding: number;
   /** Pénalité de faim, cf. `hungerPenalty()` */
   hunger?: number;
@@ -385,35 +435,45 @@ export function happinessTarget(input: {
    * béton dort mal — moins grave que la faim, mais cela se voit sur le lait.
    */
   bedding?: number;
+  /** Pénalité d'odeur, fosse trop pleine, cf. `manureSmellPenalty()` */
+  smell?: number;
+  /** Pénalité de froid ou de chaleur, cf. `thermalPenalty()` */
+  thermal?: number;
+  /**
+   * Le lot vit-il dehors ? C'est un choix du joueur, pas une séance : tant
+   * qu'il est au pré, le bonus de pâture tient, sans retomber au fil des
+   * heures.
+   */
+  outside?: boolean;
 }): number {
   const span = HAPPINESS.grazedCeiling - HAPPINESS.confinedFloor;
-  const freshness = input.hasPaddock
-    ? clamp(1 - Math.max(0, input.grazedRecentlyMs) / HAPPINESS.grazeMemoryMs, 0, 1)
-    : 0;
+  const freshness = input.outside
+    ? 1
+    : input.hasPaddock
+      ? clamp(1 - Math.max(0, input.grazedRecentlyMs) / HAPPINESS.grazeMemoryMs, 0, 1)
+      : 0;
   const base = HAPPINESS.confinedFloor + span * freshness;
-  // La faim passe avant le confort : une bête affamée ne se console pas d'un
-  // beau pré, et la pénalité peut donc pousser sous le plancher.
+  // Seuls les vrais manques poussent sous le plancher : faim, litière,
+  // hygiène, densité, température. Pas le fait d'être à l'étable.
   const malus =
     crowdingPenalty(input.crowding) +
     Math.max(0, input.hunger ?? 0) +
-    Math.max(0, input.bedding ?? 0);
+    Math.max(0, input.bedding ?? 0) +
+    Math.max(0, input.smell ?? 0) +
+    Math.max(0, input.thermal ?? 0);
   return clamp(base - malus, HAPPINESS.min, HAPPINESS.max);
 }
 
 /**
  * Pourquoi le lot va mal — et quoi faire.
  *
- * « Elles sont stressées pour quoi ? » L'écran affichait un pourcentage et
- * rien d'autre : le joueur voyait la note sans jamais la copie. Or les quatre
- * causes sont connues au moment où la cible est calculée — c'est exactement
- * la même arithmétique, lue à l'envers.
- *
- * Le coût est exprimé en points de bien-être, ce qui permet de les classer :
- * une bête affamée ne se console pas d'un beau pré, et il faut le dire dans
- * cet ordre-là.
+ * Une cause n'existe que si elle coûte vraiment du bien-être. Rester à
+ * l'étable, même longtemps, n'en est pas une : le pré est un bonus, pas un
+ * besoin. Si rien ne cloche, la liste est vide — l'écran dit alors que
+ * tout va bien.
  */
 export type WelfareCause = {
-  code: "SORTIE" | "SURPEUPLEMENT" | "FAIM" | "LITIERE";
+  code: "SURPEUPLEMENT" | "FAIM" | "LITIERE" | "HYGIENE" | "THERMIQUE";
   /** Ce que cette cause coûte, en points de cible (0 à 1) */
   cout: number;
   /** Le constat */
@@ -426,51 +486,71 @@ export type WelfareCause = {
 const CAUSE_MIN = 0.02;
 
 export function welfareReasons(input: {
-  hasPaddock: boolean;
-  grazedRecentlyMs: number;
   crowding: number;
   hunger?: number;
   bedding?: number;
+  smell?: number;
+  thermal?: number;
+  /** Pour dire trop chaud ou trop froid, pas seulement « température ». */
+  tempC?: number;
 }): WelfareCause[] {
-  const span = HAPPINESS.grazedCeiling - HAPPINESS.confinedFloor;
-  const freshness = input.hasPaddock
-    ? clamp(1 - Math.max(0, input.grazedRecentlyMs) / HAPPINESS.grazeMemoryMs, 0, 1)
-    : 0;
-
+  const chaud = (input.tempC ?? 12) > 22;
   const causes: WelfareCause[] = [
-    {
-      code: "SORTIE",
-      // Tout ce qui sépare le lot du plafond, faute de sortie fraîche.
-      cout: span * (1 - freshness),
-      texte: input.hasPaddock
-        ? "Enfermées depuis trop longtemps"
-        : "Jamais dehors — aucun enclos attenant",
-      remede: input.hasPaddock
-        ? "Sortez-les au pré"
-        : "Construisez un enclos collé au bâtiment",
-    },
     {
       code: "SURPEUPLEMENT",
       cout: crowdingPenalty(input.crowding),
-      texte: "Trop serrées pour la place disponible",
-      remede: "Agrandissez le bâtiment ou l'enclos, ou vendez quelques bêtes",
+      texte: "Manque d’espace disponible dans l’étable",
+      remede: "Agrandissez le bâtiment, ou vendez quelques bêtes",
     },
     {
       code: "FAIM",
       cout: Math.max(0, input.hunger ?? 0),
-      texte: "Affamées — la mangeoire est vide",
+      texte: "Manque de nourriture",
       remede: "Distribuez une ration",
     },
     {
       code: "LITIERE",
       cout: Math.max(0, input.bedding ?? 0),
-      texte: "Couchées sur le béton — litière sale",
+      texte: "Litière insuffisante — couchées sur le béton",
       remede: "Étalez de la paille",
+    },
+    {
+      code: "HYGIENE",
+      cout: Math.max(0, input.smell ?? 0),
+      texte: "Mauvaise hygiène — la fosse est trop pleine",
+      remede: "Épandez ou vendez le fumier",
+    },
+    {
+      code: "THERMIQUE",
+      cout: Math.max(0, input.thermal ?? 0),
+      texte: chaud ? "Température trop élevée" : "Température trop basse",
+      remede: chaud
+        ? "Rentrez-les à l’ombre, ou sortez-les si l’étable surchauffe"
+        : "Rentrez-les à l’étable, le bâtiment tempère",
     },
   ];
 
   // La plus coûteuse d'abord : c'est celle par laquelle il faut commencer.
   return causes.filter((c) => c.cout >= CAUSE_MIN).sort((a, b) => b.cout - a.cout);
+}
+
+/** Ce qu'on lit quand rien ne cloche. */
+export function welfareOkLine(input: { hasPaddock: boolean; outside?: boolean }): {
+  title: string;
+  detail: string;
+} {
+  if (input.outside) {
+    return {
+      title: "Bien-être optimal",
+      detail: "Nourriture, litière, espace et pâturage : les bêtes s’épanouissent.",
+    };
+  }
+  return {
+    title: "Bien-être optimal",
+    detail: input.hasPaddock
+      ? "Nourriture, litière et espace suffisants. Le pré reste un bonus de lait et d’herbe, pas une obligation."
+      : "Nourriture, litière et espace suffisants. Un enclos collé à l’étable apporterait un bonus — ce n’est pas obligatoire.",
+  };
 }
 
 /**
@@ -487,13 +567,16 @@ export function tickHappiness(input: {
   hasPaddock: boolean;
   /** Ancienneté de la dernière sortie, en ms */
   grazedRecentlyMs: number;
-  /** Effectif / capacité de l'enclos */
+  /** Occupation du lieu de vie actuel (étable ou enclos) */
   crowding: number;
   elapsedMs: number;
   /** Pénalité de faim, cf. `hungerPenalty()` */
   hunger?: number;
   /** Pénalité de litière, cf. `beddingPenalty()` */
   bedding?: number;
+  smell?: number;
+  thermal?: number;
+  outside?: boolean;
 }): number {
   const current = clamp(input.happiness, HAPPINESS.min, HAPPINESS.max);
   const hours = Math.max(0, input.elapsedMs) / HOUR_MS;
@@ -506,10 +589,10 @@ export function tickHappiness(input: {
 }
 
 /**
- * Indice de bien-être normalisé `∈ [0 ; 1]` : 0 au plancher de l'enfermement,
- * 1 au plafond du pâturage. C'est **lui** qui pilote les bonus de production,
- * jamais le bonheur brut — sinon une bête enfermée toucherait déjà 35 % du
- * bonus sans que le joueur ait rien construit.
+ * Indice de bien-être normalisé `∈ [0 ; 1]` : 0 au plancher de l'étable bien
+ * tenue, 1 au plafond du pâturage. C'est **lui** qui pilote les bonus de
+ * production, jamais le bonheur brut — sinon une bête à l'étable toucherait
+ * déjà 78 % du bonus sans que le joueur ait construit d'enclos.
  */
 export function welfareIndex(happiness: number): number {
   const span = HAPPINESS.grazedCeiling - HAPPINESS.confinedFloor;
@@ -1138,16 +1221,16 @@ export function grazingWaveCount(herdSize: number, paddockCapacity: number): num
 /* ------------------------------------------------------------------ */
 
 /**
- * Tranches de bien-être, de la pire à la meilleure. Les seuils sont accrochés
- * aux constantes : « Correctes » démarre exactement au plancher de
- * l'enfermement, pour qu'un joueur sans enclos lise « Correctes » et non
- * « Stressées » — il n'a rien fait de mal, il n'a juste pas encore construit.
+ * Tranches de bien-être, de la pire à la meilleure.
+ *
+ * « Sereines » démarre sous le plancher de l'étable : un troupeau bien tenu
+ * dedans lit Sereines, pas Stressées. Le pré, lui, pousse vers Épanouies.
  */
 export const HAPPINESS_LABELS: readonly { min: number; label: string }[] = [
   { min: 0, label: "Stressées" },
-  { min: HAPPINESS.confinedFloor, label: "Correctes" },
-  { min: 0.6, label: "Sereines" },
-  { min: 0.85, label: "Épanouies" },
+  { min: 0.4, label: "Gênées" },
+  { min: 0.68, label: "Sereines" },
+  { min: 0.88, label: "Épanouies" },
 ];
 
 /** Libellé d'affichage d'une jauge de bien-être. */

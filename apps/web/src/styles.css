@@ -2051,6 +2051,57 @@ button.blocked:active { opacity: 0.72; }
 }
 .welfare-why b { font-size: 0.8rem; }
 .welfare-why span { font-size: 0.74rem; color: var(--muted); }
+.welfare-ok {
+  margin: 0.5rem 0 0;
+  padding: 0.4rem 0.55rem;
+  border-radius: var(--r-sm, 6px);
+  border-left: 3px solid var(--teal-500, #2f7d6b);
+  background: color-mix(in srgb, var(--teal-500, #2f7d6b) 12%, transparent);
+  display: grid;
+  gap: 0.05rem;
+}
+.welfare-ok b { font-size: 0.8rem; }
+.welfare-ok span { font-size: 0.74rem; color: var(--muted); }
+
+.herd-needs { display: grid; gap: 0.25rem; }
+.herd-need {
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  background: var(--paper);
+}
+.herd-need > summary {
+  display: grid;
+  grid-template-columns: 1.4rem 1fr auto;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.4rem 0.55rem;
+  cursor: pointer;
+  list-style: none;
+  font-size: 0.8rem;
+  font-weight: 800;
+}
+.herd-need > summary::-webkit-details-marker { display: none; }
+.herd-need-icon { font-size: 0.95rem; }
+.herd-need-title { color: var(--ink); }
+.herd-need-status {
+  font-size: 0.72rem;
+  font-weight: 700;
+  color: var(--teal-700);
+  text-align: right;
+  max-width: 11rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.herd-need-status.warn { color: var(--danger); }
+.herd-need.warn { border-color: color-mix(in srgb, var(--gold-500) 45%, var(--line)); }
+.herd-need.bad { border-color: color-mix(in srgb, var(--danger) 45%, var(--line)); }
+.herd-need-body {
+  padding: 0 0.55rem 0.5rem;
+  display: grid;
+  gap: 0.35rem;
+  border-top: 1px solid var(--line);
+}
 /* Quatre colonnes — vignette, nom, saisie, bouton — ne tiennent pas dans la
    largeur d'un téléphone : la colonne souple s'écrasait à zéro et le prix
    passait sous l'étiquette « Combien (tonnes) ». Le nom garde sa ligne, la

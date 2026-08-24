@@ -24,7 +24,7 @@ import {
   repairHalfwayTarget,
   repairQuote,
   isPaddockAdjacent,
-  welfareIndex,
+  barnOccupancy,
   machineResaleValue,
   soilSummary,
   MAX_HARVESTS_BEFORE_PLOW,
@@ -160,7 +160,7 @@ import { useIsMobile } from "./use-media-query";
 /** Ce que la saison change vraiment, en une phrase. */
 const SEASON_HINTS: Record<Season, string> = {
   SPRING: "l'herbe repousse vite, les bêtes se nourrissent au pré",
-  SUMMER: "chaleur : surveillez les bêtes enfermées",
+  SUMMER: "chaleur : l’étable tempère, le pré reste un bonus",
   AUTUMN: "la pousse ralentit, constituez les stocks",
   WINTER: "l'herbe ne pousse plus — rentrez les bêtes ou nourrissez-les",
 };
@@ -1626,22 +1626,23 @@ export function App() {
           ...orientedFootprint(yardType, b.rotation ?? 0),
         });
       });
-      const outside = Boolean(herd.grazingUntil && herd.grazingUntil > now && paddockB);
+      const outside = Boolean(
+        (herd.housing === "OUTSIDE" || (herd.grazingUntil && herd.grazingUntil > now)) && paddockB,
+      );
       const pDef = paddockB ? BUILDING_DEFS[yardType] : barnDef;
       out.push({
         buildingId: barn.buildingId,
         animals: herd.size,
         kind: herd.kind,
         sheared: herd.kind === "SHEEP" && !herd.canShear,
-        // Ce que la simulation sait déjà de l'élevage, la parcelle le montre :
-        // le poil terne et l'échine creuse d'un lot mal tenu, le pis plein
-        // d'un lot qu'on n'a pas trait. Ces deux jauges n'étaient visibles
-        // que dans un panneau.
+        // Le poil et l'échine suivent le bonheur brut : un lot à l'étable
+        // bien tenu (autour de 0,78) ne doit plus paraître maltraité.
         welfare: Math.max(
           0,
-          Math.min(1, welfareIndex(herd.happiness) - (herd.hungry ? 0.3 : 0) - (herd.atRisk ? 0.3 : 0)),
+          Math.min(1, herd.happiness - (herd.hungry ? 0.3 : 0) - (herd.atRisk ? 0.3 : 0)),
         ),
         yield: herd.collectProgress ?? 0,
+        occupancy: barnOccupancy(herd.size, barn.capacity),
         out: outside,
         barn: barnBox,
         paddock: paddockB

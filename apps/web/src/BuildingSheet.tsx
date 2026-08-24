@@ -109,7 +109,11 @@ export function BuildingSheet({
             <h4>
               {herd.size} {herd.label}
             </h4>
-            <p>{herd.out ? "Les bêtes sont dehors." : "Les bêtes sont à l'intérieur."}</p>
+            <p>
+              {herd.out
+                ? "Les bêtes sont au pré — bonus de bien-être et d’herbe."
+                : "Les bêtes sont à l’étable. Si tout est en ordre, elles vont bien."}
+            </p>
             <div className="building-sheet-actions">
               {herd.out ? (
                 <button type="button" className="primary" disabled={busy || visiting} onClick={onShelter}>

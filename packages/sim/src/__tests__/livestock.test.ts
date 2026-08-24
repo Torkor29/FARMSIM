@@ -23,6 +23,9 @@ import {
   canGraze,
   canLiveOutside,
   crowdingPenalty,
+  barnOccupancy,
+  spaceComfort,
+  SPACE_COMFORT_LABELS,
   feedConsumption,
   grazingWaveCount,
   happinessLabel,
@@ -92,20 +95,20 @@ describe("bonheur — dérive à la baisse (étable fermée)", () => {
     expect(HAPPINESS.decayTauH).toBe(36);
   });
 
-  it("s’arrête au plancher de 0,35 et n’en descend pas", () => {
+  it("s’arrête au plancher de l’étable et n’en descend pas", () => {
     const apres = tickHappiness({ ...enferme, happiness: 0.95, elapsedMs: 30 * 24 * HOUR });
     expect(apres).toBeCloseTo(HAPPINESS.confinedFloor, 4);
     expect(apres).toBeGreaterThanOrEqual(HAPPINESS.confinedFloor);
-    expect(HAPPINESS.confinedFloor).toBeCloseTo(0.35, 6);
+    expect(HAPPINESS.confinedFloor).toBeCloseTo(0.78, 6);
   });
 
-  it("remonte un troupeau enfermé sous le plancher jusqu’au plancher", () => {
+  it("remonte un troupeau malmené jusqu’au plancher de l’étable", () => {
     const apres = tickHappiness({ ...enferme, happiness: 0.1, elapsedMs: 48 * HOUR });
     expect(apres).toBeGreaterThan(0.1);
     expect(apres).toBeLessThanOrEqual(HAPPINESS.confinedFloor);
   });
 
-  it("ignore un enclos posé loin de l’étable, comme s’il n’existait pas", () => {
+  it("traite un enclos loin de l’étable comme s’il n’existait pas — sans punir", () => {
     const detache = tickHappiness({
       happiness: 0.5,
       hasPaddock: false,
@@ -113,7 +116,9 @@ describe("bonheur — dérive à la baisse (étable fermée)", () => {
       crowding: 0.2,
       elapsedMs: 12 * HOUR,
     });
-    expect(detache).toBeLessThan(0.5);
+    // 0,5 est sous le plancher de l'étable : le lot remonte, il ne s'effondre pas.
+    expect(detache).toBeGreaterThan(0.5);
+    expect(detache).toBeLessThanOrEqual(HAPPINESS.confinedFloor);
   });
 });
 
@@ -128,11 +133,12 @@ describe("bonheur — dérive à la hausse (sorties au pré)", () => {
   it("monte trois fois plus vite qu’il ne descend", () => {
     expect(HAPPINESS.riseTauH).toBe(12);
     expect(HAPPINESS.decayTauH / HAPPINESS.riseTauH).toBeCloseTo(3, 6);
-    const monte = tickHappiness({ ...auPre, happiness: 0.65, elapsedMs: 6 * HOUR }) - 0.65;
+    const depart = (HAPPINESS.confinedFloor + HAPPINESS.grazedCeiling) / 2;
+    const monte = tickHappiness({ ...auPre, happiness: depart, elapsedMs: 6 * HOUR }) - depart;
     const descend =
-      0.65 -
+      depart -
       tickHappiness({
-        happiness: 0.65,
+        happiness: depart,
         hasPaddock: false,
         grazedRecentlyMs: Number.POSITIVE_INFINITY,
         crowding: 0.5,
@@ -167,14 +173,15 @@ describe("bonheur — dérive à la hausse (sorties au pré)", () => {
     expect(petits).toBeCloseTo(gros, 6);
   });
 
-  it("oublie la sortie au-delà de 48 h : la cible retombe au plancher", () => {
+  it("oublie la sortie au-delà de 48 h : la cible retombe au plancher de l’étable", () => {
     expect(happinessTarget({ hasPaddock: true, grazedRecentlyMs: 0, crowding: 0 })).toBeCloseTo(
       HAPPINESS.grazedCeiling,
       6,
     );
+    const span = HAPPINESS.grazedCeiling - HAPPINESS.confinedFloor;
     expect(
       happinessTarget({ hasPaddock: true, grazedRecentlyMs: 24 * HOUR, crowding: 0 }),
-    ).toBeCloseTo(0.65, 6);
+    ).toBeCloseTo(HAPPINESS.confinedFloor + span * 0.5, 6);
     expect(
       happinessTarget({ hasPaddock: true, grazedRecentlyMs: 72 * HOUR, crowding: 0 }),
     ).toBeCloseTo(HAPPINESS.confinedFloor, 6);
@@ -183,13 +190,16 @@ describe("bonheur — dérive à la hausse (sorties au pré)", () => {
 });
 
 describe("bonheur — surpeuplement", () => {
-  it("ne pénalise pas un enclos rempli jusqu’à 85 %", () => {
+  it("ne pénalise pas une étable remplie jusqu’à 80 %", () => {
     expect(crowdingPenalty(0)).toBe(0);
-    expect(crowdingPenalty(0.85)).toBe(0);
+    expect(crowdingPenalty(0.8)).toBe(0);
+    // 30 vaches dans 55 places : ~55 %, largement à l'aise.
+    expect(crowdingPenalty(30 / 55)).toBe(0);
   });
 
-  it("pénalise dès que l’enclos déborde, jusqu’à −0,30 point", () => {
-    expect(crowdingPenalty(1)).toBeGreaterThan(0);
+  it("pénalise en approchant du plein, jusqu’à −0,30 point", () => {
+    expect(crowdingPenalty(0.9)).toBeGreaterThan(0);
+    expect(crowdingPenalty(1)).toBeCloseTo(HAPPINESS.crowdingPenaltyMax, 6);
     expect(crowdingPenalty(1.5)).toBeCloseTo(HAPPINESS.crowdingPenaltyMax, 6);
     expect(crowdingPenalty(4)).toBeCloseTo(HAPPINESS.crowdingPenaltyMax, 6);
   });
@@ -200,7 +210,7 @@ describe("bonheur — surpeuplement", () => {
     expect(entasse).toBeLessThan(auLarge);
   });
 
-  it("peut pousser un troupeau entassé sous le plancher de l’enfermement", () => {
+  it("peut pousser un troupeau entassé sous le plancher de l’étable", () => {
     const cible = happinessTarget({
       hasPaddock: false,
       grazedRecentlyMs: Number.POSITIVE_INFINITY,
@@ -219,6 +229,31 @@ describe("bonheur — surpeuplement", () => {
     expect(milkYield({ ...commun, happiness: serre })).toBeLessThan(
       milkYield({ ...commun, happiness: large }),
     );
+  });
+
+  it("garde le bonus tant que le lot vit dehors, même sans séance récente", () => {
+    expect(
+      happinessTarget({
+        hasPaddock: true,
+        grazedRecentlyMs: Number.POSITIVE_INFINITY,
+        crowding: 0.4,
+        outside: true,
+      }),
+    ).toBeCloseTo(HAPPINESS.grazedCeiling, 6);
+  });
+});
+
+describe("espace de l’étable", () => {
+  it("tient 30 vaches dans 55 places pour à l’aise", () => {
+    expect(barnOccupancy(30, 55)).toBeCloseTo(30 / 55, 6);
+    expect(spaceComfort(30 / 55)).toBe("spacious");
+    expect(SPACE_COMFORT_LABELS.spacious).toMatch(/aise/i);
+  });
+
+  it("ne dit serré qu’en approchant du plein", () => {
+    expect(spaceComfort(0.8)).toBe("comfortable");
+    expect(spaceComfort(0.9)).toBe("tight");
+    expect(spaceComfort(1)).toBe("full");
   });
 });
 
@@ -604,14 +639,14 @@ describe("fenêtres de pâturage", () => {
 describe("libellés de bien-être", () => {
   it("qualifie chaque tranche de la jauge", () => {
     expect(happinessLabel(0.1)).toBe("Stressées");
-    expect(happinessLabel(0.4)).toBe("Correctes");
+    expect(happinessLabel(0.4)).toBe("Gênées");
     expect(happinessLabel(0.7)).toBe("Sereines");
     expect(happinessLabel(0.95)).toBe("Épanouies");
   });
 
-  it("lit « Correctes » exactement au plancher de l’enfermement", () => {
-    expect(happinessLabel(HAPPINESS.confinedFloor)).toBe("Correctes");
-    expect(happinessLabel(HAPPINESS.confinedFloor - 0.01)).toBe("Stressées");
+  it("lit « Sereines » au plancher de l’étable bien tenue", () => {
+    expect(happinessLabel(HAPPINESS.confinedFloor)).toBe("Sereines");
+    expect(happinessLabel(0.39)).toBe("Stressées");
   });
 
   it("expose des tranches ordonnées et toutes nommées", () => {
@@ -650,10 +685,9 @@ describe("scénario complet — l’étable seule contre l’étable + enclos", 
   it("sépare nettement les deux conduites d’élevage après cinq cycles", () => {
     const ferme = elever(false);
     const ouvert = elever(true);
-    expect(ferme).toBeGreaterThanOrEqual(HAPPINESS.confinedFloor);
-    expect(ferme).toBeLessThan(HAPPINESS.confinedFloor + 0.01);
+    expect(ferme).toBeCloseTo(HAPPINESS.confinedFloor, 2);
     expect(ouvert).toBeGreaterThan(0.9);
-    expect(happinessLabel(ferme)).toBe("Correctes");
+    expect(happinessLabel(ferme)).toBe("Sereines");
     expect(happinessLabel(ouvert)).toBe("Épanouies");
   });
 
@@ -780,16 +814,21 @@ describe("la cuve de production", () => {
  * « Elles sont stressées pour quoi ? » L'écran donnait la note sans la copie.
  */
 describe("les causes du stress", () => {
-  const bien = { hasPaddock: true, grazedRecentlyMs: 0, crowding: 0.5, hunger: 0, bedding: 0 };
+  const bien = { crowding: 0.5, hunger: 0, bedding: 0, smell: 0, thermal: 0 };
 
-  it("ne reproche rien à un lot qui va bien", () => {
+  it("ne reproche rien à un lot qui va bien — y compris sans enclos", () => {
     expect(welfareReasons(bien)).toEqual([]);
+    expect(welfareReasons({ crowding: 30 / 55 })).toEqual([]);
   });
 
-  it("nomme l'absence d'enclos, et dit quoi construire", () => {
-    const causes = welfareReasons({ ...bien, hasPaddock: false });
-    expect(causes[0].code).toBe("SORTIE");
-    expect(causes[0].remede).toMatch(/enclos/i);
+  it("ne traite pas l’absence d’enclos comme un stress", () => {
+    expect(welfareReasons({ crowding: 0.5 }).some((c) => c.texte.includes("enferm"))).toBe(false);
+  });
+
+  it("nomme le manque d’espace, pas le simple effectif", () => {
+    const causes = welfareReasons({ crowding: 1 });
+    expect(causes[0].code).toBe("SURPEUPLEMENT");
+    expect(causes[0].texte).toMatch(/espace/i);
   });
 
   it("met la faim avant le confort", () => {
@@ -802,10 +841,10 @@ describe("les causes du stress", () => {
   it("classe toujours de la plus coûteuse à la moindre", () => {
     const causes = welfareReasons({
       ...bien,
-      hasPaddock: false,
       crowding: 2,
       hunger: 0.2,
       bedding: 0.05,
+      smell: 0.1,
     });
     const couts = causes.map((c) => c.cout);
     expect(couts).toEqual([...couts].sort((a, b) => b - a));
@@ -813,8 +852,13 @@ describe("les causes du stress", () => {
   });
 
   it("chaque cause porte un geste, pas seulement un constat", () => {
-    for (const c of welfareReasons({ ...bien, hasPaddock: false, crowding: 2, hunger: 0.3, bedding: 0.2 })) {
+    for (const c of welfareReasons({ crowding: 2, hunger: 0.3, bedding: 0.2, smell: 0.1, thermal: 0.15 })) {
       expect(`${c.code} ${c.remede.length > 10}`).toBe(`${c.code} true`);
     }
+  });
+
+  it("sépare la fosse pleine de la faim", () => {
+    const causes = welfareReasons({ crowding: 0.4, smell: 0.2 });
+    expect(causes.map((c) => c.code)).toEqual(["HYGIENE"]);
   });
 });

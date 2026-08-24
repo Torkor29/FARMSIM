@@ -16,6 +16,10 @@ import {
   feedAutonomyMs,
   rationCycles,
   autoCollects,
+  barnOccupancy,
+  spaceComfort,
+  SPACE_COMFORT_LABELS,
+  welfareOkLine,
   type WelfareCause,
   troughCapacity,
   BUILDING_ART,
@@ -204,6 +208,42 @@ function attente(progress: number | undefined): string {
   const p = Math.max(0, Math.min(1, progress ?? 0));
   const part = Math.round((1 - p) * 100);
   return part <= 0 ? "un instant" : `${part} % du cycle`;
+}
+
+/**
+ * Une catégorie du lot, pliée par défaut.
+ *
+ * L'écran alignait toutes les jauges au même niveau : on voyait tout, donc
+ * on ne voyait rien. Ici le bandeau dit l'essentiel ; le détail s'ouvre
+ * au clic.
+ */
+function NeedFold({
+  icon,
+  title,
+  status,
+  tone,
+  children,
+}: {
+  icon: string;
+  title: string;
+  status: string;
+  tone?: "ok" | "warn" | "bad";
+  children: ReactNode;
+}) {
+  return (
+    <details className={`herd-need${tone && tone !== "ok" ? ` ${tone}` : ""}`}>
+      <summary>
+        <span className="herd-need-icon" aria-hidden="true">
+          {icon}
+        </span>
+        <span className="herd-need-title">{title}</span>
+        <b className={`herd-need-status${tone === "warn" || tone === "bad" ? " warn" : ""}`}>
+          {status}
+        </b>
+      </summary>
+      <div className="herd-need-body">{children}</div>
+    </details>
+  );
 }
 
 /**
@@ -515,8 +555,8 @@ export function LivestockPanel({
           sur un téléphone, cela suffisait à repousser le bouton d'achat sous
           le pli. On garde ce qui est actionnable, le reste est dans le guide. */}
       <p className="muted tiny">
-        Un troupeau affamé s’effondre ; une aire de sortie accolée le rend plus
-        productif.
+        Nourriture, litière, espace : si c’est en ordre, les bêtes vont bien. Le
+        pré est un bonus, pas une obligation.
       </p>
       {orphelins.length > 0 && (
         /* L'enclos posé seul.
@@ -600,6 +640,13 @@ export function LivestockPanel({
          */
         const herd = barn.herd && barn.herd.size > 0 ? barn.herd : null;
         const pct = herd ? Math.round(herd.happiness * 100) : 0;
+        const occupancy = barnOccupancy(herd?.size ?? 0, barn.capacity);
+        const espace = spaceComfort(occupancy);
+        const causes = herd?.welfareCauses ?? [];
+        const okLine = welfareOkLine({
+          hasPaddock: barn.paddockCapacity > 0,
+          outside: herd?.housing === "OUTSIDE",
+        });
         // Dehors se lit d'abord dans l'état durable ; la fenêtre de sortie ne
         // sert plus qu'à jouer l'animation de la transition.
         const outside =
@@ -653,27 +700,16 @@ export function LivestockPanel({
 
             {herd ? (
               <>
-                {/* Ce qui compte d'un coup d'œil : l'effectif et le moral.
-                    Ils étaient noyés — l'effectif en petit dans l'en-tête, le
-                    moral sous une barre parmi cinq barres identiques. */}
                 <div className="barn-key">
                   <div>
-                    <em>Effectif</em>
+                    <em>{espece ? ANIMAL_PLURAL[espece] : "Bêtes"}</em>
                     <strong>
                       {herd.size}
                       <small> / {barn.capacity}</small>
                     </strong>
-                    {/* Le lot ne se lit pas d'un seul chiffre quand il mélange
-                        veaux et vaches : dire combien sont encore jeunes, et
-                        dans combien de temps le prochain passe adulte. */}
                     {(herd.young ?? 0) > 0 && (
                       <em className="herd-young">
                         dont {herd.young} jeune{(herd.young ?? 0) > 1 ? "s" : ""}
-                        {/* « 45 minutes de quoi, IRL ou en jeu ? » — la
-                            question s'est posée, et elle était légitime : le
-                            jeu compte en jours de quinze minutes, donc un
-                            nombre nu ne veut rien dire. Celui-ci est en temps
-                            réel, et le dit. */}
                         {herd.youngMaturesAt
                           ? ` · adulte dans ${dureeReelle(
                               Math.max(0, herd.youngMaturesAt - Date.now()),
@@ -683,7 +719,7 @@ export function LivestockPanel({
                     )}
                   </div>
                   <div className={pct >= 75 ? "bon" : pct >= 50 ? "moyen" : "mauvais"}>
-                    <em>{herd.label}</em>
+                    <em>Bien-être</em>
                     <strong>
                       {pct}
                       <small> %</small>
@@ -691,71 +727,53 @@ export function LivestockPanel({
                     <span className="barn-key-bar" role="img" aria-label={`Bien-être ${pct} %`}>
                       <i style={{ width: `${pct}%` }} />
                     </span>
+                    <em className="herd-young">{herd.label}</em>
                   </div>
                 </div>
 
-                {/* La copie, pas seulement la note.
-                    « Elles sont stressées pour quoi ? » — l'écran donnait un
-                    pourcentage et rien d'autre. Les causes viennent du serveur,
-                    classées par ce qu'elles coûtent : on commence par la
-                    première. */}
-                {(herd.welfareCauses?.length ?? 0) > 0 && (
-                  <ul className="welfare-why">
-                    {herd.welfareCauses!.map((c) => (
+                {herd.atRisk && (
+                  <p className="herd-alert">
+                    Le troupeau dépérit — des bêtes vont mourir. Distribuez une ration
+                    sans attendre.
+                  </p>
+                )}
+
+                {causes.length > 0 ? (
+                  <ul className={`welfare-why${causes[0] ? " bad" : ""}`}>
+                    {causes.map((c) => (
                       <li key={c.code}>
                         <b>{c.texte}</b>
                         <span>{c.remede}</span>
                       </li>
                     ))}
                   </ul>
+                ) : (
+                  <p className="welfare-ok">
+                    <b>{okLine.title}</b>
+                    <span>{okLine.detail}</span>
+                  </p>
                 )}
 
-                {/* Les cinq mesures du lot.
-                    Chacune occupait une barre pleine largeur **plus** sa ligne
-                    de légende : dix rangées de décor pour cinq nombres, et il
-                    fallait faire défiler pour toutes les voir. Une mesure tient
-                    maintenant sur une ligne — nom, valeur, jauge fine. */}
-                <section className="barn-part">
-                  <h4>Le lot</h4>
-                  <div className="mesures">
-                    {/* L'autonomie se lit en heures **réelles**.
-                        Elle s'affichait en jours de jeu — quinze minutes pièce
-                        —, si bien qu'un « 1 j » se comprenait comme une
-                        journée entière quand il valait un quart d'heure. Le
-                        joueur revenait le lendemain devant un troupeau
-                        affamé sans comprendre. */}
-                    <Mesure
-                      nom="Ration"
-                      valeur={dureeReelle(
-                        feedAutonomyMs({
-                          besoinParCycle: herd.feedNeed,
-                          feedStock: herd.feedStock,
-                        }),
-                      )}
-                      part={
-                        herd.feedStock / Math.max(1, troughCapacity(herd.feedNeed))
-                      }
-                      ton={herd.hungry ? "alerte" : "normal"}
-                      detail={
-                        herd.feedQuality > 0.5 ? "au maïs, rendement maximal" : "au foin"
-                      }
-                    />
-                    <Mesure
-                      nom="Litière"
-                      valeur={`${(herd.beddingTons ?? 0).toFixed(2)} t`}
-                      part={herd.beddingCover ?? 0}
-                      ton={(herd.beddingCover ?? 1) < 0.5 ? "alerte" : "normal"}
-                      detail={`${parJourReel(herd.beddingNeed ?? 0).toFixed(1)} t par jour`}
-                    />
-                    <Mesure
-                      nom="Fosse"
-                      valeur={`${(herd.manureTons ?? 0).toFixed(2)} / ${(herd.manureCap ?? 0).toFixed(2)} t`}
-                      part={herd.manureFill ?? 0}
-                      /* La fosse se lit à l'envers des autres : pleine, c'est
-                         mauvais. Sans cette inversion, la jauge la plus verte
-                         serait celle du problème. */
-                      ton={herd.smelly ? "alerte" : "inverse"}
-                    />
+                <div className="herd-needs">
+                  <NeedFold
+                    icon="❤️"
+                    title="Bien-être"
+                    status={herd.label}
+                    tone={pct >= 68 ? "ok" : pct >= 40 ? "warn" : "bad"}
+                  >
+                    <p className="mesure-note">
+                      Ressenti{" "}
+                      <b
+                        className={
+                          (herd.tempC ?? 12) < 3 ? "cold" : (herd.tempC ?? 12) > 26 ? "hot" : ""
+                        }
+                      >
+                        {herd.tempC ?? "—"} °C
+                      </b>
+                      {herd.housing !== "OUTSIDE" && herd.outdoorTempC !== undefined
+                        ? ` · dehors ${herd.outdoorTempC} °C`
+                        : ""}
+                    </p>
                     {herd.gestation > 0 ? (
                       <Mesure
                         nom="Gestation"
@@ -768,94 +786,145 @@ export function LivestockPanel({
                         <p className="mesure-note">Reproduction — {herd.breedRefusal}</p>
                       )
                     )}
-                  </div>
+                  </NeedFold>
 
-                  {/* L'environnement du lot : c'est lui qui explique le reste,
-                      donc il se lit à côté des mesures, pas trois écrans plus bas. */}
-                  <div className="barn-env">
-                    <span>
-                      Ressenti{" "}
-                      <b
-                        className={
-                          (herd.tempC ?? 12) < 3 ? "cold" : (herd.tempC ?? 12) > 26 ? "hot" : ""
-                        }
-                      >
-                        {herd.tempC ?? "—"} °C
-                      </b>
-                      {herd.housing !== "OUTSIDE" && herd.outdoorTempC !== undefined
-                        ? ` · dehors ${herd.outdoorTempC} °C`
-                        : ""}
-                    </span>
+                  <NeedFold
+                    icon={
+                      herd.kind === "COW"
+                        ? "🥛"
+                        : herd.kind === "HEN"
+                          ? "🥚"
+                          : herd.kind === "SHEEP"
+                            ? "🧶"
+                            : "🥩"
+                    }
+                    title="Production"
+                    status={
+                      PRODUITS.find((p) => p.espece === herd.kind)?.rendement(herd) ??
+                      `${herd.meatAtSlaughter.toFixed(0)} kg`
+                    }
+                    tone={
+                      herd.kind === "COW" && herd.canMilk
+                        ? "ok"
+                        : herd.kind === "HEN" && herd.canCollectEggs
+                          ? "ok"
+                          : herd.kind === "SHEEP" && herd.canShear
+                            ? "ok"
+                            : undefined
+                    }
+                  >
+                    <div className="mesures">
+                      {PRODUITS.filter((p) => p.espece === herd.kind).map((p) => {
+                        const pret = p.pret(herd);
+                        return (
+                          <Mesure
+                            key={p.espece}
+                            nom={p.nom}
+                            valeur={pret ? "prêt" : `${Math.round((herd.collectProgress ?? 0) * 100)} %`}
+                            part={herd.collectProgress ?? (pret ? 1 : 0)}
+                            ton={pret ? "prêt" : "normal"}
+                            detail={p.rendement(herd)}
+                          />
+                        );
+                      })}
+                      <p className="mesure-note">
+                        Viande à l’abattage · <b>{herd.meatAtSlaughter.toFixed(0)} kg</b>
+                      </p>
+                    </div>
+                  </NeedFold>
+
+                  <NeedFold
+                    icon="🍽️"
+                    title="Nourriture"
+                    status={
+                      herd.hungry
+                        ? "à distribuer"
+                        : dureeReelle(
+                            feedAutonomyMs({
+                              besoinParCycle: herd.feedNeed,
+                              feedStock: herd.feedStock,
+                            }),
+                          )
+                    }
+                    tone={herd.hungry ? "bad" : "ok"}
+                  >
+                    <Mesure
+                      nom="Ration"
+                      valeur={dureeReelle(
+                        feedAutonomyMs({
+                          besoinParCycle: herd.feedNeed,
+                          feedStock: herd.feedStock,
+                        }),
+                      )}
+                      part={herd.feedStock / Math.max(1, troughCapacity(herd.feedNeed))}
+                      ton={herd.hungry ? "alerte" : "normal"}
+                      detail={
+                        herd.feedQuality > 0.5 ? "au maïs, rendement maximal" : "au foin"
+                      }
+                    />
                     {herd.grazes && barn.paddockCapacity > 0 && (
-                      <span>
+                      <p className="mesure-note">
                         Pré{" "}
                         <b>
                           {(herd.grassTons ?? 0).toFixed(1)}
                           {herd.grassCapacityTons ? ` / ${herd.grassCapacityTons}` : ""} t
                         </b>
-                      </span>
+                        {herd.housing === "OUTSIDE"
+                          ? " — les bêtes s’y nourrissent"
+                          : " — bonus si elles vivent dehors"}
+                      </p>
                     )}
-                  </div>
+                    <div className="reserves">
+                      {RATIONS.filter((r) => !r.especes || r.especes.includes(herd.kind)).map((r) => {
+                        const stock = stockDe(r.code);
+                        return (
+                          <Geste
+                            key={r.code}
+                            busy={busy}
+                            className="reserve"
+                            label={
+                              <>
+                                <span>{r.label}</span>
+                                <b>{stock.toFixed(1)} t</b>
+                              </>
+                            }
+                            hint={r.hint}
+                            blocage={stock <= 0 ? r.manque : null}
+                            onDo={() => onFeed(herd.id, r.code)}
+                            onExplain={onExplain}
+                          />
+                        );
+                      })}
+                    </div>
+                  </NeedFold>
 
-                  {herd.atRisk && (
-                    <p className="herd-alert">
-                      Le troupeau dépérit — des bêtes vont mourir. Distribuez une ration
-                      sans attendre.
-                    </p>
-                  )}
-                </section>
-
-                {/* Ce que le lot rapporte, et quand. Le compte à rebours de la
-                    traite et le rendement par cycle vivaient dans deux blocs
-                    séparés, à trois écrans l'un de l'autre. */}
-                <section className="barn-part">
-                  <h4>Production</h4>
-                  <div className="mesures">
-                    {PRODUITS.filter((p) => p.espece === herd.kind).map((p) => {
-                      const pret = p.pret(herd);
-                      return (
-                        <Mesure
-                          key={p.espece}
-                          nom={p.nom}
-                          valeur={pret ? "prêt" : `${Math.round((herd.collectProgress ?? 0) * 100)} %`}
-                          part={herd.collectProgress ?? (pret ? 1 : 0)}
-                          ton={pret ? "prêt" : "normal"}
-                          detail={p.rendement(herd)}
-                        />
-                      );
-                    })}
-                    <p className="mesure-note">
-                      Viande à l’abattage · <b>{herd.meatAtSlaughter.toFixed(0)} kg</b>
-                    </p>
-                  </div>
-                </section>
-
-                {/* Les réserves de la ferme, et non plus huit pilules mêlées
-                    aux gestes. Le tonnage est aligné à droite : on compare une
-                    colonne de nombres, pas des étiquettes de largeurs diverses. */}
-                <section className="barn-part">
-                  <h4>Réserves à distribuer</h4>
-                  <div className="reserves">
-                    {RATIONS.filter((r) => !r.especes || r.especes.includes(herd.kind)).map((r) => {
-                      const stock = stockDe(r.code);
-                      return (
-                        <Geste
-                          key={r.code}
-                          busy={busy}
-                          className="reserve"
-                          label={
-                            <>
-                              <span>{r.label}</span>
-                              <b>{stock.toFixed(1)} t</b>
-                            </>
-                          }
-                          hint={r.hint}
-                          blocage={stock <= 0 ? r.manque : null}
-                          onDo={() => onFeed(herd.id, r.code)}
-                          onExplain={onExplain}
-                        />
-                      );
-                    })}
+                  <NeedFold
+                    icon="🧹"
+                    title="Litière"
+                    status={
+                      herd.smelly
+                        ? "fosse pleine"
+                        : (herd.beddingCover ?? 1) < 0.5
+                          ? "à refaire"
+                          : "propre"
+                    }
+                    tone={
+                      herd.smelly || (herd.beddingCover ?? 1) < 0.5 ? "warn" : "ok"
+                    }
+                  >
+                    <Mesure
+                      nom="Paille"
+                      valeur={`${(herd.beddingTons ?? 0).toFixed(2)} t`}
+                      part={herd.beddingCover ?? 0}
+                      ton={(herd.beddingCover ?? 1) < 0.5 ? "alerte" : "normal"}
+                      detail={`${parJourReel(herd.beddingNeed ?? 0).toFixed(1)} t par jour`}
+                    />
+                    <Mesure
+                      nom="Fosse"
+                      valeur={`${(herd.manureTons ?? 0).toFixed(2)} / ${(herd.manureCap ?? 0).toFixed(2)} t`}
+                      part={herd.manureFill ?? 0}
+                      ton={herd.smelly ? "alerte" : "inverse"}
+                    />
                     <Geste
                       busy={busy}
                       className="reserve"
@@ -876,8 +945,38 @@ export function LivestockPanel({
                       onDo={() => onSpreadBedding(herd.id)}
                       onExplain={onExplain}
                     />
-                  </div>
-                </section>
+                  </NeedFold>
+
+                  <NeedFold icon="💧" title="Eau" status="abreuvoirs OK" tone="ok">
+                    <p className="mesure-note">
+                      Les abreuvoirs de l’étable sont alimentés — pas de réserve à
+                      gérer.
+                    </p>
+                  </NeedFold>
+
+                  <NeedFold
+                    icon="🏠"
+                    title="Espace disponible"
+                    status={SPACE_COMFORT_LABELS[espace]}
+                    tone={espace === "full" ? "bad" : espace === "tight" ? "warn" : "ok"}
+                  >
+                    <Mesure
+                      nom="Occupation"
+                      valeur={`${herd.size} / ${barn.capacity}`}
+                      part={occupancy}
+                      ton={espace === "full" || espace === "tight" ? "alerte" : "normal"}
+                      detail={
+                        espace === "spacious"
+                          ? "Encore de la place — vous pouvez accueillir davantage de bêtes"
+                          : espace === "comfortable"
+                            ? "Densité correcte"
+                            : espace === "tight"
+                              ? "Le troupeau commence à manquer de place — agrandissez avant d’acheter"
+                              : "Bâtiment trop plein — agrandissez-le ou vendez quelques bêtes"
+                      }
+                    />
+                  </NeedFold>
+                </div>
               </>
             ) : (
               <p className="muted tiny">Bâtiment vide — achetez des bêtes pour démarrer.</p>
@@ -891,8 +990,8 @@ export function LivestockPanel({
                 const aire = BUILDING_DEFS[barn.yardType];
                 const e = aire.article === "une" ? "e" : "";
                 return barn.paddockCapacity > 0
-                  ? `${aire.name} attenant${e} · ${barn.paddockCapacity} places de sortie`
-                  : `Aucun${e} ${aire.name.toLowerCase()} attenant${e} — les bêtes restent enfermées`;
+                  ? `${aire.name} attenant${e} · ${barn.paddockCapacity} places — bonus de lait et d’herbe`
+                  : `Aucun${e} ${aire.name.toLowerCase()} attenant${e} — l’étable suffit, le pré reste un bonus`;
               })()}
             </p>
 

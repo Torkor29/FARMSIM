@@ -600,7 +600,7 @@ export const GUIDE_CHAPTERS: GuideChapter[] = [
       {
         id: "graze",
         name: "Sortir au pré",
-        how: "Enclos collé à l’étable. Le bonheur monte, le lait aussi.",
+        how: "Enclos collé à l’étable. Ce n’est pas obligatoire : l’étable bien tenue suffit. Le pré donne un bonus de lait et d’herbe.",
         usedBy: "Éleveur.",
       },
       {

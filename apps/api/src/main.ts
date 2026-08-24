@@ -7798,12 +7798,28 @@ async function settleHerd(
   const tempC = feltTempC({ kind, housing, season, weather, barnLevel });
   const thermal = thermalPenalty({ kind, tempC });
 
+  /**
+   * La densité se lit sur le **lieu de vie actuel**.
+   *
+   * L'occupation de l'enclos servait pour tout le monde, y compris les bêtes
+   * à l'étable : 30 vaches dans une étable de 55 places étaient déjà
+   * « entassées » dès que le pré tenait moins de 30 têtes, ou dès qu'il
+   * n'y avait pas d'enclos (occupation forcée à 1). L'étable a ses propres
+   * places ; l'enclos ne compte que lorsque le lot y vit.
+   */
+  const barnOcc = capacity > 0 ? herd.size / Math.max(1, capacity) : 0;
+  const paddockOcc =
+    paddockCapacityCells > 0 ? herd.size / Math.max(1, paddockCapacityCells) : 0;
+  const crowding = grazing ? paddockOcc : barnOcc;
+  const soigne = 1 - competencesEleveur.ANIMAL_HAPPINESS;
+
   const happiness = tickHappiness({
     happiness: herd.happiness,
     hasPaddock: paddockCapacityCells > 0,
     grazedRecentlyMs: herd.lastGrazedAt ? now - herd.lastGrazedAt.getTime() : Number.MAX_SAFE_INTEGER,
-    crowding: paddockCapacityCells > 0 ? herd.size / Math.max(1, paddockCapacityCells) : 1,
+    crowding,
     elapsedMs,
+    outside: housing === "OUTSIDE",
     /*
      * L'œil de l'éleveur **allège la peine**, il ne fabrique pas du bonheur.
      *
@@ -7811,9 +7827,15 @@ async function settleHerd(
      * intacte : un troupeau affamé reste malheureux quel que soit le
      * savoir-faire, et la ration continue de décider. Un bonus additif, lui,
      * aurait fini par masquer la faim.
+     *
+     * Faim, odeur et température restent **séparées** : les regrouper dans
+     * `hunger` faisait lire « affamées » pour une fosse pleine ou un coup
+     * de chaud.
      */
-    hunger: Math.max(0, (hunger + smell + thermal) * (1 - competencesEleveur.ANIMAL_HAPPINESS)),
+    hunger: Math.max(0, hunger * soigne),
     bedding: beddingPenalty(cover),
+    smell: Math.max(0, smell * soigne),
+    thermal: Math.max(0, thermal * soigne),
   });
 
   // Reproduction : une gestation démarre quand tout est réuni, et aboutit
@@ -8118,12 +8140,10 @@ app.get("/parcels/:id/livestock", async (req, res) => {
               les aurait laissées diverger au premier changement de règle.
             */
             welfareCauses: welfareReasons({
-              hasPaddock: paddock.capacity > 0,
-              grazedRecentlyMs: b.herd.lastGrazedAt
-                ? now - b.herd.lastGrazedAt.getTime()
-                : Number.MAX_SAFE_INTEGER,
               crowding:
-                paddock.capacity > 0 ? b.herd.size / Math.max(1, paddock.capacity) : 1,
+                parseHousing(b.herd.housing) === "OUTSIDE" && paddock.capacity > 0
+                  ? b.herd.size / Math.max(1, paddock.capacity)
+                  : herdSize / Math.max(1, capacity),
               hunger: hungerPenalty({
                 feedStock,
                 herdSize: b.herd.size,
@@ -8136,6 +8156,9 @@ app.get("/parcels/:id/livestock", async (req, res) => {
                   stockTons: b.herd.beddingTons ?? 0,
                 }),
               ),
+              smell: manureSmellPenalty(pitFill),
+              thermal: thermalPenalty({ kind: herdKind ?? "COW", tempC: herdTempC }),
+              tempC: herdTempC,
             }),
             /* Un lot entièrement composé de jeunes n'a rien à donner : sans
                ce garde, « traite prête » s'affichait sur une étable de veaux

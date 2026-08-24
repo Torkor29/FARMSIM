@@ -175,6 +175,8 @@ export type GrazingHerd = {
   welfare?: number;
   /** Production en attente (lait, œufs, laine), 0 à 1 : le pis se remplit. */
   yield?: number;
+  /** Occupation de l'étable, pour étaler les bêtes au lieu de les entasser. */
+  occupancy?: number;
   /** Dehors dans l’enclos ; sinon collées à l’étable. */
   out?: boolean;
   barn: { originX: number; originY: number; w: number; h: number };
@@ -3035,7 +3037,10 @@ export function IsoFarmView({
       // Troupeaux : deux poses, et une vraie marche entre la porte et le pré.
       const herds = dataRef.current.grazing ?? [];
       const nextIdKey = herds
-        .map((h) => `${h.buildingId}:${h.animals}:${h.kind ?? "COW"}:${h.sheared ? 1 : 0}`)
+        .map(
+          (h) =>
+            `${h.buildingId}:${h.animals}:${h.kind ?? "COW"}:${h.sheared ? 1 : 0}:${Math.round((h.occupancy ?? 0) * 20)}`,
+        )
         .join("|");
       const nextOutKey = herds.map((h) => `${h.buildingId}:${h.out ? 1 : 0}`).join("|");
 
@@ -3049,7 +3054,13 @@ export function IsoFarmView({
         cowWalkers.length = 0;
 
         for (const herd of herds) {
-          const shown = Math.min(8, herd.animals);
+          const occupancy = Math.max(0, Math.min(1, herd.occupancy ?? 0.5));
+          // Peu de bêtes, ou une étable à moitié vide : on en montre moins,
+          // plus écartées. Un 30 / 55 ne doit plus ressembler à un tas.
+          const shown = Math.max(
+            1,
+            Math.min(herd.animals, occupancy > 0.92 ? 10 : occupancy > 0.8 ? 8 : occupancy > 0.62 ? 6 : 4),
+          );
           const kind = herd.kind ?? "COW";
           const barn = buildingRigs.find((b) => b.id === herd.buildingId)?.rig ?? null;
           barn?.group.updateMatrixWorld(true);
@@ -3085,16 +3096,20 @@ export function IsoFarmView({
           outward.normalize();
           const side = new THREE.Vector3(outward.z, 0, -outward.x);
 
+          const alongGap = (0.22 + (1 - occupancy) * 0.28) * step;
+          const rankGap = (0.28 + (1 - occupancy) * 0.22) * step;
+          const cols = Math.min(4, shown);
+          const padSpread = 0.55 + (1 - occupancy) * 0.45;
+
           for (let i = 0; i < shown; i++) {
-            const rank = Math.floor(i / 4);
-            const along = ((i % 4) - 1.5) * 0.26 * step;
-            // Dedans : rangée de stalles derrière la façade. La bête y est
-            // masquée une fois la porte refermée.
+            const rank = Math.floor(i / cols);
+            const along = ((i % cols) - (cols - 1) / 2) * alongGap;
+            // Dedans : stalles derrière la façade, écartées selon la densité.
             const stall = new THREE.Vector3(gx, 0.1, gz)
-              .addScaledVector(outward, -0.35 * step - rank * 0.3 * step)
+              .addScaledVector(outward, -0.35 * step - rank * rankGap)
               .addScaledVector(side, along);
-            const spreadX = (((i % 3) - 1) * 0.55 + ((i * 0.13) % 0.4)) * step;
-            const spreadZ = ((Math.floor(i / 3) - 1) * 0.55 + ((i * 0.21) % 0.4)) * step;
+            const spreadX = (((i % 3) - 1) * padSpread + ((i * 0.13) % 0.4)) * step;
+            const spreadZ = ((Math.floor(i / 3) - 1) * padSpread + ((i * 0.21) % 0.4)) * step;
             // Dehors : le pré s'il en existe un, sinon la cour du bâtiment —
             // dans tous les cas, sur une case qui appartient à l'élevage.
             const paddock = pre
@@ -3142,7 +3157,11 @@ export function IsoFarmView({
         grazeOutKey = nextOutKey;
         let wi = 0;
         for (const herd of herds) {
-          const shown = Math.min(8, herd.animals);
+          const occupancy = Math.max(0, Math.min(1, herd.occupancy ?? 0.5));
+          const shown = Math.max(
+            1,
+            Math.min(herd.animals, occupancy > 0.92 ? 10 : occupancy > 0.8 ? 8 : occupancy > 0.62 ? 6 : 4),
+          );
           for (let i = 0; i < shown; i++) {
             const w = cowWalkers[wi++];
             if (!w) continue;
