@@ -1,6 +1,5 @@
-import { useEffect, useRef, useState, type ReactNode } from "react";
-import type { ObjectiveView } from "@farmsim/shared";
-import { DIRECT_SEED_COST_PER_CELL, DIRECT_SEED_YIELD_MALUS , type Season } from "@farmsim/shared";
+import { useLayoutEffect, useRef, useState, type ReactNode } from "react";
+import type { ObjectiveView, Season } from "@farmsim/shared";
 import { isFieldWorkTool, isPlantTool, isSoilTool, toolBareVerb, toolVerb, type Tool } from "./tools";
 import { BRUSH_SIZES, TOOL_GROUPS, groupOf, optionsFor } from "./ui/tool-options";
 
@@ -59,7 +58,6 @@ type Props = {
    */
   contractorAffordable: boolean;
   laborAffordable: boolean;
-  directSeed: boolean;
   /** Laisser l'andain derrière la moissonneuse. */
   keepSwath: boolean;
   /** La culture sélectionnée laisse-t-elle de la paille ? L'herbe, non. */
@@ -82,7 +80,16 @@ type Props = {
   onBrush: (n: 1 | 2 | 3) => void;
   onDragRect: () => void;
   onClearSelection: () => void;
-  onDirectSeed: () => void;
+  /**
+   * Prendre d'un coup toutes les cases que l'outil peut travailler.
+   *
+   * Le bureau a Ctrl+A. Au doigt, sélectionner quarante cases libres c'est
+   * glisser en évitant le dock, les bâtiments, les cultures déjà là — et
+   * ça n'allait jamais au bout. Un bouton, le même geste.
+   */
+  onSelectAll: () => void;
+  /** Combien de cases l'outil courant peut prendre d'un coup. */
+  eligibleCount: number;
   onKeepSwath: () => void;
   onConfirm: () => void;
   onHarvestAll: () => void;
@@ -91,8 +98,6 @@ type Props = {
   onSell: () => void;
   onGuide: () => void;
   hasHerd?: boolean;
-  showDev?: boolean;
-  onDev?: () => void;
   /**
    * Les panneaux tenaient dans une **seconde** barre collée sous celle-ci :
    * onze boutons sur deux rangées, soit près d'un quart de l'écran mangé en
@@ -134,7 +139,6 @@ export function FieldDock({
   stockTons,
   contractorAffordable,
   laborAffordable,
-  directSeed,
   keepSwath,
   swathUseful,
   machineManquante,
@@ -147,7 +151,8 @@ export function FieldDock({
   onBrush,
   onDragRect,
   onClearSelection,
-  onDirectSeed,
+  onSelectAll,
+  eligibleCount,
   onKeepSwath,
   onConfirm,
   onHarvestAll,
@@ -155,8 +160,6 @@ export function FieldDock({
   onPublishLabor,
   onSell,
   onGuide,
-  showDev,
-  onDev,
   moreOpen,
   moreBadge = 0,
   onMore,
@@ -178,22 +181,26 @@ export function FieldDock({
    * le prochain geste sur le champ.
    */
   const rail = useRef<HTMLDivElement | null>(null);
-  useEffect(() => {
+  useLayoutEffect(() => {
     const arme = rail.current?.querySelector<HTMLElement>("[data-armed='true']");
     // `scrollIntoView` ferait aussi défiler la page entière sur iOS : on ne
     // bouge que le rail, et seulement s'il défile vraiment.
     if (!arme || !rail.current) return;
+    // Si rien ne dépasse, un scroll « smooth » partait quand même de zéro
+    // et faisait sauter la rangée du bord vers le milieu.
+    if (rail.current.scrollWidth <= rail.current.clientWidth + 1) return;
     const boite = rail.current.getBoundingClientRect();
     const cible = arme.getBoundingClientRect();
     if (cible.left >= boite.left && cible.right <= boite.right) return;
-    rail.current.scrollTo({
-      left: rail.current.scrollLeft + (cible.left - boite.left) - 8,
-      behavior: "smooth",
-    });
+    // Avant peinture, sans animation : le joueur voit l'outil armé déjà
+    // en place, pas une pastille qui arrive de gauche puis se recentre.
+    rail.current.scrollLeft += cible.left - boite.left - 8;
   }, [tool, optionsOpen]);
 
   const group = groupOf(tool);
   const options = optionsFor(group, season);
+  const arme = options.find((o) => o.tool === tool);
+  const horsSaison = Boolean(arme?.outOfSeason);
   const plant = isPlantTool(tool);
   const soil = isSoilTool(tool);
   const harvest = tool === "HARVEST";
@@ -229,6 +236,10 @@ export function FieldDock({
     // au-dessus dit lequel et pour combien de temps : inutile de le répéter.
     if (chantierBar) return null;
     if (!work) return null;
+    // Hors saison : le dire avant le geste, pas après un refus du serveur.
+    // Le rail de bureau barre déjà la pastille ; ici le doigt n'a pas
+    // d'infobulle au survol, donc la phrase passe en clair.
+    if (horsSaison && arme?.hint) return arme.hint;
     if (selectedCount === 0) {
       // Le bouton est gris parce qu'il n'y a rien à travailler : ce n'est pas
       // une panne, c'est un geste qui manque. Autant le demander.
@@ -287,9 +298,10 @@ export function FieldDock({
                 <button
                   key={o.tool}
                   type="button"
-                  className={`chip ${tool === o.tool ? "on" : ""}`}
+                  className={`chip${tool === o.tool ? " on" : ""}${o.outOfSeason ? " out-of-season" : ""}`}
                   aria-pressed={tool === o.tool}
                   data-armed={tool === o.tool}
+                  title={o.hint}
                   onClick={() => onTool(o.tool)}
                 >
                   {o.label}
@@ -309,39 +321,6 @@ export function FieldDock({
                 onClick={onKeepSwath}
               >
                 Andain
-              </button>
-            )}
-
-            {plant && (
-              <button
-                type="button"
-                className={`chip ${directSeed ? "on" : ""}`}
-                aria-pressed={directSeed}
-                title={`Semer dans les chaumes : +${DIRECT_SEED_COST_PER_CELL} €/case, −${Math.round(
-                  DIRECT_SEED_YIELD_MALUS * 100,
-                )} % de rendement.`}
-                onClick={onDirectSeed}
-              >
-                Semis direct
-              </button>
-            )}
-
-            {/* Deux façons de glisser, et il fallait les deux : la trace du
-                doigt pour suivre une bordure, le rectangle pour prendre une
-                bande d'un coin à l'autre sans repasser sur chaque case. */}
-            {work && (
-              <button
-                type="button"
-                className={`chip ${dragRect ? "on" : ""}`}
-                aria-pressed={dragRect}
-                title={
-                  dragRect
-                    ? "Le glissé prend le rectangle entre les deux coins."
-                    : "Le glissé suit le doigt, case par case."
-                }
-                onClick={onDragRect}
-              >
-                {dragRect ? "▦ Rectangle" : "✎ Trace"}
               </button>
             )}
 
@@ -388,12 +367,25 @@ export function FieldDock({
                 Vider ×{selectedCount}
               </button>
             )}
+            {/* Tout sélectionner : le même geste que Ctrl+A au bureau.
+                Visible dès qu'un outil de champ est armé, même à zéro case
+                — c'est précisément là qu'on en a besoin. */}
+            {work && eligibleCount > 0 && (
+              <button
+                type="button"
+                className="chip"
+                onClick={onSelectAll}
+                title="Sélectionner toutes les cases que cet outil peut travailler"
+              >
+                Tout · {eligibleCount}
+              </button>
+            )}
             {work && (
               <button
                 type="button"
                 className="chip go"
-                disabled={busy || selectedCount === 0 || Boolean(machineManquante)}
-                title={machineManquante ?? undefined}
+                disabled={busy || selectedCount === 0 || Boolean(machineManquante) || horsSaison}
+                title={horsSaison ? arme?.hint : (machineManquante ?? undefined)}
                 onClick={onConfirm}
               >
                 {/* « Faire ×12 » ne disait pas ce qu'on allait faire : le
@@ -408,9 +400,11 @@ export function FieldDock({
               <button
                 type="button"
                 className="chip eta"
-                disabled={busy || selectedCount === 0 || !contractorAffordable}
+                disabled={busy || selectedCount === 0 || !contractorAffordable || horsSaison}
                 title={
-                  tool === "HARVEST" && !mowSelected && !contractor.hasMachine
+                  horsSaison
+                    ? arme?.hint
+                    : tool === "HARVEST" && !mowSelected && !contractor.hasMachine
                     ? `Vous n’avez pas la machine : quelqu’un le fait pour vous — ${contractor.cost} €`
                     : `Quelqu’un le fait pour vous, tout de suite — ${contractor.cost} €`
                 }
@@ -425,8 +419,12 @@ export function FieldDock({
               <button
                 type="button"
                 className="chip"
-                disabled={busy || !laborAffordable}
-                title="Cet argent est mis de côté jusqu’à la fin (ou l’annulation)."
+                disabled={busy || !laborAffordable || horsSaison}
+                title={
+                  horsSaison
+                    ? arme?.hint
+                    : "Cet argent est mis de côté jusqu’à la fin (ou l’annulation)."
+                }
                 onClick={onPublishLabor}
               >
                 Un joueur · {laborQuote} €
@@ -480,14 +478,26 @@ export function FieldDock({
             {!moreOpen && moreBadge > 0 && <span className="dock-badge">{moreBadge}</span>}
           </button>
         )}
-        {showDev && (
-          <button type="button" className="dock-tool extra" onClick={onDev}>
-            <span className="dock-emoji" aria-hidden="true">
-              🛠
-            </span>
-            <span className="dock-label">Test</span>
-          </button>
-        )}
+        {/* Trace ou rectangle : un tap pour basculer, toujours au même
+            endroit. C'était une pastille dans chaque sous-menu, et le
+            sixième bouton du dock n'existait que pour les comptes Test.
+            Test reste dans Plus ; ici on choisit comment on sélectionne. */}
+        <button
+          type="button"
+          className={`dock-tool extra ${dragRect ? "on" : ""}`}
+          aria-pressed={dragRect}
+          title={
+            dragRect
+              ? "Le glissé prend le rectangle entre les deux coins. Toucher pour tracer."
+              : "Le glissé suit le doigt, case par case. Toucher pour un rectangle."
+          }
+          onClick={onDragRect}
+        >
+          <span className="dock-emoji" aria-hidden="true">
+            {dragRect ? "▦" : "✎"}
+          </span>
+          <span className="dock-label">{dragRect ? "Rectangle" : "Trace"}</span>
+        </button>
       </div>
     </div>
   );

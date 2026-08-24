@@ -51,6 +51,19 @@ describe("le catalogue d'outils", () => {
     expect(tousLesOutils).toContain("COLLECT");
   });
 
+  it("marque hors saison les cultures qui ne se sèment pas maintenant", () => {
+    // Le rail de bureau lisait déjà `outOfSeason`. Le dock tactile
+    // ignorait le drapeau : on choisissait le maïs en hiver, on semait,
+    // et le serveur renvoyait la saison. Les deux coques passent par
+    // `optionsFor` — ce test tient le drapeau, pas le pixel.
+    const hiver = optionsFor("PLANT", "WINTER");
+    expect(hiver.find((o) => o.tool === "PLANT_MAIZE")?.outOfSeason).toBe(true);
+    expect(hiver.find((o) => o.tool === "PLANT_WHEAT")?.outOfSeason).toBeUndefined();
+    const printemps = optionsFor("PLANT", "SPRING");
+    expect(printemps.find((o) => o.tool === "PLANT_MAIZE")?.outOfSeason).toBeUndefined();
+    expect(printemps.find((o) => o.tool === "PLANT_WHEAT")?.outOfSeason).toBe(true);
+  });
+
   it("n'arme jamais une famille sur un outil inerte", () => {
     // « Récolte » n'a pas d'options : elle arme directement son outil d'entrée.
     // C'est précisément ce cas qui doit rester actionnable.

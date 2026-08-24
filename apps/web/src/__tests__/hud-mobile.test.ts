@@ -107,11 +107,67 @@ describe("le bandeau du haut", () => {
     expect(APP).toMatch(/return hasUnlimitedFunds\(player\) \? "∞ €" : formatEurosCourt\(player\.crd\)/);
   });
 
+  it("porte la saison en icône, et tient en une seule barre", () => {
+    /*
+     * Capture : logo, étoile, ∞ €, « Gris », voisin et ☰, chacun dans sa
+     * pastille, et nulle part la saison. Un dessin suffit ; le mot « Gris »
+     * n'ajoutait rien qu'un nuage ne dise.
+     */
+    expect(APP).toMatch(/<SeasonMark season=\{season\}/);
+    expect(APP).toMatch(/saison-btn/);
+    expect(APP).toMatch(/<WeatherMark weather=\{localWeather\}/);
+    expect(APP).not.toMatch(/weatherCourt/);
+    expect(regle(".game-stage.mobile .hud-top")).toMatch(/border-radius:\s*16px/);
+    expect(regle(".game-stage.mobile .hud-puce")).toMatch(/background:\s*transparent/);
+  });
+
   it("laisse le guide joignable bien que le « ? » s’efface", () => {
     // Le « ? » ouvrait le même guide que le tiroir profil et que la puce
     // d'objectif. Il cède sa place — les deux autres portes restent.
     expect(CSS).toMatch(/\.game-stage\.mobile \.help-btn \{ display: none; \}/);
     expect(APP.match(/setShowGuide\(true\)/g)?.length ?? 0).toBeGreaterThanOrEqual(2);
+  });
+});
+
+describe("le plateau tactile", () => {
+  const DOCK = fs.readFileSync("src/FieldDock.tsx", "utf8");
+
+  it("offre Tout sélectionner, comme le bureau", () => {
+    /*
+     * Au doigt, prendre toutes les cases libres c'était glisser en évitant
+     * le dock. Le bureau a Ctrl+A ; le téléphone n'avait que « Vider ».
+     */
+    expect(DOCK).toMatch(/onSelectAll/);
+    expect(DOCK).toMatch(/Tout · \{eligibleCount\}/);
+    expect(APP).toMatch(/onSelectAll=\{\(\) => \{/);
+    expect(APP).toMatch(/eligibleCount=\{eligibleCells\(tool\)\.length\}/);
+  });
+
+  it("barre les graines hors saison, comme le rail de bureau", () => {
+    // Sans cela on sélectionnait, on semait, et le refus arrivait après.
+    expect(DOCK).toMatch(/o\.outOfSeason \? " out-of-season"/);
+    expect(DOCK).toMatch(/horsSaison/);
+    expect(regle(".chip.out-of-season")).toMatch(/line-through/);
+  });
+
+  it("n’offre plus Semis direct dans le menu, et Trace/Rectangle tient la place de Test", () => {
+    /*
+     * « Semis direct » ne disait rien au doigt — pas d'infobulle — et le
+     * jeu le décide déjà : on sème dans les chaumes, c'est du direct.
+     * Trace et rectangle vivaient dans chaque sous-menu ; Test occupait
+     * le septième bouton du dock. Un tap au même endroit bascule le geste.
+     */
+    expect(DOCK).not.toMatch(/Semis direct/);
+    expect(DOCK).toMatch(/\{dragRect \? "Rectangle" : "Trace"\}/);
+    expect(DOCK).not.toMatch(/dock-label">Test/);
+    expect(APP).toMatch(/directSeed: sowingDirect/);
+  });
+
+  it("n’anime plus les menus depuis le bord de l’écran", () => {
+    expect(CSS).not.toMatch(/rail-in-left/);
+    expect(CSS).toMatch(/@keyframes panel-in/);
+    expect(CSS).toMatch(/@keyframes tray-in/);
+    expect(fs.readFileSync("src/ui/desktop/Window.tsx", "utf8")).toMatch(/createPortal/);
   });
 });
 

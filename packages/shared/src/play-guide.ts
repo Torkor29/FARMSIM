@@ -320,7 +320,7 @@ export const GUIDE_CHAPTERS: GuideChapter[] = [
       {
         id: "direct",
         name: "Semis direct",
-        how: "Semer avec l’option Semis direct : dans les chaumes, sans passage avant. −10 % de rendement.",
+        how: "Semer dans les chaumes, sans labour ni déchaumage : le jeu le fait tout seul. Un peu plus cher, −10 % de rendement.",
         usedBy: "Céréalier pressé, ou qui ménage son sol.",
       },
       {
