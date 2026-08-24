@@ -335,7 +335,7 @@ export function MarketPanel({
             dépassait 92 % de la hauteur d'écran était simplement coupé, sans
             aucun moyen d'y accéder — sur téléphone, le formulaire des contrats
             à terme commençait juste sous le bord. */}
-        <div className="hall-body">
+        <div className="hall-body" key={tab}>
         {/* Les cotations du jour, en tête : c'est la première question qu'on
             se pose en entrant au marché, et la seule raison pour laquelle
             elles occupaient jusqu'ici un bandeau permanent sur la ferme. */}
