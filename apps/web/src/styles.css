@@ -2375,6 +2375,18 @@ html.playing .build-confirm { position: fixed; }
   color: #3a1f07;
 }
 .chip.brush { min-width: 2.8rem; padding-inline: 0.55rem; }
+/* Hors saison, même règle que le rail de bureau : barré, encore
+   cliquable — on choisit la culture pour lire pourquoi, on ne sème pas.
+   Le doigt n'a pas de survol : le trait et le message sous la rangée
+   portent l'information que l'infobulle portait à la souris. */
+.chip.out-of-season {
+  text-decoration: line-through;
+  text-decoration-thickness: 1px;
+  opacity: 0.55;
+}
+.chip.out-of-season.on {
+  opacity: 0.85;
+}
 
 .dock-bar {
   display: grid;

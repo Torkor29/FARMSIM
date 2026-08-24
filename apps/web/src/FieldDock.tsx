@@ -82,6 +82,16 @@ type Props = {
   onBrush: (n: 1 | 2 | 3) => void;
   onDragRect: () => void;
   onClearSelection: () => void;
+  /**
+   * Prendre d'un coup toutes les cases que l'outil peut travailler.
+   *
+   * Le bureau a Ctrl+A. Au doigt, sélectionner quarante cases libres c'est
+   * glisser en évitant le dock, les bâtiments, les cultures déjà là — et
+   * ça n'allait jamais au bout. Un bouton, le même geste.
+   */
+  onSelectAll: () => void;
+  /** Combien de cases l'outil courant peut prendre d'un coup. */
+  eligibleCount: number;
   onDirectSeed: () => void;
   onKeepSwath: () => void;
   onConfirm: () => void;
@@ -147,6 +157,8 @@ export function FieldDock({
   onBrush,
   onDragRect,
   onClearSelection,
+  onSelectAll,
+  eligibleCount,
   onDirectSeed,
   onKeepSwath,
   onConfirm,
@@ -194,6 +206,8 @@ export function FieldDock({
 
   const group = groupOf(tool);
   const options = optionsFor(group, season);
+  const arme = options.find((o) => o.tool === tool);
+  const horsSaison = Boolean(arme?.outOfSeason);
   const plant = isPlantTool(tool);
   const soil = isSoilTool(tool);
   const harvest = tool === "HARVEST";
@@ -229,6 +243,10 @@ export function FieldDock({
     // au-dessus dit lequel et pour combien de temps : inutile de le répéter.
     if (chantierBar) return null;
     if (!work) return null;
+    // Hors saison : le dire avant le geste, pas après un refus du serveur.
+    // Le rail de bureau barre déjà la pastille ; ici le doigt n'a pas
+    // d'infobulle au survol, donc la phrase passe en clair.
+    if (horsSaison && arme?.hint) return arme.hint;
     if (selectedCount === 0) {
       // Le bouton est gris parce qu'il n'y a rien à travailler : ce n'est pas
       // une panne, c'est un geste qui manque. Autant le demander.
@@ -287,9 +305,10 @@ export function FieldDock({
                 <button
                   key={o.tool}
                   type="button"
-                  className={`chip ${tool === o.tool ? "on" : ""}`}
+                  className={`chip${tool === o.tool ? " on" : ""}${o.outOfSeason ? " out-of-season" : ""}`}
                   aria-pressed={tool === o.tool}
                   data-armed={tool === o.tool}
+                  title={o.hint}
                   onClick={() => onTool(o.tool)}
                 >
                   {o.label}
@@ -388,12 +407,25 @@ export function FieldDock({
                 Vider ×{selectedCount}
               </button>
             )}
+            {/* Tout sélectionner : le même geste que Ctrl+A au bureau.
+                Visible dès qu'un outil de champ est armé, même à zéro case
+                — c'est précisément là qu'on en a besoin. */}
+            {work && eligibleCount > 0 && (
+              <button
+                type="button"
+                className="chip"
+                onClick={onSelectAll}
+                title="Sélectionner toutes les cases que cet outil peut travailler"
+              >
+                Tout · {eligibleCount}
+              </button>
+            )}
             {work && (
               <button
                 type="button"
                 className="chip go"
-                disabled={busy || selectedCount === 0 || Boolean(machineManquante)}
-                title={machineManquante ?? undefined}
+                disabled={busy || selectedCount === 0 || Boolean(machineManquante) || horsSaison}
+                title={horsSaison ? arme?.hint : (machineManquante ?? undefined)}
                 onClick={onConfirm}
               >
                 {/* « Faire ×12 » ne disait pas ce qu'on allait faire : le
@@ -408,9 +440,11 @@ export function FieldDock({
               <button
                 type="button"
                 className="chip eta"
-                disabled={busy || selectedCount === 0 || !contractorAffordable}
+                disabled={busy || selectedCount === 0 || !contractorAffordable || horsSaison}
                 title={
-                  tool === "HARVEST" && !mowSelected && !contractor.hasMachine
+                  horsSaison
+                    ? arme?.hint
+                    : tool === "HARVEST" && !mowSelected && !contractor.hasMachine
                     ? `Vous n’avez pas la machine : quelqu’un le fait pour vous — ${contractor.cost} €`
                     : `Quelqu’un le fait pour vous, tout de suite — ${contractor.cost} €`
                 }
@@ -425,8 +459,12 @@ export function FieldDock({
               <button
                 type="button"
                 className="chip"
-                disabled={busy || !laborAffordable}
-                title="Cet argent est mis de côté jusqu’à la fin (ou l’annulation)."
+                disabled={busy || !laborAffordable || horsSaison}
+                title={
+                  horsSaison
+                    ? arme?.hint
+                    : "Cet argent est mis de côté jusqu’à la fin (ou l’annulation)."
+                }
                 onClick={onPublishLabor}
               >
                 Un joueur · {laborQuote} €

@@ -5913,6 +5913,11 @@ export function App() {
             setSelectedCells([]);
             selectionAnchor.current = null;
           }}
+          onSelectAll={() => {
+            setSelectedCells(eligibleCells(tool));
+            selectionAnchor.current = null;
+          }}
+          eligibleCount={eligibleCells(tool).length}
           isMobile={isMobile}
           isEta={visiting}
           visiting={visiting}

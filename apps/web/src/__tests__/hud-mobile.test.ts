@@ -115,6 +115,28 @@ describe("le bandeau du haut", () => {
   });
 });
 
+describe("le plateau tactile", () => {
+  const DOCK = fs.readFileSync("src/FieldDock.tsx", "utf8");
+
+  it("offre Tout sélectionner, comme le bureau", () => {
+    /*
+     * Au doigt, prendre toutes les cases libres c'était glisser en évitant
+     * le dock. Le bureau a Ctrl+A ; le téléphone n'avait que « Vider ».
+     */
+    expect(DOCK).toMatch(/onSelectAll/);
+    expect(DOCK).toMatch(/Tout · \{eligibleCount\}/);
+    expect(APP).toMatch(/onSelectAll=\{\(\) => \{/);
+    expect(APP).toMatch(/eligibleCount=\{eligibleCells\(tool\)\.length\}/);
+  });
+
+  it("barre les graines hors saison, comme le rail de bureau", () => {
+    // Sans cela on sélectionnait, on semait, et le refus arrivait après.
+    expect(DOCK).toMatch(/o\.outOfSeason \? " out-of-season"/);
+    expect(DOCK).toMatch(/horsSaison/);
+    expect(regle(".chip.out-of-season")).toMatch(/line-through/);
+  });
+});
+
 describe("le bas de l’écran", () => {
   it("resserre les cartes sans descendre sous le plancher tactile", () => {
     // Quarante-quatre pixels, charte §7.3. Ce qu'on récupère, c'est le
