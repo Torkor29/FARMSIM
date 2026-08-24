@@ -814,11 +814,11 @@ function buildHarvester(tier: MachineTier = 1): Blueprint {
       spin.add("steel", cyl(0.06, 0.06, 0.04, 10, [0, 0, 0], [HALF, 0, 0]));
       spin.add("rim", roundedBox(0.12, 0.016, 0.016, 0.004, [0, 0, 0]));
     }
-    const steer = root.child([-0.64, 0, 0], { role: "steer" });
-    addCrawlerTrack(steer, 0, 0.34, 0.5, 0.128, 0.17);
-    addCrawlerTrack(steer, 0, -0.34, 0.5, 0.128, 0.17);
-    for (const z of [0.34, -0.34] as const) {
-      steer.add("paint", roundedBox(0.4, 0.04, 0.18, 0.015, [0, 0.3, z]));
+    const steer = root.child([-0.72, 0, 0], { role: "steer" });
+    addCrawlerTrack(steer, 0, 0.42, 0.64, 0.142, 0.2);
+    addCrawlerTrack(steer, 0, -0.42, 0.64, 0.142, 0.2);
+    for (const z of [0.42, -0.42] as const) {
+      steer.add("paint", roundedBox(0.52, 0.045, 0.22, 0.016, [0, 0.34, z]));
     }
   } else {
     const driveZs = tier >= 4 ? ([0.22, 0.38, -0.22, -0.38] as const) : ([0.28, -0.28] as const);
@@ -837,7 +837,7 @@ function buildHarvester(tier: MachineTier = 1): Blueprint {
     steer.add("cast", cyl(0.03, 0.03, 0.34, 10, [0, 0, 0], [HALF, 0, 0]));
   }
 
-  return { root, length: atTier(tier, [1.95, 1.98, 2.04, 2.12, 2.55]), hitch: [-0.9, 0.3, 0], eye: [0, 0, 0] };
+  return { root, length: atTier(tier, [1.95, 1.98, 2.04, 2.12, 2.62]), hitch: [-0.9, 0.3, 0], eye: [0, 0, 0] };
 }
 
 /* ------------------------------------------------------------------ */
@@ -1542,11 +1542,11 @@ function buildForageHarvester(tier: MachineTier = 1): Blueprint {
     for (const z of [0.44, -0.44] as const) {
       root.add("paint", roundedBox(0.66, 0.05, 0.22, 0.02, [0.24, 0.4, z]));
     }
-    const steer = root.child([-0.54, 0, 0], { role: "steer" });
-    addCrawlerTrack(steer, 0, 0.34, 0.48, 0.125, 0.165);
-    addCrawlerTrack(steer, 0, -0.34, 0.48, 0.125, 0.165);
-    for (const z of [0.34, -0.34] as const) {
-      steer.add("paint", roundedBox(0.38, 0.04, 0.18, 0.015, [0, 0.3, z]));
+    const steer = root.child([-0.62, 0, 0], { role: "steer" });
+    addCrawlerTrack(steer, 0, 0.4, 0.6, 0.138, 0.19);
+    addCrawlerTrack(steer, 0, -0.4, 0.6, 0.138, 0.19);
+    for (const z of [0.4, -0.4] as const) {
+      steer.add("paint", roundedBox(0.48, 0.045, 0.2, 0.016, [0, 0.32, z]));
     }
   } else {
     const driveZs = tier >= 4 ? ([0.24, 0.4, -0.24, -0.4] as const) : ([0.31, -0.31] as const);
@@ -1569,7 +1569,7 @@ function buildForageHarvester(tier: MachineTier = 1): Blueprint {
   // Bec élargi devant, goulotte qui porte loin derrière : l'engin mesure
   // vraiment deux unités. La valeur sert au cadrage de l'atelier et au
   // placement de la poussière — la laisser à 1,8 déréglerait les deux.
-  return { root, length: atTier(tier, [2.05, 2.08, 2.12, 2.16, 2.35]), hitch: [-0.85, 0.3, 0], eye: [0, 0, 0] };
+  return { root, length: atTier(tier, [2.05, 2.08, 2.12, 2.16, 2.42]), hitch: [-0.85, 0.3, 0], eye: [0, 0, 0] };
 }
 
 /* ------------------------------------------------------------------ */
