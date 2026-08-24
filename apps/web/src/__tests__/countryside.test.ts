@@ -18,6 +18,7 @@ import {
   versEcranBas,
   versEcranDroite,
   type OptionsPlan,
+  type VoisinReel,
 } from "../countryside-plan";
 
 /**
@@ -777,5 +778,73 @@ describe("le démontage", () => {
     const c = createCountryside(OPTIONS);
     c.dispose();
     expect(c.object.children.length).toBe(0);
+  });
+});
+
+describe("les bâtiments du cadastre", () => {
+  function voisin(col: number, rang: number, extra: Partial<VoisinReel> = {}): VoisinReel {
+    return {
+      id: `p-${col}-${rang}`,
+      label: "Champ",
+      col,
+      rang,
+      statut: "PNJ",
+      proprietaire: "Duval",
+      exploitation: "Duval",
+      culture: "WHEAT",
+      stade: "GROWING",
+      partCultivee: 1,
+      fertility: 0.7,
+      batiments: [],
+      cheptel: [],
+      prix: null,
+      achetable: false,
+      refus: null,
+      ...extra,
+    };
+  }
+
+  it("sont les modèles du joueur, même loin du regard", () => {
+    /*
+     * Une grange générique faisait d'un silo et d'une étable la même baraque,
+     * dès qu'on n'était plus collé à la parcelle. Les vrais modèles tiennent
+     * sur toute la commune.
+     */
+    const c = createCountryside({
+      ...OPTIONS,
+      voisins: [
+        voisin(1, 0, {
+          batiments: [{ type: "CATTLE_BARN", level: 1, x: 1, y: 1, rotation: 0 }],
+        }),
+        voisin(2, 2, {
+          batiments: [{ type: "SILO", level: 1, x: 3, y: 3, rotation: 0 }],
+        }),
+      ],
+    });
+    const types = new Set<string>();
+    c.object.traverse((o) => {
+      if (o.name === "voisin-batiment") types.add(String(o.userData.type));
+    });
+    expect(types.has("CATTLE_BARN")).toBe(true);
+    expect(types.has("SILO")).toBe(true);
+    expect(c.object.getObjectByName("campagne-batiments")?.children).toHaveLength(2);
+    c.dispose();
+  });
+
+  it("ne superpose pas le détail aux bâtiments déjà posés", () => {
+    const c = createCountryside({
+      ...OPTIONS,
+      voisins: [
+        voisin(1, 0, {
+          batiments: [{ type: "FARMHOUSE", level: 1, x: 2, y: 2, rotation: 0 }],
+        }),
+      ],
+    });
+    let n = 0;
+    c.object.traverse((o) => {
+      if (o.name === "voisin-batiment") n += 1;
+    });
+    expect(n).toBe(1);
+    c.dispose();
   });
 });

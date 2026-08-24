@@ -14,12 +14,10 @@
  * bâtiments — ceux que le joueur construit —, `animal-meshes` pour les bêtes.
  * Un décor peint à part finirait toujours par ne plus ressembler au jeu.
  *
- * Mais **pas sur toutes les parcelles**. Trente champs en détail plein font
- * cent mille brins et quatre-vingts modèles de bâtiment : un téléphone n'y
- * survit pas, et ce sont justement les téléphones qui font le gros des
- * joueurs. Seules les parcelles que le joueur **regarde** passent en détail —
- * voir `countryside`, qui choisit — et c'est ce qui rend le déplacement
- * intéressant : on s'approche, et la ferme du voisin s'anime.
+ * Les **bâtiments** du cadastre sont les mêmes partout : une étable de voisin
+ * est une étable, un silo est un silo. Ce qui reste en LOD, ce sont les
+ * cultures et les bêtes — trente champs en brins instanciés feraient cent
+ * mille tiges. Seules les parcelles regardées passent en détail pour ça.
  *
  * ## Ce qu'on invente, faute de mieux
  *
@@ -50,7 +48,70 @@ export type OptionsVoisin = {
   shadows?: boolean;
   /** Réglage sobre : semis éclairci, moins de bêtes. */
   sobre?: boolean;
+  /**
+   * Poser les bâtiments ici.
+   *
+   * À `false`, c'est la campagne qui les pose une fois pour toutes — les
+   * mêmes modèles, sur toutes les parcelles du cadastre, pas seulement
+   * celles qu'on regarde. Le détail ne s'occupe plus que des cultures et
+   * des bêtes.
+   */
+  batiments?: boolean;
 };
+
+/** Un ouvrage du cadastre, tel que la route le rend. */
+export type BatimentCadastre = {
+  type: string;
+  level: number;
+  x: number;
+  y: number;
+  rotation: number;
+};
+
+/**
+ * Les vrais bâtiments du jeu, à leur place sur la grille.
+ *
+ * C'est le même `createBuildingRig` que sur la parcelle du joueur : un silo
+ * reste un silo, une étable une étable. Une grange générique tirée au sort
+ * racontait la même chose de toutes les fermes.
+ *
+ * Les positions sont **locales** à la parcelle : l'appelant ajoute le centre
+ * du champ s'il pose dans le monde.
+ */
+export function poserBatimentsVoisin(o: {
+  batiments: readonly BatimentCadastre[];
+  pasCase: number;
+  origine: number;
+  grain: number;
+  shadows?: boolean;
+  y?: number;
+}): BuildingRig[] {
+  const y = o.y ?? 0.02;
+  const rigs: BuildingRig[] = [];
+  for (const b of o.batiments) {
+    const def = BUILDING_DEFS[b.type as BuildingType];
+    if (!def) continue;
+    const quarts = (((b.rotation ?? 0) % 4) + 4) % 4;
+    const fw = quarts % 2 === 0 ? def.w : def.h;
+    const fh = quarts % 2 === 0 ? def.h : def.w;
+    const rig = createBuildingRig(b.type as BuildingType, {
+      level: b.level ?? 1,
+      seed: o.grain + b.x * 7.3 + b.y * 3.1,
+      shadows: o.shadows ?? false,
+    });
+    rig.group.scale.setScalar(o.pasCase);
+    rig.group.position.set(
+      o.origine + (b.x + (fw - 1) / 2) * o.pasCase,
+      y,
+      o.origine + (b.y + (fh - 1) / 2) * o.pasCase,
+    );
+    rig.group.rotation.y = quarts * (Math.PI / 2);
+    rig.group.name = "voisin-batiment";
+    rig.group.userData.type = b.type;
+    rigs.push(rig);
+  }
+  return rigs;
+}
 
 export type VoisinDetaille = {
   object: THREE.Group;
@@ -175,35 +236,19 @@ export function creerVoisinDetaille(o: OptionsVoisin): VoisinDetaille {
   }
 
   /* —— Les bâtiments ——
-     Les vrais modèles, aux vraies places : la route rend l'origine de chaque
-     ouvrage sur la grille du voisin. Une grange générique posée dans un coin
-     racontait la même chose de toutes les fermes. */
-  const rigs: BuildingRig[] = [];
-  for (const b of reel?.batiments ?? []) {
-    const def = BUILDING_DEFS[b.type as BuildingType];
-    if (!def) continue;
-    const quarts = (((b.rotation ?? 0) % 4) + 4) % 4;
-    const fw = quarts % 2 === 0 ? def.w : def.h;
-    const fh = quarts % 2 === 0 ? def.h : def.w;
-    const rig = createBuildingRig(b.type as BuildingType, {
-      level: b.level ?? 1,
-      // Deux silos voisins ne doivent pas être la photocopie l'un de l'autre.
-      seed: grain + b.x * 7.3 + b.y * 3.1,
-      shadows,
-    });
-    rig.group.scale.setScalar(pasCase);
-    rig.group.position.set(
-      origine + (b.x + (fw - 1) / 2) * pasCase,
-      0.02,
-      origine + (b.y + (fh - 1) / 2) * pasCase,
-    );
-    rig.group.rotation.y = quarts * (Math.PI / 2);
-    // Nommé : c'est ainsi qu'on les retrouve pour les compter, à la main comme
-    // au test — un groupe anonyme au milieu du semis ne se distingue pas.
-    rig.group.name = "voisin-batiment";
-    object.add(rig.group);
-    rigs.push(rig);
-  }
+     Les vrais modèles, aux vraies places. Sauf si la campagne les a déjà
+     posés pour tout le voisinage : alors on ne les remet pas ici. */
+  const rigs: BuildingRig[] =
+    o.batiments === false
+      ? []
+      : poserBatimentsVoisin({
+          batiments: reel?.batiments ?? [],
+          pasCase,
+          origine,
+          grain,
+          shadows,
+        });
+  for (const rig of rigs) object.add(rig.group);
 
   /* —— Les bêtes ——
      Au pré, et non dans le bâtiment : c'est dehors qu'un troupeau se voit. On

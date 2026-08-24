@@ -34,7 +34,7 @@
  */
 
 import * as THREE from "three";
-import { BUILDING_DEFS, type BuildingType, type Season } from "@farmsim/shared";
+import { type Season } from "@farmsim/shared";
 import { createMachineRig, type MachineRig } from "./machines3d";
 import {
   ajouterArbre,
@@ -46,7 +46,8 @@ import {
   maillageFacette,
   makeVoiture,
 } from "./decor3d";
-import { creerVoisinDetaille, type VoisinDetaille } from "./voisin3d";
+import { creerVoisinDetaille, poserBatimentsVoisin, type VoisinDetaille } from "./voisin3d";
+import type { BuildingRig } from "./buildings3d";
 import {
   couleurChamp,
   type EtatChamp,
@@ -93,11 +94,10 @@ export type Campagne = {
 /**
  * Combien de parcelles passent en détail plein à la fois.
  *
- * Trois, et une seule en réglage sobre. Ce n'est pas une estimation prudente :
- * un champ détaillé, ce sont plusieurs milliers de brins instanciés, les vrais
- * modèles de bâtiment et cinq bêtes articulées. Trente parcelles à ce régime
- * feraient de la campagne le poste le plus cher de la vue, loin devant la
- * ferme du joueur — qui est pourtant ce qu'on regarde.
+ * Trois, et une seule en réglage sobre. Le détail, c'est les **cultures**
+ * (des milliers de brins) et les bêtes articulées. Les bâtiments, eux, sont
+ * les vrais modèles partout : un silo se lit de loin, et il n'y en a que
+ * quelques-uns par ferme.
  */
 export const DETAILS_MAX = 3;
 
@@ -563,12 +563,46 @@ export function createCountryside(o: OptionsCampagne): Campagne {
   const pasCase = (plan.emprise - 1.4) / cases;
 
   /*
+   * Les bâtiments du cadastre, une fois, partout.
+   *
+   * Ce sont les mêmes modèles que sur la ferme du joueur. Posés ici plutôt
+   * que dans le détail, ils se voient aussi de loin — un silo reste un silo
+   * à trois parcelles de là.
+   */
+  const groupeBatiments = new THREE.Group();
+  groupeBatiments.name = "campagne-batiments";
+  object.add(groupeBatiments);
+  const rigsBatiments: BuildingRig[] = [];
+  {
+    const origine = -((cases - 1) * pasCase) / 2;
+    for (const p of plan.parcelles) {
+      if (!p.reel?.batiments.length) continue;
+      const rigs = poserBatimentsVoisin({
+        batiments: p.reel.batiments,
+        pasCase,
+        origine,
+        grain: grainerDe(p.id),
+        shadows,
+      });
+      for (const rig of rigs) {
+        rig.group.position.x += p.x;
+        rig.group.position.y += y0 + HAUT_CASE;
+        rig.group.position.z += p.z;
+        groupeBatiments.add(rig.group);
+        rigsBatiments.push(rig);
+      }
+    }
+  }
+
+  /*
    * Les parcelles montrées en détail plein, par identifiant.
    *
    * La nappe fusionnée continue de porter leur dalle, leur damier et leur
-   * haie — c'est le sol du champ, et il ne coûte rien. Ce qu'elle ne dessine
-   * plus pour elles, c'est la grange générique : le détail pose les vrais
-   * bâtiments, aux vraies places, et deux granges superposées se verraient.
+   * haie — c'est le sol du champ, et il ne coûte rien. Les bâtiments du
+   * cadastre ne sont plus ici : ils sont posés une fois, en vrais modèles,
+   * sur toutes les parcelles. Le détail n'ajoute que les cultures et les
+   * bêtes. Ce que la nappe saute encore pour une parcelle détaillée, c'est
+   * le cheptel en pavés : les vraies bêtes le remplacent.
    */
   const detailles = new Map<string, VoisinDetaille>();
   let clefDetail = "";
@@ -655,46 +689,14 @@ export function createCountryside(o: OptionsCampagne): Campagne {
       }
 
       /*
-       * Les bâtiments du cadastre, à leur emprise et à leur place.
+       * Les bâtiments du cadastre ne sont plus dans la nappe : une grange
+       * générique faisait d'un silo, d'une étable et d'une maison la même
+       * baraque. Ils sont posés à part, avec les modèles du joueur.
        *
-       * Une grange générique tirée au sort dans un coin racontait la même
-       * chose de toutes les fermes. Ici un silo n'a pas la carrure d'un
-       * poulailler, et l'étable est là où l'exploitant l'a bâtie.
-       *
-       * Les parcelles détaillées reçoivent les vrais modèles — voir
-       * `voisin3d` — et sont donc sautées ici, sinon deux bâtiments se
-       * superposeraient.
+       * Faute de cadastre — au-delà de la commune — on garde la grange de
+       * décor : une ferme sans un seul bâtiment n'a l'air de rien.
        */
       if (!detailles.has(p.id)) {
-        for (const b of p.reel?.batiments ?? []) {
-          const def = BUILDING_DEFS[b.type as BuildingType];
-          if (!def) continue;
-          const quarts = (((b.rotation ?? 0) % 4) + 4) % 4;
-          const fw = quarts % 2 === 0 ? def.w : def.h;
-          const fh = quarts % 2 === 0 ? def.h : def.w;
-          ajouterGrange(
-            pos, col,
-            p.x + o0 + (b.x + (fw - 1) / 2) * pasCase,
-            y0 + CASE_EP / 2,
-            p.z + o0 + (b.y + (fh - 1) / 2) * pasCase,
-            quarts * (Math.PI / 2),
-            grainerDe(`${p.id}:${b.x},${b.y}`),
-            /*
-             * La hauteur suit le **petit** côté, pas la surface. Réglée sur la
-             * largeur, une étable de quatre cases sur trois sortait longue et
-             * plate comme un quai de gare : c'est la profondeur qui donne sa
-             * carrure à un bâtiment agricole, parce que c'est elle qui porte
-             * la charpente.
-             */
-            {
-              l: fw * pasCase,
-              prof: fh * pasCase,
-              h: 0.5 + Math.min(fw, fh) * pasCase * 0.42,
-            },
-          );
-        }
-        // Faute de cadastre — au-delà de la commune — on garde la grange de
-        // décor : une ferme sans un seul bâtiment n'a l'air de rien.
         if (!p.reel && p.batiment) {
           ajouterGrange(
             pos, col,
@@ -1015,6 +1017,7 @@ export function createCountryside(o: OptionsCampagne): Campagne {
   }
 
   function update(t: number): void {
+    for (const r of rigsBatiments) r.update({ t, doorOpen: 0 });
     for (const d of detailles.values()) d.update(t, 0.4);
     for (const v of voitures) {
       const u = (((t - v.depart) % v.cycle) + v.cycle) % v.cycle;
@@ -1134,12 +1137,13 @@ export function createCountryside(o: OptionsCampagne): Campagne {
         y: y0 + HAUT_CASE,
         shadows,
         sobre,
+        batiments: false,
       });
       object.add(d.object);
       detailles.set(p.id, d);
     }
-    // La nappe portait peut-être une grange générique là où le détail vient
-    // d'en poser une vraie : on la refait.
+    // La nappe portait peut-être le cheptel en pavés là où le détail vient
+    // de poser les vraies bêtes : on la refait.
     const jour = jourPose;
     const saison = saisonPosee;
     if (Number.isFinite(jour) && saison) {
@@ -1161,6 +1165,8 @@ export function createCountryside(o: OptionsCampagne): Campagne {
   function dispose(): void {
     for (const d of detailles.values()) d.dispose();
     detailles.clear();
+    for (const r of rigsBatiments) r.dispose();
+    rigsBatiments.length = 0;
     for (const e of engins) e.rig.dispose();
     engins.length = 0;
     if (nappeParcelles) {

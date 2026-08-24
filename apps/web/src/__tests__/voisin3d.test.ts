@@ -1,5 +1,5 @@
 import * as THREE from "three";
-import { BETES_MAX, casesSemees, creerVoisinDetaille } from "../voisin3d";
+import { BETES_MAX, casesSemees, creerVoisinDetaille, poserBatimentsVoisin } from "../voisin3d";
 import { planCampagne, type OptionsPlan, type VoisinReel } from "../countryside-plan";
 
 /**
@@ -163,6 +163,33 @@ describe("le bâti et les bêtes", () => {
     });
     expect(volumes).toBeGreaterThan(4);
     d.dispose();
+  });
+
+  it("distingue un silo d’une étable", () => {
+    /*
+     * C'était le reproche : toutes les fermes voisines portaient la même
+     * grange générique. Les modèles sont ceux du joueur — un silo est plus
+     * haut, plus étroit, et ce n'est pas une étable.
+     */
+    const silo = poserBatimentsVoisin({
+      batiments: [{ type: "SILO", level: 1, x: 2, y: 2, rotation: 0 }],
+      pasCase: 1,
+      origine: 0,
+      grain: 1,
+    });
+    const etable = poserBatimentsVoisin({
+      batiments: [{ type: "CATTLE_BARN", level: 1, x: 2, y: 2, rotation: 0 }],
+      pasCase: 1,
+      origine: 0,
+      grain: 1,
+    });
+    expect(silo).toHaveLength(1);
+    expect(etable).toHaveLength(1);
+    expect(silo[0]!.group.userData.type).toBe("SILO");
+    expect(etable[0]!.group.userData.type).toBe("CATTLE_BARN");
+    expect(silo[0]!.height).toBeGreaterThan(etable[0]!.height);
+    silo[0]!.dispose();
+    etable[0]!.dispose();
   });
 
   it("montre une poignée de bêtes, jamais tout le troupeau", () => {
