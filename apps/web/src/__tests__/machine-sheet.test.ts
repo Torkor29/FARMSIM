@@ -28,6 +28,8 @@ describe("la fiche des paliers d'engins", () => {
   it("montre les cinq crans T1–T5 sur le parc et au catalogue", () => {
     expect(app).toContain("MachineTierPips");
     expect(sheet).toContain("MACHINE_TIERS.map");
-    expect(app).toContain("Améliorer ·");
+    expect(sheet).toContain("height={320}");
+    expect(sheet).toContain("machine-sheet-tiers");
+    expect(css).toContain("min-height: 320px");
   });
 });
