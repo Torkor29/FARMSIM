@@ -1442,12 +1442,12 @@ export function App() {
   const homeOwner =
     parcelDetail?.parcel?.farm?.user?.displayName ?? visitOrder?.clientName ?? null;
 
-  /** Adjacent buyable parcels for expansion (all free/NPC if no land yet). */
+  /** Adjacent buyable parcels for expansion (all truly free if no land yet). */
   const expandableParcelIds = useMemo(() => {
     const ids = freeParcels
       .filter((fp) =>
         ownedParcels.length === 0
-          ? true
+          ? !fp.farmId
           : ownedParcels.some(
               (op) =>
                 op.zone?.code === fp.zone?.code &&
