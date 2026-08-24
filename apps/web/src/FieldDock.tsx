@@ -448,17 +448,23 @@ export function FieldDock({
               type="button"
               className={`dock-tool ${on ? "on" : ""} ${g.id === "SELL" ? "sell" : ""}`}
               aria-pressed={on}
+              aria-label={
+                g.id === "SELL" && stockTons > 0
+                  ? `Marché — ${stockTons.toFixed(0)} t en stock`
+                  : g.label
+              }
               onClick={() => {
                 if (g.id === "SELL") onSell();
                 else if (g.entry && !on) onTool(g.entry);
               }}
             >
               <img src={g.icon} alt="" width={22} height={22} />
-              <span className="dock-label">
-                {g.id === "SELL" && stockTons > 0 ? `${stockTons.toFixed(0)} t` : g.label}
-              </span>
+              <span className="dock-label">{g.label}</span>
               {g.id === "HARVEST" && readyCount > 0 && (
                 <span className="dock-badge">{readyCount}</span>
+              )}
+              {g.id === "SELL" && stockTons > 0 && (
+                <span className="dock-badge stock">{stockTons.toFixed(0)} t</span>
               )}
             </button>
           );

@@ -140,6 +140,33 @@ export function panPourGarderLePoint(
   return { x: pan.x + (avant.x - apres.x), z: pan.z + (avant.z - apres.z) };
 }
 
+/**
+ * Facteur d'échelle d'un cran de molette (ou d'un pincement trackpad).
+ *
+ * La molette physique envoie un cran : × 1,12. Le pincement trackpad et
+ * Safari iOS arrivent en `wheel` + ctrlKey, des dizaines d'événements par
+ * seconde : leur coller le cran de molette faisait gonfler la ferme par
+ * à-coups, et chaque cran recadrait autour d'un autre pixel.
+ */
+export function facteurMolette(deltaY: number, pincement = false): number {
+  if (pincement) return Math.exp(-deltaY * 0.008);
+  return deltaY < 0 ? 1.12 : 1 / 1.12;
+}
+
+/**
+ * Où le doigt restant « est » quand un pincement se termine.
+ *
+ * Pendant le pincement, `last` suit le **milieu** des deux doigts. Si on
+ * laisse ce milieu en mémoire, le doigt qui reste — ailleurs sur l'écran —
+ * fait sauter la vue de tout l'écart dès le premier pixel de glissement.
+ */
+export function doigtRestantApresPincement(
+  restants: readonly { x: number; y: number }[],
+  dernierMilieu: { x: number; y: number },
+): { x: number; y: number } {
+  return restants.length === 1 ? restants[0]! : dernierMilieu;
+}
+
 /** La vue est-elle hors de ses bornes, et vers où faut-il la ramener ? */
 export function horsBornes(
   x: number,

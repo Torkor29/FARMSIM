@@ -107,18 +107,24 @@ describe("le bandeau du haut", () => {
     expect(APP).toMatch(/return hasUnlimitedFunds\(player\) \? "∞ €" : formatEurosCourt\(player\.crd\)/);
   });
 
-  it("porte la saison en icône, et tient en une seule barre", () => {
+  it("porte la saison en icône ET en mot, et tient en une seule barre", () => {
     /*
      * Capture : logo, étoile, ∞ €, « Gris », voisin et ☰, chacun dans sa
      * pastille, et nulle part la saison. Un dessin suffit ; le mot « Gris »
-     * n'ajoutait rien qu'un nuage ne dise.
+     * n'ajoutait rien qu'un nuage ne dise. Deuxième capture : l'icône de
+     * saison (une pousse) et l'étoile restaient muettes — on ajoute le mot.
      */
     expect(APP).toMatch(/<SeasonMark season=\{season\}/);
+    expect(APP).toMatch(/saison-nom/);
+    expect(APP).toMatch(/SEASON_SHORT\[season\]/);
+    expect(APP).toMatch(/skills-tab-label court/);
     expect(APP).toMatch(/saison-btn/);
     expect(APP).toMatch(/<WeatherMark weather=\{localWeather\}/);
     expect(APP).not.toMatch(/weatherCourt/);
     expect(regle(".game-stage.mobile .hud-top")).toMatch(/border-radius:\s*16px/);
     expect(regle(".game-stage.mobile .hud-puce")).toMatch(/background:\s*transparent/);
+    expect(regle(".game-stage.mobile .skills-tab-label.court")).toMatch(/display:\s*inline/);
+    expect(regle(".game-stage.mobile .saison-nom")).toMatch(/display:\s*inline/);
   });
 
   it("laisse le guide joignable bien que le « ? » s’efface", () => {
@@ -163,11 +169,30 @@ describe("le plateau tactile", () => {
     expect(APP).toMatch(/directSeed: sowingDirect/);
   });
 
+  it("garde « Marché » sous le sac, et le stock en pastille", () => {
+    /*
+     * Capture : le cinquième bouton affichait « 79 t » à la place de
+     * « Marché », sous un sac marqué €. On ne savait plus si c'était
+     * de l'argent ou du grain. Le mot reste ; le tonnage se pose en badge.
+     */
+    expect(DOCK).toMatch(/className="dock-label">\{g\.label\}/);
+    expect(DOCK).toMatch(/dock-badge stock/);
+    expect(DOCK).not.toMatch(/stockTons > 0 \? `\$\{stockTons/);
+    expect(regle(".dock-badge.stock")).toMatch(/gold-500/);
+  });
+
   it("n’anime plus les menus depuis le bord de l’écran", () => {
     expect(CSS).not.toMatch(/rail-in-left/);
     expect(CSS).toMatch(/@keyframes panel-in/);
     expect(CSS).toMatch(/@keyframes tray-in/);
     expect(fs.readFileSync("src/ui/desktop/Window.tsx", "utf8")).toMatch(/createPortal/);
+  });
+
+  it("ne laisse pas Safari zoomer deux fois, ni sauter au doigt restant", () => {
+    const VUE = fs.readFileSync("src/IsoFarmView.tsx", "utf8");
+    expect(VUE).toMatch(/facteurMolette/);
+    expect(VUE).toMatch(/pointer: coarse/);
+    expect(VUE).toMatch(/doigtRestantApresPincement/);
   });
 });
 

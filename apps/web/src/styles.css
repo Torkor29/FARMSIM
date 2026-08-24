@@ -2447,6 +2447,16 @@ html.playing .build-confirm { position: fixed; }
   font-weight: 800;
   line-height: 1.2;
 }
+/* Le stock n'est pas une alerte : or, pas rouge, et on lit « Marché » en dessous. */
+.dock-badge.stock {
+  background: var(--gold-500);
+  color: #3a2a00;
+  right: 0.1rem;
+  left: auto;
+  max-width: calc(100% - 0.2rem);
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
 
 .action {
   border-radius: var(--r-sm);
@@ -6280,13 +6290,22 @@ button.tiny {
   box-shadow: none;
   min-width: 44px;
   min-height: 44px;
-  padding: 0.2rem 0.35rem;
+  padding: 0.2rem 0.28rem;
+  gap: 0.18rem;
 }
 .game-stage.mobile .skills-tab.on {
   background: var(--teal-100, rgba(46, 142, 122, 0.16));
   color: var(--teal-700);
 }
 .game-stage.mobile .skills-tab.on .skills-tab-icon { color: var(--gold-500); }
+/* L'étoile seule ne dit pas « compétences ». */
+.skills-tab-label.court { display: none; }
+.game-stage.mobile .skills-tab-label.long { display: none; }
+.game-stage.mobile .skills-tab-label.court {
+  display: inline;
+  font-size: 0.58rem;
+  font-weight: 800;
+}
 .game-stage.mobile .skills-tab-count {
   font-size: 0.62rem;
   padding: 0.05rem 0.28rem;
@@ -6311,6 +6330,18 @@ button.tiny {
   justify-content: center;
   box-shadow: none;
 }
+.game-stage.mobile .saison-btn {
+  min-width: auto;
+  padding: 0 0.28rem;
+  gap: 0.2rem;
+}
+.game-stage.mobile .saison-nom {
+  display: inline;
+  font-size: 0.58rem;
+  font-weight: 800;
+  letter-spacing: 0.01em;
+}
+.saison-nom { display: none; }
 .game-stage.mobile .profile-btn {
   background: transparent;
   border: 0;

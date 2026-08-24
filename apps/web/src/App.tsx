@@ -36,6 +36,7 @@ import {
   type TradeGood,
   PARCEL_HECTARES,
   SEASON_LABELS,
+  SEASON_SHORT,
   GOOD_ICONS,
   WEATHER_LABELS,
   formatEurosCourt,
@@ -4844,7 +4845,8 @@ export function App() {
               >
                 <path d="m12 2.5 2.9 6 6.6.9-4.8 4.6 1.2 6.5L12 17.4 6.1 20.5l1.2-6.5L2.5 9.4l6.6-.9z" />
               </svg>
-              <span className="skills-tab-label">Compétences</span>
+              <span className="skills-tab-label long">Compétences</span>
+              <span className="skills-tab-label court">Comp.</span>
               {/* Le compte n'apparaît qu'une fois l'arbre lu : afficher
                   « 0 / 39 » avant la première réponse du serveur annoncerait
                   une ferme sans aucun acquis, ce qui est faux dès le deuxième
@@ -4900,6 +4902,7 @@ export function App() {
               onClick={() => setShowCalendrier((v) => !v)}
             >
               <SeasonMark season={season} />
+              <span className="saison-nom">{SEASON_SHORT[season]}</span>
             </button>
             {player.bonuses && (
               <span className="stat-bonus">

@@ -26,6 +26,8 @@ import {
   bornesDeplacement,
   elastique,
   horsBornes,
+  doigtRestantApresPincement,
+  facteurMolette,
   panPourGarderLePoint,
   pasRetour,
   retenir,
@@ -2732,6 +2734,11 @@ export function IsoFarmView({
       if (pointers.size < 2) {
         pinchStart = 0;
         pinchAnchor = null;
+        // Le milieu des deux doigts n'est plus le point de glissement :
+        // coller lastX/Y au doigt qui reste, sinon la vue saute.
+        const pose = doigtRestantApresPincement([...pointers.values()], { x: lastX, y: lastY });
+        lastX = pose.x;
+        lastY = pose.y;
       }
       if (!had || pointers.size > 0) return;
       const wasPan = panGesture;
@@ -2781,7 +2788,22 @@ export function IsoFarmView({
      */
     function onWheel(ev: WheelEvent) {
       ev.preventDefault();
-      setZoom(view.zoom * (ev.deltaY < 0 ? 1.12 : 1 / 1.12), ev.clientX, ev.clientY);
+      // Deux doigts tiennent déjà la vue : le zoom pointer a tout dit.
+      // Un second passage ici recalerait autour d'un autre pixel.
+      if (pointers.size >= 2) return;
+      // Safari iOS transforme le pincement en `wheel` + ctrlKey, avec des
+      // coordonnées qui ne sont pas le milieu des doigts. Chaque cran
+      // décalait la ferme. Le pincement pointer suffit sur un écran tactile.
+      if (ev.ctrlKey && window.matchMedia("(pointer: coarse)").matches) return;
+      const rect = renderer.domElement.getBoundingClientRect();
+      const dans =
+        ev.clientX >= rect.left &&
+        ev.clientX <= rect.right &&
+        ev.clientY >= rect.top &&
+        ev.clientY <= rect.bottom;
+      const x = dans ? ev.clientX : rect.left + rect.width / 2;
+      const y = dans ? ev.clientY : rect.top + rect.height / 2;
+      setZoom(view.zoom * facteurMolette(ev.deltaY, ev.ctrlKey), x, y);
     }
 
     /**
