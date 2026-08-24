@@ -15,6 +15,8 @@ import {
   type MachineType,
   gameDayIndex,
   type RipenessStage,
+  machineMeshScale,
+  asTier,
 } from "@farmsim/shared";
 import { disposeRenderer, disposeThreeScene, markShared } from "./three-cleanup";
 import { applyHerdPose, meshForHerd } from "./animal-meshes";
@@ -148,6 +150,8 @@ export type SupplyCrate = {
 export type ActiveWork = {
   type: MachineType;
   cells: { x: number; y: number }[];
+  /** Palier catalogue, pour l'échelle du mesh. */
+  tier?: number;
   /** État de l'engin de chantier, 0 à 100 */
   condition?: number | null;
   /** La machine coupe : moisson (cache le plant) ou fauche (andain) */
@@ -219,6 +223,8 @@ export type PreviewBuilding = {
 export type ParkedMachine = {
   id: string;
   type: MachineType;
+  /** Palier catalogue : le mesh T5 est un peu plus imposant. */
+  tier?: number;
   /** État 0 à 100 : il se lit sur la carrosserie */
   condition?: number | null;
 };
@@ -1797,7 +1803,9 @@ export function IsoFarmView({
           shadows: quality.shadows,
           condition: machine.condition ?? undefined,
         });
-        mRig.group.scale.setScalar(cellSize * MACHINE_SCALE);
+        mRig.group.scale.setScalar(
+          cellSize * MACHINE_SCALE * machineMeshScale(asTier(machine.tier)),
+        );
         // Un parc rangé au cordeau sonne faux : chaque engin est de travers de
         // quelques degrés, toujours les mêmes.
         mRig.group.rotation.y = rig.heading + Math.sin(i * 3.7) * 0.06;
@@ -3457,7 +3465,7 @@ export function IsoFarmView({
 
       // Engin de travail : parcours des cases, rang par rang.
       const workKey = aw
-        ? `${aw.type}:${aw.haul ? "H" : ""}:${aw.cargo ?? ""}:${aw.cells.map((c) => `${c.x},${c.y}`).join("|")}`
+        ? `${aw.type}:${aw.haul ? "H" : ""}:${aw.cargo ?? ""}:${aw.tier ?? 1}:${aw.cells.map((c) => `${c.x},${c.y}`).join("|")}`
         : "";
       if (workKey !== prevWorkKey.current) {
         prevWorkKey.current = workKey;
@@ -3472,7 +3480,9 @@ export function IsoFarmView({
             condition: aw.condition ?? undefined,
           });
           if (aw.haul) hitchTrailer(workRig, aw.cargo);
-          workRig.group.scale.setScalar(MACHINE_SCALE);
+          workRig.group.scale.setScalar(
+            MACHINE_SCALE * machineMeshScale(asTier(aw.tier)),
+          );
           workGroup.add(workRig.group);
           workTravelled = 0;
           workHeading = null;
@@ -3540,7 +3550,8 @@ export function IsoFarmView({
         }
 
         // Poussière au sol, fumée au pot : tant que l'engin roule.
-        const rear = workRig.length * MACHINE_SCALE * 0.5;
+        const rear =
+          workRig.length * MACHINE_SCALE * machineMeshScale(asTier(aw?.tier)) * 0.5;
         workDust.update(
           dt,
           px - Math.cos(heading) * rear,
@@ -3768,7 +3779,9 @@ export function IsoFarmView({
     const w = workers.map((x) => x.id).join("|");
     // Le parc fait partie du décor : une machine achetée doit apparaître sur la
     // cour sans attendre qu'une case du champ change.
-    const p = parked.map((x) => `${x.id}:${x.type}:${Math.round((x.condition ?? 100) / 5)}`).join("|");
+    const p = parked
+      .map((x) => `${x.id}:${x.type}:${x.tier ?? 1}:${Math.round((x.condition ?? 100) / 5)}`)
+      .join("|");
     // La commune fait partie de la scène depuis qu'elle est réelle : sans elle
     // ici, la campagne resterait le décor tiré au sort jusqu'au prochain coup
     // de bêche du joueur.

@@ -1542,6 +1542,31 @@ describe("porteur et outils", () => {
       "le palier n'a pas été enregistré",
     );
   });
+
+  it("vend le haut de gamme à son prix, et refuse un palier hors catalogue", async () => {
+    const { moi } = await ferme("Collectionneur");
+    const avant = ((await appel("/auth/me", { jeton: moi.jeton })).corps as unknown as {
+      player: { crd: number };
+    }).player.crd;
+    const t5 = await appel("/machines/buy", {
+      methode: "POST",
+      corps: { userId: moi.id, type: "TRACTOR", tier: 5 },
+      jeton: moi.jeton,
+    });
+    assert.equal(t5.statut, 201, `T5 refusé : ${JSON.stringify(t5.corps)}`);
+    const apres = ((await appel("/auth/me", { jeton: moi.jeton })).corps as unknown as {
+      player: { crd: number; farm: { machines: { type: string; tier: number }[] } };
+    }).player;
+    assert.equal(Math.round(avant - apres.crd), machineCost("TRACTOR", 5));
+    assert.ok(apres.farm.machines.some((m) => m.type === "TRACTOR" && m.tier === 5));
+
+    const hors = await appel("/machines/buy", {
+      methode: "POST",
+      corps: { userId: moi.id, type: "TRACTOR", tier: 6 },
+      jeton: moi.jeton,
+    });
+    assert.equal(hors.statut, 400);
+  });
 });
 
 describe("un chantier prend du temps", () => {

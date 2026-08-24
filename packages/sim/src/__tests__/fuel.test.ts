@@ -131,7 +131,7 @@ describe("ce que ça pèse dans une saison", () => {
       const def = MACHINE_DEFS[t];
       if (def.kind === "TRACTOR") continue;
       for (const tier of MACHINE_TIERS) {
-        const porteur = def.kind === "SELF_PROPELLED" ? machinePower(t, tier) : machinePower("TRACTOR", 3);
+        const porteur = def.kind === "SELF_PROPELLED" ? machinePower(t, tier) : machinePower("TRACTOR", tier);
         const besoin = def.kind === "SELF_PROPELLED" ? porteur : machineRequiredHp(t, tier);
         const litres = fuelForJob({
           powerHp: porteur,

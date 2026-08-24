@@ -84,12 +84,16 @@ import {
   machinePower,
   machineWidth,
   machineRequiredHp,
-  machineCost,
   asTier,
   TIER_LABELS,
+  TIER_ROLE_LABELS,
+  MACHINE_STAR_LABELS,
   MACHINE_TIERS,
   canPull,
   type Tier,
+  type MachineStars,
+  machineVariant,
+  machineRepairPerPoint,
   machineDealerValue,
   MACHINE_LISTING_MIN_RATE,
   MACHINE_LISTING_MAX_RATE,
@@ -270,6 +274,7 @@ type MachineListing = {
   seller?: { id: string; displayName: string } | null;
   type: string;
   name: string;
+  tier?: number;
   hours: number;
   condition: number;
   priceCrd: number;
@@ -478,6 +483,21 @@ function resumeImportance(resume: SessionResume | null | undefined): "modale" | 
   // message passe, il ne barre pas.
   if (resume.awayMs >= RESUME_TOAST_MS) return "toast";
   return "rien";
+}
+
+function MachineStarStrip({ stars }: { stars: MachineStars }) {
+  return (
+    <span className="machine-stars">
+      {MACHINE_STAR_LABELS.map((axe) => (
+        <span key={axe.key} title={axe.title}>
+          <i>{axe.short}</i>
+          {([1, 2, 3, 4, 5] as const).map((n) => (
+            <b key={n} className={`pip${stars[axe.key] >= n ? " on" : ""}`} />
+          ))}
+        </span>
+      ))}
+    </span>
+  );
 }
 
 function clearSession() {
@@ -764,6 +784,8 @@ export function App() {
     cut?: "harvest" | "mow";
     haul?: boolean;
     cargo?: string;
+    /** Palier de l'engin au garage : le mesh T5 se lit plus imposant. */
+    tier?: Tier;
     /** Durée du chantier : l'engin doit traverser le champ en ce temps-là. */
     durationMs?: number;
   } | null>(null);
@@ -1468,6 +1490,7 @@ export function App() {
       .map((m) => ({
         id: m.id,
         type: (m.type as MachineType) ?? "TRACTOR",
+        tier: asTier((m as { tier?: number }).tier),
         // Sur la parcelle d'un voisin, l'API ne donne que le type : l'état
         // reste au propriétaire, et la machine s'affiche alors comme neuve.
         condition: (m as { condition?: number }).condition,
@@ -2937,6 +2960,7 @@ export function App() {
         haul: extra?.haul,
         cargo: extra?.cargo,
         condition: used?.condition,
+        tier: asTier(used?.tier),
         durationMs: duree,
       });
       // Un peu de marge sur la durée du parcours : l'engin doit atteindre la
@@ -3770,7 +3794,7 @@ export function App() {
       });
       await refreshPlayer();
       if (activeParcelId) await loadParcel(activeParcelId);
-      setMsg(`${MACHINE_DEFS[type].name} ${TIER_LABELS[tier]} acheté`);
+      setMsg(`${machineVariant(type, tier).label} acheté`);
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e));
     } finally {
@@ -5140,17 +5164,19 @@ export function App() {
                 const grease = m.grease ?? (m.greased === false ? 0 : GREASE_FULL);
                 const eta = true;
                 const halfTarget = repairHalfwayTarget(m.condition);
+                const palier = asTier(m.tier);
+                const fiche = def ? machineVariant(m.type as MachineType, palier) : null;
                 const halfQuote = def
                   ? repairQuote({
                       condition: m.condition,
-                      repairCostPerPoint: def.repairCostPerPoint,
+                      repairCostPerPoint: machineRepairPerPoint(m.type as MachineType, palier),
                       targetCondition: halfTarget,
                     })
                   : null;
                 const fullQuote = def
                   ? repairQuote({
                       condition: m.condition,
-                      repairCostPerPoint: def.repairCostPerPoint,
+                      repairCostPerPoint: machineRepairPerPoint(m.type as MachineType, palier),
                       targetCondition: 100,
                     })
                   : null;
@@ -5158,7 +5184,6 @@ export function App() {
                 const salete = Math.max(0, Math.min(100, m.dirt ?? 0));
                 const compteur = m.hours ?? 0;
                 const ageFactor = machineAgeYieldFactor(compteur);
-                const palier = asTier(m.tier);
                 const heuresRestantes = def
                   ? hoursBeforeWorkshop({
                       condition: m.condition,
@@ -5182,7 +5207,7 @@ export function App() {
                   <li key={m.id}>
                     <span>
                       <strong>
-                        {def?.name ?? m.type} {TIER_LABELS[palier]}
+                        {fiche?.label ?? `${def?.name ?? m.type} ${TIER_LABELS[palier]}`}
                       </strong>
                       {/* Ce qui décide de tout depuis la séparation porteur /
                           outil : les chevaux d'un tracteur, la largeur d'un
@@ -5400,7 +5425,7 @@ export function App() {
                         className="sell-btn"
                         disabled={busy}
                         title={`Le concessionnaire reprend tout de suite, sous la cote (${cote} €)`}
-                        onClick={() => sellMachine(m.id, def?.name ?? m.type, reprise)}
+                        onClick={() => sellMachine(m.id, fiche?.label ?? def?.name ?? m.type, reprise)}
                       >
                         Reprise · {reprise} €
                       </button>
@@ -5409,7 +5434,7 @@ export function App() {
                         className="ghost-btn"
                         disabled={busy}
                         title={`Cote ${cote} € — l’engin quitte la ferme le temps de l’annonce`}
-                        onClick={() => listMachine(m.id, def?.name ?? m.type, cote)}
+                        onClick={() => listMachine(m.id, fiche?.label ?? def?.name ?? m.type, cote)}
                       >
                         Mettre en vente · cote {cote} €
                       </button>
@@ -5483,7 +5508,8 @@ export function App() {
                       <span>
                         <strong>{l.name}</strong>
                         <div className="muted tiny">
-                          {l.hours.toFixed(0)} h au compteur · état {l.condition.toFixed(0)} %
+                          {TIER_LABELS[asTier(l.tier)]} · {l.hours.toFixed(0)} h au compteur · état{" "}
+                          {l.condition.toFixed(0)} %
                           {/* Ce qu'un acheteur doit savoir avant de payer : les
                               heures coûtent du rendement, et la révision ne les
                               efface pas. */}
@@ -5526,12 +5552,13 @@ export function App() {
               </ul>
             )}
             <h3 className="spaced">Acheter neuf</h3>
-            {/* Le catalogue se lit désormais en trois tailles. Un palier plus
-                haut ne travaille pas mieux : il travaille plus large, donc plus
-                vite — et il demande un tracteur qui suive. */}
+            {/* Cinq modèles par famille, calés sur des engins réels. Un palier
+                plus haut n'est pas « cinq fois mieux » : il attelle plus large,
+                et il coûte — à l'achat comme à la cuve. */}
             <p className="muted tiny">
-              Palier affiché : <strong>{TIER_LABELS[tierAchat]}</strong>. Un outil plus large va
-              plus vite, mais exige plus de chevaux.
+              {TIER_ROLE_LABELS[tierAchat]} · <strong>{TIER_LABELS[tierAchat]}</strong>. Un outil
+              plus large va plus vite, mais exige plus de chevaux — et un T5 se paie aussi à
+              l’entretien.
             </p>
             <div className="age-switch" role="group" aria-label="Palier de matériel">
               {MACHINE_TIERS.map((t) => (
@@ -5540,6 +5567,7 @@ export function App() {
                   type="button"
                   className={tierAchat === t ? "on" : ""}
                   aria-pressed={tierAchat === t}
+                  title={TIER_ROLE_LABELS[t]}
                   onClick={() => setTierAchat(t)}
                 >
                   {TIER_LABELS[t]}
@@ -5556,9 +5584,10 @@ export function App() {
             <div className="build-list">
               {(Object.keys(MACHINE_DEFS) as MachineType[]).map((t) => {
                 const d = MACHINE_DEFS[t];
-                const prix = machineCost(t, tierAchat);
-                const largeur = machineWidth(t, tierAchat);
-                const besoin = machineRequiredHp(t, tierAchat);
+                const fiche = machineVariant(t, tierAchat);
+                const prix = fiche.cost;
+                const largeur = fiche.widthM;
+                const besoin = fiche.requiredHp ?? 0;
                 // Un outil qu'aucun tracteur de la ferme ne peut tirer reste
                 // achetable — on prépare parfois son parc — mais il le dit.
                 const tractable =
@@ -5571,6 +5600,12 @@ export function App() {
                         { type: t, tier: tierAchat },
                       ),
                   );
+                const stats =
+                  d.kind === "TRACTOR"
+                    ? `${fiche.powerHp ?? 0} ch`
+                    : d.kind === "SELF_PROPELLED"
+                      ? `${largeur} m · automoteur${fiche.capacityL ? ` · ${fiche.capacityL.toLocaleString("fr-FR")} L` : ""}`
+                      : `${largeur} m · ${besoin} ch requis${fiche.capacityL ? ` · ${fiche.capacityL.toLocaleString("fr-FR")} L` : ""}`;
                 return (
                   <button
                     key={t}
@@ -5587,26 +5622,21 @@ export function App() {
                         : player.crd < prix
                           ? `€ insuffisants — ${prix} requis`
                           : tractable
-                            ? d.description
+                            ? fiche.bonus
                             : `Aucun de vos tracteurs ne donne les ${besoin} ch nécessaires`
                     }
                     onClick={() => buyMachine(t, tierAchat)}
                   >
                     <img className="build-art" src={MACHINE_ART[t]} alt="" loading="lazy" />
                     <span className="build-text">
-                      <strong>
-                        {d.name} {TIER_LABELS[tierAchat]}
-                      </strong>
-                      <span>{prix} €</span>
+                      <strong>{fiche.label}</strong>
+                      <span>{prix.toLocaleString("fr-FR")} €</span>
                       <span className="muted tiny">
-                        {d.kind === "TRACTOR"
-                          ? `${machinePower(t, tierAchat)} ch`
-                          : d.kind === "SELF_PROPELLED"
-                            ? `${largeur} m · automoteur`
-                            : `${largeur} m · ${besoin} ch requis`}
+                        {stats}
                         {!tractable ? " · rien pour le tirer" : ""}
                       </span>
-                      <span className="muted tiny">{d.description}</span>
+                      <span className="muted tiny">{fiche.bonus}</span>
+                      <MachineStarStrip stars={fiche.stars} />
                     </span>
                   </button>
                 );

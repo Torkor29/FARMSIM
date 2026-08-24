@@ -2,6 +2,7 @@
 
 import { GAME_DAY_MS, JOB_MS_PER_GAME_HOUR } from "./time.js";
 import { MACHINE_END_OF_LIFE_HOURS } from "./machine-care.js";
+import { machineVariant, type MachineTier } from "./machine-catalog.js";
 import { RECIPES, type ProcessingKind } from "./processing.js";
 import { kindForBarn, yardTypeForBarn } from "./livestock.js";
 import {
@@ -30,6 +31,7 @@ export * from "./breeding.js";
 export * from "./rotation.js";
 export * from "./futures.js";
 export * from "./machine-care.js";
+export * from "./machine-catalog.js";
 export * from "./calendar.js";
 export * from "./fuel.js";
 export * from "./weeds.js";
@@ -1193,28 +1195,14 @@ export function hoursPerHectare(widthM: number, speedKmh: number): number {
   return Math.round((1 / haParHeure) * 1000) / 1000;
 }
 
-export type Tier = 1 | 2 | 3;
-export const MACHINE_TIERS: readonly Tier[] = [1, 2, 3];
-
-/**
- * Ce qu'un palier change `[GD]`.
- *
- * Le palier est un **modificateur**, pas un nouveau type de machine. Les six
- * engins portaient tous `tier: 1` et la colonne existait déjà sans servir à
- * rien ; trois tailles par famille valent mieux que trois catalogues, autant
- * pour l'équilibrage que pour le rendu 3D — un modèle par famille, mis à
- * l'échelle.
- *
- * La puissance requise monte avec la largeur, et c'est la boucle de
- * progression : une charrue plus large ne se tire pas avec le tracteur d'hier.
- */
+export type Tier = MachineTier;
 export const TIER_SCALE: Record<Tier, { width: number; power: number; cost: number; life: number }> = {
   1: { width: 1, power: 1, cost: 1, life: 1 },
   2: { width: 1.6, power: 1.45, cost: 2.3, life: 1.25 },
   3: { width: 2.4, power: 2, cost: 4.5, life: 1.5 },
+  4: { width: 3.2, power: 2.8, cost: 7.2, life: 1.7 },
+  5: { width: 4.2, power: 4.5, cost: 12, life: 2 },
 };
-
-export const TIER_LABELS: Record<Tier, string> = { 1: "T1", 2: "T2", 3: "T3" };
 
 export type MachineDef = {
   type: MachineType;
@@ -1319,9 +1307,9 @@ export const MACHINE_DEFS: Record<MachineType, MachineDef> = {
     type: "TRACTOR",
     kind: "TRACTOR",
     name: "Tracteur",
-    // Prix réel : tracteur 90 ch d'occasion révisé.
+    // Palier 1 : utilitaire ~115 ch, matériel de petite ferme.
     cost: PRIX_ENGINS.TRACTOR,
-    powerHp: 90,
+    powerHp: 115,
     // Un tracteur seul ne travaille pas : il tire. Sa largeur est celle de
     // l'outil qu'il porte, d'où zéro ici et aucun travail à son nom.
     widthM: 0,
@@ -1513,34 +1501,40 @@ export const MACHINE_DEFS: Record<MachineType, MachineDef> = {
 
 /** Largeur de travail effective, palier compris. */
 export function machineWidth(type: MachineType, tier: Tier = 1): number {
-  return Math.round(MACHINE_DEFS[type].widthM * TIER_SCALE[tier].width * 100) / 100;
+  return machineVariant(type, tier).widthM;
 }
 
 /** Chevaux disponibles, palier compris. `0` pour un outil. */
 export function machinePower(type: MachineType, tier: Tier = 1): number {
-  return Math.round((MACHINE_DEFS[type].powerHp ?? 0) * TIER_SCALE[tier].power);
+  return machineVariant(type, tier).powerHp ?? 0;
 }
 
 /** Chevaux exigés pour tirer cet outil, palier compris. `0` pour un porteur. */
 export function machineRequiredHp(type: MachineType, tier: Tier = 1): number {
-  return Math.round((MACHINE_DEFS[type].requiredHp ?? 0) * TIER_SCALE[tier].power);
+  return machineVariant(type, tier).requiredHp ?? 0;
 }
 
 /** Prix catalogue au palier demandé. */
 export function machineCost(type: MachineType, tier: Tier = 1): number {
-  return Math.round(MACHINE_DEFS[type].cost * TIER_SCALE[tier].cost);
+  return machineVariant(type, tier).cost;
 }
 
 /** Heures entre deux révisions, palier compris — un gros engin dure plus longtemps. */
 export function machineLifeHours(type: MachineType, tier: Tier = 1): number {
-  return Math.round(MACHINE_DEFS[type].lifeHours * TIER_SCALE[tier].life);
+  return machineVariant(type, tier).lifeHours;
+}
+
+/** Coût d'un point de condition, au prix de ce palier. */
+export function machineRepairPerPoint(type: MachineType, tier: Tier = 1): number {
+  return reparationParPoint(machineCost(type, tier));
 }
 
 /** Heures par hectare de cet engin, à ce palier. */
 export function machineHoursPerHectare(type: MachineType, tier: Tier = 1): number {
   const def = MACHINE_DEFS[type];
   if (def.kind === "TRACTOR") return 0;
-  return hoursPerHectare(machineWidth(type, tier), def.speedKmh);
+  const fiche = machineVariant(type, tier);
+  return hoursPerHectare(fiche.widthM, fiche.speedKmh);
 }
 
 /**
@@ -1582,7 +1576,7 @@ export function canPull(
 }
 
 export function isTier(v: number): v is Tier {
-  return v === 1 || v === 2 || v === 3;
+  return v === 1 || v === 2 || v === 3 || v === 4 || v === 5;
 }
 
 /** Palier lu depuis la base, borné : une valeur aberrante ne doit rien casser. */
