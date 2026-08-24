@@ -1,7 +1,9 @@
 import {
   COURSE,
   bornesDeplacement,
+  doigtRestantApresPincement,
   elastique,
+  facteurMolette,
   horsBornes,
   panPourGarderLePoint,
   pasRetour,
@@ -202,6 +204,39 @@ describe("garder le point sous le zoom", () => {
   it("ne bouge pas si le pixel n’a pas changé de cible", () => {
     const p = { x: 2, z: -1 };
     expect(panPourGarderLePoint({ x: 5, z: 8 }, p, p)).toEqual({ x: 5, z: 8 });
+  });
+});
+
+describe("la molette et le pincement trackpad", () => {
+  it("garde le cran de 12 % pour une molette physique", () => {
+    expect(facteurMolette(-1)).toBeCloseTo(1.12);
+    expect(facteurMolette(1)).toBeCloseTo(1 / 1.12);
+  });
+
+  it("ne saute pas de 12 % à chaque event d’un pincement", () => {
+    /*
+     * Safari iOS et le trackpad envoient des dizaines de `wheel` ctrlKey
+     * par seconde. Un cran de molette à chacun faisait gonfler la ferme
+     * par à-coups — et recadrer autour d'un autre pixel à chaque cran.
+     */
+    const d = facteurMolette(8, true);
+    expect(d).toBeLessThan(1);
+    expect(d).toBeGreaterThan(0.9);
+    expect(facteurMolette(-8, true)).toBeCloseTo(1 / d, 8);
+  });
+});
+
+describe("le doigt qui reste après un pincement", () => {
+  it("reprend la pose du doigt restant, pas le milieu des deux", () => {
+    const milieu = { x: 200, y: 300 };
+    const restant = { x: 140, y: 360 };
+    expect(doigtRestantApresPincement([restant], milieu)).toEqual(restant);
+  });
+
+  it("ne bouge pas s’il ne reste personne, ou s’il en reste deux", () => {
+    const milieu = { x: 10, y: 20 };
+    expect(doigtRestantApresPincement([], milieu)).toEqual(milieu);
+    expect(doigtRestantApresPincement([milieu, { x: 1, y: 2 }], milieu)).toEqual(milieu);
   });
 });
 

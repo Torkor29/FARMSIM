@@ -26,6 +26,14 @@ export const SEASON_LABELS: Record<Season, string> = {
   WINTER: "Hiver",
 };
 
+/** Abréviations pour les bandeaux étroits — un téléphone n'a pas la place du mot entier. */
+export const SEASON_SHORT: Record<Season, string> = {
+  SPRING: "Prin.",
+  SUMMER: "Été",
+  AUTUMN: "Aut.",
+  WINTER: "Hiv.",
+};
+
 export const DIFFICULTY_LABELS: Record<Difficulty, string> = {
   EASY: "Accessible",
   MEDIUM: "Intermédiaire",
