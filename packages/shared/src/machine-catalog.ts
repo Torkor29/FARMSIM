@@ -1289,6 +1289,29 @@ export function machineVariant<T extends keyof MachineCatalog>(
 
 export const MACHINE_CATALOG: MachineCatalog = CATALOGUE;
 
+/** Cinq paliers, comme les bâtiments : T5 est le plafond. */
+export const MAX_MACHINE_TIER: MachineTier = 5;
+
+/** Le palier suivant, ou `null` si on tient déjà le sommet. */
+export function nextMachineTier(tier: MachineTier): MachineTier | null {
+  return tier < MAX_MACHINE_TIER ? ((tier + 1) as MachineTier) : null;
+}
+
+/**
+ * Ce que coûte le passage au palier suivant : la différence de catalogue.
+ *
+ * L'engin est repris, le suivant arrive neuf. On ne paie pas un deuxième
+ * exemplaire : on paie l'écart, comme on agrandit un hangar. `null` au T5.
+ */
+export function machineUpgradeCost(
+  type: keyof MachineCatalog,
+  currentTier: MachineTier,
+): number | null {
+  const next = nextMachineTier(currentTier);
+  if (!next) return null;
+  return CATALOGUE[type][next].cost - CATALOGUE[type][currentTier].cost;
+}
+
 /** Révision complète, 22 % du neuf — le chiffre que le joueur voit à l’atelier. */
 export function machineOverhaulCost(cost: number): number {
   return Math.round(cost * 0.22);

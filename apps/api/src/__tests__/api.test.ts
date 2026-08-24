@@ -32,6 +32,7 @@ import {
   BUILDING_DEFS,
   MACHINE_DEFS,
   machineCost,
+  machineUpgradeCost,
   PLANTING_WINDOW,
   SEASON_DURATION_MS,
   canSowInSeason,
@@ -1566,6 +1567,59 @@ describe("porteur et outils", () => {
       jeton: moi.jeton,
     });
     assert.equal(hors.statut, 400);
+  });
+
+  it("améliore un engin au palier suivant, en payant la différence", async () => {
+    const { moi } = await ferme("Mécano");
+    const achat = await appel("/machines/buy", {
+      methode: "POST",
+      corps: { userId: moi.id, type: "TRAILER", tier: 1 },
+      jeton: moi.jeton,
+    });
+    assert.equal(achat.statut, 201, `achat refusé : ${JSON.stringify(achat.corps)}`);
+    const machine = (achat.corps as unknown as { machine: { id: string; tier: number } }).machine;
+    const avant = ((await appel("/auth/me", { jeton: moi.jeton })).corps as unknown as {
+      player: { crd: number };
+    }).player.crd;
+    const attendu = machineUpgradeCost("TRAILER", 1);
+    assert.ok(attendu && attendu > 0);
+    const r = await appel(`/machines/${machine.id}/upgrade`, {
+      methode: "POST",
+      corps: { userId: moi.id },
+      jeton: moi.jeton,
+    });
+    assert.equal(r.statut, 200, `amélioration refusée : ${JSON.stringify(r.corps)}`);
+    const corps = r.corps as unknown as {
+      cost: number;
+      tier: number;
+      machine: { tier: number; condition: number; hours: number };
+    };
+    assert.equal(corps.tier, 2);
+    assert.equal(corps.machine.tier, 2);
+    assert.equal(corps.machine.condition, 100);
+    assert.equal(corps.machine.hours, 0);
+    assert.equal(corps.cost, attendu);
+    const apres = ((await appel("/auth/me", { jeton: moi.jeton })).corps as unknown as {
+      player: { crd: number };
+    }).player.crd;
+    assert.equal(Math.round(avant - apres), attendu);
+  });
+
+  it("refuse d'améliorer un T5", async () => {
+    const { moi } = await ferme("Sommet");
+    const achat = await appel("/machines/buy", {
+      methode: "POST",
+      corps: { userId: moi.id, type: "TRAILER", tier: 5 },
+      jeton: moi.jeton,
+    });
+    assert.equal(achat.statut, 201, `achat T5 refusé : ${JSON.stringify(achat.corps)}`);
+    const machine = (achat.corps as unknown as { machine: { id: string } }).machine;
+    const r = await appel(`/machines/${machine.id}/upgrade`, {
+      methode: "POST",
+      corps: { userId: moi.id },
+      jeton: moi.jeton,
+    });
+    assert.equal(r.statut, 409);
   });
 });
 

@@ -308,6 +308,14 @@ type Props = {
    * n'est pas dans cette liste.
    */
   parked?: ParkedMachine[];
+  /**
+   * Clic sur un engin de la cour.
+   *
+   * La cour est hors grille : viser le tracteur tombait dans le vide, et le
+   * palier ne se lisait que dans une liste. C'est l'objet lui-même qu'on
+   * ouvre, comme un bâtiment.
+   */
+  onParkedClick?: (id: string) => void;
   /** Places du garage — hangar compris. C'est elle que la cour dessine. */
   machineSlots?: number;
   weather?: string;
@@ -1106,6 +1114,7 @@ export function IsoFarmView({
   manurePiles = [],
   workers = [],
   parked = [],
+  onParkedClick,
   machineSlots = 0,
   weather = "CLEAR",
   season = "SUMMER",
@@ -1174,6 +1183,8 @@ export function IsoFarmView({
   parcelIdRef.current = parcelId;
   const onVoisinRef = useRef(onVoisinClick);
   onVoisinRef.current = onVoisinClick;
+  const onParkedRef = useRef(onParkedClick);
+  onParkedRef.current = onParkedClick;
   const seasonAppliedRef = useRef<string | null>(null);
   const weatherRef = useRef(weather);
   weatherRef.current = weather;
@@ -1565,10 +1576,12 @@ export function IsoFarmView({
 
     const raycaster = new THREE.Raycaster();
     const pointer = new THREE.Vector2();
-    /** Uniquement les dalles de sol — les engins ne bloquent pas le clic */
+    /** Uniquement les dalles de sol — les engins de la cour ont leur propre viseur. */
     const pickables: THREE.Object3D[] = [];
     /** Les caisses livrées : elles se visent directement, hors de la grille. */
     const crateTargets: THREE.Object3D[] = [];
+    /** Engins de la cour : hors grille, comme les caisses. */
+    const parkedTargets: THREE.Object3D[] = [];
 
     /**
      * Cadrage choisi par le joueur, conservé d'une reconstruction de scène à
@@ -1795,6 +1808,7 @@ export function IsoFarmView({
         z: cz + s.z * cellSize,
       }));
 
+      parkedTargets.length = 0;
       parked.forEach((machine, i) => {
         const slot = rig.slots[i];
         if (!slot) return;
@@ -1815,8 +1829,13 @@ export function IsoFarmView({
           rig.deck * cellSize,
           cz + slot.z * cellSize,
         );
+        mRig.group.userData.machineId = machine.id;
+        mRig.group.traverse((o) => {
+          o.userData.machineId = machine.id;
+        });
         world.add(mRig.group);
         vehicleRigs.set(machine.id, mRig);
+        parkedTargets.push(mRig.group);
       });
     }
 
@@ -1874,6 +1893,7 @@ export function IsoFarmView({
         rig.dispose();
       }
       vehicleRigs.clear();
+      parkedTargets.length = 0;
       if (parkingRig) {
         parkingGroup.remove(parkingRig.group);
         parkingRig.dispose();
@@ -2385,6 +2405,14 @@ export function IsoFarmView({
       return typeof id === "string" ? id : null;
     }
 
+    function raycastParked(): string | null {
+      if (!parkedTargets.length) return null;
+      raycaster.setFromCamera(pointer, camera);
+      const hits = raycaster.intersectObjects(parkedTargets, true);
+      const id = hits[0]?.object.userData?.machineId;
+      return typeof id === "string" ? id : null;
+    }
+
     function raycastCell(): { x: number; y: number } | null {
       raycaster.setFromCamera(pointer, camera);
       const hits = raycaster.intersectObjects(pickables, false);
@@ -2770,6 +2798,11 @@ export function IsoFarmView({
       const caisse = raycastCrate();
       if (caisse) {
         onCollectSupplyRef.current?.(caisse);
+        return;
+      }
+      const parkedId = raycastParked();
+      if (parkedId) {
+        onParkedRef.current?.(parkedId);
         return;
       }
       const cell = raycastCell();

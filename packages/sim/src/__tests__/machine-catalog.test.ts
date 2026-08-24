@@ -18,6 +18,7 @@ import {
   machineCost,
   machineMeshScale,
   machineRepairPerPoint,
+  machineUpgradeCost,
   machineVariant,
   TELEHANDLER_CATALOG,
   type MachineType,
@@ -112,6 +113,26 @@ describe("cinq fiches par famille", () => {
     expect(TELEHANDLER_CATALOG[5].cost).toBeGreaterThan(200000);
     for (const tier of MACHINE_TIERS) {
       expect(TELEHANDLER_CATALOG[tier].label).not.toMatch(/Manitou|JCB|Merlo|CLAAS/i);
+    }
+  });
+});
+
+describe("améliorer un engin", () => {
+  it("facture la différence de catalogue, et refuse le T5", () => {
+    for (const t of TYPES) {
+      let cumul = machineVariant(t, 1).cost;
+      for (const tier of MACHINE_TIERS) {
+        const next = tier < 5 ? ((tier + 1) as 2 | 3 | 4 | 5) : null;
+        if (!next) {
+          expect(machineUpgradeCost(t, tier)).toBeNull();
+          continue;
+        }
+        const cout = machineUpgradeCost(t, tier);
+        expect(cout).toBe(machineVariant(t, next).cost - machineVariant(t, tier).cost);
+        expect(cout).toBeGreaterThan(0);
+        cumul += cout!;
+        expect(cumul).toBe(machineVariant(t, next).cost);
+      }
     }
   });
 });

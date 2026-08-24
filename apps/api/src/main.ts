@@ -280,6 +280,8 @@ import {
   machineHoursPerHectare,
   machineCost,
   machineVariant,
+  machineUpgradeCost,
+  nextMachineTier,
   machineRepairPerPoint,
   jobDurationMs,
   fuelForJob,
@@ -10030,6 +10032,74 @@ app.post("/machines/buy", async (req, res) => {
     include: { farm: { include: farmInclude() } },
   });
   res.status(201).json({ machine: result, player: refreshed });
+});
+
+/**
+ * Passage au palier suivant, sur place.
+ *
+ * On n'achète pas un deuxième exemplaire : l'engin est repris, le suivant
+ * arrive neuf, et on paie la différence de catalogue. C'est le même geste
+ * qu'agrandir un hangar — et c'est ce qui rend les cinq paliers visibles
+ * une fois le parc déjà constitué, pas seulement au moment de l'achat.
+ */
+app.post("/machines/:id/upgrade", async (req, res) => {
+  const body = z.object({ userId: z.string() }).safeParse(req.body);
+  if (!body.success) {
+    res.status(400).json(body.error.flatten());
+    return;
+  }
+  const machine = await prisma.machine.findUnique({
+    where: { id: req.params.id },
+    include: { farm: { include: { user: true } } },
+  });
+  if (!machine || machine.farm.userId !== body.data.userId) {
+    res.status(403).json({ error: "Machine non possédée" });
+    return;
+  }
+  if (machine.busyUntil && machine.busyUntil.getTime() > Date.now()) {
+    res.status(409).json({ error: "Cet engin est au champ — attendez la fin du chantier." });
+    return;
+  }
+  const type = machine.type as MachineType;
+  if (!MACHINE_DEFS[type]) {
+    res.status(400).json({ error: "Type machine inconnu" });
+    return;
+  }
+  const current = asTier(machine.tier);
+  const next = nextMachineTier(current);
+  const cost = machineUpgradeCost(type, current);
+  if (!next || cost === null) {
+    res.status(409).json({ error: "Niveau maximum atteint" });
+    return;
+  }
+  if (!peutPayer(machine.farm.user, cost)) {
+    res.status(402).json({ error: `€ insuffisants — ${cost} requis` });
+    return;
+  }
+  const fiche = machineVariant(type, next);
+  const updated = await prisma.$transaction(async (tx) => {
+    await debit(tx, body.data.userId, cost, "MACHINES", `Amélioration — ${fiche.label}`);
+    await grantXp(tx, body.data.userId, "MACHINE_BUY", { cost });
+    return tx.machine.update({
+      where: { id: machine.id },
+      data: {
+        tier: next,
+        condition: 100,
+        hours: 0,
+        grease: GREASE_FULL,
+        greased: true,
+        dirt: 0,
+        greaseSkipStreak: 0,
+        breakdown: null,
+      },
+    });
+  });
+  res.json({
+    machine: updated,
+    cost,
+    tier: next,
+    label: fiche.label,
+  });
 });
 
 app.post("/machines/:id/repair", async (req, res) => {
