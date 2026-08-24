@@ -177,12 +177,9 @@ describe("une machine coûte moins qu'elle ne rapporte", () => {
 
   it("pèse quelques pour cent d'une saison, pas le dixième", () => {
     /**
-     * Le chiffre qui a motivé le changement : mesuré en jeu, l'entretien du
-     * parc mangeait 9,6 % du revenu net d'une saison sur une seule parcelle.
-     * Pour du matériel amorti sur des années, c'est un ordre de grandeur trop
-     * haut.
-     *
-     * On rapporte ici le coût d'un champ moissonné au revenu de ce champ.
+     * L'entretien d'une moissonneuse T1 (neuf de petite exploitation) doit se
+     * sentir — c'est un poste qu'on cherche à réduire — sans manger la
+     * récolte. Quelques pour cent, pas un dixième.
      */
     const def = MACHINE_DEFS.HARVESTER;
     const heures = jobHours(machineHoursPerHectare("HARVESTER"), CHAMP);
@@ -194,7 +191,8 @@ describe("une machine coûte moins qu'elle ne rapporte", () => {
     }).wearApplied;
     const usureCrd = points * def.repairCostPerPoint;
     const brut = CHAMP * CROP_DEFS.WHEAT.yieldPerCell * MARKET_BOUNDS.WHEAT.initial;
-    expect(usureCrd / brut).toBeLessThan(0.01);
+    expect(usureCrd / brut).toBeGreaterThan(0.01);
+    expect(usureCrd / brut).toBeLessThan(0.1);
   });
 
   it("punit l'abandon sans transformer l'engin en consommable", () => {
@@ -206,15 +204,14 @@ describe("une machine coûte moins qu'elle ne rapporte", () => {
     }
   });
 
-  it("garde la révision rentable au moment où elle se présente", () => {
+  it("garde la révision douloureuse — c'est une décision, pas un clic", () => {
     /**
-     * Ralentir l'usure ne doit pas rendre l'atelier facultatif : quand la
-     * machine arrive en bas, la révision doit se rembourser en quelques champs.
-     * C'est ce qui en fait un calcul plutôt qu'une corvée qu'on repousse.
-     *
-     * « Sur le champ suivant » tenait quand une moissonneuse valait 4 000 € :
-     * sa révision complète en coûtait 800. Aux prix en euros, elle en coûte
-     * 3 872 contre 2 495 de rendement perdu par champ — un champ et demi.
+     * Une moissonneuse T1 à 200 000 € a une révision à ~40 000 €. Sur une
+     * parcelle de quatorze hectares, le rendement perdu ne la rembourse pas
+     * en trois champs : c'est voulu. On n'achète (ni ne révise) cette machine
+     * que si la ferme a assez de surface pour que le temps de chantier vaille
+     * la facture. Sur une grande exploitation, les pertes de la saison
+     * dépassent enfin l'atelier.
      */
     const def = MACHINE_DEFS.HARVESTER;
     const usee = def.minCondition + 5;
@@ -224,6 +221,8 @@ describe("une machine coûte moins qu'elle ne rapporte", () => {
       condition: usee,
       repairCostPerPoint: def.repairCostPerPoint,
     }).cost;
-    expect(perdu * 3).toBeGreaterThan(revision);
+    expect(perdu * 3).toBeLessThan(revision);
+    expect(perdu * 24).toBeGreaterThan(revision);
+    expect(revision).toBeLessThan(def.cost * 0.3);
   });
 });

@@ -1267,36 +1267,29 @@ export function reparationParPoint(prix: number): number {
  * endroits, il aurait fini par différer — c'est exactement ce qui était arrivé
  * entre le prix des machines et celui de leurs révisions.
  *
- * ## L'ancre : le capital par hectare, pas le prix du neuf
+ * ## L'ancre : les fourchettes du neuf, adaptées au jeu
  *
- * Première tentative : les prix du marché de l'occasion — tracteur 90 ch à
- * 30 000, moissonneuse à 78 000. Vrais prix, mauvaise ancre. Une exploitation
- * de quatorze hectares n'achète pas une moissonneuse de 78 000 € : elle n'en
- * achète aucune, elle appelle une entreprise. Mesuré, le matériel d'occasion
- * ne se rentabilisait plus qu'au bout de quinze moissons, et une révision de
- * moissonneuse coûtait cinq fois le rendement qu'elle rattrapait.
+ * Le palier 1 est un petit engin **neuf de petite exploitation** (tracteur
+ * ~105 ch à 72 000 €, pas un utilitaire d'occasion à 14 000). Les paliers
+ * suivants collent aux tarifs concessionnaire, un cran en dessous. Un T5
+ * coûte ce qu'il coûte dans le vrai monde — assez pour que l'acheter soit
+ * une décision, pas un clic.
  *
- * L'ancre juste est le **capital matériel par hectare** : une exploitation
- * française y consacre de deux à trois mille euros l'hectare. Sur quatorze
- * hectares, cela fait un parc de trente-cinq mille euros — c'est-à-dire du
- * matériel ancien, étroit, de petite exploitation. C'est exactement ce que le
- * joueur possède, et c'est ce que ces prix décrivent.
- *
- * Les rapports entre engins, eux, restent ceux du vrai marché : une
- * moissonneuse vaut une fois et demie le tracteur, une charrue le cinquième.
+ * Les rapports entre engins restent ceux du marché : une moissonneuse vaut
+ * plus de deux tracteurs T1 ; une charrue, une fraction du porteur.
  */
 export const PRIX_ENGINS: Record<MachineType, number> = {
-  TRACTOR: 14000,
-  HARVESTER: 22000,
-  FORAGE_HARVESTER: 31000,
-  PLOUGH: 3100,
-  SEEDER: 4600,
-  SPREADER: 2300,
-  DISC_HARROW: 3300,
-  MOWER: 1900,
-  BALER: 6100,
-  SPRAYER: 3900,
-  TRAILER: 2600,
+  TRACTOR: 72000,
+  HARVESTER: 200000,
+  FORAGE_HARVESTER: 220000,
+  PLOUGH: 22000,
+  SEEDER: 25000,
+  SPREADER: 12000,
+  DISC_HARROW: 22000,
+  MOWER: 16000,
+  BALER: 40000,
+  SPRAYER: 28000,
+  TRAILER: 18000,
 };
 
 export const MACHINE_DEFS: Record<MachineType, MachineDef> = {
@@ -1304,9 +1297,9 @@ export const MACHINE_DEFS: Record<MachineType, MachineDef> = {
     type: "TRACTOR",
     kind: "TRACTOR",
     name: "Tracteur",
-    // Palier 1 : utilitaire ~115 ch, matériel de petite ferme.
+    // Palier 1 : utilitaire ~105 ch, petite exploitation.
     cost: PRIX_ENGINS.TRACTOR,
-    powerHp: 115,
+    powerHp: 105,
     // Un tracteur seul ne travaille pas : il tire. Sa largeur est celle de
     // l'outil qu'il porte, d'où zéro ici et aucun travail à son nom.
     widthM: 0,
@@ -1325,8 +1318,8 @@ export const MACHINE_DEFS: Record<MachineType, MachineDef> = {
     name: "Moissonneuse",
     // Prix réel : moissonneuse-batteuse d'occasion, coupe de 4,5 m.
     cost: PRIX_ENGINS.HARVESTER,
-    powerHp: 200,
-    widthM: 4.2,
+    powerHp: 175,
+    widthM: 4.5,
     speedKmh: 6,
     lifeHours: 480,
     repairCostPerPoint: reparationParPoint(PRIX_ENGINS.HARVESTER),
@@ -1342,7 +1335,7 @@ export const MACHINE_DEFS: Record<MachineType, MachineDef> = {
     name: "Ensileuse",
     // Prix réel : ensileuse automotrice d'occasion.
     cost: PRIX_ENGINS.FORAGE_HARVESTER,
-    powerHp: 260,
+    powerHp: 400,
     widthM: 3,
     speedKmh: 8,
     lifeHours: 450,
@@ -1361,7 +1354,7 @@ export const MACHINE_DEFS: Record<MachineType, MachineDef> = {
     name: "Charrue",
     // Prix réel : charrue 4 corps.
     cost: PRIX_ENGINS.PLOUGH,
-    requiredHp: 90,
+    requiredHp: 85,
     widthM: 2,
     speedKmh: 8,
     lifeHours: 850,
@@ -1378,7 +1371,7 @@ export const MACHINE_DEFS: Record<MachineType, MachineDef> = {
     // Prix réel : semoir en ligne de 3 m.
     cost: PRIX_ENGINS.SEEDER,
     requiredHp: 70,
-    widthM: 4,
+    widthM: 3,
     speedKmh: 10,
     lifeHours: 800,
     repairCostPerPoint: reparationParPoint(PRIX_ENGINS.SEEDER),
@@ -1394,7 +1387,7 @@ export const MACHINE_DEFS: Record<MachineType, MachineDef> = {
     // Prix réel : épandeur à engrais porté.
     cost: PRIX_ENGINS.SPREADER,
     requiredHp: 50,
-    // Douze mètres de nappe : l'outil le plus rapide du parc, ce qui est vrai.
+    // Douze mètres de nappe au T1 : l'engrais reste un passage rapide.
     widthM: 12,
     speedKmh: 12,
     lifeHours: 800,
@@ -1429,7 +1422,7 @@ export const MACHINE_DEFS: Record<MachineType, MachineDef> = {
     // Prix réel : faucheuse à disques portée.
     cost: PRIX_ENGINS.MOWER,
     requiredHp: 60,
-    widthM: 3,
+    widthM: 3.1,
     speedKmh: 12,
     lifeHours: 800,
     repairCostPerPoint: reparationParPoint(PRIX_ENGINS.MOWER),
@@ -1446,7 +1439,7 @@ export const MACHINE_DEFS: Record<MachineType, MachineDef> = {
     // Prix réel : presse à balles rondes.
     cost: PRIX_ENGINS.BALER,
     requiredHp: 70,
-    widthM: 2.2,
+    widthM: 2.1,
     speedKmh: 9,
     lifeHours: 750,
     repairCostPerPoint: reparationParPoint(PRIX_ENGINS.BALER),
@@ -1461,10 +1454,9 @@ export const MACHINE_DEFS: Record<MachineType, MachineDef> = {
     name: "Pulvérisateur",
     // Prix réel : pulvérisateur porté de 1 000 L.
     cost: PRIX_ENGINS.SPRAYER,
-    requiredHp: 60,
-    // Une rampe de dix-huit mètres : le désherbage est un passage rapide, et
-    // c'est ce qui le rend jouable — on ne perd pas sa campagne à le faire.
-    widthM: 18,
+    requiredHp: 70,
+    // Une rampe de quinze mètres : le désherbage reste un passage rapide.
+    widthM: 15,
     speedKmh: 12,
     lifeHours: 850,
     repairCostPerPoint: reparationParPoint(PRIX_ENGINS.SPRAYER),

@@ -251,7 +251,7 @@ describe("cinq paliers, cinq silhouettes", () => {
     const t5 = createMachineRig("PLOUGH", { shadows: false, tier: 5 });
     expect(t5.anchors("tool").length).toBeGreaterThan(t1.anchors("tool").length);
     expect(t1.anchors("tool")).toHaveLength(3);
-    expect(t5.anchors("tool")).toHaveLength(9);
+    expect(t5.anchors("tool")).toHaveLength(12);
     t1.dispose();
     t5.dispose();
   });

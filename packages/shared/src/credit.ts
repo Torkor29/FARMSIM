@@ -28,7 +28,7 @@ import { GAME_DAY_MS, SEASON_DAYS } from "./time.js";
  * Part des capitaux propres qu'une banque accepte de prêter `[GD]`.
  *
  * Soixante pour cent : assez pour financer un vrai saut de matériel — une
- * moissonneuse T2 sur une ferme installée — sans permettre de doubler
+ * moissonneuse T2 sur une ferme de six parcelles — sans permettre de doubler
  * l'exploitation d'un coup.
  */
 export const LOAN_EQUITY_RATIO = 0.6;
@@ -36,11 +36,10 @@ export const LOAN_EQUITY_RATIO = 0.6;
 /**
  * Plancher de la ligne, en euros : une ferme neuve doit pouvoir démarrer.
  *
- * Trois mille suffisaient quand une charrue en valait 1 400. Aux prix réels,
- * ils n'achètent plus rien : le plancher se cale sur le premier outil dont un
- * débutant a besoin, la charrue, plus de quoi semer derrière.
+ * Dix mille n'achetaient plus le premier pulvé une fois les T1 passés au neuf.
+ * Trente mille couvrent un pulvérisateur T1, ou une faucheuse et de quoi semer.
  */
-export const LOAN_FLOOR_CRD = 10000;
+export const LOAN_FLOOR_CRD = 30000;
 
 /**
  * Intérêt par jour de jeu `[GD]`.

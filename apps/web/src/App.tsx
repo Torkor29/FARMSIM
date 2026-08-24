@@ -93,6 +93,7 @@ import {
   type Tier,
   type MachineStars,
   machineVariant,
+  machineOverhaulCost,
   machineRepairPerPoint,
   machineDealerValue,
   MACHINE_LISTING_MIN_RATE,
@@ -5558,7 +5559,8 @@ export function App() {
             <p className="muted tiny">
               {TIER_ROLE_LABELS[tierAchat]} · <strong>{TIER_LABELS[tierAchat]}</strong>. Un outil
               plus large va plus vite, mais exige plus de chevaux — et un T5 se paie aussi à
-              l’entretien.
+              l’entretien et à la cuve. Trop gros pour une petite parcelle, ce n’est pas un
+              cadeau.
             </p>
             <div className="age-switch" role="group" aria-label="Palier de matériel">
               {MACHINE_TIERS.map((t) => (
@@ -5636,6 +5638,11 @@ export function App() {
                         {!tractable ? " · rien pour le tirer" : ""}
                       </span>
                       <span className="muted tiny">{fiche.bonus}</span>
+                      <span className="muted tiny">
+                        {fiche.fuelLPerHour} L/h · révision{" "}
+                        {machineOverhaulCost(prix).toLocaleString("fr-FR")} €
+                      </span>
+                      <span className="muted tiny">{fiche.constraints}</span>
                       <MachineStarStrip stars={fiche.stars} />
                     </span>
                   </button>

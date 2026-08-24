@@ -528,21 +528,21 @@ function buildTractor(tier: MachineTier = 1): Blueprint {
 
   /* — Trains roulants ————————————————————————————————— */
   if (tracks) {
-    // Quadtrac : quatre chenilles longues, pas un T4 jumelé agrandi.
-    addCrawlerTrack(root, -0.24, 0.46, 0.7, 0.175, 0.21);
-    addCrawlerTrack(root, -0.24, -0.46, 0.7, 0.175, 0.21);
-    const steer = root.child([0.42, 0, 0], { role: "steer" });
-    addCrawlerTrack(steer, 0, 0.4, 0.5, 0.142, 0.185);
-    addCrawlerTrack(steer, 0, -0.4, 0.5, 0.142, 0.185);
-    root.add("cast", roundedBox(0.88, 0.1, 0.5, 0.03, [0.06, 0.14, 0]));
-    root.add("paintDark", roundedBox(0.28, 0.14, 0.86, 0.03, [-0.24, 0.24, 0]));
+    // 9RX : quatre chenilles longues, pas un T4 jumelé agrandi.
+    addCrawlerTrack(root, -0.28, 0.5, 0.78, 0.188, 0.225);
+    addCrawlerTrack(root, -0.28, -0.5, 0.78, 0.188, 0.225);
+    const steer = root.child([0.46, 0, 0], { role: "steer" });
+    addCrawlerTrack(steer, 0, 0.44, 0.56, 0.155, 0.2);
+    addCrawlerTrack(steer, 0, -0.44, 0.56, 0.155, 0.2);
+    root.add("cast", roundedBox(0.96, 0.1, 0.56, 0.03, [0.08, 0.14, 0]));
+    root.add("paintDark", roundedBox(0.32, 0.16, 0.94, 0.03, [-0.28, 0.24, 0]));
     // Capots de chenille : le train n’est pas nu.
-    for (const z of [0.46, -0.46] as const) {
-      root.add("paint", roundedBox(0.62, 0.055, 0.22, 0.02, [-0.24, 0.4, z]));
-      root.add("steel", roundedBox(0.08, 0.16, 0.06, 0.015, [-0.08, 0.3, z * 0.72]));
+    for (const z of [0.5, -0.5] as const) {
+      root.add("paint", roundedBox(0.7, 0.055, 0.24, 0.02, [-0.28, 0.42, z]));
+      root.add("steel", roundedBox(0.08, 0.16, 0.06, 0.015, [-0.1, 0.3, z * 0.72]));
     }
-    for (const z of [0.4, -0.4] as const) {
-      steer.add("paint", roundedBox(0.42, 0.045, 0.2, 0.018, [0, 0.34, z]));
+    for (const z of [0.44, -0.44] as const) {
+      steer.add("paint", roundedBox(0.48, 0.045, 0.22, 0.018, [0, 0.36, z]));
     }
   } else {
     for (const z of rearTrack) {
@@ -561,7 +561,7 @@ function buildTractor(tier: MachineTier = 1): Blueprint {
     }
   }
 
-  return { root, length: tracks ? 1.72 : 1.35, hitch: [-0.64, 0.16, 0], eye: [0, 0, 0] };
+  return { root, length: tracks ? 1.88 : 1.35, hitch: [-0.64, 0.16, 0], eye: [0, 0, 0] };
 }
 
 /* ------------------------------------------------------------------ */
@@ -573,9 +573,9 @@ function buildHarvester(tier: MachineTier = 1): Blueprint {
   const DRIVE_R = 0.25;
   const DRIVE_W = 0.2;
   const STEER_R = 0.135;
-  // Largeur de coupe : T1 4,2 m → T5 12,3 m, en unités monde. Le T1 garde
-  // le bec déjà en jeu (1,1) ; les paliers suivants l'élargissent vraiment.
-  const headerW = atTier(tier, [1.1, 1.24, 1.4, 1.6, 1.88]);
+    // Largeur de coupe : T1 ~4,5 m → T5 15,2 m (CR11), en unités monde.
+    // Le T1 garde le bec déjà en jeu (1,1) ; le T5 s'élargit vraiment.
+    const headerW = atTier(tier, [1.1, 1.28, 1.46, 1.72, 2.16]);
   const hs = headerW / 1.1;
 
   /* — Caisse : un profil de côté, capot moteur incliné à l'arrière —— */
@@ -1598,17 +1598,17 @@ type Blueprint = {
  * bas sur terre, tout en fonte. Les corps descendent au travail et se
  * relèvent en transport — d'où le rôle `tool` sur chacun.
  *
- * T1 : 3 corps. T5 : 9 corps. On ne scale pas une charrue de trois, on
+ * T1 : 3 corps. T5 : 12 corps. On ne scale pas une charrue de trois, on
  * en ajoute.
  */
 function buildPlough(tier: MachineTier = 1): Blueprint {
   const root = new Part();
   const WHEEL_R = 0.15;
-  const n = atTier(tier, [3, 4, 5, 7, 9]);
-  const pitchX = atTier(tier, [0.28, 0.24, 0.22, 0.16, 0.13]);
-  const pitchZ = atTier(tier, [0.13, 0.12, 0.11, 0.09, 0.08]);
-  const beamLen = atTier(tier, [0.86, 1.0, 1.14, 1.32, 1.48]);
-  const beamX = atTier(tier, [-0.72, -0.8, -0.88, -0.98, -1.06]);
+  const n = atTier(tier, [3, 4, 6, 8, 12]);
+  const pitchX = atTier(tier, [0.28, 0.24, 0.2, 0.15, 0.11]);
+  const pitchZ = atTier(tier, [0.13, 0.12, 0.1, 0.085, 0.068]);
+  const beamLen = atTier(tier, [0.86, 1.0, 1.22, 1.42, 1.78]);
+  const beamX = atTier(tier, [-0.72, -0.8, -0.9, -1.02, -1.18]);
 
   /* — Timon, anneau, béquille — même chape que les autres outils —— */
   root.add("paint", roundedBox(0.46, 0.08, 0.09, 0.025, [-0.18, 0.28, 0], [0, 0, -0.6]));
@@ -1682,7 +1682,7 @@ function buildPlough(tier: MachineTier = 1): Blueprint {
 
   return {
     root,
-    length: atTier(tier, [1.2, 1.32, 1.44, 1.56, 1.68]),
+    length: atTier(tier, [1.2, 1.32, 1.52, 1.74, 2.12]),
     hitch: [-1.15, 0.3, 0],
     eye: [0.01, 0.16, 0],
   };
@@ -2005,7 +2005,7 @@ function buildSprayer(tier: MachineTier = 1): Blueprint {
   const root = new Part();
   const WHEEL_R = 0.16;
   const CX = -0.52;
-  const nNozzles = atTier(tier, [5, 6, 8, 10, 12]);
+  const nNozzles = atTier(tier, [5, 6, 9, 12, 16]);
   const tankR = atTier(tier, [0.22, 0.24, 0.26, 0.28, 0.3]);
   const tankL = atTier(tier, [0.62, 0.68, 0.76, 0.88, 1.0]);
   const tankY = 0.33 + tankR;
