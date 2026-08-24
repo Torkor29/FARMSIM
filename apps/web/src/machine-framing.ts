@@ -1,20 +1,32 @@
 import * as THREE from "three";
 
+export type IsoOrthoFit = {
+  /** Cible monde : même hauteur que le centre de la boîte. */
+  lookAtY: number;
+  left: number;
+  right: number;
+  top: number;
+  bottom: number;
+  /** Demi-hauteur visible, utile aux tests. */
+  frustum: number;
+};
+
 /**
- * Demi-hauteur du frustum ortho pour qu'un engin tienne dans la vignette,
- * y compris quand le plateau tourne.
+ * Fenêtre ortho pour qu'un engin tienne dans la vignette, y compris quand
+ * le plateau tourne.
  *
- * Le cadrage se déduisait de la seule longueur (`length × 0,62`). Ça remplissait
- * la case, mais une moissonneuse ou un T5 passait **au-dessus du cadre** : la
- * hauteur projetée en iso n'était pas comptée, et un canevas très large
- * n'ajoute aucun pixel en vertical.
+ * Un cadrage symétrique autour de l'origine caméra (`±max |y|`) collait le
+ * toit au bord : en iso, la trémie (loin, en haut) n'est pas en face de la
+ * coupe (près, en bas). On cadre donc le **rectangle projeté**, centré, avec
+ * une marge — pas un frustum calé sur le plus grand |y|.
  */
 export function isoOrthoFrustum(
   box: THREE.Box3,
   aspect: number,
-  pad = 1.34,
-): { frustum: number; lookAtY: number } {
+  pad = 1.36,
+): IsoOrthoFit {
   const center = box.getCenter(new THREE.Vector3());
+  const lookAtY = center.y;
   const { min, max } = box;
   const corners: THREE.Vector3[] = [];
   for (const x of [min.x, max.x]) {
@@ -26,13 +38,15 @@ export function isoOrthoFrustum(
   }
 
   const cam = new THREE.OrthographicCamera(-1, 1, 1, -1, 0.1, 100);
-  cam.position.set(9, 7.35 + center.y, 9);
-  cam.lookAt(0, center.y, 0);
+  cam.position.set(9, 7.35 + lookAtY, 9);
+  cam.lookAt(0, lookAtY, 0);
   cam.updateMatrixWorld();
   const inv = cam.matrixWorldInverse;
 
-  let maxX = 0;
-  let maxY = 0;
+  let minX = Infinity;
+  let maxX = -Infinity;
+  let minY = Infinity;
+  let maxY = -Infinity;
   for (let k = 0; k < 8; k++) {
     const yaw = (k / 8) * Math.PI * 2;
     const cy = Math.cos(yaw);
@@ -40,11 +54,29 @@ export function isoOrthoFrustum(
     for (const c of corners) {
       const p = new THREE.Vector3(c.x * cy + c.z * sy, c.y, -c.x * sy + c.z * cy);
       p.applyMatrix4(inv);
-      maxX = Math.max(maxX, Math.abs(p.x));
-      maxY = Math.max(maxY, Math.abs(p.y));
+      minX = Math.min(minX, p.x);
+      maxX = Math.max(maxX, p.x);
+      minY = Math.min(minY, p.y);
+      maxY = Math.max(maxY, p.y);
     }
   }
+
   const a = aspect > 0.15 ? aspect : 1;
-  const frustum = Math.max(maxY, maxX / a) * pad;
-  return { frustum: Math.max(0.55, frustum), lookAtY: center.y };
+  const cx = (minX + maxX) / 2;
+  const cyCam = (minY + maxY) / 2;
+  let halfW = ((maxX - minX) / 2) * pad;
+  let halfH = ((maxY - minY) / 2) * pad;
+  halfW = Math.max(halfW, 0.4);
+  halfH = Math.max(halfH, 0.4);
+  if (halfW / halfH > a) halfH = halfW / a;
+  else halfW = halfH * a;
+
+  return {
+    lookAtY,
+    left: cx - halfW,
+    right: cx + halfW,
+    top: cyCam + halfH,
+    bottom: cyCam - halfH,
+    frustum: halfH,
+  };
 }

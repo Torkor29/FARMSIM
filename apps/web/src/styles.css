@@ -2287,9 +2287,9 @@ html.playing .build-confirm { position: fixed; }
   border-radius: 12px;
   overflow: hidden;
   background: #cfeafb;
-  min-height: 260px;
+  min-height: 320px;
 }
-.machine-sheet-art .machine-view3d { height: 260px; }
+.machine-sheet-art .machine-view3d { height: 320px; }
 .machine-view3d { width: 100%; }
 .machine-view3d canvas { display: block; width: 100% !important; height: 100% !important; }
 .machine-sheet-stats {

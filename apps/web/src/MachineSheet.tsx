@@ -217,7 +217,7 @@ export function MachineSheet({
 
         <div className="machine-sheet-body">
         <div className="machine-sheet-art">
-          <MachineView3D type={type} tier={shownTier} height={260} turntable />
+          <MachineView3D type={type} tier={shownTier} height={320} turntable />
         </div>
 
         {preview.mode === "buy" ? (

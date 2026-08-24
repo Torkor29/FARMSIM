@@ -85,10 +85,14 @@ export function MachineView3D({
     turn.add(rig.group);
     rig.group.updateMatrixWorld(true);
 
-    // Caméra isométrique, comme la vue ferme. Le frustum se calcule sur la
-    // boîte réelle : un cadrage à la longueur seule coupait les cabines.
+    // Caméra isométrique, comme la vue ferme. Le cadrage se calcule sur la
+    // silhouette projetée (pas un frustum centré sur l'origine) : sinon la
+    // trémie, plus loin en iso, colle au plafond de la vignette.
     const camera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0.1, 100);
     const box = new THREE.Box3().setFromObject(rig.group);
+    // Le socle descend un peu sous les roues : sans lui, le centre optique
+    // remonte et tout l'air se retrouve sous l'engin.
+    box.min.y = Math.min(box.min.y, -0.16);
 
     // Le socle suit la taille de l'engin : un attelage de deux mètres ne se
     // juge pas sur la même motte de terre qu'un tracteur seul.
@@ -112,13 +116,13 @@ export function MachineView3D({
       const h = Math.max(1, host.clientHeight || height);
       renderer.setSize(w, h, false);
       const aspect = w / h;
-      const { frustum, lookAtY } = isoOrthoFrustum(box, aspect);
-      camera.position.set(9, 7.35 + lookAtY, 9);
-      camera.lookAt(0, lookAtY, 0);
-      camera.left = -frustum * aspect;
-      camera.right = frustum * aspect;
-      camera.top = frustum;
-      camera.bottom = -frustum;
+      const fit = isoOrthoFrustum(box, aspect);
+      camera.position.set(9, 7.35 + fit.lookAtY, 9);
+      camera.lookAt(0, fit.lookAtY, 0);
+      camera.left = fit.left;
+      camera.right = fit.right;
+      camera.top = fit.top;
+      camera.bottom = fit.bottom;
       camera.updateProjectionMatrix();
     };
     resize();
