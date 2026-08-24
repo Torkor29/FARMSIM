@@ -1,6 +1,7 @@
 import { useEffect, useRef } from "react";
 import { CROP_DEFS, SPECIES, formatEuros, peutRacheter, type CropCode } from "@farmsim/shared";
 import type { VoisinReel } from "./countryside-plan";
+import { MenuClose } from "./ui/MenuClose";
 
 /**
  * La fiche d'une parcelle voisine.
@@ -95,9 +96,7 @@ export function ParcelleVoisineSheet({ voisin, enCours = false, onAcheter, onFer
             <h3 id="voisin-titre">{voisin.label}</h3>
             <p className={`voisin-tenue s-${voisin.statut.toLowerCase()}`}>{tenue}</p>
           </div>
-          <button type="button" className="voisin-fermer" onClick={onFermer} aria-label="Fermer">
-            ×
-          </button>
+          <MenuClose onClose={onFermer} />
         </header>
 
         <dl className="voisin-faits">

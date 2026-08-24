@@ -1,0 +1,413 @@
+/**
+ * Menu du joueur — compte, son, aide, déconnexion.
+ *
+ * L'ancien tiroir empilait une fiche (niveau, trésorerie, badge développeur)
+ * et trois gros boutons. L'argent est déjà dans le bandeau ; ici on range
+ * les **réglages**, avec une croix pour partir et des pages pour changer
+ * le pseudo, l'e-mail, le code d'accès, et le son.
+ */
+
+import { useEffect, useState, type PointerEvent as ReactPointerEvent } from "react";
+import { readAudioPrefs, writeAudioPrefs, type AudioPrefs } from "./audio";
+import { MenuClose } from "./ui/MenuClose";
+
+export type ProfilePlayer = {
+  displayName: string;
+  email?: string;
+  level: number;
+  xp: number;
+  bonuses?: {
+    storageGrain: number;
+    yieldBonus: number;
+  };
+  unlimitedCrd?: boolean;
+  dev?: boolean;
+};
+
+export type AccountPatch = {
+  displayName?: string;
+  email?: string;
+  accessCode?: string;
+  currentAccessCode?: string;
+};
+
+type Page = "home" | "account" | "sound";
+
+type Notifications = {
+  state: NotificationPermission | "unsupported";
+  ask: () => void | Promise<void>;
+};
+
+type Gesture = {
+  onPointerDown?: (e: ReactPointerEvent<HTMLElement>) => void;
+  onPointerUp?: (e: ReactPointerEvent<HTMLElement>) => void;
+};
+
+type Props = {
+  className?: string;
+  gesture?: Gesture;
+  player: ProfilePlayer;
+  notifications: Notifications;
+  /** Fenêtre bureau : le cadre porte déjà la croix et le titre. */
+  embedded?: boolean;
+  onClose: () => void;
+  onGuide: () => void;
+  onTutorial: () => void;
+  onLogout: () => void;
+  onPatchAccount: (body: AccountPatch) => Promise<ProfilePlayer>;
+  onFlash: (text: string, isError?: boolean | "warn") => void;
+};
+
+function initial(name: string): string {
+  const t = name.trim();
+  return t ? t.slice(0, 1).toUpperCase() : "?";
+}
+
+export function ProfilePanel({
+  className,
+  gesture,
+  player,
+  notifications,
+  embedded = false,
+  onClose,
+  onGuide,
+  onTutorial,
+  onLogout,
+  onPatchAccount,
+  onFlash,
+}: Props) {
+  const [page, setPage] = useState<Page>("home");
+
+  return (
+    <aside className={className} {...gesture}>
+      {page === "home" ? (
+        <Home
+          player={player}
+          notifications={notifications}
+          embedded={embedded}
+          onClose={onClose}
+          onOpen={setPage}
+          onGuide={onGuide}
+          onTutorial={onTutorial}
+          onLogout={onLogout}
+        />
+      ) : page === "account" ? (
+        <AccountPage
+          player={player}
+          embedded={embedded}
+          onBack={() => setPage("home")}
+          onClose={onClose}
+          onPatchAccount={onPatchAccount}
+          onFlash={onFlash}
+        />
+      ) : (
+        <SoundPage embedded={embedded} onBack={() => setPage("home")} onClose={onClose} />
+      )}
+    </aside>
+  );
+}
+
+function Home({
+  player,
+  notifications,
+  embedded,
+  onClose,
+  onOpen,
+  onGuide,
+  onTutorial,
+  onLogout,
+}: {
+  player: ProfilePlayer;
+  notifications: Notifications;
+  embedded: boolean;
+  onClose: () => void;
+  onOpen: (p: Page) => void;
+  onGuide: () => void;
+  onTutorial: () => void;
+  onLogout: () => void;
+}) {
+  const bonus = player.bonuses;
+  const alertLine =
+    notifications.state === "granted"
+      ? "Activées"
+      : notifications.state === "denied"
+        ? "Refusées dans le navigateur"
+        : notifications.state === "unsupported"
+          ? "Indisponibles ici"
+          : "Désactivées";
+
+  return (
+    <>
+      <header className="profile-head">
+        <div className="profile-ident">
+          <span className="profile-avatar" aria-hidden="true">
+            {initial(player.displayName)}
+          </span>
+          <div>
+            <h3>{player.displayName}</h3>
+            <p>Nv.{player.level}</p>
+          </div>
+        </div>
+        {!embedded && <MenuClose onClose={onClose} />}
+      </header>
+
+      <ul className="profile-meta">
+        <li>{player.xp} XP</li>
+        {bonus && (
+          <li>
+            grain {bonus.storageGrain} t · +{Math.round(bonus.yieldBonus * 100)} % rendement
+          </li>
+        )}
+        {(player.dev || player.unlimitedCrd) && <li className="dev">Compte développeur</li>}
+      </ul>
+
+      <nav className="profile-groups" aria-label="Réglages">
+        <div className="profile-group">
+          <button type="button" className="profile-row" onClick={() => onOpen("account")}>
+            <span>
+              <strong>Compte</strong>
+              <em>Pseudo, e-mail, code d’accès</em>
+            </span>
+            <i aria-hidden="true">›</i>
+          </button>
+          <button type="button" className="profile-row" onClick={() => onOpen("sound")}>
+            <span>
+              <strong>Son</strong>
+              <em>Effets et volume</em>
+            </span>
+            <i aria-hidden="true">›</i>
+          </button>
+          {notifications.state === "default" ? (
+            <button type="button" className="profile-row" onClick={() => void notifications.ask()}>
+              <span>
+                <strong>Alertes</strong>
+                <em>M’alerter si la ferme va mal</em>
+              </span>
+              <i aria-hidden="true">›</i>
+            </button>
+          ) : (
+            <div className="profile-row static">
+              <span>
+                <strong>Alertes</strong>
+                <em>{alertLine}</em>
+              </span>
+            </div>
+          )}
+        </div>
+
+        <div className="profile-group">
+          <button type="button" className="profile-row" onClick={onGuide}>
+            <span>
+              <strong>Guide de ferme</strong>
+              <em>Cultures, sol, métier</em>
+            </span>
+            <i aria-hidden="true">›</i>
+          </button>
+          <button type="button" className="profile-row" onClick={onTutorial}>
+            <span>
+              <strong>Revoir le tutoriel</strong>
+              <em>Les gestes de départ</em>
+            </span>
+            <i aria-hidden="true">›</i>
+          </button>
+        </div>
+      </nav>
+
+      <button type="button" className="profile-logout" onClick={onLogout}>
+        Se déconnecter
+      </button>
+    </>
+  );
+}
+
+function SubHead({
+  title,
+  embedded,
+  onBack,
+  onClose,
+}: {
+  title: string;
+  embedded: boolean;
+  onBack: () => void;
+  onClose: () => void;
+}) {
+  return (
+    <header className="profile-head sub">
+      <button type="button" className="profile-back" onClick={onBack} aria-label="Retour">
+        ‹
+      </button>
+      <h3>{title}</h3>
+      {!embedded && <MenuClose onClose={onClose} />}
+    </header>
+  );
+}
+
+function AccountPage({
+  player,
+  embedded,
+  onBack,
+  onClose,
+  onPatchAccount,
+  onFlash,
+}: {
+  player: ProfilePlayer;
+  embedded: boolean;
+  onBack: () => void;
+  onClose: () => void;
+  onPatchAccount: (body: AccountPatch) => Promise<ProfilePlayer>;
+  onFlash: (text: string, isError?: boolean | "warn") => void;
+}) {
+  const [displayName, setDisplayName] = useState(player.displayName);
+  const [email, setEmail] = useState(player.email ?? "");
+  const [currentAccessCode, setCurrent] = useState("");
+  const [accessCode, setAccess] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    setDisplayName(player.displayName);
+    setEmail(player.email ?? "");
+  }, [player.displayName, player.email]);
+
+  const nameDirty = displayName.trim() !== player.displayName;
+  const emailDirty = email.trim() !== (player.email ?? "");
+  const codeDirty = accessCode.length > 0;
+  const needsCurrent = emailDirty || codeDirty;
+  const canSave =
+    !busy &&
+    (nameDirty || emailDirty || codeDirty) &&
+    displayName.trim().length >= 2 &&
+    email.includes("@") &&
+    (!codeDirty || accessCode.length >= 3) &&
+    (!needsCurrent || currentAccessCode.length >= 1);
+
+  async function save() {
+    if (!canSave) return;
+    setBusy(true);
+    try {
+      const body: AccountPatch = {};
+      if (nameDirty) body.displayName = displayName.trim();
+      if (emailDirty) body.email = email.trim();
+      if (codeDirty) body.accessCode = accessCode;
+      if (needsCurrent) body.currentAccessCode = currentAccessCode;
+      await onPatchAccount(body);
+      setCurrent("");
+      setAccess("");
+      onFlash("Compte mis à jour");
+      onBack();
+    } catch (e) {
+      onFlash(e instanceof Error ? e.message : String(e), true);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <>
+      <SubHead title="Compte" embedded={embedded} onBack={onBack} onClose={onClose} />
+      <p className="profile-hint">
+        L’e-mail est votre identifiant de connexion. Le code d’accès ouvre la ferme — ce n’est pas
+        l’identifiant technique du serveur, et il n’y a pas à le changer.
+      </p>
+      <form
+        className="profile-form"
+        onSubmit={(e) => {
+          e.preventDefault();
+          void save();
+        }}
+      >
+        <label>
+          Pseudo
+          <input
+            value={displayName}
+            onChange={(e) => setDisplayName(e.target.value)}
+            maxLength={32}
+            autoComplete="nickname"
+          />
+        </label>
+        <label>
+          E-mail
+          <input
+            type="email"
+            value={email}
+            onChange={(e) => setEmail(e.target.value)}
+            autoComplete="email"
+          />
+        </label>
+        <label>
+          Nouveau code d’accès
+          <input
+            type="password"
+            value={accessCode}
+            onChange={(e) => setAccess(e.target.value)}
+            minLength={3}
+            maxLength={32}
+            autoComplete="new-password"
+            placeholder="Laisser vide pour ne pas changer"
+          />
+        </label>
+        {needsCurrent && (
+          <label>
+            Code actuel
+            <input
+              type="password"
+              value={currentAccessCode}
+              onChange={(e) => setCurrent(e.target.value)}
+              autoComplete="current-password"
+              placeholder="Pour confirmer e-mail ou code"
+            />
+          </label>
+        )}
+        <button type="submit" className="accent" disabled={!canSave}>
+          {busy ? "Enregistrement…" : "Enregistrer"}
+        </button>
+      </form>
+    </>
+  );
+}
+
+function SoundPage({
+  embedded,
+  onBack,
+  onClose,
+}: {
+  embedded: boolean;
+  onBack: () => void;
+  onClose: () => void;
+}) {
+  const [prefs, setPrefs] = useState<AudioPrefs>(() => readAudioPrefs());
+
+  function set(next: Partial<AudioPrefs>) {
+    setPrefs(writeAudioPrefs(next));
+  }
+
+  return (
+    <>
+      <SubHead title="Son" embedded={embedded} onBack={onBack} onClose={onClose} />
+      <p className="profile-hint">
+        Coupe les effets de l’interface. La musique de fond n’est pas encore dans le jeu ; le
+        réglage est déjà là pour le jour où elle arrivera.
+      </p>
+      <div className="profile-form">
+        <label className="profile-switch">
+          <span>Effets sonores</span>
+          <input
+            type="checkbox"
+            checked={!prefs.muted}
+            onChange={(e) => set({ muted: !e.target.checked })}
+          />
+        </label>
+        <label>
+          Volume
+          <input
+            type="range"
+            min={0}
+            max={100}
+            value={Math.round(prefs.volume * 100)}
+            disabled={prefs.muted}
+            onChange={(e) => set({ volume: Number(e.target.value) / 100 })}
+          />
+        </label>
+      </div>
+    </>
+  );
+}

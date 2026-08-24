@@ -2085,6 +2085,77 @@ describe("code de secours", () => {
   });
 });
 
+describe("mise à jour du compte", () => {
+  it("refuse sans session", async () => {
+    const r = await appel("/auth/me", {
+      methode: "PATCH",
+      corps: { displayName: "Intrus" },
+    });
+    assert.equal(r.statut, 401);
+  });
+
+  it("change le pseudo sans redemander le code", async () => {
+    const moi = await inscrire("Patch Pseudo");
+    const r = await appel("/auth/me", {
+      methode: "PATCH",
+      jeton: moi.jeton,
+      corps: { displayName: "NouveauPseudo" },
+    });
+    assert.equal(r.statut, 200, JSON.stringify(r.corps));
+    const b = r.corps as { player: { displayName: string } };
+    assert.equal(b.player.displayName, "NouveauPseudo");
+  });
+
+  it("refuse un nouvel e-mail sans le code actuel", async () => {
+    const moi = await inscrire("Patch Mail Nu");
+    const r = await appel("/auth/me", {
+      methode: "PATCH",
+      jeton: moi.jeton,
+      corps: { email: `autre-${Date.now()}@test.fr` },
+    });
+    assert.equal(r.statut, 403);
+  });
+
+  it("change l'e-mail et le code avec le code actuel", async () => {
+    const moi = await inscrire("Patch Secret");
+    const neuf = `secret-${Date.now()}@test.fr`;
+    const r = await appel("/auth/me", {
+      methode: "PATCH",
+      jeton: moi.jeton,
+      corps: {
+        email: neuf,
+        accessCode: "nouveau-code",
+        currentAccessCode: "ferme",
+      },
+    });
+    assert.equal(r.statut, 200, JSON.stringify(r.corps));
+    const b = r.corps as { player: { email: string } };
+    assert.equal(b.player.email, neuf);
+
+    const ancien = await appel("/auth/login", {
+      methode: "POST",
+      corps: { email: moi.email, accessCode: "ferme" },
+    });
+    assert.equal(ancien.statut, 401);
+    const ok = await appel("/auth/login", {
+      methode: "POST",
+      corps: { email: neuf, accessCode: "nouveau-code" },
+    });
+    assert.equal(ok.statut, 200);
+  });
+
+  it("refuse un e-mail déjà pris", async () => {
+    const a = await inscrire("Patch Pris A");
+    const b = await inscrire("Patch Pris B");
+    const r = await appel("/auth/me", {
+      methode: "PATCH",
+      jeton: a.jeton,
+      corps: { email: b.email, currentAccessCode: "ferme" },
+    });
+    assert.equal(r.statut, 409);
+  });
+});
+
 /**
  * L'arbre de compétences, de bout en bout.
  *

@@ -4075,6 +4075,82 @@ app.get("/auth/me", async (req, res) => {
   res.json({ token: auth.session.token, player });
 });
 
+const patchMeSchema = z
+  .object({
+    displayName: z.string().min(2).max(32).optional(),
+    email: z.string().email().optional(),
+    accessCode: z.string().min(3).max(32).optional(),
+    currentAccessCode: z.string().min(1).max(32).optional(),
+  })
+  .refine(
+    (d) => Boolean(d.displayName || d.email || d.accessCode),
+    { message: "Rien à modifier" },
+  );
+
+/**
+ * Mettre à jour le compte connecté : pseudo, e-mail (identifiant), code d'accès.
+ *
+ * L'id Prisma ne se change pas — ce n'est pas un identifiant de joueur. Changer
+ * l'e-mail ou le code demande le code actuel, comme on le ferait d'un mot de
+ * passe. Les autres sessions tombent si le code change, pour que l'ancien
+ * n'ouvre plus la ferme ailleurs.
+ */
+app.patch("/auth/me", async (req, res) => {
+  const auth = await userFromAuthHeader(req);
+  if (!auth) {
+    res.status(401).json({ error: "Session invalide" });
+    return;
+  }
+  const parsed = patchMeSchema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json(parsed.error.flatten());
+    return;
+  }
+  const { displayName, email, accessCode, currentAccessCode } = parsed.data;
+  const needsSecret = Boolean(email || accessCode);
+  if (needsSecret && currentAccessCode !== auth.user.accessCode) {
+    res.status(403).json({ error: "Code d'accès actuel incorrect" });
+    return;
+  }
+
+  const data: { displayName?: string; email?: string; accessCode?: string } = {};
+  if (displayName && displayName !== auth.user.displayName) data.displayName = displayName;
+  if (email && normalizeEmail(email) !== normalizeEmail(auth.user.email)) {
+    const other = await findUserByEmail(email);
+    if (other && other.id !== auth.user.id) {
+      res.status(409).json({ error: "Email déjà utilisé" });
+      return;
+    }
+    data.email = email.trim();
+  }
+  if (accessCode && accessCode !== auth.user.accessCode) data.accessCode = accessCode;
+
+  if (!Object.keys(data).length) {
+    res.json({ player: await playerPayload(auth.user.id) });
+    return;
+  }
+
+  try {
+    await prisma.user.update({ where: { id: auth.user.id }, data });
+  } catch (e) {
+    if (typeof e === "object" && e && "code" in e && (e as { code: string }).code === "P2002") {
+      res.status(409).json({ error: "Email déjà utilisé" });
+      return;
+    }
+    console.error(e);
+    res.status(500).json({ error: "Erreur serveur" });
+    return;
+  }
+
+  if (data.accessCode) {
+    await prisma.session.deleteMany({
+      where: { userId: auth.user.id, token: { not: auth.session.token } },
+    });
+  }
+
+  res.json({ player: await playerPayload(auth.user.id) });
+});
+
 /* ------------------------------------------------------------------ */
 /* Quêtes                                                              */
 /* ------------------------------------------------------------------ */

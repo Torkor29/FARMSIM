@@ -53,12 +53,13 @@ const FOV = (38 * Math.PI) / 180;
  */
 const DIST_FIT = R / Math.sin(FOV / 2);
 
-const DIST_WORLD = DIST_FIT * 1.24;
-/** Continent choisi : on s'approche, mais le limbe reste visible. */
-const DIST_FOCUS = DIST_FIT * 0.92;
+/** Recul de la vue monde : assez pour voir le limbe et l'atmosphère, pas un gros plan. */
+const DIST_WORLD = DIST_FIT * 1.58;
+/** Continent choisi : on s'approche, le disque entier reste dans le cadre. */
+const DIST_FOCUS = DIST_FIT * 1.18;
 /** Continent survolé, sans engagement : à peine plus près que la vue monde. */
-const DIST_NEAR = DIST_FIT * 1.08;
-const DIST_MIN = DIST_FIT * 0.82;
+const DIST_NEAR = DIST_FIT * 1.32;
+const DIST_MIN = DIST_FIT * 0.95;
 const DIST_MAX = 12;
 
 /* ------------------------------------------------------------------ */

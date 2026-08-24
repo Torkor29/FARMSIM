@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { PriceSparkline } from "./PriceSparkline";
+import { MenuClose } from "./ui/MenuClose";
 import {
   DRYING,
   GOOD_DEFS,
@@ -300,9 +301,7 @@ export function MarketPanel({
               Vous avez <strong>{Math.round(crd)} €</strong>
             </p>
           </div>
-          <button type="button" className="ghost" onClick={onClose}>
-            Fermer
-          </button>
+          <MenuClose onClose={onClose} />
         </header>
 
         <div className="hall-doors" role="tablist" aria-label="Acheter ou vendre">

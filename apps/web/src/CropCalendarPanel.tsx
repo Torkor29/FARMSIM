@@ -10,6 +10,7 @@ import {
   weekdayIndex,
   type Season,
 } from "@farmsim/shared";
+import { MenuClose } from "./ui/MenuClose";
 
 /**
  * Le calendrier des cultures.
@@ -92,10 +93,8 @@ export function CropCalendarPanel({ hemisphere = "N", onClose }: Props) {
           <span>
             <i className="pastille recolte" /> Récolte
           </span>
-          <button type="button" className="ghost tiny" onClick={onClose}>
-            Fermer
-          </button>
         </div>
+        <MenuClose onClose={onClose} />
       </div>
 
       <div className="calendrier-grille" style={{ ["--jours" as string]: jours.length }}>

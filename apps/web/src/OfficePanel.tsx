@@ -16,6 +16,7 @@ import {
   type TradeGood,
 } from "@farmsim/shared";
 import { ZoneMap, type ZoneMapZone } from "./ZoneMap";
+import { MenuClose } from "./ui/MenuClose";
 
 export type OnlinePeer = {
   id: string;
@@ -512,9 +513,7 @@ export function OfficePanel({
             <strong className="gain">{money(toEarn)}</strong>
             <em>{board.length} offre(s)</em>
           </div>
-          <button type="button" className="ghost hdv-close" onClick={onClose}>
-            Fermer
-          </button>
+          <MenuClose onClose={onClose} />
         </header>
 
         <nav className="hdv-modes" aria-label="Modes">

@@ -22,6 +22,7 @@
 
 import { useEffect, useRef, type ReactNode } from "react";
 import { createPortal } from "react-dom";
+import { MenuClose } from "../MenuClose";
 
 type Props = {
   open: boolean;
@@ -103,9 +104,7 @@ export function Window({ open, title, subtitle, width = "regular", onClose, chil
             <h2>{title}</h2>
             {subtitle && <p>{subtitle}</p>}
           </div>
-          <button type="button" className="win-close" onClick={onClose} title="Fermer (Échap)">
-            Fermer <kbd>Échap</kbd>
-          </button>
+          <MenuClose onClose={onClose} label="Fermer (Échap)" />
         </header>
         <div className="win-body">{children}</div>
       </div>

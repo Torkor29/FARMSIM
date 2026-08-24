@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { SELLABLE_GOODS, GOOD_DEFS, xpForLevel, type TradeGood } from "@farmsim/shared";
+import { MenuClose } from "./ui/MenuClose";
 
 export type DevGrant = {
   crd?: number;
@@ -45,9 +46,7 @@ export function DevPanel({ open, onClose, busy, onGrant, onTick }: Props) {
       <div className="market-sheet glass dev-panel">
         <header className="market-head">
           <h2>Outils de test</h2>
-          <button type="button" className="ghost" onClick={onClose}>
-            Fermer
-          </button>
+          <MenuClose onClose={onClose} />
         </header>
         <p className="muted tiny">
           Visible uniquement sur un compte développeur. La trésorerie de ce

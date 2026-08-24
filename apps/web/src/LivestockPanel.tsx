@@ -7,6 +7,7 @@ import {
 import { herdAlerts, type HerdAlert } from "./ui/herd-alerts";
 import { AlertIcon } from "./ui/AlertIcon";
 import { Geste } from "./ui/Geste";
+import { MenuClose } from "./ui/MenuClose";
 import {
   YOUNG_PRICE_RATIO,
   YOUNG_GROW_MS,
@@ -504,11 +505,7 @@ export function LivestockPanel({
     <aside className={className} {...gesture}>
       <div className="panel-head">
         <h3>Élevage</h3>
-        {onClose && (
-          <button type="button" className="ghost tiny" onClick={onClose}>
-            Fermer
-          </button>
-        )}
+        {onClose && <MenuClose onClose={onClose} />}
       </div>
       {/* Trois lignes d'explication en tête de panneau, c'est cent dix pixels
           repris à chaque ouverture pour un texte qu'on ne lit qu'une fois — et

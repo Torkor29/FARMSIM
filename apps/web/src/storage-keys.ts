@@ -17,3 +17,6 @@ export const TUTORIAL_KEY = "farmsim_tutorial_v1";
 
 /** Drapeaux d'objectifs qui ne se déduisent pas de la ferme (vente, chantier…). */
 export const GUIDE_FLAGS_KEY = "farmsim_guide_flags_v1";
+
+/** Préférences sonores (coupure, volume). */
+export const AUDIO_KEY = "farmsim.audio";

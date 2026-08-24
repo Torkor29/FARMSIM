@@ -3,7 +3,7 @@ import { GlobeView, type GlobeContinent } from "./GlobeView";
 
 type Props = {
   continents: GlobeContinent[];
-  continentCode: string | null;
+  continentCode?: string | null;
   regionName: string;
   cityName: string;
   onDone: () => void;
@@ -12,7 +12,6 @@ type Props = {
 /** Plongée depuis le globe jusqu'à la parcelle, à chaque retour en jeu. */
 export function ArrivalTransition({
   continents,
-  continentCode,
   regionName,
   cityName,
   onDone,
@@ -27,9 +26,7 @@ export function ArrivalTransition({
       <div className="arrival-globe">
         <GlobeView
           continents={continents}
-          selected={continentCode}
-          focus
-          height={Math.min(420, Math.round(window.innerHeight * 0.5))}
+          height={Math.min(560, Math.round(window.innerHeight * 0.68))}
         />
       </div>
       <p className="arrival-caption">

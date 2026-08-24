@@ -7,6 +7,7 @@ import {
   withinRegret,
   type BuildingType,
 } from "@farmsim/shared";
+import { MenuClose } from "./ui/MenuClose";
 
 export type SheetBuilding = {
   id: string;
@@ -86,9 +87,7 @@ export function BuildingSheet({
               {(building.rotation ?? 0) * 90}°
             </p>
           </div>
-          <button type="button" className="ghost" onClick={onClose} aria-label="Fermer">
-            ✕
-          </button>
+          <MenuClose onClose={onClose} />
         </header>
 
         <p className="building-sheet-desc">{def.description}</p>

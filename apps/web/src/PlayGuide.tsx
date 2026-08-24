@@ -9,6 +9,7 @@ import {
   type GuideSnapshot,
   type ObjectiveView,
 } from "@farmsim/shared";
+import { MenuClose } from "./ui/MenuClose";
 
 type Props = {
   open: boolean;
@@ -55,9 +56,7 @@ export function PlayGuide({ open, snapshot, xp = 0, onClose }: Props) {
             <p className="guide-kicker">Toujours sous la main</p>
             <h2 id="guide-title">Guide de ferme</h2>
           </div>
-          <button type="button" className="guide-close" onClick={onClose} aria-label="Fermer">
-            Fermer
-          </button>
+          <MenuClose onClose={onClose} />
         </header>
 
         <nav className="guide-tabs" aria-label="Chapitres du guide">

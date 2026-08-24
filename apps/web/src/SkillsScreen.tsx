@@ -30,6 +30,7 @@ import {
   type SkillEffectKind,
 } from "@farmsim/shared";
 import { EFFECT_META, effectCap, effectSign, effectValue } from "./skill-effects";
+import { MenuClose } from "./ui/MenuClose";
 
 /** Les bonus déjà cumulés, tels que le serveur les a bornés. */
 export type SkillBonusView = Partial<Record<SkillEffectKind, number>>;
@@ -279,9 +280,7 @@ export function SkillsScreen({ open, skills, bonuses, onClose }: Props) {
             </span>
           </p>
 
-          <button type="button" className="skills-close" onClick={onClose} aria-label="Fermer">
-            Fermer
-          </button>
+          <MenuClose onClose={onClose} />
         </header>
 
         <nav className="skills-nav" aria-label="Vues des compétences">

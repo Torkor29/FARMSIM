@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 
 import { TUTORIAL_KEY } from "./storage-keys";
+import { MenuClose } from "./ui/MenuClose";
 
 type Step = {
   id: string;
@@ -85,6 +86,7 @@ export function TutorialOverlay({ open, onClose }: Props) {
   return (
     <div className="tutorial-backdrop" role="dialog" aria-modal="true" aria-labelledby="tut-title">
       <div className="tutorial-card glass">
+        <MenuClose onClose={finish} label="Fermer le tutoriel" />
         <div className="tutorial-progress">
           {STEPS.map((_, i) => (
             <span key={i} className={`tutorial-dot ${i <= step ? "on" : ""}`} />

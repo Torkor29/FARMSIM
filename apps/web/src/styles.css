@@ -2884,8 +2884,19 @@ html.playing .build-confirm { position: fixed; }
  * outils de développement — ne la laisse jamais apparaître sur grand écran.
  */
 .tab-drawer,
-.sheet-scrim,
-.profile-btn { display: none; }
+.sheet-scrim { display: none; }
+.logout-btn { display: none; }
+.profile-btn {
+  display: grid;
+  place-items: center;
+  min-width: 36px;
+  min-height: 36px;
+  padding: 0;
+  border-radius: 10px;
+  border: 1px solid var(--line);
+  background: var(--paper);
+  font-size: 0.95rem;
+}
 
 /* ——————————————————————————————————————————————————————————————
    Coque mobile
@@ -3010,6 +3021,15 @@ html.playing .build-confirm { position: fixed; }
     margin-top: 0.6rem;
   }
   .profile-actions button { min-height: 44px; }
+
+  /* Croix collée au coin du tiroir, à côté de la poignée. */
+  .game-stage.mobile .sheet .menu-close.sheet-x {
+    position: absolute;
+    top: 0.05rem;
+    right: 0.1rem;
+    margin: 0;
+    z-index: 3;
+  }
 
   .brush-cycle {
     font-weight: 800;
@@ -3210,9 +3230,16 @@ html.playing .build-confirm { position: fixed; }
   to { opacity: 1; }
 }
 .tutorial-card {
+  position: relative;
   width: min(420px, 100%);
   padding: 1.25rem 1.2rem 1.1rem;
   border-radius: 18px;
+}
+.tutorial-card .menu-close {
+  position: absolute;
+  top: 0.25rem;
+  right: 0.25rem;
+  margin: 0;
 }
 .tutorial-progress {
   display: flex;
@@ -5129,6 +5156,34 @@ button.tiny {
   color: var(--muted);
 }
 
+/*
+ * Croix de menu : glyphe de douze pixels, cible de quarante-quatre.
+ * Opacité basse pour rester discrète ; le survol / le focus la réveille.
+ */
+.menu-close {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 44px;
+  height: 44px;
+  margin: -6px -8px -6px 0;
+  padding: 0;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--ink);
+  opacity: 0.42;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+.menu-close:hover,
+.menu-close:focus-visible {
+  opacity: 0.88;
+  background: rgba(34, 49, 44, 0.06);
+}
+.menu-close:focus-visible { outline: 2px solid var(--teal-400, #3a9a86); outline-offset: 1px; }
+.menu-close svg { display: block; }
+
 .win-body {
   flex: 1;
   min-height: 0;
@@ -6830,4 +6885,206 @@ button.tiny {
   margin: 0;
   font-size: 0.88rem;
   color: var(--ink-soft);
+}
+
+/* —— Menu joueur (profil / réglages) —— */
+.profile-panel {
+  display: grid;
+  align-content: start;
+  gap: 0.75rem;
+}
+.profile-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.4rem;
+  min-height: 44px;
+}
+.profile-head h3 {
+  margin: 0;
+  font-size: 1.15rem;
+  line-height: 1.15;
+}
+.profile-head p {
+  margin: 0.12rem 0 0;
+  font-size: 0.78rem;
+  font-weight: 650;
+  color: var(--ink-soft);
+}
+.profile-ident {
+  display: flex;
+  align-items: center;
+  gap: 0.7rem;
+  min-width: 0;
+}
+.profile-avatar {
+  flex: none;
+  width: 2.5rem;
+  height: 2.5rem;
+  display: grid;
+  place-items: center;
+  border-radius: 12px;
+  background: linear-gradient(180deg, var(--teal-100, #d7efe8), var(--sand));
+  color: var(--teal-700);
+  font-family: "Baloo 2", Nunito, sans-serif;
+  font-size: 1.15rem;
+  font-weight: 800;
+}
+.profile-head.sub {
+  align-items: center;
+}
+.profile-head.sub h3 {
+  flex: 1;
+  font-size: 1.05rem;
+}
+.profile-back {
+  flex: none;
+  width: 44px;
+  height: 44px;
+  margin: -6px 0 -6px -10px;
+  border: 0;
+  background: transparent;
+  color: var(--ink);
+  font-size: 1.55rem;
+  line-height: 1;
+  opacity: 0.55;
+  cursor: pointer;
+}
+.profile-back:hover { opacity: 0.9; }
+.profile-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.profile-meta li {
+  padding: 0.22rem 0.55rem;
+  border-radius: 999px;
+  background: var(--sand);
+  border: 1px solid var(--line);
+  font-size: 0.72rem;
+  font-weight: 700;
+  color: var(--ink-soft);
+}
+.profile-meta li.dev {
+  background: var(--teal-100, #d7efe8);
+  color: var(--teal-700);
+  border-color: var(--teal-300, #8ec9bb);
+}
+.profile-groups { display: grid; gap: 0.65rem; }
+.profile-group {
+  display: grid;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  overflow: hidden;
+  background: var(--paper);
+}
+.profile-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.6rem;
+  width: 100%;
+  min-height: 52px;
+  padding: 0.55rem 0.85rem;
+  border: 0;
+  border-bottom: 1px solid var(--line);
+  background: transparent;
+  text-align: left;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+.profile-row:last-child { border-bottom: 0; }
+.profile-row span { display: grid; gap: 0.08rem; min-width: 0; }
+.profile-row strong { font-size: 0.92rem; }
+.profile-row em {
+  font-style: normal;
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: var(--ink-soft);
+}
+.profile-row i {
+  flex: none;
+  font-style: normal;
+  font-size: 1.25rem;
+  font-weight: 300;
+  color: var(--ink-soft);
+  opacity: 0.7;
+}
+.profile-row.static { cursor: default; }
+.profile-row:not(.static):hover { background: rgba(46, 142, 122, 0.06); }
+.profile-hint {
+  margin: 0;
+  font-size: 0.78rem;
+  line-height: 1.4;
+  color: var(--ink-soft);
+}
+.profile-form {
+  display: grid;
+  gap: 0.7rem;
+}
+.profile-form label {
+  display: grid;
+  gap: 0.28rem;
+  font-size: 0.72rem;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--ink-soft);
+}
+.profile-form input[type="text"],
+.profile-form input[type="email"],
+.profile-form input[type="password"] {
+  min-height: 44px;
+  padding: 0.45rem 0.7rem;
+  border-radius: 10px;
+  border: 1px solid var(--line);
+  background: var(--paper);
+  font: inherit;
+  font-size: 0.95rem;
+  font-weight: 600;
+  letter-spacing: 0;
+  text-transform: none;
+  color: var(--ink);
+}
+.profile-form input[type="range"] { width: 100%; padding: 0; }
+.profile-switch {
+  display: flex !important;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  text-transform: none;
+  letter-spacing: 0;
+  font-size: 0.95rem !important;
+  font-weight: 700 !important;
+  color: var(--ink) !important;
+}
+.profile-switch input { width: 1.15rem; height: 1.15rem; }
+.profile-logout {
+  justify-self: center;
+  min-height: 44px;
+  padding: 0.4rem 1rem;
+  border: 0;
+  background: transparent;
+  color: #a8382a;
+  font: inherit;
+  font-weight: 800;
+  cursor: pointer;
+}
+.profile-logout:hover { text-decoration: underline; }
+
+.tab-drawer .menu-close {
+  position: absolute;
+  top: -38px;
+  right: 0;
+  z-index: 2;
+  width: 36px;
+  height: 36px;
+  margin: 0;
+  background: var(--bar);
+  border: 1px solid var(--glass-border);
+  opacity: 0.7;
 }

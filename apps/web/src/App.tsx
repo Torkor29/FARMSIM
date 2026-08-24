@@ -167,6 +167,9 @@ const SEASON_HINTS: Record<Season, string> = {
 };
 import { DevPanel, type DevGrant } from "./DevPanel";
 import { NO_ALERTS, tabBadge, useAwayAlerts, useNotificationState, type FarmAlerts } from "./use-alerts";
+import { playUiSound } from "./audio";
+import { ProfilePanel } from "./ProfilePanel";
+import { MenuClose } from "./ui/MenuClose";
 
 const API = "/api";
 
@@ -277,6 +280,7 @@ type MachineListing = {
 type Player = {
   id: string;
   displayName: string;
+  email?: string;
   specialization: Specialization;
   level: number;
   xp: number;
@@ -569,17 +573,7 @@ function harvestGrainNote(r: {
   return `Récolte ${total} t · ${r.soldTons.toFixed(2)} t vendues (silo plein)${money}${hay}`;
 }
 
-/** Sons UI optionnels — ignorés tant qu’aucun asset n’est fourni */
-function playUiSound(_kind: "click" | "place") {
-  const urls: Partial<Record<"click" | "place", string>> = {};
-  const url = urls[_kind];
-  if (!url) return;
-  try {
-    new Audio(url).play().catch(() => undefined);
-  } catch {
-    /* skip */
-  }
-}
+/** Sons UI : voir `audio.ts` — coupés si le joueur les a coupés. */
 
 export function App() {
   const [zones, setZones] = useState<Zone[]>([]);
@@ -4938,7 +4932,7 @@ export function App() {
             <button
               type="button"
               className="profile-btn"
-              aria-label="Profil et déconnexion"
+              aria-label="Profil et réglages"
               onClick={() => setSheet((cur) => (cur === "PROFILE" ? null : "PROFILE"))}
             >
               ☰
@@ -5013,62 +5007,38 @@ export function App() {
         </div>
       )}
 
-      {sheet === "PROFILE" && isMobile && (
-        <aside className={panelClass("profile-panel", "PROFILE")} {...(isMobile ? sheetGesture : {})}>
-          <h3>{player.displayName}</h3>
-          <dl>
-            <div>
-              <dt>Niveau</dt>
-              <dd>
-                Nv.{player.level} · {player.xp} XP
-              </dd>
-            </div>
-            <div>
-              <dt>Trésorerie</dt>
-              <dd>{walletLabel(player)}</dd>
-            </div>
-            {hasUnlimitedFunds(player) && (
-              <div>
-                <dt>Compte</dt>
-                <dd>Développeur · argent illimité</dd>
-              </div>
-            )}
-            {player.bonuses && (
-              <div>
-                <dt>Bonus ferme</dt>
-                <dd>
-                  grain {player.bonuses.storageGrain} t · +
-                  {Math.round(player.bonuses.yieldBonus * 100)} % rendement
-                </dd>
-              </div>
-            )}
-          </dl>
-          <div className="profile-actions">
-            {notifications.state === "default" && (
-              <button type="button" className="ghost" onClick={notifications.ask}>
-                M’alerter en cas de problème
-              </button>
-            )}
-            {notifications.state === "granted" && (
-              <span className="muted tiny">Alertes activées</span>
-            )}
-            {notifications.state === "denied" && (
-              <span className="muted tiny">
-                Alertes refusées — à rouvrir dans les réglages du navigateur
-              </span>
-            )}
-            <button type="button" className="ghost" onClick={() => setShowGuide(true)}>
-              Guide de ferme
-            </button>
-            <button type="button" className="ghost" onClick={() => setShowTutorial(true)}>
-              Revoir le tutoriel
-            </button>
-            <button type="button" className="ghost" onClick={logout}>
-              Déconnexion
-            </button>
-          </div>
-        </aside>
-      )}
+      <PanelHost
+        mobile={isMobile}
+        open={sheet === "PROFILE"}
+        title={player.displayName}
+        subtitle="Réglages"
+        onClose={() => setSheet(null)}
+      >
+        {sheet === "PROFILE" && (
+          <ProfilePanel
+            className={panelClass("profile-panel", "PROFILE")}
+            gesture={isMobile ? sheetGesture : undefined}
+            embedded={!isMobile}
+            player={player}
+            notifications={notifications}
+            onClose={() => setSheet(null)}
+            onGuide={() => setShowGuide(true)}
+            onTutorial={() => setShowTutorial(true)}
+            onLogout={logout}
+            onPatchAccount={async (body) => {
+              const r = await api<{ player: Player }>("/auth/me", {
+                method: "PATCH",
+                body: JSON.stringify(body),
+              });
+              setPlayer(r.player);
+              if (r.player.email) setEmail(r.player.email);
+              if (body.displayName) setName(body.displayName);
+              return r.player;
+            }}
+            onFlash={flashToast}
+          />
+        )}
+      </PanelHost>
 
 
 
@@ -5154,7 +5124,10 @@ export function App() {
         >
         {(isMobile ? sheet === "GARAGE" : showGarage) && (
           <aside className={panelClass("garage-panel", "GARAGE")} {...(isMobile ? sheetGesture : {})}>
-            <h3 className="only-mobile">Garage</h3>
+            <div className="panel-head only-mobile">
+              <h3>Garage</h3>
+              <MenuClose onClose={() => setSheet(null)} />
+            </div>
             <p className="muted tiny">
               Graissez et nettoyez : la machine s’use moins et récolte un peu plus.
               Réparer ramène à mi-chemin, remettre à neuf va jusqu’à 100 %. Le
@@ -5763,7 +5736,10 @@ export function App() {
 
       <div className="rail rail-right">
         <aside className={panelClass("geo-panel", "INFO")} {...(isMobile ? sheetGesture : {})}>
-          <h3>{homeCity || zoneName}</h3>
+          <div className="panel-head">
+            <h3>{homeCity || zoneName}</h3>
+            {isMobile && <MenuClose onClose={() => setSheet(null)} />}
+          </div>
           <dl>
             <div>
               <dt>Région</dt>
@@ -5846,7 +5822,10 @@ export function App() {
             Au doigt la carte reste : c'est elle qui porte le tiroir. */}
         {isMobile && (
           <aside className={panelClass("build-panel", "BUILD")} {...(isMobile ? sheetGesture : {})}>
-            <h3>Construire</h3>
+            <div className="panel-head">
+              <h3>Construire</h3>
+              <MenuClose onClose={() => setSheet(null)} />
+            </div>
             {/* Au doigt, le catalogue reste dans le tiroir : il y occupe tout
                 l'écran, ce qui est le bon geste sur un téléphone. Sur bureau il
                 passe dans une fenêtre, et le rail ne garde que le choix courant.
@@ -6309,6 +6288,12 @@ export function App() {
           ) : null}
           {moreOpen && (
             <nav className="tab-drawer" aria-label="Panneaux">
+              <MenuClose
+                onClose={() => {
+                  setMoreOpen(false);
+                  setSheet(null);
+                }}
+              />
               {SHEET_TABS.map((t, i) => {
                 const disabled = t.key === "HERD" && !barns.length;
                 const badge = tabBadge(alerts, t.key);
