@@ -2447,16 +2447,6 @@ html.playing .build-confirm { position: fixed; }
   font-weight: 800;
   line-height: 1.2;
 }
-/* Le stock n'est pas une alerte : or, pas rouge, et on lit « Marché » en dessous. */
-.dock-badge.stock {
-  background: var(--gold-500);
-  color: #3a2a00;
-  right: 0.1rem;
-  left: auto;
-  max-width: calc(100% - 0.2rem);
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
 
 .action {
   border-radius: var(--r-sm);

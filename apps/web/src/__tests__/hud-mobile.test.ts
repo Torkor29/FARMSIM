@@ -169,16 +169,19 @@ describe("le plateau tactile", () => {
     expect(APP).toMatch(/directSeed: sowingDirect/);
   });
 
-  it("garde « Marché » sous le sac, et le stock en pastille", () => {
+  it("écrit Ventes, le nom du menu, pas un tonnage", () => {
     /*
-     * Capture : le cinquième bouton affichait « 79 t » à la place de
-     * « Marché », sous un sac marqué €. On ne savait plus si c'était
-     * de l'argent ou du grain. Le mot reste ; le tonnage se pose en badge.
+     * Capture : sac € + « 79 t ». On ne savait pas quel panneau ça ouvrait.
+     * Le panneau s'intitule « Hôtel des ventes » ; le bouton porte le mot
+     * qui s'y lit, et plus rien d'autre.
      */
+    expect(fs.readFileSync("src/ui/tool-options.ts", "utf8")).toMatch(
+      /id: "SELL", label: "Ventes"/,
+    );
+    expect(fs.readFileSync("src/MarketPanel.tsx", "utf8")).toMatch(/<h2>Hôtel des ventes<\/h2>/);
     expect(DOCK).toMatch(/className="dock-label">\{g\.label\}/);
-    expect(DOCK).toMatch(/dock-badge stock/);
-    expect(DOCK).not.toMatch(/stockTons > 0 \? `\$\{stockTons/);
-    expect(regle(".dock-badge.stock")).toMatch(/gold-500/);
+    expect(DOCK).not.toMatch(/stockTons/);
+    expect(DOCK).not.toMatch(/dock-badge stock/);
   });
 
   it("n’anime plus les menus depuis le bord de l’écran", () => {
