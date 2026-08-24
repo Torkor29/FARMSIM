@@ -12,6 +12,7 @@ const css = fs.readFileSync("src/styles.css", "utf8");
 
 describe("la fiche des paliers d'engins", () => {
   it("existe et prévisualise avant l'achat comme avant l'amélioration", () => {
+    expect(sheet).toContain("createPortal");
     expect(sheet).toContain("MachineView3D");
     expect(sheet).toContain("fiche.bonus");
     expect(sheet).toContain("Améliorer");

@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { createPortal } from "react-dom";
 import {
   MACHINE_ART,
   MACHINE_DEFS,
@@ -144,10 +145,13 @@ export function MachineSheet({
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose();
+      if (e.key !== "Escape") return;
+      e.preventDefault();
+      e.stopImmediatePropagation();
+      onClose();
     };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
+    window.addEventListener("keydown", onKey, true);
+    return () => window.removeEventListener("keydown", onKey, true);
   }, [onClose]);
 
   const type = preview.type;
@@ -188,7 +192,7 @@ export function MachineSheet({
         ? fiche.label
         : `Acheter · ${fiche.label}`;
 
-  return (
+  const ficheEl = (
     <div className="sheet-backdrop machine-sheet-backdrop" onClick={onClose}>
       <div
         className="building-sheet machine-sheet glass"
@@ -212,6 +216,7 @@ export function MachineSheet({
           <MenuClose onClose={onClose} />
         </header>
 
+        <div className="machine-sheet-body">
         <div className="machine-sheet-art">
           <MachineView3D type={type} tier={shownTier} height={188} turntable />
           <img className="machine-sheet-thumb" src={MACHINE_ART[type]} alt="" />
@@ -280,8 +285,10 @@ export function MachineSheet({
             <strong>{coutUpgrade.toLocaleString("fr-FR")} €</strong>.
           </p>
         )}
+        </div>
 
-        <div className="building-sheet-actions">
+        <footer className="machine-sheet-foot">
+        <div className="building-sheet-actions machine-sheet-actions">
           {preview.mode === "buy" && (
             <button
               type="button"
@@ -325,7 +332,10 @@ export function MachineSheet({
         {(achatBloque || (preview.mode === "upgrade" && upgradeBloque)) && (
           <p className="machine-sheet-block">{achatBloque ?? upgradeBloque}</p>
         )}
+        </footer>
       </div>
     </div>
   );
+
+  return createPortal(ficheEl, document.body);
 }
