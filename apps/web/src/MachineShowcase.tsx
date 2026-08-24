@@ -38,8 +38,8 @@ export function MachineShowcase() {
         <h1>Atelier — parc matériel 3D</h1>
         <p>
           Les onze engins du jeu, montés en géométrie procédurale et animés par la
-          distance parcourue. Cinq paliers par famille : un T5 n’est pas un T1 agrandi
-          — plus de corps, une rampe plus large, un jumelage, une presse cubique.
+          distance parcourue.           Cinq paliers par famille : un T5 n’est pas un T1 agrandi
+          — chenilles, papillon, presse cubique, et chaque palier a sa silhouette.
         </p>
         <div className="atelier-controls">
           <span className="atelier-speed">

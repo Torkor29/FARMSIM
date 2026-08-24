@@ -80,6 +80,187 @@ function atTier<T>(tier: MachineTier, values: readonly [T, T, T, T, T]): T {
   return values[tier - 1]!;
 }
 
+/**
+ * Pignon de chenille : moyeu fonte, couronne acier, dents. Ce n’est pas un
+ * pneu agricole — un T5 lu de loin doit poser une bande, pas quatre jantes
+ * jumelées de plus.
+ */
+function crawlerSprocket(radius: number, width: number): Part {
+  const p = new Part();
+  const hw = width * 0.5;
+  p.add(
+    "cast",
+    lathe(
+      [
+        [radius * 0.2, -hw * 0.58],
+        [radius * 0.66, -hw * 0.48],
+        [radius * 0.66, hw * 0.48],
+        [radius * 0.2, hw * 0.58],
+      ],
+      14,
+      [0, 0, 0],
+    ),
+  );
+  p.add(
+    "steel",
+    lathe(
+      [
+        [radius * 0.5, -hw * 0.9],
+        [radius * 0.9, -hw * 0.4],
+        [radius * 0.9, hw * 0.4],
+        [radius * 0.5, hw * 0.9],
+      ],
+      16,
+      [0, 0, 0],
+    ),
+  );
+  const teeth: THREE.BufferGeometry[] = [];
+  const n = 12;
+  for (let i = 0; i < n; i++) {
+    const a = (i / n) * Math.PI * 2;
+    teeth.push(
+      box(
+        radius * 0.065,
+        radius * 0.14,
+        width * 0.5,
+        [Math.cos(a) * radius * 0.84, Math.sin(a) * radius * 0.84, 0],
+        [0, 0, a],
+      ),
+    );
+  }
+  p.add("steel", ...teeth);
+  p.add("rim", cyl(radius * 0.16, radius * 0.16, width * 0.36, 10, [0, 0, 0], [HALF, 0, 0]));
+  return p;
+}
+
+/** Galet de bogie : petit cylindre caoutchouc, rôle `wheel` pour l’avance. */
+function addTrackRoller(parent: Part, pos: Vec3, radius: number, width: number): void {
+  const node = parent.child(pos, { role: "wheel", radius });
+  node.add(
+    "rubber",
+    lathe(
+      [
+        [radius * 0.4, -width * 0.4],
+        [radius, -width * 0.3],
+        [radius, width * 0.3],
+        [radius * 0.4, width * 0.4],
+      ],
+      12,
+      [0, 0, 0],
+    ),
+  );
+  node.add("cast", cyl(radius * 0.26, radius * 0.26, width * 0.42, 8, [0, 0, 0], [HALF, 0, 0]));
+}
+
+/**
+ * Un train de chenilles, lu de loin : deux pignons acier, galets, bande
+ * continue et patins à crampons. Le bas des patins pose au sol — pas les
+ * pignons, légèrement relevés, comme sur une vraie Terra Trac / Quadtrac.
+ *
+ * C’est ça qui fait un T5, pas un jumelage de plus : la bande noire longue,
+ * les galets, le flanc.
+ */
+function addCrawlerTrack(
+  parent: Part,
+  x: number,
+  z: number,
+  span: number,
+  radius: number,
+  width: number,
+): void {
+  const padH = 0.028;
+  const lift = 0.02;
+  const sy = radius + lift;
+  for (const dx of [span / 2, -span / 2] as const) {
+    parent
+      .child([x + dx, sy, z], { role: "wheel", radius })
+      .attach(crawlerSprocket(radius, width * 0.72));
+  }
+  // Bâti du bogie, longeron, tendeur.
+  parent.add(
+    "paintDark",
+    roundedBox(span + radius * 0.4, radius * 0.78, width * 0.42, 0.04, [x, sy + radius * 0.06, z]),
+  );
+  parent.add(
+    "cast",
+    cyl(0.03, 0.03, span * 0.86, 8, [x, sy * 0.9, z], [0, 0, HALF]),
+    roundedBox(0.08, radius * 0.5, width * 0.5, 0.02, [x + span / 2 + radius * 0.15, sy, z]),
+  );
+  parent.add(
+    "paint",
+    roundedBox(span * 0.62, 0.05, width * 0.78, 0.016, [x, sy + radius * 0.68, z]),
+    roundedBox(0.09, 0.07, width * 0.55, 0.02, [x - span * 0.12, sy + radius * 0.55, z]),
+  );
+  // Galets porteurs au sol — c’est le train, pas deux pignons seuls.
+  const nRoll = Math.max(3, Math.round(span / 0.15));
+  const rollR = radius * 0.36;
+  for (let i = 0; i < nRoll; i++) {
+    const t = (i + 1) / (nRoll + 1);
+    const rx = x - span / 2 + t * span;
+    addTrackRoller(parent, [rx, rollR + lift * 0.45, z], rollR, width * 0.8);
+  }
+  // Galets de retour, sous le brin supérieur.
+  const nRet = Math.max(2, Math.round(span / 0.28));
+  for (let i = 0; i < nRet; i++) {
+    const t = (i + 1) / (nRet + 1);
+    const rx = x - span / 2 + t * span;
+    parent.add(
+      "cast",
+      cyl(radius * 0.22, radius * 0.22, width * 0.55, 10, [rx, sy + radius * 0.52, z], [HALF, 0, 0]),
+    );
+  }
+  // Flancs + bande continue : sans eux, en iso, on ne lit qu’une file de roues.
+  parent.add(
+    "rubber",
+    roundedBox(span + radius * 1.75, radius * 1.55, 0.028, 0.012, [x, sy, z + width * 0.5]),
+    roundedBox(span + radius * 1.75, radius * 1.55, 0.028, 0.012, [x, sy, z - width * 0.5]),
+    roundedBox(span, 0.03, width * 0.94, 0.008, [x, lift + 0.002, z]),
+    roundedBox(span, 0.03, width * 0.94, 0.008, [x, sy + radius, z]),
+  );
+  // Guide central, entre les dents du pignon.
+  parent.add(
+    "paintDark",
+    roundedBox(span + radius * 0.2, radius * 0.22, 0.04, 0.01, [x, sy - radius * 0.15, z]),
+  );
+  // Patins à crampons tout autour du stade — c’est la chenille.
+  const peri = 2 * span + Math.PI * 2 * radius;
+  const nPads = Math.max(22, Math.round(peri / 0.058));
+  const padL = (peri / nPads) * 0.86;
+  const pads: THREE.BufferGeometry[] = [];
+  const grousers: THREE.BufferGeometry[] = [];
+  for (let i = 0; i < nPads; i++) {
+    const s = (i / nPads) * peri;
+    let px: number;
+    let py: number;
+    let rotZ = 0;
+    if (s < span) {
+      px = x - span / 2 + s;
+      py = lift;
+      rotZ = 0;
+    } else if (s < span + Math.PI * radius) {
+      const a = -HALF + (s - span) / radius;
+      px = x + span / 2 + Math.cos(a) * radius;
+      py = sy + Math.sin(a) * radius;
+      rotZ = a + HALF;
+    } else if (s < 2 * span + Math.PI * radius) {
+      px = x + span / 2 - (s - span - Math.PI * radius);
+      py = sy + radius;
+      rotZ = 0;
+    } else {
+      const a = HALF + (s - 2 * span - Math.PI * radius) / radius;
+      px = x - span / 2 + Math.cos(a) * radius;
+      py = sy + Math.sin(a) * radius;
+      rotZ = a + HALF;
+    }
+    pads.push(roundedBox(padL, padH, width, 0.005, [px, py, z], [0, 0, rotZ]));
+    // Crampon qui déborde en largeur, pas vers le sol : lu de profil.
+    grousers.push(
+      roundedBox(padL * 0.42, padH * 0.7, width * 1.16, 0.004, [px, py, z], [0, 0, rotZ]),
+    );
+  }
+  parent.add("rubber", ...pads, ...grousers);
+}
+
 /* ------------------------------------------------------------------ */
 /* Tracteur                                                            */
 /* ------------------------------------------------------------------ */
@@ -91,11 +272,12 @@ const FRONT_W = 0.125;
 
 function buildTractor(tier: MachineTier = 1): Blueprint {
   const root = new Part();
-  const rearR = tier >= 4 ? 0.255 : REAR_R;
-  const rearW = tier >= 4 ? 0.165 : REAR_W;
-  const frontR = tier >= 4 ? 0.175 : FRONT_R;
-  const frontW = tier >= 4 ? 0.13 : FRONT_W;
-  const dual = tier >= 5;
+  const tracks = tier >= 5;
+  const rearR = atTier(tier, [REAR_R, 0.242, 0.248, 0.255, REAR_R]);
+  const rearW = atTier(tier, [REAR_W, 0.17, 0.168, 0.165, REAR_W]);
+  const frontR = atTier(tier, [FRONT_R, 0.155, 0.165, 0.175, FRONT_R]);
+  const frontW = atTier(tier, [FRONT_W, 0.126, 0.128, 0.13, FRONT_W]);
+  const dual = tier === 4;
   const rearTrack = dual ? ([0.2, 0.38, -0.2, -0.38] as const) : ([0.238, -0.238] as const);
   const fenderTrack = dual ? ([0.38, -0.38] as const) : ([0.238, -0.238] as const);
 
@@ -146,11 +328,17 @@ function buildTractor(tier: MachineTier = 1): Blueprint {
     root.add("lamp", cyl(0.03, 0.03, 0.02, 14, [0.553, 0.47, z], [0, 0, HALF]));
   }
   root.add("steel", roundedBox(0.05, 0.1, 0.26, 0.02, [0.6, 0.28, 0]));
+  const nWeights = atTier(tier, [5, 5, 6, 7, 8]);
   const weights: THREE.BufferGeometry[] = [];
-  for (let i = 0; i < 5; i++) {
-    weights.push(roundedBox(0.045, 0.1, 0.042, 0.012, [0.632, 0.27, -0.096 + i * 0.048]));
+  for (let i = 0; i < nWeights; i++) {
+    weights.push(
+      roundedBox(0.045, 0.1, 0.042, 0.012, [0.632, 0.27, -((nWeights - 1) * 0.048) / 2 + i * 0.048]),
+    );
   }
   root.add("cast", ...weights);
+  if (tier >= 3) {
+    root.add("steel", roundedBox(0.08, 0.14, 0.3, 0.02, [0.66, 0.28, 0]));
+  }
 
   /* — Échappement ————————————————————————————————————— */
   root.add(
@@ -212,6 +400,46 @@ function buildTractor(tier: MachineTier = 1): Blueprint {
     .child([-0.22, cabTop + 0.08, 0.16], { role: "beacon" })
     .add("steel", cyl(0.022, 0.022, 0.02, 10, [0, 0, 0]))
     .add("beacon", cyl(0.026, 0.03, 0.05, 12, [0, 0.03, 0]));
+  if (tier >= 2) {
+    root.add("plastic", roundedBox(0.22, 0.03, 0.06, 0.01, [-0.07, cabTop + 0.08, 0]));
+    for (const z of [0.08, -0.08] as const) {
+      root.add("lamp", box(0.04, 0.018, 0.03, [-0.07, cabTop + 0.095, z]));
+    }
+  }
+  if (tier >= 3) {
+    root.add("plastic", roundedBox(0.16, 0.04, 0.48, 0.012, [-0.07, cabTop + 0.075, 0]));
+    for (const z of [0.18, -0.18] as const) {
+      root.add("lamp", box(0.03, 0.016, 0.04, [-0.07, cabTop + 0.1, z]));
+    }
+  }
+  if (tier >= 4) {
+    root.add("paint", roundedBox(0.54, 0.04, 0.52, 0.05, [-0.07, cabTop + 0.07, 0]));
+    root.add("steel", roundedBox(0.3, 0.02, 0.08, 0.008, [-0.28, cabTop + 0.1, 0]));
+    root.add("plastic", ball(0.028, [-0.18, cabTop + 0.12, 0]));
+    root.add("chrome", cyl(0.012, 0.012, 0.04, 8, [-0.18, cabTop + 0.145, 0]));
+  }
+  if (tier >= 5) {
+    root.add(
+      "plastic",
+      cyl(0.026, 0.03, 0.34, 16, [0.32, 0.72, -0.126]),
+      cyl(0.034, 0.034, 0.12, 16, [0.32, 0.62, -0.126]),
+    );
+    root.add("chrome", cyl(0.03, 0.026, 0.06, 16, [0.32, 0.9, -0.126], [0, 0, 0.22]));
+    // Snorkel d’admission : le géant respire haut.
+    root.add(
+      "plastic",
+      cyl(0.028, 0.032, 0.22, 12, [0.22, 0.68, 0.18]),
+      cyl(0.036, 0.036, 0.08, 12, [0.22, 0.8, 0.18], [0, 0, HALF]),
+    );
+    for (const z of [0.24, -0.24] as const) {
+      root.add("steel", cyl(0.01, 0.01, 0.18, 8, [0.16, cabTop + 0.05, z], [HALF, 0, 0.32]));
+      root.add("plastic", roundedBox(0.045, 0.09, 0.08, 0.012, [0.18, cabTop + 0.03, z]));
+      root.add("lamp", box(0.014, 0.04, 0.055, [0.205, cabTop + 0.03, z]));
+    }
+    for (const z of [0.12, 0, -0.12] as const) {
+      root.add("lamp", box(0.05, 0.02, 0.035, [-0.07, cabTop + 0.12, z]));
+    }
+  }
 
   /* — Poste de conduite ————————————————————————————————— */
   root.add(
@@ -230,20 +458,22 @@ function buildTractor(tier: MachineTier = 1): Blueprint {
   );
 
   /* — Garde-boue et marchepieds ————————————————————————— */
-  for (const z of fenderTrack) {
-    const from = Math.PI * 0.1;
-    const span = Math.PI * 0.72;
-    root.add("paint", shell(rearR + 0.03, rearW + 0.012, from, span, [-0.26, rearR, z]));
-    root.add(
-      "paintDark",
-      ring(rearR + 0.03, 0.007, 24, span, [-0.26, rearR, z + (z > 0 ? 0.007 : -0.007)], [0, 0, from]),
-    );
-    root.add("paint", roundedBox(0.2, 0.016, rearW + 0.01, 0.008, [-0.26, rearR + 0.032, z]));
-    root.add(
-      "steel",
-      roundedBox(0.16, 0.014, 0.07, 0.01, [-0.09, 0.34, z * 0.95]),
-      cyl(0.009, 0.009, 0.12, 6, [-0.09, 0.4, z * 0.95]),
-    );
+  if (!tracks) {
+    for (const z of fenderTrack) {
+      const from = Math.PI * 0.1;
+      const span = Math.PI * 0.72;
+      root.add("paint", shell(rearR + 0.03, rearW + 0.012, from, span, [-0.26, rearR, z]));
+      root.add(
+        "paintDark",
+        ring(rearR + 0.03, 0.007, 24, span, [-0.26, rearR, z + (z > 0 ? 0.007 : -0.007)], [0, 0, from]),
+      );
+      root.add("paint", roundedBox(0.2, 0.016, rearW + 0.01, 0.008, [-0.26, rearR + 0.032, z]));
+      root.add(
+        "steel",
+        roundedBox(0.16, 0.014, 0.07, 0.01, [-0.09, 0.34, z * 0.95]),
+        cyl(0.009, 0.009, 0.12, 6, [-0.09, 0.4, z * 0.95]),
+      );
+    }
   }
 
   /* — Relevage trois points, prise de force, flexibles ——————————— */
@@ -297,22 +527,41 @@ function buildTractor(tier: MachineTier = 1): Blueprint {
   );
 
   /* — Trains roulants ————————————————————————————————— */
-  for (const z of rearTrack) {
-    root
-      .child([-0.26, rearR, z], { role: "wheel", radius: rearR })
-      .attach(wheelPart(rearR, rearW, 14));
-  }
-  const steer = root.child([0.36, frontR, 0], { role: "steer" });
-  for (const z of [0.208, -0.208] as const) {
-    steer.child([0, 0, z], { role: "wheel", radius: frontR }).attach(wheelPart(frontR, frontW, 12));
-    steer.add("cast", cyl(0.022, 0.022, 0.06, 10, [0, 0, z * 0.72], [HALF, 0, 0]));
-    steer.add(
-      "paint",
-      shell(frontR + 0.03, frontW + 0.018, Math.PI * 0.12, Math.PI * 0.66, [0, 0, z], 20),
-    );
+  if (tracks) {
+    // Quadtrac : quatre chenilles longues, pas un T4 jumelé agrandi.
+    addCrawlerTrack(root, -0.24, 0.46, 0.7, 0.175, 0.21);
+    addCrawlerTrack(root, -0.24, -0.46, 0.7, 0.175, 0.21);
+    const steer = root.child([0.42, 0, 0], { role: "steer" });
+    addCrawlerTrack(steer, 0, 0.4, 0.5, 0.142, 0.185);
+    addCrawlerTrack(steer, 0, -0.4, 0.5, 0.142, 0.185);
+    root.add("cast", roundedBox(0.88, 0.1, 0.5, 0.03, [0.06, 0.14, 0]));
+    root.add("paintDark", roundedBox(0.28, 0.14, 0.86, 0.03, [-0.24, 0.24, 0]));
+    // Capots de chenille : le train n’est pas nu.
+    for (const z of [0.46, -0.46] as const) {
+      root.add("paint", roundedBox(0.62, 0.055, 0.22, 0.02, [-0.24, 0.4, z]));
+      root.add("steel", roundedBox(0.08, 0.16, 0.06, 0.015, [-0.08, 0.3, z * 0.72]));
+    }
+    for (const z of [0.4, -0.4] as const) {
+      steer.add("paint", roundedBox(0.42, 0.045, 0.2, 0.018, [0, 0.34, z]));
+    }
+  } else {
+    for (const z of rearTrack) {
+      root
+        .child([-0.26, rearR, z], { role: "wheel", radius: rearR })
+        .attach(wheelPart(rearR, rearW, 14));
+    }
+    const steer = root.child([0.36, frontR, 0], { role: "steer" });
+    for (const z of [0.208, -0.208] as const) {
+      steer.child([0, 0, z], { role: "wheel", radius: frontR }).attach(wheelPart(frontR, frontW, 12));
+      steer.add("cast", cyl(0.022, 0.022, 0.06, 10, [0, 0, z * 0.72], [HALF, 0, 0]));
+      steer.add(
+        "paint",
+        shell(frontR + 0.03, frontW + 0.018, Math.PI * 0.12, Math.PI * 0.66, [0, 0, z], 20),
+      );
+    }
   }
 
-  return { root, length: tier >= 5 ? 1.5 : 1.35, hitch: [-0.64, 0.16, 0], eye: [0, 0, 0] };
+  return { root, length: tracks ? 1.72 : 1.35, hitch: [-0.64, 0.16, 0], eye: [0, 0, 0] };
 }
 
 /* ------------------------------------------------------------------ */
@@ -326,7 +575,7 @@ function buildHarvester(tier: MachineTier = 1): Blueprint {
   const STEER_R = 0.135;
   // Largeur de coupe : T1 4,2 m → T5 12,3 m, en unités monde. Le T1 garde
   // le bec déjà en jeu (1,1) ; les paliers suivants l'élargissent vraiment.
-  const headerW = atTier(tier, [1.1, 1.22, 1.36, 1.52, 1.72]);
+  const headerW = atTier(tier, [1.1, 1.24, 1.4, 1.6, 1.88]);
   const hs = headerW / 1.1;
 
   /* — Caisse : un profil de côté, capot moteur incliné à l'arrière —— */
@@ -417,6 +666,27 @@ function buildHarvester(tier: MachineTier = 1): Blueprint {
       .child([0.14, cabTop + 0.08, z], { role: "beacon" })
       .add("steel", cyl(0.02, 0.02, 0.02, 10, [0, 0, 0]))
       .add("beacon", cyl(0.024, 0.028, 0.045, 12, [0, 0.03, 0]));
+  }
+  if (tier >= 2) {
+    root.add("plastic", roundedBox(0.28, 0.03, 0.08, 0.01, [0.3, cabTop + 0.08, 0]));
+    for (const z of [0.08, -0.08] as const) {
+      root.add("lamp", box(0.05, 0.018, 0.035, [0.3, cabTop + 0.095, z]));
+    }
+  }
+  if (tier >= 3) {
+    root.add("trim", roundedBox(0.8, 0.04, 0.58, 0.015, [-0.14, 0.9, 0]));
+    root.add("grain", roundedBox(0.7, 0.05, 0.5, 0.03, [-0.15, 0.87, 0]));
+  }
+  if (tier >= 5) {
+    root.add(
+      "plastic",
+      cyl(0.028, 0.032, 0.3, 14, [-0.48, 0.78, -0.19]),
+      cyl(0.036, 0.036, 0.1, 14, [-0.48, 0.66, -0.19]),
+    );
+    root.add("chrome", cyl(0.032, 0.028, 0.05, 14, [-0.48, 0.95, -0.19], [0, 0, 0.2]));
+    for (const z of [0.2, 0, -0.2] as const) {
+      root.add("lamp", box(0.04, 0.02, 0.04, [0.3, cabTop + 0.11, z]));
+    }
   }
   // Échelle d'accès et main courante
   for (const z of [0.28] as const) {
@@ -515,30 +785,59 @@ function buildHarvester(tier: MachineTier = 1): Blueprint {
   }
 
   /* — Vis de déchargement ————————————————————————————— */
+  const augerLen = atTier(tier, [0.74, 0.82, 0.92, 1.04, 1.18]);
   const auger = root.child([-0.3, 0.9, 0.2], { role: "auger" });
-  auger.add("paint", cyl(0.06, 0.06, 0.74, 14, [-0.36, 0.02, 0], [0, 0, HALF]));
+  auger.add("paint", cyl(0.06, 0.06, augerLen, 14, [-augerLen / 2, 0.02, 0], [0, 0, HALF]));
   auger.add(
     "cast",
-    roundedBox(0.12, 0.14, 0.12, 0.03, [-0.72, -0.05, 0]),
+    roundedBox(0.12, 0.14, 0.12, 0.03, [-augerLen, -0.05, 0]),
     cyl(0.05, 0.05, 0.13, 10, [-0.02, -0.06, 0]),
   );
   auger.add("steel", roundedBox(0.18, 0.03, 0.03, 0.01, [-0.16, 0.08, 0]));
+  if (tier >= 4) {
+    auger.add("paintDark", cyl(0.045, 0.07, 0.12, 10, [-augerLen - 0.04, -0.02, 0], [0, 0, HALF]));
+  }
 
   /* — Trains roulants ————————————————————————————————— */
-  // T5 : jumelage des motrices, comme le tracteur géant — pas un T1 élargi.
-  const driveZs = tier >= 5 ? ([0.22, 0.38, -0.22, -0.38] as const) : ([0.28, -0.28] as const);
-  for (const z of driveZs) {
-    root
-      .child([0.12, DRIVE_R, z], { role: "wheel", radius: DRIVE_R })
-      .attach(wheelPart(DRIVE_R, DRIVE_W, 16));
+  if (tier >= 5) {
+    // Terra Trac intégral : deux longues motrices, deux directrices derrière.
+    addCrawlerTrack(root, 0.08, 0.44, 0.84, 0.168, 0.22);
+    addCrawlerTrack(root, 0.08, -0.44, 0.84, 0.168, 0.22);
+    root.add("paintDark", roundedBox(0.62, 0.12, 0.62, 0.03, [0.08, 0.3, 0]));
+    for (const z of [0.44, -0.44] as const) {
+      root.add("paint", roundedBox(0.7, 0.05, 0.24, 0.02, [0.08, 0.42, z]));
+    }
+    // Broyeur de paille : le T5 n’a plus un capot nu à l’arrière.
+    root.add("cast", roundedBox(0.16, 0.14, 0.5, 0.03, [-0.9, 0.32, 0]));
+    for (const z of [0.16, -0.16] as const) {
+      const spin = root.child([-0.92, 0.28, z], { role: "spinner", spin: z > 0 ? 1 : -1 });
+      spin.add("steel", cyl(0.06, 0.06, 0.04, 10, [0, 0, 0], [HALF, 0, 0]));
+      spin.add("rim", roundedBox(0.12, 0.016, 0.016, 0.004, [0, 0, 0]));
+    }
+    const steer = root.child([-0.64, 0, 0], { role: "steer" });
+    addCrawlerTrack(steer, 0, 0.34, 0.5, 0.128, 0.17);
+    addCrawlerTrack(steer, 0, -0.34, 0.5, 0.128, 0.17);
+    for (const z of [0.34, -0.34] as const) {
+      steer.add("paint", roundedBox(0.4, 0.04, 0.18, 0.015, [0, 0.3, z]));
+    }
+  } else {
+    const driveZs = tier >= 4 ? ([0.22, 0.38, -0.22, -0.38] as const) : ([0.28, -0.28] as const);
+    for (const z of driveZs) {
+      root
+        .child([0.12, DRIVE_R, z], { role: "wheel", radius: DRIVE_R })
+        .attach(wheelPart(DRIVE_R, DRIVE_W, 16));
+    }
+    if (tier >= 4) {
+      root.add("cast", roundedBox(0.14, 0.12, 0.46, 0.03, [-0.88, 0.3, 0]));
+    }
+    const steer = root.child([-0.58, STEER_R, 0], { role: "steer" });
+    for (const z of [0.19, -0.19] as const) {
+      steer.child([0, 0, z], { role: "wheel", radius: STEER_R }).attach(wheelPart(STEER_R, 0.11, 10));
+    }
+    steer.add("cast", cyl(0.03, 0.03, 0.34, 10, [0, 0, 0], [HALF, 0, 0]));
   }
-  const steer = root.child([-0.58, STEER_R, 0], { role: "steer" });
-  for (const z of [0.19, -0.19] as const) {
-    steer.child([0, 0, z], { role: "wheel", radius: STEER_R }).attach(wheelPart(STEER_R, 0.11, 10));
-  }
-  steer.add("cast", cyl(0.03, 0.03, 0.34, 10, [0, 0, 0], [HALF, 0, 0]));
 
-  return { root, length: 1.95, hitch: [-0.9, 0.3, 0], eye: [0, 0, 0] };
+  return { root, length: atTier(tier, [1.95, 1.98, 2.04, 2.12, 2.55]), hitch: [-0.9, 0.3, 0], eye: [0, 0, 0] };
 }
 
 /* ------------------------------------------------------------------ */
@@ -607,6 +906,25 @@ function buildSpreader(tier: MachineTier = 1): Blueprint {
     roundedBox(0.04, 0.035, hopD + 0.1, 0.012, [CX - hopHalf + 0.03, hopTop + 0.015, 0]),
   );
   root.add("grain", roundedBox(hopHalf * 1.56, 0.04, hopD * 0.89, 0.03, [CX, hopTop - 0.04, 0]));
+  if (tier >= 2) {
+    root.add("steel", cyl(0.016, 0.016, hopD * 0.7, 8, [CX, hopTop + 0.04, 0], [HALF, 0, 0]));
+  }
+  if (tier >= 5) {
+    root.add("paintDark", roundedBox(hopHalf * 1.7, 0.04, hopD * 0.7, 0.02, [CX, hopTop + 0.04, 0]));
+    root.add(
+      "steel",
+      tube(
+        [
+          [CX + hopHalf - 0.04, hopTop, hopD / 2],
+          [CX + hopHalf + 0.02, hopTop + 0.12, hopD / 2 + 0.04],
+          [CX + hopHalf + 0.02, 0.44, hopD / 2 + 0.08],
+        ],
+        0.008,
+      ),
+    );
+    root.add("plastic", roundedBox(0.06, 0.05, 0.05, 0.01, [CX + hopHalf, hopTop + 0.02, 0]));
+    root.add("lamp", box(0.02, 0.03, 0.04, [CX + hopHalf + 0.03, hopTop + 0.02, 0]));
+  }
   root.add(
     "paintDark",
     roundedBox(0.04, 0.4, 0.045, 0.012, [CX + 0.2 * hs, 0.54, (hopD / 2) * 0.96], [0, 0, 0.12]),
@@ -648,6 +966,15 @@ function buildSpreader(tier: MachineTier = 1): Blueprint {
       );
     }
     disc.add("chrome", cyl(0.018, 0.018, 0.05, 8, [0, 0.025, 0]));
+    if (tier >= 3) {
+      for (let i = 0; i < 4; i++) {
+        const a = (i / 4) * Math.PI * 2 + 0.4;
+        disc.add(
+          "steel",
+          roundedBox(0.012, 0.02, 0.05, 0.004, [Math.cos(a) * 0.08, 0.03, Math.sin(a) * 0.08], [0, -a, 0]),
+        );
+      }
+    }
   }
 
   /* — Essieu, roues, garde-boue ————————————————————————— */
@@ -741,6 +1068,13 @@ function buildDiscHarrow(tier: MachineTier = 1): Blueprint {
       );
       gang.add("cast", cyl(0.042, 0.042, 0.04, 10, [0, 0, z], [HALF, 0, 0]));
     }
+    if (tier >= 3) {
+      tool.add(
+        "chrome",
+        cyl(0.01, 0.01, 0.22, 8, [0, 0.38, hang * 0.4], [0, 0, 0.45]),
+        cyl(0.01, 0.01, 0.22, 8, [0, 0.38, -hang * 0.4], [0, 0, -0.45]),
+      );
+    }
   }
 
   /* — Roues de transport sur chandelles ————————————————— */
@@ -752,6 +1086,11 @@ function buildDiscHarrow(tier: MachineTier = 1): Blueprint {
       root.child([x, WHEEL_R, z], { role: "wheel", radius: WHEEL_R }).attach(wheelPart(WHEEL_R, 0.115, 11));
       root.add("paint", roundedBox(0.09, 0.34, 0.08, 0.02, [x, WHEEL_R + 0.19, z * 0.8]));
     }
+  }
+  if (tier >= 5) {
+    root.add("paintDark", roundedBox(0.16, 0.08, frameZ * 1.6, 0.02, [-0.62, 0.54, 0]));
+    root.add("plastic", roundedBox(0.06, 0.05, 0.05, 0.01, [-0.36, 0.54, frameZ]));
+    root.add("lamp", box(0.02, 0.03, 0.04, [-0.33, 0.54, frameZ]));
   }
 
   return { root, length: atTier(tier, [1.2, 1.22, 1.26, 1.32, 1.38]), hitch: [-1.1, 0.36, 0], eye: [0.01, 0.16, 0] };
@@ -847,6 +1186,14 @@ function buildBaler(tier: MachineTier = 1): Blueprint {
   // Compteur de balles et gyrophare : la presse travaille en aveugle.
   root.add("plastic", roundedBox(0.09, 0.07, 0.05, 0.015, [CX + 0.12, CHAMBER_Y + 0.3, 0.3]));
   root.child([CX - 0.1, CHAMBER_Y + 0.34, 0.26], { role: "beacon" });
+  if (tier >= 2) {
+    root.add("paintDark", roundedBox(0.12, 0.1, 0.08, 0.02, [CX + CHAMBER_R * 0.2, CHAMBER_Y + 0.08, 0.32]));
+  }
+  if (tier >= 4) {
+    root.add("steel", roundedBox(0.4, 0.03, 0.64, 0.012, [CX, CHAMBER_Y + CHAMBER_R + 0.01, 0]));
+    root.add("plastic", roundedBox(0.05, 0.04, 0.05, 0.01, [CX + 0.16, CHAMBER_Y + CHAMBER_R + 0.04, 0.28]));
+    root.add("lamp", box(0.016, 0.024, 0.035, [CX + 0.19, CHAMBER_Y + CHAMBER_R + 0.04, 0.28]));
+  }
 
   /* — Hayon : le volet arrière par lequel la balle tombe ————— */
   root.add(
@@ -935,49 +1282,67 @@ function buildSquareBaler(): Blueprint {
   root
     .child([CX + 0.74, 0.075, 0.34], { role: "wheel", radius: 0.075 })
     .attach(wheelPart(0.075, 0.05, 8));
+  root.add("cast", cyl(0.02, 0.02, 0.1, 8, [CX + 0.74, 0.1, -0.3], [HALF, 0, 0]));
+  root
+    .child([CX + 0.74, 0.075, -0.34], { role: "wheel", radius: 0.075 })
+    .attach(wheelPart(0.075, 0.05, 8));
 
   /* — Chambre cubique : c'est ça qui dit « Quadrant » de loin ——— */
   root.add(
     "paint",
-    roundedBox(0.92, 0.44, 0.44, 0.04, [CX, 0.48, 0]),
+    roundedBox(1.02, 0.5, 0.5, 0.045, [CX, 0.52, 0]),
   );
   root.add(
     "paintDark",
-    roundedBox(0.7, 0.08, 0.46, 0.02, [CX - 0.04, 0.72, 0]),
-    roundedBox(0.12, 0.28, 0.46, 0.03, [CX + 0.42, 0.48, 0]),
+    roundedBox(0.78, 0.09, 0.52, 0.02, [CX - 0.04, 0.8, 0]),
+    roundedBox(0.14, 0.32, 0.52, 0.03, [CX + 0.48, 0.52, 0]),
+    roundedBox(0.1, 0.26, 0.54, 0.02, [CX - 0.42, 0.62, 0]),
+    roundedBox(0.2, 0.18, 0.08, 0.02, [CX + 0.1, 0.55, 0.28]),
+    roundedBox(0.2, 0.18, 0.08, 0.02, [CX + 0.1, 0.55, -0.28]),
   );
-  // Noueur : le volant tourne à la prise de force.
-  const fly = root.child([CX + 0.1, 0.74, 0.24], { role: "spinner", spin: 1 });
-  fly.add("steel", cyl(0.07, 0.07, 0.03, 12, [0, 0, 0], [HALF, 0, 0]));
-  fly.add("rim", roundedBox(0.14, 0.02, 0.02, 0.006, [0, 0, 0]));
-  root.add("plastic", roundedBox(0.1, 0.07, 0.06, 0.015, [CX + 0.2, 0.74, -0.18]));
-  root.child([CX - 0.2, 0.76, 0.2], { role: "beacon" });
+  root.add(
+    "steel",
+    roundedBox(0.62, 0.035, 0.54, 0.012, [CX, 0.82, 0]),
+    cyl(0.018, 0.018, 0.24, 8, [CX + 0.22, 0.68, 0.28], [HALF, 0, 0]),
+    cyl(0.018, 0.018, 0.24, 8, [CX - 0.08, 0.68, 0.28], [HALF, 0, 0]),
+  );
+  // Noueurs : deux volants, plus un capot.
+  const fly = root.child([CX + 0.16, 0.82, 0.26], { role: "spinner", spin: 1 });
+  fly.add("steel", cyl(0.075, 0.075, 0.03, 12, [0, 0, 0], [HALF, 0, 0]));
+  fly.add("rim", roundedBox(0.15, 0.02, 0.02, 0.006, [0, 0, 0]));
+  const fly2 = root.child([CX - 0.06, 0.82, 0.26], { role: "spinner", spin: -1 });
+  fly2.add("steel", cyl(0.06, 0.06, 0.025, 12, [0, 0, 0], [HALF, 0, 0]));
+  fly2.add("rim", roundedBox(0.12, 0.016, 0.016, 0.005, [0, 0, 0]));
+  root.add("paintDark", roundedBox(0.36, 0.08, 0.16, 0.02, [CX + 0.05, 0.88, 0.22]));
+  root.add("plastic", roundedBox(0.1, 0.07, 0.06, 0.015, [CX + 0.24, 0.82, -0.2]));
+  root.add("lamp", box(0.02, 0.03, 0.04, [CX + 0.3, 0.82, -0.2]));
+  root.child([CX - 0.22, 0.86, 0.22], { role: "beacon" });
 
   /* — Goulotte de sortie, à l'arrière ————————————————— */
   root.add(
     "paint",
-    roundedBox(0.28, 0.16, 0.36, 0.03, [CX - 0.58, 0.4, 0]),
+    roundedBox(0.34, 0.18, 0.4, 0.03, [CX - 0.64, 0.42, 0]),
   );
   root.add(
     "rim",
-    roundedBox(0.34, 0.035, 0.07, 0.015, [CX - 0.7, WHEEL_R - 0.04, 0.16], [0, 0, -0.2]),
-    roundedBox(0.34, 0.035, 0.07, 0.015, [CX - 0.7, WHEEL_R - 0.04, -0.16], [0, 0, -0.2]),
+    roundedBox(0.4, 0.035, 0.08, 0.015, [CX - 0.78, WHEEL_R - 0.04, 0.18], [0, 0, -0.2]),
+    roundedBox(0.4, 0.035, 0.08, 0.015, [CX - 0.78, WHEEL_R - 0.04, -0.18], [0, 0, -0.2]),
   );
 
-  /* — Tandem ——————————————————————————————————— */
+  /* — Tandem jumelé ————————————————————————————— */
   root.add(
     "cast",
-    roundedBox(0.88, 0.07, 0.09, 0.02, [CX, WHEEL_R + 0.02, 0.24]),
-    roundedBox(0.88, 0.07, 0.09, 0.02, [CX, WHEEL_R + 0.02, -0.24]),
+    roundedBox(0.96, 0.07, 0.09, 0.02, [CX, WHEEL_R + 0.02, 0.24]),
+    roundedBox(0.96, 0.07, 0.09, 0.02, [CX, WHEEL_R + 0.02, -0.24]),
   );
-  for (const x of [CX - 0.18, CX + 0.18]) {
-    root.add("cast", cyl(0.032, 0.032, 0.74, 10, [x, WHEEL_R, 0], [HALF, 0, 0]));
-    for (const z of [0.37, -0.37] as const) {
-      root.child([x, WHEEL_R, z], { role: "wheel", radius: WHEEL_R }).attach(wheelPart(WHEEL_R, 0.12, 11));
+  for (const x of [CX - 0.2, CX + 0.2]) {
+    root.add("cast", cyl(0.032, 0.032, 0.86, 10, [x, WHEEL_R, 0], [HALF, 0, 0]));
+    for (const z of [0.32, 0.46, -0.32, -0.46] as const) {
+      root.child([x, WHEEL_R, z], { role: "wheel", radius: WHEEL_R }).attach(wheelPart(WHEEL_R, 0.11, 11));
     }
   }
 
-  return { root, length: 1.55, hitch: [-1.4, 0.3, 0], eye: [0.01, 0.16, 0] };
+  return { root, length: 1.72, hitch: [-1.4, 0.3, 0], eye: [0.01, 0.16, 0] };
 }
 
 /* ------------------------------------------------------------------ */
@@ -997,7 +1362,7 @@ function buildForageHarvester(tier: MachineTier = 1): Blueprint {
   const DRIVE_R = 0.24;
   const STEER_R = 0.15;
   const HEAD_X = 0.66;
-  const HEAD_W = atTier(tier, [1.06, 1.16, 1.28, 1.42, 1.58]);
+  const HEAD_W = atTier(tier, [1.06, 1.2, 1.36, 1.54, 1.78]);
   const nDrums = atTier(tier, [4, 4, 6, 6, 8]);
   const nPoints = atTier(tier, [5, 5, 7, 7, 9]);
 
@@ -1042,6 +1407,16 @@ function buildForageHarvester(tier: MachineTier = 1): Blueprint {
     roundedBox(0.05, 0.36, 0.05, 0.018, [0.25, 0.84, 0.23]),
   );
   root.child([0.04, 1.07, 0.03], { role: "beacon" });
+  if (tier >= 2) {
+    for (const z of [0.14, -0.08] as const) {
+      root.add("plastic", roundedBox(0.05, 0.035, 0.055, 0.01, [0.22, 1.04, z]));
+      root.add("lamp", box(0.012, 0.024, 0.04, [0.248, 1.04, z]));
+    }
+  }
+  if (tier >= 4) {
+    root.add("rim", roundedBox(0.48, 0.04, 0.48, 0.015, [0.04, 1.05, 0.03]));
+    root.add("plastic", ball(0.024, [0.04, 1.1, 0.16]));
+  }
 
   /* — Moteur : grille, échappement vertical ————————————————— */
   root.add("plastic", roundedBox(0.03, 0.2, 0.36, 0.03, [-0.73, 0.46, 0]));
@@ -1055,6 +1430,14 @@ function buildForageHarvester(tier: MachineTier = 1): Blueprint {
   );
   root.add("chrome", cyl(0.034, 0.03, 0.05, 14, [-0.5, 1.0, -0.2], [0, 0, 0.2]));
   root.child([-0.5, 1.04, -0.2], { role: "exhaust" });
+  if (tier >= 5) {
+    root.add(
+      "plastic",
+      cyl(0.03, 0.034, 0.32, 14, [-0.38, 0.82, 0.2]),
+      cyl(0.038, 0.038, 0.1, 14, [-0.38, 0.69, 0.2]),
+    );
+    root.add("chrome", cyl(0.034, 0.03, 0.05, 14, [-0.38, 1.0, 0.2], [0, 0, 0.2]));
+  }
 
   /* — Goulotte : ce qui fait reconnaître une ensileuse ——————— */
   //
@@ -1086,6 +1469,26 @@ function buildForageHarvester(tier: MachineTier = 1): Blueprint {
     "paintDark",
     roundedBox(0.22, 0.03, 0.24, 0.012, [-1.06, 0.9, -0.52], [0, 0.42, 0.55]),
   );
+  if (tier >= 3) {
+    root.add(
+      "paintDark",
+      roundedBox(0.16, 0.025, 0.18, 0.01, [-1.12, 0.86, -0.56], [0, 0.5, 0.45]),
+    );
+    root.add("chrome", ring(0.09, 0.012, 10, Math.PI * 2, [-0.66, 1.04, -0.44], [0, 0.4, 0.2]));
+  }
+  if (tier >= 5) {
+    root.add("paint", tube(
+      [
+        [-0.02, 0.68, -0.12],
+        [-0.18, 0.92, -0.28],
+        [-0.42, 1.05, -0.4],
+        [-0.74, 1.06, -0.52],
+        [-1.08, 0.94, -0.58],
+      ],
+      0.055,
+      8,
+    ));
+  }
   // Vérin de commande, entre le corps et le milieu de la flèche.
   root.add("chrome", cyl(0.022, 0.022, 0.4, 8, [-0.3, 0.86, -0.08], [0, 0, -0.8]));
 
@@ -1132,26 +1535,41 @@ function buildForageHarvester(tier: MachineTier = 1): Blueprint {
   }
 
   /* — Roues : motrices devant, directrices derrière ——————————— */
-  const driveZs = tier >= 5 ? ([0.24, 0.4, -0.24, -0.4] as const) : ([0.31, -0.31] as const);
-  root.add("cast", cyl(0.038, 0.038, Math.max(...driveZs.map((z) => Math.abs(z))) * 2, 10, [0.28, DRIVE_R, 0], [HALF, 0, 0]));
-  for (const z of driveZs) {
-    root
-      .child([0.28, DRIVE_R, z], { role: "wheel", radius: DRIVE_R })
-      .attach(wheelPart(DRIVE_R, 0.19, 14));
-    if (tier < 5) {
-      root.add("paint", shell(DRIVE_R + 0.03, 0.2, Math.PI * 0.1, Math.PI * 0.62, [0.28, DRIVE_R, z]));
+  if (tier >= 5) {
+    addCrawlerTrack(root, 0.24, 0.44, 0.78, 0.16, 0.21);
+    addCrawlerTrack(root, 0.24, -0.44, 0.78, 0.16, 0.21);
+    root.add("paintDark", roundedBox(0.56, 0.12, 0.58, 0.03, [0.24, 0.28, 0]));
+    for (const z of [0.44, -0.44] as const) {
+      root.add("paint", roundedBox(0.66, 0.05, 0.22, 0.02, [0.24, 0.4, z]));
     }
+    const steer = root.child([-0.54, 0, 0], { role: "steer" });
+    addCrawlerTrack(steer, 0, 0.34, 0.48, 0.125, 0.165);
+    addCrawlerTrack(steer, 0, -0.34, 0.48, 0.125, 0.165);
+    for (const z of [0.34, -0.34] as const) {
+      steer.add("paint", roundedBox(0.38, 0.04, 0.18, 0.015, [0, 0.3, z]));
+    }
+  } else {
+    const driveZs = tier >= 4 ? ([0.24, 0.4, -0.24, -0.4] as const) : ([0.31, -0.31] as const);
+    root.add("cast", cyl(0.038, 0.038, Math.max(...driveZs.map((z) => Math.abs(z))) * 2, 10, [0.28, DRIVE_R, 0], [HALF, 0, 0]));
+    for (const z of driveZs) {
+      root
+        .child([0.28, DRIVE_R, z], { role: "wheel", radius: DRIVE_R })
+        .attach(wheelPart(DRIVE_R, 0.19, 14));
+      if (tier < 4) {
+        root.add("paint", shell(DRIVE_R + 0.03, 0.2, Math.PI * 0.1, Math.PI * 0.62, [0.28, DRIVE_R, z]));
+      }
+    }
+    const steer = root.child([-0.52, STEER_R, 0], { role: "steer" });
+    for (const z of [0.2, -0.2] as const) {
+      steer.child([0, 0, z], { role: "wheel", radius: STEER_R }).attach(wheelPart(STEER_R, 0.12, 10));
+    }
+    steer.add("cast", cyl(0.03, 0.03, 0.36, 10, [0, 0, 0], [HALF, 0, 0]));
   }
-  const steer = root.child([-0.52, STEER_R, 0], { role: "steer" });
-  for (const z of [0.2, -0.2] as const) {
-    steer.child([0, 0, z], { role: "wheel", radius: STEER_R }).attach(wheelPart(STEER_R, 0.12, 10));
-  }
-  steer.add("cast", cyl(0.03, 0.03, 0.36, 10, [0, 0, 0], [HALF, 0, 0]));
 
   // Bec élargi devant, goulotte qui porte loin derrière : l'engin mesure
   // vraiment deux unités. La valeur sert au cadrage de l'atelier et au
   // placement de la poussière — la laisser à 1,8 déréglerait les deux.
-  return { root, length: 2.05, hitch: [-0.85, 0.3, 0], eye: [0, 0, 0] };
+  return { root, length: atTier(tier, [2.05, 2.08, 2.12, 2.16, 2.35]), hitch: [-0.85, 0.3, 0], eye: [0, 0, 0] };
 }
 
 /* ------------------------------------------------------------------ */
@@ -1216,6 +1634,28 @@ function buildPlough(tier: MachineTier = 1): Blueprint {
     );
     // Soc : la pointe qui entre en terre.
     corps.add("chrome", cone(0.05, 0.13, 6, [0.07, 0.055, 0.01], [0, 0, -HALF]));
+    if (tier >= 2) {
+      corps.add("steel", roundedBox(0.08, 0.04, 0.05, 0.01, [0.04, 0.2, 0.04], [0, 0.2, 0.3]));
+    }
+    if (tier >= 3) {
+      corps.add("chrome", cyl(0.01, 0.01, 0.2, 8, [0.02, 0.38, 0], [0, 0, 0.5]));
+    }
+    if (tier >= 5) {
+      corps.add(
+        "cast",
+        lathe(
+          [
+            [0.015, 0.004],
+            [0.055, 0],
+            [0.055, -0.006],
+            [0.015, -0.008],
+          ],
+          10,
+          [0.1, 0.16, 0.06],
+          [HALF, 0.5, 0],
+        ),
+      );
+    }
   }
 
   /* — Roue de jauge, à l'arrière ——————————————————————— */
@@ -1225,6 +1665,20 @@ function buildPlough(tier: MachineTier = 1): Blueprint {
     .child([wheelX, WHEEL_R, wheelZ], { role: "wheel", radius: WHEEL_R })
     .attach(wheelPart(WHEEL_R, 0.1, 10));
   root.add("steel", roundedBox(0.06, 0.26, 0.06, 0.015, [wheelX, 0.32, wheelZ]));
+  if (tier >= 5) {
+    root
+      .child([wheelX + 0.22, WHEEL_R, -wheelZ], { role: "wheel", radius: WHEEL_R })
+      .attach(wheelPart(WHEEL_R, 0.1, 10));
+    root.add("steel", roundedBox(0.06, 0.26, 0.06, 0.015, [wheelX + 0.22, 0.32, -wheelZ]));
+    root.add("paintDark", roundedBox(0.18, 0.07, 0.08, 0.02, [beamX - 0.2, 0.48, 0]));
+    root.add(
+      "chrome",
+      cyl(0.012, 0.012, 0.28, 8, [beamX + 0.1, 0.52, 0.08], [0, 0, 0.4]),
+      cyl(0.012, 0.012, 0.28, 8, [beamX + 0.1, 0.52, -0.08], [0, 0, -0.4]),
+    );
+    root.add("plastic", roundedBox(0.08, 0.05, 0.06, 0.012, [-0.28, 0.5, 0.08]));
+    root.add("lamp", box(0.02, 0.03, 0.04, [-0.32, 0.5, 0.08]));
+  }
 
   return {
     root,
@@ -1284,6 +1738,25 @@ function buildSeeder(tier: MachineTier = 1): Blueprint {
   root.add("paintDark", roundedBox(hopD + 0.1, 0.05, hopD + 0.04, 0.02, [CX, hopTop + 0.02, 0]));
   // Hublot de niveau : un semoir se juge à ce qu'il lui reste dedans.
   root.add("chrome", roundedBox(0.06, 0.2, 0.02, 0.008, [CX + hopHalf + 0.01, 0.55, 0]));
+  if (tier >= 2) {
+    root.add("chrome", roundedBox(0.05, 0.14, 0.018, 0.008, [CX - hopHalf - 0.01, 0.52, 0]));
+  }
+  if (tier >= 3) {
+    root.add(
+      "steel",
+      tube(
+        [
+          [CX + 0.08, hopTop + 0.02, hopD / 2],
+          [CX + 0.08, hopTop + 0.16, hopD / 2 + 0.04],
+          [CX + 0.08, 0.42, hopD / 2 + 0.08],
+        ],
+        0.008,
+      ),
+    );
+    for (let i = 0; i < 3; i++) {
+      root.add("steel", box(0.08, 0.01, 0.012, [CX + 0.1, 0.42 + i * 0.1, hopD / 2 + 0.06]));
+    }
+  }
 
   /* — Rampe de descentes et ouvreurs ——————————————————— */
   const rampe = root.child([CX - 0.36, 0, 0], { role: "tool" });
@@ -1313,6 +1786,19 @@ function buildSeeder(tier: MachineTier = 1): Blueprint {
         .child([x, WHEEL_R, z], { role: "wheel", radius: WHEEL_R })
         .attach(wheelPart(WHEEL_R, 0.12, 10));
     }
+  }
+  if (tier >= 5) {
+    rampe.add("cast", cyl(0.05, 0.05, barW * 0.92, 12, [-0.16, 0.08, 0], [HALF, 0, 0]));
+    rampe.add("paintDark", roundedBox(0.08, 0.05, barW, 0.015, [-0.16, 0.14, 0]));
+    // Marqueurs de bout de champ : le T5 n’est plus une rampe nue.
+    for (const cote of [1, -1] as const) {
+      rampe.add(
+        "steel",
+        cyl(0.01, 0.01, 0.28, 6, [0.02, 0.42, cote * barW * 0.42], [cote * 0.55, 0, 0]),
+      );
+      rampe.add("plastic", roundedBox(0.04, 0.08, 0.03, 0.008, [0.02, 0.56, cote * barW * 0.55]));
+    }
+    root.add("paintDark", roundedBox(0.12, 0.04, hopD * 0.6, 0.015, [CX, hopTop + 0.06, 0]));
   }
 
   return { root, length: atTier(tier, [1.15, 1.18, 1.22, 1.28, 1.35]), hitch: [-1.0, 0.3, 0], eye: [0.01, 0.16, 0] };
@@ -1375,6 +1861,26 @@ function buildMower(tier: MachineTier = 1): Blueprint {
       "steel",
       roundedBox(0.06, 0.04, gap * 2, 0.012, [0.04, 0.22, 0]),
     );
+    lamier.add(
+      "chrome",
+      cyl(0.012, 0.012, 0.32, 8, [0.02, 0.3, gap * 0.45], [0, 0, 0.35]),
+      cyl(0.012, 0.012, 0.32, 8, [0.02, 0.3, -gap * 0.45], [0, 0, -0.35]),
+    );
+    if (tier >= 5) {
+      lamier.add(
+        "paint",
+        roundedBox(0.1, 0.08, 0.1, 0.02, [0.02, 0.26, gap]),
+        roundedBox(0.1, 0.08, 0.1, 0.02, [0.02, 0.26, -gap]),
+      );
+      lamier.add(
+        "cast",
+        cyl(0.04, 0.04, barW * 0.85, 10, [-0.08, 0.18, 0], [HALF, 0, 0]),
+      );
+      for (const cote of [1, -1] as const) {
+        lamier.add("plastic", roundedBox(0.05, 0.04, 0.06, 0.01, [0.08, 0.22, cote * gap]));
+        lamier.add("lamp", box(0.016, 0.024, 0.04, [0.11, 0.22, cote * gap]));
+      }
+    }
   }
 
   /* — Roue de report ——————————————————————————————— */
@@ -1437,15 +1943,46 @@ function buildTrailer(tier: MachineTier = 1): Blueprint {
       roundedBox(0.035, sideH + 0.02, 0.05, 0.01, [x, 0.37 + sideH / 2 + 0.02, -bodyW / 2]));
   }
 
-  /* — Essieux : tandem d'origine, tridem au T5 ——————————— */
+  /* — Essieux : tandem d'origine, tridem jumelé au T5 ——————————— */
   const axleSpan = atTier(tier, [0.4, 0.42, 0.46, 0.5, 0.64]);
-  const track = atTier(tier, [0.29, 0.3, 0.31, 0.32, 0.33]);
+  const track = atTier(tier, [0.29, 0.3, 0.31, 0.32, 0.28]);
+  const zs = tier >= 5 ? ([0.26, 0.42, -0.26, -0.42] as const) : ([track, -track] as const);
   for (let i = 0; i < nAxles; i++) {
     const x = nAxles === 1 ? CX : CX - axleSpan / 2 + (i / (nAxles - 1)) * axleSpan;
-    for (const z of [track, -track] as const) {
+    for (const z of zs) {
       root
         .child([x, WHEEL_R, z], { role: "wheel", radius: WHEEL_R })
         .attach(wheelPart(WHEEL_R, 0.11, 10));
+    }
+  }
+  if (tier >= 4) {
+    root.add("paintDark", roundedBox(0.12, 0.16, bodyW * 0.4, 0.03, [CX + bodyL / 2 + 0.04, 0.42, 0]));
+    root.add("steel", cyl(0.04, 0.05, 0.18, 10, [CX + bodyL / 2 + 0.12, 0.32, 0], [0, 0, HALF]));
+  }
+  if (tier >= 2) {
+    root.add("plastic", roundedBox(0.05, 0.04, 0.05, 0.01, [CX + bodyL / 2 - 0.08, 0.4 + sideH, bodyW / 2]));
+    root.add("lamp", box(0.016, 0.025, 0.035, [CX + bodyL / 2 - 0.05, 0.4 + sideH, bodyW / 2]));
+    root.add("tail", box(0.016, 0.025, 0.035, [CX - bodyL / 2 + 0.05, 0.4 + sideH, bodyW / 2]));
+  }
+  if (tier >= 5) {
+    const topY = 0.4 + sideH;
+    for (const x of [CX - bodyL * 0.3, CX, CX + bodyL * 0.3]) {
+      root.add("steel", cyl(0.01, 0.01, bodyW * 0.92, 6, [x, topY + 0.08, 0], [HALF, 0, 0]));
+      root.add("steel", cyl(0.008, 0.008, 0.1, 6, [x, topY + 0.03, 0]));
+    }
+    root.add(
+      "steel",
+      tube(
+        [
+          [CX + bodyL / 2, 0.38, bodyW / 2],
+          [CX + bodyL / 2 + 0.04, topY * 0.6, bodyW / 2 + 0.04],
+          [CX + bodyL / 2 + 0.04, 0.42, bodyW / 2 + 0.06],
+        ],
+        0.008,
+      ),
+    );
+    for (let i = 0; i < 4; i++) {
+      root.add("steel", box(0.09, 0.012, 0.012, [CX + bodyL / 2 + 0.02, 0.38 + i * 0.1, bodyW / 2 + 0.04]));
     }
   }
 
@@ -1492,6 +2029,18 @@ function buildSprayer(tier: MachineTier = 1): Blueprint {
   // Jauge de niveau : on juge une cuve à ce qu'il lui reste dedans.
   root.add("chrome", roundedBox(0.04, tankR * 1.36, 0.02, 0.008, [CX + tankL / 2 + 0.01, tankY, 0.06], [0, 0, 0.2]));
   root.add("steel", cyl(0.05, 0.05, 0.05, 10, [CX, tankY + tankR + 0.01, 0]));
+  if (tier >= 2) {
+    root.add(
+      "paintDark",
+      cyl(tankR + 0.008, tankR + 0.008, 0.04, 14, [CX - tankL * 0.18, tankY, 0], [0, 0, HALF]),
+      cyl(tankR + 0.008, tankR + 0.008, 0.04, 14, [CX + tankL * 0.18, tankY, 0], [0, 0, HALF]),
+    );
+  }
+  if (tier >= 5) {
+    root.add("paint", cyl(tankR * 0.42, tankR * 0.42, 0.28, 12, [CX + tankL * 0.22, tankY - 0.02, 0.22], [0, 0, HALF]));
+    root.add("plastic", roundedBox(0.07, 0.05, 0.05, 0.012, [CX, tankY + tankR + 0.04, 0.12]));
+    root.add("lamp", box(0.02, 0.03, 0.04, [CX, tankY + tankR + 0.04, 0.15]));
+  }
 
   /* — Rampe : centre et deux volets, très large ——————————————— */
   const rampe = root.child([CX - 0.36, 0, 0], { role: "tool" });
@@ -1510,6 +2059,14 @@ function buildSprayer(tier: MachineTier = 1): Blueprint {
       rampe.add("chrome", cone(0.016, 0.05, 6, [0, 0.38, z], [Math.PI, 0, 0]));
     }
     rampe.add("steel", cyl(0.008, 0.008, nNozzles === 5 ? 0.4 : Math.min(0.48, wingLen * 0.32), 6, [0, nNozzles === 5 ? 0.47 : 0.56, cote * (nNozzles === 5 ? 0.24 : wingMid * 0.4)], [cote * (nNozzles === 5 ? 0.42 : 0.16), 0, 0]));
+    if (tier >= 4) {
+      rampe.add("cast", ball(0.028, [0, 0.44, cote * 0.18]));
+      rampe.add("paintDark", roundedBox(0.05, 0.06, 0.05, 0.012, [0, 0.48, cote * wingMid]));
+    }
+  }
+  if (tier >= 5) {
+    rampe.add("paintDark", roundedBox(0.08, 0.07, 0.1, 0.018, [0, 0.5, 0]));
+    rampe.add("steel", roundedBox(0.04, 0.04, lastZ * 2, 0.01, [0, 0.56, 0]));
   }
 
   /* — Roues ———————————————————————————————————— */

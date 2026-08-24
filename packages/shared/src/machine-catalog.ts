@@ -159,7 +159,7 @@ const CATALOGUE: MachineCatalog = {
     4: {
       label: "Lourd 250",
       inspiredBy: "John Deere 7R 250",
-      copy: "Châssis 7R : capot haut, cabine plus large, roues avant presque aussi hautes.",
+      copy: "Châssis 7R : capot haut, cabine plus large, jumelage arrière.",
       cost: 98000,
       powerHp: 250,
       widthM: 0,
@@ -171,7 +171,7 @@ const CATALOGUE: MachineCatalog = {
     5: {
       label: "Géant 517",
       inspiredBy: "Fendt 1050 Vario",
-      copy: "Quatre roues quasi égales, jumelage arrière, capot long type MAN, cabine haute.",
+      copy: "Quatre chenilles type Quadtrac, capot long, double échappement, snorkel, cabine haute.",
       cost: 168000,
       powerHp: 517,
       widthM: 0,
@@ -224,7 +224,7 @@ const CATALOGUE: MachineCatalog = {
     4: {
       label: "Coupe 17",
       inspiredBy: "Fendt IDEAL 8",
-      copy: "IDEAL : rotor unique, coupe 9,1 m, trémie 17 100 L, silhouette basse et large.",
+      copy: "IDEAL : rotor unique, coupe 9,1 m, trémie 17 100 L, jumelage moteur.",
       cost: 165000,
       powerHp: 450,
       widthM: 9.1,
@@ -237,7 +237,7 @@ const CATALOGUE: MachineCatalog = {
     5: {
       label: "Coupe 18",
       inspiredBy: "CLAAS LEXION 8600",
-      copy: "LEXION 8000 + coupe Vario 1230 (12,3 m), trémie 15 000 L, chenilles optionnelles.",
+      copy: "LEXION 8000 : coupe Vario 12,3 m, quatre chenilles Terra Trac, double échappement.",
       cost: 264000,
       powerHp: 650,
       widthM: 12.3,
@@ -288,7 +288,7 @@ const CATALOGUE: MachineCatalog = {
     4: {
       label: "Ensileuse 7,5 m",
       inspiredBy: "John Deere 9700",
-      copy: "9000 series : bec 7,5 m, capot plus massif, goulotte plus longue.",
+      copy: "9000 series : bec 7,5 m, jumelage moteur, goulotte plus longue.",
       cost: 230000,
       powerHp: 580,
       widthM: 7.5,
@@ -300,7 +300,7 @@ const CATALOGUE: MachineCatalog = {
     5: {
       label: "Ensileuse 9 m",
       inspiredBy: "CLAAS Jaguar 990",
-      copy: "Jaguar 900 : Orbis 900 9 m, jumelage, goulotte maximale.",
+      copy: "Jaguar 900 : Orbis 900 9 m, quatre chenilles Terra Trac, double goulotte.",
       cost: 372000,
       powerHp: 790,
       widthM: 9,

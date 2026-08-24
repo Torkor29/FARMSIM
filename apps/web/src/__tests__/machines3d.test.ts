@@ -117,10 +117,13 @@ describe("pièces animées", () => {
     rig.dispose();
   });
 
-  it("un tracteur T5 est jumelé — silhouette du géant, pas un T1 agrandi", () => {
-    const rig = createMachineRig("TRACTOR", { shadows: false, tier: 5 });
-    expect(rig.anchors("wheel").length).toBeGreaterThan(4);
-    rig.dispose();
+  it("un tracteur T5 pose des chenilles — pas un T4 jumelé agrandi", () => {
+    const t4 = createMachineRig("TRACTOR", { shadows: false, tier: 4 });
+    const t5 = createMachineRig("TRACTOR", { shadows: false, tier: 5 });
+    expect(t4.anchors("wheel").length).toBeGreaterThan(4);
+    expect(t5.anchors("wheel").length).toBeGreaterThan(t4.anchors("wheel").length);
+    t4.dispose();
+    t5.dispose();
   });
 
   it("un outil dételé n'a pas de pot d'échappement", () => {
@@ -292,17 +295,31 @@ describe("cinq paliers, cinq silhouettes", () => {
     t5.dispose();
   });
 
-  it("une moissonneuse T5 est jumelée et plus large au bec", () => {
+  it("une moissonneuse T5 est sur quatre chenilles, plus large au bec", () => {
     const t1 = createMachineRig("HARVESTER", { shadows: false, tier: 1 });
+    const t4 = createMachineRig("HARVESTER", { shadows: false, tier: 4 });
     const t5 = createMachineRig("HARVESTER", { shadows: false, tier: 5 });
     expect(t1.anchors("wheel")).toHaveLength(4);
-    expect(t5.anchors("wheel").length).toBeGreaterThan(4);
+    expect(t4.anchors("wheel").length).toBeGreaterThan(4);
+    expect(t5.anchors("wheel").length).toBeGreaterThan(t4.anchors("wheel").length);
     const w = (rig: { group: THREE.Object3D }) => {
       const box = new THREE.Box3().setFromObject(rig.group);
       return box.max.z - box.min.z;
     };
     expect(w(t5)).toBeGreaterThan(w(t1));
     t1.dispose();
+    t4.dispose();
+    t5.dispose();
+  });
+
+  it("une ensileuse T5 est sur quatre chenilles, pas un T4 jumelé", () => {
+    const t1 = createMachineRig("FORAGE_HARVESTER", { shadows: false, tier: 1 });
+    const t4 = createMachineRig("FORAGE_HARVESTER", { shadows: false, tier: 4 });
+    const t5 = createMachineRig("FORAGE_HARVESTER", { shadows: false, tier: 5 });
+    expect(t5.anchors("wheel").length).toBeGreaterThan(t4.anchors("wheel").length);
+    expect(t4.anchors("wheel").length).toBeGreaterThan(t1.anchors("wheel").length);
+    t1.dispose();
+    t4.dispose();
     t5.dispose();
   });
 });
