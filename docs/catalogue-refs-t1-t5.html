@@ -1,0 +1,222 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>FARMSIM — Références réelles T1 à T5</title>
+  <style>
+    :root { --green: #2d5a2a; --row: #f4f8f2; --ink: #1e1e1e; --muted: #555; }
+    * { box-sizing: border-box; }
+    body { font-family: Georgia, "Times New Roman", serif; margin: 0; color: var(--ink); background: #f7f5ef; }
+    header { background: var(--green); color: #fff; padding: 1.4rem 1.5rem 1.1rem; }
+    header h1 { margin: 0 0 .35rem; font-size: 1.55rem; font-family: system-ui, sans-serif; }
+    header p { margin: 0; opacity: .9; font-size: .95rem; }
+    main { max-width: 1100px; margin: 0 auto; padding: 1.25rem 1rem 3rem; }
+    .notes { background: #fff; border: 1px solid #dbe3d6; border-radius: 8px; padding: 1rem 1.15rem; margin-bottom: 1.5rem; }
+    .notes h2 { margin: 0 0 .6rem; font-size: 1.05rem; font-family: system-ui, sans-serif; color: var(--green); }
+    .notes ul { margin: 0; padding-left: 1.2rem; }
+    .notes li { margin: .35rem 0; font-size: .92rem; line-height: 1.4; }
+    section { margin: 1.6rem 0; }
+    section h2 { margin: 0; font-family: system-ui, sans-serif; color: var(--green); font-size: 1.2rem; }
+    section .blurb { color: var(--muted); font-size: .88rem; margin: .25rem 0 .55rem; }
+    table { width: 100%; border-collapse: collapse; background: #fff; font-size: .82rem; box-shadow: 0 1px 2px rgba(0,0,0,.04); }
+    th { background: var(--green); color: #fff; text-align: left; padding: .45rem .5rem; font-family: system-ui, sans-serif; font-weight: 600; }
+    td { padding: .4rem .5rem; vertical-align: top; border-bottom: 1px solid #e4eadf; }
+    tr:nth-child(even) td { background: var(--row); }
+    td:first-child, td:last-child { font-weight: 700; font-family: system-ui, sans-serif; white-space: nowrap; }
+    td:nth-child(2) { font-weight: 600; }
+    footer { color: #777; font-size: .8rem; margin-top: 2rem; }
+    a { color: var(--green); }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>FARMSIM — Catalogue T1 à T5</h1>
+    <p>Références réelles (SKU) et prix — silhouette 3D vs économie de jeu</p>
+  </header>
+  <main>
+    <div class="notes">
+      <h2>Comment lire ce document</h2>
+      <ul>
+        <li>Les SKU (colonne <em>inspiredBy</em>) servent à la silhouette 3D, aux chevaux et à la largeur de travail. Les marques ne s’affichent pas au joueur.</li>
+        <li>Les prix de jeu ne sont pas les factures concessionnaire. Le palier 1 est du matériel d’occasion de petite ferme (inchangé), puis × 2,3 / 4,5 / ~7,2 / 12.</li>
+        <li>Un 6M 115 neuf se négocie ~90–120 k€ HT ; le T1 tracteur vaut 14 000 € : c’est un vieux 115 ch de petite exploitation, pas un 6M 2025.</li>
+        <li>Ancres notées dans le code : tracteur ~90 ch d’occasion ~30 000 € ; moissonneuse d’occasion ~78 000 € ; 6R/7R 250 neuf ~230 000 € TTC.</li>
+        <li>Les fourchettes « marché » sont des ordres de grandeur 2024–2026 (annonces FR/UE, HT sauf mention). Les constructeurs ne publient pas de tarif unique.</li>
+        <li>Les rapports entre engins (moissonneuse ≈ 1,5× le tracteur, charrue ≈ 1/5) suivent le marché de l’occasion, pas les tarifs du neuf.</li>
+      </ul>
+    </div>
+
+    <section>
+      <h2>Tracteur</h2>
+      <p class="blurb">Automoteur. T5 : silhouette Quadtrac (chenilles), SKU Fendt 1050 (517 ch).</p>
+      <table>
+        <thead><tr><th>Palier</th><th>SKU réel (inspiredBy)</th><th>Copié dans le jeu</th><th>Marché 2024–2026</th><th>Prix jeu</th></tr></thead>
+        <tbody>
+          <tr><td>T1</td><td>John Deere 6M 115</td><td>115 ch, capot court</td><td>Neuf ~90–120 k€ HT ; occ. récente ~78–110 k€</td><td>14 000 €</td></tr>
+          <tr><td>T2</td><td>John Deere 6R 145</td><td>145 ch, cabine 6R</td><td>Neuf ~145–180 k€ ; occ. ~140–165 k€</td><td>32 200 €</td></tr>
+          <tr><td>T3</td><td>John Deere 6R 185</td><td>185 ch, 6 cyl</td><td>Neuf à partir de ~165 k€ ; occ. ~135–186 k€</td><td>63 000 €</td></tr>
+          <tr><td>T4</td><td>John Deere 7R 250</td><td>250 ch, châssis 7R</td><td>Neuf ~215–250 k€ (entre 7R 210 et 7R 270)</td><td>98 000 €</td></tr>
+          <tr><td>T5</td><td>Fendt 1050 Vario</td><td>517 ch</td><td>Occ. 2021–24 ~315–365 k€ HT ; neuf ~400–500 k€+</td><td>168 000 €</td></tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section>
+      <h2>Moissonneuse</h2>
+      <p class="blurb">Automoteur. T5 : LEXION 8600, coupe 12,3 m, Terra Trac.</p>
+      <table>
+        <thead><tr><th>Palier</th><th>SKU réel (inspiredBy)</th><th>Copié dans le jeu</th><th>Marché 2024–2026</th><th>Prix jeu</th></tr></thead>
+        <tbody>
+          <tr><td>T1</td><td>New Holland TC5.90</td><td>Coupe ~4–5 m, ~5 000 L</td><td>Neuf ~180–250 k€ ; occ. ancienne 25–80 k€</td><td>22 000 €</td></tr>
+          <tr><td>T2</td><td>CLAAS Tucano 450</td><td>5,5 m, 8 000 L</td><td>Neuf ~280–380 k€</td><td>50 600 €</td></tr>
+          <tr><td>T3</td><td>John Deere S7 600</td><td>7,6 m, 14 000 L, 340 ch</td><td>Neuf ~400–550 k€</td><td>99 000 €</td></tr>
+          <tr><td>T4</td><td>Fendt IDEAL 8</td><td>9,1 m, 17 100 L</td><td>Occ. 2019 ~227 k€ HT ; neuf ~500–650 k€</td><td>165 000 €</td></tr>
+          <tr><td>T5</td><td>CLAAS LEXION 8600</td><td>12,3 m, Terra Trac, ~650 ch</td><td>Démo TT 2024 ~420–500 k€ HT</td><td>264 000 €</td></tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section>
+      <h2>Ensileuse</h2>
+      <p class="blurb">Automotrice fourragère.</p>
+      <table>
+        <thead><tr><th>Palier</th><th>SKU réel (inspiredBy)</th><th>Copié dans le jeu</th><th>Marché 2024–2026</th><th>Prix jeu</th></tr></thead>
+        <tbody>
+          <tr><td>T1</td><td>John Deere 8100</td><td>Bec 3 m, 260 ch</td><td>Occ. série 8000 ~80–150 k€</td><td>31 000 €</td></tr>
+          <tr><td>T2</td><td>New Holland FR 550</td><td>4,5 m, 340 ch</td><td>Neuf ~350–450 k€</td><td>71 300 €</td></tr>
+          <tr><td>T3</td><td>CLAAS Jaguar 950</td><td>Orbis 6 m, 450 ch</td><td>Neuf ~450–550 k€</td><td>139 500 €</td></tr>
+          <tr><td>T4</td><td>John Deere 9700</td><td>7,5 m, 580 ch</td><td>Neuf ~500–650 k€</td><td>230 000 €</td></tr>
+          <tr><td>T5</td><td>CLAAS Jaguar 990</td><td>Orbis 9 m, 790 ch</td><td>Neuf ~650–850 k€</td><td>372 000 €</td></tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section>
+      <h2>Charrue</h2>
+      <p class="blurb">Outil traîné / porté.</p>
+      <table>
+        <thead><tr><th>Palier</th><th>SKU réel (inspiredBy)</th><th>Copié dans le jeu</th><th>Marché 2024–2026</th><th>Prix jeu</th></tr></thead>
+        <tbody>
+          <tr><td>T1</td><td>Kuhn Master 103 3E</td><td>3 corps, 2 m</td><td>Neuf ~12–18 k€</td><td>3 100 €</td></tr>
+          <tr><td>T2</td><td>Kuhn Multi-Master 123 4E</td><td>4 corps, 3 m</td><td>Neuf ~18–28 k€</td><td>7 130 €</td></tr>
+          <tr><td>T3</td><td>Lemken Juwel 8 5 N100</td><td>5 corps, 4 m</td><td>Neuf ~35–50 k€</td><td>13 950 €</td></tr>
+          <tr><td>T4</td><td>Lemken Diamant 16 7+1</td><td>7+1, 6 m</td><td>Neuf ~55–80 k€</td><td>22 300 €</td></tr>
+          <tr><td>T5</td><td>Kverneland PW 9</td><td>9 corps, 8 m</td><td>Neuf ~80–120 k€</td><td>37 200 €</td></tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section>
+      <h2>Semoir</h2>
+      <p class="blurb">Largeur de travail copiée à la virgule près (6,00 / 9,00 / 12,00 m).</p>
+      <table>
+        <thead><tr><th>Palier</th><th>SKU réel (inspiredBy)</th><th>Copié dans le jeu</th><th>Marché 2024–2026</th><th>Prix jeu</th></tr></thead>
+        <tbody>
+          <tr><td>T1</td><td>Amazone D9 4000 Super</td><td>4 m porté</td><td>Neuf ~15–25 k€</td><td>4 600 €</td></tr>
+          <tr><td>T2</td><td>Amazone Cataya 5000 Super</td><td>5 m combiné</td><td>Neuf ~40–60 k€</td><td>10 580 €</td></tr>
+          <tr><td>T3</td><td>Horsch Pronto 6 DC</td><td>6,00 m</td><td>Neuf ~80–120 k€</td><td>20 700 €</td></tr>
+          <tr><td>T4</td><td>Horsch Pronto 9 DC</td><td>9,00 m</td><td>Neuf ~130–180 k€</td><td>33 100 €</td></tr>
+          <tr><td>T5</td><td>Väderstad Inspire 1200C</td><td>12,00 m</td><td>Neuf ~200–300 k€</td><td>55 200 €</td></tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section>
+      <h2>Épandeur</h2>
+      <p class="blurb">Porté T1–T4, traîné T5 (ZG-TS).</p>
+      <table>
+        <thead><tr><th>Palier</th><th>SKU réel (inspiredBy)</th><th>Copié dans le jeu</th><th>Marché 2024–2026</th><th>Prix jeu</th></tr></thead>
+        <tbody>
+          <tr><td>T1</td><td>Amazone ZA-M 1500</td><td>12 m, 1 500 L</td><td>Neuf ~6–10 k€</td><td>2 300 €</td></tr>
+          <tr><td>T2</td><td>Sulky X40+ ECONOV</td><td>15 m</td><td>Neuf ~12–18 k€</td><td>5 290 €</td></tr>
+          <tr><td>T3</td><td>Amazone ZA-TS 2000</td><td>18 m, 2 000 L</td><td>Neuf ~18–28 k€</td><td>10 350 €</td></tr>
+          <tr><td>T4</td><td>Kuhn Axis 50.2 W</td><td>24 m</td><td>Neuf ~25–40 k€</td><td>16 560 €</td></tr>
+          <tr><td>T5</td><td>Amazone ZG-TS 10001</td><td>36 m, 10 000 L traîné</td><td>Neuf ~50–80 k€</td><td>27 600 €</td></tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section>
+      <h2>Déchaumeur</h2>
+      <p class="blurb">Largeurs 3,00 / 4,00 / 7,50 / 10,00 m calées sur les SKU.</p>
+      <table>
+        <thead><tr><th>Palier</th><th>SKU réel (inspiredBy)</th><th>Copié dans le jeu</th><th>Marché 2024–2026</th><th>Prix jeu</th></tr></thead>
+        <tbody>
+          <tr><td>T1</td><td>Kuhn Optimer+ 303</td><td>3,00 m</td><td>Neuf ~12–18 k€</td><td>3 300 €</td></tr>
+          <tr><td>T2</td><td>Lemken Rubin 10/400</td><td>4,00 m</td><td>Neuf ~20–30 k€</td><td>7 590 €</td></tr>
+          <tr><td>T3</td><td>Horsch Joker 6 CT</td><td>~6 m traîné</td><td>Neuf ~40–60 k€</td><td>14 850 €</td></tr>
+          <tr><td>T4</td><td>Kuhn Optimer+ 7503</td><td>7,50 m</td><td>Neuf ~55–80 k€</td><td>23 760 €</td></tr>
+          <tr><td>T5</td><td>Lemken Rubin 10/1000 KUA</td><td>10,00 m</td><td>Neuf ~90–140 k€</td><td>39 600 €</td></tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section>
+      <h2>Faucheuse</h2>
+      <p class="blurb">T4–T5 : papillon (trois barres).</p>
+      <table>
+        <thead><tr><th>Palier</th><th>SKU réel (inspiredBy)</th><th>Copié dans le jeu</th><th>Marché 2024–2026</th><th>Prix jeu</th></tr></thead>
+        <tbody>
+          <tr><td>T1</td><td>Kuhn GMD 3125</td><td>3,10 m</td><td>Neuf ~8–12 k€</td><td>1 900 €</td></tr>
+          <tr><td>T2</td><td>CLAAS Disco 4400 Contour</td><td>4,20 m</td><td>Neuf ~14–20 k€</td><td>4 370 €</td></tr>
+          <tr><td>T3</td><td>Krone EasyCut 6210 CV</td><td>6,20 m combiné</td><td>Neuf ~25–40 k€</td><td>8 550 €</td></tr>
+          <tr><td>T4</td><td>CLAAS Disco 8500 C</td><td>~8,3 m papillon</td><td>Neuf ~40–60 k€</td><td>13 680 €</td></tr>
+          <tr><td>T5</td><td>Krone EasyCut B 1000 CV</td><td>9,7–10,1 m</td><td>Neuf ~70–100 k€</td><td>22 800 €</td></tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section>
+      <h2>Pulvérisateur</h2>
+      <p class="blurb">T4–T5 copient des automoteurs (Pantera, 410R) ; le jeu les vend encore comme outils attelés.</p>
+      <table>
+        <thead><tr><th>Palier</th><th>SKU réel (inspiredBy)</th><th>Copié dans le jeu</th><th>Marché 2024–2026</th><th>Prix jeu</th></tr></thead>
+        <tbody>
+          <tr><td>T1</td><td>Amazone UF 1501</td><td>18 m, 1 500 L porté</td><td>Neuf ~20–35 k€</td><td>3 900 €</td></tr>
+          <tr><td>T2</td><td>Amazone UF 2002</td><td>21 m, 2 000 L</td><td>Neuf ~30–45 k€</td><td>8 970 €</td></tr>
+          <tr><td>T3</td><td>John Deere R732i</td><td>24 m porté</td><td>Neuf ~50–80 k€</td><td>17 550 €</td></tr>
+          <tr><td>T4</td><td>Amazone Pantera 4502</td><td>36 m automoteur</td><td>Neuf ~250–350 k€</td><td>28 080 €</td></tr>
+          <tr><td>T5</td><td>John Deere 410R</td><td>~40–42 m automoteur</td><td>Neuf ~300–450 k€</td><td>46 800 €</td></tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section>
+      <h2>Presse à balles</h2>
+      <p class="blurb">T1–T4 rondes ; T5 cubique (Quadrant).</p>
+      <table>
+        <thead><tr><th>Palier</th><th>SKU réel (inspiredBy)</th><th>Copié dans le jeu</th><th>Marché 2024–2026</th><th>Prix jeu</th></tr></thead>
+        <tbody>
+          <tr><td>T1</td><td>John Deere 440M</td><td>Chambre fixe, pickup 2,2 m</td><td>Neuf ~25–40 k€</td><td>6 100 €</td></tr>
+          <tr><td>T2</td><td>New Holland Roll-Belt 450</td><td>Chambre variable 2,3 m</td><td>Neuf ~40–55 k€</td><td>14 030 €</td></tr>
+          <tr><td>T3</td><td>CLAAS Rollant 520</td><td>Fixe 1,25 m</td><td>Neuf ~45–65 k€</td><td>27 450 €</td></tr>
+          <tr><td>T4</td><td>CLAAS Variant 585 RF</td><td>Variable jusqu’à 1,80 m</td><td>Neuf ~60–85 k€</td><td>43 920 €</td></tr>
+          <tr><td>T5</td><td>CLAAS Quadrant 5300 FC</td><td>Cubique</td><td>Neuf ~120–180 k€</td><td>73 200 €</td></tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section>
+      <h2>Remorque</h2>
+      <p class="blurb">T5 tridem jumelé.</p>
+      <table>
+        <thead><tr><th>Palier</th><th>SKU réel (inspiredBy)</th><th>Copié dans le jeu</th><th>Marché 2024–2026</th><th>Prix jeu</th></tr></thead>
+        <tbody>
+          <tr><td>T1</td><td>Gourdon RMG 8</td><td>8 t, un essieu</td><td>Neuf ~8–12 k€</td><td>2 600 €</td></tr>
+          <tr><td>T2</td><td>Joskin Trans-CAP 12/50</td><td>12 t</td><td>Neuf ~15–22 k€</td><td>5 980 €</td></tr>
+          <tr><td>T3</td><td>Fliegl TMK 160</td><td>16 t tandem</td><td>Neuf ~25–40 k€</td><td>11 700 €</td></tr>
+          <tr><td>T4</td><td>Krampe Big Body 650</td><td>~24 t</td><td>Neuf ~40–60 k€</td><td>18 720 €</td></tr>
+          <tr><td>T5</td><td>Krampe Big Body 900</td><td>~30–32 t tridem</td><td>Neuf ~55–85 k€</td><td>31 200 €</td></tr>
+        </tbody>
+      </table>
+    </section>
+
+    <footer>
+      Source interne : <code>packages/shared/src/machine-catalog.ts</code> (<code>inspiredBy</code>, <code>cost</code>).
+      Les prix de jeu T1 sont <code>PRIX_ENGINS</code>. Document de travail, hors licence commerciale — les SKU ne sont pas affichés en jeu.
+      PDF : <a href="catalogue-refs-t1-t5.pdf">catalogue-refs-t1-t5.pdf</a>
+    </footer>
+  </main>
+</body>
+</html>
