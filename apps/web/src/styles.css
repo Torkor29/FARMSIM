@@ -6234,6 +6234,80 @@ button.tiny {
 .cours-puce.on .hud-puce-val, .cours-puce.on small { color: inherit; }
 .meteo-puce { cursor: default; color: var(--ink-soft); font-weight: 600; }
 .voisins-puce { gap: 0.3rem; }
+.saison-btn { color: var(--teal-700); }
+.saison-btn.s-spring { color: #3d8a38; }
+.saison-btn.s-summer { color: var(--gold-700); }
+.saison-btn.s-autumn { color: #b45c1c; }
+.saison-btn.s-winter { color: #4e7d9a; }
+.hud-puce svg { display: block; flex: none; }
+
+/* —— Bandeau téléphone : une barre, pas des pastilles collées au ciel ——
+   Mesuré sur capture : logo, étoile, ∞ €, « Gris », voisin et ☰ chacun dans
+   sa propre pastille blanche, formes mélangées (carré, pilule, or). Ça flotte
+   sur le ciel et ça ne se lit pas comme un bandeau. Une seule plaque de verre,
+   les infos en icônes à l'intérieur — la saison y a enfin sa place. */
+.game-stage.mobile .hud-top {
+  margin: calc(0.3rem + env(safe-area-inset-top)) 0.55rem 0;
+  padding: 0.15rem 0.25rem;
+  gap: 0.1rem;
+  flex-wrap: nowrap;
+  align-items: center;
+  background: var(--bar);
+  border: 1px solid var(--glass-border);
+  border-radius: 16px;
+  box-shadow: var(--sh-2);
+  backdrop-filter: blur(14px);
+}
+.game-stage.mobile .hud-center { margin-inline: 0; }
+.game-stage.mobile .brand-row { gap: 0.2rem; padding-left: 0.2rem; }
+.game-stage.mobile .brand-logo {
+  width: 28px;
+  height: 28px;
+  filter: none;
+}
+.game-stage.mobile .skills-tab {
+  background: transparent;
+  border: 0;
+  box-shadow: none;
+  min-width: 44px;
+  min-height: 44px;
+  padding: 0.2rem 0.35rem;
+}
+.game-stage.mobile .skills-tab.on {
+  background: var(--teal-100, rgba(46, 142, 122, 0.16));
+  color: var(--teal-700);
+}
+.game-stage.mobile .skills-tab.on .skills-tab-icon { color: var(--gold-500); }
+.game-stage.mobile .skills-tab-count {
+  font-size: 0.62rem;
+  padding: 0.05rem 0.28rem;
+}
+.game-stage.mobile .hud-stats {
+  margin-left: auto;
+  gap: 0.05rem;
+}
+.game-stage.mobile .hud-stats > span {
+  background: transparent;
+  border: 0;
+  box-shadow: none;
+  padding: 0.2rem 0.4rem;
+  font-size: 0.82rem;
+}
+.game-stage.mobile .hud-puce {
+  background: transparent;
+  border: 0;
+  height: 44px;
+  min-width: 44px;
+  padding: 0;
+  justify-content: center;
+  box-shadow: none;
+}
+.game-stage.mobile .profile-btn {
+  background: transparent;
+  border: 0;
+  min-width: 44px;
+  min-height: 44px;
+}
 
 /* L'ordre dans lequel les puces cèdent la place, du plus sacrifiable au moins.
    Le ☰ et le « ? » ne cèdent jamais : ce sont des portes, pas des nouvelles.

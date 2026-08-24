@@ -38,7 +38,6 @@ import {
   SEASON_LABELS,
   GOOD_ICONS,
   WEATHER_LABELS,
-  WEATHER_SHORT,
   formatEurosCourt,
   currentSeason,
   conditionYieldFactor,
@@ -155,6 +154,7 @@ import {
   type CellContextItem,
 } from "./ui/desktop/CellContextMenu";
 import { SEASON_NAMES, SeasonSky } from "./ui/SeasonSky";
+import { SeasonMark, WeatherMark } from "./ui/HudMarks";
 import { useIsMobile } from "./use-media-query";
 
 /** Ce que la saison change vraiment, en une phrase. */
@@ -1567,7 +1567,6 @@ export function App() {
     weather.find((w) => w.zoneCode === zoneCode)?.state ??
     "CLEAR";
   const weatherLabel = WEATHER_LABELS[localWeather] ?? localWeather;
-  const weatherCourt = WEATHER_SHORT[localWeather] ?? weatherLabel;
 
   /** Les autres joueurs présents — jamais soi-même. */
   const voisinsEnLigne = onlinePlayers.filter((p) => p.online && p.id !== player?.id);
@@ -4890,6 +4889,15 @@ export function App() {
             <span className="gold" title={hasUnlimitedFunds(player) ? "Trésorerie illimitée (compte développeur)" : "Terrons (€)"}>
               {walletLabel(player)}
             </span>
+            <button
+              type="button"
+              className={`hud-puce saison-btn s-${season.toLowerCase()}`}
+              title={`${SEASON_LABELS[season]} — calendrier des cultures`}
+              aria-label={`Saison : ${SEASON_LABELS[season]}`}
+              onClick={() => setShowCalendrier((v) => !v)}
+            >
+              <SeasonMark season={season} />
+            </button>
             {player.bonuses && (
               <span className="stat-bonus">
                 grain {player.bonuses.storageGrain}t · +
@@ -4899,17 +4907,12 @@ export function App() {
             {/* Au téléphone, tout ce qui précède sauf les € passe dans un
                 tiroir : le bandeau doit tenir sur une ligne. */}
             {/*
-              Les deux puces du téléphone : cotations et voisins.
-
-              Elles remplacent deux bandeaux pleine largeur — trente et
-              quarante-quatre pixels de hauteur, en permanence — par deux
-              boutons de la ligne qui existe déjà. Le contenu n'a pas bougé
-              d'un mot : la première déplie la liste des cours, la seconde
-              ouvre la même vue des voisins qu'avant.
+              Météo, saison, voisins : des icônes dans la barre, plus des
+              pastilles de mots. Un tap sur la saison ouvre le calendrier.
             */}
             {isMobile && (
               <span className="hud-puce meteo-puce" title={`Météo · ${weatherLabel}`}>
-                {weatherCourt}
+                <WeatherMark weather={localWeather} />
               </span>
             )}
             {isMobile && voisinsEnLigne.length > 0 && (

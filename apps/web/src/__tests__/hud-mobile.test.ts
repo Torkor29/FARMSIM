@@ -107,6 +107,20 @@ describe("le bandeau du haut", () => {
     expect(APP).toMatch(/return hasUnlimitedFunds\(player\) \? "∞ €" : formatEurosCourt\(player\.crd\)/);
   });
 
+  it("porte la saison en icône, et tient en une seule barre", () => {
+    /*
+     * Capture : logo, étoile, ∞ €, « Gris », voisin et ☰, chacun dans sa
+     * pastille, et nulle part la saison. Un dessin suffit ; le mot « Gris »
+     * n'ajoutait rien qu'un nuage ne dise.
+     */
+    expect(APP).toMatch(/<SeasonMark season=\{season\}/);
+    expect(APP).toMatch(/saison-btn/);
+    expect(APP).toMatch(/<WeatherMark weather=\{localWeather\}/);
+    expect(APP).not.toMatch(/weatherCourt/);
+    expect(regle(".game-stage.mobile .hud-top")).toMatch(/border-radius:\s*16px/);
+    expect(regle(".game-stage.mobile .hud-puce")).toMatch(/background:\s*transparent/);
+  });
+
   it("laisse le guide joignable bien que le « ? » s’efface", () => {
     // Le « ? » ouvrait le même guide que le tiroir profil et que la puce
     // d'objectif. Il cède sa place — les deux autres portes restent.
