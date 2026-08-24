@@ -1802,6 +1802,7 @@ export function IsoFarmView({
           seed: i * 7 + 13,
           shadows: quality.shadows,
           condition: machine.condition ?? undefined,
+          tier: asTier(machine.tier),
         });
         mRig.group.scale.setScalar(
           cellSize * MACHINE_SCALE * machineMeshScale(asTier(machine.tier)),
@@ -3478,6 +3479,7 @@ export function IsoFarmView({
             towed: !aw.haul && isTowedImplement(aw.type),
             shadows: quality.shadows,
             condition: aw.condition ?? undefined,
+            tier: asTier(aw.tier),
           });
           if (aw.haul) hitchTrailer(workRig, aw.cargo);
           workRig.group.scale.setScalar(

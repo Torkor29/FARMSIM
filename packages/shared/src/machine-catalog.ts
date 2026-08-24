@@ -78,8 +78,13 @@ export const MACHINE_STAR_LABELS: { key: keyof MachineStars; short: string; titl
 export type MachineVariant = {
   /** Nom affiché — générique, sans marque. */
   label: string;
-  /** Référence réelle, pour le 3D et le design. Pas un nom commercial. */
+  /**
+   * SKU réel à copier (silhouette, proportions, accessoires).
+   * Interne : les marques ne s’affichent pas au joueur.
+   */
   inspiredBy: string;
+  /** Ce que le mesh 3D doit reprendre, en une phrase. */
+  copy: string;
   /** Prix cible du jeu, en euros. */
   cost: number;
   /** Chevaux disponibles (tracteur, automoteur). */
@@ -118,6 +123,7 @@ const CATALOGUE: MachineCatalog = {
     1: {
       label: "Utilitaire 115",
       inspiredBy: "John Deere 6M 115",
+      copy: "Capot court 4 cyl, cabine 6M, roues arrière nettement plus grandes, garde-boue simples.",
       cost: 14000,
       powerHp: 115,
       widthM: 0,
@@ -129,6 +135,7 @@ const CATALOGUE: MachineCatalog = {
     2: {
       label: "Polyvalent 145",
       inspiredBy: "John Deere 6R 145",
+      copy: "Capot 6R plus long, calandre à lames, cabine panoramique, mêmes trains étroits.",
       cost: 32200,
       powerHp: 145,
       widthM: 0,
@@ -140,6 +147,7 @@ const CATALOGUE: MachineCatalog = {
     3: {
       label: "Céréalier 185",
       inspiredBy: "John Deere 6R 185",
+      copy: "6R 6 cyl : capot plus haut, empattement allongé, jantes plus larges.",
       cost: 63000,
       powerHp: 185,
       widthM: 0,
@@ -151,6 +159,7 @@ const CATALOGUE: MachineCatalog = {
     4: {
       label: "Lourd 250",
       inspiredBy: "John Deere 7R 250",
+      copy: "Châssis 7R : capot haut, cabine plus large, roues avant presque aussi hautes.",
       cost: 98000,
       powerHp: 250,
       widthM: 0,
@@ -162,6 +171,7 @@ const CATALOGUE: MachineCatalog = {
     5: {
       label: "Géant 517",
       inspiredBy: "Fendt 1050 Vario",
+      copy: "Quatre roues quasi égales, jumelage arrière, capot long type MAN, cabine haute.",
       cost: 168000,
       powerHp: 517,
       widthM: 0,
@@ -175,6 +185,7 @@ const CATALOGUE: MachineCatalog = {
     1: {
       label: "Coupe 5",
       inspiredBy: "New Holland TC5.90",
+      copy: "Petite batteuse 5 cylindres, coupe ~4–5 m, trémie 5 000 L, vis latérale courte.",
       cost: 22000,
       powerHp: 200,
       widthM: 4.2,
@@ -187,6 +198,7 @@ const CATALOGUE: MachineCatalog = {
     2: {
       label: "Coupe 8",
       inspiredBy: "CLAAS Tucano 450",
+      copy: "Caisse Tucano, coupe 5,5 m, trémie 8 000 L, rabatteur et vis plus longs.",
       cost: 50600,
       powerHp: 260,
       widthM: 5.5,
@@ -199,6 +211,7 @@ const CATALOGUE: MachineCatalog = {
     3: {
       label: "Coupe 14",
       inspiredBy: "John Deere S7 600",
+      copy: "Rotor S7, coupe 7,6 m, trémie 14 000 L, cabine haute, vis de déchargement longue.",
       cost: 99000,
       powerHp: 340,
       widthM: 7.6,
@@ -211,6 +224,7 @@ const CATALOGUE: MachineCatalog = {
     4: {
       label: "Coupe 17",
       inspiredBy: "Fendt IDEAL 8",
+      copy: "IDEAL : rotor unique, coupe 9,1 m, trémie 17 100 L, silhouette basse et large.",
       cost: 165000,
       powerHp: 450,
       widthM: 9.1,
@@ -223,6 +237,7 @@ const CATALOGUE: MachineCatalog = {
     5: {
       label: "Coupe 18",
       inspiredBy: "CLAAS LEXION 8600",
+      copy: "LEXION 8000 + coupe Vario 1230 (12,3 m), trémie 15 000 L, chenilles optionnelles.",
       cost: 264000,
       powerHp: 650,
       widthM: 12.3,
@@ -237,6 +252,7 @@ const CATALOGUE: MachineCatalog = {
     1: {
       label: "Ensileuse 3 m",
       inspiredBy: "John Deere 8100",
+      copy: "8000 series : bec Kemper 300 3 m, goulotte arrière, cabine haute étroite.",
       cost: 31000,
       powerHp: 260,
       widthM: 3,
@@ -248,6 +264,7 @@ const CATALOGUE: MachineCatalog = {
     2: {
       label: "Ensileuse 4,5 m",
       inspiredBy: "New Holland FR 550",
+      copy: "FR : bec 4,5 m, goulotte plus haute, capot moteur long à l’arrière.",
       cost: 71300,
       powerHp: 340,
       widthM: 4.5,
@@ -259,6 +276,7 @@ const CATALOGUE: MachineCatalog = {
     3: {
       label: "Ensileuse 6 m",
       inspiredBy: "CLAAS Jaguar 950",
+      copy: "Jaguar : Orbis 600 6 m, goulotte courbe, orange-vert, cabine large.",
       cost: 139500,
       powerHp: 450,
       widthM: 6,
@@ -270,6 +288,7 @@ const CATALOGUE: MachineCatalog = {
     4: {
       label: "Ensileuse 7,5 m",
       inspiredBy: "John Deere 9700",
+      copy: "9000 series : bec 7,5 m, capot plus massif, goulotte plus longue.",
       cost: 230000,
       powerHp: 580,
       widthM: 7.5,
@@ -281,6 +300,7 @@ const CATALOGUE: MachineCatalog = {
     5: {
       label: "Ensileuse 9 m",
       inspiredBy: "CLAAS Jaguar 990",
+      copy: "Jaguar 900 : Orbis 900 9 m, jumelage, goulotte maximale.",
       cost: 372000,
       powerHp: 790,
       widthM: 9,
@@ -293,7 +313,8 @@ const CATALOGUE: MachineCatalog = {
   PLOUGH: {
     1: {
       label: "Charrue 3 corps",
-      inspiredBy: "Kuhn Master 103",
+      inspiredBy: "Kuhn Master 103 3E",
+      copy: "Portée 3 corps, châssis simple, versoirs rouge, roue de jauge.",
       cost: 3100,
       requiredHp: 90,
       widthM: 2,
@@ -304,7 +325,8 @@ const CATALOGUE: MachineCatalog = {
     },
     2: {
       label: "Charrue 4 corps",
-      inspiredBy: "Kuhn Multi-Master",
+      inspiredBy: "Kuhn Multi-Master 123 4E",
+      copy: "Portée 4 corps, largeur variable, même silhouette Master plus longue.",
       cost: 7130,
       requiredHp: 130,
       widthM: 3,
@@ -315,7 +337,8 @@ const CATALOGUE: MachineCatalog = {
     },
     3: {
       label: "Charrue 5 corps",
-      inspiredBy: "Lemken Juwel 8",
+      inspiredBy: "Lemken Juwel 8 5 N100",
+      copy: "Portée 5 corps, tourteau hydraulique, châssis plus haut.",
       cost: 13950,
       requiredHp: 175,
       widthM: 4,
@@ -326,7 +349,8 @@ const CATALOGUE: MachineCatalog = {
     },
     4: {
       label: "Charrue 7 corps",
-      inspiredBy: "Lemken Titan 11",
+      inspiredBy: "Lemken Diamant 16 7+1",
+      copy: "Semi-portée 7+1, roue de transport, châssis en deux sections.",
       cost: 22300,
       requiredHp: 240,
       widthM: 6,
@@ -337,7 +361,8 @@ const CATALOGUE: MachineCatalog = {
     },
     5: {
       label: "Charrue 9 corps",
-      inspiredBy: "Kverneland PW",
+      inspiredBy: "Kverneland PW 9",
+      copy: "Semi-portée 9 corps, « queue » articulée, très longue au transport.",
       cost: 37200,
       requiredHp: 400,
       widthM: 8,
@@ -350,7 +375,8 @@ const CATALOGUE: MachineCatalog = {
   SEEDER: {
     1: {
       label: "Semoir 4 m",
-      inspiredBy: "Amazone D9 4000",
+      inspiredBy: "Amazone D9 4000 Super",
+      copy: "Porté 4 m, trémie orange, rangées de socs, herse-peigne.",
       cost: 4600,
       requiredHp: 70,
       widthM: 4,
@@ -361,7 +387,8 @@ const CATALOGUE: MachineCatalog = {
     },
     2: {
       label: "Semoir 5 m",
-      inspiredBy: "Amazone Cataya 5000",
+      inspiredBy: "Amazone Cataya 5000 Super",
+      copy: "Combiné 5 m herse rotative + semoir, trémie plus haute.",
       cost: 10580,
       requiredHp: 100,
       widthM: 5,
@@ -373,6 +400,7 @@ const CATALOGUE: MachineCatalog = {
     3: {
       label: "Semoir 6 m",
       inspiredBy: "Horsch Pronto 6 DC",
+      copy: "Traîné 6 m, packer pneus, double trémie, ailes repliables.",
       cost: 20700,
       requiredHp: 140,
       widthM: 6,
@@ -383,7 +411,8 @@ const CATALOGUE: MachineCatalog = {
     },
     4: {
       label: "Semoir 9 m",
-      inspiredBy: "Horsch Avatar 8.16",
+      inspiredBy: "Horsch Pronto 9 DC",
+      copy: "Traîné 9,00 m pile, trémie 6 000 L, même architecture Pronto élargie.",
       cost: 33100,
       requiredHp: 200,
       widthM: 9,
@@ -394,7 +423,8 @@ const CATALOGUE: MachineCatalog = {
     },
     5: {
       label: "Semoir 12 m",
-      inspiredBy: "Väderstad Inspire 1200",
+      inspiredBy: "Väderstad Inspire 1200C",
+      copy: "12,00 m, ailes triples, trémie centrale, packer pneumatique.",
       cost: 55200,
       requiredHp: 320,
       widthM: 12,
@@ -408,6 +438,7 @@ const CATALOGUE: MachineCatalog = {
     1: {
       label: "Épandeur 12 m",
       inspiredBy: "Amazone ZA-M 1500",
+      copy: "Porté, trémie 1 500 L, deux disques, déflecteurs 12 m.",
       cost: 2300,
       requiredHp: 50,
       widthM: 12,
@@ -418,7 +449,8 @@ const CATALOGUE: MachineCatalog = {
     },
     2: {
       label: "Épandeur 15 m",
-      inspiredBy: "Sulky X40",
+      inspiredBy: "Sulky X40+ ECONOV",
+      copy: "Porté, trémie plus haute, carénage latéral, rampe 15 m.",
       cost: 5290,
       requiredHp: 75,
       widthM: 15,
@@ -430,6 +462,7 @@ const CATALOGUE: MachineCatalog = {
     3: {
       label: "Épandeur 18 m",
       inspiredBy: "Amazone ZA-TS 2000",
+      copy: "Porté pesée, trémie 2 000 L, disques TS, 18 m.",
       cost: 10350,
       requiredHp: 110,
       widthM: 18,
@@ -440,7 +473,8 @@ const CATALOGUE: MachineCatalog = {
     },
     4: {
       label: "Épandeur 24 m",
-      inspiredBy: "Kuhn Axis 50.2",
+      inspiredBy: "Kuhn Axis 50.2 W",
+      copy: "Porté pesée 50.2, trémie large, 24 m de nappe.",
       cost: 16560,
       requiredHp: 160,
       widthM: 24,
@@ -452,6 +486,7 @@ const CATALOGUE: MachineCatalog = {
     5: {
       label: "Épandeur 36 m",
       inspiredBy: "Amazone ZG-TS 10001",
+      copy: "Traîné 10 000 L, essieu, disques TS, nappe 36 m.",
       cost: 27600,
       requiredHp: 240,
       widthM: 36,
@@ -464,7 +499,8 @@ const CATALOGUE: MachineCatalog = {
   DISC_HARROW: {
     1: {
       label: "Déchaumeur 3 m",
-      inspiredBy: "Kuhn Discover XM",
+      inspiredBy: "Kuhn Optimer+ 303",
+      copy: "Porté rigide 3,00 m, 24 disques 510 mm, rouleau arrière.",
       cost: 3300,
       requiredHp: 80,
       widthM: 3,
@@ -475,7 +511,8 @@ const CATALOGUE: MachineCatalog = {
     },
     2: {
       label: "Déchaumeur 4 m",
-      inspiredBy: "Lemken Rubin 9",
+      inspiredBy: "Lemken Rubin 10/400",
+      copy: "Porté 4,00 m, disques 645 mm, deux rangées, rouleau packer.",
       cost: 7590,
       requiredHp: 115,
       widthM: 4,
@@ -486,7 +523,8 @@ const CATALOGUE: MachineCatalog = {
     },
     3: {
       label: "Déchaumeur 5,5 m",
-      inspiredBy: "Horsch Joker 5 CT",
+      inspiredBy: "Horsch Joker 6 CT",
+      copy: "Traîné repliable ~6 m, disques concaves, packer pneu.",
       cost: 14850,
       requiredHp: 160,
       widthM: 5.5,
@@ -497,7 +535,8 @@ const CATALOGUE: MachineCatalog = {
     },
     4: {
       label: "Déchaumeur 7,5 m",
-      inspiredBy: "Horsch Joker 8 RT",
+      inspiredBy: "Kuhn Optimer+ 7503",
+      copy: "Traîné 7,50 m pile, 60 disques, repliage 3 m au transport.",
       cost: 23760,
       requiredHp: 230,
       widthM: 7.5,
@@ -508,7 +547,8 @@ const CATALOGUE: MachineCatalog = {
     },
     5: {
       label: "Déchaumeur 10 m",
-      inspiredBy: "Väderstad Carrier 925",
+      inspiredBy: "Lemken Rubin 10/1000 KUA",
+      copy: "Traîné 10,00 m pile, disques 645 mm, repliage hydraulique.",
       cost: 39600,
       requiredHp: 360,
       widthM: 10,
@@ -521,7 +561,8 @@ const CATALOGUE: MachineCatalog = {
   MOWER: {
     1: {
       label: "Faucheuse 3 m",
-      inspiredBy: "Kuhn GMD 310",
+      inspiredBy: "Kuhn GMD 3125",
+      copy: "Portée arrière 3,10 m, 7 disques, relevage vertical.",
       cost: 1900,
       requiredHp: 60,
       widthM: 3,
@@ -532,7 +573,8 @@ const CATALOGUE: MachineCatalog = {
     },
     2: {
       label: "Faucheuse 4 m",
-      inspiredBy: "CLAAS Disco 3200",
+      inspiredBy: "CLAAS Disco 4400 Contour",
+      copy: "Portée arrière 4,20 m, 10 disques, pivot central.",
       cost: 4370,
       requiredHp: 85,
       widthM: 4,
@@ -543,7 +585,8 @@ const CATALOGUE: MachineCatalog = {
     },
     3: {
       label: "Faucheuse 6 m",
-      inspiredBy: "Krone EasyCut 6210",
+      inspiredBy: "Krone EasyCut 6210 CV",
+      copy: "Combiné frontal + arrière 6,20 m, deux barres, conditionneur.",
       cost: 8550,
       requiredHp: 120,
       widthM: 6,
@@ -554,7 +597,8 @@ const CATALOGUE: MachineCatalog = {
     },
     4: {
       label: "Faucheuse 8 m",
-      inspiredBy: "CLAAS Disco 9200",
+      inspiredBy: "CLAAS Disco 8500 C",
+      copy: "Combiné papillon ~8,3 m, trois barres, repliage vertical.",
       cost: 13680,
       requiredHp: 170,
       widthM: 8,
@@ -565,7 +609,8 @@ const CATALOGUE: MachineCatalog = {
     },
     5: {
       label: "Faucheuse 10 m",
-      inspiredBy: "Krone EasyCut B 1000",
+      inspiredBy: "Krone EasyCut B 1000 CV",
+      copy: "Papillon 9,70–10,10 m, trois barres, conditionneur.",
       cost: 22800,
       requiredHp: 260,
       widthM: 10,
@@ -579,6 +624,7 @@ const CATALOGUE: MachineCatalog = {
     1: {
       label: "Pulvé 18 m",
       inspiredBy: "Amazone UF 1501",
+      copy: "Porté, cuve 1 500 L crème, rampe 18 m repliée en U.",
       cost: 3900,
       requiredHp: 60,
       widthM: 18,
@@ -590,6 +636,7 @@ const CATALOGUE: MachineCatalog = {
     2: {
       label: "Pulvé 21 m",
       inspiredBy: "Amazone UF 2002",
+      copy: "Porté, cuve 2 000 L, rampe 21 m, même architecture UF.",
       cost: 8970,
       requiredHp: 90,
       widthM: 21,
@@ -600,7 +647,8 @@ const CATALOGUE: MachineCatalog = {
     },
     3: {
       label: "Pulvé 24 m",
-      inspiredBy: "John Deere R700i",
+      inspiredBy: "John Deere R732i",
+      copy: "Porté R700i, cuve profilée, rampe 24 m, pompe avant.",
       cost: 17550,
       requiredHp: 130,
       widthM: 24,
@@ -612,6 +660,7 @@ const CATALOGUE: MachineCatalog = {
     4: {
       label: "Pulvé 36 m",
       inspiredBy: "Amazone Pantera 4502",
+      copy: "Automoteur, cuve 4 500 L, rampe 36 m, cabine centrale.",
       cost: 28080,
       requiredHp: 200,
       widthM: 36,
@@ -622,7 +671,8 @@ const CATALOGUE: MachineCatalog = {
     },
     5: {
       label: "Pulvé 42 m",
-      inspiredBy: "John Deere R8 410R",
+      inspiredBy: "John Deere 410R",
+      copy: "Automoteur 410R, cuve 3 800 L, rampe carbone jusqu’à 40,2 m.",
       cost: 46800,
       requiredHp: 320,
       widthM: 42,
@@ -636,6 +686,7 @@ const CATALOGUE: MachineCatalog = {
     1: {
       label: "Presse 440",
       inspiredBy: "John Deere 440M",
+      copy: "Chambre fixe ronde, pickup 2,2 m, capot latéral, béquille.",
       cost: 6100,
       requiredHp: 70,
       widthM: 2.2,
@@ -647,6 +698,7 @@ const CATALOGUE: MachineCatalog = {
     2: {
       label: "Presse ronde",
       inspiredBy: "New Holland Roll-Belt 450",
+      copy: "Chambre variable, pickup 2,3 m, courroies visibles sur le flanc.",
       cost: 14030,
       requiredHp: 95,
       widthM: 2.3,
@@ -658,6 +710,7 @@ const CATALOGUE: MachineCatalog = {
     3: {
       label: "Presse Rollant",
       inspiredBy: "CLAAS Rollant 520",
+      copy: "Chambre fixe 1,25 m, pickup 2,5 m, capot vert-jaune.",
       cost: 27450,
       requiredHp: 130,
       widthM: 2.5,
@@ -668,7 +721,8 @@ const CATALOGUE: MachineCatalog = {
     },
     4: {
       label: "Presse Variant",
-      inspiredBy: "CLAAS Variant 585",
+      inspiredBy: "CLAAS Variant 585 RF",
+      copy: "Chambre variable jusqu’à 1,80 m, pickup 2,7 m, capot plus haut.",
       cost: 43920,
       requiredHp: 180,
       widthM: 2.7,
@@ -679,7 +733,8 @@ const CATALOGUE: MachineCatalog = {
     },
     5: {
       label: "Presse Quadrant",
-      inspiredBy: "CLAAS Quadrant 5300",
+      inspiredBy: "CLAAS Quadrant 5300 FC",
+      copy: "Balle cubique, piston avant, flywheel, pickup 2,9 m, caisse longue.",
       cost: 73200,
       requiredHp: 280,
       widthM: 2.9,
@@ -692,7 +747,8 @@ const CATALOGUE: MachineCatalog = {
   TRAILER: {
     1: {
       label: "Benne 8 t",
-      inspiredBy: "Gourdon 8T",
+      inspiredBy: "Gourdon RMG 8",
+      copy: "Ridelles 8 t, simple essieu, porte 2 vantaux, flèche à ressort.",
       cost: 2600,
       requiredHp: 60,
       widthM: 2.5,
@@ -704,7 +760,8 @@ const CATALOGUE: MachineCatalog = {
     },
     2: {
       label: "Benne 12 t",
-      inspiredBy: "Joskin Tetra-CAP 12",
+      inspiredBy: "Joskin Trans-CAP 12/50",
+      copy: "Monocoque 12 t, un essieu, ridelles basses, hayon hydraulique.",
       cost: 5980,
       requiredHp: 80,
       widthM: 2.6,
@@ -717,6 +774,7 @@ const CATALOGUE: MachineCatalog = {
     3: {
       label: "Benne 16 t",
       inspiredBy: "Fliegl TMK 160",
+      copy: "Monocoque 16 t, tandem, hayon, flèche articulée.",
       cost: 11700,
       requiredHp: 110,
       widthM: 2.8,
@@ -729,6 +787,7 @@ const CATALOGUE: MachineCatalog = {
     4: {
       label: "Benne 24 t",
       inspiredBy: "Krampe Big Body 650",
+      copy: "Monocoque ~24 t, tandem, caisse haute, hayon grain.",
       cost: 18720,
       requiredHp: 160,
       widthM: 3,
@@ -740,7 +799,8 @@ const CATALOGUE: MachineCatalog = {
     },
     5: {
       label: "Benne 32 t",
-      inspiredBy: "Fliegl TMK 266",
+      inspiredBy: "Krampe Big Body 900",
+      copy: "Monocoque ~30 t, tridem, caisse très haute, bennes d’ensilage.",
       cost: 31200,
       requiredHp: 240,
       widthM: 3.2,

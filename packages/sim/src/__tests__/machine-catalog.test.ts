@@ -53,7 +53,8 @@ describe("cinq fiches par famille", () => {
         const fiche = machineVariant(t, tier);
         expect(fiche.cost).toBeGreaterThan(prix);
         expect(fiche.label.length).toBeGreaterThan(2);
-        expect(fiche.inspiredBy.length).toBeGreaterThan(4);
+        expect(fiche.copy.length).toBeGreaterThan(12);
+        expect(fiche.inspiredBy).toMatch(/\d/);
         expect(fiche.bonus.length).toBeGreaterThan(8);
         expect(fiche.label).not.toMatch(/John Deere|CLAAS|Fendt|Manitou|Amazone|Horsch/i);
         prix = fiche.cost;

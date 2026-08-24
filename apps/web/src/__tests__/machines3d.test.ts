@@ -107,10 +107,16 @@ describe("pièces animées", () => {
     });
   }
 
-  it("un automoteur a quatre roues et une sortie de pot", () => {
+  it("un automoteur T1 a quatre roues et une sortie de pot", () => {
     const rig = createMachineRig("TRACTOR", { shadows: false });
     expect(rig.anchors("wheel")).toHaveLength(4);
     expect(rig.exhaust).not.toBeNull();
+    rig.dispose();
+  });
+
+  it("un tracteur T5 est jumelé — silhouette du géant, pas un T1 agrandi", () => {
+    const rig = createMachineRig("TRACTOR", { shadows: false, tier: 5 });
+    expect(rig.anchors("wheel").length).toBeGreaterThan(4);
     rig.dispose();
   });
 

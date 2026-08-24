@@ -1,5 +1,5 @@
 import * as THREE from "three";
-import type { MachineType } from "@farmsim/shared";
+import type { MachineType, MachineTier } from "@farmsim/shared";
 import { markShared } from "./three-cleanup";
 import {
   HALF,
@@ -84,8 +84,15 @@ const REAR_W = 0.175;
 const FRONT_R = 0.15;
 const FRONT_W = 0.125;
 
-function buildTractor(): Blueprint {
+function buildTractor(tier: MachineTier = 1): Blueprint {
   const root = new Part();
+  const rearR = tier >= 4 ? 0.255 : REAR_R;
+  const rearW = tier >= 4 ? 0.165 : REAR_W;
+  const frontR = tier >= 4 ? 0.175 : FRONT_R;
+  const frontW = tier >= 4 ? 0.13 : FRONT_W;
+  const dual = tier >= 5;
+  const rearTrack = dual ? ([0.2, 0.38, -0.2, -0.38] as const) : ([0.238, -0.238] as const);
+  const fenderTrack = dual ? ([0.38, -0.38] as const) : ([0.238, -0.238] as const);
 
   /* — Transmission, ponts, carters ————————————————————————— */
   root.add(
@@ -218,15 +225,15 @@ function buildTractor(): Blueprint {
   );
 
   /* — Garde-boue et marchepieds ————————————————————————— */
-  for (const z of [0.238, -0.238] as const) {
+  for (const z of fenderTrack) {
     const from = Math.PI * 0.1;
     const span = Math.PI * 0.72;
-    root.add("paint", shell(REAR_R + 0.03, REAR_W + 0.012, from, span, [-0.26, REAR_R, z]));
+    root.add("paint", shell(rearR + 0.03, rearW + 0.012, from, span, [-0.26, rearR, z]));
     root.add(
       "paintDark",
-      ring(REAR_R + 0.03, 0.007, 24, span, [-0.26, REAR_R, z + (z > 0 ? 0.007 : -0.007)], [0, 0, from]),
+      ring(rearR + 0.03, 0.007, 24, span, [-0.26, rearR, z + (z > 0 ? 0.007 : -0.007)], [0, 0, from]),
     );
-    root.add("paint", roundedBox(0.2, 0.016, REAR_W + 0.01, 0.008, [-0.26, REAR_R + 0.032, z]));
+    root.add("paint", roundedBox(0.2, 0.016, rearW + 0.01, 0.008, [-0.26, rearR + 0.032, z]));
     root.add(
       "steel",
       roundedBox(0.16, 0.014, 0.07, 0.01, [-0.09, 0.34, z * 0.95]),
@@ -285,22 +292,22 @@ function buildTractor(): Blueprint {
   );
 
   /* — Trains roulants ————————————————————————————————— */
-  for (const z of [0.238, -0.238] as const) {
+  for (const z of rearTrack) {
     root
-      .child([-0.26, REAR_R, z], { role: "wheel", radius: REAR_R })
-      .attach(wheelPart(REAR_R, REAR_W, 14));
+      .child([-0.26, rearR, z], { role: "wheel", radius: rearR })
+      .attach(wheelPart(rearR, rearW, 14));
   }
-  const steer = root.child([0.36, FRONT_R, 0], { role: "steer" });
+  const steer = root.child([0.36, frontR, 0], { role: "steer" });
   for (const z of [0.208, -0.208] as const) {
-    steer.child([0, 0, z], { role: "wheel", radius: FRONT_R }).attach(wheelPart(FRONT_R, FRONT_W, 12));
+    steer.child([0, 0, z], { role: "wheel", radius: frontR }).attach(wheelPart(frontR, frontW, 12));
     steer.add("cast", cyl(0.022, 0.022, 0.06, 10, [0, 0, z * 0.72], [HALF, 0, 0]));
     steer.add(
       "paint",
-      shell(FRONT_R + 0.03, FRONT_W + 0.018, Math.PI * 0.12, Math.PI * 0.66, [0, 0, z], 20),
+      shell(frontR + 0.03, frontW + 0.018, Math.PI * 0.12, Math.PI * 0.66, [0, 0, z], 20),
     );
   }
 
-  return { root, length: 1.35, hitch: [-0.64, 0.16, 0], eye: [0, 0, 0] };
+  return { root, length: tier >= 5 ? 1.5 : 1.35, hitch: [-0.64, 0.16, 0], eye: [0, 0, 0] };
 }
 
 /* ------------------------------------------------------------------ */
@@ -1333,7 +1340,7 @@ function buildSprayer(): Blueprint {
 }
 
 const BUILDERS: Record<MachineType, () => Blueprint> = {
-  TRACTOR: buildTractor,
+  TRACTOR: () => buildTractor(1),
   HARVESTER: buildHarvester,
   FORAGE_HARVESTER: buildForageHarvester,
   PLOUGH: buildPlough,
@@ -1346,13 +1353,14 @@ const BUILDERS: Record<MachineType, () => Blueprint> = {
   TRAILER: buildTrailer,
 };
 
-const blueprints = new Map<MachineType, Blueprint>();
+const blueprints = new Map<string, Blueprint>();
 
-function blueprint(type: MachineType): Blueprint {
-  let bp = blueprints.get(type);
+function blueprint(type: MachineType, tier: MachineTier = 1): Blueprint {
+  const key = type === "TRACTOR" ? `TRACTOR-${tier}` : type;
+  let bp = blueprints.get(key);
   if (!bp) {
-    bp = BUILDERS[type]();
-    blueprints.set(type, bp);
+    bp = type === "TRACTOR" ? buildTractor(tier) : BUILDERS[type]();
+    blueprints.set(key, bp);
   }
   return bp;
 }
@@ -1411,6 +1419,8 @@ export type MachineRigOptions = {
   shadows?: boolean;
   /** Graine de variation de teinte, pour ne pas cloner deux engins voisins */
   seed?: number;
+  /** Palier catalogue : un T5 n’est pas un T1 agrandi, il a une autre silhouette. */
+  tier?: MachineTier;
 };
 
 export type MachineRig = {
@@ -1450,7 +1460,7 @@ function wearOf(condition: number | undefined): number {
 }
 
 function createUnit(type: MachineType, opts: MachineRigOptions): Unit {
-  const bp = blueprint(type);
+  const bp = blueprint(type, opts.tier ?? 1);
   const materials = createMaterials(PALETTES[type], opts.seed ?? 0, wearOf(opts.condition));
   const roles = new Map<Role, THREE.Object3D[]>();
   const body = bp.root.build(materials, roles, opts.shadows ?? true);
@@ -1529,19 +1539,20 @@ function animateUnit(unit: Unit, s: Required<MachineState>) {
 export function createMachineRig(type: MachineType, opts: MachineRigOptions = {}): MachineRig {
   const group = new THREE.Group();
   const units: Unit[] = [];
-  let length = blueprint(type).length;
+  const palier = opts.tier ?? 1;
+  let length = blueprint(type, palier).length;
 
   if (opts.towed && isTowedImplement(type)) {
     const tractor = createUnit("TRACTOR", opts);
     const implement = createUnit(type, { ...opts, seed: (opts.seed ?? 0) + 7 });
     // L'anneau de l'outil vient se poser sur la chape du tracteur : attelage
     // jointif, plutôt qu'un outil qui flotte derrière son timon.
-    const hitch = blueprint("TRACTOR").hitch;
-    const eye = blueprint(type).eye;
+    const hitch = blueprint("TRACTOR", palier).hitch;
+    const eye = blueprint(type, palier).eye;
     implement.group.position.set(hitch[0] - eye[0], hitch[1] - eye[1], 0);
     group.add(tractor.group, implement.group);
     units.push(tractor, implement);
-    length = blueprint("TRACTOR").length + blueprint(type).length;
+    length = blueprint("TRACTOR", palier).length + blueprint(type, palier).length;
     // Recentrage : sans cela le tracteur occuperait le milieu de la case et
     // l'outil travaillerait hors du champ.
     for (const child of group.children) child.position.x += length * 0.22;

@@ -189,22 +189,19 @@ export const SPECIALIZATION_SHORT: Record<Specialization, string> = {
   ELEVEUR: "Éleveur",
 };
 
-/** Illustration du matériel, pour le catalogue et le garage. */
+/** Illustration du matériel, pour le catalogue et le garage — une par famille. */
 export const MACHINE_ART: Record<MachineType, string> = {
-  TRACTOR: "/assets/vehicles/tractor.webp",
-  HARVESTER: "/assets/vehicles/harvester.webp",
-  FORAGE_HARVESTER: "/assets/vehicles/harvester.webp",
-  SPREADER: "/assets/vehicles/spreader.webp",
-  DISC_HARROW: "/assets/vehicles/harrow.webp",
-  // Les quatre outils nouveaux partagent les vignettes existantes : une
-  // illustration approximative vaut mieux qu'une case vide, et le rendu 3D
-  // du garage montre de toute façon le vrai engin.
-  PLOUGH: "/assets/vehicles/harrow.webp",
-  SEEDER: "/assets/vehicles/spreader.webp",
-  MOWER: "/assets/vehicles/harrow.webp",
-  SPRAYER: "/assets/vehicles/spreader.webp",
-  BALER: "/assets/vehicles/harrow.webp",
-  TRAILER: "/assets/vehicles/spreader.webp",
+  TRACTOR: "/assets/vehicles/tractor.png",
+  HARVESTER: "/assets/vehicles/harvester.png",
+  FORAGE_HARVESTER: "/assets/vehicles/forage-harvester.png",
+  SPREADER: "/assets/vehicles/spreader.png",
+  DISC_HARROW: "/assets/vehicles/harrow.png",
+  PLOUGH: "/assets/vehicles/plough.png",
+  SEEDER: "/assets/vehicles/seeder.png",
+  MOWER: "/assets/vehicles/mower.png",
+  SPRAYER: "/assets/vehicles/sprayer.png",
+  BALER: "/assets/vehicles/baler.png",
+  TRAILER: "/assets/vehicles/trailer.png",
 };
 
 /** Bonus spé max ≤ +10 % — valeurs de départ faibles `[GD]` */
