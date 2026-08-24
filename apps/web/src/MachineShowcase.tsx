@@ -1,5 +1,13 @@
 import { useEffect, useMemo, useState } from "react";
-import { MACHINE_DEFS, MACHINE_TIERS, TIER_LABELS, type MachineType, type MachineTier } from "@farmsim/shared";
+import {
+  MACHINE_DEFS,
+  MACHINE_TIERS,
+  TIER_LABELS,
+  TIER_ROLE_LABELS,
+  machineVariant,
+  type MachineType,
+  type MachineTier,
+} from "@farmsim/shared";
 import { MachineView3D } from "./MachineView3D";
 import { IsoFarmView, type IsoBuilding, type IsoCell } from "./IsoFarmView";
 import { isTowedImplement } from "./machines3d";
@@ -89,7 +97,7 @@ export function MachineShowcase() {
 
       <div className={`atelier-grid ${big ? "big" : ""}`}>
         {TYPES.map((type) => {
-          const def = MACHINE_DEFS[type];
+          const fiche = machineVariant(type, tier);
           return (
             <article className="atelier-card" key={type}>
               <MachineView3D
@@ -102,10 +110,12 @@ export function MachineShowcase() {
                 tier={tier}
               />
               <div className="atelier-meta">
-                <h2>{def.name}</h2>
-                <p>{def.description}</p>
+                <h2>{fiche.label}</h2>
+                <p className="atelier-sku">{fiche.inspiredBy}</p>
+                <p>{fiche.copy}</p>
                 <p className="atelier-tags">
-                  {isTowedImplement(type) ? "Outil traîné" : "Automoteur"} · {TIER_LABELS[tier]}
+                  {isTowedImplement(type) ? "Outil traîné" : "Automoteur"} · {TIER_LABELS[tier]} ·{" "}
+                  {TIER_ROLE_LABELS[tier]}
                 </p>
               </div>
             </article>

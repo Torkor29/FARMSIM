@@ -290,9 +290,18 @@ describe("cinq paliers, cinq silhouettes", () => {
   it("une remorque T5 a plus de roues qu'une T1 — tridem", () => {
     const t1 = createMachineRig("TRAILER", { shadows: false, tier: 1 });
     const t5 = createMachineRig("TRAILER", { shadows: false, tier: 5 });
+    expect(t1.anchors("wheel")).toHaveLength(2);
     expect(t5.anchors("wheel").length).toBeGreaterThan(t1.anchors("wheel").length);
     t1.dispose();
     t5.dispose();
+  });
+
+  it("une faucheuse T3 est déjà un combiné, plus une barre unique", () => {
+    const t1 = createMachineRig("MOWER", { shadows: false, tier: 1 });
+    const t3 = createMachineRig("MOWER", { shadows: false, tier: 3 });
+    expect(t3.anchors("spinner").length).toBeGreaterThan(t1.anchors("spinner").length);
+    t1.dispose();
+    t3.dispose();
   });
 
   it("une moissonneuse T5 est sur quatre chenilles, plus large au bec", () => {

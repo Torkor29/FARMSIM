@@ -111,6 +111,14 @@ body {
   line-height: 1.45;
 }
 
+.atelier-sku {
+  margin: 2px 0 8px !important;
+  font-size: 0.82rem;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  color: var(--teal-600);
+}
+
 .atelier-tags {
   margin-top: 6px !important;
   font-size: 0.85rem;
