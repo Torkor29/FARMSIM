@@ -56,6 +56,14 @@
   --sh-2: 0 8px 24px rgba(34, 49, 44, 0.12);
   --sh-3: 0 18px 48px rgba(34, 49, 44, 0.18);
 
+  /* Entrée des menus. La courbe d'avant (0.22, 1, 0.36, 1) partait trop
+     vite, et 8 px en un tiers de seconde claquaient : on voyait un apparu,
+     pas un mouvement. */
+  --menu-ease: cubic-bezier(0.22, 0.61, 0.36, 1);
+  --menu-ms: 0.5s;
+  --submenu-ms: 0.4s;
+  --veil-ms: 0.45s;
+
   /* Signika remplace Nunito.
      Nunito est le sans arrondi le plus répandu des interfaces engendrées : à
      lui seul il donnait au jeu l'air d'un gabarit. Signika tient le même
@@ -203,9 +211,17 @@ html.playing body {
 /* Charte §8.1 #8 : un panneau entre en glissant depuis son bord, il
    n'apparaît pas d'un coup au milieu de l'écran. Le sens dépend du rail —
    à gauche on vient de la gauche. */
-.rail-left > * { animation: panel-in 0.34s cubic-bezier(0.22, 1, 0.36, 1) both; }
-.rail-right > * { animation: panel-in 0.34s cubic-bezier(0.22, 1, 0.36, 1) both; }
+.rail-left > * { animation: panel-in var(--menu-ms) var(--menu-ease) both; }
+.rail-right > * { animation: panel-in var(--menu-ms) var(--menu-ease) both; }
 @keyframes panel-in {
+  from { opacity: 0; transform: translateY(22px); }
+  to { opacity: 1; transform: none; }
+}
+@keyframes veil-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+@keyframes submenu-in {
   from { opacity: 0; transform: translateY(10px); }
   to { opacity: 1; transform: none; }
 }
@@ -516,11 +532,11 @@ html.playing .field-dock {
    hors de la requête média : une @keyframes imbriquée dans un @media n'est
    pas visible depuis une règle déclarée ailleurs. */
 @keyframes drawer-rise {
-  from { opacity: 0; transform: translateY(16px); }
+  from { opacity: 0; transform: translateY(28px); }
   to { opacity: 1; transform: none; }
 }
 @keyframes tab-pop {
-  from { opacity: 0; transform: translateY(6px); }
+  from { opacity: 0; transform: translateY(12px); }
   to { opacity: 1; transform: none; }
 }
 
@@ -900,7 +916,7 @@ button.ghost {
   padding: 1rem;
   background: rgba(24, 44, 38, 0.6);
   backdrop-filter: blur(4px);
-  animation: tut-fade-in 0.18s ease;
+  animation: veil-in var(--veil-ms) var(--menu-ease) both;
 }
 .confirm-card {
   width: min(400px, 100%);
@@ -908,6 +924,7 @@ button.ghost {
   border-radius: var(--r-lg);
   display: grid;
   gap: 0.5rem;
+  animation: panel-in var(--menu-ms) var(--menu-ease) both;
 }
 .confirm-card h3 { margin: 0; font-size: 1.15rem; color: var(--teal-700); }
 
@@ -922,6 +939,7 @@ button.ghost {
   padding-bottom: max(1rem, env(safe-area-inset-bottom));
   background: rgba(24, 44, 38, 0.65);
   backdrop-filter: blur(4px);
+  animation: veil-in var(--veil-ms) var(--menu-ease) both;
 }
 .care-card {
   width: min(420px, 100%);
@@ -929,6 +947,7 @@ button.ghost {
   border-radius: var(--r-lg);
   display: grid;
   gap: 0.4rem;
+  animation: panel-in var(--menu-ms) var(--menu-ease) both;
 }
 .care-card h3 { margin: 0; font-size: 1.15rem; color: var(--teal-700); }
 .care-machine { margin: 0; font-weight: 650; color: var(--ink); }
@@ -1082,6 +1101,7 @@ button.ghost {
   padding: 1rem;
   background: rgba(24, 44, 38, 0.55);
   backdrop-filter: blur(6px);
+  animation: veil-in var(--veil-ms) var(--menu-ease) both;
 }
 .hall-sheet,
 .market-sheet {
@@ -1091,6 +1111,7 @@ button.ghost {
   padding: 0;
   border-radius: var(--r-lg);
   display: grid;
+  animation: panel-in var(--menu-ms) var(--menu-ease) both;
 }
 /* En-tête et portes fixes, contenu défilant : sans cette ligne la feuille
    coupait net tout ce qui dépassait, et il n'y avait aucun moyen de descendre
@@ -1105,6 +1126,7 @@ button.ghost {
   align-content: start;
   gap: 0.6rem;
   padding-top: 0.75rem;
+  animation: submenu-in var(--submenu-ms) var(--menu-ease) both;
 }
 /* Sans retrait, l'en-tête touchait le haut de la feuille et rabotait le
    « BIENVENUE » qui la coiffe. Le retrait vit sur le conteneur et non sur
@@ -2114,7 +2136,7 @@ button.blocked:active { opacity: 0.72; }
   justify-content: space-between;
   gap: 0.75rem;
   padding: 0.6rem 0.85rem;
-  animation: build-rise 0.18s ease-out;
+  animation: menu-in-center var(--menu-ms) var(--menu-ease) both;
   /* Au-dessus du dock **et** de la puce « À faire » qui le coiffe : à
      7,2 rem la barre recouvrait l'objectif du moment. */
   bottom: 9.6rem;
@@ -2153,8 +2175,8 @@ html.playing .build-confirm { position: fixed; }
 .build-go b { font-variant-numeric: tabular-nums; }
 .build-turn span { display: inline-block; font-size: 1.05em; }
 .build-turn:active span { transform: rotate(90deg); transition: transform 0.18s ease-out; }
-@keyframes build-rise {
-  from { opacity: 0; transform: translate(-50%, 10px); }
+@keyframes menu-in-center {
+  from { opacity: 0; transform: translate(-50%, 22px); }
   to { opacity: 1; transform: translate(-50%, 0); }
 }
 /* Un bâtiment tout juste posé se démolit intégralement remboursé : le bouton
@@ -2175,13 +2197,14 @@ html.playing .build-confirm { position: fixed; }
   place-items: center;
   background: rgba(20, 34, 30, 0.34);
   padding: var(--gutter, 1rem);
+  animation: veil-in var(--veil-ms) var(--menu-ease) both;
 }
 .building-sheet {
   width: min(26rem, 100%);
   display: grid;
   gap: 0.7rem;
   padding: 1rem 1.1rem 1.15rem;
-  animation: build-rise 0.18s ease-out;
+  animation: panel-in var(--menu-ms) var(--menu-ease) both;
 }
 .building-sheet header { display: flex; align-items: flex-start; justify-content: space-between; gap: 0.5rem; }
 .building-sheet h3 { margin: 0; font-size: 1.25rem; color: var(--teal-700); }
@@ -2307,10 +2330,10 @@ html.playing .build-confirm { position: fixed; }
   border: 1px solid var(--glass-border);
   box-shadow: var(--sh-2);
   backdrop-filter: blur(12px);
-  animation: tray-in 0.32s cubic-bezier(0.22, 1, 0.36, 1);
+  animation: tray-in var(--menu-ms) var(--menu-ease) both;
 }
 @keyframes tray-in {
-  from { opacity: 0; transform: translateY(8px); }
+  from { opacity: 0; transform: translateY(22px); }
   to { opacity: 1; transform: none; }
 }
 .dock-tray .stroke-hint,
@@ -2342,6 +2365,16 @@ html.playing .build-confirm { position: fixed; }
 }
 .dock-chips::-webkit-scrollbar { display: none; }
 .dock-chips > * { flex: 0 0 auto; }
+.dock-chips .chip {
+  animation: submenu-in var(--submenu-ms) var(--menu-ease) both;
+}
+.dock-chips .chip:nth-child(1) { animation-delay: 0.05s; }
+.dock-chips .chip:nth-child(2) { animation-delay: 0.09s; }
+.dock-chips .chip:nth-child(3) { animation-delay: 0.13s; }
+.dock-chips .chip:nth-child(4) { animation-delay: 0.17s; }
+.dock-chips .chip:nth-child(5) { animation-delay: 0.21s; }
+.dock-chips .chip:nth-child(6) { animation-delay: 0.25s; }
+.dock-chips .chip:nth-child(n + 7) { animation-delay: 0.29s; }
 /* La rangée d'action ne défile pas : « Faire ×14 » doit rester sous le doigt. */
 .dock-chips-end {
   grid-column: 2;
@@ -3007,9 +3040,11 @@ html.playing .build-confirm { position: fixed; }
     box-shadow: 0 -10px 30px rgba(24, 44, 38, 0.22);
     /* Fermé par défaut : le tiroir n'existe que quand on l'appelle. */
     display: none;
-    animation: sheet-rise 0.36s cubic-bezier(0.22, 1, 0.36, 1);
   }
-  .game-stage.mobile .sheet.open { display: block; }
+  .game-stage.mobile .sheet.open {
+    display: block;
+    animation: sheet-rise var(--menu-ms) var(--menu-ease) both;
+  }
 
   /* Poignée : elle signale qu'on a affaire à un tiroir, pas à une carte. */
   .game-stage.mobile .sheet::before {
@@ -3023,7 +3058,7 @@ html.playing .build-confirm { position: fixed; }
   }
 
   @keyframes sheet-rise {
-    from { transform: translateY(18px); opacity: 0; }
+    from { transform: translateY(32px); opacity: 0; }
     to { transform: translateY(0); opacity: 1; }
   }
 
@@ -3036,6 +3071,7 @@ html.playing .build-confirm { position: fixed; }
     padding: 0;
     background: rgba(24, 44, 38, 0.28);
     backdrop-filter: blur(2px);
+    animation: veil-in var(--veil-ms) var(--menu-ease) both;
   }
 
   /* —— Tiroir « Plus » ——
@@ -3061,7 +3097,7 @@ html.playing .build-confirm { position: fixed; }
     border: 1px solid var(--glass-border);
     box-shadow: var(--sh-3);
     backdrop-filter: blur(14px);
-    animation: drawer-rise 0.38s cubic-bezier(0.22, 1, 0.36, 1) both;
+    animation: drawer-rise var(--menu-ms) var(--menu-ease) both;
   }
   .tab {
     display: grid;
@@ -3077,8 +3113,13 @@ html.playing .build-confirm { position: fixed; }
     background: var(--paper);
     line-height: 1.15;
     color: var(--ink);
-    animation: tab-pop 0.32s cubic-bezier(0.22, 1, 0.36, 1) both;
+    animation: tab-pop var(--submenu-ms) var(--menu-ease) both;
   }
+  .tab:nth-child(1) { animation-delay: 0.05s; }
+  .tab:nth-child(2) { animation-delay: 0.1s; }
+  .tab:nth-child(3) { animation-delay: 0.15s; }
+  .tab:nth-child(4) { animation-delay: 0.2s; }
+  .tab:nth-child(5) { animation-delay: 0.25s; }
   /* Le dessin remplace l'emoji : il lui faut une taille, pas un corps. */
   .tab-icon { width: 22px; height: 22px; display: block; }
   .tab.on { background: var(--teal-100, rgba(46, 142, 122, 0.16)); border-color: var(--teal-300); }
@@ -3241,6 +3282,7 @@ html.playing .build-confirm { position: fixed; }
   padding: 0;
   background: rgba(24, 44, 38, 0.45);
   backdrop-filter: blur(5px);
+  animation: veil-in var(--veil-ms) var(--menu-ease) both;
 }
 .guide-sheet {
   width: min(560px, 100%);
@@ -3250,6 +3292,7 @@ html.playing .build-confirm { position: fixed; }
   border-radius: 22px 22px 0 0;
   padding: 1rem 1rem 1.2rem;
   overflow: hidden;
+  animation: panel-in var(--menu-ms) var(--menu-ease) both;
 }
 .guide-head {
   display: flex;
@@ -4366,10 +4409,10 @@ button.tiny {
   box-shadow: var(--sh-3);
   display: grid;
   gap: 0.1rem;
-  animation: cell-menu-in 0.12s ease-out;
+  animation: cell-menu-in var(--submenu-ms) var(--menu-ease) both;
 }
 @keyframes cell-menu-in {
-  from { opacity: 0; transform: scale(0.97); }
+  from { opacity: 0; transform: translateY(12px) scale(0.98); }
   to { opacity: 1; transform: none; }
 }
 .cell-menu-head {
@@ -5028,7 +5071,7 @@ button.tiny {
   padding: clamp(0.75rem, 3vh, 2.5rem);
   background: rgba(24, 44, 38, 0.34);
   backdrop-filter: blur(3px);
-  animation: win-fade 0.28s ease-out;
+  animation: win-fade var(--veil-ms) var(--menu-ease) both;
 }
 @keyframes win-fade { from { opacity: 0; } to { opacity: 1; } }
 
@@ -5042,12 +5085,12 @@ button.tiny {
   border: 1px solid var(--glass-border);
   box-shadow: var(--sh-3);
   overflow: hidden;
-  animation: win-rise 0.34s cubic-bezier(0.22, 1, 0.36, 1);
+  animation: win-rise var(--menu-ms) var(--menu-ease) both;
 }
 /* Large : les panneaux qui montrent des tableaux, pas des cartes empilées. */
 .win.wide { width: min(1440px, 100%); }
 @keyframes win-rise {
-  from { opacity: 0; transform: translateY(14px) scale(0.985); }
+  from { opacity: 0; transform: translateY(22px); }
   to { opacity: 1; transform: none; }
 }
 
@@ -6379,7 +6422,7 @@ button.tiny {
   backdrop-filter: blur(12px);
   flex-wrap: wrap;
   overflow: visible;
-  animation: build-rise 0.16s ease-out;
+  animation: panel-in var(--menu-ms) var(--menu-ease) both;
 }
 
 /* —— Calendrier des cultures ——
@@ -6436,7 +6479,7 @@ button.tiny {
   border: 1px solid var(--glass-border);
   box-shadow: var(--sh-3, 0 12px 32px rgba(20, 40, 34, 0.18));
   backdrop-filter: blur(14px);
-  animation: build-rise 0.18s ease-out;
+  animation: panel-in var(--menu-ms) var(--menu-ease) both;
 }
 .calendrier-tete {
   display: flex;
@@ -6623,6 +6666,35 @@ button.tiny {
 
 @media (prefers-reduced-motion: reduce) {
   .vue-recentrer { transition: opacity 1ms linear, visibility 1ms; transform: none; }
+  .rail-left > *,
+  .rail-right > *,
+  .dock-tray,
+  .dock-chips .chip,
+  .sheet.open,
+  .tab-drawer,
+  .tab,
+  .win-backdrop,
+  .win,
+  .market-backdrop,
+  .hall-backdrop,
+  .market-sheet,
+  .hall-sheet,
+  .hall-body,
+  .guide-backdrop,
+  .guide-sheet,
+  .sheet-backdrop,
+  .sheet-scrim,
+  .building-sheet,
+  .calendrier,
+  .cell-menu,
+  .build-confirm,
+  .confirm-backdrop,
+  .confirm-card,
+  .care-backdrop,
+  .care-card,
+  .market-ticker.tiroir {
+    animation: none !important;
+  }
 }
 
 /* Sur téléphone, l'icône seule : le dock occupe déjà le bas de l'écran, et le

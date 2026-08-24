@@ -191,6 +191,23 @@ describe("le plateau tactile", () => {
     expect(fs.readFileSync("src/ui/desktop/Window.tsx", "utf8")).toMatch(/createPortal/);
   });
 
+  it("fait entrer menus et sous-menus du même geste, sans claquer", () => {
+    /*
+     * Capture : chaque ouverture claquait. Les tiroirs, le dock, l'hôtel
+     * des ventes, le calendrier et le guide partageaient des durées de
+     * 0,12 à 0,34 s et, pour le calendrier, une animation prévue pour un
+     * bandeau centré — ça arrivait de travers, puis ça sautait.
+     */
+    expect(CSS).toMatch(/--menu-ms:\s*0\.5s/);
+    expect(CSS).toMatch(/@keyframes veil-in/);
+    expect(CSS).toMatch(/@keyframes submenu-in/);
+    expect(CSS).not.toMatch(/@keyframes build-rise/);
+    expect(regle(".calendrier")).toMatch(/panel-in/);
+    expect(regle(".hall-sheet,\n.market-sheet")).toMatch(/panel-in/);
+    expect(regle(".dock-chips .chip")).toMatch(/submenu-in/);
+    expect(regle(".game-stage.mobile .sheet.open")).toMatch(/sheet-rise/);
+  });
+
   it("ne laisse pas Safari zoomer deux fois, ni sauter au doigt restant", () => {
     const VUE = fs.readFileSync("src/IsoFarmView.tsx", "utf8");
     expect(VUE).toMatch(/facteurMolette/);
