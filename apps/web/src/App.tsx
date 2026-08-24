@@ -1545,7 +1545,9 @@ export function App() {
    * Le rail n'affichait que le nom de la saison. Elle durait quinze minutes,
    * soit un seul jour de jeu, et personne ne pouvait s'en rendre compte : on
    * lisait « Été » puis « Automne » sans avoir rien fait entre les deux. Une
-   * saison d'une semaine ne se voit pas davantage si on ne la compte pas.
+   * saison de dix heures ne se voit pas davantage si on ne la compte pas —
+   * surtout depuis qu'elle ne tombe plus sur un jour de la semaine, et qu'on
+   * ne peut donc plus la déduire du calendrier réel.
    */
   const jourDeSaison = dayOfSeason(horloge);
   const zoneCode =

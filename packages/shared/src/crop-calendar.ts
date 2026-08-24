@@ -4,138 +4,167 @@
  * Un calendrier agricole dessiné à la main est un mensonge en sursis : il dit
  * « le blé se moissonne en été » jusqu'au jour où l'on retouche une vitesse de
  * pousse, et plus personne ne s'en aperçoit. Ce module ne dessine rien. Il
- * fait pousser chaque culture, jour de jeu par jour de jeu, avec exactement
- * les fonctions qu'emploie le champ — `canSowInSeason` pour la fenêtre de
- * semis, `growthRate` pour la vitesse — et rapporte ce qui s'est passé.
+ * fait pousser chaque culture avec exactement les fonctions qu'emploie le
+ * champ — `canSowInSeason` pour la fenêtre, `growthRate` pour la vitesse — et
+ * rapporte ce qui s'est passé.
  *
- * Le calendrier ne peut donc pas mentir : s'il affiche une récolte le vendredi,
- * c'est qu'une graine semée lundi est mûre le vendredi.
+ * ## Pourquoi des saisons, et non plus des jours
  *
- * ## Pourquoi une semaine
+ * Le calendrier avait sept colonnes, une par jour de la semaine, parce que
+ * l'année de jeu tombait pile sur la semaine réelle. C'était précisément le
+ * défaut à corriger : un joueur du week-end ne voyait que deux saisons sur
+ * quatre, à vie. Les saisons glissent désormais dans la journée
+ * (`SEASON_REAL_HOURS`), et « lundi » ne dit plus rien de la saison qu'il
+ * portera.
  *
- * L'année de jeu tombe sur la semaine réelle — lundi et mardi au printemps,
- * mercredi et jeudi en été, vendredi et samedi à l'automne, l'hiver le
- * dimanche. Les colonnes du calendrier sont donc les sept jours, et non des
- * mois : c'est le repère que le joueur a déjà dans la tête.
+ * Les colonnes sont donc les quatre saisons, ce qui est de toute façon le seul
+ * repère dont un agriculteur se sert : on ne sème pas « un mardi », on sème à
+ * l'automne.
  *
  * ## Ce qui est volontairement ignoré
  *
  * La météo. Elle accélère ou ralentit la pousse au jour le jour, mais elle est
- * tirée par zone : l'intégrer donnerait un calendrier différent par région et
- * par semaine, ce qui n'est plus un calendrier mais un bulletin. On dit le
- * temps qu'il fait ailleurs ; ici on dit la saison.
+ * tirée par zone : l'intégrer donnerait un calendrier différent par région,
+ * ce qui n'est plus un calendrier mais un bulletin.
  */
 
 import { canSowInSeason, growthRate } from "./calendar.js";
-import { CROP_DEFS, cropGrowMs, type CropCode } from "./index.js";
-import { GAME_DAY_MS, GAME_DAYS_PER_REAL_DAY, seasonOfWeekday, YEAR_REAL_DAYS } from "./time.js";
+import { cropGrowMs, type CropCode, CROP_DEFS } from "./index.js";
+import { SEASON_CYCLE, SEASON_REAL_MS } from "./time.js";
 import type { Season } from "./world.js";
 
-/** Les jours de la semaine, dans l'ordre où le calendrier les affiche. */
-export const WEEKDAY_LABELS = [
-  "Lundi",
-  "Mardi",
-  "Mercredi",
-  "Jeudi",
-  "Vendredi",
-  "Samedi",
-  "Dimanche",
-] as const;
-
-/** Version courte, pour les colonnes étroites. */
-export const WEEKDAY_SHORT = ["LUN", "MAR", "MER", "JEU", "VEN", "SAM", "DIM"] as const;
-
-/** Une ligne du calendrier : une culture, ses deux barres. */
-export type CropCalendarRow = {
-  crop: CropCode;
-  /** Jours où l'on peut semer — lundi = 0. */
-  sowDays: number[];
-  /** Jours où une culture semée dans sa fenêtre est mûre. */
-  harvestDays: number[];
-  /** Saisons de semis, telles que la règle les déclare. */
-  sowSeasons: Season[];
-  /** Durée de pousse nominale, en jours de jeu. */
-  growDays: number;
-  /**
-   * Ce que met réellement la culture, semée à son meilleur jour, en jours
-   * réels. C'est le seul chiffre qui réponde à « je sème ce soir, c'est prêt
-   * quand ? » — la durée nominale, elle, ignore les saisons traversées.
-   */
-  realDays: number;
-  /** Le meilleur jour de semis : celui qui mène le plus vite à maturité. */
-  bestSowDay: number;
+export const SEASON_LABELS_FR: Record<Season, string> = {
+  SPRING: "Printemps",
+  SUMMER: "Été",
+  AUTUMN: "Automne",
+  WINTER: "Hiver",
 };
 
-/** Plafond de sécurité : une culture qui ne mûrit pas en deux ans n'existe pas. */
-const MAX_JOURS = YEAR_REAL_DAYS * GAME_DAYS_PER_REAL_DAY * 2;
+/** Version courte, pour les colonnes étroites. */
+export const SEASON_SHORT_FR: Record<Season, string> = {
+  SPRING: "PRI",
+  SUMMER: "ÉTÉ",
+  AUTUMN: "AUT",
+  WINTER: "HIV",
+};
+
+/** Ce qu'un semis à un moment donné produit comme récolte. */
+export type SowOutcome = {
+  /** Saison du semis. */
+  sowSeason: Season;
+  /** Semé au début, au milieu ou en fin de saison — 0, 0.5, 0.9. */
+  at: number;
+  /** Saison où la culture est mûre. */
+  harvestSeason: Season;
+  /** Attente réelle, en heures. */
+  realHours: number;
+};
+
+/** Une ligne du calendrier : une culture, et ce qu'elle donne. */
+export type CropCalendarRow = {
+  crop: CropCode;
+  /** Saisons où le semis est autorisé. */
+  sowSeasons: Season[];
+  /** Saisons où l'on récolte, tous semis de la fenêtre confondus. */
+  harvestSeasons: Season[];
+  /** Le détail, semis par semis : c'est là que se lit l'arbitrage. */
+  outcomes: SowOutcome[];
+  /**
+   * Ce que met la culture semée à son meilleur moment, en heures réelles.
+   * Le seul chiffre qui réponde à « je sème ce soir, c'est prêt quand ? ».
+   */
+  bestRealHours: number;
+  /** Le meilleur moment de semis : celui qui mène le plus vite à maturité. */
+  bestSowSeason: Season;
+};
+
+/** Plafond de sécurité : une culture qui ne mûrit pas en trois ans n'existe pas. */
+const MAX_SAISONS = SEASON_CYCLE.length * 3;
 
 /**
- * Quand une graine semée au début du jour `sowDay` est-elle mûre ?
+ * Quand une graine semée à l'instant `t0` est-elle mûre ?
  *
- * On avance jour de jeu par jour de jeu en cumulant la vitesse de la saison
- * traversée — le même calcul que le champ, sans la météo. Renvoie le nombre de
- * jours de jeu écoulés, ou `null` si la culture n'y arrive pas.
+ * On avance **de frontière de saison en frontière de saison** en cumulant la
+ * vitesse traversée. Découper à la saison plutôt qu'au jour de jeu est ce qui
+ * rend le calcul exact : une saison de dix heures ne fait pas un nombre entier
+ * de jours de jeu de six heures, et un pas d'un jour entier sauterait ou
+ * compterait deux fois la frontière.
+ *
+ * Renvoie l'instant de maturité, ou `null` si la culture n'y arrive jamais —
+ * ce qui n'est pas une erreur : un maïs semé en fin d'été n'y arrive pas.
  */
-function joursJusquAMaturite(
-  crop: CropCode,
-  sowDay: number,
-  hemisphere: "N" | "S",
-): number | null {
+export function maturityAt(crop: CropCode, t0: number): number | null {
   const objectif = cropGrowMs(crop);
+  let t = t0;
   let acquis = 0;
-  for (let i = 0; i < MAX_JOURS; i++) {
-    // Chaque jour réel porte quatre jours de jeu : la saison ne change qu'aux
-    // frontières de jour réel, la vitesse est donc constante sur les quatre.
-    const jourReel = sowDay + Math.floor(i / GAME_DAYS_PER_REAL_DAY);
-    const saison = seasonOfWeekday(jourReel, hemisphere);
-    acquis += GAME_DAY_MS * growthRate(crop, saison);
-    if (acquis >= objectif) return i + 1;
+  for (let i = 0; i < MAX_SAISONS; i++) {
+    const rang = Math.floor(t / SEASON_REAL_MS);
+    const finSaison = (rang + 1) * SEASON_REAL_MS;
+    const saison = SEASON_CYCLE[((rang % 4) + 4) % 4]!;
+    const vitesse = growthRate(crop, saison);
+    const tranche = finSaison - t;
+    if (vitesse > 0 && acquis + tranche * vitesse >= objectif) {
+      return t + (objectif - acquis) / vitesse;
+    }
+    acquis += tranche * vitesse;
+    t = finSaison;
   }
   return null;
+}
+
+/** La saison à un rang donné du cycle, sans passer par une horloge. */
+function saisonAuRang(rang: number): Season {
+  return SEASON_CYCLE[((rang % 4) + 4) % 4]!;
 }
 
 /**
  * Le calendrier complet, une ligne par culture.
  *
- * Les cultures sont triées par ordre de semis puis par nom : le joueur qui
- * ouvre le calendrier un lundi veut voir en haut ce qu'il peut semer lundi.
+ * Chaque culture est semée à trois moments de chacune de ses saisons de
+ * fenêtre — début, milieu, fin. Trois suffisent : c'est ce qui montre
+ * l'arbitrage « semer tôt ou semer tard » sans noyer le tableau.
  */
-export function cropCalendar(hemisphere: "N" | "S" = "N"): CropCalendarRow[] {
-  const cultures = Object.keys(CROP_DEFS) as CropCode[];
+export function cropCalendar(): CropCalendarRow[] {
   const lignes: CropCalendarRow[] = [];
 
-  for (const crop of cultures) {
-    const sowDays: number[] = [];
-    const harvestDays = new Set<number>();
-    const sowSeasons = new Set<Season>();
-    let meilleur = { jour: 0, duree: Number.POSITIVE_INFINITY };
+  for (const crop of Object.keys(CROP_DEFS) as CropCode[]) {
+    const outcomes: SowOutcome[] = [];
+    const sowSeasons: Season[] = [];
+    const harvestSeasons = new Set<Season>();
+    let meilleur = { saison: "SPRING" as Season, heures: Number.POSITIVE_INFINITY };
 
-    for (let jour = 0; jour < YEAR_REAL_DAYS; jour++) {
-      const saison = seasonOfWeekday(jour, hemisphere);
+    for (let rang = 0; rang < SEASON_CYCLE.length; rang++) {
+      const saison = saisonAuRang(rang);
       if (!canSowInSeason(crop, saison).ok) continue;
-      sowDays.push(jour);
-      sowSeasons.add(saison);
+      sowSeasons.push(saison);
 
-      const joursDeJeu = joursJusquAMaturite(crop, jour, hemisphere);
-      if (joursDeJeu === null) continue;
-      const joursReels = joursDeJeu / GAME_DAYS_PER_REAL_DAY;
-      if (joursReels < meilleur.duree) meilleur = { jour, duree: joursReels };
-      // Le jour de récolte, ramené dans la semaine : l'année boucle.
-      harvestDays.add(Math.floor(jour + joursReels) % YEAR_REAL_DAYS);
+      for (const at of [0, 0.5, 0.9]) {
+        const t0 = (rang + at) * SEASON_REAL_MS;
+        const mur = maturityAt(crop, t0);
+        if (mur === null) continue;
+        const recolte = saisonAuRang(Math.floor(mur / SEASON_REAL_MS));
+        const heures = Math.round(((mur - t0) / 3_600_000) * 10) / 10;
+        harvestSeasons.add(recolte);
+        outcomes.push({ sowSeason: saison, at, harvestSeason: recolte, realHours: heures });
+        if (heures < meilleur.heures) meilleur = { saison, heures };
+      }
     }
 
     lignes.push({
       crop,
-      sowDays,
-      harvestDays: [...harvestDays].sort((a, b) => a - b),
-      sowSeasons: [...sowSeasons],
-      growDays: cropGrowMs(crop) / GAME_DAY_MS,
-      realDays: Number.isFinite(meilleur.duree) ? Math.round(meilleur.duree * 10) / 10 : 0,
-      bestSowDay: meilleur.jour,
+      sowSeasons,
+      harvestSeasons: SEASON_CYCLE.filter((s) => harvestSeasons.has(s)),
+      outcomes,
+      bestRealHours: Number.isFinite(meilleur.heures) ? meilleur.heures : 0,
+      bestSowSeason: meilleur.saison,
     });
   }
 
+  // Trié par ordre de semis dans le cycle, puis par nom : le joueur cherche
+  // d'abord ce qu'il peut semer à la saison où il se trouve.
   return lignes.sort(
-    (a, b) => (a.sowDays[0] ?? 9) - (b.sowDays[0] ?? 9) || a.crop.localeCompare(b.crop),
+    (a, b) =>
+      SEASON_CYCLE.indexOf(a.sowSeasons[0] ?? "WINTER") -
+        SEASON_CYCLE.indexOf(b.sowSeasons[0] ?? "WINTER") || a.crop.localeCompare(b.crop),
   );
 }

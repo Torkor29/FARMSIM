@@ -1,6 +1,12 @@
 /** Types & constantes partagés Farming Navigateur */
 
-import { GAME_DAY_MS, JOB_MS_PER_GAME_HOUR } from "./time.js";
+import {
+  GAME_DAY_MS,
+  JOB_MS_PER_GAME_HOUR,
+  SEASON_DAYS,
+  SEASON_REAL_HOURS,
+  SEASON_REAL_MS,
+} from "./time.js";
 import { MACHINE_END_OF_LIFE_HOURS } from "./machine-care.js";
 import { RECIPES, type ProcessingKind } from "./processing.js";
 import { kindForBarn, yardTypeForBarn } from "./livestock.js";
@@ -235,6 +241,31 @@ export const SPECIALIZATION_BONUSES: Record<
  *   C'est ce qui rend des durées d'une heure confortables plutôt que
  *   punitives : un champ semé avant de fermer l'onglet est mûr au retour.
  */
+/**
+ * Le capital de croissance d'une culture, exprimé en heures.
+ *
+ * `growMs` n'est **pas** un temps réel : c'est un capital que chaque saison
+ * remplit à sa vitesse. Une heure d'automne vaut 0,85 heure de croissance pour
+ * un blé ; une heure d'hiver n'en vaut que 0,30. Deux blés semés à deux
+ * saisons d'écart mettent donc des temps différents à mûrir, et c'est tout
+ * l'intérêt de semer au bon moment.
+ *
+ * Les valeurs ci-dessous ont été calculées pour que chaque culture, **semée au
+ * début de sa fenêtre**, mûrisse dans la saison où on la récolte vraiment :
+ * le blé d'automne en été, l'orge au printemps, le maïs de printemps à
+ * l'automne. Elles portent une marge délibérée — viser la frontière exacte
+ * d'une saison ferait basculer la récolte d'une saison entière pour quelques
+ * minutes de retard au semis.
+ */
+function croissanceHeures(h: number): number {
+  return Math.round(h * 60 * 60 * 1000);
+}
+
+/** Combien de saisons pleines représente un capital, à titre indicatif. */
+export function growSeasonsHint(growMs: number): number {
+  return Math.round((growMs / 3_600_000 / SEASON_REAL_HOURS) * 10) / 10;
+}
+
 export const CROP_DEFS: Record<
   CropCode,
   {
@@ -252,21 +283,18 @@ export const CROP_DEFS: Record<
     code: "WHEAT",
     name: "Blé",
     yieldPerCell: 0.35,
-    // Cinq jours de jeu, soit trente heures réelles. Céréale d'hiver : semée
-    // vendredi ou samedi, elle passe le dimanche au ralenti et se moissonne le
-    // lundi. C'est l'arc que le calendrier montre, et il n'y est pas dessiné —
-    // il est calculé avec cette valeur-ci.
-    growMs: 5 * GAME_DAY_MS,
+    // Semé au début de l'automne, mûr en été — le blé d'hiver classique.
+    growMs: croissanceHeures(28),
     seedCostPerCell: 15,
   },
   MAIZE: {
     code: "MAIZE",
     name: "Maïs",
     yieldPerCell: 0.45,
-    // La plus longue du catalogue : six jours de jeu, un jour et demi réel.
-    // Qui plante du maïs engage son printemps, et c'est ce qui doit rendre le
-    // choix sérieux.
-    growMs: 6 * GAME_DAY_MS,
+    // Semé au début du printemps, mûr à l'automne. Qui plante du maïs engage
+    // son champ jusqu'aux moissons, et c'est ce qui doit rendre le choix
+    // sérieux — mais il paie le mieux à la case.
+    growMs: croissanceHeures(27),
     seedCostPerCell: 18,
   },
   // Tête de rotation : le pois rapporte moins à la tonne, mais il laisse
@@ -276,35 +304,38 @@ export const CROP_DEFS: Record<
     code: "PEA",
     name: "Pois",
     yieldPerCell: 0.26,
-    // Volontairement gardé court. Avec des céréales à plus d'une heure, il
-    // faut au moins une culture qui redonne une raison de revenir dans le
-    // quart d'heure — sans quoi un céréalier débutant, sans bêtes et sans
-    // grande surface, n'a strictement rien à faire de sa première heure.
-    growMs: Math.round(1.5 * GAME_DAY_MS),
+    // La plus rapide des cultures de vente : semé au printemps, mûr en été,
+    // dans la saison qui suit. C'est le pois qui donne une raison de revenir
+    // quand tout le reste immobilise le champ deux ou trois saisons.
+    growMs: croissanceHeures(13),
     seedCostPerCell: 12,
   },
   BARLEY: {
     code: "BARLEY",
     name: "Orge",
     yieldPerCell: 0.32,
-    growMs: 3 * GAME_DAY_MS,
+    // Plus précoce que le blé, comme le dit sa fiche : mûre au printemps.
+    growMs: croissanceHeures(15),
     seedCostPerCell: 13,
   },
   RAPE: {
     code: "RAPE",
     name: "Colza",
     yieldPerCell: 0.22,
-    growMs: 4 * GAME_DAY_MS,
+    // Semé en été, mûr au printemps ; semé à l'automne, mûr en été.
+    growMs: croissanceHeures(26),
     seedCostPerCell: 16,
   },
   GRASS: {
     code: "GRASS",
     name: "Herbe",
     yieldPerCell: 0.4,
-    growMs: 2 * GAME_DAY_MS,
+    // Une coupe par saison, ou presque.
+    growMs: croissanceHeures(12),
     // L'herbe déjà fauchée repart vite : c'est ce qui fait tenir un élevage
     // sur ses propres fourrages sans immobiliser un champ toute la saison.
-    regrowMs: GAME_DAY_MS,
+    // La repousse est plus rapide que l'installation : le pied est déjà là.
+    regrowMs: croissanceHeures(7),
     seedCostPerCell: 8,
   },
 };
@@ -393,7 +424,17 @@ export const MARKET_BOUNDS: Record<
  * pouvait rien exprimer), puis 0,015 (un quart d'heure — mais c'était encore
  * lui, et non l'offre, qui fixait le cours d'équilibre).
  */
-export const MARKET_REVERSION_HALFLIFE_DAYS = 8;
+export const MARKET_REVERSION_HALFLIFE_SEASONS = 4.5;
+
+/**
+ * La même demi-vie en jours de jeu, pour `tauxParTick`.
+ *
+ * Écrite en **saisons** au-dessus, et pas en jours, parce que c'est la saison
+ * que le rappel doit être trop lent pour effacer : la borne du réglage est
+ * « bien plus long qu'une saison », et un nombre de jours ne la dit pas. Quand
+ * la longueur d'une saison change, ce garde-fou garde son sens tout seul.
+ */
+export const MARKET_REVERSION_HALFLIFE_DAYS = MARKET_REVERSION_HALFLIFE_SEASONS * SEASON_DAYS;
 
 /**
  * Part du rappel appliquée à chaque tick.
@@ -445,16 +486,21 @@ export const MARKET_DEPTH_FLOOR = 0.3;
 /**
  * Sensibilité du cours au déséquilibre, par **jour de jeu** `[GD]`.
  *
- * Elle était écrite par tick, et c'est le dernier taux du marché à l'avoir
- * été. Un prix qui bouge « de tant par tick » avance d'autant plus vite dans
- * une saison qu'il y a de ticks dedans : le jour de jeu passant de quinze
- * minutes à six heures, le cours réagissait vingt-quatre fois plus par saison
- * et se collait à ses bornes en une journée.
+ * Elle était écrite par tick, puis par jour de jeu, et l'unité était encore
+ * fausse : un prix qui bouge « de tant par jour » avance d'autant plus vite
+ * dans une saison qu'il y a de jours dedans. La saison est passée de
+ * vingt-huit jours de jeu à sept, et le cours réagissait quatre fois moins par
+ * saison — assez pour qu'un déversement massif ne se voie plus sur la moyenne
+ * du trimestre.
+ *
+ * Vingt-cinq, c'est-à-dire que le cours parcourt environ vingt-cinq fois son
+ * écart au déséquilibre dans une saison : il a le temps de réagir plusieurs
+ * fois à l'intérieur d'une saison, sans jamais la traverser d'un bond.
  */
-export const MARKET_KAPPA_PER_DAY = 0.9;
+export const MARKET_KAPPA_PER_SEASON = 25;
 
 /** La même sensibilité ramenée au pas de simulation. */
-export const MARKET_KAPPA = (MARKET_KAPPA_PER_DAY * SIM_TICK_MS) / GAME_DAY_MS;
+export const MARKET_KAPPA = (MARKET_KAPPA_PER_SEASON * SIM_TICK_MS) / SEASON_REAL_MS;
 
 /**
  * Poids du carnet face au flux du jour `[GD]`.
@@ -474,12 +520,31 @@ export const MARKET_BOOK_WEIGHT = 0.5;
  * rapide, on retombait sur le défaut d'origine, où même vingt parcelles ne se
  * voyaient pas.
  *
- * À 0,045, un excédent se résorbe de moitié en cinq minutes : une moisson est
- * un événement de marché passager, un domaine qui produit sans cesse pèse
- * durablement. Le réglage n'est pas sur le fil — 0,06 tient les mêmes
- * intentions.
+ * À trois dixièmes de saison, un excédent se résorbe de moitié en trois heures
+ * — la même durée réelle qu'avant le changement de calendrier, et ce n'est pas
+ * un hasard : c'est le rythme des moissons qui commande, et il n'a pas bougé.
+ * Une moisson reste un événement de marché passager, un domaine qui produit
+ * sans cesse pèse durablement. Le réglage n'est pas sur le fil — 0,25 et 0,35
+ * tiennent les mêmes intentions.
  */
-export const MARKET_ABSORB_HALFLIFE_DAYS = 1 / 3;
+export const MARKET_ABSORB_HALFLIFE_SEASONS = 0.3;
+
+/**
+ * La même demi-vie en jours de jeu, pour `tauxParTick`.
+ *
+ * Elle valait un tiers de jour de jeu, posé en dur. Le chiffre était juste
+ * tant qu'une culture mûrissait en cinq jours de jeu : l'excédent d'une
+ * moisson vivait un quinzième de cycle cultural, donc les moissons d'un gros
+ * domaine se chevauchaient et pesaient en permanence. Le blé est devenu la
+ * céréale d'hiver qu'il aurait toujours dû être — semé à l'automne, moissonné
+ * l'été, vingt jours de jeu — et ce même tiers de jour ne valait plus qu'un
+ * soixantième de cycle : chaque moisson se résorbait entièrement avant la
+ * suivante, et un domaine de vingt parcelles ne se voyait plus sur les cours.
+ *
+ * Ce qui doit rester constant, c'est le rapport entre la mémoire du carnet et
+ * le rythme des moissons. Les deux se lisent maintenant en saisons.
+ */
+export const MARKET_ABSORB_HALFLIFE_DAYS = MARKET_ABSORB_HALFLIFE_SEASONS * SEASON_DAYS;
 
 /** Part du carnet écoulée à chaque tick, dérivée de la demi-vie. */
 export const MARKET_ABSORB = tauxParTick(MARKET_ABSORB_HALFLIFE_DAYS);

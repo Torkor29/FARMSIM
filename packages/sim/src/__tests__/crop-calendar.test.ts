@@ -17,8 +17,10 @@ import {
   CROP_SEASONALITY,
   GAME_DAY_MS,
   PLANTING_WINDOW,
+  SEASON_CYCLE,
   SEASON_DURATION_MS,
   SEASON_GROWTH,
+  SEASON_REAL_MS,
   canSowInSeason,
   cropGrowMs,
   currentSeason,
@@ -29,28 +31,27 @@ import {
 } from "@farmsim/shared";
 
 /**
- * Instant du premier jour de la saison demandée, hémisphère nord.
+ * Instant du premier instant de la saison demandée, hémisphère nord.
  *
- * L'année tombe sur la semaine réelle : lundi et mardi font le printemps,
- * mercredi et jeudi l'été, vendredi et samedi l'automne, et l'hiver tient dans
- * le dimanche. On part donc d'un lundi à minuit UTC et on compte les jours.
+ * Le calendrier ne se lit plus dans une table indexée par jour de la semaine —
+ * c'est ce qui enfermait un joueur du week-end dans deux saisons à vie. Les
+ * saisons se succèdent maintenant en un cycle continu depuis l'origine des
+ * temps, et le début d'une saison est un simple multiple : c'est ce qui rend
+ * ces repères exacts au lieu d'approchés.
  */
-const LUNDI = Date.UTC(2026, 7, 24);
-const JOUR_REEL = 24 * 60 * 60 * 1000;
-const PREMIER_JOUR: Record<Season, number> = { SPRING: 0, SUMMER: 2, AUTUMN: 4, WINTER: 6 };
-
 function debutDe(saison: Season, cycle = 0): number {
-  return LUNDI + (cycle * 7 + PREMIER_JOUR[saison]) * JOUR_REEL;
+  return (SEASON_CYCLE.indexOf(saison) + cycle * SEASON_CYCLE.length) * SEASON_REAL_MS;
 }
 
 /**
- * La plus courte des saisons, en jours de jeu.
+ * Une saison entière, en millisecondes.
  *
- * L'hiver ne dure qu'un jour réel, soit quatre jours de jeu. Toute mesure qui
- * veut rester *dans* une saison doit tenir là-dedans — sans quoi elle déborde
- * sur la suivante et mesure autre chose que ce qu'elle croit.
+ * Toute mesure qui veut rester *dans* une saison doit tenir là-dedans — sans
+ * quoi elle déborde sur la suivante et mesure autre chose que ce qu'elle
+ * croit. Les quatre saisons durent maintenant le même temps, ce qui supprime
+ * la précaution qu'il fallait prendre du temps de l'hiver court.
  */
-const DANS_UNE_SAISON = 4 * GAME_DAY_MS;
+const DANS_UNE_SAISON = SEASON_REAL_MS;
 
 const CULTURES = Object.keys(CROP_SEASONALITY) as CropCode[];
 
@@ -151,23 +152,81 @@ describe("intégration jour par jour", () => {
     );
   });
 
-  it("fait rattraper un semis tardif par l'hiver", () => {
+  it("ne laisse jamais un semis plus tardif mûrir plus tôt", () => {
     /**
-     * Le cœur de la leçon. Le blé pousse en cinq jours et une saison en dure
-     * sept : semé le premier jour de l'automne il est prêt avant l'hiver ;
-     * semé au bout de cinq jours, il attend le printemps.
+     * La propriété que l'intégration doit garantir, et la seule qui ne
+     * souffre aucune exception : décaler le semis ne peut pas avancer la
+     * moisson.
+     *
+     * Ce n'est pas une évidence, c'est précisément ce que le découpage aux
+     * frontières de saison protège. Un pas d'un jour entier lisait la saison
+     * du **début** du pas et l'appliquait à toute la tranche : une frontière
+     * tombant au milieu était ignorée, la vitesse de l'hiver pouvait
+     * s'appliquer à des heures de printemps, et selon l'instant du semis on
+     * pouvait gagner une tranche entière. La courbe cessait d'être monotone,
+     * et un joueur qui décale son semis de deux heures récoltait avant son
+     * voisin.
      */
-    const growMs = cropGrowMs("WHEAT");
-    const automne = debutDe("AUTUMN");
-    const tot = projectReadyAt({ crop: "WHEAT", plantedAt: automne, growMs, ...nord });
-    const tard = projectReadyAt({
-      crop: "WHEAT",
-      plantedAt: automne + 5 * GAME_DAY_MS,
-      growMs,
-      ...nord,
-    });
-    expect(currentSeason("N", tot)).toBe("AUTUMN");
-    expect(tard - (automne + 5 * GAME_DAY_MS)).toBeGreaterThan(tot - automne);
+    for (const crop of CULTURES) {
+      const growMs = cropGrowMs(crop);
+      let precedent = -Infinity;
+      for (let pas = 0; pas <= 48; pas++) {
+        const semis = Math.round((pas / 48) * 4 * SEASON_REAL_MS);
+        const mur = projectReadyAt({ crop, plantedAt: semis, growMs, ...nord });
+        expect({ crop, pas, monotone: mur >= precedent }).toEqual({ crop, pas, monotone: true });
+        precedent = mur;
+      }
+    }
+  });
+
+  it("fait dire la même chose à la barre et à la date de maturité", () => {
+    /**
+     * `integrateGrowth` avance la barre de progression, `projectReadyAt`
+     * annonce la date de récolte. Ce sont deux boucles distinctes, dans deux
+     * fonctions distinctes, et rien dans le typage ne les oblige à intégrer la
+     * même chose.
+     *
+     * Si elles divergent, le joueur voit une barre pleine sur un champ que le
+     * serveur refuse de moissonner — ou l'inverse. C'est le genre d'écart
+     * qu'on ne découvre qu'en jouant, et qu'aucun test de l'une ou l'autre
+     * prise séparément ne peut voir.
+     */
+    for (const crop of CULTURES) {
+      const growMs = cropGrowMs(crop);
+      for (let pas = 0; pas < 12; pas++) {
+        const semis = Math.round((pas / 12) * 4 * SEASON_REAL_MS);
+        const pret = projectReadyAt({ crop, plantedAt: semis, growMs, ...nord });
+        const acquis = integrateGrowth({ crop, plantedAt: semis, until: pret, ...nord });
+        // Au millième près : `projectReadyAt` arrondit sa date à la
+        // milliseconde, ce qui laisse une miette d'un côté ou de l'autre.
+        expect(acquis / growMs).toBeCloseTo(1, 3);
+      }
+    }
+  });
+
+  it("fait payer le semis tardif là où la saison lente suit", () => {
+    /**
+     * L'arbitrage « semer tôt ou tard », et il n'est plus uniforme — c'est ce
+     * que le nouveau calendrier apporte de plus intéressant.
+     *
+     * Il se lisait sur le blé seul : « il pousse en cinq jours, la saison en
+     * dure sept ; semé le premier jour de l'automne il est prêt avant l'hiver,
+     * semé le cinquième il attend le printemps ». Un blé qui se sème et se
+     * moissonne dans la même saison n'est pas un blé d'hiver : c'était le
+     * défaut, pas la leçon.
+     *
+     * Le maïs, lui, garde la leçon entière : semé tard au printemps, il entre
+     * dans l'automne sans avance et l'hiver le fige. Le blé fait l'inverse —
+     * semé en fin d'automne il attend moins, mais mûrit dans l'automne
+     * suivant, la saison où les cours sont au plus bas. Deux arbitrages
+     * différents valent mieux qu'un seul répété six fois.
+     */
+    const growMs = cropGrowMs("MAIZE");
+    const printemps = debutDe("SPRING");
+    const tardif = printemps + 0.9 * SEASON_REAL_MS;
+    const tot = projectReadyAt({ crop: "MAIZE", plantedAt: printemps, growMs, ...nord }) - printemps;
+    const tard = projectReadyAt({ crop: "MAIZE", plantedAt: tardif, growMs, ...nord }) - tardif;
+    expect(tard).toBeGreaterThan(tot);
   });
 
   it("finit toujours par mûrir, même semé au pire moment", () => {
@@ -184,14 +243,26 @@ describe("intégration jour par jour", () => {
     }
   });
 
-  it("décale le sud de deux saisons", () => {
-    // L'hémisphère existait déjà pour les cours et le ciel ; la culture doit
-    // le suivre, sinon deux régions vivraient deux calendriers différents.
-    const growMs = cropGrowMs("MAIZE");
-    const t = debutDe("SUMMER");
-    const nordPret = projectReadyAt({ crop: "MAIZE", plantedAt: t, growMs, hemisphere: "N" });
-    const sudPret = projectReadyAt({ crop: "MAIZE", plantedAt: t, growMs, hemisphere: "S" });
-    expect(sudPret).toBeGreaterThan(nordPret);
+  it("décale le sud de deux saisons, exactement", () => {
+    /*
+     * L'hémisphère existait déjà pour les cours et le ciel ; la culture doit
+     * le suivre, sinon deux régions vivraient deux calendriers différents.
+     *
+     * L'ancienne version se contentait de « le sud met plus longtemps », ce
+     * qui n'était vrai que pour l'instant de semis choisi : selon la date, le
+     * sud peut très bien mûrir plus vite — c'est l'hiver de l'un contre l'été
+     * de l'autre. Ce qui est vrai à tout instant, c'est l'égalité du décalage.
+     */
+    const DEUX_SAISONS = 2 * SEASON_REAL_MS;
+    for (const crop of CULTURES) {
+      const growMs = cropGrowMs(crop);
+      for (let i = 0; i < 8; i++) {
+        const t = Math.round(i * 0.7 * SEASON_REAL_MS);
+        const sud = projectReadyAt({ crop, plantedAt: t, growMs, hemisphere: "S" });
+        const nord = projectReadyAt({ crop, plantedAt: t + DEUX_SAISONS, growMs, hemisphere: "N" });
+        expect(sud - t).toBe(nord - (t + DEUX_SAISONS));
+      }
+    }
   });
 });
 

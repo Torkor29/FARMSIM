@@ -43,10 +43,10 @@
  * point précédent : à moitié de récolte et plein tarif, il engloutissait un
  * tiers du résultat d'une saison — mesuré en jeu. Voir `fuel.ts`.
  *
- * **Le calendrier.** Une année tient dans une semaine réelle et laisse place à
- * quatre moissons. Une ferme encaisse donc en un an de jeu à peu près ce
- * qu'elle encaisserait en deux ans réels — et c'est ce qui rend un tracteur
- * d'occasion accessible en quelques jours de jeu plutôt qu'en deux saisons.
+ * **Le calendrier.** Une saison dure dix heures réelles, une année de jeu
+ * quarante. Une ferme encaisse donc en une soirée ce qu'elle encaisserait en
+ * une saison réelle — et c'est ce qui rend un tracteur d'occasion accessible
+ * en quelques soirées plutôt qu'en deux ans.
  */
 
 /**

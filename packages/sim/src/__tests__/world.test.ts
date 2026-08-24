@@ -39,23 +39,39 @@ describe("monde", () => {
 });
 
 describe("saisons", () => {
-  /** Un lundi à minuit UTC : l'année de jeu commence au printemps. */
   const LUNDI = Date.UTC(2026, 7, 24);
-  const JOUR = 24 * 60 * 60 * 1000;
 
   it("inverse les saisons entre les deux hémisphères", () => {
-    expect(currentSeason("N", LUNDI)).toBe("SPRING");
-    expect(currentSeason("S", LUNDI)).toBe("AUTUMN");
+    /*
+     * Les saisons ne se lisent plus dans une table indexée par jour de la
+     * semaine — c'est ce qui enfermait un joueur du week-end dans deux saisons
+     * à vie. On ne peut donc plus nommer la saison d'un lundi ; ce qui reste
+     * vrai, et qui est la seule chose que l'hémisphère doit garantir, c'est
+     * que les deux sont en opposition exacte.
+     */
+    const oppose = { SPRING: "AUTUMN", SUMMER: "WINTER", AUTUMN: "SPRING", WINTER: "SUMMER" };
+    for (let i = 0; i < 8; i++) {
+      const t = LUNDI + i * SEASON_DURATION_MS;
+      expect(currentSeason("S", t)).toBe(oppose[currentSeason("N", t)]);
+    }
   });
 
-  it("avance d’une saison au fil de la semaine", () => {
-    // Deux jours réels par saison pleine, un seul pour l'hiver.
-    expect(currentSeason("N", LUNDI)).toBe("SPRING");
-    expect(currentSeason("N", LUNDI + JOUR * 2)).toBe("SUMMER");
-    expect(currentSeason("N", LUNDI + JOUR * 4)).toBe("AUTUMN");
-    expect(currentSeason("N", LUNDI + JOUR * 6)).toBe("WINTER");
-    // Et la semaine suivante recommence.
-    expect(currentSeason("N", LUNDI + JOUR * 7)).toBe("SPRING");
+  it("avance d’une saison à chaque tour d’horloge, dans l’ordre", () => {
+    const cycle = ["SPRING", "SUMMER", "AUTUMN", "WINTER"];
+    const depart = cycle.indexOf(currentSeason("N", LUNDI));
+    for (let i = 1; i <= 9; i++) {
+      const attendu = cycle[(depart + i) % 4];
+      expect(currentSeason("N", LUNDI + i * SEASON_DURATION_MS)).toBe(attendu);
+    }
+  });
+
+  it("ne dépend pas du jour de la semaine — c’est tout le propos", () => {
+    // Sous l'ancien modèle, tous les lundis de l'histoire étaient au
+    // printemps. Huit lundis consécutifs doivent maintenant couvrir le cycle.
+    const SEMAINE = 7 * 24 * 60 * 60 * 1000;
+    const vues = new Set<string>();
+    for (let i = 0; i < 8; i++) vues.add(currentSeason("N", LUNDI + i * SEMAINE));
+    expect([...vues].sort()).toEqual(["AUTUMN", "SPRING", "SUMMER", "WINTER"]);
   });
 
   it("distribue une probabilité météo complète", () => {

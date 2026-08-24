@@ -11,7 +11,7 @@
  */
 
 import { EXTRA_REGIONS } from "./climate.js";
-import { seasonOfWeekday, weekdayIndex } from "./time.js";
+import { seasonAt } from "./time.js";
 
 export type Hemisphere = "N" | "S";
 
@@ -567,8 +567,9 @@ export const REGION_BY_CODE: Record<string, RegionDef & { continent: ContinentDe
  *
  * Elle était posée ici à quinze minutes — exactement la durée d'un cycle
  * d'élevage, si bien qu'une saison durait un seul jour de jeu et l'année
- * entière une heure. Elle vaut désormais une semaine de sept jours, définie
- * une seule fois dans `time.ts` et dérivée partout ailleurs.
+ * entière une heure. Elle vaut désormais dix heures réelles, définies une
+ * seule fois dans `time.ts` et dérivées partout ailleurs — le jour de jeu
+ * compris, qui en est le septième.
  */
 export { SEASON_DURATION_MS, seasonProgress } from "./time.js";
 
@@ -577,14 +578,16 @@ const SEASON_ORDER: Season[] = ["SPRING", "SUMMER", "AUTUMN", "WINTER"];
 /** Saison courante d'un hémisphère : le sud est décalé de deux saisons. */
 export function currentSeason(hemisphere: Hemisphere, now: number = Date.now()): Season {
   /*
-   * La saison se lit sur le calendrier réel, plus sur un compteur.
+   * La saison tourne sur son propre cycle, et c'est délibéré.
    *
-   * Elle tournait sur une horloge à elle, sans coïncider avec quoi que ce soit :
-   * un joueur qui revenait le lendemain ne savait pas où il en était. Elle suit
-   * désormais les jours de la semaine — l'hiver le dimanche — si bien que
-   * chacun sait la saison sans ouvrir le jeu.
+   * Elle a suivi les jours de la semaine — l'hiver le dimanche — pour qu'on
+   * la connaisse sans ouvrir le jeu. Le prix en était lourd : l'année tombait
+   * pile sur la semaine, donc un joueur du week-end ne voyait qu'automne et
+   * hiver, à vie, et ne pouvait jamais semer la moitié du catalogue. Une
+   * saison de dix heures glisse au contraire dans la journée, et tout le monde
+   * finit par toutes les voir. Voir `SEASON_REAL_HOURS`.
    */
-  return seasonOfWeekday(weekdayIndex(now), hemisphere);
+  return seasonAt(now, hemisphere);
 }
 
 /** Facteur de rendement saisonnier `[TEST]` */

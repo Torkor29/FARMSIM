@@ -563,7 +563,14 @@ describe("fenêtres de pâturage", () => {
 
   it("dure 3 h de base plus 6 min par bête, plafonné à 6 h", () => {
     const grosse = planGrazing(now, troupeau({ size: 40 }), enclos())!;
-    expect(grosse.endsAt - grosse.startsAt).toBe(3 * HOUR + 8 * GRAZING.perAnimalMs);
+    /*
+     * `toBeCloseTo` et non `toBe` : les durées de pâturage se comptent en
+     * heures de jeu, et l'heure de jeu est un vingt-quatrième d'un jour de jeu
+     * qui vaut lui-même un septième de saison. Rien de tout cela ne tombe rond
+     * en millisecondes, et il n'y a aucune raison que ça tombe rond — une
+     * sortie au pré n'a pas de sens à la milliseconde près.
+     */
+    expect(grosse.endsAt - grosse.startsAt).toBeCloseTo(3 * HOUR + 8 * GRAZING.perAnimalMs, 3);
     const petite = planGrazing(now, troupeau({ size: 2 }), enclos())!;
     expect(petite.endsAt - petite.startsAt).toBeLessThan(grosse.endsAt - grosse.startsAt);
     expect(grosse.endsAt - grosse.startsAt).toBeLessThanOrEqual(GRAZING.maxDurationMs);
