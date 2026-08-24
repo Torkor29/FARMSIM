@@ -2279,6 +2279,9 @@ html.playing .build-confirm { position: fixed; }
   padding-top: 0.55rem;
   border-top: 1px solid var(--line);
 }
+.machine-sheet .age-switch {
+  grid-template-columns: repeat(5, 1fr);
+}
 .machine-sheet-art {
   position: relative;
   border-radius: 12px;
