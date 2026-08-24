@@ -655,8 +655,6 @@ export function App() {
    * qu'un panneau s'ouvre : jamais deux couches de menu à la fois.
    */
   const [moreOpen, setMoreOpen] = useState(false);
-  /** Semer dans les chaumes plutôt que de travailler le sol au préalable */
-  const [directSeed, setDirectSeed] = useState(false);
   /**
    * Laisser l'andain derrière la moissonneuse.
    *
@@ -3133,6 +3131,9 @@ export function App() {
       }
       if (plantCrop) {
         const crop = plantCrop;
+        const sowingDirect = workCells.some((p) =>
+          grid.some((c) => c.x === p.x && c.y === p.y && c.hasStubble),
+        );
         const r = await api<{
           machine?: {
             wearApplied: number;
@@ -3144,10 +3145,16 @@ export function App() {
           labor?: LaborBit;
         }>(`/parcels/${activeParcelId}/plant`, {
           method: "POST",
-          body: JSON.stringify({ userId: player.id, jobId, crop, cells: workCells, directSeed }),
+          body: JSON.stringify({
+            userId: player.id,
+            jobId,
+            crop,
+            cells: workCells,
+            directSeed: sowingDirect,
+          }),
         });
         setMsg(
-          `Semé ${CROP_DEFS[crop].name} ×${workCells.length}${directSeed ? " en direct" : ""}` +
+          `Semé ${CROP_DEFS[crop].name} ×${workCells.length}${sowingDirect ? " en direct" : ""}` +
             wearNote(r.machine),
         );
         labor = r.labor;
@@ -5932,7 +5939,6 @@ export function App() {
           stockTons={totalStockTons}
           contractorAffordable={canPay(player, contractorOffer?.cost ?? 0)}
           laborAffordable={canPay(player, laborQuote ?? 0)}
-          directSeed={directSeed}
           keepSwath={keepSwath}
           swathUseful={swathUsefulHere}
           contractor={visiting ? null : contractorOffer}
@@ -5942,7 +5948,6 @@ export function App() {
           allGoalsDone={allGoalsDone}
           onTool={pickTool}
           onBrush={setBrush}
-          onDirectSeed={() => setDirectSeed((v) => !v)}
           onKeepSwath={() => setKeepSwath((v) => !v)}
           onConfirm={runSelectionAction}
           onHarvestAll={harvestAll}
@@ -5953,8 +5958,6 @@ export function App() {
           onSell={() => setShowMarket(true)}
           onGuide={() => setShowGuide(true)}
           hasHerd={barns.length > 0}
-          showDev={devEnabled}
-          onDev={() => setShowDev(true)}
           moreOpen={moreOpen}
           /* Refermé, « Plus » porte la somme de ce qui attend derrière lui :
              sinon cacher les panneaux cacherait aussi leurs alertes. */
@@ -5972,7 +5975,6 @@ export function App() {
             brush={brush}
             dragRect={dragRect}
             onDragRect={() => setDragRect((v) => !v)}
-            directSeed={directSeed}
             keepSwath={keepSwath}
             swathUseful={swathUsefulHere}
             readyCount={
@@ -5983,7 +5985,6 @@ export function App() {
             visiting={visiting}
             onTool={pickTool}
             onBrush={setBrush}
-            onDirectSeed={() => setDirectSeed((v) => !v)}
             onKeepSwath={() => setKeepSwath((v) => !v)}
             onMarket={() => setShowMarket(true)}
             onGuide={() => setShowGuide(true)}

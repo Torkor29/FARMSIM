@@ -37,7 +37,7 @@ type Props = {
   /** Saison courante : elle décide des cultures semables. */
   season: Season;
   brush: BrushSize;
-  directSeed: boolean;
+  dragRect: boolean;
   /** Laisser l'andain derrière la moissonneuse. */
   keepSwath: boolean;
   /** La culture sélectionnée laisse-t-elle de la paille ? L'herbe, non. */
@@ -53,7 +53,6 @@ type Props = {
   /** Le glissé prend un rectangle plein plutôt que la trace du pointeur. */
   dragRect: boolean;
   onDragRect: () => void;
-  onDirectSeed: () => void;
   onKeepSwath: () => void;
   onMarket: () => void;
   onGuide: () => void;
@@ -94,7 +93,6 @@ export function ToolRail({
   brush,
   dragRect,
   onDragRect,
-  directSeed,
   keepSwath,
   swathUseful,
   readyCount,
@@ -103,7 +101,6 @@ export function ToolRail({
   visiting,
   onTool,
   onBrush,
-  onDirectSeed,
   onKeepSwath,
   onMarket,
   onGuide,
@@ -208,20 +205,6 @@ export function ToolRail({
               );
             })}
           </ul>
-          {group === "PLANT" && (
-            <button
-              type="button"
-              className={`tool-rail-toggle${directSeed ? " on" : ""}`}
-              aria-pressed={directSeed}
-              title="Semer dans les chaumes : moins de travail du sol, moins de rendement."
-              onClick={onDirectSeed}
-            >
-              <span className="tool-rail-check" aria-hidden="true">
-                {directSeed ? "✓" : ""}
-              </span>
-              Semis direct
-            </button>
-          )}
           {/* L'andain ne se propose que là où il existe : sur de l'herbe la
               plante part entière, il ne reste rien à presser. Une case à
               cocher sans effet est pire qu'absente. */}

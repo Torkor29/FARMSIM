@@ -3,6 +3,7 @@ import {
   bornesDeplacement,
   elastique,
   horsBornes,
+  panPourGarderLePoint,
   pasRetour,
   ramener,
   retenir,
@@ -186,6 +187,21 @@ describe("savoir si la vue est dehors", () => {
     const r = horsBornes(2, 90, b);
     expect(r.cibleX).toBe(2);
     expect(r.cibleZ).toBe(45);
+  });
+});
+
+describe("garder le point sous le zoom", () => {
+  it("décale le pan de ce que le sol a glissé à l’écran", () => {
+    // Avant le zoom, le doigt visait (10, 4). Après, ce pixel regarde (6, 2) :
+    // le champ a glissé. On pousse le pan de la différence, et (10, 4)
+    // revient sous le doigt.
+    const suivant = panPourGarderLePoint({ x: 3, z: 1 }, { x: 10, z: 4 }, { x: 6, z: 2 });
+    expect(suivant).toEqual({ x: 7, z: 3 });
+  });
+
+  it("ne bouge pas si le pixel n’a pas changé de cible", () => {
+    const p = { x: 2, z: -1 };
+    expect(panPourGarderLePoint({ x: 5, z: 8 }, p, p)).toEqual({ x: 5, z: 8 });
   });
 });
 

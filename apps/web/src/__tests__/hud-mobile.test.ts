@@ -135,6 +135,26 @@ describe("le plateau tactile", () => {
     expect(DOCK).toMatch(/horsSaison/);
     expect(regle(".chip.out-of-season")).toMatch(/line-through/);
   });
+
+  it("n’offre plus Semis direct dans le menu, et Trace/Rectangle tient la place de Test", () => {
+    /*
+     * « Semis direct » ne disait rien au doigt — pas d'infobulle — et le
+     * jeu le décide déjà : on sème dans les chaumes, c'est du direct.
+     * Trace et rectangle vivaient dans chaque sous-menu ; Test occupait
+     * le septième bouton du dock. Un tap au même endroit bascule le geste.
+     */
+    expect(DOCK).not.toMatch(/Semis direct/);
+    expect(DOCK).toMatch(/\{dragRect \? "Rectangle" : "Trace"\}/);
+    expect(DOCK).not.toMatch(/dock-label">Test/);
+    expect(APP).toMatch(/directSeed: sowingDirect/);
+  });
+
+  it("n’anime plus les menus depuis le bord de l’écran", () => {
+    expect(CSS).not.toMatch(/rail-in-left/);
+    expect(CSS).toMatch(/@keyframes panel-in/);
+    expect(CSS).toMatch(/@keyframes tray-in/);
+    expect(fs.readFileSync("src/ui/desktop/Window.tsx", "utf8")).toMatch(/createPortal/);
+  });
 });
 
 describe("le bas de l’écran", () => {

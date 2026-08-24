@@ -124,6 +124,22 @@ export function retenir(v: number, min: number, max: number, course = COURSE): n
   return Math.max(min - 2 * course, Math.min(max + 2 * course, v));
 }
 
+/**
+ * Recale le pan pour qu'un point du sol reste sous le même pixel.
+ *
+ * Sans cela, zoomer agrandit autour du centre de l'écran : le champ qu'on
+ * visait glisse, et on se retrouve ailleurs. La différence monde avant/après
+ * le changement d'échelle, ajoutée au pan, ramène ce point sous le doigt
+ * (ou sous la molette).
+ */
+export function panPourGarderLePoint(
+  pan: { x: number; z: number },
+  avant: { x: number; z: number },
+  apres: { x: number; z: number },
+): { x: number; z: number } {
+  return { x: pan.x + (avant.x - apres.x), z: pan.z + (avant.z - apres.z) };
+}
+
 /** La vue est-elle hors de ses bornes, et vers où faut-il la ramener ? */
 export function horsBornes(
   x: number,

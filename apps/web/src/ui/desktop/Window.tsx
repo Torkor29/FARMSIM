@@ -21,6 +21,7 @@
  */
 
 import { useEffect, useRef, type ReactNode } from "react";
+import { createPortal } from "react-dom";
 
 type Props = {
   open: boolean;
@@ -76,7 +77,17 @@ export function Window({ open, title, subtitle, width = "regular", onClose, chil
 
   if (!open) return null;
 
-  return (
+  /*
+   * Hors du rail, dans le document.
+   *
+   * Posée dans `.rail-left`, la fenêtre héritait de son `overflow` : un
+   * `position: fixed` se cale alors sur la colonne, pas sur l'écran. Elle
+   * entrait donc par le côté — l'animation `rail-in-left` — puis le cadre
+   * visait le centre d'une bande de 300 px. De l'œil du joueur : ça arrive
+   * de gauche, ça saute au milieu. Le portail la pose sur le viewport, une
+   * seule animation, depuis le centre.
+   */
+  return createPortal(
     <div className="win-backdrop" role="presentation" onMouseDown={onClose}>
       <div
         ref={boxRef}
@@ -98,7 +109,8 @@ export function Window({ open, title, subtitle, width = "regular", onClose, chil
         </header>
         <div className="win-body">{children}</div>
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }
 

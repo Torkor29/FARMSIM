@@ -26,6 +26,7 @@ import {
   bornesDeplacement,
   elastique,
   horsBornes,
+  panPourGarderLePoint,
   pasRetour,
   retenir,
   type Bornes,
@@ -2350,6 +2351,7 @@ export function IsoFarmView({
       const cibleX = vueX - parkingOverhang / 2;
       camera.position.set(span * 0.95 + cibleX, span * 0.85, span * 0.95 + vueZ);
       camera.lookAt(cibleX, 0, vueZ);
+      camera.updateMatrixWorld();
     }
 
     function resize() {
@@ -2424,6 +2426,8 @@ export function IsoFarmView({
     let dragged = false;
     let pinchStart = 0;
     let zoomStart = 1;
+    /** Point du sol sous le milieu des deux doigts, figé au début du pincement. */
+    let pinchAnchor: { x: number; z: number } | null = null;
     let lastX = 0;
     let lastY = 0;
     const strokeKeys = new Set<string>();
@@ -2556,8 +2560,47 @@ export function IsoFarmView({
       applyCamera();
     }
 
-    function setZoom(next: number) {
+    const sol = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
+    const solHit = new THREE.Vector3();
+
+    function pointerFromClient(clientX: number, clientY: number) {
+      const rect = renderer.domElement.getBoundingClientRect();
+      pointer.x = ((clientX - rect.left) / rect.width) * 2 - 1;
+      pointer.y = -((clientY - rect.top) / rect.height) * 2 + 1;
+    }
+
+    /** Le point du sol sous un pixel, ou null s'il n'y en a pas. */
+    function solSous(clientX: number, clientY: number): { x: number; z: number } | null {
+      pointerFromClient(clientX, clientY);
+      raycaster.setFromCamera(pointer, camera);
+      if (!raycaster.ray.intersectPlane(sol, solHit)) return null;
+      return { x: solHit.x, z: solHit.z };
+    }
+
+    /**
+     * Change l'échelle en gardant un point du sol sous le même pixel.
+     *
+     * Zoomer autour du centre de l'écran déplace ce qu'on visait : on pince
+     * un champ, on arrive sur la haie d'à côté. On ancre le point monde
+     * sous le doigt (ou sous la molette), on change le frustum, on recale
+     * le pan de ce que ce pixel regarde maintenant.
+     */
+    function setZoom(next: number, clientX?: number, clientY?: number, ancre?: { x: number; z: number } | null) {
+      const hold =
+        ancre ??
+        (clientX !== undefined && clientY !== undefined ? solSous(clientX, clientY) : null);
       view.zoom = Math.max(0.6, Math.min(3.2, next));
+      applyCamera();
+      if (!hold || clientX === undefined || clientY === undefined) return;
+      const apres = solSous(clientX, clientY);
+      if (!apres) return;
+      const suivant = panPourGarderLePoint(
+        { x: view.panX, z: view.panZ },
+        hold,
+        apres,
+      );
+      view.panX = retenir(suivant.x, bornesVue.xMin, bornesVue.xMax);
+      view.panZ = retenir(suivant.z, bornesVue.zMin, bornesVue.zMax);
       applyCamera();
     }
 
@@ -2607,6 +2650,7 @@ export function IsoFarmView({
         const mid = pinchMid();
         lastX = mid.x;
         lastY = mid.y;
+        pinchAnchor = solSous(mid.x, mid.y);
         // Un pincement n'est jamais un clic, même si les doigts bougent peu.
         dragged = true;
         clearStroke();
@@ -2624,12 +2668,14 @@ export function IsoFarmView({
 
       if (pointers.size >= 2) {
         ev.preventDefault();
-        if (pinchStart > 0) setZoom((zoomStart * pinchDistance()) / pinchStart);
-        // Deux doigts déplacent aussi la vue, en suivant leur milieu. Sans
-        // cela, dès qu'un tracé est armé, plus rien ne cadrait la ferme : le
-        // doigt unique peignait, et le pincement ne savait que zoomer.
         const mid = pinchMid();
-        panBy(mid.x - lastX, mid.y - lastY);
+        // Un seul geste : le point du sol ancré au départ reste sous le
+        // milieu des doigts, que l'écart change (zoom) ou que le milieu
+        // se déplace (cadrage). Ajouter un pan par-dessus recalerait deux
+        // fois, et le champ visé glissait.
+        if (pinchStart > 0) {
+          setZoom((zoomStart * pinchDistance()) / pinchStart, mid.x, mid.y, pinchAnchor);
+        }
         lastX = mid.x;
         lastY = mid.y;
         onHoverRef.current?.(null);
@@ -2683,7 +2729,10 @@ export function IsoFarmView({
       // bornes. `pointercancel` passe aussi par ici, et c'est voulu : un geste
       // interrompu par le système ne doit pas laisser la vue coincée dehors.
       if (pointers.size === 0) tientLaVue = false;
-      if (pointers.size < 2) pinchStart = 0;
+      if (pointers.size < 2) {
+        pinchStart = 0;
+        pinchAnchor = null;
+      }
       if (!had || pointers.size > 0) return;
       const wasPan = panGesture;
       panGesture = false;
@@ -2732,7 +2781,7 @@ export function IsoFarmView({
      */
     function onWheel(ev: WheelEvent) {
       ev.preventDefault();
-      setZoom(view.zoom * (ev.deltaY < 0 ? 1.12 : 1 / 1.12));
+      setZoom(view.zoom * (ev.deltaY < 0 ? 1.12 : 1 / 1.12), ev.clientX, ev.clientY);
     }
 
     /**
