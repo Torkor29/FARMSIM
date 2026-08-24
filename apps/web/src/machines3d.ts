@@ -2074,21 +2074,23 @@ function buildSprayer(tier: MachineTier = 1): Blueprint {
     );
   }
   if (auto) {
-    // Pantera / Rogator / Leeb : cabine vitrée à l’avant. Pas de pot — l’outil
-    // reste attelé, le hitch à 0,16.
-    const cabX = CX + tankL * 0.42;
-    const cabW = 0.32 + 0.02 * Math.max(0, tier - 3);
-    const cabH = 0.24;
-    const cabLen = 0.28;
-    const cabMidY = 0.46 + clearance;
+    // Pantera / Rogator / Leeb : cabine vitrée posée à l’avant de la cuve,
+    // au-dessus du cylindre — sinon le verre se noie dans le blanc de la cuve.
+    // Pas de pot : l’outil reste attelé, le hitch à 0,16.
+    const cabX = CX + tankL * 0.52;
+    const cabW = 0.34 + 0.02 * Math.max(0, tier - 3);
+    const cabH = 0.26;
+    const cabLen = 0.3;
+    const cabMidY = tankY + tankR * 0.15 + cabH * 0.45;
     root.add("glass", roundedBox(cabLen, cabH, cabW, 0.03, [cabX, cabMidY, 0]));
     root.add("paint", roundedBox(cabLen * 0.92, 0.032, cabW * 0.92, 0.02, [cabX, cabMidY + cabH * 0.5 + 0.02, 0]));
+    root.add("paintDark", roundedBox(cabLen * 0.7, 0.06, cabW * 0.92, 0.02, [cabX, cabMidY - cabH * 0.42, 0]));
     root.add("plastic", ball(0.018, [cabX - 0.04, cabMidY + cabH * 0.5 + 0.055, 0]));
     for (const [dx, dz] of [
-      [0.11, 0.14],
-      [0.11, -0.14],
-      [-0.11, 0.14],
-      [-0.11, -0.14],
+      [0.12, 0.15],
+      [0.12, -0.15],
+      [-0.12, 0.15],
+      [-0.12, -0.15],
     ] as const) {
       root.add("paintDark", cyl(0.012, 0.012, cabH, 8, [cabX + dx, cabMidY, dz]));
     }
