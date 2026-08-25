@@ -1,5 +1,13 @@
 import * as THREE from "three";
-import { MACHINE_DEFS, MACHINE_TIERS, type MachineType } from "@farmsim/shared";
+import {
+  MACHINE_CATALOG,
+  MACHINE_DEFS,
+  MACHINE_TIERS,
+  TIER_SCALE_MAX,
+  machineTierScale,
+  type MachineType,
+} from "@farmsim/shared";
+import { isoOrthoFrustum } from "../machine-framing";
 import { createMachineRig, isTowedImplement } from "../machines3d";
 
 /**
@@ -353,5 +361,120 @@ describe("cinq paliers, cinq silhouettes", () => {
     t1.dispose();
     t4.dispose();
     t5.dispose();
+  });
+});
+
+/**
+ * La stature des paliers.
+ *
+ * Les tests ci-dessus vérifient le **détail** : plus de corps de charrue,
+ * plus de roues, une rampe plus large. Aucun ne vérifiait que l'engin est
+ * réellement plus **gros**, ni que la progression est régulière du T1 au T5.
+ * C'est précisément ce qui manquait : la vignette cadrant sur la boîte
+ * englobante, un T5 occupait la même place qu'un T1 à l'écran, et personne
+ * ne pouvait le voir en lisant le code.
+ */
+describe("la stature grandit à chaque palier", () => {
+  const TYPES = Object.keys(MACHINE_CATALOG) as (keyof typeof MACHINE_CATALOG)[];
+
+  it.each(TYPES)("%s grossit strictement du T1 au T5", (type) => {
+    const echelles = MACHINE_TIERS.map((t) => machineTierScale(type, t));
+    for (let i = 1; i < echelles.length; i++) {
+      expect({ type, palier: i + 1, plusGrand: echelles[i]! > echelles[i - 1]! }).toEqual({
+        type,
+        palier: i + 1,
+        plusGrand: true,
+      });
+    }
+  });
+
+  it("part de un et culmine au plafond commun, pour tous les types", () => {
+    // Un écart commun, et non proportionnel au catalogue : un semoir passe de
+    // 3 à 24,4 m et un tracteur de 105 à 830 ch. À l'échelle exacte, le T5
+    // écraserait tout le reste — et la largeur d'un pulvérisateur mesure sa
+    // rampe déployée, pas son encombrement.
+    for (const type of TYPES) {
+      expect(machineTierScale(type, 1)).toBeCloseTo(1, 6);
+      expect(machineTierScale(type, 5)).toBeCloseTo(TIER_SCALE_MAX, 6);
+    }
+  });
+
+  it("place les paliers au rythme du catalogue, pas à intervalle égal", () => {
+    /*
+     * La remorque grandit peu jusqu'au T2 (2,5 → 2,6 m) puis franchit un cap
+     * au T5 (3,1 → 3,4). Le pulvérisateur fait l'inverse : il bondit dès le
+     * T2 (15 → 24 m) puis se tasse. Si les deux montaient par cinquièmes
+     * égaux, l'échelle n'apprendrait rien qu'on ne sache déjà.
+     */
+    const pas = (type: keyof typeof MACHINE_CATALOG) =>
+      MACHINE_TIERS.slice(1).map((t, i) => machineTierScale(type, t) - machineTierScale(type, MACHINE_TIERS[i]!));
+    const remorque = pas("TRAILER");
+    const pulve = pas("SPRAYER");
+    expect(remorque[3]!).toBeGreaterThan(remorque[0]!);
+    expect(pulve[0]!).toBeGreaterThan(pulve[3]!);
+  });
+
+  it("la fenêtre de cadrage s'élargit quand la stature baisse", () => {
+    // Le mécanisme qui rend la stature visible : à modèle identique, un
+    // palier bas se regarde de plus loin. Sans cela le cadrage annulerait
+    // tout, ce qu'il faisait.
+    const box = new THREE.Box3(new THREE.Vector3(-1, 0, -0.5), new THREE.Vector3(1, 0.8, 0.5));
+    const plein = isoOrthoFrustum(box, 1.4, 1.5, 1);
+    const bas = isoOrthoFrustum(box, 1.4, 1.5, 1 / TIER_SCALE_MAX);
+    expect(bas.frustum).toBeGreaterThan(plein.frustum);
+    expect(bas.frustum / plein.frustum).toBeCloseTo(TIER_SCALE_MAX, 3);
+  });
+
+  it("sans stature donnée, le cadrage ne bouge pas", () => {
+    // La vue de ferme et la campagne appellent sans ce paramètre : elles
+    // doivent retrouver exactement le cadrage d'avant.
+    const box = new THREE.Box3(new THREE.Vector3(-1, 0, -0.5), new THREE.Vector3(1, 0.8, 0.5));
+    expect(isoOrthoFrustum(box, 1.4).frustum).toBeCloseTo(isoOrthoFrustum(box, 1.4, 1.5, 1).frustum, 9);
+  });
+});
+
+describe("les paliers ne régressent pas en géométrie", () => {
+  it("la presse gagne en encombrement à chaque palier", () => {
+    /*
+     * On mesure le **volume** de la boîte, pas la hauteur — et c'est le
+     * cœur de l'affaire. Le T5 n'est pas une ronde agrandie mais une presse
+     * **cubique** (`buildSquareBaler`), longue et basse là où la ronde est
+     * haute et courte. Comparer les hauteurs déclarerait donc le T5 plus
+     * petit que le T4, ce qui est vrai et sans intérêt : ce sont deux
+     * machines de forme différente.
+     *
+     * Le volume est la bonne mesure d'un « plus gros » qui traverse un
+     * changement de forme.
+     */
+    const encombrement = (tier: 1 | 4 | 5) => {
+      const rig = createMachineRig("BALER", { shadows: false, tier });
+      const box = new THREE.Box3().setFromObject(rig.group);
+      const v =
+        (box.max.x - box.min.x) * (box.max.y - box.min.y) * (box.max.z - box.min.z);
+      rig.dispose();
+      return v;
+    };
+    expect(encombrement(4)).toBeGreaterThan(encombrement(1));
+    expect(encombrement(5)).toBeGreaterThan(encombrement(4));
+  });
+
+  it("le tracteur annonce une longueur qui monte à chaque palier", () => {
+    // Elle valait `tracks ? 1.95 : 1.35` : quatre paliers sur cinq
+    // annonçaient la même, alors que c'est elle qui espace les engins dans
+    // la vue de ferme.
+    const longueurs = MACHINE_TIERS.map((tier) => {
+      const rig = createMachineRig("TRACTOR", { shadows: false, tier });
+      const l = rig.length;
+      rig.dispose();
+      return l;
+    });
+    for (let i = 1; i < longueurs.length; i++) {
+      expect({ palier: i + 1, monte: longueurs[i]! >= longueurs[i - 1]! }).toEqual({
+        palier: i + 1,
+        monte: true,
+      });
+    }
+    expect(longueurs[4]!).toBeGreaterThan(longueurs[0]!);
+    expect(new Set(longueurs).size).toBeGreaterThan(2);
   });
 });

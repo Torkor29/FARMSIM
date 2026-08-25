@@ -217,7 +217,10 @@ export function MachineSheet({
 
         <div className="machine-sheet-body">
         <div className="machine-sheet-art">
-          <MachineView3D type={type} tier={shownTier} height={320} turntable />
+          {/* La hauteur suit celle que la feuille de style accorde au cadre :
+              en dur à 320, la toile débordait du conteneur réduit sur écran
+              court et reprenait la place qu'on venait de lui retirer. */}
+          <MachineView3D type={type} tier={shownTier} turntable />
           {preview.mode === "buy" ? (
             <div className="age-switch machine-sheet-tiers" role="group" aria-label="Palier de matériel">
               {MACHINE_TIERS.map((t) => (

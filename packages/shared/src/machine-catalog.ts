@@ -1289,6 +1289,68 @@ export function machineVariant<T extends keyof MachineCatalog>(
 
 export const MACHINE_CATALOG: MachineCatalog = CATALOGUE;
 
+/**
+ * De combien un palier grossit à l'écran, par rapport à son T1.
+ *
+ * ## Le défaut que cette fonction corrige
+ *
+ * Les vignettes 3D cadraient la caméra sur la boîte englobante du modèle.
+ * Autrement dit : quelle que soit la taille de l'engin, la caméra reculait
+ * pour le faire tenir, et **un T5 occupait exactement la même place qu'un
+ * T1**. Toute la montée en gamme — plus de corps de charrue, une rampe plus
+ * large, quatre chenilles — se voyait dans le détail, jamais dans la
+ * stature. Le joueur qui paie quatre-vingt-dix mille euros voulait voir une
+ * machine plus grosse, et voyait la même en plus fourni.
+ *
+ * ## D'où vient le chiffre
+ *
+ * Pas d'une table écrite à la main : du **catalogue lui-même**, c'est-à-dire
+ * de ce que la fiche annonce au joueur. La puissance pour les porteurs, la
+ * largeur de travail pour les outils. Une taille inventée à côté finirait
+ * par contredire la fiche au premier réglage ; celle-ci ne peut pas.
+ *
+ * ## Pourquoi le logarithme, et pas la proportion
+ *
+ * Un tracteur passe de 105 à 830 chevaux, un semoir de 3 à 24,4 mètres : à
+ * l'échelle exacte, un T5 écraserait tout. Et la largeur d'un pulvérisateur
+ * mesure sa **rampe déployée**, pas son encombrement — quarante-huit mètres
+ * de traitement tiennent sur une machine de six.
+ *
+ * On garde donc l'ordre et la forme de la progression, pas son amplitude :
+ * chaque type s'étale sur le même écart visuel, de 1 à `TIER_SCALE_MAX`, et
+ * les paliers intermédiaires se placent selon le rythme du catalogue. Un
+ * type qui bondit entre T3 et T4 montre ce bond.
+ */
+export const TIER_SCALE_MAX = 1.62;
+
+/** Les types que le catalogue couvre — plus étroit que `MachineType`. */
+export type CatalogMachine = keyof MachineCatalog;
+
+function referenceTaille(type: CatalogMachine): number[] {
+  const paliers = CATALOGUE[type];
+  const largeurs = MACHINE_TIERS.map((t) => paliers[t]?.widthM ?? 0);
+  if (largeurs.every((w) => w > 0)) return largeurs;
+  const puissances = MACHINE_TIERS.map((t) => paliers[t]?.powerHp ?? 0);
+  return puissances.every((p) => p > 0) ? puissances : MACHINE_TIERS.map((t) => t);
+}
+
+export function machineTierScale(type: CatalogMachine, tier: MachineTier): number {
+  const ref = referenceTaille(type);
+  const base = ref[0]!;
+  const haut = ref[MACHINE_TIERS.length - 1]!;
+  const ici = ref[tier - 1]!;
+  // Un catalogue plat — ou incohérent — retombe sur un étalement régulier
+  // plutôt que sur une division par zéro : la vignette doit rendre quelque
+  // chose même si quelqu'un met cinq fois la même largeur.
+  const etendue = Math.log(haut / base);
+  const t =
+    Number.isFinite(etendue) && etendue > 1e-6
+      ? Math.log(ici / base) / etendue
+      : (tier - 1) / (MACHINE_TIERS.length - 1);
+  const borne = Math.min(1, Math.max(0, t));
+  return 1 + borne * (TIER_SCALE_MAX - 1);
+}
+
 /** Cinq paliers, comme les bâtiments : T5 est le plafond. */
 export const MAX_MACHINE_TIER: MachineTier = 5;
 

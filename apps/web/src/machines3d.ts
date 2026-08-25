@@ -273,6 +273,13 @@ const FRONT_W = 0.125;
 function buildTractor(tier: MachineTier = 1): Blueprint {
   const root = new Part();
   const tracks = tier >= 5;
+  /*
+   * Les quatre lignes qui suivent retombent sur la valeur du T1 au palier 5,
+   * ce qui ressemble à une régression et n'en est pas : à ce palier
+   * `tracks` vaut vrai, la branche à roues n'est pas prise, et ces
+   * dimensions ne sont jamais lues. On le note plutôt que de laisser le
+   * prochain lecteur — ou le prochain audit — s'y arrêter.
+   */
   const rearR = atTier(tier, [REAR_R, 0.242, 0.248, 0.255, REAR_R]);
   const rearW = atTier(tier, [REAR_W, 0.17, 0.168, 0.165, REAR_W]);
   const frontR = atTier(tier, [FRONT_R, 0.155, 0.165, 0.175, FRONT_R]);
@@ -589,7 +596,19 @@ function buildTractor(tier: MachineTier = 1): Blueprint {
     }
   }
 
-  return { root, length: tracks ? 1.95 : 1.35, hitch: [-0.64, 0.16, 0], eye: [0, 0, 0] };
+  /*
+   * La longueur valait `tracks ? 1.95 : 1.35` : **quatre paliers sur cinq
+   * annonçaient exactement la même**, et seul le T5 chenillé s'en écartait.
+   * C'est cette longueur que la vue de ferme emploie pour espacer les engins
+   * et que les tests comparent à l'encombrement mesuré — un utilitaire de
+   * 105 ch y occupait autant de place qu'un 370.
+   */
+  return {
+    root,
+    length: tracks ? 1.95 : atTier(tier, [1.35, 1.42, 1.5, 1.6, 1.6]),
+    hitch: [-0.64, 0.16, 0],
+    eye: [0, 0, 0],
+  };
 }
 
 /* ------------------------------------------------------------------ */
@@ -1163,7 +1182,10 @@ function buildBaler(tier: MachineTier = 1): Blueprint {
   const WHEEL_R = 0.16;
   /** Centre de la chambre de pressage */
   const CX = -0.62;
-  const CHAMBER_R = atTier(tier, [0.32, 0.335, 0.35, 0.365, 0.32]);
+  // La cinquième valeur n'est jamais lue : `buildSquareBaler` a déjà rendu
+  // la main au-dessus. On la garde alignée sur la progression plutôt que
+  // repliée sur le T1, pour que la suite se lise comme ce qu'elle est.
+  const CHAMBER_R = atTier(tier, [0.32, 0.335, 0.35, 0.365, 0.385]);
   const CHAMBER_Y = WHEEL_R + CHAMBER_R + 0.05;
 
   /* — Flèche, anneau, béquille ————————————————————————— */
@@ -1281,7 +1303,8 @@ function buildBaler(tier: MachineTier = 1): Blueprint {
       .attach(wheelPart(WHEEL_R, 0.12, 11));
   }
 
-  return { root, length: atTier(tier, [1.35, 1.38, 1.42, 1.48, 1.35]), hitch: [-1.25, 0.3, 0], eye: [0.01, 0.16, 0] };
+  // Cinquième valeur morte elle aussi, pour la même raison.
+  return { root, length: atTier(tier, [1.35, 1.38, 1.42, 1.48, 1.56]), hitch: [-1.25, 0.3, 0], eye: [0.01, 0.16, 0] };
 }
 
 /**
