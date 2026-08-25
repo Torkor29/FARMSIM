@@ -43,6 +43,26 @@ services:
     volumes:
       - farmsim-pg:/var/lib/postgresql/data
     restart: unless-stopped
+    # ——————————————————————————————————————————————————————————————————
+    # Les journaux ont une taille maximale.
+    #
+    # Docker n'en impose aucune par défaut : le pilote `json-file` écrit sans
+    # jamais tourner, et un conteneur qui vit des semaines finit par remplir
+    # le disque à lui seul. Ce n'est pas une hypothèse d'école — le serveur
+    # s'est retrouvé saturé, et un disque plein ne se contente pas de ralentir
+    # Docker : PostgreSQL ne peut plus écrire, la sauvegarde échoue, et le
+    # déploiement s'arrête sur une erreur qui ne dit rien de la vraie cause.
+    #
+    # Trois fichiers de cinquante mégaoctets : de quoi remonter largement
+    # au-delà du dernier incident, sans que le journal puisse devenir le
+    # problème qu'il sert à diagnostiquer.
+    # ——————————————————————————————————————————————————————————————————
+    logging:
+      driver: json-file
+      options:
+        max-size: "50m"
+        max-file: "3"
+
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U farmsim -d farmsim"]
       interval: 10s
@@ -101,6 +121,26 @@ services:
     cap_drop:
       - ALL
     restart: unless-stopped
+    # ——————————————————————————————————————————————————————————————————
+    # Les journaux ont une taille maximale.
+    #
+    # Docker n'en impose aucune par défaut : le pilote `json-file` écrit sans
+    # jamais tourner, et un conteneur qui vit des semaines finit par remplir
+    # le disque à lui seul. Ce n'est pas une hypothèse d'école — le serveur
+    # s'est retrouvé saturé, et un disque plein ne se contente pas de ralentir
+    # Docker : PostgreSQL ne peut plus écrire, la sauvegarde échoue, et le
+    # déploiement s'arrête sur une erreur qui ne dit rien de la vraie cause.
+    #
+    # Trois fichiers de cinquante mégaoctets : de quoi remonter largement
+    # au-delà du dernier incident, sans que le journal puisse devenir le
+    # problème qu'il sert à diagnostiquer.
+    # ——————————————————————————————————————————————————————————————————
+    logging:
+      driver: json-file
+      options:
+        max-size: "50m"
+        max-file: "3"
+
     healthcheck:
       test:
         [

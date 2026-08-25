@@ -114,8 +114,38 @@ echo "==> Ménage Docker (cache de construction et images orphelines)"
 timeout 300 docker builder prune -af >/dev/null 2>&1 || echo "    (cache : ménage incomplet)"
 timeout 300 docker image prune -f >/dev/null 2>&1 || echo "    (images : ménage incomplet)"
 timeout 120 docker container prune -f >/dev/null 2>&1 || true
+# Les journaux de conteneurs, que le ménage Docker ne touche pas.
+#
+# Le pilote `json-file` écrit sans jamais tourner tant qu'on ne le lui a pas
+# demandé. `docker-compose.yml` le lui demande désormais, mais ce réglage ne
+# s'applique qu'aux conteneurs **créés ensuite** : ceux qui tournent depuis
+# des semaines gardent leur journal sans limite, et c'est précisément
+# celui-là qui a rempli le disque. On les vide ici une bonne fois.
+#
+# On tronque, on ne supprime pas : Docker garde le fichier ouvert, et
+# l'effacer lui ferait écrire dans un fichier fantôme jusqu'au prochain
+# redémarrage — la place ne serait même pas rendue.
+echo "==> Journaux de conteneurs volumineux"
+vides=0
+for f in /var/lib/docker/containers/*/*-json.log; do
+  [[ -f "$f" ]] || continue
+  taille="$(stat -c %s "$f" 2>/dev/null || echo 0)"
+  (( taille > 209715200 )) || continue
+  echo "    $(( taille / 1048576 )) Mo — $(basename "$(dirname "$f")" | cut -c1-12)"
+  : > "$f"
+  vides=$((vides + 1))
+done
+(( vides > 0 )) || echo "    aucun au-delà de 200 Mo"
+
 echo "==> Place disque après ménage"
 df -h / | tail -n +2 | awk '{print "    " $5 " occupé, " $4 " libre sur " $2}'
+# Si le disque reste plein après tout ça, on veut savoir **qui** l'occupe :
+# sans cette ligne, le prochain incident repartira de zéro comme celui-ci.
+libre_pct="$(df --output=pcent / | tail -1 | tr -dc '0-9')"
+if [[ -n "$libre_pct" ]] && (( libre_pct > 85 )); then
+  echo "WARN: disque encore à ${libre_pct} % — les dix plus gros postes :" >&2
+  du -xhd2 /var 2>/dev/null | sort -rh | head -10 | sed 's/^/    /' >&2 || true
+fi
 
 # --- git ---
 #
