@@ -52,6 +52,28 @@ services:
 
   farmsim:
     container_name: farmsim
+    # ——————————————————————————————————————————————————————————————————
+    # L'image vient du registre ; `build` reste le filet.
+    #
+    # Le VPS construisait l'image lui-même à chaque déploiement. Sur cette
+    # machine, une construction sans cache demande six à sept minutes de
+    # calcul — dont deux et demie pour le seul bundle web — et c'est ce qui a
+    # fait dépasser le délai de la session SSH. Le vrai coût n'était pas le
+    # dépassement : couper la session ne tue pas le `docker build` resté
+    # derrière, et le déploiement **suivant** démarrait sur une machine
+    # saturée par un orphelin. Un échec en causait un second.
+    #
+    # L'image est désormais construite par l'action, avec son cache, et
+    # publiée sur ghcr.io. Le VPS n'a plus qu'à la tirer.
+    #
+    # Les deux clés cohabitent volontairement. `image` seule interdirait de
+    # déployer quand le registre est indisponible ou pas encore alimenté ;
+    # `build` seule ramènerait le problème. Avec les deux, `docker compose
+    # pull` prend l'image toute faite quand elle existe, et `--build` reste
+    # possible partout ailleurs — sur un poste de développement comme sur le
+    # VPS en dépannage. Voir `scripts/vps-deploy.sh`.
+    # ——————————————————————————————————————————————————————————————————
+    image: ${FARMSIM_IMAGE:-farmsim:local}
     build: .
     ports:
       - "${FARMSIM_BIND:-0.0.0.0}:${FARMSIM_PORT:-8081}:8080"

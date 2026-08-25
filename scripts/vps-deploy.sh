@@ -25,16 +25,64 @@ if ! command -v docker >/dev/null 2>&1; then
   exit 1
 fi
 
+# --- reprise après un déploiement coupé ---
+#
+# Trois déploiements de suite ont échoué, et le troisième a mis le jeu à
+# terre. L'enchaînement, une fois reconstitué, est le même à chaque fois :
+#
+#  1. la construction de l'image dépasse le délai de la session SSH ;
+#  2. couper la session **ne tue pas** le `docker build` lancé derrière : il
+#     continue à tourner sur la machine, sans personne pour l'attendre ;
+#  3. le déploiement suivant démarre sur un serveur saturé par cet orphelin.
+#     Mesuré : trois cent vingt-cinq secondes pour transférer six kilo-octets
+#     de Dockerfile, cinq minutes pour ouvrir une session SSH, puis un
+#     `git fetch` qui expire au bout d'un quart d'heure.
+#
+# Un échec en causait donc un second, puis un troisième. On casse la chaîne
+# ici, avant de toucher à quoi que ce soit d'autre : c'est le premier travail
+# du script, parce que tout le reste en dépend.
+#
+# Le filtre est volontairement étroit — un processus de construction, et âgé
+# de plus de dix minutes. Un déploiement légitime en cours n'a jamais dix
+# minutes au moment où celui-ci démarre, puisqu'ils ne peuvent pas se
+# chevaucher (voir la clause `concurrency` du workflow).
+echo "==> Recherche de constructions orphelines"
+trouves=0
+for pid in $(pgrep -f 'docker.*build|buildx' 2>/dev/null || true); do
+  age="$(ps -o etimes= -p "$pid" 2>/dev/null | tr -d ' ' || true)"
+  [[ -n "$age" ]] || continue
+  (( age > 600 )) || continue
+  echo "    construction orpheline : pid $pid, ${age}s — arrêt"
+  kill -TERM "$pid" 2>/dev/null || true
+  trouves=$((trouves + 1))
+done
+if (( trouves > 0 )); then
+  sleep 5
+  for pid in $(pgrep -f 'docker.*build|buildx' 2>/dev/null || true); do
+    kill -KILL "$pid" 2>/dev/null || true
+  done
+  echo "    $trouves arrêtée(s) ; on laisse la machine respirer"
+  sleep 10
+else
+  echo "    aucune"
+fi
+
 # --- git ---
 #
 # Le VPS a déjà perdu GitHub en plein `git fetch` (SSL connection timeout)
-# et Docker Hub en plein pull du frontend Dockerfile. Quatre essais, avec
-# une pause qui double : 4 s, 8 s, 16 s, 32 s. Un seul essai laissait le
-# déploiement en échec alors que le jeu tournait encore très bien.
+# et Docker Hub en plein pull. Quatre essais, avec une pause qui double :
+# 4 s, 8 s, 16 s, 32 s. Un seul essai laissait le déploiement en échec alors
+# que le jeu tournait encore très bien.
+#
+# Chaque essai est **borné à trois minutes**, et c'est cette borne qui fait le
+# travail. La panne observée n'était pas une erreur rapide mais un blocage :
+# le `git fetch` du dernier déploiement a tenu la session un quart d'heure
+# avant d'admettre qu'il n'aboutirait pas. Réessayer sans borne ne l'aurait
+# pas rattrapé — ça aurait fait quatre quarts d'heure au lieu d'un.
 git_essaie() {
   local i attente
   for i in 1 2 3 4; do
-    if "$@"; then
+    if timeout 180 "$@"; then
       return 0
     fi
     attente=$((4 * 2 ** (i - 1)))
@@ -97,8 +145,33 @@ else
   fi
 fi
 
-echo "==> Build & start"
-docker compose up -d --build --force-recreate
+# --- l'image ---
+#
+# Elle est construite par l'action GitHub et publiée sur ghcr.io ; le VPS ne
+# fait plus que la tirer. C'est la correction d'un défaut qui a coûté deux
+# déploiements de suite : construire ici demandait six à sept minutes, la
+# session SSH était coupée avant la fin, et le `docker build` continuait à
+# tourner sans personne pour l'attendre — si bien que le déploiement suivant
+# démarrait sur une machine saturée et mourait à son tour.
+#
+# Le repli sur une construction locale est délibéré et n'est pas de la
+# prudence décorative : sans lui, un registre indisponible, une image pas
+# encore publiée ou un premier déploiement empêcheraient toute mise en ligne.
+# On préfère un déploiement lent à pas de déploiement du tout.
+if [[ -n "${FARMSIM_IMAGE:-}" ]]; then
+  export FARMSIM_IMAGE
+  echo "==> Image : $FARMSIM_IMAGE"
+  if docker compose pull farmsim; then
+    echo "==> Démarrage sur l'image du registre"
+    docker compose up -d --force-recreate
+  else
+    echo "WARN: image introuvable au registre — construction sur place." >&2
+    docker compose up -d --build --force-recreate
+  fi
+else
+  echo "==> Aucune image fournie — construction sur place"
+  docker compose up -d --build --force-recreate
+fi
 
 # Un volume nommé créé par une exécution antérieure — ou par une image
 # construite avec un uid différent — garde son propriétaire d'origine tant
