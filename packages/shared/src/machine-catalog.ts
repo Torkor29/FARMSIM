@@ -173,7 +173,16 @@ const CATALOGUE: MachineCatalog = {
       stars: { puissance: 2, vitesse: 3, capacite: 2, sobriete: 4, fiabilite: 4 },
     },
     3: {
-      label: "Céréalier 250",
+      /*
+       * « Céréalier 250 » désignait un type de ferme, quand tous ses voisins
+       * de gamme désignent une taille : Utilitaire, Polyvalent, Lourd, Géant.
+       * Le mot a surtout un passé — c'était l'un des deux métiers qu'on
+       * choisissait à l'inscription, avant qu'on supprime ce choix. Un joueur
+       * qui l'a connu lit donc un reste de mécanique morte et se demande si
+       * son tracteur a hérité d'un libellé qui traîne. La question a été
+       * posée telle quelle.
+       */
+      label: "Intensif 250",
       inspiredBy: "John Deere 6R 250",
       maker: "John Deere",
       copy: "6R 6 cyl : capot haut, empattement allongé, jantes plus larges, GPS de série.",

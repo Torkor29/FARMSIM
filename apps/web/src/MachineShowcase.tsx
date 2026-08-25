@@ -177,9 +177,13 @@ function FarmPreview({ tier = 1 }: { tier?: MachineTier }) {
     [],
   );
 
+  /** La vitrine n'a qu'une parcelle ; le chantier lui appartient. */
+  const PARCELLE_VITRINE = "vitrine";
+
   const activeWork = useMemo(
     () => ({
       type,
+      parcelId: PARCELLE_VITRINE,
       cells: Array.from({ length: 6 }, (_, i) => ({ x: i, y: 3 + (run % 2) })),
       // Un engin de chantier fatigué : sa carrosserie doit le dire.
       condition: 28,
@@ -217,6 +221,9 @@ function FarmPreview({ tier = 1 }: { tier?: MachineTier }) {
       </div>
       <div className="atelier-iso">
         <IsoFarmView
+          // La vue ne joue le chantier que s'il porte sa parcelle : sans ce
+          // `parcelId`, la vitrine resterait vide depuis que le filtre existe.
+          parcelId={PARCELLE_VITRINE}
           gridW={6}
           gridH={6}
           cells={cells}

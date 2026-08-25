@@ -794,12 +794,44 @@ export function LivestockPanel({
                     )}
                   </div>
 
-                  {herd.atRisk && (
-                    <p className="herd-alert">
-                      Le troupeau dépérit — des bêtes vont mourir. Distribuez une ration
-                      sans attendre.
-                    </p>
-                  )}
+                  {herd.atRisk &&
+                    (() => {
+                      /*
+                       * L'alerte nomme la cause dominante, plus « distribuez
+                       * une ration » en toutes circonstances.
+                       *
+                       * Signalé en jeu, et le message a coûté dix bêtes : un
+                       * troupeau à mangeoire pleine et quatre-vingt-six tonnes
+                       * de litière dépérissait quand même — vingt et une bêtes
+                       * pour dix-huit places d'enclos, soit un serrement qui
+                       * mange à lui seul un demi-plancher de bien-être. Le
+                       * joueur a fait ce qu'on lui demandait ; la route lui a
+                       * répondu « la mangeoire est pleine », et les bêtes sont
+                       * mortes pendant qu'il cherchait du grain.
+                       *
+                       * Les causes sont déjà calculées par le serveur, avec
+                       * les mêmes entrées que le bien-être. Les ignorer pour
+                       * accuser la faim était le vrai défaut : une alerte qui
+                       * désigne le mauvais geste est pire que pas d'alerte,
+                       * parce qu'elle occupe le joueur ailleurs.
+                       */
+                      const pire = [...(herd.welfareCauses ?? [])].sort(
+                        (a, b) => b.cout - a.cout,
+                      )[0];
+                      return (
+                        <p className="herd-alert">
+                          Le troupeau dépérit — des bêtes vont mourir.{" "}
+                          {pire ? (
+                            <>
+                              {pire.texte} : {pire.remede.charAt(0).toLowerCase()}
+                              {pire.remede.slice(1)}.
+                            </>
+                          ) : (
+                            <>Distribuez une ration sans attendre.</>
+                          )}
+                        </p>
+                      );
+                    })()}
                 </section>
 
                 {/* Ce que le lot rapporte, et quand. Le compte à rebours de la
