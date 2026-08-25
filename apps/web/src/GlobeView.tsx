@@ -24,6 +24,24 @@ type Props = {
   height?: number;
 };
 
+/**
+ * Part du chemin parcourue en `dt` secondes, pour une approche exponentielle.
+ *
+ * Les fondus de cette vue s'écrivaient « avance de quinze pour cent du reste »
+ * — par **image**. Une animation écrite ainsi va deux fois plus vite sur un
+ * écran à 120 Hz que sur un écran à 60, et rampe sur un appareil qui tombe à
+ * 30 : ce n'est pas un réglage, c'est un réglage par appareil. Pire, le
+ * surveillant d'images bride volontairement à 30 sur les machines lentes,
+ * donc le jeu ralentissait ses propres animations là où elles ont le plus
+ * besoin de rester lisibles.
+ *
+ * `k` est une vitesse en « par seconde » : à 10, on couvre les neuf dixièmes
+ * du chemin en un quart de seconde, quelle que soit la cadence.
+ */
+function approche(dt: number, k: number): number {
+  return 1 - Math.exp(-k * dt);
+}
+
 const R = 2;
 /** Inclinaison de l'axe (23,4°) : la Terre penchée est plus jolie qu'une bille droite. */
 const AXIS_TILT = 0.41;
@@ -470,12 +488,25 @@ const TEX_H = 1024;
 /**
  * Résolution de l'aperçu. Peindre la pleine définition demande plusieurs
  * secondes ; une planète grossière mais complète coûte quelques dizaines de
- * millisecondes. On affiche donc l'aperçu tout de suite et on lui substitue
- * la version fine dès qu'elle est prête — le joueur ne voit jamais de bille
- * bleue vide.
+ * millisecondes. On affiche donc l'aperçu tout de suite et on l'affine
+ * ensuite — le joueur ne voit jamais de bille bleue vide.
+ *
+ * Elle valait 256 × 128, et c'était le vrai visage du globe à la connexion :
+ * l'aperçu restait affiché tel quel jusqu'à ce que la carte fine soit
+ * **entièrement** peinte, soit près d'une seconde pendant laquelle on
+ * regardait trente-deux mille texels étirés sur une sphère plein écran. Le
+ * globe n'était pas « un peu pixelisé », il était en basse définition et le
+ * restait le temps qu'on le regarde.
+ *
+ * Deux corrections, et la seconde compte davantage : l'aperçu est deux fois
+ * plus fin dans chaque sens — quarante millisecondes de calcul au lieu de dix,
+ * que personne ne voit passer au montage — et surtout la carte fine se
+ * **substitue par bandes** au lieu d'attendre d'être complète. C'est cette
+ * seconde qui fait le travail : l'aperçu n'a plus qu'à tenir les deux
+ * premières centaines de millisecondes. Voir `seed` dans `makePlanetPainter`.
  */
-const PREVIEW_W = 256;
-const PREVIEW_H = 128;
+const PREVIEW_W = 384;
+const PREVIEW_H = 192;
 
 /** Budget de calcul par image, en ms : au-delà, on rend la main au navigateur. */
 const PAINT_BUDGET_MS = 10;
@@ -521,6 +552,17 @@ function makePlanetPainter(
   fields: Field[],
   texW = TEX_W,
   texH = TEX_H,
+  /**
+   * Aperçu à agrandir dans les toiles avant de peindre.
+   *
+   * C'est ce qui permet d'afficher la carte fine **pendant** qu'elle se peint
+   * plutôt qu'après. Sans graine, les bandes pas encore peintes seraient
+   * transparentes et la planète se dévoilerait derrière une frontière franche
+   * qui descendrait du pôle ; avec elle, chaque bande remplace du flou par du
+   * net, et il n'y a aucun bord à voir. Le globe se précise, il n'apparaît
+   * pas.
+   */
+  seed?: PlanetSkin,
 ): { skin: PlanetSkin; paintBand: () => boolean; paintAll: () => PlanetSkin } {
   const color = document.createElement("canvas");
   const bump = document.createElement("canvas");
@@ -532,7 +574,22 @@ function makePlanetPainter(
   const ctxColor = color.getContext("2d")!;
   const ctxBump = bump.getContext("2d")!;
   const ctxRough = rough.getContext("2d")!;
+  if (seed) {
+    ctxColor.drawImage(seed.color, 0, 0, texW, texH);
+    ctxBump.drawImage(seed.bump, 0, 0, texW, texH);
+    ctxRough.drawImage(seed.rough, 0, 0, texW, texH);
+  }
 
+  /*
+   * Carte des continents. Elle ne sert pas au rendu mais au **clic** :
+   * `ownerAt` y lit quel continent se trouve sous le doigt.
+   *
+   * Elle se remplit au fil des bandes, donc elle est incomplète tant que la
+   * peinture n'est pas finie — c'est pourquoi l'appelant continue de désigner
+   * celle de l'aperçu pour le clic, et n'échange qu'à la fin. Les deux moitiés
+   * du travail ont des rythmes différents : les toiles doivent s'afficher au
+   * plus tôt, la carte des continents doit être entière ou ne pas servir.
+   */
   const owner = new Uint8Array(texW * texH);
 
   let row = 0;
@@ -732,6 +789,10 @@ function atmosphereMaterial(color: number, power: number, intensity: number) {
 type MarkerHandle = {
   code: string;
   pin: THREE.Group;
+  /** La pastille seule : elle tourne et flotte, la tige ne bouge pas. */
+  head: THREE.Mesh;
+  /** Déphasage du flottement : six pastilles au même rythme font un métronome. */
+  bob: number;
   ring: THREE.Mesh;
   ringMat: THREE.MeshBasicMaterial;
   free: boolean;
@@ -768,11 +829,23 @@ export function GlobeView({
     let quality = initialQuality();
     const renderer = new THREE.WebGLRenderer({ antialias: quality.antialias, alpha: true });
     quality = qualityForContext(renderer.getContext()) ?? quality;
-    renderer.setPixelRatio(Math.min(1.75, quality.pixelRatio));
+    /*
+     * Densité de pixels : deux, et non un et trois quarts.
+     *
+     * Le plafond était à 1,75 — sur un écran à deux pixels par point, c'est
+     * douze pour cent de définition en moins que ce que l'écran affiche, et ça
+     * se voit précisément là où le globe est un arc : en marches d'escalier
+     * sur le limbe. Le globe est petit (quatre cent vingt points de haut) et
+     * seul à l'écran ; ce quart de pixel supplémentaire coûte trente pour cent
+     * de rasterisation sur une surface minuscule, et le surveillant d'images
+     * déclasse de lui-même si l'appareil ne suit pas.
+     */
+    const densite = (q: RenderQuality) => Math.min(2, q.pixelRatio);
+    renderer.setPixelRatio(densite(quality));
     let lastFrame = 0;
     const applyQuality = (next: RenderQuality) => {
       quality = next;
-      renderer.setPixelRatio(Math.min(1.75, next.pixelRatio));
+      renderer.setPixelRatio(densite(next));
     };
     const governor = makeFrameGovernor(applyQuality);
     renderer.setSize(width, height, false);
@@ -841,23 +914,32 @@ export function GlobeView({
     let skin = geometryCache.skin;
     let paintRaf = 0;
     const ownedTextures: THREE.Texture[] = [];
+    /** Les textures en place, pour pouvoir les rafraîchir sans les recréer. */
+    let liveTex: { color: THREE.Texture; bump: THREE.Texture; rough: THREE.Texture } | null = null;
     const applySkin = (s: PlanetSkin) => {
       // Les textures précédentes — l'aperçu — n'ont plus lieu d'être.
       ownedTextures.splice(0).forEach((t) => t.dispose());
       const colorTex = new THREE.CanvasTexture(s.color);
       colorTex.colorSpace = THREE.SRGBColorSpace;
-      colorTex.anisotropy = renderer.capabilities.getMaxAnisotropy();
       const bumpTex = new THREE.CanvasTexture(s.bump);
       const roughTex = new THREE.CanvasTexture(s.rough);
       for (const t of [colorTex, bumpTex, roughTex]) {
         t.wrapS = THREE.RepeatWrapping;
         t.minFilter = THREE.LinearMipmapLinearFilter;
+        /*
+         * Le filtrage anisotrope était posé sur la seule couleur. Aux pôles et
+         * au limbe, là où un texel s'étire sur toute la largeur de l'écran,
+         * c'est pourtant lui qui décide si l'on voit une côte ou un escalier —
+         * et le relief et la rugosité s'y étirent autant que la couleur.
+         */
+        t.anisotropy = renderer.capabilities.getMaxAnisotropy();
       }
       planetMat.map = colorTex;
       planetMat.bumpMap = bumpTex;
       planetMat.roughnessMap = roughTex;
       planetMat.needsUpdate = true;
       ownedTextures.push(colorTex, bumpTex, roughTex);
+      liveTex = { color: colorTex, bump: bumpTex, rough: roughTex };
     };
 
     if (skin) {
@@ -866,16 +948,63 @@ export function GlobeView({
       // Planète complète tout de suite, en basse définition : quelques dizaines
       // de millisecondes suffisent, et le joueur voit un monde plutôt qu'une
       // bille bleue pendant que la version fine se calcule.
-      skin = makePlanetPainter(terrain, fields, PREVIEW_W, PREVIEW_H).paintAll();
-      applySkin(skin);
+      const apercu = makePlanetPainter(terrain, fields, PREVIEW_W, PREVIEW_H).paintAll();
 
-      const painter = makePlanetPainter(terrain, fields);
+      /*
+       * La carte fine part de l'aperçu agrandi, et c'est elle qu'on affiche
+       * **tout de suite**.
+       *
+       * L'ancien enchaînement montrait l'aperçu, peignait la carte fine dans
+       * son coin, et ne l'échangeait qu'une fois terminée : le globe restait
+       * donc en basse définition pendant toute la peinture, c'est-à-dire
+       * pendant tout le temps où on le regarde à la connexion. En peignant
+       * par-dessus l'aperçu agrandi et en réenvoyant la toile de temps en
+       * temps, chaque bande remplace du flou par du net sans qu'aucune
+       * frontière ne soit visible.
+       */
+      const painter = makePlanetPainter(terrain, fields, TEX_W, TEX_H, apercu);
+      /*
+       * On affiche les toiles fines et on garde l'aperçu pour le clic.
+       *
+       * Ce sont deux choses distinctes dans le même objet : les toiles, qu'on
+       * veut montrer au plus tôt quitte à ce qu'elles s'affinent en cours de
+       * route, et la carte des continents, qui n'a aucun sens tant qu'elle est
+       * à moitié peinte. Publier la carte fine des deux d'un bloc rendrait le
+       * globe net et incliquable pendant une seconde et demie.
+       */
+      applySkin(painter.skin);
+
+      /*
+       * On ne réenvoie pas la texture à chaque bande.
+       *
+       * Un aller de deux mégatexels vers la carte graphique, mipmaps
+       * recalculés, coûte bien plus cher que la bande qui vient d'être
+       * peinte : le faire soixante fois par seconde rendrait la peinture plus
+       * lente que si on ne montrait rien. Six fois par seconde suffisent à
+       * donner l'impression que le globe se précise sous les yeux.
+       *
+       * Et seule la **couleur** est renvoyée en cours de route : le relief et
+       * la rugosité ne se voient pas à cette échelle, ils partiront une fois,
+       * à la fin, pour le tiers du prix.
+       */
+      const RENVOI_MS = 160;
+      let dernierRenvoi = 0;
       const paintNext = () => {
-        if (painter.paintBand()) {
+        const fini = painter.paintBand();
+        const maintenant = performance.now();
+        if (fini) {
           geometryCache.skin = painter.skin;
           skin = painter.skin;
-          applySkin(painter.skin);
+          if (liveTex) {
+            liveTex.color.needsUpdate = true;
+            liveTex.bump.needsUpdate = true;
+            liveTex.rough.needsUpdate = true;
+          }
           return;
+        }
+        if (liveTex && maintenant - dernierRenvoi > RENVOI_MS) {
+          dernierRenvoi = maintenant;
+          liveTex.color.needsUpdate = true;
         }
         paintRaf = requestAnimationFrame(paintNext);
       };
@@ -937,11 +1066,28 @@ export function GlobeView({
     );
     scene.add(glow);
 
-    // Marqueurs : anneau au sol qui pulse, tige fine, pastille à facettes.
-    const ringGeo = new THREE.RingGeometry(0.12, 0.155, 26);
-    const stemGeo = new THREE.CylinderGeometry(0.014, 0.02, 0.2, 6);
-    const headGeo = new THREE.OctahedronGeometry(0.075, 0);
-    const baseGeo = new THREE.CylinderGeometry(0.045, 0.055, 0.03, 8);
+    /*
+     * Marqueurs : anneau au sol qui pulse, tige fine, pastille à facettes.
+     *
+     * Les découpages étaient comptés au plus juste — vingt-six segments pour
+     * l'anneau, six pour la tige, huit pour le socle. À la taille où on les
+     * regarde en vue monde c'était invisible ; dès qu'on s'approche d'un
+     * continent, l'anneau devient un polygone et la tige un prisme, et ce sont
+     * les seuls objets de la scène que l'œil suit vraiment puisque ce sont eux
+     * qu'on vient cliquer.
+     *
+     * Ce sont six marqueurs sur toute la planète : le surcoût se compte en
+     * centaines de triangles, c'est-à-dire en rien du tout face aux
+     * soixante-cinq mille de la sphère.
+     *
+     * La pastille garde ses facettes franches — c'est un octaèdre, pas une
+     * bille, et le rendu à plat du jeu tient à ça. Une subdivision suffit à
+     * lui ôter son air de caillou sans lui ôter ses arêtes.
+     */
+    const ringGeo = new THREE.RingGeometry(0.12, 0.155, 72);
+    const stemGeo = new THREE.CylinderGeometry(0.014, 0.02, 0.2, 16);
+    const headGeo = new THREE.OctahedronGeometry(0.075, 1);
+    const baseGeo = new THREE.CylinderGeometry(0.045, 0.055, 0.03, 24);
     const markers: MarkerHandle[] = [];
     const up = new THREE.Vector3(0, 1, 0);
 
@@ -985,7 +1131,15 @@ export function GlobeView({
       ring.rotation.x = -Math.PI / 2;
       anchor.add(ring);
 
-      const pinMat = new THREE.MeshLambertMaterial({ color: tone, flatShading: true });
+      /*
+       * Tige et socle en ombrage **lisse**, pastille en ombrage plat.
+       *
+       * Tout portait le rendu à facettes. Sur un octaèdre c'est le sujet même
+       * — une pierre taillée — mais sur un cylindre c'est juste un tuyau qui
+       * montre ses côtés. Les deux matériaux séparés donnent ce qu'on veut de
+       * chacun : une tige ronde et une pastille qui accroche la lumière.
+       */
+      const pinMat = new THREE.MeshLambertMaterial({ color: tone, flatShading: false });
       const pin = new THREE.Group();
       pin.position.y = surface + 0.03;
       const plate = new THREE.Mesh(baseGeo, pinMat);
@@ -1009,7 +1163,7 @@ export function GlobeView({
       anchor.userData.continentCode = c.code;
       spinner.add(anchor);
       pickTargets.push(anchor);
-      markers.push({ code: c.code, pin, ring, ringMat, free });
+      markers.push({ code: c.code, pin, ring, ringMat, free, head, bob: i * 1.7 });
     }
 
     /**
@@ -1319,8 +1473,11 @@ export function GlobeView({
         if (Math.abs(velX) > 0.00005 || Math.abs(velY) > 0.00005) {
           spin += velX;
           pitch = THREE.MathUtils.clamp(pitch + velY, -1.05, 1.05);
-          velX *= 0.93;
-          velY *= 0.93;
+          // 0,93 par image à 60 Hz, mais exprimé par seconde : le globe
+          // s'arrête après la même course quelle que soit la cadence.
+          const frein = Math.exp(-4.35 * dt);
+          velX *= frein;
+          velY *= frein;
           idle = 0;
         } else {
           idle += dt;
@@ -1353,19 +1510,38 @@ export function GlobeView({
       }
       const wantOpacity = lit ? (lit === sel ? 0.42 : 0.24) + pulse * 0.08 : 0;
       const uOpacity = highlightMat.uniforms.uOpacity;
-      uOpacity.value += (wantOpacity - uOpacity.value) * 0.14;
+      uOpacity.value += (wantOpacity - uOpacity.value) * approche(dt, 9);
 
+      const suivi = approche(dt, 9.75);
       for (const m of markers) {
         const isSel = m.code === sel;
         const isHover = m.code === hovered;
         const s = isSel ? 1.55 : isHover ? 1.3 : 1;
         scaleTmp.set(s, s, s);
-        m.pin.scale.lerp(scaleTmp, 0.15);
+        m.pin.scale.lerp(scaleTmp, suivi);
         const ringScale = 1 + (isSel ? 0.35 : 0.14) * pulse;
         m.ring.scale.setScalar(ringScale);
         m.ringMat.opacity = m.free
           ? (isSel ? 0.55 : 0.34) + pulse * (isSel ? 0.4 : 0.22)
           : 0.22 + pulse * 0.06;
+
+        /*
+         * La pastille tourne et flotte ; le reste du repère ne bouge pas.
+         *
+         * Le marqueur ne faisait que grossir au survol et pulser au sol. Sur
+         * un écran d'accueil où l'on cherche des yeux ce qui est cliquable,
+         * une facette qui tourne attire là où un cône immobile ne dit rien —
+         * et c'est ce qui distingue d'un coup d'œil un continent libre d'un
+         * continent complet, dont la pastille reste inerte.
+         *
+         * Le mouvement respecte `prefers-reduced-motion`, comme la rotation
+         * du globe : le repère doit rester visible sans jamais bouger pour qui
+         * l'a demandé.
+         */
+        if (!reduced && m.free) {
+          m.head.rotation.y += dt * (isSel ? 1.5 : 0.55);
+          m.head.position.y = 0.27 + Math.sin(now * 0.0016 + m.bob) * (isSel ? 0.022 : 0.012);
+        }
       }
 
       renderer.render(scene, camera);
