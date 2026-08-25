@@ -231,6 +231,31 @@ jobs:
             exit 1
           fi
 
+      # ——————————————————————————————————————————————————————————————
+      # Le script de déploiement voyage avec l'action, il ne se télécharge
+      # plus depuis le serveur.
+      #
+      # Le VPS le prenait sur raw.githubusercontent.com à chaque exécution.
+      # Mesuré deux fois de suite, à cinq minutes d'intervalle :
+      #
+      #     curl: (35) Recv failure: Connection reset by peer
+      #
+      # Ce serveur ne joint pas GitHub de façon fiable. Or le coureur, lui, a
+      # le dépôt sous la main et une connexion saine : il n'y a aucune raison
+      # de faire retélécharger au VPS un fichier qu'on tient déjà.
+      #
+      # On l'encode en base64 pour qu'il traverse la session SSH sans qu'aucun
+      # guillemet, apostrophe ou accent n'ait à être échappé — le script en
+      # est plein.
+      # ——————————————————————————————————————————————————————————————
+      - uses: actions/checkout@v4
+        if: steps.config.outputs.pret == 'oui'
+
+      - name: Emporter le script de déploiement
+        if: steps.config.outputs.pret == 'oui'
+        id: script
+        run: echo "b64=$(base64 -w0 scripts/vps-deploy.sh)" >> "$GITHUB_OUTPUT"
+
       - name: Ouvrir une session et lancer le script de déploiement
         if: steps.config.outputs.pret == 'oui'
         uses: appleboy/ssh-action@v1.2.0
@@ -272,32 +297,25 @@ jobs:
             # ne répond pas — un déploiement lent vaut mieux que pas de
             # déploiement du tout. Voir `scripts/vps-deploy.sh`.
             IMAGE='${{ needs.construire.outputs.image }}:${{ github.sha }}'
-            URL='https://raw.githubusercontent.com/Torkor29/FARMSIM/main/scripts/vps-deploy.sh'
-            # On télécharge le script dans un fichier, puis on l'exécute — et
-            # surtout pas `curl … | bash`.
+            # Le script arrive encodé dans la commande : rien à télécharger,
+            # donc rien qui puisse échouer silencieusement.
             #
-            # Mesuré, et c'est le défaut le plus coûteux de toute cette série :
+            # `curl … | bash` avait un défaut bien pire que la panne réseau
+            # qu'il subissait : quand le téléchargement échouait, `bash`
+            # recevait un flux vide, ne faisait rien, et sortait avec le code
+            # 0. C'est son code que le tube retenait, pas celui de `curl` —
+            # deux déploiements se sont ainsi déclarés réussis en n'ayant
+            # rien déployé. Un déploiement qui ment sur son résultat envoie
+            # chercher la panne partout ailleurs.
             #
-            #     curl: (35) Recv failure: Connection reset by peer
-            #     ✅ Successfully executed commands to all hosts.
-            #
-            # Le téléchargement échoue, `bash` reçoit un flux vide, ne fait
-            # rien et sort avec le code 0 — c'est **son** code que le tube
-            # retient, pas celui de `curl`. Le déploiement a duré cinquante-six
-            # secondes, n'a rien déployé, et s'est déclaré réussi. Un
-            # déploiement qui ment sur son résultat est pire qu'un déploiement
-            # qui échoue : on cherche la panne partout ailleurs.
-            #
-            # Le danger jumeau est plus grave encore : un téléchargement
-            # **tronqué** fait exécuter un demi-script. Celui-ci arrête des
-            # conteneurs avant de les recréer ; s'interrompre au milieu laisse
-            # le jeu à terre. `bash -n` relit le fichier entier avant de le
-            # lancer, ce qu'un tube ne permet structurellement pas.
+            # `bash -n` relit le fichier entier avant de le lancer, ce qu'un
+            # tube ne permet structurellement pas : un script tronqué
+            # arrêterait des conteneurs sans les recréer.
             sudo -n bash -c "
               set -euo pipefail
               script=\$(mktemp)
               trap 'rm -f \"\$script\"' EXIT
-              curl -fsSL --retry 3 --retry-delay 2 --max-time 180 -o \"\$script\" '$URL'
+              printf '%s' '${{ steps.script.outputs.b64 }}' | base64 -d > \"\$script\"
               test -s \"\$script\"
               bash -n \"\$script\"
               FARMSIM_DOMAIN='$DOMAINE' FARMSIM_IMAGE='$IMAGE' bash \"\$script\"
