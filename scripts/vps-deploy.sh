@@ -26,13 +26,32 @@ if ! command -v docker >/dev/null 2>&1; then
 fi
 
 # --- git ---
+#
+# Le VPS a déjà perdu GitHub en plein `git fetch` (SSL connection timeout)
+# et Docker Hub en plein pull du frontend Dockerfile. Quatre essais, avec
+# une pause qui double : 4 s, 8 s, 16 s, 32 s. Un seul essai laissait le
+# déploiement en échec alors que le jeu tournait encore très bien.
+git_essaie() {
+  local i attente
+  for i in 1 2 3 4; do
+    if "$@"; then
+      return 0
+    fi
+    attente=$((4 * 2 ** (i - 1)))
+    echo "    essai $i/4 échoué — nouvelle tentative dans ${attente}s"
+    sleep "$attente"
+  done
+  echo "ERROR: impossible de joindre GitHub après 4 essais." >&2
+  return 1
+}
+
 mkdir -p "$(dirname "$APP_DIR")"
 if [[ ! -d "$APP_DIR/.git" ]]; then
   rm -rf "$APP_DIR"
-  git clone --branch "$BRANCH" "$REPO_URL" "$APP_DIR"
+  git_essaie git clone --branch "$BRANCH" "$REPO_URL" "$APP_DIR"
 else
   cd "$APP_DIR"
-  git fetch origin
+  git_essaie git fetch origin
   git checkout "$BRANCH"
   git reset --hard "origin/$BRANCH"
   git clean -fd
