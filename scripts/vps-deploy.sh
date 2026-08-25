@@ -341,6 +341,31 @@ else
     timeout 600 env FARMSIM_BACKUP_VERIFY=0 \
       bash "$APP_DIR/scripts/farmsim-backup.sh" avant-deploi || code=$?
   fi
+  # Le fichier fait foi, pas le code de sortie.
+  #
+  # Mesuré, et c'est le défaut que ce bloc corrige : la sauvegarde a écrit son
+  # archive et affiché « OK » à 10:32:33 — puis la borne l'a tuée à 10:33:31,
+  # une minute plus tard, et le déploiement s'est arrêté en déclarant n'avoir
+  # aucune sauvegarde. Il y en avait deux, valides, de six mégaoctets et demi.
+  #
+  # `docker run --rm` démonte son conteneur après que le programme a fini. Sur
+  # une machine chargée ce démontage prend des minutes : le travail est fait,
+  # l'enveloppe ne rend pas encore la main, et une borne posée sur l'enveloppe
+  # tue un succès.
+  #
+  # On regarde donc ce qui existe sur le disque. Un fichier d'avant-déploiement
+  # écrit dans les vingt dernières minutes et non vide **est** la sauvegarde
+  # qu'on réclamait ; refuser de déployer parce qu'un processus a mis trop
+  # longtemps à se ranger serait confondre la preuve et le messager.
+  if (( code != 0 )); then
+    fraiche="$(find "${FARMSIM_BACKUP_DIR:-/var/backups/farmsim}" \
+        -name '*avant-deploi.dump' -mmin -20 -size +4k 2>/dev/null | head -1 || true)"
+    if [[ -n "$fraiche" ]]; then
+      echo "==> Sauvegarde bien présente malgré la borne : $fraiche"
+      echo "    $(du -h "$fraiche" 2>/dev/null | cut -f1) — on continue."
+      code=0
+    fi
+  fi
   if (( code != 0 )); then
     echo "ERROR: la sauvegarde a échoué — déploiement interrompu." >&2
     echo "       Rien n'a été touché ; le jeu tourne toujours sur l'ancienne" >&2
