@@ -47,6 +47,26 @@ free -m 2>/dev/null | sed -n '1,3p' | sed 's/^/    /' || true
 echo "    les cinq processus les plus gourmands en mémoire :"
 ps -eo pid,pmem,pcpu,etimes,comm --sort=-pmem 2>/dev/null | head -6 | sed 's/^/      /' || true
 
+# Une machine à genoux ne se déploie pas : on le dit tout de suite.
+#
+# Mesuré ici : charge moyenne 25 à 31 sur un serveur de deux gigaoctets, un
+# gigaoctet et quart déjà dans le swap. Dans cet état chaque commande met des
+# minutes, la fenêtre de quarante minutes se consume en diagnostics, et
+# l'échec final ne dit rien de la cause. Autant l'annoncer à la première
+# seconde, avec le chiffre qui le prouve.
+#
+# On n'interrompt pas pour autant — un déploiement qui a une chance
+# d'aboutir vaut mieux qu'un refus — mais quiconque lit le journal saura où
+# regarder au lieu de soupçonner le déploiement.
+charge="$(cut -d' ' -f1 /proc/loadavg 2>/dev/null || echo 0)"
+coeurs="$(nproc 2>/dev/null || echo 1)"
+if awk -v c="$charge" -v n="$coeurs" 'BEGIN{exit !(c > n * 4)}' 2>/dev/null; then
+  echo "WARN: charge $charge pour $coeurs cœur(s) — la machine est saturée." >&2
+  echo "      Les commandes vont mettre des minutes. Si ce déploiement échoue," >&2
+  echo "      la cause est ici, pas dans le script : redémarrez le serveur ou" >&2
+  echo "      donnez-lui plus de mémoire." >&2
+fi
+
 # --- reprise après un déploiement coupé ---
 #
 # Trois déploiements de suite ont échoué, et le troisième a mis le jeu à
@@ -100,14 +120,19 @@ fi
 #
 # Un conteneur de sauvegarde de plus de dix minutes n'appartient à personne :
 # le déploiement en cours vient tout juste de commencer.
-for cid in $(docker ps --format '{{.ID}} {{.Command}}' 2>/dev/null \
+# Chaque appel à Docker est borné. Mesuré sur cette machine : ce `docker ps`
+# a mis **vingt et une minutes** à répondre, soit plus de la moitié de la
+# fenêtre de déploiement, consommée par le code censé la protéger. Un
+# diagnostic qui coûte plus cher que la panne qu'il cherche n'est pas un
+# diagnostic.
+for cid in $(timeout 60 docker ps --format '{{.ID}} {{.Command}}' 2>/dev/null \
              | grep -F 'farmsim-backup.mjs' | cut -d' ' -f1 || true); do
-  debut="$(docker inspect "$cid" -f '{{.State.StartedAt}}' 2>/dev/null || true)"
+  debut="$(timeout 20 docker inspect "$cid" -f '{{.State.StartedAt}}' 2>/dev/null || true)"
   [[ -n "$debut" ]] || continue
   age=$(( $(date +%s) - $(date -d "$debut" +%s 2>/dev/null || echo 0) ))
   (( age > 600 )) || continue
   echo "    sauvegarde orpheline : $cid, ${age}s — arrêt"
-  docker rm -f "$cid" >/dev/null 2>&1 || true
+  timeout 60 docker rm -f "$cid" >/dev/null 2>&1 || true
 done
 
 # --- le disque ---
@@ -131,7 +156,7 @@ done
 # volume nommé, et cette option les effacerait. Les images encore utilisées
 # par un conteneur en marche sont conservées par construction.
 echo "==> Place disque avant ménage"
-df -h / | tail -n +2 | awk '{print "    " $5 " occupé, " $4 " libre sur " $2}'
+timeout 60 df -h / | tail -n +2 | awk '{print "    " $5 " occupé, " $4 " libre sur " $2}'
 echo "==> Ménage Docker (cache de construction et images orphelines)"
 timeout 300 docker builder prune -af >/dev/null 2>&1 || echo "    (cache : ménage incomplet)"
 timeout 300 docker image prune -f >/dev/null 2>&1 || echo "    (images : ménage incomplet)"
@@ -160,7 +185,7 @@ done
 (( vides > 0 )) || echo "    aucun au-delà de 200 Mo"
 
 echo "==> Place disque après ménage"
-df -h / | tail -n +2 | awk '{print "    " $5 " occupé, " $4 " libre sur " $2}'
+timeout 60 df -h / | tail -n +2 | awk '{print "    " $5 " occupé, " $4 " libre sur " $2}'
 # Si le disque reste plein après tout ça, on veut savoir **qui** l'occupe :
 # sans cette ligne, le prochain incident repartira de zéro comme celui-ci.
 libre_pct="$(df --output=pcent / | tail -1 | tr -dc '0-9')"
