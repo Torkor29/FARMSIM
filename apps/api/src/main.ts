@@ -279,7 +279,10 @@ import {
   peutRacheter,
   machineHoursPerHectare,
   machineCost,
-  TIER_LABELS,
+  machineVariant,
+  machineUpgradeCost,
+  nextMachineTier,
+  machineRepairPerPoint,
   jobDurationMs,
   fuelForJob,
   MARKET_DEPTH_FLOOR,
@@ -9652,7 +9655,9 @@ app.post("/machines/:id/sell", async (req, res) => {
   const value = machineDealerValue(machine.type as MachineType, {
     condition: machine.condition,
     hours: machine.hours,
+    tier: asTier(machine.tier),
   });
+  const nom = machineVariant(machine.type as MachineType, asTier(machine.tier)).label;
   await prisma.$transaction(async (tx) => {
     // Libérer la case si l'engin était stationné sur la parcelle.
     await tx.parcelCell.updateMany({
@@ -9660,7 +9665,7 @@ app.post("/machines/:id/sell", async (req, res) => {
       data: { kind: "EMPTY", machineId: null },
     });
     await tx.machine.delete({ where: { id: machine.id } });
-    await crediter(tx, body.data.userId, value, "MACHINES", `Reprise concessionnaire — ${MACHINE_DEFS[machine.type as MachineType]?.name ?? machine.type}`);
+    await crediter(tx, body.data.userId, value, "MACHINES", `Reprise concessionnaire — ${nom}`);
   });
   res.json({ sold: machine.type, value });
 });
@@ -9740,8 +9745,14 @@ app.get("/machines/listings", async (_req, res) => {
     listings: listings.map((l) => ({
       ...l,
       // La cote voyage avec l'annonce : sans elle, « 900 € » ne se juge pas.
-      quote: machineResaleValue(l.type as MachineType, { condition: l.condition, hours: l.hours }),
-      name: MACHINE_DEFS[l.type as MachineType]?.name ?? l.type,
+      quote: machineResaleValue(l.type as MachineType, {
+        condition: l.condition,
+        hours: l.hours,
+        tier: asTier(l.tier),
+      }),
+      name: MACHINE_DEFS[l.type as MachineType]
+        ? machineVariant(l.type as MachineType, asTier(l.tier)).label
+        : l.type,
     })),
   });
 });
@@ -9775,6 +9786,7 @@ app.post("/machines/:id/list", async (req, res) => {
   const cote = machineResaleValue(machine.type as MachineType, {
     condition: machine.condition,
     hours: machine.hours,
+    tier: asTier(machine.tier),
   });
   // Un prix libre, mais pas n'importe lequel : sans bornes, la criée sert à
   // se transférer de l'argent entre comptes plutôt qu'à vendre du matériel.
@@ -9880,7 +9892,9 @@ app.post("/machines/listings/:id/buy", async (req, res) => {
     res.status(402).json({ error: "€ insuffisants" });
     return;
   }
-  const nom = MACHINE_DEFS[listing.type as MachineType]?.name ?? listing.type;
+  const nom = MACHINE_DEFS[listing.type as MachineType]
+    ? machineVariant(listing.type as MachineType, asTier(listing.tier)).label
+    : listing.type;
   const machine = await prisma.$transaction(async (tx) => {
     // La vente se clôt dans la même écriture que le débit : deux acheteurs
     // simultanés ne peuvent pas repartir chacun avec le même tracteur.
@@ -9969,7 +9983,7 @@ app.post("/machines/buy", async (req, res) => {
       // deuxième source de vérité, et c'est exactement ce qui avait rendu
       // trois bâtiments inachetables après leur ajout.
       type: z.enum(Object.keys(MACHINE_DEFS) as [MachineType, ...MachineType[]]),
-      tier: z.number().int().min(1).max(3).optional(),
+      tier: z.number().int().min(1).max(5).optional(),
     })
     .safeParse(req.body);
   if (!body.success) {
@@ -10000,7 +10014,7 @@ app.post("/machines/buy", async (req, res) => {
     return;
   }
   const result = await prisma.$transaction(async (tx) => {
-    await debit(tx, user.id, prix, "MACHINES", `Achat — ${def.name} ${TIER_LABELS[tier]}`);
+    await debit(tx, user.id, prix, "MACHINES", `Achat — ${machineVariant(def.type, tier).label}`);
     const machine = await tx.machine.create({
       data: { farmId: user.farm!.id, type: def.type, tier, condition: 100 },
     });
@@ -10018,6 +10032,74 @@ app.post("/machines/buy", async (req, res) => {
     include: { farm: { include: farmInclude() } },
   });
   res.status(201).json({ machine: result, player: refreshed });
+});
+
+/**
+ * Passage au palier suivant, sur place.
+ *
+ * On n'achète pas un deuxième exemplaire : l'engin est repris, le suivant
+ * arrive neuf, et on paie la différence de catalogue. C'est le même geste
+ * qu'agrandir un hangar — et c'est ce qui rend les cinq paliers visibles
+ * une fois le parc déjà constitué, pas seulement au moment de l'achat.
+ */
+app.post("/machines/:id/upgrade", async (req, res) => {
+  const body = z.object({ userId: z.string() }).safeParse(req.body);
+  if (!body.success) {
+    res.status(400).json(body.error.flatten());
+    return;
+  }
+  const machine = await prisma.machine.findUnique({
+    where: { id: req.params.id },
+    include: { farm: { include: { user: true } } },
+  });
+  if (!machine || machine.farm.userId !== body.data.userId) {
+    res.status(403).json({ error: "Machine non possédée" });
+    return;
+  }
+  if (machine.busyUntil && machine.busyUntil.getTime() > Date.now()) {
+    res.status(409).json({ error: "Cet engin est au champ — attendez la fin du chantier." });
+    return;
+  }
+  const type = machine.type as MachineType;
+  if (!MACHINE_DEFS[type]) {
+    res.status(400).json({ error: "Type machine inconnu" });
+    return;
+  }
+  const current = asTier(machine.tier);
+  const next = nextMachineTier(current);
+  const cost = machineUpgradeCost(type, current);
+  if (!next || cost === null) {
+    res.status(409).json({ error: "Niveau maximum atteint" });
+    return;
+  }
+  if (!peutPayer(machine.farm.user, cost)) {
+    res.status(402).json({ error: `€ insuffisants — ${cost} requis` });
+    return;
+  }
+  const fiche = machineVariant(type, next);
+  const updated = await prisma.$transaction(async (tx) => {
+    await debit(tx, body.data.userId, cost, "MACHINES", `Amélioration — ${fiche.label}`);
+    await grantXp(tx, body.data.userId, "MACHINE_BUY", { cost });
+    return tx.machine.update({
+      where: { id: machine.id },
+      data: {
+        tier: next,
+        condition: 100,
+        hours: 0,
+        grease: GREASE_FULL,
+        greased: true,
+        dirt: 0,
+        greaseSkipStreak: 0,
+        breakdown: null,
+      },
+    });
+  });
+  res.json({
+    machine: updated,
+    cost,
+    tier: next,
+    label: fiche.label,
+  });
 });
 
 app.post("/machines/:id/repair", async (req, res) => {
@@ -10058,7 +10140,7 @@ app.post("/machines/:id/repair", async (req, res) => {
   const bonuses = await getFarmBonuses(machine.farmId);
   const quote = repairMachineCost({
     condition: machine.condition,
-    repairCostPerPoint: def.repairCostPerPoint,
+    repairCostPerPoint: machineRepairPerPoint(def.type, asTier(machine.tier)),
     targetCondition: target,
     workshopDiscount: bonuses.repairDiscount,
   });
@@ -10228,7 +10310,7 @@ app.post("/machines/:id/service", async (req, res) => {
   const bonuses = await getFarmBonuses(machine.farmId);
   const quote = repairMachineCost({
     condition: machine.condition,
-    repairCostPerPoint: def.repairCostPerPoint,
+    repairCostPerPoint: machineRepairPerPoint(def.type, asTier(machine.tier)),
     targetCondition: target,
     workshopDiscount: bonuses.repairDiscount,
   });

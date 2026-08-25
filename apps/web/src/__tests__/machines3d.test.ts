@@ -1,5 +1,5 @@
 import * as THREE from "three";
-import { MACHINE_DEFS, type MachineType } from "@farmsim/shared";
+import { MACHINE_DEFS, MACHINE_TIERS, type MachineType } from "@farmsim/shared";
 import { createMachineRig, isTowedImplement } from "../machines3d";
 
 /**
@@ -19,8 +19,11 @@ import { createMachineRig, isTowedImplement } from "../machines3d";
 const TYPES = Object.keys(MACHINE_DEFS) as MachineType[];
 
 /** Bornes verticales d'un engin, après stabilisation des mouvements amortis. */
-function verticalBounds(type: MachineType, opts: { towed: boolean; working: boolean }) {
-  const rig = createMachineRig(type, { towed: opts.towed, shadows: false });
+function verticalBounds(
+  type: MachineType,
+  opts: { towed: boolean; working: boolean; tier?: 1 | 2 | 3 | 4 | 5 },
+) {
+  const rig = createMachineRig(type, { towed: opts.towed, shadows: false, tier: opts.tier });
   // Les vérins et la vis sont amortis : il leur faut quelques images pour
   // arriver en butée.
   for (let i = 0; i < 200; i++) {
@@ -107,10 +110,34 @@ describe("pièces animées", () => {
     });
   }
 
-  it("un automoteur a quatre roues et une sortie de pot", () => {
+  it("un automoteur T1 a quatre roues et une sortie de pot", () => {
     const rig = createMachineRig("TRACTOR", { shadows: false });
     expect(rig.anchors("wheel")).toHaveLength(4);
     expect(rig.exhaust).not.toBeNull();
+    rig.dispose();
+  });
+
+  it("un tracteur T5 pose des chenilles — pas un T4 jumelé agrandi", () => {
+    const t4 = createMachineRig("TRACTOR", { shadows: false, tier: 4 });
+    const t5 = createMachineRig("TRACTOR", { shadows: false, tier: 5 });
+    expect(t4.anchors("wheel").length).toBeGreaterThan(4);
+    expect(t5.anchors("wheel").length).toBeGreaterThan(t4.anchors("wheel").length);
+    t4.dispose();
+    t5.dispose();
+  });
+
+  it("un tracteur T5 a quatre bogies distincts, pas deux barres fusionnées", () => {
+    const rig = createMachineRig("TRACTOR", { shadows: false, tier: 5 });
+    const xs = rig.anchors("wheel").map((w) => {
+      const p = new THREE.Vector3();
+      w.getWorldPosition(p);
+      return p.x;
+    });
+    const rear = xs.filter((x) => x < 0);
+    const front = xs.filter((x) => x > 0);
+    expect(rear.length).toBeGreaterThan(0);
+    expect(front.length).toBeGreaterThan(0);
+    expect(Math.max(...rear)).toBeLessThan(Math.min(...front) - 0.1);
     rig.dispose();
   });
 
@@ -152,7 +179,7 @@ describe("les roues suivent la distance, pas le temps", () => {
 });
 
 describe("outil posé au travail, relevé en transport", () => {
-  for (const type of ["HARVESTER", "DISC_HARROW"] as MachineType[]) {
+  for (const type of ["HARVESTER", "DISC_HARROW", "PLOUGH", "SEEDER", "MOWER", "SPRAYER", "FORAGE_HARVESTER"] as MachineType[]) {
     it(`${type} relève son outil hors chantier`, () => {
       const rig = createMachineRig(type, { shadows: false });
       const settle = (working: boolean) => {
@@ -210,5 +237,121 @@ describe("l'usure se voit", () => {
     const usee = box(5);
     expect(usee.min.y).toBeCloseTo(neuve.min.y, 6);
     expect(usee.max.y).toBeCloseTo(neuve.max.y, 6);
+  });
+});
+
+describe("cinq paliers, cinq silhouettes", () => {
+  for (const type of TYPES) {
+    for (const tier of MACHINE_TIERS) {
+      it(`${type} T${tier} pose ses roues et tient sous le plafond`, () => {
+        const box = verticalBounds(type, { towed: false, working: true, tier });
+        expect(box.min.y).toBeGreaterThan(-0.005);
+        expect(box.min.y).toBeLessThan(0.02);
+        expect(box.max.y).toBeLessThan(1.2);
+      });
+    }
+
+    it(`${type} T5 annonce la longueur qu'il occupe vraiment`, () => {
+      const rig = createMachineRig(type, { shadows: false, tier: 5 });
+      const box = new THREE.Box3().setFromObject(rig.group);
+      const measured = box.max.x - box.min.x;
+      rig.dispose();
+      expect(measured).toBeGreaterThan(rig.length * 0.75);
+      expect(measured).toBeLessThan(rig.length * 1.25);
+    });
+  }
+
+  it("une charrue T5 a plus de corps qu'une T1", () => {
+    const t1 = createMachineRig("PLOUGH", { shadows: false, tier: 1 });
+    const t5 = createMachineRig("PLOUGH", { shadows: false, tier: 5 });
+    expect(t5.anchors("tool").length).toBeGreaterThan(t1.anchors("tool").length);
+    expect(t1.anchors("tool")).toHaveLength(3);
+    expect(t5.anchors("tool")).toHaveLength(12);
+    t1.dispose();
+    t5.dispose();
+  });
+
+  it("une faucheuse T5 a plus de disques qu'une T1 — papillon, pas T1 élargi", () => {
+    const t1 = createMachineRig("MOWER", { shadows: false, tier: 1 });
+    const t5 = createMachineRig("MOWER", { shadows: false, tier: 5 });
+    expect(t1.anchors("spinner")).toHaveLength(4);
+    expect(t5.anchors("spinner").length).toBeGreaterThan(t1.anchors("spinner").length);
+    t1.dispose();
+    t5.dispose();
+  });
+
+  it("un pulvérisateur T5 déploie une rampe plus large", () => {
+    const span = (tier: 1 | 5) => {
+      const rig = createMachineRig("SPRAYER", { shadows: false, tier });
+      const box = new THREE.Box3().setFromObject(rig.group);
+      const w = box.max.z - box.min.z;
+      rig.dispose();
+      return w;
+    };
+    expect(span(5)).toBeGreaterThan(span(1) * 1.4);
+  });
+
+  it("une presse T5 est plus longue — chambre cubique, plus une ronde agrandie", () => {
+    const len = (tier: 1 | 5) => {
+      const rig = createMachineRig("BALER", { shadows: false, tier });
+      const box = new THREE.Box3().setFromObject(rig.group);
+      const x = box.max.x - box.min.x;
+      rig.dispose();
+      return x;
+    };
+    expect(len(5)).toBeGreaterThan(len(1));
+  });
+
+  it("une remorque T5 a plus de roues qu'une T1 — tridem", () => {
+    const t1 = createMachineRig("TRAILER", { shadows: false, tier: 1 });
+    const t5 = createMachineRig("TRAILER", { shadows: false, tier: 5 });
+    expect(t1.anchors("wheel")).toHaveLength(2);
+    expect(t5.anchors("wheel").length).toBeGreaterThan(t1.anchors("wheel").length);
+    t1.dispose();
+    t5.dispose();
+  });
+
+  it("une faucheuse T3 est déjà un combiné, plus une barre unique", () => {
+    const t1 = createMachineRig("MOWER", { shadows: false, tier: 1 });
+    const t3 = createMachineRig("MOWER", { shadows: false, tier: 3 });
+    expect(t3.anchors("spinner").length).toBeGreaterThan(t1.anchors("spinner").length);
+    t1.dispose();
+    t3.dispose();
+  });
+
+  it("une moissonneuse T5 est sur quatre chenilles, plus large au bec", () => {
+    const t1 = createMachineRig("HARVESTER", { shadows: false, tier: 1 });
+    const t4 = createMachineRig("HARVESTER", { shadows: false, tier: 4 });
+    const t5 = createMachineRig("HARVESTER", { shadows: false, tier: 5 });
+    expect(t1.anchors("wheel")).toHaveLength(4);
+    expect(t4.anchors("wheel").length).toBeGreaterThan(4);
+    expect(t5.anchors("wheel").length).toBeGreaterThan(t4.anchors("wheel").length);
+    const w = (rig: { group: THREE.Object3D }) => {
+      const box = new THREE.Box3().setFromObject(rig.group);
+      return box.max.z - box.min.z;
+    };
+    expect(w(t5)).toBeGreaterThan(w(t1));
+    const xs = t5.anchors("wheel").map((node) => {
+      const p = new THREE.Vector3();
+      node.getWorldPosition(p);
+      return p.x;
+    });
+    expect(Math.max(...xs.filter((x) => x < -0.4))).toBeLessThan(
+      Math.min(...xs.filter((x) => x > -0.35)) - 0.08,
+    );
+    t1.dispose();
+    t4.dispose();
+    t5.dispose();
+  });
+
+  it("une ensileuse T5 est sur quatre chenilles, pas un T4 jumelé", () => {
+    const t1 = createMachineRig("FORAGE_HARVESTER", { shadows: false, tier: 1 });
+    const t4 = createMachineRig("FORAGE_HARVESTER", { shadows: false, tier: 4 });
+    const t5 = createMachineRig("FORAGE_HARVESTER", { shadows: false, tier: 5 });
+    expect(t5.anchors("wheel").length).toBeGreaterThan(t4.anchors("wheel").length);
+    expect(t4.anchors("wheel").length).toBeGreaterThan(t1.anchors("wheel").length);
+    t1.dispose();
+    t4.dispose();
+    t5.dispose();
   });
 });

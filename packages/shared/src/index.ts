@@ -8,6 +8,7 @@ import {
   SEASON_REAL_MS,
 } from "./time.js";
 import { MACHINE_END_OF_LIFE_HOURS } from "./machine-care.js";
+import { machineVariant, type MachineTier } from "./machine-catalog.js";
 import { RECIPES, type ProcessingKind } from "./processing.js";
 import { kindForBarn, yardTypeForBarn } from "./livestock.js";
 import {
@@ -36,6 +37,7 @@ export * from "./breeding.js";
 export * from "./rotation.js";
 export * from "./futures.js";
 export * from "./machine-care.js";
+export * from "./machine-catalog.js";
 export * from "./calendar.js";
 export * from "./fuel.js";
 export * from "./weeds.js";
@@ -193,22 +195,19 @@ export const SPECIALIZATION_SHORT: Record<Specialization, string> = {
   ELEVEUR: "Éleveur",
 };
 
-/** Illustration du matériel, pour le catalogue et le garage. */
+/** Illustration du matériel, pour le catalogue et le garage — une par famille. */
 export const MACHINE_ART: Record<MachineType, string> = {
-  TRACTOR: "/assets/vehicles/tractor.webp",
-  HARVESTER: "/assets/vehicles/harvester.webp",
-  FORAGE_HARVESTER: "/assets/vehicles/harvester.webp",
-  SPREADER: "/assets/vehicles/spreader.webp",
-  DISC_HARROW: "/assets/vehicles/harrow.webp",
-  // Les quatre outils nouveaux partagent les vignettes existantes : une
-  // illustration approximative vaut mieux qu'une case vide, et le rendu 3D
-  // du garage montre de toute façon le vrai engin.
-  PLOUGH: "/assets/vehicles/harrow.webp",
-  SEEDER: "/assets/vehicles/spreader.webp",
-  MOWER: "/assets/vehicles/harrow.webp",
-  SPRAYER: "/assets/vehicles/spreader.webp",
-  BALER: "/assets/vehicles/harrow.webp",
-  TRAILER: "/assets/vehicles/spreader.webp",
+  TRACTOR: "/assets/vehicles/tractor.png",
+  HARVESTER: "/assets/vehicles/harvester.png",
+  FORAGE_HARVESTER: "/assets/vehicles/forage-harvester.png",
+  SPREADER: "/assets/vehicles/spreader.png",
+  DISC_HARROW: "/assets/vehicles/harrow.png",
+  PLOUGH: "/assets/vehicles/plough.png",
+  SEEDER: "/assets/vehicles/seeder.png",
+  MOWER: "/assets/vehicles/mower.png",
+  SPRAYER: "/assets/vehicles/sprayer.png",
+  BALER: "/assets/vehicles/baler.png",
+  TRAILER: "/assets/vehicles/trailer.png",
 };
 
 /** Bonus spé max ≤ +10 % — valeurs de départ faibles `[GD]` */
@@ -1258,28 +1257,14 @@ export function hoursPerHectare(widthM: number, speedKmh: number): number {
   return Math.round((1 / haParHeure) * 1000) / 1000;
 }
 
-export type Tier = 1 | 2 | 3;
-export const MACHINE_TIERS: readonly Tier[] = [1, 2, 3];
-
-/**
- * Ce qu'un palier change `[GD]`.
- *
- * Le palier est un **modificateur**, pas un nouveau type de machine. Les six
- * engins portaient tous `tier: 1` et la colonne existait déjà sans servir à
- * rien ; trois tailles par famille valent mieux que trois catalogues, autant
- * pour l'équilibrage que pour le rendu 3D — un modèle par famille, mis à
- * l'échelle.
- *
- * La puissance requise monte avec la largeur, et c'est la boucle de
- * progression : une charrue plus large ne se tire pas avec le tracteur d'hier.
- */
+export type Tier = MachineTier;
 export const TIER_SCALE: Record<Tier, { width: number; power: number; cost: number; life: number }> = {
   1: { width: 1, power: 1, cost: 1, life: 1 },
   2: { width: 1.6, power: 1.45, cost: 2.3, life: 1.25 },
   3: { width: 2.4, power: 2, cost: 4.5, life: 1.5 },
+  4: { width: 3.2, power: 2.8, cost: 7.2, life: 1.7 },
+  5: { width: 4.2, power: 4.5, cost: 12, life: 2 },
 };
-
-export const TIER_LABELS: Record<Tier, string> = { 1: "T1", 2: "T2", 3: "T3" };
 
 export type MachineDef = {
   type: MachineType;
@@ -1347,36 +1332,29 @@ export function reparationParPoint(prix: number): number {
  * endroits, il aurait fini par différer — c'est exactement ce qui était arrivé
  * entre le prix des machines et celui de leurs révisions.
  *
- * ## L'ancre : le capital par hectare, pas le prix du neuf
+ * ## L'ancre : les fourchettes du neuf, adaptées au jeu
  *
- * Première tentative : les prix du marché de l'occasion — tracteur 90 ch à
- * 30 000, moissonneuse à 78 000. Vrais prix, mauvaise ancre. Une exploitation
- * de quatorze hectares n'achète pas une moissonneuse de 78 000 € : elle n'en
- * achète aucune, elle appelle une entreprise. Mesuré, le matériel d'occasion
- * ne se rentabilisait plus qu'au bout de quinze moissons, et une révision de
- * moissonneuse coûtait cinq fois le rendement qu'elle rattrapait.
+ * Le palier 1 est un petit engin **neuf de petite exploitation** (tracteur
+ * ~105 ch à 72 000 €, pas un utilitaire d'occasion à 14 000). Les paliers
+ * suivants collent aux tarifs concessionnaire, un cran en dessous. Un T5
+ * coûte ce qu'il coûte dans le vrai monde — assez pour que l'acheter soit
+ * une décision, pas un clic.
  *
- * L'ancre juste est le **capital matériel par hectare** : une exploitation
- * française y consacre de deux à trois mille euros l'hectare. Sur quatorze
- * hectares, cela fait un parc de trente-cinq mille euros — c'est-à-dire du
- * matériel ancien, étroit, de petite exploitation. C'est exactement ce que le
- * joueur possède, et c'est ce que ces prix décrivent.
- *
- * Les rapports entre engins, eux, restent ceux du vrai marché : une
- * moissonneuse vaut une fois et demie le tracteur, une charrue le cinquième.
+ * Les rapports entre engins restent ceux du marché : une moissonneuse vaut
+ * plus de deux tracteurs T1 ; une charrue, une fraction du porteur.
  */
 export const PRIX_ENGINS: Record<MachineType, number> = {
-  TRACTOR: 14000,
-  HARVESTER: 22000,
-  FORAGE_HARVESTER: 31000,
-  PLOUGH: 3100,
-  SEEDER: 4600,
-  SPREADER: 2300,
-  DISC_HARROW: 3300,
-  MOWER: 1900,
-  BALER: 6100,
-  SPRAYER: 3900,
-  TRAILER: 2600,
+  TRACTOR: 72000,
+  HARVESTER: 200000,
+  FORAGE_HARVESTER: 220000,
+  PLOUGH: 22000,
+  SEEDER: 25000,
+  SPREADER: 12000,
+  DISC_HARROW: 22000,
+  MOWER: 16000,
+  BALER: 40000,
+  SPRAYER: 28000,
+  TRAILER: 18000,
 };
 
 export const MACHINE_DEFS: Record<MachineType, MachineDef> = {
@@ -1384,9 +1362,9 @@ export const MACHINE_DEFS: Record<MachineType, MachineDef> = {
     type: "TRACTOR",
     kind: "TRACTOR",
     name: "Tracteur",
-    // Prix réel : tracteur 90 ch d'occasion révisé.
+    // Palier 1 : utilitaire ~105 ch, petite exploitation.
     cost: PRIX_ENGINS.TRACTOR,
-    powerHp: 90,
+    powerHp: 105,
     // Un tracteur seul ne travaille pas : il tire. Sa largeur est celle de
     // l'outil qu'il porte, d'où zéro ici et aucun travail à son nom.
     widthM: 0,
@@ -1405,8 +1383,8 @@ export const MACHINE_DEFS: Record<MachineType, MachineDef> = {
     name: "Moissonneuse",
     // Prix réel : moissonneuse-batteuse d'occasion, coupe de 4,5 m.
     cost: PRIX_ENGINS.HARVESTER,
-    powerHp: 200,
-    widthM: 4.2,
+    powerHp: 175,
+    widthM: 4.5,
     speedKmh: 6,
     lifeHours: 480,
     repairCostPerPoint: reparationParPoint(PRIX_ENGINS.HARVESTER),
@@ -1422,7 +1400,7 @@ export const MACHINE_DEFS: Record<MachineType, MachineDef> = {
     name: "Ensileuse",
     // Prix réel : ensileuse automotrice d'occasion.
     cost: PRIX_ENGINS.FORAGE_HARVESTER,
-    powerHp: 260,
+    powerHp: 400,
     widthM: 3,
     speedKmh: 8,
     lifeHours: 450,
@@ -1441,7 +1419,7 @@ export const MACHINE_DEFS: Record<MachineType, MachineDef> = {
     name: "Charrue",
     // Prix réel : charrue 4 corps.
     cost: PRIX_ENGINS.PLOUGH,
-    requiredHp: 90,
+    requiredHp: 85,
     widthM: 2,
     speedKmh: 8,
     lifeHours: 850,
@@ -1458,7 +1436,7 @@ export const MACHINE_DEFS: Record<MachineType, MachineDef> = {
     // Prix réel : semoir en ligne de 3 m.
     cost: PRIX_ENGINS.SEEDER,
     requiredHp: 70,
-    widthM: 4,
+    widthM: 3,
     speedKmh: 10,
     lifeHours: 800,
     repairCostPerPoint: reparationParPoint(PRIX_ENGINS.SEEDER),
@@ -1474,7 +1452,7 @@ export const MACHINE_DEFS: Record<MachineType, MachineDef> = {
     // Prix réel : épandeur à engrais porté.
     cost: PRIX_ENGINS.SPREADER,
     requiredHp: 50,
-    // Douze mètres de nappe : l'outil le plus rapide du parc, ce qui est vrai.
+    // Douze mètres de nappe au T1 : l'engrais reste un passage rapide.
     widthM: 12,
     speedKmh: 12,
     lifeHours: 800,
@@ -1509,7 +1487,7 @@ export const MACHINE_DEFS: Record<MachineType, MachineDef> = {
     // Prix réel : faucheuse à disques portée.
     cost: PRIX_ENGINS.MOWER,
     requiredHp: 60,
-    widthM: 3,
+    widthM: 3.1,
     speedKmh: 12,
     lifeHours: 800,
     repairCostPerPoint: reparationParPoint(PRIX_ENGINS.MOWER),
@@ -1526,7 +1504,7 @@ export const MACHINE_DEFS: Record<MachineType, MachineDef> = {
     // Prix réel : presse à balles rondes.
     cost: PRIX_ENGINS.BALER,
     requiredHp: 70,
-    widthM: 2.2,
+    widthM: 2.1,
     speedKmh: 9,
     lifeHours: 750,
     repairCostPerPoint: reparationParPoint(PRIX_ENGINS.BALER),
@@ -1541,10 +1519,9 @@ export const MACHINE_DEFS: Record<MachineType, MachineDef> = {
     name: "Pulvérisateur",
     // Prix réel : pulvérisateur porté de 1 000 L.
     cost: PRIX_ENGINS.SPRAYER,
-    requiredHp: 60,
-    // Une rampe de dix-huit mètres : le désherbage est un passage rapide, et
-    // c'est ce qui le rend jouable — on ne perd pas sa campagne à le faire.
-    widthM: 18,
+    requiredHp: 70,
+    // Une rampe de quinze mètres : le désherbage reste un passage rapide.
+    widthM: 15,
     speedKmh: 12,
     lifeHours: 850,
     repairCostPerPoint: reparationParPoint(PRIX_ENGINS.SPRAYER),
@@ -1578,34 +1555,40 @@ export const MACHINE_DEFS: Record<MachineType, MachineDef> = {
 
 /** Largeur de travail effective, palier compris. */
 export function machineWidth(type: MachineType, tier: Tier = 1): number {
-  return Math.round(MACHINE_DEFS[type].widthM * TIER_SCALE[tier].width * 100) / 100;
+  return machineVariant(type, tier).widthM;
 }
 
 /** Chevaux disponibles, palier compris. `0` pour un outil. */
 export function machinePower(type: MachineType, tier: Tier = 1): number {
-  return Math.round((MACHINE_DEFS[type].powerHp ?? 0) * TIER_SCALE[tier].power);
+  return machineVariant(type, tier).powerHp ?? 0;
 }
 
 /** Chevaux exigés pour tirer cet outil, palier compris. `0` pour un porteur. */
 export function machineRequiredHp(type: MachineType, tier: Tier = 1): number {
-  return Math.round((MACHINE_DEFS[type].requiredHp ?? 0) * TIER_SCALE[tier].power);
+  return machineVariant(type, tier).requiredHp ?? 0;
 }
 
 /** Prix catalogue au palier demandé. */
 export function machineCost(type: MachineType, tier: Tier = 1): number {
-  return Math.round(MACHINE_DEFS[type].cost * TIER_SCALE[tier].cost);
+  return machineVariant(type, tier).cost;
 }
 
 /** Heures entre deux révisions, palier compris — un gros engin dure plus longtemps. */
 export function machineLifeHours(type: MachineType, tier: Tier = 1): number {
-  return Math.round(MACHINE_DEFS[type].lifeHours * TIER_SCALE[tier].life);
+  return machineVariant(type, tier).lifeHours;
+}
+
+/** Coût d'un point de condition, au prix de ce palier. */
+export function machineRepairPerPoint(type: MachineType, tier: Tier = 1): number {
+  return reparationParPoint(machineCost(type, tier));
 }
 
 /** Heures par hectare de cet engin, à ce palier. */
 export function machineHoursPerHectare(type: MachineType, tier: Tier = 1): number {
   const def = MACHINE_DEFS[type];
   if (def.kind === "TRACTOR") return 0;
-  return hoursPerHectare(machineWidth(type, tier), def.speedKmh);
+  const fiche = machineVariant(type, tier);
+  return hoursPerHectare(fiche.widthM, fiche.speedKmh);
 }
 
 /**
@@ -1647,7 +1630,7 @@ export function canPull(
 }
 
 export function isTier(v: number): v is Tier {
-  return v === 1 || v === 2 || v === 3;
+  return v === 1 || v === 2 || v === 3 || v === 4 || v === 5;
 }
 
 /** Palier lu depuis la base, borné : une valeur aberrante ne doit rien casser. */

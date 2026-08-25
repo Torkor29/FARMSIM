@@ -1,5 +1,13 @@
 import { useEffect, useMemo, useState } from "react";
-import { MACHINE_DEFS, type MachineType } from "@farmsim/shared";
+import {
+  MACHINE_DEFS,
+  MACHINE_TIERS,
+  TIER_LABELS,
+  TIER_ROLE_LABELS,
+  machineVariant,
+  type MachineType,
+  type MachineTier,
+} from "@farmsim/shared";
 import { MachineView3D } from "./MachineView3D";
 import { IsoFarmView, type IsoBuilding, type IsoCell } from "./IsoFarmView";
 import { isTowedImplement } from "./machines3d";
@@ -22,11 +30,12 @@ export function MachineShowcase() {
   const [towed, setTowed] = useState(true);
   const [turntable, setTurntable] = useState(true);
   const [big, setBig] = useState(false);
+  const [tier, setTier] = useState<MachineTier>(1);
 
   if (isoOnly) {
     return (
       <div className="atelier">
-        <FarmPreview />
+        <FarmPreview tier={tier} />
       </div>
     );
   }
@@ -36,11 +45,25 @@ export function MachineShowcase() {
       <header className="atelier-head">
         <h1>Atelier — parc matériel 3D</h1>
         <p>
-          Les six engins du jeu, montés en géométrie procédurale et animés par la
-          distance parcourue. Aucune texture : facettes, couleurs plates et lumière de
-          fin d'après-midi, comme le reste de la ferme.
+          Les onze engins du jeu, montés en géométrie procédurale et animés par la
+          distance parcourue.           Cinq paliers par famille : un T5 n’est pas un T1 agrandi
+          — chenilles, papillon, presse cubique, et chaque palier a sa silhouette.
         </p>
         <div className="atelier-controls">
+          <span className="atelier-speed">
+            Palier
+            {MACHINE_TIERS.map((t) => (
+              <button
+                key={t}
+                type="button"
+                className={tier === t ? "on" : ""}
+                aria-pressed={tier === t}
+                onClick={() => setTier(t)}
+              >
+                {TIER_LABELS[t]}
+              </button>
+            ))}
+          </span>
           <label>
             <input type="checkbox" checked={working} onChange={(e) => setWorking(e.target.checked)} />
             Au travail
@@ -74,7 +97,7 @@ export function MachineShowcase() {
 
       <div className={`atelier-grid ${big ? "big" : ""}`}>
         {TYPES.map((type) => {
-          const def = MACHINE_DEFS[type];
+          const fiche = machineVariant(type, tier);
           return (
             <article className="atelier-card" key={type}>
               <MachineView3D
@@ -84,12 +107,15 @@ export function MachineShowcase() {
                 speed={speed}
                 towed={towed}
                 turntable={turntable}
+                tier={tier}
               />
               <div className="atelier-meta">
-                <h2>{def.name}</h2>
-                <p>{def.description}</p>
+                <h2>{fiche.label}</h2>
+                <p className="atelier-sku">{fiche.inspiredBy}</p>
+                <p>{fiche.copy}</p>
                 <p className="atelier-tags">
-                  {isTowedImplement(type) ? "Outil traîné" : "Automoteur"} · {def.cost} CRD
+                  {isTowedImplement(type) ? "Outil traîné" : "Automoteur"} · {TIER_LABELS[tier]} ·{" "}
+                  {TIER_ROLE_LABELS[tier]}
                 </p>
               </div>
             </article>
@@ -97,7 +123,7 @@ export function MachineShowcase() {
         })}
       </div>
 
-      <FarmPreview />
+      <FarmPreview tier={tier} />
     </div>
   );
 }
@@ -107,7 +133,7 @@ export function MachineShowcase() {
  * qui traverse la parcelle en boucle. C'est le seul endroit où l'on juge
  * l'échelle des machines par rapport aux cases et aux cultures.
  */
-function FarmPreview() {
+function FarmPreview({ tier = 1 }: { tier?: MachineTier }) {
   const [type, setType] = useState<MachineType>("HARVESTER");
   const [run, setRun] = useState(0);
 
@@ -157,8 +183,9 @@ function FarmPreview() {
       cells: Array.from({ length: 6 }, (_, i) => ({ x: i, y: 3 + (run % 2) })),
       // Un engin de chantier fatigué : sa carrosserie doit le dire.
       condition: 28,
+      tier,
     }),
-    [type, run],
+    [type, run, tier],
   );
 
   // Le dernier rang a passé son heure : ses tiges ploient avant de verser.

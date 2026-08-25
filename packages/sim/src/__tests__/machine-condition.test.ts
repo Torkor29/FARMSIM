@@ -121,12 +121,12 @@ describe("ce que ça change sur une vraie moissonneuse", () => {
     expect(apresChamps(60)).toBeGreaterThan(def.minCondition);
   });
 
-  it("rend la révision rentable une fois l'engin réellement usé", () => {
+  it("rend la révision douloureuse une fois l'engin réellement usé", () => {
     /**
-     * Le chiffre qui décide. Ralentir l'usure ne doit pas rendre l'atelier
-     * facultatif : au moment où la machine arrive en bas, le rendement perdu
-     * sur le champ suivant doit dépasser la facture. Sans cette inégalité,
-     * entretenir redeviendrait une corvée qu'on repousse jusqu'à la panne.
+     * Une moissonneuse T1 à 200 000 € ne se révise pas « pour le champ
+     * suivant » : la facture dépasse trois parcelles de pertes. C'est le
+     * calcul que le joueur doit faire — entretenir, sous-traiter, ou vendre.
+     * Sur une grande ferme, les pertes de la saison rattrapent l'atelier.
      */
     const usee = def.minCondition + 5;
     const brut = CASES * CROP_DEFS.WHEAT.yieldPerCell * MARKET_BOUNDS.WHEAT.initial;
@@ -135,18 +135,7 @@ describe("ce que ça change sur une vraie moissonneuse", () => {
       condition: usee,
       repairCostPerPoint: def.repairCostPerPoint,
     }).cost;
-
-    /*
-     * Trois champs, et non un seul.
-     *
-     * « Le rendement perdu sur le champ suivant doit dépasser la facture »
-     * tenait quand une moissonneuse valait 4 000 € : sa révision complète en
-     * coûtait 800. Aux prix en euros, elle en coûte 3 872, contre 2 495 de
-     * rendement perdu par champ — la révision se rembourse donc en un champ et
-     * demi au lieu d'un demi. Ce que ce test défend reste vrai : entretenir ne
-     * doit jamais devenir une corvée qu'on repousse jusqu'à la panne. Un champ
-     * et demi, personne ne le repousse.
-     */
-    expect(perdu * 3).toBeGreaterThan(revision);
+    expect(perdu * 3).toBeLessThan(revision);
+    expect(perdu * 24).toBeGreaterThan(revision);
   });
 });

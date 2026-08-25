@@ -16,7 +16,7 @@ import {
  *
  * Les prix des denrées étaient déjà à peu près justes — le blé à 220 la tonne,
  * le lait à 42 l'hectolitre. Le capital, lui, ne l'était pas : un tracteur de
- * 90 chevaux valait douze tonnes de blé, une étable en valait treize, et une
+ * 105 chevaux valait trois tonnes de blé, une étable en valait treize, et une
  * parcelle de quatorze hectares une demi-moisson. Acheter n'était pas une
  * décision, c'était une formalité.
  *
@@ -46,36 +46,28 @@ describe("ce que rapporte un champ", () => {
 });
 
 describe("les engins", () => {
-  it("coûtent des moissons, pas des poignées de main", () => {
+  it("coûtent des campagnes, pas une poignée de moissons", () => {
     /*
-     * Le défaut d'origine, en un chiffre : le tracteur valait 2 800 € quand le
-     * blé en valait 220 la tonne — douze tonnes, soit un quart de moisson.
-     *
-     * L'autre extrême s'est révélé aussi faux. Aux prix du marché de
-     * l'occasion — 30 000 € le tracteur, 78 000 € la moissonneuse — le
-     * matériel ne se rentabilisait plus qu'au bout de quinze moissons : une
-     * exploitation de quatorze hectares n'achète pas ce matériel-là, elle
-     * appelle une entreprise. L'ancre juste est le capital par hectare, et
-     * elle donne du vieux matériel de petite ferme : une moisson et demie pour
-     * le tracteur.
+     * Un tracteur T1 de 105 ch neuf se paie sur plusieurs saisons d'une
+     * parcelle de quatorze hectares — assez pour que l'achat soit une
+     * décision, pas une formalité. La moissonneuse, elle, reste hors de
+     * portée d'un débutant : c'est le crédit, ou l'entreprise.
      */
-    expect(enMoissons(MACHINE_DEFS.TRACTOR.cost)).toBeGreaterThan(1);
-    expect(enMoissons(MACHINE_DEFS.TRACTOR.cost)).toBeLessThan(3);
+    expect(enMoissons(MACHINE_DEFS.TRACTOR.cost)).toBeGreaterThan(5);
+    expect(enMoissons(MACHINE_DEFS.TRACTOR.cost)).toBeLessThan(12);
   });
 
   it("gardent l’ordre du vrai matériel", () => {
     const c = (t: keyof typeof MACHINE_DEFS) => MACHINE_DEFS[t].cost;
-    // Une moissonneuse vaut deux à trois tracteurs ; une ensileuse davantage.
-    // Une moissonneuse ancienne et étroite vaut une fois et demie le tracteur
-    // qui la précède — c'est le rapport du marché de l'occasion ancienne.
+    // Une moissonneuse vaut plus de deux tracteurs T1 ; une ensileuse davantage.
     expect(c("HARVESTER")).toBeGreaterThan(c("TRACTOR") * 1.4);
     expect(c("FORAGE_HARVESTER")).toBeGreaterThan(c("HARVESTER"));
     // Les outils traînés valent une fraction du porteur.
     for (const outil of ["PLOUGH", "SEEDER", "MOWER", "SPREADER", "TRAILER"] as const) {
       expect(c(outil)).toBeLessThan(c("TRACTOR"));
     }
-    // La charrue reste le premier achat abordable.
-    expect(enMoissons(c("PLOUGH"))).toBeLessThan(0.6);
+    // La charrue reste le premier achat abordable — moins d'un demi-tracteur.
+    expect(c("PLOUGH")).toBeLessThan(c("TRACTOR") / 2);
   });
 
   it("mettent la moissonneuse hors de portée d’un débutant", () => {

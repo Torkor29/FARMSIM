@@ -1,7 +1,8 @@
 import { useEffect, useRef } from "react";
 import * as THREE from "three";
-import type { MachineType } from "@farmsim/shared";
+import type { MachineType, MachineTier } from "@farmsim/shared";
 import { attachStudioEnvironment } from "./machine-kit";
+import { isoOrthoFrustum } from "./machine-framing";
 import { createDustTrail, createMachineRig, isTowedImplement } from "./machines3d";
 import { disposeRenderer, disposeThreeScene } from "./three-cleanup";
 
@@ -17,6 +18,8 @@ type Props = {
   towed?: boolean;
   /** Tour de plateau : l'engin pivote pour se montrer sous toutes ses faces */
   turntable?: boolean;
+  /** Palier catalogue : un T5 n’est pas un T1 agrandi. */
+  tier?: MachineTier;
 };
 
 /**
@@ -32,6 +35,7 @@ export function MachineView3D({
   speed = 1.6,
   towed = false,
   turntable = true,
+  tier = 1,
 }: Props) {
   const hostRef = useRef<HTMLDivElement | null>(null);
   const liveRef = useRef({ working, speed, turntable });
@@ -57,12 +61,6 @@ export function MachineView3D({
     // métallisée, le chrome et le verre rendent comme de la peinture mate.
     const releaseEnvironment = attachStudioEnvironment(renderer, scene);
 
-    // Caméra isométrique, comme la vue ferme : un engin doit être jugé sous
-    // l'angle où il sera vu en jeu.
-    const camera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0.1, 100);
-    camera.position.set(9, 7.35, 9);
-    camera.lookAt(0, 0.35, 0);
-
     scene.add(new THREE.HemisphereLight(0xdff0ff, 0xc8b48a, 0.6));
     scene.add(new THREE.AmbientLight(0xfff6e6, 0.12));
     const sun = new THREE.DirectionalLight(0xfff0d0, 1.7);
@@ -83,8 +81,18 @@ export function MachineView3D({
     const turn = new THREE.Group();
     scene.add(turn);
 
-    const rig = createMachineRig(type, { towed: towed && isTowedImplement(type), seed: 3 });
+    const rig = createMachineRig(type, { towed: towed && isTowedImplement(type), seed: 3, tier });
     turn.add(rig.group);
+    rig.group.updateMatrixWorld(true);
+
+    // Caméra isométrique, comme la vue ferme. Le cadrage se calcule sur la
+    // silhouette projetée (pas un frustum centré sur l'origine) : sinon la
+    // trémie, plus loin en iso, colle au plafond de la vignette.
+    const camera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0.1, 100);
+    const box = new THREE.Box3().setFromObject(rig.group);
+    // Le socle descend un peu sous les roues : sans lui, le centre optique
+    // remonte et tout l'air se retrouve sous l'engin.
+    box.min.y = Math.min(box.min.y, -0.16);
 
     // Le socle suit la taille de l'engin : un attelage de deux mètres ne se
     // juge pas sur la même motte de terre qu'un tracteur seul.
@@ -105,15 +113,16 @@ export function MachineView3D({
 
     const resize = () => {
       const w = host.clientWidth || 320;
-      const h = height;
+      const h = Math.max(1, host.clientHeight || height);
       renderer.setSize(w, h, false);
-      // Cadrage serré : l'engin remplit la vignette quelle que soit sa taille.
-      const frustum = rig.length * 0.62 + 0.3;
       const aspect = w / h;
-      camera.left = -frustum * aspect;
-      camera.right = frustum * aspect;
-      camera.top = frustum;
-      camera.bottom = -frustum;
+      const fit = isoOrthoFrustum(box, aspect);
+      camera.position.set(9, 7.35 + fit.lookAtY, 9);
+      camera.lookAt(0, fit.lookAtY, 0);
+      camera.left = fit.left;
+      camera.right = fit.right;
+      camera.top = fit.top;
+      camera.bottom = fit.bottom;
       camera.updateProjectionMatrix();
     };
     resize();
@@ -151,7 +160,7 @@ export function MachineView3D({
       disposeThreeScene(scene);
       disposeRenderer(renderer, host);
     };
-  }, [type, height, towed]);
+  }, [type, height, towed, tier]);
 
   return <div className="machine-view3d" ref={hostRef} style={{ height }} aria-hidden="true" />;
 }

@@ -40,15 +40,19 @@ import {
  * plus rien dire une fois les prix passés au réel : une exploitation dont tout
  * le parc vaut 4 000 € n'est pas « installée », elle n'existe pas.
  *
- * Trois parcelles, le hangar et le silo, le parc de départ complet et un peu
- * de grain en stock : c'est l'exploitation qui peut envisager une moissonneuse
- * de palier deux, ce que ce fichier sert précisément à vérifier.
+ * Six parcelles, le hangar et le silo, le parc de départ (tracteur, semoir,
+ * charrue, déchaumeur) et un peu de grain en stock : c'est l'exploitation
+ * qui peut envisager une moissonneuse de palier deux, ce que ce fichier sert
+ * précisément à vérifier.
  */
 const INSTALLEE = {
-  landCrd: LAND_BASE_PER_HA * PARCEL_HECTARES * 3,
+  landCrd: LAND_BASE_PER_HA * PARCEL_HECTARES * 6,
   buildingsCrd: BUILDING_DEFS.SILO.cost + BUILDING_DEFS.MACHINE_SHED.cost,
   machinesCrd:
-    MACHINE_DEFS.TRACTOR.cost + MACHINE_DEFS.SEEDER.cost + MACHINE_DEFS.PLOUGH.cost,
+    MACHINE_DEFS.TRACTOR.cost +
+    MACHINE_DEFS.SEEDER.cost +
+    MACHINE_DEFS.PLOUGH.cost +
+    MACHINE_DEFS.DISC_HARROW.cost,
   stockCrd: 10 * GOOD_DEFS.WHEAT.basePrice,
   cashCrd: 3000,
   debtCrd: 0,

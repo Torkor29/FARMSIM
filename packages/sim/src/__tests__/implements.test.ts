@@ -28,7 +28,6 @@ import {
   machineResaleValue,
   machineWidth,
   type MachineType,
-  type Tier,
 } from "@farmsim/shared";
 
 const TOUS = Object.keys(MACHINE_DEFS) as MachineType[];
@@ -86,7 +85,7 @@ describe("la largeur fait la vitesse", () => {
 
   it("chiffre un champ entier en heures agricoles plausibles", () => {
     /*
-     * Une demi-heure de plancher, pas une heure : une rampe de dix-huit mètres
+     * Une demi-heure de plancher, pas une heure : une rampe de quinze mètres
      * traverse quatorze hectares en moins d'une heure, et c'est exactement ce
      * qui fait d'un passage de pulvérisateur un geste qu'on peut se permettre
      * en cours de campagne.
@@ -120,7 +119,7 @@ describe("un palier se paie et se mérite", () => {
      * récolte plus **vite**. Le temps gagné est ce qui permet de rattraper la
      * fenêtre de récolte — c'est la seule récompense, et elle suffit.
      */
-    for (const t of OUTILS) {
+    for (const t of TOUS.filter((x) => MACHINE_DEFS[x].kind !== "TRACTOR")) {
       let precedent = Infinity;
       for (const tier of MACHINE_TIERS) {
         const h = jobHours(machineHoursPerHectare(t, tier), 144);
@@ -133,19 +132,21 @@ describe("un palier se paie et se mérite", () => {
   it("exige un tracteur qui suive — c'est la boucle de progression", () => {
     // Une charrue plus large ne se tire pas avec le tracteur d'hier.
     for (const outil of OUTILS) {
-      for (const tier of [2, 3] as Tier[]) {
+      for (const tier of MACHINE_TIERS.filter((t) => t !== 1)) {
         expect(machineRequiredHp(outil, tier)).toBeGreaterThan(machineRequiredHp(outil, 1));
       }
     }
     expect(canPull({ type: "TRACTOR", tier: 1 }, { type: "PLOUGH", tier: 2 })).toBe(false);
     expect(canPull({ type: "TRACTOR", tier: 2 }, { type: "PLOUGH", tier: 2 })).toBe(true);
+    expect(canPull({ type: "TRACTOR", tier: 4 }, { type: "PLOUGH", tier: 5 })).toBe(false);
+    expect(canPull({ type: "TRACTOR", tier: 5 }, { type: "PLOUGH", tier: 5 })).toBe(true);
   });
 
   it("coûte plus cher que le gain de largeur", () => {
     // Sinon le palier 1 n'aurait aucune raison d'exister : on achèterait le
     // plus gros d'emblée.
     for (const t of TOUS) {
-      for (const tier of [2, 3] as Tier[]) {
+      for (const tier of MACHINE_TIERS.filter((palier) => palier !== 1)) {
         const prixRelatif = machineCost(t, tier) / machineCost(t, 1);
         const largeurRelative =
           MACHINE_DEFS[t].kind === "TRACTOR"
@@ -159,10 +160,10 @@ describe("un palier se paie et se mérite", () => {
   it("se revend au prorata de son palier", () => {
     for (const t of TOUS) {
       const t1 = machineResaleValue(t, { condition: 100, hours: 0, tier: 1 });
-      const t3 = machineResaleValue(t, { condition: 100, hours: 0, tier: 3 });
-      expect(t3).toBeGreaterThan(t1);
+      const t5 = machineResaleValue(t, { condition: 100, hours: 0, tier: 5 });
+      expect(t5).toBeGreaterThan(t1);
       // Et jamais au-dessus du neuf, sinon on fabrique de l'argent.
-      expect(t3).toBeLessThan(machineCost(t, 3));
+      expect(t5).toBeLessThan(machineCost(t, 5));
     }
   });
 });

@@ -23,10 +23,9 @@
  * seul arbitrage que ce système ajoute, et c'en est un vrai — celui du
  * machinisme réel.
  *
- *     tracteur T1 (90 ch) + charrue T1   →  177 L   (charge pleine)
- *     tracteur T3 (180 ch) + charrue T1  →  238 L   (surdimensionné, +34 %)
- *     tracteur T3 (180 ch) + charrue T3  →  149 L   (bien attelé, et trois
- *                                                    fois plus rapide)
+ *     tracteur T1 (105 ch) + charrue T1   →  charge pleine
+ *     tracteur T3 (250 ch) + charrue T1  →  surdimensionné
+ *     tracteur T3 (250 ch) + charrue T3  →  bien attelé, et plus rapide
  *
  * @see docs/research/24_MACHINES.md — carburant et compatibilité outils
  */

@@ -1,0 +1,739 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>FARMSIM — Catalogue T1 à T5</title>
+  <style>
+    :root { --green: #2d5a2a; --row: #f4f8f2; --ink: #1e1e1e; --muted: #555; }
+    * { box-sizing: border-box; }
+    body { font-family: Georgia, "Times New Roman", serif; margin: 0; color: var(--ink); background: #f7f5ef; }
+    header { background: var(--green); color: #fff; padding: 1.4rem 1.5rem 1.1rem; }
+    header h1 { margin: 0 0 .35rem; font-size: 1.55rem; font-family: system-ui, sans-serif; }
+    header p { margin: 0; opacity: .9; font-size: .95rem; }
+    main { max-width: 1280px; margin: 0 auto; padding: 1.25rem 1rem 3rem; }
+    .notes { background: #fff; border: 1px solid #dbe3d6; border-radius: 8px; padding: 1rem 1.15rem; margin-bottom: 1.5rem; }
+    .notes h2 { margin: 0 0 .6rem; font-size: 1.05rem; font-family: system-ui, sans-serif; color: var(--green); }
+    .notes ul { margin: 0; padding-left: 1.2rem; }
+    .notes li { margin: .35rem 0; font-size: .92rem; line-height: 1.4; }
+    section { margin: 1.6rem 0; }
+    section h2 { margin: 0; font-family: system-ui, sans-serif; color: var(--green); font-size: 1.2rem; }
+    section .blurb { color: var(--muted); font-size: .88rem; margin: .25rem 0 .55rem; }
+    table { width: 100%; border-collapse: collapse; background: #fff; font-size: .78rem; box-shadow: 0 1px 2px rgba(0,0,0,.04); }
+    th { background: var(--green); color: #fff; text-align: left; padding: .45rem .5rem; font-family: system-ui, sans-serif; font-weight: 600; }
+    td { padding: .4rem .5rem; vertical-align: top; border-bottom: 1px solid #e4eadf; }
+    tr:nth-child(even) td { background: var(--row); }
+    td:first-child, td:nth-child(5) { font-weight: 700; font-family: system-ui, sans-serif; white-space: nowrap; }
+    .muted { font-weight: 400; color: var(--muted); font-size: .84em; }
+    footer { color: #777; font-size: .8rem; margin-top: 2rem; }
+    a { color: var(--green); }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>FARMSIM — Catalogue T1 à T5</h1>
+    <p>Références réelles (SKU) · prix de jeu · T5 = sommet du marché</p>
+  </header>
+  <main>
+    <div class="notes">
+      <h2>Comment lire ce document</h2>
+      <ul>
+        <li>Les SKU servent à la silhouette 3D, aux chevaux, largeurs, capacités. Les marques ne s’affichent pas au joueur (<code>inspiredBy</code> interne).</li>
+        <li>Les prix de jeu collent aux fourchettes du neuf 2024–2026, un cran en dessous. Un T5 coûte ce qu’il coûte dans le vrai monde.</li>
+        <li>Le T5 n’est pas « un gros T4 » : 9RX 830, CR11 20 000 L, 9900 ~970 ch, rampe 48 m, semoir 24 m.</li>
+        <li>Révision complète = 22 % du neuf. Un T5 se paie aussi à la cuve et à l’atelier — trop gros pour 14 ha.</li>
+        <li>Le chargeur télescopique est documenté (cour) mais n’est pas un engin de champ : un travail = un outil.</li>
+      </ul>
+    </div>
+
+    <section>
+      <h2>Tracteur</h2>
+      <p class="blurb">T5 = John Deere 9RX 830 (830 ch, 4 chenilles) — sommet du marché, pas un 1050.</p>
+      <table>
+        <thead><tr>
+          <th>Palier</th>
+          <th>Référence réelle</th>
+          <th>Copié dans le jeu</th>
+          <th>Marché ~neuf HT</th>
+          <th>Prix jeu</th>
+          <th>Bonus / contraintes</th>
+        </tr></thead>
+        <tbody>
+<tr>
+      <td>T1<br><span class="muted">Petite exploitation</span></td>
+      <td>John Deere 6105M<br><span class="muted">John Deere</span></td>
+      <td>105 ch · 10 km/h · 17 L/h<br><span class="muted">Capot court 4 cyl, cabine 6M, roues arrière nettement plus grandes, garde-boue simples.</span></td>
+      <td>85 000 €</td>
+      <td>72 000 € · rév. 15 840 €</td>
+      <td>Polyvalent de petite ferme — outils jusqu’à ~3 m.<br><span class="muted">Inutile sur un déchaumeur de 10 m. Lent dès que les parcelles s’agrandissent.</span></td>
+    </tr>
+<tr>
+      <td>T2<br><span class="muted">En développement</span></td>
+      <td>Fendt 516 Vario<br><span class="muted">Fendt</span></td>
+      <td>163 ch · 11 km/h · 26 L/h<br><span class="muted">Capot 500 Vario plus long, transmission continue, cabine panoramique, trains étroits.</span></td>
+      <td>155 000 €</td>
+      <td>140 000 € · rév. 30 800 €</td>
+      <td>Attelle les outils T2 (jusqu’à ~6 m). Première vraie montée en gamme.<br><span class="muted">Encore juste pour un labour professionnel. La cuve le sent déjà.</span></td>
+    </tr>
+<tr>
+      <td>T3<br><span class="muted">Professionnelle</span></td>
+      <td>John Deere 6R 250<br><span class="muted">John Deere</span></td>
+      <td>250 ch · 12 km/h · 40 L/h<br><span class="muted">6R 6 cyl : capot haut, empattement allongé, jantes plus larges, GPS de série.</span></td>
+      <td>245 000 €</td>
+      <td>230 000 € · rév. 50 600 €</td>
+      <td>Chantier professionnel — outils jusqu’à ~8 m.<br><span class="muted">Surdimensionné pour 14 ha. Un T1 attelé juste boit moins sur petite parcelle.</span></td>
+    </tr>
+<tr>
+      <td>T4<br><span class="muted">Grande exploitation</span></td>
+      <td>John Deere 8R 370<br><span class="muted">John Deere</span></td>
+      <td>370 ch · 13 km/h · 58 L/h<br><span class="muted">Châssis 8R : capot très haut, cabine large, jumelage arrière, masses avant épaisses.</span></td>
+      <td>400 000 €</td>
+      <td>380 000 € · rév. 83 600 €</td>
+      <td>Gros outils (jusqu’à ~12 m). Jumelage : traction, pas encore chenilles.<br><span class="muted">N’attelle pas la charrue T5 ni le semoir de 24 m. Entretien de grande ferme.</span></td>
+    </tr>
+<tr>
+      <td>T5<br><span class="muted">Technologie maximale</span></td>
+      <td>John Deere 9RX 830<br><span class="muted">John Deere</span></td>
+      <td>830 ch · 14 km/h · 149 L/h<br><span class="muted">Quatre chenilles 9RX, capot immense, double échappement, snorkel, cabine haute.</span></td>
+      <td>1 050 000 €</td>
+      <td>920 000 € · rév. 202 400 €</td>
+      <td>Sommet du marché : 830 ch, tous les outils T5. Travaux les plus lourds.<br><span class="muted">Achat ~1 M€, soif ~150 L/h, révision ruineuse. Ridicule sur 14 ha.</span></td>
+    </tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section>
+      <h2>Moissonneuse</h2>
+      <p class="blurb">T5 = New Holland CR11 : 20 000 L, coupe 15,2 m, 775 ch.</p>
+      <table>
+        <thead><tr>
+          <th>Palier</th>
+          <th>Référence réelle</th>
+          <th>Copié dans le jeu</th>
+          <th>Marché ~neuf HT</th>
+          <th>Prix jeu</th>
+          <th>Bonus / contraintes</th>
+        </tr></thead>
+        <tbody>
+<tr>
+      <td>T1<br><span class="muted">Petite exploitation</span></td>
+      <td>New Holland TC5.90<br><span class="muted">New Holland</span></td>
+      <td>175 ch · 4.5 m · 5 200 L · 6 km/h · 32 L/h<br><span class="muted">Petite batteuse 5 cylindres, coupe ~4,5 m, trémie 5 200 L, vis latérale courte.</span></td>
+      <td>220 000 €</td>
+      <td>200 000 € · rév. 44 000 €</td>
+      <td>On rattrape une parcelle. Trémie petite : vidanges fréquentes.<br><span class="muted">Fenêtre de moisson courte = file d’attente. Pertes dès que ça verse.</span></td>
+    </tr>
+<tr>
+      <td>T2<br><span class="muted">En développement</span></td>
+      <td>CLAAS Tucano 560<br><span class="muted">CLAAS</span></td>
+      <td>300 ch · 6 m · 9 000 L · 6.2 km/h · 48 L/h<br><span class="muted">Caisse Tucano, coupe 6,0 m, trémie 9 000 L, rabatteur et vis plus longs.</span></td>
+      <td>340 000 €</td>
+      <td>320 000 € · rév. 70 400 €</td>
+      <td>Moins d’allers-retours au silo. Première batteuse qui suit deux parcelles.<br><span class="muted">Encore étroite pour une campagne de 80 ha. L’entreprise reste tentante.</span></td>
+    </tr>
+<tr>
+      <td>T3<br><span class="muted">Professionnelle</span></td>
+      <td>John Deere S7 700<br><span class="muted">John Deere</span></td>
+      <td>373 ch · 7.6 m · 14 100 L · 6.6 km/h · 62 L/h<br><span class="muted">Rotor S7, coupe 7,6 m, trémie 14 100 L, cabine haute, vis de déchargement longue.</span></td>
+      <td>560 000 €</td>
+      <td>520 000 € · rév. 114 400 €</td>
+      <td>Débit de céréalier : la fenêtre de moisson se rattrape.<br><span class="muted">Investissement conséquent. Il faut des bennes qui suivent.</span></td>
+    </tr>
+<tr>
+      <td>T4<br><span class="muted">Grande exploitation</span></td>
+      <td>Fendt IDEAL 9T<br><span class="muted">Fendt</span></td>
+      <td>647 ch · 12.2 m · 17 100 L · 7.2 km/h · 98 L/h<br><span class="muted">IDEAL 9 : rotor unique, coupe 12,2 m, trémie 17 100 L, jumelage moteur.</span></td>
+      <td>820 000 €</td>
+      <td>740 000 € · rév. 162 800 €</td>
+      <td>Grande coupe, trémie ~17 000 L, automatisation, moins de pertes.<br><span class="muted">Gourmande. Sur petite parcelle, trop de temps en demi-tour.</span></td>
+    </tr>
+<tr>
+      <td>T5<br><span class="muted">Technologie maximale</span></td>
+      <td>New Holland CR11<br><span class="muted">New Holland</span></td>
+      <td>775 ch · 15.2 m · 20 000 L · 8 km/h · 140 L/h<br><span class="muted">CR11 : coupe 15,2 m, trémie 20 000 L, quatre chenilles, double rotor, vis XXL.</span></td>
+      <td>1 450 000 €</td>
+      <td>1 280 000 € · rév. 281 600 €</td>
+      <td>Sommet mondial : 20 000 L, 15 m de coupe. Une vidange, un camion.<br><span class="muted">1,3 M€, soif de centrale, entretien de site industriel. Inutile sous 150 ha.</span></td>
+    </tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section>
+      <h2>Ensileuse</h2>
+      <p class="blurb">T5 = John Deere 9900 (~970 ch, 9 m). La Jaguar 990 est le T4.</p>
+      <table>
+        <thead><tr>
+          <th>Palier</th>
+          <th>Référence réelle</th>
+          <th>Copié dans le jeu</th>
+          <th>Marché ~neuf HT</th>
+          <th>Prix jeu</th>
+          <th>Bonus / contraintes</th>
+        </tr></thead>
+        <tbody>
+<tr>
+      <td>T1<br><span class="muted">Petite exploitation</span></td>
+      <td>John Deere 8100<br><span class="muted">John Deere</span></td>
+      <td>400 ch · 3 m · 8 km/h · 58 L/h<br><span class="muted">8000 series : bec Kemper 300 3 m, goulotte arrière, cabine haute étroite.</span></td>
+      <td>240 000 €</td>
+      <td>220 000 € · rév. 48 400 €</td>
+      <td>Le maïs plante entière d’une petite ferme. Débit limité.<br><span class="muted">Rampe étroite : une journée pour 14 ha. Les bennes T1 suffisent pile.</span></td>
+    </tr>
+<tr>
+      <td>T2<br><span class="muted">En développement</span></td>
+      <td>New Holland FR 550<br><span class="muted">New Holland</span></td>
+      <td>544 ch · 4.5 m · 8.2 km/h · 78 L/h<br><span class="muted">FR 550 : bec 4,5 m, goulotte plus haute, capot moteur long à l’arrière.</span></td>
+      <td>350 000 €</td>
+      <td>340 000 € · rév. 74 800 €</td>
+      <td>Plus de tonnage à l’heure. Les silos se remplissent dans la journée.<br><span class="muted">Il faut deux bennes pour ne pas l’arrêter.</span></td>
+    </tr>
+<tr>
+      <td>T3<br><span class="muted">Professionnelle</span></td>
+      <td>CLAAS Jaguar 960<br><span class="muted">CLAAS</span></td>
+      <td>626 ch · 6 m · 8.6 km/h · 95 L/h<br><span class="muted">Jaguar 960 : Orbis 600 6 m, goulotte courbe, cabine large.</span></td>
+      <td>480 000 €</td>
+      <td>450 000 € · rév. 99 000 €</td>
+      <td>Chantier professionnel : 6 m de rampe, débit d’ETA.<br><span class="muted">Trois remorques ou elle attend en bout de rang.</span></td>
+    </tr>
+<tr>
+      <td>T4<br><span class="muted">Grande exploitation</span></td>
+      <td>CLAAS Jaguar 990<br><span class="muted">CLAAS</span></td>
+      <td>790 ch · 7.5 m · 9 km/h · 125 L/h<br><span class="muted">Jaguar 990 : Orbis 750 7,5 m, jumelage, goulotte longue, 790 ch.</span></td>
+      <td>780 000 €</td>
+      <td>720 000 € · rév. 158 400 €</td>
+      <td>Très gros débit — le train de bennes doit suivre sans trou.<br><span class="muted">Presque le sommet Claas. Encore un cran sous la 9900.</span></td>
+    </tr>
+<tr>
+      <td>T5<br><span class="muted">Technologie maximale</span></td>
+      <td>John Deere 9900<br><span class="muted">John Deere</span></td>
+      <td>970 ch · 9 m · 9.6 km/h · 175 L/h<br><span class="muted">9900 : ~970 ch, bec 9 m, quatre chenilles, double goulotte, capot arrière énorme.</span></td>
+      <td>1 180 000 €</td>
+      <td>1 050 000 € · rév. 231 000 €</td>
+      <td>La plus puissante du marché. Volumes industriels, vitesse max.<br><span class="muted">Plus d’1 M€, ~175 L/h, train de 70 m³ obligatoire. Hors sujet en petit.</span></td>
+    </tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section>
+      <h2>Charrue</h2>
+      <p class="blurb">Une charrue ne fait pas 18 m. T5 = 12 corps, 7 m, 420 ch — seul le 830 la tire.</p>
+      <table>
+        <thead><tr>
+          <th>Palier</th>
+          <th>Référence réelle</th>
+          <th>Copié dans le jeu</th>
+          <th>Marché ~neuf HT</th>
+          <th>Prix jeu</th>
+          <th>Bonus / contraintes</th>
+        </tr></thead>
+        <tbody>
+<tr>
+      <td>T1<br><span class="muted">Petite exploitation</span></td>
+      <td>Kuhn Master 103 3E<br><span class="muted">Kuhn</span></td>
+      <td>85 ch requis · 2 m · 8 km/h · 15 L/h<br><span class="muted">Portée 3 corps, châssis simple, versoirs, roue de jauge.</span></td>
+      <td>18 000 €</td>
+      <td>22 000 € · rév. 4 840 €</td>
+      <td>2 m — le goulot du parc, et c’est voulu.<br><span class="muted">Un labour de 14 ha prend une journée. C’est le prix du T1.</span></td>
+    </tr>
+<tr>
+      <td>T2<br><span class="muted">En développement</span></td>
+      <td>Kuhn Multi-Master 123 4E<br><span class="muted">Kuhn</span></td>
+      <td>130 ch requis · 3 m · 8 km/h · 22 L/h<br><span class="muted">Portée 4 corps, largeur variable, silhouette Master plus longue.</span></td>
+      <td>32 000 €</td>
+      <td>38 000 € · rév. 8 360 €</td>
+      <td>3 m — le 105 ch ne suffit plus.<br><span class="muted">Il faut le polyvalent 163. Sinon elle reste au hangar.</span></td>
+    </tr>
+<tr>
+      <td>T3<br><span class="muted">Professionnelle</span></td>
+      <td>Lemken Juwel 8 6 N100<br><span class="muted">Lemken</span></td>
+      <td>200 ch requis · 5 m · 8.5 km/h · 32 L/h<br><span class="muted">Portée 6 corps, tourteau hydraulique, châssis plus haut.</span></td>
+      <td>55 000 €</td>
+      <td>62 000 € · rév. 13 640 €</td>
+      <td>5 m — chantier pro, le céréalier 250 la tire.<br><span class="muted">Semi-lourde : uns petite parcelle n’y gagne presque rien.</span></td>
+    </tr>
+<tr>
+      <td>T4<br><span class="muted">Grande exploitation</span></td>
+      <td>Lemken Diamant 16 8+1<br><span class="muted">Lemken</span></td>
+      <td>280 ch requis · 6 m · 8.6 km/h · 44 L/h<br><span class="muted">Semi-portée 8+1, roue de transport, châssis en deux sections.</span></td>
+      <td>78 000 €</td>
+      <td>82 000 € · rév. 18 040 €</td>
+      <td>6 m — réservée au lourd 370.<br><span class="muted">Une charrue n’atteint pas 12 m : au-delà, on déchaume.</span></td>
+    </tr>
+<tr>
+      <td>T5<br><span class="muted">Technologie maximale</span></td>
+      <td>Kverneland PW 100 12<br><span class="muted">Kverneland</span></td>
+      <td>420 ch requis · 7 m · 9 km/h · 68 L/h<br><span class="muted">Semi-portée 12 corps, queue articulée, très longue au transport.</span></td>
+      <td>110 000 €</td>
+      <td>98 000 € · rév. 21 560 €</td>
+      <td>7 m, 12 versoirs — seul le géant 830 la tire.<br><span class="muted">Le 370 ch recule. Transport cauchemardesque. Soif du 830.</span></td>
+    </tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section>
+      <h2>Semoir</h2>
+      <p class="blurb">La largeur est le palier. T5 = Bourgault 3420-80, 24,4 m.</p>
+      <table>
+        <thead><tr>
+          <th>Palier</th>
+          <th>Référence réelle</th>
+          <th>Copié dans le jeu</th>
+          <th>Marché ~neuf HT</th>
+          <th>Prix jeu</th>
+          <th>Bonus / contraintes</th>
+        </tr></thead>
+        <tbody>
+<tr>
+      <td>T1<br><span class="muted">Petite exploitation</span></td>
+      <td>Amazone D9 3000 Super<br><span class="muted">Amazone</span></td>
+      <td>70 ch requis · 3 m · 850 L · 10 km/h · 14 L/h<br><span class="muted">Porté 3 m, trémie, rangées de socs, herse-peigne.</span></td>
+      <td>28 000 €</td>
+      <td>25 000 € · rév. 5 500 €</td>
+      <td>3 m — le semis de petite ferme.<br><span class="muted">Beaucoup de passages. Trémie petite.</span></td>
+    </tr>
+<tr>
+      <td>T2<br><span class="muted">En développement</span></td>
+      <td>Horsch Express 6 KR<br><span class="muted">Horsch</span></td>
+      <td>110 ch requis · 6 m · 2 000 L · 10 km/h · 22 L/h<br><span class="muted">Traîné 6 m, trémie plus haute, ailes repliables.</span></td>
+      <td>62 000 €</td>
+      <td>55 000 € · rév. 12 100 €</td>
+      <td>6 m, deux fois moins de passages.<br><span class="muted">Le 105 ch ne la tire pas.</span></td>
+    </tr>
+<tr>
+      <td>T3<br><span class="muted">Professionnelle</span></td>
+      <td>Horsch Pronto 9 DC<br><span class="muted">Horsch</span></td>
+      <td>180 ch requis · 9 m · 5 000 L · 10.5 km/h · 34 L/h<br><span class="muted">Traîné 9 m, packer pneus, double trémie, ailes.</span></td>
+      <td>135 000 €</td>
+      <td>120 000 € · rév. 26 400 €</td>
+      <td>9 m — semis direct possible, chantier pro.<br><span class="muted">Il faut le 250 ch. Trémie à remplir souvent si on force le débit.</span></td>
+    </tr>
+<tr>
+      <td>T4<br><span class="muted">Grande exploitation</span></td>
+      <td>Horsch Avatar 12.25 SD<br><span class="muted">Horsch</span></td>
+      <td>280 ch requis · 12.25 m · 6 500 L · 11 km/h · 48 L/h<br><span class="muted">12,25 m, dents, trémie 6 500 L, repliage routier.</span></td>
+      <td>230 000 €</td>
+      <td>210 000 € · rév. 46 200 €</td>
+      <td>12 m — grande exploitation, tracteur lourd.<br><span class="muted">Le 250 ch recule. Demi-tours longs sur 14 ha.</span></td>
+    </tr>
+<tr>
+      <td>T5<br><span class="muted">Technologie maximale</span></td>
+      <td>Bourgault 3420-80<br><span class="muted">Bourgault</span></td>
+      <td>500 ch requis · 24.4 m · 17 000 L · 12 km/h · 95 L/h<br><span class="muted">Air drill 24,4 m, trémie centrale énorme, ailes triples, packer.</span></td>
+      <td>480 000 €</td>
+      <td>420 000 € · rév. 92 400 €</td>
+      <td>24 m — un passage couvre une petite ferme entière.<br><span class="muted">500 ch : seul le 830 la tire. Monstrueuse à manœuvrer. 420 k€.</span></td>
+    </tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section>
+      <h2>Épandeur</h2>
+      <p class="blurb">T5 = Amazone ZG-TS 10 000 L, nappe 48 m.</p>
+      <table>
+        <thead><tr>
+          <th>Palier</th>
+          <th>Référence réelle</th>
+          <th>Copié dans le jeu</th>
+          <th>Marché ~neuf HT</th>
+          <th>Prix jeu</th>
+          <th>Bonus / contraintes</th>
+        </tr></thead>
+        <tbody>
+<tr>
+      <td>T1<br><span class="muted">Petite exploitation</span></td>
+      <td>Amazone ZA-M 1500<br><span class="muted">Amazone</span></td>
+      <td>50 ch requis · 12 m · 1 500 L · 12 km/h · 10 L/h<br><span class="muted">Porté, trémie 1 500 L, deux disques, nappe 12 m.</span></td>
+      <td>14 000 €</td>
+      <td>12 000 € · rév. 2 640 €</td>
+      <td>12 m — l’engrais d’une petite parcelle.<br><span class="muted">Trémie vite vide. Précision limitée.</span></td>
+    </tr>
+<tr>
+      <td>T2<br><span class="muted">En développement</span></td>
+      <td>Sulky X40+ ECONOV<br><span class="muted">Sulky</span></td>
+      <td>75 ch requis · 18 m · 3 000 L · 12 km/h · 14 L/h<br><span class="muted">Porté, trémie plus haute, carénage, nappe 18 m.</span></td>
+      <td>25 000 €</td>
+      <td>22 000 € · rév. 4 840 €</td>
+      <td>18 m, plus de trémie, début de modulation.<br><span class="muted">Encore porté : le 105 ch le sent en cote.</span></td>
+    </tr>
+<tr>
+      <td>T3<br><span class="muted">Professionnelle</span></td>
+      <td>Amazone ZA-TS 3200<br><span class="muted">Amazone</span></td>
+      <td>110 ch requis · 24 m · 3 200 L · 12.5 km/h · 20 L/h<br><span class="muted">Porté pesée, trémie 3 200 L, disques TS, 24 m.</span></td>
+      <td>42 000 €</td>
+      <td>38 000 € · rév. 8 360 €</td>
+      <td>24 m — pesée et largeur pro.<br><span class="muted">Porté lourd. Il faut le 163 ch.</span></td>
+    </tr>
+<tr>
+      <td>T4<br><span class="muted">Grande exploitation</span></td>
+      <td>Kuhn Axis 50.2 W<br><span class="muted">Kuhn</span></td>
+      <td>160 ch requis · 36 m · 4 200 L · 13 km/h · 28 L/h<br><span class="muted">Porté pesée 50.2, trémie large, nappe 36 m.</span></td>
+      <td>62 000 €</td>
+      <td>58 000 € · rév. 12 760 €</td>
+      <td>36 m — un passage couvre la parcelle.<br><span class="muted">Nappe large : le vent devient un vrai risque.</span></td>
+    </tr>
+<tr>
+      <td>T5<br><span class="muted">Technologie maximale</span></td>
+      <td>Amazone ZG-TS 10001<br><span class="muted">Amazone</span></td>
+      <td>240 ch requis · 48 m · 10 000 L · 14 km/h · 42 L/h<br><span class="muted">Traîné 10 000 L, essieu, disques TS, nappe 48 m.</span></td>
+      <td>95 000 €</td>
+      <td>88 000 € · rév. 19 360 €</td>
+      <td>48 m, 10 000 L — autonomie et largeur de sommet.<br><span class="muted">Sur 14 ha c’est un passage unique, et un 250 ch qui s’ennuie.</span></td>
+    </tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section>
+      <h2>Déchaumeur</h2>
+      <p class="blurb">T5 = Horsch Joker 12 RT, 12,25 m, 400 ch.</p>
+      <table>
+        <thead><tr>
+          <th>Palier</th>
+          <th>Référence réelle</th>
+          <th>Copié dans le jeu</th>
+          <th>Marché ~neuf HT</th>
+          <th>Prix jeu</th>
+          <th>Bonus / contraintes</th>
+        </tr></thead>
+        <tbody>
+<tr>
+      <td>T1<br><span class="muted">Petite exploitation</span></td>
+      <td>Kuhn Optimer+ 303<br><span class="muted">Kuhn</span></td>
+      <td>80 ch requis · 3 m · 11 km/h · 15 L/h<br><span class="muted">Porté rigide 3,00 m, 24 disques 510 mm, rouleau arrière.</span></td>
+      <td>24 000 €</td>
+      <td>22 000 € · rév. 4 840 €</td>
+      <td>3 m — enfouit les résidus d’une petite ferme.<br><span class="muted">Lent dès que les hectares s’additionnent.</span></td>
+    </tr>
+<tr>
+      <td>T2<br><span class="muted">En développement</span></td>
+      <td>Lemken Rubin 10/500<br><span class="muted">Lemken</span></td>
+      <td>130 ch requis · 5 m · 11 km/h · 24 L/h<br><span class="muted">Porté 5,00 m, disques 645 mm, deux rangées, rouleau packer.</span></td>
+      <td>48 000 €</td>
+      <td>42 000 € · rév. 9 240 €</td>
+      <td>5 m — le 105 ch ne passe plus.<br><span class="muted">Il faut le 163 ch.</span></td>
+    </tr>
+<tr>
+      <td>T3<br><span class="muted">Professionnelle</span></td>
+      <td>Horsch Joker 8 RT<br><span class="muted">Horsch</span></td>
+      <td>200 ch requis · 8 m · 11.5 km/h · 36 L/h<br><span class="muted">Traîné repliable 8 m, disques concaves, packer pneu.</span></td>
+      <td>85 000 €</td>
+      <td>78 000 € · rév. 17 160 €</td>
+      <td>8 m — chantier pro, le 250 ch la tire.<br><span class="muted">Repliage routier obligatoire. Poids.</span></td>
+    </tr>
+<tr>
+      <td>T4<br><span class="muted">Grande exploitation</span></td>
+      <td>Lemken Rubin 10/1000 KUA<br><span class="muted">Lemken</span></td>
+      <td>280 ch requis · 10 m · 12 km/h · 50 L/h<br><span class="muted">Traîné 10,00 m, disques 645 mm, repliage hydraulique.</span></td>
+      <td>130 000 €</td>
+      <td>120 000 € · rév. 26 400 €</td>
+      <td>10 m — tracteur lourd.<br><span class="muted">Le 250 ch recule. Demi-tours longs.</span></td>
+    </tr>
+<tr>
+      <td>T5<br><span class="muted">Technologie maximale</span></td>
+      <td>Horsch Joker 12 RT<br><span class="muted">Horsch</span></td>
+      <td>400 ch requis · 12.25 m · 13 km/h · 78 L/h<br><span class="muted">Traîné 12,25 m, disques concaves, packer, repliage 3 m au transport.</span></td>
+      <td>185 000 €</td>
+      <td>165 000 € · rév. 36 300 €</td>
+      <td>12 m — sommet européen. Le 370 ch ne suffit pas.<br><span class="muted">400 ch : géant 830. Sur 14 ha, trop d’outil pour trop peu de terre.</span></td>
+    </tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section>
+      <h2>Faucheuse</h2>
+      <p class="blurb">T5 = CLAAS Disco 1100 C, 10,7 m papillon.</p>
+      <table>
+        <thead><tr>
+          <th>Palier</th>
+          <th>Référence réelle</th>
+          <th>Copié dans le jeu</th>
+          <th>Marché ~neuf HT</th>
+          <th>Prix jeu</th>
+          <th>Bonus / contraintes</th>
+        </tr></thead>
+        <tbody>
+<tr>
+      <td>T1<br><span class="muted">Petite exploitation</span></td>
+      <td>Kuhn GMD 3125<br><span class="muted">Kuhn</span></td>
+      <td>60 ch requis · 3.1 m · 12 km/h · 12 L/h<br><span class="muted">Portée arrière 3,10 m, 7 disques, relevage vertical.</span></td>
+      <td>18 000 €</td>
+      <td>16 000 € · rév. 3 520 €</td>
+      <td>3 m — l’herbe d’un petit pré.<br><span class="muted">Une coupe, pas une campagne fourragère.</span></td>
+    </tr>
+<tr>
+      <td>T2<br><span class="muted">En développement</span></td>
+      <td>CLAAS Disco 4400 Contour<br><span class="muted">CLAAS</span></td>
+      <td>85 ch requis · 4.2 m · 12 km/h · 16 L/h<br><span class="muted">Portée arrière 4,20 m, 10 disques, pivot central.</span></td>
+      <td>32 000 €</td>
+      <td>28 000 € · rév. 6 160 €</td>
+      <td>4 m, un cran plus vite.<br><span class="muted">Toujours une seule barre. Les grandes prairies attendent le combiné.</span></td>
+    </tr>
+<tr>
+      <td>T3<br><span class="muted">Professionnelle</span></td>
+      <td>Krone EasyCut 6210 CV<br><span class="muted">Krone</span></td>
+      <td>120 ch requis · 6.2 m · 12.5 km/h · 24 L/h<br><span class="muted">Combiné frontal + arrière 6,20 m, deux barres, conditionneur.</span></td>
+      <td>55 000 €</td>
+      <td>48 000 € · rév. 10 560 €</td>
+      <td>6 m — combiné frontal + arrière.<br><span class="muted">Il faut le 163 ch et un attelage avant.</span></td>
+    </tr>
+<tr>
+      <td>T4<br><span class="muted">Grande exploitation</span></td>
+      <td>CLAAS Disco 8500 C<br><span class="muted">CLAAS</span></td>
+      <td>170 ch requis · 8.3 m · 13 km/h · 32 L/h<br><span class="muted">Combiné papillon ~8,3 m, trois barres, repliage vertical.</span></td>
+      <td>75 000 €</td>
+      <td>68 000 € · rév. 14 960 €</td>
+      <td>8 m — grande prairie.<br><span class="muted">Poids, hydraulique, 250 ch à l’aise.</span></td>
+    </tr>
+<tr>
+      <td>T5<br><span class="muted">Technologie maximale</span></td>
+      <td>CLAAS Disco 1100 C<br><span class="muted">CLAAS</span></td>
+      <td>220 ch requis · 10.7 m · 14 km/h · 42 L/h<br><span class="muted">Papillon 10,7 m, trois barres, conditionneur, repliage vertical.</span></td>
+      <td>105 000 €</td>
+      <td>95 000 € · rév. 20 900 €</td>
+      <td>10,7 m — le plus large des combinés tractés.<br><span class="muted">Sur un petit pré, on passe plus de temps à replier qu’à faucher.</span></td>
+    </tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section>
+      <h2>Pulvérisateur</h2>
+      <p class="blurb">T1 porté 15 m → T2 traîné 24 m → T3+ automoteur jusqu’à 48 m (Leeb PT).</p>
+      <table>
+        <thead><tr>
+          <th>Palier</th>
+          <th>Référence réelle</th>
+          <th>Copié dans le jeu</th>
+          <th>Marché ~neuf HT</th>
+          <th>Prix jeu</th>
+          <th>Bonus / contraintes</th>
+        </tr></thead>
+        <tbody>
+<tr>
+      <td>T1<br><span class="muted">Petite exploitation</span></td>
+      <td>Amazone UF 1501<br><span class="muted">Amazone</span></td>
+      <td>70 ch requis · 15 m · 1 500 L · 12 km/h · 14 L/h<br><span class="muted">Porté, cuve 1 500 L, rampe 15 m repliée en U.</span></td>
+      <td>32 000 €</td>
+      <td>28 000 € · rév. 6 160 €</td>
+      <td>15 m porté — le désherbage d’une petite ferme.<br><span class="muted">Cuve petite, précision limitée. Rechargements.</span></td>
+    </tr>
+<tr>
+      <td>T2<br><span class="muted">En développement</span></td>
+      <td>Amazone UX 5201<br><span class="muted">Amazone</span></td>
+      <td>90 ch requis · 24 m · 5 200 L · 12.5 km/h · 18 L/h<br><span class="muted">Traîné, cuve 5 200 L, rampe 24 m, essieu, pompe.</span></td>
+      <td>85 000 €</td>
+      <td>75 000 € · rév. 16 500 €</td>
+      <td>24 m traîné — autonomie et largeur d’un vrai chantier.<br><span class="muted">Encore attelé. Manœuvres en fourrière plus lourdes.</span></td>
+    </tr>
+<tr>
+      <td>T3<br><span class="muted">Professionnelle</span></td>
+      <td>Amazone Pantera 4504<br><span class="muted">Amazone</span></td>
+      <td>180 ch requis · 36 m · 4 500 L · 14 km/h · 32 L/h<br><span class="muted">Automoteur, cuve 4 500 L, rampe 36 m, cabine centrale — attelé en jeu.</span></td>
+      <td>220 000 €</td>
+      <td>200 000 € · rév. 44 000 €</td>
+      <td>36 m — rampe et précision pro. Un passage, la parcelle.<br><span class="muted">Il faut le 250 ch (porteur). Investissement d’ETA.</span></td>
+    </tr>
+<tr>
+      <td>T4<br><span class="muted">Grande exploitation</span></td>
+      <td>Fendt Rogator 937H<br><span class="muted">Fendt</span></td>
+      <td>240 ch requis · 42 m · 6 000 L · 15 km/h · 44 L/h<br><span class="muted">Automoteur haute garde, cuve 6 000 L, rampe 42 m, cabine haute.</span></td>
+      <td>360 000 €</td>
+      <td>320 000 € · rév. 70 400 €</td>
+      <td>42 m, garde au sol, automatisation.<br><span class="muted">Cher à l’heure. Sur 14 ha, la rampe dépasse le champ.</span></td>
+    </tr>
+<tr>
+      <td>T5<br><span class="muted">Technologie maximale</span></td>
+      <td>Horsch Leeb PT 8350<br><span class="muted">Horsch</span></td>
+      <td>280 ch requis · 48 m · 8 000 L · 16 km/h · 58 L/h<br><span class="muted">Automoteur PT, cuve 8 000 L, rampe 48 m carbone, cabine, éclairage LED.</span></td>
+      <td>520 000 €</td>
+      <td>480 000 € · rév. 105 600 €</td>
+      <td>48 m, 8 000 L — le plus large du parc. Précision et autonomie max.<br><span class="muted">480 k€, soif, 280 ch. Inutile et dangereux d’intérêt sur petite parcelle.</span></td>
+    </tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section>
+      <h2>Presse</h2>
+      <p class="blurb">T5 = Krone Big Pack 1290 HDP, balle cubique, débit industriel.</p>
+      <table>
+        <thead><tr>
+          <th>Palier</th>
+          <th>Référence réelle</th>
+          <th>Copié dans le jeu</th>
+          <th>Marché ~neuf HT</th>
+          <th>Prix jeu</th>
+          <th>Bonus / contraintes</th>
+        </tr></thead>
+        <tbody>
+<tr>
+      <td>T1<br><span class="muted">Petite exploitation</span></td>
+      <td>John Deere 440M<br><span class="muted">John Deere</span></td>
+      <td>70 ch requis · 2.1 m · 9 km/h · 14 L/h<br><span class="muted">Chambre fixe ronde, pickup 2,1 m, capot latéral, béquille.</span></td>
+      <td>38 000 €</td>
+      <td>40 000 € · rév. 8 800 €</td>
+      <td>Petites balles, rythme de petite ferme.<br><span class="muted">Beaucoup de bottes, beaucoup de voyages.</span></td>
+    </tr>
+<tr>
+      <td>T2<br><span class="muted">En développement</span></td>
+      <td>New Holland Roll-Belt 450<br><span class="muted">New Holland</span></td>
+      <td>95 ch requis · 2.3 m · 10 km/h · 18 L/h<br><span class="muted">Chambre variable, pickup 2,3 m, courroies visibles sur le flanc.</span></td>
+      <td>60 000 €</td>
+      <td>65 000 € · rév. 14 300 €</td>
+      <td>Plus de balles à l’heure, chambre variable.<br><span class="muted">Le 105 ch passe juste.</span></td>
+    </tr>
+<tr>
+      <td>T3<br><span class="muted">Professionnelle</span></td>
+      <td>CLAAS Rollant 540<br><span class="muted">CLAAS</span></td>
+      <td>120 ch requis · 2.5 m · 11 km/h · 24 L/h<br><span class="muted">Chambre fixe 1,25 m, pickup 2,5 m, capot, liage filet.</span></td>
+      <td>95 000 €</td>
+      <td>100 000 € · rév. 22 000 €</td>
+      <td>Chambre fixe pro, cadence qui suit la fauche.<br><span class="muted">Il faut le 163 ch pour ne pas patiner.</span></td>
+    </tr>
+<tr>
+      <td>T4<br><span class="muted">Grande exploitation</span></td>
+      <td>CLAAS Variant 585 RF<br><span class="muted">CLAAS</span></td>
+      <td>160 ch requis · 2.7 m · 12.5 km/h · 32 L/h<br><span class="muted">Chambre variable jusqu’à 1,80 m, pickup 2,7 m, capot plus haut.</span></td>
+      <td>140 000 €</td>
+      <td>145 000 € · rév. 31 900 €</td>
+      <td>Grosses balles, moins de voyages, début d’automatisation.<br><span class="muted">Toujours de la ronde. Le cube attend le T5.</span></td>
+    </tr>
+<tr>
+      <td>T5<br><span class="muted">Technologie maximale</span></td>
+      <td>Krone Big Pack 1290 HDP<br><span class="muted">Krone</span></td>
+      <td>250 ch requis · 3 m · 14 km/h · 48 L/h<br><span class="muted">Balle cubique 120×90, piston, volant, pickup 3,0 m, caisse longue.</span></td>
+      <td>240 000 €</td>
+      <td>220 000 € · rév. 48 400 €</td>
+      <td>Débit industriel, densité max, balles cubiques, option enrubannage.<br><span class="muted">250 ch, 220 k€, soif. Ridicule derrière une GMD 3 m.</span></td>
+    </tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section>
+      <h2>Remorque</h2>
+      <p class="blurb">T5 = Fliegl ASW 391, 70 m³, tridem.</p>
+      <table>
+        <thead><tr>
+          <th>Palier</th>
+          <th>Référence réelle</th>
+          <th>Copié dans le jeu</th>
+          <th>Marché ~neuf HT</th>
+          <th>Prix jeu</th>
+          <th>Bonus / contraintes</th>
+        </tr></thead>
+        <tbody>
+<tr>
+      <td>T1<br><span class="muted">Petite exploitation</span></td>
+      <td>Joskin Trans-CAP 12/50<br><span class="muted">Joskin</span></td>
+      <td>60 ch requis · 2.5 m · 12 000 L · 14 km/h · 12 L/h<br><span class="muted">Monocoque 12 m³, simple essieu, hayon, flèche à ressort.</span></td>
+      <td>16 000 €</td>
+      <td>18 000 € · rév. 3 960 €</td>
+      <td>12 m³ — les bottes et le grain d’un petit champ.<br><span class="muted">Beaucoup de voyages dès la première moisson T2.</span></td>
+    </tr>
+<tr>
+      <td>T2<br><span class="muted">En développement</span></td>
+      <td>Fliegl TMK 160<br><span class="muted">Fliegl</span></td>
+      <td>80 ch requis · 2.6 m · 22 000 L · 15 km/h · 16 L/h<br><span class="muted">Monocoque 22 m³, un essieu renforcé, hayon hydraulique.</span></td>
+      <td>32 000 €</td>
+      <td>35 000 € · rév. 7 700 €</td>
+      <td>22 m³ — moins de voyages au silo.<br><span class="muted">Encore juste derrière une Tucano.</span></td>
+    </tr>
+<tr>
+      <td>T3<br><span class="muted">Professionnelle</span></td>
+      <td>Krampe Big Body 650<br><span class="muted">Krampe</span></td>
+      <td>110 ch requis · 2.8 m · 35 000 L · 16 km/h · 22 L/h<br><span class="muted">Monocoque 35 m³, tandem, hayon grain, flèche articulée.</span></td>
+      <td>60 000 €</td>
+      <td>65 000 € · rév. 14 300 €</td>
+      <td>35 m³ — suit une moisson professionnelle.<br><span class="muted">Tandem : il faut de la place pour tourner.</span></td>
+    </tr>
+<tr>
+      <td>T4<br><span class="muted">Grande exploitation</span></td>
+      <td>Fliegl ASW 271<br><span class="muted">Fliegl</span></td>
+      <td>180 ch requis · 3.1 m · 52 000 L · 17.5 km/h · 32 L/h<br><span class="muted">Poussière / ensilage 52 m³, tandem, caisse haute, fond poussant.</span></td>
+      <td>100 000 €</td>
+      <td>110 000 € · rév. 24 200 €</td>
+      <td>52 m³ — grande exploitation, fond poussant.<br><span class="muted">180 ch. Inutile si l’ensileuse est encore T1.</span></td>
+    </tr>
+<tr>
+      <td>T5<br><span class="muted">Technologie maximale</span></td>
+      <td>Fliegl ASW 391<br><span class="muted">Fliegl</span></td>
+      <td>260 ch requis · 3.4 m · 70 000 L · 19 km/h · 48 L/h<br><span class="muted">70 m³, tridem, caisse d’ensilage très haute, fond poussant, jumelage.</span></td>
+      <td>180 000 €</td>
+      <td>190 000 € · rév. 41 800 €</td>
+      <td>70 m³ — suit la 9900 et la CR11. Un voyage, un silo.<br><span class="muted">260 ch, 190 k€, gabarit routier. Une seule parcelle la sous-occupe.</span></td>
+    </tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section>
+      <h2>Chargeur télescopique (cour, hors champ)</h2>
+      <p class="blurb">Manitou / JCB / CLAAS / Merlo. T5 = MLT 961, 6 t / 9 m. Pas achetable en jeu — ancre 3D et économie future.</p>
+      <table>
+        <thead><tr>
+          <th>Palier</th>
+          <th>Référence réelle</th>
+          <th>Copié dans le jeu</th>
+          <th>Marché ~neuf HT</th>
+          <th>Prix jeu</th>
+          <th>Bonus / contraintes</th>
+        </tr></thead>
+        <tbody>
+<tr>
+      <td>T1<br><span class="muted">Petite exploitation</span></td>
+      <td>Manitou MLT 625-75H<br><span class="muted">Manitou</span></td>
+      <td>75 ch · 2 500 L · 25 km/h · 12 L/h<br><span class="muted">Petit agri, flèche 6 m, fourches, cabine étroite, un essieu directeur.</span></td>
+      <td>75 000 €</td>
+      <td>70 000 € · rév. 15 400 €</td>
+      <td>2,5 t / 6 m — bottes et palettes d’une petite cour.<br><span class="muted">Pas un engin de champ. Hauteur limitée au hangar.</span></td>
+    </tr>
+<tr>
+      <td>T2<br><span class="muted">En développement</span></td>
+      <td>JCB 536-60 Agri<br><span class="muted">JCB</span></td>
+      <td>109 ch · 3 600 L · 33 km/h · 16 L/h<br><span class="muted">Flèche 6,2 m, 3,6 t, cabine latérale, ponts agri.</span></td>
+      <td>100 000 €</td>
+      <td>95 000 € · rév. 20 900 €</td>
+      <td>3,6 t / 6 m — bottes cubiques, big-bags.<br><span class="muted">Toujours un outil de cour.</span></td>
+    </tr>
+<tr>
+      <td>T3<br><span class="muted">Professionnelle</span></td>
+      <td>CLAAS Scorpion 741<br><span class="muted">CLAAS</span></td>
+      <td>136 ch · 4 100 L · 40 km/h · 22 L/h<br><span class="muted">4,1 t / 7,1 m, cabine Scorpion, flèche en Z, hydraulique plus forte.</span></td>
+      <td>140 000 €</td>
+      <td>130 000 € · rév. 28 600 €</td>
+      <td>4 t / 7 m — silo, bottes, chargement camion.<br><span class="muted">Stabilite à grande hauteur : on ne joue pas au grue.</span></td>
+    </tr>
+<tr>
+      <td>T4<br><span class="muted">Grande exploitation</span></td>
+      <td>Merlo TF42.7 CS<br><span class="muted">Merlo</span></td>
+      <td>170 ch · 4 200 L · 40 km/h · 28 L/h<br><span class="muted">4,2 t / 7,1 m, cabine CS, suspension, hydrostatique.</span></td>
+      <td>185 000 €</td>
+      <td>175 000 € · rév. 38 500 €</td>
+      <td>Hydraulique et stabilité de grande ferme.<br><span class="muted">Cher pour ne sortir que de la cour.</span></td>
+    </tr>
+<tr>
+      <td>T5<br><span class="muted">Technologie maximale</span></td>
+      <td>Manitou MLT 961-160<br><span class="muted">Manitou</span></td>
+      <td>160 ch · 6 000 L · 40 km/h · 36 L/h<br><span class="muted">6,0 t / 9,0 m, flèche massive, cabine haute, ponts lourds, 160 ch.</span></td>
+      <td>300 000 €</td>
+      <td>280 000 € · rév. 61 600 €</td>
+      <td>6 t / 9 m — sommet agri. On charge un camion sans y penser.<br><span class="muted">280 k€ pour un engin qui ne sème rien. Prestige de cour.</span></td>
+    </tr>
+        </tbody>
+      </table>
+    </section>
+    <footer>
+      Source : <code>packages/shared/src/machine-catalog.ts</code>.
+      Généré par <code>node scripts/gen-catalogue-html.mjs</code>.
+      PDF : <a href="catalogue-refs-t1-t5.pdf">catalogue-refs-t1-t5.pdf</a>
+    </footer>
+  </main>
+</body>
+</html>

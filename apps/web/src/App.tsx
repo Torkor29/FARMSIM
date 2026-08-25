@@ -84,13 +84,18 @@ import {
   machinePower,
   machineWidth,
   machineRequiredHp,
-  machineCost,
   asTier,
   TIER_LABELS,
+  TIER_ROLE_LABELS,
   MACHINE_TIERS,
   canPull,
   type Tier,
+  machineVariant,
+  machineOverhaulCost,
+  machineRepairPerPoint,
   machineDealerValue,
+  machineUpgradeCost,
+  nextMachineTier,
   MACHINE_LISTING_MIN_RATE,
   MACHINE_LISTING_MAX_RATE,
   isBreakdownKind,
@@ -99,6 +104,7 @@ import { AuthScreen, RecoveryNotice, type AuthMode } from "./AuthScreen";
 import type { GrazingHerd, PreviewBuilding } from "./IsoFarmView";
 import type { VoisinReel } from "./countryside-plan";
 import { BuildingSheet } from "./BuildingSheet";
+import { MachineSheet, MachineStarStrip, MachineTierPips, type MachinePreview } from "./MachineSheet";
 import { ConfirmDialog, type ConfirmRequest } from "./ConfirmDialog";
 import { ParcelleVoisineSheet } from "./ParcelleVoisineSheet";
 import { MachineCareOverlay, type CareMode } from "./MachineCareOverlay";
@@ -270,6 +276,7 @@ type MachineListing = {
   seller?: { id: string; displayName: string } | null;
   type: string;
   name: string;
+  tier?: number;
   hours: number;
   condition: number;
   priceCrd: number;
@@ -296,7 +303,7 @@ type Player = {
       condition: number;
       /** Compteur horaire. Absent sur une base d'avant le compteur. */
       hours?: number;
-      /** Palier 1 à 3 : il décide de la largeur, de la puissance et du prix. */
+      /** Palier 1 à 5 : il décide de la largeur, de la puissance et du prix. */
       tier?: number;
       parkedParcelId?: string | null;
       storedInBuildingId?: string | null;
@@ -715,6 +722,13 @@ export function App() {
   /** Palier montré au catalogue — un seul réglage pour toute la liste. */
   const [tierAchat, setTierAchat] = useState<Tier>(1);
   /**
+   * Fiche d'un engin : achat, inspection, ou prévisualisation d'amélioration.
+   *
+   * Le catalogue achetait d'un clic, et le garage ne disait pas les cinq
+   * paliers. On ouvre d'abord la fiche — illustration, stats, bonus, prix.
+   */
+  const [machinePreview, setMachinePreview] = useState<MachinePreview | null>(null);
+  /**
    * Les places de garage, lues là où le serveur les compte.
    *
    * Le catalogue proposait chaque engin quel que soit le parc, et le clic
@@ -764,6 +778,8 @@ export function App() {
     cut?: "harvest" | "mow";
     haul?: boolean;
     cargo?: string;
+    /** Palier de l'engin au garage : le mesh T5 se lit plus imposant. */
+    tier?: Tier;
     /** Durée du chantier : l'engin doit traverser le champ en ce temps-là. */
     durationMs?: number;
   } | null>(null);
@@ -1468,6 +1484,7 @@ export function App() {
       .map((m) => ({
         id: m.id,
         type: (m.type as MachineType) ?? "TRACTOR",
+        tier: asTier((m as { tier?: number }).tier),
         // Sur la parcelle d'un voisin, l'API ne donne que le type : l'état
         // reste au propriétaire, et la machine s'affiche alors comme neuve.
         condition: (m as { condition?: number }).condition,
@@ -2939,6 +2956,7 @@ export function App() {
         haul: extra?.haul,
         cargo: extra?.cargo,
         condition: used?.condition,
+        tier: asTier(used?.tier),
         durationMs: duree,
       });
       // Un peu de marge sur la durée du parcours : l'engin doit atteindre la
@@ -3772,9 +3790,30 @@ export function App() {
       });
       await refreshPlayer();
       if (activeParcelId) await loadParcel(activeParcelId);
-      setMsg(`${MACHINE_DEFS[type].name} ${TIER_LABELS[tier]} acheté`);
+      setMachinePreview(null);
+      setMsg(`${machineVariant(type, tier).label} acheté`);
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function upgradeMachine(id: string) {
+    if (!player) return;
+    setBusy(true);
+    setErr(null);
+    try {
+      const r = await api<{ cost: number; tier: number; label: string }>(`/machines/${id}/upgrade`, {
+        method: "POST",
+        body: JSON.stringify({ userId: player.id }),
+      });
+      flashToast(`${r.label} · palier ${r.tier} — ${r.cost.toLocaleString("fr-FR")} €`);
+      setMachinePreview(null);
+      await refreshPlayer();
+      if (activeParcelId) await loadParcel(activeParcelId);
+    } catch (e) {
+      flashToast(e instanceof Error ? e.message : String(e), true);
     } finally {
       setBusy(false);
     }
@@ -4708,6 +4747,17 @@ export function App() {
               })}
               workers={[]}
               parked={parkedMachines}
+              onParkedClick={(id) => {
+                if (visiting) return;
+                const m = player?.farm?.machines.find((x) => x.id === id);
+                if (!m) return;
+                setMachinePreview({
+                  mode: "inspect",
+                  machineId: m.id,
+                  type: m.type as MachineType,
+                  currentTier: asTier(m.tier),
+                });
+              }}
               machineSlots={slotsMachines}
               weather={localWeather}
               /* La saison ne réglait que le ciel CSS ; la ferme, elle, était
@@ -5128,7 +5178,9 @@ export function App() {
               Graissez et nettoyez : la machine s’use moins et récolte un peu plus.
               Réparer ramène à mi-chemin, remettre à neuf va jusqu’à 100 %. Le
               compteur horaire, lui, ne se répare pas : c’est ce qui fixe la cote
-              d’un engin et ce qui rend l’occasion moins chère.
+              d’un engin et ce qui rend l’occasion moins chère. Chaque engin a
+              cinq paliers : cliquez son nom ou <b>Améliorer</b> pour voir le
+              suivant — illustration, caractéristiques, bonus, prix.
             </p>
             <ul className="list">
               {(player.farm?.machines ?? []).map((m) => {
@@ -5142,17 +5194,19 @@ export function App() {
                 const grease = m.grease ?? (m.greased === false ? 0 : GREASE_FULL);
                 const eta = true;
                 const halfTarget = repairHalfwayTarget(m.condition);
+                const palier = asTier(m.tier);
+                const fiche = def ? machineVariant(m.type as MachineType, palier) : null;
                 const halfQuote = def
                   ? repairQuote({
                       condition: m.condition,
-                      repairCostPerPoint: def.repairCostPerPoint,
+                      repairCostPerPoint: machineRepairPerPoint(m.type as MachineType, palier),
                       targetCondition: halfTarget,
                     })
                   : null;
                 const fullQuote = def
                   ? repairQuote({
                       condition: m.condition,
-                      repairCostPerPoint: def.repairCostPerPoint,
+                      repairCostPerPoint: machineRepairPerPoint(m.type as MachineType, palier),
                       targetCondition: 100,
                     })
                   : null;
@@ -5160,7 +5214,6 @@ export function App() {
                 const salete = Math.max(0, Math.min(100, m.dirt ?? 0));
                 const compteur = m.hours ?? 0;
                 const ageFactor = machineAgeYieldFactor(compteur);
-                const palier = asTier(m.tier);
                 const heuresRestantes = def
                   ? hoursBeforeWorkshop({
                       condition: m.condition,
@@ -5183,9 +5236,23 @@ export function App() {
                 return (
                   <li key={m.id}>
                     <span>
-                      <strong>
-                        {def?.name ?? m.type} {TIER_LABELS[palier]}
-                      </strong>
+                      <button
+                        type="button"
+                        className="machine-name-btn"
+                        onClick={() =>
+                          setMachinePreview({
+                            mode: "inspect",
+                            machineId: m.id,
+                            type: m.type as MachineType,
+                            currentTier: palier,
+                          })
+                        }
+                      >
+                        <strong>
+                          {fiche?.label ?? `${def?.name ?? m.type} ${TIER_LABELS[palier]}`}
+                        </strong>
+                      </button>
+                      <MachineTierPips tier={palier} />
                       {/* Ce qui décide de tout depuis la séparation porteur /
                           outil : les chevaux d'un tracteur, la largeur d'un
                           outil. Sans ces deux nombres, on ne peut pas savoir
@@ -5300,6 +5367,31 @@ export function App() {
                         muets. `Geste` les rend touchables : ils n'agissent
                         pas, mais ils répondent. */}
                     <span className="row-actions">
+                      {(() => {
+                        const suivant = nextMachineTier(palier);
+                        const coutUp = def ? machineUpgradeCost(m.type as MachineType, palier) : null;
+                        if (!suivant || coutUp == null) {
+                          return <span className="upgrade-max">Niveau max</span>;
+                        }
+                        return (
+                          <button
+                            type="button"
+                            className="upgrade-btn"
+                            disabled={busy}
+                            title={`Prévisualiser le ${TIER_LABELS[suivant]} · ${TIER_ROLE_LABELS[suivant]}`}
+                            onClick={() =>
+                              setMachinePreview({
+                                mode: "upgrade",
+                                machineId: m.id,
+                                type: m.type as MachineType,
+                                currentTier: palier,
+                              })
+                            }
+                          >
+                            Améliorer · {coutUp.toLocaleString("fr-FR")} €
+                          </button>
+                        );
+                      })()}
                       <Geste
                         busy={busy}
                         blocage={
@@ -5402,7 +5494,7 @@ export function App() {
                         className="sell-btn"
                         disabled={busy}
                         title={`Le concessionnaire reprend tout de suite, sous la cote (${cote} €)`}
-                        onClick={() => sellMachine(m.id, def?.name ?? m.type, reprise)}
+                        onClick={() => sellMachine(m.id, fiche?.label ?? def?.name ?? m.type, reprise)}
                       >
                         Reprise · {reprise} €
                       </button>
@@ -5411,7 +5503,7 @@ export function App() {
                         className="ghost-btn"
                         disabled={busy}
                         title={`Cote ${cote} € — l’engin quitte la ferme le temps de l’annonce`}
-                        onClick={() => listMachine(m.id, def?.name ?? m.type, cote)}
+                        onClick={() => listMachine(m.id, fiche?.label ?? def?.name ?? m.type, cote)}
                       >
                         Mettre en vente · cote {cote} €
                       </button>
@@ -5485,7 +5577,8 @@ export function App() {
                       <span>
                         <strong>{l.name}</strong>
                         <div className="muted tiny">
-                          {l.hours.toFixed(0)} h au compteur · état {l.condition.toFixed(0)} %
+                          {TIER_LABELS[asTier(l.tier)]} · {l.hours.toFixed(0)} h au compteur · état{" "}
+                          {l.condition.toFixed(0)} %
                           {/* Ce qu'un acheteur doit savoir avant de payer : les
                               heures coûtent du rendement, et la révision ne les
                               efface pas. */}
@@ -5528,12 +5621,14 @@ export function App() {
               </ul>
             )}
             <h3 className="spaced">Acheter neuf</h3>
-            {/* Le catalogue se lit désormais en trois tailles. Un palier plus
-                haut ne travaille pas mieux : il travaille plus large, donc plus
-                vite — et il demande un tracteur qui suive. */}
+            {/* Cinq modèles par famille, calés sur des engins réels. Un palier
+                plus haut n'est pas « cinq fois mieux » : il attelle plus large,
+                et il coûte — à l'achat comme à la cuve. */}
             <p className="muted tiny">
-              Palier affiché : <strong>{TIER_LABELS[tierAchat]}</strong>. Un outil plus large va
-              plus vite, mais exige plus de chevaux.
+              {TIER_ROLE_LABELS[tierAchat]} · <strong>{TIER_LABELS[tierAchat]}</strong>. Cliquez un
+              engin pour le prévisualiser — silhouette, caractéristiques, bonus,
+              prix — avant d’acheter. Un outil plus large va plus vite, mais exige
+              plus de chevaux ; un T5 se paie aussi à l’entretien et à la cuve.
             </p>
             <div className="age-switch" role="group" aria-label="Palier de matériel">
               {MACHINE_TIERS.map((t) => (
@@ -5542,6 +5637,7 @@ export function App() {
                   type="button"
                   className={tierAchat === t ? "on" : ""}
                   aria-pressed={tierAchat === t}
+                  title={TIER_ROLE_LABELS[t]}
                   onClick={() => setTierAchat(t)}
                 >
                   {TIER_LABELS[t]}
@@ -5558,9 +5654,10 @@ export function App() {
             <div className="build-list">
               {(Object.keys(MACHINE_DEFS) as MachineType[]).map((t) => {
                 const d = MACHINE_DEFS[t];
-                const prix = machineCost(t, tierAchat);
-                const largeur = machineWidth(t, tierAchat);
-                const besoin = machineRequiredHp(t, tierAchat);
+                const fiche = machineVariant(t, tierAchat);
+                const prix = fiche.cost;
+                const largeur = fiche.widthM;
+                const besoin = fiche.requiredHp ?? 0;
                 // Un outil qu'aucun tracteur de la ferme ne peut tirer reste
                 // achetable — on prépare parfois son parc — mais il le dit.
                 const tractable =
@@ -5573,42 +5670,47 @@ export function App() {
                         { type: t, tier: tierAchat },
                       ),
                   );
+                const stats =
+                  d.kind === "TRACTOR"
+                    ? `${fiche.powerHp ?? 0} ch`
+                    : d.kind === "SELF_PROPELLED"
+                      ? `${largeur} m · automoteur${fiche.capacityL ? ` · ${fiche.capacityL.toLocaleString("fr-FR")} L` : ""}`
+                      : `${largeur} m · ${besoin} ch requis${fiche.capacityL ? ` · ${fiche.capacityL.toLocaleString("fr-FR")} L` : ""}`;
                 return (
                   <button
                     key={t}
                     type="button"
-                    className="build-item art"
-                    /* Le garage plein grisait le bouton nulle part : le
-                       catalogue proposait chaque engin, et le clic revenait en
-                       409 « Slots machines pleins ». Une place manquante se
-                       sait avant de cliquer, comme un € manquant. */
-                    disabled={busy || player.crd < prix || !placeAuGarage}
+                    className={`build-item art${player.crd < prix || !placeAuGarage ? " dim" : ""}`}
+                    /* On ouvre la fiche même sans les fonds : c'est là qu'on
+                       compare les paliers. Le bouton d'achat, lui, se grise. */
+                    disabled={busy}
                     title={
                       !placeAuGarage
                         ? `Garage plein — ${parcMachines}/${slotsMachines} emplacements. Agrandissez ou bâtissez un hangar matériel, ou revendez un engin.`
                         : player.crd < prix
                           ? `€ insuffisants — ${prix} requis`
                           : tractable
-                            ? d.description
+                            ? fiche.bonus
                             : `Aucun de vos tracteurs ne donne les ${besoin} ch nécessaires`
                     }
-                    onClick={() => buyMachine(t, tierAchat)}
+                    onClick={() => setMachinePreview({ mode: "buy", type: t, tier: tierAchat })}
                   >
                     <img className="build-art" src={MACHINE_ART[t]} alt="" loading="lazy" />
                     <span className="build-text">
-                      <strong>
-                        {d.name} {TIER_LABELS[tierAchat]}
-                      </strong>
-                      <span>{prix} €</span>
+                      <strong>{fiche.label}</strong>
+                      <MachineTierPips tier={tierAchat} />
+                      <span>{prix.toLocaleString("fr-FR")} €</span>
                       <span className="muted tiny">
-                        {d.kind === "TRACTOR"
-                          ? `${machinePower(t, tierAchat)} ch`
-                          : d.kind === "SELF_PROPELLED"
-                            ? `${largeur} m · automoteur`
-                            : `${largeur} m · ${besoin} ch requis`}
+                        {stats}
                         {!tractable ? " · rien pour le tirer" : ""}
                       </span>
-                      <span className="muted tiny">{d.description}</span>
+                      <span className="muted tiny">{fiche.bonus}</span>
+                      <span className="muted tiny">
+                        {fiche.fuelLPerHour} L/h · révision{" "}
+                        {machineOverhaulCost(prix).toLocaleString("fr-FR")} €
+                      </span>
+                      <span className="muted tiny">{fiche.constraints}</span>
+                      <MachineStarStrip stars={fiche.stars} />
                     </span>
                   </button>
                 );
@@ -6131,6 +6233,22 @@ export function App() {
         onTick={devTick}
       />
 
+      {machinePreview && player && (
+        <MachineSheet
+          preview={machinePreview}
+          crd={player.crd}
+          busy={busy}
+          placeAuGarage={placeAuGarage}
+          onClose={() => setMachinePreview(null)}
+          onBuy={(type, tier) => void buyMachine(type, tier)}
+          onUpgrade={(id) => void upgradeMachine(id)}
+          onWantUpgrade={() => {
+            if (machinePreview.mode === "inspect" || machinePreview.mode === "upgrade") {
+              setMachinePreview({ ...machinePreview, mode: "upgrade" });
+            }
+          }}
+        />
+      )}
 
       {openBuilding && (
         <BuildingSheet
