@@ -73,7 +73,7 @@ function schemaPresent(url) {
   return Number(n) === TABLES_VITALES.length;
 }
 
-export function instantané(url, destination) {
+export function instantané(url, destination, { relire = true } = {}) {
   if (!schemaPresent(url)) {
     throw new RienASauvegarder(
       "la base n'a pas encore de schéma — rien à sauvegarder",
@@ -84,6 +84,34 @@ export function instantané(url, destination) {
     [url, "--format=custom", "--compress=6", "--no-owner", "--no-privileges", "--file", destination],
     { stdio: ["ignore", "ignore", "inherit"] },
   );
+  if (!relire) {
+    /*
+     * Instantané sans relecture. **À n'employer qu'en repli**, jamais par
+     * défaut, et voici l'arbitrage exact.
+     *
+     * Une sauvegarde jamais relue est une promesse invérifiée : c'est
+     * précisément ce que la relecture existe pour empêcher, et elle reste le
+     * comportement normal — la sauvegarde quotidienne, celle dont on se sert
+     * un jour de catastrophe, la fait toujours.
+     *
+     * Mais la sauvegarde d'avant-déploiement a un autre métier : exister avant
+     * qu'une migration touche aux données. La relecture y double le coût au
+     * seul moment où la machine est déjà occupée à déployer — mesuré, elle a
+     * tenu trente-cinq minutes sans finir et emporté le déploiement avec elle.
+     * Le choix n'est donc pas « avec ou sans relecture » mais « un instantané
+     * non relu, ou pas d'instantané du tout » : refuser le repli ne rend
+     * personne plus sûr, ça déploie sans filet ou ça ne déploie pas.
+     *
+     * On vérifie au moins que l'archive est lisible et complète — `pg_restore
+     * --list` lit le sommaire, ce qui attrape un fichier tronqué sans rien
+     * restaurer.
+     */
+    const octets = statSync(destination).size;
+    execFileSync("pg_restore", ["--list", destination], {
+      stdio: ["ignore", "ignore", "inherit"],
+    });
+    return { integrité: "sommaire lu, non restaurée", lignes: {}, octets };
+  }
   return vérifier(destination, url);
 }
 
@@ -172,12 +200,12 @@ export function horodatage(date = new Date()) {
   return date.toISOString().replace(/\.\d+Z$/, "Z").replace(/:/g, "");
 }
 
-export function sauvegarder({ url, dossier, garder = 14, étiquette = "" }) {
+export function sauvegarder({ url, dossier, garder = 14, étiquette = "", relire = true }) {
   mkdirSync(dossier, { recursive: true });
   const nom = `farmsim-${horodatage()}${étiquette ? `-${étiquette}` : ""}.dump`;
   const destination = join(dossier, nom);
   try {
-    const rapport = instantané(url, destination);
+    const rapport = instantané(url, destination, { relire });
     const ménage = élaguer(dossier, garder);
     return { fichier: destination, ...rapport, ...ménage };
   } catch (e) {
@@ -199,11 +227,16 @@ if (estAppeléDirectement) {
   const garder = Number(process.env.FARMSIM_BACKUP_KEEP ?? 14);
   const étiquette = process.env.FARMSIM_BACKUP_LABEL ?? "";
   try {
-    const r = sauvegarder({ url, dossier, garder, étiquette });
+    // `FARMSIM_BACKUP_VERIFY=0` : instantané sans relecture. Le déploiement
+    // ne s'en sert qu'en repli, après qu'une sauvegarde relue a dépassé son
+    // temps — voir `scripts/vps-deploy.sh`.
+    const relire = process.env.FARMSIM_BACKUP_VERIFY !== "0";
+    const r = sauvegarder({ url, dossier, garder, étiquette, relire });
     const mo = (r.octets / 1024 / 1024).toFixed(2);
-    const compte = Object.entries(r.lignes)
-      .map(([t, n]) => `${t} ${n}`)
-      .join(" · ");
+    const compte =
+      Object.entries(r.lignes)
+        .map(([t, n]) => `${t} ${n}`)
+        .join(" · ") || r.integrité;
     console.log(`OK ${r.fichier}`);
     console.log(`   ${mo} Mo · ${compte}`);
     console.log(`   ${r.gardées} sauvegarde(s) conservée(s), ${r.effacées.length} effacée(s)`);
