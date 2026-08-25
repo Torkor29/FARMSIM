@@ -600,6 +600,30 @@ export function App() {
   const [email, setEmail] = useState("");
   const [accessCode, setAccessCode] = useState("ferme");
   const [activeParcelId, setActiveParcelId] = useState<string | null>(null);
+  /**
+   * La parcelle réellement affichée, lisible depuis une requête en vol.
+   *
+   * ## Le défaut que cette référence corrige
+   *
+   * Les chargements écrivaient leur réponse sans vérifier qu'elle concernait
+   * encore la parcelle regardée. Changer de champ pendant qu'une requête est
+   * partie — ce qui arrive tout le temps quand un chantier tourne, puisque
+   * l'écran se rafraîchit toutes les quelques secondes — faisait atterrir les
+   * données de l'ancienne par-dessus la nouvelle.
+   *
+   * À l'écran, la parcelle se mettait à osciller : le champ passait de labouré
+   * à cultivé, les chiffres de « 52 cases en chaumes, 100 % de fertilité » à
+   * « 130 cases perdues, 80 % », et le compte à rebours du chantier remontait
+   * — 33 s, 31 s, 32 s, 30 s — parce qu'il affichait alternativement le
+   * chantier de l'une et celui de l'autre. Le joueur croyait voir sa récolte
+   * détruite sous ses yeux.
+   *
+   * Arrêter le minuteur au changement de parcelle ne suffisait pas : ça
+   * empêche la requête **suivante**, jamais celle qui est déjà partie. On
+   * compare donc à l'arrivée, ce qui est le seul moment où l'on sait.
+   */
+  const parcelleAffichee = useRef<string | null>(null);
+  parcelleAffichee.current = activeParcelId;
   /*
    * La caméra parcourt maintenant toute la commune, et non plus le tour de
    * l'île : sans repère, on finit par ne plus savoir où est sa propre ferme.
@@ -713,6 +737,16 @@ export function App() {
   /** Chantier en cours — ce que la ferme est en train de faire, et jusqu'à quand. */
   const [chantier, setChantier] = useState<{
     work: FarmWork;
+    /**
+     * La parcelle du chantier.
+     *
+     * La barre affichait le dernier chantier lancé, quelle que soit la
+     * parcelle regardée : on ouvrait l'autre champ et on y lisait « Labourer ·
+     * 130 cases » par-dessus des chiffres qui n'avaient rien à voir. On la
+     * garde visible — un chantier en cours ne doit pas disparaître parce qu'on
+     * regarde ailleurs — mais elle dit désormais où il a lieu.
+     */
+    parcelId: string;
     cells: { x: number; y: number }[];
     endsAt: number;
     durationMs: number;
@@ -1012,9 +1046,13 @@ export function App() {
       const r = await api<{ barns: BarnState[]; orphanYards?: OrphanYard[] }>(
         `/parcels/${parcelId}/livestock`,
       );
+      if (parcelleAffichee.current !== parcelId) return;
       setBarns((prev) => keepIfSame(prev, r.barns));
       setOrphanYards((prev) => keepIfSame(prev, r.orphanYards ?? []));
     } catch {
+      // Un échec sur une parcelle qu'on a quittée ne doit pas vider les
+      // étables de celle qu'on regarde.
+      if (parcelleAffichee.current !== parcelId) return;
       setBarns([]);
       setOrphanYards([]);
     }
@@ -1167,6 +1205,9 @@ export function App() {
 
   const loadParcel = useCallback(async (id: string) => {
     const d = await api<typeof parcelDetail>(`/parcels/${id}`);
+    // Réponse d'une parcelle qu'on ne regarde plus : on la jette. Sans ce
+    // garde, elle écrasait celle qu'on venait d'ouvrir.
+    if (parcelleAffichee.current !== id) return;
     setParcelDetail((prev) => keepIfSame(prev, d));
   }, []);
 
@@ -1180,6 +1221,7 @@ export function App() {
    */
   const loadVoisinage = useCallback(async (id: string) => {
     const d = await api<{ parcelles: VoisinReel[] }>(`/parcels/${id}/voisinage`);
+    if (parcelleAffichee.current !== id) return;
     setVoisinage((prev) => keepIfSame(prev, d.parcelles));
   }, []);
 
@@ -3097,6 +3139,8 @@ export function App() {
     }
     setChantier({
       work,
+      // La parcelle sur laquelle la route a réellement ouvert le chantier.
+      parcelId: activeParcelId ?? "",
       cells: retenues,
       endsAt: fin,
       durationMs: r.job.durationMs,
@@ -4686,6 +4730,15 @@ export function App() {
              */
             `${MACHINE_DEFS[chantier.machine ?? "TRACTOR"]?.name ?? "L’attelage"} en route vers le champ…`
           : `${WORK_LABELS[chantier.work] ?? chantier.work} · ${chantier.cells.length} cases`}
+        {chantier.parcelId !== activeParcelId && (
+          /* Le chantier tourne ailleurs : sans ce rappel, la barre se lisait
+             comme si elle décrivait le champ qu'on a sous les yeux. */
+          <em className="chantier-ailleurs">
+            {" "}
+            sur{" "}
+            {ownedParcels.find((p) => p.id === chantier.parcelId)?.label ?? "une autre parcelle"}
+          </em>
+        )}
       </span>
       <span className="chantier-piste">
         <span

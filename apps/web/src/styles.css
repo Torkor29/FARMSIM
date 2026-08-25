@@ -647,6 +647,15 @@ html.playing .field-dock {
   max-width: 100%;
 }
 .chantier-nom { font-weight: 600; }
+
+/* Le chantier qui tourne sur un autre champ.
+   Sans ce rappel, la barre se lisait comme si elle décrivait la parcelle
+   qu'on a sous les yeux — un joueur y a lu la destruction de sa récolte. */
+.chantier-ailleurs {
+  font-style: normal;
+  opacity: 0.72;
+  font-weight: 500;
+}
 .chantier-reste { font-variant-numeric: tabular-nums; color: var(--muted); }
 .chantier-piste {
   width: clamp(5rem, 18vw, 11rem);
