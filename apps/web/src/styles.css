@@ -2282,14 +2282,24 @@ html.playing .build-confirm { position: fixed; }
 .machine-sheet .age-switch {
   grid-template-columns: repeat(5, 1fr);
 }
+/* La vignette 3D cède la place aux chiffres quand l'écran est court.
+   Elle mesurait 320 px en dur : sur un téléphone tenu droit, elle occupait
+   la moitié du panneau et coupait « Conso » et « Prix neuf » en plein
+   milieu d'une ligne. Le corps défile, donc rien n'était perdu — mais une
+   ligne tranchée par le bas se lit comme un bogue, pas comme un défilement,
+   et le joueur ne pense pas à faire glisser.
+
+   `clamp` la laisse pleine sur un écran large et la réduit à 190 px sur un
+   écran court, ce qui suffit à faire entrer la première rangée de chiffres
+   sous l'engin. */
 .machine-sheet-art {
   position: relative;
   border-radius: 12px;
   overflow: hidden;
   background: #cfeafb;
-  min-height: 320px;
+  min-height: clamp(190px, 34dvh, 320px);
 }
-.machine-sheet-art .machine-view3d { height: 320px; }
+.machine-sheet-art .machine-view3d { height: clamp(190px, 34dvh, 320px); }
 .machine-sheet-tiers {
   position: absolute;
   left: 0.45rem;

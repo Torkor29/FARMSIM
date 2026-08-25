@@ -1,6 +1,12 @@
 import { useEffect, useRef } from "react";
 import * as THREE from "three";
-import type { MachineType, MachineTier } from "@farmsim/shared";
+import {
+  TIER_SCALE_MAX,
+  machineTierScale,
+  type CatalogMachine,
+  type MachineType,
+  type MachineTier,
+} from "@farmsim/shared";
 import { attachStudioEnvironment } from "./machine-kit";
 import { isoOrthoFrustum } from "./machine-framing";
 import { createDustTrail, createMachineRig, isTowedImplement } from "./machines3d";
@@ -8,7 +14,11 @@ import { disposeRenderer, disposeThreeScene } from "./three-cleanup";
 
 type Props = {
   type: MachineType;
-  /** Hauteur du rendu, en pixels */
+  /**
+   * Hauteur du rendu, en pixels. Omise, c'est la feuille de style qui
+   * décide — ce que fait la fiche d'engin, dont la vignette rétrécit sur un
+   * écran court pour laisser voir les chiffres.
+   */
   height?: number;
   /** Engin au travail : outil posé, gyrophare, poussière */
   working?: boolean;
@@ -30,7 +40,7 @@ type Props = {
  */
 export function MachineView3D({
   type,
-  height = 240,
+  height,
   working = false,
   speed = 1.6,
   towed = false,
@@ -113,10 +123,20 @@ export function MachineView3D({
 
     const resize = () => {
       const w = host.clientWidth || 320;
-      const h = Math.max(1, host.clientHeight || height);
+      const h = Math.max(1, host.clientHeight || height || 240);
       renderer.setSize(w, h, false);
       const aspect = w / h;
-      const fit = isoOrthoFrustum(box, aspect);
+      /*
+       * La stature du palier, rapportée au T5.
+       *
+       * Sans elle, la vignette cadrait sur la boîte de l'engin : la caméra
+       * reculait d'autant qu'il était gros, et un T5 occupait exactement la
+       * même place qu'un T1. On divise par le maximum pour que le T5 remplisse
+       * le cadre comme avant — c'est lui la référence — et que les paliers
+       * inférieurs s'y mesurent.
+       */
+      const stature = machineTierScale(type as CatalogMachine, tier) / TIER_SCALE_MAX;
+      const fit = isoOrthoFrustum(box, aspect, 1.5, stature);
       camera.position.set(9, 7.35 + fit.lookAtY, 9);
       camera.lookAt(0, fit.lookAtY, 0);
       camera.left = fit.left;
@@ -162,5 +182,17 @@ export function MachineView3D({
     };
   }, [type, height, towed, tier]);
 
-  return <div className="machine-view3d" ref={hostRef} style={{ height }} aria-hidden="true" />;
+  // Pas de hauteur en dur quand l'appelant n'en donne pas : un style en
+  // ligne l'emporterait sur la feuille de style, et la vignette reprendrait
+  // la place qu'on venait de lui retirer sur écran court. Le
+  // `ResizeObserver` déjà en place recadre la caméra quand le conteneur
+  // change de taille.
+  return (
+    <div
+      className="machine-view3d"
+      ref={hostRef}
+      style={height ? { height } : undefined}
+      aria-hidden="true"
+    />
+  );
 }

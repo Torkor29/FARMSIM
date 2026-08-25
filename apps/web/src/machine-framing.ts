@@ -28,6 +28,28 @@ export function isoOrthoFrustum(
   box: THREE.Box3,
   aspect: number,
   pad = 1.5,
+  /**
+   * Stature du palier, de 0 à 1 : 1 remplit le cadre, 0,6 n'en occupe que
+   * les trois cinquièmes.
+   *
+   * ## Pourquoi ce paramètre existe
+   *
+   * Cadrer sur la boîte englobante **annule toute différence de taille** :
+   * la caméra recule d'autant que l'engin est gros, et un T5 occupe donc
+   * exactement la même place qu'un T1. Toute la montée en gamme se voyait
+   * dans le détail — plus de corps de charrue, quatre chenilles — et jamais
+   * dans la stature. Le joueur qui paie quatre-vingt-dix mille euros voyait
+   * la même machine, en plus fournie.
+   *
+   * On élargit donc la fenêtre à mesure que le palier baisse. Le résultat
+   * ne dépend que de la stature, jamais de la géométrie : un palier qui
+   * gagne un essieu ne rétrécit pas pour autant, il montre son essieu de
+   * plus **à taille croissante**.
+   *
+   * Un par défaut : sans stature donnée, on retrouve exactement le cadrage
+   * d'avant, ce dont dépendent la vue de ferme et la campagne.
+   */
+  stature = 1,
 ): IsoOrthoFit {
   const center = box.getCenter(new THREE.Vector3());
   const lookAtY = center.y;
@@ -80,6 +102,13 @@ export function isoOrthoFrustum(
   const sky = halfH * 0.16;
   halfH += sky / 2;
   halfW = halfH * a;
+
+  // La stature agrandit la fenêtre, elle ne rétrécit pas l'engin : c'est le
+  // même modèle, vu de plus loin. Bornée pour qu'une valeur aberrante ne
+  // renvoie pas une vignette vide.
+  const recul = 1 / Math.min(1, Math.max(0.2, stature));
+  halfH *= recul;
+  halfW *= recul;
 
   return {
     lookAtY,
