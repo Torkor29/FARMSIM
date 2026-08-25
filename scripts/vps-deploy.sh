@@ -25,6 +25,28 @@ if ! command -v docker >/dev/null 2>&1; then
   exit 1
 fi
 
+# --- état de la machine ---
+#
+# Deux diagnostics faux de suite ont coûté des heures : « des constructions
+# orphelines saturent le serveur » (le journal a répondu « aucune ») puis
+# « le disque est plein » (il était à 78 %, treize gigaoctets libres). À
+# chaque fois on corrigeait une cause plausible sans jamais l'avoir mesurée.
+#
+# Ce que le journal montrait vraiment, c'est que **tout** est lent sur cette
+# machine : `docker ps` en six minutes, `df` en une minute et demie, quatre
+# `git fetch` d'affilée en échec. Une commande qui ne fait que lire une table
+# du noyau ne met pas une minute — sauf si la machine s'effondre dans le
+# swap, ou si un processus la monopolise.
+#
+# Ces quatre lignes coûtent moins d'une seconde et disent lequel des deux.
+# Elles passent en premier, avant tout ce qui pourrait échouer : un
+# diagnostic qu'on n'obtient qu'en cas de succès ne sert à rien.
+echo "==> État de la machine"
+uptime 2>/dev/null | sed 's/^/    /' || true
+free -m 2>/dev/null | sed -n '1,3p' | sed 's/^/    /' || true
+echo "    les cinq processus les plus gourmands en mémoire :"
+ps -eo pid,pmem,pcpu,etimes,comm --sort=-pmem 2>/dev/null | head -6 | sed 's/^/      /' || true
+
 # --- reprise après un déploiement coupé ---
 #
 # Trois déploiements de suite ont échoué, et le troisième a mis le jeu à
