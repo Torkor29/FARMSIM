@@ -170,9 +170,37 @@ else
   #
   # Sans borne, l'échec est le pire des trois : ni sauvegarde, ni déploiement,
   # et une demi-heure perdue à ne rien apprendre.
+  # Une sauvegarde relue ne se paie que s'il y a une migration à craindre.
+  #
+  # Le garde-fou protège d'une chose précise : une migration qui abîme les
+  # données au lieu d'échouer proprement. Quand le déploiement n'apporte
+  # aucune migration — le cas le plus fréquent, puisqu'on livre surtout du
+  # code — il n'y a rien dont se protéger, et la relecture complète coûte
+  # alors un quart d'heure de fenêtre pour rien.
+  #
+  # On compare les migrations présentes dans le dépôt à celles que la base dit
+  # avoir appliquées. Si la base est à jour, on prend quand même un
+  # instantané — la sauvegarde reste due, un bogue applicatif peut abîmer des
+  # données sans migration — mais sans le relire.
+  #
+  # En cas de doute (base muette, requête en échec), on retombe sur la
+  # sauvegarde complète : un garde-fou qui se désarme quand il ne comprend pas
+  # ne garde plus rien.
+  relire=1
+  appliquees="$(docker exec "${FARMSIM_DB_CONTAINER:-farmsim-db}" \
+      psql -U "${FARMSIM_DB_USER:-farmsim}" -d "${FARMSIM_DB_NAME:-farmsim}" -tAc \
+      'SELECT count(*) FROM _prisma_migrations WHERE finished_at IS NOT NULL' 2>/dev/null || true)"
+  presentes="$(find "$APP_DIR/apps/api/prisma/migrations" -mindepth 1 -maxdepth 1 -type d 2>/dev/null | wc -l)"
+  if [[ "$appliquees" =~ ^[0-9]+$ ]] && (( appliquees >= presentes )) && (( presentes > 0 )); then
+    echo "==> Base à jour ($appliquees migrations sur $presentes) : aucune migration à appliquer."
+    echo "    Instantané sans relecture — il n'y a pas de migration dont se protéger."
+    relire=0
+  fi
+
   echo "==> Sauvegarde avant migration"
   code=0
-  timeout 900 bash "$APP_DIR/scripts/farmsim-backup.sh" avant-deploi || code=$?
+  timeout 900 env FARMSIM_BACKUP_VERIFY="$relire" \
+    bash "$APP_DIR/scripts/farmsim-backup.sh" avant-deploi || code=$?
   if (( code == 124 )); then
     # 124 : la borne a parlé. On retente un instantané **sans relecture** —
     # l'arbitrage est détaillé dans `farmsim-backup.mjs`, et il se résume à
