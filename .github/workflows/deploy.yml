@@ -104,10 +104,6 @@ jobs:
     name: Déployer sur le VPS
     needs: verifier
     runs-on: ubuntu-latest
-    # La session SSH s'arrête d'elle-même à 45 minutes ; cette borne-ci couvre
-    # le reste de l'étape, pour qu'une panne réseau ne laisse pas un exécuteur
-    # tourner six heures — le défaut de GitHub.
-    timeout-minutes: 60
     steps:
       # Sans les trois secrets, l'étape suivante échouerait sur une erreur de
       # connexion incompréhensible. On le dit clairement, et on s'arrête là
@@ -177,29 +173,11 @@ jobs:
           username: ${{ secrets.VPS_USER }}
           key: ${{ secrets.VPS_SSH_KEY }}
           port: ${{ secrets.VPS_PORT || 22 }}
-          # Quarante-cinq minutes, et le chiffre vient d'une mesure.
-          #
-          # Vingt suffisaient tant que Docker retrouvait ses couches en cache :
-          # un déploiement qui ne changeait presque rien tenait en quatre
-          # minutes. Mais le VPS **construit l'image lui-même**, et dès qu'un
-          # paquet du dépôt change, la couche `pnpm -r build` est invalidée :
-          # mesuré sur ce serveur, six minutes et demie pour les quatre
-          # paquets, dont deux minutes vingt pour le seul bundle web, plus une
-          # minute de génération Prisma, plus l'assemblage de l'image. La
-          # session était coupée en plein `COPY` de l'étape finale, et le
-          # déploiement échouait sans que rien ne soit cassé — simplement, rien
-          # n'était livré non plus.
-          #
-          # Autrement dit, la borne tenait pour les déploiements sans
-          # conséquence et lâchait précisément pour ceux qui en avaient. À
-          # quarante-cinq, une reconstruction complète passe avec de la marge,
-          # et le garde-fou reste réel : un script vraiment bloqué ne tient pas
-          # la session ouverte indéfiniment.
-          #
-          # Le fond du problème n'est pas ici : c'est de construire l'image sur
-          # le VPS à chaque fois. La construire dans l'action et n'y pousser
-          # qu'une image prête ramènerait le déploiement à une minute.
-          command_timeout: 45m
+          # L'amorçage du monde peut prendre plusieurs minutes au premier
+          # démarrage suivant une migration : le script attend jusqu'à cinq
+          # minutes. Une image Docker sans cache (pnpm + Prisma + vite)
+          # dépasse souvent vingt minutes sur le VPS : on laisse quarante.
+          command_timeout: 40m
           # Le nom du site, pour que le script teste lui-même le passage par le
           # portier commun. Sans lui il sautait sa vérification finale et
           # annonçait « déployé » alors que seul le conteneur avait répondu,
