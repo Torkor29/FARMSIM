@@ -156,52 +156,108 @@ export function thermalAlert(penalty: number): "none" | "warn" | "danger" {
 /* ------------------------------------------------------------------ */
 
 /**
- * Herbe d'un enclos, en tonnes par case et par cycle, selon la saison `[GD]`.
+ * Charge d'un enclos, en bêtes par case `[GD]`.
  *
- * L'hiver ne donne rien : c'est ce qui rend la décision « je les laisse
- * dehors ? » réelle. On ne perd pas seulement du confort, on perd le
- * fourrage gratuit et il faut puiser dans le stock.
+ * Recopié de `PADDOCK.capacityPerCell` (`livestock.ts`) : l'importer d'ici
+ * créerait un cycle, `livestock.ts` important déjà `species.ts` qui importe le
+ * type de celui-ci. Un test tient les deux valeurs égales — tout le calibrage
+ * du pré se lit par rapport à cette charge, et les laisser diverger rendrait
+ * les trois constantes qui suivent fausses sans qu'aucune ne bouge.
  */
-export const GRASS_GROWTH: Record<Season, number> = {
-  SPRING: 0.09,
-  SUMMER: 0.075,
-  AUTUMN: 0.04,
-  WINTER: 0,
-};
-
-/**
- * Réserve d'herbe maximale d'un enclos, en tonnes par case `[GD]`.
- *
- * Descendue de 0,5 à 0,35, puis à 0,2, et les deux fois pour la même raison :
- * une réserve trop grasse fait traverser l'hiver sans jamais ouvrir le
- * hangar, et la décision « je rentre ou je nourris » n'existe plus.
- *
- * Le second ajustement est venu de l'allongement des saisons. Tant qu'une
- * saison durait un seul cycle d'élevage, le test d'équilibrage simulait dix
- * cycles d'hiver — un hiver imaginaire, dix fois trop long, que 0,35
- * suffisait à vider. La saison fait maintenant sept jours pour de bon, et à
- * 0,35 l'enclos finissait l'hiver encore à moitié plein.
- *
- * À 0,2, un enclos correctement chargé tient environ six jours de saison
- * morte : le joueur voit sa réserve fondre du premier au dernier jour de
- * l'hiver, et doit avoir tranché avant qu'elle touche le fond.
- */
-export const GRASS_MAX_PER_CELL = 0.2;
+export const PADDOCK_ANIMALS_PER_CELL = 2;
 
 /**
  * Herbe qu'une bête au pré prélève par cycle, en tonnes `[GD]`.
  *
- * Calée sur la charge : l'enclos accueille deux bêtes par case
- * (`PADDOCK.capacityPerCell`), donc un enclos **plein** prélève
- * `2 × 0,035 = 0,07 t` par case et par cycle — soit un peu moins que la
- * pousse d'été (0,075) et un peu plus que celle d'automne (0,04).
+ * **L'unité de tout ce qui suit.** La pousse et la réserve se lisent en
+ * multiples de cet ingéré, ce qui rend le calibrage lisible d'un coup d'œil :
+ * une case qui pousse à `0,048` nourrit 2,4 bêtes, une réserve de `0,32`
+ * tient seize cycles d'une bête.
  *
- * C'est ce calage qui fait exister la décision : à pleine charge, l'été passe
- * tout juste, l'automne entame la réserve, l'hiver la vide. À 0,011, la
- * pousse valait neuf fois l'ingéré et le pré était une source inépuisable —
- * le surpâturage était théorique et l'hiver indolore.
+ * ## Pourquoi 0,035 était devenu faux
+ *
+ * Ce chiffre a été calé quand un cycle d'élevage durait **six heures
+ * réelles**. Depuis le passage aux saisons de dix heures, le cycle suit
+ * `GAME_DAY_MS` et vaut 1 h 25 min 43 s : le même prélèvement « par cycle »
+ * se produit donc **4,2 fois plus souvent** à l'horloge murale. Ni la pousse,
+ * ni la réserve, ni la charge n'avaient été retouchées, et le pré se vidait
+ * d'autant plus vite. Mesuré : à pleine charge en hiver, une réserve pleine
+ * durait 4 h 06 réelles — un joueur qui se déconnecte le soir retrouvait un
+ * pré à nu.
+ *
+ * Ramené à 0,02, l'ingéré ne rend pas à lui seul les 4,2× : les deux autres
+ * constantes portent le reste, parce que rattraper le facteur sur le seul
+ * ingéré aurait rendu le pâturage gratuit (la pousse de printemps aurait
+ * nourri 4,5 bêtes par case).
  */
-export const GRASS_INTAKE_TONS = 0.035;
+export const GRASS_INTAKE_TONS = 0.02;
+
+/**
+ * Herbe d'un enclos, en tonnes par case et par cycle, selon la saison `[GD]`.
+ *
+ * Se lit en bêtes nourries par case : **2,8 au printemps, 2,4 l'été, 1,2 à
+ * l'automne, aucune l'hiver**. L'hiver ne donne rien, et c'est ce qui rend la
+ * décision « je les laisse dehors ? » réelle : on ne perd pas seulement du
+ * confort, on perd le fourrage gratuit et il faut puiser dans le stock.
+ *
+ * La moyenne des quatre saisons vaut `1,6` bête par case — c'est
+ * `SUSTAINABLE_STOCKING_RATE`, et c'est le vrai réglage de ce tableau. Les
+ * valeurs d'avant (0,09 / 0,075 / 0,04 / 0) donnaient 1,46, mais avec un
+ * ingéré de 0,035 : la même charge soutenable, sur un pré qui se vidait
+ * quatre fois plus vite en temps réel.
+ */
+export const GRASS_GROWTH: Record<Season, number> = {
+  SPRING: 0.056,
+  SUMMER: 0.048,
+  AUTUMN: 0.024,
+  WINTER: 0,
+};
+
+/**
+ * Charge que le pré nourrit sur une année entière, en bêtes par case `[GD]`.
+ *
+ * **Dérivée, jamais réglée** : c'est la pousse moyenne des quatre saisons
+ * divisée par l'ingéré d'une bête. Elle vaut 1,6 pour une capacité de sortie
+ * de 2 — autrement dit, un enclos rempli à **80 %** se nourrit tout seul sur
+ * l'année, et un enclos plein ne s'en sort pas sans le hangar.
+ *
+ * C'est le chiffre qui répond à « le pâturage est-il gratuit ? ». Non : au
+ * maximum de ce que l'enclos laisse sortir, le pré perd chaque année 70 % de
+ * sa réserve et passe trois cycles à sec. Un test le tient.
+ */
+export const SUSTAINABLE_STOCKING_RATE =
+  (GRASS_GROWTH.SPRING + GRASS_GROWTH.SUMMER + GRASS_GROWTH.AUTUMN + GRASS_GROWTH.WINTER) /
+  4 /
+  GRASS_INTAKE_TONS;
+
+/**
+ * Réserve d'herbe maximale d'un enclos, en tonnes par case `[GD]`.
+ *
+ * Seize fois l'ingéré d'une bête, soit **huit cycles à pleine charge** — 11 h
+ * 26 min réelles sans une seule repousse. C'est la constante qui décide de
+ * l'expérience réellement reprochée : elle est le tampon qui sépare deux
+ * connexions.
+ *
+ * ## Le trajet de ce nombre
+ *
+ * Il valait 0,5, puis 0,35, puis 0,2, et les trois fois pour la même raison :
+ * une réserve trop grasse fait traverser l'hiver sans jamais ouvrir le
+ * hangar. Sauf que le raisonnement se tenait en **cycles**, et qu'entre-temps
+ * un cycle a perdu les trois quarts de sa durée réelle. À 0,2 le tampon
+ * valait 4 h 06 à pleine charge, moins qu'une nuit.
+ *
+ * ## Pourquoi 0,32 et pas davantage
+ *
+ * Un hiver dure sept cycles. À pleine charge, un tampon de huit cycles laisse
+ * 13 % de réserve à la sortie de l'hiver : le joueur voit le fond arriver et
+ * doit avoir tranché. Au-delà de douze cycles, l'hiver ne pourrait plus
+ * entamer une réserve pleine et la décision disparaîtrait — c'est la borne
+ * haute, et 0,32 s'en tient à bonne distance.
+ *
+ * Rien à migrer : les réserves enregistrées (au plus 0,2 par case) sont
+ * simplement sous le nouveau plafond, et se remplissent à la première pousse.
+ */
+export const GRASS_MAX_PER_CELL = 16 * GRASS_INTAKE_TONS;
 
 /** Capacité d'herbe d'un enclos, en tonnes. */
 export function grassCapacity(paddockCells: number): number {
