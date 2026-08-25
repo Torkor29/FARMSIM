@@ -773,6 +773,15 @@ export function App() {
   const [pulseCells, setPulseCells] = useState<{ x: number; y: number }[]>([]);
   const [activeWork, setActiveWork] = useState<{
     type: MachineType;
+    /**
+     * La parcelle du chantier.
+     *
+     * Les coordonnées ci-dessous sont relatives au champ : sans cet
+     * identifiant, un chantier se rejouait sur la parcelle **affichée** et non
+     * sur la sienne. On changeait de champ pendant un labour, et le tracteur
+     * retournait à l'écran une culture qui n'était pas concernée.
+     */
+    parcelId: string;
     cells: { x: number; y: number }[];
     condition?: number;
     cut?: "harvest" | "mow";
@@ -2932,6 +2941,16 @@ export function App() {
   ) {
     for (const t of workTimers.current) window.clearTimeout(t);
     workTimers.current = [];
+    /*
+     * La parcelle est retenue **maintenant**, pas au moment où l'engin entre.
+     *
+     * Le matériel met quelques secondes à arriver, et le joueur peut avoir
+     * changé de champ entre-temps : lire la parcelle courante dans la
+     * minuterie enverrait l'engin sur celle qu'on regarde. C'est le champ sur
+     * lequel on a cliqué qui décide, et lui seul.
+     */
+    const parcelleDuChantier = activeParcelId;
+    if (!parcelleDuChantier) return;
     // L'engin envoyé au chantier est celui du garage : il arrive avec son
     // usure, visible sur sa carrosserie.
     const used = (player?.farm?.machines ?? []).find((m) => m.type === type);
@@ -2951,6 +2970,7 @@ export function App() {
       setPulseCells(cells);
       setActiveWork({
         type,
+        parcelId: parcelleDuChantier,
         cells,
         cut,
         haul: extra?.haul,

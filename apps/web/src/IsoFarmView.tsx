@@ -149,6 +149,17 @@ export type SupplyCrate = {
 
 export type ActiveWork = {
   type: MachineType;
+  /**
+   * La parcelle sur laquelle le chantier a lieu.
+   *
+   * Sans elle, un chantier lancé sur un champ se rejouait **sur celui qu'on
+   * regarde**. Les coordonnées de `cells` sont relatives à la parcelle : le
+   * tracteur, la poussière et les cases qui s'allument retrouvaient donc les
+   * mêmes x et y sur le champ voisin, et labouraient à l'écran une culture
+   * qui n'était pas concernée. Le joueur voyait sa parcelle se retourner sous
+   * ses yeux — sans que le serveur, lui, n'y touche.
+   */
+  parcelId: string;
   cells: { x: number; y: number }[];
   /** Palier catalogue, pour l'échelle du mesh. */
   tier?: number;
@@ -1204,6 +1215,19 @@ export function IsoFarmView({
     seasonAppliedRef.current = season;
   }, [season]);
 
+  /*
+   * Un chantier n'appartient qu'à sa parcelle.
+   *
+   * Les coordonnées de `cells` sont relatives au champ : sans ce filtre, un
+   * labour lancé sur « Pré du Moulin » se rejouait à l'identique sur « Mas
+   * d'Orme » dès qu'on y basculait — même tracteur, mêmes cases, mauvais
+   * terrain. Le joueur voyait sa parcelle se retourner sous ses yeux, cultures
+   * comprises, alors que le serveur n'y touchait pas. Rien n'était perdu, mais
+   * rien ne le disait non plus, et c'est la panique légitime que ça provoque
+   * qui coûte cher.
+   */
+  const chantierIci = activeWork && activeWork.parcelId === parcelId ? activeWork : null;
+
   const dataRef = useRef({
     cells,
     buildings,
@@ -1214,7 +1238,7 @@ export function IsoFarmView({
     hoverCell,
     previewBuilding,
     pulseCells,
-    activeWork,
+    activeWork: chantierIci,
     grazing,
     yardSignals,
     manurePiles,
@@ -1232,7 +1256,7 @@ export function IsoFarmView({
     hoverCell,
     previewBuilding,
     pulseCells,
-    activeWork,
+    activeWork: chantierIci,
     grazing,
     yardSignals,
     supplies,
