@@ -17,7 +17,7 @@
  */
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -114,5 +114,33 @@ describe("le conteneur du jeu a un vrai numéro 1", () => {
     // processus abandonnés — le serveur en compte 88 — et il ne répercute pas
     // `SIGTERM`, ce qui coûtait dix secondes à chaque `docker compose down`.
     assert.equal(valeur("farmsim", "init"), "true");
+  });
+});
+
+describe("l'image embarque ce dont le déploiement se sert", () => {
+  const DOCKERFILE = readFileSync(join(RACINE, "Dockerfile"), "utf8");
+  const DEPLOIEMENT = readFileSync(join(RACINE, "scripts", "vps-deploy.sh"), "utf8");
+
+  it("les scripts de maintenance sont copiés dans l'étape d'exécution", () => {
+    /*
+     * Le déploiement lance `farmsim-hacher-codes.mjs` **dans** le conteneur :
+     * c'est le seul endroit qui voit à la fois la base et le client Prisma.
+     * L'étape d'exécution ne copiait que `node_modules`, `apps` et
+     * `packages` — la commande aurait échoué sur « module introuvable », et
+     * les codes d'accès des comptes qui ne reviennent jamais seraient restés
+     * en clair sans que rien ne le signale.
+     */
+    assert.match(DOCKERFILE, /COPY --from=build[^\n]*\/app\/scripts \.\/scripts/);
+  });
+
+  it("chaque script lancé par le déploiement existe bel et bien", () => {
+    const lances = [...DEPLOIEMENT.matchAll(/node \/app\/scripts\/([\w.-]+)/g)].map((m) => m[1]);
+    assert.ok(lances.length > 0, "aucun script lancé — le motif de détection a-t-il changé ?");
+    for (const nom of new Set(lances)) {
+      assert.ok(
+        existsSync(join(RACINE, "scripts", nom)),
+        `${nom} est lancé par le déploiement mais n'existe pas dans scripts/`,
+      );
+    }
   });
 });

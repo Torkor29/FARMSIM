@@ -357,6 +357,12 @@ import { randomBytes, randomUUID } from "crypto";
 import path from "node:path";
 import { existsSync } from "node:fs";
 import { BAREMES, Limiteur, classer, cleAppelant } from "./rate-limit.js";
+import {
+  CODE_INUTILISABLE,
+  codeCorrespond,
+  doitEtreMigre,
+  hacherCode,
+} from "./access-code.js";
 import { empreinteSecours, nouveauCodeSecours, secoursCorrespond } from "./recovery.js";
 
 /**
@@ -2370,7 +2376,10 @@ async function seedNpcFarms() {
           email,
           displayName: name,
           specialization: spec,
-          accessCode: `npc-${parcel.id.slice(-8)}`,
+          // Un PNJ n'a personne au clavier : il n'a donc pas besoin d'un
+          // code, et trois cents codes en clair déductibles d'un identifiant
+          // public n'avaient rien à faire en base.
+          accessCode: CODE_INUTILISABLE,
           crd: 48_000,
           isNpc: true,
           lastSeenAt: new Date(0),
@@ -3930,7 +3939,9 @@ app.post("/auth/register", async (req, res) => {
           email,
           displayName,
           specialization: specialization ?? "CEREALIER",
-          accessCode: accessCode ?? "ferme",
+          // Haché dès l'inscription : un compte créé aujourd'hui n'a jamais
+          // de code en clair en base, pas même le temps d'une connexion.
+          accessCode: await hacherCode(accessCode ?? "ferme"),
           lastSeenAt: new Date(),
         },
       });
@@ -4053,9 +4064,28 @@ app.post("/auth/login", async (req, res) => {
     return;
   }
   const user = await findUserByEmail(body.data.email);
-  if (!user || user.accessCode !== body.data.accessCode) {
+  if (!user || !(await codeCorrespond(user.accessCode, body.data.accessCode))) {
     res.status(401).json({ error: "Email ou code incorrect" });
     return;
+  }
+  /*
+   * Rattrapage des comptes encore en clair.
+   *
+   * La connexion réussie est le seul instant où l'on est sûr d'avoir affaire
+   * au propriétaire — il vient de donner son code. On remplace donc la valeur
+   * en clair par son empreinte, ici et pas ailleurs. Aucun compte n'est
+   * invalidé : le joueur se reconnectera avec le même code, vérifié cette
+   * fois contre l'empreinte.
+   *
+   * Ce n'est pas le seul chemin. Les comptes qui ne se reconnectent jamais ne
+   * seraient jamais migrés ; `scripts/farmsim-hacher-codes.mjs` balaie ce qui
+   * reste, sans invalider personne non plus.
+   */
+  if (doitEtreMigre(user.accessCode)) {
+    await prisma.user.update({
+      where: { id: user.id },
+      data: { accessCode: await hacherCode(body.data.accessCode) },
+    });
   }
   const resume = await buildResumeForUser(user.id);
   const token = await createSession(user.id);
@@ -4119,7 +4149,7 @@ app.post("/auth/recover", async (req, res) => {
   await prisma.session.deleteMany({ where: { userId: user.id } });
   await prisma.user.update({
     where: { id: user.id },
-    data: { accessCode: body.data.accessCode },
+    data: { accessCode: await hacherCode(body.data.accessCode) },
   });
   const recoveryCode = await remettreCodeSecours(user.id);
   const resume = await buildResumeForUser(user.id);
@@ -4172,7 +4202,10 @@ app.patch("/auth/me", async (req, res) => {
   }
   const { displayName, email, accessCode, currentAccessCode } = parsed.data;
   const needsSecret = Boolean(email || accessCode);
-  if (needsSecret && currentAccessCode !== auth.user.accessCode) {
+  if (
+    needsSecret &&
+    !(currentAccessCode && (await codeCorrespond(auth.user.accessCode, currentAccessCode)))
+  ) {
     res.status(403).json({ error: "Code d'accès actuel incorrect" });
     return;
   }
@@ -4187,7 +4220,15 @@ app.patch("/auth/me", async (req, res) => {
     }
     data.email = email.trim();
   }
-  if (accessCode && accessCode !== auth.user.accessCode) data.accessCode = accessCode;
+  /*
+   * Le nouveau code, haché — et comparé à l'ancien **par vérification**, pas
+   * par égalité de chaînes : depuis que la colonne porte une empreinte, un
+   * `!==` entre un code saisi et une empreinte est toujours vrai, et l'on
+   * réécrivait la ligne pour un code inchangé.
+   */
+  if (accessCode && !(await codeCorrespond(auth.user.accessCode, accessCode))) {
+    data.accessCode = await hacherCode(accessCode);
+  }
 
   if (!Object.keys(data).length) {
     res.json({ player: await playerPayload(auth.user.id) });

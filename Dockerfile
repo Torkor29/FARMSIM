@@ -103,6 +103,14 @@ ENV PRISMA_SCHEMA_ENGINE_BINARY=/usr/local/bin/schema-engine
 COPY --from=build --chown=farmsim:farmsim /app/node_modules ./node_modules
 COPY --from=build --chown=farmsim:farmsim /app/apps ./apps
 COPY --from=build --chown=farmsim:farmsim /app/packages ./packages
+# Les scripts de maintenance.
+#
+# Ils n'y étaient pas, et ils devaient y être : `farmsim-hacher-codes.mjs` est
+# lancé par le déploiement à l'intérieur de ce conteneur — c'est le seul
+# endroit qui voit à la fois la base et le client Prisma. Sans cette copie, la
+# commande échoue sur « module introuvable » et les codes d'accès des comptes
+# qui ne se reconnectent jamais restent en clair.
+COPY --from=build --chown=farmsim:farmsim /app/scripts ./scripts
 
 USER farmsim
 EXPOSE 8080
