@@ -88,6 +88,35 @@ for cid in $(docker ps --format '{{.ID}} {{.Command}}' 2>/dev/null \
   docker rm -f "$cid" >/dev/null 2>&1 || true
 done
 
+# --- le disque ---
+#
+# Le symptôme qui a mis des heures à se laisser lire : `docker ps` et
+# `docker inspect` prenaient **plusieurs minutes**, le script de sauvegarde
+# mettait dix minutes à atteindre sa première ligne, `/health` répondait mais
+# `/world` — qui lit la base — expirait. Aucune construction orpheline ne
+# tournait ; la machine n'était pas occupée, elle était **pleine**.
+#
+# Trois constructions ratées d'affilée laissent derrière elles autant de jeux
+# de couches intermédiaires. Sur un VPS modeste ça suffit à saturer le disque,
+# et un disque saturé ne ralentit pas seulement Docker : PostgreSQL ne peut
+# plus écrire, donc plus se sauvegarder, donc le déploiement s'arrête sur un
+# échec de sauvegarde qui n'a rien à voir avec la sauvegarde.
+#
+# On fait donc le ménage avant tout le reste, et on l'affiche : c'est la seule
+# façon de savoir, la prochaine fois, si le disque était en cause.
+#
+# `--volumes` n'est **jamais** employé : les données du jeu vivent dans un
+# volume nommé, et cette option les effacerait. Les images encore utilisées
+# par un conteneur en marche sont conservées par construction.
+echo "==> Place disque avant ménage"
+df -h / | tail -n +2 | awk '{print "    " $5 " occupé, " $4 " libre sur " $2}'
+echo "==> Ménage Docker (cache de construction et images orphelines)"
+timeout 300 docker builder prune -af >/dev/null 2>&1 || echo "    (cache : ménage incomplet)"
+timeout 300 docker image prune -f >/dev/null 2>&1 || echo "    (images : ménage incomplet)"
+timeout 120 docker container prune -f >/dev/null 2>&1 || true
+echo "==> Place disque après ménage"
+df -h / | tail -n +2 | awk '{print "    " $5 " occupé, " $4 " libre sur " $2}'
+
 # --- git ---
 #
 # Le VPS a déjà perdu GitHub en plein `git fetch` (SSL connection timeout)
