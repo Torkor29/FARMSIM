@@ -3477,6 +3477,20 @@ export function App() {
     }
   }
 
+  /**
+   * Achète une parcelle — et laisse la caméra où elle est.
+   *
+   * Elle appelait `setActiveParcelId(parcelId)` juste après l'achat : la vue
+   * sautait sur la nouvelle parcelle sans que personne l'ait demandé. C'est ce
+   * que le joueur décrivait par « après un achat, mes parcelles ne sont plus
+   * au même endroit » — ce n'étaient pas les parcelles qui bougeaient, c'était
+   * lui qu'on téléportait, au milieu du chantier qu'il était en train de
+   * suivre.
+   *
+   * On achète souvent une terre en prévision, pas pour y aller tout de suite.
+   * Le déplacement redevient donc un geste : la nouvelle parcelle apparaît
+   * dans « Mes parcelles », et c'est un clic qui y emmène.
+   */
   async function buyAdjacent(parcelId: string) {
     if (!player) return;
     setBusy(true);
@@ -3485,10 +3499,14 @@ export function App() {
         method: "POST",
         body: JSON.stringify({ userId: player.id }),
       });
-      await refreshPlayer();
+      const apres = await refreshPlayer();
       await refreshMeta();
-      setActiveParcelId(parcelId);
-      setMsg("Parcelle acquise");
+      const achetee = apres?.farm?.parcels.find((p) => p.id === parcelId);
+      setMsg(
+        achetee
+          ? `${achetee.label} est à vous — elle vous attend dans « Mes parcelles »`
+          : "Parcelle acquise",
+      );
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e));
     } finally {

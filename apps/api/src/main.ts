@@ -615,9 +615,35 @@ async function createParcelGrid(parcelId: string, gridW: number, gridH: number) 
   await prisma.parcelCell.createMany({ data });
 }
 
+/**
+ * L'ordre des parcelles d'une ferme. **Le même partout, et jamais l'ordre du tas.**
+ *
+ * Un joueur a signalé que ses parcelles « ne sont plus au même endroit ». La
+ * cause est ici : aucune de ces lectures ne portait de `ORDER BY`. PostgreSQL
+ * rend alors les lignes dans l'ordre physique du tas, et un `UPDATE` réécrit
+ * la ligne ailleurs. Or `Parcel.fertility` est réécrite à chaque semis, labour,
+ * épandage et moisson — six routes le font. La parcelle qu'on vient de
+ * travailler passait donc en fin de liste, et « Mes parcelles » se
+ * réorganisait tout seul entre deux sessions.
+ *
+ * Mesuré sur PostgreSQL 16, sur la requête exacte que produit `farmInclude()` :
+ * l'achat d'une parcelle, lui, ne dérange rien — la nouvelle venue s'ajoute à
+ * la fin. C'est le premier coup de charrue qui déplace tout.
+ *
+ * La date d'entrée dans la ferme d'abord, l'identifiant ensuite pour départager
+ * ce que la migration n'a pas su dater. Les indatables en tête (`nulls:
+ * "first"`), donc la parcelle de départ avant les acquisitions : un achat se
+ * range à la fin sans jamais déplacer ce qui précède.
+ */
+const ORDRE_PARCELLES = [
+  { acquiredAt: { sort: "asc", nulls: "first" } },
+  { id: "asc" },
+] as const satisfies Prisma.ParcelOrderByWithRelationInput[];
+
 function farmInclude() {
   return {
     parcels: {
+      orderBy: ORDRE_PARCELLES,
       include: {
         zone: true,
         cells: true,
@@ -881,7 +907,7 @@ async function capitauxPropres(userId: string): Promise<{
         include: {
           machines: true,
           inventory: true,
-          parcels: { include: { buildings: true } },
+          parcels: { orderBy: ORDRE_PARCELLES, include: { buildings: true } },
         },
       },
     },
@@ -2358,7 +2384,10 @@ async function seedNpcFarms() {
       const farm = await prisma.farm.create({
         data: { userId: user.id, name },
       });
-      await prisma.parcel.update({ where: { id: parcel.id }, data: { farmId: farm.id } });
+      await prisma.parcel.update({
+        where: { id: parcel.id },
+        data: { farmId: farm.id, acquiredAt: new Date() },
+      });
       await prisma.machine.create({
         data: { farmId: farm.id, type: "TRACTOR", parkedParcelId: parcel.id },
       });
@@ -2387,7 +2416,7 @@ async function publishFromConsignes() {
       OR: [{ isNpc: true }, { lastSeenAt: { lt: cutoff } }, { lastSeenAt: null }],
     },
     include: {
-      farm: { include: { parcels: { include: { cells: true, zone: true } } } },
+      farm: { include: { parcels: { orderBy: ORDRE_PARCELLES, include: { cells: true, zone: true } } } },
     },
   });
   const now = Date.now();
@@ -2506,7 +2535,7 @@ async function publishFromConsignes() {
 async function tickNpcFarms() {
   const npcs = await prisma.user.findMany({
     where: { isNpc: true, specialization: "CEREALIER" },
-    include: { farm: { include: { parcels: { include: { cells: true, zone: true } } } } },
+    include: { farm: { include: { parcels: { orderBy: ORDRE_PARCELLES, include: { cells: true, zone: true } } } } },
   });
   const now = Date.now();
   const growMs = CROP_DEFS.WHEAT.growMs;
@@ -2920,7 +2949,7 @@ app.post("/world/claim", async (req, res) => {
     await prisma.$transaction(async (tx) => {
       const user = await tx.user.findUnique({
         where: { id: auth.user.id },
-        include: { farm: { include: { parcels: true, machines: true } } },
+        include: { farm: { include: { parcels: { orderBy: ORDRE_PARCELLES }, machines: true } } },
       });
       if (!user) throw new Error("NOT_FOUND");
       if (user.farm && user.farm.parcels.length > 0) throw new Error("ALREADY_SETTLED");
@@ -2950,7 +2979,7 @@ app.post("/world/claim", async (req, res) => {
       if (!farm) {
         farm = await tx.farm.create({
           data: { userId: user.id, name: `Ferme ${user.displayName}` },
-          include: { parcels: true, machines: true },
+          include: { parcels: { orderBy: ORDRE_PARCELLES }, machines: true },
         });
       }
 
@@ -2975,7 +3004,10 @@ app.post("/world/claim", async (req, res) => {
         }
       }
 
-      await tx.parcel.update({ where: { id: parcel.id }, data: { farmId: farm.id } });
+      await tx.parcel.update({
+        where: { id: parcel.id },
+        data: { farmId: farm.id, acquiredAt: new Date() },
+      });
 
       const tractor = await tx.machine.findFirst({
         where: { farmId: farm.id, type: "TRACTOR" },
@@ -3291,7 +3323,7 @@ app.post("/dev/grant", async (req, res) => {
 
   const user = await prisma.user.findUnique({
     where: { id: auth.user.id },
-    include: { farm: { include: { parcels: true, machines: true } } },
+    include: { farm: { include: { parcels: { orderBy: ORDRE_PARCELLES }, machines: true } } },
   });
   if (!user) {
     res.status(404).json({ error: "Joueur introuvable" });
@@ -3732,7 +3764,7 @@ async function buildResumeForUser(userId: string) {
     include: {
       farm: {
         include: {
-          parcels: { include: { cells: true, zone: true } },
+          parcels: { orderBy: ORDRE_PARCELLES, include: { cells: true, zone: true } },
         },
       },
     },
@@ -3925,7 +3957,10 @@ app.post("/auth/register", async (req, res) => {
         const fresh = await tx.user.findUnique({ where: { id: u.id } });
         if (!fresh || !peutPayer(fresh, parcel.landPrice)) throw new Error("INSUFFICIENT_FUNDS");
         await debit(tx, u.id, parcel.landPrice, "TERRES", "Parcelle de départ");
-        await tx.parcel.update({ where: { id: parcel.id }, data: { farmId: farm.id } });
+        await tx.parcel.update({
+          where: { id: parcel.id },
+          data: { farmId: farm.id, acquiredAt: new Date() },
+        });
         const machine = await tx.machine.findFirst({ where: { farmId: farm.id } });
         if (machine) {
           await tx.machine.update({
@@ -4796,7 +4831,7 @@ app.post("/parcels/:id/buy", async (req, res) => {
   }
   const user = await prisma.user.findUnique({
     where: { id: body.data.userId },
-    include: { farm: { include: { parcels: true } } },
+    include: { farm: { include: { parcels: { orderBy: ORDRE_PARCELLES } } } },
   });
   if (!user?.farm) {
     res.status(404).json({ error: "Ferme introuvable" });
@@ -4847,7 +4882,13 @@ app.post("/parcels/:id/buy", async (req, res) => {
     }
     await tx.parcel.update({
       where: { id: target.id },
-      data: { farmId: user.farm!.id, landPrice: quote.marketValue },
+      /*
+       * La date d'entrée dans la ferme, et c'est elle qui tient l'ordre de la
+       * liste. Sans elle, la nouvelle venue n'aurait pas de rang et se
+       * rangerait où PostgreSQL voudrait — c'est-à-dire ailleurs à chaque
+       * écriture sur la table.
+       */
+      data: { farmId: user.farm!.id, landPrice: quote.marketValue, acquiredAt: new Date() },
     });
     return tx.user.findUnique({
       where: { id: user.id },
@@ -4880,7 +4921,7 @@ app.get("/parcels/:id/quote", async (req, res) => {
   }
   const farm = await prisma.farm.findUnique({
     where: { userId: auth.user.id },
-    include: { parcels: true },
+    include: { parcels: { orderBy: ORDRE_PARCELLES } },
   });
   const owned = farm?.parcels ?? [];
   const quote = await quoteParcel(target, owned, auth.user.level);
@@ -4935,7 +4976,10 @@ app.get("/parcels/:id/voisinage", async (req, res) => {
   }
 
   const [farm, autour] = await Promise.all([
-    prisma.farm.findUnique({ where: { userId: auth.user.id }, include: { parcels: true } }),
+    prisma.farm.findUnique({
+      where: { userId: auth.user.id },
+      include: { parcels: { orderBy: ORDRE_PARCELLES } },
+    }),
     prisma.parcel.findMany({
       where: {
         zoneId: centre.zoneId,
@@ -5692,7 +5736,7 @@ app.post("/farm/fuel", async (req, res) => {
   }
   const user = await prisma.user.findUnique({
     where: { id: body.data.userId },
-    include: { farm: { include: { parcels: { include: { zone: true } } } } },
+    include: { farm: { include: { parcels: { orderBy: ORDRE_PARCELLES, include: { zone: true } } } } },
   });
   if (!user?.farm) {
     res.status(404).json({ error: "Ferme introuvable" });
@@ -5740,7 +5784,7 @@ app.get("/farm/processing", async (req, res) => {
       farm: {
         include: {
           inventory: true,
-          parcels: { include: { buildings: true } },
+          parcels: { orderBy: ORDRE_PARCELLES, include: { buildings: true } },
         },
       },
     },
@@ -9995,7 +10039,14 @@ app.post("/machines/buy", async (req, res) => {
   const prix = machineCost(def.type, tier);
   const user = await prisma.user.findUnique({
     where: { id: body.data.userId },
-    include: { farm: { include: { machines: true, parcels: { include: { buildings: true } } } } },
+    include: {
+      farm: {
+        include: {
+          machines: true,
+          parcels: { orderBy: ORDRE_PARCELLES, include: { buildings: true } },
+        },
+      },
+    },
   });
   if (!user?.farm) {
     res.status(404).json({ error: "Ferme introuvable" });
