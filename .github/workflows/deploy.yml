@@ -272,4 +272,33 @@ jobs:
             # ne répond pas — un déploiement lent vaut mieux que pas de
             # déploiement du tout. Voir `scripts/vps-deploy.sh`.
             IMAGE='${{ needs.construire.outputs.image }}:${{ github.sha }}'
-            sudo -n bash -c "curl -fsSL https://raw.githubusercontent.com/Torkor29/FARMSIM/main/scripts/vps-deploy.sh | FARMSIM_DOMAIN='$DOMAINE' FARMSIM_IMAGE='$IMAGE' bash"
+            URL='https://raw.githubusercontent.com/Torkor29/FARMSIM/main/scripts/vps-deploy.sh'
+            # On télécharge le script dans un fichier, puis on l'exécute — et
+            # surtout pas `curl … | bash`.
+            #
+            # Mesuré, et c'est le défaut le plus coûteux de toute cette série :
+            #
+            #     curl: (35) Recv failure: Connection reset by peer
+            #     ✅ Successfully executed commands to all hosts.
+            #
+            # Le téléchargement échoue, `bash` reçoit un flux vide, ne fait
+            # rien et sort avec le code 0 — c'est **son** code que le tube
+            # retient, pas celui de `curl`. Le déploiement a duré cinquante-six
+            # secondes, n'a rien déployé, et s'est déclaré réussi. Un
+            # déploiement qui ment sur son résultat est pire qu'un déploiement
+            # qui échoue : on cherche la panne partout ailleurs.
+            #
+            # Le danger jumeau est plus grave encore : un téléchargement
+            # **tronqué** fait exécuter un demi-script. Celui-ci arrête des
+            # conteneurs avant de les recréer ; s'interrompre au milieu laisse
+            # le jeu à terre. `bash -n` relit le fichier entier avant de le
+            # lancer, ce qu'un tube ne permet structurellement pas.
+            sudo -n bash -c "
+              set -euo pipefail
+              script=\$(mktemp)
+              trap 'rm -f \"\$script\"' EXIT
+              curl -fsSL --retry 3 --retry-delay 2 --max-time 180 -o \"\$script\" '$URL'
+              test -s \"\$script\"
+              bash -n \"\$script\"
+              FARMSIM_DOMAIN='$DOMAINE' FARMSIM_IMAGE='$IMAGE' bash \"\$script\"
+            "
