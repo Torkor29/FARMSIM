@@ -69,30 +69,37 @@ fi
 
 # --- git ---
 #
-# Chaque commande réseau a une borne et trois essais. Sans borne, le
-# `git fetch` du déploiement raté a tenu la session **quinze minutes** avant
-# d'admettre « SSL connection timeout » — un quart d'heure passé à ne rien
-# faire, et le déploiement mort sans que rien n'ait été tenté deux fois. Une
-# panne réseau passagère ne doit pas coûter une mise en ligne.
-reessayer() {
-  local etiquette="$1"; shift
-  local i
-  for i in 1 2 3; do
-    if timeout 180 "$@"; then return 0; fi
-    echo "    $etiquette : essai $i/3 sans succès" >&2
-    sleep $((i * 10))
+# Le VPS a déjà perdu GitHub en plein `git fetch` (SSL connection timeout)
+# et Docker Hub en plein pull. Quatre essais, avec une pause qui double :
+# 4 s, 8 s, 16 s, 32 s. Un seul essai laissait le déploiement en échec alors
+# que le jeu tournait encore très bien.
+#
+# Chaque essai est **borné à trois minutes**, et c'est cette borne qui fait le
+# travail. La panne observée n'était pas une erreur rapide mais un blocage :
+# le `git fetch` du dernier déploiement a tenu la session un quart d'heure
+# avant d'admettre qu'il n'aboutirait pas. Réessayer sans borne ne l'aurait
+# pas rattrapé — ça aurait fait quatre quarts d'heure au lieu d'un.
+git_essaie() {
+  local i attente
+  for i in 1 2 3 4; do
+    if timeout 180 "$@"; then
+      return 0
+    fi
+    attente=$((4 * 2 ** (i - 1)))
+    echo "    essai $i/4 échoué — nouvelle tentative dans ${attente}s"
+    sleep "$attente"
   done
-  echo "ERROR: $etiquette a échoué trois fois." >&2
+  echo "ERROR: impossible de joindre GitHub après 4 essais." >&2
   return 1
 }
 
 mkdir -p "$(dirname "$APP_DIR")"
 if [[ ! -d "$APP_DIR/.git" ]]; then
   rm -rf "$APP_DIR"
-  reessayer "clone" git clone --branch "$BRANCH" "$REPO_URL" "$APP_DIR"
+  git_essaie git clone --branch "$BRANCH" "$REPO_URL" "$APP_DIR"
 else
   cd "$APP_DIR"
-  reessayer "fetch" git fetch origin
+  git_essaie git fetch origin
   git checkout "$BRANCH"
   git reset --hard "origin/$BRANCH"
   git clean -fd
