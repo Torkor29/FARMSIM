@@ -6616,8 +6616,13 @@ button.tiny {
 /* —— Calendrier des cultures ——
    Le pendant clair du calendrier de Farming Simulator : mêmes deux bandes,
    même lecture d'un coup d'œil, mais dans la crème et la sarcelle du jeu
-   plutôt que dans son noir. Les colonnes sont les sept jours de la semaine,
-   parce que l'année de jeu en fait une — le joueur n'a rien à convertir. */
+   plutôt que dans son noir.
+
+   Les colonnes étaient les sept jours de la semaine, parce que l'année de jeu
+   en faisait une. C'était le défaut à corriger : un joueur du week-end ne
+   voyait que deux saisons sur quatre, à vie. Ce sont maintenant les quatre
+   saisons — quatre colonnes au lieu de sept, donc plus larges, ce dont la
+   grille se charge seule par `--jours`. */
 .calendrier-ouvrir {
   position: fixed;
   right: max(0.9rem, env(safe-area-inset-right));
@@ -6742,6 +6747,22 @@ button.tiny {
 .barre { display: block; height: 0.4rem; border-radius: 999px; }
 .barre.semis { background: #7cc36a; }
 .barre.recolte { background: #d0743c; }
+
+.calendrier-aujourdhui { margin: 0.35rem 0 0; font-size: 0.82rem; }
+.calendrier-aujourdhui em { font-style: normal; color: var(--muted); }
+
+/* Le détail « semer tôt ou tard ».
+   Replié par défaut : c'est la réponse à la deuxième question, et l'ouvrir
+   d'office repousserait la première — le tableau — hors de l'écran. */
+.calendrier-detail { margin-top: 0.8rem; font-size: 0.78rem; }
+.calendrier-detail summary {
+  cursor: pointer;
+  color: var(--teal-500);
+  padding: 0.2rem 0;
+}
+.calendrier-detail > ul { margin: 0.4rem 0 0; padding-left: 1rem; display: grid; gap: 0.4rem; }
+.calendrier-detail ul ul { margin: 0.15rem 0 0; padding-left: 0.9rem; color: var(--muted); }
+.calendrier-detail li { line-height: 1.35; }
 
 @media (max-width: 640px) {
   .calendrier { width: calc(100vw - 1rem); right: 0.5rem; padding: 0.75rem 0.6rem 0.9rem; }

@@ -77,6 +77,22 @@ async function appel(
     method: opts.methode ?? "GET",
     headers: {
       "content-type": "application/json",
+      /*
+       * Une connexion par appel, et surtout pas de réutilisation.
+       *
+       * `fetch` garde ses connexions ouvertes dans un pool ; le serveur, lui,
+       * ferme les siennes après cinq secondes d'inactivité — c'est le défaut
+       * de Node. Or plusieurs tests posent leur décor avec `prismaExec`, qui
+       * lance `npx prisma` en **synchrone** : quatre cases à marquer, et six
+       * secondes passent sans qu'aucun octet ne circule. Le serveur ferme sa
+       * moitié de la socket, `fetch` la ressort quand même du pool au test
+       * suivant, et l'appel meurt sur « other side closed » — un échec qui
+       * n'a rien à voir avec ce que le test mesure et qui accuse la route.
+       *
+       * Une suite d'intégration n'a aucun besoin de garder ses connexions :
+       * on les ferme, et la classe entière de faux échecs disparaît.
+       */
+      connection: "close",
       ...(opts.jeton ? { authorization: `Bearer ${opts.jeton}` } : {}),
     },
     ...(opts.corps === undefined ? {} : { body: JSON.stringify(opts.corps) }),

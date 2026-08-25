@@ -20,7 +20,21 @@ describe("stabilité du marché sur la durée", () => {
     let stockTons = bounds.depth;
     const history: number[] = [];
     for (let i = 0; i < ticks; i++) {
-      const pressure = marketNpcPressure({ weatherStates: states });
+      /*
+       * On passe le cours et la référence : sans eux, `marketNpcPressure`
+       * retombe sur des flux **inélastiques**, et c'est l'élasticité qui tient
+       * le marché — les vendeurs se retirent quand le cours cède, les
+       * acheteurs reviennent. Ce harnais était l'un des « vieux tests » que la
+       * doc de la fonction mentionne : il simulait un carnet plein en
+       * permanence, sans personne pour réagir au prix, et vérifiait ensuite
+       * que le prix ne s'effondrait pas. Il ne tenait que parce que le cours
+       * réagissait peu par saison.
+       */
+      const pressure = marketNpcPressure({
+        weatherStates: states,
+        price,
+        reference: bounds.initial,
+      });
       const r = tickMarket({
         commodity,
         price,

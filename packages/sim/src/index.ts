@@ -22,6 +22,7 @@ import {
   DIRT_DIRTY_THRESHOLD,
   weedYieldFactor,
   GAME_DAY_MS,
+  SEASON_REAL_MS,
   SIM_TICK_MS,
   currentSeason,
   growthRate,
@@ -252,14 +253,24 @@ export function integrateGrowth(opts: {
   while (curseur < fin && gardeFou < MAX_GROWTH_DAYS) {
     const jour = Math.floor(curseur / GAME_DAY_MS);
     const finDuJour = (jour + 1) * GAME_DAY_MS;
-    const tranche = Math.min(fin, finDuJour) - curseur;
+    /*
+     * Même découpage que `projectReadyAt`, et c'est le point : ces deux
+     * fonctions doivent lire la **même** grille. L'une avance la barre de
+     * progression, l'autre annonce la date de maturité ; si elles n'intégraient
+     * pas la même chose, la barre atteindrait 100 % un moment et la récolte
+     * s'ouvrirait un autre — le genre d'écart qu'un joueur voit tout de suite
+     * et qu'aucun test ne regarde.
+     */
+    const finDeSaison = (Math.floor(curseur / SEASON_REAL_MS) + 1) * SEASON_REAL_MS;
+    const finDeTranche = Math.min(fin, finDuJour, finDeSaison);
+    const tranche = finDeTranche - curseur;
     const saison = currentSeason(opts.hemisphere, curseur);
     const ciel =
       opts.koppen && opts.zoneCode
         ? weatherForDay(opts.koppen, saison, opts.zoneCode, jour)
         : undefined;
     acquis += tranche * growthRate(opts.crop, saison, ciel);
-    curseur = Math.min(fin, finDuJour);
+    curseur = Math.max(finDeTranche, curseur + 1);
     gardeFou += 1;
   }
   return acquis;
@@ -286,7 +297,23 @@ export function projectReadyAt(opts: {
   for (let i = 0; i < MAX_GROWTH_DAYS; i++) {
     const jour = Math.floor(curseur / GAME_DAY_MS);
     const finDuJour = (jour + 1) * GAME_DAY_MS;
-    const tranche = finDuJour - curseur;
+    /*
+     * On découpe aussi aux frontières de **saison**, pas seulement de jour.
+     *
+     * Une saison fait sept jours de jeu pleins, donc les deux grilles
+     * coïncident : ce `min` ne devrait jamais trancher. Il est là parce que
+     * rien dans le code n'oblige la saison à contenir un nombre entier de
+     * jours — c'est un réglage, pas une loi — et que le jour où ce ne serait
+     * plus le cas, un pas d'un jour entier lirait la saison du **début** du
+     * pas et l'appliquerait à toute la tranche : la vitesse de l'hiver
+     * s'appliquerait à des heures de printemps, sans que rien ne le signale.
+     *
+     * Le plancher d'une milliseconde évite qu'une frontière tombant à
+     * l'ulp près sur le curseur fasse tourner la boucle sans avancer.
+     */
+    const finDeSaison = (Math.floor(curseur / SEASON_REAL_MS) + 1) * SEASON_REAL_MS;
+    const finDeTranche = Math.max(Math.min(finDuJour, finDeSaison), curseur + 1);
+    const tranche = finDeTranche - curseur;
     const saison = currentSeason(opts.hemisphere, curseur);
     const ciel =
       opts.koppen && opts.zoneCode
@@ -295,16 +322,16 @@ export function projectReadyAt(opts: {
     const vitesse = growthRate(opts.crop, saison, ciel);
     const gain = tranche * vitesse;
     if (acquis + gain >= opts.growMs) {
-      // Vitesse nulle : la culture n'avance pas ce jour-là, on passe au
-      // suivant plutôt que de diviser par zéro.
+      // Vitesse nulle : la culture n'avance pas sur cette tranche, on passe à
+      // la suivante plutôt que de diviser par zéro.
       if (vitesse <= 0) {
-        curseur = finDuJour;
+        curseur = finDeTranche;
         continue;
       }
       return Math.round(curseur + (opts.growMs - acquis) / vitesse);
     }
     acquis += gain;
-    curseur = finDuJour;
+    curseur = finDeTranche;
   }
   return curseur;
 }
@@ -832,29 +859,38 @@ function weatherTransitions(
  * sont désormais de l'ordre de ce que produit une ferme, et le joueur devient
  * un acteur de son marché — d'abord négligeable, puis pesant.
  */
-export const NPC_SUPPLY_PER_DAY = 90;
+export const NPC_SUPPLY_PER_SEASON = 160;
 
 /**
  * Ce que les voisins mettent au marché à chaque tick.
  *
- * Dérivé du volume **par jour de jeu**, et non posé par tick : écrit par tick,
- * le flux dépendait à la fois du pas de simulation et de la durée d'un jour.
- * Le jour est passé de quinze minutes à six heures pour que l'année tombe sur
- * la semaine réelle — les voisins auraient produit vingt-quatre fois plus par
- * saison, et la moisson du joueur aurait de nouveau été noyée. C'est
- * exactement le défaut d'origine, par une autre porte.
+ * Dérivé d'un volume **par saison**, et non posé par tick : écrit par tick, le
+ * flux dépendrait du pas de simulation, ce qui n'a aucun sens agricole.
+ *
+ * Il a d'abord été écrit par jour de jeu, et c'était encore une unité de trop :
+ * le voisinage cultive les mêmes plantes que le joueur, sur le même calendrier.
+ * Quand le blé est devenu la céréale d'hiver qu'il aurait toujours dû être —
+ * semé à l'automne, moissonné l'été, près de trois saisons — la récolte du
+ * joueur s'est espacée d'autant, mais pas celle des voisins : à volume par
+ * jour constant, ils produisaient quatre fois plus par cycle cultural, et la
+ * moisson du joueur repassait sous le bruit. C'est le défaut d'origine, par
+ * une troisième porte.
+ *
+ * Cent soixante tonnes par saison, c'est l'ordre de grandeur de neuf parcelles
+ * de blé — un voisinage, pas un marché mondial. C'était l'intention depuis le
+ * début ; seule l'unité qui la portait était fausse.
  */
-export const NPC_BASE_SUPPLY = (NPC_SUPPLY_PER_DAY * SIM_TICK_MS) / GAME_DAY_MS;
+export const NPC_BASE_SUPPLY = (NPC_SUPPLY_PER_SEASON * SIM_TICK_MS) / SEASON_REAL_MS;
 
 /**
  * La demande égale l'offre en moyenne : c'est la **saison** qui creuse
  * l'excédent d'automne et la pénurie de printemps, pas un déséquilibre
  * permanent qui ferait dériver le cours dans un seul sens.
  */
-export const NPC_DEMAND_PER_DAY = 90;
+export const NPC_DEMAND_PER_SEASON = 160;
 
-/** Idem côté demande, dérivée du volume par jour de jeu. */
-export const NPC_BASE_DEMAND = (NPC_DEMAND_PER_DAY * SIM_TICK_MS) / GAME_DAY_MS;
+/** Idem côté demande, dérivée du volume par saison. */
+export const NPC_BASE_DEMAND = (NPC_DEMAND_PER_SEASON * SIM_TICK_MS) / SEASON_REAL_MS;
 
 /**
  * Le cycle annuel de l'offre voisine `[GD]`.

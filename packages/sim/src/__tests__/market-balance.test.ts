@@ -20,6 +20,7 @@
 
 import {
   CROP_DEFS,
+  MARKET_ABSORB_HALFLIFE_SEASONS,
   MARKET_BOUNDS,
   MARKET_REVERSION,
   SEASON_DURATION_MS,
@@ -29,6 +30,21 @@ import {
 import { NPC_BASE_SUPPLY, marketNpcPressure, tickMarket } from "../index";
 
 const TICKS_SAISON = Math.round(SEASON_DURATION_MS / SIM_TICK_MS);
+/**
+ * Sur combien de saisons on mesure. Vingt-quatre, soit six années de jeu.
+ *
+ * C'était huit, et ce huit-là mesurait en réalité **quarante-cinq moissons** :
+ * le blé mûrissait en cinq jours de jeu quand la saison en durait vingt-huit.
+ * Depuis qu'il est la céréale d'hiver qu'il aurait toujours dû être — semé à
+ * l'automne, moissonné l'été — huit saisons ne contiennent plus que **trois**
+ * moissons. Ce que ce fichier mesure (le poids durable d'un domaine sur son
+ * marché) est un régime permanent : sur trois moissons on ne mesurait plus un
+ * régime, on mesurait trois accidents et leur moyenne.
+ *
+ * Vingt-quatre saisons font neuf moissons, et les mesures y sont stables à
+ * quelques millièmes près — vérifié jusqu'à quarante-huit.
+ */
+const SAISONS_MESUREES = 24;
 const TICKS_RECOLTE = Math.round(CROP_DEFS.WHEAT.growMs / SIM_TICK_MS);
 /** Ce qu'une parcelle de 12 × 12 rentre à chaque moisson. */
 const RECOLTE = 144 * CROP_DEFS.WHEAT.yieldPerCell;
@@ -41,7 +57,7 @@ function anneeDeMarche(opts: { parcelles?: number; saisons?: number; graine?: nu
   let stock = B.depth * 0.3;
   let s = opts.graine ?? 11;
   const rnd = () => (s = (s * 1103515245 + 12345) % 2147483648) / 2147483648;
-  const ticks = TICKS_SAISON * (opts.saisons ?? 8);
+  const ticks = TICKS_SAISON * (opts.saisons ?? SAISONS_MESUREES);
   const parSaison: Record<Season, { somme: number; n: number }> = {
     SPRING: { somme: 0, n: 0 }, SUMMER: { somme: 0, n: 0 },
     AUTUMN: { somme: 0, n: 0 }, WINTER: { somme: 0, n: 0 },
@@ -183,10 +199,24 @@ describe("ce qui ramène le cours, c’est l’offre, pas un décret", () => {
       }
       return etat;
     };
+    /*
+     * La reprise s'observe sur **dix demi-vies du carnet**, et non sur une
+     * saison en dur. Une saison suffisait tant que le carnet se vidait de
+     * moitié en un centième de saison : l'excédent d'une saison de déversement
+     * s'évaporait quatre-vingts fois avant qu'on regarde. La mémoire du carnet
+     * suit maintenant le rythme des moissons — c'est ce qui fait qu'un domaine
+     * pèse durablement — et un excédent de saison met plusieurs saisons à
+     * s'écouler. Le mesurer sur une seule saison ne prouvait plus que le cours
+     * ne remonte pas : ça prouvait qu'on n'avait pas attendu.
+     */
+    const REPRISE = Math.round(TICKS_SAISON * 10 * MARKET_ABSORB_HALFLIFE_SEASONS);
     const calme = tourne(600, { p: B.initial, s: B.depth * 0.3 }, 0);
     const noye = tourne(TICKS_SAISON, { ...calme }, 3);
     expect(noye.p).toBeLessThan(calme.p * 0.75);
-    const apres = tourne(TICKS_SAISON, { ...noye }, 0);
+    // Tant qu'il déverse, le cours ne remonte pas — même en laissant le temps.
+    const encore = tourne(REPRISE, { ...noye }, 3);
+    expect(encore.p).toBeLessThan(calme.p * 0.75);
+    const apres = tourne(REPRISE, { ...noye }, 0);
     expect(apres.p).toBeGreaterThan(noye.p * 1.2);
   });
 });

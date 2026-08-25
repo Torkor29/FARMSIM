@@ -72,11 +72,12 @@ export const CROP_SEASONALITY: Record<CropCode, Seasonality> = {
 /**
  * Saisons où le semis est autorisé `[GD]`.
  *
- * Volontairement plus large que le calendrier réel, qui se compte en semaines
- * : une saison de jeu dure sept jours, et n'ouvrir qu'une seule saison
- * enfermerait le joueur dans une fenêtre d'une heure quarante-cinq. Deux
- * saisons laissent le choix — semer tôt et sûr, ou tard et rattraper le cours
- * du marché — sans que tout soit permis.
+ * Volontairement plus large que le calendrier réel, qui se compte en semaines :
+ * une saison dure dix heures, et n'ouvrir qu'une seule saison enfermerait le
+ * joueur dans une fenêtre de dix heures — soit, pour qui joue une soirée par
+ * jour, une chance sur deux de la manquer entièrement. Deux saisons laissent
+ * le choix — semer tôt et sûr, ou tard et rattraper le cours du marché — sans
+ * que tout soit permis.
  */
 export const PLANTING_WINDOW: Record<CropCode, readonly Season[]> = {
   WHEAT: ["AUTUMN", "WINTER"],
@@ -95,10 +96,20 @@ export const PLANTING_WINDOW: Record<CropCode, readonly Season[]> = {
  * les seules à pousser encore quand il gèle, ce qui est exact — c'est même
  * leur raison d'être.
  *
- * Calibré pour qu'une culture semée en début de fenêtre finisse dans sa saison
- * ou la suivante, et qu'un semis tardif se fasse rattraper. Le blé pousse en
- * cinq jours et une saison en dure sept : semé le premier jour de l'automne il
- * est prêt avant l'hiver ; semé le cinquième, il attend le printemps.
+ * Calibré avec les temps de pousse, et non contre eux : ces coefficients et les
+ * `growMs` de `CROP_DEFS` ont été cherchés ensemble pour que chaque culture
+ * arrive à maturité **dans la saison où on la moissonne pour de vrai**. Le blé
+ * semé à l'automne traverse l'hiver au ralenti — 0,3, ce qui est exact, c'est
+ * même la raison d'être d'une céréale d'hiver — repart au printemps et se
+ * moissonne l'été, trente-trois heures plus tard.
+ *
+ * Le maïs fait l'inverse : 0,05 en hiver, autant dire rien. Semé trop tard au
+ * printemps, il entre dans l'automne sans avance et l'hiver le fige jusqu'au
+ * printemps suivant. C'est l'arbitrage que la fenêtre de semis laisse ouvert.
+ *
+ * Le tableau qu'en tire `cropCalendar()` n'est pas écrit à la main : il fait
+ * réellement pousser chaque culture avec ces coefficients. Retoucher une
+ * valeur ici déplace le calendrier affiché, et les tests le disent.
  */
 export const SEASON_GROWTH: Record<Seasonality, Record<Season, number>> = {
   WINTER_CEREAL: { SPRING: 1.35, SUMMER: 1.05, AUTUMN: 0.85, WINTER: 0.3 },
