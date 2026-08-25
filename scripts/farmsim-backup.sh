@@ -79,6 +79,7 @@ docker run --rm \
   -e FARMSIM_BACKUP_DIR=/sauvegardes \
   -e FARMSIM_BACKUP_KEEP="$GARDER" \
   -e FARMSIM_BACKUP_LABEL="$ETIQUETTE" \
+  -e FARMSIM_BACKUP_VERIFY="${FARMSIM_BACKUP_VERIFY:-1}" \
   --entrypoint node \
   "$IMAGE" /opt/farmsim-backup.mjs || CODE=$?
 CODE="${CODE:-0}"

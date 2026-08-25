@@ -67,6 +67,27 @@ else
   echo "    aucune"
 fi
 
+# Et les sauvegardes orphelines, qui ne sont pas des constructions.
+#
+# Le filtre ci-dessus ne cherchait que des `docker build`, parce que c'est par
+# là que le problème est arrivé. Mais un déploiement peut être coupé n'importe
+# où, et il l'a été **pendant la sauvegarde** : celle-ci tourne dans un
+# conteneur jetable qui, lui, survit très bien à la mort de la session. Le
+# déploiement suivant lançait alors une seconde sauvegarde par-dessus la
+# première, sur la même base, et les deux se disputaient la machine.
+#
+# Un conteneur de sauvegarde de plus de dix minutes n'appartient à personne :
+# le déploiement en cours vient tout juste de commencer.
+for cid in $(docker ps --format '{{.ID}} {{.Command}}' 2>/dev/null \
+             | grep -F 'farmsim-backup.mjs' | cut -d' ' -f1 || true); do
+  debut="$(docker inspect "$cid" -f '{{.State.StartedAt}}' 2>/dev/null || true)"
+  [[ -n "$debut" ]] || continue
+  age=$(( $(date +%s) - $(date -d "$debut" +%s 2>/dev/null || echo 0) ))
+  (( age > 600 )) || continue
+  echo "    sauvegarde orpheline : $cid, ${age}s — arrêt"
+  docker rm -f "$cid" >/dev/null 2>&1 || true
+done
+
 # --- git ---
 #
 # Le VPS a déjà perdu GitHub en plein `git fetch` (SSL connection timeout)
@@ -136,8 +157,33 @@ elif ! docker inspect farmsim-db >/dev/null 2>&1; then
   echo "    intacte sur le volume farmsim-data, et c'est elle le filet."
   echo "    Voir docs/POSTGRESQL.md pour le transfert des données."
 else
+  # La sauvegarde est bornée, et son échec n'a que deux issues : une
+  # sauvegarde plus modeste, ou pas de déploiement. Jamais un déploiement sans
+  # filet.
+  #
+  # Elle prend un instantané **puis le restaure dans une base jetable** pour
+  # vérifier qu'il est relisible — c'est ce qui fait la différence entre une
+  # sauvegarde et un fichier qu'on espère. Mais mesuré en production, cette
+  # relecture a tenu trente-cinq minutes sans finir sur une machine occupée à
+  # déployer, et a emporté le déploiement avec elle : la session SSH a expiré
+  # pendant que la sauvegarde tournait encore.
+  #
+  # Sans borne, l'échec est le pire des trois : ni sauvegarde, ni déploiement,
+  # et une demi-heure perdue à ne rien apprendre.
   echo "==> Sauvegarde avant migration"
-  if ! bash "$APP_DIR/scripts/farmsim-backup.sh" avant-deploi; then
+  code=0
+  timeout 900 bash "$APP_DIR/scripts/farmsim-backup.sh" avant-deploi || code=$?
+  if (( code == 124 )); then
+    # 124 : la borne a parlé. On retente un instantané **sans relecture** —
+    # l'arbitrage est détaillé dans `farmsim-backup.mjs`, et il se résume à
+    # ceci : une sauvegarde non relue vaut mieux que pas de sauvegarde, et
+    # refuser le repli ne rendrait personne plus sûr.
+    echo "WARN: sauvegarde relue trop longue (15 min) — instantané sans relecture." >&2
+    code=0
+    timeout 600 env FARMSIM_BACKUP_VERIFY=0 \
+      bash "$APP_DIR/scripts/farmsim-backup.sh" avant-deploi || code=$?
+  fi
+  if (( code != 0 )); then
     echo "ERROR: la sauvegarde a échoué — déploiement interrompu." >&2
     echo "       Rien n'a été touché ; le jeu tourne toujours sur l'ancienne" >&2
     echo "       version. Corrigez la sauvegarde avant de recommencer." >&2
