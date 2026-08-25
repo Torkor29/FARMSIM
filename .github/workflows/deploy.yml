@@ -100,9 +100,75 @@ jobs:
       - name: Tester les trois paquets et l'exercice de restauration
         run: pnpm test
 
+  # ——————————————————————————————————————————————————————————————————————
+  # Construire l'image ici, et non sur le VPS.
+  #
+  # Le VPS la construisait lui-même à chaque déploiement. Sur cette petite
+  # machine, une construction sans cache demande six à sept minutes de calcul,
+  # et c'est ce qui a fait dépasser le délai de la session SSH. Le vrai coût
+  # n'était pas le dépassement mais sa suite : couper la session ne tue pas le
+  # `docker build` resté derrière, si bien que le déploiement **suivant**
+  # démarrait sur une machine saturée. Trois échecs de suite, et le jeu à
+  # terre.
+  #
+  # Ici, la construction a un cache qui survit d'une exécution à l'autre, une
+  # machine qui ne sert qu'à ça, et son échec n'a aucune conséquence sur le
+  # serveur en production — puisqu'on n'y a même pas touché.
+  #
+  # L'image est publique, comme le dépôt : le VPS la tire sans authentifi-
+  # cation, il n'y a donc aucun jeton à installer ni à faire tourner sur le
+  # serveur. C'est ce qui rend ce changement plus simple que ce qu'il
+  # remplace, et pas seulement plus rapide.
+  # ——————————————————————————————————————————————————————————————————————
+  construire:
+    name: Construire et publier l'image
+    needs: verifier
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    outputs:
+      image: ${{ steps.nom.outputs.image }}
+    steps:
+      - uses: actions/checkout@v4
+
+      # ghcr.io exige un chemin en minuscules ; le compte s'écrit « Torkor29 ».
+      - name: Choisir le nom de l'image
+        id: nom
+        run: |
+          depot="$(echo '${{ github.repository }}' | tr '[:upper:]' '[:lower:]')"
+          echo "image=ghcr.io/${depot}" >> "$GITHUB_OUTPUT"
+
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Construire et publier
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          # Deux étiquettes, et les deux servent : `main` est ce que tire un
+          # dépannage manuel, l'empreinte du commit est ce que tire ce
+          # déploiement-ci. Sans la seconde, deux déploiements rapprochés
+          # pourraient livrer l'image l'un de l'autre.
+          tags: |
+            ${{ steps.nom.outputs.image }}:main
+            ${{ steps.nom.outputs.image }}:${{ github.sha }}
+          # Le cache vit dans l'espace de l'action et survit d'une exécution à
+          # l'autre : une construction qui ne change que le code applicatif ne
+          # réinstalle pas les dépendances ni ne réamorce Prisma.
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          provenance: false
+
   deployer:
     name: Déployer sur le VPS
-    needs: verifier
+    needs: [verifier, construire]
     runs-on: ubuntu-latest
     steps:
       # Sans les trois secrets, l'étape suivante échouerait sur une erreur de
@@ -197,4 +263,13 @@ jobs:
             # l'environnement : `sudo --preserve-env` dépend de la politique
             # sudoers du serveur et peut être refusé sans que rien ne le dise.
             # Là, il n'y a rien à autoriser.
-            sudo -n bash -c "curl -fsSL https://raw.githubusercontent.com/Torkor29/FARMSIM/main/scripts/vps-deploy.sh | FARMSIM_DOMAIN='$DOMAINE' bash"
+            # L'image est passée au script, qui la tire au lieu de la
+            # construire. Elle est désignée par l'empreinte du commit et non
+            # par `main` : deux déploiements rapprochés livreraient sinon
+            # chacun l'image de l'autre, et on ne saurait plus ce qui tourne.
+            #
+            # Le script se replie sur une construction locale si le registre
+            # ne répond pas — un déploiement lent vaut mieux que pas de
+            # déploiement du tout. Voir `scripts/vps-deploy.sh`.
+            IMAGE='${{ needs.construire.outputs.image }}:${{ github.sha }}'
+            sudo -n bash -c "curl -fsSL https://raw.githubusercontent.com/Torkor29/FARMSIM/main/scripts/vps-deploy.sh | FARMSIM_DOMAIN='$DOMAINE' FARMSIM_IMAGE='$IMAGE' bash"
