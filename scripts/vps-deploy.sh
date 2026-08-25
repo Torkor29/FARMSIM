@@ -197,14 +197,38 @@ git_essaie() {
 
 mkdir -p "$(dirname "$APP_DIR")"
 if [[ ! -d "$APP_DIR/.git" ]]; then
+  # Premier déploiement : sans dépôt, il n'y a ni docker-compose.yml ni
+  # scripts. Là, l'échec est bien un échec.
   rm -rf "$APP_DIR"
   git_essaie git clone --branch "$BRANCH" "$REPO_URL" "$APP_DIR"
 else
   cd "$APP_DIR"
-  git_essaie git fetch origin
-  git checkout "$BRANCH"
-  git reset --hard "origin/$BRANCH"
-  git clean -fd
+  # Un `git fetch` en échec n'est plus une raison de ne pas déployer.
+  #
+  # C'est ce qui vient d'emporter un déploiement : quatre tentatives sans
+  # succès, et le script s'est arrêté là — alors que **l'image était déjà
+  # construite et publiée**, et qu'elle contient tout le code applicatif.
+  #
+  # Le dépôt local ne sert plus qu'à deux choses depuis que l'image vient
+  # d'un registre : `docker-compose.yml` et les scripts. Ces fichiers-là
+  # bougent rarement, et une version vieille de quelques commits vaut
+  # infiniment mieux qu'un déploiement qui n'a pas lieu. On déploie donc avec
+  # ce qu'on a sous la main, en le disant fort.
+  #
+  # La contrepartie est réelle et il faut la connaître : un changement
+  # d'orchestration — un port, une variable, une limite de journaux — ne
+  # prendra pas effet ce tour-ci. Le code du jeu, lui, sera bien à jour,
+  # puisqu'il ne vient pas d'ici.
+  if git_essaie git fetch origin; then
+    git checkout "$BRANCH"
+    git reset --hard "origin/$BRANCH"
+    git clean -fd
+  else
+    echo "WARN: GitHub injoignable — on déploie avec le dépôt local tel quel." >&2
+    echo "      L'image vient du registre, donc le code du jeu sera à jour ;" >&2
+    echo "      seule l'orchestration reste à sa version précédente." >&2
+    git log -1 --format='      dépôt local : %h %s' 2>/dev/null || true
+  fi
 fi
 cd "$APP_DIR"
 
