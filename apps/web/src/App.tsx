@@ -1434,6 +1434,36 @@ export function App() {
     };
   }, [player]);
 
+  /**
+   * Changer de parcelle efface la sélection de cases.
+   *
+   * Elle ne l'était nulle part, et c'est un défaut qui **abîme les données**,
+   * pas seulement l'affichage. La sélection est une liste de coordonnées nues
+   * — `{x, y}` —, sans le moindre lien avec la parcelle où elle a été faite.
+   * Tous les champs faisant douze cases sur douze, ces coordonnées restent
+   * parfaitement valides sur n'importe quelle autre parcelle.
+   *
+   * D'où la scène rapportée en jeu : on sélectionne quarante cases sur un
+   * champ, on clique une autre parcelle dans « Mes parcelles », on prend un
+   * outil — et le travail part sur quarante cases de la **nouvelle** parcelle,
+   * que personne n'a désignées. Le joueur voit ses états de champ changer
+   * « aléatoirement » ; ils changent en réalité très exactement là où il avait
+   * cliqué, mais sur le mauvais champ.
+   *
+   * Le serveur ne pouvait pas s'en apercevoir : les cases existent, elles
+   * appartiennent bien à la parcelle visée, la demande est licite. Seul le
+   * client sait que la sélection n'a plus de sens.
+   *
+   * Un effet à part, avec `activeParcelId` pour seule dépendance, plutôt
+   * qu'une ligne ajoutée au chargement voisin : il ne doit surtout pas se
+   * rejouer parce qu'un chargeur a changé d'identité, sous peine d'effacer la
+   * sélection sous les doigts du joueur.
+   */
+  useEffect(() => {
+    setSelectedCells([]);
+    setCellMenu(null);
+  }, [activeParcelId]);
+
   useEffect(() => {
     if (!activeParcelId) return;
     loadParcel(activeParcelId).catch((e) => setErr(String(e.message ?? e)));
