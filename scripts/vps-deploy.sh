@@ -309,6 +309,34 @@ elif ! docker inspect farmsim-db >/dev/null 2>&1; then
   echo "    Aucune sauvegarde possible ici — l'ancienne base SQLite reste"
   echo "    intacte sur le volume farmsim-data, et c'est elle le filet."
   echo "    Voir docs/POSTGRESQL.md pour le transfert des données."
+elif [[ "$(docker inspect -f '{{.State.Status}}' farmsim-db 2>/dev/null || echo inconnu)" != "running" ]]; then
+  # ——————————————————————————————————————————————————————————————————
+  # La base existe mais ne tourne pas — troisième cas, découvert en panne.
+  #
+  # Le 26 août, une fenêtre SSH a expiré au milieu d'un `--force-recreate` :
+  # `farmsim-db` est resté à l'état `created`, créé mais jamais démarré. Le
+  # déploiement suivant a alors buté sur ceci —
+  #
+  #     docker: cannot join network namespace of a non running container:
+  #             container farmsim-db is created
+  #     ERROR: la sauvegarde a échoué — déploiement interrompu.
+  #
+  # — et s'est arrêté en affirmant « rien n'a été touché, le jeu tourne
+  # toujours sur l'ancienne version ». C'était faux : le jeu ne tournait plus
+  # du tout, toutes ses routes rendaient 500. Le garde-fou raisonnait sur un
+  # statu quo sain qui n'existait plus, et il empêchait la seule chose qui
+  # réparait — remonter la pile.
+  #
+  # Une base à l'arrêt n'a aucune donnée vivante qu'une migration puisse
+  # abîmer, et il n'y a rien à sauvegarder d'un conteneur qui ne répond pas.
+  # Le filet ne sert à rien ici ; on le dit, et on remonte.
+  # ——————————————————————————————————————————————————————————————————
+  echo "==> Base à l'arrêt (état : $(docker inspect -f '{{.State.Status}}' farmsim-db 2>/dev/null || echo inconnu))."
+  echo "    Rien à sauvegarder d'un conteneur qui ne tourne pas, et rien qu'une"
+  echo "    migration puisse abîmer : c'est le démarrage qui suit qui la remet"
+  echo "    debout. La dernière sauvegarde en date reste le filet :"
+  ls -t "${FARMSIM_BACKUP_DIR:-/var/backups/farmsim}"/*.dump 2>/dev/null | head -1 | sed 's/^/      /' \
+    || echo "      (aucune dans ${FARMSIM_BACKUP_DIR:-/var/backups/farmsim})"
 else
   # La sauvegarde est bornée, et son échec n'a que deux issues : une
   # sauvegarde plus modeste, ou pas de déploiement. Jamais un déploiement sans
