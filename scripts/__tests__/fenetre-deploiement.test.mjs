@@ -89,8 +89,67 @@ describe("l’ordre reste celui qu’on croit", () => {
     // rattrape pas. Ce qui ne l'est pas, c'est qu'elles puissent tout manger.
     const menage = DEPLOY.indexOf("Place disque avant ménage");
     const sauvegarde = DEPLOY.indexOf("Sauvegarde avant migration");
-    const monte = DEPLOY.indexOf("docker compose up -d");
+    const monte = DEPLOY.indexOf("monter up -d");
     assert.ok(menage > 0 && sauvegarde > menage, "le ménage précède la sauvegarde");
     assert.ok(monte > sauvegarde, "la mise en ligne suit les précautions");
+  });
+});
+
+/**
+ * La recréation des conteneurs ne se laisse pas couper.
+ *
+ * Le 26 août à 23 h 05, la fenêtre SSH a expiré **au milieu** d'un
+ * `docker compose up --force-recreate`, six minutes après la ligne
+ * « Container farmsim-db Recreate ». L'état laissé derrière est le pire des
+ * possibles, et personne ne pouvait le voir :
+ *
+ *   /api/meta/machines   200   (ne touche pas la base)
+ *   /api/world           500   en 0,63 s
+ *   /api/zones           500   en 0,59 s
+ *   /api/auth/login      500   en 0,45 s
+ *
+ * Le conteneur du jeu était debout et se déclarait en bonne santé — son
+ * contrôle interroge `/api/health`, qui ne touche pas la base. Pour Docker,
+ * pour le veilleur, pour le portier, tout allait bien. Pour un joueur, le jeu
+ * était mort : c'est très exactement l'écran « Erreur serveur » du début de
+ * la soirée.
+ */
+describe("la recréation des conteneurs", () => {
+  it("est détachée de la session SSH", () => {
+    // Une session qui tombe ne doit pas pouvoir laisser la pile à moitié
+    // reconstruite. `setsid` sort du groupe de processus de la session.
+    assert.match(DEPLOY, /setsid docker compose "\$@"/);
+  });
+
+  it("passe par ce détachement partout où elle monte la pile", () => {
+    // Un seul `docker compose up` resté nu suffirait à ramener le défaut.
+    const nus = [...DEPLOY.matchAll(/^\s*docker compose up\b.*$/gm)].map((m) => m[0].trim());
+    assert.deepEqual(nus, [], `un « up » n'est pas détaché : ${nus.join(" | ")}`);
+  });
+
+  it("retombe sur un appel direct là où setsid n’existe pas", () => {
+    // Un déploiement qui refuserait de monter faute d'un utilitaire absent
+    // serait un remède pire que le mal.
+    assert.match(DEPLOY, /command -v setsid >\/dev\/null 2>&1/);
+  });
+
+  it("et le script vérifie ensuite que la base répond", () => {
+    // C'est elle que la coupure a laissée en rade, et rien ensuite ne s'en
+    // apercevait — le contrôle de santé du jeu ne la regarde pas.
+    assert.match(DEPLOY, /==> La base répond \?/);
+    assert.match(DEPLOY, /pg_isready -U/);
+  });
+});
+
+describe("la fenêtre SSH", () => {
+  const WORKFLOW = readFileSync(join(RACINE, ".github", "workflows", "deploy.yml"), "utf8");
+
+  it("laisse la place à un déploiement complet sur une machine lente", () => {
+    const m = WORKFLOW.match(/command_timeout:\s*(\d+)m/);
+    assert.ok(m, "command_timeout doit être déclaré");
+    assert.ok(
+      Number(m[1]) >= 60,
+      `la fenêtre est de ${m[1]} min ; le déploiement du 26 août en a consommé 48 avant d'être coupé en pleine recréation`,
+    );
   });
 });

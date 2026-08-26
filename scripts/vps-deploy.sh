@@ -436,20 +436,59 @@ fi
 # prudence décorative : sans lui, un registre indisponible, une image pas
 # encore publiée ou un premier déploiement empêcheraient toute mise en ligne.
 # On préfère un déploiement lent à pas de déploiement du tout.
+# ————————————————————————————————————————————————————————————————————————
+# La recréation des conteneurs ne se laisse pas couper.
+#
+# Le 26 août à 23 h 05, la fenêtre SSH de quarante minutes a expiré **au
+# milieu** d'un `docker compose up --force-recreate`, six minutes après la
+# ligne « Container farmsim-db Recreate ». Le résultat est le pire état
+# possible : le conteneur du jeu, lui, était recréé et se déclarait en bonne
+# santé — son contrôle interroge `/api/health`, qui ne touche pas la base —
+# pendant que la base, elle, n'existait plus. Mesuré depuis l'extérieur :
+# `/api/meta/machines` répondait 200, `/api/world`, `/api/zones` et
+# `/api/auth/login` rendaient 500 en six dixièmes de seconde. Pour un joueur,
+# le jeu était mort ; pour Docker, tout allait bien.
+#
+# Une session qui tombe ne doit pas pouvoir laisser la pile à moitié
+# reconstruite. `setsid` détache la commande du groupe de processus de la
+# session : le SSH peut mourir, la recréation va au bout. On l'attend quand
+# même — mais si l'attente est coupée, le travail continue côté serveur au
+# lieu d'être tué en plein milieu.
+# ————————————————————————————————————————————————————————————————————————
+monter() {
+  if command -v setsid >/dev/null 2>&1; then
+    setsid docker compose "$@" </dev/null
+  else
+    docker compose "$@"
+  fi
+}
+
 if [[ -n "${FARMSIM_IMAGE:-}" ]]; then
   export FARMSIM_IMAGE
   echo "==> Image : $FARMSIM_IMAGE"
   if docker compose pull farmsim; then
     echo "==> Démarrage sur l'image du registre"
-    docker compose up -d --force-recreate
+    monter up -d --force-recreate
   else
     echo "WARN: image introuvable au registre — construction sur place." >&2
-    docker compose up -d --build --force-recreate
+    monter up -d --build --force-recreate
   fi
 else
   echo "==> Aucune image fournie — construction sur place"
-  docker compose up -d --build --force-recreate
+  monter up -d --build --force-recreate
 fi
+
+# La base doit répondre avant qu'on aille plus loin : c'est elle que la
+# coupure du 26 août a laissée en rade, et rien ensuite ne s'en apercevait.
+echo "==> La base répond ?"
+for _ in $(seq 1 30); do
+  if timeout 20 docker exec "${FARMSIM_DB_CONTAINER:-farmsim-db}" \
+       pg_isready -U "${FARMSIM_DB_USER:-farmsim}" -d "${FARMSIM_DB_NAME:-farmsim}" >/dev/null 2>&1; then
+    echo "    oui."
+    break
+  fi
+  sleep 5
+done
 
 # Un volume nommé créé par une exécution antérieure — ou par une image
 # construite avec un uid différent — garde son propriétaire d'origine tant
@@ -460,7 +499,7 @@ echo "==> Vérification des droits sur le volume de données"
 DATA_VOL="$(docker inspect farmsim -f '{{range .Mounts}}{{if eq .Destination "/data"}}{{.Name}}{{end}}{{end}}' 2>/dev/null || true)"
 if [[ -n "$DATA_VOL" ]]; then
   docker run --rm -v "${DATA_VOL}:/data" busybox chown -R 10001:10001 /data
-  docker compose up -d
+  monter up -d
 else
   echo "WARN: volume /data introuvable sur le conteneur farmsim — vérifie docker-compose.yml" >&2
 fi
