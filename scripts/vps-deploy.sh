@@ -157,10 +157,22 @@ done
 # par un conteneur en marche sont conservées par construction.
 echo "==> Place disque avant ménage"
 timeout 60 df -h / | tail -n +2 | awk '{print "    " $5 " occupé, " $4 " libre sur " $2}'
-echo "==> Ménage Docker (cache de construction et images orphelines)"
-timeout 300 docker builder prune -af >/dev/null 2>&1 || echo "    (cache : ménage incomplet)"
-timeout 300 docker image prune -f >/dev/null 2>&1 || echo "    (images : ménage incomplet)"
-timeout 120 docker container prune -f >/dev/null 2>&1 || true
+# Le ménage n'a de raison d'être que si le disque est réellement plein.
+#
+# Mesuré le 26 août : 27 % occupé, 42 Go libres, et les deux `prune` ont
+# quand même tenu **dix minutes** — cinq pour le cache (borne atteinte),
+# quatre pour les images — avant de rendre exactement la même place. Sur une
+# machine déjà dans le swap, ces dix minutes sont la fenêtre de déploiement.
+# On ne les dépense que si le disque dépasse 70 %.
+occupe_pct="$(timeout 60 df --output=pcent / | tail -1 | tr -dc '0-9' || true)"
+if [[ -n "$occupe_pct" ]] && (( occupe_pct < 70 )); then
+  echo "==> Ménage Docker sauté (${occupe_pct} % occupé) — le disque n'est pas en cause."
+else
+  echo "==> Ménage Docker (cache de construction et images orphelines)"
+  timeout 300 docker builder prune -af >/dev/null 2>&1 || echo "    (cache : ménage incomplet)"
+  timeout 300 docker image prune -f >/dev/null 2>&1 || echo "    (images : ménage incomplet)"
+  timeout 120 docker container prune -f >/dev/null 2>&1 || true
+fi
 # Les journaux de conteneurs, que le ménage Docker ne touche pas.
 #
 # Le pilote `json-file` écrit sans jamais tourner tant qu'on ne le lui a pas
@@ -327,19 +339,39 @@ else
     relire=0
   fi
 
+  dump_avant_deploi() {
+    find "${FARMSIM_BACKUP_DIR:-/var/backups/farmsim}" \
+        -name '*avant-deploi.dump' -mmin -20 -size +4k 2>/dev/null | head -1 || true
+  }
+
   echo "==> Sauvegarde avant migration"
   code=0
   timeout 900 env FARMSIM_BACKUP_VERIFY="$relire" \
     bash "$APP_DIR/scripts/farmsim-backup.sh" avant-deploi || code=$?
   if (( code == 124 )); then
-    # 124 : la borne a parlé. On retente un instantané **sans relecture** —
-    # l'arbitrage est détaillé dans `farmsim-backup.mjs`, et il se résume à
-    # ceci : une sauvegarde non relue vaut mieux que pas de sauvegarde, et
-    # refuser le repli ne rendrait personne plus sûr.
-    echo "WARN: sauvegarde relue trop longue (15 min) — instantané sans relecture." >&2
-    code=0
-    timeout 600 env FARMSIM_BACKUP_VERIFY=0 \
-      bash "$APP_DIR/scripts/farmsim-backup.sh" avant-deploi || code=$?
+    # 124 : la borne a parlé. Le dump est souvent **déjà là** — `docker run
+    # --rm` a fini d'écrire et n'a pas encore rendu la main. On le cherche
+    # **avant** de relancer. Relancer un instantané qui a réussi, sur une
+    # machine saturée, a emporté le déploiement du 26 août : la session SSH
+    # a expiré pendant le second essai, alors que le premier avait déjà
+    # tenu quinze minutes *sans* relecture.
+    fraiche="$(dump_avant_deploi)"
+    if [[ -n "$fraiche" ]]; then
+      echo "==> Sauvegarde bien présente malgré la borne : $fraiche"
+      echo "    $(du -h "$fraiche" 2>/dev/null | cut -f1) — on continue."
+      code=0
+    elif (( relire != 0 )); then
+      # L'arbitrage est détaillé dans `farmsim-backup.mjs` : une sauvegarde
+      # non relue vaut mieux que pas de sauvegarde, et refuser le repli ne
+      # rendrait personne plus sûr. On ne retente **que** si le premier
+      # essai lisait encore la sauvegarde — sinon c'est le même travail.
+      echo "WARN: sauvegarde relue trop longue (15 min) — instantané sans relecture." >&2
+      code=0
+      timeout 600 env FARMSIM_BACKUP_VERIFY=0 \
+        bash "$APP_DIR/scripts/farmsim-backup.sh" avant-deploi || code=$?
+    else
+      echo "WARN: instantané trop long à se ranger (15 min) — on cherche le fichier." >&2
+    fi
   fi
   # Le fichier fait foi, pas le code de sortie.
   #
@@ -358,8 +390,7 @@ else
   # qu'on réclamait ; refuser de déployer parce qu'un processus a mis trop
   # longtemps à se ranger serait confondre la preuve et le messager.
   if (( code != 0 )); then
-    fraiche="$(find "${FARMSIM_BACKUP_DIR:-/var/backups/farmsim}" \
-        -name '*avant-deploi.dump' -mmin -20 -size +4k 2>/dev/null | head -1 || true)"
+    fraiche="$(dump_avant_deploi)"
     if [[ -n "$fraiche" ]]; then
       echo "==> Sauvegarde bien présente malgré la borne : $fraiche"
       echo "    $(du -h "$fraiche" 2>/dev/null | cut -f1) — on continue."
