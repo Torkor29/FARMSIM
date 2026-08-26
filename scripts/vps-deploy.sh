@@ -157,10 +157,33 @@ done
 # par un conteneur en marche sont conservées par construction.
 echo "==> Place disque avant ménage"
 timeout 60 df -h / | tail -n +2 | awk '{print "    " $5 " occupé, " $4 " libre sur " $2}'
-echo "==> Ménage Docker (cache de construction et images orphelines)"
-timeout 300 docker builder prune -af >/dev/null 2>&1 || echo "    (cache : ménage incomplet)"
-timeout 300 docker image prune -f >/dev/null 2>&1 || echo "    (images : ménage incomplet)"
-timeout 120 docker container prune -f >/dev/null 2>&1 || true
+
+# ————————————————————————————————————————————————————————————————————————
+# Le ménage ne se paie que s'il sert.
+#
+# Il tournait à chaque déploiement, quel que soit l'état du disque. Mesuré le
+# 26 août sur un disque **occupé à 27 %, quarante-deux gigaoctets libres** :
+# neuf minutes et demie, sur une fenêtre SSH de quarante. Le même
+# déploiement a fini par expirer sans jamais atteindre `docker compose up` —
+# le ménage, la vérification des migrations et la sauvegarde avaient mangé
+# la totalité du budget, et le jeu est resté sur l'ancienne image.
+#
+# Un garde-fou qui empêche la mise en ligne ne garde plus rien. Le ménage
+# sert quand le disque se remplit ; en dessous du seuil il ne fait que
+# consommer la fenêtre de quelqu'un d'autre. `FARMSIM_FORCE_PRUNE=1` le
+# force, pour un dépannage.
+# ————————————————————————————————————————————————————————————————————————
+occupe_pct="$(df --output=pcent / | tail -1 | tr -dc '0-9' || echo 0)"
+[[ -n "$occupe_pct" ]] || occupe_pct=0
+if (( occupe_pct >= 70 )) || [[ "${FARMSIM_FORCE_PRUNE:-0}" == "1" ]]; then
+  echo "==> Ménage Docker (cache de construction et images orphelines)"
+  timeout 300 docker builder prune -af >/dev/null 2>&1 || echo "    (cache : ménage incomplet)"
+  timeout 300 docker image prune -f >/dev/null 2>&1 || echo "    (images : ménage incomplet)"
+  timeout 120 docker container prune -f >/dev/null 2>&1 || true
+else
+  echo "==> Ménage Docker sauté — disque à ${occupe_pct} %, la place ne manque pas."
+  echo "    (FARMSIM_FORCE_PRUNE=1 pour le forcer.)"
+fi
 # Les journaux de conteneurs, que le ménage Docker ne touche pas.
 #
 # Le pilote `json-file` écrit sans jamais tourner tant qu'on ne le lui a pas
@@ -317,7 +340,11 @@ else
   # sauvegarde complète : un garde-fou qui se désarme quand il ne comprend pas
   # ne garde plus rien.
   relire=1
-  appliquees="$(docker exec "${FARMSIM_DB_CONTAINER:-farmsim-db}" \
+  # Bornée : cette lecture a mis **sept minutes** le 26 août sur une machine
+  # saturée. Non bornée, une requête qui n'aboutit pas emporte la fenêtre
+  # entière — et son échec retombe de toute façon sur la sauvegarde complète,
+  # qui est le comportement prudent.
+  appliquees="$(timeout 120 docker exec "${FARMSIM_DB_CONTAINER:-farmsim-db}" \
       psql -U "${FARMSIM_DB_USER:-farmsim}" -d "${FARMSIM_DB_NAME:-farmsim}" -tAc \
       'SELECT count(*) FROM _prisma_migrations WHERE finished_at IS NOT NULL' 2>/dev/null || true)"
   presentes="$(find "$APP_DIR/apps/api/prisma/migrations" -mindepth 1 -maxdepth 1 -type d 2>/dev/null | wc -l)"
@@ -327,19 +354,41 @@ else
     relire=0
   fi
 
-  echo "==> Sauvegarde avant migration"
+  # ——————————————————————————————————————————————————————————————————
+  # Le budget de la sauvegarde dépend de ce qu'elle protège.
+  #
+  # Il était de 900 s, plus 600 s de repli — vingt-cinq minutes possibles sur
+  # une fenêtre de quarante. Le 26 août, sans **aucune** migration à
+  # appliquer, l'instantané a consommé les quinze premières minutes puis le
+  # repli les cinq suivantes, et le déploiement a expiré avant d'avoir touché
+  # au moindre conteneur.
+  #
+  # Quand une migration s'apprête à toucher la base, la sauvegarde vaut la
+  # fenêtre : elle garde son budget entier. Quand il n'y en a aucune — le cas
+  # le plus fréquent, puisqu'on livre surtout du code — elle reste due mais
+  # ne peut plus faire échouer la mise en ligne : cinq minutes, et pas de
+  # repli. Ne pas livrer est un risque, lui aussi.
+  # ——————————————————————————————————————————————————————————————————
+  if (( relire == 1 )); then budget=900; repli=600; else budget=300; repli=0; fi
+  echo "==> Sauvegarde avant migration (budget ${budget} s)"
   code=0
-  timeout 900 env FARMSIM_BACKUP_VERIFY="$relire" \
+  timeout "$budget" env FARMSIM_BACKUP_VERIFY="$relire" \
     bash "$APP_DIR/scripts/farmsim-backup.sh" avant-deploi || code=$?
-  if (( code == 124 )); then
+  if (( code == 124 && repli > 0 )); then
     # 124 : la borne a parlé. On retente un instantané **sans relecture** —
     # l'arbitrage est détaillé dans `farmsim-backup.mjs`, et il se résume à
     # ceci : une sauvegarde non relue vaut mieux que pas de sauvegarde, et
     # refuser le repli ne rendrait personne plus sûr.
-    echo "WARN: sauvegarde relue trop longue (15 min) — instantané sans relecture." >&2
+    echo "WARN: sauvegarde relue trop longue ($(( budget / 60 )) min) — instantané sans relecture." >&2
     code=0
-    timeout 600 env FARMSIM_BACKUP_VERIFY=0 \
+    timeout "$repli" env FARMSIM_BACKUP_VERIFY=0 \
       bash "$APP_DIR/scripts/farmsim-backup.sh" avant-deploi || code=$?
+  elif (( code == 124 )); then
+    # Pas de migration en vue : on ne rejoue pas, on le dit et on déploie.
+    echo "WARN: instantané trop long ($(( budget / 60 )) min) et aucune migration à" >&2
+    echo "      protéger — on déploie sans. Relancez la sauvegarde à la main :" >&2
+    echo "        cd $APP_DIR && bash scripts/farmsim-backup.sh manuel" >&2
+    code=0
   fi
   # Le fichier fait foi, pas le code de sortie.
   #
