@@ -30,8 +30,6 @@ import fs from "node:fs";
  */
 const APP = fs.readFileSync("src/App.tsx", "utf8");
 const ISO = fs.readFileSync("src/IsoFarmView.tsx", "utf8");
-const BARRE = fs.readFileSync("src/ui/desktop/SelectionBar.tsx", "utf8");
-const DOCK = fs.readFileSync("src/FieldDock.tsx", "utf8");
 
 describe("la vue suit la parcelle", () => {
   it("un recadrage sec existe, distinct du recentrage qui glisse", () => {
@@ -84,38 +82,70 @@ describe("une sélection appartient à sa parcelle", () => {
   });
 });
 
-describe("le grisage des outils s’explique", () => {
-  it("la raison nomme le chantier qui retient le parc", () => {
-    expect(APP).toMatch(/const chantierRetient = chantier/);
-    const debut = APP.indexOf("const chantierRetient = chantier");
-    const corps = APP.slice(debut, APP.indexOf(": null;", debut));
-    expect(corps).toMatch(/Un seul chantier à la fois/);
-    // La parcelle est nommée : « ailleurs » ne dit pas où aller regarder.
-    expect(corps).toMatch(/ownedParcels\.find\(\(p\) => p\.id === chantier\.parcelId\)\?\.label/);
+describe("un chantier n’éteint plus le jeu", () => {
+  /*
+   * Ce bloc remplace un test écrit quelques heures plus tôt, qui vérifiait
+   * qu'une phrase expliquait le grisage : « un seul chantier à la fois ». La
+   * règle a été levée depuis — « oui il peut utiliser le même engin pour
+   * plusieurs parcelles » — et il n'y a donc plus rien à expliquer. Ce qu'il
+   * faut tenir, c'est que la cause ne revienne pas.
+   */
+  it("le verrou tombe dès le chantier ouvert, pas à sa fin", () => {
+    // `busy` couvrait toute la fonction, attente comprise : pendant les trois
+    // minutes d'un semis, tous les boutons du jeu restaient éteints, sur
+    // toutes les parcelles.
+    const debut = APP.indexOf("async function runWorkOnCells");
+    expect(debut).toBeGreaterThan(-1);
+    const corps = APP.slice(debut, APP.indexOf("async function runSelectionAction", debut));
+    const ouverture = corps.indexOf("rendreLeVerrou();");
+    const attente = corps.indexOf("await attendreChantier(");
+    expect(ouverture).toBeGreaterThan(-1);
+    expect(attente).toBeGreaterThan(-1);
+    expect(ouverture).toBeLessThan(attente);
   });
 
-  it("elle est passée à la barre de sélection", () => {
-    expect(APP).toMatch(/chantierEnCours=\{chantierRetient\}/);
+  it("« Tout récolter » suit la même règle", () => {
+    const debut = APP.indexOf("async function harvestAll");
+    const corps = APP.slice(debut, APP.indexOf("Achète une parcelle", debut));
+    expect(corps.indexOf("rendreLeVerrou();")).toBeLessThan(corps.indexOf("await attendreChantier("));
   });
 
-  it("et la barre l’écrit, au lieu de la réserver à une infobulle", () => {
-    // Au doigt il n'y a pas de survol : une raison qui ne vit que dans un
-    // `title` n'existe pas pour la moitié des joueurs.
-    expect(BARRE).toMatch(/\{chantierEnCours && \(/);
-    expect(BARRE).toMatch(/className="selection-bar-note" role="status"/);
+  it("les chantiers sont une liste, et chacun se clôt seul", () => {
+    // Un seul emplacement, et ouvrir le second écrasait le premier : le
+    // bandeau décrivait le dernier lancé et sa clôture remettait tout à zéro.
+    expect(APP).toMatch(/const \[chantiers, setChantiers\] = useState</);
+    expect(APP).toMatch(/setChantiers\(\(liste\) => liste\.filter\(\(c\) => c\.id !== id\)\)/);
   });
 
-  it("l’infobulle du bouton la reprend, sans écraser une raison plus précise", () => {
-    // Une machine qui manque est un obstacle plus précis qu'un chantier en
-    // cours : elle passe devant.
-    expect(BARRE).toMatch(/title=\{machineManquante \?\? chantierEnCours \?\? undefined\}/);
+  it("les animations aussi, une minuterie par chantier", () => {
+    // Elles vivaient dans une seule liste vidée à chaque départ : lancer un
+    // travail sur une seconde parcelle coupait l'engin de la première en
+    // pleine traversée.
+    expect(APP).toMatch(/workTimers = useRef<Map<string, number\[\]>>/);
+    expect(APP).toMatch(/function stopWork\(jobId\?: string\)/);
   });
 
-  it("le dock du téléphone l’écrit aussi, où il n’y a aucune infobulle", () => {
-    // C'est la coque où le joueur a rapporté le défaut. Le dock renvoyait
-    // `null` dès qu'un bandeau de chantier était là — le bandeau nomme le
-    // chantier, il ne dit pas que c'est lui qui éteint les boutons.
-    expect(DOCK).toMatch(/if \(chantierEnCours\) return chantierEnCours;/);
-    expect(APP).toMatch(/chantierEnCours=\{chantierRetient\}[\s\S]{0,80}machineManquante=/);
+  it("la vue ne reçoit que l’engin de la parcelle regardée", () => {
+    expect(APP).toMatch(/activeWork=\{activeWorks\.find\(\(w\) => w\.parcelId === activeParcelId\) \?\? null\}/);
+  });
+
+  it("le serveur laisse un attelage repartir sur un autre champ", () => {
+    // `pickMachineForWork` écartait tout engin dont `busyUntil` n'était pas
+    // passé : le second chantier était refusé faute de matériel.
+    const API = fs.readFileSync("../../apps/api/src/main.ts", "utf8");
+    const debut = API.indexOf("function pickMachineForWork");
+    const corps = API.slice(debut, API.indexOf("type CellXY", debut));
+    expect(corps).not.toMatch(/busyUntil/);
+  });
+
+  it("mais on ne vend toujours pas un engin qui est au champ", () => {
+    // `busyUntil` garde ce rôle-là : il porte désormais la fin du **dernier**
+    // chantier en cours, recalculée à chaque ouverture comme à chaque clôture.
+    const API = fs.readFileSync("../../apps/api/src/main.ts", "utf8");
+    expect(API).toMatch(/async function reglerOccupation\(/);
+    expect(API).toMatch(/Cet engin est au champ — attendez la fin du chantier\./);
+    // Plus aucune remise à zéro aveugle : elle libérerait un engin qui
+    // travaille encore ailleurs.
+    expect(API).not.toMatch(/data: \{ busyUntil: null \}/);
   });
 });

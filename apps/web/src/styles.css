@@ -614,14 +614,30 @@ html.playing .field-dock {
 /* —— Chantier en cours ——
    Un travail qui dure sans rien afficher se lit comme une panne. La barre est
    posée au-dessus du dock, là où l'œil revient entre deux gestes. */
-.chantier-bar {
-  /* Ancré à la fenêtre, pas à un parent. En `absolute`, le bandeau se calait
-     sur le premier ancêtre positionné — qui n'est pas le dock — et atterrissait
-     au milieu du champ. Vu à l'écran avant de livrer. */
+/* La pile des chantiers.
+   Ils sont plusieurs depuis qu'un attelage peut servir plusieurs parcelles.
+   L'ancrage à la fenêtre — `position: fixed` — vivait sur le bandeau
+   lui-même : deux bandeaux se seraient donc superposés au pixel près. C'est
+   la pile qui s'ancre maintenant, et les bandeaux s'y empilent. */
+.chantier-pile {
   position: fixed;
   left: 50%;
   bottom: 4.6rem;
   transform: translateX(-50%);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.3rem;
+  z-index: 6;
+}
+.field-dock .chantier-pile {
+  position: static;
+  left: auto;
+  bottom: auto;
+  transform: none;
+  width: 100%;
+}
+.chantier-bar {
   display: flex;
   align-items: center;
   gap: 0.6rem;
@@ -632,17 +648,13 @@ html.playing .field-dock {
   box-shadow: 0 2px 10px rgba(0, 0, 0, 0.12);
   font-size: 0.78rem;
   white-space: nowrap;
-  z-index: 6;
+  max-width: 100%;
 }
 /* Empilé dans le dock tactile, le bandeau n'a plus à s'ancrer à la fenêtre :
    c'est la grille du dock qui le place. Il garde son apparence, il perd
    seulement le `bottom: 4.6rem` qui le faisait passer sous une barre trois
    fois plus haute que la valeur devinée. */
 .field-dock .chantier-bar {
-  position: static;
-  left: auto;
-  bottom: auto;
-  transform: none;
   justify-self: center;
   max-width: 100%;
 }

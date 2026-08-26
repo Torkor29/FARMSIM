@@ -115,15 +115,6 @@ type Props = {
    * dessous. Dans la pile, il ne peut plus être recouvert.
    */
   chantierBar?: ReactNode;
-  /**
-   * La règle qui éteint les boutons, quand un chantier tourne.
-   *
-   * Le bandeau au-dessus dit **lequel** et pour combien de temps ; il ne dit
-   * pas que c'est lui qui grise tout le reste. Le joueur qui vient d'acheter
-   * une deuxième parcelle, qui y bascule et trouve tous les boutons éteints,
-   * ne fait pas le lien — il croit le jeu cassé. La phrase le fait.
-   */
-  chantierEnCours?: string | null;
   /** La sélection n'est que de l'herbe mûre : on fauche, on ne moissonne pas */
   mowSelected?: boolean;
   /** Toutes les cases prêtes sont de l'herbe */
@@ -171,7 +162,6 @@ export function FieldDock({
   moreBadge = 0,
   onMore,
   chantierBar,
-  chantierEnCours,
   mowSelected = false,
   mowReadyAll = false,
 }: Props) {
@@ -240,16 +230,11 @@ export function FieldDock({
    */
   function raisonDuGrisage(): string | null {
     /*
-     * Un chantier en cours grise **tous** les boutons d'action à la fois, le
-     * temps qu'il dure — plusieurs minutes sur un grand champ.
-     *
-     * Le bandeau au-dessus dit lequel et pour combien de temps. On a d'abord
-     * cru que cela suffisait ; en jeu, non : « on change de parcelle pendant
-     * qu'on utilise un outil, ça bug complètement ». Le bandeau nomme un
-     * chantier, il ne dit pas que c'est lui qui éteint tout ici. C'est le lien
-     * qui manquait, pas l'information.
+     * Un chantier en cours ne grise plus rien : le verrou ne couvre que
+     * l'aller-retour qui l'ouvre, et un attelage peut repartir sur une autre
+     * parcelle. Le bandeau au-dessus dit lequel tourne et pour combien de
+     * temps — il n'a plus de grisage à justifier.
      */
-    if (chantierEnCours) return chantierEnCours;
     if (chantierBar) return null;
     if (!work) return null;
     // Hors saison : le dire avant le geste, pas après un refus du serveur.
