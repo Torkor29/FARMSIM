@@ -267,8 +267,16 @@ jobs:
           # L'amorçage du monde peut prendre plusieurs minutes au premier
           # démarrage suivant une migration : le script attend jusqu'à cinq
           # minutes. Une image Docker sans cache (pnpm + Prisma + vite)
-          # dépasse souvent vingt minutes sur le VPS : on laisse quarante.
-          command_timeout: 40m
+          # dépasse souvent vingt minutes sur le VPS.
+          #
+          # Soixante et non quarante : le 26 août, la borne de quarante a
+          # expiré six minutes après « Container farmsim-db Recreate » et a
+          # laissé la pile à moitié reconstruite — jeu debout, base absente.
+          # La borne reste utile (une session pendue ne doit pas tenir
+          # indéfiniment), mais elle ne doit plus tomber au milieu du seul
+          # moment où l'état est incohérent. `setsid`, côté script, protège
+          # ce moment-là ; ce chiffre lui donne de la marge.
+          command_timeout: 60m
           # Le nom du site, pour que le script teste lui-même le passage par le
           # portier commun. Sans lui il sautait sa vérification finale et
           # annonçait « déployé » alors que seul le conteneur avait répondu,
