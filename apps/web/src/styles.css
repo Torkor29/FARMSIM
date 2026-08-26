@@ -4509,6 +4509,10 @@ button.tiny {
   color: var(--ink-soft);
   max-width: 22rem;
   line-height: 1.3;
+  /* Elle explique, elle ne pousse pas : les boutons d'action gardent leur
+     place, la note se resserre. */
+  flex: 0 1 auto;
+  min-width: 0;
 }
 .selection-bar-picks { display: flex; gap: 0.3rem; }
 .selection-bar-link {

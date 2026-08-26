@@ -1167,6 +1167,20 @@ export function IsoFarmView({
   /** Repeint la scène quand la saison tourne, sans la reconstruire. */
   const relightRef = useRef<((saison: string) => void) | null>(null);
   /*
+   * Ramener la vue au-dessus de la parcelle, sans glisser.
+   *
+   * Le déplacement de la caméra vit dans la fermeture du grand effet de
+   * montage, qui ne tourne qu'une fois : changer de parcelle remplaçait tout
+   * le monde autour, mais laissait la vue exactement là où le joueur l'avait
+   * tirée. Sur la nouvelle carte, ce même décalage tombe chez un voisin —
+   * « on ne voit plus les mêmes parcelles », et la sienne est hors champ.
+   *
+   * Séparé de `recentrer()` — le bouton « Ma ferme » — qui glisse : glisser
+   * suppose qu'on revient d'un endroit qu'on a choisi, et ici on n'y est
+   * jamais allé. On y est déjà.
+   */
+  const recadrerRef = useRef<(() => void) | null>(null);
+  /*
    * Le recentrage se commande de l'extérieur.
    *
    * Le bouton a d'abord vécu dans la vue elle-même. Mesuré en jeu : posé en
@@ -3082,6 +3096,21 @@ export function IsoFarmView({
       };
     }
 
+    /* Recadrage sec, pour un changement de parcelle : pas de rappel en cours,
+       pas de doigt qui tient la vue, et le bouton « Ma ferme » retiré puisque
+       la ferme est de nouveau au centre. */
+    recadrerRef.current = () => {
+      tientLaVue = false;
+      retourVers = null;
+      view.panX = 0;
+      view.panZ = 0;
+      applyCamera();
+      if (egareRef.current) {
+        egareRef.current = false;
+        onEgareRef.current?.(false);
+      }
+    };
+
     const governor = makeFrameGovernor(applyQuality);
     let lastFrame = 0;
 
@@ -3754,6 +3783,7 @@ export function IsoFarmView({
     return () => {
       cancelAnimationFrame(raf);
       layoutRef.current = null;
+      recadrerRef.current = null;
       if (controle) controle.current = null;
       // La vue disparaît : le bouton de recentrage n'a plus rien à commander.
       if (egareRef.current) {
@@ -3853,6 +3883,18 @@ export function IsoFarmView({
   useEffect(() => {
     layoutRef.current?.();
   }, [sceneKey]);
+
+  /*
+   * La vue suit la parcelle.
+   *
+   * Sans cela, changer de parcelle gardait le décalage de caméra de la
+   * précédente : le joueur atterrissait sur le champ d'un voisin, sa propre
+   * parcelle hors cadre, avec le bouton « Ma ferme » allumé. Reproduit en
+   * jeu — on tire la vue, on bascule, on ne voit plus rien de chez soi.
+   */
+  useEffect(() => {
+    recadrerRef.current?.();
+  }, [parcelId]);
 
   return <div className="iso-viewport" ref={mountRef} aria-label="Vue isométrique de la ferme" />;
 }

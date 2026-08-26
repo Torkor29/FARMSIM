@@ -1445,6 +1445,26 @@ export function App() {
     return () => clearInterval(t);
   }, [activeParcelId, loadParcel, loadLivestock]);
 
+  /*
+   * Une sélection appartient à sa parcelle.
+   *
+   * Les cases retenues sont des coordonnées nues — « 4,7 », « 5,7 ». Elles ne
+   * disent pas sur quel champ elles ont été prises, si bien qu'en changeant de
+   * parcelle on emportait les cent trente-cinq cases de la précédente : elles
+   * se rallumaient sur le nouveau champ, la barre proposait toujours
+   * « Semer · 135 cases », et valider aurait travaillé ici ce qu'on avait
+   * désigné là-bas. Reproduit en jeu, sélection héritée à l'écran.
+   *
+   * Le survol, le menu de case et le fantôme de bâtiment sont du même bois :
+   * ils pointent une case d'un champ qu'on ne regarde plus.
+   */
+  useEffect(() => {
+    setSelectedCells([]);
+    setHoverCell(null);
+    setCellMenu(null);
+    setPendingBuild(null);
+  }, [activeParcelId]);
+
   useEffect(() => {
     if (!activeParcelId) {
       setVoisinage([]);
@@ -4727,6 +4747,20 @@ export function App() {
     );
   }
 
+  /*
+   * Pourquoi les boutons de travail sont gris.
+   *
+   * Un seul chantier à la fois : l'attelage ne peut pas être à deux champs. La
+   * règle tenait, mais rien ne l'écrivait — on achetait une deuxième parcelle,
+   * on y basculait pendant un semis, et tous les boutons étaient éteints, sans
+   * un mot. Reproduit en jeu : « Semer · 144 cases » gris, aucune explication.
+   */
+  const chantierRetient = chantier
+    ? `Un seul chantier à la fois — les outils reprennent à la fin de celui de ${
+        ownedParcels.find((p) => p.id === chantier.parcelId)?.label ?? "l’autre parcelle"
+      }.`
+    : null;
+
   /**
    * Bandeau du chantier en cours — écrit une fois, accroché à deux endroits.
    *
@@ -6087,6 +6121,7 @@ export function App() {
       {isMobile ? (
         <FieldDock
           chantierBar={chantierBar}
+          chantierEnCours={chantierRetient}
           machineManquante={machineManquante}
           tool={tool}
           season={season}
@@ -6214,6 +6249,7 @@ export function App() {
         <SelectionBar
             tool={tool}
             machineManquante={machineManquante}
+            chantierEnCours={chantierRetient}
             selectedCount={selectedCells.length}
             readyCount={
               visiting ? Math.min(readyCellCount, visitOrder?.remaining ?? 0) : readyCellCount

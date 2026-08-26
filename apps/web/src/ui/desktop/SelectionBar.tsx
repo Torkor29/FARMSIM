@@ -47,6 +47,16 @@ type Props = {
    * dix qui ne pouvaient que refuser en 409.
    */
   machineManquante?: string | null;
+  /**
+   * Le chantier qui tient le parc, s'il y en a un.
+   *
+   * Un seul travail à la fois : le tracteur ne peut pas être à deux champs.
+   * C'est une règle, mais elle n'était écrite nulle part — les boutons
+   * devenaient gris, sans un mot, et le joueur qui venait d'acheter une
+   * deuxième parcelle croyait le jeu cassé. La phrase nomme le chantier et le
+   * champ où il tourne.
+   */
+  chantierEnCours?: string | null;
   onConfirm: () => void;
   onHarvestAll: () => void;
   onContractor: () => void;
@@ -72,6 +82,7 @@ export function SelectionBar({
   mowSelected,
   mowReadyAll,
   machineManquante,
+  chantierEnCours,
   onConfirm,
   onHarvestAll,
   onContractor,
@@ -92,6 +103,12 @@ export function SelectionBar({
           {selectedCount > 1 ? "cases retenues" : "case retenue"}
         </span>
       </div>
+
+      {chantierEnCours && (
+        <span className="selection-bar-note" role="status">
+          {chantierEnCours}
+        </span>
+      )}
 
       {acts && (
         <div className="selection-bar-picks">
@@ -115,7 +132,7 @@ export function SelectionBar({
             type="button"
             className="selection-bar-go"
             disabled={busy || !has || Boolean(machineManquante)}
-            title={machineManquante ?? undefined}
+            title={machineManquante ?? chantierEnCours ?? undefined}
             onClick={onConfirm}
           >
             {toolActionLabel(tool, selectedCount, mowSelected)}
@@ -129,6 +146,7 @@ export function SelectionBar({
             disabled={busy || !has || !contractorAffordable || Boolean(contractorBlocage)}
             title={
               contractorBlocage ??
+              chantierEnCours ??
               (contractorAffordable
                 ? "Une entreprise de dépannage vient tout de suite, avec son matériel. Le travail est fait dès le clic. Prix ferme, semences comprises."
                 : "Trésorerie insuffisante pour ce devis.")
