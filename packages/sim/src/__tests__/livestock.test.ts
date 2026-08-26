@@ -188,10 +188,27 @@ describe("bonheur — surpeuplement", () => {
     expect(crowdingPenalty(0.85)).toBe(0);
   });
 
-  it("pénalise dès que l’enclos déborde, jusqu’à −0,30 point", () => {
+  it("pénalise dès que l’enclos déborde, jusqu’à −0,35 point au double", () => {
     expect(crowdingPenalty(1)).toBeGreaterThan(0);
-    expect(crowdingPenalty(1.5)).toBeCloseTo(HAPPINESS.crowdingPenaltyMax, 6);
+    // Le maximum est désormais atteint à **deux fois** la place, plus à une
+    // fois et demie : au-delà de 150 %, entasser continue de coûter.
+    expect(crowdingPenalty(1.5)).toBeLessThan(HAPPINESS.crowdingPenaltyMax);
+    expect(crowdingPenalty(2)).toBeCloseTo(HAPPINESS.crowdingPenaltyMax, 6);
     expect(crowdingPenalty(4)).toBeCloseTo(HAPPINESS.crowdingPenaltyMax, 6);
+  });
+
+  it("croît comme le carré du dépassement, pas comme une droite", () => {
+    /*
+     * La forme est tout le réglage : à mi-chemin du plafond d'occupation, une
+     * droite aurait rendu la moitié de la peine ; le carré n'en rend que le
+     * quart. C'est ce qui sépare l'erreur de gestion de l'abandon.
+     */
+    const miChemin = (HAPPINESS.crowdingComfort + HAPPINESS.crowdingCritical) / 2;
+    expect(crowdingPenalty(miChemin)).toBeCloseTo(HAPPINESS.crowdingPenaltyMax / 4, 6);
+    // Et elle reste monotone : entasser davantage ne peut jamais soulager.
+    for (let c = 0.85; c < 2; c += 0.05) {
+      expect(crowdingPenalty(c + 0.05)).toBeGreaterThanOrEqual(crowdingPenalty(c));
+    }
   });
 
   it("abaisse la cible du troupeau entassé sous celle du troupeau au large", () => {

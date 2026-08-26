@@ -21,16 +21,25 @@
  */
 
 import {
+  GAME_DAY_MS,
+  GRASS_GROWTH,
   GRASS_INTAKE_TONS,
+  PADDOCK,
+  PADDOCK_ANIMALS_PER_CELL,
   SPECIES,
+  SUSTAINABLE_STOCKING_RATE,
   feedSavedByPasture,
   feltTempC,
   grassCapacity,
   grazePasture,
   SEASON_DAYS,
   thermalPenalty,
+  YEAR_DAYS,
   type Season,
 } from "@farmsim/shared";
+
+/** Heures réelles que dure un cycle d'élevage — l'unité du joueur. */
+const CYCLE_H = GAME_DAY_MS / 3_600_000;
 
 const SAISONS: Season[] = ["SPRING", "SUMMER", "AUTUMN", "WINTER"];
 
@@ -90,10 +99,31 @@ describe("une année au pré", () => {
     expect(par("SPRING").couverture).toBeCloseTo(1, 2);
   });
 
-  it("l'hiver vide la réserve — le pré ne se reconstitue plus", () => {
-    // Dix cycles d'hiver suffisent à ramener un enclos correctement chargé
-    // presque à zéro : le joueur a le temps de voir venir, pas de l'ignorer.
-    expect(par("WINTER").herbeFin).toBeLessThan(0.2);
+  it("un enclos sous-chargé passe l'hiver — c'est la récompense du bon chargement", () => {
+    // 9 cases pour 8 bêtes, soit 0,89 bête par case : très en dessous de la
+    // charge soutenable de 1,6. Ce troupeau-là traverse l'hiver sans que le
+    // hangar s'ouvre, et c'est voulu — le calibrage récompense qui ne
+    // surcharge pas. La falaise d'hiver se mesure à pleine charge, plus bas.
+    expect(par("WINTER").herbeFin).toBeGreaterThan(0.5 * grassCapacity(9));
+    expect(par("WINTER").couverture).toBeCloseTo(1, 2);
+  });
+
+  it("à pleine charge, l'hiver vide bel et bien la réserve", () => {
+    // 9 cases, 18 bêtes : le maximum que l'enclos laisse sortir. La réserve
+    // part pleine et finit sous 20 % — le joueur voit le fond arriver du
+    // premier au dernier jour de l'hiver et doit avoir tranché avant.
+    let herbe = grassCapacity(9);
+    for (let c = 0; c < SEASON_DAYS; c++) {
+      herbe = grazePasture({
+        grassTons: herbe,
+        paddockCells: 9,
+        season: "WINTER",
+        animalsOutside: 18,
+        cycles: 1,
+      }).grassTons;
+    }
+    expect(herbe).toBeGreaterThan(0);
+    expect(herbe).toBeLessThan(0.2 * grassCapacity(9));
   });
 
   it("un hiver qui dure force à ouvrir le hangar", () => {
@@ -137,6 +167,157 @@ describe("charge du pré", () => {
     // Garde-fou d'échelle : si l'un des deux dérive d'un ordre de grandeur,
     // le pâturage devient soit gratuit, soit inutile.
     expect(GRASS_INTAKE_TONS).toBeLessThan(grassCapacity(1));
+  });
+});
+
+/**
+ * Le calibrage du pré, lu à l'horloge murale.
+ *
+ * Les tests ci-dessus raisonnent en **cycles**, et c'est ce qui a laissé
+ * passer le défaut : quand la saison est passée à dix heures réelles, le
+ * cycle d'élevage a suivi `GAME_DAY_MS` et perdu les trois quarts de sa
+ * durée. Tous les équilibres par cycle sont restés vrais ; l'expérience du
+ * joueur, elle, s'est mise à défiler 4,2 fois plus vite.
+ *
+ * Ce bloc-ci fixe donc les intentions dans l'unité du joueur — l'heure
+ * réelle — pour qu'un futur changement de `SEASON_REAL_HOURS` casse un test
+ * au lieu de vider les prés en silence.
+ */
+describe("le pré à l'horloge du joueur", () => {
+  /** Heures réelles avant le pré à nu, réserve pleine, saison figée. */
+  function heuresAvantANu(cells: number, animals: number, season: Season): number {
+    const net = GRASS_INTAKE_TONS * animals - GRASS_GROWTH[season] * cells;
+    if (net <= 0) return Infinity;
+    return (grassCapacity(cells) / net) * CYCLE_H;
+  }
+
+  it("une réserve pleine tient plus qu'une nuit, même à pleine charge", () => {
+    // Le reproche exact : « un joueur qui se connecte le soir retrouve un pré
+    // à nu ». Le pire cas est l'hiver à pleine charge, sans une seule
+    // repousse. Il durait 4 h 06 — moins qu'une soirée de travail.
+    const pire = heuresAvantANu(9, 9 * PADDOCK_ANIMALS_PER_CELL, "WINTER");
+    expect(pire).toBeGreaterThan(10);
+    // Mais pas au point que l'hiver (10 h réelles) ne puisse plus l'entamer :
+    // au-delà, la décision « je rentre ou je nourris » disparaîtrait.
+    expect(pire).toBeLessThan(2 * 10);
+  });
+
+  it("à 80 % de charge, une absence d'une nuit ne met pas le pré à nu", () => {
+    // Une absence de 22 h réelles traverse deux saisons et demie : on la
+    // simule en faisant défiler les saisons, en partant de chaque phase
+    // possible de l'année, et on garde la pire.
+    const cells = 9;
+    const animals = Math.round(cells * PADDOCK_ANIMALS_PER_CELL * 0.8);
+    const cyclesAbsence = 22 / CYCLE_H;
+
+    let pire = 1;
+    for (let depart = 0; depart < YEAR_DAYS; depart += 1) {
+      let herbe = grassCapacity(cells);
+      for (let c = 0; c < cyclesAbsence; c += 0.25) {
+        const saison = SAISONS[Math.floor((depart + c) / SEASON_DAYS) % SAISONS.length]!;
+        herbe = grazePasture({
+          grassTons: herbe,
+          paddockCells: cells,
+          season: saison,
+          animalsOutside: animals,
+          cycles: 0.25,
+        }).grassTons;
+        pire = Math.min(pire, herbe / grassCapacity(cells));
+      }
+    }
+    expect(pire).toBeGreaterThan(0);
+  });
+
+  it("mais à pleine charge, elle le met à nu — c'est le prix du maximum", () => {
+    // La contrepartie assumée : l'enclos rempli au maximum de ce qu'il laisse
+    // sortir ne passe pas une absence longue qui tombe sur l'automne et
+    // l'hiver. Sans ce point de bascule, le pâturage serait gratuit.
+    const cells = 9;
+    const animals = cells * PADDOCK_ANIMALS_PER_CELL;
+    let herbe = grassCapacity(cells);
+    // 22 h réelles à cheval sur l'automne et l'hiver.
+    for (let c = 0; c < 22 / CYCLE_H; c += 0.25) {
+      const saison: Season = c < SEASON_DAYS ? "AUTUMN" : "WINTER";
+      herbe = grazePasture({
+        grassTons: herbe,
+        paddockCells: cells,
+        season: saison,
+        animalsOutside: animals,
+        cycles: 0.25,
+      }).grassTons;
+    }
+    expect(herbe).toBe(0);
+  });
+});
+
+describe("charge soutenable du pré", () => {
+  it("la charge soutenable est celle qu'on annonce : 80 % de la capacité de sortie", () => {
+    expect(SUSTAINABLE_STOCKING_RATE).toBeCloseTo(1.6, 5);
+    expect(SUSTAINABLE_STOCKING_RATE / PADDOCK_ANIMALS_PER_CELL).toBeCloseTo(0.8, 5);
+  });
+
+  it("la charge de l'enclos et celle du calibrage ne peuvent pas diverger", () => {
+    // `husbandry.ts` recopie la capacité par case de `livestock.ts` pour ne
+    // pas créer de cycle d'import. Tout le calibrage du pré se lit par rapport
+    // à elle : les laisser diverger rendrait les trois constantes fausses sans
+    // qu'aucune ne bouge.
+    expect(PADDOCK_ANIMALS_PER_CELL).toBe(PADDOCK.capacityPerCell);
+  });
+
+  it("sous la charge soutenable, le pré ne touche jamais le fond", () => {
+    /*
+     * L'équilibre n'est pas un plateau, c'est une dent de scie : le plafond
+     * de réserve **rogne** le surplus du printemps et de l'été, si bien qu'on
+     * ne peut pas entrer dans l'hiver avec plus que ce plafond. La bonne
+     * question n'est donc pas « la réserve revient-elle à son point de
+     * départ ? » — elle ne le peut pas — mais « le creux de fin d'hiver
+     * laisse-t-il de quoi tenir ? ».
+     */
+    const cells = 9;
+    const animals = Math.floor(cells * SUSTAINABLE_STOCKING_RATE * 0.9);
+    let herbe = grassCapacity(cells);
+    let creux = 1;
+    for (let c = 0; c < YEAR_DAYS; c++) {
+      const saison = SAISONS[Math.floor(c / SEASON_DAYS) % SAISONS.length]!;
+      const out = grazePasture({
+        grassTons: herbe,
+        paddockCells: cells,
+        season: saison,
+        animalsOutside: animals,
+        cycles: 1,
+      });
+      herbe = out.grassTons;
+      // Le hangar n'a jamais eu à s'ouvrir : le pré a tout couvert.
+      expect(out.coverage).toBeCloseTo(1, 6);
+      creux = Math.min(creux, herbe / grassCapacity(cells));
+    }
+    // Le creux de fin d'hiver garde une marge nette : bien charger son pré,
+    // c'est ne plus avoir à y penser.
+    expect(creux).toBeGreaterThan(0.2);
+  });
+
+  it("au-dessus, le pré ne se refait pas — le pâturage n'est pas gratuit", () => {
+    const cells = 9;
+    const animals = cells * PADDOCK_ANIMALS_PER_CELL;
+    let herbe = grassCapacity(cells);
+    let cyclesASec = 0;
+    for (let c = 0; c < YEAR_DAYS; c++) {
+      const saison = SAISONS[Math.floor(c / SEASON_DAYS) % SAISONS.length]!;
+      const out = grazePasture({
+        grassTons: herbe,
+        paddockCells: cells,
+        season: saison,
+        animalsOutside: animals,
+        cycles: 1,
+      });
+      herbe = out.grassTons;
+      if (out.coverage < 1) cyclesASec++;
+    }
+    // Au maximum de la charge, l'année se termine à sec et le hangar a dû
+    // prendre le relais : c'est exactement ce qui empêche le pré d'être une
+    // source infinie.
+    expect(cyclesASec).toBeGreaterThan(0);
+    expect(herbe).toBeLessThan(0.1 * grassCapacity(cells));
   });
 });
 

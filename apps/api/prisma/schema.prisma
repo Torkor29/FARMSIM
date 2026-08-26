@@ -103,7 +103,26 @@ model User {
   level          Int            @default(1)
   xp             Int            @default(0)
   crd            Float          @default(12000)
-  /** Code d’accès MVP (pas un vrai hash — démo locale) */
+  /// Empreinte bcrypt du code d'accès — plus jamais le code lui-même.
+  ///
+  /// Il y a été stocké **en clair** sous un commentaire qui l'assumait
+  /// (« pas un vrai hash — démo locale ») : la démo est devenue un jeu
+  /// public, le commentaire n'a pas bougé, et le mot de passe d'un joueur a
+  /// fini par se lire dans cette colonne.
+  ///
+  /// La colonne accepte les deux formes le temps de la migration :
+  /// `codeCorrespond()` reconnaît une empreinte (`$2b$…`) d'un code en clair
+  /// et vérifie l'une ou l'autre. Un compte encore en clair bascule à sa
+  /// première connexion réussie ; `scripts/farmsim-hacher-codes.mjs` balaie
+  /// ceux qui ne reviennent pas. Personne n'est invalidé dans un cas comme
+  /// dans l'autre.
+  ///
+  /// Chaîne vide = compte qui ne peut pas se connecter, c'est le cas des PNJ.
+  ///
+  /// Le défaut reste « ferme » en clair, et il le faut : une valeur par
+  /// défaut ne peut pas être calculée par la base. Les deux routes qui créent
+  /// un compte fournissent toujours l'empreinte, ce défaut ne sert donc
+  /// qu'aux lignes posées à la main.
   accessCode     String         @default("ferme")
   /// Empreinte du code de secours (SHA-256 salé par l'id), jamais le code.
   /// Nul tant que le compte n'en a pas reçu : les comptes créés avant que le
@@ -284,6 +303,20 @@ model Parcel {
   landPrice   Float
   fertility   Float     @default(0.7)
   accessIndex Float     @default(0.5)
+  /// Quand cette parcelle est entrée dans la ferme qui la détient.
+  ///
+  /// Elle existe pour une seule raison : donner à la liste des parcelles un
+  /// **ordre qui ne bouge pas**. Sans clé de tri, PostgreSQL rend les lignes
+  /// dans l'ordre du tas, et le moindre `UPDATE` sur une parcelle — la
+  /// fertilité change à chaque semis, labour, épandage et moisson — la renvoie
+  /// en fin de liste. Le joueur voyait donc ses parcelles « bouger » toutes
+  /// seules d'une session à l'autre.
+  ///
+  /// Nulle pour les parcelles acquises avant que cette colonne existe : la
+  /// migration en retrouve autant que le journal comptable en garde trace, et
+  /// le tri place les indatables en tête, par identifiant, ce qui reste stable
+  /// à défaut d'être exact.
+  acquiredAt  DateTime?
   cells      ParcelCell[]
   buildings  Building[]
   machines   Machine[]  @relation("ParkedOn")

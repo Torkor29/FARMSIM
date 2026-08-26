@@ -2068,6 +2068,169 @@ describe("un chantier prend du temps", () => {
 /* Code d'accès oublié                                                 */
 /* ------------------------------------------------------------------ */
 
+/**
+ * Le code d'accès, haché — et les deux chemins de la migration.
+ *
+ * Il était stocké en clair sous un commentaire qui l'assumait, ce qui a permis
+ * de retrouver le mot de passe d'un joueur en lisant une colonne. Ces
+ * tests-ci parlent à la vraie base, parce que c'est là que se joue tout ce qui
+ * peut mal tourner : la colonne doit accueillir les deux formes, un compte
+ * encore en clair doit basculer sans être invalidé, et un compte déjà migré
+ * doit continuer d'ouvrir.
+ */
+describe("code d'accès haché", () => {
+  /** Ce que la colonne contient réellement, vu de la base. */
+  function codeEnBase(email: string): string {
+    return execFileSync(
+      "psql",
+      [base!.url, "-v", "ON_ERROR_STOP=1", "-tA", "-c",
+       `SELECT "accessCode" FROM "User" WHERE email = '${email}'`],
+      { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] },
+    ).trim();
+  }
+
+  const EMPREINTE = /^\$2[aby]\$\d{2}\$[./A-Za-z0-9]{53}$/;
+
+  it("l'inscription n'écrit jamais le code en clair", async () => {
+    const moi = await inscrire("Code Neuf");
+    const stocke = codeEnBase(moi.email);
+    assert.match(stocke, EMPREINTE, "la colonne doit contenir une empreinte");
+    assert.ok(!stocke.includes("ferme"), "le code ne doit apparaître nulle part");
+  });
+
+  it("compte déjà migré : il ouvre, et la colonne ne bouge pas", async () => {
+    const moi = await inscrire("Code Migre");
+    const avant = codeEnBase(moi.email);
+
+    const r = await appel("/auth/login", {
+      methode: "POST",
+      corps: { email: moi.email, accessCode: "ferme" },
+    });
+    assert.equal(r.statut, 200, JSON.stringify(r.corps));
+    // Re-hacher à chaque connexion coûterait un bcrypt pour rien, et surtout
+    // ouvrirait une fenêtre où l'écriture peut échouer sur un compte qui va
+    // très bien.
+    assert.equal(codeEnBase(moi.email), avant);
+
+    const faux = await appel("/auth/login", {
+      methode: "POST",
+      corps: { email: moi.email, accessCode: "pas-le-bon" },
+    });
+    assert.equal(faux.statut, 401);
+  });
+
+  it("compte pas encore migré : il ouvre avec son code, et la colonne bascule", async () => {
+    const moi = await inscrire("Code Ancien");
+    // On remet la colonne dans l'état d'avant la correction : le clair, tel
+    // qu'il y dormait pour tous les comptes existants.
+    prismaExec(`UPDATE "User" SET "accessCode" = 'vieux-code' WHERE email = '${moi.email}';`);
+    assert.equal(codeEnBase(moi.email), "vieux-code");
+
+    const r = await appel("/auth/login", {
+      methode: "POST",
+      corps: { email: moi.email, accessCode: "vieux-code" },
+    });
+    assert.equal(r.statut, 200, "un compte d'avant doit continuer d'entrer");
+
+    const apres = codeEnBase(moi.email);
+    assert.match(apres, EMPREINTE, "la connexion réussie doit avoir haché le code");
+    assert.ok(!apres.includes("vieux-code"));
+
+    // Et surtout : le même code ouvre toujours. C'est ce qui distingue une
+    // migration d'une mise à la porte.
+    const encore = await appel("/auth/login", {
+      methode: "POST",
+      corps: { email: moi.email, accessCode: "vieux-code" },
+    });
+    assert.equal(encore.statut, 200, "le joueur n'a pas été invalidé");
+  });
+
+  it("compte pas encore migré : un mauvais code ne migre rien", async () => {
+    // Migrer sur un échec écrirait l'empreinte du code **saisi**, c'est-à-dire
+    // celui de l'attaquant. Le compte changerait de propriétaire.
+    const moi = await inscrire("Code Attaque");
+    prismaExec(`UPDATE "User" SET "accessCode" = 'vrai-code' WHERE email = '${moi.email}';`);
+
+    const r = await appel("/auth/login", {
+      methode: "POST",
+      corps: { email: moi.email, accessCode: "tentative" },
+    });
+    assert.equal(r.statut, 401);
+    assert.equal(codeEnBase(moi.email), "vrai-code", "rien ne doit avoir été écrit");
+
+    const vrai = await appel("/auth/login", {
+      methode: "POST",
+      corps: { email: moi.email, accessCode: "vrai-code" },
+    });
+    assert.equal(vrai.statut, 200);
+  });
+
+  it("changer de code depuis le profil écrit une empreinte, jamais le clair", async () => {
+    const moi = await inscrire("Code Change");
+    const r = await appel("/auth/me", {
+      methode: "PATCH",
+      corps: { accessCode: "code-tout-neuf", currentAccessCode: "ferme" },
+      jeton: moi.jeton,
+    });
+    assert.equal(r.statut, 200, JSON.stringify(r.corps));
+    assert.match(codeEnBase(moi.email), EMPREINTE);
+
+    assert.equal(
+      (await appel("/auth/login", {
+        methode: "POST",
+        corps: { email: moi.email, accessCode: "code-tout-neuf" },
+      })).statut,
+      200,
+    );
+    assert.equal(
+      (await appel("/auth/login", {
+        methode: "POST",
+        corps: { email: moi.email, accessCode: "ferme" },
+      })).statut,
+      401,
+    );
+  });
+
+  it("le code actuel se vérifie même sur un compte pas encore migré", async () => {
+    // Sans cela, un joueur d'avant ne pourrait plus changer son code : la
+    // route comparait la saisie à la colonne par égalité de chaînes.
+    const moi = await inscrire("Code Profil Ancien");
+    prismaExec(`UPDATE "User" SET "accessCode" = 'code-d-avant' WHERE email = '${moi.email}';`);
+
+    const refuse = await appel("/auth/me", {
+      methode: "PATCH",
+      corps: { accessCode: "peu-importe", currentAccessCode: "pas-le-bon" },
+      jeton: moi.jeton,
+    });
+    assert.equal(refuse.statut, 403);
+
+    const ok = await appel("/auth/me", {
+      methode: "PATCH",
+      corps: { accessCode: "code-apres", currentAccessCode: "code-d-avant" },
+      jeton: moi.jeton,
+    });
+    assert.equal(ok.statut, 200, JSON.stringify(ok.corps));
+    assert.match(codeEnBase(moi.email), EMPREINTE);
+  });
+
+  it("la récupération pose une empreinte, pas un code en clair", async () => {
+    const moi = await inscrire("Code Secours Hache");
+    const r = await appel("/auth/recover", {
+      methode: "POST",
+      corps: { email: moi.email, recoveryCode: moi.secours, accessCode: "apres-secours" },
+    });
+    assert.equal(r.statut, 200, JSON.stringify(r.corps));
+    assert.match(codeEnBase(moi.email), EMPREINTE);
+    assert.equal(
+      (await appel("/auth/login", {
+        methode: "POST",
+        corps: { email: moi.email, accessCode: "apres-secours" },
+      })).statut,
+      200,
+    );
+  });
+});
+
 describe("code de secours", () => {
   it("est remis à l'inscription, une seule fois", async () => {
     const moi = await inscrire("Secours Neuf");

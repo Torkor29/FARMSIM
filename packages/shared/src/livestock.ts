@@ -344,22 +344,91 @@ export const HAPPINESS = {
   grazeMemoryMs: 48 * HOUR_MS,
   /** Taux d'occupation de l'enclos toléré sans stress `[TEST]` */
   crowdingComfort: 0.85,
-  /** Taux d'occupation où le stress est maximal `[TEST]` */
-  crowdingCritical: 1.5,
-  /** Pénalité maximale de surpeuplement, en points de cible `[GD]` */
-  crowdingPenaltyMax: 0.3,
+  /**
+   * Taux d'occupation où le stress est maximal `[GD]`.
+   *
+   * Porté de 1,5 à **2,0** : le maximum de la peine doit désigner
+   * l'entassement massif — deux fois la place — et non un dépassement de
+   * moitié, qui est une erreur de gestion ordinaire.
+   */
+  crowdingCritical: 2,
+  /**
+   * Pénalité maximale de surpeuplement, en points de cible `[GD]`.
+   *
+   * Portée de 0,30 à **0,35**, et c'est délibérément *plus* sévère au sommet.
+   * L'assouplissement porte sur la forme de la courbe, pas sur son extrémité :
+   * un enclos chargé au double doit rester mortel, faute de quoi
+   * l'entassement cesserait d'être une contrainte.
+   */
+  crowdingPenaltyMax: 0.35,
+  /**
+   * Exposant de la courbe de gêne `[GD]`. Le cœur du réglage.
+   *
+   * La peine croît comme le **carré** du dépassement, plus linéairement.
+   * Voir `crowdingPenalty()` pour ce que ce 2 change.
+   */
+  crowdingExponent: 2,
 } as const;
 
 /**
- * Pénalité de surpeuplement `∈ [0 ; 0,30]`, linéaire entre 85 % et 150 %
- * d'occupation. En dessous de 85 %, aucune pénalité : le joueur n'a pas à
- * calculer au ras des places disponibles pour être optimal.
+ * Pénalité de surpeuplement `∈ [0 ; 0,35]`, en **carré** du dépassement entre
+ * 85 % et 200 % d'occupation. En dessous de 85 %, aucune pénalité : le joueur
+ * n'a pas à calculer au ras des places disponibles pour être optimal.
+ *
+ * ## Ce que la droite faisait, et pourquoi c'était faux
+ *
+ * La peine montait linéairement de 85 % à 150 %, jusqu'à 0,30 point. Un
+ * dépassement de 17 % — vingt et une bêtes pour dix-huit places, le cas
+ * remonté — coûtait donc déjà **0,146 point**, soit les trois quarts de la
+ * marge qui sépare le plancher de l'enfermement (0,35) du plancher de
+ * mortalité (0,15). Il ne restait plus que 0,054, et n'importe quelle
+ * contrariété la mangeait : un orage d'hiver sur un troupeau dehors vaut
+ * 0,075, une chute de neige 0,225. Le lot mourait, mangeoire pleine et
+ * litière fraîche, pour dix-sept pour cent de trop.
+ *
+ * Pire, la droite atteignait son maximum à 150 % et n'avait plus rien à dire
+ * au-delà : entasser au double coûtait exactement autant qu'entasser d'une
+ * moitié. La pente était donc à la fois trop raide en bas et plate en haut.
+ *
+ * ## La courbe, et ce qu'elle sépare
+ *
+ * `peine = 0,35 × ((occupation − 0,85) / 1,15)²`
+ *
+ *  - **jusqu'à 130 %** — une erreur de gestion : quelques points de lait et de
+ *    croissance en moins, jamais un cadavre. La marge au plancher de
+ *    mortalité reste au-dessus de 0,29 point, de quoi encaisser le pire hiver.
+ *  - **au-delà de 172 %** — le seul entassement passe sous le plancher : les
+ *    pertes commencent sans qu'il faille rien d'autre.
+ *  - **à 200 %** — la cible tombe à zéro. L'entassement massif tue, comme la
+ *    faim.
+ *
+ * Autrement dit : le surpeuplement léger se paie en production, la mortalité
+ * reste réservée à l'abandon caractérisé.
  */
 export function crowdingPenalty(crowding: number): number {
   const excess = Math.max(0, crowding) - HAPPINESS.crowdingComfort;
   if (excess <= 0) return 0;
   const span = HAPPINESS.crowdingCritical - HAPPINESS.crowdingComfort;
-  return HAPPINESS.crowdingPenaltyMax * clamp(excess / span, 0, 1);
+  return HAPPINESS.crowdingPenaltyMax * clamp(excess / span, 0, 1) ** HAPPINESS.crowdingExponent;
+}
+
+/**
+ * Occupation à partir de laquelle le seul entassement devient mortel.
+ *
+ * **Dérivée, jamais réglée** : c'est l'occupation où la cible d'un lot par
+ * ailleurs irréprochable — nourri, paillé, tempéré — passe sous
+ * `MORTALITY.floor`. Elle vaut ~1,72, contre 1,28 avec l'ancienne droite.
+ *
+ * Elle existe pour être testée et affichée, pas pour être crue sur parole :
+ * c'est le chiffre qui répond à « à partir de quand mes bêtes meurent
+ * d'entassement ? », et il ne doit pas pouvoir dériver en silence quand on
+ * retouche l'une des trois constantes.
+ */
+export function crowdingLethalThreshold(): number {
+  const marge = HAPPINESS.confinedFloor - MORTALITY.floor;
+  if (marge >= HAPPINESS.crowdingPenaltyMax) return Number.POSITIVE_INFINITY;
+  const part = (marge / HAPPINESS.crowdingPenaltyMax) ** (1 / HAPPINESS.crowdingExponent);
+  return HAPPINESS.crowdingComfort + part * (HAPPINESS.crowdingCritical - HAPPINESS.crowdingComfort);
 }
 
 /**

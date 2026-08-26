@@ -44,6 +44,28 @@ services:
       - farmsim-pg:/var/lib/postgresql/data
     restart: unless-stopped
     # ——————————————————————————————————————————————————————————————————
+    # Plafonds de la base.
+    #
+    # Mesuré sur un monde complet — 306 fermes, 615 parcelles, 88 560 cases,
+    # 44 Mo de données : la somme des `RSS` de tous les processus PostgreSQL
+    # atteint 171 Mo, et cette somme **surestime** la vraie consommation
+    # puisqu'elle recompte la mémoire partagée à chaque backend. La
+    # configuration est celle de l'image : `shared_buffers` à 128 Mo,
+    # `work_mem` à 4 Mo, et le jeu n'ouvre que dix connexions
+    # (`connection_limit=10` dans son `DATABASE_URL`).
+    #
+    # 384 Mo, soit plus du double du mesuré. On ne descend pas plus bas : un
+    # PostgreSQL tué par le noyau à court de mémoire, c'est le jeu à l'arrêt et
+    # une reprise sur journal au redémarrage. Le plafond est là pour empêcher
+    # un emballement, pas pour serrer au plus juste.
+    #
+    # Pas de `memswap_limit` ici, volontairement : la base a le droit de
+    # déborder un peu sur l'échange plutôt que de se faire tuer.
+    # ——————————————————————————————————————————————————————————————————
+    cpus: 0.5
+    mem_limit: 384m
+    mem_reservation: 192m
+    # ——————————————————————————————————————————————————————————————————
     # Les journaux ont une taille maximale.
     #
     # Docker n'en impose aucune par défaut : le pilote `json-file` écrit sans
@@ -113,6 +135,25 @@ services:
       # rendrait cette bévue possible en une ligne, un soir. Sur une
       # installation locale on lance l'API à la main, sans Docker.
       FARMSIM_TESTERS: "${FARMSIM_TESTERS:-}"
+      # ————————————————————————————————————————————————————————————————
+      # Le tas de V8, plafonné à la main.
+      #
+      # Sans cette ligne, Node dimensionne son tas d'après la mémoire de
+      # **l'hôte** : sur une machine de 2 Go il se donne plusieurs centaines de
+      # mégaoctets, les remplit avant de ramasser, et le voisinage paie la
+      # note en échange disque. Mesuré, tas libre : le processus culmine à
+      # 1 157 Mo et navigue entre 730 et 950 Mo au repos.
+      #
+      # À 192 Mo, le même processus démarre à froid en 34 s — monde entier
+      # semé, 306 fermes — avec un pic de 613 Mo, et se stabilise à 331 Mo.
+      # C'est un plancher, pas une valeur ronde : à 128 Mo, V8 abandonne au
+      # démarrage (`JavaScript heap out of memory`), mesuré aussi.
+      #
+      # Le plafond du conteneur ne remplace pas celui-ci : le moteur de
+      # requêtes Prisma alloue hors du tas V8, et seul `mem_limit` le borne.
+      # Les deux servent, chacun de son côté.
+      # ————————————————————————————————————————————————————————————————
+      NODE_OPTIONS: "--max-old-space-size=192"
     tmpfs:
       - /tmp:size=64M,mode=1777
     read_only: true
@@ -120,6 +161,72 @@ services:
       - no-new-privileges:true
     cap_drop:
       - ALL
+    # ——————————————————————————————————————————————————————————————————
+    # Un vrai numéro 1.
+    #
+    # `CMD ["sh", "-c", "prisma migrate deploy && node dist/main.js"]` fait du
+    # shell le processus numéro 1 du conteneur. Deux conséquences, et aucune
+    # n'est théorique :
+    #
+    #  - **il ne récolte pas les orphelins.** Un processus numéro 1 doit
+    #    ramasser les enfants abandonnés ; ni `sh` ni `node` ne le font. Les
+    #    zombies s'accumulent, chacun retenant une entrée de table de
+    #    processus. Le serveur en compte 88 — on ne sait pas d'où ils sortent,
+    #    et c'est bien le problème : cette pile-ci ne pourra plus y contribuer.
+    #  - **il n'a pas transmis le signal d'arrêt.** `docker compose down`
+    #    envoie `SIGTERM` au numéro 1, c'est-à-dire au shell, qui ne le
+    #    répercute pas sur `node`. Docker attend dix secondes, puis tue.
+    #    Chaque déploiement coûtait donc dix secondes et une base fermée sans
+    #    ménagement.
+    #
+    # `init: true` glisse `tini` en numéro 1 : il récolte, et il transmet.
+    # ——————————————————————————————————————————————————————————————————
+    init: true
+    # ——————————————————————————————————————————————————————————————————
+    # Plafonds du jeu. **Le voisinage n'est plus à la merci d'un tick.**
+    #
+    # La machine héberge PostgreSQL, ce jeu, et une autre application qui ne
+    # relève pas de ce dépôt. Elle a été trouvée à 246 Mo libres sur 1 906, à
+    # 1 248 Mo d'échange sur 2 047, et à 25,81 / 29,19 / 31,35 de charge
+    # moyenne. Rien ici ne bornait le jeu : il pouvait prendre tout ce qui
+    # restait, et c'est ce qu'il faisait.
+    #
+    # Les mesures, sur le monde complet et l'image telle qu'elle est bâtie :
+    #
+    #   tas V8      démarrage à froid   au repos      pic       processeur
+    #   libre       ok                  730–950 Mo    1 157 Mo  30 % d'un cœur
+    #   256 Mo      ok                  615–695 Mo      794 Mo  30 % d'un cœur
+    #   192 Mo      ok, 34 s, 27 s CPU  331 Mo          731 Mo  30 % d'un cœur
+    #   128 Mo      échec — V8 renonce      —              —        —
+    #
+    # D'où les deux chiffres :
+    #
+    #  - **896 Mo**, soit 23 % au-dessus du plus haut relevé avec le tas
+    #    plafonné (731 Mo), et 23 % **en dessous** du pic sans plafond. Le
+    #    conteneur ne peut donc plus, à lui seul, faire basculer la machine
+    #    dans l'échange.
+    #  - **1 cœur**, quand la mesure donne 30 % d'un cœur au repos et 80 % le
+    #    temps d'un démarrage à froid. Ce n'est pas un chiffre rond choisi de
+    #    loin : c'est le pic mesuré, plus un quart. À plus de joueurs
+    #    simultanés il faudra le relever — et refaire la mesure, pas doubler
+    #    au jugé.
+    #
+    # `memswap_limit` égale `mem_limit` : le conteneur n'a **aucun** droit à
+    # l'échange. C'est délibéré. Un Node qui pagine ne ralentit pas seulement,
+    # il fait exploser la charge moyenne de toute la machine — c'est
+    # exactement ce qu'on lit dans les trois chiffres relevés. S'il dépasse, il
+    # est tué net et `restart: unless-stopped` le relève. Pour le savoir plutôt
+    # que le supposer :
+    #
+    #     docker inspect farmsim --format '{{.State.OOMKilled}} {{.RestartCount}}'
+    #
+    # Si cela arrive pour de bon, c'est le plafond qu'il faut relever, pas
+    # l'échange qu'il faut rouvrir.
+    # ——————————————————————————————————————————————————————————————————
+    cpus: 1.0
+    mem_limit: 896m
+    memswap_limit: 896m
+    mem_reservation: 384m
     restart: unless-stopped
     # ——————————————————————————————————————————————————————————————————
     # Les journaux ont une taille maximale.

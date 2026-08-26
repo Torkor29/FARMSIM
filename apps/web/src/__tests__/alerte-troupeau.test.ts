@@ -13,18 +13,22 @@ import fs from "node:fs";
 const PANNEAU = fs.readFileSync("src/LivestockPanel.tsx", "utf8");
 
 describe("un troupeau nourri peut mourir d’autre chose", () => {
-  it("vingt et une bêtes pour dix-huit places suffisent à approcher le seuil", () => {
+  it("vingt et une bêtes pour dix-huit places se voient, sans mettre en danger", () => {
     /*
-     * Le cas exact rapporté. Le plancher d'une bête jamais sortie est 0,35 et
-     * les pertes commencent à 0,15 : il ne reste que 0,20 de marge, et le
-     * seul serrement en mange les trois quarts. Nourrir n'y change rien.
+     * Le cas exact rapporté, et ce qu'il est devenu. Le plancher d'une bête
+     * jamais sortie est 0,35, les pertes commencent à 0,15 : il reste 0,20 de
+     * marge. La droite d'avant en mangeait les trois quarts pour dix-sept
+     * pour cent de trop (0,146), si bien qu'un orage suffisait à achever le
+     * lot. Le carré en mange un huitième (0,027) — assez pour se lire sur le
+     * lait et être nommé au joueur, pas assez pour tuer quoi que ce soit.
      */
     const serrement = 21 / 18;
     const penalite = crowdingPenalty(serrement);
     const bienEtre = HAPPINESS.confinedFloor - penalite;
-    expect(penalite).toBeGreaterThan(0.1);
+    expect(penalite).toBeGreaterThan(0);
     expect(bienEtre).toBeLessThan(HAPPINESS.confinedFloor);
-    expect(bienEtre - MORTALITY.floor).toBeLessThan(0.1);
+    // La marge restante encaisse le pire hiver du jeu (0,225 pour la neige).
+    expect(bienEtre - MORTALITY.floor).toBeGreaterThan(0.15);
   });
 
   it("et la cause dominante est bien le serrement, pas la faim", () => {
