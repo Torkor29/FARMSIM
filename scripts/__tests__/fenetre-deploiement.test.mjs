@@ -153,3 +153,53 @@ describe("la fenêtre SSH", () => {
     );
   });
 });
+
+/**
+ * Le filet ne doit pas empêcher le sauvetage.
+ *
+ * Suite directe de la coupure : `farmsim-db` est resté à l'état `created`,
+ * créé mais jamais démarré. Le déploiement suivant a buté là-dessus —
+ *
+ *     docker: cannot join network namespace of a non running container:
+ *             container farmsim-db is created
+ *     ERROR: la sauvegarde a échoué — déploiement interrompu.
+ *
+ * — et s'est arrêté en affirmant « rien n'a été touché, le jeu tourne
+ * toujours sur l'ancienne version ». C'était faux : toutes les routes qui
+ * touchent la base rendaient 500. Le garde-fou raisonnait sur un statu quo
+ * sain qui n'existait plus, et il bloquait la seule chose qui réparait.
+ *
+ * Une base à l'arrêt n'a aucune donnée vivante qu'une migration puisse
+ * abîmer, et il n'y a rien à extraire d'un conteneur qui ne répond pas.
+ */
+describe("la sauvegarde d’avant-déploiement, quand la base est à l’arrêt", () => {
+  it("reconnaît le cas au lieu de buter dessus", () => {
+    assert.match(DEPLOY, /\{\{\.State\.Status\}\}' farmsim-db/);
+    assert.match(DEPLOY, /!= "running"/);
+  });
+
+  it("laisse le déploiement remonter la pile", () => {
+    // La branche ne doit ni `exit` ni tenter la sauvegarde : c'est le
+    // démarrage qui suit qui remet la base debout.
+    const debut = DEPLOY.indexOf('!= "running"');
+    const bloc = DEPLOY.slice(debut, DEPLOY.indexOf("\nelse", debut));
+    assert.doesNotMatch(bloc, /exit 1/);
+    assert.doesNotMatch(bloc, /farmsim-backup\.sh/);
+    assert.match(bloc, /c'est le démarrage qui suit qui la remet/);
+  });
+
+  it("dit quel filet reste, avec le fichier", () => {
+    // Sauter la sauvegarde sans nommer la dernière en date, ce serait
+    // demander de faire confiance sans rien montrer.
+    const debut = DEPLOY.indexOf('!= "running"');
+    const bloc = DEPLOY.slice(debut, DEPLOY.indexOf("\nelse", debut));
+    assert.match(bloc, /ls -t .*\.dump/);
+  });
+
+  it("garde le refus partout ailleurs", () => {
+    // Une sauvegarde qui échoue sur une base **vivante** arrête toujours
+    // tout : c'est le seul filet avant une migration.
+    assert.match(DEPLOY, /ERROR: la sauvegarde a échoué — déploiement interrompu\./);
+    assert.match(DEPLOY, /exit 1/);
+  });
+});
