@@ -484,7 +484,22 @@ fi
 # lieu d'être tué en plein milieu.
 # ————————————————————————————————————————————————————————————————————————
 monter() {
-  if command -v setsid >/dev/null 2>&1; then
+  # `--wait` n'est pas un détail : sans lui, `setsid` **fork** dès que le shell
+  # est déjà chef de groupe de processus, et rend la main aussitôt. Le script
+  # filerait alors vers ses vérifications — la base répond-elle, le conteneur
+  # est-il sain, le HTTPS passe-t-il — pendant que la pile se reconstruit
+  # encore derrière, et il annoncerait un succès qu'il n'a pas constaté.
+  #
+  # Mesuré au déploiement du 26 août à 23 h 44 : il a bien attendu, parce que
+  # le shell n'était pas chef de groupe ce jour-là. C'est exactement le genre
+  # de garantie qu'on ne veut pas devoir à la chance.
+  #
+  # Deux replis, du plus sûr au plus simple : `--wait` s'il existe, `setsid`
+  # nu sinon, appel direct là où l'utilitaire manque. Le détachement se perd
+  # au dernier échelon, pas la mise en ligne.
+  if setsid --wait true >/dev/null 2>&1; then
+    setsid --wait docker compose "$@" </dev/null
+  elif command -v setsid >/dev/null 2>&1; then
     setsid docker compose "$@" </dev/null
   else
     docker compose "$@"

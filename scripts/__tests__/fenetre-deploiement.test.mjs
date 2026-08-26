@@ -118,7 +118,16 @@ describe("la recréation des conteneurs", () => {
   it("est détachée de la session SSH", () => {
     // Une session qui tombe ne doit pas pouvoir laisser la pile à moitié
     // reconstruite. `setsid` sort du groupe de processus de la session.
-    assert.match(DEPLOY, /setsid docker compose "\$@"/);
+    assert.match(DEPLOY, /setsid .*docker compose "\$@"/);
+  });
+
+  it("mais le script l’attend quand même", () => {
+    // Sans `--wait`, `setsid` fork dès que le shell est déjà chef de groupe
+    // et rend la main aussitôt : le script annoncerait un succès qu'il n'a
+    // pas constaté, la pile se reconstruisant encore derrière.
+    assert.match(DEPLOY, /setsid --wait docker compose "\$@"/);
+    // Et il vérifie que `--wait` existe avant de s'en servir.
+    assert.match(DEPLOY, /setsid --wait true >\/dev\/null 2>&1/);
   });
 
   it("passe par ce détachement partout où elle monte la pile", () => {
