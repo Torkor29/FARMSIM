@@ -302,13 +302,50 @@ cd "$APP_DIR"
 #
 # Dans les deux cas on continue, en le disant fort. Partout ailleurs, une
 # sauvegarde qui échoue arrête tout : c'est le seul filet avant une migration.
-if ! docker inspect farmsim >/dev/null 2>&1; then
+#
+# Troisième cas, mesuré le 26 août (run 33023611230) : le conteneur **existe**
+# (`docker inspect` réussit) mais n'est pas en marche — état `created`, laissé
+# par un `compose up --force-recreate` coupé. La sauvegarde a alors tenté de
+# rejoindre son réseau : « cannot join network namespace of a non running
+# container ». Le script s'est arrêté en déclarant n'avoir rien touché. Le
+# jeu, lui, rendait déjà 500 sur `/api/world` et `/api/auth/login`.
+monter() {
+  if command -v setsid >/dev/null 2>&1; then
+    setsid docker compose "$@" </dev/null
+  else
+    docker compose "$@"
+  fi
+}
+
+attendre_base() {
+  echo "==> La base répond ?"
+  local i
+  for i in $(seq 1 30); do
+    if timeout 20 docker exec "${FARMSIM_DB_CONTAINER:-farmsim-db}" \
+         pg_isready -U "${FARMSIM_DB_USER:-farmsim}" -d "${FARMSIM_DB_NAME:-farmsim}" >/dev/null 2>&1; then
+      echo "    oui."
+      return 0
+    fi
+    sleep 5
+  done
+  echo "WARN: la base ne répond pas encore." >&2
+  return 1
+}
+
+etat_db="$(timeout 20 docker inspect "${FARMSIM_DB_CONTAINER:-farmsim-db}" -f '{{.State.Status}}' 2>/dev/null || echo absent)"
+if ! timeout 20 docker inspect farmsim >/dev/null 2>&1; then
   echo "==> Premier déploiement : aucune base à sauvegarder"
-elif ! docker inspect farmsim-db >/dev/null 2>&1; then
+elif [[ "$etat_db" == "absent" ]]; then
   echo "==> Bascule vers PostgreSQL : la nouvelle base n'existe pas encore."
   echo "    Aucune sauvegarde possible ici — l'ancienne base SQLite reste"
   echo "    intacte sur le volume farmsim-data, et c'est elle le filet."
   echo "    Voir docs/POSTGRESQL.md pour le transfert des données."
+elif [[ "$etat_db" != "running" ]]; then
+  echo "==> farmsim-db est « $etat_db », pas en marche."
+  echo "    Une recréation précédente a été coupée. On démarre la base,"
+  echo "    sans instantané — il n'y a rien de cohérent à y lire."
+  monter up -d db || true
+  attendre_base || true
 else
   # La sauvegarde est bornée, et son échec n'a que deux issues : une
   # sauvegarde plus modeste, ou pas de déploiement. Jamais un déploiement sans
@@ -454,14 +491,9 @@ fi
 # session : le SSH peut mourir, la recréation va au bout. On l'attend quand
 # même — mais si l'attente est coupée, le travail continue côté serveur au
 # lieu d'être tué en plein milieu.
+# (`monter` est défini plus haut : on s'en sert aussi pour relancer une base
+# restée à l'état `created`.)
 # ————————————————————————————————————————————————————————————————————————
-monter() {
-  if command -v setsid >/dev/null 2>&1; then
-    setsid docker compose "$@" </dev/null
-  else
-    docker compose "$@"
-  fi
-}
 
 if [[ -n "${FARMSIM_IMAGE:-}" ]]; then
   export FARMSIM_IMAGE
@@ -480,15 +512,7 @@ fi
 
 # La base doit répondre avant qu'on aille plus loin : c'est elle que la
 # coupure du 26 août a laissée en rade, et rien ensuite ne s'en apercevait.
-echo "==> La base répond ?"
-for _ in $(seq 1 30); do
-  if timeout 20 docker exec "${FARMSIM_DB_CONTAINER:-farmsim-db}" \
-       pg_isready -U "${FARMSIM_DB_USER:-farmsim}" -d "${FARMSIM_DB_NAME:-farmsim}" >/dev/null 2>&1; then
-    echo "    oui."
-    break
-  fi
-  sleep 5
-done
+attendre_base || true
 
 # Un volume nommé créé par une exécution antérieure — ou par une image
 # construite avec un uid différent — garde son propriétaire d'origine tant

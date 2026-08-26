@@ -89,7 +89,7 @@ describe("l’ordre reste celui qu’on croit", () => {
     // rattrape pas. Ce qui ne l'est pas, c'est qu'elles puissent tout manger.
     const menage = DEPLOY.indexOf("Place disque avant ménage");
     const sauvegarde = DEPLOY.indexOf("Sauvegarde avant migration");
-    const monte = DEPLOY.indexOf("monter up -d");
+    const monte = DEPLOY.indexOf("monter up -d --force-recreate");
     assert.ok(menage > 0 && sauvegarde > menage, "le ménage précède la sauvegarde");
     assert.ok(monte > sauvegarde, "la mise en ligne suit les précautions");
   });
@@ -138,6 +138,20 @@ describe("la recréation des conteneurs", () => {
     // apercevait — le contrôle de santé du jeu ne la regarde pas.
     assert.match(DEPLOY, /==> La base répond \?/);
     assert.match(DEPLOY, /pg_isready -U/);
+  });
+});
+
+describe("une base créée mais pas démarrée ne bloque plus le déploiement", () => {
+  it("lit l'état du conteneur, pas seulement son existence", () => {
+    // `docker inspect` réussit sur un conteneur `created`. C'est ce qui a
+    // fait prendre la sauvegarde pour une base morte.
+    assert.match(DEPLOY, /\.State\.Status/);
+  });
+
+  it("démarre la base au lieu de la sauvegarder", () => {
+    assert.match(DEPLOY, /pas en marche/);
+    assert.match(DEPLOY, /monter up -d db/);
+    assert.match(DEPLOY, /sans instantané/);
   });
 });
 
