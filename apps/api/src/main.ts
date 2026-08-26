@@ -794,11 +794,28 @@ function explainNoMachine(machines: FarmMachine[], work: FarmWork): string {
  * À matériel égal on prend le plus large — c'est le plus rapide — puis le
  * mieux entretenu.
  */
+/**
+ * L'attelage d'un travail — même s'il est déjà au champ.
+ *
+ * Il refusait tout engin dont `busyUntil` n'était pas passé : un chantier en
+ * cours interdisait donc d'en ouvrir un second, sur quelque parcelle que ce
+ * soit. Un joueur qui achète une deuxième terre pour la travailler ne pouvait
+ * pas s'en servir tant que la première tournait, et rien ne le lui disait.
+ *
+ * « Oui il peut utiliser le même engin pour plusieurs parcelles » : c'est le
+ * choix qui a été fait, en connaissance de ce qu'il coûte — un semoir n'est
+ * plus une ressource physique qu'on se dispute, et le palier de l'engin ne se
+ * contourne plus en achetant du temps, puisqu'on peut lancer deux chantiers au
+ * lieu d'un plus large. Ce qui borne encore, c'est le gazole (prélevé au
+ * départ de chaque chantier) et les cases, qu'un seul chantier peut retenir.
+ *
+ * `busyUntil` garde tout son sens ailleurs : on ne vend, ne reprend ni
+ * n'améliore un engin qui est aux champs. Il porte désormais la fin du
+ * **dernier** chantier en cours — voir `reglerOccupation`.
+ */
 function pickMachineForWork(machines: FarmMachine[], work: FarmWork): Rig | null {
-  const libre = (m: FarmMachine) => !m.busyUntil || m.busyUntil.getTime() <= Date.now();
   const tracteurs = machines
     .filter((m) => MACHINE_DEFS[m.type as MachineType]?.kind === "TRACTOR")
-    .filter(libre)
     .filter((m) => !machineWorkBlock(careOf(m), MACHINE_DEFS[m.type as MachineType].minCondition))
     .sort(
       (a, b) =>
@@ -810,7 +827,6 @@ function pickMachineForWork(machines: FarmMachine[], work: FarmWork): Rig | null
   for (const m of machines) {
     const def = MACHINE_DEFS[m.type as MachineType];
     if (!def || !def.works.includes(work)) continue;
-    if (!libre(m)) continue;
     if (machineWorkBlock(careOf(m), def.minCondition)) continue;
     const tier = tierOf(m);
     if (def.kind === "IMPLEMENT") {
@@ -1136,6 +1152,48 @@ const JOB_ABANDON_GRACE_MS = 5 * 60_000;
  * qui regardent les chantiers d'une parcelle passent ici d'abord, ce qui
  * suffit à ce qu'un fantôme ne survive jamais à la visite suivante.
  */
+/**
+ * Remet l'occupation d'un attelage d'après ses chantiers encore ouverts.
+ *
+ * `busyUntil` était posé à la fin du chantier qu'on venait d'ouvrir, et remis
+ * à `null` dès qu'un chantier se terminait. Tant qu'un engin n'en menait qu'un
+ * à la fois, les deux gestes étaient justes. Ils cessent de l'être dès qu'il
+ * peut en mener deux :
+ *
+ *  - poser la fin du **dernier ouvert** raccourcit la garde quand ce chantier
+ *    finit avant un autre déjà en route — l'engin devient vendable alors qu'il
+ *    est encore au champ ;
+ *  - remettre à `null` à la première clôture libère un engin qui travaille
+ *    toujours ailleurs.
+ *
+ * La seule valeur qui ne se trompe jamais est celle qu'on relit : la fin du
+ * dernier chantier `RUNNING` de cet engin, ou `null` s'il n'en reste aucun.
+ * Elle se recalcule à chaque ouverture comme à chaque clôture — plus court
+ * que de raisonner sur des deltas, et sans dérive possible.
+ */
+async function reglerOccupation(
+  tx: Pick<typeof prisma, "fieldJob" | "machine">,
+  machineIds: (string | null | undefined)[],
+): Promise<void> {
+  const ids = [...new Set(machineIds.filter(Boolean) as string[])];
+  if (!ids.length) return;
+  const encours = await tx.fieldJob.findMany({
+    where: {
+      status: "RUNNING",
+      OR: [{ machineId: { in: ids } }, { tractorId: { in: ids } }],
+    },
+    select: { machineId: true, tractorId: true, endsAt: true },
+  });
+  for (const id of ids) {
+    let fin: Date | null = null;
+    for (const j of encours) {
+      if (j.machineId !== id && j.tractorId !== id) continue;
+      if (!fin || j.endsAt.getTime() > fin.getTime()) fin = j.endsAt;
+    }
+    await tx.machine.update({ where: { id }, data: { busyUntil: fin } });
+  }
+}
+
 async function libererChantiersAbandonnes(parcelId: string): Promise<void> {
   const morts = await prisma.fieldJob.findMany({
     where: {
@@ -1158,7 +1216,7 @@ async function libererChantiersAbandonnes(parcelId: string): Promise<void> {
       where: { id: { in: morts.map((j) => j.id) } },
       data: { status: "CANCELLED" },
     });
-    await tx.machine.updateMany({ where: { id: { in: attelages } }, data: { busyUntil: null } });
+    await reglerOccupation(tx, attelages);
     if (parcelle?.farmId && gazole > 0) {
       await tx.farm.update({
         where: { id: parcelle.farmId },
@@ -1296,8 +1354,7 @@ async function closeFieldJob(jobId: string | null | undefined) {
   if (!job) return;
   await prisma.$transaction(async (tx) => {
     await tx.fieldJob.update({ where: { id: jobId }, data: { status: "DONE" } });
-    const ids = [job.machineId, job.tractorId].filter(Boolean) as string[];
-    await tx.machine.updateMany({ where: { id: { in: ids } }, data: { busyUntil: null } });
+    await reglerOccupation(tx, [job.machineId, job.tractorId]);
   });
 }
 
@@ -5736,10 +5793,11 @@ app.post("/parcels/:id/jobs", async (req, res) => {
         endsAt,
       },
     });
-    // L'attelage part au champ : il ne peut ni repartir sur un autre travail,
-    // ni se vendre pendant ce temps-là.
-    const ids = [picked.machine.id, picked.tractor?.id].filter(Boolean) as string[];
-    await tx.machine.updateMany({ where: { id: { in: ids } }, data: { busyUntil: endsAt } });
+    /* L'attelage est au champ : il ne se vend pas, ne se reprend pas et ne
+       s'améliore pas tant qu'il y est. Il peut en revanche repartir sur un
+       autre chantier — c'est tout l'objet de `reglerOccupation`, qui retient
+       la fin du dernier des siens et non celle qu'on vient de fixer. */
+    await reglerOccupation(tx, [picked.machine.id, picked.tractor?.id]);
     return created;
   });
 
@@ -6035,8 +6093,7 @@ app.post("/jobs/:id/cancel", async (req, res) => {
   }
   await prisma.$transaction(async (tx) => {
     await tx.fieldJob.update({ where: { id: job.id }, data: { status: "CANCELLED" } });
-    const ids = [job.machineId, job.tractorId].filter(Boolean) as string[];
-    await tx.machine.updateMany({ where: { id: { in: ids } }, data: { busyUntil: null } });
+    await reglerOccupation(tx, [job.machineId, job.tractorId]);
     // Le plein retourne à la cuve : l'engin n'est pas parti.
     const parcelle = await tx.parcel.findUnique({ where: { id: job.parcelId } });
     if (parcelle?.farmId && job.fuelL > 0) {

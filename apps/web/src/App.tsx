@@ -734,25 +734,45 @@ export function App() {
   const [err, setErr] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [machineListings, setMachineListings] = useState<MachineListing[]>([]);
-  /** Chantier en cours — ce que la ferme est en train de faire, et jusqu'à quand. */
-  const [chantier, setChantier] = useState<{
-    work: FarmWork;
-    /**
-     * La parcelle du chantier.
-     *
-     * La barre affichait le dernier chantier lancé, quelle que soit la
-     * parcelle regardée : on ouvrait l'autre champ et on y lisait « Labourer ·
-     * 130 cases » par-dessus des chiffres qui n'avaient rien à voir. On la
-     * garde visible — un chantier en cours ne doit pas disparaître parce qu'on
-     * regarde ailleurs — mais elle dit désormais où il a lieu.
-     */
-    parcelId: string;
-    cells: { x: number; y: number }[];
-    endsAt: number;
-    durationMs: number;
-    /** L'engin que le chantier a sorti du garage — c'est celui du joueur. */
-    machine?: MachineType;
-  } | null>(null);
+  /**
+   * Les chantiers en cours — au pluriel, depuis qu'un engin peut servir
+   * plusieurs parcelles.
+   *
+   * L'état n'en tenait qu'un. Ouvrir un second l'écrasait : le bandeau
+   * décrivait le dernier lancé, l'animation du premier était coupée, et sa
+   * clôture remettait l'unique emplacement à zéro pour tout le monde. Tant
+   * qu'un seul chantier pouvait tourner, ce raccourci était juste ; il cesse
+   * de l'être à la seconde où deux le peuvent.
+   *
+   * Chacun porte l'identifiant que le serveur lui a donné : c'est la seule
+   * clé qui distingue deux labours du même jour sur la même parcelle.
+   */
+  const [chantiers, setChantiers] = useState<
+    {
+      id: string;
+      work: FarmWork;
+      /**
+       * La parcelle du chantier.
+       *
+       * La barre affichait le dernier chantier lancé, quelle que soit la
+       * parcelle regardée : on ouvrait l'autre champ et on y lisait
+       * « Labourer · 130 cases » par-dessus des chiffres qui n'avaient rien à
+       * voir. On les garde visibles — un chantier en cours ne doit pas
+       * disparaître parce qu'on regarde ailleurs — mais chacun dit où il a
+       * lieu.
+       */
+      parcelId: string;
+      cells: { x: number; y: number }[];
+      endsAt: number;
+      durationMs: number;
+      /** L'engin que le chantier a sorti du garage — c'est celui du joueur. */
+      machine?: MachineType;
+    }[]
+  >([]);
+  /** Retire un chantier de la liste, sans toucher aux autres. */
+  const clore = useCallback((id: string) => {
+    setChantiers((liste) => liste.filter((c) => c.id !== id));
+  }, []);
   /** Palier montré au catalogue — un seul réglage pour toute la liste. */
   const [tierAchat, setTierAchat] = useState<Tier>(1);
   /**
@@ -805,7 +825,17 @@ export function App() {
   const [showSkills, setShowSkills] = useState(false);
   const [guideFlags, setGuideFlags] = useState(() => readGuideFlags());
   const [pulseCells, setPulseCells] = useState<{ x: number; y: number }[]>([]);
-  const [activeWork, setActiveWork] = useState<{
+  /**
+   * Les engins en train de traverser un champ — un par chantier.
+   *
+   * Comme le bandeau, l'animation n'avait qu'un emplacement : lancer un second
+   * travail effaçait le premier engin en pleine traversée. La vue n'en montre
+   * jamais qu'un — celui de la parcelle regardée — mais les autres continuent
+   * de rouler pour quand on y reviendra.
+   */
+  const [activeWorks, setActiveWorks] = useState<{
+    /** Le chantier auquel cet engin appartient. */
+    jobId: string;
     type: MachineType;
     /**
      * La parcelle du chantier.
@@ -825,7 +855,7 @@ export function App() {
     tier?: Tier;
     /** Durée du chantier : l'engin doit traverser le champ en ce temps-là. */
     durationMs?: number;
-  } | null>(null);
+  }[]>([]);
   const haulPendingRef = useRef<Set<string>>(new Set());
   const haulSeenRef = useRef<Set<string>>(new Set());
   const haulReadyRef = useRef(false);
@@ -1445,6 +1475,26 @@ export function App() {
     return () => clearInterval(t);
   }, [activeParcelId, loadParcel, loadLivestock]);
 
+  /*
+   * Une sélection appartient à sa parcelle.
+   *
+   * Les cases retenues sont des coordonnées nues — « 4,7 », « 5,7 ». Elles ne
+   * disent pas sur quel champ elles ont été prises, si bien qu'en changeant de
+   * parcelle on emportait les cent trente-cinq cases de la précédente : elles
+   * se rallumaient sur le nouveau champ, la barre proposait toujours
+   * « Semer · 135 cases », et valider aurait travaillé ici ce qu'on avait
+   * désigné là-bas. Reproduit en jeu, sélection héritée à l'écran.
+   *
+   * Le survol, le menu de case et le fantôme de bâtiment sont du même bois :
+   * ils pointent une case d'un champ qu'on ne regarde plus.
+   */
+  useEffect(() => {
+    setSelectedCells([]);
+    setHoverCell(null);
+    setCellMenu(null);
+    setPendingBuild(null);
+  }, [activeParcelId]);
+
   useEffect(() => {
     if (!activeParcelId) {
       setVoisinage([]);
@@ -1594,7 +1644,7 @@ export function App() {
     };
   }, [showSkills, player?.id, player?.xp]);
 
-  const chantierEnCours = Boolean(chantier);
+  const chantierEnCours = chantiers.length > 0;
   useEffect(() => {
     if (!chantierEnCours) return;
     setHorloge(Date.now());
@@ -2917,7 +2967,11 @@ export function App() {
     const workCells = selectedCells.slice();
     // Pressage, ramassage et ensilage sont écartés juste au-dessus : ils
     // passent par un chantier publié, jamais par l'entreprise instantanée.
+    /* L'entreprise n'ouvre pas de chantier : son travail est fait au clic.
+       Un identifiant fixe suffit donc — un second appel remplace le premier,
+       ce qui est exactement ce qu'on veut d'une intervention instantanée. */
     flashWork(
+      "prestataire",
       contractorOffer.work === "HARVEST" ? "HARVESTER" : "TRACTOR",
       workCells,
       contractorOffer.work === "MOW" ? "mow" : contractorOffer.work === "HARVEST" ? "harvest" : undefined,
@@ -2973,16 +3027,25 @@ export function App() {
    * anonymes : celle du premier effaçait l'engin du second en plein parcours.
    * On les garde pour pouvoir les annuler.
    */
-  const workTimers = useRef<number[]>([]);
+  /**
+   * Les minuteries d'animation, **par chantier**.
+   *
+   * Elles vivaient dans une seule liste, vidée à chaque nouveau départ : lancer
+   * un travail sur une seconde parcelle coupait l'engin de la première en
+   * pleine traversée. Une entrée par chantier, et chacun s'éteint tout seul.
+   */
+  const workTimers = useRef<Map<string, number[]>>(new Map());
 
   function flashWork(
+    jobId: string,
     type: MachineType,
     cells: { x: number; y: number }[],
     cut?: "harvest" | "mow",
     extra?: { haul?: boolean; cargo?: string; jobMs?: number; delayMs?: number },
   ) {
-    for (const t of workTimers.current) window.clearTimeout(t);
-    workTimers.current = [];
+    for (const t of workTimers.current.get(jobId) ?? []) window.clearTimeout(t);
+    const minuteries: number[] = [];
+    workTimers.current.set(jobId, minuteries);
     /*
      * La parcelle est retenue **maintenant**, pas au moment où l'engin entre.
      *
@@ -3010,29 +3073,34 @@ export function App() {
      */
     const partir = () => {
       setPulseCells(cells);
-      setActiveWork({
-        type,
-        parcelId: parcelleDuChantier,
-        cells,
-        cut,
-        haul: extra?.haul,
-        cargo: extra?.cargo,
-        condition: used?.condition,
-        tier: asTier(used?.tier),
-        durationMs: duree,
-      });
+      setActiveWorks((liste) => [
+        ...liste.filter((w) => w.jobId !== jobId),
+        {
+          jobId,
+          type,
+          parcelId: parcelleDuChantier,
+          cells,
+          cut,
+          haul: extra?.haul,
+          cargo: extra?.cargo,
+          condition: used?.condition,
+          tier: asTier(used?.tier),
+          durationMs: duree,
+        },
+      ]);
       // Un peu de marge sur la durée du parcours : l'engin doit atteindre la
       // dernière case avant qu'on ne l'efface.
-      workTimers.current.push(
+      minuteries.push(
         window.setTimeout(() => {
           setPulseCells([]);
-          setActiveWork(null);
+          setActiveWorks((liste) => liste.filter((w) => w.jobId !== jobId));
+          workTimers.current.delete(jobId);
         }, duree + 250),
       );
     };
     const attente = Math.max(0, extra?.delayMs ?? 0);
     if (attente === 0) partir();
-    else workTimers.current.push(window.setTimeout(partir, attente));
+    else minuteries.push(window.setTimeout(partir, attente));
   }
 
   /**
@@ -3043,11 +3111,18 @@ export function App() {
    * elle attend son tour dans une minuterie, et remettre l'état à zéro ne la
    * retient pas.
    */
-  function stopWork() {
-    for (const t of workTimers.current) window.clearTimeout(t);
-    workTimers.current = [];
+  function stopWork(jobId?: string) {
+    /* Sans identifiant, on rappelle tout : c'est le cas des travaux qui
+       n'ouvrent pas de chantier, et celui d'une déconnexion. */
+    const cibles = jobId ? [jobId] : [...workTimers.current.keys()];
+    for (const id of cibles) {
+      for (const t of workTimers.current.get(id) ?? []) window.clearTimeout(t);
+      workTimers.current.delete(id);
+    }
     setPulseCells([]);
-    setActiveWork(null);
+    setActiveWorks((liste) =>
+      jobId ? liste.filter((w) => w.jobId !== jobId) : [],
+    );
   }
 
   /** Tracteur + remorque sur la parcelle d’arrivée, comme chez le voisin. */
@@ -3069,7 +3144,8 @@ export function App() {
     );
     if (cells.length < 2) return;
     setShowMarket(false);
-    flashWork("TRACTOR", cells, undefined, { haul: true, cargo: commodity });
+    // Une livraison à la fois : le camion suivant remplace le précédent.
+    flashWork("livraison", "TRACTOR", cells, undefined, { haul: true, cargo: commodity });
   }
   playHaulRef.current = flashDeliveryArrival;
 
@@ -3137,15 +3213,19 @@ export function App() {
           : `${r.job.skipped} cases déjà sur un chantier — laissées de côté.`,
       );
     }
-    setChantier({
-      work,
-      // La parcelle sur laquelle la route a réellement ouvert le chantier.
-      parcelId: activeParcelId ?? "",
-      cells: retenues,
-      endsAt: fin,
-      durationMs: r.job.durationMs,
-      machine: r.job.machine?.type,
-    });
+    setChantiers((liste) => [
+      ...liste,
+      {
+        id: r.job.id,
+        work,
+        // La parcelle sur laquelle la route a réellement ouvert le chantier.
+        parcelId: activeParcelId ?? "",
+        cells: retenues,
+        endsAt: fin,
+        durationMs: r.job.durationMs,
+        machine: r.job.machine?.type,
+      },
+    ]);
     return { id: r.job.id, durationMs: r.job.durationMs, endsAt: fin, cells: retenues };
   }
 
@@ -3161,15 +3241,37 @@ export function App() {
    * Ouvrir et attendre sont deux gestes séparés : entre les deux, l'appelant
    * met l'engin en route, et il traverse pendant tout le chrono.
    */
-  async function attendreChantier(endsAt: number): Promise<void> {
+  async function attendreChantier(jobId: string, endsAt: number): Promise<void> {
     const reste = endsAt - Date.now();
     if (reste > 0) await new Promise((resolve) => window.setTimeout(resolve, reste + 60));
-    setChantier(null);
+    clore(jobId);
   }
 
+  /**
+   * Ouvre un travail sur des cases, puis le mène jusqu'au bout.
+   *
+   * `busy` couvrait toute la fonction, attente comprise : pendant les trois
+   * minutes d'un semis, **tous** les boutons du jeu restaient éteints, sur
+   * toutes les parcelles. Un joueur qui achetait une deuxième terre pour la
+   * travailler ne pouvait rien y faire tant que la première tournait.
+   *
+   * Le verrou ne couvre plus que l'ouverture — l'aller-retour avec le serveur
+   * qui réserve les cases et sort l'attelage. Il ne protège que d'un double
+   * clic, et c'est tout ce qu'on lui demandait : une fois le chantier ouvert,
+   * ses cases sont retenues côté serveur et un second travail ne peut plus les
+   * reprendre. L'attente qui suit est libre, et c'est elle qui rend deux
+   * chantiers possibles.
+   */
   async function runWorkOnCells(cells: { x: number; y: number }[]) {
     if (!player || !activeParcelId || !cells.length || busy) return;
     setBusy(true);
+    /** Le verrou est-il déjà rendu ? (il l'est dès le chantier ouvert). */
+    let verrouRendu = false;
+    const rendreLeVerrou = () => {
+      if (verrouRendu) return;
+      verrouRendu = true;
+      setBusy(false);
+    };
     setErr(null);
     // Réaffecté juste après l'ouverture du chantier : seules les cases qu'il a
     // retenues partent au travail.
@@ -3186,6 +3288,9 @@ export function App() {
         if (!chantierOuvert) return;
         jobId = chantierOuvert.id;
         workCells = chantierOuvert.cells;
+        /* Les cases sont réservées, l'attelage est sorti : le jeu peut
+           reprendre. C'est ici, et pas à la fin, que le verrou tombe. */
+        rendreLeVerrou();
         /*
          * L'engin part **avec** le chrono, pas après lui.
          *
@@ -3196,12 +3301,13 @@ export function App() {
          */
         const arrivee = jobArrivalMs(chantierOuvert.durationMs);
         flashWork(
+          chantierOuvert.id,
           tool === "HARVEST" && selectedAreGrass ? "TRACTOR" : workMachineForTool(tool),
           workCells,
           harvestCut,
           { jobMs: chantierOuvert.durationMs - arrivee, delayMs: arrivee },
         );
-        await attendreChantier(chantierOuvert.endsAt);
+        await attendreChantier(chantierOuvert.id, chantierOuvert.endsAt);
       }
       if (plantCrop) {
         const crop = plantCrop;
@@ -3380,13 +3486,14 @@ export function App() {
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e));
       flashToast(e instanceof Error ? e.message : String(e), true);
-      stopWork();
+      // On ne rappelle que **son** engin : les autres chantiers continuent.
+      stopWork(jobId);
     } finally {
-      // Le bandeau ne survit jamais à la sortie : ouvrir et attendre étant
-      // deux gestes séparés, un échec entre les deux le laisserait sinon
-      // tourner à vide jusqu'au prochain chantier.
-      setChantier(null);
-      setBusy(false);
+      /* Le bandeau de ce chantier ne survit jamais à la sortie : ouvrir et
+         attendre étant deux gestes séparés, un échec entre les deux le
+         laisserait tourner à vide. Les bandeaux des autres restent. */
+      if (jobId) clore(jobId);
+      rendreLeVerrou();
     }
   }
 
@@ -3397,6 +3504,14 @@ export function App() {
   async function harvestAll() {
     if (!player || !activeParcelId) return;
     setBusy(true);
+    // Même règle que `runWorkOnCells` : le verrou tombe dès le chantier ouvert.
+    let verrouRendu = false;
+    let jobId: string | undefined;
+    const rendreLeVerrou = () => {
+      if (verrouRendu) return;
+      verrouRendu = true;
+      setBusy(false);
+    };
     try {
       // Le maïs bon à ensiler compte comme prêt **si l'on a l'ensileuse** :
       // il se récolte avant maturité grain, et « Tout récolter » doit le
@@ -3431,15 +3546,18 @@ export function App() {
       const work: FarmWork = readyAreGrass ? "MOW" : "HARVEST";
       const chantier = await ouvrirChantier(work, readyCells);
       if (!chantier) return;
+      jobId = chantier.id;
+      rendreLeVerrou();
       const cellsDuChantier = chantier.cells;
       const arrivee = jobArrivalMs(chantier.durationMs);
       flashWork(
+        chantier.id,
         readyAreGrass ? "TRACTOR" : "HARVESTER",
         cellsDuChantier,
         readyAreGrass ? "mow" : "harvest",
         { jobMs: chantier.durationMs - arrivee, delayMs: arrivee },
       );
-      await attendreChantier(chantier.endsAt);
+      await attendreChantier(chantier.id, chantier.endsAt);
       const r = await api<{
         totalTons: number;
         soldTons?: number;
@@ -3470,10 +3588,10 @@ export function App() {
       await loadParcel(activeParcelId);
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e));
-      stopWork();
+      stopWork(jobId);
     } finally {
-      setChantier(null);
-      setBusy(false);
+      if (jobId) clore(jobId);
+      rendreLeVerrou();
     }
   }
 
@@ -4736,8 +4854,10 @@ export function App() {
    * haut et passait par-dessus. Le contenu, lui, est le même — d'où une seule
    * écriture.
    */
-  const chantierBar = chantier ? (
-    <div className="chantier-bar" role="status" aria-live="polite">
+  const chantierBar = chantiers.length ? (
+    <div className="chantier-pile">
+      {chantiers.map((chantier) => (
+    <div key={chantier.id} className="chantier-bar" role="status" aria-live="polite">
       <span className="chantier-nom">
         {horloge - (chantier.endsAt - chantier.durationMs) < jobArrivalMs(chantier.durationMs)
           ? /*
@@ -4766,6 +4886,8 @@ export function App() {
       </span>
       <span className="chantier-reste">{formatChantierReste(chantier.endsAt, horloge)}</span>
     </div>
+      ))}
+    </div>
   ) : null;
 
   return (
@@ -4792,7 +4914,11 @@ export function App() {
               hoverCell={hoverCell}
               previewBuilding={previewBuilding}
               pulseCells={pulseCells}
-              activeWork={activeWork}
+              /* La vue ne montre qu'un champ : elle ne reçoit donc que
+                 l'engin qui y travaille. Les autres roulent sans être
+                 dessinés, et réapparaissent quand on revient sur leur
+                 parcelle. */
+              activeWork={activeWorks.find((w) => w.parcelId === activeParcelId) ?? null}
               grazing={grazingHerds}
               manurePiles={barns.flatMap((barn) => {
                 const b = (parcel?.buildings ?? []).find((x) => x.id === barn.buildingId);
@@ -6214,7 +6340,7 @@ export function App() {
         <SelectionBar
             tool={tool}
             machineManquante={machineManquante}
-            selectedCount={selectedCells.length}
+              selectedCount={selectedCells.length}
             readyCount={
               visiting ? Math.min(readyCellCount, visitOrder?.remaining ?? 0) : readyCellCount
             }

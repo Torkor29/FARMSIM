@@ -229,9 +229,12 @@ export function FieldDock({
    * la consigne de tracé s'affiche déjà.
    */
   function raisonDuGrisage(): string | null {
-    // Un chantier en cours grise **tous** les boutons d'action à la fois, le
-    // temps qu'il dure — plusieurs minutes sur un grand champ. Le bandeau
-    // au-dessus dit lequel et pour combien de temps : inutile de le répéter.
+    /*
+     * Un chantier en cours ne grise plus rien : le verrou ne couvre que
+     * l'aller-retour qui l'ouvre, et un attelage peut repartir sur une autre
+     * parcelle. Le bandeau au-dessus dit lequel tourne et pour combien de
+     * temps — il n'a plus de grisage à justifier.
+     */
     if (chantierBar) return null;
     if (!work) return null;
     // Hors saison : le dire avant le geste, pas après un refus du serveur.
