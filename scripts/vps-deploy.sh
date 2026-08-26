@@ -451,24 +451,30 @@ echo
 # ————————————————————————————————————————————————————————————————————————
 # Les codes d'accès restés en clair.
 #
-# Le code d'accès est passé au hachage bcrypt, et un compte encore en clair
-# bascule tout seul à sa première connexion réussie. Reste celui qui ne se
-# reconnecte pas : son code dormirait en clair indéfiniment — et c'est
-# exactement la ligne qui a permis de retrouver le mot de passe d'un joueur.
+# Le balayage tournait ici, **dans le conteneur du jeu**, juste après le
+# contrôle de santé. C'était une erreur : `docker compose exec` démarre un
+# second processus Node à l'intérieur du conteneur, qui partage donc son
+# plafond de mémoire avec le jeu en train de tourner. Il a échoué au premier
+# déploiement, et le site a rendu 502 dans la foulée.
 #
-# Le balayage tourne donc à chaque déploiement. Il est rejouable sans risque
-# (une empreinte est reconnue et laissée en place) et n'invalide personne :
-# hacher un code connu conserve la capacité de le vérifier. Son coût est un
-# bcrypt par compte encore en clair, c'est-à-dire quelques secondes la
-# première fois et rien du tout ensuite.
+# Il tourne désormais dans un **conteneur jetable**, bâti sur la même image
+# mais avec sa propre mémoire — exactement comme la sauvegarde. Le jeu ne le
+# voit pas passer, et un balayage qui trébuche ne peut plus l'emporter avec
+# lui.
 #
-# Il ne fait **pas** échouer le déploiement s'il trébuche : le jeu répond, et
-# une remise à l'abri manquée se rattrape en relançant la commande à la main.
+# Il ne fait pas échouer le déploiement : le jeu répond, et une remise à
+# l'abri manquée se rattrape en relançant la commande à la main.
 # ————————————————————————————————————————————————————————————————————————
 echo "==> Mise à l'abri des codes d'accès restés en clair"
-if ! docker compose exec -T farmsim node /app/scripts/farmsim-hacher-codes.mjs --vraiment; then
+# `run` sans `--service-ports` ne publie aucun port : il ne peut donc pas
+# entrer en conflit avec le conteneur du jeu qui tient déjà le 8081.
+# `--no-deps` laisse la base tranquille — elle tourne déjà, et le réseau de la
+# pile suffit à la joindre.
+if ! docker compose run --rm --no-deps farmsim \
+     node /app/scripts/farmsim-hacher-codes.mjs --vraiment; then
   echo "WARN: le balayage des codes en clair a échoué — relancez-le à la main :" >&2
-  echo "  docker compose exec farmsim node /app/scripts/farmsim-hacher-codes.mjs --vraiment" >&2
+  echo "  cd $APP_DIR && docker compose run --rm --no-deps farmsim \\" >&2
+  echo "    node /app/scripts/farmsim-hacher-codes.mjs --vraiment" >&2
 fi
 echo
 

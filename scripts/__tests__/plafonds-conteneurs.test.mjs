@@ -45,22 +45,46 @@ function enMo(texte) {
 
 const SERVICES = ["db", "farmsim"];
 
-describe("aucun conteneur ne peut affamer ses voisins", () => {
-  for (const service of SERVICES) {
-    it(`${service} a un plafond de mémoire et de processeur`, () => {
-      assert.ok(enMo(valeur(service, "mem_limit")) > 0, `${service} : mem_limit manquant`);
-      const cpus = Number(valeur(service, "cpus"));
-      assert.ok(cpus > 0 && Number.isFinite(cpus), `${service} : cpus manquant`);
-    });
-  }
+/**
+ * Les plafonds sont **absents pour l'instant**, et ces tests gardent leur
+ * retour.
+ *
+ * Ils ont été posés une fois, sur des mesures prises à vide, et le
+ * déploiement qui les portait a mis le site à terre. Ils reviendront — le
+ * problème d'origine, lui, n'a pas disparu — mais sur des mesures faites en
+ * service, et sans retirer le coussin d'échange. Voir docs/PLAFONDS.md.
+ *
+ * D'où la forme de ce qui suit : rien n'exige qu'un plafond existe, mais tout
+ * ce qui s'applique dès qu'il en existe un est vérifié. C'est le seul garde-fou
+ * qui a du sens tant que les bons chiffres ne sont pas connus.
+ */
+describe("si un plafond est posé, il l'est correctement", () => {
+  it("un service plafonné en mémoire garde son coussin d'échange", () => {
+    /*
+     * `memswap_limit` égal à `mem_limit` interdit toute pagination : le
+     * conteneur ne ralentit pas sous la pression, il se fait tuer. C'est
+     * précisément ce qui a coûté le site, et ce que ce test empêche de
+     * refaire — tant qu'un pic mesuré **en service** ne le justifie pas.
+     */
+    for (const service of SERVICES) {
+      const plafond = valeur(service, "mem_limit");
+      const echange = valeur(service, "memswap_limit");
+      if (!plafond || !echange) continue;
+      assert.notEqual(
+        enMo(echange),
+        enMo(plafond),
+        `${service} : memswap_limit == mem_limit interdit toute pagination — ` +
+          "le conteneur se fera tuer au lieu de ralentir (voir docs/PLAFONDS.md)",
+      );
+    }
+  });
 
   it("la somme des plafonds laisse de quoi vivre à la machine", () => {
-    /*
-     * La règle : la pile ne réserve pas plus des deux tiers de la machine.
-     * Le reste va au système, à Docker, et à l'application voisine — celle
-     * qu'on ne déplacera pas.
-     */
-    const total = SERVICES.reduce((n, s) => n + enMo(valeur(s, "mem_limit")), 0);
+    // La pile ne réserve pas plus des deux tiers de la machine : le reste va
+    // au système, à Docker, et à l'application voisine qu'on ne déplacera pas.
+    const poses = SERVICES.map((s) => valeur(s, "mem_limit")).filter(Boolean);
+    if (poses.length === 0) return;
+    const total = poses.reduce((n, v) => n + enMo(v), 0);
     assert.ok(
       total <= RAM_VPS * 0.7,
       `les plafonds totalisent ${total} Mo sur ${RAM_VPS} — il ne reste que ` +
@@ -68,43 +92,51 @@ describe("aucun conteneur ne peut affamer ses voisins", () => {
     );
   });
 
-  it("le jeu n'a aucun droit à l'échange", () => {
-    // Un Node qui pagine ne ralentit pas seulement : il fait exploser la
-    // charge moyenne de toute la machine. Mieux vaut qu'il soit tué net et
-    // relevé par `restart: unless-stopped`.
-    assert.equal(valeur("farmsim", "memswap_limit"), valeur("farmsim", "mem_limit"));
-  });
-
   it("la réservation reste sous le plafond, pour chaque service", () => {
     // Une réservation au-dessus du plafond n'est pas refusée par Docker : elle
     // est simplement absurde, et le service ne démarre plus.
     for (const service of SERVICES) {
       const reservation = valeur(service, "mem_reservation");
-      if (!reservation) continue;
-      assert.ok(enMo(reservation) < enMo(valeur(service, "mem_limit")), service);
+      const plafond = valeur(service, "mem_limit");
+      if (!reservation || !plafond) continue;
+      assert.ok(enMo(reservation) < enMo(plafond), service);
     }
+  });
+
+  it("le tas de V8, s'il est plafonné, laisse la place au reste du processus", () => {
+    const tas = COMPOSE.match(/--max-old-space-size=(\d+)/);
+    if (!tas) return;
+    const mo = Number(tas[1]);
+    // Mesuré : sous 128 Mo, V8 renonce au démarrage.
+    assert.ok(mo >= 160, `tas de ${mo} Mo : V8 abandonne au démarrage sous 128 Mo`);
+    const plafond = valeur("farmsim", "mem_limit");
+    // Le moteur de requêtes Prisma alloue **hors** du tas V8 : il lui faut la
+    // place, et le tas ne doit donc jamais approcher le plafond du conteneur.
+    if (plafond) assert.ok(mo < enMo(plafond) / 2);
   });
 });
 
-describe("le jeu tient son tas, pas seulement son conteneur", () => {
-  it("le tas de V8 est plafonné explicitement", () => {
+describe("les travaux lourds ne tournent pas dans le conteneur du jeu", () => {
+  const DEPLOIEMENT = readFileSync(join(RACINE, "scripts", "vps-deploy.sh"), "utf8");
+
+  it("le balayage des codes passe par un conteneur jetable", () => {
     /*
-     * Sans `--max-old-space-size`, Node dimensionne son tas d'après la mémoire
-     * de **l'hôte**, pas d'après le plafond du conteneur. Le plafond seul ne
-     * ferait donc que déplacer le problème : au lieu de paginer, le processus
-     * se ferait tuer.
+     * `docker compose exec` démarre un second processus Node **dans** le
+     * conteneur du jeu : il partage sa mémoire, et son échec peut emporter le
+     * jeu avec lui. C'est ce qui s'est produit au premier déploiement. `run
+     * --rm` lui donne son propre conteneur, comme la sauvegarde.
      */
-    assert.match(COMPOSE, /NODE_OPTIONS:\s*"--max-old-space-size=(\d+)"/);
+    assert.match(DEPLOIEMENT, /docker compose run --rm --no-deps farmsim/);
+    assert.ok(
+      !/docker compose exec[^\n]*farmsim-hacher-codes/.test(DEPLOIEMENT),
+      "le balayage ne doit pas tourner dans le conteneur du jeu",
+    );
   });
 
-  it("le tas reste au-dessus du plancher mesuré et sous le plafond du conteneur", () => {
-    const tas = Number(COMPOSE.match(/--max-old-space-size=(\d+)/)[1]);
-    // Mesuré : à 128 Mo, V8 renonce au démarrage. 160 laisse une marge au
-    // plancher constaté sans prétendre qu'il ne bougera jamais.
-    assert.ok(tas >= 160, `tas de ${tas} Mo : V8 abandonne au démarrage sous 128 Mo`);
-    // Et il doit rester très en dessous du plafond du conteneur : le moteur de
-    // requêtes Prisma alloue **hors** du tas V8, et il lui faut la place.
-    assert.ok(tas < enMo(valeur("farmsim", "mem_limit")) / 2);
+  it("le conteneur jetable ne publie aucun port", () => {
+    // `docker compose run --service-ports` republierait le 8081, déjà tenu par
+    // le jeu : le conteneur jetable échouerait à démarrer.
+    assert.ok(!/docker compose run[^\n]*--service-ports/.test(DEPLOIEMENT));
   });
 });
 
