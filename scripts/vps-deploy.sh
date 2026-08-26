@@ -449,6 +449,60 @@ cat /tmp/farmsim-health.json
 echo
 
 # ————————————————————————————————————————————————————————————————————————
+# Le veilleur.
+#
+# Le conteneur du jeu a un contrôle de santé, et personne ne s'en sert :
+# `restart: unless-stopped` ne relance qu'un conteneur qui **sort**. Un
+# conteneur vivant mais figé — boucle d'événements bloquée, machine dans le
+# swap — reste figé, et le site est mort jusqu'à ce qu'un humain s'en
+# aperçoive. C'est ce qui s'est passé le 26 août : plus une réponse à partir
+# de 20 h 12, y compris sur `/api/health`, et toujours rien une heure et
+# demie plus tard.
+#
+# La minuterie regarde chaque minute ; le script relance ce qui est
+# `unhealthy`, une fois toutes les dix minutes au plus. Voir
+# deploy/farmsim-veilleur.sh pour ce qu'il ne prétend pas régler.
+#
+# Posé à chaque déploiement, et sans condition : c'est ce qui le répare si
+# quelqu'un l'a désactivé ou si le fichier a changé.
+# ————————————————————————————————————————————————————————————————————————
+echo "==> Veilleur (relance le jeu s'il ne répond plus)"
+if [[ -r "$APP_DIR/deploy/farmsim-veilleur.sh" ]] && command -v systemctl >/dev/null 2>&1; then
+  install -m 0755 "$APP_DIR/deploy/farmsim-veilleur.sh" /usr/local/bin/farmsim-veilleur
+  cat > /etc/systemd/system/farmsim-veilleur.service <<'UNITE'
+[Unit]
+Description=Relance FARMSIM quand son conteneur ne répond plus
+Documentation=https://github.com/Torkor29/FARMSIM/blob/main/deploy/farmsim-veilleur.sh
+After=docker.service
+Requires=docker.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/farmsim-veilleur
+UNITE
+  cat > /etc/systemd/system/farmsim-veilleur.timer <<'MINUTERIE'
+[Unit]
+Description=Surveille FARMSIM toutes les minutes
+
+[Timer]
+OnBootSec=5min
+OnUnitActiveSec=1min
+# Le veilleur ne doit jamais s'empiler sur lui-même : sur une machine lente,
+# un `docker restart` peut durer plus d'une minute.
+AccuracySec=10s
+
+[Install]
+WantedBy=timers.target
+MINUTERIE
+  systemctl daemon-reload
+  systemctl enable --now farmsim-veilleur.timer
+  systemctl status farmsim-veilleur.timer --no-pager --lines=0 2>/dev/null | sed 's/^/    /' || true
+else
+  echo "    systemd absent ou script introuvable — veilleur non posé."
+fi
+echo
+
+# ————————————————————————————————————————————————————————————————————————
 # Les codes d'accès restés en clair.
 #
 # Le balayage tournait ici, **dans le conteneur du jeu**, juste après le
