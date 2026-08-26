@@ -118,22 +118,20 @@ fi
 # déploiement suivant lançait alors une seconde sauvegarde par-dessus la
 # première, sur la même base, et les deux se disputaient la machine.
 #
-# Un conteneur de sauvegarde de plus de dix minutes n'appartient à personne :
-# le déploiement en cours vient tout juste de commencer.
-# Chaque appel à Docker est borné. Mesuré sur cette machine : ce `docker ps`
-# a mis **vingt et une minutes** à répondre, soit plus de la moitié de la
-# fenêtre de déploiement, consommée par le code censé la protéger. Un
-# diagnostic qui coûte plus cher que la panne qu'il cherche n'est pas un
-# diagnostic.
-for cid in $(timeout 60 docker ps --format '{{.ID}} {{.Command}}' 2>/dev/null \
-             | grep -F 'farmsim-backup.mjs' | cut -d' ' -f1 || true); do
-  debut="$(timeout 20 docker inspect "$cid" -f '{{.State.StartedAt}}' 2>/dev/null || true)"
-  [[ -n "$debut" ]] || continue
-  age=$(( $(date +%s) - $(date -d "$debut" +%s 2>/dev/null || echo 0) ))
-  (( age > 600 )) || continue
-  echo "    sauvegarde orpheline : $cid, ${age}s — arrêt"
-  timeout 60 docker rm -f "$cid" >/dev/null 2>&1 || true
-done
+# Un conteneur de sauvegarde n'appartient à personne dès que le déploiement
+# a décidé de passer à autre chose. Le filtre « plus de dix minutes » laissait
+# vivre celui qu'on venait de borner à cinq : mesuré le 26 août, il a écrit
+# « OK » cinq minutes **après** le début de `docker compose up`, pendant que
+# PostgreSQL se faisait recréer. On les arrête tous, sans seuil d'âge.
+tuer_sauvegardes() {
+  local cid
+  for cid in $(timeout 60 docker ps --format '{{.ID}} {{.Command}}' 2>/dev/null \
+               | grep -F 'farmsim-backup.mjs' | cut -d' ' -f1 || true); do
+    echo "    arrêt de la sauvegarde $cid"
+    timeout 60 docker rm -f "$cid" >/dev/null 2>&1 || true
+  done
+}
+tuer_sauvegardes
 
 # --- le disque ---
 #
@@ -350,76 +348,51 @@ else
   presentes="$(find "$APP_DIR/apps/api/prisma/migrations" -mindepth 1 -maxdepth 1 -type d 2>/dev/null | wc -l)"
   if [[ "$appliquees" =~ ^[0-9]+$ ]] && (( appliquees >= presentes )) && (( presentes > 0 )); then
     echo "==> Base à jour ($appliquees migrations sur $presentes) : aucune migration à appliquer."
-    echo "    Instantané sans relecture — il n'y a pas de migration dont se protéger."
     relire=0
   fi
 
   # ——————————————————————————————————————————————————————————————————
   # Le budget de la sauvegarde dépend de ce qu'elle protège.
   #
-  # Il était de 900 s, plus 600 s de repli — vingt-cinq minutes possibles sur
-  # une fenêtre de quarante. Le 26 août, sans **aucune** migration à
-  # appliquer, l'instantané a consommé les quinze premières minutes puis le
-  # repli les cinq suivantes, et le déploiement a expiré avant d'avoir touché
-  # au moindre conteneur.
-  #
-  # Quand une migration s'apprête à toucher la base, la sauvegarde vaut la
-  # fenêtre : elle garde son budget entier. Quand il n'y en a aucune — le cas
-  # le plus fréquent, puisqu'on livre surtout du code — elle reste due mais
-  # ne peut plus faire échouer la mise en ligne : cinq minutes, et pas de
-  # repli. Ne pas livrer est un risque, lui aussi.
+  # Sans migration, attendre cinq minutes un instantané qu'on a déjà décidé
+  # d'ignorer a laissé un conteneur orphelin se battre avec `docker compose
+  # up`. Mesuré le 26 août (run 33018627983) : dump écrit à 23:04, pendant
+  # que PostgreSQL se recréait, session coupée à 23:05. Les sauvegardes
+  # quotidiennes (21 sur le disque ce soir-là) restent le filet. On ne lance
+  # l'instantané **que** s'il y a une migration à craindre.
   # ——————————————————————————————————————————————————————————————————
-  if (( relire == 1 )); then budget=900; repli=600; else budget=300; repli=0; fi
-  echo "==> Sauvegarde avant migration (budget ${budget} s)"
-  code=0
-  timeout "$budget" env FARMSIM_BACKUP_VERIFY="$relire" \
-    bash "$APP_DIR/scripts/farmsim-backup.sh" avant-deploi || code=$?
-  if (( code == 124 && repli > 0 )); then
-    # 124 : la borne a parlé. On retente un instantané **sans relecture** —
-    # l'arbitrage est détaillé dans `farmsim-backup.mjs`, et il se résume à
-    # ceci : une sauvegarde non relue vaut mieux que pas de sauvegarde, et
-    # refuser le repli ne rendrait personne plus sûr.
-    echo "WARN: sauvegarde relue trop longue ($(( budget / 60 )) min) — instantané sans relecture." >&2
+  if (( relire == 0 )); then
+    echo "==> Aucune migration : instantané sauté."
+    echo "    Les sauvegardes quotidiennes restent ; à la main :"
+    echo "      cd $APP_DIR && bash scripts/farmsim-backup.sh manuel"
+  else
+    budget=900
+    repli=600
+    echo "==> Sauvegarde avant migration (budget ${budget} s)"
     code=0
-    timeout "$repli" env FARMSIM_BACKUP_VERIFY=0 \
+    timeout "$budget" env FARMSIM_BACKUP_VERIFY=1 \
       bash "$APP_DIR/scripts/farmsim-backup.sh" avant-deploi || code=$?
-  elif (( code == 124 )); then
-    # Pas de migration en vue : on ne rejoue pas, on le dit et on déploie.
-    echo "WARN: instantané trop long ($(( budget / 60 )) min) et aucune migration à" >&2
-    echo "      protéger — on déploie sans. Relancez la sauvegarde à la main :" >&2
-    echo "        cd $APP_DIR && bash scripts/farmsim-backup.sh manuel" >&2
-    code=0
-  fi
-  # Le fichier fait foi, pas le code de sortie.
-  #
-  # Mesuré, et c'est le défaut que ce bloc corrige : la sauvegarde a écrit son
-  # archive et affiché « OK » à 10:32:33 — puis la borne l'a tuée à 10:33:31,
-  # une minute plus tard, et le déploiement s'est arrêté en déclarant n'avoir
-  # aucune sauvegarde. Il y en avait deux, valides, de six mégaoctets et demi.
-  #
-  # `docker run --rm` démonte son conteneur après que le programme a fini. Sur
-  # une machine chargée ce démontage prend des minutes : le travail est fait,
-  # l'enveloppe ne rend pas encore la main, et une borne posée sur l'enveloppe
-  # tue un succès.
-  #
-  # On regarde donc ce qui existe sur le disque. Un fichier d'avant-déploiement
-  # écrit dans les vingt dernières minutes et non vide **est** la sauvegarde
-  # qu'on réclamait ; refuser de déployer parce qu'un processus a mis trop
-  # longtemps à se ranger serait confondre la preuve et le messager.
-  if (( code != 0 )); then
-    fraiche="$(find "${FARMSIM_BACKUP_DIR:-/var/backups/farmsim}" \
-        -name '*avant-deploi.dump' -mmin -20 -size +4k 2>/dev/null | head -1 || true)"
-    if [[ -n "$fraiche" ]]; then
-      echo "==> Sauvegarde bien présente malgré la borne : $fraiche"
-      echo "    $(du -h "$fraiche" 2>/dev/null | cut -f1) — on continue."
+    if (( code == 124 )); then
+      echo "WARN: sauvegarde relue trop longue ($(( budget / 60 )) min) — instantané sans relecture." >&2
       code=0
+      timeout "$repli" env FARMSIM_BACKUP_VERIFY=0 \
+        bash "$APP_DIR/scripts/farmsim-backup.sh" avant-deploi || code=$?
     fi
-  fi
-  if (( code != 0 )); then
-    echo "ERROR: la sauvegarde a échoué — déploiement interrompu." >&2
-    echo "       Rien n'a été touché ; le jeu tourne toujours sur l'ancienne" >&2
-    echo "       version. Corrigez la sauvegarde avant de recommencer." >&2
-    exit 1
+    if (( code != 0 )); then
+      fraiche="$(find "${FARMSIM_BACKUP_DIR:-/var/backups/farmsim}" \
+          -name '*avant-deploi.dump' -mmin -20 -size +4k 2>/dev/null | head -1 || true)"
+      if [[ -n "$fraiche" ]]; then
+        echo "==> Sauvegarde bien présente malgré la borne : $fraiche"
+        echo "    $(du -h "$fraiche" 2>/dev/null | cut -f1) — on continue."
+        code=0
+      fi
+    fi
+    if (( code != 0 )); then
+      echo "ERROR: la sauvegarde a échoué — déploiement interrompu." >&2
+      echo "       Rien n'a été touché ; le jeu tourne toujours sur l'ancienne" >&2
+      echo "       version. Corrigez la sauvegarde avant de recommencer." >&2
+      exit 1
+    fi
   fi
 fi
 
@@ -436,19 +409,35 @@ fi
 # prudence décorative : sans lui, un registre indisponible, une image pas
 # encore publiée ou un premier déploiement empêcheraient toute mise en ligne.
 # On préfère un déploiement lent à pas de déploiement du tout.
+#
+# `docker compose up --force-recreate` sans nom de service recréait **aussi**
+# PostgreSQL. Mesuré le 26 août : `Container farmsim-db Recreate` à 22:59:44,
+# coupure SSH à 23:05:09, le jeu n'avait pas commencé à démarrer. L'image de
+# la base n'avait pas changé. `--no-deps --force-recreate farmsim` ne touche
+# qu'au jeu ; `up -d db` sans `--force-recreate` le laisse tourner s'il tourne.
+# Tuer une sauvegarde laissée derrière par `timeout`. Mesuré le 26 août
+# (run 33018627983) : l'instantané borné à 300 s a continué dans son
+# conteneur, a écrit « OK » à 23:04 — cinq minutes **après** le début de
+# `docker compose up` — et PostgreSQL se faisait recréer en même temps.
+echo "==> Arrêt des sauvegardes encore en cours"
+tuer_sauvegardes
+
 if [[ -n "${FARMSIM_IMAGE:-}" ]]; then
   export FARMSIM_IMAGE
   echo "==> Image : $FARMSIM_IMAGE"
   if docker compose pull farmsim; then
-    echo "==> Démarrage sur l'image du registre"
-    docker compose up -d --force-recreate
+    echo "==> Démarrage du jeu — PostgreSQL n'est pas recréé"
+    timeout 120 docker compose up -d db || true
+    docker compose up -d --no-deps --force-recreate farmsim
   else
     echo "WARN: image introuvable au registre — construction sur place." >&2
-    docker compose up -d --build --force-recreate
+    timeout 120 docker compose up -d db || true
+    docker compose up -d --no-deps --build --force-recreate farmsim
   fi
 else
   echo "==> Aucune image fournie — construction sur place"
-  docker compose up -d --build --force-recreate
+  timeout 120 docker compose up -d db || true
+  docker compose up -d --no-deps --build --force-recreate farmsim
 fi
 
 # Un volume nommé créé par une exécution antérieure — ou par une image

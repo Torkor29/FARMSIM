@@ -266,9 +266,10 @@ jobs:
           port: ${{ secrets.VPS_PORT || 22 }}
           # L'amorçage du monde peut prendre plusieurs minutes au premier
           # démarrage suivant une migration : le script attend jusqu'à cinq
-          # minutes. Une image Docker sans cache (pnpm + Prisma + vite)
-          # dépasse souvent vingt minutes sur le VPS : on laisse quarante.
-          command_timeout: 40m
+          # minutes. Tirer l'image a demandé quatorze minutes le 26 août, et
+          # ouvrir la session SSH dix de plus : quarante n'ont pas suffi une
+          # fois le jeu enfin prêt à démarrer. Cinquante.
+          command_timeout: 50m
           # Le nom du site, pour que le script teste lui-même le passage par le
           # portier commun. Sans lui il sautait sa vérification finale et
           # annonçait « déployé » alors que seul le conteneur avait répondu,

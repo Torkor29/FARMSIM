@@ -28,6 +28,7 @@ import { fileURLToPath } from "node:url";
 
 const RACINE = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
 const DEPLOY = readFileSync(join(RACINE, "scripts", "vps-deploy.sh"), "utf8");
+const ACTION = readFileSync(join(RACINE, ".github", "workflows", "deploy.yml"), "utf8");
 
 describe("le ménage Docker", () => {
   it("ne tourne que si le disque se remplit", () => {
@@ -59,38 +60,56 @@ describe("la lecture des migrations", () => {
 
 describe("la sauvegarde d’avant-déploiement", () => {
   it("garde son budget entier quand une migration s’annonce", () => {
-    assert.match(DEPLOY, /if \(\( relire == 1 \)\); then budget=900; repli=600;/);
+    assert.match(DEPLOY, /budget=900/);
+    assert.match(DEPLOY, /repli=600/);
   });
 
-  it("est réduite, et sans repli, quand il n’y a aucune migration à protéger", () => {
-    assert.match(DEPLOY, /else budget=300; repli=0; fi/);
+  it("est sautée quand il n’y a aucune migration à protéger", () => {
+    // Attendre cinq minutes un dump qu'on a déjà décidé d'ignorer a laissé
+    // un conteneur orphelin se battre avec `docker compose up`.
+    assert.match(DEPLOY, /Aucune migration : instantané sauté/);
+    assert.match(DEPLOY, /farmsim-backup\.sh manuel/);
   });
 
-  it("laisse alors le déploiement continuer plutôt que d’échouer", () => {
-    // C'est l'arbitrage même : ne pas livrer est un risque, lui aussi. Le
-    // journal dit comment rattraper la sauvegarde à la main.
-    const bloc = DEPLOY.slice(DEPLOY.indexOf("elif (( code == 124 ))"));
-    assert.match(bloc, /aucune migration à/);
-    assert.match(bloc, /on déploie sans/);
-    assert.match(bloc, /farmsim-backup\.sh manuel/);
-    assert.match(bloc, /code=0/);
-  });
-
-  it("annonce son budget dans le journal", () => {
-    // Le message précédent parlait de « sauvegarde relue » même quand la
-    // relecture était désactivée : il nommait le mauvais coupable.
-    assert.match(DEPLOY, /Sauvegarde avant migration \(budget \$\{budget\} s\)/);
+  it("n’emploie plus le budget de cinq minutes sans migration", () => {
+    assert.doesNotMatch(DEPLOY, /budget=300/);
   });
 });
 
 describe("l’ordre reste celui qu’on croit", () => {
   it("le déploiement des conteneurs vient après les précautions, mais il vient", () => {
-    // Les précautions passent devant — c'est voulu, une base abîmée ne se
-    // rattrape pas. Ce qui ne l'est pas, c'est qu'elles puissent tout manger.
     const menage = DEPLOY.indexOf("Place disque avant ménage");
     const sauvegarde = DEPLOY.indexOf("Sauvegarde avant migration");
-    const monte = DEPLOY.indexOf("docker compose up -d");
+    const monte = DEPLOY.indexOf("docker compose up -d --no-deps --force-recreate farmsim");
     assert.ok(menage > 0 && sauvegarde > menage, "le ménage précède la sauvegarde");
     assert.ok(monte > sauvegarde, "la mise en ligne suit les précautions");
+  });
+});
+
+describe("la session SSH", () => {
+  it("laisse cinquante minutes au script", () => {
+    // Quatorze minutes de pull, dix d'ouverture de session : quarante n'ont
+    // pas suffi une fois le jeu prêt à démarrer.
+    assert.match(ACTION, /command_timeout:\s*50m/);
+  });
+});
+
+describe("le jeu redémarre, pas la base", () => {
+  it("recrée farmsim sans ses dépendances", () => {
+    assert.match(DEPLOY, /docker compose up -d --no-deps --force-recreate farmsim/);
+  });
+
+  it("ne force pas la recréation de PostgreSQL", () => {
+    assert.doesNotMatch(
+      DEPLOY,
+      /docker compose up -d --force-recreate\s*$/m,
+      "un `--force-recreate` nu recréerait farmsim-db",
+    );
+  });
+
+  it("arrête les sauvegardes orphelines avant de monter le jeu", () => {
+    const tuer = DEPLOY.lastIndexOf("tuer_sauvegardes");
+    const monte = DEPLOY.indexOf("docker compose up -d --no-deps --force-recreate farmsim");
+    assert.ok(tuer > 0 && tuer < monte, "les orphelines tombent avant le compose up");
   });
 });
