@@ -346,10 +346,14 @@ describe("les motifs du ciel", () => {
  * Une distance devinée entre deux éléments qui grandissent chacun de leur
  * côté ne tient jamais longtemps. Empilé dans le dock, le bandeau ne peut
  * plus être recouvert et il n'y a plus de hauteur à deviner.
+ *
+ * Depuis que plusieurs chantiers peuvent tourner, l'ancrage n'est plus sur
+ * chaque bandeau (ils se seraient superposés) : c'est la pile qui flotte, et
+ * c'est elle qu'on empile dans le dock.
  */
 describe("le bandeau de chantier", () => {
-  const flottant = toutes.find((r) => r.selecteur === ".chantier-bar");
-  const empile = toutes.find((r) => /\.field-dock\s+\.chantier-bar/.test(r.selecteur));
+  const flottant = toutes.find((r) => r.selecteur === ".chantier-pile");
+  const empile = toutes.find((r) => /\.field-dock\s+\.chantier-pile/.test(r.selecteur));
 
   it("existe sous les deux formes : flottante et empilée", () => {
     expect(`flottant=${Boolean(flottant)} empilé=${Boolean(empile)}`).toBe(
@@ -358,18 +362,20 @@ describe("le bandeau de chantier", () => {
   });
 
   it("ne garde aucune hauteur devinée une fois empilé", () => {
-    // C'est **la** règle : dans la pile, plus de `position: fixed` et plus de
+    // C'est **la** règle : dans le dock, plus de `position: fixed` et plus de
     // `bottom` — donc plus rien à faire coïncider avec la taille du dock.
     expect(declaration(empile!.corps, "position")).toBe("static");
     expect(declaration(empile!.corps, "bottom")).toBe("auto");
   });
 
   it("ne se laisse pas recouvrir par le dock quand il flotte", () => {
-    // Hors de la pile, il reste ancré à la fenêtre : son plan doit alors être
-    // au moins celui du dock, sinon on retombe sur le même recouvrement.
+    // Hors du dock, la pile reste ancrée à la fenêtre : son plan doit alors
+    // être au moins celui du dock, sinon on retombe sur le même recouvrement.
     const dock = toutes.find((r) => r.selecteur === ".field-dock");
-    const planBandeau = Number(declaration(flottant!.corps, "z-index") ?? 0);
+    const planPile = Number(declaration(flottant!.corps, "z-index") ?? 0);
     const planDock = Number(declaration(dock!.corps, "z-index") ?? 0);
-    expect(`${planBandeau} >= ${planDock}`).toBe(`${planBandeau} >= ${planBandeau}`);
+    expect(`${planPile} >= ${planDock}`).toBe(
+      `${planPile} >= ${Math.min(planPile, planDock)}`,
+    );
   });
 });
