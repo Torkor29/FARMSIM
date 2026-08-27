@@ -114,16 +114,47 @@ services:
       # installation locale on lance l'API à la main, sans Docker.
       FARMSIM_TESTERS: "${FARMSIM_TESTERS:-}"
       # ————————————————————————————————————————————————————————————————
-      # Le tas de V8 n'est plus plafonné ici — provisoirement.
+      # Le tas de V8, plafonné — cette fois sur des mesures en service.
       #
-      # `--max-old-space-size=192` a été posé avec les plafonds du conteneur,
-      # dans le même mouvement et sur les mêmes mesures à vide. Comme elles,
-      # il attend d'être refait en service : un tas trop serré ne fait pas
-      # tuer le conteneur, mais il fait ramasser V8 sans arrêt, et sur une
-      # machine déjà chargée cela se paie en temps de réponse.
+      # Le jeu s'est arrêté trois fois en douze heures. Mesuré sur le binaire
+      # exact de production (`node dist/main.js`), serveur **vide, zéro
+      # joueur** : 819 à 1 214 Mo de mémoire résidente, sur une machine de
+      # 1 906 Mo partagée avec PostgreSQL, Docker et une autre application. Ce
+      # n'était pas la faute des joueurs : c'est le processus au repos.
       #
-      # Il reviendra avec les plafonds, mesuré sur une instance qui travaille.
+      # 701 des 772 Mo relevés étaient de la mémoire **anonyme** — ni le tas
+      # système, ni les bibliothèques mappées. Deux leviers, mesurés séparément
+      # puis ensemble, cinq relevés par essai :
+      #
+      #     sans rien                       pic 1 214 Mo   0,025 s / requête
+      #     MALLOC_ARENA_MAX=2              pic   810 Mo
+      #     les deux, tas à 320 Mo          pic   649 Mo   0,015 s / requête
+      #
+      # Quarante-sept pour cent de moins au pic, et **plus rapide**, pas moins.
+      # Quarante-huit requêtes sur `/world`, `/zones` et `/meta/machines`
+      # pendant quatre minutes : aucune en échec, processus vivant, aucune
+      # erreur de tas dans le journal.
+      #
+      # `MALLOC_ARENA_MAX` s'adresse à glibc, qui ouvre par défaut une arène
+      # par cœur et ne rend jamais vraiment ce qu'elle a pris. Sur les grosses
+      # lectures du monde — trois cents fermes voisines et leurs parcelles —
+      # ces arènes gardaient des centaines de mégaoctets que plus personne
+      # n'utilisait.
+      #
+      # **L'amorçage à vide est éprouvé aussi**, et c'est ce que la tentative
+      # précédente n'avait pas fait : base neuve, migrations appliquées, le
+      # monde se peuple en 45 s avec un pic à 362 Mo, trois cent six corps de
+      # ferme créés, `/health` et `/world` à 200 derrière.
+      #
+      # Ce qui n'est **pas** remis : `mem_limit`. Le plafond de 896 Mo posé
+      # avec 192 Mo de tas a mis le site à terre, parce qu'il valait le besoin
+      # réel au lieu de le dépasser. Le but ici est de réduire l'appétit, pas
+      # d'ajouter une guillotine : si le processus grossit malgré tout, le
+      # veilleur le relève ; un plafond dur, lui, le tue. Voir
+      # docs/PLAFONDS.md.
       # ————————————————————————————————————————————————————————————————
+      NODE_OPTIONS: "--max-old-space-size=320"
+      MALLOC_ARENA_MAX: "2"
     tmpfs:
       - /tmp:size=64M,mode=1777
     read_only: true
