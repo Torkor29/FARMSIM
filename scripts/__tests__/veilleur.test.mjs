@@ -38,46 +38,77 @@ const VEILLEUR = join(RACINE, "deploy", "farmsim-veilleur.sh");
 
 let bac;
 
-/** Pose un faux `docker` qui répond `etat` et journalise ses appels. */
-function fauxDocker(etat) {
+/**
+ * Pose un faux `docker` qui rejoue un état de pile et journalise ses appels.
+ *
+ * Le veilleur interroge deux choses par conteneur — `.State.Status` et
+ * `.State.Health.Status` — et il les interroge pour `farmsim-db` **puis**
+ * `farmsim`. Le faux répond aux deux gabarits, pour les deux noms.
+ */
+function fauxDocker(pile) {
   const bin = join(bac, "bin");
   mkdirSync(bin, { recursive: true });
   const journal = join(bac, "appels.txt");
+  const reponse = (nom, gabarit) => {
+    const c = pile[nom];
+    if (!c) return "";
+    return gabarit.includes("Health") ? c.sante : c.etat;
+  };
+  const cas = Object.keys(pile)
+    .map(
+      (nom) => `    ${nom}) case "$gabarit" in
+      *Health*) printf '%s' ${JSON.stringify(reponse(nom, "Health"))} ;;
+      *) printf '%s' ${JSON.stringify(reponse(nom, "Status"))} ;;
+    esac ;;`,
+    )
+    .join("\n");
   writeFileSync(
     join(bin, "docker"),
     `#!/bin/sh
 echo "$@" >> ${JSON.stringify(journal)}
 case "$1" in
-  inspect) printf '%s' ${JSON.stringify(etat)} ;;
+  inspect)
+    gabarit="$3"
+    case "$4" in
+${cas}
+    esac ;;
   logs) echo "(journal du conteneur)" ;;
-  restart) ;;
 esac
 exit 0
 `,
   );
   chmodSync(join(bin, "docker"), 0o755);
-  // `timeout` est appelé par le veilleur : il doit trouver notre faux docker.
   return { bin, journal };
 }
 
-function lancer(etat, { marque = null } = {}) {
-  const { bin, journal } = fauxDocker(etat);
-  const fichierMarque = join(bac, "derniere-relance");
-  if (marque !== null) writeFileSync(fichierMarque, String(marque));
-  const sortie = execFileSync("bash", [VEILLEUR], {
+/**
+ * @param pile   { farmsim: {etat, sante}, "farmsim-db": {...} }
+ * @param marque horodatage de la dernière intervention sur `farmsim`
+ */
+function lancer(pile, { marque = null, conteneurs = "farmsim" } = {}) {
+  const { bin, journal } = fauxDocker(pile);
+  const marques = join(bac, "marques");
+  mkdirSync(marques, { recursive: true });
+  if (marque !== null) writeFileSync(join(marques, "derniere-relance-farmsim"), String(marque));
+  // Les refus du veilleur partent sur la sortie d'erreur — c'est là que
+  // systemd les attend. Le test doit donc lire les deux flux.
+  const sortie = execFileSync("bash", ["-c", `bash ${JSON.stringify(VEILLEUR)} 2>&1`], {
     env: {
       ...process.env,
       PATH: `${bin}:${process.env.PATH}`,
-      FARMSIM_CONTENEUR: "farmsim",
-      FARMSIM_VEILLEUR_MARQUE: fichierMarque,
+      FARMSIM_VEILLEUR_CONTENEURS: conteneurs,
+      FARMSIM_VEILLEUR_MARQUES: marques,
       FARMSIM_VEILLEUR_REPOS: "600",
     },
     encoding: "utf8",
     stdio: ["ignore", "pipe", "pipe"],
   });
   const appels = existsSync(journal) ? readFileSync(journal, "utf8") : "";
-  return { sortie, appels, fichierMarque };
+  return { sortie, appels, marques };
 }
+
+/** Raccourci : un seul conteneur `farmsim` dans l'état demandé. */
+const seul = (etat, sante) => ({ farmsim: { etat, sante } });
 
 describe("le veilleur", () => {
   beforeEach(() => {
@@ -87,48 +118,130 @@ describe("le veilleur", () => {
     if (bac) rmSync(bac, { recursive: true, force: true });
   });
 
-  it("relance un conteneur malade", () => {
-    const { appels, fichierMarque } = lancer("unhealthy");
+  it("relance un conteneur vivant mais malade", () => {
+    const { appels, marques } = lancer(seul("running", "unhealthy"));
     assert.match(appels, /^restart farmsim$/m);
     // La trace d'abord : relancer efface ce qui a figé le processus.
     assert.match(appels, /logs --tail=100 farmsim/);
-    assert.ok(existsSync(fichierMarque), "la relance doit être datée");
+    assert.ok(existsSync(join(marques, "derniere-relance-farmsim")));
+  });
+
+  it("démarre un conteneur resté à l’état « created »", () => {
+    // C'est l'état où une fenêtre SSH coupée en plein `--force-recreate` a
+    // laissé `farmsim-db` : créé, jamais démarré. `restart: unless-stopped`
+    // ne le voit pas — il ne relance que ce qui *sort* — et un `created`
+    // n'est pas `unhealthy` non plus.
+    const { appels } = lancer(seul("created", "sans-controle"));
+    assert.match(appels, /^start farmsim$/m);
+  });
+
+  it("démarre aussi un conteneur sorti, mort ou en pause", () => {
+    for (const etat of ["exited", "dead", "paused"]) {
+      bac = mkdtempSync(join(tmpdir(), "veilleur-"));
+      const { appels } = lancer(seul(etat, "sans-controle"));
+      assert.match(appels, /^start farmsim$/m, `état ${etat}`);
+    }
   });
 
   it("laisse tranquille un conteneur en bonne santé", () => {
-    const { appels } = lancer("healthy");
-    assert.doesNotMatch(appels, /restart/);
+    const { appels } = lancer(seul("running", "healthy"));
+    assert.doesNotMatch(appels, /restart|start farmsim/);
   });
 
   it("laisse démarrer un conteneur qui s’amorce", () => {
     // L'amorçage du monde dure jusqu'à cinq minutes (start_period: 300s).
     // Relancer là-dessus l'empêcherait de finir, à chaque fois.
-    const { appels } = lancer("starting");
-    assert.doesNotMatch(appels, /restart/);
+    const { appels } = lancer(seul("running", "starting"));
+    assert.doesNotMatch(appels, /restart|start farmsim/);
   });
 
-  it("ne relance pas deux fois dans le délai de garde", () => {
+  it("ne touche pas à un conteneur qui tourne sans contrôle de santé", () => {
+    const { appels } = lancer(seul("running", "sans-controle"));
+    assert.doesNotMatch(appels, /restart|start farmsim/);
+  });
+
+  it("ignore un conteneur qui n’existe pas plutôt que de l’inventer", () => {
+    // Ce n'est pas au veilleur de créer une pile : un déploiement le fera,
+    // avec sa configuration.
+    const { appels } = lancer({}, { conteneurs: "farmsim" });
+    assert.doesNotMatch(appels, /restart|start/);
+  });
+
+  it("ne rejoue pas dans le délai de garde", () => {
     const ilYAUneMinute = Math.floor(Date.now() / 1000) - 60;
-    const { appels, sortie } = lancer("unhealthy", { marque: ilYAUneMinute });
+    const { appels, sortie } = lancer(seul("running", "unhealthy"), { marque: ilYAUneMinute });
     assert.doesNotMatch(appels, /restart/);
-    assert.match(sortie + "", /toujours malade|on attend|^$/m);
+    assert.match(sortie, /on attend/);
   });
 
-  it("relance de nouveau une fois le délai passé", () => {
+  it("rejoue une fois le délai passé", () => {
     const ilYALongtemps = Math.floor(Date.now() / 1000) - 3600;
-    const { appels } = lancer("unhealthy", { marque: ilYALongtemps });
+    const { appels } = lancer(seul("running", "unhealthy"), { marque: ilYALongtemps });
     assert.match(appels, /^restart farmsim$/m);
-  });
-
-  it("ne touche pas à un conteneur sans contrôle de santé", () => {
-    const { appels } = lancer("sans-controle");
-    assert.doesNotMatch(appels, /restart/);
   });
 
   it("survit à une marque illisible plutôt que de rester bloqué", () => {
-    // Un fichier corrompu ne doit pas condamner le jeu à rester figé.
-    const { appels } = lancer("unhealthy", { marque: "n'importe quoi" });
+    const { appels } = lancer(seul("running", "unhealthy"), { marque: "n'importe quoi" });
     assert.match(appels, /^restart farmsim$/m);
+  });
+});
+
+describe("le veilleur surveille les deux conteneurs", () => {
+  beforeEach(() => {
+    bac = mkdtempSync(join(tmpdir(), "veilleur-"));
+  });
+
+  it("remonte la base avant le jeu", () => {
+    // Une base tombée suffit à rendre le jeu inutilisable sans qu'il s'en
+    // aperçoive : son contrôle de santé ne la regarde pas. La remonter en
+    // premier évite de relancer le jeu une seconde fois pour qu'il la
+    // retrouve.
+    const { appels } = lancer(
+      { "farmsim-db": { etat: "created", sante: "sans-controle" }, farmsim: { etat: "exited", sante: "sans-controle" } },
+      { conteneurs: "farmsim-db farmsim" },
+    );
+    const rangDb = appels.indexOf("start farmsim-db");
+    const rangJeu = appels.search(/^start farmsim$/m);
+    assert.ok(rangDb > -1, "la base doit être démarrée");
+    assert.ok(rangJeu > -1, "le jeu doit être démarré");
+    assert.ok(rangDb < rangJeu, "la base doit passer avant le jeu");
+  });
+
+  it("agit sur la base même quand le jeu va bien", () => {
+    // C'est très exactement l'état du 26 août à 23 h : jeu debout et « sain »,
+    // base absente, toutes les routes en 500.
+    const { appels } = lancer(
+      { "farmsim-db": { etat: "created", sante: "sans-controle" }, farmsim: { etat: "running", sante: "healthy" } },
+      { conteneurs: "farmsim-db farmsim" },
+    );
+    assert.match(appels, /^start farmsim-db$/m);
+    assert.doesNotMatch(appels, /^(re)?start farmsim$/m);
+  });
+
+  it("tient un délai de garde par conteneur, pas un pour tous", () => {
+    // Sans cela, relancer la base condamnerait le jeu à attendre dix minutes.
+    const ilYAUneMinute = Math.floor(Date.now() / 1000) - 60;
+    const marques = join(bac, "marques");
+    mkdirSync(marques, { recursive: true });
+    writeFileSync(join(marques, "derniere-relance-farmsim-db"), String(ilYAUneMinute));
+    const { bin, journal } = fauxDocker({
+      "farmsim-db": { etat: "created", sante: "sans-controle" },
+      farmsim: { etat: "exited", sante: "sans-controle" },
+    });
+    execFileSync("bash", [VEILLEUR], {
+      env: {
+        ...process.env,
+        PATH: `${bin}:${process.env.PATH}`,
+        FARMSIM_VEILLEUR_CONTENEURS: "farmsim-db farmsim",
+        FARMSIM_VEILLEUR_MARQUES: marques,
+        FARMSIM_VEILLEUR_REPOS: "600",
+      },
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    const appels = existsSync(journal) ? readFileSync(journal, "utf8") : "";
+    assert.doesNotMatch(appels, /start farmsim-db/, "la base est au repos");
+    assert.match(appels, /^start farmsim$/m, "le jeu, lui, doit repartir");
   });
 });
 
