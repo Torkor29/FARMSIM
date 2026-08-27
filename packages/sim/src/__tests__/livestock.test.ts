@@ -9,6 +9,7 @@ import {
   troughCapacity,
   TROUGH_REAL_DAYS,
   FEED_GRAZING_RATIO,
+  FEED_BARN_SAVING_CAP,
   GRAZING,
   GRAZING_REFUSAL_LABELS,
   HAPPINESS,
@@ -23,6 +24,15 @@ import {
   canGraze,
   canLiveOutside,
   crowdingPenalty,
+  crowdingLethalThreshold,
+  installationLevel,
+  installationBonus,
+  installationLabel,
+  productionFactor,
+  tickWater,
+  thirstPenalty,
+  WATER,
+  CASCADE,
   feedConsumption,
   grazingWaveCount,
   happinessLabel,
@@ -67,7 +77,7 @@ const troupeau = (over: Partial<Herd> = {}): Herd => ({
 const deriver = (
   depart: number,
   heures: number,
-  conditions: { hasPaddock: boolean; grazedRecentlyMs: number; crowding: number },
+  conditions: { crowding: number; hunger?: number; water?: number },
 ): number => {
   let h = depart;
   for (let i = 0; i < heures; i++) {
@@ -76,81 +86,93 @@ const deriver = (
   return h;
 };
 
-describe("bonheur — dérive à la baisse (étable fermée)", () => {
-  const enferme = { hasPaddock: false, grazedRecentlyMs: Number.POSITIVE_INFINITY, crowding: 0.5 };
+describe("satisfaction des besoins — la base est 100 %", () => {
+  /*
+   * Le cœur de la refonte, et le test qui doit tomber le premier si on y
+   * touche.
+   *
+   * Avant : la cible d'un troupeau jamais sorti valait 0,35 (`confinedFloor`),
+   * la mortalité commençait à 0,15, et il ne restait donc que 0,20 point de
+   * marge à un lot enfermé — contre 0,80 à un lot sorti. L'enfermement ne
+   * tuait pas seul : il rendait mortel tout le reste. Ni la saison ni la
+   * température n'entraient nulle part, si bien que rentrer les bêtes en
+   * décembre était puni exactement comme les enfermer en juin.
+   */
+  const remplis = { crowding: 0.5, hunger: 0, water: 1, bedding: 0 };
 
-  it("fait décroître le bonheur d’un troupeau qui ne sort jamais", () => {
-    const apres = tickHappiness({ ...enferme, happiness: 0.9, elapsedMs: 24 * HOUR });
-    expect(apres).toBeLessThan(0.9);
-    expect(apres).toBeGreaterThan(HAPPINESS.confinedFloor);
+  it("met à 100 % un troupeau nourri, abreuvé et logé — dedans comme dehors", () => {
+    expect(happinessTarget({ ...remplis, hasPaddock: false })).toBeCloseTo(1, 6);
+    expect(happinessTarget({ ...remplis, hasPaddock: true, grazedRecentlyMs: 0 })).toBeCloseTo(
+      1,
+      6,
+    );
   });
 
-  it("décroît lentement : il reste du bonheur après une journée d’oubli", () => {
-    // τ = 36 h ⇒ à 24 h on n’a comblé qu’environ la moitié de l’écart.
-    const apres = tickHappiness({ ...enferme, happiness: 0.95, elapsedMs: 24 * HOUR });
-    expect(apres).toBeGreaterThan(0.6);
-    expect(HAPPINESS.decayTauH).toBe(36);
-  });
-
-  it("s’arrête au plancher de 0,35 et n’en descend pas", () => {
-    const apres = tickHappiness({ ...enferme, happiness: 0.95, elapsedMs: 30 * 24 * HOUR });
-    expect(apres).toBeCloseTo(HAPPINESS.confinedFloor, 4);
-    expect(apres).toBeGreaterThanOrEqual(HAPPINESS.confinedFloor);
-    expect(HAPPINESS.confinedFloor).toBeCloseTo(0.35, 6);
-  });
-
-  it("remonte un troupeau enfermé sous le plancher jusqu’au plancher", () => {
-    const apres = tickHappiness({ ...enferme, happiness: 0.1, elapsedMs: 48 * HOUR });
-    expect(apres).toBeGreaterThan(0.1);
-    expect(apres).toBeLessThanOrEqual(HAPPINESS.confinedFloor);
-  });
-
-  it("ignore un enclos posé loin de l’étable, comme s’il n’existait pas", () => {
-    const detache = tickHappiness({
-      happiness: 0.5,
-      hasPaddock: false,
-      grazedRecentlyMs: 0,
-      crowding: 0.2,
-      elapsedMs: 12 * HOUR,
+  it("ne retient rien de la dernière sortie : jamais sortie vaut sortie du jour", () => {
+    // C'est la phrase exacte du cahier des charges : « ne pas revenir à un
+    // système où les vaches sont stressées simplement parce qu'elles sont
+    // dans l'étable ».
+    const jamais = happinessTarget({
+      ...remplis,
+      hasPaddock: true,
+      grazedRecentlyMs: Number.POSITIVE_INFINITY,
     });
-    expect(detache).toBeLessThan(0.5);
+    const aLInstant = happinessTarget({ ...remplis, hasPaddock: true, grazedRecentlyMs: 0 });
+    expect(jamais).toBeCloseTo(aLInstant, 6);
+    expect(jamais).toBeCloseTo(1, 6);
+  });
+
+  it("ne descend que sur un manque réel, et remonte dès qu'on y répond", () => {
+    const affame = happinessTarget({ ...remplis, hunger: 0.55 });
+    expect(affame).toBeCloseTo(0.45, 6);
+    const assoiffe = happinessTarget({ ...remplis, water: 0 });
+    expect(assoiffe).toBeCloseTo(0.5, 6);
+    // Et les manques s'additionnent : deux besoins à zéro coûtent plus qu'un.
+    expect(happinessTarget({ ...remplis, hunger: 0.55, water: 0 })).toBeLessThan(affame);
+  });
+
+  it("reste borné dans [0 ; 1] même sous une avalanche de manques", () => {
+    const pire = happinessTarget({
+      crowding: 4,
+      hunger: 1,
+      water: 0,
+      bedding: 1,
+      hasPaddock: false,
+    });
+    expect(pire).toBeGreaterThanOrEqual(HAPPINESS.min);
+    expect(pire).toBeLessThanOrEqual(HAPPINESS.max);
   });
 });
 
-describe("bonheur — dérive à la hausse (sorties au pré)", () => {
-  const auPre = { hasPaddock: true, grazedRecentlyMs: 0, crowding: 0.5 };
+describe("satisfaction — dérive vers la cible", () => {
+  const remplis = { crowding: 0.5, hunger: 0, water: 1 };
 
-  it("fait monter le bonheur dès la première sortie", () => {
-    const apres = tickHappiness({ ...auPre, happiness: 0.35, elapsedMs: 12 * HOUR });
-    expect(apres).toBeGreaterThan(0.35);
+  it("remonte un troupeau qu'on remet d'aplomb jusqu'à 100 %", () => {
+    const apres = tickHappiness({ ...remplis, happiness: 0.4, elapsedMs: 30 * 24 * HOUR });
+    expect(apres).toBeCloseTo(1, 4);
   });
 
-  it("monte trois fois plus vite qu’il ne descend", () => {
+  it("descend vers la cible quand un besoin manque, sans jamais la percer", () => {
+    const affame = { crowding: 0.5, hunger: 0.55, water: 1 };
+    const apres = tickHappiness({ ...affame, happiness: 1, elapsedMs: 30 * 24 * HOUR });
+    expect(apres).toBeCloseTo(happinessTarget(affame), 4);
+    expect(apres).toBeGreaterThanOrEqual(happinessTarget(affame) - 1e-9);
+  });
+
+  it("monte trois fois plus vite qu'il ne descend", () => {
     expect(HAPPINESS.riseTauH).toBe(12);
     expect(HAPPINESS.decayTauH / HAPPINESS.riseTauH).toBeCloseTo(3, 6);
-    const monte = tickHappiness({ ...auPre, happiness: 0.65, elapsedMs: 6 * HOUR }) - 0.65;
+    const monte = tickHappiness({ ...remplis, happiness: 0.65, elapsedMs: 6 * HOUR }) - 0.65;
     const descend =
       0.65 -
-      tickHappiness({
-        happiness: 0.65,
-        hasPaddock: false,
-        grazedRecentlyMs: Number.POSITIVE_INFINITY,
-        crowding: 0.5,
-        elapsedMs: 6 * HOUR,
-      });
+      tickHappiness({ crowding: 0.5, hunger: 0.55, happiness: 0.65, elapsedMs: 6 * HOUR });
     expect(monte).toBeGreaterThan(descend * 2);
-  });
-
-  it("plafonne à 0,95 et ne le dépasse jamais", () => {
-    const apres = tickHappiness({ ...auPre, happiness: 0.9, elapsedMs: 30 * 24 * HOUR });
-    expect(apres).toBeCloseTo(HAPPINESS.grazedCeiling, 4);
-    expect(apres).toBeLessThanOrEqual(HAPPINESS.grazedCeiling);
   });
 
   it("reste borné dans [0 ; 1] même avec des entrées aberrantes", () => {
     for (const h of [-3, 0, 0.5, 1, 12]) {
       for (const elapsed of [-1000, 0, HOUR, 1e12]) {
-        const out = tickHappiness({ ...auPre, happiness: h, elapsedMs: elapsed });
+        const out = tickHappiness({ ...remplis, happiness: h, elapsedMs: elapsed });
         expect(out).toBeGreaterThanOrEqual(HAPPINESS.min);
         expect(out).toBeLessThanOrEqual(HAPPINESS.max);
       }
@@ -158,84 +180,161 @@ describe("bonheur — dérive à la hausse (sorties au pré)", () => {
   });
 
   it("ne change rien sur un pas de temps nul", () => {
-    expect(tickHappiness({ ...auPre, happiness: 0.42, elapsedMs: 0 })).toBeCloseTo(0.42, 6);
+    expect(tickHappiness({ ...remplis, happiness: 0.42, elapsedMs: 0 })).toBeCloseTo(0.42, 6);
   });
 
-  it("donne le même résultat en un gros tick qu’en 24 petits", () => {
-    const gros = tickHappiness({ ...auPre, happiness: 0.4, elapsedMs: 24 * HOUR });
-    const petits = deriver(0.4, 24, auPre);
+  it("donne le même résultat en un gros tick qu'en 24 petits", () => {
+    const gros = tickHappiness({ ...remplis, happiness: 0.4, elapsedMs: 24 * HOUR });
+    const petits = deriver(0.4, 24, remplis);
     expect(petits).toBeCloseTo(gros, 6);
-  });
-
-  it("oublie la sortie au-delà de 48 h : la cible retombe au plancher", () => {
-    expect(happinessTarget({ hasPaddock: true, grazedRecentlyMs: 0, crowding: 0 })).toBeCloseTo(
-      HAPPINESS.grazedCeiling,
-      6,
-    );
-    expect(
-      happinessTarget({ hasPaddock: true, grazedRecentlyMs: 24 * HOUR, crowding: 0 }),
-    ).toBeCloseTo(0.65, 6);
-    expect(
-      happinessTarget({ hasPaddock: true, grazedRecentlyMs: 72 * HOUR, crowding: 0 }),
-    ).toBeCloseTo(HAPPINESS.confinedFloor, 6);
-    expect(HAPPINESS.grazeMemoryMs).toBe(48 * HOUR);
   });
 });
 
-describe("bonheur — surpeuplement", () => {
-  it("ne pénalise pas un enclos rempli jusqu’à 85 %", () => {
-    expect(crowdingPenalty(0)).toBe(0);
-    expect(crowdingPenalty(0.85)).toBe(0);
+describe("dépassement de capacité — et rien avant", () => {
+  /*
+   * Le second défaut mesuré, et celui que Strea a lu à l'écran.
+   *
+   * La peine démarrait à 85 % d'occupation, et le ratio se calculait sur les
+   * **cases de l'enclos** — dix-huit pour cinquante-cinq places d'étable. On
+   * était donc « encombré » dès seize vaches, et sans enclos du tout le ratio
+   * valait 1 en dur : une peine permanente qu'aucun geste n'effaçait.
+   */
+  it("ne pénalise rien jusqu'à la dernière place payée", () => {
+    for (const effectif of [0, 30, 40, 54, 55]) {
+      expect(crowdingPenalty(effectif / 55)).toBe(0);
+    }
+    expect(HAPPINESS.crowdingComfort).toBe(1);
   });
 
-  it("pénalise dès que l’enclos déborde, jusqu’à −0,35 point au double", () => {
-    expect(crowdingPenalty(1)).toBeGreaterThan(0);
-    // Le maximum est désormais atteint à **deux fois** la place, plus à une
-    // fois et demie : au-delà de 150 %, entasser continue de coûter.
-    expect(crowdingPenalty(1.5)).toBeLessThan(HAPPINESS.crowdingPenaltyMax);
-    expect(crowdingPenalty(2)).toBeCloseTo(HAPPINESS.crowdingPenaltyMax, 6);
-    expect(crowdingPenalty(4)).toBeCloseTo(HAPPINESS.crowdingPenaltyMax, 6);
+  it("pénalise la bête de trop, et elle seule", () => {
+    expect(crowdingPenalty(56 / 55)).toBeGreaterThan(0);
+    // Et 40 sur 55 reste exactement à 100 % de satisfaction : c'est le cas de
+    // la capture, celui qui affichait « des bêtes vont mourir ».
+    expect(
+      happinessTarget({ crowding: 40 / 55, hunger: 0, water: 1, bedding: 0 }),
+    ).toBeCloseTo(1, 6);
   });
 
-  it("croît comme le carré du dépassement, pas comme une droite", () => {
+  it("croît comme le carré du dépassement, jusqu'au double de la capacité", () => {
     /*
-     * La forme est tout le réglage : à mi-chemin du plafond d'occupation, une
-     * droite aurait rendu la moitié de la peine ; le carré n'en rend que le
-     * quart. C'est ce qui sépare l'erreur de gestion de l'abandon.
+     * La forme est tout le réglage : à mi-chemin du plafond, une droite aurait
+     * rendu la moitié de la peine ; le carré n'en rend que le quart. C'est ce
+     * qui sépare l'erreur de gestion de l'abandon.
      */
     const miChemin = (HAPPINESS.crowdingComfort + HAPPINESS.crowdingCritical) / 2;
     expect(crowdingPenalty(miChemin)).toBeCloseTo(HAPPINESS.crowdingPenaltyMax / 4, 6);
+    expect(crowdingPenalty(2)).toBeCloseTo(HAPPINESS.crowdingPenaltyMax, 6);
+    expect(crowdingPenalty(4)).toBeCloseTo(HAPPINESS.crowdingPenaltyMax, 6);
     // Et elle reste monotone : entasser davantage ne peut jamais soulager.
     for (let c = 0.85; c < 2; c += 0.05) {
       expect(crowdingPenalty(c + 0.05)).toBeGreaterThanOrEqual(crowdingPenalty(c));
     }
   });
 
-  it("abaisse la cible du troupeau entassé sous celle du troupeau au large", () => {
-    const auLarge = happinessTarget({ hasPaddock: true, grazedRecentlyMs: 0, crowding: 0.5 });
-    const entasse = happinessTarget({ hasPaddock: true, grazedRecentlyMs: 0, crowding: 1.4 });
-    expect(entasse).toBeLessThan(auLarge);
-  });
-
-  it("peut pousser un troupeau entassé sous le plancher de l’enfermement", () => {
-    const cible = happinessTarget({
-      hasPaddock: false,
-      grazedRecentlyMs: Number.POSITIVE_INFINITY,
-      crowding: 1.5,
-    });
-    expect(cible).toBeLessThan(HAPPINESS.confinedFloor);
-    expect(cible).toBeGreaterThanOrEqual(0);
-  });
-
-  it("fait perdre du lait au troupeau entassé malgré ses sorties", () => {
-    const conditions = { hasPaddock: true, grazedRecentlyMs: 0 };
-    const large = deriver(0.35, 96, { ...conditions, crowding: 0.6 });
-    const serre = deriver(0.35, 96, { ...conditions, crowding: 1.5 });
-    expect(serre).toBeLessThan(large);
+  it("coûte de la production, et jamais une bête", () => {
+    // `crowdingLethalThreshold()` valait ~1,72 : au-delà, l'entassement seul
+    // passait sous le plancher de mortalité. Il n'y a plus de tel seuil.
+    expect(crowdingLethalThreshold()).toBe(Number.POSITIVE_INFINITY);
     const commun = { herdSize: 20, barnLevel: 1, feedQuality: 0 };
+    const serre = happinessTarget({ crowding: 1.5, hunger: 0, water: 1 });
+    const auLarge = happinessTarget({ crowding: 0.6, hunger: 0, water: 1 });
     expect(milkYield({ ...commun, happiness: serre })).toBeLessThan(
-      milkYield({ ...commun, happiness: large }),
+      milkYield({ ...commun, happiness: auLarge }),
     );
+  });
+});
+
+describe("l'installation — ce qu'on bâtit rapporte", () => {
+  it("laisse une ferme sans rien à 100 %, et pas en dessous", () => {
+    expect(installationLevel({ barnLevel: 1 })).toBe(1);
+    expect(installationBonus(1)).toEqual({ production: 0, reproduction: 0, feed: 0 });
+    expect(
+      productionFactor({ happiness: 1, installationLevel: 1, feedQuality: 0 }).total,
+    ).toBeCloseTo(1, 6);
+  });
+
+  it("donne 130 % à une installation complète, besoins remplis", () => {
+    const complet = installationLevel({
+      barnLevel: 5,
+      hasPaddock: true,
+      hasTrough: true,
+      hasRack: true,
+    });
+    expect(complet).toBe(4);
+    expect(installationBonus(complet)).toEqual({
+      production: 0.3,
+      reproduction: 0.15,
+      feed: 0.1,
+    });
+    expect(
+      productionFactor({ happiness: 1, installationLevel: complet, feedQuality: 0 }).total,
+    ).toBeCloseTo(1.3, 6);
+    expect(installationLabel(complet)).toBe("Haut de gamme");
+  });
+
+  it("monte pièce par pièce, sans qu'aucune soit obligatoire", () => {
+    const niveaux = [
+      installationLevel({ barnLevel: 1 }),
+      installationLevel({ barnLevel: 1, hasTrough: true }),
+      installationLevel({ barnLevel: 1, hasTrough: true, hasRack: true }),
+      installationLevel({ barnLevel: 3, hasTrough: true, hasRack: true, hasPaddock: true }),
+      installationLevel({ barnLevel: 5, hasTrough: true, hasRack: true, hasPaddock: true }),
+    ];
+    // Monotone, et jamais en arrière : ajouter ne peut pas retirer.
+    for (let i = 1; i < niveaux.length; i++) {
+      expect(niveaux[i]).toBeGreaterThanOrEqual(niveaux[i - 1]);
+    }
+    expect(niveaux[0]).toBe(1);
+    expect(niveaux[niveaux.length - 1]).toBe(4);
+  });
+
+  it("économise du fourrage, et la remise reste bornée", () => {
+    const commun = { herdSize: 20, grazing: false, barnLevel: 5 };
+    const nu = feedConsumption({ ...commun, installationLevel: 1 });
+    const complet = feedConsumption({ ...commun, installationLevel: 4 });
+    expect(complet).toBeLessThan(nu);
+    expect(complet).toBeCloseTo(nu * 0.9, 1);
+  });
+
+  it("multiplie la production sans jamais compter deux fois le bâtiment", () => {
+    // Le niveau d'étable entre par le niveau d'installation, et par lui seul :
+    // l'ancien multiplicateur `MILK_BARN_LEVEL_STEP` ne s'y ajoute plus.
+    const commun = { herdSize: 10, happiness: 1, feedQuality: 0 };
+    const base = milkYield({ ...commun, barnLevel: 1, installationLevel: 1 });
+    const complet = milkYield({ ...commun, barnLevel: 5, installationLevel: 4 });
+    expect(complet).toBeCloseTo(base * 1.3, 1);
+  });
+});
+
+describe("l'eau — le besoin qui manquait", () => {
+  it("reste pleine tant qu'on passe distribuer la ration", () => {
+    expect(
+      tickWater({ water: 0.4, hasTrough: false, fed: true, elapsedMs: 6 * 3_600_000 }),
+    ).toBe(1);
+  });
+
+  it("se vide quand plus personne ne vient, et plus lentement que la faim", () => {
+    const apres = tickWater({
+      water: 1,
+      hasTrough: false,
+      fed: false,
+      elapsedMs: 12 * 3_600_000,
+    });
+    expect(apres).toBeCloseTo(0.5, 6);
+    // Vingt-quatre heures pour se vider, contre huit avant que la cascade ne
+    // s'engage : les alertes tombent dans l'ordre, ration puis eau.
+    expect(WATER.dryH).toBeGreaterThan(CASCADE.productionH);
+  });
+
+  it("ne se vide jamais avec un abreuvoir automatique — c'est ce qu'on achète", () => {
+    expect(
+      tickWater({ water: 0, hasTrough: true, fed: false, elapsedMs: 30 * 24 * 3_600_000 }),
+    ).toBe(1);
+  });
+
+  it("coûte de la production quand elle manque, et rien tant qu'elle est là", () => {
+    expect(thirstPenalty(1)).toBe(0);
+    expect(thirstPenalty(0)).toBeCloseTo(WATER.penaltyMax, 6);
   });
 });
 
@@ -374,36 +473,46 @@ describe("sortie au pré — conditions d’autorisation", () => {
   });
 });
 
-describe("production laitière — écart enfermé / au pré", () => {
+describe("production laitière — 100 % de base, puis l'installation", () => {
   const base = { herdSize: 10, barnLevel: 1, feedQuality: 0 };
 
-  it("part de 22 litres par vache et par cycle au plancher", () => {
-    expect(milkYield({ ...base, happiness: HAPPINESS.confinedFloor })).toBeCloseTo(
-      MILK_BASE_PER_COW * 10,
-      1,
-    );
+  it("rend 22 litres par vache dès que les besoins sont remplis", () => {
+    // Et non plus « au plancher de l'enfermement » : ce plancher n'existe
+    // plus, la référence est le troupeau dont rien ne manque.
+    expect(milkYield({ ...base, happiness: 1 })).toBeCloseTo(MILK_BASE_PER_COW * 10, 1);
   });
 
-  it("donne +32 % de lait au troupeau au pré, dans la fourchette annoncée", () => {
-    const enferme = milkYield({ ...base, happiness: HAPPINESS.confinedFloor });
-    const auPre = milkYield({ ...base, happiness: HAPPINESS.grazedCeiling });
-    const ecart = auPre / enferme - 1;
-    expect(ecart).toBeCloseTo(MILK_HAPPINESS_SPAN, 3);
-    expect(ecart).toBeGreaterThanOrEqual(0.25);
-    expect(ecart).toBeLessThanOrEqual(0.4);
+  it("ne rend rien de moins parce que les bêtes sont restées à l'étable", () => {
+    // Le test qui garde la promesse faite au joueur. Deux troupeaux dont les
+    // besoins sont couverts produisent pareil, que l'un sorte et l'autre non :
+    // ce qui les sépare désormais, c'est ce qu'on a bâti autour d'eux.
+    const dedans = milkYield({ ...base, happiness: 1, installationLevel: 1 });
+    const dehors = milkYield({ ...base, happiness: 1, installationLevel: 1 });
+    expect(dedans).toBe(dehors);
   });
 
-  it("n’accorde aucun bonus au troupeau resté au plancher, même sans stress", () => {
-    expect(welfareIndex(HAPPINESS.confinedFloor)).toBeCloseTo(0, 6);
-    expect(welfareIndex(HAPPINESS.grazedCeiling)).toBeCloseTo(1, 6);
-    expect(welfareIndex(0.2)).toBeCloseTo(0, 6);
+  it("perd du lait à proportion de ce qui manque, et de rien d'autre", () => {
+    const remplis = milkYield({ ...base, happiness: 1 });
+    const affame = milkYield({ ...base, happiness: happinessTarget({ crowding: 0, hunger: 0.55 }) });
+    expect(affame).toBeCloseTo(remplis * 0.45, 0);
   });
 
-  it("croît avec le niveau d’étable, plafonné au niveau 5", () => {
-    const n1 = milkYield({ ...base, happiness: 0.6, barnLevel: 1 });
-    const n5 = milkYield({ ...base, happiness: 0.6, barnLevel: 5 });
-    expect(n5 / n1).toBeCloseTo(1.24, 3);
-    expect(milkYield({ ...base, happiness: 0.6, barnLevel: 99 })).toBeCloseTo(n5, 1);
+  it("rend la jauge telle quelle, sans remise à l'échelle", () => {
+    // `welfareIndex` remettait `[0,35 ; 0,95]` sur `[0 ; 1]`, parce que la
+    // jauge ne visitait jamais ses bornes. Elle les visite maintenant.
+    expect(welfareIndex(1)).toBeCloseTo(1, 6);
+    expect(welfareIndex(0.5)).toBeCloseTo(0.5, 6);
+    expect(welfareIndex(0)).toBeCloseTo(0, 6);
+    expect(welfareIndex(1.4)).toBeCloseTo(1, 6);
+  });
+
+  it("croît avec l'installation, et le niveau d'étable y entre une seule fois", () => {
+    const nu = milkYield({ ...base, happiness: 1, barnLevel: 1, installationLevel: 1 });
+    const complet = milkYield({ ...base, happiness: 1, barnLevel: 5, installationLevel: 4 });
+    expect(complet / nu).toBeCloseTo(1.3, 3);
+    // L'ancien écart bien-être × niveau d'étable valait ×1,64 : le nouveau
+    // plafond est plus bas, mais le plancher est bien plus haut.
+    expect(MILK_HAPPINESS_SPAN).toBeCloseTo(0.32, 6);
   });
 
   it("croît avec la qualité de la ration, +20 % en premium", () => {
@@ -427,32 +536,26 @@ describe("production laitière — écart enfermé / au pré", () => {
 describe("production de viande à l’abattage", () => {
   const base = { herdSize: 1, averageAgeMs: MEAT_MATURITY_MS, barnLevel: 1 };
 
-  it("rend 280 kg de carcasse pour une bête mature et sans bonus", () => {
-    expect(meatYield({ ...base, happiness: HAPPINESS.confinedFloor })).toBe(280);
+  it("rend 280 kg de carcasse pour une bête mature dont rien ne manque", () => {
+    expect(meatYield({ ...base, happiness: 1 })).toBe(280);
   });
 
-  it("donne +22 % de viande au troupeau élevé au pré", () => {
-    const enferme = meatYield({ ...base, happiness: HAPPINESS.confinedFloor });
-    const auPre = meatYield({ ...base, happiness: HAPPINESS.grazedCeiling });
-    expect(auPre / enferme - 1).toBeCloseTo(0.22, 2);
+  it("donne +30 % de carcasse à une installation haut de gamme", () => {
+    const nu = meatYield({ ...base, happiness: 1, installationLevel: 1 });
+    const complet = meatYield({ ...base, happiness: 1, installationLevel: 4 });
+    expect(complet / nu - 1).toBeCloseTo(0.3, 2);
   });
 
-  it("récompense moins la viande que le lait, pour ne pas tuer la traite", () => {
-    const laitier = milkYield({
-      herdSize: 10,
-      barnLevel: 1,
-      feedQuality: 0,
-      happiness: HAPPINESS.grazedCeiling,
-    });
-    const laitierEnferme = milkYield({
-      herdSize: 10,
-      barnLevel: 1,
-      feedQuality: 0,
-      happiness: HAPPINESS.confinedFloor,
-    });
-    const viande = meatYield({ ...base, happiness: HAPPINESS.grazedCeiling });
-    const viandeEnfermee = meatYield({ ...base, happiness: HAPPINESS.confinedFloor });
-    expect(viande / viandeEnfermee).toBeLessThan(laitier / laitierEnferme);
+  it("perd de la carcasse quand un besoin manque, à la même mesure que le lait", () => {
+    // Les deux filières lisent la même satisfaction : négliger un troupeau ne
+    // peut pas être plus rentable à l'abattage qu'à la traite.
+    const manque = happinessTarget({ crowding: 0, hunger: 0.55 });
+    expect(meatYield({ ...base, happiness: manque }) / meatYield({ ...base, happiness: 1 }))
+      .toBeCloseTo(
+        milkYield({ herdSize: 10, barnLevel: 1, feedQuality: 0, happiness: manque }) /
+          milkYield({ herdSize: 10, barnLevel: 1, feedQuality: 0, happiness: 1 }),
+        2,
+      );
   });
 
   it("croît avec l’âge jusqu’à maturité, puis plafonne", () => {
@@ -466,7 +569,7 @@ describe("production de viande à l’abattage", () => {
   });
 
   it("ne descend jamais sous 35 % du poids adulte", () => {
-    expect(meatYield({ ...base, averageAgeMs: -1000, happiness: 0.5 })).toBeGreaterThanOrEqual(
+    expect(meatYield({ ...base, averageAgeMs: -1000, happiness: 1 })).toBeGreaterThanOrEqual(
       Math.round(280 * 0.35),
     );
   });
@@ -489,9 +592,25 @@ describe("consommation de fourrage", () => {
   });
 
   it("économise du gaspillage avec le niveau d’étable, plafonné à 12 %", () => {
+    /*
+     * L'économie se lit désormais sur le **niveau d'installation**, dont le
+     * niveau d'étable n'est qu'une des cinq composantes : une étable Nv.5 sans
+     * rien autour vaut deux points, soit le niveau 2, soit 3 % — et le râtelier
+     * qui va avec la fait monter. C'est délibéré : la remise récompense
+     * l'installation entière, pas un seul bâtiment.
+     */
     const n1 = feedConsumption({ herdSize: 10, grazing: false, barnLevel: 1 });
     const n5 = feedConsumption({ herdSize: 10, grazing: false, barnLevel: 5 });
-    expect(n5 / n1).toBeCloseTo(0.88, 3);
+    expect(n5 / n1).toBeCloseTo(0.97, 3);
+    const complet = feedConsumption({
+      herdSize: 10,
+      grazing: false,
+      barnLevel: 5,
+      installationLevel: 4,
+    });
+    expect(complet / n1).toBeCloseTo(0.9, 3);
+    // Et la remise reste bornée, quoi qu'on empile.
+    expect(complet / n1).toBeGreaterThanOrEqual(1 - FEED_BARN_SAVING_CAP);
     expect(feedConsumption({ herdSize: 10, grazing: false, barnLevel: 99 })).toBeCloseTo(n5, 1);
   });
 
@@ -627,15 +746,19 @@ describe("fenêtres de pâturage", () => {
 
 describe("libellés de bien-être", () => {
   it("qualifie chaque tranche de la jauge", () => {
-    expect(happinessLabel(0.1)).toBe("Stressées");
-    expect(happinessLabel(0.4)).toBe("Correctes");
-    expect(happinessLabel(0.7)).toBe("Sereines");
-    expect(happinessLabel(0.95)).toBe("Épanouies");
+    expect(happinessLabel(0.1)).toBe("En souffrance");
+    expect(happinessLabel(0.5)).toBe("Stressées");
+    expect(happinessLabel(0.8)).toBe("Correctes");
+    expect(happinessLabel(1)).toBe("Épanouies");
   });
 
-  it("lit « Correctes » exactement au plancher de l’enfermement", () => {
-    expect(happinessLabel(HAPPINESS.confinedFloor)).toBe("Correctes");
-    expect(happinessLabel(HAPPINESS.confinedFloor - 0.01)).toBe("Stressées");
+  it("lit « Épanouies » sur un troupeau dont rien ne manque", () => {
+    // C'est l'état **normal** d'un troupeau bien tenu, et non une récompense
+    // rare : sur l'ancienne échelle, un lot enfermé plafonnait à « Correctes »
+    // quoi qu'on fasse.
+    expect(happinessLabel(happinessTarget({ crowding: 0.5, hunger: 0, water: 1 }))).toBe(
+      "Épanouies",
+    );
   });
 
   it("expose des tranches ordonnées et toutes nommées", () => {
@@ -652,193 +775,67 @@ describe("libellés de bien-être", () => {
   });
 });
 
-describe("scénario complet — l’étable seule contre l’étable + enclos", () => {
+describe("scénario complet — l’étable nue contre l’étable équipée", () => {
   const cycles = 5;
 
-  /** Cinq cycles d'élevage, avec une sortie par cycle si l'enclos existe. */
-  const elever = (hasPaddock: boolean): number => {
+  /**
+   * Cinq cycles d'élevage, besoins couverts, sur deux installations.
+   *
+   * Le scénario a changé de question. Il opposait « enfermé » à « sorti au
+   * pré », et il mesurait une punition : le troupeau enfermé retombait au
+   * plancher quoi que fasse le joueur. Il oppose maintenant « rien bâti » à
+   * « tout bâti », et il mesure un investissement — les deux troupeaux vont
+   * très bien, l'un rapporte davantage.
+   */
+  const elever = (): number => {
     let happiness = 0.5;
     for (let cycle = 0; cycle < cycles; cycle++) {
-      // Sortie en début de cycle, puis 24 h de dérive.
       happiness = tickHappiness({
         happiness,
-        hasPaddock,
-        grazedRecentlyMs: hasPaddock ? 0 : Number.POSITIVE_INFINITY,
         crowding: 0.6,
+        hunger: 0,
+        water: 1,
         elapsedMs: 24 * HOUR,
       });
     }
     return happiness;
   };
 
-  it("sépare nettement les deux conduites d’élevage après cinq cycles", () => {
-    const ferme = elever(false);
-    const ouvert = elever(true);
-    expect(ferme).toBeGreaterThanOrEqual(HAPPINESS.confinedFloor);
-    expect(ferme).toBeLessThan(HAPPINESS.confinedFloor + 0.01);
-    expect(ouvert).toBeGreaterThan(0.9);
-    expect(happinessLabel(ferme)).toBe("Correctes");
-    expect(happinessLabel(ouvert)).toBe("Épanouies");
+  it("laisse les deux conduites au sommet de la satisfaction", () => {
+    // C'est la promesse : bien tenir son troupeau suffit, et il n'existe
+    // aucune conduite qui le condamne à « Correctes » pour l'éternité.
+    const satisfaction = elever();
+    expect(satisfaction).toBeGreaterThan(0.95);
+    expect(happinessLabel(satisfaction)).toBe("Épanouies");
   });
 
-  it("traduit l’écart en litres, en kilos et en foin économisé", () => {
-    const ferme = elever(false);
-    const ouvert = elever(true);
-    const lot = { herdSize: 20, barnLevel: 2, feedQuality: 0.5 };
+  it("traduit l’écart d’installation en litres, en kilos et en foin économisé", () => {
+    const satisfaction = elever();
+    const lot = { herdSize: 20, barnLevel: 2, feedQuality: 0.5, happiness: satisfaction };
 
-    const laitFerme = milkYield({ ...lot, happiness: ferme });
-    const laitOuvert = milkYield({ ...lot, happiness: ouvert });
-    expect(laitOuvert / laitFerme).toBeGreaterThan(1.25);
-    expect(laitOuvert / laitFerme).toBeLessThan(1.4);
+    const laitNu = milkYield({ ...lot, installationLevel: 1 });
+    const laitEquipe = milkYield({ ...lot, installationLevel: 4 });
+    expect(laitEquipe / laitNu).toBeCloseTo(1.3, 2);
 
-    const viandeFerme = meatYield({
-      herdSize: 20,
-      averageAgeMs: MEAT_MATURITY_MS,
-      barnLevel: 2,
-      happiness: ferme,
-    });
-    const viandeOuvert = meatYield({
-      herdSize: 20,
-      averageAgeMs: MEAT_MATURITY_MS,
-      barnLevel: 2,
-      happiness: ouvert,
-    });
-    expect(viandeOuvert).toBeGreaterThan(viandeFerme);
-    expect(viandeOuvert / viandeFerme).toBeLessThan(1.25);
+    const viande = (niveau: number) =>
+      meatYield({
+        herdSize: 20,
+        averageAgeMs: MEAT_MATURITY_MS,
+        barnLevel: 2,
+        installationLevel: niveau,
+        happiness: satisfaction,
+      });
+    expect(viande(4)).toBeGreaterThan(viande(1));
 
+    // Et le foin : l'installation en économise, la pâture aussi, et les deux
+    // se cumulent sans que le troupeau cesse jamais de manger.
+    expect(
+      feedConsumption({ herdSize: 20, grazing: false, barnLevel: 2, installationLevel: 4 }),
+    ).toBeLessThan(
+      feedConsumption({ herdSize: 20, grazing: false, barnLevel: 2, installationLevel: 1 }),
+    );
     expect(feedConsumption({ herdSize: 20, grazing: true, barnLevel: 2 })).toBeLessThan(
       feedConsumption({ herdSize: 20, grazing: false, barnLevel: 2 }),
     );
-  });
-});
-
-describe("barre de lait", () => {
-  it("passe de 0 à prêt en 15 % d’un cycle", () => {
-    const born = 1_000;
-    expect(collectProgress(born, born, born)).toBe(0);
-    expect(collectReady(born, born, born)).toBe(false);
-    const mid = born + LIVESTOCK_CYCLE_MS * 0.075;
-    expect(collectProgress(born, born, mid)).toBeCloseTo(0.5, 5);
-    const readyAt = born + LIVESTOCK_CYCLE_MS * 0.15;
-    expect(collectReady(born, born, readyAt)).toBe(true);
-    expect(collectProgress(born, born, readyAt)).toBe(1);
-  });
-});
-
-/**
- * La ration se compte en temps réel, pas en temps de jeu.
- *
- * Un cycle d'élevage vaut un jour de jeu, soit quinze minutes d'horloge. La
- * distribution servait exactement un cycle : il fallait revenir nourrir ses
- * bêtes tous les quarts d'heure, faute de quoi le lot dépérissait. L'écran
- * disait « 1 j » et le joueur comprenait « une journée ».
- */
-describe("une ration tient un jour réel", () => {
-  const BESOIN = 98; // sept vaches à 14 kg
-
-  it("couvre vingt-quatre heures d'horloge, pas quinze minutes", () => {
-    const servie = rationToServe({ besoinParCycle: BESOIN, feedStock: 0 });
-    const tenue = feedAutonomyMs({ besoinParCycle: BESOIN, feedStock: servie });
-    expect(Math.round(tenue / 3_600_000)).toBe(24);
-  });
-
-  it("déduit ce qui reste dans l'auge", () => {
-    const pleine = rationToServe({ besoinParCycle: BESOIN, feedStock: 0 });
-    const demi = rationToServe({ besoinParCycle: BESOIN, feedStock: pleine / 2 });
-    expect(Math.round(demi)).toBe(Math.round(pleine / 2));
-    // Un lot déjà servi ne redemande rien.
-    expect(rationToServe({ besoinParCycle: BESOIN, feedStock: pleine })).toBe(0);
-  });
-
-  it("ne laisse pas vider le silo dans l'auge", () => {
-    const capacite = troughCapacity(BESOIN);
-    const uneRation = rationToServe({ besoinParCycle: BESOIN, feedStock: 0 });
-    // La mangeoire garde de l'avance, mais pas une saison entière.
-    expect(capacite).toBeGreaterThan(uneRation);
-    expect(capacite / uneRation).toBe(TROUGH_REAL_DAYS);
-    expect(Math.round(feedAutonomyMs({ besoinParCycle: BESOIN, feedStock: capacite }) / 3_600_000)).toBe(48);
-  });
-
-  it("un lot sans besoin n'a pas d'autonomie infinie", () => {
-    expect(feedAutonomyMs({ besoinParCycle: 0, feedStock: 500 })).toBe(0);
-  });
-});
-
-/**
- * Améliorer un bâtiment doit se sentir.
- *
- * « J'ai mis l'étable niveau 2 mais je dois toujours me taper le lait à traire
- * moi-même. » Le palier coûtait cher et ne changeait rien à la corvée — d'autant
- * que la traite se refait toutes les quinze minutes réelles.
- */
-describe("la mécanisation d'un bâtiment", () => {
-  it("ne ramasse pas toute seule au niveau le plus rustique", () => {
-    expect(autoCollects(1)).toBe(false);
-  });
-
-  it("ramasse dès le premier palier, et à tous les suivants", () => {
-    for (let n = AUTO_COLLECT_LEVEL; n <= 5; n++) {
-      expect(`niveau ${n} ${autoCollects(n)}`).toBe(`niveau ${n} true`);
-    }
-  });
-});
-
-describe("la cuve de production", () => {
-  it("tient un jour réel, et non une demi-heure", () => {
-    // Le plafond valait deux cycles, soit trente minutes d'horloge : passé ce
-    // délai, tout ce que les bêtes produisaient disparaissait sans un mot. Une
-    // nuit de sommeil suffisait à tout perdre.
-    const heures = (collectCapCycles() * LIVESTOCK_CYCLE_MS) / 3_600_000;
-    expect(Math.round(heures)).toBe(24);
-  });
-
-  it("plafonne quand même : il reste une raison de revenir", () => {
-    expect(Number.isFinite(collectCapCycles())).toBe(true);
-    expect(collectCapCycles()).toBeGreaterThan(2);
-  });
-});
-
-/**
- * La jauge de bien-être doit dire pourquoi.
- *
- * « Elles sont stressées pour quoi ? » L'écran donnait la note sans la copie.
- */
-describe("les causes du stress", () => {
-  const bien = { hasPaddock: true, grazedRecentlyMs: 0, crowding: 0.5, hunger: 0, bedding: 0 };
-
-  it("ne reproche rien à un lot qui va bien", () => {
-    expect(welfareReasons(bien)).toEqual([]);
-  });
-
-  it("nomme l'absence d'enclos, et dit quoi construire", () => {
-    const causes = welfareReasons({ ...bien, hasPaddock: false });
-    expect(causes[0].code).toBe("SORTIE");
-    expect(causes[0].remede).toMatch(/enclos/i);
-  });
-
-  it("met la faim avant le confort", () => {
-    // Une bête affamée ne se console pas d'un beau pré : l'ordre d'affichage
-    // doit dire par quoi commencer.
-    const causes = welfareReasons({ ...bien, hunger: 0.5, bedding: 0.1 });
-    expect(causes.map((c) => c.code)).toEqual(["FAIM", "LITIERE"]);
-  });
-
-  it("classe toujours de la plus coûteuse à la moindre", () => {
-    const causes = welfareReasons({
-      ...bien,
-      hasPaddock: false,
-      crowding: 2,
-      hunger: 0.2,
-      bedding: 0.05,
-    });
-    const couts = causes.map((c) => c.cout);
-    expect(couts).toEqual([...couts].sort((a, b) => b - a));
-    expect(causes.length).toBe(4);
-  });
-
-  it("chaque cause porte un geste, pas seulement un constat", () => {
-    for (const c of welfareReasons({ ...bien, hasPaddock: false, crowding: 2, hunger: 0.3, bedding: 0.2 })) {
-      expect(`${c.code} ${c.remede.length > 10}`).toBe(`${c.code} true`);
-    }
   });
 });

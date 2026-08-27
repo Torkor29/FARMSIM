@@ -180,7 +180,14 @@ export type BuildingType =
   | "WIND_TURBINE"
   | "BEEHIVE"
   | "DAIRY"
-  | "MILL";
+  | "MILL"
+  /* —— Les annexes d'élevage ——
+     Collées à une étable, elles ne changent rien à ce qu'elle héberge : elles
+     font monter son **niveau d'installation**, et avec lui la production, la
+     reproduction et l'économie de fourrage. Ce sont les deux pièces qui
+     rendent l'élevage rentable au lieu de simplement viable. */
+  | "WATER_TROUGH"
+  | "HAY_RACK";
 
 export type CellKind = "EMPTY" | "CROP" | "BUILDING" | "VEHICLE";
 
@@ -804,6 +811,49 @@ export const BUILDING_DEFS: Record<BuildingType, BuildingDef> = {
     cost: 1150,
     description: "Collée au poulailler : les poules picorent dehors, elles pondent mieux.",
   },
+  /* ------------------------------------------------------------------ */
+  /* Annexes d'élevage                                                   */
+  /* ------------------------------------------------------------------ */
+  /*
+   * Deux petites pièces, une case chacune, à coller au bâtiment d'élevage.
+   *
+   * Elles ne sont **jamais obligatoires** : un troupeau nourri et logé dans la
+   * capacité de son étable tourne à 100 % sans elles. C'est la règle qui rend
+   * l'élevage jouable — on ne punit pas qui n'a pas construit. Elles font
+   * monter le niveau d'installation (`installationLevel()`), et le niveau
+   * donne des bonus au-dessus de 100 %.
+   *
+   * L'abreuvoir a une seconde vertu, qu'aucun autre bâtiment n'a : branché sur
+   * le réseau, il tient la jauge d'eau pleine même quand le joueur ne se
+   * connecte pas de la journée. C'est de l'assurance autant que du rendement.
+   */
+  WATER_TROUGH: {
+    type: "WATER_TROUGH",
+    article: "un",
+    name: "Abreuvoir automatique",
+    w: 1,
+    h: 1,
+    // Prix réel : bac inox à niveau constant, sur arrivée d'eau enterrée et
+    // tranchée. Le plancher du catalogue est à mille euros — rien ici ne doit
+    // être un achat d'impulsion — et la pose de la conduite le justifie.
+    cost: 1200,
+    description:
+      "Collé à un bâtiment d’élevage : les bêtes ne manquent jamais d’eau, même en votre absence.",
+  },
+  HAY_RACK: {
+    type: "HAY_RACK",
+    article: "un",
+    name: "Râtelier à fourrage",
+    w: 1,
+    h: 1,
+    // Prix réel : râtelier acier à cornadis, pour une vingtaine de bêtes.
+    // La pièce la moins chère du catalogue, et c'est voulu : c'est le premier
+    // pas d'un éleveur qui commence à investir.
+    cost: 1050,
+    description:
+      "Collé à un bâtiment d’élevage : moins de foin piétiné, plus de foin mangé.",
+  },
+
   BUNKER_SILO: {
     type: "BUNKER_SILO",
     name: "Silo couloir",
@@ -1021,19 +1071,51 @@ export function buildingWithArticle(type: BuildingType): string {
   return `${def.article ?? "un"} ${def.name.toLowerCase()}`;
 }
 
-/** Prés et courettes : les bâtiments qui ne valent que collés à un abri. */
-export const YARD_BUILDINGS = [
-  ...new Set(SHELTER_BUILDINGS.map((t) => yardTypeForBarn(t) as BuildingType)),
-];
+/**
+ * Les annexes d'élevage : elles se collent à n'importe quel abri.
+ *
+ * À la différence des aires de sortie, elles ne sont pas liées à une espèce —
+ * une vache, un porc et une brebis boivent la même eau. Elles suivent en
+ * revanche exactement la même règle de pose, et pour la même raison : une
+ * annexe posée à l'autre bout de la ferme serait payée et n'apparaîtrait sur
+ * aucun écran.
+ */
+export const LIVESTOCK_ANNEXES: BuildingType[] = ["WATER_TROUGH", "HAY_RACK"];
 
 /**
- * Les abris auxquels une aire de sortie donnée peut se coller.
+ * Prés, courettes et annexes : les bâtiments qui ne valent que collés à un abri.
+ *
+ * Les deux annexes d'élevage y entrent au même titre que les aires de sortie.
+ * Elles n'auraient rien fait posées seules, et le contrôle de pose qui refuse
+ * une courette égarée devait donc les couvrir aussi — sans quoi on aurait
+ * reproduit, pour l'abreuvoir, le bâtiment payé et muet.
+ */
+export const YARD_BUILDINGS = [
+  ...new Set([
+    ...SHELTER_BUILDINGS.map((t) => yardTypeForBarn(t) as BuildingType),
+    ...LIVESTOCK_ANNEXES,
+  ]),
+];
+
+/** Cette annexe compte-t-elle comme abreuvoir automatique ? */
+export function isTrough(type: string): boolean {
+  return type === "WATER_TROUGH";
+}
+
+/** Cette annexe compte-t-elle comme râtelier ? */
+export function isHayRack(type: string): boolean {
+  return type === "HAY_RACK";
+}
+
+/**
+ * Les abris auxquels une aire de sortie — ou une annexe — peut se coller.
  *
  * Sert d'abord à le **dire** : une courette posée loin de toute porcherie
  * était acceptée sans un mot, débitée, et n'apparaissait ensuite sur aucun
  * écran. Le joueur avait payé pour un bâtiment invisible.
  */
 export function barnsForYard(yard: BuildingType): BuildingType[] {
+  if (LIVESTOCK_ANNEXES.includes(yard)) return SHELTER_BUILDINGS;
   return SHELTER_BUILDINGS.filter((t) => yardTypeForBarn(t) === yard);
 }
 
@@ -1149,6 +1231,9 @@ export const BUILDING_ART: Record<BuildingType, string> = {
   BEEHIVE: "/assets/buildings/beehive.svg",
   DAIRY: "/assets/buildings/dairy.svg",
   MILL: "/assets/buildings/mill.svg",
+  // Même raison pour les deux annexes d'élevage : une case au sol, un dessin.
+  WATER_TROUGH: "/assets/buildings/water-trough.svg",
+  HAY_RACK: "/assets/buildings/hay-rack.svg",
 };
 
 export const DEFAULT_GRID = { w: 12, h: 12 } as const;

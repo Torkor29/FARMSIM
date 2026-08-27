@@ -85,6 +85,11 @@ const PALETTES: Record<BuildingType, BuildingPalette> = {
   // pierre claire et le bois goudronné d'un moulin.
   DAIRY: { roof: 0x8794a0, wall: 0xf1eee6, timber: 0x7d6f5a, metal: 0xcdd6da },
   MILL: { roof: 0x53381f, wall: 0xe2d8c2, timber: 0x8a6234, metal: 0xa9b0b6 },
+  // Les deux annexes d'élevage : l'inox clair du bac à eau, l'acier galvanisé
+  // et le bois du râtelier. Toiture verte pour l'une et l'autre — elles se
+  // posent contre une étable, et rien ne doit trancher avec elle.
+  WATER_TROUGH: { roof: 0x2f7d6b, wall: 0xd3dbe0, timber: 0x7d6a4a, metal: 0xcbd4d9 },
+  HAY_RACK: { roof: 0x2f7d6b, wall: 0xd8c68f, timber: 0x8a6a45, metal: 0xb2bbc1 },
 };
 
 /* ------------------------------------------------------------------ */
@@ -1442,6 +1447,93 @@ function buildMill(w: number, d: number, lvl: number): Built {
   return { root, height: capY + 0.05 + capH + 0.05 };
 }
 
+/**
+ * Abreuvoir automatique : un bac à niveau constant, et son arrivée d'eau.
+ *
+ * Une case au sol, donc tout se joue sur la silhouette : le bac est **le seul
+ * volume d'eau libre de la ferme**, et c'est à ça qu'on le reconnaît de loin,
+ * sans lire son étiquette. Le tuyau qui remonte derrière dit le reste — il est
+ * branché, il se remplit tout seul, c'est ce qu'on a payé.
+ */
+function buildWaterTrough(w: number, d: number, lvl: number): Built {
+  const root = new Part();
+  const bw = w - EDGE * 2;
+  const bd = d - EDGE * 2;
+  slab(root, bw, bd, 0.04);
+
+  // Le bac. Un niveau supérieur allonge la cuve : plus de bêtes y boivent en
+  // même temps, et cela se voit.
+  const cuveW = bw * (0.6 + Math.min(2, lvl - 1) * 0.06);
+  const cuveD = bd * 0.42;
+  const hautCuve = 0.14;
+  const y = 0.05;
+  root.add("concrete", box(cuveW + 0.04, 0.05, cuveD + 0.04, [0, y, 0]));
+  root.add("corrugate", box(cuveW, hautCuve, cuveD, [0, y + hautCuve / 2, 0]));
+  // L'eau, un peu en retrait des parois pour qu'on voie le rebord.
+  root.add("glass", box(cuveW - 0.05, 0.02, cuveD - 0.05, [0, y + hautCuve - 0.03, 0]));
+  // Le rebord, qui accroche la lumière et ferme le volume par le haut.
+  root.add("chrome", box(cuveW + 0.02, 0.02, 0.03, [0, y + hautCuve, cuveD / 2 - 0.015]));
+  root.add("chrome", box(cuveW + 0.02, 0.02, 0.03, [0, y + hautCuve, -cuveD / 2 + 0.015]));
+
+  // L'arrivée d'eau : montant et col de cygne au-dessus du bac.
+  const zTuyau = -cuveD / 2 - 0.05;
+  const hautTuyau = y + hautCuve + 0.16;
+  root.add("chrome", cyl(0.014, 0.014, hautTuyau, 6, [cuveW / 2 - 0.03, hautTuyau / 2, zTuyau]));
+  root.add(
+    "chrome",
+    cyl(0.012, 0.012, 0.1, 6, [cuveW / 2 - 0.03, hautTuyau, zTuyau + 0.05], [HALF, 0, 0]),
+  );
+
+  yardDressing(root, w, d, 61);
+  return { root, height: hautTuyau + 0.03 };
+}
+
+/**
+ * Râtelier à fourrage : la corbeille d'acier, ses barreaux, et le foin dedans.
+ *
+ * Le foin dépasse du haut, et c'est délibéré : c'est la seule chose qui
+ * distingue un râtelier plein d'un râtelier vide à cette échelle, et le joueur
+ * doit reconnaître son bâtiment sur la grille sans cliquer dessus.
+ */
+function buildHayRack(w: number, d: number, lvl: number): Built {
+  const root = new Part();
+  const bw = w - EDGE * 2;
+  const bd = d - EDGE * 2;
+  slab(root, bw, bd, 0.04);
+
+  const rw = bw * (0.56 + Math.min(2, lvl - 1) * 0.05);
+  const rd = bd * 0.46;
+  const haut = 0.2;
+  const y = 0.05;
+
+  // La corbeille : deux cerclages, et les barreaux entre les deux.
+  root.add("corrugate", box(rw, 0.03, rd, [0, y + 0.015, 0]));
+  root.add("chrome", box(rw + 0.03, 0.025, rd + 0.03, [0, y + haut, 0]));
+  const barreaux = 5;
+  for (let i = 0; i < barreaux; i++) {
+    const x = rw * (-0.5 + i / (barreaux - 1)) * 0.94;
+    root.add("corrugate", box(0.018, haut, 0.018, [x, y + haut / 2, rd / 2 - 0.012]));
+    root.add("corrugate", box(0.018, haut, 0.018, [x, y + haut / 2, -rd / 2 + 0.012]));
+  }
+  // Les montants d'angle, plus épais : sans eux la corbeille flotte.
+  for (const sx of [-1, 1]) {
+    for (const sz of [-1, 1]) {
+      root.add(
+        "timber",
+        box(0.028, haut, 0.028, [(sx * rw) / 2, y + haut / 2, (sz * rd) / 2]),
+      );
+    }
+  }
+
+  // Le foin : un bloc dans la corbeille, et une brassée qui déborde.
+  root.add("hay", box(rw - 0.05, haut * 0.8, rd - 0.05, [0, y + haut * 0.44, 0]));
+  root.add("hay", mound(rw * 0.34, 0.07, [0, y + haut, 0]));
+  root.add("hay", mound(rw * 0.2, 0.05, [rw * 0.18, y + haut - 0.01, rd * 0.12]));
+
+  yardDressing(root, w, d, 79);
+  return { root, height: y + haut + 0.09 };
+}
+
 const BUILDERS: Record<BuildingType, (w: number, d: number, lvl: number) => Built> = {
   SILO: buildSilo,
   HAY_BARN: buildHayBarn,
@@ -1464,6 +1556,8 @@ const BUILDERS: Record<BuildingType, (w: number, d: number, lvl: number) => Buil
   BEEHIVE: buildBeehive,
   DAIRY: buildDairy,
   MILL: buildMill,
+  WATER_TROUGH: buildWaterTrough,
+  HAY_RACK: buildHayRack,
 };
 
 type Blueprint = Built & { w: number; d: number };

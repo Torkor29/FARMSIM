@@ -311,39 +311,64 @@ export type PaddockState = {
 };
 
 /* ------------------------------------------------------------------ */
-/* 2. Bonheur — le cœur de la demande                                  */
+/* 2. Satisfaction des besoins — le cœur de la demande                 */
 /* ------------------------------------------------------------------ */
 
 /**
- * Constantes de dérive du bien-être `[GD]`.
+ * Constantes de dérive de la satisfaction des besoins `[GD]`.
  *
- * Le plancher de 0,35 n'est pas 0 à dessein : une vache correctement nourrie
- * dans une étable propre n'est pas maltraitée, elle est juste *sans plus*. Le
- * zéro est réservé au surpeuplement, qui seul peut pousser la cible **sous**
- * le plancher — c'est le seul cas de figure vraiment punitif.
+ * ## Ce que cette jauge veut dire, désormais
+ *
+ * **Cent pour cent quand les besoins sont remplis.** Trois besoins, et trois
+ * seulement : manger, boire, avoir la place. Une vache nourrie, abreuvée et
+ * logée dans la capacité de son étable est à 1,0 — en juin comme en décembre,
+ * dehors comme dedans. Il n'existe plus de plancher subi.
+ *
+ * ## Ce qu'elle voulait dire avant, et ce que ça a coûté
+ *
+ * Il y avait un `confinedFloor` à 0,35 : la cible d'une bête qui ne sort
+ * jamais. Sortie au pré, elle montait à 0,95 ; enfermée, elle retombait à
+ * 0,35, et la mortalité commençait à 0,15 (`MORTALITY.floor`). Un troupeau
+ * enfermé n'avait donc plus que 0,20 point de marge là où un troupeau sorti en
+ * avait 0,80 : l'enfermement ne tuait pas seul, il **rendait mortel tout le
+ * reste**. Ni la saison ni la température n'entraient nulle part — rentrer les
+ * bêtes en décembre était puni exactement comme les enfermer en juin.
+ *
+ * Strea a envoyé la capture qui a déclenché cette réécriture : dix-neuf bêtes
+ * pour cinquante-cinq places, ration servie avec un jour d'avance, litière
+ * pleine, et « le troupeau dépérit — des bêtes vont mourir · sortez-les au
+ * pré », devant un pré à 0,0 t d'herbe et 10 °C dehors. Le jeu réclamait un
+ * geste qui n'aidait pas, et tuait si on ne le faisait pas.
+ *
+ * Le plein air ne disparaît pas pour autant : il passe du côté des **bonus**,
+ * avec le reste de l'installation (`installationBonus()`). On ne perd plus
+ * rien à rester à l'étable ; on gagne à bâtir autour.
  */
 export const HAPPINESS = {
   /** Bornes dures de la jauge */
   min: 0,
   max: 1,
-  /** Cible d'une bête qui ne sort jamais `[GD]` */
-  confinedFloor: 0.35,
-  /** Cible d'une bête sortie du jour, enclos non saturé `[GD]` */
-  grazedCeiling: 0.95,
   /**
    * Constante de temps de la **baisse**, en heures `[TEST]`. Volontairement
-   * lente : 36 h ⇒ il faut ~3 jours sans sortie pour retomber au plancher.
+   * lente : un besoin qui vient de tomber ne fait pas plonger la jauge dans la
+   * minute, le joueur a le temps de revenir.
    */
   decayTauH: 36,
   /** Constante de temps de la **hausse**, en heures `[TEST]` — 3× plus rapide */
   riseTauH: 12,
   /**
-   * Mémoire de la dernière sortie `[GD]`. Au-delà de 48 h, la cible est
-   * redescendue au plancher : le rythme attendu est « une sortie par cycle ».
+   * Taux d'occupation toléré sans gêne `[GD]`.
+   *
+   * **Un**, et pas 0,85. Une étable de cinquante-cinq places accueille
+   * cinquante-cinq bêtes : c'est ce que « cinquante-cinq places » veut dire.
+   * À 0,85, elle était déclarée pleine à quarante-sept, et le joueur lisait
+   * « encombrée » devant quinze places vides.
+   *
+   * La capacité et le confort sont deux choses distinctes. La capacité dit
+   * combien de bêtes tiennent ; le confort se gagne en bâtissant, il ne se
+   * perd pas en remplissant ce qu'on a payé.
    */
-  grazeMemoryMs: 48 * HOUR_MS,
-  /** Taux d'occupation de l'enclos toléré sans stress `[TEST]` */
-  crowdingComfort: 0.85,
+  crowdingComfort: 1,
   /**
    * Taux d'occupation où le stress est maximal `[GD]`.
    *
@@ -371,39 +396,40 @@ export const HAPPINESS = {
 } as const;
 
 /**
- * Pénalité de surpeuplement `∈ [0 ; 0,35]`, en **carré** du dépassement entre
- * 85 % et 200 % d'occupation. En dessous de 85 %, aucune pénalité : le joueur
- * n'a pas à calculer au ras des places disponibles pour être optimal.
+ * Peine de dépassement de capacité `∈ [0 ; 0,35]`.
  *
- * ## Ce que la droite faisait, et pourquoi c'était faux
+ * **Zéro tant qu'on est dans la capacité**, quelle que soit l'occupation :
+ * 30/55, 40/55, 54/55, 55/55 ne coûtent rien. La peine ne commence qu'au
+ * cinquante-sixième, et croît comme le carré du dépassement jusqu'au double
+ * de la capacité.
  *
- * La peine montait linéairement de 85 % à 150 %, jusqu'à 0,30 point. Un
- * dépassement de 17 % — vingt et une bêtes pour dix-huit places, le cas
- * remonté — coûtait donc déjà **0,146 point**, soit les trois quarts de la
- * marge qui sépare le plancher de l'enfermement (0,35) du plancher de
- * mortalité (0,15). Il ne restait plus que 0,054, et n'importe quelle
- * contrariété la mangeait : un orage d'hiver sur un troupeau dehors vaut
- * 0,075, une chute de neige 0,225. Le lot mourait, mangeoire pleine et
- * litière fraîche, pour dix-sept pour cent de trop.
+ * ## Ce qui était faux, et le prix que ça a coûté
  *
- * Pire, la droite atteignait son maximum à 150 % et n'avait plus rien à dire
- * au-delà : entasser au double coûtait exactement autant qu'entasser d'une
- * moitié. La pente était donc à la fois trop raide en bas et plate en haut.
+ * Deux erreurs superposées, et il fallait les corriger ensemble.
  *
- * ## La courbe, et ce qu'elle sépare
+ * La première : la peine démarrait à **85 %** d'occupation. Une étable de
+ * cinquante-cinq places était donc déclarée gênée à quarante-sept bêtes, et le
+ * joueur lisait « encombrée » devant quinze places qu'il avait payées. C'est
+ * une contradiction pure : soit le bâtiment a cinquante-cinq places, soit il
+ * n'en a que quarante-sept.
  *
- * `peine = 0,35 × ((occupation − 0,85) / 1,15)²`
+ * La seconde, plus grave, ne se voyait pas ici : le ratio n'était même pas
+ * calculé sur l'étable. Il l'était sur les cases de l'**enclos** — dix-huit
+ * pour cinquante-cinq places — si bien qu'on était « encombré » dès seize
+ * bêtes, et qu'un troupeau sans enclos du tout écopait d'un ratio de 1 en dur,
+ * donc d'une peine permanente sans aucun moyen d'en sortir. Voir la correction
+ * côté serveur, où le ratio se lit désormais sur `barnCapacity()`.
  *
- *  - **jusqu'à 130 %** — une erreur de gestion : quelques points de lait et de
- *    croissance en moins, jamais un cadavre. La marge au plancher de
- *    mortalité reste au-dessus de 0,29 point, de quoi encaisser le pire hiver.
- *  - **au-delà de 172 %** — le seul entassement passe sous le plancher : les
- *    pertes commencent sans qu'il faille rien d'autre.
- *  - **à 200 %** — la cible tombe à zéro. L'entassement massif tue, comme la
- *    faim.
+ * Combinées au plancher d'enfermement, ces deux erreurs tuaient des troupeaux
+ * nourris, paillés, et remplis au tiers de leur capacité.
  *
- * Autrement dit : le surpeuplement léger se paie en production, la mortalité
- * reste réservée à l'abandon caractérisé.
+ * ## La courbe
+ *
+ * `peine = 0,35 × (dépassement / 1)²`, du plein au double.
+ *
+ *  - **jusqu'à 100 %** — rien. C'est la capacité, elle s'utilise entièrement.
+ *  - **à 130 %** — une erreur de gestion : de la production en moins.
+ *  - **à 200 %** — l'entassement massif, et là seulement il devient grave.
  */
 export function crowdingPenalty(crowding: number): number {
   const excess = Math.max(0, crowding) - HAPPINESS.crowdingComfort;
@@ -413,39 +439,52 @@ export function crowdingPenalty(crowding: number): number {
 }
 
 /**
- * Occupation à partir de laquelle le seul entassement devient mortel.
+ * Occupation à partir de laquelle le seul entassement devient mortel :
+ * **aucune**.
  *
- * **Dérivée, jamais réglée** : c'est l'occupation où la cible d'un lot par
- * ailleurs irréprochable — nourri, paillé, tempéré — passe sous
- * `MORTALITY.floor`. Elle vaut ~1,72, contre 1,28 avec l'ancienne droite.
+ * La fonction est conservée — elle est appelée, testée et affichée — mais elle
+ * répond désormais `+∞`, et c'est une décision, pas un oubli. L'entassement
+ * coûte de la production ; il ne tue pas. La seule voie vers la mort passe par
+ * la santé (`tickHealth()`), qui ne baisse que si un besoin vital reste à zéro
+ * pendant des heures — et l'entassement n'en est pas un : les bêtes sont
+ * serrées, elles ne sont ni affamées ni assoiffées.
  *
- * Elle existe pour être testée et affichée, pas pour être crue sur parole :
- * c'est le chiffre qui répond à « à partir de quand mes bêtes meurent
- * d'entassement ? », et il ne doit pas pouvoir dériver en silence quand on
- * retouche l'une des trois constantes.
+ * Auparavant elle valait ~1,72 : la cible d'un lot par ailleurs irréprochable
+ * passait sous `MORTALITY.floor` au seul motif qu'il était à 172 % de la
+ * capacité. Comme le ratio se calculait sur les cases de l'enclos et non sur
+ * l'étable, ce seuil était atteint par des troupeaux qui avaient de la place.
  */
 export function crowdingLethalThreshold(): number {
-  const marge = HAPPINESS.confinedFloor - MORTALITY.floor;
-  if (marge >= HAPPINESS.crowdingPenaltyMax) return Number.POSITIVE_INFINITY;
-  const part = (marge / HAPPINESS.crowdingPenaltyMax) ** (1 / HAPPINESS.crowdingExponent);
-  return HAPPINESS.crowdingComfort + part * (HAPPINESS.crowdingCritical - HAPPINESS.crowdingComfort);
+  return Number.POSITIVE_INFINITY;
 }
 
 /**
- * Cible de bonheur vers laquelle le lot dérive, à conditions constantes.
+ * Satisfaction des besoins vers laquelle le lot dérive, à conditions
+ * constantes `∈ [0 ; 1]`.
  *
- * Sans enclos adjacent, la cible est le plancher, point. Avec enclos, elle
- * décroît linéairement du plafond vers le plancher au fil de l'oubli, sur
- * `grazeMemoryMs`.
+ * **La base est 1.** On part d'un troupeau satisfait et on retranche ce qui
+ * manque : la faim, la soif, le dépassement de capacité, la litière. Rien
+ * d'autre. Ni la saison, ni la température, ni le fait d'être à l'étable
+ * n'entrent dans ce calcul — et c'est le cœur de la refonte.
+ *
+ * Le plein air n'est plus un besoin mais un bonus : voir
+ * `installationBonus()`. `hasPaddock` et `grazedRecentlyMs` restent dans la
+ * signature parce que l'appelant les a sous la main et que l'écran s'en sert,
+ * mais ils ne pèsent plus sur la cible. Une vache à l'étable toute l'année est
+ * à 100 % — elle produit simplement moins qu'une vache dont le maître a bâti
+ * l'enclos, l'abreuvoir et le râtelier.
  */
 export function happinessTarget(input: {
-  hasPaddock: boolean;
-  /** Ancienneté de la dernière sortie, en ms (`+∞` si jamais sortie) */
-  grazedRecentlyMs: number;
-  /** Effectif / capacité de l'enclos */
+  /** Enclos attenant — ne compte plus que pour le bonus d'installation */
+  hasPaddock?: boolean;
+  /** Ancienneté de la dernière sortie, en ms — conservée pour l'affichage */
+  grazedRecentlyMs?: number;
+  /** Effectif / capacité de **l'étable** (et non de l'enclos, cf. serveur) */
   crowding: number;
   /** Pénalité de faim, cf. `hungerPenalty()` */
   hunger?: number;
+  /** Niveau de la jauge d'eau, 1 = abreuvée, cf. `tickWater()` */
+  water?: number;
   /**
    * Pénalité de litière, cf. `beddingPenalty()`.
    *
@@ -455,18 +494,12 @@ export function happinessTarget(input: {
    */
   bedding?: number;
 }): number {
-  const span = HAPPINESS.grazedCeiling - HAPPINESS.confinedFloor;
-  const freshness = input.hasPaddock
-    ? clamp(1 - Math.max(0, input.grazedRecentlyMs) / HAPPINESS.grazeMemoryMs, 0, 1)
-    : 0;
-  const base = HAPPINESS.confinedFloor + span * freshness;
-  // La faim passe avant le confort : une bête affamée ne se console pas d'un
-  // beau pré, et la pénalité peut donc pousser sous le plancher.
   const malus =
     crowdingPenalty(input.crowding) +
     Math.max(0, input.hunger ?? 0) +
+    thirstPenalty(input.water ?? 1) +
     Math.max(0, input.bedding ?? 0);
-  return clamp(base - malus, HAPPINESS.min, HAPPINESS.max);
+  return clamp(1 - malus, HAPPINESS.min, HAPPINESS.max);
 }
 
 /**
@@ -482,7 +515,7 @@ export function happinessTarget(input: {
  * cet ordre-là.
  */
 export type WelfareCause = {
-  code: "SORTIE" | "SURPEUPLEMENT" | "FAIM" | "LITIERE";
+  code: "SURPEUPLEMENT" | "FAIM" | "SOIF" | "LITIERE";
   /** Ce que cette cause coûte, en points de cible (0 à 1) */
   cout: number;
   /** Le constat */
@@ -494,35 +527,53 @@ export type WelfareCause = {
 /** En deçà, la cause ne vaut pas la peine d'être nommée. */
 const CAUSE_MIN = 0.02;
 
+/**
+ * Les causes réelles, et elles seules.
+ *
+ * `SORTIE` a disparu de cette liste, et c'est le point de départ de toute la
+ * refonte. C'était la cause la plus coûteuse — jusqu'à 0,60 point — et elle
+ * s'affichait « Enfermées depuis trop longtemps · Sortez-les au pré » sur des
+ * troupeaux nourris, paillés, au tiers de leur capacité, un jour où le pré
+ * était pelé et où il faisait 10 °C. Un reproche qu'on ne peut pas satisfaire
+ * n'est pas une cause : c'est un bug d'énoncé.
+ *
+ * Ce qui reste se répare d'un geste, chaque fois : distribuer, abreuver,
+ * pailler, faire de la place.
+ */
 export function welfareReasons(input: {
-  hasPaddock: boolean;
-  grazedRecentlyMs: number;
+  hasPaddock?: boolean;
+  grazedRecentlyMs?: number;
   crowding: number;
   hunger?: number;
+  water?: number;
   bedding?: number;
 }): WelfareCause[] {
-  const span = HAPPINESS.grazedCeiling - HAPPINESS.confinedFloor;
-  const freshness = input.hasPaddock
-    ? clamp(1 - Math.max(0, input.grazedRecentlyMs) / HAPPINESS.grazeMemoryMs, 0, 1)
-    : 0;
+  /*
+   * Le dépassement se dit dès la première bête de trop, même quand il ne coûte
+   * presque rien.
+   *
+   * Les autres causes se taisent sous `CAUSE_MIN` — nommer une peine de deux
+   * millièmes serait du bruit. Celle-ci fait exception parce qu'elle décrit un
+   * **état** et non une intensité : « il y a plus de bêtes que de places » se
+   * répare d'un geste précis, et le joueur qui voit sa production baisser d'un
+   * point doit pouvoir savoir pourquoi. À 117 % d'occupation la peine ne vaut
+   * qu'un centième de point ; la taire laisserait un écart inexpliqué.
+   */
+  const depasse = input.crowding > HAPPINESS.crowdingComfort;
 
-  const causes: WelfareCause[] = [
-    {
-      code: "SORTIE",
-      // Tout ce qui sépare le lot du plafond, faute de sortie fraîche.
-      cout: span * (1 - freshness),
-      texte: input.hasPaddock
-        ? "Enfermées depuis trop longtemps"
-        : "Jamais dehors — aucun enclos attenant",
-      remede: input.hasPaddock
-        ? "Sortez-les au pré"
-        : "Construisez un enclos collé au bâtiment",
-    },
+  const causes: (WelfareCause & { toujours?: boolean })[] = [
     {
       code: "SURPEUPLEMENT",
       cout: crowdingPenalty(input.crowding),
-      texte: "Trop serrées pour la place disponible",
-      remede: "Agrandissez le bâtiment ou l'enclos, ou vendez quelques bêtes",
+      texte: "Plus de bêtes que de places dans le bâtiment",
+      remede: "Agrandissez le bâtiment, ou vendez quelques bêtes",
+      toujours: depasse,
+    },
+    {
+      code: "SOIF",
+      cout: thirstPenalty(input.water ?? 1),
+      texte: "Assoiffées — plus rien à boire",
+      remede: "Passez les abreuver, ou construisez un abreuvoir automatique",
     },
     {
       code: "FAIM",
@@ -539,7 +590,10 @@ export function welfareReasons(input: {
   ];
 
   // La plus coûteuse d'abord : c'est celle par laquelle il faut commencer.
-  return causes.filter((c) => c.cout >= CAUSE_MIN).sort((a, b) => b.cout - a.cout);
+  return causes
+    .filter((c) => c.toujours || c.cout >= CAUSE_MIN)
+    .map(({ toujours: _toujours, ...c }) => c)
+    .sort((a, b) => b.cout - a.cout);
 }
 
 /**
@@ -553,14 +607,16 @@ export function welfareReasons(input: {
  */
 export function tickHappiness(input: {
   happiness: number;
-  hasPaddock: boolean;
+  hasPaddock?: boolean;
   /** Ancienneté de la dernière sortie, en ms */
-  grazedRecentlyMs: number;
-  /** Effectif / capacité de l'enclos */
+  grazedRecentlyMs?: number;
+  /** Effectif / capacité de **l'étable** */
   crowding: number;
   elapsedMs: number;
   /** Pénalité de faim, cf. `hungerPenalty()` */
   hunger?: number;
+  /** Niveau de la jauge d'eau, cf. `tickWater()` */
+  water?: number;
   /** Pénalité de litière, cf. `beddingPenalty()` */
   bedding?: number;
 }): number {
@@ -575,14 +631,345 @@ export function tickHappiness(input: {
 }
 
 /**
- * Indice de bien-être normalisé `∈ [0 ; 1]` : 0 au plancher de l'enfermement,
- * 1 au plafond du pâturage. C'est **lui** qui pilote les bonus de production,
- * jamais le bonheur brut — sinon une bête enfermée toucherait déjà 35 % du
- * bonus sans que le joueur ait rien construit.
+ * Satisfaction normalisée `∈ [0 ; 1]` — soit, désormais, la jauge elle-même.
+ *
+ * Elle remettait autrefois à l'échelle `[0,35 ; 0,95]` sur `[0 ; 1]`, parce que
+ * la jauge ne visitait jamais ses bornes : un troupeau enfermé plafonnait à
+ * 0,35 et un troupeau au pré à 0,95. La jauge parcourt maintenant tout son
+ * intervalle et veut dire ce qu'elle affiche — 1 quand les besoins sont
+ * remplis, 0 quand plus rien ne l'est. Il n'y a plus rien à remettre à
+ * l'échelle.
+ *
+ * La fonction reste exportée : elle est appelée en une dizaine d'endroits, et
+ * la remplacer par un `clamp` chez chaque appelant ferait perdre le nom, qui
+ * dit ce qu'on lit.
  */
 export function welfareIndex(happiness: number): number {
-  const span = HAPPINESS.grazedCeiling - HAPPINESS.confinedFloor;
-  return clamp((happiness - HAPPINESS.confinedFloor) / span, 0, 1);
+  return clamp(happiness, HAPPINESS.min, HAPPINESS.max);
+}
+
+/* ------------------------------------------------------------------ */
+/* 2 bis. L'eau, la santé, et la seule mort possible                   */
+/* ------------------------------------------------------------------ */
+
+/**
+ * L'eau `[GD]`.
+ *
+ * Une vache boit cent litres par jour, et c'est le besoin qui la tue le plus
+ * vite quand il manque. Il n'existait pas dans le jeu.
+ *
+ * **Aucune corvée nouvelle n'est créée pour autant.** La jauge est pleine tant
+ * qu'on s'occupe du troupeau : l'éleveur qui apporte la ration remplit les
+ * seaux du même passage. Elle ne se vide que quand plus personne ne vient —
+ * c'est-à-dire quand la mangeoire est vide depuis un moment — et elle se vide
+ * plus lentement que la faim ne s'installe, pour que les alertes tombent dans
+ * l'ordre : d'abord la ration, ensuite l'eau.
+ *
+ * L'abreuvoir automatique supprime purement et simplement ce risque : branché
+ * sur le réseau, il tient la jauge pleine même quand le joueur ne se connecte
+ * pas. C'est ce qui en fait un investissement et non une décoration.
+ */
+export const WATER = {
+  min: 0,
+  max: 1,
+  /**
+   * Heures réelles pour vider la jauge quand plus personne ne passe `[GD]`.
+   *
+   * Vingt-quatre, contre huit avant que la production ne commence à souffrir
+   * de la faim : la soif arrive après, jamais avant.
+   */
+  dryH: 24,
+  /** Heures réelles pour la remplir de nouveau, une fois la ration rétablie */
+  refillH: 3,
+  /** Ce que la soif totale coûte sur la satisfaction `[GD]` */
+  penaltyMax: 0.5,
+} as const;
+
+/**
+ * Une heure de montre, et non une heure de jeu.
+ *
+ * `HOUR_MS` vaut ici une heure **compressée** — un vingt-quatrième de cycle
+ * d'élevage, soit trois minutes et demie d'horloge. C'est la bonne unité pour
+ * la satisfaction, qui doit réagir dans la partie en cours ; c'est la mauvaise
+ * pour la cascade, dont tout le curseur est « trente-six heures réelles entre
+ * une mangeoire vide et la première mort ». Confondre les deux réduirait ces
+ * trente-six heures à deux, et rendrait la mort à peu près inévitable pour qui
+ * ne joue pas d'une traite.
+ */
+const REAL_HOUR_MS = 3_600_000;
+
+/** Peine de soif `∈ [0 ; 0,5]`, linéaire dans le manque. */
+export function thirstPenalty(water: number): number {
+  return WATER.penaltyMax * (1 - clamp(water, WATER.min, WATER.max));
+}
+
+/**
+ * Fait évoluer la jauge d'eau sur `elapsedMs`.
+ *
+ * Linéaire et non exponentielle, à dessein : le joueur doit pouvoir lire
+ * « il reste tant d'heures » sur la jauge, et une exponentielle ne se lit pas.
+ */
+export function tickWater(input: {
+  water: number;
+  /** Un abreuvoir automatique rattaché au bâtiment ? */
+  hasTrough: boolean;
+  /** Reste-t-il de la ration à distribuer ? Si oui, on passe, donc on abreuve. */
+  fed: boolean;
+  elapsedMs: number;
+}): number {
+  const current = clamp(input.water, WATER.min, WATER.max);
+  const hours = Math.max(0, input.elapsedMs) / REAL_HOUR_MS;
+  if (hours === 0) return current;
+  if (input.hasTrough) return WATER.max;
+  if (input.fed) return clamp(current + hours / WATER.refillH, WATER.min, WATER.max);
+  return clamp(current - hours / WATER.dryH, WATER.min, WATER.max);
+}
+
+/**
+ * La cascade : ce qui se passe entre une mangeoire vide et la première mort.
+ *
+ * **Trente-six heures réelles, et trois avertissements avant.** C'est le
+ * curseur retenu : assez long pour qu'un joueur qui se connecte une fois par
+ * jour ne perde rien, assez court pour que négliger un troupeau coûte
+ * quelque chose.
+ *
+ * | Depuis l'épuisement | Ce qui se passe        | Ce que le joueur voit |
+ * |---------------------|------------------------|-----------------------|
+ * | 0 – 8 h             | la production baisse   | ⚠️ réserve épuisée     |
+ * | 8 – 20 h            | la santé baisse        | 🟠 santé en baisse     |
+ * | 20 – 36 h           | état critique          | 🔴 intervenez          |
+ * | au-delà de 36 h     | une bête peut mourir   | —                     |
+ *
+ * Avant, il n'y avait pas de cascade du tout : la satisfaction tombait sous
+ * `MORTALITY.floor` et les bêtes mouraient, sans étape ni préavis. C'est ce
+ * qui a produit « je sais plus quoi faire ».
+ */
+export const CASCADE = {
+  /** Fin du sursis : au-delà, la santé commence à baisser `[GD]` */
+  productionH: 8,
+  /** Entrée dans le rouge `[GD]` */
+  healthH: 20,
+  /** Santé à zéro, la mortalité peut commencer `[GD]` */
+  criticalH: 36,
+} as const;
+
+/** Où en est le troupeau dans la cascade. */
+export type CascadeStage = "OK" | "PRODUCTION" | "SANTE" | "CRITIQUE" | "MORTEL";
+
+/** Étape de la cascade, d'après les heures écoulées depuis le manque. */
+export function cascadeStage(deprivedH: number): CascadeStage {
+  const h = Math.max(0, deprivedH);
+  if (h <= 0) return "OK";
+  if (h < CASCADE.productionH) return "PRODUCTION";
+  if (h < CASCADE.healthH) return "SANTE";
+  if (h < CASCADE.criticalH) return "CRITIQUE";
+  return "MORTEL";
+}
+
+/** Ce que l'écran affiche à chaque étape — le constat, puis le geste. */
+export const CASCADE_LABELS: Record<CascadeStage, { texte: string; remede: string } | null> = {
+  OK: null,
+  PRODUCTION: {
+    texte: "Réserve épuisée — la production baisse",
+    remede: "Distribuez une ration",
+  },
+  SANTE: {
+    texte: "La santé du troupeau baisse",
+    remede: "Distribuez une ration sans tarder",
+  },
+  CRITIQUE: {
+    texte: "Troupeau en état critique — intervenez",
+    remede: "Distribuez une ration maintenant",
+  },
+  MORTEL: {
+    texte: "Le troupeau ne tient plus — des bêtes peuvent mourir",
+    remede: "Distribuez une ration immédiatement",
+  },
+};
+
+/**
+ * La santé `[GD]`.
+ *
+ * C'est la seule jauge qui peut tuer, et elle ne bouge que par la cascade.
+ * Elle est délibérément lente dans les deux sens : on ne perd pas un troupeau
+ * pour une soirée d'absence, et on ne le remet pas d'aplomb en un clic.
+ */
+export const HEALTH = {
+  min: 0,
+  max: 1,
+  /** Heures de manque pour tomber de 1 à 0, une fois le sursis écoulé `[GD]` */
+  collapseH: CASCADE.criticalH - CASCADE.productionH,
+  /** Heures pour remonter de 0 à 1 une fois les besoins rétablis `[GD]` */
+  recoverH: 24,
+} as const;
+
+/**
+ * Fait évoluer la santé sur `elapsedMs`.
+ *
+ * Tant que la privation reste dans le sursis (`CASCADE.productionH`), la santé
+ * **remonte** : un troupeau qu'on nourrit se rétablit, et un troupeau qu'on
+ * néglige une heure ne perd rien du tout.
+ */
+export function tickHealth(input: {
+  health: number;
+  /** Heures écoulées depuis que le besoin vital n'est plus couvert */
+  deprivedH: number;
+  elapsedMs: number;
+}): number {
+  const current = clamp(input.health, HEALTH.min, HEALTH.max);
+  const hours = Math.max(0, input.elapsedMs) / REAL_HOUR_MS;
+  if (hours === 0) return current;
+  if (Math.max(0, input.deprivedH) <= CASCADE.productionH) {
+    return clamp(current + hours / HEALTH.recoverH, HEALTH.min, HEALTH.max);
+  }
+  return clamp(current - hours / HEALTH.collapseH, HEALTH.min, HEALTH.max);
+}
+
+/* ------------------------------------------------------------------ */
+/* 2 ter. L'installation — ce qu'on bâtit rapporte                     */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Les bonus d'installation `[GD]` — le renversement de philosophie.
+ *
+ * L'étable et son enclos étaient un **malus** : ne rien bâtir coûtait de la
+ * satisfaction, donc de la production, donc des bêtes. Ils deviennent un
+ * **investissement** : ne rien bâtir donne 100 %, et bâtir donne plus.
+ *
+ * | Niveau | Production | Reproduction | Efficacité alimentaire |
+ * |--------|-----------|--------------|------------------------|
+ * | 1 · basique      | —     | —     | —     |
+ * | 2 · améliorée    | +10 % | +5 %  | +3 %  |
+ * | 3 · bonne        | +20 % | +10 % | +6 %  |
+ * | 4 · haut de gamme| +30 % | +15 % | +10 % |
+ *
+ * Le plafond remplace l'ancien empilement « bien-être ×1,32 × niveau d'étable
+ * ×1,24 » : un seul multiplicateur, lisible à l'écran, qu'on gagne en
+ * construisant et jamais en subissant.
+ */
+export type InstallationBonus = {
+  /** Lait, œufs, laine, viande */
+  production: number;
+  /** Chances de naissance */
+  reproduction: number;
+  /** Fourrage économisé */
+  feed: number;
+};
+
+export const INSTALLATION_TIERS: readonly InstallationBonus[] = [
+  { production: 0, reproduction: 0, feed: 0 },
+  { production: 0.1, reproduction: 0.05, feed: 0.03 },
+  { production: 0.2, reproduction: 0.1, feed: 0.06 },
+  { production: 0.3, reproduction: 0.15, feed: 0.1 },
+];
+
+/** Niveau d'installation le plus élevé atteignable. */
+export const MAX_INSTALLATION_LEVEL = INSTALLATION_TIERS.length;
+
+export const INSTALLATION_LABELS: readonly string[] = [
+  "Basique",
+  "Améliorée",
+  "Bonne",
+  "Haut de gamme",
+];
+
+/** Libellé du niveau d'installation, pour l'écran d'élevage. */
+export function installationLabel(level: number): string {
+  const i = clamp(Math.round(level), 1, MAX_INSTALLATION_LEVEL) - 1;
+  return INSTALLATION_LABELS[i];
+}
+
+/** Les trois bonus d'un niveau donné. */
+export function installationBonus(level: number): InstallationBonus {
+  return INSTALLATION_TIERS[clamp(Math.round(level), 1, MAX_INSTALLATION_LEVEL) - 1];
+}
+
+/**
+ * Ce qui compte dans le niveau, et ce que ça vaut.
+ *
+ * Cinq points à gagner, quatre paliers. Chaque pièce compte pour de vrai :
+ * c'est ce qui rend l'abreuvoir et le râtelier désirables plutôt
+ * qu'obligatoires — on tourne très bien à 100 % sans eux, on monte avec.
+ *
+ * L'étable pèse deux points parce qu'elle se paie en dizaines de milliers
+ * d'euros par niveau, là où les deux annexes se posent pour quelques
+ * centaines : leur donner le même poids ferait du niveau d'étable un
+ * investissement moins rentable que le mobilier qu'on met autour.
+ */
+export const INSTALLATION_POINTS = {
+  /** Enclos de pâture partageant un bord avec le bâtiment */
+  paddock: 1,
+  /** Abreuvoir automatique attenant */
+  trough: 1,
+  /** Râtelier à fourrage attenant */
+  rack: 1,
+  /** Étable de niveau 3 ou plus */
+  barnMid: 1,
+  /** Étable de niveau 5 */
+  barnTop: 1,
+} as const;
+
+/** Niveau d'installation d'après ce que le joueur a réellement posé. */
+export function installationLevel(input: {
+  barnLevel?: number;
+  /** Enclos **attenant** — un enclos à l'autre bout de la ferme ne compte pas */
+  hasPaddock?: boolean;
+  hasTrough?: boolean;
+  hasRack?: boolean;
+}): number {
+  const barn = clamp(Math.round(input.barnLevel ?? 1), 1, MAX_BARN_LEVEL);
+  let points = 0;
+  if (input.hasPaddock) points += INSTALLATION_POINTS.paddock;
+  if (input.hasTrough) points += INSTALLATION_POINTS.trough;
+  if (input.hasRack) points += INSTALLATION_POINTS.rack;
+  if (barn >= 3) points += INSTALLATION_POINTS.barnMid;
+  if (barn >= MAX_BARN_LEVEL) points += INSTALLATION_POINTS.barnTop;
+
+  if (points <= 0) return 1;
+  if (points <= 2) return 2;
+  if (points <= 4) return 3;
+  return 4;
+}
+
+/**
+ * Facteur de production complet, tel qu'il s'affiche.
+ *
+ *     production = satisfaction des besoins × (1 + bonus d'installation) × ration
+ *
+ * Besoins remplis, installation basique, ration ordinaire : **exactement
+ * 100 %**. C'est la ligne de référence, et rien ne doit la faire varier — ni
+ * la saison, ni l'heure, ni le fait que les bêtes soient rentrées.
+ */
+export type ProductionFactor = {
+  /** Ce que les besoins remplis valent, `∈ [0 ; 1]` */
+  satisfaction: number;
+  /** Ce que l'installation ajoute, `≥ 1` */
+  installation: number;
+  /** Ce que la qualité de la ration ajoute, `≥ 1` */
+  ration: number;
+  /** Le produit des trois — le chiffre affiché */
+  total: number;
+};
+
+export function productionFactor(input: {
+  /** Satisfaction des besoins (la jauge de bonheur) */
+  happiness: number;
+  installationLevel: number;
+  /** Qualité de la ration, 0 = basique, 1 = premium */
+  feedQuality?: number;
+  /** Amplitude du bonus de ration ; 1 = pleine, cf. `MILK_FEED_SPAN` */
+  feedWeight?: number;
+}): ProductionFactor {
+  const satisfaction = welfareIndex(input.happiness);
+  const installation = 1 + installationBonus(input.installationLevel).production;
+  const ration =
+    1 + MILK_FEED_SPAN * (input.feedWeight ?? 1) * clamp(input.feedQuality ?? 0, 0, 1);
+  return {
+    satisfaction,
+    installation,
+    ration,
+    total: satisfaction * installation * ration,
+  };
 }
 
 /** Météo qui interdit la sortie `[GD]` — orage (foudre) et neige (pas d'herbe). */
@@ -663,6 +1050,8 @@ export function feedBurn(input: {
   grazing: boolean;
   /** Niveau de l'étable ; par défaut, la plus rustique */
   barnLevel?: number;
+  /** Niveau d'installation, cf. `installationLevel()` */
+  installationLevel?: number;
   kind?: AnimalKind;
 }): number {
   const cycles = Math.max(0, input.elapsedMs) / Math.max(1, input.cycleMs);
@@ -670,6 +1059,7 @@ export function feedBurn(input: {
     herdSize: input.herdSize,
     grazing: input.grazing,
     barnLevel: input.barnLevel ?? 1,
+    installationLevel: input.installationLevel,
     kind: input.kind,
   });
   return perCycle * cycles;
@@ -792,48 +1182,67 @@ export function canLiveOutside(input: {
 export const MILK_BASE_PER_COW = 22;
 
 /**
- * Écart de production maximal entre une vache enfermée et une vache au pré
- * `[GD]` : **+32 %**.
+ * Écart de production maximal `[GD]` : **+32 %**, conservé pour la viande.
  *
- * Le choix se justifie par deux bornes. En dessous de +25 %, l'enclos (400 CRD
- * + 90 CRD/case, soit ~1 850 CRD pour 16 cases) ne se rembourse pas assez vite
- * pour qu'un joueur le construise ; au-dessus de +40 %, l'étable fermée
- * devient un piège de conception (« tu as mal joué au moment de bâtir ») et le
- * lait au pré écrase les autres filières. +32 % laisse l'enclos rentable en
- * une quinzaine de cycles tout en gardant l'étable seule jouable.
+ * Il représentait l'écart entre une vache enfermée et une vache au pré, et il
+ * s'appliquait à la satisfaction remise à l'échelle. Le lait, les œufs et la
+ * laine ne s'en servent plus : leur écart passe par le bonus d'installation
+ * (`installationBonus()`), qui se **gagne** en bâtissant au lieu de se perdre
+ * en restant à l'étable.
  */
 export const MILK_HAPPINESS_SPAN = 0.32;
 
-/** Gain de traite par niveau d'étable au-dessus de 1 `[TEST]` — ×1,24 au niveau 5 */
+/**
+ * Gain de traite par niveau d'étable au-dessus de 1 `[TEST]`.
+ *
+ * Absorbé par le bonus d'installation, dont le niveau d'étable est l'une des
+ * cinq composantes. La constante reste exportée le temps que les appelants
+ * historiques passent à `installationLevel()` ; la conserver dans le calcul
+ * aurait compté deux fois le même bâtiment.
+ */
 export const MILK_BARN_LEVEL_STEP = 0.06;
 
 /** Gain de ration : basique → premium, aligné sur la table §3 de la doc `[GD]` */
 export const MILK_FEED_SPAN = 0.2;
 
 /**
+ * Niveau d'installation à défaut d'en connaître les annexes.
+ *
+ * Les appelants qui ne passent qu'un niveau d'étable — il en reste — obtiennent
+ * le niveau que ce seul bâtiment vaut. Ils ne sont jamais pénalisés pour une
+ * information qu'ils n'avaient pas à fournir.
+ */
+function installationFallback(input: { installationLevel?: number; barnLevel?: number }): number {
+  return input.installationLevel ?? installationLevel({ barnLevel: input.barnLevel });
+}
+
+/**
  * Lait produit par cycle, en litres.
  *
- * `L = 22 × effectif × (1 + 0,32 × w) × (1 + 0,06 × (niveau − 1)) × (1 + 0,20 × ration)`
- * où `w = welfareIndex(happiness)`. Les trois multiplicateurs sont bornés, donc
- * l'écart total entre le pire et le meilleur troupeau reste ~×1,96 : l'élevage
- * ne peut pas déraper en écart de puissance entre joueurs.
+ * `L = 22 × effectif × satisfaction × (1 + bonus d'installation) × (1 + 0,20 × ration)`
+ *
+ * Un troupeau nourri, abreuvé et logé produit **22 L par tête**, dedans comme
+ * dehors, en juin comme en janvier. Tout ce qui dépasse se construit.
  */
 export function milkYield(input: {
   herdSize: number;
   happiness: number;
   barnLevel: number;
+  /** Niveau d'installation, cf. `installationLevel()` */
+  installationLevel?: number;
   /** Qualité de la ration, 0 = basique, 1 = premium */
   feedQuality: number;
 }): number {
   const size = Math.max(0, Math.floor(input.herdSize));
   if (size === 0) return 0;
 
-  const welfare = 1 + MILK_HAPPINESS_SPAN * welfareIndex(input.happiness);
-  const level = clamp(Math.round(input.barnLevel), 1, MAX_BARN_LEVEL);
-  const barn = 1 + MILK_BARN_LEVEL_STEP * (level - 1);
-  const feed = 1 + MILK_FEED_SPAN * clamp(input.feedQuality, 0, 1);
+  const facteur = productionFactor({
+    happiness: input.happiness,
+    installationLevel: installationFallback(input),
+    feedQuality: input.feedQuality,
+  });
 
-  return round1(MILK_BASE_PER_COW * size * welfare * barn * feed);
+  return round1(MILK_BASE_PER_COW * size * facteur.total);
 }
 
 /** Caisses d'œufs par poule et par cycle `[GD]` */
@@ -843,15 +1252,17 @@ export function eggYield(input: {
   herdSize: number;
   happiness: number;
   barnLevel: number;
+  installationLevel?: number;
   feedQuality: number;
 }): number {
   const size = Math.max(0, Math.floor(input.herdSize));
   if (size === 0) return 0;
-  const welfare = 1 + MILK_HAPPINESS_SPAN * welfareIndex(input.happiness);
-  const level = clamp(Math.round(input.barnLevel), 1, MAX_BARN_LEVEL);
-  const barn = 1 + MILK_BARN_LEVEL_STEP * (level - 1);
-  const feed = 1 + MILK_FEED_SPAN * clamp(input.feedQuality, 0, 1);
-  return Math.round(EGGS_BASE_PER_HEN * size * welfare * barn * feed * 100) / 100;
+  const facteur = productionFactor({
+    happiness: input.happiness,
+    installationLevel: installationFallback(input),
+    feedQuality: input.feedQuality,
+  });
+  return Math.round(EGGS_BASE_PER_HEN * size * facteur.total * 100) / 100;
 }
 
 /** Tonnes de laine par mouton et par tonte `[GD]` */
@@ -861,15 +1272,20 @@ export function woolYield(input: {
   herdSize: number;
   happiness: number;
   barnLevel: number;
+  installationLevel?: number;
   feedQuality: number;
 }): number {
   const size = Math.max(0, Math.floor(input.herdSize));
   if (size === 0) return 0;
-  const welfare = 1 + MILK_HAPPINESS_SPAN * 0.6 * welfareIndex(input.happiness);
-  const level = clamp(Math.round(input.barnLevel), 1, MAX_BARN_LEVEL);
-  const barn = 1 + MILK_BARN_LEVEL_STEP * (level - 1);
-  const feed = 1 + MILK_FEED_SPAN * 0.5 * clamp(input.feedQuality, 0, 1);
-  return Math.round(WOOL_BASE_PER_SHEEP * size * welfare * barn * feed * 1000) / 1000;
+  // La laine tire moins de la ration que le lait : une brebis premium ne tond
+  // pas deux fois plus. D'où le demi-poids sur le seul terme de ration.
+  const facteur = productionFactor({
+    happiness: input.happiness,
+    installationLevel: installationFallback(input),
+    feedQuality: input.feedQuality,
+    feedWeight: 0.5,
+  });
+  return Math.round(WOOL_BASE_PER_SHEEP * size * facteur.total * 1000) / 1000;
 }
 
 /* ==========================================================================
@@ -952,21 +1368,21 @@ export const MEAT_MATURITY_MS = 30 * LIVESTOCK_CYCLE_MS;
 export const MEAT_AGE_FLOOR = 0.35;
 
 /**
- * Écart de rendement carcasse dû au bien-être `[GD]` : **+22 %**, donc moins
- * que le lait. La viande dépend d'abord de la croissance (l'âge), et le
- * bien-être n'y agit qu'indirectement, via l'ingéré et l'absence de stress.
- * Un écart aussi fort que sur le lait rendrait l'abattage systématiquement
- * plus rentable que la traite, ce que la doc §8 interdit explicitement.
+ * Écart de rendement carcasse dû au bien-être `[GD]` : **+22 %**.
+ *
+ * Comme `MILK_HAPPINESS_SPAN`, il est absorbé par le bonus d'installation et
+ * n'entre plus dans le calcul. La constante reste exportée : elle documente
+ * l'ordre de grandeur retenu, et la doc §8 s'y réfère.
  */
 export const MEAT_HAPPINESS_SPAN = 0.22;
 
-/** Gain d'abattage par niveau d'étable au-dessus de 1 `[TEST]` — ×1,12 au niveau 5 */
+/** Gain d'abattage par niveau d'étable au-dessus de 1 `[TEST]` — absorbé, cf. ci-dessus */
 export const MEAT_BARN_LEVEL_STEP = 0.03;
 
 /**
  * Viande obtenue à l'abattage d'un lot, en kg.
  *
- * `kg = 280 × effectif × âge × (1 + 0,22 × w) × (1 + 0,03 × (niveau − 1))`
+ * `kg = 280 × effectif × âge × satisfaction × (1 + bonus d'installation)`
  *
  * **Comment le bonheur cumulé compte** : `happiness` n'est pas la photo d'un
  * instant, c'est la sortie de `tickHappiness()`, une relaxation de constante
@@ -987,6 +1403,7 @@ export function meatYield(input: {
   happiness: number;
   averageAgeMs: number;
   barnLevel: number;
+  installationLevel?: number;
   kind?: AnimalKind;
 }): number {
   const size = Math.max(0, Math.floor(input.herdSize));
@@ -999,11 +1416,12 @@ export function meatYield(input: {
     MEAT_AGE_FLOOR,
     1,
   );
-  const welfare = 1 + MEAT_HAPPINESS_SPAN * welfareIndex(input.happiness);
-  const level = clamp(Math.round(input.barnLevel), 1, MAX_BARN_LEVEL);
-  const barn = 1 + MEAT_BARN_LEVEL_STEP * (level - 1);
+  const facteur = productionFactor({
+    happiness: input.happiness,
+    installationLevel: installationFallback(input),
+  });
 
-  return Math.round(meatBaseKg(input.kind ?? "COW") * size * growth * welfare * barn);
+  return Math.round(meatBaseKg(input.kind ?? "COW") * size * growth * facteur.total);
 }
 
 /** Fourrage distribué par vache et par cycle, en kg de matière sèche `[GD]` */
@@ -1031,20 +1449,30 @@ export const FEED_BARN_SAVING_CAP = 0.12;
 /**
  * Fourrage consommé par cycle, en kg de matière sèche.
  *
- * `kg = 14 × effectif × (pâture ? 0,65 : 1) × (1 − min(0,12 ; 0,03 × (niveau − 1)))`
+ * `kg = 14 × effectif × (pâture ? 0,65 : 1) × (1 − économie)`
+ *
+ * L'économie est le troisième bonus d'installation
+ * (`installationBonus().feed`) : jusqu'à 10 % de foin en moins pour qui a bâti
+ * le râtelier et l'abreuvoir autour d'une bonne étable. C'est le bonus le plus
+ * discret des trois et le plus durable — il se touche à chaque cycle, y compris
+ * quand le joueur n'est pas là.
  */
 export function feedConsumption(input: {
   herdSize: number;
   /** Le lot est-il sorti au pré sur ce cycle ? */
   grazing: boolean;
   barnLevel: number;
+  /** Niveau d'installation, cf. `installationLevel()` */
+  installationLevel?: number;
   kind?: AnimalKind;
 }): number {
   const size = Math.max(0, Math.floor(input.herdSize));
   if (size === 0) return 0;
 
-  const level = clamp(Math.round(input.barnLevel), 1, MAX_BARN_LEVEL);
-  const saving = Math.min(FEED_BARN_SAVING_CAP, FEED_BARN_LEVEL_STEP * (level - 1));
+  const saving = Math.min(
+    FEED_BARN_SAVING_CAP,
+    installationBonus(installationFallback(input)).feed,
+  );
   const pasture = input.grazing ? FEED_GRAZING_RATIO : 1;
   const base = FEED_BASE[input.kind ?? "COW"] ?? FEED_BASE_PER_COW;
 
@@ -1207,16 +1635,19 @@ export function grazingWaveCount(herdSize: number, paddockCapacity: number): num
 /* ------------------------------------------------------------------ */
 
 /**
- * Tranches de bien-être, de la pire à la meilleure. Les seuils sont accrochés
- * aux constantes : « Correctes » démarre exactement au plancher de
- * l'enfermement, pour qu'un joueur sans enclos lise « Correctes » et non
- * « Stressées » — il n'a rien fait de mal, il n'a juste pas encore construit.
+ * Tranches de satisfaction, de la pire à la meilleure.
+ *
+ * Les seuils suivent la nouvelle échelle : besoins remplis = 1, donc
+ * « Épanouies » est l'état **normal** d'un troupeau bien tenu et non une
+ * récompense rare. Les trois tranches basses désignent chacune un manque
+ * réel — faim, soif, dépassement de capacité — et non le simple fait d'être à
+ * l'étable, qui n'a plus de coût.
  */
 export const HAPPINESS_LABELS: readonly { min: number; label: string }[] = [
-  { min: 0, label: "Stressées" },
-  { min: HAPPINESS.confinedFloor, label: "Correctes" },
-  { min: 0.6, label: "Sereines" },
-  { min: 0.85, label: "Épanouies" },
+  { min: 0, label: "En souffrance" },
+  { min: 0.4, label: "Stressées" },
+  { min: 0.7, label: "Correctes" },
+  { min: 0.95, label: "Épanouies" },
 ];
 
 /** Libellé d'affichage d'une jauge de bien-être. */
@@ -1234,17 +1665,24 @@ export function happinessLabel(happiness: number): string {
 /* ------------------------------------------------------------------ */
 
 /**
- * Un troupeau affamé finit par perdre des bêtes.
+ * Un troupeau qu'on abandonne finit par perdre des bêtes.
  *
- * Sans cela, négliger son élevage ne coûtait rien : le bien-être tombait au
- * plancher, la production s'effondrait, et le lot attendait indéfiniment que
- * le joueur revienne. La faim devient une vraie perte, mais lente — on doit
- * avoir le temps de réagir en rentrant.
+ * **La santé, et rien d'autre.** C'est le verrou de toute la refonte : la
+ * mortalité ne lit plus la satisfaction des besoins mais `health`, qui ne
+ * baisse que par la cascade (`tickHealth()`), c'est-à-dire après huit heures
+ * réelles de mangeoire vide, et qui ne s'annule qu'après trente-six.
+ *
+ * Ce que cela ferme, définitivement : un troupeau enfermé tout l'hiver, nourri
+ * et abreuvé, ne peut plus perdre une seule bête. Auparavant la satisfaction
+ * d'un lot confiné tombait à 0,35 et le moindre malus supplémentaire la
+ * poussait sous ce plancher de 0,15 — c'est ainsi que sont mortes les bêtes de
+ * la capture de Strea, dans une étable au tiers pleine avec un jour de ration
+ * d'avance.
  */
 export const MORTALITY = {
-  /** En dessous de ce bien-être, les pertes commencent `[GD]` */
+  /** En dessous de cette **santé**, les pertes commencent `[GD]` */
   floor: 0.15,
-  /** Part du lot perdue par cycle, bien-être au plus bas `[GD]` */
+  /** Part du lot perdue par cycle, santé au plus bas `[GD]` */
   perCycleAtWorst: 0.06,
 } as const;
 
@@ -1256,7 +1694,8 @@ export const MORTALITY = {
  * sous l'unité. Elle est retournée pour être stockée.
  */
 export function mortalityToll(input: {
-  happiness: number;
+  /** Santé du lot, cf. `tickHealth()` — **jamais** la satisfaction */
+  health: number;
   herdSize: number;
   elapsedMs: number;
   cycleMs: number;
@@ -1264,12 +1703,12 @@ export function mortalityToll(input: {
 }): { deaths: number; debt: number } {
   const size = Math.max(0, Math.floor(input.herdSize));
   if (size <= 0) return { deaths: 0, debt: 0 };
-  if (input.happiness >= MORTALITY.floor) {
+  if (input.health >= MORTALITY.floor) {
     // Un troupeau qu'on remet d'aplomb ne traîne pas sa dette : la pression
     // retombe avec la faim.
     return { deaths: 0, debt: Math.max(0, input.debt - 0.25) };
   }
-  const severity = clamp((MORTALITY.floor - input.happiness) / MORTALITY.floor, 0, 1);
+  const severity = clamp((MORTALITY.floor - input.health) / MORTALITY.floor, 0, 1);
   const cycles = Math.max(0, input.elapsedMs) / Math.max(1, input.cycleMs);
   const debt = input.debt + size * MORTALITY.perCycleAtWorst * severity * cycles;
   const deaths = Math.min(size, Math.floor(debt));

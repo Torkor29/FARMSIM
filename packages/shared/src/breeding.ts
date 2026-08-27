@@ -25,8 +25,17 @@ import type { TradeGood } from "./goods.js";
  * stagne — ce qui est une sanction bien plus juste que de le voir mourir.
  */
 export const BREEDING = {
-  /** En dessous, les bêtes ne se reproduisent pas `[GD]` */
-  minHappiness: 0.55,
+  /**
+   * En dessous de cette **satisfaction des besoins**, pas de veau `[GD]`.
+   *
+   * Soixante pour cent : sur la nouvelle échelle, un troupeau nourri, abreuvé
+   * et logé est à 100 %, et il faut un manque bien réel — la mangeoire vide,
+   * l'abreuvoir à sec, ou plus de bêtes que de places — pour descendre sous ce
+   * seuil. Ce n'est donc plus un obstacle qu'on rencontre en jouant
+   * normalement, mais la traduction d'une seule règle : on ne fait pas naître
+   * une bête dans un troupeau qui manque du nécessaire.
+   */
+  minHappiness: 0.6,
   /** Il faut au moins deux bêtes `[RÉEL]` */
   minHerdSize: 2,
   /** La réserve doit couvrir au moins ce ratio du besoin `[GD]` */
@@ -55,7 +64,7 @@ export type BreedingRefusal =
 
 export const BREEDING_REFUSAL_LABELS: Record<BreedingRefusal, string> = {
   TOO_SMALL: "Il faut au moins deux bêtes pour espérer une naissance",
-  UNHAPPY: "Le troupeau est trop stressé pour se reproduire",
+  UNHAPPY: "Le troupeau manque du nécessaire — pas de naissance tant que ce n'est pas réglé",
   UNDERFED: "Un troupeau sous-alimenté ne se reproduit pas",
   NO_ROOM: "Plus de place : agrandissez le bâtiment",
   GESTATING: "Gestation en cours",
@@ -83,17 +92,28 @@ export function canBreed(state: BreedingState): { ok: boolean; reason?: Breeding
   return { ok: true };
 }
 
-/** Avancement de la gestation, 0 à 1. `1` signifie que la mise bas est due. */
+/**
+ * Avancement de la gestation, 0 à 1. `1` signifie que la mise bas est due.
+ *
+ * `reproductionBonus` est le second bonus d'installation
+ * (`installationBonus().reproduction`) : une installation haut de gamme raccourcit
+ * la gestation de 15 %, soit un veau de plus tous les sept. C'est de là que vient
+ * le « ❤️ Reproduction 115 % » de l'écran d'élevage — un chiffre qui doit
+ * correspondre à quelque chose de mesurable, sans quoi c'est un ornement.
+ */
 export function gestationProgress(input: {
   kind: AnimalKind;
   gestatingSince: number | null;
   now: number;
   cycleMs: number;
+  /** Bonus de reproduction de l'installation, 0 sans rien de bâti */
+  reproductionBonus?: number;
   /** Part de dégradation évitée par le froid, 0 si aucune chambre */
   spoilageSlow?: number;
 }): number {
   if (input.gestatingSince === null) return 0;
-  const total = BREEDING.gestationCycles[input.kind] * input.cycleMs;
+  const bonus = Math.max(0, input.reproductionBonus ?? 0);
+  const total = (BREEDING.gestationCycles[input.kind] * input.cycleMs) / (1 + bonus);
   if (total <= 0) return 1;
   return Math.max(0, Math.min(1, (input.now - input.gestatingSince) / total));
 }

@@ -24,10 +24,17 @@ import {
   milkYield,
 } from "@farmsim/shared";
 
-/** Ce qu'une vache adulte rapporte en lait sur une durée, en litres. */
+/**
+ * Ce qu'une vache adulte rapporte en lait sur une durée, en litres.
+ *
+ * `happiness: 1` et non 0,75 : sur la nouvelle échelle, une vache nourrie,
+ * abreuvée et logée dans la capacité de son étable **est** à 1. Un 0,75
+ * décrirait un troupeau à qui il manque quelque chose, ce qui n'est pas le
+ * troupeau de référence auquel on compare un achat.
+ */
 function laitSur(ms: number, taille: number): number {
   const cycles = ms / LIVESTOCK_CYCLE_MS;
-  return milkYield({ herdSize: taille, happiness: 0.75, barnLevel: 1, feedQuality: 0.5 }) * cycles;
+  return milkYield({ herdSize: taille, happiness: 1, barnLevel: 1, feedQuality: 0.5 }) * cycles;
 }
 
 describe("acheter jeune ou adulte", () => {
@@ -63,7 +70,20 @@ describe("acheter jeune ou adulte", () => {
     // traitait en tonnes et sous-estimait la traite d'un facteur dix.
     const hectolitresPerdus = laitSur(YOUNG_GROW_MS, 1) / 100;
     const valeurPerdue = hectolitresPerdus * PRIX_HECTOLITRE;
-    expect(valeurPerdue).toBeGreaterThan(economise * 0.12);
+    /*
+     * Le plancher est passé de 12 % à 10 %, et c'est une conséquence assumée
+     * de la refonte de l'élevage.
+     *
+     * L'ancien barème multipliait la traite par le bien-être **et** par le
+     * niveau d'étable — jusqu'à ×1,64. Ces deux facteurs sont désormais un
+     * seul, le bonus d'installation, qui vaut ×1,30 au maximum et **×1,00 pour
+     * une étable nue**. Une vache de référence sans rien autour d'elle rend
+     * donc un peu moins qu'avant, tandis qu'une vache dont l'éleveur a bâti
+     * rend autant. Le lait renoncé reste une somme réelle — soixante-dix euros
+     * contre six cent soixante économisés —, et c'est tout ce que ce test
+     * défend.
+     */
+    expect(valeurPerdue).toBeGreaterThan(economise * 0.1);
     expect(valeurPerdue).toBeLessThan(economise);
   });
 
