@@ -7244,6 +7244,35 @@ button.tiny {
   line-height: 1.4;
   color: var(--ink-soft);
 }
+.profile-hint.warn { color: var(--warn, #a8702a); }
+/* Trois choix exclusifs, lisibles d'un coup : le retenu se souligne d'un
+   liseré plein plutôt que d'une pastille, qui se perdrait à côté des lignes
+   du menu juste au-dessus. */
+.profile-choices { display: grid; gap: 0.5rem; }
+.profile-choice {
+  display: grid;
+  gap: 0.1rem;
+  padding: 0.6rem 0.8rem;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--paper);
+  text-align: left;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+.profile-choice strong { font-size: 0.92rem; }
+.profile-choice em {
+  font-style: normal;
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: var(--ink-soft);
+}
+.profile-choice:hover { background: rgba(46, 142, 122, 0.06); }
+.profile-choice.on {
+  border-color: var(--accent, #2e8e7a);
+  box-shadow: inset 3px 0 0 var(--accent, #2e8e7a);
+}
 .profile-form {
   display: grid;
   gap: 0.7rem;

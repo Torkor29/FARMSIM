@@ -1644,6 +1644,16 @@ export function App() {
     };
   }, [showSkills, player?.id, player?.xp]);
 
+  /**
+   * Remonte la scène quand le joueur change la qualité graphique.
+   *
+   * Ombres, anticrénelage et densité de pixels se fixent à la création du
+   * contexte WebGL : un rendu déjà monté ne les relit jamais. Sans ce
+   * compteur dans la clé de la vue, choisir « Élevée » ne changerait rien à
+   * l'écran, et le réglage passerait pour cassé.
+   */
+  const [qualiteVue, setQualiteVue] = useState(0);
+
   const chantierEnCours = chantiers.length > 0;
   useEffect(() => {
     if (!chantierEnCours) return;
@@ -4900,6 +4910,7 @@ export function App() {
         {parcel ? (
           <Suspense fallback={<SceneLoading label="Chargement de la ferme…" />}>
             <IsoFarmView
+              key={`qualite-${qualiteVue}`}
               parcelId={activeParcelId ?? ""}
               controle={vueControle}
               onEgare={setVueEgaree}
@@ -5299,6 +5310,7 @@ export function App() {
               return r.player;
             }}
             onFlash={flashToast}
+            onQualityChange={() => setQualiteVue((n) => n + 1)}
           />
         )}
       </PanelHost>

@@ -1457,10 +1457,17 @@ export function IsoFarmView({
     /** Cases à parcourir, ordonnées en va-et-vient rang par rang. */
     let workPath: { x: number; y: number }[] = [];
 
-    // Ce que l'engin soulève et projette. Un bassin par effet, un appel de
-    // rendu chacun ; sur une machine modeste (pas d'ombres) on s'en tient à la
-    // poussière et à la fumée.
+    /*
+     * Ce que l'engin soulève et projette.
+     *
+     * `rich` dimensionne les bassins : une machine modeste en garde moins.
+     * Mais c'est `quality.sprays` qui décide si les gerbes **existent**, et
+     * les deux ne se confondent plus. Elles étaient jusqu'ici accrochées aux
+     * ombres, et disparaissaient donc au premier déclassement automatique —
+     * signalé en jouant : « il n'y a plus les petits trucs de terre ».
+     */
     const rich = quality.shadows;
+    const projections = quality.sprays;
     const workDust = createDustTrail(rich ? 10 : 6);
     const workSmoke = createExhaustSmoke(rich ? 14 : 8);
     workGroup.add(workDust.object, workSmoke.object);
@@ -3656,7 +3663,7 @@ export function IsoFarmView({
         // Projections : chaque machine lance ce qu'elle travaille, depuis la
         // pièce qui le produit. Cadencées, jamais une gerbe par image.
         emitClock += dt;
-        if (working && rich && emitClock > 0.045) {
+        if (working && projections && emitClock > 0.045) {
           emitClock = 0;
           const rearX = -Math.cos(heading);
           const rearZ = Math.sin(heading);
