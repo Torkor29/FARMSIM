@@ -218,12 +218,19 @@ jobs:
       # « exit code 1 » au bout de cinq secondes ne dit pas *pourquoi* : port
       # fermé, hôte injoignable, clé refusée ? Ces trois pannes se corrigent
       # différemment. On les sépare avant d'essayer de se connecter.
+      #
+      # Le 28 août, le diagnostic s'est arrêté au TCP : le port répondait, la
+      # clé commençait par BEGIN, et `appleboy/ssh-action` a rendu
+      # « handshake failed: unable to authenticate, attempted methods
+      # [none publickey] ». C'est exactement le cas « clé refusée » que
+      # cette étape promettait de nommer, et qu'elle n'ouvrait jamais.
       - name: Diagnostiquer l'accès au serveur
         if: steps.config.outputs.pret == 'oui'
         env:
           HOTE: ${{ secrets.VPS_HOST }}
           PORT: ${{ secrets.VPS_PORT || 22 }}
           CLE: ${{ secrets.VPS_SSH_KEY }}
+          UTILISATEUR: ${{ secrets.VPS_USER }}
         run: |
           echo "── Forme de l'adresse ──"
           if printf '%s' "$HOTE" | grep -q ':'; then
@@ -234,20 +241,35 @@ jobs:
           fi
           echo "OK (pas d'IPv6)"
 
+          echo "── Utilisateur ──"
+          if [ -z "$UTILISATEUR" ]; then
+            echo "PROBLÈME : VPS_USER est vide."
+            echo "C'est le compte Unix du VPS, pas le jeton GitHub."
+            exit 1
+          fi
+          echo "OK (renseigné)"
+
           echo "── Forme de la clé ──"
           if ! printf '%s' "$CLE" | head -n 1 | grep -q 'BEGIN'; then
             echo "PROBLÈME : VPS_SSH_KEY ne commence pas par une ligne BEGIN."
             echo "Collez la clé PRIVÉE entière, de -----BEGIN à -----END inclus."
             exit 1
           fi
-          # Une clé sans saut de ligne final est refusée par OpenSSH avec un
-          # « no key found » très peu parlant. C'est le piège classique quand
-          # on copie depuis un terminal mobile.
-          if [ -n "$(tail -c 1 <<< "$CLE")" ]; then
-            echo "AVERTISSEMENT : la clé n'a pas de saut de ligne final."
-            echo "Réenregistrez le secret en appuyant sur Entrée après -----END."
+          # OpenSSH refuse une clé sans saut de ligne final (« no key found »).
+          # On l'écrit donc nous-mêmes, newline garantie, plutôt que de
+          # prévenir et de laisser l'étape suivante buter dessus.
+          cle="$RUNNER_TEMP/vps_deploy_key"
+          install -m 600 /dev/null "$cle"
+          printf '%s\n' "$CLE" > "$cle"
+          if ! ssh-keygen -y -P '' -f "$cle" >/tmp/vps_pub 2>/tmp/vps_keygen_err; then
+            echo "PROBLÈME : OpenSSH refuse de lire VPS_SSH_KEY."
+            echo "La ligne BEGIN est là, mais le corps est illisible (tronqué,"
+            echo "mauvais format, ou protégé par une phrase secrète)."
+            cat /tmp/vps_keygen_err
+            exit 1
           fi
-          echo "OK (forme plausible)"
+          echo "OK (OpenSSH la lit)"
+          echo "Empreinte : $(ssh-keygen -l -f "$cle" | awk '{print $1, $2}')"
 
           echo "── Le port SSH répond-il ? ──"
           if timeout 10 bash -c "cat < /dev/null > /dev/tcp/$HOTE/$PORT" 2>/dev/null; then
@@ -256,6 +278,28 @@ jobs:
             echo "PROBLÈME : impossible d'ouvrir $HOTE:$PORT depuis GitHub."
             echo "Soit l'adresse est fausse, soit un pare-feu bloque le port 22"
             echo "aux adresses extérieures. Vérifiez :  sudo ufw status"
+            exit 1
+          fi
+
+          echo "── Le serveur accepte-t-il cette clé ? ──"
+          if ssh -i "$cle" -p "$PORT" \
+              -o BatchMode=yes \
+              -o IdentitiesOnly=yes \
+              -o PreferredAuthentications=publickey \
+              -o StrictHostKeyChecking=accept-new \
+              -o ConnectTimeout=15 \
+              "$UTILISATEUR@$HOTE" true; then
+            echo "OK : session ouverte."
+          else
+            echo "PROBLÈME : le serveur a refusé la clé."
+            echo "Le port répond et la clé est lisible, mais elle n'ouvre pas"
+            echo "de session pour cet utilisateur."
+            echo "Sur le VPS, la clé publique ci-dessous doit figurer dans"
+            echo "~/.ssh/authorized_keys du compte VPS_USER :"
+            cat /tmp/vps_pub
+            echo "Dans GitHub : Settings › Secrets and variables › Actions"
+            echo "→ VPS_SSH_KEY (privée appariée) et VPS_USER."
+            echo "La production n'a pas été touchée."
             exit 1
           fi
 
@@ -290,7 +334,10 @@ jobs:
         with:
           host: ${{ secrets.VPS_HOST }}
           username: ${{ secrets.VPS_USER }}
-          key: ${{ secrets.VPS_SSH_KEY }}
+          # Même fichier que le diagnostic : newline garantie, déjà accepté
+          # par OpenSSH. Le secret brut a déjà fait refuser une session
+          # (« no supported methods remain ») alors que le port répondait.
+          key_path: ${{ runner.temp }}/vps_deploy_key
           port: ${{ secrets.VPS_PORT || 22 }}
           # L'amorçage du monde peut prendre plusieurs minutes au premier
           # démarrage suivant une migration : le script attend jusqu'à cinq
