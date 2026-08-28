@@ -2164,6 +2164,62 @@ describe("un chantier prend du temps", () => {
     );
   });
 
+  /**
+   * Une terre labourée puis laissée là peut redevenir verte.
+   *
+   * Signalé en jouant le 28 août : « je peux plus nettoyer le terrain pour
+   * qu'après labour ça redevienne vert ». Les règles de `soil.ts` savent le
+   * faire — `canRegrass` et `applyRegrass` existent, et disent en toutes
+   * lettres à quel signalement de joueur elles répondent. Ce test-ci prend le
+   * chemin complet, du chantier à la case relue, parce que c'est le seul qui
+   * dirait où ça casse.
+   */
+  it("remet en herbe une terre labourée et nue", async () => {
+    const { moi, parcelle, cells } = await fermeAuChamp("Enherbe");
+    const bloc = cells.slice(0, 6);
+    // L'état exact que laisse un labour : préparée, nue, sans chaumes. On le
+    // pose directement — y arriver en jouant demanderait une saison entière.
+    const paires = bloc.map((c) => `(${c.x}, ${c.y})`).join(", ");
+    prismaExec(
+      `UPDATE "ParcelCell" SET "fieldStage" = 'PREPARED', "hasStubble" = false, "crop" = NULL` +
+        ` WHERE "parcelId" = '${parcelle.id}' AND (x, y) IN (${paires});`,
+    );
+
+    const lance = await appel(`/parcels/${parcelle.id}/jobs`, {
+      methode: "POST",
+      corps: { userId: moi.id, work: "STUBBLE", cells: bloc },
+      jeton: moi.jeton,
+    });
+    assert.equal(lance.statut, 201, `chantier refusé : ${JSON.stringify(lance.corps)}`);
+    const job = (lance.corps as unknown as { job: { id: string; endsAt: string } }).job;
+    const reste = new Date(job.endsAt).getTime() - Date.now();
+    if (reste > 0) await new Promise((r) => setTimeout(r, reste + 40));
+
+    const fait = await appel(`/parcels/${parcelle.id}/stubble`, {
+      methode: "POST",
+      corps: { userId: moi.id, jobId: job.id, cells: bloc },
+      jeton: moi.jeton,
+    });
+    assert.equal(fait.statut, 200, `déchaumage refusé : ${JSON.stringify(fait.corps)}`);
+    assert.equal(
+      (fait.corps as unknown as { regrassed: number }).regrassed,
+      6,
+      `les cases n'ont pas été remises en herbe : ${JSON.stringify(fait.corps)}`,
+    );
+
+    // Le vert, côté joueur, c'est `fieldStage` revenu à EMPTY sans résidus :
+    // c'est ce couple, et lui seul, que la vue lit pour peindre en `PLAIN`.
+    const det = await appel(`/parcels/${parcelle.id}`);
+    const apres = (det.corps as unknown as {
+      parcel: { cells: { x: number; y: number; fieldStage: string; residuePasses: number }[] };
+    }).parcel.cells.filter((c) => bloc.some((b) => b.x === c.x && b.y === c.y));
+    assert.equal(apres.length, 6);
+    for (const c of apres) {
+      assert.equal(c.fieldStage, "EMPTY", `case ${c.x},${c.y} encore travaillée`);
+      assert.equal(c.residuePasses, 0, `case ${c.x},${c.y} garde des résidus, donc du marron`);
+    }
+  });
+
   it("rend l'attelage quand on abandonne", async () => {
     const { moi, parcelle, cells } = await fermeAuChamp("Renonce");
     const lance = await appel(`/parcels/${parcelle.id}/jobs`, {
