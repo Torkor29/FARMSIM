@@ -76,7 +76,14 @@ export const SOIL_OPTIONS: ToolOption[] = [
     label: "Désherber",
     hint: "Pulvérisateur : élimine les adventices sans toucher à la culture",
   },
-  { tool: "STUBBLE", label: "Déchaumer", hint: "Enfouit les résidus après la moisson" },
+  {
+    // Le même outil fait deux choses, et la seconde ne se devine pas : sans
+    // elle dans l'aide, une terre labourée puis laissée là paraît condamnée
+    // au marron. C'est ce qu'un joueur a cherché sous le nom de « nettoyage ».
+    tool: "STUBBLE",
+    label: "Déchaumer",
+    hint: "Enfouit les résidus — ou remet en herbe une terre nue",
+  },
   { tool: "PLOW", label: "Labourer", hint: "Remet le compteur de récoltes à zéro" },
   { tool: "FERTILIZE", label: "Engrais", hint: "Relève la fertilité de la case" },
   { tool: "BALE", label: "Presser", hint: "Met la paille en bottes" },

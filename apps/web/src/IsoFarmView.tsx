@@ -1450,6 +1450,31 @@ export function IsoFarmView({
     const workGroup = new THREE.Group();
     world.add(workGroup);
     let workRig: MachineRig | null = null;
+    /**
+     * L'engin qui regagne sa place, une fois le chantier fini.
+     *
+     * Il survit au chantier — voir `rentrerAuGarage` — donc il ne peut pas
+     * rester accroché à `workRig`, que la disparition du chantier efface.
+     */
+    let retour: {
+      rig: MachineRig;
+      chemin: { x: number; z: number; y: number }[];
+      debut: number;
+      distance: number;
+      /** La place visée — celle dont la cour ne doit pas encore dessiner l'engin. */
+      cible: number;
+    } | null = null;
+    /**
+     * Les engins de la cour, dans l'ordre des places.
+     *
+     * Le serveur rend l'attelage dès que le client réclame son travail : la
+     * cour se redessine donc avec l'engin **déjà garé**, alors qu'à l'écran il
+     * traverse encore le champ. Sans cette liste pour le masquer le temps du
+     * trajet, le joueur verrait la même machine à deux endroits.
+     */
+    let parkedSlotGroups: THREE.Object3D[] = [];
+    /** Durée du retour au garage, en secondes. */
+    const RETOUR_S = 2.8;
     /** Distance cumulée du chantier — elle entraîne roues, disques, rabatteur */
     let workTravelled = 0;
     let workHeading: number | null = null;
@@ -1457,10 +1482,17 @@ export function IsoFarmView({
     /** Cases à parcourir, ordonnées en va-et-vient rang par rang. */
     let workPath: { x: number; y: number }[] = [];
 
-    // Ce que l'engin soulève et projette. Un bassin par effet, un appel de
-    // rendu chacun ; sur une machine modeste (pas d'ombres) on s'en tient à la
-    // poussière et à la fumée.
+    /*
+     * Ce que l'engin soulève et projette.
+     *
+     * `rich` dimensionne les bassins : une machine modeste en garde moins.
+     * Mais c'est `quality.sprays` qui décide si les gerbes **existent**, et
+     * les deux ne se confondent plus. Elles étaient jusqu'ici accrochées aux
+     * ombres, et disparaissaient donc au premier déclassement automatique —
+     * signalé en jouant : « il n'y a plus les petits trucs de terre ».
+     */
     const rich = quality.shadows;
+    const projections = quality.sprays;
     const workDust = createDustTrail(rich ? 10 : 6);
     const workSmoke = createExhaustSmoke(rich ? 14 : 8);
     workGroup.add(workDust.object, workSmoke.object);
@@ -1603,6 +1635,10 @@ export function IsoFarmView({
     let yardDeck = 0;
     /** Où la haie doit s'ouvrir, en z monde. */
     let parkingGateZ = 0;
+    /** Les places du garage en coordonnées monde — c'est là que rentre l'engin. */
+    let parkingSlots: { x: number; z: number }[] = [];
+    /** Cap des engins garés : celui qui rentre se range dans le même sens. */
+    let parkingHeading = 0;
     /**
      * Débord de la cour à l'ouest de l'île, en unités monde.
      *
@@ -1845,8 +1881,14 @@ export function IsoFarmView({
         x: cx + s.x * cellSize,
         z: cz + s.z * cellSize,
       }));
+      parkingSlots = rig.slots.map((s) => ({
+        x: cx + s.x * cellSize,
+        z: cz + s.z * cellSize,
+      }));
+      parkingHeading = rig.heading;
 
       parkedTargets.length = 0;
+      parkedSlotGroups = [];
       parked.forEach((machine, i) => {
         const slot = rig.slots[i];
         if (!slot) return;
@@ -1874,6 +1916,10 @@ export function IsoFarmView({
         world.add(mRig.group);
         vehicleRigs.set(machine.id, mRig);
         parkedTargets.push(mRig.group);
+        parkedSlotGroups[i] = mRig.group;
+        // Sa place est encore occupée par l'engin qui rentre : on ne le
+        // dessine qu'une fois arrivé.
+        if (retour && retour.cible === i) mRig.group.visible = false;
       });
     }
 
@@ -1883,6 +1929,42 @@ export function IsoFarmView({
         workRig.dispose();
         workRig = null;
       }
+    }
+
+    /**
+     * Le chantier fini, l'engin rentre au garage.
+     *
+     * Il s'éteignait sur place — `visible = false` à la dernière case — et le
+     * joueur voyait sa moissonneuse s'évaporer au milieu du champ. Signalé en
+     * jouant : « quand l'engin a fini dans le champ, au lieu qu'il disparaisse
+     * faudrait qu'il aille à sa place au parking ».
+     *
+     * Le retour ne peut pas dépendre du chantier : celui-ci disparaît des
+     * données dès que le client réclame son travail, soit quelques centaines
+     * de millisecondes après la dernière case — bien avant que l'engin ait eu
+     * le temps de traverser la cour. L'attelage change donc de mains ici :
+     * `workRig` le lâche, `retour` le garde jusqu'à sa place, puis le rend.
+     *
+     * Le trajet est en équerre — descendre jusqu'à la hauteur du portail,
+     * longer, puis se ranger — parce qu'un engin ne coupe pas à travers la
+     * haie, et qu'une diagonale se lirait comme un vol plané.
+     */
+    function rentrerAuGarage(t: number): boolean {
+      if (!workRig || !parkingSlots.length) return false;
+      const occupees = dataRef.current.parked.length;
+      const cible = Math.min(occupees, parkingSlots.length - 1);
+      const place = parkingSlots[cible];
+      if (!place) return false;
+      const depart = workRig.group.position;
+      const chemin = [
+        { x: depart.x, z: depart.z, y: MACHINE_GROUND },
+        { x: depart.x, z: parkingGateZ, y: MACHINE_GROUND },
+        { x: place.x, z: parkingGateZ, y: yardDeck },
+        { x: place.x, z: place.z, y: yardDeck },
+      ];
+      retour = { rig: workRig, chemin, debut: t, distance: workTravelled, cible };
+      workRig = null;
+      return true;
     }
 
     function layout() {
@@ -3621,7 +3703,7 @@ export function IsoFarmView({
         const working = u < 1;
         workRig.group.position.set(px, MACHINE_GROUND, pz);
         workRig.group.rotation.y = heading;
-        workRig.group.visible = working;
+        workRig.group.visible = true;
         workRig.update({
           t,
           distance: workTravelled,
@@ -3656,7 +3738,7 @@ export function IsoFarmView({
         // Projections : chaque machine lance ce qu'elle travaille, depuis la
         // pièce qui le produit. Cadencées, jamais une gerbe par image.
         emitClock += dt;
-        if (working && rich && emitClock > 0.045) {
+        if (working && projections && emitClock > 0.045) {
           emitClock = 0;
           const rearX = -Math.cos(heading);
           const rearZ = Math.sin(heading);
@@ -3730,9 +3812,65 @@ export function IsoFarmView({
             }
           }
         }
+        /*
+         * Dernière case franchie : l'engin change de mains.
+         *
+         * Le passage se fait **à la fin** du bloc, une fois tous les usages de
+         * `workRig` derrière nous : `rentrerAuGarage` le met à `null`, et le
+         * lire plus haut planterait la boucle de rendu.
+         */
+        if (!working && !retour && !rentrerAuGarage(t)) {
+          // Pas de cour où se ranger — elle n'est pas encore bâtie. On en
+          // revient au comportement d'avant, faute de destination.
+          workRig.group.visible = false;
+        }
       } else {
         workDust.update(delta / 1000, 0, 0, 0, false);
         workSmoke.update(delta / 1000, 0, 0, 0, false);
+      }
+
+      if (retour) {
+        /*
+         * Trajet en équerre, à vitesse adoucie aux deux bouts. Les roues
+         * tournent de la distance vraiment parcourue, comme au champ : un
+         * engin qui glisse sans que ses roues suivent se remarque tout de
+         * suite.
+         */
+        // La cour a pu se redessiner depuis le départ : on remasque à chaque
+        // image plutôt que de retenir un objet qui n'existe peut-être plus.
+        const dejaGaree = parkedSlotGroups[retour.cible];
+        if (dejaGaree) dejaGaree.visible = false;
+        const brut = Math.min(1, (t - retour.debut) / RETOUR_S);
+        const u = brut * brut * (3 - 2 * brut);
+        const segments = retour.chemin.length - 1;
+        const f = u * segments;
+        const i0 = Math.min(segments - 1, Math.floor(f));
+        const local = f - i0;
+        const a = retour.chemin[i0];
+        const b = retour.chemin[i0 + 1];
+        const px = a.x + (b.x - a.x) * local;
+        const pz = a.z + (b.z - a.z) * local;
+        const py = a.y + (b.y - a.y) * local;
+        const g = retour.rig.group;
+        const dx = px - g.position.x;
+        const dz = pz - g.position.z;
+        const avance = Math.hypot(dx, dz);
+        retour.distance += avance;
+        // Arrivé à sa place, il se range dans le sens des autres ; en chemin,
+        // il regarde où il va. Le cap n'est pas repris quand il ne bouge plus,
+        // sinon l'engin pivoterait au hasard sur les derniers centimètres.
+        if (brut >= 1) g.rotation.y = parkingHeading;
+        else if (avance > 1e-5) g.rotation.y = Math.atan2(-dz, dx);
+        g.position.set(px, py, pz);
+        retour.rig.update({ t, distance: retour.distance, working: false, steer: 0 });
+        if (brut >= 1) {
+          // La donnée a rattrapé l'animation : l'engin garé est désormais
+          // dessiné par la cour, celui-ci n'a plus lieu d'être.
+          if (dejaGaree) dejaGaree.visible = true;
+          workGroup.remove(retour.rig.group);
+          retour.rig.dispose();
+          retour = null;
+        }
       }
 
       grainSpray.update(delta / 1000);
@@ -3813,6 +3951,13 @@ export function IsoFarmView({
       campagne = null;
       scene.remove(campagneGroup);
       clearWorkVehicle();
+      // L'engin qui rentrait au garage n'appartient plus à `workRig` : sans
+      // cette ligne, sa géométrie survivrait au démontage de la scène.
+      if (retour) {
+        workGroup.remove(retour.rig.group);
+        retour.rig.dispose();
+        retour = null;
+      }
       workDust.dispose();
       workSmoke.dispose();
       grainSpray.dispose();

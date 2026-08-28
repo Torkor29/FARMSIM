@@ -15,6 +15,21 @@ name: Déploiement
 on:
   push:
     branches: [main]
+  # Les propositions sont vérifiées **avant** d'être fusionnées.
+  #
+  # Le fichier dit depuis le début « on vérifie d'abord, on déploie ensuite »,
+  # et c'était vrai — mais seulement après la fusion. Une proposition n'était
+  # donc jamais compilée ni testée avant d'entrer dans `main` : on l'apprenait
+  # une fois la branche cassée, avec le déploiement sauté par-dessus le marché.
+  # C'est arrivé, et ça se lit dans l'historique : la fusion de #67 a mis
+  # `main` au rouge sur deux assertions de feuille de style, et il a fallu #68
+  # puis #69 pour la relever, pendant que la production restait sur la version
+  # d'avant.
+  #
+  # Le travail de vérification est le même ; il arrive simplement une étape
+  # plus tôt, là où il peut encore empêcher quelque chose.
+  pull_request:
+    branches: [main]
   # Permet aussi de relancer un déploiement à la main depuis l'onglet Actions,
   # sans avoir à pousser un commit vide.
   workflow_dispatch:
@@ -22,7 +37,12 @@ on:
 concurrency:
   # Deux poussées rapprochées ne doivent pas déployer en même temps : le
   # second `docker compose up` couperait le premier en pleine migration.
-  group: deploiement-vps
+  #
+  # Le groupe distingue la proposition de la branche principale : sans cela,
+  # une vérification de proposition et un déploiement de `main` se
+  # disputeraient le même verrou, et le déploiement attendrait derrière un
+  # travail qui ne le concerne pas.
+  group: deploiement-vps-${{ github.event_name == 'pull_request' && github.ref || 'main' }}
   cancel-in-progress: false
 
 jobs:
@@ -123,6 +143,9 @@ jobs:
   construire:
     name: Construire et publier l'image
     needs: verifier
+    # Une proposition se vérifie, elle ne se publie pas : on ne pousse pas une
+    # image au registre pour du code que personne n'a encore accepté.
+    if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -169,6 +192,11 @@ jobs:
   deployer:
     name: Déployer sur le VPS
     needs: [verifier, construire]
+    # Et une proposition ne se déploie surtout pas. Le garde est redondant avec
+    # celui de `construire`, dont ce travail dépend — et c'est voulu : la règle
+    # doit se lire là où elle s'applique, pas se déduire d'une chaîne de
+    # dépendances qu'un remaniement pourrait défaire sans qu'on y pense.
+    if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
     steps:
       # Sans les trois secrets, l'étape suivante échouerait sur une erreur de

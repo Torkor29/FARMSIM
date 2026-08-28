@@ -9,6 +9,12 @@
 
 import { useEffect, useState, type PointerEvent as ReactPointerEvent } from "react";
 import { readAudioPrefs, writeAudioPrefs, type AudioPrefs } from "./audio";
+import {
+  qualityChoice,
+  qualityDowngraded,
+  setQualityChoice,
+  type QualityChoice,
+} from "./render-quality";
 import { MenuClose } from "./ui/MenuClose";
 
 export type ProfilePlayer = {
@@ -31,7 +37,7 @@ export type AccountPatch = {
   currentAccessCode?: string;
 };
 
-type Page = "home" | "account" | "sound";
+type Page = "home" | "account" | "sound" | "graphics";
 
 type Notifications = {
   state: NotificationPermission | "unsupported";
@@ -56,6 +62,13 @@ type Props = {
   onLogout: () => void;
   onPatchAccount: (body: AccountPatch) => Promise<ProfilePlayer>;
   onFlash: (text: string, isError?: boolean | "warn") => void;
+  /**
+   * La qualité vient de changer : la scène doit se remonter pour en tenir
+   * compte. Les réglages du rendu — ombres, anticrénelage, densité de pixels —
+   * sont lus à la création du contexte WebGL et n'y reviennent plus ; sans ce
+   * signal, le joueur choisirait « Élevée » et ne verrait rien bouger.
+   */
+  onQualityChange?: () => void;
 };
 
 function initial(name: string): string {
@@ -75,6 +88,7 @@ export function ProfilePanel({
   onLogout,
   onPatchAccount,
   onFlash,
+  onQualityChange,
 }: Props) {
   const [page, setPage] = useState<Page>("home");
 
@@ -100,8 +114,15 @@ export function ProfilePanel({
           onPatchAccount={onPatchAccount}
           onFlash={onFlash}
         />
-      ) : (
+      ) : page === "sound" ? (
         <SoundPage embedded={embedded} onBack={() => setPage("home")} onClose={onClose} />
+      ) : (
+        <GraphicsPage
+          embedded={embedded}
+          onBack={() => setPage("home")}
+          onClose={onClose}
+          onChange={onQualityChange}
+        />
       )}
     </aside>
   );
@@ -174,6 +195,13 @@ function Home({
             <span>
               <strong>Son</strong>
               <em>Effets et volume</em>
+            </span>
+            <i aria-hidden="true">›</i>
+          </button>
+          <button type="button" className="profile-row" onClick={() => onOpen("graphics")}>
+            <span>
+              <strong>Qualité graphique</strong>
+              <em>Ombres, fluidité, effets de chantier</em>
             </span>
             <i aria-hidden="true">›</i>
           </button>
@@ -361,6 +389,90 @@ function AccountPage({
           {busy ? "Enregistrement…" : "Enregistrer"}
         </button>
       </form>
+    </>
+  );
+}
+
+const QUALITES: { valeur: QualityChoice; nom: string; quoi: string }[] = [
+  {
+    valeur: "auto",
+    nom: "Automatique",
+    quoi: "Le jeu allège le rendu s’il voit des images trop lentes",
+  },
+  {
+    valeur: "full",
+    nom: "Élevée",
+    quoi: "Ombres, anticrénelage, fluidité sans bride",
+  },
+  {
+    valeur: "reduced",
+    nom: "Sobre",
+    quoi: "Pour un appareil modeste : 30 images/s, sans ombres",
+  },
+];
+
+/**
+ * Le rendu, décidé par le joueur.
+ *
+ * L'observation automatique était seule à décider, et sans retour possible :
+ * une minute de lenteur — un serveur qui rame, un onglet en arrière-plan — et
+ * la partie se terminait en mode sobre, sans que rien ne le dise. Signalé en
+ * jouant comme une régression du jeu : « il n'y a plus d'animation douce
+ * quand il tourne ni les petits trucs de terre ».
+ *
+ * Le choix est retenu d'une partie à l'autre, et il l'emporte sur
+ * l'observation — y compris sur la détection des rasteriseurs logiciels :
+ * c'est sa machine, il a le droit de l'essayer.
+ */
+function GraphicsPage({
+  embedded,
+  onBack,
+  onClose,
+  onChange,
+}: {
+  embedded: boolean;
+  onBack: () => void;
+  onClose: () => void;
+  onChange?: () => void;
+}) {
+  const [choix, setChoix] = useState<QualityChoice>(() => qualityChoice());
+  const [allege] = useState(() => qualityDowngraded());
+
+  function choisir(valeur: QualityChoice) {
+    setQualityChoice(valeur);
+    setChoix(valeur);
+    onChange?.();
+  }
+
+  return (
+    <>
+      <SubHead title="Qualité graphique" embedded={embedded} onBack={onBack} onClose={onClose} />
+      <p className="profile-hint">
+        Les effets de chantier — la terre projetée derrière la charrue, le grain qui saute au
+        battage — restent affichés dans tous les cas. Ce réglage ne touche qu’à ce qui coûte
+        vraiment : les ombres, le lissage des bords et la fluidité.
+      </p>
+      <div className="profile-choices" role="radiogroup" aria-label="Qualité graphique">
+        {QUALITES.map((q) => (
+          <button
+            key={q.valeur}
+            type="button"
+            role="radio"
+            aria-checked={choix === q.valeur}
+            className={`profile-choice${choix === q.valeur ? " on" : ""}`}
+            onClick={() => choisir(q.valeur)}
+          >
+            <strong>{q.nom}</strong>
+            <em>{q.quoi}</em>
+          </button>
+        ))}
+      </div>
+      {choix === "auto" && allege && (
+        <p className="profile-hint warn">
+          Le rendu a été allégé tout seul pendant cette partie. Si l’image te paraît moins belle
+          qu’avant, c’est de là que ça vient : choisis « Élevée » pour le forcer.
+        </p>
+      )}
     </>
   );
 }

@@ -21,6 +21,18 @@
 export type RenderQuality = {
   /** Ombres portées : une passe de rendu complète en plus, par image. */
   shadows: boolean;
+  /**
+   * Projections de terre, de grain, d'engrais derrière l'engin.
+   *
+   * Elles suivaient les ombres, sur le même interrupteur. Le rapport de coût
+   * ne le justifie pas : une passe d'ombres redessine toute la scène à chaque
+   * image, ces gerbes-ci sont quelques dizaines de quadrilatères instanciés
+   * lancés une fois toutes les quarante-cinq millisecondes. Les couper avec
+   * les ombres revenait à jeter ce qui fait vivre un chantier pour économiser
+   * ce qui ne coûtait rien — et c'est ce qu'a vu le joueur : « il n'y a plus
+   * les petits trucs de terre en animation qui étaient sympas ».
+   */
+  sprays: boolean;
   /** Densité de pixels. Le coût de peinture varie avec son carré. */
   pixelRatio: number;
   antialias: boolean;
@@ -28,9 +40,42 @@ export type RenderQuality = {
   maxFps: number;
 };
 
+/**
+ * Ce que le joueur a demandé : « débrouille-toi », « tout », ou « sobre ».
+ *
+ * Sans ce choix, l'observation automatique avait le dernier mot et personne
+ * ne pouvait la contredire : une mauvaise passe — un serveur qui rame, un
+ * onglet en arrière-plan — et le jeu restait dégradé jusqu'au rechargement,
+ * sans rien dire. Le réglage est retenu d'une partie à l'autre ; il n'a
+ * d'intérêt que si l'on n'a pas à le reposer chaque fois.
+ */
+export type QualityChoice = "auto" | "full" | "reduced";
+
+const CLE_CHOIX = "farmsim.qualite";
+
+export function qualityChoice(): QualityChoice {
+  try {
+    const v = localStorage.getItem(CLE_CHOIX);
+    return v === "full" || v === "reduced" ? v : "auto";
+  } catch {
+    // Navigation privée, stockage refusé : on retombe sur l'automatique.
+    return "auto";
+  }
+}
+
+export function setQualityChoice(choix: QualityChoice): void {
+  try {
+    if (choix === "auto") localStorage.removeItem(CLE_CHOIX);
+    else localStorage.setItem(CLE_CHOIX, choix);
+  } catch {
+    // Rien à faire : le choix vaudra pour cette session seulement.
+  }
+}
+
 function full(): RenderQuality {
   return {
     shadows: true,
+    sprays: true,
     pixelRatio: Math.min(typeof window === "undefined" ? 1 : window.devicePixelRatio, 2),
     antialias: true,
     maxFps: 0,
@@ -38,7 +83,10 @@ function full(): RenderQuality {
 }
 
 function reduced(): RenderQuality {
-  return { shadows: false, pixelRatio: 1, antialias: false, maxFps: 30 };
+  // `sprays` reste vrai : c'est le point de la séparation ci-dessus. Le mode
+  // sobre rend une machine lente jouable en coupant ce qui coûte — la passe
+  // d'ombres, l'anticrénelage, la densité de pixels — pas ce qui fait plaisir.
+  return { shadows: false, sprays: true, pixelRatio: 1, antialias: false, maxFps: 30 };
 }
 
 /** Rasteriseurs logiciels courants : SwiftShader, Mesa, le repli de Direct3D. */
@@ -50,8 +98,16 @@ const SOFTWARE = /swiftshader|llvmpipe|softpipe|software|basic render|microsoft 
  */
 let known = false;
 
-/** Réglage de départ, sobre d'emblée si une vue a déjà tranché. */
+/** Le rendu a-t-il été dégradé tout seul ? Le réglage l'affiche au joueur. */
+export function qualityDowngraded(): boolean {
+  return known;
+}
+
+/** Réglage de départ : le choix du joueur d'abord, l'observation ensuite. */
 export function initialQuality(): RenderQuality {
+  const choix = qualityChoice();
+  if (choix === "full") return full();
+  if (choix === "reduced") return reduced();
   return known ? reduced() : full();
 }
 
@@ -61,6 +117,11 @@ export function initialQuality(): RenderQuality {
  * touche pas au contexte : seule une lecture de paramètre a lieu.
  */
 export function qualityForContext(gl: WebGLRenderingContext | WebGL2RenderingContext): RenderQuality | null {
+  const choix = qualityChoice();
+  // Un joueur qui a demandé « tout » ne se fait pas contredire par une
+  // chaîne de caractères de pilote : c'est sa machine, il l'essaie.
+  if (choix === "full") return null;
+  if (choix === "reduced") return reduced();
   if (known) return reduced();
   try {
     const ext = gl.getExtension("WEBGL_debug_renderer_info");
@@ -92,6 +153,11 @@ export function makeFrameGovernor(onDowngrade: (q: RenderQuality) => void) {
 
   return function sample(deltaMs: number): void {
     if (done) return;
+    // Le joueur a tranché : on ne repasse pas derrière lui.
+    if (qualityChoice() !== "auto") {
+      done = true;
+      return;
+    }
     if (known) {
       done = true;
       return;

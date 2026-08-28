@@ -1907,25 +1907,48 @@ describe("un chantier prend du temps", () => {
    */
   it("laisse de côté les cases déjà prises, et fait le reste", async () => {
     const { moi, parcelle, cells } = await fermeAuChamp("Doublon");
+    /*
+     * Le partage partiel se teste sur un chantier **qui tourne encore** :
+     * c'est le seul état où des cases sont vraiment retenues.
+     *
+     * Cette version-ci attendait le terme du premier chantier sans le
+     * réclamer, et vérifiait que ses cases restaient prises. C'était le
+     * comportement signalé en jouant le 28 août — « toutes ces cases sont
+     * déjà sur un chantier en cours » devant un champ où plus rien ne
+     * tournait. Un chantier fini du joueur lui-même ne retient plus rien.
+     *
+     * D'où le second attelage, acheté **avant** de lancer quoi que ce soit :
+     * sans lui le chantier B n'aurait pas de quoi partir, et l'acheter après
+     * prendrait plus longtemps que ne dure le chantier A.
+     */
+    // Le garage ne tient que cinq engins : on revend celui dont ce test n'a
+    // que faire, sinon le second semoir n'a pas de place où rentrer.
+    const parcAvant = (await appel("/auth/me", { jeton: moi.jeton })).corps as unknown as {
+      player: { farm: { machines: { id: string; type: string }[] } };
+    };
+    const inutile = parcAvant.player.farm.machines.find(
+      (m) => m.type !== "TRACTOR" && m.type !== "SEEDER",
+    );
+    assert.ok(inutile, "il faut un engin à revendre pour libérer une place");
+    await appel(`/machines/${inutile.id}/sell`, {
+      methode: "POST",
+      corps: { userId: moi.id },
+      jeton: moi.jeton,
+    });
+    for (const type of ["TRACTOR", "SEEDER"]) {
+      const achat = await appel("/machines/buy", {
+        methode: "POST",
+        corps: { userId: moi.id, type },
+        jeton: moi.jeton,
+      });
+      assert.equal(achat.statut, 201, `achat ${type} refusé : ${JSON.stringify(achat.corps)}`);
+    }
     const a = await appel(`/parcels/${parcelle.id}/jobs`, {
       methode: "POST",
       corps: { userId: moi.id, work: "PLANT", crop: cropDeSaison(), cells: cells.slice(0, 6) },
       jeton: moi.jeton,
     });
     assert.equal(a.statut, 201);
-    /*
-     * On laisse le premier chantier arriver à son terme sans le réclamer.
-     *
-     * C'est l'état qui compte ici : le semoir est rentré — il n'y en a qu'un,
-     * et le second chantier en a besoin — mais les cases du premier restent
-     * réservées tant que personne n'est venu chercher son travail. C'est aussi
-     * l'état exact du joueur qui relance un champ après un refus.
-     */
-    const finA = new Date(
-      (a.corps as unknown as { job: { endsAt: string } }).job.endsAt,
-    ).getTime();
-    const resteA = finA - Date.now();
-    if (resteA > 0) await new Promise((r) => setTimeout(r, resteA + 30));
     const b = await appel(`/parcels/${parcelle.id}/jobs`, {
       methode: "POST",
       corps: { userId: moi.id, work: "PLANT", crop: cropDeSaison(), cells: cells.slice(4, 10) },
@@ -2015,6 +2038,186 @@ describe("un chantier prend du temps", () => {
       return new Date(m.busyUntil).getTime() < Date.now() - 60_000;
     });
     assert.equal(encoreDehors.length, 0, "un attelage est resté au champ pour toujours");
+  });
+
+  /**
+   * Son propre chantier fini ne fait pas attendre le joueur.
+   *
+   * Relevé en production le 28 août : deux labours terminés depuis cinq et six
+   * minutes, et « Toutes ces cases sont déjà sur un chantier en cours » devant
+   * un champ où rien ne tournait. Le délai de grâce protège une reprise — un
+   * téléphone qui sort de veille vient réclamer son travail — mais relancer
+   * sur ses propres cases dit précisément qu'on ne viendra pas le réclamer.
+   *
+   * Le test se place **dans** la grâce, à une minute : c'est la fenêtre où le
+   * refus tombait, et où il ne doit plus tomber.
+   */
+  it("laisse relancer sur ses propres cases sans attendre la grâce", async () => {
+    const { moi, parcelle, cells } = await fermeAuChamp("Grace");
+    const bloc = cells.slice(0, 6);
+    const lance = await appel(`/parcels/${parcelle.id}/jobs`, {
+      methode: "POST",
+      corps: { userId: moi.id, work: "PLANT", crop: cropDeSaison(), cells: bloc },
+      jeton: moi.jeton,
+    });
+    assert.equal(lance.statut, 201);
+    const jobId = (lance.corps as unknown as { job: { id: string } }).job.id;
+
+    // Fini il y a une minute, jamais réclamé : encore couvert par la grâce.
+    const finiRecemment = new Date(Date.now() - 60_000);
+    prismaExec(
+      `UPDATE "FieldJob" SET "endsAt" = '${finiRecemment.toISOString()}' WHERE id = '${jobId}';`,
+    );
+
+    const repris = await appel(`/parcels/${parcelle.id}/jobs`, {
+      methode: "POST",
+      corps: { userId: moi.id, work: "PLANT", crop: cropDeSaison(), cells: bloc },
+      jeton: moi.jeton,
+    });
+    assert.equal(
+      repris.statut,
+      201,
+      `le joueur attend cinq minutes pour rien : ${JSON.stringify(repris.corps)}`,
+    );
+    assert.equal(
+      (repris.corps as unknown as { job: { skipped: number } }).job.skipped,
+      0,
+      "son propre chantier terminé retenait encore des cases",
+    );
+  });
+
+  /**
+   * Un chantier encore en cours, lui, retient — et le dit honnêtement.
+   *
+   * L'assouplissement ci-dessus ne doit pas ouvrir la porte à deux chantiers
+   * sur les mêmes cases. Le refus reste, mais il annonce désormais quand la
+   * sélection se libère : sans cette date, le joueur relançait en boucle.
+   */
+  it("refuse les cases d'un chantier qui tourne, et dit jusqu'à quand", async () => {
+    const { moi, parcelle, cells } = await fermeAuChamp("Occupe");
+    const bloc = cells.slice(0, 6);
+    const lance = await appel(`/parcels/${parcelle.id}/jobs`, {
+      methode: "POST",
+      corps: { userId: moi.id, work: "PLANT", crop: cropDeSaison(), cells: bloc },
+      jeton: moi.jeton,
+    });
+    assert.equal(lance.statut, 201);
+
+    const repris = await appel(`/parcels/${parcelle.id}/jobs`, {
+      methode: "POST",
+      corps: { userId: moi.id, work: "PLANT", crop: cropDeSaison(), cells: bloc },
+      jeton: moi.jeton,
+    });
+    assert.equal(repris.statut, 409);
+    const corps = repris.corps as unknown as { error: string; freeAt?: string };
+    assert.ok(corps.freeAt, `le refus n'annonce pas de fin : ${JSON.stringify(corps)}`);
+    assert.ok(
+      new Date(corps.freeAt as string).getTime() > Date.now(),
+      "la date de libération est déjà passée",
+    );
+    assert.ok(
+      /libre dans/.test(corps.error),
+      `le refus n'annonce pas l'attente : ${corps.error}`,
+    );
+  });
+
+  /**
+   * Le fantôme d'un champ qu'on ne revisite jamais finit par tomber.
+   *
+   * `libererChantiersAbandonnes` ne nettoie que la parcelle visitée. En
+   * production, un chantier de semis était encore `RUNNING` **huit jours**
+   * après sa fin : personne n'était retourné sur ce champ. Le tour de
+   * simulation balaie maintenant, quelle que soit la parcelle.
+   */
+  it("balaie au tour de simulation les fantômes des champs délaissés", async () => {
+    const { moi, parcelle, cells } = await fermeAuChamp("Balai");
+    const lance = await appel(`/parcels/${parcelle.id}/jobs`, {
+      methode: "POST",
+      corps: { userId: moi.id, work: "PLANT", crop: cropDeSaison(), cells: cells.slice(0, 6) },
+      jeton: moi.jeton,
+    });
+    assert.equal(lance.statut, 201);
+    const jobId = (lance.corps as unknown as { job: { id: string } }).job.id;
+    const vieux = new Date(Date.now() - 8 * 24 * 60 * 60_000);
+    prismaExec(
+      `UPDATE "FieldJob" SET "endsAt" = '${vieux.toISOString()}' WHERE id = '${jobId}';`,
+    );
+
+    // Aucune visite sur la parcelle : c'est le tour du monde qui doit le voir.
+    const tick = await appel("/sim/tick", { methode: "POST", jeton: moi.jeton });
+    assert.equal(tick.statut, 200, `le tour n'a pas tourné : ${JSON.stringify(tick.corps)}`);
+
+    /*
+     * On juge le balayage sur l'attelage, pas sur la ligne en base : c'est ce
+     * que le joueur constate. Le chantier avait mis la machine de garde
+     * jusqu'à la fin prévue ; le balayage la rend, et `busyUntil` retombe à
+     * `null`. Sans lui, elle resterait retenue par un chantier mort.
+     */
+    const parc = (await appel("/auth/me", { jeton: moi.jeton })).corps as unknown as {
+      player: { farm: { machines: { id: string; busyUntil: string | null }[] } };
+    };
+    const retenues = parc.player.farm.machines.filter((m) => m.busyUntil);
+    assert.equal(
+      retenues.length,
+      0,
+      `le fantôme retient encore un attelage : ${JSON.stringify(retenues)}`,
+    );
+  });
+
+  /**
+   * Une terre labourée puis laissée là peut redevenir verte.
+   *
+   * Signalé en jouant le 28 août : « je peux plus nettoyer le terrain pour
+   * qu'après labour ça redevienne vert ». Les règles de `soil.ts` savent le
+   * faire — `canRegrass` et `applyRegrass` existent, et disent en toutes
+   * lettres à quel signalement de joueur elles répondent. Ce test-ci prend le
+   * chemin complet, du chantier à la case relue, parce que c'est le seul qui
+   * dirait où ça casse.
+   */
+  it("remet en herbe une terre labourée et nue", async () => {
+    const { moi, parcelle, cells } = await fermeAuChamp("Enherbe");
+    const bloc = cells.slice(0, 6);
+    // L'état exact que laisse un labour : préparée, nue, sans chaumes. On le
+    // pose directement — y arriver en jouant demanderait une saison entière.
+    const paires = bloc.map((c) => `(${c.x}, ${c.y})`).join(", ");
+    prismaExec(
+      `UPDATE "ParcelCell" SET "fieldStage" = 'PREPARED', "hasStubble" = false, "crop" = NULL` +
+        ` WHERE "parcelId" = '${parcelle.id}' AND (x, y) IN (${paires});`,
+    );
+
+    const lance = await appel(`/parcels/${parcelle.id}/jobs`, {
+      methode: "POST",
+      corps: { userId: moi.id, work: "STUBBLE", cells: bloc },
+      jeton: moi.jeton,
+    });
+    assert.equal(lance.statut, 201, `chantier refusé : ${JSON.stringify(lance.corps)}`);
+    const job = (lance.corps as unknown as { job: { id: string; endsAt: string } }).job;
+    const reste = new Date(job.endsAt).getTime() - Date.now();
+    if (reste > 0) await new Promise((r) => setTimeout(r, reste + 40));
+
+    const fait = await appel(`/parcels/${parcelle.id}/stubble`, {
+      methode: "POST",
+      corps: { userId: moi.id, jobId: job.id, cells: bloc },
+      jeton: moi.jeton,
+    });
+    assert.equal(fait.statut, 200, `déchaumage refusé : ${JSON.stringify(fait.corps)}`);
+    assert.equal(
+      (fait.corps as unknown as { regrassed: number }).regrassed,
+      6,
+      `les cases n'ont pas été remises en herbe : ${JSON.stringify(fait.corps)}`,
+    );
+
+    // Le vert, côté joueur, c'est `fieldStage` revenu à EMPTY sans résidus :
+    // c'est ce couple, et lui seul, que la vue lit pour peindre en `PLAIN`.
+    const det = await appel(`/parcels/${parcelle.id}`);
+    const apres = (det.corps as unknown as {
+      parcel: { cells: { x: number; y: number; fieldStage: string; residuePasses: number }[] };
+    }).parcel.cells.filter((c) => bloc.some((b) => b.x === c.x && b.y === c.y));
+    assert.equal(apres.length, 6);
+    for (const c of apres) {
+      assert.equal(c.fieldStage, "EMPTY", `case ${c.x},${c.y} encore travaillée`);
+      assert.equal(c.residuePasses, 0, `case ${c.x},${c.y} garde des résidus, donc du marron`);
+    }
   });
 
   it("rend l'attelage quand on abandonne", async () => {

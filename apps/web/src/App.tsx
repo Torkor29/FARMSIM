@@ -1644,6 +1644,16 @@ export function App() {
     };
   }, [showSkills, player?.id, player?.xp]);
 
+  /**
+   * Remonte la scène quand le joueur change la qualité graphique.
+   *
+   * Ombres, anticrénelage et densité de pixels se fixent à la création du
+   * contexte WebGL : un rendu déjà monté ne les relit jamais. Sans ce
+   * compteur dans la clé de la vue, choisir « Élevée » ne changerait rien à
+   * l'écran, et le réglage passerait pour cassé.
+   */
+  const [qualiteVue, setQualiteVue] = useState(0);
+
   const chantierEnCours = chantiers.length > 0;
   useEffect(() => {
     if (!chantierEnCours) return;
@@ -3453,8 +3463,10 @@ export function App() {
       } else if (tool === "STUBBLE") {
         const r = await api<{
           stubbled: number;
+          /** Cases nues rendues à l'herbe — le même outil fait les deux. */
+          regrassed: number;
           cost: number;
-          nextBonus: number;
+          nextBonus: number | null;
           machine?: {
             condition: number;
             type: string;
@@ -3466,10 +3478,26 @@ export function App() {
           method: "POST",
           body: JSON.stringify({ userId: player.id, jobId, cells: workCells }),
         });
-        setMsg(
-          `Sol déchaumé ×${r.stubbled} · −${r.cost} € · +${Math.round(r.nextBonus * 100)} % sur la prochaine récolte` +
-            wearNote(r.machine),
-        );
+        /*
+         * Le déchaumeur fait deux choses, et le message n'en disait qu'une.
+         *
+         * Sur une terre labourée puis laissée là, il n'y a pas de chaumes à
+         * enfouir : le serveur remet la case en herbe et renvoie `regrassed`.
+         * Le client ne lisait que `stubbled`, d'où « Sol déchaumé ×0 · −360 €
+         * · +0 % sur la prochaine récolte » — le joueur payait, son champ
+         * reverdissait, et le jeu lui annonçait que rien n'avait eu lieu.
+         * Signalé comme une fonctionnalité disparue : « je peux plus nettoyer
+         * le terrain pour qu'après labour ça redevienne vert ».
+         */
+        const faits = [
+          r.stubbled ? `Sol déchaumé ×${r.stubbled}` : "",
+          r.regrassed ? `Remis en herbe ×${r.regrassed}` : "",
+        ].filter(Boolean);
+        const bonus =
+          r.stubbled && r.nextBonus
+            ? ` · +${Math.round(r.nextBonus * 100)} % sur la prochaine récolte`
+            : "";
+        setMsg(`${faits.join(" · ")} · −${r.cost} €${bonus}` + wearNote(r.machine));
         labor = r.labor;
       }
       setSelectedCells([]);
@@ -4900,6 +4928,7 @@ export function App() {
         {parcel ? (
           <Suspense fallback={<SceneLoading label="Chargement de la ferme…" />}>
             <IsoFarmView
+              key={`qualite-${qualiteVue}`}
               parcelId={activeParcelId ?? ""}
               controle={vueControle}
               onEgare={setVueEgaree}
@@ -5299,6 +5328,7 @@ export function App() {
               return r.player;
             }}
             onFlash={flashToast}
+            onQualityChange={() => setQualiteVue((n) => n + 1)}
           />
         )}
       </PanelHost>

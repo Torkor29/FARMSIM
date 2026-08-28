@@ -1203,20 +1203,44 @@ async function reglerOccupation(
   }
 }
 
-async function libererChantiersAbandonnes(parcelId: string): Promise<void> {
-  const morts = await prisma.fieldJob.findMany({
-    where: {
-      parcelId,
-      status: "RUNNING",
-      endsAt: { lt: new Date(Date.now() - JOB_ABANDON_GRACE_MS) },
-    },
-  });
+/** Ce qu'il faut savoir d'un chantier pour le clore : rien de plus. */
+const CHANTIER_A_CLORE = {
+  id: true,
+  parcelId: true,
+  fuelL: true,
+  machineId: true,
+  tractorId: true,
+} as const;
+
+type ChantierAClore = {
+  id: string;
+  parcelId: string;
+  fuelL: number;
+  machineId: string | null;
+  tractorId: string | null;
+};
+
+/**
+ * Annule un lot de chantiers : attelages rendus, gazole recrédité.
+ *
+ * Le lot peut couvrir plusieurs parcelles — c'est le cas du balayage — donc
+ * plusieurs fermes. Le gazole se regroupe par ferme avant d'être rendu :
+ * incrémenter la même ferme deux fois dans la même transaction se lit mal et
+ * coûte un aller-retour de plus par chantier.
+ */
+async function annulerChantiers(morts: ChantierAClore[]): Promise<void> {
   if (!morts.length) return;
-  const parcelle = await prisma.parcel.findUnique({
-    where: { id: parcelId },
-    select: { farmId: true },
+  const parcelles = await prisma.parcel.findMany({
+    where: { id: { in: [...new Set(morts.map((j) => j.parcelId))] } },
+    select: { id: true, farmId: true },
   });
-  const gazole = morts.reduce((somme, j) => somme + (j.fuelL ?? 0), 0);
+  const fermeDe = new Map(parcelles.map((p) => [p.id, p.farmId]));
+  const gazoleParFerme = new Map<string, number>();
+  for (const j of morts) {
+    const ferme = fermeDe.get(j.parcelId);
+    if (!ferme || !j.fuelL) continue;
+    gazoleParFerme.set(ferme, (gazoleParFerme.get(ferme) ?? 0) + j.fuelL);
+  }
   const attelages = morts
     .flatMap((j) => [j.machineId, j.tractorId])
     .filter(Boolean) as string[];
@@ -1226,13 +1250,66 @@ async function libererChantiersAbandonnes(parcelId: string): Promise<void> {
       data: { status: "CANCELLED" },
     });
     await reglerOccupation(tx, attelages);
-    if (parcelle?.farmId && gazole > 0) {
-      await tx.farm.update({
-        where: { id: parcelle.farmId },
-        data: { fuelL: { increment: gazole } },
-      });
+    for (const [ferme, litres] of gazoleParFerme) {
+      await tx.farm.update({ where: { id: ferme }, data: { fuelL: { increment: litres } } });
     }
   });
+}
+
+/**
+ * @param sansDelaiPour Le joueur qui relance un chantier ici et maintenant.
+ *
+ * Le délai de grâce protège une reprise ; il n'a plus lieu d'être pour
+ * celui-là. Relancer un travail sur ses propres cases **est** la preuve qu'on
+ * ne viendra pas réclamer le chantier précédent : le lui opposer, c'est lui
+ * refuser son champ pendant cinq minutes en lui disant qu'un chantier tourne,
+ * alors qu'il est fini. C'est précisément ce qui a été signalé en jouant.
+ */
+async function libererChantiersAbandonnes(
+  parcelId: string,
+  sansDelaiPour?: string,
+): Promise<void> {
+  const maintenant = Date.now();
+  const morts = await prisma.fieldJob.findMany({
+    where: {
+      parcelId,
+      status: "RUNNING",
+      OR: [
+        { endsAt: { lt: new Date(maintenant - JOB_ABANDON_GRACE_MS) } },
+        ...(sansDelaiPour
+          ? [{ userId: sansDelaiPour, endsAt: { lte: new Date(maintenant) } }]
+          : []),
+      ],
+    },
+    select: CHANTIER_A_CLORE,
+  });
+  await annulerChantiers(morts);
+}
+
+/**
+ * Le ménage que personne ne vient faire.
+ *
+ * `libererChantiersAbandonnes` ne nettoie que la parcelle qu'on visite : un
+ * fantôme sur un champ où l'on ne remet jamais les pieds survit indéfiniment.
+ * Relevé en production le 28 août : un chantier de semis encore `RUNNING`
+ * **huit jours** après sa fin, tenant ses cases et son attelage.
+ *
+ * Le balayage est borné par `take` et ne lit que cinq colonnes : contrairement
+ * aux deux étapes du tour qui ont provoqué la panne du 28, il ne charge aucune
+ * case et son coût ne suit pas la taille du monde.
+ */
+const BALAYAGE_CHANTIERS_MAX = 200;
+
+async function balayerChantiersFantomes(): Promise<void> {
+  const morts = await prisma.fieldJob.findMany({
+    where: {
+      status: "RUNNING",
+      endsAt: { lt: new Date(Date.now() - JOB_ABANDON_GRACE_MS) },
+    },
+    select: CHANTIER_A_CLORE,
+    take: BALAYAGE_CHANTIERS_MAX,
+  });
+  await annulerChantiers(morts);
 }
 
 /**
@@ -1255,6 +1332,39 @@ async function occupiedJobCells(parcelId: string): Promise<Set<string>> {
   const pris = new Set<string>();
   for (const j of jobs) for (const c of parseCellJson(j.cellsJson)) pris.add(`${c.x},${c.y}`);
   return pris;
+}
+
+/**
+ * Quand les cases demandées seront-elles libres, au plus tard ?
+ *
+ * Au plus tard, parce qu'un chantier réclamé rend ses cases sur-le-champ : la
+ * date rendue est celle du fantôme, fin du travail plus le délai de grâce.
+ * Mieux vaut annoncer trois minutes et en tenir une que l'inverse.
+ */
+async function finDesChantiersSur(parcelId: string, cells: CellXY[]): Promise<Date | null> {
+  const jobs = await prisma.fieldJob.findMany({
+    where: {
+      parcelId,
+      status: "RUNNING",
+      endsAt: { gte: new Date(Date.now() - JOB_ABANDON_GRACE_MS) },
+    },
+    select: { cellsJson: true, endsAt: true },
+  });
+  const vises = new Set(cells.map((c) => `${c.x},${c.y}`));
+  let fin: Date | null = null;
+  for (const j of jobs) {
+    if (!parseCellJson(j.cellsJson).some((c) => vises.has(`${c.x},${c.y}`))) continue;
+    const libre = j.endsAt.getTime() + JOB_ABANDON_GRACE_MS;
+    if (!fin || libre > fin.getTime()) fin = new Date(libre);
+  }
+  return fin;
+}
+
+/** Une attente lisible : « 40 s », « 3 min ». `null` si c'est déjà passé. */
+function attenteEnClair(quand: Date): string | null {
+  const secondes = Math.ceil((quand.getTime() - Date.now()) / 1000);
+  if (secondes <= 0) return null;
+  return secondes < 90 ? `${secondes} s` : `${Math.ceil(secondes / 60)} min`;
 }
 
 /**
@@ -3676,6 +3786,7 @@ async function runWorldTick() {
   await expireListings();
   await settleOverdueDeliveries();
   await expireLaborOrders();
+  await balayerChantiersFantomes();
   await tickNpcFarms();
   await publishFromConsignes();
   await ressemerVoisinage();
@@ -5765,17 +5876,30 @@ app.post("/parcels/:id/jobs", async (req, res) => {
    * cases concernées » — c'est la seule issue qui ne demande rien à personne.
    * On garde ce qui peut partir, on dit combien on a laissé.
    */
-  await libererChantiersAbandonnes(parcel.id);
+  await libererChantiersAbandonnes(parcel.id, body.data.userId);
   const pris = await occupiedJobCells(parcel.id);
   const cells = demandees.filter((c) => !pris.has(`${c.x},${c.y}`));
   const ignorees = demandees.length - cells.length;
   if (!cells.length) {
+    /*
+     * Le refus dit qui retient les cases, et jusqu'à quand.
+     *
+     * Le message parlait d'un « chantier en cours » sans regarder l'heure : le
+     * joueur le lisait devant un champ vide, sur des labours terminés depuis
+     * six minutes. Ses propres chantiers finis viennent d'être clos juste
+     * au-dessus ; ce qui reste tourne vraiment, ou appartient à quelqu'un
+     * d'autre. Dans les deux cas, l'attente a une fin et elle s'affiche.
+     */
+    const jusqua = await finDesChantiersSur(parcel.id, demandees);
+    const attente = jusqua ? attenteEnClair(jusqua) : null;
     res.status(409).json({
       error:
-        demandees.length === 1
-          ? "Cette case est déjà sur un chantier en cours."
-          : "Toutes ces cases sont déjà sur un chantier en cours.",
+        (demandees.length === 1
+          ? "Cette case est retenue par un chantier"
+          : "Ces cases sont retenues par un chantier") +
+        (attente ? ` — libre dans ${attente}.` : " en cours."),
       skipped: ignorees,
+      freeAt: jusqua?.toISOString(),
     });
     return;
   }
