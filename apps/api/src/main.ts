@@ -2490,8 +2490,29 @@ async function publishFromConsignes() {
       farm: { isNot: null },
       OR: [{ isNpc: true }, { lastSeenAt: { lt: cutoff } }, { lastSeenAt: null }],
     },
+    /*
+     * **Sans les cases.**
+     *
+     * Cette requête en chargeait la totalité — `cells: true` sur toutes les
+     * parcelles de tous les comptes absents depuis trois minutes, PNJ compris,
+     * c'est-à-dire à peu près toute la table. Mesuré sur un monde neuf et sans
+     * joueurs : 307 comptes, **44 208 cases, 1,4 seconde et 147 Mo de tas** —
+     * toutes les vingt secondes, contre un plafond de tas de 320 Mo.
+     *
+     * Le prix ne se payait pas qu'en mémoire. V8 passait son temps en
+     * ramasse-miettes complet, la boucle d'événements se bloquait — `/api/health`,
+     * qui n'écrit que `{"ok":true}`, a été mesuré à 24 secondes —, le contrôle de
+     * santé du conteneur expirait, le veilleur relançait, et le jeu repartait
+     * pour soixante-dix secondes de 502 sur **tout**, y compris les images. D'où
+     * les « erreurs serveur » et les icônes manquantes signalées par le joueur :
+     * une seule panne, pas deux.
+     *
+     * Les cases se lisent donc parcelle par parcelle, plus bas, et seulement
+     * pour celles qu'on atteint vraiment — la boucle s'arrête dès qu'il n'y a
+     * plus ni créneau ni budget.
+     */
     include: {
-      farm: { include: { parcels: { orderBy: ORDRE_PARCELLES, include: { cells: true, zone: true } } } },
+      farm: { include: { parcels: { orderBy: ORDRE_PARCELLES, include: { zone: true } } } },
     },
   });
   const now = Date.now();
@@ -2510,13 +2531,17 @@ async function publishFromConsignes() {
       if (slots <= 0 || budget <= 0) break;
       const busy = await occupiedLaborCells(parcel.id);
       const bonuses = await getFarmBonuses(parcel.farmId!);
+      // Les cases de cette parcelle-ci, et d'aucune autre. On n'arrive ici que
+      // pour un compte qui a encore un créneau et du budget : dans les faits,
+      // une poignée de parcelles par tick au lieu de toutes.
+      const cells = await prisma.parcelCell.findMany({ where: { parcelId: parcel.id } });
       type Job = { work: FarmWork; cells: CellXY[] };
       const jobs: Job[] = [];
 
       if (consignes.harvest) {
         const ready: CellXY[] = [];
         const silage: CellXY[] = [];
-        for (const cell of parcel.cells) {
+        for (const cell of cells) {
           if (busy.has(`${cell.x},${cell.y}`)) continue;
           if (cell.kind !== "CROP" || !cell.crop || !cell.plantedAt) continue;
           const sim = simulateCell({
@@ -2546,17 +2571,17 @@ async function publishFromConsignes() {
         for (const batch of chunkCells(silage, seedOf(parcel.id))) jobs.push({ work: "SILAGE", cells: batch });
       }
       if (consignes.straw) {
-        const windrow = parcel.cells
+        const windrow = cells
           .filter((c) => c.strawTons > 0 && c.baleCount <= 0 && !busy.has(`${c.x},${c.y}`))
           .map((c) => ({ x: c.x, y: c.y }));
-        const bales = parcel.cells
+        const bales = cells
           .filter((c) => c.baleCount > 0 && !busy.has(`${c.x},${c.y}`))
           .map((c) => ({ x: c.x, y: c.y }));
         for (const batch of chunkCells(windrow, seedOf(parcel.id))) jobs.push({ work: "BALE", cells: batch });
         for (const batch of chunkCells(bales, seedOf(parcel.id))) jobs.push({ work: "COLLECT", cells: batch });
       }
       if (consignes.stubble) {
-        const stub = parcel.cells
+        const stub = cells
           .filter(
             (c) =>
               c.hasStubble &&
@@ -2568,7 +2593,7 @@ async function publishFromConsignes() {
         for (const batch of chunkCells(stub, seedOf(parcel.id))) jobs.push({ work: "STUBBLE", cells: batch });
       }
       if (consignes.plow) {
-        const plow = parcel.cells
+        const plow = cells
           .filter(
             (c) =>
               (c.fieldStage === "SPOILED" || c.harvestsSincePlow >= MAX_HARVESTS_BEFORE_PLOW) &&
@@ -2607,48 +2632,88 @@ async function publishFromConsignes() {
   }
 }
 
+/** Ce qu'un PNJ sème d'un coup, au maximum `[GD]`. */
+const NPC_SOW_PER_TICK = 18;
+
+/**
+ * Les fermes PNJ sèment ce qu'elles peuvent, tous les tours.
+ *
+ * ## Ce que cette fonction chargeait
+ *
+ * Toutes les parcelles PNJ **avec toutes leurs cases** — mesuré sur un monde
+ * neuf : 243 fermes, **34 992 cases, 0,9 seconde et 118 Mo de tas** à chaque
+ * tour de vingt secondes. Pour n'en semer que dix-huit par parcelle, et faire
+ * un `UPDATE` par case, soit jusqu'à quatre mille trois cents allers-retours.
+ *
+ * Le tri se fait maintenant là où sont les données. La base rend au plus
+ * dix-huit candidates par parcelle, et une seule écriture les sème toutes :
+ * elles reçoivent exactement les mêmes valeurs.
+ */
 async function tickNpcFarms() {
   const npcs = await prisma.user.findMany({
     where: { isNpc: true, specialization: "CEREALIER" },
-    include: { farm: { include: { parcels: { orderBy: ORDRE_PARCELLES, include: { cells: true, zone: true } } } } },
+    include: {
+      farm: {
+        include: {
+          parcels: { orderBy: ORDRE_PARCELLES, select: { id: true, zone: true } },
+        },
+      },
+    },
   });
   const now = Date.now();
   const growMs = CROP_DEFS.WHEAT.growMs;
   for (const npc of npcs) {
     if (!npc.farm) continue;
     for (const parcel of npc.farm.parcels) {
-      const busy = await occupiedLaborCells(parcel.id);
-      const empty = parcel.cells.filter(
-        (c) =>
-          c.kind === "EMPTY" &&
-          !c.hasStubble &&
-          c.strawTons <= 0 &&
-          c.baleCount <= 0 &&
-          c.fieldStage !== "SPOILED" &&
-          !busy.has(`${c.x},${c.y}`),
-      );
       // Les PNJ suivent le même calendrier que les joueurs : sans cela ils
       // sèmeraient du blé toute l'année et l'offre du marché ne connaîtrait
       // plus les saisons.
+      //
+      // Ce test passe **avant** toute lecture de cases : hors saison, la
+      // parcelle ne coûte plus une seule requête.
       const climat = climatDe(parcel);
       if (!canSowInSeason("WHEAT", currentSeason(climat.hemisphere ?? "N", now)).ok) continue;
+
+      const busy = await occupiedLaborCells(parcel.id);
+      /*
+       * On demande un peu plus que le compte, puis on retire les cases
+       * réservées par un chantier en cours. Celles-là vivent dans un JSON de
+       * `LaborOrder` et ne se filtrent donc pas en SQL ; la marge évite de
+       * repartir en base pour les remplacer.
+       */
+      const candidates = await prisma.parcelCell.findMany({
+        where: {
+          parcelId: parcel.id,
+          kind: "EMPTY",
+          hasStubble: false,
+          strawTons: { lte: 0 },
+          baleCount: { lte: 0 },
+          fieldStage: { not: "SPOILED" },
+        },
+        select: { id: true, x: true, y: true },
+        take: NPC_SOW_PER_TICK + busy.size,
+      });
+      const toPlant = candidates
+        .filter((c) => !busy.has(`${c.x},${c.y}`))
+        .slice(0, NPC_SOW_PER_TICK);
+      if (!toPlant.length) continue;
+
       const pretLe = projectReadyAt({ crop: "WHEAT", plantedAt: now, growMs, ...climat });
-      const toPlant = empty.slice(0, 18);
-      for (const cell of toPlant) {
-        await prisma.parcelCell.update({
-          where: { id: cell.id },
-          data: {
-            kind: "CROP",
-            crop: "WHEAT",
-            fieldStage: "PLANTED",
-            plantedAt: new Date(now),
-            readyAt: new Date(pretLe),
-            fertilizedPasses: 0,
-            weedPressure: 0,
-            directSeeded: false,
-          },
-        });
-      }
+      // Une écriture pour toute la parcelle : les dix-huit cases reçoivent les
+      // mêmes valeurs, il n'y a jamais eu de raison de les écrire une par une.
+      await prisma.parcelCell.updateMany({
+        where: { id: { in: toPlant.map((c) => c.id) } },
+        data: {
+          kind: "CROP",
+          crop: "WHEAT",
+          fieldStage: "PLANTED",
+          plantedAt: new Date(now),
+          readyAt: new Date(pretLe),
+          fertilizedPasses: 0,
+          weedPressure: 0,
+          directSeeded: false,
+        },
+      });
     }
   }
 }
