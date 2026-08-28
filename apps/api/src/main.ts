@@ -179,6 +179,15 @@ import {
   buildingWithArticle,
   paddockCapacity,
   tickHappiness,
+  /* — Les besoins, l'installation, et la seule mort possible — */
+  tickWater,
+  tickHealth,
+  cascadeStage,
+  installationLevel,
+  installationBonus,
+  installationLabel,
+  isTrough,
+  isHayRack,
   canGraze,
   canLiveOutside,
   planGrazing,
@@ -2481,8 +2490,29 @@ async function publishFromConsignes() {
       farm: { isNot: null },
       OR: [{ isNpc: true }, { lastSeenAt: { lt: cutoff } }, { lastSeenAt: null }],
     },
+    /*
+     * **Sans les cases.**
+     *
+     * Cette requête en chargeait la totalité — `cells: true` sur toutes les
+     * parcelles de tous les comptes absents depuis trois minutes, PNJ compris,
+     * c'est-à-dire à peu près toute la table. Mesuré sur un monde neuf et sans
+     * joueurs : 307 comptes, **44 208 cases, 1,4 seconde et 147 Mo de tas** —
+     * toutes les vingt secondes, contre un plafond de tas de 320 Mo.
+     *
+     * Le prix ne se payait pas qu'en mémoire. V8 passait son temps en
+     * ramasse-miettes complet, la boucle d'événements se bloquait — `/api/health`,
+     * qui n'écrit que `{"ok":true}`, a été mesuré à 24 secondes —, le contrôle de
+     * santé du conteneur expirait, le veilleur relançait, et le jeu repartait
+     * pour soixante-dix secondes de 502 sur **tout**, y compris les images. D'où
+     * les « erreurs serveur » et les icônes manquantes signalées par le joueur :
+     * une seule panne, pas deux.
+     *
+     * Les cases se lisent donc parcelle par parcelle, plus bas, et seulement
+     * pour celles qu'on atteint vraiment — la boucle s'arrête dès qu'il n'y a
+     * plus ni créneau ni budget.
+     */
     include: {
-      farm: { include: { parcels: { orderBy: ORDRE_PARCELLES, include: { cells: true, zone: true } } } },
+      farm: { include: { parcels: { orderBy: ORDRE_PARCELLES, include: { zone: true } } } },
     },
   });
   const now = Date.now();
@@ -2501,13 +2531,17 @@ async function publishFromConsignes() {
       if (slots <= 0 || budget <= 0) break;
       const busy = await occupiedLaborCells(parcel.id);
       const bonuses = await getFarmBonuses(parcel.farmId!);
+      // Les cases de cette parcelle-ci, et d'aucune autre. On n'arrive ici que
+      // pour un compte qui a encore un créneau et du budget : dans les faits,
+      // une poignée de parcelles par tick au lieu de toutes.
+      const cells = await prisma.parcelCell.findMany({ where: { parcelId: parcel.id } });
       type Job = { work: FarmWork; cells: CellXY[] };
       const jobs: Job[] = [];
 
       if (consignes.harvest) {
         const ready: CellXY[] = [];
         const silage: CellXY[] = [];
-        for (const cell of parcel.cells) {
+        for (const cell of cells) {
           if (busy.has(`${cell.x},${cell.y}`)) continue;
           if (cell.kind !== "CROP" || !cell.crop || !cell.plantedAt) continue;
           const sim = simulateCell({
@@ -2537,17 +2571,17 @@ async function publishFromConsignes() {
         for (const batch of chunkCells(silage, seedOf(parcel.id))) jobs.push({ work: "SILAGE", cells: batch });
       }
       if (consignes.straw) {
-        const windrow = parcel.cells
+        const windrow = cells
           .filter((c) => c.strawTons > 0 && c.baleCount <= 0 && !busy.has(`${c.x},${c.y}`))
           .map((c) => ({ x: c.x, y: c.y }));
-        const bales = parcel.cells
+        const bales = cells
           .filter((c) => c.baleCount > 0 && !busy.has(`${c.x},${c.y}`))
           .map((c) => ({ x: c.x, y: c.y }));
         for (const batch of chunkCells(windrow, seedOf(parcel.id))) jobs.push({ work: "BALE", cells: batch });
         for (const batch of chunkCells(bales, seedOf(parcel.id))) jobs.push({ work: "COLLECT", cells: batch });
       }
       if (consignes.stubble) {
-        const stub = parcel.cells
+        const stub = cells
           .filter(
             (c) =>
               c.hasStubble &&
@@ -2559,7 +2593,7 @@ async function publishFromConsignes() {
         for (const batch of chunkCells(stub, seedOf(parcel.id))) jobs.push({ work: "STUBBLE", cells: batch });
       }
       if (consignes.plow) {
-        const plow = parcel.cells
+        const plow = cells
           .filter(
             (c) =>
               (c.fieldStage === "SPOILED" || c.harvestsSincePlow >= MAX_HARVESTS_BEFORE_PLOW) &&
@@ -2598,48 +2632,88 @@ async function publishFromConsignes() {
   }
 }
 
+/** Ce qu'un PNJ sème d'un coup, au maximum `[GD]`. */
+const NPC_SOW_PER_TICK = 18;
+
+/**
+ * Les fermes PNJ sèment ce qu'elles peuvent, tous les tours.
+ *
+ * ## Ce que cette fonction chargeait
+ *
+ * Toutes les parcelles PNJ **avec toutes leurs cases** — mesuré sur un monde
+ * neuf : 243 fermes, **34 992 cases, 0,9 seconde et 118 Mo de tas** à chaque
+ * tour de vingt secondes. Pour n'en semer que dix-huit par parcelle, et faire
+ * un `UPDATE` par case, soit jusqu'à quatre mille trois cents allers-retours.
+ *
+ * Le tri se fait maintenant là où sont les données. La base rend au plus
+ * dix-huit candidates par parcelle, et une seule écriture les sème toutes :
+ * elles reçoivent exactement les mêmes valeurs.
+ */
 async function tickNpcFarms() {
   const npcs = await prisma.user.findMany({
     where: { isNpc: true, specialization: "CEREALIER" },
-    include: { farm: { include: { parcels: { orderBy: ORDRE_PARCELLES, include: { cells: true, zone: true } } } } },
+    include: {
+      farm: {
+        include: {
+          parcels: { orderBy: ORDRE_PARCELLES, select: { id: true, zone: true } },
+        },
+      },
+    },
   });
   const now = Date.now();
   const growMs = CROP_DEFS.WHEAT.growMs;
   for (const npc of npcs) {
     if (!npc.farm) continue;
     for (const parcel of npc.farm.parcels) {
-      const busy = await occupiedLaborCells(parcel.id);
-      const empty = parcel.cells.filter(
-        (c) =>
-          c.kind === "EMPTY" &&
-          !c.hasStubble &&
-          c.strawTons <= 0 &&
-          c.baleCount <= 0 &&
-          c.fieldStage !== "SPOILED" &&
-          !busy.has(`${c.x},${c.y}`),
-      );
       // Les PNJ suivent le même calendrier que les joueurs : sans cela ils
       // sèmeraient du blé toute l'année et l'offre du marché ne connaîtrait
       // plus les saisons.
+      //
+      // Ce test passe **avant** toute lecture de cases : hors saison, la
+      // parcelle ne coûte plus une seule requête.
       const climat = climatDe(parcel);
       if (!canSowInSeason("WHEAT", currentSeason(climat.hemisphere ?? "N", now)).ok) continue;
+
+      const busy = await occupiedLaborCells(parcel.id);
+      /*
+       * On demande un peu plus que le compte, puis on retire les cases
+       * réservées par un chantier en cours. Celles-là vivent dans un JSON de
+       * `LaborOrder` et ne se filtrent donc pas en SQL ; la marge évite de
+       * repartir en base pour les remplacer.
+       */
+      const candidates = await prisma.parcelCell.findMany({
+        where: {
+          parcelId: parcel.id,
+          kind: "EMPTY",
+          hasStubble: false,
+          strawTons: { lte: 0 },
+          baleCount: { lte: 0 },
+          fieldStage: { not: "SPOILED" },
+        },
+        select: { id: true, x: true, y: true },
+        take: NPC_SOW_PER_TICK + busy.size,
+      });
+      const toPlant = candidates
+        .filter((c) => !busy.has(`${c.x},${c.y}`))
+        .slice(0, NPC_SOW_PER_TICK);
+      if (!toPlant.length) continue;
+
       const pretLe = projectReadyAt({ crop: "WHEAT", plantedAt: now, growMs, ...climat });
-      const toPlant = empty.slice(0, 18);
-      for (const cell of toPlant) {
-        await prisma.parcelCell.update({
-          where: { id: cell.id },
-          data: {
-            kind: "CROP",
-            crop: "WHEAT",
-            fieldStage: "PLANTED",
-            plantedAt: new Date(now),
-            readyAt: new Date(pretLe),
-            fertilizedPasses: 0,
-            weedPressure: 0,
-            directSeeded: false,
-          },
-        });
-      }
+      // Une écriture pour toute la parcelle : les dix-huit cases reçoivent les
+      // mêmes valeurs, il n'y a jamais eu de raison de les écrire une par une.
+      await prisma.parcelCell.updateMany({
+        where: { id: { in: toPlant.map((c) => c.id) } },
+        data: {
+          kind: "CROP",
+          crop: "WHEAT",
+          fieldStage: "PLANTED",
+          plantedAt: new Date(now),
+          readyAt: new Date(pretLe),
+          fertilizedPasses: 0,
+          weedPressure: 0,
+          directSeeded: false,
+        },
+      });
     }
   }
 }
@@ -7785,6 +7859,74 @@ function paddocksFor(
   return { cells, capacity: paddockCapacity(cells), yardType };
 }
 
+/**
+ * Ce qui est bâti autour d'un abri, et le niveau d'installation qui en découle.
+ *
+ * Un seul endroit pour cette lecture, appelé par le tick comme par l'écran :
+ * le chiffre affiché « Installation Nv. 3 » et celui qui multiplie le lait
+ * doivent être le même, sans quoi le joueur bâtit à l'aveugle.
+ *
+ * L'adjacence se juge sur l'emprise posée, orientation comprise — même règle
+ * que pour l'enclos, et pour la même raison.
+ */
+function installationAround(
+  barn: { originX: number; originY: number; type: string; rotation?: number; level?: number },
+  buildings: { type: string; originX: number; originY: number; rotation?: number }[],
+): { level: number; hasPaddock: boolean; hasTrough: boolean; hasRack: boolean } {
+  const footprint = {
+    originX: barn.originX,
+    originY: barn.originY,
+    ...orientedFootprint(barn.type as SharedBuildingType, barn.rotation),
+  };
+  const yardType = yardTypeForBarn(barn.type);
+  let hasPaddock = false;
+  let hasTrough = false;
+  let hasRack = false;
+
+  for (const b of buildings) {
+    if (b.type !== yardType && !isTrough(b.type) && !isHayRack(b.type)) continue;
+    const foot = orientedFootprint(b.type as SharedBuildingType, b.rotation);
+    if (!isPaddockAdjacent(footprint, { originX: b.originX, originY: b.originY, ...foot })) {
+      continue;
+    }
+    if (b.type === yardType) hasPaddock = true;
+    if (isTrough(b.type)) hasTrough = true;
+    if (isHayRack(b.type)) hasRack = true;
+  }
+
+  return {
+    hasPaddock,
+    hasTrough,
+    hasRack,
+    level: installationLevel({ barnLevel: barn.level ?? 1, hasPaddock, hasTrough, hasRack }),
+  };
+}
+
+/**
+ * Le niveau d'installation d'un abri, quand on n'a que l'abri sous la main.
+ *
+ * Les routes de récolte — traite, ramassage, tonte, abattage — ne chargent que
+ * le bâtiment. Sans cette relecture, elles rendraient moins que ce que
+ * l'écran d'élevage venait d'annoncer, parce que l'abreuvoir et le râtelier ne
+ * compteraient pas : le joueur aurait payé pour un bonus qui ne s'applique
+ * qu'à l'affichage. Une requête de plus, sur un geste que le joueur déclenche
+ * lui-même, et le chiffre promis est le chiffre versé.
+ */
+async function installationForBarn(barn: {
+  parcelId: string;
+  originX: number;
+  originY: number;
+  type: string;
+  rotation?: number;
+  level?: number;
+}): Promise<number> {
+  const voisins = await prisma.building.findMany({
+    where: { parcelId: barn.parcelId },
+    select: { type: true, originX: true, originY: true, rotation: true },
+  });
+  return installationAround(barn, voisins).level;
+}
+
 /** Fumier encore dans les fosses de la parcelle, en tonnes. */
 async function parcelManureTons(parcelId: string): Promise<number> {
   const buildings = await prisma.building.findMany({
@@ -7859,13 +8001,16 @@ async function settleAllHerds() {
     const zone = barn.parcel.zone;
     const season = currentSeason((zone?.hemisphere as Hemisphere) ?? "N", now);
     const weather = weatherByZone.get(zone?.code ?? "") ?? "CLEAR";
+    const installation = installationAround(barn, barn.parcel.buildings);
     const apres = await settleHerd(herd, paddock.capacity, now, barn.level, capacity, {
       season,
       weather,
       paddockCells: paddock.cells,
+      installationLevel: installation.level,
+      hasTrough: installation.hasTrough,
     });
     // La salle de traite fait son travail, que le joueur regarde ou non.
-    await ramasserAutomatiquement(herd, barn.level, apres.size, now);
+    await ramasserAutomatiquement(herd, barn.level, apres.size, now, installation.level);
   }
 }
 
@@ -7895,6 +8040,14 @@ async function ramasserAutomatiquement(
   barnLevel: number,
   taille: number,
   now: number,
+  /**
+   * Niveau d'installation du bâtiment, cf. `installationAround()`.
+   *
+   * Sans lui, la salle de traite automatique rendrait moins que la traite à la
+   * main sur la même étable : l'abreuvoir et le râtelier ne compteraient pas.
+   * Automatiser ne doit rien changer à ce qu'on récolte.
+   */
+  niveauInstallation = 1,
 ): Promise<void> {
   if (!autoCollects(barnLevel) || taille <= 0) return;
 
@@ -7907,6 +8060,7 @@ async function ramasserAutomatiquement(
     herdSize: taille,
     happiness: herd.happiness,
     barnLevel,
+    installationLevel: niveauInstallation,
     feedQuality: herd.feedQuality,
   };
   let bien: TradeGood | null = null;
@@ -7949,6 +8103,12 @@ async function settleHerd(
     beddingTons?: number;
     housing?: string;
     grassTons?: number;
+    /** Abreuvement, cf. `tickWater()`. Absent : le lot est réputé abreuvé. */
+    water?: number;
+    /** Santé, cf. `tickHealth()`. Absente : le lot est réputé en bonne santé. */
+    health?: number;
+    /** Début de la privation en cours, `null` si tout est couvert. */
+    deprivedSince?: Date | null;
     /**
      * Jeunes du lot, comptés dans `size`.
      *
@@ -7978,7 +8138,22 @@ async function settleHerd(
    * printemps par temps clair et un pré nul, ce qui reproduit l'ancien
    * fonctionnement.
    */
-  env?: { season: Season; weather: WeatherState; paddockCells: number },
+  env?: {
+    season: Season;
+    weather: WeatherState;
+    paddockCells: number;
+    /**
+     * Ce qui est bâti autour, cf. `installationAround()`.
+     *
+     * Facultatif comme le reste : sans lui, on retombe sur le niveau que la
+     * seule étable vaut. Un appelant qui l'ignore n'est jamais pénalisé pour
+     * une information qu'il n'avait pas à fournir — c'est la règle de toute
+     * cette signature.
+     */
+    installationLevel?: number;
+    /** Un abreuvoir automatique est-il rattaché au bâtiment ? */
+    hasTrough?: boolean;
+  },
 ): Promise<{
   happiness: number;
   feedStock: number;
@@ -7989,6 +8164,9 @@ async function settleHerd(
   avgAgeMs: number;
   manureTons: number;
   beddingTons: number;
+  water: number;
+  health: number;
+  deprivedSince: Date | null;
 }> {
   /*
    * Les compétences de l'éleveur, résolues ici plutôt qu'aux appelants.
@@ -8016,6 +8194,9 @@ async function settleHerd(
       avgAgeMs: herd.avgAgeMs,
       manureTons: herd.manureTons ?? 0,
       beddingTons: herd.beddingTons ?? 0,
+      water: herd.water ?? 1,
+      health: herd.health ?? 1,
+      deprivedSince: herd.deprivedSince ?? null,
     };
   }
 
@@ -8081,6 +8262,7 @@ async function settleHerd(
       // Le forfait d'avant est neutralisé : c'est `saved` qui fait le travail.
       grazing: false,
       barnLevel,
+      installationLevel: env?.installationLevel,
       kind,
     }) *
     (1 - saved) *
@@ -8132,11 +8314,52 @@ async function settleHerd(
   const tempC = feltTempC({ kind, housing, season, weather, barnLevel });
   const thermal = thermalPenalty({ kind, tempC });
 
+  /**
+   * L'eau, puis la cascade, puis la santé — dans cet ordre.
+   *
+   * La privation démarre à la ration : c'est le manque que le joueur peut
+   * voir venir, et il commande le reste. L'eau se vide ensuite, plus
+   * lentement, et un abreuvoir automatique la garde pleine quoi qu'il arrive.
+   */
+  const rationVide = feedStock <= 0;
+  const water = tickWater({
+    water: herd.water ?? 1,
+    hasTrough: Boolean(env?.hasTrough),
+    fed: !rationVide,
+    elapsedMs,
+  });
+
+  /*
+   * L'horloge de la privation.
+   *
+   * Elle ne démarre que sur un manque **vital** — plus rien à manger, ou plus
+   * rien à boire. Ni le froid, ni la litière, ni l'entassement ne la
+   * déclenchent : ils coûtent de la production, jamais une bête. C'est
+   * exactement ce qui manquait, et ce qui a tué le troupeau de la capture.
+   */
+  const prive = rationVide || water <= 0;
+  const deprivedSince = prive ? (herd.deprivedSince ?? new Date(now)) : null;
+  const deprivedH = deprivedSince ? Math.max(0, now - deprivedSince.getTime()) / 3_600_000 : 0;
+  const santeAvant = herd.health ?? 1;
+  const health = tickHealth({ health: santeAvant, deprivedH, elapsedMs });
+
   const happiness = tickHappiness({
     happiness: herd.happiness,
     hasPaddock: paddockCapacityCells > 0,
     grazedRecentlyMs: herd.lastGrazedAt ? now - herd.lastGrazedAt.getTime() : Number.MAX_SAFE_INTEGER,
-    crowding: paddockCapacityCells > 0 ? herd.size / Math.max(1, paddockCapacityCells) : 1,
+    /*
+     * L'encombrement se lit sur la capacité **du bâtiment**, et sur rien
+     * d'autre.
+     *
+     * Il se lisait sur les cases de l'enclos — dix-huit pour cinquante-cinq
+     * places — si bien qu'une étable au tiers pleine était déclarée
+     * surpeuplée dès seize bêtes ; et sans enclos du tout, le ratio valait
+     * `1` en dur, soit une peine permanente qu'aucun geste n'effaçait. Deux
+     * lignes plus haut dans le fichier, `capacity` disait pourtant depuis
+     * toujours combien de bêtes tiennent ici.
+     */
+    crowding: capacity > 0 ? herd.size / capacity : 0,
+    water,
     elapsedMs,
     /*
      * L'œil de l'éleveur **allège la peine**, il ne fabrique pas du bonheur.
@@ -8166,6 +8389,9 @@ async function settleHerd(
       gestatingSince: gestatingSince.getTime(),
       now,
       cycleMs: LIVESTOCK_CYCLE_MS,
+      // Une belle installation raccourcit la gestation : c'est le « ❤️ 115 % »
+      // de l'écran d'élevage, et il doit correspondre à quelque chose.
+      reproductionBonus: installationBonus(env?.installationLevel ?? 1).reproduction,
     });
     if (progress >= 1) {
       born = litterFor(herd.kind as AnimalKind, freeSlots);
@@ -8198,13 +8424,17 @@ async function settleHerd(
     });
   }
 
-  // Un troupeau affamé finit par perdre des bêtes. Lentement : on doit avoir
-  // le temps de réagir en rentrant.
+  // Un troupeau abandonné finit par perdre des bêtes — mais **seulement** au
+  // bout de la cascade, quand la santé est tombée à zéro. Trente-six heures
+  // réelles, et trois avertissements avant.
   const toll = mortalityToll({
-    happiness,
+    health,
+    // La santé baisse **pendant** le pas : sans les deux bornes, un joueur qui
+    // rentre après une journée se voit appliquer le pire barème à toute son
+    // absence, et retrouve une étable vide.
+    healthBefore: santeAvant,
     herdSize: size,
     elapsedMs,
-    cycleMs: LIVESTOCK_CYCLE_MS,
     debt: herd.mortalityDebt,
   });
   size = Math.max(0, size - toll.deaths);
@@ -8224,6 +8454,9 @@ async function settleHerd(
       avgAgeMs,
       manureTons: pit.tons,
       beddingTons,
+      water,
+      health,
+      deprivedSince,
     };
   }
 
@@ -8240,6 +8473,9 @@ async function settleHerd(
       manureTons: pit.tons,
       beddingTons,
       grassTons: pasture.grassTons,
+      water,
+      health,
+      deprivedSince,
       lastTickAt: new Date(now),
     },
   });
@@ -8253,6 +8489,9 @@ async function settleHerd(
     avgAgeMs,
     manureTons: pit.tons,
     beddingTons,
+    water,
+    health,
+    deprivedSince,
   };
 }
 
@@ -8283,6 +8522,8 @@ app.get("/parcels/:id/livestock", async (req, res) => {
   for (const b of parcel.buildings) {
     if (!kindForBarn(b.type)) continue;
     const paddock = paddocksFor(b, parcel.buildings);
+    const installation = installationAround(b, parcel.buildings);
+    const bonus = installationBonus(installation.level);
     const stats = buildingStatsAtLevel(b.type as SharedBuildingType, b.level);
     const capacity = barnCapacity(b.type, stats);
     const herdKind = (b.herd?.kind as AnimalKind | undefined) ?? kindForBarn(b.type);
@@ -8302,6 +8543,9 @@ app.get("/parcels/:id/livestock", async (req, res) => {
     let gestatingSince: Date | null = b.herd?.gestatingSince ?? null;
     let manureTons = b.herd?.manureTons ?? 0;
     let beddingTons = b.herd?.beddingTons ?? 0;
+    let water = b.herd?.water ?? 1;
+    let health = b.herd?.health ?? 1;
+    let deprivedSince: Date | null = b.herd?.deprivedSince ?? null;
     /**
      * Les jeunes encore en croissance.
      *
@@ -8323,6 +8567,13 @@ app.get("/parcels/:id/livestock", async (req, res) => {
         now,
         b.level,
         capacity,
+        {
+          season: saison,
+          weather: meteo,
+          paddockCells: paddock.cells,
+          installationLevel: installation.level,
+          hasTrough: installation.hasTrough,
+        },
       );
       happiness = settled.happiness;
       feedStock = settled.feedStock;
@@ -8330,6 +8581,9 @@ app.get("/parcels/:id/livestock", async (req, res) => {
       gestatingSince = settled.gestatingSince;
       manureTons = settled.manureTons;
       beddingTons = settled.beddingTons;
+      water = settled.water;
+      health = settled.health;
+      deprivedSince = settled.deprivedSince;
     }
     const pitCap = herdKind
       ? manurePitCapacity(herdKind, capacity)
@@ -8376,6 +8630,25 @@ app.get("/parcels/:id/livestock", async (req, res) => {
       type: b.type,
       level: b.level,
       capacity,
+      /**
+       * Places encore libres — le chiffre que l'écran affiche.
+       *
+       * « Étable encombrée » se lisait devant quinze places vides ; on dit
+       * maintenant combien il en reste, ce qui est à la fois vrai et utile.
+       * Négatif jamais : au-delà de la capacité, c'est `crowding` qui parle.
+       */
+      freeSlots: Math.max(0, capacity - (b.herd?.size ?? 0)),
+      /* — L'installation : ce qui est bâti autour, et ce que ça rapporte — */
+      installationLevel: installation.level,
+      installationLabel: installationLabel(installation.level),
+      installation: {
+        hasPaddock: installation.hasPaddock,
+        hasTrough: installation.hasTrough,
+        hasRack: installation.hasRack,
+        production: bonus.production,
+        reproduction: bonus.reproduction,
+        feed: bonus.feed,
+      },
       paddockCells: paddock.cells,
       paddockCapacity: paddock.capacity,
       yardType: paddock.yardType,
@@ -8386,10 +8659,27 @@ app.get("/parcels/:id/livestock", async (req, res) => {
             size: herdSize,
             happiness,
             label: happinessLabel(happiness),
-            // Prévenir vaut mieux que constater : au-dessous du seuil, le lot
-            // commence à perdre des bêtes, et le joueur doit pouvoir agir
-            // avant d'en compter les pertes.
-            atRisk: happiness < MORTALITY.floor,
+            /*
+             * Le lot est-il réellement en train de mourir ?
+             *
+             * Il lisait la satisfaction des besoins : un troupeau enfermé
+             * tombait à 0,35 et le moindre malus le déclarait mourant, d'où
+             * le bandeau rouge « des bêtes vont mourir » sur une étable au
+             * tiers pleine avec un jour de ration d'avance. Il lit maintenant
+             * la **santé**, qui ne baisse que par la cascade — et l'alerte ne
+             * s'allume donc que quand elle dit vrai.
+             */
+            atRisk: health < MORTALITY.floor,
+            /* — Les jauges de besoin, et l'horloge de la cascade — */
+            water: Math.round(water * 100) / 100,
+            health: Math.round(health * 100) / 100,
+            /** Heures réelles depuis que le nécessaire manque, 0 si tout va bien. */
+            deprivedH: deprivedSince
+              ? Math.round(((now - deprivedSince.getTime()) / 3_600_000) * 10) / 10
+              : 0,
+            cascade: cascadeStage(
+              deprivedSince ? (now - deprivedSince.getTime()) / 3_600_000 : 0,
+            ),
             grazingUntil: b.herd.grazingUntil?.getTime() ?? null,
             feedStock: Math.round(feedStock * 10) / 10,
             gestation: gestationProgress({
@@ -8397,6 +8687,7 @@ app.get("/parcels/:id/livestock", async (req, res) => {
               gestatingSince: gestatingSince?.getTime() ?? null,
               now,
               cycleMs: LIVESTOCK_CYCLE_MS,
+              reproductionBonus: bonus.reproduction,
             }),
             breedRefusal: (() => {
               if (gestatingSince) return null;
@@ -8456,8 +8747,11 @@ app.get("/parcels/:id/livestock", async (req, res) => {
               grazedRecentlyMs: b.herd.lastGrazedAt
                 ? now - b.herd.lastGrazedAt.getTime()
                 : Number.MAX_SAFE_INTEGER,
-              crowding:
-                paddock.capacity > 0 ? b.herd.size / Math.max(1, paddock.capacity) : 1,
+              // Sur la capacité du bâtiment, comme dans le tick. Les deux
+              // doivent dire la même chose, sinon l'écran explique une peine
+              // que la simulation n'applique pas — ou l'inverse.
+              crowding: capacity > 0 ? herdSize / capacity : 0,
+              water,
               hunger: hungerPenalty({
                 feedStock,
                 herdSize: b.herd.size,
@@ -8494,18 +8788,21 @@ app.get("/parcels/:id/livestock", async (req, res) => {
               herdSize: Math.max(0, herdSize - jeunes),
               happiness,
               barnLevel: b.level,
+              installationLevel: installation.level,
               feedQuality: b.herd.feedQuality,
             }),
             eggsPerCycle: eggYield({
               herdSize: Math.max(0, herdSize - jeunes),
               happiness,
               barnLevel: b.level,
+              installationLevel: installation.level,
               feedQuality: b.herd.feedQuality,
             }),
             woolPerShear: woolYield({
               herdSize: Math.max(0, herdSize - jeunes),
               happiness,
               barnLevel: b.level,
+              installationLevel: installation.level,
               feedQuality: b.herd.feedQuality,
             }),
             meatAtSlaughter: meatYield({
@@ -8513,6 +8810,7 @@ app.get("/parcels/:id/livestock", async (req, res) => {
               happiness,
               averageAgeMs: b.herd.avgAgeMs,
               barnLevel: b.level,
+              installationLevel: installation.level,
               kind: b.herd.kind as AnimalKind,
             }),
             manureTons: Math.round(manureTons * 1000) / 1000,
@@ -9411,6 +9709,7 @@ app.post("/herds/:id/milk", async (req, res) => {
       herdSize: herd.size,
       happiness: herd.happiness,
       barnLevel: herd.building.level,
+      installationLevel: await installationForBarn(herd.building),
       feedQuality: herd.feedQuality,
     }) * (1 + laitier.MILK_YIELD);
   // Le lait se compte en hectolitres au silo : cent litres la tonne d'échange.
@@ -9483,6 +9782,7 @@ app.post("/herds/:id/collect-eggs", async (req, res) => {
       herdSize: herd.size,
       happiness: herd.happiness,
       barnLevel: herd.building.level,
+      installationLevel: await installationForBarn(herd.building),
       feedQuality: herd.feedQuality,
     }) * (1 + avicole.EGG_YIELD);
   const crates = Math.round(perCycle * cycles * 100) / 100;
@@ -9539,6 +9839,7 @@ app.post("/herds/:id/shear", async (req, res) => {
       herdSize: herd.size,
       happiness: herd.happiness,
       barnLevel: herd.building.level,
+      installationLevel: await installationForBarn(herd.building),
       feedQuality: herd.feedQuality,
     }) * (1 + ovin.WOOL_YIELD);
   const tons = Math.round(perCycle * cycles * 1000) / 1000;
@@ -9583,6 +9884,7 @@ app.post("/herds/:id/slaughter", async (req, res) => {
     happiness: herd.happiness,
     averageAgeMs: ageMs,
     barnLevel: herd.building.level,
+    installationLevel: await installationForBarn(herd.building),
     kind: herd.kind as AnimalKind,
   });
   const tons = Math.round((kgTotal / 1000) * 1000) / 1000;

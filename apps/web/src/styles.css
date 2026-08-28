@@ -5911,6 +5911,38 @@ button.tiny {
   color: var(--muted);
 }
 
+/* —— Les places qui restent ——
+   « Étable encombrée » se lisait devant quinze places vides. On dit ce qu'il
+   reste, en vert : c'est une bonne nouvelle, pas un reproche. Le dépassement,
+   lui, se dit en rouge — et lui seul coûte quelque chose. */
+.herd-room {
+  display: block;
+  font-style: normal;
+  font-size: 0.7rem;
+  font-weight: 700;
+  color: var(--ok);
+}
+
+/* —— Ce qui est bâti autour de l'étable ——
+   Une liste de cases à cocher, et la ligne de ce qu'elles rapportent. Rien
+   n'y est rouge : une pièce manquante n'est pas une faute, c'est un achat
+   qu'on n'a pas encore fait. */
+.barn-install .install-kit {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 0.2rem 0.75rem;
+  list-style: none;
+  margin: 0 0 0.35rem;
+  padding: 0;
+  font-size: 0.74rem;
+  font-weight: 600;
+  color: var(--muted);
+}
+.barn-install .install-kit li.ok {
+  color: var(--teal-700);
+  font-weight: 800;
+}
+
 /* —— Ateliers de transformation ——
    Une ligne par atelier, et un seul chiffre en gras : la marge au cours du
    jour. C'est la seule chose qui décide — le débit et le stock ne font que

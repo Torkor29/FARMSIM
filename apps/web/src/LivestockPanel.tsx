@@ -19,6 +19,9 @@ import {
   autoCollects,
   type WelfareCause,
   troughCapacity,
+  productionFactor,
+  installationBonus,
+  installationLabel,
   BUILDING_ART,
   BUILDING_DEFS,
   kindForBarn,
@@ -66,6 +69,19 @@ export type BarnState = {
   type: BuildingType;
   level: number;
   capacity: number;
+  /** Places encore libres — ce qu'on affiche à la place de « encombrée ». */
+  freeSlots?: number;
+  /* — L'installation : ce qui est bâti autour, et ce que ça rapporte — */
+  installationLevel?: number;
+  installationLabel?: string;
+  installation?: {
+    hasPaddock: boolean;
+    hasTrough: boolean;
+    hasRack: boolean;
+    production: number;
+    reproduction: number;
+    feed: number;
+  };
   paddockCells: number;
   paddockCapacity: number;
   cowPrice: number;
@@ -104,6 +120,14 @@ export type BarnState = {
     hungry: boolean;
     /** Le lot commence à perdre des bêtes : il faut agir maintenant */
     atRisk: boolean;
+    /* — Les besoins, et l'horloge de la cascade — */
+    /** Abreuvement, 1 = plein. */
+    water?: number;
+    /** Santé, 1 = intacte. La seule jauge qui peut tuer. */
+    health?: number;
+    /** Heures réelles depuis que le nécessaire manque, 0 si tout va bien. */
+    deprivedH?: number;
+    cascade?: "OK" | "PRODUCTION" | "SANTE" | "CRITIQUE" | "MORTEL";
     canMilk: boolean;
     canCollectEggs?: boolean;
     canShear?: boolean;
@@ -511,9 +535,14 @@ export function LivestockPanel({
           repris à chaque ouverture pour un texte qu'on ne lit qu'une fois — et
           sur un téléphone, cela suffisait à repousser le bouton d'achat sous
           le pli. On garde ce qui est actionnable, le reste est dans le guide. */}
+      {/* La phrase disait « une aire de sortie accolée le rend plus
+          productif », ce qui est devenu à moitié faux : l'enclos n'est plus
+          qu'une des quatre pièces de l'installation, et aucune n'est
+          obligatoire. On dit donc la règle entière, qui tient en deux
+          propositions — ce qu'il faut, et ce qui rapporte en plus. */}
       <p className="muted tiny">
-        Un troupeau affamé s’effondre ; une aire de sortie accolée le rend plus
-        productif.
+        Nourrissez, abreuvez, laissez de la place : le troupeau produit à 100 %.
+        Ce que vous bâtissez autour du bâtiment le fait monter au-dessus.
       </p>
       {orphelins.length > 0 && (
         /* L'enclos posé seul.
@@ -597,6 +626,28 @@ export function LivestockPanel({
          */
         const herd = barn.herd && barn.herd.size > 0 ? barn.herd : null;
         const pct = herd ? Math.round(herd.happiness * 100) : 0;
+        /*
+         * Ce que le lot produit, rapporté à sa référence.
+         *
+         * Le chiffre que le joueur doit lire d'un coup d'œil, et la phrase
+         * entière de la refonte tient dedans : **100 % quand les besoins sont
+         * remplis**, et davantage grâce à ce qu'on a bâti. L'écran affichait
+         * jusqu'ici le seul bien-être, une note sans unité que rien ne
+         * rattachait au lait.
+         */
+        const niveauInstall = barn.installationLevel ?? 1;
+        /** Ce que l'installation rapporte : du serveur, ou dérivé du niveau. */
+        const bonusInstall = barn.installation ?? installationBonus(niveauInstall);
+        /** Ce qui est réellement posé autour — connu du seul serveur. */
+        const equipements = barn.installation;
+        const rendement = herd
+          ? productionFactor({
+              happiness: herd.happiness,
+              installationLevel: niveauInstall,
+              feedQuality: herd.feedQuality,
+            })
+          : null;
+        const rendementPct = rendement ? Math.round(rendement.total * 100) : 0;
         // Dehors se lit d'abord dans l'état durable ; la fenêtre de sortie ne
         // sert plus qu'à jouer l'animation de la transition.
         const outside =
@@ -660,6 +711,19 @@ export function LivestockPanel({
                       {herd.size}
                       <small> / {barn.capacity}</small>
                     </strong>
+                    {/* « Étable encombrée » se lisait devant quinze places
+                        vides — la peine démarrait à 85 % d'occupation, et sur
+                        les cases de l'enclos par-dessus le marché. On dit
+                        maintenant ce qu'il reste, ce qui est à la fois vrai
+                        et utile ; le dépassement, lui, se voit dans les
+                        causes juste en dessous. */}
+                    <em className="herd-room">
+                      {herd.size > barn.capacity
+                        ? `${herd.size - barn.capacity} de trop`
+                        : `${barn.capacity - herd.size} place${
+                            barn.capacity - herd.size > 1 ? "s" : ""
+                          } disponible${barn.capacity - herd.size > 1 ? "s" : ""}`}
+                    </em>
                     {/* Le lot ne se lit pas d'un seul chiffre quand il mélange
                         veaux et vaches : dire combien sont encore jeunes, et
                         dans combien de temps le prochain passe adulte. */}
@@ -679,14 +743,29 @@ export function LivestockPanel({
                       </em>
                     )}
                   </div>
-                  <div className={pct >= 75 ? "bon" : pct >= 50 ? "moyen" : "mauvais"}>
-                    <em>{herd.label}</em>
+                  {/* La production, et non plus le seul moral.
+                      Le pourcentage affiché était le bien-être : une note sans
+                      unité que rien ne rattachait au lait, et qu'un troupeau
+                      enfermé ne pouvait de toute façon pas dépasser. On montre
+                      ce que le lot rend — 100 % besoins remplis, davantage
+                      grâce à ce qui est bâti autour — et le moral reste lisible
+                      juste à côté, sous son libellé. */}
+                  <div
+                    className={
+                      rendementPct >= 100 ? "bon" : rendementPct >= 70 ? "moyen" : "mauvais"
+                    }
+                  >
+                    <em>Production · {herd.label}</em>
                     <strong>
-                      {pct}
+                      {rendementPct}
                       <small> %</small>
                     </strong>
-                    <span className="barn-key-bar" role="img" aria-label={`Bien-être ${pct} %`}>
-                      <i style={{ width: `${pct}%` }} />
+                    <span
+                      className="barn-key-bar"
+                      role="img"
+                      aria-label={`Production ${rendementPct} %`}
+                    >
+                      <i style={{ width: `${Math.min(100, rendementPct)}%` }} />
                     </span>
                   </div>
                 </div>
@@ -735,6 +814,33 @@ export function LivestockPanel({
                       ton={herd.hungry ? "alerte" : "normal"}
                       detail={
                         herd.feedQuality > 0.5 ? "au maïs, rendement maximal" : "au foin"
+                      }
+                    />
+                    {/* L'eau et la santé : les deux jauges qui manquaient.
+                        Une vache boit cent litres par jour, et c'est le besoin
+                        qui la tue le plus vite ; il n'existait pas. La santé
+                        est la **seule** jauge dont dépend la mortalité — tout
+                        le reste coûte de la production, jamais une bête. */}
+                    <Mesure
+                      nom="Eau"
+                      valeur={`${Math.round((herd.water ?? 1) * 100)} %`}
+                      part={herd.water ?? 1}
+                      ton={(herd.water ?? 1) < 0.35 ? "alerte" : "normal"}
+                      detail={
+                        equipements?.hasTrough
+                          ? "abreuvoir automatique — jamais à sec"
+                          : "remplie à chaque distribution de ration"
+                      }
+                    />
+                    <Mesure
+                      nom="Santé"
+                      valeur={`${Math.round((herd.health ?? 1) * 100)} %`}
+                      part={herd.health ?? 1}
+                      ton={(herd.health ?? 1) < 0.5 ? "alerte" : "normal"}
+                      detail={
+                        (herd.deprivedH ?? 0) > 0
+                          ? `${Math.round(herd.deprivedH ?? 0)} h sans le nécessaire`
+                          : "rien ne manque"
                       }
                     />
                     <Mesure
@@ -794,6 +900,44 @@ export function LivestockPanel({
                     )}
                   </div>
 
+                  {/* L'installation : ce qu'on a bâti, et ce que ça rapporte.
+                      C'est le renversement de la refonte, et il doit se lire
+                      ici : l'étable et ses annexes n'ôtent plus rien, elles
+                      ajoutent. Un joueur qui n'a rien construit lit « Basique »
+                      sans une seule ligne rouge — il tourne à 100 %, et les
+                      bonus lui disent ce qu'il gagnerait à bâtir. */}
+                  <section className="barn-part barn-install">
+                    <h4>Installation · {barn.installationLabel ?? installationLabel(niveauInstall)}</h4>
+                    <ul className="install-kit">
+                      <li className={equipements?.hasPaddock ? "ok" : ""}>
+                        {equipements?.hasPaddock ? "✓" : "○"} Enclos attenant
+                      </li>
+                      <li className={equipements?.hasTrough ? "ok" : ""}>
+                        {equipements?.hasTrough ? "✓" : "○"} Abreuvoir automatique
+                      </li>
+                      <li className={equipements?.hasRack ? "ok" : ""}>
+                        {equipements?.hasRack ? "✓" : "○"} Râtelier à fourrage
+                      </li>
+                      <li className={barn.level >= 3 ? "ok" : ""}>
+                        {barn.level >= 3 ? "✓" : "○"} Bâtiment Nv.{barn.level}
+                      </li>
+                    </ul>
+                    <p className="mesure-note">
+                      {bonusInstall.production > 0 ? (
+                        <>
+                          Production <b>+{Math.round(bonusInstall.production * 100)} %</b> ·
+                          reproduction <b>+{Math.round(bonusInstall.reproduction * 100)} %</b> ·
+                          fourrage <b>−{Math.round(bonusInstall.feed * 100)} %</b>
+                        </>
+                      ) : (
+                        <>
+                          Aucun bonus pour l’instant — le troupeau tourne à 100 %. Chaque pièce
+                          posée contre le bâtiment fait monter le niveau.
+                        </>
+                      )}
+                    </p>
+                  </section>
+
                   {herd.atRisk &&
                     (() => {
                       /*
@@ -820,7 +964,7 @@ export function LivestockPanel({
                       )[0];
                       return (
                         <p className="herd-alert">
-                          Le troupeau dépérit — des bêtes vont mourir.{" "}
+                          Le troupeau ne tient plus — des bêtes peuvent mourir.{" "}
                           {pire ? (
                             <>
                               {pire.texte} : {pire.remede.charAt(0).toLowerCase()}
@@ -919,9 +1063,18 @@ export function LivestockPanel({
                    la main, ce qui était faux dès qu'on en ajoutait un. */
                 const aire = BUILDING_DEFS[barn.yardType];
                 const e = aire.article === "une" ? "e" : "";
+                /* « Les bêtes restent enfermées » était un reproche, et c'en
+                   est fini des reproches qu'on ne peut pas satisfaire : un
+                   troupeau à l'étable ne perd plus rien. On dit ce que l'enclos
+                   apporterait, et le joueur décide. */
+                const nom = aire.name.toLowerCase();
+                // « Pas d'courette » : l'élision se fait sur la voyelle, pas au
+                // jugé. Le catalogue porte « enclos », « courette à porcs » et
+                // « courette à poules » — les deux formes existent.
+                const de = /^[aeiouyéèêà]/.test(nom) ? "d’" : "de ";
                 return barn.paddockCapacity > 0
                   ? `${aire.name} attenant${e} · ${barn.paddockCapacity} places de sortie`
-                  : `Aucun${e} ${aire.name.toLowerCase()} attenant${e} — les bêtes restent enfermées`;
+                  : `Pas ${de}${nom} attenant${e} — le troupeau va bien, mais il ne sort pas`;
               })()}
             </p>
 

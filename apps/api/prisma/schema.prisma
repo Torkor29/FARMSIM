@@ -86,6 +86,11 @@ enum BuildingType {
   /// une autre, plus chère. Voir `RECIPES` côté domaine.
   DAIRY
   MILL
+  /// Annexes d'élevage : collées à un abri, elles ne changent rien à ce qu'il
+  /// héberge mais font monter son niveau d'installation, et avec lui la
+  /// production, la reproduction et l'économie de fourrage.
+  WATER_TROUGH
+  HAY_RACK
 }
 
 enum CellKind {
@@ -389,7 +394,11 @@ model Herd {
   building      Building @relation(fields: [buildingId], references: [id], onDelete: Cascade)
   kind          String   @default("COW")
   size          Int      @default(0)
-  happiness     Float    @default(0.6)
+  /// Satisfaction des besoins, de 0 à 1. **Un** par défaut : un troupeau
+  /// qu'on vient d'acheter et qu'on nourrit ne manque de rien. Le 0,6 d'avant
+  /// venait de l'ancienne échelle, où la cible d'une bête enfermée plafonnait
+  /// à 0,35 et où 0,6 se lisait « Sereines ».
+  happiness     Float    @default(1)
   bornAt        DateTime @default(now())
   lastGrazedAt  DateTime?
   lastTickAt    DateTime @default(now())
@@ -419,6 +428,16 @@ model Herd {
   manureTons    Float     @default(0)
   /// Paille en litière, en tonnes — le pont aller depuis le céréalier
   beddingTons   Float     @default(0)
+  /// Abreuvement, de 0 à 1. Plein tant qu'on passe distribuer la ration, ou
+  /// en permanence si un abreuvoir automatique est rattaché au bâtiment.
+  water         Float     @default(1)
+  /// Santé du lot, de 0 à 1. **La seule jauge qui peut tuer**, et elle ne
+  /// baisse que par la cascade : huit heures réelles de sursis après le
+  /// manque, puis vingt-huit heures de dégradation avant la première perte.
+  health        Float     @default(1)
+  /// Depuis quand un besoin vital n'est plus couvert ; null si tout va bien.
+  /// C'est l'horloge de la cascade, et elle se remet à zéro dès qu'on nourrit.
+  deprivedSince DateTime?
   /// Lots de jeunes en croissance ; ils comptent dans `size`
   youngBatches  YoungBatch[]
 }
