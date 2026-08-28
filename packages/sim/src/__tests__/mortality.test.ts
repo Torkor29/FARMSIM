@@ -23,6 +23,8 @@ import {
 const CYCLE = LIVESTOCK_CYCLE_MS;
 /** Une heure d'horloge : la cascade se compte en temps réel, pas en jeu. */
 const HEURE = 3_600_000;
+/** Un jour de montre : l'unité dans laquelle les pertes se comptent. */
+const REAL_DAY = 24 * HEURE;
 
 describe("mortalité d'un troupeau négligé", () => {
   it("épargne un troupeau au-dessus du seuil, si mal en point soit-il", () => {
@@ -30,48 +32,78 @@ describe("mortalité d'un troupeau négligé", () => {
       health: MORTALITY.floor + 0.01,
       herdSize: 20,
       elapsedMs: CYCLE * 50,
-      cycleMs: CYCLE,
       debt: 0,
     });
     expect(r.deaths).toBe(0);
   });
 
-  it("fait payer la famine, mais lentement", () => {
-    const un = mortalityToll({
+  it("fait payer l'abandon, mais lentement, et en temps réel", () => {
+    /*
+     * Le barème se compte en **jours de montre**, plus en cycles d'élevage.
+     * En cycles — un toutes les 1 h 25 —, six pour cent valaient dix-sept pour
+     * cent du lot par heure réelle : un joueur absent une nuit rentrait sur une
+     * étable vide, sans avoir pu lire le moindre avertissement.
+     */
+    const uneHeure = mortalityToll({
       health: 0,
       herdSize: 10,
-      elapsedMs: CYCLE,
-      cycleMs: CYCLE,
+      elapsedMs: HEURE,
       debt: 0,
     });
-    // Six pour cent d'un lot de dix, soit moins d'une bête : la dette porte le
-    // reste jusqu'au cycle suivant.
-    expect(un.deaths).toBe(0);
-    expect(un.debt).toBeCloseTo(0.6, 5);
+    // Un quart du lot par jour au pire : sur une heure, un quart de bête.
+    expect(uneHeure.deaths).toBe(0);
+    expect(uneHeure.debt).toBeCloseTo((10 * 0.25) / 24, 5);
 
-    const deux = mortalityToll({
+    // Et il faut la moitié d'un jour réel pour perdre la première bête.
+    const demiJour = mortalityToll({
       health: 0,
       herdSize: 10,
-      elapsedMs: CYCLE,
-      cycleMs: CYCLE,
-      debt: un.debt,
+      elapsedMs: 12 * HEURE,
+      debt: 0,
     });
-    expect(deux.deaths).toBe(1);
+    expect(demiJour.deaths).toBe(1);
+  });
+
+  it("ne peut pas vider une étable en une seule reconnexion", () => {
+    /*
+     * Le cas mesuré sur la pile complète, et celui qui a motivé la réécriture :
+     * trente-quatre heures d'absence, un unique tick de rattrapage, et
+     * cinquante-six bêtes disparues d'un coup. La santé descend **pendant** la
+     * fenêtre : sur trente-quatre heures elle ne passe sous le plancher que
+     * pour les deux dernières.
+     */
+    const r = mortalityToll({
+      health: tickHealth({ health: 1, deprivedH: 34, elapsedMs: 34 * HEURE }),
+      healthBefore: 1,
+      herdSize: 56,
+      elapsedMs: 34 * HEURE,
+      debt: 0,
+    });
+    expect(r.deaths).toBeLessThan(3);
+    expect(r.deaths).toBeGreaterThanOrEqual(0);
   });
 
   it("finit par emporter un petit lot, que la dette rendait immortel", () => {
+    /*
+     * Trois bêtes ne perdaient jamais rien : la perte attendue restait sous
+     * l'unité et se retrouvait arrondie à zéro à chaque passage. La dette
+     * fractionnaire est là pour ça — elle se reporte jusqu'à valoir une bête.
+     *
+     * On compte en **heures réelles** d'abandon complet, et le seuil dit ce
+     * qu'on exige : que le joueur ait plus d'une journée pour rentrer avant de
+     * perdre la dernière.
+     */
     let size = 3;
     let debt = 0;
-    let cycles = 0;
-    while (size > 0 && cycles < 500) {
-      const r = mortalityToll({ health: 0, herdSize: size, elapsedMs: CYCLE, cycleMs: CYCLE, debt });
+    let heures = 0;
+    while (size > 0 && heures < 2000) {
+      const r = mortalityToll({ health: 0, herdSize: size, elapsedMs: HEURE, debt });
       size -= r.deaths;
       debt = r.debt;
-      cycles += 1;
+      heures += 1;
     }
     expect(size).toBe(0);
-    // Assez lent pour qu'on puisse rentrer et réagir.
-    expect(cycles).toBeGreaterThan(10);
+    expect(heures).toBeGreaterThan(24);
   });
 
   it("ne tue jamais plus de bêtes qu'il n'y en a", () => {
@@ -79,7 +111,6 @@ describe("mortalité d'un troupeau négligé", () => {
       health: 0,
       herdSize: 2,
       elapsedMs: CYCLE * 1000,
-      cycleMs: CYCLE,
       debt: 0,
     });
     expect(r.deaths).toBeLessThanOrEqual(2);
@@ -90,7 +121,6 @@ describe("mortalité d'un troupeau négligé", () => {
       health: 0.8,
       herdSize: 10,
       elapsedMs: CYCLE,
-      cycleMs: CYCLE,
       debt: 0.9,
     });
     expect(r.debt).toBeLessThan(0.9);
@@ -198,7 +228,7 @@ describe("le dépassement de capacité coûte, et ne tue jamais", () => {
     expect(cible(2)).toBeCloseTo(1 - HAPPINESS.crowdingPenaltyMax, 6);
     expect(crowdingLethalThreshold()).toBe(Number.POSITIVE_INFINITY);
     expect(
-      mortalityToll({ health: 1, herdSize: 40, elapsedMs: CYCLE * 500, cycleMs: CYCLE, debt: 0 })
+      mortalityToll({ health: 1, herdSize: 40, elapsedMs: CYCLE * 500, debt: 0 })
         .deaths,
     ).toBe(0);
   });
@@ -223,6 +253,15 @@ describe("le dépassement de capacité coûte, et ne tue jamais", () => {
  * faire ».
  */
 describe("la cascade — de la mangeoire vide à la première perte", () => {
+  /** La santé d'un lot privé depuis `heures`, heure par heure. */
+  const santeApres = (heures: number): number => {
+    let sante = 1;
+    for (let h = 1; h <= heures; h++) {
+      sante = tickHealth({ health: sante, deprivedH: h, elapsedMs: HEURE });
+    }
+    return sante;
+  };
+
   it("laisse huit heures de sursis avant que la santé ne bouge", () => {
     expect(cascadeStage(0)).toBe("OK");
     expect(cascadeStage(1)).toBe("PRODUCTION");
@@ -264,14 +303,31 @@ describe("la cascade — de la mangeoire vide à la première perte", () => {
     ).toBeCloseTo(0, 6);
   });
 
-  /** La santé d'un lot privé depuis `heures`, heure par heure. */
-  const santeApres = (heures: number): number => {
-    let sante = 1;
-    for (let h = 1; h <= heures; h++) {
-      sante = tickHealth({ health: sante, deprivedH: h, elapsedMs: HEURE });
+
+  it("compte pareil en un gros tick qu'en petits — le cas du joueur absent", () => {
+    /*
+     * Le bug que ce test ferme, mesuré sur la pile complète.
+     *
+     * `tickHealth` facturait **toute** la fenêtre au tarif de la chute, sursis
+     * compris. Un joueur qui revenait après vingt-quatre heures se voyait
+     * facturer vingt-quatre heures de dégradation au lieu de seize : santé à
+     * zéro, troupeau supprimé, là où la règle promet trente-six heures et
+     * trois avertissements. Le serveur rattrape une absence en un seul tick —
+     * c'est le cas où l'arithmétique doit être juste, pas l'exception.
+     */
+    for (const heures of [4, 10, 24, 34, 36, 60]) {
+      const dUnCoup = tickHealth({ health: 1, deprivedH: heures, elapsedMs: heures * HEURE });
+      expect(dUnCoup).toBeCloseTo(santeApres(heures), 6);
     }
-    return sante;
-  };
+  });
+
+  it("laisse encore de la santé après vingt-quatre heures d'absence", () => {
+    // Seize heures au-delà du sursis sur vingt-huit : il reste 43 %, et
+    // surtout pas une bête perdue.
+    const sante = tickHealth({ health: 1, deprivedH: 24, elapsedMs: 24 * HEURE });
+    expect(sante).toBeCloseTo(1 - 16 / HEALTH.collapseH, 6);
+    expect(sante).toBeGreaterThan(MORTALITY.floor);
+  });
 
   it("ne tue aucune bête avant le bout de la cascade", () => {
     // La santé reste au-dessus du plancher de mortalité pendant trente et une
@@ -281,7 +337,6 @@ describe("la cascade — de la mangeoire vide à la première perte", () => {
         health: santeApres(h),
         herdSize: 40,
         elapsedMs: CYCLE,
-        cycleMs: CYCLE,
         debt: 0,
       });
       expect(perte.deaths).toBe(0);
@@ -306,7 +361,6 @@ describe("la cascade — de la mangeoire vide à la première perte", () => {
         health: sante,
         herdSize: taille,
         elapsedMs: 24 * HEURE,
-        cycleMs: CYCLE,
         debt,
       });
       taille -= perte.deaths;
@@ -326,7 +380,7 @@ describe("la cascade — de la mangeoire vide à la première perte", () => {
     sante = tickHealth({ health: sante, deprivedH: 0, elapsedMs: 6 * HEURE });
     expect(sante).toBeGreaterThan(MORTALITY.floor);
     expect(
-      mortalityToll({ health: sante, herdSize: 40, elapsedMs: CYCLE, cycleMs: CYCLE, debt: 0 })
+      mortalityToll({ health: sante, herdSize: 40, elapsedMs: CYCLE, debt: 0 })
         .deaths,
     ).toBe(0);
   });

@@ -8275,7 +8275,8 @@ async function settleHerd(
   const prive = rationVide || water <= 0;
   const deprivedSince = prive ? (herd.deprivedSince ?? new Date(now)) : null;
   const deprivedH = deprivedSince ? Math.max(0, now - deprivedSince.getTime()) / 3_600_000 : 0;
-  const health = tickHealth({ health: herd.health ?? 1, deprivedH, elapsedMs });
+  const santeAvant = herd.health ?? 1;
+  const health = tickHealth({ health: santeAvant, deprivedH, elapsedMs });
 
   const happiness = tickHappiness({
     happiness: herd.happiness,
@@ -8363,9 +8364,12 @@ async function settleHerd(
   // réelles, et trois avertissements avant.
   const toll = mortalityToll({
     health,
+    // La santé baisse **pendant** le pas : sans les deux bornes, un joueur qui
+    // rentre après une journée se voit appliquer le pire barème à toute son
+    // absence, et retrouve une étable vide.
+    healthBefore: santeAvant,
     herdSize: size,
     elapsedMs,
-    cycleMs: LIVESTOCK_CYCLE_MS,
     debt: herd.mortalityDebt,
   });
   size = Math.max(0, size - toll.deaths);

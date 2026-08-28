@@ -535,9 +535,14 @@ export function LivestockPanel({
           repris à chaque ouverture pour un texte qu'on ne lit qu'une fois — et
           sur un téléphone, cela suffisait à repousser le bouton d'achat sous
           le pli. On garde ce qui est actionnable, le reste est dans le guide. */}
+      {/* La phrase disait « une aire de sortie accolée le rend plus
+          productif », ce qui est devenu à moitié faux : l'enclos n'est plus
+          qu'une des quatre pièces de l'installation, et aucune n'est
+          obligatoire. On dit donc la règle entière, qui tient en deux
+          propositions — ce qu'il faut, et ce qui rapporte en plus. */}
       <p className="muted tiny">
-        Un troupeau affamé s’effondre ; une aire de sortie accolée le rend plus
-        productif.
+        Nourrissez, abreuvez, laissez de la place : le troupeau produit à 100 %.
+        Ce que vous bâtissez autour du bâtiment le fait monter au-dessus.
       </p>
       {orphelins.length > 0 && (
         /* L'enclos posé seul.
@@ -1058,9 +1063,18 @@ export function LivestockPanel({
                    la main, ce qui était faux dès qu'on en ajoutait un. */
                 const aire = BUILDING_DEFS[barn.yardType];
                 const e = aire.article === "une" ? "e" : "";
+                /* « Les bêtes restent enfermées » était un reproche, et c'en
+                   est fini des reproches qu'on ne peut pas satisfaire : un
+                   troupeau à l'étable ne perd plus rien. On dit ce que l'enclos
+                   apporterait, et le joueur décide. */
+                const nom = aire.name.toLowerCase();
+                // « Pas d'courette » : l'élision se fait sur la voyelle, pas au
+                // jugé. Le catalogue porte « enclos », « courette à porcs » et
+                // « courette à poules » — les deux formes existent.
+                const de = /^[aeiouyéèêà]/.test(nom) ? "d’" : "de ";
                 return barn.paddockCapacity > 0
                   ? `${aire.name} attenant${e} · ${barn.paddockCapacity} places de sortie`
-                  : `Aucun${e} ${aire.name.toLowerCase()} attenant${e} — les bêtes restent enfermées`;
+                  : `Pas ${de}${nom} attenant${e} — le troupeau va bien, mais il ne sort pas`;
               })()}
             </p>
 

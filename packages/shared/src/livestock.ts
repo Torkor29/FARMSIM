@@ -809,20 +809,46 @@ export const HEALTH = {
  * Tant que la privation reste dans le sursis (`CASCADE.productionH`), la santé
  * **remonte** : un troupeau qu'on nourrit se rétablit, et un troupeau qu'on
  * néglige une heure ne perd rien du tout.
+ *
+ * ## Le pas de temps se découpe, il ne se facture pas en bloc
+ *
+ * `deprivedH` est la privation **à la fin** de la fenêtre. La fenêtre couvre
+ * donc `[deprivedH − Δt ; deprivedH]`, et seule la part qui dépasse le sursis
+ * abîme quoi que ce soit.
+ *
+ * Sans ce découpage, un joueur qui revient après vingt-quatre heures voyait
+ * les vingt-quatre facturées au tarif de la chute : santé à zéro et troupeau
+ * mort, là où la règle en promet trente-six. Mesuré sur la pile complète avant
+ * correction — dix heures d'absence rendaient déjà 64 % de santé, vingt-quatre
+ * un troupeau supprimé. Le serveur rattrape un joueur absent en un seul tick :
+ * c'est précisément le cas où l'arithmétique doit être juste.
  */
 export function tickHealth(input: {
   health: number;
-  /** Heures écoulées depuis que le besoin vital n'est plus couvert */
+  /** Heures écoulées depuis que le besoin vital n'est plus couvert, à la fin du pas */
   deprivedH: number;
   elapsedMs: number;
 }): number {
-  const current = clamp(input.health, HEALTH.min, HEALTH.max);
   const hours = Math.max(0, input.elapsedMs) / REAL_HOUR_MS;
-  if (hours === 0) return current;
-  if (Math.max(0, input.deprivedH) <= CASCADE.productionH) {
-    return clamp(current + hours / HEALTH.recoverH, HEALTH.min, HEALTH.max);
-  }
-  return clamp(current - hours / HEALTH.collapseH, HEALTH.min, HEALTH.max);
+  if (hours === 0) return clamp(input.health, HEALTH.min, HEALTH.max);
+
+  const fin = Math.max(0, input.deprivedH);
+  const debut = Math.max(0, fin - hours);
+  /** Heures de la fenêtre passées au-delà du sursis — celles qui coûtent. */
+  const nuisibles = Math.max(0, fin - Math.max(debut, CASCADE.productionH));
+  /** Le reste : la privation n'avait pas commencé, ou pas encore mordu. */
+  const reparatrices = Math.max(0, hours - nuisibles);
+
+  // Séquentiellement, et non en une somme : la santé se borne entre les deux,
+  // sinon des heures de repos qu'un troupeau déjà au maximum ne peut pas
+  // encaisser viendraient amortir la chute qui suit.
+  let sante = clamp(
+    input.health + reparatrices / HEALTH.recoverH,
+    HEALTH.min,
+    HEALTH.max,
+  );
+  sante = clamp(sante - nuisibles / HEALTH.collapseH, HEALTH.min, HEALTH.max);
+  return sante;
 }
 
 /* ------------------------------------------------------------------ */
@@ -1682,35 +1708,91 @@ export function happinessLabel(happiness: number): string {
 export const MORTALITY = {
   /** En dessous de cette **santé**, les pertes commencent `[GD]` */
   floor: 0.15,
-  /** Part du lot perdue par cycle, santé au plus bas `[GD]` */
-  perCycleAtWorst: 0.06,
+  /**
+   * Part du lot perdue par **jour réel**, santé au plus bas `[GD]`.
+   *
+   * Un quart, et compté en temps de montre — pas en cycles d'élevage.
+   *
+   * Le barème d'avant valait 6 % par cycle, soit un cycle toutes les
+   * 1 h 25 min : dix-sept pour cent par heure réelle. Tant que le serveur
+   * tournait sans arrêt, personne ne l'avait vu ; mesuré sur la pile complète,
+   * un joueur revenant après trente-quatre heures se voyait appliquer
+   * vingt-quatre cycles **d'un coup**, soit cent quarante pour cent du lot :
+   * le troupeau entier disparaissait dans l'instant de la reconnexion, sans
+   * qu'aucun avertissement ait pu être lu. C'est le contraire de ce qu'on
+   * cherche — l'absence doit coûter, elle ne doit pas condamner.
+   *
+   * À ce rythme, un troupeau de quarante bêtes complètement abandonné en perd
+   * dix par jour réel. Trois jours d'absence laissent de quoi repartir.
+   */
+  perDayAtWorst: 0.25,
 } as const;
+
+/** Un jour de montre, en millisecondes — l'unité des pertes. */
+const REAL_DAY_MS = 24 * REAL_HOUR_MS;
 
 /**
  * Pertes d'un lot sur une durée donnée.
  *
  * La dette fractionnaire est reportée d'un appel à l'autre : sans elle, un lot
- * de trois bêtes ne perdrait jamais rien, la perte attendue par cycle restant
- * sous l'unité. Elle est retournée pour être stockée.
+ * de trois bêtes ne perdrait jamais rien, la perte attendue restant sous
+ * l'unité. Elle est retournée pour être stockée.
+ *
+ * ## La santé baisse *pendant* la fenêtre, elle n'y est pas plate
+ *
+ * `healthBefore` est la santé au début du pas, `health` celle de la fin. Entre
+ * les deux elle descend en ligne droite, et **seule la part passée sous le
+ * plancher** coûte des bêtes. Un pas de trente-quatre heures qui commence à
+ * pleine santé n'en compte qu'un peu plus de deux sous le plancher, pas
+ * trente-quatre.
+ *
+ * Sans cette lecture, un joueur qui rentrait après une nuit et une journée
+ * voyait le pire des barèmes appliqué à toute son absence : mesuré, cent
+ * quarante pour cent du lot en une reconnexion. `healthBefore` est facultatif
+ * — omis, on retombe sur l'ancienne lecture, santé plate.
  */
 export function mortalityToll(input: {
-  /** Santé du lot, cf. `tickHealth()` — **jamais** la satisfaction */
+  /** Santé du lot à la fin du pas, cf. `tickHealth()` — **jamais** la satisfaction */
   health: number;
+  /** Santé au début du pas ; par défaut, la même qu'à la fin */
+  healthBefore?: number;
   herdSize: number;
   elapsedMs: number;
-  cycleMs: number;
   debt: number;
 }): { deaths: number; debt: number } {
   const size = Math.max(0, Math.floor(input.herdSize));
   if (size <= 0) return { deaths: 0, debt: 0 };
-  if (input.health >= MORTALITY.floor) {
+
+  const fin = clamp(input.health, 0, 1);
+  const debut = clamp(input.healthBefore ?? fin, 0, 1);
+  const jours = Math.max(0, input.elapsedMs) / REAL_DAY_MS;
+
+  if (debut >= MORTALITY.floor && fin >= MORTALITY.floor) {
     // Un troupeau qu'on remet d'aplomb ne traîne pas sa dette : la pression
     // retombe avec la faim.
     return { deaths: 0, debt: Math.max(0, input.debt - 0.25) };
   }
-  const severity = clamp((MORTALITY.floor - input.health) / MORTALITY.floor, 0, 1);
-  const cycles = Math.max(0, input.elapsedMs) / Math.max(1, input.cycleMs);
-  const debt = input.debt + size * MORTALITY.perCycleAtWorst * severity * cycles;
+
+  /*
+   * Part de la fenêtre passée sous le plancher, et santé moyenne sur cette
+   * part. Trois cas : sous le plancher d'un bout à l'autre, ou traversée dans
+   * un sens ou dans l'autre — la géométrie est la même, seul le bord change.
+   */
+  let part: number;
+  let moyenne: number;
+  if (debut < MORTALITY.floor && fin < MORTALITY.floor) {
+    part = 1;
+    moyenne = (debut + fin) / 2;
+  } else {
+    const bas = debut < MORTALITY.floor ? debut : fin;
+    const haut = debut < MORTALITY.floor ? fin : debut;
+    // Où la droite coupe le plancher, en part de la fenêtre.
+    part = haut === bas ? 1 : (MORTALITY.floor - bas) / (haut - bas);
+    moyenne = (bas + MORTALITY.floor) / 2;
+  }
+
+  const severite = clamp((MORTALITY.floor - moyenne) / MORTALITY.floor, 0, 1);
+  const debt = input.debt + size * MORTALITY.perDayAtWorst * severite * jours * part;
   const deaths = Math.min(size, Math.floor(debt));
   return { deaths, debt: debt - deaths };
 }

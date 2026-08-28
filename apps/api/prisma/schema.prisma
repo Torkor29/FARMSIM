@@ -394,7 +394,11 @@ model Herd {
   building      Building @relation(fields: [buildingId], references: [id], onDelete: Cascade)
   kind          String   @default("COW")
   size          Int      @default(0)
-  happiness     Float    @default(0.6)
+  /// Satisfaction des besoins, de 0 à 1. **Un** par défaut : un troupeau
+  /// qu'on vient d'acheter et qu'on nourrit ne manque de rien. Le 0,6 d'avant
+  /// venait de l'ancienne échelle, où la cible d'une bête enfermée plafonnait
+  /// à 0,35 et où 0,6 se lisait « Sereines ».
+  happiness     Float    @default(1)
   bornAt        DateTime @default(now())
   lastGrazedAt  DateTime?
   lastTickAt    DateTime @default(now())

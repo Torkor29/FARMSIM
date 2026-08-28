@@ -28,3 +28,19 @@ ALTER TABLE "Herd" ADD COLUMN "deprivedSince" TIMESTAMP(3);
 -- la capacité de son étable tourne à 100 % sans elles.
 ALTER TYPE "BuildingType" ADD VALUE 'WATER_TROUGH';
 ALTER TYPE "BuildingType" ADD VALUE 'HAY_RACK';
+
+-- La satisfaction change d'unité, donc l'ancienne valeur ne veut plus rien dire.
+--
+-- Elle mesurait une position entre le plancher de l'enfermement (0,35) et le
+-- plafond du pâturage (0,95) : une jauge qui ne visitait jamais ses bornes, et
+-- dont 0,6 se lisait « Sereines ». Elle mesure maintenant la part des besoins
+-- couverts, où 1 veut dire « rien ne manque ». Reporter l'ancien nombre
+-- afficherait « Stressées 60 % » sous une liste de causes vide — un reproche
+-- sans motif, exactement ce qu'on corrige.
+--
+-- On repart donc du haut, et la simulation redescend au vrai chiffre dès le
+-- premier tick pour les troupeaux à qui il manque réellement quelque chose :
+-- la faim, la soif et le dépassement se recalculent à partir de l'état, jamais
+-- à partir de cette colonne.
+ALTER TABLE "Herd" ALTER COLUMN "happiness" SET DEFAULT 1;
+UPDATE "Herd" SET "happiness" = 1;
