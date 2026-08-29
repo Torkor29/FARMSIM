@@ -305,6 +305,11 @@ type Player = {
       hours?: number;
       /** Palier 1 à 5 : il décide de la largeur, de la puissance et du prix. */
       tier?: number;
+      /**
+       * Au champ jusqu'à cette heure — le serveur l'envoie, l'écran s'en sert
+       * pour dire « de retour dans 2 min » avant le clic plutôt qu'après.
+       */
+      busyUntil?: string | null;
       parkedParcelId?: string | null;
       storedInBuildingId?: string | null;
       greased?: boolean;
@@ -2849,7 +2854,15 @@ export function App() {
   const machineManquante = useMemo(() => {
     const work = workOfTool(tool);
     if (!work) return null;
-    const parc = explainNoMachine((player?.farm?.machines ?? []) as MachineForWork[], work);
+    /* `horloge` est passée plutôt que laissée par défaut : le message compte à
+       rebours le retour de l'engin, et cette horloge bat à la seconde tant
+       qu'un chantier tourne. Sans elle en dépendance, « de retour dans 2 min »
+       resterait figé jusqu'au prochain rafraîchissement du parc. */
+    const parc = explainNoMachine(
+      (player?.farm?.machines ?? []) as MachineForWork[],
+      work,
+      horloge,
+    );
     if (parc) return parc;
     // La machine est là ; reste à savoir si la sélection a de quoi l'occuper.
     if ((work === "HARVEST" || work === "MOW") && selectedCells.length) {
@@ -2858,7 +2871,7 @@ export function App() {
       }
     }
     return null;
-  }, [tool, player?.farm?.machines, selectedCells.length, dansSelection]);
+  }, [tool, player?.farm?.machines, selectedCells.length, dansSelection, horloge]);
 
   const laborQuote = useMemo(() => {
     if (visiting || !contractorOffer) return null;

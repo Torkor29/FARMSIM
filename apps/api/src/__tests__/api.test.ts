@@ -2220,6 +2220,46 @@ describe("un chantier prend du temps", () => {
     }
   });
 
+  /**
+   * Un seul tracteur ne mène pas deux chantiers.
+   *
+   * Signalé en jouant le 28 août : « tu peux lancer deux choses qui
+   * nécessitent le tracteur alors que t'as qu'un seul tracteur, c'est pas
+   * censé être possible. Il faudrait un ajustement là dessus. Dire qu'il faut
+   * deux tracteurs. »
+   *
+   * Les deux chantiers portent sur des cases **disjointes** : c'est ce qui
+   * isole l'attelage. Sur les mêmes cases, la réservation suffirait à refuser
+   * et le test ne mesurerait pas ce qu'il prétend mesurer.
+   */
+  it("refuse un second chantier quand l'attelage est déjà au champ", async () => {
+    const { moi, parcelle, cells } = await fermeAuChamp("UnSeulTracteur");
+
+    const a = await appel(`/parcels/${parcelle.id}/jobs`, {
+      methode: "POST",
+      corps: { userId: moi.id, work: "PLANT", crop: cropDeSaison(), cells: cells.slice(0, 6) },
+      jeton: moi.jeton,
+    });
+    assert.equal(a.statut, 201);
+
+    const b = await appel(`/parcels/${parcelle.id}/jobs`, {
+      methode: "POST",
+      corps: { userId: moi.id, work: "PLANT", crop: cropDeSaison(), cells: cells.slice(6, 12) },
+      jeton: moi.jeton,
+    });
+    assert.equal(
+      b.statut,
+      409,
+      `le même attelage a mené deux chantiers : ${JSON.stringify(b.corps)}`,
+    );
+    const erreur = (b.corps as unknown as { error: string }).error;
+    // Le refus doit se suffire à lui-même : ce qui bloque, pour combien de
+    // temps, et quoi faire. C'est le silence, pas la règle, qui avait fait
+    // retirer cette contrainte la première fois.
+    assert.match(erreur, /au champ/, `refus muet : ${erreur}`);
+    assert.match(erreur, /second/, `le refus ne dit pas quoi faire : ${erreur}`);
+  });
+
   it("rend l'attelage quand on abandonne", async () => {
     const { moi, parcelle, cells } = await fermeAuChamp("Renonce");
     const lance = await appel(`/parcels/${parcelle.id}/jobs`, {

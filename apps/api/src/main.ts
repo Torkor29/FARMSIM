@@ -804,28 +804,48 @@ function explainNoMachine(machines: FarmMachine[], work: FarmWork): string {
  * mieux entretenu.
  */
 /**
- * L'attelage d'un travail — même s'il est déjà au champ.
+ * L'attelage d'un travail — parmi ceux qui ne sont pas déjà au champ.
  *
- * Il refusait tout engin dont `busyUntil` n'était pas passé : un chantier en
- * cours interdisait donc d'en ouvrir un second, sur quelque parcelle que ce
- * soit. Un joueur qui achète une deuxième terre pour la travailler ne pouvait
- * pas s'en servir tant que la première tournait, et rien ne le lui disait.
+ * ## L'aller-retour, et ce qu'il a appris
  *
- * « Oui il peut utiliser le même engin pour plusieurs parcelles » : c'est le
- * choix qui a été fait, en connaissance de ce qu'il coûte — un semoir n'est
- * plus une ressource physique qu'on se dispute, et le palier de l'engin ne se
- * contourne plus en achetant du temps, puisqu'on peut lancer deux chantiers au
- * lieu d'un plus large. Ce qui borne encore, c'est le gazole (prélevé au
- * départ de chaque chantier) et les cases, qu'un seul chantier peut retenir.
+ * Ce filtre a existé, a été retiré, et revient. Il vaut la peine de dire
+ * pourquoi, parce que les deux signalements avaient raison.
  *
- * `busyUntil` garde tout son sens ailleurs : on ne vend, ne reprend ni
- * n'améliore un engin qui est aux champs. Il porte désormais la fin du
- * **dernier** chantier en cours — voir `reglerOccupation`.
+ * Il refusait d'abord tout engin dont `busyUntil` n'était pas passé, **sans
+ * un mot** : un chantier en cours interdisait d'en ouvrir un second, sur
+ * quelque parcelle que ce soit, et le joueur qui venait d'acheter une seconde
+ * terre ne pouvait pas s'en servir sans comprendre pourquoi. D'où sa
+ * suppression — « oui il peut utiliser le même engin pour plusieurs
+ * parcelles ».
+ *
+ * Le remède a créé l'inverse : « tu peux lancer deux choses qui nécessitent le
+ * tracteur alors que t'as qu'un seul tracteur, c'est pas censé être
+ * possible ». Un semoir cessait d'être une ressource physique, et le palier de
+ * l'engin se contournait en achetant du temps — deux chantiers étroits au lieu
+ * d'un large.
+ *
+ * Ce qui n'allait pas, la première fois, n'était donc pas la règle : c'était
+ * le silence. `explainNoMachine` nomme maintenant l'engin, dit dans combien de
+ * temps il rentre et dit qu'il en faut un second, des deux côtés de
+ * l'écran — l'écran le dit **avant** le clic. La contrainte revient avec sa
+ * phrase.
+ *
+ * `busyUntil` porte la fin du **dernier** chantier en cours — voir
+ * `reglerOccupation` — et sert aussi à interdire la vente, la reprise et
+ * l'amélioration d'un engin qui n'est pas rentré.
  */
-function pickMachineForWork(machines: FarmMachine[], work: FarmWork): Rig | null {
+function pickMachineForWork(
+  machines: FarmMachine[],
+  work: FarmWork,
+  maintenant: number = Date.now(),
+): Rig | null {
+  const libre = (m: FarmMachine) =>
+    !m.busyUntil || m.busyUntil.getTime() <= maintenant;
+
   const tracteurs = machines
     .filter((m) => MACHINE_DEFS[m.type as MachineType]?.kind === "TRACTOR")
     .filter((m) => !machineWorkBlock(careOf(m), MACHINE_DEFS[m.type as MachineType].minCondition))
+    .filter(libre)
     .sort(
       (a, b) =>
         machinePower(b.type as MachineType, tierOf(b)) -
@@ -837,6 +857,7 @@ function pickMachineForWork(machines: FarmMachine[], work: FarmWork): Rig | null
     const def = MACHINE_DEFS[m.type as MachineType];
     if (!def || !def.works.includes(work)) continue;
     if (machineWorkBlock(careOf(m), def.minCondition)) continue;
+    if (!libre(m)) continue;
     const tier = tierOf(m);
     if (def.kind === "IMPLEMENT") {
       const besoin = machineRequiredHp(def.type, tier);
