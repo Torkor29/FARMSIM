@@ -2128,8 +2128,24 @@ describe("un chantier prend du temps", () => {
    * production, un chantier de semis était encore `RUNNING` **huit jours**
    * après sa fin : personne n'était retourné sur ce champ. Le tour de
    * simulation balaie maintenant, quelle que soit la parcelle.
+   *
+   * ## Et l'engin de ce fantôme a été vendu depuis
+   *
+   * C'est ce que la production a livré le 31 août, au prix de trois jours de
+   * site injoignable. `FieldJob.machineId` n'est pas une clé étrangère :
+   * l'identifiant survit à la vente de l'engin. Le balayage a réveillé le
+   * fantôme, `machine.update` a levé un P2025 « No record was found for an
+   * update », la transaction a échoué, et avec elle le tour de simulation —
+   * attendu sans filet au démarrage, il faisait sortir le processus. Docker
+   * relançait, le tour échouait encore, et le conteneur tournait en
+   * `Restarting` sans jamais ouvrir son port.
+   *
+   * Le test supprime donc l'outil, **pas** le tracteur : ce qui reste doit
+   * rentrer au garage pendant que ce qui a disparu est ignoré. Le second
+   * défaut de cette panne — un tour raté n'empêche plus de servir — se lit
+   * dans `main()`.
    */
-  it("balaie au tour de simulation les fantômes des champs délaissés", async () => {
+  it("balaie un fantôme de champ délaissé, même si son outil a été vendu", async () => {
     const { moi, parcelle, cells } = await fermeAuChamp("Balai");
     const lance = await appel(`/parcels/${parcelle.id}/jobs`, {
       methode: "POST",
@@ -2140,7 +2156,9 @@ describe("un chantier prend du temps", () => {
     const jobId = (lance.corps as unknown as { job: { id: string } }).job.id;
     const vieux = new Date(Date.now() - 8 * 24 * 60 * 60_000);
     prismaExec(
-      `UPDATE "FieldJob" SET "endsAt" = '${vieux.toISOString()}' WHERE id = '${jobId}';`,
+      `UPDATE "FieldJob" SET "endsAt" = '${vieux.toISOString()}' WHERE id = '${jobId}';` +
+        // C'est le chantier qui désigne son outil, comme dans le code.
+        ` DELETE FROM "Machine" WHERE id IN (SELECT "machineId" FROM "FieldJob" WHERE id = '${jobId}');`,
     );
 
     // Aucune visite sur la parcelle : c'est le tour du monde qui doit le voir.
@@ -2218,6 +2236,46 @@ describe("un chantier prend du temps", () => {
       assert.equal(c.fieldStage, "EMPTY", `case ${c.x},${c.y} encore travaillée`);
       assert.equal(c.residuePasses, 0, `case ${c.x},${c.y} garde des résidus, donc du marron`);
     }
+  });
+
+  /**
+   * Un seul tracteur ne mène pas deux chantiers.
+   *
+   * Signalé en jouant le 28 août : « tu peux lancer deux choses qui
+   * nécessitent le tracteur alors que t'as qu'un seul tracteur, c'est pas
+   * censé être possible. Il faudrait un ajustement là dessus. Dire qu'il faut
+   * deux tracteurs. »
+   *
+   * Les deux chantiers portent sur des cases **disjointes** : c'est ce qui
+   * isole l'attelage. Sur les mêmes cases, la réservation suffirait à refuser
+   * et le test ne mesurerait pas ce qu'il prétend mesurer.
+   */
+  it("refuse un second chantier quand l'attelage est déjà au champ", async () => {
+    const { moi, parcelle, cells } = await fermeAuChamp("UnSeulTracteur");
+
+    const a = await appel(`/parcels/${parcelle.id}/jobs`, {
+      methode: "POST",
+      corps: { userId: moi.id, work: "PLANT", crop: cropDeSaison(), cells: cells.slice(0, 6) },
+      jeton: moi.jeton,
+    });
+    assert.equal(a.statut, 201);
+
+    const b = await appel(`/parcels/${parcelle.id}/jobs`, {
+      methode: "POST",
+      corps: { userId: moi.id, work: "PLANT", crop: cropDeSaison(), cells: cells.slice(6, 12) },
+      jeton: moi.jeton,
+    });
+    assert.equal(
+      b.statut,
+      409,
+      `le même attelage a mené deux chantiers : ${JSON.stringify(b.corps)}`,
+    );
+    const erreur = (b.corps as unknown as { error: string }).error;
+    // Le refus doit se suffire à lui-même : ce qui bloque, pour combien de
+    // temps, et quoi faire. C'est le silence, pas la règle, qui avait fait
+    // retirer cette contrainte la première fois.
+    assert.match(erreur, /au champ/, `refus muet : ${erreur}`);
+    assert.match(erreur, /second/, `le refus ne dit pas quoi faire : ${erreur}`);
   });
 
   it("rend l'attelage quand on abandonne", async () => {

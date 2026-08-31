@@ -976,7 +976,28 @@ export type MachineForWork = {
   dirt?: number;
   greaseSkipStreak?: number;
   breakdown?: string | null;
+  /**
+   * Fin du dernier chantier en cours : l'engin est au champ jusque-là.
+   *
+   * Facultatif, et absent vaut « libre » : les écrans qui ne jugent que du
+   * matériel possédé — la fiche d'un engin, le catalogue du garage — n'ont pas
+   * à connaître les chantiers pour dire si un semoir est en état.
+   */
+  busyUntil?: string | Date | null;
 };
+
+/** Une attente lisible : « 40 s », « 3 min ». Zéro ou passé donne « 0 s ». */
+export function delaiEnClair(ms: number): string {
+  const secondes = Math.max(0, Math.ceil(ms / 1000));
+  return secondes < 90 ? `${secondes} s` : `${Math.ceil(secondes / 60)} min`;
+}
+
+/** Jusqu'à quand cet engin est pris, ou `null` s'il est libre maintenant. */
+function occupeJusqua(m: MachineForWork, maintenant: number): number | null {
+  if (!m.busyUntil) return null;
+  const fin = m.busyUntil instanceof Date ? m.busyUntil.getTime() : Date.parse(m.busyUntil);
+  return Number.isFinite(fin) && fin > maintenant ? fin : null;
+}
 
 function careDe(m: MachineForWork): MachineCareState {
   const grease = m.grease ?? (m.greased === false ? 0 : GREASE_FULL);
@@ -997,20 +1018,34 @@ function careDe(m: MachineForWork): MachineCareState {
 /**
  * Pourquoi ce travail ne peut pas se faire, ou `null` s'il le peut.
  *
- * Trois causes depuis la séparation porteur / outil, et le joueur doit savoir
- * laquelle : il n'a pas l'outil, il ne l'a pas en état, ou il n'a pas de
- * tracteur assez puissant pour le tirer. Un message unique le laisserait
- * acheter le mauvais engin.
+ * Quatre causes, et le joueur doit savoir laquelle : il n'a pas l'outil, il ne
+ * l'a pas en état, l'engin est déjà au champ, ou aucun tracteur assez puissant
+ * ne peut le tirer. Un message unique le laisserait acheter le mauvais engin —
+ * ou attendre là où il faut acheter.
  *
  * Vivait côté serveur, donc l'écran ne pouvait rien en dire : un débutant, dont
  * le parc n'a que tracteur, semoir et charrue, pouvait cliquer Récolte, Faucher,
  * Engrais, Presser, Ramasser, Ensiler et Déchaumer — sept outils sur dix qui ne
  * pouvaient que refuser. Ici, les deux côtés donnent la même phrase, et l'écran
  * la donne avant le clic.
+ *
+ * ## L'engin au champ
+ *
+ * Un même attelage a pu, un temps, mener deux chantiers de front : le filtre
+ * sur `busyUntil` avait été retiré parce qu'il refusait sans un mot — un joueur
+ * qui achetait une seconde parcelle ne pouvait pas la travailler, et rien ne le
+ * lui disait. Signalé en jouant : « tu peux lancer deux choses qui nécessitent
+ * le tracteur alors que t'as qu'un seul tracteur, c'est pas censé être
+ * possible ».
+ *
+ * La contrainte revient donc, mais le silence ne revient pas : le refus nomme
+ * l'engin, dit dans combien de temps il rentre, et dit qu'il en faut un second.
+ * C'était le vrai défaut de l'époque — la règle, elle, était juste.
  */
 export function explainNoMachine(
   machines: MachineForWork[],
   work: FarmWork,
+  maintenant: number = Date.now(),
 ): string | null {
   const outils = (Object.keys(MACHINE_DEFS) as MachineType[]).filter((t) =>
     MACHINE_DEFS[t].works.includes(work as never),
@@ -1021,28 +1056,50 @@ export function explainNoMachine(
     const noms = outils.map((t) => machineWithArticle(t)).join(" ou ");
     return `Il faut ${noms} pour ce travail — passez au garage.`;
   }
-  for (const m of possedes) {
+  const enEtat = possedes.filter(
+    (m) => !machineWorkBlock(careDe(m), MACHINE_DEFS[m.type].minCondition),
+  );
+  if (!enEtat.length) {
+    const m = possedes[0]!;
     const def = MACHINE_DEFS[m.type];
-    const block = machineWorkBlock(careDe(m), def.minCondition);
-    if (block) return `${def.name} : ${block.message}`;
+    const block = machineWorkBlock(careDe(m), def.minCondition)!;
+    return `${def.name} : ${block.message}`;
   }
-  // L'outil est là et en état : il manque donc de quoi le tirer.
-  const outil = possedes[0]!;
+  const libres = enEtat.filter((m) => occupeJusqua(m, maintenant) === null);
+  if (!libres.length) {
+    const rentre = Math.min(...enEtat.map((m) => occupeJusqua(m, maintenant)!));
+    const def = MACHINE_DEFS[enEtat[0]!.type];
+    return `${def.name} au champ — de retour dans ${delaiEnClair(rentre - maintenant)}. Il en faut un second pour mener deux chantiers de front.`;
+  }
+  // L'outil est là, en état et libre : il manque donc de quoi le tirer.
+  const outil = libres[0]!;
   const def = MACHINE_DEFS[outil.type];
   if (def.kind === "IMPLEMENT") {
     const ch = machineRequiredHp(def.type, asTier(outil.tier ?? 1));
     const tracteurs = machines.filter((m) => MACHINE_DEFS[m.type]?.kind === "TRACTOR");
-    const meilleur = tracteurs.reduce(
+    const attelables = tracteurs.filter(
+      (m) =>
+        !machineWorkBlock(careDe(m), MACHINE_DEFS[m.type].minCondition) &&
+        occupeJusqua(m, maintenant) === null,
+    );
+    const meilleur = attelables.reduce(
       (max, m) => Math.max(max, machinePower(m.type, asTier(m.tier ?? 1))),
       0,
     );
+    if (meilleur >= ch) return null;
+    // Aucun tracteur libre ne suffit. Reste à dire pourquoi : il n'y en a pas,
+    // ils sont tous au champ, ou le seul disponible manque de puissance.
+    const auChamp = tracteurs
+      .map((m) => occupeJusqua(m, maintenant))
+      .filter((fin): fin is number => fin !== null);
+    if (!attelables.length && auChamp.length) {
+      const rentre = Math.min(...auChamp);
+      return `${def.name} est prêt, mais votre tracteur est au champ — de retour dans ${delaiEnClair(rentre - maintenant)}. Il en faut un second pour tirer deux outils à la fois.`;
+    }
     if (meilleur === 0) {
       return `${def.name} prêt, mais aucun tracteur pour le tirer (${ch} ch nécessaires).`;
     }
-    if (meilleur < ch) {
-      return `${def.name} demande ${ch} ch — votre meilleur tracteur en donne ${meilleur}.`;
-    }
-    return null;
+    return `${def.name} demande ${ch} ch — votre meilleur tracteur en donne ${meilleur}.`;
   }
   return null;
 }

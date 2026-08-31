@@ -804,28 +804,48 @@ function explainNoMachine(machines: FarmMachine[], work: FarmWork): string {
  * mieux entretenu.
  */
 /**
- * L'attelage d'un travail — même s'il est déjà au champ.
+ * L'attelage d'un travail — parmi ceux qui ne sont pas déjà au champ.
  *
- * Il refusait tout engin dont `busyUntil` n'était pas passé : un chantier en
- * cours interdisait donc d'en ouvrir un second, sur quelque parcelle que ce
- * soit. Un joueur qui achète une deuxième terre pour la travailler ne pouvait
- * pas s'en servir tant que la première tournait, et rien ne le lui disait.
+ * ## L'aller-retour, et ce qu'il a appris
  *
- * « Oui il peut utiliser le même engin pour plusieurs parcelles » : c'est le
- * choix qui a été fait, en connaissance de ce qu'il coûte — un semoir n'est
- * plus une ressource physique qu'on se dispute, et le palier de l'engin ne se
- * contourne plus en achetant du temps, puisqu'on peut lancer deux chantiers au
- * lieu d'un plus large. Ce qui borne encore, c'est le gazole (prélevé au
- * départ de chaque chantier) et les cases, qu'un seul chantier peut retenir.
+ * Ce filtre a existé, a été retiré, et revient. Il vaut la peine de dire
+ * pourquoi, parce que les deux signalements avaient raison.
  *
- * `busyUntil` garde tout son sens ailleurs : on ne vend, ne reprend ni
- * n'améliore un engin qui est aux champs. Il porte désormais la fin du
- * **dernier** chantier en cours — voir `reglerOccupation`.
+ * Il refusait d'abord tout engin dont `busyUntil` n'était pas passé, **sans
+ * un mot** : un chantier en cours interdisait d'en ouvrir un second, sur
+ * quelque parcelle que ce soit, et le joueur qui venait d'acheter une seconde
+ * terre ne pouvait pas s'en servir sans comprendre pourquoi. D'où sa
+ * suppression — « oui il peut utiliser le même engin pour plusieurs
+ * parcelles ».
+ *
+ * Le remède a créé l'inverse : « tu peux lancer deux choses qui nécessitent le
+ * tracteur alors que t'as qu'un seul tracteur, c'est pas censé être
+ * possible ». Un semoir cessait d'être une ressource physique, et le palier de
+ * l'engin se contournait en achetant du temps — deux chantiers étroits au lieu
+ * d'un large.
+ *
+ * Ce qui n'allait pas, la première fois, n'était donc pas la règle : c'était
+ * le silence. `explainNoMachine` nomme maintenant l'engin, dit dans combien de
+ * temps il rentre et dit qu'il en faut un second, des deux côtés de
+ * l'écran — l'écran le dit **avant** le clic. La contrainte revient avec sa
+ * phrase.
+ *
+ * `busyUntil` porte la fin du **dernier** chantier en cours — voir
+ * `reglerOccupation` — et sert aussi à interdire la vente, la reprise et
+ * l'amélioration d'un engin qui n'est pas rentré.
  */
-function pickMachineForWork(machines: FarmMachine[], work: FarmWork): Rig | null {
+function pickMachineForWork(
+  machines: FarmMachine[],
+  work: FarmWork,
+  maintenant: number = Date.now(),
+): Rig | null {
+  const libre = (m: FarmMachine) =>
+    !m.busyUntil || m.busyUntil.getTime() <= maintenant;
+
   const tracteurs = machines
     .filter((m) => MACHINE_DEFS[m.type as MachineType]?.kind === "TRACTOR")
     .filter((m) => !machineWorkBlock(careOf(m), MACHINE_DEFS[m.type as MachineType].minCondition))
+    .filter(libre)
     .sort(
       (a, b) =>
         machinePower(b.type as MachineType, tierOf(b)) -
@@ -837,6 +857,7 @@ function pickMachineForWork(machines: FarmMachine[], work: FarmWork): Rig | null
     const def = MACHINE_DEFS[m.type as MachineType];
     if (!def || !def.works.includes(work)) continue;
     if (machineWorkBlock(careOf(m), def.minCondition)) continue;
+    if (!libre(m)) continue;
     const tier = tierOf(m);
     if (def.kind === "IMPLEMENT") {
       const besoin = machineRequiredHp(def.type, tier);
@@ -1199,7 +1220,21 @@ async function reglerOccupation(
       if (j.machineId !== id && j.tractorId !== id) continue;
       if (!fin || j.endsAt.getTime() > fin.getTime()) fin = j.endsAt;
     }
-    await tx.machine.update({ where: { id }, data: { busyUntil: fin } });
+    /*
+     * `updateMany` et non `update` : l'engin a pu être vendu.
+     *
+     * Un chantier garde l'identifiant de son attelage même après la vente de
+     * celui-ci. Le balayage des fantômes en a réveillé un vieux de huit jours,
+     * dont le semoir n'existait plus : `update` a levé un P2025 « No record
+     * was found », la transaction a échoué, et avec elle le tour de
+     * simulation — lancé sans filet au démarrage, il a tué le serveur en
+     * boucle. Trois jours de site injoignable pour un engin revendu.
+     *
+     * `updateMany` ne trouve rien et n'en fait pas une affaire : c'est
+     * exactement le comportement voulu, puisqu'un engin qui n'existe plus n'a
+     * plus d'occupation à régler.
+     */
+    await tx.machine.updateMany({ where: { id }, data: { busyUntil: fin } });
   }
 }
 
@@ -1251,7 +1286,9 @@ async function annulerChantiers(morts: ChantierAClore[]): Promise<void> {
     });
     await reglerOccupation(tx, attelages);
     for (const [ferme, litres] of gazoleParFerme) {
-      await tx.farm.update({ where: { id: ferme }, data: { fuelL: { increment: litres } } });
+      // Même raison qu'au-dessus : une ferme supprimée ne doit pas faire
+      // tomber le tour de simulation pour un litre de gazole.
+      await tx.farm.updateMany({ where: { id: ferme }, data: { fuelL: { increment: litres } } });
     }
   });
 }
@@ -11932,7 +11969,22 @@ app.use(
 
 async function main() {
   await ensureSeed();
-  await runWorldTick();
+  /*
+   * Le premier tour ne peut pas empêcher le serveur de servir.
+   *
+   * Il était attendu sans filet, là où les suivants étaient protégés. Un tour
+   * qui échoue faisait donc échouer `main()`, le rejet remontait sans
+   * gestionnaire, et le processus sortait — Docker relançait, le tour
+   * échouait encore, et le conteneur tournait en `Restarting` sans jamais
+   * ouvrir son port. Relevé le 31 août : trois jours de site injoignable
+   * parce qu'un chantier de huit jours désignait un semoir revendu.
+   *
+   * Une simulation en panne dégrade le jeu — les cultures ne poussent plus.
+   * Elle ne doit pas l'éteindre : le joueur doit pouvoir se connecter, voir sa
+   * ferme, et nous laisser le temps de comprendre. Le même traitement que les
+   * tours suivants, pour la même raison.
+   */
+  await runWorldTick().catch((e) => console.error("premier tour de simulation en échec", e));
   setInterval(() => {
     runWorldTick().catch((e) => console.error("sim tick failed", e));
   }, SIM_TICK_MS);

@@ -129,13 +129,37 @@ describe("un chantier n’éteint plus le jeu", () => {
     expect(APP).toMatch(/activeWork=\{activeWorks\.find\(\(w\) => w\.parcelId === activeParcelId\) \?\? null\}/);
   });
 
-  it("le serveur laisse un attelage repartir sur un autre champ", () => {
-    // `pickMachineForWork` écartait tout engin dont `busyUntil` n'était pas
-    // passé : le second chantier était refusé faute de matériel.
+  /**
+   * Un engin au champ n'y repart pas — mais le refus s'explique.
+   *
+   * Cette assertion disait l'inverse, et elle avait ses raisons. Le filtre sur
+   * `busyUntil` écartait tout engin occupé **sans un mot** : le joueur qui
+   * venait d'acheter une seconde parcelle la trouvait inutilisable sans
+   * comprendre pourquoi. On l'avait donc retiré — « oui il peut utiliser le
+   * même engin pour plusieurs parcelles ».
+   *
+   * Le remède a produit l'inverse, signalé en jouant le 28 août : « tu peux
+   * lancer deux choses qui nécessitent le tracteur alors que t'as qu'un seul
+   * tracteur, c'est pas censé être possible ».
+   *
+   * Ce qui n'allait pas la première fois n'était pas la règle, c'était le
+   * silence. La contrainte revient donc avec sa phrase, et c'est cette
+   * paire-là que le test tient maintenant : le filtre, **et** le message.
+   */
+  it("le serveur garde un attelage occupé au champ, et le dit", () => {
     const API = fs.readFileSync("../../apps/api/src/main.ts", "utf8");
     const debut = API.indexOf("function pickMachineForWork");
     const corps = API.slice(debut, API.indexOf("type CellXY", debut));
-    expect(corps).not.toMatch(/busyUntil/);
+    expect(corps).toMatch(/busyUntil/);
+    expect(corps).toMatch(/\.filter\(libre\)/);
+
+    // La moitié qui manquait la première fois : le refus nomme l'engin, dit
+    // quand il rentre et dit qu'il en faut un second.
+    const SHARED = fs.readFileSync("../../packages/shared/src/index.ts", "utf8");
+    expect(SHARED).toMatch(/au champ — de retour dans \$\{delaiEnClair\(/);
+    expect(SHARED).toMatch(/Il en faut un second/);
+    // Et l'écran la donne avant le clic, avec la même horloge que le décompte.
+    expect(APP).toMatch(/explainNoMachine\(\n\s+\(player\?\.farm\?\.machines \?\? \[\]\) as MachineForWork\[\],\n\s+work,\n\s+horloge,\n\s+\)/);
   });
 
   it("mais on ne vend toujours pas un engin qui est au champ", () => {

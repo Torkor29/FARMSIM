@@ -305,6 +305,11 @@ type Player = {
       hours?: number;
       /** Palier 1 à 5 : il décide de la largeur, de la puissance et du prix. */
       tier?: number;
+      /**
+       * Au champ jusqu'à cette heure — le serveur l'envoie, l'écran s'en sert
+       * pour dire « de retour dans 2 min » avant le clic plutôt qu'après.
+       */
+      busyUntil?: string | null;
       parkedParcelId?: string | null;
       storedInBuildingId?: string | null;
       greased?: boolean;
@@ -2572,13 +2577,22 @@ export function App() {
    * démarrer le geste une demi-seconde après le doigt.
    */
   async function collectSupply(id: string) {
+    // Où la caisse était posée : le convoi part de là, pas du bord du champ.
+    // Lu avant de la retirer de la liste, sans quoi il n'en resterait rien.
+    const caisse = supplies.find((s) => s.id === id);
     setSupplies((prev) => prev.filter((s) => s.id !== id));
     try {
       const r = await api<{ collected: string; tons: number }>(`/supplies/${id}/collect`, {
         method: "POST",
       });
       const nom = GOOD_DEFS[r.collected as TradeGood]?.name ?? r.collected;
-      flashToast(`${r.tons} t de ${nom.toLowerCase()} rentrées`);
+      /* Rentrer une caisse est un transport, pas une téléportation : elle
+         disparaissait de la cour et le stock montait, sans que rien ne relie
+         les deux. L'attelage qui sert déjà aux livraisons entre joueurs fait
+         le trajet — « on clique sur le paquet pour l'envoyer au silo et là
+         c'est l'engin qui l'amène ». */
+      flashDeliveryArrival(r.collected, caisse ? { x: caisse.x, y: caisse.y } : undefined);
+      flashToast(`${r.tons} t de ${nom.toLowerCase()} · l'attelage la rentre au silo`);
       await refreshPlayer();
     } catch (e) {
       // Refusée — le camion n'était pas là, ou la caisse n'est plus : on
@@ -2849,7 +2863,15 @@ export function App() {
   const machineManquante = useMemo(() => {
     const work = workOfTool(tool);
     if (!work) return null;
-    const parc = explainNoMachine((player?.farm?.machines ?? []) as MachineForWork[], work);
+    /* `horloge` est passée plutôt que laissée par défaut : le message compte à
+       rebours le retour de l'engin, et cette horloge bat à la seconde tant
+       qu'un chantier tourne. Sans elle en dépendance, « de retour dans 2 min »
+       resterait figé jusqu'au prochain rafraîchissement du parc. */
+    const parc = explainNoMachine(
+      (player?.farm?.machines ?? []) as MachineForWork[],
+      work,
+      horloge,
+    );
     if (parc) return parc;
     // La machine est là ; reste à savoir si la sélection a de quoi l'occuper.
     if ((work === "HARVEST" || work === "MOW") && selectedCells.length) {
@@ -2858,7 +2880,7 @@ export function App() {
       }
     }
     return null;
-  }, [tool, player?.farm?.machines, selectedCells.length, dansSelection]);
+  }, [tool, player?.farm?.machines, selectedCells.length, dansSelection, horloge]);
 
   const laborQuote = useMemo(() => {
     if (visiting || !contractorOffer) return null;
@@ -3136,7 +3158,16 @@ export function App() {
   }
 
   /** Tracteur + remorque sur la parcelle d’arrivée, comme chez le voisin. */
-  function flashDeliveryArrival(commodity?: string) {
+  /**
+   * @param depuis La case d'où part l'attelage.
+   *
+   * Absent pour une livraison qui arrive de l'extérieur : le camion entre par
+   * le bord. Renseigné quand le joueur clique une caisse posée dans sa cour —
+   * « on clique sur le paquet pour l'envoyer au silo et là c'est l'engin qui
+   * l'amène ». Sans ce point de départ, l'attelage se serait matérialisé au
+   * bord du champ pendant que la caisse disparaissait ailleurs.
+   */
+  function flashDeliveryArrival(commodity?: string, depuis?: { x: number; y: number }) {
     if (visiting) return;
     const destBuilding = (parcel?.buildings ?? []).find(
       (b) =>
@@ -3151,6 +3182,7 @@ export function App() {
       destBuilding
         ? { x: destBuilding.originX, y: destBuilding.originY }
         : null,
+      depuis,
     );
     if (cells.length < 2) return;
     setShowMarket(false);
@@ -3793,38 +3825,63 @@ export function App() {
     silage: "SILAGE",
   };
 
-  /** Ce que chaque denrée achetable vaut comme ration, si elle en est une. */
-  const RATION_DE: Partial<Record<TradeGood, "hay" | "maize" | "barley" | "wheat" | "silage">> = {
-    HAY: "hay",
-    MAIZE: "maize",
-    BARLEY: "barley",
-    WHEAT: "wheat",
-    SILAGE: "silage",
-  };
+  /* `RATION_DE` — la table inverse de `RATION_GOOD` — vivait ici pour
+     enchaîner l'achat sur la distribution. L'enchaînement a été retiré : il
+     servait un stock qui n'était pas encore rentré, et échouait à tous les
+     coups. La table part avec lui plutôt que de rester à attendre un usage
+     qui n'existe plus ; elle se réécrit en cinq lignes le jour où la
+     distribution différée sera faite pour de bon. */
 
   /** Achat d'un intrant au négociant — du fourrage, pour l'instant. */
   async function buyInput(commodity: TradeGood, tons: number) {
     if (!player) return;
     setBusy(true);
     try {
-      const r = await api<{ bought: number; cost: number }>("/market/buy", {
+      const r = await api<{
+        bought: number;
+        cost: number;
+        /** La commande part en camion : elle n'est pas au stock. */
+        delivery?: { id: string; arrivesAt: number };
+      }>("/market/buy", {
         method: "POST",
         body: JSON.stringify({ userId: player.id, commodity, tons }),
       });
       const nom = GOOD_DEFS[commodity]?.name ?? commodity;
-      const ration = RATION_DE[commodity];
       const pourLeLot = nourrirApres;
       await refreshPlayer();
-      if (pourLeLot && ration) {
-        // La marchandise est au silo : on enchaîne sur ce que le joueur
-        // voulait vraiment. `feedHerd` gère lui-même le `busy` et la quantité.
+      /*
+       * Le négociant livre, il ne remplit pas le silo.
+       *
+       * Le message annonçait « 5 t de paille · −360 € » comme si la
+       * marchandise était rentrée, et le commentaire d'ici affirmait « la
+       * marchandise est au silo ». C'est faux : la route crée une commande
+       * qui voyage, se pose en caisse dans la cour, et n'entre au stock qu'une
+       * fois rentrée — à la main, ou d'elle-même trois minutes plus tard.
+       *
+       * D'où les trois symptômes d'un seul défaut, signalés en jouant : « je
+       * clique mais on dirait que j'ai rien », « ça va se stocker où ? », et
+       * « quand je clique sur nourrir du coup je peux pas ». Le dernier était
+       * le plus sûr : l'enchaînement achat → distribution servait un stock
+       * qui n'existait pas encore, et échouait.
+       *
+       * On dit donc ce qui se passe vraiment, et où regarder.
+       */
+      const secondes = r.delivery
+        ? Math.max(1, Math.round((r.delivery.arrivesAt - Date.now()) / 1000))
+        : 0;
+      const quand = secondes ? `dans ${secondes} s` : "dans un instant";
+      const livraison =
+        `Le colis sera livré sur ta parcelle ${quand} — clique dessus pour l’envoyer au silo.`;
+      if (pourLeLot) {
+        // On ne distribue pas ce qui n'est pas encore là. On dit quoi faire.
         setNourrirApres(null);
-        setBusy(false);
-        await feedHerd(pourLeLot, ration, r.bought);
-        flashToast(`${r.bought} t de ${nom.toLowerCase()} · −${r.cost} € · distribué au troupeau`);
+        flashToast(
+          `${r.bought} t de ${nom.toLowerCase()} · −${r.cost} €. ${livraison} Tu pourras nourrir le lot ensuite.`,
+          "warn",
+        );
         return;
       }
-      flashToast(`${r.bought} t de ${nom.toLowerCase()} · −${r.cost} €`);
+      flashToast(`${r.bought} t de ${nom.toLowerCase()} · −${r.cost} €. ${livraison}`);
     } catch (e) {
       flashToast(e instanceof Error ? e.message : String(e), true);
     } finally {
