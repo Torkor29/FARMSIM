@@ -110,6 +110,11 @@ import { ParcelleVoisineSheet } from "./ParcelleVoisineSheet";
 import { MachineCareOverlay, type CareMode } from "./MachineCareOverlay";
 import { MissionPlay, type MissionPlayContract } from "./MissionPlay";
 import { LivestockPanel, type BarnState, type OrphanYard } from "./LivestockPanel";
+import {
+  EmployeesPanel,
+  type CandidateRow,
+  type EmployeeRow,
+} from "./EmployeesPanel";
 import type { SupplyCrate } from "./IsoFarmView";
 import { MarketPanel, type Listing, type MarketDelivery, type FuturesContract } from "./MarketPanel";
 import { OfficePanel, type CreditView, type ProcessingView } from "./OfficePanel";
@@ -519,10 +524,10 @@ function writeGuideFlags(next: GuideFlags) {
 }
 
 /** Tiroirs du bas, sur petit écran. */
-type SheetKey = "INFO" | "BUILD" | "GARAGE" | "OFFICE" | "HERD" | "PROFILE";
+type SheetKey = "INFO" | "BUILD" | "GARAGE" | "OFFICE" | "HERD" | "STAFF" | "PROFILE";
 
 /**
- * Les cinq onglets du bas.
+ * Les onglets du bas.
  *
  * Leurs icônes étaient des emoji — 🌾 🏗️ 🐄 🚜 🤝 — alors que les outils, eux,
  * avaient de vrais dessins depuis toujours (`/assets/icons/tools/*.svg`). Les
@@ -536,6 +541,7 @@ const SHEET_TABS: { key: SheetKey; label: string; icon: string }[] = [
   { key: "HERD", label: "Troupeau", icon: "/assets/icons/nav/troupeau.svg" },
   { key: "GARAGE", label: "Garage", icon: "/assets/icons/nav/garage.svg" },
   { key: "OFFICE", label: "Missions", icon: "/assets/icons/nav/missions.svg" },
+  { key: "STAFF", label: "Personnel", icon: "/assets/icons/nav/personnel.svg" },
 ];
 
 /** Temps restant d'un chantier, en clair. */
@@ -817,6 +823,24 @@ export function App() {
   const [ledger, setLedger] = useState<LedgerLine[]>([]);
   const [showGarage, setShowGarage] = useState(false);
   const [showHerd, setShowHerd] = useState(false);
+  const [showStaff, setShowStaff] = useState(false);
+  /**
+   * Le personnel : l'équipe, le vivier du jour, et ce qu'il en coûte.
+   *
+   * Le vivier n'est pas stocké côté serveur — il se calcule à partir de la
+   * ferme et du jour — mais il se lit comme le reste : une seule requête rend
+   * l'équipe et les candidats, pour qu'ils ne puissent pas se contredire.
+   */
+  const [staff, setStaff] = useState<{
+    employees: EmployeeRow[];
+    candidates: CandidateRow[];
+    lits: number;
+    loges: number;
+    masseSalariale: number;
+    peutEmbaucher: boolean;
+    sansLogement: number;
+    preavisJours: number;
+  } | null>(null);
   const [weather, setWeather] = useState<WeatherSnap[]>([]);
   const [brush, setBrush] = useState<1 | 2 | 3>(1);
   const [prevPrices, setPrevPrices] = useState<Record<string, number>>({});
@@ -1061,6 +1085,32 @@ export function App() {
   }, [activeParcelId]);
 
   /**
+   * L'équipe et le vivier, en une lecture.
+   *
+   * Les deux vont ensemble : le nombre d'employés décide de ce qu'on peut
+   * encore embaucher, et les afficher depuis deux requêtes séparées les
+   * laisserait se contredire le temps d'un aller-retour.
+   */
+  const loadStaff = useCallback(async () => {
+    try {
+      setStaff(
+        await api<{
+          employees: EmployeeRow[];
+          candidates: CandidateRow[];
+          lits: number;
+          loges: number;
+          masseSalariale: number;
+          peutEmbaucher: boolean;
+          sansLogement: number;
+          preavisJours: number;
+        }>("/employees"),
+      );
+    } catch {
+      setStaff(null);
+    }
+  }, []);
+
+  /**
    * Les commandes en cours, relues régulièrement.
    *
    * Un camion met douze secondes : il faut donc revenir voir. On sonde toutes
@@ -1102,6 +1152,14 @@ export function App() {
     const t = window.setInterval(() => void loadSupplies(farmId), 5000);
     return () => window.clearInterval(t);
   }, [farmId, loadSupplies]);
+
+  // L'équipe ne se lit qu'à l'ouverture de l'écran : le vivier ne change qu'au
+  // changement de jour, il n'y a rien à sonder entre-temps.
+  const staffOuvert = isMobile ? sheet === "STAFF" : showStaff;
+  useEffect(() => {
+    if (!farmId || !staffOuvert) return;
+    void loadStaff();
+  }, [farmId, staffOuvert, loadStaff]);
 
   useEffect(() => {
     if (player?.dev || player?.unlimitedCrd) {
@@ -1372,6 +1430,10 @@ export function App() {
       }
 
       if (e.key === "g" || e.key === "G") setShowGarage((v) => !v);
+      // « P » comme personnel. Pas « E » : la touche fait déjà défiler les
+      // options de l'outil courant, et le badge du rail promettrait un
+      // raccourci qui ferait autre chose.
+      else if (e.key === "p" || e.key === "P") setShowStaff((v) => !v);
       else if (e.key === "t" || e.key === "T") setShowEta((v) => !v);
       else if (e.key === "m" || e.key === "M") setShowMarket((v) => !v);
       else if (e.key === "c" || e.key === "C") setShowSkills((v) => !v);
@@ -4450,6 +4512,64 @@ export function App() {
     }
   }
 
+  /* ---------------------------------------------------------------- */
+  /* Le personnel                                                       */
+  /* ---------------------------------------------------------------- */
+
+  async function hireEmployee(candidateId: string) {
+    setBusy(true);
+    try {
+      const r = await api<{ employee: { name: string; salaire: number } }>("/employees/hire", {
+        method: "POST",
+        body: JSON.stringify({ candidateId }),
+      });
+      flashToast(`${r.employee.name} embauché(e) · ${r.employee.salaire} € par jour de jeu`);
+      await loadStaff();
+      await refreshPlayer();
+    } catch (e) {
+      flashToast(e instanceof Error ? e.message : String(e), true);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function setEmployeePost(id: string, poste: "CHAMP" | "ELEVAGE") {
+    setBusy(true);
+    try {
+      await api(`/employees/${id}/post`, { method: "POST", body: JSON.stringify({ poste }) });
+      await loadStaff();
+    } catch (e) {
+      flashToast(e instanceof Error ? e.message : String(e), true);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  function fireEmployee(id: string, nom: string) {
+    /* Se séparer de quelqu'un se confirme : le geste est irréversible, et le
+       vivier du jour aura peut-être déjà tourné quand on le regrettera. */
+    setConfirmRequest({
+      title: `Se séparer de ${nom} ?`,
+      detail: "Le poste se libère tout de suite. Il faudra réembaucher dans le vivier du jour.",
+      confirmLabel: "Se séparer",
+      destructive: true,
+      onConfirm: () => void doFireEmployee(id, nom),
+    });
+  }
+
+  async function doFireEmployee(id: string, nom: string) {
+    setBusy(true);
+    try {
+      await api(`/employees/${id}/fire`, { method: "POST" });
+      flashToast(`${nom} quitte la ferme`);
+      await loadStaff();
+    } catch (e) {
+      flashToast(e instanceof Error ? e.message : String(e), true);
+    } finally {
+      setBusy(false);
+    }
+  }
+
   function slaughterHerd(herdId: string, count: number) {
     if (!player) return;
     setConfirmRequest({
@@ -6044,6 +6164,40 @@ export function App() {
 
         <PanelHost
           mobile={isMobile}
+          open={showStaff}
+          title="Personnel"
+          subtitle={
+            staff
+              ? `${staff.employees.length} employé(s) · ${staff.masseSalariale} € / jour`
+              : "Équipe et candidats"
+          }
+          onClose={() => setShowStaff(false)}
+        >
+        {(isMobile ? sheet === "STAFF" : showStaff) && staff && (
+          <EmployeesPanel
+            className={panelClass("staff-panel", "STAFF")}
+            embedded={!isMobile}
+            gesture={isMobile ? sheetGesture : undefined}
+            busy={busy}
+            employees={staff.employees}
+            candidates={staff.candidates}
+            lits={staff.lits}
+            loges={staff.loges}
+            masseSalariale={staff.masseSalariale}
+            peutEmbaucher={staff.peutEmbaucher}
+            sansLogement={staff.sansLogement}
+            preavisJours={staff.preavisJours}
+            onClose={() => (isMobile ? setSheet(null) : setShowStaff(false))}
+            onHire={(id) => void hireEmployee(id)}
+            onPost={(id, poste) => void setEmployeePost(id, poste)}
+            onFire={fireEmployee}
+            onExplain={(raison) => flashToast(raison, "warn")}
+          />
+        )}
+        </PanelHost>
+
+        <PanelHost
+          mobile={isMobile}
           open={showHerd}
           title="Élevage"
           subtitle={`${barns.reduce((n, b) => n + (b.herd?.size ?? 0), 0)} bête(s) · ${barns.length} bâtiment(s)`}
@@ -6418,6 +6572,14 @@ export function App() {
                 hotkey: "T",
                 on: showEta,
                 onOpen: () => setShowEta((v) => !v),
+              },
+              {
+                id: "STAFF",
+                label: "Personnel",
+                icon: "/assets/icons/nav/personnel.svg",
+                hotkey: "P",
+                on: showStaff,
+                onOpen: () => setShowStaff((v) => !v),
               },
               ...(barns.length > 0
                 ? [

@@ -38,6 +38,7 @@ export * from "./rotation.js";
 export * from "./futures.js";
 export * from "./machine-care.js";
 export * from "./machine-catalog.js";
+export * from "./employees.js";
 export * from "./calendar.js";
 export * from "./fuel.js";
 export * from "./weeds.js";
@@ -187,7 +188,11 @@ export type BuildingType =
      reproduction et l'économie de fourrage. Ce sont les deux pièces qui
      rendent l'élevage rentable au lieu de simplement viable. */
   | "WATER_TROUGH"
-  | "HAY_RACK";
+  | "HAY_RACK"
+  /* Le logement des employés. Il n'est pas requis pour embaucher — deux
+     personnes logent au village — mais c'est lui qui ouvre au-delà, et il
+     fait baisser le salaire de ceux qu'il héberge. */
+  | "EMPLOYEE_HOUSING";
 
 export type CellKind = "EMPTY" | "CROP" | "BUILDING" | "VEHICLE";
 
@@ -812,6 +817,30 @@ export const BUILDING_DEFS: Record<BuildingType, BuildingDef> = {
     description: "Collée au poulailler : les poules picorent dehors, elles pondent mieux.",
   },
   /* ------------------------------------------------------------------ */
+  /* Le personnel                                                        */
+  /* ------------------------------------------------------------------ */
+  EMPLOYEE_HOUSING: {
+    type: "EMPLOYEE_HOUSING",
+    article: "un",
+    name: "Logement du personnel",
+    w: 2,
+    h: 2,
+    /*
+     * Le prix d'un bâtiment utilitaire du catalogue, pas d'une nouveauté qui
+     * s'inventerait sa propre échelle.
+     *
+     * À ce tarif il ne se rembourse pas vite sur la seule remise de salaire —
+     * et il ne le doit pas : ce qu'il vend d'abord, c'est la **capacité**.
+     * La remise est ce qui rend l'agrandissement tentant une fois qu'on y est.
+     * S'il paraît trop cher à l'usage, c'est le pourcentage qu'il faut monter,
+     * pas le prix qu'il faut baisser : un bâtiment bon marché qu'on bâtit sans
+     * y penser ne décide de rien.
+     */
+    cost: 7200,
+    description:
+      "Loge vos employés : un lit au premier niveau, cinq au dernier. Un employé logé coûte 35 % de moins.",
+  },
+  /* ------------------------------------------------------------------ */
   /* Annexes d'élevage                                                   */
   /* ------------------------------------------------------------------ */
   /*
@@ -1288,6 +1317,7 @@ export const BUILDING_ART: Record<BuildingType, string> = {
   BEEHIVE: "/assets/buildings/beehive.svg",
   DAIRY: "/assets/buildings/dairy.svg",
   MILL: "/assets/buildings/mill.svg",
+  EMPLOYEE_HOUSING: "/assets/buildings/employee-housing.svg",
   // Même raison pour les deux annexes d'élevage : une case au sol, un dessin.
   WATER_TROUGH: "/assets/buildings/water-trough.svg",
   HAY_RACK: "/assets/buildings/hay-rack.svg",

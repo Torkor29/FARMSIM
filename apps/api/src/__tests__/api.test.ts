@@ -1943,6 +1943,23 @@ describe("un chantier prend du temps", () => {
       });
       assert.equal(achat.statut, 201, `achat ${type} refusé : ${JSON.stringify(achat.corps)}`);
     }
+    /*
+     * Et quelqu'un pour conduire le second attelage.
+     *
+     * Le matériel ne suffit plus : le joueur compte pour un conducteur, et
+     * mener deux chantiers en demande deux. C'est toute la règle des
+     * employés, et elle s'applique ici comme ailleurs.
+     */
+    const vivier = await appel("/employees", { jeton: moi.jeton });
+    assert.equal(vivier.statut, 200, `vivier illisible : ${JSON.stringify(vivier.corps)}`);
+    const candidat = (vivier.corps as unknown as { candidates: { id: string }[] }).candidates[0]!;
+    const embauche = await appel("/employees/hire", {
+      methode: "POST",
+      corps: { candidateId: candidat.id },
+      jeton: moi.jeton,
+    });
+    assert.equal(embauche.statut, 201, `embauche refusée : ${JSON.stringify(embauche.corps)}`);
+
     const a = await appel(`/parcels/${parcelle.id}/jobs`, {
       methode: "POST",
       corps: { userId: moi.id, work: "PLANT", crop: cropDeSaison(), cells: cells.slice(0, 6) },
@@ -2276,6 +2293,207 @@ describe("un chantier prend du temps", () => {
     // retirer cette contrainte la première fois.
     assert.match(erreur, /au champ/, `refus muet : ${erreur}`);
     assert.match(erreur, /second/, `le refus ne dit pas quoi faire : ${erreur}`);
+  });
+
+  /**
+   * Du vivier au chantier, en une seule ferme.
+   *
+   * Les règles pures — barème, tirage déterministe, capacité de logement —
+   * sont tenues dans `packages/sim`. Ici on prend le chemin que le joueur
+   * emprunte, et on vérifie la seule chose qu'aucun test pur ne peut dire :
+   * que le second chantier part une fois quelqu'un embauché, et pas avant.
+   *
+   * Une seule ferme pour tout cela : chaque `fermeAuChamp` consomme une
+   * parcelle libre du monde de test, et il n'y en a pas des mille.
+   */
+  /**
+   * Du vivier au chantier, sur une seule ferme.
+   *
+   * Les règles pures — barème, tirage déterministe, capacité de logement —
+   * sont tenues dans `packages/sim`. Ici on suit le chemin du joueur, et on
+   * vérifie la seule chose qu'aucun test pur ne peut dire : que le second
+   * chantier part une fois quelqu'un embauché, et pas avant.
+   *
+   * Tout tient dans une ferme et un récit : chaque `fermeAuChamp` consomme
+   * une parcelle libre du monde de test, et il n'y en a pas des mille — deux
+   * fermes de plus ont suffi à affamer le test de voisinage.
+   */
+  it("embauche : le second chantier devient possible, et le logement borne le reste", async () => {
+    const { moi, parcelle, cells } = await fermeAuChamp("Equipe");
+
+    // 1 — le tableau d'embauche, avant toute embauche.
+    const vivier = await appel("/employees", { jeton: moi.jeton });
+    assert.equal(vivier.statut, 200);
+    const tableau = vivier.corps as unknown as {
+      employees: { impayeJours: number }[];
+      candidates: { id: string; salaire: number }[];
+      lits: number;
+      peutEmbaucher: boolean;
+      sansLogement: number;
+      preavisJours: number;
+    };
+    assert.equal(tableau.employees.length, 0, "on démarre seul");
+    assert.equal(tableau.candidates.length, 3, "trois candidats se présentent");
+    assert.equal(tableau.lits, 0, "aucun logement bâti");
+    assert.equal(tableau.peutEmbaucher, true, "deux embauches sont possibles sans rien bâtir");
+    assert.equal(tableau.sansLogement, 2);
+    assert.equal(tableau.preavisJours, 2, "le préavis se lit depuis la règle partagée");
+    for (const c of tableau.candidates) {
+      assert.ok(c.salaire >= 60, `salaire sous le plancher : ${c.salaire}`);
+    }
+
+    /* Un second attelage, sinon le refus porterait sur le matériel et ce test
+       ne mesurerait pas ce qu'il prétend mesurer. Le garage ne tient que cinq
+       engins : on revend celui dont on n'a que faire. */
+    const parc = (await appel("/auth/me", { jeton: moi.jeton })).corps as unknown as {
+      player: { farm: { machines: { id: string; type: string }[] } };
+    };
+    const inutile = parc.player.farm.machines.find(
+      (m) => m.type !== "TRACTOR" && m.type !== "SEEDER",
+    );
+    assert.ok(inutile);
+    await appel(`/machines/${inutile.id}/sell`, {
+      methode: "POST",
+      corps: { userId: moi.id },
+      jeton: moi.jeton,
+    });
+    for (const type of ["TRACTOR", "SEEDER"]) {
+      const achat = await appel("/machines/buy", {
+        methode: "POST",
+        corps: { userId: moi.id, type },
+        jeton: moi.jeton,
+      });
+      assert.equal(achat.statut, 201, `achat ${type} refusé : ${JSON.stringify(achat.corps)}`);
+    }
+
+    // 2 — le premier chantier part ; le second est refusé faute de bras.
+    const a = await appel(`/parcels/${parcelle.id}/jobs`, {
+      methode: "POST",
+      corps: { userId: moi.id, work: "PLANT", crop: cropDeSaison(), cells: cells.slice(0, 6) },
+      jeton: moi.jeton,
+    });
+    assert.equal(a.statut, 201);
+    const refuse = await appel(`/parcels/${parcelle.id}/jobs`, {
+      methode: "POST",
+      corps: { userId: moi.id, work: "PLANT", crop: cropDeSaison(), cells: cells.slice(6, 12) },
+      jeton: moi.jeton,
+    });
+    assert.equal(refuse.statut, 409);
+    assert.match(
+      (refuse.corps as unknown as { error: string }).error,
+      /embauchez/,
+      "le refus doit nommer le geste qui débloque",
+    );
+
+    // 3 — on embauche, et le même chantier passe.
+    const embauche = await appel("/employees/hire", {
+      methode: "POST",
+      corps: { candidateId: tableau.candidates[0]!.id },
+      jeton: moi.jeton,
+    });
+    assert.equal(embauche.statut, 201, `embauche refusée : ${JSON.stringify(embauche.corps)}`);
+    const recrue = (embauche.corps as unknown as { employee: { id: string } }).employee;
+    /* Un employé frais ne doit rien : sans ce zéro, l'écran afficherait une
+       mise en garde de départ à la seconde qui suit l'embauche. */
+    const apres = (await appel("/employees", { jeton: moi.jeton })).corps as unknown as {
+      employees: { impayeJours: number }[];
+    };
+    assert.equal(apres.employees.length, 1);
+    assert.equal(apres.employees[0]!.impayeJours, 0, "on ne doit rien à qui vient d'arriver");
+
+    /* Le vivier se recalcule à chaque appel : sans garde-fou, on rembaucherait
+       la même personne autant de fois qu'il reste des lits. */
+    const encore = await appel("/employees/hire", {
+      methode: "POST",
+      corps: { candidateId: tableau.candidates[0]!.id },
+      jeton: moi.jeton,
+    });
+    assert.equal(encore.statut, 409, "on ne peut pas embaucher deux fois la même personne");
+    const vivierApres = (await appel("/employees", { jeton: moi.jeton })).corps as unknown as {
+      candidates: { id: string }[];
+    };
+    assert.equal(vivierApres.candidates.length, 2, "l'embauché quitte le tableau des candidats");
+    assert.ok(
+      !vivierApres.candidates.some((c) => c.id === tableau.candidates[0]!.id),
+      "celui qu'on a embauché ne doit plus être proposé",
+    );
+    const b = await appel(`/parcels/${parcelle.id}/jobs`, {
+      methode: "POST",
+      corps: { userId: moi.id, work: "PLANT", crop: cropDeSaison(), cells: cells.slice(6, 12) },
+      jeton: moi.jeton,
+    });
+    assert.equal(b.statut, 201, `le second chantier reste refusé : ${JSON.stringify(b.corps)}`);
+
+    /* On range les deux chantiers avant de mesurer la suite. Les attendre
+       finir marchait sur une machine au repos et tombait sous charge : le
+       plafond compte ce qui tourne **maintenant**, et « maintenant » n'est pas
+       une durée sur laquelle on peut parier. */
+    for (const lance of [a, b]) {
+      const id = (lance.corps as unknown as { job: { id: string } }).job.id;
+      const stop = await appel(`/jobs/${id}/cancel`, {
+        methode: "POST",
+        corps: { userId: moi.id },
+        jeton: moi.jeton,
+      });
+      // 409 : il avait fini tout seul entre-temps, ce qui nous va aussi.
+      assert.ok(
+        stop.statut === 200 || stop.statut === 409,
+        `abandon refusé : ${JSON.stringify(stop.corps)}`,
+      );
+    }
+
+    // 4 — envoyé à l'élevage, il ne conduit plus : le plafond retombe.
+    const mute = await appel(`/employees/${recrue.id}/post`, {
+      methode: "POST",
+      corps: { poste: "ELEVAGE" },
+      jeton: moi.jeton,
+    });
+    assert.equal(mute.statut, 200);
+    // Deux chantiers neufs, coup sur coup, sur un compteur remis à zéro.
+    const c = await appel(`/parcels/${parcelle.id}/jobs`, {
+      methode: "POST",
+      corps: { userId: moi.id, work: "PLANT", crop: cropDeSaison(), cells: cells.slice(12, 18) },
+      jeton: moi.jeton,
+    });
+    assert.equal(c.statut, 201, `le joueur doit pouvoir mener le sien : ${JSON.stringify(c.corps)}`);
+    const d = await appel(`/parcels/${parcelle.id}/jobs`, {
+      methode: "POST",
+      corps: { userId: moi.id, work: "PLANT", crop: cropDeSaison(), cells: cells.slice(18, 24) },
+      jeton: moi.jeton,
+    });
+    assert.equal(
+      d.statut,
+      409,
+      "celui qui est à l'élevage ne devrait pas conduire un chantier",
+    );
+
+    // 5 — deux au village, pas trois : au-delà, il faut des lits.
+    const deuxieme = await appel("/employees/hire", {
+      methode: "POST",
+      corps: { candidateId: tableau.candidates[1]!.id },
+      jeton: moi.jeton,
+    });
+    assert.equal(deuxieme.statut, 201);
+    const trop = await appel("/employees/hire", {
+      methode: "POST",
+      corps: { candidateId: tableau.candidates[2]!.id },
+      jeton: moi.jeton,
+    });
+    assert.equal(trop.statut, 409);
+    assert.match(
+      (trop.corps as unknown as { error: string }).error,
+      /logement/,
+      "le refus doit nommer le bâtiment qui débloque",
+    );
+
+    /* Et le candidat ne se fabrique pas : le serveur le retrouve dans le
+       vivier du jour, sinon n'importe qui s'embaucherait un 5/5/5. */
+    const invente = await appel("/employees/hire", {
+      methode: "POST",
+      corps: { candidateId: "cand-inexistant-0" },
+      jeton: moi.jeton,
+    });
+    assert.equal(invente.statut, 409);
   });
 
   it("rend l'attelage quand on abandonne", async () => {
@@ -2834,13 +3052,22 @@ describe("le voisinage d’une parcelle", () => {
     const regions = (monde.corps as unknown as {
       regions: { parcels: { id: string; taken: boolean }[] }[];
     }).regions;
+    /*
+     * On s'installe par la fin du monde, pas par le début.
+     *
+     * `fermeAuChamp` prend la première parcelle libre, et chaque test en
+     * consomme une : le début de la liste se remplit, et la première libre
+     * finit entourée de fermes de test. Ce test-ci a besoin d'un **voisin
+     * libre** — il tombait donc dès qu'on ajoutait deux ou trois cas ailleurs
+     * dans le fichier, pour une raison qui n'avait rien à voir avec lui.
+     *
+     * En partant de l'autre bout, les deux montages ne se disputent plus les
+     * mêmes cases, et le voisinage reste dégagé.
+     */
     let parcelId = "";
-    for (const r of regions) {
-      const libre = (r.parcels ?? []).find((p) => !p.taken);
-      if (libre) {
-        parcelId = libre.id;
-        break;
-      }
+    for (let i = regions.length - 1; i >= 0 && !parcelId; i--) {
+      const libres = (regions[i]?.parcels ?? []).filter((p) => !p.taken);
+      parcelId = libres[libres.length - 1]?.id ?? "";
     }
     assert.ok(parcelId, "il faut une parcelle libre");
     await appel("/world/claim", {

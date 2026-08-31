@@ -83,6 +83,18 @@ import {
   buildingUpgradeCost,
   buildingLevelDef,
   MAX_BUILDING_LEVEL,
+  // Les employés : le vivier, le salaire, les lits et le plafond de chantiers.
+  candidatsDuJour,
+  chantiersSimultanes,
+  gainConduite,
+  gainElevage,
+  gainMecanique,
+  litsDuLogement,
+  masseSalariale,
+  peutEmbaucher,
+  salaireJournalier,
+  EMPLOYES_SANS_LOGEMENT,
+  SALAIRE_IMPAYE_MAX_JOURS,
   urgentContractorQuote,
   contractorTotal,
   URGENT_CONTRACTOR_WORKS,
@@ -3831,6 +3843,9 @@ async function runWorldTick() {
   await spoilPerishables();
   await settleAllHerds();
   await settleDueFutures();
+  // Les salaires suivent le changement de jour, comme les intérêts : la
+  // main-d'œuvre est un coût qui revient, y compris hors connexion.
+  await tickSalaires();
   // Les intérêts modifient la dette : ils courent au tick, pas à la lecture.
   // Les faire courir à l'affichage les ferait dépendre du nombre de fois où
   // le joueur ouvre son Bureau.
@@ -5877,6 +5892,290 @@ function rienAFaire(
   return null;
 }
 
+/* ------------------------------------------------------------------ */
+/* Les employés                                                        */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Les lits d'une ferme, tous logements confondus.
+ *
+ * Le bâtiment est posé sur une parcelle, pas sur la ferme : on remonte par
+ * elle. Deux logements s'additionnent — rien n'interdit d'en bâtir un second
+ * plutôt que d'agrandir le premier, et le joueur qui le fait a payé pour.
+ */
+async function litsDeLaFerme(farmId: string): Promise<number> {
+  const logements = await prisma.building.findMany({
+    where: { type: "EMPLOYEE_HOUSING", parcel: { farmId } },
+    select: { level: true },
+  });
+  return logements.reduce(
+    (n, b) => n + litsDuLogement(b.level, buildingLevelDef(b.level).capacityMult),
+    0,
+  );
+}
+
+/** L'équipe d'une ferme : qui y travaille, et combien de lits l'attendent. */
+async function equipeDe(farmId: string) {
+  const [employes, lits] = await Promise.all([
+    prisma.employee.findMany({ where: { farmId }, orderBy: { hiredAt: "asc" } }),
+    litsDeLaFerme(farmId),
+  ]);
+  return { employes, lits };
+}
+
+/**
+ * Le meilleur niveau d'une compétence, parmi ceux qui sont au bon poste.
+ *
+ * Un seul employé mène un chantier donné : c'est le plus qualifié qui s'y
+ * colle, comme n'importe quel chef d'exploitation le déciderait. Additionner
+ * les niveaux de toute l'équipe donnerait des fermes où embaucher dix
+ * débutants vaut mieux qu'un bon.
+ */
+function meilleurNiveau(
+  employes: { conduite: number; mecanique: number; elevage: number; poste: string }[],
+  competence: "conduite" | "mecanique" | "elevage",
+  poste: "CHAMP" | "ELEVAGE",
+): number {
+  let max = 0;
+  for (const e of employes) {
+    if (e.poste !== poste) continue;
+    max = Math.max(max, e[competence]);
+  }
+  return max;
+}
+
+/** Ce que l'équipe apporte à un chantier, et à l'élevage. */
+async function bonusEquipe(farmId: string) {
+  const { employes } = await equipeDe(farmId);
+  const auChamp = employes.filter((e) => e.poste === "CHAMP").length;
+  return {
+    employes,
+    auChamp,
+    conduite: gainConduite(meilleurNiveau(employes, "conduite", "CHAMP")),
+    mecanique: gainMecanique(meilleurNiveau(employes, "mecanique", "CHAMP")),
+    elevage: gainElevage(meilleurNiveau(employes, "elevage", "ELEVAGE")),
+  };
+}
+
+/** Les chantiers que ce joueur mène en ce moment. */
+async function chantiersEnCours(userId: string): Promise<number> {
+  return prisma.fieldJob.count({
+    where: { userId, status: "RUNNING", endsAt: { gte: new Date() } },
+  });
+}
+
+app.get("/employees", async (req, res) => {
+  const auth = await userFromAuthHeader(req);
+  if (!auth?.user.farm) {
+    res.status(auth ? 404 : 401).json({ error: auth ? "Ferme introuvable" : "Jeton requis" });
+    return;
+  }
+  const farmId = auth.user.farm.id;
+  const { employes, lits } = await equipeDe(farmId);
+  const loges = Math.min(lits, employes.length);
+  const maintenant = Date.now();
+  res.json({
+    employees: employes.map((e) => ({
+      id: e.id,
+      name: e.name,
+      conduite: e.conduite,
+      mecanique: e.mecanique,
+      elevage: e.elevage,
+      poste: e.poste,
+      salaire: salaireJournalier(e),
+      /* Les jours de salaire qu'on lui doit. C'est le seul endroit où le
+         joueur peut voir venir un départ : sans ce compteur, quelqu'un
+         disparaîtrait de la liste sans que rien ne l'ait annoncé.
+         Un tour de simulation de battement, sinon le franchissement du jour
+         crierait « impayé » pendant les vingt secondes qui séparent le
+         changement de date du prélèvement — une fausse alerte à chaque jour,
+         y compris sur une ferme qui paie sans faillir. */
+      impayeJours: Math.max(
+        0,
+        Math.floor((maintenant - e.paidAt.getTime() - SIM_TICK_MS) / GAME_DAY_MS),
+      ),
+    })),
+    /* Le vivier ne se stocke pas : il se calcule. Trois candidats tirés de la
+       ferme et du jour, les mêmes à chaque appel — sans quoi le joueur
+       rechargerait la page jusqu'à tomber sur le profil qui l'arrange.
+       Celui qu'on a déjà embauché sort du tableau : il n'est plus candidat,
+       et le laisser afficher promettrait un bouton qui refuserait. */
+    candidates: candidatsDuJour(farmId, gameDayIndex(maintenant)).filter(
+      (c) => !employes.some((e) => e.sourceId === c.id),
+    ),
+    lits,
+    loges,
+    /** Ce que l'équipe coûtera au prochain changement de jour. */
+    masseSalariale: masseSalariale(employes, lits),
+    peutEmbaucher: peutEmbaucher({ employes: employes.length, lits }),
+    sansLogement: EMPLOYES_SANS_LOGEMENT,
+    /** Le préavis, pour que l'écran dise combien de jours il reste. */
+    preavisJours: SALAIRE_IMPAYE_MAX_JOURS,
+  });
+});
+
+app.post("/employees/hire", async (req, res) => {
+  const body = z.object({ candidateId: z.string() }).safeParse(req.body);
+  const auth = await userFromAuthHeader(req);
+  if (!body.success) {
+    res.status(400).json(body.error.flatten());
+    return;
+  }
+  if (!auth?.user.farm) {
+    res.status(auth ? 404 : 401).json({ error: auth ? "Ferme introuvable" : "Jeton requis" });
+    return;
+  }
+  const farmId = auth.user.farm.id;
+  const { employes, lits } = await equipeDe(farmId);
+  if (!peutEmbaucher({ employes: employes.length, lits })) {
+    res.status(409).json({
+      error:
+        lits > 0
+          ? `Plus de lit libre — agrandissez le logement du personnel (${lits} lit(s)).`
+          : `Deux employés logent au village ; au-delà, il faut bâtir un logement du personnel.`,
+    });
+    return;
+  }
+  /* Le candidat n'existe qu'en mémoire : on le retrouve dans le vivier du
+     jour plutôt que de faire confiance au corps de la requête. Sans cela,
+     n'importe qui s'embaucherait un 5/5/5. */
+  const candidat = candidatsDuJour(farmId, gameDayIndex(Date.now())).find(
+    (c) => c.id === body.data.candidateId,
+  );
+  if (!candidat) {
+    res.status(409).json({ error: "Ce candidat n'est plus au tableau — le vivier a tourné." });
+    return;
+  }
+  /* `sourceId` porte l'unicité : le même candidat ne s'embauche pas deux fois.
+     C'est la base qui refuse, pas une lecture préalable — deux requêtes
+     lancées ensemble passeraient toutes deux un simple contrôle, et la ferme
+     se retrouverait avec deux fiches pour la même personne. */
+  const embauche = await prisma.employee
+    .create({
+      data: {
+        farmId,
+        name: candidat.name,
+        conduite: candidat.conduite,
+        mecanique: candidat.mecanique,
+        elevage: candidat.elevage,
+        sourceId: candidat.id,
+      },
+    })
+    .catch((e: unknown) => {
+      if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === "P2002") return null;
+      throw e;
+    });
+  if (!embauche) {
+    res.status(409).json({ error: `${candidat.name} travaille déjà chez vous.` });
+    return;
+  }
+  res.status(201).json({
+    employee: { ...embauche, salaire: salaireJournalier(embauche) },
+    // Ce qu'il coûtera demain, logement compris : le joueur décide en le
+    // sachant, pas au premier prélèvement.
+    masseSalariale: masseSalariale([...employes, embauche], lits),
+  });
+});
+
+app.post("/employees/:id/post", async (req, res) => {
+  const body = z.object({ poste: z.enum(["CHAMP", "ELEVAGE"]) }).safeParse(req.body);
+  const auth = await userFromAuthHeader(req);
+  if (!body.success) {
+    res.status(400).json(body.error.flatten());
+    return;
+  }
+  if (!auth?.user.farm) {
+    res.status(auth ? 404 : 401).json({ error: auth ? "Ferme introuvable" : "Jeton requis" });
+    return;
+  }
+  const { count } = await prisma.employee.updateMany({
+    where: { id: req.params.id, farmId: auth.user.farm.id },
+    data: { poste: body.data.poste },
+  });
+  if (!count) {
+    res.status(404).json({ error: "Employé inconnu" });
+    return;
+  }
+  res.json({ ok: true, poste: body.data.poste });
+});
+
+app.post("/employees/:id/fire", async (req, res) => {
+  const auth = await userFromAuthHeader(req);
+  if (!auth?.user.farm) {
+    res.status(auth ? 404 : 401).json({ error: auth ? "Ferme introuvable" : "Jeton requis" });
+    return;
+  }
+  const { count } = await prisma.employee.deleteMany({
+    where: { id: req.params.id, farmId: auth.user.farm.id },
+  });
+  if (!count) {
+    res.status(404).json({ error: "Employé inconnu" });
+    return;
+  }
+  res.json({ ok: true });
+});
+
+/**
+ * Les salaires, au changement de jour de jeu.
+ *
+ * Même mécanisme que les intérêts de la dette : le compte tourne hors
+ * connexion, sinon un joueur absent ne paierait rien et la main-d'œuvre
+ * cesserait d'être un coût qui revient.
+ *
+ * Trésorerie insuffisante : on ne prélève pas, et `paidAt` n'avance pas. Le
+ * joueur a donc deux journées de jeu pour renflouer — c'est le préavis. Au-delà,
+ * l'employé s'en va.
+ *
+ * Il ne part pas en silence : `/employees` renvoie les jours impayés de chacun,
+ * et l'écran du personnel les affiche en clair avec ce qu'il reste avant le
+ * départ. Le grand livre ne peut pas porter cet avertissement — il n'inscrit
+ * que des mouvements d'argent, et un salaire qu'on ne paie pas n'en est pas
+ * un ; c'est justement pourquoi la mise en garde vit sur l'écran de l'équipe.
+ */
+async function tickSalaires(): Promise<void> {
+  const maintenant = Date.now();
+  const equipes = await prisma.employee.findMany({
+    where: { paidAt: { lt: new Date(maintenant - GAME_DAY_MS) } },
+    orderBy: { farmId: "asc" },
+  });
+  if (!equipes.length) return;
+  const parFerme = new Map<string, typeof equipes>();
+  for (const e of equipes) {
+    const liste = parFerme.get(e.farmId) ?? [];
+    liste.push(e);
+    parFerme.set(e.farmId, liste);
+  }
+  for (const [farmId, membres] of parFerme) {
+    const ferme = await prisma.farm.findUnique({
+      where: { id: farmId },
+      select: { userId: true },
+    });
+    if (!ferme) continue;
+    const lits = await litsDeLaFerme(farmId);
+    // Les mieux payés dorment sur place : la remise rapporte le plus là.
+    const tries = [...membres].sort((a, b) => salaireJournalier(b) - salaireJournalier(a));
+    for (const [rang, e] of tries.entries()) {
+      const jours = Math.floor((maintenant - e.paidAt.getTime()) / GAME_DAY_MS);
+      if (jours < 1) continue;
+      const du = salaireJournalier(e, { loge: rang < lits }) * jours;
+      const patron = await prisma.user.findUnique({ where: { id: ferme.userId } });
+      if (!patron) continue;
+      if (peutPayer(patron, du)) {
+        await prisma.$transaction(async (tx) => {
+          await debit(tx, patron.id, du, "SALAIRES", `Salaire — ${e.name}, ${jours} jour(s)`);
+          await tx.employee.updateMany({
+            where: { id: e.id },
+            data: { paidAt: new Date(maintenant) },
+          });
+        });
+      } else if (jours > SALAIRE_IMPAYE_MAX_JOURS) {
+        await prisma.employee.deleteMany({ where: { id: e.id } });
+        console.warn(`salaire impayé — ${e.name} quitte la ferme ${farmId}`);
+      }
+    }
+  }
+}
+
 app.post("/parcels/:id/jobs", async (req, res) => {
   const body = z
     .object({
@@ -5979,6 +6278,31 @@ app.post("/parcels/:id/jobs", async (req, res) => {
     res.status(409).json({ error: explainNoMachine(access.machines, work) });
     return;
   }
+  /*
+   * Le matériel plafonne, l'employé débloque.
+   *
+   * L'attelage est libre — c'est la condition qu'on vient de vérifier — mais
+   * il faut encore quelqu'un pour le conduire. Le joueur compte pour un
+   * conducteur, et chaque employé **aux champs** en ajoute un ; celui qui
+   * passe sa journée à l'élevage ne conduit pas.
+   */
+  const braves = await bonusEquipe(parcel.farmId!);
+  const plafond = chantiersSimultanes({
+    employesAuChamp: braves.auChamp,
+    attelagesLibres: Number.POSITIVE_INFINITY,
+  });
+  const menes = await chantiersEnCours(body.data.userId);
+  if (menes >= plafond) {
+    res.status(409).json({
+      error:
+        braves.auChamp === 0
+          ? "Vous ne pouvez mener qu'un chantier à la fois — embauchez quelqu'un pour en ouvrir un second."
+          : `Toute l'équipe est déjà au travail (${menes} chantier(s)) — embauchez, ou attendez.`,
+      running: menes,
+      cap: plafond,
+    });
+    return;
+  }
 
   /*
    * Le tour de main du chauffeur se voit sur le chrono et sur la cuve.
@@ -5989,9 +6313,16 @@ app.post("/parcels/:id/jobs", async (req, res) => {
    * l'essentiel — c'est le matériel qui fait le rendement, pas l'habitude.
    */
   const competences = await getSkillBonuses(body.data.userId);
+  /* Le meilleur conducteur de l'équipe mène celui-ci — jusqu'à un quart de
+     temps en moins. Le gain s'ajoute à celui du joueur : l'un vient de son
+     expérience, l'autre de qui il emploie, et rien ne justifie qu'ils
+     s'annulent. */
+  const equipe = await bonusEquipe(parcel.farmId!);
   const duree = Math.max(
     1,
-    Math.round(dureeChantier(picked, cells.length) * (1 - competences.WORK_SPEED)),
+    Math.round(
+      dureeChantier(picked, cells.length) * (1 - competences.WORK_SPEED) * (1 - equipe.conduite),
+    ),
   );
   /* Le plein se fait au départ, pas à l'arrivée : le gazole part dans le
      réservoir au moment où l'engin quitte la cour. Un chantier abandonné le
