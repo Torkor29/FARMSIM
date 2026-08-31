@@ -32,20 +32,39 @@ const ACHAT = (() => {
   return APP.slice(debut, APP.indexOf("\n  }", APP.indexOf("finally", debut)));
 })();
 
+const APP_ENTIER = APP;
+
 describe("l'achat au négociant", () => {
-  it("annonce une commande, jamais une livraison", () => {
-    expect(ACHAT).toMatch(/commandées/);
+  it("annonce un colis à venir, jamais une marchandise rentrée", () => {
+    expect(ACHAT).toMatch(/livré/);
     // L'ancien message présentait la marchandise comme acquise.
     expect(ACHAT).not.toMatch(/t de \$\{nom\.toLowerCase\(\)\} · −\$\{r\.cost\} €`\)/);
   });
 
-  it("dit où la marchandise atterrit, et quand", () => {
+  it("fait rentrer la caisse par l'attelage, pas par téléportation", () => {
+    /*
+     * « On clique sur le paquet pour l'envoyer au silo et là c'est l'engin
+     * qui l'amène. » Le convoi tracteur + remorque existait déjà pour les
+     * livraisons entre joueurs ; il sert maintenant aussi à rentrer une
+     * caisse du négociant, et il part de la case où elle était posée.
+     */
+    expect(APP_ENTIER).toMatch(/const caisse = supplies\.find\(\(s\) => s\.id === id\)/);
+    expect(APP_ENTIER).toMatch(
+      /flashDeliveryArrival\(r\.collected, caisse \? \{ x: caisse\.x, y: caisse\.y \} : undefined\)/,
+    );
+    expect(APP_ENTIER).toMatch(
+      /function flashDeliveryArrival\(commodity\?: string, depuis\?: \{ x: number; y: number \}\)/,
+    );
+  });
+
+  it("dit où le colis atterrit, quand, et quoi en faire", () => {
     // « ça va se stocker où ? » — la question n'avait pas de réponse à
-    // l'écran. Elle en a une, et elle nomme la cour.
-    expect(ACHAT).toMatch(/caisse/);
-    expect(ACHAT).toMatch(/cour/);
-    expect(ACHAT).toMatch(/le camion arrive dans \$\{secondes\} s/);
-    // La date vient du serveur, pas d'une constante recopiée côté écran.
+    // l'écran. Elle en a une, et elle nomme le geste suivant.
+    expect(ACHAT).toMatch(/colis/);
+    expect(ACHAT).toMatch(/parcelle/);
+    expect(ACHAT).toMatch(/dans \$\{secondes\} s/);
+    expect(ACHAT).toMatch(/clique dessus pour l’envoyer au silo/);
+    // Le délai vient du serveur, pas d'une constante recopiée côté écran.
     expect(ACHAT).toMatch(/r\.delivery\.arrivesAt/);
   });
 
@@ -56,6 +75,6 @@ describe("l'achat au négociant", () => {
      * son intention, mais on lui dit le geste qui manque.
      */
     expect(ACHAT).not.toMatch(/await feedHerd\(/);
-    expect(ACHAT).toMatch(/Rentre la caisse posée dans ta cour, puis nourris le lot\./);
+    expect(ACHAT).toMatch(/Tu pourras nourrir le lot ensuite\./);
   });
 });

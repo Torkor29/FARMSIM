@@ -2577,13 +2577,22 @@ export function App() {
    * démarrer le geste une demi-seconde après le doigt.
    */
   async function collectSupply(id: string) {
+    // Où la caisse était posée : le convoi part de là, pas du bord du champ.
+    // Lu avant de la retirer de la liste, sans quoi il n'en resterait rien.
+    const caisse = supplies.find((s) => s.id === id);
     setSupplies((prev) => prev.filter((s) => s.id !== id));
     try {
       const r = await api<{ collected: string; tons: number }>(`/supplies/${id}/collect`, {
         method: "POST",
       });
       const nom = GOOD_DEFS[r.collected as TradeGood]?.name ?? r.collected;
-      flashToast(`${r.tons} t de ${nom.toLowerCase()} rentrées`);
+      /* Rentrer une caisse est un transport, pas une téléportation : elle
+         disparaissait de la cour et le stock montait, sans que rien ne relie
+         les deux. L'attelage qui sert déjà aux livraisons entre joueurs fait
+         le trajet — « on clique sur le paquet pour l'envoyer au silo et là
+         c'est l'engin qui l'amène ». */
+      flashDeliveryArrival(r.collected, caisse ? { x: caisse.x, y: caisse.y } : undefined);
+      flashToast(`${r.tons} t de ${nom.toLowerCase()} · l'attelage la rentre au silo`);
       await refreshPlayer();
     } catch (e) {
       // Refusée — le camion n'était pas là, ou la caisse n'est plus : on
@@ -3149,7 +3158,16 @@ export function App() {
   }
 
   /** Tracteur + remorque sur la parcelle d’arrivée, comme chez le voisin. */
-  function flashDeliveryArrival(commodity?: string) {
+  /**
+   * @param depuis La case d'où part l'attelage.
+   *
+   * Absent pour une livraison qui arrive de l'extérieur : le camion entre par
+   * le bord. Renseigné quand le joueur clique une caisse posée dans sa cour —
+   * « on clique sur le paquet pour l'envoyer au silo et là c'est l'engin qui
+   * l'amène ». Sans ce point de départ, l'attelage se serait matérialisé au
+   * bord du champ pendant que la caisse disparaissait ailleurs.
+   */
+  function flashDeliveryArrival(commodity?: string, depuis?: { x: number; y: number }) {
     if (visiting) return;
     const destBuilding = (parcel?.buildings ?? []).find(
       (b) =>
@@ -3164,6 +3182,7 @@ export function App() {
       destBuilding
         ? { x: destBuilding.originX, y: destBuilding.originY }
         : null,
+      depuis,
     );
     if (cells.length < 2) return;
     setShowMarket(false);
@@ -3850,21 +3869,19 @@ export function App() {
       const secondes = r.delivery
         ? Math.max(1, Math.round((r.delivery.arrivesAt - Date.now()) / 1000))
         : 0;
-      const arrivee = secondes ? ` · le camion arrive dans ${secondes} s` : "";
+      const quand = secondes ? `dans ${secondes} s` : "dans un instant";
+      const livraison =
+        `Le colis sera livré sur ta parcelle ${quand} — clique dessus pour l’envoyer au silo.`;
       if (pourLeLot) {
         // On ne distribue pas ce qui n'est pas encore là. On dit quoi faire.
         setNourrirApres(null);
         flashToast(
-          `${r.bought} t de ${nom.toLowerCase()} commandées · −${r.cost} €${arrivee}. ` +
-            `Rentre la caisse posée dans ta cour, puis nourris le lot.`,
+          `${r.bought} t de ${nom.toLowerCase()} · −${r.cost} €. ${livraison} Tu pourras nourrir le lot ensuite.`,
           "warn",
         );
         return;
       }
-      flashToast(
-        `${r.bought} t de ${nom.toLowerCase()} commandées · −${r.cost} €${arrivee} · ` +
-          `caisse à rentrer dans la cour`,
-      );
+      flashToast(`${r.bought} t de ${nom.toLowerCase()} · −${r.cost} €. ${livraison}`);
     } catch (e) {
       flashToast(e instanceof Error ? e.message : String(e), true);
     } finally {
