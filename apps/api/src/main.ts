@@ -1220,7 +1220,21 @@ async function reglerOccupation(
       if (j.machineId !== id && j.tractorId !== id) continue;
       if (!fin || j.endsAt.getTime() > fin.getTime()) fin = j.endsAt;
     }
-    await tx.machine.update({ where: { id }, data: { busyUntil: fin } });
+    /*
+     * `updateMany` et non `update` : l'engin a pu être vendu.
+     *
+     * Un chantier garde l'identifiant de son attelage même après la vente de
+     * celui-ci. Le balayage des fantômes en a réveillé un vieux de huit jours,
+     * dont le semoir n'existait plus : `update` a levé un P2025 « No record
+     * was found », la transaction a échoué, et avec elle le tour de
+     * simulation — lancé sans filet au démarrage, il a tué le serveur en
+     * boucle. Trois jours de site injoignable pour un engin revendu.
+     *
+     * `updateMany` ne trouve rien et n'en fait pas une affaire : c'est
+     * exactement le comportement voulu, puisqu'un engin qui n'existe plus n'a
+     * plus d'occupation à régler.
+     */
+    await tx.machine.updateMany({ where: { id }, data: { busyUntil: fin } });
   }
 }
 
@@ -1272,7 +1286,9 @@ async function annulerChantiers(morts: ChantierAClore[]): Promise<void> {
     });
     await reglerOccupation(tx, attelages);
     for (const [ferme, litres] of gazoleParFerme) {
-      await tx.farm.update({ where: { id: ferme }, data: { fuelL: { increment: litres } } });
+      // Même raison qu'au-dessus : une ferme supprimée ne doit pas faire
+      // tomber le tour de simulation pour un litre de gazole.
+      await tx.farm.updateMany({ where: { id: ferme }, data: { fuelL: { increment: litres } } });
     }
   });
 }
@@ -11953,7 +11969,22 @@ app.use(
 
 async function main() {
   await ensureSeed();
-  await runWorldTick();
+  /*
+   * Le premier tour ne peut pas empêcher le serveur de servir.
+   *
+   * Il était attendu sans filet, là où les suivants étaient protégés. Un tour
+   * qui échoue faisait donc échouer `main()`, le rejet remontait sans
+   * gestionnaire, et le processus sortait — Docker relançait, le tour
+   * échouait encore, et le conteneur tournait en `Restarting` sans jamais
+   * ouvrir son port. Relevé le 31 août : trois jours de site injoignable
+   * parce qu'un chantier de huit jours désignait un semoir revendu.
+   *
+   * Une simulation en panne dégrade le jeu — les cultures ne poussent plus.
+   * Elle ne doit pas l'éteindre : le joueur doit pouvoir se connecter, voir sa
+   * ferme, et nous laisser le temps de comprendre. Le même traitement que les
+   * tours suivants, pour la même raison.
+   */
+  await runWorldTick().catch((e) => console.error("premier tour de simulation en échec", e));
   setInterval(() => {
     runWorldTick().catch((e) => console.error("sim tick failed", e));
   }, SIM_TICK_MS);

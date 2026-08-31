@@ -2128,8 +2128,24 @@ describe("un chantier prend du temps", () => {
    * production, un chantier de semis était encore `RUNNING` **huit jours**
    * après sa fin : personne n'était retourné sur ce champ. Le tour de
    * simulation balaie maintenant, quelle que soit la parcelle.
+   *
+   * ## Et l'engin de ce fantôme a été vendu depuis
+   *
+   * C'est ce que la production a livré le 31 août, au prix de trois jours de
+   * site injoignable. `FieldJob.machineId` n'est pas une clé étrangère :
+   * l'identifiant survit à la vente de l'engin. Le balayage a réveillé le
+   * fantôme, `machine.update` a levé un P2025 « No record was found for an
+   * update », la transaction a échoué, et avec elle le tour de simulation —
+   * attendu sans filet au démarrage, il faisait sortir le processus. Docker
+   * relançait, le tour échouait encore, et le conteneur tournait en
+   * `Restarting` sans jamais ouvrir son port.
+   *
+   * Le test supprime donc l'outil, **pas** le tracteur : ce qui reste doit
+   * rentrer au garage pendant que ce qui a disparu est ignoré. Le second
+   * défaut de cette panne — un tour raté n'empêche plus de servir — se lit
+   * dans `main()`.
    */
-  it("balaie au tour de simulation les fantômes des champs délaissés", async () => {
+  it("balaie un fantôme de champ délaissé, même si son outil a été vendu", async () => {
     const { moi, parcelle, cells } = await fermeAuChamp("Balai");
     const lance = await appel(`/parcels/${parcelle.id}/jobs`, {
       methode: "POST",
@@ -2140,7 +2156,9 @@ describe("un chantier prend du temps", () => {
     const jobId = (lance.corps as unknown as { job: { id: string } }).job.id;
     const vieux = new Date(Date.now() - 8 * 24 * 60 * 60_000);
     prismaExec(
-      `UPDATE "FieldJob" SET "endsAt" = '${vieux.toISOString()}' WHERE id = '${jobId}';`,
+      `UPDATE "FieldJob" SET "endsAt" = '${vieux.toISOString()}' WHERE id = '${jobId}';` +
+        // C'est le chantier qui désigne son outil, comme dans le code.
+        ` DELETE FROM "Machine" WHERE id IN (SELECT "machineId" FROM "FieldJob" WHERE id = '${jobId}');`,
     );
 
     // Aucune visite sur la parcelle : c'est le tour du monde qui doit le voir.
