@@ -1473,8 +1473,14 @@ export function IsoFarmView({
      * trajet, le joueur verrait la même machine à deux endroits.
      */
     let parkedSlotGroups: THREE.Object3D[] = [];
-    /** Durée du retour au garage, en secondes. */
-    const RETOUR_S = 2.8;
+    /**
+     * Durée du retour au garage, en secondes.
+     *
+     * 2,8 s traversaient la cour à une vitesse qu'aucun tracteur ne tient :
+     * « au retour il repart beaucoup trop vite ». Un engin qui rentre roule
+     * moins vite qu'il ne travaille, pas plus.
+     */
+    const RETOUR_S = 6.5;
     /** Distance cumulée du chantier — elle entraîne roues, disques, rabatteur */
     let workTravelled = 0;
     let workHeading: number | null = null;

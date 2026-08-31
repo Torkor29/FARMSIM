@@ -3806,38 +3806,65 @@ export function App() {
     silage: "SILAGE",
   };
 
-  /** Ce que chaque denrée achetable vaut comme ration, si elle en est une. */
-  const RATION_DE: Partial<Record<TradeGood, "hay" | "maize" | "barley" | "wheat" | "silage">> = {
-    HAY: "hay",
-    MAIZE: "maize",
-    BARLEY: "barley",
-    WHEAT: "wheat",
-    SILAGE: "silage",
-  };
+  /* `RATION_DE` — la table inverse de `RATION_GOOD` — vivait ici pour
+     enchaîner l'achat sur la distribution. L'enchaînement a été retiré : il
+     servait un stock qui n'était pas encore rentré, et échouait à tous les
+     coups. La table part avec lui plutôt que de rester à attendre un usage
+     qui n'existe plus ; elle se réécrit en cinq lignes le jour où la
+     distribution différée sera faite pour de bon. */
 
   /** Achat d'un intrant au négociant — du fourrage, pour l'instant. */
   async function buyInput(commodity: TradeGood, tons: number) {
     if (!player) return;
     setBusy(true);
     try {
-      const r = await api<{ bought: number; cost: number }>("/market/buy", {
+      const r = await api<{
+        bought: number;
+        cost: number;
+        /** La commande part en camion : elle n'est pas au stock. */
+        delivery?: { id: string; arrivesAt: number };
+      }>("/market/buy", {
         method: "POST",
         body: JSON.stringify({ userId: player.id, commodity, tons }),
       });
       const nom = GOOD_DEFS[commodity]?.name ?? commodity;
-      const ration = RATION_DE[commodity];
       const pourLeLot = nourrirApres;
       await refreshPlayer();
-      if (pourLeLot && ration) {
-        // La marchandise est au silo : on enchaîne sur ce que le joueur
-        // voulait vraiment. `feedHerd` gère lui-même le `busy` et la quantité.
+      /*
+       * Le négociant livre, il ne remplit pas le silo.
+       *
+       * Le message annonçait « 5 t de paille · −360 € » comme si la
+       * marchandise était rentrée, et le commentaire d'ici affirmait « la
+       * marchandise est au silo ». C'est faux : la route crée une commande
+       * qui voyage, se pose en caisse dans la cour, et n'entre au stock qu'une
+       * fois rentrée — à la main, ou d'elle-même trois minutes plus tard.
+       *
+       * D'où les trois symptômes d'un seul défaut, signalés en jouant : « je
+       * clique mais on dirait que j'ai rien », « ça va se stocker où ? », et
+       * « quand je clique sur nourrir du coup je peux pas ». Le dernier était
+       * le plus sûr : l'enchaînement achat → distribution servait un stock
+       * qui n'existait pas encore, et échouait.
+       *
+       * On dit donc ce qui se passe vraiment, et où regarder.
+       */
+      const secondes = r.delivery
+        ? Math.max(1, Math.round((r.delivery.arrivesAt - Date.now()) / 1000))
+        : 0;
+      const arrivee = secondes ? ` · le camion arrive dans ${secondes} s` : "";
+      if (pourLeLot) {
+        // On ne distribue pas ce qui n'est pas encore là. On dit quoi faire.
         setNourrirApres(null);
-        setBusy(false);
-        await feedHerd(pourLeLot, ration, r.bought);
-        flashToast(`${r.bought} t de ${nom.toLowerCase()} · −${r.cost} € · distribué au troupeau`);
+        flashToast(
+          `${r.bought} t de ${nom.toLowerCase()} commandées · −${r.cost} €${arrivee}. ` +
+            `Rentre la caisse posée dans ta cour, puis nourris le lot.`,
+          "warn",
+        );
         return;
       }
-      flashToast(`${r.bought} t de ${nom.toLowerCase()} · −${r.cost} €`);
+      flashToast(
+        `${r.bought} t de ${nom.toLowerCase()} commandées · −${r.cost} €${arrivee} · ` +
+          `caisse à rentrer dans la cour`,
+      );
     } catch (e) {
       flashToast(e instanceof Error ? e.message : String(e), true);
     } finally {
