@@ -176,6 +176,15 @@ export type ActiveWork = {
    * rapide au compteur, le traverserait comme une T1.
    */
   durationMs?: number;
+  /**
+   * Temps d'acheminement avant le premier sillon.
+   *
+   * Le chantier est annoncé dès son ouverture, mais l'engin sort du garage :
+   * pendant ce délai il fait le trajet au lieu d'apparaître sur sa première
+   * case. Signalé en jouant : « faudrait qu'il arrive tranquillement sur le
+   * champ, pas pop d'un coup ».
+   */
+  approcheMs?: number;
 };
 
 /** Un troupeau au pré : de quelle étable il sort, et vers quel enclos. */
@@ -1456,6 +1465,20 @@ export function IsoFarmView({
      * Il survit au chantier — voir `rentrerAuGarage` — donc il ne peut pas
      * rester accroché à `workRig`, que la disparition du chantier efface.
      */
+    /**
+     * L'engin en route vers son chantier, avant le premier sillon.
+     *
+     * Symétrique de `retour`, et pour la même raison : un attelage ne se
+     * matérialise pas au milieu d'un champ. Il garde le `workRig` du travail
+     * qui suit — c'est le même engin, il ne change pas de mains — et la
+     * boucle de travail attend qu'il soit arrivé.
+     */
+    let arrivee: {
+      chemin: { x: number; z: number; y: number }[];
+      debut: number;
+      fin: number;
+      distance: number;
+    } | null = null;
     let retour: {
       rig: MachineRig;
       chemin: { x: number; z: number; y: number }[];
@@ -1930,6 +1953,9 @@ export function IsoFarmView({
     }
 
     function clearWorkVehicle() {
+      // L'acheminement appartient à l'engin qu'on efface : le laisser vivrait
+      // sur un attelage disparu.
+      arrivee = null;
       if (workRig) {
         workGroup.remove(workRig.group);
         workRig.dispose();
@@ -3670,11 +3696,80 @@ export function IsoFarmView({
           workPath = [...aw.cells].sort((p, q) =>
             p.y !== q.y ? p.y - q.y : (p.y % 2 === 0 ? p.x - q.x : q.x - p.x),
           );
+          /*
+           * L'acheminement : la cour, le portail, puis la première case.
+           *
+           * Le travail ne commence qu'au bout — `workStartRef` est décalé
+           * d'autant — et le trajet est en équerre, comme le retour. Sans
+           * cour bâtie, il n'y a pas d'où partir : l'engin se pose alors sur
+           * sa première case, comme avant.
+           */
+          const approcheS = Math.max(0, aw.approcheMs ?? 0) / 1000;
+          workStartRef.current = t + approcheS;
+          arrivee = null;
+          if (approcheS > 0.2 && parkingSlots.length && workPath.length) {
+            // La place qu'il vient de quitter — et celle où `rentrerAuGarage`
+            // le ramènera. Même calcul des deux côtés, sinon il partirait
+            // d'une case et reviendrait dans une autre.
+            const place =
+              parkingSlots[
+                Math.min(dataRef.current.parked.length, parkingSlots.length - 1)
+              ];
+            const premiere = cellWorldPos(workPath[0]!.x, workPath[0]!.y);
+            if (place) {
+              workRig.group.position.set(place.x, yardDeck, place.z);
+              workRig.group.rotation.y = parkingHeading;
+              arrivee = {
+                chemin: [
+                  { x: place.x, z: place.z, y: yardDeck },
+                  { x: place.x, z: parkingGateZ, y: yardDeck },
+                  { x: premiere.px, z: parkingGateZ, y: MACHINE_GROUND },
+                  { x: premiere.px, z: premiere.pz, y: MACHINE_GROUND },
+                ],
+                debut: t,
+                fin: t + approcheS,
+                distance: 0,
+              };
+            }
+          }
         } else {
           workPath = [];
+          arrivee = null;
         }
       }
-      if (workRig && workPath.length) {
+      if (arrivee && workRig) {
+        /*
+         * L'acheminement, avant le premier sillon. Même interpolation que le
+         * retour : vitesse adoucie aux deux bouts, roues entraînées par la
+         * distance réellement parcourue, cap donné par le déplacement.
+         */
+        const brut = Math.min(1, (t - arrivee.debut) / Math.max(0.001, arrivee.fin - arrivee.debut));
+        const u = brut * brut * (3 - 2 * brut);
+        const segments = arrivee.chemin.length - 1;
+        const f = u * segments;
+        const i0 = Math.min(segments - 1, Math.floor(f));
+        const local = f - i0;
+        const a = arrivee.chemin[i0]!;
+        const b = arrivee.chemin[i0 + 1]!;
+        const px = a.x + (b.x - a.x) * local;
+        const pz = a.z + (b.z - a.z) * local;
+        const py = a.y + (b.y - a.y) * local;
+        const g = workRig.group;
+        const avance = Math.hypot(px - g.position.x, pz - g.position.z);
+        arrivee.distance += avance;
+        if (avance > 1e-5) g.rotation.y = Math.atan2(-(pz - g.position.z), px - g.position.x);
+        g.position.set(px, py, pz);
+        g.visible = true;
+        // `working: false` : l'outil est relevé tant qu'on roule sur la route.
+        workRig.update({ t, distance: arrivee.distance, working: false, steer: 0 });
+        workDust.update(delta / 1000, px, py + 0.03, pz, brut < 1);
+        if (workRig.exhaust) {
+          workRig.exhaust.getWorldPosition(exhaustPoint);
+          workGroup.worldToLocal(exhaustPoint);
+          workSmoke.update(delta / 1000, exhaustPoint.x, exhaustPoint.y, exhaustPoint.z, true);
+        }
+        if (brut >= 1) arrivee = null;
+      } else if (workRig && workPath.length) {
         const dt = delta / 1000;
         const duration = workAnimationMs(workPath.length, aw?.durationMs) / 1000;
         const raw = Math.min(1, (t - workStartRef.current) / duration);

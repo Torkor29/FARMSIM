@@ -29,6 +29,9 @@
 import fs from "node:fs";
 
 const ISO = fs.readFileSync("src/IsoFarmView.tsx", "utf8");
+/* L'aller se décide dans `App.tsx` — c'est lui qui annonce le chantier et
+   porte le délai d'acheminement — et se joue dans la vue. Les deux fichiers. */
+const APP = fs.readFileSync("src/App.tsx", "utf8");
 
 describe("la fin de chantier", () => {
   it("n'efface plus l'engin sur place", () => {
@@ -53,6 +56,32 @@ describe("la fin de chantier", () => {
     expect(ISO).toMatch(/const dejaGaree = parkedSlotGroups\[retour\.cible\];/);
     // Et la rend : sans cela, une place resterait vide pour toujours.
     expect(ISO).toMatch(/if \(dejaGaree\) dejaGaree\.visible = true;/);
+  });
+
+  it("amène l'engin depuis la cour au lieu de le poser sur sa case", () => {
+    /*
+     * Le pendant de l'arrivée. Le chantier n'était publié qu'à la fin du
+     * délai d'acheminement : la vue n'avait rien à dessiner pendant ce
+     * temps-là, et la machine se matérialisait sur sa première case —
+     * « faudrait qu'il arrive tranquillement sur le champ, pas pop d'un
+     * coup ». Le chantier est désormais annoncé tout de suite, avec le temps
+     * qui reste avant le premier sillon.
+     */
+    expect(APP).toMatch(/approcheMs: attente,/);
+    expect(APP).toMatch(/const annoncer = \(\) => \{/);
+    expect(ISO).toMatch(/approcheMs\?: number;/);
+    // Le travail attend l'arrivée, il ne démarre plus à la seconde zéro.
+    expect(ISO).toMatch(/workStartRef\.current = t \+ approcheS;/);
+    expect(ISO).toMatch(/if \(arrivee && workRig\) \{/);
+    expect(ISO).toMatch(/\} else if \(workRig && workPath\.length\) \{/);
+  });
+
+  it("part de la place où il rentrera, pas d'à côté", () => {
+    // Départ et retour visent le même index de place : sinon l'engin sortirait
+    // d'une case et se rangerait dans une autre, sous les yeux du joueur.
+    const depart = ISO.match(/Math\.min\(dataRef\.current\.parked\.length, parkingSlots\.length - 1\)/g);
+    expect(depart).not.toBeNull();
+    expect(ISO).toMatch(/const cible = Math\.min\(occupees, parkingSlots\.length - 1\);/);
   });
 
   it("libère l'attelage au démontage de la scène", () => {

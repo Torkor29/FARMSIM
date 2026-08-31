@@ -3103,8 +3103,22 @@ export function App() {
      * une chose et en montrer une autre. Les cases s'allument quand l'engin
      * y entre.
      */
-    const partir = () => {
-      setPulseCells(cells);
+    const attente = Math.max(0, extra?.delayMs ?? 0);
+    /*
+     * L'engin est annoncé tout de suite, le travail commence après l'attente.
+     *
+     * Le chantier n'était publié qu'à la fin du délai : pendant l'acheminement
+     * la vue n'avait rien à dessiner, et la machine se matérialisait sur sa
+     * première case. « Quand on fait une action avec le tracteur faudrait
+     * qu'il arrive tranquillement sur le champ, pas pop d'un coup. »
+     *
+     * La vue reçoit donc le chantier immédiatement, avec le temps qu'il reste
+     * avant le premier sillon : elle s'en sert pour amener l'attelage depuis
+     * la cour. Les cases, elles, ne s'allument qu'au premier sillon — annoncer
+     * un travail commencé pendant que le tracteur roule encore, ce serait dire
+     * une chose et en montrer une autre.
+     */
+    const annoncer = () => {
       setActiveWorks((liste) => [
         ...liste.filter((w) => w.jobId !== jobId),
         {
@@ -3118,8 +3132,12 @@ export function App() {
           condition: used?.condition,
           tier: asTier(used?.tier),
           durationMs: duree,
+          approcheMs: attente,
         },
       ]);
+    };
+    const partir = () => {
+      setPulseCells(cells);
       // Un peu de marge sur la durée du parcours : l'engin doit atteindre la
       // dernière case avant qu'on ne l'efface.
       minuteries.push(
@@ -3130,7 +3148,7 @@ export function App() {
         }, duree + 250),
       );
     };
-    const attente = Math.max(0, extra?.delayMs ?? 0);
+    annoncer();
     if (attente === 0) partir();
     else minuteries.push(window.setTimeout(partir, attente));
   }
