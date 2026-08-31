@@ -1779,6 +1779,21 @@ button.ghost {
   gap: 1px;
   background: var(--line);
 }
+/* La raison d'un geste refusé, dite sous le bouton qu'on vient de toucher.
+   Elle part aussi dans le bandeau du haut — mais l'élevage s'ouvre dans une
+   fenêtre plein écran, et le joueur qui appuie en bas à droite ne regarde
+   jamais en haut à gauche. Elle prend toute la rangée : la grille reste
+   d'aplomb, et la phrase se lit d'un trait. */
+.geste-dit {
+  grid-column: 1 / -1;
+  margin: 0;
+  padding: 0.45rem 0.7rem;
+  background: var(--paper);
+  color: var(--danger);
+  font-size: 0.76rem;
+  font-weight: 600;
+  line-height: 1.35;
+}
 .barn-actions button {
   min-height: 44px;
   padding: 0.5rem 0.6rem;
