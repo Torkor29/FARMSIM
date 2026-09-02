@@ -1973,26 +1973,32 @@ export function withinRegret(ageMs?: number): boolean {
  * étable, c'est plus cher que la moitié d'un tracteur — de quoi renoncer à
  * réorganiser, ce qui est exactement le « punitif » qu'on ne veut pas.
  *
- * Douze pour cent, donc. Ce n'est pas un nombre choisi au hasard : déplacer
- * une construction, dans la vraie vie, coûte l'ordre de dix à vingt pour cent
- * de ce qu'elle coûterait à rebâtir — on garde la structure, on paie le
- * démontage, le terrassement et la reprise. Le bas de cette fourchette, parce
- * qu'ici le geste doit rester tentant.
+ * Un premier barème à douze pour cent partait de l'ordre de grandeur réel :
+ * déplacer une construction coûte, dans la vraie vie, dix à vingt pour cent de
+ * ce qu'elle coûterait à rebâtir — on garde la structure, on paie le
+ * démontage, le terrassement et la reprise. À l'usage, c'était encore trop :
+ * « les prix sont un peu durs pour replacer les bâtiments ». La mesure du réel
+ * n'est pas la mesure du jeu, et c'est le jeu qui décide.
+ *
+ * Six pour cent, donc, avec plancher et plafond divisés d'autant : chaque
+ * déménagement coûte exactement la moitié de ce qu'il coûtait, du plus petit
+ * au plus gros. Réorganiser sa cour devient une contrariété, plus un
+ * arbitrage.
  *
  * Ce que ça donne, mesuré en jours de jeu (une parcelle de blé rapporte
  * environ 260 € nets par jour) :
  *
  * | Bâtiment | Investi | Déménagement | En jours de blé |
  * |---|---|---|---|
- * | Abreuvoir | 1 050 € | 150 € (plancher) | moins d'un jour |
- * | Logement du personnel | 7 200 € | 864 € | trois jours |
- * | Grand silo, niveau 1 | 28 000 € | 2 500 € (plafond) | dix jours |
- * | Grand silo, niveau 5 | 282 800 € | 2 500 € (plafond) | dix jours |
+ * | Râtelier | 1 050 € | 75 € (plancher) | un quart de jour |
+ * | Logement du personnel | 7 200 € | 432 € | un jour et demi |
+ * | Laiterie, niveau 1 | 28 000 € | 1 250 € (plafond) | cinq jours |
+ * | Laiterie, niveau 5 | 282 800 € | 1 250 € (plafond) | cinq jours |
  *
  * Le **plancher** évite qu'on déplace une pièce à une case pour trois francs
  * six sous : même petit, un déménagement est un chantier. Le **plafond** est
  * ce qui empêche la punition de revenir par la fenêtre — sans lui, un joueur
- * qui a beaucoup investi dans son silo serait celui qui aurait le moins le
+ * qui a beaucoup investi dans sa laiterie serait celui qui aurait le moins le
  * droit de réorganiser sa cour, ce qui est l'inverse du bon sens.
  *
  * ## La fenêtre de regret
@@ -2001,16 +2007,16 @@ export function withinRegret(ageMs?: number): boolean {
  * comme il se démolit intégralement remboursé. C'est la même erreur qu'on
  * rattrape : une place mal choisie au moment de la pose. `[GD]`
  */
-export const BUILDING_MOVE_RATE = 0.12;
+export const BUILDING_MOVE_RATE = 0.06;
 
 /** Plancher : même petit, un déménagement est un chantier. `[GD]` */
-export const BUILDING_MOVE_MIN = 150;
+export const BUILDING_MOVE_MIN = 75;
 
 /**
  * Plafond : au-delà, la réorganisation redeviendrait un luxe réservé à ceux
  * qui n'ont rien construit de gros. `[GD]`
  */
-export const BUILDING_MOVE_MAX = 2500;
+export const BUILDING_MOVE_MAX = 1250;
 
 export function buildingMoveCost(type: BuildingType, level: number, ageMs?: number): number {
   if (withinRegret(ageMs)) return 0;

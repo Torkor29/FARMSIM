@@ -63,25 +63,44 @@ describe("déplacer coûte moins cher que démolir et rebâtir", () => {
     }
   });
 
-  it("et beaucoup moins cher : au plus le quart de cette perte", () => {
-    // « Un peu moins cher » ne suffirait pas à changer la décision du joueur.
+  it("et beaucoup moins cher : au plus le huitième de cette perte", () => {
+    /*
+     * « Un peu moins cher » ne suffirait pas à changer la décision du joueur.
+     * Le premier barème tenait le quart ; celui-ci, moitié moindre, tient le
+     * huitième. La borne suit le barème, sinon elle cesse de mesurer quoi que
+     * ce soit le jour où l'on baisse les prix.
+     */
     for (const type of TOUS) {
       const perte = investi(type, 1) - buildingResaleValue(type, 1);
-      expect(`${type} : ${buildingMoveCost(type, 1) <= perte / 4}`).toBe(`${type} : true`);
+      expect(`${type} : ${buildingMoveCost(type, 1) <= perte / 8}`).toBe(`${type} : true`);
     }
   });
 });
 
 describe("sensible, mais jamais dissuasif", () => {
-  it("aucun déménagement ne dépasse dix jours de blé", () => {
-    // La borne haute de « pas punitif ». Dix jours de jeu, c'est une décision
-    // qu'on prend ; trente, c'est une réorganisation à laquelle on renonce.
+  it("aucun déménagement ne dépasse cinq jours de blé", () => {
+    /*
+     * La borne haute de « pas punitif ».
+     *
+     * Elle était à dix jours, ce qui restait « un peu dur pour replacer les
+     * bâtiments » une fois manette en main. Cinq : la réorganisation devient
+     * une contrariété plutôt qu'un arbitrage. C'est un réglage de confort, et
+     * il se lit dans le seul chiffre qui compte — ce que la ferme gagne
+     * pendant qu'on déplace.
+     */
     for (const type of TOUS) {
       for (let lvl = 1; lvl <= MAX_BUILDING_LEVEL; lvl++) {
         const jours = buildingMoveCost(type, lvl) / JOUR_DE_BLE;
-        expect(`${type} n${lvl} : ${jours <= 10}`).toBe(`${type} n${lvl} : true`);
+        expect(`${type} n${lvl} : ${jours <= 5}`).toBe(`${type} n${lvl} : true`);
       }
     }
+  });
+
+  it("le plus petit se déplace pour moins d’un demi-jour de blé", () => {
+    // L'autre bout de l'échelle : déplacer un râtelier d'une case ne doit pas
+    // se réfléchir. Sans cette borne, seul le plafond serait tenu.
+    const petit = TOUS.reduce((a, b) => (BUILDING_DEFS[a].cost < BUILDING_DEFS[b].cost ? a : b));
+    expect(buildingMoveCost(petit, 1) / JOUR_DE_BLE).toBeLessThan(0.5);
   });
 
   it("aucun déménagement n’est gratuit hors fenêtre de regret", () => {
@@ -93,17 +112,18 @@ describe("sensible, mais jamais dissuasif", () => {
   });
 
   it("le plus gros bâtiment coûte plus cher à bouger que le plus petit", () => {
-    // Un prix forfaitaire rendrait le déplacement d'un abreuvoir aussi lourd
-    // que celui d'un silo. L'échelle doit se sentir.
+    // Un prix forfaitaire rendrait le déplacement d'un râtelier aussi lourd
+    // que celui d'une laiterie. L'échelle doit se sentir.
     const prix = TOUS.map((t) => buildingMoveCost(t, 1));
     expect(Math.max(...prix)).toBeGreaterThan(Math.min(...prix));
   });
 
   it("le plafond protège celui qui a le plus investi", () => {
     /*
-     * Sans plafond, un silo poussé au niveau 5 coûterait plus de trente mille
-     * € à déplacer : le joueur qui a le plus construit serait celui qui aurait
-     * le moins le droit de réorganiser sa cour. C'est l'inverse du bon sens.
+     * Sans plafond, une laiterie poussée au niveau 5 coûterait près de dix-sept
+     * mille € à déplacer : le joueur qui a le plus construit serait celui qui
+     * aurait le moins le droit de réorganiser sa cour. C'est l'inverse du bon
+     * sens.
      */
     const gros = TOUS.reduce((a, b) => (BUILDING_DEFS[a].cost > BUILDING_DEFS[b].cost ? a : b));
     expect(buildingMoveCost(gros, MAX_BUILDING_LEVEL)).toBe(BUILDING_MOVE_MAX);
