@@ -2312,6 +2312,14 @@ describe("un chantier prend du temps", () => {
       jeton: moi.jeton,
     });
     assert.equal(a.statut, 201);
+    /* Le chantier A doit tourner **encore** quand B part : c'est le seul état
+       où ses cases sont vraiment retenues. Un semis de six cases dure moins
+       d'une seconde en test, on ne court donc pas après — on le fige. */
+    const jobA = (a.corps as unknown as { job: { id: string } }).job.id;
+    prismaExec(
+      `UPDATE "FieldJob" SET "endsAt" = '${new Date(Date.now() + 60 * 60_000).toISOString()}' ` +
+        `WHERE id = '${jobA}';`,
+    );
     const b = await appel(`/parcels/${parcelle.id}/jobs`, {
       methode: "POST",
       corps: { userId: moi.id, work: "PLANT", crop: cropDeSaison(), cells: cells.slice(4, 10) },
@@ -2335,18 +2343,39 @@ describe("un chantier prend du temps", () => {
     // La sélection entièrement prise garde un refus : il n'y a pas de « reste »
     // à travailler, et partir sur zéro case n'aurait aucun sens.
     const { moi, parcelle, cells } = await fermeAuChamp("Toutprises");
+    const bloc = cells.slice(0, 6);
     const a = await appel(`/parcels/${parcelle.id}/jobs`, {
       methode: "POST",
-      corps: { userId: moi.id, work: "PLANT", crop: cropDeSaison(), cells: cells.slice(0, 6) },
+      corps: { userId: moi.id, work: "PLANT", crop: cropDeSaison(), cells: bloc },
       jeton: moi.jeton,
     });
     assert.equal(a.statut, 201);
+
+    /*
+     * On fige le chantier au champ, au lieu de courir après lui.
+     *
+     * `FARMSIM_JOB_SPEED` ramène un semis de six cases sous la seconde. Le
+     * second appel arrivait donc parfois après la fin du premier — et il était
+     * alors **accepté à bon droit** : un joueur qui relance sur ses propres
+     * cases n'attend pas le délai de grâce, c'est la règle que tient le test
+     * suivant. Ce test-ci n'a rien à dire sur ce cas ; il porte sur des cases
+     * retenues par un chantier qui tourne vraiment. On pose donc cet état-là.
+     */
+    const jobId = (a.corps as unknown as { job: { id: string } }).job.id;
+    const loin = new Date(Date.now() + 60 * 60_000).toISOString();
+    prismaExec(`UPDATE "FieldJob" SET "endsAt" = '${loin}' WHERE id = '${jobId}';`);
+
     const b = await appel(`/parcels/${parcelle.id}/jobs`, {
       methode: "POST",
-      corps: { userId: moi.id, work: "PLANT", crop: cropDeSaison(), cells: cells.slice(0, 6) },
+      corps: { userId: moi.id, work: "PLANT", crop: cropDeSaison(), cells: bloc },
       jeton: moi.jeton,
     });
     assert.equal(b.statut, 409);
+    /* Et refusé pour la bonne raison. Le plafond de chantiers refuse lui aussi
+       en 409 : sans ce contrôle, ce test passerait au vert le jour où la règle
+       des cases disparaîtrait, en mesurant celle de l'équipe à sa place. */
+    const refus = (b.corps as unknown as { error: string; freeAt?: string }).error;
+    assert.match(refus, /retenue|retenues/, `mauvais motif de refus : ${refus}`);
   });
 
   /**
@@ -2642,17 +2671,6 @@ describe("un chantier prend du temps", () => {
   });
 
   /**
-   * Du vivier au chantier, en une seule ferme.
-   *
-   * Les règles pures — barème, tirage déterministe, capacité de logement —
-   * sont tenues dans `packages/sim`. Ici on prend le chemin que le joueur
-   * emprunte, et on vérifie la seule chose qu'aucun test pur ne peut dire :
-   * que le second chantier part une fois quelqu'un embauché, et pas avant.
-   *
-   * Une seule ferme pour tout cela : chaque `fermeAuChamp` consomme une
-   * parcelle libre du monde de test, et il n'y en a pas des mille.
-   */
-  /**
    * Du vivier au chantier, sur une seule ferme.
    *
    * Les règles pures — barème, tirage déterministe, capacité de logement —
@@ -2719,12 +2737,19 @@ describe("un chantier prend du temps", () => {
       jeton: moi.jeton,
     });
     assert.equal(a.statut, 201);
+    /* Le plafond compte ce qui tourne **maintenant**. Un semis de six cases
+       dure moins d'une seconde en test : sans figer le chantier, le second
+       partirait parfois sans rien enfreindre, et le test mesurerait la vitesse
+       de la machine au lieu de la règle. */
+    const jobA = (a.corps as unknown as { job: { id: string } }).job.id;
+    const finLointaine = new Date(Date.now() + 60 * 60_000).toISOString();
+    prismaExec(`UPDATE "FieldJob" SET "endsAt" = '${finLointaine}' WHERE id = '${jobA}';`);
     const refuse = await appel(`/parcels/${parcelle.id}/jobs`, {
       methode: "POST",
       corps: { userId: moi.id, work: "PLANT", crop: cropDeSaison(), cells: cells.slice(6, 12) },
       jeton: moi.jeton,
     });
-    assert.equal(refuse.statut, 409);
+    assert.equal(refuse.statut, 409, `second chantier accepté : ${JSON.stringify(refuse.corps)}`);
     assert.match(
       (refuse.corps as unknown as { error: string }).error,
       /embauchez/,
@@ -2776,6 +2801,7 @@ describe("un chantier prend du temps", () => {
        une durée sur laquelle on peut parier. */
     for (const lance of [a, b]) {
       const id = (lance.corps as unknown as { job: { id: string } }).job.id;
+      // `a` a été figé plus haut : il tourne encore, l'abandon le prend.
       const stop = await appel(`/jobs/${id}/cancel`, {
         methode: "POST",
         corps: { userId: moi.id },
