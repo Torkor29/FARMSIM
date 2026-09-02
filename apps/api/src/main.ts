@@ -183,6 +183,7 @@ import {
   MACHINE_LISTING_MIN_RATE,
   MACHINE_LISTING_MAX_RATE,
   buildingResaleValue,
+  buildingMoveCost,
   isPaddockAdjacent,
   explainNoMachine as explainNoMachineShared,
   type MachineForWork,
@@ -5420,9 +5421,118 @@ app.get("/parcels/:id/voisinage", async (req, res) => {
   });
 });
 
+/** Une case de parcelle, telle que les routes de champ la lisent. */
+type CaseDeChamp = Awaited<ReturnType<typeof loadParcelForWork>> extends infer P
+  ? P extends { cells: (infer C)[] }
+    ? C
+    : never
+  : never;
+
+/**
+ * Le tri du déchaumeur : ce qu'il déchaume, ce qu'il remet en herbe.
+ *
+ * Extrait de la route pour que le prestataire lise exactement la même règle.
+ * Un dépanneur qui trierait autrement que le joueur donnerait deux résultats
+ * différents sur la même sélection — et c'est précisément le genre d'écart
+ * qu'on ne découvre qu'en jouant.
+ */
+function trierDechaumage(selection: CaseDeChamp[]): {
+  targets: CaseDeChamp[];
+  enherber: CaseDeChamp[];
+  blockedByPlow: number;
+} {
+  const targets: CaseDeChamp[] = [];
+  /**
+   * Cases à remettre en herbe : travaillées, nues, sans chaumes.
+   *
+   * Le même outil, le même bouton. Une terre labourée puis abandonnée restait
+   * marron indéfiniment, et « Déchaumer » la refusait avec « la case n'a pas de
+   * chaumes » — un refus juste, mais sans issue. Le déchaumeur sait aussi
+   * reprendre une terre nue et la remettre en herbe : c'est ce qu'il fait ici.
+   */
+  const enherber: CaseDeChamp[] = [];
+  let blockedByPlow = 0;
+  for (const cell of selection) {
+    if (cell.kind !== "EMPTY") continue;
+    const verdict = canStubble({
+      harvestsSincePlow: cell.harvestsSincePlow,
+      residuePasses: cell.residuePasses,
+      hasStubble: cell.hasStubble,
+    });
+    if (verdict.ok) {
+      if (cell.baleCount > 0) continue;
+      targets.push(cell);
+      continue;
+    }
+    if (verdict.reason === "PLOW_REQUIRED") {
+      blockedByPlow += 1;
+      continue;
+    }
+    if (
+      canRegrass({
+        hasStubble: cell.hasStubble,
+        hasCrop: Boolean(cell.crop),
+        worked: cell.fieldStage !== "EMPTY",
+      })
+    ) {
+      enherber.push(cell);
+    }
+  }
+  return { targets, enherber, blockedByPlow };
+}
+
+/** L'effet du déchaumeur sur le sol, quel que soit qui tient le volant. */
+async function ecrireDechaumage(
+  tx: Prisma.TransactionClient,
+  targets: CaseDeChamp[],
+  enherber: CaseDeChamp[],
+): Promise<void> {
+  for (const cell of enherber) {
+    const next = applyRegrass();
+    await tx.parcelCell.update({
+      where: { id: cell.id },
+      data: {
+        fieldStage: "EMPTY",
+        hasStubble: false,
+        strawTons: 0,
+        harvestsSincePlow: next.harvestsSincePlow,
+        residuePasses: next.residuePasses,
+        // L'herbe reprend : la case n'est plus un lit de semence propre.
+        weedPressure: 0,
+        directSeeded: false,
+      },
+    });
+  }
+  for (const cell of targets) {
+    const next = applyStubble({
+      harvestsSincePlow: cell.harvestsSincePlow,
+      residuePasses: cell.residuePasses,
+      hasStubble: cell.hasStubble,
+    });
+    await tx.parcelCell.update({
+      where: { id: cell.id },
+      data: {
+        fieldStage: "PREPARED",
+        hasStubble: false,
+        strawTons: 0,
+        residuePasses: next.residuePasses,
+        /* Faux-semis : le déchaumage fait lever les graines puis les détruit
+           aussitôt. `soil.ts` l'affirmait déjà en toutes lettres — « il
+           détruit les adventices » — sans que rien ne l'implémente. */
+        weedPressure: weedsAfterSoilWork("STUBBLE", pressionAdventices(cell)),
+        weedAt: new Date(),
+      },
+    });
+  }
+}
+
 /**
  * Faire venir une entreprise (filet urgent PNJ) : barème client +15 %,
  * malus de rendement, l'argent sort. Aucun matériel requis côté joueur.
+ *
+ * Elle prend les dix travaux. Elle n'en prenait que cinq, et les cinq autres
+ * n'avaient aucune voie déléguée garantie : l'entraide attend qu'un joueur
+ * accepte. Voir `URGENT_CONTRACTOR_WORKS` pour le raisonnement.
  */
 app.post("/parcels/:id/contractor", async (req, res) => {
   const body = z
@@ -5491,7 +5601,7 @@ app.post("/parcels/:id/contractor", async (req, res) => {
     const pretLe = projectReadyAt({ crop, plantedAt: now, growMs, ...climat });
     const enDirect = sol.plans.some((p) => p.directSeed);
     await prisma.$transaction(async (tx) => {
-      await debit(tx, user.id, total, "CHANTIERS", "Prestataire — moisson");
+      await debit(tx, user.id, total, "CHANTIERS", `Prestataire — ${WORK_LABELS[work] ?? work}`);
       for (const plan of sol.plans) {
         const soil = plan.directSeed ? applyDirectSeed(plan.cell) : null;
         await tx.parcelCell.update({
@@ -5546,7 +5656,7 @@ app.post("/parcels/:id/contractor", async (req, res) => {
     }
     const malus = LOST_CROP_FERTILITY_MALUS * lost.length;
     await prisma.$transaction(async (tx) => {
-      await debit(tx, user.id, total, "CHANTIERS", "Prestataire — pressage");
+      await debit(tx, user.id, total, "CHANTIERS", `Prestataire — ${WORK_LABELS[work] ?? work}`);
       for (const cell of lost) {
         await tx.parcelCell.update({
           where: { id: cell.id },
@@ -5579,7 +5689,7 @@ app.post("/parcels/:id/contractor", async (req, res) => {
     const available = await parcelManureTons(parcel.id);
     const usedManure = needed > 0 && available >= needed;
     await prisma.$transaction(async (tx) => {
-      await debit(tx, user.id, total, "CHANTIERS", "Prestataire — ramassage");
+      await debit(tx, user.id, total, "CHANTIERS", `Prestataire — ${WORK_LABELS[work] ?? work}`);
       if (usedManure) await drawManureFromPits(tx, parcel.id, needed);
       for (const { x, y } of cropCells) {
         const cell = parcel.cells.find((c) => c.x === x && c.y === y);
@@ -5612,7 +5722,121 @@ app.post("/parcels/:id/contractor", async (req, res) => {
     return;
   }
 
-  // HARVEST / MOW — grain au silo, herbe au hangar. L'herbe peut reprendre.
+  if (work === "STUBBLE") {
+    /* Le prestataire trie comme le joueur — même fonction, même verdict — et
+       remet en herbe une terre nue au même titre qu'il déchaume un chaume. */
+    const selection = parcel.cells.filter((c) => cells.some((t) => t.x === c.x && t.y === c.y));
+    const { targets, enherber, blockedByPlow } = trierDechaumage(selection);
+    if (!targets.length && !enherber.length) {
+      res.status(409).json({
+        error: blockedByPlow
+          ? SOIL_WORK_REFUSAL_LABELS.PLOW_REQUIRED
+          : SOIL_WORK_REFUSAL_LABELS.NO_STUBBLE,
+        blockedByPlow,
+      });
+      return;
+    }
+    await prisma.$transaction(async (tx) => {
+      await debit(tx, user.id, total, "CHANTIERS", `Prestataire — ${WORK_LABELS[work] ?? work}`);
+      await ecrireDechaumage(tx, targets, enherber);
+    });
+    res.json({
+      work,
+      cells: targets.length + enherber.length,
+      stubbled: targets.length,
+      regrassed: enherber.length,
+      blockedByPlow,
+      cost: total,
+      service,
+      seeds: 0,
+    });
+    return;
+  }
+
+  if (work === "BALE") {
+    const targets = parcel.cells.filter(
+      (c) => cells.some((t) => t.x === c.x && t.y === c.y) && c.strawTons > 0,
+    );
+    if (!targets.length) {
+      res.status(409).json({ error: "Aucun andain à presser" });
+      return;
+    }
+    let bales = 0;
+    await prisma.$transaction(async (tx) => {
+      await debit(tx, user.id, total, "CHANTIERS", `Prestataire — ${WORK_LABELS[work] ?? work}`);
+      for (const cell of targets) {
+        const n = balesFromStraw(cell.strawTons);
+        bales += n;
+        await tx.parcelCell.update({
+          where: { id: cell.id },
+          data: { strawTons: 0, baleCount: cell.baleCount + n },
+        });
+      }
+    });
+    res.json({ work, cells: targets.length, baled: targets.length, bales, cost: total, service, seeds: 0 });
+    return;
+  }
+
+  if (work === "COLLECT") {
+    const targets = parcel.cells.filter(
+      (c) => cells.some((t) => t.x === c.x && t.y === c.y) && c.baleCount > 0,
+    );
+    if (!targets.length) {
+      res.status(409).json({ error: "Aucune botte à ramasser" });
+      return;
+    }
+    let bales = 0;
+    await prisma.$transaction(async (tx) => {
+      await debit(tx, user.id, total, "CHANTIERS", `Prestataire — ${WORK_LABELS[work] ?? work}`);
+      for (const cell of targets) {
+        bales += cell.baleCount;
+        await tx.parcelCell.update({ where: { id: cell.id }, data: { baleCount: 0 } });
+      }
+      /* Ce qu'on charge, ce sont des bottes — pas un tas de vrac, comme sur la
+         route du joueur. Le stock les compte à l'unité. */
+      await addToStock(tx, parcel.farm!.id, "STRAW_BALE", bales, 0, 3);
+    });
+    res.json({
+      work,
+      cells: targets.length,
+      collected: targets.length,
+      bales,
+      tons: Math.round(strawFromBales(bales) * 1000) / 1000,
+      cost: total,
+      service,
+      seeds: 0,
+    });
+    return;
+  }
+
+  if (work === "WEED") {
+    const saison = currentSeason(climatDe(parcel).hemisphere ?? "N", now);
+    const cibles = parcel.cells.filter(
+      (c) =>
+        cells.some((t) => t.x === c.x && t.y === c.y) &&
+        c.kind === "CROP" &&
+        pressionAdventices(c, saison) > WEED_AFTER_SPRAY,
+    );
+    if (!cibles.length) {
+      res.status(409).json({ error: "Rien à désherber : ces cases sont déjà propres." });
+      return;
+    }
+    /* Le prestataire vient avec son bidon : l'herbicide est dans le devis, il
+       ne se débite pas une seconde fois comme sur la route du joueur. */
+    await prisma.$transaction(async (tx) => {
+      await debit(tx, user.id, total, "CHANTIERS", `Prestataire — ${WORK_LABELS[work] ?? work}`);
+      for (const cell of cibles) {
+        await tx.parcelCell.update({
+          where: { id: cell.id },
+          data: { weedPressure: WEED_AFTER_SPRAY, weedAt: new Date(now) },
+        });
+      }
+    });
+    res.json({ work, cells: cibles.length, weeded: cibles.length, cost: total, service, seeds: 0 });
+    return;
+  }
+
+  // HARVEST / MOW / SILAGE — grain au silo, herbe au hangar, ensilage au tas.
   const ready = cells
     .map(({ x, y }) => parcel.cells.find((c) => c.x === x && c.y === y))
     .filter((c): c is NonNullable<typeof c> => Boolean(c && c.kind === "CROP" && c.plantedAt));
@@ -5642,6 +5866,18 @@ app.post("/parcels/:id/contractor", async (req, res) => {
       specialization: playableSpec(user.specialization),
       cutsDone: grassCutsDone(cell),
     });
+    /* L'ensilage se coupe **avant** maturité grain : c'est tout son intérêt,
+       et c'est pourquoi il ne passe pas par le contrôle `sim.ready`. On le
+       chiffre depuis l'équivalent grain, comme la route du joueur. */
+    if (work === "SILAGE") {
+      if (!canSilageHarvest({ crop: cell.crop, progress: sim.progress, lost: sim.lost })) continue;
+      const grainEq = sim.estimatedYieldTons * (1 - CONTRACTOR_YIELD_MALUS);
+      const tons = silageYieldTons(grainEq, sim.progress);
+      totalTons += tons;
+      perItem.set("SILAGE", (perItem.get("SILAGE") ?? 0) + tons);
+      taken.push(cell);
+      continue;
+    }
     if (!sim.ready) continue;
     const tons = sim.estimatedYieldTons * (1 - CONTRACTOR_YIELD_MALUS);
     totalTons += tons;
@@ -5653,7 +5889,12 @@ app.post("/parcels/:id/contractor", async (req, res) => {
 
   if (totalTons <= 0) {
     res.status(409).json({
-      error: work === "MOW" ? "Rien à faucher sur la sélection" : "Rien n'est mûr sur la sélection",
+      error:
+        work === "MOW"
+          ? "Rien à faucher sur la sélection"
+          : work === "SILAGE"
+            ? "Aucun maïs assez avancé pour l'ensilage"
+            : "Rien n'est mûr sur la sélection",
     });
     return;
   }
@@ -5671,6 +5912,8 @@ app.post("/parcels/:id/contractor", async (req, res) => {
           harvestsSincePlow: cell.harvestsSincePlow,
         },
         now,
+        // Ensilage : la plante part entière, il ne reste pas d'andain à presser.
+        work === "SILAGE",
       );
       await tx.parcelCell.update({ where: { id: cell.id }, data: next.data });
     }
@@ -7184,43 +7427,7 @@ app.post("/parcels/:id/stubble", async (req, res) => {
       ? parcel.cells.filter((c) => remaining.some((t) => t.x === c.x && t.y === c.y))
       : parcel.cells;
 
-  const targets: (typeof selection)[number][] = [];
-  /**
-   * Cases à remettre en herbe : travaillées, nues, sans chaumes.
-   *
-   * Le même outil, le même bouton. Une terre labourée puis abandonnée restait
-   * marron indéfiniment, et « Déchaumer » la refusait avec « la case n'a pas de
-   * chaumes » — un refus juste, mais sans issue. Le déchaumeur sait aussi
-   * reprendre une terre nue et la remettre en herbe : c'est ce qu'il fait ici.
-   */
-  const enherber: (typeof selection)[number][] = [];
-  let blockedByPlow = 0;
-  for (const cell of selection) {
-    if (cell.kind !== "EMPTY") continue;
-    const verdict = canStubble({
-      harvestsSincePlow: cell.harvestsSincePlow,
-      residuePasses: cell.residuePasses,
-      hasStubble: cell.hasStubble,
-    });
-    if (verdict.ok) {
-      if (cell.baleCount > 0) continue;
-      targets.push(cell);
-      continue;
-    }
-    if (verdict.reason === "PLOW_REQUIRED") {
-      blockedByPlow += 1;
-      continue;
-    }
-    if (
-      canRegrass({
-        hasStubble: cell.hasStubble,
-        hasCrop: Boolean(cell.crop),
-        worked: cell.fieldStage !== "EMPTY",
-      })
-    ) {
-      enherber.push(cell);
-    }
-  }
+  const { targets, enherber, blockedByPlow } = trierDechaumage(selection);
 
   if (!targets.length && !enherber.length) {
     res.status(409).json({
@@ -7244,43 +7451,7 @@ app.post("/parcels/:id/stubble", async (req, res) => {
     if (access.charge) {
       await debit(tx, user.id, cost, "CULTURES", "Déchaumage");
     }
-    for (const cell of enherber) {
-      const next = applyRegrass();
-      await tx.parcelCell.update({
-        where: { id: cell.id },
-        data: {
-          fieldStage: "EMPTY",
-          hasStubble: false,
-          strawTons: 0,
-          harvestsSincePlow: next.harvestsSincePlow,
-          residuePasses: next.residuePasses,
-          // L'herbe reprend : la case n'est plus un lit de semence propre.
-          weedPressure: 0,
-          directSeeded: false,
-        },
-      });
-    }
-    for (const cell of targets) {
-      const next = applyStubble({
-        harvestsSincePlow: cell.harvestsSincePlow,
-        residuePasses: cell.residuePasses,
-        hasStubble: cell.hasStubble,
-      });
-      await tx.parcelCell.update({
-        where: { id: cell.id },
-        data: {
-          fieldStage: "PREPARED",
-          hasStubble: false,
-          strawTons: 0,
-          residuePasses: next.residuePasses,
-          /* Faux-semis : le déchaumage fait lever les graines puis les détruit
-             aussitôt. `soil.ts` l'affirmait déjà en toutes lettres — « il
-             détruit les adventices » — sans que rien ne l'implémente. */
-          weedPressure: weedsAfterSoilWork("STUBBLE", pressionAdventices(cell)),
-          weedAt: new Date(),
-        },
-      });
-    }
+    await ecrireDechaumage(tx, targets, enherber);
     // Remettre en herbe use la machine et paie l'expérience autant que
     // déchaumer : c'est le même passage d'outil sur la même surface.
     const wear = await applyWearToMachine(tx, {
@@ -8240,6 +8411,103 @@ app.post("/buildings/:id/rotate", async (req, res) => {
     return tx.building.update({ where: { id: building.id }, data: { rotation: next } });
   });
   res.json({ building: updated });
+});
+
+/**
+ * Déménager un bâtiment déjà posé.
+ *
+ * Demandé en jouant : la cour d'une ferme se réorganise, et la seule voie
+ * jusqu'ici était de démolir (40 % rendus) puis de rebâtir — 60 % de perdu.
+ * Le prix vit dans `buildingMoveCost` ; le raisonnement aussi.
+ *
+ * Le bâtiment ne change pas d'identité : même ligne, même niveau, mêmes engins
+ * rangés dedans, même troupeau. Seules ses cases changent. C'est ce qui
+ * distingue un déménagement d'une démolition suivie d'une reconstruction, et
+ * c'est pourquoi il n'a pas à coûter le même prix.
+ */
+app.post("/buildings/:id/move", async (req, res) => {
+  const body = z
+    .object({
+      userId: z.string(),
+      x: z.number().int().min(0),
+      y: z.number().int().min(0),
+      rotation: z.number().int().min(0).max(3).optional(),
+    })
+    .safeParse(req.body);
+  if (!body.success) {
+    res.status(400).json(body.error.flatten());
+    return;
+  }
+  const building = await prisma.building.findUnique({
+    where: { id: req.params.id },
+    include: { parcel: { include: { farm: true, cells: true } } },
+  });
+  if (!building?.parcel.farm || building.parcel.farm.userId !== body.data.userId) {
+    res.status(403).json({ error: "Bâtiment non possédé" });
+    return;
+  }
+  const rotation = quarterTurns(body.data.rotation ?? building.rotation);
+  const type = building.type as SharedBuildingType;
+  const foot = orientedFootprint(type, rotation);
+  if (
+    body.data.x + foot.w > building.parcel.gridW ||
+    body.data.y + foot.h > building.parcel.gridH
+  ) {
+    res.status(409).json({ error: "Le bâtiment déborderait de la parcelle" });
+    return;
+  }
+  const wanted = footprintCells(body.data.x, body.data.y, foot.w, foot.h);
+  for (const c of wanted) {
+    const cell = building.parcel.cells.find((p) => p.x === c.x && p.y === c.y);
+    /* Ses propres cases ne le gênent pas : un bâtiment peut glisser d'une case
+       et chevaucher sa place d'avant. Même règle que le quart de tour. */
+    if (!cell || (cell.kind !== "EMPTY" && cell.buildingId !== building.id)) {
+      res.status(409).json({ error: `Place occupée en ${c.x},${c.y}` });
+      return;
+    }
+  }
+  if (body.data.x === building.originX && body.data.y === building.originY && rotation === building.rotation) {
+    res.status(409).json({ error: "Le bâtiment est déjà là." });
+    return;
+  }
+
+  const user = await prisma.user.findUnique({ where: { id: body.data.userId } });
+  if (!user) {
+    res.status(404).json({ error: "Joueur introuvable" });
+    return;
+  }
+  const cout = buildingMoveCost(type, building.level, Date.now() - building.createdAt.getTime());
+  if (cout > 0 && !peutPayer(user, cout)) {
+    res.status(402).json({ error: `€ insuffisants — ${cout} requis` });
+    return;
+  }
+
+  const updated = await prisma.$transaction(async (tx) => {
+    if (cout > 0) {
+      await debit(
+        tx,
+        user.id,
+        cout,
+        "BATIMENTS",
+        `Déplacement — ${BUILDING_DEFS[type]?.name ?? type}`,
+      );
+    }
+    await tx.parcelCell.updateMany({
+      where: { buildingId: building.id },
+      data: { kind: "EMPTY", buildingId: null },
+    });
+    for (const c of wanted) {
+      await tx.parcelCell.update({
+        where: { parcelId_x_y: { parcelId: building.parcelId, x: c.x, y: c.y } },
+        data: { kind: "BUILDING", buildingId: building.id },
+      });
+    }
+    return tx.building.update({
+      where: { id: building.id },
+      data: { originX: body.data.x, originY: body.data.y, rotation },
+    });
+  });
+  res.json({ building: updated, cost: cout });
 });
 
 /** Passage d'un bâtiment au palier suivant (5 niveaux au total). */

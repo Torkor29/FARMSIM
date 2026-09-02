@@ -43,6 +43,8 @@ import {
   MACHINE_AGE_YIELD_MALUS,
   MACHINE_END_OF_LIFE_HOURS,
   machineResaleValue,
+  SILAGE_MIN_PROGRESS,
+  buildingMoveCost,
 } from "@farmsim/shared";
 
 const API_DIR = fileURLToPath(new URL("../..", import.meta.url));
@@ -391,6 +393,128 @@ describe("argent", () => {
     const silos = joueur.farm.parcels[0]!.buildings.filter((b) => b.type === "SILO").length;
     assert.equal(silos, 1, `${silos} silos posés au lieu d'un`);
     assert.ok(joueur.crd >= 0, `la trésorerie ne doit jamais passer sous zéro (${joueur.crd})`);
+  });
+
+  it("déplace un bâtiment sans lui faire perdre son niveau ni son contenu", async () => {
+    /*
+     * Demandé en jouant : « ça serait bien de pouvoir déplacer les bâtiments
+     * qu'on a posé, il faudrait que ce soit payant mais pas punitif ». La
+     * seule voie était de démolir et rebâtir — 60 % de l'investi perdu.
+     *
+     * Ce qui compte ici n'est pas le 200 : c'est que le bâtiment reste **le
+     * même**. Une route qui supprimerait puis recréerait la ligne passerait un
+     * test de statut, et ferait disparaître le troupeau logé dedans.
+     */
+    const f = await fermeAvec(Math.round(BUILDING_DEFS.SILO.cost * 3));
+    const pose = await appel(`/parcels/${f.parcelId}/build`, {
+      methode: "POST",
+      corps: { userId: f.id, type: "SILO", x: 0, y: 0 },
+      jeton: f.jeton,
+    });
+    assert.ok(pose.statut < 400, `pose refusée : ${JSON.stringify(pose.corps)}`);
+    const silo = (
+      (await appel("/auth/me", { jeton: f.jeton })).corps as unknown as {
+        player: { farm: { parcels: { buildings: { id: string; type: string; level: number }[] }[] } };
+      }
+    ).player.farm.parcels[0]!.buildings.find((b) => b.type === "SILO")!;
+
+    /* La fenêtre de regret rendrait ce premier déplacement gratuit, et le test
+       ne mesurerait alors ni le prix ni le débit. On vieillit la pose. */
+    prismaExec(
+      `UPDATE "Building" SET "createdAt" = NOW() - INTERVAL '2 hours' WHERE id = '${silo.id}';`,
+    );
+    const attendu = buildingMoveCost("SILO", silo.level ?? 1);
+    const avant = (
+      (await appel("/auth/me", { jeton: f.jeton })).corps as unknown as { player: { crd: number } }
+    ).player.crd;
+
+    const r = await appel(`/buildings/${silo.id}/move`, {
+      methode: "POST",
+      corps: { userId: f.id, x: 6, y: 6 },
+      jeton: f.jeton,
+    });
+    assert.equal(r.statut, 200, `déplacement refusé : ${JSON.stringify(r.corps)}`);
+    assert.equal(
+      (r.corps as unknown as { cost: number }).cost,
+      attendu,
+      "le prix débité doit être celui que l'écran annonce",
+    );
+
+    const apres = (await appel("/auth/me", { jeton: f.jeton })).corps as unknown as {
+      player: { crd: number; farm: { parcels: { buildings: { id: string; originX: number; originY: number }[] }[] } };
+    };
+    assert.equal(Math.round(avant - apres.player.crd), attendu, "le débit ne correspond pas au devis");
+    const batiments = apres.player.farm.parcels[0]!.buildings;
+    const meme = batiments.find((b) => b.id === silo.id);
+    assert.ok(meme, "le bâtiment a changé d'identité — il a été recréé, pas déplacé");
+    assert.equal(meme.originX, 6);
+    assert.equal(meme.originY, 6);
+
+    // Les cases d'avant se libèrent, celles d'arrivée se prennent.
+    const cases = (
+      (await appel(`/parcels/${f.parcelId}`)).corps as unknown as {
+        parcel: { cells: { x: number; y: number; kind: string; buildingId: string | null }[] };
+      }
+    ).parcel.cells;
+    assert.equal(cases.find((c) => c.x === 0 && c.y === 0)!.kind, "EMPTY", "l'ancienne place est restée occupée");
+    assert.equal(cases.find((c) => c.x === 6 && c.y === 6)!.buildingId, silo.id, "la nouvelle place n'est pas prise");
+  });
+
+  it("ne déplace un bâtiment ni hors de la parcelle, ni sur un autre, ni sans payer", async () => {
+    const f = await fermeAvec(Math.round(BUILDING_DEFS.SILO.cost * 3));
+    await appel(`/parcels/${f.parcelId}/build`, {
+      methode: "POST",
+      corps: { userId: f.id, type: "SILO", x: 0, y: 0 },
+      jeton: f.jeton,
+    });
+    const ferme = (
+      (await appel("/auth/me", { jeton: f.jeton })).corps as unknown as {
+        player: { farm: { parcels: { gridW: number; buildings: { id: string; type: string; originX: number; originY: number }[] }[] } };
+      }
+    ).player.farm.parcels[0]!;
+    const silo = ferme.buildings.find((b) => b.type === "SILO")!;
+    const autre = ferme.buildings.find((b) => b.id !== silo.id);
+    prismaExec(
+      `UPDATE "Building" SET "createdAt" = NOW() - INTERVAL '2 hours' WHERE id = '${silo.id}';`,
+    );
+
+    const dehors = await appel(`/buildings/${silo.id}/move`, {
+      methode: "POST",
+      corps: { userId: f.id, x: ferme.gridW - 1, y: 0 },
+      jeton: f.jeton,
+    });
+    assert.equal(dehors.statut, 409, "un bâtiment ne doit pas déborder de la parcelle");
+
+    if (autre) {
+      const dessus = await appel(`/buildings/${silo.id}/move`, {
+        methode: "POST",
+        corps: { userId: f.id, x: autre.originX, y: autre.originY },
+        jeton: f.jeton,
+      });
+      assert.equal(dessus.statut, 409, "deux bâtiments ne peuvent pas se superposer");
+    }
+
+    const surPlace = await appel(`/buildings/${silo.id}/move`, {
+      methode: "POST",
+      corps: { userId: f.id, x: silo.originX, y: silo.originY },
+      jeton: f.jeton,
+    });
+    assert.equal(surPlace.statut, 409, "déplacer sur place ne doit rien facturer");
+
+    // Sans le sou : le refus doit venir avant que quoi que ce soit ne bouge.
+    prismaExec(`UPDATE "User" SET crd = 0 WHERE id = '${f.id}';`);
+    const fauche = await appel(`/buildings/${silo.id}/move`, {
+      methode: "POST",
+      corps: { userId: f.id, x: 6, y: 6 },
+      jeton: f.jeton,
+    });
+    assert.equal(fauche.statut, 402, `déplacement accordé sans trésorerie : ${JSON.stringify(fauche.corps)}`);
+    const apres = (
+      (await appel("/auth/me", { jeton: f.jeton })).corps as unknown as {
+        player: { farm: { parcels: { buildings: { id: string; originX: number }[] }[] } };
+      }
+    ).player.farm.parcels[0]!.buildings.find((b) => b.id === silo.id)!;
+    assert.equal(apres.originX, silo.originX, "un refus a quand même déplacé le bâtiment");
   });
 
   it("refuse une dépense hors de portée sans rien écrire", async () => {
@@ -1316,6 +1440,210 @@ describe("calendrier cultural", () => {
 
     const ok = await travailler(parcelle.id, "plant", "PLANT", { id: moi.id, jeton: moi.jeton }, cells.slice(0, 4), { crop: dedans });
     assert.equal(ok.statut, 200, `${dedans} refusé en ${saison} : ${JSON.stringify(ok.corps)}`);
+  });
+
+  it("le dépannage prend aussi la presse, le ramassage, le déchaumage et le désherbage", async () => {
+    /*
+     * Signalé par Strea : « il y a des chantiers que tu peux faire faire par
+     * le pnj et d'autres non ? presser, tu peux pas ; ramasser tu peux pas ;
+     * déchaumer tu peux pas ». Le bouton disparaissait sans un mot, et
+     * l'entraide — la seule autre voie — attend qu'un joueur passe.
+     *
+     * Ce test parcourt les quatre travaux repris, sur des cases préparées à la
+     * main : chacun doit **faire le travail**, pas seulement répondre 200.
+     */
+    const { moi, parcelle, cells } = await fermeSemable();
+    const lot = (i: number) => cells.slice(i * 4, i * 4 + 4);
+    const ou = (l: { x: number; y: number }[]) =>
+      l.map((c) => `(x = ${c.x} AND y = ${c.y})`).join(" OR ");
+    const relire = async () =>
+      (
+        (await appel(`/parcels/${parcelle.id}`)).corps as unknown as {
+          parcel: {
+            cells: {
+              x: number;
+              y: number;
+              strawTons: number;
+              baleCount: number;
+              hasStubble: boolean;
+              weedPressure: number;
+            }[];
+          };
+        }
+      ).parcel.cells;
+    const caseA = (l: { x: number; y: number }[], toutes: Awaited<ReturnType<typeof relire>>) =>
+      toutes.find((c) => c.x === l[0]!.x && c.y === l[0]!.y)!;
+
+    // 1 — La presse : un andain devient des bottes.
+    const presse = lot(0);
+    prismaExec(
+      `UPDATE "ParcelCell" SET "strawTons" = 2 WHERE "parcelId" = '${parcelle.id}' AND (${ou(presse)});`,
+    );
+    const rPresse = await appel(`/parcels/${parcelle.id}/contractor`, {
+      methode: "POST",
+      corps: { userId: moi.id, work: "BALE", cells: presse },
+      jeton: moi.jeton,
+    });
+    assert.equal(rPresse.statut, 200, `presse refusée : ${JSON.stringify(rPresse.corps)}`);
+    assert.ok(
+      (rPresse.corps as unknown as { bales: number }).bales > 0,
+      "le prestataire a pressé zéro botte",
+    );
+    const apresPresse = caseA(presse, await relire());
+    assert.equal(apresPresse.strawTons, 0, "l'andain est resté au sol");
+    assert.ok(apresPresse.baleCount > 0, "aucune botte sur la case pressée");
+
+    // 2 — Le ramassage : les bottes rentrent au stock.
+    const rRamasse = await appel(`/parcels/${parcelle.id}/contractor`, {
+      methode: "POST",
+      corps: { userId: moi.id, work: "COLLECT", cells: presse },
+      jeton: moi.jeton,
+    });
+    assert.equal(rRamasse.statut, 200, `ramassage refusé : ${JSON.stringify(rRamasse.corps)}`);
+    assert.equal(caseA(presse, await relire()).baleCount, 0, "les bottes sont restées au champ");
+    const stock = (await appel("/auth/me", { jeton: moi.jeton })).corps as unknown as {
+      player: { farm: { inventory: { itemCode: string; qty: number }[] } };
+    };
+    const bottes = stock.player.farm.inventory
+      .filter((i) => i.itemCode === "STRAW_BALE")
+      .reduce((n, i) => n + i.qty, 0);
+    assert.ok(bottes > 0, "les bottes ramassées ne sont pas au stock");
+
+    // 3 — Le déchaumage : le chaume disparaît.
+    const chaume = lot(1);
+    prismaExec(
+      `UPDATE "ParcelCell" SET "hasStubble" = true, "harvestsSincePlow" = 1, "fieldStage" = 'HARVESTED' ` +
+        `WHERE "parcelId" = '${parcelle.id}' AND (${ou(chaume)});`,
+    );
+    const rChaume = await appel(`/parcels/${parcelle.id}/contractor`, {
+      methode: "POST",
+      corps: { userId: moi.id, work: "STUBBLE", cells: chaume },
+      jeton: moi.jeton,
+    });
+    assert.equal(rChaume.statut, 200, `déchaumage refusé : ${JSON.stringify(rChaume.corps)}`);
+    assert.equal(caseA(chaume, await relire()).hasStubble, false, "le chaume est resté debout");
+
+    // 4 — Le désherbage : la pression retombe.
+    const sales = lot(2);
+    const crop = cropDeSaison();
+    const semis = await appel(`/parcels/${parcelle.id}/contractor`, {
+      methode: "POST",
+      corps: { userId: moi.id, work: "PLANT", crop, cells: sales },
+      jeton: moi.jeton,
+    });
+    assert.equal(semis.statut, 200, `semis refusé : ${JSON.stringify(semis.corps)}`);
+    prismaExec(
+      `UPDATE "ParcelCell" SET "weedPressure" = 0.9 WHERE "parcelId" = '${parcelle.id}' AND (${ou(sales)});`,
+    );
+    const rDesherbe = await appel(`/parcels/${parcelle.id}/contractor`, {
+      methode: "POST",
+      corps: { userId: moi.id, work: "WEED", cells: sales },
+      jeton: moi.jeton,
+    });
+    assert.equal(rDesherbe.statut, 200, `désherbage refusé : ${JSON.stringify(rDesherbe.corps)}`);
+    assert.ok(
+      caseA(sales, await relire()).weedPressure < 0.9,
+      "les adventices n'ont pas bougé",
+    );
+  });
+
+  it("le dépannage ensile un maïs qui n'est pas encore mûr en grain", async () => {
+    /*
+     * L'ensilage se coupe **avant** maturité grain : c'est tout son intérêt.
+     * Le prestataire ne le prenait pas du tout ; le laisser passer par la
+     * branche moisson lui aurait fait répondre « rien n'est mûr » sur un champ
+     * qui ne demandait qu'à être coupé.
+     *
+     * Le maïs est écrit directement en base : on veut une culture à mi-course,
+     * pas un semis à faire mûrir pendant le test.
+     */
+    const { moi, parcelle, cells } = await fermeSemable();
+    const lot = cells.slice(0, 4);
+    const ou = lot.map((c) => `(x = ${c.x} AND y = ${c.y})`).join(" OR ");
+    /*
+     * On vise entre le seuil d'ensilage (0,55) et la maturité grain, et on le
+     * **mesure** au lieu de le supposer : la durée de pousse effective dépend
+     * du climat et de la saison, si bien qu'un temps écoulé calculé sur la
+     * durée de base tombe à côté selon le jour où la suite tourne.
+     */
+    const grow = 27 * 60 * 60 * 1000;
+    const progressionDe = async () => {
+      const det = (await appel(`/parcels/${parcelle.id}`, { jeton: moi.jeton })).corps as unknown as {
+        cellSims: { x: number; y: number; sim: { progress: number; ready: boolean } }[];
+      };
+      return det.cellSims.find((c) => c.x === lot[0]!.x && c.y === lot[0]!.y)!.sim;
+    };
+    const semerIlYA = async (ecoule: number) => {
+      const seme = new Date(Date.now() - ecoule).toISOString();
+      const pret = new Date(Date.now() + Math.max(60_000, grow - ecoule)).toISOString();
+      prismaExec(
+        `UPDATE "ParcelCell" SET kind = 'CROP', crop = 'MAIZE', "fieldStage" = 'PLANTED', ` +
+          `"plantedAt" = '${seme}', "readyAt" = '${pret}' ` +
+          `WHERE "parcelId" = '${parcelle.id}' AND (${ou});`,
+      );
+      return progressionDe();
+    };
+    /* Un premier semis sert d'étalon : `progress = écoulé / durée effective`
+       donne la durée que le climat du jour impose vraiment. On vise ensuite
+       les trois quarts de cette durée — au-dessus du seuil d'ensilage, sous la
+       maturité grain, quelle que soit la saison où la suite tourne. */
+    const etalon = await semerIlYA(grow);
+    assert.ok(etalon.progress > 0, "le maïs témoin n'a pas poussé du tout");
+    const effectif = grow / etalon.progress;
+    const sim = await semerIlYA(effectif * 0.75);
+    assert.ok(
+      sim.progress >= SILAGE_MIN_PROGRESS,
+      `maïs trop jeune pour l'ensilage : ${sim.progress}`,
+    );
+    assert.equal(sim.ready, false, "le maïs devait rester en deçà de la maturité grain");
+    const r = await appel(`/parcels/${parcelle.id}/contractor`, {
+      methode: "POST",
+      corps: { userId: moi.id, work: "SILAGE", cells: lot },
+      jeton: moi.jeton,
+    });
+    assert.equal(r.statut, 200, `ensilage refusé : ${JSON.stringify(r.corps)}`);
+    const rendu = r.corps as unknown as { totalTons: number };
+    assert.ok(rendu.totalTons > 0, "l'ensileuse est repartie à vide");
+    const tas = (await appel("/auth/me", { jeton: moi.jeton })).corps as unknown as {
+      player: { farm: { inventory: { itemCode: string; qty: number }[] } };
+    };
+    const ensilage = tas.player.farm.inventory
+      .filter((i) => i.itemCode === "SILAGE")
+      .reduce((n, i) => n + i.qty, 0);
+    assert.ok(ensilage > 0, "l'ensilage n'est pas arrivé au tas");
+    // La plante part entière : il ne reste pas d'andain derrière l'ensileuse.
+    const apres = (
+      (await appel(`/parcels/${parcelle.id}`)).corps as unknown as {
+        parcel: { cells: { x: number; y: number; strawTons: number }[] };
+      }
+    ).parcel.cells.find((c) => c.x === lot[0]!.x && c.y === lot[0]!.y)!;
+    assert.equal(apres.strawTons, 0, "l'ensilage a laissé de la paille derrière lui");
+  });
+
+  it("inscrit chaque prestation sous son vrai nom au grand livre", async () => {
+    /*
+     * Trois libellés étaient des copiés-collés qui n'avaient pas été relus :
+     * un semis s'inscrivait « Prestataire — moisson », un labour « pressage »,
+     * une fertilisation « ramassage ». Le grand livre est l'endroit où le
+     * joueur va chercher où part son argent ; il n'y a rien de plus coûteux
+     * qu'un registre auquel on ne peut pas se fier.
+     */
+    const { moi, parcelle, cells } = await fermeSemable();
+    const r = await appel(`/parcels/${parcelle.id}/contractor`, {
+      methode: "POST",
+      corps: { userId: moi.id, work: "PLANT", crop: cropDeSaison(), cells: cells.slice(0, 4) },
+      jeton: moi.jeton,
+    });
+    assert.equal(r.statut, 200, `semis refusé : ${JSON.stringify(r.corps)}`);
+    const journal = (await appel(`/players/${moi.id}/ledger`, { jeton: moi.jeton }))
+      .corps as unknown as { lignes: { poste: string; label: string }[] };
+    const ligne = journal.lignes.find((l) => l.label.startsWith("Prestataire"));
+    assert.ok(ligne, "le prestataire n'a rien inscrit au grand livre");
+    assert.match(
+      ligne.label,
+      /Semer/i,
+      `un semis inscrit sous un autre nom : « ${ligne.label} »`,
+    );
   });
 
   it("ne laisse pas l'entreprise contourner le calendrier", async () => {

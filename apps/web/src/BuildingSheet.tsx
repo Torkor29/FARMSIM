@@ -2,6 +2,7 @@ import {
   BUILDING_DEFS,
   MAX_BUILDING_LEVEL,
   buildingLevelDef,
+  buildingMoveCost,
   buildingResaleValue,
   buildingUpgradeCost,
   withinRegret,
@@ -39,6 +40,7 @@ type Props = {
   visiting: boolean;
   onClose: () => void;
   onRotate: () => void;
+  onMove: () => void;
   onUpgrade: () => void;
   onDemolish: () => void;
   onGrazeOut: () => void;
@@ -63,6 +65,7 @@ export function BuildingSheet({
   visiting,
   onClose,
   onRotate,
+  onMove,
   onUpgrade,
   onDemolish,
   onGrazeOut,
@@ -75,6 +78,9 @@ export function BuildingSheet({
   const age = building.createdAt ? Date.now() - Date.parse(building.createdAt) : undefined;
   const fresh = withinRegret(age);
   const refund = buildingResaleValue(building.type, lvl, age);
+  /* Déménager plutôt que démolir : la seule voie jusqu'ici coûtait 60 % de
+     l'investi — 40 % rendus, 100 % à repayer. Ici c'est 12 %, plafonné. */
+  const dema = buildingMoveCost(building.type, lvl, age);
 
   return (
     <div className="sheet-backdrop" onClick={onClose}>
@@ -133,6 +139,19 @@ export function BuildingSheet({
         <div className="building-sheet-actions">
           <button type="button" className="ghost" disabled={busy || visiting} onClick={onRotate}>
             ⟳ Tourner
+          </button>
+          <button
+            type="button"
+            className="ghost"
+            disabled={busy || visiting}
+            title={
+              dema === 0
+                ? "Posé à l'instant : le déplacement est offert."
+                : "Le bâtiment garde son niveau, ses engins et son troupeau — seule sa place change."
+            }
+            onClick={onMove}
+          >
+            ✥ Déplacer{dema > 0 ? ` · ${dema} €` : " · offert"}
           </button>
           {cost !== null && (
             <button
