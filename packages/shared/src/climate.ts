@@ -239,8 +239,13 @@ export function weatherForDay(
  * Ce n'est pas un générateur de qualité cryptographique et n'a pas à l'être :
  * on veut seulement que la même zone et le même jour redonnent le même ciel,
  * sur le serveur comme dans un test.
+ *
+ * Exporté parce que le vivier d'embauche a besoin de la même propriété, pour
+ * la même raison : sans elle, le joueur rechargerait la page jusqu'à tomber
+ * sur le candidat qui l'arrange, et le choix disparaîtrait. Deux tirages
+ * reproductibles valent mieux que deux implémentations.
  */
-function hasard(graine: string): number {
+export function hasard(graine: string): number {
   let h = 2166136261;
   for (let i = 0; i < graine.length; i++) {
     h ^= graine.charCodeAt(i);

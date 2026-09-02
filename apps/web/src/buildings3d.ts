@@ -90,6 +90,9 @@ const PALETTES: Record<BuildingType, BuildingPalette> = {
   // posent contre une étable, et rien ne doit trancher avec elle.
   WATER_TROUGH: { roof: 0x2f7d6b, wall: 0xd3dbe0, timber: 0x7d6a4a, metal: 0xcbd4d9 },
   HAY_RACK: { roof: 0x2f7d6b, wall: 0xd8c68f, timber: 0x8a6a45, metal: 0xb2bbc1 },
+  // Le logement : crépi clair et tuile sombre, la maison d'habitation plutôt
+  // que le hangar. C'est le seul bâtiment de la cour où quelqu'un dort.
+  EMPLOYEE_HOUSING: { roof: 0x3f7a6a, wall: 0xe6ddcb, timber: 0x8c6b46, metal: 0xb7735a },
 };
 
 /* ------------------------------------------------------------------ */
@@ -1455,6 +1458,49 @@ function buildMill(w: number, d: number, lvl: number): Built {
  * sans lire son étiquette. Le tuyau qui remonte derrière dit le reste — il est
  * branché, il se remplit tout seul, c'est ce qu'on a payé.
  */
+/**
+ * Logement du personnel : une maison d'ouvriers, et ses lits qui se comptent.
+ *
+ * Le niveau se lit de l'extérieur, sans cliquer : une fenêtre de plus par
+ * lit, et une lucarne dès qu'on monte sous les combles. C'est la même règle
+ * que partout ailleurs sur la grille — un bâtiment amélioré doit se
+ * reconnaître à sa silhouette, sinon le joueur ne voit pas ce qu'il a payé.
+ */
+function buildEmployeeHousing(w: number, d: number, lvl: number): Built {
+  const root = new Part();
+  const bw = w - EDGE * 2;
+  const bd = d - EDGE * 2;
+  slab(root, bw, bd, 0.04);
+
+  const corpsW = bw * 0.86;
+  const corpsD = bd * 0.78;
+  const mur = 0.34 + Math.min(2, lvl - 1) * 0.04;
+  const yMur = 0.04 + mur;
+  root.add("wall", box(corpsW, mur, corpsD, [0, 0.04 + mur / 2, 0]));
+
+  // La toiture à deux pentes, et ses pignons — sans eux le toit flotte.
+  const rise = 0.2;
+  const faite = gableRoof(root, corpsW, corpsD, yMur, rise);
+  gableEnd(root, corpsW, yMur, rise, corpsD / 2);
+  gableEnd(root, corpsW, yMur, rise, -corpsD / 2);
+
+  // Les fenêtres : une par lit, alignées en façade, jusqu'à cinq. Le niveau
+  // se lit ainsi de l'extérieur, sans ouvrir la fiche du bâtiment.
+  const lits = Math.max(1, Math.min(5, Math.round(lvl)));
+  const pas = (corpsW * 0.78) / Math.max(1, lits);
+  for (let i = 0; i < lits; i++) {
+    const x = -((lits - 1) / 2) * pas + i * pas;
+    root.add("glass", box(0.1, 0.11, 0.02, [x, 0.04 + mur * 0.62, corpsD / 2 + 0.01]));
+  }
+
+  // La porte, toujours au centre, et la cheminée : le seul signe qu'on y vit.
+  root.add("door", box(0.13, mur * 0.58, 0.02, [0, 0.04 + mur * 0.29, corpsD / 2 + 0.01]));
+  root.add("wallDark", box(0.09, 0.2, 0.09, [corpsW * 0.3, faite - 0.05, -corpsD * 0.22]));
+
+  yardDressing(root, w, d, 74);
+  return { root, height: faite + 0.1 };
+}
+
 function buildWaterTrough(w: number, d: number, lvl: number): Built {
   const root = new Part();
   const bw = w - EDGE * 2;
@@ -1558,6 +1604,7 @@ const BUILDERS: Record<BuildingType, (w: number, d: number, lvl: number) => Buil
   MILL: buildMill,
   WATER_TROUGH: buildWaterTrough,
   HAY_RACK: buildHayRack,
+  EMPLOYEE_HOUSING: buildEmployeeHousing,
 };
 
 type Blueprint = Built & { w: number; d: number };

@@ -15,6 +15,9 @@ import {
   jobArrivalMs,
   acceptsUrgentContractor,
   acceptsLaborOrder,
+  buildingMoveCost,
+  canStubble,
+  canRegrass,
   MISSION_CELLS_MIN,
   laborEscrow,
   SILAGE_MIN_PROGRESS,
@@ -110,6 +113,11 @@ import { ParcelleVoisineSheet } from "./ParcelleVoisineSheet";
 import { MachineCareOverlay, type CareMode } from "./MachineCareOverlay";
 import { MissionPlay, type MissionPlayContract } from "./MissionPlay";
 import { LivestockPanel, type BarnState, type OrphanYard } from "./LivestockPanel";
+import {
+  EmployeesPanel,
+  type CandidateRow,
+  type EmployeeRow,
+} from "./EmployeesPanel";
 import type { SupplyCrate } from "./IsoFarmView";
 import { MarketPanel, type Listing, type MarketDelivery, type FuturesContract } from "./MarketPanel";
 import { OfficePanel, type CreditView, type ProcessingView } from "./OfficePanel";
@@ -519,10 +527,10 @@ function writeGuideFlags(next: GuideFlags) {
 }
 
 /** Tiroirs du bas, sur petit écran. */
-type SheetKey = "INFO" | "BUILD" | "GARAGE" | "OFFICE" | "HERD" | "PROFILE";
+type SheetKey = "INFO" | "BUILD" | "GARAGE" | "OFFICE" | "HERD" | "STAFF" | "PROFILE";
 
 /**
- * Les cinq onglets du bas.
+ * Les onglets du bas.
  *
  * Leurs icônes étaient des emoji — 🌾 🏗️ 🐄 🚜 🤝 — alors que les outils, eux,
  * avaient de vrais dessins depuis toujours (`/assets/icons/tools/*.svg`). Les
@@ -536,6 +544,7 @@ const SHEET_TABS: { key: SheetKey; label: string; icon: string }[] = [
   { key: "HERD", label: "Troupeau", icon: "/assets/icons/nav/troupeau.svg" },
   { key: "GARAGE", label: "Garage", icon: "/assets/icons/nav/garage.svg" },
   { key: "OFFICE", label: "Missions", icon: "/assets/icons/nav/missions.svg" },
+  { key: "STAFF", label: "Personnel", icon: "/assets/icons/nav/personnel.svg" },
 ];
 
 /** Temps restant d'un chantier, en clair. */
@@ -709,6 +718,15 @@ export function App() {
    * la case, on la tourne si besoin, puis on confirme.
    */
   const [pendingBuild, setPendingBuild] = useState<{ x: number; y: number } | null>(null);
+  /**
+   * Le bâtiment qu'on est en train de déménager.
+   *
+   * Déplacer réutilise tout le geste de pose — le fantôme, le quart de tour,
+   * la barre de confirmation — parce que c'est le même geste : on choisit une
+   * place. Seuls le prix et la route changent au bout. Une seconde mécanique
+   * de placement, à côté de celle-ci, aurait divergé au premier réglage.
+   */
+  const [movingBuildingId, setMovingBuildingId] = useState<string | null>(null);
   /** Bâtiment ouvert dans sa fiche : améliorer, tourner, démolir, faire sortir */
   const [openBuildingId, setOpenBuildingId] = useState<string | null>(null);
   /** Objectifs du joueur : l'avancement vient du serveur, pas du navigateur. */
@@ -817,6 +835,24 @@ export function App() {
   const [ledger, setLedger] = useState<LedgerLine[]>([]);
   const [showGarage, setShowGarage] = useState(false);
   const [showHerd, setShowHerd] = useState(false);
+  const [showStaff, setShowStaff] = useState(false);
+  /**
+   * Le personnel : l'équipe, le vivier du jour, et ce qu'il en coûte.
+   *
+   * Le vivier n'est pas stocké côté serveur — il se calcule à partir de la
+   * ferme et du jour — mais il se lit comme le reste : une seule requête rend
+   * l'équipe et les candidats, pour qu'ils ne puissent pas se contredire.
+   */
+  const [staff, setStaff] = useState<{
+    employees: EmployeeRow[];
+    candidates: CandidateRow[];
+    lits: number;
+    loges: number;
+    masseSalariale: number;
+    peutEmbaucher: boolean;
+    sansLogement: number;
+    preavisJours: number;
+  } | null>(null);
   const [weather, setWeather] = useState<WeatherSnap[]>([]);
   const [brush, setBrush] = useState<1 | 2 | 3>(1);
   const [prevPrices, setPrevPrices] = useState<Record<string, number>>({});
@@ -1061,6 +1097,32 @@ export function App() {
   }, [activeParcelId]);
 
   /**
+   * L'équipe et le vivier, en une lecture.
+   *
+   * Les deux vont ensemble : le nombre d'employés décide de ce qu'on peut
+   * encore embaucher, et les afficher depuis deux requêtes séparées les
+   * laisserait se contredire le temps d'un aller-retour.
+   */
+  const loadStaff = useCallback(async () => {
+    try {
+      setStaff(
+        await api<{
+          employees: EmployeeRow[];
+          candidates: CandidateRow[];
+          lits: number;
+          loges: number;
+          masseSalariale: number;
+          peutEmbaucher: boolean;
+          sansLogement: number;
+          preavisJours: number;
+        }>("/employees"),
+      );
+    } catch {
+      setStaff(null);
+    }
+  }, []);
+
+  /**
    * Les commandes en cours, relues régulièrement.
    *
    * Un camion met douze secondes : il faut donc revenir voir. On sonde toutes
@@ -1102,6 +1164,14 @@ export function App() {
     const t = window.setInterval(() => void loadSupplies(farmId), 5000);
     return () => window.clearInterval(t);
   }, [farmId, loadSupplies]);
+
+  // L'équipe ne se lit qu'à l'ouverture de l'écran : le vivier ne change qu'au
+  // changement de jour, il n'y a rien à sonder entre-temps.
+  const staffOuvert = isMobile ? sheet === "STAFF" : showStaff;
+  useEffect(() => {
+    if (!farmId || !staffOuvert) return;
+    void loadStaff();
+  }, [farmId, staffOuvert, loadStaff]);
 
   useEffect(() => {
     if (player?.dev || player?.unlimitedCrd) {
@@ -1292,12 +1362,15 @@ export function App() {
       if (e.key === "r" || e.key === "R") {
         setBuildRotation((r) => (r + 1) % 4);
       } else if (e.key === "Escape" && pendingBuild) {
-        setPendingBuild(null);
+        // Échap sort du déménagement comme il annule une pose : le bâtiment
+        // reste où il est, et rien n'a été débité.
+        if (movingBuildingId) cancelMoveBuilding();
+        else setPendingBuild(null);
       }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [tool, pendingBuild]);
+  }, [tool, pendingBuild, movingBuildingId]);
 
   /**
    * Raccourcis de bureau.
@@ -1372,6 +1445,10 @@ export function App() {
       }
 
       if (e.key === "g" || e.key === "G") setShowGarage((v) => !v);
+      // « P » comme personnel. Pas « E » : la touche fait déjà défiler les
+      // options de l'outil courant, et le badge du rail promettrait un
+      // raccourci qui ferait autre chose.
+      else if (e.key === "p" || e.key === "P") setShowStaff((v) => !v);
       else if (e.key === "t" || e.key === "T") setShowEta((v) => !v);
       else if (e.key === "m" || e.key === "M") setShowMarket((v) => !v);
       else if (e.key === "c" || e.key === "C") setShowSkills((v) => !v);
@@ -1395,10 +1472,14 @@ export function App() {
   // fantôme à l'instant où l'on passe sur le champ, et le figer d'office
   // retirerait ce suivi sans rien régler.
   useEffect(() => {
+    /* Un déménagement pose déjà son fantôme sur la place actuelle du bâtiment :
+       le renvoyer au centre de la parcelle ferait perdre au joueur celle qu'il
+       cherche justement à quitter. */
+    if (movingBuildingId) return;
     const propose = isMobile && tool === "BUILD" ? firstFreeSpot(buildType, buildRotation) : null;
     setPendingBuild(propose);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [tool, buildType, activeParcelId, isMobile]);
+  }, [tool, buildType, activeParcelId, isMobile, movingBuildingId]);
 
   useEffect(() => {
     setPrevPrices((prev) => {
@@ -2226,16 +2307,43 @@ export function App() {
    * 402 : un aller-retour perdu, et une erreur rouge en console pour une
    * situation parfaitement prévisible côté client.
    */
+  /** Le bâtiment qu'on déménage, tel que la parcelle le connaît. */
+  const movingBuilding = useMemo(
+    () => (parcel?.buildings ?? []).find((b) => b.id === movingBuildingId) ?? null,
+    [parcel?.buildings, movingBuildingId],
+  );
+
+  /**
+   * Ce que ce déménagement-là coûtera.
+   *
+   * Le serveur refera le calcul — c'est lui qui décide — mais la barre doit
+   * annoncer le prix **avant** le clic. Les deux lisent la même fonction ; un
+   * prix affiché qui ne serait pas le prix débité est le défaut qu'on a déjà
+   * corrigé sur le prestataire, et qu'on ne réintroduit pas ici.
+   */
+  const moveCost = useMemo(() => {
+    if (!movingBuilding) return null;
+    const pose = movingBuilding.createdAt ? Date.parse(movingBuilding.createdAt) : NaN;
+    return buildingMoveCost(
+      movingBuilding.type,
+      movingBuilding.level ?? 1,
+      Number.isFinite(pose) ? Date.now() - pose : undefined,
+    );
+  }, [movingBuilding]);
+
   function canPlaceBuildingAt(x: number, y: number, rot = buildRotation, type = buildType): boolean {
-    const def = BUILDING_DEFS[type];
     // L'emprise suit le quart de tour : un hangar 3×2 tourné occupe 2×3.
     const foot = orientedFootprint(type, rot);
     if (x + foot.w > gw || y + foot.h > gh) return false;
-    if (!canPay(player, def.cost)) return false;
+    // Déménager se paie au tarif du déplacement, pas au prix du catalogue.
+    const prix = movingBuildingId ? (moveCost ?? 0) : BUILDING_DEFS[type].cost;
+    if (!canPay(player, prix)) return false;
     const footprint = footprintCells(x, y, foot.w, foot.h);
     return footprint.every((fc) => {
       const c = grid.find((cell) => cell.x === fc.x && cell.y === fc.y);
-      return c?.kind === "EMPTY";
+      /* Ses propres cases ne le gênent pas : un bâtiment peut glisser d'une
+         case et chevaucher sa place d'avant. Même règle que le serveur. */
+      return c?.kind === "EMPTY" || (movingBuildingId != null && c?.buildingId === movingBuildingId);
     });
   }
 
@@ -2284,21 +2392,23 @@ export function App() {
    * postait aussitôt, et cinq clics involontaires posaient cinq silos.
    */
   const previewBuilding = useMemo((): PreviewBuilding | null => {
-    if (tool !== "BUILD") return null;
+    if (tool !== "BUILD" && !movingBuilding) return null;
     const at = pendingBuild ?? hoverCell;
     if (!at) return null;
-    const def = BUILDING_DEFS[buildType];
-    const spaceOk = canPlaceBuildingAt(at.x, at.y);
-    const moneyOk = canPay(player, def.cost);
+    // Déménagement : c'est le bâtiment existant qu'on promène, à son prix de
+    // déplacement — pas un achat neuf au prix du catalogue.
+    const type = movingBuilding ? movingBuilding.type : buildType;
+    const prix = movingBuilding ? (moveCost ?? 0) : BUILDING_DEFS[type].cost;
+    const spaceOk = canPlaceBuildingAt(at.x, at.y, buildRotation, type);
     return {
-      type: buildType,
+      type,
       originX: at.x,
       originY: at.y,
       rotation: buildRotation,
-      valid: spaceOk && moneyOk,
+      valid: spaceOk && canPay(player, prix),
       pending: Boolean(pendingBuild),
     };
-  }, [tool, buildType, buildRotation, pendingBuild, hoverCell, grid, gw, gh, player?.crd, player?.dev, player?.unlimitedCrd]);
+  }, [tool, buildType, buildRotation, pendingBuild, hoverCell, grid, gw, gh, movingBuilding, moveCost, player?.crd, player?.dev, player?.unlimitedCrd]);
 
   /** Le bâtiment dont la fiche est ouverte, et le troupeau qu'il abrite. */
   /** Où en est le joueur dans son palier — pour la jauge du bandeau. */
@@ -2401,6 +2511,10 @@ export function App() {
       (isSoilTool(tool) && isSoilTool(t)) ||
       (tool === "HARVEST" && t === "HARVEST");
     setTool(t);
+    // Changer d'outil abandonne un déménagement en cours : sans ce ménage,
+    // l'état survivrait sans fantôme ni barre, et le prochain « Construire »
+    // partirait sur la route du déplacement.
+    if (t !== "BUILD" && movingBuildingId) cancelMoveBuilding();
     if (!keep && t !== "BUILD") {
       setSelectedCells([]);
       selectionAnchor.current = null;
@@ -2688,6 +2802,11 @@ export function App() {
           label: "Tourner d’un quart",
           onPick: () => void rotateBuilding(b.id, BUILDING_DEFS[b.type].name),
         });
+        items.push({
+          label: "Déplacer",
+          hint: "il garde son niveau et son contenu",
+          onPick: () => startMoveBuilding(b.id),
+        });
       }
     } else {
       items.push({
@@ -2778,33 +2897,54 @@ export function App() {
     [parcelDetail?.cellSims, selectedCells],
   );
 
+  /**
+   * Le maïs bon à ensiler **dans la sélection**.
+   *
+   * `silageReadyCount` compte la parcelle entière : il sert à allumer l'outil.
+   * Le devis du prestataire, lui, ne porte que sur les cases retenues.
+   */
+  const silageDansSelection = useMemo(
+    () =>
+      (parcelDetail?.cellSims ?? []).filter((s) => {
+        if (!selectedCells.some((sel) => sel.x === s.x && sel.y === s.y)) return false;
+        const cell = (parcel?.cells ?? []).find((c) => c.x === s.x && c.y === s.y);
+        return cell?.crop === "MAIZE" && !s.sim.lost && s.sim.progress >= SILAGE_MIN_PROGRESS;
+      }).length,
+    [parcelDetail?.cellSims, parcel?.cells, selectedCells],
+  );
+
   const contractorOffer = useMemo(() => {
-    const work: FarmWork | null = isPlantTool(tool)
-      ? "PLANT"
-      : tool === "FERTILIZE"
-        ? "FERTILIZE"
-        : tool === "HARVEST"
-          ? selectedAreGrass
-            ? "MOW"
-            : "HARVEST"
-          : tool === "PLOW"
-              ? "PLOW"
-              : tool === "STUBBLE"
-                ? "STUBBLE"
-                : tool === "BALE"
-                  ? "BALE"
-                  : tool === "COLLECT"
-                    ? "COLLECT"
-                    : null;
+    /*
+     * Le travail se déduit de l'outil, une seule fois.
+     *
+     * Cette cascade était écrite à la main et ne connaissait pas le
+     * désherbage : le devis valait `null`, le bouton disparaissait, et rien à
+     * l'écran ne le disait. C'est exactement la moitié du signalement « il y a
+     * des chantiers que tu peux faire faire par le pnj et d'autres non ? » —
+     * l'autre moitié étant la liste des travaux acceptés, côté serveur.
+     */
+    let work = workOfTool(tool);
+    /*
+     * Le maïs qui n'est pas mûr en grain mais qui est bon à ensiler part en
+     * ensilage — c'est la machine qui décide, ici comme au garage du joueur.
+     * Sans cette bascule, le prestataire facturerait le barème moisson pour
+     * un travail d'ensileuse, et repartirait bredouille sur un champ qui ne
+     * demandait qu'à être coupé.
+     */
+    if (
+      work === "HARVEST" &&
+      dansSelection((sim) => sim.ready && !sim.lost) === 0 &&
+      silageDansSelection > 0
+    ) {
+      work = "SILAGE";
+    }
     if (!work || !selectedCells.length) return null;
+    /* L'outil qu'il faut se lit dans le catalogue : un outil neuf y entre sans
+       que cette ligne ait à l'apprendre. */
     const needed: MachineType =
-      work === "HARVEST"
-        ? "HARVESTER"
-        : work === "STUBBLE"
-            ? "DISC_HARROW"
-            : work === "BALE"
-              ? "BALER"
-              : "TRACTOR";
+      (Object.keys(MACHINE_DEFS) as MachineType[]).find((m) =>
+        MACHINE_DEFS[m].works.includes(work as never),
+      ) ?? "TRACTOR";
     const hasMachine = (player?.farm?.machines ?? []).some(
       (m) => m.type === needed && m.condition >= (MACHINE_DEFS[needed]?.minCondition ?? 15),
     );
@@ -2815,6 +2955,9 @@ export function App() {
      * la sélection. « Faire faire » restait cliquable sur des cases où il n'y
      * avait rien à récolter, et le devis payé partait en 409.
      */
+    const retenues = (parcel?.cells ?? []).filter((c) =>
+      selectedCells.some((sel) => sel.x === c.x && sel.y === c.y),
+    );
     const blocage =
       work === "HARVEST" || work === "MOW"
         ? dansSelection((sim) => sim.ready && !sim.lost) === 0
@@ -2824,7 +2967,47 @@ export function App() {
           ? dansSelection((sim) => Boolean(sim.lost)) === 0
             ? "Aucune culture perdue à labourer dans la sélection."
             : null
-          : null;
+          : /* Les quatre travaux que le dépannage vient de reprendre. Chacun a
+               sa condition, et chacun doit la dire avant le clic : un devis
+               payé qui repart en 409 est pire qu'un bouton absent. */
+            work === "BALE"
+            ? retenues.every((c) => (c.strawTons ?? 0) <= 0)
+              ? "Aucun andain dans la sélection — rien à presser."
+              : null
+            : work === "COLLECT"
+              ? retenues.every((c) => (c.baleCount ?? 0) <= 0)
+                ? "Aucune botte dans la sélection — rien à ramasser."
+                : null
+              : work === "SILAGE"
+                ? silageDansSelection === 0
+                  ? "Aucun maïs assez avancé pour l’ensilage dans la sélection."
+                  : null
+                : work === "WEED"
+                  ? retenues.every((c) => (c.weedPressure ?? 0) <= 0)
+                    ? "Ces cases sont déjà propres — rien à désherber."
+                    : null
+                  : work === "STUBBLE"
+                    ? /* Le déchaumeur reprend deux choses : un chaume, et une
+                         terre nue à remettre en herbe. Refuser ne se dit que
+                         si aucune des deux n'est là — la même règle que le
+                         serveur, lue depuis `shared`. */
+                      retenues.every(
+                        (c) =>
+                          c.kind !== "EMPTY" ||
+                          (!canStubble({
+                            harvestsSincePlow: c.harvestsSincePlow ?? 0,
+                            residuePasses: c.residuePasses ?? 0,
+                            hasStubble: Boolean(c.hasStubble),
+                          }).ok &&
+                            !canRegrass({
+                              hasStubble: Boolean(c.hasStubble),
+                              hasCrop: Boolean(c.crop),
+                              worked: c.fieldStage !== "EMPTY",
+                            })),
+                      )
+                      ? "Ni chaumes ni terre nue dans la sélection — rien à déchaumer."
+                      : null
+                    : null;
     /*
      * Le prix, ou rien du tout.
      *
@@ -2851,7 +3034,7 @@ export function App() {
         ? contractorTotal(work, selectedCells.length, cropFromPlantTool(tool)).total
         : null,
     };
-  }, [tool, selectedCells, selectedAreGrass, player?.farm?.machines, dansSelection]);
+  }, [tool, selectedCells, selectedAreGrass, player?.farm?.machines, dansSelection, silageDansSelection]);
 
   /**
    * Ce qui manque au parc pour l'outil en main.
@@ -2902,7 +3085,14 @@ export function App() {
    */
   const laborBlocage = useMemo(() => {
     if (visiting || !contractorOffer || laborQuote !== null) return null;
-    if (!acceptsLaborOrder(contractorOffer.work)) return null;
+    /* Le désherbage ne se publie pas en entraide : il se traite à la case, sur
+       des surfaces plus petites que la fenêtre de huit. Le bouton disparaissait
+       alors sans un mot — la même absence muette que le dépannage avait sur la
+       presse, et qui a valu la question « il y a des chantiers que tu peux
+       faire faire par le pnj et d'autres non ? ». */
+    if (!acceptsLaborOrder(contractorOffer.work)) {
+      return `${WORK_LABELS[contractorOffer.work]} ne se confie pas à un autre joueur — mais « Faire faire » l’envoie à une entreprise.`;
+    }
     const n = selectedCells.length;
     if (!n || n >= MISSION_CELLS_MIN) return null;
     return `L’entraide se demande à partir de ${MISSION_CELLS_MIN} cases — vous en avez retenu ${n}.`;
@@ -2984,10 +3174,9 @@ export function App() {
   async function callContractor() {
     if (!player || !activeParcelId || !contractorOffer) return;
     if (contractorOffer.cost === null) {
-      // Ne devrait plus être atteignable — le bouton n'est plus rendu dans ce
-      // cas. Si ça arrive quand même, on nomme le bouton qui, lui, marche,
-      // au lieu de parler d'un « chantier à publier » qui ne s'appelle comme
-      // ça nulle part dans le jeu.
+      /* Le dépannage prend désormais les dix travaux : ce chemin n'a plus de
+         cas connu. Il reste comme filet — un devis nul vaut mieux qu'un clic
+         qui part sans prix. */
       flashToast(
         `Personne ne vient ${toolBareVerb(tool, selectedAreGrass).toLowerCase()} dans l’heure — passez par « Demander de l’aide ».`,
         true,
@@ -2997,16 +3186,23 @@ export function App() {
     setBusy(true);
     setErr(null);
     const workCells = selectedCells.slice();
-    // Pressage, ramassage et ensilage sont écartés juste au-dessus : ils
-    // passent par un chantier publié, jamais par l'entreprise instantanée.
     /* L'entreprise n'ouvre pas de chantier : son travail est fait au clic.
        Un identifiant fixe suffit donc — un second appel remplace le premier,
-       ce qui est exactement ce qu'on veut d'une intervention instantanée. */
+       ce qui est exactement ce qu'on veut d'une intervention instantanée.
+
+       L'engin se déduit de l'outil en main, comme pour un chantier du joueur :
+       une presse est une presse, y compris quand c'est le dépanneur qui la
+       tire. La paire écrite à la main ne connaissait que la moissonneuse, et
+       aurait envoyé un tracteur nu presser un andain. */
     flashWork(
       "prestataire",
-      contractorOffer.work === "HARVEST" ? "HARVESTER" : "TRACTOR",
+      workMachineForTool(tool),
       workCells,
-      contractorOffer.work === "MOW" ? "mow" : contractorOffer.work === "HARVEST" ? "harvest" : undefined,
+      contractorOffer.work === "MOW"
+        ? "mow"
+        : contractorOffer.work === "HARVEST" || contractorOffer.work === "SILAGE"
+          ? "harvest"
+          : undefined,
     );
     try {
       const r = await api<{ cost: number; cells: number; totalTons?: number }>(
@@ -3103,8 +3299,22 @@ export function App() {
      * une chose et en montrer une autre. Les cases s'allument quand l'engin
      * y entre.
      */
-    const partir = () => {
-      setPulseCells(cells);
+    const attente = Math.max(0, extra?.delayMs ?? 0);
+    /*
+     * L'engin est annoncé tout de suite, le travail commence après l'attente.
+     *
+     * Le chantier n'était publié qu'à la fin du délai : pendant l'acheminement
+     * la vue n'avait rien à dessiner, et la machine se matérialisait sur sa
+     * première case. « Quand on fait une action avec le tracteur faudrait
+     * qu'il arrive tranquillement sur le champ, pas pop d'un coup. »
+     *
+     * La vue reçoit donc le chantier immédiatement, avec le temps qu'il reste
+     * avant le premier sillon : elle s'en sert pour amener l'attelage depuis
+     * la cour. Les cases, elles, ne s'allument qu'au premier sillon — annoncer
+     * un travail commencé pendant que le tracteur roule encore, ce serait dire
+     * une chose et en montrer une autre.
+     */
+    const annoncer = () => {
       setActiveWorks((liste) => [
         ...liste.filter((w) => w.jobId !== jobId),
         {
@@ -3118,8 +3328,12 @@ export function App() {
           condition: used?.condition,
           tier: asTier(used?.tier),
           durationMs: duree,
+          approcheMs: attente,
         },
       ]);
+    };
+    const partir = () => {
+      setPulseCells(cells);
       // Un peu de marge sur la durée du parcours : l'engin doit atteindre la
       // dernière case avant qu'on ne l'efface.
       minuteries.push(
@@ -3130,7 +3344,7 @@ export function App() {
         }, duree + 250),
       );
     };
-    const attente = Math.max(0, extra?.delayMs ?? 0);
+    annoncer();
     if (attente === 0) partir();
     else minuteries.push(window.setTimeout(partir, attente));
   }
@@ -4432,6 +4646,64 @@ export function App() {
     }
   }
 
+  /* ---------------------------------------------------------------- */
+  /* Le personnel                                                       */
+  /* ---------------------------------------------------------------- */
+
+  async function hireEmployee(candidateId: string) {
+    setBusy(true);
+    try {
+      const r = await api<{ employee: { name: string; salaire: number } }>("/employees/hire", {
+        method: "POST",
+        body: JSON.stringify({ candidateId }),
+      });
+      flashToast(`${r.employee.name} embauché(e) · ${r.employee.salaire} € par jour de jeu`);
+      await loadStaff();
+      await refreshPlayer();
+    } catch (e) {
+      flashToast(e instanceof Error ? e.message : String(e), true);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function setEmployeePost(id: string, poste: "CHAMP" | "ELEVAGE") {
+    setBusy(true);
+    try {
+      await api(`/employees/${id}/post`, { method: "POST", body: JSON.stringify({ poste }) });
+      await loadStaff();
+    } catch (e) {
+      flashToast(e instanceof Error ? e.message : String(e), true);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  function fireEmployee(id: string, nom: string) {
+    /* Se séparer de quelqu'un se confirme : le geste est irréversible, et le
+       vivier du jour aura peut-être déjà tourné quand on le regrettera. */
+    setConfirmRequest({
+      title: `Se séparer de ${nom} ?`,
+      detail: "Le poste se libère tout de suite. Il faudra réembaucher dans le vivier du jour.",
+      confirmLabel: "Se séparer",
+      destructive: true,
+      onConfirm: () => void doFireEmployee(id, nom),
+    });
+  }
+
+  async function doFireEmployee(id: string, nom: string) {
+    setBusy(true);
+    try {
+      await api(`/employees/${id}/fire`, { method: "POST" });
+      flashToast(`${nom} quitte la ferme`);
+      await loadStaff();
+    } catch (e) {
+      flashToast(e instanceof Error ? e.message : String(e), true);
+    } finally {
+      setBusy(false);
+    }
+  }
+
   function slaughterHerd(herdId: string, count: number) {
     if (!player) return;
     setConfirmRequest({
@@ -4627,6 +4899,60 @@ export function App() {
       flashToast(`${label} tourné d'un quart`);
       playUiSound("place");
       if (activeParcelId) await loadParcel(activeParcelId);
+    } catch (e) {
+      flashToast(e instanceof Error ? e.message : String(e), true);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  /**
+   * Commencer un déménagement.
+   *
+   * On arme le mode « bâtir » avec le bâtiment existant : à partir de là, tout
+   * le geste de pose s'applique — le fantôme, le quart de tour, la barre de
+   * confirmation. La place de départ est retenue d'emblée, pour que la barre
+   * s'affiche tout de suite avec son prix plutôt qu'après un premier clic.
+   */
+  function startMoveBuilding(id: string) {
+    const b = (parcel?.buildings ?? []).find((x) => x.id === id);
+    if (!b) return;
+    setOpenBuildingId(null);
+    setCellMenu(null);
+    setMovingBuildingId(id);
+    setBuildRotation(b.rotation ?? 0);
+    setPendingBuild({ x: b.originX, y: b.originY });
+    setTool("BUILD");
+    flashToast(`Choisissez la nouvelle place de ${BUILDING_DEFS[b.type].name}.`);
+  }
+
+  /** Sortir du déménagement sans rien changer ni rien débiter. */
+  function cancelMoveBuilding() {
+    setMovingBuildingId(null);
+    setPendingBuild(null);
+  }
+
+  /** Déménagement confirmé. Le bâtiment garde son niveau et son contenu. */
+  async function confirmMoveBuilding() {
+    if (!player || !pendingBuild || !movingBuilding || !activeParcelId) return;
+    const nom = BUILDING_DEFS[movingBuilding.type].name;
+    setBusy(true);
+    setErr(null);
+    try {
+      const r = await api<{ cost: number }>(`/buildings/${movingBuilding.id}/move`, {
+        method: "POST",
+        body: JSON.stringify({
+          userId: player.id,
+          x: pendingBuild.x,
+          y: pendingBuild.y,
+          rotation: buildRotation,
+        }),
+      });
+      flashToast(r.cost > 0 ? `${nom} déplacé · −${r.cost} €` : `${nom} déplacé`);
+      playUiSound("place");
+      cancelMoveBuilding();
+      await refreshPlayer();
+      await loadParcel(activeParcelId);
     } catch (e) {
       flashToast(e instanceof Error ? e.message : String(e), true);
     } finally {
@@ -4876,6 +5202,9 @@ export function App() {
         type="button"
         className={`build-item art ${tool === "BUILD" && buildType === t ? "on" : ""}`}
         onClick={() => {
+          // Choisir un bâtiment neuf abandonne le déménagement en cours : on
+          // ne peut pas promener deux fantômes à la fois.
+          if (movingBuildingId) cancelMoveBuilding();
           setTool("BUILD");
           setBuildType(t);
           setSelectedCells([]);
@@ -5399,25 +5728,37 @@ export function App() {
         par accident, sans moyen d'annuler.
       */}
       {pendingBuild && !visiting && (() => {
-        const def = BUILDING_DEFS[buildType];
-        const foot = orientedFootprint(buildType, buildRotation);
-        const placeOk = canPlaceBuildingAt(pendingBuild.x, pendingBuild.y);
-        // Un bouton grisé ne dit pas ce qui cloche. Les deux seuls empêchements
-        // possibles se nomment, et la barre le dit à la place du bouton.
+        // Déménager ou bâtir : le même geste, le même fantôme, la même barre.
+        // Seuls le bâtiment concerné, le prix et le verbe changent.
+        const type = movingBuilding ? movingBuilding.type : buildType;
+        const def = BUILDING_DEFS[type];
+        const prix = movingBuilding ? (moveCost ?? 0) : def.cost;
+        const foot = orientedFootprint(type, buildRotation);
+        const placeOk = canPlaceBuildingAt(pendingBuild.x, pendingBuild.y, buildRotation, type);
+        const bouge =
+          !movingBuilding ||
+          pendingBuild.x !== movingBuilding.originX ||
+          pendingBuild.y !== movingBuilding.originY ||
+          buildRotation !== movingBuilding.rotation;
+        // Un bouton grisé ne dit pas ce qui cloche. Les empêchements possibles
+        // se nomment, et la barre le dit à la place du bouton.
         const souci =
-          (player?.crd ?? 0) < def.cost
-            ? `Il vous manque ${def.cost - Math.round(player?.crd ?? 0)} €`
+          (player?.crd ?? 0) < prix
+            ? `Il vous manque ${prix - Math.round(player?.crd ?? 0)} €`
             : !placeOk
               ? "Place occupée — touchez une autre case"
-              : null;
+              : !bouge
+                ? "Il est déjà là — choisissez une autre case"
+                : null;
         return (
           <div className={`build-confirm glass ${souci ? "blocked" : ""}`}>
             <div className="build-confirm-what">
-              <img className="build-confirm-art" src={BUILDING_ART[buildType]} alt="" />
+              <img className="build-confirm-art" src={BUILDING_ART[type]} alt="" />
               <span className="build-confirm-lines">
-                <strong>{def.name}</strong>
+                <strong>{movingBuilding ? `Déplacer ${def.name}` : def.name}</strong>
                 <span className="build-confirm-meta">
                   {foot.w}×{foot.h} cases · face {["nord", "est", "sud", "ouest"][buildRotation % 4]}
+                  {movingBuilding && prix === 0 && " · tout juste posé, déplacement offert"}
                 </span>
                 {souci && <span className="build-confirm-why">{souci}</span>}
               </span>
@@ -5434,16 +5775,20 @@ export function App() {
               </button>
             </div>
             <div className="build-confirm-actions">
-              <button type="button" className="ghost" onClick={() => setPendingBuild(null)}>
+              <button
+                type="button"
+                className="ghost"
+                onClick={() => (movingBuilding ? cancelMoveBuilding() : setPendingBuild(null))}
+              >
                 Annuler
               </button>
               <button
                 type="button"
                 className="primary build-go"
-                disabled={busy || !placeOk}
-                onClick={() => void confirmBuild()}
+                disabled={busy || !placeOk || !bouge}
+                onClick={() => void (movingBuilding ? confirmMoveBuilding() : confirmBuild())}
               >
-                Construire <b>{def.cost} €</b>
+                {movingBuilding ? "Déplacer" : "Construire"} <b>{prix} €</b>
               </button>
             </div>
           </div>
@@ -6026,6 +6371,40 @@ export function App() {
 
         <PanelHost
           mobile={isMobile}
+          open={showStaff}
+          title="Personnel"
+          subtitle={
+            staff
+              ? `${staff.employees.length} employé(s) · ${staff.masseSalariale} € / jour`
+              : "Équipe et candidats"
+          }
+          onClose={() => setShowStaff(false)}
+        >
+        {(isMobile ? sheet === "STAFF" : showStaff) && staff && (
+          <EmployeesPanel
+            className={panelClass("staff-panel", "STAFF")}
+            embedded={!isMobile}
+            gesture={isMobile ? sheetGesture : undefined}
+            busy={busy}
+            employees={staff.employees}
+            candidates={staff.candidates}
+            lits={staff.lits}
+            loges={staff.loges}
+            masseSalariale={staff.masseSalariale}
+            peutEmbaucher={staff.peutEmbaucher}
+            sansLogement={staff.sansLogement}
+            preavisJours={staff.preavisJours}
+            onClose={() => (isMobile ? setSheet(null) : setShowStaff(false))}
+            onHire={(id) => void hireEmployee(id)}
+            onPost={(id, poste) => void setEmployeePost(id, poste)}
+            onFire={fireEmployee}
+            onExplain={(raison) => flashToast(raison, "warn")}
+          />
+        )}
+        </PanelHost>
+
+        <PanelHost
+          mobile={isMobile}
           open={showHerd}
           title="Élevage"
           subtitle={`${barns.reduce((n, b) => n + (b.herd?.size ?? 0), 0)} bête(s) · ${barns.length} bâtiment(s)`}
@@ -6088,6 +6467,7 @@ export function App() {
              avec un silo plein. */
           silageTons={silageInStock}
           onBuildPaddock={(yardType) => {
+            if (movingBuildingId) cancelMoveBuilding();
             setTool("BUILD");
             setBuildType(yardType);
             setSelectedCells([]);
@@ -6401,6 +6781,14 @@ export function App() {
                 on: showEta,
                 onOpen: () => setShowEta((v) => !v),
               },
+              {
+                id: "STAFF",
+                label: "Personnel",
+                icon: "/assets/icons/nav/personnel.svg",
+                hotkey: "P",
+                on: showStaff,
+                onOpen: () => setShowStaff((v) => !v),
+              },
               ...(barns.length > 0
                 ? [
                     {
@@ -6564,6 +6952,7 @@ export function App() {
           visiting={visiting}
           onClose={() => setOpenBuildingId(null)}
           onRotate={() => void rotateBuilding(openBuilding.id, BUILDING_DEFS[openBuilding.type].name)}
+          onMove={() => startMoveBuilding(openBuilding.id)}
           onUpgrade={() => void upgradeBuilding(openBuilding.id)}
           onDemolish={() => {
             setOpenBuildingId(null);

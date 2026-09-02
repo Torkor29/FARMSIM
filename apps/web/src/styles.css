@@ -764,6 +764,7 @@ button.ghost {
 .build-panel,
 .eta-panel,
 .garage-panel,
+.staff-panel,
 .livestock-panel {
   width: 100%;
   min-width: 0;
@@ -7354,3 +7355,105 @@ button.tiny {
   border: 1px solid var(--glass-border);
   opacity: 0.7;
 }
+
+/* ==========================================================================
+   Le personnel
+   Deux listes et une règle. Les pastilles de compétence reprennent celles des
+   niveaux de bâtiment (`.pip`) : c'est le même geste de lecture, cinq crans
+   qu'on compte d'un coup d'œil sans lire un chiffre.
+   ========================================================================== */
+.staff-panel { display: grid; align-content: start; }
+.emp-tete { display: flex; align-items: center; justify-content: space-between; gap: 0.6rem; }
+.emp-tete h3 { margin: 0; font-size: 1.05rem; }
+.emp-regle {
+  margin: 0.4rem 0 0.9rem;
+  font-size: 0.8rem;
+  line-height: 1.45;
+  color: var(--ink-soft);
+}
+.emp-bloc { display: grid; gap: 0.5rem; margin-bottom: 1rem; }
+.emp-bloc h4 {
+  margin: 0;
+  font-size: 0.78rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--accent-hot);
+}
+.emp-compte { color: var(--ink-soft); font-weight: 600; }
+.emp-vide, .emp-note { margin: 0; font-size: 0.76rem; color: var(--ink-soft); line-height: 1.4; }
+.emp-liste { list-style: none; margin: 0; padding: 0; display: grid; gap: 0.5rem; }
+.emp-fiche {
+  display: grid;
+  gap: 0.45rem;
+  padding: 0.6rem 0.7rem;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--paper);
+}
+.emp-entete { display: flex; align-items: baseline; justify-content: space-between; gap: 0.6rem; }
+.emp-entete strong { font-size: 0.92rem; }
+.emp-prix { font-size: 0.78rem; font-weight: 600; color: var(--accent-hot); white-space: nowrap; }
+.emp-prix em { font-style: normal; color: var(--ink-soft); font-weight: 600; }
+.emp-impaye {
+  margin: 0;
+  font-size: 0.74rem;
+  line-height: 1.4;
+  font-weight: 600;
+  color: var(--danger);
+}
+.emp-jauges { display: grid; gap: 0.2rem; }
+.emp-jauge {
+  display: grid;
+  grid-template-columns: 5.6rem 1fr;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.74rem;
+  color: var(--ink-soft);
+}
+.emp-pips { display: inline-flex; gap: 3px; }
+.emp-pips i {
+  width: 9px;
+  height: 9px;
+  border-radius: 3px;
+  background: var(--line);
+}
+.emp-pips i.on { background: var(--accent); }
+.emp-actions { display: flex; align-items: center; justify-content: space-between; gap: 0.5rem; }
+.emp-poste { display: inline-flex; border: 1px solid var(--line); border-radius: 9px; overflow: hidden; }
+.emp-poste button {
+  min-height: 32px;
+  padding: 0.25rem 0.55rem;
+  border: 0;
+  background: transparent;
+  font: inherit;
+  font-size: 0.74rem;
+  font-weight: 600;
+  color: var(--ink-soft);
+  cursor: pointer;
+}
+.emp-poste button.on { background: var(--accent); color: #fff; }
+.emp-renvoi {
+  min-height: 32px;
+  padding: 0.25rem 0.55rem;
+  border: 0;
+  border-radius: 9px;
+  background: transparent;
+  font: inherit;
+  font-size: 0.74rem;
+  font-weight: 600;
+  color: var(--danger);
+  cursor: pointer;
+}
+.emp-embauche {
+  min-height: 40px;
+  border: 0;
+  border-radius: 10px;
+  background: var(--accent);
+  color: #fff;
+  font: inherit;
+  font-weight: 700;
+  font-size: 0.82rem;
+  cursor: pointer;
+}
+.emp-pied { border-top: 1px solid var(--line); padding-top: 0.6rem; display: grid; gap: 0.3rem; }
+.emp-pied p { margin: 0; font-size: 0.78rem; line-height: 1.45; }

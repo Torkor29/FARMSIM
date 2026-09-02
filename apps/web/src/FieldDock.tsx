@@ -248,11 +248,12 @@ export function FieldDock({
     }
     if (!machineManquante) return laborBlocage;
     /*
-     * La machine manque. Reste à dire par où sortir — et ce n'est pas la même
-     * porte selon le travail : l'entreprise de dépannage vient labourer ou
-     * moissonner dans l'heure, mais elle ne vient ni presser ni ramasser. Ces
-     * deux-là passent par l'entraide, qui a ses propres bornes. Nommer la
-     * porte qui est **à l'écran**, jamais une autre.
+     * La machine manque. Reste à dire par où sortir. L'entreprise de dépannage
+     * prend maintenant les dix travaux — elle a longtemps refusé la presse, le
+     * ramassage et le déchaumage, ce qui laissait ces trois-là sans porte
+     * quand personne n'était en ligne pour l'entraide. On nomme quand même la
+     * porte qui est **à l'écran**, jamais une autre : le devis peut manquer
+     * pour d'autres raisons que le travail.
      */
     const sortie =
       contractor && contractor.cost !== null

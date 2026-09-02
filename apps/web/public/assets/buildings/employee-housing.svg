@@ -1,0 +1,28 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 96 96" width="96" height="96">
+  <!-- Logement du personnel : une petite maison d'ouvriers, volets ouverts. -->
+  <g fill="none" fill-rule="evenodd">
+    <ellipse cx="48" cy="84" rx="34" ry="8" fill="#8fbf6a"/>
+
+    <!-- Le corps de bâtiment -->
+    <path d="M22 48h52v34H22Z" fill="#e6ddcb" stroke="#8c7a5e" stroke-width="2" stroke-linejoin="round"/>
+
+    <!-- La toiture, débordante comme celle des autres bâtiments de ferme -->
+    <path d="M16 50 48 26l32 24Z" fill="#3f7a6a" stroke="#2f5f52" stroke-width="2" stroke-linejoin="round"/>
+    <path d="M16 50h64" stroke="#2f5f52" stroke-width="3" stroke-linecap="round"/>
+    <!-- La lucarne du dortoir sous les combles -->
+    <path d="M44 40h8v8h-8Z" fill="#cfe4ee" stroke="#2f5f52" stroke-width="2"/>
+
+    <!-- Deux fenêtres : deux chambrées -->
+    <path d="M30 56h12v12H30Z" fill="#cfe4ee" stroke="#8c7a5e" stroke-width="2"/>
+    <path d="M36 56v12M30 62h12" stroke="#8c7a5e" stroke-width="1.5"/>
+    <path d="M54 56h12v12H54Z" fill="#cfe4ee" stroke="#8c7a5e" stroke-width="2"/>
+    <path d="M60 56v12M54 62h12" stroke="#8c7a5e" stroke-width="1.5"/>
+
+    <!-- La porte, et le pas de porte usé -->
+    <path d="M42 72h12v10H42Z" fill="#8c6b46" stroke="#6b5334" stroke-width="2" stroke-linejoin="round"/>
+    <circle cx="51" cy="77" r="1.4" fill="#e6ddcb"/>
+
+    <!-- La cheminée : le seul signe qu'on y vit -->
+    <path d="M64 30h7v12h-7Z" fill="#b7735a" stroke="#8c5340" stroke-width="2" stroke-linejoin="round"/>
+  </g>
+</svg>

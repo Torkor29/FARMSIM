@@ -38,6 +38,7 @@ export * from "./rotation.js";
 export * from "./futures.js";
 export * from "./machine-care.js";
 export * from "./machine-catalog.js";
+export * from "./employees.js";
 export * from "./calendar.js";
 export * from "./fuel.js";
 export * from "./weeds.js";
@@ -187,7 +188,11 @@ export type BuildingType =
      reproduction et l'économie de fourrage. Ce sont les deux pièces qui
      rendent l'élevage rentable au lieu de simplement viable. */
   | "WATER_TROUGH"
-  | "HAY_RACK";
+  | "HAY_RACK"
+  /* Le logement des employés. Il n'est pas requis pour embaucher — deux
+     personnes logent au village — mais c'est lui qui ouvre au-delà, et il
+     fait baisser le salaire de ceux qu'il héberge. */
+  | "EMPLOYEE_HOUSING";
 
 export type CellKind = "EMPTY" | "CROP" | "BUILDING" | "VEHICLE";
 
@@ -812,6 +817,30 @@ export const BUILDING_DEFS: Record<BuildingType, BuildingDef> = {
     description: "Collée au poulailler : les poules picorent dehors, elles pondent mieux.",
   },
   /* ------------------------------------------------------------------ */
+  /* Le personnel                                                        */
+  /* ------------------------------------------------------------------ */
+  EMPLOYEE_HOUSING: {
+    type: "EMPLOYEE_HOUSING",
+    article: "un",
+    name: "Logement du personnel",
+    w: 2,
+    h: 2,
+    /*
+     * Le prix d'un bâtiment utilitaire du catalogue, pas d'une nouveauté qui
+     * s'inventerait sa propre échelle.
+     *
+     * À ce tarif il ne se rembourse pas vite sur la seule remise de salaire —
+     * et il ne le doit pas : ce qu'il vend d'abord, c'est la **capacité**.
+     * La remise est ce qui rend l'agrandissement tentant une fois qu'on y est.
+     * S'il paraît trop cher à l'usage, c'est le pourcentage qu'il faut monter,
+     * pas le prix qu'il faut baisser : un bâtiment bon marché qu'on bâtit sans
+     * y penser ne décide de rien.
+     */
+    cost: 7200,
+    description:
+      "Loge vos employés : un lit au premier niveau, cinq au dernier. Un employé logé coûte 35 % de moins.",
+  },
+  /* ------------------------------------------------------------------ */
   /* Annexes d'élevage                                                   */
   /* ------------------------------------------------------------------ */
   /*
@@ -1288,6 +1317,7 @@ export const BUILDING_ART: Record<BuildingType, string> = {
   BEEHIVE: "/assets/buildings/beehive.svg",
   DAIRY: "/assets/buildings/dairy.svg",
   MILL: "/assets/buildings/mill.svg",
+  EMPLOYEE_HOUSING: "/assets/buildings/employee-housing.svg",
   // Même raison pour les deux annexes d'élevage : une case au sol, un dessin.
   WATER_TROUGH: "/assets/buildings/water-trough.svg",
   HAY_RACK: "/assets/buildings/hay-rack.svg",
@@ -1807,8 +1837,12 @@ export function repairQuote(opts: {
 export const MACHINE_RESALE_RATE = 0.55;
 
 /**
- * Un bâtiment se revend moins bien qu'une machine : on ne déplace pas un
- * silo, on le démolit. Le prix reflète les matériaux récupérés. `[GD]`
+ * Un bâtiment se revend moins bien qu'une machine : ce qu'on récupère, ce sont
+ * des matériaux, pas un bien d'occasion. `[GD]`
+ *
+ * Ce taux ne décide plus, à lui seul, du coût d'une réorganisation :
+ * `buildingMoveCost` ouvre une voie beaucoup moins chère que démolir puis
+ * rebâtir. Voir le raisonnement là-bas.
  */
 export const BUILDING_RESALE_RATE = 0.4;
 
@@ -1917,6 +1951,86 @@ export function withinRegret(ageMs?: number): boolean {
 }
 
 /* ------------------------------------------------------------------ */
+/* Déplacer un bâtiment                                                */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Ce que coûte de déménager un bâtiment déjà posé.
+ *
+ * ## Pourquoi un prix, et pas la gratuité
+ *
+ * Demandé en jouant : « ça serait bien de pouvoir déplacer les bâtiments qu'on
+ * a posé, il faudrait que ce soit payant mais pas punitif ». La cour d'une
+ * ferme se réorganise — un troisième silo, une étable qui grandit, un chemin
+ * qui ne tombe plus juste. Gratuit, le plan de la ferme cesserait d'être une
+ * décision : on poserait au hasard, quitte à ranger ensuite. Payant, poser
+ * reste un choix, et le corriger reste possible.
+ *
+ * ## Le chiffre, et d'où il sort
+ *
+ * Jusqu'ici la seule voie était de démolir et de rebâtir. On récupère 40 %
+ * (`BUILDING_RESALE_RATE`) et on repaie 100 % : **60 % de perdu**. Sur une
+ * étable, c'est plus cher que la moitié d'un tracteur — de quoi renoncer à
+ * réorganiser, ce qui est exactement le « punitif » qu'on ne veut pas.
+ *
+ * Un premier barème à douze pour cent partait de l'ordre de grandeur réel :
+ * déplacer une construction coûte, dans la vraie vie, dix à vingt pour cent de
+ * ce qu'elle coûterait à rebâtir — on garde la structure, on paie le
+ * démontage, le terrassement et la reprise. À l'usage, c'était encore trop :
+ * « les prix sont un peu durs pour replacer les bâtiments ». La mesure du réel
+ * n'est pas la mesure du jeu, et c'est le jeu qui décide.
+ *
+ * Six pour cent, donc, avec plancher et plafond divisés d'autant : chaque
+ * déménagement coûte exactement la moitié de ce qu'il coûtait, du plus petit
+ * au plus gros. Réorganiser sa cour devient une contrariété, plus un
+ * arbitrage.
+ *
+ * Ce que ça donne, mesuré en jours de jeu (une parcelle de blé rapporte
+ * environ 260 € nets par jour) :
+ *
+ * | Bâtiment | Investi | Déménagement | En jours de blé |
+ * |---|---|---|---|
+ * | Râtelier | 1 050 € | 75 € (plancher) | un quart de jour |
+ * | Logement du personnel | 7 200 € | 432 € | un jour et demi |
+ * | Laiterie, niveau 1 | 28 000 € | 1 250 € (plafond) | cinq jours |
+ * | Laiterie, niveau 5 | 282 800 € | 1 250 € (plafond) | cinq jours |
+ *
+ * Le **plancher** évite qu'on déplace une pièce à une case pour trois francs
+ * six sous : même petit, un déménagement est un chantier. Le **plafond** est
+ * ce qui empêche la punition de revenir par la fenêtre — sans lui, un joueur
+ * qui a beaucoup investi dans sa laiterie serait celui qui aurait le moins le
+ * droit de réorganiser sa cour, ce qui est l'inverse du bon sens.
+ *
+ * ## La fenêtre de regret
+ *
+ * Un bâtiment posé il y a moins de trois minutes se déplace **gratuitement**,
+ * comme il se démolit intégralement remboursé. C'est la même erreur qu'on
+ * rattrape : une place mal choisie au moment de la pose. `[GD]`
+ */
+export const BUILDING_MOVE_RATE = 0.06;
+
+/** Plancher : même petit, un déménagement est un chantier. `[GD]` */
+export const BUILDING_MOVE_MIN = 75;
+
+/**
+ * Plafond : au-delà, la réorganisation redeviendrait un luxe réservé à ceux
+ * qui n'ont rien construit de gros. `[GD]`
+ */
+export const BUILDING_MOVE_MAX = 1250;
+
+export function buildingMoveCost(type: BuildingType, level: number, ageMs?: number): number {
+  if (withinRegret(ageMs)) return 0;
+  const base = BUILDING_DEFS[type].cost;
+  let invested = base;
+  for (let l = 2; l <= Math.max(1, Math.min(MAX_BUILDING_LEVEL, level)); l++) {
+    invested += base * BUILDING_LEVELS[l - 1].upgradeCostMult;
+  }
+  return Math.round(
+    Math.min(BUILDING_MOVE_MAX, Math.max(BUILDING_MOVE_MIN, invested * BUILDING_MOVE_RATE)),
+  );
+}
+
+/* ------------------------------------------------------------------ */
 /* Deux prix : client (faire venir) vs prestataire (mission)           */
 /* ------------------------------------------------------------------ */
 
@@ -2015,24 +2129,46 @@ export function contractorTotal(
 /**
  * Les travaux que l'entreprise de dépannage prend au pied levé.
  *
- * Elle ne prend pas tout : ni le déchaumage, ni la presse, ni le ramassage,
- * ni l'ensilage. C'est un choix de jeu — ces travaux-là passent par
- * l'entraide entre joueurs, qui est la boucle qu'on veut faire vivre.
+ * **Elle prend tout.** Elle n'a pas toujours tout pris : le déchaumage, la
+ * presse, le ramassage, l'ensilage et le désherbage en étaient exclus, au
+ * motif que ces travaux-là devaient passer par l'entraide entre joueurs.
+ * Signalé en jouant : « il y a des chantiers que tu peux faire faire par le
+ * pnj et d'autres non ? presser, tu peux pas ; ramasser tu peux pas ;
+ * déchaumer tu peux pas ». Trois défauts dans cette règle :
+ *
+ * 1. **Elle ne se voyait pas.** Le bouton disparaissait sans un mot. Sur la
+ *    moitié des outils il était là, sur l'autre non, et rien à l'écran ne
+ *    disait pourquoi.
+ * 2. **Elle laissait sans issue.** L'entraide attend qu'un autre joueur
+ *    accepte. Sans personne en ligne, presser n'avait aucune voie déléguée —
+ *    ni payante, ni gratuite.
+ * 3. **Elle prenait le réel à l'envers.** Ce sont précisément la presse,
+ *    l'ensilage et le déchaumage qu'on confie à une entreprise de travaux
+ *    agricoles ; le semis et le labour sont ce qu'on garde pour soi.
+ *
+ * Le barème, lui, avait toujours ses dix lignes : `CONTRACTOR_RATE_PER_CELL`
+ * chiffrait la presse et le ramassage depuis le début. Ce qui manquait
+ * n'était pas un prix, c'était la moitié des branches côté serveur.
+ *
+ * Ce qui protège l'entraide n'est donc plus un mur, c'est le prix : le
+ * dépannage coûte 15 % de plus (`URGENT_NPC_SURCHARGE`) et rend un peu moins
+ * (`CONTRACTOR_YIELD_MALUS`). On paie pour que ce soit fait tout de suite.
  *
  * Cette liste vivait en deux exemplaires : une énumération Zod côté serveur,
- * et une cascade de `? :` côté écran qui, elle, proposait le bouton pour
- * trois travaux de plus. Le joueur voyait donc « Payer · 428 € » sur une
- * presse, appuyait, et se faisait renvoyer — par un message pour le
- * déchaumage, par une erreur de validation informe pour les deux autres. Deux
- * listes qui prétendent dire la même chose finissent toujours par diverger ;
- * il n'y en a plus qu'une, et les deux côtés la lisent.
+ * et une cascade de `? :` côté écran. Deux listes qui prétendent dire la même
+ * chose finissent toujours par diverger ; il n'y en a plus qu'une.
  */
 export const URGENT_CONTRACTOR_WORKS = [
   "PLANT",
   "FERTILIZE",
   "HARVEST",
   "PLOW",
+  "STUBBLE",
   "MOW",
+  "BALE",
+  "COLLECT",
+  "SILAGE",
+  "WEED",
 ] as const satisfies readonly FarmWork[];
 
 /** L'entreprise instantanée prend-elle ce travail ? */
@@ -2043,8 +2179,9 @@ export function acceptsUrgentContractor(work: FarmWork): boolean {
 /**
  * Les travaux qu'on peut confier à un autre joueur.
  *
- * Plus large que la liste ci-dessus : c'est justement là que passent la
- * presse et le ramassage.
+ * Les deux listes se rejoignent presque, désormais : la seule différence est
+ * le désherbage, qu'on ne publie pas en entraide — il se traite à la case,
+ * sur des surfaces trop petites pour la fenêtre de huit cases.
  */
 export const LABOR_ORDER_WORKS = [
   "PLANT",
