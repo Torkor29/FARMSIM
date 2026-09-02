@@ -1583,19 +1583,37 @@ describe("calendrier cultural", () => {
       );
       return progressionDe();
     };
-    /* Un premier semis sert d'étalon : `progress = écoulé / durée effective`
-       donne la durée que le climat du jour impose vraiment. On vise ensuite
-       les trois quarts de cette durée — au-dessus du seuil d'ensilage, sous la
-       maturité grain, quelle que soit la saison où la suite tourne. */
-    const etalon = await semerIlYA(grow);
-    assert.ok(etalon.progress > 0, "le maïs témoin n'a pas poussé du tout");
-    const effectif = grow / etalon.progress;
-    const sim = await semerIlYA(effectif * 0.75);
+    /*
+     * On **cherche** la fenêtre au lieu de la calculer.
+     *
+     * Deux tentatives d'extrapolation ont échoué avant celle-ci, et pour deux
+     * raisons différentes : `progress` est plafonné à 1, si bien qu'un semis
+     * témoin déjà mûr ment sur la durée effective ; et la pousse n'est pas
+     * linéaire dans le temps écoulé — elle dépend de la météo traversée, donc
+     * de la saison où le semis a commencé. Un facteur mesuré sur trois
+     * dixièmes de cycle ne vaut pas pour un cycle entier.
+     *
+     * Rien de tout cela ne gêne une recherche : on essaie des semis de plus en
+     * plus anciens et on garde le premier qui tombe entre le seuil d'ensilage
+     * et la maturité grain. Le test dure quelques requêtes de plus et ne
+     * dépend plus d'un modèle de croissance qu'il n'a pas à connaître.
+     */
+    let sim = { progress: 0, ready: false };
+    let trouve = false;
+    for (const part of [0.75, 1, 1.25, 1.5, 2, 2.5, 3, 4, 5]) {
+      sim = await semerIlYA(grow * part);
+      if (sim.progress >= SILAGE_MIN_PROGRESS && !sim.ready) {
+        trouve = true;
+        break;
+      }
+      // Déjà mûr en grain : inutile de vieillir davantage, on ne redescendra pas.
+      if (sim.ready) break;
+    }
     assert.ok(
-      sim.progress >= SILAGE_MIN_PROGRESS,
-      `maïs trop jeune pour l'ensilage : ${sim.progress}`,
+      trouve,
+      `aucun semis ne tombe entre le seuil d'ensilage et la maturité (dernier : progress ${sim.progress}, mûr ${sim.ready})`,
     );
-    assert.equal(sim.ready, false, "le maïs devait rester en deçà de la maturité grain");
+
     const r = await appel(`/parcels/${parcelle.id}/contractor`, {
       methode: "POST",
       corps: { userId: moi.id, work: "SILAGE", cells: lot },
