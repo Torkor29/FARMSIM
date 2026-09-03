@@ -4573,25 +4573,36 @@ export function App() {
        * à jeun, et une tonne d'ensilage — soixante pour cent plus nourrissante
        * que le foin — comptait comme une tonne de foin.
        *
-       * On distribue donc le **manque** : le besoin du cycle moins ce qui
-       * reste dans la mangeoire, converti en tonnes par la valeur de la
-       * ration choisie. Un minimum d'une centaine de kilos, sans quoi un lot
-       * repu ferait des allers-retours pour rien.
+       * On distribue donc le **manque** : de quoi remplir la mangeoire, moins
+       * ce qui y reste, converti en tonnes par la valeur de la ration
+       * choisie.
        */
       /**
-       * Une distribution = **un jour réel**, pas un cycle.
+       * Un clic remplit la mangeoire. Un seul.
        *
-       * Un cycle vaut quinze minutes réelles : servir un cycle obligeait à
-       * revenir toutes les quinze minutes sous peine de voir le lot dépérir.
-       * On sert donc de quoi tenir vingt-quatre heures d'horloge, ce qui reste
-       * dans l'auge déduit. La consommation, elle, n'a pas bougé d'un kilo.
+       * Il servait de quoi tenir un jour réel quand l'auge en tient deux — et
+       * la jauge de l'écran, elle, se mesure sur la capacité. Passé un jour,
+       * le manque tombait à zéro et le plancher de cent kilos prenait le
+       * relais : le joueur cliquait, la jauge ne bougeait presque pas, il
+       * recliquait. « Faut cliquer 300 000 fois », et ce n'était pas une
+       * grande exagération — remplir la seconde moitié demandait des dizaines
+       * d'allers-retours au serveur.
+       *
+       * Le plancher part avec le défaut : une mangeoire pleine se dit, elle ne
+       * se sert pas. Prendre cent kilos de grain pour ne rien changer à l'état
+       * du lot est un vol silencieux, et c'était le seul effet du plancher une
+       * fois la cible corrigée.
        */
       const besoinKg = rationToServe({
         besoinParCycle: barn?.herd?.feedNeed ?? size * 14,
         feedStock: barn?.herd?.feedStock ?? 0,
       });
       const valeur = FEED_VALUE[RATION_GOOD[ration]] ?? 1;
-      const wanted = Math.max(0.1, Math.round((besoinKg / 1000 / valeur) * 100) / 100);
+      const wanted = Math.round((besoinKg / 1000 / valeur) * 100) / 100;
+      if (wanted <= 0) {
+        flashToast("La mangeoire est pleine — reviens quand les bêtes auront mangé.", "warn");
+        return;
+      }
       const stock = stockConnu ?? (
         ration === "maize"
           ? maizeInStock
@@ -4603,6 +4614,16 @@ export function App() {
                 ? silageInStock
                 : hayInStock);
       const tons = Math.min(stock, wanted);
+      // Réserve vide : la route refuserait avec « Indiquez une quantité »,
+      // un message qui parle de l'appel et non de la ferme. On dit ce qui
+      // manque, et où en trouver.
+      if (tons <= 0) {
+        flashToast(
+          "Plus rien de cette ration en réserve — achètes-en au négociant.",
+          "warn",
+        );
+        return;
+      }
       const r = await api<{ units: number; quality: number }>(`/herds/${herdId}/feed`, {
         method: "POST",
         body: JSON.stringify({
