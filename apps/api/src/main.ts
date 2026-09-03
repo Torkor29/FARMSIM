@@ -534,6 +534,22 @@ app.use((req, _res, next) => {
  * aucun appel ne contourne ce helper : aucun gestionnaire n'a besoin de
  * changer.
  */
+/**
+ * Le joueur qu'une URL désigne, quand elle en désigne un.
+ *
+ * Seul `/players/<id>` compte : c'est le seul préfixe dont le second segment
+ * est un identifiant de joueur, et ses trois routes — la fiche, le grand
+ * livre, les compétences — ne servent qu'à soi. Les autres chemins qui
+ * portent un identifiant (`/parcels/…`, `/herds/…`, `/machines/…`) désignent
+ * une *ressource*, dont la possession se vérifie route par route parce qu'elle
+ * peut légitimement être partagée — une parcelle se visite, un chantier se
+ * fait faire par un voisin.
+ */
+function identiteDansLeChemin(chemin: string): string | null {
+  const m = /^\/players\/([^/]+)(?:\/|$)/.exec(chemin);
+  return m ? decodeURIComponent(m[1]!) : null;
+}
+
 async function enforceIdentity(
   req: express.Request,
   res: express.Response,
@@ -541,7 +557,23 @@ async function enforceIdentity(
 ) {
   const claimed =
     (typeof req.body?.userId === "string" ? req.body.userId : null) ??
-    (typeof req.query.userId === "string" ? req.query.userId : null);
+    (typeof req.query.userId === "string" ? req.query.userId : null) ??
+    /*
+     * L'identité annoncée par l'URL elle-même.
+     *
+     * Trois routes désignent leur joueur par un morceau de chemin plutôt que
+     * par un `userId` : la fiche, le grand livre et l'arbre de compétences.
+     * Aucune n'annonçait donc d'identité, aucune n'était vérifiée — et la
+     * fiche rend l'**adresse e-mail**, le grand livre trente jours de
+     * comptabilité. `GET /players` distribuant quarante identifiants sans
+     * jeton, il suffisait de deux requêtes pour moissonner quarante adresses.
+     *
+     * La règle vit ici et non dans les trois gestionnaires, pour la raison
+     * qui a déjà fait mettre `enforceIdentity` en amont : la prochaine route
+     * `/players/:id/…` sera protégée sans que personne ait à y penser. C'est
+     * précisément l'oubli qui a créé la fuite.
+     */
+    identiteDansLeChemin(req.path);
   if (!claimed) {
     next();
     return;
