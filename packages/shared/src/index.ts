@@ -192,7 +192,11 @@ export type BuildingType =
   /* Le logement des employés. Il n'est pas requis pour embaucher — deux
      personnes logent au village — mais c'est lui qui ouvre au-delà, et il
      fait baisser le salaire de ceux qu'il héberge. */
-  | "EMPLOYEE_HOUSING";
+  | "EMPLOYEE_HOUSING"
+  /* La fumière : le tas de fumier cesse de tenir dans l'étable. Sans elle, il
+     fallait agrandir son bâtiment d'élevage pour stocker davantage — deux
+     besoins différents payés par le même mur. */
+  | "MANURE_STORE";
 
 export type CellKind = "EMPTY" | "CROP" | "BUILDING" | "VEHICLE";
 
@@ -840,6 +844,25 @@ export const BUILDING_DEFS: Record<BuildingType, BuildingDef> = {
     description:
       "Loge vos employés : un lit au premier niveau, cinq au dernier. Un employé logé coûte 35 % de moins.",
   },
+  MANURE_STORE: {
+    type: "MANURE_STORE",
+    article: "une",
+    name: "Fumière",
+    w: 2,
+    h: 2,
+    /*
+     * Moins qu'une étable, plus qu'une annexe.
+     *
+     * Ce qu'elle remplace coûtait bien plus cher : pour gagner quelques tonnes
+     * de fosse, il fallait agrandir son bâtiment d'élevage et payer des places
+     * de bêtes dont on n'avait pas l'usage. À ce prix-là, elle se rembourse en
+     * seize jours de blé — et surtout elle évite ce que l'odeur coûte au
+     * troupeau quand le tas déborde.
+     */
+    cost: 4200,
+    description:
+      "Stocke le fumier hors de l’étable : six tonnes au premier niveau, près de vingt-huit au dernier. Partagée entre les troupeaux de la parcelle.",
+  },
   /* ------------------------------------------------------------------ */
   /* Annexes d'élevage                                                   */
   /* ------------------------------------------------------------------ */
@@ -1318,6 +1341,7 @@ export const BUILDING_ART: Record<BuildingType, string> = {
   DAIRY: "/assets/buildings/dairy.svg",
   MILL: "/assets/buildings/mill.svg",
   EMPLOYEE_HOUSING: "/assets/buildings/employee-housing.svg",
+  MANURE_STORE: "/assets/buildings/manure-store.svg",
   // Même raison pour les deux annexes d'élevage : une case au sol, un dessin.
   WATER_TROUGH: "/assets/buildings/water-trough.svg",
   HAY_RACK: "/assets/buildings/hay-rack.svg",

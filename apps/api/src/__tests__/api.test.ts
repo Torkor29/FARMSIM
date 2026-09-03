@@ -807,6 +807,86 @@ describe("lieu de vie", () => {
     );
   });
 
+  it("l'employé d'élevage vide la fumière qui déborde", async () => {
+    /*
+     * Demandé en jouant, dans la foulée de « il fait quoi l'employé à
+     * l'élevage ? » : « est-ce qu'il vide la fosse à lisier ? ». Il ne le
+     * faisait pas, et il n'y avait même pas d'ouvrage à vider.
+     *
+     * Un tas qui déborde coûte du bonheur — l'odeur — et bloque la production
+     * de fumier. Le seul remède était que le joueur revienne épandre ou vendre
+     * à la main. C'est exactement la corvée qu'on embauche pour ne plus avoir.
+     */
+    const { moi, pid, herdId } = await eleveurAvecEnclos();
+
+    const fumier = async () => {
+      const el = await appel(`/parcels/${pid}/livestock`, { jeton: moi.jeton });
+      const b = (el.corps as unknown as {
+        barns: { herd: { id: string; manureTons?: number; manureCap?: number } | null }[];
+      }).barns.find((x) => x.herd?.id === herdId)!;
+      return { tas: b.herd?.manureTons ?? 0, cap: b.herd?.manureCap ?? 0 };
+    };
+
+    const nu = await fumier();
+    assert.ok(nu.cap > 0, `l'étable n'a pas de contenance : ${JSON.stringify(nu)}`);
+
+    // 1 — La fumière agrandit le stockage, sans toucher à l'étable.
+    const bat = await appel(`/parcels/${pid}/build`, {
+      methode: "POST",
+      corps: { userId: moi.id, type: "MANURE_STORE", x: 8, y: 8, rotation: 0 },
+      jeton: moi.jeton,
+    });
+    assert.equal(bat.statut, 201, `fumière refusée : ${JSON.stringify(bat.corps)}`);
+    const avecFumiere = await fumier();
+    assert.ok(
+      avecFumiere.cap > nu.cap,
+      `la fumière n'agrandit rien : ${nu.cap} puis ${avecFumiere.cap} t`,
+    );
+
+    // 2 — Sans personne à l'élevage, un tas plein le reste.
+    prismaExec(
+      `UPDATE "Herd" SET "manureTons" = ${(avecFumiere.cap * 0.95).toFixed(3)} WHERE id = '${herdId}';`,
+    );
+    await appel("/sim/tick", { methode: "POST", jeton: moi.jeton });
+    const seul = await fumier();
+    assert.ok(
+      seul.tas > avecFumiere.cap * 0.8,
+      `le tas s'est vidé sans employé : ${seul.tas} t`,
+    );
+
+    // 3 — Avec un employé à l'élevage, il redescend, et l'argent rentre.
+    const vivier = await appel("/employees", { jeton: moi.jeton });
+    const candidat = (vivier.corps as unknown as { candidates: { id: string }[] }).candidates[0]!;
+    const embauche = await appel("/employees/hire", {
+      methode: "POST",
+      corps: { candidateId: candidat.id },
+      jeton: moi.jeton,
+    });
+    assert.equal(embauche.statut, 201, `embauche refusée : ${JSON.stringify(embauche.corps)}`);
+    const recrue = (embauche.corps as unknown as { employee: { id: string } }).employee;
+    prismaExec(`UPDATE "Employee" SET poste = 'ELEVAGE' WHERE id = '${recrue.id}';`);
+
+    const sou = async () =>
+      ((await appel("/auth/me", { jeton: moi.jeton })).corps as unknown as {
+        player: { crd: number };
+      }).player.crd;
+    const avantVente = await sou();
+    await appel("/sim/tick", { methode: "POST", jeton: moi.jeton });
+    const apres = await fumier();
+
+    assert.ok(
+      apres.tas < seul.tas,
+      `l'employé n'a rien vidé : ${seul.tas} puis ${apres.tas} t`,
+    );
+    // Mais pas jusqu'à zéro : le fumier vaut plus épandu que vendu, et
+    // l'employé évite la corvée sans décider à la place du joueur.
+    assert.ok(apres.tas > 0, "la fumière a été vidée entièrement");
+    assert.ok(
+      (await sou()) > avantVente,
+      "le fumier vendu au voisin n'a rien rapporté",
+    );
+  });
+
   it("rentrer le troupeau met fin à la séance de pâture", async () => {
     const { moi, pid, herdId, buildingId } = await eleveurAvecEnclos();
     const avant = await etat(pid, buildingId, moi.jeton);

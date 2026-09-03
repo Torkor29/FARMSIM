@@ -277,6 +277,9 @@ import {
   beddingNeed,
   beddingCapacity,
   manurePitCapacity,
+  manureStoreCapacity,
+  MANURE_SMELL_START,
+  MANURE_LOCAL_PRICE,
   addManureToPit,
   manureFill,
   manureSmellPenalty,
@@ -1163,6 +1166,95 @@ function gazoleChantier(rig: Rig, cells: number): number {
 function dureeChantier(rig: Rig, cells: number): number {
   const reel = jobDurationMs(jobHours(machineHoursPerHectare(rig.def.type, rig.tier), cells));
   return Math.max(1, Math.round(reel / JOB_SPEED));
+}
+
+/**
+ * L'employé d'élevage vide les fumières qui débordent.
+ *
+ * ## Le métier qui manquait
+ *
+ * Demandé en jouant : « il fait quoi l'employé à l'élevage ? » puis « est-ce
+ * qu'il vide la fosse ? ». Il produisait mieux, et c'était tout : rien à faire
+ * de ses journées quand le tas montait. Un tas qui déborde coûte du bonheur —
+ * l'odeur — et bloque la production de fumier, et le seul remède était que le
+ * joueur revienne épandre ou vendre à la main.
+ *
+ * Il s'en occupe désormais, et c'est ce qui donne son sens au poste : on
+ * l'embauche pour ne plus avoir à surveiller.
+ *
+ * ## Ce qu'il fait, exactement
+ *
+ * Il vend au voisin, au prix local, ce qui dépasse le seuil d'odeur, et
+ * redescend le tas à la moitié. Il ne le vide pas complètement : le fumier
+ * vaut plus épandu sur ses propres terres que vendu, et un employé qui
+ * liquiderait tout priverait le joueur de cet arbitrage. Il évite la peine,
+ * il ne décide pas à la place.
+ *
+ * Sans employé à l'élevage, rien ne se passe — exactement comme avant.
+ */
+async function viderLesFumieres(): Promise<void> {
+  /* Seuls les tas qui sentent déjà nous intéressent : un plancher en tonnes
+     évite d'ouvrir une transaction pour trois kilos de fumier de poule. */
+  const lots = await prisma.herd.findMany({
+    where: { manureTons: { gt: 0.5 } },
+    include: { building: { include: { parcel: { include: { buildings: true, farm: true } } } } },
+  });
+  for (const lot of lots) {
+    const parcelle = lot.building?.parcel;
+    const ferme = parcelle?.farm;
+    if (!parcelle || !ferme) continue;
+    const equipe = await bonusEquipe(ferme.id);
+    // Personne à l'élevage : le tas reste au joueur, comme avant.
+    if (!equipe.employes.some((e) => e.poste === "ELEVAGE")) continue;
+
+    const stats = buildingStatsAtLevel(lot.building.type as SharedBuildingType, lot.building.level);
+    const capacite =
+      manurePitCapacity(lot.kind as AnimalKind, barnCapacity(lot.building.type, stats)) +
+      partDeFumiere(parcelle.buildings);
+    if (capacite <= 0) continue;
+    if (manureFill(lot.manureTons, capacite) < MANURE_SMELL_START) continue;
+
+    const garde = capacite * 0.5;
+    const vendu = Math.round((lot.manureTons - garde) * 1000) / 1000;
+    if (vendu <= 0) continue;
+    const recette = Math.round(vendu * MANURE_LOCAL_PRICE);
+    await prisma.$transaction(async (tx) => {
+      await tx.herd.update({ where: { id: lot.id }, data: { manureTons: garde } });
+      if (recette > 0) {
+        await crediter(
+          tx,
+          ferme.userId,
+          recette,
+          "ELEVAGE",
+          `Fumière vidée par l'équipe — ${vendu.toFixed(1)} t`,
+        );
+      }
+    });
+  }
+}
+
+/**
+ * Ce que les fumières de cette parcelle ajoutent au stockage de fumier.
+ *
+ * Elles sont **partagées** entre les troupeaux : sans ce partage, une seule
+ * fumière offrirait sa pleine contenance à six étables à la fois, et il n'y
+ * aurait plus jamais de raison d'en bâtir une seconde.
+ */
+function fumieresDe(buildings: { type: string; level: number }[]): number {
+  return buildings
+    .filter((b) => b.type === "MANURE_STORE")
+    .reduce(
+      (t, b) => t + manureStoreCapacity(b.level, buildingLevelDef(b.level).capacityMult),
+      0,
+    );
+}
+
+/** La part de fumière qui revient à **un** abri d'élevage de cette parcelle. */
+function partDeFumiere(buildings: { type: string; level: number }[]): number {
+  const total = fumieresDe(buildings);
+  if (total <= 0) return 0;
+  const abris = buildings.filter((b) => kindForBarn(b.type)).length;
+  return Math.round((total / Math.max(1, abris)) * 1000) / 1000;
 }
 
 /** Les cases déjà prises par un chantier en cours sur cette parcelle. */
@@ -3866,6 +3958,9 @@ async function runWorldTick() {
   await runNpcBuyers();
   await spoilPerishables();
   await settleAllHerds();
+  // Après le tour des troupeaux : c'est lui qui fait monter les tas, et il
+  // n'y a rien à vider avant qu'il ait tourné.
+  await viderLesFumieres();
   await settleDueFutures();
   // Les salaires suivent le changement de jour, comme les intérêts : la
   // main-d'œuvre est un coût qui revient, y compris hors connexion.
@@ -8807,6 +8902,7 @@ async function settleAllHerds() {
       paddockCells: paddock.cells,
       installationLevel: installation.level,
       hasTrough: installation.hasTrough,
+      fumierEnPlus: partDeFumiere(barn.parcel.buildings),
     });
     // La salle de traite fait son travail, que le joueur regarde ou non.
     await ramasserAutomatiquement(herd, barn.level, apres.size, now, installation.level);
@@ -8952,6 +9048,14 @@ async function settleHerd(
     installationLevel?: number;
     /** Un abreuvoir automatique est-il rattaché au bâtiment ? */
     hasTrough?: boolean;
+    /**
+     * Ce que les fumières de la parcelle ajoutent au stockage de ce lot.
+     *
+     * Facultatif comme le reste : sans elle, on retombe sur la contenance que
+     * les seules places de l'étable donnent — soit exactement le comportement
+     * d'avant que la fumière existe.
+     */
+    fumierEnPlus?: number;
   },
 ): Promise<{
   happiness: number;
@@ -9085,7 +9189,7 @@ async function settleHerd(
   );
   const cover = beddingCover({ kind, herdSize: herd.size, stockTons: beddingTons });
 
-  const pitCap = manurePitCapacity(kind, capacity);
+  const pitCap = manurePitCapacity(kind, capacity) + Math.max(0, env?.fumierEnPlus ?? 0);
   // La paille ne disparaît pas : elle passe dans le tas. C'est ce qui rend le
   // paillage rentable au lieu d'être une taxe — l'éleveur achète de la paille
   // au céréalier et lui revend du fumier.
@@ -9331,6 +9435,9 @@ app.get("/parcels/:id/livestock", async (req, res) => {
    */
   const soinElevage = parcel.farm ? await getSkillBonuses(parcel.farm.userId) : noSkillBonuses();
   const equipeElevage = parcel.farmId ? await gainElevageDe(parcel.farmId) : 0;
+  /* Les fumières se partagent entre les abris de la parcelle : la part est la
+     même pour tous, donc elle se calcule une fois, hors de la boucle. */
+  const partFumiere = partDeFumiere(parcel.buildings);
 
   const barns = [];
   for (const b of parcel.buildings) {
@@ -9387,6 +9494,7 @@ app.get("/parcels/:id/livestock", async (req, res) => {
           paddockCells: paddock.cells,
           installationLevel: installation.level,
           hasTrough: installation.hasTrough,
+          fumierEnPlus: partFumiere,
         },
       );
       happiness = settled.happiness;
@@ -9399,9 +9507,10 @@ app.get("/parcels/:id/livestock", async (req, res) => {
       health = settled.health;
       deprivedSince = settled.deprivedSince;
     }
-    const pitCap = herdKind
-      ? manurePitCapacity(herdKind, capacity)
-      : manurePitCapacity("COW", capacity);
+    const pitCap =
+      (herdKind
+        ? manurePitCapacity(herdKind, capacity)
+        : manurePitCapacity("COW", capacity)) + partFumiere;
     const pitFill = manureFill(manureTons, pitCap);
 
     const graze = b.herd

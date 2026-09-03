@@ -95,6 +95,10 @@ enum BuildingType {
   /// pas requis pour embaucher — deux personnes logent au village — mais il
   /// ouvre au-delà, et fait baisser le salaire de ceux qu'il héberge.
   EMPLOYEE_HOUSING
+  /// Stocke le fumier hors de l'étable. Sans elle, la contenance de la fosse
+  /// se déduisait des places du bâtiment d'élevage : il fallait agrandir son
+  /// étable pour stocker davantage, et payer des places de bêtes inutiles.
+  MANURE_STORE
 }
 
 /// Où un employé passe sa journée : au champ, ou à l'élevage.

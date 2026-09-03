@@ -1,0 +1,36 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64">
+  <!--
+    La fumière : une dalle bétonnée, trois murets, un tas dessus.
+
+    Elle se lit à ce qu'elle n'a pas — ni toit, ni porte. Le quatrième côté
+    reste ouvert, c'est par là que l'épandeur entre. C'est ce vide qui la
+    distingue du hangar dans la liste de construction, où toutes les
+    vignettes se ressemblent au premier coup d'œil.
+  -->
+  <defs>
+    <linearGradient id="fum-tas" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#6b4f2a"/>
+      <stop offset="1" stop-color="#4a3319"/>
+    </linearGradient>
+  </defs>
+
+  <!-- La dalle, en perspective légère -->
+  <path d="M8 46 L32 54 L56 46 L56 42 L32 50 L8 42 Z" fill="#9a9285"/>
+  <path d="M8 42 L32 50 L56 42 L32 34 Z" fill="#b8b0a2"/>
+
+  <!-- Le tas, débordant un peu par l'avant ouvert -->
+  <path d="M17 42 C21 30 27 26 32 26 C37 26 43 30 47 42 C40 45 24 45 17 42 Z"
+        fill="url(#fum-tas)"/>
+  <!-- Quelques brins de paille : c'est du fumier, pas du lisier -->
+  <g stroke="#c9a35c" stroke-width="1.4" stroke-linecap="round" opacity="0.85">
+    <path d="M24 36 l4 -2"/>
+    <path d="M31 32 l4 1"/>
+    <path d="M37 38 l3 -2"/>
+    <path d="M27 40 l3 1"/>
+  </g>
+
+  <!-- Les trois murets. Le devant reste ouvert. -->
+  <path d="M8 42 L8 30 L32 22 L32 34 Z" fill="#cfc7b8"/>
+  <path d="M32 34 L32 22 L56 30 L56 42 Z" fill="#b5ad9e"/>
+  <path d="M8 30 L32 22 L56 30 L32 38 Z" fill="#ded7ca"/>
+</svg>

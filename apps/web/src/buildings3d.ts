@@ -93,6 +93,9 @@ const PALETTES: Record<BuildingType, BuildingPalette> = {
   // Le logement : crépi clair et tuile sombre, la maison d'habitation plutôt
   // que le hangar. C'est le seul bâtiment de la cour où quelqu'un dort.
   EMPLOYEE_HOUSING: { roof: 0x3f7a6a, wall: 0xe6ddcb, timber: 0x8c6b46, metal: 0xb7735a },
+  /* Béton et fumier : la fumière n'a pas de toit, donc pas de teinte de toit
+     qui compte. C'est le brun du tas qui la fait reconnaître de loin. */
+  MANURE_STORE: { roof: 0x8c8578, wall: 0xcfc7b8, timber: 0x6b4f2a, metal: 0x9a9285 },
 };
 
 /* ------------------------------------------------------------------ */
@@ -1501,6 +1504,53 @@ function buildEmployeeHousing(w: number, d: number, lvl: number): Built {
   return { root, height: faite + 0.1 };
 }
 
+/**
+ * La fumière : une dalle, trois murets, un tas.
+ *
+ * Elle se reconnaît à ce qu'elle **n'a pas**. Pas de toit, pas de porte, et
+ * le quatrième côté grand ouvert — c'est par là que l'épandeur recule. Sur
+ * une grille où tout le reste est fermé et couvert, ce vide suffit à la
+ * distinguer sans qu'on ait à lire l'étiquette.
+ *
+ * Le tas monte avec le niveau : un ouvrage agrandi doit se voir de l'extérieur,
+ * c'est la règle de tous les bâtiments d'ici.
+ */
+function buildManureStore(w: number, d: number, lvl: number): Built {
+  const root = new Part();
+  const bw = w - EDGE * 2;
+  const bd = d - EDGE * 2;
+  slab(root, bw, bd, 0.05);
+
+  // Trois murets bas. Le côté +Z reste ouvert : c'est la façade, et la façade
+  // d'une fumière est un trou.
+  const mur = 0.16 + Math.min(4, lvl - 1) * 0.02;
+  const ep = 0.05;
+  const yMur = 0.05 + mur / 2;
+  root.add("wall", box(bw, mur, ep, [0, yMur, -bd / 2 + ep / 2]));
+  root.add("wall", box(ep, mur, bd, [-bw / 2 + ep / 2, yMur, 0]));
+  root.add("wall", box(ep, mur, bd, [bw / 2 - ep / 2, yMur, 0]));
+
+  /*
+   * Le tas, en marches plutôt qu'en dôme.
+   *
+   * Trois boîtes empilées et décalées donnent la silhouette d'un tas repris au
+   * chargeur — irrégulier, plus haut au fond. Une demi-sphère aurait fait
+   * pâtisserie, et coûté des triangles pour un rendu moins juste.
+   */
+  const hauteur = 0.10 + Math.min(4, lvl - 1) * 0.035;
+  const couches = [
+    { w: bw * 0.78, d: bd * 0.70, y: 0.05, h: hauteur * 0.55, z: -bd * 0.04 },
+    { w: bw * 0.58, d: bd * 0.50, y: 0.05 + hauteur * 0.55, h: hauteur * 0.32, z: -bd * 0.09 },
+    { w: bw * 0.32, d: bd * 0.28, y: 0.05 + hauteur * 0.87, h: hauteur * 0.28, z: -bd * 0.13 },
+  ];
+  for (const c of couches) {
+    root.add("timber", box(c.w, c.h, c.d, [0, c.y + c.h / 2, c.z]));
+  }
+
+  yardDressing(root, w, d, 91);
+  return { root, height: 0.05 + mur + hauteur * 0.4 };
+}
+
 function buildWaterTrough(w: number, d: number, lvl: number): Built {
   const root = new Part();
   const bw = w - EDGE * 2;
@@ -1605,6 +1655,7 @@ const BUILDERS: Record<BuildingType, (w: number, d: number, lvl: number) => Buil
   WATER_TROUGH: buildWaterTrough,
   HAY_RACK: buildHayRack,
   EMPLOYEE_HOUSING: buildEmployeeHousing,
+  MANURE_STORE: buildManureStore,
 };
 
 type Blueprint = Built & { w: number; d: number };
