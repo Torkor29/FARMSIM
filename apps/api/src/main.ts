@@ -1693,11 +1693,26 @@ async function applyWearToMachine(
    */
   const proprio = await tx.machine.findUnique({
     where: { id: machine.id },
-    select: { farm: { select: { userId: true } } },
+    select: { farm: { select: { id: true, userId: true } } },
   });
   const soin = proprio?.farm?.userId
     ? await getSkillBonuses(proprio.farm.userId)
     : noSkillBonuses();
+  /*
+   * Le mécanicien de l'équipe, s'il y en a un.
+   *
+   * Sa compétence était calculée par `bonusEquipe` et **jetée** : l'écran du
+   * personnel promettait « moins d'usure et de pannes — jusqu'à 40 % » et
+   * rien dans le jeu ne l'appliquait. Un employé payé qui ne fait rien est
+   * pire qu'un employé qu'on ne peut pas embaucher.
+   *
+   * Il agit ici, au même endroit que le savoir-faire du joueur, et pour la
+   * même raison : douze travaux de champ appellent cette fonction, et leur
+   * demander de porter la règle serait douze occasions de l'oublier.
+   */
+  const equipe = proprio?.farm?.id
+    ? await bonusEquipe(proprio.farm.id)
+    : { mecanique: 0 };
   /* Les heures du chantier viennent de l'outil : c'est sa largeur qui décide
      du temps passé. Le tracteur en prend autant — il a tiré pendant tout ce
      temps-là — ce qui fait de lui la machine au compteur le plus chargé de la
@@ -1713,8 +1728,13 @@ async function applyWearToMachine(
       inShed: Boolean(m.storedInBuildingId),
       // L'entretien et le savoir-faire se multiplient : une machine graissée
       // par quelqu'un qui sait s'y prendre s'use moins que la somme des deux.
+      // Entretien, savoir-faire et mécanicien se multiplient : trois façons
+      // différentes de ménager une machine, qui n'ont pas de raison de
+      // s'annuler.
       careMult:
-        careWearMultiplier({ grease: care.grease, dirt: care.dirt }) * (1 - soin.WEAR),
+        careWearMultiplier({ grease: care.grease, dirt: care.dirt }) *
+        (1 - soin.WEAR) *
+        (1 - equipe.mecanique),
     });
     // Les deux pièces traversent le même champ : elles se salissent pareil,
     // et chacune a sa jauge et son nettoyage. Posséder plus de matériel coûte
@@ -1722,6 +1742,9 @@ async function applyWearToMachine(
     const after = applyJobCare({ ...care, condition: wear.condition }, {
       work: opts.work,
       cells: opts.cells,
+      // Le mécanicien réduit aussi le risque de casse, pas seulement l'usure :
+      // c'est ce que l'écran annonce, « moins d'usure **et de pannes** ».
+      risqueMult: 1 - equipe.mecanique,
     });
     const compteur = Math.round(((m.hours ?? 0) + heures) * 100) / 100;
     await tx.machine.update({
@@ -6200,6 +6223,22 @@ async function bonusEquipe(farmId: string) {
   };
 }
 
+/**
+ * Ce que l'équipe ajoute à la production d'un troupeau.
+ *
+ * Trois routes produisent — le lait, les œufs, la laine — et elles appliquent
+ * déjà toutes les trois le savoir-faire du joueur de la même façon. Le bonus
+ * d'équipe passe par ici plutôt que d'être recopié trois fois : une quatrième
+ * production arrivera un jour, et le seul moyen qu'elle n'oublie pas la règle
+ * est qu'il n'y ait qu'un endroit où la lire.
+ *
+ * Multiplicatif, comme le savoir-faire : un employé qui s'y connaît fait mieux
+ * produire un troupeau bien tenu, il ne rattrape pas un troupeau affamé.
+ */
+async function gainElevageDe(farmId: string): Promise<number> {
+  return (await bonusEquipe(farmId)).elevage;
+}
+
 /** Les chantiers que ce joueur mène en ce moment. */
 async function chantiersEnCours(userId: string): Promise<number> {
   return prisma.fieldJob.count({
@@ -9278,6 +9317,21 @@ app.get("/parcels/:id/livestock", async (req, res) => {
   const saison = currentSeason((parcel.zone.hemisphere as Hemisphere) ?? "N", now);
   const meteo = (weather?.state as WeatherState) ?? "CLEAR";
 
+  /*
+   * Ce que la ferme ajoute à la production, savoir-faire et équipe compris.
+   *
+   * Les chiffres annoncés ici étaient les rendements **nus**, alors que les
+   * boutons de traite, de ramassage et de tonte appliquent les bonus. L'écran
+   * annonçait donc moins que ce qu'on obtenait — une bonne surprise, mais un
+   * écran qui se trompe reste un écran qui se trompe, et l'arrivée de
+   * l'employé d'élevage creusait l'écart.
+   *
+   * Résolu une fois pour toute la parcelle, pas une fois par bâtiment : une
+   * ferme de six étables aurait sinon fait douze requêtes pour deux réponses.
+   */
+  const soinElevage = parcel.farm ? await getSkillBonuses(parcel.farm.userId) : noSkillBonuses();
+  const equipeElevage = parcel.farmId ? await gainElevageDe(parcel.farmId) : 0;
+
   const barns = [];
   for (const b of parcel.buildings) {
     if (!kindForBarn(b.type)) continue;
@@ -9550,21 +9604,27 @@ app.get("/parcels/:id/livestock", async (req, res) => {
               barnLevel: b.level,
               installationLevel: installation.level,
               feedQuality: b.herd.feedQuality,
-            }),
+            }) *
+              (1 + soinElevage.MILK_YIELD) *
+              (1 + equipeElevage),
             eggsPerCycle: eggYield({
               herdSize: Math.max(0, herdSize - jeunes),
               happiness,
               barnLevel: b.level,
               installationLevel: installation.level,
               feedQuality: b.herd.feedQuality,
-            }),
+            }) *
+              (1 + soinElevage.EGG_YIELD) *
+              (1 + equipeElevage),
             woolPerShear: woolYield({
               herdSize: Math.max(0, herdSize - jeunes),
               happiness,
               barnLevel: b.level,
               installationLevel: installation.level,
               feedQuality: b.herd.feedQuality,
-            }),
+            }) *
+              (1 + soinElevage.WOOL_YIELD) *
+              (1 + equipeElevage),
             meatAtSlaughter: meatYield({
               herdSize: b.herd.size,
               happiness,
@@ -10471,7 +10531,9 @@ app.post("/herds/:id/milk", async (req, res) => {
       barnLevel: herd.building.level,
       installationLevel: await installationForBarn(herd.building),
       feedQuality: herd.feedQuality,
-    }) * (1 + laitier.MILK_YIELD);
+    }) *
+    (1 + laitier.MILK_YIELD) *
+    (1 + (await gainElevageDe(herd.farmId)));
   // Le lait se compte en hectolitres au silo : cent litres la tonne d'échange.
   const litres = perCycle * cycles;
   const hectolitres = Math.round((litres / 100) * 1000) / 1000;
@@ -10544,7 +10606,9 @@ app.post("/herds/:id/collect-eggs", async (req, res) => {
       barnLevel: herd.building.level,
       installationLevel: await installationForBarn(herd.building),
       feedQuality: herd.feedQuality,
-    }) * (1 + avicole.EGG_YIELD);
+    }) *
+    (1 + avicole.EGG_YIELD) *
+    (1 + (await gainElevageDe(herd.farmId)));
   const crates = Math.round(perCycle * cycles * 100) / 100;
   if (crates <= 0) {
     res.status(409).json({ error: "Rien à ramasser : le lot ne pond pas" });
@@ -10601,7 +10665,9 @@ app.post("/herds/:id/shear", async (req, res) => {
       barnLevel: herd.building.level,
       installationLevel: await installationForBarn(herd.building),
       feedQuality: herd.feedQuality,
-    }) * (1 + ovin.WOOL_YIELD);
+    }) *
+    (1 + ovin.WOOL_YIELD) *
+    (1 + (await gainElevageDe(herd.farmId)));
   const tons = Math.round(perCycle * cycles * 1000) / 1000;
   if (tons <= 0) {
     res.status(409).json({ error: "Rien à tondre : le lot ne produit pas" });
