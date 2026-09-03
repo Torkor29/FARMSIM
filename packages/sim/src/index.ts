@@ -551,7 +551,20 @@ export function breakdownChance(opts: {
 
 export function applyJobCare(
   state: MachineCareState,
-  opts: { work: string; cells: number; rng?: () => number },
+  opts: {
+    work: string;
+    cells: number;
+    rng?: () => number;
+    /**
+     * Ce qui reste du risque de panne, de 0 à 1.
+     *
+     * Un mécanicien dans l'équipe ne rend pas la machine increvable : il
+     * réduit la probabilité, il ne la supprime pas. Le multiplicateur porte
+     * donc sur le tirage, pas sur les causes — une machine à l'abandon reste
+     * une machine à l'abandon, elle tombe simplement en panne moins souvent.
+     */
+    risqueMult?: number;
+  },
 ): { next: MachineCareState; broke: boolean } {
   const rng = opts.rng ?? Math.random;
   const current = state.grease ?? (state.greased ? GREASE_FULL : 0);
@@ -560,11 +573,13 @@ export function applyJobCare(
   const wasEmpty = greaseIsEmpty(current);
   const empty = greaseIsEmpty(grease);
   const streak = empty ? (wasEmpty ? state.greaseSkipStreak + 1 : 0) : 0;
-  const chance = breakdownChance({
-    condition: state.condition,
-    grease,
-    dirt: state.dirt,
-  });
+  const risque = Math.max(0, Math.min(1, opts.risqueMult ?? 1));
+  const chance =
+    breakdownChance({
+      condition: state.condition,
+      grease,
+      dirt: state.dirt,
+    }) * risque;
   const broke = rng() < chance;
   const breakdown = broke ? pickBreakdownKind(state.condition) : state.breakdown;
   return {

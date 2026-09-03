@@ -716,6 +716,177 @@ describe("lieu de vie", () => {
     };
   }
 
+  it("l'employé d'élevage fait vraiment produire davantage", async () => {
+    /*
+     * Demandé en jouant : « il fait quoi l'employé à l'élevage ? ». Rien.
+     * `bonusEquipe` calculait sa compétence et la jetait, pendant que l'écran
+     * du personnel promettait « le troupeau produit mieux — jusqu'à 20 % ».
+     *
+     * Ce test compte des litres. Une recherche de texte dans le serveur
+     * prouverait qu'une ligne existe ; seul un litre de plus au silo prouve
+     * qu'elle sert.
+     */
+    const { moi, pid, herdId } = await eleveurAvecEnclos();
+
+    /*
+     * `milkPerCycle` vit **dans** le lot, pas à côté : c'est une propriété du
+     * troupeau, et une étable vide n'en a pas.
+     *
+     * Le bonheur est refixé avant chaque lecture. Le tour de simulation le
+     * fait dériver — un lot sans réserve d'aliment s'assombrit toutes les
+     * vingt secondes — et deux mesures espacées de quelques requêtes
+     * différeraient pour une raison qui n'a rien à voir avec l'employé. On
+     * neutralise ce qu'on ne mesure pas.
+     */
+    const litresAnnonces = async () => {
+      prismaExec(`UPDATE "Herd" SET happiness = 0.9, "feedQuality" = 1 WHERE id = '${herdId}';`);
+      const el = await appel(`/parcels/${pid}/livestock`, { jeton: moi.jeton });
+      const b = (el.corps as unknown as {
+        barns: { herd: { id: string; milkPerCycle?: number } | null }[];
+      }).barns.find((x) => x.herd?.id === herdId)!;
+      return b.herd?.milkPerCycle ?? 0;
+    };
+
+    /* Des adultes, et une étable qui tourne : le lot de départ peut être
+       entièrement composé de jeunes, et un veau ne donne pas de lait. On pose
+       donc l'état qu'on veut mesurer plutôt que d'espérer le trouver. */
+    const { buildingId } = await (async () => {
+      const el = await appel(`/parcels/${pid}/livestock`, { jeton: moi.jeton });
+      const b = (el.corps as unknown as {
+        barns: { buildingId: string; herd: { id: string } | null }[];
+      }).barns.find((x) => x.herd?.id === herdId)!;
+      return { buildingId: b.buildingId };
+    })();
+    const achat = await appel(`/buildings/${buildingId}/animals`, {
+      methode: "POST",
+      corps: { userId: moi.id, count: 6 },
+      jeton: moi.jeton,
+    });
+    assert.ok(achat.statut < 400, `achat de bêtes refusé : ${JSON.stringify(achat.corps)}`);
+
+    const avant = await litresAnnonces();
+    assert.ok(avant > 0, `l'étable témoin ne produit rien : ${avant}`);
+
+    /* On embauche, puis on force la compétence : le vivier est tiré au sort,
+       et attendre un 5/5 rendrait ce test dépendant du jour. */
+    const vivier = await appel("/employees", { jeton: moi.jeton });
+    const candidat = (vivier.corps as unknown as { candidates: { id: string }[] }).candidates[0]!;
+    const embauche = await appel("/employees/hire", {
+      methode: "POST",
+      corps: { candidateId: candidat.id },
+      jeton: moi.jeton,
+    });
+    assert.equal(embauche.statut, 201, `embauche refusée : ${JSON.stringify(embauche.corps)}`);
+    const recrue = (embauche.corps as unknown as { employee: { id: string } }).employee;
+    prismaExec(
+      `UPDATE "Employee" SET elevage = 5, poste = 'ELEVAGE' WHERE id = '${recrue.id}';`,
+    );
+
+    const apres = await litresAnnonces();
+    assert.ok(
+      apres > avant,
+      `l'employé d'élevage ne change rien : ${avant} puis ${apres} litres`,
+    );
+    // Cinq crans au-dessus du premier : +20 %, ni plus ni moins.
+    assert.ok(
+      Math.abs(apres / avant - 1.2) < 0.001,
+      `gain inattendu : ${(apres / avant - 1).toFixed(3)} au lieu de 0,200`,
+    );
+
+    /* Aux champs, il ne trait plus : la compétence ne compte qu'au poste où
+       elle s'exerce. Sans ce contrôle, le poste ne déciderait de rien. */
+    const mute = await appel(`/employees/${recrue.id}/post`, {
+      methode: "POST",
+      corps: { poste: "CHAMP" },
+      jeton: moi.jeton,
+    });
+    assert.equal(mute.statut, 200);
+    assert.ok(
+      Math.abs((await litresAnnonces()) - avant) < 0.001,
+      "un employé aux champs ne devrait rien apporter à l'étable",
+    );
+  });
+
+  it("l'employé d'élevage vide la fumière qui déborde", async () => {
+    /*
+     * Demandé en jouant, dans la foulée de « il fait quoi l'employé à
+     * l'élevage ? » : « est-ce qu'il vide la fosse à lisier ? ». Il ne le
+     * faisait pas, et il n'y avait même pas d'ouvrage à vider.
+     *
+     * Un tas qui déborde coûte du bonheur — l'odeur — et bloque la production
+     * de fumier. Le seul remède était que le joueur revienne épandre ou vendre
+     * à la main. C'est exactement la corvée qu'on embauche pour ne plus avoir.
+     */
+    const { moi, pid, herdId } = await eleveurAvecEnclos();
+
+    const fumier = async () => {
+      const el = await appel(`/parcels/${pid}/livestock`, { jeton: moi.jeton });
+      const b = (el.corps as unknown as {
+        barns: { herd: { id: string; manureTons?: number; manureCap?: number } | null }[];
+      }).barns.find((x) => x.herd?.id === herdId)!;
+      return { tas: b.herd?.manureTons ?? 0, cap: b.herd?.manureCap ?? 0 };
+    };
+
+    const nu = await fumier();
+    assert.ok(nu.cap > 0, `l'étable n'a pas de contenance : ${JSON.stringify(nu)}`);
+
+    // 1 — La fumière agrandit le stockage, sans toucher à l'étable.
+    const bat = await appel(`/parcels/${pid}/build`, {
+      methode: "POST",
+      corps: { userId: moi.id, type: "MANURE_STORE", x: 8, y: 8, rotation: 0 },
+      jeton: moi.jeton,
+    });
+    assert.equal(bat.statut, 201, `fumière refusée : ${JSON.stringify(bat.corps)}`);
+    const avecFumiere = await fumier();
+    assert.ok(
+      avecFumiere.cap > nu.cap,
+      `la fumière n'agrandit rien : ${nu.cap} puis ${avecFumiere.cap} t`,
+    );
+
+    // 2 — Sans personne à l'élevage, un tas plein le reste.
+    prismaExec(
+      `UPDATE "Herd" SET "manureTons" = ${(avecFumiere.cap * 0.95).toFixed(3)} WHERE id = '${herdId}';`,
+    );
+    await appel("/sim/tick", { methode: "POST", jeton: moi.jeton });
+    const seul = await fumier();
+    assert.ok(
+      seul.tas > avecFumiere.cap * 0.8,
+      `le tas s'est vidé sans employé : ${seul.tas} t`,
+    );
+
+    // 3 — Avec un employé à l'élevage, il redescend, et l'argent rentre.
+    const vivier = await appel("/employees", { jeton: moi.jeton });
+    const candidat = (vivier.corps as unknown as { candidates: { id: string }[] }).candidates[0]!;
+    const embauche = await appel("/employees/hire", {
+      methode: "POST",
+      corps: { candidateId: candidat.id },
+      jeton: moi.jeton,
+    });
+    assert.equal(embauche.statut, 201, `embauche refusée : ${JSON.stringify(embauche.corps)}`);
+    const recrue = (embauche.corps as unknown as { employee: { id: string } }).employee;
+    prismaExec(`UPDATE "Employee" SET poste = 'ELEVAGE' WHERE id = '${recrue.id}';`);
+
+    const sou = async () =>
+      ((await appel("/auth/me", { jeton: moi.jeton })).corps as unknown as {
+        player: { crd: number };
+      }).player.crd;
+    const avantVente = await sou();
+    await appel("/sim/tick", { methode: "POST", jeton: moi.jeton });
+    const apres = await fumier();
+
+    assert.ok(
+      apres.tas < seul.tas,
+      `l'employé n'a rien vidé : ${seul.tas} puis ${apres.tas} t`,
+    );
+    // Mais pas jusqu'à zéro : le fumier vaut plus épandu que vendu, et
+    // l'employé évite la corvée sans décider à la place du joueur.
+    assert.ok(apres.tas > 0, "la fumière a été vidée entièrement");
+    assert.ok(
+      (await sou()) > avantVente,
+      "le fumier vendu au voisin n'a rien rapporté",
+    );
+  });
+
   it("rentrer le troupeau met fin à la séance de pâture", async () => {
     const { moi, pid, herdId, buildingId } = await eleveurAvecEnclos();
     const avant = await etat(pid, buildingId, moi.jeton);

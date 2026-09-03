@@ -277,6 +277,9 @@ import {
   beddingNeed,
   beddingCapacity,
   manurePitCapacity,
+  manureStoreCapacity,
+  MANURE_SMELL_START,
+  MANURE_LOCAL_PRICE,
   addManureToPit,
   manureFill,
   manureSmellPenalty,
@@ -1165,6 +1168,95 @@ function dureeChantier(rig: Rig, cells: number): number {
   return Math.max(1, Math.round(reel / JOB_SPEED));
 }
 
+/**
+ * L'employé d'élevage vide les fumières qui débordent.
+ *
+ * ## Le métier qui manquait
+ *
+ * Demandé en jouant : « il fait quoi l'employé à l'élevage ? » puis « est-ce
+ * qu'il vide la fosse ? ». Il produisait mieux, et c'était tout : rien à faire
+ * de ses journées quand le tas montait. Un tas qui déborde coûte du bonheur —
+ * l'odeur — et bloque la production de fumier, et le seul remède était que le
+ * joueur revienne épandre ou vendre à la main.
+ *
+ * Il s'en occupe désormais, et c'est ce qui donne son sens au poste : on
+ * l'embauche pour ne plus avoir à surveiller.
+ *
+ * ## Ce qu'il fait, exactement
+ *
+ * Il vend au voisin, au prix local, ce qui dépasse le seuil d'odeur, et
+ * redescend le tas à la moitié. Il ne le vide pas complètement : le fumier
+ * vaut plus épandu sur ses propres terres que vendu, et un employé qui
+ * liquiderait tout priverait le joueur de cet arbitrage. Il évite la peine,
+ * il ne décide pas à la place.
+ *
+ * Sans employé à l'élevage, rien ne se passe — exactement comme avant.
+ */
+async function viderLesFumieres(): Promise<void> {
+  /* Seuls les tas qui sentent déjà nous intéressent : un plancher en tonnes
+     évite d'ouvrir une transaction pour trois kilos de fumier de poule. */
+  const lots = await prisma.herd.findMany({
+    where: { manureTons: { gt: 0.5 } },
+    include: { building: { include: { parcel: { include: { buildings: true, farm: true } } } } },
+  });
+  for (const lot of lots) {
+    const parcelle = lot.building?.parcel;
+    const ferme = parcelle?.farm;
+    if (!parcelle || !ferme) continue;
+    const equipe = await bonusEquipe(ferme.id);
+    // Personne à l'élevage : le tas reste au joueur, comme avant.
+    if (!equipe.employes.some((e) => e.poste === "ELEVAGE")) continue;
+
+    const stats = buildingStatsAtLevel(lot.building.type as SharedBuildingType, lot.building.level);
+    const capacite =
+      manurePitCapacity(lot.kind as AnimalKind, barnCapacity(lot.building.type, stats)) +
+      partDeFumiere(parcelle.buildings);
+    if (capacite <= 0) continue;
+    if (manureFill(lot.manureTons, capacite) < MANURE_SMELL_START) continue;
+
+    const garde = capacite * 0.5;
+    const vendu = Math.round((lot.manureTons - garde) * 1000) / 1000;
+    if (vendu <= 0) continue;
+    const recette = Math.round(vendu * MANURE_LOCAL_PRICE);
+    await prisma.$transaction(async (tx) => {
+      await tx.herd.update({ where: { id: lot.id }, data: { manureTons: garde } });
+      if (recette > 0) {
+        await crediter(
+          tx,
+          ferme.userId,
+          recette,
+          "ELEVAGE",
+          `Fumière vidée par l'équipe — ${vendu.toFixed(1)} t`,
+        );
+      }
+    });
+  }
+}
+
+/**
+ * Ce que les fumières de cette parcelle ajoutent au stockage de fumier.
+ *
+ * Elles sont **partagées** entre les troupeaux : sans ce partage, une seule
+ * fumière offrirait sa pleine contenance à six étables à la fois, et il n'y
+ * aurait plus jamais de raison d'en bâtir une seconde.
+ */
+function fumieresDe(buildings: { type: string; level: number }[]): number {
+  return buildings
+    .filter((b) => b.type === "MANURE_STORE")
+    .reduce(
+      (t, b) => t + manureStoreCapacity(b.level, buildingLevelDef(b.level).capacityMult),
+      0,
+    );
+}
+
+/** La part de fumière qui revient à **un** abri d'élevage de cette parcelle. */
+function partDeFumiere(buildings: { type: string; level: number }[]): number {
+  const total = fumieresDe(buildings);
+  if (total <= 0) return 0;
+  const abris = buildings.filter((b) => kindForBarn(b.type)).length;
+  return Math.round((total / Math.max(1, abris)) * 1000) / 1000;
+}
+
 /** Les cases déjà prises par un chantier en cours sur cette parcelle. */
 /**
  * Le délai au bout duquel un chantier jamais réclamé est tenu pour abandonné.
@@ -1693,11 +1785,26 @@ async function applyWearToMachine(
    */
   const proprio = await tx.machine.findUnique({
     where: { id: machine.id },
-    select: { farm: { select: { userId: true } } },
+    select: { farm: { select: { id: true, userId: true } } },
   });
   const soin = proprio?.farm?.userId
     ? await getSkillBonuses(proprio.farm.userId)
     : noSkillBonuses();
+  /*
+   * Le mécanicien de l'équipe, s'il y en a un.
+   *
+   * Sa compétence était calculée par `bonusEquipe` et **jetée** : l'écran du
+   * personnel promettait « moins d'usure et de pannes — jusqu'à 40 % » et
+   * rien dans le jeu ne l'appliquait. Un employé payé qui ne fait rien est
+   * pire qu'un employé qu'on ne peut pas embaucher.
+   *
+   * Il agit ici, au même endroit que le savoir-faire du joueur, et pour la
+   * même raison : douze travaux de champ appellent cette fonction, et leur
+   * demander de porter la règle serait douze occasions de l'oublier.
+   */
+  const equipe = proprio?.farm?.id
+    ? await bonusEquipe(proprio.farm.id)
+    : { mecanique: 0 };
   /* Les heures du chantier viennent de l'outil : c'est sa largeur qui décide
      du temps passé. Le tracteur en prend autant — il a tiré pendant tout ce
      temps-là — ce qui fait de lui la machine au compteur le plus chargé de la
@@ -1713,8 +1820,13 @@ async function applyWearToMachine(
       inShed: Boolean(m.storedInBuildingId),
       // L'entretien et le savoir-faire se multiplient : une machine graissée
       // par quelqu'un qui sait s'y prendre s'use moins que la somme des deux.
+      // Entretien, savoir-faire et mécanicien se multiplient : trois façons
+      // différentes de ménager une machine, qui n'ont pas de raison de
+      // s'annuler.
       careMult:
-        careWearMultiplier({ grease: care.grease, dirt: care.dirt }) * (1 - soin.WEAR),
+        careWearMultiplier({ grease: care.grease, dirt: care.dirt }) *
+        (1 - soin.WEAR) *
+        (1 - equipe.mecanique),
     });
     // Les deux pièces traversent le même champ : elles se salissent pareil,
     // et chacune a sa jauge et son nettoyage. Posséder plus de matériel coûte
@@ -1722,6 +1834,9 @@ async function applyWearToMachine(
     const after = applyJobCare({ ...care, condition: wear.condition }, {
       work: opts.work,
       cells: opts.cells,
+      // Le mécanicien réduit aussi le risque de casse, pas seulement l'usure :
+      // c'est ce que l'écran annonce, « moins d'usure **et de pannes** ».
+      risqueMult: 1 - equipe.mecanique,
     });
     const compteur = Math.round(((m.hours ?? 0) + heures) * 100) / 100;
     await tx.machine.update({
@@ -3843,6 +3958,9 @@ async function runWorldTick() {
   await runNpcBuyers();
   await spoilPerishables();
   await settleAllHerds();
+  // Après le tour des troupeaux : c'est lui qui fait monter les tas, et il
+  // n'y a rien à vider avant qu'il ait tourné.
+  await viderLesFumieres();
   await settleDueFutures();
   // Les salaires suivent le changement de jour, comme les intérêts : la
   // main-d'œuvre est un coût qui revient, y compris hors connexion.
@@ -6198,6 +6316,22 @@ async function bonusEquipe(farmId: string) {
     mecanique: gainMecanique(meilleurNiveau(employes, "mecanique", "CHAMP")),
     elevage: gainElevage(meilleurNiveau(employes, "elevage", "ELEVAGE")),
   };
+}
+
+/**
+ * Ce que l'équipe ajoute à la production d'un troupeau.
+ *
+ * Trois routes produisent — le lait, les œufs, la laine — et elles appliquent
+ * déjà toutes les trois le savoir-faire du joueur de la même façon. Le bonus
+ * d'équipe passe par ici plutôt que d'être recopié trois fois : une quatrième
+ * production arrivera un jour, et le seul moyen qu'elle n'oublie pas la règle
+ * est qu'il n'y ait qu'un endroit où la lire.
+ *
+ * Multiplicatif, comme le savoir-faire : un employé qui s'y connaît fait mieux
+ * produire un troupeau bien tenu, il ne rattrape pas un troupeau affamé.
+ */
+async function gainElevageDe(farmId: string): Promise<number> {
+  return (await bonusEquipe(farmId)).elevage;
 }
 
 /** Les chantiers que ce joueur mène en ce moment. */
@@ -8768,6 +8902,7 @@ async function settleAllHerds() {
       paddockCells: paddock.cells,
       installationLevel: installation.level,
       hasTrough: installation.hasTrough,
+      fumierEnPlus: partDeFumiere(barn.parcel.buildings),
     });
     // La salle de traite fait son travail, que le joueur regarde ou non.
     await ramasserAutomatiquement(herd, barn.level, apres.size, now, installation.level);
@@ -8913,6 +9048,14 @@ async function settleHerd(
     installationLevel?: number;
     /** Un abreuvoir automatique est-il rattaché au bâtiment ? */
     hasTrough?: boolean;
+    /**
+     * Ce que les fumières de la parcelle ajoutent au stockage de ce lot.
+     *
+     * Facultatif comme le reste : sans elle, on retombe sur la contenance que
+     * les seules places de l'étable donnent — soit exactement le comportement
+     * d'avant que la fumière existe.
+     */
+    fumierEnPlus?: number;
   },
 ): Promise<{
   happiness: number;
@@ -9046,7 +9189,7 @@ async function settleHerd(
   );
   const cover = beddingCover({ kind, herdSize: herd.size, stockTons: beddingTons });
 
-  const pitCap = manurePitCapacity(kind, capacity);
+  const pitCap = manurePitCapacity(kind, capacity) + Math.max(0, env?.fumierEnPlus ?? 0);
   // La paille ne disparaît pas : elle passe dans le tas. C'est ce qui rend le
   // paillage rentable au lieu d'être une taxe — l'éleveur achète de la paille
   // au céréalier et lui revend du fumier.
@@ -9278,6 +9421,24 @@ app.get("/parcels/:id/livestock", async (req, res) => {
   const saison = currentSeason((parcel.zone.hemisphere as Hemisphere) ?? "N", now);
   const meteo = (weather?.state as WeatherState) ?? "CLEAR";
 
+  /*
+   * Ce que la ferme ajoute à la production, savoir-faire et équipe compris.
+   *
+   * Les chiffres annoncés ici étaient les rendements **nus**, alors que les
+   * boutons de traite, de ramassage et de tonte appliquent les bonus. L'écran
+   * annonçait donc moins que ce qu'on obtenait — une bonne surprise, mais un
+   * écran qui se trompe reste un écran qui se trompe, et l'arrivée de
+   * l'employé d'élevage creusait l'écart.
+   *
+   * Résolu une fois pour toute la parcelle, pas une fois par bâtiment : une
+   * ferme de six étables aurait sinon fait douze requêtes pour deux réponses.
+   */
+  const soinElevage = parcel.farm ? await getSkillBonuses(parcel.farm.userId) : noSkillBonuses();
+  const equipeElevage = parcel.farmId ? await gainElevageDe(parcel.farmId) : 0;
+  /* Les fumières se partagent entre les abris de la parcelle : la part est la
+     même pour tous, donc elle se calcule une fois, hors de la boucle. */
+  const partFumiere = partDeFumiere(parcel.buildings);
+
   const barns = [];
   for (const b of parcel.buildings) {
     if (!kindForBarn(b.type)) continue;
@@ -9333,6 +9494,7 @@ app.get("/parcels/:id/livestock", async (req, res) => {
           paddockCells: paddock.cells,
           installationLevel: installation.level,
           hasTrough: installation.hasTrough,
+          fumierEnPlus: partFumiere,
         },
       );
       happiness = settled.happiness;
@@ -9345,9 +9507,10 @@ app.get("/parcels/:id/livestock", async (req, res) => {
       health = settled.health;
       deprivedSince = settled.deprivedSince;
     }
-    const pitCap = herdKind
-      ? manurePitCapacity(herdKind, capacity)
-      : manurePitCapacity("COW", capacity);
+    const pitCap =
+      (herdKind
+        ? manurePitCapacity(herdKind, capacity)
+        : manurePitCapacity("COW", capacity)) + partFumiere;
     const pitFill = manureFill(manureTons, pitCap);
 
     const graze = b.herd
@@ -9550,21 +9713,27 @@ app.get("/parcels/:id/livestock", async (req, res) => {
               barnLevel: b.level,
               installationLevel: installation.level,
               feedQuality: b.herd.feedQuality,
-            }),
+            }) *
+              (1 + soinElevage.MILK_YIELD) *
+              (1 + equipeElevage),
             eggsPerCycle: eggYield({
               herdSize: Math.max(0, herdSize - jeunes),
               happiness,
               barnLevel: b.level,
               installationLevel: installation.level,
               feedQuality: b.herd.feedQuality,
-            }),
+            }) *
+              (1 + soinElevage.EGG_YIELD) *
+              (1 + equipeElevage),
             woolPerShear: woolYield({
               herdSize: Math.max(0, herdSize - jeunes),
               happiness,
               barnLevel: b.level,
               installationLevel: installation.level,
               feedQuality: b.herd.feedQuality,
-            }),
+            }) *
+              (1 + soinElevage.WOOL_YIELD) *
+              (1 + equipeElevage),
             meatAtSlaughter: meatYield({
               herdSize: b.herd.size,
               happiness,
@@ -10471,7 +10640,9 @@ app.post("/herds/:id/milk", async (req, res) => {
       barnLevel: herd.building.level,
       installationLevel: await installationForBarn(herd.building),
       feedQuality: herd.feedQuality,
-    }) * (1 + laitier.MILK_YIELD);
+    }) *
+    (1 + laitier.MILK_YIELD) *
+    (1 + (await gainElevageDe(herd.farmId)));
   // Le lait se compte en hectolitres au silo : cent litres la tonne d'échange.
   const litres = perCycle * cycles;
   const hectolitres = Math.round((litres / 100) * 1000) / 1000;
@@ -10544,7 +10715,9 @@ app.post("/herds/:id/collect-eggs", async (req, res) => {
       barnLevel: herd.building.level,
       installationLevel: await installationForBarn(herd.building),
       feedQuality: herd.feedQuality,
-    }) * (1 + avicole.EGG_YIELD);
+    }) *
+    (1 + avicole.EGG_YIELD) *
+    (1 + (await gainElevageDe(herd.farmId)));
   const crates = Math.round(perCycle * cycles * 100) / 100;
   if (crates <= 0) {
     res.status(409).json({ error: "Rien à ramasser : le lot ne pond pas" });
@@ -10601,7 +10774,9 @@ app.post("/herds/:id/shear", async (req, res) => {
       barnLevel: herd.building.level,
       installationLevel: await installationForBarn(herd.building),
       feedQuality: herd.feedQuality,
-    }) * (1 + ovin.WOOL_YIELD);
+    }) *
+    (1 + ovin.WOOL_YIELD) *
+    (1 + (await gainElevageDe(herd.farmId)));
   const tons = Math.round(perCycle * cycles * 1000) / 1000;
   if (tons <= 0) {
     res.status(409).json({ error: "Rien à tondre : le lot ne produit pas" });
