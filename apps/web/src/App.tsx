@@ -1558,13 +1558,29 @@ export function App() {
       .finally(() => setBooting(false));
   }, []);
 
+  /**
+   * Le tutoriel s'ouvre à l'arrivée **sur la ferme**, pas à la connexion.
+   *
+   * Il se déclenchait dès que `player` existait. Or un compte tout neuf a un
+   * joueur bien avant d'avoir une terre : le temps de choisir son continent,
+   * sa région et sa parcelle, `player` est déjà là. Le tutoriel s'ouvrait
+   * donc **pendant l'installation**, sous l'écran qui la mène — et le moindre
+   * geste qui le refermait écrivait sa clé. Il ne revenait jamais.
+   *
+   * D'où le signalement : « le tuto ne s'affiche pas lors de la première
+   * entrée en jeu ». Il s'affichait, mais trop tôt et au mauvais endroit,
+   * ce qui revient au même et se voit moins.
+   *
+   * La dépendance est donc `surSaFerme` : le premier rendu où le joueur a
+   * vraiment une parcelle sous les yeux.
+   */
+  const installe = Boolean(player?.farm?.parcels?.length);
   useEffect(() => {
-    if (!player) return;
-    if (!localStorage.getItem(TUTORIAL_KEY)) {
-      const t = window.setTimeout(() => setShowTutorial(true), 600);
-      return () => window.clearTimeout(t);
-    }
-  }, [player?.id]);
+    if (!installe) return;
+    if (localStorage.getItem(TUTORIAL_KEY)) return;
+    const t = window.setTimeout(() => setShowTutorial(true), 600);
+    return () => window.clearTimeout(t);
+  }, [installe, player?.id]);
 
   useEffect(() => {
     if (!player) return;
@@ -1661,6 +1677,14 @@ export function App() {
   );
 
   const ownedParcels = player?.farm?.parcels ?? [];
+  /**
+   * Le joueur est-il vraiment installé ?
+   *
+   * Un compte existe bien avant d'avoir une terre — tout le temps de choisir
+   * son continent et sa parcelle. Distinguer les deux est ce qui décide quand
+   * la musique démarre et quand le tutoriel s'ouvre.
+   */
+  const surSaFerme = Boolean(player && ownedParcels.length);
   const visiting = Boolean(
     visitOrder && activeParcelId && visitOrder.parcelId === activeParcelId,
   );
@@ -1851,7 +1875,6 @@ export function App() {
    * plus sûr que de guetter la transition ici, où un rechargement de partie
    * la ferait manquer.
    */
-  const surSaFerme = Boolean(player && ownedParcels.length);
   useEffect(() => {
     if (!surSaFerme) return;
     saisonAudio(season);

@@ -950,10 +950,30 @@ button.ghost {
 .sell-btn:hover:not(:disabled) { background: #fbdcd6; }
 
 /* —— Confirmation —— */
+/*
+ * La confirmation passe devant tout le reste. Sans exception.
+ *
+ * Elle était à 60, sous la fiche machine (90), l'entretien, le voisinage et
+ * les messages (70 chacun). Ouvrir une confirmation depuis l'un de ces écrans
+ * — vendre une machine depuis sa fiche, licencier depuis le personnel — la
+ * plaçait *derrière* : on ne pouvait ni confirmer ni annuler, et comme elle
+ * capture les clics, le reste devenait inutilisable. « La pop-up est toujours
+ * derrière, ce qui rend impossible le reste. »
+ *
+ * Les cinq confirmations du jeu passent toutes par `ConfirmDialog`, donc par
+ * cette seule règle : licencier, abattre, vendre une machine, la mettre en
+ * vente, vendre un bâtiment. Le nombre est ce qui rend le correctif sûr — il
+ * n'y a pas d'autre boîte à corriger ailleurs.
+ *
+ * 200 laisse cent points de marge au-dessus du calque le plus haut du jeu :
+ * un écran neuf peut monter sans repasser devant la confirmation par
+ * mégarde. Seule la porte d'entrée (`auth.css`) va plus haut, et pour cause :
+ * quand elle est là, il n'y a pas de partie derrière.
+ */
 .confirm-backdrop {
   position: fixed;
   inset: 0;
-  z-index: 60;
+  z-index: 200;
   display: grid;
   place-items: center;
   padding: 1rem;
@@ -7457,3 +7477,186 @@ button.tiny {
 }
 .emp-pied { border-top: 1px solid var(--line); padding-top: 0.6rem; display: grid; gap: 0.3rem; }
 .emp-pied p { margin: 0; font-size: 0.78rem; line-height: 1.45; }
+
+/* ------------------------------------------------------------------ */
+/* Les scènes du tutoriel                                              */
+/* ------------------------------------------------------------------ */
+/*
+ * Des maquettes minuscules du jeu, où le geste se fait tout seul en boucle.
+ * Le tutoriel décrivait « touchez des cases puis le bouton d'or » à des gens
+ * qui n'avaient jamais vu le bouton d'or : un geste se montre.
+ *
+ * Tout est en SVG et en CSS — aucune image à télécharger — et tout s'arrête
+ * si le système demande moins de mouvement.
+ */
+.tuto-scene {
+  margin: 0.15rem 0 0.7rem;
+  border-radius: var(--r-md);
+  background: linear-gradient(160deg, #eef4ee, #e2ebe4);
+  border: 1px solid var(--line);
+  overflow: hidden;
+}
+.tuto-scene svg { display: block; width: 100%; height: auto; }
+
+/* Le champ */
+.tuto-case { fill: #cfe0cd; stroke: #adc6ab; stroke-width: 0.6; }
+.tuto-case.sel { fill: #ffd977; stroke: #d9a531; }
+.tuto-case.pousse { fill: #8fc47a; animation: tuto-murit 4s ease-in-out infinite; }
+.tuto-case.mur { fill: #e3bd5a; }
+.tuto-case.sale { fill: #b9c9a4; }
+
+@keyframes tuto-murit {
+  0%, 15% { fill: #8fc47a; }
+  70%, 100% { fill: #e3bd5a; }
+}
+
+/* Les zones de l'écran, éclairées l'une après l'autre */
+.tuto-zone { fill: #ffffff; stroke: var(--line); stroke-width: 1; opacity: 0.55; }
+.tuto-zone.z1 { animation: tuto-zone 6s ease-in-out infinite; }
+.tuto-zone.z2 { animation: tuto-zone 6s ease-in-out infinite 2s; }
+.tuto-zone.z3 { animation: tuto-zone 6s ease-in-out infinite 4s; }
+@keyframes tuto-zone {
+  0%, 66%, 100% { opacity: 0.5; fill: #ffffff; }
+  15%, 50% { opacity: 1; fill: #fff2cf; }
+}
+
+.tuto-txt {
+  fill: var(--teal-700);
+  font-size: 7px;
+  font-weight: 700;
+  text-anchor: middle;
+  font-family: inherit;
+}
+.tuto-txt.petit { font-size: 5.5px; font-weight: 600; }
+.tuto-txt.sur-or { fill: #4a3105; font-size: 7px; }
+.tuto-txt.refus-txt { fill: #a33; }
+.tuto-txt.ok-txt { fill: #2c7a4b; }
+
+/* La barre d'outils */
+.tuto-barre { fill: #ffffff; stroke: var(--line); stroke-width: 0.8; opacity: 0.9; }
+.tuto-outil { fill: #dfe7df; }
+.tuto-outil.on { fill: var(--accent); animation: tuto-pulse 2.4s ease-in-out infinite; }
+@keyframes tuto-pulse {
+  0%, 100% { opacity: 0.75; }
+  50% { opacity: 1; }
+}
+
+/* Le bouton d'or */
+.tuto-faire { fill: var(--accent); animation: tuto-pulse 1.8s ease-in-out infinite; }
+
+/* Le curseur, et le doigt */
+.tuto-fleche { fill: #24312b; stroke: #ffffff; stroke-width: 1; }
+.tuto-doigt { fill: #24312b; opacity: 0.85; }
+.tuto-doigt-halo { fill: #24312b; opacity: 0.18; }
+
+.tuto-curseur.vers-outil { animation: tuto-vers-outil 3.2s ease-in-out infinite; }
+@keyframes tuto-vers-outil {
+  0% { transform: translate(96px, 30px); }
+  45%, 100% { transform: translate(44px, 78px); }
+}
+.tuto-curseur.glisse { animation: tuto-glisse 3.6s ease-in-out infinite; }
+@keyframes tuto-glisse {
+  0%, 10% { transform: translate(46px, 18px); }
+  55%, 100% { transform: translate(98px, 62px); }
+}
+.tuto-curseur.tapote { animation: tuto-tapote 4s steps(1) infinite; }
+@keyframes tuto-tapote {
+  0%, 24% { transform: translate(57px, 27px); }
+  25%, 49% { transform: translate(87px, 27px); }
+  50%, 74% { transform: translate(57px, 53px); }
+  75%, 100% { transform: translate(87px, 53px); }
+}
+.tuto-curseur.vers-faire { animation: tuto-vers-faire 3s ease-in-out infinite; }
+@keyframes tuto-vers-faire {
+  0% { transform: translate(60px, 40px); }
+  50%, 100% { transform: translate(110px, 76px); }
+}
+.tuto-curseur.vers-emprise { animation: tuto-vers-emprise 4s ease-in-out infinite; }
+@keyframes tuto-vers-emprise {
+  0%, 20% { transform: translate(40px, 40px); }
+  60%, 100% { transform: translate(100px, 40px); }
+}
+
+/* Le lasso de sélection, à la souris seulement */
+.tuto-lasso {
+  fill: rgba(255, 200, 60, 0.18);
+  stroke: var(--accent);
+  stroke-width: 1;
+  stroke-dasharray: 3 2;
+  animation: tuto-pulse 3.6s ease-in-out infinite;
+}
+
+/* Les engins qui traversent */
+.tuto-tracteur { fill: #3f7d4f; animation: tuto-traverse 4s linear infinite; }
+.tuto-moisson { fill: #b8892f; animation: tuto-traverse 4.5s linear infinite; }
+@keyframes tuto-traverse {
+  0% { transform: translate(6px, 27px); }
+  100% { transform: translate(134px, 27px); }
+}
+
+/* Les mauvaises herbes, qui disparaissent */
+.tuto-herbes {
+  fill: none;
+  stroke: #4d7a3a;
+  stroke-width: 1.2;
+  stroke-linecap: round;
+  animation: tuto-nettoie 4s ease-in-out infinite;
+}
+@keyframes tuto-nettoie {
+  0%, 40% { opacity: 1; }
+  70%, 100% { opacity: 0; }
+}
+
+/* Les jauges */
+.tuto-jauge-fond { fill: #d7e0d7; }
+.tuto-jauge { fill: var(--accent); animation: tuto-remplit 4s ease-in-out infinite; }
+.tuto-jauge.lente { animation-duration: 3s; }
+@keyframes tuto-remplit {
+  0% { width: 4px; }
+  70%, 100% { width: 112px; }
+}
+.tuto-jauge.lente { animation-name: tuto-remplit-court; }
+@keyframes tuto-remplit-court {
+  0% { width: 4px; }
+  60%, 100% { width: 50px; }
+}
+
+/* L'emprise d'un bâtiment */
+.tuto-emprise { stroke-width: 1.4; }
+.tuto-emprise.ok { fill: rgba(60, 160, 100, 0.28); stroke: #2c7a4b; }
+.tuto-emprise.refus { fill: rgba(190, 60, 60, 0.22); stroke: #a33; }
+
+/* L'étable */
+.tuto-etable { fill: #e8ded0; stroke: #b9a88f; stroke-width: 0.8; }
+.tuto-toit { fill: #9c5b45; }
+.tuto-bete { fill: #ffffff; stroke: #7c6a58; stroke-width: 0.8; }
+
+/* Le cours du marché */
+.tuto-cours {
+  fill: none;
+  stroke: var(--teal-700);
+  stroke-width: 1.6;
+  stroke-linejoin: round;
+  stroke-dasharray: 160;
+  animation: tuto-trace 4s ease-in-out infinite;
+}
+@keyframes tuto-trace {
+  0% { stroke-dashoffset: 160; }
+  60%, 100% { stroke-dashoffset: 0; }
+}
+.tuto-point { fill: var(--accent); }
+
+.tutorial-chapitre {
+  margin: 0 0 0.1rem;
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--accent-hot);
+}
+
+/* Une animation qui tourne en boucle derrière un texte à lire est
+   exactement ce que « moins de mouvement » veut éviter. */
+@media (prefers-reduced-motion: reduce) {
+  .tuto-scene * { animation: none !important; }
+}

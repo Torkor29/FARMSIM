@@ -11,7 +11,6 @@ import {
   type WeatherState,
 } from "@farmsim/shared";
 import { GlobeView, type GlobeContinent } from "./GlobeView";
-import { LowPolyCharacter } from "./LowPolyCharacter";
 
 export type WorldContinent = GlobeContinent & {
   tagline: string;
@@ -450,10 +449,13 @@ export function Onboarding({
 
       {step === 2 && parcel && region && detail && (
         <section className="onb-body">
+          {/* Le bonhomme a quitté cet écran.
+              Il y occupait la moitié de la place pour ne rien apprendre à
+              personne : on ne le choisit plus depuis longtemps, on le voit en
+              jeu haut comme une case, et la dernière chose qu'on veut lire
+              avant de commencer, c'est où l'on s'installe. Le récapitulatif
+              prend donc toute la largeur. */}
           <div className="recap">
-            <div className="recap-char">
-              <LowPolyCharacter code={spe} appearance={appearance} active height={220} />
-            </div>
             <div className="recap-info">
               <h2>Tout est prêt</h2>
               <dl className="recap-list">

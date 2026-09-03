@@ -1,118 +1,136 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 
 import { TUTORIAL_KEY } from "./storage-keys";
+import { TutorialScene } from "./TutorialScenes";
+import { ETAPES } from "./tutorial-steps";
 import { MenuClose } from "./ui/MenuClose";
 
-type Step = {
-  id: string;
-  title: string;
-  body: string;
-  hint?: string;
-};
-
-const STEPS: Step[] = [
-  {
-    id: "welcome",
-    title: "Bienvenue chez vous",
-    body: "Voici votre parcelle, vue du ciel. Les cases s’illuminent quand vous les survolez et quand vous les sélectionnez.",
-    hint: "Le bouton ? et la puce « À faire » ouvrent le guide complet",
-  },
-  {
-    id: "select",
-    title: "1 — Voir une case",
-    body: "Touchez une case pour lire son état (vide, culture, bâtiment, véhicule).",
-    hint: "Barre du bas : Voir",
-  },
-  {
-    id: "plant",
-    title: "2 — Semer",
-    body: "Choisissez Semer, le blé, le maïs ou le pois, touchez des cases nues, puis le bouton d’or Faire.",
-    hint: "Il faut un tracteur en bon état (Garage). Le guide dit quoi semer et pourquoi.",
-  },
-  {
-    id: "grow",
-    title: "3 — Attendre la croissance",
-    body: "Les cultures passent du vert à l’or. La barre de progression est dans le panneau à droite.",
-    hint: "~3 min en démo · tick serveur en continu",
-  },
-  {
-    id: "harvest",
-    title: "4 — Récolter",
-    body: "Récolte, cases dorées, puis Faire. Sans moissonneuse : demandez de l’aide, ou achetez la machine.",
-    hint: "Sans silo, le grain se vend tout de suite, moins cher. Un silo permet d’attendre.",
-  },
-  {
-    id: "build",
-    title: "5 — Construire",
-    body: "Onglet Bâtir → un type → l’emprise s’affiche en vert ou rouge → touchez pour poser.",
-    hint: "Le silo est le premier objectif après la vente. Tout est dans le Guide.",
-  },
-  {
-    id: "sell",
-    title: "6 — Vendre et s’entraider",
-    body: "Vendre ouvre l’hôtel des ventes. Vendez tout de suite, ou mettez votre grain en vitrine pour les autres. Pendant que ça pousse, ouvrez Missions et allez aider un voisin.",
-    hint: "L’éleveur achète le foin et le maïs du céréalier.",
-  },
-  {
-    id: "climate",
-    title: "7 — Climat et saisons",
-    body: "Le panneau de droite indique votre ville, votre climat et la saison en cours. Une saison dure 15 minutes et change les rendements.",
-    hint: "Vous êtes prêt — bonne récolte !",
-  },
-];
+/**
+ * Le tutoriel : quatorze étapes montrées, contre huit décrites.
+ *
+ * ## Ce qui n'allait pas
+ *
+ * « Le tuto est beaucoup trop court, il ne montre pas du tout les sections,
+ * les outils, ce qu'il faut faire pour planter, pour nettoyer. » Le reproche
+ * est exact, et il vise deux choses distinctes.
+ *
+ * **Il ne montrait rien.** Huit paragraphes de texte pour un jeu qui se joue
+ * au doigt sur une grille. « Touchez des cases nues, puis le bouton d'or
+ * Faire » est une phrase juste et inutilisable : on n'a jamais vu le bouton
+ * d'or. Chaque étape porte maintenant une petite scène animée où le geste se
+ * fait tout seul, en boucle.
+ *
+ * **Il sautait la moitié du jeu.** Rien sur la barre d'outils — qu'il faut
+ * pourtant régler *avant* de toucher une case —, rien sur le désherbage ni le
+ * déchaumage, rien sur le troupeau, rien sur le personnel. Un joueur qui
+ * suivait le tutoriel jusqu'au bout ignorait quatre des six onglets.
+ *
+ * ## Le geste dépend de l'écran
+ *
+ * On glisse à la souris, on tapote au doigt. Montrer un lasso à quelqu'un qui
+ * joue au téléphone, c'est lui montrer ce qu'il ne peut pas faire. Le texte
+ * *et* l'animation changent donc selon l'appareil.
+ *
+ * ## Quand il s'ouvre
+ *
+ * À l'arrivée sur la ferme, pas à la connexion : voir `App.tsx`. Il se
+ * déclenchait dès qu'un joueur existait, c'est-à-dire pendant l'installation,
+ * derrière l'écran qui la mène — et il ne revenait jamais.
+ */
 
 type Props = {
   open: boolean;
   onClose: () => void;
 };
 
+/** L'écran répond-il au doigt ? Le tutoriel montre alors d'autres gestes. */
+function useTactile(): boolean {
+  return useMemo(() => {
+    try {
+      return window.matchMedia("(pointer: coarse)").matches;
+    } catch {
+      return false;
+    }
+  }, []);
+}
+
 export function TutorialOverlay({ open, onClose }: Props) {
   const [step, setStep] = useState(0);
+  const tactile = useTactile();
 
   useEffect(() => {
     if (open) setStep(0);
   }, [open]);
 
+  /**
+   * Les flèches et Échap.
+   *
+   * Quatorze étapes se parcourent au clavier ou pas du tout : cliquer
+   * « Suivant » treize fois est ce qui fait fermer un tutoriel.
+   */
+  useEffect(() => {
+    if (!open) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "ArrowRight") setStep((x) => Math.min(ETAPES.length - 1, x + 1));
+      else if (e.key === "ArrowLeft") setStep((x) => Math.max(0, x - 1));
+      else if (e.key === "Escape") finir();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open]);
+
   if (!open) return null;
 
-  const s = STEPS[step];
-  const last = step >= STEPS.length - 1;
+  const s = ETAPES[step]!;
+  const dernier = step >= ETAPES.length - 1;
 
-  function finish() {
-    localStorage.setItem(TUTORIAL_KEY, "1");
+  function finir() {
+    try {
+      localStorage.setItem(TUTORIAL_KEY, "1");
+    } catch {
+      /* navigation privée : le tutoriel reviendra, ce n'est pas grave */
+    }
     onClose();
   }
 
   return (
     <div className="tutorial-backdrop" role="dialog" aria-modal="true" aria-labelledby="tut-title">
       <div className="tutorial-card glass">
-        <MenuClose onClose={finish} label="Fermer le tutoriel" />
-        <div className="tutorial-progress">
-          {STEPS.map((_, i) => (
-            <span key={i} className={`tutorial-dot ${i <= step ? "on" : ""}`} />
+        <MenuClose onClose={finir} label="Fermer le tutoriel" />
+
+        <p className="tutorial-chapitre">{s.chapitre}</p>
+        <h2 id="tut-title">{s.titre}</h2>
+
+        <TutorialScene scene={s.scene} tactile={tactile} />
+
+        <p className="tutorial-body">{tactile ? (s.texteTactile ?? s.texte) : s.texte}</p>
+        {s.astuce && <p className="tutorial-hint">{s.astuce}</p>}
+
+        <div className="tutorial-progress" aria-hidden="true">
+          {ETAPES.map((e, i) => (
+            <span key={e.id} className={`tutorial-dot ${i <= step ? "on" : ""}`} />
           ))}
         </div>
         <p className="tutorial-step-label">
-          Étape {step + 1} / {STEPS.length}
+          Étape {step + 1} / {ETAPES.length}
         </p>
-        <h2 id="tut-title">{s.title}</h2>
-        <p className="tutorial-body">{s.body}</p>
-        {s.hint && <p className="tutorial-hint">{s.hint}</p>}
+
         <div className="tutorial-actions">
           {step > 0 && (
             <button type="button" className="ghost" onClick={() => setStep((x) => x - 1)}>
               Retour
             </button>
           )}
-          <button type="button" className="ghost" onClick={finish}>
+          <button type="button" className="ghost" onClick={finir}>
             Passer
           </button>
-          {!last ? (
+          {!dernier ? (
             <button type="button" className="tutorial-next" onClick={() => setStep((x) => x + 1)}>
               Suivant
             </button>
           ) : (
-            <button type="button" className="tutorial-next" onClick={finish}>
+            <button type="button" className="tutorial-next" onClick={finir}>
               Jouer
             </button>
           )}
