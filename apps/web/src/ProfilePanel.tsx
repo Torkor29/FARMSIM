@@ -8,7 +8,7 @@
  */
 
 import { useEffect, useState, type PointerEvent as ReactPointerEvent } from "react";
-import { readAudioPrefs, writeAudioPrefs, type AudioPrefs } from "./audio";
+import { jouerSon, prefsAudio, reglerAudio, type AudioPrefs } from "./audio";
 import {
   qualityChoice,
   qualityDowngraded,
@@ -194,7 +194,7 @@ function Home({
           <button type="button" className="profile-row" onClick={() => onOpen("sound")}>
             <span>
               <strong>Son</strong>
-              <em>Effets et volume</em>
+              <em>Musique, effets, ambiance</em>
             </span>
             <i aria-hidden="true">›</i>
           </button>
@@ -486,22 +486,34 @@ function SoundPage({
   onBack: () => void;
   onClose: () => void;
 }) {
-  const [prefs, setPrefs] = useState<AudioPrefs>(() => readAudioPrefs());
+  const [prefs, setPrefs] = useState<AudioPrefs>(() => prefsAudio());
 
+  /**
+   * Régler, c'est entendre le réglage.
+   *
+   * `reglerAudio` applique le volume au moteur en cours de route, sans
+   * coupure : le joueur bouge le curseur et entend le résultat tout de
+   * suite, au lieu de deviner puis de vérifier plus tard.
+   */
   function set(next: Partial<AudioPrefs>) {
-    setPrefs(writeAudioPrefs(next));
+    setPrefs(reglerAudio(next));
+    // Un repère à l'oreille pour les deux curseurs qu'on ne peut pas juger
+    // en silence. La musique, elle, s'entend d'elle-même.
+    if (next.effets !== undefined || next.volume !== undefined) jouerSon("clic");
+    if (next.ambiance !== undefined) jouerSon("poule");
   }
 
   return (
     <>
       <SubHead title="Son" embedded={embedded} onBack={onBack} onClose={onClose} />
       <p className="profile-hint">
-        Coupe les effets de l’interface. La musique de fond n’est pas encore dans le jeu ; le
-        réglage est déjà là pour le jour où elle arrivera.
+        Trois réglages plutôt qu’un, parce que trois choses très différentes sortent du même
+        haut-parleur. L’ambiance — les bêtes, au loin — part volontairement basse&nbsp;: elle est
+        là pour qu’une ferme ne soit pas muette, pas pour qu’on l’écoute.
       </p>
       <div className="profile-form">
         <label className="profile-switch">
-          <span>Effets sonores</span>
+          <span>Son</span>
           <input
             type="checkbox"
             checked={!prefs.muted}
@@ -509,7 +521,7 @@ function SoundPage({
           />
         </label>
         <label>
-          Volume
+          Volume général
           <input
             type="range"
             min={0}
@@ -519,7 +531,44 @@ function SoundPage({
             onChange={(e) => set({ volume: Number(e.target.value) / 100 })}
           />
         </label>
+        <label>
+          Musique
+          <input
+            type="range"
+            min={0}
+            max={100}
+            value={Math.round(prefs.musique * 100)}
+            disabled={prefs.muted}
+            onChange={(e) => set({ musique: Number(e.target.value) / 100 })}
+          />
+        </label>
+        <label>
+          Effets
+          <input
+            type="range"
+            min={0}
+            max={100}
+            value={Math.round(prefs.effets * 100)}
+            disabled={prefs.muted}
+            onChange={(e) => set({ effets: Number(e.target.value) / 100 })}
+          />
+        </label>
+        <label>
+          Ambiance
+          <input
+            type="range"
+            min={0}
+            max={100}
+            value={Math.round(prefs.ambiance * 100)}
+            disabled={prefs.muted}
+            onChange={(e) => set({ ambiance: Number(e.target.value) / 100 })}
+          />
+        </label>
       </div>
+      <p className="profile-hint">
+        La musique change avec la saison, et les deux se croisent en fondu plutôt que de se couper
+        net. Elle ne se répète jamais&nbsp;: chaque mesure est composée au moment de la jouer.
+      </p>
     </>
   );
 }
