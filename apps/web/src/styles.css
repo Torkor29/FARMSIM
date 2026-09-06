@@ -977,8 +977,11 @@ button.ghost {
   display: grid;
   place-items: center;
   padding: 1rem;
-  background: rgba(24, 44, 38, 0.6);
-  backdrop-filter: blur(4px);
+  /* Un voile franc, plus dense que celui des autres calques (0,34 pour une
+     fenêtre) : une confirmation doit se voir tout de suite, et couper
+     visuellement ce qu'elle recouvre. « Que la confirmation soit apparente. » */
+  background: rgba(18, 34, 29, 0.72);
+  backdrop-filter: blur(6px);
   animation: veil-in var(--veil-ms) var(--menu-ease) both;
 }
 .confirm-card {
@@ -987,7 +990,20 @@ button.ghost {
   border-radius: var(--r-lg);
   display: grid;
   gap: 0.5rem;
-  animation: panel-in var(--menu-ms) var(--menu-ease) both;
+  /* Un liseré et une ombre portée : posée sur une fenêtre déjà claire, la
+     carte se confondait avec elle. */
+  border: 2px solid var(--accent);
+  box-shadow: 0 18px 48px rgba(12, 26, 21, 0.45);
+  /* Elle arrive en grandissant plutôt qu'en glissant : le regard va au centre
+     au lieu de suivre un mouvement latéral. */
+  animation: confirm-in 0.22s var(--menu-ease) both;
+}
+@keyframes confirm-in {
+  from { opacity: 0; transform: scale(0.94); }
+  to { opacity: 1; transform: none; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .confirm-card { animation: none; }
 }
 .confirm-card h3 { margin: 0; font-size: 1.15rem; color: var(--teal-700); }
 

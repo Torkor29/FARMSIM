@@ -386,6 +386,7 @@ import {
   CODE_INUTILISABLE,
   codeCorrespond,
   doitEtreMigre,
+  MDP_MIN,
   hacherCode,
 } from "./access-code.js";
 import { empreinteSecours, nouveauCodeSecours, secoursCorrespond } from "./recovery.js";
@@ -4549,7 +4550,19 @@ const registerSchema = z.object({
   /** Choisie plus tard, pendant l'installation guidée */
   specialization: z.enum(["CEREALIER", "ELEVEUR"]).optional(),
   parcelId: z.string().optional(),
-  accessCode: z.string().min(3).max(32).optional(),
+  /**
+   * Un mot de passe, obligatoire, et d'au moins huit signes.
+   *
+   * Il était **facultatif**, et l'inscription retombait alors sur le littéral
+   * `"ferme"` : tout compte créé sans le préciser s'ouvrait avec un mot que
+   * n'importe qui devine. Le minimum était de trois signes, ce qui n'est pas
+   * un mot de passe mais un code de casier.
+   *
+   * Huit est le plancher usuel, et il ne s'applique qu'ici et au changement :
+   * la connexion accepte toujours ce qui existe, sans quoi les comptes créés
+   * avant se retrouveraient dehors.
+   */
+  accessCode: z.string().min(MDP_MIN).max(72),
 });
 
 app.post("/auth/register", async (req, res) => {
@@ -4568,7 +4581,8 @@ app.post("/auth/register", async (req, res) => {
           specialization: specialization ?? "CEREALIER",
           // Haché dès l'inscription : un compte créé aujourd'hui n'a jamais
           // de code en clair en base, pas même le temps d'une connexion.
-          accessCode: await hacherCode(accessCode ?? "ferme"),
+          // Plus de repli : le schéma l'exige, il est là.
+          accessCode: await hacherCode(accessCode),
           lastSeenAt: new Date(),
         },
       });
@@ -4757,7 +4771,7 @@ app.post("/auth/recover", async (req, res) => {
     .object({
       email: z.string().email(),
       recoveryCode: z.string().min(1).max(64),
-      accessCode: z.string().min(3).max(32),
+      accessCode: z.string().min(MDP_MIN).max(72),
     })
     .safeParse(req.body);
   if (!body.success) {
@@ -4800,7 +4814,7 @@ const patchMeSchema = z
   .object({
     displayName: z.string().min(2).max(32).optional(),
     email: z.string().email().optional(),
-    accessCode: z.string().min(3).max(32).optional(),
+    accessCode: z.string().min(MDP_MIN).max(72).optional(),
     currentAccessCode: z.string().min(1).max(32).optional(),
   })
   .refine(

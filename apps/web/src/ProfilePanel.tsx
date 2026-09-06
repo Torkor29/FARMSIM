@@ -4,7 +4,7 @@
  * L'ancien tiroir empilait une fiche (niveau, trésorerie, badge développeur)
  * et trois gros boutons. L'argent est déjà dans le bandeau ; ici on range
  * les **réglages**, avec une croix pour partir et des pages pour changer
- * le pseudo, l'e-mail, le code d'accès, et le son.
+ * le pseudo, l'e-mail, le mot de passe, et le son.
  */
 
 import { useEffect, useState, type PointerEvent as ReactPointerEvent } from "react";
@@ -187,7 +187,7 @@ function Home({
           <button type="button" className="profile-row" onClick={() => onOpen("account")}>
             <span>
               <strong>Compte</strong>
-              <em>Pseudo, e-mail, code d’accès</em>
+              <em>Pseudo, e-mail, mot de passe</em>
             </span>
             <i aria-hidden="true">›</i>
           </button>
@@ -333,7 +333,7 @@ function AccountPage({
     <>
       <SubHead title="Compte" embedded={embedded} onBack={onBack} onClose={onClose} />
       <p className="profile-hint">
-        L’e-mail est votre identifiant de connexion. Le code d’accès ouvre la ferme — ce n’est pas
+        L’e-mail est votre identifiant de connexion. Le mot de passe ouvre la ferme — ce n’est pas
         l’identifiant technique du serveur, et il n’y a pas à le changer.
       </p>
       <form
@@ -362,13 +362,13 @@ function AccountPage({
           />
         </label>
         <label>
-          Nouveau code d’accès
+          Nouveau mot de passe
           <input
             type="password"
             value={accessCode}
             onChange={(e) => setAccess(e.target.value)}
-            minLength={3}
-            maxLength={32}
+            minLength={8}
+            maxLength={72}
             autoComplete="new-password"
             placeholder="Laisser vide pour ne pas changer"
           />

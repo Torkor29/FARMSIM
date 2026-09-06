@@ -178,7 +178,7 @@ describe("le tableau des voisins", () => {
         email: `contrat-${Date.now()}-${Math.random().toString(36).slice(2)}@test.fr`,
         displayName: "Preneur",
         specialization: "CEREALIER",
-        accessCode: "ferme",
+        accessCode: "ferme-2026",
       },
     });
     assert.equal(inscription.statut, 201, inscription.texte);

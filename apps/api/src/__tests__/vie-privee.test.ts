@@ -56,7 +56,7 @@ async function appel(chemin: string, opts: { corps?: unknown; jeton?: string } =
 async function inscrire(nom: string) {
   const email = `${nom}-${Date.now()}-${Math.random().toString(36).slice(2)}@test.fr`;
   const r = await appel("/auth/register", {
-    corps: { email, displayName: nom, specialization: "CEREALIER", accessCode: "ferme" },
+    corps: { email, displayName: nom, specialization: "CEREALIER", accessCode: "ferme-2026" },
   });
   assert.equal(r.statut, 201, r.texte);
   const b = r.corps as unknown as { token: string; player: { id: string } };

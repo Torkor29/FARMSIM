@@ -69,6 +69,16 @@ import bcrypt from "bcryptjs";
  * puis un toutes les trente secondes. Une attaque par dictionnaire ne passe
  * pas par là ; ce coût protège la base **volée**, pas la porte d'entrée.
  */
+/**
+ * Longueur minimale d'un mot de passe `[GD]`.
+ *
+ * Trois signes étaient acceptés — un code de casier, pas un mot de passe. Le
+ * plancher ne s'applique qu'à l'inscription et au changement : la connexion
+ * accepte ce qui existe déjà, sans quoi les comptes d'avant se retrouveraient
+ * dehors du jour au lendemain.
+ */
+export const MDP_MIN = 8;
+
 export const BCRYPT_COST = 12;
 
 /**

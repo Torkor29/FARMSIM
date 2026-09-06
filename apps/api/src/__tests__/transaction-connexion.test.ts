@@ -78,7 +78,7 @@ async function joueurInstalle(nom: string) {
       email: `${nom}-${Date.now()}-${Math.random().toString(36).slice(2)}@test.fr`,
       displayName: nom,
       specialization: "CEREALIER",
-      accessCode: "ferme",
+      accessCode: "ferme-2026",
     },
   });
   assert.equal(inscription.statut, 201, JSON.stringify(inscription.corps));

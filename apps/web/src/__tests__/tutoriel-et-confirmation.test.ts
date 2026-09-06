@@ -58,6 +58,33 @@ describe("la fenêtre de confirmation", () => {
     expect(plusHaut).toBe(confirmation);
   });
 
+  /**
+   * Le `z-index` ne suffisait pas, et c'est pour ça que le défaut est revenu.
+   *
+   * Un `z-index` ne vaut que dans son **contexte d'empilement**. La
+   * confirmation vivait dans l'arbre du jeu, quand la fenêtre et la fiche
+   * machine se portent sur `document.body` : il suffisait qu'un ancêtre gagne
+   * un `transform`, un `filter` ou une `opacity` — ce qu'une animation de
+   * panneau fait couramment — pour que le 200 cesse d'être comparable au 30
+   * de la fenêtre.
+   */
+  it("sort de l'arbre du jeu, comme les autres calques hauts", () => {
+    const source = readFileSync("src/ConfirmDialog.tsx", "utf8");
+    expect(source).toMatch(/createPortal\(/);
+    expect(source).toMatch(/document\.body/);
+  });
+
+  it("se voit : voile dense, liseré, ombre portée", () => {
+    // « Que la confirmation soit apparente. » Posée sur une fenêtre déjà
+    // claire, la carte s'y confondait.
+    const bloc = /\.confirm-backdrop\s*\{[^}]*\}/s.exec(STYLES)![0];
+    const opacite = Number(/rgba\([^)]*,\s*([\d.]+)\)/.exec(bloc)![1]);
+    const fenetre = /\.win-backdrop\s*\{[^}]*\}/s.exec(STYLES)![0];
+    const opaciteFenetre = Number(/rgba\([^)]*,\s*([\d.]+)\)/.exec(fenetre)![1]);
+    expect(opacite).toBeGreaterThan(opaciteFenetre);
+    expect(STYLES).toMatch(/\.confirm-card\s*\{[^}]*border:[^;]*accent/s);
+  });
+
   it("garde de la marge pour un écran à venir", () => {
     // Un calque neuf doit pouvoir monter sans repasser devant par mégarde.
     const confirmation = zIndexDe("confirm-backdrop");

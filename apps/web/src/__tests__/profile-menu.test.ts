@@ -44,10 +44,10 @@ describe("le menu du joueur", () => {
     expect(APP).toMatch(/method: "PATCH"/);
   });
 
-  it("laisse changer pseudo, e-mail et code d’accès", () => {
+  it("laisse changer pseudo, e-mail et mot de passe", () => {
     expect(PROFILE).toMatch(/Pseudo/);
     expect(PROFILE).toMatch(/E-mail/);
-    expect(PROFILE).toMatch(/Nouveau code d’accès/);
+    expect(PROFILE).toMatch(/Nouveau mot de passe/);
     expect(PROFILE).toMatch(/currentAccessCode/);
   });
 });

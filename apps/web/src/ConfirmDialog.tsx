@@ -1,4 +1,5 @@
 import { useEffect, useRef } from "react";
+import { createPortal } from "react-dom";
 
 export type ConfirmRequest = {
   title: string;
@@ -46,7 +47,23 @@ export function ConfirmDialog({ request, onCancel }: Props) {
 
   if (!request) return null;
 
-  return (
+  /*
+   * Portée sur le corps du document, comme les deux autres calques hauts.
+   *
+   * `Window` et `MachineSheet` se portent déjà sur `document.body` ; la
+   * confirmation, elle, restait dans l'arbre du jeu. Un `z-index` n'a de
+   * valeur que dans son **contexte d'empilement** : il suffit qu'un ancêtre
+   * gagne un `transform`, un `filter` ou une `opacity` — ce qu'une animation
+   * de panneau fait couramment — pour que le 200 ci-dessous ne soit plus
+   * comparable au 30 de la fenêtre, et que la confirmation se retrouve
+   * derrière sans que rien n'ait changé dans sa feuille de style.
+   *
+   * Signalé deux fois en jouant : « la pop-up passe derrière, je ne peux pas
+   * confirmer ». Monter le `z-index` traitait le symptôme du jour ; sortir de
+   * l'arbre traite la cause, et met la confirmation dans le même plan que ce
+   * qu'elle doit recouvrir.
+   */
+  return createPortal(
     <div
       className="confirm-backdrop"
       role="dialog"
@@ -74,6 +91,7 @@ export function ConfirmDialog({ request, onCancel }: Props) {
           </button>
         </div>
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }

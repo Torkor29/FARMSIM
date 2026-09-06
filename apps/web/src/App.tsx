@@ -2755,7 +2755,7 @@ export function App() {
   }
 
   /**
-   * Code d'accès oublié : le code de secours en choisit un nouveau.
+   * Mot de passe oublié : le code de secours en choisit un nouveau.
    *
    * La reprise en main est complète — le serveur ferme les sessions ouvertes
    * avec l'ancien code et en rend un neuf ici. Le joueur entre donc
@@ -2780,7 +2780,7 @@ export function App() {
       // Le code qui vient de servir est brûlé : celui-ci le remplace.
       if (r.recoveryCode) setRecoveryCode(r.recoveryCode);
       await refreshMeta();
-      setMsg("Nouveau code d'accès enregistré");
+      setMsg("Nouveau mot de passe enregistré");
       setAuthMode("login");
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e));

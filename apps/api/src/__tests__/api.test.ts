@@ -173,7 +173,7 @@ async function inscrire(nom: string) {
         .toLowerCase()}-${Date.now()}-${Math.random().toString(36).slice(2)}@test.fr`,
       displayName: nom,
       specialization: "CEREALIER",
-      accessCode: "ferme",
+      accessCode: "ferme-2026",
     },
   });
   assert.equal(r.statut, 201, `inscription refusée : ${JSON.stringify(r.corps)}`);
@@ -3151,7 +3151,7 @@ describe("code d'accès haché", () => {
 
     const r = await appel("/auth/login", {
       methode: "POST",
-      corps: { email: moi.email, accessCode: "ferme" },
+      corps: { email: moi.email, accessCode: "ferme-2026" },
     });
     assert.equal(r.statut, 200, JSON.stringify(r.corps));
     // Re-hacher à chaque connexion coûterait un bcrypt pour rien, et surtout
@@ -3232,7 +3232,7 @@ describe("code d'accès haché", () => {
     assert.equal(
       (await appel("/auth/login", {
         methode: "POST",
-        corps: { email: moi.email, accessCode: "ferme" },
+        corps: { email: moi.email, accessCode: "ferme-2026" },
       })).statut,
       401,
     );
@@ -3288,7 +3288,7 @@ describe("code de secours", () => {
     // le joueur cesserait de valoir à chaque visite.
     const r = await appel("/auth/login", {
       methode: "POST",
-      corps: { email: moi.email, accessCode: "ferme" },
+      corps: { email: moi.email, accessCode: "ferme-2026" },
     });
     assert.equal(r.statut, 200);
     assert.equal((r.corps as { recoveryCode?: string }).recoveryCode, undefined);
@@ -3312,7 +3312,7 @@ describe("code de secours", () => {
     // L'ancien code ne vaut plus, le nouveau vaut.
     const ancien = await appel("/auth/login", {
       methode: "POST",
-      corps: { email: moi.email, accessCode: "ferme" },
+      corps: { email: moi.email, accessCode: "ferme-2026" },
     });
     assert.equal(ancien.statut, 401);
     const neuf = await appel("/auth/login", {
@@ -3388,7 +3388,7 @@ describe("code de secours", () => {
     // Et le compte visé n'a pas bougé.
     const encore = await appel("/auth/login", {
       methode: "POST",
-      corps: { email: moi.email, accessCode: "ferme" },
+      corps: { email: moi.email, accessCode: "ferme-2026" },
     });
     assert.equal(encore.statut, 200);
   });
@@ -3443,7 +3443,7 @@ describe("mise à jour du compte", () => {
 
     const ancien = await appel("/auth/login", {
       methode: "POST",
-      corps: { email: moi.email, accessCode: "ferme" },
+      corps: { email: moi.email, accessCode: "ferme-2026" },
     });
     assert.equal(ancien.statut, 401);
     const ok = await appel("/auth/login", {

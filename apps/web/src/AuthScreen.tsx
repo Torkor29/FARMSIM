@@ -100,9 +100,9 @@ export function AuthScreen({
 
           {isRecover && (
             <p className="gate-note">
-              <strong>Code d'accès oublié.</strong> Il n'y a pas d'envoi d'e-mail sur ce
+              <strong>Mot de passe oublié.</strong> Il n'y a pas d'envoi d'e-mail sur ce
               serveur : c'est le code de secours remis à la création de votre ferme qui
-              vous rouvre la porte. Vous choisissez un nouveau code d'accès dans la foulée.
+              vous rouvre la porte. Vous choisissez un nouveau mot de passe dans la foulée.
             </p>
           )}
 
@@ -158,24 +158,24 @@ export function AuthScreen({
             <label className="field">
               <span className="field-label">
                 {isRecover
-                  ? "Nouveau code d'accès"
+                  ? "Nouveau mot de passe"
                   : isRegister
-                    ? "Choisissez un code d'accès"
-                    : "Code d'accès"}
+                    ? "Choisissez un mot de passe"
+                    : "Mot de passe"}
               </span>
               <span className="field-row">
                 <input
                   type={showCode ? "text" : "password"}
                   value={accessCode}
                   onChange={(e) => onAccessCodeChange(e.target.value)}
-                  placeholder={isRegister || isRecover ? "au moins 3 caractères" : "votre code"}
+                  placeholder={isRegister || isRecover ? "au moins 8 caractères" : "votre mot de passe"}
                   autoComplete={isRegister || isRecover ? "new-password" : "current-password"}
                 />
                 <button
                   type="button"
                   className="field-toggle"
                   onClick={() => setShowCode((v) => !v)}
-                  aria-label={showCode ? "Masquer le code" : "Afficher le code"}
+                  aria-label={showCode ? "Masquer le mot de passe" : "Afficher le mot de passe"}
                 >
                   {showCode ? "Masquer" : "Voir"}
                 </button>
@@ -197,7 +197,7 @@ export function AuthScreen({
               {busy
                 ? "Un instant…"
                 : isRecover
-                  ? "Changer mon code d'accès"
+                  ? "Changer mon mot de passe"
                   : isRegister
                     ? "Créer ma ferme"
                     : "Reprendre ma ferme"}
@@ -212,7 +212,7 @@ export function AuthScreen({
                 </button>
               ) : (
                 <button type="button" className="link" onClick={() => onAuthModeChange("recover")}>
-                  Code d'accès oublié ?
+                  Mot de passe oublié ?
                 </button>
               )}
             </p>
