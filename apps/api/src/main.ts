@@ -387,6 +387,7 @@ import {
   codeCorrespond,
   doitEtreMigre,
   MDP_MIN,
+  MDP_MAX,
   hacherCode,
 } from "./access-code.js";
 import { empreinteSecours, nouveauCodeSecours, secoursCorrespond } from "./recovery.js";
@@ -4562,7 +4563,7 @@ const registerSchema = z.object({
    * la connexion accepte toujours ce qui existe, sans quoi les comptes créés
    * avant se retrouveraient dehors.
    */
-  accessCode: z.string().min(MDP_MIN).max(72),
+  accessCode: z.string().min(MDP_MIN).max(MDP_MAX),
 });
 
 app.post("/auth/register", async (req, res) => {
@@ -4636,7 +4637,6 @@ app.post("/auth/register", async (req, res) => {
     res.status(201).json({
       token,
       player,
-      accessCodeHint: accessCode ?? "ferme",
       // Remis une seule fois, ici. Il n'y a pas d'envoi d'e-mail sur ce
       // serveur : sans ce code noté quelque part, un code d'accès oublié
       // signifie une ferme perdue.
@@ -4771,7 +4771,7 @@ app.post("/auth/recover", async (req, res) => {
     .object({
       email: z.string().email(),
       recoveryCode: z.string().min(1).max(64),
-      accessCode: z.string().min(MDP_MIN).max(72),
+      accessCode: z.string().min(MDP_MIN).max(MDP_MAX),
     })
     .safeParse(req.body);
   if (!body.success) {
@@ -4814,7 +4814,7 @@ const patchMeSchema = z
   .object({
     displayName: z.string().min(2).max(32).optional(),
     email: z.string().email().optional(),
-    accessCode: z.string().min(MDP_MIN).max(72).optional(),
+    accessCode: z.string().min(MDP_MIN).max(MDP_MAX).optional(),
     currentAccessCode: z.string().min(1).max(32).optional(),
   })
   .refine(

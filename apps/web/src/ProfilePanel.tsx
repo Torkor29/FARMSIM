@@ -16,6 +16,7 @@ import {
   type QualityChoice,
 } from "./render-quality";
 import { MenuClose } from "./ui/MenuClose";
+import { MDP_AIDE, MDP_MAX, MDP_MIN, motDePasseValide } from "@farmsim/shared";
 
 export type ProfilePlayer = {
   displayName: string;
@@ -305,7 +306,7 @@ function AccountPage({
     (nameDirty || emailDirty || codeDirty) &&
     displayName.trim().length >= 2 &&
     email.includes("@") &&
-    (!codeDirty || accessCode.length >= 3) &&
+    (!codeDirty || motDePasseValide(accessCode)) &&
     (!needsCurrent || currentAccessCode.length >= 1);
 
   async function save() {
@@ -367,11 +368,12 @@ function AccountPage({
             type="password"
             value={accessCode}
             onChange={(e) => setAccess(e.target.value)}
-            minLength={8}
-            maxLength={72}
+            minLength={MDP_MIN}
+            maxLength={MDP_MAX}
             autoComplete="new-password"
             placeholder="Laisser vide pour ne pas changer"
           />
+          <span className="field-help">{MDP_AIDE}</span>
         </label>
         {needsCurrent && (
           <label>

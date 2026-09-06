@@ -70,14 +70,10 @@ import bcrypt from "bcryptjs";
  * pas par là ; ce coût protège la base **volée**, pas la porte d'entrée.
  */
 /**
- * Longueur minimale d'un mot de passe `[GD]`.
- *
- * Trois signes étaient acceptés — un code de casier, pas un mot de passe. Le
- * plancher ne s'applique qu'à l'inscription et au changement : la connexion
- * accepte ce qui existe déjà, sans quoi les comptes d'avant se retrouveraient
- * dehors du jour au lendemain.
+ * Le plancher et le plafond viennent du paquet partagé : l'écran d'accueil
+ * doit annoncer exactement la règle que cette route fait respecter.
  */
-export const MDP_MIN = 8;
+export { MDP_MIN, MDP_MAX } from "@farmsim/shared";
 
 export const BCRYPT_COST = 12;
 

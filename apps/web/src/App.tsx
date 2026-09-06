@@ -640,7 +640,13 @@ export function App() {
   const [recoveryCode, setRecoveryCode] = useState<string | null>(null);
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
-  const [accessCode, setAccessCode] = useState("ferme");
+  /**
+   * Vide au départ.
+   *
+   * Le champ arrivait pré-rempli avec « ferme » : un joueur qui passait
+   * l'écran sans y toucher repartait avec ce mot-là, comme tous les autres.
+   */
+  const [accessCode, setAccessCode] = useState("");
   const [activeParcelId, setActiveParcelId] = useState<string | null>(null);
   /**
    * La parcelle réellement affichée, lisible depuis une requête en vol.
@@ -2660,7 +2666,9 @@ export function App() {
         body: JSON.stringify({
           email,
           displayName: name.trim(),
-          accessCode: accessCode || "ferme",
+          // Pas de repli : un compte créé avec un mot de passe deviné
+          // d'avance n'est pas un compte protégé, et la route est publique.
+          accessCode,
         }),
       });
       applyAuth(r);
@@ -2738,7 +2746,7 @@ export function App() {
         recoveryCode?: string;
       }>("/auth/login", {
         method: "POST",
-        body: JSON.stringify({ email, accessCode: accessCode || "ferme" }),
+        body: JSON.stringify({ email, accessCode }),
       });
       await loadWorld().catch(() => undefined);
       applyAuth(r);

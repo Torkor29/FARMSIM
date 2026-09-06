@@ -1,6 +1,14 @@
 import { useState } from "react";
 
-import { RECOVERY_HELP, formatRecovery, isRecoveryCode } from "@farmsim/shared";
+import {
+  MDP_AIDE,
+  MDP_MAX,
+  MDP_MIN,
+  RECOVERY_HELP,
+  formatRecovery,
+  isRecoveryCode,
+  motDePasseValide,
+} from "@farmsim/shared";
 
 export type AuthMode = "register" | "login" | "recover";
 
@@ -48,10 +56,14 @@ export function AuthScreen({
   const [showCode, setShowCode] = useState(false);
   const isRegister = authMode === "register";
   const isRecover = authMode === "recover";
+  // Le plancher ne vaut qu'aux endroits où l'on *pose* un mot de passe. La
+  // connexion accepte ce qui existe : les comptes d'avant en ont de plus
+  // courts, et griser leur bouton les enfermerait dehors sans un mot
+  // d'explication.
   const canSubmit = isRecover
-    ? email.includes("@") && isRecoveryCode(recoveryInput) && accessCode.length >= 3
+    ? email.includes("@") && isRecoveryCode(recoveryInput) && motDePasseValide(accessCode)
     : isRegister
-      ? name.trim().length >= 2 && email.includes("@") && accessCode.length >= 3
+      ? name.trim().length >= 2 && email.includes("@") && motDePasseValide(accessCode)
       : email.includes("@") && accessCode.length >= 1;
 
   function submit() {
@@ -168,8 +180,14 @@ export function AuthScreen({
                   type={showCode ? "text" : "password"}
                   value={accessCode}
                   onChange={(e) => onAccessCodeChange(e.target.value)}
-                  placeholder={isRegister || isRecover ? "au moins 8 caractères" : "votre mot de passe"}
+                  placeholder={
+                    isRegister || isRecover
+                      ? `au moins ${MDP_MIN} caractères`
+                      : "votre mot de passe"
+                  }
                   autoComplete={isRegister || isRecover ? "new-password" : "current-password"}
+                  minLength={isRegister || isRecover ? MDP_MIN : undefined}
+                  maxLength={MDP_MAX}
                 />
                 <button
                   type="button"
@@ -180,11 +198,7 @@ export function AuthScreen({
                   {showCode ? "Masquer" : "Voir"}
                 </button>
               </span>
-              {isRegister && (
-                <span className="field-help">
-                  Ce code remplace le mot de passe. Notez-le : il vous servira à revenir.
-                </span>
-              )}
+              {(isRegister || isRecover) && <span className="field-help">{MDP_AIDE}</span>}
             </label>
 
             {(msg || err) && (

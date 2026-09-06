@@ -3216,7 +3216,7 @@ describe("code d'accès haché", () => {
     const moi = await inscrire("Code Change");
     const r = await appel("/auth/me", {
       methode: "PATCH",
-      corps: { accessCode: "code-tout-neuf", currentAccessCode: "ferme" },
+      corps: { accessCode: "code-tout-neuf", currentAccessCode: "ferme-2026" },
       jeton: moi.jeton,
     });
     assert.equal(r.statut, 200, JSON.stringify(r.corps));
@@ -3327,7 +3327,7 @@ describe("code de secours", () => {
     const moi = await inscrire("Secours Brule");
     const un = await appel("/auth/recover", {
       methode: "POST",
-      corps: { email: moi.email, recoveryCode: moi.secours, accessCode: "code-un" },
+      corps: { email: moi.email, recoveryCode: moi.secours, accessCode: "code-secours-un" },
     });
     assert.equal(un.statut, 200);
     const suivant = (un.corps as { recoveryCode?: string }).recoveryCode;
@@ -3335,13 +3335,13 @@ describe("code de secours", () => {
 
     const rejoue = await appel("/auth/recover", {
       methode: "POST",
-      corps: { email: moi.email, recoveryCode: moi.secours, accessCode: "code-deux" },
+      corps: { email: moi.email, recoveryCode: moi.secours, accessCode: "code-secours-deux" },
     });
     assert.equal(rejoue.statut, 401);
 
     const bon = await appel("/auth/recover", {
       methode: "POST",
-      corps: { email: moi.email, recoveryCode: suivant, accessCode: "code-trois" },
+      corps: { email: moi.email, recoveryCode: suivant, accessCode: "code-secours-trois" },
     });
     assert.equal(bon.statut, 200);
   });
@@ -3434,7 +3434,7 @@ describe("mise à jour du compte", () => {
       corps: {
         email: neuf,
         accessCode: "nouveau-code",
-        currentAccessCode: "ferme",
+        currentAccessCode: "ferme-2026",
       },
     });
     assert.equal(r.statut, 200, JSON.stringify(r.corps));
@@ -3459,7 +3459,7 @@ describe("mise à jour du compte", () => {
     const r = await appel("/auth/me", {
       methode: "PATCH",
       jeton: a.jeton,
-      corps: { email: b.email, currentAccessCode: "ferme" },
+      corps: { email: b.email, currentAccessCode: "ferme-2026" },
     });
     assert.equal(r.statut, 409);
   });
