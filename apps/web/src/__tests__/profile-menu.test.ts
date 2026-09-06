@@ -1,5 +1,5 @@
 import fs from "node:fs";
-import { parseAudioPrefs, writeAudioPrefs, readAudioPrefs } from "../audio";
+import { parseAudioPrefs, writeAudioPrefs, readAudioPrefs, DEFAULT_AUDIO } from "../audio";
 
 const APP = fs.readFileSync("src/App.tsx", "utf8");
 const PROFILE = fs.readFileSync("src/ProfilePanel.tsx", "utf8");
@@ -54,9 +54,21 @@ describe("le menu du joueur", () => {
 
 describe("les préférences de son", () => {
   it("lisent un JSON malformé comme le défaut", () => {
-    expect(parseAudioPrefs(null)).toEqual({ muted: false, volume: 0.7 });
-    expect(parseAudioPrefs("{")).toEqual({ muted: false, volume: 0.7 });
-    expect(parseAudioPrefs('{"muted":true,"volume":0.2}')).toEqual({ muted: true, volume: 0.2 });
+    expect(parseAudioPrefs(null)).toEqual(DEFAULT_AUDIO);
+    expect(parseAudioPrefs("{")).toEqual(DEFAULT_AUDIO);
+  });
+
+  /**
+   * Une partie enregistrée avant les trois bus n'a que `muted` et `volume`.
+   * Elle doit garder son volume et hériter du reste, sinon le joueur retrouve
+   * le son à fond au premier lancement d'après mise à jour.
+   */
+  it("relisent l'ancien format sans rien perdre", () => {
+    expect(parseAudioPrefs('{"muted":true,"volume":0.2}')).toEqual({
+      ...DEFAULT_AUDIO,
+      muted: true,
+      volume: 0.2,
+    });
   });
 
   it("bornent le volume et tiennent dans le stockage", () => {
@@ -73,8 +85,8 @@ describe("les préférences de son", () => {
       key: () => null,
       length: 0,
     };
-    const saved = writeAudioPrefs({ muted: true, volume: 2 });
-    expect(saved).toEqual({ muted: true, volume: 1 });
-    expect(readAudioPrefs()).toEqual({ muted: true, volume: 1 });
+    const saved = writeAudioPrefs({ muted: true, volume: 2, ambiance: -3 });
+    expect(saved).toEqual({ ...DEFAULT_AUDIO, muted: true, volume: 1, ambiance: 0 });
+    expect(readAudioPrefs()).toEqual({ ...DEFAULT_AUDIO, muted: true, volume: 1, ambiance: 0 });
   });
 });

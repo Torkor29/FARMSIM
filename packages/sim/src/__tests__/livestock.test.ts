@@ -5,6 +5,7 @@ import {
   collectCapCycles,
   LIVESTOCK_CYCLE_MS,
   rationToServe,
+  rationCycles,
   feedAutonomyMs,
   troughCapacity,
   TROUGH_REAL_DAYS,
@@ -837,5 +838,66 @@ describe("scénario complet — l’étable nue contre l’étable équipée", (
     expect(feedConsumption({ herdSize: 20, grazing: true, barnLevel: 2 })).toBeLessThan(
       feedConsumption({ herdSize: 20, grazing: false, barnLevel: 2 }),
     );
+  });
+});
+
+/**
+ * La mangeoire, et le clic qui la remplit.
+ *
+ * `rationToServe` était importé par ce fichier depuis le début et n'y était
+ * jamais éprouvé. C'est par là que le défaut est passé : la fonction visait
+ * un jour réel quand la mangeoire en tient deux, et rien ne le contredisait.
+ */
+describe("remplir la mangeoire", () => {
+  const besoin = 420; // un lot de trente vaches, en unités par cycle
+
+  it("remplit jusqu'au bord en une fois", () => {
+    // Le reproche, tel qu'il a été formulé en jouant : « quand tu veux
+    // remplir le truc de bouffe, faut cliquer 300 000 fois ».
+    expect(rationToServe({ besoinParCycle: besoin, feedStock: 0 })).toBeCloseTo(
+      troughCapacity(besoin),
+      6,
+    );
+  });
+
+  it("déduit ce qui reste dans l'auge", () => {
+    const capacite = troughCapacity(besoin);
+    const moitie = capacite / 2;
+    expect(rationToServe({ besoinParCycle: besoin, feedStock: moitie })).toBeCloseTo(moitie, 6);
+  });
+
+  /**
+   * Le cœur du défaut : à moitié pleine, l'auge recevait zéro. L'écran
+   * servait alors son plancher de cent kilos, la jauge ne bougeait pas, et le
+   * joueur recliquait — indéfiniment.
+   */
+  it("sert encore quelque chose au-delà d'un jour de réserve", () => {
+    const unJour = besoin * rationCycles();
+    const reste = rationToServe({ besoinParCycle: besoin, feedStock: unJour });
+    expect(reste).toBeGreaterThan(0);
+    // Il reste exactement le second jour, celui qui était inatteignable.
+    expect(reste).toBeCloseTo(unJour * (TROUGH_REAL_DAYS - 1), 6);
+  });
+
+  it("ne sert rien quand l'auge est pleine", () => {
+    const capacite = troughCapacity(besoin);
+    expect(rationToServe({ besoinParCycle: besoin, feedStock: capacite })).toBe(0);
+    // Et pas de quantité négative si le lot a plus que sa capacité.
+    expect(rationToServe({ besoinParCycle: besoin, feedStock: capacite * 2 })).toBe(0);
+  });
+
+  /**
+   * Un plein doit tenir le temps annoncé par la capacité. C'est ce lien qui
+   * s'était rompu : on remplissait pour un jour une auge décrite comme en
+   * tenant deux.
+   */
+  it("donne au plein l'autonomie que la capacité promet", () => {
+    const plein = rationToServe({ besoinParCycle: besoin, feedStock: 0 });
+    const ms = feedAutonomyMs({ besoinParCycle: besoin, feedStock: plein });
+    expect(ms).toBeCloseTo(TROUGH_REAL_DAYS * 24 * 60 * 60 * 1000, -3);
+  });
+
+  it("ne sert rien à un lot sans bêtes", () => {
+    expect(rationToServe({ besoinParCycle: 0, feedStock: 0 })).toBe(0);
   });
 });

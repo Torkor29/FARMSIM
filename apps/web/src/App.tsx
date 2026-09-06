@@ -181,7 +181,14 @@ const SEASON_HINTS: Record<Season, string> = {
 };
 import { DevPanel, type DevGrant } from "./DevPanel";
 import { NO_ALERTS, tabBadge, useAwayAlerts, useNotificationState, type FarmAlerts } from "./use-alerts";
-import { playUiSound } from "./audio";
+import {
+  jouerSon,
+  playUiSound,
+  reglerCheptel,
+  reveillerAudio,
+  saisonAudio,
+  type SonId,
+} from "./audio";
 import { ProfilePanel } from "./ProfilePanel";
 import { MenuClose } from "./ui/MenuClose";
 
@@ -594,7 +601,28 @@ function harvestGrainNote(r: {
   return `Récolte ${total} t · ${r.soldTons.toFixed(2)} t vendues (silo plein)${money}${hay}`;
 }
 
-/** Sons UI : voir `audio.ts` — coupés si le joueur les a coupés. */
+/**
+ * Le bruit que fait chaque travail.
+ *
+ * On écoute le **travail**, pas l'outil : déchaumer et labourer sont deux
+ * outils différents et le même geste — de la terre qu'on retourne. Faucher et
+ * moissonner, pareil. Deux sons de moins à écrire, et surtout deux sons de
+ * moins à distinguer à l'oreille pour rien.
+ */
+const SON_DU_TRAVAIL: Partial<Record<FarmWork, SonId>> = {
+  PLOW: "charrue",
+  STUBBLE: "charrue",
+  PLANT: "semoir",
+  FERTILIZE: "pulverisateur",
+  WEED: "pulverisateur",
+  HARVEST: "moissonneuse",
+  MOW: "moissonneuse",
+  SILAGE: "moissonneuse",
+  BALE: "presse",
+  COLLECT: "remorque",
+};
+
+/** Sons UI : voir `audio/` — coupés si le joueur les a coupés. */
 
 export function App() {
   const [zones, setZones] = useState<Zone[]>([]);
@@ -1255,6 +1283,7 @@ export function App() {
             ? ` · ${r.outcome.delta} € de mieux que le comptant`
             : ` · ${Math.abs(r.outcome.delta)} € de moins que le comptant`;
       flashToast(`Livré · +${r.revenue} €${verdict}`);
+      jouerSon("livraison");
     } catch (e) {
       flashToast(e instanceof Error ? e.message : String(e), true);
     } finally {
@@ -1529,13 +1558,29 @@ export function App() {
       .finally(() => setBooting(false));
   }, []);
 
+  /**
+   * Le tutoriel s'ouvre à l'arrivée **sur la ferme**, pas à la connexion.
+   *
+   * Il se déclenchait dès que `player` existait. Or un compte tout neuf a un
+   * joueur bien avant d'avoir une terre : le temps de choisir son continent,
+   * sa région et sa parcelle, `player` est déjà là. Le tutoriel s'ouvrait
+   * donc **pendant l'installation**, sous l'écran qui la mène — et le moindre
+   * geste qui le refermait écrivait sa clé. Il ne revenait jamais.
+   *
+   * D'où le signalement : « le tuto ne s'affiche pas lors de la première
+   * entrée en jeu ». Il s'affichait, mais trop tôt et au mauvais endroit,
+   * ce qui revient au même et se voit moins.
+   *
+   * La dépendance est donc `surSaFerme` : le premier rendu où le joueur a
+   * vraiment une parcelle sous les yeux.
+   */
+  const installe = Boolean(player?.farm?.parcels?.length);
   useEffect(() => {
-    if (!player) return;
-    if (!localStorage.getItem(TUTORIAL_KEY)) {
-      const t = window.setTimeout(() => setShowTutorial(true), 600);
-      return () => window.clearTimeout(t);
-    }
-  }, [player?.id]);
+    if (!installe) return;
+    if (localStorage.getItem(TUTORIAL_KEY)) return;
+    const t = window.setTimeout(() => setShowTutorial(true), 600);
+    return () => window.clearTimeout(t);
+  }, [installe, player?.id]);
 
   useEffect(() => {
     if (!player) return;
@@ -1632,6 +1677,14 @@ export function App() {
   );
 
   const ownedParcels = player?.farm?.parcels ?? [];
+  /**
+   * Le joueur est-il vraiment installé ?
+   *
+   * Un compte existe bien avant d'avoir une terre — tout le temps de choisir
+   * son continent et sa parcelle. Distinguer les deux est ce qui décide quand
+   * la musique démarre et quand le tutoriel s'ouvre.
+   */
+  const surSaFerme = Boolean(player && ownedParcels.length);
   const visiting = Boolean(
     visitOrder && activeParcelId && visitOrder.parcelId === activeParcelId,
   );
@@ -1794,6 +1847,56 @@ export function App() {
     flashToast(`${SEASON_NAMES[season]} — ${SEASON_HINTS[season]}`);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [season, player?.id]);
+
+  /**
+   * Le son se réveille au premier geste, jamais avant.
+   *
+   * Un navigateur refuse de faire du bruit sur une page où l'on n'a pas
+   * encore cliqué — et il a raison : une page qui se met à jouer de la
+   * musique toute seule est une page qu'on ferme. On attend donc le premier
+   * clic ou la première touche, puis on n'écoute plus.
+   */
+  useEffect(() => {
+    const reveil = () => reveillerAudio();
+    const opts = { once: true, passive: true } as const;
+    window.addEventListener("pointerdown", reveil, opts);
+    window.addEventListener("keydown", reveil, opts);
+    return () => {
+      window.removeEventListener("pointerdown", reveil);
+      window.removeEventListener("keydown", reveil);
+    };
+  }, []);
+
+  /**
+   * La musique suit la saison.
+   *
+   * On l'annonce à chaque rendu où la saison est connue : le moteur ignore
+   * les répétitions et ne déclenche le fondu qu'au vrai changement. C'est
+   * plus sûr que de guetter la transition ici, où un rechargement de partie
+   * la ferait manquer.
+   */
+  useEffect(() => {
+    if (!surSaFerme) return;
+    saisonAudio(season);
+  }, [season, surSaFerme]);
+
+  /**
+   * On n'entend que les bêtes qu'on possède.
+   *
+   * Une poule sur une exploitation sans volaille est un mensonge, et un
+   * mensonge sonore décrédibilise tout le décor autour.
+   */
+  useEffect(() => {
+    const especes = new Set<SonId>();
+    for (const b of barns) {
+      const k = b.herd?.kind;
+      if (k === "COW") especes.add("vache");
+      else if (k === "SHEEP") especes.add("mouton");
+      else if (k === "PIG") especes.add("cochon");
+      else if (k === "HEN") especes.add("poule");
+    }
+    reglerCheptel([...especes]);
+  }, [barns]);
 
   const avgProgress = useMemo(() => {
     const sims = parcelDetail?.cellSims ?? [];
@@ -2152,6 +2255,10 @@ export function App() {
    */
   function flashToast(text: string, isError: boolean | "warn" = false) {
     if (isError === true) {
+      // Tous les refus du jeu passent par ici. Un seul branchement leur donne
+      // donc à tous leur son, plutôt que d'espérer que chacun des cent
+      // endroits qui refusent quelque chose y ait pensé.
+      jouerSon("refus");
       setErr(text);
     } else {
       setErr(null);
@@ -3421,6 +3528,11 @@ export function App() {
   /**
    * Ouvre un chantier et attend qu'il soit fait.
    *
+   * C'est aussi le seul endroit d'où part le bruit d'une machine : le son
+   * suit le travail demandé, jamais l'outil choisi dans le rail. Un chantier
+   * refusé par le serveur ne fait donc aucun bruit — ce qui est bien ce
+   * qu'on veut, un moteur qui démarre pour rien étant un mensonge.
+   *
    * Un travail de champ ne part plus au clic : il réserve ses cases, immobilise
    * son attelage, et prend le temps que sa largeur de travail impose. Tout est
    * vérifié à l'ouverture — l'attelage, la saison, les cases — pour que le
@@ -3462,6 +3574,7 @@ export function App() {
      * pas partie du chantier.
      */
     const retenues = r.job.cells?.length ? r.job.cells : cells;
+    jouerSon(SON_DU_TRAVAIL[work] ?? "tracteur");
     if (r.job.skipped) {
       flashToast(
         r.job.skipped === 1
@@ -3751,6 +3864,7 @@ export function App() {
       await loadParcel(activeParcelId);
       if (labor?.completed) {
         flashToast(`Chantier terminé · +${Math.round(labor.payout ?? 0)} €`);
+        jouerSon("recolte");
         setVisitOrder(null);
         const home = player.farm?.parcels[0]?.id;
         if (home) setActiveParcelId(home);
@@ -3854,6 +3968,7 @@ export function App() {
       if (r.soldTons) markGuideFlag("sold");
       if (r.labor?.completed) {
         flashToast(`Chantier terminé · +${Math.round(r.labor.payout ?? 0)} €`);
+        jouerSon("recolte");
         setVisitOrder(null);
         const home = player.farm?.parcels[0]?.id;
         if (home) setActiveParcelId(home);
@@ -3916,6 +4031,7 @@ export function App() {
         body: JSON.stringify({ userId: player.id, commodity, tons }),
       });
       flashToast(`Négociant : ${tons.toFixed(2)} t · +${r.revenue} €`);
+      jouerSon("piece");
       markGuideFlag("sold");
       await refreshPlayer();
       await refreshMeta();
@@ -4114,6 +4230,7 @@ export function App() {
       await refreshPlayer();
       await refreshMeta();
       setMsg(`Vendu pour ${r.revenue} €`);
+      jouerSon("piece");
       markGuideFlag("sold");
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e));
@@ -4175,6 +4292,7 @@ export function App() {
         ? ` · ${r.machine.type} −${r.machine.wearApplied.toFixed(1)}%`
         : "";
       flashToast(`Chantier honoré · +${r.reward} €${wearNote}`);
+      jouerSon("piece");
       setActiveMission(null);
       markGuideFlag("contract");
     } catch (e) {
@@ -4407,7 +4525,7 @@ export function App() {
     if (before == null || level <= before) return;
     const opened = levelUnlocks().find((u) => u.level === level);
     flashToast(opened ? `Niveau ${level} — ${opened.label}` : `Niveau ${level}`);
-    playUiSound("place");
+    jouerSon("niveau");
   }, [player?.level]);
 
   async function claimQuest(id: string) {
@@ -4419,7 +4537,7 @@ export function App() {
         body: JSON.stringify({ userId: player.id }),
       });
       flashToast(`Objectif tenu · +${r.reward.crd} € · +${r.reward.xp} XP`);
-      playUiSound("place");
+      jouerSon("piece");
       await refreshPlayer();
       await loadQuests();
     } catch (e) {
@@ -4478,25 +4596,36 @@ export function App() {
        * à jeun, et une tonne d'ensilage — soixante pour cent plus nourrissante
        * que le foin — comptait comme une tonne de foin.
        *
-       * On distribue donc le **manque** : le besoin du cycle moins ce qui
-       * reste dans la mangeoire, converti en tonnes par la valeur de la
-       * ration choisie. Un minimum d'une centaine de kilos, sans quoi un lot
-       * repu ferait des allers-retours pour rien.
+       * On distribue donc le **manque** : de quoi remplir la mangeoire, moins
+       * ce qui y reste, converti en tonnes par la valeur de la ration
+       * choisie.
        */
       /**
-       * Une distribution = **un jour réel**, pas un cycle.
+       * Un clic remplit la mangeoire. Un seul.
        *
-       * Un cycle vaut quinze minutes réelles : servir un cycle obligeait à
-       * revenir toutes les quinze minutes sous peine de voir le lot dépérir.
-       * On sert donc de quoi tenir vingt-quatre heures d'horloge, ce qui reste
-       * dans l'auge déduit. La consommation, elle, n'a pas bougé d'un kilo.
+       * Il servait de quoi tenir un jour réel quand l'auge en tient deux — et
+       * la jauge de l'écran, elle, se mesure sur la capacité. Passé un jour,
+       * le manque tombait à zéro et le plancher de cent kilos prenait le
+       * relais : le joueur cliquait, la jauge ne bougeait presque pas, il
+       * recliquait. « Faut cliquer 300 000 fois », et ce n'était pas une
+       * grande exagération — remplir la seconde moitié demandait des dizaines
+       * d'allers-retours au serveur.
+       *
+       * Le plancher part avec le défaut : une mangeoire pleine se dit, elle ne
+       * se sert pas. Prendre cent kilos de grain pour ne rien changer à l'état
+       * du lot est un vol silencieux, et c'était le seul effet du plancher une
+       * fois la cible corrigée.
        */
       const besoinKg = rationToServe({
         besoinParCycle: barn?.herd?.feedNeed ?? size * 14,
         feedStock: barn?.herd?.feedStock ?? 0,
       });
       const valeur = FEED_VALUE[RATION_GOOD[ration]] ?? 1;
-      const wanted = Math.max(0.1, Math.round((besoinKg / 1000 / valeur) * 100) / 100);
+      const wanted = Math.round((besoinKg / 1000 / valeur) * 100) / 100;
+      if (wanted <= 0) {
+        flashToast("La mangeoire est pleine — reviens quand les bêtes auront mangé.", "warn");
+        return;
+      }
       const stock = stockConnu ?? (
         ration === "maize"
           ? maizeInStock
@@ -4508,6 +4637,16 @@ export function App() {
                 ? silageInStock
                 : hayInStock);
       const tons = Math.min(stock, wanted);
+      // Réserve vide : la route refuserait avec « Indiquez une quantité »,
+      // un message qui parle de l'appel et non de la ferme. On dit ce qui
+      // manque, et où en trouver.
+      if (tons <= 0) {
+        flashToast(
+          "Plus rien de cette ration en réserve — achètes-en au négociant.",
+          "warn",
+        );
+        return;
+      }
       const r = await api<{ units: number; quality: number }>(`/herds/${herdId}/feed`, {
         method: "POST",
         body: JSON.stringify({
@@ -4897,7 +5036,7 @@ export function App() {
         body: JSON.stringify({ userId: player.id }),
       });
       flashToast(`${label} tourné d'un quart`);
-      playUiSound("place");
+      jouerSon("porte");
       if (activeParcelId) await loadParcel(activeParcelId);
     } catch (e) {
       flashToast(e instanceof Error ? e.message : String(e), true);
@@ -4978,7 +5117,7 @@ export function App() {
         }),
       });
       flashToast(`${def.name} bâti · −${def.cost} €`);
-      playUiSound("place");
+      jouerSon("construction");
       setPendingBuild(null);
       await refreshPlayer();
       await loadParcel(activeParcelId);

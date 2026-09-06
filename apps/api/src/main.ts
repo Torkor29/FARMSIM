@@ -411,7 +411,41 @@ declare global {
   }
 }
 
-const prisma = new PrismaClient();
+/**
+ * Cinq secondes ne suffisaient pas, et personne ne l'avait dit à Prisma.
+ *
+ * Une transaction interactive s'annule au bout de **cinq secondes** par
+ * défaut, et aucune des quatre-vingts du fichier ne demandait mieux. Un semis
+ * en tient largement moins d'habitude — mais il lit au passage le
+ * savoir-faire du joueur et les compétences de son équipe, et sur un serveur
+ * chargé ces allers-retours suffisent à faire sauter le budget. La
+ * transaction s'annulait alors *après* avoir réservé les cases : le chantier
+ * restait ouvert, la case gardait son verrou, et le joueur relançait pour
+ * s'entendre répondre « chantier en cours ». Rien ne poussait, et rien
+ * n'expliquait pourquoi.
+ *
+ * Vingt secondes laissent la place à un pic de charge sans jamais laisser une
+ * transaction vraiment bloquée s'éterniser. `maxWait` monte de deux à dix
+ * pour la même raison : c'est l'attente d'une connexion libre, et sous charge
+ * c'est précisément le moment où elles manquent.
+ */
+const prisma = new PrismaClient({
+  transactionOptions: { timeout: 20_000, maxWait: 10_000 },
+});
+
+/**
+ * Le client de base à employer : la transaction si l'on est dedans.
+ *
+ * Une lecture faite sur `prisma` depuis l'intérieur d'un `$transaction` prend
+ * une **seconde connexion** dans le pool, pendant que la première reste
+ * retenue par la transaction. Sous charge, les connexions manquent : la
+ * lecture attend, la transaction attend la lecture, et le budget s'épuise.
+ * Elle ne voit pas non plus ce que la transaction vient d'écrire.
+ *
+ * Les fonctions qui peuvent être appelées des deux côtés prennent donc ce
+ * paramètre. Le défaut garde les dizaines d'appels hors transaction inchangés.
+ */
+type DbClient = PrismaClient | Prisma.TransactionClient;
 const app = express();
 
 /**
@@ -500,6 +534,22 @@ app.use((req, _res, next) => {
  * aucun appel ne contourne ce helper : aucun gestionnaire n'a besoin de
  * changer.
  */
+/**
+ * Le joueur qu'une URL désigne, quand elle en désigne un.
+ *
+ * Seul `/players/<id>` compte : c'est le seul préfixe dont le second segment
+ * est un identifiant de joueur, et ses trois routes — la fiche, le grand
+ * livre, les compétences — ne servent qu'à soi. Les autres chemins qui
+ * portent un identifiant (`/parcels/…`, `/herds/…`, `/machines/…`) désignent
+ * une *ressource*, dont la possession se vérifie route par route parce qu'elle
+ * peut légitimement être partagée — une parcelle se visite, un chantier se
+ * fait faire par un voisin.
+ */
+function identiteDansLeChemin(chemin: string): string | null {
+  const m = /^\/players\/([^/]+)(?:\/|$)/.exec(chemin);
+  return m ? decodeURIComponent(m[1]!) : null;
+}
+
 async function enforceIdentity(
   req: express.Request,
   res: express.Response,
@@ -507,7 +557,23 @@ async function enforceIdentity(
 ) {
   const claimed =
     (typeof req.body?.userId === "string" ? req.body.userId : null) ??
-    (typeof req.query.userId === "string" ? req.query.userId : null);
+    (typeof req.query.userId === "string" ? req.query.userId : null) ??
+    /*
+     * L'identité annoncée par l'URL elle-même.
+     *
+     * Trois routes désignent leur joueur par un morceau de chemin plutôt que
+     * par un `userId` : la fiche, le grand livre et l'arbre de compétences.
+     * Aucune n'annonçait donc d'identité, aucune n'était vérifiée — et la
+     * fiche rend l'**adresse e-mail**, le grand livre trente jours de
+     * comptabilité. `GET /players` distribuant quarante identifiants sans
+     * jeton, il suffisait de deux requêtes pour moissonner quarante adresses.
+     *
+     * La règle vit ici et non dans les trois gestionnaires, pour la raison
+     * qui a déjà fait mettre `enforceIdentity` en amont : la prochaine route
+     * `/players/:id/…` sera protégée sans que personne ait à y penser. C'est
+     * précisément l'oubli qui a créé la fuite.
+     */
+    identiteDansLeChemin(req.path);
   if (!claimed) {
     next();
     return;
@@ -1788,7 +1854,7 @@ async function applyWearToMachine(
     select: { farm: { select: { id: true, userId: true } } },
   });
   const soin = proprio?.farm?.userId
-    ? await getSkillBonuses(proprio.farm.userId)
+    ? await getSkillBonuses(proprio.farm.userId, tx)
     : noSkillBonuses();
   /*
    * Le mécanicien de l'équipe, s'il y en a un.
@@ -1803,7 +1869,7 @@ async function applyWearToMachine(
    * demander de porter la règle serait douze occasions de l'oublier.
    */
   const equipe = proprio?.farm?.id
-    ? await bonusEquipe(proprio.farm.id)
+    ? await bonusEquipe(proprio.farm.id, tx)
     : { mecanique: 0 };
   /* Les heures du chantier viennent de l'outil : c'est sa largeur qui décide
      du temps passé. Le tracteur en prend autant — il a tiré pendant tout ce
@@ -2103,8 +2169,8 @@ function pollinationBonusAt(
  * garantie qu'on veut — un compteur qu'on ne sait pas lire est un verrou que
  * le joueur ne peut pas ouvrir.
  */
-async function getSkillSnapshot(userId: string): Promise<SkillSnapshot> {
-  const user = await prisma.user.findUnique({
+async function getSkillSnapshot(userId: string, db: DbClient = prisma): Promise<SkillSnapshot> {
+  const user = await db.user.findUnique({
     where: { id: userId },
     select: {
       xp: true,
@@ -2147,8 +2213,8 @@ async function getSkillSnapshot(userId: string): Promise<SkillSnapshot> {
  * seulement de ce qu'il possède. Les deux enveloppes se cumulent chez
  * l'appelant, chacune avec son propre plafond.
  */
-async function getSkillBonuses(userId: string): Promise<SkillBonuses> {
-  return bonusesFor(await getSkillSnapshot(userId));
+async function getSkillBonuses(userId: string, db: DbClient = prisma): Promise<SkillBonuses> {
+  return bonusesFor(await getSkillSnapshot(userId, db));
 }
 
 async function getFarmBonuses(farmId: string) {
@@ -6264,8 +6330,8 @@ function rienAFaire(
  * elle. Deux logements s'additionnent — rien n'interdit d'en bâtir un second
  * plutôt que d'agrandir le premier, et le joueur qui le fait a payé pour.
  */
-async function litsDeLaFerme(farmId: string): Promise<number> {
-  const logements = await prisma.building.findMany({
+async function litsDeLaFerme(farmId: string, db: DbClient = prisma): Promise<number> {
+  const logements = await db.building.findMany({
     where: { type: "EMPLOYEE_HOUSING", parcel: { farmId } },
     select: { level: true },
   });
@@ -6276,10 +6342,10 @@ async function litsDeLaFerme(farmId: string): Promise<number> {
 }
 
 /** L'équipe d'une ferme : qui y travaille, et combien de lits l'attendent. */
-async function equipeDe(farmId: string) {
+async function equipeDe(farmId: string, db: DbClient = prisma) {
   const [employes, lits] = await Promise.all([
-    prisma.employee.findMany({ where: { farmId }, orderBy: { hiredAt: "asc" } }),
-    litsDeLaFerme(farmId),
+    db.employee.findMany({ where: { farmId }, orderBy: { hiredAt: "asc" } }),
+    litsDeLaFerme(farmId, db),
   ]);
   return { employes, lits };
 }
@@ -6306,8 +6372,8 @@ function meilleurNiveau(
 }
 
 /** Ce que l'équipe apporte à un chantier, et à l'élevage. */
-async function bonusEquipe(farmId: string) {
-  const { employes } = await equipeDe(farmId);
+async function bonusEquipe(farmId: string, db: DbClient = prisma) {
+  const { employes } = await equipeDe(farmId, db);
   const auChamp = employes.filter((e) => e.poste === "CHAMP").length;
   return {
     employes,

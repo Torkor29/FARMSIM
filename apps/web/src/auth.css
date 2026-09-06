@@ -325,10 +325,19 @@
  * code n'est affiché qu'une fois — le serveur n'en garde qu'une empreinte —
  * et le fermer par inadvertance coûterait au joueur son unique filet.
  */
+/*
+ * Au-dessus de tout le jeu, y compris de la confirmation.
+ *
+ * Le code de secours ne s'affiche qu'une fois : ce qui le recouvre le perd
+ * pour de bon. Il était à 110, ce qui suffisait tant que le jeu plafonnait à
+ * 90 — la confirmation est passée à 200 pour cesser de s'ouvrir derrière les
+ * écrans, et ce voile devait suivre. `recovery-ui.test.ts` tient les deux
+ * feuilles ensemble et a signalé la rupture le jour même.
+ */
 .recovery-veil {
   position: fixed;
   inset: 0;
-  z-index: 110;
+  z-index: 300;
   display: grid;
   place-items: center;
   padding: 1.2rem;
@@ -1033,10 +1042,9 @@
   border: 1px solid var(--line);
   box-shadow: var(--sh-2);
 }
-@media (min-width: 760px) {
-  .recap { grid-template-columns: minmax(200px, 0.6fr) 1.4fr; align-items: center; }
-}
-.recap-char { border-radius: var(--r-md); overflow: hidden; }
+/* Une seule colonne : le bonhomme occupait la première et n'apprenait rien à
+   personne. Le récapitulatif — où l'on s'installe, sous quel climat — prend
+   toute la largeur, ce qui est bien ce qu'on veut lire avant de commencer. */
 .recap-info h2 { color: var(--teal-700); font-size: 1.5rem; }
 .recap-list { display: grid; gap: 0.35rem; margin: 0.6rem 0 0; }
 .recap-list > div {

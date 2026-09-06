@@ -103,17 +103,33 @@ export function troughCapacity(besoinParCycle: number, cycleMs = LIVESTOCK_CYCLE
 }
 
 /**
- * Ce qu'il faut distribuer maintenant pour tenir un jour réel, en unités.
+ * Ce qu'il faut distribuer maintenant pour **remplir la mangeoire**, en unités.
  *
  * Ce qui reste dans l'auge est déduit : un lot presque repu ne reçoit pas
  * autant qu'un lot à jeun.
+ *
+ * ## Pourquoi la cible est la capacité, et non un jour
+ *
+ * Elle visait un jour réel quand la mangeoire en tient deux. Les deux
+ * nombres se contredisaient, et l'écran donnait raison au second : la jauge
+ * se mesure sur la capacité. Nourrir un lot déjà servi ne montait donc
+ * jamais au-delà de la moitié de la jauge — et au-delà d'un jour, cette
+ * fonction rendait zéro, si bien que chaque clic ne distribuait plus que le
+ * minimum de cent kilos. Signalé en jouant, et sans exagérer de beaucoup :
+ * « quand tu veux remplir le truc de bouffe, faut cliquer 300 000 fois ».
+ *
+ * Le deuxième jour de réserve existe précisément pour qui passe une journée
+ * sans se connecter ; il était inatteignable. On remplit donc jusqu'au bord,
+ * ce que le serveur acceptait déjà. Rien ne change côté consommation : les
+ * bêtes mangent au même rythme, on leur sert seulement de quoi tenir en une
+ * fois au lieu de deux.
  */
 export function rationToServe(input: {
   besoinParCycle: number;
   feedStock: number;
   cycleMs?: number;
 }): number {
-  const cible = Math.max(0, input.besoinParCycle) * rationCycles(input.cycleMs);
+  const cible = troughCapacity(input.besoinParCycle, input.cycleMs);
   return Math.max(0, cible - Math.max(0, input.feedStock));
 }
 
