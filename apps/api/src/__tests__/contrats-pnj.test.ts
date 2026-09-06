@@ -184,7 +184,21 @@ describe("le tableau des voisins", () => {
     assert.equal(inscription.statut, 201, inscription.texte);
     const moi = inscription.corps as unknown as { token: string; player: { id: string } };
 
-    const offre = (await tableau())[0]!;
+    /*
+     * Une offre que le parc de départ sait faire.
+     *
+     * Le test prenait la première venue, et les offres sont tirées au sort :
+     * sur un tirage de moisson, la route refusait — « il faut une
+     * moissonneuse ». C'était le test qui était fragile, mais il a mis le
+     * doigt sur mieux que ça : rien ne garantissait qu'un débutant puisse
+     * toucher au tableau. Le générateur assure désormais une offre
+     * accessible ; on vérifie ici qu'elle est là et qu'elle se prend.
+     */
+    const offre = (await tableau()).find((c) => c.jobType === "PLOW" || c.jobType === "SOW");
+    assert.ok(
+      offre,
+      "aucune offre à la portée du parc de départ — le nouveau venu ne peut rien prendre",
+    );
     const prise = await appel(`/contracts/${offre.id}/accept`, {
       corps: { userId: moi.player.id },
       jeton: moi.token,

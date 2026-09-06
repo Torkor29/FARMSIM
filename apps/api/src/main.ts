@@ -1827,10 +1827,20 @@ function publicLaborOrder(o: {
 const CONTRATS_PNJ: {
   jobType: ContractJobType;
   work: FarmWork;
+  /**
+   * Faisable avec le seul parc de départ ?
+   *
+   * `STARTER_KIT` donne un tracteur, un semoir, une charrue et un déchaumeur.
+   * Ni moissonneuse ni épandeur : une offre de moisson est donc hors de
+   * portée de qui vient de s'installer, et la route la refuse — « il faut une
+   * moissonneuse, passez au garage ».
+   */
+  debutant: boolean;
   titres: string[];
 }[] = [
   {
     jobType: "PLOW",
+    debutant: true,
     work: "PLOW",
     titres: [
       "Labour avant les gelées",
@@ -1840,16 +1850,19 @@ const CONTRATS_PNJ: {
   },
   {
     jobType: "SOW",
+    debutant: true,
     work: "PLANT",
     titres: ["Semer la pièce du haut", "Un semis à finir avant la nuit", "Emblaver la parcelle neuve"],
   },
   {
     jobType: "FERTILIZE",
+    debutant: false,
     work: "FERTILIZE",
     titres: ["Épandre sur la sole fatiguée", "Remettre de l'azote avant la pousse"],
   },
   {
     jobType: "HARVEST",
+    debutant: false,
     work: "HARVEST",
     titres: ["Moisson à sauver avant l'orage", "Rentrer la récolte du voisin", "Une moisson de trop pour lui"],
   },
@@ -1892,16 +1905,40 @@ const VOISINS_PNJ = [
  * remplacer sa propre ferme. Trois offres au plus, pour la même raison.
  */
 async function garnirLeTableau() {
-  const ouverts = await prisma.npcContract.count({ where: { status: "OPEN" } });
-  const manque = MISSION_OPEN_MAX - ouverts;
+  const dejaLa = await prisma.npcContract.findMany({
+    where: { status: "OPEN" },
+    select: { jobType: true },
+  });
+  const manque = MISSION_OPEN_MAX - dejaLa.length;
   if (manque <= 0) return;
+
+  /*
+   * Toujours une offre à la portée d'un débutant.
+   *
+   * Les quatre types se tiraient au sort, et deux d'entre eux — la moisson et
+   * l'épandage — demandent un engin que le parc de départ n'a pas. Trois
+   * tirages malheureux, et le nouveau venu voyait trois offres dont la route
+   * lui refusait chacune : « il faut une moissonneuse, passez au garage ».
+   *
+   * Un tableau qu'on ne peut pas toucher est pire qu'un tableau vide — c'est
+   * celui d'avant, avec en plus la frustration de voir ce qu'on n'aura pas.
+   * Or le tableau existe précisément pour donner du travail à qui n'a encore
+   * rien à récolter. On garantit donc la première offre accessible, et les
+   * suivantes se tirent librement : le parc s'agrandit, l'éventail suit.
+   */
+  const accessibles = CONTRATS_PNJ.filter((c) => c.debutant);
+  const dejaAccessible = dejaLa.some((c) =>
+    accessibles.some((a) => a.jobType === c.jobType),
+  );
 
   /* Les régions servent de décor : une offre nommée « la ferme des Ormes,
      Beauce » se situe, là où « contrat #4 » ne dit rien à personne. */
   const zones = await prisma.zone.findMany({ select: { name: true }, take: 40 });
 
   for (let i = 0; i < manque; i++) {
-    const modele = CONTRATS_PNJ[Math.floor(Math.random() * CONTRATS_PNJ.length)]!;
+    // La première comble le manque d'offre accessible, s'il y en a un.
+    const vivier = i === 0 && !dejaAccessible ? accessibles : CONTRATS_PNJ;
+    const modele = vivier[Math.floor(Math.random() * vivier.length)]!;
     const cells =
       MISSION_CELL_CHOICES[Math.floor(Math.random() * MISSION_CELL_CHOICES.length)]!;
     const voisin = VOISINS_PNJ[Math.floor(Math.random() * VOISINS_PNJ.length)]!;
