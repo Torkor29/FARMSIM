@@ -52,16 +52,21 @@ function nomEspece(kind: string): string {
 
 export function ParcelleVoisineSheet({ voisin, enCours = false, onAcheter, onFermer }: Props) {
   const premier = useRef<HTMLButtonElement | null>(null);
+  /* La fermeture arrive en lambda : son identité change à chaque rendu du
+     parent. La garder dans les dépendances relançait l'effet — et donc le
+     `focus()` — à chaque sondage de prix, arrachant le curseur au passage. */
+  const fermer = useRef(onFermer);
+  fermer.current = onFermer;
 
   useEffect(() => {
     if (!voisin) return;
     premier.current?.focus();
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onFermer();
+      if (e.key === "Escape") fermer.current();
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [voisin, onFermer]);
+  }, [voisin]);
 
   if (!voisin) return null;
 

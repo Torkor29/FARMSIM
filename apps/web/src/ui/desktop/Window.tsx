@@ -39,6 +39,26 @@ export function Window({ open, title, subtitle, width = "regular", onClose, chil
   const boxRef = useRef<HTMLDivElement>(null);
   const returnFocus = useRef<HTMLElement | null>(null);
 
+  /**
+   * La fermeture, toujours fraîche, sans jamais relancer l'effet.
+   *
+   * Les vingt-quatre appelants passent une lambda — `onClose={() => setSheet(null)}` —
+   * dont l'identité change à **chaque rendu** de l'écran. Tant que `onClose`
+   * figurait dans les dépendances ci-dessous, l'effet se démontait et se
+   * remontait aussi souvent, et son nettoyage rappelait `focus()`.
+   *
+   * D'où le défaut signalé en jouant : « quand les prix s'actualisent, la
+   * fenêtre perd la priorité et tu écris dans le vent ». Les cours arrivent
+   * par un sondage, le sondage rerend l'écran, l'écran refait la lambda, et
+   * le curseur quittait le champ en cours de frappe — toutes les quelques
+   * secondes, sans que rien ne l'explique à l'écran.
+   *
+   * La référence garde la dernière fermeture connue ; l'effet, lui, ne
+   * dépend plus que de l'ouverture.
+   */
+  const fermer = useRef(onClose);
+  fermer.current = onClose;
+
   useEffect(() => {
     if (!open) return;
     returnFocus.current = document.activeElement as HTMLElement | null;
@@ -46,7 +66,7 @@ export function Window({ open, title, subtitle, width = "regular", onClose, chil
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") {
         e.stopPropagation();
-        onClose();
+        fermer.current();
         return;
       }
       if (e.key !== "Tab") return;
@@ -70,11 +90,19 @@ export function Window({ open, title, subtitle, width = "regular", onClose, chil
     window.addEventListener("keydown", onKey);
     return () => {
       window.removeEventListener("keydown", onKey);
-      // Rendre le focus d'où il venait : sinon il retombe sur le corps de la
-      // page et la touche suivante ne va nulle part.
-      returnFocus.current?.focus?.();
+      /*
+       * Rendre le focus d'où il venait — mais seulement à la vraie fermeture.
+       *
+       * Ce nettoyage tournait à chaque rendu de l'écran parent, et arrachait
+       * alors le curseur du champ qu'on était en train de remplir. On ne le
+       * rend donc que si le joueur n'est plus dans la fenêtre : s'il y tape
+       * quelque chose, c'est que la fenêtre est bien ouverte et qu'il n'y a
+       * rien à rendre.
+       */
+      const dedans = boxRef.current?.contains(document.activeElement);
+      if (!dedans) returnFocus.current?.focus?.();
     };
-  }, [open, onClose]);
+  }, [open]);
 
   if (!open) return null;
 

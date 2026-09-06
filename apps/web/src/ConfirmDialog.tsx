@@ -23,16 +23,26 @@ type Props = {
  */
 export function ConfirmDialog({ request, onCancel }: Props) {
   const confirmRef = useRef<HTMLButtonElement | null>(null);
+  /*
+   * L'annulation vit dans une référence, pas dans les dépendances.
+   *
+   * Elle arrive en lambda depuis l'écran, donc neuve à chaque rendu. L'effet
+   * se relançait d'autant, et ramenait le focus sur « Confirmer » : un joueur
+   * qui avait tabulé jusqu'à « Annuler » se retrouvait, sans rien faire, sur
+   * le bouton qui vend sa machine. Ici le défaut ne fait pas qu'agacer.
+   */
+  const annuler = useRef(onCancel);
+  annuler.current = onCancel;
 
   useEffect(() => {
     if (!request) return;
     confirmRef.current?.focus();
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onCancel();
+      if (e.key === "Escape") annuler.current();
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [request, onCancel]);
+  }, [request]);
 
   if (!request) return null;
 
