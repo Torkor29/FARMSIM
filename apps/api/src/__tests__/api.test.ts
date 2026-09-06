@@ -739,7 +739,32 @@ describe("lieu de vie", () => {
      * neutralise ce qu'on ne mesure pas.
      */
     const litresAnnonces = async () => {
-      prismaExec(`UPDATE "Herd" SET happiness = 0.9, "feedQuality" = 1 WHERE id = '${herdId}';`);
+      /*
+       * Quatre grandeurs entrent dans le lait, pas deux.
+       *
+       * Ce bloc n'en figeait que le bonheur et la qualité de la ration. Or la
+       * production compte les **adultes** — `taille moins les jeunes` — et ces
+       * deux nombres bougent tout seuls : le tour de simulation fait naître
+       * des bêtes, et un lot de jeunes rejoint les adultes à son échéance.
+       *
+       * En local et sur la pull request, les trois mesures tombaient dans la
+       * même poignée de secondes et rien n'avait le temps de bouger. Sur le
+       * runner d'intégration, plus lent, un lot a mûri entre la deuxième et la
+       * troisième : le lait est remonté sans que l'employé y soit pour rien,
+       * et le test a eu raison de le dire. C'est bien le test qui était trop
+       * léger, pas le jeu qui était faux.
+       *
+       * On fige donc les quatre : effectif à douze, aucun jeune, et la
+       * gestation coupée pour qu'aucune naissance ne se glisse entre deux
+       * lectures. Douze adultes, à chaque mesure, quoi qu'ait fait le tour de
+       * simulation entre-temps. Le seul terme encore libre est celui qu'on
+       * mesure.
+       */
+      prismaExec(
+        `DELETE FROM "YoungBatch" WHERE "herdId" = '${herdId}';` +
+          `UPDATE "Herd" SET happiness = 0.9, "feedQuality" = 1, size = 12,` +
+          ` "gestatingSince" = NULL WHERE id = '${herdId}';`,
+      );
       const el = await appel(`/parcels/${pid}/livestock`, { jeton: moi.jeton });
       const b = (el.corps as unknown as {
         barns: { herd: { id: string; milkPerCycle?: number } | null }[];
