@@ -1814,6 +1814,149 @@ function publicLaborOrder(o: {
   };
 }
 
+/* ------------------------------------------------------------------ */
+/* Les contrats des voisins PNJ                                        */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Ce qu'un voisin peut demander, et comment ça s'annonce.
+ *
+ * Le travail décide du reste : le prix se lit dans `missionPayout`, l'usure
+ * dans l'outil qu'il faudra sortir. Ici on ne choisit que le mot.
+ */
+const CONTRATS_PNJ: {
+  jobType: ContractJobType;
+  work: FarmWork;
+  /**
+   * Faisable avec le seul parc de départ ?
+   *
+   * `STARTER_KIT` donne un tracteur, un semoir, une charrue et un déchaumeur.
+   * Ni moissonneuse ni épandeur : une offre de moisson est donc hors de
+   * portée de qui vient de s'installer, et la route la refuse — « il faut une
+   * moissonneuse, passez au garage ».
+   */
+  debutant: boolean;
+  titres: string[];
+}[] = [
+  {
+    jobType: "PLOW",
+    debutant: true,
+    work: "PLOW",
+    titres: [
+      "Labour avant les gelées",
+      "Retourner la sole du bas",
+      "Un labour, et vite : la pluie arrive",
+    ],
+  },
+  {
+    jobType: "SOW",
+    debutant: true,
+    work: "PLANT",
+    titres: ["Semer la pièce du haut", "Un semis à finir avant la nuit", "Emblaver la parcelle neuve"],
+  },
+  {
+    jobType: "FERTILIZE",
+    debutant: false,
+    work: "FERTILIZE",
+    titres: ["Épandre sur la sole fatiguée", "Remettre de l'azote avant la pousse"],
+  },
+  {
+    jobType: "HARVEST",
+    debutant: false,
+    work: "HARVEST",
+    titres: ["Moisson à sauver avant l'orage", "Rentrer la récolte du voisin", "Une moisson de trop pour lui"],
+  },
+];
+
+/** Les voisins qui passent commande. Des noms, pas des matricules. */
+const VOISINS_PNJ = [
+  "la ferme des Ormes",
+  "le GAEC du Moulin",
+  "la métairie Basse",
+  "les Grandes Terres",
+  "la ferme Sainte-Anne",
+  "le domaine du Pré-Long",
+];
+
+/**
+ * Poster les offres du tableau, et les tenir garnies.
+ *
+ * ## Pourquoi cette fonction n'existait pas
+ *
+ * Tout le reste était écrit : le modèle `NpcContract`, la liste, l'acceptation,
+ * l'achèvement avec son usure et son salaire, l'abandon. Le démarrage allait
+ * jusqu'à **annuler** les offres qui traînaient — un ménage qui n'attendait
+ * plus que la regénération. Elle n'est jamais venue, et il n'y a jamais eu
+ * un seul `npcContract.create` dans le serveur.
+ *
+ * Le tableau était donc vide depuis le premier jour, et le reproche est exact :
+ * « on a toujours pas les contrats de PNJ, ça fait depuis le début qu'il
+ * manque ça ».
+ *
+ * ## Ce que ça donne au jeu
+ *
+ * Une boucle courte, qui ne demande ni terre ni attente : on prend une offre,
+ * on la fait avec son propre matériel, on est payé. C'est la voie d'entrée
+ * pour qui vient de s'installer et n'a rien à récolter — et le seul revenu
+ * qui ne dépende pas d'une saison.
+ *
+ * Le salaire vaut cinquante-cinq pour cent du devis d'un prestataire
+ * (`MISSION_NPC_SHARE`) : de quoi valoir le déplacement, jamais de quoi
+ * remplacer sa propre ferme. Trois offres au plus, pour la même raison.
+ */
+async function garnirLeTableau() {
+  const dejaLa = await prisma.npcContract.findMany({
+    where: { status: "OPEN" },
+    select: { jobType: true },
+  });
+  const manque = MISSION_OPEN_MAX - dejaLa.length;
+  if (manque <= 0) return;
+
+  /*
+   * Toujours une offre à la portée d'un débutant.
+   *
+   * Les quatre types se tiraient au sort, et deux d'entre eux — la moisson et
+   * l'épandage — demandent un engin que le parc de départ n'a pas. Trois
+   * tirages malheureux, et le nouveau venu voyait trois offres dont la route
+   * lui refusait chacune : « il faut une moissonneuse, passez au garage ».
+   *
+   * Un tableau qu'on ne peut pas toucher est pire qu'un tableau vide — c'est
+   * celui d'avant, avec en plus la frustration de voir ce qu'on n'aura pas.
+   * Or le tableau existe précisément pour donner du travail à qui n'a encore
+   * rien à récolter. On garantit donc la première offre accessible, et les
+   * suivantes se tirent librement : le parc s'agrandit, l'éventail suit.
+   */
+  const accessibles = CONTRATS_PNJ.filter((c) => c.debutant);
+  const dejaAccessible = dejaLa.some((c) =>
+    accessibles.some((a) => a.jobType === c.jobType),
+  );
+
+  /* Les régions servent de décor : une offre nommée « la ferme des Ormes,
+     Beauce » se situe, là où « contrat #4 » ne dit rien à personne. */
+  const zones = await prisma.zone.findMany({ select: { name: true }, take: 40 });
+
+  for (let i = 0; i < manque; i++) {
+    // La première comble le manque d'offre accessible, s'il y en a un.
+    const vivier = i === 0 && !dejaAccessible ? accessibles : CONTRATS_PNJ;
+    const modele = vivier[Math.floor(Math.random() * vivier.length)]!;
+    const cells =
+      MISSION_CELL_CHOICES[Math.floor(Math.random() * MISSION_CELL_CHOICES.length)]!;
+    const voisin = VOISINS_PNJ[Math.floor(Math.random() * VOISINS_PNJ.length)]!;
+    const region = zones.length
+      ? zones[Math.floor(Math.random() * zones.length)]!.name
+      : "la région";
+    await prisma.npcContract.create({
+      data: {
+        jobType: modele.jobType,
+        title: modele.titres[Math.floor(Math.random() * modele.titres.length)]!,
+        cells,
+        rewardCrd: missionPayout(modele.work, cells, "NPC"),
+        regionNote: `${voisin} — ${region} · ${cells} cases`,
+      },
+    });
+  }
+}
+
 async function expireLaborOrders() {
   const now = new Date();
   const stale = await prisma.laborOrder.findMany({
@@ -3200,6 +3343,10 @@ async function ensureSeed() {
       data: { status: "CANCELLED" },
     });
   }
+  /* Le ménage ci-dessus attendait sa regénération depuis toujours : sans
+     elle, le tableau restait vide jusqu'au premier tour du monde, et vide
+     tout court puisque rien ne créait jamais rien. */
+  await garnirLeTableau();
   // Semer cent cinquante fermes PNJ prend deux bonnes minutes sur une machine
   // d'intégration à deux cœurs — assez pour que la suite de tests expire avant
   // que le serveur ne réponde, et qu'un déploiement parfaitement sain soit
@@ -4017,6 +4164,7 @@ async function runWorldTick() {
   await expireListings();
   await settleOverdueDeliveries();
   await expireLaborOrders();
+  await garnirLeTableau();
   await balayerChantiersFantomes();
   await tickNpcFarms();
   await publishFromConsignes();
