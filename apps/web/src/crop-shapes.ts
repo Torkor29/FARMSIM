@@ -23,7 +23,22 @@ import { markShared } from "./three-cleanup";
  *    serait un buisson uniformément jaune, tige comprise.
  */
 
-export type CropShape = "WHEAT" | "BARLEY" | "MAIZE" | "PEA" | "RAPE" | "GRASS";
+export type CropShape =
+  | "WHEAT"
+  | "BARLEY"
+  | "MAIZE"
+  | "PEA"
+  | "RAPE"
+  | "GRASS"
+  // Le maraîchage : deux silhouettes pour cinq cultures, que la couleur et la
+  // densité distinguent. Un rang de radis et un rang de salade ne diffèrent
+  // pas par la forme d'une feuille vue de vingt mètres — ils diffèrent par la
+  // teinte et par l'espacement, et c'est ce qu'on modélise.
+  | "MESCLUN"
+  | "RADISH"
+  | "SPINACH"
+  | "LETTUCE"
+  | "POTATO";
 
 /** Couleur des épis, gousses, fleurs et panicules — le reste prend la teinte de la case. */
 /**
@@ -46,6 +61,11 @@ export const CROP_ACCENT: Record<CropShape, number> = {
   PEA: 0x9fc65a,
   RAPE: 0xf5d417,
   GRASS: 0x8fbf5c,
+  MESCLUN: 0x7fc45f,
+  RADISH: 0xd4506a,
+  SPINACH: 0x2f7d43,
+  LETTUCE: 0xa8d269,
+  POTATO: 0x6f9c52,
 };
 
 /** Brins par case : le maïs se sème clair et large, l'herbe très dru. */
@@ -56,6 +76,12 @@ export const CROP_DENSITY: Record<CropShape, number> = {
   PEA: 0.85,
   RAPE: 0.72,
   GRASS: 1.15,
+  // Le maraîchage se sème dru : des rangs serrés, des plantes basses.
+  MESCLUN: 1.4,
+  RADISH: 1.2,
+  SPINACH: 1.1,
+  LETTUCE: 0.8,
+  POTATO: 0.55,
 };
 
 /**
@@ -270,6 +296,41 @@ function buildShape(kind: CropShape): THREE.BufferGeometry {
     // en icosaèdre coûtaient quatre fois plus pour une masse moins lisible.
     head(0.24, leafProfile(0.115), { y: 0.62, segments: 5 });
     head(0.14, leafProfile(0.075), { y: 0.8, yaw: 0.9, segments: 4 });
+  } else if (kind === "MESCLUN" || kind === "SPINACH" || kind === "LETTUCE") {
+    /*
+     * La rosette : des feuilles larges, basses, ouvertes en étoile.
+     *
+     * Un légume à feuille n'a pas de tige — c'est ce qui le distingue d'un
+     * pied d'herbe au premier coup d'œil. On part donc du sol, et on ouvre.
+     */
+    const brins = kind === "LETTUCE" ? 6 : 5;
+    for (let i = 0; i < brins; i++) {
+      const a = (i / brins) * Math.PI * 2 + 0.35;
+      leaf(kind === "LETTUCE" ? 0.3 : 0.24, kind === "MESCLUN" ? 0.09 : 0.13, {
+        yaw: a,
+        // Très couché : la feuille s'étale au lieu de monter.
+        curve: 0.3,
+        droop: 0.22,
+        segments: 4,
+      });
+    }
+  } else if (kind === "RADISH" || kind === "POTATO") {
+    /*
+     * Le fane : ce qui dépasse d'un tubercule.
+     *
+     * On ne voit ni le radis ni la pomme de terre — ils sont sous terre. Ce
+     * qui se lit au champ, c'est un bouquet de fanes dressées, plus haut et
+     * plus fourni pour la patate.
+     */
+    const haut = kind === "POTATO" ? 0.42 : 0.26;
+    for (let i = 0; i < 4; i++) {
+      const a = (i / 4) * Math.PI * 2 + 0.9;
+      leaf(haut + (i % 2) * 0.06, 0.075, { yaw: a, curve: 0.16, droop: 0.1, segments: 4 });
+    }
+    if (kind === "POTATO") {
+      // La fleur de pomme de terre, discrète mais reconnaissable.
+      parts.push(tag(ribbon(0.1, leafProfile(0.05), { y: 0.4, segments: 4 }), { accent: 1 }));
+    }
   } else {
     // Herbe : une touffe de lames fines, sans épi. Un pré doit se lire comme
     // un tapis, pas comme une céréale rasée.

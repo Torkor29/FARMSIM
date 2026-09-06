@@ -34,6 +34,12 @@ enum CropCode {
   BARLEY
   RAPE
   GRASS
+  /// Le maraîchage : des boucles de deux à dix heures réelles.
+  MESCLUN
+  RADISH
+  SPINACH
+  LETTUCE
+  POTATO
 }
 
 enum FieldStage {

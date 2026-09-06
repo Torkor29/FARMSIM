@@ -17,8 +17,23 @@ import {
 import { simulateCell } from "../index.js";
 
 describe("orge, colza, herbe", () => {
-  it("déclare les six cultures", () => {
-    expect(CROP_CODES).toEqual(["WHEAT", "MAIZE", "PEA", "BARLEY", "RAPE", "GRASS"]);
+  it("déclare les onze cultures", () => {
+    // Six céréales et fourrages, puis les cinq du maraîchage. L'ordre compte :
+    // il est celui de la barre d'outils, et un légume en tête de liste dirait
+    // que le jeu commence par la salade.
+    expect(CROP_CODES).toEqual([
+      "WHEAT",
+      "MAIZE",
+      "PEA",
+      "BARLEY",
+      "RAPE",
+      "GRASS",
+      "MESCLUN",
+      "RADISH",
+      "SPINACH",
+      "LETTUCE",
+      "POTATO",
+    ]);
     expect(CROP_DEFS.BARLEY.name).toBe("Orge");
     expect(CROP_DEFS.RAPE.name).toBe("Colza");
     expect(CROP_DEFS.GRASS.name).toBe("Herbe");

@@ -283,16 +283,33 @@ describe("le calendrier agricole", () => {
     expect(CROP_DEFS.BARLEY.growMs).toBeGreaterThan(SEASON_DURATION_MS);
   });
 
-  it("garde de quoi revenir vite : l’herbe boucle dans sa saison", () => {
+  it("garde de quoi revenir vite, et bien plus vite qu'avant", () => {
     /*
      * Le garde-fou de l'autre côté. Si toutes les cultures tenaient trois
      * saisons, un débutant sans bêtes n'aurait rien à récolter de ses
-     * premières heures. L'herbe est le cycle court — et la repousse est plus
-     * courte encore.
+     * premières heures.
+     *
+     * L'herbe tenait ce rôle, et ce test disait « l'herbe est la plus courte
+     * du catalogue ». Elle ne l'est plus : le maraîchage passe dessous, et
+     * c'est le but — douze heures, ce n'est toujours pas une soirée. Ce qu'il
+     * fallait garder de l'assertion, c'est son intention : **il existe une
+     * culture qui boucle dans une saison**, et une plus courte encore pour
+     * qui ne revient qu'un soir.
      */
-    const plusCourte = Math.min(...Object.values(CROP_DEFS).map((d) => d.growMs));
-    expect(CROP_DEFS.GRASS.growMs).toBe(plusCourte);
+    // C'est la **repousse** qui boucle dans la saison, pas le premier cycle :
+    // l'herbe met douze heures à s'installer, une saison en dure dix.
     expect(cropGrowMs("GRASS", 1)).toBeLessThan(SEASON_DURATION_MS);
+    expect(cropGrowMs("GRASS", 1)).toBeLessThan(CROP_DEFS.GRASS.growMs);
+
+    // L'herbe reste le cycle court des fourrages : aucune autre culture
+    // destinée au troupeau ne doit être plus rapide qu'elle.
+    for (const c of ["WHEAT", "MAIZE", "PEA", "BARLEY", "RAPE"] as const) {
+      expect(CROP_DEFS[c].growMs).toBeGreaterThan(CROP_DEFS.GRASS.growMs);
+    }
+
+    // Et le plancher du catalogue tient maintenant dans une soirée.
+    const plusCourte = Math.min(...Object.values(CROP_DEFS).map((d) => d.growMs));
+    expect(plusCourte).toBeLessThanOrEqual(2 * 3_600_000);
   });
 
   it("classe les cultures de la plus rapide à la plus lente, sans ex æquo", () => {
