@@ -58,6 +58,10 @@ import {
   DEFAULT_GRID,
   MACHINE_DEFS,
   CONTRACT_WORK,
+  libelleMaterielLoue,
+  missionRentalFee,
+  missionRentedPayout,
+  peutLouerPourCeTravail,
   SIM_TICK_MS,
   DELIVERY_TRAVEL_MS,
   DELIVERY_AUTO_MS,
@@ -4112,7 +4116,68 @@ app.get("/contracts", async (req, res) => {
         where: { status: "ACCEPTED", providerId: userId },
       })
     : null;
-  res.json({ contracts: open, active });
+  /*
+   * Le parc du joueur, pour que le tableau dise **avant le clic** ce que la
+   * route répondrait après.
+   *
+   * Une offre de moisson se lisait, se chiffrait, et se refusait au clic. Le
+   * refus est maintenant remplacé par un chiffre : « avec du matériel loué,
+   * 143 € au lieu de 260 ». Les deux côtés lisent le même calcul, celui du
+   * paquet partagé.
+   */
+  const parc = userId
+    ? ((
+        await prisma.farm.findFirst({
+          where: { userId },
+          include: { machines: true },
+        })
+      )?.machines ?? [])
+    : [];
+  const enrichi = open.map((c) => {
+    const work = CONTRACT_WORK[c.jobType as ContractJobType];
+    const cells = clampMissionCells(c.cells || 16);
+    const outils = parc as unknown as MachineForWork[];
+    // La version partagée, qui rend `null` quand tout va bien — le garde-fou
+    // local, lui, garantit toujours une phrase et ne saurait pas dire « oui ».
+    const manque = explainNoMachineShared(outils, work);
+    const louable = manque !== null && peutLouerPourCeTravail(outils, work);
+    return {
+      ...c,
+      work,
+      // `null` quand le joueur peut le faire lui-même : c'est ce que l'écran
+      // teste pour décider s'il montre un bouton ou deux.
+      manqueMachine: manque,
+      location: louable
+        ? {
+            materiel: libelleMaterielLoue(work),
+            frais: missionRentalFee(work, cells, "NPC"),
+            salaire: missionRentedPayout(work, cells, "NPC"),
+          }
+        : null,
+    };
+  });
+  /*
+   * Le chantier en cours part avec son net, pas seulement son salaire.
+   *
+   * Le mini-jeu affiche « Encaisser N € » : sans le net, un chantier repris
+   * après un rechargement de page annoncerait le plein salaire et en verserait
+   * 55 %. Le drapeau `rented` est porté par la ligne, il suffit de le chiffrer.
+   */
+  const actif = active
+    ? (() => {
+        const work = CONTRACT_WORK[active.jobType as ContractJobType];
+        const cells = clampMissionCells(active.cells || 16);
+        return {
+          ...active,
+          work,
+          rentalFee: active.rented ? missionRentalFee(work, cells, "NPC") : 0,
+          netCrd: active.rented
+            ? missionRentedPayout(work, cells, "NPC")
+            : missionPayout(work, cells, "NPC"),
+        };
+      })()
+    : null;
+  res.json({ contracts: enrichi, active: actif });
 });
 
 let lastSimTick: {
@@ -12822,7 +12887,20 @@ app.post("/inventory/dry", async (req, res) => {
 });
 
 app.post("/contracts/:id/accept", async (req, res) => {
-  const body = z.object({ userId: z.string() }).safeParse(req.body);
+  const body = z
+    .object({
+      userId: z.string(),
+      /**
+       * Prendre le chantier avec du matériel loué.
+       *
+       * Le drapeau est **demandé**, jamais deviné : sans lui, un joueur sans
+       * moissonneuse verrait son salaire amputé de 45 % sans avoir rien
+       * choisi. Le refus reste donc la réponse par défaut, et l'écran propose
+       * la location à côté, avec son chiffre.
+       */
+      rented: z.boolean().optional(),
+    })
+    .safeParse(req.body);
   if (!body.success) {
     res.status(400).json(body.error.flatten());
     return;
@@ -12850,10 +12928,31 @@ app.post("/contracts/:id/accept", async (req, res) => {
     return;
   }
   const work = CONTRACT_WORK[contract.jobType as ContractJobType];
+  const parc = user.farm.machines as unknown as MachineForWork[];
   const picked = pickMachineForWork(user.farm.machines, work);
-  if (!picked) {
+  /*
+   * On ne loue que ce qu'on n'a pas, et seulement si on le demande.
+   *
+   * `peutLouerPourCeTravail` est strict : posséder l'engin, même occupé au
+   * champ, ferme la location. C'est ce qui empêche un joueur de mener deux
+   * chantiers avec un seul attelage en louant le second — la règle qu'il a
+   * fallu remettre après l'avoir retirée, et que la location rouvrirait par
+   * la fenêtre.
+   */
+  const louable = peutLouerPourCeTravail(parc, work);
+  const loue = Boolean(body.data.rented) && louable;
+  if (!picked && !loue) {
     res.status(409).json({
       error: explainNoMachine(user.farm.machines, work),
+      // L'écran a besoin de savoir s'il doit proposer la location, et à quel
+      // prix, sans avoir à refaire le calcul de son côté.
+      location: louable
+        ? {
+            materiel: libelleMaterielLoue(work),
+            frais: missionRentalFee(work, clampMissionCells(contract.cells || 16), "NPC"),
+            salaire: missionRentedPayout(work, clampMissionCells(contract.cells || 16), "NPC"),
+          }
+        : null,
     });
     return;
   }
@@ -12861,13 +12960,19 @@ app.post("/contracts/:id/accept", async (req, res) => {
   const reward = missionPayout(work, cells, "NPC");
   const updated = await prisma.npcContract.update({
     where: { id: contract.id },
-    data: { status: "ACCEPTED", providerId: user.id, cells, rewardCrd: reward },
+    data: { status: "ACCEPTED", providerId: user.id, cells, rewardCrd: reward, rented: loue },
   });
   res.json({
     contract: {
       ...updated,
       work,
-      machineType: picked.def.type,
+      machineType: picked?.def.type ?? null,
+      rented: loue,
+      // Ce que le joueur touchera vraiment. `rewardCrd` reste le salaire du
+      // chantier — c'est lui qu'affiche le tableau ; la location se lit à
+      // part, comme au grand livre.
+      rentalFee: loue ? missionRentalFee(work, cells, "NPC") : 0,
+      netCrd: loue ? missionRentedPayout(work, cells, "NPC") : reward,
     },
   });
 });
@@ -12892,20 +12997,35 @@ app.post("/contracts/:id/complete", async (req, res) => {
     return;
   }
   const work = CONTRACT_WORK[contract.jobType as ContractJobType];
-  const picked = pickMachineForWork(user.farm.machines, work);
-  if (!picked) {
+  /*
+   * Le drapeau est lu sur le **contrat**, pas recalculé sur le parc.
+   *
+   * Entre l'acceptation et l'encaissement, le joueur peut très bien avoir
+   * acheté la moissonneuse — ou vendu la sienne. Recalculer ferait payer le
+   * plein salaire d'un chantier accepté en location, et ferait échouer un
+   * chantier accepté avec son propre matériel.
+   */
+  const loue = contract.rented;
+  const picked = loue ? null : pickMachineForWork(user.farm.machines, work);
+  if (!loue && !picked) {
     res.status(409).json({ error: explainNoMachine(user.farm.machines, work) });
     return;
   }
   const cells = clampMissionCells(contract.cells || 16);
   const reward = missionPayout(work, cells, "NPC");
+  const frais = loue ? missionRentalFee(work, cells, "NPC") : 0;
+  const net = reward - frais;
   const result = await prisma.$transaction(async (tx) => {
-    const wear = await applyWearToMachine(tx, {
-      rig: picked,
-      cells,
-      work,
-      specialization: user.specialization,
-    });
+    // Pas d'engin à soi, pas d'usure : c'est ce qu'on paie en louant, et
+    // c'est aussi ce qui empêche la location de dégrader un parc absent.
+    const wear = picked
+      ? await applyWearToMachine(tx, {
+          rig: picked,
+          cells,
+          work,
+          specialization: user.specialization,
+        })
+      : null;
     await tx.npcContract.update({
       where: { id: contract.id },
       data: { status: "COMPLETED", completedAt: new Date() },
@@ -12913,10 +13033,29 @@ app.post("/contracts/:id/complete", async (req, res) => {
     await grantXp(tx, user.id, "CONTRACT", { cells: contract.cells }, { contracts: 1 });
     const u = await tx.user.update({
       where: { id: user.id },
-      data: { crd: { increment: reward } },
+      data: { crd: { increment: net } },
     });
+    // Deux lignes plutôt qu'un salaire déjà rogné : le joueur doit pouvoir
+    // lire ce que la location lui a coûté, et non deviner pourquoi le chiffre
+    // du tableau n'est pas celui de son compte.
     await ecrireJournal(tx, user.id, reward, "PROGRESSION", `Contrat — ${contract.title}`);
-    return { user: u, reward, machine: { id: picked.machine.id, type: picked.machine.type, ...wear } };
+    if (frais > 0) {
+      await ecrireJournal(
+        tx,
+        user.id,
+        -frais,
+        "MACHINES",
+        `Location — ${libelleMaterielLoue(work)}`,
+      );
+    }
+    return {
+      user: u,
+      reward: net,
+      rented: loue,
+      rentalFee: frais,
+      grossCrd: reward,
+      machine: picked && wear ? { id: picked.machine.id, type: picked.machine.type, ...wear } : null,
+    };
   });
   res.json(result);
 });

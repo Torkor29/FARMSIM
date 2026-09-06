@@ -57,6 +57,13 @@ export type OfficeContract = {
   jobType: string;
   rewardCrd: number;
   cells?: number;
+  /** Ce qui manque pour le faire soi-même, ou `null` si rien ne manque. */
+  manqueMachine?: string | null;
+  /**
+   * La sortie de secours quand il manque l'engin : louer, contre une part du
+   * salaire. Le chiffre vient du serveur — l'écran n'a pas de barème à lui.
+   */
+  location?: { materiel: string; frais: number; salaire: number } | null;
 };
 
 export type OfficeConsignes = {
@@ -84,7 +91,7 @@ type Props = {
   onTake: (id: string) => void;
   onCancelPosted: (id: string) => void;
   onAbandonActive: () => void;
-  onTakeGhost: (id: string) => void;
+  onTakeGhost: (id: string, rented?: boolean) => void;
   onSaveConsignes: (next: OfficeConsignes) => Promise<void>;
   zones: ZoneLike[];
   myFarmId?: string;
@@ -788,7 +795,7 @@ function MineBody({
   cannotTake: boolean;
   onAbandon: () => void;
   onCancel: (id: string) => void;
-  onTakeGhost: (id: string) => void;
+  onTakeGhost: (id: string, rented?: boolean) => void;
   ghostPick: OfficeContract | null;
   setGhostId: (id: string) => void;
 }) {
@@ -805,7 +812,7 @@ function MineBody({
         </button>
         {ghost.length > 0 && (
           <button type="button" className={!sel && ghostPick ? "on" : ""} onClick={() => setSel("")}>
-            <span>Ancien filet</span>
+            <span>Offres des voisins</span>
             <em>{ghost.length}</em>
           </button>
         )}
@@ -924,7 +931,7 @@ function MineBody({
             <header>
               <h3>{ghostPick.title}</h3>
             </header>
-            <p className="hdv-muted">Ancien filet — plus de nouveaux contrats fantômes.</p>
+            <p className="hdv-muted">Un voisin cherche quelqu’un pour ce passage.</p>
             <dl className="hdv-quotes">
               <div>
                 <dt>Salaire</dt>
@@ -934,15 +941,42 @@ function MineBody({
                 <dt>Cases</dt>
                 <dd>{ghostPick.cells ?? "—"}</dd>
               </div>
+              {ghostPick.location && (
+                <div>
+                  <dt>Si vous louez</dt>
+                  <dd>{money(ghostPick.location.salaire)}</dd>
+                </div>
+              )}
             </dl>
-            <button
-              type="button"
-              className="accent"
-              disabled={cannotTake}
-              onClick={() => onTakeGhost(ghostPick.id)}
-            >
-              Prendre
-            </button>
+            {/*
+              Il manque l'engin : plutôt qu'un bouton qui refusera, on dit ce
+              qui manque et on met la sortie de secours à côté, avec son
+              chiffre. C'est par les contrats qu'un débutant finance sa
+              première moissonneuse ; un mur y coupait le seul chemin.
+            */}
+            {ghostPick.manqueMachine && (
+              <p className="hdv-muted">{ghostPick.manqueMachine}</p>
+            )}
+            {!ghostPick.manqueMachine && (
+              <button
+                type="button"
+                className="accent"
+                disabled={cannotTake}
+                onClick={() => onTakeGhost(ghostPick.id)}
+              >
+                Prendre
+              </button>
+            )}
+            {ghostPick.location && (
+              <button
+                type="button"
+                className={ghostPick.manqueMachine ? "accent" : "ghost"}
+                disabled={cannotTake}
+                onClick={() => onTakeGhost(ghostPick.id, true)}
+              >
+                Louer {ghostPick.location.materiel} · {money(ghostPick.location.salaire)} net
+              </button>
+            )}
           </div>
         ) : (
           <p className="hdv-empty">Rien à afficher.</p>

@@ -387,7 +387,20 @@ type Contract = {
   cells?: number;
   status?: string;
   work?: FarmWork;
-  machineType?: string;
+  machineType?: string | null;
+  /**
+   * Ce qui manque pour le faire soi-même, ou `null` si rien ne manque.
+   *
+   * Le serveur le calcule et l'envoie avec l'offre : sans cela, l'écran ne
+   * peut que laisser cliquer puis afficher un refus, ce qui était exactement
+   * le parcours d'un débutant devant une offre de moisson.
+   */
+  manqueMachine?: string | null;
+  /** La sortie de secours, quand elle existe : louer le matériel. */
+  location?: { materiel: string; frais: number; salaire: number } | null;
+  rented?: boolean;
+  netCrd?: number;
+  rentalFee?: number;
 };
 
 type LaborOrderView = {
@@ -1088,6 +1101,9 @@ export function App() {
         cells: c.active.cells,
         work,
         machineType: c.active.machineType,
+        rented: c.active.rented,
+        rentalFee: c.active.rentalFee,
+        netCrd: c.active.netCrd,
       });
     }
     setWeather((prev) => keepIfSame(prev, w));
@@ -4266,13 +4282,20 @@ export function App() {
     }
   }
 
-  async function acceptContract(id: string) {
+  /**
+   * Prendre un chantier du tableau, avec son matériel ou en location.
+   *
+   * `rented` n'est jamais deviné : sans le drapeau, un joueur sans
+   * moissonneuse verrait son salaire amputé de 45 % sans avoir rien choisi.
+   * C'est le second bouton du tableau qui le pose, et il annonce son chiffre.
+   */
+  async function acceptContract(id: string, rented = false) {
     if (!player) return;
     setBusy(true);
     try {
       const r = await api<{ contract: MissionPlayContract }>(`/contracts/${id}/accept`, {
         method: "POST",
-        body: JSON.stringify({ userId: player.id }),
+        body: JSON.stringify({ userId: player.id, rented }),
       });
       setActiveMission(r.contract);
       await refreshMeta();
@@ -4287,7 +4310,12 @@ export function App() {
     if (!player || !activeMission) return;
     setBusy(true);
     try {
-      const r = await api<{ reward: number; machine?: { type: string; condition: number; wearApplied: number } }>(
+      const r = await api<{
+        reward: number;
+        rented?: boolean;
+        rentalFee?: number;
+        machine?: { type: string; condition: number; wearApplied: number } | null;
+      }>(
         `/contracts/${activeMission.id}/complete`,
         {
           method: "POST",
@@ -4296,10 +4324,15 @@ export function App() {
       );
       await refreshPlayer();
       await refreshMeta();
-      const wearNote = r.machine
+      // Louer, c'est ne pas user son matériel : il n'y a donc pas d'usure à
+      // annoncer, mais il y a une location — et c'est elle qui explique
+      // l'écart avec le salaire affiché au tableau.
+      const note = r.machine
         ? ` · ${r.machine.type} −${r.machine.wearApplied.toFixed(1)}%`
-        : "";
-      flashToast(`Chantier honoré · +${r.reward} €${wearNote}`);
+        : r.rented
+          ? ` · location −${r.rentalFee ?? 0} €`
+          : "";
+      flashToast(`Chantier honoré · +${r.reward} €${note}`);
       jouerSon("piece");
       setActiveMission(null);
       markGuideFlag("contract");
@@ -7197,8 +7230,8 @@ export function App() {
             .catch((e) => flashToast(e instanceof Error ? e.message : String(e), true))
         }
         onAbandonActive={() => void abandonVisit()}
-        onTakeGhost={(id) => {
-          void acceptContract(id);
+        onTakeGhost={(id, rented) => {
+          void acceptContract(id, rented);
           setShowEta(false);
           setSheet(null);
         }}

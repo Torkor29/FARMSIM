@@ -9,7 +9,18 @@ export type MissionPlayContract = {
   regionNote: string;
   cells: number;
   work: FarmWork;
-  machineType?: string;
+  machineType?: string | null;
+  /** Chantier pris avec du matériel loué : pas d'usure, salaire réduit. */
+  rented?: boolean;
+  rentalFee?: number;
+  /**
+   * Ce qui tombera vraiment sur le compte.
+   *
+   * Le bouton affichait `rewardCrd`, c'est-à-dire le salaire du chantier. Sur
+   * un chantier loué, ce n'est pas ce qu'on encaisse : annoncer le brut puis
+   * verser le net serait le genre d'écart qu'un joueur voit tout de suite.
+   */
+  netCrd?: number;
 };
 
 type Props = {
@@ -32,6 +43,7 @@ function colsFor(n: number): number {
  */
 export function MissionPlay({ contract, busy = false, onCancel, onDone }: Props) {
   const total = Math.max(1, contract.cells);
+  const aEncaisser = contract.netCrd ?? contract.rewardCrd;
   const cols = colsFor(total);
   const [done, setDone] = useState<boolean[]>(() => Array.from({ length: total }, () => false));
 
@@ -68,7 +80,8 @@ export function MissionPlay({ contract, busy = false, onCancel, onDone }: Props)
       <div className="care-card glass mission-card" onClick={(e) => e.stopPropagation()}>
         <h3 id="mission-title">{contract.title}</h3>
         <p className="care-machine">
-          {WORK_LABELS[contract.work]} · {contract.rewardCrd} €
+          {WORK_LABELS[contract.work]} · {aEncaisser} €
+          {contract.rented ? ` · matériel loué −${contract.rentalFee ?? 0} €` : ""}
         </p>
         <p className="muted tiny">
           Glissez sur les cases. Un travail à la fois — vos cultures poussent chez vous.
@@ -98,7 +111,7 @@ export function MissionPlay({ contract, busy = false, onCancel, onDone }: Props)
             Laisser
           </button>
           <button type="button" className="go" disabled={!finished || busy} onClick={onDone}>
-            Encaisser {contract.rewardCrd} €
+            Encaisser {aEncaisser} €
           </button>
         </div>
       </div>

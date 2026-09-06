@@ -770,6 +770,8 @@ model NpcContract {
   /// Cases du chantier (8–24). L'usure et le salaire suivent ce chiffre.
   cells       Int             @default(16)
   status      ContractStatus  @default(OPEN)
+  /// Chantier pris avec du matériel loué : pas d'usure, et salaire réduit.
+  rented      Boolean         @default(false)
   providerId  String?
   provider    User?           @relation("Provider", fields: [providerId], references: [id])
   createdAt   DateTime        @default(now())

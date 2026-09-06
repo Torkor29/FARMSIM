@@ -2390,6 +2390,81 @@ export function missionPayout(
   return Math.round(contractorQuote(work, n) * share);
 }
 
+/* ------------------------------------------------------------------ */
+/* Louer le matériel d'un chantier                                     */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Part du salaire que prend la location du matériel `[GD]`.
+ *
+ * ## Le défaut que ceci corrige
+ *
+ * Le tableau publie trois offres, et le parc de départ n'a que tracteur,
+ * semoir et charrue : une offre de moisson ou d'épandage se lisait, se
+ * chiffrait, et se refusait au clic — « Il faut une moissonneuse-batteuse ».
+ * Le générateur garantit désormais qu'une des trois soit à portée d'un
+ * débutant, mais cela ne fait que réduire la fréquence du mur ; ça ne donne
+ * pas de chemin pour le franchir. Or c'est précisément par les contrats qu'un
+ * débutant est censé financer sa première moissonneuse.
+ *
+ * ## Pourquoi 45 %, et pas moins
+ *
+ * Posséder doit rester nettement meilleur que louer, sinon la moissonneuse ne
+ * s'achète jamais. Le propriétaire paie l'usure du passage — de l'ordre d'un
+ * dixième du salaire, réparation comprise — et garde donc près de 90 % ; le
+ * locataire en garde 55. L'écart est assez net pour que l'achat reste
+ * l'objectif, et le reste assez pour que la location vaille la soirée.
+ */
+export const MISSION_RENTAL_SHARE = 0.45;
+
+/** Ce que coûte la location pour ce chantier. */
+export function missionRentalFee(
+  work: FarmWork,
+  cells: number,
+  kind: MissionKind = "NPC",
+): number {
+  return Math.round(missionPayout(work, cells, kind) * MISSION_RENTAL_SHARE);
+}
+
+/** Ce qui reste au prestataire une fois la location payée. */
+export function missionRentedPayout(
+  work: FarmWork,
+  cells: number,
+  kind: MissionKind = "NPC",
+): number {
+  return missionPayout(work, cells, kind) - missionRentalFee(work, cells, kind);
+}
+
+/**
+ * Peut-on louer le matériel de ce chantier ?
+ *
+ * **On ne loue que ce qu'on n'a pas.** La règle est volontairement stricte, et
+ * pour une raison précise : un joueur qui possède l'engin mais l'a envoyé au
+ * champ pourrait, sinon, en louer un second et mener deux chantiers avec un
+ * seul attelage — exactement ce qui a été signalé en jouant et corrigé
+ * (« tu peux lancer deux choses qui nécessitent le tracteur alors que t'as
+ * qu'un seul tracteur »). La location rouvrirait la porte par la fenêtre.
+ *
+ * Un engin en panne ou trop usé ne se loue pas non plus : il se répare. La
+ * location est une rampe pour qui n'a pas encore le matériel, pas une
+ * assurance contre l'entretien.
+ */
+export function peutLouerPourCeTravail(machines: MachineForWork[], work: FarmWork): boolean {
+  const outils = (Object.keys(MACHINE_DEFS) as MachineType[]).filter((t) =>
+    MACHINE_DEFS[t].works.includes(work as never),
+  );
+  if (!outils.length) return false;
+  return !machines.some((m) => outils.includes(m.type));
+}
+
+/** Ce qu'on loue, en toutes lettres : « une moissonneuse-batteuse ». */
+export function libelleMaterielLoue(work: FarmWork): string {
+  const outils = (Object.keys(MACHINE_DEFS) as MachineType[]).filter((t) =>
+    MACHINE_DEFS[t].works.includes(work as never),
+  );
+  return outils.length ? machineWithArticle(outils[0]!) : "du matériel";
+}
+
 export const P2P_YIELD_MALUS = 0.02;
 export const LABOR_ORDER_TTL_MS = 45 * 60 * 1000;
 export const LABOR_OPEN_MAX_PER_CLIENT = 3;
