@@ -218,7 +218,7 @@ export function saisonAudio(s: SaisonMusicale): void {
 /**
  * La dernière saison annoncée, même si la musique était coupée à ce
  * moment-là. Sans elle, remonter le curseur « Musique » ne relancerait rien
- * avant le prochain changement de saison — dix heures de jeu plus tard.
+ * avant le prochain changement de saison — jusqu'à dix heures plus tard.
  */
 let derniereSaison: SaisonMusicale | null = null;
 

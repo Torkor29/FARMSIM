@@ -90,7 +90,7 @@ export function CropCalendarPanel({ hemisphere = "N", onClose }: Props) {
 
   const lignes = cropCalendar();
   const saisonActuelle = currentSeason(hemisphere);
-  const avantProchaine = msUntilNextSeason();
+  const avantProchaine = msUntilNextSeason(Date.now(), hemisphere);
   const saisons = [...SEASON_CYCLE];
 
   /*

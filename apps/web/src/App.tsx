@@ -1822,7 +1822,7 @@ export function App() {
    * surtout depuis qu'elle ne tombe plus sur un jour de la semaine, et qu'on
    * ne peut donc plus la déduire du calendrier réel.
    */
-  const jourDeSaison = dayOfSeason(horloge);
+  const jourDeSaison = dayOfSeason(horloge, hemisphere);
   const zoneCode =
     parcel?.zone?.code ??
     ownedParcels[0]?.zone?.code ??

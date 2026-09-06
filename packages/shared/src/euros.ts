@@ -43,10 +43,11 @@
  * point précédent : à moitié de récolte et plein tarif, il engloutissait un
  * tiers du résultat d'une saison — mesuré en jeu. Voir `fuel.ts`.
  *
- * **Le calendrier.** Une saison dure dix heures réelles, une année de jeu
- * quarante. Une ferme encaisse donc en une soirée ce qu'elle encaisserait en
- * une saison réelle — et c'est ce qui rend un tracteur d'occasion accessible
- * en quelques soirées plutôt qu'en deux ans.
+ * **Le calendrier.** Une saison de végétation dure dix heures réelles,
+ * l'hiver 5 h 43, et l'année de jeu 35 h 43. Une ferme encaisse donc en une
+ * soirée ce qu'elle encaisserait en une saison réelle — et c'est ce qui rend
+ * un tracteur d'occasion accessible en quelques soirées plutôt qu'en deux
+ * ans.
  */
 
 /**

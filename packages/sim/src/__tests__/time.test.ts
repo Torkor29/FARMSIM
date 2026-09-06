@@ -7,16 +7,20 @@
  * minutes chacune — **une saison durait donc un jour de jeu**, et l'année
  * entière une heure. Rien ne l'interdisait, rien ne le signalait.
  *
- * L'horloge a changé deux fois depuis. Elle est d'abord tombée sur la semaine
+ * L'horloge a changé trois fois depuis. Elle est d'abord tombée sur la semaine
  * réelle — lundi le printemps, dimanche l'hiver — ce qui réglait le problème
  * de repère et en créait un pire : les fenêtres de semis étant verrouillées
  * par saison, un joueur du week-end ne pouvait **jamais** semer la moitié du
- * catalogue. Elle tourne maintenant sur un cycle continu de saisons de dix
- * heures, qui glisse dans la journée.
+ * catalogue. Elle est ensuite passée à un cycle continu de quatre saisons
+ * égales de dix heures, qui glisse dans la journée. L'hiver y redevient
+ * enfin court — quatre jours de jeu contre sept —, cette fois sans la table
+ * indexée par jour de semaine qui avait fait renoncer la première fois.
  *
- * Ce que ces tests tiennent : que les durées continuent de s'emboîter, et que
- * le glissement soit réel — c'est-à-dire qu'aucune habitude de jeu, si
- * régulière soit-elle, n'enferme un joueur dans un sous-ensemble de saisons.
+ * Ce que ces tests tiennent : que les durées continuent de s'emboîter, que le
+ * glissement soit réel — c'est-à-dire qu'aucune habitude de jeu, si régulière
+ * soit-elle, n'enferme un joueur dans un sous-ensemble de saisons — et que le
+ * prix de l'hiver court, l'opposition des hémisphères qui n'est plus exacte,
+ * reste borné à ce qu'on a accepté.
  */
 
 import {
@@ -28,16 +32,20 @@ import {
   SEASON_CYCLE,
   SEASON_DAYS,
   SEASON_DURATION_MS,
+  SEASON_LENGTH_DAYS,
   SEASON_REAL_HOURS,
   SEASON_REAL_MS,
+  WINTER_DAYS,
   YEAR_DAYS,
   YEAR_MS,
   currentSeason,
   dayOfSeason,
   gameDayIndex,
-  seasonIndex,
+  seasonDurationMs,
+  seasonSpan,
   seasonLengthDays,
   seasonProgress,
+  seasonStartOfIndex,
   weatherForDay,
   type Season,
 } from "@farmsim/shared";
@@ -47,25 +55,30 @@ const HEURE = 60 * 60 * 1000;
 const LUNDI = Date.UTC(2026, 7, 24);
 
 describe("les durées s’emboîtent", () => {
-  it("une saison dure dix heures réelles, et c’est le seul réglage", () => {
+  it("une saison pleine dure dix heures réelles, et c’est le seul réglage", () => {
     expect(SEASON_REAL_HOURS).toBe(10);
     expect(SEASON_REAL_MS).toBe(10 * HEURE);
     expect(SEASON_DURATION_MS).toBe(SEASON_REAL_MS);
-    expect(YEAR_MS).toBe(4 * SEASON_REAL_MS);
+    // Trois saisons pleines et un hiver court : l'année ne fait plus quatre
+    // fois la saison.
+    expect(YEAR_MS).toBeCloseTo(3 * SEASON_REAL_MS + WINTER_DAYS * GAME_DAY_MS, 6);
   });
 
-  it("une année tient toujours vingt-huit jours de jeu", () => {
+  it("garde le jour de jeu inchangé — c’est le nombre de jours qui varie", () => {
     /*
-     * C'est l'invariant de calibrage du jeu entier, et il ne bouge pas : les
-     * intérêts d'une saison valent sept jours d'intérêts, un pré tient sept
-     * cycles d'élevage, un jeune grandit en sept cycles. Toutes ces valeurs
-     * sont écrites en jours de jeu, et elles gardent leur sens parce que le
-     * **jour de jeu se déduit de la saison**, et non l'inverse.
+     * L'invariant de calibrage du jeu entier tient à ceci : un jour de jeu
+     * dure toujours la même chose. Les intérêts, la gestation, la péremption
+     * et la pousse sont tous libellés en jours ; ils ne se décalent donc pas
+     * les uns par rapport aux autres. Un hiver court, c'est **moins de
+     * jours**, pas des jours plus courts.
      */
     expect(SEASON_DAYS).toBe(7);
-    expect(YEAR_DAYS).toBe(28);
+    expect(WINTER_DAYS).toBe(4);
+    expect(YEAR_DAYS).toBe(3 * SEASON_DAYS + WINTER_DAYS);
     expect(GAME_DAY_MS).toBeCloseTo(SEASON_REAL_MS / 7, 6);
-    expect(SEASON_DURATION_MS / GAME_DAY_MS).toBeCloseTo(7, 9);
+    for (const s of SEASON_CYCLE) {
+      expect(seasonDurationMs(s) / GAME_DAY_MS).toBeCloseTo(SEASON_LENGTH_DAYS[s], 9);
+    }
   });
 
   it("un cycle d’élevage est un jour — pas une saison", () => {
@@ -76,13 +89,35 @@ describe("les durées s’emboîtent", () => {
     expect(SEASON_DURATION_MS / LIVESTOCK_CYCLE_MS).toBeCloseTo(7, 9);
   });
 
-  it("donne les mêmes sept journées à chaque saison", () => {
-    // Les saisons étaient inégales — trois pleines et un hiver court — ce qui
-    // imposait une table indexée par jour, donc le calage sur la semaine.
-    for (const s of SEASON_CYCLE) expect(seasonLengthDays(s)).toBe(7);
-    const jours = new Set<number>();
-    for (let t = 0; t < SEASON_REAL_MS; t += GAME_DAY_MS / 4) jours.add(dayOfSeason(t));
-    expect([...jours].sort((a, b) => a - b)).toEqual([1, 2, 3, 4, 5, 6, 7]);
+  it("donne sept journées aux saisons pleines et quatre à l’hiver", () => {
+    /*
+     * Les saisons ont déjà été inégales, puis rendues égales — non parce que
+     * l'hiver méritait sept jours, mais parce que la seule implémentation à
+     * portée de main était une table indexée par jour de semaine, qui
+     * ramenait le calage hebdomadaire. Elles redeviennent inégales sans cette
+     * table : l'année est une suite d'intervalles, et la saison se trouve par
+     * un modulo sur la position dans l'année.
+     */
+    expect(seasonLengthDays("SPRING")).toBe(7);
+    expect(seasonLengthDays("SUMMER")).toBe(7);
+    expect(seasonLengthDays("AUTUMN")).toBe(7);
+    expect(seasonLengthDays("WINTER")).toBe(4);
+
+    // Et le quantième affiché va bien de 1 à la longueur de la saison — sans
+    // sauter de jour, et sans en inventer un huitième.
+    for (let rang = 0; rang < SEASON_CYCLE.length; rang++) {
+      const saison = SEASON_CYCLE[rang]!;
+      const debut = seasonStartOfIndex(rang);
+      const jours = new Set<number>();
+      for (let t = debut; t < debut + seasonDurationMs(saison); t += GAME_DAY_MS / 4) {
+        jours.add(dayOfSeason(t));
+      }
+      const attendus = Array.from({ length: seasonLengthDays(saison) }, (_, i) => i + 1);
+      expect({ saison, jours: [...jours].sort((a, b) => a - b) }).toEqual({
+        saison,
+        jours: attendus,
+      });
+    }
   });
 });
 
@@ -94,20 +129,36 @@ describe("le quantième de saison", () => {
      * de jour de jeu, et à un horodatage de l'ordre de 10^12 la frontière se
      * situe à l'ulp près d'un côté ou de l'autre. Aucun joueur ne regarde une
      * frontière à la milliseconde ; un test, si.
+     *
+     * On le fait pour les quatre saisons : c'est l'hiver, la plus courte, qui
+     * déborderait le premier si le quantième se comptait sur une longueur type.
      */
-    const debut = seasonIndex(LUNDI) * SEASON_REAL_MS;
-    for (let j = 0; j < 7; j++) {
-      expect(dayOfSeason(debut + GAME_DAY_MS * (j + 0.5))).toBe(j + 1);
+    for (let rang = 0; rang < SEASON_CYCLE.length; rang++) {
+      const saison = SEASON_CYCLE[rang]!;
+      const debut = seasonStartOfIndex(rang);
+      const duree = seasonDurationMs(saison);
+      for (let j = 0; j < seasonLengthDays(saison); j++) {
+        expect({ saison, j, jour: dayOfSeason(debut + GAME_DAY_MS * (j + 0.5)) }).toEqual({
+          saison,
+          j,
+          jour: j + 1,
+        });
+      }
+      // La dernière milliseconde reste dans la saison : sans borne on
+      // afficherait « jour 8 sur 7 », ou « jour 5 sur 4 » en hiver.
+      expect({ saison, dernier: dayOfSeason(debut + duree - 1) }).toEqual({
+        saison,
+        dernier: seasonLengthDays(saison),
+      });
     }
-    // La dernière milliseconde de la saison reste dans la saison : la division
-    // ne tombe pas ronde, et sans borne on afficherait « jour 8 sur 7 ».
-    expect(dayOfSeason(debut + SEASON_REAL_MS - 1)).toBe(7);
   });
 
   it("repart à 1 exactement quand la saison change", () => {
-    const fin = (seasonIndex(LUNDI) + 1) * SEASON_REAL_MS;
-    expect(currentSeason("N", fin - 1)).not.toBe(currentSeason("N", fin));
-    expect(dayOfSeason(fin)).toBe(1);
+    for (let rang = 0; rang < 8; rang++) {
+      const fin = seasonStartOfIndex(rang + 1);
+      expect(currentSeason("N", fin - 1)).not.toBe(currentSeason("N", fin));
+      expect(dayOfSeason(fin)).toBe(1);
+    }
   });
 
   it("avance d’un jour par jour, et pas plus vite", () => {
@@ -116,10 +167,30 @@ describe("le quantième de saison", () => {
   });
 
   it("progresse continûment du début à la fin", () => {
-    const debut = seasonIndex(LUNDI) * SEASON_REAL_MS;
-    expect(seasonProgress(debut)).toBeCloseTo(0, 6);
-    expect(seasonProgress(debut + SEASON_REAL_MS / 2)).toBeCloseTo(0.5, 6);
-    expect(seasonProgress(debut + SEASON_REAL_MS - 1)).toBeGreaterThan(0.99);
+    for (let rang = 0; rang < SEASON_CYCLE.length; rang++) {
+      const debut = seasonStartOfIndex(rang);
+      const duree = seasonDurationMs(SEASON_CYCLE[rang]!);
+      expect(seasonProgress(debut)).toBeCloseTo(0, 6);
+      expect(seasonProgress(debut + duree / 2)).toBeCloseTo(0.5, 6);
+      expect(seasonProgress(debut + duree - 1)).toBeGreaterThan(0.99);
+    }
+  });
+
+  it("tombe toujours sur une frontière de jour de jeu", () => {
+    /*
+     * Ce n'est pas une coquetterie : la simulation de pousse découpe son
+     * intégration à la fois au jour et à la saison, et elle ne peut lire la
+     * bonne vitesse que si les deux grilles coïncident. Une saison qui
+     * finirait au milieu d'une journée ferait pousser des heures de printemps
+     * à la vitesse de l'hiver, sans que rien ne le signale.
+     */
+    for (const h of ["N", "S"] as const) {
+      for (let i = 0; i < 12; i++) {
+        const { start, end } = seasonSpan(h, LUNDI + i * 3 * HEURE);
+        expect(start / GAME_DAY_MS).toBeCloseTo(Math.round(start / GAME_DAY_MS), 6);
+        expect(end / GAME_DAY_MS).toBeCloseTo(Math.round(end / GAME_DAY_MS), 6);
+      }
+    }
   });
 });
 
@@ -132,24 +203,38 @@ describe("la saison glisse — c’est tout l’objet du réglage", () => {
    * changeait `SEASON_REAL_HOURS` sans regarder ces deux propriétés.
    */
 
-  it("n’avance pas d’un nombre entier de saisons par jour réel", () => {
-    /*
-     * Si le quotient est entier, la saison revient à la même heure chaque
-     * jour. Il reste alors une chance : qu'il soit premier avec 4, auquel cas
-     * on parcourt quand même le cycle (8 h → 3 saisons/jour, et 3 et 4 sont
-     * premiers entre eux). Sinon on est figé — 12 h donne éternellement deux
-     * saisons sur quatre, 6 h une seule.
-     */
-    const parJour = 24 / SEASON_REAL_HOURS;
-    const entier = Number.isInteger(parJour);
-    const pgcd = (a: number, b: number): number => (b === 0 ? a : pgcd(b, a % b));
-    expect(entier ? pgcd(parJour, 4) : 1).toBe(1);
+  /**
+   * La quantité à surveiller n'est plus la saison mais l'**année**.
+   *
+   * Tant que les quatre saisons étaient égales, « avancer d'un nombre entier
+   * de saisons par jour » suffisait à décrire le piège. Avec un hiver court,
+   * ce n'est plus la bonne unité : ce qui enferme un joueur, c'est que sa
+   * position dans l'année revienne toujours à la même place. On mesure donc
+   * combien de positions distinctes une habitude régulière visite avant de se
+   * répéter.
+   */
+  function positionsVisitees(periodeMs: number): number {
+    const vues = new Set<number>();
+    for (let i = 0; i < 4000; i++) {
+      // Arrondi au dixième de jour de jeu : deux positions qui ne diffèrent
+      // que d'une milliseconde ne sont pas deux positions pour un joueur.
+      vues.add(Math.round((((i * periodeMs) % YEAR_MS) / GAME_DAY_MS) * 10));
+    }
+    return vues.size;
+  }
+
+  it("ne ramène pas le joueur quotidien à la même place dans l’année", () => {
+    // Un jour réel avance de 84/125 d'année ; 84 est premier avec 125, donc
+    // 125 positions avant répétition. Il en faut au moins autant qu'il y a de
+    // jours dans l'année pour que les quatre saisons soient atteignables.
+    expect(positionsVisitees(REAL_DAY_MS)).toBeGreaterThan(YEAR_DAYS);
   });
 
-  it("ne retombe pas non plus sur la semaine", () => {
+  it("ne ramène pas non plus le joueur hebdomadaire", () => {
     // Le second piège, et le plus discret : un joueur d'un seul soir par
-    // semaine. C'est lui qui disqualifie 7 h (168 ÷ 28 = 6) et 14 h.
-    expect(Number.isInteger(168 / (SEASON_CYCLE.length * SEASON_REAL_HOURS))).toBe(false);
+    // semaine. C'est lui qui disqualifiait 7 h et 14 h du temps des saisons
+    // égales, alors que la vérification quotidienne les laissait passer.
+    expect(positionsVisitees(7 * REAL_DAY_MS)).toBeGreaterThan(YEAR_DAYS);
   });
 
   const habitudes: Array<{ nom: string; creneaux: (semaine: number) => number[] }> = [
@@ -197,30 +282,86 @@ describe("la saison glisse — c’est tout l’objet du réglage", () => {
     }
   });
 
-  it("garde les deux hémisphères à contretemps exact", () => {
-    // Opposition, pas décalage : quand l'un est au plus froid, l'autre est au
-    // plus chaud. Un décalage impair les mettrait en demi-saison l'un de
-    // l'autre — ça ne s'oppose plus, ça se croise.
-    const oppose: Record<Season, Season> = {
-      SPRING: "AUTUMN",
-      SUMMER: "WINTER",
-      AUTUMN: "SPRING",
-      WINTER: "SUMMER",
-    };
-    for (let i = 0; i < 12; i++) {
-      const t = LUNDI + i * 3 * HEURE;
-      expect(currentSeason("S", t)).toBe(oppose[currentSeason("N", t)]);
+  /**
+   * ## L'opposition des hémisphères, et sa couture
+   *
+   * Tant que les quatre saisons duraient le même temps, le sud était l'opposé
+   * exact du nord : on renommait, et c'était tout. Un hiver plus court rend
+   * cette opposition-là impossible, et c'est arithmétique. Renommer
+   * l'intervalle où le nord hiverne donnerait au sud un **été de quatre
+   * jours**, et à son hiver les sept jours de l'été du nord : l'hémisphère sud
+   * paierait le confort du nord. Aucun choix de longueurs n'évite cela, sauf à
+   * rendre l'été aussi court que l'hiver.
+   *
+   * Les deux hémisphères lisent donc la même suite d'intervalles, le sud avec
+   * deux saisons pleines d'avance. Chacun a son hiver court. L'opposition
+   * tient alors sur dix-neuf jours sur vingt-cinq, et se déchire sur deux
+   * coutures de trois jours : la fin de l'été du nord, où le sud est déjà
+   * sorti de l'hiver, et la fin de son automne, où le sud est déjà en été.
+   *
+   * Ces vingt-quatre pour cent sont un plancher, pas un réglage à améliorer :
+   * quel que soit le décalage choisi, on ne descend pas en dessous. La seule
+   * façon de retrouver l'opposition exacte serait de rendre l'été aussi court
+   * que l'hiver — c'est-à-dire de payer le confort d'hiver avec la saison où
+   * tout pousse.
+   *
+   * Ces tests nomment la couture plutôt que de faire comme si elle n'existait
+   * pas : le premier borne exactement ce qui n'est plus vrai, le second tient
+   * la propriété pour laquelle on l'accepte.
+   */
+  const OPPOSE: Record<Season, Season> = {
+    SPRING: "AUTUMN",
+    SUMMER: "WINTER",
+    AUTUMN: "SPRING",
+    WINTER: "SUMMER",
+  };
+
+  it("oppose les deux hémisphères partout sauf sur deux coutures nommées", () => {
+    const coutures = new Set<string>();
+    let desaccords = 0;
+    for (let i = 0; i < 400; i++) {
+      const t = LUNDI + i * (YEAR_MS / 400);
+      const nord = currentSeason("N", t);
+      const sud = currentSeason("S", t);
+      if (sud === OPPOSE[nord]) continue;
+      // Les deux seuls désaccords admis, et ils sont nommés. Tout autre
+      // couple signifierait que le décalage a bougé.
+      expect(`${nord}/${sud}`).toMatch(/^(SUMMER\/SPRING|AUTUMN\/SUMMER)$/);
+      coutures.add(`${nord}/${sud}`);
+      desaccords++;
+    }
+    // Et la couture reste une couture : six jours sur vingt-cinq, pas un
+    // décalage général.
+    expect(desaccords / 400).toBeLessThan(0.25);
+    expect([...coutures].sort()).toEqual(["AUTUMN/SUMMER", "SUMMER/SPRING"]);
+  });
+
+  it("donne à chaque hémisphère le même hiver court", () => {
+    // C'est la propriété pour laquelle la couture est acceptée : personne ne
+    // paie l'hiver court de l'autre.
+    for (const h of ["N", "S"] as const) {
+      const compte = new Map<Season, number>();
+      const pas = YEAR_MS / 2500;
+      for (let i = 0; i < 2500; i++) {
+        const s = currentSeason(h, LUNDI + i * pas);
+        compte.set(s, (compte.get(s) ?? 0) + 1);
+      }
+      for (const s of SEASON_CYCLE) {
+        const part = (compte.get(s) ?? 0) / 2500;
+        expect({ h, s, part: Math.round(part * 100) }).toEqual({
+          h,
+          s,
+          part: Math.round((seasonLengthDays(s) / YEAR_DAYS) * 100),
+        });
+      }
     }
   });
 
-  it("passe autant de temps dans chaque saison", () => {
-    const compte = new Map<Season, number>();
-    for (let i = 0; i < 4 * 24 * 40; i++) {
-      const s = currentSeason("N", LUNDI + i * HEURE);
-      compte.set(s, (compte.get(s) ?? 0) + 1);
-    }
-    const parts = SEASON_CYCLE.map((s) => compte.get(s) ?? 0);
-    expect(Math.max(...parts) - Math.min(...parts)).toBeLessThanOrEqual(1);
+  it("fait passer moins de temps en hiver qu’ailleurs — c’est tout l’objet", () => {
+    expect(seasonDurationMs("WINTER")).toBeLessThan(seasonDurationMs("SUMMER"));
+    // 5 h 43 au lieu de 10 h : assez court pour qu'un joueur du soir ne tombe
+    // pas deux sessions de suite sur la seule saison où son champ n'avance pas.
+    expect(seasonDurationMs("WINTER") / HEURE).toBeCloseTo(40 / 7, 6);
   });
 });
 
