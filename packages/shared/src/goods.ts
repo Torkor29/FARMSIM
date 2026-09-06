@@ -23,6 +23,11 @@ export type TradeGood =
   | "HAY"
   | "EGGS"
   | "WOOL"
+  | "MESCLUN"
+  | "RADISH"
+  | "SPINACH"
+  | "LETTUCE"
+  | "POTATO"
   | "MANURE"
   | "STRAW"
   | "STRAW_BALE"
@@ -96,6 +101,67 @@ export const GOOD_DEFS: Record<TradeGood, GoodDef> = {
     // Une protéine se paie mieux qu'une céréale, ce qui compense en partie un
     // rendement à l'hectare plus faible.
     basePrice: 285,
+    sellable: true,
+    purchasable: false,
+    perishable: false,
+  },
+  /* ---------------------------------------------------------------- */
+  /* Le maraîchage                                                     */
+  /* ---------------------------------------------------------------- */
+  /*
+   * Un légume vaut plus cher à la tonne qu'une céréale, et pèse beaucoup
+   * moins à la case : c'est ce qui empêche cinq cultures rapides d'inonder le
+   * marché. La pomme de terre fait l'inverse — lourde et bon marché.
+   *
+   * **Les feuilles sont périssables, la pomme de terre non.** C'est la
+   * texture du lot : on ne stocke pas une salade en attendant un bon cours,
+   * on la vend. La patate se garde, et donne au silo une raison d'être quand
+   * on fait du légume.
+   */
+  MESCLUN: {
+    code: "MESCLUN",
+    name: "Mesclun",
+    unit: "t",
+    // Les jeunes pousses sont ce qui se vend le plus cher au kilo.
+    basePrice: 400,
+    sellable: true,
+    purchasable: false,
+    perishable: true,
+  },
+  RADISH: {
+    code: "RADISH",
+    name: "Radis",
+    unit: "t",
+    basePrice: 250,
+    sellable: true,
+    purchasable: false,
+    perishable: true,
+  },
+  SPINACH: {
+    code: "SPINACH",
+    name: "Épinard",
+    unit: "t",
+    basePrice: 300,
+    sellable: true,
+    purchasable: false,
+    perishable: true,
+  },
+  LETTUCE: {
+    code: "LETTUCE",
+    name: "Salade",
+    unit: "t",
+    basePrice: 260,
+    sellable: true,
+    purchasable: false,
+    perishable: true,
+  },
+  POTATO: {
+    code: "POTATO",
+    name: "Pomme de terre",
+    unit: "t",
+    // Lourde et bon marché : l'inverse des feuilles, et la seule du lot qui
+    // se conserve.
+    basePrice: 180,
     sellable: true,
     purchasable: false,
     perishable: false,
@@ -275,6 +341,11 @@ export const GOOD_ICONS: Record<TradeGood, string> = {
   MAIZE: "/assets/icons/goods/maize.svg",
   RAPE: "/assets/icons/goods/rape.svg",
   PEA: "/assets/icons/goods/pea.svg",
+  MESCLUN: "/assets/icons/goods/mesclun.svg",
+  RADISH: "/assets/icons/goods/radish.svg",
+  SPINACH: "/assets/icons/goods/spinach.svg",
+  LETTUCE: "/assets/icons/goods/lettuce.svg",
+  POTATO: "/assets/icons/goods/potato.svg",
   HAY: "/assets/icons/goods/hay.svg",
   MILK: "/assets/icons/goods/milk.svg",
   MEAT: "/assets/icons/goods/meat.svg",

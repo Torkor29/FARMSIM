@@ -57,6 +57,22 @@ export const PLANT_OPTIONS: ToolOption[] = [
   { tool: "PLANT_RAPE", label: "Colza", hint: "Cours élevé, exigeant sur le sol" },
   { tool: "PLANT_PEA", label: "Pois", hint: "Légumineuse : laisse de l'azote au suivant" },
   { tool: "PLANT_GRASS", label: "Herbe", hint: "Se fauche, nourrit le troupeau" },
+  /*
+   * Le maraîchage, en bas de liste et dans l'ordre des durées.
+   *
+   * Les céréales d'abord : elles restent le cœur du jeu, et une liste qui
+   * s'ouvre sur le mesclun dirait le contraire. Mais les cinq suivantes se
+   * sèment et se récoltent dans une soirée, ce qu'aucune des six premières ne
+   * permet — c'est la boucle courte qui manquait.
+   *
+   * L'infobulle annonce la durée : c'est la seule chose qui distingue vraiment
+   * ces cultures les unes des autres au moment de choisir.
+   */
+  { tool: "PLANT_MESCLUN", label: "Mesclun", hint: "2 h — et ça repousse après la coupe" },
+  { tool: "PLANT_RADISH", label: "Radis", hint: "3 h — la plus rapide à resemer" },
+  { tool: "PLANT_SPINACH", label: "Épinard", hint: "4 h — se vend cher, se garde mal" },
+  { tool: "PLANT_LETTUCE", label: "Salade", hint: "5 h — la plus lourde des feuilles" },
+  { tool: "PLANT_POTATO", label: "Pomme de terre", hint: "10 h — se conserve, contrairement aux feuilles" },
 ];
 
 /**

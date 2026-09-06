@@ -72,7 +72,7 @@ export type Specialization = "CEREALIER" | "ELEVEUR";
 /** Les deux métiers jouables. Les travaux à façon sont un appoint, pas un 3ᵉ métier. */
 export const PLAYABLE_SPECIALIZATIONS: Specialization[] = ["CEREALIER", "ELEVEUR"];
 
-import type { CropCode } from "./crops.js";
+import { repousseApresCoupe, type CropCode } from "./crops.js";
 
 export type FieldStage =
   | "EMPTY"
@@ -353,12 +353,93 @@ export const CROP_DEFS: Record<
     regrowMs: croissanceHeures(7),
     seedCostPerCell: 8,
   },
+
+  /* ---------------------------------------------------------------- */
+  /* Le maraîchage                                                     */
+  /* ---------------------------------------------------------------- */
+  /*
+   * Cinq cultures de deux à dix heures, là où une céréale en demande
+   * vingt-huit. Demandé en jouant : on ne pouvait ni semer ni récolter dans
+   * une même soirée, la plus rapide du catalogue étant l'herbe à douze heures.
+   *
+   * ## La règle qui tient l'échelle
+   *
+   * **Plus la boucle est courte, moins elle paie à l'heure.** Le mesclun est
+   * le plus rapide et le moins rentable ; la pomme de terre est la plus lente
+   * du lot et la mieux payée. On achète de la liquidité, pas du rendement —
+   * sans cette pente, tout le monde sèmerait le deux heures en boucle et le
+   * blé disparaîtrait du jeu.
+   *
+   * Le tableau, semence déduite, au cours de base :
+   *
+   *     mesclun  2 h   2,50 €/case/h
+   *     radis    3 h   2,83
+   *     épinard  4 h   3,00
+   *     salade   5 h   2,92
+   *     patate  10 h   3,10
+   *     — pour mémoire : blé 2,21 · maïs 2,67 · orge 3,19 · pois 4,78
+   *
+   * Le maraîchage se glisse donc entre les céréales qu'on sème et qu'on
+   * oublie, et l'orge ou le pois qu'on surveille. Ce qu'il coûte vraiment
+   * n'est pas dans ces nombres : neuf récoltes de radis là où le blé en
+   * demande une, c'est neuf fois l'usure, le gazole et le temps passé.
+   */
+  MESCLUN: {
+    code: "MESCLUN",
+    name: "Mesclun",
+    yieldPerCell: 0.04,
+    // La boucle la plus courte du jeu : semé en arrivant, coupé avant de
+    // partir.
+    growMs: croissanceHeures(2),
+    // Les jeunes pousses repartent après la coupe — le seul légume de vente
+    // qu'on ne resème pas à chaque récolte.
+    regrowMs: croissanceHeures(1.5),
+    seedCostPerCell: 11,
+  },
+  RADISH: {
+    code: "RADISH",
+    name: "Radis",
+    yieldPerCell: 0.09,
+    // La plus rapide des vraies cultures de plein champ : vingt-cinq jours.
+    growMs: croissanceHeures(3),
+    seedCostPerCell: 14,
+  },
+  SPINACH: {
+    code: "SPINACH",
+    name: "Épinard",
+    yieldPerCell: 0.08,
+    growMs: croissanceHeures(4),
+    seedCostPerCell: 12,
+  },
+  LETTUCE: {
+    code: "LETTUCE",
+    name: "Salade",
+    yieldPerCell: 0.11,
+    growMs: croissanceHeures(5),
+    seedCostPerCell: 14,
+  },
+  POTATO: {
+    code: "POTATO",
+    name: "Pomme de terre",
+    yieldPerCell: 0.3,
+    // L'ancre du lot : dix heures, le meilleur rendement horaire du
+    // maraîchage, et la seule qui se conserve. C'est elle qui donne une
+    // raison de posséder un silo quand on fait du légume.
+    growMs: croissanceHeures(10),
+    seedCostPerCell: 23,
+  },
 };
 
-/** Durée de pousse : l'herbe déjà fauchée reprend plus vite. */
+/**
+ * Durée de pousse : ce qui a déjà été coupé reprend plus vite.
+ *
+ * La règle testait `GRASS` en dur. Le mesclun repousse lui aussi, et la
+ * condition l'aurait ignoré en silence : un rang recoupé aurait remis deux
+ * heures pleines au lieu d'une heure et demie, sans que rien ne le dise.
+ */
 export function cropGrowMs(crop: CropCode, cutsDone = 0): number {
   const def = CROP_DEFS[crop];
-  if (crop === "GRASS" && cutsDone > 0) return def.regrowMs ?? def.growMs;
+  if (cutsDone > 0 && repousseApresCoupe(crop)) return def.regrowMs ?? def.growMs;
   return def.growMs;
 }
 
@@ -388,6 +469,25 @@ const AMPLITUDES: Record<TradeGood, { bas: number; haut: number; depth: number }
   // Le lait varie peu : c'est un revenu régulier, pas un pari.
   MILK: { bas: 0.71, haut: 1.48, depth: 50 },
   MEAT: { bas: 0.62, haut: 1.59, depth: 20 },
+  /*
+   * Le maraîchage : carnets étroits, et c'est le point.
+   *
+   * Un légume se vend sur un marché local, pas sur un cours mondial. La
+   * profondeur faible veut dire qu'un gros lot fait chuter le prix : semer
+   * quarante cases de radis et tout vendre d'un coup ne rapporte pas quarante
+   * fois une case. C'est le second garde-fou du lot, après la pente horaire —
+   * on ne fait pas fortune en industrialisant la salade.
+   *
+   * L'amplitude reste large : un légume périssable a des cours nerveux, et
+   * c'est ce qui donne un intérêt à vendre au bon moment plutôt que le
+   * lendemain.
+   */
+  MESCLUN: { bas: 0.6, haut: 1.9, depth: 14 },
+  RADISH: { bas: 0.6, haut: 1.85, depth: 22 },
+  SPINACH: { bas: 0.6, haut: 1.85, depth: 20 },
+  LETTUCE: { bas: 0.6, haut: 1.85, depth: 24 },
+  // La pomme de terre se garde : son marché est plus profond et plus calme.
+  POTATO: { bas: 0.65, haut: 1.6, depth: 70 },
   HAY: { bas: 0.63, haut: 1.74, depth: 94 },
   STRAW: { bas: 0.62, haut: 1.81, depth: 56 },
   // Une botte pèse 0,35 t : à son prix, la tonne bottelée vaut sensiblement
