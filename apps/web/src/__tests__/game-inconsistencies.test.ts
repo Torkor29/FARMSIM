@@ -48,7 +48,7 @@ describe("les incohérences repérées pendant l’audit", () => {
 
   it("emploie les mêmes noms que les boutons réellement visibles", () => {
     expect(TUTORIAL).toContain("Onglet Bâtir");
-    expect(TUTORIAL).toContain("L’onglet Missions");
+    expect(TUTORIAL).toContain("Le bouton Ventes du dock");
     expect(TUTORIAL).toContain("Onglet Troupeau");
     expect(TUTORIAL).toContain("Onglet Personnel");
     expect(OFFICE).toContain('className="hdv-kicker">Bureau');

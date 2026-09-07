@@ -7661,6 +7661,143 @@ button.tiny {
   .tuto-scene * { animation: none !important; }
 }
 
+/*
+ * Maquette fidèle de l'interface mobile.
+ *
+ * Les premières scènes étaient des rectangles anonymes. Elles reprenaient la
+ * disposition d'une ancienne coque (détails à droite, onglets dans la barre)
+ * alors que le téléphone utilise désormais un dock et un tiroir « Plus ».
+ * Ces styles dessinent la vraie hiérarchie et réutilisent les icônes du jeu.
+ */
+.tuto-scene {
+  margin: 0.15rem 0 0.7rem;
+  border: 1px solid #c4d8cd;
+  border-radius: 14px;
+  background: linear-gradient(145deg, #f5faf6, #dfece4);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.85), 0 8px 24px rgba(32, 72, 57, 0.1);
+}
+.tuto-scene svg { aspect-ratio: 160 / 104; }
+.tuto-screen { fill: #eaf2ec; stroke: #b9d1c3; stroke-width: 1; }
+.tuto-farm { fill: #9ab97a; }
+.tuto-road { fill: none; stroke: #d5c18b; stroke-width: 4; stroke-linecap: round; opacity: 0.8; }
+.tuto-hud rect { fill: #173e36; }
+.tuto-hud circle { fill: #e5bb42; }
+.tuto-txt { font-family: Nunito, sans-serif; }
+.tuto-txt.micro { fill: #f3f7ef; font-size: 3.5px; letter-spacing: 0.04em; }
+.tuto-txt.left { text-anchor: start; }
+.tuto-txt.right { text-anchor: end; }
+.tuto-grille .tuto-case { fill: #b9cc91; stroke: rgba(43, 86, 48, 0.45); stroke-width: 0.55; }
+.tuto-grille .tuto-case.selection { fill: #f3cd5a; stroke: #b5851d; stroke-width: 1; }
+.tuto-grille .tuto-case.pousse { fill: #6fa65f; }
+.tuto-grille .tuto-case.mur { fill: #d9af3c; }
+.tuto-grille .tuto-case.sale { fill: #aabf83; }
+.tuto-grille .tuto-case.chaume { fill: #c3a870; stroke-dasharray: 2 1; }
+.tuto-grille .tuto-case.fertile { fill: #73b66d; filter: drop-shadow(0 0 2px rgba(87, 177, 111, 0.65)); }
+.tuto-barn-mini rect { fill: #e8d9be; stroke: #7d5540; stroke-width: 0.6; }
+.tuto-barn-mini path { fill: #a94f38; }
+
+.tuto-dock-bg { fill: rgba(255, 255, 255, 0.96); stroke: #b6cabf; stroke-width: 0.7; }
+.tuto-dock-item { fill: #edf3ee; stroke: #d5e1d9; stroke-width: 0.45; }
+.tuto-dock g.on .tuto-dock-item { fill: #307d6b; stroke: #1e6959; }
+.tuto-dock image { opacity: 0.82; }
+.tuto-dock g.on image { filter: brightness(0) invert(1); opacity: 1; }
+.tuto-txt.dock-label { font-size: 2.55px; fill: #435b52; font-weight: 800; }
+.tuto-dock g.on .dock-label { fill: #fff; }
+.tuto-txt.dock-symbol { font-size: 6px; fill: #34594d; font-weight: 900; }
+.tuto-dock g.on .dock-symbol { fill: #fff; }
+
+.tuto-callouts path { fill: none; stroke: #fff; stroke-width: 0.9; stroke-dasharray: 2 1; }
+.tuto-txt.callout { fill: #fff; font-size: 4px; font-weight: 900; paint-order: stroke; stroke: rgba(19, 61, 49, 0.68); stroke-width: 2px; }
+.tuto-scrim { fill: rgba(12, 35, 29, 0.42); }
+.tuto-drawer > rect { fill: #f9fbf8; stroke: #aac4b5; stroke-width: 0.8; filter: drop-shadow(0 4px 5px rgba(16, 51, 41, 0.22)); }
+.tuto-txt.drawer-title { font-size: 4px; fill: #967321; letter-spacing: 0.09em; }
+.drawer-item rect { fill: #edf4ef; stroke: #c4d6cb; stroke-width: 0.5; }
+.drawer-item image { opacity: 0.82; }
+.tuto-txt.drawer-label { font-size: 3.2px; fill: #274d41; text-anchor: start; font-weight: 800; }
+
+.tuto-tray > rect { fill: rgba(249, 252, 249, 0.98); stroke: #b7ccbf; stroke-width: 0.6; }
+.tuto-tray g rect { fill: #e3ece5; }
+.tuto-tray g.on rect { fill: #307d6b; }
+.tuto-txt.chip-label { font-size: 3.3px; fill: #405b52; }
+.tuto-tray g.on .chip-label { fill: #fff; }
+.tuto-action rect { fill: #e5b437; stroke: #b17e17; stroke-width: 0.7; }
+.tuto-txt.action-label { fill: #3e2b08; font-size: 4.4px; font-weight: 900; }
+
+.tuto-fleche { fill: #193f35; stroke: #fff; stroke-width: 0.8; }
+.tuto-doigt { fill: #193f35; }
+.tuto-doigt-halo { fill: rgba(25, 63, 53, 0.22); animation: tuto-tap-ring 1.2s ease-out infinite; }
+@keyframes tuto-tap-ring { 0%, 100% { transform: scale(0.65); opacity: 0.65; } 70% { transform: scale(1.25); opacity: 0; } }
+.tuto-curseur.vers-plus { animation: tuto-vers-plus 3s ease-in-out infinite; }
+@keyframes tuto-vers-plus { 0%, 25% { transform: translate(111px, 48px); } 65%, 100% { transform: translate(123px, 88px); } }
+.tuto-curseur.vers-semer { animation: tuto-vers-semer 3s ease-in-out infinite; }
+@keyframes tuto-vers-semer { 0%, 25% { transform: translate(69px, 38px); } 65%, 100% { transform: translate(40px, 88px); } }
+.tuto-curseur.glisse { animation: tuto-glisse-v2 3.6s ease-in-out infinite; }
+@keyframes tuto-glisse-v2 { 0%, 12% { transform: translate(36px, 23px); } 58%, 100% { transform: translate(83px, 56px); } }
+.tuto-curseur.tapote { animation: tuto-tapote-v2 4s steps(1) infinite; }
+@keyframes tuto-tapote-v2 { 0%, 24% { transform: translate(48px, 28px); } 25%, 49% { transform: translate(76px, 28px); } 50%, 74% { transform: translate(48px, 48px); } 75%, 100% { transform: translate(76px, 48px); } }
+.tuto-curseur.vers-faire { animation: tuto-vers-faire-v2 3s ease-in-out infinite; }
+@keyframes tuto-vers-faire-v2 { 0%, 30% { transform: translate(75px, 45px); } 70%, 100% { transform: translate(128px, 68px); } }
+.tuto-curseur.vers-emprise { animation: tuto-vers-emprise-v2 3.5s ease-in-out infinite; }
+@keyframes tuto-vers-emprise-v2 { 0%, 25% { transform: translate(35px, 38px); } 70%, 100% { transform: translate(92px, 38px); } }
+.tuto-lasso { fill: rgba(245, 198, 65, 0.22); stroke: #e4ac22; stroke-width: 1; stroke-dasharray: 3 2; }
+
+.tuto-tracteur, .tuto-moisson { fill: #285f49; stroke: #173f31; stroke-width: 0.7; animation: tuto-traverse-v2 4s ease-in-out infinite; }
+.tuto-moisson { fill: #d2a230; animation-duration: 4.6s; }
+@keyframes tuto-traverse-v2 { 0% { transform: translate(12px, 31px); } 80%, 100% { transform: translate(101px, 49px); } }
+.tuto-herbes { fill: none; stroke: #376f36; stroke-width: 1.2; stroke-linecap: round; animation: tuto-disparait 4s ease-in-out infinite; }
+@keyframes tuto-disparait { 0%, 45% { opacity: 1; } 75%, 100% { opacity: 0.12; } }
+.tuto-cultivateur { fill: none; stroke: #7f572c; stroke-width: 1.4; stroke-dasharray: 3 2; animation: tuto-cultive 3.8s linear infinite; }
+.tuto-cultivateur circle { fill: #445e4c; stroke: none; }
+@keyframes tuto-cultive { from { transform: translateX(-18px); } to { transform: translateX(26px); } }
+.tuto-engrais > circle { fill: rgba(255,255,255,0.88); stroke: #4d9f65; stroke-width: 1.5; }
+.tuto-engrais > path { fill: none; stroke: #5dad6b; stroke-width: 2; stroke-dasharray: 3 2; animation: tuto-pulse 2s ease-in-out infinite; }
+.tuto-txt.nutrient { font-size: 9px; fill: #34794d; font-weight: 900; }
+.tuto-txt.nutrient-value { font-size: 4px; fill: #34794d; }
+
+.tuto-growth path { fill: none; stroke: #315e35; stroke-width: 1.5; stroke-linecap: round; }
+.tuto-growth rect { fill: #d7e1d8; }
+.tuto-growth rect.fill { fill: #62a860; animation: tuto-growth-bar 4s ease-in-out infinite; }
+@keyframes tuto-growth-bar { 0% { width: 7px; } 75%,100% { width: 87px; } }
+.tuto-txt.growth-label { font-size: 4.5px; fill: #285d3c; }
+.tuto-silo rect { fill: #d8ddd6; stroke: #68776f; stroke-width: 0.7; }
+.tuto-silo > path:not(.grain-route) { fill: #789084; }
+.tuto-txt.silo-label { font-size: 3.2px; fill: #44574e; }
+.grain-route { fill: none; stroke: #e6b938; stroke-width: 1.5; stroke-dasharray: 3 2; animation: tuto-grain 1.2s linear infinite; }
+@keyframes tuto-grain { to { stroke-dashoffset: -10; } }
+
+.tuto-market > rect:first-child, .tuto-herd-card > rect:first-child, .tuto-staff > rect:first-child { fill: rgba(249,252,249,0.97); stroke: #b4cbbd; stroke-width: 0.7; }
+.tuto-market polyline { fill: none; stroke: #397d6b; stroke-width: 1.5; stroke-linejoin: round; stroke-dasharray: 160; animation: tuto-trace 4s ease-in-out infinite; }
+.tuto-market circle { fill: #e0ad2d; }
+.tuto-market rect:not(:first-child), .tuto-staff g rect { fill: #307d6b; }
+.tuto-txt.market-title, .tuto-txt.card-title { fill: #9a7420; font-size: 4px; letter-spacing: 0.08em; }
+.tuto-txt.market-crop { fill: #284f43; font-size: 5px; font-weight: 900; }
+.tuto-txt.sell-label, .tuto-txt.assign-label { fill: #fff; font-size: 3.3px; font-weight: 900; }
+
+.tuto-build .bad { fill: rgba(186,63,63,0.25); stroke: #a53d3d; stroke-width: 1; }
+.tuto-build .good { fill: rgba(47,151,91,0.24); stroke: #2e955b; stroke-width: 1.2; }
+.tuto-build path { fill: #d6c5a5; stroke: #307253; stroke-width: 0.8; }
+.tuto-txt.bad-label { fill: #9b3030; font-size: 4px; }
+.tuto-txt.good-label { fill: #267047; font-size: 3.8px; }
+.tuto-herd-card ellipse, .tuto-herd-card circle { fill: #f8f7f0; stroke: #755f4e; stroke-width: 0.7; }
+.tuto-herd-card path { fill: none; stroke: #755f4e; stroke-width: 0.8; }
+.tuto-herd-card .ration-bg { fill: #dbe4dc; }
+.tuto-herd-card .ration { fill: #4ba06d; animation: tuto-ration 4s ease-in-out infinite; }
+@keyframes tuto-ration { 0% { width: 8px; } 70%,100% { width: 80px; } }
+.tuto-txt.ration-label { fill: #285d43; font-size: 4px; }
+.tuto-staff g circle { fill: #d7b483; stroke: #8a6841; stroke-width: 0.6; }
+.tuto-staff g path { fill: #4f7d69; }
+.tuto-txt.staff-name { fill: #214c3f; font-size: 4.5px; }
+.tuto-txt.staff-detail { fill: #687d74; font-size: 3.2px; font-weight: 600; }
+
+@media (max-width: 420px) {
+  .tutorial-backdrop { padding: 0.7rem; align-items: center; }
+  .tutorial-card { width: min(390px, 100%); max-height: calc(100dvh - 1.4rem); overflow-y: auto; padding: 1rem 0.95rem 0.9rem; }
+  .tutorial-card h2 { margin-bottom: 0.45rem; }
+  .tutorial-body { font-size: 0.91rem; line-height: 1.42; }
+  .tutorial-hint { margin-bottom: 0.7rem; font-size: 0.8rem; }
+  .tutorial-progress { margin-bottom: 0.55rem; }
+}
+
 .dock-choice-group {
   display: contents;
 }

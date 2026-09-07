@@ -30,7 +30,7 @@ export function ArrivalTransition({
           selected={continentCode}
           focus
           mode="arrival"
-          height={Math.min(560, Math.round(window.innerHeight * 0.68))}
+          height={Math.min(500, Math.round(window.innerHeight * 0.56))}
         />
       </div>
       <p className="arrival-caption">

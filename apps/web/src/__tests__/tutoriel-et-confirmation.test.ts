@@ -69,6 +69,21 @@ describe("la fenêtre de confirmation", () => {
 });
 
 describe("le tutoriel", () => {
+  it("montre la vraie organisation mobile", () => {
+    const ecran = ETAPES.find((e) => e.id === "ecran")!;
+    const onglets = ETAPES.find((e) => e.id === "onglets")!;
+    const outil = ETAPES.find((e) => e.id === "outil")!;
+    expect(ecran.texteTactile).toMatch(/dock.*Plus.*Trace ou Rectangle/i);
+    expect(onglets.texteTactile).toMatch(/Touchez Plus.*tiroir Panneaux/i);
+    expect(outil.texteTactile).toMatch(/Voir, Semer, Sol, Récolte ou Ventes/i);
+  });
+
+  it("donne une illustration différente aux quatorze étapes", () => {
+    expect(ETAPES).toHaveLength(14);
+    expect(new Set(ETAPES.map((e) => e.scene)).size).toBe(14);
+    expect(ETAPES.find((e) => e.id === "personnel")?.scene).toBe("personnel");
+  });
+
   /**
    * Il s'ouvrait dès qu'un joueur existait — donc pendant l'installation,
    * derrière l'écran qui la mène, et il ne revenait jamais. Il attend
@@ -100,12 +115,12 @@ describe("le tutoriel", () => {
   });
 
   it("dit le bon geste selon l'écran", () => {
-    // Montrer un cliquer-glisser à quelqu'un qui joue au doigt, c'est lui
-    // montrer ce qu'il ne peut pas faire.
+    // Sur mobile le dock propose réellement les deux modes, Trace et Rectangle.
+    // Le tutoriel doit donc les nommer au lieu d'inventer une suite de taps.
     const selection = ETAPES.find((e) => e.id === "selection")!;
     expect(selection.texte).toMatch(/gliss/i);
     expect(selection.texteTactile).toBeTruthy();
-    expect(selection.texteTactile).not.toMatch(/glissez/i);
+    expect(selection.texteTactile).toMatch(/Trace.*glissez.*Rectangle/i);
   });
 
   it("range les étapes par chapitres suivis", () => {

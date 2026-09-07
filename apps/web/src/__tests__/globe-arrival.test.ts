@@ -16,13 +16,14 @@ describe("le globe à la connexion", () => {
   it("cadre assez loin pour que le disque tienne dans l’image", () => {
     expect(GLOBE).toMatch(/DIST_WORLD = DIST_FIT \* 1\.58/);
     expect(GLOBE).toMatch(/DIST_FOCUS = DIST_FIT \* 1\.18/);
+    expect(GLOBE).toMatch(/DIST_ARRIVAL = DIST_FIT \* 1\.18/);
   });
 
   it("ne gonfle plus le globe hors cadre dès les premières images", () => {
     const zoom = CSS.slice(CSS.indexOf("@keyframes arrival-zoom"));
-    expect(zoom).toMatch(/transform: scale\(0\.9\)/);
-    expect(zoom).not.toMatch(/scale\(2\.6\)/);
-    expect(zoom).not.toMatch(/scale\(6\)/);
+    expect(zoom).toMatch(/translateY\(-7vh\) scale\(0\.9\)/);
+    expect(zoom).toMatch(/translateY\(-7vh\) scale\(1\)/);
+    expect(zoom).not.toMatch(/scale\(1\.08\)/);
   });
 
   it("reprend la direction artistique nocturne jusque dans le chargement", () => {
@@ -101,14 +102,19 @@ describe("l’animation ne dépend pas de la cadence d’affichage", () => {
 });
 
 describe("les repères dorés", () => {
-  it("adoptent eux aussi une géométrie low-poly lisible", () => {
-    expect(GLOBE).toMatch(/RingGeometry\(0\.12, 0\.155, 32\)/);
-    expect(GLOBE).toMatch(/CylinderGeometry\(0\.014, 0\.02, 0\.2, 8\)/);
+  it("restent ronds jusque dans la vue rapprochée", () => {
+    expect(GLOBE).toMatch(/RingGeometry\(0\.1, 0\.132, 64\)/);
+    expect(GLOBE).toMatch(/CylinderGeometry\(0\.012, 0\.017, 0\.17, 16\)/);
   });
 
-  it("gardent la pastille facettée — c’est une pierre, pas une bille", () => {
-    expect(GLOBE).toMatch(/OctahedronGeometry\(0\.075, 0\)/);
-    expect(GLOBE).toMatch(/color: tone, flatShading: true/);
+  it("ne montre que la destination pendant le voyage", () => {
+    expect(GLOBE).toMatch(/m\.anchor\.visible = mode !== "arrival" \|\| isSel/);
+    expect(GLOBE).toMatch(/biome\.content\.visible = mode !== "arrival" \|\| isSel/);
+  });
+
+  it("lisse aussi la pastille sélectionnée", () => {
+    expect(GLOBE).toMatch(/OctahedronGeometry\(0\.065, 1\)/);
+    expect(GLOBE).toMatch(/color: tone, flatShading: false/);
   });
 
   it("ne bougent pas pour qui a demandé moins d’animation", () => {
@@ -118,17 +124,18 @@ describe("les repères dorés", () => {
 });
 
 describe("la maquette vivante", () => {
-  it("pose des décors agricoles low-poly sur chaque continent", () => {
+  it("pose des décors agricoles discrets sur chaque continent", () => {
     expect(GLOBE).toMatch(/function createMiniBiome/);
     expect(GLOBE).toMatch(/name = "crop-row"/);
-    expect(GLOBE).toMatch(/ConeGeometry\(0\.052, 0\.15, 6\)/);
+    expect(GLOBE).toMatch(/CircleGeometry\(0\.25, 48\)/);
+    expect(GLOBE).toMatch(/ConeGeometry\(0\.052, 0\.15, 12\)/);
     expect(GLOBE).toMatch(/name = "windmill-rotor"/);
     expect(GLOBE).toMatch(/miniBiomes\.push\(miniBiome\)/);
   });
 
-  it("utilise une planète facettée au lieu d’une sphère photoréaliste", () => {
-    expect(GLOBE).toMatch(/SphereGeometry\(R, 96, 48\)/);
-    expect(GLOBE).toMatch(/bumpScale: 0\.52/);
-    expect(GLOBE).toMatch(/flatShading: true/);
+  it("lisse la planète tout en gardant son relief peint", () => {
+    expect(GLOBE).toMatch(/SphereGeometry\(R, 160, 80\)/);
+    expect(GLOBE).toMatch(/bumpScale: 0\.28/);
+    expect(GLOBE).toMatch(/flatShading: false/);
   });
 });

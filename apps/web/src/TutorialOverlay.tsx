@@ -23,7 +23,8 @@ import { MenuClose } from "./ui/MenuClose";
  * **Il sautait la moitié du jeu.** Rien sur la barre d'outils — qu'il faut
  * pourtant régler *avant* de toucher une case —, rien sur le désherbage ni le
  * déchaumage, rien sur le troupeau, rien sur le personnel. Un joueur qui
- * suivait le tutoriel jusqu'au bout ignorait quatre des six onglets.
+ * suivait le tutoriel jusqu'au bout ignorait quatre des six panneaux rangés
+ * derrière « Plus » sur téléphone.
  *
  * ## Le geste dépend de l'écran
  *

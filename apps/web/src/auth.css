@@ -1189,14 +1189,14 @@
 }
 .arrival-globe {
   position: relative;
-  width: min(720px, 96vw);
+  width: min(680px, 92vw);
   z-index: 1;
   animation: arrival-zoom 3.2s cubic-bezier(0.32, 0.02, 0.72, 0.98) forwards;
 }
 @keyframes arrival-zoom {
-  0% { transform: scale(0.9); opacity: 0.78; filter: saturate(0.82); }
-  66% { transform: scale(1); opacity: 1; filter: saturate(1); }
-  100% { transform: scale(1.08); opacity: 1; filter: saturate(1.1); }
+  0% { transform: translateY(-7vh) scale(0.9); opacity: 0.78; filter: saturate(0.82); }
+  66% { transform: translateY(-7vh) scale(0.97); opacity: 1; filter: saturate(1); }
+  100% { transform: translateY(-7vh) scale(1); opacity: 1; filter: saturate(1.04); }
 }
 .arrival-caption {
   position: absolute;
