@@ -12,12 +12,13 @@ type Props = {
 /** Plongée depuis le globe jusqu'à la parcelle, à chaque retour en jeu. */
 export function ArrivalTransition({
   continents,
+  continentCode,
   regionName,
   cityName,
   onDone,
 }: Props) {
   useEffect(() => {
-    const t = window.setTimeout(onDone, 2400);
+    const t = window.setTimeout(onDone, 3200);
     return () => window.clearTimeout(t);
   }, [onDone]);
 
@@ -26,12 +27,17 @@ export function ArrivalTransition({
       <div className="arrival-globe">
         <GlobeView
           continents={continents}
+          selected={continentCode}
+          focus
+          mode="arrival"
           height={Math.min(560, Math.round(window.innerHeight * 0.68))}
         />
       </div>
       <p className="arrival-caption">
+        <small>VOYAGE VERS VOTRE MONDE</small>
         <strong>{regionName}</strong>
         <span>{cityName ? `Approche de ${cityName}…` : "Approche de votre exploitation…"}</span>
+        <i aria-hidden="true"><b /></i>
       </p>
     </div>
   );

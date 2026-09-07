@@ -1,17 +1,16 @@
 import fs from "node:fs";
 
-/**
- * Le globe d'arrivée : on doit voir la planète entière, pas un gros plan
- * de mer recadré par le zoom CSS.
- */
+/** Le voyage part du globe entier et vise réellement la terre choisie. */
 const GLOBE = fs.readFileSync("src/GlobeView.tsx", "utf8");
 const ARRIVAL = fs.readFileSync("src/ArrivalTransition.tsx", "utf8");
 const CSS = fs.readFileSync("src/auth.css", "utf8");
 
 describe("le globe à la connexion", () => {
-  it("s’ouvre en vue monde, sans focus sur un continent", () => {
-    expect(ARRIVAL).not.toMatch(/\bfocus\b/);
-    expect(ARRIVAL).not.toMatch(/selected=\{continentCode\}/);
+  it("vise le continent du joueur pendant l’approche", () => {
+    expect(ARRIVAL).toMatch(/selected=\{continentCode\}/);
+    expect(ARRIVAL).toMatch(/\bfocus\b/);
+    expect(ARRIVAL).toMatch(/mode="arrival"/);
+    expect(GLOBE).toMatch(/mode === "arrival" \? DIST_ARRIVAL/);
   });
 
   it("cadre assez loin pour que le disque tienne dans l’image", () => {
@@ -21,9 +20,15 @@ describe("le globe à la connexion", () => {
 
   it("ne gonfle plus le globe hors cadre dès les premières images", () => {
     const zoom = CSS.slice(CSS.indexOf("@keyframes arrival-zoom"));
-    expect(zoom).toMatch(/transform: scale\(0\.92\)/);
+    expect(zoom).toMatch(/transform: scale\(0\.9\)/);
     expect(zoom).not.toMatch(/scale\(2\.6\)/);
     expect(zoom).not.toMatch(/scale\(6\)/);
+  });
+
+  it("reprend la direction artistique nocturne jusque dans le chargement", () => {
+    const arrival = CSS.slice(CSS.indexOf(".arrival {"));
+    expect(arrival).toMatch(/#061720/);
+    expect(arrival).toMatch(/arrival-progress 3\.2s/);
   });
 });
 
@@ -96,25 +101,34 @@ describe("l’animation ne dépend pas de la cadence d’affichage", () => {
 });
 
 describe("les repères dorés", () => {
-  it("ne montrent plus leurs polygones", () => {
-    // Vingt-six segments pour l'anneau et six pour la tige : invisible en vue
-    // monde, un polygone et un prisme dès qu'on s'approche — et ce sont les
-    // seuls objets qu'on vient cliquer.
-    expect(GLOBE).not.toMatch(/RingGeometry\(0\.12, 0\.155, 26\)/);
-    expect(GLOBE).not.toMatch(/CylinderGeometry\(0\.014, 0\.02, 0\.2, 6\)/);
-    const ring = GLOBE.match(/RingGeometry\(0\.12, 0\.155, (\d+)\)/);
-    expect(Number(ring?.[1])).toBeGreaterThanOrEqual(64);
+  it("adoptent eux aussi une géométrie low-poly lisible", () => {
+    expect(GLOBE).toMatch(/RingGeometry\(0\.12, 0\.155, 32\)/);
+    expect(GLOBE).toMatch(/CylinderGeometry\(0\.014, 0\.02, 0\.2, 8\)/);
   });
 
   it("gardent la pastille facettée — c’est une pierre, pas une bille", () => {
-    // La tige devient lisse, la pastille reste taillée : c'est ce qui la fait
-    // accrocher la lumière quand elle tourne.
-    expect(GLOBE).toMatch(/OctahedronGeometry\(0\.075, 1\)/);
-    expect(GLOBE).toMatch(/color: tone, flatShading: false/);
+    expect(GLOBE).toMatch(/OctahedronGeometry\(0\.075, 0\)/);
+    expect(GLOBE).toMatch(/color: tone, flatShading: true/);
   });
 
   it("ne bougent pas pour qui a demandé moins d’animation", () => {
     const bloc = GLOBE.slice(GLOBE.indexOf("m.head.rotation.y") - 200);
     expect(bloc.slice(0, 400)).toMatch(/!reduced/);
+  });
+});
+
+describe("la maquette vivante", () => {
+  it("pose des décors agricoles low-poly sur chaque continent", () => {
+    expect(GLOBE).toMatch(/function createMiniBiome/);
+    expect(GLOBE).toMatch(/name = "crop-row"/);
+    expect(GLOBE).toMatch(/ConeGeometry\(0\.052, 0\.15, 6\)/);
+    expect(GLOBE).toMatch(/name = "windmill-rotor"/);
+    expect(GLOBE).toMatch(/miniBiomes\.push\(miniBiome\)/);
+  });
+
+  it("utilise une planète facettée au lieu d’une sphère photoréaliste", () => {
+    expect(GLOBE).toMatch(/SphereGeometry\(R, 96, 48\)/);
+    expect(GLOBE).toMatch(/bumpScale: 0\.52/);
+    expect(GLOBE).toMatch(/flatShading: true/);
   });
 });

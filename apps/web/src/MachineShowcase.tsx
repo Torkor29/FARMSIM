@@ -50,14 +50,15 @@ export function MachineShowcase() {
           — chenilles, papillon, presse cubique, et chaque palier a sa silhouette.
         </p>
         <div className="atelier-controls">
-          <span className="atelier-speed">
+          <span className="atelier-speed" role="radiogroup" aria-label="Palier de matériel">
             Palier
             {MACHINE_TIERS.map((t) => (
               <button
                 key={t}
                 type="button"
+                role="radio"
                 className={tier === t ? "on" : ""}
-                aria-pressed={tier === t}
+                aria-checked={tier === t}
                 onClick={() => setTier(t)}
               >
                 {TIER_LABELS[t]}

@@ -10,6 +10,8 @@
  * n'a besoin de l'autre.
  */
 
+import { SEASON_REAL_HOURS } from "@farmsim/shared";
+
 /** Les maquettes animées disponibles — voir `TutorialScenes.tsx`. */
 export type Scene =
   | "interface"
@@ -129,7 +131,7 @@ export const ETAPES: Etape[] = [
     titre: "Attendre",
     texte:
       "La culture passe du vert au doré. La barre du panneau de droite dit où elle en est. La saison et la météo décident de la vitesse — un blé d’avril ne pousse pas comme un blé d’août.",
-    astuce: "Une saison dure dix heures réelles, un jour de jeu un peu plus d’une heure.",
+    astuce: `Une saison dure ${SEASON_REAL_HOURS} heures réelles, un jour de jeu un peu plus d’une heure.`,
     scene: "pousse",
   },
   {

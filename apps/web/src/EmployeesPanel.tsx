@@ -154,13 +154,14 @@ export function EmployeesPanel({
                   </p>
                 )}
                 <div className="emp-actions">
-                  <div className="emp-poste" role="group" aria-label="Poste">
+                  <div className="emp-poste" role="radiogroup" aria-label="Poste">
                     {(["CHAMP", "ELEVAGE"] as EmployeePost[]).map((p) => (
                       <button
                         key={p}
                         type="button"
+                        role="radio"
                         className={e.poste === p ? "on" : ""}
-                        aria-pressed={e.poste === p}
+                        aria-checked={e.poste === p}
                         onClick={() =>
                           busy ? onExplain("Une action est déjà en cours — un instant.") : onPost(e.id, p)
                         }

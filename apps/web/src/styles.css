@@ -7660,3 +7660,7 @@ button.tiny {
 @media (prefers-reduced-motion: reduce) {
   .tuto-scene * { animation: none !important; }
 }
+
+.dock-choice-group {
+  display: contents;
+}

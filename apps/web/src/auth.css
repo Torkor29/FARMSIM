@@ -448,6 +448,42 @@
   align-content: start;
   gap: 1rem;
 }
+.onb-step-0 {
+  position: relative;
+  isolation: isolate;
+  overflow: hidden;
+  color: #edf8f1;
+  background:
+    radial-gradient(circle at 50% 28%, rgba(31, 111, 117, 0.32), transparent 32%),
+    radial-gradient(circle at 12% 78%, rgba(91, 130, 72, 0.14), transparent 24%),
+    linear-gradient(155deg, #071922 0%, #0b2430 52%, #07151d 100%);
+}
+.onb-step-0::before,
+.arrival::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  opacity: 0.42;
+  background-image:
+    radial-gradient(circle, rgba(225, 243, 235, 0.9) 0 1px, transparent 1.3px),
+    radial-gradient(circle, rgba(199, 224, 214, 0.7) 0 1px, transparent 1.2px);
+  background-position: 0 0, 37px 49px;
+  background-size: 83px 83px, 117px 117px;
+  mask-image: linear-gradient(to bottom, #000, transparent 80%);
+}
+.onb-step-0 .onb-title { color: #f3fbf4; }
+.onb-step-0 .onb-sub,
+.onb-step-0 .onb-lead { color: #a9c5c2; }
+.onb-step-0 .onb-step {
+  color: #8ca9a8;
+  background: rgba(9, 37, 47, 0.72);
+  border-color: rgba(176, 211, 199, 0.14);
+  backdrop-filter: blur(8px);
+}
+.onb-step-0 .onb-step.on { color: #f4f5d7; border-color: #c7a841; }
+.onb-step-0 .onb-step-num { background: rgba(126, 164, 148, 0.18); color: #cfe2dc; }
 .onb-top {
   display: flex;
   align-items: center;
@@ -783,21 +819,61 @@
   .globe-layout { grid-template-columns: minmax(340px, 1.1fr) minmax(320px, 1fr); }
 }
 .globe-wrap {
+  position: relative;
+  overflow: hidden;
   border-radius: var(--r-lg);
-  background: radial-gradient(circle at 50% 40%, #eaf7ff 0%, #cfe7f5 70%, #bcdcee 100%);
-  border: 1px solid var(--line);
-  box-shadow: var(--sh-2);
+  background:
+    radial-gradient(circle at 50% 44%, rgba(28, 103, 111, 0.22) 0%, transparent 43%),
+    linear-gradient(160deg, rgba(5, 22, 31, 0.78), rgba(9, 34, 43, 0.48));
+  border: 1px solid rgba(172, 210, 199, 0.16);
+  box-shadow: 0 1.4rem 4rem rgba(0, 0, 0, 0.28);
   padding: 0.5rem;
   display: grid;
   gap: 0.25rem;
 }
+.globe-eyebrow {
+  position: absolute;
+  z-index: 2;
+  top: 0.85rem;
+  left: 1rem;
+  color: rgba(221, 239, 230, 0.58);
+  font-size: 0.66rem;
+  font-weight: 800;
+  letter-spacing: 0.16em;
+}
+.globe-place-card {
+  position: absolute;
+  z-index: 2;
+  left: 1rem;
+  bottom: 1.8rem;
+  display: grid;
+  max-width: min(19rem, calc(100% - 6rem));
+  padding: 0.65rem 0.75rem;
+  border-left: 2px solid #d3b448;
+  color: #edf7ec;
+  text-align: left;
+  pointer-events: none;
+  background: linear-gradient(90deg, rgba(4, 19, 27, 0.74), transparent);
+}
+.globe-place-card span {
+  color: #d3b448;
+  font-size: 0.6rem;
+  font-weight: 900;
+  letter-spacing: 0.15em;
+}
+.globe-place-card strong {
+  font-family: "Baloo 2", Nunito, sans-serif;
+  font-size: clamp(1.05rem, 3vw, 1.45rem);
+  line-height: 1.1;
+}
+.globe-place-card em { color: #9eb9b5; font-size: 0.73rem; font-style: normal; }
 .globe-host { width: 100%; touch-action: none; }
 .globe-host canvas { display: block; width: 100% !important; }
 .globe-hint {
   margin: 0;
   text-align: center;
   font-size: 0.78rem;
-  color: var(--ink-soft);
+  color: #8faeaa;
 }
 .continent-list { display: grid; gap: 0.5rem; align-content: start; }
 .continent-card {
@@ -857,6 +933,29 @@
   color: var(--teal-700);
   font-size: 0.92rem;
 }
+.onb-step-0 .continent-card {
+  color: #dcebe4;
+  background: rgba(12, 42, 50, 0.72);
+  border-color: rgba(175, 208, 196, 0.14);
+  box-shadow: inset 0 1px rgba(255, 255, 255, 0.025);
+}
+.onb-step-0 .continent-card:hover:not(:disabled) {
+  border-color: rgba(211, 180, 72, 0.58);
+  transform: translateY(-1px);
+}
+.onb-step-0 .continent-card.on {
+  border-color: #d3b448;
+  box-shadow: 0 0 0 2px rgba(211, 180, 72, 0.14), 0 0.8rem 2rem rgba(0, 0, 0, 0.2);
+}
+.onb-step-0 .cc-main strong { color: #f1f7e9; }
+.onb-step-0 .cc-tag,
+.onb-step-0 .cc-stock { color: #9eb9b5; }
+.onb-step-0 .cc-meta em { color: #b8cbc4; background: rgba(174, 205, 191, 0.1); }
+.onb-step-0 .cc-meta .diff.easy { color: #96dfaf; background: rgba(54, 152, 94, 0.16); }
+.onb-step-0 .cc-meta .diff.medium { color: #e5c55a; background: rgba(211, 180, 72, 0.14); }
+.onb-step-0 .cc-meta .diff.hard { color: #eea58b; background: rgba(190, 84, 54, 0.15); }
+.onb-step-0 .continent-desc { color: #c6dcd4; background: rgba(12, 42, 50, 0.7); }
+.onb-step-0 .btn-ghost { color: #d5e5de; border-color: rgba(184, 214, 202, 0.3); background: rgba(7, 27, 35, 0.5); }
 
 /* Régions & parcelles */
 /* Fil d'Ariane du choix : continent, puis région, puis ferme. */
@@ -1078,7 +1177,10 @@
   /* Le zoom CSS reste dans le cadre : sans overflow hidden, même un
      scale(2) déborde et fait apparaître une barre horizontale. */
   overflow: hidden;
-  background: radial-gradient(circle at 50% 45%, #eaf7ff 0%, #cfe7f5 60%, #a9d2ea 100%);
+  isolation: isolate;
+  background:
+    radial-gradient(circle at 50% 42%, rgba(31, 111, 117, 0.34), transparent 37%),
+    linear-gradient(155deg, #061720 0%, #0a2631 58%, #05131b 100%);
   animation: arrival-in 0.35s ease;
 }
 @keyframes arrival-in {
@@ -1086,20 +1188,20 @@
   to { opacity: 1; }
 }
 .arrival-globe {
+  position: relative;
   width: min(720px, 96vw);
-  /* On part d'une planète entière, puis on plonge. Un scale(2.6) dès le
-     premier tiers recadrait déjà le globe hors cadre — on ne voyait plus
-     qu'un morceau de mer. */
-  animation: arrival-zoom 2.4s cubic-bezier(0.45, 0, 0.75, 0.25) forwards;
+  z-index: 1;
+  animation: arrival-zoom 3.2s cubic-bezier(0.32, 0.02, 0.72, 0.98) forwards;
 }
 @keyframes arrival-zoom {
-  0% { transform: scale(0.92); opacity: 1; }
-  55% { transform: scale(1.28); opacity: 1; }
-  100% { transform: scale(2.05); opacity: 0; }
+  0% { transform: scale(0.9); opacity: 0.78; filter: saturate(0.82); }
+  66% { transform: scale(1); opacity: 1; filter: saturate(1); }
+  100% { transform: scale(1.08); opacity: 1; filter: saturate(1.1); }
 }
 .arrival-caption {
   position: absolute;
-  bottom: 14%;
+  z-index: 2;
+  bottom: max(8%, env(safe-area-inset-bottom, 0px));
   display: grid;
   justify-items: center;
   gap: 0.2rem;
@@ -1113,9 +1215,36 @@
 .arrival-caption strong {
   font-family: "Baloo 2", Nunito, sans-serif;
   font-size: clamp(1.3rem, 4vw, 2rem);
-  color: var(--teal-700);
+  color: #eef8ed;
 }
-.arrival-caption span { color: var(--ink-soft); font-weight: 600; }
+.arrival-caption small {
+  color: #d3b448;
+  font-size: 0.64rem;
+  font-weight: 900;
+  letter-spacing: 0.17em;
+}
+.arrival-caption span { color: #a9c3be; font-weight: 600; }
+.arrival-caption i {
+  width: min(15rem, 58vw);
+  height: 3px;
+  margin-top: 0.65rem;
+  overflow: hidden;
+  border-radius: 999px;
+  background: rgba(185, 214, 203, 0.14);
+}
+.arrival-caption i b {
+  display: block;
+  width: 100%;
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, #739d6c, #d3b448);
+  transform-origin: left;
+  animation: arrival-progress 3.2s linear both;
+}
+@keyframes arrival-progress {
+  from { transform: scaleX(0); }
+  to { transform: scaleX(1); }
+}
 
 /* —— Globe v2 —— */
 .globe-v2 { position: relative; }
@@ -1123,7 +1252,7 @@
 .globe-hud {
   position: absolute;
   right: 0.55rem;
-  bottom: 0.55rem;
+  top: 0.55rem;
   display: flex;
   gap: 0.35rem;
   align-items: center;

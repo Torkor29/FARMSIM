@@ -1,4 +1,4 @@
-import { useState, type ReactNode } from "react";
+import { useState, type AriaRole, type ReactNode } from "react";
 
 /**
  * Un geste, et ce qui l'empêche — dit là où le doigt vient de se poser.
@@ -38,6 +38,8 @@ export function Geste({
   onDo,
   onExplain,
   hint,
+  role,
+  ariaChecked,
 }: {
   label: ReactNode;
   className?: string;
@@ -48,6 +50,8 @@ export function Geste({
   onExplain: (raison: string) => void;
   /** Ce que le geste fait, quand il est possible — pour la souris. */
   hint?: string;
+  role?: AriaRole;
+  ariaChecked?: boolean;
 }) {
   const [dit, setDit] = useState<string | null>(null);
   const empeche = blocage !== null;
@@ -61,6 +65,8 @@ export function Geste({
     <>
       <button
         type="button"
+        role={role}
+        aria-checked={ariaChecked}
         className={`${className ?? ""}${empeche ? " blocked" : ""}`.trim()}
         // Plus de `disabled` : il rendait le bouton muet. Le double envoi est
         // arrêté dans le gestionnaire, qui lui dit pourquoi.

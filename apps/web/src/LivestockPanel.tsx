@@ -904,8 +904,9 @@ export function LivestockPanel({
                       C'est le renversement de la refonte, et il doit se lire
                       ici : l'étable et ses annexes n'ôtent plus rien, elles
                       ajoutent. Un joueur qui n'a rien construit lit « Basique »
-                      sans une seule ligne rouge — il tourne à 100 %, et les
-                      bonus lui disent ce qu'il gagnerait à bâtir. */}
+                      sans une seule ligne rouge — son installation ne retire
+                      aucun point, et les bonus disent ce qu'il gagnerait à bâtir.
+                      Le bien-être reste, lui, le facteur de production réel. */}
                   <section className="barn-part barn-install">
                     <h4>Installation · {barn.installationLabel ?? installationLabel(niveauInstall)}</h4>
                     <ul className="install-kit">
@@ -931,7 +932,8 @@ export function LivestockPanel({
                         </>
                       ) : (
                         <>
-                          Aucun bonus pour l’instant — le troupeau tourne à 100 %. Chaque pièce
+                          Aucun bonus d’installation pour l’instant. La production de base atteint
+                          100 % seulement si le troupeau est nourri, abreuvé et propre. Chaque pièce
                           posée contre le bâtiment fait monter le niveau.
                         </>
                       )}
@@ -1092,11 +1094,12 @@ export function LivestockPanel({
                   : "Construire un enclos"}
               </button>
             ) : herd ? (
-              <span className="housing-switch" role="group" aria-label="Lieu de vie">
+              <span className="housing-switch" role="radiogroup" aria-label="Lieu de vie">
                 <button
                   type="button"
+                  role="radio"
                   className={`housing-side${herd.housing !== "OUTSIDE" ? " on" : ""}`}
-                  aria-pressed={herd.housing !== "OUTSIDE"}
+                  aria-checked={herd.housing !== "OUTSIDE"}
                   disabled={busy}
                   title="Les bêtes restent à l’étable : elles mangent la ration, à l’abri du temps."
                   onClick={() => onHousing(herd.id, "INSIDE")}
@@ -1114,6 +1117,8 @@ export function LivestockPanel({
                     d'une seule bête. */}
                 <Geste
                   busy={busy}
+                  role="radio"
+                  ariaChecked={herd.housing === "OUTSIDE"}
                   className={`housing-side${herd.housing === "OUTSIDE" ? " on" : ""}`}
                   label="Sortir les bêtes"
                   blocage={
@@ -1165,11 +1170,12 @@ export function LivestockPanel({
               </span>
               {/* Le pari : payer moins et attendre, ou payer plein et traire
                   tout de suite. Deux pastilles, aucun écran de plus. */}
-              <div className="age-switch" role="group" aria-label="Âge des bêtes">
+              <div className="age-switch" role="radiogroup" aria-label="Âge des bêtes">
                 <button
                   type="button"
+                  role="radio"
                   className={`age-side${!jeune ? " on" : ""}`}
-                  aria-pressed={!jeune}
+                  aria-checked={!jeune}
                   onClick={() => setJeunes((p) => ({ ...p, [barn.buildingId]: false }))}
                 >
                   Adultes
@@ -1177,8 +1183,9 @@ export function LivestockPanel({
                 </button>
                 <button
                   type="button"
+                  role="radio"
                   className={`age-side${jeune ? " on" : ""}`}
-                  aria-pressed={jeune}
+                  aria-checked={jeune}
                   onClick={() => setJeunes((p) => ({ ...p, [barn.buildingId]: true }))}
                 >
                   Jeunes

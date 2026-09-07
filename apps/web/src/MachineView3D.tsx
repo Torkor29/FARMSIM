@@ -119,7 +119,8 @@ export function MachineView3D({
 
     let raf = 0;
     let distance = 0;
-    const clock = new THREE.Clock();
+    const startedAt = performance.now();
+    let previousFrame = startedAt;
 
     const resize = () => {
       const w = host.clientWidth || 320;
@@ -149,10 +150,11 @@ export function MachineView3D({
     const ro = new ResizeObserver(resize);
     ro.observe(host);
 
-    const tick = () => {
+    const tick = (now: number) => {
       raf = requestAnimationFrame(tick);
-      const dt = Math.min(0.05, clock.getDelta());
-      const t = clock.getElapsedTime();
+      const dt = Math.min(0.05, Math.max(0, (now - previousFrame) / 1000));
+      const t = (now - startedAt) / 1000;
+      previousFrame = now;
       const live = liveRef.current;
       // Au travail l'engin avance : les roues, les disques et le rabatteur
       // en découlent. À l'arrêt, tout se fige — sauf le plateau.
@@ -169,7 +171,7 @@ export function MachineView3D({
       if (live.turntable) turn.rotation.y = t * 0.35;
       renderer.render(scene, camera);
     };
-    tick();
+    raf = requestAnimationFrame(tick);
 
     return () => {
       cancelAnimationFrame(raf);

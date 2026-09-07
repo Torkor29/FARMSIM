@@ -222,13 +222,14 @@ export function MachineSheet({
               court et reprenait la place qu'on venait de lui retirer. */}
           <MachineView3D type={type} tier={shownTier} turntable />
           {preview.mode === "buy" ? (
-            <div className="age-switch machine-sheet-tiers" role="group" aria-label="Palier de matériel">
+            <div className="age-switch machine-sheet-tiers" role="radiogroup" aria-label="Palier de matériel">
               {MACHINE_TIERS.map((t) => (
                 <button
                   key={t}
                   type="button"
+                  role="radio"
                   className={tierAchat === t ? "on" : ""}
-                  aria-pressed={tierAchat === t}
+                  aria-checked={tierAchat === t}
                   title={TIER_ROLE_LABELS[t]}
                   onClick={() => setTierAchat(t)}
                 >

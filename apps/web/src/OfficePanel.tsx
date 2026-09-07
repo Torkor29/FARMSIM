@@ -492,7 +492,7 @@ export function OfficePanel({
       className="hdv-backdrop hall-backdrop"
       role="dialog"
       aria-modal="true"
-      aria-label="Hôtel du travail"
+      aria-label="Bureau — bourse des chantiers"
       onClick={(e) => {
         if (e.target === e.currentTarget) onClose();
       }}
@@ -500,7 +500,7 @@ export function OfficePanel({
       <div className="hdv-shell hall-sheet glass" onClick={(e) => e.stopPropagation()}>
         <header className="hdv-top">
           <div className="hdv-brand">
-            <p className="hdv-kicker">Hôtel du travail</p>
+            <p className="hdv-kicker">Bureau</p>
             <h2>Bourse des chantiers</h2>
           </div>
           <div className="hdv-purse">

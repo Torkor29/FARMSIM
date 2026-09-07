@@ -96,6 +96,17 @@ describe("guide et objectifs", () => {
     expect(goods?.entries.some((e) => e.id === "SILAGE" && !e.soon)).toBe(true);
   });
 
+  it("ne présente plus la paille et l’ensilage comme des fonctions à venir", () => {
+    const crops = GUIDE_CHAPTERS.find((c) => c.id === "crops")!;
+    const wheat = crops.entries.find((e) => e.id === "WHEAT")!;
+    const maize = crops.entries.find((e) => e.id === "MAIZE")!;
+
+    expect(wheat.usedBy).toContain("paille");
+    expect(wheat.usedBy).not.toMatch(/bientôt/i);
+    expect(maize.usedBy).toContain("ensilage");
+    expect(maize.usedBy).not.toMatch(/plus tard/i);
+  });
+
   it("explique qui utilise la production des autres", () => {
     const triangle = GUIDE_CHAPTERS.find((c) => c.id === "triangle");
     expect(triangle?.entries.some((e) => /paille|ensilage|lisier|travail/i.test(e.how))).toBe(

@@ -76,7 +76,9 @@ describe("le tutoriel", () => {
    */
   it("attend que le joueur soit installé sur sa ferme", () => {
     expect(APP).toMatch(/const installe = Boolean\(player\?\.farm\?\.parcels\?\.length\)/);
-    expect(APP).toMatch(/if \(!installe\) return;\s*\n\s*if \(localStorage\.getItem\(TUTORIAL_KEY\)\)/);
+    expect(APP).toMatch(
+      /if \(!installe\) return;\s*\n\s*if \(localStorage\.getItem\(playerStorageKey\(TUTORIAL_KEY, player\.id\)\)\)/,
+    );
   });
 
   it("couvre tout le jeu, pas seulement le semis", () => {
