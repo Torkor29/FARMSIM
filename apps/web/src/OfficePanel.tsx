@@ -1,5 +1,12 @@
 import { useEffect, useMemo, useState } from "react";
 import {
+  harvestItemCode,
+  CROP_CODES,
+  CROP_DEFS,
+  FERTILIZE_COST_PER_CELL,
+  FERTILIZE_YIELD_STEP,
+  type CropCode,
+  type LedgerPage,
   LEDGER_HINTS,
   LEDGER_LABELS,
   CREDIT_HEALTH_LABELS,
@@ -93,6 +100,13 @@ type Props = {
   /** Mouvements récents, du plus récent au plus ancien. */
   ledger?: LedgerLine[];
   ledgerJours?: number;
+  ledgerPage?: LedgerPage | null;
+  ledgerLoading?: boolean;
+  ledgerError?: string | null;
+  onLedgerPeriod?: (jours: number) => void;
+  onLedgerMore?: () => void;
+  onLedgerRetry?: () => void;
+  cropPrices?: { commodity: string; price: number }[];
   /**
    * Objectifs et voisinage — les deux seules choses que le Bureau montrait
    * ailleurs. Voir l'onglet « Objectifs ».
@@ -183,7 +197,15 @@ function Activite({
   onLoan,
   onRepay,
   ateliers,
+  page, loading, error, onPeriod, onMore, onRetry, cropPrices,
 }: {
+  page?: LedgerPage | null;
+  loading?: boolean;
+  error?: string | null;
+  onPeriod?: (jours: number) => void;
+  onMore?: () => void;
+  onRetry?: () => void;
+  cropPrices?: { commodity: string; price: number }[];
   lignes: LedgerLine[];
   jours: number;
   crd: number;
@@ -194,27 +216,29 @@ function Activite({
   onRepay?: (amount: number) => void;
   ateliers?: ProcessingView[];
 }) {
-  const postes = totauxParPoste(lignes);
-  const total = resultat(lignes);
+  const postes = page?.postes ?? totauxParPoste(lignes);
+  const total = page?.resultat ?? resultat(lignes);
+  const [crop, setCrop] = useState<CropCode>("WHEAT");
+  const price = cropPrices?.find((p) => p.commodity === harvestItemCode(crop))?.price ?? GOOD_DEFS[harvestItemCode(crop)].basePrice;
+  const preciseMoney = (n: number) => `${n.toLocaleString("fr-FR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} €`;
+  const extraTons = CROP_DEFS[crop].yieldPerCell * FERTILIZE_YIELD_STEP;
+  const extraRevenue = extraTons * price;
 
-  if (!lignes.length && !credit) {
-    return (
-      <div className="activite-vide">
-        <strong>Rien à montrer pour l’instant</strong>
-        <p>
-          Vendez une récolte, payez une révision, prenez un chantier : chaque
-          mouvement s’inscrit ici, et vous saurez enfin quel atelier vous
-          rapporte.
-        </p>
-      </div>
-    );
-  }
 
   return (
     <div className="activite">
+      <label className="activite-periode">Période du journal
+        <select value={jours} onChange={(e) => onPeriod?.(Number(e.target.value))}>
+          <option value={7}>7 jours</option><option value={30}>30 jours</option>
+          <option value={365}>1 an</option><option value={1096}>3 ans</option>
+          <option value={0}>Tout l’historique</option>
+        </select>
+      </label>
+      {loading && <p role="status">Chargement du journal…</p>}
+      {error && <p role="alert">{error} <button type="button" onClick={onRetry}>Réessayer</button></p>}
       <div className="activite-tete">
         <div>
-          <em>Sur {jours} jours</em>
+          <em>{jours ? `Sur ${jours} jours réels` : "Depuis le début"}</em>
           <strong className={total.solde >= 0 ? "gain" : "perte"}>
             {total.solde >= 0 ? "+" : "−"}
             {money(Math.abs(total.solde))}
@@ -372,12 +396,28 @@ function Activite({
         })}
       </ul>
 
-      <h4 className="activite-titre">Derniers mouvements</h4>
+      <details className="activite-engrais">
+        <summary>Combien rapporte un passage d’engrais ?</summary>
+        <label>Culture <select value={crop} onChange={(e) => setCrop(e.target.value as CropCode)}>
+          {CROP_CODES.map((code) => <option key={code} value={code}>{CROP_DEFS[code].name}</option>)}
+        </select></label>
+        <p>Par case : +{(extraTons * 1000).toFixed(1)} kg de rendement de référence,
+          soit {preciseMoney(extraRevenue)} de recette supplémentaire à {money(price)}/t.
+          L’engrais minéral coûte {money(FERTILIZE_COST_PER_CELL)} par passage :
+          marge indicative {preciseMoney(extraRevenue - FERTILIZE_COST_PER_CELL)}, avant gazole et usure.</p>
+        <p>Deux passages maximum. La météo, les adventices, le sol et les autres bonus modifient
+          le gain réel. Le fumier disponible remplace automatiquement l’achat d’engrais ;
+          il améliore aussi la fertilité du sol.</p>
+      </details>
+      <h4 className="activite-titre">Mouvements — {lignes.length} affichés</h4>
+      {!loading && !error && !lignes.length && <p>Aucun mouvement sur cette période.</p>}
       <ul className="activite-lignes">
-        {lignes.slice(0, 40).map((l, i) => (
-          <li key={`${l.at}-${i}`}>
+        {lignes.map((l, i) => (
+          <li key={l.id ?? `${l.at}-${i}`}>
             <span className="activite-poste-tag">{LEDGER_LABELS[l.poste]}</span>
-            <span className="activite-label">{l.label}</span>
+            <span className="activite-label">{l.label}
+              <time dateTime={l.at}>{new Date(l.at).toLocaleString("fr-FR", { dateStyle: "short", timeStyle: "short" })}</time>
+            </span>
             <b className={l.amount >= 0 ? "gain" : "perte"}>
               {l.amount >= 0 ? "+" : "−"}
               {money(Math.abs(l.amount))}
@@ -385,6 +425,9 @@ function Activite({
           </li>
         ))}
       </ul>
+      {page?.nextCursor && <button type="button" disabled={loading || Boolean(error)} onClick={onMore}>
+        Afficher les mouvements précédents
+      </button>}
     </div>
   );
 }
@@ -439,6 +482,7 @@ export function OfficePanel({
   onBuyLand,
   ledger = [],
   ledgerJours = 7,
+  ledgerPage, ledgerLoading, ledgerError, onLedgerPeriod, onLedgerMore, onLedgerRetry, cropPrices,
 }: Props) {
   const [mode, setMode] = useState<Mode>("ACTIVITE");
   const [cat, setCat] = useState<WorkCat>("ALL");
@@ -547,6 +591,9 @@ export function OfficePanel({
             <Activite
               lignes={ledger}
               jours={ledgerJours}
+              page={ledgerPage} loading={ledgerLoading} error={ledgerError}
+              onPeriod={onLedgerPeriod} onMore={onLedgerMore} onRetry={onLedgerRetry}
+              cropPrices={cropPrices}
               crd={crd}
               escrow={escrow}
               busy={busy}

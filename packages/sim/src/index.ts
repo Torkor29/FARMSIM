@@ -1,4 +1,5 @@
 import {
+  FERTILIZE_YIELD_STEP,
   CROP_DEFS,
   cropGrowMs,
   GOOD_DEFS,
@@ -109,7 +110,7 @@ export type CellSimResult = {
 function managementFactor(input: CellSimInput): number {
   let f = 0.55;
   f += Math.min(1, Math.max(0, input.fertility)) * 0.2;
-  f += input.fertilizedPasses * 0.115;
+  f += input.fertilizedPasses * FERTILIZE_YIELD_STEP;
   /* Les adventices ne sont plus un interrupteur.
      `weedsControlled` valait dix pour cent de rendement et ne se déclenchait
      qu'en même temps que la fertilisation, en silence : le joueur n'apprenait

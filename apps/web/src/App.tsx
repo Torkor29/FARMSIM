@@ -1,3 +1,4 @@
+import { useLedger } from "./useLedger";
 import { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
 import {
   BUILDING_ART,
@@ -45,7 +46,6 @@ import {
   formatEurosCourt,
   currentSeason,
   conditionYieldFactor,
-  type LedgerLine,
   dayOfSeason,
   seasonLengthDays,
   footprintCells,
@@ -863,7 +863,7 @@ export function App() {
    * le tenir en permanence dans l'état ferait vivre une liste que personne ne
    * regarde, et le recharger à chaque tick du monde n'apprendrait rien.
    */
-  const [ledger, setLedger] = useState<LedgerLine[]>([]);
+  const journal = useLedger(api, player?.id, showEta);
   const [showGarage, setShowGarage] = useState(false);
   const [showHerd, setShowHerd] = useState(false);
   const [showStaff, setShowStaff] = useState(false);
@@ -2530,21 +2530,6 @@ export function App() {
   /** Où en est le joueur dans son palier — pour la jauge du bandeau. */
   const xpHere = useMemo(() => levelProgress(player?.xp ?? 0), [player?.xp]);
 
-  useEffect(() => {
-    if (!showEta || !player?.id) return;
-    let vivant = true;
-    void api(`/players/${player.id}/ledger?jours=7`)
-      .then((r) => {
-        const rep = r as { lignes?: LedgerLine[] };
-        if (vivant) setLedger(rep.lignes ?? []);
-      })
-      .catch(() => {
-        /* Le Bureau reste utilisable sans son journal : il n'en dépend pas. */
-      });
-    return () => {
-      vivant = false;
-    };
-  }, [showEta, player?.id]);
 
   const openBuilding = useMemo(
     () => (parcel?.buildings ?? []).find((b) => b.id === openBuildingId) ?? null,
@@ -7225,7 +7210,15 @@ export function App() {
         myFarmId={player.farm?.id}
         expandableIds={expandableParcelIds}
         onBuyLand={buyAdjacent}
-        ledger={ledger}
+        ledger={journal.page?.lignes ?? []}
+        ledgerJours={journal.jours}
+        ledgerPage={journal.page}
+        ledgerLoading={journal.loading}
+        ledgerError={journal.error}
+        onLedgerPeriod={journal.setJours}
+        onLedgerMore={journal.more}
+        onLedgerRetry={journal.retry}
+        cropPrices={market}
         quests={quests}
         onClaimQuest={(id) => void claimQuest(id)}
         onlinePlayers={onlinePlayers}

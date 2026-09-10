@@ -2393,6 +2393,8 @@ export const P2P_YIELD_MALUS = 0.02;
 export const LABOR_ORDER_TTL_MS = 45 * 60 * 1000;
 export const LABOR_OPEN_MAX_PER_CLIENT = 3;
 export const FERTILIZE_COST_PER_CELL = 10;
+/** Gain ajouté au coefficient de conduite par passage, deux passages maximum. */
+export const FERTILIZE_YIELD_STEP = 0.115;
 
 export function laborExtras(work: FarmWork, cells: number, crop?: CropCode | null): number {
   const n = Math.max(0, cells);
