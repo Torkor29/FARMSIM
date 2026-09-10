@@ -868,7 +868,7 @@
 }
 .globe-place-card em { color: #9eb9b5; font-size: 0.73rem; font-style: normal; }
 .globe-host { width: 100%; touch-action: none; }
-.globe-host canvas { display: block; width: 100% !important; }
+.globe-host canvas { display: block; width: 100% !important; height: 100% !important; }
 .globe-hint {
   margin: 0;
   text-align: center;

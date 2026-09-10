@@ -17,7 +17,8 @@ import fs from "node:fs";
  * refait à l'écran.
  */
 const APP = fs.readFileSync("src/App.tsx", "utf8");
-const CSS = fs.readFileSync("src/styles.css", "utf8");
+// Les assertions CSS doivent être identiques avec des fins de ligne LF ou CRLF.
+const CSS = fs.readFileSync("src/styles.css", "utf8").replace(/\r\n/g, "\n");
 
 /**
  * Tout ce que la feuille déclare pour un sélecteur, mis bout à bout.
