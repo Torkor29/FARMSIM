@@ -1,5 +1,6 @@
 import { useEffect, useRef } from "react";
 import * as THREE from "three";
+import { globeFitScale, globeSurfaceRadius } from "./globe-geometry";
 import { earthLandRings } from "./earth-land";
 import { disposeRenderer, disposeThreeScene, markShared } from "./three-cleanup";
 import { initialQuality, makeFrameGovernor, qualityForContext, type RenderQuality } from "./render-quality";
@@ -58,8 +59,7 @@ const AXIS_TILT = 0.41;
  * l'écran quelle que soit sa forme, sans rien changer au cadrage en paysage.
  */
 function fitDistance(aspect: number): number {
-  if (!Number.isFinite(aspect) || aspect <= 0) return 1;
-  return Math.max(1, 1 / aspect);
+  return globeFitScale(aspect, FOV);
 }
 
 /** Ouverture verticale de la caméra, en radians. */
@@ -81,7 +81,7 @@ const DIST_FOCUS = DIST_FIT * 1.18;
 const DIST_NEAR = DIST_FIT * 1.32;
 /** Dernier plan du voyage : le globe entier garde une marge, même sur téléphone. */
 const DIST_ARRIVAL = DIST_FIT * 1.18;
-const DIST_MIN = DIST_FIT * 0.95;
+const DIST_MIN = DIST_FIT * 1.18;
 const DIST_MAX = 12;
 
 /* ------------------------------------------------------------------ */
@@ -486,15 +486,9 @@ function createMiniBiome(c: GlobeContinent, field: Field, surface: number): Mini
   root.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), field.center);
 
   const content = new THREE.Group();
-  content.position.y = surface + 0.025;
+  content.position.y = surface + 0.008;
   root.add(content);
 
-  const groundMat = new THREE.MeshLambertMaterial({
-    color: polar ? 0xb9d9d3 : dry ? 0xc8953f : c.color,
-    transparent: true,
-    opacity: 0.28,
-    depthWrite: false,
-  });
   const darkGroundMat = new THREE.MeshLambertMaterial({
     color: polar ? 0x729795 : dry ? 0x8d5d2c : 0x24643c,
     flatShading: false,
@@ -507,13 +501,6 @@ function createMiniBiome(c: GlobeContinent, field: Field, surface: number): Mini
     color: dry ? 0xe3b84e : 0x8fbd3f,
     flatShading: false,
   });
-
-  // Ombre colorée douce, pas un socle : son bord rond se fond dans la texture.
-  const patch = new THREE.Mesh(new THREE.CircleGeometry(0.25, 48), groundMat);
-  patch.name = "biome-ground";
-  patch.rotation.x = -Math.PI / 2;
-  patch.scale.set(1.18, 0.82, 1);
-  content.add(patch);
 
   const path = new THREE.Mesh(
     new THREE.BoxGeometry(0.42, 0.012, 0.045),
@@ -599,6 +586,17 @@ function createMiniBiome(c: GlobeContinent, field: Field, surface: number): Mini
   windmill.add(rotor);
   content.add(windmill);
 
+  // Chaque élément suit la courbure au lieu de flotter sur un plateau tangent.
+  // Une taille fixe évite de déplacer ses pieds lors de la sélection.
+  const size = 0.64;
+  for (const object of content.children) {
+    object.position.multiplyScalar(size);
+    object.scale.multiplyScalar(size);
+    const { x, z } = object.position;
+    const normal = new THREE.Vector3(x, surface, z).normalize();
+    object.position.y += Math.sqrt(Math.max(0, surface * surface - x * x - z * z)) - surface;
+    object.quaternion.premultiply(new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 1, 0), normal));
+  }
   return { code: c.code, root, content, rotors: [rotor] };
 }
 
@@ -779,7 +777,7 @@ function makePlanetPainter(
           imgBump.data[i] = imgBump.data[i + 1] = imgBump.data[i + 2] = wave;
           imgBump.data[i + 3] = 255;
           // L'eau est lisse : c'est ce qui lui donne son reflet de soleil.
-          const r = 40 + shelf * 40;
+          const r = 125 + shelf * 35;
           imgRough.data[i] = imgRough.data[i + 1] = imgRough.data[i + 2] = r;
           imgRough.data[i + 3] = 255;
           continue;
@@ -821,7 +819,7 @@ function makePlanetPainter(
         const speckle = 0.93 + grain * 0.14;
         writeRgb(imgColor.data, i, tint, speckle);
 
-        const relief = clamp01(elev / 0.9) * 190 + 40 + (grain - 0.5) * 22;
+        const relief = 118 + clamp01(h / 0.16) * clamp01(elev / 0.9) * 100;
         imgBump.data[i] = imgBump.data[i + 1] = imgBump.data[i + 2] = relief;
         imgBump.data[i + 3] = 255;
 
@@ -884,8 +882,7 @@ function buildPlanetGeometry(terrain: Terrain): THREE.BufferGeometry {
   for (let i = 0; i < pos.count; i++) {
     dir.set(pos.getX(i), pos.getY(i), pos.getZ(i)).normalize();
     const h = terrain.height(dir);
-    let radius = R;
-    if (h > 0) radius = R + elevationOf(h, terrain.mountain(dir)) * 0.5;
+    const radius = globeSurfaceRadius(R, h, elevationOf(Math.max(0, h), terrain.mountain(dir)));
     dir.multiplyScalar(radius);
     pos.setXYZ(i, dir.x, dir.y, dir.z);
   }
@@ -919,7 +916,8 @@ function atmosphereMaterial(color: number, power: number, intensity: number) {
       uniform vec3 uColor; uniform float uPower; uniform float uIntensity;
       varying vec3 vN; varying vec3 vP;
       void main() {
-        float f = pow(1.0 - abs(dot(normalize(vN), normalize(-vP))), uPower);
+        float facing = abs(dot(normalize(vN), normalize(-vP)));
+        float f = pow(1.0 - facing, uPower) * smoothstep(0.0, 0.22, facing);
         gl_FragColor = vec4(uColor, f * uIntensity);
       }`,
   });
@@ -966,9 +964,10 @@ export function GlobeView({
 
     const scene = new THREE.Scene();
     const width = host.clientWidth || 480;
-    const camera = new THREE.PerspectiveCamera(38, width / height, 0.1, 100);
+    const canvasHeight = host.clientHeight || height;
+    const camera = new THREE.PerspectiveCamera(38, width / canvasHeight, 0.1, 100);
     /** Facteur de recul imposé par la forme de l'écran, mis à jour au redimensionnement. */
-    let fit = fitDistance(width / height);
+    let fit = fitDistance(width / canvasHeight);
     camera.position.set(0, 0, DIST_WORLD * fit);
 
     let quality = initialQuality();
@@ -993,7 +992,7 @@ export function GlobeView({
       renderer.setPixelRatio(densite(next));
     };
     const governor = makeFrameGovernor(applyQuality);
-    renderer.setSize(width, height, false);
+    renderer.setSize(width, canvasHeight, false);
     renderer.outputColorSpace = THREE.SRGBColorSpace;
     host.appendChild(renderer.domElement);
 
@@ -1028,7 +1027,7 @@ export function GlobeView({
       color: 0xffffff,
       roughness: 0.88,
       metalness: 0,
-      bumpScale: 0.28,
+      bumpScale: 0.045,
       flatShading: false,
     });
     const planet = new THREE.Mesh(
@@ -1163,13 +1162,13 @@ export function GlobeView({
     // vire au caillou gris.
     const cloudMat = new THREE.MeshLambertMaterial({
       color: 0xffffff,
-      emissive: new THREE.Color(0x6f7f8f),
+      emissive: new THREE.Color(0x253745),
       flatShading: false,
-      transparent: true,
-      opacity: 0.85,
-      depthWrite: false,
+      // Opaque : le tampon de profondeur masque correctement les volumes
+      // qui se chevauchent, y compris de l’autre côté de la planète.
+      depthWrite: true,
     });
-    const cloudGeos = [0.055, 0.075, 0.095].map((r) => new THREE.IcosahedronGeometry(r, 1));
+    const cloudGeos = [0.055, 0.075, 0.095].map((r) => new THREE.SphereGeometry(r, 16, 10));
     const CLOUDS = 28;
     const golden = Math.PI * (3 - Math.sqrt(5));
     for (let i = 0; i < CLOUDS; i++) {
@@ -1207,7 +1206,7 @@ export function GlobeView({
     scene.add(atmo);
     const glow = new THREE.Mesh(
       new THREE.SphereGeometry(R * 1.11, 64, 32),
-      atmosphereMaterial(0xc9a227, 3.2, 0.3),
+      atmosphereMaterial(0x6abdd4, 3.2, 0.18),
     );
     scene.add(glow);
 
@@ -1260,7 +1259,7 @@ export function GlobeView({
           .normalize();
         surface = Math.max(
           surface,
-          R + elevationOf(Math.max(0, terrain.height(probe)), terrain.mountain(probe)) * 0.5,
+          globeSurfaceRadius(R, terrain.height(probe), elevationOf(Math.max(0, terrain.height(probe)), terrain.mountain(probe))),
         );
       }
 
@@ -1345,12 +1344,12 @@ export function GlobeView({
         varying vec2 vUv;
         void main() {
           float d = distance(vUv, vec2(0.5));
-          float falloff = smoothstep(0.5, 0.06, d);
+          float falloff = (1.0 - smoothstep(0.06, 0.5, d));
           gl_FragColor = vec4(uColor, falloff * uOpacity);
         }
       `,
     });
-    const highlight = new THREE.Mesh(new THREE.CircleGeometry(0.78, 32), highlightMat);
+    const highlight = new THREE.Mesh(new THREE.CircleGeometry(0.32, 48), highlightMat);
     highlight.visible = false;
     spinner.add(highlight);
 
@@ -1364,7 +1363,7 @@ export function GlobeView({
         highlight.visible = false;
         return;
       }
-      const p = latLonToVec3(c.lat, c.lon, R + 0.09);
+      const p = latLonToVec3(c.lat, c.lon, R + 0.045);
       highlight.position.copy(p);
       highlight.lookAt(p.clone().multiplyScalar(2));
       highlight.visible = true;
@@ -1643,7 +1642,7 @@ export function GlobeView({
 
       root.rotation.x = pitch;
       spinner.rotation.y = spin;
-      clouds.rotation.y = spin * 1.9 + (reduced ? 0 : now * 0.000012);
+      clouds.rotation.y = spin + (reduced ? 0 : now * 0.000012);
 
       dist += (distTarget - dist) * Math.min(1, dt * 3.6);
       camera.position.set(0, 0, dist * fit);
@@ -1704,9 +1703,6 @@ export function GlobeView({
       for (const biome of miniBiomes) {
         const isSel = biome.code === sel;
         biome.content.visible = mode !== "arrival" || isSel;
-        const targetScale = mode === "arrival" ? 0.88 : isSel ? 0.86 : 0.74;
-        scaleTmp.setScalar(targetScale);
-        biome.content.scale.lerp(scaleTmp, suivi);
         if (!reduced) {
           for (const rotor of biome.rotors) rotor.rotation.z -= dt * (isSel ? 1.35 : 0.72);
         }
@@ -1719,10 +1715,11 @@ export function GlobeView({
 
     const onResize = () => {
       const w = host.clientWidth || 480;
-      camera.aspect = w / height;
+      const h = host.clientHeight || height;
+      camera.aspect = w / h;
       fit = fitDistance(camera.aspect);
       camera.updateProjectionMatrix();
-      renderer.setSize(w, height, false);
+      renderer.setSize(w, h, false);
     };
     const ro = new ResizeObserver(onResize);
     ro.observe(host);
@@ -1749,7 +1746,7 @@ export function GlobeView({
   }, [continents, height, mode]);
 
   return (
-    <div className="globe-host globe-v2" style={{ height }}>
+    <div className="globe-host globe-v2" style={{ height, maxHeight: mode === "arrival" ? "56svh" : undefined }}>
       <div className="globe-canvas" ref={hostRef} />
       {onSelect && (
         <div className="globe-hud">

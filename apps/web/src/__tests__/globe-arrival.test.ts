@@ -127,7 +127,7 @@ describe("la maquette vivante", () => {
   it("pose des décors agricoles discrets sur chaque continent", () => {
     expect(GLOBE).toMatch(/function createMiniBiome/);
     expect(GLOBE).toMatch(/name = "crop-row"/);
-    expect(GLOBE).toMatch(/CircleGeometry\(0\.25, 48\)/);
+    expect(GLOBE).not.toMatch(/name = "biome-ground"/);
     expect(GLOBE).toMatch(/ConeGeometry\(0\.052, 0\.15, 12\)/);
     expect(GLOBE).toMatch(/name = "windmill-rotor"/);
     expect(GLOBE).toMatch(/miniBiomes\.push\(miniBiome\)/);
@@ -135,7 +135,7 @@ describe("la maquette vivante", () => {
 
   it("lisse la planète tout en gardant son relief peint", () => {
     expect(GLOBE).toMatch(/SphereGeometry\(R, 160, 80\)/);
-    expect(GLOBE).toMatch(/bumpScale: 0\.28/);
+    expect(GLOBE).toMatch(/bumpScale: 0\.045/);
     expect(GLOBE).toMatch(/flatShading: false/);
   });
 });
