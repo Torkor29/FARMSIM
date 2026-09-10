@@ -6867,11 +6867,12 @@ app.post("/parcels/:id/jobs", async (req, res) => {
     return;
   }
 
-  const picked = pickMachineForWork(access.machines, work);
-  if (!picked) {
+  const candidate = pickMachineForWork(access.machines, work);
+  if (!candidate) {
     res.status(409).json({ error: explainNoMachine(access.machines, work) });
     return;
   }
+  let picked = candidate;
   /*
    * Le matériel plafonne, l'employé débloque.
    *
@@ -6913,7 +6914,7 @@ app.post("/parcels/:id/jobs", async (req, res) => {
      expérience, l'autre de qui il emploie, et rien ne justifie qu'ils
      s'annulent. */
   const equipe = await bonusEquipe(workFarmId);
-  const duree = Math.max(
+  let duree = Math.max(
     1,
     Math.round(
       dureeChantier(picked, cells.length) * (1 - competences.WORK_SPEED) * (1 - equipe.conduite),
@@ -6922,7 +6923,7 @@ app.post("/parcels/:id/jobs", async (req, res) => {
   /* Le plein se fait au départ, pas à l'arrivée : le gazole part dans le
      réservoir au moment où l'engin quitte la cour. Un chantier abandonné le
      rend, puisqu'il n'a rien brûlé. */
-  const gazole = gazoleChantier(picked, cells.length) * (1 - competences.FUEL_USE);
+  let gazole = gazoleChantier(picked, cells.length) * (1 - competences.FUEL_USE);
   const cuve = await prisma.farm.findUnique({
     where: { id: workFarmId },
     select: { fuelL: true },
@@ -6935,19 +6936,27 @@ app.post("/parcels/:id/jobs", async (req, res) => {
     });
     return;
   }
-  const endsAt = new Date(Date.now() + duree);
+  let endsAt = new Date(Date.now() + duree);
   const job = await prisma.$transaction(async (tx) => {
     // Les départs de la même ferme sont sérialisés, même sur deux parcelles
     // ou deux requêtes simultanées. Toutes les relectures utilisent ce client.
     await tx.$queryRaw`SELECT "id" FROM "Farm" WHERE "id" = ${workFarmId} FOR UPDATE`;
-    const rigIds = [picked.machine.id, ...(picked.tractor ? [picked.tractor.id] : [])];
-    const reserved = await tx.fieldJob.count({
+    const machines = await tx.machine.findMany({ where: { farmId: workFarmId } });
+    const rigIds = machines.map((m) => m.id);
+    const reservations = await tx.fieldJob.findMany({
       where: { status: "RUNNING", OR: [{ machineId: { in: rigIds } }, { tractorId: { in: rigIds } }] },
+      select: { machineId: true, tractorId: true },
     });
-    if (reserved) throw new Error("RIG_RESERVED");
-    const machines = await tx.machine.findMany({ where: { id: { in: rigIds }, farmId: workFarmId } });
-    if (machines.length !== rigIds.length || !pickMachineForWork(machines, work)) throw new Error("RIG_RESERVED");
+    const reserved = new Set(reservations.flatMap((j) => [j.machineId, j.tractorId]));
+    // Le premier choix peut être pris pendant l'aller-retour. Choisir un
+    // autre attelage libre, et non refuser une ferme qui en possède deux.
+    const rig = pickMachineForWork(machines.filter((m) => !reserved.has(m.id)), work);
+    if (!rig) throw new Error("RIG_RESERVED");
+    picked = rig;
     const currentTeam = await bonusEquipe(workFarmId, tx);
+    duree = Math.max(1, Math.round(dureeChantier(picked, cells.length) * (1 - competences.WORK_SPEED) * (1 - currentTeam.conduite)));
+    gazole = gazoleChantier(picked, cells.length) * (1 - competences.FUEL_USE);
+    endsAt = new Date(Date.now() + duree);
     const running = await tx.fieldJob.count({ where: { userId: body.data.userId, status: "RUNNING", endsAt: { gte: new Date() } } });
     if (running >= 1 + currentTeam.auChamp) throw new Error("TEAM_RESERVED");
     const onParcel = await tx.fieldJob.findMany({ where: { parcelId: parcel.id, status: "RUNNING" }, select: { cellsJson: true } });
