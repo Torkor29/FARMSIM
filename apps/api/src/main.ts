@@ -14,6 +14,7 @@ import {
   BUILDING_DEFS,
   CROP_DEFS,
   CROP_CODES,
+  FERTILIZE_COST_PER_CELL,
   cropGrowMs,
   harvestItemCode,
   isMowCrop,
@@ -990,6 +991,7 @@ type FieldAccess =
       ok: true;
       parcel: NonNullable<Awaited<ReturnType<typeof loadParcelForWork>>>;
       machines: FarmMachine[];
+      workFarmId: string;
       charge: boolean;
       order: {
         id: string;
@@ -1413,6 +1415,7 @@ async function reglerOccupation(
 const CHANTIER_A_CLORE = {
   id: true,
   parcelId: true,
+  userId: true,
   fuelL: true,
   machineId: true,
   tractorId: true,
@@ -1421,6 +1424,7 @@ const CHANTIER_A_CLORE = {
 type ChantierAClore = {
   id: string;
   parcelId: string;
+  userId: string;
   fuelL: number;
   machineId: string | null;
   tractorId: string | null;
@@ -1436,14 +1440,14 @@ type ChantierAClore = {
  */
 async function annulerChantiers(morts: ChantierAClore[]): Promise<void> {
   if (!morts.length) return;
-  const parcelles = await prisma.parcel.findMany({
-    where: { id: { in: [...new Set(morts.map((j) => j.parcelId))] } },
-    select: { id: true, farmId: true },
+  const fermes = await prisma.farm.findMany({
+    where: { userId: { in: [...new Set(morts.map((j) => j.userId))] } },
+    select: { id: true, userId: true },
   });
-  const fermeDe = new Map(parcelles.map((p) => [p.id, p.farmId]));
+  const fermeDe = new Map(fermes.map((f) => [f.userId, f.id]));
   const gazoleParFerme = new Map<string, number>();
   for (const j of morts) {
-    const ferme = fermeDe.get(j.parcelId);
+    const ferme = fermeDe.get(j.userId);
     if (!ferme || !j.fuelL) continue;
     gazoleParFerme.set(ferme, (gazoleParFerme.get(ferme) ?? 0) + j.fuelL);
   }
@@ -1644,13 +1648,11 @@ async function checkFieldJob(opts: {
  */
 async function rendreGazole(job: { id: string; fuelL: number; parcelId: string } | null) {
   if (!job?.fuelL) return;
-  const parcel = await prisma.parcel.findUnique({
-    where: { id: job.parcelId },
-    select: { farmId: true },
-  });
-  if (!parcel?.farmId) return;
+  const owner = await prisma.fieldJob.findUnique({ where: { id: job.id }, select: { userId: true } });
+  const farm = owner ? await prisma.farm.findUnique({ where: { userId: owner.userId }, select: { id: true } }) : null;
+  if (!farm) return;
   await prisma.farm.update({
-    where: { id: parcel.farmId },
+    where: { id: farm.id },
     data: { fuelL: { increment: job.fuelL } },
   });
 }
@@ -1696,7 +1698,7 @@ async function resolveFieldAccess(opts: {
     return { ok: false, status: 404, error: "Parcelle introuvable" };
   }
   if (parcel.farm.userId === opts.userId) {
-    return { ok: true, parcel, machines: parcel.farm.machines, charge: true, order: null };
+    return { ok: true, parcel, machines: parcel.farm.machines, workFarmId: parcel.farm.id, charge: true, order: null };
   }
   const order = await prisma.laborOrder.findFirst({
     where: { parcelId: opts.parcelId, providerId: opts.userId, status: "ACCEPTED" },
@@ -1722,6 +1724,7 @@ async function resolveFieldAccess(opts: {
     ok: true,
     parcel,
     machines: provider.farm.machines,
+    workFarmId: provider.farm.id,
     charge: false,
     order: {
       id: order.id,
@@ -6864,11 +6867,12 @@ app.post("/parcels/:id/jobs", async (req, res) => {
     return;
   }
 
-  const picked = pickMachineForWork(access.machines, work);
-  if (!picked) {
+  const candidate = pickMachineForWork(access.machines, work);
+  if (!candidate) {
     res.status(409).json({ error: explainNoMachine(access.machines, work) });
     return;
   }
+  let picked = candidate;
   /*
    * Le matériel plafonne, l'employé débloque.
    *
@@ -6877,7 +6881,8 @@ app.post("/parcels/:id/jobs", async (req, res) => {
    * conducteur, et chaque employé **aux champs** en ajoute un ; celui qui
    * passe sa journée à l'élevage ne conduit pas.
    */
-  const braves = await bonusEquipe(parcel.farmId!);
+  const workFarmId = access.workFarmId;
+  const braves = await bonusEquipe(workFarmId);
   const plafond = chantiersSimultanes({
     employesAuChamp: braves.auChamp,
     attelagesLibres: Number.POSITIVE_INFINITY,
@@ -6908,8 +6913,8 @@ app.post("/parcels/:id/jobs", async (req, res) => {
      temps en moins. Le gain s'ajoute à celui du joueur : l'un vient de son
      expérience, l'autre de qui il emploie, et rien ne justifie qu'ils
      s'annulent. */
-  const equipe = await bonusEquipe(parcel.farmId!);
-  const duree = Math.max(
+  const equipe = await bonusEquipe(workFarmId);
+  let duree = Math.max(
     1,
     Math.round(
       dureeChantier(picked, cells.length) * (1 - competences.WORK_SPEED) * (1 - equipe.conduite),
@@ -6918,9 +6923,9 @@ app.post("/parcels/:id/jobs", async (req, res) => {
   /* Le plein se fait au départ, pas à l'arrivée : le gazole part dans le
      réservoir au moment où l'engin quitte la cour. Un chantier abandonné le
      rend, puisqu'il n'a rien brûlé. */
-  const gazole = gazoleChantier(picked, cells.length) * (1 - competences.FUEL_USE);
+  let gazole = gazoleChantier(picked, cells.length) * (1 - competences.FUEL_USE);
   const cuve = await prisma.farm.findUnique({
-    where: { id: parcel.farmId! },
+    where: { id: workFarmId },
     select: { fuelL: true },
   });
   if ((cuve?.fuelL ?? 0) < gazole) {
@@ -6931,12 +6936,37 @@ app.post("/parcels/:id/jobs", async (req, res) => {
     });
     return;
   }
-  const endsAt = new Date(Date.now() + duree);
+  let endsAt = new Date(Date.now() + duree);
   const job = await prisma.$transaction(async (tx) => {
-    await tx.farm.update({
-      where: { id: parcel.farmId! },
+    // Les départs de la même ferme sont sérialisés, même sur deux parcelles
+    // ou deux requêtes simultanées. Toutes les relectures utilisent ce client.
+    await tx.$queryRaw`SELECT "id" FROM "Farm" WHERE "id" = ${workFarmId} FOR UPDATE`;
+    const machines = await tx.machine.findMany({ where: { farmId: workFarmId } });
+    const rigIds = machines.map((m) => m.id);
+    const reservations = await tx.fieldJob.findMany({
+      where: { status: "RUNNING", OR: [{ machineId: { in: rigIds } }, { tractorId: { in: rigIds } }] },
+      select: { machineId: true, tractorId: true },
+    });
+    const reserved = new Set(reservations.flatMap((j) => [j.machineId, j.tractorId]));
+    // Le premier choix peut être pris pendant l'aller-retour. Choisir un
+    // autre attelage libre, et non refuser une ferme qui en possède deux.
+    const rig = pickMachineForWork(machines.filter((m) => !reserved.has(m.id)), work);
+    if (!rig) throw new Error("RIG_RESERVED");
+    picked = rig;
+    const currentTeam = await bonusEquipe(workFarmId, tx);
+    duree = Math.max(1, Math.round(dureeChantier(picked, cells.length) * (1 - competences.WORK_SPEED) * (1 - currentTeam.conduite)));
+    gazole = gazoleChantier(picked, cells.length) * (1 - competences.FUEL_USE);
+    endsAt = new Date(Date.now() + duree);
+    const running = await tx.fieldJob.count({ where: { userId: body.data.userId, status: "RUNNING", endsAt: { gte: new Date() } } });
+    if (running >= 1 + currentTeam.auChamp) throw new Error("TEAM_RESERVED");
+    const onParcel = await tx.fieldJob.findMany({ where: { parcelId: parcel.id, status: "RUNNING" }, select: { cellsJson: true } });
+    const occupied = new Set(onParcel.flatMap((j) => parseCellJson(j.cellsJson).map((c) => `${c.x},${c.y}`)));
+    if (cells.some((c) => occupied.has(`${c.x},${c.y}`))) throw new Error("CELLS_RESERVED");
+    const fuel = await tx.farm.updateMany({
+      where: { id: workFarmId, fuelL: { gte: gazole } },
       data: { fuelL: { decrement: gazole } },
     });
+    if (!fuel.count) throw new Error("FUEL_RESERVED");
     const created = await tx.fieldJob.create({
       data: {
         parcelId: parcel.id,
@@ -6950,13 +6980,23 @@ app.post("/parcels/:id/jobs", async (req, res) => {
         endsAt,
       },
     });
-    /* L'attelage est au champ : il ne se vend pas, ne se reprend pas et ne
-       s'améliore pas tant qu'il y est. Il peut en revanche repartir sur un
-       autre chantier — c'est tout l'objet de `reglerOccupation`, qui retient
-       la fin du dernier des siens et non celle qu'on vient de fixer. */
+    // L'outil et son tracteur restent réservés jusqu'à la clôture du chantier.
     await reglerOccupation(tx, [picked.machine.id, picked.tractor?.id]);
     return created;
+  }).catch((error: unknown) => {
+    const messages: Record<string, string> = {
+      RIG_RESERVED: "Cet attelage est déjà réservé par un chantier — attendez son retour ou utilisez un second tracteur et un outil libres.",
+      TEAM_RESERVED: "Toute l’équipe est déjà au travail — attendez ou affectez un employé aux champs.",
+      CELLS_RESERVED: "Une de ces cases vient d’être réservée par un autre chantier.",
+      FUEL_RESERVED: "Le gazole disponible ne suffit plus pour ce chantier.",
+    };
+    if (error instanceof Error && messages[error.message]) {
+      res.status(409).json({ error: messages[error.message] });
+      return null;
+    }
+    throw error;
   });
+  if (!job) return;
 
   res.status(201).json({
     job: {
@@ -7252,10 +7292,10 @@ app.post("/jobs/:id/cancel", async (req, res) => {
     await tx.fieldJob.update({ where: { id: job.id }, data: { status: "CANCELLED" } });
     await reglerOccupation(tx, [job.machineId, job.tractorId]);
     // Le plein retourne à la cuve : l'engin n'est pas parti.
-    const parcelle = await tx.parcel.findUnique({ where: { id: job.parcelId } });
-    if (parcelle?.farmId && job.fuelL > 0) {
+    const ferme = await tx.farm.findUnique({ where: { userId: job.userId } });
+    if (ferme && job.fuelL > 0) {
       await tx.farm.update({
-        where: { id: parcelle.farmId },
+        where: { id: ferme.id },
         data: { fuelL: { increment: job.fuelL } },
       });
     }
@@ -7486,7 +7526,7 @@ app.post("/parcels/:id/fertilize", async (req, res) => {
   const needed = manureNeededForCells(eligible.length);
   const available = await parcelManureTons(parcel.id);
   const usedManure = needed > 0 && available >= needed;
-  const cost = usedManure || !access.charge ? 0 : 10 * body.data.cells.length;
+  const cost = usedManure || !access.charge ? 0 : FERTILIZE_COST_PER_CELL * eligible.length;
   const user = await prisma.user.findUnique({ where: { id: body.data.userId } });
   if (!user || (access.charge && !peutPayer(user, cost))) {
     res.status(402).json({ error: "€ insuffisants" });
@@ -8148,8 +8188,15 @@ app.post("/parcels/:id/harvest", async (req, res) => {
       moisture: number;
       quality: number;
     }[] = [];
+    let vegetableTons = 0;
     for (const [crop, { tons, wet, moistureSum }] of byCrop) {
-      if (!isGrainGood(crop)) continue;
+      if (!isGrainGood(crop)) {
+        if (!isMowCrop(crop)) {
+          await addToStock(tx, parcel.farmId!, harvestItemCode(crop), tons, 0, 3);
+          vegetableTons += tons;
+        }
+        continue;
+      }
       const batchMoisture = tons > 0 ? moistureSum / tons : harvestMoisture();
       incomingGrain.push({
         code: crop,
@@ -8174,6 +8221,7 @@ app.post("/parcels/:id/harvest", async (req, res) => {
     if (hayTons > 0) {
       await addToStock(tx, parcel.farmId!, "HAY", hayTons, 0, 3);
     }
+    grain.storedTons += vegetableTons + hayTons;
 
     if (harvested.length === 0) {
       return { wear: null, mowWear: null, grain, labor: null, gain: null };
@@ -10578,26 +10626,41 @@ app.post("/herds/:id/feed", async (req, res) => {
  * même règle serve à l'écran et à un test.
  */
 app.get("/players/:id/ledger", async (req, res) => {
-  const jours = Math.min(30, Math.max(1, Number(req.query.jours ?? 7)));
-  const depuis = new Date(Date.now() - jours * 24 * 60 * 60 * 1000);
-  const lignes = await prisma.ledgerEntry.findMany({
-    where: { userId: req.params.id, at: { gte: depuis } },
-    orderBy: { at: "desc" },
-    // Le Bureau montre les mouvements récents ; l'historique complet n'a pas
-    // à traverser le réseau pour être résumé.
-    take: 200,
-  });
-  const vues = lignes.map((l) => ({
-    amount: l.amount,
-    poste: l.poste as LedgerPoste,
-    label: l.label,
-    at: l.at.toISOString(),
-  }));
+  const query = z.object({
+    jours: z.coerce.number().int().min(0).max(1096).default(7),
+    cursor: z.string().min(1).max(100).optional(),
+    until: z.string().datetime().optional(),
+  }).safeParse(req.query);
+  if (!query.success) {
+    res.status(400).json({ error: "Période ou curseur du journal invalide." });
+    return;
+  }
+  const { jours, cursor } = query.data;
+  const until = query.data.until ? new Date(query.data.until) : new Date();
+  const where = {
+    userId: req.params.id,
+    at: { lte: until, ...(jours ? { gte: new Date(until.getTime() - jours * 86400000) } : {}) },
+  };
+  if (cursor && !await prisma.ledgerEntry.findFirst({ where: { ...where, id: cursor }, select: { id: true } })) {
+    res.status(400).json({ error: "Ce curseur n’appartient pas à ce journal ou à cette période." });
+    return;
+  }
+  const [page, recettes, depenses] = await Promise.all([
+    prisma.ledgerEntry.findMany({
+      where, orderBy: [{ at: "desc" }, { id: "desc" }], take: 101,
+      ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}),
+    }),
+    prisma.ledgerEntry.groupBy({ by: ["poste"], where: { ...where, amount: { gte: 0 } }, _sum: { amount: true } }),
+    prisma.ledgerEntry.groupBy({ by: ["poste"], where: { ...where, amount: { lt: 0 } }, _sum: { amount: true } }),
+  ]);
+  const lignes = page.slice(0, 100);
+  // Les totaux portent sur toute la période, jamais sur la seule page visible.
+  const totaux = [...recettes, ...depenses].map((l) => ({ amount: l._sum.amount ?? 0, poste: l.poste as LedgerPoste, label: "", at: until.toISOString() }));
   res.json({
-    lignes: vues,
-    postes: totauxParPoste(vues),
-    resultat: resultat(vues),
-    jours,
+    lignes: lignes.map((l) => ({ id: l.id, amount: l.amount, poste: l.poste as LedgerPoste, label: l.label, at: l.at.toISOString() })),
+    postes: totauxParPoste(totaux), resultat: resultat(totaux), jours,
+    until: until.toISOString(),
+    nextCursor: page.length > 100 ? lignes[lignes.length - 1].id : null,
   });
 });
 

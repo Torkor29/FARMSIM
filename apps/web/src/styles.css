@@ -7801,3 +7801,10 @@ button.tiny {
 .dock-choice-group {
   display: contents;
 }
+
+.activite-label { white-space: normal; overflow-wrap: anywhere; }
+.activite-label time { display: block; font-size: .72rem; opacity: .72; margin-top: .15rem; }
+.activite-periode { display: flex; flex-wrap: wrap; align-items: center; gap: .6rem; margin-bottom: .8rem; }
+.activite-engrais { margin: 1rem 0; padding: .8rem; border: 1px solid var(--line); border-radius: var(--r-sm); }
+.activite-engrais summary { cursor: pointer; font-weight: 700; }
+.activite-engrais label { display: flex; gap: .5rem; align-items: center; margin-top: .7rem; }

@@ -1466,7 +1466,7 @@ describe("les heures pèsent sur la récolte", () => {
    * `used-market.test.ts` ; ici on vérifie qu'il arrive bien jusqu'aux tonnes,
    * par la vraie route de moisson.
    */
-  async function moissonne(heuresCompteur: number) {
+  async function moissonne(heuresCompteur: number, crop?: "POTATO") {
     const moi = await inscrire("Moissonneur");
     const monde = await appel("/world/AUR");
     const regions = (monde.corps as unknown as {
@@ -1525,6 +1525,7 @@ describe("les heures pèsent sur la récolte", () => {
 
     const semis = await travailler(parcelle.id, "plant", "PLANT", moi, cells, { crop: cropDeSaison() });
     assert.equal(semis.statut, 200, `semis refusé : ${JSON.stringify(semis.corps)}`);
+    if (crop) prismaExec(`UPDATE "ParcelCell" SET crop = '${crop}' WHERE "parcelId" = '${parcelle.id}' AND kind = 'CROP'`);
     await appel("/dev/grant", {
       methode: "POST",
       corps: { userId: moi.id, ripenAll: true },
@@ -1533,8 +1534,21 @@ describe("les heures pèsent sur la récolte", () => {
     const r = await travailler(parcelle.id, "harvest", "HARVEST", moi, cells);
     assert.equal(r.statut, 200, `moisson refusée : ${JSON.stringify(r.corps)}`);
     const lots = (r.corps as unknown as { harvested: { tons: number }[] }).harvested;
-    return lots.reduce((a, l) => a + l.tons, 0);
+    const tons = lots.reduce((a, l) => a + l.tons, 0);
+    if (crop) {
+      const me = (await appel("/auth/me", { jeton: moi.jeton })).corps as unknown as {
+        player: { farm: { inventory: { itemCode: string; qty: number }[] } };
+      };
+      const stock = me.player.farm.inventory.filter((item) => item.itemCode === crop).reduce((n, item) => n + item.qty, 0);
+      assert.ok(Math.abs(stock - tons) < 0.01, `récolte ${tons} t, stock ${stock} t`);
+      assert.ok(Math.abs(Number(r.corps.storedTons) - tons) < 0.01, "la réponse doit annoncer les légumes stockés");
+    }
+    return tons;
   }
+
+  it("range les pommes de terre récoltées dans le stock vendable", async () => {
+    assert.ok(await moissonne(0, "POTATO") > 0);
+  });
 
   it("fait moins rendre une moissonneuse usée, révisée ou non", async () => {
     /**
@@ -2864,6 +2878,25 @@ describe("un chantier prend du temps", () => {
     // retirer cette contrainte la première fois.
     assert.match(erreur, /au champ/, `refus muet : ${erreur}`);
     assert.match(erreur, /second/, `le refus ne dit pas quoi faire : ${erreur}`);
+
+    await appel(`/jobs/${(a.corps as { job: { id: string } }).job.id}/cancel`, {
+      methode: "POST", corps: { userId: moi.id }, jeton: moi.jeton,
+    });
+    const candidates = (await appel("/employees", { jeton: moi.jeton })).corps as { candidates: { id: string }[] };
+    const hire = await appel("/employees/hire", {
+      methode: "POST", corps: { candidateId: candidates.candidates[0].id }, jeton: moi.jeton,
+    });
+    assert.equal(hire.statut, 201, JSON.stringify(hire.corps));
+    prismaExec(`UPDATE "ParcelCell" SET "hasStubble" = true, "fieldStage" = 'HARVESTED' WHERE "parcelId" = '${parcelle.id}' AND kind = 'EMPTY'`);
+    // Deux outils différents, deux sélections disjointes, deux conducteurs,
+    // mais un seul tracteur : une seule réservation doit être acceptée.
+    const starts = await Promise.all(["PLOW", "STUBBLE"].map((work, i) => appel(`/parcels/${parcelle.id}/jobs`, {
+      methode: "POST", corps: { userId: moi.id, work, cells: cells.slice(i * 6, i * 6 + 6) }, jeton: moi.jeton,
+    })));
+    assert.deepEqual(starts.map((r) => r.statut).sort(), [201, 409], JSON.stringify(starts));
+    const accepted = starts.find((r) => r.statut === 201)!;
+    const active = (accepted.corps as { job: { id: string } }).job;
+    await appel(`/jobs/${active.id}/cancel`, { methode: "POST", corps: { userId: moi.id }, jeton: moi.jeton });
   });
 
   /**
@@ -3858,5 +3891,45 @@ describe("le voisinage d’une parcelle", () => {
     const moi = await inscrire("Voisin Six");
     const r = await appel("/parcels/inexistante/voisinage", { jeton: moi.jeton });
     assert.equal(r.statut, 404);
+  });
+});
+
+
+describe("journal durable et paginé", () => {
+  it("retrouve toutes les écritures, même datées à la même seconde, et totalise la période entière", async () => {
+    const moi = await inscrire("Journal");
+    const date = new Date(Date.now() - 400 * 86400000).toISOString();
+    const ancien = new Date(Date.now() - 1500 * 86400000).toISOString();
+    prismaExec(`DELETE FROM "LedgerEntry" WHERE "userId" = '${moi.id}';
+      INSERT INTO "LedgerEntry" (id, "userId", amount, poste, label, at)
+      SELECT '${moi.id}-' || n, '${moi.id}', 1, 'CULTURES', 'Récolte', '${date}' FROM generate_series(1, 230) AS n;
+      INSERT INTO "LedgerEntry" (id, "userId", amount, poste, label, at) VALUES
+      ('${moi.id}-depense', '${moi.id}', -25, 'INTRANTS', 'Engrais', '${date}'),
+      ('${moi.id}-ancien', '${moi.id}', 999, 'CULTURES', 'Ancien', '${ancien}');`);
+    let cursor: string | null = null;
+    let until = "";
+    const ids: string[] = [];
+    do {
+      const query = new URLSearchParams({ jours: "1096" });
+      if (cursor) query.set("cursor", cursor);
+      if (until) query.set("until", until);
+      const r = await appel(`/players/${moi.id}/ledger?${query}`, { jeton: moi.jeton });
+      assert.equal(r.statut, 200);
+      const page = r.corps as unknown as import("@farmsim/shared").LedgerPage;
+      assert.equal(page.resultat.solde, 205);
+      assert.equal(page.resultat.recettes, 230);
+      assert.equal(page.resultat.depenses, 25);
+      assert.ok(page.lignes.length <= 100);
+      ids.push(...page.lignes.map((l) => l.id!));
+      cursor = page.nextCursor;
+      until = page.until;
+      assert.ok(ids.length <= 231, "le curseur ne doit pas boucler");
+    } while (cursor);
+    assert.equal(ids.length, 231);
+    assert.equal(new Set(ids).size, 231);
+    const all = await appel(`/players/${moi.id}/ledger?jours=0`, { jeton: moi.jeton });
+    assert.equal((all.corps as unknown as import("@farmsim/shared").LedgerPage).resultat.solde, 1204);
+    const invalid = await appel(`/players/${moi.id}/ledger?jours=NaN`, { jeton: moi.jeton });
+    assert.equal(invalid.statut, 400);
   });
 });
