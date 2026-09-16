@@ -1,4 +1,5 @@
 import {
+  gainElevage,
   EMPLOYEE_SKILL_EFFECTS,
   EMPLOYEE_SKILL_LABELS,
   EMPLOYEE_POST_LABELS,
@@ -106,6 +107,7 @@ export function EmployeesPanel({
   onExplain,
 }: Props) {
   const auChamp = employees.filter((e) => e.poste === "CHAMP").length;
+  const herdBonus = gainElevage(Math.max(0, ...employees.filter((e) => e.poste === "ELEVAGE").map((e) => e.elevage)));
   return (
     <aside className={className} {...gesture}>
       {!embedded && (
@@ -121,6 +123,12 @@ export function EmployeesPanel({
         pouvez mener <strong>{1 + auChamp} chantier(s)</strong> à la fois.
       </p>
 
+      <p className="emp-regle">
+        À l’élevage : <strong>+{Math.round(herdBonus * 100)} % de lait, d’œufs et de laine</strong> actuellement.
+        Le meilleur niveau affecté à ce poste compte ; les bonus ne s’additionnent pas.
+        L’employé vend automatiquement le surplus des fumières proches du débordement et conserve la moitié de leur capacité.
+        Nourrir, pailler et collecter les produits restent vos actions.
+      </p>
       <section className="emp-bloc">
         <h4>
           L’équipe <span className="emp-compte">{employees.length}</span>
@@ -155,13 +163,14 @@ export function EmployeesPanel({
                   </p>
                 )}
                 <div className="emp-actions">
-                  <div className="emp-poste" role="group" aria-label="Poste">
+                  <div className="emp-poste" role="radiogroup" aria-label="Poste">
                     {(["CHAMP", "ELEVAGE"] as EmployeePost[]).map((p) => (
                       <button
                         key={p}
                         type="button"
+                        role="radio"
                         className={e.poste === p ? "on" : ""}
-                        aria-pressed={e.poste === p}
+                        aria-checked={e.poste === p}
                         onClick={() =>
                           busy ? onExplain("Une action est déjà en cours — un instant.") : onPost(e.id, p)
                         }

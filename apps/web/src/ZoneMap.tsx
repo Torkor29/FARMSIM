@@ -123,7 +123,7 @@ export function ZoneMap({
                   if (p && isAllowed && onSelect) onSelect(p.id);
                 }}
                 aria-label={title}
-                aria-pressed={selected}
+                aria-selected={selected}
               >
                 {/*
                   En version compacte la case ne porte aucun texte. Elle en

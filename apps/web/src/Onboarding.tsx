@@ -168,7 +168,7 @@ export function Onboarding({
   }
 
   return (
-    <div className="onb">
+    <div className={`onb onb-step-${step}`}>
       <header className="onb-top">
         <img className="onb-logo" src="/logo.webp" alt="" />
         <div>
@@ -202,6 +202,9 @@ export function Onboarding({
           </p>
           <div className="globe-layout">
             <div className="globe-wrap">
+              <div className="globe-eyebrow" aria-hidden="true">
+                FARMSIM · MONDES VIVANTS
+              </div>
               <GlobeView
                 continents={continents}
                 selected={continentCode}
@@ -209,6 +212,11 @@ export function Onboarding({
                 focus={Boolean(continentCode)}
                 height={420}
               />
+              <div className="globe-place-card" aria-live="polite">
+                <span>{continent ? "MONDE SÉLECTIONNÉ" : "CHOISISSEZ VOTRE MONDE"}</span>
+                <strong>{continent?.name ?? "Une nouvelle terre vous attend"}</strong>
+                <em>{continent?.tagline ?? "Faites tourner la planète pour explorer ses régions."}</em>
+              </div>
               <p className="globe-hint">Glissez pour tourner · cliquez un repère doré</p>
             </div>
             <div className="continent-list">

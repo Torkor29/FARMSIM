@@ -1,3 +1,4 @@
+import { useLedger } from "./useLedger";
 import { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
 import {
   BUILDING_ART,
@@ -45,7 +46,6 @@ import {
   formatEurosCourt,
   currentSeason,
   conditionYieldFactor,
-  type LedgerLine,
   dayOfSeason,
   seasonLengthDays,
   footprintCells,
@@ -140,7 +140,7 @@ import { FieldDock } from "./FieldDock";
 import type { SkillView } from "./SkillTree";
 import { PlayGuide } from "./PlayGuide";
 import { SkillsScreen, type SkillBonusView } from "./SkillsScreen";
-import { TOKEN_KEY, TUTORIAL_KEY, GUIDE_FLAGS_KEY } from "./storage-keys";
+import { TOKEN_KEY, TUTORIAL_KEY, GUIDE_FLAGS_KEY, playerStorageKey } from "./storage-keys";
 import {
   cropFromPlantTool,
   isFieldWorkTool,
@@ -527,10 +527,13 @@ function clearSession() {
 
 type GuideFlags = { sold: boolean; harvested: boolean; contract: boolean };
 
-function readGuideFlags(): GuideFlags {
+const EMPTY_GUIDE_FLAGS: GuideFlags = { sold: false, harvested: false, contract: false };
+
+function readGuideFlags(playerId?: string | null): GuideFlags {
+  if (!playerId) return { ...EMPTY_GUIDE_FLAGS };
   try {
-    const raw = localStorage.getItem(GUIDE_FLAGS_KEY);
-    if (!raw) return { sold: false, harvested: false, contract: false };
+    const raw = localStorage.getItem(playerStorageKey(GUIDE_FLAGS_KEY, playerId));
+    if (!raw) return { ...EMPTY_GUIDE_FLAGS };
     const parsed = JSON.parse(raw) as Partial<GuideFlags>;
     return {
       sold: !!parsed.sold,
@@ -538,12 +541,12 @@ function readGuideFlags(): GuideFlags {
       contract: !!parsed.contract,
     };
   } catch {
-    return { sold: false, harvested: false, contract: false };
+    return { ...EMPTY_GUIDE_FLAGS };
   }
 }
 
-function writeGuideFlags(next: GuideFlags) {
-  localStorage.setItem(GUIDE_FLAGS_KEY, JSON.stringify(next));
+function writeGuideFlags(playerId: string, next: GuideFlags) {
+  localStorage.setItem(playerStorageKey(GUIDE_FLAGS_KEY, playerId), JSON.stringify(next));
 }
 
 /** Tiroirs du bas, sur petit écran. */
@@ -879,7 +882,7 @@ export function App() {
    * le tenir en permanence dans l'état ferait vivre une liste que personne ne
    * regarde, et le recharger à chaque tick du monde n'apprendrait rien.
    */
-  const [ledger, setLedger] = useState<LedgerLine[]>([]);
+  const journal = useLedger(api, player?.id, showEta);
   const [showGarage, setShowGarage] = useState(false);
   const [showHerd, setShowHerd] = useState(false);
   const [showStaff, setShowStaff] = useState(false);
@@ -911,7 +914,7 @@ export function App() {
   const [showGuide, setShowGuide] = useState(false);
   /** Les compétences ont leur propre porte, au milieu du bandeau. */
   const [showSkills, setShowSkills] = useState(false);
-  const [guideFlags, setGuideFlags] = useState(() => readGuideFlags());
+  const [guideFlags, setGuideFlags] = useState<GuideFlags>({ ...EMPTY_GUIDE_FLAGS });
   const [pulseCells, setPulseCells] = useState<{ x: number; y: number }[]>([]);
   /**
    * Les engins en train de traverser un champ — un par chantier.
@@ -1598,8 +1601,10 @@ export function App() {
    */
   const installe = Boolean(player?.farm?.parcels?.length);
   useEffect(() => {
+    if (!player) return;
+    setGuideFlags(readGuideFlags(player.id));
     if (!installe) return;
-    if (localStorage.getItem(TUTORIAL_KEY)) return;
+    if (localStorage.getItem(playerStorageKey(TUTORIAL_KEY, player.id))) return;
     const t = window.setTimeout(() => setShowTutorial(true), 600);
     return () => window.clearTimeout(t);
   }, [installe, player?.id]);
@@ -2079,7 +2084,10 @@ export function App() {
       milkOrMeat: stock("MILK") + stock("MEAT"),
       animals: barns.reduce((n, b) => n + (b.herd?.size ?? 0), 0),
       hasSold: guideFlags.sold,
-      hasHarvested: guideFlags.harvested || cells.some((c) => c.hasStubble) || stock("WHEAT") + stock("MAIZE") + stock("PEA") + stock("BARLEY") + stock("RAPE") + stock("HAY") > 0,
+      // Un stock peut avoir été acheté ou offert au départ : il ne prouve
+      // jamais qu'une récolte a eu lieu. Seul le geste réussi (ou les chaumes
+      // encore visibles d'une ancienne récolte) valide cet objectif.
+      hasHarvested: guideFlags.harvested || cells.some((c) => c.hasStubble),
       hasContract: guideFlags.contract,
     };
   }, [
@@ -2335,10 +2343,11 @@ export function App() {
   }, [onFarm]);
 
   function markGuideFlag(key: keyof GuideFlags) {
+    if (!player) return;
     setGuideFlags((prev) => {
       if (prev[key]) return prev;
       const next = { ...prev, [key]: true };
-      writeGuideFlags(next);
+      writeGuideFlags(player.id, next);
       return next;
     });
   }
@@ -2543,21 +2552,6 @@ export function App() {
   /** Où en est le joueur dans son palier — pour la jauge du bandeau. */
   const xpHere = useMemo(() => levelProgress(player?.xp ?? 0), [player?.xp]);
 
-  useEffect(() => {
-    if (!showEta || !player?.id) return;
-    let vivant = true;
-    void api(`/players/${player.id}/ledger?jours=7`)
-      .then((r) => {
-        const rep = r as { lignes?: LedgerLine[] };
-        if (vivant) setLedger(rep.lignes ?? []);
-      })
-      .catch(() => {
-        /* Le Bureau reste utilisable sans son journal : il n'en dépend pas. */
-      });
-    return () => {
-      vivant = false;
-    };
-  }, [showEta, player?.id]);
 
   const openBuilding = useMemo(
     () => (parcel?.buildings ?? []).find((b) => b.id === openBuildingId) ?? null,
@@ -6459,13 +6453,14 @@ export function App() {
               prix — avant d’acheter. Un outil plus large va plus vite, mais exige
               plus de chevaux ; un T5 se paie aussi à l’entretien et à la cuve.
             </p>
-            <div className="age-switch" role="group" aria-label="Palier de matériel">
+            <div className="age-switch" role="radiogroup" aria-label="Palier de matériel">
               {MACHINE_TIERS.map((t) => (
                 <button
                   key={t}
                   type="button"
+                  role="radio"
                   className={tierAchat === t ? "on" : ""}
-                  aria-pressed={tierAchat === t}
+                  aria-checked={tierAchat === t}
                   title={TIER_ROLE_LABELS[t]}
                   onClick={() => setTierAchat(t)}
                 >
@@ -7184,7 +7179,11 @@ export function App() {
         />
       )}
 
-      <TutorialOverlay open={showTutorial} onClose={() => setShowTutorial(false)} />
+      <TutorialOverlay
+        open={showTutorial}
+        playerId={player.id}
+        onClose={() => setShowTutorial(false)}
+      />
       <PlayGuide
         open={showGuide}
         snapshot={guideSnapshot}
@@ -7252,7 +7251,15 @@ export function App() {
         myFarmId={player.farm?.id}
         expandableIds={expandableParcelIds}
         onBuyLand={buyAdjacent}
-        ledger={ledger}
+        ledger={journal.page?.lignes ?? []}
+        ledgerJours={journal.jours}
+        ledgerPage={journal.page}
+        ledgerLoading={journal.loading}
+        ledgerError={journal.error}
+        onLedgerPeriod={journal.setJours}
+        onLedgerMore={journal.more}
+        onLedgerRetry={journal.retry}
+        cropPrices={market}
         quests={quests}
         onClaimQuest={(id) => void claimQuest(id)}
         onlinePlayers={onlinePlayers}
@@ -7293,7 +7300,7 @@ export function App() {
                     /* Entrée en cascade, 45 ms par carte — charte §8.1 #7. */
                     style={{ animationDelay: `${i * 45}ms` }}
                     title={disabled ? "Aucun bâtiment d’élevage sur la parcelle" : t.label}
-                    aria-pressed={t.key === "OFFICE" ? showEta : sheet === t.key}
+                    aria-expanded={t.key === "OFFICE" ? showEta : sheet === t.key}
                     onClick={() => {
                       setMoreOpen(false);
                       // « Missions » n'a plus de tiroir : son contenu a rejoint

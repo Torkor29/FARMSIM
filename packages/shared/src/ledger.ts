@@ -68,10 +68,20 @@ export const LEDGER_HINTS: Record<LedgerPoste, string> = {
 };
 
 export type LedgerLine = {
+  id?: string;
   amount: number;
   poste: LedgerPoste;
   label: string;
   at: string;
+};
+
+export type LedgerPage = {
+  lignes: LedgerLine[];
+  postes: PosteTotal[];
+  resultat: { recettes: number; depenses: number; solde: number };
+  jours: number;
+  until: string;
+  nextCursor: string | null;
 };
 
 export type PosteTotal = {

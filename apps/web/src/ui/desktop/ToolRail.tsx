@@ -123,7 +123,7 @@ export function ToolRail({
                 <button
                   type="button"
                   className={`tool-rail-group${p.on ? " on" : ""}`}
-                  aria-pressed={p.on}
+                  aria-expanded={p.on}
                   title={p.hotkey ? `${p.label} — touche ${p.hotkey}` : p.label}
                   onClick={p.onOpen}
                 >
@@ -145,7 +145,7 @@ export function ToolRail({
 
       <div className="tool-rail-block">
         <h4 className="tool-rail-title">Aux champs</h4>
-        <ul className="tool-rail-groups">
+        <ul className="tool-rail-groups" role="toolbar" aria-label="Outils de champ">
         {TOOL_GROUPS.map((g) => {
           if (g.id === "SELL" && visiting) return null;
           const on = group === g.id;
@@ -155,7 +155,7 @@ export function ToolRail({
               <button
                 type="button"
                 className={`tool-rail-group${on ? " on" : ""}`}
-                aria-pressed={on}
+                aria-current={on ? "true" : undefined}
                 title={`${g.label} — touche ${g.hotkey}`}
                 onClick={() => {
                   if (g.id === "SELL") onMarket();
@@ -184,7 +184,17 @@ export function ToolRail({
           <h4 className="tool-rail-title">
             {group === "PLANT" ? "Culture" : group === "HARVEST" ? "Andain" : "Travail"}
           </h4>
-          <ul className="tool-rail-options">
+          <ul
+            className="tool-rail-options"
+            role="radiogroup"
+            aria-label={
+              group === "PLANT"
+                ? "Culture"
+                : group === "HARVEST"
+                  ? "Mode de récolte"
+                  : "Travail du sol"
+            }
+          >
             {options.map((o) => {
               const on = tool === o.tool;
               const n = optionCount(o.tool, strawCount, baleCount);
@@ -192,8 +202,9 @@ export function ToolRail({
                 <li key={o.tool}>
                   <button
                     type="button"
+                    role="radio"
                     className={`tool-rail-option${on ? " on" : ""}${o.outOfSeason ? " out-of-season" : ""}`}
-                    aria-pressed={on}
+                    aria-checked={on}
                     title={o.hint}
                     onClick={() => onTool(o.tool)}
                   >
@@ -210,8 +221,9 @@ export function ToolRail({
           {group === "HARVEST" && (
             <button
               type="button"
+              role="switch"
               className={`tool-rail-toggle${keepSwath ? " on" : ""}`}
-              aria-pressed={keepSwath}
+              aria-checked={keepSwath}
               disabled={!swathUseful}
               title={
                 swathUseful
@@ -234,13 +246,14 @@ export function ToolRail({
           <h4 className="tool-rail-title">
             Pinceau <kbd className="tool-rail-key inline">[ ]</kbd>
           </h4>
-          <div className="tool-rail-brush" role="group" aria-label="Taille du pinceau">
+          <div className="tool-rail-brush" role="radiogroup" aria-label="Taille du pinceau">
             {BRUSH_SIZES.map((n) => (
               <button
                 key={n}
                 type="button"
+                role="radio"
                 className={`tool-rail-brush-btn${brush === n ? " on" : ""}`}
-                aria-pressed={brush === n}
+                aria-checked={brush === n}
                 title={`Travailler ${n}×${n} cases d’un clic`}
                 onClick={() => onBrush(n)}
               >
@@ -253,8 +266,9 @@ export function ToolRail({
               à l'autre sans repasser sur chaque case. */}
           <button
             type="button"
+            role="switch"
             className={`tool-rail-toggle${dragRect ? " on" : ""}`}
-            aria-pressed={dragRect}
+            aria-checked={dragRect}
             title={
               dragRect
                 ? "Le glissé prend le rectangle entre les deux coins."

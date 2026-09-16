@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 
-import { TUTORIAL_KEY } from "./storage-keys";
+import { playerStorageKey, TUTORIAL_KEY } from "./storage-keys";
 import { TutorialScene } from "./TutorialScenes";
 import { ETAPES } from "./tutorial-steps";
 import { MenuClose } from "./ui/MenuClose";
@@ -23,7 +23,8 @@ import { MenuClose } from "./ui/MenuClose";
  * **Il sautait la moitié du jeu.** Rien sur la barre d'outils — qu'il faut
  * pourtant régler *avant* de toucher une case —, rien sur le désherbage ni le
  * déchaumage, rien sur le troupeau, rien sur le personnel. Un joueur qui
- * suivait le tutoriel jusqu'au bout ignorait quatre des six onglets.
+ * suivait le tutoriel jusqu'au bout ignorait quatre des six panneaux rangés
+ * derrière « Plus » sur téléphone.
  *
  * ## Le geste dépend de l'écran
  *
@@ -40,6 +41,7 @@ import { MenuClose } from "./ui/MenuClose";
 
 type Props = {
   open: boolean;
+  playerId: string;
   onClose: () => void;
 };
 
@@ -54,7 +56,7 @@ function useTactile(): boolean {
   }, []);
 }
 
-export function TutorialOverlay({ open, onClose }: Props) {
+export function TutorialOverlay({ open, playerId, onClose }: Props) {
   const [step, setStep] = useState(0);
   const tactile = useTactile();
 
@@ -87,7 +89,7 @@ export function TutorialOverlay({ open, onClose }: Props) {
 
   function finir() {
     try {
-      localStorage.setItem(TUTORIAL_KEY, "1");
+      localStorage.setItem(playerStorageKey(TUTORIAL_KEY, playerId), "1");
     } catch {
       /* navigation privée : le tutoriel reviendra, ce n'est pas grave */
     }
