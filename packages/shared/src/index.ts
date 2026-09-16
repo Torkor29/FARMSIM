@@ -39,6 +39,7 @@ export * from "./futures.js";
 export * from "./machine-care.js";
 export * from "./machine-catalog.js";
 export * from "./employees.js";
+export * from "./soins-equipe.js";
 export * from "./calendar.js";
 export * from "./fuel.js";
 export * from "./weeds.js";

@@ -70,6 +70,25 @@ function prismaExec(sql: string) {
   });
 }
 
+/**
+ * Ce qu'il reste d'une marchandise au silo, lu dans la base.
+ *
+ * Les routes de lecture agrègent et arrondissent ; ici on veut le chiffre
+ * brut, parce que ce qu'on vérifie est précisément ce qui a été **prélevé**.
+ */
+function stockDe(farmId: string, code: string): number {
+  const out = execFileSync(
+    "psql",
+    [
+      base!.url,
+      "-tAc",
+      `SELECT COALESCE(SUM(qty), 0) FROM "InventoryItem" WHERE "farmId" = '${farmId}' AND "itemCode" = '${code}'`,
+    ],
+    { encoding: "utf8" },
+  ).trim();
+  return Number(out);
+}
+
 /** Appel HTTP, avec jeton facultatif. */
 async function appel(
   chemin: string,
@@ -909,6 +928,158 @@ describe("lieu de vie", () => {
     assert.ok(
       (await sou()) > avantVente,
       "le fumier vendu au voisin n'a rien rapporté",
+    );
+  });
+
+  it("l'employé d'élevage refait la mangeoire et la litière", async () => {
+    /*
+     * ## Ce qui a fait poser la question deux fois
+     *
+     * « Je pige toujours pas l'intérêt du PNJ éleveur. » Ce n'était pas un
+     * défaut de compréhension : l'employé ne faisait que multiplier la
+     * production par 1,2 au mieux, et vider la fumière. Or la production est
+     * déjà bornée à 100 % par des besoins que le joueur satisfait **à la
+     * main** toutes les 1 h 26 — le bonus multipliait donc un travail qu'on
+     * continuait de faire, en payant un salaire pour ça.
+     *
+     * Ce qu'on achète en embauchant un vacher, c'est de ne plus avoir à
+     * revenir. Ce test vérifie que c'est ce qui se passe, et — tout aussi
+     * important — que ça s'arrête quand le silo est vide.
+     */
+    const { moi, pid, herdId } = await eleveurAvecEnclos();
+
+    const lot = async () => {
+      const el = await appel(`/parcels/${pid}/livestock`, { jeton: moi.jeton });
+      const b = (el.corps as unknown as {
+        barns: {
+          herd: {
+            id: string;
+            feedStock: number;
+            feedNeed: number;
+            beddingTons: number;
+            beddingCap: number;
+            tendedAt: number | null;
+          } | null;
+        }[];
+      }).barns.find((x) => x.herd?.id === herdId)!;
+      return b.herd!;
+    };
+
+    // Un lot à sec et sur le béton, pour que la passe ait quelque chose à faire.
+    prismaExec(
+      `UPDATE "Herd" SET "feedStock" = 0, "beddingTons" = 0, "feedQuality" = 0 WHERE id = '${herdId}';`,
+    );
+
+    // 1 — Sans personne à l'élevage, rien ne se passe. C'est la moitié qui
+    // prouve que la suite vient bien de l'employé, et non du tour de monde.
+    await appel("/sim/tick", { methode: "POST", jeton: moi.jeton });
+    const seul = await lot();
+    assert.equal(seul.feedStock, 0, `la mangeoire s'est remplie sans employé : ${seul.feedStock}`);
+    assert.equal(seul.tendedAt, null, "un passage est signalé alors que personne n'est embauché");
+
+    // 2 — On embauche, on l'affecte à l'élevage, et on remplit le silo.
+    const vivier = await appel("/employees", { jeton: moi.jeton });
+    const candidat = (vivier.corps as unknown as { candidates: { id: string }[] }).candidates[0]!;
+    const embauche = await appel("/employees/hire", {
+      methode: "POST",
+      corps: { candidateId: candidat.id },
+      jeton: moi.jeton,
+    });
+    assert.equal(embauche.statut, 201, `embauche refusée : ${JSON.stringify(embauche.corps)}`);
+    const recrue = (embauche.corps as unknown as { employee: { id: string } }).employee;
+    prismaExec(`UPDATE "Employee" SET poste = 'ELEVAGE' WHERE id = '${recrue.id}';`);
+
+    const farmId = (
+      (await appel("/auth/me", { jeton: moi.jeton })).corps as unknown as {
+        player: { farm: { id: string } };
+      }
+    ).player.farm.id;
+    const poser = (code: string, qty: number) =>
+      prismaExec(
+        `INSERT INTO "InventoryItem" ("id", "farmId", "itemCode", "qty", "quality", "lastDecayAt")
+         VALUES ('inv-${code}-${Date.now()}', '${farmId}', '${code}', ${qty}, 0, NOW())
+         ON CONFLICT DO NOTHING;`,
+      );
+    poser("HAY", 40);
+    poser("STRAW", 20);
+
+    // 3 — Le tour suivant, l'équipe a servi et paillé.
+    await appel("/sim/tick", { methode: "POST", jeton: moi.jeton });
+    const soigne = await lot();
+    assert.ok(
+      soigne.feedStock > seul.feedStock,
+      `la mangeoire n'a pas été servie : ${seul.feedStock} puis ${soigne.feedStock}`,
+    );
+    assert.ok(
+      soigne.beddingTons > seul.beddingTons,
+      `la litière n'a pas été refaite : ${seul.beddingTons} puis ${soigne.beddingTons} t`,
+    );
+    assert.ok(soigne.tendedAt, "le passage n'est pas daté — le joueur ne verra rien");
+
+    // 4 — Il puise, il n'achète pas. Silo vide, la corvée revient au joueur.
+    prismaExec(`DELETE FROM "InventoryItem" WHERE "farmId" = '${farmId}';`);
+    prismaExec(`UPDATE "Herd" SET "feedStock" = 0, "beddingTons" = 0 WHERE id = '${herdId}';`);
+    await appel("/sim/tick", { methode: "POST", jeton: moi.jeton });
+    const aSec = await lot();
+    assert.equal(
+      aSec.feedStock,
+      0,
+      `l'employé a nourri sans stock — il achèterait donc à votre place : ${aSec.feedStock}`,
+    );
+    assert.equal(aSec.beddingTons, 0, "l'employé a paillé sans paille");
+  });
+
+  it("l'employé d'élevage refait la ration du joueur, et pas la sienne", async () => {
+    /*
+     * La borne qui rend la délégation acceptable. Un employé qui choisirait la
+     * ration viderait le silo de maïs d'un joueur qui menait ses bêtes au
+     * foin — une culture qu'il gardait pour la vente, consommée à son insu.
+     * On reconduit donc la **qualité de la dernière ration servie**.
+     */
+    const { moi, pid, herdId } = await eleveurAvecEnclos();
+
+    const farmId = (
+      (await appel("/auth/me", { jeton: moi.jeton })).corps as unknown as {
+        player: { farm: { id: string } };
+      }
+    ).player.farm.id;
+    prismaExec(
+      `INSERT INTO "InventoryItem" ("id", "farmId", "itemCode", "qty", "quality", "lastDecayAt")
+       VALUES ('inv-hay-${Date.now()}', '${farmId}', 'HAY', 60, 0, NOW()),
+              ('inv-wheat-${Date.now()}', '${farmId}', 'WHEAT', 60, 0, NOW());`,
+    );
+
+    const vivier = await appel("/employees", { jeton: moi.jeton });
+    const candidat = (vivier.corps as unknown as { candidates: { id: string }[] }).candidates[0]!;
+    const recrue = (
+      (
+        await appel("/employees/hire", {
+          methode: "POST",
+          corps: { candidateId: candidat.id },
+          jeton: moi.jeton,
+        })
+      ).corps as unknown as { employee: { id: string } }
+    ).employee;
+    prismaExec(`UPDATE "Employee" SET poste = 'ELEVAGE' WHERE id = '${recrue.id}';`);
+
+    // Le joueur mène au foin : qualité zéro.
+    prismaExec(
+      `UPDATE "Herd" SET "feedStock" = 0, "feedQuality" = 0 WHERE id = '${herdId}';`,
+    );
+    // On relève les deux stocks **avant**, plutôt que de supposer le silo
+    // vide : une ferme d'éleveur démarre avec du fourrage, et comparer à la
+    // quantité qu'on vient d'insérer mesurerait autre chose.
+    const bleAvant = stockDe(farmId, "WHEAT");
+    const foinAvant = stockDe(farmId, "HAY");
+    await appel("/sim/tick", { methode: "POST", jeton: moi.jeton });
+    assert.equal(
+      stockDe(farmId, "WHEAT"),
+      bleAvant,
+      "le blé du joueur est parti dans l'auge alors qu'il menait ses bêtes au foin",
+    );
+    assert.ok(
+      stockDe(farmId, "HAY") < foinAvant,
+      `le foin n'a pas été servi : ${foinAvant} t avant, ${stockDe(farmId, "HAY")} après`,
     );
   });
 

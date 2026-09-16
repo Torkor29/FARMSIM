@@ -92,6 +92,12 @@ import {
   chantiersSimultanes,
   gainConduite,
   gainElevage,
+  ALIMENTS_RATION,
+  litiereARefaire,
+  mangeoireAServir,
+  rationDeLEquipe,
+  rationToServe,
+  type StockRation,
   gainMecanique,
   litsDuLogement,
   masseSalariale,
@@ -1303,6 +1309,173 @@ async function viderLesFumieres(): Promise<void> {
       }
     });
   }
+}
+
+/**
+ * L'équipe refait la mangeoire et la litière.
+ *
+ * ## Le défaut que ceci corrige
+ *
+ * Signalé deux fois en jouant : « je pige toujours pas l'intérêt du PNJ
+ * éleveur ». Ce n'était pas un défaut de compréhension. L'employé affecté à
+ * l'élevage ne faisait que deux choses — jusqu'à +20 % de production, et vider
+ * la fumière — alors que la production est déjà bornée à 100 % par des besoins
+ * que le joueur satisfait **à la main**, toutes les 1 h 26. Le bonus
+ * multipliait donc un travail qu'on continuait de faire, tout en payant un
+ * salaire pour ça ; aucune configuration ne se rentabilisait, et affecter
+ * l'employé à l'élevage coûtait en plus un chantier simultané.
+ *
+ * Ce qu'on achète en embauchant un vacher, ce n'est pas un pourcentage, c'est
+ * **de ne plus avoir à revenir**. C'est ce que fait cette passe. Le bonus de
+ * production ne bouge pas ; il cesse simplement d'être la seule raison
+ * d'embaucher.
+ *
+ * ## Ce qu'elle ne fait pas
+ *
+ * Elle puise, elle n'achète pas : silo vide, tout s'arrête et les alertes du
+ * joueur repartent — celles qui existent déjà, il n'y a rien de neuf à
+ * afficher. On achète une absence, pas une invulnérabilité. Et elle ne choisit
+ * pas la ration : elle refait celle que le joueur a servie la dernière fois.
+ *
+ * Les seuils et le partage de la ration vivent dans `soins-equipe.ts` : ce
+ * sont des règles, elles se testent sans base de données.
+ */
+async function lEquipeSoigneLesTroupeaux(): Promise<void> {
+  /*
+   * On part des **employés**, pas des troupeaux.
+   *
+   * Le monde compte des centaines de lots — les fermes PNJ en ont toutes — et
+   * presque aucun n'a de vacher. Balayer les lots pour demander à chacun si sa
+   * ferme emploie quelqu'un ferait deux requêtes par lot à chaque tour de
+   * monde, et chargerait au passage l'inventaire de chaque silo. Ici, tant que
+   * personne n'est affecté à l'élevage, la passe coûte une requête et rend la
+   * main.
+   */
+  const fermes = await prisma.employee.findMany({
+    where: { poste: "ELEVAGE" },
+    select: { farmId: true },
+    distinct: ["farmId"],
+  });
+  if (!fermes.length) return;
+
+  const lots = await prisma.herd.findMany({
+    where: { farmId: { in: fermes.map((f) => f.farmId) }, size: { gt: 0 } },
+    include: {
+      building: true,
+      farm: { include: { inventory: true } },
+    },
+  });
+  for (const lot of lots) {
+    if (!lot.building || !lot.farm) continue;
+
+    const stats = buildingStatsAtLevel(
+      lot.building.type as SharedBuildingType,
+      lot.building.level,
+    );
+    const places = barnCapacity(lot.building.type, stats);
+    let passe = false;
+
+    /* ---- La mangeoire ------------------------------------------------ */
+    // Somme des **bêtes**, jeunes compris : un lot de six veaux mange comme
+    // six. La route de distribution compte pareil.
+    const jeunes = (
+      await prisma.youngBatch.findMany({
+        where: { herdId: lot.id, maturesAt: { gt: new Date() } },
+        select: { count: true },
+      })
+    ).reduce((n, y) => n + y.count, 0);
+    const besoinParCycle = herdFeedNeed({
+      size: lot.size,
+      young: jeunes,
+      kind: (lot.kind as AnimalKind) ?? "COW",
+    });
+    const capaciteAuge = troughCapacity(besoinParCycle);
+
+    if (mangeoireAServir({ feedStock: lot.feedStock, capacite: capaciteAuge })) {
+      const stock = stockDeRation(lot.farm.inventory);
+      const ration = rationDeLEquipe({
+        unitesVoulues: rationToServe({ besoinParCycle, feedStock: lot.feedStock }),
+        // La qualité de la dernière ration servie. Un éleveur qui soigne au
+        // concentré retrouve du concentré ; un éleveur qui mène au foin ne
+        // voit pas son maïs partir pendant son absence.
+        qualiteVisee: lot.feedQuality,
+        stock,
+      });
+      if (ration.unites > 0) {
+        await prisma.$transaction(async (tx) => {
+          for (const a of ALIMENTS_RATION) {
+            const tonnes = ration.tonnes[a];
+            if (tonnes <= 0) continue;
+            const item = lot.farm.inventory.find((i) => i.itemCode === a);
+            if (item) await drawFromStock(tx, item, tonnes);
+          }
+          await tx.herd.update({
+            where: { id: lot.id },
+            data: {
+              feedStock: lot.feedStock + ration.unites,
+              // La qualité réelle de ce qui a été servi, pas celle qu'on
+              // visait : quand le silo force à se rabattre sur du foin, la
+              // production doit le refléter.
+              feedQuality: rationQuality(
+                ration.tonnes.HAY,
+                ration.tonnes.MAIZE,
+                ration.tonnes.BARLEY,
+                ration.tonnes.WHEAT,
+                ration.tonnes.SILAGE,
+              ),
+              lastFedAt: new Date(),
+            },
+          });
+        });
+        passe = true;
+      }
+    }
+
+    /* ---- La litière -------------------------------------------------- */
+    const plafondLitiere = beddingCapacity((lot.kind as AnimalKind) ?? "COW", places);
+    if (litiereARefaire({ beddingTons: lot.beddingTons, capacite: plafondLitiere })) {
+      // Les bottes d'abord, puis le vrac — exactement l'ordre de la route
+      // « Pailler », pour la même raison : c'est ce qu'on a sous la main.
+      const bottes = lot.farm.inventory.find((i) => i.itemCode === "STRAW_BALE");
+      const paille = lot.farm.inventory.find((i) => i.itemCode === "STRAW");
+      const enStock = strawFromBales(bottes?.qty ?? 0) + (paille?.qty ?? 0);
+      const place = Math.max(0, plafondLitiere - lot.beddingTons);
+      const tons = Math.round(Math.min(place, enStock) * 1000) / 1000;
+      if (tons > 0) {
+        await prisma.$transaction(async (tx) => {
+          let reste = tons;
+          if (bottes && bottes.qty > 0) {
+            const prises = Math.min(bottes.qty, Math.ceil((reste - 1e-9) / BALE_TONS));
+            if (prises > 0) {
+              await drawFromStock(tx, bottes, prises);
+              reste = Math.max(0, reste - strawFromBales(prises));
+            }
+          }
+          if (reste > 1e-9 && paille) await drawFromStock(tx, paille, reste);
+          await tx.herd.update({
+            where: { id: lot.id },
+            data: { beddingTons: lot.beddingTons + tons },
+          });
+        });
+        passe = true;
+      }
+    }
+
+    // La trace du passage. Sans elle, l'employé travaillerait en silence — et
+    // c'est ce silence qui a fait poser la question deux fois.
+    if (passe) {
+      await prisma.herd.update({ where: { id: lot.id }, data: { tendedAt: new Date() } });
+    }
+  }
+}
+
+/** Ce que le silo contient des cinq aliments d'une ration, en tonnes. */
+function stockDeRation(inventory: { itemCode: string; qty: number }[]): StockRation {
+  const stock = { HAY: 0, MAIZE: 0, BARLEY: 0, WHEAT: 0, SILAGE: 0 } as StockRation;
+  for (const a of ALIMENTS_RATION) {
+    stock[a] = inventory.find((i) => i.itemCode === a)?.qty ?? 0;
+  }
+  return stock;
 }
 
 /**
@@ -4239,6 +4412,15 @@ async function runWorldTick() {
   await runNpcBuyers();
   await spoilPerishables();
   await settleAllHerds();
+  /*
+   * Puis l'équipe passe, et dans cet ordre.
+   *
+   * `settleAllHerds` consomme la ration et salit la litière ; c'est lui qui
+   * creuse les jauges. Soigner **avant** lui remplirait une auge que le tour
+   * viderait dans la foulée : l'équipe travaillerait pour rien la moitié du
+   * temps, et le seuil de la mangeoire ne voudrait plus rien dire.
+   */
+  await lEquipeSoigneLesTroupeaux();
   // Après le tour des troupeaux : c'est lui qui fait monter les tas, et il
   // n'y a rien à vider avant qu'il ait tourné.
   await viderLesFumieres();
@@ -9934,6 +10116,16 @@ app.get("/parcels/:id/livestock", async (req, res) => {
               beddingCover({ kind: herdKind ?? "COW", herdSize, stockTons: beddingTons }) * 100,
             ) / 100,
             feedQuality: b.herd.feedQuality,
+            /**
+             * Dernier passage de l'employé affecté à l'élevage.
+             *
+             * Sans cette date, le vacher travaillait en silence : le joueur ne
+             * voyait que ses alertes ne plus apparaître, ce qui ressemble
+             * exactement à un employé qui ne sert à rien. C'est ce silence qui
+             * a fait poser deux fois la question « je pige toujours pas
+             * l'intérêt du PNJ éleveur ».
+             */
+            tendedAt: b.herd.tendedAt?.getTime() ?? null,
             /* — Environnement : ce que la simulation lit désormais — */
             housing: parseHousing(b.herd.housing),
             tempC: Math.round(herdTempC),

@@ -64,6 +64,23 @@ function dureeReelle(ms: number): string {
   return reste > 0 ? `${jours} j ${reste} h` : `${jours} j`;
 }
 
+/**
+ * Depuis quand, en clair : « à l'instant », « il y a 20 min », « il y a 2 h ».
+ *
+ * `dureeReelle` dit une durée restante — « 3 h » d'autonomie — ; ici on dit
+ * une durée écoulée, et les deux ne se lisent pas pareil. Réutiliser la
+ * première donnerait « Mangeoire tenue par votre équipe — 20 min », qu'on lit
+ * comme un délai à venir.
+ */
+function depuisQuand(instant: number): string {
+  const minutes = Math.floor((Date.now() - instant) / 60000);
+  if (minutes < 2) return "à l’instant";
+  if (minutes < 60) return `il y a ${minutes} min`;
+  const heures = Math.floor(minutes / 60);
+  if (heures < 24) return `il y a ${heures} h`;
+  return `il y a ${Math.floor(heures / 24)} j`;
+}
+
 export type BarnState = {
   buildingId: string;
   type: BuildingType;
@@ -117,6 +134,15 @@ export type BarnState = {
     /** Pourquoi le lot va mal, et quoi faire — calculé par le serveur. */
     welfareCauses?: WelfareCause[];
     feedQuality: number;
+    /**
+     * Dernier passage de l'employé affecté à l'élevage, ou `null`.
+     *
+     * Le vacher refait la mangeoire et la litière depuis le serveur. Sans
+     * cette date, il le faisait en silence : le joueur voyait seulement ses
+     * alertes ne plus apparaître — ce qui ressemble exactement à un employé
+     * qui ne sert à rien.
+     */
+    tendedAt?: number | null;
     hungry: boolean;
     /** Le lot commence à perdre des bêtes : il faut agir maintenant */
     atRisk: boolean;
@@ -784,6 +810,17 @@ export function LivestockPanel({
                       </li>
                     ))}
                   </ul>
+                )}
+
+                {/* Ce que l'employé a fait pendant votre absence.
+                    Le salaire achète une absence : encore faut-il qu'elle se
+                    voie. Rien à afficher tant que personne n'est affecté à
+                    l'élevage — la ligne ne se montre qu'après un passage. */}
+                {herd.tendedAt != null && (
+                  <p className="barn-tended">
+                    Mangeoire et litière tenues par votre équipe —{" "}
+                    {depuisQuand(herd.tendedAt)}
+                  </p>
                 )}
 
                 {/* Les cinq mesures du lot.

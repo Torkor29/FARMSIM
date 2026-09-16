@@ -2,6 +2,7 @@ import {
   EMPLOYEE_SKILL_EFFECTS,
   EMPLOYEE_SKILL_LABELS,
   EMPLOYEE_POST_LABELS,
+  EMPLOYEE_POST_EFFECTS,
   EMPLOYEE_SKILLS,
   SKILL_MAX,
   type EmployeePost,
@@ -169,6 +170,12 @@ export function EmployeesPanel({
                       </button>
                     ))}
                   </div>
+                  {/* Ce que le poste fait faire, et non seulement son nom.
+                      L'écran ne montrait que les trois compétences : l'élevage
+                      se lisait donc « +20 % de production », un chiffre qui ne
+                      couvre jamais le salaire. D'où la question, posée deux
+                      fois : « je pige toujours pas l'intérêt du PNJ éleveur ». */}
+                  <p className="emp-poste-effet">{EMPLOYEE_POST_EFFECTS[e.poste]}</p>
                   <button
                     type="button"
                     className="emp-renvoi"

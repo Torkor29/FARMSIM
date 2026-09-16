@@ -63,6 +63,21 @@ export const EMPLOYEE_SKILL_EFFECTS: Record<EmployeeSkill, string> = {
   elevage: "Le troupeau produit mieux — jusqu’à 20 %",
 };
 
+/**
+ * Ce que chaque poste fait faire, dit au joueur.
+ *
+ * Il manquait, et c'est ce qui a fait poser la question deux fois : « je pige
+ * toujours pas l'intérêt du PNJ éleveur ». L'écran d'embauche ne montrait que
+ * les trois compétences, donc l'élevage se lisait « +20 % de production » —
+ * un chiffre qui ne couvre jamais le salaire. Ce que l'employé fait vraiment
+ * à l'élevage, c'est la corvée : voir `soins-equipe.ts`.
+ */
+export const EMPLOYEE_POST_EFFECTS: Record<EmployeePost, string> = {
+  CHAMP: "Un chantier simultané de plus — s’il reste un attelage libre",
+  ELEVAGE:
+    "Refait la mangeoire et la litière à votre place, dans votre stock — et le troupeau produit mieux",
+};
+
 /** Niveau d'une compétence : de 1 à 5, comme les paliers d'engins. */
 export const SKILL_MIN = 1;
 export const SKILL_MAX = 5;

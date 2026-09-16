@@ -490,6 +490,10 @@ model Herd {
   manureTons    Float     @default(0)
   /// Paille en litière, en tonnes — le pont aller depuis le céréalier
   beddingTons   Float     @default(0)
+  /// Dernier passage de l'employé affecté à l'élevage — ration servie ou
+  /// litière refaite. Sert à montrer au joueur ce que son salaire achète :
+  /// sans cette trace, l'employé travaille et rien ne le dit.
+  tendedAt      DateTime?
   /// Abreuvement, de 0 à 1. Plein tant qu'on passe distribuer la ration, ou
   /// en permanence si un abreuvoir automatique est rattaché au bâtiment.
   water         Float     @default(1)

@@ -1681,6 +1681,31 @@ button.ghost {
 .barn-key .moyen .barn-key-bar i { background: var(--gold-500); }
 .barn-key .mauvais .barn-key-bar i { background: var(--danger); }
 
+/* Ce que le poste choisi fait faire. Une ligne sous les deux boutons :
+   « Aux champs » et « À l'élevage » ne disent rien de ce qu'on achète. */
+.emp-poste-effet {
+  flex-basis: 100%;
+  margin: 0.35rem 0 0;
+  font-size: 0.72rem;
+  line-height: 1.35;
+  color: var(--ink-600, var(--teal-700));
+}
+
+/* Le passage de l'équipe.
+   Discret — c'est une bonne nouvelle, pas une alerte — mais présent : le
+   salaire achète une absence, et une absence qui ne se voit nulle part
+   ressemble à un employé qui ne sert à rien. */
+.barn-tended {
+  margin: 0.4rem 0 0;
+  padding: 0.3rem 0.55rem;
+  border-left: 3px solid var(--teal-500);
+  border-radius: var(--r-sm);
+  background: var(--teal-100);
+  color: var(--teal-700);
+  font-size: 0.72rem;
+  font-weight: 600;
+}
+
 /* Une section nommée. Le bandeau coûte vingt pixels et fait gagner le
    parcours : on saute au bon endroit sans lire ce qu'il y a avant. */
 .barn-part {
