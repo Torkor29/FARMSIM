@@ -16,7 +16,14 @@ import {
   type QualityChoice,
 } from "./render-quality";
 import { MenuClose } from "./ui/MenuClose";
-import { MDP_AIDE, MDP_MAX, MDP_MIN, motDePasseValide } from "@farmsim/shared";
+import {
+  MDP_AIDE,
+  MDP_MAX,
+  MDP_MIN,
+  RECOVERY_HELP,
+  isRecoveryCode,
+  motDePasseValide,
+} from "@farmsim/shared";
 
 export type ProfilePlayer = {
   displayName: string;
@@ -36,6 +43,8 @@ export type AccountPatch = {
   email?: string;
   accessCode?: string;
   currentAccessCode?: string;
+  /** Le code de secours, quand on ne connaît plus son mot de passe. */
+  recoveryCode?: string;
 };
 
 type Page = "home" | "account" | "sound" | "graphics";
@@ -291,6 +300,15 @@ function AccountPage({
   const [currentAccessCode, setCurrent] = useState("");
   const [accessCode, setAccess] = useState("");
   const [busy, setBusy] = useState(false);
+  /**
+   * « Je ne connais pas mon mot de passe. »
+   *
+   * Sans cette bascule, un joueur connecté qui a oublié son mot de passe
+   * n'avait aucune porte : l'écran exigeait l'ancien, et l'écran d'oubli se
+   * passe déconnecté. Signalé en jouant — « impossible de changer le mdp
+   * puisqu'il faut le code et que je l'ai pas ».
+   */
+  const [parSecours, setParSecours] = useState(false);
 
   useEffect(() => {
     setDisplayName(player.displayName);
@@ -307,7 +325,10 @@ function AccountPage({
     displayName.trim().length >= 2 &&
     email.includes("@") &&
     (!codeDirty || motDePasseValide(accessCode)) &&
-    (!needsCurrent || currentAccessCode.length >= 1);
+    (!needsCurrent || currentAccessCode.length >= 1) &&
+    // Un code de secours mal recopié se voit avant l'envoi : le format est
+    // connu, et un aller-retour pour une faute de frappe n'apprend rien.
+    (!needsCurrent || !parSecours || isRecoveryCode(currentAccessCode));
 
   async function save() {
     if (!canSave) return;
@@ -317,10 +338,16 @@ function AccountPage({
       if (nameDirty) body.displayName = displayName.trim();
       if (emailDirty) body.email = email.trim();
       if (codeDirty) body.accessCode = accessCode;
-      if (needsCurrent) body.currentAccessCode = currentAccessCode;
+      // La même case sert aux deux preuves ; c'est la bascule qui dit au
+      // serveur laquelle il reçoit.
+      if (needsCurrent) {
+        if (parSecours) body.recoveryCode = currentAccessCode;
+        else body.currentAccessCode = currentAccessCode;
+      }
       await onPatchAccount(body);
       setCurrent("");
       setAccess("");
+      setParSecours(false);
       onFlash("Compte mis à jour");
       onBack();
     } catch (e) {
@@ -376,16 +403,44 @@ function AccountPage({
           <span className="field-help">{MDP_AIDE}</span>
         </label>
         {needsCurrent && (
-          <label>
-            Code actuel
-            <input
-              type="password"
-              value={currentAccessCode}
-              onChange={(e) => setCurrent(e.target.value)}
-              autoComplete="current-password"
-              placeholder="Pour confirmer e-mail ou code"
-            />
-          </label>
+          <>
+            <label>
+              {parSecours ? "Code de secours" : "Mot de passe actuel"}
+              <input
+                /* Le code de secours se recopie d'un bout de papier : le
+                   masquer ferait rater les fautes de frappe. */
+                type={parSecours ? "text" : "password"}
+                className={parSecours ? "mono" : undefined}
+                value={currentAccessCode}
+                onChange={(e) => setCurrent(e.target.value)}
+                autoComplete={parSecours ? "one-time-code" : "current-password"}
+                spellCheck={false}
+                maxLength={parSecours ? 32 : MDP_MAX}
+                placeholder={
+                  parSecours ? "A1B2-C3D4-E5F6-G7H8" : "Pour confirmer le changement"
+                }
+              />
+              <span className="field-help">
+                {parSecours ? RECOVERY_HELP : "Celui avec lequel vous vous connectez."}
+              </span>
+            </label>
+            {/* La porte de sortie du cul-de-sac.
+                « Impossible de changer le mdp puisqu'il faut le code et que je
+                l'ai pas » : un joueur connecté qui a oublié son mot de passe
+                n'avait aucune voie, l'écran d'oubli se passant déconnecté. */}
+            <button
+              type="button"
+              className="link"
+              onClick={() => {
+                setParSecours((v) => !v);
+                setCurrent("");
+              }}
+            >
+              {parSecours
+                ? "J’ai finalement mon mot de passe"
+                : "Je ne connais pas mon mot de passe"}
+            </button>
+          </>
         )}
         <button type="submit" className="accent" disabled={!canSave}>
           {busy ? "Enregistrement…" : "Enregistrer"}

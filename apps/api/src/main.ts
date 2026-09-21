@@ -5108,7 +5108,24 @@ const patchMeSchema = z
     displayName: z.string().min(2).max(32).optional(),
     email: z.string().email().optional(),
     accessCode: z.string().min(MDP_MIN).max(MDP_MAX).optional(),
-    currentAccessCode: z.string().min(1).max(32).optional(),
+    currentAccessCode: z.string().min(1).max(72).optional(),
+    /**
+     * Le code de secours, accepté à la place du mot de passe actuel.
+     *
+     * ## Le cul-de-sac que ceci ouvre
+     *
+     * Signalé en jouant : « impossible de changer le mdp puisqu'il faut le
+     * code et que je l'ai pas ». Un joueur **connecté** qui a oublié son mot
+     * de passe n'avait aucune porte : cette route exigeait l'ancien, et
+     * `/auth/recover` — la seule autre voie — se passe déconnecté.
+     *
+     * Le code de secours existe précisément pour ça, et il prouve la même
+     * chose que le mot de passe : la possession d'un secret remis au
+     * propriétaire. L'accepter ici ne relâche donc rien — sans cette
+     * alternative, la session seule finirait par devenir la preuve, et là on
+     * perdrait vraiment quelque chose.
+     */
+    recoveryCode: z.string().min(1).max(64).optional(),
   })
   .refine(
     (d) => Boolean(d.displayName || d.email || d.accessCode),
@@ -5134,13 +5151,27 @@ app.patch("/auth/me", async (req, res) => {
     res.status(400).json(parsed.error.flatten());
     return;
   }
-  const { displayName, email, accessCode, currentAccessCode } = parsed.data;
+  const { displayName, email, accessCode, currentAccessCode, recoveryCode } = parsed.data;
   const needsSecret = Boolean(email || accessCode);
-  if (
-    needsSecret &&
-    !(currentAccessCode && (await codeCorrespond(auth.user.accessCode, currentAccessCode)))
-  ) {
-    res.status(403).json({ error: "Code d'accès actuel incorrect" });
+  /*
+   * Deux preuves valent, et une seule suffit : le mot de passe actuel, ou le
+   * code de secours. Elles disent la même chose — « ce compte est le mien » —
+   * et le joueur qui a perdu l'une garde l'autre.
+   */
+  const parMotDePasse = Boolean(
+    currentAccessCode && (await codeCorrespond(auth.user.accessCode, currentAccessCode)),
+  );
+  const parSecours = Boolean(
+    recoveryCode &&
+      isRecoveryCode(recoveryCode) &&
+      secoursCorrespond(auth.user.recoveryHash, auth.user.id, recoveryCode),
+  );
+  if (needsSecret && !parMotDePasse && !parSecours) {
+    res.status(403).json({
+      error: recoveryCode
+        ? "Code de secours invalide — vérifiez-le, ou utilisez votre mot de passe actuel."
+        : "Mot de passe actuel incorrect. Vous pouvez aussi vous servir de votre code de secours.",
+    });
     return;
   }
 
@@ -5187,7 +5218,51 @@ app.patch("/auth/me", async (req, res) => {
     });
   }
 
-  res.json({ player: await playerPayload(auth.user.id) });
+  /*
+   * Un code de secours servi est un code brûlé.
+   *
+   * `/auth/recover` le fait déjà : un bout de papier retrouvé dans six mois
+   * ne doit pas rouvrir la ferme. La même règle vaut ici, sans quoi on
+   * ouvrirait une porte dérobée permanente à côté de celle qu'on vient de
+   * verrouiller. Le nouveau est rendu une fois, comme partout ailleurs.
+   */
+  const secoursNeuf = parSecours ? await remettreCodeSecours(auth.user.id) : undefined;
+
+  res.json({ player: await playerPayload(auth.user.id), recoveryCode: secoursNeuf });
+});
+
+/**
+ * Remettre un code de secours neuf à un joueur connecté.
+ *
+ * ## Pourquoi cette route existe
+ *
+ * Le code n'est montré qu'une fois, à la création. Qui l'a perdu — ou n'en a
+ * jamais reçu, son compte datant d'avant le mécanisme — se retrouvait sans
+ * filet : plus de mot de passe oublié possible, plus de changement d'e-mail,
+ * rien. Le seul recours était d'écrire au propriétaire du serveur.
+ *
+ * Elle demande le **mot de passe actuel**, et c'est le point d'équilibre :
+ * une session seule ne suffit pas à s'en faire remettre un, sinon quiconque
+ * trouve un écran ouvert repartirait avec la clé de la ferme. Qui a perdu les
+ * deux reste sur `scripts/farmsim-code-secours.sh`, et c'est normal : à ce
+ * stade, plus rien côté joueur ne distingue le propriétaire d'un inconnu.
+ */
+app.post("/auth/me/recovery", async (req, res) => {
+  const auth = await userFromAuthHeader(req);
+  if (!auth) {
+    res.status(401).json({ error: "Session invalide" });
+    return;
+  }
+  const body = z.object({ currentAccessCode: z.string().min(1).max(72) }).safeParse(req.body);
+  if (!body.success) {
+    res.status(400).json(body.error.flatten());
+    return;
+  }
+  if (!(await codeCorrespond(auth.user.accessCode, body.data.currentAccessCode))) {
+    res.status(403).json({ error: "Mot de passe actuel incorrect" });
+    return;
+  }
+  res.json({ recoveryCode: await remettreCodeSecours(auth.user.id) });
 });
 
 /* ------------------------------------------------------------------ */

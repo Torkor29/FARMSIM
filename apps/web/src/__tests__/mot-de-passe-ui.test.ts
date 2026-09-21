@@ -81,6 +81,41 @@ describe("la règle partagée", () => {
   });
 });
 
+describe("l’écran Compte", () => {
+  /**
+   * Le cul-de-sac, signalé en jouant : « impossible de changer le mdp
+   * puisqu'il faut le code et que je l'ai pas ».
+   *
+   * Un joueur connecté qui a oublié son mot de passe n'avait aucune voie :
+   * l'écran exigeait l'ancien, et l'écran d'oubli se passe déconnecté. Deux
+   * défauts se superposaient — le mur, et un libellé (« Code actuel / Pour
+   * confirmer e-mail ou code ») qui ne distinguait pas le mot de passe du
+   * code de secours.
+   */
+  it("offre la sortie : « je ne connais pas mon mot de passe »", () => {
+    expect(PROFIL).toContain("Je ne connais pas mon mot de passe");
+    expect(PROFIL).toContain("parSecours");
+    // Et le drapeau voyage jusqu'à la requête, sinon le bouton ne fait rien.
+    expect(PROFIL).toMatch(/body\.recoveryCode = currentAccessCode/);
+    expect(PROFIL).toMatch(/recoveryCode\?: string/);
+  });
+
+  it("nomme les deux preuves sans les confondre", () => {
+    // « Code actuel » ne disait pas lequel des deux codes on attendait.
+    expect(PROFIL).not.toContain("Pour confirmer e-mail ou code");
+    expect(PROFIL).toContain('"Mot de passe actuel"');
+    expect(PROFIL).toContain('"Code de secours"');
+  });
+
+  it("laisse lire le code de secours qu’on recopie d’un papier", () => {
+    // Masquer un code recopié à la main fait rater les fautes de frappe.
+    expect(PROFIL).toMatch(/type=\{parSecours \? "text" : "password"\}/);
+    // Et le format se vérifie avant l'envoi : un aller-retour pour une faute
+    // de frappe n'apprend rien au joueur.
+    expect(PROFIL).toContain("isRecoveryCode(currentAccessCode)");
+  });
+});
+
 describe("le vocabulaire", () => {
   /**
    * « Code d'accès » décrivait un casier ; le joueur demandait un mot de
