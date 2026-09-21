@@ -105,6 +105,9 @@ import {
   hectaresDeGrille,
   nouveautesNonLues,
   DERNIERE_NOUVEAUTE,
+  REINIT_CHEMIN,
+  REINIT_PARAM,
+  jetonDeReinitValide,
   type Nouveaute,
 } from "@farmsim/shared";
 import { AuthScreen, RecoveryNotice, type AuthMode } from "./AuthScreen";
@@ -591,6 +594,47 @@ function ecrireNouveauteVue(playerId: string, id: string) {
   }
 }
 
+/**
+ * Le jeton de réinitialisation, s'il est dans l'adresse.
+ *
+ * Hors du composant : il est lu à l'initialisation d'un `useState`, donc avant
+ * le premier rendu, et une fonction déclarée dans le corps du composant ne
+ * serait pas encore définie à cet instant.
+ *
+ * La vérification de forme n'est pas décorative. Sans elle, n'importe quelle
+ * chaîne collée derrière `?jeton=` basculerait l'écran en mode « nouveau mot
+ * de passe » et partirait au serveur. On refuse donc tout de suite ce qui ne
+ * peut pas être un jeton — une adresse tronquée par un client de messagerie,
+ * un copier-coller de travers.
+ */
+function jetonDansLAdresse(): string | null {
+  try {
+    const url = new URL(window.location.href);
+    if (url.pathname !== REINIT_CHEMIN) return null;
+    const brut = url.searchParams.get(REINIT_PARAM);
+    return brut && jetonDeReinitValide(brut) ? brut : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Retire le jeton de la barre d'adresse.
+ *
+ * Un jeton qui reste dans l'adresse se retrouve dans l'historique du
+ * navigateur, dans un signet pris par mégarde, et dans l'en-tête `Referer` de
+ * la requête suivante. Il est déjà brûlé côté serveur quand on arrive ici ;
+ * l'effacer referme le cas où la réponse ne serait jamais parvenue.
+ */
+function effacerJetonDeLAdresse(): void {
+  try {
+    window.history.replaceState(null, "", "/");
+  } catch {
+    /* Un navigateur qui refuse l'historique ne doit pas faire échouer le
+       changement de mot de passe, qui est déjà enregistré à ce stade. */
+  }
+}
+
 /** Tiroirs du bas, sur petit écran. */
 type SheetKey = "INFO" | "BUILD" | "GARAGE" | "OFFICE" | "HERD" | "STAFF" | "PROFILE";
 
@@ -691,7 +735,26 @@ export function App() {
   const [visitOrder, setVisitOrder] = useState<LaborOrderView | null>(null);
   const [activeMission, setActiveMission] = useState<MissionPlayContract | null>(null);
   const [player, setPlayer] = useState<Player | null>(null);
-  const [authMode, setAuthMode] = useState<AuthMode>("register");
+  /**
+   * L'état de la porte d'entrée.
+   *
+   * Il part de l'adresse plutôt que d'une valeur fixe : un joueur qui ouvre le
+   * lien reçu par courriel doit tomber **directement** sur le choix du nouveau
+   * mot de passe. L'amener d'abord sur « Je débute » puis attendre qu'il
+   * trouve son chemin annulerait tout l'intérêt du lien.
+   */
+  const [authMode, setAuthMode] = useState<AuthMode>(() =>
+    jetonDansLAdresse() ? "reset" : "register",
+  );
+  /** Le jeton lu dans l'adresse, s'il y en avait un de bien formé. */
+  const [jetonReinit, setJetonReinit] = useState<string | null>(() => jetonDansLAdresse());
+  /**
+   * Le serveur sait-il envoyer du courrier ?
+   *
+   * Demandé au serveur, jamais supposé : l'écran n'offre le lien par courriel
+   * que si quelqu'un peut réellement l'envoyer.
+   */
+  const [courrielDisponible, setCourrielDisponible] = useState(false);
   /** Ce que le joueur tape dans l'écran d'oubli. */
   const [recoveryInput, setRecoveryInput] = useState("");
   /** Le code que le serveur vient de remettre, à montrer une seule fois. */
@@ -1668,6 +1731,19 @@ export function App() {
     const t = window.setTimeout(() => setShowTutorial(true), 600);
     return () => window.clearTimeout(t);
   }, [installe, player?.id]);
+
+  /*
+   * Le serveur sait-il envoyer du courrier ?
+   *
+   * Une seule fois, au montage, et sans jeton : la porte d'entrée en a besoin
+   * avant toute connexion. Un échec vaut « non » — mieux vaut ne pas proposer
+   * le lien que promettre un courriel dont on ignore s'il partira.
+   */
+  useEffect(() => {
+    api<{ disponible: boolean }>("/auth/courriel")
+      .then((r) => setCourrielDisponible(Boolean(r.disponible)))
+      .catch(() => setCourrielDisponible(false));
+  }, []);
 
   useEffect(() => {
     if (!player) return;
@@ -2863,6 +2939,69 @@ export function App() {
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e));
     } finally {
+      setBusy(false);
+    }
+  }
+
+  /**
+   * Demander un lien de réinitialisation.
+   *
+   * Le serveur répond la même chose pour une adresse connue et pour une
+   * inconnue — c'est ce qui empêche l'écran de devenir un annuaire des comptes
+   * qui jouent. L'écran doit donc afficher ce message **tel quel**, sans
+   * chercher à le nuancer selon ce qu'il croit savoir.
+   */
+  async function demanderLienMdp() {
+    setBusy(true);
+    setErr(null);
+    setMsg(null);
+    try {
+      const r = await api<{ message: string }>("/auth/forgot", {
+        method: "POST",
+        body: JSON.stringify({ email }),
+      });
+      setMsg(r.message);
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  /**
+   * Poser le nouveau mot de passe, depuis le lien reçu.
+   *
+   * Le jeton ne vient pas d'un champ : il est dans l'adresse. On le retire de
+   * la barre d'adresse dès qu'il a servi — un jeton qui reste dans
+   * l'historique du navigateur, dans un signet ou dans le `Referer` d'une
+   * requête suivante est un secret qui voyage plus loin que prévu. Il est
+   * certes déjà brûlé côté serveur à ce moment-là ; l'effacer coûte une ligne
+   * et referme le cas où la réponse n'arriverait pas.
+   */
+  async function poserNouveauMdp() {
+    if (!jetonReinit) return;
+    setBusy(true);
+    setErr(null);
+    try {
+      const r = await api<{
+        token: string;
+        player: Player;
+        resume?: SessionResume;
+        recoveryCode?: string;
+      }>("/auth/reset", {
+        method: "POST",
+        body: JSON.stringify({ jeton: jetonReinit, accessCode }),
+      });
+      await loadWorld().catch(() => undefined);
+      applyAuth(r);
+      if (r.recoveryCode) setRecoveryCode(r.recoveryCode);
+      await refreshMeta();
+      setMsg("Nouveau mot de passe enregistré");
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e));
+    } finally {
+      setJetonReinit(null);
+      effacerJetonDeLAdresse();
       setBusy(false);
     }
   }
@@ -5351,6 +5490,9 @@ export function App() {
           onRegister={register}
           onLogin={login}
           onRecover={recover}
+          courrielDisponible={courrielDisponible}
+          onForgot={demanderLienMdp}
+          onReset={poserNouveauMdp}
         />
         {recoveryCode && (
           <RecoveryNotice code={recoveryCode} onClose={() => setRecoveryCode(null)} />

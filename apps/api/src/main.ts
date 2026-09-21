@@ -369,6 +369,10 @@ import {
   hasUnlimitedCrd,
   normalizeEmail,
   RECOVERY_REFUSAL,
+  REINIT_ENVOYE,
+  REINIT_REFUS,
+  REINIT_TTL_LIBELLE,
+  lienDeReinit,
   isRecoveryCode,
 } from "@farmsim/shared";
 import {
@@ -406,6 +410,14 @@ import {
   hacherCode,
 } from "./access-code.js";
 import { empreinteSecours, nouveauCodeSecours, secoursCorrespond } from "./recovery.js";
+import { courrielConfigure, envoyerCourriel, origineDuJeu } from "./courriel.js";
+import {
+  empreinteJeton,
+  expirationJeton,
+  jetonDeReinitValide,
+  jetonUtilisable,
+  nouveauJetonReinit,
+} from "./reinitialisation.js";
 
 /**
  * Ce processus sert-il aussi le front construit ?
@@ -5258,6 +5270,179 @@ app.post("/auth/recover", async (req, res) => {
   const token = await createSession(user.id);
   await touchUserPresence(user.id);
   const player = await playerPayload(user.id);
+  res.json({ token, player, resume, recoveryCode });
+});
+
+/**
+ * Le courrier est-il branché sur cette instance ?
+ *
+ * L'écran de connexion s'en sert pour décider s'il propose le lien par
+ * courriel. Sans cela il faudrait deviner : ou bien offrir un bouton qui
+ * échoue en silence sur une instance sans SMTP — le « secours qui n'arrivera
+ * jamais » que `recovery.ts` refusait déjà — ou bien ne jamais l'offrir.
+ *
+ * Elle ne dit rien d'autre que « oui » ou « non » : ni l'hôte, ni l'adresse,
+ * ni le fournisseur.
+ */
+app.get("/auth/courriel", (_req, res) => {
+  res.json({ disponible: courrielConfigure() });
+});
+
+/**
+ * Mot de passe oublié — demander un lien.
+ *
+ * ## Ce que cette route ne fera jamais
+ *
+ * Elle n'envoie pas le mot de passe. Le serveur ne l'a pas : il n'en garde
+ * qu'une empreinte bcrypt, qui ne se remonte pas. C'est exactement la
+ * propriété qu'un joueur réclamait en écrivant « c'est censé être crypté, et
+ * illisible » — et tout service capable de vous renvoyer votre mot de passe
+ * est un service qui le stocke lisible.
+ *
+ * ## La réponse est la même pour tout le monde
+ *
+ * Adresse connue, adresse inconnue, envoi réussi, serveur de messagerie
+ * injoignable : `REINIT_ENVOYE`, toujours, et 200. Une réponse qui
+ * distinguerait ces cas ferait de cet écran un annuaire — on essaie une
+ * adresse, et la réponse dit si elle joue. `/auth/recover` applique déjà cette
+ * règle ; celle-ci ne peut pas faire moins, puisqu'elle prend une adresse
+ * seule, sans aucune preuve.
+ *
+ * ## Le temps de réponse parle, lui aussi
+ *
+ * Un message identique ne suffit pas si l'attente ne l'est pas. Attendre
+ * l'envoi avant de répondre ferait tenir une adresse connue une seconde de
+ * plus qu'une inconnue — une session SMTP complète — et cette seconde est le
+ * même annuaire, mesuré au chronomètre plutôt que lu à l'écran.
+ *
+ * On répond donc **avant** d'envoyer, et l'envoi part sans être attendu. Il
+ * reste un écart : l'insertion du jeton, que le cas inconnu n'a pas. Une
+ * écriture en base se compte en millisecondes contre des centaines pour un
+ * aller-retour de messagerie, noyées dans le bruit du réseau ; c'est un
+ * résidu assumé, et il est de trois ordres de grandeur plus discret que
+ * l'attente qu'il remplace.
+ *
+ * Rien n'est perdu en route : `envoyerCourriel` ne lève jamais et journalise
+ * ses échecs — c'est l'exploitant qui doit voir qu'un envoi rate, pas le
+ * joueur, à qui on ne dirait de toute façon rien d'autre.
+ *
+ * Le seau `AUTH` de la limite de débit couvre cette route (`/auth/…`).
+ */
+app.post("/auth/forgot", async (req, res) => {
+  const body = z.object({ email: z.string().email() }).safeParse(req.body);
+  if (!body.success) {
+    res.status(400).json(body.error.flatten());
+    return;
+  }
+  if (!courrielConfigure()) {
+    /*
+     * Rien n'est branché : on le dit franchement plutôt que de promettre un
+     * courriel qui ne partira pas. Ce n'est pas une fuite — l'information
+     * porte sur le serveur, pas sur l'existence d'un compte, et l'écran ne
+     * propose de toute façon pas le bouton dans ce cas.
+     */
+    res.status(503).json({
+      error:
+        "L'envoi de courriel n'est pas actif sur ce serveur. " +
+        "Servez-vous du code de secours remis à la création de votre ferme.",
+    });
+    return;
+  }
+
+  const user = await findUserByEmail(body.data.email);
+  if (user && !user.isNpc) {
+    const { jeton, empreinte } = nouveauJetonReinit();
+    await prisma.passwordReset.create({
+      data: { userId: user.id, tokenHash: empreinte, expiresAt: expirationJeton() },
+    });
+    const lien = lienDeReinit(origineDuJeu(), jeton);
+    /* Sans `await` : voir « Le temps de réponse parle, lui aussi ». */
+    void envoyerCourriel({
+      destinataire: user.email,
+      objet: "Farming Navigateur — votre lien de réinitialisation",
+      texte: [
+        `Bonjour ${user.displayName},`,
+        "",
+        "Quelqu'un a demandé à réinitialiser le mot de passe de votre ferme.",
+        `Ouvrez ce lien pour en choisir un nouveau ; il est valable ${REINIT_TTL_LIBELLE} :`,
+        "",
+        lien,
+        "",
+        "Si ce n'est pas vous, il n'y a rien à faire : votre mot de passe reste",
+        "celui que vous connaissez, et ce lien expirera tout seul.",
+        "",
+        "— Farming Navigateur",
+      ].join("\n"),
+    }).catch((e) => console.error("envoi du lien de réinitialisation en échec", e));
+  }
+
+  /* Le même corps et le même code, quoi qu'il se soit passé au-dessus. */
+  res.json({ message: REINIT_ENVOYE });
+});
+
+/**
+ * Mot de passe oublié — poser le nouveau.
+ *
+ * Quatre précautions, et chacune ferme une porte précise :
+ *
+ * - **le jeton est brûlé** avant toute autre chose, dans la même transaction
+ *   que le changement. Sans cela, un lien resté dans une boîte de réception
+ *   est une clé permanente ;
+ * - **les autres jetons du compte tombent aussi.** Un joueur qui demande deux
+ *   liens et se fait dérober le premier ne doit pas laisser un second
+ *   utilisable derrière lui ;
+ * - **les sessions ouvertes tombent** — si quelqu'un d'autre était entré,
+ *   changer le mot de passe doit le mettre dehors, sinon la reprise en main
+ *   n'est qu'apparente ;
+ * - **un code de secours neuf est remis.** Celui qui arrive ici a
+ *   vraisemblablement perdu l'ancien ; le lui renouveler referme la boucle au
+ *   lieu de le laisser sans filet pour la fois suivante.
+ */
+app.post("/auth/reset", async (req, res) => {
+  const body = z
+    .object({
+      jeton: z.string().min(1).max(200),
+      accessCode: z.string().min(MDP_MIN).max(MDP_MAX),
+    })
+    .safeParse(req.body);
+  if (!body.success) {
+    res.status(400).json(body.error.flatten());
+    return;
+  }
+  if (!jetonDeReinitValide(body.data.jeton)) {
+    res.status(401).json({ error: REINIT_REFUS });
+    return;
+  }
+
+  const ligne = await prisma.passwordReset.findUnique({
+    where: { tokenHash: empreinteJeton(body.data.jeton) },
+    include: { user: true },
+  });
+  if (!jetonUtilisable(ligne)) {
+    res.status(401).json({ error: REINIT_REFUS });
+    return;
+  }
+  const cible = ligne!.user;
+
+  await prisma.$transaction(async (tx) => {
+    /* Brûler d'abord. Si la suite échoue, le lien est perdu — le joueur en
+       redemande un — plutôt que de rester ouvert. */
+    await tx.passwordReset.updateMany({
+      where: { userId: cible.id, usedAt: null },
+      data: { usedAt: new Date() },
+    });
+    await tx.session.deleteMany({ where: { userId: cible.id } });
+    await tx.user.update({
+      where: { id: cible.id },
+      data: { accessCode: await hacherCode(body.data.accessCode) },
+    });
+  });
+
+  const recoveryCode = await remettreCodeSecours(cible.id);
+  const resume = await buildResumeForUser(cible.id);
+  const token = await createSession(cible.id);
+  await touchUserPresence(cible.id);
+  const player = await playerPayload(cible.id);
   res.json({ token, player, resume, recoveryCode });
 });
 

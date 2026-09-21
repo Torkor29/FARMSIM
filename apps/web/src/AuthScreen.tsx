@@ -10,7 +10,20 @@ import {
   motDePasseValide,
 } from "@farmsim/shared";
 
-export type AuthMode = "register" | "login" | "recover";
+/**
+ * Les cinq états de la porte d'entrée.
+ *
+ * `recover` et `forgot` répondent à la même question — « j'ai oublié mon mot
+ * de passe » — par deux moyens qui ne se remplacent pas. Le code de secours
+ * fonctionne sans réseau de messagerie et sans que le joueur ait accès à sa
+ * boîte ; le lien par courriel ne demande rien à conserver. On garde les deux
+ * parce qu'ils tombent en panne pour des raisons différentes : un papier se
+ * perd, une boîte se ferme.
+ *
+ * `reset` n'est jamais choisi par le joueur : c'est l'état dans lequel
+ * l'adresse du lien met l'écran.
+ */
+export type AuthMode = "register" | "login" | "recover" | "forgot" | "reset";
 
 type Props = {
   authMode: AuthMode;
@@ -29,6 +42,18 @@ type Props = {
   onRegister: () => void;
   onLogin: () => void;
   onRecover: () => void;
+  /**
+   * Le serveur sait-il envoyer du courrier ?
+   *
+   * Posé par le serveur, jamais supposé. Offrir le lien sur une instance sans
+   * SMTP promettrait « un secours qui n'arrivera jamais » — l'expression est
+   * de `recovery.ts`, qui refusait déjà ce bouton pour cette raison.
+   */
+  courrielDisponible?: boolean;
+  /** Demander un lien de réinitialisation. */
+  onForgot: () => void;
+  /** Poser le nouveau mot de passe, depuis le lien reçu. */
+  onReset: () => void;
 };
 
 /**
@@ -52,23 +77,36 @@ export function AuthScreen({
   onRegister,
   onLogin,
   onRecover,
+  courrielDisponible = false,
+  onForgot,
+  onReset,
 }: Props) {
   const [showCode, setShowCode] = useState(false);
   const isRegister = authMode === "register";
   const isRecover = authMode === "recover";
+  const isForgot = authMode === "forgot";
+  const isReset = authMode === "reset";
+  /** Les trois écrans où l'on **pose** un mot de passe neuf. */
+  const posePassword = isRegister || isRecover || isReset;
   // Le plancher ne vaut qu'aux endroits où l'on *pose* un mot de passe. La
   // connexion accepte ce qui existe : les comptes d'avant en ont de plus
   // courts, et griser leur bouton les enfermerait dehors sans un mot
   // d'explication.
-  const canSubmit = isRecover
-    ? email.includes("@") && isRecoveryCode(recoveryInput) && motDePasseValide(accessCode)
-    : isRegister
-      ? name.trim().length >= 2 && email.includes("@") && motDePasseValide(accessCode)
-      : email.includes("@") && accessCode.length >= 1;
+  const canSubmit = isReset
+    ? motDePasseValide(accessCode)
+    : isForgot
+      ? email.includes("@")
+      : isRecover
+        ? email.includes("@") && isRecoveryCode(recoveryInput) && motDePasseValide(accessCode)
+        : isRegister
+          ? name.trim().length >= 2 && email.includes("@") && motDePasseValide(accessCode)
+          : email.includes("@") && accessCode.length >= 1;
 
   function submit() {
     if (!canSubmit || busy) return;
-    if (isRecover) onRecover();
+    if (isReset) onReset();
+    else if (isForgot) onForgot();
+    else if (isRecover) onRecover();
     else if (isRegister) onRegister();
     else onLogin();
   }
@@ -89,7 +127,15 @@ export function AuthScreen({
         <img className="gate-logo" src="/logo.webp" alt="Farming Navigator" />
 
         <div className="gate-card">
-          <div className="gate-tabs" role="tablist" aria-label="Accès au jeu">
+          {/* Les onglets disparaissent sur les écrans de dépannage : ils
+              n'offrent aucun des deux chemins qu'on est en train de suivre, et
+              un clic dessus ferait perdre le lien qu'on vient d'ouvrir. */}
+          <div
+            className="gate-tabs"
+            role="tablist"
+            aria-label="Accès au jeu"
+            hidden={isRecover || isForgot || isReset}
+          >
             <button
               type="button"
               role="tab"
@@ -112,9 +158,31 @@ export function AuthScreen({
 
           {isRecover && (
             <p className="gate-note">
-              <strong>Mot de passe oublié.</strong> Il n'y a pas d'envoi d'e-mail sur ce
-              serveur : c'est le code de secours remis à la création de votre ferme qui
-              vous rouvre la porte. Vous choisissez un nouveau mot de passe dans la foulée.
+              <strong>Avec votre code de secours.</strong> C'est le code remis à la création
+              de votre ferme, sur un bout de papier ou dans vos notes. Vous choisissez un
+              nouveau mot de passe dans la foulée, et un code neuf vous est remis.
+            </p>
+          )}
+
+          {isForgot && (
+            <p className="gate-note">
+              {/*
+                La phrase dit ce qui arrive **et** ce qui n'arrivera pas. « Nous
+                ne pouvons pas vous renvoyer votre mot de passe » a l'air d'un
+                aveu de faiblesse ; c'est l'inverse, et le dire évite qu'on
+                cherche dans le message un mot de passe qui n'y sera jamais.
+              */}
+              <strong>Par e-mail.</strong> Nous vous envoyons un lien pour choisir un nouveau
+              mot de passe. Nous ne pouvons pas vous renvoyer l'ancien : le serveur ne le
+              détient pas, il n'en garde qu'une empreinte illisible.
+            </p>
+          )}
+
+          {isReset && (
+            <p className="gate-note">
+              <strong>Nouveau mot de passe.</strong> Vous êtes arrivé par le lien reçu par
+              e-mail. Choisissez votre mot de passe : il remplace l'ancien tout de suite, et
+              toutes les sessions ouvertes ailleurs sont fermées.
             </p>
           )}
 
@@ -138,7 +206,10 @@ export function AuthScreen({
               </label>
             )}
 
-            <label className="field">
+            {/* En mode « reset », l'adresse ne sert à rien : le jeton dit déjà
+                de quel compte il s'agit. La demander inviterait à se tromper,
+                et laisserait croire qu'elle est vérifiée. */}
+            <label className="field" hidden={isReset}>
               <span className="field-label">Adresse e-mail</span>
               <input
                 type="email"
@@ -167,9 +238,9 @@ export function AuthScreen({
               </label>
             )}
 
-            <label className="field">
+            <label className="field" hidden={isForgot}>
               <span className="field-label">
-                {isRecover
+                {isRecover || isReset
                   ? "Nouveau mot de passe"
                   : isRegister
                     ? "Choisissez un mot de passe"
@@ -181,12 +252,10 @@ export function AuthScreen({
                   value={accessCode}
                   onChange={(e) => onAccessCodeChange(e.target.value)}
                   placeholder={
-                    isRegister || isRecover
-                      ? `au moins ${MDP_MIN} caractères`
-                      : "votre mot de passe"
+                    posePassword ? `au moins ${MDP_MIN} caractères` : "votre mot de passe"
                   }
-                  autoComplete={isRegister || isRecover ? "new-password" : "current-password"}
-                  minLength={isRegister || isRecover ? MDP_MIN : undefined}
+                  autoComplete={posePassword ? "new-password" : "current-password"}
+                  minLength={posePassword ? MDP_MIN : undefined}
                   maxLength={MDP_MAX}
                 />
                 <button
@@ -198,7 +267,7 @@ export function AuthScreen({
                   {showCode ? "Masquer" : "Voir"}
                 </button>
               </span>
-              {(isRegister || isRecover) && <span className="field-help">{MDP_AIDE}</span>}
+              {posePassword && <span className="field-help">{MDP_AIDE}</span>}
             </label>
 
             {(msg || err) && (
@@ -210,29 +279,63 @@ export function AuthScreen({
             <button type="submit" className="btn-primary big" disabled={busy || !canSubmit}>
               {busy
                 ? "Un instant…"
-                : isRecover
-                  ? "Changer mon mot de passe"
-                  : isRegister
-                    ? "Créer ma ferme"
-                    : "Reprendre ma ferme"}
+                : isForgot
+                  ? "Recevoir le lien"
+                  : isRecover || isReset
+                    ? "Changer mon mot de passe"
+                    : isRegister
+                      ? "Créer ma ferme"
+                      : "Reprendre ma ferme"}
             </button>
           </form>
 
           {!isRegister && (
             <p className="gate-forgot">
-              {isRecover ? (
-                <button type="button" className="link" onClick={() => onAuthModeChange("login")}>
-                  Revenir à la connexion
-                </button>
+              {isRecover || isForgot || isReset ? (
+                <>
+                  {/*
+                    Les deux voies se renvoient l'une à l'autre, parce qu'elles
+                    tombent en panne pour des raisons différentes : le papier
+                    se perd, la boîte se ferme. Celui qui échoue d'un côté doit
+                    trouver l'autre sans repasser par la connexion.
+                  */}
+                  {isRecover && courrielDisponible && (
+                    <button
+                      type="button"
+                      className="link"
+                      onClick={() => onAuthModeChange("forgot")}
+                    >
+                      Recevoir plutôt un lien par e-mail
+                    </button>
+                  )}
+                  {isForgot && (
+                    <button
+                      type="button"
+                      className="link"
+                      onClick={() => onAuthModeChange("recover")}
+                    >
+                      J'ai mon code de secours
+                    </button>
+                  )}
+                  <button type="button" className="link" onClick={() => onAuthModeChange("login")}>
+                    Revenir à la connexion
+                  </button>
+                </>
               ) : (
-                <button type="button" className="link" onClick={() => onAuthModeChange("recover")}>
+                <button
+                  type="button"
+                  className="link"
+                  /* Le lien par e-mail d'abord quand il existe : il ne demande
+                     rien à avoir conservé. Le code de secours reste à un clic. */
+                  onClick={() => onAuthModeChange(courrielDisponible ? "forgot" : "recover")}
+                >
                   Mot de passe oublié ?
                 </button>
               )}
             </p>
           )}
 
-          <p className="gate-switch">
+          <p className="gate-switch" hidden={isRecover || isForgot || isReset}>
             {isRegister ? (
               <>
                 Déjà installé ?{" "}

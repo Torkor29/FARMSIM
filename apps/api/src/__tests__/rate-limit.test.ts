@@ -32,6 +32,20 @@ describe("classement des routes", () => {
     assert.equal(classer("POST", "/auth/recover"), "AUTH");
   });
 
+  it("range aussi les deux portes du lien par courriel", () => {
+    /*
+     * Elles ont été ajoutées après coup, et l'oubli aurait coûté cher des deux
+     * côtés. `/auth/forgot` **envoie un courriel à chaque appel** : sans
+     * limite, on inonde la boîte d'un joueur dont on connaît l'adresse, et on
+     * épuise le quota d'envoi du serveur — ce qui prive tout le monde du
+     * secours. `/auth/reset` pose un mot de passe : le jeton fait deux cent
+     * cinquante-six bits, mais une porte qui change un mot de passe ne s'ouvre
+     * pas soixante fois de suite.
+     */
+    assert.equal(classer("POST", "/auth/forgot"), "AUTH");
+    assert.equal(classer("POST", "/auth/reset"), "AUTH");
+  });
+
   it("sépare la lecture de l'écriture", () => {
     assert.equal(classer("GET", "/players"), "LECTURE");
     assert.equal(classer("POST", "/market/buy"), "ECRITURE");

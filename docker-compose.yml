@@ -114,6 +114,41 @@ services:
       # installation locale on lance l'API à la main, sans Docker.
       FARMSIM_TESTERS: "${FARMSIM_TESTERS:-}"
       # ————————————————————————————————————————————————————————————————
+      # L'envoi de courriel — « mot de passe oublié ».
+      #
+      # Vides par défaut, et c'est un mode de fonctionnement, pas un oubli :
+      # sans `FARMSIM_SMTP_HOST`, le jeu n'offre pas le lien par courriel et
+      # le code de secours porte seul le dépannage. Une instance de
+      # développement n'a donc rien à configurer.
+      #
+      # Le mot de passe se met dans `/opt/farmsim/.env` sur le serveur, et
+      # **jamais ici** : ce fichier est versionné et public.
+      #
+      # Le choix du fournisseur s'est fait sur le DNS du domaine, pas sur une
+      # préférence. `farming-navigator.com` publie
+      # « v=spf1 include:mx.ovh.com -all » : ce refus dur déclare qu'aucun
+      # serveur hors OVH n'a le droit d'écrire en son nom. Passer par un tiers
+      # — Gmail, par exemple — ferait échouer SPF et finir le message en
+      # indésirables, pour un courriel dont tout l'objet est d'arriver.
+      #
+      #   FARMSIM_SMTP_HOST=ssl0.ovh.net
+      #   FARMSIM_SMTP_PORT=465          465 = TLS d'emblée, 587 = STARTTLS
+      #   FARMSIM_SMTP_USER=noreply@farming-navigator.com
+      #   FARMSIM_SMTP_PASS=…
+      #   FARMSIM_SMTP_FROM="Farming Navigateur <noreply@farming-navigator.com>"
+      #
+      # `FARMSIM_PUBLIC_URL` compose les liens. Elle est lue ici et non
+      # déduite de l'en-tête `Host` de la requête : cet en-tête vient du
+      # client, et un lien de réinitialisation bâti sur une valeur fournie par
+      # l'attaquant est le manuel du vol de jeton.
+      # ————————————————————————————————————————————————————————————————
+      FARMSIM_SMTP_HOST: "${FARMSIM_SMTP_HOST:-}"
+      FARMSIM_SMTP_PORT: "${FARMSIM_SMTP_PORT:-465}"
+      FARMSIM_SMTP_USER: "${FARMSIM_SMTP_USER:-}"
+      FARMSIM_SMTP_PASS: "${FARMSIM_SMTP_PASS:-}"
+      FARMSIM_SMTP_FROM: "${FARMSIM_SMTP_FROM:-}"
+      FARMSIM_PUBLIC_URL: "${FARMSIM_PUBLIC_URL:-https://farming-navigator.com}"
+      # ————————————————————————————————————————————————————————————————
       # Le tas de V8, plafonné — cette fois sur des mesures en service.
       #
       # Le jeu s'est arrêté trois fois en douze heures. Mesuré sur le binaire

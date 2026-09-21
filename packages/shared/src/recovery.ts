@@ -1,17 +1,27 @@
 /**
  * Le code de secours — retrouver sa ferme sans e-mail.
  *
- * Le serveur du jeu n'a **aucun envoi de courrier** : pas de SMTP, pas de
+ * Le serveur du jeu n'avait **aucun envoi de courrier** : pas de SMTP, pas de
  * service tiers, rien. Un « mot de passe oublié » classique — on vous envoie
- * un lien — ne peut donc pas exister ici. Poser le bouton quand même, en
- * espérant brancher l'envoi plus tard, revient à promettre au joueur un
- * secours qui n'arrivera jamais.
+ * un lien — ne pouvait donc pas exister, et poser le bouton quand même en
+ * espérant brancher l'envoi plus tard revenait à promettre au joueur un
+ * secours qui n'arriverait jamais.
  *
  * D'où ce choix : un **code de secours** remis une seule fois, à la création
  * du compte, que le joueur note. Il ne remplace pas le code d'accès, il ne
  * connecte pas : il sert uniquement à en choisir un nouveau. C'est le même
  * mécanisme que les codes de récupération d'une double authentification, pour
  * la même raison — il fonctionne hors ligne.
+ *
+ * ## Le courriel existe maintenant, et ceci ne disparaît pas pour autant
+ *
+ * `reinitialisation.ts` ajoute le lien par courriel, branché sur le serveur
+ * d'OVH qui héberge déjà le domaine. Les deux voies coexistent **parce
+ * qu'elles tombent en panne pour des raisons différentes** : un bout de papier
+ * se perd, une boîte aux lettres se ferme ou devient inaccessible. Et le code
+ * de secours reste le seul recours sur une instance où rien n'est configuré —
+ * un poste de développement, la suite de tests, un serveur dont le compte
+ * d'envoi vient d'expirer.
  *
  * Ce module ne contient que la **forme** du code : l'alphabet, la lecture
  * indulgente de ce qui est tapé, l'affichage. Le tirage au sort et

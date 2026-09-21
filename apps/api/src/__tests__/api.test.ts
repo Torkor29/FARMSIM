@@ -24,6 +24,7 @@ import { after, before, describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { spawn, type ChildProcess } from "node:child_process";
 import { execFileSync } from "node:child_process";
+import { createHash, randomBytes } from "node:crypto";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { creerBaseTest, supprimerBaseTest, type BaseTest } from "./base-test.js";
@@ -4460,5 +4461,200 @@ describe("le parcellaire", () => {
       assert.equal(ds.breakdown.surface.value, 1);
       assert.equal(ds.breakdown.surface.contribution, 0);
     }
+  });
+});
+
+describe("le lien de réinitialisation", () => {
+  /**
+   * « Intégrer la possibilité de mettre mot de passe oublié et de recevoir son
+   * mdp sur son adresse mail. »
+   *
+   * La seconde moitié est impossible, et c'est une bonne nouvelle : le
+   * serveur ne détient pas le mot de passe, seulement une empreinte bcrypt.
+   * C'est la propriété que le même joueur réclamait quelques jours plus tôt en
+   * écrivant « c'est censé être crypté, et illisible ». Ce qui part est donc
+   * un lien à usage unique.
+   *
+   * Cette suite tourne **sans serveur de messagerie** — le serveur de test n'a
+   * pas de SMTP — ce qui éprouve au passage le mode « non configuré », celui
+   * dans lequel l'instance sera déployée tant que les identifiants n'existent
+   * pas. Le parcours d'usage, lui, se joue en posant le jeton directement en
+   * base : c'est exactement ce que `/auth/forgot` écrit quand il peut envoyer.
+   */
+
+  /** L'empreinte du jeton, telle que le serveur la calcule. */
+  function empreinte(jeton: string): string {
+    return createHash("sha256").update(jeton).digest("hex");
+  }
+
+  /** Pose un jeton en base, comme le ferait la route d'envoi. */
+  function poserJeton(userId: string, jeton: string, opts: { expire?: boolean; servi?: boolean } = {}) {
+    const fin = opts.expire ? "now() - interval '1 minute'" : "now() + interval '30 minutes'";
+    const servi = opts.servi ? "now()" : "NULL";
+    prismaExec(
+      `INSERT INTO "PasswordReset" (id, "userId", "tokenHash", "expiresAt", "usedAt", "createdAt")
+       VALUES ('${jeton.slice(0, 20)}-row', '${userId}', '${empreinte(jeton)}', ${fin}, ${servi}, now());`,
+    );
+  }
+
+  /** Un jeton bien formé, propre à chaque test. */
+  const jetonNeuf = () => randomBytes(32).toString("base64url");
+
+  it("annonce franchement quand le courrier n’est pas branché", async () => {
+    /*
+     * Plutôt que de promettre un courriel qui ne partira pas — « un secours
+     * qui n'arrivera jamais », le travers que `recovery.ts` refusait déjà. Ce
+     * n'est pas une fuite : l'information porte sur le serveur, pas sur
+     * l'existence d'un compte.
+     */
+    const dispo = await appel("/auth/courriel");
+    assert.equal(dispo.statut, 200);
+    assert.equal((dispo.corps as unknown as { disponible: boolean }).disponible, false);
+
+    const r = await appel("/auth/forgot", {
+      methode: "POST",
+      corps: { email: "personne@test.fr" },
+    });
+    assert.equal(r.statut, 503, JSON.stringify(r.corps));
+    assert.match((r.corps as unknown as { error: string }).error, /code de secours/);
+  });
+
+  it("refuse un jeton qui n’a pas la forme d’un jeton", async () => {
+    for (const jeton of ["", "court", "a".repeat(200)]) {
+      const r = await appel("/auth/reset", {
+        methode: "POST",
+        corps: { jeton, accessCode: "nouveau-mot-de-passe" },
+      });
+      assert.ok(r.statut === 400 || r.statut === 401, `${jeton} → ${r.statut}`);
+    }
+  });
+
+  it("refuse un jeton inconnu, expiré ou déjà servi", async () => {
+    const moi = await inscrire("Oublieux");
+    const inconnu = jetonNeuf();
+    const expire = jetonNeuf();
+    const servi = jetonNeuf();
+    poserJeton(moi.id, expire, { expire: true });
+    poserJeton(moi.id, servi, { servi: true });
+
+    for (const [nom, jeton] of [
+      ["inconnu", inconnu],
+      ["expiré", expire],
+      /* Le cas qu'on oublie, et le plus coûteux : sans lui, un lien reste une
+         clé permanente dans une boîte de réception. */
+      ["déjà servi", servi],
+    ] as const) {
+      const r = await appel("/auth/reset", {
+        methode: "POST",
+        corps: { jeton, accessCode: "un-mot-de-passe-neuf" },
+      });
+      assert.equal(r.statut, 401, `${nom} : ${JSON.stringify(r.corps)}`);
+      // Le même refus pour les trois : l'écran ne doit pas dire lequel.
+      assert.match((r.corps as unknown as { error: string }).error, /plus valable/);
+    }
+  });
+
+  it("refuse un mot de passe trop court, sans brûler le jeton", async () => {
+    /*
+     * L'ordre compte. Brûler avant de valider ferait qu'une faute de frappe
+     * sur le nouveau mot de passe coûte le lien, et renvoie le joueur
+     * redemander un courriel pour rien.
+     */
+    const moi = await inscrire("Pressé");
+    const jeton = jetonNeuf();
+    poserJeton(moi.id, jeton);
+
+    const court = await appel("/auth/reset", {
+      methode: "POST",
+      corps: { jeton, accessCode: "court" },
+    });
+    assert.equal(court.statut, 400, JSON.stringify(court.corps));
+
+    const bon = await appel("/auth/reset", {
+      methode: "POST",
+      corps: { jeton, accessCode: "un-mot-de-passe-correct" },
+    });
+    assert.equal(bon.statut, 200, JSON.stringify(bon.corps));
+  });
+
+  it("change le mot de passe, connecte, et remet un code de secours", async () => {
+    const moi = await inscrire("Revenant");
+    const jeton = jetonNeuf();
+    poserJeton(moi.id, jeton);
+
+    const r = await appel("/auth/reset", {
+      methode: "POST",
+      corps: { jeton, accessCode: "ma-nouvelle-ferme-2026" },
+    });
+    assert.equal(r.statut, 200, JSON.stringify(r.corps));
+    const corps = r.corps as unknown as {
+      token: string;
+      player: { id: string };
+      recoveryCode?: string;
+    };
+    assert.equal(corps.player.id, moi.id);
+    assert.ok(corps.token, "le lien doit reconnecter : sinon il faut ressaisir dans la foulée");
+    /* Celui qui arrive ici a vraisemblablement perdu son code de secours. Le
+       lui renouveler referme la boucle au lieu de le laisser sans filet. */
+    assert.ok(corps.recoveryCode, "un code de secours neuf doit être remis");
+
+    // L'ancien mot de passe ne vaut plus rien.
+    const ancien = await appel("/auth/login", {
+      methode: "POST",
+      corps: { email: moi.email, accessCode: "ferme-2026" },
+    });
+    assert.equal(ancien.statut, 401, JSON.stringify(ancien.corps));
+
+    // Le nouveau ouvre.
+    const neuf = await appel("/auth/login", {
+      methode: "POST",
+      corps: { email: moi.email, accessCode: "ma-nouvelle-ferme-2026" },
+    });
+    assert.equal(neuf.statut, 200, JSON.stringify(neuf.corps));
+  });
+
+  it("met dehors les sessions ouvertes ailleurs", async () => {
+    /*
+     * Si quelqu'un d'autre était entré avec l'ancien mot de passe, le changer
+     * doit le mettre dehors — sinon la reprise en main n'est qu'apparente.
+     */
+    const moi = await inscrire("Repris");
+    const avant = await appel("/auth/me", { jeton: moi.jeton });
+    assert.equal(avant.statut, 200, "la session doit valoir avant");
+
+    const jeton = jetonNeuf();
+    poserJeton(moi.id, jeton);
+    await appel("/auth/reset", {
+      methode: "POST",
+      corps: { jeton, accessCode: "encore-un-autre-mot-de-passe" },
+    });
+
+    const apres = await appel("/auth/me", { jeton: moi.jeton });
+    assert.equal(apres.statut, 401, "l'ancienne session doit être tombée");
+  });
+
+  it("brûle tous les liens du compte, pas seulement celui qui a servi", async () => {
+    /*
+     * Un joueur qui demande deux liens — le premier courriel s'est perdu — ne
+     * doit pas laisser le second utilisable derrière lui une fois le mot de
+     * passe changé.
+     */
+    const moi = await inscrire("Insistant");
+    const premier = jetonNeuf();
+    const second = jetonNeuf();
+    poserJeton(moi.id, premier);
+    poserJeton(moi.id, second);
+
+    const ok = await appel("/auth/reset", {
+      methode: "POST",
+      corps: { jeton: second, accessCode: "mot-de-passe-du-second-lien" },
+    });
+    assert.equal(ok.statut, 200, JSON.stringify(ok.corps));
+
+    const restant = await appel("/auth/reset", {
+      methode: "POST",
+      corps: { jeton: premier, accessCode: "tentative-avec-le-premier" },
+    });
+    assert.equal(restant.statut, 401, JSON.stringify(restant.corps));
   });
 });

@@ -73,8 +73,28 @@ export const BAREMES: Record<ClasseRoute, Bareme> = {
  * présentation du seul code de secours. Laissé dans le seau d'écriture
  * ordinaire, il offrirait soixante essais d'affilée puis deux par seconde —
  * un débit qu'on ne concède pas à une porte d'entrée, même bien fermée.
+ *
+ * `/auth/forgot` et `/auth/reset` ont été ajoutés avec le lien par courriel,
+ * et l'oubli aurait coûté cher des deux côtés :
+ *
+ *  - **`/auth/forgot` envoie un courriel à chaque appel.** Sans limite, c'est
+ *    une arme à deux tranchants : on inonde la boîte d'un joueur dont on
+ *    connaît l'adresse, et on épuise au passage le quota d'envoi du serveur —
+ *    ce qui prive **tout le monde** du secours, y compris celui qui en a
+ *    vraiment besoin. Le seau d'écriture ordinaire autorisait soixante
+ *    courriels d'affilée.
+ *  - **`/auth/reset` pose un mot de passe** sur présentation d'un jeton. Le
+ *    jeton fait deux cent cinquante-six bits, donc il n'y a rien à deviner —
+ *    mais une porte qui change un mot de passe ne s'ouvre pas soixante fois
+ *    de suite, quelle que soit la solidité de sa serrure.
  */
-const CHEMINS_AUTH = ["/auth/login", "/auth/code", "/auth/recover"];
+const CHEMINS_AUTH = [
+  "/auth/login",
+  "/auth/code",
+  "/auth/recover",
+  "/auth/forgot",
+  "/auth/reset",
+];
 const CHEMINS_INSCRIPTION = ["/auth/register"];
 
 /** À quelle classe appartient une requête. */

@@ -161,6 +161,34 @@ enum CellKind {
   VEHICLE
 }
 
+/// Un lien de réinitialisation de mot de passe, en attente.
+///
+/// Une table et non deux colonnes sur `User` : un joueur peut demander un
+/// lien deux fois de suite — le premier courriel s'est perdu, il recommence —
+/// et les deux liens doivent valoir tant qu'ils n'ont pas expiré. Écraser le
+/// précédent à chaque demande ferait qu'un joueur qui clique sur le premier
+/// message reçu tombe sur un lien mort, sans comprendre pourquoi.
+model PasswordReset {
+  id        String    @id @default(cuid())
+  userId    String
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  /// Empreinte SHA-256 du jeton, jamais le jeton.
+  ///
+  /// SHA-256 et non bcrypt, contrairement au mot de passe : le jeton fait 256
+  /// bits tirés au sort, il n'y a donc rien à deviner et aucune raison de
+  /// ralentir la vérification. Ce qu'on protège ici, c'est le cas d'une base
+  /// lue par un tiers — il n'y trouvera pas de lien utilisable.
+  tokenHash String    @unique
+  expiresAt DateTime
+  /// Date d'utilisation. Non nulle = jeton brûlé, et il ne resservira pas.
+  usedAt    DateTime?
+  createdAt DateTime  @default(now())
+
+  /// On lit par empreinte pour valider, et par joueur pour faire le ménage.
+  @@index([userId])
+  @@index([expiresAt])
+}
+
 model User {
   id             String         @id @default(cuid())
   email          String         @unique
@@ -227,6 +255,7 @@ model User {
   deliveriesBought Delivery[] @relation("DeliveryBuyer")
   questClaims      QuestClaim[]
   ledger         LedgerEntry[]
+  passwordResets   PasswordReset[]
 }
 
 /// Récompense de quête déjà encaissée. Seul l'encaissement se stocke :
@@ -390,6 +419,15 @@ model Parcel {
   laborOrders LaborOrder[]
 
   @@unique([zoneId, mapX, mapY])
+  /// L'index du tri stable des parcelles d'une ferme.
+  ///
+  /// Il existait en base depuis `20260825220000_ordre_des_parcelles`, posé à
+  /// la main dans le SQL, mais n'avait jamais été déclaré ici. Prisma le
+  /// voyait donc comme un intrus et proposait de le **supprimer** dans chaque
+  /// migration suivante — piège silencieux : la première migration générée
+  /// sans relire son SQL emportait avec elle l'index du seul tri que toutes
+  /// les lectures de parcelles utilisent. Déclaré, il cesse d'être une dérive.
+  @@index([farmId, acquiredAt])
   fieldJobs     FieldJob[]
 }
 
