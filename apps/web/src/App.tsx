@@ -103,6 +103,9 @@ import {
   MACHINE_LISTING_MAX_RATE,
   isBreakdownKind,
   hectaresDeGrille,
+  nouveautesNonLues,
+  DERNIERE_NOUVEAUTE,
+  type Nouveaute,
 } from "@farmsim/shared";
 import { AuthScreen, RecoveryNotice, type AuthMode } from "./AuthScreen";
 import type { GrazingHerd, PreviewBuilding } from "./IsoFarmView";
@@ -111,6 +114,7 @@ import { BuildingSheet } from "./BuildingSheet";
 import { MachineSheet, MachineStarStrip, MachineTierPips, type MachinePreview } from "./MachineSheet";
 import { ConfirmDialog, type ConfirmRequest } from "./ConfirmDialog";
 import { ParcelleVoisineSheet } from "./ParcelleVoisineSheet";
+import { NouveautesPanel } from "./NouveautesPanel";
 import { MachineCareOverlay, type CareMode } from "./MachineCareOverlay";
 import { MissionPlay, type MissionPlayContract } from "./MissionPlay";
 import { LivestockPanel, type BarnState, type OrphanYard } from "./LivestockPanel";
@@ -141,7 +145,13 @@ import { FieldDock } from "./FieldDock";
 import type { SkillView } from "./SkillTree";
 import { PlayGuide } from "./PlayGuide";
 import { SkillsScreen, type SkillBonusView } from "./SkillsScreen";
-import { TOKEN_KEY, TUTORIAL_KEY, GUIDE_FLAGS_KEY, playerStorageKey } from "./storage-keys";
+import {
+  TOKEN_KEY,
+  TUTORIAL_KEY,
+  GUIDE_FLAGS_KEY,
+  NOUVEAUTES_KEY,
+  playerStorageKey,
+} from "./storage-keys";
 import {
   cropFromPlantTool,
   isFieldWorkTool,
@@ -308,6 +318,14 @@ type Player = {
   level: number;
   xp: number;
   crd: number;
+  /**
+   * Date d'inscription.
+   *
+   * Elle sert au « Quoi de neuf » : sont nouvelles pour ce joueur les entrées
+   * publiées après son arrivée. C'est ce qui permet d'annoncer l'historique à
+   * ceux qui jouaient déjà sans en accabler un compte créé ce matin.
+   */
+  createdAt?: string;
   farm: {
     id: string;
     /** Gazole en cuve, en litres. */
@@ -550,6 +568,29 @@ function writeGuideFlags(playerId: string, next: GuideFlags) {
   localStorage.setItem(playerStorageKey(GUIDE_FLAGS_KEY, playerId), JSON.stringify(next));
 }
 
+/**
+ * Le marque-page du « Quoi de neuf ».
+ *
+ * Enveloppé dans un `try` comme les autres : le stockage local lève en
+ * navigation privée sur certains navigateurs, et une nouveauté non lue ne vaut
+ * pas un écran blanc.
+ */
+function lireNouveauteVue(playerId: string): string | null {
+  try {
+    return localStorage.getItem(playerStorageKey(NOUVEAUTES_KEY, playerId));
+  } catch {
+    return null;
+  }
+}
+
+function ecrireNouveauteVue(playerId: string, id: string) {
+  try {
+    localStorage.setItem(playerStorageKey(NOUVEAUTES_KEY, playerId), id);
+  } catch {
+    /* Tant pis : le panneau se rouvrira à la prochaine visite. */
+  }
+}
+
 /** Tiroirs du bas, sur petit écran. */
 type SheetKey = "INFO" | "BUILD" | "GARAGE" | "OFFICE" | "HERD" | "STAFF" | "PROFILE";
 
@@ -707,6 +748,8 @@ export function App() {
   const [voisinage, setVoisinage] = useState<VoisinReel[]>([]);
   /* La fiche ouverte en cliquant sur un champ de voisin, s'il y en a une. */
   const [voisinOuvert, setVoisinOuvert] = useState<VoisinReel | null>(null);
+  /** Les nouveautés que ce joueur n'a pas encore lues, s'il y en a. */
+  const [nouveautes, setNouveautes] = useState<readonly Nouveaute[]>([]);
   const [parcelDetail, setParcelDetail] = useState<{
     parcel: Parcel;
     bonuses: Player["bonuses"];
@@ -1605,7 +1648,23 @@ export function App() {
     if (!player) return;
     setGuideFlags(readGuideFlags(player.id));
     if (!installe) return;
-    if (localStorage.getItem(playerStorageKey(TUTORIAL_KEY, player.id))) return;
+    if (localStorage.getItem(playerStorageKey(TUTORIAL_KEY, player.id))) {
+      /*
+       * Le « Quoi de neuf », et seulement pour qui a déjà vu le tutoriel.
+       *
+       * Les deux s'ouvrent au même moment et au même endroit de l'écran : les
+       * empiler accueillerait un joueur neuf par deux panneaux superposés. Le
+       * tutoriel passe d'abord ; les nouveautés attendent la visite suivante,
+       * où elles seront encore là.
+       */
+      setNouveautes(
+        nouveautesNonLues({
+          vue: lireNouveauteVue(player.id),
+          compteCreeLe: player.createdAt,
+        }),
+      );
+      return;
+    }
     const t = window.setTimeout(() => setShowTutorial(true), 600);
     return () => window.clearTimeout(t);
   }, [installe, player?.id]);
@@ -7194,6 +7253,13 @@ export function App() {
           setVoisinOuvert(null);
         }}
         onFermer={() => setVoisinOuvert(null)}
+      />
+      <NouveautesPanel
+        nouveautes={nouveautes}
+        onFermer={() => {
+          if (player) ecrireNouveauteVue(player.id, DERNIERE_NOUVEAUTE);
+          setNouveautes([]);
+        }}
       />
       <ConfirmDialog request={confirmRequest} onCancel={() => setConfirmRequest(null)} />
       {care && player && (() => {

@@ -19,6 +19,15 @@ export const TUTORIAL_KEY = "farmsim_tutorial_v1";
 export const GUIDE_FLAGS_KEY = "farmsim_guide_flags_v1";
 
 /**
+ * Dernière nouveauté lue — le marque-page du « Quoi de neuf ».
+ *
+ * Ici et non en base : la liste voyage avec le jeu, et le pire qui puisse
+ * arriver en changeant d'appareil, c'est de relire une bonne nouvelle. Une
+ * colonne aurait demandé une migration et une route pour ça.
+ */
+export const NOUVEAUTES_KEY = "farmsim_nouveautes_v1";
+
+/**
  * Les marqueurs de progression appartiennent à un joueur, pas au navigateur.
  * Sans ce suffixe, créer un second compte sur le même téléphone lui faisait
  * hériter du tutoriel et des objectifs du compte précédent.

@@ -26,6 +26,7 @@ export * from "./world.js";
 export * from "./climate.js";
 export * from "./land.js";
 export * from "./parcelles.js";
+export * from "./nouveautes.js";
 export * from "./livestock.js";
 export * from "./ripeness.js";
 export * from "./soil.js";

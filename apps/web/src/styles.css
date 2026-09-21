@@ -7097,6 +7097,47 @@ button.tiny {
   background: rgba(20, 26, 20, 0.42);
   backdrop-filter: blur(2px);
 }
+/* « Quoi de neuf » — ce qui a changé depuis la dernière partie.
+
+   « Je te fais pas de retour parce que tu m'en fais pas sur ce que tu as
+   modifié. » Le panneau reprend la carte de la fiche de parcelle : même
+   fond, même largeur, même bouton. Une liste de nouvelles n'a pas besoin
+   d'un habillage à elle. */
+.neuf-card {
+  width: min(30rem, 100%);
+  max-height: min(34rem, 84vh);
+}
+.neuf-liste {
+  /* Six entrées dépassent l'écran d'un téléphone : la liste défile, l'en-tête
+     et le bouton restent en place. */
+  overflow-y: auto;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 0.85rem;
+}
+.neuf-entree {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  padding-left: 0.7rem;
+  border-left: 3px solid var(--gold-500);
+}
+.neuf-titre {
+  font-size: 0.95rem;
+  line-height: 1.25;
+}
+.neuf-texte {
+  margin: 0;
+  font-size: 0.86rem;
+  line-height: 1.45;
+  opacity: 0.85;
+}
+.neuf-appel {
+  margin: 0;
+}
 .voisin-card {
   width: min(24rem, 100%);
   display: flex;
