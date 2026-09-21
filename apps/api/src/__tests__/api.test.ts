@@ -30,6 +30,7 @@ import { creerBaseTest, supprimerBaseTest, type BaseTest } from "./base-test.js"
 import { formatRecovery, isRecoveryCode } from "@farmsim/shared";
 import {
   BUILDING_DEFS,
+  DEFAULT_GRID,
   MACHINE_DEFS,
   machineCost,
   machineUpgradeCost,
@@ -4246,5 +4247,218 @@ describe("journal durable et paginé", () => {
     assert.equal((all.corps as unknown as import("@farmsim/shared").LedgerPage).resultat.solde, 1204);
     const invalid = await appel(`/players/${moi.id}/ledger?jours=NaN`, { jeton: moi.jeton });
     assert.equal(invalid.statut, 400);
+  });
+});
+
+describe("le parcellaire", () => {
+  /**
+   * « Les parcelles ont toutes les mêmes tailles, il devrait y avoir des
+   * tailles différentes ; seule la parcelle de base qu'on a tous devrait avoir
+   * une taille standard. »
+   *
+   * Le reproche portait sur la génération du monde, et il était exact :
+   * `gridW` et `gridH` existent sur `Parcel` depuis toujours, mais la création
+   * y écrivait `DEFAULT_GRID` pour chacune des parcelles de chacune des
+   * régions. Une variable qui ne prend jamais qu'une valeur.
+   *
+   * Le second volet — que la différence se **voie** dans le paysage — est tenu
+   * côté client (`parcelles-de-tailles.test.ts`) ; le catalogue et le prix à
+   * la surface sont dans `taille-parcelle.test.ts`. Ici on éprouve ce que le
+   * serveur pose vraiment en base, et la seule règle qui ne se déduit d'aucune
+   * fonction pure : la parcelle de départ est ramenée au standard.
+   */
+  type ParcelleCarte = {
+    id: string;
+    farmId: string | null;
+    gridW: number;
+    gridH: number;
+  };
+
+  async function parcellesLibres(jeton: string): Promise<ParcelleCarte[]> {
+    const r = await appel("/zones", { jeton });
+    assert.equal(r.statut, 200, JSON.stringify(r.corps));
+    const zones = r.corps as unknown as { parcels: ParcelleCarte[] }[];
+    return zones.flatMap((z) => z.parcels).filter((p) => !p.farmId);
+  }
+
+  /**
+   * Les parcelles libres d'une région **où l'on peut s'installer**.
+   *
+   * `/zones` ne dit pas si une région accepte une ferme de départ : celles où
+   * ni blé ni maïs ne pousse sont refusées par `/world/claim`, et un test qui
+   * tirait au hasard dans le monde entier tombait dessus une fois sur
+   * plusieurs. Le test échouait alors sur un piège du monde, pas sur ce qu'il
+   * mesure. `/world/:continent` porte le drapeau, et la grille avec.
+   */
+  async function parcellesOuSInstaller(jeton: string): Promise<ParcelleCarte[]> {
+    const r = await appel("/world/AUR", { jeton });
+    assert.equal(r.statut, 200, JSON.stringify(r.corps));
+    const regions = (r.corps as unknown as {
+      regions: {
+        starterEligible: boolean;
+        parcels: { id: string; gridW: number; gridH: number; taken: boolean }[];
+      }[];
+    }).regions;
+    return regions
+      .filter((z) => z.starterEligible)
+      .flatMap((z) => z.parcels)
+      .filter((p) => !p.taken)
+      .map((p) => ({ id: p.id, farmId: null, gridW: p.gridW, gridH: p.gridH }));
+  }
+
+  it("pose des lots de plusieurs tailles, et pas une seule", async () => {
+    const moi = await inscrire("Arpenteur");
+    const libres = await parcellesLibres(moi.jeton);
+    assert.ok(libres.length > 50, `il faut un monde peuplé, vu ${libres.length}`);
+    const tailles = new Set(libres.map((p) => `${p.gridW}x${p.gridH}`));
+    assert.ok(
+      tailles.size >= 3,
+      `le monde ne devrait pas être uniforme, vu ${[...tailles].join(", ")}`,
+    );
+    // Et de part et d'autre du standard : c'est la demande, « des lots plus
+    // grands et plus petits ».
+    assert.ok(libres.some((p) => p.gridW < DEFAULT_GRID.w), "il manque des petits lots");
+    assert.ok(libres.some((p) => p.gridW > DEFAULT_GRID.w), "il manque des grands lots");
+  });
+
+  it("ramène la parcelle de départ au standard, quelle que soit celle qu’on choisit", async () => {
+    /*
+     * La règle qui rend le parcellaire variable jouable plutôt qu'injuste.
+     * Sans elle, celui qui pose son doigt au bon endroit de la carte démarre
+     * sur vingt-cinq hectares et son voisin sur six, avant d'avoir joué un
+     * seul coup.
+     */
+    const moi = await inscrire("Colon");
+    const libres = await parcellesOuSInstaller(moi.jeton);
+    /* Par la fin : le début de la liste se remplit au fil des tests, et deux
+       montages ne doivent pas se disputer les mêmes cases. */
+    const horsNorme = [...libres].reverse().find((p) => p.gridW !== DEFAULT_GRID.w);
+    assert.ok(horsNorme, "il faut une parcelle qui ne soit pas au standard");
+
+    const r = await appel("/world/claim", {
+      methode: "POST",
+      corps: { userId: moi.id, specialization: "ELEVEUR", parcelId: horsNorme.id },
+      jeton: moi.jeton,
+    });
+    // 201 : la route crée la ferme, elle ne met pas à jour une ressource.
+    assert.equal(r.statut, 201, JSON.stringify(r.corps));
+
+    const me = await appel("/auth/me", { jeton: moi.jeton });
+    const parcelles = (me.corps as unknown as {
+      player: { farm: { parcels: { id: string; gridW: number; gridH: number }[] } };
+    }).player.farm.parcels;
+    assert.equal(parcelles.length, 1);
+    assert.equal(parcelles[0]!.gridW, DEFAULT_GRID.w);
+    assert.equal(parcelles[0]!.gridH, DEFAULT_GRID.h);
+
+    /*
+     * Et la grille de cases suit, en nombre comme en bornes.
+     *
+     * C'est ici que le premier essai s'est cassé : la grange de départ se
+     * plaçait d'après la grille **lue avant** le redécoupage, donc vers
+     * (13, 13) sur un lot de seize — une case qui venait d'être supprimée. Le
+     * `parcelCell.update` faisait échouer toute la transaction, et
+     * l'installation entière avec elle.
+     */
+    const vue = await appel(`/parcels/${parcelles[0]!.id}`, { jeton: moi.jeton });
+    assert.equal(vue.statut, 200, JSON.stringify(vue.corps));
+    const parcelle = (vue.corps as unknown as {
+      parcel: {
+        gridW: number;
+        gridH: number;
+        cells: { x: number; y: number }[];
+        buildings: { type: string }[];
+      };
+    }).parcel;
+    assert.equal(parcelle.gridW, DEFAULT_GRID.w);
+    assert.equal(parcelle.cells.length, DEFAULT_GRID.w * DEFAULT_GRID.h);
+    assert.ok(
+      parcelle.cells.every((c) => c.x < DEFAULT_GRID.w && c.y < DEFAULT_GRID.h),
+      "aucune case ne doit dépasser la grille standard",
+    );
+    // L'étable de départ est bien là : c'est elle qui échouait en silence.
+    assert.ok(
+      parcelle.buildings.some((b) => b.type === "CATTLE_BARN"),
+      "l'étable de départ doit avoir été posée",
+    );
+  });
+
+  it("dit la surface du voisinage, et la fait varier d’un champ à l’autre", async () => {
+    const moi = await inscrire("Voisin");
+    const libres = await parcellesOuSInstaller(moi.jeton);
+    const choisie = libres[Math.floor(libres.length / 2)]!;
+    await appel("/world/claim", {
+      methode: "POST",
+      corps: { userId: moi.id, specialization: "CEREALIER", parcelId: choisie.id },
+      jeton: moi.jeton,
+    });
+    const r = await appel(`/parcels/${choisie.id}/voisinage`, { jeton: moi.jeton });
+    assert.equal(r.statut, 200, JSON.stringify(r.corps));
+    const parcelles = (r.corps as unknown as {
+      parcelles: { id: string; gridW: number; gridH: number; statut: string }[];
+    }).parcelles;
+    assert.ok(parcelles.length >= 8, `voisinage trop maigre : ${parcelles.length}`);
+    /*
+     * C'est cette route qui alimente le paysage. Sans ces deux colonnes, le
+     * client n'a aucun moyen de dessiner un champ à sa taille — c'était le cas
+     * jusqu'ici, et c'est pourquoi tous les voisins se ressemblaient.
+     */
+    for (const p of parcelles) {
+      assert.equal(typeof p.gridW, "number", `grille manquante sur ${p.id}`);
+      assert.equal(typeof p.gridH, "number", `grille manquante sur ${p.id}`);
+    }
+    assert.ok(
+      new Set(parcelles.map((p) => p.gridW)).size >= 2,
+      "le voisinage immédiat doit déjà montrer plusieurs tailles",
+    );
+  });
+
+  it("fait payer la surface, et le dit dans le devis", async () => {
+    /*
+     * Le défaut économique que le déplafonnement des tailles aurait ouvert :
+     * `askPrice()` chiffrait sept facteurs et pas les hectares. Invisible tant
+     * que toutes les parcelles faisaient la même taille, indéfendable dès la
+     * première qui n'en fait pas.
+     */
+    const moi = await inscrire("Acheteur");
+    const libres = await parcellesOuSInstaller(moi.jeton);
+    const base = libres[0]!;
+    await appel("/world/claim", {
+      methode: "POST",
+      corps: { userId: moi.id, specialization: "CEREALIER", parcelId: base.id },
+      jeton: moi.jeton,
+    });
+
+    const devis = async (id: string) => {
+      const r = await appel(`/parcels/${id}/quote`, { jeton: moi.jeton });
+      assert.equal(r.statut, 200, JSON.stringify(r.corps));
+      return r.corps as unknown as {
+        hectares: number;
+        gridW: number;
+        total: number;
+        breakdown: { surface: { value: number; contribution: number } };
+      };
+    };
+
+    const restantes = (await parcellesLibres(moi.jeton)).filter((p) => p.id !== base.id);
+    const petite = restantes.find((p) => p.gridW === Math.min(...restantes.map((x) => x.gridW)))!;
+    const grande = restantes.find((p) => p.gridW === Math.max(...restantes.map((x) => x.gridW)))!;
+    assert.ok(petite.gridW < grande.gridW, "il faut deux tailles différentes à comparer");
+
+    const dp = await devis(petite.id);
+    const dg = await devis(grande.id);
+    assert.ok(dp.hectares < dg.hectares, "le devis doit annoncer la surface");
+    assert.ok(
+      dg.breakdown.surface.value > dp.breakdown.surface.value,
+      "le facteur de surface doit suivre la grille",
+    );
+    // Le facteur vaut exactement 1 au standard : c'est ce qui garantit que
+    // rien n'a bougé pour les parcelles qui n'ont pas changé de taille.
+    const standard = restantes.find((p) => p.gridW === DEFAULT_GRID.w);
+    if (standard) {
+      const ds = await devis(standard.id);
+      assert.equal(ds.breakdown.surface.value, 1);
+      assert.equal(ds.breakdown.surface.contribution, 0);
+    }
   });
 });

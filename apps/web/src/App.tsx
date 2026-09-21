@@ -102,6 +102,7 @@ import {
   MACHINE_LISTING_MIN_RATE,
   MACHINE_LISTING_MAX_RATE,
   isBreakdownKind,
+  hectaresDeGrille,
 } from "@farmsim/shared";
 import { AuthScreen, RecoveryNotice, type AuthMode } from "./AuthScreen";
 import type { GrazingHerd, PreviewBuilding } from "./IsoFarmView";
@@ -4027,9 +4028,14 @@ export function App() {
       const apres = await refreshPlayer();
       await refreshMeta();
       const achetee = apres?.farm?.parcels.find((p) => p.id === parcelId);
+      /* La surface dans le message d'achat : c'est elle qu'on vient de payer,
+         et elle n'est plus la même d'un lot à l'autre. */
       setMsg(
         achetee
-          ? `${achetee.label} est à vous — elle vous attend dans « Mes parcelles »`
+          ? `${achetee.label} est à vous — ${hectaresDeGrille(
+              achetee.gridW,
+              achetee.gridH,
+            ).toLocaleString("fr-FR")} ha, elle vous attend dans « Mes parcelles »`
           : "Parcelle acquise",
       );
     } catch (e) {
@@ -5504,7 +5510,25 @@ export function App() {
               controle={vueControle}
               onEgare={setVueEgaree}
               voisinage={voisinage}
-              onVoisinClick={setVoisinOuvert}
+              /*
+               * Cliquer sur sa propre parcelle y emmène — le bouton devient
+               * facultatif.
+               *
+               * « On est obligé de cliquer sur un bouton pour changer de
+               * parcelle », puis « aller sur sa parcelle en cliquant
+               * dessus ». Le paysage montrait bien les siennes, mais le seul
+               * geste qu'il offrait dessus ouvrait une fiche dont le texte
+               * était « Cette parcelle est déjà la vôtre » : une impasse, au
+               * bout du geste le plus naturel de l'écran.
+               *
+               * Les pastilles « Mes parcelles » restent : ce sont elles qu'on
+               * emploie pour rejoindre une parcelle d'une autre région, que le
+               * paysage ne montre pas.
+               */
+              onVoisinClick={(v) => {
+                if (v.statut === "MOI") setActiveParcelId(v.id);
+                else setVoisinOuvert(v);
+              }}
               gridW={gw}
               gridH={gh}
               cells={grid}
@@ -7160,6 +7184,13 @@ export function App() {
         enCours={busy}
         onAcheter={async (id) => {
           await buyAdjacent(id);
+          setVoisinOuvert(null);
+        }}
+        /* Le paysage n'ouvre plus cette fiche sur une parcelle à soi — il y
+           emmène directement. Le bouton reste pour les autres chemins qui
+           l'ouvrent, afin qu'aucun ne retombe dans l'impasse. */
+        onAller={(id) => {
+          setActiveParcelId(id);
           setVoisinOuvert(null);
         }}
         onFermer={() => setVoisinOuvert(null)}

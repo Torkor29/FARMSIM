@@ -1,5 +1,13 @@
 import { useEffect, useRef } from "react";
-import { CROP_DEFS, SPECIES, formatEuros, peutRacheter, type CropCode } from "@farmsim/shared";
+import {
+  CROP_DEFS,
+  SPECIES,
+  formatEuros,
+  hectaresDeGrille,
+  libelleDeTaille,
+  peutRacheter,
+  type CropCode,
+} from "@farmsim/shared";
 import type { VoisinReel } from "./countryside-plan";
 import { MenuClose } from "./ui/MenuClose";
 
@@ -21,6 +29,8 @@ type Props = {
   /** Achat en cours : le bouton attend plutôt que de se laisser cliquer deux fois. */
   enCours?: boolean;
   onAcheter: (id: string) => void;
+  /** Rejoindre une parcelle qu'on possède déjà, au lieu de l'impasse d'avant. */
+  onAller?: (id: string) => void;
   onFermer: () => void;
 };
 
@@ -50,7 +60,13 @@ function nomEspece(kind: string): string {
   return SPECIES[kind as keyof typeof SPECIES]?.plural ?? kind;
 }
 
-export function ParcelleVoisineSheet({ voisin, enCours = false, onAcheter, onFermer }: Props) {
+export function ParcelleVoisineSheet({
+  voisin,
+  enCours = false,
+  onAcheter,
+  onAller,
+  onFermer,
+}: Props) {
   const premier = useRef<HTMLButtonElement | null>(null);
   /* La fermeture arrive en lambda : son identité change à chaque rendu du
      parent. La garder dans les dépendances relançait l'effet — et donc le
@@ -105,6 +121,21 @@ export function ParcelleVoisineSheet({ voisin, enCours = false, onAcheter, onFer
         </header>
 
         <dl className="voisin-faits">
+          {/* La surface d'abord : c'est ce qui change d'un lot à l'autre
+              depuis que les parcelles n'ont plus toutes la même taille, et
+              c'est ce qui explique l'écart de prix plus bas. */}
+          {voisin.gridW != null && voisin.gridH != null && (
+            <div>
+              <dt>Surface</dt>
+              <dd>
+                {hectaresDeGrille(voisin.gridW, voisin.gridH).toLocaleString("fr-FR")} ha
+                <span className="voisin-stade">
+                  {" "}
+                  · {libelleDeTaille(voisin.gridW, voisin.gridH)}
+                </span>
+              </dd>
+            </div>
+          )}
           <div>
             <dt>Culture</dt>
             <dd>
@@ -168,7 +199,22 @@ export function ParcelleVoisineSheet({ voisin, enCours = false, onAcheter, onFer
             )}
           </div>
         ) : voisin.statut === "MOI" ? (
-          <p className="voisin-refus">Cette parcelle est déjà la vôtre.</p>
+          /* L'impasse d'avant. « Cette parcelle est déjà la vôtre » était vrai
+             et sans issue : il fallait fermer la fiche et repasser par les
+             pastilles du rail pour y aller. */
+          <button
+            ref={premier}
+            type="button"
+            /* La même classe que « Acheter cette parcelle » : c'est le même
+               geste au même endroit de la fiche, il doit avoir la même tenue.
+               Inventer une classe qui n'existe pas dans la feuille rendrait un
+               bouton nu. */
+            className="voisin-acheter"
+            onClick={() => onAller?.(voisin.id)}
+            disabled={!onAller}
+          >
+            Aller sur cette parcelle
+          </button>
         ) : (
           <p className="voisin-refus">
             {voisin.exploitation ?? "Cette exploitation"} la travaille. Elle ne sera à reprendre que

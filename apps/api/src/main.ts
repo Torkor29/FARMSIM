@@ -76,6 +76,8 @@ import {
   parcelName,
   marketValue,
   askPrice,
+  tailleDeParcelle,
+  hectaresDeGrille,
   accessIndex,
   canAcquire,
   landTax,
@@ -717,14 +719,27 @@ async function testeurAutorisé(req: express.Request) {
   return estCompteDev(auth.user.email) ? auth : null;
 }
 
-async function createParcelGrid(parcelId: string, gridW: number, gridH: number) {
+/**
+ * Les cases d'une parcelle.
+ *
+ * `client` existe pour la remise au standard de la parcelle de départ, qui se
+ * joue dans une transaction : y écrire avec le `prisma` global poserait les
+ * cases hors du bloc, et un échec plus loin laisserait une parcelle sans
+ * grille.
+ */
+async function createParcelGrid(
+  parcelId: string,
+  gridW: number,
+  gridH: number,
+  client: Pick<typeof prisma, "parcelCell"> = prisma,
+) {
   const data = [];
   for (let y = 0; y < gridH; y++) {
     for (let x = 0; x < gridW; x++) {
       data.push({ parcelId, x, y, kind: "EMPTY" as CellKind });
     }
   }
-  await prisma.parcelCell.createMany({ data });
+  await client.parcelCell.createMany({ data });
 }
 
 /**
@@ -2425,6 +2440,15 @@ type QuoteTarget = {
   mapY: number;
   fertility: number;
   accessIndex: number;
+  /**
+   * La grille de la parcelle — parce qu'on achète des hectares.
+   *
+   * Facultative pour ne pas casser les appels qui chiffrent une parcelle
+   * qu'ils n'ont pas chargée en entier ; absente, `hectaresDeGrille` retombe
+   * sur la grille standard, c'est-à-dire sur le prix d'avant.
+   */
+  gridW?: number;
+  gridH?: number;
   zone: { koppen: string; continentCode: string };
 };
 
@@ -2459,6 +2483,18 @@ function quoteFromCounts(target: QuoteTarget, owned: OwnedParcel[], counts: Quot
   ).length;
 
   const publicInput = {
+    /*
+     * La surface, enfin comptée.
+     *
+     * Toutes les parcelles du monde faisaient douze cases sur douze : le prix
+     * pouvait ignorer les hectares sans que rien ne se voie. Le parcellaire
+     * variable rend l'oubli intenable — un lot de vingt-cinq hectares se
+     * serait payé le prix d'un de six.
+     */
+    hectares: hectaresDeGrille(
+      target.gridW ?? DEFAULT_GRID.w,
+      target.gridH ?? DEFAULT_GRID.h,
+    ),
     fertility: target.fertility,
     koppen: target.zone.koppen,
     accessIndex: target.accessIndex,
@@ -2473,6 +2509,9 @@ function quoteFromCounts(target: QuoteTarget, owned: OwnedParcel[], counts: Quot
 
   return {
     parcelId: target.id,
+    hectares: publicInput.hectares,
+    gridW: target.gridW ?? DEFAULT_GRID.w,
+    gridH: target.gridH ?? DEFAULT_GRID.h,
     marketValue: marketValue(publicInput),
     total: priced.total,
     breakdown: priced.breakdown,
@@ -3427,6 +3466,81 @@ async function tickNpcFarms() {
   }
 }
 
+/**
+ * Le redécoupage des lots libres — le rattrapage des mondes déjà nés.
+ *
+ * La génération pose désormais des tailles variées, mais elle ne s'exécute
+ * qu'une fois par région : un monde né avant ce changement garderait son
+ * parcellaire uniforme pour toujours, et c'est précisément celui sur lequel on
+ * joue. Cette fonction le reprend.
+ *
+ * Trois garde-fous, et ils comptent plus que le reste :
+ *
+ * - **Seules les parcelles sans ferme.** Redécouper une parcelle exploitée
+ *   supprimerait ses cases, donc ses cultures, ses bâtiments et son travail en
+ *   cours. Aucune terre de joueur ni de PNJ n'est touchée, jamais.
+ * - **Rien à faire si la taille est déjà la bonne**, ce qui rend la fonction
+ *   idempotente : au deuxième démarrage elle ne réécrit rien.
+ * - **Hors du chemin critique.** Elle est lancée après l'ouverture du port :
+ *   quatre cents parcelles à redécouper, c'est une poignée de secondes, mais
+ *   pas au prix d'un serveur qui ne répond pas encore au vérificateur de
+ *   santé. Une parcelle pas encore reprise garde simplement sa taille d'avant.
+ */
+async function redecouperLesLotsLibres(): Promise<void> {
+  const libres = await prisma.parcel.findMany({
+    where: { farmId: null },
+    select: {
+      id: true,
+      mapX: true,
+      mapY: true,
+      gridW: true,
+      gridH: true,
+      fertility: true,
+      accessIndex: true,
+      zone: { select: { code: true, koppen: true } },
+    },
+  });
+
+  let repris = 0;
+  for (const p of libres) {
+    const cible = tailleDeParcelle(p.zone.code, p.mapX, p.mapY);
+    if (p.gridW === cible.w && p.gridH === cible.h) continue;
+    try {
+      await prisma.$transaction(async (tx) => {
+        /* Une dernière vérification **dans** la transaction : entre la lecture
+           et ici, un joueur a pu revendiquer cette parcelle. */
+        const encoreLibre = await tx.parcel.findFirst({
+          where: { id: p.id, farmId: null },
+          select: { id: true },
+        });
+        if (!encoreLibre) return;
+        await tx.parcelCell.deleteMany({ where: { parcelId: p.id } });
+        await createParcelGrid(p.id, cible.w, cible.h, tx);
+        await tx.parcel.update({
+          where: { id: p.id },
+          data: {
+            gridW: cible.w,
+            gridH: cible.h,
+            landPrice: marketValue({
+              hectares: hectaresDeGrille(cible.w, cible.h),
+              fertility: p.fertility,
+              koppen: p.zone.koppen,
+              accessIndex: p.accessIndex,
+              neighborDensity: 0,
+              occupancy: 0,
+            }),
+          },
+        });
+      });
+      repris++;
+    } catch (e) {
+      // Une parcelle qui résiste ne doit pas arrêter les quatre cents autres.
+      console.error(`redécoupage impossible pour ${p.id}`, e);
+    }
+  }
+  if (repris > 0) console.log(`Parcellaire : ${repris} lots libres redécoupés`);
+}
+
 async function ensureSeed() {
   await prisma.user.updateMany({
     where: { specialization: "ETA" },
@@ -3479,17 +3593,29 @@ async function ensureSeed() {
               Math.abs(my - Math.floor((region.mapH - 1) / 2)),
             );
             const access = accessIndex({ hubDistance, road: 0.6, silo: 0.3, rail: 0.1 });
+            /*
+             * La taille du lot, enfin variable.
+             *
+             * Ces deux colonnes recevaient `DEFAULT_GRID` pour chacune des
+             * parcelles de chacune des régions : une variable qui ne prenait
+             * jamais qu'une valeur, d'où « les parcelles ont toutes la même
+             * taille ». Elle se **déduit** maintenant de la case du cadastre,
+             * ce qui la rend stable sans rien stocker de plus : la même case
+             * rendra toujours le même lot, pour tout le monde.
+             */
+            const grille = tailleDeParcelle(region.code, mx, my);
             const parcel = await prisma.parcel.create({
               data: {
                 zoneId: zone.id,
                 label: parcelName(continent.code, n++),
                 mapX: mx,
                 mapY: my,
-                gridW: DEFAULT_GRID.w,
-                gridH: DEFAULT_GRID.h,
+                gridW: grille.w,
+                gridH: grille.h,
                 fertility,
                 accessIndex: access,
                 landPrice: marketValue({
+                  hectares: hectaresDeGrille(grille.w, grille.h),
                   fertility,
                   koppen: region.koppen,
                   cropFitA: region.crops.length >= 2,
@@ -3499,7 +3625,7 @@ async function ensureSeed() {
                 }),
               },
             });
-            await createParcelGrid(parcel.id, DEFAULT_GRID.w, DEFAULT_GRID.h);
+            await createParcelGrid(parcel.id, grille.w, grille.h);
           }
         }
       }
@@ -3857,9 +3983,42 @@ app.post("/world/claim", async (req, res) => {
         }
       }
 
+      /*
+       * La parcelle de départ est ramenée au standard — pour tout le monde.
+       *
+       * « Seule la parcelle de base qu'on a tous devrait avoir une taille
+       * standard » : c'est ce qui rend le parcellaire variable jouable plutôt
+       * qu'injuste. Sans cela, celui qui pose son doigt au bon endroit de la
+       * carte démarrerait sur vingt-cinq hectares et son voisin sur six, avant
+       * d'avoir joué un seul coup. La variété est ce qu'on **achète**, pas ce
+       * qu'on tire au sort à l'inscription.
+       *
+       * La parcelle n'a jamais été exploitée — la route exige `farmId: null` —
+       * donc ses cases sont toutes vides : les refaire ne détruit rien.
+       */
+      if (parcel.gridW !== DEFAULT_GRID.w || parcel.gridH !== DEFAULT_GRID.h) {
+        await tx.parcelCell.deleteMany({ where: { parcelId: parcel.id } });
+        await createParcelGrid(parcel.id, DEFAULT_GRID.w, DEFAULT_GRID.h, tx);
+      }
+
       await tx.parcel.update({
         where: { id: parcel.id },
-        data: { farmId: farm.id, acquiredAt: new Date() },
+        data: {
+          farmId: farm.id,
+          acquiredAt: new Date(),
+          gridW: DEFAULT_GRID.w,
+          gridH: DEFAULT_GRID.h,
+          /* Le prix au cadastre suit la nouvelle surface, sinon la taxe
+             foncière continuerait de porter sur le lot d'avant. */
+          landPrice: marketValue({
+            hectares: hectaresDeGrille(DEFAULT_GRID.w, DEFAULT_GRID.h),
+            fertility: parcel.fertility,
+            koppen: parcel.zone.koppen,
+            accessIndex: parcel.accessIndex,
+            neighborDensity: 0,
+            occupancy: 0,
+          }),
+        },
       });
 
       const tractor = await tx.machine.findFirst({
@@ -3883,7 +4042,16 @@ app.post("/world/claim", async (req, res) => {
        * découvrir qu'il en existe un, et la branche s'ouvre en les menant.
        */
       {
-        const barnSpot = findStarterBarnSpot(parcel.gridW, parcel.gridH);
+        /*
+         * La grille **après** remise au standard, et non celle qu'on a lue.
+         *
+         * `parcel` a été chargée avant le redécoupage : sur un lot de seize
+         * cases, elle annonce encore seize. La grange partait alors se poser
+         * vers (13, 13), une case qui venait d'être supprimée, et le
+         * `parcelCell.update` faisait échouer toute la transaction — donc
+         * l'installation entière, sans message utile.
+         */
+        const barnSpot = findStarterBarnSpot(DEFAULT_GRID.w, DEFAULT_GRID.h);
         if (barnSpot) {
           const barnDef = BUILDING_DEFS.CATTLE_BARN;
           const cells = footprintCells(barnSpot.x, barnSpot.y, barnDef.w, barnDef.h);
@@ -13602,6 +13770,11 @@ async function main() {
           "Retirez FARMSIM_DEV_TOOLS de l'environnement en production.",
       );
     }
+    /* Après l'ouverture du port, jamais avant : voir le commentaire de la
+       fonction. Un échec ne doit pas davantage éteindre le serveur. */
+    void redecouperLesLotsLibres().catch((e) =>
+      console.error("redécoupage du parcellaire en échec", e),
+    );
   });
 }
 

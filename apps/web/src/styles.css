@@ -3002,6 +3002,13 @@ html.playing .build-confirm { position: fixed; }
   border-color: var(--teal-300);
   color: var(--teal-700);
 }
+.zone-cell-ha {
+  /* La surface, sous le prix, sur les parcelles libres.
+     Plus discrète que lui : c'est le prix qu'on compare d'abord, la surface
+     explique l'écart. */
+  opacity: 0.75;
+  font-weight: 400;
+}
 .zone-cell.st-mine {
   background: var(--gold-300);
   border-color: var(--gold-500);

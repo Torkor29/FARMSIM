@@ -96,12 +96,15 @@ describe("la trame des voisins", () => {
     expect(plan.parcelles.length).toBeGreaterThanOrEqual(8);
   });
 
-  it("les fait toutes de la taille de celle du joueur", () => {
+  it("les fait toutes de la taille du joueur tant qu’on ne dit pas l’échelle", () => {
     /*
-     * « Les parcelles des PNJ doivent être sous la même forme que nous et
-     * collées, de la même taille, juste ils les gèrent indépendamment, et ça
-     * sera les parcelles qu'on pourra racheter. » Une parcelle rachetée ne
-     * doit rien avoir à changer de forme pour venir se coller à la sienne.
+     * Le repli, et il compte : c'est le décor qu'on monte avant que la carte
+     * réponde, et le rendu de tous les appels écrits avant que les parcelles
+     * aient des tailles différentes.
+     *
+     * Sans `pasCase`, rien ne permet de convertir une grille en mètres : on
+     * retombe donc sur l'emprise du joueur pour tout le monde, exactement
+     * comme avant. La variété demande l'échelle, elle ne s'invente pas.
      */
     expect(plan.emprise).toBe(EMPRISE);
     expect(plan.pas).toBe(EMPRISE + LARGEUR_CHEMIN);
@@ -109,6 +112,7 @@ describe("la trame des voisins", () => {
       const e = empriseParcelle(p, plan.emprise);
       expect(e.w).toBe(EMPRISE);
       expect(e.d).toBe(EMPRISE);
+      expect(p.cote).toBe(EMPRISE);
     }
   });
 

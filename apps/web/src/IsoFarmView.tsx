@@ -23,7 +23,7 @@ import { applyHerdPose, meshForHerd } from "./animal-meshes";
 import { createBuildingRig, nearestThreshold, type BuildingRig } from "./buildings3d";
 import { createParkingRig, type ParkingRig } from "./parking3d";
 import { createCountryside, type Campagne } from "./countryside";
-import { parcelleSous, type VoisinReel } from "./countryside-plan";
+import { TALUS_PARCELLE, parcelleSous, type VoisinReel } from "./countryside-plan";
 import {
   bornesDeplacement,
   elastique,
@@ -2104,7 +2104,13 @@ export function IsoFarmView({
        */
       const voisins = voisinageRef.current;
       const empreinteVoisins = (voisins ?? [])
-        .map((v) => `${v.col},${v.rang}:${v.culture ?? "-"}:${v.stade ?? "-"}:${v.batiments.length}:${v.statut}`)
+        .map(
+          (v) =>
+            /* La grille en fait partie : c'est elle qui donne sa taille au
+               champ. L'omettre laisserait le pays uniforme jusqu'au prochain
+               changement de culture d'un voisin. */
+            `${v.col},${v.rang}:${v.gridW ?? "-"}x${v.gridH ?? "-"}:${v.culture ?? "-"}:${v.stade ?? "-"}:${v.batiments.length}:${v.statut}`,
+        )
         .join("|");
       const cle = `${gw}x${gh}|${courBoite.x.toFixed(2)},${courBoite.z.toFixed(2)},${courBoite.w.toFixed(2)},${courBoite.d.toFixed(2)}|${parcelIdRef.current}|${empreinteVoisins}`;
       if (cle !== campagneCle) {
@@ -2114,12 +2120,17 @@ export function IsoFarmView({
         campagne = createCountryside({
           graine: parcelIdRef.current || `${gw}x${gh}`,
           /*
-           * Les voisins ont exactement l'emprise de l'île du joueur, et se
-           * posent sur la même trame : ce sont les parcelles qu'il pourra
-           * racheter, et une parcelle rachetée ne doit rien avoir à changer
-           * de forme pour venir se coller à la sienne.
+           * L'île du joueur, et l'échelle du pays.
+           *
+           * `emprise` reste la sienne : c'est elle qui borde la cour et cale
+           * le cadrage. `pasCase` est la nouveauté — le côté d'une **case**,
+           * d'où chaque voisin tire le sien. Le passer plutôt que de recopier
+           * l'emprise du joueur est ce qui fait que deux joueurs voient la
+           * même ferme voisine à la même dimension, quelle que soit la taille
+           * de la leur.
            */
-          emprise: Math.max(gw, gh) * step + 1.4,
+          emprise: Math.max(gw, gh) * step + TALUS_PARCELLE,
+          pasCase: step,
           cases: Math.max(gw, gh),
           voisins: voisins?.length ? voisins : undefined,
           cour: courBoite,
@@ -2144,7 +2155,10 @@ export function IsoFarmView({
         const boites = [ile, courBoite];
         if (campagne) {
           for (const v of campagne.plan.parcelles) {
-            boites.push({ x: v.x, z: v.z, w: campagne.plan.emprise, d: campagne.plan.emprise });
+            // Le côté de chaque parcelle, et non celui du joueur : depuis que
+            // les lots n'ont plus tous la même taille, le second sous-estime
+            // l'enveloppe des grands et surestime celle des petits.
+            boites.push({ x: v.x, z: v.z, w: v.cote, d: v.cote });
           }
         }
         bornesVue = bornesDeplacement(boites, ile.w / 2);

@@ -1,9 +1,23 @@
+import { hectaresDeGrille } from "@farmsim/shared";
+
 export type ZoneMapParcel = {
   id: string;
   label: string;
   mapX: number;
   mapY: number;
   landPrice: number;
+  /**
+   * La grille du cadastre.
+   *
+   * La carte est un plan de **cases du monde** : un grand lot y occupe le même
+   * carré qu'un petit, parce que c'est sa position qu'elle montre, pas sa
+   * surface. Depuis que les parcelles n'ont plus toutes la même taille, le
+   * prix seul ne se compare donc plus d'une case à l'autre — il faut dire
+   * combien d'hectares on achète, sinon la plus chère a l'air de la meilleure
+   * affaire ou de la pire, sans qu'on puisse trancher.
+   */
+  gridW?: number;
+  gridH?: number;
   farmId?: string | null;
   /** Exploitant PNJ : on peut racheter, contrairement à un autre joueur. */
   npc?: boolean;
@@ -89,8 +103,12 @@ export function ZoneMap({
             const isFree = isBuyableStatus(status);
             const isAllowed = isFree && (allowed == null || (p != null && allowed.has(p.id)));
             const selected = p != null && selectedParcelId === p.id;
+            const surface =
+              p?.gridW != null && p.gridH != null
+                ? ` · ${hectaresDeGrille(p.gridW, p.gridH).toLocaleString("fr-FR")} ha`
+                : "";
             const title = p
-              ? `${p.label} · (${p.mapX},${p.mapY}) · ${p.landPrice} €` +
+              ? `${p.label} · (${p.mapX},${p.mapY})${surface} · ${p.landPrice} €` +
                 (status === "mine"
                   ? " · à toi"
                   : status === "other"
@@ -137,7 +155,15 @@ export function ZoneMap({
                   <>
                     <span className="zone-cell-label">{p?.label ?? "·"}</span>
                     {p && isFree ? (
-                      <span className="zone-cell-price">{Math.round(p.landPrice)}</span>
+                      <span className="zone-cell-price">
+                        {Math.round(p.landPrice)}
+                        {p.gridW != null && p.gridH != null && (
+                          <span className="zone-cell-ha">
+                            {" "}
+                            · {hectaresDeGrille(p.gridW, p.gridH).toLocaleString("fr-FR")} ha
+                          </span>
+                        )}
+                      </span>
                     ) : null}
                   </>
                 )}

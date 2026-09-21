@@ -56,6 +56,7 @@ import {
   grainerDe,
   planCampagne,
   suite,
+  TALUS_PARCELLE,
   type OptionsPlan,
   type ParcelleVoisine,
   type PlanCampagne,
@@ -69,7 +70,13 @@ export type OptionsCampagne = OptionsPlan & {
   sobre?: boolean;
   /** Altitude du sol — sous le niveau de l'île du joueur. */
   y?: number;
-  /** Cases par côté d'une parcelle voisine, comme sur celle du joueur. */
+  /**
+   * Cases par côté — repli quand `pasCase` n'est pas fourni.
+   *
+   * Il ne fixe plus le découpage des voisins : chacun a le sien, déduit de sa
+   * taille. Il ne sert donc qu'à retrouver l'ancien pas de case, pour les
+   * appels qui ne connaissent pas l'échelle du monde.
+   */
   cases?: number;
 };
 
@@ -559,8 +566,27 @@ export function createCountryside(o: OptionsCampagne): Campagne {
   let jourPose = Number.NaN;
   let saisonPosee: Season | null = null;
 
-  /** Le pas d'une case, déduit de l'emprise : le damier remplit la parcelle. */
-  const pasCase = (plan.emprise - 1.4) / cases;
+  /**
+   * Le pas d'une case — la même mesure partout dans le pays.
+   *
+   * Il se déduisait de l'emprise du joueur divisée par sa grille, ce qui
+   * revenait à supposer que toutes les parcelles avaient sa taille. Fourni,
+   * `o.pasCase` l'emporte : la case garde alors la même dimension d'un champ
+   * à l'autre, et c'est le **nombre** de cases qui change — ce qui est la
+   * vérité du cadastre, et ce qui rend un grand lot visiblement plus grand.
+   */
+  const pasCase = o.pasCase ?? (plan.emprise - TALUS_PARCELLE) / cases;
+
+  /**
+   * Le nombre de cases d'une parcelle, déduit de son côté.
+   *
+   * L'inverse exact de `coteDeGrille` : la parcelle a été dimensionnée à
+   * partir de sa grille, on la retrouve. Passer par le côté plutôt que par
+   * `p.reel` fait que le décor — qui n'a pas de cadastre — se découpe avec la
+   * même règle.
+   */
+  const casesDe = (p: { cote: number }): number =>
+    Math.max(1, Math.round((p.cote - TALUS_PARCELLE) / pasCase));
 
   /*
    * Les bâtiments du cadastre, une fois, partout.
@@ -574,9 +600,11 @@ export function createCountryside(o: OptionsCampagne): Campagne {
   object.add(groupeBatiments);
   const rigsBatiments: BuildingRig[] = [];
   {
-    const origine = -((cases - 1) * pasCase) / 2;
     for (const p of plan.parcelles) {
       if (!p.reel?.batiments.length) continue;
+      // L'origine du damier dépend de la taille du lot : la reprendre du
+      // joueur poserait les bâtiments d'un grand voisin dans son champ.
+      const origine = -((casesDe(p) - 1) * pasCase) / 2;
       const rigs = poserBatimentsVoisin({
         batiments: p.reel.batiments,
         pasCase,
@@ -621,9 +649,13 @@ export function createCountryside(o: OptionsCampagne): Campagne {
     const TERRE_DALLE = 0x8a6b4a;
     const HAIE = 0x5c9a52;
     const teinte = new THREE.Color();
-    const emprise = plan.emprise;
 
     for (const p of plan.parcelles) {
+      /* Le côté de **cette** parcelle. C'est la ligne qui rend le parcellaire
+         visible : tout ce qui suit — la dalle, le damier, la haie, la grange,
+         les bêtes — s'y réfère au lieu de se référer à l'île du joueur. */
+      const emprise = p.cote;
+      const casesIci = casesDe(p);
       const grain = suite(grainerDe(p.id));
       /*
        * L'état lu sur la carte l'emporte sur le cycle déduit du jour : quand
@@ -651,11 +683,11 @@ export function createCountryside(o: OptionsCampagne): Campagne {
        * ce que la carte encaisse sans broncher. En réglage sobre on retombe
        * sur des aplats, où c'est la cadence qui prime.
        */
-      const o0 = -((cases - 1) * pasCase) / 2;
+      const o0 = -((casesIci - 1) * pasCase) / 2;
       const taille = pasCase - JOINT;
       const demi = taille / 2;
-      for (let i = 0; i < cases; i++) {
-        for (let k = 0; k < cases; k++) {
+      for (let i = 0; i < casesIci; i++) {
+        for (let k = 0; k < casesIci; k++) {
           const cx = p.x + o0 + i * pasCase;
           const cz = p.z + o0 + k * pasCase;
           // Une teinte par case, très légèrement différente : un aplat parfait
@@ -674,6 +706,33 @@ export function createCountryside(o: OptionsCampagne): Campagne {
             ajouterBoite(pos, col, cx, y0, cz, taille, CASE_EP, taille, teinte.getHex());
           }
         }
+      }
+
+      /*
+       * La borne de propriété — l'indicateur discret demandé.
+       *
+       * « Il faudrait un indicateur discret qui permette de repérer ses
+       * propres parcelles. » Le paysage disait déjà tout d'un voisin, sauf la
+       * seule chose qu'on cherche en s'y promenant : lesquelles sont à soi. La
+       * fiche le disait, mais il fallait cliquer sur chaque champ pour la lire.
+       *
+       * Une borne, et non une couleur de champ : un blé à soi doit rester un
+       * blé. C'est l'objet que le monde réel emploie exactement pour cela —
+       * un piquet au coin de la parcelle, avec sa tête peinte. Posée au coin
+       * aval, celui que la vue isométrique met en bas de l'écran, elle ne
+       * passe jamais derrière la culture.
+       *
+       * Les mêmes ors que la carte du Bureau (`--gold-300` / `--gold-500`) :
+       * deux écrans qui parlent de la même chose doivent la peindre pareil.
+       */
+      if (p.reel?.statut === "MOI") {
+        /* Un peu plus haute que la haie — 0,86 contre 0,55 — et pas
+           davantage : elle doit dépasser pour se voir d'un champ à l'autre,
+           sans devenir le mât qu'on remarque avant la culture. */
+        const bx = p.x + emprise / 2 - 0.7;
+        const bz = p.z + emprise / 2 - 0.7;
+        ajouterBoite(pos, col, bx, y0 + 0.43, bz, 0.15, 0.86, 0.15, 0x6b5a3a);
+        ajouterBoite(pos, col, bx, y0 + 0.93, bz, 0.3, 0.22, 0.3, 0xf0d27a);
       }
 
       // La haie, sur les quatre bords, à la hauteur de celle de l'île.
@@ -1132,8 +1191,8 @@ export function createCountryside(o: OptionsCampagne): Campagne {
       if (detailles.has(p.id)) continue;
       const d = creerVoisinDetaille({
         parcelle: p,
-        emprise: plan.emprise,
-        cases,
+        emprise: p.cote,
+        cases: casesDe(p),
         y: y0 + HAUT_CASE,
         shadows,
         sobre,
