@@ -26,7 +26,31 @@ describe("la fiche du lot", () => {
   it("porte la date du dernier passage de l’équipe", () => {
     expect(ELEVAGE).toContain("tendedAt");
     expect(ELEVAGE).toContain("barn-tended");
-    expect(ELEVAGE).toContain("Mangeoire et litière tenues par votre équipe");
+    expect(ELEVAGE).toContain("Votre équipe");
+  });
+
+  it("dit ce que l’équipe a fait, et pas seulement qu’elle est passée", () => {
+    /*
+     * La phrase était figée — « mangeoire et litière tenues par votre
+     * équipe » — et laissait donc entière la question suivante, posée en
+     * jouant : « ce qu'il faut que je teste, c'est ce qu'il fait à propos du
+     * fumier : est-ce qu'il le traite, le vend, vide simplement ? ». Elle
+     * énumère maintenant les gestes réellement accomplis.
+     */
+    expect(ELEVAGE).toContain("tendedWhat");
+    expect(ELEVAGE).toContain("travauxDeLEquipe");
+    for (const code of ["ration", "litiere", "fumier"]) {
+      expect({ code, connu: ELEVAGE.includes(`${code}:`) }).toEqual({ code, connu: true });
+    }
+    // Et le fumier dit où il part : « vidée » seul ne distingue pas la benne
+    // du voisin qui paie.
+    expect(ELEVAGE).toMatch(/vendu au voisin/);
+  });
+
+  it("garde une phrase honnête pour un passage sans détail", () => {
+    // Les lignes écrites avant que la colonne existe n'ont pas de codes : on
+    // ne doit pas afficher un tiret solitaire ni inventer un geste.
+    expect(ELEVAGE).toContain('if (!faits.length) return "Votre équipe est passée"');
   });
 
   it("ne montre rien tant que personne n’est passé", () => {

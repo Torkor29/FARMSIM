@@ -4494,14 +4494,25 @@ export function App() {
     if (!player) return;
     setBusy(true);
     try {
-      const r = await api<{ added: number; cost: number; young?: boolean }>(
-        `/buildings/${buildingId}/animals`,
-        {
-          method: "POST",
-          body: JSON.stringify({ userId: player.id, count, young }),
-        },
-      );
+      const r = await api<{
+        added: number;
+        cost: number;
+        young?: boolean;
+        /** Non nul dès qu'on dépasse les places — voir `crowdingWarning`. */
+        crowding?: string | null;
+      }>(`/buildings/${buildingId}/animals`, {
+        method: "POST",
+        body: JSON.stringify({ userId: player.id, count, young }),
+      });
       flashToast(`+${r.added} ${young ? "jeune(s)" : "bête(s)"} · −${r.cost} €`);
+      /*
+       * Entasser est permis, pas gratuit — et ça se dit tout de suite.
+       *
+       * Sans cet avertissement, le joueur découvrirait la perte une heure
+       * plus tard sur une courbe de production qui baisse, sans faire le lien
+       * avec l'achat. On le prévient à la seconde où il dépasse.
+       */
+      if (r.crowding) flashToast(r.crowding, "warn");
       await refreshPlayer();
       if (activeParcelId) await loadLivestock(activeParcelId);
     } catch (e) {

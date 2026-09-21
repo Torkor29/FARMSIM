@@ -494,6 +494,11 @@ model Herd {
   /// litière refaite. Sert à montrer au joueur ce que son salaire achète :
   /// sans cette trace, l'employé travaille et rien ne le dit.
   tendedAt      DateTime?
+  /// Ce que l'équipe a fait lors de ce passage : codes séparés par `+`, parmi
+  /// `ration`, `litiere` et `fumier`. Une date seule ne répondait pas à la
+  /// question posée en jouant — « qu'est-ce qu'il fait à propos du fumier,
+  /// est-ce qu'il le traite, le vend, vide simplement ? ». On le dit.
+  tendedWhat    String?
   /// Abreuvement, de 0 à 1. Plein tant qu'on passe distribuer la ration, ou
   /// en permanence si un abreuvoir automatique est rattaché au bâtiment.
   water         Float     @default(1)

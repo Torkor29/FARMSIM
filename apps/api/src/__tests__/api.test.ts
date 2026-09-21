@@ -45,6 +45,7 @@ import {
   machineResaleValue,
   SILAGE_MIN_PROGRESS,
   buildingMoveCost,
+  GAME_DAY_MS,
 } from "@farmsim/shared";
 
 const API_DIR = fileURLToPath(new URL("../..", import.meta.url));
@@ -1083,6 +1084,93 @@ describe("lieu de vie", () => {
     );
   });
 
+  it("laisse entasser au-delà des places, au prix des conditions", async () => {
+    /*
+     * Signalé en jouant : « les bêtes ne dépassent pas le nombre max qu'il est
+     * possible dans l'étable, ce qui n'est pas normal, il faudrait que ce soit
+     * possible, au détriment des conditions à cause d'une surpopulation ».
+     *
+     * Le reproche était exact, et la courbe de peine existait déjà, écrite et
+     * documentée du plein au double. C'est cette route qui la rendait
+     * inatteignable en refusant à la dernière place : le taux d'occupation ne
+     * dépassait jamais 1, donc la peine valait toujours zéro.
+     */
+    const { moi, pid, herdId } = await eleveurAvecEnclos();
+    const etable = async () => {
+      const el = await appel(`/parcels/${pid}/livestock`, { jeton: moi.jeton });
+      const b = (el.corps as unknown as {
+        barns: {
+          buildingId: string;
+          capacity: number;
+          herd: { id: string; size: number; welfareCauses?: { code: string; cout: number }[] } | null;
+        }[];
+      }).barns.find((x) => x.herd?.id === herdId)!;
+      return { buildingId: b.buildingId, capacity: b.capacity, herd: b.herd! };
+    };
+
+    const avant = await etable();
+    assert.ok(avant.capacity > 0, `étable sans capacité : ${JSON.stringify(avant)}`);
+
+    // 1 — On remplit jusqu'à la dernière place. Rien d'anormal à ce stade :
+    // la capacité s'utilise entièrement, c'est ce qu'on a payé.
+    const aPlein = avant.capacity - avant.herd.size;
+    if (aPlein > 0) {
+      const r = await appel(`/buildings/${avant.buildingId}/animals`, {
+        methode: "POST",
+        corps: { userId: moi.id, count: aPlein },
+        jeton: moi.jeton,
+      });
+      assert.equal(r.statut, 201, `remplissage refusé : ${JSON.stringify(r.corps)}`);
+      assert.equal(
+        (r.corps as { crowding?: string | null }).crowding ?? null,
+        null,
+        "on prévient d'un entassement alors qu'on est dans la capacité payée",
+      );
+    }
+
+    // 2 — La bête de trop passe désormais, et la route le dit.
+    const trop = await appel(`/buildings/${avant.buildingId}/animals`, {
+      methode: "POST",
+      corps: { userId: moi.id, count: 2 },
+      jeton: moi.jeton,
+    });
+    assert.equal(
+      trop.statut,
+      201,
+      `la surpopulation est encore refusée : ${JSON.stringify(trop.corps)}`,
+    );
+    const avis = trop.corps as unknown as {
+      crowding?: string | null;
+      size: number;
+      capacity: number;
+    };
+    assert.ok(avis.size > avis.capacity, `effectif ${avis.size} pour ${avis.capacity} places`);
+    assert.ok(
+      avis.crowding,
+      "entassement accepté sans un mot — le joueur ne saura pas pourquoi il produit moins",
+    );
+    assert.match(avis.crowding!, /%/, "l'avertissement doit chiffrer la perte");
+
+    // 3 — Et les conditions se dégradent vraiment : ce n'est pas qu'un texte.
+    // C'est la moitié qui compte, parce que c'est elle qui était morte.
+    const apres = await etable();
+    const surpeuplement = (apres.herd.welfareCauses ?? []).find((c) => c.code === "SURPEUPLEMENT");
+    assert.ok(
+      surpeuplement,
+      `aucune peine d'entassement sur ${apres.herd.size} bêtes pour ${apres.capacity} places : ` +
+        JSON.stringify(apres.herd.welfareCauses),
+    );
+    assert.ok(surpeuplement!.cout > 0, "la peine est listée mais ne coûte rien");
+
+    // 4 — Mais il existe un plafond : on n'entasse pas à l'infini.
+    const mur = await appel(`/buildings/${avant.buildingId}/animals`, {
+      methode: "POST",
+      corps: { userId: moi.id, count: avant.capacity * 3 },
+      jeton: moi.jeton,
+    });
+    assert.equal(mur.statut, 409, `aucun plafond à l'entassement : ${JSON.stringify(mur.corps)}`);
+  });
+
   it("rentrer le troupeau met fin à la séance de pâture", async () => {
     const { moi, pid, herdId, buildingId } = await eleveurAvecEnclos();
     const avant = await etat(pid, buildingId, moi.jeton);
@@ -1799,6 +1887,62 @@ describe("calendrier cultural", () => {
   function saisonCourante(): Season {
     return currentSeason("N", Date.now());
   }
+
+  it("salit un champ laissé labouré, et le semis en hérite", async () => {
+    /*
+     * « J'ai laissé les champs juste labourés, pas une seule mauvaise herbe,
+     * rien n'a poussé. »
+     *
+     * Le modèle montait bien — `weedPressureAfter` intègre depuis `weedAt` —
+     * mais deux endroits le rendaient invisible : la parcelle était servie
+     * avec la pression **figée** au dernier geste, et le semis repartait de
+     * cette même valeur brute, jetant tout ce qui avait levé entre les deux.
+     */
+    const { moi, parcelle, cells } = await fermeSemable();
+    assert.ok(cells.length > 0, "il faut des cases cultivables");
+    const cible = cells[0]!;
+
+    const lire = async () => {
+      const r = await appel(`/parcels/${parcelle.id}`, { jeton: moi.jeton });
+      assert.equal(r.statut, 200, JSON.stringify(r.corps));
+      return (r.corps as unknown as {
+        parcel: { cells: { x: number; y: number; weedPressure: number }[] };
+      }).parcel.cells.find((c) => c.x === cible.x && c.y === cible.y)!;
+    };
+
+    /*
+     * Une case labourée il y a six jours de jeu — ce qu'un joueur obtient en
+     * laissant son champ en l'état le temps d'une soirée. On la pose en base
+     * plutôt que d'attendre huit heures réelles.
+     */
+    const ilYaSixJours = new Date(Date.now() - 6 * GAME_DAY_MS);
+    prismaExec(
+      `UPDATE "ParcelCell" SET "weedPressure" = 0, "weedAt" = '${ilYaSixJours.toISOString()}' ` +
+        `WHERE "parcelId" = '${parcelle.id}' AND x = ${cible.x} AND y = ${cible.y};`,
+    );
+
+    // 1 — L'écran doit voir la salissure, et non le zéro figé du labour.
+    const vue = await lire();
+    assert.ok(
+      vue.weedPressure > 0.1,
+      `le champ reste annoncé propre six jours après le labour : ${vue.weedPressure}`,
+    );
+
+    // 2 — Et le semis en hérite, au lieu de repartir de zéro. On sème ce que
+    // la saison autorise : le but est de mesurer les adventices, pas de se
+    // battre avec la fenêtre de semis.
+    // On passe par le même sas que le joueur : un semis se réserve avant de
+    // s'exécuter, et appeler la route directement se fait renvoyer.
+    const semis = await travailler(parcelle.id, "plant", "PLANT", moi, [cible], {
+      crop: cropDeSaison(),
+    });
+    assert.ok(semis.statut < 400, `semis refusé : ${JSON.stringify(semis.corps)}`);
+    const apres = await lire();
+    assert.ok(
+      apres.weedPressure > 0.1,
+      `le semis a effacé les adventices levées depuis le labour : ${apres.weedPressure}`,
+    );
+  });
 
   it("accepte une culture de saison et refuse l'autre", async () => {
     const { moi, parcelle, cells } = await fermeSemable();

@@ -455,6 +455,54 @@ export function crowdingPenalty(crowding: number): number {
 }
 
 /**
+ * Jusqu'où l'on peut entasser `[GD]`.
+ *
+ * ## Ce qui n'allait pas
+ *
+ * Signalé en jouant, deux fois : « les bêtes ne dépassent pas le nombre max
+ * qu'il est possible dans l'étable, ce qui n'est pas normal, il faudrait que
+ * ce soit possible, au détriment des conditions ».
+ *
+ * Le reproche est exact, et le plus gênant est que **tout était déjà écrit
+ * pour ça**. `crowdingPenalty()` définit une courbe de peine qui va du plein
+ * (100 %, peine nulle) au double (200 %, peine maximale), et
+ * `crowdingLethalThreshold()` dit noir sur blanc que l'entassement coûte de la
+ * production sans jamais tuer. Toute cette moitié du modèle était
+ * inatteignable : la route d'achat refusait sèchement à la dernière place, si
+ * bien que `crowding` ne dépassait jamais 1 et que la peine valait toujours
+ * zéro.
+ *
+ * ## Pourquoi le double, et pas davantage
+ *
+ * C'est `crowdingCritical` : au-delà, la peine ne monte plus — elle est
+ * bornée à `crowdingPenaltyMax`. Laisser entasser plus loin n'ajouterait donc
+ * aucune conséquence mécanique, seulement des bêtes qui souffrent sans que le
+ * jeu en dise rien. Un plafond qui coïncide avec le sommet de la courbe est
+ * le seul qui ne soit pas arbitraire.
+ */
+export const CROWDING_MAX = HAPPINESS.crowdingCritical;
+
+/** Combien de bêtes ce bâtiment accepte, entassement compris. */
+export function maxAnimalsWithCrowding(capacity: number): number {
+  return Math.floor(Math.max(0, capacity) * CROWDING_MAX);
+}
+
+/**
+ * Ce que coûte d'ajouter des bêtes au-delà des places, dit au joueur.
+ *
+ * Rend `null` tant qu'on reste dans la capacité : un avertissement qui
+ * s'affiche quand il n'y a rien à craindre n'est plus lu quand il y a
+ * quelque chose à craindre.
+ */
+export function crowdingWarning(opts: { size: number; capacity: number }): string | null {
+  if (opts.capacity <= 0) return null;
+  const ratio = opts.size / opts.capacity;
+  if (ratio <= HAPPINESS.crowdingComfort) return null;
+  const perte = Math.round(crowdingPenalty(ratio) * 100);
+  return `${opts.size} bêtes pour ${opts.capacity} places — les conditions se dégradent, environ ${perte} % de production en moins. Agrandissez le bâtiment pour revenir au calme.`;
+}
+
+/**
  * Occupation à partir de laquelle le seul entassement devient mortel :
  * **aucune**.
  *

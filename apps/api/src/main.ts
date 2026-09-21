@@ -28,6 +28,8 @@ import {
   footprintCells,
   freeYardSlot,
   YARD_FULL,
+  crowdingWarning,
+  maxAnimalsWithCrowding,
   orientedFootprint,
   quarterTurns,
   xpFor,
@@ -833,12 +835,12 @@ function climatDe(parcel: {
  * désynchroniser de sa source.
  */
 function pressionAdventices(
-  cell: { weedPressure: number; weedAt: Date | null },
+  cell: { weedPressure?: number | null; weedAt?: Date | null },
   season?: Season,
 ): number {
   if (!cell.weedAt) return clampWeeds(cell.weedPressure);
   return weedPressureAfter({
-    start: cell.weedPressure,
+    start: clampWeeds(cell.weedPressure),
     elapsedMs: Date.now() - cell.weedAt.getTime(),
     season,
   });
@@ -1306,10 +1308,14 @@ async function viderLesFumieres(): Promise<void> {
           ferme.userId,
           recette,
           "ELEVAGE",
-          `Fumière vidée par l'équipe — ${vendu.toFixed(1)} t`,
+          `Fumière vidée par l'équipe — ${vendu.toFixed(1)} t vendues au voisin`,
         );
       }
     });
+    // Le geste s'inscrit sur le lot, comme la ration et la litière : sans
+    // cela il n'apparaissait qu'au grand livre, que personne n'ouvre en
+    // jouant. « Je ne sais pas ce qu'il se passe » — maintenant, si.
+    await marquerSoin(lot.id, ["fumier"]);
   }
 }
 
@@ -1375,7 +1381,15 @@ async function lEquipeSoigneLesTroupeaux(): Promise<void> {
       lot.building.level,
     );
     const places = barnCapacity(lot.building.type, stats);
-    let passe = false;
+    /*
+     * Ce que l'équipe aura fait, et pas seulement qu'elle est passée.
+     *
+     * « L'employé a l'air de bien gérer, ce qu'il faut que je teste c'est ce
+     * qu'il fait à propos du fumier, est-ce qu'il le traite, le vend, vide
+     * simplement, je ne sais pas ce qu'il se passe. » Un travail délégué dont
+     * on ignore le contenu n'est pas délégué, il est subi.
+     */
+    const faits: string[] = [];
 
     /* ---- La mangeoire ------------------------------------------------ */
     // Somme des **bêtes**, jeunes compris : un lot de six veaux mange comme
@@ -1429,7 +1443,7 @@ async function lEquipeSoigneLesTroupeaux(): Promise<void> {
             },
           });
         });
-        passe = true;
+        faits.push("ration");
       }
     }
 
@@ -1459,16 +1473,45 @@ async function lEquipeSoigneLesTroupeaux(): Promise<void> {
             data: { beddingTons: lot.beddingTons + tons },
           });
         });
-        passe = true;
+        faits.push("litiere");
       }
     }
 
     // La trace du passage. Sans elle, l'employé travaillerait en silence — et
     // c'est ce silence qui a fait poser la question deux fois.
-    if (passe) {
-      await prisma.herd.update({ where: { id: lot.id }, data: { tendedAt: new Date() } });
-    }
+    if (faits.length) await marquerSoin(lot.id, faits);
   }
+}
+
+/**
+ * Inscrit ce que l'équipe vient de faire sur ce lot.
+ *
+ * Les codes s'ajoutent à ceux du même passage plutôt que de les remplacer : la
+ * fumière se vide dans une autre fonction, plus tard dans le même tour de
+ * monde. Sans ce cumul, « fumière vidée » effacerait « ration servie » et le
+ * joueur croirait que son employé n'a fait qu'une chose sur deux.
+ *
+ * La fenêtre de cumul est le tour de monde : au-delà de quelques minutes, on
+ * repart d'une liste neuve, sinon la fiche finirait par tout annoncer en
+ * permanence sans plus rien vouloir dire.
+ */
+const FENETRE_SOIN_MS = 5 * 60 * 1000;
+
+async function marquerSoin(herdId: string, faits: string[]): Promise<void> {
+  if (!faits.length) return;
+  const lot = await prisma.herd.findUnique({
+    where: { id: herdId },
+    select: { tendedAt: true, tendedWhat: true },
+  });
+  const recent =
+    lot?.tendedAt && Date.now() - lot.tendedAt.getTime() < FENETRE_SOIN_MS
+      ? (lot.tendedWhat ?? "").split("+").filter(Boolean)
+      : [];
+  const tout = [...new Set([...recent, ...faits])];
+  await prisma.herd.update({
+    where: { id: herdId },
+    data: { tendedAt: new Date(), tendedWhat: tout.join("+") },
+  });
 }
 
 /** Ce que le silo contient des cinq aliments d'une ration, en tonnes. */
@@ -5396,8 +5439,29 @@ app.get("/parcels/:id", async (req, res) => {
     where: { parcelId: parcel.id, status: { in: ["OPEN", "ACCEPTED"] } },
     include: laborOrderInclude,
   });
+  /*
+   * Les adventices partent **effectives**, pas figées au dernier geste.
+   *
+   * La parcelle était rendue telle que la base la stocke : `weedPressure` y
+   * vaut la valeur du dernier travail du sol — zéro après un labour — et
+   * `weedAt` la date à laquelle elle a été posée. L'écran lisait donc un zéro
+   * éternel sur un champ laissé en l'état, et l'outil Désherber ne proposait
+   * jamais la moindre case. Signalé en jouant : « j'ai laissé les champs
+   * juste labourés, pas une seule mauvaise herbe, rien n'a poussé ».
+   *
+   * Ce que le serveur calcule déjà pour la récolte, il le dit maintenant à
+   * l'écran. La valeur brute reste en base ; c'est la lecture qui intègre,
+   * comme pour la croissance des cultures.
+   */
+  const parcelleVue = {
+    ...parcel,
+    cells: parcel.cells.map((c) => ({
+      ...c,
+      weedPressure: pressionAdventices(c, season),
+    })),
+  };
   res.json({
-    parcel,
+    parcel: parcelleVue,
     weather,
     bonuses,
     cellSims,
@@ -6187,7 +6251,8 @@ app.post("/parcels/:id/contractor", async (req, res) => {
     }
     const growMs = cropGrowMs(crop, 0);
     const climat = climatDe(parcel);
-    const fenetre = canSowInSeason(crop, currentSeason(climat.hemisphere ?? "N", now));
+    const saisonSemis = currentSeason(climat.hemisphere ?? "N", now);
+    const fenetre = canSowInSeason(crop, saisonSemis);
     if (!fenetre.ok) {
       // L'entreprise ne sème pas hors saison non plus : la payer pour
       // contourner le calendrier viderait la règle de son sens.
@@ -6210,10 +6275,21 @@ app.post("/parcels/:id/contractor", async (req, res) => {
             readyAt: new Date(pretLe),
             fertilizedPasses: 0,
             weedAt: new Date(now),
+            /*
+             * La pression **effective**, pas celle du dernier geste.
+             *
+             * On lisait `cell.weedPressure` brut, c'est-à-dire la valeur figée
+             * au dernier travail du sol — zéro après un labour. Tout ce qui
+             * avait levé depuis, et que `pressionAdventices` sait calculer,
+             * était jeté au moment précis où il aurait compté. D'où le
+             * signalement : « j'ai laissé les champs juste labourés, pas une
+             * seule mauvaise herbe, rien n'a poussé ». Le modèle montait bien,
+             * c'est le semis qui remettait le compteur à zéro en silence.
+             */
             weedPressure: weedsAtSowing({
               carried: plan.directSeed
-                ? weedsAfterSoilWork("DIRECT_SEED", plan.cell.weedPressure ?? 0)
-                : (plan.cell.weedPressure ?? 0),
+                ? weedsAfterSoilWork("DIRECT_SEED", pressionAdventices(plan.cell, saisonSemis))
+                : pressionAdventices(plan.cell, saisonSemis),
               sameCropAgain: plan.cell.lastCrop === crop,
             }),
             directSeeded: plan.directSeed,
@@ -6664,6 +6740,14 @@ type SowableCell = {
   harvestsSincePlow: number;
   residuePasses: number;
   weedPressure?: number;
+  /**
+   * Date du dernier geste sur les adventices.
+   *
+   * Indispensable, et elle manquait : sans elle, le semis ne pouvait lire que
+   * la pression **figée** au dernier travail du sol — zéro après un labour —
+   * et jetait tout ce qui avait levé depuis. Voir `pressionAdventices`.
+   */
+  weedAt?: Date | null;
   lastCrop?: string | null;
 };
 
@@ -7675,10 +7759,21 @@ app.post("/parcels/:id/plant", async (req, res) => {
              d'adventices restent en place : c'est le vrai coût agronomique du
              semis direct, et il manquait. */
           weedAt: new Date(now),
+          /*
+           * La pression **effective**, pas celle du dernier geste.
+           *
+           * On lisait `cell.weedPressure` brut, c'est-à-dire la valeur figée
+           * au dernier travail du sol — zéro après un labour. Tout ce qui
+           * avait levé depuis, et que `pressionAdventices` sait calculer,
+           * était jeté au moment précis où il aurait compté. D'où le
+           * signalement : « j'ai laissé les champs juste labourés, pas une
+           * seule mauvaise herbe, rien n'a poussé ». Le modèle montait bien,
+           * c'est le semis qui remettait le compteur à zéro en silence.
+           */
           weedPressure: weedsAtSowing({
             carried: plan.directSeed
-              ? weedsAfterSoilWork("DIRECT_SEED", cell.weedPressure ?? 0)
-              : (cell.weedPressure ?? 0),
+              ? weedsAfterSoilWork("DIRECT_SEED", pressionAdventices(cell, saison))
+              : pressionAdventices(cell, saison),
             sameCropAgain: cell.lastCrop === plantCrop,
           }),
           directSeeded: plan.directSeed,
@@ -10174,6 +10269,14 @@ app.get("/parcels/:id/livestock", async (req, res) => {
              * l'intérêt du PNJ éleveur ».
              */
             tendedAt: b.herd.tendedAt?.getTime() ?? null,
+            /**
+             * Ce que l'équipe a fait, et pas seulement quand.
+             *
+             * « Est-ce qu'il le traite, le vend, vide simplement ? » — la
+             * réponse est « il vend au voisin et garde la moitié », et elle
+             * doit se lire sur la fiche plutôt que se déduire du grand livre.
+             */
+            tendedWhat: b.herd.tendedWhat ?? null,
             /* — Environnement : ce que la simulation lit désormais — */
             housing: parseHousing(b.herd.housing),
             tempC: Math.round(herdTempC),
@@ -10383,9 +10486,25 @@ app.post("/buildings/:id/animals", async (req, res) => {
   const stats = buildingStatsAtLevel(building.type as SharedBuildingType, building.level);
   const capacity = barnCapacity(building.type, stats);
   const current = building.herd?.size ?? 0;
-  if (current + body.data.count > capacity) {
+  /*
+   * On peut entasser au-delà des places — c'était déjà prévu, et interdit.
+   *
+   * Signalé en jouant : « les bêtes ne dépassent pas le nombre max qu'il est
+   * possible dans l'étable, ce qui n'est pas normal, il faudrait que ce soit
+   * possible, au détriment des conditions ». Le modèle de bien-être définit
+   * depuis longtemps une peine d'entassement qui court du plein au double
+   * (`crowdingPenalty`) et qui ne tue jamais (`crowdingLethalThreshold`) —
+   * mais ce refus-ci rendait toute cette moitié inatteignable : `crowding` ne
+   * dépassait jamais 1, donc la peine valait toujours zéro.
+   *
+   * Le plafond devient donc le sommet de la courbe, au double de la capacité.
+   * Au-delà, la peine ne monte plus : on ferait souffrir des bêtes sans que le
+   * jeu en dise quoi que ce soit.
+   */
+  const plafond = maxAnimalsWithCrowding(capacity);
+  if (current + body.data.count > plafond) {
     res.status(409).json({
-      error: `Capacité dépassée — ${capacity} places, ${current} occupées`,
+      error: `Étable pleine à craquer — ${plafond} bêtes au maximum pour ${capacity} places, ${current} déjà là. Agrandissez le bâtiment.`,
     });
     return;
   }
@@ -10453,7 +10572,22 @@ app.post("/buildings/:id/animals", async (req, res) => {
       }
     }
   });
-  res.status(201).json({ added: body.data.count, cost, young: jeune });
+  /*
+   * L'avertissement voyage avec la réponse, il ne se devine pas.
+   *
+   * Entasser est désormais permis ; ce n'est pas pour autant gratuit. Le
+   * joueur doit lire ce que ça lui coûte au moment où il le fait, et non le
+   * découvrir une heure plus tard sur une courbe de production qui baisse.
+   */
+  res.status(201).json({
+    added: body.data.count,
+    cost,
+    young: jeune,
+    capacity,
+    size: current + body.data.count,
+    crowdingMax: plafond,
+    crowding: crowdingWarning({ size: current + body.data.count, capacity }),
+  });
 });
 
 /** Vente locale : le fumier part au voisin, pas au silo ni au négociant. */

@@ -81,6 +81,32 @@ function depuisQuand(instant: number): string {
   return `il y a ${Math.floor(heures / 24)} j`;
 }
 
+/**
+ * Ce que l'équipe a fait, en toutes lettres.
+ *
+ * Le fumier mérite sa phrase entière plutôt qu'un mot : c'est le geste sur
+ * lequel la question est venue, et « vidée » ne dit pas si le tas part à la
+ * benne ou au voisin. Il part au voisin, contre argent, et la moitié reste —
+ * le fumier vaut plus épandu sur ses propres terres que vendu, et l'équipe
+ * évite la corvée sans décider à la place du joueur.
+ */
+const LIBELLES_SOIN: Record<string, string> = {
+  ration: "ration servie",
+  litiere: "litière refaite",
+  fumier: "fumière vidée à moitié, le surplus vendu au voisin",
+};
+
+function travauxDeLEquipe(codes: string | null | undefined): string {
+  const faits = (codes ?? "")
+    .split("+")
+    .map((c) => LIBELLES_SOIN[c])
+    .filter(Boolean);
+  // Un passage sans détail — une ligne d'avant cette colonne — garde une
+  // phrase honnête plutôt que d'afficher un tiret solitaire.
+  if (!faits.length) return "Votre équipe est passée";
+  return `Votre équipe : ${faits.join(", ")}`;
+}
+
 export type BarnState = {
   buildingId: string;
   type: BuildingType;
@@ -143,6 +169,13 @@ export type BarnState = {
      * qui ne sert à rien.
      */
     tendedAt?: number | null;
+    /**
+     * Ce que l'équipe a fait au dernier passage : codes joints par `+`.
+     *
+     * « Est-ce qu'il le traite, le vend, vide simplement ? Je ne sais pas ce
+     * qu'il se passe. » Une date seule ne répondait pas ; le détail, si.
+     */
+    tendedWhat?: string | null;
     hungry: boolean;
     /** Le lot commence à perdre des bêtes : il faut agir maintenant */
     atRisk: boolean;
@@ -818,8 +851,7 @@ export function LivestockPanel({
                     l'élevage — la ligne ne se montre qu'après un passage. */}
                 {herd.tendedAt != null && (
                   <p className="barn-tended">
-                    Mangeoire et litière tenues par votre équipe —{" "}
-                    {depuisQuand(herd.tendedAt)}
+                    {travauxDeLEquipe(herd.tendedWhat)} — {depuisQuand(herd.tendedAt)}
                   </p>
                 )}
 
