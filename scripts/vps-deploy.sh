@@ -506,9 +506,41 @@ monter() {
   fi
 }
 
+# ——————————————————————————————————————————————————————————————————————
+# L'image exacte est **écrite dans `.env`**, et pas seulement exportée.
+#
+# Elle ne l'était pas, et `.env` gardait `ghcr.io/…/farmsim:main` — une cible
+# mouvante. Conséquence, un jour de dépannage : un `docker compose up -d`
+# tapé à la main sur le serveur ne retélécharge rien et repart de l'image
+# `:main` posée sur le disque, qui peut avoir plusieurs déploiements de
+# retard. La base, elle, porte déjà les migrations du dernier. Une image plus
+# ancienne y trouve des migrations qu'elle ne connaît pas, `prisma migrate
+# deploy` refuse de continuer, le processus sort, Docker relance : le site
+# tombe, sur un geste qui avait l'air anodin.
+#
+# Ce n'est pas une crainte d'école — le retrait du code de secours a supprimé
+# deux colonnes. Une image d'avant, relancée sur cette base-là, ne démarrerait
+# pas.
+#
+# Écrire l'empreinte du commit dans `.env` referme le piège : la commande
+# manuelle redémarre alors **exactement** ce qui tournait, et le prochain
+# déploiement réécrira la ligne.
+# ——————————————————————————————————————————————————————————————————————
+epingler_image() {
+  local image="$1" tmp
+  tmp="$(mktemp)"
+  # `grep -v` plutôt que `sed -i` : une image contient des barres obliques et
+  # des deux-points, qu'il faudrait échapper dans le motif de remplacement.
+  grep -v '^FARMSIM_IMAGE=' .env > "$tmp" 2>/dev/null || true
+  printf 'FARMSIM_IMAGE=%s\n' "$image" >> "$tmp"
+  cat "$tmp" > .env
+  rm -f "$tmp"
+}
+
 if [[ -n "${FARMSIM_IMAGE:-}" ]]; then
   export FARMSIM_IMAGE
-  echo "==> Image : $FARMSIM_IMAGE"
+  epingler_image "$FARMSIM_IMAGE"
+  echo "==> Image : $FARMSIM_IMAGE (épinglée dans .env)"
   if docker compose pull farmsim; then
     echo "==> Démarrage sur l'image du registre"
     monter up -d --force-recreate
