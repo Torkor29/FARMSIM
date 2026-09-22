@@ -57,6 +57,16 @@ export type Nouveaute = {
  */
 export const NOUVEAUTES: readonly Nouveaute[] = [
   {
+    id: "2026-09-22-fin-code-secours",
+    date: "2026-09-22",
+    titre: "Le code de secours n'existe plus",
+    texte:
+      "Si vous aviez noté un code de secours à la création de votre ferme, vous pouvez " +
+      "jeter le papier : il ne sert plus à rien. Le lien par e-mail le remplace, et il ne " +
+      "demande rien à conserver. Une seule chose compte désormais — que votre adresse soit " +
+      "la bonne dans l'écran Compte.",
+  },
+  {
     id: "2026-09-21-lien-mot-de-passe",
     date: "2026-09-21",
     titre: "Mot de passe oublié : un lien par e-mail",
