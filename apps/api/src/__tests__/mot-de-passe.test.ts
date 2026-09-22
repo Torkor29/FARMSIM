@@ -193,16 +193,22 @@ describe("les comptes d’avant", () => {
   });
 });
 
-describe("changer son mot de passe quand on l’a oublié", () => {
+describe("changer son mot de passe depuis l’écran Compte", () => {
   /**
    * Le cul-de-sac, signalé en jouant : « impossible de changer le mdp
    * puisqu'il faut le code et que je l'ai pas ».
    *
-   * Un joueur **connecté** qui a oublié son mot de passe n'avait aucune
-   * porte : `/auth/me` exigeait l'ancien, et `/auth/recover` — la seule autre
-   * voie — se passe déconnecté. Le code de secours existe précisément pour
-   * ça, et il prouve la même chose : la possession d'un secret remis au
-   * propriétaire.
+   * Il a été refermé deux fois, et la seconde a remplacé la première. Le
+   * **code de secours** — un code remis à l'inscription — était d'abord
+   * accepté ici à la place du mot de passe actuel. Il a été retiré avec
+   * l'arrivée du lien par courriel : deux voies pour le même oubli, c'était
+   * deux écrans à expliquer et une fenêtre imposée à l'inscription pour faire
+   * recopier un code que personne ne relisait.
+   *
+   * Le joueur connecté qui a oublié son mot de passe se déconnecte donc, et
+   * demande un lien. Ce que cette suite tient ici, c'est que la route ne
+   * laisse passer **que** le mot de passe actuel — l'alternative retirée ne
+   * doit pas survivre à moitié.
    */
   async function compte(nom: string) {
     const email = adresse(nom);
@@ -213,9 +219,8 @@ describe("changer son mot de passe quand on l’a oublié", () => {
       accessCode: "mot-de-passe-du-debut",
     });
     assert.equal(r.statut, 201, r.texte);
-    const b = JSON.parse(r.texte) as { token: string; recoveryCode: string };
-    assert.ok(b.recoveryCode, "l'inscription doit remettre un code de secours");
-    return { email, jeton: b.token, secours: b.recoveryCode };
+    const b = JSON.parse(r.texte) as { token: string };
+    return { email, jeton: b.token };
   }
 
   async function patch(jeton: string, corps: unknown) {
@@ -228,104 +233,65 @@ describe("changer son mot de passe quand on l’a oublié", () => {
     return { statut: r.status, texte: await r.text() };
   }
 
-  it("accepte le code de secours à la place du mot de passe actuel", async () => {
-    const moi = await compte("Oublieux");
-    const r = await patch(moi.jeton, {
-      accessCode: "un-mot-tout-neuf",
-      recoveryCode: moi.secours,
-    });
-    assert.equal(r.statut, 200, `le cul-de-sac est toujours là : ${r.texte.slice(0, 200)}`);
-
-    // Et le nouveau mot de passe ouvre vraiment.
-    assert.equal(
-      (await appel("/auth/login", { email: moi.email, accessCode: "un-mot-tout-neuf" })).statut,
-      200,
-    );
-    assert.notEqual(
-      (await appel("/auth/login", { email: moi.email, accessCode: "mot-de-passe-du-debut" }))
-        .statut,
-      200,
-      "l'ancien mot de passe ouvre encore",
-    );
-  });
-
-  it("brûle le code de secours utilisé, et en remet un", async () => {
-    /*
-     * Sans cela on ouvrirait une porte dérobée permanente à côté de celle
-     * qu'on vient de verrouiller : un bout de papier retrouvé dans six mois
-     * rouvrirait la ferme. `/auth/recover` brûle déjà le sien.
-     */
-    const moi = await compte("Brule");
-    const un = await patch(moi.jeton, { accessCode: "premier-changement", recoveryCode: moi.secours });
-    assert.equal(un.statut, 200, un.texte);
-    const suivant = (JSON.parse(un.texte) as { recoveryCode?: string }).recoveryCode;
-    assert.ok(suivant && suivant !== moi.secours, "un code neuf doit être remis");
-
-    const rejoue = await patch(moi.jeton, {
-      accessCode: "second-changement",
-      recoveryCode: moi.secours,
-    });
-    assert.equal(rejoue.statut, 403, `le code brûlé marche encore : ${rejoue.texte.slice(0, 150)}`);
-  });
-
-  it("refuse un code de secours qui n’est pas le sien", async () => {
-    const moi = await compte("Cible");
-    const autre = await compte("Voisin");
-    const r = await patch(moi.jeton, {
-      accessCode: "tentative-de-prise",
-      recoveryCode: autre.secours,
-    });
-    assert.equal(r.statut, 403, `le code d'un autre a été accepté : ${r.texte.slice(0, 150)}`);
-  });
-
-  it("laisse toujours passer le mot de passe actuel", async () => {
-    // La moitié qu'il ne faut pas casser en ajoutant l'autre voie.
+  it("laisse passer le mot de passe actuel", async () => {
     const moi = await compte("Classique");
     const r = await patch(moi.jeton, {
       accessCode: "changement-classique",
       currentAccessCode: "mot-de-passe-du-debut",
     });
     assert.equal(r.statut, 200, r.texte);
+    assert.equal(
+      (await appel("/auth/login", { email: moi.email, accessCode: "changement-classique" })).statut,
+      200,
+    );
   });
 
-  it("remet un code de secours neuf à qui connaît son mot de passe", async () => {
+  it("n’accepte plus rien d’autre", async () => {
     /*
-     * Le filet pour qui a perdu son papier mais pas sa mémoire. Il demande le
-     * mot de passe, et c'est le point d'équilibre : une session seule ne doit
-     * pas suffire, sinon qui trouve un écran ouvert repart avec la clé.
+     * Le champ `recoveryCode` a disparu du schéma. Un client resté sur
+     * l'ancienne version l'enverrait encore : la route doit alors refuser,
+     * et non l'ignorer en silence pour laisser passer le changement. Une
+     * preuve retirée qui survivrait à moitié serait pire que les deux.
      */
-    const moi = await compte("Refaire");
-    const refaire = async (mdp: string) => {
-      const r = await fetch(`${BASE}/auth/me/recovery`, {
-        method: "POST",
-        headers: { "content-type": "application/json", authorization: `Bearer ${moi.jeton}` },
-        body: JSON.stringify({ currentAccessCode: mdp }),
-        signal: AbortSignal.timeout(30_000),
-      });
-      // Le corps ne se lit qu'une fois : le passer aussi en message d'échec
-      // le consommerait avant l'analyse, et l'erreur parlerait du corps au
-      // lieu de parler de la route.
-      return { statut: r.status, texte: await r.text() };
-    };
-
-    const refus = await refaire("pas-le-bon");
-    assert.equal(
-      refus.statut,
-      403,
-      `un mot de passe faux remet un code de secours : ${refus.texte.slice(0, 150)}`,
-    );
-
-    const r = await refaire("mot-de-passe-du-debut");
-    assert.equal(r.statut, 200, r.texte);
-    const neuf = JSON.parse(r.texte) as { recoveryCode: string };
-    assert.ok(neuf.recoveryCode && neuf.recoveryCode !== moi.secours);
-
-    // Et il marche : c'est la seule chose qui compte pour un filet.
-    const usage = await patch(moi.jeton, {
-      accessCode: "apres-le-filet",
-      recoveryCode: neuf.recoveryCode,
+    const moi = await compte("ancien-client");
+    const r = await patch(moi.jeton, {
+      accessCode: "tentative-avec-l-ancien-champ",
+      recoveryCode: "ZZZZ-ZZZZ-ZZZZ-ZZZZ",
     });
-    assert.equal(usage.statut, 200, usage.texte);
+    assert.equal(r.statut, 403, `un changement est passé sans preuve : ${r.texte.slice(0, 200)}`);
+    assert.equal(
+      (await appel("/auth/login", { email: moi.email, accessCode: "mot-de-passe-du-debut" }))
+        .statut,
+      200,
+      "le mot de passe a bougé alors que la preuve était refusée",
+    );
+  });
+
+  it("dit où aller quand on ne connaît plus son mot de passe", async () => {
+    // Un « Mot de passe actuel incorrect » sec laisserait le joueur devant le
+    // même mur qu'il signalait. Le refus porte la sortie.
+    const moi = await compte("Perdu");
+    const r = await patch(moi.jeton, {
+      accessCode: "peu-importe-le-nouveau",
+      currentAccessCode: "ce-n-est-pas-le-bon",
+    });
+    assert.equal(r.statut, 403);
+    assert.match(r.texte, /lien par e-mail/);
+  });
+
+  it("n’expose plus la route qui remettait un code de secours", async () => {
+    const moi = await compte("filet-retire");
+    const r = await fetch(`${BASE}/auth/me/recovery`, {
+      method: "POST",
+      headers: { "content-type": "application/json", authorization: `Bearer ${moi.jeton}` },
+      body: JSON.stringify({ currentAccessCode: "mot-de-passe-du-debut" }),
+      signal: AbortSignal.timeout(30_000),
+    });
+    /* Elle tombe sur le repli du serveur d'application, qui sert la page du
+       jeu à tout chemin inconnu : ce qui compte est qu'elle ne rende plus de
+       code. */
+    const texte = await r.text();
+    assert.ok(!texte.includes("recoveryCode"), "la route remet encore un code de secours");
   });
 });
 

@@ -57,6 +57,16 @@ export type Nouveaute = {
  */
 export const NOUVEAUTES: readonly Nouveaute[] = [
   {
+    id: "2026-09-21-lien-mot-de-passe",
+    date: "2026-09-21",
+    titre: "Mot de passe oublié : un lien par e-mail",
+    texte:
+      "L'écran de connexion peut maintenant vous envoyer un lien pour choisir un nouveau " +
+      "mot de passe, valable trente minutes. Personne ne vous renverra jamais l'ancien : " +
+      "le serveur ne le détient pas, il n'en garde qu'une empreinte illisible. Vérifiez que " +
+      "votre adresse est la bonne dans l'écran Compte — c'est elle qui vous rouvrira la porte.",
+  },
+  {
     id: "2026-09-21-parcellaire",
     date: "2026-09-21",
     titre: "Les parcelles n'ont plus toutes la même taille",
@@ -74,15 +84,6 @@ export const NOUVEAUTES: readonly Nouveaute[] = [
       "Dans le paysage, un clic sur un champ qui vous appartient vous y emmène " +
       "directement — plus besoin de passer par les pastilles du rail. Une borne dorée " +
       "plantée au coin de chaque champ vous dit lesquels sont à vous.",
-  },
-  {
-    id: "2026-09-21-mot-de-passe",
-    date: "2026-09-21",
-    titre: "Changer son mot de passe sans le connaître",
-    texte:
-      "Si vous avez oublié votre mot de passe mais gardé le code de secours remis à la " +
-      "création de la ferme, l'écran Compte l'accepte désormais à la place. Le code servi " +
-      "est remplacé aussitôt par un neuf : notez-le.",
   },
   {
     id: "2026-09-20-entasser",

@@ -4,13 +4,22 @@
 #   sudo bash /opt/farmsim/scripts/farmsim-code-secours.sh joueur@exemple.fr
 #   sudo bash /opt/farmsim/scripts/farmsim-code-secours.sh --lister
 #
-# Le jeu sait se dépanner tout seul : à la création de sa ferme, chaque joueur
-# reçoit un **code de secours** qui lui permet de choisir un nouveau code
-# d'accès depuis l'écran de connexion, sans e-mail et sans vous déranger.
+# Le jeu sait se dépanner tout seul : depuis l'écran de connexion, « Mot de
+# passe oublié ? » envoie un lien à l'adresse du compte, valable trente
+# minutes, qui ouvre le choix d'un nouveau mot de passe.
 #
-# Ce script est le cran d'après : celui qui a oublié son code d'accès **et**
-# perdu son code de secours. Là, plus rien côté joueur ne peut le tirer
-# d'affaire — il faut quelqu'un qui ait la main sur la base. C'est vous.
+# Ce script est le cran d'après, et il ne reste qu'un seul cas : le joueur n'a
+# plus accès à sa boîte aux lettres — perdue, fermée, ou mal saisie à
+# l'inscription, l'adresse n'étant pas vérifiée. Là, plus rien côté joueur ne
+# peut le tirer d'affaire ; il faut quelqu'un qui ait la main sur la base.
+# C'est vous.
+#
+# Le nom du fichier vient du **code de secours**, un code remis à la création
+# de la ferme que le joueur devait noter. Il a été retiré le jour où le lien
+# par courriel est entré en service — deux voies pour le même oubli, c'était
+# deux écrans à expliquer et une fenêtre imposée à l'inscription. Le nom reste
+# tel quel : le script est déployé sous ce chemin sur le serveur, et le
+# renommer casserait la seule commande qu'on tape un jour de panne.
 #
 # Ce qu'il fait : tire un code d'accès neuf, l'écrit sur le compte, ferme les
 # sessions ouvertes, et l'affiche **une fois**. Transmettez-le au joueur par un
@@ -38,7 +47,7 @@ Usage :
   farmsim-code-secours.sh --lister           liste les comptes réels
 
 Rappel : le joueur peut se dépanner seul depuis l'écran de connexion,
-« Code d'accès oublié ? », s'il a noté son code de secours.
+« Mot de passe oublié ? », si sa boîte aux lettres lui répond encore.
 TXT
   exit 1
 fi
@@ -99,11 +108,11 @@ case "$EMPREINTE" in
   *) mourir "le hachage n'a pas rendu une empreinte bcrypt : ${EMPREINTE:0:12}" ;;
 esac
 
-# Le code de secours est mis à néant en même temps : celui que le joueur avait
-# noté n'existe peut-être plus, et un compte ne doit pas rester sans filet. Le
-# serveur lui en remettra un neuf à sa prochaine connexion réussie.
+# Les sessions ouvertes tombent avec l'ancien mot de passe : si quelqu'un
+# d'autre était entré, le remplacer doit le mettre dehors, sans quoi la reprise
+# en main n'est qu'apparente.
 pg "$URL_JEU" -v ON_ERROR_STOP=1 -q <<SQL
-UPDATE "User" SET "accessCode" = '${EMPREINTE}', "recoveryHash" = NULL, "recoveryAt" = NULL WHERE id = '${ID}';
+UPDATE "User" SET "accessCode" = '${EMPREINTE}' WHERE id = '${ID}';
 DELETE FROM "Session" WHERE "userId" = '${ID}';
 SQL
 
@@ -115,7 +124,9 @@ echo
 cat <<'TXT'
 À transmettre au joueur par un canal privé. Dites-lui :
 
-  - de se connecter avec ce mot de passe ;
-  - qu'un **code de secours** neuf lui sera affiché à ce moment-là, une seule
-    fois — c'est celui-là qu'il doit noter, il lui évitera de vous redéranger.
+  - de se connecter avec ce mot de passe, puis d'en choisir un autre depuis
+    l'écran Compte ;
+  - de **vérifier son adresse e-mail** au passage, dans ce même écran. C'est
+    elle qui porte désormais tout le dépannage : une adresse juste lui évitera
+    de vous redéranger.
 TXT

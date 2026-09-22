@@ -110,7 +110,7 @@ import {
   jetonDeReinitValide,
   type Nouveaute,
 } from "@farmsim/shared";
-import { AuthScreen, RecoveryNotice, type AuthMode } from "./AuthScreen";
+import { AuthScreen, type AuthMode } from "./AuthScreen";
 import type { GrazingHerd, PreviewBuilding } from "./IsoFarmView";
 import type { VoisinReel } from "./countryside-plan";
 import { BuildingSheet } from "./BuildingSheet";
@@ -755,10 +755,6 @@ export function App() {
    * que si quelqu'un peut réellement l'envoyer.
    */
   const [courrielDisponible, setCourrielDisponible] = useState(false);
-  /** Ce que le joueur tape dans l'écran d'oubli. */
-  const [recoveryInput, setRecoveryInput] = useState("");
-  /** Le code que le serveur vient de remettre, à montrer une seule fois. */
-  const [recoveryCode, setRecoveryCode] = useState<string | null>(null);
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   /**
@@ -1707,13 +1703,52 @@ export function App() {
    * vraiment une parcelle sous les yeux.
    */
   const installe = Boolean(player?.farm?.parcels?.length);
+  /**
+   * N'a-t-il **jamais rien fait** ?
+   *
+   * L'expérience est cumulative et ne retombe jamais : un joueur qui a labouré
+   * une fois en a. C'est la seule preuve que le serveur détient, et c'est
+   * justement ce qu'il fallait — voir le commentaire ci-dessous.
+   */
+  const debutant = (player?.xp ?? 0) === 0;
   useEffect(() => {
     if (!player) return;
     setGuideFlags(readGuideFlags(player.id));
     if (!installe) return;
-    if (localStorage.getItem(playerStorageKey(TUTORIAL_KEY, player.id))) {
+    /*
+     * Le tutoriel ne se rejoue pas parce qu'on a changé de navigateur.
+     *
+     * Son marque-page vit dans le stockage local, donc dans **ce** navigateur.
+     * C'était sans conséquence tant qu'on revenait toujours par le même — et
+     * le lien de réinitialisation vient de casser cette hypothèse : ouvert
+     * depuis une application de courrier, il s'affiche dans un navigateur
+     * intégré, avec un stockage vierge. Signalé aussitôt : « faut pas
+     * renvoyer le tuto quand on réinitialise le mdp, là je viens de l'avoir ».
+     *
+     * Le même défaut valait déjà pour un nouveau téléphone ou des données de
+     * site effacées ; il était seulement plus rare.
+     *
+     * L'expérience du joueur tranche donc en second recours. Elle vient du
+     * serveur, elle suit le compte et non l'appareil, et elle ne peut pas se
+     * tromper dans le sens gênant : on ne gagne pas d'expérience sans avoir
+     * joué. Le cas inverse — inscrit hier, revenu aujourd'hui sans avoir rien
+     * fait — revoit le tutoriel, ce qui est exactement ce qu'il lui faut.
+     */
+    const dejaVu = localStorage.getItem(playerStorageKey(TUTORIAL_KEY, player.id)) != null;
+    if (dejaVu || !debutant) {
+      /* Le marque-page manquant est posé maintenant : sans cela, ce navigateur
+         reposerait la question à chaque visite, et le « Quoi de neuf » ne
+         saurait jamais où il en est. */
+      if (!dejaVu) {
+        try {
+          localStorage.setItem(playerStorageKey(TUTORIAL_KEY, player.id), "1");
+        } catch {
+          /* Stockage refusé : le tutoriel ne s'affichera pas pour autant,
+             c'est l'expérience du joueur qui l'a écarté. */
+        }
+      }
       /*
-       * Le « Quoi de neuf », et seulement pour qui a déjà vu le tutoriel.
+       * Le « Quoi de neuf », et seulement pour qui n'a pas besoin du tutoriel.
        *
        * Les deux s'ouvrent au même moment et au même endroit de l'écran : les
        * empiler accueillerait un joueur neuf par deux panneaux superposés. Le
@@ -1730,7 +1765,7 @@ export function App() {
     }
     const t = window.setTimeout(() => setShowTutorial(true), 600);
     return () => window.clearTimeout(t);
-  }, [installe, player?.id]);
+  }, [installe, debutant, player?.id]);
 
   /*
    * Le serveur sait-il envoyer du courrier ?
@@ -2806,7 +2841,6 @@ export function App() {
         token: string;
         player: Player;
         resume?: SessionResume;
-        recoveryCode?: string;
       }>("/auth/register", {
         method: "POST",
         body: JSON.stringify({
@@ -2818,7 +2852,6 @@ export function App() {
         }),
       });
       applyAuth(r);
-      if (r.recoveryCode) setRecoveryCode(r.recoveryCode);
       await Promise.all([refreshMeta(), loadWorld()]);
       setMsg(null);
     } catch (e) {
@@ -2889,7 +2922,6 @@ export function App() {
         token: string;
         player: Player;
         resume?: SessionResume;
-        recoveryCode?: string;
       }>("/auth/login", {
         method: "POST",
         body: JSON.stringify({ email, accessCode }),
@@ -2898,7 +2930,6 @@ export function App() {
       applyAuth(r);
       // Compte créé avant que le code de secours existe : le serveur vient
       // d'en remettre un. C'est la seule occasion de le montrer.
-      if (r.recoveryCode) setRecoveryCode(r.recoveryCode);
       await refreshMeta();
       if (!r.resume || r.resume.awayMs < 30_000) setMsg("Connexion OK");
     } catch (e) {
@@ -2908,40 +2939,6 @@ export function App() {
     }
   }
 
-  /**
-   * Mot de passe oublié : le code de secours en choisit un nouveau.
-   *
-   * La reprise en main est complète — le serveur ferme les sessions ouvertes
-   * avec l'ancien code et en rend un neuf ici. Le joueur entre donc
-   * directement dans sa ferme, sans avoir à se reconnecter derrière.
-   */
-  async function recover() {
-    setBusy(true);
-    setErr(null);
-    try {
-      const r = await api<{
-        token: string;
-        player: Player;
-        resume?: SessionResume;
-        recoveryCode?: string;
-      }>("/auth/recover", {
-        method: "POST",
-        body: JSON.stringify({ email, recoveryCode: recoveryInput, accessCode }),
-      });
-      await loadWorld().catch(() => undefined);
-      applyAuth(r);
-      setRecoveryInput("");
-      // Le code qui vient de servir est brûlé : celui-ci le remplace.
-      if (r.recoveryCode) setRecoveryCode(r.recoveryCode);
-      await refreshMeta();
-      setMsg("Nouveau mot de passe enregistré");
-      setAuthMode("login");
-    } catch (e) {
-      setErr(e instanceof Error ? e.message : String(e));
-    } finally {
-      setBusy(false);
-    }
-  }
 
   /**
    * Demander un lien de réinitialisation.
@@ -2987,14 +2984,12 @@ export function App() {
         token: string;
         player: Player;
         resume?: SessionResume;
-        recoveryCode?: string;
       }>("/auth/reset", {
         method: "POST",
         body: JSON.stringify({ jeton: jetonReinit, accessCode }),
       });
       await loadWorld().catch(() => undefined);
       applyAuth(r);
-      if (r.recoveryCode) setRecoveryCode(r.recoveryCode);
       await refreshMeta();
       setMsg("Nouveau mot de passe enregistré");
     } catch (e) {
@@ -5482,21 +5477,15 @@ export function App() {
           onEmailChange={setEmail}
           accessCode={accessCode}
           onAccessCodeChange={setAccessCode}
-          recoveryInput={recoveryInput}
-          onRecoveryInputChange={setRecoveryInput}
           busy={busy}
           msg={msg}
           err={err}
           onRegister={register}
           onLogin={login}
-          onRecover={recover}
           courrielDisponible={courrielDisponible}
           onForgot={demanderLienMdp}
           onReset={poserNouveauMdp}
         />
-        {recoveryCode && (
-          <RecoveryNotice code={recoveryCode} onClose={() => setRecoveryCode(null)} />
-        )}
       </>
     );
   }
@@ -6058,12 +6047,6 @@ export function App() {
           </div>
         )}
       </div>
-
-      {/* Le code de secours passe **devant** le bilan d'absence : il ne se
-          redemande pas, alors que le bilan se relit dans le journal. */}
-      {recoveryCode && (
-        <RecoveryNotice code={recoveryCode} onClose={() => setRecoveryCode(null)} />
-      )}
 
       {/* Le bilan d'absence annonce parfois huit cultures perdues : il mérite
           d'être lu, donc acquitté, plutôt que de flotter sur la ferme. */}

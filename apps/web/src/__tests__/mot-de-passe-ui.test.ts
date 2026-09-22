@@ -92,27 +92,24 @@ describe("l’écran Compte", () => {
    * confirmer e-mail ou code ») qui ne distinguait pas le mot de passe du
    * code de secours.
    */
-  it("offre la sortie : « je ne connais pas mon mot de passe »", () => {
-    expect(PROFIL).toContain("Je ne connais pas mon mot de passe");
-    expect(PROFIL).toContain("parSecours");
-    // Et le drapeau voyage jusqu'à la requête, sinon le bouton ne fait rien.
-    expect(PROFIL).toMatch(/body\.recoveryCode = currentAccessCode/);
-    expect(PROFIL).toMatch(/recoveryCode\?: string/);
+  it("dit où aller quand on ne connaît pas son mot de passe", () => {
+    /*
+     * La sortie a changé de porte. Une bascule offrait ici le **code de
+     * secours** en seconde preuve ; le code a été retiré avec l'arrivée du
+     * lien par courriel, qui se demande déconnecté. L'écran le dit, plutôt que
+     * de laisser le joueur redécouvrir l'impasse.
+     */
+    expect(PROFIL).toMatch(/Mot de passe oublié \? Déconnectez-vous/);
+    expect(PROFIL).not.toContain("parSecours");
+    expect(PROFIL).not.toContain("recoveryCode");
   });
 
-  it("nomme les deux preuves sans les confondre", () => {
-    // « Code actuel » ne disait pas lequel des deux codes on attendait.
+  it("nomme la preuve qu’il attend", () => {
+    // « Code actuel » ne disait pas lequel des deux codes on attendait ; il
+    // n'y en a plus qu'un, et il porte son nom.
     expect(PROFIL).not.toContain("Pour confirmer e-mail ou code");
-    expect(PROFIL).toContain('"Mot de passe actuel"');
-    expect(PROFIL).toContain('"Code de secours"');
-  });
-
-  it("laisse lire le code de secours qu’on recopie d’un papier", () => {
-    // Masquer un code recopié à la main fait rater les fautes de frappe.
-    expect(PROFIL).toMatch(/type=\{parSecours \? "text" : "password"\}/);
-    // Et le format se vérifie avant l'envoi : un aller-retour pour une faute
-    // de frappe n'apprend rien au joueur.
-    expect(PROFIL).toContain("isRecoveryCode(currentAccessCode)");
+    expect(PROFIL).toContain("Mot de passe actuel");
+    expect(PROFIL).not.toContain("Code de secours");
   });
 });
 
@@ -123,7 +120,13 @@ describe("le vocabulaire", () => {
    */
   it("dit « mot de passe » et non « code d'accès » sur l'écran d'entrée", () => {
     expect(ECRAN).not.toMatch(/code d'accès/i);
-    // Le code de **secours** garde son nom : ce n'en est pas un.
-    expect(ECRAN).toMatch(/Code de secours/);
+    /*
+     * Et plus un mot du code de secours, qui n'existe plus — dans ce que le
+     * joueur lit. Les commentaires, eux, ont le droit d'expliquer le retrait :
+     * c'est même là que la phrase sert le plus, pour qui se demandera dans six
+     * mois pourquoi il n'y a qu'une seule voie.
+     */
+    const vu = ECRAN.replace(/\/\*[\s\S]*?\*\//g, " ").replace(/^\s*\/\/.*$/gm, " ");
+    expect(vu).not.toMatch(/code de secours/i);
   });
 });

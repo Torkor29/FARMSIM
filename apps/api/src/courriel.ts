@@ -2,9 +2,11 @@
  * L'envoi de courrier — et pourquoi il n'y en avait pas.
  *
  * Pendant toute la vie du jeu, ce serveur n'a rien envoyé : pas de SMTP, pas
- * de service tiers. C'était assumé, et documenté dans `recovery.ts` — le code
- * de secours existe précisément parce qu'il fonctionne hors ligne. Il reste,
- * et reste la voie de dépannage quand rien n'est configuré ici.
+ * de service tiers. C'était assumé, et un **code de secours** remis à
+ * l'inscription en tenait lieu, parce qu'il fonctionnait hors ligne. Il a été
+ * retiré le jour où ce module est entré en service : deux voies pour le même
+ * oubli, c'était deux écrans à expliquer et une fenêtre imposée à
+ * l'inscription pour faire recopier un code que personne ne relisait.
  *
  * ## Le choix du fournisseur s'est fait sur une mesure, pas sur une préférence
  *
@@ -30,11 +32,10 @@
  * ## Absent par défaut, et c'est un mode de fonctionnement
  *
  * Sans `FARMSIM_SMTP_HOST`, ce module ne tente rien et le dit. L'écran
- * n'offre alors pas le lien par courriel, et le code de secours porte seul le
- * dépannage. C'est ce qui permet de déployer ce travail avant que les
- * identifiants existent, et de faire tourner la suite de tests sans serveur
- * de messagerie — un module qui exigerait sa configuration pour se charger
- * rendrait l'un et l'autre impossibles.
+ * n'offre alors pas le lien par courriel, et le dépannage repasse tout entier
+ * par `scripts/farmsim-code-secours.sh`, côté serveur. C'est ce qui permet de
+ * faire tourner la suite de tests sans serveur de messagerie — un module qui
+ * exigerait sa configuration pour se charger rendrait cela impossible.
  */
 
 import { createTransport, type Transporter } from "nodemailer";

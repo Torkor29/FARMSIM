@@ -18,6 +18,21 @@ import { REINIT_CHEMIN, REINIT_PARAM } from "@farmsim/shared";
 const PORTE = readFileSync("src/AuthScreen.tsx", "utf8");
 const APP = readFileSync("src/App.tsx", "utf8");
 
+/**
+ * Le fichier sans ses commentaires.
+ *
+ * « Le code de secours a été retiré » doit pouvoir s'écrire dans un
+ * commentaire — c'est même l'endroit où cette phrase a le plus de valeur, pour
+ * qui se demandera dans six mois pourquoi il n'y a qu'une seule voie. Ce qu'on
+ * interdit, c'est que le **joueur** le lise. Les assertions portent donc sur
+ * ce qui reste une fois les explications ôtées.
+ */
+function sansCommentaires(source: string): string {
+  return source.replace(/\/\*[\s\S]*?\*\//g, " ").replace(/^\s*\/\/.*$/gm, " ");
+}
+
+const PORTE_VUE = sansCommentaires(PORTE);
+
 describe("le lien reçu par courriel", () => {
   it("ouvre directement le choix du nouveau mot de passe", () => {
     /*
@@ -63,12 +78,13 @@ describe("l’écran d’oubli", () => {
   it("ne propose le courriel que si le serveur sait en envoyer", () => {
     /*
      * Un bouton qui échoue en silence sur une instance sans SMTP promettrait
-     * « un secours qui n'arrivera jamais » — le travers que `recovery.ts`
-     * refusait déjà, et la raison d'être du code de secours.
+     * un secours qui n'arriverait jamais. Le code de secours tenait autrefois
+     * ce rôle hors ligne ; il a été retiré, donc l'écran n'a plus rien à
+     * proposer dans ce cas — et il le dit au lieu d'afficher un lien mort.
      */
     expect(APP).toContain('api<{ disponible: boolean }>("/auth/courriel")');
     expect(PORTE).toContain("courrielDisponible");
-    expect(PORTE).toContain('onAuthModeChange(courrielDisponible ? "forgot" : "recover")');
+    expect(PORTE).toMatch(/L'envoi d'e-mail n'est pas actif sur ce serveur/);
   });
 
   it("dit ce qui n’arrivera pas, et pourquoi", () => {
@@ -81,14 +97,16 @@ describe("l’écran d’oubli", () => {
     expect(PORTE).toMatch(/empreinte illisible/);
   });
 
-  it("garde les deux voies, et les relie", () => {
+  it("n’a plus qu’une voie, et ne laisse pas traîner l’autre", () => {
     /*
-     * Le papier se perd, la boîte aux lettres se ferme : les deux secours
-     * tombent en panne pour des raisons différentes. Celui qui échoue d'un
-     * côté doit trouver l'autre sans repasser par la connexion.
+     * Il y en avait deux — le code de secours et le lien — qui tombaient en
+     * panne pour des raisons différentes. La première a été retirée : il ne
+     * doit en rester aucune trace à l'écran, sans quoi on proposerait un
+     * chemin que le serveur ne sait plus suivre.
      */
-    expect(PORTE).toContain("Recevoir plutôt un lien par e-mail");
-    expect(PORTE).toContain("J'ai mon code de secours");
+    expect(PORTE_VUE).not.toMatch(/code de secours/i);
+    expect(PORTE_VUE).not.toContain('"recover"');
+    expect(PORTE).toContain('onAuthModeChange("forgot")');
   });
 
   it("affiche la réponse du serveur telle quelle", () => {

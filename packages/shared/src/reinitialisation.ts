@@ -18,8 +18,7 @@
  *
  * Seulement la **forme** : la durée de vie, la longueur, la reconnaissance
  * d'un jeton bien formé. Le tirage au sort et l'empreinte restent côté
- * serveur, seul endroit qui ait un vrai générateur cryptographique — même
- * partage que pour le code de secours.
+ * serveur, seul endroit qui ait un vrai générateur cryptographique.
  *
  * Le client en a besoin pour une raison précise : la page qui reçoit le lien
  * doit pouvoir dire « ce lien n'est pas valide » sans faire un aller-retour
@@ -88,9 +87,9 @@ export function lienDeReinit(base: string, jeton: string): string {
  *
  * **La même phrase pour une adresse connue et pour une adresse inconnue.**
  * C'est la règle qui empêche l'écran de devenir un annuaire : sans elle,
- * n'importe qui essaie une adresse et sait, à la réponse, si elle joue. La
- * route `/auth/recover` applique déjà ce principe pour le code de secours ;
- * celle-ci ne peut pas faire moins, puisqu'elle prend une adresse seule.
+ * n'importe qui essaie une adresse et sait, à la réponse, si elle joue. Cette
+ * route prend une adresse **seule**, sans aucune preuve : elle est donc la
+ * plus exposée du jeu à cet égard.
  */
 export const REINIT_ENVOYE =
   "Si un compte existe avec cette adresse, un lien vient d'y être envoyé. " +

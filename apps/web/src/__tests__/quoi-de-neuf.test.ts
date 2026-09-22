@@ -26,9 +26,14 @@ describe("le panneau", () => {
   });
 
   it("ne s’empile pas sur le tutoriel", () => {
-    // Les deux s'ouvrent au même moment et au même endroit de l'écran :
-    // superposés, ils accueilleraient un joueur neuf par deux panneaux.
-    expect(APP).toContain("if (localStorage.getItem(playerStorageKey(TUTORIAL_KEY, player.id))) {");
+    /*
+     * Les deux s'ouvrent au même moment et au même endroit de l'écran :
+     * superposés, ils accueilleraient un joueur neuf par deux panneaux. Les
+     * nouveautés ne se posent donc que dans la branche où le tutoriel est
+     * écarté — soit qu'il ait déjà été vu, soit que le joueur ait de
+     * l'expérience.
+     */
+    expect(APP).toContain("if (dejaVu || !debutant) {");
     expect(APP).toMatch(/setNouveautes\(\s*nouveautesNonLues\(/);
   });
 

@@ -118,8 +118,12 @@ describe("le tutoriel", () => {
    */
   it("attend que le joueur soit installé sur sa ferme", () => {
     expect(APP).toMatch(/const installe = Boolean\(player\?\.farm\?\.parcels\?\.length\)/);
+    /* Le garde du marque-page s'est étoffé depuis — l'expérience du joueur
+       s'y ajoute, pour qu'un changement de navigateur ne rejoue pas le
+       tutoriel — mais `installe` reste le préalable, et c'est lui qu'on tient
+       ici. Voir `tuto-ne-rejoue-pas.test.ts`. */
     expect(APP).toMatch(
-      /if \(!installe\) return;\s*\n\s*if \(localStorage\.getItem\(playerStorageKey\(TUTORIAL_KEY, player\.id\)\)\)/,
+      /if \(!installe\) return;[\s\S]{0,2000}localStorage\.getItem\(playerStorageKey\(TUTORIAL_KEY, player\.id\)\)/,
     );
   });
 

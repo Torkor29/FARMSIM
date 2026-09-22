@@ -28,7 +28,6 @@ import { createHash, randomBytes } from "node:crypto";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { creerBaseTest, supprimerBaseTest, type BaseTest } from "./base-test.js";
-import { formatRecovery, isRecoveryCode } from "@farmsim/shared";
 import {
   BUILDING_DEFS,
   DEFAULT_GRID,
@@ -201,14 +200,12 @@ async function inscrire(nom: string) {
   assert.equal(r.statut, 201, `inscription refusée : ${JSON.stringify(r.corps)}`);
   const b = r.corps as unknown as {
     token: string;
-    recoveryCode?: string;
     player: { id: string; email: string; farm: { machines: { id: string }[] } };
   };
   return {
     jeton: b.token,
     id: b.player.id,
     email: b.player.email,
-    secours: b.recoveryCode,
     machines: b.player.farm.machines,
   };
 }
@@ -3610,138 +3607,6 @@ describe("code d'accès haché", () => {
     assert.match(codeEnBase(moi.email), EMPREINTE);
   });
 
-  it("la récupération pose une empreinte, pas un code en clair", async () => {
-    const moi = await inscrire("Code Secours Hache");
-    const r = await appel("/auth/recover", {
-      methode: "POST",
-      corps: { email: moi.email, recoveryCode: moi.secours, accessCode: "apres-secours" },
-    });
-    assert.equal(r.statut, 200, JSON.stringify(r.corps));
-    assert.match(codeEnBase(moi.email), EMPREINTE);
-    assert.equal(
-      (await appel("/auth/login", {
-        methode: "POST",
-        corps: { email: moi.email, accessCode: "apres-secours" },
-      })).statut,
-      200,
-    );
-  });
-});
-
-describe("code de secours", () => {
-  it("est remis à l'inscription, une seule fois", async () => {
-    const moi = await inscrire("Secours Neuf");
-    assert.ok(moi.secours, "l'inscription doit remettre un code de secours");
-    assert.ok(isRecoveryCode(moi.secours!));
-
-    // Se reconnecter ne doit **pas** en redonner un : sinon le code noté par
-    // le joueur cesserait de valoir à chaque visite.
-    const r = await appel("/auth/login", {
-      methode: "POST",
-      corps: { email: moi.email, accessCode: "ferme-2026" },
-    });
-    assert.equal(r.statut, 200);
-    assert.equal((r.corps as { recoveryCode?: string }).recoveryCode, undefined);
-  });
-
-  it("rouvre la ferme et pose un code d'accès neuf", async () => {
-    const moi = await inscrire("Secours Oubli");
-    const r = await appel("/auth/recover", {
-      methode: "POST",
-      corps: {
-        email: moi.email,
-        // Recopié comme sur un carnet : tirets, minuscules.
-        recoveryCode: formatRecovery(moi.secours!).toLowerCase(),
-        accessCode: "nouveau-code",
-      },
-    });
-    assert.equal(r.statut, 200, JSON.stringify(r.corps));
-    const b = r.corps as { token: string; player: { id: string }; recoveryCode?: string };
-    assert.equal(b.player.id, moi.id, "c'est bien la même ferme");
-
-    // L'ancien code ne vaut plus, le nouveau vaut.
-    const ancien = await appel("/auth/login", {
-      methode: "POST",
-      corps: { email: moi.email, accessCode: "ferme-2026" },
-    });
-    assert.equal(ancien.statut, 401);
-    const neuf = await appel("/auth/login", {
-      methode: "POST",
-      corps: { email: moi.email, accessCode: "nouveau-code" },
-    });
-    assert.equal(neuf.statut, 200);
-  });
-
-  it("brûle le code utilisé et en remet un autre", async () => {
-    // Un bout de papier retrouvé dans six mois ne doit pas rouvrir la ferme.
-    const moi = await inscrire("Secours Brule");
-    const un = await appel("/auth/recover", {
-      methode: "POST",
-      corps: { email: moi.email, recoveryCode: moi.secours, accessCode: "code-secours-un" },
-    });
-    assert.equal(un.statut, 200);
-    const suivant = (un.corps as { recoveryCode?: string }).recoveryCode;
-    assert.ok(suivant && suivant !== moi.secours, "un code neuf doit être remis");
-
-    const rejoue = await appel("/auth/recover", {
-      methode: "POST",
-      corps: { email: moi.email, recoveryCode: moi.secours, accessCode: "code-secours-deux" },
-    });
-    assert.equal(rejoue.statut, 401);
-
-    const bon = await appel("/auth/recover", {
-      methode: "POST",
-      corps: { email: moi.email, recoveryCode: suivant, accessCode: "code-secours-trois" },
-    });
-    assert.equal(bon.statut, 200);
-  });
-
-  it("met dehors les sessions ouvertes avec l'ancien code", async () => {
-    // Sans cela, reprendre la main sur son compte serait une illusion : celui
-    // qui était entré avec l'ancien code y resterait jusqu'à l'expiration.
-    const moi = await inscrire("Secours Dehors");
-    const avant = await appel("/auth/me", { jeton: moi.jeton });
-    assert.equal(avant.statut, 200);
-
-    const r = await appel("/auth/recover", {
-      methode: "POST",
-      corps: { email: moi.email, recoveryCode: moi.secours, accessCode: "code-repris" },
-    });
-    assert.equal(r.statut, 200);
-
-    const apres = await appel("/auth/me", { jeton: moi.jeton });
-    assert.equal(apres.statut, 401);
-  });
-
-  it("refuse sans dire si l'adresse existe", async () => {
-    const moi = await inscrire("Secours Muet");
-    const faux = await appel("/auth/recover", {
-      methode: "POST",
-      corps: {
-        email: moi.email,
-        recoveryCode: "ZZZZ-ZZZZ-ZZZZ-ZZZZ",
-        accessCode: "peu-importe",
-      },
-    });
-    const inconnu = await appel("/auth/recover", {
-      methode: "POST",
-      corps: {
-        email: `personne-${Date.now()}@test.fr`,
-        recoveryCode: "ZZZZ-ZZZZ-ZZZZ-ZZZZ",
-        accessCode: "peu-importe",
-      },
-    });
-    assert.equal(faux.statut, inconnu.statut);
-    assert.deepEqual(faux.corps, inconnu.corps);
-    assert.equal(faux.statut, 401);
-
-    // Et le compte visé n'a pas bougé.
-    const encore = await appel("/auth/login", {
-      methode: "POST",
-      corps: { email: moi.email, accessCode: "ferme-2026" },
-    });
-    assert.equal(encore.statut, 200);
-  });
 });
 
 describe("mise à jour du compte", () => {
@@ -4502,10 +4367,10 @@ describe("le lien de réinitialisation", () => {
 
   it("annonce franchement quand le courrier n’est pas branché", async () => {
     /*
-     * Plutôt que de promettre un courriel qui ne partira pas — « un secours
-     * qui n'arrivera jamais », le travers que `recovery.ts` refusait déjà. Ce
-     * n'est pas une fuite : l'information porte sur le serveur, pas sur
-     * l'existence d'un compte.
+     * Plutôt que de promettre un courriel qui ne partira pas. Ce n'est pas une
+     * fuite : l'information porte sur le serveur, pas sur l'existence d'un
+     * compte. Et il n'y a plus de repli à proposer — le code de secours, qui
+     * tenait ce rôle hors ligne, a été retiré avec l'arrivée du lien.
      */
     const dispo = await appel("/auth/courriel");
     assert.equal(dispo.statut, 200);
@@ -4516,7 +4381,7 @@ describe("le lien de réinitialisation", () => {
       corps: { email: "personne@test.fr" },
     });
     assert.equal(r.statut, 503, JSON.stringify(r.corps));
-    assert.match((r.corps as unknown as { error: string }).error, /code de secours/);
+    assert.match((r.corps as unknown as { error: string }).error, /exploitant du jeu/);
   });
 
   it("refuse un jeton qui n’a pas la forme d’un jeton", async () => {
@@ -4577,7 +4442,7 @@ describe("le lien de réinitialisation", () => {
     assert.equal(bon.statut, 200, JSON.stringify(bon.corps));
   });
 
-  it("change le mot de passe, connecte, et remet un code de secours", async () => {
+  it("change le mot de passe et connecte dans la foulée", async () => {
     const moi = await inscrire("Revenant");
     const jeton = jetonNeuf();
     poserJeton(moi.id, jeton);
@@ -4587,16 +4452,9 @@ describe("le lien de réinitialisation", () => {
       corps: { jeton, accessCode: "ma-nouvelle-ferme-2026" },
     });
     assert.equal(r.statut, 200, JSON.stringify(r.corps));
-    const corps = r.corps as unknown as {
-      token: string;
-      player: { id: string };
-      recoveryCode?: string;
-    };
+    const corps = r.corps as unknown as { token: string; player: { id: string } };
     assert.equal(corps.player.id, moi.id);
     assert.ok(corps.token, "le lien doit reconnecter : sinon il faut ressaisir dans la foulée");
-    /* Celui qui arrive ici a vraisemblablement perdu son code de secours. Le
-       lui renouveler referme la boucle au lieu de le laisser sans filet. */
-    assert.ok(corps.recoveryCode, "un code de secours neuf doit être remis");
 
     // L'ancien mot de passe ne vaut plus rien.
     const ancien = await appel("/auth/login", {
