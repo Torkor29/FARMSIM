@@ -42,6 +42,13 @@ describe("acheter une parcelle ne déplace pas le joueur", () => {
     expect(corps).toMatch(/Mes parcelles/);
   });
 
+  it("mais le paysage se met à jour aussitôt : la terre achetée n'est plus « à vendre »", () => {
+    // Le saut rechargeait le voisinage au passage. Sans lui, la parcelle
+    // restait dessinée comme à vendre jusqu'au rafraîchissement suivant, et un
+    // clic dessus rouvrait la fiche d'achat au lieu d'y mener.
+    expect(corpsDeBuyAdjacent()).toMatch(/loadVoisinage\(activeParcelId\)/);
+  });
+
   it("le seul déplacement de vue reste celui que le joueur demande", () => {
     // Le rail « Mes parcelles » est la porte de sortie : c'est lui, et lui
     // seul, qui doit emmener sur une parcelle qu'on vient d'acheter.
