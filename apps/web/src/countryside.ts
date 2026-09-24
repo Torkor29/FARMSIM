@@ -47,6 +47,7 @@ import {
   makeVoiture,
 } from "./decor3d";
 import { creerVoisinDetaille, poserBatimentsVoisin, type VoisinDetaille } from "./voisin3d";
+import { creerLieu, creerPanneau, type Jetables } from "./village3d";
 import type { BuildingRig } from "./buildings3d";
 import {
   couleurChamp,
@@ -614,7 +615,18 @@ export function createCountryside(o: OptionsCampagne): Campagne {
    *  - **à vendre**, un piquet de bois et sa pancarte au coin du champ.
    *    Une forme, pas seulement une teinte.
    */
-  const ATTENUATION = -0.11;
+  /*
+   * L'atténuation des terres des autres : plus sombre **et** un peu passée.
+   *
+   * À −11 % de luminosité seule, on ne la voyait pas sur téléphone — signalé
+   * en jeu : « y'a pas les terrains un poil plus sombres ». Un quart plus
+   * sombre, et un cinquième de la couleur rendu au gris : sa ferme ressort
+   * nettement, le reste du pays reste lisible.
+   */
+  const ATTENUATION = 0.74;
+  const DELAVE = 0.2;
+  const _teinte = new THREE.Color();
+  const _gris = new THREE.Color();
   const estChezMoi = (p: ParcelleVoisine) => p.reel?.statut === "MOI";
   /**
    * De combien lever une de ses parcelles pour l'aligner sur l'île.
@@ -625,8 +637,12 @@ export function createCountryside(o: OptionsCampagne): Campagne {
    * exactement au même niveau, talus compris.
    */
   const levee = (p: ParcelleVoisine) => (estChezMoi(p) ? -y0 : 0);
-  const teinter = (hex: number, p: ParcelleVoisine) =>
-    estChezMoi(p) ? hex : eclaircir(hex, ATTENUATION);
+  const teinter = (hex: number, p: ParcelleVoisine): number => {
+    if (estChezMoi(p)) return hex;
+    _teinte.setHex(hex);
+    const l = _teinte.r * 0.3 + _teinte.g * 0.59 + _teinte.b * 0.11;
+    return _teinte.lerp(_gris.setRGB(l, l, l), DELAVE).multiplyScalar(ATTENUATION).getHex();
+  };
 
   /*
    * Les bâtiments du cadastre, une fois, partout.
@@ -660,6 +676,41 @@ export function createCountryside(o: OptionsCampagne): Campagne {
         rigsBatiments.push(rig);
       }
     }
+  }
+
+  /*
+   * Les pancartes « À VENDRE », et le village.
+   *
+   * La pancarte était un aplat de trois boîtes, posé seulement si **ce**
+   * joueur pouvait acheter la parcelle : plafond atteint, niveau trop bas, et
+   * le pays entier semblait ne rien avoir à vendre. Elle se pose désormais
+   * sur toute parcelle en vente, avec son enseigne peinte, tournée vers la
+   * caméra. Qu'on puisse l'acheter tout de suite, c'est la fiche qui le dit.
+   */
+  const jetables: Jetables = { geometries: [], materiaux: [], textures: [] };
+  const enginsVillage: MachineRig[] = [];
+  {
+    const groupe = new THREE.Group();
+    groupe.name = "campagne-pancartes";
+    for (const p of plan.parcelles) {
+      if (!p.reel || p.reel.statut === "MOI" || p.reel.prix === null) continue;
+      // Grande : elle doit se lire sur un téléphone, de toute la largeur du pays.
+      const pancarte = creerPanneau("VENTE", jetables, { largeur: 3.8, shadows });
+      const coin = (p.cote - 0.5) / 2 - 1.4;
+      pancarte.position.set(p.x + coin, y0, p.z + coin);
+      groupe.add(pancarte);
+    }
+    object.add(groupe);
+
+    const village = new THREE.Group();
+    village.name = "campagne-lieux";
+    for (const lieu of plan.lieux) {
+      const monte = creerLieu(lieu, { pasCase, y: y0, shadows, jetables });
+      village.add(monte.group);
+      rigsBatiments.push(...monte.batiments);
+      enginsVillage.push(...monte.engins);
+    }
+    object.add(village);
   }
 
   /*
@@ -817,29 +868,6 @@ export function createCountryside(o: OptionsCampagne): Campagne {
       }
 
       /*
-       * À vendre : un piquet et sa pancarte, au coin du champ.
-       *
-       * Posé au coin tourné vers la caméra — celui des `x` et `z` positifs —
-       * pour qu'il se voie sans masquer la parcelle. Le bois reprend le brun
-       * des clôtures de la cour ; la pancarte, le crème des étiquettes du jeu.
-       * Pleine lumière même sur un terrain assombri : c'est une invitation,
-       * elle doit ressortir.
-       */
-      if (p.reel?.achetable) {
-        const coin = bordHaie - 0.35;
-        const px = p.x + coin;
-        const pz = p.z + coin;
-        const BOIS = 0x7a5534;
-        const PANCARTE = 0xf2e6c4;
-        const LISERE = 0xc9542e;
-        // À l'échelle d'un champ de douze cases, vu de trente unités : en deçà
-        // d'un mètre et demi de haut, la pancarte se perdait dans le damier.
-        ajouterBoite(pos, col, px, y0 + 0.85, pz, 0.18, 1.7, 0.18, BOIS);
-        ajouterBoite(pos, col, px, y0 + 1.55, pz + 0.05, 1.45, 0.8, 0.1, PANCARTE);
-        ajouterBoite(pos, col, px, y0 + 1.92, pz + 0.06, 1.45, 0.12, 0.11, LISERE);
-      }
-
-      /*
        * Les bâtiments du cadastre ne sont plus dans la nappe : une grange
        * générique faisait d'un silo, d'une étable et d'une maison la même
        * baraque. Ils sont posés à part, avec les modèles du joueur.
@@ -910,11 +938,21 @@ export function createCountryside(o: OptionsCampagne): Campagne {
      * roues ne touchent jamais. Même tracé, même largeur : seul l'habit
      * change, et rien de ce qui s'appuie sur la route ne bouge.
      */
-    const bitume = new THREE.Color(0xc2a479);
-    const accotement = new THREE.Color(0x98ab68);
-    const ligne = new THREE.Color(0xa3b06f);
-    const orniere = new THREE.Color(0xb39570);
-    const gravier = new THREE.Color(0xcdb58a);
+    /*
+     * Une allée de gravier blond, bordée et clôturée.
+     *
+     * La première version — terre, deux ornières brunes, une bande d'herbe —
+     * se lisait de loin comme deux traits rosés sur du vert : « le chemin de
+     * terre est pas dingue ». On garde le tracé et la largeur, et l'on
+     * dessine une vraie allée de campagne : un gravier clair, deux liserés
+     * plus soutenus qui la tiennent, un bas-côté d'herbe tendre, et une
+     * clôture de bois de part et d'autre — le même bois que la cour.
+     */
+    const bitume = new THREE.Color(0xe0c996);
+    const accotement = new THREE.Color(0xa6c86f);
+    const liseré = new THREE.Color(0xc2a26a);
+    const orniere = new THREE.Color(0xd4b986);
+    const gravier = new THREE.Color(0xdcc9a0);
 
     /**
      * Un ruban posé au sol le long d'une polyligne.
@@ -962,36 +1000,65 @@ export function createCountryside(o: OptionsCampagne): Campagne {
     ruban(pointsRoute, DEMI_ROUTE - 0.5, y0 + 0.03, bitume, accotement);
     ruban(plan.desserte, 1.0, y0 + 0.025, gravier, null);
 
-    // Les deux ornières, là où passent les roues.
-    for (const cote of [-1, 1]) {
-      const decale = pointsRoute.map((pt, i) => {
+    // Les deux liserés qui tiennent l'allée, et deux traces de roues à peine
+    // plus claires que le gravier : une texture, pas des traits.
+    const decaler = (k: number) =>
+      pointsRoute.map((pt, i) => {
         const a = pointsRoute[Math.max(0, i - 1)]!;
         const b = pointsRoute[Math.min(pointsRoute.length - 1, i + 1)]!;
         const l = Math.hypot(b.x - a.x, b.z - a.z) || 1;
-        return { x: pt.x + (-(b.z - a.z) / l) * 0.27 * cote, z: pt.z + ((b.x - a.x) / l) * 0.27 * cote };
+        return { x: pt.x + (-(b.z - a.z) / l) * k, z: pt.z + ((b.x - a.x) / l) * k };
       });
-      ruban(decale, 0.1, y0 + 0.035, orniere, null);
+    const bordChaussee = DEMI_ROUTE - 0.5;
+    for (const cote of [-1, 1]) {
+      ruban(decaler(cote * (bordChaussee - 0.06)), 0.06, y0 + 0.034, liseré, null);
+      ruban(decaler(cote * 0.3), 0.09, y0 + 0.033, orniere, null);
     }
 
-    // La bande d'herbe entre les ornières, en touffes : deux mètres d'herbe,
-    // un de terre nue. Une bande continue se lirait comme une ligne peinte.
+    /*
+     * La clôture, de part et d'autre, là où l'on regarde.
+     *
+     * Des piquets tous les deux mètres et demi et deux lisses entre eux, au
+     * bord extérieur du bas-côté. Elle s'ouvre là où un chemin rejoint la
+     * route — la desserte de la cour, chaque chemin d'accès — sinon elle
+     * barrerait l'entrée qu'elle borde.
+     */
     const total = longueurs[longueurs.length - 1]!;
-    for (let s = 2; s < total - 2; s += 3) {
-      const a = surLaRoute(pointsRoute, longueurs, s);
-      const b = surLaRoute(pointsRoute, longueurs, s + 2);
-      const dx = b.x - a.x;
-      const dz = b.z - a.z;
-      const l = Math.hypot(dx, dz) || 1;
-      const nn = { x: -dz / l, z: dx / l };
-      const k = 0.13;
-      const c = (p: { x: number; z: number }, signe: number): [number, number, number] => [
-        p.x + nn.x * k * signe,
-        y0 + 0.04,
-        p.z + nn.z * k * signe,
-      ];
-      quad(pos, col, c(a, -1), c(b, -1), c(b, 1), c(a, 1), ligne);
+    const ouvertures = [plan.desserte[0]?.x ?? 0, ...plan.acces.map((a) => a.points[0]!.x)];
+    const sCentreFerme = -pointsRoute[0]!.x;
+    const PAS_PIQUET = 2.5;
+    const debutClo = Math.max(1, sCentreFerme - 60);
+    const finClo = Math.min(total - 1, sCentreFerme + 60);
+    const BOIS_CLOTURE = 0x8a6440;
+    const LISSE = 0x9c7650;
+    // Un maillage à part : la route est une nappe qui regarde le ciel, la
+    // clôture a des flancs.
+    const posClo: number[] = [];
+    const colClo: number[] = [];
+    for (const cote of [-1, 1]) {
+      const k = cote * (DEMI_ROUTE + 0.15);
+      for (let s = debutClo; s + PAS_PIQUET <= finClo; s += PAS_PIQUET) {
+        const a = surLaRoute(pointsRoute, longueurs, s);
+        const b = surLaRoute(pointsRoute, longueurs, s + PAS_PIQUET);
+        if (ouvertures.some((x) => Math.abs(a.x - x) < 1.6 || Math.abs(b.x - x) < 1.6)) continue;
+        const l = Math.hypot(b.x - a.x, b.z - a.z) || 1;
+        const nx = -(b.z - a.z) / l;
+        const nz = (b.x - a.x) / l;
+        const ax = a.x + nx * k;
+        const az = a.z + nz * k;
+        const bx = b.x + nx * k;
+        const bz = b.z + nz * k;
+        ajouterBoite(posClo, colClo, ax, y0 + 0.28, az, 0.12, 0.56, 0.12, BOIS_CLOTURE);
+        // La route court le long des `x` : les lisses aussi.
+        for (const h of [0.22, 0.44]) {
+          ajouterBoite(posClo, colClo, (ax + bx) / 2, y0 + h, (az + bz) / 2, Math.abs(bx - ax) + 0.02, 0.06, 0.05, LISSE);
+        }
+      }
     }
     object.add(garder(maillageFacette(pos, col, { nom: "campagne-route" })));
+    if (posClo.length) {
+      object.add(garder(maillageFacette(posClo, colClo, { shadows, nom: "campagne-cloture" })));
+    }
   }
 
   /* —— Les chemins d'accès ——
@@ -1016,10 +1083,11 @@ export function createCountryside(o: OptionsCampagne): Campagne {
   const chantiers: Chantier[] = [];
   {
     const enChantier = new Set(o.chantiers ?? []);
-    const gravier = new THREE.Color(0xcdb58a);
-    const neuf = new THREE.Color(0xd9c49b);
-    const bord = new THREE.Color(0x98ab68);
-    const orniere = new THREE.Color(0xb39570);
+    // Le même habit que la route : gravier blond, bas-côté tendre.
+    const gravier = new THREE.Color(0xe0c996);
+    const neuf = new THREE.Color(0xeedcb2);
+    const bord = new THREE.Color(0xa6c86f);
+    const orniere = new THREE.Color(0xd4b986);
     const CHAUSSEE = DEMI_ACCES - 0.2;
     const PAS = 0.5;
     for (const a of plan.acces) {
@@ -1517,6 +1585,11 @@ export function createCountryside(o: OptionsCampagne): Campagne {
     detailles.clear();
     for (const r of rigsBatiments) r.dispose();
     rigsBatiments.length = 0;
+    for (const e of enginsVillage) e.dispose();
+    enginsVillage.length = 0;
+    for (const g of jetables.geometries) g.dispose();
+    for (const m of jetables.materiaux) m.dispose();
+    for (const t of jetables.textures) t.dispose();
     for (const e of engins) e.rig.dispose();
     engins.length = 0;
     for (const c of chantiers) {

@@ -7,6 +7,8 @@ import {
   parcelleSous,
   tourner,
   boiteSegment,
+  COTE_LIEU,
+  LIEUX_UTILES,
   DEMI_ROUTE,
   ENGINS_MAX,
   LARGEUR_CHEMIN,
@@ -1002,5 +1004,85 @@ describe("les chemins d'accès", () => {
     const ici = plan.acces.find((a) => a.id === "a-0-0");
     expect(ici).toBeDefined();
     expect(Math.abs(ici!.points[ici!.points.length - 1]!.x)).toBeCloseTo(EMPRISE / 2, 9);
+  });
+});
+
+/**
+ * Le village, entre la ferme et le bois.
+ *
+ * Trois lieux qui servent — coopérative, concession, mairie — et trois de
+ * décor. Jamais sur un champ, la cour, l'île, la route ou un chemin.
+ */
+describe("le village", () => {
+  function voisin(col: number, rang: number, statut: VoisinReel["statut"]): VoisinReel {
+    return {
+      id: `v-${col}-${rang}`,
+      label: `Champ ${col}·${rang}`,
+      col,
+      rang,
+      statut,
+      proprietaire: null,
+      exploitation: null,
+      culture: "WHEAT",
+      stade: "GROWING",
+      partCultivee: 1,
+      fertility: 0.7,
+      batiments: [],
+      cheptel: [],
+      prix: statut === "MOI" ? null : 1000,
+      achetable: false,
+      refus: null,
+    };
+  }
+  const commune: VoisinReel[] = [];
+  for (let c = -3; c <= 3; c++) {
+    for (let r = -3; r <= 3; r++) {
+      commune.push(voisin(c, r, (c === 0 && r === 0) || (c === 1 && r === 1) ? "MOI" : "PNJ"));
+    }
+  }
+  const plan = planCampagne({ ...OPTIONS, voisins: commune, maison: "v-0-0", quart: 0 });
+  const boite = (l: { x: number; z: number }) => ({ x: l.x, z: l.z, w: COTE_LIEU, d: COTE_LIEU });
+
+  it("pose les trois lieux utiles, puis le décor", () => {
+    const genres = plan.lieux.map((l) => l.genre);
+    for (const g of LIEUX_UTILES) expect(genres).toContain(g);
+    expect(genres.slice(0, 3)).toEqual([...LIEUX_UTILES]);
+  });
+
+  it("ne pose rien sur un champ, la cour, l'île, la route ou un chemin", () => {
+    const ile = { x: 0, z: 0, w: EMPRISE, d: EMPRISE };
+    for (const l of plan.lieux) {
+      const b = boite(l);
+      expect(seChevauchent(b, OPTIONS.cour)).toBe(false);
+      expect(seChevauchent(b, ile)).toBe(false);
+      expect(Math.abs(l.z - plan.routeZ)).toBeGreaterThan(COTE_LIEU / 2 + DEMI_ROUTE);
+      for (const p of plan.parcelles) expect(seChevauchent(b, empriseParcelle(p, p.cote))).toBe(false);
+      for (const a of plan.acces) {
+        for (let i = 0; i + 1 < a.points.length; i++) {
+          expect(seChevauchent(b, boiteSegment(a.points[i]!, a.points[i + 1]!))).toBe(false);
+        }
+      }
+      for (const autre of plan.lieux) {
+        if (autre !== l) expect(seChevauchent(b, boite(autre))).toBe(false);
+      }
+    }
+  });
+
+  it("reste dans le pré, au ras de la lisière, sans empiéter sur le bois", () => {
+    for (const l of plan.lieux) {
+      expect(versEcranBas(l.x, l.z) - COTE_LIEU).toBeGreaterThanOrEqual(plan.sol.uMin + 4.5 - 1e-9);
+    }
+  });
+
+  it("aucun arbre ne pousse sur le village", () => {
+    for (const l of plan.lieux) {
+      for (const a of plan.arbres) {
+        expect(seChevauchent({ x: a.x, z: a.z, w: 1, d: 1 }, boite(l))).toBe(false);
+      }
+    }
+  });
+
+  it("sans carte, pas de village : le décor n'a pas de commune", () => {
+    expect(planCampagne(OPTIONS).lieux).toEqual([]);
   });
 });

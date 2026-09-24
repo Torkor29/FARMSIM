@@ -223,7 +223,25 @@ export type Acces = {
 /** Demi-largeur d'un chemin d'accès, bas-côtés compris. */
 export const DEMI_ACCES = 0.8;
 
+/**
+ * Ce qu'il y a autour des champs : le village, et de quoi l'habiter.
+ *
+ * Les trois premiers servent — la coopérative où l'on vend, la concession où
+ * l'on achète ses engins, la mairie où l'on achète ses terres. Les trois
+ * autres sont du paysage : un étang, un verger, un rucher.
+ */
+export type GenreLieu = "COOPERATIVE" | "CONCESSION" | "MAIRIE" | "ETANG" | "VERGER" | "RUCHER";
+export const LIEUX_UTILES: readonly GenreLieu[] = ["COOPERATIVE", "CONCESSION", "MAIRIE"];
+export const LIEUX_DECOR: readonly GenreLieu[] = ["ETANG", "VERGER", "RUCHER"];
+
+export type Lieu = { genre: GenreLieu; x: number; z: number };
+
+/** Côté de l'emprise d'un lieu, en unités de la scène. */
+export const COTE_LIEU = 7.5;
+
 export type PlanCampagne = {
+  /** Le village et son décor, entre la ferme et la lisière. */
+  lieux: Lieu[];
   parcelles: ParcelleVoisine[];
   /**
    * Les chemins d'accès aux parcelles du joueur — sauf au siège, que la
@@ -914,6 +932,66 @@ export function planCampagne(o: OptionsPlan): PlanCampagne {
   });
 
   /*
+   * Le village, entre la ferme et le bois.
+   *
+   * Le pré d'amont était une bande d'herbe vide en travers du cadre. On y pose
+   * de quoi habiter le pays — et d'abord de quoi servir : la coopérative, la
+   * concession, la mairie. Ils sont comptés **depuis le siège** et depuis la
+   * lisière, qui ne bougent ni l'un ni l'autre quand on change de parcelle
+   * active : le village reste où il est, comme la cour.
+   *
+   * Rien ne se pose sur un champ, la cour, l'île, la route ou un chemin.
+   */
+  const lieux: Lieu[] = [];
+  const desserte0 = (): PointPlan => ({ x: o.cour.x, z: o.cour.z + o.cour.d / 2 - 0.3 });
+  const desserte1 = (): PointPlan => ({ x: o.cour.x, z: routeZ });
+  if (o.voisins) {
+    const siege =
+      o.maison && o.voisins.find((v) => v.id === o.maison)
+        ? tourner(o.voisins.find((v) => v.id === o.maison)!, quart)
+        : { col: 0, rang: 0 };
+    const vSiege = versEcranDroite(siege.col * pas, siege.rang * pas);
+    const demi = COTE_LIEU / 2;
+    const libreLieu = (x: number, z: number): boolean => {
+      const b: Boite = { x, z, w: COTE_LIEU, d: COTE_LIEU };
+      if (versEcranBas(x, z) - COTE_LIEU < sol.uMin + 4.5) return false;
+      if (Math.abs(versEcranDroite(x, z)) + COTE_LIEU > sol.vMax - MARGE_LISIERE) return false;
+      if (Math.abs(z - routeZ) < DEMI_ROUTE + demi + 0.6) return false;
+      if (seChevauchent(b, cour, 0.8) || seChevauchent(b, joueur, 0.8)) return false;
+      if (parcelles.some((p) => seChevauchent(b, empriseParcelle(p, p.cote), 0.8))) return false;
+      if (lieux.some((l) => seChevauchent(b, { x: l.x, z: l.z, w: COTE_LIEU, d: COTE_LIEU }, 1.2))) {
+        return false;
+      }
+      for (const a of acces) {
+        for (let i = 0; i + 1 < a.points.length; i++) {
+          if (seChevauchent(b, boiteSegment(a.points[i]!, a.points[i + 1]!), 0.4)) return false;
+        }
+      }
+      return !seChevauchent(b, boiteSegment(desserte0(), desserte1()), 0.4);
+    };
+    /*
+     * À droite du siège d'abord : la cour déborde de l'île à gauche, et ce
+     * côté-là est souvent pris. Le premier rang, au ras du bois, puis un
+     * second plus bas ; à gauche ensuite, pour le décor surtout.
+     */
+    const candidats: { x: number; z: number }[] = [];
+    const pasLieu = COTE_LIEU + 1.6;
+    for (const signe of [1, -1]) {
+      for (const rangU of [9.5, 17]) {
+        const u = sol.uMin + rangU;
+        for (let k = signe > 0 ? 0 : 1; k <= 14; k++) {
+          const v = vSiege + signe * k * pasLieu;
+          candidats.push({ x: (u + v) / 2, z: (u - v) / 2 });
+        }
+      }
+    }
+    for (const genre of [...LIEUX_UTILES, ...LIEUX_DECOR]) {
+      const c = candidats.find((c) => libreLieu(c.x, c.z));
+      if (c) lieux.push({ genre, x: c.x, z: c.z });
+    }
+  }
+
+  /*
    * Le chemin, d'un bord à l'autre du sol.
    *
    * À `z` constant, le losange se traverse entre deux abscisses qu'on tire des
@@ -956,6 +1034,10 @@ export function planCampagne(o: OptionsPlan): PlanCampagne {
     }
     if (seChevauchent({ x, z, w: r * 2, d: r * 2 }, cour, 0.8)) return false;
     if (seChevauchent({ x, z, w: r * 2, d: r * 2 }, joueur, 0.8)) return false;
+    // Ni sur le village, ni sur son décor.
+    if (lieux.some((l) => seChevauchent({ x, z, w: r * 2, d: r * 2 }, { x: l.x, z: l.z, w: COTE_LIEU, d: COTE_LIEU }, 0.3))) {
+      return false;
+    }
     return !parcelles.some((p) =>
       seChevauchent({ x, z, w: r * 2, d: r * 2 }, empriseParcelle(p, emprise), 0.2),
     );
@@ -1017,7 +1099,7 @@ export function planCampagne(o: OptionsPlan): PlanCampagne {
     );
   }
 
-  return { parcelles, acces, route, desserte, arbres, sol, pas, emprise, routeZ, quart };
+  return { lieux, parcelles, acces, route, desserte, arbres, sol, pas, emprise, routeZ, quart };
 }
 
 /** L'emprise d'un tronçon de chemin, droit et parallèle à un axe. */

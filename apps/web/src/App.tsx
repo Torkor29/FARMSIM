@@ -5817,6 +5817,18 @@ export function App() {
                 if (v.statut === "MOI") setActiveParcelId(v.id);
                 else setVoisinOuvert(v);
               }}
+              /* Le village sert : la coopérative mène au marché, la
+                 concession au garage, la mairie au Bureau et ses terres. */
+              onLieuClick={(genre) => {
+                if (genre === "COOPERATIVE") setShowMarket(true);
+                else if (genre === "CONCESSION") {
+                  if (isMobile) setSheet("GARAGE");
+                  else setShowGarage(true);
+                } else if (genre === "MAIRIE") {
+                  if (isMobile) setSheet("OFFICE");
+                  else setShowEta(true);
+                }
+              }}
               onOwnedCellClick={(parcelId, x, y, mods) => {
                 gesteApresBascule.current = { parcelId, x, y, mods };
                 setActiveParcelId(parcelId);

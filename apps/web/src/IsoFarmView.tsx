@@ -33,8 +33,10 @@ import {
   orientationTrame,
   parcelleSous,
   tourner,
+  type GenreLieu,
   type VoisinReel,
 } from "./countryside-plan";
+import { lieuUtile } from "./village3d";
 import {
   bornesDeplacement,
   elastique,
@@ -304,6 +306,11 @@ type Props = {
    * devenue active, puisque la vue compense le déplacement d'origine.
    */
   onOwnedCellClick?: (parcelId: string, x: number, y: number, mods: PointerMods) => void;
+  /**
+   * Un lieu du village touché dans le paysage : la coopérative, la
+   * concession ou la mairie. Chacun ouvre ce qu'il abrite.
+   */
+  onLieuClick?: (genre: GenreLieu) => void;
   /**
    * Le siège de l'exploitation : la parcelle où est la cour.
    *
@@ -1152,6 +1159,7 @@ export function IsoFarmView({
   voisinage,
   onVoisinClick,
   onOwnedCellClick,
+  onLieuClick,
   homeParcelId,
   gridW,
   gridH,
@@ -1254,6 +1262,8 @@ export function IsoFarmView({
   parcelIdRef.current = parcelId;
   const onVoisinRef = useRef(onVoisinClick);
   onVoisinRef.current = onVoisinClick;
+  const onLieuRef = useRef(onLieuClick);
+  onLieuRef.current = onLieuClick;
   const onOwnedCellRef = useRef(onOwnedCellClick);
   onOwnedCellRef.current = onOwnedCellClick;
   const homeRef = useRef(homeParcelId);
@@ -2810,6 +2820,20 @@ export function IsoFarmView({
      * monde et `y` vers ses `z`. La case lue ici est donc celle qu'on
      * retrouvera sous le doigt une fois la parcelle devenue active.
      */
+    /** Le lieu utile du village sous le curseur, s'il y en a un. */
+    function raycastLieu(): GenreLieu | null {
+      const village = campagne?.object.getObjectByName("campagne-lieux");
+      if (!village) return null;
+      raycaster.setFromCamera(pointer, camera);
+      for (const hit of raycaster.intersectObject(village, true)) {
+        let o: THREE.Object3D | null = hit.object;
+        while (o && !o.userData.genre) o = o.parent;
+        const genre = o?.userData.genre as GenreLieu | undefined;
+        if (genre && lieuUtile(genre)) return genre;
+      }
+      return null;
+    }
+
     function raycastParcelle(): { voisin: VoisinReel; x: number; y: number } | null {
       if (!campagne) return null;
       const nappe = campagne.object.getObjectByName("campagne-parcelles-nappe");
@@ -3196,6 +3220,12 @@ export function IsoFarmView({
       // Hors de sa grille : peut-être un champ de voisin. C'est le seul geste
       // qui porte au-delà de l'île, et il ne coûte rien puisqu'on n'y arrive
       // qu'après avoir manqué toutes les cases.
+      // Un lieu du village : la coopérative, la concession, la mairie.
+      const lieu = raycastLieu();
+      if (lieu) {
+        onLieuRef.current?.(lieu);
+        return;
+      }
       const touche = raycastParcelle();
       if (!touche) return;
       /*

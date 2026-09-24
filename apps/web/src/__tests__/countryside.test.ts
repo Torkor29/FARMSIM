@@ -87,7 +87,10 @@ describe("le sol", () => {
       const m = c.object.getObjectByName(nom) as THREE.Mesh | undefined;
       expect(m).toBeDefined();
       const n = m!.geometry.getAttribute("normal");
-      expect(n.count).toBeGreaterThan(60);
+      // Assez pour ne pas mesurer le vide : la route n'a plus ses touffes
+      // d'herbe en pointillés (48 sommets pour une ligne droite), le sol en a
+      // des centaines.
+      expect(n.count).toBeGreaterThan(30);
       let mini = 1;
       for (let i = 0; i < n.count; i++) mini = Math.min(mini, n.getY(i));
       expect(mini).toBeGreaterThan(0.99);
