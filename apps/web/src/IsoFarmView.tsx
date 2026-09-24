@@ -23,7 +23,14 @@ import { applyHerdPose, meshForHerd } from "./animal-meshes";
 import { createBuildingRig, nearestThreshold, type BuildingRig } from "./buildings3d";
 import { createParkingRig, type ParkingRig } from "./parking3d";
 import { createCountryside, type Campagne } from "./countryside";
-import { parcelleSous, type VoisinReel } from "./countryside-plan";
+import {
+  LARGEUR_CHEMIN,
+  couloirRoute,
+  orientationTrame,
+  parcelleSous,
+  tourner,
+  type VoisinReel,
+} from "./countryside-plan";
 import {
   bornesDeplacement,
   elastique,
@@ -271,6 +278,28 @@ type Props = {
   voisinage?: readonly VoisinReel[];
   /** Un champ de voisin a été touché : la coquille en ouvre la fiche. */
   onVoisinClick?: (voisin: VoisinReel) => void;
+  /**
+   * Une case d'une **autre** parcelle du joueur a été touchée.
+   *
+   * Toucher une de ses propres parcelles ouvrait une fiche qui disait
+   * « Cette parcelle est déjà la vôtre » — et rien d'autre. Pour y travailler
+   * il fallait trouver « Mes parcelles », cliquer son nom, et retrouver sa
+   * place dans un paysage qui venait de sauter d'une parcelle.
+   *
+   * La case touchée est donnée dans le repère de **sa** parcelle : c'est la
+   * même que celle qu'on retrouvera sous le doigt une fois la parcelle
+   * devenue active, puisque la vue compense le déplacement d'origine.
+   */
+  onOwnedCellClick?: (parcelId: string, x: number, y: number, mods: PointerMods) => void;
+  /**
+   * Le siège de l'exploitation : la parcelle où est la cour.
+   *
+   * La cour montre **tous** les engins de la ferme — c'est la cour de la
+   * ferme, pas celle d'une parcelle. Elle doit donc rester au siège quand on
+   * travaille ailleurs, au lieu de suivre la parcelle active et d'aller
+   * recouvrir la voisine.
+   */
+  homeParcelId?: string;
   gridW: number;
   gridH: number;
   cells: IsoCell[];
@@ -1107,6 +1136,8 @@ export function IsoFarmView({
   onEgare,
   voisinage,
   onVoisinClick,
+  onOwnedCellClick,
+  homeParcelId,
   gridW,
   gridH,
   cells,
@@ -1194,6 +1225,10 @@ export function IsoFarmView({
   parcelIdRef.current = parcelId;
   const onVoisinRef = useRef(onVoisinClick);
   onVoisinRef.current = onVoisinClick;
+  const onOwnedCellRef = useRef(onOwnedCellClick);
+  onOwnedCellRef.current = onOwnedCellClick;
+  const homeRef = useRef(homeParcelId);
+  homeRef.current = homeParcelId;
   const onParkedRef = useRef(onParkedClick);
   onParkedRef.current = onParkedClick;
   const seasonAppliedRef = useRef<string | null>(null);
@@ -1400,6 +1435,40 @@ export function IsoFarmView({
     scene.add(campagneGroup);
     let campagne: Campagne | null = null;
     let campagneCle = "";
+    /**
+     * Le repère de la ferme : orientation de la carte et place du siège.
+     *
+     * Tout ce qui appartient à la **ferme** et non à une parcelle — la cour,
+     * son chemin d'accès, l'orientation du paysage — se calcule autour du
+     * siège, quelle que soit la parcelle active. Passer d'une de ses parcelles
+     * à l'autre n'est alors qu'une translation : rien ne tourne, rien ne
+     * change de place, la vue compense le déplacement d'origine.
+     *
+     * Quand le siège est la parcelle active — le cas de presque toutes les
+     * parties —, tout vaut zéro et le paysage est exactement celui d'avant.
+     */
+    let repere: { quart: 0 | 1 | 2 | 3; mx: number; mz: number } = { quart: 0, mx: 0, mz: 0 };
+    function calculerRepere(gw: number, gh: number): void {
+      const voisins = voisinageRef.current ?? [];
+      if (!voisins.length) {
+        repere = { quart: 0, mx: 0, mz: 0 };
+        return;
+      }
+      const maison = voisins.find((v) => v.id === homeRef.current);
+      if (!maison) {
+        repere = { quart: orientationTrame(voisins), mx: 0, mz: 0 };
+        return;
+      }
+      const autourDuSiege = voisins.map((v) => ({
+        ...v,
+        col: v.col - maison.col,
+        rang: v.rang - maison.rang,
+      }));
+      const quart = orientationTrame(autourDuSiege);
+      const pas = Math.max(gw, gh) * step + 1.4 + LARGEUR_CHEMIN;
+      const t = tourner(maison, quart);
+      repere = { quart, mx: t.col * pas, mz: t.rang * pas };
+    }
 
     const world = new THREE.Group();
     scene.add(world);
@@ -1812,13 +1881,15 @@ export function IsoFarmView({
       const rig = createParkingRig(plan, { shadows: quality.shadows });
       rig.group.scale.setScalar(cellSize);
 
+      calculerRepere(gw, gh);
       const ileOuest = -(gw * step + 1.4) / 2;
       const ileSud = (gh * step + 1.4) / 2;
       // Le chemin du modèle saille de 0,72 case au-delà de la dalle : on cale
-      // la cour pour qu'il rejoigne exactement le bord de l'île.
+      // la cour pour qu'il rejoigne exactement le bord de l'île — celle du
+      // siège, décalée de sa place quand on travaille sur une autre parcelle.
       parkingOverhang = (0.72 + plan.w) * cellSize;
-      const cx = ileOuest - (0.72 + plan.w / 2) * cellSize;
-      const cz = ileSud - (plan.d / 2) * cellSize;
+      const cx = repere.mx + ileOuest - (0.72 + plan.w / 2) * cellSize;
+      const cz = repere.mz + ileSud - (plan.d / 2) * cellSize;
       rig.group.position.set(cx, 0, cz);
       parkingGroup.add(rig.group);
       parkingRig = rig;
@@ -1981,9 +2052,38 @@ export function IsoFarmView({
       const cle = `${gw}x${gh}|${courBoite.x.toFixed(2)},${courBoite.z.toFixed(2)},${courBoite.w.toFixed(2)},${courBoite.d.toFixed(2)}|${parcelIdRef.current}|${empreinteVoisins}`;
       if (cle !== campagneCle) {
         campagneCle = cle;
+        /*
+         * La parcelle active a-t-elle changé pour une autre qu'on voyait déjà ?
+         *
+         * C'est le cas quand on touche une case de sa parcelle voisine, et
+         * aussi quand on clique son nom dans « Mes parcelles ». La nouvelle
+         * parcelle devient l'origine du monde : tout ce qu'on voit recule donc
+         * de sa position. La caméra recule d'autant, et la même terre reste
+         * sous le même pixel — au lieu de voir le paysage sauter d'un champ.
+         */
+        const idActif = parcelIdRef.current;
+        const ici = campagne?.plan.parcelles.find((v) => v.id === idActif);
+        if (ici) {
+          view.panX -= ici.x;
+          view.panZ -= ici.z;
+        }
         campagne?.dispose();
         campagneGroup.clear();
+        const empriseIle = Math.max(gw, gh) * step + 1.4;
         campagne = createCountryside({
+          quart: repere.quart,
+          maison: homeRef.current,
+          /*
+           * Le chemin se cale sous la cour du siège, calculé comme si le siège
+           * était l'origine puis ramené à sa place : il reste ainsi dans le
+           * même couloir de la trame quelle que soit la parcelle active.
+           */
+          routeZ:
+            couloirRoute({
+              graine: "",
+              emprise: empriseIle,
+              cour: { ...courBoite, x: courBoite.x - repere.mx, z: courBoite.z - repere.mz },
+            }) + repere.mz,
           graine: parcelIdRef.current || `${gw}x${gh}`,
           /*
            * Les voisins ont exactement l'emprise de l'île du joueur, et se
@@ -2459,13 +2559,31 @@ export function IsoFarmView({
      * la cour ou dans le ciel.
      */
     function raycastVoisin(): VoisinReel | null {
+      return raycastParcelle()?.voisin ?? null;
+    }
+
+    /**
+     * La parcelle voisine sous le curseur, et la case touchée dans son repère.
+     *
+     * Les cases d'une parcelle de la campagne sont posées exactement comme
+     * celles de l'île — même pas, même origine centrée, `x` vers les `x` du
+     * monde et `y` vers ses `z`. La case lue ici est donc celle qu'on
+     * retrouvera sous le doigt une fois la parcelle devenue active.
+     */
+    function raycastParcelle(): { voisin: VoisinReel; x: number; y: number } | null {
       if (!campagne) return null;
       const nappe = campagne.object.getObjectByName("campagne-parcelles-nappe");
       if (!nappe) return null;
       raycaster.setFromCamera(pointer, camera);
       const hit = raycaster.intersectObject(nappe, false)[0];
       if (!hit) return null;
-      return parcelleSous(campagne.plan, hit.point.x, hit.point.z)?.reel ?? null;
+      const p = parcelleSous(campagne.plan, hit.point.x, hit.point.z);
+      if (!p?.reel) return null;
+      const cases = Math.max(dataRef.current.gridW, dataRef.current.gridH);
+      const origine = -((cases - 1) * step) / 2;
+      const x = Math.round((hit.point.x - p.x - origine) / step);
+      const y = Math.round((hit.point.z - p.z - origine) / step);
+      return { voisin: p.reel, x, y };
     }
 
     function setPointerFromEvent(ev: PointerEvent) {
@@ -2837,8 +2955,27 @@ export function IsoFarmView({
       // Hors de sa grille : peut-être un champ de voisin. C'est le seul geste
       // qui porte au-delà de l'île, et il ne coûte rien puisqu'on n'y arrive
       // qu'après avoir manqué toutes les cases.
-      const voisin = raycastVoisin();
-      if (voisin) onVoisinRef.current?.(voisin);
+      const touche = raycastParcelle();
+      if (!touche) return;
+      /*
+       * Une de ses propres parcelles : on y travaille, on n'ouvre pas de fiche.
+       *
+       * La fiche ne disait que « Cette parcelle est déjà la vôtre ». Le geste
+       * attendu est évident — on a touché une case de son champ, on veut
+       * travailler cette case. Hors de la grille (le talus, le coin), on garde
+       * la fiche : il n'y a pas de case à désigner.
+       */
+      const cases = Math.max(dataRef.current.gridW, dataRef.current.gridH);
+      if (
+        touche.voisin.statut === "MOI" &&
+        onOwnedCellRef.current &&
+        touche.x >= 0 && touche.x < cases &&
+        touche.y >= 0 && touche.y < cases
+      ) {
+        onOwnedCellRef.current(touche.voisin.id, touche.x, touche.y, gestureMods);
+        return;
+      }
+      onVoisinRef.current?.(touche.voisin);
     }
 
     function onPointerLeave() {

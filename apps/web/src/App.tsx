@@ -99,6 +99,7 @@ import {
   MACHINE_LISTING_MIN_RATE,
   MACHINE_LISTING_MAX_RATE,
   isBreakdownKind,
+  kindForBarn,
 } from "@farmsim/shared";
 import { AuthScreen, RecoveryNotice, type AuthMode } from "./AuthScreen";
 import type { GrazingHerd, PreviewBuilding } from "./IsoFarmView";
@@ -842,6 +843,22 @@ export function App() {
   const [continentDetail, setContinentDetail] = useState<ContinentDetail | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
   const [barns, setBarns] = useState<BarnState[]>([]);
+  /**
+   * Les étables de **toute** la ferme, et pas seulement de la parcelle active.
+   *
+   * `barns` reste celle de la parcelle active : il sert à ce qui se dessine
+   * sur son île — les tas de fumier, les signaux d'enclos —, qui n'a de sens
+   * que là où il est posé. Mais le menu Élevage, son panneau et les alertes
+   * parlent du troupeau, pas de la parcelle.
+   *
+   * Tant qu'on changeait de parcelle rarement, par un bouton, personne ne le
+   * voyait. Depuis qu'un clic sur un champ voisin le rend actif, aller semer à
+   * côté faisait disparaître « Élevage » du menu — les bêtes semblaient
+   * s'évanouir dès qu'on s'éloignait de l'étable.
+   */
+  const [barnsFerme, setBarnsFerme] = useState<BarnState[]>([]);
+  /** Les parcelles de la ferme qui portent une étable — relues au chargement. */
+  const parcellesAEtable = useRef<string[]>([]);
   const [orphanYards, setOrphanYards] = useState<OrphanYard[]>([]);
   /** Le calendrier des cultures, ouvert depuis la pastille en bas à droite. */
   const [showCalendrier, setShowCalendrier] = useState(false);
@@ -1043,20 +1060,45 @@ export function App() {
   }, []);
 
   const loadLivestock = useCallback(async (parcelId: string) => {
-    try {
-      const r = await api<{ barns: BarnState[]; orphanYards?: OrphanYard[] }>(
-        `/parcels/${parcelId}/livestock`,
-      );
-      if (parcelleAffichee.current !== parcelId) return;
-      setBarns((prev) => keepIfSame(prev, r.barns));
-      setOrphanYards((prev) => keepIfSame(prev, r.orphanYards ?? []));
-    } catch {
-      // Un échec sur une parcelle qu'on a quittée ne doit pas vider les
-      // étables de celle qu'on regarde.
-      if (parcelleAffichee.current !== parcelId) return;
-      setBarns([]);
-      setOrphanYards([]);
-    }
+    const ici = await (async (): Promise<BarnState[]> => {
+      try {
+        const r = await api<{ barns: BarnState[]; orphanYards?: OrphanYard[] }>(
+          `/parcels/${parcelId}/livestock`,
+        );
+        // Réponse d'une parcelle qu'on a quittée : elle compte pour la ferme,
+        // pas pour l'île qu'on regarde.
+        if (parcelleAffichee.current !== parcelId) return r.barns;
+        setBarns((prev) => keepIfSame(prev, r.barns));
+        setOrphanYards((prev) => keepIfSame(prev, r.orphanYards ?? []));
+        return r.barns;
+      } catch {
+        // Un échec sur une parcelle qu'on a quittée ne doit pas vider les
+        // étables de celle qu'on regarde.
+        if (parcelleAffichee.current !== parcelId) return [];
+        setBarns([]);
+        setOrphanYards([]);
+        return [];
+      }
+    })();
+    /*
+     * Puis les étables des autres parcelles de la ferme.
+     *
+     * Seulement celles qui en portent une : la plupart des fermes n'ont qu'une
+     * parcelle d'élevage, et interroger chaque champ toutes les quatre
+     * secondes pour n'y trouver aucune bête serait payer pour rien. Aucun
+     * garde de parcelle ici : cette liste-là ne dépend pas de celle qu'on
+     * regarde.
+     */
+    const autres = parcellesAEtable.current.filter((id) => id !== parcelId);
+    const resultats = await Promise.all(
+      autres.map((id) =>
+        api<{ barns: BarnState[] }>(`/parcels/${id}/livestock`)
+          .then((r) => r.barns)
+          .catch(() => [] as BarnState[]),
+      ),
+    );
+    const ferme = [...ici, ...resultats.flat()];
+    setBarnsFerme((prev) => keepIfSame(prev, ferme));
   }, []);
 
   const farmId = player?.farm?.id;
@@ -1465,6 +1507,33 @@ export function App() {
     setCellMenu(null);
   }, [activeParcelId]);
 
+  /**
+   * Le geste fait sur une autre de ses parcelles, rejoué une fois qu'elle est là.
+   *
+   * Toucher une case de sa parcelle voisine la rend active — la vue compense
+   * le déplacement, rien ne saute à l'écran. Mais l'outil ne peut agir qu'avec
+   * les données de **cette** parcelle : quelles cases sont semées, lesquelles
+   * sont libres. On garde donc le geste, et on le rejoue quand elles arrivent.
+   *
+   * Sans cela il aurait fallu toucher deux fois : une pour « aller » sur la
+   * parcelle, une pour agir. C'est précisément la démarche qu'on supprime.
+   */
+  const gesteApresBascule = useRef<{
+    parcelId: string;
+    x: number;
+    y: number;
+    mods: PointerMods;
+  } | null>(null);
+  useEffect(() => {
+    const attente = gesteApresBascule.current;
+    if (!attente || parcelDetail?.parcel.id !== attente.parcelId) return;
+    gesteApresBascule.current = null;
+    void applyToolOnCell(attente.x, attente.y, attente.mods);
+    // `applyToolOnCell` change à chaque rendu : c'est l'arrivée de la parcelle
+    // qui déclenche, rien d'autre.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [parcelDetail]);
+
   useEffect(() => {
     if (!activeParcelId) return;
     loadParcel(activeParcelId).catch((e) => setErr(String(e.message ?? e)));
@@ -1481,9 +1550,25 @@ export function App() {
       setVoisinage([]);
       return;
     }
-    // La commune change de parcelle : on repart de rien plutôt que de laisser
-    // un instant les voisins de l'ancienne autour de la nouvelle.
-    setVoisinage([]);
+    /*
+     * La commune change de parcelle : on la **recentre** sur la nouvelle.
+     *
+     * On la vidait, pour ne pas laisser un instant les voisins de l'ancienne
+     * autour de la nouvelle. Mais une commune vide fait retomber la campagne
+     * sur son damier de décor, tiré au sort : passer à sa parcelle d'à côté
+     * faisait apparaître une seconde un paysage inventé, puis le vrai.
+     *
+     * Or les cases de la carte sont relatives à la parcelle active : si la
+     * nouvelle y figure, il suffit de décaler toutes les autres de sa place.
+     * Le résultat est exact, et le serveur n'a plus qu'à le confirmer. Une
+     * parcelle hors de la commune connue — un nom cliqué dans « Mes
+     * parcelles », loin d'ici — repart de rien, comme avant.
+     */
+    setVoisinage((avant) => {
+      const cible = avant.find((v) => v.id === activeParcelId);
+      if (!cible) return [];
+      return avant.map((v) => ({ ...v, col: v.col - cible.col, rang: v.rang - cible.rang }));
+    });
     loadVoisinage(activeParcelId).catch(() => undefined);
     const t = setInterval(() => loadVoisinage(activeParcelId).catch(() => undefined), 45_000);
     return () => clearInterval(t);
@@ -1527,6 +1612,9 @@ export function App() {
   );
 
   const ownedParcels = player?.farm?.parcels ?? [];
+  parcellesAEtable.current = ownedParcels
+    .filter((p) => (p.buildings ?? []).some((b) => kindForBarn(b.type) !== null))
+    .map((p) => p.id);
   const visiting = Boolean(
     visitOrder && activeParcelId && visitOrder.parcelId === activeParcelId,
   );
@@ -1837,7 +1925,7 @@ export function App() {
       stockTons: totalStockTons,
       hayTons: stock("HAY"),
       milkOrMeat: stock("MILK") + stock("MEAT"),
-      animals: barns.reduce((n, b) => n + (b.herd?.size ?? 0), 0),
+      animals: barnsFerme.reduce((n, b) => n + (b.herd?.size ?? 0), 0),
       hasSold: guideFlags.sold,
       hasHarvested: guideFlags.harvested || cells.some((c) => c.hasStubble) || stock("WHEAT") + stock("MAIZE") + stock("PEA") + stock("BARLEY") + stock("RAPE") + stock("HAY") > 0,
       hasContract: guideFlags.contract,
@@ -1850,7 +1938,7 @@ export function App() {
     parcel?.buildings,
     readyCellCount,
     totalStockTons,
-    barns,
+    barnsFerme,
     guideFlags,
   ]);
 
@@ -2020,9 +2108,9 @@ export function App() {
       else if (stage === "POOR" || stage === "DECLINING") urgent += 1;
       else if (s.sim.ready) ready += 1;
     }
-    const herdsAtRisk = barns.filter((b) => b.herd?.atRisk).length;
+    const herdsAtRisk = barnsFerme.filter((b) => b.herd?.atRisk).length;
     return { ready, urgent, lost, herdsAtRisk };
-  }, [parcelDetail, barns]);
+  }, [parcelDetail, barnsFerme]);
 
   const notifications = useNotificationState();
   useAwayAlerts(alerts, notifications.state === "granted");
@@ -4081,7 +4169,7 @@ export function App() {
     if (!player) return;
     setBusy(true);
     try {
-      const barn = barns.find((b) => b.herd?.id === herdId);
+      const barn = barnsFerme.find((b) => b.herd?.id === herdId);
       const size = barn?.herd?.size ?? 1;
       /**
        * Ce qu'il manque, pas une tonne de plus.
@@ -4814,6 +4902,14 @@ export function App() {
               onEgare={setVueEgaree}
               voisinage={voisinage}
               onVoisinClick={setVoisinOuvert}
+              onOwnedCellClick={(parcelId, x, y, mods) => {
+                gesteApresBascule.current = { parcelId, x, y, mods };
+                setActiveParcelId(parcelId);
+              }}
+              /* Le siège : la première parcelle acquise. L'ordre d'acquisition
+                 est stable côté serveur, ce siège ne change donc pas d'une
+                 session à l'autre. */
+              homeParcelId={player?.farm?.parcels[0]?.id}
               gridW={gw}
               gridH={gh}
               cells={grid}
@@ -5848,7 +5944,7 @@ export function App() {
           mobile={isMobile}
           open={showHerd}
           title="Élevage"
-          subtitle={`${barns.reduce((n, b) => n + (b.herd?.size ?? 0), 0)} bête(s) · ${barns.length} bâtiment(s)`}
+          subtitle={`${barnsFerme.reduce((n, b) => n + (b.herd?.size ?? 0), 0)} bête(s) · ${barnsFerme.length} bâtiment(s)`}
           width="wide"
           onClose={() => setShowHerd(false)}
         >
@@ -5862,7 +5958,7 @@ export function App() {
             if (isMobile) setSheet(null);
             else setShowHerd(false);
           }}
-          barns={barns}
+          barns={barnsFerme}
           busy={busy}
           crd={player.crd}
           onBuyAnimals={buyAnimals}
@@ -6166,7 +6262,7 @@ export function App() {
           onPublishLabor={publishLaborOrder}
           onSell={() => setShowMarket(true)}
           onGuide={() => setShowGuide(true)}
-          hasHerd={barns.length > 0}
+          hasHerd={barnsFerme.length > 0}
           moreOpen={moreOpen}
           /* Refermé, « Plus » porte la somme de ce qui attend derrière lui :
              sinon cacher les panneaux cacherait aussi leurs alertes. */
@@ -6221,7 +6317,7 @@ export function App() {
                 on: showEta,
                 onOpen: () => setShowEta((v) => !v),
               },
-              ...(barns.length > 0
+              ...(barnsFerme.length > 0
                 ? [
                     {
                       id: "HERD",
@@ -6533,7 +6629,7 @@ export function App() {
                 }}
               />
               {SHEET_TABS.map((t, i) => {
-                const disabled = t.key === "HERD" && !barns.length;
+                const disabled = t.key === "HERD" && !barnsFerme.length;
                 const badge = tabBadge(alerts, t.key);
                 return (
                   <button
