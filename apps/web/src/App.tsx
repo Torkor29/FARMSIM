@@ -3100,22 +3100,19 @@ export function App() {
    * démarrer le geste une demi-seconde après le doigt.
    */
   async function collectSupply(id: string) {
-    // Où la caisse était posée : le convoi part de là, pas du bord du champ.
-    // Lu avant de la retirer de la liste, sans quoi il n'en resterait rien.
-    const caisse = supplies.find((s) => s.id === id);
     setSupplies((prev) => prev.filter((s) => s.id !== id));
     try {
       const r = await api<{ collected: string; tons: number }>(`/supplies/${id}/collect`, {
         method: "POST",
       });
       const nom = GOOD_DEFS[r.collected as TradeGood]?.name ?? r.collected;
-      /* Rentrer une caisse est un transport, pas une téléportation : elle
-         disparaissait de la cour et le stock montait, sans que rien ne relie
-         les deux. L'attelage qui sert déjà aux livraisons entre joueurs fait
-         le trajet — « on clique sur le paquet pour l'envoyer au silo et là
-         c'est l'engin qui l'amène ». */
-      flashDeliveryArrival(r.collected, caisse ? { x: caisse.x, y: caisse.y } : undefined);
-      flashToast(`${r.tons} t de ${nom.toLowerCase()} · l'attelage la rentre au silo`);
+      /* Rentrer une caisse est un transport, pas une téléportation — « on
+         clique sur le paquet pour l'envoyer au silo et là c'est l'engin qui
+         l'amène ». C'est la vue qui joue le convoi, dès le toucher : elle seule
+         sait où la caisse est posée, où attend l'attelage et où est la porte
+         du bâtiment. Le passer par le moteur des chantiers le faisait partir
+         d'un coin du champ, en allers-retours de labour. */
+      flashToast(`${r.tons} t de ${nom.toLowerCase()} · l'attelage vient la chercher`);
       await refreshPlayer();
     } catch (e) {
       // Refusée — le camion n'était pas là, ou la caisse n'est plus : on
@@ -3790,7 +3787,7 @@ export function App() {
    * l'amène ». Sans ce point de départ, l'attelage se serait matérialisé au
    * bord du champ pendant que la caisse disparaissait ailleurs.
    */
-  function flashDeliveryArrival(commodity?: string, depuis?: { x: number; y: number }) {
+  function flashDeliveryArrival(commodity?: string) {
     if (visiting) return;
     const destBuilding = (parcel?.buildings ?? []).find(
       (b) =>
@@ -3805,7 +3802,6 @@ export function App() {
       destBuilding
         ? { x: destBuilding.originX, y: destBuilding.originY }
         : null,
-      depuis,
     );
     if (cells.length < 2) return;
     setShowMarket(false);
@@ -6162,11 +6158,15 @@ export function App() {
             {voisinsEnLigne.length > 1 ? "sont connectés" : "est connecté"}
           </button>
         )}
+        {/* Par portail : la notification suit souvent un geste fait dans une
+            fenêtre — un achat au marché — et doit se lire par-dessus elle. */}
         {(msg || err) && (
-          <div key={toastTick} className={`toast ${err ? "bad" : toastTone}`} role="status">
-            <span>{err ?? msg}</span>
-            <i className="toast-bar" />
-          </div>
+          <Portail>
+            <div key={toastTick} className={`toast ${err ? "bad" : toastTone}`} role="status">
+              <span>{err ?? msg}</span>
+              <i className="toast-bar" />
+            </div>
+          </Portail>
         )}
       </div>
 

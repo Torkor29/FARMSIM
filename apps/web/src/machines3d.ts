@@ -2479,7 +2479,11 @@ const CARGO_TINT: Record<string, number> = {
 };
 
 /** Accroche une remorque derrière le tracteur, pour une livraison. */
-export function hitchTrailer(rig: MachineRig, commodity?: string): void {
+export function hitchTrailer(
+  rig: MachineRig,
+  commodity?: string,
+  opts: { vide?: boolean } = {},
+): void {
   if (rig.group.userData.hauled) return;
   const cargo = CARGO_TINT[commodity ?? ""] ?? 0xc9a36a;
   const trailer = new THREE.Group();
@@ -2490,7 +2494,11 @@ export function hitchTrailer(rig: MachineRig, commodity?: string): void {
   trailer.add(bed);
   const heap = new THREE.Mesh(new THREE.BoxGeometry(0.32, 0.14, 0.28), load);
   heap.position.set(0, 0.28, 0);
+  // Vide, elle part chercher une caisse : c'est la caisse elle-même qu'on
+  // y posera, pas un tas qui en tiendrait lieu.
+  heap.visible = !opts.vide;
   trailer.add(heap);
+  trailer.name = "remorque";
   const hitch = blueprint("TRACTOR").hitch;
   trailer.position.set(hitch[0] - 0.42, 0, 0);
   rig.group.add(trailer);

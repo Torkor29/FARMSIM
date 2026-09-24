@@ -291,6 +291,7 @@ html.playing body {
      50  le tutoriel                 .tutorial-backdrop
      70  les ateliers et le voisin   .care-backdrop, .voisin-backdrop
      90  la fiche d'engin            .machine-sheet-backdrop
+   100  les notifications           .toast
     200  la confirmation             .confirm-backdrop
 
    La confirmation ferme la marche, et ce n'est pas un détail de goût : elle
@@ -2856,11 +2857,16 @@ html.playing .build-confirm { position: fixed; }
 .toast {
   /* Il surplombe le bandeau au lieu d'y prendre place : dans le flux, son
      apparition allongeait la rangée du haut, la scène se recadrait, et la
-     ferme sautait à chaque message. */
-  position: absolute;
-  top: calc(100% + 0.15rem);
+     ferme sautait à chaque message.
+     Il est posé par portail dans <body>, comme les fenêtres : rendu dans le
+     plateau, il restait enfermé dans son contexte d'empilement et passait
+     sous la fenêtre qu'on venait d'ouvrir — « la notif d'achat du foin passe
+     derrière ». Sa place sur l'échelle des plans : au-dessus de toutes les
+     fenêtres, sous la confirmation. */
+  position: fixed;
+  top: calc(env(safe-area-inset-top, 0px) + 4.1rem);
   left: 50%;
-  z-index: 70;
+  z-index: 100;
   overflow: hidden;
   /* Une notification est un accusé de réception, pas un panneau : elle
      occupait près de quatre cents pixels de large et trois lignes de haut
@@ -2869,7 +2875,8 @@ html.playing .build-confirm { position: fixed; }
   max-width: min(19rem, calc(100vw - 2.5rem));
   padding: 0.38rem 0.8rem 0.5rem;
   border-radius: var(--r-pill);
-  background: var(--glass);
+  /* Opaque : elle se lit désormais par-dessus un voile de fenêtre. */
+  background: var(--paper);
   border: 1px solid var(--glass-border);
   font-size: 0.8rem;
   font-weight: 700;

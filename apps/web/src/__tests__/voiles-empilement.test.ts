@@ -102,4 +102,33 @@ describe("l'échelle des plans reste lisible", () => {
       expect(confirmation).toBeGreaterThan(z(autre));
     }
   });
+
+  it("la notification passe devant les fenêtres, et sous la confirmation", () => {
+    /*
+     * « Quand on achète le foin, la notif d'achat passe derrière la fenêtre. »
+     * Rendue dans le plateau, elle était enfermée dans son contexte
+     * d'empilement : aucun z-index ne pouvait la faire passer devant le
+     * marché. Elle sort par portail, et se range au-dessus de tout voile.
+     */
+    const z = (classe: string) => {
+      const bloc = CSS.slice(CSS.indexOf(`.${classe} {`));
+      return Number(bloc.slice(0, 1200).match(/z-index:\s*(\d+)/)?.[1] ?? 0);
+    };
+    const toast = z("toast");
+    for (const voile of [
+      "win-backdrop",
+      "market-backdrop",
+      "tutorial-backdrop",
+      "care-backdrop",
+      "voisin-backdrop",
+      "skills-backdrop",
+      "guide-backdrop",
+      "machine-sheet-backdrop",
+    ]) {
+      expect(toast).toBeGreaterThan(z(voile));
+    }
+    expect(toast).toBeLessThan(z("confirm-backdrop"));
+    const APP = fs.readFileSync(path.join(SRC, "App.tsx"), "utf8");
+    expect(APP).toMatch(/<Portail>\s*<div key=\{toastTick\} className=\{`toast/);
+  });
 });
