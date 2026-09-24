@@ -6,6 +6,7 @@ import {
   orientationTrame,
   parcelleSous,
   tourner,
+  boiteSegment,
   DEMI_ROUTE,
   ENGINS_MAX,
   LARGEUR_CHEMIN,
@@ -777,5 +778,229 @@ describe("viser un champ de voisin", () => {
   it("ne rend rien sur la ferme du joueur ni au loin", () => {
     expect(parcelleSous(plan, 0, 0)).toBeNull();
     expect(parcelleSous(plan, 900, -900)).toBeNull();
+  });
+});
+
+/**
+ * Ses propres parcelles, dans le paysage.
+ *
+ * Un joueur achetait la parcelle d'à côté et ne la trouvait nulle part : la
+ * trame ne montrait que l'aval de la parcelle active, et une parcelle tombée en
+ * amont était remplacée par le pré et le bois. Pour y travailler il fallait
+ * passer par « Mes parcelles », et le paysage sautait d'un champ.
+ */
+describe("les parcelles du joueur", () => {
+  function voisin(col: number, rang: number, p: Partial<VoisinReel> = {}): VoisinReel {
+    return {
+      id: `p-${col}-${rang}`,
+      label: `Champ ${col}·${rang}`,
+      col,
+      rang,
+      statut: "PNJ",
+      proprietaire: "Ferme Duval",
+      exploitation: "Duval",
+      culture: "WHEAT",
+      stade: "GROWING",
+      partCultivee: 1,
+      fertility: 0.7,
+      batiments: [],
+      cheptel: [],
+      prix: null,
+      achetable: false,
+      refus: null,
+      ...p,
+    };
+  }
+  const moi = (col: number, rang: number) =>
+    voisin(col, rang, { statut: "MOI", culture: null, stade: null, partCultivee: 0 });
+
+  /** Une commune entourant la ferme de tous côtés, avec la case (0,0). */
+  function commune(extra: VoisinReel[]): VoisinReel[] {
+    const tous: VoisinReel[] = [moi(0, 0)];
+    for (let c = -2; c <= 2; c++) {
+      for (let r = -2; r <= 2; r++) {
+        if (c === 0 && r === 0) continue;
+        if (extra.some((e) => e.col === c && e.rang === r)) continue;
+        tous.push(voisin(c, r));
+      }
+    }
+    return [...tous, ...extra];
+  }
+
+  it("une parcelle achetée se dessine, de quelque côté qu'elle soit", () => {
+    for (const [c, r] of [[1, 0], [-1, 0], [0, 1], [0, -1], [1, 1], [-1, -1]] as const) {
+      const voisins = commune([moi(c, r)]);
+      const plan = planCampagne({ ...OPTIONS, voisins });
+      expect(plan.parcelles.some((p) => p.id === `p-${c}-${r}`)).toBe(true);
+    }
+  });
+
+  it("même tournée en amont, elle passe la lisière", () => {
+    // L'orientation imposée la plus défavorable qui ne la pose pas sous la
+    // cour : celle qui l'envoie droit vers l'horizon.
+    const voisins = commune([moi(0, 1)]);
+    const quart = ([0, 1, 2, 3] as const).find((q) => {
+      const t = tourner({ col: 0, rang: 1 }, q);
+      return t.col + t.rang < 0 && !(t.col === -1 && t.rang === 0);
+    })!;
+    const plan = planCampagne({ ...OPTIONS, voisins, quart });
+    expect(plan.parcelles.some((p) => p.id === "p-0-1")).toBe(true);
+  });
+
+  it("l'orientation ne la pose jamais sous la cour quand elle peut l'éviter", () => {
+    for (const [c, r] of [[1, 0], [-1, 0], [0, 1], [0, -1]] as const) {
+      const quart = orientationTrame(commune([moi(c, r)]));
+      const t = tourner({ col: c, rang: r }, quart);
+      expect(t.col === -1 && t.rang === 0).toBe(false);
+    }
+  });
+
+  it("la lisière recule au-dessus d'elle, et seulement pour elle", () => {
+    const sans = planCampagne({ ...OPTIONS, voisins: commune([]), quart: 0 });
+    const avec = planCampagne({ ...OPTIONS, voisins: commune([moi(-1, 0)]), quart: 0 });
+    expect(avec.sol.uMin).toBeLessThan(sans.sol.uMin);
+    // Les terres des autres n'en profitent pas pour envahir le pré : en amont
+    // de la lisière d'avant, il n'y a que ce qui est au joueur.
+    for (const p of avec.parcelles) {
+      if (versEcranBas(p.x, p.z) - avec.emprise >= sans.sol.uMin) continue;
+      expect(p.reel?.statut).toBe("MOI");
+    }
+  });
+
+  it("une ferme qui ne s'étend pas vers l'amont garde son paysage d'avant", () => {
+    const voisins = commune([]);
+    const plan = planCampagne({ ...OPTIONS, voisins });
+    expect(plan.sol.uMin).toBe(-horizonPour(OPTIONS.emprise));
+  });
+
+  it("l'orientation préfère montrer ses parcelles plutôt que celles des autres", () => {
+    // Une seule parcelle au joueur, en (-1, 0) : sans préférence, l'orientation
+    // retenue la laisserait en amont pour montrer un voisin de plus.
+    const voisins = commune([moi(-1, 0)]);
+    const quart = orientationTrame(voisins);
+    const t = tourner({ col: -1, rang: 0 }, quart);
+    expect(t.col + t.rang).toBeGreaterThanOrEqual(0);
+  });
+
+  it("le siège reste dessiné malgré sa cour", () => {
+    /*
+     * La cour mord le bord de sa parcelle — c'est son chemin d'accès. Quand on
+     * travaille sur une autre parcelle, la cour reste au siège : sans
+     * exception, sa propre cour empêchait de le dessiner.
+     */
+    const pas = OPTIONS.emprise + LARGEUR_CHEMIN;
+    const voisins = commune([]).map((v) =>
+      v.col === 0 && v.rang === 0 ? { ...v, col: -1, rang: 0, id: "siege" } : v,
+    ).filter((v) => !(v.col === -1 && v.rang === 0 && v.id !== "siege"));
+    voisins.push(moi(0, 0));
+    const cour = { ...OPTIONS.cour, x: OPTIONS.cour.x - pas };
+    const plan = planCampagne({ ...OPTIONS, cour, voisins, maison: "siege", quart: 0 });
+    expect(plan.parcelles.some((p) => p.id === "siege")).toBe(true);
+  });
+
+  it("le chemin peut être imposé, pour ne pas sauter d'un rang", () => {
+    const plan = planCampagne({ ...OPTIONS, voisins: commune([]), routeZ: 42 });
+    expect(plan.routeZ).toBe(42);
+  });
+});
+
+/**
+ * Un chemin jusqu'à chaque parcelle achetée.
+ *
+ * On y va avec ses engins : il faut donc une voie, de la route à une porte de
+ * la haie, qui ne traverse ni la cour ni le champ d'un autre.
+ */
+describe("les chemins d'accès", () => {
+  function voisin(col: number, rang: number, statut: VoisinReel["statut"]): VoisinReel {
+    return {
+      id: `a-${col}-${rang}`,
+      label: `Champ ${col}·${rang}`,
+      col,
+      rang,
+      statut,
+      proprietaire: null,
+      exploitation: null,
+      culture: "WHEAT",
+      stade: "GROWING",
+      partCultivee: 1,
+      fertility: 0.7,
+      batiments: [],
+      cheptel: [],
+      prix: null,
+      achetable: false,
+      refus: null,
+    };
+  }
+  function commune(miens: [number, number][]): VoisinReel[] {
+    const tous: VoisinReel[] = [];
+    for (let c = -2; c <= 2; c++) {
+      for (let r = -2; r <= 2; r++) {
+        const mien = (c === 0 && r === 0) || miens.some(([mc, mr]) => mc === c && mr === r);
+        tous.push(voisin(c, r, mien ? "MOI" : "PNJ"));
+      }
+    }
+    return tous;
+  }
+  const segments = (pts: { x: number; z: number }[]) =>
+    pts.slice(1).map((q, i) => [pts[i]!, q] as const);
+
+  it("chaque parcelle achetée a son chemin, le siège n'en a pas besoin", () => {
+    const voisins = commune([[1, 0], [1, 1], [0, 1]]);
+    const plan = planCampagne({ ...OPTIONS, voisins, maison: "a-0-0", quart: 0 });
+    const miennes = plan.parcelles.filter((p) => p.reel?.statut === "MOI").map((p) => p.id);
+    expect(miennes.length).toBeGreaterThan(0);
+    expect(plan.acces.map((a) => a.id).sort()).toEqual(miennes.sort());
+    expect(plan.acces.some((a) => a.id === "a-0-0")).toBe(false);
+  });
+
+  it("part de la route et finit à la porte, au milieu d'un côté", () => {
+    const plan = planCampagne({ ...OPTIONS, voisins: commune([[1, 1]]), maison: "a-0-0", quart: 0 });
+    for (const a of plan.acces) {
+      const p = plan.parcelles.find((x) => x.id === a.id)!;
+      expect(a.points[0]!.z).toBeCloseTo(plan.routeZ, 9);
+      const porte = a.points[a.points.length - 1]!;
+      expect(porte.z).toBeCloseTo(p.z, 9);
+      expect(porte.x).toBeCloseTo(p.x + (a.cote * p.cote) / 2, 9);
+    }
+  });
+
+  it("ne traverse ni la cour, ni l'île, ni le champ d'un autre", () => {
+    const voisins = commune([[1, 0], [1, 1], [0, 1], [-1, 1], [2, 2]]);
+    const plan = planCampagne({ ...OPTIONS, voisins, maison: "a-0-0", quart: 0 });
+    const ile = { x: 0, z: 0, w: EMPRISE, d: EMPRISE };
+    for (const a of plan.acces) {
+      for (const [p, q] of segments(a.points).slice(0, -1)) {
+        const b = boiteSegment(p, q);
+        expect(seChevauchent(b, OPTIONS.cour)).toBe(false);
+        expect(seChevauchent(b, ile)).toBe(false);
+        for (const autre of plan.parcelles) {
+          if (autre.id === a.id) continue;
+          expect(seChevauchent(b, empriseParcelle(autre, autre.cote))).toBe(false);
+        }
+      }
+    }
+  });
+
+  it("aucun arbre sur un chemin", () => {
+    const plan = planCampagne({ ...OPTIONS, voisins: commune([[1, 1], [0, 2]]), maison: "a-0-0", quart: 0 });
+    for (const a of plan.acces) {
+      for (const [p, q] of segments(a.points)) {
+        for (const arbre of plan.arbres) {
+          expect(seChevauchent({ x: arbre.x, z: arbre.z, w: 1, d: 1 }, boiteSegment(p, q))).toBe(false);
+        }
+      }
+    }
+  });
+
+  it("la parcelle active a le sien quand ce n'est pas le siège", () => {
+    // On travaille sur une parcelle achetée : le siège est ailleurs, et le
+    // tracteur doit pouvoir venir jusqu'ici.
+    const voisins = commune([[-1, -1]]).map((v) =>
+      v.col === -1 && v.rang === -1 ? { ...v, id: "siege" } : v,
+    );
+    const plan = planCampagne({ ...OPTIONS, voisins, maison: "siege", quart: 0 });
+    const ici = plan.acces.find((a) => a.id === "a-0-0");
+    expect(ici).toBeDefined();
+    expect(Math.abs(ici!.points[ici!.points.length - 1]!.x)).toBeCloseTo(EMPRISE / 2, 9);
   });
 });

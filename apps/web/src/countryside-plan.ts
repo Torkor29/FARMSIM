@@ -44,7 +44,7 @@
  * et elle est la même à chaque rechargement.
  */
 
-import { COTE_MAX, TAILLES_PARCELLE, type Season } from "@farmsim/shared";
+import { COTE_MAX, GRILLE_STANDARD, TAILLES_PARCELLE, type Season } from "@farmsim/shared";
 
 /** Ce qu'on voit dans une parcelle voisine. */
 export type EtatChamp =
@@ -203,8 +203,33 @@ export type PointPlan = { x: number; z: number };
  */
 export type EmpriseSol = { uMin: number; uMax: number; vMax: number };
 
+/**
+ * Le chemin d'accès d'une parcelle du joueur.
+ *
+ * Il part de la route, remonte le couloir de trame qui longe la parcelle, et
+ * entre par une porte au milieu d'un de ses côtés. Tout en angles droits, et
+ * toujours dans les couloirs : ceux-ci sont vides par construction, le chemin
+ * ne traverse donc jamais le champ d'un autre.
+ */
+export type Acces = {
+  /** La parcelle desservie. */
+  id: string;
+  /** De la route à la porte, dans l'ordre où on les parcourt. */
+  points: PointPlan[];
+  /** Le côté de la parcelle où est la porte : −1 à l'ouest (`x` négatifs), +1 à l'est. */
+  cote: -1 | 1;
+};
+
+/** Demi-largeur d'un chemin d'accès, bas-côtés compris. */
+export const DEMI_ACCES = 0.8;
+
 export type PlanCampagne = {
   parcelles: ParcelleVoisine[];
+  /**
+   * Les chemins d'accès aux parcelles du joueur — sauf au siège, que la
+   * desserte de la cour relie déjà à la route.
+   */
+  acces: Acces[];
   /** Le chemin d'exploitation, d'un bout à l'autre du sol. */
   route: PointPlan[];
   /** L'amorce qui relie la cour au chemin. */
@@ -229,6 +254,14 @@ export type PlanCampagne = {
   emprise: number;
   /** L'ordonnée du chemin : il court parallèlement à l'axe des `x`. */
   routeZ: number;
+  /**
+   * Le quart de tour appliqué à la carte.
+   *
+   * Exposé pour qu'on puisse le **reprendre** : quand le joueur passe d'une de
+   * ses parcelles à une autre, la carte doit garder son orientation, sans quoi
+   * le paysage pivoterait sous ses yeux au lieu de simplement glisser.
+   */
+  quart: 0 | 1 | 2 | 3;
 };
 
 export type OptionsPlan = {
@@ -263,6 +296,31 @@ export type OptionsPlan = {
    * que la vue se monte sans réseau.
    */
   voisins?: readonly VoisinReel[];
+  /**
+   * Imposer le quart de tour plutôt que le choisir.
+   *
+   * Passer d'une de ses parcelles à la voisine ne doit être qu'une
+   * **translation** du paysage : la même terre sous le même pixel. Si la carte
+   * choisissait à nouveau son orientation autour de la nouvelle parcelle, elle
+   * pourrait tourner d'un quart, et plus rien ne serait à sa place.
+   */
+  quart?: 0 | 1 | 2 | 3;
+  /**
+   * L'ordonnée du chemin, quand l'appelant la connaît mieux que le plan.
+   *
+   * Le chemin se cale sous la cour, et la cour est celle du **siège** de la
+   * ferme — pas forcément de la parcelle active. Calculé autour de la parcelle
+   * active, il sautait d'un rang dès qu'on en changeait.
+   */
+  routeZ?: number;
+  /**
+   * L'identifiant du siège de la ferme, là où est la cour.
+   *
+   * La cour mord volontairement le bord de sa parcelle — c'est son chemin
+   * d'accès. Sans cette exception, le siège ne se dessinerait plus dès qu'on
+   * travaille sur une autre de ses parcelles : sa propre cour le recouvre.
+   */
+  maison?: string;
 };
 
 /* ------------------------------------------------------------------ */
@@ -588,7 +646,9 @@ export function couloirRoute(o: OptionsPlan, pasTrame?: number): number {
  * donc pas d'un rafraîchissement à l'autre, et le pays ne pivote pas sous les
  * pieds.
  */
-export function orientationTrame(cases: readonly { col: number; rang: number }[]): 0 | 1 | 2 | 3 {
+export function orientationTrame(
+  cases: readonly { col: number; rang: number; statut?: string }[],
+): 0 | 1 | 2 | 3 {
   let meilleur: 0 | 1 | 2 | 3 = 0;
   let record = -1;
   for (const quart of [0, 1, 2, 3] as const) {
@@ -596,7 +656,28 @@ export function orientationTrame(cases: readonly { col: number; rang: number }[]
     for (const c of cases) {
       const t = tourner(c, quart);
       if (t.col === 0 && t.rang === 0) continue;
-      if (t.col + t.rang >= 0) vus++;
+      /*
+       * La case sous la cour est interdite à ses parcelles.
+       *
+       * La cour déborde de l'île vers l'ouest — c'est par là qu'on entre — et
+       * mord la case `(-1, 0)` de la trame. Une parcelle du joueur tournée là
+       * serait recouverte par son propre parking, donc pas dessinée : c'est
+       * la pire des orientations pour elle, pire encore que l'amont.
+       */
+      if (c.statut === "MOI" && t.col === -1 && t.rang === 0) {
+        vus -= 1000;
+        continue;
+      }
+      if (t.col + t.rang < 0) continue;
+      /*
+       * Ses propres parcelles d'abord, et de loin.
+       *
+       * Un joueur qui achète la parcelle d'à côté doit la **voir** : c'est
+       * elle qu'il vient chercher à l'écran. Compter chacune pour cent voisins
+       * fait qu'aucun gain sur le nombre de parcelles étrangères visibles ne
+       * peut justifier de reléguer l'une des siennes en amont, hors du cadre.
+       */
+      vus += c.statut === "MOI" ? 100 : 1;
     }
     if (vus > record) {
       record = vus;
@@ -665,11 +746,43 @@ export function planCampagne(o: OptionsPlan): PlanCampagne {
     o.pasCase && gridW && gridH ? coteDeGrille(gridW, gridH, o.pasCase) : emprise;
   const colonnes = o.colonnes ?? 3;
   const rangs = o.rangs ?? 3;
-  const horizon = o.horizon ?? horizonPour(emprise);
+  /*
+   * La lisière se compte depuis une parcelle **standard**, pas depuis l'île
+   * active : passer d'une 12×12 à une 16×16 de sa ferme ne doit pas faire
+   * reculer le bois. Sans échelle de case (le décor sans réseau), c'est
+   * l'emprise du joueur, comme avant.
+   */
+  const horizon =
+    o.horizon ??
+    horizonPour(
+      o.pasCase ? coteDeGrille(GRILLE_STANDARD.w, GRILLE_STANDARD.h, o.pasCase) : emprise,
+    );
   const rnd = suite(grainerDe(o.graine));
 
-  const sol: EmpriseSol = { uMin: -horizon, uMax: SOL_AVAL, vMax: SOL_LARGEUR };
-  const routeZ = couloirRoute(o, pas);
+  const quart: 0 | 1 | 2 | 3 = o.quart ?? (o.voisins ? orientationTrame(o.voisins) : 0);
+
+  /*
+   * La lisière recule au-dessus de la plus haute des parcelles du joueur.
+   *
+   * La trame ne montrait que l'aval : en amont de la parcelle active, un pré
+   * puis le bois, et rien d'autre. Une parcelle achetée qui tombait de ce
+   * côté-là n'était **tout simplement pas dessinée** — le joueur payait une
+   * terre et ne la trouvait nulle part dans le paysage.
+   *
+   * On garde la même bande de pré et de bois, mais comptée depuis la plus
+   * haute de ses parcelles au lieu de la seule parcelle active. Une ferme qui
+   * ne s'étend pas vers l'amont garde exactement le paysage d'avant.
+   */
+  let uMaison = 0;
+  for (const v of o.voisins ?? []) {
+    if (v.statut !== "MOI" || (v.col === 0 && v.rang === 0)) continue;
+    const t = tourner(v, quart);
+    uMaison = Math.min(uMaison, versEcranBas(t.col * pas, t.rang * pas));
+  }
+  const sol: EmpriseSol = { uMin: uMaison - horizon, uMax: SOL_AVAL, vMax: SOL_LARGEUR };
+  /** Où s'arrêtaient les terres des autres — la lisière d'avant. */
+  const lisiereEtrangers = -horizon;
+  const routeZ = o.routeZ ?? couloirRoute(o, pas);
   const cour: Boite = { ...o.cour };
   const joueur: Boite = { x: 0, z: 0, w: emprise, d: emprise };
 
@@ -683,12 +796,16 @@ export function planCampagne(o: OptionsPlan): PlanCampagne {
    * coin dépasse la lisière se terminerait dans le vide, et l'on verrait la
    * tranche du monde par-dessus.
    */
-  const posable = (x: number, z: number, cote: number): boolean => {
+  const posable = (x: number, z: number, cote: number, aMoi = false, estMaison = false): boolean => {
     const boite: Boite = { x, z, w: cote, d: cote };
-    if (versEcranBas(x, z) - cote < sol.uMin) return false;
+    // En amont, seules les parcelles du joueur passent la lisière d'avant :
+    // les siennes doivent se voir, celles des autres n'ont pas à envahir le
+    // pré ni à manger le ciel.
+    if (versEcranBas(x, z) - cote < (aMoi ? sol.uMin : lisiereEtrangers)) return false;
     if (versEcranBas(x, z) + cote > sol.uMax - MARGE_LISIERE) return false;
     if (Math.abs(versEcranDroite(x, z)) + cote > sol.vMax - MARGE_LISIERE) return false;
-    if (seChevauchent(boite, cour, 0.4)) return false;
+    // Le siège est exempté : sa cour mord volontairement son bord.
+    if (!estMaison && seChevauchent(boite, cour, 0.4)) return false;
     if (seChevauchent(boite, joueur, 0.4)) return false;
     // Le chemin passe dans un couloir de trame : une parcelle ne peut pas y
     // être, mais on le vérifie plutôt que de le supposer.
@@ -704,7 +821,6 @@ export function planCampagne(o: OptionsPlan): PlanCampagne {
      * prix. Là où la commune s'arrête, il n'y a pas de parcelle : c'est ce qui
      * donne au pays un bord crédible plutôt qu'un damier sans fin.
      */
-    const quart = orientationTrame(o.voisins);
     for (const brut of o.voisins) {
       if (brut.col === 0 && brut.rang === 0) continue;
       const v = brut;
@@ -712,7 +828,7 @@ export function planCampagne(o: OptionsPlan): PlanCampagne {
       const x = col * pas;
       const z = rang * pas;
       const cote = coteDe(v.gridW, v.gridH);
-      if (!posable(x, z, cote)) continue;
+      if (!posable(x, z, cote, v.statut === "MOI", v.id === o.maison)) continue;
       const grain = suite(grainerDe(v.id));
       parcelles.push({
         id: v.id,
@@ -787,6 +903,16 @@ export function planCampagne(o: OptionsPlan): PlanCampagne {
     .sort((a, b) => visible(a) - visible(b));
   for (const p of candidats.slice(0, ENGINS_MAX)) p.travaille = true;
 
+  const acces = cheminsAcces({
+    parcelles,
+    voisins: o.voisins ?? [],
+    maison: o.maison,
+    pas,
+    routeZ,
+    cour,
+    ile: emprise,
+  });
+
   /*
    * Le chemin, d'un bord à l'autre du sol.
    *
@@ -820,6 +946,14 @@ export function planCampagne(o: OptionsPlan): PlanCampagne {
   const arbres: { x: number; z: number; taille: number; graine: number }[] = [];
   const libre = (x: number, z: number, r: number) => {
     if (Math.abs(z - routeZ) < DEMI_ROUTE + r) return false;
+    // Pas un arbre au milieu d'un chemin d'accès.
+    for (const a of acces) {
+      for (let i = 0; i + 1 < a.points.length; i++) {
+        if (seChevauchent({ x, z, w: r * 2, d: r * 2 }, boiteSegment(a.points[i]!, a.points[i + 1]!), 0.3)) {
+          return false;
+        }
+      }
+    }
     if (seChevauchent({ x, z, w: r * 2, d: r * 2 }, cour, 0.8)) return false;
     if (seChevauchent({ x, z, w: r * 2, d: r * 2 }, joueur, 0.8)) return false;
     return !parcelles.some((p) =>
@@ -883,5 +1017,69 @@ export function planCampagne(o: OptionsPlan): PlanCampagne {
     );
   }
 
-  return { parcelles, route, desserte, arbres, sol, pas, emprise, routeZ };
+  return { parcelles, acces, route, desserte, arbres, sol, pas, emprise, routeZ, quart };
+}
+
+/** L'emprise d'un tronçon de chemin, droit et parallèle à un axe. */
+export function boiteSegment(a: PointPlan, b: PointPlan, demi = DEMI_ACCES): Boite {
+  return {
+    x: (a.x + b.x) / 2,
+    z: (a.z + b.z) / 2,
+    w: Math.abs(b.x - a.x) + demi * 2,
+    d: Math.abs(b.z - a.z) + demi * 2,
+  };
+}
+
+/**
+ * Les chemins d'accès aux parcelles du joueur.
+ *
+ * Chaque parcelle achetée doit être **joignable** : on y va avec ses engins,
+ * on ne les téléporte pas. Le chemin part de la route, suit le couloir de
+ * trame qui longe la parcelle — à l'ouest de préférence, comme la cour du
+ * siège, à l'est si l'ouest est pris —, puis tourne vers une porte au milieu
+ * du côté.
+ *
+ * La parcelle active compte aussi quand ce n'est pas le siège : elle est à
+ * l'origine, hors de `parcelles`, et il faut bien que le tracteur y arrive.
+ */
+export function cheminsAcces(o: {
+  parcelles: readonly ParcelleVoisine[];
+  voisins: readonly VoisinReel[];
+  maison?: string;
+  pas: number;
+  routeZ: number;
+  cour: Boite;
+  ile: number;
+}): Acces[] {
+  const cibles: { id: string; x: number; z: number; emprise: number }[] = [];
+  const active = o.voisins.find((v) => v.col === 0 && v.rang === 0);
+  if (active && active.statut === "MOI" && o.maison && active.id !== o.maison) {
+    cibles.push({ id: active.id, x: 0, z: 0, emprise: o.ile });
+  }
+  for (const p of o.parcelles) {
+    if (p.reel?.statut !== "MOI" || p.id === o.maison) continue;
+    cibles.push({ id: p.id, x: p.x, z: p.z, emprise: p.cote });
+  }
+  const obstacles: { id: string; boite: Boite }[] = [
+    { id: "", boite: o.cour },
+    { id: active?.id ?? "", boite: { x: 0, z: 0, w: o.ile, d: o.ile } },
+    ...o.parcelles.map((p) => ({ id: p.id, boite: empriseParcelle(p, p.cote) })),
+  ];
+  const acces: Acces[] = [];
+  for (const c of cibles) {
+    for (const cote of [-1, 1] as const) {
+      const couloir = c.x + (cote * o.pas) / 2;
+      const porte = { x: c.x + (cote * c.emprise) / 2, z: c.z };
+      const points = [{ x: couloir, z: o.routeZ }, { x: couloir, z: c.z }, porte];
+      const bloque = [0, 1].some((i) => {
+        const b = boiteSegment(points[i]!, points[i + 1]!);
+        // Le dernier tronçon entre dans sa propre parcelle : c'est le but.
+        return obstacles.some((ob) => ob.id !== c.id && seChevauchent(b, ob.boite, 0.05));
+      });
+      if (bloque) continue;
+      acces.push({ id: c.id, points, cote });
+      break;
+    }
+  }
+  return acces;
 }
