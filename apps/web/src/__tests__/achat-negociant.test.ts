@@ -48,13 +48,19 @@ describe("l'achat au négociant", () => {
      * livraisons entre joueurs ; il sert maintenant aussi à rentrer une
      * caisse du négociant, et il part de la case où elle était posée.
      */
-    expect(APP_ENTIER).toMatch(/const caisse = supplies\.find\(\(s\) => s\.id === id\)/);
-    expect(APP_ENTIER).toMatch(
-      /flashDeliveryArrival\(r\.collected, caisse \? \{ x: caisse\.x, y: caisse\.y \} : undefined\)/,
-    );
-    expect(APP_ENTIER).toMatch(
-      /function flashDeliveryArrival\(commodity\?: string, depuis\?: \{ x: number; y: number \}\)/,
-    );
+    /*
+     * Le convoi est joué par la vue, en coordonnées du monde : la place de la
+     * caisse lue comme une case du champ le faisait partir d'un coin du champ,
+     * en allers-retours de labour, pendant que la caisse s'envolait seule.
+     */
+    const VUE = fs.readFileSync("src/IsoFarmView.tsx", "utf8");
+    expect(APP_ENTIER).not.toMatch(/flashDeliveryArrival\(r\.collected/);
+    expect(VUE).toMatch(/touchee\.userData\.cliquee = true/);
+    expect(VUE).toMatch(/mesh\.userData\.cliquee && lancerConvoi\(mesh/);
+    // Chargée sur la remorque, déchargée devant le bâtiment qui la stocke.
+    expect(VUE).toMatch(/genre: "charge"/);
+    expect(VUE).toMatch(/genre: "decharge"/);
+    expect(VUE).toMatch(/hitchTrailer\(rig, commodite, \{ vide: true \}\)/);
   });
 
   it("dit où le colis atterrit, quand, et quoi en faire", () => {

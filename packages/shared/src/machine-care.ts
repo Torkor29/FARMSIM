@@ -100,32 +100,19 @@ export const REPAIR_PARTS: Record<BreakdownKind, string[]> = {
   ENGINE: ["Filtre", "Bougie", "Durite", "Pompe", "Joint", "Vidange"],
 };
 
-/** Points de graissage, en % de l'illustration. */
+/**
+ * Points de graissage, en % de l'illustration (3:2) — et plus de la scène
+ * carrée où elle flottait entre deux bandes vides.
+ *
+ * La poussière et la boue n'ont plus de points : le lavage se joue au jet,
+ * sur une couche de boue qu'on décape, pas sur des taches à toucher.
+ */
 export const GREASE_POINTS: Array<{ x: number; y: number }> = [
-  { x: 28, y: 38 },
-  { x: 72, y: 36 },
-  { x: 48, y: 52 },
-  { x: 32, y: 74 },
-  { x: 68, y: 76 },
-];
-
-export const DUST_POINTS: Array<{ x: number; y: number }> = [
-  { x: 18, y: 22 },
-  { x: 42, y: 16 },
-  { x: 70, y: 24 },
-  { x: 22, y: 48 },
-  { x: 55, y: 44 },
-  { x: 78, y: 52 },
-  { x: 30, y: 70 },
-  { x: 62, y: 68 },
-];
-
-export const MUD_POINTS: Array<{ x: number; y: number }> = [
-  { x: 24, y: 58 },
-  { x: 48, y: 72 },
-  { x: 70, y: 62 },
-  { x: 38, y: 36 },
-  { x: 64, y: 40 },
+  { x: 28, y: 32 },
+  { x: 72, y: 29 },
+  { x: 48, y: 53 },
+  { x: 32, y: 80 },
+  { x: 68, y: 82 },
 ];
 
 /**

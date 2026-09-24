@@ -42,6 +42,10 @@ describe("le village remplace les menus", () => {
 
   it("montre le chemin du village quand il sort du cadre", () => {
     expect(VUE).toMatch(/className = "village-pastille"/);
+    // Elle vise le bâtiment utile hors cadre le plus proche, à son nom : viser
+    // le centre du village ne montrait qu'un bâtiment sur trois au téléphone.
+    expect(VUE).toMatch(/NOMS_LIEUX\[cible\.l\.genre\]/);
+    expect(VUE).toMatch(/if \(aLEcran\) continue;/);
     expect(VUE).toMatch(/retourVers = \{ x: c\.x \+ parkingOverhang \/ 2, z: c\.z \}/);
     // Sans le village dans les bornes, la vue y glisserait puis serait
     // rappelée aussitôt.

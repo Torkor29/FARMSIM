@@ -3,6 +3,8 @@ import * as THREE from "three";
 import {
   parkingLayout,
   YARD_W,
+  GOOD_DEFS,
+  type TradeGood,
   BUILDING_DEFS,
   RIPENESS_COLORS,
   artGroundFraction,
@@ -736,7 +738,7 @@ function cropGroundColor(c: IsoCell, sim?: IsoSim): number {
  * on reconnaît de loin qu'il s'agit de paille plutôt que de grain, sans
  * étiquette accrochée sur la ferme.
  */
-function makeSupplyCrate(couleur: number): THREE.Group {
+function makeSupplyCrate(couleur: number, appel?: { nom: string }): THREE.Group {
   const g = new THREE.Group();
   const bois = new THREE.MeshLambertMaterial({ color: 0x8a6234, flatShading: true });
   const sangle = new THREE.MeshLambertMaterial({ color: 0x4a3320, flatShading: true });
@@ -754,7 +756,52 @@ function makeSupplyCrate(couleur: number): THREE.Group {
     s.position.set(dx, 0.15, 0);
     g.add(s);
   }
+  if (appel) {
+    /*
+     * Une caisse à ranger réclame un geste.
+     *
+     * Posée au parking, elle mesurait 40 cm sur une case d'un mètre, avec un
+     * balancement que personne ne remarquait : « c'est sympa mais pas facile
+     * à cliquer ». Elle porte maintenant une flèche dorée qui rebondit et
+     * clignote, le nom de ce qu'elle contient, et une cible de clic près de
+     * quatre fois plus large qu'elle — invisible, mais le rayon la trouve.
+     */
+    const fleche = new THREE.Group();
+    fleche.name = "caisse-fleche";
+    const or = new THREE.MeshBasicMaterial({ color: 0xf2c230, transparent: true, depthTest: false });
+    const pointe = new THREE.Mesh(new THREE.ConeGeometry(0.32, 0.46, 4), or);
+    pointe.rotation.x = Math.PI; // pointe vers la caisse
+    pointe.rotation.y = Math.PI / 4;
+    const hampe = new THREE.Mesh(new THREE.BoxGeometry(0.16, 0.36, 0.16), or);
+    hampe.position.y = 0.4;
+    fleche.add(pointe, hampe);
+    fleche.renderOrder = 21;
+    for (const m of fleche.children) m.renderOrder = 21;
+    fleche.position.y = 0.72;
+    g.add(fleche);
+    const etiquette = makeTag(appel.nom);
+    etiquette.name = "caisse-etiquette";
+    etiquette.scale.multiplyScalar(1.7);
+    etiquette.position.y = 1.75;
+    g.add(etiquette);
+    const cible = new THREE.Mesh(
+      new THREE.BoxGeometry(1.5, 2.2, 1.5),
+      new THREE.MeshBasicMaterial({ transparent: true, opacity: 0, depthWrite: false, colorWrite: false }),
+    );
+    cible.name = "caisse-cible";
+    cible.position.y = 1;
+    g.add(cible);
+  }
   return g;
+}
+
+/** Retire l'appel d'une caisse — flèche, nom, cible — dès qu'on l'a touchée. */
+function eteindreCaisse(caisse: THREE.Object3D): void {
+  for (const nom of ["caisse-fleche", "caisse-etiquette", "caisse-cible"]) {
+    const o = caisse.getObjectByName(nom);
+    if (o) o.visible = false;
+  }
+  caisse.userData.eteinte = true;
 }
 
 /** La couleur du dessus d'une caisse, par denrée. */
@@ -1714,7 +1761,9 @@ export function IsoFarmView({
      * escamotage franc qu'un vol vers un point arbitraire du terrain.
      */
     const storagePoint = (depuis: THREE.Vector3): THREE.Vector3 => {
-      const rangeurs = new Set(["GRAIN_SILO", "HAY_BARN", "MACHINE_SHED", "FARMHOUSE", "BARN"]);
+      // Les types réels : « GRAIN_SILO » et « BARN » n'existent pas, et le vol
+      // ne trouvait qu'un hangar ou la maison.
+      const rangeurs = new Set(["SILO", "HAY_BARN", "MACHINE_SHED", "FARMHOUSE", "CATTLE_BARN"]);
       let best: THREE.Vector3 | null = null;
       let d2 = Infinity;
       for (const b of dataRef.current.buildings ?? []) {
@@ -1735,6 +1784,217 @@ export function IsoFarmView({
     const partis = new Set<string>();
     type Vol = { mesh: THREE.Group; from: THREE.Vector3; to: THREE.Vector3; t0: number };
     let vols: Vol[] = [];
+
+    /*
+     * Le convoi qui rentre une caisse.
+     *
+     * « Le tracteur qui vient chercher le fait pas parfaitement. » Il
+     * empruntait le moteur des chantiers : la place de la caisse, lue comme
+     * une case du champ, le faisait partir d'un coin du champ ; son trajet
+     * était trié en allers-retours comme un labour ; et la caisse s'envolait
+     * seule vers le silo pendant qu'il arrivait — deux animations qui ne se
+     * parlaient pas.
+     *
+     * Le convoi est maintenant une seule histoire, en coordonnées du monde :
+     * l'attelage quitte sa place, longe l'allée, s'arrête remorque contre la
+     * caisse, la charge, passe le portail, se range devant le bâtiment qui
+     * stocke, décharge, et rentre en reculant dans sa place.
+     */
+    type PointConvoi = { x: number; z: number; y: number; recul?: boolean };
+    type EtapeConvoi =
+      | { genre: "route"; pts: PointConvoi[]; longueurs: number[]; total: number; duree: number }
+      | { genre: "charge" | "decharge"; duree: number };
+    type Convoi = {
+      rig: MachineRig;
+      caisse: THREE.Group;
+      echelle: number;
+      etapes: EtapeConvoi[];
+      rang: number;
+      debut: number;
+      cap: number;
+      distance: number;
+      /** La caisse est-elle sur la remorque ? */
+      chargee: boolean;
+      depart: THREE.Vector3;
+      rangement: THREE.Vector3 | null;
+    };
+    const convois: Convoi[] = [];
+    const VITESSE_CONVOI = 2.4;
+    const routeConvoi = (pts: PointConvoi[]): EtapeConvoi => {
+      const longueurs: number[] = [];
+      let total = 0;
+      for (let i = 1; i < pts.length; i++) {
+        const l = Math.hypot(pts[i]!.x - pts[i - 1]!.x, pts[i]!.z - pts[i - 1]!.z);
+        longueurs.push(l);
+        total += l;
+      }
+      return { genre: "route", pts, longueurs, total, duree: Math.max(0.6, total / VITESSE_CONVOI + 0.5) };
+    };
+    /** Où se range ce que contient la caisse : le fourrage au hangar, le grain au silo. */
+    const batimentPour = (commodite: string) => {
+      const fourrage =
+        commodite === "HAY" || commodite === "STRAW" || commodite === "STRAW_BALE" || commodite === "SILAGE";
+      const prefere = fourrage
+        ? ["HAY_BARN", "BUNKER_SILO", "CATTLE_BARN", "SHEEPFOLD", "MACHINE_SHED", "FARMHOUSE", "SILO"]
+        : ["SILO", "HAY_BARN", "MACHINE_SHED", "FARMHOUSE", "CATTLE_BARN"];
+      const bs = dataRef.current.buildings ?? [];
+      for (const type of prefere) {
+        const b = bs.find((x) => x.type === type);
+        if (b) return { b, def: BUILDING_DEFS[b.type] };
+      }
+      return null;
+    };
+    function lancerConvoi(caisse: THREE.Group, commodite: string, t: number): boolean {
+      if (!parkingSlots.length) return false;
+      const place = parkingSlots[Math.min(dataRef.current.parked.length, parkingSlots.length - 1)];
+      if (!place) return false;
+      const rig = createMachineRig("TRACTOR", { shadows: quality.shadows });
+      hitchTrailer(rig, commodite, { vide: true });
+      const echelle = MACHINE_SCALE * machineMeshScale(asTier(1));
+      rig.group.scale.setScalar(echelle);
+      rig.group.position.set(place.x, yardDeck, place.z);
+      rig.group.rotation.y = parkingHeading;
+      workGroup.add(rig.group);
+      // L'allée longe le bord du parc côté champ ; la remorque traîne derrière
+      // le tracteur, d'où l'arrêt un peu au-delà de la caisse.
+      const allee = courBoite.x + courBoite.w / 2 - 0.25;
+      const recul = 0.62;
+      const c = caisse.position;
+      const arret = { x: allee, z: c.z - recul, y: yardDeck };
+      const aller: PointConvoi[] = [
+        { x: place.x, z: place.z, y: yardDeck },
+        { x: allee, z: place.z, y: yardDeck },
+        arret,
+      ];
+      const cible = batimentPour(commodite);
+      const etapes: EtapeConvoi[] = [routeConvoi(aller), { genre: "charge", duree: 0.9 }];
+      let rangement: THREE.Vector3 | null = null;
+      // Le portail est derrière lui s'il s'est arrêté plus loin : il y recule.
+      const sortie = { x: allee, z: parkingGateZ, y: yardDeck, recul: parkingGateZ > arret.z };
+      const retourPlace: PointConvoi[] = [
+        { x: allee, z: place.z, y: yardDeck },
+        { x: place.x, z: place.z, y: yardDeck, recul: true },
+      ];
+      if (cible) {
+        const cx = ox + (cible.b.originX + cible.def.w / 2) * step;
+        const devant = oz + (cible.b.originY + cible.def.h) * step + 0.55 * step;
+        rangement = new THREE.Vector3(cx, 0.3, oz + (cible.b.originY + cible.def.h / 2) * step);
+        const porte = { x: courBoite.x + courBoite.w / 2 + 0.9, z: parkingGateZ, y: MACHINE_GROUND };
+        etapes.push(
+          routeConvoi([
+            arret,
+            sortie,
+            porte,
+            { x: cx, z: parkingGateZ, y: MACHINE_GROUND },
+            { x: cx, z: devant, y: MACHINE_GROUND },
+          ]),
+          { genre: "decharge", duree: 0.9 },
+          routeConvoi([
+            { x: cx, z: devant, y: MACHINE_GROUND },
+            { x: cx, z: parkingGateZ, y: MACHINE_GROUND },
+            porte,
+            { x: allee, z: parkingGateZ, y: yardDeck },
+            ...retourPlace,
+          ]),
+        );
+      } else {
+        // Sans bâtiment pour la ranger, la caisse rentre au garage avec lui.
+        etapes.push(routeConvoi([arret, sortie, ...retourPlace]), { genre: "decharge", duree: 0.6 });
+      }
+      convois.push({
+        rig,
+        caisse,
+        echelle,
+        etapes,
+        rang: 0,
+        debut: t,
+        cap: parkingHeading,
+        distance: 0,
+        chargee: false,
+        depart: caisse.position.clone(),
+        rangement,
+      });
+      return true;
+    }
+    const lit = new THREE.Vector3();
+    /** Le plateau de la remorque, dans le repère des caisses. */
+    function plateau(rig: MachineRig): THREE.Vector3 {
+      const remorque = rig.group.getObjectByName("remorque");
+      if (!remorque) return rig.group.position.clone();
+      lit.set(0, 0.22, 0);
+      remorque.localToWorld(lit);
+      return supplyGroup.worldToLocal(lit.clone());
+    }
+    function animerConvois(t: number, dt: number) {
+      for (let k = convois.length - 1; k >= 0; k--) {
+        const cv = convois[k]!;
+        const etape = cv.etapes[cv.rang];
+        const g = cv.rig.group;
+        if (!etape) {
+          workGroup.remove(g);
+          cv.rig.dispose();
+          supplyGroup.remove(cv.caisse);
+          disposeObject3D(cv.caisse);
+          convois.splice(k, 1);
+          continue;
+        }
+        const brut = Math.min(1, (t - cv.debut) / etape.duree);
+        if (etape.genre === "route") {
+          const u = brut * brut * (3 - 2 * brut);
+          let reste = u * etape.total;
+          let i = 0;
+          while (i < etape.longueurs.length - 1 && reste > etape.longueurs[i]!) {
+            reste -= etape.longueurs[i]!;
+            i++;
+          }
+          const a = etape.pts[i]!;
+          const b = etape.pts[i + 1]!;
+          const f = etape.longueurs[i]! > 1e-6 ? Math.min(1, reste / etape.longueurs[i]!) : 1;
+          const px = a.x + (b.x - a.x) * f;
+          const pz = a.z + (b.z - a.z) * f;
+          const py = a.y + (b.y - a.y) * f;
+          const avance = Math.hypot(px - g.position.x, pz - g.position.z);
+          if (avance > 1e-5) {
+            // En marche arrière, le tracteur regarde à l'opposé de son mouvement.
+            let vise = Math.atan2(-(pz - g.position.z), px - g.position.x);
+            if (b.recul) vise += Math.PI;
+            cv.cap += shortestAngle(vise - cv.cap) * Math.min(1, dt * 9);
+          }
+          cv.distance += b.recul ? -avance : avance;
+          g.position.set(px, py, pz);
+          g.rotation.y = cv.cap;
+          cv.rig.update({ t, distance: cv.distance, working: false, steer: 0 });
+        } else {
+          cv.rig.update({ t, distance: cv.distance, working: false, steer: 0 });
+          const e = brut * brut * (3 - 2 * brut);
+          const lit0 = plateau(cv.rig);
+          if (etape.genre === "charge") {
+            // La caisse monte en cloche sur le plateau, et s'y ajuste.
+            cv.caisse.position.lerpVectors(cv.depart, lit0, e);
+            cv.caisse.position.y += Math.sin(e * Math.PI) * 0.7;
+            cv.caisse.scale.setScalar(1 + (cv.echelle - 1) * e);
+            cv.caisse.rotation.y += (cv.cap - cv.caisse.rotation.y) * e;
+            if (brut >= 1) cv.chargee = true;
+          } else {
+            cv.chargee = false;
+            const vers = cv.rangement ?? lit0.clone().setY(lit0.y + 0.6);
+            cv.caisse.position.lerpVectors(lit0, vers, e);
+            cv.caisse.position.y += Math.sin(e * Math.PI) * 0.8;
+            cv.caisse.scale.setScalar(cv.echelle * (1 - e * 0.8));
+          }
+        }
+        if (cv.chargee) {
+          cv.caisse.position.copy(plateau(cv.rig));
+          cv.caisse.rotation.y = cv.cap;
+          cv.caisse.scale.setScalar(cv.echelle);
+        }
+        if (brut >= 1) {
+          if (etape.genre === "decharge") cv.caisse.visible = false;
+          cv.rang += 1;
+          cv.debut = t;
+        }
+      }
+    }
 
     const farmerGroup = new THREE.Group();
     world.add(farmerGroup);
@@ -3210,6 +3470,13 @@ export function IsoFarmView({
       // changer d'outil d'abord.
       const caisse = raycastCrate();
       if (caisse) {
+        // La flèche s'éteint tout de suite : attendre la réponse du serveur
+        // laisserait croire que le clic n'a pas pris.
+        const touchee = crates.get(caisse);
+        if (touchee) {
+          eteindreCaisse(touchee);
+          touchee.userData.cliquee = true;
+        }
         onCollectSupplyRef.current?.(caisse);
         return;
       }
@@ -3498,44 +3765,46 @@ export function IsoFarmView({
     }
 
     /*
-     * La pastille « Village ».
+     * La pastille du village.
      *
      * Le marché, le garage et le bureau ne s'ouvrent plus que depuis la
-     * coopérative, la concession et la mairie. Or le village est posé au bord
-     * du pays : au téléphone il sort du cadre, et sur un grand écran la fiche
-     * de droite le couvre. Quand il n'est pas à l'écran, une pastille au bord
-     * indique sa direction ; la toucher y fait glisser la vue — le bouton
-     * « Ma ferme » ramène ensuite chez soi.
+     * coopérative, la concession et la mairie. Or ces bâtiments sont posés au
+     * bord du pays, souvent loin l'un de l'autre : au téléphone ils sortent du
+     * cadre, et sur un grand écran la fiche de droite peut les couvrir.
+     *
+     * Viser le centre du village ne suffisait pas — sur un téléphone il ne
+     * montrait qu'un bâtiment sur trois, et la pastille disparaissait puisque
+     * ce centre était à l'écran. Elle désigne donc **le bâtiment utile hors
+     * cadre le plus proche**, à son nom ; la toucher y fait glisser la vue, et
+     * elle désigne alors le suivant. « Ma ferme » ramène chez soi.
      */
+    const NOMS_LIEUX: Partial<Record<GenreLieu, string>> = {
+      COOPERATIVE: "Coopérative",
+      CONCESSION: "Concession",
+      MAIRIE: "Mairie",
+    };
     const pastille = document.createElement("button");
     pastille.type = "button";
     pastille.className = "village-pastille";
-    pastille.title = "Aller au village : coopérative, concession, mairie";
     pastille.innerHTML =
-      '<span class="village-fleche" aria-hidden="true">➜</span><span>Village</span>';
+      '<span class="village-fleche" aria-hidden="true">➜</span><span class="village-nom">Village</span>';
     el.appendChild(pastille);
-    const centreVillage = (): { x: number; z: number } | null => {
-      const utiles = campagne?.plan.lieux.filter((l) => lieuUtile(l.genre)) ?? [];
-      if (!utiles.length) return null;
-      return {
-        x: utiles.reduce((n, l) => n + l.x, 0) / utiles.length,
-        z: utiles.reduce((n, l) => n + l.z, 0) / utiles.length,
-      };
-    };
+    const nomPastille = pastille.querySelector(".village-nom") as HTMLElement;
+    let visee: { genre: GenreLieu; x: number; z: number } | null = null;
     pastille.addEventListener("click", () => {
-      const c = centreVillage();
+      const c = visee;
       if (!c) return;
       tientLaVue = false;
       // La caméra vise `panX - parkingOverhang / 2` : on compense pour que ce
-      // soit bien le village, et non un point à côté, qui arrive au centre.
+      // soit bien le bâtiment, et non un point à côté, qui arrive au centre.
       retourVers = { x: c.x + parkingOverhang / 2, z: c.z };
     });
     const projete = new THREE.Vector3();
     let pastilleMesuree = 0;
     let railsPastille = { left: 0, right: 0 };
     function majPastille(now: number) {
-      const c = centreVillage();
-      if (!c) {
+      const utiles = campagne?.plan.lieux.filter((l) => lieuUtile(l.genre)) ?? [];
+      if (!utiles.length || retourVers) {
         pastille.classList.remove("visible");
         return;
       }
@@ -3546,23 +3815,36 @@ export function IsoFarmView({
       }
       const w = el.clientWidth;
       const h = el.clientHeight;
-      projete.set(c.x, CAMPAGNE_Y + 1.2, c.z).project(camera);
-      const px = ((projete.x + 1) / 2) * w;
-      const py = ((1 - projete.y) / 2) * h;
       const gauche = railsPastille.left;
       const droite = w - railsPastille.right;
-      const marge = 50;
-      const aLEcran =
-        px > gauche + marge && px < droite - marge && py > h * 0.12 && py < h * 0.8;
-      pastille.classList.toggle("visible", !aLEcran && !retourVers);
-      if (aLEcran) return;
-      // Au bord de la zone libre, à hauteur du village mais jamais sous le
-      // bandeau ni sur le dock ; la flèche, elle, vise le village.
-      const bx = Math.min(droite - 70, Math.max(gauche + 70, px));
-      const by = Math.min(h * 0.62, Math.max(h * 0.2, py));
+      const marge = 40;
+      const cx = (gauche + droite) / 2;
+      const cy = h / 2;
+      let cible: { l: (typeof utiles)[number]; px: number; py: number; d: number } | null = null;
+      for (const l of utiles) {
+        projete.set(l.x, CAMPAGNE_Y + 1.2, l.z).project(camera);
+        const px = ((projete.x + 1) / 2) * w;
+        const py = ((1 - projete.y) / 2) * h;
+        const aLEcran = px > gauche + marge && px < droite - marge && py > h * 0.12 && py < h * 0.8;
+        if (aLEcran) continue;
+        const d = Math.hypot(px - cx, py - cy);
+        if (!cible || d < cible.d) cible = { l, px, py, d };
+      }
+      pastille.classList.toggle("visible", Boolean(cible));
+      visee = cible ? cible.l : null;
+      if (!cible) return;
+      const nom = NOMS_LIEUX[cible.l.genre] ?? "Village";
+      if (nomPastille.textContent !== nom) {
+        nomPastille.textContent = nom;
+        pastille.title = `Aller à la ${nom.toLowerCase()}`;
+      }
+      // Au bord de la zone libre, à hauteur du bâtiment mais jamais sous le
+      // bandeau ni sur le dock ; la flèche, elle, vise le bâtiment.
+      const bx = Math.min(droite - 80, Math.max(gauche + 80, cible.px));
+      const by = Math.min(h * 0.62, Math.max(h * 0.2, cible.py));
       pastille.style.left = `${bx}px`;
       pastille.style.top = `${by}px`;
-      const angle = Math.atan2(py - by, px - bx);
+      const angle = Math.atan2(cible.py - by, cible.px - bx);
       pastille.style.setProperty("--village-angle", `${angle}rad`);
     }
 
@@ -3811,12 +4093,15 @@ export function IsoFarmView({
         for (const c of attendues) {
           let mesh = crates.get(c.id);
           if (!mesh) {
-            mesh = makeSupplyCrate(SUPPLY_COLORS[c.commodity] ?? 0xcbbf9a);
+            mesh = makeSupplyCrate(SUPPLY_COLORS[c.commodity] ?? 0xcbbf9a, {
+              nom: GOOD_DEFS[c.commodity as TradeGood]?.name ?? "Livraison",
+            });
             mesh.scale.setScalar(cellSize);
             supplyGroup.add(mesh);
             crates.set(c.id, mesh);
             mesh.userData.pose = maintenant;
             mesh.userData.supplyId = c.id;
+            mesh.userData.commodite = c.commodity;
             mesh.traverse((o) => {
               o.userData.supplyId = c.id;
             });
@@ -3836,6 +4121,16 @@ export function IsoFarmView({
           mesh.position.set(px, yardDeck + 0.02 + chute + rebond, pz);
           // Un léger balancement tant qu'elle attend : elle réclame un geste.
           mesh.rotation.y = Math.sin(t * 1.4 + c.x) * 0.08;
+          // La flèche rebondit et clignote, en phase d'une caisse à l'autre
+          // décalée pour qu'une rangée de livraisons ne batte pas d'un bloc.
+          const fleche = mesh.getObjectByName("caisse-fleche");
+          if (fleche && !mesh.userData.eteinte) {
+            const phase = t * 3.2 + c.x * 0.7;
+            fleche.position.y = 0.72 + Math.abs(Math.sin(phase)) * 0.3;
+            fleche.rotation.y = -mesh.rotation.y;
+            const m = (fleche.children[0] as THREE.Mesh).material as THREE.MeshBasicMaterial;
+            m.opacity = 0.55 + 0.45 * (0.5 + 0.5 * Math.cos(phase * 0.5));
+          }
         }
         /* Les transports : du stockage vers le bâtiment qui reçoit. On les
            lance une fois, à leur apparition, et on les oublie ensuite — la
@@ -3853,12 +4148,20 @@ export function IsoFarmView({
         for (const [id, mesh] of crates) {
           if (vues.has(id)) continue;
           crates.delete(id);
+          eteindreCaisse(mesh);
           const rang = crateTargets.indexOf(mesh);
           if (rang >= 0) crateTargets.splice(rang, 1);
+          // Rentrée à la main : l'attelage vient la chercher. Rangée d'elle-même
+          // au bout du délai, elle s'envole comme avant — personne n'a rien
+          // demandé, inutile de sortir un tracteur.
+          if (mesh.userData.cliquee && lancerConvoi(mesh, String(mesh.userData.commodite ?? ""), t)) {
+            continue;
+          }
           // Rangée : elle s'envole vers le bâtiment qui la stocke.
           const cible = storagePoint(mesh.position);
           vols.push({ mesh, from: mesh.position.clone(), to: cible, t0: t });
         }
+        animerConvois(t, delta / 1000);
         if (vols.length > 0) {
           vols = vols.filter((v) => {
             const u = Math.min(1, (t - v.t0) / 0.9);
@@ -4393,6 +4696,12 @@ export function IsoFarmView({
       layoutRef.current = null;
       recadrerRef.current = null;
       if (controle) controle.current = null;
+      for (const cv of convois) {
+        workGroup.remove(cv.rig.group);
+        cv.rig.dispose();
+        disposeObject3D(cv.caisse);
+      }
+      convois.length = 0;
       pastille.remove();
       // La vue disparaît : le bouton de recentrage n'a plus rien à commander.
       if (egareRef.current) {
