@@ -39,6 +39,90 @@ export const LAND_PARCEL_HA = 14;
 /** Prix d'une parcelle « tout neutre » : 420 × 14 = 5 880 CRD `[GD]` */
 export const LAND_REFERENCE_PRICE = LAND_BASE_PER_HA * LAND_PARCEL_HA;
 
+/* ------------------------------------------------------------------ */
+/* La taille des parcelles                                             */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Les tailles de parcelle, en cases par côté `[GD]`.
+ *
+ * Toutes les parcelles faisaient douze cases sur douze : les terres à vendre
+ * ne se distinguaient que par leur sol et leur place. Il y a maintenant des
+ * petites parcelles bon marché et de grandes qui coûtent en proportion.
+ *
+ * **Des carrés, et pas de rectangles.** La carte pivote d'un quart de tour
+ * pour montrer au mieux la ferme : un rectangle tourné changerait de forme en
+ * devenant la parcelle active, et le passage sans saut d'une parcelle à
+ * l'autre ne tiendrait plus.
+ */
+export const TAILLES_PARCELLE = [8, 10, 12, 14, 16] as const;
+
+/** Côté de la parcelle de référence — celle de 14 ha. */
+export const TAILLE_REFERENCE = 12;
+
+/**
+ * La parcelle de départ garde la taille de référence.
+ *
+ * Elle est **offerte** : si elle pouvait tomber sur un 16×16, un joueur
+ * recevrait gratuitement près de deux fois la terre d'un autre. La taille se
+ * paie à l'achat, pas au tirage. Toute terre libre reste pourtant ouverte au
+ * départ — celle qu'on choisit est ramenée à cette taille quand on la prend
+ * (voir `ramenerATailleDepart` côté serveur).
+ */
+export const TAILLE_DEPART = TAILLE_REFERENCE;
+
+/** La plus grande : c'est elle qui dimensionne une case du cadastre. */
+export const TAILLE_MAX = TAILLES_PARCELLE[TAILLES_PARCELLE.length - 1]!;
+
+/** Surface d'une case, en hectares : 12 × 12 cases pour 14 ha. */
+export const HECTARES_CASE = LAND_PARCEL_HA / (TAILLE_REFERENCE * TAILLE_REFERENCE);
+
+/** Surface d'une parcelle, en hectares. */
+export function hectaresDe(gridW: number, gridH: number): number {
+  return Math.max(0, gridW) * Math.max(0, gridH) * HECTARES_CASE;
+}
+
+/**
+ * La part de chaque taille parmi les terres libres.
+ *
+ * La référence reste la plus fréquente : c'est la taille de toutes les
+ * fermes déjà installées, et le paysage ne doit pas devenir un patchwork.
+ */
+const REPARTITION_TAILLES: readonly (readonly [number, number])[] = [
+  [8, 0.15],
+  [10, 0.15],
+  [12, 0.4],
+  [14, 0.15],
+  [16, 0.15],
+];
+
+/**
+ * La taille d'une terre libre, tirée de son emplacement.
+ *
+ * Déterministe : la même case du cadastre donne toujours la même taille,
+ * d'un serveur à l'autre et d'un démarrage à l'autre. C'est ce qui rend le
+ * redimensionnement rejouable sans rien défaire.
+ */
+export function tailleTerreLibre(graine: string): number {
+  let h = 0x811c9dc5;
+  for (let i = 0; i < graine.length; i++) {
+    h ^= graine.charCodeAt(i);
+    h = Math.imul(h, 0x01000193);
+  }
+  const u = (h >>> 0) / 0x1_0000_0000;
+  let cumul = 0;
+  for (const [taille, part] of REPARTITION_TAILLES) {
+    cumul += part;
+    if (u < cumul) return taille;
+  }
+  return TAILLE_REFERENCE;
+}
+
+/** Base du prix : un prix à l'hectare, et plus un forfait par parcelle. */
+function prixDeBase(input: { hectares?: number }): number {
+  return LAND_BASE_PER_HA * (input.hectares ?? LAND_PARCEL_HA);
+}
+
 /** Escalade patrimoniale par parcelle déjà possédée `[GD]` */
 export const LAND_OWNERSHIP_STEP = 1.4;
 
@@ -213,6 +297,16 @@ export type ParcelValuationInput = {
   neighborDensity: number;
   /** Occupation du continent `O ∈ [0 ; 1]` */
   occupancy: number;
+  /**
+   * Surface de la parcelle, en hectares. Absente, c'est la parcelle de
+   * référence de 14 ha — tout ce qui était écrit avant garde son prix.
+   *
+   * Le prix ignorait la surface : chaque parcelle valait « 14 ha », si bien
+   * qu'un champ de 16×16 se serait vendu le prix d'un 12×12 avec 78 % de
+   * terre en plus. La base est désormais un prix à l'hectare ; tous les
+   * autres facteurs s'y appliquent comme avant.
+   */
+  hectares?: number;
 };
 
 /** Entrées personnalisées : ce que le prix doit à l'acheteur, pas à la parcelle. */
@@ -280,13 +374,9 @@ function marketFactors(input: ParcelValuationInput): Omit<FactorSet, "adjacency"
  */
 export function marketValue(input: ParcelValuationInput): number {
   const f = marketFactors(input);
-  const raw =
-    LAND_REFERENCE_PRICE * f.fertility * f.climate * f.access * f.density * f.scarcity;
-  const bounded = clamp(
-    raw,
-    LAND_PRICE_FLOOR_MULT * LAND_REFERENCE_PRICE,
-    LAND_PRICE_CEIL_MULT * LAND_REFERENCE_PRICE,
-  );
+  const base = prixDeBase(input);
+  const raw = base * f.fertility * f.climate * f.access * f.density * f.scarcity;
+  const bounded = clamp(raw, LAND_PRICE_FLOOR_MULT * base, LAND_PRICE_CEIL_MULT * base);
   return roundUpTo(bounded, LAND_PRICE_ROUNDING);
 }
 
@@ -303,7 +393,8 @@ export function askPrice(input: AskPriceInput): { total: number; breakdown: Pric
 
   // Contributions calculées en cascade : chaque facteur s'applique au sous-total
   // déjà accumulé, ce qui rend la somme exactement égale au produit.
-  let running = LAND_REFERENCE_PRICE;
+  const base = prixDeBase(input);
+  let running = base;
   const detail = (value: number): PriceFactorDetail => {
     const contribution = running * (value - 1);
     running += contribution;
@@ -321,15 +412,15 @@ export function askPrice(input: AskPriceInput): { total: number; breakdown: Pric
   // Le clamp suit l'escalade patrimoniale : il borne le marché, pas l'anti-monopole.
   const bounded = clamp(
     running,
-    LAND_PRICE_FLOOR_MULT * LAND_REFERENCE_PRICE * f.ownership,
-    LAND_PRICE_CEIL_MULT * LAND_REFERENCE_PRICE * f.ownership,
+    LAND_PRICE_FLOOR_MULT * base * f.ownership,
+    LAND_PRICE_CEIL_MULT * base * f.ownership,
   );
   const total = roundUpTo(bounded, LAND_PRICE_ROUNDING);
 
   return {
     total,
     breakdown: {
-      base: LAND_REFERENCE_PRICE,
+      base,
       fertility,
       climate,
       access,

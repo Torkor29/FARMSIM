@@ -2804,3 +2804,90 @@ describe("le voisinage d’une parcelle", () => {
     assert.equal(r.statut, 404);
   });
 });
+
+describe("un cadastre de tailles variées", () => {
+  type ParcelleMonde = {
+    id: string;
+    gridW: number;
+    gridH: number;
+    landPrice: number;
+    taken: boolean;
+  };
+  async function parcellesAUR(): Promise<ParcelleMonde[]> {
+    const monde = await appel("/world/AUR");
+    const regions = (monde.corps as unknown as { regions: { parcels: ParcelleMonde[] }[] })
+      .regions;
+    return regions.flatMap((r) => r.parcels);
+  }
+  function sql(texte: string): string {
+    return execFileSync("psql", [base!.url, "-tA", "-c", texte], { encoding: "utf8" }).trim();
+  }
+
+  it("les terres libres vont de 8×8 à 16×16, toujours carrées", async () => {
+    const libres = (await parcellesAUR()).filter((p) => !p.taken);
+    const tailles = new Set(libres.map((p) => p.gridW));
+    for (const p of libres) {
+      assert.equal(p.gridW, p.gridH, "une parcelle reste carrée");
+      assert.ok([8, 10, 12, 14, 16].includes(p.gridW), `taille inattendue : ${p.gridW}`);
+    }
+    assert.ok(tailles.has(8) && tailles.has(16), `pas assez de variété : ${[...tailles]}`);
+  });
+
+  it("chaque parcelle a exactement ses cases, ni plus ni moins", () => {
+    const fausses = sql(
+      `SELECT count(*) FROM "Parcel" p
+         WHERE (SELECT count(*) FROM "ParcelCell" c WHERE c."parcelId" = p.id)
+               <> p."gridW" * p."gridH"`,
+    );
+    assert.equal(fausses, "0");
+  });
+
+  it("le prix suit la surface : une 16×16 coûte bien plus qu'une 8×8", async () => {
+    const libres = (await parcellesAUR()).filter((p) => !p.taken);
+    const de = (t: number) => libres.filter((p) => p.gridW === t);
+    const prixMoyen = (l: ParcelleMonde[]) => l.reduce((n, p) => n + p.landPrice, 0) / l.length;
+    assert.ok(prixMoyen(de(16)) > 2.5 * prixMoyen(de(8)));
+    // À la case, les deux restent du même ordre : c'est la terre qu'on paie.
+    const rapport = prixMoyen(de(16)) / 256 / (prixMoyen(de(8)) / 64);
+    assert.ok(rapport > 0.6 && rapport < 1.6, `prix à la case trop différent : ${rapport}`);
+  });
+
+  it("une ferme démarre toujours en 12×12, même prise sur une terre de 16", async () => {
+    const grande = (await parcellesAUR()).find((p) => !p.taken && p.gridW === 16)!;
+    const moi = await inscrire("Cadastre Un");
+    const r = await appel("/world/claim", {
+      methode: "POST",
+      corps: { specialization: "CEREALIER", parcelId: grande.id },
+      jeton: moi.jeton,
+    });
+    assert.equal(r.statut, 201);
+    assert.equal(
+      sql(`SELECT "gridW" || 'x' || "gridH" || ':' ||
+             (SELECT count(*) FROM "ParcelCell" c WHERE c."parcelId" = p.id)
+           FROM "Parcel" p WHERE id = '${grande.id}'`),
+      "12x12:144",
+    );
+  });
+
+  it("le voisinage donne la taille de chaque parcelle et un devis à sa surface", async () => {
+    const depart = (await parcellesAUR()).find((p) => !p.taken)!;
+    const moi = await inscrire("Cadastre Deux");
+    await appel("/world/claim", {
+      methode: "POST",
+      corps: { specialization: "CEREALIER", parcelId: depart.id },
+      jeton: moi.jeton,
+    });
+    const r = await appel(`/parcels/${depart.id}/voisinage`, { jeton: moi.jeton });
+    assert.equal(r.statut, 200);
+    const voisins = (r.corps as unknown as {
+      parcelles: { gridW: number; gridH: number; prix: number | null }[];
+    }).parcelles;
+    const avecDevis = voisins.filter((v) => v.prix !== null);
+    assert.ok(avecDevis.length > 0);
+    for (const v of voisins) assert.ok(v.gridW >= 8 && v.gridW <= 16);
+    assert.ok(new Set(avecDevis.map((v) => v.gridW)).size > 1, "le voisinage doit mêler les tailles");
+    // Des tailles différentes, un prix à la case du même ordre : le devis suit la surface.
+    const parCase = avecDevis.map((v) => v.prix! / (v.gridW * v.gridH));
+    assert.ok(Math.max(...parCase) / Math.min(...parCase) < 4);
+  });
+});

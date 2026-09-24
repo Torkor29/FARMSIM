@@ -34,7 +34,7 @@ import {
   type FarmWork,
   type RipenessStage,
   type TradeGood,
-  PARCEL_HECTARES,
+  hectaresDe,
   SEASON_LABELS,
   SEASON_SHORT,
   GOOD_ICONS,
@@ -3620,6 +3620,16 @@ export function App() {
       });
       const apres = await refreshPlayer();
       await refreshMeta();
+      /*
+       * Le paysage aussi, et tout de suite.
+       *
+       * Avant, l'achat vous téléportait sur la parcelle, et ce déplacement
+       * rechargeait le voisinage au passage. Sans lui, la terre achetée
+       * restait « à vendre », à fleur de sol, jusqu'au rafraîchissement
+       * suivant — trois quarts de minute pendant lesquels un clic dessus
+       * rouvrait la fiche d'achat au lieu d'y travailler.
+       */
+      if (activeParcelId) await loadVoisinage(activeParcelId).catch(() => undefined);
       const achetee = apres?.farm?.parcels.find((p) => p.id === parcelId);
       setMsg(
         achetee
@@ -6088,7 +6098,7 @@ export function App() {
             <div>
               <dt>Parcelle</dt>
               <dd>
-                {PARCEL_HECTARES} Ha ({gw}×{gh})
+                {hectaresDe(gw, gh).toLocaleString("fr-FR", { maximumFractionDigits: 1 })} Ha ({gw}×{gh})
               </dd>
             </div>
           </dl>

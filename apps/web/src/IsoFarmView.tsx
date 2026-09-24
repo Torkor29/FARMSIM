@@ -17,6 +17,8 @@ import {
   type RipenessStage,
   machineMeshScale,
   asTier,
+  TAILLE_MAX,
+  TAILLE_REFERENCE,
 } from "@farmsim/shared";
 import { disposeRenderer, disposeThreeScene, markShared } from "./three-cleanup";
 import { applyHerdPose, meshForHerd } from "./animal-meshes";
@@ -1448,7 +1450,23 @@ export function IsoFarmView({
      * parties —, tout vaut zéro et le paysage est exactement celui d'avant.
      */
     let repere: { quart: 0 | 1 | 2 | 3; mx: number; mz: number } = { quart: 0, mx: 0, mz: 0 };
-    function calculerRepere(gw: number, gh: number): void {
+    /**
+     * La case de trame, taillée pour la plus grande parcelle (16×16).
+     *
+     * Constante, et c'est tout son intérêt : si le pas de la campagne suivait
+     * la parcelle active, passer d'une 12×12 à une 16×16 ferait glisser tout
+     * le paysage. Chaque parcelle se centre dans sa case, avec son vrai côté.
+     *
+     * Une fonction et non une constante : `step` n'est déclaré que plus bas.
+     */
+    const empriseTrame = (): number => TAILLE_MAX * step + 1.4;
+    /** Les dimensions du siège, là où est la cour — pas forcément la parcelle active. */
+    function tailleSiege(gw: number, gh: number): { gw: number; gh: number } {
+      const siege = voisinageRef.current?.find((v) => v.id === homeRef.current);
+      if (!siege?.gridW || !siege.gridH || siege.id === parcelIdRef.current) return { gw, gh };
+      return { gw: siege.gridW, gh: siege.gridH };
+    }
+    function calculerRepere(): void {
       const voisins = voisinageRef.current ?? [];
       if (!voisins.length) {
         repere = { quart: 0, mx: 0, mz: 0 };
@@ -1465,7 +1483,7 @@ export function IsoFarmView({
         rang: v.rang - maison.rang,
       }));
       const quart = orientationTrame(autourDuSiege);
-      const pas = Math.max(gw, gh) * step + 1.4 + LARGEUR_CHEMIN;
+      const pas = empriseTrame() + LARGEUR_CHEMIN;
       const t = tourner(maison, quart);
       repere = { quart, mx: t.col * pas, mz: t.rang * pas };
     }
@@ -1881,9 +1899,11 @@ export function IsoFarmView({
       const rig = createParkingRig(plan, { shadows: quality.shadows });
       rig.group.scale.setScalar(cellSize);
 
-      calculerRepere(gw, gh);
-      const ileOuest = -(gw * step + 1.4) / 2;
-      const ileSud = (gh * step + 1.4) / 2;
+      calculerRepere();
+      // La cour borde l'île du siège : ce sont ses dimensions à lui qui comptent.
+      const siege = tailleSiege(gw, gh);
+      const ileOuest = -(siege.gw * step + 1.4) / 2;
+      const ileSud = (siege.gh * step + 1.4) / 2;
       // Le chemin du modèle saille de 0,72 case au-delà de la dalle : on cale
       // la cour pour qu'il rejoigne exactement le bord de l'île — celle du
       // siège, décalée de sa place quand on travaille sur une autre parcelle.
@@ -2047,7 +2067,7 @@ export function IsoFarmView({
        */
       const voisins = voisinageRef.current;
       const empreinteVoisins = (voisins ?? [])
-        .map((v) => `${v.col},${v.rang}:${v.culture ?? "-"}:${v.stade ?? "-"}:${v.batiments.length}:${v.statut}`)
+        .map((v) => `${v.col},${v.rang}:${v.gridW ?? 12}:${v.culture ?? "-"}:${v.stade ?? "-"}:${v.batiments.length}:${v.statut}`)
         .join("|");
       const cle = `${gw}x${gh}|${courBoite.x.toFixed(2)},${courBoite.z.toFixed(2)},${courBoite.w.toFixed(2)},${courBoite.d.toFixed(2)}|${parcelIdRef.current}|${empreinteVoisins}`;
       if (cle !== campagneCle) {
@@ -2081,18 +2101,21 @@ export function IsoFarmView({
           routeZ:
             couloirRoute({
               graine: "",
-              emprise: empriseIle,
+              emprise: empriseTrame(),
               cour: { ...courBoite, x: courBoite.x - repere.mx, z: courBoite.z - repere.mz },
             }) + repere.mz,
           graine: parcelIdRef.current || `${gw}x${gh}`,
           /*
-           * Les voisins ont exactement l'emprise de l'île du joueur, et se
+           * Les voisins ont les cases de l'île du joueur, au même pas, et se
            * posent sur la même trame : ce sont les parcelles qu'il pourra
            * racheter, et une parcelle rachetée ne doit rien avoir à changer
-           * de forme pour venir se coller à la sienne.
+           * de forme pour venir se coller à la sienne. Leur **nombre** de
+           * cases est le leur — de 8 à 16 — dans une case de trame taillée
+           * pour la plus grande.
            */
-          emprise: Math.max(gw, gh) * step + 1.4,
-          cases: Math.max(gw, gh),
+          emprise: empriseTrame(),
+          cases: TAILLE_MAX,
+          ile: empriseIle,
           voisins: voisins?.length ? voisins : undefined,
           cour: courBoite,
           shadows: quality.shadows,
@@ -2116,7 +2139,7 @@ export function IsoFarmView({
         const boites = [ile, courBoite];
         if (campagne) {
           for (const v of campagne.plan.parcelles) {
-            boites.push({ x: v.x, z: v.z, w: campagne.plan.emprise, d: campagne.plan.emprise });
+            boites.push({ x: v.x, z: v.z, w: v.emprise, d: v.emprise });
           }
         }
         bornesVue = bornesDeplacement(boites, ile.w / 2);
@@ -2405,7 +2428,16 @@ export function IsoFarmView({
         }
       }
 
-      viewSpan = Math.max(gw * step + parkingOverhang, gh * step);
+      /*
+       * Le cadrage se règle sur la parcelle de référence, pas sur l'active.
+       *
+       * Les parcelles vont de 8×8 à 16×16. Cadrer sur l'active faisait
+       * changer l'échelle à chaque bascule : on touchait une case de sa 16×16
+       * et tout le paysage reculait d'un cran — la terre ne restait plus sous
+       * le doigt. Une 16×16 tient quand même dans ce cadre : la cour, à
+       * l'ouest, lui laisse la place.
+       */
+      viewSpan = TAILLE_REFERENCE * step + parkingOverhang;
       applyCamera();
     }
 
@@ -2579,7 +2611,8 @@ export function IsoFarmView({
       if (!hit) return null;
       const p = parcelleSous(campagne.plan, hit.point.x, hit.point.z);
       if (!p?.reel) return null;
-      const cases = Math.max(dataRef.current.gridW, dataRef.current.gridH);
+      // Ses cases à elle : une 16×16 voisine n'a pas la grille de l'île active.
+      const cases = p.cases;
       const origine = -((cases - 1) * step) / 2;
       const x = Math.round((hit.point.x - p.x - origine) / step);
       const y = Math.round((hit.point.z - p.z - origine) / step);

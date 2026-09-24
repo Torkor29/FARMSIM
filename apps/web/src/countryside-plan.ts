@@ -44,7 +44,7 @@
  * et elle est la même à chaque rechargement.
  */
 
-import type { Season } from "@farmsim/shared";
+import { TAILLE_REFERENCE, type Season } from "@farmsim/shared";
 
 /** Ce qu'on voit dans une parcelle voisine. */
 export type EtatChamp =
@@ -124,8 +124,10 @@ export function etatDepuisStade(
 /**
  * Une parcelle de voisin.
  *
- * Même emprise que celle du joueur, et posée sur la même trame : c'est ce qui
- * permettra de la lui vendre un jour sans rien redessiner.
+ * Posée sur la même trame que celle du joueur, et avec des cases de la même
+ * taille : c'est ce qui permet de la lui vendre sans rien redessiner. Son
+ * **côté**, lui, est le sien — de 8 à 16 cases — et elle se centre dans sa
+ * case de trame, qui est taillée pour la plus grande.
  */
 export type ParcelleVoisine = {
   id: string;
@@ -135,6 +137,10 @@ export type ParcelleVoisine = {
   /** Centre, en unités monde. */
   x: number;
   z: number;
+  /** Cases par côté : sa vraie taille, celle du cadastre. */
+  cases: number;
+  /** Côté au sol, talus compris — `cases` cases et la bordure de l'île. */
+  emprise: number;
   culture: CultureVoisine;
   /** Décalage dans le cycle cultural, en jours de jeu. */
   decalage: number;
@@ -166,6 +172,9 @@ export type VoisinReel = {
   label: string;
   col: number;
   rang: number;
+  /** Sa taille en cases. Absente d'une vieille réponse : on la suppose de 12. */
+  gridW?: number;
+  gridH?: number;
   statut: "MOI" | "PNJ" | "JOUEUR" | "LIBRE";
   proprietaire: string | null;
   exploitation: string | null;
@@ -201,8 +210,14 @@ export type PlanCampagne = {
   sol: EmpriseSol;
   /** Pas de la trame, entre deux centres de parcelle. */
   pas: number;
-  /** Côté d'une parcelle, hors chemin. */
+  /**
+   * Côté d'une case de la trame, hors chemin — la place de la plus grande
+   * parcelle. Chaque parcelle a le sien (`ParcelleVoisine.emprise`), au plus
+   * celui-ci.
+   */
   emprise: number;
+  /** Le pas d'une case de champ, le même partout. */
+  pasCase: number;
   /** L'ordonnée du chemin : il court parallèlement à l'axe des `x`. */
   routeZ: number;
   /**
@@ -218,8 +233,20 @@ export type PlanCampagne = {
 export type OptionsPlan = {
   /** Nom de la parcelle, ou tout ce qui l'identifie : la graine en sort. */
   graine: string;
-  /** Côté d'une parcelle, talus compris — celui de l'île du joueur. */
+  /**
+   * Côté d'une case de la trame, talus compris : la place que prend la plus
+   * grande parcelle possible. Le pas de la trame en découle, et il ne doit
+   * **pas** dépendre de la parcelle active — sans quoi passer d'une 12×12 à
+   * une 16×16 ferait glisser toute la campagne.
+   */
   emprise: number;
+  /**
+   * Combien de cases tient ce côté. Défaut : 12, la parcelle de référence —
+   * la trame est alors exactement celle d'avant les tailles variées.
+   */
+  cases?: number;
+  /** Côté de l'île du joueur, s'il diffère de la case de trame. */
+  ile?: number;
   /** Emprise de la cour, à ne pas cultiver ni traverser. */
   cour: { x: number; z: number; w: number; d: number };
   /** Distance de la lisière, comptée en `u`. Voir `horizonPour`. */
@@ -284,6 +311,12 @@ export const versEcranDroite = (x: number, z: number): number => x - z;
  * que le damier se délite en îlots.
  */
 export const LARGEUR_CHEMIN = 2.4;
+
+/**
+ * Ce qu'une parcelle a de plus que ses cases : la bordure de talus, comme
+ * autour de l'île (`cases × pas + 1,4`).
+ */
+export const BORDURE_PARCELLE = 1.4;
 
 /** Marge entre la dernière parcelle et le bord du sol, sur les autres côtés. */
 export const MARGE_LISIERE = 2.5;
@@ -439,9 +472,13 @@ export function seChevauchent(a: Boite, b: Boite, marge = 0): boolean {
   );
 }
 
-/** Emprise au sol d'une parcelle voisine. */
-export function empriseParcelle(p: Pick<ParcelleVoisine, "x" | "z">, emprise: number): Boite {
-  return { x: p.x, z: p.z, w: emprise, d: emprise };
+/** Emprise au sol d'une parcelle voisine — la sienne quand on la connaît. */
+export function empriseParcelle(
+  p: Pick<ParcelleVoisine, "x" | "z"> & { emprise?: number },
+  emprise: number,
+): Boite {
+  const e = p.emprise ?? emprise;
+  return { x: p.x, z: p.z, w: e, d: e };
 }
 
 /**
@@ -465,7 +502,9 @@ export function parcelleSous(
   const rang = Math.round(z / plan.pas);
   const p = plan.parcelles.find((c) => c.col === col && c.rang === rang);
   if (!p) return null;
-  const demi = plan.emprise / 2;
+  // Son côté à elle : une 8×8 laisse du pré tout autour dans sa case de trame,
+  // et ce pré n'est à personne.
+  const demi = (p.emprise ?? plan.emprise) / 2;
   return Math.abs(x - p.x) <= demi && Math.abs(z - p.z) <= demi ? p : null;
 }
 
@@ -613,7 +652,24 @@ export function planCampagne(o: OptionsPlan): PlanCampagne {
   const pas = emprise + LARGEUR_CHEMIN;
   const colonnes = o.colonnes ?? 3;
   const rangs = o.rangs ?? 3;
-  const horizon = o.horizon ?? horizonPour(emprise);
+  /*
+   * Des cases de champ toutes de la même taille, et des parcelles qui en
+   * comptent plus ou moins.
+   *
+   * La case de trame est taillée pour la plus grande (`o.cases` cases) ; une
+   * parcelle plus petite s'y centre, avec du pré autour. Le côté se compte
+   * comme celui de l'île : les cases, plus la bordure de talus.
+   */
+  const casesTrame = o.cases ?? TAILLE_REFERENCE;
+  const pasCase = (emprise - BORDURE_PARCELLE) / casesTrame;
+  const cotePour = (cases: number): number =>
+    Math.min(casesTrame, cases) * pasCase + BORDURE_PARCELLE;
+  /*
+   * La lisière se compte depuis une parcelle **de référence**, pas depuis la
+   * case de trame : élargir la trame pour les 16×16 ne doit pas repousser le
+   * bois hors du cadre. Sans `o.cases`, c'est exactement `horizonPour(emprise)`.
+   */
+  const horizon = o.horizon ?? horizonPour(cotePour(TAILLE_REFERENCE));
   const rnd = suite(grainerDe(o.graine));
 
   const quart: 0 | 1 | 2 | 3 = o.quart ?? (o.voisins ? orientationTrame(o.voisins) : 0);
@@ -641,7 +697,8 @@ export function planCampagne(o: OptionsPlan): PlanCampagne {
   const lisiereEtrangers = -horizon;
   const routeZ = o.routeZ ?? couloirRoute(o);
   const cour: Boite = { ...o.cour };
-  const joueur: Boite = { x: 0, z: 0, w: emprise, d: emprise };
+  const ile = o.ile ?? emprise;
+  const joueur: Boite = { x: 0, z: 0, w: ile, d: ile };
 
   const cultures: CultureVoisine[] = ["BLE", "ORGE", "COLZA", "MAIS", "TOURNESOL", "HERBE"];
   const parcelles: ParcelleVoisine[] = [];
@@ -653,19 +710,25 @@ export function planCampagne(o: OptionsPlan): PlanCampagne {
    * coin dépasse la lisière se terminerait dans le vide, et l'on verrait la
    * tranche du monde par-dessus.
    */
-  const posable = (x: number, z: number, aMoi = false, estMaison = false): boolean => {
-    const boite: Boite = { x, z, w: emprise, d: emprise };
+  const posable = (
+    x: number,
+    z: number,
+    aMoi = false,
+    estMaison = false,
+    cote = emprise,
+  ): boolean => {
+    const boite: Boite = { x, z, w: cote, d: cote };
     // En amont, seules les parcelles du joueur passent la lisière d'avant :
     // les siennes doivent se voir, celles des autres n'ont pas à envahir le
     // pré ni à manger le ciel.
-    if (versEcranBas(x, z) - emprise < (aMoi ? sol.uMin : lisiereEtrangers)) return false;
-    if (versEcranBas(x, z) + emprise > sol.uMax - MARGE_LISIERE) return false;
-    if (Math.abs(versEcranDroite(x, z)) + emprise > sol.vMax - MARGE_LISIERE) return false;
+    if (versEcranBas(x, z) - cote < (aMoi ? sol.uMin : lisiereEtrangers)) return false;
+    if (versEcranBas(x, z) + cote > sol.uMax - MARGE_LISIERE) return false;
+    if (Math.abs(versEcranDroite(x, z)) + cote > sol.vMax - MARGE_LISIERE) return false;
     if (!estMaison && seChevauchent(boite, cour, 0.4)) return false;
     if (seChevauchent(boite, joueur, 0.4)) return false;
     // Le chemin passe dans un couloir de trame : une parcelle ne peut pas y
     // être, mais on le vérifie plutôt que de le supposer.
-    return Math.abs(z - routeZ) >= emprise / 2 + DEMI_ROUTE;
+    return Math.abs(z - routeZ) >= cote / 2 + DEMI_ROUTE;
   };
 
   if (o.voisins) {
@@ -683,7 +746,9 @@ export function planCampagne(o: OptionsPlan): PlanCampagne {
       const { col, rang } = tourner(brut, quart);
       const x = col * pas;
       const z = rang * pas;
-      if (!posable(x, z, v.statut === "MOI", v.id === o.maison)) continue;
+      const cases = Math.min(casesTrame, Math.max(v.gridW ?? TAILLE_REFERENCE, v.gridH ?? TAILLE_REFERENCE));
+      const cote = cotePour(cases);
+      if (!posable(x, z, v.statut === "MOI", v.id === o.maison, cote)) continue;
       const grain = suite(grainerDe(v.id));
       parcelles.push({
         id: v.id,
@@ -691,6 +756,8 @@ export function planCampagne(o: OptionsPlan): PlanCampagne {
         rang,
         x,
         z,
+        cases,
+        emprise: cote,
         culture: cultureDe(v.culture),
         // Le cycle ne sert plus qu'aux parcelles de décor ; on garde un
         // décalage stable pour que rien ne clignote si la carte se tait.
@@ -707,13 +774,18 @@ export function planCampagne(o: OptionsPlan): PlanCampagne {
         if (col === 0 && rang === 0) continue;
         const x = col * pas;
         const z = rang * pas;
-        if (!posable(x, z)) continue;
+        // Le décor n'a pas de cadastre : il prend la taille de référence.
+        const cases = Math.min(casesTrame, TAILLE_REFERENCE);
+        const cote = cotePour(cases);
+        if (!posable(x, z, false, false, cote)) continue;
         parcelles.push({
           id: `voisin-${col}-${rang}`,
           col,
           rang,
           x,
           z,
+          cases,
+          emprise: cote,
           culture: cultures[Math.floor(rnd() * cultures.length)]!,
           decalage: Math.floor(rnd() * CYCLE_VOISIN),
           travaille: false,
@@ -787,7 +859,7 @@ export function planCampagne(o: OptionsPlan): PlanCampagne {
     if (seChevauchent({ x, z, w: r * 2, d: r * 2 }, cour, 0.8)) return false;
     if (seChevauchent({ x, z, w: r * 2, d: r * 2 }, joueur, 0.8)) return false;
     return !parcelles.some((p) =>
-      seChevauchent({ x, z, w: r * 2, d: r * 2 }, empriseParcelle(p, emprise), 0.2),
+      seChevauchent({ x, z, w: r * 2, d: r * 2 }, empriseParcelle(p, p.emprise), 0.2),
     );
   };
   const poser = (x: number, z: number, taille: number) => {
@@ -828,7 +900,7 @@ export function planCampagne(o: OptionsPlan): PlanCampagne {
     }
   };
   for (let i = 0; i < 14; i++) {
-    const u = sol.uMin + 5.5 + rnd() * (horizon - emprise - 7);
+    const u = sol.uMin + 5.5 + rnd() * (horizon - cotePour(TAILLE_REFERENCE) - 7);
     const v = (rnd() * 2 - 1) * Math.min(sol.vMax, 62);
     bosquet((u + v) / 2, (u - v) / 2, 2 + Math.floor(rnd() * 3));
   }
@@ -847,5 +919,5 @@ export function planCampagne(o: OptionsPlan): PlanCampagne {
     );
   }
 
-  return { parcelles, route, desserte, arbres, sol, pas, emprise, routeZ, quart };
+  return { parcelles, route, desserte, arbres, sol, pas, emprise, pasCase, routeZ, quart };
 }

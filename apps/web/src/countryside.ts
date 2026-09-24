@@ -69,8 +69,6 @@ export type OptionsCampagne = OptionsPlan & {
   sobre?: boolean;
   /** Altitude du sol — sous le niveau de l'île du joueur. */
   y?: number;
-  /** Cases par côté d'une parcelle voisine, comme sur celle du joueur. */
-  cases?: number;
 };
 
 export type Campagne = {
@@ -483,7 +481,6 @@ export function createCountryside(o: OptionsCampagne): Campagne {
   const shadows = o.shadows ?? false;
   const sobre = o.sobre ?? false;
   const y0 = o.y ?? -0.5;
-  const cases = o.cases ?? 12;
   const plan = planCampagne({
     ...o,
     colonnes: o.colonnes ?? (sobre ? 2 : 3),
@@ -559,8 +556,11 @@ export function createCountryside(o: OptionsCampagne): Campagne {
   let jourPose = Number.NaN;
   let saisonPosee: Season | null = null;
 
-  /** Le pas d'une case, déduit de l'emprise : le damier remplit la parcelle. */
-  const pasCase = (plan.emprise - 1.4) / cases;
+  /**
+   * Le pas d'une case, le même sur toutes les parcelles : c'est le **nombre**
+   * de cases qui change de l'une à l'autre, pas leur taille.
+   */
+  const pasCase = plan.pasCase;
 
   /**
    * Ce qui est à vous, et ce qui ne l'est pas — lisible d'un coup d'œil.
@@ -605,13 +605,12 @@ export function createCountryside(o: OptionsCampagne): Campagne {
   object.add(groupeBatiments);
   const rigsBatiments: BuildingRig[] = [];
   {
-    const origine = -((cases - 1) * pasCase) / 2;
     for (const p of plan.parcelles) {
       if (!p.reel?.batiments.length) continue;
       const rigs = poserBatimentsVoisin({
         batiments: p.reel.batiments,
         pasCase,
-        origine,
+        origine: -((p.cases - 1) * pasCase) / 2,
         grain: grainerDe(p.id),
         shadows,
       });
@@ -653,10 +652,11 @@ export function createCountryside(o: OptionsCampagne): Campagne {
     const TERRE_DALLE = 0x8a6b4a;
     const HAIE = 0x5c9a52;
     const teinte = new THREE.Color();
-    const emprise = plan.emprise;
-
     for (const p of plan.parcelles) {
       const grain = suite(grainerDe(p.id));
+      // Son côté et ses cases à elle : de 8 à 16, centrée dans sa case de trame.
+      const emprise = p.emprise;
+      const cases = p.cases;
       /*
        * L'état lu sur la carte l'emporte sur le cycle déduit du jour : quand
        * on sait ce que le voisin a semé, il n'y a plus rien à deviner. Le
@@ -1029,7 +1029,7 @@ export function createCountryside(o: OptionsCampagne): Campagne {
        * celles qu'il a faites : régler une plage de dessin ne coûte rien, là
        * où reconstruire un maillage par image coûterait la fluidité.
        */
-      const cote = coteTravail(plan.emprise);
+      const cote = coteTravail(p.emprise);
       const largeur = 1.8;
       const rangs = Math.max(2, Math.round(cote / largeur));
       const segments = 8;
@@ -1128,7 +1128,7 @@ export function createCountryside(o: OptionsCampagne): Campagne {
        * derrière lui. Voir `cycleTravail` — c'est là qu'est la manœuvre.
        */
       const pas = cycleTravail(t + e.phase, {
-        cote: coteTravail(plan.emprise),
+        cote: coteTravail(e.p.emprise),
         rangs: e.rangs,
         largeur: 1.8,
         vitesse: e.vitesse,
@@ -1216,8 +1216,8 @@ export function createCountryside(o: OptionsCampagne): Campagne {
       if (detailles.has(p.id)) continue;
       const d = creerVoisinDetaille({
         parcelle: p,
-        emprise: plan.emprise,
-        cases,
+        emprise: p.emprise,
+        cases: p.cases,
         y: y0 + levee(p) + HAUT_CASE,
         shadows,
         sobre,

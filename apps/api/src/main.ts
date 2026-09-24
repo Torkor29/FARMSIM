@@ -330,6 +330,9 @@ import {
   normalizeEmail,
   RECOVERY_REFUSAL,
   isRecoveryCode,
+  hectaresDe,
+  tailleTerreLibre,
+  TAILLE_DEPART,
 } from "@farmsim/shared";
 import {
   simulateCell,
@@ -1651,6 +1654,13 @@ type QuoteTarget = {
   fertility: number;
   accessIndex: number;
   zone: { koppen: string; continentCode: string };
+  /**
+   * La taille de la parcelle. Facultative pour les appelants qui ne la
+   * sélectionnent pas encore : on retombe alors sur la parcelle de référence,
+   * c'est-à-dire exactement le prix d'avant.
+   */
+  gridW?: number;
+  gridH?: number;
 };
 
 async function loadQuoteCounts(zoneId: string, continentCode: string): Promise<QuoteCounts> {
@@ -1689,6 +1699,9 @@ function quoteFromCounts(target: QuoteTarget, owned: OwnedParcel[], counts: Quot
     accessIndex: target.accessIndex,
     neighborDensity,
     occupancy,
+    // Le prix se paie à l'hectare : une 16×16 coûte ce que vaut sa terre.
+    hectares:
+      target.gridW && target.gridH ? hectaresDe(target.gridW, target.gridH) : undefined,
   };
   const priced = askPrice({
     ...publicInput,
@@ -2587,6 +2600,167 @@ async function tickNpcFarms() {
   }
 }
 
+type Tx = Parameters<Parameters<typeof prisma.$transaction>[0]>[0];
+
+/**
+ * Une parcelle a-t-elle été touchée ? Une case semée, bâtie, garée, paillée,
+ * ou qui garde la mémoire d'une culture suffit.
+ */
+async function casesTravaillees(tx: Tx, parcelId: string): Promise<number> {
+  return tx.parcelCell.count({
+    where: {
+      parcelId,
+      OR: [
+        { kind: { not: "EMPTY" } },
+        { crop: { not: null } },
+        { fieldStage: { not: "EMPTY" } },
+        { buildingId: { not: null } },
+        { machineId: { not: null } },
+        { strawTons: { gt: 0 } },
+        { baleCount: { gt: 0 } },
+        { lastCrop: { not: null } },
+      ],
+    },
+  });
+}
+
+/**
+ * Refait la grille d'une parcelle **vierge** à la taille demandée, et son
+ * prix affiché avec. À n'appeler qu'une fois la virginité vérifiée.
+ */
+async function retaillerParcelle(
+  tx: Tx,
+  p: { id: string; fertility: number; accessIndex: number; zone: { koppen: string } },
+  taille: number,
+) {
+  await tx.parcelCell.deleteMany({ where: { parcelId: p.id } });
+  const cases = [];
+  for (let y = 0; y < taille; y++) {
+    for (let x = 0; x < taille; x++) {
+      cases.push({ parcelId: p.id, x, y, kind: "EMPTY" as CellKind });
+    }
+  }
+  await tx.parcelCell.createMany({ data: cases });
+  return tx.parcel.update({
+    where: { id: p.id },
+    data: {
+      gridW: taille,
+      gridH: taille,
+      // Le prix affiché suit la surface ; le devis d'achat, lui, se recalcule à chaque fois.
+      landPrice: marketValue({
+        fertility: p.fertility,
+        koppen: p.zone.koppen,
+        accessIndex: p.accessIndex,
+        neighborDensity: 0,
+        occupancy: 0,
+        hectares: hectaresDe(taille, taille),
+      }),
+    },
+  });
+}
+
+/**
+ * Une ferme démarre toujours sur une 12×12.
+ *
+ * Les terres libres vont de 8×8 à 16×16, mais la parcelle de départ est
+ * offerte (ou presque) : une 16×16 donnée vaudrait une 8×8 payée double, et
+ * une 8×8 serait un handicap. Interdire les autres tailles au départ aurait
+ * retiré six terres libres sur dix aux nouveaux venus — le monde n'en a que
+ * trois cents. On garde donc **toutes** les terres libres ouvertes au départ,
+ * et celle qu'on choisit est ramenée à 12×12 au moment où on la prend : une
+ * terre libre est vierge, il n'y a rien à perdre.
+ *
+ * Rend la parcelle à jour, ou `null` si elle a été travaillée — on ne rogne
+ * jamais un champ.
+ */
+async function ramenerATailleDepart<
+  P extends {
+    id: string;
+    gridW: number;
+    gridH: number;
+    fertility: number;
+    accessIndex: number;
+    zone: { koppen: string };
+  },
+>(tx: Tx, parcel: P): Promise<(P & { gridW: number; gridH: number; landPrice: number }) | null> {
+  if (parcel.gridW === TAILLE_DEPART && parcel.gridH === TAILLE_DEPART) {
+    return parcel as P & { landPrice: number };
+  }
+  const [bati, travaillees] = await Promise.all([
+    tx.building.count({ where: { parcelId: parcel.id } }),
+    casesTravaillees(tx, parcel.id),
+  ]);
+  if (bati > 0 || travaillees > 0) return null;
+  const maj = await retaillerParcelle(tx, parcel, TAILLE_DEPART);
+  return { ...parcel, gridW: maj.gridW, gridH: maj.gridH, landPrice: maj.landPrice };
+}
+
+/**
+ * Donne aux terres libres leur vraie taille : de 8×8 à 16×16.
+ *
+ * Le monde a été semé tout en 12×12. Plutôt que d'écrire deux chemins (un
+ * semis neuf, une migration de l'ancien), on sème toujours en 12×12 et on
+ * retaille ici, au démarrage, ce qui peut l'être **sans rien perdre** :
+ *
+ * - une parcelle sans propriétaire, joueur ou PNJ ;
+ * - encore en 12×12 (une parcelle déjà retaillée n'est plus candidate : le
+ *   passage est idempotent, un redémarrage ne touche rien) ;
+ * - vierge : pas un bâtiment, pas une machine garée, pas un chantier, pas un
+ *   ordre de travail, et chacune de ses cases nue, sans culture ni paille.
+ *
+ * Une parcelle qui ne remplit pas tout cela garde ses 12×12, point. On ne
+ * rogne jamais un champ qu'un joueur a travaillé, même abandonné.
+ *
+ * La taille se tire des coordonnées (`tailleTerreLibre`), pas du hasard : deux
+ * serveurs qui partent de la même base arrivent au même cadastre, et une
+ * parcelle ne change pas de taille d'un démarrage à l'autre.
+ *
+ * Une terre prise comme ferme de départ repasse en 12×12
+ * (`ramenerATailleDepart`) ; elle a alors un propriétaire et n'est plus
+ * candidate ici.
+ */
+async function retaillerTerresLibres() {
+  const candidates = await prisma.parcel.findMany({
+    where: {
+      farmId: null,
+      gridW: TAILLE_DEPART,
+      gridH: TAILLE_DEPART,
+      buildings: { none: {} },
+      machines: { none: {} },
+      laborOrders: { none: {} },
+      fieldJobs: { none: {} },
+    },
+    select: {
+      id: true,
+      mapX: true,
+      mapY: true,
+      fertility: true,
+      accessIndex: true,
+      zone: { select: { code: true, koppen: true } },
+    },
+  });
+  let retaillees = 0;
+  for (const p of candidates) {
+    const taille = tailleTerreLibre(`${p.zone.code}:${p.mapX}:${p.mapY}`);
+    if (taille === TAILLE_DEPART) continue;
+    const fait = await prisma.$transaction(async (tx) => {
+      // Relu dans la transaction : entre la liste et ici, quelqu'un a pu la prendre.
+      const ici = await tx.parcel.findFirst({
+        where: { id: p.id, farmId: null, gridW: TAILLE_DEPART, gridH: TAILLE_DEPART },
+        select: { id: true },
+      });
+      if (!ici) return false;
+      if ((await casesTravaillees(tx, p.id)) > 0) return false;
+      await retaillerParcelle(tx, p, taille);
+      return true;
+    });
+    if (fait) retaillees++;
+  }
+  if (retaillees > 0) {
+    console.log(`Cadastre : ${retaillees} terres libres retaillées (8×8 à 16×16).`);
+  }
+}
+
 async function ensureSeed() {
   await prisma.user.updateMany({
     where: { specialization: "ETA" },
@@ -2735,6 +2909,7 @@ async function ensureSeed() {
   // passer. Le drapeau n'existe que pour eux, et n'est jamais posé en
   // production.
   if (process.env.FARMSIM_SKIP_NPC !== "1") await seedNpcFarms();
+  await retaillerTerresLibres();
 
   const zonesForWeather = await prisma.zone.findMany({ select: { code: true } });
   for (const z of zonesForWeather) {
@@ -2963,11 +3138,14 @@ app.post("/world/claim", async (req, res) => {
       if (!user) throw new Error("NOT_FOUND");
       if (user.farm && user.farm.parcels.length > 0) throw new Error("ALREADY_SETTLED");
 
-      const parcel = await tx.parcel.findFirst({
+      const trouvee = await tx.parcel.findFirst({
         where: { id: body.data.parcelId, farmId: null },
         include: { zone: true },
       });
-      if (!parcel) throw new Error("PARCEL_UNAVAILABLE");
+      if (!trouvee) throw new Error("PARCEL_UNAVAILABLE");
+      // Toute terre libre peut servir de départ ; elle devient alors une 12×12.
+      const parcel = await ramenerATailleDepart(tx, trouvee);
+      if (!parcel) throw new Error("PARCEL_NOT_STARTER");
       // La parcelle de départ ne doit jamais être un piège : on refuse les
       // régions où aucune culture du catalogue ne pousse.
       if ((REGION_BY_CODE[parcel.zone.code]?.crops.length ?? 0) === 0) {
@@ -3076,6 +3254,12 @@ app.post("/world/claim", async (req, res) => {
     const msg = e instanceof Error ? e.message : "ERROR";
     if (msg === "PARCEL_UNAVAILABLE") {
       res.status(409).json({ error: "Cette parcelle vient d'être prise" });
+      return;
+    }
+    if (msg === "PARCEL_NOT_STARTER") {
+      res.status(409).json({
+        error: "Cette terre a déjà été travaillée — choisissez-en une autre pour démarrer",
+      });
       return;
     }
     if (msg === "ALREADY_SETTLED") {
@@ -3963,8 +4147,14 @@ app.post("/auth/register", async (req, res) => {
         },
       });
       if (parcelId) {
-        const parcel = await tx.parcel.findFirst({ where: { id: parcelId, farmId: null } });
-        if (!parcel) throw new Error("PARCEL_UNAVAILABLE");
+        const trouvee = await tx.parcel.findFirst({
+          where: { id: parcelId, farmId: null },
+          include: { zone: true },
+        });
+        if (!trouvee) throw new Error("PARCEL_UNAVAILABLE");
+        // Ramenée à 12×12 avant d'en lire le prix : c'est une 12×12 qu'on paie.
+        const parcel = await ramenerATailleDepart(tx, trouvee);
+        if (!parcel) throw new Error("PARCEL_NOT_STARTER");
         const fresh = await tx.user.findUnique({ where: { id: u.id } });
         if (!fresh || !peutPayer(fresh, parcel.landPrice)) throw new Error("INSUFFICIENT_FUNDS");
         await debit(tx, u.id, parcel.landPrice, "TERRES", "Parcelle de départ");
@@ -4006,6 +4196,12 @@ app.post("/auth/register", async (req, res) => {
     const msg = e instanceof Error ? e.message : "ERROR";
     if (msg === "PARCEL_UNAVAILABLE") {
       res.status(409).json({ error: "Parcelle indisponible" });
+      return;
+    }
+    if (msg === "PARCEL_NOT_STARTER") {
+      res.status(409).json({
+        error: "Cette terre a déjà été travaillée — choisissez-en une autre pour démarrer",
+      });
       return;
     }
     if (msg === "INSUFFICIENT_FUNDS") {

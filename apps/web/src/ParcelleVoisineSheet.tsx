@@ -1,5 +1,13 @@
 import { useEffect, useRef } from "react";
-import { CROP_DEFS, SPECIES, formatEuros, peutRacheter, type CropCode } from "@farmsim/shared";
+import {
+  CROP_DEFS,
+  SPECIES,
+  TAILLE_REFERENCE,
+  formatEuros,
+  hectaresDe,
+  peutRacheter,
+  type CropCode,
+} from "@farmsim/shared";
 import type { VoisinReel } from "./countryside-plan";
 import { MenuClose } from "./ui/MenuClose";
 import { Portail } from "./ui/Portail";
@@ -67,6 +75,8 @@ export function ParcelleVoisineSheet({ voisin, enCours = false, onAcheter, onFer
   if (!voisin) return null;
 
   const culture = nomCulture(voisin.culture);
+  const gridW = voisin.gridW ?? TAILLE_REFERENCE;
+  const gridH = voisin.gridH ?? TAILLE_REFERENCE;
   const stade = voisin.stade ? STADES[voisin.stade] : null;
   const aVendre = peutRacheter(voisin.statut);
 
@@ -102,6 +112,17 @@ export function ParcelleVoisineSheet({ voisin, enCours = false, onAcheter, onFer
           </header>
 
           <dl className="voisin-faits">
+            <div>
+              {/* La taille d'abord : c'est elle qui fait le prix. */}
+              <dt>Surface</dt>
+              <dd>
+                {gridW} × {gridH} cases
+                <span className="voisin-stade">
+                  {" "}
+                  · {hectaresDe(gridW, gridH).toLocaleString("fr-FR", { maximumFractionDigits: 1 })} ha
+                </span>
+              </dd>
+            </div>
             <div>
               <dt>Culture</dt>
               <dd>

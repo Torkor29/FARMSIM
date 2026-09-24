@@ -898,3 +898,107 @@ describe("les parcelles du joueur", () => {
     expect(plan.routeZ).toBe(42);
   });
 });
+
+/**
+ * Des parcelles de 8 à 16 cases.
+ *
+ * La case de trame est taillée pour la plus grande ; chaque parcelle y garde
+ * son vrai côté, au même pas de case que l'île du joueur. Le paysage ne doit
+ * pas bouger d'un pouce selon la taille de la parcelle active.
+ */
+describe("des parcelles de tailles variées", () => {
+  const PAS_CASE = 1.06;
+  const TRAME = 16 * PAS_CASE + 1.4;
+  function voisin(col: number, rang: number, taille: number): VoisinReel {
+    return {
+      id: `t-${col}-${rang}`,
+      label: `Champ ${col}·${rang}`,
+      col,
+      rang,
+      gridW: taille,
+      gridH: taille,
+      statut: "LIBRE",
+      proprietaire: null,
+      exploitation: null,
+      culture: null,
+      stade: null,
+      partCultivee: 0,
+      fertility: 0.7,
+      batiments: [],
+      cheptel: [],
+      prix: 1000,
+      achetable: true,
+      refus: null,
+    };
+  }
+  const TAILLES = [8, 10, 12, 14, 16];
+  const commune: VoisinReel[] = [];
+  for (let c = -2; c <= 2; c++) {
+    for (let r = -2; r <= 2; r++) {
+      commune.push(voisin(c, r, TAILLES[(c + r + 10) % TAILLES.length]!));
+    }
+  }
+  const options = (ile: number): OptionsPlan => ({
+    ...OPTIONS,
+    emprise: TRAME,
+    cases: 16,
+    ile: ile * PAS_CASE + 1.4,
+    voisins: commune,
+  });
+
+  it("chaque parcelle a son côté à elle, au pas de case de l'île", () => {
+    const plan = planCampagne(options(12));
+    expect(plan.pasCase).toBeCloseTo(PAS_CASE, 9);
+    const vues = new Set(plan.parcelles.map((p) => p.cases));
+    expect(vues.size).toBeGreaterThan(2);
+    for (const p of plan.parcelles) {
+      expect(p.cases).toBe(p.reel!.gridW);
+      expect(p.emprise).toBeCloseTo(p.cases * PAS_CASE + 1.4, 9);
+      expect(p.emprise).toBeLessThanOrEqual(TRAME + 1e-9);
+    }
+  });
+
+  it("la trame ne dépend pas de la parcelle active", () => {
+    // Passer d'une 12×12 à une 16×16 ne doit rien faire glisser.
+    const a = planCampagne(options(12));
+    const b = planCampagne(options(16));
+    expect(b.pas).toBe(a.pas);
+    expect(b.sol).toEqual(a.sol);
+    expect(b.parcelles.map((p) => [p.id, p.x, p.z])).toEqual(a.parcelles.map((p) => [p.id, p.x, p.z]));
+  });
+
+  it("la lisière ne recule pas parce que la trame s'élargit", () => {
+    // Le bois se compte depuis une parcelle de référence : sinon il sortirait du cadre.
+    expect(planCampagne(options(12)).sol.uMin).toBe(-horizonPour(EMPRISE));
+  });
+
+  it("deux parcelles ne se touchent jamais, quelle que soit leur taille", () => {
+    const plan = planCampagne(options(12));
+    for (let i = 0; i < plan.parcelles.length; i++) {
+      for (let k = i + 1; k < plan.parcelles.length; k++) {
+        const a = plan.parcelles[i]!;
+        const b = plan.parcelles[k]!;
+        expect(seChevauchent(empriseParcelle(a, a.emprise), empriseParcelle(b, b.emprise))).toBe(
+          false,
+        );
+      }
+    }
+  });
+
+  it("le pré autour d'une petite parcelle n'est à personne", () => {
+    const plan = planCampagne(options(12));
+    const petite = plan.parcelles.find((p) => p.cases === 8)!;
+    expect(parcelleSous(plan, petite.x, petite.z)?.id).toBe(petite.id);
+    const dedans = petite.emprise / 2 - 0.05;
+    expect(parcelleSous(plan, petite.x + dedans, petite.z)?.id).toBe(petite.id);
+    // Hors de son côté mais encore dans sa case de trame : du pré.
+    const pre = (petite.emprise + TRAME) / 4;
+    expect(parcelleSous(plan, petite.x + pre, petite.z)).toBeNull();
+  });
+
+  it("sans taille annoncée, une parcelle garde ses douze cases", () => {
+    const { gridW: _w, gridH: _h, ...ancienne } = voisin(1, 1, 12);
+    const plan = planCampagne({ ...options(12), voisins: [ancienne] });
+    expect(plan.parcelles[0]?.cases).toBe(12);
+  });
+});
