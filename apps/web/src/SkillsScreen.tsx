@@ -31,6 +31,7 @@ import {
 } from "@farmsim/shared";
 import { EFFECT_META, effectCap, effectSign, effectValue } from "./skill-effects";
 import { MenuClose } from "./ui/MenuClose";
+import { Portail } from "./ui/Portail";
 
 /** Les bonus déjà cumulés, tels que le serveur les a bornés. */
 export type SkillBonusView = Partial<Record<SkillEffectKind, number>>;
@@ -248,73 +249,75 @@ export function SkillsScreen({ open, skills, bonuses, onClose }: Props) {
   const part = skills.length ? ouvertes / skills.length : 0;
 
   return (
-    <div
-      className="skills-backdrop"
-      role="dialog"
-      aria-modal="true"
-      aria-labelledby="skills-title"
-    >
-      <div className="skills-screen glass">
-        <header className="skills-head">
-          <div className="skills-ident">
-            <p className="skills-kicker">Le métier s’apprend en le faisant</p>
-            <h2 id="skills-title">Compétences</h2>
-          </div>
+    <Portail>
+      <div
+        className="skills-backdrop"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="skills-title"
+      >
+        <div className="skills-screen glass">
+          <header className="skills-head">
+            <div className="skills-ident">
+              <p className="skills-kicker">Le métier s’apprend en le faisant</p>
+              <h2 id="skills-title">Compétences</h2>
+            </div>
 
-          <p className="skills-score">
-            {/* Un anneau plutôt qu'une fraction seule : « 6 / 39 » demande un
-                calcul, l'anneau se lit sans en faire un. */}
-            <svg className="skills-ring" viewBox="0 0 36 36" aria-hidden="true">
-              <circle className="skills-ring-bg" cx="18" cy="18" r="16" />
-              <circle
-                className="skills-ring-fill"
-                cx="18"
-                cy="18"
-                r="16"
-                strokeDasharray={`${Math.round(part * 100.5)} 100.5`}
-              />
-            </svg>
-            <span>
-              <strong>{ouvertes}</strong>
-              <small>sur {skills.length} acquises</small>
-            </span>
-          </p>
-
-          <MenuClose onClose={onClose} />
-        </header>
-
-        <nav className="skills-nav" aria-label="Vues des compétences">
-          <button
-            type="button"
-            className={tab === "gains" ? "on" : ""}
-            aria-current={tab === "gains"}
-            onClick={() => setTab("gains")}
-          >
-            Vos avantages
-          </button>
-          <button
-            type="button"
-            className={tab === "tree" ? "on" : ""}
-            aria-current={tab === "tree"}
-            onClick={() => setTab("tree")}
-          >
-            L’arbre
-          </button>
-        </nav>
-
-        <div className="skills-body">
-          {skills.length === 0 ? (
-            <p className="skills-empty">
-              L’arbre se charge… S’il ne vient pas, c’est que le serveur n’a pas répondu :
-              refermez et rouvrez cet écran.
+            <p className="skills-score">
+              {/* Un anneau plutôt qu'une fraction seule : « 6 / 39 » demande un
+                  calcul, l'anneau se lit sans en faire un. */}
+              <svg className="skills-ring" viewBox="0 0 36 36" aria-hidden="true">
+                <circle className="skills-ring-bg" cx="18" cy="18" r="16" />
+                <circle
+                  className="skills-ring-fill"
+                  cx="18"
+                  cy="18"
+                  r="16"
+                  strokeDasharray={`${Math.round(part * 100.5)} 100.5`}
+                />
+              </svg>
+              <span>
+                <strong>{ouvertes}</strong>
+                <small>sur {skills.length} acquises</small>
+              </span>
             </p>
-          ) : tab === "gains" ? (
-            <AdvantagesPane skills={skills} bonuses={effectifs} />
-          ) : (
-            <SkillTree skills={skills} />
-          )}
+
+            <MenuClose onClose={onClose} />
+          </header>
+
+          <nav className="skills-nav" aria-label="Vues des compétences">
+            <button
+              type="button"
+              className={tab === "gains" ? "on" : ""}
+              aria-current={tab === "gains"}
+              onClick={() => setTab("gains")}
+            >
+              Vos avantages
+            </button>
+            <button
+              type="button"
+              className={tab === "tree" ? "on" : ""}
+              aria-current={tab === "tree"}
+              onClick={() => setTab("tree")}
+            >
+              L’arbre
+            </button>
+          </nav>
+
+          <div className="skills-body">
+            {skills.length === 0 ? (
+              <p className="skills-empty">
+                L’arbre se charge… S’il ne vient pas, c’est que le serveur n’a pas répondu :
+                refermez et rouvrez cet écran.
+              </p>
+            ) : tab === "gains" ? (
+              <AdvantagesPane skills={skills} bonuses={effectifs} />
+            ) : (
+              <SkillTree skills={skills} />
+            )}
+          </div>
         </div>
       </div>
-    </div>
+    </Portail>
   );
 }

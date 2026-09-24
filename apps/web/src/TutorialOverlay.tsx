@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 
 import { TUTORIAL_KEY } from "./storage-keys";
 import { MenuClose } from "./ui/MenuClose";
+import { Portail } from "./ui/Portail";
 
 type Step = {
   id: string;
@@ -84,40 +85,42 @@ export function TutorialOverlay({ open, onClose }: Props) {
   }
 
   return (
-    <div className="tutorial-backdrop" role="dialog" aria-modal="true" aria-labelledby="tut-title">
-      <div className="tutorial-card glass">
-        <MenuClose onClose={finish} label="Fermer le tutoriel" />
-        <div className="tutorial-progress">
-          {STEPS.map((_, i) => (
-            <span key={i} className={`tutorial-dot ${i <= step ? "on" : ""}`} />
-          ))}
-        </div>
-        <p className="tutorial-step-label">
-          Étape {step + 1} / {STEPS.length}
-        </p>
-        <h2 id="tut-title">{s.title}</h2>
-        <p className="tutorial-body">{s.body}</p>
-        {s.hint && <p className="tutorial-hint">{s.hint}</p>}
-        <div className="tutorial-actions">
-          {step > 0 && (
-            <button type="button" className="ghost" onClick={() => setStep((x) => x - 1)}>
-              Retour
+    <Portail>
+      <div className="tutorial-backdrop" role="dialog" aria-modal="true" aria-labelledby="tut-title">
+        <div className="tutorial-card glass">
+          <MenuClose onClose={finish} label="Fermer le tutoriel" />
+          <div className="tutorial-progress">
+            {STEPS.map((_, i) => (
+              <span key={i} className={`tutorial-dot ${i <= step ? "on" : ""}`} />
+            ))}
+          </div>
+          <p className="tutorial-step-label">
+            Étape {step + 1} / {STEPS.length}
+          </p>
+          <h2 id="tut-title">{s.title}</h2>
+          <p className="tutorial-body">{s.body}</p>
+          {s.hint && <p className="tutorial-hint">{s.hint}</p>}
+          <div className="tutorial-actions">
+            {step > 0 && (
+              <button type="button" className="ghost" onClick={() => setStep((x) => x - 1)}>
+                Retour
+              </button>
+            )}
+            <button type="button" className="ghost" onClick={finish}>
+              Passer
             </button>
-          )}
-          <button type="button" className="ghost" onClick={finish}>
-            Passer
-          </button>
-          {!last ? (
-            <button type="button" className="tutorial-next" onClick={() => setStep((x) => x + 1)}>
-              Suivant
-            </button>
-          ) : (
-            <button type="button" className="tutorial-next" onClick={finish}>
-              Jouer
-            </button>
-          )}
+            {!last ? (
+              <button type="button" className="tutorial-next" onClick={() => setStep((x) => x + 1)}>
+                Suivant
+              </button>
+            ) : (
+              <button type="button" className="tutorial-next" onClick={finish}>
+                Jouer
+              </button>
+            )}
+          </div>
         </div>
       </div>
-    </div>
+    </Portail>
   );
 }

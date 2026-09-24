@@ -1,4 +1,5 @@
 import { useEffect, useRef } from "react";
+import { Portail } from "./ui/Portail";
 
 export type ConfirmRequest = {
   title: string;
@@ -37,33 +38,35 @@ export function ConfirmDialog({ request, onCancel }: Props) {
   if (!request) return null;
 
   return (
-    <div
-      className="confirm-backdrop"
-      role="dialog"
-      aria-modal="true"
-      aria-labelledby="confirm-title"
-      onClick={onCancel}
-    >
-      <div className="confirm-card glass" onClick={(e) => e.stopPropagation()}>
-        <h3 id="confirm-title">{request.title}</h3>
-        {request.detail && <p className="confirm-detail">{request.detail}</p>}
-        <div className="confirm-actions">
-          <button type="button" className="ghost" onClick={onCancel}>
-            Annuler
-          </button>
-          <button
-            ref={confirmRef}
-            type="button"
-            className={request.destructive ? "confirm-go danger" : "confirm-go"}
-            onClick={() => {
-              request.onConfirm();
-              onCancel();
-            }}
-          >
-            {request.confirmLabel}
-          </button>
+    <Portail>
+      <div
+        className="confirm-backdrop"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="confirm-title"
+        onClick={onCancel}
+      >
+        <div className="confirm-card glass" onClick={(e) => e.stopPropagation()}>
+          <h3 id="confirm-title">{request.title}</h3>
+          {request.detail && <p className="confirm-detail">{request.detail}</p>}
+          <div className="confirm-actions">
+            <button type="button" className="ghost" onClick={onCancel}>
+              Annuler
+            </button>
+            <button
+              ref={confirmRef}
+              type="button"
+              className={request.destructive ? "confirm-go danger" : "confirm-go"}
+              onClick={() => {
+                request.onConfirm();
+                onCancel();
+              }}
+            >
+              {request.confirmLabel}
+            </button>
+          </div>
         </div>
       </div>
-    </div>
+    </Portail>
   );
 }

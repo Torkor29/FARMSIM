@@ -154,6 +154,7 @@ import { TOOL_GROUPS, groupOf, optionsFor } from "./ui/tool-options";
 import { ToolRail } from "./ui/desktop/ToolRail";
 import { SelectionBar } from "./ui/desktop/SelectionBar";
 import { PanelHost, Window } from "./ui/desktop/Window";
+import { Portail } from "./ui/Portail";
 import { Geste } from "./ui/Geste";
 import {
   CellContextMenu,
@@ -5147,31 +5148,33 @@ export function App() {
       {/* Le bilan d'absence annonce parfois huit cultures perdues : il mérite
           d'être lu, donc acquitté, plutôt que de flotter sur la ferme. */}
       {resumeBanner && !err && (
-        <div className="resume-backdrop" role="dialog" aria-modal="true">
-          <div className="resume-card glass">
-            <strong>Pendant votre absence</strong>
-            <p>{resumeBanner}</p>
-            {absenceLines.length > 0 && (
-              <ul className="list">
-                {absenceLines.map((line, i) => (
-                  <li key={i}>
-                    <span className="muted tiny">{line}</span>
-                  </li>
-                ))}
-              </ul>
-            )}
-            <button
-              type="button"
-              className="accent"
-              onClick={() => {
-                setResumeBanner(null);
-                setAbsenceLines([]);
-              }}
-            >
-              J’ai vu
-            </button>
+        <Portail>
+          <div className="resume-backdrop" role="dialog" aria-modal="true">
+            <div className="resume-card glass">
+              <strong>Pendant votre absence</strong>
+              <p>{resumeBanner}</p>
+              {absenceLines.length > 0 && (
+                <ul className="list">
+                  {absenceLines.map((line, i) => (
+                    <li key={i}>
+                      <span className="muted tiny">{line}</span>
+                    </li>
+                  ))}
+                </ul>
+              )}
+              <button
+                type="button"
+                className="accent"
+                onClick={() => {
+                  setResumeBanner(null);
+                  setAbsenceLines([]);
+                }}
+              >
+                J’ai vu
+              </button>
+            </div>
           </div>
-        </div>
+        </Portail>
       )}
 
       <PanelHost

@@ -8,6 +8,7 @@ import {
   type BuildingType,
 } from "@farmsim/shared";
 import { MenuClose } from "./ui/MenuClose";
+import { Portail } from "./ui/Portail";
 
 export type SheetBuilding = {
   id: string;
@@ -77,93 +78,95 @@ export function BuildingSheet({
   const refund = buildingResaleValue(building.type, lvl, age);
 
   return (
-    <div className="sheet-backdrop" onClick={onClose}>
-      <div className="building-sheet glass" onClick={(e) => e.stopPropagation()}>
-        <header>
-          <div>
-            <h3>{def.name}</h3>
-            <p className="building-sheet-sub">
-              {def.w}×{def.h} · case ({building.originX},{building.originY}) ·{" "}
-              {(building.rotation ?? 0) * 90}°
-            </p>
-          </div>
-          <MenuClose onClose={onClose} />
-        </header>
-
-        <p className="building-sheet-desc">{def.description}</p>
-
-        <div className="building-sheet-level">
-          <span className="level-row">
-            {Array.from({ length: MAX_BUILDING_LEVEL }, (_, i) => (
-              <i key={i} className={`pip ${i < lvl ? "on" : ""}`} />
-            ))}
-          </span>
-          <em>
-            Niveau {lvl} · {buildingLevelDef(lvl).name}
-          </em>
-        </div>
-
-        {herd && (
-          <section className="building-sheet-herd">
-            <h4>
-              {herd.size} {herd.label}
-            </h4>
-            <p>{herd.out ? "Les bêtes sont dehors." : "Les bêtes sont à l'intérieur."}</p>
-            <div className="building-sheet-actions">
-              {herd.out ? (
-                <button type="button" className="primary" disabled={busy || visiting} onClick={onShelter}>
-                  Faire rentrer
-                </button>
-              ) : (
-                <button
-                  type="button"
-                  className="primary"
-                  disabled={busy || visiting || !herd.canGraze}
-                  title={herd.grazeRefusal ?? "Laisser sortir les bêtes"}
-                  onClick={onGrazeOut}
-                >
-                  Faire sortir
-                </button>
-              )}
+    <Portail>
+      <div className="sheet-backdrop" onClick={onClose}>
+        <div className="building-sheet glass" onClick={(e) => e.stopPropagation()}>
+          <header>
+            <div>
+              <h3>{def.name}</h3>
+              <p className="building-sheet-sub">
+                {def.w}×{def.h} · case ({building.originX},{building.originY}) ·{" "}
+                {(building.rotation ?? 0) * 90}°
+              </p>
             </div>
-            {!herd.out && herd.grazeRefusal && <p className="graze-refusal">{herd.grazeRefusal}</p>}
-          </section>
-        )}
+            <MenuClose onClose={onClose} />
+          </header>
 
-        <div className="building-sheet-actions">
-          <button type="button" className="ghost" disabled={busy || visiting} onClick={onRotate}>
-            ⟳ Tourner
-          </button>
-          {cost !== null && (
+          <p className="building-sheet-desc">{def.description}</p>
+
+          <div className="building-sheet-level">
+            <span className="level-row">
+              {Array.from({ length: MAX_BUILDING_LEVEL }, (_, i) => (
+                <i key={i} className={`pip ${i < lvl ? "on" : ""}`} />
+              ))}
+            </span>
+            <em>
+              Niveau {lvl} · {buildingLevelDef(lvl).name}
+            </em>
+          </div>
+
+          {herd && (
+            <section className="building-sheet-herd">
+              <h4>
+                {herd.size} {herd.label}
+              </h4>
+              <p>{herd.out ? "Les bêtes sont dehors." : "Les bêtes sont à l'intérieur."}</p>
+              <div className="building-sheet-actions">
+                {herd.out ? (
+                  <button type="button" className="primary" disabled={busy || visiting} onClick={onShelter}>
+                    Faire rentrer
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    className="primary"
+                    disabled={busy || visiting || !herd.canGraze}
+                    title={herd.grazeRefusal ?? "Laisser sortir les bêtes"}
+                    onClick={onGrazeOut}
+                  >
+                    Faire sortir
+                  </button>
+                )}
+              </div>
+              {!herd.out && herd.grazeRefusal && <p className="graze-refusal">{herd.grazeRefusal}</p>}
+            </section>
+          )}
+
+          <div className="building-sheet-actions">
+            <button type="button" className="ghost" disabled={busy || visiting} onClick={onRotate}>
+              ⟳ Tourner
+            </button>
+            {cost !== null && (
+              <button
+                type="button"
+                className="ghost"
+                disabled={busy || visiting || playerLevel < (next?.requiredLevel ?? 1) || crd < cost}
+                title={
+                  playerLevel < (next?.requiredLevel ?? 1)
+                    ? `Niveau joueur ${next?.requiredLevel} requis`
+                    : `Passer au niveau ${lvl + 1} — ${buildingLevelDef(lvl + 1).name}`
+                }
+                onClick={onUpgrade}
+              >
+                ↑ Améliorer · {cost} €
+              </button>
+            )}
             <button
               type="button"
-              className="ghost"
-              disabled={busy || visiting || playerLevel < (next?.requiredLevel ?? 1) || crd < cost}
-              title={
-                playerLevel < (next?.requiredLevel ?? 1)
-                  ? `Niveau joueur ${next?.requiredLevel} requis`
-                  : `Passer au niveau ${lvl + 1} — ${buildingLevelDef(lvl + 1).name}`
-              }
-              onClick={onUpgrade}
+              className={`sell-btn${fresh ? " regret" : ""}`}
+              disabled={busy || visiting}
+              onClick={onDemolish}
             >
-              ↑ Améliorer · {cost} €
+              {fresh ? `Annuler · +${refund} €` : `Démolir · +${refund} €`}
             </button>
+          </div>
+          {fresh && (
+            <p className="building-sheet-note">
+              Posé à l'instant : l'annuler rend l'intégralité de la dépense.
+            </p>
           )}
-          <button
-            type="button"
-            className={`sell-btn${fresh ? " regret" : ""}`}
-            disabled={busy || visiting}
-            onClick={onDemolish}
-          >
-            {fresh ? `Annuler · +${refund} €` : `Démolir · +${refund} €`}
-          </button>
         </div>
-        {fresh && (
-          <p className="building-sheet-note">
-            Posé à l'instant : l'annuler rend l'intégralité de la dépense.
-          </p>
-        )}
       </div>
-    </div>
+    </Portail>
   );
 }

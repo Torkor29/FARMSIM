@@ -2,6 +2,7 @@ import { useEffect, useRef } from "react";
 import { CROP_DEFS, SPECIES, formatEuros, peutRacheter, type CropCode } from "@farmsim/shared";
 import type { VoisinReel } from "./countryside-plan";
 import { MenuClose } from "./ui/MenuClose";
+import { Portail } from "./ui/Portail";
 
 /**
  * La fiche d'une parcelle voisine.
@@ -83,94 +84,96 @@ export function ParcelleVoisineSheet({ voisin, enCours = false, onAcheter, onFer
           : (voisin.proprietaire ?? "Exploitée");
 
   return (
-    <div
-      className="voisin-backdrop"
-      role="dialog"
-      aria-modal="true"
-      aria-labelledby="voisin-titre"
-      onClick={onFermer}
-    >
-      <div className="voisin-card glass" onClick={(e) => e.stopPropagation()}>
-        <header className="voisin-tete">
-          <div>
-            <h3 id="voisin-titre">{voisin.label}</h3>
-            <p className={`voisin-tenue s-${voisin.statut.toLowerCase()}`}>{tenue}</p>
-          </div>
-          <MenuClose onClose={onFermer} />
-        </header>
-
-        <dl className="voisin-faits">
-          <div>
-            <dt>Culture</dt>
-            <dd>
-              {culture ? (
-                <>
-                  {culture}
-                  {stade && <span className="voisin-stade"> · {stade}</span>}
-                </>
-              ) : (
-                "en herbe"
-              )}
-            </dd>
-          </div>
-          {voisin.partCultivee > 0 && (
+    <Portail>
+      <div
+        className="voisin-backdrop"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="voisin-titre"
+        onClick={onFermer}
+      >
+        <div className="voisin-card glass" onClick={(e) => e.stopPropagation()}>
+          <header className="voisin-tete">
             <div>
-              <dt>Emblavée</dt>
-              <dd>{Math.round(voisin.partCultivee * 100)} %</dd>
+              <h3 id="voisin-titre">{voisin.label}</h3>
+              <p className={`voisin-tenue s-${voisin.statut.toLowerCase()}`}>{tenue}</p>
             </div>
-          )}
-          <div>
-            <dt>Fertilité</dt>
-            <dd>{Math.round(voisin.fertility * 100)} %</dd>
-          </div>
-          {voisin.batiments.length > 0 && (
+            <MenuClose onClose={onFermer} />
+          </header>
+
+          <dl className="voisin-faits">
             <div>
-              <dt>Bâti</dt>
+              <dt>Culture</dt>
               <dd>
-                {voisin.batiments.length} ouvrage{voisin.batiments.length > 1 ? "s" : ""}
+                {culture ? (
+                  <>
+                    {culture}
+                    {stade && <span className="voisin-stade"> · {stade}</span>}
+                  </>
+                ) : (
+                  "en herbe"
+                )}
               </dd>
             </div>
-          )}
-          {voisin.cheptel.length > 0 && (
-            <div>
-              <dt>Cheptel</dt>
-              <dd>
-                {voisin.cheptel.map((t) => `${t.size} ${nomEspece(t.kind).toLowerCase()}`).join(", ")}
-              </dd>
-            </div>
-          )}
-        </dl>
-
-        {aVendre ? (
-          <div className="voisin-marche">
-            {voisin.prix !== null && <p className="voisin-prix">{formatEuros(voisin.prix)}</p>}
-            {voisin.achetable ? (
-              <button
-                ref={premier}
-                type="button"
-                className="voisin-acheter"
-                disabled={enCours}
-                onClick={() => onAcheter(voisin.id)}
-              >
-                {enCours
-                  ? "Achat en cours…"
-                  : voisin.statut === "PNJ"
-                    ? "Racheter cette parcelle"
-                    : "Acheter cette parcelle"}
-              </button>
-            ) : (
-              <p className="voisin-refus">{voisin.refus ?? "Pas encore accessible."}</p>
+            {voisin.partCultivee > 0 && (
+              <div>
+                <dt>Emblavée</dt>
+                <dd>{Math.round(voisin.partCultivee * 100)} %</dd>
+              </div>
             )}
-          </div>
-        ) : voisin.statut === "MOI" ? (
-          <p className="voisin-refus">Cette parcelle est déjà la vôtre.</p>
-        ) : (
-          <p className="voisin-refus">
-            {voisin.exploitation ?? "Cette exploitation"} la travaille. Elle ne sera à reprendre que
-            le jour où elle sera cédée.
-          </p>
-        )}
+            <div>
+              <dt>Fertilité</dt>
+              <dd>{Math.round(voisin.fertility * 100)} %</dd>
+            </div>
+            {voisin.batiments.length > 0 && (
+              <div>
+                <dt>Bâti</dt>
+                <dd>
+                  {voisin.batiments.length} ouvrage{voisin.batiments.length > 1 ? "s" : ""}
+                </dd>
+              </div>
+            )}
+            {voisin.cheptel.length > 0 && (
+              <div>
+                <dt>Cheptel</dt>
+                <dd>
+                  {voisin.cheptel.map((t) => `${t.size} ${nomEspece(t.kind).toLowerCase()}`).join(", ")}
+                </dd>
+              </div>
+            )}
+          </dl>
+
+          {aVendre ? (
+            <div className="voisin-marche">
+              {voisin.prix !== null && <p className="voisin-prix">{formatEuros(voisin.prix)}</p>}
+              {voisin.achetable ? (
+                <button
+                  ref={premier}
+                  type="button"
+                  className="voisin-acheter"
+                  disabled={enCours}
+                  onClick={() => onAcheter(voisin.id)}
+                >
+                  {enCours
+                    ? "Achat en cours…"
+                    : voisin.statut === "PNJ"
+                      ? "Racheter cette parcelle"
+                      : "Acheter cette parcelle"}
+                </button>
+              ) : (
+                <p className="voisin-refus">{voisin.refus ?? "Pas encore accessible."}</p>
+              )}
+            </div>
+          ) : voisin.statut === "MOI" ? (
+            <p className="voisin-refus">Cette parcelle est déjà la vôtre.</p>
+          ) : (
+            <p className="voisin-refus">
+              {voisin.exploitation ?? "Cette exploitation"} la travaille. Elle ne sera à reprendre que
+              le jour où elle sera cédée.
+            </p>
+          )}
+        </div>
       </div>
-    </div>
+    </Portail>
   );
 }

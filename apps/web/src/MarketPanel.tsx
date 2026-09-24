@@ -27,6 +27,7 @@ import {
   type SaleChannel,
   type TradeGood,
 } from "@farmsim/shared";
+import { Portail } from "./ui/Portail";
 
 export type StockItem = {
   id: string;
@@ -291,271 +292,313 @@ export function MarketPanel({
   const listQ = quotes.find((q) => q.channel === "LISTING");
 
   return (
-    <div className="market-backdrop" role="dialog" aria-modal="true" aria-label="Hôtel des ventes">
-      <div className="market-sheet glass hall">
-        <header className="hall-head">
-          <div>
-            <p className="hall-kicker">Bienvenue</p>
-            <h2>Hôtel des ventes</h2>
-            <p className="hall-wallet">
-              Vous avez <strong>{Math.round(crd)} €</strong>
-            </p>
-          </div>
-          <MenuClose onClose={onClose} />
-        </header>
-
-        <div className="hall-doors" role="tablist" aria-label="Acheter ou vendre">
-          <button
-            type="button"
-            role="tab"
-            aria-selected={tab === "BUY"}
-            className={`hall-door buy ${tab === "BUY" ? "on" : ""}`}
-            onClick={() => setTab("BUY")}
-          >
-            <img className="hall-door-icon" src="/assets/icons/goods/straw-bale.svg" alt="" aria-hidden="true" />
-            <strong>Acheter</strong>
-            <em>{others.length ? `${others.length} en vitrine` : "Rien en vitrine"}</em>
-          </button>
-          <button
-            type="button"
-            role="tab"
-            aria-selected={tab === "SELL"}
-            className={`hall-door sell ${tab === "SELL" ? "on" : ""}`}
-            onClick={() => setTab("SELL")}
-          >
-            <img className="hall-door-icon" src="/assets/icons/nav/marche.svg" alt="" aria-hidden="true" />
-            <strong>Vendre</strong>
-            <em>{stock.length ? "Votre stock" : "Rien à vendre"}</em>
-          </button>
-        </div>
-
-        {/* Le contenu de l'onglet défile ; l'en-tête et les deux portes ne
-            bougent pas. La feuille était en `overflow: hidden` : tout ce qui
-            dépassait 92 % de la hauteur d'écran était simplement coupé, sans
-            aucun moyen d'y accéder — sur téléphone, le formulaire des contrats
-            à terme commençait juste sous le bord. */}
-        <div className="hall-body" key={tab}>
-        {/* Les cotations du jour, en tête : c'est la première question qu'on
-            se pose en entrant au marché, et la seule raison pour laquelle
-            elles occupaient jusqu'ici un bandeau permanent sur la ferme. */}
-        {marketPrices.length > 0 && (
-          <section className="cotations" aria-label="Cours du jour">
-            <h4>Cours du jour</h4>
-            <div className="cotations-grille">
-              {marketPrices.map((m) => {
-                const avant = prevPrices[m.commodity] ?? m.price;
-                const ecart = m.price - avant;
-                const sens = ecart > 0.05 ? "up" : ecart < -0.05 ? "down" : "flat";
-                return (
-                  <span key={m.commodity} className={`cote ${sens}`}>
-                    <GoodIcon code={m.commodity} />
-                    <b>{goodName(m.commodity)}</b>
-                    <i>{m.price.toFixed(0)}</i>
-                    <em>
-                      {sens === "up" ? "▲" : sens === "down" ? "▼" : "·"}
-                      {Math.abs(ecart) > 0.05 ? Math.abs(ecart).toFixed(1) : ""}
-                    </em>
-                  </span>
-                );
-              })}
+    <Portail>
+      <div className="market-backdrop" role="dialog" aria-modal="true" aria-label="Hôtel des ventes">
+        <div className="market-sheet glass hall">
+          <header className="hall-head">
+            <div>
+              <p className="hall-kicker">Bienvenue</p>
+              <h2>Hôtel des ventes</h2>
+              <p className="hall-wallet">
+                Vous avez <strong>{Math.round(crd)} €</strong>
+              </p>
             </div>
-          </section>
-        )}
-        {tab === "MORE" ? (
-          <div className="hall-more">
-            <button type="button" className="ghost tiny" onClick={() => setTab("BUY")}>
-              ← Retour
+            <MenuClose onClose={onClose} />
+          </header>
+
+          <div className="hall-doors" role="tablist" aria-label="Acheter ou vendre">
+            <button
+              type="button"
+              role="tab"
+              aria-selected={tab === "BUY"}
+              className={`hall-door buy ${tab === "BUY" ? "on" : ""}`}
+              onClick={() => setTab("BUY")}
+            >
+              <img className="hall-door-icon" src="/assets/icons/goods/straw-bale.svg" alt="" aria-hidden="true" />
+              <strong>Acheter</strong>
+              <em>{others.length ? `${others.length} en vitrine` : "Rien en vitrine"}</em>
             </button>
-            <SupplyTab
-              marketPrices={marketPrices}
-              crd={crd}
-              busy={busy}
-              tons={inputTons}
-              onTons={(g, n) => setInputTons((t) => ({ ...t, [g]: n }))}
-              onBuy={onBuyInput}
-            />
-            <FuturesTab
-              futures={futures}
-              marketPrices={marketPrices}
-              busy={busy}
-              good={good}
-              setGood={setGood}
-              tons={futTons}
-              setTons={setFutTons}
-              horizon={horizon}
-              setHorizon={setHorizon}
-              onOpen={onOpenFuture}
-              onDeliver={onDeliverFuture}
-            />
+            <button
+              type="button"
+              role="tab"
+              aria-selected={tab === "SELL"}
+              className={`hall-door sell ${tab === "SELL" ? "on" : ""}`}
+              onClick={() => setTab("SELL")}
+            >
+              <img className="hall-door-icon" src="/assets/icons/nav/marche.svg" alt="" aria-hidden="true" />
+              <strong>Vendre</strong>
+              <em>{stock.length ? "Votre stock" : "Rien à vendre"}</em>
+            </button>
           </div>
-        ) : tab === "SELL" ? (
-          !stock.length ? (
-            <>
-              <p className="market-empty">Rien à vendre. Récoltez d’abord, puis revenez ici.</p>
-              <DeliveryList
-                deliveries={deliveries}
-                busy={busy}
-                crd={crd}
-                onDeliverLot={onDeliverLot}
-                onAutoDeliverLot={onAutoDeliverLot}
-              />
-            </>
-          ) : (
-            <>
-              <p className="hall-lead">Choisissez ce que vous vendez, puis comment.</p>
-              <div className="stock-row">
-                {stock.map((s) => {
-                  const wet = s.moisture > DRYING.sellThreshold;
+
+          {/* Le contenu de l'onglet défile ; l'en-tête et les deux portes ne
+              bougent pas. La feuille était en `overflow: hidden` : tout ce qui
+              dépassait 92 % de la hauteur d'écran était simplement coupé, sans
+              aucun moyen d'y accéder — sur téléphone, le formulaire des contrats
+              à terme commençait juste sous le bord. */}
+          <div className="hall-body" key={tab}>
+          {/* Les cotations du jour, en tête : c'est la première question qu'on
+              se pose en entrant au marché, et la seule raison pour laquelle
+              elles occupaient jusqu'ici un bandeau permanent sur la ferme. */}
+          {marketPrices.length > 0 && (
+            <section className="cotations" aria-label="Cours du jour">
+              <h4>Cours du jour</h4>
+              <div className="cotations-grille">
+                {marketPrices.map((m) => {
+                  const avant = prevPrices[m.commodity] ?? m.price;
+                  const ecart = m.price - avant;
+                  const sens = ecart > 0.05 ? "up" : ecart < -0.05 ? "down" : "flat";
                   return (
-                    <button
-                      key={s.id}
-                      type="button"
-                      className={`stock-chip ${item?.id === s.id ? "on" : ""}`}
-                      onClick={() => setSelectedId(s.id)}
-                    >
-                      <strong>
-                        <GoodIcon code={s.itemCode} /> {goodName(s.itemCode)}
-                      </strong>
-                      <span>
-                        {s.qty.toFixed(2)} {GOOD_DEFS[s.itemCode as TradeGood]?.unit ?? "t"}
-                      </span>
-                      <em className={wet || s.quality <= 2 ? "wet" : ""}>
-                        {isPerishable(s.itemCode as TradeGood)
-                          ? "À vendre vite : ça se gâte"
-                          : qualityOf(s.itemCode, s.qty, s.moisture, s.quality)}
+                    <span key={m.commodity} className={`cote ${sens}`}>
+                      <GoodIcon code={m.commodity} />
+                      <b>{goodName(m.commodity)}</b>
+                      <i>{m.price.toFixed(0)}</i>
+                      <em>
+                        {sens === "up" ? "▲" : sens === "down" ? "▼" : "·"}
+                        {Math.abs(ecart) > 0.05 ? Math.abs(ecart).toFixed(1) : ""}
                       </em>
-                    </button>
+                    </span>
                   );
                 })}
               </div>
-
-              {item && price && (
-                <>
-                  {spoilageWarning(item.itemCode as TradeGood, item.qty) && (
-                    <p className="market-warn perish">
-                      {spoilageWarning(item.itemCode as TradeGood, item.qty)}
-                    </p>
-                  )}
-
-                  {item.moisture > DRYING.sellThreshold && (
-                    <p className="market-warn">
-                      Trop d’eau : on vous paie moins.
-                      <button type="button" disabled={busy} onClick={() => onDry(item.id)}>
-                        Sécher
+            </section>
+          )}
+          {tab === "MORE" ? (
+            <div className="hall-more">
+              <button type="button" className="ghost tiny" onClick={() => setTab("BUY")}>
+                ← Retour
+              </button>
+              <SupplyTab
+                marketPrices={marketPrices}
+                crd={crd}
+                busy={busy}
+                tons={inputTons}
+                onTons={(g, n) => setInputTons((t) => ({ ...t, [g]: n }))}
+                onBuy={onBuyInput}
+              />
+              <FuturesTab
+                futures={futures}
+                marketPrices={marketPrices}
+                busy={busy}
+                good={good}
+                setGood={setGood}
+                tons={futTons}
+                setTons={setFutTons}
+                horizon={horizon}
+                setHorizon={setHorizon}
+                onOpen={onOpenFuture}
+                onDeliver={onDeliverFuture}
+              />
+            </div>
+          ) : tab === "SELL" ? (
+            !stock.length ? (
+              <>
+                <p className="market-empty">Rien à vendre. Récoltez d’abord, puis revenez ici.</p>
+                <DeliveryList
+                  deliveries={deliveries}
+                  busy={busy}
+                  crd={crd}
+                  onDeliverLot={onDeliverLot}
+                  onAutoDeliverLot={onAutoDeliverLot}
+                />
+              </>
+            ) : (
+              <>
+                <p className="hall-lead">Choisissez ce que vous vendez, puis comment.</p>
+                <div className="stock-row">
+                  {stock.map((s) => {
+                    const wet = s.moisture > DRYING.sellThreshold;
+                    return (
+                      <button
+                        key={s.id}
+                        type="button"
+                        className={`stock-chip ${item?.id === s.id ? "on" : ""}`}
+                        onClick={() => setSelectedId(s.id)}
+                      >
+                        <strong>
+                          <GoodIcon code={s.itemCode} /> {goodName(s.itemCode)}
+                        </strong>
+                        <span>
+                          {s.qty.toFixed(2)} {GOOD_DEFS[s.itemCode as TradeGood]?.unit ?? "t"}
+                        </span>
+                        <em className={wet || s.quality <= 2 ? "wet" : ""}>
+                          {isPerishable(s.itemCode as TradeGood)
+                            ? "À vendre vite : ça se gâte"
+                            : qualityOf(s.itemCode, s.qty, s.moisture, s.quality)}
+                        </em>
                       </button>
-                    </p>
-                  )}
-                  {item.quality <= 2 && item.moisture <= DRYING.sellThreshold && (
-                    <p className="market-warn">Récolté trop tard — ça vaut moins.</p>
-                  )}
+                    );
+                  })}
+                </div>
 
-                  <label className="market-field">
-                    <span>
-                      Combien : <strong>{tons.toFixed(2)}</strong> sur {item.qty.toFixed(2)}
-                    </span>
-                    <input
-                      type="range"
-                      min={0.01}
-                      max={maxTons}
-                      step={0.01}
-                      value={Math.min(tons, maxTons)}
-                      onChange={(e) => setTons(Number(e.target.value))}
-                    />
-                    <button
-                      type="button"
-                      className="ghost tiny"
-                      disabled={tons >= maxTons}
-                      onClick={() => setTons(maxTons)}
-                    >
-                      Tout
-                    </button>
-                  </label>
-
-                  <p className="market-course">
-                    Prix du jour : <strong>{price.price.toFixed(0)} € / {GOOD_DEFS[item.itemCode as TradeGood]?.unit ?? "t"}</strong>
-                  </p>
-                  <PriceSparkline points={history} />
-
-                  <div className="channel-grid hall-sell">
-                    {marketQ && (
-                      <div className="channel-card">
-                        <h3>{SALE_CHANNEL_LABELS.MARKET}</h3>
-                        <p className="channel-net">
-                          {marketQ.net} €
-                          <em className="sure">argent maintenant</em>
-                        </p>
-                        {/* La note du canal vient du domaine : elle dit qui
-                            achète et pourquoi le prix diffère. Elle était
-                            réécrite ici en « Le prix du jour. C'est vendu. »,
-                            qui ne dit ni l'un ni l'autre. */}
-                        <p className="channel-note">{marketQ.note}</p>
-                        <button
-                          type="button"
-                          className="channel-go"
-                          disabled={busy || tons <= 0}
-                          onClick={() => act("MARKET")}
-                        >
-                          Vendre
-                        </button>
-                      </div>
+                {item && price && (
+                  <>
+                    {spoilageWarning(item.itemCode as TradeGood, item.qty) && (
+                      <p className="market-warn perish">
+                        {spoilageWarning(item.itemCode as TradeGood, item.qty)}
+                      </p>
                     )}
-                    {listQ && (
-                      <div className="channel-card">
-                        <h3>{SALE_CHANNEL_LABELS.LISTING}</h3>
-                        <p className="channel-net">
-                          {listQ.net} €
-                          <em className="risky">si un joueur achète</em>
-                        </p>
-                        <label className="ask-field">
-                          <span>Votre prix (€ / {GOOD_DEFS[item.itemCode as TradeGood]?.unit ?? "t"})</span>
-                          <input
-                            type="number"
-                            min={1}
-                            step={1}
-                            value={ask}
-                            onChange={(e) => setAsk(Number(e.target.value))}
-                          />
-                        </label>
-                        <button
-                          type="button"
-                          className="channel-go"
-                          disabled={busy || tons <= 0 || crd < listingFee(ask, tons)}
-                          onClick={() => act("LISTING")}
-                        >
-                          Mettre en vente
+
+                    {item.moisture > DRYING.sellThreshold && (
+                      <p className="market-warn">
+                        Trop d’eau : on vous paie moins.
+                        <button type="button" disabled={busy} onClick={() => onDry(item.id)}>
+                          Sécher
                         </button>
-                        {/* Mettre en vente coûte une commission d'avance :
-                            sans elle, le bouton restait gris sans raison
-                            visible. */}
-                        {tons > 0 && crd < listingFee(ask, tons) && (
-                          <p className="supply-why">
-                            Commission de {listingFee(ask, tons)} € à avancer — il vous en
-                            manque {Math.ceil(listingFee(ask, tons) - crd)}.
-                          </p>
-                        )}
-                      </div>
+                      </p>
                     )}
-                  </div>
-                  {/* Le troisième acheteur, dit comme les deux autres.
-                      « Vendre à tout prix » ne nommait personne : on encaissait
-                      40 % de moins sans savoir que c'était un PNJ de secours,
-                      et on croyait à une panne du marché. */}
-                  {dealerQ && (
-                    <p className="market-rules">
+                    {item.quality <= 2 && item.moisture <= DRYING.sellThreshold && (
+                      <p className="market-warn">Récolté trop tard — ça vaut moins.</p>
+                    )}
+
+                    <label className="market-field">
+                      <span>
+                        Combien : <strong>{tons.toFixed(2)}</strong> sur {item.qty.toFixed(2)}
+                      </span>
+                      <input
+                        type="range"
+                        min={0.01}
+                        max={maxTons}
+                        step={0.01}
+                        value={Math.min(tons, maxTons)}
+                        onChange={(e) => setTons(Number(e.target.value))}
+                      />
                       <button
                         type="button"
                         className="ghost tiny"
-                        disabled={busy || tons <= 0}
-                        onClick={() => act("DEALER")}
+                        disabled={tons >= maxTons}
+                        onClick={() => setTons(maxTons)}
                       >
-                        {SALE_CHANNEL_LABELS.DEALER} · {dealerQ.net} €
-                      </button>{" "}
-                      <span className="channel-note">{dealerQ.note}</span>
-                    </p>
-                  )}
-                </>
-              )}
+                        Tout
+                      </button>
+                    </label>
 
+                    <p className="market-course">
+                      Prix du jour : <strong>{price.price.toFixed(0)} € / {GOOD_DEFS[item.itemCode as TradeGood]?.unit ?? "t"}</strong>
+                    </p>
+                    <PriceSparkline points={history} />
+
+                    <div className="channel-grid hall-sell">
+                      {marketQ && (
+                        <div className="channel-card">
+                          <h3>{SALE_CHANNEL_LABELS.MARKET}</h3>
+                          <p className="channel-net">
+                            {marketQ.net} €
+                            <em className="sure">argent maintenant</em>
+                          </p>
+                          {/* La note du canal vient du domaine : elle dit qui
+                              achète et pourquoi le prix diffère. Elle était
+                              réécrite ici en « Le prix du jour. C'est vendu. »,
+                              qui ne dit ni l'un ni l'autre. */}
+                          <p className="channel-note">{marketQ.note}</p>
+                          <button
+                            type="button"
+                            className="channel-go"
+                            disabled={busy || tons <= 0}
+                            onClick={() => act("MARKET")}
+                          >
+                            Vendre
+                          </button>
+                        </div>
+                      )}
+                      {listQ && (
+                        <div className="channel-card">
+                          <h3>{SALE_CHANNEL_LABELS.LISTING}</h3>
+                          <p className="channel-net">
+                            {listQ.net} €
+                            <em className="risky">si un joueur achète</em>
+                          </p>
+                          <label className="ask-field">
+                            <span>Votre prix (€ / {GOOD_DEFS[item.itemCode as TradeGood]?.unit ?? "t"})</span>
+                            <input
+                              type="number"
+                              min={1}
+                              step={1}
+                              value={ask}
+                              onChange={(e) => setAsk(Number(e.target.value))}
+                            />
+                          </label>
+                          <button
+                            type="button"
+                            className="channel-go"
+                            disabled={busy || tons <= 0 || crd < listingFee(ask, tons)}
+                            onClick={() => act("LISTING")}
+                          >
+                            Mettre en vente
+                          </button>
+                          {/* Mettre en vente coûte une commission d'avance :
+                              sans elle, le bouton restait gris sans raison
+                              visible. */}
+                          {tons > 0 && crd < listingFee(ask, tons) && (
+                            <p className="supply-why">
+                              Commission de {listingFee(ask, tons)} € à avancer — il vous en
+                              manque {Math.ceil(listingFee(ask, tons) - crd)}.
+                            </p>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                    {/* Le troisième acheteur, dit comme les deux autres.
+                        « Vendre à tout prix » ne nommait personne : on encaissait
+                        40 % de moins sans savoir que c'était un PNJ de secours,
+                        et on croyait à une panne du marché. */}
+                    {dealerQ && (
+                      <p className="market-rules">
+                        <button
+                          type="button"
+                          className="ghost tiny"
+                          disabled={busy || tons <= 0}
+                          onClick={() => act("DEALER")}
+                        >
+                          {SALE_CHANNEL_LABELS.DEALER} · {dealerQ.net} €
+                        </button>{" "}
+                        <span className="channel-note">{dealerQ.note}</span>
+                      </p>
+                    )}
+                  </>
+                )}
+
+                <DeliveryList
+                  deliveries={deliveries}
+                  busy={busy}
+                  crd={crd}
+                  onDeliverLot={onDeliverLot}
+                  onAutoDeliverLot={onAutoDeliverLot}
+                />
+
+                {mine.length > 0 && (
+                  <section className="hall-block">
+                    <h3>Encore en vitrine</h3>
+                    <div className="sale-grid">
+                      {mine.map((l) => (
+                        <article key={l.id} className="sale-card mine">
+                          <span className="sale-icon" aria-hidden="true">
+                            <GoodIcon code={l.commodity} />
+                          </span>
+                          <div className="sale-body">
+                            <strong>{goodName(l.commodity)}</strong>
+                            <span>{qualityOf(l.commodity, l.tons, l.moisture, l.quality)}</span>
+                            <em>
+                              {l.pricePerTon.toFixed(0)} € · encore{" "}
+                              {Math.max(0, Math.round(l.expiresInMs / 60000))} min
+                            </em>
+                          </div>
+                          <button type="button" disabled={busy} onClick={() => onCancelListing(l.id)}>
+                            Retirer
+                          </button>
+                        </article>
+                      ))}
+                    </div>
+                  </section>
+                )}
+              </>
+            )
+          ) : (
+            <>
+              <p className="hall-lead">
+                Vous payez, puis ça arrive chez vous. Un autre joueur l’apporte, ou vous payez pour
+                le faire venir.
+              </p>
               <DeliveryList
                 deliveries={deliveries}
                 busy={busy}
@@ -563,113 +606,73 @@ export function MarketPanel({
                 onDeliverLot={onDeliverLot}
                 onAutoDeliverLot={onAutoDeliverLot}
               />
-
-              {mine.length > 0 && (
-                <section className="hall-block">
-                  <h3>Encore en vitrine</h3>
-                  <div className="sale-grid">
-                    {mine.map((l) => (
-                      <article key={l.id} className="sale-card mine">
-                        <span className="sale-icon" aria-hidden="true">
-                          <GoodIcon code={l.commodity} />
-                        </span>
-                        <div className="sale-body">
-                          <strong>{goodName(l.commodity)}</strong>
-                          <span>{qualityOf(l.commodity, l.tons, l.moisture, l.quality)}</span>
-                          <em>
-                            {l.pricePerTon.toFixed(0)} € · encore{" "}
-                            {Math.max(0, Math.round(l.expiresInMs / 60000))} min
-                          </em>
-                        </div>
-                        <button type="button" disabled={busy} onClick={() => onCancelListing(l.id)}>
-                          Retirer
+              {others.length === 0 ? (
+                /* Charte §7.7 : un écran vide porte une image, une phrase qui
+                   explique, et l'action à faire — pas une ligne grise seule. */
+                <div className="market-empty">
+                  <img className="market-empty-art" src="/assets/icons/nav/marche.svg" alt="" aria-hidden="true" />
+                  <strong>La vitrine est vide</strong>
+                  <span>
+                    Personne ne vend pour l’instant. Mettez-y votre récolte, ou passez chez le
+                    négociant.
+                  </span>
+                  <button type="button" className="accent-btn" onClick={() => setTab("MORE")}>
+                    Voir le négociant
+                  </button>
+                </div>
+              ) : (
+                <div className="sale-grid catalog">
+                  {others.map((l) => (
+                    <article key={l.id} className="sale-card catalog">
+                      <span className="sale-icon" aria-hidden="true">
+                        <GoodIcon code={l.commodity} />
+                      </span>
+                      <div className="sale-body">
+                        <strong>{goodName(l.commodity)}</strong>
+                        <span>{qualityOf(l.commodity, l.tons, l.moisture, l.quality)}</span>
+                        <em>Chez {l.sellerName}</em>
+                      </div>
+                      <div className="sale-pay">
+                        <strong>{l.total} €</strong>
+                        <em>
+                          {l.pricePerTon.toFixed(0)} € /{" "}
+                          {GOOD_DEFS[l.commodity as TradeGood]?.unit ?? "t"}
+                        </em>
+                        <button
+                          type="button"
+                          className="sale-go"
+                          disabled={busy || crd < l.total}
+                          onClick={() => onBuyListing(l.id)}
+                        >
+                          Acheter
                         </button>
-                      </article>
-                    ))}
-                  </div>
-                </section>
+                        {crd < l.total && (
+                          <em className="supply-why">Il manque {Math.ceil(l.total - crd)} €</em>
+                        )}
+                      </div>
+                    </article>
+                  ))}
+                </div>
+              )}
+              {/* Une phrase entière dans un bouton de vingt-neuf pixels de haut :
+                  ni cliquable au doigt, ni lisible comme une action. La phrase
+                  devient l'explication, le bouton devient court.
+                  Vitrine vide, l'état vide propose déjà le négociant : le
+                  répéter deux fois dans le même écran ne l'aide pas. */}
+              {others.length > 0 && (
+                <p className="hall-more-link">
+                  <span>Besoin de fourrage, ou d’écouler une récolte pas encore mûre ?</span>
+                  <button type="button" className="ghost" onClick={() => setTab("MORE")}>
+                    Voir le négociant
+                  </button>
+                </p>
               )}
             </>
-          )
-        ) : (
-          <>
-            <p className="hall-lead">
-              Vous payez, puis ça arrive chez vous. Un autre joueur l’apporte, ou vous payez pour
-              le faire venir.
-            </p>
-            <DeliveryList
-              deliveries={deliveries}
-              busy={busy}
-              crd={crd}
-              onDeliverLot={onDeliverLot}
-              onAutoDeliverLot={onAutoDeliverLot}
-            />
-            {others.length === 0 ? (
-              /* Charte §7.7 : un écran vide porte une image, une phrase qui
-                 explique, et l'action à faire — pas une ligne grise seule. */
-              <div className="market-empty">
-                <img className="market-empty-art" src="/assets/icons/nav/marche.svg" alt="" aria-hidden="true" />
-                <strong>La vitrine est vide</strong>
-                <span>
-                  Personne ne vend pour l’instant. Mettez-y votre récolte, ou passez chez le
-                  négociant.
-                </span>
-                <button type="button" className="accent-btn" onClick={() => setTab("MORE")}>
-                  Voir le négociant
-                </button>
-              </div>
-            ) : (
-              <div className="sale-grid catalog">
-                {others.map((l) => (
-                  <article key={l.id} className="sale-card catalog">
-                    <span className="sale-icon" aria-hidden="true">
-                      <GoodIcon code={l.commodity} />
-                    </span>
-                    <div className="sale-body">
-                      <strong>{goodName(l.commodity)}</strong>
-                      <span>{qualityOf(l.commodity, l.tons, l.moisture, l.quality)}</span>
-                      <em>Chez {l.sellerName}</em>
-                    </div>
-                    <div className="sale-pay">
-                      <strong>{l.total} €</strong>
-                      <em>
-                        {l.pricePerTon.toFixed(0)} € /{" "}
-                        {GOOD_DEFS[l.commodity as TradeGood]?.unit ?? "t"}
-                      </em>
-                      <button
-                        type="button"
-                        className="sale-go"
-                        disabled={busy || crd < l.total}
-                        onClick={() => onBuyListing(l.id)}
-                      >
-                        Acheter
-                      </button>
-                      {crd < l.total && (
-                        <em className="supply-why">Il manque {Math.ceil(l.total - crd)} €</em>
-                      )}
-                    </div>
-                  </article>
-                ))}
-              </div>
-            )}
-            {/* Une phrase entière dans un bouton de vingt-neuf pixels de haut :
-                ni cliquable au doigt, ni lisible comme une action. La phrase
-                devient l'explication, le bouton devient court.
-                Vitrine vide, l'état vide propose déjà le négociant : le
-                répéter deux fois dans le même écran ne l'aide pas. */}
-            {others.length > 0 && (
-              <p className="hall-more-link">
-                <span>Besoin de fourrage, ou d’écouler une récolte pas encore mûre ?</span>
-                <button type="button" className="ghost" onClick={() => setTab("MORE")}>
-                  Voir le négociant
-                </button>
-              </p>
-            )}
-          </>
-        )}
+          )}
+          </div>
         </div>
       </div>
-    </div>
+    </Portail>
   );
 }
 
