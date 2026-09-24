@@ -44,7 +44,7 @@
  * et elle est la même à chaque rechargement.
  */
 
-import { COTE_MAX, TAILLES_PARCELLE, type Season } from "@farmsim/shared";
+import { COTE_MAX, GRILLE_STANDARD, TAILLES_PARCELLE, type Season } from "@farmsim/shared";
 
 /** Ce qu'on voit dans une parcelle voisine. */
 export type EtatChamp =
@@ -229,6 +229,14 @@ export type PlanCampagne = {
   emprise: number;
   /** L'ordonnée du chemin : il court parallèlement à l'axe des `x`. */
   routeZ: number;
+  /**
+   * Le quart de tour appliqué à la carte.
+   *
+   * Exposé pour qu'on puisse le **reprendre** : quand le joueur passe d'une de
+   * ses parcelles à une autre, la carte doit garder son orientation, sans quoi
+   * le paysage pivoterait sous ses yeux au lieu de simplement glisser.
+   */
+  quart: 0 | 1 | 2 | 3;
 };
 
 export type OptionsPlan = {
@@ -263,6 +271,31 @@ export type OptionsPlan = {
    * que la vue se monte sans réseau.
    */
   voisins?: readonly VoisinReel[];
+  /**
+   * Imposer le quart de tour plutôt que le choisir.
+   *
+   * Passer d'une de ses parcelles à la voisine ne doit être qu'une
+   * **translation** du paysage : la même terre sous le même pixel. Si la carte
+   * choisissait à nouveau son orientation autour de la nouvelle parcelle, elle
+   * pourrait tourner d'un quart, et plus rien ne serait à sa place.
+   */
+  quart?: 0 | 1 | 2 | 3;
+  /**
+   * L'ordonnée du chemin, quand l'appelant la connaît mieux que le plan.
+   *
+   * Le chemin se cale sous la cour, et la cour est celle du **siège** de la
+   * ferme — pas forcément de la parcelle active. Calculé autour de la parcelle
+   * active, il sautait d'un rang dès qu'on en changeait.
+   */
+  routeZ?: number;
+  /**
+   * L'identifiant du siège de la ferme, là où est la cour.
+   *
+   * La cour mord volontairement le bord de sa parcelle — c'est son chemin
+   * d'accès. Sans cette exception, le siège ne se dessinerait plus dès qu'on
+   * travaille sur une autre de ses parcelles : sa propre cour le recouvre.
+   */
+  maison?: string;
 };
 
 /* ------------------------------------------------------------------ */
@@ -588,7 +621,9 @@ export function couloirRoute(o: OptionsPlan, pasTrame?: number): number {
  * donc pas d'un rafraîchissement à l'autre, et le pays ne pivote pas sous les
  * pieds.
  */
-export function orientationTrame(cases: readonly { col: number; rang: number }[]): 0 | 1 | 2 | 3 {
+export function orientationTrame(
+  cases: readonly { col: number; rang: number; statut?: string }[],
+): 0 | 1 | 2 | 3 {
   let meilleur: 0 | 1 | 2 | 3 = 0;
   let record = -1;
   for (const quart of [0, 1, 2, 3] as const) {
@@ -596,7 +631,28 @@ export function orientationTrame(cases: readonly { col: number; rang: number }[]
     for (const c of cases) {
       const t = tourner(c, quart);
       if (t.col === 0 && t.rang === 0) continue;
-      if (t.col + t.rang >= 0) vus++;
+      /*
+       * La case sous la cour est interdite à ses parcelles.
+       *
+       * La cour déborde de l'île vers l'ouest — c'est par là qu'on entre — et
+       * mord la case `(-1, 0)` de la trame. Une parcelle du joueur tournée là
+       * serait recouverte par son propre parking, donc pas dessinée : c'est
+       * la pire des orientations pour elle, pire encore que l'amont.
+       */
+      if (c.statut === "MOI" && t.col === -1 && t.rang === 0) {
+        vus -= 1000;
+        continue;
+      }
+      if (t.col + t.rang < 0) continue;
+      /*
+       * Ses propres parcelles d'abord, et de loin.
+       *
+       * Un joueur qui achète la parcelle d'à côté doit la **voir** : c'est
+       * elle qu'il vient chercher à l'écran. Compter chacune pour cent voisins
+       * fait qu'aucun gain sur le nombre de parcelles étrangères visibles ne
+       * peut justifier de reléguer l'une des siennes en amont, hors du cadre.
+       */
+      vus += c.statut === "MOI" ? 100 : 1;
     }
     if (vus > record) {
       record = vus;
@@ -665,11 +721,43 @@ export function planCampagne(o: OptionsPlan): PlanCampagne {
     o.pasCase && gridW && gridH ? coteDeGrille(gridW, gridH, o.pasCase) : emprise;
   const colonnes = o.colonnes ?? 3;
   const rangs = o.rangs ?? 3;
-  const horizon = o.horizon ?? horizonPour(emprise);
+  /*
+   * La lisière se compte depuis une parcelle **standard**, pas depuis l'île
+   * active : passer d'une 12×12 à une 16×16 de sa ferme ne doit pas faire
+   * reculer le bois. Sans échelle de case (le décor sans réseau), c'est
+   * l'emprise du joueur, comme avant.
+   */
+  const horizon =
+    o.horizon ??
+    horizonPour(
+      o.pasCase ? coteDeGrille(GRILLE_STANDARD.w, GRILLE_STANDARD.h, o.pasCase) : emprise,
+    );
   const rnd = suite(grainerDe(o.graine));
 
-  const sol: EmpriseSol = { uMin: -horizon, uMax: SOL_AVAL, vMax: SOL_LARGEUR };
-  const routeZ = couloirRoute(o, pas);
+  const quart: 0 | 1 | 2 | 3 = o.quart ?? (o.voisins ? orientationTrame(o.voisins) : 0);
+
+  /*
+   * La lisière recule au-dessus de la plus haute des parcelles du joueur.
+   *
+   * La trame ne montrait que l'aval : en amont de la parcelle active, un pré
+   * puis le bois, et rien d'autre. Une parcelle achetée qui tombait de ce
+   * côté-là n'était **tout simplement pas dessinée** — le joueur payait une
+   * terre et ne la trouvait nulle part dans le paysage.
+   *
+   * On garde la même bande de pré et de bois, mais comptée depuis la plus
+   * haute de ses parcelles au lieu de la seule parcelle active. Une ferme qui
+   * ne s'étend pas vers l'amont garde exactement le paysage d'avant.
+   */
+  let uMaison = 0;
+  for (const v of o.voisins ?? []) {
+    if (v.statut !== "MOI" || (v.col === 0 && v.rang === 0)) continue;
+    const t = tourner(v, quart);
+    uMaison = Math.min(uMaison, versEcranBas(t.col * pas, t.rang * pas));
+  }
+  const sol: EmpriseSol = { uMin: uMaison - horizon, uMax: SOL_AVAL, vMax: SOL_LARGEUR };
+  /** Où s'arrêtaient les terres des autres — la lisière d'avant. */
+  const lisiereEtrangers = -horizon;
+  const routeZ = o.routeZ ?? couloirRoute(o, pas);
   const cour: Boite = { ...o.cour };
   const joueur: Boite = { x: 0, z: 0, w: emprise, d: emprise };
 
@@ -683,12 +771,16 @@ export function planCampagne(o: OptionsPlan): PlanCampagne {
    * coin dépasse la lisière se terminerait dans le vide, et l'on verrait la
    * tranche du monde par-dessus.
    */
-  const posable = (x: number, z: number, cote: number): boolean => {
+  const posable = (x: number, z: number, cote: number, aMoi = false, estMaison = false): boolean => {
     const boite: Boite = { x, z, w: cote, d: cote };
-    if (versEcranBas(x, z) - cote < sol.uMin) return false;
+    // En amont, seules les parcelles du joueur passent la lisière d'avant :
+    // les siennes doivent se voir, celles des autres n'ont pas à envahir le
+    // pré ni à manger le ciel.
+    if (versEcranBas(x, z) - cote < (aMoi ? sol.uMin : lisiereEtrangers)) return false;
     if (versEcranBas(x, z) + cote > sol.uMax - MARGE_LISIERE) return false;
     if (Math.abs(versEcranDroite(x, z)) + cote > sol.vMax - MARGE_LISIERE) return false;
-    if (seChevauchent(boite, cour, 0.4)) return false;
+    // Le siège est exempté : sa cour mord volontairement son bord.
+    if (!estMaison && seChevauchent(boite, cour, 0.4)) return false;
     if (seChevauchent(boite, joueur, 0.4)) return false;
     // Le chemin passe dans un couloir de trame : une parcelle ne peut pas y
     // être, mais on le vérifie plutôt que de le supposer.
@@ -704,7 +796,6 @@ export function planCampagne(o: OptionsPlan): PlanCampagne {
      * prix. Là où la commune s'arrête, il n'y a pas de parcelle : c'est ce qui
      * donne au pays un bord crédible plutôt qu'un damier sans fin.
      */
-    const quart = orientationTrame(o.voisins);
     for (const brut of o.voisins) {
       if (brut.col === 0 && brut.rang === 0) continue;
       const v = brut;
@@ -712,7 +803,7 @@ export function planCampagne(o: OptionsPlan): PlanCampagne {
       const x = col * pas;
       const z = rang * pas;
       const cote = coteDe(v.gridW, v.gridH);
-      if (!posable(x, z, cote)) continue;
+      if (!posable(x, z, cote, v.statut === "MOI", v.id === o.maison)) continue;
       const grain = suite(grainerDe(v.id));
       parcelles.push({
         id: v.id,
@@ -883,5 +974,5 @@ export function planCampagne(o: OptionsPlan): PlanCampagne {
     );
   }
 
-  return { parcelles, route, desserte, arbres, sol, pas, emprise, routeZ };
+  return { parcelles, route, desserte, arbres, sol, pas, emprise, routeZ, quart };
 }

@@ -588,6 +588,37 @@ export function createCountryside(o: OptionsCampagne): Campagne {
   const casesDe = (p: { cote: number }): number =>
     Math.max(1, Math.round((p.cote - TALUS_PARCELLE) / pasCase));
 
+  /**
+   * Ce qui est à vous, et ce qui ne l'est pas — lisible d'un coup d'œil.
+   *
+   * Toute la campagne avait la même luminosité et le même habillage : on ne
+   * distinguait pas sa propre terre de celle du voisin, ni une parcelle à
+   * vendre d'une parcelle tenue. Trois signes, et jamais la couleur seule
+   * — elle ne suffit pas à tout le monde :
+   *
+   *  - **chez vous**, pleine lumière, et **surélevée** comme la parcelle où
+   *    vous travaillez : son talus de terre se voit sur les côtés. Les terres
+   *    des autres restent à fleur du sol. C'est une forme — elle se lit même
+   *    sans distinguer les couleurs ;
+   *  - **ailleurs**, le terrain légèrement assombri (`ATTENUATION`). Assez
+   *    pour que votre ferme ressorte, pas assez pour éteindre le paysage ;
+   *  - **à vendre**, un piquet de bois et sa pancarte au coin du champ.
+   *    Une forme, pas seulement une teinte.
+   */
+  const ATTENUATION = -0.11;
+  const estChezMoi = (p: ParcelleVoisine) => p.reel?.statut === "MOI";
+  /**
+   * De combien lever une de ses parcelles pour l'aligner sur l'île.
+   *
+   * La campagne est posée sous l'île (`y0`), pour que l'île garde son talus
+   * au lieu de flotter. Une case d'île est centrée à l'altitude zéro et a la
+   * même épaisseur qu'une case de campagne : lever de `-y0` met donc les deux
+   * exactement au même niveau, talus compris.
+   */
+  const levee = (p: ParcelleVoisine) => (estChezMoi(p) ? -y0 : 0);
+  const teinter = (hex: number, p: ParcelleVoisine) =>
+    estChezMoi(p) ? hex : eclaircir(hex, ATTENUATION);
+
   /*
    * Les bâtiments du cadastre, une fois, partout.
    *
@@ -614,7 +645,7 @@ export function createCountryside(o: OptionsCampagne): Campagne {
       });
       for (const rig of rigs) {
         rig.group.position.x += p.x;
-        rig.group.position.y += y0 + HAUT_CASE;
+        rig.group.position.y += y0 + levee(p) + HAUT_CASE;
         rig.group.position.z += p.z;
         groupeBatiments.add(rig.group);
         rigsBatiments.push(rig);
@@ -634,6 +665,7 @@ export function createCountryside(o: OptionsCampagne): Campagne {
    */
   const detailles = new Map<string, VoisinDetaille>();
   let clefDetail = "";
+
 
   function poserParcelles(jour: number, saison: Season): void {
     if (jour === jourPose && saison === saisonPosee) return;
@@ -666,9 +698,10 @@ export function createCountryside(o: OptionsCampagne): Campagne {
 
       // Le talus de terre qui porte le champ — la plateforme de l'île, à
       // l'identique, et posée sous la surface plutôt qu'au travers.
+      const dy = levee(p);
       ajouterBoite(
-        pos, col, p.x, y0 + DALLE_HAUT - DALLE_EP / 2, p.z,
-        emprise, DALLE_EP, emprise, TERRE_DALLE,
+        pos, col, p.x, y0 + dy + DALLE_HAUT - DALLE_EP / 2, p.z,
+        emprise, DALLE_EP, emprise, teinter(TERRE_DALLE, p),
       );
 
       /*
@@ -692,18 +725,18 @@ export function createCountryside(o: OptionsCampagne): Campagne {
           const cz = p.z + o0 + k * pasCase;
           // Une teinte par case, très légèrement différente : un aplat parfait
           // se lit comme une nappe, pas comme un champ.
-          teinte.setHex(eclaircir(base, (grain() - 0.5) * 0.12));
+          teinte.setHex(teinter(eclaircir(base, (grain() - 0.5) * 0.12), p));
           if (sobre) {
             quad(
               pos, col,
-              [cx - demi, y0 + CASE_EP / 2, cz - demi],
-              [cx + demi, y0 + CASE_EP / 2, cz - demi],
-              [cx + demi, y0 + CASE_EP / 2, cz + demi],
-              [cx - demi, y0 + CASE_EP / 2, cz + demi],
+              [cx - demi, y0 + dy + CASE_EP / 2, cz - demi],
+              [cx + demi, y0 + dy + CASE_EP / 2, cz - demi],
+              [cx + demi, y0 + dy + CASE_EP / 2, cz + demi],
+              [cx - demi, y0 + dy + CASE_EP / 2, cz + demi],
               teinte,
             );
           } else {
-            ajouterBoite(pos, col, cx, y0, cz, taille, CASE_EP, taille, teinte.getHex());
+            ajouterBoite(pos, col, cx, y0 + dy, cz, taille, CASE_EP, taille, teinte.getHex());
           }
         }
       }
@@ -731,20 +764,46 @@ export function createCountryside(o: OptionsCampagne): Campagne {
            sans devenir le mât qu'on remarque avant la culture. */
         const bx = p.x + emprise / 2 - 0.7;
         const bz = p.z + emprise / 2 - 0.7;
-        ajouterBoite(pos, col, bx, y0 + 0.43, bz, 0.15, 0.86, 0.15, 0x6b5a3a);
-        ajouterBoite(pos, col, bx, y0 + 0.93, bz, 0.3, 0.22, 0.3, 0xf0d27a);
+        ajouterBoite(pos, col, bx, y0 + dy + 0.43, bz, 0.15, 0.86, 0.15, 0x6b5a3a);
+        ajouterBoite(pos, col, bx, y0 + dy + 0.93, bz, 0.3, 0.22, 0.3, 0xf0d27a);
       }
 
-      // La haie, sur les quatre bords, à la hauteur de celle de l'île.
+      // La haie, sur les quatre bords, à la hauteur de celle de l'île — et
+      // levée avec la parcelle quand elle est au joueur.
       const bordHaie = (emprise - 0.5) / 2;
-      const ep = 0.28;
-      for (const [dx, dz, w, dd] of [
-        [0, -bordHaie, bordHaie * 2, ep],
-        [0, bordHaie, bordHaie * 2, ep],
-        [-bordHaie, 0, ep, bordHaie * 2],
-        [bordHaie, 0, ep, bordHaie * 2],
-      ] as const) {
-        ajouterBoite(pos, col, p.x + dx, y0 + 0.15, p.z + dz, w, 0.55, dd, HAIE);
+      {
+        const ep = 0.28;
+        for (const [dx, dz, w, dd] of [
+          [0, -bordHaie, bordHaie * 2, ep],
+          [0, bordHaie, bordHaie * 2, ep],
+          [-bordHaie, 0, ep, bordHaie * 2],
+          [bordHaie, 0, ep, bordHaie * 2],
+        ] as const) {
+          ajouterBoite(pos, col, p.x + dx, y0 + dy + 0.15, p.z + dz, w, 0.55, dd, teinter(HAIE, p));
+        }
+      }
+
+      /*
+       * À vendre : un piquet et sa pancarte, au coin du champ.
+       *
+       * Posé au coin tourné vers la caméra — celui des `x` et `z` positifs —
+       * pour qu'il se voie sans masquer la parcelle. Le bois reprend le brun
+       * des clôtures de la cour ; la pancarte, le crème des étiquettes du jeu.
+       * Pleine lumière même sur un terrain assombri : c'est une invitation,
+       * elle doit ressortir.
+       */
+      if (p.reel?.achetable) {
+        const coin = bordHaie - 0.35;
+        const px = p.x + coin;
+        const pz = p.z + coin;
+        const BOIS = 0x7a5534;
+        const PANCARTE = 0xf2e6c4;
+        const LISERE = 0xc9542e;
+        // À l'échelle d'un champ de douze cases, vu de trente unités : en deçà
+        // d'un mètre et demi de haut, la pancarte se perdait dans le damier.
+        ajouterBoite(pos, col, px, y0 + 0.85, pz, 0.18, 1.7, 0.18, BOIS);
+        ajouterBoite(pos, col, px, y0 + 1.55, pz + 0.05, 1.45, 0.8, 0.1, PANCARTE);
+        ajouterBoite(pos, col, px, y0 + 1.92, pz + 0.06, 1.45, 0.12, 0.11, LISERE);
       }
 
       /*
@@ -783,7 +842,7 @@ export function createCountryside(o: OptionsCampagne): Campagne {
             ajouterBete(
               pos, col,
               p.x + Math.cos(a) * r,
-              y0 + CASE_EP / 2,
+              y0 + dy + CASE_EP / 2,
               p.z + Math.sin(a) * r,
               grain() * Math.PI * 2,
               troupeau.kind,
@@ -806,10 +865,23 @@ export function createCountryside(o: OptionsCampagne): Campagne {
   {
     const pos: number[] = [];
     const col: number[] = [];
-    const bitume = new THREE.Color(0x53535a);
-    const accotement = new THREE.Color(0x8e9a6a);
-    const ligne = new THREE.Color(0xdedac9);
-    const gravier = new THREE.Color(0xb5a687);
+    /*
+     * Un chemin de terre, plus une route départementale.
+     *
+     * C'était un bitume gris-noir coupé d'une médiane blanche en pointillés :
+     * le seul noir et le seul blanc francs de tout le paysage, là où la ferme
+     * ne parle qu'en bruns, en crèmes et en verts. L'œil allait droit dessus.
+     *
+     * Le chemin reprend la terre du talus, éclaircie par le passage, avec deux
+     * ornières plus sombres et une bande d'herbe au milieu — celle que les
+     * roues ne touchent jamais. Même tracé, même largeur : seul l'habit
+     * change, et rien de ce qui s'appuie sur la route ne bouge.
+     */
+    const bitume = new THREE.Color(0xc2a479);
+    const accotement = new THREE.Color(0x98ab68);
+    const ligne = new THREE.Color(0xa3b06f);
+    const orniere = new THREE.Color(0xb39570);
+    const gravier = new THREE.Color(0xcdb58a);
 
     /**
      * Un ruban posé au sol le long d'une polyligne.
@@ -857,16 +929,28 @@ export function createCountryside(o: OptionsCampagne): Campagne {
     ruban(pointsRoute, DEMI_ROUTE - 0.5, y0 + 0.03, bitume, accotement);
     ruban(plan.desserte, 1.0, y0 + 0.025, gravier, null);
 
-    // La médiane, en pointillés : deux mètres de trait, trois de vide.
+    // Les deux ornières, là où passent les roues.
+    for (const cote of [-1, 1]) {
+      const decale = pointsRoute.map((pt, i) => {
+        const a = pointsRoute[Math.max(0, i - 1)]!;
+        const b = pointsRoute[Math.min(pointsRoute.length - 1, i + 1)]!;
+        const l = Math.hypot(b.x - a.x, b.z - a.z) || 1;
+        return { x: pt.x + (-(b.z - a.z) / l) * 0.27 * cote, z: pt.z + ((b.x - a.x) / l) * 0.27 * cote };
+      });
+      ruban(decale, 0.1, y0 + 0.035, orniere, null);
+    }
+
+    // La bande d'herbe entre les ornières, en touffes : deux mètres d'herbe,
+    // un de terre nue. Une bande continue se lirait comme une ligne peinte.
     const total = longueurs[longueurs.length - 1]!;
-    for (let s = 2; s < total - 2; s += 5) {
+    for (let s = 2; s < total - 2; s += 3) {
       const a = surLaRoute(pointsRoute, longueurs, s);
       const b = surLaRoute(pointsRoute, longueurs, s + 2);
       const dx = b.x - a.x;
       const dz = b.z - a.z;
       const l = Math.hypot(dx, dz) || 1;
       const nn = { x: -dz / l, z: dx / l };
-      const k = 0.08;
+      const k = 0.13;
       const c = (p: { x: number; z: number }, signe: number): [number, number, number] => [
         p.x + nn.x * k * signe,
         y0 + 0.04,
@@ -1193,7 +1277,7 @@ export function createCountryside(o: OptionsCampagne): Campagne {
         parcelle: p,
         emprise: p.cote,
         cases: casesDe(p),
-        y: y0 + HAUT_CASE,
+        y: y0 + levee(p) + HAUT_CASE,
         shadows,
         sobre,
         batiments: false,
