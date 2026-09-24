@@ -111,57 +111,50 @@ function OutilTray({ actif, options }: { actif: string; options: string[] }) {
 type Lieu = "cooperative" | "concession" | "mairie";
 
 /**
- * Le village, tel qu'on le voit au bord de la route : les trois bâtiments
- * utiles, leur plaque, et celui dont parle l'étape qui s'éclaire. Le doigt va
- * le toucher, puis la fenêtre qu'il ouvre apparaît — le geste entier, pas
- * seulement son résultat.
+ * Où tombe chaque bâtiment sur la capture du village, en unités de scène :
+ * le pied du bâtiment (halo) et le point que le doigt vient toucher.
+ */
+const LIEUX: Record<Lieu, { nom: string; x: number; y: number; sol: number }> = {
+  cooperative: { nom: "Coopérative", x: 27, y: 42, sol: 52 },
+  concession: { nom: "Concession", x: 79, y: 44, sol: 53 },
+  mairie: { nom: "Mairie", x: 131, y: 43, sol: 53 },
+};
+
+/**
+ * Le village tel qu'il est dans le jeu — une vraie capture, pas un dessin.
+ * Les deux autres bâtiments s'effacent sous un voile, celui de l'étape
+ * s'éclaire, le doigt le touche, puis la fenêtre qu'il ouvre apparaît : le
+ * geste entier, pas seulement son résultat.
  */
 function EcranVillage({ lieu, tactile, children }: { lieu: Lieu; tactile: boolean; children: ReactNode }) {
-  const on = (l: Lieu) => (l === lieu ? "tuto-lieu on" : "tuto-lieu");
+  const l = LIEUX[lieu];
   return (
     <>
       <rect className="tuto-screen" x="1" y="1" width="158" height="102" rx="10" />
       <MiniHud />
-      <rect className="tuto-farm" x="5" y="18" width="150" height="58" rx="7" />
-      <path className="tuto-village-route" d="M5 66H155" />
-      <g className={on("cooperative")}>
-        <ellipse className="tuto-lieu-halo" cx="29" cy="58" rx="21" ry="5" />
-        <rect className="coop-hangar" x="12" y="44" width="30" height="13" rx="1" />
-        <path className="coop-toit" d="M10 45l17-6 17 6z" />
-        {[15, 23, 31].map((x) => (
-          <g key={x} className="coop-silo"><rect x={x} y="27" width="7" height="17" rx="1" /><path d={`M${x - 0.6} 27.4l4.1-4.4 4.1 4.4z`} /></g>
-        ))}
-        <rect className="coop-tour" x="40" y="19" width="4" height="38" />
-        <rect className="coop-tete" x="39" y="17" width="6" height="4" />
+      <defs>
+        <clipPath id={`tuto-village-cadre-${lieu}`}>
+          <rect x="5" y="18" width="150" height="58" rx="7" />
+        </clipPath>
+        {/* Un trou aux bords fondus : un cercle net faisait projecteur. */}
+        <radialGradient id={`tuto-village-fondu-${lieu}`}>
+          <stop offset="0.55" stopColor="#000" />
+          <stop offset="1" stopColor="#fff" />
+        </radialGradient>
+        <mask id={`tuto-village-trou-${lieu}`}>
+          <rect x="0" y="0" width="160" height="104" fill="#fff" />
+          <ellipse cx={l.x} cy={l.y + 2} rx="30" ry="23" fill={`url(#tuto-village-fondu-${lieu})`} />
+        </mask>
+      </defs>
+      <g clipPath={`url(#tuto-village-cadre-${lieu})`}>
+        <image href="/assets/tuto/village.webp" x="5" y="18" width="150" height="58" preserveAspectRatio="xMidYMid slice" />
+        <rect className="tuto-village-voile" x="5" y="18" width="150" height="58" mask={`url(#tuto-village-trou-${lieu})`} />
       </g>
-      <g className={on("concession")}>
-        <ellipse className="tuto-lieu-halo" cx="80" cy="58" rx="22" ry="5" />
-        <rect className="conc-vitre" x="62" y="34" width="36" height="22" rx="1" />
-        <path className="conc-meneaux" d="M71 38v18M80 38v18M89 38v18" />
-        <rect className="conc-bandeau" x="61" y="31" width="38" height="5" rx="1" />
-        <rect className="conc-liseret" x="61" y="35" width="38" height="1.2" />
-        <g className="conc-tracteur"><rect x="68" y="47" width="9" height="5" rx="1" /><rect x="74" y="44" width="4" height="4" /><circle cx="70" cy="53" r="2.4" /><circle cx="76.5" cy="53.3" r="1.7" /></g>
-        <path className="conc-drapeau" d="M101 56V33m0 0h5l-1.5 2 1.5 2h-5" />
+      <ellipse className="tuto-village-halo" cx={l.x} cy={l.sol} rx="22" ry="7" />
+      <g className="tuto-village-nom">
+        <rect x={l.x - 17} y="20.5" width="34" height="7" rx="3.5" />
+        <Texte x={l.x} y={25.4} classe="village-nom">{l.nom.toUpperCase()}</Texte>
       </g>
-      <g className={on("mairie")}>
-        <ellipse className="tuto-lieu-halo" cx="130" cy="58" rx="22" ry="5" />
-        <rect className="mairie-corps" x="112" y="33" width="36" height="23" rx="0.6" />
-        <path className="mairie-toit" d="M110 34l4-6h32l4 6z" />
-        <path className="mairie-fronton" d="M123 33l7-6 7 6z" />
-        <rect className="mairie-tour" x="126.5" y="17" width="7" height="11" />
-        <path className="mairie-toit" d="M125.5 17.5l4.5-5 4.5 5z" />
-        <circle className="mairie-horloge" cx="130" cy="22.5" r="2.4" />
-        <path className="mairie-aiguilles" d="M130 22.5v-1.6M130 22.5h1.2" />
-        {[115, 120, 138, 143].flatMap((x) => [36.5, 45].map((y) => <rect key={`${x}-${y}`} className="mairie-fenetre" x={x} y={y} width="3" height="5" />))}
-        <rect className="mairie-porte" x="127.5" y="47" width="5" height="9" rx="2.4" />
-        <path className="mairie-perron" d="M125 56h10v1.6h-10z" />
-      </g>
-      {([["cooperative", 29, "COOPÉRATIVE"], ["concession", 80, "CONCESSION"], ["mairie", 130, "MAIRIE"]] as const).map(([l, x, nom]) => (
-        <g key={l} className={`tuto-plaque${l === lieu ? " on" : ""}`}>
-          <rect x={x - 15} y="68.5" width="30" height="6" rx="2" />
-          <Texte x={x} y={72.9} classe="plaque-label">{nom}</Texte>
-        </g>
-      ))}
       <Curseur tactile={tactile} classe={`vers-${lieu}`} />
       <g className="tuto-lieu-fenetre">{children}</g>
       <Dock />

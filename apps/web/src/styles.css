@@ -7929,7 +7929,7 @@ button.tiny {
 .grain-route { fill: none; stroke: #e6b938; stroke-width: 1.5; stroke-dasharray: 3 2; animation: tuto-grain 1.2s linear infinite; }
 @keyframes tuto-grain { to { stroke-dashoffset: -10; } }
 
-.tuto-market > rect:first-child, .tuto-herd-card > rect:first-child, .tuto-staff > rect:first-child { fill: rgba(249,252,249,0.97); stroke: #b4cbbd; stroke-width: 0.7; }
+.tuto-market > rect:first-child, .tuto-herd-card > rect:first-child, .tuto-staff > rect:first-child { fill: #f9fcf9; stroke: #b4cbbd; stroke-width: 0.7; }
 .tuto-market polyline { fill: none; stroke: #397d6b; stroke-width: 1.5; stroke-linejoin: round; stroke-dasharray: 160; animation: tuto-trace 4s ease-in-out infinite; }
 .tuto-market circle { fill: #e0ad2d; }
 .tuto-market rect:not(:first-child), .tuto-staff g rect { fill: #307d6b; }
@@ -7953,53 +7953,27 @@ button.tiny {
 .tuto-txt.staff-name { fill: #214c3f; font-size: 4.5px; }
 .tuto-txt.staff-detail { fill: #687d74; font-size: 3.2px; font-weight: 600; }
 
-/* Le village : trois bâtiments au bord de la route, celui de l'étape
-   s'éclaire, le doigt le touche, sa fenêtre s'ouvre. */
-.tuto-village-route { fill: none; stroke: #e0c996; stroke-width: 5; opacity: 0.9; }
-.tuto-lieu { opacity: 0.55; }
-.tuto-lieu.on { opacity: 1; }
-.tuto-lieu-halo { fill: none; stroke: transparent; stroke-width: 1.2; }
-.tuto-lieu.on .tuto-lieu-halo { stroke: #f2c230; animation: tuto-halo-lieu 5s ease-in-out infinite; }
-@keyframes tuto-halo-lieu { 0%, 100% { opacity: 0.35; } 20%, 45% { opacity: 1; } }
-.coop-hangar { fill: #e8dcc2; stroke: #8e7a5a; stroke-width: 0.5; }
-.coop-toit { fill: #4e8a5a; }
-.coop-silo rect { fill: #d8dfe0; stroke: #7d8b8e; stroke-width: 0.5; }
-.coop-silo path { fill: #a9b6b8; }
-.coop-tour { fill: #c9cfcf; stroke: #7d8b8e; stroke-width: 0.4; }
-.coop-tete { fill: #b3431f; }
-.conc-vitre { fill: #9fd0e3; stroke: #5e8795; stroke-width: 0.5; }
-.conc-meneaux { fill: none; stroke: #eef6f8; stroke-width: 0.6; }
-.conc-bandeau { fill: #2f7d4a; }
-.conc-liseret { fill: #f2c230; }
-.conc-tracteur rect { fill: #c8402f; }
-.conc-tracteur circle { fill: #2b2b2b; }
-.conc-drapeau { fill: #f2c230; stroke: #6b6b6b; stroke-width: 0.5; }
-.mairie-corps { fill: #f1e6cc; stroke: #a8946b; stroke-width: 0.5; }
-.mairie-toit { fill: #5d6b7a; }
-.mairie-fronton { fill: #e6d7b4; stroke: #a8946b; stroke-width: 0.5; }
-.mairie-tour { fill: #f1e6cc; stroke: #a8946b; stroke-width: 0.5; }
-.mairie-horloge { fill: #fffdf5; stroke: #4a4a4a; stroke-width: 0.5; }
-.mairie-aiguilles { fill: none; stroke: #2b2b2b; stroke-width: 0.5; stroke-linecap: round; }
-.mairie-fenetre { fill: #7fa8bd; stroke: #6f93a8; stroke-width: 0.5; }
-.mairie-porte { fill: #7a4a2c; }
-.mairie-perron { fill: #c9bfae; }
-.tuto-plaque rect { fill: #f7f0dc; stroke: #b9a88f; stroke-width: 0.5; opacity: 0.7; }
-.tuto-plaque.on rect { fill: #fff8e3; stroke: #2f7d4a; stroke-width: 0.8; opacity: 1; }
-.tuto-txt.plaque-label { font-size: 3px; fill: #6b5a3f; font-weight: 900; letter-spacing: 0.05em; }
-.tuto-plaque.on .plaque-label { fill: #2f7d4a; }
+/* Le village : la capture du jeu, un voile sur les bâtiments dont l'étape
+   ne parle pas, un halo sous celui dont elle parle. */
+.tuto-village-voile { fill: rgba(16, 42, 32, 0.34); }
+.tuto-village-halo { fill: none; stroke: #f2c230; stroke-width: 1.3; animation: tuto-halo-lieu 5s ease-in-out infinite; }
+@keyframes tuto-halo-lieu { 0%, 100% { opacity: 0.4; } 20%, 45% { opacity: 1; } }
+.tuto-village-nom rect { fill: #fff8e3; stroke: #2f7d4a; stroke-width: 0.7; filter: drop-shadow(0 1px 1.5px rgba(16, 51, 41, 0.3)); }
+.tuto-txt.village-nom { font-size: 3.4px; fill: #2f7d4a; font-weight: 900; letter-spacing: 0.06em; }
 .tuto-curseur.vers-cooperative { animation: tuto-vers-coop 5s ease-in-out infinite; }
-@keyframes tuto-vers-coop { 0%, 10% { transform: translate(80px, 88px); } 40%, 100% { transform: translate(29px, 48px); } }
+@keyframes tuto-vers-coop { 0%, 10% { transform: translate(80px, 88px); } 40%, 100% { transform: translate(28px, 45px); } }
 .tuto-curseur.vers-concession { animation: tuto-vers-concession 5s ease-in-out infinite; }
-@keyframes tuto-vers-concession { 0%, 10% { transform: translate(40px, 88px); } 40%, 100% { transform: translate(80px, 46px); } }
+@keyframes tuto-vers-concession { 0%, 10% { transform: translate(40px, 88px); } 40%, 100% { transform: translate(79px, 45px); } }
 .tuto-curseur.vers-mairie { animation: tuto-vers-mairie 5s ease-in-out infinite; }
-@keyframes tuto-vers-mairie { 0%, 10% { transform: translate(80px, 88px); } 40%, 100% { transform: translate(130px, 45px); } }
+@keyframes tuto-vers-mairie { 0%, 10% { transform: translate(80px, 88px); } 40%, 100% { transform: translate(131px, 46px); } }
 .tuto-lieu-fenetre { opacity: 0; animation: tuto-fenetre-lieu 5s ease-out infinite; transform-origin: 80px 46px; }
 @keyframes tuto-fenetre-lieu {
   0%, 48% { opacity: 0; transform: scale(0.92); }
   56%, 94% { opacity: 1; transform: scale(1); }
   100% { opacity: 0; transform: scale(1); }
 }
-.tuto-carte > rect:first-child { fill: rgba(249,252,249,0.97); stroke: #b4cbbd; stroke-width: 0.7; }
+.tuto-carte > rect:first-child { fill: #f9fcf9; stroke: #b4cbbd; stroke-width: 0.7; }
+.tuto-lieu-fenetre > g > rect:first-child { filter: drop-shadow(0 2px 3px rgba(16, 51, 41, 0.35)); }
 .tuto-carte .tuto-bouton { fill: #307d6b; }
 .garage-jauge-fond { fill: #dbe4dc; }
 .garage-jauge { fill: #4ba06d; }
