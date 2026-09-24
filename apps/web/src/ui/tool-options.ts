@@ -41,6 +41,17 @@ export const TOOL_GROUPS: ToolGroupDef[] = [
   { id: "SELL", label: "Ventes", icon: "/assets/icons/nav/marche.svg", hotkey: "5" },
 ];
 
+/**
+ * Les familles que montrent le dock et le rail.
+ *
+ * « Ventes » n'y figure plus : on vend à la coopérative du village, comme on
+ * répare à la concession et on prend ses missions à la mairie. Un bouton qui
+ * double un bâtiment apprend au joueur à ignorer le bâtiment. La famille
+ * reste au catalogue pour sa touche 5, raccourci de bureau vers l'hôtel des
+ * ventes.
+ */
+export const RAIL_GROUPS: ToolGroupDef[] = TOOL_GROUPS.filter((g) => g.id !== "SELL");
+
 export type ToolOption = {
   tool: Tool;
   label: string;

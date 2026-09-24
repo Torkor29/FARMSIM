@@ -25,7 +25,7 @@ import type { Season } from "@farmsim/shared";
 import type { Tool } from "../../tools";
 import {
   BRUSH_SIZES,
-  TOOL_GROUPS,
+  RAIL_GROUPS,
   groupOf,
   optionsFor,
   type BrushSize,
@@ -45,15 +45,12 @@ type Props = {
   readyCount: number;
   strawCount: number;
   baleCount: number;
-  /** Chez un voisin : ni construction ni marché. */
-  visiting: boolean;
   onTool: (t: Tool) => void;
   onBrush: (n: BrushSize) => void;
   /** Le glissé prend un rectangle plein plutôt que la trace du pointeur. */
   dragRect: boolean;
   onDragRect: () => void;
   onKeepSwath: () => void;
-  onMarket: () => void;
   onGuide: () => void;
   /**
    * Les panneaux de l'exploitation.
@@ -97,11 +94,9 @@ export function ToolRail({
   readyCount,
   strawCount,
   baleCount,
-  visiting,
   onTool,
   onBrush,
   onKeepSwath,
-  onMarket,
   onGuide,
   panneaux,
 }: Props) {
@@ -146,8 +141,7 @@ export function ToolRail({
       <div className="tool-rail-block">
         <h4 className="tool-rail-title">Aux champs</h4>
         <ul className="tool-rail-groups" role="toolbar" aria-label="Outils de champ">
-        {TOOL_GROUPS.map((g) => {
-          if (g.id === "SELL" && visiting) return null;
+        {RAIL_GROUPS.map((g) => {
           const on = group === g.id;
           const badge = groupBadge(g.id, readyCount);
           return (
@@ -158,8 +152,7 @@ export function ToolRail({
                 aria-current={on ? "true" : undefined}
                 title={`${g.label} — touche ${g.hotkey}`}
                 onClick={() => {
-                  if (g.id === "SELL") onMarket();
-                  else if (g.entry && !on) onTool(g.entry);
+                  if (g.entry && !on) onTool(g.entry);
                 }}
               >
                 <span className="tool-rail-icon" aria-hidden="true">

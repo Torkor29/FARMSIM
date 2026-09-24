@@ -47,7 +47,7 @@ import {
   makeVoiture,
 } from "./decor3d";
 import { creerVoisinDetaille, poserBatimentsVoisin, type VoisinDetaille } from "./voisin3d";
-import { creerLieu, creerPanneau, type Jetables } from "./village3d";
+import { creerLieu, creerPancarteVente, type Jetables } from "./village3d";
 import type { BuildingRig } from "./buildings3d";
 import {
   couleurChamp,
@@ -694,9 +694,8 @@ export function createCountryside(o: OptionsCampagne): Campagne {
     groupe.name = "campagne-pancartes";
     for (const p of plan.parcelles) {
       if (!p.reel || p.reel.statut === "MOI" || p.reel.prix === null) continue;
-      // Grande : elle doit se lire sur un téléphone, de toute la largeur du pays.
-      const pancarte = creerPanneau("VENTE", jetables, { largeur: 3.8, shadows });
-      const coin = (p.cote - 0.5) / 2 - 1.4;
+      const pancarte = creerPancarteVente(jetables, { shadows });
+      const coin = (p.cote - 0.5) / 2 - 1.2;
       pancarte.position.set(p.x + coin, y0, p.z + coin);
       groupe.add(pancarte);
     }
@@ -707,7 +706,6 @@ export function createCountryside(o: OptionsCampagne): Campagne {
     for (const lieu of plan.lieux) {
       const monte = creerLieu(lieu, { pasCase, y: y0, shadows, jetables });
       village.add(monte.group);
-      rigsBatiments.push(...monte.batiments);
       enginsVillage.push(...monte.engins);
     }
     object.add(village);
@@ -960,7 +958,24 @@ export function createCountryside(o: OptionsCampagne): Campagne {
      * Plus besoin de redécouper : le sol est plat, un long segment ne passe
      * plus sous le terrain en son milieu.
      */
-    const ruban = (pts: PointPlan[], demi: number, y: number, teinte: THREE.Color, bord: THREE.Color | null) => {
+    /*
+     * Les deux bouts de la route, coupés sur la lisière et non en travers.
+     *
+     * La route court le long des `x`, et la lisière suit `u = x + z` — une
+     * diagonale dans le monde, une horizontale à l'écran. Coupée d'équerre,
+     * la route finissait en biseau contre l'horizon : un bord dépassait sur le
+     * bois, l'autre s'arrêtait avant. Chaque sommet d'extrémité glisse donc le
+     * long de la route jusqu'à la ligne du sol.
+     */
+    const coupeSol = { u0: plan.sol.uMin, u1: plan.sol.uMax };
+    const ruban = (
+      pts: PointPlan[],
+      demi: number,
+      y: number,
+      teinte: THREE.Color,
+      bord: THREE.Color | null,
+      coupe: { u0: number; u1: number } | null = null,
+    ) => {
       const normale = (i: number): PointPlan => {
         const p = pts[Math.max(0, i - 1)]!;
         const q = pts[Math.min(pts.length - 1, i + 1)]!;
@@ -977,12 +992,32 @@ export function createCountryside(o: OptionsCampagne): Campagne {
         if (Math.hypot(q.x - p.x, q.z - p.z) < 1e-6) continue;
         const np = normale(i);
         const nq = normale(i + 1);
-        const c = (pt: PointPlan, nn: PointPlan, k: number): [number, number, number] => [
-          pt.x + nn.x * k,
-          y,
-          pt.z + nn.z * k,
-        ];
-        quad(pos, col, c(p, np, -demi), c(q, nq, -demi), c(q, nq, demi), c(p, np, demi), teinte);
+        const lx = q.x - p.x;
+        const lz = q.z - p.z;
+        const ll = Math.hypot(lx, lz);
+        const dir = { x: lx / ll, z: lz / ll };
+        const bout = (pt: PointPlan, j: number): number | null => {
+          if (!coupe) return null;
+          // Seulement si ce bout est vraiment sur la lisière — la route peut
+          // aussi finir sur un bord latéral du sol, qu'on laisse d'équerre.
+          const u = pt.x + pt.z;
+          if (j === 0 && Math.abs(u - coupe.u0) < 1.5) return coupe.u0;
+          if (j === pts.length - 1 && Math.abs(u - coupe.u1) < 1.5) return coupe.u1;
+          return null;
+        };
+        const c = (pt: PointPlan, nn: PointPlan, k: number, j = -1): [number, number, number] => {
+          let vx = pt.x + nn.x * k;
+          let vz = pt.z + nn.z * k;
+          const u = bout(pt, j);
+          const pente = dir.x + dir.z;
+          if (u !== null && Math.abs(pente) > 1e-6) {
+            const glisse = (u - (vx + vz)) / pente;
+            vx += dir.x * glisse;
+            vz += dir.z * glisse;
+          }
+          return [vx, y, vz];
+        };
+        quad(pos, col, c(p, np, -demi, i), c(q, nq, -demi, i + 1), c(q, nq, demi, i + 1), c(p, np, demi, i), teinte);
         if (!bord) continue;
         for (const s of [-1, 1]) {
           // Toujours du décalage le plus petit vers le plus grand : écrit
@@ -990,14 +1025,14 @@ export function createCountryside(o: OptionsCampagne): Campagne {
           // quadrilatère à l'envers et se retrouvait face au sol.
           const lo = Math.min(s * demi, s * (demi + 0.5));
           const hi = Math.max(s * demi, s * (demi + 0.5));
-          quad(pos, col, c(p, np, lo), c(q, nq, lo), c(q, nq, hi), c(p, np, hi), bord);
+          quad(pos, col, c(p, np, lo, i), c(q, nq, lo, i + 1), c(q, nq, hi, i + 1), c(p, np, hi, i), bord);
         }
       }
     };
 
     // L'accotement d'abord, la chaussée par-dessus : deux nappes au même
     // millimètre se battent en profondeur et clignotent.
-    ruban(pointsRoute, DEMI_ROUTE - 0.5, y0 + 0.03, bitume, accotement);
+    ruban(pointsRoute, DEMI_ROUTE - 0.5, y0 + 0.03, bitume, accotement, coupeSol);
     ruban(plan.desserte, 1.0, y0 + 0.025, gravier, null);
 
     // Les deux liserés qui tiennent l'allée, et deux traces de roues à peine
@@ -1011,8 +1046,8 @@ export function createCountryside(o: OptionsCampagne): Campagne {
       });
     const bordChaussee = DEMI_ROUTE - 0.5;
     for (const cote of [-1, 1]) {
-      ruban(decaler(cote * (bordChaussee - 0.06)), 0.06, y0 + 0.034, liseré, null);
-      ruban(decaler(cote * 0.3), 0.09, y0 + 0.033, orniere, null);
+      ruban(decaler(cote * (bordChaussee - 0.06)), 0.06, y0 + 0.034, liseré, null, coupeSol);
+      ruban(decaler(cote * 0.3), 0.09, y0 + 0.033, orniere, null, coupeSol);
     }
 
     /*

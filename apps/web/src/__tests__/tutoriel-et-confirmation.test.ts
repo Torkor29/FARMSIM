@@ -102,12 +102,12 @@ describe("le tutoriel", () => {
     const outil = ETAPES.find((e) => e.id === "outil")!;
     expect(ecran.texteTactile).toMatch(/dock.*Plus.*Trace ou Rectangle/i);
     expect(onglets.texteTactile).toMatch(/Touchez Plus.*tiroir Panneaux/i);
-    expect(outil.texteTactile).toMatch(/Voir, Semer, Sol, Récolte ou Ventes/i);
+    expect(outil.texteTactile).toMatch(/Voir, Semer, Sol ou Récolte/i);
   });
 
-  it("donne une illustration différente aux quatorze étapes", () => {
-    expect(ETAPES).toHaveLength(14);
-    expect(new Set(ETAPES.map((e) => e.scene)).size).toBe(14);
+  it("donne une illustration différente aux seize étapes", () => {
+    expect(ETAPES).toHaveLength(16);
+    expect(new Set(ETAPES.map((e) => e.scene)).size).toBe(16);
     expect(ETAPES.find((e) => e.id === "personnel")?.scene).toBe("personnel");
   });
 
@@ -125,6 +125,24 @@ describe("le tutoriel", () => {
     expect(APP).toMatch(
       /if \(!installe\) return;[\s\S]{0,2000}localStorage\.getItem\(playerStorageKey\(TUTORIAL_KEY, player\.id\)\)/,
     );
+  });
+
+  /**
+   * Le marché, le garage et le bureau ont quitté les menus pour le village :
+   * le tutoriel doit mener à la coopérative, la concession et la mairie, et
+   * ne plus citer des boutons qui n'existent plus.
+   */
+  it("envoie au village pour vendre, réparer et prendre des missions", () => {
+    const village = ETAPES.filter((e) => e.chapitre === "Le village");
+    expect(village.map((e) => e.id)).toEqual(["cooperative", "concession", "mairie"]);
+    expect(village[0].texte).toMatch(/coopérative[\s\S]*hôtel des ventes/);
+    expect(village[1].texte).toMatch(/concession[\s\S]*garage/);
+    expect(village[2].texte).toMatch(/mairie[\s\S]*bureau/);
+    for (const e of ETAPES) {
+      for (const t of [e.texte, e.texteTactile ?? "", e.astuce ?? ""]) {
+        expect(t).not.toMatch(/bouton Ventes|Ventes du dock|Garage, Missions/);
+      }
+    }
   });
 
   it("couvre tout le jeu, pas seulement le semis", () => {

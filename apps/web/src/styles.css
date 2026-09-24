@@ -2740,11 +2740,6 @@ html.playing .build-confirm { position: fixed; }
   color: #fff;
 }
 .dock-tool.on img { filter: brightness(1.2) drop-shadow(0 1px 2px rgba(0, 0, 0, 0.25)); }
-.dock-tool.sell .dock-label { color: var(--gold-700); }
-.dock-tool.sell.on,
-.dock-tool.sell:hover:not(:disabled) {
-  background: var(--gold-100);
-}
 .dock-badge {
   position: absolute;
   top: 0.15rem;
@@ -7059,6 +7054,49 @@ button.tiny {
   transform: none;
 }
 .vue-recentrer:hover { background: var(--paper); }
+/* La pastille « Village » : posée par la vue, au bord de la zone libre, quand
+   le village est hors cadre. La flèche pointe vers lui. */
+.village-pastille {
+  position: absolute;
+  z-index: 4;
+  transform: translate(-50%, -50%) scale(0.9);
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.42rem 0.8rem 0.42rem 0.5rem;
+  border-radius: 999px;
+  background: #fff8e3;
+  border: 2px solid #2f7d4a;
+  box-shadow: var(--sh-2);
+  color: #2f7d4a;
+  font: inherit;
+  font-size: 0.82rem;
+  font-weight: 800;
+  cursor: pointer;
+  opacity: 0;
+  visibility: hidden;
+  transition: opacity 0.25s ease, transform 0.25s ease, visibility 0.25s;
+}
+.village-pastille.visible {
+  opacity: 1;
+  visibility: visible;
+  transform: translate(-50%, -50%) scale(1);
+}
+.village-pastille:hover { background: #fffdf3; }
+.village-fleche {
+  display: inline-grid;
+  place-items: center;
+  width: 1.35rem;
+  height: 1.35rem;
+  border-radius: 50%;
+  background: #2f7d4a;
+  color: #fff;
+  font-size: 0.8rem;
+  transform: rotate(var(--village-angle, 0rad));
+}
+@media (prefers-reduced-motion: reduce) {
+  .village-pastille { transition: none; }
+}
 .vue-recentrer svg { width: 1.05rem; height: 1.05rem; }
 
 @media (prefers-reduced-motion: reduce) {
@@ -7854,7 +7892,7 @@ button.tiny {
 .tuto-doigt-halo { fill: rgba(25, 63, 53, 0.22); animation: tuto-tap-ring 1.2s ease-out infinite; }
 @keyframes tuto-tap-ring { 0%, 100% { transform: scale(0.65); opacity: 0.65; } 70% { transform: scale(1.25); opacity: 0; } }
 .tuto-curseur.vers-plus { animation: tuto-vers-plus 3s ease-in-out infinite; }
-@keyframes tuto-vers-plus { 0%, 25% { transform: translate(111px, 48px); } 65%, 100% { transform: translate(123px, 88px); } }
+@keyframes tuto-vers-plus { 0%, 25% { transform: translate(101px, 48px); } 65%, 100% { transform: translate(113px, 88px); } }
 .tuto-curseur.vers-semer { animation: tuto-vers-semer 3s ease-in-out infinite; }
 @keyframes tuto-vers-semer { 0%, 25% { transform: translate(69px, 38px); } 65%, 100% { transform: translate(40px, 88px); } }
 .tuto-curseur.glisse { animation: tuto-glisse-v2 3.6s ease-in-out infinite; }
@@ -7891,7 +7929,7 @@ button.tiny {
 .grain-route { fill: none; stroke: #e6b938; stroke-width: 1.5; stroke-dasharray: 3 2; animation: tuto-grain 1.2s linear infinite; }
 @keyframes tuto-grain { to { stroke-dashoffset: -10; } }
 
-.tuto-market > rect:first-child, .tuto-herd-card > rect:first-child, .tuto-staff > rect:first-child { fill: rgba(249,252,249,0.97); stroke: #b4cbbd; stroke-width: 0.7; }
+.tuto-market > rect:first-child, .tuto-herd-card > rect:first-child, .tuto-staff > rect:first-child { fill: #f9fcf9; stroke: #b4cbbd; stroke-width: 0.7; }
 .tuto-market polyline { fill: none; stroke: #397d6b; stroke-width: 1.5; stroke-linejoin: round; stroke-dasharray: 160; animation: tuto-trace 4s ease-in-out infinite; }
 .tuto-market circle { fill: #e0ad2d; }
 .tuto-market rect:not(:first-child), .tuto-staff g rect { fill: #307d6b; }
@@ -7914,6 +7952,36 @@ button.tiny {
 .tuto-staff g path { fill: #4f7d69; }
 .tuto-txt.staff-name { fill: #214c3f; font-size: 4.5px; }
 .tuto-txt.staff-detail { fill: #687d74; font-size: 3.2px; font-weight: 600; }
+
+/* Le village : la capture du jeu, un voile sur les bâtiments dont l'étape
+   ne parle pas, un halo sous celui dont elle parle. */
+.tuto-village-voile { fill: rgba(16, 42, 32, 0.34); }
+.tuto-village-halo { fill: none; stroke: #f2c230; stroke-width: 1.3; animation: tuto-halo-lieu 5s ease-in-out infinite; }
+@keyframes tuto-halo-lieu { 0%, 100% { opacity: 0.4; } 20%, 45% { opacity: 1; } }
+.tuto-village-nom rect { fill: #fff8e3; stroke: #2f7d4a; stroke-width: 0.7; filter: drop-shadow(0 1px 1.5px rgba(16, 51, 41, 0.3)); }
+.tuto-txt.village-nom { font-size: 3.4px; fill: #2f7d4a; font-weight: 900; letter-spacing: 0.06em; }
+.tuto-curseur.vers-cooperative { animation: tuto-vers-coop 5s ease-in-out infinite; }
+@keyframes tuto-vers-coop { 0%, 10% { transform: translate(80px, 88px); } 40%, 100% { transform: translate(28px, 45px); } }
+.tuto-curseur.vers-concession { animation: tuto-vers-concession 5s ease-in-out infinite; }
+@keyframes tuto-vers-concession { 0%, 10% { transform: translate(40px, 88px); } 40%, 100% { transform: translate(79px, 45px); } }
+.tuto-curseur.vers-mairie { animation: tuto-vers-mairie 5s ease-in-out infinite; }
+@keyframes tuto-vers-mairie { 0%, 10% { transform: translate(80px, 88px); } 40%, 100% { transform: translate(131px, 46px); } }
+.tuto-lieu-fenetre { opacity: 0; animation: tuto-fenetre-lieu 5s ease-out infinite; transform-origin: 80px 46px; }
+@keyframes tuto-fenetre-lieu {
+  0%, 48% { opacity: 0; transform: scale(0.92); }
+  56%, 94% { opacity: 1; transform: scale(1); }
+  100% { opacity: 0; transform: scale(1); }
+}
+.tuto-carte > rect:first-child { fill: #f9fcf9; stroke: #b4cbbd; stroke-width: 0.7; }
+.tuto-lieu-fenetre > g > rect:first-child { filter: drop-shadow(0 2px 3px rgba(16, 51, 41, 0.35)); }
+.tuto-carte .tuto-bouton { fill: #307d6b; }
+.garage-jauge-fond { fill: #dbe4dc; }
+.garage-jauge { fill: #4ba06d; }
+.garage-jauge.basse { fill: #d9822b; }
+.bureau-onglet rect { fill: #e3ece5; }
+.bureau-onglet.on rect { fill: #307d6b; }
+.tuto-txt.onglet-label { font-size: 3.2px; fill: #405b52; }
+.bureau-onglet.on .onglet-label { fill: #fff; }
 
 @media (max-width: 420px) {
   .tutorial-backdrop { padding: 0.7rem; align-items: center; }
