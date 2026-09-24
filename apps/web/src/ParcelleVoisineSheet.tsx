@@ -10,6 +10,7 @@ import {
 } from "@farmsim/shared";
 import type { VoisinReel } from "./countryside-plan";
 import { MenuClose } from "./ui/MenuClose";
+import { Portail } from "./ui/Portail";
 
 /**
  * La fiche d'une parcelle voisine.
@@ -104,124 +105,126 @@ export function ParcelleVoisineSheet({
           : (voisin.proprietaire ?? "Exploitée");
 
   return (
-    <div
-      className="voisin-backdrop"
-      role="dialog"
-      aria-modal="true"
-      aria-labelledby="voisin-titre"
-      onClick={onFermer}
-    >
-      <div className="voisin-card glass" onClick={(e) => e.stopPropagation()}>
-        <header className="voisin-tete">
-          <div>
-            <h3 id="voisin-titre">{voisin.label}</h3>
-            <p className={`voisin-tenue s-${voisin.statut.toLowerCase()}`}>{tenue}</p>
-          </div>
-          <MenuClose onClose={onFermer} />
-        </header>
+    <Portail>
+      <div
+        className="voisin-backdrop"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="voisin-titre"
+        onClick={onFermer}
+      >
+        <div className="voisin-card glass" onClick={(e) => e.stopPropagation()}>
+          <header className="voisin-tete">
+            <div>
+              <h3 id="voisin-titre">{voisin.label}</h3>
+              <p className={`voisin-tenue s-${voisin.statut.toLowerCase()}`}>{tenue}</p>
+            </div>
+            <MenuClose onClose={onFermer} />
+          </header>
 
-        <dl className="voisin-faits">
-          {/* La surface d'abord : c'est ce qui change d'un lot à l'autre
-              depuis que les parcelles n'ont plus toutes la même taille, et
-              c'est ce qui explique l'écart de prix plus bas. */}
-          {voisin.gridW != null && voisin.gridH != null && (
-            <div>
-              <dt>Surface</dt>
-              <dd>
-                {hectaresDeGrille(voisin.gridW, voisin.gridH).toLocaleString("fr-FR")} ha
-                <span className="voisin-stade">
-                  {" "}
-                  · {libelleDeTaille(voisin.gridW, voisin.gridH)}
-                </span>
-              </dd>
-            </div>
-          )}
-          <div>
-            <dt>Culture</dt>
-            <dd>
-              {culture ? (
-                <>
-                  {culture}
-                  {stade && <span className="voisin-stade"> · {stade}</span>}
-                </>
-              ) : (
-                "en herbe"
-              )}
-            </dd>
-          </div>
-          {voisin.partCultivee > 0 && (
-            <div>
-              <dt>Emblavée</dt>
-              <dd>{Math.round(voisin.partCultivee * 100)} %</dd>
-            </div>
-          )}
-          <div>
-            <dt>Fertilité</dt>
-            <dd>{Math.round(voisin.fertility * 100)} %</dd>
-          </div>
-          {voisin.batiments.length > 0 && (
-            <div>
-              <dt>Bâti</dt>
-              <dd>
-                {voisin.batiments.length} ouvrage{voisin.batiments.length > 1 ? "s" : ""}
-              </dd>
-            </div>
-          )}
-          {voisin.cheptel.length > 0 && (
-            <div>
-              <dt>Cheptel</dt>
-              <dd>
-                {voisin.cheptel.map((t) => `${t.size} ${nomEspece(t.kind).toLowerCase()}`).join(", ")}
-              </dd>
-            </div>
-          )}
-        </dl>
-
-        {aVendre ? (
-          <div className="voisin-marche">
-            {voisin.prix !== null && <p className="voisin-prix">{formatEuros(voisin.prix)}</p>}
-            {voisin.achetable ? (
-              <button
-                ref={premier}
-                type="button"
-                className="voisin-acheter"
-                disabled={enCours}
-                onClick={() => onAcheter(voisin.id)}
-              >
-                {enCours
-                  ? "Achat en cours…"
-                  : voisin.statut === "PNJ"
-                    ? "Racheter cette parcelle"
-                    : "Acheter cette parcelle"}
-              </button>
-            ) : (
-              <p className="voisin-refus">{voisin.refus ?? "Pas encore accessible."}</p>
+          <dl className="voisin-faits">
+            {/* La surface d'abord : c'est ce qui change d'un lot à l'autre
+                depuis que les parcelles n'ont plus toutes la même taille, et
+                c'est ce qui explique l'écart de prix plus bas. */}
+            {voisin.gridW != null && voisin.gridH != null && (
+              <div>
+                <dt>Surface</dt>
+                <dd>
+                  {hectaresDeGrille(voisin.gridW, voisin.gridH).toLocaleString("fr-FR")} ha
+                  <span className="voisin-stade">
+                    {" "}
+                    · {libelleDeTaille(voisin.gridW, voisin.gridH)}
+                  </span>
+                </dd>
+              </div>
             )}
-          </div>
-        ) : voisin.statut === "MOI" ? (
-          /* L'impasse d'avant. « Cette parcelle est déjà la vôtre » était vrai
-             et sans issue : il fallait fermer la fiche et repasser par les
-             pastilles du rail pour y aller. */
-          <button
-            ref={premier}
-            type="button"
-            /* La même classe que « Acheter cette parcelle » : c'est le même
-               geste au même endroit de la fiche, il doit avoir la même tenue.
-               Inventer une classe qui n'existe pas dans la feuille rendrait un
-               bouton nu. */
-            className="voisin-acheter"
-            onClick={() => onAller?.(voisin.id)}
-            disabled={!onAller}
-          >
-            Aller sur cette parcelle
-          </button>
-        ) : (
-          <p className="voisin-refus">
-            {voisin.exploitation ?? "Cette exploitation"} la travaille. Elle ne sera à reprendre que
-            le jour où elle sera cédée.
-          </p>
-        )}
+            <div>
+              <dt>Culture</dt>
+              <dd>
+                {culture ? (
+                  <>
+                    {culture}
+                    {stade && <span className="voisin-stade"> · {stade}</span>}
+                  </>
+                ) : (
+                  "en herbe"
+                )}
+              </dd>
+            </div>
+            {voisin.partCultivee > 0 && (
+              <div>
+                <dt>Emblavée</dt>
+                <dd>{Math.round(voisin.partCultivee * 100)} %</dd>
+              </div>
+            )}
+            <div>
+              <dt>Fertilité</dt>
+              <dd>{Math.round(voisin.fertility * 100)} %</dd>
+            </div>
+            {voisin.batiments.length > 0 && (
+              <div>
+                <dt>Bâti</dt>
+                <dd>
+                  {voisin.batiments.length} ouvrage{voisin.batiments.length > 1 ? "s" : ""}
+                </dd>
+              </div>
+            )}
+            {voisin.cheptel.length > 0 && (
+              <div>
+                <dt>Cheptel</dt>
+                <dd>
+                  {voisin.cheptel.map((t) => `${t.size} ${nomEspece(t.kind).toLowerCase()}`).join(", ")}
+                </dd>
+              </div>
+            )}
+          </dl>
+
+          {aVendre ? (
+            <div className="voisin-marche">
+              {voisin.prix !== null && <p className="voisin-prix">{formatEuros(voisin.prix)}</p>}
+              {voisin.achetable ? (
+                <button
+                  ref={premier}
+                  type="button"
+                  className="voisin-acheter"
+                  disabled={enCours}
+                  onClick={() => onAcheter(voisin.id)}
+                >
+                  {enCours
+                    ? "Achat en cours…"
+                    : voisin.statut === "PNJ"
+                      ? "Racheter cette parcelle"
+                      : "Acheter cette parcelle"}
+                </button>
+              ) : (
+                <p className="voisin-refus">{voisin.refus ?? "Pas encore accessible."}</p>
+              )}
+            </div>
+          ) : voisin.statut === "MOI" ? (
+            /* L'impasse d'avant. « Cette parcelle est déjà la vôtre » était vrai
+               et sans issue : il fallait fermer la fiche et repasser par les
+               pastilles du rail pour y aller. */
+            <button
+              ref={premier}
+              type="button"
+              /* La même classe que « Acheter cette parcelle » : c'est le même
+                 geste au même endroit de la fiche, il doit avoir la même tenue.
+                 Inventer une classe qui n'existe pas dans la feuille rendrait un
+                 bouton nu. */
+              className="voisin-acheter"
+              onClick={() => onAller?.(voisin.id)}
+              disabled={!onAller}
+            >
+              Aller sur cette parcelle
+            </button>
+          ) : (
+            <p className="voisin-refus">
+              {voisin.exploitation ?? "Cette exploitation"} la travaille. Elle ne sera à reprendre que
+              le jour où elle sera cédée.
+            </p>
+          )}
+        </div>
       </div>
-    </div>
+    </Portail>
   );
 }

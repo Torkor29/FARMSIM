@@ -1,5 +1,6 @@
 import { useMemo, useState, type PointerEvent as ReactPointerEvent } from "react";
 import { WORK_LABELS, type FarmWork } from "@farmsim/shared";
+import { Portail } from "./ui/Portail";
 
 export type MissionPlayContract = {
   id: string;
@@ -76,45 +77,47 @@ export function MissionPlay({ contract, busy = false, onCancel, onDone }: Props)
   }
 
   return (
-    <div className="care-backdrop" role="dialog" aria-modal="true" aria-labelledby="mission-title">
-      <div className="care-card glass mission-card" onClick={(e) => e.stopPropagation()}>
-        <h3 id="mission-title">{contract.title}</h3>
-        <p className="care-machine">
-          {WORK_LABELS[contract.work]} · {aEncaisser} €
-          {contract.rented ? ` · matériel loué −${contract.rentalFee ?? 0} €` : ""}
-        </p>
-        <p className="muted tiny">
-          Glissez sur les cases. Un travail à la fois — vos cultures poussent chez vous.
-        </p>
-        <div className="mission-progress" aria-live="polite">
-          {progress} / {total}
-        </div>
-        <div
-          className={`mission-grid ${workClass}`}
-          style={{ gridTemplateColumns: `repeat(${cols}, 1fr)` }}
-          onPointerDown={onGridPointer}
-          onPointerMove={onGridPointer}
-        >
-          {done.map((ok, i) => (
-            <button
-              key={i}
-              type="button"
-              data-cell={i}
-              className={`mission-cell${ok ? " done" : ""}`}
-              aria-label={ok ? `Case ${i + 1} faite` : `Case ${i + 1}`}
-              onClick={() => paint(i)}
-            />
-          ))}
-        </div>
-        <div className="care-actions">
-          <button type="button" onClick={onCancel} disabled={busy}>
-            Laisser
-          </button>
-          <button type="button" className="go" disabled={!finished || busy} onClick={onDone}>
-            Encaisser {aEncaisser} €
-          </button>
+    <Portail>
+      <div className="care-backdrop" role="dialog" aria-modal="true" aria-labelledby="mission-title">
+        <div className="care-card glass mission-card" onClick={(e) => e.stopPropagation()}>
+          <h3 id="mission-title">{contract.title}</h3>
+          <p className="care-machine">
+            {WORK_LABELS[contract.work]} · {aEncaisser} €
+            {contract.rented ? ` · matériel loué −${contract.rentalFee ?? 0} €` : ""}
+          </p>
+          <p className="muted tiny">
+            Glissez sur les cases. Un travail à la fois — vos cultures poussent chez vous.
+          </p>
+          <div className="mission-progress" aria-live="polite">
+            {progress} / {total}
+          </div>
+          <div
+            className={`mission-grid ${workClass}`}
+            style={{ gridTemplateColumns: `repeat(${cols}, 1fr)` }}
+            onPointerDown={onGridPointer}
+            onPointerMove={onGridPointer}
+          >
+            {done.map((ok, i) => (
+              <button
+                key={i}
+                type="button"
+                data-cell={i}
+                className={`mission-cell${ok ? " done" : ""}`}
+                aria-label={ok ? `Case ${i + 1} faite` : `Case ${i + 1}`}
+                onClick={() => paint(i)}
+              />
+            ))}
+          </div>
+          <div className="care-actions">
+            <button type="button" onClick={onCancel} disabled={busy}>
+              Laisser
+            </button>
+            <button type="button" className="go" disabled={!finished || busy} onClick={onDone}>
+              Encaisser {aEncaisser} €
+            </button>
+          </div>
         </div>
       </div>
-    </div>
+    </Portail>
   );
 }

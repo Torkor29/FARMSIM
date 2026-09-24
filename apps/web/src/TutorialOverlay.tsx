@@ -4,6 +4,7 @@ import { playerStorageKey, TUTORIAL_KEY } from "./storage-keys";
 import { TutorialScene } from "./TutorialScenes";
 import { ETAPES } from "./tutorial-steps";
 import { MenuClose } from "./ui/MenuClose";
+import { Portail } from "./ui/Portail";
 
 /**
  * Le tutoriel : quatorze étapes montrées, contre huit décrites.
@@ -97,47 +98,49 @@ export function TutorialOverlay({ open, playerId, onClose }: Props) {
   }
 
   return (
-    <div className="tutorial-backdrop" role="dialog" aria-modal="true" aria-labelledby="tut-title">
-      <div className="tutorial-card glass">
-        <MenuClose onClose={finir} label="Fermer le tutoriel" />
+    <Portail>
+      <div className="tutorial-backdrop" role="dialog" aria-modal="true" aria-labelledby="tut-title">
+        <div className="tutorial-card glass">
+          <MenuClose onClose={finir} label="Fermer le tutoriel" />
 
-        <p className="tutorial-chapitre">{s.chapitre}</p>
-        <h2 id="tut-title">{s.titre}</h2>
+          <p className="tutorial-chapitre">{s.chapitre}</p>
+          <h2 id="tut-title">{s.titre}</h2>
 
-        <TutorialScene scene={s.scene} tactile={tactile} />
+          <TutorialScene scene={s.scene} tactile={tactile} />
 
-        <p className="tutorial-body">{tactile ? (s.texteTactile ?? s.texte) : s.texte}</p>
-        {s.astuce && <p className="tutorial-hint">{s.astuce}</p>}
+          <p className="tutorial-body">{tactile ? (s.texteTactile ?? s.texte) : s.texte}</p>
+          {s.astuce && <p className="tutorial-hint">{s.astuce}</p>}
 
-        <div className="tutorial-progress" aria-hidden="true">
-          {ETAPES.map((e, i) => (
-            <span key={e.id} className={`tutorial-dot ${i <= step ? "on" : ""}`} />
-          ))}
-        </div>
-        <p className="tutorial-step-label">
-          Étape {step + 1} / {ETAPES.length}
-        </p>
+          <div className="tutorial-progress" aria-hidden="true">
+            {ETAPES.map((e, i) => (
+              <span key={e.id} className={`tutorial-dot ${i <= step ? "on" : ""}`} />
+            ))}
+          </div>
+          <p className="tutorial-step-label">
+            Étape {step + 1} / {ETAPES.length}
+          </p>
 
-        <div className="tutorial-actions">
-          {step > 0 && (
-            <button type="button" className="ghost" onClick={() => setStep((x) => x - 1)}>
-              Retour
+          <div className="tutorial-actions">
+            {step > 0 && (
+              <button type="button" className="ghost" onClick={() => setStep((x) => x - 1)}>
+                Retour
+              </button>
+            )}
+            <button type="button" className="ghost" onClick={finir}>
+              Passer
             </button>
-          )}
-          <button type="button" className="ghost" onClick={finir}>
-            Passer
-          </button>
-          {!dernier ? (
-            <button type="button" className="tutorial-next" onClick={() => setStep((x) => x + 1)}>
-              Suivant
-            </button>
-          ) : (
-            <button type="button" className="tutorial-next" onClick={finir}>
-              Jouer
-            </button>
-          )}
+            {!dernier ? (
+              <button type="button" className="tutorial-next" onClick={() => setStep((x) => x + 1)}>
+                Suivant
+              </button>
+            ) : (
+              <button type="button" className="tutorial-next" onClick={finir}>
+                Jouer
+              </button>
+            )}
+          </div>
         </div>
       </div>
-    </div>
+    </Portail>
   );
 }

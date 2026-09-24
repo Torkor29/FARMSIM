@@ -24,6 +24,7 @@ import {
 } from "@farmsim/shared";
 import { ZoneMap, type ZoneMapZone } from "./ZoneMap";
 import { MenuClose } from "./ui/MenuClose";
+import { Portail } from "./ui/Portail";
 
 export type OnlinePeer = {
   id: string;
@@ -539,287 +540,289 @@ export function OfficePanel({
   if (!open) return null;
 
   return (
-    <div
-      className="hdv-backdrop hall-backdrop"
-      role="dialog"
-      aria-modal="true"
-      aria-label="Bureau — bourse des chantiers"
-      onClick={(e) => {
-        if (e.target === e.currentTarget) onClose();
-      }}
-    >
-      <div className="hdv-shell hall-sheet glass" onClick={(e) => e.stopPropagation()}>
-        <header className="hdv-top">
-          <div className="hdv-brand">
-            <p className="hdv-kicker">Bureau</p>
-            <h2>Bourse des chantiers</h2>
-          </div>
-          <div className="hdv-purse">
-            <span>Caisse</span>
-            <strong>{money(crd)}</strong>
-            <em>séquestre {money(escrow)}</em>
-          </div>
-          <div className="hdv-purse alt">
-            <span>À gagner</span>
-            <strong className="gain">{money(toEarn)}</strong>
-            <em>{board.length} offre(s)</em>
-          </div>
-          <MenuClose onClose={onClose} />
-        </header>
-
-        <nav className="hdv-modes" aria-label="Modes">
-          {(
-            [
-              ["OBJECTIFS", `Objectifs${aFaire > 0 ? ` (${aFaire})` : ""}`],
-              ["ACTIVITE", "Activité"],
-              ["TAKE", `Prendre (${board.length})`],
-              ["MINE", `Mes offres (${posted.length + (active ? 1 : 0)})`],
-              ["CONSIGNES", "Consignes"],
-              ["LAND", "Terres"],
-            ] as const
-          ).map(([id, label]) => (
-            <button key={id} type="button" className={mode === id ? "on" : ""} onClick={() => setMode(id)}>
-              {label}
-            </button>
-          ))}
-        </nav>
-
-        {mode === "OBJECTIFS" ? (
-          <div className="hdv-single">
-            <Objectifs
-              quests={quests ?? []}
-              busy={busy}
-              onClaim={onClaimQuest}
-              pairs={onlinePlayers ?? []}
-            />
-          </div>
-        ) : mode === "ACTIVITE" ? (
-          <div className="hdv-single">
-            <Activite
-              lignes={ledger}
-              jours={ledgerJours}
-              page={ledgerPage} loading={ledgerLoading} error={ledgerError}
-              onPeriod={onLedgerPeriod} onMore={onLedgerMore} onRetry={onLedgerRetry}
-              cropPrices={cropPrices}
-              crd={crd}
-              escrow={escrow}
-              busy={busy}
-              credit={credit}
-              onLoan={onLoan}
-              onRepay={onRepay}
-              ateliers={ateliers}
-            />
-          </div>
-        ) : mode === "CONSIGNES" ? (
-          <div className="hdv-single">
-            <ConsignesForm consignes={consignes} busy={busy} onSave={onSaveConsignes} locked={escrow} crd={crd} />
-          </div>
-        ) : mode === "LAND" ? (
-          <div className="hdv-single">
-            <p className="hdv-muted">Parcelles libres ou cédées par un voisin, dans vos régions — cliquez pour acheter.</p>
-            <div className="zone-maps office-maps">
-              {zones.map((z) => (
-                <ZoneMap
-                  key={z.id}
-                  zone={z}
-                  myFarmId={myFarmId}
-                  selectableIds={expandableIds}
-                  onSelect={onBuyLand}
-                  compact
-                />
-              ))}
+    <Portail>
+      <div
+        className="hdv-backdrop hall-backdrop"
+        role="dialog"
+        aria-modal="true"
+        aria-label="Bureau — bourse des chantiers"
+        onClick={(e) => {
+          if (e.target === e.currentTarget) onClose();
+        }}
+      >
+        <div className="hdv-shell hall-sheet glass" onClick={(e) => e.stopPropagation()}>
+          <header className="hdv-top">
+            <div className="hdv-brand">
+              <p className="hdv-kicker">Bureau</p>
+              <h2>Bourse des chantiers</h2>
             </div>
-            {expandableIds.size === 0 && <p className="hdv-empty">Aucune parcelle à racheter dans vos régions.</p>}
-          </div>
-        ) : mode === "MINE" ? (
-          <MineBody
-            active={active}
-            posted={posted}
-            ghost={ghost}
-            busy={busy}
-            cannotTake={cannotTake}
-            onAbandon={onAbandonActive}
-            onCancel={onCancelPosted}
-            onTakeGhost={onTakeGhost}
-            ghostPick={ghostPick}
-            setGhostId={setGhostId}
-          />
-        ) : (
-          <div className="hdv-body">
-            <aside className="hdv-cats" aria-label="Types de chantier">
-              <p>Travaux</p>
-              {WORK_CATS.map((c) => {
-                const n = c.id === "ALL" ? board.length : board.filter((o) => o.work === c.id).length;
-                if (c.id !== "ALL" && n === 0) return null;
-                return (
-                  <button
-                    key={c.id}
-                    type="button"
-                    className={cat === c.id ? "on" : ""}
-                    onClick={() => setCat(c.id)}
-                  >
-                    <span>{c.label}</span>
-                    <em>{n}</em>
-                  </button>
-                );
-              })}
-            </aside>
+            <div className="hdv-purse">
+              <span>Caisse</span>
+              <strong>{money(crd)}</strong>
+              <em>séquestre {money(escrow)}</em>
+            </div>
+            <div className="hdv-purse alt">
+              <span>À gagner</span>
+              <strong className="gain">{money(toEarn)}</strong>
+              <em>{board.length} offre(s)</em>
+            </div>
+            <MenuClose onClose={onClose} />
+          </header>
 
-            <section className="hdv-main">
-              {active && (
-                <div className="hdv-banner">
-                  <div>
-                    <strong>En cours · {WORK_LABELS[active.work]}</strong>
-                    <span>
-                      Chez {active.npc ? "une ferme voisine" : active.clientName} · {active.parcelLabel} ·{" "}
-                      {active.remaining} case(s)
-                    </span>
-                  </div>
-                  <button type="button" className="ghost" disabled={busy} onClick={onAbandonActive}>
-                    Lâcher
-                  </button>
-                </div>
-              )}
-              <div className="hdv-toolbar">
-                <input
-                  type="search"
-                  placeholder="Rechercher un chantier, un client, une parcelle…"
-                  value={query}
-                  onChange={(e) => setQuery(e.target.value)}
-                  aria-label="Recherche"
-                />
-                <span className="hdv-count">{filtered.length} offre(s)</span>
+          <nav className="hdv-modes" aria-label="Modes">
+            {(
+              [
+                ["OBJECTIFS", `Objectifs${aFaire > 0 ? ` (${aFaire})` : ""}`],
+                ["ACTIVITE", "Activité"],
+                ["TAKE", `Prendre (${board.length})`],
+                ["MINE", `Mes offres (${posted.length + (active ? 1 : 0)})`],
+                ["CONSIGNES", "Consignes"],
+                ["LAND", "Terres"],
+              ] as const
+            ).map(([id, label]) => (
+              <button key={id} type="button" className={mode === id ? "on" : ""} onClick={() => setMode(id)}>
+                {label}
+              </button>
+            ))}
+          </nav>
+
+          {mode === "OBJECTIFS" ? (
+            <div className="hdv-single">
+              <Objectifs
+                quests={quests ?? []}
+                busy={busy}
+                onClaim={onClaimQuest}
+                pairs={onlinePlayers ?? []}
+              />
+            </div>
+          ) : mode === "ACTIVITE" ? (
+            <div className="hdv-single">
+              <Activite
+                lignes={ledger}
+                jours={ledgerJours}
+                page={ledgerPage} loading={ledgerLoading} error={ledgerError}
+                onPeriod={onLedgerPeriod} onMore={onLedgerMore} onRetry={onLedgerRetry}
+                cropPrices={cropPrices}
+                crd={crd}
+                escrow={escrow}
+                busy={busy}
+                credit={credit}
+                onLoan={onLoan}
+                onRepay={onRepay}
+                ateliers={ateliers}
+              />
+            </div>
+          ) : mode === "CONSIGNES" ? (
+            <div className="hdv-single">
+              <ConsignesForm consignes={consignes} busy={busy} onSave={onSaveConsignes} locked={escrow} crd={crd} />
+            </div>
+          ) : mode === "LAND" ? (
+            <div className="hdv-single">
+              <p className="hdv-muted">Parcelles libres ou cédées par un voisin, dans vos régions — cliquez pour acheter.</p>
+              <div className="zone-maps office-maps">
+                {zones.map((z) => (
+                  <ZoneMap
+                    key={z.id}
+                    zone={z}
+                    myFarmId={myFarmId}
+                    selectableIds={expandableIds}
+                    onSelect={onBuyLand}
+                    compact
+                  />
+                ))}
               </div>
-              {filtered.length === 0 ? (
-                <p className="hdv-empty">Aucune offre dans ce rayon. Revenez un peu plus tard.</p>
-              ) : (
-                <div className="hdv-table-wrap">
-                  <table className="hdv-table">
-                    <thead>
-                      <tr>
-                        <th>Chantier</th>
-                        <th>
-                          <button type="button" className="hdv-sort" onClick={() => setSort("client")}>
-                            Client
-                          </button>
-                        </th>
-                        <th>
-                          <button type="button" className="hdv-sort" onClick={() => setSort("cells")}>
-                            Cases
-                          </button>
-                        </th>
-                        <th>
-                          <button type="button" className="hdv-sort" onClick={() => setSort("payout")}>
-                            Salaire
-                          </button>
-                        </th>
-                        <th>
-                          <button type="button" className="hdv-sort" onClick={() => setSort("ttl")}>
-                            Délai
-                          </button>
-                        </th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {filtered.map((o) => (
-                        <tr
-                          key={o.id}
-                          className={pick?.id === o.id ? "sel" : ""}
-                          onClick={() => setPickId(o.id)}
-                        >
-                          <td>
-                            <strong>{WORK_LABELS[o.work]}</strong>
-                            {o.npc && <em className="local-tag">voisin</em>}
-                            {o.crop ? <span className="hdv-sub">{o.crop}</span> : null}
-                          </td>
-                          <td>
-                            {/* Les cent cinquante-sept fermes PNJ portent de
-                                vrais noms — « Élevage Lefèvre », « GAEC des
-                                Haies » — que l'API envoie fidèlement. Les
-                                remplacer tous par « Ferme voisine » faisait
-                                vingt-quatre lignes rigoureusement identiques
-                                d'un bout à l'autre du tableau. La pastille
-                                « voisin » suffit à dire que ce n'est pas un
-                                joueur. */}
-                            {o.clientName}
-                            <span className="hdv-sub">
-                              {o.parcelLabel}
-                              {o.zoneName ? ` · ${o.zoneName}` : ""}
-                            </span>
-                          </td>
-                          <td className="num">
-                            {o.remaining}/{o.cells}
-                          </td>
-                          <td className="num last">{money(o.payoutCrd)}</td>
-                          <td>{ttlLabel(o.expiresAt)}</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              )}
-            </section>
+              {expandableIds.size === 0 && <p className="hdv-empty">Aucune parcelle à racheter dans vos régions.</p>}
+            </div>
+          ) : mode === "MINE" ? (
+            <MineBody
+              active={active}
+              posted={posted}
+              ghost={ghost}
+              busy={busy}
+              cannotTake={cannotTake}
+              onAbandon={onAbandonActive}
+              onCancel={onCancelPosted}
+              onTakeGhost={onTakeGhost}
+              ghostPick={ghostPick}
+              setGhostId={setGhostId}
+            />
+          ) : (
+            <div className="hdv-body">
+              <aside className="hdv-cats" aria-label="Types de chantier">
+                <p>Travaux</p>
+                {WORK_CATS.map((c) => {
+                  const n = c.id === "ALL" ? board.length : board.filter((o) => o.work === c.id).length;
+                  if (c.id !== "ALL" && n === 0) return null;
+                  return (
+                    <button
+                      key={c.id}
+                      type="button"
+                      className={cat === c.id ? "on" : ""}
+                      onClick={() => setCat(c.id)}
+                    >
+                      <span>{c.label}</span>
+                      <em>{n}</em>
+                    </button>
+                  );
+                })}
+              </aside>
 
-            <aside className="hdv-detail">
-              {pick ? (
-                <div className="hdv-card">
-                  <header>
-                    <h3>{WORK_LABELS[pick.work]}</h3>
-                    {pick.npc && <em className="local-tag">voisin</em>}
-                  </header>
-                  <dl className="hdv-quotes">
+              <section className="hdv-main">
+                {active && (
+                  <div className="hdv-banner">
                     <div>
-                      <dt>Salaire</dt>
-                      <dd>{money(pick.payoutCrd)}</dd>
+                      <strong>En cours · {WORK_LABELS[active.work]}</strong>
+                      <span>
+                        Chez {active.npc ? "une ferme voisine" : active.clientName} · {active.parcelLabel} ·{" "}
+                        {active.remaining} case(s)
+                      </span>
                     </div>
-                    <div>
-                      <dt>Par case</dt>
-                      <dd>{money(perCell(pick))}</dd>
-                    </div>
-                    <div>
-                      <dt>Restant</dt>
-                      <dd>
-                        {pick.remaining}/{pick.cells}
-                      </dd>
-                    </div>
-                    <div>
-                      <dt>Délai</dt>
-                      <dd>{ttlLabel(pick.expiresAt)}</dd>
-                    </div>
-                  </dl>
-                  <p>
-                    <strong>{pick.clientName}</strong>
-                    {pick.npc && <em className="local-tag">voisin</em>}
-                    <span className="hdv-sub">
-                      {pick.parcelLabel}
-                      {pick.zoneName ? ` · ${pick.zoneName}` : ""}
-                      {pick.crop ? ` · ${pick.crop}` : ""}
-                    </span>
-                  </p>
-                  <p className="hdv-muted">
-                    Vous y allez avec votre matériel. Paiement à l’encaissement, au retour. Appoint — pas une
-                    rente.
-                  </p>
-                  {cannotTake && active && (
-                    <p className="hdv-muted">Terminez ou lâchez le chantier en cours avant d’en prendre un autre.</p>
-                  )}
-                  <button
-                    type="button"
-                    className="accent"
-                    disabled={cannotTake}
-                    onClick={() => onTake(pick.id)}
-                  >
-                    Prendre · {money(pick.payoutCrd)}
-                  </button>
+                    <button type="button" className="ghost" disabled={busy} onClick={onAbandonActive}>
+                      Lâcher
+                    </button>
+                  </div>
+                )}
+                <div className="hdv-toolbar">
+                  <input
+                    type="search"
+                    placeholder="Rechercher un chantier, un client, une parcelle…"
+                    value={query}
+                    onChange={(e) => setQuery(e.target.value)}
+                    aria-label="Recherche"
+                  />
+                  <span className="hdv-count">{filtered.length} offre(s)</span>
                 </div>
-              ) : (
-                <p className="hdv-empty">Sélectionnez une offre pour voir le détail.</p>
-              )}
-            </aside>
-          </div>
-        )}
+                {filtered.length === 0 ? (
+                  <p className="hdv-empty">Aucune offre dans ce rayon. Revenez un peu plus tard.</p>
+                ) : (
+                  <div className="hdv-table-wrap">
+                    <table className="hdv-table">
+                      <thead>
+                        <tr>
+                          <th>Chantier</th>
+                          <th>
+                            <button type="button" className="hdv-sort" onClick={() => setSort("client")}>
+                              Client
+                            </button>
+                          </th>
+                          <th>
+                            <button type="button" className="hdv-sort" onClick={() => setSort("cells")}>
+                              Cases
+                            </button>
+                          </th>
+                          <th>
+                            <button type="button" className="hdv-sort" onClick={() => setSort("payout")}>
+                              Salaire
+                            </button>
+                          </th>
+                          <th>
+                            <button type="button" className="hdv-sort" onClick={() => setSort("ttl")}>
+                              Délai
+                            </button>
+                          </th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {filtered.map((o) => (
+                          <tr
+                            key={o.id}
+                            className={pick?.id === o.id ? "sel" : ""}
+                            onClick={() => setPickId(o.id)}
+                          >
+                            <td>
+                              <strong>{WORK_LABELS[o.work]}</strong>
+                              {o.npc && <em className="local-tag">voisin</em>}
+                              {o.crop ? <span className="hdv-sub">{o.crop}</span> : null}
+                            </td>
+                            <td>
+                              {/* Les cent cinquante-sept fermes PNJ portent de
+                                  vrais noms — « Élevage Lefèvre », « GAEC des
+                                  Haies » — que l'API envoie fidèlement. Les
+                                  remplacer tous par « Ferme voisine » faisait
+                                  vingt-quatre lignes rigoureusement identiques
+                                  d'un bout à l'autre du tableau. La pastille
+                                  « voisin » suffit à dire que ce n'est pas un
+                                  joueur. */}
+                              {o.clientName}
+                              <span className="hdv-sub">
+                                {o.parcelLabel}
+                                {o.zoneName ? ` · ${o.zoneName}` : ""}
+                              </span>
+                            </td>
+                            <td className="num">
+                              {o.remaining}/{o.cells}
+                            </td>
+                            <td className="num last">{money(o.payoutCrd)}</td>
+                            <td>{ttlLabel(o.expiresAt)}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </section>
+
+              <aside className="hdv-detail">
+                {pick ? (
+                  <div className="hdv-card">
+                    <header>
+                      <h3>{WORK_LABELS[pick.work]}</h3>
+                      {pick.npc && <em className="local-tag">voisin</em>}
+                    </header>
+                    <dl className="hdv-quotes">
+                      <div>
+                        <dt>Salaire</dt>
+                        <dd>{money(pick.payoutCrd)}</dd>
+                      </div>
+                      <div>
+                        <dt>Par case</dt>
+                        <dd>{money(perCell(pick))}</dd>
+                      </div>
+                      <div>
+                        <dt>Restant</dt>
+                        <dd>
+                          {pick.remaining}/{pick.cells}
+                        </dd>
+                      </div>
+                      <div>
+                        <dt>Délai</dt>
+                        <dd>{ttlLabel(pick.expiresAt)}</dd>
+                      </div>
+                    </dl>
+                    <p>
+                      <strong>{pick.clientName}</strong>
+                      {pick.npc && <em className="local-tag">voisin</em>}
+                      <span className="hdv-sub">
+                        {pick.parcelLabel}
+                        {pick.zoneName ? ` · ${pick.zoneName}` : ""}
+                        {pick.crop ? ` · ${pick.crop}` : ""}
+                      </span>
+                    </p>
+                    <p className="hdv-muted">
+                      Vous y allez avec votre matériel. Paiement à l’encaissement, au retour. Appoint — pas une
+                      rente.
+                    </p>
+                    {cannotTake && active && (
+                      <p className="hdv-muted">Terminez ou lâchez le chantier en cours avant d’en prendre un autre.</p>
+                    )}
+                    <button
+                      type="button"
+                      className="accent"
+                      disabled={cannotTake}
+                      onClick={() => onTake(pick.id)}
+                    >
+                      Prendre · {money(pick.payoutCrd)}
+                    </button>
+                  </div>
+                ) : (
+                  <p className="hdv-empty">Sélectionnez une offre pour voir le détail.</p>
+                )}
+              </aside>
+            </div>
+          )}
+        </div>
       </div>
-    </div>
+    </Portail>
   );
 }
 

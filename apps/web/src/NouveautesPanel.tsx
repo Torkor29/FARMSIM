@@ -1,6 +1,7 @@
 import { useEffect, useRef } from "react";
 import type { Nouveaute } from "@farmsim/shared";
 import { MenuClose } from "./ui/MenuClose";
+import { Portail } from "./ui/Portail";
 
 /**
  * « Quoi de neuf » — ce qui a changé depuis la dernière visite.
@@ -52,45 +53,47 @@ export function NouveautesPanel({
   if (!nouveautes.length) return null;
 
   return (
-    <div className="voisin-backdrop" role="dialog" aria-modal="true" aria-labelledby="neuf-titre">
-      <div className="voisin-card glass neuf-card">
-        <header className="voisin-tete">
-          <div>
-            <h3 id="neuf-titre">Quoi de neuf</h3>
-            <p className="muted tiny">
-              {nouveautes.length === 1
-                ? "Un changement depuis votre dernière partie"
-                : `${nouveautes.length} changements depuis votre dernière partie`}
-            </p>
-          </div>
-          <MenuClose onClose={onFermer} />
-        </header>
+    <Portail>
+      <div className="voisin-backdrop" role="dialog" aria-modal="true" aria-labelledby="neuf-titre">
+        <div className="voisin-card glass neuf-card">
+          <header className="voisin-tete">
+            <div>
+              <h3 id="neuf-titre">Quoi de neuf</h3>
+              <p className="muted tiny">
+                {nouveautes.length === 1
+                  ? "Un changement depuis votre dernière partie"
+                  : `${nouveautes.length} changements depuis votre dernière partie`}
+              </p>
+            </div>
+            <MenuClose onClose={onFermer} />
+          </header>
 
-        <ul className="neuf-liste">
-          {nouveautes.map((n) => (
-            <li key={n.id} className="neuf-entree">
-              <strong className="neuf-titre">{n.titre}</strong>
-              <p className="neuf-texte">{n.texte}</p>
-            </li>
-          ))}
-        </ul>
+          <ul className="neuf-liste">
+            {nouveautes.map((n) => (
+              <li key={n.id} className="neuf-entree">
+                <strong className="neuf-titre">{n.titre}</strong>
+                <p className="neuf-texte">{n.texte}</p>
+              </li>
+            ))}
+          </ul>
 
-        {/*
-          Le mot qui ferme la boucle.
+          {/*
+            Le mot qui ferme la boucle.
 
-          Le panneau dit ce qui a changé ; il doit aussi dire qu'on attend un
-          retour dessus, sans quoi on aurait réglé la moitié du problème —
-          celle de l'information — et laissé l'autre entière.
-        */}
-        <p className="neuf-appel muted tiny">
-          Si quelque chose ne va pas là-dedans, dites-le : c'est exactement ce
-          qu'on cherche à savoir.
-        </p>
+            Le panneau dit ce qui a changé ; il doit aussi dire qu'on attend un
+            retour dessus, sans quoi on aurait réglé la moitié du problème —
+            celle de l'information — et laissé l'autre entière.
+          */}
+          <p className="neuf-appel muted tiny">
+            Si quelque chose ne va pas là-dedans, dites-le : c'est exactement ce
+            qu'on cherche à savoir.
+          </p>
 
-        <button ref={bouton} type="button" className="voisin-acheter" onClick={onFermer}>
-          J'ai lu
-        </button>
+          <button ref={bouton} type="button" className="voisin-acheter" onClick={onFermer}>
+            J'ai lu
+          </button>
+        </div>
       </div>
-    </div>
+    </Portail>
   );
 }

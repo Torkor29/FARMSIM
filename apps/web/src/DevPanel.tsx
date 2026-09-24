@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { SELLABLE_GOODS, GOOD_DEFS, xpForLevel, type TradeGood } from "@farmsim/shared";
 import { MenuClose } from "./ui/MenuClose";
+import { Portail } from "./ui/Portail";
 
 export type DevGrant = {
   crd?: number;
@@ -42,122 +43,124 @@ export function DevPanel({ open, onClose, busy, onGrant, onTick }: Props) {
   if (!open) return null;
 
   return (
-    <div className="market-backdrop" role="dialog" aria-modal="true" aria-label="Outils de test">
-      <div className="market-sheet glass dev-panel">
-        <header className="market-head">
-          <h2>Outils de test</h2>
-          <MenuClose onClose={onClose} />
-        </header>
-        <p className="muted tiny">
-          Visible uniquement sur un compte développeur. La trésorerie de ce
-          compte ne descend jamais : les autres boutons forcent un état
-          (cultures mûres, machines neuves, stock).
-        </p>
+    <Portail>
+      <div className="market-backdrop" role="dialog" aria-modal="true" aria-label="Outils de test">
+        <div className="market-sheet glass dev-panel">
+          <header className="market-head">
+            <h2>Outils de test</h2>
+            <MenuClose onClose={onClose} />
+          </header>
+          <p className="muted tiny">
+            Visible uniquement sur un compte développeur. La trésorerie de ce
+            compte ne descend jamais : les autres boutons forcent un état
+            (cultures mûres, machines neuves, stock).
+          </p>
 
-        <section className="dev-row">
-          <label className="market-field">
-            <span>Trésorerie</span>
-            <input
-              type="number"
-              min={0}
-              step={1000}
-              value={crd}
-              onChange={(e) => setCrd(Number(e.target.value))}
-            />
-          </label>
-          <div className="dev-actions">
-            {PRESETS.map((p) => (
-              <button key={p} type="button" className="ghost" onClick={() => setCrd(p)}>
-                {p.toLocaleString("fr-FR")}
-              </button>
-            ))}
-            <button
-              type="button"
-              className="accent"
-              disabled={busy}
-              onClick={() => onGrant({ crd })}
-            >
-              Appliquer
-            </button>
-          </div>
-        </section>
-
-        <section className="dev-row">
-          <label className="market-field">
-            <span>Niveau du joueur</span>
-            <input
-              type="number"
-              min={1}
-              max={50}
-              value={level}
-              onChange={(e) => setLevel(Number(e.target.value))}
-            />
-          </label>
-          <div className="dev-actions">
-            <button
-              type="button"
-              className="accent"
-              disabled={busy}
-              // L'expérience se lit sur la courbe, pas sur une constante d'affichage :
-              // « niveau 6, 1 500 XP » fabriquait un état que le jeu ne peut pas
-              // produire, et le refus d'achat de parcelle disait alors n'importe quoi.
-              onClick={() => onGrant({ level, xp: xpForLevel(level) })}
-            >
-              Appliquer
-            </button>
-          </div>
-        </section>
-
-        <section className="dev-row">
-          <label className="market-field">
-            <span>Ajouter au silo</span>
-            <select value={good} onChange={(e) => setGood(e.target.value as TradeGood)}>
-              {SELLABLE_GOODS.map((g) => (
-                <option key={g} value={g}>
-                  {GOOD_DEFS[g].name}
-                </option>
+          <section className="dev-row">
+            <label className="market-field">
+              <span>Trésorerie</span>
+              <input
+                type="number"
+                min={0}
+                step={1000}
+                value={crd}
+                onChange={(e) => setCrd(Number(e.target.value))}
+              />
+            </label>
+            <div className="dev-actions">
+              {PRESETS.map((p) => (
+                <button key={p} type="button" className="ghost" onClick={() => setCrd(p)}>
+                  {p.toLocaleString("fr-FR")}
+                </button>
               ))}
-            </select>
-          </label>
-          <label className="market-field">
-            <span>Quantité (t)</span>
-            <input
-              type="number"
-              min={0}
-              step={5}
-              value={tons}
-              onChange={(e) => setTons(Number(e.target.value))}
-            />
-          </label>
-          <div className="dev-actions">
-            <button
-              type="button"
-              className="accent"
-              disabled={busy}
-              onClick={() => onGrant({ stock: { commodity: good, tons } })}
-            >
-              Ajouter
-            </button>
-          </div>
-        </section>
+              <button
+                type="button"
+                className="accent"
+                disabled={busy}
+                onClick={() => onGrant({ crd })}
+              >
+                Appliquer
+              </button>
+            </div>
+          </section>
 
-        <section className="dev-row">
-          <div className="dev-actions wide">
-            <button type="button" className="ghost" disabled={busy} onClick={() => onGrant({ ripenAll: true })}>
-              Amener les cultures à maturité
-            </button>
-            <button type="button" className="ghost" disabled={busy} onClick={() => onGrant({ feedHerds: true })}>
-              Nourrir tous les troupeaux
-            </button>
-            <button type="button" className="ghost" disabled={busy} onClick={() => onGrant({ fixMachines: true })}>
-              Remettre les machines à neuf
-            </button>
-            <button type="button" className="ghost" disabled={busy} onClick={onTick}>
-              Avancer le monde d’un tick
-            </button>
-          </div>
-        </section>
+          <section className="dev-row">
+            <label className="market-field">
+              <span>Niveau du joueur</span>
+              <input
+                type="number"
+                min={1}
+                max={50}
+                value={level}
+                onChange={(e) => setLevel(Number(e.target.value))}
+              />
+            </label>
+            <div className="dev-actions">
+              <button
+                type="button"
+                className="accent"
+                disabled={busy}
+                // L'expérience se lit sur la courbe, pas sur une constante d'affichage :
+                // « niveau 6, 1 500 XP » fabriquait un état que le jeu ne peut pas
+                // produire, et le refus d'achat de parcelle disait alors n'importe quoi.
+                onClick={() => onGrant({ level, xp: xpForLevel(level) })}
+              >
+                Appliquer
+              </button>
+            </div>
+          </section>
+
+          <section className="dev-row">
+            <label className="market-field">
+              <span>Ajouter au silo</span>
+              <select value={good} onChange={(e) => setGood(e.target.value as TradeGood)}>
+                {SELLABLE_GOODS.map((g) => (
+                  <option key={g} value={g}>
+                    {GOOD_DEFS[g].name}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className="market-field">
+              <span>Quantité (t)</span>
+              <input
+                type="number"
+                min={0}
+                step={5}
+                value={tons}
+                onChange={(e) => setTons(Number(e.target.value))}
+              />
+            </label>
+            <div className="dev-actions">
+              <button
+                type="button"
+                className="accent"
+                disabled={busy}
+                onClick={() => onGrant({ stock: { commodity: good, tons } })}
+              >
+                Ajouter
+              </button>
+            </div>
+          </section>
+
+          <section className="dev-row">
+            <div className="dev-actions wide">
+              <button type="button" className="ghost" disabled={busy} onClick={() => onGrant({ ripenAll: true })}>
+                Amener les cultures à maturité
+              </button>
+              <button type="button" className="ghost" disabled={busy} onClick={() => onGrant({ feedHerds: true })}>
+                Nourrir tous les troupeaux
+              </button>
+              <button type="button" className="ghost" disabled={busy} onClick={() => onGrant({ fixMachines: true })}>
+                Remettre les machines à neuf
+              </button>
+              <button type="button" className="ghost" disabled={busy} onClick={onTick}>
+                Avancer le monde d’un tick
+              </button>
+            </div>
+          </section>
+        </div>
       </div>
-    </div>
+    </Portail>
   );
 }
