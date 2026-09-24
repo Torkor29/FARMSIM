@@ -6,6 +6,7 @@ import {
   orientationTrame,
   parcelleSous,
   tourner,
+  boiteSegment,
   DEMI_ROUTE,
   ENGINS_MAX,
   LARGEUR_CHEMIN,
@@ -1000,5 +1001,106 @@ describe("des parcelles de tailles variées", () => {
     const { gridW: _w, gridH: _h, ...ancienne } = voisin(1, 1, 12);
     const plan = planCampagne({ ...options(12), voisins: [ancienne] });
     expect(plan.parcelles[0]?.cases).toBe(12);
+  });
+});
+
+/**
+ * Un chemin jusqu'à chaque parcelle achetée.
+ *
+ * On y va avec ses engins : il faut donc une voie, de la route à une porte de
+ * la haie, qui ne traverse ni la cour ni le champ d'un autre.
+ */
+describe("les chemins d'accès", () => {
+  function voisin(col: number, rang: number, statut: VoisinReel["statut"]): VoisinReel {
+    return {
+      id: `a-${col}-${rang}`,
+      label: `Champ ${col}·${rang}`,
+      col,
+      rang,
+      statut,
+      proprietaire: null,
+      exploitation: null,
+      culture: "WHEAT",
+      stade: "GROWING",
+      partCultivee: 1,
+      fertility: 0.7,
+      batiments: [],
+      cheptel: [],
+      prix: null,
+      achetable: false,
+      refus: null,
+    };
+  }
+  function commune(miens: [number, number][]): VoisinReel[] {
+    const tous: VoisinReel[] = [];
+    for (let c = -2; c <= 2; c++) {
+      for (let r = -2; r <= 2; r++) {
+        const mien = (c === 0 && r === 0) || miens.some(([mc, mr]) => mc === c && mr === r);
+        tous.push(voisin(c, r, mien ? "MOI" : "PNJ"));
+      }
+    }
+    return tous;
+  }
+  const segments = (pts: { x: number; z: number }[]) =>
+    pts.slice(1).map((q, i) => [pts[i]!, q] as const);
+
+  it("chaque parcelle achetée a son chemin, le siège n'en a pas besoin", () => {
+    const voisins = commune([[1, 0], [1, 1], [0, 1]]);
+    const plan = planCampagne({ ...OPTIONS, voisins, maison: "a-0-0", quart: 0 });
+    const miennes = plan.parcelles.filter((p) => p.reel?.statut === "MOI").map((p) => p.id);
+    expect(miennes.length).toBeGreaterThan(0);
+    expect(plan.acces.map((a) => a.id).sort()).toEqual(miennes.sort());
+    expect(plan.acces.some((a) => a.id === "a-0-0")).toBe(false);
+  });
+
+  it("part de la route et finit à la porte, au milieu d'un côté", () => {
+    const plan = planCampagne({ ...OPTIONS, voisins: commune([[1, 1]]), maison: "a-0-0", quart: 0 });
+    for (const a of plan.acces) {
+      const p = plan.parcelles.find((x) => x.id === a.id)!;
+      expect(a.points[0]!.z).toBeCloseTo(plan.routeZ, 9);
+      const porte = a.points[a.points.length - 1]!;
+      expect(porte.z).toBeCloseTo(p.z, 9);
+      expect(porte.x).toBeCloseTo(p.x + (a.cote * p.emprise) / 2, 9);
+    }
+  });
+
+  it("ne traverse ni la cour, ni l'île, ni le champ d'un autre", () => {
+    const voisins = commune([[1, 0], [1, 1], [0, 1], [-1, 1], [2, 2]]);
+    const plan = planCampagne({ ...OPTIONS, voisins, maison: "a-0-0", quart: 0 });
+    const ile = { x: 0, z: 0, w: EMPRISE, d: EMPRISE };
+    for (const a of plan.acces) {
+      for (const [p, q] of segments(a.points).slice(0, -1)) {
+        const b = boiteSegment(p, q);
+        expect(seChevauchent(b, OPTIONS.cour)).toBe(false);
+        expect(seChevauchent(b, ile)).toBe(false);
+        for (const autre of plan.parcelles) {
+          if (autre.id === a.id) continue;
+          expect(seChevauchent(b, empriseParcelle(autre, autre.emprise))).toBe(false);
+        }
+      }
+    }
+  });
+
+  it("aucun arbre sur un chemin", () => {
+    const plan = planCampagne({ ...OPTIONS, voisins: commune([[1, 1], [0, 2]]), maison: "a-0-0", quart: 0 });
+    for (const a of plan.acces) {
+      for (const [p, q] of segments(a.points)) {
+        for (const arbre of plan.arbres) {
+          expect(seChevauchent({ x: arbre.x, z: arbre.z, w: 1, d: 1 }, boiteSegment(p, q))).toBe(false);
+        }
+      }
+    }
+  });
+
+  it("la parcelle active a le sien quand ce n'est pas le siège", () => {
+    // On travaille sur une parcelle achetée : le siège est ailleurs, et le
+    // tracteur doit pouvoir venir jusqu'ici.
+    const voisins = commune([[-1, -1]]).map((v) =>
+      v.col === -1 && v.rang === -1 ? { ...v, id: "siege" } : v,
+    );
+    const plan = planCampagne({ ...OPTIONS, voisins, maison: "siege", quart: 0 });
+    const ici = plan.acces.find((a) => a.id === "a-0-0");
+    expect(ici).toBeDefined();
+    expect(Math.abs(ici!.points[ici!.points.length - 1]!.x)).toBeCloseTo(EMPRISE / 2, 9);
   });
 });
