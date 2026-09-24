@@ -10,6 +10,7 @@ import {
   type BreakdownKind,
   type MachineType,
 } from "@farmsim/shared";
+import { Portail } from "./ui/Portail";
 
 export type CareMode = "grease" | "clean" | "repair";
 
@@ -121,110 +122,112 @@ export function MachineCareOverlay({
   }
 
   return (
-    <div
-      className="care-backdrop"
-      role="dialog"
-      aria-modal="true"
-      aria-labelledby="care-title"
-      onClick={onCancel}
-    >
+    <Portail>
       <div
-        className={`care-card glass${shake ? " care-shake" : ""}`}
-        onClick={(e) => e.stopPropagation()}
+        className="care-backdrop"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="care-title"
+        onClick={onCancel}
       >
-        <h3 id="care-title">{title}</h3>
-        <p className="care-machine">{machineName}</p>
-        <p className="muted tiny">{hint}</p>
         <div
-          className="care-stage"
-          onPointerMove={(e) => {
-            if (mode !== "clean" || cleanPhase !== "blow" || e.buttons === 0) return;
-            const t = e.target as HTMLElement;
-            const i = t.dataset.dust;
-            if (i != null) clearDust(Number(i));
-          }}
+          className={`care-card glass${shake ? " care-shake" : ""}`}
+          onClick={(e) => e.stopPropagation()}
         >
-          <img src={art} alt="" draggable={false} />
-          {mode === "grease" &&
-            GREASE_POINTS.map((p, i) => (
-              <button
-                key={`g${i}`}
-                type="button"
-                className={`care-nipple${greased[i] ? " done" : ""}`}
-                style={{ left: `${p.x}%`, top: `${p.y}%` }}
-                aria-label={`Point de graisse ${i + 1}`}
-                onClick={() => tapGrease(i)}
-              />
-            ))}
-          {mode === "clean" &&
-            cleanPhase === "blow" &&
-            DUST_POINTS.map((p, i) =>
-              dust[i] ? (
-                <span
-                  key={`d${i}`}
-                  data-dust={i}
-                  className="care-dust"
-                  style={{ left: `${p.x}%`, top: `${p.y}%` }}
-                  onPointerDown={() => clearDust(i)}
-                />
-              ) : null,
-            )}
-          {mode === "clean" &&
-            cleanPhase === "wash" &&
-            MUD_POINTS.map((p, i) =>
-              mud[i] ? (
-                <button
-                  key={`m${i}`}
-                  type="button"
-                  className="care-mud"
-                  style={{ left: `${p.x}%`, top: `${p.y}%` }}
-                  aria-label={`Tache ${i + 1}`}
-                  onClick={() => clearMud(i)}
-                />
-              ) : null,
-            )}
-        </div>
-        {mode === "repair" && (
-          <ol className="care-parts">
-            {parts.map((name, i) => (
-              <li key={name}>
-                <button
-                  type="button"
-                  className={fitted[i] ? "done" : ""}
-                  disabled={fitted[i]}
-                  onClick={() => tapPart(i)}
-                >
-                  {ordered ? `${i + 1}. ` : ""}
-                  {name}
-                  {fitted[i] ? " ✓" : ""}
-                </button>
-              </li>
-            ))}
-          </ol>
-        )}
-        <div className="confirm-actions">
-          <button type="button" className="ghost" onClick={onCancel} disabled={busy}>
-            Annuler
-          </button>
-          <button
-            type="button"
-            disabled={
-              busy ||
-              (mode === "grease" && !greaseDone) ||
-              (mode === "clean" && cleanPhase === "blow" && !blowDone) ||
-              (mode === "clean" && cleanPhase === "wash" && !washDone) ||
-              (mode === "repair" && !repairDone)
-            }
-            onClick={finish}
+          <h3 id="care-title">{title}</h3>
+          <p className="care-machine">{machineName}</p>
+          <p className="muted tiny">{hint}</p>
+          <div
+            className="care-stage"
+            onPointerMove={(e) => {
+              if (mode !== "clean" || cleanPhase !== "blow" || e.buttons === 0) return;
+              const t = e.target as HTMLElement;
+              const i = t.dataset.dust;
+              if (i != null) clearDust(Number(i));
+            }}
           >
-            {mode === "clean" && cleanPhase === "blow"
-              ? "Laver"
-              : mode === "repair"
-                ? "Tester"
-                : "C'est bon"}
-          </button>
+            <img src={art} alt="" draggable={false} />
+            {mode === "grease" &&
+              GREASE_POINTS.map((p, i) => (
+                <button
+                  key={`g${i}`}
+                  type="button"
+                  className={`care-nipple${greased[i] ? " done" : ""}`}
+                  style={{ left: `${p.x}%`, top: `${p.y}%` }}
+                  aria-label={`Point de graisse ${i + 1}`}
+                  onClick={() => tapGrease(i)}
+                />
+              ))}
+            {mode === "clean" &&
+              cleanPhase === "blow" &&
+              DUST_POINTS.map((p, i) =>
+                dust[i] ? (
+                  <span
+                    key={`d${i}`}
+                    data-dust={i}
+                    className="care-dust"
+                    style={{ left: `${p.x}%`, top: `${p.y}%` }}
+                    onPointerDown={() => clearDust(i)}
+                  />
+                ) : null,
+              )}
+            {mode === "clean" &&
+              cleanPhase === "wash" &&
+              MUD_POINTS.map((p, i) =>
+                mud[i] ? (
+                  <button
+                    key={`m${i}`}
+                    type="button"
+                    className="care-mud"
+                    style={{ left: `${p.x}%`, top: `${p.y}%` }}
+                    aria-label={`Tache ${i + 1}`}
+                    onClick={() => clearMud(i)}
+                  />
+                ) : null,
+              )}
+          </div>
+          {mode === "repair" && (
+            <ol className="care-parts">
+              {parts.map((name, i) => (
+                <li key={name}>
+                  <button
+                    type="button"
+                    className={fitted[i] ? "done" : ""}
+                    disabled={fitted[i]}
+                    onClick={() => tapPart(i)}
+                  >
+                    {ordered ? `${i + 1}. ` : ""}
+                    {name}
+                    {fitted[i] ? " ✓" : ""}
+                  </button>
+                </li>
+              ))}
+            </ol>
+          )}
+          <div className="confirm-actions">
+            <button type="button" className="ghost" onClick={onCancel} disabled={busy}>
+              Annuler
+            </button>
+            <button
+              type="button"
+              disabled={
+                busy ||
+                (mode === "grease" && !greaseDone) ||
+                (mode === "clean" && cleanPhase === "blow" && !blowDone) ||
+                (mode === "clean" && cleanPhase === "wash" && !washDone) ||
+                (mode === "repair" && !repairDone)
+              }
+              onClick={finish}
+            >
+              {mode === "clean" && cleanPhase === "blow"
+                ? "Laver"
+                : mode === "repair"
+                  ? "Tester"
+                  : "C'est bon"}
+            </button>
+          </div>
         </div>
       </div>
-    </div>
+    </Portail>
   );
 }

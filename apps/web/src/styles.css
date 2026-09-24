@@ -261,6 +261,43 @@ html.playing body {
     --rail-r: clamp(16.5rem, 19vw, 20rem);
   }
 }
+/* ——————————————————————————————————————————————————————————————————————
+   L'ÉCHELLE DES PLANS
+
+   Tous les voiles du jeu se comparent sur cette échelle, et nulle part
+   ailleurs. Elle n'a de sens que parce qu'ils vivent tous dans le même
+   contexte d'empilement : `ui/Portail.tsx` les pose dans `<body>`.
+
+   C'est la moitié manquante d'un défaut signalé plusieurs fois — « quand
+   t'appuies sur acheter de la paille, la popup s'ouvre derrière ». La règle
+   ci-dessous met le plateau en `position: fixed`, ce qui **crée un contexte
+   d'empilement** : tout ce qui était rendu dedans s'y trouvait enfermé, et
+   ses z-index ne se comparaient plus à ceux des fenêtres, posées par portail
+   dans `<body>`. Mesuré dans le navigateur, ordre de peinture réel :
+
+       .win-backdrop       z-index: 30   ← devant
+       .tutorial-backdrop  z-index: 50
+       .market-backdrop    z-index: 40   ← derrière
+
+   Un 30 devant un 50. Aucun réglage de nombre ne pouvait corriger cela —
+   d'où les tentatives répétées sans effet. C'est le portail qui répare ; ces
+   nombres-ci ne font que dire l'ordre voulu.
+
+     30  la ferme et ses fenêtres    .win-backdrop, .resume-backdrop
+     40  les salles                  .market-backdrop, .sheet-backdrop,
+                                     .hall-backdrop
+     45  le guide                    .guide-backdrop
+     46  les compétences             .skills-backdrop
+     50  le tutoriel                 .tutorial-backdrop
+     70  les ateliers et le voisin   .care-backdrop, .voisin-backdrop
+     90  la fiche d'engin            .machine-sheet-backdrop
+    200  la confirmation             .confirm-backdrop
+
+   La confirmation ferme la marche, et ce n'est pas un détail de goût : elle
+   porte toujours sur quelque chose déjà ouvert. À 60, « Reprise de … ? »
+   lancée depuis la fiche d'engin (90) s'ouvrait derrière elle — le même
+   défaut, une fenêtre plus loin.
+   —————————————————————————————————————————————————————————————————————— */
 html.playing .game-stage {
   position: fixed;
   inset: 0;

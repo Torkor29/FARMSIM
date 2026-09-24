@@ -10,6 +10,7 @@ import {
   type ObjectiveView,
 } from "@farmsim/shared";
 import { MenuClose } from "./ui/MenuClose";
+import { Portail } from "./ui/Portail";
 
 type Props = {
   open: boolean;
@@ -49,56 +50,58 @@ export function PlayGuide({ open, snapshot, xp = 0, onClose }: Props) {
   const chapter = GUIDE_CHAPTERS.find((c) => c.id === tab);
 
   return (
-    <div className="guide-backdrop" role="dialog" aria-modal="true" aria-labelledby="guide-title">
-      <div className="guide-sheet glass">
-        <header className="guide-head">
-          <div>
-            <p className="guide-kicker">Toujours sous la main</p>
-            <h2 id="guide-title">Guide de ferme</h2>
+    <Portail>
+      <div className="guide-backdrop" role="dialog" aria-modal="true" aria-labelledby="guide-title">
+        <div className="guide-sheet glass">
+          <header className="guide-head">
+            <div>
+              <p className="guide-kicker">Toujours sous la main</p>
+              <h2 id="guide-title">Guide de ferme</h2>
+            </div>
+            <MenuClose onClose={onClose} />
+          </header>
+
+          <nav className="guide-tabs" aria-label="Chapitres du guide">
+            {TABS.map((t) => (
+              <button
+                key={t.id}
+                type="button"
+                className={tab === t.id ? "on" : ""}
+                onClick={() => setTab(t.id)}
+              >
+                {t.label}
+              </button>
+            ))}
+          </nav>
+
+          <div className="guide-body">
+            {tab === "goals" ? (
+              <GoalsPane goals={goals} current={current} />
+            ) : tab === "levels" ? (
+              <LevelsPane xp={xp} />
+            ) : (
+              chapter && (
+                <>
+                  <p className="guide-lead">{chapter.lead}</p>
+                  <ul className="guide-list">
+                    {chapter.entries.map((e) => (
+                      <li key={e.id} className={e.soon ? "soon" : ""}>
+                        <strong>
+                          {e.name}
+                          {e.soon ? <em> Bientôt</em> : null}
+                        </strong>
+                        <span>{e.how}</span>
+                        <small>{e.usedBy}</small>
+                      </li>
+                    ))}
+                  </ul>
+                </>
+              )
+            )}
           </div>
-          <MenuClose onClose={onClose} />
-        </header>
-
-        <nav className="guide-tabs" aria-label="Chapitres du guide">
-          {TABS.map((t) => (
-            <button
-              key={t.id}
-              type="button"
-              className={tab === t.id ? "on" : ""}
-              onClick={() => setTab(t.id)}
-            >
-              {t.label}
-            </button>
-          ))}
-        </nav>
-
-        <div className="guide-body">
-          {tab === "goals" ? (
-            <GoalsPane goals={goals} current={current} />
-          ) : tab === "levels" ? (
-            <LevelsPane xp={xp} />
-          ) : (
-            chapter && (
-              <>
-                <p className="guide-lead">{chapter.lead}</p>
-                <ul className="guide-list">
-                  {chapter.entries.map((e) => (
-                    <li key={e.id} className={e.soon ? "soon" : ""}>
-                      <strong>
-                        {e.name}
-                        {e.soon ? <em> Bientôt</em> : null}
-                      </strong>
-                      <span>{e.how}</span>
-                      <small>{e.usedBy}</small>
-                    </li>
-                  ))}
-                </ul>
-              </>
-            )
-          )}
         </div>
       </div>
-    </div>
+    </Portail>
   );
 }
 
