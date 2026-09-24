@@ -203,8 +203,33 @@ export type PointPlan = { x: number; z: number };
  */
 export type EmpriseSol = { uMin: number; uMax: number; vMax: number };
 
+/**
+ * Le chemin d'accès d'une parcelle du joueur.
+ *
+ * Il part de la route, remonte le couloir de trame qui longe la parcelle, et
+ * entre par une porte au milieu d'un de ses côtés. Tout en angles droits, et
+ * toujours dans les couloirs : ceux-ci sont vides par construction, le chemin
+ * ne traverse donc jamais le champ d'un autre.
+ */
+export type Acces = {
+  /** La parcelle desservie. */
+  id: string;
+  /** De la route à la porte, dans l'ordre où on les parcourt. */
+  points: PointPlan[];
+  /** Le côté de la parcelle où est la porte : −1 à l'ouest (`x` négatifs), +1 à l'est. */
+  cote: -1 | 1;
+};
+
+/** Demi-largeur d'un chemin d'accès, bas-côtés compris. */
+export const DEMI_ACCES = 0.8;
+
 export type PlanCampagne = {
   parcelles: ParcelleVoisine[];
+  /**
+   * Les chemins d'accès aux parcelles du joueur — sauf au siège, que la
+   * desserte de la cour relie déjà à la route.
+   */
+  acces: Acces[];
   /** Le chemin d'exploitation, d'un bout à l'autre du sol. */
   route: PointPlan[];
   /** L'amorce qui relie la cour au chemin. */
@@ -878,6 +903,16 @@ export function planCampagne(o: OptionsPlan): PlanCampagne {
     .sort((a, b) => visible(a) - visible(b));
   for (const p of candidats.slice(0, ENGINS_MAX)) p.travaille = true;
 
+  const acces = cheminsAcces({
+    parcelles,
+    voisins: o.voisins ?? [],
+    maison: o.maison,
+    pas,
+    routeZ,
+    cour,
+    ile: emprise,
+  });
+
   /*
    * Le chemin, d'un bord à l'autre du sol.
    *
@@ -911,6 +946,14 @@ export function planCampagne(o: OptionsPlan): PlanCampagne {
   const arbres: { x: number; z: number; taille: number; graine: number }[] = [];
   const libre = (x: number, z: number, r: number) => {
     if (Math.abs(z - routeZ) < DEMI_ROUTE + r) return false;
+    // Pas un arbre au milieu d'un chemin d'accès.
+    for (const a of acces) {
+      for (let i = 0; i + 1 < a.points.length; i++) {
+        if (seChevauchent({ x, z, w: r * 2, d: r * 2 }, boiteSegment(a.points[i]!, a.points[i + 1]!), 0.3)) {
+          return false;
+        }
+      }
+    }
     if (seChevauchent({ x, z, w: r * 2, d: r * 2 }, cour, 0.8)) return false;
     if (seChevauchent({ x, z, w: r * 2, d: r * 2 }, joueur, 0.8)) return false;
     return !parcelles.some((p) =>
@@ -974,5 +1017,69 @@ export function planCampagne(o: OptionsPlan): PlanCampagne {
     );
   }
 
-  return { parcelles, route, desserte, arbres, sol, pas, emprise, routeZ, quart };
+  return { parcelles, acces, route, desserte, arbres, sol, pas, emprise, routeZ, quart };
+}
+
+/** L'emprise d'un tronçon de chemin, droit et parallèle à un axe. */
+export function boiteSegment(a: PointPlan, b: PointPlan, demi = DEMI_ACCES): Boite {
+  return {
+    x: (a.x + b.x) / 2,
+    z: (a.z + b.z) / 2,
+    w: Math.abs(b.x - a.x) + demi * 2,
+    d: Math.abs(b.z - a.z) + demi * 2,
+  };
+}
+
+/**
+ * Les chemins d'accès aux parcelles du joueur.
+ *
+ * Chaque parcelle achetée doit être **joignable** : on y va avec ses engins,
+ * on ne les téléporte pas. Le chemin part de la route, suit le couloir de
+ * trame qui longe la parcelle — à l'ouest de préférence, comme la cour du
+ * siège, à l'est si l'ouest est pris —, puis tourne vers une porte au milieu
+ * du côté.
+ *
+ * La parcelle active compte aussi quand ce n'est pas le siège : elle est à
+ * l'origine, hors de `parcelles`, et il faut bien que le tracteur y arrive.
+ */
+export function cheminsAcces(o: {
+  parcelles: readonly ParcelleVoisine[];
+  voisins: readonly VoisinReel[];
+  maison?: string;
+  pas: number;
+  routeZ: number;
+  cour: Boite;
+  ile: number;
+}): Acces[] {
+  const cibles: { id: string; x: number; z: number; emprise: number }[] = [];
+  const active = o.voisins.find((v) => v.col === 0 && v.rang === 0);
+  if (active && active.statut === "MOI" && o.maison && active.id !== o.maison) {
+    cibles.push({ id: active.id, x: 0, z: 0, emprise: o.ile });
+  }
+  for (const p of o.parcelles) {
+    if (p.reel?.statut !== "MOI" || p.id === o.maison) continue;
+    cibles.push({ id: p.id, x: p.x, z: p.z, emprise: p.cote });
+  }
+  const obstacles: { id: string; boite: Boite }[] = [
+    { id: "", boite: o.cour },
+    { id: active?.id ?? "", boite: { x: 0, z: 0, w: o.ile, d: o.ile } },
+    ...o.parcelles.map((p) => ({ id: p.id, boite: empriseParcelle(p, p.cote) })),
+  ];
+  const acces: Acces[] = [];
+  for (const c of cibles) {
+    for (const cote of [-1, 1] as const) {
+      const couloir = c.x + (cote * o.pas) / 2;
+      const porte = { x: c.x + (cote * c.emprise) / 2, z: c.z };
+      const points = [{ x: couloir, z: o.routeZ }, { x: couloir, z: c.z }, porte];
+      const bloque = [0, 1].some((i) => {
+        const b = boiteSegment(points[i]!, points[i + 1]!);
+        // Le dernier tronçon entre dans sa propre parcelle : c'est le but.
+        return obstacles.some((ob) => ob.id !== c.id && seChevauchent(b, ob.boite, 0.05));
+      });
+      if (bloque) continue;
+      acces.push({ id: c.id, points, cote });
+      break;
+    }
+  }
+  return acces;
 }

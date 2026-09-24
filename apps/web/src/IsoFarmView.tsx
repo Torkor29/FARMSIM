@@ -421,6 +421,8 @@ const TILE_TOP = TILE_THICK / 2;
 /** Pneus légèrement dans la dalle : un contact pile au sommet laisse un
  *  interstice d'un pixel iso, et l'engin a l'air de flotter. */
 const MACHINE_GROUND = TILE_TOP - 0.012;
+/** L'altitude du sol de la campagne, sous l'île : routes et chemins y courent. */
+const CAMPAGNE_Y = -0.46;
 
 /**
  * Échelle commune du parc matériel : une seule valeur pour toutes les
@@ -1462,6 +1464,9 @@ export function IsoFarmView({
     scene.add(campagneGroup);
     let campagne: Campagne | null = null;
     let campagneCle = "";
+    /** Les parcelles du voisinage précédent, et celles qui étaient déjà au joueur. */
+    let dejaVus: Set<string> | null = null;
+    let dejaMiens = new Set<string>();
     /**
      * Le repère de la ferme : orientation de la carte et place du siège.
      *
@@ -1963,6 +1968,7 @@ export function IsoFarmView({
       return { px: ox + x * step, pz: oz + y * step };
     }
 
+
     /**
      * Monte la cour de stationnement et y range le parc.
      *
@@ -2073,6 +2079,37 @@ export function IsoFarmView({
      * longer, puis se ranger — parce qu'un engin ne coupe pas à travers la
      * haie, et qu'une diagonale se lirait comme un vol plané.
      */
+    /**
+     * De la place de garage jusqu'à l'intérieur de la porte, par la route.
+     *
+     * Seulement pour une parcelle desservie par un chemin d'accès — une
+     * parcelle achetée, quand ce n'est pas le siège. L'engin sort de la cour
+     * par la desserte, suit la route jusqu'au chemin, le chemin jusqu'à la
+     * porte, et monte la rampe. Route et chemin courent au niveau de la
+     * campagne, plus bas que les champs du joueur.
+     *
+     * `null` ailleurs : sur le siège, la cour touche le champ, et l'équerre
+     * par le portail reste le bon trajet.
+     */
+    function trajetParLaRoute(
+      place: { x: number; z: number },
+    ): { x: number; y: number; z: number }[] | null {
+      if (!campagne) return null;
+      const acces = campagne.plan.acces.find((a) => a.id === parcelIdRef.current);
+      const [sortie, carrefour] = campagne.plan.desserte;
+      if (!acces || !sortie || !carrefour) return null;
+      const surRoute = CAMPAGNE_Y + 0.05;
+      const porte = acces.points[acces.points.length - 1]!;
+      return [
+        { x: place.x, z: place.z, y: yardDeck },
+        { x: sortie.x, z: sortie.z - 1.2, y: yardDeck },
+        { x: sortie.x, z: sortie.z + 0.6, y: surRoute },
+        { x: carrefour.x, z: carrefour.z, y: surRoute },
+        ...acces.points.map((p) => ({ x: p.x, z: p.z, y: surRoute })),
+        { x: porte.x - acces.cote * 1.2, z: porte.z, y: MACHINE_GROUND },
+      ];
+    }
+
     function rentrerAuGarage(t: number): boolean {
       if (!workRig || !parkingSlots.length) return false;
       const occupees = dataRef.current.parked.length;
@@ -2080,12 +2117,16 @@ export function IsoFarmView({
       const place = parkingSlots[cible];
       if (!place) return false;
       const depart = workRig.group.position;
-      const chemin = [
-        { x: depart.x, z: depart.z, y: MACHINE_GROUND },
-        { x: depart.x, z: parkingGateZ, y: MACHINE_GROUND },
-        { x: place.x, z: parkingGateZ, y: yardDeck },
-        { x: place.x, z: place.z, y: yardDeck },
-      ];
+      // Le retour d'une parcelle achetée reprend son chemin d'accès, à l'envers.
+      const parRoute = trajetParLaRoute(place);
+      const chemin = parRoute
+        ? [{ x: depart.x, z: depart.z, y: MACHINE_GROUND }, ...parRoute.reverse()]
+        : [
+            { x: depart.x, z: depart.z, y: MACHINE_GROUND },
+            { x: depart.x, z: parkingGateZ, y: MACHINE_GROUND },
+            { x: place.x, z: parkingGateZ, y: yardDeck },
+            { x: place.x, z: place.z, y: yardDeck },
+          ];
       retour = { rig: workRig, chemin, debut: t, distance: workTravelled, cible };
       workRig = null;
       return true;
@@ -2222,6 +2263,23 @@ export function IsoFarmView({
           view.panX -= ici.x;
           view.panZ -= ici.z;
         }
+        /*
+         * Les parcelles qui viennent de passer à nous : on les voyait déjà, à
+         * un autre, et les voici au joueur. Leur chemin d'accès se construit
+         * sous ses yeux. Au premier affichage, ou en arrivant dans un autre
+         * coin de la commune, rien ne « vient » d'être acheté : pas de
+         * chantier.
+         */
+        const chantiers: string[] = [];
+        if (dejaVus) {
+          for (const v of voisins ?? []) {
+            if (v.statut === "MOI" && dejaVus.has(v.id) && !dejaMiens.has(v.id)) chantiers.push(v.id);
+          }
+        }
+        if (voisins?.length) {
+          dejaVus = new Set(voisins.map((v) => v.id));
+          dejaMiens = new Set(voisins.filter((v) => v.statut === "MOI").map((v) => v.id));
+        }
         campagne?.dispose();
         campagneGroup.clear();
         const siege = tailleSiege(gw, gh);
@@ -2256,13 +2314,14 @@ export function IsoFarmView({
           emprise: Math.max(gw, gh) * step + TALUS_PARCELLE,
           pasCase: step,
           cases: Math.max(gw, gh),
+          chantiers,
           voisins: voisins?.length ? voisins : undefined,
           cour: courBoite,
           shadows: quality.shadows,
           sobre: !quality.shadows,
           // Le pied de la dalle : la campagne passe dessous, de sorte que
           // l'île garde son talus de terre au lieu de flotter.
-          y: -0.46,
+          y: CAMPAGNE_Y,
         });
         campagneGroup.add(campagne.object);
       }
@@ -2300,25 +2359,32 @@ export function IsoFarmView({
        * enclos voisin sans porte. Le pan ouest est donc coupé en deux tronçons
        * qui réservent le passage, en face du chemin de la cour.
        */
-      const passage = 1.5;
-      const passageZ = parkingGateZ;
+      /*
+       * Sur une parcelle achetée, la porte n'est plus face à la cour — la
+       * cour est au siège, parfois à trois champs de là. Elle est au milieu
+       * du côté où arrive son chemin d'accès.
+       */
+      const accesIci = campagne?.plan.acces.find((a) => a.id === parcelIdRef.current);
+      const passage = accesIci ? 1.8 : 1.5;
+      const passageZ = accesIci ? 0 : parkingGateZ;
+      const cotePassage = accesIci?.cote ?? -1;
       const ouestAvant = Math.max(0, passageZ - passage / 2 + hh / 2);
       const ouestApres = Math.max(0, hh / 2 - (passageZ + passage / 2));
       const hedges: [THREE.BoxGeometry, [number, number, number]][] = [
         [new THREE.BoxGeometry(hw, hedgeH, hedgeT), [0, 0.15, -hh / 2]],
         [new THREE.BoxGeometry(hw, hedgeH, hedgeT), [0, 0.15, hh / 2]],
-        [new THREE.BoxGeometry(hedgeT, hedgeH, hh), [hw / 2, 0.15, 0]],
+        [new THREE.BoxGeometry(hedgeT, hedgeH, hh), [(-cotePassage * hw) / 2, 0.15, 0]],
       ];
       if (ouestAvant > 0.05) {
         hedges.push([
           new THREE.BoxGeometry(hedgeT, hedgeH, ouestAvant),
-          [-hw / 2, 0.15, -hh / 2 + ouestAvant / 2],
+          [(cotePassage * hw) / 2, 0.15, -hh / 2 + ouestAvant / 2],
         ]);
       }
       if (ouestApres > 0.05) {
         hedges.push([
           new THREE.BoxGeometry(hedgeT, hedgeH, ouestApres),
-          [-hw / 2, 0.15, hh / 2 - ouestApres / 2],
+          [(cotePassage * hw) / 2, 0.15, hh / 2 - ouestApres / 2],
         ]);
       }
       for (const [geo, [px, py, pz]] of hedges) {
@@ -2334,7 +2400,7 @@ export function IsoFarmView({
           new THREE.BoxGeometry(hedgeT * 1.2, hedgeH * 1.15, hedgeT * 1.2),
           hedgeMat,
         );
-        pilier.position.set(-hw / 2, 0.15, passageZ + (side * passage) / 2);
+        pilier.position.set((cotePassage * hw) / 2, 0.15, passageZ + (side * passage) / 2);
         pilier.castShadow = true;
         fenceGroup.add(pilier);
       }
@@ -3904,13 +3970,25 @@ export function IsoFarmView({
             if (place) {
               workRig.group.position.set(place.x, yardDeck, place.z);
               workRig.group.rotation.y = parkingHeading;
+              /*
+               * Sur une parcelle achetée, la route et son chemin d'accès.
+               *
+               * L'équerre du siège — descendre au portail, traverser — ne
+               * vaut que là où la cour touche le champ. Une parcelle achetée
+               * est parfois à trois champs de là : en équerre, l'engin
+               * traversait les cultures des voisins. Il prend la desserte,
+               * la route, puis le chemin d'accès de la parcelle.
+               */
+              const parRoute = trajetParLaRoute(place);
               arrivee = {
-                chemin: [
-                  { x: place.x, z: place.z, y: yardDeck },
-                  { x: place.x, z: parkingGateZ, y: yardDeck },
-                  { x: premiere.px, z: parkingGateZ, y: MACHINE_GROUND },
-                  { x: premiere.px, z: premiere.pz, y: MACHINE_GROUND },
-                ],
+                chemin: parRoute
+                  ? [...parRoute, { x: premiere.px, z: premiere.pz, y: MACHINE_GROUND }]
+                  : [
+                      { x: place.x, z: place.z, y: yardDeck },
+                      { x: place.x, z: parkingGateZ, y: yardDeck },
+                      { x: premiere.px, z: parkingGateZ, y: MACHINE_GROUND },
+                      { x: premiere.px, z: premiere.pz, y: MACHINE_GROUND },
+                    ],
                 debut: t,
                 fin: t + approcheS,
                 distance: 0,
