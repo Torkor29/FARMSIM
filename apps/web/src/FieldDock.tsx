@@ -1,7 +1,7 @@
 import { useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import type { ObjectiveView, Season } from "@farmsim/shared";
 import { isFieldWorkTool, isPlantTool, isSoilTool, toolBareVerb, toolVerb, type Tool } from "./tools";
-import { BRUSH_SIZES, TOOL_GROUPS, groupOf, optionsFor } from "./ui/tool-options";
+import { BRUSH_SIZES, RAIL_GROUPS, groupOf, optionsFor } from "./ui/tool-options";
 
 /**
  * Barre d'outils tactile.
@@ -94,7 +94,6 @@ type Props = {
   onHarvestAll: () => void;
   onContractor: () => void;
   onPublishLabor?: () => void;
-  onSell: () => void;
   onGuide: () => void;
   hasHerd?: boolean;
   /**
@@ -156,7 +155,6 @@ export function FieldDock({
   onHarvestAll,
   onContractor,
   onPublishLabor,
-  onSell,
   onGuide,
   moreOpen,
   moreBadge = 0,
@@ -449,17 +447,16 @@ export function FieldDock({
       )}
 
       <div className="dock-bar" role="toolbar" aria-label="Outils de champ">
-        {TOOL_GROUPS.map((g) => {
+        {RAIL_GROUPS.map((g) => {
           const on = group === g.id;
           return (
             <button
               key={g.id}
               type="button"
-              className={`dock-tool ${on ? "on" : ""} ${g.id === "SELL" ? "sell" : ""}`}
+              className={`dock-tool ${on ? "on" : ""}`}
               aria-current={on ? "true" : undefined}
               onClick={() => {
-                if (g.id === "SELL") onSell();
-                else if (g.entry && !on) onTool(g.entry);
+                if (g.entry && !on) onTool(g.entry);
               }}
             >
               <img src={g.icon} alt="" width={22} height={22} />

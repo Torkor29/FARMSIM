@@ -32,7 +32,9 @@ export type Scene =
   | "recolte"
   | "batir"
   | "troupeau"
-  | "vendre"
+  | "cooperative"
+  | "concession"
+  | "mairie"
   | "personnel";
 
 export type Etape = {
@@ -64,12 +66,12 @@ export const ETAPES: Etape[] = [
   {
     id: "onglets",
     chapitre: "L’écran",
-    titre: "Les six panneaux",
+    titre: "Les panneaux de la ferme",
     texte:
-      "Parcelle décrit votre terre. Bâtir pose les bâtiments. Troupeau gère les bêtes. Garage tient les machines. Missions ouvre les objectifs et Personnel gère les employés.",
+      "À gauche, Mon exploitation ouvre Construire, Personnel et Élevage. La fiche Parcelle s’ouvre à droite quand vous regardez une case. Tout le reste se trouve au village, en bord de route.",
     texteTactile:
-      "Touchez Plus dans le dock : le tiroir Panneaux affiche Parcelle, Bâtir, Troupeau, Garage, Missions et Personnel. Touchez une carte pour ouvrir son panneau.",
-    astuce: "Au téléphone, ces six panneaux sont rangés derrière Plus : ils ne prennent pas une seconde barre en permanence.",
+      "Touchez Plus dans le dock : le tiroir Panneaux affiche Parcelle, Bâtir, Troupeau et Personnel. Pour vendre, réparer ou prendre des missions, on va au village.",
+    astuce: "Le marché, le garage et le bureau ne sont plus des boutons : ce sont la coopérative, la concession et la mairie.",
     scene: "onglets",
   },
 
@@ -79,9 +81,9 @@ export const ETAPES: Etape[] = [
     chapitre: "Travailler un champ",
     titre: "1 — Choisir l’outil d’abord",
     texte:
-      "Choisissez d’abord une famille d’outils : Voir, Semer, Sol, Récolte ou Ventes. Les choix précis — culture, désherbage, déchaumage, engrais — apparaissent ensuite.",
+      "Choisissez d’abord une famille d’outils : Voir, Semer, Sol ou Récolte. Les choix précis — culture, désherbage, déchaumage, engrais — apparaissent ensuite.",
     texteTactile:
-      "Touchez d’abord Voir, Semer, Sol, Récolte ou Ventes dans le dock. Une rangée s’ouvre au-dessus pour choisir précisément la culture ou le travail du sol.",
+      "Touchez d’abord Voir, Semer, Sol ou Récolte dans le dock. Une rangée s’ouvre au-dessus pour choisir précisément la culture ou le travail du sol.",
     astuce: "Semer propose les céréales, l’herbe et le maraîchage ; Sol contient Désherber, Déchaumer, Labourer et Engrais.",
     scene: "outils",
   },
@@ -164,14 +166,39 @@ export const ETAPES: Etape[] = [
     astuce: "Trop mûr, ça se perd. Le panneau prévient avant que ça n’arrive.",
     scene: "recolte",
   },
+  /* ---- Le village ------------------------------------------------ */
   {
-    id: "vendre",
-    chapitre: "Le cycle",
-    titre: "Vendre au bon moment",
+    id: "cooperative",
+    chapitre: "Le village",
+    titre: "Vendre à la coopérative",
     texte:
-      "Le bouton Ventes du dock ouvre l’hôtel des ventes. Le cours bouge chaque jour : garder son grain quelques jours peut rapporter davantage, ou moins.",
-    astuce: "Vous pouvez aussi vendre aux autres joueurs — l’éleveur cherche du foin et du maïs.",
-    scene: "vendre",
+      "Au bord de la route, le village a trois bâtiments utiles. La coopérative, avec ses silos, ouvre l’hôtel des ventes quand on clique dessus. Le cours bouge chaque jour : garder son grain quelques jours peut rapporter plus, ou moins.",
+    texteTactile:
+      "Au bord de la route, le village a trois bâtiments utiles. Touchez la coopérative, avec ses silos, pour ouvrir l’hôtel des ventes. Le cours bouge chaque jour : garder son grain peut rapporter plus, ou moins.",
+    astuce: "Le village est hors de l’écran ? La pastille Village, au bord de la vue, vous y emmène ; Ma ferme vous ramène.",
+    scene: "cooperative",
+  },
+  {
+    id: "concession",
+    chapitre: "Le village",
+    titre: "Le garage de la concession",
+    texte:
+      "Cliquez la concession, le showroom aux tracteurs, pour ouvrir le garage. On y graisse, nettoie et répare ses machines, on les améliore palier par palier, et on achète du neuf ou de l’occasion.",
+    texteTactile:
+      "Touchez la concession, le showroom aux tracteurs, pour ouvrir le garage. On y graisse, nettoie et répare ses machines, on les améliore et on achète du neuf ou de l’occasion.",
+    astuce: "Une machine graissée et propre s’use moins et récolte un peu plus.",
+    scene: "concession",
+  },
+  {
+    id: "mairie",
+    chapitre: "Le village",
+    titre: "Le bureau de la mairie",
+    texte:
+      "Cliquez la mairie, sous son horloge, pour ouvrir le bureau : vos objectifs, la bourse des chantiers entre joueurs, la banque et les terres à acheter.",
+    texteTactile:
+      "Touchez la mairie, sous son horloge, pour ouvrir le bureau : vos objectifs, la bourse des chantiers entre joueurs, la banque et les terres à acheter.",
+    astuce: "Un objectif terminé se réclame ici : pensez à passer à la mairie.",
+    scene: "mairie",
   },
 
   /* ---- S'agrandir ------------------------------------------------- */

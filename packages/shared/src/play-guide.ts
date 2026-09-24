@@ -187,7 +187,7 @@ export const OBJECTIVE_DEFS: ObjectiveDef[] = [
   {
     id: "hay",
     title: "Stockez du fourrage",
-    hint: "Ventes → on peut acheter du foin. L’éleveur achète ce que le céréalier cultive.",
+    hint: "Coopérative du village → on peut acheter du foin. L’éleveur achète ce que le céréalier cultive.",
     unlock: "Nourrir le troupeau sans le laisser dépérir",
     spec: "ELEVEUR",
     check: (s) => s.hayTons > 0,
@@ -210,7 +210,7 @@ export const OBJECTIVE_DEFS: ObjectiveDef[] = [
   {
     id: "contract",
     title: "Aidez un voisin pendant que ça pousse",
-    hint: "Bureau → Prendre. Il faut la machine.",
+    hint: "Mairie du village → Prendre. Il faut la machine.",
     unlock: "Un peu d’argent en plus, pas une rente",
     check: (s) => s.hasContract,
   },
@@ -637,7 +637,7 @@ export const GUIDE_CHAPTERS: GuideChapter[] = [
       {
         id: "appoint",
         name: "Aider les voisins",
-        how: "Ce n’est pas un métier. Missions → un travail de 8 à 24 cases chez un voisin. Un peu d’argent, pas une rente.",
+        how: "Ce n’est pas un métier. Mairie → Prendre : un travail de 8 à 24 cases chez un voisin. Un peu d’argent, pas une rente.",
         usedBy: "Les deux, pendant que les cultures poussent ou que le troupeau mange.",
       },
       {

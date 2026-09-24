@@ -637,7 +637,7 @@ function effacerJetonDeLAdresse(): void {
 }
 
 /** Tiroirs du bas, sur petit écran. */
-type SheetKey = "INFO" | "BUILD" | "GARAGE" | "OFFICE" | "HERD" | "STAFF" | "PROFILE";
+type SheetKey = "INFO" | "BUILD" | "GARAGE" | "HERD" | "STAFF" | "PROFILE";
 
 /**
  * Les onglets du bas.
@@ -647,13 +647,15 @@ type SheetKey = "INFO" | "BUILD" | "GARAGE" | "OFFICE" | "HERD" | "STAFF" | "PRO
  * cinq boutons les plus vus du jeu, présents sur chaque écran, étaient donc
  * les seuls dont l'apparence dépendait du téléphone du joueur : ronds et
  * brillants sur iPhone, plats sur Android, et jamais dans la palette.
+ *
+ * Garage et Missions n'y sont plus : on les ouvre en touchant la concession et
+ * la mairie du village, comme l'hôtel des ventes à la coopérative. Le tiroir
+ * « GARAGE » reste, c'est la concession qui l'ouvre.
  */
 const SHEET_TABS: { key: SheetKey; label: string; icon: string }[] = [
   { key: "INFO", label: "Parcelle", icon: "/assets/icons/nav/parcelle.svg" },
   { key: "BUILD", label: "Bâtir", icon: "/assets/icons/nav/batir.svg" },
   { key: "HERD", label: "Troupeau", icon: "/assets/icons/nav/troupeau.svg" },
-  { key: "GARAGE", label: "Garage", icon: "/assets/icons/nav/garage.svg" },
-  { key: "OFFICE", label: "Missions", icon: "/assets/icons/nav/missions.svg" },
   { key: "STAFF", label: "Personnel", icon: "/assets/icons/nav/personnel.svg" },
 ];
 
@@ -5270,13 +5272,12 @@ export function App() {
   /* La ligne de crédit se recharge à l'ouverture du Bureau : une dette qui a
      couru pendant qu'on jouait doit se voir en arrivant. */
   useEffect(() => {
-    const ouvert = isMobile ? sheet === "OFFICE" : showEta;
-    if (ouvert) {
+    if (showEta) {
       void loadCredit();
       void loadAteliers();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [showEta, sheet, isMobile, player?.id]);
+  }, [showEta, player?.id]);
 
   useEffect(() => {
     const ouvert = isMobile ? sheet === "GARAGE" : showGarage;
@@ -5825,8 +5826,11 @@ export function App() {
                   if (isMobile) setSheet("GARAGE");
                   else setShowGarage(true);
                 } else if (genre === "MAIRIE") {
-                  if (isMobile) setSheet("OFFICE");
-                  else setShowEta(true);
+                  // Le Bureau est une fenêtre sur les deux coques : un tiroir
+                  // « OFFICE » n'affiche plus rien au téléphone depuis que la
+                  // bourse des chantiers l'a absorbé.
+                  setSheet(null);
+                  setShowEta(true);
                 }
               }}
               onOwnedCellClick={(parcelId, x, y, mods) => {
@@ -7238,7 +7242,6 @@ export function App() {
           mowReadyAll={readyAreGrass}
           onContractor={callContractor}
           onPublishLabor={publishLaborOrder}
-          onSell={() => setShowMarket(true)}
           onGuide={() => setShowGuide(true)}
           hasHerd={barnsFerme.length > 0}
           moreOpen={moreOpen}
@@ -7265,11 +7268,9 @@ export function App() {
             }
             strawCount={strawCellCount}
             baleCount={baleCellCount}
-            visiting={visiting}
             onTool={pickTool}
             onBrush={setBrush}
             onKeepSwath={() => setKeepSwath((v) => !v)}
-            onMarket={() => setShowMarket(true)}
             onGuide={() => setShowGuide(true)}
             panneaux={[
               {
@@ -7278,22 +7279,6 @@ export function App() {
                 icon: "/assets/icons/nav/batir.svg",
                 on: showBuildPicker,
                 onOpen: () => setShowBuildPicker((v) => !v),
-              },
-              {
-                id: "GARAGE",
-                label: "Garage",
-                icon: "/assets/icons/nav/garage.svg",
-                hotkey: "G",
-                on: showGarage,
-                onOpen: () => setShowGarage((v) => !v),
-              },
-              {
-                id: "OFFICE",
-                label: "Bureau",
-                icon: "/assets/icons/nav/missions.svg",
-                hotkey: "T",
-                on: showEta,
-                onOpen: () => setShowEta((v) => !v),
               },
               {
                 id: "STAFF",
@@ -7622,7 +7607,7 @@ export function App() {
         <>
           {/* Un voile referme le tiroir d'une tape hors de lui : sur un
               téléphone, chercher la bonne croix est une corvée. */}
-          {(sheet && sheet !== "OFFICE") || moreOpen ? (
+          {sheet || moreOpen ? (
             <button
               type="button"
               className="sheet-scrim"
@@ -7648,22 +7633,14 @@ export function App() {
                   <button
                     key={t.key}
                     type="button"
-                    className={`tab${(t.key === "OFFICE" ? showEta : sheet === t.key) ? " on" : ""}`}
+                    className={`tab${sheet === t.key ? " on" : ""}`}
                     disabled={disabled}
                     /* Entrée en cascade, 45 ms par carte — charte §8.1 #7. */
                     style={{ animationDelay: `${i * 45}ms` }}
                     title={disabled ? "Aucun bâtiment d’élevage sur la parcelle" : t.label}
-                    aria-expanded={t.key === "OFFICE" ? showEta : sheet === t.key}
+                    aria-expanded={sheet === t.key}
                     onClick={() => {
                       setMoreOpen(false);
-                      // « Missions » n'a plus de tiroir : son contenu a rejoint
-                      // la bourse des chantiers, qui le montrait déjà en
-                      // double. L'onglet ouvre donc directement la bourse.
-                      if (t.key === "OFFICE") {
-                        setSheet(null);
-                        setShowEta(true);
-                        return;
-                      }
                       setSheet((cur) => (cur === t.key ? null : t.key));
                     }}
                   >

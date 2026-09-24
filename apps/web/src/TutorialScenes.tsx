@@ -9,15 +9,12 @@ const OUTILS = [
   ["Semer", "/assets/icons/tools/plant.svg"],
   ["Sol", "/assets/icons/tools/plow.svg"],
   ["Récolte", "/assets/icons/tools/harvest.svg"],
-  ["Ventes", "/assets/icons/nav/marche.svg"],
 ] as const;
 
 const PANNEAUX = [
   ["Parcelle", "/assets/icons/nav/parcelle.svg"],
   ["Bâtir", "/assets/icons/nav/batir.svg"],
   ["Troupeau", "/assets/icons/nav/troupeau.svg"],
-  ["Garage", "/assets/icons/nav/garage.svg"],
-  ["Missions", "/assets/icons/nav/missions.svg"],
   ["Personnel", "/assets/icons/nav/personnel.svg"],
 ] as const;
 
@@ -68,7 +65,7 @@ function Dock({ actif = "", plus = false }: { actif?: string; plus?: boolean }) 
     <g className="tuto-dock">
       <rect className="tuto-dock-bg" x="4" y="78" width="152" height="23" rx="8" />
       {items.map(([label, icon], i) => {
-        const x = 8 + i * 21.2;
+        const x = 8 + i * 24;
         const on = actif === label || (label === "Fermer" && actif === "Plus");
         return (
           <g key={label} className={on ? "on" : ""}>
@@ -111,6 +108,67 @@ function OutilTray({ actif, options }: { actif: string; options: string[] }) {
   );
 }
 
+type Lieu = "cooperative" | "concession" | "mairie";
+
+/**
+ * Le village, tel qu'on le voit au bord de la route : les trois bâtiments
+ * utiles, leur plaque, et celui dont parle l'étape qui s'éclaire. Le doigt va
+ * le toucher, puis la fenêtre qu'il ouvre apparaît — le geste entier, pas
+ * seulement son résultat.
+ */
+function EcranVillage({ lieu, tactile, children }: { lieu: Lieu; tactile: boolean; children: ReactNode }) {
+  const on = (l: Lieu) => (l === lieu ? "tuto-lieu on" : "tuto-lieu");
+  return (
+    <>
+      <rect className="tuto-screen" x="1" y="1" width="158" height="102" rx="10" />
+      <MiniHud />
+      <rect className="tuto-farm" x="5" y="18" width="150" height="58" rx="7" />
+      <path className="tuto-village-route" d="M5 66H155" />
+      <g className={on("cooperative")}>
+        <ellipse className="tuto-lieu-halo" cx="29" cy="58" rx="21" ry="5" />
+        <rect className="coop-hangar" x="12" y="44" width="30" height="13" rx="1" />
+        <path className="coop-toit" d="M10 45l17-6 17 6z" />
+        {[15, 23, 31].map((x) => (
+          <g key={x} className="coop-silo"><rect x={x} y="27" width="7" height="17" rx="1" /><path d={`M${x - 0.6} 27.4l4.1-4.4 4.1 4.4z`} /></g>
+        ))}
+        <rect className="coop-tour" x="40" y="19" width="4" height="38" />
+        <rect className="coop-tete" x="39" y="17" width="6" height="4" />
+      </g>
+      <g className={on("concession")}>
+        <ellipse className="tuto-lieu-halo" cx="80" cy="58" rx="22" ry="5" />
+        <rect className="conc-vitre" x="62" y="34" width="36" height="22" rx="1" />
+        <path className="conc-meneaux" d="M71 38v18M80 38v18M89 38v18" />
+        <rect className="conc-bandeau" x="61" y="31" width="38" height="5" rx="1" />
+        <rect className="conc-liseret" x="61" y="35" width="38" height="1.2" />
+        <g className="conc-tracteur"><rect x="68" y="47" width="9" height="5" rx="1" /><rect x="74" y="44" width="4" height="4" /><circle cx="70" cy="53" r="2.4" /><circle cx="76.5" cy="53.3" r="1.7" /></g>
+        <path className="conc-drapeau" d="M101 56V33m0 0h5l-1.5 2 1.5 2h-5" />
+      </g>
+      <g className={on("mairie")}>
+        <ellipse className="tuto-lieu-halo" cx="130" cy="58" rx="22" ry="5" />
+        <rect className="mairie-corps" x="112" y="33" width="36" height="23" rx="0.6" />
+        <path className="mairie-toit" d="M110 34l4-6h32l4 6z" />
+        <path className="mairie-fronton" d="M123 33l7-6 7 6z" />
+        <rect className="mairie-tour" x="126.5" y="17" width="7" height="11" />
+        <path className="mairie-toit" d="M125.5 17.5l4.5-5 4.5 5z" />
+        <circle className="mairie-horloge" cx="130" cy="22.5" r="2.4" />
+        <path className="mairie-aiguilles" d="M130 22.5v-1.6M130 22.5h1.2" />
+        {[115, 120, 138, 143].flatMap((x) => [36.5, 45].map((y) => <rect key={`${x}-${y}`} className="mairie-fenetre" x={x} y={y} width="3" height="5" />))}
+        <rect className="mairie-porte" x="127.5" y="47" width="5" height="9" rx="2.4" />
+        <path className="mairie-perron" d="M125 56h10v1.6h-10z" />
+      </g>
+      {([["cooperative", 29, "COOPÉRATIVE"], ["concession", 80, "CONCESSION"], ["mairie", 130, "MAIRIE"]] as const).map(([l, x, nom]) => (
+        <g key={l} className={`tuto-plaque${l === lieu ? " on" : ""}`}>
+          <rect x={x - 15} y="68.5" width="30" height="6" rx="2" />
+          <Texte x={x} y={72.9} classe="plaque-label">{nom}</Texte>
+        </g>
+      ))}
+      <Curseur tactile={tactile} classe={`vers-${lieu}`} />
+      <g className="tuto-lieu-fenetre">{children}</g>
+      <Dock />
+    </>
+  );
+}
+
 export function TutorialScene({ scene, tactile }: Props) {
   return <div className={`tuto-scene scene-${scene}`} aria-hidden="true"><svg viewBox="0 0 160 104" role="img">{rendre(scene, tactile)}</svg></div>;
 }
@@ -128,9 +186,9 @@ function rendre(scene: Scene, tactile: boolean) {
             <rect x="19" y="18" width="122" height="56" rx="8" />
             <Texte x={29} y={27} classe="drawer-title left">PANNEAUX</Texte>
             {PANNEAUX.map(([label, icon], i) => {
-              const x = 25 + (i % 3) * 39;
-              const y = 31 + Math.floor(i / 3) * 20;
-              return <g key={label} className="drawer-item"><rect x={x} y={y} width="33" height="17" rx="4"/><image href={icon} x={x + 3} y={y + 3} width="8" height="8"/><Texte x={x + 19} y={y + 10.5} classe="drawer-label">{label}</Texte></g>;
+              const x = 27 + (i % 2) * 54;
+              const y = 31 + Math.floor(i / 2) * 20;
+              return <g key={label} className="drawer-item"><rect x={x} y={y} width="52" height="17" rx="4"/><image href={icon} x={x + 3} y={y + 3} width="8" height="8"/><Texte x={x + 19} y={y + 10.5} classe="drawer-label">{label}</Texte></g>;
             })}
           </g>
           <Curseur tactile={tactile} classe="vers-plus" />
@@ -161,8 +219,26 @@ function rendre(scene: Scene, tactile: boolean) {
     case "recolte":
       return <EcranFerme actif="Récolte" etat="mur"><g className="tuto-moisson"><rect x="-9" y="-5" width="15" height="9" rx="2"/><path d="M6-3h7v7H6"/><circle cx="-5" cy="5" r="3"/><circle cx="4" cy="5" r="3"/></g><g className="tuto-silo"><rect x="119" y="40" width="21" height="24" rx="7"/><path d="m118 42 12-7 12 7"/><Texte x={129} y={55} classe="silo-label">SILO</Texte><path className="grain-route" d="M85 38c17 0 18 13 33 13"/></g></EcranFerme>;
 
-    case "vendre":
-      return <EcranFerme actif="Ventes"><g className="tuto-market"><rect x="14" y="21" width="132" height="50" rx="7"/><Texte x={23} y={30} classe="market-title left">HÔTEL DES VENTES</Texte><Texte x={23} y={42} classe="market-crop left">Blé · 8,4 t</Texte><polyline points="23,62 42,55 58,58 78,44 97,48 119,33 138,37"/><circle cx="119" cy="33" r="3"/><rect x="103" y="56" width="35" height="10" rx="5"/><Texte x={120.5} y={62.8} classe="sell-label">Vendre</Texte></g></EcranFerme>;
+    case "cooperative":
+      return (
+        <EcranVillage lieu="cooperative" tactile={tactile}>
+          <g className="tuto-market"><rect x="14" y="21" width="132" height="50" rx="7"/><Texte x={23} y={30} classe="market-title left">HÔTEL DES VENTES</Texte><Texte x={23} y={42} classe="market-crop left">Blé · 8,4 t</Texte><polyline points="23,62 42,55 58,58 78,44 97,48 119,33 138,37"/><circle cx="119" cy="33" r="3"/><rect x="103" y="56" width="35" height="10" rx="5"/><Texte x={120.5} y={62.8} classe="sell-label">Vendre</Texte></g>
+        </EcranVillage>
+      );
+
+    case "concession":
+      return (
+        <EcranVillage lieu="concession" tactile={tactile}>
+          <g className="tuto-carte"><rect x="14" y="21" width="132" height="50" rx="7"/><Texte x={23} y={30} classe="card-title left">GARAGE</Texte>{([["Tracteur 120 ch", 0.82, "Graisser"], ["Moissonneuse", 0.46, "Réparer"]] as const).map(([nom, etat, geste], i) => <g key={nom} transform={`translate(0 ${i * 17})`}><Texte x={23} y={41} classe="staff-name left">{nom}</Texte><rect className="garage-jauge-fond" x="23" y="44" width="70" height="3.6" rx="1.8"/><rect className={`garage-jauge${etat < 0.5 ? " basse" : ""}`} x="23" y="44" width={70 * etat} height="3.6" rx="1.8"/><rect className="tuto-bouton" x="108" y="37" width="30" height="10" rx="5"/><Texte x={123} y={43.8} classe="assign-label">{geste}</Texte></g>)}</g>
+        </EcranVillage>
+      );
+
+    case "mairie":
+      return (
+        <EcranVillage lieu="mairie" tactile={tactile}>
+          <g className="tuto-carte"><rect x="14" y="21" width="132" height="50" rx="7"/><Texte x={23} y={30} classe="card-title left">BUREAU</Texte>{["Objectifs", "Prendre", "Banque", "Terres"].map((t, i) => <g key={t} className={i === 0 ? "bureau-onglet on" : "bureau-onglet"}><rect x={23 + i * 29} y="34" width="26" height="8" rx="4"/><Texte x={36 + i * 29} y={39.4} classe="onglet-label">{t}</Texte></g>)}<Texte x={23} y={53} classe="staff-name left">Construire un silo</Texte><Texte x={23} y={60} classe="staff-detail left">Terminé · 1 500 € à réclamer</Texte><rect className="tuto-bouton" x="108" y="51" width="30" height="10" rx="5"/><Texte x={123} y={57.8} classe="assign-label">Réclamer</Texte></g>
+        </EcranVillage>
+      );
 
     case "batir":
       return <EcranFerme actif="Plus"><g className="tuto-build"><rect className="bad" x="12" y="21" width="48" height="36" rx="4"/><rect className="good" x="66" y="21" width="48" height="36" rx="4"/><path d="M72 49V34l18-10 18 10v15z"/><Texte x={36} y={42} classe="bad-label">occupé</Texte><Texte x={90} y={64} classe="good-label">emprise libre</Texte></g><Curseur tactile={tactile} classe="vers-emprise" /></EcranFerme>;
