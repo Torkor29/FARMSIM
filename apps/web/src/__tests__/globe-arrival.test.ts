@@ -1,29 +1,35 @@
 import fs from "node:fs";
 
-/**
- * Le globe d'arrivée : on doit voir la planète entière, pas un gros plan
- * de mer recadré par le zoom CSS.
- */
+/** Le voyage part du globe entier et vise réellement la terre choisie. */
 const GLOBE = fs.readFileSync("src/GlobeView.tsx", "utf8");
 const ARRIVAL = fs.readFileSync("src/ArrivalTransition.tsx", "utf8");
 const CSS = fs.readFileSync("src/auth.css", "utf8");
 
 describe("le globe à la connexion", () => {
-  it("s’ouvre en vue monde, sans focus sur un continent", () => {
-    expect(ARRIVAL).not.toMatch(/\bfocus\b/);
-    expect(ARRIVAL).not.toMatch(/selected=\{continentCode\}/);
+  it("vise le continent du joueur pendant l’approche", () => {
+    expect(ARRIVAL).toMatch(/selected=\{continentCode\}/);
+    expect(ARRIVAL).toMatch(/\bfocus\b/);
+    expect(ARRIVAL).toMatch(/mode="arrival"/);
+    expect(GLOBE).toMatch(/mode === "arrival" \? DIST_ARRIVAL/);
   });
 
   it("cadre assez loin pour que le disque tienne dans l’image", () => {
     expect(GLOBE).toMatch(/DIST_WORLD = DIST_FIT \* 1\.58/);
     expect(GLOBE).toMatch(/DIST_FOCUS = DIST_FIT \* 1\.18/);
+    expect(GLOBE).toMatch(/DIST_ARRIVAL = DIST_FIT \* 1\.18/);
   });
 
   it("ne gonfle plus le globe hors cadre dès les premières images", () => {
     const zoom = CSS.slice(CSS.indexOf("@keyframes arrival-zoom"));
-    expect(zoom).toMatch(/transform: scale\(0\.92\)/);
-    expect(zoom).not.toMatch(/scale\(2\.6\)/);
-    expect(zoom).not.toMatch(/scale\(6\)/);
+    expect(zoom).toMatch(/translateY\(-7vh\) scale\(0\.9\)/);
+    expect(zoom).toMatch(/translateY\(-7vh\) scale\(1\)/);
+    expect(zoom).not.toMatch(/scale\(1\.08\)/);
+  });
+
+  it("reprend la direction artistique nocturne jusque dans le chargement", () => {
+    const arrival = CSS.slice(CSS.indexOf(".arrival {"));
+    expect(arrival).toMatch(/#061720/);
+    expect(arrival).toMatch(/arrival-progress 3\.2s/);
   });
 });
 
@@ -96,25 +102,40 @@ describe("l’animation ne dépend pas de la cadence d’affichage", () => {
 });
 
 describe("les repères dorés", () => {
-  it("ne montrent plus leurs polygones", () => {
-    // Vingt-six segments pour l'anneau et six pour la tige : invisible en vue
-    // monde, un polygone et un prisme dès qu'on s'approche — et ce sont les
-    // seuls objets qu'on vient cliquer.
-    expect(GLOBE).not.toMatch(/RingGeometry\(0\.12, 0\.155, 26\)/);
-    expect(GLOBE).not.toMatch(/CylinderGeometry\(0\.014, 0\.02, 0\.2, 6\)/);
-    const ring = GLOBE.match(/RingGeometry\(0\.12, 0\.155, (\d+)\)/);
-    expect(Number(ring?.[1])).toBeGreaterThanOrEqual(64);
+  it("restent ronds jusque dans la vue rapprochée", () => {
+    expect(GLOBE).toMatch(/RingGeometry\(0\.1, 0\.132, 64\)/);
+    expect(GLOBE).toMatch(/CylinderGeometry\(0\.012, 0\.017, 0\.17, 16\)/);
   });
 
-  it("gardent la pastille facettée — c’est une pierre, pas une bille", () => {
-    // La tige devient lisse, la pastille reste taillée : c'est ce qui la fait
-    // accrocher la lumière quand elle tourne.
-    expect(GLOBE).toMatch(/OctahedronGeometry\(0\.075, 1\)/);
+  it("ne montre que la destination pendant le voyage", () => {
+    expect(GLOBE).toMatch(/m\.anchor\.visible = mode !== "arrival" \|\| isSel/);
+    expect(GLOBE).toMatch(/biome\.content\.visible = mode !== "arrival" \|\| isSel/);
+  });
+
+  it("lisse aussi la pastille sélectionnée", () => {
+    expect(GLOBE).toMatch(/OctahedronGeometry\(0\.065, 1\)/);
     expect(GLOBE).toMatch(/color: tone, flatShading: false/);
   });
 
   it("ne bougent pas pour qui a demandé moins d’animation", () => {
     const bloc = GLOBE.slice(GLOBE.indexOf("m.head.rotation.y") - 200);
     expect(bloc.slice(0, 400)).toMatch(/!reduced/);
+  });
+});
+
+describe("la maquette vivante", () => {
+  it("pose des décors agricoles discrets sur chaque continent", () => {
+    expect(GLOBE).toMatch(/function createMiniBiome/);
+    expect(GLOBE).toMatch(/name = "crop-row"/);
+    expect(GLOBE).not.toMatch(/name = "biome-ground"/);
+    expect(GLOBE).toMatch(/ConeGeometry\(0\.052, 0\.15, 12\)/);
+    expect(GLOBE).toMatch(/name = "windmill-rotor"/);
+    expect(GLOBE).toMatch(/miniBiomes\.push\(miniBiome\)/);
+  });
+
+  it("lisse la planète tout en gardant son relief peint", () => {
+    expect(GLOBE).toMatch(/SphereGeometry\(R, 160, 80\)/);
+    expect(GLOBE).toMatch(/bumpScale: 0\.045/);
+    expect(GLOBE).toMatch(/flatShading: false/);
   });
 });

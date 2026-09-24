@@ -113,12 +113,20 @@ export function deliveryAutoFee(tons: number): number {
 
 /**
  * Trajet du tracteur + remorque sur la parcelle d’arrivée.
- * On entre par le bord opposé au silo / hangar, on roule jusqu’à lui.
+ *
+ * Sans `from`, on entre par le bord opposé au silo / hangar et on roule
+ * jusqu’à lui : c’est le camion d’une livraison qui arrive de l’extérieur.
+ *
+ * Avec `from`, on part de là — la caisse posée dans la cour, qu’un joueur
+ * vient de cliquer pour la rentrer. Le trajet est en équerre, comme le retour
+ * au garage : on roule d’abord en x, puis en y. Une diagonale se lirait comme
+ * un vol plané, et un engin ne coupe pas à travers les bâtiments.
  */
 export function deliveryHaulPath(
   gridW: number,
   gridH: number,
   dest?: { x: number; y: number } | null,
+  from?: { x: number; y: number } | null,
 ): { x: number; y: number }[] {
   const w = Math.max(1, Math.floor(gridW));
   const h = Math.max(1, Math.floor(gridH));
@@ -128,6 +136,22 @@ export function deliveryHaulPath(
   const destY = dest
     ? Math.min(h - 1, Math.max(0, dest.y))
     : Math.floor(h / 2);
+  if (from) {
+    const fx = Math.min(w - 1, Math.max(0, Math.floor(from.x)));
+    const fy = Math.min(h - 1, Math.max(0, Math.floor(from.y)));
+    const trajet: { x: number; y: number }[] = [];
+    const pasX = destX >= fx ? 1 : -1;
+    for (let x = fx; pasX > 0 ? x <= destX : x >= destX; x += pasX) {
+      trajet.push({ x, y: fy });
+    }
+    const pasY = destY >= fy ? 1 : -1;
+    for (let y = fy + pasY; pasY > 0 ? y <= destY : y >= destY; y += pasY) {
+      trajet.push({ x: destX, y });
+    }
+    // Deux cases au moins : l’animation interpole entre des points, elle ne
+    // sait rien faire d’un trajet immobile.
+    if (trajet.length >= 2) return trajet;
+  }
   const fromLeft = destX >= w / 2;
   const startX = fromLeft ? 0 : w - 1;
   const step = fromLeft ? 1 : -1;

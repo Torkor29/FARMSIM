@@ -11,7 +11,6 @@ import {
   type WeatherState,
 } from "@farmsim/shared";
 import { GlobeView, type GlobeContinent } from "./GlobeView";
-import { LowPolyCharacter } from "./LowPolyCharacter";
 
 export type WorldContinent = GlobeContinent & {
   tagline: string;
@@ -169,7 +168,7 @@ export function Onboarding({
   }
 
   return (
-    <div className="onb">
+    <div className={`onb onb-step-${step}`}>
       <header className="onb-top">
         <img className="onb-logo" src="/logo.webp" alt="" />
         <div>
@@ -203,6 +202,9 @@ export function Onboarding({
           </p>
           <div className="globe-layout">
             <div className="globe-wrap">
+              <div className="globe-eyebrow" aria-hidden="true">
+                FARMSIM · MONDES VIVANTS
+              </div>
               <GlobeView
                 continents={continents}
                 selected={continentCode}
@@ -210,6 +212,11 @@ export function Onboarding({
                 focus={Boolean(continentCode)}
                 height={420}
               />
+              <div className="globe-place-card" aria-live="polite">
+                <span>{continent ? "MONDE SÉLECTIONNÉ" : "CHOISISSEZ VOTRE MONDE"}</span>
+                <strong>{continent?.name ?? "Une nouvelle terre vous attend"}</strong>
+                <em>{continent?.tagline ?? "Faites tourner la planète pour explorer ses régions."}</em>
+              </div>
               <p className="globe-hint">Glissez pour tourner · cliquez un repère doré</p>
             </div>
             <div className="continent-list">
@@ -450,10 +457,13 @@ export function Onboarding({
 
       {step === 2 && parcel && region && detail && (
         <section className="onb-body">
+          {/* Le bonhomme a quitté cet écran.
+              Il y occupait la moitié de la place pour ne rien apprendre à
+              personne : on ne le choisit plus depuis longtemps, on le voit en
+              jeu haut comme une case, et la dernière chose qu'on veut lire
+              avant de commencer, c'est où l'on s'installe. Le récapitulatif
+              prend donc toute la largeur. */}
           <div className="recap">
-            <div className="recap-char">
-              <LowPolyCharacter code={spe} appearance={appearance} active height={220} />
-            </div>
             <div className="recap-info">
               <h2>Tout est prêt</h2>
               <dl className="recap-list">

@@ -25,6 +25,13 @@ export const STRAW_YIELD: Record<CropCode, number> = {
   PEA: 0.12,
   MAIZE: 0.08,
   GRASS: 0,
+  // Aucun légume ne laisse de paille : on emporte la plante entière, ou le
+  // fane reste au sol sans qu'on le presse.
+  MESCLUN: 0,
+  RADISH: 0,
+  SPINACH: 0,
+  LETTUCE: 0,
+  POTATO: 0,
 };
 
 /** Une botte pèse environ 350 kg. */

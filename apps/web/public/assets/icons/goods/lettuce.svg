@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48" fill="none" aria-hidden="true">
+  <ellipse cx="24" cy="43.5" rx="11" ry="2" fill="currentColor" opacity="0.18"/>
+  <!-- Une pomme de salade : des feuilles enroulées les unes sur les autres,
+       de plus en plus claires vers le cœur. -->
+  <path d="M24 40c-11 0-15-7-14-15 2-6 8-9 14-9s12 3 14 9c1 8-3 15-14 15z" fill="#8cc85a" stroke="#3d6b28" stroke-width="2" stroke-linejoin="round"/>
+  <path d="M24 37c-7 0-10-5-9-11 2-4 5-6 9-6s7 2 9 6c1 6-2 11-9 11z" fill="#a8d269" stroke="#3d6b28" stroke-width="1.8" stroke-linejoin="round"/>
+  <path d="M24 33c-4 0-6-3-5-6 1-2 3-4 5-4s4 2 5 4c1 3-1 6-5 6z" fill="#cbe49b" stroke="#3d6b28" stroke-width="1.5" stroke-linejoin="round"/>
+</svg>

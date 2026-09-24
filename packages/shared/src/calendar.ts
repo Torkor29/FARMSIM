@@ -44,12 +44,13 @@ import type { Season } from "./world.js";
  * correspondent à un vrai découpage agronomique — c'est ce qui rend le modèle
  * extensible sans table à rallonge.
  */
-export type Seasonality = "WINTER_CEREAL" | "SPRING_CROP" | "FORAGE";
+export type Seasonality = "WINTER_CEREAL" | "SPRING_CROP" | "FORAGE" | "MARAICHAGE";
 
 export const SEASONALITY_LABELS: Record<Seasonality, string> = {
   WINTER_CEREAL: "céréale d’hiver",
   SPRING_CROP: "culture de printemps",
   FORAGE: "fourrage",
+  MARAICHAGE: "légume de plein champ",
 };
 
 /**
@@ -67,6 +68,15 @@ export const CROP_SEASONALITY: Record<CropCode, Seasonality> = {
   MAIZE: "SPRING_CROP",
   PEA: "SPRING_CROP",
   GRASS: "FORAGE",
+  // Le maraîchage : rien ne passe l'hiver dehors, tout pousse vite le reste
+  // de l'année. C'est une quatrième famille et non un rangement parmi les
+  // trois autres — un légume à feuille n'a ni le calendrier d'une céréale
+  // d'hiver ni celui d'un maïs.
+  MESCLUN: "MARAICHAGE",
+  RADISH: "MARAICHAGE",
+  SPINACH: "MARAICHAGE",
+  LETTUCE: "MARAICHAGE",
+  POTATO: "MARAICHAGE",
 };
 
 /**
@@ -86,6 +96,24 @@ export const PLANTING_WINDOW: Record<CropCode, readonly Season[]> = {
   MAIZE: ["SPRING", "SUMMER"],
   PEA: ["SPRING", "SUMMER"],
   GRASS: ["SPRING", "AUTUMN"],
+  /*
+   * Trois saisons, contre deux partout ailleurs — et c'est l'exception qui
+   * fait exister le maraîchage.
+   *
+   * La règle des deux saisons protège un arbitrage : semer tôt et sûr, ou
+   * tard et rattraper le cours. Elle suppose une culture qu'on engage pour
+   * une saison entière. Un mesclun de deux heures derrière une attente de
+   * vingt n'est pas une boucle courte, c'est une boucle longue déguisée : le
+   * joueur qui s'assoit un soir doit pouvoir semer, point.
+   *
+   * L'hiver reste fermé. Il n'y a pas de salade au champ en janvier, et
+   * laisser une saison dehors garde au calendrier un sens.
+   */
+  MESCLUN: ["SPRING", "SUMMER", "AUTUMN"],
+  RADISH: ["SPRING", "SUMMER", "AUTUMN"],
+  SPINACH: ["SPRING", "SUMMER", "AUTUMN"],
+  LETTUCE: ["SPRING", "SUMMER", "AUTUMN"],
+  POTATO: ["SPRING", "SUMMER", "AUTUMN"],
 };
 
 /**
@@ -115,6 +143,15 @@ export const SEASON_GROWTH: Record<Seasonality, Record<Season, number>> = {
   WINTER_CEREAL: { SPRING: 1.35, SUMMER: 1.05, AUTUMN: 0.85, WINTER: 0.3 },
   SPRING_CROP: { SPRING: 1.2, SUMMER: 1.3, AUTUMN: 0.5, WINTER: 0.05 },
   FORAGE: { SPRING: 1.3, SUMMER: 1, AUTUMN: 0.7, WINTER: 0.1 },
+  /*
+   * Le légume pousse vite et craint le gel. Les coefficients sont plus serrés
+   * que partout ailleurs — de 1,25 à 0,05 — parce qu'une culture de deux
+   * heures n'a pas le temps de traverser une saison : elle prend le
+   * coefficient du moment où on la sème, et c'est tout. Étaler davantage ne
+   * changerait rien de perceptible, sauf en hiver où l'on veut que rien ne
+   * sorte de terre.
+   */
+  MARAICHAGE: { SPRING: 1.25, SUMMER: 1.2, AUTUMN: 0.9, WINTER: 0.05 },
 };
 
 /**

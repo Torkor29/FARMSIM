@@ -1,7 +1,21 @@
 import {
+  ADJACENCY_BONUS_CAP,
+  ESTATE_BONUS_CAP,
+  LAND_AUCTION,
+  LAND_CAPS,
+  LAND_FACTOR_BOUNDS,
+  LAND_CYCLE_MS,
+  LAND_CYCLES_PER_SEASON,
+  LAND_PRICE_CEIL_MULT,
+  LAND_BASE_PER_HA,
+  LAND_PARCEL_HA,
+  LAND_PRICE_FLOOR_MULT,
+  LAND_PRICE_ROUNDING,
+  LAND_REFERENCE_PRICE,
+  LAND_STATUS_LABELS,
+  LAND_TAX_MULT_CAP,
   accessFactor,
   accessIndex,
-  ADJACENCY_BONUS_CAP,
   adjacencyFactor,
   askPrice,
   auctionCommission,
@@ -10,24 +24,9 @@ import {
   climateFactor,
   densityFactor,
   diminishingYield,
-  ESTATE_BONUS_CAP,
   estateBonuses,
   fallowRestorationCost,
   fertilityFactor,
-  hectaresDe,
-  LAND_AUCTION,
-  LAND_BASE_PER_HA,
-  LAND_CAPS,
-  LAND_CYCLE_MS,
-  LAND_CYCLES_PER_SEASON,
-  LAND_FACTOR_BOUNDS,
-  LAND_PARCEL_HA,
-  LAND_PRICE_CEIL_MULT,
-  LAND_PRICE_FLOOR_MULT,
-  LAND_PRICE_ROUNDING,
-  LAND_REFERENCE_PRICE,
-  LAND_STATUS_LABELS,
-  LAND_TAX_MULT_CAP,
   landStatusFor,
   landTax,
   landTaxMultiplier,
@@ -39,11 +38,6 @@ import {
   ownershipFactor,
   requiredLevelForParcel,
   scarcityFactor,
-  TAILLE_DEPART,
-  TAILLE_MAX,
-  TAILLE_REFERENCE,
-  TAILLES_PARCELLE,
-  tailleTerreLibre,
   volatilityReduction,
 } from "../../../shared/src/land.js";
 import type { AskPriceInput, LandStatus } from "../../../shared/src/land.js";
@@ -530,75 +524,5 @@ describe("enchères", () => {
 
   it("détruit 5 % du prix final en commission", () => {
     expect(auctionCommission(20000)).toBe(1000);
-  });
-});
-
-/**
- * Des parcelles de tailles différentes, payées à la surface.
- *
- * Toutes les parcelles faisaient 12×12 et valaient « 14 ha » : un champ plus
- * grand se serait vendu au prix d'un plus petit.
- */
-describe("la taille des parcelles", () => {
-  const sol = {
-    fertility: 0.7,
-    koppen: "Cfb",
-    accessIndex: 0.5,
-    neighborDensity: 0.3,
-    occupancy: 0.4,
-  };
-
-  it("une 12×12 garde exactement son prix d'avant", () => {
-    expect(marketValue({ ...sol, hectares: hectaresDe(12, 12) })).toBe(marketValue(sol));
-    expect(hectaresDe(12, 12)).toBeCloseTo(LAND_PARCEL_HA, 9);
-  });
-
-  it("le prix suit la surface : même prix à l'hectare, à l'arrondi près", () => {
-    const parHa = (n: number) => marketValue({ ...sol, hectares: hectaresDe(n, n) }) / hectaresDe(n, n);
-    const reference = parHa(12);
-    for (const n of TAILLES_PARCELLE) {
-      expect(Math.abs(parHa(n) - reference) / reference).toBeLessThan(0.01);
-    }
-    expect(marketValue({ ...sol, hectares: hectaresDe(16, 16) })).toBeGreaterThan(
-      marketValue({ ...sol, hectares: hectaresDe(8, 8) }) * 3.5,
-    );
-  });
-
-  it("la décomposition du prix reste exacte pour toute taille", () => {
-    for (const n of TAILLES_PARCELLE) {
-      const { total, breakdown: b } = askPrice({
-        ...sol,
-        hectares: hectaresDe(n, n),
-        adjacentOwnedBorders: 1,
-        ownershipRank: 2,
-      });
-      const somme =
-        b.base +
-        b.fertility.contribution + b.climate.contribution + b.access.contribution +
-        b.density.contribution + b.scarcity.contribution + b.adjacency.contribution +
-        b.ownership.contribution + b.clampAdjustment + b.roundingAdjustment;
-      expect(somme).toBeCloseTo(total, 6);
-      expect(b.base).toBeCloseTo(LAND_BASE_PER_HA * hectaresDe(n, n), 6);
-    }
-  });
-
-  it("le tirage des terres libres est stable et varié", () => {
-    expect(tailleTerreLibre("AUR-01:3:2")).toBe(tailleTerreLibre("AUR-01:3:2"));
-    const vus = new Map<number, number>();
-    for (let i = 0; i < 2000; i++) {
-      const t = tailleTerreLibre(`Z:${i % 40}:${Math.floor(i / 40)}`);
-      expect(TAILLES_PARCELLE).toContain(t);
-      vus.set(t, (vus.get(t) ?? 0) + 1);
-    }
-    // Toutes les tailles sortent, et la référence reste la plus fréquente :
-    // c'est elle qu'on offre au départ.
-    expect(vus.size).toBe(TAILLES_PARCELLE.length);
-    const ref = vus.get(TAILLE_REFERENCE)!;
-    for (const [t, n] of vus) if (t !== TAILLE_REFERENCE) expect(n).toBeLessThan(ref);
-  });
-
-  it("la parcelle de départ est la parcelle de référence", () => {
-    expect(TAILLE_DEPART).toBe(12);
-    expect(TAILLE_MAX).toBe(Math.max(...TAILLES_PARCELLE));
   });
 });

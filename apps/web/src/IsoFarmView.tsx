@@ -17,22 +17,13 @@ import {
   type RipenessStage,
   machineMeshScale,
   asTier,
-  TAILLE_MAX,
-  TAILLE_REFERENCE,
 } from "@farmsim/shared";
 import { disposeRenderer, disposeThreeScene, markShared } from "./three-cleanup";
 import { applyHerdPose, meshForHerd } from "./animal-meshes";
 import { createBuildingRig, nearestThreshold, type BuildingRig } from "./buildings3d";
 import { createParkingRig, type ParkingRig } from "./parking3d";
 import { createCountryside, type Campagne } from "./countryside";
-import {
-  LARGEUR_CHEMIN,
-  couloirRoute,
-  orientationTrame,
-  parcelleSous,
-  tourner,
-  type VoisinReel,
-} from "./countryside-plan";
+import { TALUS_PARCELLE, parcelleSous, type VoisinReel } from "./countryside-plan";
 import {
   bornesDeplacement,
   elastique,
@@ -185,6 +176,15 @@ export type ActiveWork = {
    * rapide au compteur, le traverserait comme une T1.
    */
   durationMs?: number;
+  /**
+   * Temps d'acheminement avant le premier sillon.
+   *
+   * Le chantier est annoncé dès son ouverture, mais l'engin sort du garage :
+   * pendant ce délai il fait le trajet au lieu d'apparaître sur sa première
+   * case. Signalé en jouant : « faudrait qu'il arrive tranquillement sur le
+   * champ, pas pop d'un coup ».
+   */
+  approcheMs?: number;
 };
 
 /** Un troupeau au pré : de quelle étable il sort, et vers quel enclos. */
@@ -280,28 +280,6 @@ type Props = {
   voisinage?: readonly VoisinReel[];
   /** Un champ de voisin a été touché : la coquille en ouvre la fiche. */
   onVoisinClick?: (voisin: VoisinReel) => void;
-  /**
-   * Une case d'une **autre** parcelle du joueur a été touchée.
-   *
-   * Toucher une de ses propres parcelles ouvrait une fiche qui disait
-   * « Cette parcelle est déjà la vôtre » — et rien d'autre. Pour y travailler
-   * il fallait trouver « Mes parcelles », cliquer son nom, et retrouver sa
-   * place dans un paysage qui venait de sauter d'une parcelle.
-   *
-   * La case touchée est donnée dans le repère de **sa** parcelle : c'est la
-   * même que celle qu'on retrouvera sous le doigt une fois la parcelle
-   * devenue active, puisque la vue compense le déplacement d'origine.
-   */
-  onOwnedCellClick?: (parcelId: string, x: number, y: number, mods: PointerMods) => void;
-  /**
-   * Le siège de l'exploitation : la parcelle où est la cour.
-   *
-   * La cour montre **tous** les engins de la ferme — c'est la cour de la
-   * ferme, pas celle d'une parcelle. Elle doit donc rester au siège quand on
-   * travaille ailleurs, au lieu de suivre la parcelle active et d'aller
-   * recouvrir la voisine.
-   */
-  homeParcelId?: string;
   gridW: number;
   gridH: number;
   cells: IsoCell[];
@@ -410,8 +388,6 @@ const TILE_TOP = TILE_THICK / 2;
 /** Pneus légèrement dans la dalle : un contact pile au sommet laisse un
  *  interstice d'un pixel iso, et l'engin a l'air de flotter. */
 const MACHINE_GROUND = TILE_TOP - 0.012;
-/** L'altitude du sol de la campagne, sous l'île : routes et chemins y courent. */
-const CAMPAGNE_Y = -0.46;
 
 /**
  * Échelle commune du parc matériel : une seule valeur pour toutes les
@@ -1140,8 +1116,6 @@ export function IsoFarmView({
   onEgare,
   voisinage,
   onVoisinClick,
-  onOwnedCellClick,
-  homeParcelId,
   gridW,
   gridH,
   cells,
@@ -1202,6 +1176,20 @@ export function IsoFarmView({
   /** Repeint la scène quand la saison tourne, sans la reconstruire. */
   const relightRef = useRef<((saison: string) => void) | null>(null);
   /*
+   * Ramener la vue au-dessus de la parcelle, sans glisser.
+   *
+   * Le déplacement de la caméra vit dans la fermeture du grand effet de
+   * montage, qui ne tourne qu'une fois : changer de parcelle remplaçait tout
+   * le monde autour, mais laissait la vue exactement là où le joueur l'avait
+   * tirée. Sur la nouvelle carte, ce même décalage tombe chez un voisin —
+   * « on ne voit plus les mêmes parcelles », et la sienne est hors champ.
+   *
+   * Séparé de `recentrer()` — le bouton « Ma ferme » — qui glisse : glisser
+   * suppose qu'on revient d'un endroit qu'on a choisi, et ici on n'y est
+   * jamais allé. On y est déjà.
+   */
+  const recadrerRef = useRef<(() => void) | null>(null);
+  /*
    * Le recentrage se commande de l'extérieur.
    *
    * Le bouton a d'abord vécu dans la vue elle-même. Mesuré en jeu : posé en
@@ -1229,10 +1217,6 @@ export function IsoFarmView({
   parcelIdRef.current = parcelId;
   const onVoisinRef = useRef(onVoisinClick);
   onVoisinRef.current = onVoisinClick;
-  const onOwnedCellRef = useRef(onOwnedCellClick);
-  onOwnedCellRef.current = onOwnedCellClick;
-  const homeRef = useRef(homeParcelId);
-  homeRef.current = homeParcelId;
   const onParkedRef = useRef(onParkedClick);
   onParkedRef.current = onParkedClick;
   const seasonAppliedRef = useRef<string | null>(null);
@@ -1439,59 +1423,6 @@ export function IsoFarmView({
     scene.add(campagneGroup);
     let campagne: Campagne | null = null;
     let campagneCle = "";
-    /** Les parcelles du voisinage précédent, et celles qui étaient déjà au joueur. */
-    let dejaVus: Set<string> | null = null;
-    let dejaMiens = new Set<string>();
-    /**
-     * Le repère de la ferme : orientation de la carte et place du siège.
-     *
-     * Tout ce qui appartient à la **ferme** et non à une parcelle — la cour,
-     * son chemin d'accès, l'orientation du paysage — se calcule autour du
-     * siège, quelle que soit la parcelle active. Passer d'une de ses parcelles
-     * à l'autre n'est alors qu'une translation : rien ne tourne, rien ne
-     * change de place, la vue compense le déplacement d'origine.
-     *
-     * Quand le siège est la parcelle active — le cas de presque toutes les
-     * parties —, tout vaut zéro et le paysage est exactement celui d'avant.
-     */
-    let repere: { quart: 0 | 1 | 2 | 3; mx: number; mz: number } = { quart: 0, mx: 0, mz: 0 };
-    /**
-     * La case de trame, taillée pour la plus grande parcelle (16×16).
-     *
-     * Constante, et c'est tout son intérêt : si le pas de la campagne suivait
-     * la parcelle active, passer d'une 12×12 à une 16×16 ferait glisser tout
-     * le paysage. Chaque parcelle se centre dans sa case, avec son vrai côté.
-     *
-     * Une fonction et non une constante : `step` n'est déclaré que plus bas.
-     */
-    const empriseTrame = (): number => TAILLE_MAX * step + 1.4;
-    /** Les dimensions du siège, là où est la cour — pas forcément la parcelle active. */
-    function tailleSiege(gw: number, gh: number): { gw: number; gh: number } {
-      const siege = voisinageRef.current?.find((v) => v.id === homeRef.current);
-      if (!siege?.gridW || !siege.gridH || siege.id === parcelIdRef.current) return { gw, gh };
-      return { gw: siege.gridW, gh: siege.gridH };
-    }
-    function calculerRepere(): void {
-      const voisins = voisinageRef.current ?? [];
-      if (!voisins.length) {
-        repere = { quart: 0, mx: 0, mz: 0 };
-        return;
-      }
-      const maison = voisins.find((v) => v.id === homeRef.current);
-      if (!maison) {
-        repere = { quart: orientationTrame(voisins), mx: 0, mz: 0 };
-        return;
-      }
-      const autourDuSiege = voisins.map((v) => ({
-        ...v,
-        col: v.col - maison.col,
-        rang: v.rang - maison.rang,
-      }));
-      const quart = orientationTrame(autourDuSiege);
-      const pas = empriseTrame() + LARGEUR_CHEMIN;
-      const t = tourner(maison, quart);
-      repere = { quart, mx: t.col * pas, mz: t.rang * pas };
-    }
 
     const world = new THREE.Group();
     scene.add(world);
@@ -1528,31 +1459,69 @@ export function IsoFarmView({
     const workGroup = new THREE.Group();
     world.add(workGroup);
     let workRig: MachineRig | null = null;
+    /**
+     * L'engin qui regagne sa place, une fois le chantier fini.
+     *
+     * Il survit au chantier — voir `rentrerAuGarage` — donc il ne peut pas
+     * rester accroché à `workRig`, que la disparition du chantier efface.
+     */
+    /**
+     * L'engin en route vers son chantier, avant le premier sillon.
+     *
+     * Symétrique de `retour`, et pour la même raison : un attelage ne se
+     * matérialise pas au milieu d'un champ. Il garde le `workRig` du travail
+     * qui suit — c'est le même engin, il ne change pas de mains — et la
+     * boucle de travail attend qu'il soit arrivé.
+     */
+    let arrivee: {
+      chemin: { x: number; z: number; y: number }[];
+      debut: number;
+      fin: number;
+      distance: number;
+    } | null = null;
+    let retour: {
+      rig: MachineRig;
+      chemin: { x: number; z: number; y: number }[];
+      debut: number;
+      distance: number;
+      /** La place visée — celle dont la cour ne doit pas encore dessiner l'engin. */
+      cible: number;
+    } | null = null;
+    /**
+     * Les engins de la cour, dans l'ordre des places.
+     *
+     * Le serveur rend l'attelage dès que le client réclame son travail : la
+     * cour se redessine donc avec l'engin **déjà garé**, alors qu'à l'écran il
+     * traverse encore le champ. Sans cette liste pour le masquer le temps du
+     * trajet, le joueur verrait la même machine à deux endroits.
+     */
+    let parkedSlotGroups: THREE.Object3D[] = [];
+    /**
+     * Durée du retour au garage, en secondes.
+     *
+     * 2,8 s traversaient la cour à une vitesse qu'aucun tracteur ne tient :
+     * « au retour il repart beaucoup trop vite ». Un engin qui rentre roule
+     * moins vite qu'il ne travaille, pas plus.
+     */
+    const RETOUR_S = 6.5;
     /** Distance cumulée du chantier — elle entraîne roues, disques, rabatteur */
     let workTravelled = 0;
     let workHeading: number | null = null;
     let lastWorkPos: { x: number; z: number } | null = null;
     /** Cases à parcourir, ordonnées en va-et-vient rang par rang. */
     let workPath: { x: number; y: number }[] = [];
-    /**
-     * Le trajet de la cour jusqu'au champ, quand il y en a un à montrer.
-     *
-     * Les engins apparaissaient sur la première case, comme posés du ciel —
-     * passe encore sur le siège, où la cour touche le champ, mais une parcelle
-     * achetée est parfois à trois champs de là. L'engin sort donc de la cour,
-     * prend la desserte, la route, le chemin d'accès, passe la porte de la
-     * haie, et seulement alors se met au travail.
-     */
-    let approche: {
-      pts: { x: number; y: number; z: number }[];
-      cumul: number[];
-      duree: number;
-    } | null = null;
 
-    // Ce que l'engin soulève et projette. Un bassin par effet, un appel de
-    // rendu chacun ; sur une machine modeste (pas d'ombres) on s'en tient à la
-    // poussière et à la fumée.
+    /*
+     * Ce que l'engin soulève et projette.
+     *
+     * `rich` dimensionne les bassins : une machine modeste en garde moins.
+     * Mais c'est `quality.sprays` qui décide si les gerbes **existent**, et
+     * les deux ne se confondent plus. Elles étaient jusqu'ici accrochées aux
+     * ombres, et disparaissaient donc au premier déclassement automatique —
+     * signalé en jouant : « il n'y a plus les petits trucs de terre ».
+     */
     const rich = quality.shadows;
+    const projections = quality.sprays;
     const workDust = createDustTrail(rich ? 10 : 6);
     const workSmoke = createExhaustSmoke(rich ? 14 : 8);
     workGroup.add(workDust.object, workSmoke.object);
@@ -1695,6 +1664,10 @@ export function IsoFarmView({
     let yardDeck = 0;
     /** Où la haie doit s'ouvrir, en z monde. */
     let parkingGateZ = 0;
+    /** Les places du garage en coordonnées monde — c'est là que rentre l'engin. */
+    let parkingSlots: { x: number; z: number }[] = [];
+    /** Cap des engins garés : celui qui rentre se range dans le même sens. */
+    let parkingHeading = 0;
     /**
      * Débord de la cour à l'ouest de l'île, en unités monde.
      *
@@ -1902,85 +1875,6 @@ export function IsoFarmView({
       return { px: ox + x * step, pz: oz + y * step };
     }
 
-    /** Vitesses de route d'un engin, en unités par seconde : allure, et au plus pressé. */
-    const ROUTE_ALLURE = 9;
-    const ROUTE_MAX = 16;
-
-    /**
-     * Le trajet de la cour jusqu'à la première case d'un chantier.
-     *
-     * Sur le siège, quelques mètres : de la cour, par la porte de la haie.
-     * Sur une parcelle achetée, la desserte, la route, puis son chemin d'accès.
-     * Le chemin et la route sont au niveau de la campagne, plus bas que les
-     * champs du joueur : l'engin monte le talus en passant la porte.
-     *
-     * Le trajet se prend sur la durée du chantier. S'il faudrait rouler plus
-     * vite que `ROUTE_MAX` pour qu'il en laisse la majeure partie au travail,
-     * on n'en montre pas : un tracteur qui traverse la carte en une seconde
-     * se lit comme un bug, pas comme un trajet.
-     */
-    function trajetDepuisCour(
-      fin: { x: number; z: number },
-      dureeChantier: number,
-    ): { pts: { x: number; y: number; z: number }[]; cumul: number[]; duree: number } | null {
-      if (!campagne) return null;
-      const { gridW: gw } = dataRef.current;
-      const hw = gw * step + 0.9;
-      const surRoute = CAMPAGNE_Y + 0.05;
-      const acces = campagne.plan.acces.find((a) => a.id === parcelIdRef.current);
-      let pts: { x: number; y: number; z: number }[];
-      if (acces) {
-        const [sortie, carrefour] = campagne.plan.desserte;
-        if (!sortie || !carrefour) return null;
-        const porte = acces.points[acces.points.length - 1]!;
-        pts = [
-          { x: sortie.x, y: MACHINE_GROUND, z: sortie.z - 1.5 },
-          { x: sortie.x, y: surRoute, z: sortie.z + 0.6 },
-          { x: carrefour.x, y: surRoute, z: carrefour.z },
-          ...acces.points.map((p) => ({ x: p.x, y: surRoute, z: p.z })),
-          { x: porte.x - acces.cote * 1.2, y: MACHINE_GROUND, z: porte.z },
-          { x: fin.x, y: MACHINE_GROUND, z: fin.z },
-        ];
-      } else if (!homeRef.current || homeRef.current === parcelIdRef.current) {
-        // Le siège : la cour touche le champ, on passe par la porte ouest.
-        pts = [
-          { x: -hw / 2 - 1.4, y: MACHINE_GROUND, z: parkingGateZ },
-          { x: -hw / 2 + 0.5, y: MACHINE_GROUND, z: parkingGateZ },
-          { x: fin.x, y: MACHINE_GROUND, z: fin.z },
-        ];
-      } else {
-        return null;
-      }
-      const cumul = [0];
-      for (let i = 1; i < pts.length; i++) {
-        const p = pts[i - 1]!;
-        const q = pts[i]!;
-        cumul.push(cumul[i - 1]! + Math.hypot(q.x - p.x, q.z - p.z));
-      }
-      const longueur = cumul[cumul.length - 1]!;
-      if (longueur < 0.5) return null;
-      const part = 0.4 * dureeChantier;
-      const duree = Math.max(longueur / ROUTE_MAX, Math.min(longueur / ROUTE_ALLURE, part));
-      if (duree > part) return null;
-      return { pts, cumul, duree };
-    }
-
-    /** Un point du trajet, à la fraction `f` de sa longueur. */
-    function surTrajet(
-      tr: { pts: { x: number; y: number; z: number }[]; cumul: number[] },
-      f: number,
-    ): { x: number; y: number; z: number } {
-      const total = tr.cumul[tr.cumul.length - 1]!;
-      const d = Math.max(0, Math.min(1, f)) * total;
-      let i = 1;
-      while (i < tr.cumul.length - 1 && tr.cumul[i]! < d) i++;
-      const p = tr.pts[i - 1]!;
-      const q = tr.pts[i]!;
-      const seg = Math.max(1e-6, tr.cumul[i]! - tr.cumul[i - 1]!);
-      const k = (d - tr.cumul[i - 1]!) / seg;
-      return { x: p.x + (q.x - p.x) * k, y: p.y + (q.y - p.y) * k, z: p.z + (q.z - p.z) * k };
-    }
-
     /**
      * Monte la cour de stationnement et y range le parc.
      *
@@ -1997,17 +1891,13 @@ export function IsoFarmView({
       const rig = createParkingRig(plan, { shadows: quality.shadows });
       rig.group.scale.setScalar(cellSize);
 
-      calculerRepere();
-      // La cour borde l'île du siège : ce sont ses dimensions à lui qui comptent.
-      const siege = tailleSiege(gw, gh);
-      const ileOuest = -(siege.gw * step + 1.4) / 2;
-      const ileSud = (siege.gh * step + 1.4) / 2;
+      const ileOuest = -(gw * step + 1.4) / 2;
+      const ileSud = (gh * step + 1.4) / 2;
       // Le chemin du modèle saille de 0,72 case au-delà de la dalle : on cale
-      // la cour pour qu'il rejoigne exactement le bord de l'île — celle du
-      // siège, décalée de sa place quand on travaille sur une autre parcelle.
+      // la cour pour qu'il rejoigne exactement le bord de l'île.
       parkingOverhang = (0.72 + plan.w) * cellSize;
-      const cx = repere.mx + ileOuest - (0.72 + plan.w / 2) * cellSize;
-      const cz = repere.mz + ileSud - (plan.d / 2) * cellSize;
+      const cx = ileOuest - (0.72 + plan.w / 2) * cellSize;
+      const cz = ileSud - (plan.d / 2) * cellSize;
       rig.group.position.set(cx, 0, cz);
       parkingGroup.add(rig.group);
       parkingRig = rig;
@@ -2020,8 +1910,14 @@ export function IsoFarmView({
         x: cx + s.x * cellSize,
         z: cz + s.z * cellSize,
       }));
+      parkingSlots = rig.slots.map((s) => ({
+        x: cx + s.x * cellSize,
+        z: cz + s.z * cellSize,
+      }));
+      parkingHeading = rig.heading;
 
       parkedTargets.length = 0;
+      parkedSlotGroups = [];
       parked.forEach((machine, i) => {
         const slot = rig.slots[i];
         if (!slot) return;
@@ -2049,15 +1945,58 @@ export function IsoFarmView({
         world.add(mRig.group);
         vehicleRigs.set(machine.id, mRig);
         parkedTargets.push(mRig.group);
+        parkedSlotGroups[i] = mRig.group;
+        // Sa place est encore occupée par l'engin qui rentre : on ne le
+        // dessine qu'une fois arrivé.
+        if (retour && retour.cible === i) mRig.group.visible = false;
       });
     }
 
     function clearWorkVehicle() {
+      // L'acheminement appartient à l'engin qu'on efface : le laisser vivrait
+      // sur un attelage disparu.
+      arrivee = null;
       if (workRig) {
         workGroup.remove(workRig.group);
         workRig.dispose();
         workRig = null;
       }
+    }
+
+    /**
+     * Le chantier fini, l'engin rentre au garage.
+     *
+     * Il s'éteignait sur place — `visible = false` à la dernière case — et le
+     * joueur voyait sa moissonneuse s'évaporer au milieu du champ. Signalé en
+     * jouant : « quand l'engin a fini dans le champ, au lieu qu'il disparaisse
+     * faudrait qu'il aille à sa place au parking ».
+     *
+     * Le retour ne peut pas dépendre du chantier : celui-ci disparaît des
+     * données dès que le client réclame son travail, soit quelques centaines
+     * de millisecondes après la dernière case — bien avant que l'engin ait eu
+     * le temps de traverser la cour. L'attelage change donc de mains ici :
+     * `workRig` le lâche, `retour` le garde jusqu'à sa place, puis le rend.
+     *
+     * Le trajet est en équerre — descendre jusqu'à la hauteur du portail,
+     * longer, puis se ranger — parce qu'un engin ne coupe pas à travers la
+     * haie, et qu'une diagonale se lirait comme un vol plané.
+     */
+    function rentrerAuGarage(t: number): boolean {
+      if (!workRig || !parkingSlots.length) return false;
+      const occupees = dataRef.current.parked.length;
+      const cible = Math.min(occupees, parkingSlots.length - 1);
+      const place = parkingSlots[cible];
+      if (!place) return false;
+      const depart = workRig.group.position;
+      const chemin = [
+        { x: depart.x, z: depart.z, y: MACHINE_GROUND },
+        { x: depart.x, z: parkingGateZ, y: MACHINE_GROUND },
+        { x: place.x, z: parkingGateZ, y: yardDeck },
+        { x: place.x, z: place.z, y: yardDeck },
+      ];
+      retour = { rig: workRig, chemin, debut: t, distance: workTravelled, cible };
+      workRig = null;
+      return true;
     }
 
     function layout() {
@@ -2165,80 +2104,41 @@ export function IsoFarmView({
        */
       const voisins = voisinageRef.current;
       const empreinteVoisins = (voisins ?? [])
-        .map((v) => `${v.col},${v.rang}:${v.gridW ?? 12}:${v.culture ?? "-"}:${v.stade ?? "-"}:${v.batiments.length}:${v.statut}`)
+        .map(
+          (v) =>
+            /* La grille en fait partie : c'est elle qui donne sa taille au
+               champ. L'omettre laisserait le pays uniforme jusqu'au prochain
+               changement de culture d'un voisin. */
+            `${v.col},${v.rang}:${v.gridW ?? "-"}x${v.gridH ?? "-"}:${v.culture ?? "-"}:${v.stade ?? "-"}:${v.batiments.length}:${v.statut}`,
+        )
         .join("|");
       const cle = `${gw}x${gh}|${courBoite.x.toFixed(2)},${courBoite.z.toFixed(2)},${courBoite.w.toFixed(2)},${courBoite.d.toFixed(2)}|${parcelIdRef.current}|${empreinteVoisins}`;
       if (cle !== campagneCle) {
         campagneCle = cle;
-        /*
-         * La parcelle active a-t-elle changé pour une autre qu'on voyait déjà ?
-         *
-         * C'est le cas quand on touche une case de sa parcelle voisine, et
-         * aussi quand on clique son nom dans « Mes parcelles ». La nouvelle
-         * parcelle devient l'origine du monde : tout ce qu'on voit recule donc
-         * de sa position. La caméra recule d'autant, et la même terre reste
-         * sous le même pixel — au lieu de voir le paysage sauter d'un champ.
-         */
-        const idActif = parcelIdRef.current;
-        const ici = campagne?.plan.parcelles.find((v) => v.id === idActif);
-        if (ici) {
-          view.panX -= ici.x;
-          view.panZ -= ici.z;
-        }
-        /*
-         * Les parcelles qui viennent de passer à nous : on les voyait déjà, à
-         * un autre, et les voici au joueur. Leur chemin d'accès se construit
-         * sous ses yeux. Au premier affichage, ou en arrivant dans un autre
-         * coin de la commune, rien ne « vient » d'être acheté : pas de
-         * chantier.
-         */
-        const chantiers: string[] = [];
-        if (dejaVus) {
-          for (const v of voisins ?? []) {
-            if (v.statut === "MOI" && dejaVus.has(v.id) && !dejaMiens.has(v.id)) chantiers.push(v.id);
-          }
-        }
-        if (voisins?.length) {
-          dejaVus = new Set(voisins.map((v) => v.id));
-          dejaMiens = new Set(voisins.filter((v) => v.statut === "MOI").map((v) => v.id));
-        }
         campagne?.dispose();
         campagneGroup.clear();
-        const empriseIle = Math.max(gw, gh) * step + 1.4;
         campagne = createCountryside({
-          quart: repere.quart,
-          maison: homeRef.current,
-          /*
-           * Le chemin se cale sous la cour du siège, calculé comme si le siège
-           * était l'origine puis ramené à sa place : il reste ainsi dans le
-           * même couloir de la trame quelle que soit la parcelle active.
-           */
-          routeZ:
-            couloirRoute({
-              graine: "",
-              emprise: empriseTrame(),
-              cour: { ...courBoite, x: courBoite.x - repere.mx, z: courBoite.z - repere.mz },
-            }) + repere.mz,
           graine: parcelIdRef.current || `${gw}x${gh}`,
           /*
-           * Les voisins ont les cases de l'île du joueur, au même pas, et se
-           * posent sur la même trame : ce sont les parcelles qu'il pourra
-           * racheter, et une parcelle rachetée ne doit rien avoir à changer
-           * de forme pour venir se coller à la sienne. Leur **nombre** de
-           * cases est le leur — de 8 à 16 — dans une case de trame taillée
-           * pour la plus grande.
+           * L'île du joueur, et l'échelle du pays.
+           *
+           * `emprise` reste la sienne : c'est elle qui borde la cour et cale
+           * le cadrage. `pasCase` est la nouveauté — le côté d'une **case**,
+           * d'où chaque voisin tire le sien. Le passer plutôt que de recopier
+           * l'emprise du joueur est ce qui fait que deux joueurs voient la
+           * même ferme voisine à la même dimension, quelle que soit la taille
+           * de la leur.
            */
-          emprise: empriseTrame(),
-          cases: TAILLE_MAX,
-          ile: empriseIle,
-          chantiers,
+          emprise: Math.max(gw, gh) * step + TALUS_PARCELLE,
+          pasCase: step,
+          cases: Math.max(gw, gh),
           voisins: voisins?.length ? voisins : undefined,
           cour: courBoite,
           shadows: quality.shadows,
           sobre: !quality.shadows,
           // Le pied de la dalle : la campagne passe dessous, de sorte que
           // l'île garde son talus de terre au lieu de flotter.
-          y: CAMPAGNE_Y,
+          y: -0.46,
         });
         campagneGroup.add(campagne.object);
       }
@@ -2255,7 +2155,10 @@ export function IsoFarmView({
         const boites = [ile, courBoite];
         if (campagne) {
           for (const v of campagne.plan.parcelles) {
-            boites.push({ x: v.x, z: v.z, w: v.emprise, d: v.emprise });
+            // Le côté de chaque parcelle, et non celui du joueur : depuis que
+            // les lots n'ont plus tous la même taille, le second sous-estime
+            // l'enveloppe des grands et surestime celle des petits.
+            boites.push({ x: v.x, z: v.z, w: v.cote, d: v.cote });
           }
         }
         bornesVue = bornesDeplacement(boites, ile.w / 2);
@@ -2273,32 +2176,25 @@ export function IsoFarmView({
        * enclos voisin sans porte. Le pan ouest est donc coupé en deux tronçons
        * qui réservent le passage, en face du chemin de la cour.
        */
-      /*
-       * Sur une parcelle achetée, la porte n'est plus face à la cour — la
-       * cour est au siège, parfois à trois champs de là. Elle est au milieu
-       * du côté où arrive son chemin d'accès.
-       */
-      const accesIci = campagne?.plan.acces.find((a) => a.id === parcelIdRef.current);
-      const passage = accesIci ? 1.8 : 1.5;
-      const passageZ = accesIci ? 0 : parkingGateZ;
-      const cotePassage = accesIci?.cote ?? -1;
+      const passage = 1.5;
+      const passageZ = parkingGateZ;
       const ouestAvant = Math.max(0, passageZ - passage / 2 + hh / 2);
       const ouestApres = Math.max(0, hh / 2 - (passageZ + passage / 2));
       const hedges: [THREE.BoxGeometry, [number, number, number]][] = [
         [new THREE.BoxGeometry(hw, hedgeH, hedgeT), [0, 0.15, -hh / 2]],
         [new THREE.BoxGeometry(hw, hedgeH, hedgeT), [0, 0.15, hh / 2]],
-        [new THREE.BoxGeometry(hedgeT, hedgeH, hh), [(-cotePassage * hw) / 2, 0.15, 0]],
+        [new THREE.BoxGeometry(hedgeT, hedgeH, hh), [hw / 2, 0.15, 0]],
       ];
       if (ouestAvant > 0.05) {
         hedges.push([
           new THREE.BoxGeometry(hedgeT, hedgeH, ouestAvant),
-          [(cotePassage * hw) / 2, 0.15, -hh / 2 + ouestAvant / 2],
+          [-hw / 2, 0.15, -hh / 2 + ouestAvant / 2],
         ]);
       }
       if (ouestApres > 0.05) {
         hedges.push([
           new THREE.BoxGeometry(hedgeT, hedgeH, ouestApres),
-          [(cotePassage * hw) / 2, 0.15, hh / 2 - ouestApres / 2],
+          [-hw / 2, 0.15, hh / 2 - ouestApres / 2],
         ]);
       }
       for (const [geo, [px, py, pz]] of hedges) {
@@ -2314,7 +2210,7 @@ export function IsoFarmView({
           new THREE.BoxGeometry(hedgeT * 1.2, hedgeH * 1.15, hedgeT * 1.2),
           hedgeMat,
         );
-        pilier.position.set((cotePassage * hw) / 2, 0.15, passageZ + (side * passage) / 2);
+        pilier.position.set(-hw / 2, 0.15, passageZ + (side * passage) / 2);
         pilier.castShadow = true;
         fenceGroup.add(pilier);
       }
@@ -2551,16 +2447,7 @@ export function IsoFarmView({
         }
       }
 
-      /*
-       * Le cadrage se règle sur la parcelle de référence, pas sur l'active.
-       *
-       * Les parcelles vont de 8×8 à 16×16. Cadrer sur l'active faisait
-       * changer l'échelle à chaque bascule : on touchait une case de sa 16×16
-       * et tout le paysage reculait d'un cran — la terre ne restait plus sous
-       * le doigt. Une 16×16 tient quand même dans ce cadre : la cour, à
-       * l'ouest, lui laisse la place.
-       */
-      viewSpan = TAILLE_REFERENCE * step + parkingOverhang;
+      viewSpan = Math.max(gw * step + parkingOverhang, gh * step);
       applyCamera();
     }
 
@@ -2714,32 +2601,13 @@ export function IsoFarmView({
      * la cour ou dans le ciel.
      */
     function raycastVoisin(): VoisinReel | null {
-      return raycastParcelle()?.voisin ?? null;
-    }
-
-    /**
-     * La parcelle voisine sous le curseur, et la case touchée dans son repère.
-     *
-     * Les cases d'une parcelle de la campagne sont posées exactement comme
-     * celles de l'île — même pas, même origine centrée, `x` vers les `x` du
-     * monde et `y` vers ses `z`. La case lue ici est donc celle qu'on
-     * retrouvera sous le doigt une fois la parcelle devenue active.
-     */
-    function raycastParcelle(): { voisin: VoisinReel; x: number; y: number } | null {
       if (!campagne) return null;
       const nappe = campagne.object.getObjectByName("campagne-parcelles-nappe");
       if (!nappe) return null;
       raycaster.setFromCamera(pointer, camera);
       const hit = raycaster.intersectObject(nappe, false)[0];
       if (!hit) return null;
-      const p = parcelleSous(campagne.plan, hit.point.x, hit.point.z);
-      if (!p?.reel) return null;
-      // Ses cases à elle : une 16×16 voisine n'a pas la grille de l'île active.
-      const cases = p.cases;
-      const origine = -((cases - 1) * step) / 2;
-      const x = Math.round((hit.point.x - p.x - origine) / step);
-      const y = Math.round((hit.point.z - p.z - origine) / step);
-      return { voisin: p.reel, x, y };
+      return parcelleSous(campagne.plan, hit.point.x, hit.point.z)?.reel ?? null;
     }
 
     function setPointerFromEvent(ev: PointerEvent) {
@@ -3111,27 +2979,8 @@ export function IsoFarmView({
       // Hors de sa grille : peut-être un champ de voisin. C'est le seul geste
       // qui porte au-delà de l'île, et il ne coûte rien puisqu'on n'y arrive
       // qu'après avoir manqué toutes les cases.
-      const touche = raycastParcelle();
-      if (!touche) return;
-      /*
-       * Une de ses propres parcelles : on y travaille, on n'ouvre pas de fiche.
-       *
-       * La fiche ne disait que « Cette parcelle est déjà la vôtre ». Le geste
-       * attendu est évident — on a touché une case de son champ, on veut
-       * travailler cette case. Hors de la grille (le talus, le coin), on garde
-       * la fiche : il n'y a pas de case à désigner.
-       */
-      const cases = Math.max(dataRef.current.gridW, dataRef.current.gridH);
-      if (
-        touche.voisin.statut === "MOI" &&
-        onOwnedCellRef.current &&
-        touche.x >= 0 && touche.x < cases &&
-        touche.y >= 0 && touche.y < cases
-      ) {
-        onOwnedCellRef.current(touche.voisin.id, touche.x, touche.y, gestureMods);
-        return;
-      }
-      onVoisinRef.current?.(touche.voisin);
+      const voisin = raycastVoisin();
+      if (voisin) onVoisinRef.current?.(voisin);
     }
 
     function onPointerLeave() {
@@ -3374,6 +3223,21 @@ export function IsoFarmView({
         },
       };
     }
+
+    /* Recadrage sec, pour un changement de parcelle : pas de rappel en cours,
+       pas de doigt qui tient la vue, et le bouton « Ma ferme » retiré puisque
+       la ferme est de nouveau au centre. */
+    recadrerRef.current = () => {
+      tientLaVue = false;
+      retourVers = null;
+      view.panX = 0;
+      view.panZ = 0;
+      applyCamera();
+      if (egareRef.current) {
+        egareRef.current = false;
+        onEgareRef.current?.(false);
+      }
+    };
 
     const governor = makeFrameGovernor(applyQuality);
     let lastFrame = 0;
@@ -3846,50 +3710,98 @@ export function IsoFarmView({
           workPath = [...aw.cells].sort((p, q) =>
             p.y !== q.y ? p.y - q.y : (p.y % 2 === 0 ? p.x - q.x : q.x - p.x),
           );
-          const premiere = cellWorldPos(workPath[0]!.x, workPath[0]!.y);
-          approche = trajetDepuisCour(
-            { x: premiere.px, z: premiere.pz },
-            workAnimationMs(workPath.length, aw.durationMs) / 1000,
-          );
+          /*
+           * L'acheminement : la cour, le portail, puis la première case.
+           *
+           * Le travail ne commence qu'au bout — `workStartRef` est décalé
+           * d'autant — et le trajet est en équerre, comme le retour. Sans
+           * cour bâtie, il n'y a pas d'où partir : l'engin se pose alors sur
+           * sa première case, comme avant.
+           */
+          const approcheS = Math.max(0, aw.approcheMs ?? 0) / 1000;
+          workStartRef.current = t + approcheS;
+          arrivee = null;
+          if (approcheS > 0.2 && parkingSlots.length && workPath.length) {
+            // La place qu'il vient de quitter — et celle où `rentrerAuGarage`
+            // le ramènera. Même calcul des deux côtés, sinon il partirait
+            // d'une case et reviendrait dans une autre.
+            const place =
+              parkingSlots[
+                Math.min(dataRef.current.parked.length, parkingSlots.length - 1)
+              ];
+            const premiere = cellWorldPos(workPath[0]!.x, workPath[0]!.y);
+            if (place) {
+              workRig.group.position.set(place.x, yardDeck, place.z);
+              workRig.group.rotation.y = parkingHeading;
+              arrivee = {
+                chemin: [
+                  { x: place.x, z: place.z, y: yardDeck },
+                  { x: place.x, z: parkingGateZ, y: yardDeck },
+                  { x: premiere.px, z: parkingGateZ, y: MACHINE_GROUND },
+                  { x: premiere.px, z: premiere.pz, y: MACHINE_GROUND },
+                ],
+                debut: t,
+                fin: t + approcheS,
+                distance: 0,
+              };
+            }
+          }
         } else {
           workPath = [];
-          approche = null;
+          arrivee = null;
         }
       }
-      if (workRig && workPath.length) {
+      if (arrivee && workRig) {
+        /*
+         * L'acheminement, avant le premier sillon. Même interpolation que le
+         * retour : vitesse adoucie aux deux bouts, roues entraînées par la
+         * distance réellement parcourue, cap donné par le déplacement.
+         */
+        const brut = Math.min(1, (t - arrivee.debut) / Math.max(0.001, arrivee.fin - arrivee.debut));
+        const u = brut * brut * (3 - 2 * brut);
+        const segments = arrivee.chemin.length - 1;
+        const f = u * segments;
+        const i0 = Math.min(segments - 1, Math.floor(f));
+        const local = f - i0;
+        const a = arrivee.chemin[i0]!;
+        const b = arrivee.chemin[i0 + 1]!;
+        const px = a.x + (b.x - a.x) * local;
+        const pz = a.z + (b.z - a.z) * local;
+        const py = a.y + (b.y - a.y) * local;
+        const g = workRig.group;
+        const avance = Math.hypot(px - g.position.x, pz - g.position.z);
+        arrivee.distance += avance;
+        if (avance > 1e-5) g.rotation.y = Math.atan2(-(pz - g.position.z), px - g.position.x);
+        g.position.set(px, py, pz);
+        g.visible = true;
+        // `working: false` : l'outil est relevé tant qu'on roule sur la route.
+        workRig.update({ t, distance: arrivee.distance, working: false, steer: 0 });
+        workDust.update(delta / 1000, px, py + 0.03, pz, brut < 1);
+        if (workRig.exhaust) {
+          workRig.exhaust.getWorldPosition(exhaustPoint);
+          workGroup.worldToLocal(exhaustPoint);
+          workSmoke.update(delta / 1000, exhaustPoint.x, exhaustPoint.y, exhaustPoint.z, true);
+        }
+        if (brut >= 1) arrivee = null;
+      } else if (workRig && workPath.length) {
         const dt = delta / 1000;
         const duration = workAnimationMs(workPath.length, aw?.durationMs) / 1000;
-        // Le trajet d'abord, pris sur la durée du chantier : l'engin doit
-        // avoir fini quand le serveur dit que c'est fini.
-        const ecoule = t - workStartRef.current;
-        const trajet = approche?.duree ?? 0;
-        const enRoute = approche !== null && ecoule < trajet;
-        const raw = Math.min(1, Math.max(0, (ecoule - trajet) / Math.max(0.3, duration - trajet)));
+        const raw = Math.min(1, (t - workStartRef.current) / duration);
         // Démarrage et arrêt adoucis : un engin ne passe pas de zéro à sa
         // vitesse de travail en une image. Les roues suivent la distance,
         // elles accélèrent donc avec lui.
         const u = raw * raw * (3 - 2 * raw);
         const n = workPath.length;
         const f = u * Math.max(1, n - 1);
-        let i0 = Math.min(n - 1, Math.floor(f));
+        const i0 = Math.min(n - 1, Math.floor(f));
         const i1 = Math.min(n - 1, i0 + 1);
         const local = f - i0;
         const a = workPath[i0];
         const b = workPath[i1];
         const pa = cellWorldPos(a.x, a.y);
         const pb = cellWorldPos(b.x, b.y);
-        let px = pa.px + (pb.px - pa.px) * local;
-        let pz = pa.pz + (pb.pz - pa.pz) * local;
-        let py = MACHINE_GROUND;
-        if (enRoute && approche) {
-          const q = ecoule / approche.duree;
-          const ici = surTrajet(approche, q * q * (3 - 2 * q));
-          px = ici.x;
-          py = ici.y;
-          pz = ici.z;
-          // Rien n'est encore travaillé tant qu'il roule.
-          i0 = -1;
-        }
+        const px = pa.px + (pb.px - pa.px) * local;
+        const pz = pa.pz + (pb.pz - pa.pz) * local;
 
         // La distance réellement parcourue entraîne roues, disques et
         // rabatteur : ils tournent à la vitesse de l'engin, et calent avec lui.
@@ -3903,13 +3815,10 @@ export function IsoFarmView({
         workHeading = heading;
         lastWorkPos = { x: px, z: pz };
 
-        const visible = u < 1;
-        // Au travail seulement une fois au champ : sur la route, l'outil est
-        // relevé et ne sème, ne projette ni ne coupe rien.
-        const working = visible && !enRoute;
-        workRig.group.position.set(px, py, pz);
+        const working = u < 1;
+        workRig.group.position.set(px, MACHINE_GROUND, pz);
         workRig.group.rotation.y = heading;
-        workRig.group.visible = visible;
+        workRig.group.visible = true;
         workRig.update({
           t,
           distance: workTravelled,
@@ -3931,9 +3840,9 @@ export function IsoFarmView({
         workDust.update(
           dt,
           px - Math.cos(heading) * rear,
-          py + 0.03,
+          MACHINE_GROUND + 0.03,
           pz + Math.sin(heading) * rear,
-          visible,
+          working,
         );
         if (workRig.exhaust) {
           workRig.exhaust.getWorldPosition(exhaustPoint);
@@ -3944,7 +3853,7 @@ export function IsoFarmView({
         // Projections : chaque machine lance ce qu'elle travaille, depuis la
         // pièce qui le produit. Cadencées, jamais une gerbe par image.
         emitClock += dt;
-        if (working && rich && emitClock > 0.045) {
+        if (working && projections && emitClock > 0.045) {
           emitClock = 0;
           const rearX = -Math.cos(heading);
           const rearZ = Math.sin(heading);
@@ -4018,9 +3927,65 @@ export function IsoFarmView({
             }
           }
         }
+        /*
+         * Dernière case franchie : l'engin change de mains.
+         *
+         * Le passage se fait **à la fin** du bloc, une fois tous les usages de
+         * `workRig` derrière nous : `rentrerAuGarage` le met à `null`, et le
+         * lire plus haut planterait la boucle de rendu.
+         */
+        if (!working && !retour && !rentrerAuGarage(t)) {
+          // Pas de cour où se ranger — elle n'est pas encore bâtie. On en
+          // revient au comportement d'avant, faute de destination.
+          workRig.group.visible = false;
+        }
       } else {
         workDust.update(delta / 1000, 0, 0, 0, false);
         workSmoke.update(delta / 1000, 0, 0, 0, false);
+      }
+
+      if (retour) {
+        /*
+         * Trajet en équerre, à vitesse adoucie aux deux bouts. Les roues
+         * tournent de la distance vraiment parcourue, comme au champ : un
+         * engin qui glisse sans que ses roues suivent se remarque tout de
+         * suite.
+         */
+        // La cour a pu se redessiner depuis le départ : on remasque à chaque
+        // image plutôt que de retenir un objet qui n'existe peut-être plus.
+        const dejaGaree = parkedSlotGroups[retour.cible];
+        if (dejaGaree) dejaGaree.visible = false;
+        const brut = Math.min(1, (t - retour.debut) / RETOUR_S);
+        const u = brut * brut * (3 - 2 * brut);
+        const segments = retour.chemin.length - 1;
+        const f = u * segments;
+        const i0 = Math.min(segments - 1, Math.floor(f));
+        const local = f - i0;
+        const a = retour.chemin[i0];
+        const b = retour.chemin[i0 + 1];
+        const px = a.x + (b.x - a.x) * local;
+        const pz = a.z + (b.z - a.z) * local;
+        const py = a.y + (b.y - a.y) * local;
+        const g = retour.rig.group;
+        const dx = px - g.position.x;
+        const dz = pz - g.position.z;
+        const avance = Math.hypot(dx, dz);
+        retour.distance += avance;
+        // Arrivé à sa place, il se range dans le sens des autres ; en chemin,
+        // il regarde où il va. Le cap n'est pas repris quand il ne bouge plus,
+        // sinon l'engin pivoterait au hasard sur les derniers centimètres.
+        if (brut >= 1) g.rotation.y = parkingHeading;
+        else if (avance > 1e-5) g.rotation.y = Math.atan2(-dz, dx);
+        g.position.set(px, py, pz);
+        retour.rig.update({ t, distance: retour.distance, working: false, steer: 0 });
+        if (brut >= 1) {
+          // La donnée a rattrapé l'animation : l'engin garé est désormais
+          // dessiné par la cour, celui-ci n'a plus lieu d'être.
+          if (dejaGaree) dejaGaree.visible = true;
+          workGroup.remove(retour.rig.group);
+          retour.rig.dispose();
+          retour = null;
+        }
       }
 
       grainSpray.update(delta / 1000);
@@ -4071,6 +4036,7 @@ export function IsoFarmView({
     return () => {
       cancelAnimationFrame(raf);
       layoutRef.current = null;
+      recadrerRef.current = null;
       if (controle) controle.current = null;
       // La vue disparaît : le bouton de recentrage n'a plus rien à commander.
       if (egareRef.current) {
@@ -4100,6 +4066,13 @@ export function IsoFarmView({
       campagne = null;
       scene.remove(campagneGroup);
       clearWorkVehicle();
+      // L'engin qui rentrait au garage n'appartient plus à `workRig` : sans
+      // cette ligne, sa géométrie survivrait au démontage de la scène.
+      if (retour) {
+        workGroup.remove(retour.rig.group);
+        retour.rig.dispose();
+        retour = null;
+      }
       workDust.dispose();
       workSmoke.dispose();
       grainSpray.dispose();
@@ -4170,6 +4143,18 @@ export function IsoFarmView({
   useEffect(() => {
     layoutRef.current?.();
   }, [sceneKey]);
+
+  /*
+   * La vue suit la parcelle.
+   *
+   * Sans cela, changer de parcelle gardait le décalage de caméra de la
+   * précédente : le joueur atterrissait sur le champ d'un voisin, sa propre
+   * parcelle hors cadre, avec le bouton « Ma ferme » allumé. Reproduit en
+   * jeu — on tire la vue, on bascule, on ne voit plus rien de chez soi.
+   */
+  useEffect(() => {
+    recadrerRef.current?.();
+  }, [parcelId]);
 
   return <div className="iso-viewport" ref={mountRef} aria-label="Vue isométrique de la ferme" />;
 }

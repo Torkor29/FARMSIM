@@ -35,7 +35,7 @@
 
 import * as THREE from "three";
 import { type Season } from "@farmsim/shared";
-import { createDustTrail, createMachineRig, type DustTrail, type MachineRig } from "./machines3d";
+import { createMachineRig, type MachineRig } from "./machines3d";
 import {
   ajouterArbre,
   ajouterBete,
@@ -51,12 +51,12 @@ import type { BuildingRig } from "./buildings3d";
 import {
   couleurChamp,
   type EtatChamp,
-  DEMI_ACCES,
   DEMI_ROUTE,
   etatChamp,
   grainerDe,
   planCampagne,
   suite,
+  TALUS_PARCELLE,
   type OptionsPlan,
   type ParcelleVoisine,
   type PlanCampagne,
@@ -64,18 +64,20 @@ import {
 } from "./countryside-plan";
 
 export type OptionsCampagne = OptionsPlan & {
-  /**
-   * Les parcelles dont le chemin d'accès se construit sous nos yeux — celles
-   * qu'on vient d'acheter. Leur chemin part vide et se pose depuis la route,
-   * un engin en tête. Les autres sont là d'emblée.
-   */
-  chantiers?: readonly string[];
   /** Ombres portées : suit le réglage de la vue. */
   shadows?: boolean;
   /** Réglage sobre : moins de rangs, moins de voitures, un seul engin. */
   sobre?: boolean;
   /** Altitude du sol — sous le niveau de l'île du joueur. */
   y?: number;
+  /**
+   * Cases par côté — repli quand `pasCase` n'est pas fourni.
+   *
+   * Il ne fixe plus le découpage des voisins : chacun a le sien, déduit de sa
+   * taille. Il ne sert donc qu'à retrouver l'ancien pas de case, pour les
+   * appels qui ne connaissent pas l'échelle du monde.
+   */
+  cases?: number;
 };
 
 export type Campagne = {
@@ -488,6 +490,7 @@ export function createCountryside(o: OptionsCampagne): Campagne {
   const shadows = o.shadows ?? false;
   const sobre = o.sobre ?? false;
   const y0 = o.y ?? -0.5;
+  const cases = o.cases ?? 12;
   const plan = planCampagne({
     ...o,
     colonnes: o.colonnes ?? (sobre ? 2 : 3),
@@ -564,43 +567,26 @@ export function createCountryside(o: OptionsCampagne): Campagne {
   let saisonPosee: Season | null = null;
 
   /**
-   * Le pas d'une case, le même sur toutes les parcelles : c'est le **nombre**
-   * de cases qui change de l'une à l'autre, pas leur taille.
+   * Le pas d'une case — la même mesure partout dans le pays.
+   *
+   * Il se déduisait de l'emprise du joueur divisée par sa grille, ce qui
+   * revenait à supposer que toutes les parcelles avaient sa taille. Fourni,
+   * `o.pasCase` l'emporte : la case garde alors la même dimension d'un champ
+   * à l'autre, et c'est le **nombre** de cases qui change — ce qui est la
+   * vérité du cadastre, et ce qui rend un grand lot visiblement plus grand.
    */
-  const pasCase = plan.pasCase;
-  /** Le chemin d'accès de chaque parcelle desservie, pour lui ouvrir sa haie. */
-  const accesPar = new Map(plan.acces.map((a) => [a.id, a]));
+  const pasCase = o.pasCase ?? (plan.emprise - TALUS_PARCELLE) / cases;
 
   /**
-   * Ce qui est à vous, et ce qui ne l'est pas — lisible d'un coup d'œil.
+   * Le nombre de cases d'une parcelle, déduit de son côté.
    *
-   * Toute la campagne avait la même luminosité et le même habillage : on ne
-   * distinguait pas sa propre terre de celle du voisin, ni une parcelle à
-   * vendre d'une parcelle tenue. Trois signes, et jamais la couleur seule
-   * — elle ne suffit pas à tout le monde :
-   *
-   *  - **chez vous**, pleine lumière, et **surélevée** comme la parcelle où
-   *    vous travaillez : son talus de terre se voit sur les côtés. Les terres
-   *    des autres restent à fleur du sol. C'est une forme — elle se lit même
-   *    sans distinguer les couleurs ;
-   *  - **ailleurs**, le terrain légèrement assombri (`ATTENUATION`). Assez
-   *    pour que votre ferme ressorte, pas assez pour éteindre le paysage ;
-   *  - **à vendre**, un piquet de bois et sa pancarte au coin du champ.
-   *    Une forme, pas seulement une teinte.
+   * L'inverse exact de `coteDeGrille` : la parcelle a été dimensionnée à
+   * partir de sa grille, on la retrouve. Passer par le côté plutôt que par
+   * `p.reel` fait que le décor — qui n'a pas de cadastre — se découpe avec la
+   * même règle.
    */
-  const ATTENUATION = -0.11;
-  const estChezMoi = (p: ParcelleVoisine) => p.reel?.statut === "MOI";
-  /**
-   * De combien lever une de ses parcelles pour l'aligner sur l'île.
-   *
-   * La campagne est posée sous l'île (`y0`), pour que l'île garde son talus
-   * au lieu de flotter. Une case d'île est centrée à l'altitude zéro et a la
-   * même épaisseur qu'une case de campagne : lever de `-y0` met donc les deux
-   * exactement au même niveau, talus compris.
-   */
-  const levee = (p: ParcelleVoisine) => (estChezMoi(p) ? -y0 : 0);
-  const teinter = (hex: number, p: ParcelleVoisine) =>
-    estChezMoi(p) ? hex : eclaircir(hex, ATTENUATION);
+  const casesDe = (p: { cote: number }): number =>
+    Math.max(1, Math.round((p.cote - TALUS_PARCELLE) / pasCase));
 
   /*
    * Les bâtiments du cadastre, une fois, partout.
@@ -616,16 +602,19 @@ export function createCountryside(o: OptionsCampagne): Campagne {
   {
     for (const p of plan.parcelles) {
       if (!p.reel?.batiments.length) continue;
+      // L'origine du damier dépend de la taille du lot : la reprendre du
+      // joueur poserait les bâtiments d'un grand voisin dans son champ.
+      const origine = -((casesDe(p) - 1) * pasCase) / 2;
       const rigs = poserBatimentsVoisin({
         batiments: p.reel.batiments,
         pasCase,
-        origine: -((p.cases - 1) * pasCase) / 2,
+        origine,
         grain: grainerDe(p.id),
         shadows,
       });
       for (const rig of rigs) {
         rig.group.position.x += p.x;
-        rig.group.position.y += y0 + levee(p) + HAUT_CASE;
+        rig.group.position.y += y0 + HAUT_CASE;
         rig.group.position.z += p.z;
         groupeBatiments.add(rig.group);
         rigsBatiments.push(rig);
@@ -646,7 +635,6 @@ export function createCountryside(o: OptionsCampagne): Campagne {
   const detailles = new Map<string, VoisinDetaille>();
   let clefDetail = "";
 
-
   function poserParcelles(jour: number, saison: Season): void {
     if (jour === jourPose && saison === saisonPosee) return;
     jourPose = jour;
@@ -661,11 +649,14 @@ export function createCountryside(o: OptionsCampagne): Campagne {
     const TERRE_DALLE = 0x8a6b4a;
     const HAIE = 0x5c9a52;
     const teinte = new THREE.Color();
+
     for (const p of plan.parcelles) {
+      /* Le côté de **cette** parcelle. C'est la ligne qui rend le parcellaire
+         visible : tout ce qui suit — la dalle, le damier, la haie, la grange,
+         les bêtes — s'y réfère au lieu de se référer à l'île du joueur. */
+      const emprise = p.cote;
+      const casesIci = casesDe(p);
       const grain = suite(grainerDe(p.id));
-      // Son côté et ses cases à elle : de 8 à 16, centrée dans sa case de trame.
-      const emprise = p.emprise;
-      const cases = p.cases;
       /*
        * L'état lu sur la carte l'emporte sur le cycle déduit du jour : quand
        * on sait ce que le voisin a semé, il n'y a plus rien à deviner. Le
@@ -675,10 +666,9 @@ export function createCountryside(o: OptionsCampagne): Campagne {
 
       // Le talus de terre qui porte le champ — la plateforme de l'île, à
       // l'identique, et posée sous la surface plutôt qu'au travers.
-      const dy = levee(p);
       ajouterBoite(
-        pos, col, p.x, y0 + dy + DALLE_HAUT - DALLE_EP / 2, p.z,
-        emprise, DALLE_EP, emprise, teinter(TERRE_DALLE, p),
+        pos, col, p.x, y0 + DALLE_HAUT - DALLE_EP / 2, p.z,
+        emprise, DALLE_EP, emprise, TERRE_DALLE,
       );
 
       /*
@@ -693,91 +683,68 @@ export function createCountryside(o: OptionsCampagne): Campagne {
        * ce que la carte encaisse sans broncher. En réglage sobre on retombe
        * sur des aplats, où c'est la cadence qui prime.
        */
-      const o0 = -((cases - 1) * pasCase) / 2;
+      const o0 = -((casesIci - 1) * pasCase) / 2;
       const taille = pasCase - JOINT;
       const demi = taille / 2;
-      for (let i = 0; i < cases; i++) {
-        for (let k = 0; k < cases; k++) {
+      for (let i = 0; i < casesIci; i++) {
+        for (let k = 0; k < casesIci; k++) {
           const cx = p.x + o0 + i * pasCase;
           const cz = p.z + o0 + k * pasCase;
           // Une teinte par case, très légèrement différente : un aplat parfait
           // se lit comme une nappe, pas comme un champ.
-          teinte.setHex(teinter(eclaircir(base, (grain() - 0.5) * 0.12), p));
+          teinte.setHex(eclaircir(base, (grain() - 0.5) * 0.12));
           if (sobre) {
             quad(
               pos, col,
-              [cx - demi, y0 + dy + CASE_EP / 2, cz - demi],
-              [cx + demi, y0 + dy + CASE_EP / 2, cz - demi],
-              [cx + demi, y0 + dy + CASE_EP / 2, cz + demi],
-              [cx - demi, y0 + dy + CASE_EP / 2, cz + demi],
+              [cx - demi, y0 + CASE_EP / 2, cz - demi],
+              [cx + demi, y0 + CASE_EP / 2, cz - demi],
+              [cx + demi, y0 + CASE_EP / 2, cz + demi],
+              [cx - demi, y0 + CASE_EP / 2, cz + demi],
               teinte,
             );
           } else {
-            ajouterBoite(pos, col, cx, y0 + dy, cz, taille, CASE_EP, taille, teinte.getHex());
-          }
-        }
-      }
-
-      // La haie, sur les quatre bords, à la hauteur de celle de l'île — et
-      // levée avec la parcelle quand elle est au joueur.
-      const bordHaie = (emprise - 0.5) / 2;
-      {
-        const ep = 0.28;
-        /*
-         * La porte, là où arrive le chemin d'accès : le côté est fendu en son
-         * milieu, deux montants de part et d'autre. Une haie pleine au bout
-         * d'un chemin, c'est un cul-de-sac.
-         */
-        const porte = accesPar.get(p.id)?.cote ?? 0;
-        const OUVERTURE = 1.8;
-        const troncon = bordHaie - OUVERTURE / 2;
-        const cotes: [number, number, number, number][] = [
-          [0, -bordHaie, bordHaie * 2, ep],
-          [0, bordHaie, bordHaie * 2, ep],
-        ];
-        for (const sx of [-1, 1]) {
-          if (sx === porte) {
-            cotes.push([sx * bordHaie, -(OUVERTURE / 2 + troncon / 2), ep, troncon]);
-            cotes.push([sx * bordHaie, OUVERTURE / 2 + troncon / 2, ep, troncon]);
-          } else {
-            cotes.push([sx * bordHaie, 0, ep, bordHaie * 2]);
-          }
-        }
-        for (const [dx, dz, w, dd] of cotes) {
-          ajouterBoite(pos, col, p.x + dx, y0 + dy + 0.15, p.z + dz, w, 0.55, dd, teinter(HAIE, p));
-        }
-        if (porte) {
-          for (const sz of [-1, 1]) {
-            ajouterBoite(
-              pos, col,
-              p.x + porte * bordHaie, y0 + dy + 0.2, p.z + (sz * OUVERTURE) / 2,
-              ep * 1.3, 0.66, ep * 1.3, teinter(HAIE, p),
-            );
+            ajouterBoite(pos, col, cx, y0, cz, taille, CASE_EP, taille, teinte.getHex());
           }
         }
       }
 
       /*
-       * À vendre : un piquet et sa pancarte, au coin du champ.
+       * La borne de propriété — l'indicateur discret demandé.
        *
-       * Posé au coin tourné vers la caméra — celui des `x` et `z` positifs —
-       * pour qu'il se voie sans masquer la parcelle. Le bois reprend le brun
-       * des clôtures de la cour ; la pancarte, le crème des étiquettes du jeu.
-       * Pleine lumière même sur un terrain assombri : c'est une invitation,
-       * elle doit ressortir.
+       * « Il faudrait un indicateur discret qui permette de repérer ses
+       * propres parcelles. » Le paysage disait déjà tout d'un voisin, sauf la
+       * seule chose qu'on cherche en s'y promenant : lesquelles sont à soi. La
+       * fiche le disait, mais il fallait cliquer sur chaque champ pour la lire.
+       *
+       * Une borne, et non une couleur de champ : un blé à soi doit rester un
+       * blé. C'est l'objet que le monde réel emploie exactement pour cela —
+       * un piquet au coin de la parcelle, avec sa tête peinte. Posée au coin
+       * aval, celui que la vue isométrique met en bas de l'écran, elle ne
+       * passe jamais derrière la culture.
+       *
+       * Les mêmes ors que la carte du Bureau (`--gold-300` / `--gold-500`) :
+       * deux écrans qui parlent de la même chose doivent la peindre pareil.
        */
-      if (p.reel?.achetable) {
-        const coin = bordHaie - 0.35;
-        const px = p.x + coin;
-        const pz = p.z + coin;
-        const BOIS = 0x7a5534;
-        const PANCARTE = 0xf2e6c4;
-        const LISERE = 0xc9542e;
-        // À l'échelle d'un champ de douze cases, vu de trente unités : en deçà
-        // d'un mètre et demi de haut, la pancarte se perdait dans le damier.
-        ajouterBoite(pos, col, px, y0 + 0.85, pz, 0.18, 1.7, 0.18, BOIS);
-        ajouterBoite(pos, col, px, y0 + 1.55, pz + 0.05, 1.45, 0.8, 0.1, PANCARTE);
-        ajouterBoite(pos, col, px, y0 + 1.92, pz + 0.06, 1.45, 0.12, 0.11, LISERE);
+      if (p.reel?.statut === "MOI") {
+        /* Un peu plus haute que la haie — 0,86 contre 0,55 — et pas
+           davantage : elle doit dépasser pour se voir d'un champ à l'autre,
+           sans devenir le mât qu'on remarque avant la culture. */
+        const bx = p.x + emprise / 2 - 0.7;
+        const bz = p.z + emprise / 2 - 0.7;
+        ajouterBoite(pos, col, bx, y0 + 0.43, bz, 0.15, 0.86, 0.15, 0x6b5a3a);
+        ajouterBoite(pos, col, bx, y0 + 0.93, bz, 0.3, 0.22, 0.3, 0xf0d27a);
+      }
+
+      // La haie, sur les quatre bords, à la hauteur de celle de l'île.
+      const bordHaie = (emprise - 0.5) / 2;
+      const ep = 0.28;
+      for (const [dx, dz, w, dd] of [
+        [0, -bordHaie, bordHaie * 2, ep],
+        [0, bordHaie, bordHaie * 2, ep],
+        [-bordHaie, 0, ep, bordHaie * 2],
+        [bordHaie, 0, ep, bordHaie * 2],
+      ] as const) {
+        ajouterBoite(pos, col, p.x + dx, y0 + 0.15, p.z + dz, w, 0.55, dd, HAIE);
       }
 
       /*
@@ -816,7 +783,7 @@ export function createCountryside(o: OptionsCampagne): Campagne {
             ajouterBete(
               pos, col,
               p.x + Math.cos(a) * r,
-              y0 + dy + CASE_EP / 2,
+              y0 + CASE_EP / 2,
               p.z + Math.sin(a) * r,
               grain() * Math.PI * 2,
               troupeau.kind,
@@ -839,23 +806,10 @@ export function createCountryside(o: OptionsCampagne): Campagne {
   {
     const pos: number[] = [];
     const col: number[] = [];
-    /*
-     * Un chemin de terre, plus une route départementale.
-     *
-     * C'était un bitume gris-noir coupé d'une médiane blanche en pointillés :
-     * le seul noir et le seul blanc francs de tout le paysage, là où la ferme
-     * ne parle qu'en bruns, en crèmes et en verts. L'œil allait droit dessus.
-     *
-     * Le chemin reprend la terre du talus, éclaircie par le passage, avec deux
-     * ornières plus sombres et une bande d'herbe au milieu — celle que les
-     * roues ne touchent jamais. Même tracé, même largeur : seul l'habit
-     * change, et rien de ce qui s'appuie sur la route ne bouge.
-     */
-    const bitume = new THREE.Color(0xc2a479);
-    const accotement = new THREE.Color(0x98ab68);
-    const ligne = new THREE.Color(0xa3b06f);
-    const orniere = new THREE.Color(0xb39570);
-    const gravier = new THREE.Color(0xcdb58a);
+    const bitume = new THREE.Color(0x53535a);
+    const accotement = new THREE.Color(0x8e9a6a);
+    const ligne = new THREE.Color(0xdedac9);
+    const gravier = new THREE.Color(0xb5a687);
 
     /**
      * Un ruban posé au sol le long d'une polyligne.
@@ -903,28 +857,16 @@ export function createCountryside(o: OptionsCampagne): Campagne {
     ruban(pointsRoute, DEMI_ROUTE - 0.5, y0 + 0.03, bitume, accotement);
     ruban(plan.desserte, 1.0, y0 + 0.025, gravier, null);
 
-    // Les deux ornières, là où passent les roues.
-    for (const cote of [-1, 1]) {
-      const decale = pointsRoute.map((pt, i) => {
-        const a = pointsRoute[Math.max(0, i - 1)]!;
-        const b = pointsRoute[Math.min(pointsRoute.length - 1, i + 1)]!;
-        const l = Math.hypot(b.x - a.x, b.z - a.z) || 1;
-        return { x: pt.x + (-(b.z - a.z) / l) * 0.27 * cote, z: pt.z + ((b.x - a.x) / l) * 0.27 * cote };
-      });
-      ruban(decale, 0.1, y0 + 0.035, orniere, null);
-    }
-
-    // La bande d'herbe entre les ornières, en touffes : deux mètres d'herbe,
-    // un de terre nue. Une bande continue se lirait comme une ligne peinte.
+    // La médiane, en pointillés : deux mètres de trait, trois de vide.
     const total = longueurs[longueurs.length - 1]!;
-    for (let s = 2; s < total - 2; s += 3) {
+    for (let s = 2; s < total - 2; s += 5) {
       const a = surLaRoute(pointsRoute, longueurs, s);
       const b = surLaRoute(pointsRoute, longueurs, s + 2);
       const dx = b.x - a.x;
       const dz = b.z - a.z;
       const l = Math.hypot(dx, dz) || 1;
       const nn = { x: -dz / l, z: dx / l };
-      const k = 0.13;
+      const k = 0.08;
       const c = (p: { x: number; z: number }, signe: number): [number, number, number] => [
         p.x + nn.x * k * signe,
         y0 + 0.04,
@@ -933,179 +875,6 @@ export function createCountryside(o: OptionsCampagne): Campagne {
       quad(pos, col, c(a, -1), c(b, -1), c(b, 1), c(a, 1), ligne);
     }
     object.add(garder(maillageFacette(pos, col, { nom: "campagne-route" })));
-  }
-
-  /* —— Les chemins d'accès ——
-     Un par parcelle du joueur, de la route à la porte de sa haie : le même
-     gravier que la desserte de la cour, avec ses deux ornières. Chacun est
-     son propre maillage, posé tronçon par tronçon dans l'ordre du trajet —
-     c'est ce qui permet de le **dévoiler** au fil de sa construction : régler
-     une plage de dessin ne coûte rien. */
-  type Chantier = {
-    mesh: THREE.Mesh;
-    /** Nombre de sommets posés à chaque distance de `distances`. */
-    jalons: number[];
-    distances: number[];
-    points: PointPlan[];
-    longueurs: number[];
-    rig: MachineRig;
-    poussiere: DustTrail;
-    debut: number | null;
-    duree: number;
-    dernierT: number;
-  };
-  const chantiers: Chantier[] = [];
-  {
-    const enChantier = new Set(o.chantiers ?? []);
-    const gravier = new THREE.Color(0xcdb58a);
-    const neuf = new THREE.Color(0xd9c49b);
-    const bord = new THREE.Color(0x98ab68);
-    const orniere = new THREE.Color(0xb39570);
-    const CHAUSSEE = DEMI_ACCES - 0.2;
-    const PAS = 0.5;
-    for (const a of plan.acces) {
-      const pos: number[] = [];
-      const col: number[] = [];
-      const jalons = [0];
-      const distances = [0];
-      const construit = enChantier.has(a.id);
-      // Un chemin frais est plus clair : le gravier n'a pas encore été roulé.
-      const teinte = construit ? neuf : gravier;
-      let parcouru = 0;
-      for (let i = 0; i + 1 < a.points.length; i++) {
-        const p = a.points[i]!;
-        const q = a.points[i + 1]!;
-        const l = Math.hypot(q.x - p.x, q.z - p.z);
-        if (l < 1e-6) continue;
-        const ux = (q.x - p.x) / l;
-        const uz = (q.z - p.z) / l;
-        const nx = -uz;
-        const nz = ux;
-        // Le coude : un carré de gravier, sans quoi l'angle droit se lirait
-        // comme deux planches posées bout à bout.
-        if (i > 0) {
-          quad(
-            pos, col,
-            [p.x - DEMI_ACCES, y0 + 0.026, p.z - DEMI_ACCES],
-            [p.x + DEMI_ACCES, y0 + 0.026, p.z - DEMI_ACCES],
-            [p.x + DEMI_ACCES, y0 + 0.026, p.z + DEMI_ACCES],
-            [p.x - DEMI_ACCES, y0 + 0.026, p.z + DEMI_ACCES],
-            teinte,
-          );
-        }
-        for (let d = 0; d < l - 1e-6; d += PAS) {
-          const d1 = Math.min(l, d + PAS);
-          const bande = (k0: number, k1: number, y: number, c: THREE.Color) => {
-            const pt = (dd: number, k: number): [number, number, number] => [
-              p.x + ux * dd + nx * k,
-              y,
-              p.z + uz * dd + nz * k,
-            ];
-            quad(pos, col, pt(d, k0), pt(d1, k0), pt(d1, k1), pt(d, k1), c);
-          };
-          bande(-DEMI_ACCES, -CHAUSSEE, y0 + 0.022, bord);
-          bande(CHAUSSEE, DEMI_ACCES, y0 + 0.022, bord);
-          bande(-CHAUSSEE, CHAUSSEE, y0 + 0.026, teinte);
-          for (const k of [-0.25, 0.25]) bande(k - 0.07, k + 0.07, y0 + 0.031, orniere);
-          jalons.push(pos.length / 3);
-          distances.push(parcouru + d1);
-        }
-        parcouru += l;
-      }
-      /*
-       * La rampe, dans la porte.
-       *
-       * Les parcelles du joueur sont surélevées, comme son île : le chemin,
-       * lui, court au niveau du pré. Sans rampe, il butait sur un talus de
-       * terre au milieu de la porte — un chemin qui ne mène nulle part.
-       */
-      {
-        const porte = a.points[a.points.length - 1]!;
-        const avant = a.points[a.points.length - 2]!;
-        const l = Math.hypot(porte.x - avant.x, porte.z - avant.z) || 1;
-        const ux = (porte.x - avant.x) / l;
-        const uz = (porte.z - avant.z) / l;
-        const nx = -uz;
-        const nz = ux;
-        const bas = y0 + 0.026;
-        const haut = CASE_EP / 2 - 0.01;
-        const pt = (d: number, k: number, y: number): [number, number, number] => [
-          porte.x + ux * d + nx * k,
-          y,
-          porte.z + uz * d + nz * k,
-        ];
-        const demi = CHAUSSEE + 0.1;
-        quad(pos, col, pt(-1.1, -demi, bas), pt(0.55, -demi, haut), pt(0.55, demi, haut), pt(-1.1, demi, bas), teinte);
-        jalons.push(pos.length / 3);
-        distances.push(parcouru);
-      }
-      if (!pos.length) continue;
-      const mesh = maillageFacette(pos, col, { recoit: shadows, nom: `campagne-acces-${a.id}` });
-      garder(mesh);
-      object.add(mesh);
-      if (!construit) continue;
-
-      /*
-       * Le chantier : le chemin part vide, et se pose depuis la route jusqu'à
-       * la porte, un tracteur en tête dans sa poussière. Quelques secondes —
-       * assez pour qu'on le suive des yeux, pas assez pour qu'on attende.
-       */
-      mesh.geometry.setDrawRange(0, 0);
-      const rig = createMachineRig("TRACTOR", { shadows, seed: grainerDe(a.id) % 97 });
-      rig.group.name = "campagne-chantier";
-      rig.group.scale.setScalar(0.72);
-      rig.group.visible = false;
-      object.add(rig.group);
-      const poussiere = createDustTrail(10, 0xd8c9a8, { rise: 0.35, grow: 1.6, opacity: 0.45 });
-      object.add(poussiere.object);
-      const longueurs = cumul(a.points);
-      chantiers.push({
-        mesh,
-        jalons,
-        distances,
-        points: a.points,
-        longueurs,
-        rig,
-        poussiere,
-        debut: null,
-        duree: Math.min(7, Math.max(3, parcouru / 7)),
-        dernierT: 0,
-      });
-    }
-  }
-
-  /** Fait avancer les chantiers de chemin. */
-  function avancerChantiers(t: number): void {
-    for (const c of chantiers) {
-      // Le départ attend la première image : construit hors champ, le chemin
-      // serait déjà posé quand on le regarde.
-      if (c.debut === null) {
-        c.debut = t + 0.5;
-        c.dernierT = t;
-      }
-      const dt = Math.max(0, t - c.dernierT);
-      c.dernierT = t;
-      const brut = (t - c.debut) / c.duree;
-      if (brut < 0) continue;
-      const u = Math.min(1, brut);
-      const lisse = u * u * (3 - 2 * u);
-      const total = c.longueurs[c.longueurs.length - 1]!;
-      const s = lisse * total;
-      let k = 0;
-      while (k + 1 < c.distances.length && c.distances[k + 1]! <= s) k++;
-      c.mesh.geometry.setDrawRange(0, u >= 1 ? Infinity : c.jalons[k]!);
-      // Le tracteur, au front du chantier ; il s'efface une fois la porte atteinte.
-      const enCours = brut < 1.15;
-      c.rig.group.visible = enCours;
-      if (enCours) {
-        const ici = surLaRoute(c.points, c.longueurs, Math.min(total - 1e-3, s));
-        c.rig.group.position.set(ici.x, y0 + 0.05, ici.z);
-        _lacet.set(0, lacetEngin(ici.cap), 0);
-        c.rig.group.quaternion.setFromEuler(_lacet);
-        c.rig.update({ t, distance: s, working: u < 1, steer: 0 });
-      }
-      c.poussiere.update(dt, c.rig.group.position.x, y0 + 0.08, c.rig.group.position.z, u < 1);
-    }
   }
 
   /* —— Les bosquets —— */
@@ -1235,7 +1004,7 @@ export function createCountryside(o: OptionsCampagne): Campagne {
        * celles qu'il a faites : régler une plage de dessin ne coûte rien, là
        * où reconstruire un maillage par image coûterait la fluidité.
        */
-      const cote = coteTravail(p.emprise);
+      const cote = coteTravail(plan.emprise);
       const largeur = 1.8;
       const rangs = Math.max(2, Math.round(cote / largeur));
       const segments = 8;
@@ -1307,7 +1076,6 @@ export function createCountryside(o: OptionsCampagne): Campagne {
   }
 
   function update(t: number): void {
-    avancerChantiers(t);
     for (const r of rigsBatiments) r.update({ t, doorOpen: 0 });
     for (const d of detailles.values()) d.update(t, 0.4);
     for (const v of voitures) {
@@ -1335,7 +1103,7 @@ export function createCountryside(o: OptionsCampagne): Campagne {
        * derrière lui. Voir `cycleTravail` — c'est là qu'est la manœuvre.
        */
       const pas = cycleTravail(t + e.phase, {
-        cote: coteTravail(e.p.emprise),
+        cote: coteTravail(plan.emprise),
         rangs: e.rangs,
         largeur: 1.8,
         vitesse: e.vitesse,
@@ -1423,9 +1191,9 @@ export function createCountryside(o: OptionsCampagne): Campagne {
       if (detailles.has(p.id)) continue;
       const d = creerVoisinDetaille({
         parcelle: p,
-        emprise: p.emprise,
-        cases: p.cases,
-        y: y0 + levee(p) + HAUT_CASE,
+        emprise: p.cote,
+        cases: casesDe(p),
+        y: y0 + HAUT_CASE,
         shadows,
         sobre,
         batiments: false,
@@ -1460,11 +1228,6 @@ export function createCountryside(o: OptionsCampagne): Campagne {
     rigsBatiments.length = 0;
     for (const e of engins) e.rig.dispose();
     engins.length = 0;
-    for (const c of chantiers) {
-      c.rig.dispose();
-      c.poussiere.dispose();
-    }
-    chantiers.length = 0;
     if (nappeParcelles) {
       nappeParcelles.geometry.dispose();
       (nappeParcelles.material as THREE.Material).dispose();

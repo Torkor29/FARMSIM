@@ -70,6 +70,12 @@ export type HerdSnapshot = {
   size: number;
   atRisk: boolean;
   hungry: boolean;
+  /** Étape de la cascade, cf. `cascadeStage()` côté domaine. */
+  cascade?: "OK" | "PRODUCTION" | "SANTE" | "CRITIQUE" | "MORTEL";
+  /** Santé du lot, 1 = intacte. La seule jauge qui peut tuer. */
+  health?: number;
+  /** Abreuvement, 1 = plein. */
+  water?: number;
   feedStock: number;
   feedNeed: number;
   beddingCover?: number;
@@ -135,16 +141,49 @@ export function herdAlerts(barns: BarnSnapshot[], stocks: FarmStocks = {}): Herd
 
     const base = { buildingId: barn.buildingId, herdId: herd.id };
 
-    // 1. Mortalité en cours — rien ne passe avant.
-    if (herd.atRisk) {
+    /*
+     * 1. La cascade : trois avertissements, puis la mort.
+     *
+     * L'alerte de mortalité était **la première et la seule**, et elle
+     * s'allumait dès que le bien-être passait sous un seuil qu'un troupeau
+     * enfermé frôlait en permanence. Strea l'a lue sur une étable au tiers
+     * pleine, ration servie avec un jour d'avance : « le troupeau dépérit,
+     * des bêtes vont mourir · sortez-les au pré », un pré à zéro tonne
+     * d'herbe et 10 °C dehors. D'où « je sais plus quoi faire ».
+     *
+     * On annonce donc la mort **seulement quand elle est imminente**, et on
+     * la fait précéder de deux paliers qui disent où l'on en est. Le geste
+     * reste le même aux quatre étages — distribuer une ration — parce que
+     * c'est bien le seul qu'il y ait à faire.
+     */
+    const etape = herd.cascade ?? (herd.atRisk ? "MORTEL" : "OK");
+    if (etape === "MORTEL" || herd.atRisk) {
       out.push({
         ...base,
         id: `${herd.id}:risk`,
         level: "danger",
         icon: "risque",
         text: aDeLaRation
-          ? `${barn.name} — le troupeau dépérit, des bêtes vont mourir`
-          : `${barn.name} — le troupeau dépérit, et il ne reste rien à distribuer`,
+          ? `${barn.name} — le troupeau ne tient plus, des bêtes peuvent mourir`
+          : `${barn.name} — le troupeau ne tient plus, et il ne reste rien à distribuer`,
+        ...gesteRation,
+      });
+    } else if (etape === "CRITIQUE") {
+      out.push({
+        ...base,
+        id: `${herd.id}:critique`,
+        level: "danger",
+        icon: "risque",
+        text: `${barn.name} — troupeau en état critique, intervenez`,
+        ...gesteRation,
+      });
+    } else if (etape === "SANTE") {
+      out.push({
+        ...base,
+        id: `${herd.id}:sante`,
+        level: "warn",
+        icon: "risque",
+        text: `${barn.name} — la santé du troupeau baisse`,
         ...gesteRation,
       });
     } else if (herd.hungry) {
@@ -159,6 +198,28 @@ export function herdAlerts(barns: BarnSnapshot[], stocks: FarmStocks = {}): Herd
           : jours < 1
             ? `${barn.name} — ration épuisée`
             : `${barn.name} — ${jours.toFixed(0)} jour(s) de ration`,
+        ...gesteRation,
+      });
+    }
+
+    /*
+     * 1 bis. La soif.
+     *
+     * Elle ne se déclenche que quand plus personne ne passe : l'éleveur qui
+     * apporte la ration remplit les seaux du même geste. Le remède définitif
+     * n'est donc pas un clic de plus mais un bâtiment — l'abreuvoir
+     * automatique, qui tient la jauge pleine même en l'absence du joueur.
+     */
+    if ((herd.water ?? 1) < 0.35) {
+      out.push({
+        ...base,
+        id: `${herd.id}:water`,
+        level: (herd.water ?? 1) <= 0 ? "danger" : "warn",
+        icon: "ration",
+        text:
+          (herd.water ?? 1) <= 0
+            ? `${barn.name} — plus une goutte à boire`
+            : `${barn.name} — l’eau vient à manquer`,
         ...gesteRation,
       });
     }

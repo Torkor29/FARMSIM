@@ -157,10 +157,33 @@ done
 # par un conteneur en marche sont conservées par construction.
 echo "==> Place disque avant ménage"
 timeout 60 df -h / | tail -n +2 | awk '{print "    " $5 " occupé, " $4 " libre sur " $2}'
-echo "==> Ménage Docker (cache de construction et images orphelines)"
-timeout 300 docker builder prune -af >/dev/null 2>&1 || echo "    (cache : ménage incomplet)"
-timeout 300 docker image prune -f >/dev/null 2>&1 || echo "    (images : ménage incomplet)"
-timeout 120 docker container prune -f >/dev/null 2>&1 || true
+
+# ————————————————————————————————————————————————————————————————————————
+# Le ménage ne se paie que s'il sert.
+#
+# Il tournait à chaque déploiement, quel que soit l'état du disque. Mesuré le
+# 26 août sur un disque **occupé à 27 %, quarante-deux gigaoctets libres** :
+# neuf minutes et demie, sur une fenêtre SSH de quarante. Le même
+# déploiement a fini par expirer sans jamais atteindre `docker compose up` —
+# le ménage, la vérification des migrations et la sauvegarde avaient mangé
+# la totalité du budget, et le jeu est resté sur l'ancienne image.
+#
+# Un garde-fou qui empêche la mise en ligne ne garde plus rien. Le ménage
+# sert quand le disque se remplit ; en dessous du seuil il ne fait que
+# consommer la fenêtre de quelqu'un d'autre. `FARMSIM_FORCE_PRUNE=1` le
+# force, pour un dépannage.
+# ————————————————————————————————————————————————————————————————————————
+occupe_pct="$(df --output=pcent / | tail -1 | tr -dc '0-9' || echo 0)"
+[[ -n "$occupe_pct" ]] || occupe_pct=0
+if (( occupe_pct >= 70 )) || [[ "${FARMSIM_FORCE_PRUNE:-0}" == "1" ]]; then
+  echo "==> Ménage Docker (cache de construction et images orphelines)"
+  timeout 300 docker builder prune -af >/dev/null 2>&1 || echo "    (cache : ménage incomplet)"
+  timeout 300 docker image prune -f >/dev/null 2>&1 || echo "    (images : ménage incomplet)"
+  timeout 120 docker container prune -f >/dev/null 2>&1 || true
+else
+  echo "==> Ménage Docker sauté — disque à ${occupe_pct} %, la place ne manque pas."
+  echo "    (FARMSIM_FORCE_PRUNE=1 pour le forcer.)"
+fi
 # Les journaux de conteneurs, que le ménage Docker ne touche pas.
 #
 # Le pilote `json-file` écrit sans jamais tourner tant qu'on ne le lui a pas
@@ -286,6 +309,34 @@ elif ! docker inspect farmsim-db >/dev/null 2>&1; then
   echo "    Aucune sauvegarde possible ici — l'ancienne base SQLite reste"
   echo "    intacte sur le volume farmsim-data, et c'est elle le filet."
   echo "    Voir docs/POSTGRESQL.md pour le transfert des données."
+elif [[ "$(docker inspect -f '{{.State.Status}}' farmsim-db 2>/dev/null || echo inconnu)" != "running" ]]; then
+  # ——————————————————————————————————————————————————————————————————
+  # La base existe mais ne tourne pas — troisième cas, découvert en panne.
+  #
+  # Le 26 août, une fenêtre SSH a expiré au milieu d'un `--force-recreate` :
+  # `farmsim-db` est resté à l'état `created`, créé mais jamais démarré. Le
+  # déploiement suivant a alors buté sur ceci —
+  #
+  #     docker: cannot join network namespace of a non running container:
+  #             container farmsim-db is created
+  #     ERROR: la sauvegarde a échoué — déploiement interrompu.
+  #
+  # — et s'est arrêté en affirmant « rien n'a été touché, le jeu tourne
+  # toujours sur l'ancienne version ». C'était faux : le jeu ne tournait plus
+  # du tout, toutes ses routes rendaient 500. Le garde-fou raisonnait sur un
+  # statu quo sain qui n'existait plus, et il empêchait la seule chose qui
+  # réparait — remonter la pile.
+  #
+  # Une base à l'arrêt n'a aucune donnée vivante qu'une migration puisse
+  # abîmer, et il n'y a rien à sauvegarder d'un conteneur qui ne répond pas.
+  # Le filet ne sert à rien ici ; on le dit, et on remonte.
+  # ——————————————————————————————————————————————————————————————————
+  echo "==> Base à l'arrêt (état : $(docker inspect -f '{{.State.Status}}' farmsim-db 2>/dev/null || echo inconnu))."
+  echo "    Rien à sauvegarder d'un conteneur qui ne tourne pas, et rien qu'une"
+  echo "    migration puisse abîmer : c'est le démarrage qui suit qui la remet"
+  echo "    debout. La dernière sauvegarde en date reste le filet :"
+  ls -t "${FARMSIM_BACKUP_DIR:-/var/backups/farmsim}"/*.dump 2>/dev/null | head -1 | sed 's/^/      /' \
+    || echo "      (aucune dans ${FARMSIM_BACKUP_DIR:-/var/backups/farmsim})"
 else
   # La sauvegarde est bornée, et son échec n'a que deux issues : une
   # sauvegarde plus modeste, ou pas de déploiement. Jamais un déploiement sans
@@ -317,7 +368,11 @@ else
   # sauvegarde complète : un garde-fou qui se désarme quand il ne comprend pas
   # ne garde plus rien.
   relire=1
-  appliquees="$(docker exec "${FARMSIM_DB_CONTAINER:-farmsim-db}" \
+  # Bornée : cette lecture a mis **sept minutes** le 26 août sur une machine
+  # saturée. Non bornée, une requête qui n'aboutit pas emporte la fenêtre
+  # entière — et son échec retombe de toute façon sur la sauvegarde complète,
+  # qui est le comportement prudent.
+  appliquees="$(timeout 120 docker exec "${FARMSIM_DB_CONTAINER:-farmsim-db}" \
       psql -U "${FARMSIM_DB_USER:-farmsim}" -d "${FARMSIM_DB_NAME:-farmsim}" -tAc \
       'SELECT count(*) FROM _prisma_migrations WHERE finished_at IS NOT NULL' 2>/dev/null || true)"
   presentes="$(find "$APP_DIR/apps/api/prisma/migrations" -mindepth 1 -maxdepth 1 -type d 2>/dev/null | wc -l)"
@@ -327,19 +382,41 @@ else
     relire=0
   fi
 
-  echo "==> Sauvegarde avant migration"
+  # ——————————————————————————————————————————————————————————————————
+  # Le budget de la sauvegarde dépend de ce qu'elle protège.
+  #
+  # Il était de 900 s, plus 600 s de repli — vingt-cinq minutes possibles sur
+  # une fenêtre de quarante. Le 26 août, sans **aucune** migration à
+  # appliquer, l'instantané a consommé les quinze premières minutes puis le
+  # repli les cinq suivantes, et le déploiement a expiré avant d'avoir touché
+  # au moindre conteneur.
+  #
+  # Quand une migration s'apprête à toucher la base, la sauvegarde vaut la
+  # fenêtre : elle garde son budget entier. Quand il n'y en a aucune — le cas
+  # le plus fréquent, puisqu'on livre surtout du code — elle reste due mais
+  # ne peut plus faire échouer la mise en ligne : cinq minutes, et pas de
+  # repli. Ne pas livrer est un risque, lui aussi.
+  # ——————————————————————————————————————————————————————————————————
+  if (( relire == 1 )); then budget=900; repli=600; else budget=300; repli=0; fi
+  echo "==> Sauvegarde avant migration (budget ${budget} s)"
   code=0
-  timeout 900 env FARMSIM_BACKUP_VERIFY="$relire" \
+  timeout "$budget" env FARMSIM_BACKUP_VERIFY="$relire" \
     bash "$APP_DIR/scripts/farmsim-backup.sh" avant-deploi || code=$?
-  if (( code == 124 )); then
+  if (( code == 124 && repli > 0 )); then
     # 124 : la borne a parlé. On retente un instantané **sans relecture** —
     # l'arbitrage est détaillé dans `farmsim-backup.mjs`, et il se résume à
     # ceci : une sauvegarde non relue vaut mieux que pas de sauvegarde, et
     # refuser le repli ne rendrait personne plus sûr.
-    echo "WARN: sauvegarde relue trop longue (15 min) — instantané sans relecture." >&2
+    echo "WARN: sauvegarde relue trop longue ($(( budget / 60 )) min) — instantané sans relecture." >&2
     code=0
-    timeout 600 env FARMSIM_BACKUP_VERIFY=0 \
+    timeout "$repli" env FARMSIM_BACKUP_VERIFY=0 \
       bash "$APP_DIR/scripts/farmsim-backup.sh" avant-deploi || code=$?
+  elif (( code == 124 )); then
+    # Pas de migration en vue : on ne rejoue pas, on le dit et on déploie.
+    echo "WARN: instantané trop long ($(( budget / 60 )) min) et aucune migration à" >&2
+    echo "      protéger — on déploie sans. Relancez la sauvegarde à la main :" >&2
+    echo "        cd $APP_DIR && bash scripts/farmsim-backup.sh manuel" >&2
+    code=0
   fi
   # Le fichier fait foi, pas le code de sortie.
   #
@@ -387,20 +464,106 @@ fi
 # prudence décorative : sans lui, un registre indisponible, une image pas
 # encore publiée ou un premier déploiement empêcheraient toute mise en ligne.
 # On préfère un déploiement lent à pas de déploiement du tout.
+# ————————————————————————————————————————————————————————————————————————
+# La recréation des conteneurs ne se laisse pas couper.
+#
+# Le 26 août à 23 h 05, la fenêtre SSH de quarante minutes a expiré **au
+# milieu** d'un `docker compose up --force-recreate`, six minutes après la
+# ligne « Container farmsim-db Recreate ». Le résultat est le pire état
+# possible : le conteneur du jeu, lui, était recréé et se déclarait en bonne
+# santé — son contrôle interroge `/api/health`, qui ne touche pas la base —
+# pendant que la base, elle, n'existait plus. Mesuré depuis l'extérieur :
+# `/api/meta/machines` répondait 200, `/api/world`, `/api/zones` et
+# `/api/auth/login` rendaient 500 en six dixièmes de seconde. Pour un joueur,
+# le jeu était mort ; pour Docker, tout allait bien.
+#
+# Une session qui tombe ne doit pas pouvoir laisser la pile à moitié
+# reconstruite. `setsid` détache la commande du groupe de processus de la
+# session : le SSH peut mourir, la recréation va au bout. On l'attend quand
+# même — mais si l'attente est coupée, le travail continue côté serveur au
+# lieu d'être tué en plein milieu.
+# ————————————————————————————————————————————————————————————————————————
+monter() {
+  # `--wait` n'est pas un détail : sans lui, `setsid` **fork** dès que le shell
+  # est déjà chef de groupe de processus, et rend la main aussitôt. Le script
+  # filerait alors vers ses vérifications — la base répond-elle, le conteneur
+  # est-il sain, le HTTPS passe-t-il — pendant que la pile se reconstruit
+  # encore derrière, et il annoncerait un succès qu'il n'a pas constaté.
+  #
+  # Mesuré au déploiement du 26 août à 23 h 44 : il a bien attendu, parce que
+  # le shell n'était pas chef de groupe ce jour-là. C'est exactement le genre
+  # de garantie qu'on ne veut pas devoir à la chance.
+  #
+  # Deux replis, du plus sûr au plus simple : `--wait` s'il existe, `setsid`
+  # nu sinon, appel direct là où l'utilitaire manque. Le détachement se perd
+  # au dernier échelon, pas la mise en ligne.
+  if setsid --wait true >/dev/null 2>&1; then
+    setsid --wait docker compose "$@" </dev/null
+  elif command -v setsid >/dev/null 2>&1; then
+    setsid docker compose "$@" </dev/null
+  else
+    docker compose "$@"
+  fi
+}
+
+# ——————————————————————————————————————————————————————————————————————
+# L'image exacte est **écrite dans `.env`**, et pas seulement exportée.
+#
+# Elle ne l'était pas, et `.env` gardait `ghcr.io/…/farmsim:main` — une cible
+# mouvante. Conséquence, un jour de dépannage : un `docker compose up -d`
+# tapé à la main sur le serveur ne retélécharge rien et repart de l'image
+# `:main` posée sur le disque, qui peut avoir plusieurs déploiements de
+# retard. La base, elle, porte déjà les migrations du dernier. Une image plus
+# ancienne y trouve des migrations qu'elle ne connaît pas, `prisma migrate
+# deploy` refuse de continuer, le processus sort, Docker relance : le site
+# tombe, sur un geste qui avait l'air anodin.
+#
+# Ce n'est pas une crainte d'école — le retrait du code de secours a supprimé
+# deux colonnes. Une image d'avant, relancée sur cette base-là, ne démarrerait
+# pas.
+#
+# Écrire l'empreinte du commit dans `.env` referme le piège : la commande
+# manuelle redémarre alors **exactement** ce qui tournait, et le prochain
+# déploiement réécrira la ligne.
+# ——————————————————————————————————————————————————————————————————————
+epingler_image() {
+  local image="$1" tmp
+  tmp="$(mktemp)"
+  # `grep -v` plutôt que `sed -i` : une image contient des barres obliques et
+  # des deux-points, qu'il faudrait échapper dans le motif de remplacement.
+  grep -v '^FARMSIM_IMAGE=' .env > "$tmp" 2>/dev/null || true
+  printf 'FARMSIM_IMAGE=%s\n' "$image" >> "$tmp"
+  cat "$tmp" > .env
+  rm -f "$tmp"
+}
+
 if [[ -n "${FARMSIM_IMAGE:-}" ]]; then
   export FARMSIM_IMAGE
-  echo "==> Image : $FARMSIM_IMAGE"
+  epingler_image "$FARMSIM_IMAGE"
+  echo "==> Image : $FARMSIM_IMAGE (épinglée dans .env)"
   if docker compose pull farmsim; then
     echo "==> Démarrage sur l'image du registre"
-    docker compose up -d --force-recreate
+    monter up -d --force-recreate
   else
     echo "WARN: image introuvable au registre — construction sur place." >&2
-    docker compose up -d --build --force-recreate
+    monter up -d --build --force-recreate
   fi
 else
   echo "==> Aucune image fournie — construction sur place"
-  docker compose up -d --build --force-recreate
+  monter up -d --build --force-recreate
 fi
+
+# La base doit répondre avant qu'on aille plus loin : c'est elle que la
+# coupure du 26 août a laissée en rade, et rien ensuite ne s'en apercevait.
+echo "==> La base répond ?"
+for _ in $(seq 1 30); do
+  if timeout 20 docker exec "${FARMSIM_DB_CONTAINER:-farmsim-db}" \
+       pg_isready -U "${FARMSIM_DB_USER:-farmsim}" -d "${FARMSIM_DB_NAME:-farmsim}" >/dev/null 2>&1; then
+    echo "    oui."
+    break
+  fi
+  sleep 5
+done
 
 # Un volume nommé créé par une exécution antérieure — ou par une image
 # construite avec un uid différent — garde son propriétaire d'origine tant
@@ -411,7 +574,7 @@ echo "==> Vérification des droits sur le volume de données"
 DATA_VOL="$(docker inspect farmsim -f '{{range .Mounts}}{{if eq .Destination "/data"}}{{.Name}}{{end}}{{end}}' 2>/dev/null || true)"
 if [[ -n "$DATA_VOL" ]]; then
   docker run --rm -v "${DATA_VOL}:/data" busybox chown -R 10001:10001 /data
-  docker compose up -d
+  monter up -d
 else
   echo "WARN: volume /data introuvable sur le conteneur farmsim — vérifie docker-compose.yml" >&2
 fi
@@ -446,6 +609,60 @@ fi
 
 echo "==> Health local OK:"
 cat /tmp/farmsim-health.json
+echo
+
+# ————————————————————————————————————————————————————————————————————————
+# Le veilleur.
+#
+# Le conteneur du jeu a un contrôle de santé, et personne ne s'en sert :
+# `restart: unless-stopped` ne relance qu'un conteneur qui **sort**. Un
+# conteneur vivant mais figé — boucle d'événements bloquée, machine dans le
+# swap — reste figé, et le site est mort jusqu'à ce qu'un humain s'en
+# aperçoive. C'est ce qui s'est passé le 26 août : plus une réponse à partir
+# de 20 h 12, y compris sur `/api/health`, et toujours rien une heure et
+# demie plus tard.
+#
+# La minuterie regarde chaque minute ; le script relance ce qui est
+# `unhealthy`, une fois toutes les dix minutes au plus. Voir
+# deploy/farmsim-veilleur.sh pour ce qu'il ne prétend pas régler.
+#
+# Posé à chaque déploiement, et sans condition : c'est ce qui le répare si
+# quelqu'un l'a désactivé ou si le fichier a changé.
+# ————————————————————————————————————————————————————————————————————————
+echo "==> Veilleur (relance le jeu s'il ne répond plus)"
+if [[ -r "$APP_DIR/deploy/farmsim-veilleur.sh" ]] && command -v systemctl >/dev/null 2>&1; then
+  install -m 0755 "$APP_DIR/deploy/farmsim-veilleur.sh" /usr/local/bin/farmsim-veilleur
+  cat > /etc/systemd/system/farmsim-veilleur.service <<'UNITE'
+[Unit]
+Description=Relance FARMSIM quand son conteneur ne répond plus
+Documentation=https://github.com/Torkor29/FARMSIM/blob/main/deploy/farmsim-veilleur.sh
+After=docker.service
+Requires=docker.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/farmsim-veilleur
+UNITE
+  cat > /etc/systemd/system/farmsim-veilleur.timer <<'MINUTERIE'
+[Unit]
+Description=Surveille FARMSIM toutes les minutes
+
+[Timer]
+OnBootSec=5min
+OnUnitActiveSec=1min
+# Le veilleur ne doit jamais s'empiler sur lui-même : sur une machine lente,
+# un `docker restart` peut durer plus d'une minute.
+AccuracySec=10s
+
+[Install]
+WantedBy=timers.target
+MINUTERIE
+  systemctl daemon-reload
+  systemctl enable --now farmsim-veilleur.timer
+  systemctl status farmsim-veilleur.timer --no-pager --lines=0 2>/dev/null | sed 's/^/    /' || true
+else
+  echo "    systemd absent ou script introuvable — veilleur non posé."
+fi
 echo
 
 # ————————————————————————————————————————————————————————————————————————

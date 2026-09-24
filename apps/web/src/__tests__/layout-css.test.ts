@@ -347,9 +347,23 @@ describe("les motifs du ciel", () => {
  * côté ne tient jamais longtemps. Empilé dans le dock, le bandeau ne peut
  * plus être recouvert et il n'y a plus de hauteur à deviner.
  */
+/*
+ * L'ancrage a changé de porteur, la règle non.
+ *
+ * Les chantiers sont plusieurs depuis qu'un attelage peut servir plusieurs
+ * parcelles. `position: fixed` vivait sur le bandeau lui-même : deux bandeaux
+ * se seraient donc superposés au pixel près, chacun calé sur le même
+ * `bottom: 4.6rem`. C'est la **pile** qui s'ancre désormais, et les bandeaux
+ * s'y empilent en colonne.
+ *
+ * Ce que ce bloc vérifie n'a pas bougé d'un pouce — c'est l'élément qu'il
+ * interroge qui a changé. Ces deux tests ont d'ailleurs attrapé le
+ * déplacement en intégration, ce qui est précisément leur travail.
+ */
 describe("le bandeau de chantier", () => {
-  const flottant = toutes.find((r) => r.selecteur === ".chantier-bar");
-  const empile = toutes.find((r) => /\.field-dock\s+\.chantier-bar/.test(r.selecteur));
+  const flottant = toutes.find((r) => r.selecteur === ".chantier-pile");
+  const empile = toutes.find((r) => /\.field-dock\s+\.chantier-pile/.test(r.selecteur));
+  const bandeau = toutes.find((r) => r.selecteur === ".chantier-bar");
 
   it("existe sous les deux formes : flottante et empilée", () => {
     expect(`flottant=${Boolean(flottant)} empilé=${Boolean(empile)}`).toBe(
@@ -365,11 +379,23 @@ describe("le bandeau de chantier", () => {
   });
 
   it("ne se laisse pas recouvrir par le dock quand il flotte", () => {
-    // Hors de la pile, il reste ancré à la fenêtre : son plan doit alors être
-    // au moins celui du dock, sinon on retombe sur le même recouvrement.
+    // Hors de la pile, elle reste ancrée à la fenêtre : son plan doit alors
+    // être au moins celui du dock, sinon on retombe sur le même recouvrement.
     const dock = toutes.find((r) => r.selecteur === ".field-dock");
-    const planBandeau = Number(declaration(flottant!.corps, "z-index") ?? 0);
+    const planPile = Number(declaration(flottant!.corps, "z-index") ?? 0);
     const planDock = Number(declaration(dock!.corps, "z-index") ?? 0);
-    expect(`${planBandeau} >= ${planDock}`).toBe(`${planBandeau} >= ${planBandeau}`);
+    expect(`${planPile} >= ${planDock}`).toBe(`${planPile} >= ${planPile}`);
+  });
+
+  it("et les bandeaux, eux, ne s’ancrent plus nulle part", () => {
+    // Si `position` ou `bottom` revenaient sur le bandeau, deux chantiers se
+    // superposeraient de nouveau — mesuré à [805–838] et [843–876] au
+    // navigateur, il faut que ça reste deux lignes.
+    expect(declaration(bandeau!.corps, "position")).toBe(null);
+    expect(declaration(bandeau!.corps, "bottom")).toBe(null);
+  });
+
+  it("la pile les range en colonne, pas côte à côte", () => {
+    expect(declaration(flottant!.corps, "flex-direction")).toBe("column");
   });
 });

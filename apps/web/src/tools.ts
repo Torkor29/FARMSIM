@@ -1,4 +1,4 @@
-import type { CropCode } from "@farmsim/shared";
+import { CROP_DEFS, type CropCode } from "@farmsim/shared";
 
 export type Tool =
   | "SELECT"
@@ -8,6 +8,11 @@ export type Tool =
   | "PLANT_BARLEY"
   | "PLANT_RAPE"
   | "PLANT_GRASS"
+  | "PLANT_MESCLUN"
+  | "PLANT_RADISH"
+  | "PLANT_SPINACH"
+  | "PLANT_LETTUCE"
+  | "PLANT_POTATO"
   | "FERTILIZE"
   | "HARVEST"
   | "STUBBLE"
@@ -30,15 +35,32 @@ export function isFieldWorkTool(t: Tool): boolean {
   );
 }
 
+/**
+ * L'outil de semis de chaque culture, et rien d'autre à tenir à jour.
+ *
+ * Trois fonctions listaient les six outils à la main : « est-ce un semis »,
+ * « quelle culture », « quel nom ». Passer de six cultures à onze aurait
+ * demandé trois chaînes de onze `if` cohérentes entre elles — trois occasions
+ * d'en oublier une, et un outil qui sème sans rien semer.
+ *
+ * La table est la seule source ; les trois fonctions la lisent.
+ */
+export const SEMIS: Record<string, CropCode> = {
+  PLANT_WHEAT: "WHEAT",
+  PLANT_MAIZE: "MAIZE",
+  PLANT_PEA: "PEA",
+  PLANT_BARLEY: "BARLEY",
+  PLANT_RAPE: "RAPE",
+  PLANT_GRASS: "GRASS",
+  PLANT_MESCLUN: "MESCLUN",
+  PLANT_RADISH: "RADISH",
+  PLANT_SPINACH: "SPINACH",
+  PLANT_LETTUCE: "LETTUCE",
+  PLANT_POTATO: "POTATO",
+};
+
 export function isPlantTool(t: Tool): boolean {
-  return (
-    t === "PLANT_WHEAT" ||
-    t === "PLANT_MAIZE" ||
-    t === "PLANT_PEA" ||
-    t === "PLANT_BARLEY" ||
-    t === "PLANT_RAPE" ||
-    t === "PLANT_GRASS"
-  );
+  return t in SEMIS;
 }
 
 export function isSoilTool(t: Tool): boolean {
@@ -53,22 +75,13 @@ export function isSoilTool(t: Tool): boolean {
 }
 
 export function cropFromPlantTool(t: Tool): CropCode | null {
-  if (t === "PLANT_WHEAT") return "WHEAT";
-  if (t === "PLANT_MAIZE") return "MAIZE";
-  if (t === "PLANT_PEA") return "PEA";
-  if (t === "PLANT_BARLEY") return "BARLEY";
-  if (t === "PLANT_RAPE") return "RAPE";
-  if (t === "PLANT_GRASS") return "GRASS";
-  return null;
+  return SEMIS[t] ?? null;
 }
 
+/** Le nom de la culture semée, tel que le catalogue l'écrit. */
 export function plantCropLabel(t: Tool): string {
-  if (t === "PLANT_MAIZE") return "Maïs";
-  if (t === "PLANT_PEA") return "Pois";
-  if (t === "PLANT_BARLEY") return "Orge";
-  if (t === "PLANT_RAPE") return "Colza";
-  if (t === "PLANT_GRASS") return "Herbe";
-  return "Blé";
+  const crop = SEMIS[t];
+  return crop ? CROP_DEFS[crop].name : "Blé";
 }
 
 /**

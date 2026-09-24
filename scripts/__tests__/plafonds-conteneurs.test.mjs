@@ -176,3 +176,67 @@ describe("l'image embarque ce dont le déploiement se sert", () => {
     }
   });
 });
+
+/**
+ * L'appétit du jeu, réduit sur mesures — et sans guillotine.
+ *
+ * Il s'est arrêté trois fois en douze heures. Mesuré sur le binaire exact de
+ * production (`node dist/main.js`), serveur **vide, zéro joueur** : 819 à
+ * 1 214 Mo de mémoire résidente, sur une machine de 1 906 Mo partagée avec
+ * PostgreSQL, Docker et une autre application. Ce n'était pas la faute des
+ * joueurs : c'est le processus au repos.
+ *
+ * 701 des 772 Mo relevés étaient de la mémoire **anonyme** — ni le tas
+ * système, ni les bibliothèques mappées. Deux leviers, cinq relevés par
+ * essai :
+ *
+ *     sans rien                  pic 1 214 Mo   0,025 s / requête
+ *     MALLOC_ARENA_MAX=2         pic   810 Mo
+ *     les deux, tas à 320 Mo     pic   649 Mo   0,015 s / requête
+ *
+ * Quarante-huit requêtes pendant quatre minutes, aucune en échec, et
+ * l'amorçage d'une base neuve tient dans le plafond : 45 s, pic 362 Mo, trois
+ * cent six corps de ferme créés.
+ *
+ * Ce que ce bloc garde, c'est surtout ce qu'il **interdit** : remettre un
+ * `mem_limit` sur le jeu. Celui de 896 Mo a mis le site à terre parce qu'il
+ * valait le besoin réel au lieu de le dépasser. Réduire l'appétit et poser
+ * une guillotine ne sont pas la même idée.
+ */
+describe("l’appétit mémoire du jeu", () => {
+  /** Le bloc du service `farmsim`, pour y chercher ce qui ne doit pas y être. */
+  const jeu = (() => {
+    const d = COMPOSE.indexOf("\n  farmsim:\n");
+    const suite = COMPOSE.slice(d + 1).search(/\n {2}\w[\w-]*:\n/);
+    return COMPOSE.slice(d, suite === -1 ? undefined : d + 1 + suite);
+  })();
+
+  it("le tas de V8 est plafonné, et à la valeur mesurée", () => {
+    const m = jeu.match(/--max-old-space-size=(\d+)/);
+    assert.ok(m, "`--max-old-space-size` doit être posé sur le service du jeu");
+    const tas = Number(m[1]);
+    // 192 était la valeur de la tentative qui a mis le site à terre ; en
+    // dessous de 256 l'amorçage du monde n'a jamais été éprouvé.
+    assert.ok(tas >= 256, `tas de ${tas} Mo : en dessous de 256, l'amorçage n'est pas éprouvé`);
+    // Au-delà, on ne réduit plus rien : le pic mesuré sans plafond était de
+    // 1 214 Mo, et c'est ce qu'on cherche à éviter.
+    assert.ok(tas <= 512, `tas de ${tas} Mo : au-delà de 512 le plafond ne sert plus à rien`);
+  });
+
+  it("les arènes de glibc sont bornées", () => {
+    // glibc ouvre une arène par cœur et ne rend jamais vraiment ce qu'elle a
+    // pris. Sur les grosses lectures du monde — trois cents fermes voisines
+    // et leurs parcelles — elles gardaient des centaines de mégaoctets que
+    // plus personne n'utilisait.
+    assert.match(jeu, /MALLOC_ARENA_MAX:\s*"?2"?/);
+  });
+
+  it("mais aucune guillotine n’est remise sur le jeu", () => {
+    // `mem_limit: 896m` avec `memswap_limit` égal a tué le conteneur au lieu
+    // de le ralentir : il valait le besoin réel au lieu de le dépasser.
+    // Réduire l'appétit, oui ; poser un couperet au niveau du besoin, non.
+    // Si le processus grossit malgré tout, c'est au veilleur de le relever.
+    assert.doesNotMatch(jeu, /^\s*mem_limit:/m);
+    assert.doesNotMatch(jeu, /^\s*memswap_limit:/m);
+  });
+});

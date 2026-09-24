@@ -229,9 +229,12 @@ export function FieldDock({
    * la consigne de tracé s'affiche déjà.
    */
   function raisonDuGrisage(): string | null {
-    // Un chantier en cours grise **tous** les boutons d'action à la fois, le
-    // temps qu'il dure — plusieurs minutes sur un grand champ. Le bandeau
-    // au-dessus dit lequel et pour combien de temps : inutile de le répéter.
+    /*
+     * Un chantier en cours ne grise plus rien : le verrou ne couvre que
+     * l'aller-retour qui l'ouvre, et un attelage peut repartir sur une autre
+     * parcelle. Le bandeau au-dessus dit lequel tourne et pour combien de
+     * temps — il n'a plus de grisage à justifier.
+     */
     if (chantierBar) return null;
     if (!work) return null;
     // Hors saison : le dire avant le geste, pas après un refus du serveur.
@@ -245,11 +248,12 @@ export function FieldDock({
     }
     if (!machineManquante) return laborBlocage;
     /*
-     * La machine manque. Reste à dire par où sortir — et ce n'est pas la même
-     * porte selon le travail : l'entreprise de dépannage vient labourer ou
-     * moissonner dans l'heure, mais elle ne vient ni presser ni ramasser. Ces
-     * deux-là passent par l'entraide, qui a ses propres bornes. Nommer la
-     * porte qui est **à l'écran**, jamais une autre.
+     * La machine manque. Reste à dire par où sortir. L'entreprise de dépannage
+     * prend maintenant les dix travaux — elle a longtemps refusé la presse, le
+     * ramassage et le déchaumage, ce qui laissait ces trois-là sans porte
+     * quand personne n'était en ligne pour l'entraide. On nomme quand même la
+     * porte qui est **à l'écran**, jamais une autre : le devis peut manquer
+     * pour d'autres raisons que le travail.
      */
     const sortie =
       contractor && contractor.cost !== null
@@ -290,31 +294,35 @@ export function FieldDock({
           {blocage && <p className="dock-hint">{blocage}</p>}
 
           <div className="dock-chips" ref={rail}>
-            {options.map((o) => {
-              const n = optionCount(o.tool);
-              return (
-                <button
-                  key={o.tool}
-                  type="button"
-                  className={`chip${tool === o.tool ? " on" : ""}${o.outOfSeason ? " out-of-season" : ""}`}
-                  aria-pressed={tool === o.tool}
-                  data-armed={tool === o.tool}
-                  title={o.hint}
-                  onClick={() => onTool(o.tool)}
-                >
-                  {o.label}
-                  {n > 0 ? ` ×${n}` : ""}
-                </button>
-              );
-            })}
+            <span className="dock-choice-group" role="radiogroup" aria-label="Choix de l’outil">
+              {options.map((o) => {
+                const n = optionCount(o.tool);
+                return (
+                  <button
+                    key={o.tool}
+                    type="button"
+                    role="radio"
+                    className={`chip${tool === o.tool ? " on" : ""}${o.outOfSeason ? " out-of-season" : ""}`}
+                    aria-checked={tool === o.tool}
+                    data-armed={tool === o.tool}
+                    title={o.hint}
+                    onClick={() => onTool(o.tool)}
+                  >
+                    {o.label}
+                    {n > 0 ? ` ×${n}` : ""}
+                  </button>
+                );
+              })}
+            </span>
 
             {/* L'andain n'a de sens que sur une moisson de pailleuse : ni sur
                 l'herbe, ni en ensilage, où la plante part entière. */}
             {harvest && swathUseful && (
               <button
                 type="button"
+                role="switch"
                 className={`chip ${keepSwath ? "on" : ""}`}
-                aria-pressed={keepSwath}
+                aria-checked={keepSwath}
                 title="Laisser la paille en andain, pour la presser ensuite en bottes."
                 onClick={onKeepSwath}
               >
@@ -324,18 +332,21 @@ export function FieldDock({
 
             {/* Le pinceau termine la même rangée : sur sa propre ligne il
                 coûtait une deuxième rangée. */}
-            {BRUSH_SIZES.map((n) => (
-              <button
-                key={n}
-                type="button"
-                className={`chip brush ${brush === n ? "on" : ""}`}
-                aria-label={`Pinceau ${n} sur ${n}`}
-                aria-pressed={brush === n}
-                onClick={() => onBrush(n)}
-              >
-                {n}×{n}
-              </button>
-            ))}
+            <span className="dock-choice-group" role="radiogroup" aria-label="Taille du pinceau">
+              {BRUSH_SIZES.map((n) => (
+                <button
+                  key={n}
+                  type="button"
+                  role="radio"
+                  className={`chip brush ${brush === n ? "on" : ""}`}
+                  aria-label={`Pinceau ${n} sur ${n}`}
+                  aria-checked={brush === n}
+                  onClick={() => onBrush(n)}
+                >
+                  {n}×{n}
+                </button>
+              ))}
+            </span>
           </div>
 
           <div className="dock-chips dock-chips-end">
@@ -445,7 +456,7 @@ export function FieldDock({
               key={g.id}
               type="button"
               className={`dock-tool ${on ? "on" : ""} ${g.id === "SELL" ? "sell" : ""}`}
-              aria-pressed={on}
+              aria-current={on ? "true" : undefined}
               onClick={() => {
                 if (g.id === "SELL") onSell();
                 else if (g.entry && !on) onTool(g.entry);
@@ -463,7 +474,6 @@ export function FieldDock({
           <button
             type="button"
             className={`dock-tool more ${moreOpen ? "on" : ""}`}
-            aria-pressed={moreOpen}
             aria-expanded={moreOpen}
             onClick={onMore}
           >
@@ -480,8 +490,9 @@ export function FieldDock({
             Test reste dans Plus ; ici on choisit comment on sélectionne. */}
         <button
           type="button"
+          role="switch"
           className={`dock-tool extra ${dragRect ? "on" : ""}`}
-          aria-pressed={dragRect}
+          aria-checked={dragRect}
           title={
             dragRect
               ? "Le glissé prend le rectangle entre les deux coins. Toucher pour tracer."

@@ -55,7 +55,7 @@ async function appel(
 async function inscrire(email: string) {
   const r = await appel("/auth/register", {
     methode: "POST",
-    corps: { email, displayName: email.split("@")[0], specialization: "CEREALIER", accessCode: "ferme" },
+    corps: { email, displayName: email.split("@")[0], specialization: "CEREALIER", accessCode: "ferme-2026" },
   });
   assert.equal(r.statut, 201, `inscription refusée : ${JSON.stringify(r.corps)}`);
   const b = r.corps as { token: string; player: { id: string } };

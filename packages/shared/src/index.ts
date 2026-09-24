@@ -25,6 +25,9 @@ export * from "./time.js";
 export * from "./world.js";
 export * from "./climate.js";
 export * from "./land.js";
+export * from "./parcelles.js";
+export * from "./nouveautes.js";
+export * from "./reinitialisation.js";
 export * from "./livestock.js";
 export * from "./ripeness.js";
 export * from "./soil.js";
@@ -38,6 +41,8 @@ export * from "./rotation.js";
 export * from "./futures.js";
 export * from "./machine-care.js";
 export * from "./machine-catalog.js";
+export * from "./employees.js";
+export * from "./soins-equipe.js";
 export * from "./calendar.js";
 export * from "./fuel.js";
 export * from "./weeds.js";
@@ -58,7 +63,7 @@ export * from "./consignes.js";
 export * from "./forage.js";
 export * from "./species.js";
 export * from "./husbandry.js";
-export * from "./recovery.js";
+export * from "./mot-de-passe.js";
 
 /** Monnaie du jeu : le terron (€). Le champ interne reste `crd`. */
 export const CURRENCY_CODE = "€";
@@ -71,7 +76,7 @@ export type Specialization = "CEREALIER" | "ELEVEUR";
 /** Les deux métiers jouables. Les travaux à façon sont un appoint, pas un 3ᵉ métier. */
 export const PLAYABLE_SPECIALIZATIONS: Specialization[] = ["CEREALIER", "ELEVEUR"];
 
-import type { CropCode } from "./crops.js";
+import { repousseApresCoupe, type CropCode } from "./crops.js";
 
 export type FieldStage =
   | "EMPTY"
@@ -180,7 +185,22 @@ export type BuildingType =
   | "WIND_TURBINE"
   | "BEEHIVE"
   | "DAIRY"
-  | "MILL";
+  | "MILL"
+  /* —— Les annexes d'élevage ——
+     Collées à une étable, elles ne changent rien à ce qu'elle héberge : elles
+     font monter son **niveau d'installation**, et avec lui la production, la
+     reproduction et l'économie de fourrage. Ce sont les deux pièces qui
+     rendent l'élevage rentable au lieu de simplement viable. */
+  | "WATER_TROUGH"
+  | "HAY_RACK"
+  /* Le logement des employés. Il n'est pas requis pour embaucher — deux
+     personnes logent au village — mais c'est lui qui ouvre au-delà, et il
+     fait baisser le salaire de ceux qu'il héberge. */
+  | "EMPLOYEE_HOUSING"
+  /* La fumière : le tas de fumier cesse de tenir dans l'étable. Sans elle, il
+     fallait agrandir son bâtiment d'élevage pour stocker davantage — deux
+     besoins différents payés par le même mur. */
+  | "MANURE_STORE";
 
 export type CellKind = "EMPTY" | "CROP" | "BUILDING" | "VEHICLE";
 
@@ -337,12 +357,93 @@ export const CROP_DEFS: Record<
     regrowMs: croissanceHeures(7),
     seedCostPerCell: 8,
   },
+
+  /* ---------------------------------------------------------------- */
+  /* Le maraîchage                                                     */
+  /* ---------------------------------------------------------------- */
+  /*
+   * Cinq cultures de deux à dix heures, là où une céréale en demande
+   * vingt-huit. Demandé en jouant : on ne pouvait ni semer ni récolter dans
+   * une même soirée, la plus rapide du catalogue étant l'herbe à douze heures.
+   *
+   * ## La règle qui tient l'échelle
+   *
+   * **Plus la boucle est courte, moins elle paie à l'heure.** Le mesclun est
+   * le plus rapide et le moins rentable ; la pomme de terre est la plus lente
+   * du lot et la mieux payée. On achète de la liquidité, pas du rendement —
+   * sans cette pente, tout le monde sèmerait le deux heures en boucle et le
+   * blé disparaîtrait du jeu.
+   *
+   * Le tableau, semence déduite, au cours de base :
+   *
+   *     mesclun  2 h   2,50 €/case/h
+   *     radis    3 h   2,83
+   *     épinard  4 h   3,00
+   *     salade   5 h   2,92
+   *     patate  10 h   3,10
+   *     — pour mémoire : blé 2,21 · maïs 2,67 · orge 3,19 · pois 4,78
+   *
+   * Le maraîchage se glisse donc entre les céréales qu'on sème et qu'on
+   * oublie, et l'orge ou le pois qu'on surveille. Ce qu'il coûte vraiment
+   * n'est pas dans ces nombres : neuf récoltes de radis là où le blé en
+   * demande une, c'est neuf fois l'usure, le gazole et le temps passé.
+   */
+  MESCLUN: {
+    code: "MESCLUN",
+    name: "Mesclun",
+    yieldPerCell: 0.04,
+    // La boucle la plus courte du jeu : semé en arrivant, coupé avant de
+    // partir.
+    growMs: croissanceHeures(2),
+    // Les jeunes pousses repartent après la coupe — le seul légume de vente
+    // qu'on ne resème pas à chaque récolte.
+    regrowMs: croissanceHeures(1.5),
+    seedCostPerCell: 11,
+  },
+  RADISH: {
+    code: "RADISH",
+    name: "Radis",
+    yieldPerCell: 0.09,
+    // La plus rapide des vraies cultures de plein champ : vingt-cinq jours.
+    growMs: croissanceHeures(3),
+    seedCostPerCell: 14,
+  },
+  SPINACH: {
+    code: "SPINACH",
+    name: "Épinard",
+    yieldPerCell: 0.08,
+    growMs: croissanceHeures(4),
+    seedCostPerCell: 12,
+  },
+  LETTUCE: {
+    code: "LETTUCE",
+    name: "Salade",
+    yieldPerCell: 0.11,
+    growMs: croissanceHeures(5),
+    seedCostPerCell: 14,
+  },
+  POTATO: {
+    code: "POTATO",
+    name: "Pomme de terre",
+    yieldPerCell: 0.3,
+    // L'ancre du lot : dix heures, le meilleur rendement horaire du
+    // maraîchage, et la seule qui se conserve. C'est elle qui donne une
+    // raison de posséder un silo quand on fait du légume.
+    growMs: croissanceHeures(10),
+    seedCostPerCell: 23,
+  },
 };
 
-/** Durée de pousse : l'herbe déjà fauchée reprend plus vite. */
+/**
+ * Durée de pousse : ce qui a déjà été coupé reprend plus vite.
+ *
+ * La règle testait `GRASS` en dur. Le mesclun repousse lui aussi, et la
+ * condition l'aurait ignoré en silence : un rang recoupé aurait remis deux
+ * heures pleines au lieu d'une heure et demie, sans que rien ne le dise.
+ */
 export function cropGrowMs(crop: CropCode, cutsDone = 0): number {
   const def = CROP_DEFS[crop];
-  if (crop === "GRASS" && cutsDone > 0) return def.regrowMs ?? def.growMs;
+  if (cutsDone > 0 && repousseApresCoupe(crop)) return def.regrowMs ?? def.growMs;
   return def.growMs;
 }
 
@@ -372,6 +473,25 @@ const AMPLITUDES: Record<TradeGood, { bas: number; haut: number; depth: number }
   // Le lait varie peu : c'est un revenu régulier, pas un pari.
   MILK: { bas: 0.71, haut: 1.48, depth: 50 },
   MEAT: { bas: 0.62, haut: 1.59, depth: 20 },
+  /*
+   * Le maraîchage : carnets étroits, et c'est le point.
+   *
+   * Un légume se vend sur un marché local, pas sur un cours mondial. La
+   * profondeur faible veut dire qu'un gros lot fait chuter le prix : semer
+   * quarante cases de radis et tout vendre d'un coup ne rapporte pas quarante
+   * fois une case. C'est le second garde-fou du lot, après la pente horaire —
+   * on ne fait pas fortune en industrialisant la salade.
+   *
+   * L'amplitude reste large : un légume périssable a des cours nerveux, et
+   * c'est ce qui donne un intérêt à vendre au bon moment plutôt que le
+   * lendemain.
+   */
+  MESCLUN: { bas: 0.6, haut: 1.9, depth: 14 },
+  RADISH: { bas: 0.6, haut: 1.85, depth: 22 },
+  SPINACH: { bas: 0.6, haut: 1.85, depth: 20 },
+  LETTUCE: { bas: 0.6, haut: 1.85, depth: 24 },
+  // La pomme de terre se garde : son marché est plus profond et plus calme.
+  POTATO: { bas: 0.65, haut: 1.6, depth: 70 },
   HAY: { bas: 0.63, haut: 1.74, depth: 94 },
   STRAW: { bas: 0.62, haut: 1.81, depth: 56 },
   // Une botte pèse 0,35 t : à son prix, la tonne bottelée vaut sensiblement
@@ -804,6 +924,92 @@ export const BUILDING_DEFS: Record<BuildingType, BuildingDef> = {
     cost: 1150,
     description: "Collée au poulailler : les poules picorent dehors, elles pondent mieux.",
   },
+  /* ------------------------------------------------------------------ */
+  /* Le personnel                                                        */
+  /* ------------------------------------------------------------------ */
+  EMPLOYEE_HOUSING: {
+    type: "EMPLOYEE_HOUSING",
+    article: "un",
+    name: "Logement du personnel",
+    w: 2,
+    h: 2,
+    /*
+     * Le prix d'un bâtiment utilitaire du catalogue, pas d'une nouveauté qui
+     * s'inventerait sa propre échelle.
+     *
+     * À ce tarif il ne se rembourse pas vite sur la seule remise de salaire —
+     * et il ne le doit pas : ce qu'il vend d'abord, c'est la **capacité**.
+     * La remise est ce qui rend l'agrandissement tentant une fois qu'on y est.
+     * S'il paraît trop cher à l'usage, c'est le pourcentage qu'il faut monter,
+     * pas le prix qu'il faut baisser : un bâtiment bon marché qu'on bâtit sans
+     * y penser ne décide de rien.
+     */
+    cost: 7200,
+    description:
+      "Loge vos employés : un lit au premier niveau, cinq au dernier. Un employé logé coûte 35 % de moins.",
+  },
+  MANURE_STORE: {
+    type: "MANURE_STORE",
+    article: "une",
+    name: "Fumière",
+    w: 2,
+    h: 2,
+    /*
+     * Moins qu'une étable, plus qu'une annexe.
+     *
+     * Ce qu'elle remplace coûtait bien plus cher : pour gagner quelques tonnes
+     * de fosse, il fallait agrandir son bâtiment d'élevage et payer des places
+     * de bêtes dont on n'avait pas l'usage. À ce prix-là, elle se rembourse en
+     * seize jours de blé — et surtout elle évite ce que l'odeur coûte au
+     * troupeau quand le tas déborde.
+     */
+    cost: 4200,
+    description:
+      "Stocke le fumier hors de l’étable : six tonnes au premier niveau, près de vingt-huit au dernier. Partagée entre les troupeaux de la parcelle.",
+  },
+  /* ------------------------------------------------------------------ */
+  /* Annexes d'élevage                                                   */
+  /* ------------------------------------------------------------------ */
+  /*
+   * Deux petites pièces, une case chacune, à coller au bâtiment d'élevage.
+   *
+   * Elles ne sont **jamais obligatoires** : un troupeau nourri et logé dans la
+   * capacité de son étable tourne à 100 % sans elles. C'est la règle qui rend
+   * l'élevage jouable — on ne punit pas qui n'a pas construit. Elles font
+   * monter le niveau d'installation (`installationLevel()`), et le niveau
+   * donne des bonus au-dessus de 100 %.
+   *
+   * L'abreuvoir a une seconde vertu, qu'aucun autre bâtiment n'a : branché sur
+   * le réseau, il tient la jauge d'eau pleine même quand le joueur ne se
+   * connecte pas de la journée. C'est de l'assurance autant que du rendement.
+   */
+  WATER_TROUGH: {
+    type: "WATER_TROUGH",
+    article: "un",
+    name: "Abreuvoir automatique",
+    w: 1,
+    h: 1,
+    // Prix réel : bac inox à niveau constant, sur arrivée d'eau enterrée et
+    // tranchée. Le plancher du catalogue est à mille euros — rien ici ne doit
+    // être un achat d'impulsion — et la pose de la conduite le justifie.
+    cost: 1200,
+    description:
+      "Collé à un bâtiment d’élevage : les bêtes ne manquent jamais d’eau, même en votre absence.",
+  },
+  HAY_RACK: {
+    type: "HAY_RACK",
+    article: "un",
+    name: "Râtelier à fourrage",
+    w: 1,
+    h: 1,
+    // Prix réel : râtelier acier à cornadis, pour une vingtaine de bêtes.
+    // La pièce la moins chère du catalogue, et c'est voulu : c'est le premier
+    // pas d'un éleveur qui commence à investir.
+    cost: 1050,
+    description:
+      "Collé à un bâtiment d’élevage : moins de foin piétiné, plus de foin mangé.",
+  },
+
   BUNKER_SILO: {
     type: "BUNKER_SILO",
     name: "Silo couloir",
@@ -926,7 +1132,28 @@ export type MachineForWork = {
   dirt?: number;
   greaseSkipStreak?: number;
   breakdown?: string | null;
+  /**
+   * Fin du dernier chantier en cours : l'engin est au champ jusque-là.
+   *
+   * Facultatif, et absent vaut « libre » : les écrans qui ne jugent que du
+   * matériel possédé — la fiche d'un engin, le catalogue du garage — n'ont pas
+   * à connaître les chantiers pour dire si un semoir est en état.
+   */
+  busyUntil?: string | Date | null;
 };
+
+/** Une attente lisible : « 40 s », « 3 min ». Zéro ou passé donne « 0 s ». */
+export function delaiEnClair(ms: number): string {
+  const secondes = Math.max(0, Math.ceil(ms / 1000));
+  return secondes < 90 ? `${secondes} s` : `${Math.ceil(secondes / 60)} min`;
+}
+
+/** Jusqu'à quand cet engin est pris, ou `null` s'il est libre maintenant. */
+function occupeJusqua(m: MachineForWork, maintenant: number): number | null {
+  if (!m.busyUntil) return null;
+  const fin = m.busyUntil instanceof Date ? m.busyUntil.getTime() : Date.parse(m.busyUntil);
+  return Number.isFinite(fin) && fin > maintenant ? fin : null;
+}
 
 function careDe(m: MachineForWork): MachineCareState {
   const grease = m.grease ?? (m.greased === false ? 0 : GREASE_FULL);
@@ -947,20 +1174,34 @@ function careDe(m: MachineForWork): MachineCareState {
 /**
  * Pourquoi ce travail ne peut pas se faire, ou `null` s'il le peut.
  *
- * Trois causes depuis la séparation porteur / outil, et le joueur doit savoir
- * laquelle : il n'a pas l'outil, il ne l'a pas en état, ou il n'a pas de
- * tracteur assez puissant pour le tirer. Un message unique le laisserait
- * acheter le mauvais engin.
+ * Quatre causes, et le joueur doit savoir laquelle : il n'a pas l'outil, il ne
+ * l'a pas en état, l'engin est déjà au champ, ou aucun tracteur assez puissant
+ * ne peut le tirer. Un message unique le laisserait acheter le mauvais engin —
+ * ou attendre là où il faut acheter.
  *
  * Vivait côté serveur, donc l'écran ne pouvait rien en dire : un débutant, dont
  * le parc n'a que tracteur, semoir et charrue, pouvait cliquer Récolte, Faucher,
  * Engrais, Presser, Ramasser, Ensiler et Déchaumer — sept outils sur dix qui ne
  * pouvaient que refuser. Ici, les deux côtés donnent la même phrase, et l'écran
  * la donne avant le clic.
+ *
+ * ## L'engin au champ
+ *
+ * Un même attelage a pu, un temps, mener deux chantiers de front : le filtre
+ * sur `busyUntil` avait été retiré parce qu'il refusait sans un mot — un joueur
+ * qui achetait une seconde parcelle ne pouvait pas la travailler, et rien ne le
+ * lui disait. Signalé en jouant : « tu peux lancer deux choses qui nécessitent
+ * le tracteur alors que t'as qu'un seul tracteur, c'est pas censé être
+ * possible ».
+ *
+ * La contrainte revient donc, mais le silence ne revient pas : le refus nomme
+ * l'engin, dit dans combien de temps il rentre, et dit qu'il en faut un second.
+ * C'était le vrai défaut de l'époque — la règle, elle, était juste.
  */
 export function explainNoMachine(
   machines: MachineForWork[],
   work: FarmWork,
+  maintenant: number = Date.now(),
 ): string | null {
   const outils = (Object.keys(MACHINE_DEFS) as MachineType[]).filter((t) =>
     MACHINE_DEFS[t].works.includes(work as never),
@@ -971,28 +1212,50 @@ export function explainNoMachine(
     const noms = outils.map((t) => machineWithArticle(t)).join(" ou ");
     return `Il faut ${noms} pour ce travail — passez au garage.`;
   }
-  for (const m of possedes) {
+  const enEtat = possedes.filter(
+    (m) => !machineWorkBlock(careDe(m), MACHINE_DEFS[m.type].minCondition),
+  );
+  if (!enEtat.length) {
+    const m = possedes[0]!;
     const def = MACHINE_DEFS[m.type];
-    const block = machineWorkBlock(careDe(m), def.minCondition);
-    if (block) return `${def.name} : ${block.message}`;
+    const block = machineWorkBlock(careDe(m), def.minCondition)!;
+    return `${def.name} : ${block.message}`;
   }
-  // L'outil est là et en état : il manque donc de quoi le tirer.
-  const outil = possedes[0]!;
+  const libres = enEtat.filter((m) => occupeJusqua(m, maintenant) === null);
+  if (!libres.length) {
+    const rentre = Math.min(...enEtat.map((m) => occupeJusqua(m, maintenant)!));
+    const def = MACHINE_DEFS[enEtat[0]!.type];
+    return `${def.name} au champ — de retour dans ${delaiEnClair(rentre - maintenant)}. Il en faut un second pour mener deux chantiers de front.`;
+  }
+  // L'outil est là, en état et libre : il manque donc de quoi le tirer.
+  const outil = libres[0]!;
   const def = MACHINE_DEFS[outil.type];
   if (def.kind === "IMPLEMENT") {
     const ch = machineRequiredHp(def.type, asTier(outil.tier ?? 1));
     const tracteurs = machines.filter((m) => MACHINE_DEFS[m.type]?.kind === "TRACTOR");
-    const meilleur = tracteurs.reduce(
+    const attelables = tracteurs.filter(
+      (m) =>
+        !machineWorkBlock(careDe(m), MACHINE_DEFS[m.type].minCondition) &&
+        occupeJusqua(m, maintenant) === null,
+    );
+    const meilleur = attelables.reduce(
       (max, m) => Math.max(max, machinePower(m.type, asTier(m.tier ?? 1))),
       0,
     );
+    if (meilleur >= ch) return null;
+    // Aucun tracteur libre ne suffit. Reste à dire pourquoi : il n'y en a pas,
+    // ils sont tous au champ, ou le seul disponible manque de puissance.
+    const auChamp = tracteurs
+      .map((m) => occupeJusqua(m, maintenant))
+      .filter((fin): fin is number => fin !== null);
+    if (!attelables.length && auChamp.length) {
+      const rentre = Math.min(...auChamp);
+      return `${def.name} est prêt, mais votre tracteur est au champ — de retour dans ${delaiEnClair(rentre - maintenant)}. Il en faut un second pour tirer deux outils à la fois.`;
+    }
     if (meilleur === 0) {
       return `${def.name} prêt, mais aucun tracteur pour le tirer (${ch} ch nécessaires).`;
     }
-    if (meilleur < ch) {
-      return `${def.name} demande ${ch} ch — votre meilleur tracteur en donne ${meilleur}.`;
-    }
-    return null;
+    return `${def.name} demande ${ch} ch — votre meilleur tracteur en donne ${meilleur}.`;
   }
   return null;
 }
@@ -1021,19 +1284,51 @@ export function buildingWithArticle(type: BuildingType): string {
   return `${def.article ?? "un"} ${def.name.toLowerCase()}`;
 }
 
-/** Prés et courettes : les bâtiments qui ne valent que collés à un abri. */
-export const YARD_BUILDINGS = [
-  ...new Set(SHELTER_BUILDINGS.map((t) => yardTypeForBarn(t) as BuildingType)),
-];
+/**
+ * Les annexes d'élevage : elles se collent à n'importe quel abri.
+ *
+ * À la différence des aires de sortie, elles ne sont pas liées à une espèce —
+ * une vache, un porc et une brebis boivent la même eau. Elles suivent en
+ * revanche exactement la même règle de pose, et pour la même raison : une
+ * annexe posée à l'autre bout de la ferme serait payée et n'apparaîtrait sur
+ * aucun écran.
+ */
+export const LIVESTOCK_ANNEXES: BuildingType[] = ["WATER_TROUGH", "HAY_RACK"];
 
 /**
- * Les abris auxquels une aire de sortie donnée peut se coller.
+ * Prés, courettes et annexes : les bâtiments qui ne valent que collés à un abri.
+ *
+ * Les deux annexes d'élevage y entrent au même titre que les aires de sortie.
+ * Elles n'auraient rien fait posées seules, et le contrôle de pose qui refuse
+ * une courette égarée devait donc les couvrir aussi — sans quoi on aurait
+ * reproduit, pour l'abreuvoir, le bâtiment payé et muet.
+ */
+export const YARD_BUILDINGS = [
+  ...new Set([
+    ...SHELTER_BUILDINGS.map((t) => yardTypeForBarn(t) as BuildingType),
+    ...LIVESTOCK_ANNEXES,
+  ]),
+];
+
+/** Cette annexe compte-t-elle comme abreuvoir automatique ? */
+export function isTrough(type: string): boolean {
+  return type === "WATER_TROUGH";
+}
+
+/** Cette annexe compte-t-elle comme râtelier ? */
+export function isHayRack(type: string): boolean {
+  return type === "HAY_RACK";
+}
+
+/**
+ * Les abris auxquels une aire de sortie — ou une annexe — peut se coller.
  *
  * Sert d'abord à le **dire** : une courette posée loin de toute porcherie
  * était acceptée sans un mot, débitée, et n'apparaissait ensuite sur aucun
  * écran. Le joueur avait payé pour un bâtiment invisible.
  */
 export function barnsForYard(yard: BuildingType): BuildingType[] {
+  if (LIVESTOCK_ANNEXES.includes(yard)) return SHELTER_BUILDINGS;
   return SHELTER_BUILDINGS.filter((t) => yardTypeForBarn(t) === yard);
 }
 
@@ -1149,6 +1444,11 @@ export const BUILDING_ART: Record<BuildingType, string> = {
   BEEHIVE: "/assets/buildings/beehive.svg",
   DAIRY: "/assets/buildings/dairy.svg",
   MILL: "/assets/buildings/mill.svg",
+  EMPLOYEE_HOUSING: "/assets/buildings/employee-housing.svg",
+  MANURE_STORE: "/assets/buildings/manure-store.svg",
+  // Même raison pour les deux annexes d'élevage : une case au sol, un dessin.
+  WATER_TROUGH: "/assets/buildings/water-trough.svg",
+  HAY_RACK: "/assets/buildings/hay-rack.svg",
 };
 
 export const DEFAULT_GRID = { w: 12, h: 12 } as const;
@@ -1665,8 +1965,12 @@ export function repairQuote(opts: {
 export const MACHINE_RESALE_RATE = 0.55;
 
 /**
- * Un bâtiment se revend moins bien qu'une machine : on ne déplace pas un
- * silo, on le démolit. Le prix reflète les matériaux récupérés. `[GD]`
+ * Un bâtiment se revend moins bien qu'une machine : ce qu'on récupère, ce sont
+ * des matériaux, pas un bien d'occasion. `[GD]`
+ *
+ * Ce taux ne décide plus, à lui seul, du coût d'une réorganisation :
+ * `buildingMoveCost` ouvre une voie beaucoup moins chère que démolir puis
+ * rebâtir. Voir le raisonnement là-bas.
  */
 export const BUILDING_RESALE_RATE = 0.4;
 
@@ -1775,6 +2079,86 @@ export function withinRegret(ageMs?: number): boolean {
 }
 
 /* ------------------------------------------------------------------ */
+/* Déplacer un bâtiment                                                */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Ce que coûte de déménager un bâtiment déjà posé.
+ *
+ * ## Pourquoi un prix, et pas la gratuité
+ *
+ * Demandé en jouant : « ça serait bien de pouvoir déplacer les bâtiments qu'on
+ * a posé, il faudrait que ce soit payant mais pas punitif ». La cour d'une
+ * ferme se réorganise — un troisième silo, une étable qui grandit, un chemin
+ * qui ne tombe plus juste. Gratuit, le plan de la ferme cesserait d'être une
+ * décision : on poserait au hasard, quitte à ranger ensuite. Payant, poser
+ * reste un choix, et le corriger reste possible.
+ *
+ * ## Le chiffre, et d'où il sort
+ *
+ * Jusqu'ici la seule voie était de démolir et de rebâtir. On récupère 40 %
+ * (`BUILDING_RESALE_RATE`) et on repaie 100 % : **60 % de perdu**. Sur une
+ * étable, c'est plus cher que la moitié d'un tracteur — de quoi renoncer à
+ * réorganiser, ce qui est exactement le « punitif » qu'on ne veut pas.
+ *
+ * Un premier barème à douze pour cent partait de l'ordre de grandeur réel :
+ * déplacer une construction coûte, dans la vraie vie, dix à vingt pour cent de
+ * ce qu'elle coûterait à rebâtir — on garde la structure, on paie le
+ * démontage, le terrassement et la reprise. À l'usage, c'était encore trop :
+ * « les prix sont un peu durs pour replacer les bâtiments ». La mesure du réel
+ * n'est pas la mesure du jeu, et c'est le jeu qui décide.
+ *
+ * Six pour cent, donc, avec plancher et plafond divisés d'autant : chaque
+ * déménagement coûte exactement la moitié de ce qu'il coûtait, du plus petit
+ * au plus gros. Réorganiser sa cour devient une contrariété, plus un
+ * arbitrage.
+ *
+ * Ce que ça donne, mesuré en jours de jeu (une parcelle de blé rapporte
+ * environ 260 € nets par jour) :
+ *
+ * | Bâtiment | Investi | Déménagement | En jours de blé |
+ * |---|---|---|---|
+ * | Râtelier | 1 050 € | 75 € (plancher) | un quart de jour |
+ * | Logement du personnel | 7 200 € | 432 € | un jour et demi |
+ * | Laiterie, niveau 1 | 28 000 € | 1 250 € (plafond) | cinq jours |
+ * | Laiterie, niveau 5 | 282 800 € | 1 250 € (plafond) | cinq jours |
+ *
+ * Le **plancher** évite qu'on déplace une pièce à une case pour trois francs
+ * six sous : même petit, un déménagement est un chantier. Le **plafond** est
+ * ce qui empêche la punition de revenir par la fenêtre — sans lui, un joueur
+ * qui a beaucoup investi dans sa laiterie serait celui qui aurait le moins le
+ * droit de réorganiser sa cour, ce qui est l'inverse du bon sens.
+ *
+ * ## La fenêtre de regret
+ *
+ * Un bâtiment posé il y a moins de trois minutes se déplace **gratuitement**,
+ * comme il se démolit intégralement remboursé. C'est la même erreur qu'on
+ * rattrape : une place mal choisie au moment de la pose. `[GD]`
+ */
+export const BUILDING_MOVE_RATE = 0.06;
+
+/** Plancher : même petit, un déménagement est un chantier. `[GD]` */
+export const BUILDING_MOVE_MIN = 75;
+
+/**
+ * Plafond : au-delà, la réorganisation redeviendrait un luxe réservé à ceux
+ * qui n'ont rien construit de gros. `[GD]`
+ */
+export const BUILDING_MOVE_MAX = 1250;
+
+export function buildingMoveCost(type: BuildingType, level: number, ageMs?: number): number {
+  if (withinRegret(ageMs)) return 0;
+  const base = BUILDING_DEFS[type].cost;
+  let invested = base;
+  for (let l = 2; l <= Math.max(1, Math.min(MAX_BUILDING_LEVEL, level)); l++) {
+    invested += base * BUILDING_LEVELS[l - 1].upgradeCostMult;
+  }
+  return Math.round(
+    Math.min(BUILDING_MOVE_MAX, Math.max(BUILDING_MOVE_MIN, invested * BUILDING_MOVE_RATE)),
+  );
+}
+
+/* ------------------------------------------------------------------ */
 /* Deux prix : client (faire venir) vs prestataire (mission)           */
 /* ------------------------------------------------------------------ */
 
@@ -1873,24 +2257,46 @@ export function contractorTotal(
 /**
  * Les travaux que l'entreprise de dépannage prend au pied levé.
  *
- * Elle ne prend pas tout : ni le déchaumage, ni la presse, ni le ramassage,
- * ni l'ensilage. C'est un choix de jeu — ces travaux-là passent par
- * l'entraide entre joueurs, qui est la boucle qu'on veut faire vivre.
+ * **Elle prend tout.** Elle n'a pas toujours tout pris : le déchaumage, la
+ * presse, le ramassage, l'ensilage et le désherbage en étaient exclus, au
+ * motif que ces travaux-là devaient passer par l'entraide entre joueurs.
+ * Signalé en jouant : « il y a des chantiers que tu peux faire faire par le
+ * pnj et d'autres non ? presser, tu peux pas ; ramasser tu peux pas ;
+ * déchaumer tu peux pas ». Trois défauts dans cette règle :
+ *
+ * 1. **Elle ne se voyait pas.** Le bouton disparaissait sans un mot. Sur la
+ *    moitié des outils il était là, sur l'autre non, et rien à l'écran ne
+ *    disait pourquoi.
+ * 2. **Elle laissait sans issue.** L'entraide attend qu'un autre joueur
+ *    accepte. Sans personne en ligne, presser n'avait aucune voie déléguée —
+ *    ni payante, ni gratuite.
+ * 3. **Elle prenait le réel à l'envers.** Ce sont précisément la presse,
+ *    l'ensilage et le déchaumage qu'on confie à une entreprise de travaux
+ *    agricoles ; le semis et le labour sont ce qu'on garde pour soi.
+ *
+ * Le barème, lui, avait toujours ses dix lignes : `CONTRACTOR_RATE_PER_CELL`
+ * chiffrait la presse et le ramassage depuis le début. Ce qui manquait
+ * n'était pas un prix, c'était la moitié des branches côté serveur.
+ *
+ * Ce qui protège l'entraide n'est donc plus un mur, c'est le prix : le
+ * dépannage coûte 15 % de plus (`URGENT_NPC_SURCHARGE`) et rend un peu moins
+ * (`CONTRACTOR_YIELD_MALUS`). On paie pour que ce soit fait tout de suite.
  *
  * Cette liste vivait en deux exemplaires : une énumération Zod côté serveur,
- * et une cascade de `? :` côté écran qui, elle, proposait le bouton pour
- * trois travaux de plus. Le joueur voyait donc « Payer · 428 € » sur une
- * presse, appuyait, et se faisait renvoyer — par un message pour le
- * déchaumage, par une erreur de validation informe pour les deux autres. Deux
- * listes qui prétendent dire la même chose finissent toujours par diverger ;
- * il n'y en a plus qu'une, et les deux côtés la lisent.
+ * et une cascade de `? :` côté écran. Deux listes qui prétendent dire la même
+ * chose finissent toujours par diverger ; il n'y en a plus qu'une.
  */
 export const URGENT_CONTRACTOR_WORKS = [
   "PLANT",
   "FERTILIZE",
   "HARVEST",
   "PLOW",
+  "STUBBLE",
   "MOW",
+  "BALE",
+  "COLLECT",
+  "SILAGE",
+  "WEED",
 ] as const satisfies readonly FarmWork[];
 
 /** L'entreprise instantanée prend-elle ce travail ? */
@@ -1901,8 +2307,9 @@ export function acceptsUrgentContractor(work: FarmWork): boolean {
 /**
  * Les travaux qu'on peut confier à un autre joueur.
  *
- * Plus large que la liste ci-dessus : c'est justement là que passent la
- * presse et le ramassage.
+ * Les deux listes se rejoignent presque, désormais : la seule différence est
+ * le désherbage, qu'on ne publie pas en entraide — il se traite à la case,
+ * sur des surfaces trop petites pour la fenêtre de huit cases.
  */
 export const LABOR_ORDER_WORKS = [
   "PLANT",
@@ -1986,10 +2393,87 @@ export function missionPayout(
   return Math.round(contractorQuote(work, n) * share);
 }
 
+/* ------------------------------------------------------------------ */
+/* Louer le matériel d'un chantier                                     */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Part du salaire que prend la location du matériel `[GD]`.
+ *
+ * ## Le défaut que ceci corrige
+ *
+ * Le tableau publie trois offres, et le parc de départ n'a que tracteur,
+ * semoir et charrue : une offre de moisson ou d'épandage se lisait, se
+ * chiffrait, et se refusait au clic — « Il faut une moissonneuse-batteuse ».
+ * Le générateur garantit désormais qu'une des trois soit à portée d'un
+ * débutant, mais cela ne fait que réduire la fréquence du mur ; ça ne donne
+ * pas de chemin pour le franchir. Or c'est précisément par les contrats qu'un
+ * débutant est censé financer sa première moissonneuse.
+ *
+ * ## Pourquoi 45 %, et pas moins
+ *
+ * Posséder doit rester nettement meilleur que louer, sinon la moissonneuse ne
+ * s'achète jamais. Le propriétaire paie l'usure du passage — de l'ordre d'un
+ * dixième du salaire, réparation comprise — et garde donc près de 90 % ; le
+ * locataire en garde 55. L'écart est assez net pour que l'achat reste
+ * l'objectif, et le reste assez pour que la location vaille la soirée.
+ */
+export const MISSION_RENTAL_SHARE = 0.45;
+
+/** Ce que coûte la location pour ce chantier. */
+export function missionRentalFee(
+  work: FarmWork,
+  cells: number,
+  kind: MissionKind = "NPC",
+): number {
+  return Math.round(missionPayout(work, cells, kind) * MISSION_RENTAL_SHARE);
+}
+
+/** Ce qui reste au prestataire une fois la location payée. */
+export function missionRentedPayout(
+  work: FarmWork,
+  cells: number,
+  kind: MissionKind = "NPC",
+): number {
+  return missionPayout(work, cells, kind) - missionRentalFee(work, cells, kind);
+}
+
+/**
+ * Peut-on louer le matériel de ce chantier ?
+ *
+ * **On ne loue que ce qu'on n'a pas.** La règle est volontairement stricte, et
+ * pour une raison précise : un joueur qui possède l'engin mais l'a envoyé au
+ * champ pourrait, sinon, en louer un second et mener deux chantiers avec un
+ * seul attelage — exactement ce qui a été signalé en jouant et corrigé
+ * (« tu peux lancer deux choses qui nécessitent le tracteur alors que t'as
+ * qu'un seul tracteur »). La location rouvrirait la porte par la fenêtre.
+ *
+ * Un engin en panne ou trop usé ne se loue pas non plus : il se répare. La
+ * location est une rampe pour qui n'a pas encore le matériel, pas une
+ * assurance contre l'entretien.
+ */
+export function peutLouerPourCeTravail(machines: MachineForWork[], work: FarmWork): boolean {
+  const outils = (Object.keys(MACHINE_DEFS) as MachineType[]).filter((t) =>
+    MACHINE_DEFS[t].works.includes(work as never),
+  );
+  if (!outils.length) return false;
+  return !machines.some((m) => outils.includes(m.type));
+}
+
+/** Ce qu'on loue, en toutes lettres : « une moissonneuse-batteuse ». */
+export function libelleMaterielLoue(work: FarmWork): string {
+  const outils = (Object.keys(MACHINE_DEFS) as MachineType[]).filter((t) =>
+    MACHINE_DEFS[t].works.includes(work as never),
+  );
+  return outils.length ? machineWithArticle(outils[0]!) : "du matériel";
+}
+
 export const P2P_YIELD_MALUS = 0.02;
 export const LABOR_ORDER_TTL_MS = 45 * 60 * 1000;
 export const LABOR_OPEN_MAX_PER_CLIENT = 3;
 export const FERTILIZE_COST_PER_CELL = 10;
+/** Gain ajouté au coefficient de conduite par passage, deux passages maximum. */
+export const FERTILIZE_YIELD_STEP = 0.115;
 
 export function laborExtras(work: FarmWork, cells: number, crop?: CropCode | null): number {
   const n = Math.max(0, cells);

@@ -21,6 +21,8 @@ import {
   SEASON_DURATION_MS,
   SEASON_GROWTH,
   SEASON_REAL_MS,
+  seasonDurationMs,
+  seasonStartOfIndex,
   canSowInSeason,
   cropGrowMs,
   currentSeason,
@@ -40,18 +42,18 @@ import {
  * ces repères exacts au lieu d'approchés.
  */
 function debutDe(saison: Season, cycle = 0): number {
-  return (SEASON_CYCLE.indexOf(saison) + cycle * SEASON_CYCLE.length) * SEASON_REAL_MS;
+  return seasonStartOfIndex(SEASON_CYCLE.indexOf(saison) + cycle * SEASON_CYCLE.length);
 }
 
 /**
- * Une saison entière, en millisecondes.
+ * Toute la saison demandée, et pas une milliseconde de plus.
  *
- * Toute mesure qui veut rester *dans* une saison doit tenir là-dedans — sans
- * quoi elle déborde sur la suivante et mesure autre chose que ce qu'elle
- * croit. Les quatre saisons durent maintenant le même temps, ce qui supprime
- * la précaution qu'il fallait prendre du temps de l'hiver court.
+ * Ce repère valait `SEASON_REAL_MS` pour les quatre. L'hiver ne fait plus dix
+ * heures mais 5 h 43 : mesurer dix heures depuis son début déborderait de plus
+ * de quatre heures sur le printemps — exactement le défaut que le commentaire
+ * ci-dessus raconte, à une saison près.
  */
-const DANS_UNE_SAISON = SEASON_REAL_MS;
+const toute = (saison: Season) => seasonDurationMs(saison);
 
 const CULTURES = Object.keys(CROP_SEASONALITY) as CropCode[];
 
@@ -130,13 +132,13 @@ describe("intégration jour par jour", () => {
     const enEte = integrateGrowth({
       crop: "MAIZE",
       plantedAt: ete,
-      until: ete + DANS_UNE_SAISON,
+      until: ete + toute("SUMMER"),
       ...nord,
     });
     const enHiver = integrateGrowth({
       crop: "MAIZE",
       plantedAt: hiver,
-      until: hiver + DANS_UNE_SAISON,
+      until: hiver + toute("WINTER"),
       ...nord,
     });
     expect(enEte).toBeGreaterThan(enHiver * 10);
@@ -253,6 +255,9 @@ describe("intégration jour par jour", () => {
      * sud peut très bien mûrir plus vite — c'est l'hiver de l'un contre l'été
      * de l'autre. Ce qui est vrai à tout instant, c'est l'égalité du décalage.
      */
+    // Le décalage du sud, exprimé en temps : deux saisons pleines. Il vaut
+    // aussi quatorze jours de jeu — c'est la même durée, et c'est sous cette
+    // forme-là que `time.ts` le pose depuis que l'hiver est court.
     const DEUX_SAISONS = 2 * SEASON_REAL_MS;
     for (const crop of CULTURES) {
       const growMs = cropGrowMs(crop);

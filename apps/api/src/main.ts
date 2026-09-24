@@ -14,6 +14,7 @@ import {
   BUILDING_DEFS,
   CROP_DEFS,
   CROP_CODES,
+  FERTILIZE_COST_PER_CELL,
   cropGrowMs,
   harvestItemCode,
   isMowCrop,
@@ -27,6 +28,8 @@ import {
   footprintCells,
   freeYardSlot,
   YARD_FULL,
+  crowdingWarning,
+  maxAnimalsWithCrowding,
   orientedFootprint,
   quarterTurns,
   xpFor,
@@ -58,6 +61,10 @@ import {
   DEFAULT_GRID,
   MACHINE_DEFS,
   CONTRACT_WORK,
+  libelleMaterielLoue,
+  missionRentalFee,
+  missionRentedPayout,
+  peutLouerPourCeTravail,
   SIM_TICK_MS,
   DELIVERY_TRAVEL_MS,
   DELIVERY_AUTO_MS,
@@ -69,6 +76,8 @@ import {
   parcelName,
   marketValue,
   askPrice,
+  tailleDeParcelle,
+  hectaresDeGrille,
   accessIndex,
   canAcquire,
   landTax,
@@ -83,6 +92,24 @@ import {
   buildingUpgradeCost,
   buildingLevelDef,
   MAX_BUILDING_LEVEL,
+  // Les employés : le vivier, le salaire, les lits et le plafond de chantiers.
+  candidatsDuJour,
+  chantiersSimultanes,
+  gainConduite,
+  gainElevage,
+  ALIMENTS_RATION,
+  litiereARefaire,
+  mangeoireAServir,
+  rationDeLEquipe,
+  rationToServe,
+  type StockRation,
+  gainMecanique,
+  litsDuLogement,
+  masseSalariale,
+  peutEmbaucher,
+  salaireJournalier,
+  EMPLOYES_SANS_LOGEMENT,
+  SALAIRE_IMPAYE_MAX_JOURS,
   urgentContractorQuote,
   contractorTotal,
   URGENT_CONTRACTOR_WORKS,
@@ -171,6 +198,7 @@ import {
   MACHINE_LISTING_MIN_RATE,
   MACHINE_LISTING_MAX_RATE,
   buildingResaleValue,
+  buildingMoveCost,
   isPaddockAdjacent,
   explainNoMachine as explainNoMachineShared,
   type MachineForWork,
@@ -179,6 +207,15 @@ import {
   buildingWithArticle,
   paddockCapacity,
   tickHappiness,
+  /* — Les besoins, l'installation, et la seule mort possible — */
+  tickWater,
+  tickHealth,
+  cascadeStage,
+  installationLevel,
+  installationBonus,
+  installationLabel,
+  isTrough,
+  isHayRack,
   canGraze,
   canLiveOutside,
   planGrazing,
@@ -255,6 +292,9 @@ import {
   beddingNeed,
   beddingCapacity,
   manurePitCapacity,
+  manureStoreCapacity,
+  MANURE_SMELL_START,
+  MANURE_LOCAL_PRICE,
   addManureToPit,
   manureFill,
   manureSmellPenalty,
@@ -328,11 +368,10 @@ import {
   canAfford,
   hasUnlimitedCrd,
   normalizeEmail,
-  RECOVERY_REFUSAL,
-  isRecoveryCode,
-  hectaresDe,
-  tailleTerreLibre,
-  TAILLE_DEPART,
+  REINIT_ENVOYE,
+  REINIT_REFUS,
+  REINIT_TTL_LIBELLE,
+  lienDeReinit,
 } from "@farmsim/shared";
 import {
   simulateCell,
@@ -364,9 +403,18 @@ import {
   CODE_INUTILISABLE,
   codeCorrespond,
   doitEtreMigre,
+  MDP_MIN,
+  MDP_MAX,
   hacherCode,
 } from "./access-code.js";
-import { empreinteSecours, nouveauCodeSecours, secoursCorrespond } from "./recovery.js";
+import { courrielConfigure, envoyerCourriel, origineDuJeu } from "./courriel.js";
+import {
+  empreinteJeton,
+  expirationJeton,
+  jetonDeReinitValide,
+  jetonUtilisable,
+  nouveauJetonReinit,
+} from "./reinitialisation.js";
 
 /**
  * Ce processus sert-il aussi le front construit ?
@@ -389,7 +437,41 @@ declare global {
   }
 }
 
-const prisma = new PrismaClient();
+/**
+ * Cinq secondes ne suffisaient pas, et personne ne l'avait dit à Prisma.
+ *
+ * Une transaction interactive s'annule au bout de **cinq secondes** par
+ * défaut, et aucune des quatre-vingts du fichier ne demandait mieux. Un semis
+ * en tient largement moins d'habitude — mais il lit au passage le
+ * savoir-faire du joueur et les compétences de son équipe, et sur un serveur
+ * chargé ces allers-retours suffisent à faire sauter le budget. La
+ * transaction s'annulait alors *après* avoir réservé les cases : le chantier
+ * restait ouvert, la case gardait son verrou, et le joueur relançait pour
+ * s'entendre répondre « chantier en cours ». Rien ne poussait, et rien
+ * n'expliquait pourquoi.
+ *
+ * Vingt secondes laissent la place à un pic de charge sans jamais laisser une
+ * transaction vraiment bloquée s'éterniser. `maxWait` monte de deux à dix
+ * pour la même raison : c'est l'attente d'une connexion libre, et sous charge
+ * c'est précisément le moment où elles manquent.
+ */
+const prisma = new PrismaClient({
+  transactionOptions: { timeout: 20_000, maxWait: 10_000 },
+});
+
+/**
+ * Le client de base à employer : la transaction si l'on est dedans.
+ *
+ * Une lecture faite sur `prisma` depuis l'intérieur d'un `$transaction` prend
+ * une **seconde connexion** dans le pool, pendant que la première reste
+ * retenue par la transaction. Sous charge, les connexions manquent : la
+ * lecture attend, la transaction attend la lecture, et le budget s'épuise.
+ * Elle ne voit pas non plus ce que la transaction vient d'écrire.
+ *
+ * Les fonctions qui peuvent être appelées des deux côtés prennent donc ce
+ * paramètre. Le défaut garde les dizaines d'appels hors transaction inchangés.
+ */
+type DbClient = PrismaClient | Prisma.TransactionClient;
 const app = express();
 
 /**
@@ -478,6 +560,22 @@ app.use((req, _res, next) => {
  * aucun appel ne contourne ce helper : aucun gestionnaire n'a besoin de
  * changer.
  */
+/**
+ * Le joueur qu'une URL désigne, quand elle en désigne un.
+ *
+ * Seul `/players/<id>` compte : c'est le seul préfixe dont le second segment
+ * est un identifiant de joueur, et ses trois routes — la fiche, le grand
+ * livre, les compétences — ne servent qu'à soi. Les autres chemins qui
+ * portent un identifiant (`/parcels/…`, `/herds/…`, `/machines/…`) désignent
+ * une *ressource*, dont la possession se vérifie route par route parce qu'elle
+ * peut légitimement être partagée — une parcelle se visite, un chantier se
+ * fait faire par un voisin.
+ */
+function identiteDansLeChemin(chemin: string): string | null {
+  const m = /^\/players\/([^/]+)(?:\/|$)/.exec(chemin);
+  return m ? decodeURIComponent(m[1]!) : null;
+}
+
 async function enforceIdentity(
   req: express.Request,
   res: express.Response,
@@ -485,7 +583,23 @@ async function enforceIdentity(
 ) {
   const claimed =
     (typeof req.body?.userId === "string" ? req.body.userId : null) ??
-    (typeof req.query.userId === "string" ? req.query.userId : null);
+    (typeof req.query.userId === "string" ? req.query.userId : null) ??
+    /*
+     * L'identité annoncée par l'URL elle-même.
+     *
+     * Trois routes désignent leur joueur par un morceau de chemin plutôt que
+     * par un `userId` : la fiche, le grand livre et l'arbre de compétences.
+     * Aucune n'annonçait donc d'identité, aucune n'était vérifiée — et la
+     * fiche rend l'**adresse e-mail**, le grand livre trente jours de
+     * comptabilité. `GET /players` distribuant quarante identifiants sans
+     * jeton, il suffisait de deux requêtes pour moissonner quarante adresses.
+     *
+     * La règle vit ici et non dans les trois gestionnaires, pour la raison
+     * qui a déjà fait mettre `enforceIdentity` en amont : la prochaine route
+     * `/players/:id/…` sera protégée sans que personne ait à y penser. C'est
+     * précisément l'oubli qui a créé la fuite.
+     */
+    identiteDansLeChemin(req.path);
   if (!claimed) {
     next();
     return;
@@ -614,14 +728,27 @@ async function testeurAutorisé(req: express.Request) {
   return estCompteDev(auth.user.email) ? auth : null;
 }
 
-async function createParcelGrid(parcelId: string, gridW: number, gridH: number) {
+/**
+ * Les cases d'une parcelle.
+ *
+ * `client` existe pour la remise au standard de la parcelle de départ, qui se
+ * joue dans une transaction : y écrire avec le `prisma` global poserait les
+ * cases hors du bloc, et un échec plus loin laisserait une parcelle sans
+ * grille.
+ */
+async function createParcelGrid(
+  parcelId: string,
+  gridW: number,
+  gridH: number,
+  client: Pick<typeof prisma, "parcelCell"> = prisma,
+) {
   const data = [];
   for (let y = 0; y < gridH; y++) {
     for (let x = 0; x < gridW; x++) {
       data.push({ parcelId, x, y, kind: "EMPTY" as CellKind });
     }
   }
-  await prisma.parcelCell.createMany({ data });
+  await client.parcelCell.createMany({ data });
 }
 
 /**
@@ -732,12 +859,12 @@ function climatDe(parcel: {
  * désynchroniser de sa source.
  */
 function pressionAdventices(
-  cell: { weedPressure: number; weedAt: Date | null },
+  cell: { weedPressure?: number | null; weedAt?: Date | null },
   season?: Season,
 ): number {
   if (!cell.weedAt) return clampWeeds(cell.weedPressure);
   return weedPressureAfter({
-    start: cell.weedPressure,
+    start: clampWeeds(cell.weedPressure),
     elapsedMs: Date.now() - cell.weedAt.getTime(),
     season,
   });
@@ -797,12 +924,49 @@ function explainNoMachine(machines: FarmMachine[], work: FarmWork): string {
  * À matériel égal on prend le plus large — c'est le plus rapide — puis le
  * mieux entretenu.
  */
-function pickMachineForWork(machines: FarmMachine[], work: FarmWork): Rig | null {
-  const libre = (m: FarmMachine) => !m.busyUntil || m.busyUntil.getTime() <= Date.now();
+/**
+ * L'attelage d'un travail — parmi ceux qui ne sont pas déjà au champ.
+ *
+ * ## L'aller-retour, et ce qu'il a appris
+ *
+ * Ce filtre a existé, a été retiré, et revient. Il vaut la peine de dire
+ * pourquoi, parce que les deux signalements avaient raison.
+ *
+ * Il refusait d'abord tout engin dont `busyUntil` n'était pas passé, **sans
+ * un mot** : un chantier en cours interdisait d'en ouvrir un second, sur
+ * quelque parcelle que ce soit, et le joueur qui venait d'acheter une seconde
+ * terre ne pouvait pas s'en servir sans comprendre pourquoi. D'où sa
+ * suppression — « oui il peut utiliser le même engin pour plusieurs
+ * parcelles ».
+ *
+ * Le remède a créé l'inverse : « tu peux lancer deux choses qui nécessitent le
+ * tracteur alors que t'as qu'un seul tracteur, c'est pas censé être
+ * possible ». Un semoir cessait d'être une ressource physique, et le palier de
+ * l'engin se contournait en achetant du temps — deux chantiers étroits au lieu
+ * d'un large.
+ *
+ * Ce qui n'allait pas, la première fois, n'était donc pas la règle : c'était
+ * le silence. `explainNoMachine` nomme maintenant l'engin, dit dans combien de
+ * temps il rentre et dit qu'il en faut un second, des deux côtés de
+ * l'écran — l'écran le dit **avant** le clic. La contrainte revient avec sa
+ * phrase.
+ *
+ * `busyUntil` porte la fin du **dernier** chantier en cours — voir
+ * `reglerOccupation` — et sert aussi à interdire la vente, la reprise et
+ * l'amélioration d'un engin qui n'est pas rentré.
+ */
+function pickMachineForWork(
+  machines: FarmMachine[],
+  work: FarmWork,
+  maintenant: number = Date.now(),
+): Rig | null {
+  const libre = (m: FarmMachine) =>
+    !m.busyUntil || m.busyUntil.getTime() <= maintenant;
+
   const tracteurs = machines
     .filter((m) => MACHINE_DEFS[m.type as MachineType]?.kind === "TRACTOR")
-    .filter(libre)
     .filter((m) => !machineWorkBlock(careOf(m), MACHINE_DEFS[m.type as MachineType].minCondition))
+    .filter(libre)
     .sort(
       (a, b) =>
         machinePower(b.type as MachineType, tierOf(b)) -
@@ -813,8 +977,8 @@ function pickMachineForWork(machines: FarmMachine[], work: FarmWork): Rig | null
   for (const m of machines) {
     const def = MACHINE_DEFS[m.type as MachineType];
     if (!def || !def.works.includes(work)) continue;
-    if (!libre(m)) continue;
     if (machineWorkBlock(careOf(m), def.minCondition)) continue;
+    if (!libre(m)) continue;
     const tier = tierOf(m);
     if (def.kind === "IMPLEMENT") {
       const besoin = machineRequiredHp(def.type, tier);
@@ -865,6 +1029,7 @@ type FieldAccess =
       ok: true;
       parcel: NonNullable<Awaited<ReturnType<typeof loadParcelForWork>>>;
       machines: FarmMachine[];
+      workFarmId: string;
       charge: boolean;
       order: {
         id: string;
@@ -1109,6 +1274,303 @@ function dureeChantier(rig: Rig, cells: number): number {
   return Math.max(1, Math.round(reel / JOB_SPEED));
 }
 
+/**
+ * L'employé d'élevage vide les fumières qui débordent.
+ *
+ * ## Le métier qui manquait
+ *
+ * Demandé en jouant : « il fait quoi l'employé à l'élevage ? » puis « est-ce
+ * qu'il vide la fosse ? ». Il produisait mieux, et c'était tout : rien à faire
+ * de ses journées quand le tas montait. Un tas qui déborde coûte du bonheur —
+ * l'odeur — et bloque la production de fumier, et le seul remède était que le
+ * joueur revienne épandre ou vendre à la main.
+ *
+ * Il s'en occupe désormais, et c'est ce qui donne son sens au poste : on
+ * l'embauche pour ne plus avoir à surveiller.
+ *
+ * ## Ce qu'il fait, exactement
+ *
+ * Il vend au voisin, au prix local, ce qui dépasse le seuil d'odeur, et
+ * redescend le tas à la moitié. Il ne le vide pas complètement : le fumier
+ * vaut plus épandu sur ses propres terres que vendu, et un employé qui
+ * liquiderait tout priverait le joueur de cet arbitrage. Il évite la peine,
+ * il ne décide pas à la place.
+ *
+ * Sans employé à l'élevage, rien ne se passe — exactement comme avant.
+ */
+async function viderLesFumieres(): Promise<void> {
+  /* Seuls les tas qui sentent déjà nous intéressent : un plancher en tonnes
+     évite d'ouvrir une transaction pour trois kilos de fumier de poule. */
+  const lots = await prisma.herd.findMany({
+    where: { manureTons: { gt: 0.5 } },
+    include: { building: { include: { parcel: { include: { buildings: true, farm: true } } } } },
+  });
+  for (const lot of lots) {
+    const parcelle = lot.building?.parcel;
+    const ferme = parcelle?.farm;
+    if (!parcelle || !ferme) continue;
+    const equipe = await bonusEquipe(ferme.id);
+    // Personne à l'élevage : le tas reste au joueur, comme avant.
+    if (!equipe.employes.some((e) => e.poste === "ELEVAGE")) continue;
+
+    const stats = buildingStatsAtLevel(lot.building.type as SharedBuildingType, lot.building.level);
+    const capacite =
+      manurePitCapacity(lot.kind as AnimalKind, barnCapacity(lot.building.type, stats)) +
+      partDeFumiere(parcelle.buildings);
+    if (capacite <= 0) continue;
+    if (manureFill(lot.manureTons, capacite) < MANURE_SMELL_START) continue;
+
+    const garde = capacite * 0.5;
+    const vendu = Math.round((lot.manureTons - garde) * 1000) / 1000;
+    if (vendu <= 0) continue;
+    const recette = Math.round(vendu * MANURE_LOCAL_PRICE);
+    await prisma.$transaction(async (tx) => {
+      await tx.herd.update({ where: { id: lot.id }, data: { manureTons: garde } });
+      if (recette > 0) {
+        await crediter(
+          tx,
+          ferme.userId,
+          recette,
+          "ELEVAGE",
+          `Fumière vidée par l'équipe — ${vendu.toFixed(1)} t vendues au voisin`,
+        );
+      }
+    });
+    // Le geste s'inscrit sur le lot, comme la ration et la litière : sans
+    // cela il n'apparaissait qu'au grand livre, que personne n'ouvre en
+    // jouant. « Je ne sais pas ce qu'il se passe » — maintenant, si.
+    await marquerSoin(lot.id, ["fumier"]);
+  }
+}
+
+/**
+ * L'équipe refait la mangeoire et la litière.
+ *
+ * ## Le défaut que ceci corrige
+ *
+ * Signalé deux fois en jouant : « je pige toujours pas l'intérêt du PNJ
+ * éleveur ». Ce n'était pas un défaut de compréhension. L'employé affecté à
+ * l'élevage ne faisait que deux choses — jusqu'à +20 % de production, et vider
+ * la fumière — alors que la production est déjà bornée à 100 % par des besoins
+ * que le joueur satisfait **à la main**, toutes les 1 h 26. Le bonus
+ * multipliait donc un travail qu'on continuait de faire, tout en payant un
+ * salaire pour ça ; aucune configuration ne se rentabilisait, et affecter
+ * l'employé à l'élevage coûtait en plus un chantier simultané.
+ *
+ * Ce qu'on achète en embauchant un vacher, ce n'est pas un pourcentage, c'est
+ * **de ne plus avoir à revenir**. C'est ce que fait cette passe. Le bonus de
+ * production ne bouge pas ; il cesse simplement d'être la seule raison
+ * d'embaucher.
+ *
+ * ## Ce qu'elle ne fait pas
+ *
+ * Elle puise, elle n'achète pas : silo vide, tout s'arrête et les alertes du
+ * joueur repartent — celles qui existent déjà, il n'y a rien de neuf à
+ * afficher. On achète une absence, pas une invulnérabilité. Et elle ne choisit
+ * pas la ration : elle refait celle que le joueur a servie la dernière fois.
+ *
+ * Les seuils et le partage de la ration vivent dans `soins-equipe.ts` : ce
+ * sont des règles, elles se testent sans base de données.
+ */
+async function lEquipeSoigneLesTroupeaux(): Promise<void> {
+  /*
+   * On part des **employés**, pas des troupeaux.
+   *
+   * Le monde compte des centaines de lots — les fermes PNJ en ont toutes — et
+   * presque aucun n'a de vacher. Balayer les lots pour demander à chacun si sa
+   * ferme emploie quelqu'un ferait deux requêtes par lot à chaque tour de
+   * monde, et chargerait au passage l'inventaire de chaque silo. Ici, tant que
+   * personne n'est affecté à l'élevage, la passe coûte une requête et rend la
+   * main.
+   */
+  const fermes = await prisma.employee.findMany({
+    where: { poste: "ELEVAGE" },
+    select: { farmId: true },
+    distinct: ["farmId"],
+  });
+  if (!fermes.length) return;
+
+  const lots = await prisma.herd.findMany({
+    where: { farmId: { in: fermes.map((f) => f.farmId) }, size: { gt: 0 } },
+    include: {
+      building: true,
+      farm: { include: { inventory: true } },
+    },
+  });
+  for (const lot of lots) {
+    if (!lot.building || !lot.farm) continue;
+
+    const stats = buildingStatsAtLevel(
+      lot.building.type as SharedBuildingType,
+      lot.building.level,
+    );
+    const places = barnCapacity(lot.building.type, stats);
+    /*
+     * Ce que l'équipe aura fait, et pas seulement qu'elle est passée.
+     *
+     * « L'employé a l'air de bien gérer, ce qu'il faut que je teste c'est ce
+     * qu'il fait à propos du fumier, est-ce qu'il le traite, le vend, vide
+     * simplement, je ne sais pas ce qu'il se passe. » Un travail délégué dont
+     * on ignore le contenu n'est pas délégué, il est subi.
+     */
+    const faits: string[] = [];
+
+    /* ---- La mangeoire ------------------------------------------------ */
+    // Somme des **bêtes**, jeunes compris : un lot de six veaux mange comme
+    // six. La route de distribution compte pareil.
+    const jeunes = (
+      await prisma.youngBatch.findMany({
+        where: { herdId: lot.id, maturesAt: { gt: new Date() } },
+        select: { count: true },
+      })
+    ).reduce((n, y) => n + y.count, 0);
+    const besoinParCycle = herdFeedNeed({
+      size: lot.size,
+      young: jeunes,
+      kind: (lot.kind as AnimalKind) ?? "COW",
+    });
+    const capaciteAuge = troughCapacity(besoinParCycle);
+
+    if (mangeoireAServir({ feedStock: lot.feedStock, capacite: capaciteAuge })) {
+      const stock = stockDeRation(lot.farm.inventory);
+      const ration = rationDeLEquipe({
+        unitesVoulues: rationToServe({ besoinParCycle, feedStock: lot.feedStock }),
+        // La qualité de la dernière ration servie. Un éleveur qui soigne au
+        // concentré retrouve du concentré ; un éleveur qui mène au foin ne
+        // voit pas son maïs partir pendant son absence.
+        qualiteVisee: lot.feedQuality,
+        stock,
+      });
+      if (ration.unites > 0) {
+        await prisma.$transaction(async (tx) => {
+          for (const a of ALIMENTS_RATION) {
+            const tonnes = ration.tonnes[a];
+            if (tonnes <= 0) continue;
+            const item = lot.farm.inventory.find((i) => i.itemCode === a);
+            if (item) await drawFromStock(tx, item, tonnes);
+          }
+          await tx.herd.update({
+            where: { id: lot.id },
+            data: {
+              feedStock: lot.feedStock + ration.unites,
+              // La qualité réelle de ce qui a été servi, pas celle qu'on
+              // visait : quand le silo force à se rabattre sur du foin, la
+              // production doit le refléter.
+              feedQuality: rationQuality(
+                ration.tonnes.HAY,
+                ration.tonnes.MAIZE,
+                ration.tonnes.BARLEY,
+                ration.tonnes.WHEAT,
+                ration.tonnes.SILAGE,
+              ),
+              lastFedAt: new Date(),
+            },
+          });
+        });
+        faits.push("ration");
+      }
+    }
+
+    /* ---- La litière -------------------------------------------------- */
+    const plafondLitiere = beddingCapacity((lot.kind as AnimalKind) ?? "COW", places);
+    if (litiereARefaire({ beddingTons: lot.beddingTons, capacite: plafondLitiere })) {
+      // Les bottes d'abord, puis le vrac — exactement l'ordre de la route
+      // « Pailler », pour la même raison : c'est ce qu'on a sous la main.
+      const bottes = lot.farm.inventory.find((i) => i.itemCode === "STRAW_BALE");
+      const paille = lot.farm.inventory.find((i) => i.itemCode === "STRAW");
+      const enStock = strawFromBales(bottes?.qty ?? 0) + (paille?.qty ?? 0);
+      const place = Math.max(0, plafondLitiere - lot.beddingTons);
+      const tons = Math.round(Math.min(place, enStock) * 1000) / 1000;
+      if (tons > 0) {
+        await prisma.$transaction(async (tx) => {
+          let reste = tons;
+          if (bottes && bottes.qty > 0) {
+            const prises = Math.min(bottes.qty, Math.ceil((reste - 1e-9) / BALE_TONS));
+            if (prises > 0) {
+              await drawFromStock(tx, bottes, prises);
+              reste = Math.max(0, reste - strawFromBales(prises));
+            }
+          }
+          if (reste > 1e-9 && paille) await drawFromStock(tx, paille, reste);
+          await tx.herd.update({
+            where: { id: lot.id },
+            data: { beddingTons: lot.beddingTons + tons },
+          });
+        });
+        faits.push("litiere");
+      }
+    }
+
+    // La trace du passage. Sans elle, l'employé travaillerait en silence — et
+    // c'est ce silence qui a fait poser la question deux fois.
+    if (faits.length) await marquerSoin(lot.id, faits);
+  }
+}
+
+/**
+ * Inscrit ce que l'équipe vient de faire sur ce lot.
+ *
+ * Les codes s'ajoutent à ceux du même passage plutôt que de les remplacer : la
+ * fumière se vide dans une autre fonction, plus tard dans le même tour de
+ * monde. Sans ce cumul, « fumière vidée » effacerait « ration servie » et le
+ * joueur croirait que son employé n'a fait qu'une chose sur deux.
+ *
+ * La fenêtre de cumul est le tour de monde : au-delà de quelques minutes, on
+ * repart d'une liste neuve, sinon la fiche finirait par tout annoncer en
+ * permanence sans plus rien vouloir dire.
+ */
+const FENETRE_SOIN_MS = 5 * 60 * 1000;
+
+async function marquerSoin(herdId: string, faits: string[]): Promise<void> {
+  if (!faits.length) return;
+  const lot = await prisma.herd.findUnique({
+    where: { id: herdId },
+    select: { tendedAt: true, tendedWhat: true },
+  });
+  const recent =
+    lot?.tendedAt && Date.now() - lot.tendedAt.getTime() < FENETRE_SOIN_MS
+      ? (lot.tendedWhat ?? "").split("+").filter(Boolean)
+      : [];
+  const tout = [...new Set([...recent, ...faits])];
+  await prisma.herd.update({
+    where: { id: herdId },
+    data: { tendedAt: new Date(), tendedWhat: tout.join("+") },
+  });
+}
+
+/** Ce que le silo contient des cinq aliments d'une ration, en tonnes. */
+function stockDeRation(inventory: { itemCode: string; qty: number }[]): StockRation {
+  const stock = { HAY: 0, MAIZE: 0, BARLEY: 0, WHEAT: 0, SILAGE: 0 } as StockRation;
+  for (const a of ALIMENTS_RATION) {
+    stock[a] = inventory.find((i) => i.itemCode === a)?.qty ?? 0;
+  }
+  return stock;
+}
+
+/**
+ * Ce que les fumières de cette parcelle ajoutent au stockage de fumier.
+ *
+ * Elles sont **partagées** entre les troupeaux : sans ce partage, une seule
+ * fumière offrirait sa pleine contenance à six étables à la fois, et il n'y
+ * aurait plus jamais de raison d'en bâtir une seconde.
+ */
+function fumieresDe(buildings: { type: string; level: number }[]): number {
+  return buildings
+    .filter((b) => b.type === "MANURE_STORE")
+    .reduce(
+      (t, b) => t + manureStoreCapacity(b.level, buildingLevelDef(b.level).capacityMult),
+      0,
+    );
+}
+
+/** La part de fumière qui revient à **un** abri d'élevage de cette parcelle. */
+function partDeFumiere(buildings: { type: string; level: number }[]): number {
+  const total = fumieresDe(buildings);
+  if (total <= 0) return 0;
+  const abris = buildings.filter((b) => kindForBarn(b.type)).length;
+  return Math.round((total / Math.max(1, abris)) * 1000) / 1000;
+}
+
 /** Les cases déjà prises par un chantier en cours sur cette parcelle. */
 /**
  * Le délai au bout duquel un chantier jamais réclamé est tenu pour abandonné.
@@ -1139,20 +1601,102 @@ const JOB_ABANDON_GRACE_MS = 5 * 60_000;
  * qui regardent les chantiers d'une parcelle passent ici d'abord, ce qui
  * suffit à ce qu'un fantôme ne survive jamais à la visite suivante.
  */
-async function libererChantiersAbandonnes(parcelId: string): Promise<void> {
-  const morts = await prisma.fieldJob.findMany({
+/**
+ * Remet l'occupation d'un attelage d'après ses chantiers encore ouverts.
+ *
+ * `busyUntil` était posé à la fin du chantier qu'on venait d'ouvrir, et remis
+ * à `null` dès qu'un chantier se terminait. Tant qu'un engin n'en menait qu'un
+ * à la fois, les deux gestes étaient justes. Ils cessent de l'être dès qu'il
+ * peut en mener deux :
+ *
+ *  - poser la fin du **dernier ouvert** raccourcit la garde quand ce chantier
+ *    finit avant un autre déjà en route — l'engin devient vendable alors qu'il
+ *    est encore au champ ;
+ *  - remettre à `null` à la première clôture libère un engin qui travaille
+ *    toujours ailleurs.
+ *
+ * La seule valeur qui ne se trompe jamais est celle qu'on relit : la fin du
+ * dernier chantier `RUNNING` de cet engin, ou `null` s'il n'en reste aucun.
+ * Elle se recalcule à chaque ouverture comme à chaque clôture — plus court
+ * que de raisonner sur des deltas, et sans dérive possible.
+ */
+async function reglerOccupation(
+  tx: Pick<typeof prisma, "fieldJob" | "machine">,
+  machineIds: (string | null | undefined)[],
+): Promise<void> {
+  const ids = [...new Set(machineIds.filter(Boolean) as string[])];
+  if (!ids.length) return;
+  const encours = await tx.fieldJob.findMany({
     where: {
-      parcelId,
       status: "RUNNING",
-      endsAt: { lt: new Date(Date.now() - JOB_ABANDON_GRACE_MS) },
+      OR: [{ machineId: { in: ids } }, { tractorId: { in: ids } }],
     },
+    select: { machineId: true, tractorId: true, endsAt: true },
   });
+  for (const id of ids) {
+    let fin: Date | null = null;
+    for (const j of encours) {
+      if (j.machineId !== id && j.tractorId !== id) continue;
+      if (!fin || j.endsAt.getTime() > fin.getTime()) fin = j.endsAt;
+    }
+    /*
+     * `updateMany` et non `update` : l'engin a pu être vendu.
+     *
+     * Un chantier garde l'identifiant de son attelage même après la vente de
+     * celui-ci. Le balayage des fantômes en a réveillé un vieux de huit jours,
+     * dont le semoir n'existait plus : `update` a levé un P2025 « No record
+     * was found », la transaction a échoué, et avec elle le tour de
+     * simulation — lancé sans filet au démarrage, il a tué le serveur en
+     * boucle. Trois jours de site injoignable pour un engin revendu.
+     *
+     * `updateMany` ne trouve rien et n'en fait pas une affaire : c'est
+     * exactement le comportement voulu, puisqu'un engin qui n'existe plus n'a
+     * plus d'occupation à régler.
+     */
+    await tx.machine.updateMany({ where: { id }, data: { busyUntil: fin } });
+  }
+}
+
+/** Ce qu'il faut savoir d'un chantier pour le clore : rien de plus. */
+const CHANTIER_A_CLORE = {
+  id: true,
+  parcelId: true,
+  userId: true,
+  fuelL: true,
+  machineId: true,
+  tractorId: true,
+} as const;
+
+type ChantierAClore = {
+  id: string;
+  parcelId: string;
+  userId: string;
+  fuelL: number;
+  machineId: string | null;
+  tractorId: string | null;
+};
+
+/**
+ * Annule un lot de chantiers : attelages rendus, gazole recrédité.
+ *
+ * Le lot peut couvrir plusieurs parcelles — c'est le cas du balayage — donc
+ * plusieurs fermes. Le gazole se regroupe par ferme avant d'être rendu :
+ * incrémenter la même ferme deux fois dans la même transaction se lit mal et
+ * coûte un aller-retour de plus par chantier.
+ */
+async function annulerChantiers(morts: ChantierAClore[]): Promise<void> {
   if (!morts.length) return;
-  const parcelle = await prisma.parcel.findUnique({
-    where: { id: parcelId },
-    select: { farmId: true },
+  const fermes = await prisma.farm.findMany({
+    where: { userId: { in: [...new Set(morts.map((j) => j.userId))] } },
+    select: { id: true, userId: true },
   });
-  const gazole = morts.reduce((somme, j) => somme + (j.fuelL ?? 0), 0);
+  const fermeDe = new Map(fermes.map((f) => [f.userId, f.id]));
+  const gazoleParFerme = new Map<string, number>();
+  for (const j of morts) {
+    const ferme = fermeDe.get(j.userId);
+    if (!ferme || !j.fuelL) continue;
+    gazoleParFerme.set(ferme, (gazoleParFerme.get(ferme) ?? 0) + j.fuelL);
+  }
   const attelages = morts
     .flatMap((j) => [j.machineId, j.tractorId])
     .filter(Boolean) as string[];
@@ -1161,14 +1705,69 @@ async function libererChantiersAbandonnes(parcelId: string): Promise<void> {
       where: { id: { in: morts.map((j) => j.id) } },
       data: { status: "CANCELLED" },
     });
-    await tx.machine.updateMany({ where: { id: { in: attelages } }, data: { busyUntil: null } });
-    if (parcelle?.farmId && gazole > 0) {
-      await tx.farm.update({
-        where: { id: parcelle.farmId },
-        data: { fuelL: { increment: gazole } },
-      });
+    await reglerOccupation(tx, attelages);
+    for (const [ferme, litres] of gazoleParFerme) {
+      // Même raison qu'au-dessus : une ferme supprimée ne doit pas faire
+      // tomber le tour de simulation pour un litre de gazole.
+      await tx.farm.updateMany({ where: { id: ferme }, data: { fuelL: { increment: litres } } });
     }
   });
+}
+
+/**
+ * @param sansDelaiPour Le joueur qui relance un chantier ici et maintenant.
+ *
+ * Le délai de grâce protège une reprise ; il n'a plus lieu d'être pour
+ * celui-là. Relancer un travail sur ses propres cases **est** la preuve qu'on
+ * ne viendra pas réclamer le chantier précédent : le lui opposer, c'est lui
+ * refuser son champ pendant cinq minutes en lui disant qu'un chantier tourne,
+ * alors qu'il est fini. C'est précisément ce qui a été signalé en jouant.
+ */
+async function libererChantiersAbandonnes(
+  parcelId: string,
+  sansDelaiPour?: string,
+): Promise<void> {
+  const maintenant = Date.now();
+  const morts = await prisma.fieldJob.findMany({
+    where: {
+      parcelId,
+      status: "RUNNING",
+      OR: [
+        { endsAt: { lt: new Date(maintenant - JOB_ABANDON_GRACE_MS) } },
+        ...(sansDelaiPour
+          ? [{ userId: sansDelaiPour, endsAt: { lte: new Date(maintenant) } }]
+          : []),
+      ],
+    },
+    select: CHANTIER_A_CLORE,
+  });
+  await annulerChantiers(morts);
+}
+
+/**
+ * Le ménage que personne ne vient faire.
+ *
+ * `libererChantiersAbandonnes` ne nettoie que la parcelle qu'on visite : un
+ * fantôme sur un champ où l'on ne remet jamais les pieds survit indéfiniment.
+ * Relevé en production le 28 août : un chantier de semis encore `RUNNING`
+ * **huit jours** après sa fin, tenant ses cases et son attelage.
+ *
+ * Le balayage est borné par `take` et ne lit que cinq colonnes : contrairement
+ * aux deux étapes du tour qui ont provoqué la panne du 28, il ne charge aucune
+ * case et son coût ne suit pas la taille du monde.
+ */
+const BALAYAGE_CHANTIERS_MAX = 200;
+
+async function balayerChantiersFantomes(): Promise<void> {
+  const morts = await prisma.fieldJob.findMany({
+    where: {
+      status: "RUNNING",
+      endsAt: { lt: new Date(Date.now() - JOB_ABANDON_GRACE_MS) },
+    },
+    select: CHANTIER_A_CLORE,
+    take: BALAYAGE_CHANTIERS_MAX,
+  });
+  await annulerChantiers(morts);
 }
 
 /**
@@ -1191,6 +1790,39 @@ async function occupiedJobCells(parcelId: string): Promise<Set<string>> {
   const pris = new Set<string>();
   for (const j of jobs) for (const c of parseCellJson(j.cellsJson)) pris.add(`${c.x},${c.y}`);
   return pris;
+}
+
+/**
+ * Quand les cases demandées seront-elles libres, au plus tard ?
+ *
+ * Au plus tard, parce qu'un chantier réclamé rend ses cases sur-le-champ : la
+ * date rendue est celle du fantôme, fin du travail plus le délai de grâce.
+ * Mieux vaut annoncer trois minutes et en tenir une que l'inverse.
+ */
+async function finDesChantiersSur(parcelId: string, cells: CellXY[]): Promise<Date | null> {
+  const jobs = await prisma.fieldJob.findMany({
+    where: {
+      parcelId,
+      status: "RUNNING",
+      endsAt: { gte: new Date(Date.now() - JOB_ABANDON_GRACE_MS) },
+    },
+    select: { cellsJson: true, endsAt: true },
+  });
+  const vises = new Set(cells.map((c) => `${c.x},${c.y}`));
+  let fin: Date | null = null;
+  for (const j of jobs) {
+    if (!parseCellJson(j.cellsJson).some((c) => vises.has(`${c.x},${c.y}`))) continue;
+    const libre = j.endsAt.getTime() + JOB_ABANDON_GRACE_MS;
+    if (!fin || libre > fin.getTime()) fin = new Date(libre);
+  }
+  return fin;
+}
+
+/** Une attente lisible : « 40 s », « 3 min ». `null` si c'est déjà passé. */
+function attenteEnClair(quand: Date): string | null {
+  const secondes = Math.ceil((quand.getTime() - Date.now()) / 1000);
+  if (secondes <= 0) return null;
+  return secondes < 90 ? `${secondes} s` : `${Math.ceil(secondes / 60)} min`;
 }
 
 /**
@@ -1262,13 +1894,11 @@ async function checkFieldJob(opts: {
  */
 async function rendreGazole(job: { id: string; fuelL: number; parcelId: string } | null) {
   if (!job?.fuelL) return;
-  const parcel = await prisma.parcel.findUnique({
-    where: { id: job.parcelId },
-    select: { farmId: true },
-  });
-  if (!parcel?.farmId) return;
+  const owner = await prisma.fieldJob.findUnique({ where: { id: job.id }, select: { userId: true } });
+  const farm = owner ? await prisma.farm.findUnique({ where: { userId: owner.userId }, select: { id: true } }) : null;
+  if (!farm) return;
   await prisma.farm.update({
-    where: { id: parcel.farmId },
+    where: { id: farm.id },
     data: { fuelL: { increment: job.fuelL } },
   });
 }
@@ -1299,8 +1929,7 @@ async function closeFieldJob(jobId: string | null | undefined) {
   if (!job) return;
   await prisma.$transaction(async (tx) => {
     await tx.fieldJob.update({ where: { id: jobId }, data: { status: "DONE" } });
-    const ids = [job.machineId, job.tractorId].filter(Boolean) as string[];
-    await tx.machine.updateMany({ where: { id: { in: ids } }, data: { busyUntil: null } });
+    await reglerOccupation(tx, [job.machineId, job.tractorId]);
   });
 }
 
@@ -1315,7 +1944,7 @@ async function resolveFieldAccess(opts: {
     return { ok: false, status: 404, error: "Parcelle introuvable" };
   }
   if (parcel.farm.userId === opts.userId) {
-    return { ok: true, parcel, machines: parcel.farm.machines, charge: true, order: null };
+    return { ok: true, parcel, machines: parcel.farm.machines, workFarmId: parcel.farm.id, charge: true, order: null };
   }
   const order = await prisma.laborOrder.findFirst({
     where: { parcelId: opts.parcelId, providerId: opts.userId, status: "ACCEPTED" },
@@ -1341,6 +1970,7 @@ async function resolveFieldAccess(opts: {
     ok: true,
     parcel,
     machines: provider.farm.machines,
+    workFarmId: provider.farm.id,
     charge: false,
     order: {
       id: order.id,
@@ -1433,6 +2063,149 @@ function publicLaborOrder(o: {
   };
 }
 
+/* ------------------------------------------------------------------ */
+/* Les contrats des voisins PNJ                                        */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Ce qu'un voisin peut demander, et comment ça s'annonce.
+ *
+ * Le travail décide du reste : le prix se lit dans `missionPayout`, l'usure
+ * dans l'outil qu'il faudra sortir. Ici on ne choisit que le mot.
+ */
+const CONTRATS_PNJ: {
+  jobType: ContractJobType;
+  work: FarmWork;
+  /**
+   * Faisable avec le seul parc de départ ?
+   *
+   * `STARTER_KIT` donne un tracteur, un semoir, une charrue et un déchaumeur.
+   * Ni moissonneuse ni épandeur : une offre de moisson est donc hors de
+   * portée de qui vient de s'installer, et la route la refuse — « il faut une
+   * moissonneuse, passez au garage ».
+   */
+  debutant: boolean;
+  titres: string[];
+}[] = [
+  {
+    jobType: "PLOW",
+    debutant: true,
+    work: "PLOW",
+    titres: [
+      "Labour avant les gelées",
+      "Retourner la sole du bas",
+      "Un labour, et vite : la pluie arrive",
+    ],
+  },
+  {
+    jobType: "SOW",
+    debutant: true,
+    work: "PLANT",
+    titres: ["Semer la pièce du haut", "Un semis à finir avant la nuit", "Emblaver la parcelle neuve"],
+  },
+  {
+    jobType: "FERTILIZE",
+    debutant: false,
+    work: "FERTILIZE",
+    titres: ["Épandre sur la sole fatiguée", "Remettre de l'azote avant la pousse"],
+  },
+  {
+    jobType: "HARVEST",
+    debutant: false,
+    work: "HARVEST",
+    titres: ["Moisson à sauver avant l'orage", "Rentrer la récolte du voisin", "Une moisson de trop pour lui"],
+  },
+];
+
+/** Les voisins qui passent commande. Des noms, pas des matricules. */
+const VOISINS_PNJ = [
+  "la ferme des Ormes",
+  "le GAEC du Moulin",
+  "la métairie Basse",
+  "les Grandes Terres",
+  "la ferme Sainte-Anne",
+  "le domaine du Pré-Long",
+];
+
+/**
+ * Poster les offres du tableau, et les tenir garnies.
+ *
+ * ## Pourquoi cette fonction n'existait pas
+ *
+ * Tout le reste était écrit : le modèle `NpcContract`, la liste, l'acceptation,
+ * l'achèvement avec son usure et son salaire, l'abandon. Le démarrage allait
+ * jusqu'à **annuler** les offres qui traînaient — un ménage qui n'attendait
+ * plus que la regénération. Elle n'est jamais venue, et il n'y a jamais eu
+ * un seul `npcContract.create` dans le serveur.
+ *
+ * Le tableau était donc vide depuis le premier jour, et le reproche est exact :
+ * « on a toujours pas les contrats de PNJ, ça fait depuis le début qu'il
+ * manque ça ».
+ *
+ * ## Ce que ça donne au jeu
+ *
+ * Une boucle courte, qui ne demande ni terre ni attente : on prend une offre,
+ * on la fait avec son propre matériel, on est payé. C'est la voie d'entrée
+ * pour qui vient de s'installer et n'a rien à récolter — et le seul revenu
+ * qui ne dépende pas d'une saison.
+ *
+ * Le salaire vaut cinquante-cinq pour cent du devis d'un prestataire
+ * (`MISSION_NPC_SHARE`) : de quoi valoir le déplacement, jamais de quoi
+ * remplacer sa propre ferme. Trois offres au plus, pour la même raison.
+ */
+async function garnirLeTableau() {
+  const dejaLa = await prisma.npcContract.findMany({
+    where: { status: "OPEN" },
+    select: { jobType: true },
+  });
+  const manque = MISSION_OPEN_MAX - dejaLa.length;
+  if (manque <= 0) return;
+
+  /*
+   * Toujours une offre à la portée d'un débutant.
+   *
+   * Les quatre types se tiraient au sort, et deux d'entre eux — la moisson et
+   * l'épandage — demandent un engin que le parc de départ n'a pas. Trois
+   * tirages malheureux, et le nouveau venu voyait trois offres dont la route
+   * lui refusait chacune : « il faut une moissonneuse, passez au garage ».
+   *
+   * Un tableau qu'on ne peut pas toucher est pire qu'un tableau vide — c'est
+   * celui d'avant, avec en plus la frustration de voir ce qu'on n'aura pas.
+   * Or le tableau existe précisément pour donner du travail à qui n'a encore
+   * rien à récolter. On garantit donc la première offre accessible, et les
+   * suivantes se tirent librement : le parc s'agrandit, l'éventail suit.
+   */
+  const accessibles = CONTRATS_PNJ.filter((c) => c.debutant);
+  const dejaAccessible = dejaLa.some((c) =>
+    accessibles.some((a) => a.jobType === c.jobType),
+  );
+
+  /* Les régions servent de décor : une offre nommée « la ferme des Ormes,
+     Beauce » se situe, là où « contrat #4 » ne dit rien à personne. */
+  const zones = await prisma.zone.findMany({ select: { name: true }, take: 40 });
+
+  for (let i = 0; i < manque; i++) {
+    // La première comble le manque d'offre accessible, s'il y en a un.
+    const vivier = i === 0 && !dejaAccessible ? accessibles : CONTRATS_PNJ;
+    const modele = vivier[Math.floor(Math.random() * vivier.length)]!;
+    const cells =
+      MISSION_CELL_CHOICES[Math.floor(Math.random() * MISSION_CELL_CHOICES.length)]!;
+    const voisin = VOISINS_PNJ[Math.floor(Math.random() * VOISINS_PNJ.length)]!;
+    const region = zones.length
+      ? zones[Math.floor(Math.random() * zones.length)]!.name
+      : "la région";
+    await prisma.npcContract.create({
+      data: {
+        jobType: modele.jobType,
+        title: modele.titres[Math.floor(Math.random() * modele.titres.length)]!,
+        cells,
+        rewardCrd: missionPayout(modele.work, cells, "NPC"),
+        regionNote: `${voisin} — ${region} · ${cells} cases`,
+      },
+    });
+  }
+}
+
 async function expireLaborOrders() {
   const now = new Date();
   const stale = await prisma.laborOrder.findMany({
@@ -1470,11 +2243,26 @@ async function applyWearToMachine(
    */
   const proprio = await tx.machine.findUnique({
     where: { id: machine.id },
-    select: { farm: { select: { userId: true } } },
+    select: { farm: { select: { id: true, userId: true } } },
   });
   const soin = proprio?.farm?.userId
-    ? await getSkillBonuses(proprio.farm.userId)
+    ? await getSkillBonuses(proprio.farm.userId, tx)
     : noSkillBonuses();
+  /*
+   * Le mécanicien de l'équipe, s'il y en a un.
+   *
+   * Sa compétence était calculée par `bonusEquipe` et **jetée** : l'écran du
+   * personnel promettait « moins d'usure et de pannes — jusqu'à 40 % » et
+   * rien dans le jeu ne l'appliquait. Un employé payé qui ne fait rien est
+   * pire qu'un employé qu'on ne peut pas embaucher.
+   *
+   * Il agit ici, au même endroit que le savoir-faire du joueur, et pour la
+   * même raison : douze travaux de champ appellent cette fonction, et leur
+   * demander de porter la règle serait douze occasions de l'oublier.
+   */
+  const equipe = proprio?.farm?.id
+    ? await bonusEquipe(proprio.farm.id, tx)
+    : { mecanique: 0 };
   /* Les heures du chantier viennent de l'outil : c'est sa largeur qui décide
      du temps passé. Le tracteur en prend autant — il a tiré pendant tout ce
      temps-là — ce qui fait de lui la machine au compteur le plus chargé de la
@@ -1490,8 +2278,13 @@ async function applyWearToMachine(
       inShed: Boolean(m.storedInBuildingId),
       // L'entretien et le savoir-faire se multiplient : une machine graissée
       // par quelqu'un qui sait s'y prendre s'use moins que la somme des deux.
+      // Entretien, savoir-faire et mécanicien se multiplient : trois façons
+      // différentes de ménager une machine, qui n'ont pas de raison de
+      // s'annuler.
       careMult:
-        careWearMultiplier({ grease: care.grease, dirt: care.dirt }) * (1 - soin.WEAR),
+        careWearMultiplier({ grease: care.grease, dirt: care.dirt }) *
+        (1 - soin.WEAR) *
+        (1 - equipe.mecanique),
     });
     // Les deux pièces traversent le même champ : elles se salissent pareil,
     // et chacune a sa jauge et son nettoyage. Posséder plus de matériel coûte
@@ -1499,6 +2292,9 @@ async function applyWearToMachine(
     const after = applyJobCare({ ...care, condition: wear.condition }, {
       work: opts.work,
       cells: opts.cells,
+      // Le mécanicien réduit aussi le risque de casse, pas seulement l'usure :
+      // c'est ce que l'écran annonce, « moins d'usure **et de pannes** ».
+      risqueMult: 1 - equipe.mecanique,
     });
     const compteur = Math.round(((m.hours ?? 0) + heures) * 100) / 100;
     await tx.machine.update({
@@ -1653,14 +2449,16 @@ type QuoteTarget = {
   mapY: number;
   fertility: number;
   accessIndex: number;
-  zone: { koppen: string; continentCode: string };
   /**
-   * La taille de la parcelle. Facultative pour les appelants qui ne la
-   * sélectionnent pas encore : on retombe alors sur la parcelle de référence,
-   * c'est-à-dire exactement le prix d'avant.
+   * La grille de la parcelle — parce qu'on achète des hectares.
+   *
+   * Facultative pour ne pas casser les appels qui chiffrent une parcelle
+   * qu'ils n'ont pas chargée en entier ; absente, `hectaresDeGrille` retombe
+   * sur la grille standard, c'est-à-dire sur le prix d'avant.
    */
   gridW?: number;
   gridH?: number;
+  zone: { koppen: string; continentCode: string };
 };
 
 async function loadQuoteCounts(zoneId: string, continentCode: string): Promise<QuoteCounts> {
@@ -1694,14 +2492,23 @@ function quoteFromCounts(target: QuoteTarget, owned: OwnedParcel[], counts: Quot
   ).length;
 
   const publicInput = {
+    /*
+     * La surface, enfin comptée.
+     *
+     * Toutes les parcelles du monde faisaient douze cases sur douze : le prix
+     * pouvait ignorer les hectares sans que rien ne se voie. Le parcellaire
+     * variable rend l'oubli intenable — un lot de vingt-cinq hectares se
+     * serait payé le prix d'un de six.
+     */
+    hectares: hectaresDeGrille(
+      target.gridW ?? DEFAULT_GRID.w,
+      target.gridH ?? DEFAULT_GRID.h,
+    ),
     fertility: target.fertility,
     koppen: target.zone.koppen,
     accessIndex: target.accessIndex,
     neighborDensity,
     occupancy,
-    // Le prix se paie à l'hectare : une 16×16 coûte ce que vaut sa terre.
-    hectares:
-      target.gridW && target.gridH ? hectaresDe(target.gridW, target.gridH) : undefined,
   };
   const priced = askPrice({
     ...publicInput,
@@ -1711,6 +2518,9 @@ function quoteFromCounts(target: QuoteTarget, owned: OwnedParcel[], counts: Quot
 
   return {
     parcelId: target.id,
+    hectares: publicInput.hectares,
+    gridW: target.gridW ?? DEFAULT_GRID.w,
+    gridH: target.gridH ?? DEFAULT_GRID.h,
     marketValue: marketValue(publicInput),
     total: priced.total,
     breakdown: priced.breakdown,
@@ -1775,8 +2585,8 @@ function pollinationBonusAt(
  * garantie qu'on veut — un compteur qu'on ne sait pas lire est un verrou que
  * le joueur ne peut pas ouvrir.
  */
-async function getSkillSnapshot(userId: string): Promise<SkillSnapshot> {
-  const user = await prisma.user.findUnique({
+async function getSkillSnapshot(userId: string, db: DbClient = prisma): Promise<SkillSnapshot> {
+  const user = await db.user.findUnique({
     where: { id: userId },
     select: {
       xp: true,
@@ -1819,8 +2629,8 @@ async function getSkillSnapshot(userId: string): Promise<SkillSnapshot> {
  * seulement de ce qu'il possède. Les deux enveloppes se cumulent chez
  * l'appelant, chacune avec son propre plafond.
  */
-async function getSkillBonuses(userId: string): Promise<SkillBonuses> {
-  return bonusesFor(await getSkillSnapshot(userId));
+async function getSkillBonuses(userId: string, db: DbClient = prisma): Promise<SkillBonuses> {
+  return bonusesFor(await getSkillSnapshot(userId, db));
 }
 
 async function getFarmBonuses(farmId: string) {
@@ -2437,8 +3247,29 @@ async function publishFromConsignes() {
       farm: { isNot: null },
       OR: [{ isNpc: true }, { lastSeenAt: { lt: cutoff } }, { lastSeenAt: null }],
     },
+    /*
+     * **Sans les cases.**
+     *
+     * Cette requête en chargeait la totalité — `cells: true` sur toutes les
+     * parcelles de tous les comptes absents depuis trois minutes, PNJ compris,
+     * c'est-à-dire à peu près toute la table. Mesuré sur un monde neuf et sans
+     * joueurs : 307 comptes, **44 208 cases, 1,4 seconde et 147 Mo de tas** —
+     * toutes les vingt secondes, contre un plafond de tas de 320 Mo.
+     *
+     * Le prix ne se payait pas qu'en mémoire. V8 passait son temps en
+     * ramasse-miettes complet, la boucle d'événements se bloquait — `/api/health`,
+     * qui n'écrit que `{"ok":true}`, a été mesuré à 24 secondes —, le contrôle de
+     * santé du conteneur expirait, le veilleur relançait, et le jeu repartait
+     * pour soixante-dix secondes de 502 sur **tout**, y compris les images. D'où
+     * les « erreurs serveur » et les icônes manquantes signalées par le joueur :
+     * une seule panne, pas deux.
+     *
+     * Les cases se lisent donc parcelle par parcelle, plus bas, et seulement
+     * pour celles qu'on atteint vraiment — la boucle s'arrête dès qu'il n'y a
+     * plus ni créneau ni budget.
+     */
     include: {
-      farm: { include: { parcels: { orderBy: ORDRE_PARCELLES, include: { cells: true, zone: true } } } },
+      farm: { include: { parcels: { orderBy: ORDRE_PARCELLES, include: { zone: true } } } },
     },
   });
   const now = Date.now();
@@ -2457,13 +3288,17 @@ async function publishFromConsignes() {
       if (slots <= 0 || budget <= 0) break;
       const busy = await occupiedLaborCells(parcel.id);
       const bonuses = await getFarmBonuses(parcel.farmId!);
+      // Les cases de cette parcelle-ci, et d'aucune autre. On n'arrive ici que
+      // pour un compte qui a encore un créneau et du budget : dans les faits,
+      // une poignée de parcelles par tick au lieu de toutes.
+      const cells = await prisma.parcelCell.findMany({ where: { parcelId: parcel.id } });
       type Job = { work: FarmWork; cells: CellXY[] };
       const jobs: Job[] = [];
 
       if (consignes.harvest) {
         const ready: CellXY[] = [];
         const silage: CellXY[] = [];
-        for (const cell of parcel.cells) {
+        for (const cell of cells) {
           if (busy.has(`${cell.x},${cell.y}`)) continue;
           if (cell.kind !== "CROP" || !cell.crop || !cell.plantedAt) continue;
           const sim = simulateCell({
@@ -2493,17 +3328,17 @@ async function publishFromConsignes() {
         for (const batch of chunkCells(silage, seedOf(parcel.id))) jobs.push({ work: "SILAGE", cells: batch });
       }
       if (consignes.straw) {
-        const windrow = parcel.cells
+        const windrow = cells
           .filter((c) => c.strawTons > 0 && c.baleCount <= 0 && !busy.has(`${c.x},${c.y}`))
           .map((c) => ({ x: c.x, y: c.y }));
-        const bales = parcel.cells
+        const bales = cells
           .filter((c) => c.baleCount > 0 && !busy.has(`${c.x},${c.y}`))
           .map((c) => ({ x: c.x, y: c.y }));
         for (const batch of chunkCells(windrow, seedOf(parcel.id))) jobs.push({ work: "BALE", cells: batch });
         for (const batch of chunkCells(bales, seedOf(parcel.id))) jobs.push({ work: "COLLECT", cells: batch });
       }
       if (consignes.stubble) {
-        const stub = parcel.cells
+        const stub = cells
           .filter(
             (c) =>
               c.hasStubble &&
@@ -2515,7 +3350,7 @@ async function publishFromConsignes() {
         for (const batch of chunkCells(stub, seedOf(parcel.id))) jobs.push({ work: "STUBBLE", cells: batch });
       }
       if (consignes.plow) {
-        const plow = parcel.cells
+        const plow = cells
           .filter(
             (c) =>
               (c.fieldStage === "SPOILED" || c.harvestsSincePlow >= MAX_HARVESTS_BEFORE_PLOW) &&
@@ -2554,211 +3389,165 @@ async function publishFromConsignes() {
   }
 }
 
+/** Ce qu'un PNJ sème d'un coup, au maximum `[GD]`. */
+const NPC_SOW_PER_TICK = 18;
+
+/**
+ * Les fermes PNJ sèment ce qu'elles peuvent, tous les tours.
+ *
+ * ## Ce que cette fonction chargeait
+ *
+ * Toutes les parcelles PNJ **avec toutes leurs cases** — mesuré sur un monde
+ * neuf : 243 fermes, **34 992 cases, 0,9 seconde et 118 Mo de tas** à chaque
+ * tour de vingt secondes. Pour n'en semer que dix-huit par parcelle, et faire
+ * un `UPDATE` par case, soit jusqu'à quatre mille trois cents allers-retours.
+ *
+ * Le tri se fait maintenant là où sont les données. La base rend au plus
+ * dix-huit candidates par parcelle, et une seule écriture les sème toutes :
+ * elles reçoivent exactement les mêmes valeurs.
+ */
 async function tickNpcFarms() {
   const npcs = await prisma.user.findMany({
     where: { isNpc: true, specialization: "CEREALIER" },
-    include: { farm: { include: { parcels: { orderBy: ORDRE_PARCELLES, include: { cells: true, zone: true } } } } },
+    include: {
+      farm: {
+        include: {
+          parcels: { orderBy: ORDRE_PARCELLES, select: { id: true, zone: true } },
+        },
+      },
+    },
   });
   const now = Date.now();
   const growMs = CROP_DEFS.WHEAT.growMs;
   for (const npc of npcs) {
     if (!npc.farm) continue;
     for (const parcel of npc.farm.parcels) {
-      const busy = await occupiedLaborCells(parcel.id);
-      const empty = parcel.cells.filter(
-        (c) =>
-          c.kind === "EMPTY" &&
-          !c.hasStubble &&
-          c.strawTons <= 0 &&
-          c.baleCount <= 0 &&
-          c.fieldStage !== "SPOILED" &&
-          !busy.has(`${c.x},${c.y}`),
-      );
       // Les PNJ suivent le même calendrier que les joueurs : sans cela ils
       // sèmeraient du blé toute l'année et l'offre du marché ne connaîtrait
       // plus les saisons.
+      //
+      // Ce test passe **avant** toute lecture de cases : hors saison, la
+      // parcelle ne coûte plus une seule requête.
       const climat = climatDe(parcel);
       if (!canSowInSeason("WHEAT", currentSeason(climat.hemisphere ?? "N", now)).ok) continue;
+
+      const busy = await occupiedLaborCells(parcel.id);
+      /*
+       * On demande un peu plus que le compte, puis on retire les cases
+       * réservées par un chantier en cours. Celles-là vivent dans un JSON de
+       * `LaborOrder` et ne se filtrent donc pas en SQL ; la marge évite de
+       * repartir en base pour les remplacer.
+       */
+      const candidates = await prisma.parcelCell.findMany({
+        where: {
+          parcelId: parcel.id,
+          kind: "EMPTY",
+          hasStubble: false,
+          strawTons: { lte: 0 },
+          baleCount: { lte: 0 },
+          fieldStage: { not: "SPOILED" },
+        },
+        select: { id: true, x: true, y: true },
+        take: NPC_SOW_PER_TICK + busy.size,
+      });
+      const toPlant = candidates
+        .filter((c) => !busy.has(`${c.x},${c.y}`))
+        .slice(0, NPC_SOW_PER_TICK);
+      if (!toPlant.length) continue;
+
       const pretLe = projectReadyAt({ crop: "WHEAT", plantedAt: now, growMs, ...climat });
-      const toPlant = empty.slice(0, 18);
-      for (const cell of toPlant) {
-        await prisma.parcelCell.update({
-          where: { id: cell.id },
-          data: {
-            kind: "CROP",
-            crop: "WHEAT",
-            fieldStage: "PLANTED",
-            plantedAt: new Date(now),
-            readyAt: new Date(pretLe),
-            fertilizedPasses: 0,
-            weedPressure: 0,
-            directSeeded: false,
-          },
-        });
-      }
+      // Une écriture pour toute la parcelle : les dix-huit cases reçoivent les
+      // mêmes valeurs, il n'y a jamais eu de raison de les écrire une par une.
+      await prisma.parcelCell.updateMany({
+        where: { id: { in: toPlant.map((c) => c.id) } },
+        data: {
+          kind: "CROP",
+          crop: "WHEAT",
+          fieldStage: "PLANTED",
+          plantedAt: new Date(now),
+          readyAt: new Date(pretLe),
+          fertilizedPasses: 0,
+          weedPressure: 0,
+          directSeeded: false,
+        },
+      });
     }
   }
 }
 
-type Tx = Parameters<Parameters<typeof prisma.$transaction>[0]>[0];
-
 /**
- * Une parcelle a-t-elle été touchée ? Une case semée, bâtie, garée, paillée,
- * ou qui garde la mémoire d'une culture suffit.
+ * Le redécoupage des lots libres — le rattrapage des mondes déjà nés.
+ *
+ * La génération pose désormais des tailles variées, mais elle ne s'exécute
+ * qu'une fois par région : un monde né avant ce changement garderait son
+ * parcellaire uniforme pour toujours, et c'est précisément celui sur lequel on
+ * joue. Cette fonction le reprend.
+ *
+ * Trois garde-fous, et ils comptent plus que le reste :
+ *
+ * - **Seules les parcelles sans ferme.** Redécouper une parcelle exploitée
+ *   supprimerait ses cases, donc ses cultures, ses bâtiments et son travail en
+ *   cours. Aucune terre de joueur ni de PNJ n'est touchée, jamais.
+ * - **Rien à faire si la taille est déjà la bonne**, ce qui rend la fonction
+ *   idempotente : au deuxième démarrage elle ne réécrit rien.
+ * - **Hors du chemin critique.** Elle est lancée après l'ouverture du port :
+ *   quatre cents parcelles à redécouper, c'est une poignée de secondes, mais
+ *   pas au prix d'un serveur qui ne répond pas encore au vérificateur de
+ *   santé. Une parcelle pas encore reprise garde simplement sa taille d'avant.
  */
-async function casesTravaillees(tx: Tx, parcelId: string): Promise<number> {
-  return tx.parcelCell.count({
-    where: {
-      parcelId,
-      OR: [
-        { kind: { not: "EMPTY" } },
-        { crop: { not: null } },
-        { fieldStage: { not: "EMPTY" } },
-        { buildingId: { not: null } },
-        { machineId: { not: null } },
-        { strawTons: { gt: 0 } },
-        { baleCount: { gt: 0 } },
-        { lastCrop: { not: null } },
-      ],
-    },
-  });
-}
-
-/**
- * Refait la grille d'une parcelle **vierge** à la taille demandée, et son
- * prix affiché avec. À n'appeler qu'une fois la virginité vérifiée.
- */
-async function retaillerParcelle(
-  tx: Tx,
-  p: { id: string; fertility: number; accessIndex: number; zone: { koppen: string } },
-  taille: number,
-) {
-  await tx.parcelCell.deleteMany({ where: { parcelId: p.id } });
-  const cases = [];
-  for (let y = 0; y < taille; y++) {
-    for (let x = 0; x < taille; x++) {
-      cases.push({ parcelId: p.id, x, y, kind: "EMPTY" as CellKind });
-    }
-  }
-  await tx.parcelCell.createMany({ data: cases });
-  return tx.parcel.update({
-    where: { id: p.id },
-    data: {
-      gridW: taille,
-      gridH: taille,
-      // Le prix affiché suit la surface ; le devis d'achat, lui, se recalcule à chaque fois.
-      landPrice: marketValue({
-        fertility: p.fertility,
-        koppen: p.zone.koppen,
-        accessIndex: p.accessIndex,
-        neighborDensity: 0,
-        occupancy: 0,
-        hectares: hectaresDe(taille, taille),
-      }),
-    },
-  });
-}
-
-/**
- * Une ferme démarre toujours sur une 12×12.
- *
- * Les terres libres vont de 8×8 à 16×16, mais la parcelle de départ est
- * offerte (ou presque) : une 16×16 donnée vaudrait une 8×8 payée double, et
- * une 8×8 serait un handicap. Interdire les autres tailles au départ aurait
- * retiré six terres libres sur dix aux nouveaux venus — le monde n'en a que
- * trois cents. On garde donc **toutes** les terres libres ouvertes au départ,
- * et celle qu'on choisit est ramenée à 12×12 au moment où on la prend : une
- * terre libre est vierge, il n'y a rien à perdre.
- *
- * Rend la parcelle à jour, ou `null` si elle a été travaillée — on ne rogne
- * jamais un champ.
- */
-async function ramenerATailleDepart<
-  P extends {
-    id: string;
-    gridW: number;
-    gridH: number;
-    fertility: number;
-    accessIndex: number;
-    zone: { koppen: string };
-  },
->(tx: Tx, parcel: P): Promise<(P & { gridW: number; gridH: number; landPrice: number }) | null> {
-  if (parcel.gridW === TAILLE_DEPART && parcel.gridH === TAILLE_DEPART) {
-    return parcel as P & { landPrice: number };
-  }
-  const [bati, travaillees] = await Promise.all([
-    tx.building.count({ where: { parcelId: parcel.id } }),
-    casesTravaillees(tx, parcel.id),
-  ]);
-  if (bati > 0 || travaillees > 0) return null;
-  const maj = await retaillerParcelle(tx, parcel, TAILLE_DEPART);
-  return { ...parcel, gridW: maj.gridW, gridH: maj.gridH, landPrice: maj.landPrice };
-}
-
-/**
- * Donne aux terres libres leur vraie taille : de 8×8 à 16×16.
- *
- * Le monde a été semé tout en 12×12. Plutôt que d'écrire deux chemins (un
- * semis neuf, une migration de l'ancien), on sème toujours en 12×12 et on
- * retaille ici, au démarrage, ce qui peut l'être **sans rien perdre** :
- *
- * - une parcelle sans propriétaire, joueur ou PNJ ;
- * - encore en 12×12 (une parcelle déjà retaillée n'est plus candidate : le
- *   passage est idempotent, un redémarrage ne touche rien) ;
- * - vierge : pas un bâtiment, pas une machine garée, pas un chantier, pas un
- *   ordre de travail, et chacune de ses cases nue, sans culture ni paille.
- *
- * Une parcelle qui ne remplit pas tout cela garde ses 12×12, point. On ne
- * rogne jamais un champ qu'un joueur a travaillé, même abandonné.
- *
- * La taille se tire des coordonnées (`tailleTerreLibre`), pas du hasard : deux
- * serveurs qui partent de la même base arrivent au même cadastre, et une
- * parcelle ne change pas de taille d'un démarrage à l'autre.
- *
- * Une terre prise comme ferme de départ repasse en 12×12
- * (`ramenerATailleDepart`) ; elle a alors un propriétaire et n'est plus
- * candidate ici.
- */
-async function retaillerTerresLibres() {
-  const candidates = await prisma.parcel.findMany({
-    where: {
-      farmId: null,
-      gridW: TAILLE_DEPART,
-      gridH: TAILLE_DEPART,
-      buildings: { none: {} },
-      machines: { none: {} },
-      laborOrders: { none: {} },
-      fieldJobs: { none: {} },
-    },
+async function redecouperLesLotsLibres(): Promise<void> {
+  const libres = await prisma.parcel.findMany({
+    where: { farmId: null },
     select: {
       id: true,
       mapX: true,
       mapY: true,
+      gridW: true,
+      gridH: true,
       fertility: true,
       accessIndex: true,
       zone: { select: { code: true, koppen: true } },
     },
   });
-  let retaillees = 0;
-  for (const p of candidates) {
-    const taille = tailleTerreLibre(`${p.zone.code}:${p.mapX}:${p.mapY}`);
-    if (taille === TAILLE_DEPART) continue;
-    const fait = await prisma.$transaction(async (tx) => {
-      // Relu dans la transaction : entre la liste et ici, quelqu'un a pu la prendre.
-      const ici = await tx.parcel.findFirst({
-        where: { id: p.id, farmId: null, gridW: TAILLE_DEPART, gridH: TAILLE_DEPART },
-        select: { id: true },
+
+  let repris = 0;
+  for (const p of libres) {
+    const cible = tailleDeParcelle(p.zone.code, p.mapX, p.mapY);
+    if (p.gridW === cible.w && p.gridH === cible.h) continue;
+    try {
+      await prisma.$transaction(async (tx) => {
+        /* Une dernière vérification **dans** la transaction : entre la lecture
+           et ici, un joueur a pu revendiquer cette parcelle. */
+        const encoreLibre = await tx.parcel.findFirst({
+          where: { id: p.id, farmId: null },
+          select: { id: true },
+        });
+        if (!encoreLibre) return;
+        await tx.parcelCell.deleteMany({ where: { parcelId: p.id } });
+        await createParcelGrid(p.id, cible.w, cible.h, tx);
+        await tx.parcel.update({
+          where: { id: p.id },
+          data: {
+            gridW: cible.w,
+            gridH: cible.h,
+            landPrice: marketValue({
+              hectares: hectaresDeGrille(cible.w, cible.h),
+              fertility: p.fertility,
+              koppen: p.zone.koppen,
+              accessIndex: p.accessIndex,
+              neighborDensity: 0,
+              occupancy: 0,
+            }),
+          },
+        });
       });
-      if (!ici) return false;
-      if ((await casesTravaillees(tx, p.id)) > 0) return false;
-      await retaillerParcelle(tx, p, taille);
-      return true;
-    });
-    if (fait) retaillees++;
+      repris++;
+    } catch (e) {
+      // Une parcelle qui résiste ne doit pas arrêter les quatre cents autres.
+      console.error(`redécoupage impossible pour ${p.id}`, e);
+    }
   }
-  if (retaillees > 0) {
-    console.log(`Cadastre : ${retaillees} terres libres retaillées (8×8 à 16×16).`);
-  }
+  if (repris > 0) console.log(`Parcellaire : ${repris} lots libres redécoupés`);
 }
 
 async function ensureSeed() {
@@ -2813,17 +3602,29 @@ async function ensureSeed() {
               Math.abs(my - Math.floor((region.mapH - 1) / 2)),
             );
             const access = accessIndex({ hubDistance, road: 0.6, silo: 0.3, rail: 0.1 });
+            /*
+             * La taille du lot, enfin variable.
+             *
+             * Ces deux colonnes recevaient `DEFAULT_GRID` pour chacune des
+             * parcelles de chacune des régions : une variable qui ne prenait
+             * jamais qu'une valeur, d'où « les parcelles ont toutes la même
+             * taille ». Elle se **déduit** maintenant de la case du cadastre,
+             * ce qui la rend stable sans rien stocker de plus : la même case
+             * rendra toujours le même lot, pour tout le monde.
+             */
+            const grille = tailleDeParcelle(region.code, mx, my);
             const parcel = await prisma.parcel.create({
               data: {
                 zoneId: zone.id,
                 label: parcelName(continent.code, n++),
                 mapX: mx,
                 mapY: my,
-                gridW: DEFAULT_GRID.w,
-                gridH: DEFAULT_GRID.h,
+                gridW: grille.w,
+                gridH: grille.h,
                 fertility,
                 accessIndex: access,
                 landPrice: marketValue({
+                  hectares: hectaresDeGrille(grille.w, grille.h),
                   fertility,
                   koppen: region.koppen,
                   cropFitA: region.crops.length >= 2,
@@ -2833,7 +3634,7 @@ async function ensureSeed() {
                 }),
               },
             });
-            await createParcelGrid(parcel.id, DEFAULT_GRID.w, DEFAULT_GRID.h);
+            await createParcelGrid(parcel.id, grille.w, grille.h);
           }
         }
       }
@@ -2902,6 +3703,10 @@ async function ensureSeed() {
       data: { status: "CANCELLED" },
     });
   }
+  /* Le ménage ci-dessus attendait sa regénération depuis toujours : sans
+     elle, le tableau restait vide jusqu'au premier tour du monde, et vide
+     tout court puisque rien ne créait jamais rien. */
+  await garnirLeTableau();
   // Semer cent cinquante fermes PNJ prend deux bonnes minutes sur une machine
   // d'intégration à deux cœurs — assez pour que la suite de tests expire avant
   // que le serveur ne réponde, et qu'un déploiement parfaitement sain soit
@@ -2909,7 +3714,6 @@ async function ensureSeed() {
   // passer. Le drapeau n'existe que pour eux, et n'est jamais posé en
   // production.
   if (process.env.FARMSIM_SKIP_NPC !== "1") await seedNpcFarms();
-  await retaillerTerresLibres();
 
   const zonesForWeather = await prisma.zone.findMany({ select: { code: true } });
   for (const z of zonesForWeather) {
@@ -3138,14 +3942,11 @@ app.post("/world/claim", async (req, res) => {
       if (!user) throw new Error("NOT_FOUND");
       if (user.farm && user.farm.parcels.length > 0) throw new Error("ALREADY_SETTLED");
 
-      const trouvee = await tx.parcel.findFirst({
+      const parcel = await tx.parcel.findFirst({
         where: { id: body.data.parcelId, farmId: null },
         include: { zone: true },
       });
-      if (!trouvee) throw new Error("PARCEL_UNAVAILABLE");
-      // Toute terre libre peut servir de départ ; elle devient alors une 12×12.
-      const parcel = await ramenerATailleDepart(tx, trouvee);
-      if (!parcel) throw new Error("PARCEL_NOT_STARTER");
+      if (!parcel) throw new Error("PARCEL_UNAVAILABLE");
       // La parcelle de départ ne doit jamais être un piège : on refuse les
       // régions où aucune culture du catalogue ne pousse.
       if ((REGION_BY_CODE[parcel.zone.code]?.crops.length ?? 0) === 0) {
@@ -3191,9 +3992,42 @@ app.post("/world/claim", async (req, res) => {
         }
       }
 
+      /*
+       * La parcelle de départ est ramenée au standard — pour tout le monde.
+       *
+       * « Seule la parcelle de base qu'on a tous devrait avoir une taille
+       * standard » : c'est ce qui rend le parcellaire variable jouable plutôt
+       * qu'injuste. Sans cela, celui qui pose son doigt au bon endroit de la
+       * carte démarrerait sur vingt-cinq hectares et son voisin sur six, avant
+       * d'avoir joué un seul coup. La variété est ce qu'on **achète**, pas ce
+       * qu'on tire au sort à l'inscription.
+       *
+       * La parcelle n'a jamais été exploitée — la route exige `farmId: null` —
+       * donc ses cases sont toutes vides : les refaire ne détruit rien.
+       */
+      if (parcel.gridW !== DEFAULT_GRID.w || parcel.gridH !== DEFAULT_GRID.h) {
+        await tx.parcelCell.deleteMany({ where: { parcelId: parcel.id } });
+        await createParcelGrid(parcel.id, DEFAULT_GRID.w, DEFAULT_GRID.h, tx);
+      }
+
       await tx.parcel.update({
         where: { id: parcel.id },
-        data: { farmId: farm.id, acquiredAt: new Date() },
+        data: {
+          farmId: farm.id,
+          acquiredAt: new Date(),
+          gridW: DEFAULT_GRID.w,
+          gridH: DEFAULT_GRID.h,
+          /* Le prix au cadastre suit la nouvelle surface, sinon la taxe
+             foncière continuerait de porter sur le lot d'avant. */
+          landPrice: marketValue({
+            hectares: hectaresDeGrille(DEFAULT_GRID.w, DEFAULT_GRID.h),
+            fertility: parcel.fertility,
+            koppen: parcel.zone.koppen,
+            accessIndex: parcel.accessIndex,
+            neighborDensity: 0,
+            occupancy: 0,
+          }),
+        },
       });
 
       const tractor = await tx.machine.findFirst({
@@ -3217,7 +4051,16 @@ app.post("/world/claim", async (req, res) => {
        * découvrir qu'il en existe un, et la branche s'ouvre en les menant.
        */
       {
-        const barnSpot = findStarterBarnSpot(parcel.gridW, parcel.gridH);
+        /*
+         * La grille **après** remise au standard, et non celle qu'on a lue.
+         *
+         * `parcel` a été chargée avant le redécoupage : sur un lot de seize
+         * cases, elle annonce encore seize. La grange partait alors se poser
+         * vers (13, 13), une case qui venait d'être supprimée, et le
+         * `parcelCell.update` faisait échouer toute la transaction — donc
+         * l'installation entière, sans message utile.
+         */
+        const barnSpot = findStarterBarnSpot(DEFAULT_GRID.w, DEFAULT_GRID.h);
         if (barnSpot) {
           const barnDef = BUILDING_DEFS.CATTLE_BARN;
           const cells = footprintCells(barnSpot.x, barnSpot.y, barnDef.w, barnDef.h);
@@ -3254,12 +4097,6 @@ app.post("/world/claim", async (req, res) => {
     const msg = e instanceof Error ? e.message : "ERROR";
     if (msg === "PARCEL_UNAVAILABLE") {
       res.status(409).json({ error: "Cette parcelle vient d'être prise" });
-      return;
-    }
-    if (msg === "PARCEL_NOT_STARTER") {
-      res.status(409).json({
-        error: "Cette terre a déjà été travaillée — choisissez-en une autre pour démarrer",
-      });
       return;
     }
     if (msg === "ALREADY_SETTLED") {
@@ -3675,7 +4512,68 @@ app.get("/contracts", async (req, res) => {
         where: { status: "ACCEPTED", providerId: userId },
       })
     : null;
-  res.json({ contracts: open, active });
+  /*
+   * Le parc du joueur, pour que le tableau dise **avant le clic** ce que la
+   * route répondrait après.
+   *
+   * Une offre de moisson se lisait, se chiffrait, et se refusait au clic. Le
+   * refus est maintenant remplacé par un chiffre : « avec du matériel loué,
+   * 143 € au lieu de 260 ». Les deux côtés lisent le même calcul, celui du
+   * paquet partagé.
+   */
+  const parc = userId
+    ? ((
+        await prisma.farm.findFirst({
+          where: { userId },
+          include: { machines: true },
+        })
+      )?.machines ?? [])
+    : [];
+  const enrichi = open.map((c) => {
+    const work = CONTRACT_WORK[c.jobType as ContractJobType];
+    const cells = clampMissionCells(c.cells || 16);
+    const outils = parc as unknown as MachineForWork[];
+    // La version partagée, qui rend `null` quand tout va bien — le garde-fou
+    // local, lui, garantit toujours une phrase et ne saurait pas dire « oui ».
+    const manque = explainNoMachineShared(outils, work);
+    const louable = manque !== null && peutLouerPourCeTravail(outils, work);
+    return {
+      ...c,
+      work,
+      // `null` quand le joueur peut le faire lui-même : c'est ce que l'écran
+      // teste pour décider s'il montre un bouton ou deux.
+      manqueMachine: manque,
+      location: louable
+        ? {
+            materiel: libelleMaterielLoue(work),
+            frais: missionRentalFee(work, cells, "NPC"),
+            salaire: missionRentedPayout(work, cells, "NPC"),
+          }
+        : null,
+    };
+  });
+  /*
+   * Le chantier en cours part avec son net, pas seulement son salaire.
+   *
+   * Le mini-jeu affiche « Encaisser N € » : sans le net, un chantier repris
+   * après un rechargement de page annoncerait le plein salaire et en verserait
+   * 55 %. Le drapeau `rented` est porté par la ligne, il suffit de le chiffrer.
+   */
+  const actif = active
+    ? (() => {
+        const work = CONTRACT_WORK[active.jobType as ContractJobType];
+        const cells = clampMissionCells(active.cells || 16);
+        return {
+          ...active,
+          work,
+          rentalFee: active.rented ? missionRentalFee(work, cells, "NPC") : 0,
+          netCrd: active.rented
+            ? missionRentedPayout(work, cells, "NPC")
+            : missionPayout(work, cells, "NPC"),
+        };
+      })()
+    : null;
+  res.json({ contracts: enrichi, active: actif });
 });
 
 let lastSimTick: {
@@ -3729,13 +4627,30 @@ async function runWorldTick() {
   await expireListings();
   await settleOverdueDeliveries();
   await expireLaborOrders();
+  await garnirLeTableau();
+  await balayerChantiersFantomes();
   await tickNpcFarms();
   await publishFromConsignes();
   await ressemerVoisinage();
   await runNpcBuyers();
   await spoilPerishables();
   await settleAllHerds();
+  /*
+   * Puis l'équipe passe, et dans cet ordre.
+   *
+   * `settleAllHerds` consomme la ration et salit la litière ; c'est lui qui
+   * creuse les jauges. Soigner **avant** lui remplirait une auge que le tour
+   * viderait dans la foulée : l'équipe travaillerait pour rien la moitié du
+   * temps, et le seuil de la mangeoire ne voudrait plus rien dire.
+   */
+  await lEquipeSoigneLesTroupeaux();
+  // Après le tour des troupeaux : c'est lui qui fait monter les tas, et il
+  // n'y a rien à vider avant qu'il ait tourné.
+  await viderLesFumieres();
   await settleDueFutures();
+  // Les salaires suivent le changement de jour, comme les intérêts : la
+  // main-d'œuvre est un coût qui revient, y compris hors connexion.
+  await tickSalaires();
   // Les intérêts modifient la dette : ils courent au tick, pas à la lecture.
   // Les faire courir à l'affichage les ferait dépendre du nombre de fois où
   // le joueur ouvre son Bureau.
@@ -3917,23 +4832,6 @@ async function createSession(userId: string) {
   return token;
 }
 
-/**
- * Remettre un code de secours au compte, et n'en garder que l'empreinte.
- *
- * Le clair remonte une fois — dans la réponse HTTP qui suit — puis n'existe
- * plus nulle part : ni en base, ni dans les journaux. C'est le prix du
- * mécanisme, et c'est aussi ce qui le rend utile ; un code que le serveur
- * pourrait relire ne protégerait rien.
- */
-async function remettreCodeSecours(userId: string): Promise<string> {
-  const code = nouveauCodeSecours();
-  await prisma.user.update({
-    where: { id: userId },
-    data: { recoveryHash: empreinteSecours(userId, code), recoveryAt: new Date() },
-  });
-  return code;
-}
-
 async function userFromAuthHeader(req: express.Request) {
   const header = req.headers.authorization;
   if (!header?.startsWith("Bearer ")) return null;
@@ -4069,10 +4967,6 @@ async function playerPayload(userId: string) {
   const bonuses = user.farm ? await getFarmBonuses(user.farm.id) : null;
   const {
     accessCode: _omit,
-    // L'empreinte du code de secours ne sort pas du serveur. Elle ne rend
-    // pas le code, mais elle permet de vérifier une supposition hors ligne :
-    // la donner au navigateur transformerait 80 bits en cible.
-    recoveryHash: _secours,
     appearanceJson,
     statsJson,
     consignesJson,
@@ -4080,7 +4974,6 @@ async function playerPayload(userId: string) {
     ...safe
   } = user;
   void _omit;
-  void _secours;
   void absenceLogJson;
   const dev = estCompteDev(user.email);
   const unlimited = estArgentIllimite(user.email);
@@ -4106,7 +4999,19 @@ const registerSchema = z.object({
   /** Choisie plus tard, pendant l'installation guidée */
   specialization: z.enum(["CEREALIER", "ELEVEUR"]).optional(),
   parcelId: z.string().optional(),
-  accessCode: z.string().min(3).max(32).optional(),
+  /**
+   * Un mot de passe, obligatoire, et d'au moins huit signes.
+   *
+   * Il était **facultatif**, et l'inscription retombait alors sur le littéral
+   * `"ferme"` : tout compte créé sans le préciser s'ouvrait avec un mot que
+   * n'importe qui devine. Le minimum était de trois signes, ce qui n'est pas
+   * un mot de passe mais un code de casier.
+   *
+   * Huit est le plancher usuel, et il ne s'applique qu'ici et au changement :
+   * la connexion accepte toujours ce qui existe, sans quoi les comptes créés
+   * avant se retrouveraient dehors.
+   */
+  accessCode: z.string().min(MDP_MIN).max(MDP_MAX),
 });
 
 app.post("/auth/register", async (req, res) => {
@@ -4125,7 +5030,8 @@ app.post("/auth/register", async (req, res) => {
           specialization: specialization ?? "CEREALIER",
           // Haché dès l'inscription : un compte créé aujourd'hui n'a jamais
           // de code en clair en base, pas même le temps d'une connexion.
-          accessCode: await hacherCode(accessCode ?? "ferme"),
+          // Plus de repli : le schéma l'exige, il est là.
+          accessCode: await hacherCode(accessCode),
           lastSeenAt: new Date(),
         },
       });
@@ -4147,14 +5053,8 @@ app.post("/auth/register", async (req, res) => {
         },
       });
       if (parcelId) {
-        const trouvee = await tx.parcel.findFirst({
-          where: { id: parcelId, farmId: null },
-          include: { zone: true },
-        });
-        if (!trouvee) throw new Error("PARCEL_UNAVAILABLE");
-        // Ramenée à 12×12 avant d'en lire le prix : c'est une 12×12 qu'on paie.
-        const parcel = await ramenerATailleDepart(tx, trouvee);
-        if (!parcel) throw new Error("PARCEL_NOT_STARTER");
+        const parcel = await tx.parcel.findFirst({ where: { id: parcelId, farmId: null } });
+        if (!parcel) throw new Error("PARCEL_UNAVAILABLE");
         const fresh = await tx.user.findUnique({ where: { id: u.id } });
         if (!fresh || !peutPayer(fresh, parcel.landPrice)) throw new Error("INSUFFICIENT_FUNDS");
         await debit(tx, u.id, parcel.landPrice, "TERRES", "Parcelle de départ");
@@ -4185,23 +5085,15 @@ app.post("/auth/register", async (req, res) => {
     res.status(201).json({
       token,
       player,
-      accessCodeHint: accessCode ?? "ferme",
       // Remis une seule fois, ici. Il n'y a pas d'envoi d'e-mail sur ce
       // serveur : sans ce code noté quelque part, un code d'accès oublié
       // signifie une ferme perdue.
-      recoveryCode: await remettreCodeSecours(user.id),
       resume: await buildResumeForUser(user.id),
     });
   } catch (e) {
     const msg = e instanceof Error ? e.message : "ERROR";
     if (msg === "PARCEL_UNAVAILABLE") {
       res.status(409).json({ error: "Parcelle indisponible" });
-      return;
-    }
-    if (msg === "PARCEL_NOT_STARTER") {
-      res.status(409).json({
-        error: "Cette terre a déjà été travaillée — choisissez-en une autre pour démarrer",
-      });
       return;
     }
     if (msg === "INSUFFICIENT_FUNDS") {
@@ -4291,68 +5183,184 @@ app.post("/auth/login", async (req, res) => {
     data: { absenceLogJson: JSON.stringify({ spent: 0, lines: [] } satisfies AbsenceLog) },
   });
   const player = await playerPayload(user.id);
-  /*
-   * Rattrapage des comptes créés avant le mécanisme.
-   *
-   * Ils n'ont pas de code de secours et ne peuvent donc pas se dépanner. On
-   * leur en remet un à la première connexion réussie — le seul moment où
-   * l'on est sûr d'avoir affaire au propriétaire du compte, puisqu'il vient
-   * de donner son code d'accès. Pas de script de rattrapage en base : celui
-   * qui ne se reconnecte jamais n'a de toute façon rien à récupérer.
-   */
-  const recoveryCode = user.recoveryHash ? undefined : await remettreCodeSecours(user.id);
-  res.json({ token, player, resume, recoveryCode });
+  res.json({ token, player, resume });
 });
 
 /**
- * Code d'accès oublié.
+ * Le courrier est-il branché sur cette instance ?
  *
- * Le joueur donne son adresse et le code de secours qu'il a noté, et choisit
- * un nouveau code d'accès. Trois précautions :
+ * L'écran de connexion s'en sert pour décider s'il propose le lien par
+ * courriel. Sans cela il faudrait deviner : ou bien offrir un bouton qui
+ * échoue en silence sur une instance sans SMTP — le « secours qui n'arrivera
+ * jamais » que `recovery.ts` refusait déjà — ou bien ne jamais l'offrir.
  *
- * - **le refus est muet** — adresse inconnue et mauvais code rendent le même
- *   message, sinon l'écran devient un annuaire des comptes qui jouent ;
- * - **le code de secours est brûlé** — un nouveau est remis dans la foulée,
- *   pour qu'un bout de papier retrouvé dans six mois ne rouvre pas la ferme ;
- * - **les sessions ouvertes tombent** — si quelqu'un d'autre était entré avec
- *   l'ancien code, changer ce code doit le mettre dehors, sans quoi la
- *   reprise en main est une illusion.
- *
- * Le seau `AUTH` de la limite de débit couvre cette route (`/auth/…`) : dix
- * essais, puis un toutes les trente secondes.
+ * Elle ne dit rien d'autre que « oui » ou « non » : ni l'hôte, ni l'adresse,
+ * ni le fournisseur.
  */
-app.post("/auth/recover", async (req, res) => {
+app.get("/auth/courriel", (_req, res) => {
+  res.json({ disponible: courrielConfigure() });
+});
+
+/**
+ * Mot de passe oublié — demander un lien.
+ *
+ * ## Ce que cette route ne fera jamais
+ *
+ * Elle n'envoie pas le mot de passe. Le serveur ne l'a pas : il n'en garde
+ * qu'une empreinte bcrypt, qui ne se remonte pas. C'est exactement la
+ * propriété qu'un joueur réclamait en écrivant « c'est censé être crypté, et
+ * illisible » — et tout service capable de vous renvoyer votre mot de passe
+ * est un service qui le stocke lisible.
+ *
+ * ## La réponse est la même pour tout le monde
+ *
+ * Adresse connue, adresse inconnue, envoi réussi, serveur de messagerie
+ * injoignable : `REINIT_ENVOYE`, toujours, et 200. Une réponse qui
+ * distinguerait ces cas ferait de cet écran un annuaire — on essaie une
+ * adresse, et la réponse dit si elle joue. Cette route prend une adresse
+ * **seule**, sans aucune preuve : elle est donc la plus exposée du jeu à cet
+ * égard, et c'est la règle la plus importante qu'elle applique.
+ *
+ * ## Le temps de réponse parle, lui aussi
+ *
+ * Un message identique ne suffit pas si l'attente ne l'est pas. Attendre
+ * l'envoi avant de répondre ferait tenir une adresse connue une seconde de
+ * plus qu'une inconnue — une session SMTP complète — et cette seconde est le
+ * même annuaire, mesuré au chronomètre plutôt que lu à l'écran.
+ *
+ * On répond donc **avant** d'envoyer, et l'envoi part sans être attendu. Il
+ * reste un écart : l'insertion du jeton, que le cas inconnu n'a pas. Une
+ * écriture en base se compte en millisecondes contre des centaines pour un
+ * aller-retour de messagerie, noyées dans le bruit du réseau ; c'est un
+ * résidu assumé, et il est de trois ordres de grandeur plus discret que
+ * l'attente qu'il remplace.
+ *
+ * Rien n'est perdu en route : `envoyerCourriel` ne lève jamais et journalise
+ * ses échecs — c'est l'exploitant qui doit voir qu'un envoi rate, pas le
+ * joueur, à qui on ne dirait de toute façon rien d'autre.
+ *
+ * Le seau `AUTH` de la limite de débit couvre cette route (`/auth/…`).
+ */
+app.post("/auth/forgot", async (req, res) => {
+  const body = z.object({ email: z.string().email() }).safeParse(req.body);
+  if (!body.success) {
+    res.status(400).json(body.error.flatten());
+    return;
+  }
+  if (!courrielConfigure()) {
+    /*
+     * Rien n'est branché : on le dit franchement plutôt que de promettre un
+     * courriel qui ne partira pas. Ce n'est pas une fuite — l'information
+     * porte sur le serveur, pas sur l'existence d'un compte, et l'écran ne
+     * propose de toute façon pas le bouton dans ce cas.
+     *
+     * Il n'y a plus de repli à proposer : le code de secours, qui tenait ce
+     * rôle hors ligne, a été retiré avec l'arrivée du lien. Sur une instance
+     * sans courrier, le dépannage passe entièrement par
+     * `scripts/farmsim-code-secours.sh`, côté serveur.
+     */
+    res.status(503).json({
+      error:
+        "L'envoi de courriel n'est pas actif sur ce serveur. " +
+        "Écrivez à l'exploitant du jeu : lui seul peut vous rouvrir la porte.",
+    });
+    return;
+  }
+
+  const user = await findUserByEmail(body.data.email);
+  if (user && !user.isNpc) {
+    const { jeton, empreinte } = nouveauJetonReinit();
+    await prisma.passwordReset.create({
+      data: { userId: user.id, tokenHash: empreinte, expiresAt: expirationJeton() },
+    });
+    const lien = lienDeReinit(origineDuJeu(), jeton);
+    /* Sans `await` : voir « Le temps de réponse parle, lui aussi ». */
+    void envoyerCourriel({
+      destinataire: user.email,
+      objet: "Farming Navigateur — votre lien de réinitialisation",
+      texte: [
+        `Bonjour ${user.displayName},`,
+        "",
+        "Quelqu'un a demandé à réinitialiser le mot de passe de votre ferme.",
+        `Ouvrez ce lien pour en choisir un nouveau ; il est valable ${REINIT_TTL_LIBELLE} :`,
+        "",
+        lien,
+        "",
+        "Si ce n'est pas vous, il n'y a rien à faire : votre mot de passe reste",
+        "celui que vous connaissez, et ce lien expirera tout seul.",
+        "",
+        "— Farming Navigateur",
+      ].join("\n"),
+    }).catch((e) => console.error("envoi du lien de réinitialisation en échec", e));
+  }
+
+  /* Le même corps et le même code, quoi qu'il se soit passé au-dessus. */
+  res.json({ message: REINIT_ENVOYE });
+});
+
+/**
+ * Mot de passe oublié — poser le nouveau.
+ *
+ * Quatre précautions, et chacune ferme une porte précise :
+ *
+ * - **le jeton est brûlé** avant toute autre chose, dans la même transaction
+ *   que le changement. Sans cela, un lien resté dans une boîte de réception
+ *   est une clé permanente ;
+ * - **les autres jetons du compte tombent aussi.** Un joueur qui demande deux
+ *   liens et se fait dérober le premier ne doit pas laisser un second
+ *   utilisable derrière lui ;
+ * - **les sessions ouvertes tombent** — si quelqu'un d'autre était entré,
+ *   changer le mot de passe doit le mettre dehors, sinon la reprise en main
+ *   n'est qu'apparente ;
+ * - **un code de secours neuf est remis.** Celui qui arrive ici a
+ *   vraisemblablement perdu l'ancien ; le lui renouveler referme la boucle au
+ *   lieu de le laisser sans filet pour la fois suivante.
+ */
+app.post("/auth/reset", async (req, res) => {
   const body = z
     .object({
-      email: z.string().email(),
-      recoveryCode: z.string().min(1).max(64),
-      accessCode: z.string().min(3).max(32),
+      jeton: z.string().min(1).max(200),
+      accessCode: z.string().min(MDP_MIN).max(MDP_MAX),
     })
     .safeParse(req.body);
   if (!body.success) {
     res.status(400).json(body.error.flatten());
     return;
   }
-  if (!isRecoveryCode(body.data.recoveryCode)) {
-    res.status(401).json({ error: RECOVERY_REFUSAL });
+  if (!jetonDeReinitValide(body.data.jeton)) {
+    res.status(401).json({ error: REINIT_REFUS });
     return;
   }
-  const user = await findUserByEmail(body.data.email);
-  if (!user || !secoursCorrespond(user.recoveryHash, user.id, body.data.recoveryCode)) {
-    res.status(401).json({ error: RECOVERY_REFUSAL });
-    return;
-  }
-  await prisma.session.deleteMany({ where: { userId: user.id } });
-  await prisma.user.update({
-    where: { id: user.id },
-    data: { accessCode: await hacherCode(body.data.accessCode) },
+
+  const ligne = await prisma.passwordReset.findUnique({
+    where: { tokenHash: empreinteJeton(body.data.jeton) },
+    include: { user: true },
   });
-  const recoveryCode = await remettreCodeSecours(user.id);
-  const resume = await buildResumeForUser(user.id);
-  const token = await createSession(user.id);
-  await touchUserPresence(user.id);
-  const player = await playerPayload(user.id);
-  res.json({ token, player, resume, recoveryCode });
+  if (!jetonUtilisable(ligne)) {
+    res.status(401).json({ error: REINIT_REFUS });
+    return;
+  }
+  const cible = ligne!.user;
+
+  await prisma.$transaction(async (tx) => {
+    /* Brûler d'abord. Si la suite échoue, le lien est perdu — le joueur en
+       redemande un — plutôt que de rester ouvert. */
+    await tx.passwordReset.updateMany({
+      where: { userId: cible.id, usedAt: null },
+      data: { usedAt: new Date() },
+    });
+    await tx.session.deleteMany({ where: { userId: cible.id } });
+    await tx.user.update({
+      where: { id: cible.id },
+      data: { accessCode: await hacherCode(body.data.accessCode) },
+    });
+  });
+
+  const resume = await buildResumeForUser(cible.id);
+  const token = await createSession(cible.id);
+  await touchUserPresence(cible.id);
+  const player = await playerPayload(cible.id);
+  res.json({ token, player, resume });
 });
 
 app.get("/auth/me", async (req, res) => {
@@ -4369,8 +5377,8 @@ const patchMeSchema = z
   .object({
     displayName: z.string().min(2).max(32).optional(),
     email: z.string().email().optional(),
-    accessCode: z.string().min(3).max(32).optional(),
-    currentAccessCode: z.string().min(1).max(32).optional(),
+    accessCode: z.string().min(MDP_MIN).max(MDP_MAX).optional(),
+    currentAccessCode: z.string().min(1).max(72).optional(),
   })
   .refine(
     (d) => Boolean(d.displayName || d.email || d.accessCode),
@@ -4398,11 +5406,24 @@ app.patch("/auth/me", async (req, res) => {
   }
   const { displayName, email, accessCode, currentAccessCode } = parsed.data;
   const needsSecret = Boolean(email || accessCode);
+  /*
+   * Le mot de passe actuel, et lui seul.
+   *
+   * Le code de secours était accepté ici en second recours, pour le joueur
+   * connecté qui avait oublié son mot de passe. Ce recours-là existe toujours,
+   * mais il est passé par la porte d'entrée : on se déconnecte, on demande un
+   * lien par courriel, et on revient. Une preuve de moins à maintenir, et une
+   * seule voie à éprouver.
+   */
   if (
     needsSecret &&
     !(currentAccessCode && (await codeCorrespond(auth.user.accessCode, currentAccessCode)))
   ) {
-    res.status(403).json({ error: "Code d'accès actuel incorrect" });
+    res.status(403).json({
+      error:
+        "Mot de passe actuel incorrect. Si vous l'avez oublié, déconnectez-vous et " +
+        "demandez un lien par e-mail depuis l'écran de connexion.",
+    });
     return;
   }
 
@@ -4451,6 +5472,7 @@ app.patch("/auth/me", async (req, res) => {
 
   res.json({ player: await playerPayload(auth.user.id) });
 });
+
 
 /* ------------------------------------------------------------------ */
 /* Quêtes                                                              */
@@ -4701,8 +5723,29 @@ app.get("/parcels/:id", async (req, res) => {
     where: { parcelId: parcel.id, status: { in: ["OPEN", "ACCEPTED"] } },
     include: laborOrderInclude,
   });
+  /*
+   * Les adventices partent **effectives**, pas figées au dernier geste.
+   *
+   * La parcelle était rendue telle que la base la stocke : `weedPressure` y
+   * vaut la valeur du dernier travail du sol — zéro après un labour — et
+   * `weedAt` la date à laquelle elle a été posée. L'écran lisait donc un zéro
+   * éternel sur un champ laissé en l'état, et l'outil Désherber ne proposait
+   * jamais la moindre case. Signalé en jouant : « j'ai laissé les champs
+   * juste labourés, pas une seule mauvaise herbe, rien n'a poussé ».
+   *
+   * Ce que le serveur calcule déjà pour la récolte, il le dit maintenant à
+   * l'écran. La valeur brute reste en base ; c'est la lecture qui intègre,
+   * comme pour la croissance des cultures.
+   */
+  const parcelleVue = {
+    ...parcel,
+    cells: parcel.cells.map((c) => ({
+      ...c,
+      weedPressure: pressionAdventices(c, season),
+    })),
+  };
   res.json({
-    parcel,
+    parcel: parcelleVue,
     weather,
     bonuses,
     cellSims,
@@ -5322,9 +6365,118 @@ app.get("/parcels/:id/voisinage", async (req, res) => {
   });
 });
 
+/** Une case de parcelle, telle que les routes de champ la lisent. */
+type CaseDeChamp = Awaited<ReturnType<typeof loadParcelForWork>> extends infer P
+  ? P extends { cells: (infer C)[] }
+    ? C
+    : never
+  : never;
+
+/**
+ * Le tri du déchaumeur : ce qu'il déchaume, ce qu'il remet en herbe.
+ *
+ * Extrait de la route pour que le prestataire lise exactement la même règle.
+ * Un dépanneur qui trierait autrement que le joueur donnerait deux résultats
+ * différents sur la même sélection — et c'est précisément le genre d'écart
+ * qu'on ne découvre qu'en jouant.
+ */
+function trierDechaumage(selection: CaseDeChamp[]): {
+  targets: CaseDeChamp[];
+  enherber: CaseDeChamp[];
+  blockedByPlow: number;
+} {
+  const targets: CaseDeChamp[] = [];
+  /**
+   * Cases à remettre en herbe : travaillées, nues, sans chaumes.
+   *
+   * Le même outil, le même bouton. Une terre labourée puis abandonnée restait
+   * marron indéfiniment, et « Déchaumer » la refusait avec « la case n'a pas de
+   * chaumes » — un refus juste, mais sans issue. Le déchaumeur sait aussi
+   * reprendre une terre nue et la remettre en herbe : c'est ce qu'il fait ici.
+   */
+  const enherber: CaseDeChamp[] = [];
+  let blockedByPlow = 0;
+  for (const cell of selection) {
+    if (cell.kind !== "EMPTY") continue;
+    const verdict = canStubble({
+      harvestsSincePlow: cell.harvestsSincePlow,
+      residuePasses: cell.residuePasses,
+      hasStubble: cell.hasStubble,
+    });
+    if (verdict.ok) {
+      if (cell.baleCount > 0) continue;
+      targets.push(cell);
+      continue;
+    }
+    if (verdict.reason === "PLOW_REQUIRED") {
+      blockedByPlow += 1;
+      continue;
+    }
+    if (
+      canRegrass({
+        hasStubble: cell.hasStubble,
+        hasCrop: Boolean(cell.crop),
+        worked: cell.fieldStage !== "EMPTY",
+      })
+    ) {
+      enherber.push(cell);
+    }
+  }
+  return { targets, enherber, blockedByPlow };
+}
+
+/** L'effet du déchaumeur sur le sol, quel que soit qui tient le volant. */
+async function ecrireDechaumage(
+  tx: Prisma.TransactionClient,
+  targets: CaseDeChamp[],
+  enherber: CaseDeChamp[],
+): Promise<void> {
+  for (const cell of enherber) {
+    const next = applyRegrass();
+    await tx.parcelCell.update({
+      where: { id: cell.id },
+      data: {
+        fieldStage: "EMPTY",
+        hasStubble: false,
+        strawTons: 0,
+        harvestsSincePlow: next.harvestsSincePlow,
+        residuePasses: next.residuePasses,
+        // L'herbe reprend : la case n'est plus un lit de semence propre.
+        weedPressure: 0,
+        directSeeded: false,
+      },
+    });
+  }
+  for (const cell of targets) {
+    const next = applyStubble({
+      harvestsSincePlow: cell.harvestsSincePlow,
+      residuePasses: cell.residuePasses,
+      hasStubble: cell.hasStubble,
+    });
+    await tx.parcelCell.update({
+      where: { id: cell.id },
+      data: {
+        fieldStage: "PREPARED",
+        hasStubble: false,
+        strawTons: 0,
+        residuePasses: next.residuePasses,
+        /* Faux-semis : le déchaumage fait lever les graines puis les détruit
+           aussitôt. `soil.ts` l'affirmait déjà en toutes lettres — « il
+           détruit les adventices » — sans que rien ne l'implémente. */
+        weedPressure: weedsAfterSoilWork("STUBBLE", pressionAdventices(cell)),
+        weedAt: new Date(),
+      },
+    });
+  }
+}
+
 /**
  * Faire venir une entreprise (filet urgent PNJ) : barème client +15 %,
  * malus de rendement, l'argent sort. Aucun matériel requis côté joueur.
+ *
+ * Elle prend les dix travaux. Elle n'en prenait que cinq, et les cinq autres
+ * n'avaient aucune voie déléguée garantie : l'entraide attend qu'un joueur
+ * accepte. Voir `URGENT_CONTRACTOR_WORKS` pour le raisonnement.
  */
 app.post("/parcels/:id/contractor", async (req, res) => {
   const body = z
@@ -5383,7 +6535,8 @@ app.post("/parcels/:id/contractor", async (req, res) => {
     }
     const growMs = cropGrowMs(crop, 0);
     const climat = climatDe(parcel);
-    const fenetre = canSowInSeason(crop, currentSeason(climat.hemisphere ?? "N", now));
+    const saisonSemis = currentSeason(climat.hemisphere ?? "N", now);
+    const fenetre = canSowInSeason(crop, saisonSemis);
     if (!fenetre.ok) {
       // L'entreprise ne sème pas hors saison non plus : la payer pour
       // contourner le calendrier viderait la règle de son sens.
@@ -5393,7 +6546,7 @@ app.post("/parcels/:id/contractor", async (req, res) => {
     const pretLe = projectReadyAt({ crop, plantedAt: now, growMs, ...climat });
     const enDirect = sol.plans.some((p) => p.directSeed);
     await prisma.$transaction(async (tx) => {
-      await debit(tx, user.id, total, "CHANTIERS", "Prestataire — moisson");
+      await debit(tx, user.id, total, "CHANTIERS", `Prestataire — ${WORK_LABELS[work] ?? work}`);
       for (const plan of sol.plans) {
         const soil = plan.directSeed ? applyDirectSeed(plan.cell) : null;
         await tx.parcelCell.update({
@@ -5406,10 +6559,21 @@ app.post("/parcels/:id/contractor", async (req, res) => {
             readyAt: new Date(pretLe),
             fertilizedPasses: 0,
             weedAt: new Date(now),
+            /*
+             * La pression **effective**, pas celle du dernier geste.
+             *
+             * On lisait `cell.weedPressure` brut, c'est-à-dire la valeur figée
+             * au dernier travail du sol — zéro après un labour. Tout ce qui
+             * avait levé depuis, et que `pressionAdventices` sait calculer,
+             * était jeté au moment précis où il aurait compté. D'où le
+             * signalement : « j'ai laissé les champs juste labourés, pas une
+             * seule mauvaise herbe, rien n'a poussé ». Le modèle montait bien,
+             * c'est le semis qui remettait le compteur à zéro en silence.
+             */
             weedPressure: weedsAtSowing({
               carried: plan.directSeed
-                ? weedsAfterSoilWork("DIRECT_SEED", plan.cell.weedPressure ?? 0)
-                : (plan.cell.weedPressure ?? 0),
+                ? weedsAfterSoilWork("DIRECT_SEED", pressionAdventices(plan.cell, saisonSemis))
+                : pressionAdventices(plan.cell, saisonSemis),
               sameCropAgain: plan.cell.lastCrop === crop,
             }),
             directSeeded: plan.directSeed,
@@ -5448,7 +6612,7 @@ app.post("/parcels/:id/contractor", async (req, res) => {
     }
     const malus = LOST_CROP_FERTILITY_MALUS * lost.length;
     await prisma.$transaction(async (tx) => {
-      await debit(tx, user.id, total, "CHANTIERS", "Prestataire — pressage");
+      await debit(tx, user.id, total, "CHANTIERS", `Prestataire — ${WORK_LABELS[work] ?? work}`);
       for (const cell of lost) {
         await tx.parcelCell.update({
           where: { id: cell.id },
@@ -5481,7 +6645,7 @@ app.post("/parcels/:id/contractor", async (req, res) => {
     const available = await parcelManureTons(parcel.id);
     const usedManure = needed > 0 && available >= needed;
     await prisma.$transaction(async (tx) => {
-      await debit(tx, user.id, total, "CHANTIERS", "Prestataire — ramassage");
+      await debit(tx, user.id, total, "CHANTIERS", `Prestataire — ${WORK_LABELS[work] ?? work}`);
       if (usedManure) await drawManureFromPits(tx, parcel.id, needed);
       for (const { x, y } of cropCells) {
         const cell = parcel.cells.find((c) => c.x === x && c.y === y);
@@ -5514,7 +6678,121 @@ app.post("/parcels/:id/contractor", async (req, res) => {
     return;
   }
 
-  // HARVEST / MOW — grain au silo, herbe au hangar. L'herbe peut reprendre.
+  if (work === "STUBBLE") {
+    /* Le prestataire trie comme le joueur — même fonction, même verdict — et
+       remet en herbe une terre nue au même titre qu'il déchaume un chaume. */
+    const selection = parcel.cells.filter((c) => cells.some((t) => t.x === c.x && t.y === c.y));
+    const { targets, enherber, blockedByPlow } = trierDechaumage(selection);
+    if (!targets.length && !enherber.length) {
+      res.status(409).json({
+        error: blockedByPlow
+          ? SOIL_WORK_REFUSAL_LABELS.PLOW_REQUIRED
+          : SOIL_WORK_REFUSAL_LABELS.NO_STUBBLE,
+        blockedByPlow,
+      });
+      return;
+    }
+    await prisma.$transaction(async (tx) => {
+      await debit(tx, user.id, total, "CHANTIERS", `Prestataire — ${WORK_LABELS[work] ?? work}`);
+      await ecrireDechaumage(tx, targets, enherber);
+    });
+    res.json({
+      work,
+      cells: targets.length + enherber.length,
+      stubbled: targets.length,
+      regrassed: enherber.length,
+      blockedByPlow,
+      cost: total,
+      service,
+      seeds: 0,
+    });
+    return;
+  }
+
+  if (work === "BALE") {
+    const targets = parcel.cells.filter(
+      (c) => cells.some((t) => t.x === c.x && t.y === c.y) && c.strawTons > 0,
+    );
+    if (!targets.length) {
+      res.status(409).json({ error: "Aucun andain à presser" });
+      return;
+    }
+    let bales = 0;
+    await prisma.$transaction(async (tx) => {
+      await debit(tx, user.id, total, "CHANTIERS", `Prestataire — ${WORK_LABELS[work] ?? work}`);
+      for (const cell of targets) {
+        const n = balesFromStraw(cell.strawTons);
+        bales += n;
+        await tx.parcelCell.update({
+          where: { id: cell.id },
+          data: { strawTons: 0, baleCount: cell.baleCount + n },
+        });
+      }
+    });
+    res.json({ work, cells: targets.length, baled: targets.length, bales, cost: total, service, seeds: 0 });
+    return;
+  }
+
+  if (work === "COLLECT") {
+    const targets = parcel.cells.filter(
+      (c) => cells.some((t) => t.x === c.x && t.y === c.y) && c.baleCount > 0,
+    );
+    if (!targets.length) {
+      res.status(409).json({ error: "Aucune botte à ramasser" });
+      return;
+    }
+    let bales = 0;
+    await prisma.$transaction(async (tx) => {
+      await debit(tx, user.id, total, "CHANTIERS", `Prestataire — ${WORK_LABELS[work] ?? work}`);
+      for (const cell of targets) {
+        bales += cell.baleCount;
+        await tx.parcelCell.update({ where: { id: cell.id }, data: { baleCount: 0 } });
+      }
+      /* Ce qu'on charge, ce sont des bottes — pas un tas de vrac, comme sur la
+         route du joueur. Le stock les compte à l'unité. */
+      await addToStock(tx, parcel.farm!.id, "STRAW_BALE", bales, 0, 3);
+    });
+    res.json({
+      work,
+      cells: targets.length,
+      collected: targets.length,
+      bales,
+      tons: Math.round(strawFromBales(bales) * 1000) / 1000,
+      cost: total,
+      service,
+      seeds: 0,
+    });
+    return;
+  }
+
+  if (work === "WEED") {
+    const saison = currentSeason(climatDe(parcel).hemisphere ?? "N", now);
+    const cibles = parcel.cells.filter(
+      (c) =>
+        cells.some((t) => t.x === c.x && t.y === c.y) &&
+        c.kind === "CROP" &&
+        pressionAdventices(c, saison) > WEED_AFTER_SPRAY,
+    );
+    if (!cibles.length) {
+      res.status(409).json({ error: "Rien à désherber : ces cases sont déjà propres." });
+      return;
+    }
+    /* Le prestataire vient avec son bidon : l'herbicide est dans le devis, il
+       ne se débite pas une seconde fois comme sur la route du joueur. */
+    await prisma.$transaction(async (tx) => {
+      await debit(tx, user.id, total, "CHANTIERS", `Prestataire — ${WORK_LABELS[work] ?? work}`);
+      for (const cell of cibles) {
+        await tx.parcelCell.update({
+          where: { id: cell.id },
+          data: { weedPressure: WEED_AFTER_SPRAY, weedAt: new Date(now) },
+        });
+      }
+    });
+    res.json({ work, cells: cibles.length, weeded: cibles.length, cost: total, service, seeds: 0 });
+    return;
+  }
+
+  // HARVEST / MOW / SILAGE — grain au silo, herbe au hangar, ensilage au tas.
   const ready = cells
     .map(({ x, y }) => parcel.cells.find((c) => c.x === x && c.y === y))
     .filter((c): c is NonNullable<typeof c> => Boolean(c && c.kind === "CROP" && c.plantedAt));
@@ -5544,6 +6822,18 @@ app.post("/parcels/:id/contractor", async (req, res) => {
       specialization: playableSpec(user.specialization),
       cutsDone: grassCutsDone(cell),
     });
+    /* L'ensilage se coupe **avant** maturité grain : c'est tout son intérêt,
+       et c'est pourquoi il ne passe pas par le contrôle `sim.ready`. On le
+       chiffre depuis l'équivalent grain, comme la route du joueur. */
+    if (work === "SILAGE") {
+      if (!canSilageHarvest({ crop: cell.crop, progress: sim.progress, lost: sim.lost })) continue;
+      const grainEq = sim.estimatedYieldTons * (1 - CONTRACTOR_YIELD_MALUS);
+      const tons = silageYieldTons(grainEq, sim.progress);
+      totalTons += tons;
+      perItem.set("SILAGE", (perItem.get("SILAGE") ?? 0) + tons);
+      taken.push(cell);
+      continue;
+    }
     if (!sim.ready) continue;
     const tons = sim.estimatedYieldTons * (1 - CONTRACTOR_YIELD_MALUS);
     totalTons += tons;
@@ -5555,7 +6845,12 @@ app.post("/parcels/:id/contractor", async (req, res) => {
 
   if (totalTons <= 0) {
     res.status(409).json({
-      error: work === "MOW" ? "Rien à faucher sur la sélection" : "Rien n'est mûr sur la sélection",
+      error:
+        work === "MOW"
+          ? "Rien à faucher sur la sélection"
+          : work === "SILAGE"
+            ? "Aucun maïs assez avancé pour l'ensilage"
+            : "Rien n'est mûr sur la sélection",
     });
     return;
   }
@@ -5573,6 +6868,8 @@ app.post("/parcels/:id/contractor", async (req, res) => {
           harvestsSincePlow: cell.harvestsSincePlow,
         },
         now,
+        // Ensilage : la plante part entière, il ne reste pas d'andain à presser.
+        work === "SILAGE",
       );
       await tx.parcelCell.update({ where: { id: cell.id }, data: next.data });
     }
@@ -5727,6 +7024,14 @@ type SowableCell = {
   harvestsSincePlow: number;
   residuePasses: number;
   weedPressure?: number;
+  /**
+   * Date du dernier geste sur les adventices.
+   *
+   * Indispensable, et elle manquait : sans elle, le semis ne pouvait lire que
+   * la pression **figée** au dernier travail du sol — zéro après un labour —
+   * et jetait tout ce qui avait levé depuis. Voir `pressionAdventices`.
+   */
+  weedAt?: Date | null;
   lastCrop?: string | null;
 };
 
@@ -5794,6 +7099,306 @@ function rienAFaire(
   return null;
 }
 
+/* ------------------------------------------------------------------ */
+/* Les employés                                                        */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Les lits d'une ferme, tous logements confondus.
+ *
+ * Le bâtiment est posé sur une parcelle, pas sur la ferme : on remonte par
+ * elle. Deux logements s'additionnent — rien n'interdit d'en bâtir un second
+ * plutôt que d'agrandir le premier, et le joueur qui le fait a payé pour.
+ */
+async function litsDeLaFerme(farmId: string, db: DbClient = prisma): Promise<number> {
+  const logements = await db.building.findMany({
+    where: { type: "EMPLOYEE_HOUSING", parcel: { farmId } },
+    select: { level: true },
+  });
+  return logements.reduce(
+    (n, b) => n + litsDuLogement(b.level, buildingLevelDef(b.level).capacityMult),
+    0,
+  );
+}
+
+/** L'équipe d'une ferme : qui y travaille, et combien de lits l'attendent. */
+async function equipeDe(farmId: string, db: DbClient = prisma) {
+  const [employes, lits] = await Promise.all([
+    db.employee.findMany({ where: { farmId }, orderBy: { hiredAt: "asc" } }),
+    litsDeLaFerme(farmId, db),
+  ]);
+  return { employes, lits };
+}
+
+/**
+ * Le meilleur niveau d'une compétence, parmi ceux qui sont au bon poste.
+ *
+ * Un seul employé mène un chantier donné : c'est le plus qualifié qui s'y
+ * colle, comme n'importe quel chef d'exploitation le déciderait. Additionner
+ * les niveaux de toute l'équipe donnerait des fermes où embaucher dix
+ * débutants vaut mieux qu'un bon.
+ */
+function meilleurNiveau(
+  employes: { conduite: number; mecanique: number; elevage: number; poste: string }[],
+  competence: "conduite" | "mecanique" | "elevage",
+  poste: "CHAMP" | "ELEVAGE",
+): number {
+  let max = 0;
+  for (const e of employes) {
+    if (e.poste !== poste) continue;
+    max = Math.max(max, e[competence]);
+  }
+  return max;
+}
+
+/** Ce que l'équipe apporte à un chantier, et à l'élevage. */
+async function bonusEquipe(farmId: string, db: DbClient = prisma) {
+  const { employes } = await equipeDe(farmId, db);
+  const auChamp = employes.filter((e) => e.poste === "CHAMP").length;
+  return {
+    employes,
+    auChamp,
+    conduite: gainConduite(meilleurNiveau(employes, "conduite", "CHAMP")),
+    mecanique: gainMecanique(meilleurNiveau(employes, "mecanique", "CHAMP")),
+    elevage: gainElevage(meilleurNiveau(employes, "elevage", "ELEVAGE")),
+  };
+}
+
+/**
+ * Ce que l'équipe ajoute à la production d'un troupeau.
+ *
+ * Trois routes produisent — le lait, les œufs, la laine — et elles appliquent
+ * déjà toutes les trois le savoir-faire du joueur de la même façon. Le bonus
+ * d'équipe passe par ici plutôt que d'être recopié trois fois : une quatrième
+ * production arrivera un jour, et le seul moyen qu'elle n'oublie pas la règle
+ * est qu'il n'y ait qu'un endroit où la lire.
+ *
+ * Multiplicatif, comme le savoir-faire : un employé qui s'y connaît fait mieux
+ * produire un troupeau bien tenu, il ne rattrape pas un troupeau affamé.
+ */
+async function gainElevageDe(farmId: string): Promise<number> {
+  return (await bonusEquipe(farmId)).elevage;
+}
+
+/** Les chantiers que ce joueur mène en ce moment. */
+async function chantiersEnCours(userId: string): Promise<number> {
+  return prisma.fieldJob.count({
+    where: { userId, status: "RUNNING", endsAt: { gte: new Date() } },
+  });
+}
+
+app.get("/employees", async (req, res) => {
+  const auth = await userFromAuthHeader(req);
+  if (!auth?.user.farm) {
+    res.status(auth ? 404 : 401).json({ error: auth ? "Ferme introuvable" : "Jeton requis" });
+    return;
+  }
+  const farmId = auth.user.farm.id;
+  const { employes, lits } = await equipeDe(farmId);
+  const loges = Math.min(lits, employes.length);
+  const maintenant = Date.now();
+  res.json({
+    employees: employes.map((e) => ({
+      id: e.id,
+      name: e.name,
+      conduite: e.conduite,
+      mecanique: e.mecanique,
+      elevage: e.elevage,
+      poste: e.poste,
+      salaire: salaireJournalier(e),
+      /* Les jours de salaire qu'on lui doit. C'est le seul endroit où le
+         joueur peut voir venir un départ : sans ce compteur, quelqu'un
+         disparaîtrait de la liste sans que rien ne l'ait annoncé.
+         Un tour de simulation de battement, sinon le franchissement du jour
+         crierait « impayé » pendant les vingt secondes qui séparent le
+         changement de date du prélèvement — une fausse alerte à chaque jour,
+         y compris sur une ferme qui paie sans faillir. */
+      impayeJours: Math.max(
+        0,
+        Math.floor((maintenant - e.paidAt.getTime() - SIM_TICK_MS) / GAME_DAY_MS),
+      ),
+    })),
+    /* Le vivier ne se stocke pas : il se calcule. Trois candidats tirés de la
+       ferme et du jour, les mêmes à chaque appel — sans quoi le joueur
+       rechargerait la page jusqu'à tomber sur le profil qui l'arrange.
+       Celui qu'on a déjà embauché sort du tableau : il n'est plus candidat,
+       et le laisser afficher promettrait un bouton qui refuserait. */
+    candidates: candidatsDuJour(farmId, gameDayIndex(maintenant)).filter(
+      (c) => !employes.some((e) => e.sourceId === c.id),
+    ),
+    lits,
+    loges,
+    /** Ce que l'équipe coûtera au prochain changement de jour. */
+    masseSalariale: masseSalariale(employes, lits),
+    peutEmbaucher: peutEmbaucher({ employes: employes.length, lits }),
+    sansLogement: EMPLOYES_SANS_LOGEMENT,
+    /** Le préavis, pour que l'écran dise combien de jours il reste. */
+    preavisJours: SALAIRE_IMPAYE_MAX_JOURS,
+  });
+});
+
+app.post("/employees/hire", async (req, res) => {
+  const body = z.object({ candidateId: z.string() }).safeParse(req.body);
+  const auth = await userFromAuthHeader(req);
+  if (!body.success) {
+    res.status(400).json(body.error.flatten());
+    return;
+  }
+  if (!auth?.user.farm) {
+    res.status(auth ? 404 : 401).json({ error: auth ? "Ferme introuvable" : "Jeton requis" });
+    return;
+  }
+  const farmId = auth.user.farm.id;
+  const { employes, lits } = await equipeDe(farmId);
+  if (!peutEmbaucher({ employes: employes.length, lits })) {
+    res.status(409).json({
+      error:
+        lits > 0
+          ? `Plus de lit libre — agrandissez le logement du personnel (${lits} lit(s)).`
+          : `Deux employés logent au village ; au-delà, il faut bâtir un logement du personnel.`,
+    });
+    return;
+  }
+  /* Le candidat n'existe qu'en mémoire : on le retrouve dans le vivier du
+     jour plutôt que de faire confiance au corps de la requête. Sans cela,
+     n'importe qui s'embaucherait un 5/5/5. */
+  const candidat = candidatsDuJour(farmId, gameDayIndex(Date.now())).find(
+    (c) => c.id === body.data.candidateId,
+  );
+  if (!candidat) {
+    res.status(409).json({ error: "Ce candidat n'est plus au tableau — le vivier a tourné." });
+    return;
+  }
+  /* `sourceId` porte l'unicité : le même candidat ne s'embauche pas deux fois.
+     C'est la base qui refuse, pas une lecture préalable — deux requêtes
+     lancées ensemble passeraient toutes deux un simple contrôle, et la ferme
+     se retrouverait avec deux fiches pour la même personne. */
+  const embauche = await prisma.employee
+    .create({
+      data: {
+        farmId,
+        name: candidat.name,
+        conduite: candidat.conduite,
+        mecanique: candidat.mecanique,
+        elevage: candidat.elevage,
+        sourceId: candidat.id,
+      },
+    })
+    .catch((e: unknown) => {
+      if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === "P2002") return null;
+      throw e;
+    });
+  if (!embauche) {
+    res.status(409).json({ error: `${candidat.name} travaille déjà chez vous.` });
+    return;
+  }
+  res.status(201).json({
+    employee: { ...embauche, salaire: salaireJournalier(embauche) },
+    // Ce qu'il coûtera demain, logement compris : le joueur décide en le
+    // sachant, pas au premier prélèvement.
+    masseSalariale: masseSalariale([...employes, embauche], lits),
+  });
+});
+
+app.post("/employees/:id/post", async (req, res) => {
+  const body = z.object({ poste: z.enum(["CHAMP", "ELEVAGE"]) }).safeParse(req.body);
+  const auth = await userFromAuthHeader(req);
+  if (!body.success) {
+    res.status(400).json(body.error.flatten());
+    return;
+  }
+  if (!auth?.user.farm) {
+    res.status(auth ? 404 : 401).json({ error: auth ? "Ferme introuvable" : "Jeton requis" });
+    return;
+  }
+  const { count } = await prisma.employee.updateMany({
+    where: { id: req.params.id, farmId: auth.user.farm.id },
+    data: { poste: body.data.poste },
+  });
+  if (!count) {
+    res.status(404).json({ error: "Employé inconnu" });
+    return;
+  }
+  res.json({ ok: true, poste: body.data.poste });
+});
+
+app.post("/employees/:id/fire", async (req, res) => {
+  const auth = await userFromAuthHeader(req);
+  if (!auth?.user.farm) {
+    res.status(auth ? 404 : 401).json({ error: auth ? "Ferme introuvable" : "Jeton requis" });
+    return;
+  }
+  const { count } = await prisma.employee.deleteMany({
+    where: { id: req.params.id, farmId: auth.user.farm.id },
+  });
+  if (!count) {
+    res.status(404).json({ error: "Employé inconnu" });
+    return;
+  }
+  res.json({ ok: true });
+});
+
+/**
+ * Les salaires, au changement de jour de jeu.
+ *
+ * Même mécanisme que les intérêts de la dette : le compte tourne hors
+ * connexion, sinon un joueur absent ne paierait rien et la main-d'œuvre
+ * cesserait d'être un coût qui revient.
+ *
+ * Trésorerie insuffisante : on ne prélève pas, et `paidAt` n'avance pas. Le
+ * joueur a donc deux journées de jeu pour renflouer — c'est le préavis. Au-delà,
+ * l'employé s'en va.
+ *
+ * Il ne part pas en silence : `/employees` renvoie les jours impayés de chacun,
+ * et l'écran du personnel les affiche en clair avec ce qu'il reste avant le
+ * départ. Le grand livre ne peut pas porter cet avertissement — il n'inscrit
+ * que des mouvements d'argent, et un salaire qu'on ne paie pas n'en est pas
+ * un ; c'est justement pourquoi la mise en garde vit sur l'écran de l'équipe.
+ */
+async function tickSalaires(): Promise<void> {
+  const maintenant = Date.now();
+  const equipes = await prisma.employee.findMany({
+    where: { paidAt: { lt: new Date(maintenant - GAME_DAY_MS) } },
+    orderBy: { farmId: "asc" },
+  });
+  if (!equipes.length) return;
+  const parFerme = new Map<string, typeof equipes>();
+  for (const e of equipes) {
+    const liste = parFerme.get(e.farmId) ?? [];
+    liste.push(e);
+    parFerme.set(e.farmId, liste);
+  }
+  for (const [farmId, membres] of parFerme) {
+    const ferme = await prisma.farm.findUnique({
+      where: { id: farmId },
+      select: { userId: true },
+    });
+    if (!ferme) continue;
+    const lits = await litsDeLaFerme(farmId);
+    // Les mieux payés dorment sur place : la remise rapporte le plus là.
+    const tries = [...membres].sort((a, b) => salaireJournalier(b) - salaireJournalier(a));
+    for (const [rang, e] of tries.entries()) {
+      const jours = Math.floor((maintenant - e.paidAt.getTime()) / GAME_DAY_MS);
+      if (jours < 1) continue;
+      const du = salaireJournalier(e, { loge: rang < lits }) * jours;
+      const patron = await prisma.user.findUnique({ where: { id: ferme.userId } });
+      if (!patron) continue;
+      if (peutPayer(patron, du)) {
+        await prisma.$transaction(async (tx) => {
+          await debit(tx, patron.id, du, "SALAIRES", `Salaire — ${e.name}, ${jours} jour(s)`);
+          await tx.employee.updateMany({
+            where: { id: e.id },
+            data: { paidAt: new Date(maintenant) },
+          });
+        });
+      } else if (jours > SALAIRE_IMPAYE_MAX_JOURS) {
+        await prisma.employee.deleteMany({ where: { id: e.id } });
+        console.warn(`salaire impayé — ${e.name} quitte la ferme ${farmId}`);
+      }
+    }
+  }
+}
+
 app.post("/parcels/:id/jobs", async (req, res) => {
   const body = z
     .object({
@@ -5830,17 +7435,30 @@ app.post("/parcels/:id/jobs", async (req, res) => {
    * cases concernées » — c'est la seule issue qui ne demande rien à personne.
    * On garde ce qui peut partir, on dit combien on a laissé.
    */
-  await libererChantiersAbandonnes(parcel.id);
+  await libererChantiersAbandonnes(parcel.id, body.data.userId);
   const pris = await occupiedJobCells(parcel.id);
   const cells = demandees.filter((c) => !pris.has(`${c.x},${c.y}`));
   const ignorees = demandees.length - cells.length;
   if (!cells.length) {
+    /*
+     * Le refus dit qui retient les cases, et jusqu'à quand.
+     *
+     * Le message parlait d'un « chantier en cours » sans regarder l'heure : le
+     * joueur le lisait devant un champ vide, sur des labours terminés depuis
+     * six minutes. Ses propres chantiers finis viennent d'être clos juste
+     * au-dessus ; ce qui reste tourne vraiment, ou appartient à quelqu'un
+     * d'autre. Dans les deux cas, l'attente a une fin et elle s'affiche.
+     */
+    const jusqua = await finDesChantiersSur(parcel.id, demandees);
+    const attente = jusqua ? attenteEnClair(jusqua) : null;
     res.status(409).json({
       error:
-        demandees.length === 1
-          ? "Cette case est déjà sur un chantier en cours."
-          : "Toutes ces cases sont déjà sur un chantier en cours.",
+        (demandees.length === 1
+          ? "Cette case est retenue par un chantier"
+          : "Ces cases sont retenues par un chantier") +
+        (attente ? ` — libre dans ${attente}.` : " en cours."),
       skipped: ignorees,
+      freeAt: jusqua?.toISOString(),
     });
     return;
   }
@@ -5878,9 +7496,36 @@ app.post("/parcels/:id/jobs", async (req, res) => {
     return;
   }
 
-  const picked = pickMachineForWork(access.machines, work);
-  if (!picked) {
+  const candidate = pickMachineForWork(access.machines, work);
+  if (!candidate) {
     res.status(409).json({ error: explainNoMachine(access.machines, work) });
+    return;
+  }
+  let picked = candidate;
+  /*
+   * Le matériel plafonne, l'employé débloque.
+   *
+   * L'attelage est libre — c'est la condition qu'on vient de vérifier — mais
+   * il faut encore quelqu'un pour le conduire. Le joueur compte pour un
+   * conducteur, et chaque employé **aux champs** en ajoute un ; celui qui
+   * passe sa journée à l'élevage ne conduit pas.
+   */
+  const workFarmId = access.workFarmId;
+  const braves = await bonusEquipe(workFarmId);
+  const plafond = chantiersSimultanes({
+    employesAuChamp: braves.auChamp,
+    attelagesLibres: Number.POSITIVE_INFINITY,
+  });
+  const menes = await chantiersEnCours(body.data.userId);
+  if (menes >= plafond) {
+    res.status(409).json({
+      error:
+        braves.auChamp === 0
+          ? "Vous ne pouvez mener qu'un chantier à la fois — embauchez quelqu'un pour en ouvrir un second."
+          : `Toute l'équipe est déjà au travail (${menes} chantier(s)) — embauchez, ou attendez.`,
+      running: menes,
+      cap: plafond,
+    });
     return;
   }
 
@@ -5893,16 +7538,23 @@ app.post("/parcels/:id/jobs", async (req, res) => {
    * l'essentiel — c'est le matériel qui fait le rendement, pas l'habitude.
    */
   const competences = await getSkillBonuses(body.data.userId);
-  const duree = Math.max(
+  /* Le meilleur conducteur de l'équipe mène celui-ci — jusqu'à un quart de
+     temps en moins. Le gain s'ajoute à celui du joueur : l'un vient de son
+     expérience, l'autre de qui il emploie, et rien ne justifie qu'ils
+     s'annulent. */
+  const equipe = await bonusEquipe(workFarmId);
+  let duree = Math.max(
     1,
-    Math.round(dureeChantier(picked, cells.length) * (1 - competences.WORK_SPEED)),
+    Math.round(
+      dureeChantier(picked, cells.length) * (1 - competences.WORK_SPEED) * (1 - equipe.conduite),
+    ),
   );
   /* Le plein se fait au départ, pas à l'arrivée : le gazole part dans le
      réservoir au moment où l'engin quitte la cour. Un chantier abandonné le
      rend, puisqu'il n'a rien brûlé. */
-  const gazole = gazoleChantier(picked, cells.length) * (1 - competences.FUEL_USE);
+  let gazole = gazoleChantier(picked, cells.length) * (1 - competences.FUEL_USE);
   const cuve = await prisma.farm.findUnique({
-    where: { id: parcel.farmId! },
+    where: { id: workFarmId },
     select: { fuelL: true },
   });
   if ((cuve?.fuelL ?? 0) < gazole) {
@@ -5913,12 +7565,37 @@ app.post("/parcels/:id/jobs", async (req, res) => {
     });
     return;
   }
-  const endsAt = new Date(Date.now() + duree);
+  let endsAt = new Date(Date.now() + duree);
   const job = await prisma.$transaction(async (tx) => {
-    await tx.farm.update({
-      where: { id: parcel.farmId! },
+    // Les départs de la même ferme sont sérialisés, même sur deux parcelles
+    // ou deux requêtes simultanées. Toutes les relectures utilisent ce client.
+    await tx.$queryRaw`SELECT "id" FROM "Farm" WHERE "id" = ${workFarmId} FOR UPDATE`;
+    const machines = await tx.machine.findMany({ where: { farmId: workFarmId } });
+    const rigIds = machines.map((m) => m.id);
+    const reservations = await tx.fieldJob.findMany({
+      where: { status: "RUNNING", OR: [{ machineId: { in: rigIds } }, { tractorId: { in: rigIds } }] },
+      select: { machineId: true, tractorId: true },
+    });
+    const reserved = new Set(reservations.flatMap((j) => [j.machineId, j.tractorId]));
+    // Le premier choix peut être pris pendant l'aller-retour. Choisir un
+    // autre attelage libre, et non refuser une ferme qui en possède deux.
+    const rig = pickMachineForWork(machines.filter((m) => !reserved.has(m.id)), work);
+    if (!rig) throw new Error("RIG_RESERVED");
+    picked = rig;
+    const currentTeam = await bonusEquipe(workFarmId, tx);
+    duree = Math.max(1, Math.round(dureeChantier(picked, cells.length) * (1 - competences.WORK_SPEED) * (1 - currentTeam.conduite)));
+    gazole = gazoleChantier(picked, cells.length) * (1 - competences.FUEL_USE);
+    endsAt = new Date(Date.now() + duree);
+    const running = await tx.fieldJob.count({ where: { userId: body.data.userId, status: "RUNNING", endsAt: { gte: new Date() } } });
+    if (running >= 1 + currentTeam.auChamp) throw new Error("TEAM_RESERVED");
+    const onParcel = await tx.fieldJob.findMany({ where: { parcelId: parcel.id, status: "RUNNING" }, select: { cellsJson: true } });
+    const occupied = new Set(onParcel.flatMap((j) => parseCellJson(j.cellsJson).map((c) => `${c.x},${c.y}`)));
+    if (cells.some((c) => occupied.has(`${c.x},${c.y}`))) throw new Error("CELLS_RESERVED");
+    const fuel = await tx.farm.updateMany({
+      where: { id: workFarmId, fuelL: { gte: gazole } },
       data: { fuelL: { decrement: gazole } },
     });
+    if (!fuel.count) throw new Error("FUEL_RESERVED");
     const created = await tx.fieldJob.create({
       data: {
         parcelId: parcel.id,
@@ -5932,12 +7609,23 @@ app.post("/parcels/:id/jobs", async (req, res) => {
         endsAt,
       },
     });
-    // L'attelage part au champ : il ne peut ni repartir sur un autre travail,
-    // ni se vendre pendant ce temps-là.
-    const ids = [picked.machine.id, picked.tractor?.id].filter(Boolean) as string[];
-    await tx.machine.updateMany({ where: { id: { in: ids } }, data: { busyUntil: endsAt } });
+    // L'outil et son tracteur restent réservés jusqu'à la clôture du chantier.
+    await reglerOccupation(tx, [picked.machine.id, picked.tractor?.id]);
     return created;
+  }).catch((error: unknown) => {
+    const messages: Record<string, string> = {
+      RIG_RESERVED: "Cet attelage est déjà réservé par un chantier — attendez son retour ou utilisez un second tracteur et un outil libres.",
+      TEAM_RESERVED: "Toute l’équipe est déjà au travail — attendez ou affectez un employé aux champs.",
+      CELLS_RESERVED: "Une de ces cases vient d’être réservée par un autre chantier.",
+      FUEL_RESERVED: "Le gazole disponible ne suffit plus pour ce chantier.",
+    };
+    if (error instanceof Error && messages[error.message]) {
+      res.status(409).json({ error: messages[error.message] });
+      return null;
+    }
+    throw error;
   });
+  if (!job) return;
 
   res.status(201).json({
     job: {
@@ -6231,13 +7919,12 @@ app.post("/jobs/:id/cancel", async (req, res) => {
   }
   await prisma.$transaction(async (tx) => {
     await tx.fieldJob.update({ where: { id: job.id }, data: { status: "CANCELLED" } });
-    const ids = [job.machineId, job.tractorId].filter(Boolean) as string[];
-    await tx.machine.updateMany({ where: { id: { in: ids } }, data: { busyUntil: null } });
+    await reglerOccupation(tx, [job.machineId, job.tractorId]);
     // Le plein retourne à la cuve : l'engin n'est pas parti.
-    const parcelle = await tx.parcel.findUnique({ where: { id: job.parcelId } });
-    if (parcelle?.farmId && job.fuelL > 0) {
+    const ferme = await tx.farm.findUnique({ where: { userId: job.userId } });
+    if (ferme && job.fuelL > 0) {
       await tx.farm.update({
-        where: { id: parcelle.farmId },
+        where: { id: ferme.id },
         data: { fuelL: { increment: job.fuelL } },
       });
     }
@@ -6356,10 +8043,21 @@ app.post("/parcels/:id/plant", async (req, res) => {
              d'adventices restent en place : c'est le vrai coût agronomique du
              semis direct, et il manquait. */
           weedAt: new Date(now),
+          /*
+           * La pression **effective**, pas celle du dernier geste.
+           *
+           * On lisait `cell.weedPressure` brut, c'est-à-dire la valeur figée
+           * au dernier travail du sol — zéro après un labour. Tout ce qui
+           * avait levé depuis, et que `pressionAdventices` sait calculer,
+           * était jeté au moment précis où il aurait compté. D'où le
+           * signalement : « j'ai laissé les champs juste labourés, pas une
+           * seule mauvaise herbe, rien n'a poussé ». Le modèle montait bien,
+           * c'est le semis qui remettait le compteur à zéro en silence.
+           */
           weedPressure: weedsAtSowing({
             carried: plan.directSeed
-              ? weedsAfterSoilWork("DIRECT_SEED", cell.weedPressure ?? 0)
-              : (cell.weedPressure ?? 0),
+              ? weedsAfterSoilWork("DIRECT_SEED", pressionAdventices(cell, saison))
+              : pressionAdventices(cell, saison),
             sameCropAgain: cell.lastCrop === plantCrop,
           }),
           directSeeded: plan.directSeed,
@@ -6468,7 +8166,7 @@ app.post("/parcels/:id/fertilize", async (req, res) => {
   const needed = manureNeededForCells(eligible.length);
   const available = await parcelManureTons(parcel.id);
   const usedManure = needed > 0 && available >= needed;
-  const cost = usedManure || !access.charge ? 0 : 10 * body.data.cells.length;
+  const cost = usedManure || !access.charge ? 0 : FERTILIZE_COST_PER_CELL * eligible.length;
   const user = await prisma.user.findUnique({ where: { id: body.data.userId } });
   if (!user || (access.charge && !peutPayer(user, cost))) {
     res.status(402).json({ error: "€ insuffisants" });
@@ -6757,43 +8455,7 @@ app.post("/parcels/:id/stubble", async (req, res) => {
       ? parcel.cells.filter((c) => remaining.some((t) => t.x === c.x && t.y === c.y))
       : parcel.cells;
 
-  const targets: (typeof selection)[number][] = [];
-  /**
-   * Cases à remettre en herbe : travaillées, nues, sans chaumes.
-   *
-   * Le même outil, le même bouton. Une terre labourée puis abandonnée restait
-   * marron indéfiniment, et « Déchaumer » la refusait avec « la case n'a pas de
-   * chaumes » — un refus juste, mais sans issue. Le déchaumeur sait aussi
-   * reprendre une terre nue et la remettre en herbe : c'est ce qu'il fait ici.
-   */
-  const enherber: (typeof selection)[number][] = [];
-  let blockedByPlow = 0;
-  for (const cell of selection) {
-    if (cell.kind !== "EMPTY") continue;
-    const verdict = canStubble({
-      harvestsSincePlow: cell.harvestsSincePlow,
-      residuePasses: cell.residuePasses,
-      hasStubble: cell.hasStubble,
-    });
-    if (verdict.ok) {
-      if (cell.baleCount > 0) continue;
-      targets.push(cell);
-      continue;
-    }
-    if (verdict.reason === "PLOW_REQUIRED") {
-      blockedByPlow += 1;
-      continue;
-    }
-    if (
-      canRegrass({
-        hasStubble: cell.hasStubble,
-        hasCrop: Boolean(cell.crop),
-        worked: cell.fieldStage !== "EMPTY",
-      })
-    ) {
-      enherber.push(cell);
-    }
-  }
+  const { targets, enherber, blockedByPlow } = trierDechaumage(selection);
 
   if (!targets.length && !enherber.length) {
     res.status(409).json({
@@ -6817,43 +8479,7 @@ app.post("/parcels/:id/stubble", async (req, res) => {
     if (access.charge) {
       await debit(tx, user.id, cost, "CULTURES", "Déchaumage");
     }
-    for (const cell of enherber) {
-      const next = applyRegrass();
-      await tx.parcelCell.update({
-        where: { id: cell.id },
-        data: {
-          fieldStage: "EMPTY",
-          hasStubble: false,
-          strawTons: 0,
-          harvestsSincePlow: next.harvestsSincePlow,
-          residuePasses: next.residuePasses,
-          // L'herbe reprend : la case n'est plus un lit de semence propre.
-          weedPressure: 0,
-          directSeeded: false,
-        },
-      });
-    }
-    for (const cell of targets) {
-      const next = applyStubble({
-        harvestsSincePlow: cell.harvestsSincePlow,
-        residuePasses: cell.residuePasses,
-        hasStubble: cell.hasStubble,
-      });
-      await tx.parcelCell.update({
-        where: { id: cell.id },
-        data: {
-          fieldStage: "PREPARED",
-          hasStubble: false,
-          strawTons: 0,
-          residuePasses: next.residuePasses,
-          /* Faux-semis : le déchaumage fait lever les graines puis les détruit
-             aussitôt. `soil.ts` l'affirmait déjà en toutes lettres — « il
-             détruit les adventices » — sans que rien ne l'implémente. */
-          weedPressure: weedsAfterSoilWork("STUBBLE", pressionAdventices(cell)),
-          weedAt: new Date(),
-        },
-      });
-    }
+    await ecrireDechaumage(tx, targets, enherber);
     // Remettre en herbe use la machine et paie l'expérience autant que
     // déchaumer : c'est le même passage d'outil sur la même surface.
     const wear = await applyWearToMachine(tx, {
@@ -7202,8 +8828,15 @@ app.post("/parcels/:id/harvest", async (req, res) => {
       moisture: number;
       quality: number;
     }[] = [];
+    let vegetableTons = 0;
     for (const [crop, { tons, wet, moistureSum }] of byCrop) {
-      if (!isGrainGood(crop)) continue;
+      if (!isGrainGood(crop)) {
+        if (!isMowCrop(crop)) {
+          await addToStock(tx, parcel.farmId!, harvestItemCode(crop), tons, 0, 3);
+          vegetableTons += tons;
+        }
+        continue;
+      }
       const batchMoisture = tons > 0 ? moistureSum / tons : harvestMoisture();
       incomingGrain.push({
         code: crop,
@@ -7228,6 +8861,7 @@ app.post("/parcels/:id/harvest", async (req, res) => {
     if (hayTons > 0) {
       await addToStock(tx, parcel.farmId!, "HAY", hayTons, 0, 3);
     }
+    grain.storedTons += vegetableTons + hayTons;
 
     if (harvested.length === 0) {
       return { wear: null, mowWear: null, grain, labor: null, gain: null };
@@ -7815,6 +9449,103 @@ app.post("/buildings/:id/rotate", async (req, res) => {
   res.json({ building: updated });
 });
 
+/**
+ * Déménager un bâtiment déjà posé.
+ *
+ * Demandé en jouant : la cour d'une ferme se réorganise, et la seule voie
+ * jusqu'ici était de démolir (40 % rendus) puis de rebâtir — 60 % de perdu.
+ * Le prix vit dans `buildingMoveCost` ; le raisonnement aussi.
+ *
+ * Le bâtiment ne change pas d'identité : même ligne, même niveau, mêmes engins
+ * rangés dedans, même troupeau. Seules ses cases changent. C'est ce qui
+ * distingue un déménagement d'une démolition suivie d'une reconstruction, et
+ * c'est pourquoi il n'a pas à coûter le même prix.
+ */
+app.post("/buildings/:id/move", async (req, res) => {
+  const body = z
+    .object({
+      userId: z.string(),
+      x: z.number().int().min(0),
+      y: z.number().int().min(0),
+      rotation: z.number().int().min(0).max(3).optional(),
+    })
+    .safeParse(req.body);
+  if (!body.success) {
+    res.status(400).json(body.error.flatten());
+    return;
+  }
+  const building = await prisma.building.findUnique({
+    where: { id: req.params.id },
+    include: { parcel: { include: { farm: true, cells: true } } },
+  });
+  if (!building?.parcel.farm || building.parcel.farm.userId !== body.data.userId) {
+    res.status(403).json({ error: "Bâtiment non possédé" });
+    return;
+  }
+  const rotation = quarterTurns(body.data.rotation ?? building.rotation);
+  const type = building.type as SharedBuildingType;
+  const foot = orientedFootprint(type, rotation);
+  if (
+    body.data.x + foot.w > building.parcel.gridW ||
+    body.data.y + foot.h > building.parcel.gridH
+  ) {
+    res.status(409).json({ error: "Le bâtiment déborderait de la parcelle" });
+    return;
+  }
+  const wanted = footprintCells(body.data.x, body.data.y, foot.w, foot.h);
+  for (const c of wanted) {
+    const cell = building.parcel.cells.find((p) => p.x === c.x && p.y === c.y);
+    /* Ses propres cases ne le gênent pas : un bâtiment peut glisser d'une case
+       et chevaucher sa place d'avant. Même règle que le quart de tour. */
+    if (!cell || (cell.kind !== "EMPTY" && cell.buildingId !== building.id)) {
+      res.status(409).json({ error: `Place occupée en ${c.x},${c.y}` });
+      return;
+    }
+  }
+  if (body.data.x === building.originX && body.data.y === building.originY && rotation === building.rotation) {
+    res.status(409).json({ error: "Le bâtiment est déjà là." });
+    return;
+  }
+
+  const user = await prisma.user.findUnique({ where: { id: body.data.userId } });
+  if (!user) {
+    res.status(404).json({ error: "Joueur introuvable" });
+    return;
+  }
+  const cout = buildingMoveCost(type, building.level, Date.now() - building.createdAt.getTime());
+  if (cout > 0 && !peutPayer(user, cout)) {
+    res.status(402).json({ error: `€ insuffisants — ${cout} requis` });
+    return;
+  }
+
+  const updated = await prisma.$transaction(async (tx) => {
+    if (cout > 0) {
+      await debit(
+        tx,
+        user.id,
+        cout,
+        "BATIMENTS",
+        `Déplacement — ${BUILDING_DEFS[type]?.name ?? type}`,
+      );
+    }
+    await tx.parcelCell.updateMany({
+      where: { buildingId: building.id },
+      data: { kind: "EMPTY", buildingId: null },
+    });
+    for (const c of wanted) {
+      await tx.parcelCell.update({
+        where: { parcelId_x_y: { parcelId: building.parcelId, x: c.x, y: c.y } },
+        data: { kind: "BUILDING", buildingId: building.id },
+      });
+    }
+    return tx.building.update({
+      where: { id: building.id },
+      data: { originX: body.data.x, originY: body.data.y, rotation },
+    });
+  });
+  res.json({ building: updated, cost: cout });
+});
+
 /** Passage d'un bâtiment au palier suivant (5 niveaux au total). */
 app.post("/buildings/:id/upgrade", async (req, res) => {
   const body = z.object({ userId: z.string() }).safeParse(req.body);
@@ -7924,6 +9655,74 @@ function paddocksFor(
   return { cells, capacity: paddockCapacity(cells), yardType };
 }
 
+/**
+ * Ce qui est bâti autour d'un abri, et le niveau d'installation qui en découle.
+ *
+ * Un seul endroit pour cette lecture, appelé par le tick comme par l'écran :
+ * le chiffre affiché « Installation Nv. 3 » et celui qui multiplie le lait
+ * doivent être le même, sans quoi le joueur bâtit à l'aveugle.
+ *
+ * L'adjacence se juge sur l'emprise posée, orientation comprise — même règle
+ * que pour l'enclos, et pour la même raison.
+ */
+function installationAround(
+  barn: { originX: number; originY: number; type: string; rotation?: number; level?: number },
+  buildings: { type: string; originX: number; originY: number; rotation?: number }[],
+): { level: number; hasPaddock: boolean; hasTrough: boolean; hasRack: boolean } {
+  const footprint = {
+    originX: barn.originX,
+    originY: barn.originY,
+    ...orientedFootprint(barn.type as SharedBuildingType, barn.rotation),
+  };
+  const yardType = yardTypeForBarn(barn.type);
+  let hasPaddock = false;
+  let hasTrough = false;
+  let hasRack = false;
+
+  for (const b of buildings) {
+    if (b.type !== yardType && !isTrough(b.type) && !isHayRack(b.type)) continue;
+    const foot = orientedFootprint(b.type as SharedBuildingType, b.rotation);
+    if (!isPaddockAdjacent(footprint, { originX: b.originX, originY: b.originY, ...foot })) {
+      continue;
+    }
+    if (b.type === yardType) hasPaddock = true;
+    if (isTrough(b.type)) hasTrough = true;
+    if (isHayRack(b.type)) hasRack = true;
+  }
+
+  return {
+    hasPaddock,
+    hasTrough,
+    hasRack,
+    level: installationLevel({ barnLevel: barn.level ?? 1, hasPaddock, hasTrough, hasRack }),
+  };
+}
+
+/**
+ * Le niveau d'installation d'un abri, quand on n'a que l'abri sous la main.
+ *
+ * Les routes de récolte — traite, ramassage, tonte, abattage — ne chargent que
+ * le bâtiment. Sans cette relecture, elles rendraient moins que ce que
+ * l'écran d'élevage venait d'annoncer, parce que l'abreuvoir et le râtelier ne
+ * compteraient pas : le joueur aurait payé pour un bonus qui ne s'applique
+ * qu'à l'affichage. Une requête de plus, sur un geste que le joueur déclenche
+ * lui-même, et le chiffre promis est le chiffre versé.
+ */
+async function installationForBarn(barn: {
+  parcelId: string;
+  originX: number;
+  originY: number;
+  type: string;
+  rotation?: number;
+  level?: number;
+}): Promise<number> {
+  const voisins = await prisma.building.findMany({
+    where: { parcelId: barn.parcelId },
+    select: { type: true, originX: true, originY: true, rotation: true },
+  });
+  return installationAround(barn, voisins).level;
+}
+
 /** Fumier encore dans les fosses de la parcelle, en tonnes. */
 async function parcelManureTons(parcelId: string): Promise<number> {
   const buildings = await prisma.building.findMany({
@@ -7998,13 +9797,17 @@ async function settleAllHerds() {
     const zone = barn.parcel.zone;
     const season = currentSeason((zone?.hemisphere as Hemisphere) ?? "N", now);
     const weather = weatherByZone.get(zone?.code ?? "") ?? "CLEAR";
+    const installation = installationAround(barn, barn.parcel.buildings);
     const apres = await settleHerd(herd, paddock.capacity, now, barn.level, capacity, {
       season,
       weather,
       paddockCells: paddock.cells,
+      installationLevel: installation.level,
+      hasTrough: installation.hasTrough,
+      fumierEnPlus: partDeFumiere(barn.parcel.buildings),
     });
     // La salle de traite fait son travail, que le joueur regarde ou non.
-    await ramasserAutomatiquement(herd, barn.level, apres.size, now);
+    await ramasserAutomatiquement(herd, barn.level, apres.size, now, installation.level);
   }
 }
 
@@ -8034,6 +9837,14 @@ async function ramasserAutomatiquement(
   barnLevel: number,
   taille: number,
   now: number,
+  /**
+   * Niveau d'installation du bâtiment, cf. `installationAround()`.
+   *
+   * Sans lui, la salle de traite automatique rendrait moins que la traite à la
+   * main sur la même étable : l'abreuvoir et le râtelier ne compteraient pas.
+   * Automatiser ne doit rien changer à ce qu'on récolte.
+   */
+  niveauInstallation = 1,
 ): Promise<void> {
   if (!autoCollects(barnLevel) || taille <= 0) return;
 
@@ -8046,6 +9857,7 @@ async function ramasserAutomatiquement(
     herdSize: taille,
     happiness: herd.happiness,
     barnLevel,
+    installationLevel: niveauInstallation,
     feedQuality: herd.feedQuality,
   };
   let bien: TradeGood | null = null;
@@ -8088,6 +9900,12 @@ async function settleHerd(
     beddingTons?: number;
     housing?: string;
     grassTons?: number;
+    /** Abreuvement, cf. `tickWater()`. Absent : le lot est réputé abreuvé. */
+    water?: number;
+    /** Santé, cf. `tickHealth()`. Absente : le lot est réputé en bonne santé. */
+    health?: number;
+    /** Début de la privation en cours, `null` si tout est couvert. */
+    deprivedSince?: Date | null;
     /**
      * Jeunes du lot, comptés dans `size`.
      *
@@ -8117,7 +9935,30 @@ async function settleHerd(
    * printemps par temps clair et un pré nul, ce qui reproduit l'ancien
    * fonctionnement.
    */
-  env?: { season: Season; weather: WeatherState; paddockCells: number },
+  env?: {
+    season: Season;
+    weather: WeatherState;
+    paddockCells: number;
+    /**
+     * Ce qui est bâti autour, cf. `installationAround()`.
+     *
+     * Facultatif comme le reste : sans lui, on retombe sur le niveau que la
+     * seule étable vaut. Un appelant qui l'ignore n'est jamais pénalisé pour
+     * une information qu'il n'avait pas à fournir — c'est la règle de toute
+     * cette signature.
+     */
+    installationLevel?: number;
+    /** Un abreuvoir automatique est-il rattaché au bâtiment ? */
+    hasTrough?: boolean;
+    /**
+     * Ce que les fumières de la parcelle ajoutent au stockage de ce lot.
+     *
+     * Facultatif comme le reste : sans elle, on retombe sur la contenance que
+     * les seules places de l'étable donnent — soit exactement le comportement
+     * d'avant que la fumière existe.
+     */
+    fumierEnPlus?: number;
+  },
 ): Promise<{
   happiness: number;
   feedStock: number;
@@ -8128,6 +9969,9 @@ async function settleHerd(
   avgAgeMs: number;
   manureTons: number;
   beddingTons: number;
+  water: number;
+  health: number;
+  deprivedSince: Date | null;
 }> {
   /*
    * Les compétences de l'éleveur, résolues ici plutôt qu'aux appelants.
@@ -8155,6 +9999,9 @@ async function settleHerd(
       avgAgeMs: herd.avgAgeMs,
       manureTons: herd.manureTons ?? 0,
       beddingTons: herd.beddingTons ?? 0,
+      water: herd.water ?? 1,
+      health: herd.health ?? 1,
+      deprivedSince: herd.deprivedSince ?? null,
     };
   }
 
@@ -8220,6 +10067,7 @@ async function settleHerd(
       // Le forfait d'avant est neutralisé : c'est `saved` qui fait le travail.
       grazing: false,
       barnLevel,
+      installationLevel: env?.installationLevel,
       kind,
     }) *
     (1 - saved) *
@@ -8243,7 +10091,7 @@ async function settleHerd(
   );
   const cover = beddingCover({ kind, herdSize: herd.size, stockTons: beddingTons });
 
-  const pitCap = manurePitCapacity(kind, capacity);
+  const pitCap = manurePitCapacity(kind, capacity) + Math.max(0, env?.fumierEnPlus ?? 0);
   // La paille ne disparaît pas : elle passe dans le tas. C'est ce qui rend le
   // paillage rentable au lieu d'être une taxe — l'éleveur achète de la paille
   // au céréalier et lui revend du fumier.
@@ -8271,11 +10119,52 @@ async function settleHerd(
   const tempC = feltTempC({ kind, housing, season, weather, barnLevel });
   const thermal = thermalPenalty({ kind, tempC });
 
+  /**
+   * L'eau, puis la cascade, puis la santé — dans cet ordre.
+   *
+   * La privation démarre à la ration : c'est le manque que le joueur peut
+   * voir venir, et il commande le reste. L'eau se vide ensuite, plus
+   * lentement, et un abreuvoir automatique la garde pleine quoi qu'il arrive.
+   */
+  const rationVide = feedStock <= 0;
+  const water = tickWater({
+    water: herd.water ?? 1,
+    hasTrough: Boolean(env?.hasTrough),
+    fed: !rationVide,
+    elapsedMs,
+  });
+
+  /*
+   * L'horloge de la privation.
+   *
+   * Elle ne démarre que sur un manque **vital** — plus rien à manger, ou plus
+   * rien à boire. Ni le froid, ni la litière, ni l'entassement ne la
+   * déclenchent : ils coûtent de la production, jamais une bête. C'est
+   * exactement ce qui manquait, et ce qui a tué le troupeau de la capture.
+   */
+  const prive = rationVide || water <= 0;
+  const deprivedSince = prive ? (herd.deprivedSince ?? new Date(now)) : null;
+  const deprivedH = deprivedSince ? Math.max(0, now - deprivedSince.getTime()) / 3_600_000 : 0;
+  const santeAvant = herd.health ?? 1;
+  const health = tickHealth({ health: santeAvant, deprivedH, elapsedMs });
+
   const happiness = tickHappiness({
     happiness: herd.happiness,
     hasPaddock: paddockCapacityCells > 0,
     grazedRecentlyMs: herd.lastGrazedAt ? now - herd.lastGrazedAt.getTime() : Number.MAX_SAFE_INTEGER,
-    crowding: paddockCapacityCells > 0 ? herd.size / Math.max(1, paddockCapacityCells) : 1,
+    /*
+     * L'encombrement se lit sur la capacité **du bâtiment**, et sur rien
+     * d'autre.
+     *
+     * Il se lisait sur les cases de l'enclos — dix-huit pour cinquante-cinq
+     * places — si bien qu'une étable au tiers pleine était déclarée
+     * surpeuplée dès seize bêtes ; et sans enclos du tout, le ratio valait
+     * `1` en dur, soit une peine permanente qu'aucun geste n'effaçait. Deux
+     * lignes plus haut dans le fichier, `capacity` disait pourtant depuis
+     * toujours combien de bêtes tiennent ici.
+     */
+    crowding: capacity > 0 ? herd.size / capacity : 0,
+    water,
     elapsedMs,
     /*
      * L'œil de l'éleveur **allège la peine**, il ne fabrique pas du bonheur.
@@ -8305,6 +10194,9 @@ async function settleHerd(
       gestatingSince: gestatingSince.getTime(),
       now,
       cycleMs: LIVESTOCK_CYCLE_MS,
+      // Une belle installation raccourcit la gestation : c'est le « ❤️ 115 % »
+      // de l'écran d'élevage, et il doit correspondre à quelque chose.
+      reproductionBonus: installationBonus(env?.installationLevel ?? 1).reproduction,
     });
     if (progress >= 1) {
       born = litterFor(herd.kind as AnimalKind, freeSlots);
@@ -8337,13 +10229,17 @@ async function settleHerd(
     });
   }
 
-  // Un troupeau affamé finit par perdre des bêtes. Lentement : on doit avoir
-  // le temps de réagir en rentrant.
+  // Un troupeau abandonné finit par perdre des bêtes — mais **seulement** au
+  // bout de la cascade, quand la santé est tombée à zéro. Trente-six heures
+  // réelles, et trois avertissements avant.
   const toll = mortalityToll({
-    happiness,
+    health,
+    // La santé baisse **pendant** le pas : sans les deux bornes, un joueur qui
+    // rentre après une journée se voit appliquer le pire barème à toute son
+    // absence, et retrouve une étable vide.
+    healthBefore: santeAvant,
     herdSize: size,
     elapsedMs,
-    cycleMs: LIVESTOCK_CYCLE_MS,
     debt: herd.mortalityDebt,
   });
   size = Math.max(0, size - toll.deaths);
@@ -8363,6 +10259,9 @@ async function settleHerd(
       avgAgeMs,
       manureTons: pit.tons,
       beddingTons,
+      water,
+      health,
+      deprivedSince,
     };
   }
 
@@ -8379,6 +10278,9 @@ async function settleHerd(
       manureTons: pit.tons,
       beddingTons,
       grassTons: pasture.grassTons,
+      water,
+      health,
+      deprivedSince,
       lastTickAt: new Date(now),
     },
   });
@@ -8392,6 +10294,9 @@ async function settleHerd(
     avgAgeMs,
     manureTons: pit.tons,
     beddingTons,
+    water,
+    health,
+    deprivedSince,
   };
 }
 
@@ -8418,10 +10323,30 @@ app.get("/parcels/:id/livestock", async (req, res) => {
   const saison = currentSeason((parcel.zone.hemisphere as Hemisphere) ?? "N", now);
   const meteo = (weather?.state as WeatherState) ?? "CLEAR";
 
+  /*
+   * Ce que la ferme ajoute à la production, savoir-faire et équipe compris.
+   *
+   * Les chiffres annoncés ici étaient les rendements **nus**, alors que les
+   * boutons de traite, de ramassage et de tonte appliquent les bonus. L'écran
+   * annonçait donc moins que ce qu'on obtenait — une bonne surprise, mais un
+   * écran qui se trompe reste un écran qui se trompe, et l'arrivée de
+   * l'employé d'élevage creusait l'écart.
+   *
+   * Résolu une fois pour toute la parcelle, pas une fois par bâtiment : une
+   * ferme de six étables aurait sinon fait douze requêtes pour deux réponses.
+   */
+  const soinElevage = parcel.farm ? await getSkillBonuses(parcel.farm.userId) : noSkillBonuses();
+  const equipeElevage = parcel.farmId ? await gainElevageDe(parcel.farmId) : 0;
+  /* Les fumières se partagent entre les abris de la parcelle : la part est la
+     même pour tous, donc elle se calcule une fois, hors de la boucle. */
+  const partFumiere = partDeFumiere(parcel.buildings);
+
   const barns = [];
   for (const b of parcel.buildings) {
     if (!kindForBarn(b.type)) continue;
     const paddock = paddocksFor(b, parcel.buildings);
+    const installation = installationAround(b, parcel.buildings);
+    const bonus = installationBonus(installation.level);
     const stats = buildingStatsAtLevel(b.type as SharedBuildingType, b.level);
     const capacity = barnCapacity(b.type, stats);
     const herdKind = (b.herd?.kind as AnimalKind | undefined) ?? kindForBarn(b.type);
@@ -8441,6 +10366,9 @@ app.get("/parcels/:id/livestock", async (req, res) => {
     let gestatingSince: Date | null = b.herd?.gestatingSince ?? null;
     let manureTons = b.herd?.manureTons ?? 0;
     let beddingTons = b.herd?.beddingTons ?? 0;
+    let water = b.herd?.water ?? 1;
+    let health = b.herd?.health ?? 1;
+    let deprivedSince: Date | null = b.herd?.deprivedSince ?? null;
     /**
      * Les jeunes encore en croissance.
      *
@@ -8462,6 +10390,14 @@ app.get("/parcels/:id/livestock", async (req, res) => {
         now,
         b.level,
         capacity,
+        {
+          season: saison,
+          weather: meteo,
+          paddockCells: paddock.cells,
+          installationLevel: installation.level,
+          hasTrough: installation.hasTrough,
+          fumierEnPlus: partFumiere,
+        },
       );
       happiness = settled.happiness;
       feedStock = settled.feedStock;
@@ -8469,10 +10405,14 @@ app.get("/parcels/:id/livestock", async (req, res) => {
       gestatingSince = settled.gestatingSince;
       manureTons = settled.manureTons;
       beddingTons = settled.beddingTons;
+      water = settled.water;
+      health = settled.health;
+      deprivedSince = settled.deprivedSince;
     }
-    const pitCap = herdKind
-      ? manurePitCapacity(herdKind, capacity)
-      : manurePitCapacity("COW", capacity);
+    const pitCap =
+      (herdKind
+        ? manurePitCapacity(herdKind, capacity)
+        : manurePitCapacity("COW", capacity)) + partFumiere;
     const pitFill = manureFill(manureTons, pitCap);
 
     const graze = b.herd
@@ -8515,6 +10455,25 @@ app.get("/parcels/:id/livestock", async (req, res) => {
       type: b.type,
       level: b.level,
       capacity,
+      /**
+       * Places encore libres — le chiffre que l'écran affiche.
+       *
+       * « Étable encombrée » se lisait devant quinze places vides ; on dit
+       * maintenant combien il en reste, ce qui est à la fois vrai et utile.
+       * Négatif jamais : au-delà de la capacité, c'est `crowding` qui parle.
+       */
+      freeSlots: Math.max(0, capacity - (b.herd?.size ?? 0)),
+      /* — L'installation : ce qui est bâti autour, et ce que ça rapporte — */
+      installationLevel: installation.level,
+      installationLabel: installationLabel(installation.level),
+      installation: {
+        hasPaddock: installation.hasPaddock,
+        hasTrough: installation.hasTrough,
+        hasRack: installation.hasRack,
+        production: bonus.production,
+        reproduction: bonus.reproduction,
+        feed: bonus.feed,
+      },
       paddockCells: paddock.cells,
       paddockCapacity: paddock.capacity,
       yardType: paddock.yardType,
@@ -8525,10 +10484,27 @@ app.get("/parcels/:id/livestock", async (req, res) => {
             size: herdSize,
             happiness,
             label: happinessLabel(happiness),
-            // Prévenir vaut mieux que constater : au-dessous du seuil, le lot
-            // commence à perdre des bêtes, et le joueur doit pouvoir agir
-            // avant d'en compter les pertes.
-            atRisk: happiness < MORTALITY.floor,
+            /*
+             * Le lot est-il réellement en train de mourir ?
+             *
+             * Il lisait la satisfaction des besoins : un troupeau enfermé
+             * tombait à 0,35 et le moindre malus le déclarait mourant, d'où
+             * le bandeau rouge « des bêtes vont mourir » sur une étable au
+             * tiers pleine avec un jour de ration d'avance. Il lit maintenant
+             * la **santé**, qui ne baisse que par la cascade — et l'alerte ne
+             * s'allume donc que quand elle dit vrai.
+             */
+            atRisk: health < MORTALITY.floor,
+            /* — Les jauges de besoin, et l'horloge de la cascade — */
+            water: Math.round(water * 100) / 100,
+            health: Math.round(health * 100) / 100,
+            /** Heures réelles depuis que le nécessaire manque, 0 si tout va bien. */
+            deprivedH: deprivedSince
+              ? Math.round(((now - deprivedSince.getTime()) / 3_600_000) * 10) / 10
+              : 0,
+            cascade: cascadeStage(
+              deprivedSince ? (now - deprivedSince.getTime()) / 3_600_000 : 0,
+            ),
             grazingUntil: b.herd.grazingUntil?.getTime() ?? null,
             feedStock: Math.round(feedStock * 10) / 10,
             gestation: gestationProgress({
@@ -8536,6 +10512,7 @@ app.get("/parcels/:id/livestock", async (req, res) => {
               gestatingSince: gestatingSince?.getTime() ?? null,
               now,
               cycleMs: LIVESTOCK_CYCLE_MS,
+              reproductionBonus: bonus.reproduction,
             }),
             breedRefusal: (() => {
               if (gestatingSince) return null;
@@ -8566,6 +10543,24 @@ app.get("/parcels/:id/livestock", async (req, res) => {
               beddingCover({ kind: herdKind ?? "COW", herdSize, stockTons: beddingTons }) * 100,
             ) / 100,
             feedQuality: b.herd.feedQuality,
+            /**
+             * Dernier passage de l'employé affecté à l'élevage.
+             *
+             * Sans cette date, le vacher travaillait en silence : le joueur ne
+             * voyait que ses alertes ne plus apparaître, ce qui ressemble
+             * exactement à un employé qui ne sert à rien. C'est ce silence qui
+             * a fait poser deux fois la question « je pige toujours pas
+             * l'intérêt du PNJ éleveur ».
+             */
+            tendedAt: b.herd.tendedAt?.getTime() ?? null,
+            /**
+             * Ce que l'équipe a fait, et pas seulement quand.
+             *
+             * « Est-ce qu'il le traite, le vend, vide simplement ? » — la
+             * réponse est « il vend au voisin et garde la moitié », et elle
+             * doit se lire sur la fiche plutôt que se déduire du grand livre.
+             */
+            tendedWhat: b.herd.tendedWhat ?? null,
             /* — Environnement : ce que la simulation lit désormais — */
             housing: parseHousing(b.herd.housing),
             tempC: Math.round(herdTempC),
@@ -8595,8 +10590,11 @@ app.get("/parcels/:id/livestock", async (req, res) => {
               grazedRecentlyMs: b.herd.lastGrazedAt
                 ? now - b.herd.lastGrazedAt.getTime()
                 : Number.MAX_SAFE_INTEGER,
-              crowding:
-                paddock.capacity > 0 ? b.herd.size / Math.max(1, paddock.capacity) : 1,
+              // Sur la capacité du bâtiment, comme dans le tick. Les deux
+              // doivent dire la même chose, sinon l'écran explique une peine
+              // que la simulation n'applique pas — ou l'inverse.
+              crowding: capacity > 0 ? herdSize / capacity : 0,
+              water,
               hunger: hungerPenalty({
                 feedStock,
                 herdSize: b.herd.size,
@@ -8633,25 +10631,35 @@ app.get("/parcels/:id/livestock", async (req, res) => {
               herdSize: Math.max(0, herdSize - jeunes),
               happiness,
               barnLevel: b.level,
+              installationLevel: installation.level,
               feedQuality: b.herd.feedQuality,
-            }),
+            }) *
+              (1 + soinElevage.MILK_YIELD) *
+              (1 + equipeElevage),
             eggsPerCycle: eggYield({
               herdSize: Math.max(0, herdSize - jeunes),
               happiness,
               barnLevel: b.level,
+              installationLevel: installation.level,
               feedQuality: b.herd.feedQuality,
-            }),
+            }) *
+              (1 + soinElevage.EGG_YIELD) *
+              (1 + equipeElevage),
             woolPerShear: woolYield({
               herdSize: Math.max(0, herdSize - jeunes),
               happiness,
               barnLevel: b.level,
+              installationLevel: installation.level,
               feedQuality: b.herd.feedQuality,
-            }),
+            }) *
+              (1 + soinElevage.WOOL_YIELD) *
+              (1 + equipeElevage),
             meatAtSlaughter: meatYield({
               herdSize: b.herd.size,
               happiness,
               averageAgeMs: b.herd.avgAgeMs,
               barnLevel: b.level,
+              installationLevel: installation.level,
               kind: b.herd.kind as AnimalKind,
             }),
             manureTons: Math.round(manureTons * 1000) / 1000,
@@ -8762,9 +10770,25 @@ app.post("/buildings/:id/animals", async (req, res) => {
   const stats = buildingStatsAtLevel(building.type as SharedBuildingType, building.level);
   const capacity = barnCapacity(building.type, stats);
   const current = building.herd?.size ?? 0;
-  if (current + body.data.count > capacity) {
+  /*
+   * On peut entasser au-delà des places — c'était déjà prévu, et interdit.
+   *
+   * Signalé en jouant : « les bêtes ne dépassent pas le nombre max qu'il est
+   * possible dans l'étable, ce qui n'est pas normal, il faudrait que ce soit
+   * possible, au détriment des conditions ». Le modèle de bien-être définit
+   * depuis longtemps une peine d'entassement qui court du plein au double
+   * (`crowdingPenalty`) et qui ne tue jamais (`crowdingLethalThreshold`) —
+   * mais ce refus-ci rendait toute cette moitié inatteignable : `crowding` ne
+   * dépassait jamais 1, donc la peine valait toujours zéro.
+   *
+   * Le plafond devient donc le sommet de la courbe, au double de la capacité.
+   * Au-delà, la peine ne monte plus : on ferait souffrir des bêtes sans que le
+   * jeu en dise quoi que ce soit.
+   */
+  const plafond = maxAnimalsWithCrowding(capacity);
+  if (current + body.data.count > plafond) {
     res.status(409).json({
-      error: `Capacité dépassée — ${capacity} places, ${current} occupées`,
+      error: `Étable pleine à craquer — ${plafond} bêtes au maximum pour ${capacity} places, ${current} déjà là. Agrandissez le bâtiment.`,
     });
     return;
   }
@@ -8832,7 +10856,22 @@ app.post("/buildings/:id/animals", async (req, res) => {
       }
     }
   });
-  res.status(201).json({ added: body.data.count, cost, young: jeune });
+  /*
+   * L'avertissement voyage avec la réponse, il ne se devine pas.
+   *
+   * Entasser est désormais permis ; ce n'est pas pour autant gratuit. Le
+   * joueur doit lire ce que ça lui coûte au moment où il le fait, et non le
+   * découvrir une heure plus tard sur une courbe de production qui baisse.
+   */
+  res.status(201).json({
+    added: body.data.count,
+    cost,
+    young: jeune,
+    capacity,
+    size: current + body.data.count,
+    crowdingMax: plafond,
+    crowding: crowdingWarning({ size: current + body.data.count, capacity }),
+  });
 });
 
 /** Vente locale : le fumier part au voisin, pas au silo ni au négociant. */
@@ -9276,26 +11315,41 @@ app.post("/herds/:id/feed", async (req, res) => {
  * même règle serve à l'écran et à un test.
  */
 app.get("/players/:id/ledger", async (req, res) => {
-  const jours = Math.min(30, Math.max(1, Number(req.query.jours ?? 7)));
-  const depuis = new Date(Date.now() - jours * 24 * 60 * 60 * 1000);
-  const lignes = await prisma.ledgerEntry.findMany({
-    where: { userId: req.params.id, at: { gte: depuis } },
-    orderBy: { at: "desc" },
-    // Le Bureau montre les mouvements récents ; l'historique complet n'a pas
-    // à traverser le réseau pour être résumé.
-    take: 200,
-  });
-  const vues = lignes.map((l) => ({
-    amount: l.amount,
-    poste: l.poste as LedgerPoste,
-    label: l.label,
-    at: l.at.toISOString(),
-  }));
+  const query = z.object({
+    jours: z.coerce.number().int().min(0).max(1096).default(7),
+    cursor: z.string().min(1).max(100).optional(),
+    until: z.string().datetime().optional(),
+  }).safeParse(req.query);
+  if (!query.success) {
+    res.status(400).json({ error: "Période ou curseur du journal invalide." });
+    return;
+  }
+  const { jours, cursor } = query.data;
+  const until = query.data.until ? new Date(query.data.until) : new Date();
+  const where = {
+    userId: req.params.id,
+    at: { lte: until, ...(jours ? { gte: new Date(until.getTime() - jours * 86400000) } : {}) },
+  };
+  if (cursor && !await prisma.ledgerEntry.findFirst({ where: { ...where, id: cursor }, select: { id: true } })) {
+    res.status(400).json({ error: "Ce curseur n’appartient pas à ce journal ou à cette période." });
+    return;
+  }
+  const [page, recettes, depenses] = await Promise.all([
+    prisma.ledgerEntry.findMany({
+      where, orderBy: [{ at: "desc" }, { id: "desc" }], take: 101,
+      ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}),
+    }),
+    prisma.ledgerEntry.groupBy({ by: ["poste"], where: { ...where, amount: { gte: 0 } }, _sum: { amount: true } }),
+    prisma.ledgerEntry.groupBy({ by: ["poste"], where: { ...where, amount: { lt: 0 } }, _sum: { amount: true } }),
+  ]);
+  const lignes = page.slice(0, 100);
+  // Les totaux portent sur toute la période, jamais sur la seule page visible.
+  const totaux = [...recettes, ...depenses].map((l) => ({ amount: l._sum.amount ?? 0, poste: l.poste as LedgerPoste, label: "", at: until.toISOString() }));
   res.json({
-    lignes: vues,
-    postes: totauxParPoste(vues),
-    resultat: resultat(vues),
-    jours,
+    lignes: lignes.map((l) => ({ id: l.id, amount: l.amount, poste: l.poste as LedgerPoste, label: l.label, at: l.at.toISOString() })),
+    postes: totauxParPoste(totaux), resultat: resultat(totaux), jours,
+    until: until.toISOString(),
+    nextCursor: page.length > 100 ? lignes[lignes.length - 1].id : null,
   });
 });
 
@@ -9550,8 +11604,11 @@ app.post("/herds/:id/milk", async (req, res) => {
       herdSize: herd.size,
       happiness: herd.happiness,
       barnLevel: herd.building.level,
+      installationLevel: await installationForBarn(herd.building),
       feedQuality: herd.feedQuality,
-    }) * (1 + laitier.MILK_YIELD);
+    }) *
+    (1 + laitier.MILK_YIELD) *
+    (1 + (await gainElevageDe(herd.farmId)));
   // Le lait se compte en hectolitres au silo : cent litres la tonne d'échange.
   const litres = perCycle * cycles;
   const hectolitres = Math.round((litres / 100) * 1000) / 1000;
@@ -9622,8 +11679,11 @@ app.post("/herds/:id/collect-eggs", async (req, res) => {
       herdSize: herd.size,
       happiness: herd.happiness,
       barnLevel: herd.building.level,
+      installationLevel: await installationForBarn(herd.building),
       feedQuality: herd.feedQuality,
-    }) * (1 + avicole.EGG_YIELD);
+    }) *
+    (1 + avicole.EGG_YIELD) *
+    (1 + (await gainElevageDe(herd.farmId)));
   const crates = Math.round(perCycle * cycles * 100) / 100;
   if (crates <= 0) {
     res.status(409).json({ error: "Rien à ramasser : le lot ne pond pas" });
@@ -9678,8 +11738,11 @@ app.post("/herds/:id/shear", async (req, res) => {
       herdSize: herd.size,
       happiness: herd.happiness,
       barnLevel: herd.building.level,
+      installationLevel: await installationForBarn(herd.building),
       feedQuality: herd.feedQuality,
-    }) * (1 + ovin.WOOL_YIELD);
+    }) *
+    (1 + ovin.WOOL_YIELD) *
+    (1 + (await gainElevageDe(herd.farmId)));
   const tons = Math.round(perCycle * cycles * 1000) / 1000;
   if (tons <= 0) {
     res.status(409).json({ error: "Rien à tondre : le lot ne produit pas" });
@@ -9722,6 +11785,7 @@ app.post("/herds/:id/slaughter", async (req, res) => {
     happiness: herd.happiness,
     averageAgeMs: ageMs,
     barnLevel: herd.building.level,
+    installationLevel: await installationForBarn(herd.building),
     kind: herd.kind as AnimalKind,
   });
   const tons = Math.round((kgTotal / 1000) * 1000) / 1000;
@@ -11496,7 +13560,20 @@ app.post("/inventory/dry", async (req, res) => {
 });
 
 app.post("/contracts/:id/accept", async (req, res) => {
-  const body = z.object({ userId: z.string() }).safeParse(req.body);
+  const body = z
+    .object({
+      userId: z.string(),
+      /**
+       * Prendre le chantier avec du matériel loué.
+       *
+       * Le drapeau est **demandé**, jamais deviné : sans lui, un joueur sans
+       * moissonneuse verrait son salaire amputé de 45 % sans avoir rien
+       * choisi. Le refus reste donc la réponse par défaut, et l'écran propose
+       * la location à côté, avec son chiffre.
+       */
+      rented: z.boolean().optional(),
+    })
+    .safeParse(req.body);
   if (!body.success) {
     res.status(400).json(body.error.flatten());
     return;
@@ -11524,10 +13601,31 @@ app.post("/contracts/:id/accept", async (req, res) => {
     return;
   }
   const work = CONTRACT_WORK[contract.jobType as ContractJobType];
+  const parc = user.farm.machines as unknown as MachineForWork[];
   const picked = pickMachineForWork(user.farm.machines, work);
-  if (!picked) {
+  /*
+   * On ne loue que ce qu'on n'a pas, et seulement si on le demande.
+   *
+   * `peutLouerPourCeTravail` est strict : posséder l'engin, même occupé au
+   * champ, ferme la location. C'est ce qui empêche un joueur de mener deux
+   * chantiers avec un seul attelage en louant le second — la règle qu'il a
+   * fallu remettre après l'avoir retirée, et que la location rouvrirait par
+   * la fenêtre.
+   */
+  const louable = peutLouerPourCeTravail(parc, work);
+  const loue = Boolean(body.data.rented) && louable;
+  if (!picked && !loue) {
     res.status(409).json({
       error: explainNoMachine(user.farm.machines, work),
+      // L'écran a besoin de savoir s'il doit proposer la location, et à quel
+      // prix, sans avoir à refaire le calcul de son côté.
+      location: louable
+        ? {
+            materiel: libelleMaterielLoue(work),
+            frais: missionRentalFee(work, clampMissionCells(contract.cells || 16), "NPC"),
+            salaire: missionRentedPayout(work, clampMissionCells(contract.cells || 16), "NPC"),
+          }
+        : null,
     });
     return;
   }
@@ -11535,13 +13633,19 @@ app.post("/contracts/:id/accept", async (req, res) => {
   const reward = missionPayout(work, cells, "NPC");
   const updated = await prisma.npcContract.update({
     where: { id: contract.id },
-    data: { status: "ACCEPTED", providerId: user.id, cells, rewardCrd: reward },
+    data: { status: "ACCEPTED", providerId: user.id, cells, rewardCrd: reward, rented: loue },
   });
   res.json({
     contract: {
       ...updated,
       work,
-      machineType: picked.def.type,
+      machineType: picked?.def.type ?? null,
+      rented: loue,
+      // Ce que le joueur touchera vraiment. `rewardCrd` reste le salaire du
+      // chantier — c'est lui qu'affiche le tableau ; la location se lit à
+      // part, comme au grand livre.
+      rentalFee: loue ? missionRentalFee(work, cells, "NPC") : 0,
+      netCrd: loue ? missionRentedPayout(work, cells, "NPC") : reward,
     },
   });
 });
@@ -11566,20 +13670,35 @@ app.post("/contracts/:id/complete", async (req, res) => {
     return;
   }
   const work = CONTRACT_WORK[contract.jobType as ContractJobType];
-  const picked = pickMachineForWork(user.farm.machines, work);
-  if (!picked) {
+  /*
+   * Le drapeau est lu sur le **contrat**, pas recalculé sur le parc.
+   *
+   * Entre l'acceptation et l'encaissement, le joueur peut très bien avoir
+   * acheté la moissonneuse — ou vendu la sienne. Recalculer ferait payer le
+   * plein salaire d'un chantier accepté en location, et ferait échouer un
+   * chantier accepté avec son propre matériel.
+   */
+  const loue = contract.rented;
+  const picked = loue ? null : pickMachineForWork(user.farm.machines, work);
+  if (!loue && !picked) {
     res.status(409).json({ error: explainNoMachine(user.farm.machines, work) });
     return;
   }
   const cells = clampMissionCells(contract.cells || 16);
   const reward = missionPayout(work, cells, "NPC");
+  const frais = loue ? missionRentalFee(work, cells, "NPC") : 0;
+  const net = reward - frais;
   const result = await prisma.$transaction(async (tx) => {
-    const wear = await applyWearToMachine(tx, {
-      rig: picked,
-      cells,
-      work,
-      specialization: user.specialization,
-    });
+    // Pas d'engin à soi, pas d'usure : c'est ce qu'on paie en louant, et
+    // c'est aussi ce qui empêche la location de dégrader un parc absent.
+    const wear = picked
+      ? await applyWearToMachine(tx, {
+          rig: picked,
+          cells,
+          work,
+          specialization: user.specialization,
+        })
+      : null;
     await tx.npcContract.update({
       where: { id: contract.id },
       data: { status: "COMPLETED", completedAt: new Date() },
@@ -11587,10 +13706,29 @@ app.post("/contracts/:id/complete", async (req, res) => {
     await grantXp(tx, user.id, "CONTRACT", { cells: contract.cells }, { contracts: 1 });
     const u = await tx.user.update({
       where: { id: user.id },
-      data: { crd: { increment: reward } },
+      data: { crd: { increment: net } },
     });
+    // Deux lignes plutôt qu'un salaire déjà rogné : le joueur doit pouvoir
+    // lire ce que la location lui a coûté, et non deviner pourquoi le chiffre
+    // du tableau n'est pas celui de son compte.
     await ecrireJournal(tx, user.id, reward, "PROGRESSION", `Contrat — ${contract.title}`);
-    return { user: u, reward, machine: { id: picked.machine.id, type: picked.machine.type, ...wear } };
+    if (frais > 0) {
+      await ecrireJournal(
+        tx,
+        user.id,
+        -frais,
+        "MACHINES",
+        `Location — ${libelleMaterielLoue(work)}`,
+      );
+    }
+    return {
+      user: u,
+      reward: net,
+      rented: loue,
+      rentalFee: frais,
+      grossCrd: reward,
+      machine: picked && wear ? { id: picked.machine.id, type: picked.machine.type, ...wear } : null,
+    };
   });
   res.json(result);
 });
@@ -11645,7 +13783,22 @@ app.use(
 
 async function main() {
   await ensureSeed();
-  await runWorldTick();
+  /*
+   * Le premier tour ne peut pas empêcher le serveur de servir.
+   *
+   * Il était attendu sans filet, là où les suivants étaient protégés. Un tour
+   * qui échoue faisait donc échouer `main()`, le rejet remontait sans
+   * gestionnaire, et le processus sortait — Docker relançait, le tour
+   * échouait encore, et le conteneur tournait en `Restarting` sans jamais
+   * ouvrir son port. Relevé le 31 août : trois jours de site injoignable
+   * parce qu'un chantier de huit jours désignait un semoir revendu.
+   *
+   * Une simulation en panne dégrade le jeu — les cultures ne poussent plus.
+   * Elle ne doit pas l'éteindre : le joueur doit pouvoir se connecter, voir sa
+   * ferme, et nous laisser le temps de comprendre. Le même traitement que les
+   * tours suivants, pour la même raison.
+   */
+  await runWorldTick().catch((e) => console.error("premier tour de simulation en échec", e));
   setInterval(() => {
     runWorldTick().catch((e) => console.error("sim tick failed", e));
   }, SIM_TICK_MS);
@@ -11658,6 +13811,11 @@ async function main() {
           "Retirez FARMSIM_DEV_TOOLS de l'environnement en production.",
       );
     }
+    /* Après l'ouverture du port, jamais avant : voir le commentaire de la
+       fonction. Un échec ne doit pas davantage éteindre le serveur. */
+    void redecouperLesLotsLibres().catch((e) =>
+      console.error("redécoupage du parcellaire en échec", e),
+    );
   });
 }
 

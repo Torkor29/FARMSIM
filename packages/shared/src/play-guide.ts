@@ -167,7 +167,7 @@ export const OBJECTIVE_DEFS: ObjectiveDef[] = [
   {
     id: "barn",
     title: "Bâtissez un bâtiment d’élevage",
-    hint: "Onglet Bâtir : étable, porcherie, poulailler ou bergerie.",
+    hint: "Onglet Construire : étable, porcherie, poulailler ou bergerie.",
     unlock: "Acheter des animaux et produire lait, œufs, laine ou viande",
     spec: "ELEVEUR",
     check: (s) =>
@@ -187,7 +187,7 @@ export const OBJECTIVE_DEFS: ObjectiveDef[] = [
   {
     id: "hay",
     title: "Stockez du fourrage",
-    hint: "Vendre → on peut acheter du foin. L’éleveur achète ce que le céréalier cultive.",
+    hint: "Ventes → on peut acheter du foin. L’éleveur achète ce que le céréalier cultive.",
     unlock: "Nourrir le troupeau sans le laisser dépérir",
     spec: "ELEVEUR",
     check: (s) => s.hayTons > 0,
@@ -203,14 +203,14 @@ export const OBJECTIVE_DEFS: ObjectiveDef[] = [
   {
     id: "workshop",
     title: "Installez l’atelier",
-    hint: "Onglet Bâtir → Atelier. Réparations moins chères, graisse et nettoyage.",
+    hint: "Onglet Construire → Atelier. Réparations moins chères, graisse et nettoyage.",
     unlock: "Réparations moins chères dès que les machines enchaînent",
     check: (s) => s.buildings.includes("WORKSHOP"),
   },
   {
     id: "contract",
     title: "Aidez un voisin pendant que ça pousse",
-    hint: "Onglet Missions. Il faut la machine.",
+    hint: "Bureau → Prendre. Il faut la machine.",
     unlock: "Un peu d’argent en plus, pas une rente",
     check: (s) => s.hasContract,
   },
@@ -266,7 +266,7 @@ export const GUIDE_CHAPTERS: GuideChapter[] = [
         id: "WHEAT",
         get name() { return nomCulture("WHEAT"); },
         how: "Outil Semer → Blé. Environ 3 min. C’est la culture de cash.",
-        usedBy: "Céréalier : vente. Éleveur : paille (bientôt). Missions de moisson.",
+        usedBy: "Céréalier : vente. Éleveur : paille. Missions de moisson.",
       },
       {
         id: "BARLEY",
@@ -278,7 +278,7 @@ export const GUIDE_CHAPTERS: GuideChapter[] = [
         id: "MAIZE",
         get name() { return nomCulture("MAIZE"); },
         how: "Outil Semer → Maïs. Un peu plus long. Sert aussi de concentré.",
-        usedBy: "Céréalier : vente. Éleveur : ration. Plus tard : ensilage.",
+        usedBy: "Céréalier : vente. Éleveur : ration et ensilage.",
       },
       {
         id: "RAPE",
@@ -424,7 +424,7 @@ export const GUIDE_CHAPTERS: GuideChapter[] = [
   },
   {
     id: "build",
-    title: "Bâtir",
+    title: "Construire",
     lead: "Chaque bâtiment débloque un geste. On ne les pose pas pour décorer.",
     entries: [
       {

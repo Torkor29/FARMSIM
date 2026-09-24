@@ -24,12 +24,13 @@ import { after, before, describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { spawn, type ChildProcess } from "node:child_process";
 import { execFileSync } from "node:child_process";
+import { createHash, randomBytes } from "node:crypto";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { creerBaseTest, supprimerBaseTest, type BaseTest } from "./base-test.js";
-import { formatRecovery, isRecoveryCode } from "@farmsim/shared";
 import {
   BUILDING_DEFS,
+  DEFAULT_GRID,
   MACHINE_DEFS,
   machineCost,
   machineUpgradeCost,
@@ -43,6 +44,9 @@ import {
   MACHINE_AGE_YIELD_MALUS,
   MACHINE_END_OF_LIFE_HOURS,
   machineResaleValue,
+  SILAGE_MIN_PROGRESS,
+  buildingMoveCost,
+  GAME_DAY_MS,
 } from "@farmsim/shared";
 
 const API_DIR = fileURLToPath(new URL("../..", import.meta.url));
@@ -66,6 +70,25 @@ function prismaExec(sql: string) {
     input: sql,
     stdio: ["pipe", "ignore", "ignore"],
   });
+}
+
+/**
+ * Ce qu'il reste d'une marchandise au silo, lu dans la base.
+ *
+ * Les routes de lecture agrègent et arrondissent ; ici on veut le chiffre
+ * brut, parce que ce qu'on vérifie est précisément ce qui a été **prélevé**.
+ */
+function stockDe(farmId: string, code: string): number {
+  const out = execFileSync(
+    "psql",
+    [
+      base!.url,
+      "-tAc",
+      `SELECT COALESCE(SUM(qty), 0) FROM "InventoryItem" WHERE "farmId" = '${farmId}' AND "itemCode" = '${code}'`,
+    ],
+    { encoding: "utf8" },
+  ).trim();
+  return Number(out);
 }
 
 /** Appel HTTP, avec jeton facultatif. */
@@ -171,20 +194,18 @@ async function inscrire(nom: string) {
         .toLowerCase()}-${Date.now()}-${Math.random().toString(36).slice(2)}@test.fr`,
       displayName: nom,
       specialization: "CEREALIER",
-      accessCode: "ferme",
+      accessCode: "ferme-2026",
     },
   });
   assert.equal(r.statut, 201, `inscription refusée : ${JSON.stringify(r.corps)}`);
   const b = r.corps as unknown as {
     token: string;
-    recoveryCode?: string;
     player: { id: string; email: string; farm: { machines: { id: string }[] } };
   };
   return {
     jeton: b.token,
     id: b.player.id,
     email: b.player.email,
-    secours: b.recoveryCode,
     machines: b.player.farm.machines,
   };
 }
@@ -393,6 +414,128 @@ describe("argent", () => {
     assert.ok(joueur.crd >= 0, `la trésorerie ne doit jamais passer sous zéro (${joueur.crd})`);
   });
 
+  it("déplace un bâtiment sans lui faire perdre son niveau ni son contenu", async () => {
+    /*
+     * Demandé en jouant : « ça serait bien de pouvoir déplacer les bâtiments
+     * qu'on a posé, il faudrait que ce soit payant mais pas punitif ». La
+     * seule voie était de démolir et rebâtir — 60 % de l'investi perdu.
+     *
+     * Ce qui compte ici n'est pas le 200 : c'est que le bâtiment reste **le
+     * même**. Une route qui supprimerait puis recréerait la ligne passerait un
+     * test de statut, et ferait disparaître le troupeau logé dedans.
+     */
+    const f = await fermeAvec(Math.round(BUILDING_DEFS.SILO.cost * 3));
+    const pose = await appel(`/parcels/${f.parcelId}/build`, {
+      methode: "POST",
+      corps: { userId: f.id, type: "SILO", x: 0, y: 0 },
+      jeton: f.jeton,
+    });
+    assert.ok(pose.statut < 400, `pose refusée : ${JSON.stringify(pose.corps)}`);
+    const silo = (
+      (await appel("/auth/me", { jeton: f.jeton })).corps as unknown as {
+        player: { farm: { parcels: { buildings: { id: string; type: string; level: number }[] }[] } };
+      }
+    ).player.farm.parcels[0]!.buildings.find((b) => b.type === "SILO")!;
+
+    /* La fenêtre de regret rendrait ce premier déplacement gratuit, et le test
+       ne mesurerait alors ni le prix ni le débit. On vieillit la pose. */
+    prismaExec(
+      `UPDATE "Building" SET "createdAt" = NOW() - INTERVAL '2 hours' WHERE id = '${silo.id}';`,
+    );
+    const attendu = buildingMoveCost("SILO", silo.level ?? 1);
+    const avant = (
+      (await appel("/auth/me", { jeton: f.jeton })).corps as unknown as { player: { crd: number } }
+    ).player.crd;
+
+    const r = await appel(`/buildings/${silo.id}/move`, {
+      methode: "POST",
+      corps: { userId: f.id, x: 6, y: 6 },
+      jeton: f.jeton,
+    });
+    assert.equal(r.statut, 200, `déplacement refusé : ${JSON.stringify(r.corps)}`);
+    assert.equal(
+      (r.corps as unknown as { cost: number }).cost,
+      attendu,
+      "le prix débité doit être celui que l'écran annonce",
+    );
+
+    const apres = (await appel("/auth/me", { jeton: f.jeton })).corps as unknown as {
+      player: { crd: number; farm: { parcels: { buildings: { id: string; originX: number; originY: number }[] }[] } };
+    };
+    assert.equal(Math.round(avant - apres.player.crd), attendu, "le débit ne correspond pas au devis");
+    const batiments = apres.player.farm.parcels[0]!.buildings;
+    const meme = batiments.find((b) => b.id === silo.id);
+    assert.ok(meme, "le bâtiment a changé d'identité — il a été recréé, pas déplacé");
+    assert.equal(meme.originX, 6);
+    assert.equal(meme.originY, 6);
+
+    // Les cases d'avant se libèrent, celles d'arrivée se prennent.
+    const cases = (
+      (await appel(`/parcels/${f.parcelId}`)).corps as unknown as {
+        parcel: { cells: { x: number; y: number; kind: string; buildingId: string | null }[] };
+      }
+    ).parcel.cells;
+    assert.equal(cases.find((c) => c.x === 0 && c.y === 0)!.kind, "EMPTY", "l'ancienne place est restée occupée");
+    assert.equal(cases.find((c) => c.x === 6 && c.y === 6)!.buildingId, silo.id, "la nouvelle place n'est pas prise");
+  });
+
+  it("ne déplace un bâtiment ni hors de la parcelle, ni sur un autre, ni sans payer", async () => {
+    const f = await fermeAvec(Math.round(BUILDING_DEFS.SILO.cost * 3));
+    await appel(`/parcels/${f.parcelId}/build`, {
+      methode: "POST",
+      corps: { userId: f.id, type: "SILO", x: 0, y: 0 },
+      jeton: f.jeton,
+    });
+    const ferme = (
+      (await appel("/auth/me", { jeton: f.jeton })).corps as unknown as {
+        player: { farm: { parcels: { gridW: number; buildings: { id: string; type: string; originX: number; originY: number }[] }[] } };
+      }
+    ).player.farm.parcels[0]!;
+    const silo = ferme.buildings.find((b) => b.type === "SILO")!;
+    const autre = ferme.buildings.find((b) => b.id !== silo.id);
+    prismaExec(
+      `UPDATE "Building" SET "createdAt" = NOW() - INTERVAL '2 hours' WHERE id = '${silo.id}';`,
+    );
+
+    const dehors = await appel(`/buildings/${silo.id}/move`, {
+      methode: "POST",
+      corps: { userId: f.id, x: ferme.gridW - 1, y: 0 },
+      jeton: f.jeton,
+    });
+    assert.equal(dehors.statut, 409, "un bâtiment ne doit pas déborder de la parcelle");
+
+    if (autre) {
+      const dessus = await appel(`/buildings/${silo.id}/move`, {
+        methode: "POST",
+        corps: { userId: f.id, x: autre.originX, y: autre.originY },
+        jeton: f.jeton,
+      });
+      assert.equal(dessus.statut, 409, "deux bâtiments ne peuvent pas se superposer");
+    }
+
+    const surPlace = await appel(`/buildings/${silo.id}/move`, {
+      methode: "POST",
+      corps: { userId: f.id, x: silo.originX, y: silo.originY },
+      jeton: f.jeton,
+    });
+    assert.equal(surPlace.statut, 409, "déplacer sur place ne doit rien facturer");
+
+    // Sans le sou : le refus doit venir avant que quoi que ce soit ne bouge.
+    prismaExec(`UPDATE "User" SET crd = 0 WHERE id = '${f.id}';`);
+    const fauche = await appel(`/buildings/${silo.id}/move`, {
+      methode: "POST",
+      corps: { userId: f.id, x: 6, y: 6 },
+      jeton: f.jeton,
+    });
+    assert.equal(fauche.statut, 402, `déplacement accordé sans trésorerie : ${JSON.stringify(fauche.corps)}`);
+    const apres = (
+      (await appel("/auth/me", { jeton: f.jeton })).corps as unknown as {
+        player: { farm: { parcels: { buildings: { id: string; originX: number }[] }[] } };
+      }
+    ).player.farm.parcels[0]!.buildings.find((b) => b.id === silo.id)!;
+    assert.equal(apres.originX, silo.originX, "un refus a quand même déplacé le bâtiment");
+  });
+
   it("refuse une dépense hors de portée sans rien écrire", async () => {
     const f = await fermeAvec(10);
     const r = await appel(`/parcels/${f.parcelId}/build`, {
@@ -591,6 +734,441 @@ describe("lieu de vie", () => {
       paddockCapacity: b.paddockCapacity,
     };
   }
+
+  it("l'employé d'élevage fait vraiment produire davantage", async () => {
+    /*
+     * Demandé en jouant : « il fait quoi l'employé à l'élevage ? ». Rien.
+     * `bonusEquipe` calculait sa compétence et la jetait, pendant que l'écran
+     * du personnel promettait « le troupeau produit mieux — jusqu'à 20 % ».
+     *
+     * Ce test compte des litres. Une recherche de texte dans le serveur
+     * prouverait qu'une ligne existe ; seul un litre de plus au silo prouve
+     * qu'elle sert.
+     */
+    const { moi, pid, herdId } = await eleveurAvecEnclos();
+
+    /*
+     * `milkPerCycle` vit **dans** le lot, pas à côté : c'est une propriété du
+     * troupeau, et une étable vide n'en a pas.
+     *
+     * Le bonheur est refixé avant chaque lecture. Le tour de simulation le
+     * fait dériver — un lot sans réserve d'aliment s'assombrit toutes les
+     * vingt secondes — et deux mesures espacées de quelques requêtes
+     * différeraient pour une raison qui n'a rien à voir avec l'employé. On
+     * neutralise ce qu'on ne mesure pas.
+     */
+    const litresAnnonces = async () => {
+      /*
+       * Quatre grandeurs entrent dans le lait, pas deux.
+       *
+       * Ce bloc n'en figeait que le bonheur et la qualité de la ration. Or la
+       * production compte les **adultes** — `taille moins les jeunes` — et ces
+       * deux nombres bougent tout seuls : le tour de simulation fait naître
+       * des bêtes, et un lot de jeunes rejoint les adultes à son échéance.
+       *
+       * En local et sur la pull request, les trois mesures tombaient dans la
+       * même poignée de secondes et rien n'avait le temps de bouger. Sur le
+       * runner d'intégration, plus lent, un lot a mûri entre la deuxième et la
+       * troisième : le lait est remonté sans que l'employé y soit pour rien,
+       * et le test a eu raison de le dire. C'est bien le test qui était trop
+       * léger, pas le jeu qui était faux.
+       *
+       * On fige donc les quatre : effectif à douze, aucun jeune, et la
+       * gestation coupée pour qu'aucune naissance ne se glisse entre deux
+       * lectures. Douze adultes, à chaque mesure, quoi qu'ait fait le tour de
+       * simulation entre-temps. Le seul terme encore libre est celui qu'on
+       * mesure.
+       */
+      prismaExec(
+        `DELETE FROM "YoungBatch" WHERE "herdId" = '${herdId}';` +
+          `UPDATE "Herd" SET happiness = 0.9, "feedQuality" = 1, size = 12,` +
+          ` "gestatingSince" = NULL WHERE id = '${herdId}';`,
+      );
+      const el = await appel(`/parcels/${pid}/livestock`, { jeton: moi.jeton });
+      const b = (el.corps as unknown as {
+        barns: { herd: { id: string; milkPerCycle?: number } | null }[];
+      }).barns.find((x) => x.herd?.id === herdId)!;
+      return b.herd?.milkPerCycle ?? 0;
+    };
+
+    /* Des adultes, et une étable qui tourne : le lot de départ peut être
+       entièrement composé de jeunes, et un veau ne donne pas de lait. On pose
+       donc l'état qu'on veut mesurer plutôt que d'espérer le trouver. */
+    const { buildingId } = await (async () => {
+      const el = await appel(`/parcels/${pid}/livestock`, { jeton: moi.jeton });
+      const b = (el.corps as unknown as {
+        barns: { buildingId: string; herd: { id: string } | null }[];
+      }).barns.find((x) => x.herd?.id === herdId)!;
+      return { buildingId: b.buildingId };
+    })();
+    const achat = await appel(`/buildings/${buildingId}/animals`, {
+      methode: "POST",
+      corps: { userId: moi.id, count: 6 },
+      jeton: moi.jeton,
+    });
+    assert.ok(achat.statut < 400, `achat de bêtes refusé : ${JSON.stringify(achat.corps)}`);
+
+    const avant = await litresAnnonces();
+    assert.ok(avant > 0, `l'étable témoin ne produit rien : ${avant}`);
+
+    /* On embauche, puis on force la compétence : le vivier est tiré au sort,
+       et attendre un 5/5 rendrait ce test dépendant du jour. */
+    const vivier = await appel("/employees", { jeton: moi.jeton });
+    const candidat = (vivier.corps as unknown as { candidates: { id: string }[] }).candidates[0]!;
+    const embauche = await appel("/employees/hire", {
+      methode: "POST",
+      corps: { candidateId: candidat.id },
+      jeton: moi.jeton,
+    });
+    assert.equal(embauche.statut, 201, `embauche refusée : ${JSON.stringify(embauche.corps)}`);
+    const recrue = (embauche.corps as unknown as { employee: { id: string } }).employee;
+    prismaExec(
+      `UPDATE "Employee" SET elevage = 5, poste = 'ELEVAGE' WHERE id = '${recrue.id}';`,
+    );
+
+    const apres = await litresAnnonces();
+    assert.ok(
+      apres > avant,
+      `l'employé d'élevage ne change rien : ${avant} puis ${apres} litres`,
+    );
+    // Cinq crans au-dessus du premier : +20 %, ni plus ni moins.
+    assert.ok(
+      Math.abs(apres / avant - 1.2) < 0.001,
+      `gain inattendu : ${(apres / avant - 1).toFixed(3)} au lieu de 0,200`,
+    );
+
+    /* Aux champs, il ne trait plus : la compétence ne compte qu'au poste où
+       elle s'exerce. Sans ce contrôle, le poste ne déciderait de rien. */
+    const mute = await appel(`/employees/${recrue.id}/post`, {
+      methode: "POST",
+      corps: { poste: "CHAMP" },
+      jeton: moi.jeton,
+    });
+    assert.equal(mute.statut, 200);
+    assert.ok(
+      Math.abs((await litresAnnonces()) - avant) < 0.001,
+      "un employé aux champs ne devrait rien apporter à l'étable",
+    );
+  });
+
+  it("l'employé d'élevage vide la fumière qui déborde", async () => {
+    /*
+     * Demandé en jouant, dans la foulée de « il fait quoi l'employé à
+     * l'élevage ? » : « est-ce qu'il vide la fosse à lisier ? ». Il ne le
+     * faisait pas, et il n'y avait même pas d'ouvrage à vider.
+     *
+     * Un tas qui déborde coûte du bonheur — l'odeur — et bloque la production
+     * de fumier. Le seul remède était que le joueur revienne épandre ou vendre
+     * à la main. C'est exactement la corvée qu'on embauche pour ne plus avoir.
+     */
+    const { moi, pid, herdId } = await eleveurAvecEnclos();
+
+    const fumier = async () => {
+      const el = await appel(`/parcels/${pid}/livestock`, { jeton: moi.jeton });
+      const b = (el.corps as unknown as {
+        barns: { herd: { id: string; manureTons?: number; manureCap?: number } | null }[];
+      }).barns.find((x) => x.herd?.id === herdId)!;
+      return { tas: b.herd?.manureTons ?? 0, cap: b.herd?.manureCap ?? 0 };
+    };
+
+    const nu = await fumier();
+    assert.ok(nu.cap > 0, `l'étable n'a pas de contenance : ${JSON.stringify(nu)}`);
+
+    // 1 — La fumière agrandit le stockage, sans toucher à l'étable.
+    const bat = await appel(`/parcels/${pid}/build`, {
+      methode: "POST",
+      corps: { userId: moi.id, type: "MANURE_STORE", x: 8, y: 8, rotation: 0 },
+      jeton: moi.jeton,
+    });
+    assert.equal(bat.statut, 201, `fumière refusée : ${JSON.stringify(bat.corps)}`);
+    const avecFumiere = await fumier();
+    assert.ok(
+      avecFumiere.cap > nu.cap,
+      `la fumière n'agrandit rien : ${nu.cap} puis ${avecFumiere.cap} t`,
+    );
+
+    // 2 — Sans personne à l'élevage, un tas plein le reste.
+    prismaExec(
+      `UPDATE "Herd" SET "manureTons" = ${(avecFumiere.cap * 0.95).toFixed(3)} WHERE id = '${herdId}';`,
+    );
+    await appel("/sim/tick", { methode: "POST", jeton: moi.jeton });
+    const seul = await fumier();
+    assert.ok(
+      seul.tas > avecFumiere.cap * 0.8,
+      `le tas s'est vidé sans employé : ${seul.tas} t`,
+    );
+
+    // 3 — Avec un employé à l'élevage, il redescend, et l'argent rentre.
+    const vivier = await appel("/employees", { jeton: moi.jeton });
+    const candidat = (vivier.corps as unknown as { candidates: { id: string }[] }).candidates[0]!;
+    const embauche = await appel("/employees/hire", {
+      methode: "POST",
+      corps: { candidateId: candidat.id },
+      jeton: moi.jeton,
+    });
+    assert.equal(embauche.statut, 201, `embauche refusée : ${JSON.stringify(embauche.corps)}`);
+    const recrue = (embauche.corps as unknown as { employee: { id: string } }).employee;
+    prismaExec(`UPDATE "Employee" SET poste = 'ELEVAGE' WHERE id = '${recrue.id}';`);
+
+    const sou = async () =>
+      ((await appel("/auth/me", { jeton: moi.jeton })).corps as unknown as {
+        player: { crd: number };
+      }).player.crd;
+    const avantVente = await sou();
+    await appel("/sim/tick", { methode: "POST", jeton: moi.jeton });
+    const apres = await fumier();
+
+    assert.ok(
+      apres.tas < seul.tas,
+      `l'employé n'a rien vidé : ${seul.tas} puis ${apres.tas} t`,
+    );
+    // Mais pas jusqu'à zéro : le fumier vaut plus épandu que vendu, et
+    // l'employé évite la corvée sans décider à la place du joueur.
+    assert.ok(apres.tas > 0, "la fumière a été vidée entièrement");
+    assert.ok(
+      (await sou()) > avantVente,
+      "le fumier vendu au voisin n'a rien rapporté",
+    );
+  });
+
+  it("l'employé d'élevage refait la mangeoire et la litière", async () => {
+    /*
+     * ## Ce qui a fait poser la question deux fois
+     *
+     * « Je pige toujours pas l'intérêt du PNJ éleveur. » Ce n'était pas un
+     * défaut de compréhension : l'employé ne faisait que multiplier la
+     * production par 1,2 au mieux, et vider la fumière. Or la production est
+     * déjà bornée à 100 % par des besoins que le joueur satisfait **à la
+     * main** toutes les 1 h 26 — le bonus multipliait donc un travail qu'on
+     * continuait de faire, en payant un salaire pour ça.
+     *
+     * Ce qu'on achète en embauchant un vacher, c'est de ne plus avoir à
+     * revenir. Ce test vérifie que c'est ce qui se passe, et — tout aussi
+     * important — que ça s'arrête quand le silo est vide.
+     */
+    const { moi, pid, herdId } = await eleveurAvecEnclos();
+
+    const lot = async () => {
+      const el = await appel(`/parcels/${pid}/livestock`, { jeton: moi.jeton });
+      const b = (el.corps as unknown as {
+        barns: {
+          herd: {
+            id: string;
+            feedStock: number;
+            feedNeed: number;
+            beddingTons: number;
+            beddingCap: number;
+            tendedAt: number | null;
+          } | null;
+        }[];
+      }).barns.find((x) => x.herd?.id === herdId)!;
+      return b.herd!;
+    };
+
+    // Un lot à sec et sur le béton, pour que la passe ait quelque chose à faire.
+    prismaExec(
+      `UPDATE "Herd" SET "feedStock" = 0, "beddingTons" = 0, "feedQuality" = 0 WHERE id = '${herdId}';`,
+    );
+
+    // 1 — Sans personne à l'élevage, rien ne se passe. C'est la moitié qui
+    // prouve que la suite vient bien de l'employé, et non du tour de monde.
+    await appel("/sim/tick", { methode: "POST", jeton: moi.jeton });
+    const seul = await lot();
+    assert.equal(seul.feedStock, 0, `la mangeoire s'est remplie sans employé : ${seul.feedStock}`);
+    assert.equal(seul.tendedAt, null, "un passage est signalé alors que personne n'est embauché");
+
+    // 2 — On embauche, on l'affecte à l'élevage, et on remplit le silo.
+    const vivier = await appel("/employees", { jeton: moi.jeton });
+    const candidat = (vivier.corps as unknown as { candidates: { id: string }[] }).candidates[0]!;
+    const embauche = await appel("/employees/hire", {
+      methode: "POST",
+      corps: { candidateId: candidat.id },
+      jeton: moi.jeton,
+    });
+    assert.equal(embauche.statut, 201, `embauche refusée : ${JSON.stringify(embauche.corps)}`);
+    const recrue = (embauche.corps as unknown as { employee: { id: string } }).employee;
+    prismaExec(`UPDATE "Employee" SET poste = 'ELEVAGE' WHERE id = '${recrue.id}';`);
+
+    const farmId = (
+      (await appel("/auth/me", { jeton: moi.jeton })).corps as unknown as {
+        player: { farm: { id: string } };
+      }
+    ).player.farm.id;
+    const poser = (code: string, qty: number) =>
+      prismaExec(
+        `INSERT INTO "InventoryItem" ("id", "farmId", "itemCode", "qty", "quality", "lastDecayAt")
+         VALUES ('inv-${code}-${Date.now()}', '${farmId}', '${code}', ${qty}, 0, NOW())
+         ON CONFLICT DO NOTHING;`,
+      );
+    poser("HAY", 40);
+    poser("STRAW", 20);
+
+    // 3 — Le tour suivant, l'équipe a servi et paillé.
+    await appel("/sim/tick", { methode: "POST", jeton: moi.jeton });
+    const soigne = await lot();
+    assert.ok(
+      soigne.feedStock > seul.feedStock,
+      `la mangeoire n'a pas été servie : ${seul.feedStock} puis ${soigne.feedStock}`,
+    );
+    assert.ok(
+      soigne.beddingTons > seul.beddingTons,
+      `la litière n'a pas été refaite : ${seul.beddingTons} puis ${soigne.beddingTons} t`,
+    );
+    assert.ok(soigne.tendedAt, "le passage n'est pas daté — le joueur ne verra rien");
+
+    // 4 — Il puise, il n'achète pas. Silo vide, la corvée revient au joueur.
+    prismaExec(`DELETE FROM "InventoryItem" WHERE "farmId" = '${farmId}';`);
+    prismaExec(`UPDATE "Herd" SET "feedStock" = 0, "beddingTons" = 0 WHERE id = '${herdId}';`);
+    await appel("/sim/tick", { methode: "POST", jeton: moi.jeton });
+    const aSec = await lot();
+    assert.equal(
+      aSec.feedStock,
+      0,
+      `l'employé a nourri sans stock — il achèterait donc à votre place : ${aSec.feedStock}`,
+    );
+    assert.equal(aSec.beddingTons, 0, "l'employé a paillé sans paille");
+  });
+
+  it("l'employé d'élevage refait la ration du joueur, et pas la sienne", async () => {
+    /*
+     * La borne qui rend la délégation acceptable. Un employé qui choisirait la
+     * ration viderait le silo de maïs d'un joueur qui menait ses bêtes au
+     * foin — une culture qu'il gardait pour la vente, consommée à son insu.
+     * On reconduit donc la **qualité de la dernière ration servie**.
+     */
+    const { moi, pid, herdId } = await eleveurAvecEnclos();
+
+    const farmId = (
+      (await appel("/auth/me", { jeton: moi.jeton })).corps as unknown as {
+        player: { farm: { id: string } };
+      }
+    ).player.farm.id;
+    prismaExec(
+      `INSERT INTO "InventoryItem" ("id", "farmId", "itemCode", "qty", "quality", "lastDecayAt")
+       VALUES ('inv-hay-${Date.now()}', '${farmId}', 'HAY', 60, 0, NOW()),
+              ('inv-wheat-${Date.now()}', '${farmId}', 'WHEAT', 60, 0, NOW());`,
+    );
+
+    const vivier = await appel("/employees", { jeton: moi.jeton });
+    const candidat = (vivier.corps as unknown as { candidates: { id: string }[] }).candidates[0]!;
+    const recrue = (
+      (
+        await appel("/employees/hire", {
+          methode: "POST",
+          corps: { candidateId: candidat.id },
+          jeton: moi.jeton,
+        })
+      ).corps as unknown as { employee: { id: string } }
+    ).employee;
+    prismaExec(`UPDATE "Employee" SET poste = 'ELEVAGE' WHERE id = '${recrue.id}';`);
+
+    // Le joueur mène au foin : qualité zéro.
+    prismaExec(
+      `UPDATE "Herd" SET "feedStock" = 0, "feedQuality" = 0 WHERE id = '${herdId}';`,
+    );
+    // On relève les deux stocks **avant**, plutôt que de supposer le silo
+    // vide : une ferme d'éleveur démarre avec du fourrage, et comparer à la
+    // quantité qu'on vient d'insérer mesurerait autre chose.
+    const bleAvant = stockDe(farmId, "WHEAT");
+    const foinAvant = stockDe(farmId, "HAY");
+    await appel("/sim/tick", { methode: "POST", jeton: moi.jeton });
+    assert.equal(
+      stockDe(farmId, "WHEAT"),
+      bleAvant,
+      "le blé du joueur est parti dans l'auge alors qu'il menait ses bêtes au foin",
+    );
+    assert.ok(
+      stockDe(farmId, "HAY") < foinAvant,
+      `le foin n'a pas été servi : ${foinAvant} t avant, ${stockDe(farmId, "HAY")} après`,
+    );
+  });
+
+  it("laisse entasser au-delà des places, au prix des conditions", async () => {
+    /*
+     * Signalé en jouant : « les bêtes ne dépassent pas le nombre max qu'il est
+     * possible dans l'étable, ce qui n'est pas normal, il faudrait que ce soit
+     * possible, au détriment des conditions à cause d'une surpopulation ».
+     *
+     * Le reproche était exact, et la courbe de peine existait déjà, écrite et
+     * documentée du plein au double. C'est cette route qui la rendait
+     * inatteignable en refusant à la dernière place : le taux d'occupation ne
+     * dépassait jamais 1, donc la peine valait toujours zéro.
+     */
+    const { moi, pid, herdId } = await eleveurAvecEnclos();
+    const etable = async () => {
+      const el = await appel(`/parcels/${pid}/livestock`, { jeton: moi.jeton });
+      const b = (el.corps as unknown as {
+        barns: {
+          buildingId: string;
+          capacity: number;
+          herd: { id: string; size: number; welfareCauses?: { code: string; cout: number }[] } | null;
+        }[];
+      }).barns.find((x) => x.herd?.id === herdId)!;
+      return { buildingId: b.buildingId, capacity: b.capacity, herd: b.herd! };
+    };
+
+    const avant = await etable();
+    assert.ok(avant.capacity > 0, `étable sans capacité : ${JSON.stringify(avant)}`);
+
+    // 1 — On remplit jusqu'à la dernière place. Rien d'anormal à ce stade :
+    // la capacité s'utilise entièrement, c'est ce qu'on a payé.
+    const aPlein = avant.capacity - avant.herd.size;
+    if (aPlein > 0) {
+      const r = await appel(`/buildings/${avant.buildingId}/animals`, {
+        methode: "POST",
+        corps: { userId: moi.id, count: aPlein },
+        jeton: moi.jeton,
+      });
+      assert.equal(r.statut, 201, `remplissage refusé : ${JSON.stringify(r.corps)}`);
+      assert.equal(
+        (r.corps as { crowding?: string | null }).crowding ?? null,
+        null,
+        "on prévient d'un entassement alors qu'on est dans la capacité payée",
+      );
+    }
+
+    // 2 — La bête de trop passe désormais, et la route le dit.
+    const trop = await appel(`/buildings/${avant.buildingId}/animals`, {
+      methode: "POST",
+      corps: { userId: moi.id, count: 2 },
+      jeton: moi.jeton,
+    });
+    assert.equal(
+      trop.statut,
+      201,
+      `la surpopulation est encore refusée : ${JSON.stringify(trop.corps)}`,
+    );
+    const avis = trop.corps as unknown as {
+      crowding?: string | null;
+      size: number;
+      capacity: number;
+    };
+    assert.ok(avis.size > avis.capacity, `effectif ${avis.size} pour ${avis.capacity} places`);
+    assert.ok(
+      avis.crowding,
+      "entassement accepté sans un mot — le joueur ne saura pas pourquoi il produit moins",
+    );
+    assert.match(avis.crowding!, /%/, "l'avertissement doit chiffrer la perte");
+
+    // 3 — Et les conditions se dégradent vraiment : ce n'est pas qu'un texte.
+    // C'est la moitié qui compte, parce que c'est elle qui était morte.
+    const apres = await etable();
+    const surpeuplement = (apres.herd.welfareCauses ?? []).find((c) => c.code === "SURPEUPLEMENT");
+    assert.ok(
+      surpeuplement,
+      `aucune peine d'entassement sur ${apres.herd.size} bêtes pour ${apres.capacity} places : ` +
+        JSON.stringify(apres.herd.welfareCauses),
+    );
+    assert.ok(surpeuplement!.cout > 0, "la peine est listée mais ne coûte rien");
+
+    // 4 — Mais il existe un plafond : on n'entasse pas à l'infini.
+    const mur = await appel(`/buildings/${avant.buildingId}/animals`, {
+      methode: "POST",
+      corps: { userId: moi.id, count: avant.capacity * 3 },
+      jeton: moi.jeton,
+    });
+    assert.equal(mur.statut, 409, `aucun plafond à l'entassement : ${JSON.stringify(mur.corps)}`);
+  });
 
   it("rentrer le troupeau met fin à la séance de pâture", async () => {
     const { moi, pid, herdId, buildingId } = await eleveurAvecEnclos();
@@ -1146,7 +1724,7 @@ describe("les heures pèsent sur la récolte", () => {
    * `used-market.test.ts` ; ici on vérifie qu'il arrive bien jusqu'aux tonnes,
    * par la vraie route de moisson.
    */
-  async function moissonne(heuresCompteur: number) {
+  async function moissonne(heuresCompteur: number, crop?: "POTATO") {
     const moi = await inscrire("Moissonneur");
     const monde = await appel("/world/AUR");
     const regions = (monde.corps as unknown as {
@@ -1205,6 +1783,7 @@ describe("les heures pèsent sur la récolte", () => {
 
     const semis = await travailler(parcelle.id, "plant", "PLANT", moi, cells, { crop: cropDeSaison() });
     assert.equal(semis.statut, 200, `semis refusé : ${JSON.stringify(semis.corps)}`);
+    if (crop) prismaExec(`UPDATE "ParcelCell" SET crop = '${crop}' WHERE "parcelId" = '${parcelle.id}' AND kind = 'CROP'`);
     await appel("/dev/grant", {
       methode: "POST",
       corps: { userId: moi.id, ripenAll: true },
@@ -1213,8 +1792,21 @@ describe("les heures pèsent sur la récolte", () => {
     const r = await travailler(parcelle.id, "harvest", "HARVEST", moi, cells);
     assert.equal(r.statut, 200, `moisson refusée : ${JSON.stringify(r.corps)}`);
     const lots = (r.corps as unknown as { harvested: { tons: number }[] }).harvested;
-    return lots.reduce((a, l) => a + l.tons, 0);
+    const tons = lots.reduce((a, l) => a + l.tons, 0);
+    if (crop) {
+      const me = (await appel("/auth/me", { jeton: moi.jeton })).corps as unknown as {
+        player: { farm: { inventory: { itemCode: string; qty: number }[] } };
+      };
+      const stock = me.player.farm.inventory.filter((item) => item.itemCode === crop).reduce((n, item) => n + item.qty, 0);
+      assert.ok(Math.abs(stock - tons) < 0.01, `récolte ${tons} t, stock ${stock} t`);
+      assert.ok(Math.abs(Number(r.corps.storedTons) - tons) < 0.01, "la réponse doit annoncer les légumes stockés");
+    }
+    return tons;
   }
+
+  it("range les pommes de terre récoltées dans le stock vendable", async () => {
+    assert.ok(await moissonne(0, "POTATO") > 0);
+  });
 
   it("fait moins rendre une moissonneuse usée, révisée ou non", async () => {
     /**
@@ -1295,6 +1887,62 @@ describe("calendrier cultural", () => {
     return currentSeason("N", Date.now());
   }
 
+  it("salit un champ laissé labouré, et le semis en hérite", async () => {
+    /*
+     * « J'ai laissé les champs juste labourés, pas une seule mauvaise herbe,
+     * rien n'a poussé. »
+     *
+     * Le modèle montait bien — `weedPressureAfter` intègre depuis `weedAt` —
+     * mais deux endroits le rendaient invisible : la parcelle était servie
+     * avec la pression **figée** au dernier geste, et le semis repartait de
+     * cette même valeur brute, jetant tout ce qui avait levé entre les deux.
+     */
+    const { moi, parcelle, cells } = await fermeSemable();
+    assert.ok(cells.length > 0, "il faut des cases cultivables");
+    const cible = cells[0]!;
+
+    const lire = async () => {
+      const r = await appel(`/parcels/${parcelle.id}`, { jeton: moi.jeton });
+      assert.equal(r.statut, 200, JSON.stringify(r.corps));
+      return (r.corps as unknown as {
+        parcel: { cells: { x: number; y: number; weedPressure: number }[] };
+      }).parcel.cells.find((c) => c.x === cible.x && c.y === cible.y)!;
+    };
+
+    /*
+     * Une case labourée il y a six jours de jeu — ce qu'un joueur obtient en
+     * laissant son champ en l'état le temps d'une soirée. On la pose en base
+     * plutôt que d'attendre huit heures réelles.
+     */
+    const ilYaSixJours = new Date(Date.now() - 6 * GAME_DAY_MS);
+    prismaExec(
+      `UPDATE "ParcelCell" SET "weedPressure" = 0, "weedAt" = '${ilYaSixJours.toISOString()}' ` +
+        `WHERE "parcelId" = '${parcelle.id}' AND x = ${cible.x} AND y = ${cible.y};`,
+    );
+
+    // 1 — L'écran doit voir la salissure, et non le zéro figé du labour.
+    const vue = await lire();
+    assert.ok(
+      vue.weedPressure > 0.1,
+      `le champ reste annoncé propre six jours après le labour : ${vue.weedPressure}`,
+    );
+
+    // 2 — Et le semis en hérite, au lieu de repartir de zéro. On sème ce que
+    // la saison autorise : le but est de mesurer les adventices, pas de se
+    // battre avec la fenêtre de semis.
+    // On passe par le même sas que le joueur : un semis se réserve avant de
+    // s'exécuter, et appeler la route directement se fait renvoyer.
+    const semis = await travailler(parcelle.id, "plant", "PLANT", moi, [cible], {
+      crop: cropDeSaison(),
+    });
+    assert.ok(semis.statut < 400, `semis refusé : ${JSON.stringify(semis.corps)}`);
+    const apres = await lire();
+    assert.ok(
+      apres.weedPressure > 0.1,
+      `le semis a effacé les adventices levées depuis le labour : ${apres.weedPressure}`,
+    );
+  });
+
   it("accepte une culture de saison et refuse l'autre", async () => {
     const { moi, parcelle, cells } = await fermeSemable();
     const saison = saisonCourante();
@@ -1316,6 +1964,228 @@ describe("calendrier cultural", () => {
 
     const ok = await travailler(parcelle.id, "plant", "PLANT", { id: moi.id, jeton: moi.jeton }, cells.slice(0, 4), { crop: dedans });
     assert.equal(ok.statut, 200, `${dedans} refusé en ${saison} : ${JSON.stringify(ok.corps)}`);
+  });
+
+  it("le dépannage prend aussi la presse, le ramassage, le déchaumage et le désherbage", async () => {
+    /*
+     * Signalé par Strea : « il y a des chantiers que tu peux faire faire par
+     * le pnj et d'autres non ? presser, tu peux pas ; ramasser tu peux pas ;
+     * déchaumer tu peux pas ». Le bouton disparaissait sans un mot, et
+     * l'entraide — la seule autre voie — attend qu'un joueur passe.
+     *
+     * Ce test parcourt les quatre travaux repris, sur des cases préparées à la
+     * main : chacun doit **faire le travail**, pas seulement répondre 200.
+     */
+    const { moi, parcelle, cells } = await fermeSemable();
+    const lot = (i: number) => cells.slice(i * 4, i * 4 + 4);
+    const ou = (l: { x: number; y: number }[]) =>
+      l.map((c) => `(x = ${c.x} AND y = ${c.y})`).join(" OR ");
+    const relire = async () =>
+      (
+        (await appel(`/parcels/${parcelle.id}`)).corps as unknown as {
+          parcel: {
+            cells: {
+              x: number;
+              y: number;
+              strawTons: number;
+              baleCount: number;
+              hasStubble: boolean;
+              weedPressure: number;
+            }[];
+          };
+        }
+      ).parcel.cells;
+    const caseA = (l: { x: number; y: number }[], toutes: Awaited<ReturnType<typeof relire>>) =>
+      toutes.find((c) => c.x === l[0]!.x && c.y === l[0]!.y)!;
+
+    // 1 — La presse : un andain devient des bottes.
+    const presse = lot(0);
+    prismaExec(
+      `UPDATE "ParcelCell" SET "strawTons" = 2 WHERE "parcelId" = '${parcelle.id}' AND (${ou(presse)});`,
+    );
+    const rPresse = await appel(`/parcels/${parcelle.id}/contractor`, {
+      methode: "POST",
+      corps: { userId: moi.id, work: "BALE", cells: presse },
+      jeton: moi.jeton,
+    });
+    assert.equal(rPresse.statut, 200, `presse refusée : ${JSON.stringify(rPresse.corps)}`);
+    assert.ok(
+      (rPresse.corps as unknown as { bales: number }).bales > 0,
+      "le prestataire a pressé zéro botte",
+    );
+    const apresPresse = caseA(presse, await relire());
+    assert.equal(apresPresse.strawTons, 0, "l'andain est resté au sol");
+    assert.ok(apresPresse.baleCount > 0, "aucune botte sur la case pressée");
+
+    // 2 — Le ramassage : les bottes rentrent au stock.
+    const rRamasse = await appel(`/parcels/${parcelle.id}/contractor`, {
+      methode: "POST",
+      corps: { userId: moi.id, work: "COLLECT", cells: presse },
+      jeton: moi.jeton,
+    });
+    assert.equal(rRamasse.statut, 200, `ramassage refusé : ${JSON.stringify(rRamasse.corps)}`);
+    assert.equal(caseA(presse, await relire()).baleCount, 0, "les bottes sont restées au champ");
+    const stock = (await appel("/auth/me", { jeton: moi.jeton })).corps as unknown as {
+      player: { farm: { inventory: { itemCode: string; qty: number }[] } };
+    };
+    const bottes = stock.player.farm.inventory
+      .filter((i) => i.itemCode === "STRAW_BALE")
+      .reduce((n, i) => n + i.qty, 0);
+    assert.ok(bottes > 0, "les bottes ramassées ne sont pas au stock");
+
+    // 3 — Le déchaumage : le chaume disparaît.
+    const chaume = lot(1);
+    prismaExec(
+      `UPDATE "ParcelCell" SET "hasStubble" = true, "harvestsSincePlow" = 1, "fieldStage" = 'HARVESTED' ` +
+        `WHERE "parcelId" = '${parcelle.id}' AND (${ou(chaume)});`,
+    );
+    const rChaume = await appel(`/parcels/${parcelle.id}/contractor`, {
+      methode: "POST",
+      corps: { userId: moi.id, work: "STUBBLE", cells: chaume },
+      jeton: moi.jeton,
+    });
+    assert.equal(rChaume.statut, 200, `déchaumage refusé : ${JSON.stringify(rChaume.corps)}`);
+    assert.equal(caseA(chaume, await relire()).hasStubble, false, "le chaume est resté debout");
+
+    // 4 — Le désherbage : la pression retombe.
+    const sales = lot(2);
+    const crop = cropDeSaison();
+    const semis = await appel(`/parcels/${parcelle.id}/contractor`, {
+      methode: "POST",
+      corps: { userId: moi.id, work: "PLANT", crop, cells: sales },
+      jeton: moi.jeton,
+    });
+    assert.equal(semis.statut, 200, `semis refusé : ${JSON.stringify(semis.corps)}`);
+    prismaExec(
+      `UPDATE "ParcelCell" SET "weedPressure" = 0.9 WHERE "parcelId" = '${parcelle.id}' AND (${ou(sales)});`,
+    );
+    const rDesherbe = await appel(`/parcels/${parcelle.id}/contractor`, {
+      methode: "POST",
+      corps: { userId: moi.id, work: "WEED", cells: sales },
+      jeton: moi.jeton,
+    });
+    assert.equal(rDesherbe.statut, 200, `désherbage refusé : ${JSON.stringify(rDesherbe.corps)}`);
+    assert.ok(
+      caseA(sales, await relire()).weedPressure < 0.9,
+      "les adventices n'ont pas bougé",
+    );
+  });
+
+  it("le dépannage ensile un maïs qui n'est pas encore mûr en grain", async () => {
+    /*
+     * L'ensilage se coupe **avant** maturité grain : c'est tout son intérêt.
+     * Le prestataire ne le prenait pas du tout ; le laisser passer par la
+     * branche moisson lui aurait fait répondre « rien n'est mûr » sur un champ
+     * qui ne demandait qu'à être coupé.
+     *
+     * Le maïs est écrit directement en base : on veut une culture à mi-course,
+     * pas un semis à faire mûrir pendant le test.
+     */
+    const { moi, parcelle, cells } = await fermeSemable();
+    const lot = cells.slice(0, 4);
+    const ou = lot.map((c) => `(x = ${c.x} AND y = ${c.y})`).join(" OR ");
+    /*
+     * On vise entre le seuil d'ensilage (0,55) et la maturité grain, et on le
+     * **mesure** au lieu de le supposer : la durée de pousse effective dépend
+     * du climat et de la saison, si bien qu'un temps écoulé calculé sur la
+     * durée de base tombe à côté selon le jour où la suite tourne.
+     */
+    const grow = 27 * 60 * 60 * 1000;
+    const progressionDe = async () => {
+      const det = (await appel(`/parcels/${parcelle.id}`, { jeton: moi.jeton })).corps as unknown as {
+        cellSims: { x: number; y: number; sim: { progress: number; ready: boolean } }[];
+      };
+      return det.cellSims.find((c) => c.x === lot[0]!.x && c.y === lot[0]!.y)!.sim;
+    };
+    const semerIlYA = async (ecoule: number) => {
+      const seme = new Date(Date.now() - ecoule).toISOString();
+      const pret = new Date(Date.now() + Math.max(60_000, grow - ecoule)).toISOString();
+      prismaExec(
+        `UPDATE "ParcelCell" SET kind = 'CROP', crop = 'MAIZE', "fieldStage" = 'PLANTED', ` +
+          `"plantedAt" = '${seme}', "readyAt" = '${pret}' ` +
+          `WHERE "parcelId" = '${parcelle.id}' AND (${ou});`,
+      );
+      return progressionDe();
+    };
+    /*
+     * On **cherche** la fenêtre au lieu de la calculer.
+     *
+     * Deux tentatives d'extrapolation ont échoué avant celle-ci, et pour deux
+     * raisons différentes : `progress` est plafonné à 1, si bien qu'un semis
+     * témoin déjà mûr ment sur la durée effective ; et la pousse n'est pas
+     * linéaire dans le temps écoulé — elle dépend de la météo traversée, donc
+     * de la saison où le semis a commencé. Un facteur mesuré sur trois
+     * dixièmes de cycle ne vaut pas pour un cycle entier.
+     *
+     * Rien de tout cela ne gêne une recherche : on essaie des semis de plus en
+     * plus anciens et on garde le premier qui tombe entre le seuil d'ensilage
+     * et la maturité grain. Le test dure quelques requêtes de plus et ne
+     * dépend plus d'un modèle de croissance qu'il n'a pas à connaître.
+     */
+    let sim = { progress: 0, ready: false };
+    let trouve = false;
+    for (const part of [0.75, 1, 1.25, 1.5, 2, 2.5, 3, 4, 5]) {
+      sim = await semerIlYA(grow * part);
+      if (sim.progress >= SILAGE_MIN_PROGRESS && !sim.ready) {
+        trouve = true;
+        break;
+      }
+      // Déjà mûr en grain : inutile de vieillir davantage, on ne redescendra pas.
+      if (sim.ready) break;
+    }
+    assert.ok(
+      trouve,
+      `aucun semis ne tombe entre le seuil d'ensilage et la maturité (dernier : progress ${sim.progress}, mûr ${sim.ready})`,
+    );
+
+    const r = await appel(`/parcels/${parcelle.id}/contractor`, {
+      methode: "POST",
+      corps: { userId: moi.id, work: "SILAGE", cells: lot },
+      jeton: moi.jeton,
+    });
+    assert.equal(r.statut, 200, `ensilage refusé : ${JSON.stringify(r.corps)}`);
+    const rendu = r.corps as unknown as { totalTons: number };
+    assert.ok(rendu.totalTons > 0, "l'ensileuse est repartie à vide");
+    const tas = (await appel("/auth/me", { jeton: moi.jeton })).corps as unknown as {
+      player: { farm: { inventory: { itemCode: string; qty: number }[] } };
+    };
+    const ensilage = tas.player.farm.inventory
+      .filter((i) => i.itemCode === "SILAGE")
+      .reduce((n, i) => n + i.qty, 0);
+    assert.ok(ensilage > 0, "l'ensilage n'est pas arrivé au tas");
+    // La plante part entière : il ne reste pas d'andain derrière l'ensileuse.
+    const apres = (
+      (await appel(`/parcels/${parcelle.id}`)).corps as unknown as {
+        parcel: { cells: { x: number; y: number; strawTons: number }[] };
+      }
+    ).parcel.cells.find((c) => c.x === lot[0]!.x && c.y === lot[0]!.y)!;
+    assert.equal(apres.strawTons, 0, "l'ensilage a laissé de la paille derrière lui");
+  });
+
+  it("inscrit chaque prestation sous son vrai nom au grand livre", async () => {
+    /*
+     * Trois libellés étaient des copiés-collés qui n'avaient pas été relus :
+     * un semis s'inscrivait « Prestataire — moisson », un labour « pressage »,
+     * une fertilisation « ramassage ». Le grand livre est l'endroit où le
+     * joueur va chercher où part son argent ; il n'y a rien de plus coûteux
+     * qu'un registre auquel on ne peut pas se fier.
+     */
+    const { moi, parcelle, cells } = await fermeSemable();
+    const r = await appel(`/parcels/${parcelle.id}/contractor`, {
+      methode: "POST",
+      corps: { userId: moi.id, work: "PLANT", crop: cropDeSaison(), cells: cells.slice(0, 4) },
+      jeton: moi.jeton,
+    });
+    assert.equal(r.statut, 200, `semis refusé : ${JSON.stringify(r.corps)}`);
+    const journal = (await appel(`/players/${moi.id}/ledger`, { jeton: moi.jeton }))
+      .corps as unknown as { lignes: { poste: string; label: string }[] };
+    const ligne = journal.lignes.find((l) => l.label.startsWith("Prestataire"));
+    assert.ok(ligne, "le prestataire n'a rien inscrit au grand livre");
+    assert.match(
+      ligne.label,
+      /Semer/i,
+      `un semis inscrit sous un autre nom : « ${ligne.label} »`,
+    );
   });
 
   it("ne laisse pas l'entreprise contourner le calendrier", async () => {
@@ -1907,25 +2777,73 @@ describe("un chantier prend du temps", () => {
    */
   it("laisse de côté les cases déjà prises, et fait le reste", async () => {
     const { moi, parcelle, cells } = await fermeAuChamp("Doublon");
+    /*
+     * Le partage partiel se teste sur un chantier **qui tourne encore** :
+     * c'est le seul état où des cases sont vraiment retenues.
+     *
+     * Cette version-ci attendait le terme du premier chantier sans le
+     * réclamer, et vérifiait que ses cases restaient prises. C'était le
+     * comportement signalé en jouant le 28 août — « toutes ces cases sont
+     * déjà sur un chantier en cours » devant un champ où plus rien ne
+     * tournait. Un chantier fini du joueur lui-même ne retient plus rien.
+     *
+     * D'où le second attelage, acheté **avant** de lancer quoi que ce soit :
+     * sans lui le chantier B n'aurait pas de quoi partir, et l'acheter après
+     * prendrait plus longtemps que ne dure le chantier A.
+     */
+    // Le garage ne tient que cinq engins : on revend celui dont ce test n'a
+    // que faire, sinon le second semoir n'a pas de place où rentrer.
+    const parcAvant = (await appel("/auth/me", { jeton: moi.jeton })).corps as unknown as {
+      player: { farm: { machines: { id: string; type: string }[] } };
+    };
+    const inutile = parcAvant.player.farm.machines.find(
+      (m) => m.type !== "TRACTOR" && m.type !== "SEEDER",
+    );
+    assert.ok(inutile, "il faut un engin à revendre pour libérer une place");
+    await appel(`/machines/${inutile.id}/sell`, {
+      methode: "POST",
+      corps: { userId: moi.id },
+      jeton: moi.jeton,
+    });
+    for (const type of ["TRACTOR", "SEEDER"]) {
+      const achat = await appel("/machines/buy", {
+        methode: "POST",
+        corps: { userId: moi.id, type },
+        jeton: moi.jeton,
+      });
+      assert.equal(achat.statut, 201, `achat ${type} refusé : ${JSON.stringify(achat.corps)}`);
+    }
+    /*
+     * Et quelqu'un pour conduire le second attelage.
+     *
+     * Le matériel ne suffit plus : le joueur compte pour un conducteur, et
+     * mener deux chantiers en demande deux. C'est toute la règle des
+     * employés, et elle s'applique ici comme ailleurs.
+     */
+    const vivier = await appel("/employees", { jeton: moi.jeton });
+    assert.equal(vivier.statut, 200, `vivier illisible : ${JSON.stringify(vivier.corps)}`);
+    const candidat = (vivier.corps as unknown as { candidates: { id: string }[] }).candidates[0]!;
+    const embauche = await appel("/employees/hire", {
+      methode: "POST",
+      corps: { candidateId: candidat.id },
+      jeton: moi.jeton,
+    });
+    assert.equal(embauche.statut, 201, `embauche refusée : ${JSON.stringify(embauche.corps)}`);
+
     const a = await appel(`/parcels/${parcelle.id}/jobs`, {
       methode: "POST",
       corps: { userId: moi.id, work: "PLANT", crop: cropDeSaison(), cells: cells.slice(0, 6) },
       jeton: moi.jeton,
     });
     assert.equal(a.statut, 201);
-    /*
-     * On laisse le premier chantier arriver à son terme sans le réclamer.
-     *
-     * C'est l'état qui compte ici : le semoir est rentré — il n'y en a qu'un,
-     * et le second chantier en a besoin — mais les cases du premier restent
-     * réservées tant que personne n'est venu chercher son travail. C'est aussi
-     * l'état exact du joueur qui relance un champ après un refus.
-     */
-    const finA = new Date(
-      (a.corps as unknown as { job: { endsAt: string } }).job.endsAt,
-    ).getTime();
-    const resteA = finA - Date.now();
-    if (resteA > 0) await new Promise((r) => setTimeout(r, resteA + 30));
+    /* Le chantier A doit tourner **encore** quand B part : c'est le seul état
+       où ses cases sont vraiment retenues. Un semis de six cases dure moins
+       d'une seconde en test, on ne court donc pas après — on le fige. */
+    const jobA = (a.corps as unknown as { job: { id: string } }).job.id;
+    prismaExec(
+      `UPDATE "FieldJob" SET "endsAt" = '${new Date(Date.now() + 60 * 60_000).toISOString()}' ` +
+        `WHERE id = '${jobA}';`,
+    );
     const b = await appel(`/parcels/${parcelle.id}/jobs`, {
       methode: "POST",
       corps: { userId: moi.id, work: "PLANT", crop: cropDeSaison(), cells: cells.slice(4, 10) },
@@ -1949,18 +2867,39 @@ describe("un chantier prend du temps", () => {
     // La sélection entièrement prise garde un refus : il n'y a pas de « reste »
     // à travailler, et partir sur zéro case n'aurait aucun sens.
     const { moi, parcelle, cells } = await fermeAuChamp("Toutprises");
+    const bloc = cells.slice(0, 6);
     const a = await appel(`/parcels/${parcelle.id}/jobs`, {
       methode: "POST",
-      corps: { userId: moi.id, work: "PLANT", crop: cropDeSaison(), cells: cells.slice(0, 6) },
+      corps: { userId: moi.id, work: "PLANT", crop: cropDeSaison(), cells: bloc },
       jeton: moi.jeton,
     });
     assert.equal(a.statut, 201);
+
+    /*
+     * On fige le chantier au champ, au lieu de courir après lui.
+     *
+     * `FARMSIM_JOB_SPEED` ramène un semis de six cases sous la seconde. Le
+     * second appel arrivait donc parfois après la fin du premier — et il était
+     * alors **accepté à bon droit** : un joueur qui relance sur ses propres
+     * cases n'attend pas le délai de grâce, c'est la règle que tient le test
+     * suivant. Ce test-ci n'a rien à dire sur ce cas ; il porte sur des cases
+     * retenues par un chantier qui tourne vraiment. On pose donc cet état-là.
+     */
+    const jobId = (a.corps as unknown as { job: { id: string } }).job.id;
+    const loin = new Date(Date.now() + 60 * 60_000).toISOString();
+    prismaExec(`UPDATE "FieldJob" SET "endsAt" = '${loin}' WHERE id = '${jobId}';`);
+
     const b = await appel(`/parcels/${parcelle.id}/jobs`, {
       methode: "POST",
-      corps: { userId: moi.id, work: "PLANT", crop: cropDeSaison(), cells: cells.slice(0, 6) },
+      corps: { userId: moi.id, work: "PLANT", crop: cropDeSaison(), cells: bloc },
       jeton: moi.jeton,
     });
     assert.equal(b.statut, 409);
+    /* Et refusé pour la bonne raison. Le plafond de chantiers refuse lui aussi
+       en 409 : sans ce contrôle, ce test passerait au vert le jour où la règle
+       des cases disparaîtrait, en mesurant celle de l'équipe à sa place. */
+    const refus = (b.corps as unknown as { error: string; freeAt?: string }).error;
+    assert.match(refus, /retenue|retenues/, `mauvais motif de refus : ${refus}`);
   });
 
   /**
@@ -2015,6 +2954,461 @@ describe("un chantier prend du temps", () => {
       return new Date(m.busyUntil).getTime() < Date.now() - 60_000;
     });
     assert.equal(encoreDehors.length, 0, "un attelage est resté au champ pour toujours");
+  });
+
+  /**
+   * Son propre chantier fini ne fait pas attendre le joueur.
+   *
+   * Relevé en production le 28 août : deux labours terminés depuis cinq et six
+   * minutes, et « Toutes ces cases sont déjà sur un chantier en cours » devant
+   * un champ où rien ne tournait. Le délai de grâce protège une reprise — un
+   * téléphone qui sort de veille vient réclamer son travail — mais relancer
+   * sur ses propres cases dit précisément qu'on ne viendra pas le réclamer.
+   *
+   * Le test se place **dans** la grâce, à une minute : c'est la fenêtre où le
+   * refus tombait, et où il ne doit plus tomber.
+   */
+  it("laisse relancer sur ses propres cases sans attendre la grâce", async () => {
+    const { moi, parcelle, cells } = await fermeAuChamp("Grace");
+    const bloc = cells.slice(0, 6);
+    const lance = await appel(`/parcels/${parcelle.id}/jobs`, {
+      methode: "POST",
+      corps: { userId: moi.id, work: "PLANT", crop: cropDeSaison(), cells: bloc },
+      jeton: moi.jeton,
+    });
+    assert.equal(lance.statut, 201);
+    const jobId = (lance.corps as unknown as { job: { id: string } }).job.id;
+
+    // Fini il y a une minute, jamais réclamé : encore couvert par la grâce.
+    const finiRecemment = new Date(Date.now() - 60_000);
+    prismaExec(
+      `UPDATE "FieldJob" SET "endsAt" = '${finiRecemment.toISOString()}' WHERE id = '${jobId}';`,
+    );
+
+    const repris = await appel(`/parcels/${parcelle.id}/jobs`, {
+      methode: "POST",
+      corps: { userId: moi.id, work: "PLANT", crop: cropDeSaison(), cells: bloc },
+      jeton: moi.jeton,
+    });
+    assert.equal(
+      repris.statut,
+      201,
+      `le joueur attend cinq minutes pour rien : ${JSON.stringify(repris.corps)}`,
+    );
+    assert.equal(
+      (repris.corps as unknown as { job: { skipped: number } }).job.skipped,
+      0,
+      "son propre chantier terminé retenait encore des cases",
+    );
+  });
+
+  /**
+   * Un chantier encore en cours, lui, retient — et le dit honnêtement.
+   *
+   * L'assouplissement ci-dessus ne doit pas ouvrir la porte à deux chantiers
+   * sur les mêmes cases. Le refus reste, mais il annonce désormais quand la
+   * sélection se libère : sans cette date, le joueur relançait en boucle.
+   */
+  it("refuse les cases d'un chantier qui tourne, et dit jusqu'à quand", async () => {
+    const { moi, parcelle, cells } = await fermeAuChamp("Occupe");
+    const bloc = cells.slice(0, 6);
+    const lance = await appel(`/parcels/${parcelle.id}/jobs`, {
+      methode: "POST",
+      corps: { userId: moi.id, work: "PLANT", crop: cropDeSaison(), cells: bloc },
+      jeton: moi.jeton,
+    });
+    assert.equal(lance.statut, 201);
+
+    const repris = await appel(`/parcels/${parcelle.id}/jobs`, {
+      methode: "POST",
+      corps: { userId: moi.id, work: "PLANT", crop: cropDeSaison(), cells: bloc },
+      jeton: moi.jeton,
+    });
+    assert.equal(repris.statut, 409);
+    const corps = repris.corps as unknown as { error: string; freeAt?: string };
+    assert.ok(corps.freeAt, `le refus n'annonce pas de fin : ${JSON.stringify(corps)}`);
+    assert.ok(
+      new Date(corps.freeAt as string).getTime() > Date.now(),
+      "la date de libération est déjà passée",
+    );
+    assert.ok(
+      /libre dans/.test(corps.error),
+      `le refus n'annonce pas l'attente : ${corps.error}`,
+    );
+  });
+
+  /**
+   * Le fantôme d'un champ qu'on ne revisite jamais finit par tomber.
+   *
+   * `libererChantiersAbandonnes` ne nettoie que la parcelle visitée. En
+   * production, un chantier de semis était encore `RUNNING` **huit jours**
+   * après sa fin : personne n'était retourné sur ce champ. Le tour de
+   * simulation balaie maintenant, quelle que soit la parcelle.
+   *
+   * ## Et l'engin de ce fantôme a été vendu depuis
+   *
+   * C'est ce que la production a livré le 31 août, au prix de trois jours de
+   * site injoignable. `FieldJob.machineId` n'est pas une clé étrangère :
+   * l'identifiant survit à la vente de l'engin. Le balayage a réveillé le
+   * fantôme, `machine.update` a levé un P2025 « No record was found for an
+   * update », la transaction a échoué, et avec elle le tour de simulation —
+   * attendu sans filet au démarrage, il faisait sortir le processus. Docker
+   * relançait, le tour échouait encore, et le conteneur tournait en
+   * `Restarting` sans jamais ouvrir son port.
+   *
+   * Le test supprime donc l'outil, **pas** le tracteur : ce qui reste doit
+   * rentrer au garage pendant que ce qui a disparu est ignoré. Le second
+   * défaut de cette panne — un tour raté n'empêche plus de servir — se lit
+   * dans `main()`.
+   */
+  it("balaie un fantôme de champ délaissé, même si son outil a été vendu", async () => {
+    const { moi, parcelle, cells } = await fermeAuChamp("Balai");
+    const lance = await appel(`/parcels/${parcelle.id}/jobs`, {
+      methode: "POST",
+      corps: { userId: moi.id, work: "PLANT", crop: cropDeSaison(), cells: cells.slice(0, 6) },
+      jeton: moi.jeton,
+    });
+    assert.equal(lance.statut, 201);
+    const jobId = (lance.corps as unknown as { job: { id: string } }).job.id;
+    const vieux = new Date(Date.now() - 8 * 24 * 60 * 60_000);
+    prismaExec(
+      `UPDATE "FieldJob" SET "endsAt" = '${vieux.toISOString()}' WHERE id = '${jobId}';` +
+        // C'est le chantier qui désigne son outil, comme dans le code.
+        ` DELETE FROM "Machine" WHERE id IN (SELECT "machineId" FROM "FieldJob" WHERE id = '${jobId}');`,
+    );
+
+    // Aucune visite sur la parcelle : c'est le tour du monde qui doit le voir.
+    const tick = await appel("/sim/tick", { methode: "POST", jeton: moi.jeton });
+    assert.equal(tick.statut, 200, `le tour n'a pas tourné : ${JSON.stringify(tick.corps)}`);
+
+    /*
+     * On juge le balayage sur l'attelage, pas sur la ligne en base : c'est ce
+     * que le joueur constate. Le chantier avait mis la machine de garde
+     * jusqu'à la fin prévue ; le balayage la rend, et `busyUntil` retombe à
+     * `null`. Sans lui, elle resterait retenue par un chantier mort.
+     */
+    const parc = (await appel("/auth/me", { jeton: moi.jeton })).corps as unknown as {
+      player: { farm: { machines: { id: string; busyUntil: string | null }[] } };
+    };
+    const retenues = parc.player.farm.machines.filter((m) => m.busyUntil);
+    assert.equal(
+      retenues.length,
+      0,
+      `le fantôme retient encore un attelage : ${JSON.stringify(retenues)}`,
+    );
+  });
+
+  /**
+   * Une terre labourée puis laissée là peut redevenir verte.
+   *
+   * Signalé en jouant le 28 août : « je peux plus nettoyer le terrain pour
+   * qu'après labour ça redevienne vert ». Les règles de `soil.ts` savent le
+   * faire — `canRegrass` et `applyRegrass` existent, et disent en toutes
+   * lettres à quel signalement de joueur elles répondent. Ce test-ci prend le
+   * chemin complet, du chantier à la case relue, parce que c'est le seul qui
+   * dirait où ça casse.
+   */
+  it("remet en herbe une terre labourée et nue", async () => {
+    const { moi, parcelle, cells } = await fermeAuChamp("Enherbe");
+    const bloc = cells.slice(0, 6);
+    // L'état exact que laisse un labour : préparée, nue, sans chaumes. On le
+    // pose directement — y arriver en jouant demanderait une saison entière.
+    const paires = bloc.map((c) => `(${c.x}, ${c.y})`).join(", ");
+    prismaExec(
+      `UPDATE "ParcelCell" SET "fieldStage" = 'PREPARED', "hasStubble" = false, "crop" = NULL` +
+        ` WHERE "parcelId" = '${parcelle.id}' AND (x, y) IN (${paires});`,
+    );
+
+    const lance = await appel(`/parcels/${parcelle.id}/jobs`, {
+      methode: "POST",
+      corps: { userId: moi.id, work: "STUBBLE", cells: bloc },
+      jeton: moi.jeton,
+    });
+    assert.equal(lance.statut, 201, `chantier refusé : ${JSON.stringify(lance.corps)}`);
+    const job = (lance.corps as unknown as { job: { id: string; endsAt: string } }).job;
+    const reste = new Date(job.endsAt).getTime() - Date.now();
+    if (reste > 0) await new Promise((r) => setTimeout(r, reste + 40));
+
+    const fait = await appel(`/parcels/${parcelle.id}/stubble`, {
+      methode: "POST",
+      corps: { userId: moi.id, jobId: job.id, cells: bloc },
+      jeton: moi.jeton,
+    });
+    assert.equal(fait.statut, 200, `déchaumage refusé : ${JSON.stringify(fait.corps)}`);
+    assert.equal(
+      (fait.corps as unknown as { regrassed: number }).regrassed,
+      6,
+      `les cases n'ont pas été remises en herbe : ${JSON.stringify(fait.corps)}`,
+    );
+
+    // Le vert, côté joueur, c'est `fieldStage` revenu à EMPTY sans résidus :
+    // c'est ce couple, et lui seul, que la vue lit pour peindre en `PLAIN`.
+    const det = await appel(`/parcels/${parcelle.id}`);
+    const apres = (det.corps as unknown as {
+      parcel: { cells: { x: number; y: number; fieldStage: string; residuePasses: number }[] };
+    }).parcel.cells.filter((c) => bloc.some((b) => b.x === c.x && b.y === c.y));
+    assert.equal(apres.length, 6);
+    for (const c of apres) {
+      assert.equal(c.fieldStage, "EMPTY", `case ${c.x},${c.y} encore travaillée`);
+      assert.equal(c.residuePasses, 0, `case ${c.x},${c.y} garde des résidus, donc du marron`);
+    }
+  });
+
+  /**
+   * Un seul tracteur ne mène pas deux chantiers.
+   *
+   * Signalé en jouant le 28 août : « tu peux lancer deux choses qui
+   * nécessitent le tracteur alors que t'as qu'un seul tracteur, c'est pas
+   * censé être possible. Il faudrait un ajustement là dessus. Dire qu'il faut
+   * deux tracteurs. »
+   *
+   * Les deux chantiers portent sur des cases **disjointes** : c'est ce qui
+   * isole l'attelage. Sur les mêmes cases, la réservation suffirait à refuser
+   * et le test ne mesurerait pas ce qu'il prétend mesurer.
+   */
+  it("refuse un second chantier quand l'attelage est déjà au champ", async () => {
+    const { moi, parcelle, cells } = await fermeAuChamp("UnSeulTracteur");
+
+    const a = await appel(`/parcels/${parcelle.id}/jobs`, {
+      methode: "POST",
+      corps: { userId: moi.id, work: "PLANT", crop: cropDeSaison(), cells: cells.slice(0, 6) },
+      jeton: moi.jeton,
+    });
+    assert.equal(a.statut, 201);
+
+    const b = await appel(`/parcels/${parcelle.id}/jobs`, {
+      methode: "POST",
+      corps: { userId: moi.id, work: "PLANT", crop: cropDeSaison(), cells: cells.slice(6, 12) },
+      jeton: moi.jeton,
+    });
+    assert.equal(
+      b.statut,
+      409,
+      `le même attelage a mené deux chantiers : ${JSON.stringify(b.corps)}`,
+    );
+    const erreur = (b.corps as unknown as { error: string }).error;
+    // Le refus doit se suffire à lui-même : ce qui bloque, pour combien de
+    // temps, et quoi faire. C'est le silence, pas la règle, qui avait fait
+    // retirer cette contrainte la première fois.
+    assert.match(erreur, /au champ/, `refus muet : ${erreur}`);
+    assert.match(erreur, /second/, `le refus ne dit pas quoi faire : ${erreur}`);
+
+    await appel(`/jobs/${(a.corps as { job: { id: string } }).job.id}/cancel`, {
+      methode: "POST", corps: { userId: moi.id }, jeton: moi.jeton,
+    });
+    const candidates = (await appel("/employees", { jeton: moi.jeton })).corps as { candidates: { id: string }[] };
+    const hire = await appel("/employees/hire", {
+      methode: "POST", corps: { candidateId: candidates.candidates[0].id }, jeton: moi.jeton,
+    });
+    assert.equal(hire.statut, 201, JSON.stringify(hire.corps));
+    prismaExec(`UPDATE "ParcelCell" SET "hasStubble" = true, "fieldStage" = 'HARVESTED' WHERE "parcelId" = '${parcelle.id}' AND kind = 'EMPTY'`);
+    // Deux outils différents, deux sélections disjointes, deux conducteurs,
+    // mais un seul tracteur : une seule réservation doit être acceptée.
+    const starts = await Promise.all(["PLOW", "STUBBLE"].map((work, i) => appel(`/parcels/${parcelle.id}/jobs`, {
+      methode: "POST", corps: { userId: moi.id, work, cells: cells.slice(i * 6, i * 6 + 6) }, jeton: moi.jeton,
+    })));
+    assert.deepEqual(starts.map((r) => r.statut).sort(), [201, 409], JSON.stringify(starts));
+    const accepted = starts.find((r) => r.statut === 201)!;
+    const active = (accepted.corps as { job: { id: string } }).job;
+    await appel(`/jobs/${active.id}/cancel`, { methode: "POST", corps: { userId: moi.id }, jeton: moi.jeton });
+  });
+
+  /**
+   * Du vivier au chantier, sur une seule ferme.
+   *
+   * Les règles pures — barème, tirage déterministe, capacité de logement —
+   * sont tenues dans `packages/sim`. Ici on suit le chemin du joueur, et on
+   * vérifie la seule chose qu'aucun test pur ne peut dire : que le second
+   * chantier part une fois quelqu'un embauché, et pas avant.
+   *
+   * Tout tient dans une ferme et un récit : chaque `fermeAuChamp` consomme
+   * une parcelle libre du monde de test, et il n'y en a pas des mille — deux
+   * fermes de plus ont suffi à affamer le test de voisinage.
+   */
+  it("embauche : le second chantier devient possible, et le logement borne le reste", async () => {
+    const { moi, parcelle, cells } = await fermeAuChamp("Equipe");
+
+    // 1 — le tableau d'embauche, avant toute embauche.
+    const vivier = await appel("/employees", { jeton: moi.jeton });
+    assert.equal(vivier.statut, 200);
+    const tableau = vivier.corps as unknown as {
+      employees: { impayeJours: number }[];
+      candidates: { id: string; salaire: number }[];
+      lits: number;
+      peutEmbaucher: boolean;
+      sansLogement: number;
+      preavisJours: number;
+    };
+    assert.equal(tableau.employees.length, 0, "on démarre seul");
+    assert.equal(tableau.candidates.length, 3, "trois candidats se présentent");
+    assert.equal(tableau.lits, 0, "aucun logement bâti");
+    assert.equal(tableau.peutEmbaucher, true, "deux embauches sont possibles sans rien bâtir");
+    assert.equal(tableau.sansLogement, 2);
+    assert.equal(tableau.preavisJours, 2, "le préavis se lit depuis la règle partagée");
+    for (const c of tableau.candidates) {
+      assert.ok(c.salaire >= 60, `salaire sous le plancher : ${c.salaire}`);
+    }
+
+    /* Un second attelage, sinon le refus porterait sur le matériel et ce test
+       ne mesurerait pas ce qu'il prétend mesurer. Le garage ne tient que cinq
+       engins : on revend celui dont on n'a que faire. */
+    const parc = (await appel("/auth/me", { jeton: moi.jeton })).corps as unknown as {
+      player: { farm: { machines: { id: string; type: string }[] } };
+    };
+    const inutile = parc.player.farm.machines.find(
+      (m) => m.type !== "TRACTOR" && m.type !== "SEEDER",
+    );
+    assert.ok(inutile);
+    await appel(`/machines/${inutile.id}/sell`, {
+      methode: "POST",
+      corps: { userId: moi.id },
+      jeton: moi.jeton,
+    });
+    for (const type of ["TRACTOR", "SEEDER"]) {
+      const achat = await appel("/machines/buy", {
+        methode: "POST",
+        corps: { userId: moi.id, type },
+        jeton: moi.jeton,
+      });
+      assert.equal(achat.statut, 201, `achat ${type} refusé : ${JSON.stringify(achat.corps)}`);
+    }
+
+    // 2 — le premier chantier part ; le second est refusé faute de bras.
+    const a = await appel(`/parcels/${parcelle.id}/jobs`, {
+      methode: "POST",
+      corps: { userId: moi.id, work: "PLANT", crop: cropDeSaison(), cells: cells.slice(0, 6) },
+      jeton: moi.jeton,
+    });
+    assert.equal(a.statut, 201);
+    /* Le plafond compte ce qui tourne **maintenant**. Un semis de six cases
+       dure moins d'une seconde en test : sans figer le chantier, le second
+       partirait parfois sans rien enfreindre, et le test mesurerait la vitesse
+       de la machine au lieu de la règle. */
+    const jobA = (a.corps as unknown as { job: { id: string } }).job.id;
+    const finLointaine = new Date(Date.now() + 60 * 60_000).toISOString();
+    prismaExec(`UPDATE "FieldJob" SET "endsAt" = '${finLointaine}' WHERE id = '${jobA}';`);
+    const refuse = await appel(`/parcels/${parcelle.id}/jobs`, {
+      methode: "POST",
+      corps: { userId: moi.id, work: "PLANT", crop: cropDeSaison(), cells: cells.slice(6, 12) },
+      jeton: moi.jeton,
+    });
+    assert.equal(refuse.statut, 409, `second chantier accepté : ${JSON.stringify(refuse.corps)}`);
+    assert.match(
+      (refuse.corps as unknown as { error: string }).error,
+      /embauchez/,
+      "le refus doit nommer le geste qui débloque",
+    );
+
+    // 3 — on embauche, et le même chantier passe.
+    const embauche = await appel("/employees/hire", {
+      methode: "POST",
+      corps: { candidateId: tableau.candidates[0]!.id },
+      jeton: moi.jeton,
+    });
+    assert.equal(embauche.statut, 201, `embauche refusée : ${JSON.stringify(embauche.corps)}`);
+    const recrue = (embauche.corps as unknown as { employee: { id: string } }).employee;
+    /* Un employé frais ne doit rien : sans ce zéro, l'écran afficherait une
+       mise en garde de départ à la seconde qui suit l'embauche. */
+    const apres = (await appel("/employees", { jeton: moi.jeton })).corps as unknown as {
+      employees: { impayeJours: number }[];
+    };
+    assert.equal(apres.employees.length, 1);
+    assert.equal(apres.employees[0]!.impayeJours, 0, "on ne doit rien à qui vient d'arriver");
+
+    /* Le vivier se recalcule à chaque appel : sans garde-fou, on rembaucherait
+       la même personne autant de fois qu'il reste des lits. */
+    const encore = await appel("/employees/hire", {
+      methode: "POST",
+      corps: { candidateId: tableau.candidates[0]!.id },
+      jeton: moi.jeton,
+    });
+    assert.equal(encore.statut, 409, "on ne peut pas embaucher deux fois la même personne");
+    const vivierApres = (await appel("/employees", { jeton: moi.jeton })).corps as unknown as {
+      candidates: { id: string }[];
+    };
+    assert.equal(vivierApres.candidates.length, 2, "l'embauché quitte le tableau des candidats");
+    assert.ok(
+      !vivierApres.candidates.some((c) => c.id === tableau.candidates[0]!.id),
+      "celui qu'on a embauché ne doit plus être proposé",
+    );
+    const b = await appel(`/parcels/${parcelle.id}/jobs`, {
+      methode: "POST",
+      corps: { userId: moi.id, work: "PLANT", crop: cropDeSaison(), cells: cells.slice(6, 12) },
+      jeton: moi.jeton,
+    });
+    assert.equal(b.statut, 201, `le second chantier reste refusé : ${JSON.stringify(b.corps)}`);
+
+    /* On range les deux chantiers avant de mesurer la suite. Les attendre
+       finir marchait sur une machine au repos et tombait sous charge : le
+       plafond compte ce qui tourne **maintenant**, et « maintenant » n'est pas
+       une durée sur laquelle on peut parier. */
+    for (const lance of [a, b]) {
+      const id = (lance.corps as unknown as { job: { id: string } }).job.id;
+      // `a` a été figé plus haut : il tourne encore, l'abandon le prend.
+      const stop = await appel(`/jobs/${id}/cancel`, {
+        methode: "POST",
+        corps: { userId: moi.id },
+        jeton: moi.jeton,
+      });
+      // 409 : il avait fini tout seul entre-temps, ce qui nous va aussi.
+      assert.ok(
+        stop.statut === 200 || stop.statut === 409,
+        `abandon refusé : ${JSON.stringify(stop.corps)}`,
+      );
+    }
+
+    // 4 — envoyé à l'élevage, il ne conduit plus : le plafond retombe.
+    const mute = await appel(`/employees/${recrue.id}/post`, {
+      methode: "POST",
+      corps: { poste: "ELEVAGE" },
+      jeton: moi.jeton,
+    });
+    assert.equal(mute.statut, 200);
+    // Deux chantiers neufs, coup sur coup, sur un compteur remis à zéro.
+    const c = await appel(`/parcels/${parcelle.id}/jobs`, {
+      methode: "POST",
+      corps: { userId: moi.id, work: "PLANT", crop: cropDeSaison(), cells: cells.slice(12, 18) },
+      jeton: moi.jeton,
+    });
+    assert.equal(c.statut, 201, `le joueur doit pouvoir mener le sien : ${JSON.stringify(c.corps)}`);
+    const d = await appel(`/parcels/${parcelle.id}/jobs`, {
+      methode: "POST",
+      corps: { userId: moi.id, work: "PLANT", crop: cropDeSaison(), cells: cells.slice(18, 24) },
+      jeton: moi.jeton,
+    });
+    assert.equal(
+      d.statut,
+      409,
+      "celui qui est à l'élevage ne devrait pas conduire un chantier",
+    );
+
+    // 5 — deux au village, pas trois : au-delà, il faut des lits.
+    const deuxieme = await appel("/employees/hire", {
+      methode: "POST",
+      corps: { candidateId: tableau.candidates[1]!.id },
+      jeton: moi.jeton,
+    });
+    assert.equal(deuxieme.statut, 201);
+    const trop = await appel("/employees/hire", {
+      methode: "POST",
+      corps: { candidateId: tableau.candidates[2]!.id },
+      jeton: moi.jeton,
+    });
+    assert.equal(trop.statut, 409);
+    assert.match(
+      (trop.corps as unknown as { error: string }).error,
+      /logement/,
+      "le refus doit nommer le bâtiment qui débloque",
+    );
+
+    /* Et le candidat ne se fabrique pas : le serveur le retrouve dans le
+       vivier du jour, sinon n'importe qui s'embaucherait un 5/5/5. */
+    const invente = await appel("/employees/hire", {
+      methode: "POST",
+      corps: { candidateId: "cand-inexistant-0" },
+      jeton: moi.jeton,
+    });
+    assert.equal(invente.statut, 409);
   });
 
   it("rend l'attelage quand on abandonne", async () => {
@@ -2104,7 +3498,7 @@ describe("code d'accès haché", () => {
 
     const r = await appel("/auth/login", {
       methode: "POST",
-      corps: { email: moi.email, accessCode: "ferme" },
+      corps: { email: moi.email, accessCode: "ferme-2026" },
     });
     assert.equal(r.statut, 200, JSON.stringify(r.corps));
     // Re-hacher à chaque connexion coûterait un bcrypt pour rien, et surtout
@@ -2169,7 +3563,7 @@ describe("code d'accès haché", () => {
     const moi = await inscrire("Code Change");
     const r = await appel("/auth/me", {
       methode: "PATCH",
-      corps: { accessCode: "code-tout-neuf", currentAccessCode: "ferme" },
+      corps: { accessCode: "code-tout-neuf", currentAccessCode: "ferme-2026" },
       jeton: moi.jeton,
     });
     assert.equal(r.statut, 200, JSON.stringify(r.corps));
@@ -2185,7 +3579,7 @@ describe("code d'accès haché", () => {
     assert.equal(
       (await appel("/auth/login", {
         methode: "POST",
-        corps: { email: moi.email, accessCode: "ferme" },
+        corps: { email: moi.email, accessCode: "ferme-2026" },
       })).statut,
       401,
     );
@@ -2213,138 +3607,6 @@ describe("code d'accès haché", () => {
     assert.match(codeEnBase(moi.email), EMPREINTE);
   });
 
-  it("la récupération pose une empreinte, pas un code en clair", async () => {
-    const moi = await inscrire("Code Secours Hache");
-    const r = await appel("/auth/recover", {
-      methode: "POST",
-      corps: { email: moi.email, recoveryCode: moi.secours, accessCode: "apres-secours" },
-    });
-    assert.equal(r.statut, 200, JSON.stringify(r.corps));
-    assert.match(codeEnBase(moi.email), EMPREINTE);
-    assert.equal(
-      (await appel("/auth/login", {
-        methode: "POST",
-        corps: { email: moi.email, accessCode: "apres-secours" },
-      })).statut,
-      200,
-    );
-  });
-});
-
-describe("code de secours", () => {
-  it("est remis à l'inscription, une seule fois", async () => {
-    const moi = await inscrire("Secours Neuf");
-    assert.ok(moi.secours, "l'inscription doit remettre un code de secours");
-    assert.ok(isRecoveryCode(moi.secours!));
-
-    // Se reconnecter ne doit **pas** en redonner un : sinon le code noté par
-    // le joueur cesserait de valoir à chaque visite.
-    const r = await appel("/auth/login", {
-      methode: "POST",
-      corps: { email: moi.email, accessCode: "ferme" },
-    });
-    assert.equal(r.statut, 200);
-    assert.equal((r.corps as { recoveryCode?: string }).recoveryCode, undefined);
-  });
-
-  it("rouvre la ferme et pose un code d'accès neuf", async () => {
-    const moi = await inscrire("Secours Oubli");
-    const r = await appel("/auth/recover", {
-      methode: "POST",
-      corps: {
-        email: moi.email,
-        // Recopié comme sur un carnet : tirets, minuscules.
-        recoveryCode: formatRecovery(moi.secours!).toLowerCase(),
-        accessCode: "nouveau-code",
-      },
-    });
-    assert.equal(r.statut, 200, JSON.stringify(r.corps));
-    const b = r.corps as { token: string; player: { id: string }; recoveryCode?: string };
-    assert.equal(b.player.id, moi.id, "c'est bien la même ferme");
-
-    // L'ancien code ne vaut plus, le nouveau vaut.
-    const ancien = await appel("/auth/login", {
-      methode: "POST",
-      corps: { email: moi.email, accessCode: "ferme" },
-    });
-    assert.equal(ancien.statut, 401);
-    const neuf = await appel("/auth/login", {
-      methode: "POST",
-      corps: { email: moi.email, accessCode: "nouveau-code" },
-    });
-    assert.equal(neuf.statut, 200);
-  });
-
-  it("brûle le code utilisé et en remet un autre", async () => {
-    // Un bout de papier retrouvé dans six mois ne doit pas rouvrir la ferme.
-    const moi = await inscrire("Secours Brule");
-    const un = await appel("/auth/recover", {
-      methode: "POST",
-      corps: { email: moi.email, recoveryCode: moi.secours, accessCode: "code-un" },
-    });
-    assert.equal(un.statut, 200);
-    const suivant = (un.corps as { recoveryCode?: string }).recoveryCode;
-    assert.ok(suivant && suivant !== moi.secours, "un code neuf doit être remis");
-
-    const rejoue = await appel("/auth/recover", {
-      methode: "POST",
-      corps: { email: moi.email, recoveryCode: moi.secours, accessCode: "code-deux" },
-    });
-    assert.equal(rejoue.statut, 401);
-
-    const bon = await appel("/auth/recover", {
-      methode: "POST",
-      corps: { email: moi.email, recoveryCode: suivant, accessCode: "code-trois" },
-    });
-    assert.equal(bon.statut, 200);
-  });
-
-  it("met dehors les sessions ouvertes avec l'ancien code", async () => {
-    // Sans cela, reprendre la main sur son compte serait une illusion : celui
-    // qui était entré avec l'ancien code y resterait jusqu'à l'expiration.
-    const moi = await inscrire("Secours Dehors");
-    const avant = await appel("/auth/me", { jeton: moi.jeton });
-    assert.equal(avant.statut, 200);
-
-    const r = await appel("/auth/recover", {
-      methode: "POST",
-      corps: { email: moi.email, recoveryCode: moi.secours, accessCode: "code-repris" },
-    });
-    assert.equal(r.statut, 200);
-
-    const apres = await appel("/auth/me", { jeton: moi.jeton });
-    assert.equal(apres.statut, 401);
-  });
-
-  it("refuse sans dire si l'adresse existe", async () => {
-    const moi = await inscrire("Secours Muet");
-    const faux = await appel("/auth/recover", {
-      methode: "POST",
-      corps: {
-        email: moi.email,
-        recoveryCode: "ZZZZ-ZZZZ-ZZZZ-ZZZZ",
-        accessCode: "peu-importe",
-      },
-    });
-    const inconnu = await appel("/auth/recover", {
-      methode: "POST",
-      corps: {
-        email: `personne-${Date.now()}@test.fr`,
-        recoveryCode: "ZZZZ-ZZZZ-ZZZZ-ZZZZ",
-        accessCode: "peu-importe",
-      },
-    });
-    assert.equal(faux.statut, inconnu.statut);
-    assert.deepEqual(faux.corps, inconnu.corps);
-    assert.equal(faux.statut, 401);
-
-    // Et le compte visé n'a pas bougé.
-    const encore = await appel("/auth/login", {
-      methode: "POST",
-      corps: { email: moi.email, accessCode: "ferme" },
-    });
-    assert.equal(encore.statut, 200);
-  });
 });
 
 describe("mise à jour du compte", () => {
@@ -2387,7 +3649,7 @@ describe("mise à jour du compte", () => {
       corps: {
         email: neuf,
         accessCode: "nouveau-code",
-        currentAccessCode: "ferme",
+        currentAccessCode: "ferme-2026",
       },
     });
     assert.equal(r.statut, 200, JSON.stringify(r.corps));
@@ -2396,7 +3658,7 @@ describe("mise à jour du compte", () => {
 
     const ancien = await appel("/auth/login", {
       methode: "POST",
-      corps: { email: moi.email, accessCode: "ferme" },
+      corps: { email: moi.email, accessCode: "ferme-2026" },
     });
     assert.equal(ancien.statut, 401);
     const ok = await appel("/auth/login", {
@@ -2412,7 +3674,7 @@ describe("mise à jour du compte", () => {
     const r = await appel("/auth/me", {
       methode: "PATCH",
       jeton: a.jeton,
-      corps: { email: b.email, currentAccessCode: "ferme" },
+      corps: { email: b.email, currentAccessCode: "ferme-2026" },
     });
     assert.equal(r.statut, 409);
   });
@@ -2573,13 +3835,22 @@ describe("le voisinage d’une parcelle", () => {
     const regions = (monde.corps as unknown as {
       regions: { parcels: { id: string; taken: boolean }[] }[];
     }).regions;
+    /*
+     * On s'installe par la fin du monde, pas par le début.
+     *
+     * `fermeAuChamp` prend la première parcelle libre, et chaque test en
+     * consomme une : le début de la liste se remplit, et la première libre
+     * finit entourée de fermes de test. Ce test-ci a besoin d'un **voisin
+     * libre** — il tombait donc dès qu'on ajoutait deux ou trois cas ailleurs
+     * dans le fichier, pour une raison qui n'avait rien à voir avec lui.
+     *
+     * En partant de l'autre bout, les deux montages ne se disputent plus les
+     * mêmes cases, et le voisinage reste dégagé.
+     */
     let parcelId = "";
-    for (const r of regions) {
-      const libre = (r.parcels ?? []).find((p) => !p.taken);
-      if (libre) {
-        parcelId = libre.id;
-        break;
-      }
+    for (let i = regions.length - 1; i >= 0 && !parcelId; i--) {
+      const libres = (regions[i]?.parcels ?? []).filter((p) => !p.taken);
+      parcelId = libres[libres.length - 1]?.id ?? "";
     }
     assert.ok(parcelId, "il faut une parcelle libre");
     await appel("/world/claim", {
@@ -2805,89 +4076,443 @@ describe("le voisinage d’une parcelle", () => {
   });
 });
 
-describe("un cadastre de tailles variées", () => {
-  type ParcelleMonde = {
+
+describe("journal durable et paginé", () => {
+  it("retrouve toutes les écritures, même datées à la même seconde, et totalise la période entière", async () => {
+    const moi = await inscrire("Journal");
+    const date = new Date(Date.now() - 400 * 86400000).toISOString();
+    const ancien = new Date(Date.now() - 1500 * 86400000).toISOString();
+    prismaExec(`DELETE FROM "LedgerEntry" WHERE "userId" = '${moi.id}';
+      INSERT INTO "LedgerEntry" (id, "userId", amount, poste, label, at)
+      SELECT '${moi.id}-' || n, '${moi.id}', 1, 'CULTURES', 'Récolte', '${date}' FROM generate_series(1, 230) AS n;
+      INSERT INTO "LedgerEntry" (id, "userId", amount, poste, label, at) VALUES
+      ('${moi.id}-depense', '${moi.id}', -25, 'INTRANTS', 'Engrais', '${date}'),
+      ('${moi.id}-ancien', '${moi.id}', 999, 'CULTURES', 'Ancien', '${ancien}');`);
+    let cursor: string | null = null;
+    let until = "";
+    const ids: string[] = [];
+    do {
+      const query = new URLSearchParams({ jours: "1096" });
+      if (cursor) query.set("cursor", cursor);
+      if (until) query.set("until", until);
+      const r = await appel(`/players/${moi.id}/ledger?${query}`, { jeton: moi.jeton });
+      assert.equal(r.statut, 200);
+      const page = r.corps as unknown as import("@farmsim/shared").LedgerPage;
+      assert.equal(page.resultat.solde, 205);
+      assert.equal(page.resultat.recettes, 230);
+      assert.equal(page.resultat.depenses, 25);
+      assert.ok(page.lignes.length <= 100);
+      ids.push(...page.lignes.map((l) => l.id!));
+      cursor = page.nextCursor;
+      until = page.until;
+      assert.ok(ids.length <= 231, "le curseur ne doit pas boucler");
+    } while (cursor);
+    assert.equal(ids.length, 231);
+    assert.equal(new Set(ids).size, 231);
+    const all = await appel(`/players/${moi.id}/ledger?jours=0`, { jeton: moi.jeton });
+    assert.equal((all.corps as unknown as import("@farmsim/shared").LedgerPage).resultat.solde, 1204);
+    const invalid = await appel(`/players/${moi.id}/ledger?jours=NaN`, { jeton: moi.jeton });
+    assert.equal(invalid.statut, 400);
+  });
+});
+
+describe("le parcellaire", () => {
+  /**
+   * « Les parcelles ont toutes les mêmes tailles, il devrait y avoir des
+   * tailles différentes ; seule la parcelle de base qu'on a tous devrait avoir
+   * une taille standard. »
+   *
+   * Le reproche portait sur la génération du monde, et il était exact :
+   * `gridW` et `gridH` existent sur `Parcel` depuis toujours, mais la création
+   * y écrivait `DEFAULT_GRID` pour chacune des parcelles de chacune des
+   * régions. Une variable qui ne prend jamais qu'une valeur.
+   *
+   * Le second volet — que la différence se **voie** dans le paysage — est tenu
+   * côté client (`parcelles-de-tailles.test.ts`) ; le catalogue et le prix à
+   * la surface sont dans `taille-parcelle.test.ts`. Ici on éprouve ce que le
+   * serveur pose vraiment en base, et la seule règle qui ne se déduit d'aucune
+   * fonction pure : la parcelle de départ est ramenée au standard.
+   */
+  type ParcelleCarte = {
     id: string;
+    farmId: string | null;
     gridW: number;
     gridH: number;
-    landPrice: number;
-    taken: boolean;
   };
-  async function parcellesAUR(): Promise<ParcelleMonde[]> {
-    const monde = await appel("/world/AUR");
-    const regions = (monde.corps as unknown as { regions: { parcels: ParcelleMonde[] }[] })
-      .regions;
-    return regions.flatMap((r) => r.parcels);
-  }
-  function sql(texte: string): string {
-    return execFileSync("psql", [base!.url, "-tA", "-c", texte], { encoding: "utf8" }).trim();
+
+  async function parcellesLibres(jeton: string): Promise<ParcelleCarte[]> {
+    const r = await appel("/zones", { jeton });
+    assert.equal(r.statut, 200, JSON.stringify(r.corps));
+    const zones = r.corps as unknown as { parcels: ParcelleCarte[] }[];
+    return zones.flatMap((z) => z.parcels).filter((p) => !p.farmId);
   }
 
-  it("les terres libres vont de 8×8 à 16×16, toujours carrées", async () => {
-    const libres = (await parcellesAUR()).filter((p) => !p.taken);
-    const tailles = new Set(libres.map((p) => p.gridW));
-    for (const p of libres) {
-      assert.equal(p.gridW, p.gridH, "une parcelle reste carrée");
-      assert.ok([8, 10, 12, 14, 16].includes(p.gridW), `taille inattendue : ${p.gridW}`);
-    }
-    assert.ok(tailles.has(8) && tailles.has(16), `pas assez de variété : ${[...tailles]}`);
-  });
+  /**
+   * Les parcelles libres d'une région **où l'on peut s'installer**.
+   *
+   * `/zones` ne dit pas si une région accepte une ferme de départ : celles où
+   * ni blé ni maïs ne pousse sont refusées par `/world/claim`, et un test qui
+   * tirait au hasard dans le monde entier tombait dessus une fois sur
+   * plusieurs. Le test échouait alors sur un piège du monde, pas sur ce qu'il
+   * mesure. `/world/:continent` porte le drapeau, et la grille avec.
+   */
+  async function parcellesOuSInstaller(jeton: string): Promise<ParcelleCarte[]> {
+    const r = await appel("/world/AUR", { jeton });
+    assert.equal(r.statut, 200, JSON.stringify(r.corps));
+    const regions = (r.corps as unknown as {
+      regions: {
+        starterEligible: boolean;
+        parcels: { id: string; gridW: number; gridH: number; taken: boolean }[];
+      }[];
+    }).regions;
+    return regions
+      .filter((z) => z.starterEligible)
+      .flatMap((z) => z.parcels)
+      .filter((p) => !p.taken)
+      .map((p) => ({ id: p.id, farmId: null, gridW: p.gridW, gridH: p.gridH }));
+  }
 
-  it("chaque parcelle a exactement ses cases, ni plus ni moins", () => {
-    const fausses = sql(
-      `SELECT count(*) FROM "Parcel" p
-         WHERE (SELECT count(*) FROM "ParcelCell" c WHERE c."parcelId" = p.id)
-               <> p."gridW" * p."gridH"`,
+  it("pose des lots de plusieurs tailles, et pas une seule", async () => {
+    const moi = await inscrire("Arpenteur");
+    const libres = await parcellesLibres(moi.jeton);
+    assert.ok(libres.length > 50, `il faut un monde peuplé, vu ${libres.length}`);
+    const tailles = new Set(libres.map((p) => `${p.gridW}x${p.gridH}`));
+    assert.ok(
+      tailles.size >= 3,
+      `le monde ne devrait pas être uniforme, vu ${[...tailles].join(", ")}`,
     );
-    assert.equal(fausses, "0");
+    // Et de part et d'autre du standard : c'est la demande, « des lots plus
+    // grands et plus petits ».
+    assert.ok(libres.some((p) => p.gridW < DEFAULT_GRID.w), "il manque des petits lots");
+    assert.ok(libres.some((p) => p.gridW > DEFAULT_GRID.w), "il manque des grands lots");
   });
 
-  it("le prix suit la surface : une 16×16 coûte bien plus qu'une 8×8", async () => {
-    const libres = (await parcellesAUR()).filter((p) => !p.taken);
-    const de = (t: number) => libres.filter((p) => p.gridW === t);
-    const prixMoyen = (l: ParcelleMonde[]) => l.reduce((n, p) => n + p.landPrice, 0) / l.length;
-    assert.ok(prixMoyen(de(16)) > 2.5 * prixMoyen(de(8)));
-    // À la case, les deux restent du même ordre : c'est la terre qu'on paie.
-    const rapport = prixMoyen(de(16)) / 256 / (prixMoyen(de(8)) / 64);
-    assert.ok(rapport > 0.6 && rapport < 1.6, `prix à la case trop différent : ${rapport}`);
-  });
+  it("ramène la parcelle de départ au standard, quelle que soit celle qu’on choisit", async () => {
+    /*
+     * La règle qui rend le parcellaire variable jouable plutôt qu'injuste.
+     * Sans elle, celui qui pose son doigt au bon endroit de la carte démarre
+     * sur vingt-cinq hectares et son voisin sur six, avant d'avoir joué un
+     * seul coup.
+     */
+    const moi = await inscrire("Colon");
+    const libres = await parcellesOuSInstaller(moi.jeton);
+    /* Par la fin : le début de la liste se remplit au fil des tests, et deux
+       montages ne doivent pas se disputer les mêmes cases. */
+    const horsNorme = [...libres].reverse().find((p) => p.gridW !== DEFAULT_GRID.w);
+    assert.ok(horsNorme, "il faut une parcelle qui ne soit pas au standard");
 
-  it("une ferme démarre toujours en 12×12, même prise sur une terre de 16", async () => {
-    const grande = (await parcellesAUR()).find((p) => !p.taken && p.gridW === 16)!;
-    const moi = await inscrire("Cadastre Un");
     const r = await appel("/world/claim", {
       methode: "POST",
-      corps: { specialization: "CEREALIER", parcelId: grande.id },
+      corps: { userId: moi.id, specialization: "ELEVEUR", parcelId: horsNorme.id },
       jeton: moi.jeton,
     });
-    assert.equal(r.statut, 201);
-    assert.equal(
-      sql(`SELECT "gridW" || 'x' || "gridH" || ':' ||
-             (SELECT count(*) FROM "ParcelCell" c WHERE c."parcelId" = p.id)
-           FROM "Parcel" p WHERE id = '${grande.id}'`),
-      "12x12:144",
+    // 201 : la route crée la ferme, elle ne met pas à jour une ressource.
+    assert.equal(r.statut, 201, JSON.stringify(r.corps));
+
+    const me = await appel("/auth/me", { jeton: moi.jeton });
+    const parcelles = (me.corps as unknown as {
+      player: { farm: { parcels: { id: string; gridW: number; gridH: number }[] } };
+    }).player.farm.parcels;
+    assert.equal(parcelles.length, 1);
+    assert.equal(parcelles[0]!.gridW, DEFAULT_GRID.w);
+    assert.equal(parcelles[0]!.gridH, DEFAULT_GRID.h);
+
+    /*
+     * Et la grille de cases suit, en nombre comme en bornes.
+     *
+     * C'est ici que le premier essai s'est cassé : la grange de départ se
+     * plaçait d'après la grille **lue avant** le redécoupage, donc vers
+     * (13, 13) sur un lot de seize — une case qui venait d'être supprimée. Le
+     * `parcelCell.update` faisait échouer toute la transaction, et
+     * l'installation entière avec elle.
+     */
+    const vue = await appel(`/parcels/${parcelles[0]!.id}`, { jeton: moi.jeton });
+    assert.equal(vue.statut, 200, JSON.stringify(vue.corps));
+    const parcelle = (vue.corps as unknown as {
+      parcel: {
+        gridW: number;
+        gridH: number;
+        cells: { x: number; y: number }[];
+        buildings: { type: string }[];
+      };
+    }).parcel;
+    assert.equal(parcelle.gridW, DEFAULT_GRID.w);
+    assert.equal(parcelle.cells.length, DEFAULT_GRID.w * DEFAULT_GRID.h);
+    assert.ok(
+      parcelle.cells.every((c) => c.x < DEFAULT_GRID.w && c.y < DEFAULT_GRID.h),
+      "aucune case ne doit dépasser la grille standard",
+    );
+    // L'étable de départ est bien là : c'est elle qui échouait en silence.
+    assert.ok(
+      parcelle.buildings.some((b) => b.type === "CATTLE_BARN"),
+      "l'étable de départ doit avoir été posée",
     );
   });
 
-  it("le voisinage donne la taille de chaque parcelle et un devis à sa surface", async () => {
-    const depart = (await parcellesAUR()).find((p) => !p.taken)!;
-    const moi = await inscrire("Cadastre Deux");
+  it("dit la surface du voisinage, et la fait varier d’un champ à l’autre", async () => {
+    const moi = await inscrire("Voisin");
+    const libres = await parcellesOuSInstaller(moi.jeton);
+    const choisie = libres[Math.floor(libres.length / 2)]!;
     await appel("/world/claim", {
       methode: "POST",
-      corps: { specialization: "CEREALIER", parcelId: depart.id },
+      corps: { userId: moi.id, specialization: "CEREALIER", parcelId: choisie.id },
       jeton: moi.jeton,
     });
-    const r = await appel(`/parcels/${depart.id}/voisinage`, { jeton: moi.jeton });
-    assert.equal(r.statut, 200);
-    const voisins = (r.corps as unknown as {
-      parcelles: { gridW: number; gridH: number; prix: number | null }[];
+    const r = await appel(`/parcels/${choisie.id}/voisinage`, { jeton: moi.jeton });
+    assert.equal(r.statut, 200, JSON.stringify(r.corps));
+    const parcelles = (r.corps as unknown as {
+      parcelles: { id: string; gridW: number; gridH: number; statut: string }[];
     }).parcelles;
-    const avecDevis = voisins.filter((v) => v.prix !== null);
-    assert.ok(avecDevis.length > 0);
-    for (const v of voisins) assert.ok(v.gridW >= 8 && v.gridW <= 16);
-    assert.ok(new Set(avecDevis.map((v) => v.gridW)).size > 1, "le voisinage doit mêler les tailles");
-    // Des tailles différentes, un prix à la case du même ordre : le devis suit la surface.
-    const parCase = avecDevis.map((v) => v.prix! / (v.gridW * v.gridH));
-    assert.ok(Math.max(...parCase) / Math.min(...parCase) < 4);
+    assert.ok(parcelles.length >= 8, `voisinage trop maigre : ${parcelles.length}`);
+    /*
+     * C'est cette route qui alimente le paysage. Sans ces deux colonnes, le
+     * client n'a aucun moyen de dessiner un champ à sa taille — c'était le cas
+     * jusqu'ici, et c'est pourquoi tous les voisins se ressemblaient.
+     */
+    for (const p of parcelles) {
+      assert.equal(typeof p.gridW, "number", `grille manquante sur ${p.id}`);
+      assert.equal(typeof p.gridH, "number", `grille manquante sur ${p.id}`);
+    }
+    assert.ok(
+      new Set(parcelles.map((p) => p.gridW)).size >= 2,
+      "le voisinage immédiat doit déjà montrer plusieurs tailles",
+    );
+  });
+
+  it("fait payer la surface, et le dit dans le devis", async () => {
+    /*
+     * Le défaut économique que le déplafonnement des tailles aurait ouvert :
+     * `askPrice()` chiffrait sept facteurs et pas les hectares. Invisible tant
+     * que toutes les parcelles faisaient la même taille, indéfendable dès la
+     * première qui n'en fait pas.
+     */
+    const moi = await inscrire("Acheteur");
+    const libres = await parcellesOuSInstaller(moi.jeton);
+    const base = libres[0]!;
+    await appel("/world/claim", {
+      methode: "POST",
+      corps: { userId: moi.id, specialization: "CEREALIER", parcelId: base.id },
+      jeton: moi.jeton,
+    });
+
+    const devis = async (id: string) => {
+      const r = await appel(`/parcels/${id}/quote`, { jeton: moi.jeton });
+      assert.equal(r.statut, 200, JSON.stringify(r.corps));
+      return r.corps as unknown as {
+        hectares: number;
+        gridW: number;
+        total: number;
+        breakdown: { surface: { value: number; contribution: number } };
+      };
+    };
+
+    const restantes = (await parcellesLibres(moi.jeton)).filter((p) => p.id !== base.id);
+    const petite = restantes.find((p) => p.gridW === Math.min(...restantes.map((x) => x.gridW)))!;
+    const grande = restantes.find((p) => p.gridW === Math.max(...restantes.map((x) => x.gridW)))!;
+    assert.ok(petite.gridW < grande.gridW, "il faut deux tailles différentes à comparer");
+
+    const dp = await devis(petite.id);
+    const dg = await devis(grande.id);
+    assert.ok(dp.hectares < dg.hectares, "le devis doit annoncer la surface");
+    assert.ok(
+      dg.breakdown.surface.value > dp.breakdown.surface.value,
+      "le facteur de surface doit suivre la grille",
+    );
+    // Le facteur vaut exactement 1 au standard : c'est ce qui garantit que
+    // rien n'a bougé pour les parcelles qui n'ont pas changé de taille.
+    const standard = restantes.find((p) => p.gridW === DEFAULT_GRID.w);
+    if (standard) {
+      const ds = await devis(standard.id);
+      assert.equal(ds.breakdown.surface.value, 1);
+      assert.equal(ds.breakdown.surface.contribution, 0);
+    }
+  });
+});
+
+describe("le lien de réinitialisation", () => {
+  /**
+   * « Intégrer la possibilité de mettre mot de passe oublié et de recevoir son
+   * mdp sur son adresse mail. »
+   *
+   * La seconde moitié est impossible, et c'est une bonne nouvelle : le
+   * serveur ne détient pas le mot de passe, seulement une empreinte bcrypt.
+   * C'est la propriété que le même joueur réclamait quelques jours plus tôt en
+   * écrivant « c'est censé être crypté, et illisible ». Ce qui part est donc
+   * un lien à usage unique.
+   *
+   * Cette suite tourne **sans serveur de messagerie** — le serveur de test n'a
+   * pas de SMTP — ce qui éprouve au passage le mode « non configuré », celui
+   * dans lequel l'instance sera déployée tant que les identifiants n'existent
+   * pas. Le parcours d'usage, lui, se joue en posant le jeton directement en
+   * base : c'est exactement ce que `/auth/forgot` écrit quand il peut envoyer.
+   */
+
+  /** L'empreinte du jeton, telle que le serveur la calcule. */
+  function empreinte(jeton: string): string {
+    return createHash("sha256").update(jeton).digest("hex");
+  }
+
+  /** Pose un jeton en base, comme le ferait la route d'envoi. */
+  function poserJeton(userId: string, jeton: string, opts: { expire?: boolean; servi?: boolean } = {}) {
+    const fin = opts.expire ? "now() - interval '1 minute'" : "now() + interval '30 minutes'";
+    const servi = opts.servi ? "now()" : "NULL";
+    prismaExec(
+      `INSERT INTO "PasswordReset" (id, "userId", "tokenHash", "expiresAt", "usedAt", "createdAt")
+       VALUES ('${jeton.slice(0, 20)}-row', '${userId}', '${empreinte(jeton)}', ${fin}, ${servi}, now());`,
+    );
+  }
+
+  /** Un jeton bien formé, propre à chaque test. */
+  const jetonNeuf = () => randomBytes(32).toString("base64url");
+
+  it("annonce franchement quand le courrier n’est pas branché", async () => {
+    /*
+     * Plutôt que de promettre un courriel qui ne partira pas. Ce n'est pas une
+     * fuite : l'information porte sur le serveur, pas sur l'existence d'un
+     * compte. Et il n'y a plus de repli à proposer — le code de secours, qui
+     * tenait ce rôle hors ligne, a été retiré avec l'arrivée du lien.
+     */
+    const dispo = await appel("/auth/courriel");
+    assert.equal(dispo.statut, 200);
+    assert.equal((dispo.corps as unknown as { disponible: boolean }).disponible, false);
+
+    const r = await appel("/auth/forgot", {
+      methode: "POST",
+      corps: { email: "personne@test.fr" },
+    });
+    assert.equal(r.statut, 503, JSON.stringify(r.corps));
+    assert.match((r.corps as unknown as { error: string }).error, /exploitant du jeu/);
+  });
+
+  it("refuse un jeton qui n’a pas la forme d’un jeton", async () => {
+    for (const jeton of ["", "court", "a".repeat(200)]) {
+      const r = await appel("/auth/reset", {
+        methode: "POST",
+        corps: { jeton, accessCode: "nouveau-mot-de-passe" },
+      });
+      assert.ok(r.statut === 400 || r.statut === 401, `${jeton} → ${r.statut}`);
+    }
+  });
+
+  it("refuse un jeton inconnu, expiré ou déjà servi", async () => {
+    const moi = await inscrire("Oublieux");
+    const inconnu = jetonNeuf();
+    const expire = jetonNeuf();
+    const servi = jetonNeuf();
+    poserJeton(moi.id, expire, { expire: true });
+    poserJeton(moi.id, servi, { servi: true });
+
+    for (const [nom, jeton] of [
+      ["inconnu", inconnu],
+      ["expiré", expire],
+      /* Le cas qu'on oublie, et le plus coûteux : sans lui, un lien reste une
+         clé permanente dans une boîte de réception. */
+      ["déjà servi", servi],
+    ] as const) {
+      const r = await appel("/auth/reset", {
+        methode: "POST",
+        corps: { jeton, accessCode: "un-mot-de-passe-neuf" },
+      });
+      assert.equal(r.statut, 401, `${nom} : ${JSON.stringify(r.corps)}`);
+      // Le même refus pour les trois : l'écran ne doit pas dire lequel.
+      assert.match((r.corps as unknown as { error: string }).error, /plus valable/);
+    }
+  });
+
+  it("refuse un mot de passe trop court, sans brûler le jeton", async () => {
+    /*
+     * L'ordre compte. Brûler avant de valider ferait qu'une faute de frappe
+     * sur le nouveau mot de passe coûte le lien, et renvoie le joueur
+     * redemander un courriel pour rien.
+     */
+    const moi = await inscrire("Pressé");
+    const jeton = jetonNeuf();
+    poserJeton(moi.id, jeton);
+
+    const court = await appel("/auth/reset", {
+      methode: "POST",
+      corps: { jeton, accessCode: "court" },
+    });
+    assert.equal(court.statut, 400, JSON.stringify(court.corps));
+
+    const bon = await appel("/auth/reset", {
+      methode: "POST",
+      corps: { jeton, accessCode: "un-mot-de-passe-correct" },
+    });
+    assert.equal(bon.statut, 200, JSON.stringify(bon.corps));
+  });
+
+  it("change le mot de passe et connecte dans la foulée", async () => {
+    const moi = await inscrire("Revenant");
+    const jeton = jetonNeuf();
+    poserJeton(moi.id, jeton);
+
+    const r = await appel("/auth/reset", {
+      methode: "POST",
+      corps: { jeton, accessCode: "ma-nouvelle-ferme-2026" },
+    });
+    assert.equal(r.statut, 200, JSON.stringify(r.corps));
+    const corps = r.corps as unknown as { token: string; player: { id: string } };
+    assert.equal(corps.player.id, moi.id);
+    assert.ok(corps.token, "le lien doit reconnecter : sinon il faut ressaisir dans la foulée");
+
+    // L'ancien mot de passe ne vaut plus rien.
+    const ancien = await appel("/auth/login", {
+      methode: "POST",
+      corps: { email: moi.email, accessCode: "ferme-2026" },
+    });
+    assert.equal(ancien.statut, 401, JSON.stringify(ancien.corps));
+
+    // Le nouveau ouvre.
+    const neuf = await appel("/auth/login", {
+      methode: "POST",
+      corps: { email: moi.email, accessCode: "ma-nouvelle-ferme-2026" },
+    });
+    assert.equal(neuf.statut, 200, JSON.stringify(neuf.corps));
+  });
+
+  it("met dehors les sessions ouvertes ailleurs", async () => {
+    /*
+     * Si quelqu'un d'autre était entré avec l'ancien mot de passe, le changer
+     * doit le mettre dehors — sinon la reprise en main n'est qu'apparente.
+     */
+    const moi = await inscrire("Repris");
+    const avant = await appel("/auth/me", { jeton: moi.jeton });
+    assert.equal(avant.statut, 200, "la session doit valoir avant");
+
+    const jeton = jetonNeuf();
+    poserJeton(moi.id, jeton);
+    await appel("/auth/reset", {
+      methode: "POST",
+      corps: { jeton, accessCode: "encore-un-autre-mot-de-passe" },
+    });
+
+    const apres = await appel("/auth/me", { jeton: moi.jeton });
+    assert.equal(apres.statut, 401, "l'ancienne session doit être tombée");
+  });
+
+  it("brûle tous les liens du compte, pas seulement celui qui a servi", async () => {
+    /*
+     * Un joueur qui demande deux liens — le premier courriel s'est perdu — ne
+     * doit pas laisser le second utilisable derrière lui une fois le mot de
+     * passe changé.
+     */
+    const moi = await inscrire("Insistant");
+    const premier = jetonNeuf();
+    const second = jetonNeuf();
+    poserJeton(moi.id, premier);
+    poserJeton(moi.id, second);
+
+    const ok = await appel("/auth/reset", {
+      methode: "POST",
+      corps: { jeton: second, accessCode: "mot-de-passe-du-second-lien" },
+    });
+    assert.equal(ok.statut, 200, JSON.stringify(ok.corps));
+
+    const restant = await appel("/auth/reset", {
+      methode: "POST",
+      corps: { jeton: premier, accessCode: "tentative-avec-le-premier" },
+    });
+    assert.equal(restant.statut, 401, JSON.stringify(restant.corps));
   });
 });

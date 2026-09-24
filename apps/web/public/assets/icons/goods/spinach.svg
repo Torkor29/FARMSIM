@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48" fill="none" aria-hidden="true">
+  <ellipse cx="24" cy="43.5" rx="10" ry="2" fill="currentColor" opacity="0.18"/>
+  <!-- Une grande feuille dentelée, vert sombre, avec sa nervure : l'épinard
+       se reconnaît à la feuille, pas à la plante. -->
+  <path d="M24 41c-9-5-13-14-11-23 3-2 7-1 10 2 5 5 6 14 1 21z" fill="#2f7d43" stroke="#17492a" stroke-width="2" stroke-linejoin="round"/>
+  <path d="M24 41c8-4 12-12 11-20-3-2-7-1-10 2" fill="#3d9450" stroke="#17492a" stroke-width="2" stroke-linejoin="round"/>
+  <path d="M24 41V16" stroke="#17492a" stroke-width="2" stroke-linecap="round"/>
+  <path d="M24 24l-6-4M24 30l-6-3M24 24l6-4M24 30l6-3" stroke="#17492a" stroke-width="1.4" opacity=".6"/>
+</svg>

@@ -385,7 +385,7 @@ const CATALOGUE: MachineCatalog = {
       bonus: "Chantier professionnel : 6 m de rampe, débit d’ETA.",
       constraints: "Trois remorques ou elle attend en bout de rang.",
       compatible: "Automoteur. Remorques T3+.",
-      role: "On ensile pour soi et, bientôt, pour les autres.",
+      role: "On ensile pour soi et pour les autres.",
       stars: { puissance: 4, vitesse: 4, capacite: 4, sobriete: 2, fiabilite: 4 },
     },
     4: {

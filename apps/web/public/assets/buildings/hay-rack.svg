@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 96 96" width="96" height="96">
+  <!-- Râtelier à fourrage : la corbeille d'acier, ses barreaux, et le foin dedans. -->
+  <g fill="none" fill-rule="evenodd">
+    <ellipse cx="48" cy="82" rx="30" ry="9" fill="#8fbf6a"/>
+
+    <!-- Le foin, qui déborde par-dessus le bord -->
+    <path d="M24 44q8-12 24-12t24 12Z" fill="#e3c268"/>
+    <path d="M30 40l6-10M44 32v-9M58 40l-4-10" stroke="#c9a445" stroke-width="2" stroke-linecap="round"/>
+
+    <!-- La corbeille, tronconique -->
+    <path d="M22 44h52l-8 30H30Z" fill="#dcc27a" stroke="#6f7a80" stroke-width="2" stroke-linejoin="round"/>
+    <!-- Les barreaux -->
+    <path d="M33 44l-2 30M44 44v30M55 44l1 30M65 44l2 30" stroke="#8d979d" stroke-width="2.5" stroke-linecap="round"/>
+    <!-- Les cerclages, haut et bas -->
+    <path d="M22 44h52" stroke="#b3bcc1" stroke-width="3.5" stroke-linecap="round"/>
+    <path d="M30 74h36" stroke="#8d979d" stroke-width="3" stroke-linecap="round"/>
+  </g>
+</svg>

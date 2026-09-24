@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48" fill="none" aria-hidden="true">
+  <ellipse cx="24" cy="43.5" rx="10" ry="2" fill="currentColor" opacity="0.18"/>
+  <!-- Une poignée de jeunes pousses : des feuilles seules, sans tige.
+       C'est ce qui distingue le mesclun d'une salade pommée. -->
+  <path d="M24 40c-6-3-9-9-8-15 5 1 9 6 9 12z" fill="#8fd06a" stroke="#2f6b32" stroke-width="2" stroke-linejoin="round"/>
+  <path d="M24 40c6-3 9-9 8-15-5 1-9 6-9 12z" fill="#a8dd80" stroke="#2f6b32" stroke-width="2" stroke-linejoin="round"/>
+  <path d="M24 39c-1-8 2-15 7-19 2 6 0 14-6 19z" fill="#6fbf55" stroke="#2f6b32" stroke-width="2" stroke-linejoin="round"/>
+  <path d="M24 39c1-8-2-15-7-19-2 6 0 14 6 19z" fill="#7fc95f" stroke="#2f6b32" stroke-width="2" stroke-linejoin="round"/>
+  <path d="M24 40v-14" stroke="#2f6b32" stroke-width="1.5" opacity=".5"/>
+</svg>

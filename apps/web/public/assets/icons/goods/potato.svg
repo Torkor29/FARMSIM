@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48" fill="none" aria-hidden="true">
+  <ellipse cx="24" cy="43.5" rx="12" ry="2" fill="currentColor" opacity="0.18"/>
+  <!-- Deux tubercules, avec leurs yeux : ce sont les germes qui font
+       reconnaître une pomme de terre plutôt qu'un caillou. -->
+  <path d="M17 20c7-3 14 0 16 7 2 8-3 14-10 14-8 0-13-5-13-12 0-4 3-8 7-9z" fill="#d8b273" stroke="#8a6534" stroke-width="2" stroke-linejoin="round"/>
+  <path d="M30 15c5-2 9 1 10 5 1 5-2 9-7 9-4 0-7-3-7-7 0-3 2-6 4-7z" fill="#e6c68f" stroke="#8a6534" stroke-width="2" stroke-linejoin="round"/>
+  <ellipse cx="17" cy="28" rx="1.7" ry="1.2" fill="#8a6534"/>
+  <ellipse cx="24" cy="34" rx="1.7" ry="1.2" fill="#8a6534"/>
+  <ellipse cx="23" cy="25" rx="1.5" ry="1" fill="#8a6534" opacity=".7"/>
+  <ellipse cx="34" cy="20" rx="1.5" ry="1" fill="#8a6534"/>
+</svg>

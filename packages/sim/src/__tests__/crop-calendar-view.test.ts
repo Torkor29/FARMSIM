@@ -23,14 +23,21 @@
 import {
   CROP_DEFS,
   PLANTING_WINDOW,
+  GAME_DAY_MS,
   SEASON_CYCLE,
-  SEASON_LABELS_FR,
   SEASON_REAL_HOURS,
+  SEASON_LABELS_FR,
+  SEASON_LENGTH_DAYS,
+  YEAR_MS,
   canSowInSeason,
   cropCalendar,
   cropGrowMs,
   growthRate,
   maturityAt,
+  seasonDurationMs,
+  seasonIndex,
+  seasonOfIndex,
+  seasonStartOfIndex,
   type CropCode,
   type Season,
 } from "@farmsim/shared";
@@ -82,30 +89,53 @@ describe("ce que le tableau montre est ce que la partie fait", () => {
   it("annonce la saison de récolte où la culture est réellement mûre", () => {
     /**
      * On refait la pousse ici, à la main, sans passer par `maturityAt` ni par
-     * `cropCalendar` : on avance saison par saison en **unités de saison**, là
-     * où le module compte en millisecondes. Deux implémentations
-     * indépendantes qui tombent d'accord, c'est ce qui donne au tableau sa
-     * valeur de preuve.
+     * `cropCalendar` : on avance de frontière en frontière en **jours de
+     * jeu**, là où le module compte en millisecondes et interroge l'horloge.
+     * Deux implémentations indépendantes qui tombent d'accord, c'est ce qui
+     * donne au tableau sa valeur de preuve.
+     *
+     * Le compteur était en *unités de saison*, ce qui revenait à poser que
+     * les quatre durent le même temps. L'hiver en fait maintenant quatre
+     * jours contre sept : seul le jour de jeu est resté une unité commune, et
+     * c'est donc en jours que cette seconde implémentation compte.
      */
+    const LONGUEURS = SEASON_CYCLE.map((s) => SEASON_LENGTH_DAYS[s]);
+    const ANNEE = LONGUEURS.reduce((a, b) => a + b, 0);
+    /** Le rang de la saison qui occupe ce jour-là, et le jour où elle finit. */
+    function saisonDuJour(jours: number): { rang: number; fin: number } {
+      const p = ((jours % ANNEE) + ANNEE) % ANNEE;
+      const base = jours - p;
+      let debut = 0;
+      for (let i = 0; i < LONGUEURS.length; i++) {
+        const fin = debut + LONGUEURS[i]!;
+        if (p < fin) return { rang: i, fin: base + fin };
+        debut = fin;
+      }
+      return { rang: 0, fin: base + ANNEE };
+    }
+
     for (const r of LIGNES) {
       for (const o of r.outcomes) {
-        const objectif = cropGrowMs(r.crop) / (SEASON_REAL_HOURS * 3_600_000);
-        let curseur = SEASON_CYCLE.indexOf(o.sowSeason) + o.at;
+        const objectif = cropGrowMs(r.crop) / GAME_DAY_MS;
+        const rangSemis = SEASON_CYCLE.indexOf(o.sowSeason);
+        const debutSemis = LONGUEURS.slice(0, rangSemis).reduce((a, b) => a + b, 0);
+        let curseur = debutSemis + o.at * LONGUEURS[rangSemis]!;
         let acquis = 0;
         let garde = 0;
-        while (acquis < objectif && garde++ < 40) {
-          const rang = Math.floor(curseur);
-          const vitesse = growthRate(r.crop, SEASON_CYCLE[rang % 4]!);
-          const reste = rang + 1 - curseur;
+        let dernier = saisonDuJour(curseur);
+        while (acquis < objectif && garde++ < 60) {
+          dernier = saisonDuJour(curseur);
+          const vitesse = growthRate(r.crop, SEASON_CYCLE[dernier.rang]!);
+          const reste = dernier.fin - curseur;
           if (vitesse > 0 && acquis + reste * vitesse >= objectif) {
             curseur += (objectif - acquis) / vitesse;
             acquis = objectif;
             break;
           }
           acquis += reste * vitesse;
-          curseur = rang + 1;
+          curseur = dernier.fin;
         }
-        const attendu = SEASON_CYCLE[Math.floor(curseur) % 4]!;
+        const attendu = SEASON_CYCLE[saisonDuJour(curseur).rang]!;
         expect({ crop: r.crop, semé: o.sowSeason, à: o.at, mûr: o.harvestSeason }).toEqual({
           crop: r.crop,
           semé: o.sowSeason,
@@ -182,7 +212,7 @@ describe("les durées annoncées", () => {
      * une culture mais une immobilisation : on ne pourrait pas la faire entrer
      * dans une rotation.
      */
-    const ANNEE = SEASON_CYCLE.length * SEASON_REAL_HOURS;
+    const ANNEE = YEAR_MS / 3_600_000;
     for (const r of LIGNES) {
       for (const o of r.outcomes) {
         expect({ crop: r.crop, semé: o.sowSeason, à: o.at, dansLAnnée: o.realHours < ANNEE })
@@ -212,17 +242,17 @@ describe("le module et la vue s’accordent", () => {
   it("donne la même maturité que `maturityAt`, semis par semis", () => {
     // `cropCalendar` s'appuie sur `maturityAt` ; ce test tient qu'il ne
     // réinterprète pas son résultat en chemin.
-    const SAISON_MS = SEASON_REAL_HOURS * 3_600_000;
     for (const r of LIGNES) {
       for (const o of r.outcomes) {
-        const t0 = (SEASON_CYCLE.indexOf(o.sowSeason) + o.at) * SAISON_MS;
+        const rang = SEASON_CYCLE.indexOf(o.sowSeason);
+        const t0 = seasonStartOfIndex(rang) + o.at * seasonDurationMs(o.sowSeason);
         const mur = maturityAt(r.crop, t0);
         expect({ crop: r.crop, semé: o.sowSeason, trouvé: mur !== null }).toEqual({
           crop: r.crop,
           semé: o.sowSeason,
           trouvé: true,
         });
-        const saison: Season = SEASON_CYCLE[Math.floor(mur! / SAISON_MS) % 4]!;
+        const saison: Season = seasonOfIndex(seasonIndex(mur!));
         expect({ crop: r.crop, à: o.at, saison: o.harvestSeason }).toEqual({
           crop: r.crop,
           à: o.at,

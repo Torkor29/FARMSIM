@@ -25,11 +25,18 @@ describe("classement des routes", () => {
     assert.ok(BAREMES.INSCRIPTION.parSeconde > BAREMES.AUTH.parSeconde);
   });
 
-  it("range l'oubli de code avec la connexion, pas avec l'écriture ordinaire", () => {
-    // `/auth/recover` change le code d'accès d'un compte : c'est une porte
-    // d'entrée. Dans le seau d'écriture, elle aurait accepté soixante essais
-    // d'affilée puis deux par seconde.
-    assert.equal(classer("POST", "/auth/recover"), "AUTH");
+  it("range aussi les deux portes du lien par courriel", () => {
+    /*
+     * Elles ont été ajoutées après coup, et l'oubli aurait coûté cher des deux
+     * côtés. `/auth/forgot` **envoie un courriel à chaque appel** : sans
+     * limite, on inonde la boîte d'un joueur dont on connaît l'adresse, et on
+     * épuise le quota d'envoi du serveur — ce qui prive tout le monde du
+     * secours. `/auth/reset` pose un mot de passe : le jeton fait deux cent
+     * cinquante-six bits, mais une porte qui change un mot de passe ne s'ouvre
+     * pas soixante fois de suite.
+     */
+    assert.equal(classer("POST", "/auth/forgot"), "AUTH");
+    assert.equal(classer("POST", "/auth/reset"), "AUTH");
   });
 
   it("sépare la lecture de l'écriture", () => {

@@ -1,0 +1,172 @@
+/**
+ * Deux défauts signalés en jouant, et la règle qui les empêche de revenir.
+ *
+ *  - « La pop-up est toujours derrière, ce qui rend impossible le reste. »
+ *  - « Le tuto est beaucoup trop court » et « ne s'affiche pas lors de la
+ *    première entrée en jeu ».
+ *
+ * Le premier est une question d'empilement, et un empilement se vérifie : il
+ * suffit de lire tous les `z-index` de la feuille de style et de s'assurer
+ * qu'aucun calque du jeu ne dépasse la confirmation.
+ */
+
+import { readFileSync } from "node:fs";
+
+import { ETAPES } from "../tutorial-steps";
+
+// Chemins depuis la racine du paquet, comme le reste de la suite : les tests
+// tournent en ESM, où `__dirname` n'existe pas.
+const STYLES = readFileSync("src/styles.css", "utf8");
+const APP = readFileSync("src/App.tsx", "utf8");
+
+/** Le `z-index` d'un sélecteur, tel que la feuille de style le déclare. */
+function zIndexDe(selecteur: string): number {
+  const bloc = new RegExp(`\\.${selecteur}\\s*\\{[^}]*?z-index:\\s*(\\d+)`, "s").exec(STYLES);
+  if (!bloc) throw new Error(`aucun z-index trouvé pour .${selecteur}`);
+  return Number(bloc[1]);
+}
+
+describe("la fenêtre de confirmation", () => {
+  /**
+   * Le cas exact du signalement : vendre une machine depuis sa fiche, ou
+   * licencier depuis le personnel, ouvrait la confirmation *derrière* l'écran
+   * qui l'avait demandée.
+   */
+  it("passe devant tous les écrans du jeu", () => {
+    const confirmation = zIndexDe("confirm-backdrop");
+    for (const dessous of [
+      "machine-sheet-backdrop",
+      "care-backdrop",
+      "voisin-backdrop",
+      "tutorial-backdrop",
+      "skills-backdrop",
+      "toast",
+    ]) {
+      expect(zIndexDe(dessous)).toBeLessThan(confirmation);
+    }
+  });
+
+  /**
+   * Le vrai filet : n'importe quel calque futur, pas seulement ceux qu'on
+   * connaît aujourd'hui. C'est ce qui manquait — le défaut est né d'un écran
+   * ajouté plus haut que la confirmation, sans que personne y pense.
+   */
+  it("reste au-dessus de tout ce que la feuille de style empile", () => {
+    const confirmation = zIndexDe("confirm-backdrop");
+    const tous = [...STYLES.matchAll(/z-index:\s*(\d+)/g)].map((m) => Number(m[1]));
+    const plusHaut = Math.max(...tous);
+    expect(plusHaut).toBe(confirmation);
+  });
+
+  /**
+   * Le `z-index` ne suffisait pas, et c'est pour ça que le défaut est revenu.
+   *
+   * Un `z-index` ne vaut que dans son **contexte d'empilement**. La
+   * confirmation vivait dans l'arbre du jeu, quand la fenêtre et la fiche
+   * machine se portent sur `document.body` : il suffisait qu'un ancêtre gagne
+   * un `transform`, un `filter` ou une `opacity` — ce qu'une animation de
+   * panneau fait couramment — pour que le 200 cesse d'être comparable au 30
+   * de la fenêtre.
+   */
+  it("sort de l'arbre du jeu, comme les autres calques hauts", () => {
+    const source = readFileSync("src/ConfirmDialog.tsx", "utf8");
+    expect(source).toMatch(/createPortal\(/);
+    expect(source).toMatch(/document\.body/);
+  });
+
+  it("se voit : voile dense, liseré, ombre portée", () => {
+    // « Que la confirmation soit apparente. » Posée sur une fenêtre déjà
+    // claire, la carte s'y confondait.
+    const bloc = /\.confirm-backdrop\s*\{[^}]*\}/s.exec(STYLES)![0];
+    const opacite = Number(/rgba\([^)]*,\s*([\d.]+)\)/.exec(bloc)![1]);
+    const fenetre = /\.win-backdrop\s*\{[^}]*\}/s.exec(STYLES)![0];
+    const opaciteFenetre = Number(/rgba\([^)]*,\s*([\d.]+)\)/.exec(fenetre)![1]);
+    expect(opacite).toBeGreaterThan(opaciteFenetre);
+    expect(STYLES).toMatch(/\.confirm-card\s*\{[^}]*border:[^;]*accent/s);
+  });
+
+  it("garde de la marge pour un écran à venir", () => {
+    // Un calque neuf doit pouvoir monter sans repasser devant par mégarde.
+    const confirmation = zIndexDe("confirm-backdrop");
+    const autres = [...STYLES.matchAll(/z-index:\s*(\d+)/g)]
+      .map((m) => Number(m[1]))
+      .filter((z) => z < confirmation);
+    expect(confirmation - Math.max(...autres)).toBeGreaterThanOrEqual(100);
+  });
+});
+
+describe("le tutoriel", () => {
+  it("montre la vraie organisation mobile", () => {
+    const ecran = ETAPES.find((e) => e.id === "ecran")!;
+    const onglets = ETAPES.find((e) => e.id === "onglets")!;
+    const outil = ETAPES.find((e) => e.id === "outil")!;
+    expect(ecran.texteTactile).toMatch(/dock.*Plus.*Trace ou Rectangle/i);
+    expect(onglets.texteTactile).toMatch(/Touchez Plus.*tiroir Panneaux/i);
+    expect(outil.texteTactile).toMatch(/Voir, Semer, Sol, Récolte ou Ventes/i);
+  });
+
+  it("donne une illustration différente aux quatorze étapes", () => {
+    expect(ETAPES).toHaveLength(14);
+    expect(new Set(ETAPES.map((e) => e.scene)).size).toBe(14);
+    expect(ETAPES.find((e) => e.id === "personnel")?.scene).toBe("personnel");
+  });
+
+  /**
+   * Il s'ouvrait dès qu'un joueur existait — donc pendant l'installation,
+   * derrière l'écran qui la mène, et il ne revenait jamais. Il attend
+   * maintenant que le joueur ait vraiment une parcelle.
+   */
+  it("attend que le joueur soit installé sur sa ferme", () => {
+    expect(APP).toMatch(/const installe = Boolean\(player\?\.farm\?\.parcels\?\.length\)/);
+    /* Le garde du marque-page s'est étoffé depuis — l'expérience du joueur
+       s'y ajoute, pour qu'un changement de navigateur ne rejoue pas le
+       tutoriel — mais `installe` reste le préalable, et c'est lui qu'on tient
+       ici. Voir `tuto-ne-rejoue-pas.test.ts`. */
+    expect(APP).toMatch(
+      /if \(!installe\) return;[\s\S]{0,2000}localStorage\.getItem\(playerStorageKey\(TUTORIAL_KEY, player\.id\)\)/,
+    );
+  });
+
+  it("couvre tout le jeu, pas seulement le semis", () => {
+    const ids = ETAPES.map((e) => e.id);
+    // Les quatre sujets absents de l'ancienne version, et qui valaient le
+    // reproche « il ne montre pas les sections, les outils, comment nettoyer ».
+    for (const attendu of ["outil", "desherber", "dechaumer", "troupeau", "personnel", "onglets"]) {
+      expect(ids).toContain(attendu);
+    }
+    expect(ETAPES.length).toBeGreaterThanOrEqual(12);
+  });
+
+  it("montre chaque étape, il ne fait pas que la décrire", () => {
+    for (const e of ETAPES) {
+      expect(e.scene).toBeTruthy();
+      expect(e.titre.length).toBeGreaterThan(3);
+      expect(e.texte.length).toBeGreaterThan(40);
+    }
+  });
+
+  it("dit le bon geste selon l'écran", () => {
+    // Sur mobile le dock propose réellement les deux modes, Trace et Rectangle.
+    // Le tutoriel doit donc les nommer au lieu d'inventer une suite de taps.
+    const selection = ETAPES.find((e) => e.id === "selection")!;
+    expect(selection.texte).toMatch(/gliss/i);
+    expect(selection.texteTactile).toBeTruthy();
+    expect(selection.texteTactile).toMatch(/Trace.*glissez.*Rectangle/i);
+  });
+
+  it("range les étapes par chapitres suivis", () => {
+    // Un chapitre qui revient plus loin, c'est un plan qu'on a perdu.
+    const vus: string[] = [];
+    for (const e of ETAPES) {
+      if (vus[vus.length - 1] !== e.chapitre) {
+        expect(vus).not.toContain(e.chapitre);
+        vus.push(e.chapitre);
+      }
+    }
+    expect(vus.length).toBeGreaterThanOrEqual(4);
+  });
+
+  it("donne un identifiant unique à chaque étape", () => {
+    expect(new Set(ETAPES.map((e) => e.id)).size).toBe(ETAPES.length);
+  });
+});

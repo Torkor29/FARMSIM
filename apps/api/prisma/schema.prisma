@@ -34,6 +34,12 @@ enum CropCode {
   BARLEY
   RAPE
   GRASS
+  /// Le maraîchage : des boucles de deux à dix heures réelles.
+  MESCLUN
+  RADISH
+  SPINACH
+  LETTUCE
+  POTATO
 }
 
 enum FieldStage {
@@ -86,6 +92,66 @@ enum BuildingType {
   /// une autre, plus chère. Voir `RECIPES` côté domaine.
   DAIRY
   MILL
+  /// Annexes d'élevage : collées à un abri, elles ne changent rien à ce qu'il
+  /// héberge mais font monter son niveau d'installation, et avec lui la
+  /// production, la reproduction et l'économie de fourrage.
+  WATER_TROUGH
+  HAY_RACK
+  /// Loge les employés : un lit au premier niveau, cinq au dernier. Il n'est
+  /// pas requis pour embaucher — deux personnes logent au village — mais il
+  /// ouvre au-delà, et fait baisser le salaire de ceux qu'il héberge.
+  EMPLOYEE_HOUSING
+  /// Stocke le fumier hors de l'étable. Sans elle, la contenance de la fosse
+  /// se déduisait des places du bâtiment d'élevage : il fallait agrandir son
+  /// étable pour stocker davantage, et payer des places de bêtes inutiles.
+  MANURE_STORE
+}
+
+/// Où un employé passe sa journée : au champ, ou à l'élevage.
+enum EmployeePost {
+  CHAMP
+  ELEVAGE
+}
+
+/// Un employé de la ferme.
+///
+/// Le matériel plafonne, l'employé débloque : un chantier simultané de plus
+/// demande **et** un attelage libre **et** quelqu'un pour le conduire. Le
+/// joueur compte pour un conducteur ; seuls les employés au champ en ajoutent.
+model Employee {
+  id        String       @id @default(cuid())
+  farmId    String
+  farm      Farm         @relation(fields: [farmId], references: [id], onDelete: Cascade)
+  name      String
+  /// Chantiers plus rapides, jusqu'à 25 % au niveau 5.
+  conduite  Int          @default(1)
+  /// Moins d'usure et de pannes, jusqu'à 40 %.
+  mecanique Int          @default(1)
+  /// Le troupeau produit mieux, jusqu'à 20 %.
+  elevage   Int          @default(1)
+  poste     EmployeePost @default(CHAMP)
+  hiredAt   DateTime     @default(now())
+  /**
+   * Dernier salaire versé.
+   *
+   * Le prélèvement suit le changement de jour de jeu, comme les intérêts de
+   * la dette : sans cette date, un joueur absent trois jours ne paierait rien,
+   * et la main-d'œuvre cesserait d'être un coût qui revient.
+   */
+  paidAt    DateTime     @default(now())
+  /**
+   * Le candidat dont il vient, dans le vivier du jour.
+   *
+   * Le vivier n'est pas stocké : il se recalcule depuis la ferme et le jour.
+   * Sans cette trace, rien n'empêcherait d'embaucher deux fois la même
+   * personne — le même profil, le même nom, deux fiches. L'unicité est portée
+   * par la base plutôt que par une lecture préalable, qui laisserait passer
+   * deux requêtes lancées ensemble.
+   */
+  sourceId  String?
+
+  @@unique([farmId, sourceId])
+  @@index([farmId])
 }
 
 enum CellKind {
@@ -93,6 +159,34 @@ enum CellKind {
   CROP
   BUILDING
   VEHICLE
+}
+
+/// Un lien de réinitialisation de mot de passe, en attente.
+///
+/// Une table et non deux colonnes sur `User` : un joueur peut demander un
+/// lien deux fois de suite — le premier courriel s'est perdu, il recommence —
+/// et les deux liens doivent valoir tant qu'ils n'ont pas expiré. Écraser le
+/// précédent à chaque demande ferait qu'un joueur qui clique sur le premier
+/// message reçu tombe sur un lien mort, sans comprendre pourquoi.
+model PasswordReset {
+  id        String    @id @default(cuid())
+  userId    String
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  /// Empreinte SHA-256 du jeton, jamais le jeton.
+  ///
+  /// SHA-256 et non bcrypt, contrairement au mot de passe : le jeton fait 256
+  /// bits tirés au sort, il n'y a donc rien à deviner et aucune raison de
+  /// ralentir la vérification. Ce qu'on protège ici, c'est le cas d'une base
+  /// lue par un tiers — il n'y trouvera pas de lien utilisable.
+  tokenHash String    @unique
+  expiresAt DateTime
+  /// Date d'utilisation. Non nulle = jeton brûlé, et il ne resservira pas.
+  usedAt    DateTime?
+  createdAt DateTime  @default(now())
+
+  /// On lit par empreinte pour valider, et par joueur pour faire le ménage.
+  @@index([userId])
+  @@index([expiresAt])
 }
 
 model User {
@@ -124,13 +218,6 @@ model User {
   /// un compte fournissent toujours l'empreinte, ce défaut ne sert donc
   /// qu'aux lignes posées à la main.
   accessCode     String         @default("ferme")
-  /// Empreinte du code de secours (SHA-256 salé par l'id), jamais le code.
-  /// Nul tant que le compte n'en a pas reçu : les comptes créés avant que le
-  /// mécanisme existe s'en voient remettre un à leur prochaine connexion.
-  recoveryHash   String?
-  /// Date du dernier code de secours remis. Sert à dire au joueur depuis
-  /// quand celui qu'il a noté est valable.
-  recoveryAt     DateTime?
   lastSeenAt     DateTime?
   lastMarketJson String?
   /** Indices du créateur de perso (peau, chapeau, vêtements…) */
@@ -161,6 +248,7 @@ model User {
   deliveriesBought Delivery[] @relation("DeliveryBuyer")
   questClaims      QuestClaim[]
   ledger         LedgerEntry[]
+  passwordResets   PasswordReset[]
 }
 
 /// Récompense de quête déjà encaissée. Seul l'encaissement se stocke :
@@ -194,6 +282,7 @@ model Farm {
   machines   Machine[]
   herds      Herd[]
   supplies   SupplyOrder[]
+  employees  Employee[]
   /**
    * Gazole en cuve, en litres.
    *
@@ -323,6 +412,15 @@ model Parcel {
   laborOrders LaborOrder[]
 
   @@unique([zoneId, mapX, mapY])
+  /// L'index du tri stable des parcelles d'une ferme.
+  ///
+  /// Il existait en base depuis `20260825220000_ordre_des_parcelles`, posé à
+  /// la main dans le SQL, mais n'avait jamais été déclaré ici. Prisma le
+  /// voyait donc comme un intrus et proposait de le **supprimer** dans chaque
+  /// migration suivante — piège silencieux : la première migration générée
+  /// sans relire son SQL emportait avec elle l'index du seul tri que toutes
+  /// les lectures de parcelles utilisent. Déclaré, il cesse d'être une dérive.
+  @@index([farmId, acquiredAt])
   fieldJobs     FieldJob[]
 }
 
@@ -389,7 +487,11 @@ model Herd {
   building      Building @relation(fields: [buildingId], references: [id], onDelete: Cascade)
   kind          String   @default("COW")
   size          Int      @default(0)
-  happiness     Float    @default(0.6)
+  /// Satisfaction des besoins, de 0 à 1. **Un** par défaut : un troupeau
+  /// qu'on vient d'acheter et qu'on nourrit ne manque de rien. Le 0,6 d'avant
+  /// venait de l'ancienne échelle, où la cible d'une bête enfermée plafonnait
+  /// à 0,35 et où 0,6 se lisait « Sereines ».
+  happiness     Float    @default(1)
   bornAt        DateTime @default(now())
   lastGrazedAt  DateTime?
   lastTickAt    DateTime @default(now())
@@ -419,6 +521,25 @@ model Herd {
   manureTons    Float     @default(0)
   /// Paille en litière, en tonnes — le pont aller depuis le céréalier
   beddingTons   Float     @default(0)
+  /// Dernier passage de l'employé affecté à l'élevage — ration servie ou
+  /// litière refaite. Sert à montrer au joueur ce que son salaire achète :
+  /// sans cette trace, l'employé travaille et rien ne le dit.
+  tendedAt      DateTime?
+  /// Ce que l'équipe a fait lors de ce passage : codes séparés par `+`, parmi
+  /// `ration`, `litiere` et `fumier`. Une date seule ne répondait pas à la
+  /// question posée en jouant — « qu'est-ce qu'il fait à propos du fumier,
+  /// est-ce qu'il le traite, le vend, vide simplement ? ». On le dit.
+  tendedWhat    String?
+  /// Abreuvement, de 0 à 1. Plein tant qu'on passe distribuer la ration, ou
+  /// en permanence si un abreuvoir automatique est rattaché au bâtiment.
+  water         Float     @default(1)
+  /// Santé du lot, de 0 à 1. **La seule jauge qui peut tuer**, et elle ne
+  /// baisse que par la cascade : huit heures réelles de sursis après le
+  /// manque, puis vingt-huit heures de dégradation avant la première perte.
+  health        Float     @default(1)
+  /// Depuis quand un besoin vital n'est plus couvert ; null si tout va bien.
+  /// C'est l'horloge de la cascade, et elle se remet à zéro dès qu'on nourrit.
+  deprivedSince DateTime?
   /// Lots de jeunes en croissance ; ils comptent dans `size`
   youngBatches  YoungBatch[]
 }
@@ -689,6 +810,8 @@ model NpcContract {
   /// Cases du chantier (8–24). L'usure et le salaire suivent ce chiffre.
   cells       Int             @default(16)
   status      ContractStatus  @default(OPEN)
+  /// Chantier pris avec du matériel loué : pas d'usure, et salaire réduit.
+  rented      Boolean         @default(false)
   providerId  String?
   provider    User?           @relation("Provider", fields: [providerId], references: [id])
   createdAt   DateTime        @default(now())

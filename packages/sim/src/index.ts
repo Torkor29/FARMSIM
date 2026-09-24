@@ -1,4 +1,5 @@
 import {
+  FERTILIZE_YIELD_STEP,
   CROP_DEFS,
   cropGrowMs,
   GOOD_DEFS,
@@ -23,6 +24,7 @@ import {
   weedYieldFactor,
   GAME_DAY_MS,
   SEASON_REAL_MS,
+  nextSeasonBoundary,
   SIM_TICK_MS,
   currentSeason,
   growthRate,
@@ -109,7 +111,7 @@ export type CellSimResult = {
 function managementFactor(input: CellSimInput): number {
   let f = 0.55;
   f += Math.min(1, Math.max(0, input.fertility)) * 0.2;
-  f += input.fertilizedPasses * 0.115;
+  f += input.fertilizedPasses * FERTILIZE_YIELD_STEP;
   /* Les adventices ne sont plus un interrupteur.
      `weedsControlled` valait dix pour cent de rendement et ne se déclenchait
      qu'en même temps que la fertilisation, en silence : le joueur n'apprenait
@@ -261,7 +263,7 @@ export function integrateGrowth(opts: {
      * s'ouvrirait un autre — le genre d'écart qu'un joueur voit tout de suite
      * et qu'aucun test ne regarde.
      */
-    const finDeSaison = (Math.floor(curseur / SEASON_REAL_MS) + 1) * SEASON_REAL_MS;
+    const finDeSaison = nextSeasonBoundary(curseur, opts.hemisphere);
     const finDeTranche = Math.min(fin, finDuJour, finDeSaison);
     const tranche = finDeTranche - curseur;
     const saison = currentSeason(opts.hemisphere, curseur);
@@ -300,18 +302,23 @@ export function projectReadyAt(opts: {
     /*
      * On découpe aussi aux frontières de **saison**, pas seulement de jour.
      *
-     * Une saison fait sept jours de jeu pleins, donc les deux grilles
-     * coïncident : ce `min` ne devrait jamais trancher. Il est là parce que
-     * rien dans le code n'oblige la saison à contenir un nombre entier de
-     * jours — c'est un réglage, pas une loi — et que le jour où ce ne serait
-     * plus le cas, un pas d'un jour entier lirait la saison du **début** du
-     * pas et l'appliquerait à toute la tranche : la vitesse de l'hiver
-     * s'appliquerait à des heures de printemps, sans que rien ne le signale.
+     * Chaque saison fait un nombre entier de jours de jeu — sept, ou quatre
+     * pour l'hiver — et l'année aussi, donc les deux grilles coïncident : ce
+     * `min` ne devrait jamais trancher. Il est là parce que rien n'oblige la
+     * saison à contenir un nombre entier de jours, et que le jour où ce ne
+     * serait plus le cas, un pas d'un jour entier lirait la saison du
+     * **début** du pas et l'appliquerait à toute la tranche : la vitesse de
+     * l'hiver s'appliquerait à des heures de printemps, sans que rien ne le
+     * signale.
+     *
+     * La frontière se demande à `nextSeasonBoundary` et ne se recalcule plus
+     * ici : elle dépend de l'hémisphère depuis que l'hiver est court, et une
+     * copie locale de la règle n'aurait pas suivi.
      *
      * Le plancher d'une milliseconde évite qu'une frontière tombant à
      * l'ulp près sur le curseur fasse tourner la boucle sans avancer.
      */
-    const finDeSaison = (Math.floor(curseur / SEASON_REAL_MS) + 1) * SEASON_REAL_MS;
+    const finDeSaison = nextSeasonBoundary(curseur, opts.hemisphere);
     const finDeTranche = Math.max(Math.min(finDuJour, finDeSaison), curseur + 1);
     const tranche = finDeTranche - curseur;
     const saison = currentSeason(opts.hemisphere, curseur);
@@ -551,7 +558,20 @@ export function breakdownChance(opts: {
 
 export function applyJobCare(
   state: MachineCareState,
-  opts: { work: string; cells: number; rng?: () => number },
+  opts: {
+    work: string;
+    cells: number;
+    rng?: () => number;
+    /**
+     * Ce qui reste du risque de panne, de 0 à 1.
+     *
+     * Un mécanicien dans l'équipe ne rend pas la machine increvable : il
+     * réduit la probabilité, il ne la supprime pas. Le multiplicateur porte
+     * donc sur le tirage, pas sur les causes — une machine à l'abandon reste
+     * une machine à l'abandon, elle tombe simplement en panne moins souvent.
+     */
+    risqueMult?: number;
+  },
 ): { next: MachineCareState; broke: boolean } {
   const rng = opts.rng ?? Math.random;
   const current = state.grease ?? (state.greased ? GREASE_FULL : 0);
@@ -560,11 +580,13 @@ export function applyJobCare(
   const wasEmpty = greaseIsEmpty(current);
   const empty = greaseIsEmpty(grease);
   const streak = empty ? (wasEmpty ? state.greaseSkipStreak + 1 : 0) : 0;
-  const chance = breakdownChance({
-    condition: state.condition,
-    grease,
-    dirt: state.dirt,
-  });
+  const risque = Math.max(0, Math.min(1, opts.risqueMult ?? 1));
+  const chance =
+    breakdownChance({
+      condition: state.condition,
+      grease,
+      dirt: state.dirt,
+    }) * risque;
   const broke = rng() < chance;
   const breakdown = broke ? pickBreakdownKind(state.condition) : state.breakdown;
   return {

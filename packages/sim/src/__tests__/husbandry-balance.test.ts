@@ -33,6 +33,7 @@ import {
   grassCapacity,
   grazePasture,
   SEASON_DAYS,
+  SEASON_LENGTH_DAYS,
   thermalPenalty,
   YEAR_DAYS,
   type Season,
@@ -42,6 +43,23 @@ import {
 const CYCLE_H = GAME_DAY_MS / 3_600_000;
 
 const SAISONS: Season[] = ["SPRING", "SUMMER", "AUTUMN", "WINTER"];
+
+/**
+ * La saison du n-ième cycle de l'année, hiver court compris.
+ *
+ * Les boucles ci-dessous faisaient `Math.floor(c / SEASON_DAYS) % 4`, ce qui
+ * posait quatre saisons de même longueur. L'hiver n'en fait plus que quatre
+ * jours : le quotient sautait alors la fin de l'année, et l'année simulée
+ * n'était plus celle du jeu.
+ */
+function saisonDuCycle(c: number): Season {
+  let reste = ((c % YEAR_DAYS) + YEAR_DAYS) % YEAR_DAYS;
+  for (const s of SAISONS) {
+    if (reste < SEASON_LENGTH_DAYS[s]) return s;
+    reste -= SEASON_LENGTH_DAYS[s];
+  }
+  return "WINTER";
+}
 
 /** Fait tourner un enclos sur `cycles` cycles, troupeau dehors en permanence. */
 function anneeAuPre(opts: { paddockCells: number; herdSize: number; cyclesParSaison: number }) {
@@ -214,7 +232,7 @@ describe("le pré à l'horloge du joueur", () => {
     for (let depart = 0; depart < YEAR_DAYS; depart += 1) {
       let herbe = grassCapacity(cells);
       for (let c = 0; c < cyclesAbsence; c += 0.25) {
-        const saison = SAISONS[Math.floor((depart + c) / SEASON_DAYS) % SAISONS.length]!;
+        const saison = saisonDuCycle(depart + c);
         herbe = grazePasture({
           grassTons: herbe,
           paddockCells: cells,
@@ -278,7 +296,7 @@ describe("charge soutenable du pré", () => {
     let herbe = grassCapacity(cells);
     let creux = 1;
     for (let c = 0; c < YEAR_DAYS; c++) {
-      const saison = SAISONS[Math.floor(c / SEASON_DAYS) % SAISONS.length]!;
+      const saison = saisonDuCycle(c);
       const out = grazePasture({
         grassTons: herbe,
         paddockCells: cells,
@@ -297,27 +315,52 @@ describe("charge soutenable du pré", () => {
   });
 
   it("au-dessus, le pré ne se refait pas — le pâturage n'est pas gratuit", () => {
+    /*
+     * ## Ce que ce test regardait, et pourquoi il fallait le corriger
+     *
+     * Il faisait tourner **une** année depuis un pré plein et exigeait que le
+     * hangar ait dû s'ouvrir. Or une année ne suffit pas à trancher : ce
+     * qu'elle mesure, c'est autant la réserve de départ que l'équilibre. Tant
+     * que l'hiver durait sept jours, le pré tombait à sec dès la première
+     * année et la distinction ne se voyait pas. Avec un hiver de quatre
+     * jours, la réserve initiale tient tout juste douze mois — l'année se
+     * termine à 2,5 % de la capacité — et le test passait au vert pour la
+     * mauvaise raison.
+     *
+     * On mesure donc le **régime établi** : la charge maximale n'est pas
+     * soutenable si, une fois la réserve de départ consommée, le pré ne
+     * revient pas. C'est cela qui empêche le pâturage d'être une source
+     * infinie, et c'est une propriété de l'équilibre, pas du point de départ.
+     */
     const cells = 9;
     const animals = cells * PADDOCK_ANIMALS_PER_CELL;
     let herbe = grassCapacity(cells);
-    let cyclesASec = 0;
-    for (let c = 0; c < YEAR_DAYS; c++) {
-      const saison = SAISONS[Math.floor(c / SEASON_DAYS) % SAISONS.length]!;
-      const out = grazePasture({
-        grassTons: herbe,
-        paddockCells: cells,
-        season: saison,
-        animalsOutside: animals,
-        cycles: 1,
-      });
-      herbe = out.grassTons;
-      if (out.coverage < 1) cyclesASec++;
+    const parAnnee: { sec: number; fin: number }[] = [];
+    for (let annee = 0; annee < 3; annee++) {
+      let cyclesASec = 0;
+      for (let c = 0; c < YEAR_DAYS; c++) {
+        const out = grazePasture({
+          grassTons: herbe,
+          paddockCells: cells,
+          season: saisonDuCycle(c),
+          animalsOutside: animals,
+          cycles: 1,
+        });
+        herbe = out.grassTons;
+        if (out.coverage < 1) cyclesASec++;
+      }
+      parAnnee.push({ sec: cyclesASec, fin: herbe / grassCapacity(cells) });
     }
-    // Au maximum de la charge, l'année se termine à sec et le hangar a dû
-    // prendre le relais : c'est exactement ce qui empêche le pré d'être une
-    // source infinie.
-    expect(cyclesASec).toBeGreaterThan(0);
-    expect(herbe).toBeLessThan(0.1 * grassCapacity(cells));
+
+    // La première année vit sur ses réserves, et les épuise : elle finit sur
+    // le fond, à quelques pour cent près.
+    expect(parAnnee[0]!.fin).toBeLessThan(0.05);
+    // Les suivantes ne les reconstituent pas — le hangar prend le relais
+    // plusieurs cycles par an, tous les ans.
+    for (const a of parAnnee.slice(1)) {
+      expect(a.sec).toBeGreaterThan(0);
+      expect(a.fin).toBe(0);
+    }
   });
 });
 

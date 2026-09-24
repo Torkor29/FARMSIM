@@ -30,7 +30,13 @@
 
 import { canSowInSeason, growthRate } from "./calendar.js";
 import { cropGrowMs, type CropCode, CROP_DEFS } from "./index.js";
-import { SEASON_CYCLE, SEASON_REAL_MS } from "./time.js";
+import {
+  SEASON_CYCLE,
+  seasonDurationMs,
+  seasonIndex,
+  seasonOfIndex,
+  seasonStartOfIndex,
+} from "./time.js";
 import type { Season } from "./world.js";
 
 export const SEASON_LABELS_FR: Record<Season, string> = {
@@ -98,9 +104,9 @@ export function maturityAt(crop: CropCode, t0: number): number | null {
   let t = t0;
   let acquis = 0;
   for (let i = 0; i < MAX_SAISONS; i++) {
-    const rang = Math.floor(t / SEASON_REAL_MS);
-    const finSaison = (rang + 1) * SEASON_REAL_MS;
-    const saison = SEASON_CYCLE[((rang % 4) + 4) % 4]!;
+    const rang = seasonIndex(t);
+    const finSaison = seasonStartOfIndex(rang + 1);
+    const saison = seasonOfIndex(rang);
     const vitesse = growthRate(crop, saison);
     const tranche = finSaison - t;
     if (vitesse > 0 && acquis + tranche * vitesse >= objectif) {
@@ -112,10 +118,7 @@ export function maturityAt(crop: CropCode, t0: number): number | null {
   return null;
 }
 
-/** La saison à un rang donné du cycle, sans passer par une horloge. */
-function saisonAuRang(rang: number): Season {
-  return SEASON_CYCLE[((rang % 4) + 4) % 4]!;
-}
+
 
 /**
  * Le calendrier complet, une ligne par culture.
@@ -134,15 +137,17 @@ export function cropCalendar(): CropCalendarRow[] {
     let meilleur = { saison: "SPRING" as Season, heures: Number.POSITIVE_INFINITY };
 
     for (let rang = 0; rang < SEASON_CYCLE.length; rang++) {
-      const saison = saisonAuRang(rang);
+      const saison = seasonOfIndex(rang);
       if (!canSowInSeason(crop, saison).ok) continue;
       sowSeasons.push(saison);
 
       for (const at of [0, 0.5, 0.9]) {
-        const t0 = (rang + at) * SEASON_REAL_MS;
+        // Les saisons n'ayant plus toutes la même longueur, « à mi-saison »
+        // se calcule sur la durée de *cette* saison, pas sur une durée type.
+        const t0 = seasonStartOfIndex(rang) + at * seasonDurationMs(saison);
         const mur = maturityAt(crop, t0);
         if (mur === null) continue;
-        const recolte = saisonAuRang(Math.floor(mur / SEASON_REAL_MS));
+        const recolte = seasonOfIndex(seasonIndex(mur));
         const heures = Math.round(((mur - t0) / 3_600_000) * 10) / 10;
         harvestSeasons.add(recolte);
         outcomes.push({ sowSeason: saison, at, harvestSeason: recolte, realHours: heures });

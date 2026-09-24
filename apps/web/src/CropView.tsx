@@ -14,6 +14,13 @@ const READY_COLOR: Record<CropShape, number> = {
   PEA: 0xc6d45a,
   RAPE: 0x9fc24a,
   GRASS: 0x5aad42,
+  // Un légume mûr ne dore pas : il reste vert, ou vire à sa couleur propre.
+  // C'est ce qui rend un rang de radis lisible à côté d'un blé.
+  MESCLUN: 0x74bd57,
+  RADISH: 0xc4485f,
+  SPINACH: 0x2c7540,
+  LETTUCE: 0x9ccb5e,
+  POTATO: 0x66914c,
 };
 
 type Props = {

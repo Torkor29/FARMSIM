@@ -1,3 +1,4 @@
+import { useLedger } from "./useLedger";
 import { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
 import {
   BUILDING_ART,
@@ -15,6 +16,9 @@ import {
   jobArrivalMs,
   acceptsUrgentContractor,
   acceptsLaborOrder,
+  buildingMoveCost,
+  canStubble,
+  canRegrass,
   MISSION_CELLS_MIN,
   laborEscrow,
   SILAGE_MIN_PROGRESS,
@@ -34,7 +38,6 @@ import {
   type FarmWork,
   type RipenessStage,
   type TradeGood,
-  hectaresDe,
   SEASON_LABELS,
   SEASON_SHORT,
   GOOD_ICONS,
@@ -42,7 +45,6 @@ import {
   formatEurosCourt,
   currentSeason,
   conditionYieldFactor,
-  type LedgerLine,
   dayOfSeason,
   seasonLengthDays,
   footprintCells,
@@ -99,18 +101,30 @@ import {
   MACHINE_LISTING_MIN_RATE,
   MACHINE_LISTING_MAX_RATE,
   isBreakdownKind,
-  kindForBarn,
+  hectaresDeGrille,
+  nouveautesNonLues,
+  DERNIERE_NOUVEAUTE,
+  REINIT_CHEMIN,
+  REINIT_PARAM,
+  jetonDeReinitValide,
+  type Nouveaute,
 } from "@farmsim/shared";
-import { AuthScreen, RecoveryNotice, type AuthMode } from "./AuthScreen";
+import { AuthScreen, type AuthMode } from "./AuthScreen";
 import type { GrazingHerd, PreviewBuilding } from "./IsoFarmView";
 import type { VoisinReel } from "./countryside-plan";
 import { BuildingSheet } from "./BuildingSheet";
 import { MachineSheet, MachineStarStrip, MachineTierPips, type MachinePreview } from "./MachineSheet";
 import { ConfirmDialog, type ConfirmRequest } from "./ConfirmDialog";
 import { ParcelleVoisineSheet } from "./ParcelleVoisineSheet";
+import { NouveautesPanel } from "./NouveautesPanel";
 import { MachineCareOverlay, type CareMode } from "./MachineCareOverlay";
 import { MissionPlay, type MissionPlayContract } from "./MissionPlay";
 import { LivestockPanel, type BarnState, type OrphanYard } from "./LivestockPanel";
+import {
+  EmployeesPanel,
+  type CandidateRow,
+  type EmployeeRow,
+} from "./EmployeesPanel";
 import type { SupplyCrate } from "./IsoFarmView";
 import { MarketPanel, type Listing, type MarketDelivery, type FuturesContract } from "./MarketPanel";
 import { OfficePanel, type CreditView, type ProcessingView } from "./OfficePanel";
@@ -133,7 +147,13 @@ import { FieldDock } from "./FieldDock";
 import type { SkillView } from "./SkillTree";
 import { PlayGuide } from "./PlayGuide";
 import { SkillsScreen, type SkillBonusView } from "./SkillsScreen";
-import { TOKEN_KEY, TUTORIAL_KEY, GUIDE_FLAGS_KEY } from "./storage-keys";
+import {
+  TOKEN_KEY,
+  TUTORIAL_KEY,
+  GUIDE_FLAGS_KEY,
+  NOUVEAUTES_KEY,
+  playerStorageKey,
+} from "./storage-keys";
 import {
   cropFromPlantTool,
   isFieldWorkTool,
@@ -175,7 +195,14 @@ const SEASON_HINTS: Record<Season, string> = {
 };
 import { DevPanel, type DevGrant } from "./DevPanel";
 import { NO_ALERTS, tabBadge, useAwayAlerts, useNotificationState, type FarmAlerts } from "./use-alerts";
-import { playUiSound } from "./audio";
+import {
+  jouerSon,
+  playUiSound,
+  reglerCheptel,
+  reveillerAudio,
+  saisonAudio,
+  type SonId,
+} from "./audio";
 import { ProfilePanel } from "./ProfilePanel";
 import { MenuClose } from "./ui/MenuClose";
 
@@ -294,6 +321,14 @@ type Player = {
   level: number;
   xp: number;
   crd: number;
+  /**
+   * Date d'inscription.
+   *
+   * Elle sert au « Quoi de neuf » : sont nouvelles pour ce joueur les entrées
+   * publiées après son arrivée. C'est ce qui permet d'annoncer l'historique à
+   * ceux qui jouaient déjà sans en accabler un compte créé ce matin.
+   */
+  createdAt?: string;
   farm: {
     id: string;
     /** Gazole en cuve, en litres. */
@@ -307,6 +342,11 @@ type Player = {
       hours?: number;
       /** Palier 1 à 5 : il décide de la largeur, de la puissance et du prix. */
       tier?: number;
+      /**
+       * Au champ jusqu'à cette heure — le serveur l'envoie, l'écran s'en sert
+       * pour dire « de retour dans 2 min » avant le clic plutôt qu'après.
+       */
+      busyUntil?: string | null;
       parkedParcelId?: string | null;
       storedInBuildingId?: string | null;
       greased?: boolean;
@@ -369,7 +409,20 @@ type Contract = {
   cells?: number;
   status?: string;
   work?: FarmWork;
-  machineType?: string;
+  machineType?: string | null;
+  /**
+   * Ce qui manque pour le faire soi-même, ou `null` si rien ne manque.
+   *
+   * Le serveur le calcule et l'envoie avec l'offre : sans cela, l'écran ne
+   * peut que laisser cliquer puis afficher un refus, ce qui était exactement
+   * le parcours d'un débutant devant une offre de moisson.
+   */
+  manqueMachine?: string | null;
+  /** La sortie de secours, quand elle existe : louer le matériel. */
+  location?: { materiel: string; frais: number; salaire: number } | null;
+  rented?: boolean;
+  netCrd?: number;
+  rentalFee?: number;
 };
 
 type LaborOrderView = {
@@ -496,10 +549,13 @@ function clearSession() {
 
 type GuideFlags = { sold: boolean; harvested: boolean; contract: boolean };
 
-function readGuideFlags(): GuideFlags {
+const EMPTY_GUIDE_FLAGS: GuideFlags = { sold: false, harvested: false, contract: false };
+
+function readGuideFlags(playerId?: string | null): GuideFlags {
+  if (!playerId) return { ...EMPTY_GUIDE_FLAGS };
   try {
-    const raw = localStorage.getItem(GUIDE_FLAGS_KEY);
-    if (!raw) return { sold: false, harvested: false, contract: false };
+    const raw = localStorage.getItem(playerStorageKey(GUIDE_FLAGS_KEY, playerId));
+    if (!raw) return { ...EMPTY_GUIDE_FLAGS };
     const parsed = JSON.parse(raw) as Partial<GuideFlags>;
     return {
       sold: !!parsed.sold,
@@ -507,19 +563,83 @@ function readGuideFlags(): GuideFlags {
       contract: !!parsed.contract,
     };
   } catch {
-    return { sold: false, harvested: false, contract: false };
+    return { ...EMPTY_GUIDE_FLAGS };
   }
 }
 
-function writeGuideFlags(next: GuideFlags) {
-  localStorage.setItem(GUIDE_FLAGS_KEY, JSON.stringify(next));
+function writeGuideFlags(playerId: string, next: GuideFlags) {
+  localStorage.setItem(playerStorageKey(GUIDE_FLAGS_KEY, playerId), JSON.stringify(next));
+}
+
+/**
+ * Le marque-page du « Quoi de neuf ».
+ *
+ * Enveloppé dans un `try` comme les autres : le stockage local lève en
+ * navigation privée sur certains navigateurs, et une nouveauté non lue ne vaut
+ * pas un écran blanc.
+ */
+function lireNouveauteVue(playerId: string): string | null {
+  try {
+    return localStorage.getItem(playerStorageKey(NOUVEAUTES_KEY, playerId));
+  } catch {
+    return null;
+  }
+}
+
+function ecrireNouveauteVue(playerId: string, id: string) {
+  try {
+    localStorage.setItem(playerStorageKey(NOUVEAUTES_KEY, playerId), id);
+  } catch {
+    /* Tant pis : le panneau se rouvrira à la prochaine visite. */
+  }
+}
+
+/**
+ * Le jeton de réinitialisation, s'il est dans l'adresse.
+ *
+ * Hors du composant : il est lu à l'initialisation d'un `useState`, donc avant
+ * le premier rendu, et une fonction déclarée dans le corps du composant ne
+ * serait pas encore définie à cet instant.
+ *
+ * La vérification de forme n'est pas décorative. Sans elle, n'importe quelle
+ * chaîne collée derrière `?jeton=` basculerait l'écran en mode « nouveau mot
+ * de passe » et partirait au serveur. On refuse donc tout de suite ce qui ne
+ * peut pas être un jeton — une adresse tronquée par un client de messagerie,
+ * un copier-coller de travers.
+ */
+function jetonDansLAdresse(): string | null {
+  try {
+    const url = new URL(window.location.href);
+    if (url.pathname !== REINIT_CHEMIN) return null;
+    const brut = url.searchParams.get(REINIT_PARAM);
+    return brut && jetonDeReinitValide(brut) ? brut : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Retire le jeton de la barre d'adresse.
+ *
+ * Un jeton qui reste dans l'adresse se retrouve dans l'historique du
+ * navigateur, dans un signet pris par mégarde, et dans l'en-tête `Referer` de
+ * la requête suivante. Il est déjà brûlé côté serveur quand on arrive ici ;
+ * l'effacer referme le cas où la réponse ne serait jamais parvenue.
+ */
+function effacerJetonDeLAdresse(): void {
+  try {
+    window.history.replaceState(null, "", "/");
+  } catch {
+    /* Un navigateur qui refuse l'historique ne doit pas faire échouer le
+       changement de mot de passe, qui est déjà enregistré à ce stade. */
+  }
 }
 
 /** Tiroirs du bas, sur petit écran. */
-type SheetKey = "INFO" | "BUILD" | "GARAGE" | "OFFICE" | "HERD" | "PROFILE";
+type SheetKey = "INFO" | "BUILD" | "GARAGE" | "OFFICE" | "HERD" | "STAFF" | "PROFILE";
 
 /**
- * Les cinq onglets du bas.
+ * Les onglets du bas.
  *
  * Leurs icônes étaient des emoji — 🌾 🏗️ 🐄 🚜 🤝 — alors que les outils, eux,
  * avaient de vrais dessins depuis toujours (`/assets/icons/tools/*.svg`). Les
@@ -533,6 +653,7 @@ const SHEET_TABS: { key: SheetKey; label: string; icon: string }[] = [
   { key: "HERD", label: "Troupeau", icon: "/assets/icons/nav/troupeau.svg" },
   { key: "GARAGE", label: "Garage", icon: "/assets/icons/nav/garage.svg" },
   { key: "OFFICE", label: "Missions", icon: "/assets/icons/nav/missions.svg" },
+  { key: "STAFF", label: "Personnel", icon: "/assets/icons/nav/personnel.svg" },
 ];
 
 /** Temps restant d'un chantier, en clair. */
@@ -582,7 +703,28 @@ function harvestGrainNote(r: {
   return `Récolte ${total} t · ${r.soldTons.toFixed(2)} t vendues (silo plein)${money}${hay}`;
 }
 
-/** Sons UI : voir `audio.ts` — coupés si le joueur les a coupés. */
+/**
+ * Le bruit que fait chaque travail.
+ *
+ * On écoute le **travail**, pas l'outil : déchaumer et labourer sont deux
+ * outils différents et le même geste — de la terre qu'on retourne. Faucher et
+ * moissonner, pareil. Deux sons de moins à écrire, et surtout deux sons de
+ * moins à distinguer à l'oreille pour rien.
+ */
+const SON_DU_TRAVAIL: Partial<Record<FarmWork, SonId>> = {
+  PLOW: "charrue",
+  STUBBLE: "charrue",
+  PLANT: "semoir",
+  FERTILIZE: "pulverisateur",
+  WEED: "pulverisateur",
+  HARVEST: "moissonneuse",
+  MOW: "moissonneuse",
+  SILAGE: "moissonneuse",
+  BALE: "presse",
+  COLLECT: "remorque",
+};
+
+/** Sons UI : voir `audio/` — coupés si le joueur les a coupés. */
 
 export function App() {
   const [zones, setZones] = useState<Zone[]>([]);
@@ -593,14 +735,35 @@ export function App() {
   const [visitOrder, setVisitOrder] = useState<LaborOrderView | null>(null);
   const [activeMission, setActiveMission] = useState<MissionPlayContract | null>(null);
   const [player, setPlayer] = useState<Player | null>(null);
-  const [authMode, setAuthMode] = useState<AuthMode>("register");
-  /** Ce que le joueur tape dans l'écran d'oubli. */
-  const [recoveryInput, setRecoveryInput] = useState("");
-  /** Le code que le serveur vient de remettre, à montrer une seule fois. */
-  const [recoveryCode, setRecoveryCode] = useState<string | null>(null);
+  /**
+   * L'état de la porte d'entrée.
+   *
+   * Il part de l'adresse plutôt que d'une valeur fixe : un joueur qui ouvre le
+   * lien reçu par courriel doit tomber **directement** sur le choix du nouveau
+   * mot de passe. L'amener d'abord sur « Je débute » puis attendre qu'il
+   * trouve son chemin annulerait tout l'intérêt du lien.
+   */
+  const [authMode, setAuthMode] = useState<AuthMode>(() =>
+    jetonDansLAdresse() ? "reset" : "register",
+  );
+  /** Le jeton lu dans l'adresse, s'il y en avait un de bien formé. */
+  const [jetonReinit, setJetonReinit] = useState<string | null>(() => jetonDansLAdresse());
+  /**
+   * Le serveur sait-il envoyer du courrier ?
+   *
+   * Demandé au serveur, jamais supposé : l'écran n'offre le lien par courriel
+   * que si quelqu'un peut réellement l'envoyer.
+   */
+  const [courrielDisponible, setCourrielDisponible] = useState(false);
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
-  const [accessCode, setAccessCode] = useState("ferme");
+  /**
+   * Vide au départ.
+   *
+   * Le champ arrivait pré-rempli avec « ferme » : un joueur qui passait
+   * l'écran sans y toucher repartait avec ce mot-là, comme tous les autres.
+   */
+  const [accessCode, setAccessCode] = useState("");
   const [activeParcelId, setActiveParcelId] = useState<string | null>(null);
   /**
    * La parcelle réellement affichée, lisible depuis une requête en vol.
@@ -644,6 +807,8 @@ export function App() {
   const [voisinage, setVoisinage] = useState<VoisinReel[]>([]);
   /* La fiche ouverte en cliquant sur un champ de voisin, s'il y en a une. */
   const [voisinOuvert, setVoisinOuvert] = useState<VoisinReel | null>(null);
+  /** Les nouveautés que ce joueur n'a pas encore lues, s'il y en a. */
+  const [nouveautes, setNouveautes] = useState<readonly Nouveaute[]>([]);
   const [parcelDetail, setParcelDetail] = useState<{
     parcel: Parcel;
     bonuses: Player["bonuses"];
@@ -706,6 +871,15 @@ export function App() {
    * la case, on la tourne si besoin, puis on confirme.
    */
   const [pendingBuild, setPendingBuild] = useState<{ x: number; y: number } | null>(null);
+  /**
+   * Le bâtiment qu'on est en train de déménager.
+   *
+   * Déplacer réutilise tout le geste de pose — le fantôme, le quart de tour,
+   * la barre de confirmation — parce que c'est le même geste : on choisit une
+   * place. Seuls le prix et la route changent au bout. Une seconde mécanique
+   * de placement, à côté de celle-ci, aurait divergé au premier réglage.
+   */
+  const [movingBuildingId, setMovingBuildingId] = useState<string | null>(null);
   /** Bâtiment ouvert dans sa fiche : améliorer, tourner, démolir, faire sortir */
   const [openBuildingId, setOpenBuildingId] = useState<string | null>(null);
   /** Objectifs du joueur : l'avancement vient du serveur, pas du navigateur. */
@@ -736,25 +910,45 @@ export function App() {
   const [err, setErr] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [machineListings, setMachineListings] = useState<MachineListing[]>([]);
-  /** Chantier en cours — ce que la ferme est en train de faire, et jusqu'à quand. */
-  const [chantier, setChantier] = useState<{
-    work: FarmWork;
-    /**
-     * La parcelle du chantier.
-     *
-     * La barre affichait le dernier chantier lancé, quelle que soit la
-     * parcelle regardée : on ouvrait l'autre champ et on y lisait « Labourer ·
-     * 130 cases » par-dessus des chiffres qui n'avaient rien à voir. On la
-     * garde visible — un chantier en cours ne doit pas disparaître parce qu'on
-     * regarde ailleurs — mais elle dit désormais où il a lieu.
-     */
-    parcelId: string;
-    cells: { x: number; y: number }[];
-    endsAt: number;
-    durationMs: number;
-    /** L'engin que le chantier a sorti du garage — c'est celui du joueur. */
-    machine?: MachineType;
-  } | null>(null);
+  /**
+   * Les chantiers en cours — au pluriel, depuis qu'un engin peut servir
+   * plusieurs parcelles.
+   *
+   * L'état n'en tenait qu'un. Ouvrir un second l'écrasait : le bandeau
+   * décrivait le dernier lancé, l'animation du premier était coupée, et sa
+   * clôture remettait l'unique emplacement à zéro pour tout le monde. Tant
+   * qu'un seul chantier pouvait tourner, ce raccourci était juste ; il cesse
+   * de l'être à la seconde où deux le peuvent.
+   *
+   * Chacun porte l'identifiant que le serveur lui a donné : c'est la seule
+   * clé qui distingue deux labours du même jour sur la même parcelle.
+   */
+  const [chantiers, setChantiers] = useState<
+    {
+      id: string;
+      work: FarmWork;
+      /**
+       * La parcelle du chantier.
+       *
+       * La barre affichait le dernier chantier lancé, quelle que soit la
+       * parcelle regardée : on ouvrait l'autre champ et on y lisait
+       * « Labourer · 130 cases » par-dessus des chiffres qui n'avaient rien à
+       * voir. On les garde visibles — un chantier en cours ne doit pas
+       * disparaître parce qu'on regarde ailleurs — mais chacun dit où il a
+       * lieu.
+       */
+      parcelId: string;
+      cells: { x: number; y: number }[];
+      endsAt: number;
+      durationMs: number;
+      /** L'engin que le chantier a sorti du garage — c'est celui du joueur. */
+      machine?: MachineType;
+    }[]
+  >([]);
+  /** Retire un chantier de la liste, sans toucher aux autres. */
+  const clore = useCallback((id: string) => {
+    setChantiers((liste) => liste.filter((c) => c.id !== id));
+  }, []);
   /** Palier montré au catalogue — un seul réglage pour toute la liste. */
   const [tierAchat, setTierAchat] = useState<Tier>(1);
   /**
@@ -791,9 +985,27 @@ export function App() {
    * le tenir en permanence dans l'état ferait vivre une liste que personne ne
    * regarde, et le recharger à chaque tick du monde n'apprendrait rien.
    */
-  const [ledger, setLedger] = useState<LedgerLine[]>([]);
+  const journal = useLedger(api, player?.id, showEta);
   const [showGarage, setShowGarage] = useState(false);
   const [showHerd, setShowHerd] = useState(false);
+  const [showStaff, setShowStaff] = useState(false);
+  /**
+   * Le personnel : l'équipe, le vivier du jour, et ce qu'il en coûte.
+   *
+   * Le vivier n'est pas stocké côté serveur — il se calcule à partir de la
+   * ferme et du jour — mais il se lit comme le reste : une seule requête rend
+   * l'équipe et les candidats, pour qu'ils ne puissent pas se contredire.
+   */
+  const [staff, setStaff] = useState<{
+    employees: EmployeeRow[];
+    candidates: CandidateRow[];
+    lits: number;
+    loges: number;
+    masseSalariale: number;
+    peutEmbaucher: boolean;
+    sansLogement: number;
+    preavisJours: number;
+  } | null>(null);
   const [weather, setWeather] = useState<WeatherSnap[]>([]);
   const [brush, setBrush] = useState<1 | 2 | 3>(1);
   const [prevPrices, setPrevPrices] = useState<Record<string, number>>({});
@@ -805,9 +1017,19 @@ export function App() {
   const [showGuide, setShowGuide] = useState(false);
   /** Les compétences ont leur propre porte, au milieu du bandeau. */
   const [showSkills, setShowSkills] = useState(false);
-  const [guideFlags, setGuideFlags] = useState(() => readGuideFlags());
+  const [guideFlags, setGuideFlags] = useState<GuideFlags>({ ...EMPTY_GUIDE_FLAGS });
   const [pulseCells, setPulseCells] = useState<{ x: number; y: number }[]>([]);
-  const [activeWork, setActiveWork] = useState<{
+  /**
+   * Les engins en train de traverser un champ — un par chantier.
+   *
+   * Comme le bandeau, l'animation n'avait qu'un emplacement : lancer un second
+   * travail effaçait le premier engin en pleine traversée. La vue n'en montre
+   * jamais qu'un — celui de la parcelle regardée — mais les autres continuent
+   * de rouler pour quand on y reviendra.
+   */
+  const [activeWorks, setActiveWorks] = useState<{
+    /** Le chantier auquel cet engin appartient. */
+    jobId: string;
     type: MachineType;
     /**
      * La parcelle du chantier.
@@ -827,7 +1049,7 @@ export function App() {
     tier?: Tier;
     /** Durée du chantier : l'engin doit traverser le champ en ce temps-là. */
     durationMs?: number;
-  } | null>(null);
+  }[]>([]);
   const haulPendingRef = useRef<Set<string>>(new Set());
   const haulSeenRef = useRef<Set<string>>(new Set());
   const haulReadyRef = useRef(false);
@@ -843,22 +1065,6 @@ export function App() {
   const [continentDetail, setContinentDetail] = useState<ContinentDetail | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
   const [barns, setBarns] = useState<BarnState[]>([]);
-  /**
-   * Les étables de **toute** la ferme, et pas seulement de la parcelle active.
-   *
-   * `barns` reste celle de la parcelle active : il sert à ce qui se dessine
-   * sur son île — les tas de fumier, les signaux d'enclos —, qui n'a de sens
-   * que là où il est posé. Mais le menu Élevage, son panneau et les alertes
-   * parlent du troupeau, pas de la parcelle.
-   *
-   * Tant qu'on changeait de parcelle rarement, par un bouton, personne ne le
-   * voyait. Depuis qu'un clic sur un champ voisin le rend actif, aller semer à
-   * côté faisait disparaître « Élevage » du menu — les bêtes semblaient
-   * s'évanouir dès qu'on s'éloignait de l'étable.
-   */
-  const [barnsFerme, setBarnsFerme] = useState<BarnState[]>([]);
-  /** Les parcelles de la ferme qui portent une étable — relues au chargement. */
-  const parcellesAEtable = useRef<string[]>([]);
   const [orphanYards, setOrphanYards] = useState<OrphanYard[]>([]);
   /** Le calendrier des cultures, ouvert depuis la pastille en bas à droite. */
   const [showCalendrier, setShowCalendrier] = useState(false);
@@ -1001,6 +1207,9 @@ export function App() {
         cells: c.active.cells,
         work,
         machineType: c.active.machineType,
+        rented: c.active.rented,
+        rentalFee: c.active.rentalFee,
+        netCrd: c.active.netCrd,
       });
     }
     setWeather((prev) => keepIfSame(prev, w));
@@ -1044,6 +1253,32 @@ export function App() {
   }, [activeParcelId]);
 
   /**
+   * L'équipe et le vivier, en une lecture.
+   *
+   * Les deux vont ensemble : le nombre d'employés décide de ce qu'on peut
+   * encore embaucher, et les afficher depuis deux requêtes séparées les
+   * laisserait se contredire le temps d'un aller-retour.
+   */
+  const loadStaff = useCallback(async () => {
+    try {
+      setStaff(
+        await api<{
+          employees: EmployeeRow[];
+          candidates: CandidateRow[];
+          lits: number;
+          loges: number;
+          masseSalariale: number;
+          peutEmbaucher: boolean;
+          sansLogement: number;
+          preavisJours: number;
+        }>("/employees"),
+      );
+    } catch {
+      setStaff(null);
+    }
+  }, []);
+
+  /**
    * Les commandes en cours, relues régulièrement.
    *
    * Un camion met douze secondes : il faut donc revenir voir. On sonde toutes
@@ -1060,45 +1295,20 @@ export function App() {
   }, []);
 
   const loadLivestock = useCallback(async (parcelId: string) => {
-    const ici = await (async (): Promise<BarnState[]> => {
-      try {
-        const r = await api<{ barns: BarnState[]; orphanYards?: OrphanYard[] }>(
-          `/parcels/${parcelId}/livestock`,
-        );
-        // Réponse d'une parcelle qu'on a quittée : elle compte pour la ferme,
-        // pas pour l'île qu'on regarde.
-        if (parcelleAffichee.current !== parcelId) return r.barns;
-        setBarns((prev) => keepIfSame(prev, r.barns));
-        setOrphanYards((prev) => keepIfSame(prev, r.orphanYards ?? []));
-        return r.barns;
-      } catch {
-        // Un échec sur une parcelle qu'on a quittée ne doit pas vider les
-        // étables de celle qu'on regarde.
-        if (parcelleAffichee.current !== parcelId) return [];
-        setBarns([]);
-        setOrphanYards([]);
-        return [];
-      }
-    })();
-    /*
-     * Puis les étables des autres parcelles de la ferme.
-     *
-     * Seulement celles qui en portent une : la plupart des fermes n'ont qu'une
-     * parcelle d'élevage, et interroger chaque champ toutes les quatre
-     * secondes pour n'y trouver aucune bête serait payer pour rien. Aucun
-     * garde de parcelle ici : cette liste-là ne dépend pas de celle qu'on
-     * regarde.
-     */
-    const autres = parcellesAEtable.current.filter((id) => id !== parcelId);
-    const resultats = await Promise.all(
-      autres.map((id) =>
-        api<{ barns: BarnState[] }>(`/parcels/${id}/livestock`)
-          .then((r) => r.barns)
-          .catch(() => [] as BarnState[]),
-      ),
-    );
-    const ferme = [...ici, ...resultats.flat()];
-    setBarnsFerme((prev) => keepIfSame(prev, ferme));
+    try {
+      const r = await api<{ barns: BarnState[]; orphanYards?: OrphanYard[] }>(
+        `/parcels/${parcelId}/livestock`,
+      );
+      if (parcelleAffichee.current !== parcelId) return;
+      setBarns((prev) => keepIfSame(prev, r.barns));
+      setOrphanYards((prev) => keepIfSame(prev, r.orphanYards ?? []));
+    } catch {
+      // Un échec sur une parcelle qu'on a quittée ne doit pas vider les
+      // étables de celle qu'on regarde.
+      if (parcelleAffichee.current !== parcelId) return;
+      setBarns([]);
+      setOrphanYards([]);
+    }
   }, []);
 
   const farmId = player?.farm?.id;
@@ -1110,6 +1320,14 @@ export function App() {
     const t = window.setInterval(() => void loadSupplies(farmId), 5000);
     return () => window.clearInterval(t);
   }, [farmId, loadSupplies]);
+
+  // L'équipe ne se lit qu'à l'ouverture de l'écran : le vivier ne change qu'au
+  // changement de jour, il n'y a rien à sonder entre-temps.
+  const staffOuvert = isMobile ? sheet === "STAFF" : showStaff;
+  useEffect(() => {
+    if (!farmId || !staffOuvert) return;
+    void loadStaff();
+  }, [farmId, staffOuvert, loadStaff]);
 
   useEffect(() => {
     if (player?.dev || player?.unlimitedCrd) {
@@ -1193,6 +1411,7 @@ export function App() {
             ? ` · ${r.outcome.delta} € de mieux que le comptant`
             : ` · ${Math.abs(r.outcome.delta)} € de moins que le comptant`;
       flashToast(`Livré · +${r.revenue} €${verdict}`);
+      jouerSon("livraison");
     } catch (e) {
       flashToast(e instanceof Error ? e.message : String(e), true);
     } finally {
@@ -1300,12 +1519,15 @@ export function App() {
       if (e.key === "r" || e.key === "R") {
         setBuildRotation((r) => (r + 1) % 4);
       } else if (e.key === "Escape" && pendingBuild) {
-        setPendingBuild(null);
+        // Échap sort du déménagement comme il annule une pose : le bâtiment
+        // reste où il est, et rien n'a été débité.
+        if (movingBuildingId) cancelMoveBuilding();
+        else setPendingBuild(null);
       }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [tool, pendingBuild]);
+  }, [tool, pendingBuild, movingBuildingId]);
 
   /**
    * Raccourcis de bureau.
@@ -1380,6 +1602,10 @@ export function App() {
       }
 
       if (e.key === "g" || e.key === "G") setShowGarage((v) => !v);
+      // « P » comme personnel. Pas « E » : la touche fait déjà défiler les
+      // options de l'outil courant, et le badge du rail promettrait un
+      // raccourci qui ferait autre chose.
+      else if (e.key === "p" || e.key === "P") setShowStaff((v) => !v);
       else if (e.key === "t" || e.key === "T") setShowEta((v) => !v);
       else if (e.key === "m" || e.key === "M") setShowMarket((v) => !v);
       else if (e.key === "c" || e.key === "C") setShowSkills((v) => !v);
@@ -1403,10 +1629,14 @@ export function App() {
   // fantôme à l'instant où l'on passe sur le champ, et le figer d'office
   // retirerait ce suivi sans rien régler.
   useEffect(() => {
+    /* Un déménagement pose déjà son fantôme sur la place actuelle du bâtiment :
+       le renvoyer au centre de la parcelle ferait perdre au joueur celle qu'il
+       cherche justement à quitter. */
+    if (movingBuildingId) return;
     const propose = isMobile && tool === "BUILD" ? firstFreeSpot(buildType, buildRotation) : null;
     setPendingBuild(propose);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [tool, buildType, activeParcelId, isMobile]);
+  }, [tool, buildType, activeParcelId, isMobile, movingBuildingId]);
 
   useEffect(() => {
     setPrevPrices((prev) => {
@@ -1456,13 +1686,99 @@ export function App() {
       .finally(() => setBooting(false));
   }, []);
 
+  /**
+   * Le tutoriel s'ouvre à l'arrivée **sur la ferme**, pas à la connexion.
+   *
+   * Il se déclenchait dès que `player` existait. Or un compte tout neuf a un
+   * joueur bien avant d'avoir une terre : le temps de choisir son continent,
+   * sa région et sa parcelle, `player` est déjà là. Le tutoriel s'ouvrait
+   * donc **pendant l'installation**, sous l'écran qui la mène — et le moindre
+   * geste qui le refermait écrivait sa clé. Il ne revenait jamais.
+   *
+   * D'où le signalement : « le tuto ne s'affiche pas lors de la première
+   * entrée en jeu ». Il s'affichait, mais trop tôt et au mauvais endroit,
+   * ce qui revient au même et se voit moins.
+   *
+   * La dépendance est donc `surSaFerme` : le premier rendu où le joueur a
+   * vraiment une parcelle sous les yeux.
+   */
+  const installe = Boolean(player?.farm?.parcels?.length);
+  /**
+   * N'a-t-il **jamais rien fait** ?
+   *
+   * L'expérience est cumulative et ne retombe jamais : un joueur qui a labouré
+   * une fois en a. C'est la seule preuve que le serveur détient, et c'est
+   * justement ce qu'il fallait — voir le commentaire ci-dessous.
+   */
+  const debutant = (player?.xp ?? 0) === 0;
   useEffect(() => {
     if (!player) return;
-    if (!localStorage.getItem(TUTORIAL_KEY)) {
-      const t = window.setTimeout(() => setShowTutorial(true), 600);
-      return () => window.clearTimeout(t);
+    setGuideFlags(readGuideFlags(player.id));
+    if (!installe) return;
+    /*
+     * Le tutoriel ne se rejoue pas parce qu'on a changé de navigateur.
+     *
+     * Son marque-page vit dans le stockage local, donc dans **ce** navigateur.
+     * C'était sans conséquence tant qu'on revenait toujours par le même — et
+     * le lien de réinitialisation vient de casser cette hypothèse : ouvert
+     * depuis une application de courrier, il s'affiche dans un navigateur
+     * intégré, avec un stockage vierge. Signalé aussitôt : « faut pas
+     * renvoyer le tuto quand on réinitialise le mdp, là je viens de l'avoir ».
+     *
+     * Le même défaut valait déjà pour un nouveau téléphone ou des données de
+     * site effacées ; il était seulement plus rare.
+     *
+     * L'expérience du joueur tranche donc en second recours. Elle vient du
+     * serveur, elle suit le compte et non l'appareil, et elle ne peut pas se
+     * tromper dans le sens gênant : on ne gagne pas d'expérience sans avoir
+     * joué. Le cas inverse — inscrit hier, revenu aujourd'hui sans avoir rien
+     * fait — revoit le tutoriel, ce qui est exactement ce qu'il lui faut.
+     */
+    const dejaVu = localStorage.getItem(playerStorageKey(TUTORIAL_KEY, player.id)) != null;
+    if (dejaVu || !debutant) {
+      /* Le marque-page manquant est posé maintenant : sans cela, ce navigateur
+         reposerait la question à chaque visite, et le « Quoi de neuf » ne
+         saurait jamais où il en est. */
+      if (!dejaVu) {
+        try {
+          localStorage.setItem(playerStorageKey(TUTORIAL_KEY, player.id), "1");
+        } catch {
+          /* Stockage refusé : le tutoriel ne s'affichera pas pour autant,
+             c'est l'expérience du joueur qui l'a écarté. */
+        }
+      }
+      /*
+       * Le « Quoi de neuf », et seulement pour qui n'a pas besoin du tutoriel.
+       *
+       * Les deux s'ouvrent au même moment et au même endroit de l'écran : les
+       * empiler accueillerait un joueur neuf par deux panneaux superposés. Le
+       * tutoriel passe d'abord ; les nouveautés attendent la visite suivante,
+       * où elles seront encore là.
+       */
+      setNouveautes(
+        nouveautesNonLues({
+          vue: lireNouveauteVue(player.id),
+          compteCreeLe: player.createdAt,
+        }),
+      );
+      return;
     }
-  }, [player?.id]);
+    const t = window.setTimeout(() => setShowTutorial(true), 600);
+    return () => window.clearTimeout(t);
+  }, [installe, debutant, player?.id]);
+
+  /*
+   * Le serveur sait-il envoyer du courrier ?
+   *
+   * Une seule fois, au montage, et sans jeton : la porte d'entrée en a besoin
+   * avant toute connexion. Un échec vaut « non » — mieux vaut ne pas proposer
+   * le lien que promettre un courriel dont on ignore s'il partira.
+   */
+  useEffect(() => {
+    api<{ disponible: boolean }>("/auth/courriel")
+      .then((r) => setCourrielDisponible(Boolean(r.disponible)))
+      .catch(() => setCourrielDisponible(false));
+  }, []);
 
   useEffect(() => {
     if (!player) return;
@@ -1477,63 +1793,6 @@ export function App() {
     };
   }, [player]);
 
-  /**
-   * Changer de parcelle efface la sélection de cases.
-   *
-   * Elle ne l'était nulle part, et c'est un défaut qui **abîme les données**,
-   * pas seulement l'affichage. La sélection est une liste de coordonnées nues
-   * — `{x, y}` —, sans le moindre lien avec la parcelle où elle a été faite.
-   * Tous les champs faisant douze cases sur douze, ces coordonnées restent
-   * parfaitement valides sur n'importe quelle autre parcelle.
-   *
-   * D'où la scène rapportée en jeu : on sélectionne quarante cases sur un
-   * champ, on clique une autre parcelle dans « Mes parcelles », on prend un
-   * outil — et le travail part sur quarante cases de la **nouvelle** parcelle,
-   * que personne n'a désignées. Le joueur voit ses états de champ changer
-   * « aléatoirement » ; ils changent en réalité très exactement là où il avait
-   * cliqué, mais sur le mauvais champ.
-   *
-   * Le serveur ne pouvait pas s'en apercevoir : les cases existent, elles
-   * appartiennent bien à la parcelle visée, la demande est licite. Seul le
-   * client sait que la sélection n'a plus de sens.
-   *
-   * Un effet à part, avec `activeParcelId` pour seule dépendance, plutôt
-   * qu'une ligne ajoutée au chargement voisin : il ne doit surtout pas se
-   * rejouer parce qu'un chargeur a changé d'identité, sous peine d'effacer la
-   * sélection sous les doigts du joueur.
-   */
-  useEffect(() => {
-    setSelectedCells([]);
-    setCellMenu(null);
-  }, [activeParcelId]);
-
-  /**
-   * Le geste fait sur une autre de ses parcelles, rejoué une fois qu'elle est là.
-   *
-   * Toucher une case de sa parcelle voisine la rend active — la vue compense
-   * le déplacement, rien ne saute à l'écran. Mais l'outil ne peut agir qu'avec
-   * les données de **cette** parcelle : quelles cases sont semées, lesquelles
-   * sont libres. On garde donc le geste, et on le rejoue quand elles arrivent.
-   *
-   * Sans cela il aurait fallu toucher deux fois : une pour « aller » sur la
-   * parcelle, une pour agir. C'est précisément la démarche qu'on supprime.
-   */
-  const gesteApresBascule = useRef<{
-    parcelId: string;
-    x: number;
-    y: number;
-    mods: PointerMods;
-  } | null>(null);
-  useEffect(() => {
-    const attente = gesteApresBascule.current;
-    if (!attente || parcelDetail?.parcel.id !== attente.parcelId) return;
-    gesteApresBascule.current = null;
-    void applyToolOnCell(attente.x, attente.y, attente.mods);
-    // `applyToolOnCell` change à chaque rendu : c'est l'arrivée de la parcelle
-    // qui déclenche, rien d'autre.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [parcelDetail]);
-
   useEffect(() => {
     if (!activeParcelId) return;
     loadParcel(activeParcelId).catch((e) => setErr(String(e.message ?? e)));
@@ -1545,30 +1804,34 @@ export function App() {
     return () => clearInterval(t);
   }, [activeParcelId, loadParcel, loadLivestock]);
 
+  /*
+   * Une sélection appartient à sa parcelle.
+   *
+   * Les cases retenues sont des coordonnées nues — « 4,7 », « 5,7 ». Elles ne
+   * disent pas sur quel champ elles ont été prises, si bien qu'en changeant de
+   * parcelle on emportait les cent trente-cinq cases de la précédente : elles
+   * se rallumaient sur le nouveau champ, la barre proposait toujours
+   * « Semer · 135 cases », et valider aurait travaillé ici ce qu'on avait
+   * désigné là-bas. Reproduit en jeu, sélection héritée à l'écran.
+   *
+   * Le survol, le menu de case et le fantôme de bâtiment sont du même bois :
+   * ils pointent une case d'un champ qu'on ne regarde plus.
+   */
+  useEffect(() => {
+    setSelectedCells([]);
+    setHoverCell(null);
+    setCellMenu(null);
+    setPendingBuild(null);
+  }, [activeParcelId]);
+
   useEffect(() => {
     if (!activeParcelId) {
       setVoisinage([]);
       return;
     }
-    /*
-     * La commune change de parcelle : on la **recentre** sur la nouvelle.
-     *
-     * On la vidait, pour ne pas laisser un instant les voisins de l'ancienne
-     * autour de la nouvelle. Mais une commune vide fait retomber la campagne
-     * sur son damier de décor, tiré au sort : passer à sa parcelle d'à côté
-     * faisait apparaître une seconde un paysage inventé, puis le vrai.
-     *
-     * Or les cases de la carte sont relatives à la parcelle active : si la
-     * nouvelle y figure, il suffit de décaler toutes les autres de sa place.
-     * Le résultat est exact, et le serveur n'a plus qu'à le confirmer. Une
-     * parcelle hors de la commune connue — un nom cliqué dans « Mes
-     * parcelles », loin d'ici — repart de rien, comme avant.
-     */
-    setVoisinage((avant) => {
-      const cible = avant.find((v) => v.id === activeParcelId);
-      if (!cible) return [];
-      return avant.map((v) => ({ ...v, col: v.col - cible.col, rang: v.rang - cible.rang }));
-    });
+    // La commune change de parcelle : on repart de rien plutôt que de laisser
+    // un instant les voisins de l'ancienne autour de la nouvelle.
+    setVoisinage([]);
     loadVoisinage(activeParcelId).catch(() => undefined);
     const t = setInterval(() => loadVoisinage(activeParcelId).catch(() => undefined), 45_000);
     return () => clearInterval(t);
@@ -1612,9 +1875,14 @@ export function App() {
   );
 
   const ownedParcels = player?.farm?.parcels ?? [];
-  parcellesAEtable.current = ownedParcels
-    .filter((p) => (p.buildings ?? []).some((b) => kindForBarn(b.type) !== null))
-    .map((p) => p.id);
+  /**
+   * Le joueur est-il vraiment installé ?
+   *
+   * Un compte existe bien avant d'avoir une terre — tout le temps de choisir
+   * son continent et sa parcelle. Distinguer les deux est ce qui décide quand
+   * la musique démarre et quand le tutoriel s'ouvre.
+   */
+  const surSaFerme = Boolean(player && ownedParcels.length);
   const visiting = Boolean(
     visitOrder && activeParcelId && visitOrder.parcelId === activeParcelId,
   );
@@ -1713,7 +1981,17 @@ export function App() {
     };
   }, [showSkills, player?.id, player?.xp]);
 
-  const chantierEnCours = Boolean(chantier);
+  /**
+   * Remonte la scène quand le joueur change la qualité graphique.
+   *
+   * Ombres, anticrénelage et densité de pixels se fixent à la création du
+   * contexte WebGL : un rendu déjà monté ne les relit jamais. Sans ce
+   * compteur dans la clé de la vue, choisir « Élevée » ne changerait rien à
+   * l'écran, et le réglage passerait pour cassé.
+   */
+  const [qualiteVue, setQualiteVue] = useState(0);
+
+  const chantierEnCours = chantiers.length > 0;
   useEffect(() => {
     if (!chantierEnCours) return;
     setHorloge(Date.now());
@@ -1736,7 +2014,7 @@ export function App() {
    * surtout depuis qu'elle ne tombe plus sur un jour de la semaine, et qu'on
    * ne peut donc plus la déduire du calendrier réel.
    */
-  const jourDeSaison = dayOfSeason(horloge);
+  const jourDeSaison = dayOfSeason(horloge, hemisphere);
   const zoneCode =
     parcel?.zone?.code ??
     ownedParcels[0]?.zone?.code ??
@@ -1767,6 +2045,56 @@ export function App() {
     flashToast(`${SEASON_NAMES[season]} — ${SEASON_HINTS[season]}`);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [season, player?.id]);
+
+  /**
+   * Le son se réveille au premier geste, jamais avant.
+   *
+   * Un navigateur refuse de faire du bruit sur une page où l'on n'a pas
+   * encore cliqué — et il a raison : une page qui se met à jouer de la
+   * musique toute seule est une page qu'on ferme. On attend donc le premier
+   * clic ou la première touche, puis on n'écoute plus.
+   */
+  useEffect(() => {
+    const reveil = () => reveillerAudio();
+    const opts = { once: true, passive: true } as const;
+    window.addEventListener("pointerdown", reveil, opts);
+    window.addEventListener("keydown", reveil, opts);
+    return () => {
+      window.removeEventListener("pointerdown", reveil);
+      window.removeEventListener("keydown", reveil);
+    };
+  }, []);
+
+  /**
+   * La musique suit la saison.
+   *
+   * On l'annonce à chaque rendu où la saison est connue : le moteur ignore
+   * les répétitions et ne déclenche le fondu qu'au vrai changement. C'est
+   * plus sûr que de guetter la transition ici, où un rechargement de partie
+   * la ferait manquer.
+   */
+  useEffect(() => {
+    if (!surSaFerme) return;
+    saisonAudio(season);
+  }, [season, surSaFerme]);
+
+  /**
+   * On n'entend que les bêtes qu'on possède.
+   *
+   * Une poule sur une exploitation sans volaille est un mensonge, et un
+   * mensonge sonore décrédibilise tout le décor autour.
+   */
+  useEffect(() => {
+    const especes = new Set<SonId>();
+    for (const b of barns) {
+      const k = b.herd?.kind;
+      if (k === "COW") especes.add("vache");
+      else if (k === "SHEEP") especes.add("mouton");
+      else if (k === "PIG") especes.add("cochon");
+      else if (k === "HEN") especes.add("poule");
+    }
+    reglerCheptel([...especes]);
+  }, [barns]);
 
   const avgProgress = useMemo(() => {
     const sims = parcelDetail?.cellSims ?? [];
@@ -1925,9 +2253,12 @@ export function App() {
       stockTons: totalStockTons,
       hayTons: stock("HAY"),
       milkOrMeat: stock("MILK") + stock("MEAT"),
-      animals: barnsFerme.reduce((n, b) => n + (b.herd?.size ?? 0), 0),
+      animals: barns.reduce((n, b) => n + (b.herd?.size ?? 0), 0),
       hasSold: guideFlags.sold,
-      hasHarvested: guideFlags.harvested || cells.some((c) => c.hasStubble) || stock("WHEAT") + stock("MAIZE") + stock("PEA") + stock("BARLEY") + stock("RAPE") + stock("HAY") > 0,
+      // Un stock peut avoir été acheté ou offert au départ : il ne prouve
+      // jamais qu'une récolte a eu lieu. Seul le geste réussi (ou les chaumes
+      // encore visibles d'une ancienne récolte) valide cet objectif.
+      hasHarvested: guideFlags.harvested || cells.some((c) => c.hasStubble),
       hasContract: guideFlags.contract,
     };
   }, [
@@ -1938,7 +2269,7 @@ export function App() {
     parcel?.buildings,
     readyCellCount,
     totalStockTons,
-    barnsFerme,
+    barns,
     guideFlags,
   ]);
 
@@ -2108,9 +2439,9 @@ export function App() {
       else if (stage === "POOR" || stage === "DECLINING") urgent += 1;
       else if (s.sim.ready) ready += 1;
     }
-    const herdsAtRisk = barnsFerme.filter((b) => b.herd?.atRisk).length;
+    const herdsAtRisk = barns.filter((b) => b.herd?.atRisk).length;
     return { ready, urgent, lost, herdsAtRisk };
-  }, [parcelDetail, barnsFerme]);
+  }, [parcelDetail, barns]);
 
   const notifications = useNotificationState();
   useAwayAlerts(alerts, notifications.state === "granted");
@@ -2125,6 +2456,10 @@ export function App() {
    */
   function flashToast(text: string, isError: boolean | "warn" = false) {
     if (isError === true) {
+      // Tous les refus du jeu passent par ici. Un seul branchement leur donne
+      // donc à tous leur son, plutôt que d'espérer que chacun des cent
+      // endroits qui refusent quelque chose y ait pensé.
+      jouerSon("refus");
       setErr(text);
     } else {
       setErr(null);
@@ -2179,10 +2514,11 @@ export function App() {
   }, [onFarm]);
 
   function markGuideFlag(key: keyof GuideFlags) {
+    if (!player) return;
     setGuideFlags((prev) => {
       if (prev[key]) return prev;
       const next = { ...prev, [key]: true };
-      writeGuideFlags(next);
+      writeGuideFlags(player.id, next);
       return next;
     });
   }
@@ -2280,16 +2616,43 @@ export function App() {
    * 402 : un aller-retour perdu, et une erreur rouge en console pour une
    * situation parfaitement prévisible côté client.
    */
+  /** Le bâtiment qu'on déménage, tel que la parcelle le connaît. */
+  const movingBuilding = useMemo(
+    () => (parcel?.buildings ?? []).find((b) => b.id === movingBuildingId) ?? null,
+    [parcel?.buildings, movingBuildingId],
+  );
+
+  /**
+   * Ce que ce déménagement-là coûtera.
+   *
+   * Le serveur refera le calcul — c'est lui qui décide — mais la barre doit
+   * annoncer le prix **avant** le clic. Les deux lisent la même fonction ; un
+   * prix affiché qui ne serait pas le prix débité est le défaut qu'on a déjà
+   * corrigé sur le prestataire, et qu'on ne réintroduit pas ici.
+   */
+  const moveCost = useMemo(() => {
+    if (!movingBuilding) return null;
+    const pose = movingBuilding.createdAt ? Date.parse(movingBuilding.createdAt) : NaN;
+    return buildingMoveCost(
+      movingBuilding.type,
+      movingBuilding.level ?? 1,
+      Number.isFinite(pose) ? Date.now() - pose : undefined,
+    );
+  }, [movingBuilding]);
+
   function canPlaceBuildingAt(x: number, y: number, rot = buildRotation, type = buildType): boolean {
-    const def = BUILDING_DEFS[type];
     // L'emprise suit le quart de tour : un hangar 3×2 tourné occupe 2×3.
     const foot = orientedFootprint(type, rot);
     if (x + foot.w > gw || y + foot.h > gh) return false;
-    if (!canPay(player, def.cost)) return false;
+    // Déménager se paie au tarif du déplacement, pas au prix du catalogue.
+    const prix = movingBuildingId ? (moveCost ?? 0) : BUILDING_DEFS[type].cost;
+    if (!canPay(player, prix)) return false;
     const footprint = footprintCells(x, y, foot.w, foot.h);
     return footprint.every((fc) => {
       const c = grid.find((cell) => cell.x === fc.x && cell.y === fc.y);
-      return c?.kind === "EMPTY";
+      /* Ses propres cases ne le gênent pas : un bâtiment peut glisser d'une
+         case et chevaucher sa place d'avant. Même règle que le serveur. */
+      return c?.kind === "EMPTY" || (movingBuildingId != null && c?.buildingId === movingBuildingId);
     });
   }
 
@@ -2338,41 +2701,28 @@ export function App() {
    * postait aussitôt, et cinq clics involontaires posaient cinq silos.
    */
   const previewBuilding = useMemo((): PreviewBuilding | null => {
-    if (tool !== "BUILD") return null;
+    if (tool !== "BUILD" && !movingBuilding) return null;
     const at = pendingBuild ?? hoverCell;
     if (!at) return null;
-    const def = BUILDING_DEFS[buildType];
-    const spaceOk = canPlaceBuildingAt(at.x, at.y);
-    const moneyOk = canPay(player, def.cost);
+    // Déménagement : c'est le bâtiment existant qu'on promène, à son prix de
+    // déplacement — pas un achat neuf au prix du catalogue.
+    const type = movingBuilding ? movingBuilding.type : buildType;
+    const prix = movingBuilding ? (moveCost ?? 0) : BUILDING_DEFS[type].cost;
+    const spaceOk = canPlaceBuildingAt(at.x, at.y, buildRotation, type);
     return {
-      type: buildType,
+      type,
       originX: at.x,
       originY: at.y,
       rotation: buildRotation,
-      valid: spaceOk && moneyOk,
+      valid: spaceOk && canPay(player, prix),
       pending: Boolean(pendingBuild),
     };
-  }, [tool, buildType, buildRotation, pendingBuild, hoverCell, grid, gw, gh, player?.crd, player?.dev, player?.unlimitedCrd]);
+  }, [tool, buildType, buildRotation, pendingBuild, hoverCell, grid, gw, gh, movingBuilding, moveCost, player?.crd, player?.dev, player?.unlimitedCrd]);
 
   /** Le bâtiment dont la fiche est ouverte, et le troupeau qu'il abrite. */
   /** Où en est le joueur dans son palier — pour la jauge du bandeau. */
   const xpHere = useMemo(() => levelProgress(player?.xp ?? 0), [player?.xp]);
 
-  useEffect(() => {
-    if (!showEta || !player?.id) return;
-    let vivant = true;
-    void api(`/players/${player.id}/ledger?jours=7`)
-      .then((r) => {
-        const rep = r as { lignes?: LedgerLine[] };
-        if (vivant) setLedger(rep.lignes ?? []);
-      })
-      .catch(() => {
-        /* Le Bureau reste utilisable sans son journal : il n'en dépend pas. */
-      });
-    return () => {
-      vivant = false;
-    };
-  }, [showEta, player?.id]);
 
   const openBuilding = useMemo(
     () => (parcel?.buildings ?? []).find((b) => b.id === openBuildingId) ?? null,
@@ -2455,6 +2805,10 @@ export function App() {
       (isSoilTool(tool) && isSoilTool(t)) ||
       (tool === "HARVEST" && t === "HARVEST");
     setTool(t);
+    // Changer d'outil abandonne un déménagement en cours : sans ce ménage,
+    // l'état survivrait sans fantôme ni barre, et le prochain « Construire »
+    // partirait sur la route du déplacement.
+    if (t !== "BUILD" && movingBuildingId) cancelMoveBuilding();
     if (!keep && t !== "BUILD") {
       setSelectedCells([]);
       selectionAnchor.current = null;
@@ -2487,17 +2841,17 @@ export function App() {
         token: string;
         player: Player;
         resume?: SessionResume;
-        recoveryCode?: string;
       }>("/auth/register", {
         method: "POST",
         body: JSON.stringify({
           email,
           displayName: name.trim(),
-          accessCode: accessCode || "ferme",
+          // Pas de repli : un compte créé avec un mot de passe deviné
+          // d'avance n'est pas un compte protégé, et la route est publique.
+          accessCode,
         }),
       });
       applyAuth(r);
-      if (r.recoveryCode) setRecoveryCode(r.recoveryCode);
       await Promise.all([refreshMeta(), loadWorld()]);
       setMsg(null);
     } catch (e) {
@@ -2568,16 +2922,14 @@ export function App() {
         token: string;
         player: Player;
         resume?: SessionResume;
-        recoveryCode?: string;
       }>("/auth/login", {
         method: "POST",
-        body: JSON.stringify({ email, accessCode: accessCode || "ferme" }),
+        body: JSON.stringify({ email, accessCode }),
       });
       await loadWorld().catch(() => undefined);
       applyAuth(r);
       // Compte créé avant que le code de secours existe : le serveur vient
       // d'en remettre un. C'est la seule occasion de le montrer.
-      if (r.recoveryCode) setRecoveryCode(r.recoveryCode);
       await refreshMeta();
       if (!r.resume || r.resume.awayMs < 30_000) setMsg("Connexion OK");
     } catch (e) {
@@ -2587,14 +2939,44 @@ export function App() {
     }
   }
 
+
   /**
-   * Code d'accès oublié : le code de secours en choisit un nouveau.
+   * Demander un lien de réinitialisation.
    *
-   * La reprise en main est complète — le serveur ferme les sessions ouvertes
-   * avec l'ancien code et en rend un neuf ici. Le joueur entre donc
-   * directement dans sa ferme, sans avoir à se reconnecter derrière.
+   * Le serveur répond la même chose pour une adresse connue et pour une
+   * inconnue — c'est ce qui empêche l'écran de devenir un annuaire des comptes
+   * qui jouent. L'écran doit donc afficher ce message **tel quel**, sans
+   * chercher à le nuancer selon ce qu'il croit savoir.
    */
-  async function recover() {
+  async function demanderLienMdp() {
+    setBusy(true);
+    setErr(null);
+    setMsg(null);
+    try {
+      const r = await api<{ message: string }>("/auth/forgot", {
+        method: "POST",
+        body: JSON.stringify({ email }),
+      });
+      setMsg(r.message);
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  /**
+   * Poser le nouveau mot de passe, depuis le lien reçu.
+   *
+   * Le jeton ne vient pas d'un champ : il est dans l'adresse. On le retire de
+   * la barre d'adresse dès qu'il a servi — un jeton qui reste dans
+   * l'historique du navigateur, dans un signet ou dans le `Referer` d'une
+   * requête suivante est un secret qui voyage plus loin que prévu. Il est
+   * certes déjà brûlé côté serveur à ce moment-là ; l'effacer coûte une ligne
+   * et referme le cas où la réponse n'arriverait pas.
+   */
+  async function poserNouveauMdp() {
+    if (!jetonReinit) return;
     setBusy(true);
     setErr(null);
     try {
@@ -2602,22 +2984,19 @@ export function App() {
         token: string;
         player: Player;
         resume?: SessionResume;
-        recoveryCode?: string;
-      }>("/auth/recover", {
+      }>("/auth/reset", {
         method: "POST",
-        body: JSON.stringify({ email, recoveryCode: recoveryInput, accessCode }),
+        body: JSON.stringify({ jeton: jetonReinit, accessCode }),
       });
       await loadWorld().catch(() => undefined);
       applyAuth(r);
-      setRecoveryInput("");
-      // Le code qui vient de servir est brûlé : celui-ci le remplace.
-      if (r.recoveryCode) setRecoveryCode(r.recoveryCode);
       await refreshMeta();
-      setMsg("Nouveau code d'accès enregistré");
-      setAuthMode("login");
+      setMsg("Nouveau mot de passe enregistré");
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e));
     } finally {
+      setJetonReinit(null);
+      effacerJetonDeLAdresse();
       setBusy(false);
     }
   }
@@ -2631,13 +3010,22 @@ export function App() {
    * démarrer le geste une demi-seconde après le doigt.
    */
   async function collectSupply(id: string) {
+    // Où la caisse était posée : le convoi part de là, pas du bord du champ.
+    // Lu avant de la retirer de la liste, sans quoi il n'en resterait rien.
+    const caisse = supplies.find((s) => s.id === id);
     setSupplies((prev) => prev.filter((s) => s.id !== id));
     try {
       const r = await api<{ collected: string; tons: number }>(`/supplies/${id}/collect`, {
         method: "POST",
       });
       const nom = GOOD_DEFS[r.collected as TradeGood]?.name ?? r.collected;
-      flashToast(`${r.tons} t de ${nom.toLowerCase()} rentrées`);
+      /* Rentrer une caisse est un transport, pas une téléportation : elle
+         disparaissait de la cour et le stock montait, sans que rien ne relie
+         les deux. L'attelage qui sert déjà aux livraisons entre joueurs fait
+         le trajet — « on clique sur le paquet pour l'envoyer au silo et là
+         c'est l'engin qui l'amène ». */
+      flashDeliveryArrival(r.collected, caisse ? { x: caisse.x, y: caisse.y } : undefined);
+      flashToast(`${r.tons} t de ${nom.toLowerCase()} · l'attelage la rentre au silo`);
       await refreshPlayer();
     } catch (e) {
       // Refusée — le camion n'était pas là, ou la caisse n'est plus : on
@@ -2733,6 +3121,11 @@ export function App() {
           label: "Tourner d’un quart",
           onPick: () => void rotateBuilding(b.id, BUILDING_DEFS[b.type].name),
         });
+        items.push({
+          label: "Déplacer",
+          hint: "il garde son niveau et son contenu",
+          onPick: () => startMoveBuilding(b.id),
+        });
       }
     } else {
       items.push({
@@ -2823,33 +3216,54 @@ export function App() {
     [parcelDetail?.cellSims, selectedCells],
   );
 
+  /**
+   * Le maïs bon à ensiler **dans la sélection**.
+   *
+   * `silageReadyCount` compte la parcelle entière : il sert à allumer l'outil.
+   * Le devis du prestataire, lui, ne porte que sur les cases retenues.
+   */
+  const silageDansSelection = useMemo(
+    () =>
+      (parcelDetail?.cellSims ?? []).filter((s) => {
+        if (!selectedCells.some((sel) => sel.x === s.x && sel.y === s.y)) return false;
+        const cell = (parcel?.cells ?? []).find((c) => c.x === s.x && c.y === s.y);
+        return cell?.crop === "MAIZE" && !s.sim.lost && s.sim.progress >= SILAGE_MIN_PROGRESS;
+      }).length,
+    [parcelDetail?.cellSims, parcel?.cells, selectedCells],
+  );
+
   const contractorOffer = useMemo(() => {
-    const work: FarmWork | null = isPlantTool(tool)
-      ? "PLANT"
-      : tool === "FERTILIZE"
-        ? "FERTILIZE"
-        : tool === "HARVEST"
-          ? selectedAreGrass
-            ? "MOW"
-            : "HARVEST"
-          : tool === "PLOW"
-              ? "PLOW"
-              : tool === "STUBBLE"
-                ? "STUBBLE"
-                : tool === "BALE"
-                  ? "BALE"
-                  : tool === "COLLECT"
-                    ? "COLLECT"
-                    : null;
+    /*
+     * Le travail se déduit de l'outil, une seule fois.
+     *
+     * Cette cascade était écrite à la main et ne connaissait pas le
+     * désherbage : le devis valait `null`, le bouton disparaissait, et rien à
+     * l'écran ne le disait. C'est exactement la moitié du signalement « il y a
+     * des chantiers que tu peux faire faire par le pnj et d'autres non ? » —
+     * l'autre moitié étant la liste des travaux acceptés, côté serveur.
+     */
+    let work = workOfTool(tool);
+    /*
+     * Le maïs qui n'est pas mûr en grain mais qui est bon à ensiler part en
+     * ensilage — c'est la machine qui décide, ici comme au garage du joueur.
+     * Sans cette bascule, le prestataire facturerait le barème moisson pour
+     * un travail d'ensileuse, et repartirait bredouille sur un champ qui ne
+     * demandait qu'à être coupé.
+     */
+    if (
+      work === "HARVEST" &&
+      dansSelection((sim) => sim.ready && !sim.lost) === 0 &&
+      silageDansSelection > 0
+    ) {
+      work = "SILAGE";
+    }
     if (!work || !selectedCells.length) return null;
+    /* L'outil qu'il faut se lit dans le catalogue : un outil neuf y entre sans
+       que cette ligne ait à l'apprendre. */
     const needed: MachineType =
-      work === "HARVEST"
-        ? "HARVESTER"
-        : work === "STUBBLE"
-            ? "DISC_HARROW"
-            : work === "BALE"
-              ? "BALER"
-              : "TRACTOR";
+      (Object.keys(MACHINE_DEFS) as MachineType[]).find((m) =>
+        MACHINE_DEFS[m].works.includes(work as never),
+      ) ?? "TRACTOR";
     const hasMachine = (player?.farm?.machines ?? []).some(
       (m) => m.type === needed && m.condition >= (MACHINE_DEFS[needed]?.minCondition ?? 15),
     );
@@ -2860,6 +3274,9 @@ export function App() {
      * la sélection. « Faire faire » restait cliquable sur des cases où il n'y
      * avait rien à récolter, et le devis payé partait en 409.
      */
+    const retenues = (parcel?.cells ?? []).filter((c) =>
+      selectedCells.some((sel) => sel.x === c.x && sel.y === c.y),
+    );
     const blocage =
       work === "HARVEST" || work === "MOW"
         ? dansSelection((sim) => sim.ready && !sim.lost) === 0
@@ -2869,7 +3286,47 @@ export function App() {
           ? dansSelection((sim) => Boolean(sim.lost)) === 0
             ? "Aucune culture perdue à labourer dans la sélection."
             : null
-          : null;
+          : /* Les quatre travaux que le dépannage vient de reprendre. Chacun a
+               sa condition, et chacun doit la dire avant le clic : un devis
+               payé qui repart en 409 est pire qu'un bouton absent. */
+            work === "BALE"
+            ? retenues.every((c) => (c.strawTons ?? 0) <= 0)
+              ? "Aucun andain dans la sélection — rien à presser."
+              : null
+            : work === "COLLECT"
+              ? retenues.every((c) => (c.baleCount ?? 0) <= 0)
+                ? "Aucune botte dans la sélection — rien à ramasser."
+                : null
+              : work === "SILAGE"
+                ? silageDansSelection === 0
+                  ? "Aucun maïs assez avancé pour l’ensilage dans la sélection."
+                  : null
+                : work === "WEED"
+                  ? retenues.every((c) => (c.weedPressure ?? 0) <= 0)
+                    ? "Ces cases sont déjà propres — rien à désherber."
+                    : null
+                  : work === "STUBBLE"
+                    ? /* Le déchaumeur reprend deux choses : un chaume, et une
+                         terre nue à remettre en herbe. Refuser ne se dit que
+                         si aucune des deux n'est là — la même règle que le
+                         serveur, lue depuis `shared`. */
+                      retenues.every(
+                        (c) =>
+                          c.kind !== "EMPTY" ||
+                          (!canStubble({
+                            harvestsSincePlow: c.harvestsSincePlow ?? 0,
+                            residuePasses: c.residuePasses ?? 0,
+                            hasStubble: Boolean(c.hasStubble),
+                          }).ok &&
+                            !canRegrass({
+                              hasStubble: Boolean(c.hasStubble),
+                              hasCrop: Boolean(c.crop),
+                              worked: c.fieldStage !== "EMPTY",
+                            })),
+                      )
+                      ? "Ni chaumes ni terre nue dans la sélection — rien à déchaumer."
+                      : null
+                    : null;
     /*
      * Le prix, ou rien du tout.
      *
@@ -2896,7 +3353,7 @@ export function App() {
         ? contractorTotal(work, selectedCells.length, cropFromPlantTool(tool)).total
         : null,
     };
-  }, [tool, selectedCells, selectedAreGrass, player?.farm?.machines, dansSelection]);
+  }, [tool, selectedCells, selectedAreGrass, player?.farm?.machines, dansSelection, silageDansSelection]);
 
   /**
    * Ce qui manque au parc pour l'outil en main.
@@ -2908,7 +3365,15 @@ export function App() {
   const machineManquante = useMemo(() => {
     const work = workOfTool(tool);
     if (!work) return null;
-    const parc = explainNoMachine((player?.farm?.machines ?? []) as MachineForWork[], work);
+    /* `horloge` est passée plutôt que laissée par défaut : le message compte à
+       rebours le retour de l'engin, et cette horloge bat à la seconde tant
+       qu'un chantier tourne. Sans elle en dépendance, « de retour dans 2 min »
+       resterait figé jusqu'au prochain rafraîchissement du parc. */
+    const parc = explainNoMachine(
+      (player?.farm?.machines ?? []) as MachineForWork[],
+      work,
+      horloge,
+    );
     if (parc) return parc;
     // La machine est là ; reste à savoir si la sélection a de quoi l'occuper.
     if ((work === "HARVEST" || work === "MOW") && selectedCells.length) {
@@ -2917,7 +3382,7 @@ export function App() {
       }
     }
     return null;
-  }, [tool, player?.farm?.machines, selectedCells.length, dansSelection]);
+  }, [tool, player?.farm?.machines, selectedCells.length, dansSelection, horloge]);
 
   const laborQuote = useMemo(() => {
     if (visiting || !contractorOffer) return null;
@@ -2939,7 +3404,14 @@ export function App() {
    */
   const laborBlocage = useMemo(() => {
     if (visiting || !contractorOffer || laborQuote !== null) return null;
-    if (!acceptsLaborOrder(contractorOffer.work)) return null;
+    /* Le désherbage ne se publie pas en entraide : il se traite à la case, sur
+       des surfaces plus petites que la fenêtre de huit. Le bouton disparaissait
+       alors sans un mot — la même absence muette que le dépannage avait sur la
+       presse, et qui a valu la question « il y a des chantiers que tu peux
+       faire faire par le pnj et d'autres non ? ». */
+    if (!acceptsLaborOrder(contractorOffer.work)) {
+      return `${WORK_LABELS[contractorOffer.work]} ne se confie pas à un autre joueur — mais « Faire faire » l’envoie à une entreprise.`;
+    }
     const n = selectedCells.length;
     if (!n || n >= MISSION_CELLS_MIN) return null;
     return `L’entraide se demande à partir de ${MISSION_CELLS_MIN} cases — vous en avez retenu ${n}.`;
@@ -3021,10 +3493,9 @@ export function App() {
   async function callContractor() {
     if (!player || !activeParcelId || !contractorOffer) return;
     if (contractorOffer.cost === null) {
-      // Ne devrait plus être atteignable — le bouton n'est plus rendu dans ce
-      // cas. Si ça arrive quand même, on nomme le bouton qui, lui, marche,
-      // au lieu de parler d'un « chantier à publier » qui ne s'appelle comme
-      // ça nulle part dans le jeu.
+      /* Le dépannage prend désormais les dix travaux : ce chemin n'a plus de
+         cas connu. Il reste comme filet — un devis nul vaut mieux qu'un clic
+         qui part sans prix. */
       flashToast(
         `Personne ne vient ${toolBareVerb(tool, selectedAreGrass).toLowerCase()} dans l’heure — passez par « Demander de l’aide ».`,
         true,
@@ -3034,12 +3505,23 @@ export function App() {
     setBusy(true);
     setErr(null);
     const workCells = selectedCells.slice();
-    // Pressage, ramassage et ensilage sont écartés juste au-dessus : ils
-    // passent par un chantier publié, jamais par l'entreprise instantanée.
+    /* L'entreprise n'ouvre pas de chantier : son travail est fait au clic.
+       Un identifiant fixe suffit donc — un second appel remplace le premier,
+       ce qui est exactement ce qu'on veut d'une intervention instantanée.
+
+       L'engin se déduit de l'outil en main, comme pour un chantier du joueur :
+       une presse est une presse, y compris quand c'est le dépanneur qui la
+       tire. La paire écrite à la main ne connaissait que la moissonneuse, et
+       aurait envoyé un tracteur nu presser un andain. */
     flashWork(
-      contractorOffer.work === "HARVEST" ? "HARVESTER" : "TRACTOR",
+      "prestataire",
+      workMachineForTool(tool),
       workCells,
-      contractorOffer.work === "MOW" ? "mow" : contractorOffer.work === "HARVEST" ? "harvest" : undefined,
+      contractorOffer.work === "MOW"
+        ? "mow"
+        : contractorOffer.work === "HARVEST" || contractorOffer.work === "SILAGE"
+          ? "harvest"
+          : undefined,
     );
     try {
       const r = await api<{ cost: number; cells: number; totalTons?: number }>(
@@ -3092,16 +3574,25 @@ export function App() {
    * anonymes : celle du premier effaçait l'engin du second en plein parcours.
    * On les garde pour pouvoir les annuler.
    */
-  const workTimers = useRef<number[]>([]);
+  /**
+   * Les minuteries d'animation, **par chantier**.
+   *
+   * Elles vivaient dans une seule liste, vidée à chaque nouveau départ : lancer
+   * un travail sur une seconde parcelle coupait l'engin de la première en
+   * pleine traversée. Une entrée par chantier, et chacun s'éteint tout seul.
+   */
+  const workTimers = useRef<Map<string, number[]>>(new Map());
 
   function flashWork(
+    jobId: string,
     type: MachineType,
     cells: { x: number; y: number }[],
     cut?: "harvest" | "mow",
     extra?: { haul?: boolean; cargo?: string; jobMs?: number; delayMs?: number },
   ) {
-    for (const t of workTimers.current) window.clearTimeout(t);
-    workTimers.current = [];
+    for (const t of workTimers.current.get(jobId) ?? []) window.clearTimeout(t);
+    const minuteries: number[] = [];
+    workTimers.current.set(jobId, minuteries);
     /*
      * La parcelle est retenue **maintenant**, pas au moment où l'engin entre.
      *
@@ -3127,31 +3618,54 @@ export function App() {
      * une chose et en montrer une autre. Les cases s'allument quand l'engin
      * y entre.
      */
+    const attente = Math.max(0, extra?.delayMs ?? 0);
+    /*
+     * L'engin est annoncé tout de suite, le travail commence après l'attente.
+     *
+     * Le chantier n'était publié qu'à la fin du délai : pendant l'acheminement
+     * la vue n'avait rien à dessiner, et la machine se matérialisait sur sa
+     * première case. « Quand on fait une action avec le tracteur faudrait
+     * qu'il arrive tranquillement sur le champ, pas pop d'un coup. »
+     *
+     * La vue reçoit donc le chantier immédiatement, avec le temps qu'il reste
+     * avant le premier sillon : elle s'en sert pour amener l'attelage depuis
+     * la cour. Les cases, elles, ne s'allument qu'au premier sillon — annoncer
+     * un travail commencé pendant que le tracteur roule encore, ce serait dire
+     * une chose et en montrer une autre.
+     */
+    const annoncer = () => {
+      setActiveWorks((liste) => [
+        ...liste.filter((w) => w.jobId !== jobId),
+        {
+          jobId,
+          type,
+          parcelId: parcelleDuChantier,
+          cells,
+          cut,
+          haul: extra?.haul,
+          cargo: extra?.cargo,
+          condition: used?.condition,
+          tier: asTier(used?.tier),
+          durationMs: duree,
+          approcheMs: attente,
+        },
+      ]);
+    };
     const partir = () => {
       setPulseCells(cells);
-      setActiveWork({
-        type,
-        parcelId: parcelleDuChantier,
-        cells,
-        cut,
-        haul: extra?.haul,
-        cargo: extra?.cargo,
-        condition: used?.condition,
-        tier: asTier(used?.tier),
-        durationMs: duree,
-      });
       // Un peu de marge sur la durée du parcours : l'engin doit atteindre la
       // dernière case avant qu'on ne l'efface.
-      workTimers.current.push(
+      minuteries.push(
         window.setTimeout(() => {
           setPulseCells([]);
-          setActiveWork(null);
+          setActiveWorks((liste) => liste.filter((w) => w.jobId !== jobId));
+          workTimers.current.delete(jobId);
         }, duree + 250),
       );
     };
-    const attente = Math.max(0, extra?.delayMs ?? 0);
+    annoncer();
     if (attente === 0) partir();
-    else workTimers.current.push(window.setTimeout(partir, attente));
+    else minuteries.push(window.setTimeout(partir, attente));
   }
 
   /**
@@ -3162,15 +3676,31 @@ export function App() {
    * elle attend son tour dans une minuterie, et remettre l'état à zéro ne la
    * retient pas.
    */
-  function stopWork() {
-    for (const t of workTimers.current) window.clearTimeout(t);
-    workTimers.current = [];
+  function stopWork(jobId?: string) {
+    /* Sans identifiant, on rappelle tout : c'est le cas des travaux qui
+       n'ouvrent pas de chantier, et celui d'une déconnexion. */
+    const cibles = jobId ? [jobId] : [...workTimers.current.keys()];
+    for (const id of cibles) {
+      for (const t of workTimers.current.get(id) ?? []) window.clearTimeout(t);
+      workTimers.current.delete(id);
+    }
     setPulseCells([]);
-    setActiveWork(null);
+    setActiveWorks((liste) =>
+      jobId ? liste.filter((w) => w.jobId !== jobId) : [],
+    );
   }
 
   /** Tracteur + remorque sur la parcelle d’arrivée, comme chez le voisin. */
-  function flashDeliveryArrival(commodity?: string) {
+  /**
+   * @param depuis La case d'où part l'attelage.
+   *
+   * Absent pour une livraison qui arrive de l'extérieur : le camion entre par
+   * le bord. Renseigné quand le joueur clique une caisse posée dans sa cour —
+   * « on clique sur le paquet pour l'envoyer au silo et là c'est l'engin qui
+   * l'amène ». Sans ce point de départ, l'attelage se serait matérialisé au
+   * bord du champ pendant que la caisse disparaissait ailleurs.
+   */
+  function flashDeliveryArrival(commodity?: string, depuis?: { x: number; y: number }) {
     if (visiting) return;
     const destBuilding = (parcel?.buildings ?? []).find(
       (b) =>
@@ -3185,10 +3715,12 @@ export function App() {
       destBuilding
         ? { x: destBuilding.originX, y: destBuilding.originY }
         : null,
+      depuis,
     );
     if (cells.length < 2) return;
     setShowMarket(false);
-    flashWork("TRACTOR", cells, undefined, { haul: true, cargo: commodity });
+    // Une livraison à la fois : le camion suivant remplace le précédent.
+    flashWork("livraison", "TRACTOR", cells, undefined, { haul: true, cargo: commodity });
   }
   playHaulRef.current = flashDeliveryArrival;
 
@@ -3207,6 +3739,11 @@ export function App() {
 
   /**
    * Ouvre un chantier et attend qu'il soit fait.
+   *
+   * C'est aussi le seul endroit d'où part le bruit d'une machine : le son
+   * suit le travail demandé, jamais l'outil choisi dans le rail. Un chantier
+   * refusé par le serveur ne fait donc aucun bruit — ce qui est bien ce
+   * qu'on veut, un moteur qui démarre pour rien étant un mensonge.
    *
    * Un travail de champ ne part plus au clic : il réserve ses cases, immobilise
    * son attelage, et prend le temps que sa largeur de travail impose. Tout est
@@ -3249,6 +3786,7 @@ export function App() {
      * pas partie du chantier.
      */
     const retenues = r.job.cells?.length ? r.job.cells : cells;
+    jouerSon(SON_DU_TRAVAIL[work] ?? "tracteur");
     if (r.job.skipped) {
       flashToast(
         r.job.skipped === 1
@@ -3256,15 +3794,19 @@ export function App() {
           : `${r.job.skipped} cases déjà sur un chantier — laissées de côté.`,
       );
     }
-    setChantier({
-      work,
-      // La parcelle sur laquelle la route a réellement ouvert le chantier.
-      parcelId: activeParcelId ?? "",
-      cells: retenues,
-      endsAt: fin,
-      durationMs: r.job.durationMs,
-      machine: r.job.machine?.type,
-    });
+    setChantiers((liste) => [
+      ...liste,
+      {
+        id: r.job.id,
+        work,
+        // La parcelle sur laquelle la route a réellement ouvert le chantier.
+        parcelId: activeParcelId ?? "",
+        cells: retenues,
+        endsAt: fin,
+        durationMs: r.job.durationMs,
+        machine: r.job.machine?.type,
+      },
+    ]);
     return { id: r.job.id, durationMs: r.job.durationMs, endsAt: fin, cells: retenues };
   }
 
@@ -3280,15 +3822,37 @@ export function App() {
    * Ouvrir et attendre sont deux gestes séparés : entre les deux, l'appelant
    * met l'engin en route, et il traverse pendant tout le chrono.
    */
-  async function attendreChantier(endsAt: number): Promise<void> {
+  async function attendreChantier(jobId: string, endsAt: number): Promise<void> {
     const reste = endsAt - Date.now();
     if (reste > 0) await new Promise((resolve) => window.setTimeout(resolve, reste + 60));
-    setChantier(null);
+    clore(jobId);
   }
 
+  /**
+   * Ouvre un travail sur des cases, puis le mène jusqu'au bout.
+   *
+   * `busy` couvrait toute la fonction, attente comprise : pendant les trois
+   * minutes d'un semis, **tous** les boutons du jeu restaient éteints, sur
+   * toutes les parcelles. Un joueur qui achetait une deuxième terre pour la
+   * travailler ne pouvait rien y faire tant que la première tournait.
+   *
+   * Le verrou ne couvre plus que l'ouverture — l'aller-retour avec le serveur
+   * qui réserve les cases et sort l'attelage. Il ne protège que d'un double
+   * clic, et c'est tout ce qu'on lui demandait : une fois le chantier ouvert,
+   * ses cases sont retenues côté serveur et un second travail ne peut plus les
+   * reprendre. L'attente qui suit est libre, et c'est elle qui rend deux
+   * chantiers possibles.
+   */
   async function runWorkOnCells(cells: { x: number; y: number }[]) {
     if (!player || !activeParcelId || !cells.length || busy) return;
     setBusy(true);
+    /** Le verrou est-il déjà rendu ? (il l'est dès le chantier ouvert). */
+    let verrouRendu = false;
+    const rendreLeVerrou = () => {
+      if (verrouRendu) return;
+      verrouRendu = true;
+      setBusy(false);
+    };
     setErr(null);
     // Réaffecté juste après l'ouverture du chantier : seules les cases qu'il a
     // retenues partent au travail.
@@ -3305,6 +3869,9 @@ export function App() {
         if (!chantierOuvert) return;
         jobId = chantierOuvert.id;
         workCells = chantierOuvert.cells;
+        /* Les cases sont réservées, l'attelage est sorti : le jeu peut
+           reprendre. C'est ici, et pas à la fin, que le verrou tombe. */
+        rendreLeVerrou();
         /*
          * L'engin part **avec** le chrono, pas après lui.
          *
@@ -3315,12 +3882,13 @@ export function App() {
          */
         const arrivee = jobArrivalMs(chantierOuvert.durationMs);
         flashWork(
+          chantierOuvert.id,
           tool === "HARVEST" && selectedAreGrass ? "TRACTOR" : workMachineForTool(tool),
           workCells,
           harvestCut,
           { jobMs: chantierOuvert.durationMs - arrivee, delayMs: arrivee },
         );
-        await attendreChantier(chantierOuvert.endsAt);
+        await attendreChantier(chantierOuvert.id, chantierOuvert.endsAt);
       }
       if (plantCrop) {
         const crop = plantCrop;
@@ -3466,8 +4034,10 @@ export function App() {
       } else if (tool === "STUBBLE") {
         const r = await api<{
           stubbled: number;
+          /** Cases nues rendues à l'herbe — le même outil fait les deux. */
+          regrassed: number;
           cost: number;
-          nextBonus: number;
+          nextBonus: number | null;
           machine?: {
             condition: number;
             type: string;
@@ -3479,10 +4049,26 @@ export function App() {
           method: "POST",
           body: JSON.stringify({ userId: player.id, jobId, cells: workCells }),
         });
-        setMsg(
-          `Sol déchaumé ×${r.stubbled} · −${r.cost} € · +${Math.round(r.nextBonus * 100)} % sur la prochaine récolte` +
-            wearNote(r.machine),
-        );
+        /*
+         * Le déchaumeur fait deux choses, et le message n'en disait qu'une.
+         *
+         * Sur une terre labourée puis laissée là, il n'y a pas de chaumes à
+         * enfouir : le serveur remet la case en herbe et renvoie `regrassed`.
+         * Le client ne lisait que `stubbled`, d'où « Sol déchaumé ×0 · −360 €
+         * · +0 % sur la prochaine récolte » — le joueur payait, son champ
+         * reverdissait, et le jeu lui annonçait que rien n'avait eu lieu.
+         * Signalé comme une fonctionnalité disparue : « je peux plus nettoyer
+         * le terrain pour qu'après labour ça redevienne vert ».
+         */
+        const faits = [
+          r.stubbled ? `Sol déchaumé ×${r.stubbled}` : "",
+          r.regrassed ? `Remis en herbe ×${r.regrassed}` : "",
+        ].filter(Boolean);
+        const bonus =
+          r.stubbled && r.nextBonus
+            ? ` · +${Math.round(r.nextBonus * 100)} % sur la prochaine récolte`
+            : "";
+        setMsg(`${faits.join(" · ")} · −${r.cost} €${bonus}` + wearNote(r.machine));
         labor = r.labor;
       }
       setSelectedCells([]);
@@ -3490,6 +4076,7 @@ export function App() {
       await loadParcel(activeParcelId);
       if (labor?.completed) {
         flashToast(`Chantier terminé · +${Math.round(labor.payout ?? 0)} €`);
+        jouerSon("recolte");
         setVisitOrder(null);
         const home = player.farm?.parcels[0]?.id;
         if (home) setActiveParcelId(home);
@@ -3499,13 +4086,14 @@ export function App() {
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e));
       flashToast(e instanceof Error ? e.message : String(e), true);
-      stopWork();
+      // On ne rappelle que **son** engin : les autres chantiers continuent.
+      stopWork(jobId);
     } finally {
-      // Le bandeau ne survit jamais à la sortie : ouvrir et attendre étant
-      // deux gestes séparés, un échec entre les deux le laisserait sinon
-      // tourner à vide jusqu'au prochain chantier.
-      setChantier(null);
-      setBusy(false);
+      /* Le bandeau de ce chantier ne survit jamais à la sortie : ouvrir et
+         attendre étant deux gestes séparés, un échec entre les deux le
+         laisserait tourner à vide. Les bandeaux des autres restent. */
+      if (jobId) clore(jobId);
+      rendreLeVerrou();
     }
   }
 
@@ -3516,6 +4104,14 @@ export function App() {
   async function harvestAll() {
     if (!player || !activeParcelId) return;
     setBusy(true);
+    // Même règle que `runWorkOnCells` : le verrou tombe dès le chantier ouvert.
+    let verrouRendu = false;
+    let jobId: string | undefined;
+    const rendreLeVerrou = () => {
+      if (verrouRendu) return;
+      verrouRendu = true;
+      setBusy(false);
+    };
     try {
       // Le maïs bon à ensiler compte comme prêt **si l'on a l'ensileuse** :
       // il se récolte avant maturité grain, et « Tout récolter » doit le
@@ -3550,15 +4146,18 @@ export function App() {
       const work: FarmWork = readyAreGrass ? "MOW" : "HARVEST";
       const chantier = await ouvrirChantier(work, readyCells);
       if (!chantier) return;
+      jobId = chantier.id;
+      rendreLeVerrou();
       const cellsDuChantier = chantier.cells;
       const arrivee = jobArrivalMs(chantier.durationMs);
       flashWork(
+        chantier.id,
         readyAreGrass ? "TRACTOR" : "HARVESTER",
         cellsDuChantier,
         readyAreGrass ? "mow" : "harvest",
         { jobMs: chantier.durationMs - arrivee, delayMs: arrivee },
       );
-      await attendreChantier(chantier.endsAt);
+      await attendreChantier(chantier.id, chantier.endsAt);
       const r = await api<{
         totalTons: number;
         soldTons?: number;
@@ -3581,6 +4180,7 @@ export function App() {
       if (r.soldTons) markGuideFlag("sold");
       if (r.labor?.completed) {
         flashToast(`Chantier terminé · +${Math.round(r.labor.payout ?? 0)} €`);
+        jouerSon("recolte");
         setVisitOrder(null);
         const home = player.farm?.parcels[0]?.id;
         if (home) setActiveParcelId(home);
@@ -3589,10 +4189,10 @@ export function App() {
       await loadParcel(activeParcelId);
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e));
-      stopWork();
+      stopWork(jobId);
     } finally {
-      setChantier(null);
-      setBusy(false);
+      if (jobId) clore(jobId);
+      rendreLeVerrou();
     }
   }
 
@@ -3627,13 +4227,18 @@ export function App() {
        * rechargeait le voisinage au passage. Sans lui, la terre achetée
        * restait « à vendre », à fleur de sol, jusqu'au rafraîchissement
        * suivant — trois quarts de minute pendant lesquels un clic dessus
-       * rouvrait la fiche d'achat au lieu d'y travailler.
+       * rouvrait la fiche d'achat au lieu d'y mener.
        */
       if (activeParcelId) await loadVoisinage(activeParcelId).catch(() => undefined);
       const achetee = apres?.farm?.parcels.find((p) => p.id === parcelId);
+      /* La surface dans le message d'achat : c'est elle qu'on vient de payer,
+         et elle n'est plus la même d'un lot à l'autre. */
       setMsg(
         achetee
-          ? `${achetee.label} est à vous — elle vous attend dans « Mes parcelles »`
+          ? `${achetee.label} est à vous — ${hectaresDeGrille(
+              achetee.gridW,
+              achetee.gridH,
+            ).toLocaleString("fr-FR")} ha, elle vous attend dans « Mes parcelles »`
           : "Parcelle acquise",
       );
     } catch (e) {
@@ -3653,6 +4258,7 @@ export function App() {
         body: JSON.stringify({ userId: player.id, commodity, tons }),
       });
       flashToast(`Négociant : ${tons.toFixed(2)} t · +${r.revenue} €`);
+      jouerSon("piece");
       markGuideFlag("sold");
       await refreshPlayer();
       await refreshMeta();
@@ -3776,38 +4382,63 @@ export function App() {
     silage: "SILAGE",
   };
 
-  /** Ce que chaque denrée achetable vaut comme ration, si elle en est une. */
-  const RATION_DE: Partial<Record<TradeGood, "hay" | "maize" | "barley" | "wheat" | "silage">> = {
-    HAY: "hay",
-    MAIZE: "maize",
-    BARLEY: "barley",
-    WHEAT: "wheat",
-    SILAGE: "silage",
-  };
+  /* `RATION_DE` — la table inverse de `RATION_GOOD` — vivait ici pour
+     enchaîner l'achat sur la distribution. L'enchaînement a été retiré : il
+     servait un stock qui n'était pas encore rentré, et échouait à tous les
+     coups. La table part avec lui plutôt que de rester à attendre un usage
+     qui n'existe plus ; elle se réécrit en cinq lignes le jour où la
+     distribution différée sera faite pour de bon. */
 
   /** Achat d'un intrant au négociant — du fourrage, pour l'instant. */
   async function buyInput(commodity: TradeGood, tons: number) {
     if (!player) return;
     setBusy(true);
     try {
-      const r = await api<{ bought: number; cost: number }>("/market/buy", {
+      const r = await api<{
+        bought: number;
+        cost: number;
+        /** La commande part en camion : elle n'est pas au stock. */
+        delivery?: { id: string; arrivesAt: number };
+      }>("/market/buy", {
         method: "POST",
         body: JSON.stringify({ userId: player.id, commodity, tons }),
       });
       const nom = GOOD_DEFS[commodity]?.name ?? commodity;
-      const ration = RATION_DE[commodity];
       const pourLeLot = nourrirApres;
       await refreshPlayer();
-      if (pourLeLot && ration) {
-        // La marchandise est au silo : on enchaîne sur ce que le joueur
-        // voulait vraiment. `feedHerd` gère lui-même le `busy` et la quantité.
+      /*
+       * Le négociant livre, il ne remplit pas le silo.
+       *
+       * Le message annonçait « 5 t de paille · −360 € » comme si la
+       * marchandise était rentrée, et le commentaire d'ici affirmait « la
+       * marchandise est au silo ». C'est faux : la route crée une commande
+       * qui voyage, se pose en caisse dans la cour, et n'entre au stock qu'une
+       * fois rentrée — à la main, ou d'elle-même trois minutes plus tard.
+       *
+       * D'où les trois symptômes d'un seul défaut, signalés en jouant : « je
+       * clique mais on dirait que j'ai rien », « ça va se stocker où ? », et
+       * « quand je clique sur nourrir du coup je peux pas ». Le dernier était
+       * le plus sûr : l'enchaînement achat → distribution servait un stock
+       * qui n'existait pas encore, et échouait.
+       *
+       * On dit donc ce qui se passe vraiment, et où regarder.
+       */
+      const secondes = r.delivery
+        ? Math.max(1, Math.round((r.delivery.arrivesAt - Date.now()) / 1000))
+        : 0;
+      const quand = secondes ? `dans ${secondes} s` : "dans un instant";
+      const livraison =
+        `Le colis sera livré sur ta parcelle ${quand} — clique dessus pour l’envoyer au silo.`;
+      if (pourLeLot) {
+        // On ne distribue pas ce qui n'est pas encore là. On dit quoi faire.
         setNourrirApres(null);
-        setBusy(false);
-        await feedHerd(pourLeLot, ration, r.bought);
-        flashToast(`${r.bought} t de ${nom.toLowerCase()} · −${r.cost} € · distribué au troupeau`);
+        flashToast(
+          `${r.bought} t de ${nom.toLowerCase()} · −${r.cost} €. ${livraison} Tu pourras nourrir le lot ensuite.`,
+          "warn",
+        );
         return;
       }
-      flashToast(`${r.bought} t de ${nom.toLowerCase()} · −${r.cost} €`);
+      flashToast(`${r.bought} t de ${nom.toLowerCase()} · −${r.cost} €. ${livraison}`);
     } catch (e) {
       flashToast(e instanceof Error ? e.message : String(e), true);
     } finally {
@@ -3826,6 +4457,7 @@ export function App() {
       await refreshPlayer();
       await refreshMeta();
       setMsg(`Vendu pour ${r.revenue} €`);
+      jouerSon("piece");
       markGuideFlag("sold");
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e));
@@ -3853,13 +4485,20 @@ export function App() {
     }
   }
 
-  async function acceptContract(id: string) {
+  /**
+   * Prendre un chantier du tableau, avec son matériel ou en location.
+   *
+   * `rented` n'est jamais deviné : sans le drapeau, un joueur sans
+   * moissonneuse verrait son salaire amputé de 45 % sans avoir rien choisi.
+   * C'est le second bouton du tableau qui le pose, et il annonce son chiffre.
+   */
+  async function acceptContract(id: string, rented = false) {
     if (!player) return;
     setBusy(true);
     try {
       const r = await api<{ contract: MissionPlayContract }>(`/contracts/${id}/accept`, {
         method: "POST",
-        body: JSON.stringify({ userId: player.id }),
+        body: JSON.stringify({ userId: player.id, rented }),
       });
       setActiveMission(r.contract);
       await refreshMeta();
@@ -3874,7 +4513,12 @@ export function App() {
     if (!player || !activeMission) return;
     setBusy(true);
     try {
-      const r = await api<{ reward: number; machine?: { type: string; condition: number; wearApplied: number } }>(
+      const r = await api<{
+        reward: number;
+        rented?: boolean;
+        rentalFee?: number;
+        machine?: { type: string; condition: number; wearApplied: number } | null;
+      }>(
         `/contracts/${activeMission.id}/complete`,
         {
           method: "POST",
@@ -3883,10 +4527,16 @@ export function App() {
       );
       await refreshPlayer();
       await refreshMeta();
-      const wearNote = r.machine
+      // Louer, c'est ne pas user son matériel : il n'y a donc pas d'usure à
+      // annoncer, mais il y a une location — et c'est elle qui explique
+      // l'écart avec le salaire affiché au tableau.
+      const note = r.machine
         ? ` · ${r.machine.type} −${r.machine.wearApplied.toFixed(1)}%`
-        : "";
-      flashToast(`Chantier honoré · +${r.reward} €${wearNote}`);
+        : r.rented
+          ? ` · location −${r.rentalFee ?? 0} €`
+          : "";
+      flashToast(`Chantier honoré · +${r.reward} €${note}`);
+      jouerSon("piece");
       setActiveMission(null);
       markGuideFlag("contract");
     } catch (e) {
@@ -4053,14 +4703,25 @@ export function App() {
     if (!player) return;
     setBusy(true);
     try {
-      const r = await api<{ added: number; cost: number; young?: boolean }>(
-        `/buildings/${buildingId}/animals`,
-        {
-          method: "POST",
-          body: JSON.stringify({ userId: player.id, count, young }),
-        },
-      );
+      const r = await api<{
+        added: number;
+        cost: number;
+        young?: boolean;
+        /** Non nul dès qu'on dépasse les places — voir `crowdingWarning`. */
+        crowding?: string | null;
+      }>(`/buildings/${buildingId}/animals`, {
+        method: "POST",
+        body: JSON.stringify({ userId: player.id, count, young }),
+      });
       flashToast(`+${r.added} ${young ? "jeune(s)" : "bête(s)"} · −${r.cost} €`);
+      /*
+       * Entasser est permis, pas gratuit — et ça se dit tout de suite.
+       *
+       * Sans cet avertissement, le joueur découvrirait la perte une heure
+       * plus tard sur une courbe de production qui baisse, sans faire le lien
+       * avec l'achat. On le prévient à la seconde où il dépasse.
+       */
+      if (r.crowding) flashToast(r.crowding, "warn");
       await refreshPlayer();
       if (activeParcelId) await loadLivestock(activeParcelId);
     } catch (e) {
@@ -4119,7 +4780,7 @@ export function App() {
     if (before == null || level <= before) return;
     const opened = levelUnlocks().find((u) => u.level === level);
     flashToast(opened ? `Niveau ${level} — ${opened.label}` : `Niveau ${level}`);
-    playUiSound("place");
+    jouerSon("niveau");
   }, [player?.level]);
 
   async function claimQuest(id: string) {
@@ -4131,7 +4792,7 @@ export function App() {
         body: JSON.stringify({ userId: player.id }),
       });
       flashToast(`Objectif tenu · +${r.reward.crd} € · +${r.reward.xp} XP`);
-      playUiSound("place");
+      jouerSon("piece");
       await refreshPlayer();
       await loadQuests();
     } catch (e) {
@@ -4179,7 +4840,7 @@ export function App() {
     if (!player) return;
     setBusy(true);
     try {
-      const barn = barnsFerme.find((b) => b.herd?.id === herdId);
+      const barn = barns.find((b) => b.herd?.id === herdId);
       const size = barn?.herd?.size ?? 1;
       /**
        * Ce qu'il manque, pas une tonne de plus.
@@ -4190,25 +4851,36 @@ export function App() {
        * à jeun, et une tonne d'ensilage — soixante pour cent plus nourrissante
        * que le foin — comptait comme une tonne de foin.
        *
-       * On distribue donc le **manque** : le besoin du cycle moins ce qui
-       * reste dans la mangeoire, converti en tonnes par la valeur de la
-       * ration choisie. Un minimum d'une centaine de kilos, sans quoi un lot
-       * repu ferait des allers-retours pour rien.
+       * On distribue donc le **manque** : de quoi remplir la mangeoire, moins
+       * ce qui y reste, converti en tonnes par la valeur de la ration
+       * choisie.
        */
       /**
-       * Une distribution = **un jour réel**, pas un cycle.
+       * Un clic remplit la mangeoire. Un seul.
        *
-       * Un cycle vaut quinze minutes réelles : servir un cycle obligeait à
-       * revenir toutes les quinze minutes sous peine de voir le lot dépérir.
-       * On sert donc de quoi tenir vingt-quatre heures d'horloge, ce qui reste
-       * dans l'auge déduit. La consommation, elle, n'a pas bougé d'un kilo.
+       * Il servait de quoi tenir un jour réel quand l'auge en tient deux — et
+       * la jauge de l'écran, elle, se mesure sur la capacité. Passé un jour,
+       * le manque tombait à zéro et le plancher de cent kilos prenait le
+       * relais : le joueur cliquait, la jauge ne bougeait presque pas, il
+       * recliquait. « Faut cliquer 300 000 fois », et ce n'était pas une
+       * grande exagération — remplir la seconde moitié demandait des dizaines
+       * d'allers-retours au serveur.
+       *
+       * Le plancher part avec le défaut : une mangeoire pleine se dit, elle ne
+       * se sert pas. Prendre cent kilos de grain pour ne rien changer à l'état
+       * du lot est un vol silencieux, et c'était le seul effet du plancher une
+       * fois la cible corrigée.
        */
       const besoinKg = rationToServe({
         besoinParCycle: barn?.herd?.feedNeed ?? size * 14,
         feedStock: barn?.herd?.feedStock ?? 0,
       });
       const valeur = FEED_VALUE[RATION_GOOD[ration]] ?? 1;
-      const wanted = Math.max(0.1, Math.round((besoinKg / 1000 / valeur) * 100) / 100);
+      const wanted = Math.round((besoinKg / 1000 / valeur) * 100) / 100;
+      if (wanted <= 0) {
+        flashToast("La mangeoire est pleine — reviens quand les bêtes auront mangé.", "warn");
+        return;
+      }
       const stock = stockConnu ?? (
         ration === "maize"
           ? maizeInStock
@@ -4220,6 +4892,16 @@ export function App() {
                 ? silageInStock
                 : hayInStock);
       const tons = Math.min(stock, wanted);
+      // Réserve vide : la route refuserait avec « Indiquez une quantité »,
+      // un message qui parle de l'appel et non de la ferme. On dit ce qui
+      // manque, et où en trouver.
+      if (tons <= 0) {
+        flashToast(
+          "Plus rien de cette ration en réserve — achètes-en au négociant.",
+          "warn",
+        );
+        return;
+      }
       const r = await api<{ units: number; quality: number }>(`/herds/${herdId}/feed`, {
         method: "POST",
         body: JSON.stringify({
@@ -4351,6 +5033,64 @@ export function App() {
       flashToast(`Tonte : ${r.tons.toFixed(3)} t de laine`);
       await refreshPlayer();
       if (activeParcelId) await loadLivestock(activeParcelId);
+    } catch (e) {
+      flashToast(e instanceof Error ? e.message : String(e), true);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  /* ---------------------------------------------------------------- */
+  /* Le personnel                                                       */
+  /* ---------------------------------------------------------------- */
+
+  async function hireEmployee(candidateId: string) {
+    setBusy(true);
+    try {
+      const r = await api<{ employee: { name: string; salaire: number } }>("/employees/hire", {
+        method: "POST",
+        body: JSON.stringify({ candidateId }),
+      });
+      flashToast(`${r.employee.name} embauché(e) · ${r.employee.salaire} € par jour de jeu`);
+      await loadStaff();
+      await refreshPlayer();
+    } catch (e) {
+      flashToast(e instanceof Error ? e.message : String(e), true);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function setEmployeePost(id: string, poste: "CHAMP" | "ELEVAGE") {
+    setBusy(true);
+    try {
+      await api(`/employees/${id}/post`, { method: "POST", body: JSON.stringify({ poste }) });
+      await loadStaff();
+    } catch (e) {
+      flashToast(e instanceof Error ? e.message : String(e), true);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  function fireEmployee(id: string, nom: string) {
+    /* Se séparer de quelqu'un se confirme : le geste est irréversible, et le
+       vivier du jour aura peut-être déjà tourné quand on le regrettera. */
+    setConfirmRequest({
+      title: `Se séparer de ${nom} ?`,
+      detail: "Le poste se libère tout de suite. Il faudra réembaucher dans le vivier du jour.",
+      confirmLabel: "Se séparer",
+      destructive: true,
+      onConfirm: () => void doFireEmployee(id, nom),
+    });
+  }
+
+  async function doFireEmployee(id: string, nom: string) {
+    setBusy(true);
+    try {
+      await api(`/employees/${id}/fire`, { method: "POST" });
+      flashToast(`${nom} quitte la ferme`);
+      await loadStaff();
     } catch (e) {
       flashToast(e instanceof Error ? e.message : String(e), true);
     } finally {
@@ -4551,8 +5291,62 @@ export function App() {
         body: JSON.stringify({ userId: player.id }),
       });
       flashToast(`${label} tourné d'un quart`);
-      playUiSound("place");
+      jouerSon("porte");
       if (activeParcelId) await loadParcel(activeParcelId);
+    } catch (e) {
+      flashToast(e instanceof Error ? e.message : String(e), true);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  /**
+   * Commencer un déménagement.
+   *
+   * On arme le mode « bâtir » avec le bâtiment existant : à partir de là, tout
+   * le geste de pose s'applique — le fantôme, le quart de tour, la barre de
+   * confirmation. La place de départ est retenue d'emblée, pour que la barre
+   * s'affiche tout de suite avec son prix plutôt qu'après un premier clic.
+   */
+  function startMoveBuilding(id: string) {
+    const b = (parcel?.buildings ?? []).find((x) => x.id === id);
+    if (!b) return;
+    setOpenBuildingId(null);
+    setCellMenu(null);
+    setMovingBuildingId(id);
+    setBuildRotation(b.rotation ?? 0);
+    setPendingBuild({ x: b.originX, y: b.originY });
+    setTool("BUILD");
+    flashToast(`Choisissez la nouvelle place de ${BUILDING_DEFS[b.type].name}.`);
+  }
+
+  /** Sortir du déménagement sans rien changer ni rien débiter. */
+  function cancelMoveBuilding() {
+    setMovingBuildingId(null);
+    setPendingBuild(null);
+  }
+
+  /** Déménagement confirmé. Le bâtiment garde son niveau et son contenu. */
+  async function confirmMoveBuilding() {
+    if (!player || !pendingBuild || !movingBuilding || !activeParcelId) return;
+    const nom = BUILDING_DEFS[movingBuilding.type].name;
+    setBusy(true);
+    setErr(null);
+    try {
+      const r = await api<{ cost: number }>(`/buildings/${movingBuilding.id}/move`, {
+        method: "POST",
+        body: JSON.stringify({
+          userId: player.id,
+          x: pendingBuild.x,
+          y: pendingBuild.y,
+          rotation: buildRotation,
+        }),
+      });
+      flashToast(r.cost > 0 ? `${nom} déplacé · −${r.cost} €` : `${nom} déplacé`);
+      playUiSound("place");
+      cancelMoveBuilding();
+      await refreshPlayer();
+      await loadParcel(activeParcelId);
     } catch (e) {
       flashToast(e instanceof Error ? e.message : String(e), true);
     } finally {
@@ -4578,7 +5372,7 @@ export function App() {
         }),
       });
       flashToast(`${def.name} bâti · −${def.cost} €`);
-      playUiSound("place");
+      jouerSon("construction");
       setPendingBuild(null);
       await refreshPlayer();
       await loadParcel(activeParcelId);
@@ -4693,18 +5487,15 @@ export function App() {
           onEmailChange={setEmail}
           accessCode={accessCode}
           onAccessCodeChange={setAccessCode}
-          recoveryInput={recoveryInput}
-          onRecoveryInputChange={setRecoveryInput}
           busy={busy}
           msg={msg}
           err={err}
           onRegister={register}
           onLogin={login}
-          onRecover={recover}
+          courrielDisponible={courrielDisponible}
+          onForgot={demanderLienMdp}
+          onReset={poserNouveauMdp}
         />
-        {recoveryCode && (
-          <RecoveryNotice code={recoveryCode} onClose={() => setRecoveryCode(null)} />
-        )}
       </>
     );
   }
@@ -4802,6 +5593,9 @@ export function App() {
         type="button"
         className={`build-item art ${tool === "BUILD" && buildType === t ? "on" : ""}`}
         onClick={() => {
+          // Choisir un bâtiment neuf abandonne le déménagement en cours : on
+          // ne peut pas promener deux fantômes à la fois.
+          if (movingBuildingId) cancelMoveBuilding();
           setTool("BUILD");
           setBuildType(t);
           setSelectedCells([]);
@@ -4865,8 +5659,10 @@ export function App() {
    * haut et passait par-dessus. Le contenu, lui, est le même — d'où une seule
    * écriture.
    */
-  const chantierBar = chantier ? (
-    <div className="chantier-bar" role="status" aria-live="polite">
+  const chantierBar = chantiers.length ? (
+    <div className="chantier-pile">
+      {chantiers.map((chantier) => (
+    <div key={chantier.id} className="chantier-bar" role="status" aria-live="polite">
       <span className="chantier-nom">
         {horloge - (chantier.endsAt - chantier.durationMs) < jobArrivalMs(chantier.durationMs)
           ? /*
@@ -4895,6 +5691,8 @@ export function App() {
       </span>
       <span className="chantier-reste">{formatChantierReste(chantier.endsAt, horloge)}</span>
     </div>
+      ))}
+    </div>
   ) : null;
 
   return (
@@ -4907,19 +5705,30 @@ export function App() {
         {parcel ? (
           <Suspense fallback={<SceneLoading label="Chargement de la ferme…" />}>
             <IsoFarmView
+              key={`qualite-${qualiteVue}`}
               parcelId={activeParcelId ?? ""}
               controle={vueControle}
               onEgare={setVueEgaree}
               voisinage={voisinage}
-              onVoisinClick={setVoisinOuvert}
-              onOwnedCellClick={(parcelId, x, y, mods) => {
-                gesteApresBascule.current = { parcelId, x, y, mods };
-                setActiveParcelId(parcelId);
+              /*
+               * Cliquer sur sa propre parcelle y emmène — le bouton devient
+               * facultatif.
+               *
+               * « On est obligé de cliquer sur un bouton pour changer de
+               * parcelle », puis « aller sur sa parcelle en cliquant
+               * dessus ». Le paysage montrait bien les siennes, mais le seul
+               * geste qu'il offrait dessus ouvrait une fiche dont le texte
+               * était « Cette parcelle est déjà la vôtre » : une impasse, au
+               * bout du geste le plus naturel de l'écran.
+               *
+               * Les pastilles « Mes parcelles » restent : ce sont elles qu'on
+               * emploie pour rejoindre une parcelle d'une autre région, que le
+               * paysage ne montre pas.
+               */
+              onVoisinClick={(v) => {
+                if (v.statut === "MOI") setActiveParcelId(v.id);
+                else setVoisinOuvert(v);
               }}
-              /* Le siège : la première parcelle acquise. L'ordre d'acquisition
-                 est stable côté serveur, ce siège ne change donc pas d'une
-                 session à l'autre. */
-              homeParcelId={player?.farm?.parcels[0]?.id}
               gridW={gw}
               gridH={gh}
               cells={grid}
@@ -4929,7 +5738,11 @@ export function App() {
               hoverCell={hoverCell}
               previewBuilding={previewBuilding}
               pulseCells={pulseCells}
-              activeWork={activeWork}
+              /* La vue ne montre qu'un champ : elle ne reçoit donc que
+                 l'engin qui y travaille. Les autres roulent sans être
+                 dessinés, et réapparaissent quand on revient sur leur
+                 parcelle. */
+              activeWork={activeWorks.find((w) => w.parcelId === activeParcelId) ?? null}
               grazing={grazingHerds}
               manurePiles={barns.flatMap((barn) => {
                 const b = (parcel?.buildings ?? []).find((x) => x.id === barn.buildingId);
@@ -5245,12 +6058,6 @@ export function App() {
         )}
       </div>
 
-      {/* Le code de secours passe **devant** le bilan d'absence : il ne se
-          redemande pas, alors que le bilan se relit dans le journal. */}
-      {recoveryCode && (
-        <RecoveryNotice code={recoveryCode} onClose={() => setRecoveryCode(null)} />
-      )}
-
       {/* Le bilan d'absence annonce parfois huit cultures perdues : il mérite
           d'être lu, donc acquitté, plutôt que de flotter sur la ferme. */}
       {resumeBanner && !err && (
@@ -5312,6 +6119,7 @@ export function App() {
               return r.player;
             }}
             onFlash={flashToast}
+            onQualityChange={() => setQualiteVue((n) => n + 1)}
           />
         )}
       </PanelHost>
@@ -5325,25 +6133,37 @@ export function App() {
         par accident, sans moyen d'annuler.
       */}
       {pendingBuild && !visiting && (() => {
-        const def = BUILDING_DEFS[buildType];
-        const foot = orientedFootprint(buildType, buildRotation);
-        const placeOk = canPlaceBuildingAt(pendingBuild.x, pendingBuild.y);
-        // Un bouton grisé ne dit pas ce qui cloche. Les deux seuls empêchements
-        // possibles se nomment, et la barre le dit à la place du bouton.
+        // Déménager ou bâtir : le même geste, le même fantôme, la même barre.
+        // Seuls le bâtiment concerné, le prix et le verbe changent.
+        const type = movingBuilding ? movingBuilding.type : buildType;
+        const def = BUILDING_DEFS[type];
+        const prix = movingBuilding ? (moveCost ?? 0) : def.cost;
+        const foot = orientedFootprint(type, buildRotation);
+        const placeOk = canPlaceBuildingAt(pendingBuild.x, pendingBuild.y, buildRotation, type);
+        const bouge =
+          !movingBuilding ||
+          pendingBuild.x !== movingBuilding.originX ||
+          pendingBuild.y !== movingBuilding.originY ||
+          buildRotation !== movingBuilding.rotation;
+        // Un bouton grisé ne dit pas ce qui cloche. Les empêchements possibles
+        // se nomment, et la barre le dit à la place du bouton.
         const souci =
-          (player?.crd ?? 0) < def.cost
-            ? `Il vous manque ${def.cost - Math.round(player?.crd ?? 0)} €`
+          (player?.crd ?? 0) < prix
+            ? `Il vous manque ${prix - Math.round(player?.crd ?? 0)} €`
             : !placeOk
               ? "Place occupée — touchez une autre case"
-              : null;
+              : !bouge
+                ? "Il est déjà là — choisissez une autre case"
+                : null;
         return (
           <div className={`build-confirm glass ${souci ? "blocked" : ""}`}>
             <div className="build-confirm-what">
-              <img className="build-confirm-art" src={BUILDING_ART[buildType]} alt="" />
+              <img className="build-confirm-art" src={BUILDING_ART[type]} alt="" />
               <span className="build-confirm-lines">
-                <strong>{def.name}</strong>
+                <strong>{movingBuilding ? `Déplacer ${def.name}` : def.name}</strong>
                 <span className="build-confirm-meta">
                   {foot.w}×{foot.h} cases · face {["nord", "est", "sud", "ouest"][buildRotation % 4]}
+                  {movingBuilding && prix === 0 && " · tout juste posé, déplacement offert"}
                 </span>
                 {souci && <span className="build-confirm-why">{souci}</span>}
               </span>
@@ -5360,16 +6180,20 @@ export function App() {
               </button>
             </div>
             <div className="build-confirm-actions">
-              <button type="button" className="ghost" onClick={() => setPendingBuild(null)}>
+              <button
+                type="button"
+                className="ghost"
+                onClick={() => (movingBuilding ? cancelMoveBuilding() : setPendingBuild(null))}
+              >
                 Annuler
               </button>
               <button
                 type="button"
                 className="primary build-go"
-                disabled={busy || !placeOk}
-                onClick={() => void confirmBuild()}
+                disabled={busy || !placeOk || !bouge}
+                onClick={() => void (movingBuilding ? confirmMoveBuilding() : confirmBuild())}
               >
-                Construire <b>{def.cost} €</b>
+                {movingBuilding ? "Déplacer" : "Construire"} <b>{prix} €</b>
               </button>
             </div>
           </div>
@@ -5860,13 +6684,14 @@ export function App() {
               prix — avant d’acheter. Un outil plus large va plus vite, mais exige
               plus de chevaux ; un T5 se paie aussi à l’entretien et à la cuve.
             </p>
-            <div className="age-switch" role="group" aria-label="Palier de matériel">
+            <div className="age-switch" role="radiogroup" aria-label="Palier de matériel">
               {MACHINE_TIERS.map((t) => (
                 <button
                   key={t}
                   type="button"
+                  role="radio"
                   className={tierAchat === t ? "on" : ""}
-                  aria-pressed={tierAchat === t}
+                  aria-checked={tierAchat === t}
                   title={TIER_ROLE_LABELS[t]}
                   onClick={() => setTierAchat(t)}
                 >
@@ -5952,9 +6777,43 @@ export function App() {
 
         <PanelHost
           mobile={isMobile}
+          open={showStaff}
+          title="Personnel"
+          subtitle={
+            staff
+              ? `${staff.employees.length} employé(s) · ${staff.masseSalariale} € / jour`
+              : "Équipe et candidats"
+          }
+          onClose={() => setShowStaff(false)}
+        >
+        {(isMobile ? sheet === "STAFF" : showStaff) && staff && (
+          <EmployeesPanel
+            className={panelClass("staff-panel", "STAFF")}
+            embedded={!isMobile}
+            gesture={isMobile ? sheetGesture : undefined}
+            busy={busy}
+            employees={staff.employees}
+            candidates={staff.candidates}
+            lits={staff.lits}
+            loges={staff.loges}
+            masseSalariale={staff.masseSalariale}
+            peutEmbaucher={staff.peutEmbaucher}
+            sansLogement={staff.sansLogement}
+            preavisJours={staff.preavisJours}
+            onClose={() => (isMobile ? setSheet(null) : setShowStaff(false))}
+            onHire={(id) => void hireEmployee(id)}
+            onPost={(id, poste) => void setEmployeePost(id, poste)}
+            onFire={fireEmployee}
+            onExplain={(raison) => flashToast(raison, "warn")}
+          />
+        )}
+        </PanelHost>
+
+        <PanelHost
+          mobile={isMobile}
           open={showHerd}
           title="Élevage"
-          subtitle={`${barnsFerme.reduce((n, b) => n + (b.herd?.size ?? 0), 0)} bête(s) · ${barnsFerme.length} bâtiment(s)`}
+          subtitle={`${barns.reduce((n, b) => n + (b.herd?.size ?? 0), 0)} bête(s) · ${barns.length} bâtiment(s)`}
           width="wide"
           onClose={() => setShowHerd(false)}
         >
@@ -5968,7 +6827,7 @@ export function App() {
             if (isMobile) setSheet(null);
             else setShowHerd(false);
           }}
-          barns={barnsFerme}
+          barns={barns}
           busy={busy}
           crd={player.crd}
           onBuyAnimals={buyAnimals}
@@ -6014,6 +6873,7 @@ export function App() {
              avec un silo plein. */
           silageTons={silageInStock}
           onBuildPaddock={(yardType) => {
+            if (movingBuildingId) cancelMoveBuilding();
             setTool("BUILD");
             setBuildType(yardType);
             setSelectedCells([]);
@@ -6098,7 +6958,7 @@ export function App() {
             <div>
               <dt>Parcelle</dt>
               <dd>
-                {hectaresDe(gw, gh).toLocaleString("fr-FR", { maximumFractionDigits: 1 })} Ha ({gw}×{gh})
+                {hectaresDeGrille(gw, gh).toLocaleString("fr-FR", { maximumFractionDigits: 1 })} Ha ({gw}×{gh})
               </dd>
             </div>
           </dl>
@@ -6272,7 +7132,7 @@ export function App() {
           onPublishLabor={publishLaborOrder}
           onSell={() => setShowMarket(true)}
           onGuide={() => setShowGuide(true)}
-          hasHerd={barnsFerme.length > 0}
+          hasHerd={barns.length > 0}
           moreOpen={moreOpen}
           /* Refermé, « Plus » porte la somme de ce qui attend derrière lui :
              sinon cacher les panneaux cacherait aussi leurs alertes. */
@@ -6327,7 +7187,15 @@ export function App() {
                 on: showEta,
                 onOpen: () => setShowEta((v) => !v),
               },
-              ...(barnsFerme.length > 0
+              {
+                id: "STAFF",
+                label: "Personnel",
+                icon: "/assets/icons/nav/personnel.svg",
+                hotkey: "P",
+                on: showStaff,
+                onOpen: () => setShowStaff((v) => !v),
+              },
+              ...(barns.length > 0
                 ? [
                     {
                       id: "HERD",
@@ -6353,7 +7221,7 @@ export function App() {
         <SelectionBar
             tool={tool}
             machineManquante={machineManquante}
-            selectedCount={selectedCells.length}
+              selectedCount={selectedCells.length}
             readyCount={
               visiting ? Math.min(readyCellCount, visitOrder?.remaining ?? 0) : readyCellCount
             }
@@ -6490,6 +7358,7 @@ export function App() {
           visiting={visiting}
           onClose={() => setOpenBuildingId(null)}
           onRotate={() => void rotateBuilding(openBuilding.id, BUILDING_DEFS[openBuilding.type].name)}
+          onMove={() => startMoveBuilding(openBuilding.id)}
           onUpgrade={() => void upgradeBuilding(openBuilding.id)}
           onDemolish={() => {
             setOpenBuildingId(null);
@@ -6513,7 +7382,21 @@ export function App() {
           await buyAdjacent(id);
           setVoisinOuvert(null);
         }}
+        /* Le paysage n'ouvre plus cette fiche sur une parcelle à soi — il y
+           emmène directement. Le bouton reste pour les autres chemins qui
+           l'ouvrent, afin qu'aucun ne retombe dans l'impasse. */
+        onAller={(id) => {
+          setActiveParcelId(id);
+          setVoisinOuvert(null);
+        }}
         onFermer={() => setVoisinOuvert(null)}
+      />
+      <NouveautesPanel
+        nouveautes={nouveautes}
+        onFermer={() => {
+          if (player) ecrireNouveauteVue(player.id, DERNIERE_NOUVEAUTE);
+          setNouveautes([]);
+        }}
       />
       <ConfirmDialog request={confirmRequest} onCancel={() => setConfirmRequest(null)} />
       {care && player && (() => {
@@ -6541,7 +7424,11 @@ export function App() {
         />
       )}
 
-      <TutorialOverlay open={showTutorial} onClose={() => setShowTutorial(false)} />
+      <TutorialOverlay
+        open={showTutorial}
+        playerId={player.id}
+        onClose={() => setShowTutorial(false)}
+      />
       <PlayGuide
         open={showGuide}
         snapshot={guideSnapshot}
@@ -6587,8 +7474,8 @@ export function App() {
             .catch((e) => flashToast(e instanceof Error ? e.message : String(e), true))
         }
         onAbandonActive={() => void abandonVisit()}
-        onTakeGhost={(id) => {
-          void acceptContract(id);
+        onTakeGhost={(id, rented) => {
+          void acceptContract(id, rented);
           setShowEta(false);
           setSheet(null);
         }}
@@ -6609,7 +7496,15 @@ export function App() {
         myFarmId={player.farm?.id}
         expandableIds={expandableParcelIds}
         onBuyLand={buyAdjacent}
-        ledger={ledger}
+        ledger={journal.page?.lignes ?? []}
+        ledgerJours={journal.jours}
+        ledgerPage={journal.page}
+        ledgerLoading={journal.loading}
+        ledgerError={journal.error}
+        onLedgerPeriod={journal.setJours}
+        onLedgerMore={journal.more}
+        onLedgerRetry={journal.retry}
+        cropPrices={market}
         quests={quests}
         onClaimQuest={(id) => void claimQuest(id)}
         onlinePlayers={onlinePlayers}
@@ -6639,7 +7534,7 @@ export function App() {
                 }}
               />
               {SHEET_TABS.map((t, i) => {
-                const disabled = t.key === "HERD" && !barnsFerme.length;
+                const disabled = t.key === "HERD" && !barns.length;
                 const badge = tabBadge(alerts, t.key);
                 return (
                   <button
@@ -6650,7 +7545,7 @@ export function App() {
                     /* Entrée en cascade, 45 ms par carte — charte §8.1 #7. */
                     style={{ animationDelay: `${i * 45}ms` }}
                     title={disabled ? "Aucun bâtiment d’élevage sur la parcelle" : t.label}
-                    aria-pressed={t.key === "OFFICE" ? showEta : sheet === t.key}
+                    aria-expanded={t.key === "OFFICE" ? showEta : sheet === t.key}
                     onClick={() => {
                       setMoreOpen(false);
                       // « Missions » n'a plus de tiroir : son contenu a rejoint
