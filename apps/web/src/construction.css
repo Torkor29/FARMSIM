@@ -1,0 +1,238 @@
+/* Le mode construction : une barre en bas de la vue, pas une fenêtre. */
+
+.construction-panneau {
+  position: fixed;
+  left: calc(var(--tool-rail-w, 12rem) + 1.2rem);
+  right: 1.2rem;
+  bottom: 1rem;
+  max-width: 1080px;
+  margin-inline: auto;
+  z-index: 60;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  padding: 0.7rem 0.85rem 0.6rem;
+  border-radius: var(--r-lg);
+  animation: construction-monte 0.32s var(--menu-ease) both;
+}
+
+@keyframes construction-monte {
+  from {
+    transform: translateY(18px);
+    opacity: 0;
+  }
+}
+
+.construction-tete {
+  display: flex;
+  align-items: center;
+  gap: 0.7rem;
+}
+
+.construction-titre {
+  font-family: "Baloo 2", Signika, sans-serif;
+  font-size: 1.1rem;
+  color: var(--ink);
+}
+
+.construction-charme {
+  font-size: 0.8rem;
+  color: #8a5a12;
+  background: #fbf1d6;
+  border: 1px solid #ecd79c;
+  border-radius: var(--r-pill);
+  padding: 0.12rem 0.6rem;
+}
+
+.construction-fin {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.construction-fin kbd,
+.construction-touches kbd {
+  font-size: 0.7rem;
+  padding: 0.05rem 0.3rem;
+  border-radius: 4px;
+  background: var(--sand);
+  border: 1px solid var(--line);
+  color: var(--ink-soft);
+}
+
+.construction-onglets {
+  display: flex;
+  gap: 0.25rem;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.construction-onglets button {
+  flex: 0 0 auto;
+  padding: 0.3rem 0.7rem;
+  border-radius: var(--r-pill);
+  background: transparent;
+  border: 1px solid transparent;
+  color: var(--ink-soft);
+  font-weight: 700;
+  font-size: 0.85rem;
+  box-shadow: none;
+}
+
+.construction-onglets button.on {
+  background: var(--accent);
+  color: #fff;
+}
+
+.construction-elements {
+  display: flex;
+  gap: 0.45rem;
+  overflow-x: auto;
+  padding: 0.15rem 0.1rem 0.35rem;
+  scroll-snap-type: x proximity;
+}
+
+.construction-aide-terrain {
+  flex: 0 0 13rem;
+  font-size: 0.8rem;
+  color: var(--ink-soft);
+  background: #fbf6e6;
+  border: 1px dashed #d7bb6d;
+  border-radius: var(--r-md);
+  padding: 0.5rem 0.6rem;
+}
+
+.construction-carte {
+  flex: 0 0 7.2rem;
+  scroll-snap-align: start;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.15rem;
+  padding: 0.5rem 0.4rem 0.45rem;
+  border-radius: var(--r-md);
+  background: var(--paper);
+  border: 1.5px solid var(--line);
+  color: var(--ink);
+  box-shadow: none;
+  text-align: center;
+  transition: transform 0.12s ease, border-color 0.12s ease;
+}
+
+.construction-carte:hover:not(:disabled) {
+  transform: translateY(-2px);
+  border-color: var(--accent);
+  filter: none;
+}
+
+.construction-carte.on {
+  border-color: var(--accent);
+  background: #eaf6f1;
+  box-shadow: 0 0 0 2px rgba(26, 107, 90, 0.18);
+}
+
+.construction-carte.verrou {
+  opacity: 0.5;
+}
+
+.construction-carte.cher .construction-prix {
+  color: var(--danger);
+}
+
+.construction-icone {
+  font-size: 1.6rem;
+  line-height: 1.1;
+}
+
+.construction-nom {
+  font-weight: 700;
+  font-size: 0.8rem;
+  line-height: 1.15;
+}
+
+.construction-prix {
+  font-size: 0.75rem;
+  color: var(--ink-soft);
+}
+
+.construction-effet {
+  font-size: 0.66rem;
+  color: var(--ok);
+  line-height: 1.15;
+}
+
+.construction-pied {
+  display: flex;
+  align-items: center;
+  gap: 0.8rem;
+  min-height: 2rem;
+}
+
+.construction-etat {
+  margin: 0;
+  font-size: 0.85rem;
+  color: var(--ink);
+  flex: 1;
+  min-width: 0;
+}
+
+.construction-etat.refus {
+  color: var(--danger);
+  font-weight: 700;
+}
+
+.construction-cout {
+  color: #8a5a12;
+}
+
+.construction-touches {
+  font-size: 0.75rem;
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+.construction-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.construction-choisi {
+  font-weight: 700;
+  font-size: 0.85rem;
+}
+
+.construction-actions button {
+  padding: 0.3rem 0.7rem;
+  font-size: 0.8rem;
+}
+
+.construction-actions button.danger {
+  background: #fbe9e6;
+  color: var(--danger);
+  border-color: #f0c2bb;
+}
+
+/* Au téléphone : un tiroir sur toute la largeur, au-dessus du dock. */
+.construction-panneau.mobile {
+  left: 0.5rem;
+  right: 0.5rem;
+  bottom: calc(env(safe-area-inset-bottom, 0px) + 4.6rem);
+  padding: 0.55rem 0.6rem 0.5rem;
+}
+
+.construction-panneau.mobile .construction-carte {
+  flex-basis: 6.2rem;
+}
+
+.construction-panneau.mobile .construction-pied {
+  flex-wrap: wrap;
+  gap: 0.4rem;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .construction-panneau {
+    animation: none;
+  }
+}

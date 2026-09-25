@@ -1,5 +1,8 @@
 import { useEffect, useMemo, useRef, type MutableRefObject } from "react";
 import * as THREE from "three";
+import { rectangleCases, type Bornes as BornesDomaine } from "@farmsim/shared";
+import { creerDalles, type Dalle } from "./cases3d";
+import { creerDomaine3d, type EtatConstruction, type ObjetPose } from "./domaine3d";
 import {
   parkingLayout,
   YARD_W,
@@ -100,6 +103,10 @@ export type IsoCell = {
   lastCrop?: CropCode | null;
   /** Épandage de fumier récent : la case s'assombrit une minute */
   manuredUntil?: number;
+  /** Ferme libre : champ, pré ou étang. Absent : champ, comme avant. */
+  sol?: "CHAMP" | "PRE" | "EAU";
+  /** Ferme libre : le chemin qui passe sur la case, s'il y en a un. */
+  revetement?: string | null;
 };
 
 export type ManurePile = {
@@ -325,6 +332,18 @@ type Props = {
   homeParcelId?: string;
   gridW: number;
   gridH: number;
+  /**
+   * Les bornes du domaine (ferme libre).
+   *
+   * L'île couvre alors tout le domaine, friche comprise : la ferme se voit
+   * au milieu de la terre qu'elle pourra gagner. Les coordonnées peuvent être
+   * négatives — la marge ouest et nord.
+   */
+  bornes?: BornesDomaine | null;
+  /** Le décor posé sur le domaine. */
+  amenagements?: ObjetPose[];
+  /** Le mode construction : grille, lots, fantôme. Nul hors du mode. */
+  construction?: EtatConstruction | null;
   cells: IsoCell[];
   buildings: IsoBuilding[];
   cellSims: IsoSim[];
@@ -424,6 +443,12 @@ type Props = {
 };
 
 const SOIL = 0x9ac06a;
+/* Ferme libre : le pré, la friche à acheter, la berge d'un étang. */
+const PRE = 0x7fb54f;
+const PRE_SOMBRE = 0x76ab48;
+const FRICHE = 0xa3ad62;
+const FRICHE_SOMBRE = 0x98a35a;
+const BERGE = 0x8a7a55;
 const SOIL_DARK = 0x8ab35e;
 /** Hauteur des dalles, centrées à y=0 : le dessus est à TILE_TOP. */
 const TILE_THICK = 0.18;
@@ -1211,6 +1236,9 @@ export function IsoFarmView({
   homeParcelId,
   gridW,
   gridH,
+  bornes = null,
+  amenagements = [],
+  construction = null,
   cells,
   buildings,
   cellSims,
@@ -1369,6 +1397,9 @@ export function IsoFarmView({
     machineSlots,
     gridW,
     gridH,
+    bornes,
+    amenagements,
+    construction,
   });
   dataRef.current = {
     cells,
@@ -1389,6 +1420,9 @@ export function IsoFarmView({
     machineSlots,
     gridW,
     gridH,
+    bornes,
+    amenagements,
+    construction,
   };
 
   const pulseStartRef = useRef(0);
@@ -1579,6 +1613,14 @@ export function IsoFarmView({
     scene.add(world);
 
     const cellMeshes = new Map<string, THREE.Mesh>();
+    /* Les dalles en instances, et ce que la ferme libre pose au sol. */
+    const dalles = creerDalles(plowedMap);
+    world.add(dalles.object);
+    const domaine3d = creerDomaine3d({ shadows: quality.shadows });
+    world.add(domaine3d.group);
+    /** Les cases de friche : visibles, mais qu'on ne vise qu'en construction. */
+    const fricheCles = new Set<string>();
+    let constructionMontee: EtatConstruction | null | undefined;
     // Le champ entier tient dans un seul maillage instancié : les brins y
     // ondulent au vent et s'y couchent au passage de la moissonneuse.
     // Sur une machine qui peine, on éclaircit le semis plutôt que d'appauvrir
@@ -2071,6 +2113,19 @@ export function IsoFarmView({
     let step = 1.06;
     let ox = 0;
     let oz = 0;
+    /**
+     * Les dimensions de l'île : le domaine s'il y en a un, la grille sinon.
+     *
+     * Le décalage du domaine (sa marge ouest et nord) est replié dans `ox` et
+     * `oz` : toutes les positions écrites `ox + x * step` restent justes sans
+     * qu'on ait à les retoucher une à une.
+     */
+    function dimsIle(): { gw: number; gh: number; x0: number; y0: number } {
+      const { gridW: w, gridH: h, bornes: b } = dataRef.current;
+      return b
+        ? { gw: b.maxX - b.minX, gh: b.maxY - b.minY, x0: b.minX, y0: b.minY }
+        : { gw: w, gh: h, x0: 0, y0: 0 };
+    }
 
     function key(x: number, y: number) {
       return `${x},${y}`;
@@ -2249,7 +2304,8 @@ export function IsoFarmView({
      * se lit comme un radeau à la dérive.
      */
     function buildParking() {
-      const { parked, machineSlots, gridW: gw, gridH: gh } = dataRef.current;
+      const { parked, machineSlots } = dataRef.current;
+      const { gw, gh } = dimsIle();
       // La cour se dessine sur la capacité du garage, pas sur ce qui y est
       // garé : une place vide doit être une place qu'on peut vraiment occuper.
       const plan = parkingLayout(Math.max(parked.length, machineSlots));
@@ -2430,13 +2486,12 @@ export function IsoFarmView({
         { sx: number; sz: number; n: number; readyAt: number; progress: number }
       >();
       const {
-        gridW: gw,
-        gridH: gh,
         cells: cs,
         buildings: bs,
         cellSims: sims,
         selected: sel,
       } = dataRef.current;
+      const { gw, gh, x0: baseX, y0: baseY } = dimsIle();
 
       for (const m of cellMeshes.values()) {
         world.remove(m);
@@ -2481,8 +2536,8 @@ export function IsoFarmView({
       cellSize = 1;
       const gap = 0.06;
       step = cellSize + gap;
-      ox = -((gw - 1) * step) / 2;
-      oz = -((gh - 1) * step) / 2;
+      ox = -((gw - 1) * step) / 2 - baseX * step;
+      oz = -((gh - 1) * step) / 2 - baseY * step;
 
       platform.scale.set(gw * step + 1.4, 1, gh * step + 1.4);
       platform.position.set(0, -0.28, 0);
@@ -2720,12 +2775,28 @@ export function IsoFarmView({
       const soilDetails: { look: SoilLook; px: number; pz: number }[] = [];
       /** Épis des cultures arrivées à maturité. */
 
-      for (let y = 0; y < gh; y++) {
-        for (let x = 0; x < gw; x++) {
-          const cell = cs.find((c) => c.x === x && c.y === y);
-          const sim = sims.find((s) => s.x === x && s.y === y);
-          const isSel = sel.some((s) => s.x === x && s.y === y);
+      /* Des tables plutôt que des recherches : un domaine de 24×24 faisait
+         cinq cent soixante-seize `find` sur cinq cent soixante-seize cases. */
+      const parCle = new Map(cs.map((c) => [key(c.x, c.y), c]));
+      const simParCle = new Map(sims.map((s) => [key(s.x, s.y), s]));
+      const selCles = new Set(sel.map((s) => key(s.x, s.y)));
+      const aPoser: Dalle[] = [];
+      fricheCles.clear();
+      for (let yy = 0; yy < gh; yy++) {
+        for (let xx = 0; xx < gw; xx++) {
+          const x = xx + baseX;
+          const y = yy + baseY;
+          const cell = parCle.get(key(x, y));
           const { px, pz } = cellWorldPos(x, y);
+          if (!cell) {
+            // La friche : de l'herbe folle, à acheter.
+            fricheCles.add(key(x, y));
+            aPoser.push({ x, y, px, pz, couleur: (x + y) % 2 === 0 ? FRICHE : FRICHE_SOMBRE, labour: false, choisie: false });
+            continue;
+          }
+          const sim = simParCle.get(key(x, y));
+          const isSel = selCles.has(key(x, y));
+          const solCase = cell.sol ?? "CHAMP";
 
           // Le damier ne vaut que pour une terre au repos. Dès qu'une case a
           // été travaillée ou moissonnée, sa couleur dit son état — sans quoi
@@ -2739,29 +2810,26 @@ export function IsoFarmView({
             const stain = new THREE.Color(col).lerp(new THREE.Color(0x3d2918), 0.45);
             col = stain.getHex();
           }
-          if (cell && cell.kind === "EMPTY" && look !== "PLAIN" && look !== "PLOWED") {
+          // Le pré est de l'herbe, l'étang a sa berge : ni labour ni chaumes.
+          if (solCase === "PRE" && cell.kind !== "BUILDING") col = (x + y) % 2 === 0 ? PRE : PRE_SOMBRE;
+          if (solCase === "EAU") col = BERGE;
+          if (cell && solCase === "CHAMP" && cell.kind === "EMPTY" && look !== "PLAIN" && look !== "PLOWED") {
             soilDetails.push({ look, px, pz });
           }
           // Les adventices restent sur la terre nue. Sur une culture elles
           // se lisaient comme un second plant — on ne les superpose plus.
 
-          const mat = new THREE.MeshLambertMaterial({
-            color: isSel ? SELECT_GLOW : col,
-            flatShading: true,
-            map: look === "PLOWED" && cell?.kind === "EMPTY" ? plowedMap : null,
+          aPoser.push({
+            x,
+            y,
+            px,
+            pz,
+            couleur: col,
+            labour: solCase === "CHAMP" && look === "PLOWED" && cell?.kind === "EMPTY",
+            choisie: isSel,
           });
-          const mesh = new THREE.Mesh(tileGeo(cellSize), mat);
-          // Toutes les cases sont à la même hauteur, bâtiments compris. Elles
-          // étaient auparavant enfoncées de quatorze centimètres sous le champ
-          // pour ne pas former un muret derrière l'illustration : le creux se
-          // lisait comme un trou, et le bâtiment paraissait flotter au-dessus.
-          // Un volume posé sur la dalle n'a plus besoin de ce sacrifice.
-          mesh.position.set(px, 0, pz);
-          mesh.receiveShadow = true;
-          mesh.userData = { x, y, baseColor: col, isSelected: isSel };
-          world.add(mesh);
-          cellMeshes.set(key(x, y), mesh);
-          pickables.push(mesh);
+          // Toutes les cases sont à la même hauteur, bâtiments compris : un
+          // volume posé sur la dalle n'a pas à s'enfoncer pour paraître posé.
 
           if (cell?.kind === "CROP") {
             const progress = sim?.sim.progress ?? 0.25;
@@ -2850,6 +2918,22 @@ export function IsoFarmView({
       }
 
       buildSoilRelief(soilDetails, cellSize);
+      dalles.poser(aPoser, cellSize, TILE_THICK);
+      /* Ce que la ferme libre pose au sol : friche, limite, étangs, chemins,
+         décor. Seulement sur un domaine — une parcelle annexe reste un champ. */
+      {
+        const b = dataRef.current.bornes;
+        domaine3d.majTerrain(
+          {
+            bornes: b ?? { minX: 0, minY: 0, maxX: gw, maxY: gh },
+            cells: cs.map((c) => ({ x: c.x, y: c.y, sol: c.sol ?? "CHAMP", revetement: c.revetement ?? null })),
+            amenagements: dataRef.current.amenagements,
+          },
+          cellWorldPos,
+          step,
+        );
+        constructionMontee = undefined;
+      }
       cropField.setCells(cropStalks, cellSize);
 
       /**
@@ -3053,14 +3137,24 @@ export function IsoFarmView({
       return typeof id === "string" ? id : null;
     }
 
+    /**
+     * La case sous le pointeur, par le calcul et non par le lancer de rayon.
+     *
+     * Viser cinq cent soixante-seize dalles une à une à chaque mouvement de
+     * souris coûtait plus que de les dessiner. Le plan des dalles suffit : on
+     * le croise, et l'on arrondit à la case.
+     */
+    const planDalles = new THREE.Plane(new THREE.Vector3(0, 1, 0), -TILE_TOP);
+    const surDalle = new THREE.Vector3();
     function raycastCell(): { x: number; y: number } | null {
       raycaster.setFromCamera(pointer, camera);
-      const hits = raycaster.intersectObjects(pickables, false);
-      if (hits[0]?.object.userData) {
-        const { x, y } = hits[0].object.userData as { x: number; y: number };
-        return { x, y };
-      }
-      return null;
+      if (!raycaster.ray.intersectPlane(planDalles, surDalle)) return null;
+      const x = Math.round((surDalle.x - ox) / step);
+      const y = Math.round((surDalle.z - oz) / step);
+      const k = key(x, y);
+      if (!dalles.a(k)) return null;
+      if (fricheCles.has(k) && !dataRef.current.construction?.actif) return null;
+      return { x, y };
     }
 
     /**
@@ -3228,7 +3322,10 @@ export function IsoFarmView({
      */
     function setStrokeRect(corner: { x: number; y: number } | null) {
       if (!strokeAnchor || !corner) return;
-      const bloc = rectBetween(strokeAnchor, corner, dataRef.current.gridW, dataRef.current.gridH);
+      const bornesIci = dataRef.current.bornes;
+      const bloc = bornesIci
+        ? rectangleCases(strokeAnchor, corner, bornesIci)
+        : rectBetween(strokeAnchor, corner, dataRef.current.gridW, dataRef.current.gridH);
       strokeKeys.clear();
       strokeCells.length = 0;
       for (const c of bloc) {
@@ -4216,28 +4313,35 @@ export function IsoFarmView({
 
       syncPreviewFootprint();
 
-      for (const [k, mesh] of cellMeshes) {
-        const mat = mesh.material as THREE.MeshLambertMaterial;
-        const base = mesh.userData.baseColor as number;
-        const isSelected = mesh.userData.isSelected as boolean;
-        tmpColor.setHex(base);
-
-        const picked = isSelected || selSet.has(k);
-        if (picked) {
-          tmpColor.lerp(selectColor, selPulse);
-        }
-        // Le relief suit la sélection. Écrire la même valeur à chaque image ne
-        // coûte rien — Three.js ne recalcule la matrice que si elle change.
-        mesh.position.y = picked ? SELECT_LIFT : 0;
-        if (k === hoverKey) {
-          tmpColor.lerp(hoverColor, hoverPulse);
-        }
+      const enConstruction = Boolean(dataRef.current.construction?.actif);
+      dalles.animer((k, repos, out) => {
+        out.copy(repos);
+        const friche = fricheCles.has(k);
+        const picked = !friche && selSet.has(k);
+        if (picked) out.lerp(selectColor, selPulse);
+        // La friche ne se vise qu'en construction : c'est là qu'on l'achète.
+        if (k === hoverKey && (!friche || enConstruction)) out.lerp(hoverColor, hoverPulse);
         if (pulseActive && pulseSet.has(k)) {
           const w = Math.sin((pulseAge / 0.55) * Math.PI);
-          tmpColor.lerp(pulseColor, 0.55 * w);
+          out.lerp(pulseColor, 0.55 * w);
         }
-        mat.color.copy(tmpColor);
+        // Le relief suit la sélection.
+        return picked ? SELECT_LIFT : 0;
+      });
+      /* Le mode construction se redessine quand son état change — le parent
+         en garde l'identité tant que rien ne bouge. */
+      const etatConstruction = dataRef.current.construction ?? null;
+      if (etatConstruction !== constructionMontee) {
+        constructionMontee = etatConstruction;
+        const { gw: w2, gh: h2, x0: bx, y0: by } = dimsIle();
+        domaine3d.majConstruction(
+          etatConstruction ?? { actif: false, lots: [], lotSurvole: null, fantome: [], objetFantome: null, selection: null },
+          dataRef.current.bornes ?? { minX: bx, minY: by, maxX: bx + w2, maxY: by + h2 },
+          cellWorldPos,
+          step,
+        );
       }
+      domaine3d.animer(t);
 
       // Engin de travail : parcours des cases, rang par rang.
       const workKey = aw
@@ -4664,6 +4768,8 @@ export function IsoFarmView({
       // géométrie de dalle doit être libérée explicitement au démontage.
       sharedTile?.geo.dispose();
       sharedTile = null;
+      dalles.dispose();
+      domaine3d.dispose();
       plowedMap.dispose();
       disposeThreeScene(scene);
       disposeRenderer(renderer, el);
@@ -4683,7 +4789,7 @@ export function IsoFarmView({
     const c = cells
       .map(
         (x) =>
-          `${x.x},${x.y},${x.kind},${x.crop ?? ""},${x.fieldStage ?? ""},${x.machineType ?? ""},${x.hasStubble ? 1 : 0},${x.residuePasses ?? 0},${Math.round((x.weedPressure ?? 0) * 10)},${x.harvestsSincePlow ?? 0},${Math.round((x.strawTons ?? 0) * 10)},${x.baleCount ?? 0}`,
+          `${x.x},${x.y},${x.kind},${x.crop ?? ""},${x.fieldStage ?? ""},${x.machineType ?? ""},${x.hasStubble ? 1 : 0},${x.residuePasses ?? 0},${Math.round((x.weedPressure ?? 0) * 10)},${x.harvestsSincePlow ?? 0},${Math.round((x.strawTons ?? 0) * 10)},${x.baleCount ?? 0},${x.sol ?? ""},${x.revetement ?? ""}`,
       )
       .join("|");
     const b = buildings
@@ -4716,8 +4822,11 @@ export function IsoFarmView({
     const v = (voisinage ?? [])
       .map((x) => `${x.col},${x.rang}:${x.culture ?? "-"}:${x.stade ?? "-"}:${x.statut}`)
       .join("|");
-    return `${gridW}x${gridH}#${c}#${b}#${s}#${sel}#${w}#${p}#${v}`;
-  }, [cells, buildings, cellSims, selected, workers, parked, gridW, gridH, voisinage]);
+    // Le domaine et son décor font partie de la scène.
+    const dom = bornes ? `${bornes.minX},${bornes.minY},${bornes.maxX},${bornes.maxY}` : "";
+    const am = amenagements.map((x) => `${x.id}:${x.type}:${x.originX},${x.originY}:${x.rotation}`).join("|");
+    return `${gridW}x${gridH}#${dom}#${c}#${b}#${s}#${sel}#${w}#${p}#${v}#${am}`;
+  }, [cells, buildings, cellSims, selected, workers, parked, gridW, gridH, voisinage, bornes, amenagements]);
 
   useEffect(() => {
     layoutRef.current?.();
