@@ -2614,7 +2614,7 @@ export function IsoFarmView({
             // l'enveloppe des grands et surestime celle des petits.
             boites.push({ x: v.x, z: v.z, w: v.cote, d: v.cote });
           }
-          // Le village aussi : la pastille y mène, la vue doit pouvoir s'y poser
+          // Le village aussi : on y va en faisant glisser la vue, elle doit pouvoir s'y poser
           // sans être rappelée aussitôt.
           for (const l of campagne.plan.lieux) {
             boites.push({ x: l.x, z: l.z, w: COTE_LIEU, d: COTE_LIEU });
@@ -3764,90 +3764,6 @@ export function IsoFarmView({
       };
     }
 
-    /*
-     * La pastille du village.
-     *
-     * Le marché, le garage et le bureau ne s'ouvrent plus que depuis la
-     * coopérative, la concession et la mairie. Or ces bâtiments sont posés au
-     * bord du pays, souvent loin l'un de l'autre : au téléphone ils sortent du
-     * cadre, et sur un grand écran la fiche de droite peut les couvrir.
-     *
-     * Viser le centre du village ne suffisait pas — sur un téléphone il ne
-     * montrait qu'un bâtiment sur trois, et la pastille disparaissait puisque
-     * ce centre était à l'écran. Elle désigne donc **le bâtiment utile hors
-     * cadre le plus proche**, à son nom ; la toucher y fait glisser la vue, et
-     * elle désigne alors le suivant. « Ma ferme » ramène chez soi.
-     */
-    const NOMS_LIEUX: Partial<Record<GenreLieu, string>> = {
-      COOPERATIVE: "Coopérative",
-      CONCESSION: "Concession",
-      MAIRIE: "Mairie",
-    };
-    const pastille = document.createElement("button");
-    pastille.type = "button";
-    pastille.className = "village-pastille";
-    pastille.innerHTML =
-      '<span class="village-fleche" aria-hidden="true">➜</span><span class="village-nom">Village</span>';
-    el.appendChild(pastille);
-    const nomPastille = pastille.querySelector(".village-nom") as HTMLElement;
-    let visee: { genre: GenreLieu; x: number; z: number } | null = null;
-    pastille.addEventListener("click", () => {
-      const c = visee;
-      if (!c) return;
-      tientLaVue = false;
-      // La caméra vise `panX - parkingOverhang / 2` : on compense pour que ce
-      // soit bien le bâtiment, et non un point à côté, qui arrive au centre.
-      retourVers = { x: c.x + parkingOverhang / 2, z: c.z };
-    });
-    const projete = new THREE.Vector3();
-    let pastilleMesuree = 0;
-    let railsPastille = { left: 0, right: 0 };
-    function majPastille(now: number) {
-      const utiles = campagne?.plan.lieux.filter((l) => lieuUtile(l.genre)) ?? [];
-      if (!utiles.length || retourVers) {
-        pastille.classList.remove("visible");
-        return;
-      }
-      // Les rails se lisent dans le DOM : quatre fois par seconde suffit.
-      if (now - pastilleMesuree > 250) {
-        railsPastille = railInsets();
-        pastilleMesuree = now;
-      }
-      const w = el.clientWidth;
-      const h = el.clientHeight;
-      const gauche = railsPastille.left;
-      const droite = w - railsPastille.right;
-      const marge = 40;
-      const cx = (gauche + droite) / 2;
-      const cy = h / 2;
-      let cible: { l: (typeof utiles)[number]; px: number; py: number; d: number } | null = null;
-      for (const l of utiles) {
-        projete.set(l.x, CAMPAGNE_Y + 1.2, l.z).project(camera);
-        const px = ((projete.x + 1) / 2) * w;
-        const py = ((1 - projete.y) / 2) * h;
-        const aLEcran = px > gauche + marge && px < droite - marge && py > h * 0.12 && py < h * 0.8;
-        if (aLEcran) continue;
-        const d = Math.hypot(px - cx, py - cy);
-        if (!cible || d < cible.d) cible = { l, px, py, d };
-      }
-      pastille.classList.toggle("visible", Boolean(cible));
-      visee = cible ? cible.l : null;
-      if (!cible) return;
-      const nom = NOMS_LIEUX[cible.l.genre] ?? "Village";
-      if (nomPastille.textContent !== nom) {
-        nomPastille.textContent = nom;
-        pastille.title = `Aller à la ${nom.toLowerCase()}`;
-      }
-      // Au bord de la zone libre, à hauteur du bâtiment mais jamais sous le
-      // bandeau ni sur le dock ; la flèche, elle, vise le bâtiment.
-      const bx = Math.min(droite - 80, Math.max(gauche + 80, cible.px));
-      const by = Math.min(h * 0.62, Math.max(h * 0.2, cible.py));
-      pastille.style.left = `${bx}px`;
-      pastille.style.top = `${by}px`;
-      const angle = Math.atan2(cible.py - by, cible.px - bx);
-      pastille.style.setProperty("--village-angle", `${angle}rad`);
-    }
-
     /* Recadrage sec, pour un changement de parcelle : pas de rappel en cours,
        pas de doigt qui tient la vue, et le bouton « Ma ferme » retiré puisque
        la ferme est de nouveau au centre. */
@@ -3911,7 +3827,6 @@ export function IsoFarmView({
           onEgareRef.current?.(loin);
         }
       }
-      majPastille(now);
 
       timer.update();
       const t = timer.getElapsed();
@@ -4702,7 +4617,6 @@ export function IsoFarmView({
         disposeObject3D(cv.caisse);
       }
       convois.length = 0;
-      pastille.remove();
       // La vue disparaît : le bouton de recentrage n'a plus rien à commander.
       if (egareRef.current) {
         egareRef.current = false;

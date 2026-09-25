@@ -537,7 +537,8 @@ export function creerLieu(
     case "ETANG": {
       // Un disque d'eau à bord de roseaux, et un ponton.
       const n = 20;
-      const rayon = (k: number) => 2.9 + Math.sin(k * 2.1) * 0.35 + Math.cos(k * 1.3) * 0.25;
+      // Il tient dans l'emprise du décor, plus petite que celle du village.
+      const rayon = (k: number) => 2.35 + Math.sin(k * 2.1) * 0.28 + Math.cos(k * 1.3) * 0.2;
       const eau: number[] = [];
       const eauCol: number[] = [];
       for (let k = 0; k < n; k++) {
@@ -564,32 +565,41 @@ export function creerLieu(
         const r = rayon(k) * 1.05;
         ajouterBoite(t.pos, t.col, Math.cos(a) * r, 0.35, Math.sin(a) * r, 0.07, 0.7 + (k % 3) * 0.15, 0.07, 0x6f9a3a);
       }
-      ajouterBoite(t.pos, t.col, 2.6, 0.12, 0.6, 1.8, 0.08, 0.7, BOIS_CLAIR);
+      ajouterBoite(t.pos, t.col, 2.1, 0.12, 0.5, 1.5, 0.08, 0.6, BOIS_CLAIR);
       break;
     }
     case "VERGER": {
+      // De vrais pommiers, à hauteur d'homme, et leurs pommes sur le
+      // feuillage : à la taille d'un buisson, les pommes flottaient au-dessus.
       for (let i = 0; i < 3; i++) {
         for (let k = 0; k < 3; k++) {
-          const x = -2.3 + i * 2.3;
-          const z = -2.3 + k * 2.3;
-          ajouterArbre(t.pos, t.col, x, 0, z, 0.85, 100 + i * 3 + k);
-          for (let f = 0; f < 3; f++) {
-            ajouterBoite(t.pos, t.col, x + Math.cos(f * 2.1) * 0.55, 1.5 + (f % 2) * 0.35, z + Math.sin(f * 2.1) * 0.55, 0.14, 0.14, 0.14, 0xd9463c);
+          const x = -2.1 + i * 2.1;
+          const z = -2.1 + k * 2.1;
+          ajouterArbre(t.pos, t.col, x, 0, z, 2.3, 100 + i * 3 + k);
+          for (let f = 0; f < 5; f++) {
+            const a = f * 1.26 + i + k;
+            ajouterBoite(t.pos, t.col, x + Math.cos(a) * 0.62, 1.02 + (f % 3) * 0.14, z + Math.sin(a) * 0.62, 0.17, 0.17, 0.17, 0xd9463c);
           }
         }
       }
       break;
     }
     case "RUCHER": {
+      // Des ruches qu'on reconnaît de loin : corps, hausse, toit débordant,
+      // posées sur un pied, au milieu d'un pré fleuri.
       for (let i = 0; i < 4; i++) {
-        const x = -2.2 + i * 1.45;
-        ajouterBoite(t.pos, t.col, x, 0.28, 0, 0.62, 0.5, 0.52, i % 2 ? 0xf2d77a : 0xf4efe0);
-        ajouterBoite(t.pos, t.col, x, 0.58, 0, 0.74, 0.1, 0.64, 0xc9a45a);
+        const x = -2.1 + i * 1.4;
+        const z = (i % 2) * 0.5 - 0.6;
+        ajouterBoite(t.pos, t.col, x, 0.12, z, 0.8, 0.24, 0.7, BOIS_CLAIR);
+        ajouterBoite(t.pos, t.col, x, 0.6, z, 0.9, 0.72, 0.8, i % 2 ? 0xf2d77a : 0xf4efe0);
+        ajouterBoite(t.pos, t.col, x, 1.06, z, 0.9, 0.2, 0.8, i % 2 ? 0xf4efe0 : 0xf2d77a);
+        ajouterBoite(t.pos, t.col, x, 1.22, z, 1.1, 0.12, 1.0, 0xa8432f);
+        ajouterBoite(t.pos, t.col, x, 0.34, z + 0.41, 0.4, 0.06, 0.03, 0x3a2a1a);
       }
-      for (let f = 0; f < 26; f++) {
+      for (let f = 0; f < 40; f++) {
         const a = f * 2.39;
-        const r = 1.2 + (f % 5) * 0.5;
-        ajouterBoite(t.pos, t.col, Math.cos(a) * r, 0.05, Math.sin(a) * r + 0.6, 0.16, 0.08, 0.16, [0xf2f2f2, 0xf5c542, 0xd96c8a][f % 3]!);
+        const r = 0.9 + (f % 7) * 0.32;
+        ajouterBoite(t.pos, t.col, Math.cos(a) * r, 0.1, Math.sin(a) * r, 0.26, 0.2, 0.26, [0xf2f2f2, 0xf5c542, 0xd96c8a][f % 3]!);
       }
       break;
     }

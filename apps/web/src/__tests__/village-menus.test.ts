@@ -15,6 +15,7 @@ const APP = fs.readFileSync("src/App.tsx", "utf8");
 const VUE = fs.readFileSync("src/IsoFarmView.tsx", "utf8");
 const DOCK = fs.readFileSync("src/FieldDock.tsx", "utf8");
 const RAIL = fs.readFileSync("src/ui/desktop/ToolRail.tsx", "utf8");
+const CSS = fs.readFileSync("src/styles.css", "utf8");
 
 describe("le village remplace les menus", () => {
   it("retire Ventes du dock et du rail, sans perdre la touche 5", () => {
@@ -40,16 +41,12 @@ describe("le village remplace les menus", () => {
     expect(APP).toMatch(/genre === "MAIRIE"\) \{[\s\S]{0,300}setShowEta\(true\)/);
   });
 
-  it("montre le chemin du village quand il sort du cadre", () => {
-    expect(VUE).toMatch(/className = "village-pastille"/);
-    // Elle vise le bâtiment utile hors cadre le plus proche, à son nom : viser
-    // le centre du village ne montrait qu'un bâtiment sur trois au téléphone.
-    expect(VUE).toMatch(/NOMS_LIEUX\[cible\.l\.genre\]/);
-    expect(VUE).toMatch(/if \(aLEcran\) continue;/);
-    expect(VUE).toMatch(/retourVers = \{ x: c\.x \+ parkingOverhang \/ 2, z: c\.z \}/);
+  it("n'a plus de grosse pastille pour montrer le village", () => {
+    // « La flèche est très grosse, je ne pense pas qu'on en ait besoin. »
+    expect(VUE).not.toMatch(/village-pastille|NOMS_LIEUX|majPastille/);
+    expect(CSS).not.toMatch(/\.village-pastille/);
     // Sans le village dans les bornes, la vue y glisserait puis serait
     // rappelée aussitôt.
     expect(VUE).toMatch(/for \(const l of campagne\.plan\.lieux\)/);
-    expect(VUE).toMatch(/pastille\.remove\(\)/);
   });
 });

@@ -175,7 +175,7 @@ export const ETAPES: Etape[] = [
       "Au bord de la route, le village a trois bâtiments utiles. La coopérative, avec ses silos, ouvre l’hôtel des ventes quand on clique dessus. Le cours bouge chaque jour : garder son grain quelques jours peut rapporter plus, ou moins.",
     texteTactile:
       "Au bord de la route, le village a trois bâtiments utiles. Touchez la coopérative, avec ses silos, pour ouvrir l’hôtel des ventes. Le cours bouge chaque jour : garder son grain peut rapporter plus, ou moins.",
-    astuce: "Un bâtiment est hors de l’écran ? Une pastille à son nom, au bord de la vue, vous y emmène ; Ma ferme vous ramène.",
+    astuce: "Le village est au bord de la route, derrière les champs : faites glisser la vue pour le trouver. Ma ferme vous ramène.",
     scene: "cooperative",
   },
   {
