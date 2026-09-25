@@ -172,7 +172,7 @@ export const ETAPES: Etape[] = [
     chapitre: "Le village",
     titre: "Vendre à la coopérative",
     texte:
-      "Au bord de la route, le village a trois bâtiments utiles. La coopérative, avec ses silos, ouvre l’hôtel des ventes quand on clique dessus. Le cours bouge chaque jour : garder son grain quelques jours peut rapporter plus, ou moins.",
+      "Au bord de la route, le village a trois bâtiments utiles. La coopérative, avec ses silos, ouvre l’hôtel des ventes quand on clique dessus — ou « Ventes » dans le menu de gauche. Le cours bouge chaque jour : garder son grain quelques jours peut rapporter plus, ou moins.",
     texteTactile:
       "Au bord de la route, le village a trois bâtiments utiles. Touchez la coopérative, avec ses silos, pour ouvrir l’hôtel des ventes. Le cours bouge chaque jour : garder son grain peut rapporter plus, ou moins.",
     astuce: "Le village est au bord de la route, derrière les champs : faites glisser la vue pour le trouver. Ma ferme vous ramène.",
@@ -183,7 +183,7 @@ export const ETAPES: Etape[] = [
     chapitre: "Le village",
     titre: "Le garage de la concession",
     texte:
-      "Cliquez la concession, le showroom aux tracteurs, pour ouvrir le garage. On y graisse, nettoie et répare ses machines, on les améliore palier par palier, et on achète du neuf ou de l’occasion.",
+      "Cliquez la concession, le showroom aux tracteurs, pour ouvrir le garage — ou « Garage » dans le menu de gauche. On y graisse, nettoie et répare ses machines, on les améliore palier par palier, et on achète du neuf ou de l’occasion.",
     texteTactile:
       "Touchez la concession, le showroom aux tracteurs, pour ouvrir le garage. On y graisse, nettoie et répare ses machines, on les améliore et on achète du neuf ou de l’occasion.",
     astuce: "Une machine graissée et propre s’use moins et récolte un peu plus.",
@@ -194,7 +194,7 @@ export const ETAPES: Etape[] = [
     chapitre: "Le village",
     titre: "Le bureau de la mairie",
     texte:
-      "Cliquez la mairie, sous son horloge, pour ouvrir le bureau : vos objectifs, la bourse des chantiers entre joueurs, la banque et les terres à acheter.",
+      "Cliquez la mairie, sous son horloge — ou « Bureau » dans le menu de gauche — pour ouvrir le bureau : vos objectifs, la bourse des chantiers entre joueurs, la banque et les terres à acheter.",
     texteTactile:
       "Touchez la mairie, sous son horloge, pour ouvrir le bureau : vos objectifs, la bourse des chantiers entre joueurs, la banque et les terres à acheter.",
     astuce: "Un objectif terminé se réclame ici : pensez à passer à la mairie.",

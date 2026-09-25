@@ -7319,6 +7319,42 @@ export function App() {
                 on: showBuildPicker,
                 onOpen: () => setShowBuildPicker((v) => !v),
               },
+              /*
+               * Ventes, Garage et Bureau, aussi au menu sur PC.
+               *
+               * Ils ne s'ouvraient plus qu'au village — coopérative,
+               * concession, mairie. « On n'a plus du tout de menu sur PC,
+               * c'est pas normal » : les bâtiments restent une porte d'entrée,
+               * le menu redevient l'autre, celle qu'on trouve sans chercher.
+               */
+              ...(visiting
+                ? []
+                : [
+                    {
+                      id: "MARKET",
+                      label: "Ventes",
+                      icon: "/assets/icons/nav/marche.svg",
+                      hotkey: "5",
+                      on: showMarket,
+                      onOpen: () => setShowMarket((v) => !v),
+                    },
+                  ]),
+              {
+                id: "GARAGE",
+                label: "Garage",
+                icon: "/assets/icons/nav/garage.svg",
+                hotkey: "G",
+                on: showGarage,
+                onOpen: () => setShowGarage((v) => !v),
+              },
+              {
+                id: "OFFICE",
+                label: "Bureau",
+                icon: "/assets/icons/nav/missions.svg",
+                hotkey: "T",
+                on: showEta,
+                onOpen: () => setShowEta((v) => !v),
+              },
               {
                 id: "STAFF",
                 label: "Personnel",
