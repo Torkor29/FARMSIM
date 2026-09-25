@@ -3217,16 +3217,24 @@ describe("un chantier prend du temps", () => {
   it("refuse un second chantier quand l'attelage est déjà au champ", async () => {
     const { moi, parcelle, cells } = await fermeAuChamp("UnSeulTracteur");
 
+    /*
+     * Le premier chantier prend presque toute la parcelle.
+     *
+     * Avec six cases, `FARMSIM_JOB_SPEED` le bouclait en moins d'une seconde :
+     * sur un runner chargé, il était déjà fini quand le second arrivait, et le
+     * test échouait sans que la règle soit en cause (vu en CI le 25 septembre).
+     * Un long chantier garantit que l'attelage est bien au champ.
+     */
     const a = await appel(`/parcels/${parcelle.id}/jobs`, {
       methode: "POST",
-      corps: { userId: moi.id, work: "PLANT", crop: cropDeSaison(), cells: cells.slice(0, 6) },
+      corps: { userId: moi.id, work: "PLANT", crop: cropDeSaison(), cells: cells.slice(6) },
       jeton: moi.jeton,
     });
     assert.equal(a.statut, 201);
 
     const b = await appel(`/parcels/${parcelle.id}/jobs`, {
       methode: "POST",
-      corps: { userId: moi.id, work: "PLANT", crop: cropDeSaison(), cells: cells.slice(6, 12) },
+      corps: { userId: moi.id, work: "PLANT", crop: cropDeSaison(), cells: cells.slice(0, 6) },
       jeton: moi.jeton,
     });
     assert.equal(
@@ -3252,8 +3260,11 @@ describe("un chantier prend du temps", () => {
     prismaExec(`UPDATE "ParcelCell" SET "hasStubble" = true, "fieldStage" = 'HARVESTED' WHERE "parcelId" = '${parcelle.id}' AND kind = 'EMPTY'`);
     // Deux outils différents, deux sélections disjointes, deux conducteurs,
     // mais un seul tracteur : une seule réservation doit être acceptée.
+    // Deux moitiés de parcelle : assez longues pour que l'une soit encore au
+    // champ quand l'autre est examinée, quel que soit l'ordre d'arrivée.
+    const moitie = Math.floor(cells.length / 2);
     const starts = await Promise.all(["PLOW", "STUBBLE"].map((work, i) => appel(`/parcels/${parcelle.id}/jobs`, {
-      methode: "POST", corps: { userId: moi.id, work, cells: cells.slice(i * 6, i * 6 + 6) }, jeton: moi.jeton,
+      methode: "POST", corps: { userId: moi.id, work, cells: i ? cells.slice(moitie) : cells.slice(0, moitie) }, jeton: moi.jeton,
     })));
     assert.deepEqual(starts.map((r) => r.statut).sort(), [201, 409], JSON.stringify(starts));
     const accepted = starts.find((r) => r.statut === 201)!;
