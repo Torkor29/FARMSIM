@@ -43,6 +43,18 @@ describe("la pression monte toute seule", () => {
     expect(printemps).toBeGreaterThan(hiver * 5);
   });
 
+  it("six jours d'hiver restent sous le seuil qu'on lisait comme « propre »", () => {
+    // Le 25 septembre, le test d'API « salit un champ… » a fait tomber
+    // `main` : il exigeait > 0,1, et six jours d'hiver donnent 0,072.
+    const sixJoursHiver = weedPressureAfter({
+      start: 0,
+      elapsedMs: 6 * GAME_DAY_MS,
+      season: "WINTER",
+    });
+    expect(sixJoursHiver).toBeGreaterThan(0);
+    expect(sixJoursHiver).toBeLessThan(0.1);
+  });
+
   it("ne dépasse jamais l'envahissement complet", () => {
     expect(weedPressureAfter({ start: 0.9, elapsedMs: 400 * GAME_DAY_MS })).toBe(1);
     expect(clampWeeds(-3)).toBe(0);
