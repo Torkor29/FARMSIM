@@ -239,6 +239,14 @@ export type Lieu = { genre: GenreLieu; x: number; z: number };
 /** Côté de l'emprise d'un lieu, en unités de la scène. */
 export const COTE_LIEU = 7.5;
 
+/** Le décor tient dans une emprise plus petite : il se glisse entre les champs. */
+export const COTE_DECOR = 6;
+
+/** L'emprise d'un lieu selon ce qu'il est. */
+export function coteLieu(genre: GenreLieu): number {
+  return LIEUX_UTILES.includes(genre) ? COTE_LIEU : COTE_DECOR;
+}
+
 export type PlanCampagne = {
   /** Le village et son décor, entre la ferme et la lisière. */
   lieux: Lieu[];
@@ -951,15 +959,20 @@ export function planCampagne(o: OptionsPlan): PlanCampagne {
         ? tourner(o.voisins.find((v) => v.id === o.maison)!, quart)
         : { col: 0, rang: 0 };
     const vSiege = versEcranDroite(siege.col * pas, siege.rang * pas);
-    const demi = COTE_LIEU / 2;
-    const libreLieu = (x: number, z: number): boolean => {
-      const b: Boite = { x, z, w: COTE_LIEU, d: COTE_LIEU };
-      if (versEcranBas(x, z) - COTE_LIEU < sol.uMin + 4.5) return false;
-      if (Math.abs(versEcranDroite(x, z)) + COTE_LIEU > sol.vMax - MARGE_LISIERE) return false;
+    const libreLieu = (x: number, z: number, cote = COTE_LIEU): boolean => {
+      const demi = cote / 2;
+      const b: Boite = { x, z, w: cote, d: cote };
+      if (versEcranBas(x, z) - cote < sol.uMin + 4.5) return false;
+      if (Math.abs(versEcranDroite(x, z)) + cote > sol.vMax - MARGE_LISIERE) return false;
       if (Math.abs(z - routeZ) < DEMI_ROUTE + demi + 0.6) return false;
       if (seChevauchent(b, cour, 0.8) || seChevauchent(b, joueur, 0.8)) return false;
       if (parcelles.some((p) => seChevauchent(b, empriseParcelle(p, p.cote), 0.8))) return false;
-      if (lieux.some((l) => seChevauchent(b, { x: l.x, z: l.z, w: COTE_LIEU, d: COTE_LIEU }, 1.2))) {
+      if (
+        lieux.some((l) => {
+          const c = coteLieu(l.genre);
+          return seChevauchent(b, { x: l.x, z: l.z, w: c, d: c }, 1.2);
+        })
+      ) {
         return false;
       }
       for (const a of acces) {
@@ -985,8 +998,39 @@ export function planCampagne(o: OptionsPlan): PlanCampagne {
         }
       }
     }
-    for (const genre of [...LIEUX_UTILES, ...LIEUX_DECOR]) {
+    for (const genre of LIEUX_UTILES) {
       const c = candidats.find((c) => libreLieu(c.x, c.z));
+      if (c) lieux.push({ genre, x: c.x, z: c.z });
+    }
+    /*
+     * Le décor, là où on le voit.
+     *
+     * Il prenait les places que le village laissait, au bout des rangées au
+     * ras du bois : de loin, l'étang n'était plus qu'une tache et le verger
+     * des points — « à peine visible, moche et mal placé ». Il se pose
+     * maintenant dans l'herbe libre la plus proche de la ferme, entre les
+     * champs, un peu en avant plutôt qu'à l'horizon, et chaque pièce à
+     * distance des autres.
+     */
+    const uSiege = versEcranBas(siege.col * pas, siege.rang * pas);
+    const prochesDuSiege: { x: number; z: number; d: number }[] = [];
+    for (let du = -1.6 * pas; du <= 1.6 * pas; du += 1.5) {
+      for (let dv = -2.2 * pas; dv <= 2.2 * pas; dv += 1.5) {
+        const u = uSiege + du;
+        const v = vSiege + dv;
+        // Un pas de côté coûte plus qu'un pas en profondeur : au téléphone,
+        // l'écran est étroit, et ce qui s'écarte sur le côté sort du cadre.
+        const d = Math.hypot(dv * 1.8, du);
+        prochesDuSiege.push({ x: (u + v) / 2, z: (u - v) / 2, d });
+      }
+    }
+    prochesDuSiege.sort((a, b) => a.d - b.d);
+    for (const genre of LIEUX_DECOR) {
+      const c = prochesDuSiege.find(
+        (c) =>
+          libreLieu(c.x, c.z, COTE_DECOR) &&
+          lieux.every((l) => LIEUX_UTILES.includes(l.genre) || Math.hypot(l.x - c.x, l.z - c.z) > COTE_DECOR * 2.2),
+      );
       if (c) lieux.push({ genre, x: c.x, z: c.z });
     }
   }
@@ -1035,7 +1079,12 @@ export function planCampagne(o: OptionsPlan): PlanCampagne {
     if (seChevauchent({ x, z, w: r * 2, d: r * 2 }, cour, 0.8)) return false;
     if (seChevauchent({ x, z, w: r * 2, d: r * 2 }, joueur, 0.8)) return false;
     // Ni sur le village, ni sur son décor.
-    if (lieux.some((l) => seChevauchent({ x, z, w: r * 2, d: r * 2 }, { x: l.x, z: l.z, w: COTE_LIEU, d: COTE_LIEU }, 0.3))) {
+    if (
+      lieux.some((l) => {
+        const c = coteLieu(l.genre);
+        return seChevauchent({ x, z, w: r * 2, d: r * 2 }, { x: l.x, z: l.z, w: c, d: c }, 0.3);
+      })
+    ) {
       return false;
     }
     return !parcelles.some((p) =>

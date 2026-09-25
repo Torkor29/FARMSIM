@@ -8,6 +8,8 @@ import {
   tourner,
   boiteSegment,
   COTE_LIEU,
+  coteLieu,
+  LIEUX_DECOR,
   LIEUX_UTILES,
   DEMI_ROUTE,
   ENGINS_MAX,
@@ -25,6 +27,7 @@ import {
   surLeSol,
   versEcranBas,
   versEcranDroite,
+  type GenreLieu,
   type OptionsPlan,
   type VoisinReel,
 } from "../countryside-plan";
@@ -1041,7 +1044,12 @@ describe("le village", () => {
     }
   }
   const plan = planCampagne({ ...OPTIONS, voisins: commune, maison: "v-0-0", quart: 0 });
-  const boite = (l: { x: number; z: number }) => ({ x: l.x, z: l.z, w: COTE_LIEU, d: COTE_LIEU });
+  const boite = (l: { genre: GenreLieu; x: number; z: number }) => ({
+    x: l.x,
+    z: l.z,
+    w: coteLieu(l.genre),
+    d: coteLieu(l.genre),
+  });
 
   it("pose les trois lieux utiles, puis le décor", () => {
     const genres = plan.lieux.map((l) => l.genre);
@@ -1055,7 +1063,7 @@ describe("le village", () => {
       const b = boite(l);
       expect(seChevauchent(b, OPTIONS.cour)).toBe(false);
       expect(seChevauchent(b, ile)).toBe(false);
-      expect(Math.abs(l.z - plan.routeZ)).toBeGreaterThan(COTE_LIEU / 2 + DEMI_ROUTE);
+      expect(Math.abs(l.z - plan.routeZ)).toBeGreaterThan(coteLieu(l.genre) / 2 + DEMI_ROUTE);
       for (const p of plan.parcelles) expect(seChevauchent(b, empriseParcelle(p, p.cote))).toBe(false);
       for (const a of plan.acces) {
         for (let i = 0; i + 1 < a.points.length; i++) {
@@ -1070,7 +1078,7 @@ describe("le village", () => {
 
   it("reste dans le pré, au ras de la lisière, sans empiéter sur le bois", () => {
     for (const l of plan.lieux) {
-      expect(versEcranBas(l.x, l.z) - COTE_LIEU).toBeGreaterThanOrEqual(plan.sol.uMin + 4.5 - 1e-9);
+      expect(versEcranBas(l.x, l.z) - coteLieu(l.genre)).toBeGreaterThanOrEqual(plan.sol.uMin + 4.5 - 1e-9);
     }
   });
 
@@ -1080,6 +1088,14 @@ describe("le village", () => {
         expect(seChevauchent({ x: a.x, z: a.z, w: 1, d: 1 }, boite(l))).toBe(false);
       }
     }
+  });
+
+  it("pose l'étang, le verger et le rucher près de la ferme, là où on les voit", () => {
+    // Loin, au bord du pré, on ne les voyait qu'à peine : « moche et mal placé ».
+    // Le siège est la case 0·0 : l'origine du plan.
+    const decor = plan.lieux.filter((l) => LIEUX_DECOR.includes(l.genre));
+    expect(decor.map((l) => l.genre).sort()).toEqual([...LIEUX_DECOR].sort());
+    for (const l of decor) expect(Math.hypot(l.x, l.z)).toBeLessThan(2.8 * plan.pas);
   });
 
   it("sans carte, pas de village : le décor n'a pas de commune", () => {
