@@ -12,7 +12,7 @@ générique.
 | Terrain | `Parcel` (`gridW`×`gridH`, 12×12 au départ = 14 ha) et une ligne `ParcelCell` par case | la case reste l'unité ; **une ligne = une case possédée** |
 | État agricole | `ParcelCell` : culture, stade, adventices, fumure, chaumes, rotation… | intact : le moteur économique ne bouge pas |
 | Bâtiments | `Building` (origine, `rotation` en quarts de tour, niveau), `orientedFootprint`, routes `build` / `rotate` / `move` / `sell`, fenêtre de regret, `buildingMoveCost`, `buildingResaleValue` | réutilisés tels quels ; seule la validation de place change |
-| Terres | achat de parcelles du monde au devis (`askPrice`, 420 €/ha, escalade ×1,4 par parcelle possédée, `LAND_CAPS`), parcelles voisines travaillées sans changer de terrain | intact : ce sont les « annexes » de fin de partie |
+| Terres | achat de parcelles du monde au devis (`askPrice`, `LAND_BASE_PER_HA` = 5 200 €/ha, escalade ×1,4 par parcelle possédée, `LAND_CAPS`), parcelles voisines travaillées sans changer de terrain | intact : ce sont les « annexes » de fin de partie |
 | Économie | 12 000 € au départ ; blé 0,35 t/case en 28 h pour 15 € de semence ; bâtiments de 1 050 € (râtelier) à 28 000 € (laiterie) | calibre les nouveaux prix |
 | Effet spatial | `pollinationBonusAt` : les ruches aident colza et pois à portée | même mécanique pour les effets du décor |
 | Travaux des champs | tous passent par `resolveFieldAccess` | c'est là qu'on exige une case de champ |
@@ -106,11 +106,15 @@ Le domaine est découpé en **lots de 6×6 cases** (3,5 ha). Un lot est
 achetable s'il touche par un côté une case déjà possédée : la ferme pousse
 dans la direction que le joueur choisit, et sa silhouette devient la sienne.
 
-**Prix** : `36 cases × 40,8 €` (le prix de la terre du jeu, 420 €/ha) × fertilité
-× prix régional × **1,28 par lot déjà acheté**. Premier lot ≈ 1 500 €, sixième ≈
-5 000 €, douzième ≈ 22 000 € — le douzième coûte le prix d'une étable ; les
-premiers, celui d'un petit bâtiment. On hésite donc réellement entre un lot, une
-machine et un agrandissement de bâtiment. **Niveau** : un palier doux (`1, 1,
+**Prix** : `cases × 505,6 €` (le prix de la terre du jeu : 5 200 €/ha, 14 ha
+pour 144 cases) × **0,5** (une friche contiguë vaut moins qu'une parcelle
+équipée) × fertilité × prix régional × **1,18 par lot déjà acheté**, arrondi aux
+50 € supérieurs. À fertilité moyenne : premier lot ≈ 10 200 €, sixième ≈
+23 350 €, douzième ≈ 63 000 € (≈ 356 000 € pour les douze). Un lot de blé
+rapporte ≈ 2 800 € brut par récolte de 28 h : le premier se rembourse en quatre
+à cinq récoltes, les derniers sont un objectif de fin de partie. Le premier lot
+coûte à peu près la trésorerie de départ (12 000 €) : c'est le premier vrai
+choix — un lot, une machine ou un bâtiment. **Niveau** : un palier doux (`1, 1,
 2, 3, 4, 5, 6, 7, 8, 10, 12, 14`), pas de mur artificiel.
 
 ### Coûts d'aménagement

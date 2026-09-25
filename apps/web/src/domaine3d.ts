@@ -273,7 +273,18 @@ export function creerDomaine3d(opts: { shadows: boolean }): Domaine3d {
   terrain.name = "domaine-terrain";
   const construction = new THREE.Group();
   construction.name = "domaine-construction";
-  group.add(terrain, construction);
+  const poussieres = new THREE.Group();
+  poussieres.name = "domaine-poussieres";
+  group.add(terrain, construction, poussieres);
+  /*
+   * Ce qui vient de changer se voit : un anneau de poussière claire s'ouvre
+   * sur chaque case repeinte, chaque objet posé ou déplacé. Sans lui, une
+   * allée d'une case ou un buisson posé au loin passaient inaperçus — on
+   * cliquait deux fois, pour rien.
+   */
+  const geoPoussiere = new THREE.RingGeometry(0.2, 0.34, 18).rotateX(-Math.PI / 2);
+  const poufs: { m: THREE.Mesh; t0: number | null }[] = [];
+  let signatures: Map<string, string> | null = null;
 
   const matEau = new THREE.MeshStandardMaterial({
     color: 0x4f9cc4,
@@ -310,6 +321,39 @@ export function creerDomaine3d(opts: { shadows: boolean }): Domaine3d {
 
   function majTerrain(d: DonneesDomaine, posDe: (x: number, y: number) => { px: number; pz: number }, pas: number) {
     vider(terrain);
+    const suivantes = new Map<string, string>();
+    for (const c of d.cells) suivantes.set(cleCase(c.x, c.y), `${c.sol}|${c.revetement ?? ""}`);
+    for (const a of d.amenagements) suivantes.set(`o:${a.id}`, `${a.originX},${a.originY},${a.rotation}`);
+    // Une autre parcelle n'est pas un changement : c'est une autre scène.
+    let disparues = 0;
+    if (signatures) for (const k of signatures.keys()) if (!k.startsWith("o:") && !suivantes.has(k)) disparues++;
+    if (signatures && disparues < 12) {
+      const changees: { x: number; y: number }[] = [];
+      for (const [k, v] of suivantes) {
+        if (signatures.get(k) === v) continue;
+        if (k.startsWith("o:")) {
+          const [x, y] = v.split(",").map(Number) as [number, number];
+          changees.push({ x, y });
+        } else {
+          const [x, y] = k.split(",").map(Number) as [number, number];
+          changees.push({ x, y });
+        }
+      }
+      // Un lot acheté change trente-six cases d'un coup : on en garde assez
+      // pour qu'on le voie, pas de quoi remplir l'écran de fumée.
+      for (const c of changees.length > 80 ? [] : changees.slice(0, 48)) {
+        const { px, pz } = posDe(c.x, c.y);
+        const m = new THREE.Mesh(
+          geoPoussiere,
+          new THREE.MeshBasicMaterial({ color: 0xf3ead2, transparent: true, opacity: 0.8, depthWrite: false }),
+        );
+        m.position.set(px, TOP + 0.03, pz);
+        m.renderOrder = 3;
+        poussieres.add(m);
+        poufs.push({ m, t0: null });
+      }
+    }
+    signatures = suivantes;
     const possedees = new Set(d.cells.map((c) => cleCase(c.x, c.y)));
     const friche: Tableaux = { pos: [], col: [] };
     const limite: Tableaux = { pos: [], col: [] };
@@ -646,6 +690,20 @@ export function creerDomaine3d(opts: { shadows: boolean }): Domaine3d {
     matLotSurvole.opacity = 0.3 + Math.sin(t * 4) * 0.08;
     matFantomeOk.opacity = 0.45 + Math.sin(t * 5) * 0.08;
     if (fantomeObjet) fantomeObjet.position.y = 0.04 + Math.sin(t * 5) * 0.025;
+    for (let i = poufs.length - 1; i >= 0; i--) {
+      const p = poufs[i]!;
+      if (p.t0 == null) p.t0 = t;
+      const k = (t - p.t0) / 0.55;
+      const mat = p.m.material as THREE.MeshBasicMaterial;
+      if (k >= 1) {
+        poussieres.remove(p.m);
+        mat.dispose();
+        poufs.splice(i, 1);
+        continue;
+      }
+      p.m.scale.setScalar(0.8 + k * 1.4);
+      mat.opacity = 0.8 * (1 - k) * (1 - k);
+    }
   }
 
   return {
@@ -656,6 +714,9 @@ export function creerDomaine3d(opts: { shadows: boolean }): Domaine3d {
     dispose() {
       vider(terrain);
       vider(construction);
+      for (const p of poufs) (p.m.material as THREE.Material).dispose();
+      poufs.length = 0;
+      geoPoussiere.dispose();
       for (const m of [matEau, matGrille, matLot, matLotSurvole, matBordLot, matFantomeOk, matFantomeNon, matSelection]) m.dispose();
       for (const j of jetables) j.dispose();
     },
