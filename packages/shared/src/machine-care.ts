@@ -101,21 +101,6 @@ export const REPAIR_PARTS: Record<BreakdownKind, string[]> = {
 };
 
 /**
- * Points de graissage, en % de l'illustration (3:2) — et plus de la scène
- * carrée où elle flottait entre deux bandes vides.
- *
- * La poussière et la boue n'ont plus de points : le lavage se joue au jet,
- * sur une couche de boue qu'on décape, pas sur des taches à toucher.
- */
-export const GREASE_POINTS: Array<{ x: number; y: number }> = [
-  { x: 28, y: 32 },
-  { x: 72, y: 29 },
-  { x: 48, y: 53 },
-  { x: 32, y: 80 },
-  { x: 68, y: 82 },
-];
-
-/**
  * Plein régime au-dessus de ce niveau d'usure `[GD]`.
  *
  * Au-delà, entretenir davantage ne rapporte rien : il faut une plage où la
