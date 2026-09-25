@@ -110,7 +110,23 @@ import {
   jetonDeReinitValide,
   type Nouveaute,
   kindForBarn,
+  LIBELLE_REFUS,
+  BUILDING_REGRET_MS,
+  cleCase,
+  construireGrille,
+  dansBornes,
+  defConstruction,
+  empriseOrientee,
+  rectangleCases,
+  validerPeinture,
+  validerPose,
+  type Bornes as BornesDomaine,
+  type CategorieConstruction,
+  type DefConstruction,
+  type Lot as LotDomaine,
 } from "@farmsim/shared";
+import { PanneauConstruction, type SelectionConstruction } from "./PanneauConstruction";
+import type { EtatConstruction, LotAffiche, ObjetPose } from "./domaine3d";
 import { AuthScreen, type AuthMode } from "./AuthScreen";
 import type { GrazingHerd, PreviewBuilding } from "./IsoFarmView";
 import type { VoisinReel } from "./countryside-plan";
@@ -246,6 +262,10 @@ type Cell = {
   buildingId?: string | null;
   machineId?: string | null;
   machineType?: MachineType | null;
+  /** Ferme libre : ce qu'est le sol de la case (champ, pré, eau). */
+  sol?: "CHAMP" | "PRE" | "EAU";
+  /** Un chemin posé sur la case, s'il y en a un. */
+  revetement?: string | null;
 };
 
 type Building = {
@@ -277,6 +297,18 @@ type Parcel = {
   buildings?: Building[];
   machines?: { id: string; type: string }[];
   farm?: { userId?: string; user?: { id: string; displayName: string } | null } | null;
+  /** Le décor posé : arbres, haies, bancs… */
+  amenagements?: ObjetPose[];
+};
+
+/** Le domaine tel que le serveur le montre à son propriétaire. */
+type DomaineVue = {
+  marge: number;
+  bornes: BornesDomaine;
+  lotsAchetes: number;
+  lots: (LotDomaine & { etat: "POSSEDE" | "ACHETABLE" | "ENCLAVE"; aAcheter: number; prix: number; niveau: number })[];
+  charme: number;
+  charmeLibelle: string;
 };
 
 type ZoneRef = {
@@ -842,6 +874,8 @@ export function App() {
     }[];
     workers?: FieldWorkerView[];
     labor?: LaborOrderView[];
+    /** Nul chez un voisin : on ne voit pas les lots d'un autre. */
+    domaine?: DomaineVue | null;
   } | null>(null);
   const [tool, setTool] = useState<Tool>("SELECT");
   /** Outils de test : n'existent que si le serveur les autorise. */
@@ -1067,6 +1101,27 @@ export function App() {
   const haulReadyRef = useRef(false);
   const playHaulRef = useRef<(commodity?: string) => void>(() => undefined);
   const [hoverCell, setHoverCell] = useState<{ x: number; y: number } | null>(null);
+  /**
+   * Le mode construction de la ferme libre.
+   *
+   * Un mode, pas un outil : on y entre, la grille et les lots à vendre
+   * apparaissent, et tout ce qu'on touche se pose, se déplace ou s'achète.
+   * On en sort, la ferme redevient une ferme — rien de ce décor n'encombre le
+   * travail des champs.
+   */
+  const [construction, setConstruction] = useState(false);
+  const [categorieConstruction, setCategorieConstruction] = useState<CategorieConstruction>("AGRICULTURE");
+  /** L'élément du catalogue prêt à poser. */
+  const [arme, setArme] = useState<string | null>(null);
+  const [rotationArme, setRotationArme] = useState(0);
+  /** Le tracé de terrain en cours, avant qu'on lâche. */
+  const [apercuTerrain, setApercuTerrain] = useState<{ x: number; y: number }[]>([]);
+  /** L'élément posé qu'on a touché : on peut le déplacer, le tourner, le retirer. */
+  const [choixConstruction, setChoixConstruction] = useState<{ kind: "OBJET" | "BATIMENT"; id: string } | null>(
+    null,
+  );
+  /** L'objet de décor en cours de déménagement. */
+  const [deplaceObjet, setDeplaceObjet] = useState<string | null>(null);
   /** Menu contextuel de case — bureau seulement, le doigt n'a pas de clic droit. */
   const [cellMenu, setCellMenu] = useState<CellContext | null>(null);
   /** Saison affichée la dernière fois : sert à annoncer le passage. */
@@ -1595,7 +1650,7 @@ export function App() {
    * les chiffres, la barre de sélection porte Entrée et Échap.
    */
   useEffect(() => {
-    if (isMobile || !player) return;
+    if (isMobile || !player || construction) return;
     const onKey = (e: KeyboardEvent) => {
       const el = e.target as HTMLElement | null;
       if (el && /^(INPUT|TEXTAREA|SELECT)$/.test(el.tagName)) return;
@@ -1667,7 +1722,7 @@ export function App() {
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isMobile, player?.id, tool, selectedCells, cellMenu, busy]);
+  }, [isMobile, player?.id, tool, selectedCells, cellMenu, busy, construction]);
 
   // Changer de bâtiment ne garde pas la place retenue — un fantôme de silo
   // resté après le passage au poulailler poserait le mauvais. Mais on ne
@@ -2006,6 +2061,32 @@ export function App() {
     const cells = parcel?.cells ?? [];
     return cells.map((c) => ({ ...c, manuredUntil: manureStain[`${c.x},${c.y}`] }));
   }, [parcel?.cells, manureStain]);
+
+  /*
+   * Le domaine et sa grille d'occupation.
+   *
+   * La même fonction que le serveur : un fantôme vert ici est une pose que le
+   * serveur accepte, et la raison d'un refus est la sienne, mot pour mot.
+   */
+  const domaine = parcelDetail?.domaine ?? null;
+  const amenagements = useMemo(() => parcel?.amenagements ?? [], [parcel?.amenagements]);
+  const bornesIci = useMemo(
+    (): BornesDomaine => domaine?.bornes ?? { minX: 0, minY: 0, maxX: gw, maxY: gh },
+    [domaine?.bornes, gw, gh],
+  );
+  const grilleDomaine = useMemo(
+    () => construireGrille({ bornes: bornesIci, cells: grid, amenagements }),
+    [bornesIci, grid, amenagements],
+  );
+  /** Seules les cases de champ se cultivent : un pré, un étang, un chemin non. */
+  const surChamps = useCallback(
+    (cells: { x: number; y: number }[]) =>
+      cells.filter((c) => {
+        const k = grilleDomaine.cases.get(cleCase(c.x, c.y));
+        return k != null && k.sol === "CHAMP" && !k.revetement;
+      }),
+    [grilleDomaine],
+  );
 
   /**
    * Le parc de la ferme, tel qu'il se voit sur la cour.
@@ -2740,19 +2821,24 @@ export function App() {
   }, [movingBuilding]);
 
   function canPlaceBuildingAt(x: number, y: number, rot = buildRotation, type = buildType): boolean {
-    // L'emprise suit le quart de tour : un hangar 3×2 tourné occupe 2×3.
-    const foot = orientedFootprint(type, rot);
-    if (x + foot.w > gw || y + foot.h > gh) return false;
     // Déménager se paie au tarif du déplacement, pas au prix du catalogue.
     const prix = movingBuildingId ? (moveCost ?? 0) : BUILDING_DEFS[type].cost;
     if (!canPay(player, prix)) return false;
-    const footprint = footprintCells(x, y, foot.w, foot.h);
-    return footprint.every((fc) => {
-      const c = grid.find((cell) => cell.x === fc.x && cell.y === fc.y);
-      /* Ses propres cases ne le gênent pas : un bâtiment peut glisser d'une
-         case et chevaucher sa place d'avant. Même règle que le serveur. */
-      return c?.kind === "EMPTY" || (movingBuildingId != null && c?.buildingId === movingBuildingId);
-    });
+    return refusPoseBatiment(x, y, rot, type) === null;
+  }
+
+  /**
+   * Pourquoi ce bâtiment ne tient pas là — ou `null` s'il tient.
+   *
+   * Les règles partagées avec le serveur : l'emprise suit le quart de tour, la
+   * friche et les cultures refusent, et ses propres cases ne gênent pas un
+   * bâtiment qu'on déménage d'une case.
+   */
+  function refusPoseBatiment(x: number, y: number, rot: number, type: BuildingType): string | null {
+    const def = defConstruction(`batiment:${type}`);
+    if (!def) return "Bâtiment inconnu";
+    const v = validerPose(grilleDomaine, def, { x, y, rotation: rot }, movingBuildingId ?? undefined);
+    return v.ok ? null : LIBELLE_REFUS[v.raison ?? "HORS_DOMAINE"];
   }
 
   /**
@@ -2779,8 +2865,8 @@ export function App() {
     const cy = Math.max(0, (gh - foot.h) / 2 - gh * recul);
     let best: { x: number; y: number } | null = null;
     let bestD = Infinity;
-    for (let y = 0; y + foot.h <= gh; y++) {
-      for (let x = 0; x + foot.w <= gw; x++) {
+    for (let y = bornesIci.minY; y + foot.h <= bornesIci.maxY; y++) {
+      for (let x = bornesIci.minX; x + foot.w <= bornesIci.maxX; x++) {
         const d = (x - cx) ** 2 + (y - cy) ** 2;
         if (d >= bestD) continue;
         if (!canPlaceBuildingAt(x, y, rot, type)) continue;
@@ -2816,7 +2902,495 @@ export function App() {
       valid: spaceOk && canPay(player, prix),
       pending: Boolean(pendingBuild),
     };
-  }, [tool, buildType, buildRotation, pendingBuild, hoverCell, grid, gw, gh, movingBuilding, moveCost, player?.crd, player?.dev, player?.unlimitedCrd]);
+  }, [tool, buildType, buildRotation, pendingBuild, hoverCell, grilleDomaine, movingBuilding, moveCost, player?.crd, player?.dev, player?.unlimitedCrd]);
+
+  /* ------------------------------------------------------------------ */
+  /*  Le mode construction                                               */
+  /* ------------------------------------------------------------------ */
+
+  const defArme = useMemo(() => (arme ? (defConstruction(arme) ?? null) : null), [arme]);
+
+  /**
+   * Ce que la vue montre en construction, et ce que dit la ligne d'état.
+   *
+   * Tout se calcule ici, d'un bloc, depuis la grille partagée : le fantôme
+   * case par case (vert ou rouge), la silhouette de l'objet, le lot survolé et
+   * son prix. La vue ne décide rien, elle dessine.
+   */
+  const vueConstruction = useMemo((): {
+    etat: EtatConstruction;
+    ligne: { texte: string; refus?: boolean; cout?: number | null };
+  } | null => {
+    if (!construction || !domaine) return null;
+    const lots: LotAffiche[] = domaine.lots
+      .filter((l) => l.etat !== "POSSEDE")
+      .map((l) => ({ id: l.id, x: l.x, y: l.y, w: l.w, h: l.h, etat: l.etat, prix: l.prix }));
+    const at = hoverCell;
+    const enFriche = at != null && dansBornes(bornesIci, at.x, at.y) && !grilleDomaine.cases.has(cleCase(at.x, at.y));
+    const lotIci =
+      at && enFriche
+        ? domaine.lots.find(
+            (l) => l.etat !== "POSSEDE" && at.x >= l.x && at.x < l.x + l.w && at.y >= l.y && at.y < l.y + l.h,
+          )
+        : undefined;
+    let fantome: EtatConstruction["fantome"] = [];
+    let objetFantome: EtatConstruction["objetFantome"] = null;
+    let ligne: { texte: string; refus?: boolean; cout?: number | null } = {
+      texte: "Choisissez un élément ci-dessous, ou touchez ce qui est posé pour le modifier.",
+    };
+
+    const objetDeplace = deplaceObjet ? amenagements.find((a) => a.id === deplaceObjet) : undefined;
+    if (objetDeplace) {
+      const def = defConstruction(objetDeplace.type);
+      if (def && at && !enFriche) {
+        const v = validerPose(grilleDomaine, def, { x: at.x, y: at.y, rotation: rotationArme }, objetDeplace.id);
+        fantome = v.cases.map((c) => ({ x: c.x, y: c.y, ok: c.ok }));
+        objetFantome = { type: objetDeplace.type, x: at.x, y: at.y, rotation: rotationArme, ok: v.ok };
+        ligne = v.ok
+          ? { texte: `Déplacer ${def.nom} ici — gratuit` }
+          : { texte: LIBELLE_REFUS[v.raison ?? "HORS_DOMAINE"], refus: true };
+      } else {
+        ligne = { texte: `Touchez la nouvelle place de ${def?.nom ?? "l'élément"}.` };
+      }
+    } else if (tool === "BUILD") {
+      const type = movingBuilding ? movingBuilding.type : buildType;
+      const nom = BUILDING_DEFS[type].name;
+      const ici = pendingBuild ?? at;
+      const refus = ici ? refusPoseBatiment(ici.x, ici.y, buildRotation, type) : null;
+      ligne = refus
+        ? { texte: refus, refus: true }
+        : {
+            texte: movingBuilding
+              ? `Déplacer ${nom} : touchez sa nouvelle place, puis confirmez.`
+              : `${nom} : touchez une place, tournez-le, puis confirmez.`,
+          };
+    } else if (defArme?.pose === "TERRAIN") {
+      const cells = apercuTerrain.length ? apercuTerrain : at ? [at] : [];
+      if (cells.length) {
+        const v = validerPeinture(grilleDomaine, defArme, cells);
+        fantome = v.cases.filter((c) => c.raison !== "DEJA").map((c) => ({ x: c.x, y: c.y, ok: c.ok }));
+        const n = v.cases.filter((c) => c.ok).length;
+        const sautees = v.cases.filter((c) => !c.ok && c.raison !== "DEJA").length;
+        if (!v.ok) {
+          ligne = { texte: LIBELLE_REFUS[v.raison ?? "DEJA"], refus: v.raison !== "DEJA" };
+        } else {
+          const manque = !canPay(player, v.cout);
+          ligne = {
+            texte: manque
+              ? `Il vous manque ${Math.ceil(v.cout - (player?.crd ?? 0))} €`
+              : `${defArme.nom} · ${n} case${n > 1 ? "s" : ""}${sautees ? ` · ${sautees} ignorée${sautees > 1 ? "s" : ""}` : ""}`,
+            refus: manque,
+            cout: v.cout,
+          };
+        }
+      } else {
+        ligne = {
+          texte:
+            defArme.regle === "CHEMIN"
+              ? `${defArme.nom} : glissez sur la ferme pour tracer le chemin.`
+              : `${defArme.nom} : glissez un rectangle sur la ferme.`,
+        };
+      }
+    } else if (defArme?.pose === "OBJET") {
+      if (at && !enFriche) {
+        const v = validerPose(grilleDomaine, defArme, { x: at.x, y: at.y, rotation: rotationArme });
+        fantome = v.cases.map((c) => ({ x: c.x, y: c.y, ok: c.ok }));
+        const manque = v.ok && !canPay(player, defArme.prix);
+        objetFantome = { type: defArme.id, x: at.x, y: at.y, rotation: rotationArme, ok: v.ok && !manque };
+        ligne = !v.ok
+          ? { texte: LIBELLE_REFUS[v.raison ?? "HORS_DOMAINE"], refus: true }
+          : manque
+            ? { texte: `Il vous manque ${Math.ceil(defArme.prix - (player?.crd ?? 0))} €`, refus: true }
+            : { texte: `${defArme.nom} — touchez pour poser`, cout: defArme.prix };
+      } else {
+        ligne = { texte: `${defArme.nom} : touchez une case de votre terrain.`, cout: defArme.prix };
+      }
+    }
+    // Survoler la friche parle du lot, quel que soit l'élément armé : c'est
+    // là qu'on apprend ce que coûte le terrain d'à côté.
+    if (lotIci && !objetDeplace && tool !== "BUILD") {
+      const niveauOk = (player?.level ?? 1) >= lotIci.niveau;
+      ligne =
+        lotIci.etat === "ENCLAVE"
+          ? { texte: "Lot enclavé — achetez d'abord un lot qui touche votre terrain", refus: true }
+          : !niveauOk
+            ? { texte: `Lot à vendre · ${lotIci.aAcheter} cases · niveau ${lotIci.niveau} requis`, refus: true }
+            : {
+                texte: `Lot à vendre · ${lotIci.aAcheter} cases — touchez pour l'acheter`,
+                cout: lotIci.prix,
+                refus: !canPay(player, lotIci.prix),
+              };
+    }
+
+    let selection: EtatConstruction["selection"] = null;
+    if (choixConstruction?.kind === "OBJET") {
+      const a = amenagements.find((x) => x.id === choixConstruction.id);
+      const def = a && defConstruction(a.type);
+      if (a && def && !deplaceObjet) {
+        const e = empriseOrientee(def, a.rotation);
+        selection = { x: a.originX, y: a.originY, w: e.w, h: e.h };
+      }
+    } else if (choixConstruction?.kind === "BATIMENT" && !movingBuilding) {
+      const b = (parcel?.buildings ?? []).find((x) => x.id === choixConstruction.id);
+      if (b) {
+        const e = orientedFootprint(b.type, b.rotation ?? 0);
+        selection = { x: b.originX, y: b.originY, w: e.w, h: e.h };
+      }
+    }
+
+    return {
+      etat: { actif: true, lots, lotSurvole: lotIci?.id ?? null, fantome, objetFantome, selection },
+      ligne,
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [
+    construction,
+    domaine,
+    hoverCell,
+    bornesIci,
+    grilleDomaine,
+    amenagements,
+    deplaceObjet,
+    rotationArme,
+    tool,
+    movingBuilding,
+    buildType,
+    buildRotation,
+    pendingBuild,
+    defArme,
+    apercuTerrain,
+    choixConstruction,
+    parcel?.buildings,
+    player?.crd,
+    player?.level,
+    player?.dev,
+    player?.unlimitedCrd,
+  ]);
+
+  /** Ce que le panneau montre de l'élément touché. */
+  const selectionConstruction = useMemo((): SelectionConstruction | null => {
+    if (!choixConstruction) return null;
+    if (choixConstruction.kind === "OBJET") {
+      const a = amenagements.find((x) => x.id === choixConstruction.id);
+      const def = a && defConstruction(a.type);
+      if (!a || !def) return null;
+      const recent = Date.now() - Date.parse((a as ObjetPose & { createdAt?: string }).createdAt ?? "") < BUILDING_REGRET_MS;
+      return {
+        kind: "OBJET",
+        id: a.id,
+        nom: def.nom,
+        revente: recent ? def.prix : Math.round(def.prix * def.revente),
+        tournable: def.rotations.length > 1,
+      };
+    }
+    const b = (parcel?.buildings ?? []).find((x) => x.id === choixConstruction.id);
+    return b ? { kind: "BATIMENT", id: b.id, nom: BUILDING_DEFS[b.type].name } : null;
+  }, [choixConstruction, amenagements, parcel?.buildings]);
+
+  /** Entrer en construction : la ferme se vide de ses sélections de travail. */
+  function entrerConstruction() {
+    if (visiting || !domaine) {
+      flashToast("La construction se fait chez vous", true);
+      return;
+    }
+    setSelectedCells([]);
+    selectionAnchor.current = null;
+    setCellMenu(null);
+    setShowBuildPicker(false);
+    if (movingBuildingId) cancelMoveBuilding();
+    setPendingBuild(null);
+    setTool("SELECT");
+    setConstruction(true);
+    if (isMobile) setSheet(null);
+    playUiSound("click");
+  }
+
+  function quitterConstruction() {
+    setConstruction(false);
+    setArme(null);
+    setApercuTerrain([]);
+    setChoixConstruction(null);
+    setDeplaceObjet(null);
+    if (movingBuildingId) cancelMoveBuilding();
+    setPendingBuild(null);
+    setTool("SELECT");
+  }
+
+  /** Choisir une carte du catalogue. La rechoisir la repose. */
+  function choisirConstruction(def: DefConstruction) {
+    setChoixConstruction(null);
+    setDeplaceObjet(null);
+    setApercuTerrain([]);
+    if (def.pose === "BATIMENT" && def.batiment) {
+      if (movingBuildingId) cancelMoveBuilding();
+      setArme(def.id);
+      setBuildType(def.batiment as BuildingType);
+      setTool("BUILD");
+      return;
+    }
+    if (tool === "BUILD") {
+      setPendingBuild(null);
+      setTool("SELECT");
+    }
+    setArme((a) => (a === def.id ? null : def.id));
+    setRotationArme(0);
+  }
+
+  /** Un geste de construction a abouti : on rafraîchit l'argent et la ferme. */
+  async function apresConstruction(message: string, son: "place" | "click" = "place") {
+    flashToast(message);
+    playUiSound(son);
+    await refreshPlayer();
+    if (activeParcelId) await loadParcel(activeParcelId);
+  }
+
+  async function peindreTerrain(cells: { x: number; y: number }[]) {
+    if (!player || !activeParcelId || !defArme || defArme.pose !== "TERRAIN") return;
+    const v = validerPeinture(grilleDomaine, defArme, cells);
+    if (!v.ok) {
+      if (v.raison !== "DEJA") flashToast(LIBELLE_REFUS[v.raison ?? "FRICHE"], true);
+      return;
+    }
+    const aPeindre = v.cases.filter((c) => c.ok).map((c) => ({ x: c.x, y: c.y }));
+    setBusy(true);
+    try {
+      const r = await api<{ peintes: number; ignorees: number; cout: number }>(
+        `/parcels/${activeParcelId}/terrain`,
+        { method: "POST", body: JSON.stringify({ userId: player.id, outil: defArme.id, cells: aPeindre }) },
+      );
+      await apresConstruction(
+        `${defArme.nom} · ${r.peintes} case${r.peintes > 1 ? "s" : ""}${r.cout ? ` · −${r.cout} €` : ""}`,
+      );
+    } catch (e) {
+      flashToast(e instanceof Error ? e.message : String(e), true);
+    } finally {
+      setBusy(false);
+      setApercuTerrain([]);
+    }
+  }
+
+  async function poserObjet(def: DefConstruction, x: number, y: number) {
+    if (!player || !activeParcelId) return;
+    const v = validerPose(grilleDomaine, def, { x, y, rotation: rotationArme });
+    if (!v.ok) {
+      flashToast(LIBELLE_REFUS[v.raison ?? "HORS_DOMAINE"], true);
+      return;
+    }
+    if (!canPay(player, def.prix)) {
+      flashToast(`Il vous manque ${Math.ceil(def.prix - player.crd)} €`, true);
+      return;
+    }
+    setBusy(true);
+    try {
+      await api(`/parcels/${activeParcelId}/amenagements`, {
+        method: "POST",
+        body: JSON.stringify({ userId: player.id, type: def.id, x, y, rotation: rotationArme }),
+      });
+      await apresConstruction(`${def.nom} posé · −${def.prix} €`);
+    } catch (e) {
+      flashToast(e instanceof Error ? e.message : String(e), true);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function deplacerObjet(id: string, x: number, y: number, rotation: number, message: string) {
+    if (!player) return;
+    setBusy(true);
+    try {
+      await api(`/amenagements/${id}/move`, {
+        method: "POST",
+        body: JSON.stringify({ userId: player.id, x, y, rotation }),
+      });
+      setDeplaceObjet(null);
+      await apresConstruction(message);
+    } catch (e) {
+      flashToast(e instanceof Error ? e.message : String(e), true);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function retirerObjet(id: string) {
+    if (!player) return;
+    const a = amenagements.find((x) => x.id === id);
+    const nom = (a && defConstruction(a.type)?.nom) ?? "Élément";
+    setBusy(true);
+    try {
+      const r = await api<{ value: number }>(`/amenagements/${id}/sell`, {
+        method: "POST",
+        body: JSON.stringify({ userId: player.id }),
+      });
+      setChoixConstruction(null);
+      await apresConstruction(`${nom} retiré · +${r.value} €`, "click");
+    } catch (e) {
+      flashToast(e instanceof Error ? e.message : String(e), true);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  function acheterLot(lot: DomaineVue["lots"][number]) {
+    if (!player || !activeParcelId) return;
+    if (lot.etat === "ENCLAVE") {
+      flashToast("Lot enclavé — achetez d'abord un lot qui touche votre terrain", true);
+      return;
+    }
+    if (player.level < lot.niveau) {
+      flashToast(`Ce lot s'achète au niveau ${lot.niveau}`, true);
+      return;
+    }
+    if (!canPay(player, lot.prix)) {
+      flashToast(`Il vous manque ${Math.ceil(lot.prix - player.crd)} € pour ce lot`, true);
+      return;
+    }
+    const parcelleId = activeParcelId;
+    setConfirmRequest({
+      title: `Acheter ce lot de ${lot.aAcheter} cases ?`,
+      detail: `${lot.prix.toLocaleString("fr-FR")} € · la friche devient un pré à vous, prêt à aménager. Le lot suivant coûtera un peu plus cher.`,
+      confirmLabel: `Acheter · ${lot.prix.toLocaleString("fr-FR")} €`,
+      onConfirm: async () => {
+        try {
+          const r = await api<{ paid: number; cases: number }>(`/parcels/${parcelleId}/lots/buy`, {
+            method: "POST",
+            body: JSON.stringify({ userId: player.id, lot: lot.id }),
+          });
+          jouerSon("construction");
+          await apresConstruction(`Lot acheté · ${r.cases} cases de plus · −${r.paid.toLocaleString("fr-FR")} €`);
+        } catch (e) {
+          flashToast(e instanceof Error ? e.message : String(e), true);
+        }
+      },
+    });
+  }
+
+  /** Un toucher sur la ferme, en construction. */
+  function cliqueConstruction(x: number, y: number, mods: PointerMods) {
+    if (tool === "BUILD") {
+      void applyToolOnCell(x, y, mods);
+      return;
+    }
+    const k = grilleDomaine.cases.get(cleCase(x, y));
+    if (deplaceObjet) {
+      const a = amenagements.find((o) => o.id === deplaceObjet);
+      const def = a && defConstruction(a.type);
+      if (!a || !def) return setDeplaceObjet(null);
+      const v = validerPose(grilleDomaine, def, { x, y, rotation: rotationArme }, a.id);
+      if (!v.ok) return flashToast(LIBELLE_REFUS[v.raison ?? "HORS_DOMAINE"], true);
+      void deplacerObjet(a.id, x, y, rotationArme, `${def.nom} déplacé`);
+      return;
+    }
+    if (!k) {
+      // La friche : c'est un lot à vendre.
+      const lot = domaine?.lots.find(
+        (l) => l.etat !== "POSSEDE" && x >= l.x && x < l.x + l.w && y >= l.y && y < l.y + l.h,
+      );
+      if (lot) acheterLot(lot);
+      return;
+    }
+    if (defArme?.pose === "OBJET") return void poserObjet(defArme, x, y);
+    if (defArme?.pose === "TERRAIN") return void peindreTerrain([{ x, y }]);
+    // Rien d'armé : toucher un élément le choisit.
+    if (k.volume?.type === "OBJET") {
+      setChoixConstruction({ kind: "OBJET", id: k.volume.id });
+      playUiSound("click");
+    } else if (k.volume?.type === "BATIMENT") {
+      setChoixConstruction({ kind: "BATIMENT", id: k.volume.id });
+      playUiSound("click");
+    } else {
+      setChoixConstruction(null);
+    }
+  }
+
+  function tournerChoix() {
+    if (deplaceObjet || (defArme && defArme.pose === "OBJET")) {
+      setRotationArme((r) => (r + 1) % 4);
+      return;
+    }
+    if (tool === "BUILD") {
+      setBuildRotation((r) => (r + 1) % 4);
+      return;
+    }
+    if (choixConstruction?.kind === "OBJET") {
+      const a = amenagements.find((x) => x.id === choixConstruction.id);
+      const def = a && defConstruction(a.type);
+      if (!a || !def || def.rotations.length < 2) return;
+      const i = def.rotations.indexOf(a.rotation);
+      const next = def.rotations[(i + 1) % def.rotations.length] ?? 0;
+      void deplacerObjet(a.id, a.originX, a.originY, next, `${def.nom} tourné`);
+    } else if (choixConstruction?.kind === "BATIMENT") {
+      const b = (parcel?.buildings ?? []).find((x) => x.id === choixConstruction.id);
+      if (b) void rotateBuilding(b.id, BUILDING_DEFS[b.type].name);
+    }
+  }
+
+  function deplacerChoix() {
+    if (choixConstruction?.kind === "OBJET") {
+      const a = amenagements.find((x) => x.id === choixConstruction.id);
+      if (!a) return;
+      setArme(null);
+      setRotationArme(a.rotation);
+      setDeplaceObjet(a.id);
+      setChoixConstruction(null);
+    } else if (choixConstruction?.kind === "BATIMENT") {
+      const id = choixConstruction.id;
+      setArme(null);
+      setChoixConstruction(null);
+      startMoveBuilding(id);
+    }
+  }
+
+  /**
+   * `R` tourne, `Échap` recule d'un cran, `B` entre et sort.
+   *
+   * En capture : Échap ne doit pas, en plus, vider une sélection ou changer
+   * d'outil par le raccourci général du bureau.
+   */
+  useEffect(() => {
+    if (!player) return;
+    const onKey = (e: KeyboardEvent) => {
+      const el = e.target as HTMLElement | null;
+      if (el && (/^(INPUT|TEXTAREA|SELECT)$/.test(el.tagName) || el.isContentEditable)) return;
+      if (e.ctrlKey || e.metaKey || e.altKey) return;
+      if (!construction) {
+        if ((e.key === "b" || e.key === "B") && !isMobile && !visiting) {
+          e.preventDefault();
+          entrerConstruction();
+        }
+        return;
+      }
+      if (e.key === "r" || e.key === "R") {
+        if (tool === "BUILD") return; // l'effet de pose s'en charge
+        e.stopImmediatePropagation();
+        tournerChoix();
+      } else if (e.key === "Escape") {
+        e.stopImmediatePropagation();
+        if (tool === "BUILD") {
+          if (movingBuildingId) cancelMoveBuilding();
+          setPendingBuild(null);
+          setTool("SELECT");
+          setArme(null);
+        } else if (deplaceObjet) setDeplaceObjet(null);
+        else if (apercuTerrain.length) setApercuTerrain([]);
+        else if (arme) setArme(null);
+        else if (choixConstruction) setChoixConstruction(null);
+        else quitterConstruction();
+      } else if (e.key === "b" || e.key === "B") {
+        quitterConstruction();
+      } else if ((e.key === "Delete" || e.key === "Backspace") && choixConstruction?.kind === "OBJET") {
+        void retirerObjet(choixConstruction.id);
+      }
+    };
+    window.addEventListener("keydown", onKey, true);
+    return () => window.removeEventListener("keydown", onKey, true);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [construction, player?.id, tool, deplaceObjet, apercuTerrain, arme, choixConstruction, movingBuildingId, isMobile, visiting, domaine, amenagements, defArme]);
+
+  // Changer de parcelle, ou partir chez un voisin, sort de la construction.
+  useEffect(() => {
+    if (construction && (visiting || !domaine)) quitterConstruction();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [visiting, domaine == null, activeParcelId]);
 
   /** Le bâtiment dont la fiche est ouverte, et le troupeau qu'il abrite. */
   /** Où en est le joueur dans son palier — pour la jauge du bandeau. */
@@ -2854,10 +3428,33 @@ export function App() {
       for (let dx = 0; dx < brush; dx++) {
         const cx = x + dx;
         const cy = y + dy;
-        if (cx >= 0 && cy >= 0 && cx < gw && cy < gh) cells.push({ x: cx, y: cy });
+        if (grilleDomaine.cases.has(cleCase(cx, cy))) cells.push({ x: cx, y: cy });
       }
     }
     return cells;
+  }
+
+  /**
+   * Chaque case d'un tracé grossie au pinceau, sans borne de grille.
+   *
+   * `expandBrush` s'arrête à 0..gridW : un domaine agrandi a des champs en
+   * coordonnées négatives, qu'il ne voyait pas. Le tri se fait ensuite, sur ce
+   * qu'on possède vraiment (`surChamps`).
+   */
+  function etaler(cells: { x: number; y: number }[]): { x: number; y: number }[] {
+    const vus = new Set<string>();
+    const out: { x: number; y: number }[] = [];
+    for (const c of cells) {
+      for (let dy = 0; dy < brush; dy++) {
+        for (let dx = 0; dx < brush; dx++) {
+          const k = cleCase(c.x + dx, c.y + dy);
+          if (vus.has(k)) continue;
+          vus.add(k);
+          out.push({ x: c.x + dx, y: c.y + dy });
+        }
+      }
+    }
+    return out;
   }
 
   /**
@@ -2919,6 +3516,8 @@ export function App() {
     const out: { x: number; y: number }[] = [];
     for (const c of grid) {
       if (c.kind === "BUILDING" || c.kind === "VEHICLE") continue;
+      // Un pré, un étang ou un chemin ne se travaillent pas.
+      if ((c.sol ?? "CHAMP") !== "CHAMP" || c.revetement) continue;
       if (isPlantTool(t) && c.kind === "CROP") continue;
       if (t === "HARVEST" && c.kind !== "CROP") continue;
       // Presser, ramasser et désherber ne concernent qu'une poignée de cases :
@@ -3159,10 +3758,9 @@ export function App() {
       // Maj+clic prend tout le rectangle depuis la dernière case posée. Sans
       // ancre — premier clic de la partie — il n'y a rien à étendre, on pose.
       const anchor = selectionAnchor.current;
-      const block =
-        mods.extend && anchor
-          ? expandBrush(rectBetween(anchor, { x, y }, gw, gh), brush, gw, gh)
-          : brushCells(x, y);
+      const block = surChamps(
+        mods.extend && anchor ? etaler(rectangleCases(anchor, { x, y }, bornesIci)) : brushCells(x, y),
+      );
       commitSelection(block, mods.mode);
       if (!mods.extend) selectionAnchor.current = { x, y };
       return;
@@ -3174,14 +3772,10 @@ export function App() {
         return;
       }
       const def = BUILDING_DEFS[buildType];
-      const foot = orientedFootprint(buildType, buildRotation);
       if (!canPlaceBuildingAt(x, y)) {
         const reason =
-          x + foot.w > gw || y + foot.h > gh
-            ? "Emprise hors grille"
-            : !canPay(player, def.cost)
-              ? `€ insuffisants (${def.cost})`
-              : "Collision ou case occupée";
+          refusPoseBatiment(x, y, buildRotation, buildType) ??
+          (!canPay(player, def.cost) ? `€ insuffisants (${def.cost})` : "Place occupée");
         flashToast(reason, true);
         return;
       }
@@ -5820,7 +6414,7 @@ export function App() {
   ) : null;
 
   return (
-    <div className={`game-stage${isMobile ? " mobile" : ""}`}>
+    <div className={`game-stage${isMobile ? " mobile" : ""}${construction ? " en-construction" : ""}`}>
       {/* Le ciel, derrière la scène 3D. Le fond était un dégradé fixe : la
           saison était calculée et écrite dans le rail, mais jamais donnée à
           voir. */}
@@ -5957,23 +6551,34 @@ export function App() {
               // « Il faudrait pouvoir le glisser au lieu de devoir cliquer » :
               // vingt-quatre touchers pour une bande de blé, c'était le geste
               // le plus répété du jeu.
-              strokeSelect={!visiting && isFieldWorkTool(tool)}
-              strokeRect={dragRect}
+              strokeSelect={
+                construction ? defArme?.pose === "TERRAIN" && !deplaceObjet : !visiting && isFieldWorkTool(tool)
+              }
+              // Un chemin se trace au doigt ; un champ, un pré, un étang se
+              // tirent en rectangle — c'est la forme qu'on leur veut.
+              strokeRect={construction ? defArme?.regle !== "CHEMIN" : dragRect}
               onStrokeStart={() => {
                 strokeBase.current = selectedCells;
+                if (construction) setApercuTerrain([]);
               }}
               // L'aperçu part toujours de la sélection **d'avant le geste** :
               // sinon un tracé en mode « retirer » mangerait sa propre trace au
               // fur et à mesure, et un tracé additif se dédoublerait.
-              onStrokePreview={(cells, mods) =>
-                setSelectedCells(
-                  applySelection(strokeBase.current, expandBrush(cells, brush, gw, gh), mods.mode),
-                )
-              }
+              onStrokePreview={(cells, mods) => {
+                if (construction) {
+                  setApercuTerrain(cells);
+                  return;
+                }
+                setSelectedCells(applySelection(strokeBase.current, surChamps(etaler(cells)), mods.mode));
+              }}
               onStrokeSelect={(cells, mods) => {
+                if (construction) {
+                  void peindreTerrain(cells);
+                  return;
+                }
                 const next = applySelection(
                   strokeBase.current,
-                  expandBrush(cells, brush, gw, gh),
+                  surChamps(etaler(cells)),
                   mods.mode,
                 );
                 setSelectedCells(next);
@@ -5987,9 +6592,14 @@ export function App() {
               supplies={supplies}
               onCollectSupply={(id) => void collectSupply(id)}
               hauls={hauls}
-              onCellClick={applyToolOnCell}
+              onCellClick={(x, y, mods) =>
+                construction ? cliqueConstruction(x, y, mods) : void applyToolOnCell(x, y, mods)
+              }
               onCellHover={setHoverCell}
               onCellContext={openCellMenu}
+              bornes={domaine?.bornes ?? null}
+              amenagements={amenagements}
+              construction={vueConstruction?.etat ?? null}
             />
           </Suspense>
         ) : (
@@ -6283,6 +6893,39 @@ export function App() {
         plus rien tout seul. C'est la réponse directe aux cinq silos posés
         par accident, sans moyen d'annuler.
       */}
+      {construction && vueConstruction && player && (
+        <PanneauConstruction
+          categorie={categorieConstruction}
+          onCategorie={(c) => {
+            setCategorieConstruction(c);
+            setArme(null);
+            setApercuTerrain([]);
+            if (tool === "BUILD") {
+              if (movingBuildingId) cancelMoveBuilding();
+              setPendingBuild(null);
+              setTool("SELECT");
+            }
+          }}
+          arme={tool === "BUILD" && !movingBuilding ? `batiment:${buildType}` : arme}
+          onChoisir={choisirConstruction}
+          niveau={player.level}
+          argent={hasUnlimitedFunds(player) ? Infinity : player.crd}
+          etat={vueConstruction.ligne}
+          charme={domaine ? { valeur: domaine.charme, libelle: domaine.charmeLibelle } : null}
+          selection={selectionConstruction}
+          onDeplacer={deplacerChoix}
+          onTourner={tournerChoix}
+          onRetirer={() => {
+            if (choixConstruction?.kind === "OBJET") void retirerObjet(choixConstruction.id);
+          }}
+          onFiche={() => {
+            if (choixConstruction?.kind === "BATIMENT") setOpenBuildingId(choixConstruction.id);
+          }}
+          onQuitter={quitterConstruction}
+          mobile={isMobile}
+        />
+      )}
+
       {pendingBuild && !visiting && (() => {
         // Déménager ou bâtir : le même geste, le même fantôme, la même barre.
         // Seuls le bâtiment concerné, le prix et le verbe changent.
@@ -6307,7 +6950,7 @@ export function App() {
                 ? "Il est déjà là — choisissez une autre case"
                 : null;
         return (
-          <div className={`build-confirm glass ${souci ? "blocked" : ""}`}>
+          <div className={`build-confirm glass ${souci ? "blocked" : ""}${construction ? " sur-construction" : ""}`}>
             <div className="build-confirm-what">
               <img className="build-confirm-art" src={BUILDING_ART[type]} alt="" />
               <span className="build-confirm-lines">
@@ -7316,8 +7959,16 @@ export function App() {
                 id: "BUILD",
                 label: "Construire",
                 icon: "/assets/icons/nav/batir.svg",
-                on: showBuildPicker,
-                onOpen: () => setShowBuildPicker((v) => !v),
+                hotkey: "B",
+                on: construction || showBuildPicker,
+                // Chez soi, « Construire » ouvre le mode construction ; chez
+                // un voisin il n'y a rien à bâtir, le catalogue suffit.
+                onOpen: () =>
+                  domaine && !visiting
+                    ? construction
+                      ? quitterConstruction()
+                      : entrerConstruction()
+                    : setShowBuildPicker((v) => !v),
               },
               /*
                * Ventes, Garage et Bureau, aussi au menu sur PC.
@@ -7717,6 +8368,13 @@ export function App() {
                     aria-expanded={sheet === t.key}
                     onClick={() => {
                       setMoreOpen(false);
+                      // « Bâtir » ouvre le mode construction chez soi : le
+                      // catalogue en tiroir couvrait la ferme qu'on aménage.
+                      if (t.key === "BUILD" && domaine && !visiting) {
+                        setSheet(null);
+                        entrerConstruction();
+                        return;
+                      }
                       setSheet((cur) => (cur === t.key ? null : t.key));
                     }}
                   >

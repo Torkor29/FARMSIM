@@ -1,4 +1,4 @@
-import { useMemo } from "react";
+import { useEffect, useMemo, useRef } from "react";
 import {
   CATEGORIES,
   catalogueConstruction,
@@ -47,12 +47,27 @@ function prixAffiche(d: DefConstruction): string {
 }
 
 export function PanneauConstruction(p: Props) {
+  const racine = useRef<HTMLElement | null>(null);
+  /* Sa hauteur, pour que la barre de pose d'un bâtiment se tienne au-dessus
+     plutôt que dessous : elle change avec la largeur et la ligne d'état. */
+  useEffect(() => {
+    const el = racine.current;
+    if (!el || typeof ResizeObserver === "undefined") return;
+    const doc = document.documentElement;
+    const ro = new ResizeObserver(() => doc.style.setProperty("--construction-h", `${el.offsetHeight}px`));
+    ro.observe(el);
+    return () => {
+      ro.disconnect();
+      doc.style.removeProperty("--construction-h");
+    };
+  }, []);
   const elements = useMemo(
     () => catalogueConstruction().filter((d) => d.categorie === p.categorie),
     [p.categorie],
   );
   return (
     <section
+      ref={racine}
       className={`construction-panneau glass${p.mobile ? " mobile" : ""}`}
       aria-label="Construction"
       onPointerDown={(e) => e.stopPropagation()}

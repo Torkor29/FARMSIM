@@ -1,5 +1,5 @@
 import * as THREE from "three";
-import { cleCase, masqueVoisins, type Bornes } from "@farmsim/shared";
+import { casesEmprise, cleCase, defConstruction, empriseOrientee, masqueVoisins, type Bornes } from "@farmsim/shared";
 import { ajouterArbre, ajouterBoite, ajouterGeometrie, maillageFacette, pose } from "./decor3d";
 
 /**
@@ -18,6 +18,8 @@ export type CaseTerrain = {
   y: number;
   sol: string;
   revetement: string | null;
+  /** Ce qui occupe la case, pour ne pas faire pousser d'herbe sous un toit. */
+  kind?: string;
 };
 
 export type ObjetPose = { id: string; type: string; originX: number; originY: number; rotation: number };
@@ -332,6 +334,37 @@ export function creerDomaine3d(opts: { shadows: boolean }): Domaine3d {
         } else if (r < 0.05) {
           ajouterGeometrie(friche.pos, friche.col, _ico, pose(px, TOP + 0.08, pz, r * 60, 0.34, 0.2, 0.3), 0x8e8b84);
         }
+      }
+    }
+
+    /*
+     * Le pré : de l'herbe courte et quelques fleurs des champs.
+     *
+     * Sa couleur seule le distinguait mal d'un champ au repos — deux verts
+     * voisins. Les touffes disent « prairie » d'un coup d'œil, et laissent au
+     * champ sa surface nette, prête à labourer.
+     */
+    const sousObjet = new Set<string>();
+    for (const a of d.amenagements) {
+      const def = defConstruction(a.type);
+      if (!def) continue;
+      const e = empriseOrientee(def, a.rotation);
+      for (const p of casesEmprise(a.originX, a.originY, e.w, e.h)) sousObjet.add(cleCase(p.x, p.y));
+    }
+    for (const c of d.cells) {
+      if (c.sol !== "PRE" || c.revetement || c.kind === "BUILDING" || sousObjet.has(cleCase(c.x, c.y))) continue;
+      const { px, pz } = posDe(c.x, c.y);
+      for (let k = 0; k < 4; k++) {
+        const u = (hash(c.x, c.y, k + 20) - 0.5) * 0.78;
+        const v = (hash(c.y, c.x, k + 27) - 0.5) * 0.78;
+        const h = 0.07 + hash(c.x, c.y, k + 31) * 0.06;
+        ajouterGeometrie(friche.pos, friche.col, _cone, pose(px + u, TOP + h / 2, pz + v, k, 0.1, h, 0.1), k % 2 ? 0x5f9a3a : 0x6ea945);
+      }
+      const f = hash(c.x, c.y, 41);
+      if (f > 0.72) {
+        const u = (hash(c.x, c.y, 43) - 0.5) * 0.6;
+        const v = (hash(c.y, c.x, 47) - 0.5) * 0.6;
+        ajouterBoite(friche.pos, friche.col, px + u, TOP + 0.05, pz + v, 0.05, 0.03, 0.05, f > 0.88 ? 0xf2e36a : 0xf7f4ea);
       }
     }
 

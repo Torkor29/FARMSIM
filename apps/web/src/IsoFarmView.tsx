@@ -444,8 +444,8 @@ type Props = {
 
 const SOIL = 0x9ac06a;
 /* Ferme libre : le pré, la friche à acheter, la berge d'un étang. */
-const PRE = 0x7fb54f;
-const PRE_SOMBRE = 0x76ab48;
+const PRE = 0x74ad48;
+const PRE_SOMBRE = 0x6ca342;
 const FRICHE = 0xa3ad62;
 const FRICHE_SOMBRE = 0x98a35a;
 const BERGE = 0x8a7a55;
@@ -2926,7 +2926,7 @@ export function IsoFarmView({
         domaine3d.majTerrain(
           {
             bornes: b ?? { minX: 0, minY: 0, maxX: gw, maxY: gh },
-            cells: cs.map((c) => ({ x: c.x, y: c.y, sol: c.sol ?? "CHAMP", revetement: c.revetement ?? null })),
+            cells: cs.map((c) => ({ x: c.x, y: c.y, sol: c.sol ?? "CHAMP", revetement: c.revetement ?? null, kind: c.kind })),
             amenagements: dataRef.current.amenagements,
           },
           cellWorldPos,
@@ -3039,9 +3039,9 @@ export function IsoFarmView({
      * reproduire la panne, et un panneau vide ne réserve rien parce qu'il ne
      * mesure rien.
      */
-    function railInsets(): { left: number; right: number } {
+    function railInsets(): { left: number; right: number; bottom: number } {
       const shell = el.closest(".game-stage");
-      if (!shell) return { left: 0, right: 0 };
+      if (!shell) return { left: 0, right: 0, bottom: 0 };
       const box = shell.getBoundingClientRect();
       const mid = box.left + box.width / 2;
       let left = 0;
@@ -3052,7 +3052,15 @@ export function IsoFarmView({
         if (r.left + r.width / 2 < mid) left = Math.max(left, r.right - box.left);
         else right = Math.max(right, box.right - r.left);
       }
-      return { left, right };
+      // Le panneau de construction mange le bas de l'écran : la ferme remonte
+      // au-dessus, et recule juste assez pour y tenir.
+      let bottom = 0;
+      const panneau = shell.querySelector(".construction-panneau");
+      if (panneau) {
+        const r = panneau.getBoundingClientRect();
+        if (r.height > 1) bottom = Math.max(0, box.bottom - r.top);
+      }
+      return { left, right, bottom };
     }
 
     function applyCamera() {
@@ -3084,7 +3092,8 @@ export function IsoFarmView({
        * sans rendre la parcelle petite au téléphone, où la place est ce qu'on
        * vient justement de lui rendre. Le zoom du joueur reste souverain.
        */
-      const frustum = (span * 0.79) / Math.min(1, (stage * 0.94) / h) / view.zoom;
+      const recul = rails.bottom ? Math.min(1.3, h / Math.max(120, h - rails.bottom)) : 1;
+      const frustum = ((span * 0.79) / Math.min(1, (stage * 0.94) / h) / view.zoom) * recul;
       camera.left = -frustum * aspect;
       camera.right = frustum * aspect;
       camera.top = frustum;
@@ -3092,7 +3101,8 @@ export function IsoFarmView({
       // Recentrage sur la partie libre : avec un seul rail, le milieu de la
       // fenêtre n'est pas le milieu de ce qu'on voit.
       const shift = (rails.left - rails.right) / 2;
-      if (shift) camera.setViewOffset(w, h, -shift, 0, w, h);
+      const monte = rails.bottom / 2;
+      if (shift || monte) camera.setViewOffset(w, h, -shift, monte, w, h);
       else camera.clearViewOffset();
       camera.updateProjectionMatrix();
       /*
@@ -3146,6 +3156,15 @@ export function IsoFarmView({
      */
     const planDalles = new THREE.Plane(new THREE.Vector3(0, 1, 0), -TILE_TOP);
     const surDalle = new THREE.Vector3();
+    // Outil de recette, en développement seulement : où tombe une case à
+    // l'écran. Les scénarios automatisés visent ainsi une case, pas un pixel.
+    if (/^(127\.0\.0\.1|localhost)$/.test(window.location.hostname)) {
+      (window as unknown as { __caseEcran?: unknown }).__caseEcran = (x: number, y: number) => {
+        const v = new THREE.Vector3(ox + x * step, TILE_TOP, oz + y * step).project(camera);
+        const r = renderer.domElement.getBoundingClientRect();
+        return { x: r.left + ((v.x + 1) / 2) * r.width, y: r.top + ((1 - v.y) / 2) * r.height };
+      };
+    }
     function raycastCell(): { x: number; y: number } | null {
       raycaster.setFromCamera(pointer, camera);
       if (!raycaster.ray.intersectPlane(planDalles, surDalle)) return null;
@@ -4332,6 +4351,11 @@ export function IsoFarmView({
          en garde l'identité tant que rien ne bouge. */
       const etatConstruction = dataRef.current.construction ?? null;
       if (etatConstruction !== constructionMontee) {
+        // Entrer ou sortir du mode recadre : le panneau paraît ou s'en va.
+        if (Boolean(etatConstruction?.actif) !== Boolean(constructionMontee?.actif)) {
+          applyCamera();
+          window.setTimeout(applyCamera, 380);
+        }
         constructionMontee = etatConstruction;
         const { gw: w2, gh: h2, x0: bx, y0: by } = dimsIle();
         domaine3d.majConstruction(
