@@ -60,6 +60,7 @@ import {
   type Specialization,
   CROP_DEFS,
   GOOD_DEFS,
+  nomNegoce,
   FEED_VALUE,
   rationToServe,
   isMowCrop,
@@ -357,7 +358,15 @@ type Player = {
       greaseSkipStreak?: number;
       breakdown?: string | null;
     }[];
-    inventory: { id: string; itemCode: string; qty: number; quality: number; moisture: number }[];
+    inventory: {
+      id: string;
+      itemCode: string;
+      qty: number;
+      quality: number;
+      moisture: number;
+      /** La part achetée au négociant, invendable aux joueurs. */
+      negoce?: number;
+    }[];
   } | null;
   bonuses?: {
     yieldBonus: number;
@@ -4355,6 +4364,36 @@ export function App() {
     }
   }
 
+  /** Jeter le négoce d'un lot : il ne se revend pas aux joueurs, on peut s'en défaire. */
+  function discardNegoce(commodity: TradeGood) {
+    if (!player) return;
+    const nom = nomNegoce(commodity);
+    setConfirmRequest({
+      title: `Jeter ${nom.toLowerCase()} ?`,
+      detail: "Il quitte le silo pour de bon, sans rien rapporter. Votre production n’est pas touchée.",
+      confirmLabel: "Jeter",
+      destructive: true,
+      onConfirm: () => void doDiscardNegoce(commodity, nom),
+    });
+  }
+
+  async function doDiscardNegoce(commodity: TradeGood, nom: string) {
+    if (!player) return;
+    setBusy(true);
+    try {
+      const r = await api<{ discarded: number }>("/inventory/discard", {
+        method: "POST",
+        body: JSON.stringify({ userId: player.id, commodity }),
+      });
+      flashToast(`${nom} jeté · ${r.discarded.toFixed(2)}`);
+      await refreshPlayer();
+    } catch (e) {
+      flashToast(e instanceof Error ? e.message : String(e), true);
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function createListing(commodity: TradeGood, tons: number, pricePerTon: number) {
     if (!player) return;
     setBusy(true);
@@ -7409,6 +7448,7 @@ export function App() {
         onDeliverLot={deliverLot}
         onAutoDeliverLot={autoDeliverLot}
         onDry={dryStock}
+        onDiscard={discardNegoce}
         onBuyInput={buyInput}
         onLoadHistory={loadPriceHistory}
         futures={futures}

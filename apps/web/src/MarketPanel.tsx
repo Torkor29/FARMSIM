@@ -23,6 +23,9 @@ import {
   FUTURES_DISCOUNT,
   FUTURES_MIN_TONS,
   FUTURES_PENALTY_RATE,
+  nomNegoce,
+  partNegoce,
+  partPropre,
   type ChannelQuote,
   type SaleChannel,
   type TradeGood,
@@ -35,6 +38,8 @@ export type StockItem = {
   qty: number;
   quality: number;
   moisture: number;
+  /** La part achetée au négociant : elle ne se revend pas aux joueurs. */
+  negoce?: number;
 };
 
 export type Listing = {
@@ -89,6 +94,8 @@ type Props = {
   onDeliverLot: (id: string) => void;
   onAutoDeliverLot: (id: string) => void;
   onDry: (itemId: string) => void;
+  /** Jeter la part du négoce d'un lot, pour faire de la place. */
+  onDiscard: (commodity: TradeGood) => void;
   onBuyInput: (commodity: TradeGood, tons: number) => void;
   onLoadHistory: (commodity: TradeGood) => Promise<{ at: string; price: number }[]>;
   futures: FuturesContract[];
@@ -210,6 +217,7 @@ export function MarketPanel({
   onDeliverLot,
   onAutoDeliverLot,
   onDry,
+  onDiscard,
   onBuyInput,
   onLoadHistory,
   futures,
@@ -416,11 +424,15 @@ export function MarketPanel({
                         onClick={() => setSelectedId(s.id)}
                       >
                         <strong>
-                          <GoodIcon code={s.itemCode} /> {goodName(s.itemCode)}
+                          <GoodIcon code={s.itemCode} />{" "}
+                          {partPropre(s) <= 0.005 ? nomNegoce(s.itemCode) : goodName(s.itemCode)}
                         </strong>
                         <span>
                           {s.qty.toFixed(2)} {GOOD_DEFS[s.itemCode as TradeGood]?.unit ?? "t"}
                         </span>
+                        {partNegoce(s) > 0.005 && partPropre(s) > 0.005 && (
+                          <em className="negoce">dont {partNegoce(s).toFixed(2)} du négoce</em>
+                        )}
                         <em className={wet || s.quality <= 2 ? "wet" : ""}>
                           {isPerishable(s.itemCode as TradeGood)
                             ? "À vendre vite : ça se gâte"
@@ -501,7 +513,20 @@ export function MarketPanel({
                           </button>
                         </div>
                       )}
-                      {listQ && (
+                      {listQ && partPropre(item) <= 0.005 && (
+                        <div className="channel-card negoce">
+                          <h3>{SALE_CHANNEL_LABELS.LISTING}</h3>
+                          {/* Ce qu'on achète au négociant ne se revend pas aux
+                              joueurs : sans cette règle, on le revendait à un
+                              second compte au plafond de la criée, en boucle. */}
+                          <p className="channel-note">
+                            {nomNegoce(item.itemCode)} ne se vend pas aux joueurs. Utilisez-le,
+                            revendez-le au marché ou au négociant — au cours du jour —, ou
+                            jetez-le pour faire de la place.
+                          </p>
+                        </div>
+                      )}
+                      {listQ && partPropre(item) > 0.005 && (
                         <div className="channel-card">
                           <h3>{SALE_CHANNEL_LABELS.LISTING}</h3>
                           <p className="channel-net">
@@ -521,11 +546,22 @@ export function MarketPanel({
                           <button
                             type="button"
                             className="channel-go"
-                            disabled={busy || tons <= 0 || crd < listingFee(ask, tons)}
+                            disabled={
+                              busy ||
+                              tons <= 0 ||
+                              tons > partPropre(item) + 0.005 ||
+                              crd < listingFee(ask, tons)
+                            }
                             onClick={() => act("LISTING")}
                           >
                             Mettre en vente
                           </button>
+                          {tons > partPropre(item) + 0.005 && (
+                            <p className="supply-why">
+                              Seule votre production se vend aux joueurs :{" "}
+                              {partPropre(item).toFixed(2)} au plus. Le reste vient du négoce.
+                            </p>
+                          )}
                           {/* Mettre en vente coûte une commission d'avance :
                               sans elle, le bouton restait gris sans raison
                               visible. */}
@@ -542,6 +578,21 @@ export function MarketPanel({
                         « Vendre à tout prix » ne nommait personne : on encaissait
                         40 % de moins sans savoir que c'était un PNJ de secours,
                         et on croyait à une panne du marché. */}
+                    {partNegoce(item) > 0.005 && (
+                      <p className="market-rules">
+                        <button
+                          type="button"
+                          className="ghost tiny"
+                          disabled={busy}
+                          onClick={() => onDiscard(item.itemCode as TradeGood)}
+                        >
+                          Jeter le négoce · {partNegoce(item).toFixed(2)}
+                        </button>{" "}
+                        <span className="channel-note">
+                          Fait de la place au silo. Votre production n’est pas touchée.
+                        </span>
+                      </p>
+                    )}
                     {dealerQ && (
                       <p className="market-rules">
                         <button

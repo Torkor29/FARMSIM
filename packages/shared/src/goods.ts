@@ -460,3 +460,31 @@ export function feedUnits(
     1000
   );
 }
+
+/*
+ * Le négoce : ce qu'on achète au négociant ne se revend pas aux joueurs.
+ *
+ * Signalé en jeu : on achetait de la paille au PNJ, on la revendait à un
+ * second compte au plafond de la criée, et on recommençait — de l'argent sans
+ * jouer. Chaque lot garde donc la part qui vient du négociant. Elle se
+ * consomme (ration, litière) et se revend aux PNJ — au marché ou au
+ * négociant, au cours du jour : achetée 25 % au-dessus, elle ne rapporte que
+ * si on l'a gardée pendant que le cours montait. Elle se jette pour faire de
+ * la place. Elle ne se met jamais en annonce.
+ */
+
+/** La part d'un lot achetée au négociant — jamais plus que le lot lui-même. */
+export function partNegoce(lot: { qty: number; negoce?: number | null }): number {
+  return Math.max(0, Math.min(lot.qty, lot.negoce ?? 0));
+}
+
+/** La part d'un lot qui vient du travail du joueur : la seule qu'on peut vendre aux joueurs. */
+export function partPropre(lot: { qty: number; negoce?: number | null }): number {
+  return Math.max(0, lot.qty - partNegoce(lot));
+}
+
+/** Le nom d'une marchandise achetée au négociant : « Paille du négoce ». */
+export function nomNegoce(code: string): string {
+  const nom = GOOD_DEFS[code as TradeGood]?.name ?? code;
+  return `${nom} du négoce`;
+}
