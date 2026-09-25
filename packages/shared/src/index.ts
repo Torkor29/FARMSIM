@@ -64,6 +64,7 @@ export * from "./forage.js";
 export * from "./species.js";
 export * from "./husbandry.js";
 export * from "./mot-de-passe.js";
+export * from "./amenagement.js";
 
 /** Monnaie du jeu : le terron (€). Le champ interne reste `crd`. */
 export const CURRENCY_CODE = "€";
