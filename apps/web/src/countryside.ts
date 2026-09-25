@@ -46,6 +46,7 @@ import {
   maillageFacette,
   makeVoiture,
 } from "./decor3d";
+import { fusionnerStatique } from "./fusion-statique";
 import { creerVoisinDetaille, poserBatimentsVoisin, type VoisinDetaille } from "./voisin3d";
 import { creerLieu, creerPancarteVente, type Jetables } from "./village3d";
 import type { BuildingRig } from "./buildings3d";
@@ -109,17 +110,17 @@ export type Campagne = {
 /**
  * Combien de parcelles passent en détail plein à la fois.
  *
- * Trois, et une seule en réglage sobre. Le détail, c'est les **cultures**
+ * Deux, et une seule en réglage sobre. Le détail, c'est les **cultures**
  * (des milliers de brins) et les bêtes articulées. Les bâtiments, eux, sont
  * les vrais modèles partout : un silo se lit de loin, et il n'y en a que
  * quelques-uns par ferme.
  */
-export const DETAILS_MAX = 3;
+export const DETAILS_MAX = 2;
 
 /**
  * Au-delà de cette distance du regard, une parcelle reste en nappe.
  *
- * Sans elle, les trois plus proches passeraient en détail même quand le joueur
+ * Sans elle, les deux plus proches passeraient en détail même quand le joueur
  * regarde à l'autre bout de la commune : on paierait des brins qu'on ne
  * distingue plus.
  */
@@ -676,6 +677,27 @@ export function createCountryside(o: OptionsCampagne): Campagne {
         rigsBatiments.push(rig);
       }
     }
+  }
+  /*
+   * Trente bâtiments, six cents pièces : autant d'appels de rendu par image,
+   * le double avec les ombres, pour des murs qui ne bougent pas. Tout ce qui
+   * est immobile est cuit en quelques maillages ; girouettes et hélices
+   * restent sur leur modèle et continuent de tourner.
+   */
+  const animes = new Set<THREE.Object3D>();
+  for (const r of rigsBatiments) {
+    for (const n of [...r.anchors("vane"), ...r.anchors("rotor")]) animes.add(n);
+  }
+  const fusionBatiments = fusionnerStatique(
+    rigsBatiments.map((r) => r.group),
+    object,
+    (o) => animes.has(o),
+  );
+  {
+    const groupe = new THREE.Group();
+    groupe.name = "campagne-batiments-fusion";
+    for (const m of fusionBatiments.meshes) groupe.add(m);
+    object.add(groupe);
   }
 
   /*
@@ -1560,7 +1582,7 @@ export function createCountryside(o: OptionsCampagne): Campagne {
    * Choisit les parcelles à détailler d'après le point regardé.
    *
    * Ne fait rien tant que le choix ne change pas : ce point bouge à chaque
-   * image pendant un glissement, et reconstruire trois champs soixante fois
+   * image pendant un glissement, et reconstruire deux champs soixante fois
    * par seconde ferait de la fluidité le prix du déplacement.
    */
   function setCentreVue(x: number, z: number): void {
@@ -1620,6 +1642,7 @@ export function createCountryside(o: OptionsCampagne): Campagne {
     detailles.clear();
     for (const r of rigsBatiments) r.dispose();
     rigsBatiments.length = 0;
+    fusionBatiments.dispose();
     for (const e of enginsVillage) e.dispose();
     enginsVillage.length = 0;
     for (const g of jetables.geometries) g.dispose();

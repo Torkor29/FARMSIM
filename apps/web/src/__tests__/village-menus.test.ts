@@ -7,9 +7,10 @@ import { RAIL_GROUPS, TOOL_GROUPS } from "../ui/tool-options";
  *
  * Ils avaient chacun un bouton — Ventes dans le dock et le rail, Garage et
  * Bureau dans « Mon exploitation », Garage et Missions dans le tiroir Plus —
- * en plus de la coopérative, de la concession et de la mairie. Un bouton qui
- * double un bâtiment apprend à ignorer le bâtiment : les boutons partent, et
- * la vue se charge de mener au village quand il sort du cadre.
+ * en plus de la coopérative, de la concession et de la mairie. Au téléphone,
+ * ils partent : c'est au village qu'on vend, répare et prend ses missions.
+ * Sur PC, le menu de gauche les a retrouvés — sans eux, « on n'a plus du
+ * tout de menu ».
  */
 const APP = fs.readFileSync("src/App.tsx", "utf8");
 const VUE = fs.readFileSync("src/IsoFarmView.tsx", "utf8");
@@ -27,11 +28,19 @@ describe("le village remplace les menus", () => {
     expect(RAIL).not.toMatch(/onMarket/);
   });
 
-  it("retire Garage, Bureau et Missions des panneaux", () => {
+  it("retire Garage et Missions du tiroir du téléphone", () => {
     const onglets = APP.match(/const SHEET_TABS[^;]+;/)?.[0] ?? "";
     expect(onglets).not.toMatch(/GARAGE|OFFICE/);
-    expect(APP).not.toMatch(/id: "GARAGE",\s*label: "Garage"/);
-    expect(APP).not.toMatch(/id: "OFFICE",\s*label: "Bureau"/);
+  });
+
+  it("garde Ventes, Garage et Bureau au menu de gauche sur PC", () => {
+    // « On n'a plus du tout de menu sur PC, c'est pas normal » : le village
+    // reste une porte d'entrée, le menu redevient l'autre.
+    expect(APP).toMatch(/id: "MARKET",\s*label: "Ventes"/);
+    expect(APP).toMatch(/id: "GARAGE",\s*label: "Garage"/);
+    expect(APP).toMatch(/id: "OFFICE",\s*label: "Bureau"/);
+    // Chez un voisin, on ne vend pas depuis sa ferme.
+    expect(APP).toMatch(/\.\.\.\(visiting\s*\? \[\]\s*: \[\s*\{\s*id: "MARKET"/);
   });
 
   it("ouvre le Bureau depuis la mairie au téléphone aussi", () => {

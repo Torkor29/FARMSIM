@@ -209,7 +209,10 @@ export function creerVoisinDetaille(o: OptionsVoisin): VoisinDetaille {
   if (reel?.culture && hauteur > 0) {
     const indices = casesSemees(cases, reel.partCultivee, grain);
     if (indices.length) {
-      champ = createCropField(indices.length, sobre ? 0.45 : 0.7);
+      // Moitié moins dru que chez soi : on voit ces champs de loin, et trois
+      // parcelles au semis plein faisaient à elles seules sept cent mille
+      // triangles par image — l'essentiel de « c'est super lent ».
+      champ = createCropField(indices.length, sobre ? 0.25 : 0.35);
       const teinte = couleurChamp(parcelle.culture, parcelle.etat ?? "POUSSE");
       const grand = reel.culture === "MAIZE";
       champ.setCells(
