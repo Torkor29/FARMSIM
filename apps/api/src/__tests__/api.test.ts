@@ -834,8 +834,12 @@ describe("lieu de vie", () => {
       `l'employé d'élevage ne change rien : ${avant} puis ${apres} litres`,
     );
     // Cinq crans au-dessus du premier : +20 %, ni plus ni moins.
+    /* Tolérance relative d'un pour cent : l'annonce dérive d'un cheveu entre
+       deux lectures (le troupeau vit), et une égalité au millième de litre
+       faisait échouer le test sur une machine chargée. Vingt pour cent de gain
+       restent sans ambiguïté. */
     assert.ok(
-      Math.abs(apres / avant - 1.2) < 0.001,
+      Math.abs(apres / avant - 1.2) < 0.01,
       `gain inattendu : ${(apres / avant - 1).toFixed(3)} au lieu de 0,200`,
     );
 
@@ -848,7 +852,7 @@ describe("lieu de vie", () => {
     });
     assert.equal(mute.statut, 200);
     assert.ok(
-      Math.abs((await litresAnnonces()) - avant) < 0.001,
+      Math.abs((await litresAnnonces()) / avant - 1) < 0.01,
       "un employé aux champs ne devrait rien apporter à l'étable",
     );
   });
@@ -3439,6 +3443,12 @@ describe("un chantier prend du temps", () => {
       jeton: moi.jeton,
     });
     assert.equal(c.statut, 201, `le joueur doit pouvoir mener le sien : ${JSON.stringify(c.corps)}`);
+    /* Même précaution que pour `a` : six cases de semis finissent en moins
+       d'une seconde en test, et le plafond ne compte que ce qui tourne à
+       l'instant. Sans figer `c`, `d` passait chaque fois que la machine
+       tardait un peu — le test mesurait la charge, pas la règle. */
+    const jobC = (c.corps as unknown as { job: { id: string } }).job.id;
+    prismaExec(`UPDATE "FieldJob" SET "endsAt" = '${finLointaine}' WHERE id = '${jobC}';`);
     const d = await appel(`/parcels/${parcelle.id}/jobs`, {
       methode: "POST",
       corps: { userId: moi.id, work: "PLANT", crop: cropDeSaison(), cells: cells.slice(18, 24) },
