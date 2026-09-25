@@ -47,6 +47,8 @@ import {
   SILAGE_MIN_PROGRESS,
   buildingMoveCost,
   GAME_DAY_MS,
+  WEED_GROWTH_PER_DAY,
+  WEED_SEASON_SPEED,
 } from "@farmsim/shared";
 
 const API_DIR = fileURLToPath(new URL("../..", import.meta.url));
@@ -1958,13 +1960,20 @@ describe("calendrier cultural", () => {
     };
 
     /*
-     * Une case labourée il y a six jours de jeu — ce qu'un joueur obtient en
-     * laissant son champ en l'état le temps d'une soirée. On la pose en base
-     * plutôt que d'attendre huit heures réelles.
+     * Une case labourée il y a quelques jours de jeu — ce qu'un joueur obtient
+     * en laissant son champ en l'état le temps d'une soirée. On la pose en
+     * base plutôt que d'attendre des heures réelles.
+     *
+     * Combien de jours, c'est la saison du serveur qui le dit : elle suit
+     * l'heure réelle, et l'hiver ne fait presque rien lever. Six jours fixes y
+     * donnaient 6 × 0,08 × 0,15 = 0,072, sous le seuil — le test tombait
+     * chaque fois que la CI passait pendant l'hiver du jeu.
      */
-    const ilYaSixJours = new Date(Date.now() - 6 * GAME_DAY_MS);
+    const pousseParJour = WEED_GROWTH_PER_DAY * WEED_SEASON_SPEED[saisonCourante()];
+    const jours = Math.max(6, Math.ceil(0.3 / pousseParJour));
+    const ilYaQuelquesJours = new Date(Date.now() - jours * GAME_DAY_MS);
     prismaExec(
-      `UPDATE "ParcelCell" SET "weedPressure" = 0, "weedAt" = '${ilYaSixJours.toISOString()}' ` +
+      `UPDATE "ParcelCell" SET "weedPressure" = 0, "weedAt" = '${ilYaQuelquesJours.toISOString()}' ` +
         `WHERE "parcelId" = '${parcelle.id}' AND x = ${cible.x} AND y = ${cible.y};`,
     );
 
@@ -1972,7 +1981,7 @@ describe("calendrier cultural", () => {
     const vue = await lire();
     assert.ok(
       vue.weedPressure > 0.1,
-      `le champ reste annoncé propre six jours après le labour : ${vue.weedPressure}`,
+      `le champ reste annoncé propre ${jours} jours après le labour : ${vue.weedPressure}`,
     );
 
     // 2 — Et le semis en hérite, au lieu de repartir de zéro. On sème ce que
