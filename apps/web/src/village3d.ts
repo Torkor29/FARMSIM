@@ -78,6 +78,27 @@ function forme(cle: string, fabrique: () => THREE.BufferGeometry): THREE.BufferG
 }
 const cylindre = (cotes = 12) => forme(`cyl${cotes}`, () => new THREE.CylinderGeometry(0.5, 0.5, 1, cotes));
 const cone = (cotes = 12) => forme(`cone${cotes}`, () => new THREE.ConeGeometry(0.5, 1, cotes));
+/**
+ * La ruche en paille : un dôme d'un d'unité de haut, de rayon ½ au pied, fait
+ * de boudins de paille superposés — c'est le bourrelet de chaque rang qui dit
+ * « ruche » au premier coup d'œil.
+ */
+const rucheEnPaille = () =>
+  forme("ruche", () => {
+    const profil: THREE.Vector2[] = [new THREE.Vector2(0.001, 0)];
+    const rayon = (y: number) => 0.5 * Math.sqrt(Math.max(0, 1 - Math.pow(y / 0.96, 2.6)));
+    const RANGS = 7;
+    for (let j = 0; j < RANGS; j++) {
+      const y0 = (j / RANGS) * 0.9;
+      const y1 = y0 + 0.9 / RANGS / 2;
+      profil.push(new THREE.Vector2(Math.max(0.03, rayon(y0) - 0.02), y0));
+      profil.push(new THREE.Vector2(Math.max(0.05, rayon(y1) + 0.035), y1));
+    }
+    profil.push(new THREE.Vector2(0.07, 0.93), new THREE.Vector2(0.001, 0.97));
+    return new THREE.LatheGeometry(profil, 12);
+  });
+/** Une touffe arrondie : le pied d'un buisson de lavande. */
+const touffe = () => forme("touffe", () => new THREE.IcosahedronGeometry(0.5, 1));
 
 type Tableaux = { pos: number[]; col: number[] };
 
@@ -586,33 +607,96 @@ export function creerLieu(
     }
     case "RUCHER": {
       /*
-       * Un rucher qu'on reconnaît : trois ruches blanches à toit rouge sur
-       * leurs tréteaux, un champ de lavande derrière, une pancarte devant.
-       * La première version — des cubes plats et des fleurs en dés semés
-       * autour — appelait une seule question : « c'est quoi ça ? ».
+       * Un rucher d'autrefois : trois ruches en paille sur un banc de bois,
+       * des pieds de lavande derrière, deux tournesols aux bouts du banc,
+       * des marguerites devant et une pancarte.
+       *
+       * Deux versions ont précédé, et la même question est revenue : « c'est
+       * quoi ça ? ». Des pavés à toit plat, puis des caisses à toit rouge,
+       * entourés de fleurs en dés ou en palets : rien qui ne soit une ruche
+       * ou une fleur qu'à condition de le savoir. La ruche en paille et le
+       * pied de lavande se lisent sans légende.
        */
-      const LAVANDE = [0x8e6cc4, 0x9b7bd0, 0x7f5fb8];
-      for (let r = 0; r < 3; r++) {
-        const z = -2.4 + r * 0.85;
-        ajouterBoite(t.pos, t.col, 0, 0.1, z, 5.4, 0.2, 0.42, 0x5c7f43);
-        for (let k = 0; k < 7; k++) {
-          const x = -2.4 + k * 0.8 + (r % 2) * 0.2;
-          ajouterGeometrie(t.pos, t.col, cylindre(6), pose(x, 0.36, z, k * 0.7, 0.62, 0.34, 0.5), LAVANDE[(k + r) % 3]!);
+      const PAILLE = 0xd8a849;
+      const zBanc = 0.35;
+      const hBanc = 0.46;
+      // Le banc : une planche épaisse, quatre pieds, une traverse.
+      ajouterBoite(t.pos, t.col, 0, hBanc - 0.05, zBanc, 3.9, 0.1, 0.8, BOIS_CLAIR);
+      for (const sx of [-1.75, 1.75]) {
+        for (const sz of [-0.28, 0.28]) {
+          ajouterBoite(t.pos, t.col, sx, (hBanc - 0.1) / 2, zBanc + sz, 0.12, hBanc - 0.1, 0.12, BOIS);
+        }
+        ajouterBoite(t.pos, t.col, sx, 0.14, zBanc, 0.08, 0.08, 0.6, BOIS);
+      }
+      ajouterBoite(t.pos, t.col, 0, 0.14, zBanc, 3.5, 0.08, 0.08, BOIS);
+      // Les ruches en paille, chacune sur son plateau, l'entrée face à nous.
+      for (let i = 0; i < 3; i++) {
+        const x = -1.25 + i * 1.25;
+        const haut = 1.0 + (i === 1 ? 0.08 : 0);
+        ajouterBoite(t.pos, t.col, x, hBanc + 0.02, zBanc, 1.0, 0.04, 0.72, 0x7a5a36);
+        ajouterGeometrie(t.pos, t.col, rucheEnPaille(), pose(x, hBanc + 0.04, zBanc, i * 0.9, 0.98, haut, 0.98), PAILLE);
+        // Le trou de vol : une petite arche sombre au pied, côté caméra.
+        ajouterBoite(t.pos, t.col, x + 0.33, hBanc + 0.12, zBanc + 0.33, 0.24, 0.14, 0.12, 0x2c2012, Math.PI / 4);
+      }
+      // La lavande : un pied vert-de-gris hérissé d'épis qui s'écartent.
+      const LAVANDE = [0x7c56c0, 0x9270d0, 0x6a48ae];
+      const pieds: [number, number][] = [];
+      for (const [z, dx] of [[-1.05, 0], [-2.15, 0.6]] as const) {
+        for (let k = 0; k < 4; k++) pieds.push([-2.1 + dx + k * 1.3, z]);
+      }
+      for (const [bx, bz] of pieds) {
+        // Le pied, bombé : c'est la masse ronde qui fait le buisson.
+        ajouterGeometrie(t.pos, t.col, touffe(), pose(bx, 0.2, bz, bx * 3, 0.92, 0.56, 0.92), 0x6f8c62);
+        const EPIS = 26;
+        for (let e = 0; e < EPIS; e++) {
+          const a = e * 2.39996 + bx;
+          const r = Math.sqrt((e + 0.5) / EPIS) * 0.38;
+          const incl = r * 0.85;
+          const L = 0.16 + ((e * 3) % 4) * 0.035;
+          // Le pied des épis suit le dôme : au centre plus haut qu'au bord.
+          const y0 = 0.2 + 0.26 * Math.sqrt(Math.max(0, 1 - (r / 0.46) ** 2));
+          const px = bx + Math.sin(a) * r;
+          const pz = bz + Math.cos(a) * r;
+          const dx = Math.sin(a) * Math.sin(incl);
+          const dz = Math.cos(a) * Math.sin(incl);
+          const dy = Math.cos(incl);
+          ajouterGeometrie(
+            t.pos, t.col, cylindre(4),
+            pose(px + dx * L * 0.5, y0 + dy * L * 0.5, pz + dz * L * 0.5, a, 0.03, L, 0.03, incl),
+            0x7f9d5e,
+          );
+          ajouterGeometrie(
+            t.pos, t.col, cylindre(5),
+            pose(px + dx * (L + 0.1), y0 + dy * (L + 0.1), pz + dz * (L + 0.1), a, 0.11, 0.24, 0.11, incl),
+            LAVANDE[e % 3]!,
+          );
         }
       }
-      for (let i = 0; i < 3; i++) {
-        const x = -1.7 + i * 1.7;
-        const z = 1.1;
-        // Le tréteau : deux pieds, une planche.
-        for (const s of [-1, 1]) ajouterBoite(t.pos, t.col, x + s * 0.32, 0.14, z, 0.1, 0.28, 0.7, BOIS);
-        ajouterBoite(t.pos, t.col, x, 0.31, z, 0.9, 0.06, 0.8, BOIS_CLAIR);
-        // Le corps, la hausse, le toit à deux pans.
-        ajouterBoite(t.pos, t.col, x, 0.66, z, 0.82, 0.64, 0.72, 0xf4efe0);
-        ajouterBoite(t.pos, t.col, x, 1.1, z, 0.82, 0.24, 0.72, 0xeccb62);
-        ajouterGeometrie(t.pos, t.col, prismeUnite(), pose(x, 1.22, z, 0, 1.0, 0.34, 0.92), 0xa8432f);
-        // Le trou de vol et sa planche d'envol, face à la caméra.
-        ajouterBoite(t.pos, t.col, x, 0.44, z + 0.365, 0.36, 0.07, 0.02, 0x2e2418);
-        ajouterBoite(t.pos, t.col, x, 0.38, z + 0.43, 0.46, 0.03, 0.14, BOIS_CLAIR);
+      // Deux tournesols aux bouts du banc, la fleur tournée vers la caméra.
+      for (const sx of [-2.45, 2.45]) {
+        const h = 1.45;
+        ajouterBoite(t.pos, t.col, sx, h / 2, zBanc, 0.07, h, 0.07, 0x5f8a3a);
+        for (const [dy, s] of [[0.45, 1], [0.8, -1]] as const) {
+          ajouterGeometrie(t.pos, t.col, touffe(), pose(sx + s * 0.16, dy, zBanc + s * 0.1, s * 0.8, 0.34, 0.06, 0.2), 0x5f8a3a);
+        }
+        const face = Math.PI / 4;
+        const penche = 1.15;
+        ajouterGeometrie(t.pos, t.col, cylindre(12), pose(sx, h, zBanc, face, 0.62, 0.05, 0.62, penche), 0xf2c21b);
+        ajouterGeometrie(
+          t.pos, t.col, cylindre(10),
+          pose(sx + Math.sin(face) * 0.03, h + 0.012, zBanc + Math.cos(face) * 0.03, face, 0.3, 0.06, 0.3, penche),
+          0x5a3a1c,
+        );
+      }
+      // Des marguerites devant le banc : une tige, un cœur jaune, des pétales.
+      const MARGUERITES: [number, number][] = [
+        [-0.9, 1.45], [-0.55, 1.75], [0.2, 1.5], [0.65, 1.9], [1.3, 1.55], [1.8, 2.05], [-0.1, 2.2], [1.05, 2.35],
+      ];
+      for (const [mx, mz] of MARGUERITES) {
+        const h = 0.26 + ((mx * 10) % 3) * 0.03;
+        ajouterBoite(t.pos, t.col, mx, h / 2, mz, 0.03, h, 0.03, 0x6f9a45);
+        ajouterGeometrie(t.pos, t.col, cylindre(8), pose(mx, h, mz, 0, 0.22, 0.03, 0.22), 0xfbf8ef);
+        ajouterGeometrie(t.pos, t.col, cylindre(6), pose(mx, h + 0.02, mz, 0, 0.08, 0.04, 0.08), 0xf2b91c);
       }
       // La pancarte, tournée vers la caméra.
       const px = -2.2;
