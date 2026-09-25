@@ -675,8 +675,10 @@ function rucherEnCode(t: Tableaux): void {
 
 /** La pancarte du rucher, tournée vers la caméra. */
 function pancarteRucher(g: THREE.Group, j: Jetables, shadows: boolean): void {
-  const px = -2.2;
-  const pz = 2.35;
+  // Au coin du pré fauché, côté caméra : le rucher, à taille réelle, n'occupe
+  // plus toute l'emprise, et une pancarte restée au bord flottait dans le vide.
+  const px = -1.9;
+  const pz = 1.75;
   enseigne(g, j, shadows, "enseigne-rucher", { x: px, y: 0, z: pz, rotY: Math.PI / 4 }, (t, gg, jj) => {
     for (const s of [-1, 1]) {
       ajouterBoite(t.pos, t.col, px + s * 0.5, 0.5, pz - s * 0.5, 0.1, 1.0, 0.1, BOIS, Math.PI / 4);

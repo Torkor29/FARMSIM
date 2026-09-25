@@ -4034,108 +4034,36 @@ describe("le voisinage d’une parcelle", () => {
     assert.ok(mienne.partCultivee < 0.1, `part trop grande : ${mienne.partCultivee}`);
   });
 
-  it("chiffre toute parcelle libre ou PNJ du voisinage, même non mitoyenne", async () => {
+  it("ne vend plus les parcelles du pays : la terre s'achète autour de sa ferme", async () => {
     /*
-     * On agrandit dans le voisinage, pas seulement collé. L'adjacence reste un
-     * facteur de prix ; elle ne cache plus le devis. Un autre joueur, jamais.
+     * Deux systèmes se marchaient dessus — acheter une parcelle du monde, puis
+     * chaque lot autour. Il n'en reste qu'un : la ferme grandit d'un seul
+     * tenant. Le voisinage ne chiffre plus rien, et l'achat est refusé avec
+     * le chemin à suivre.
      */
-    const { parcelId, vue } = await fermeAvecVoisins("Voisin Cinq");
-    const moi = vue.parcelles.find((p) => p.id === parcelId)!;
-    let loin = 0;
+    const { moi, parcelId, vue } = await fermeAvecVoisins("Voisin Cinq");
     for (const p of vue.parcelles) {
-      if (p.statut === "LIBRE" || p.statut === "PNJ") {
-        assert.ok(p.prix !== null && p.prix > 0, `${p.id} ${p.statut} sans devis`);
-        const collee = Math.abs(p.mapX - moi.mapX) + Math.abs(p.mapY - moi.mapY) === 1;
-        if (!collee && p.id !== parcelId) loin += 1;
-      } else {
-        assert.equal(p.prix, null, `${p.id} chiffrée alors qu'elle est ${p.statut}`);
-      }
+      assert.equal(p.prix, null, `${p.id} ${p.statut} encore chiffrée`);
     }
-    assert.ok(loin > 0, "le voisinage doit contenir une parcelle rachetable non mitoyenne");
-  });
-
-  it("laisse acheter une parcelle libre même non mitoyenne", async () => {
-    const { moi, parcelId, vue } = await fermeAvecVoisins("Voisin Loin");
-    const chezMoi = vue.parcelles.find((p) => p.id === parcelId)!;
-    const loin = vue.parcelles.find(
-      (p) =>
-        p.statut === "LIBRE" &&
-        p.id !== parcelId &&
-        Math.abs(p.mapX - chezMoi.mapX) + Math.abs(p.mapY - chezMoi.mapY) > 1,
-    );
-    assert.ok(loin, "il faut une parcelle libre non mitoyenne pour le test");
-
+    const libre = vue.parcelles.find((p) => p.statut === "LIBRE" && p.id !== parcelId);
+    assert.ok(libre, "il faut une parcelle libre pour le test");
     await appel("/dev/grant", {
       methode: "POST",
       corps: { userId: moi.id, crd: 400000, level: 20 },
       jeton: moi.jeton,
     });
-
-    const achat = await appel(`/parcels/${loin.id}/buy`, {
+    const achat = await appel(`/parcels/${libre.id}/buy`, {
       methode: "POST",
       corps: { userId: moi.id },
       jeton: moi.jeton,
     });
-    assert.equal(achat.statut, 200, `achat loin refusé : ${JSON.stringify(achat.corps)}`);
+    assert.equal(achat.statut, 409, JSON.stringify(achat.corps));
+    assert.match(String((achat.corps as { error?: string }).error), /Construire/);
     const me = await appel("/auth/me", { jeton: moi.jeton });
     const ids = (
       me.corps as unknown as { player: { farm: { parcels: { id: string }[] } } }
     ).player.farm.parcels.map((p) => p.id);
-    assert.ok(ids.includes(loin.id), "la parcelle non mitoyenne n'est pas à la ferme");
-  });
-
-  it("laisse racheter la parcelle d'un voisin PNJ", async () => {
-    /*
-     * La moitié de la commune est déjà exploitée. Sans rachat, les quatre
-     * voisins d'une ferme de départ sont souvent occupés, et le joueur
-     * demande « est-ce qu'on va pouvoir acheter les parcelles voisines
-     * bientôt ? ». On rachète au PNJ, jamais à un autre joueur.
-     */
-    const { moi, parcelId, vue } = await fermeAvecVoisins("Voisin Sept");
-    const chezMoi = vue.parcelles.find((p) => p.id === parcelId)!;
-    const voisine = vue.parcelles.find(
-      (p) =>
-        p.statut === "LIBRE" &&
-        Math.abs(p.mapX - chezMoi.mapX) + Math.abs(p.mapY - chezMoi.mapY) === 1,
-    );
-    assert.ok(voisine, "il faut une parcelle libre mitoyenne pour le test");
-
-    const npc = await inscrire("Exploitant Npc");
-    await appel("/world/claim", {
-      methode: "POST",
-      corps: { userId: npc.id, specialization: "CEREALIER", parcelId: voisine.id },
-      jeton: npc.jeton,
-    });
-    prismaExec(`UPDATE "User" SET "isNpc" = true WHERE id = '${npc.id}';`);
-
-    await appel("/dev/grant", {
-      methode: "POST",
-      corps: { userId: moi.id, crd: 400000, level: 20 },
-      jeton: moi.jeton,
-    });
-
-    const apres = await appel(`/parcels/${parcelId}/voisinage`, { jeton: moi.jeton });
-    assert.equal(apres.statut, 200);
-    const fiche = (
-      apres.corps as unknown as {
-        parcelles: { id: string; statut: string; prix: number | null; achetable: boolean }[];
-      }
-    ).parcelles.find((p) => p.id === voisine.id);
-    assert.equal(fiche?.statut, "PNJ");
-    assert.ok(fiche?.prix && fiche.prix > 0, "le devis du voisin PNJ manque");
-    assert.equal(fiche?.achetable, true);
-
-    const achat = await appel(`/parcels/${voisine.id}/buy`, {
-      methode: "POST",
-      corps: { userId: moi.id },
-      jeton: moi.jeton,
-    });
-    assert.equal(achat.statut, 200, `rachat PNJ refusé : ${JSON.stringify(achat.corps)}`);
-    const me = await appel("/auth/me", { jeton: moi.jeton });
-    const ids = (
-      me.corps as unknown as { player: { farm: { parcels: { id: string }[] } } }
-    ).player.farm.parcels.map((p) => p.id);
-    assert.ok(ids.includes(voisine.id), "la parcelle rachetée n'est pas à la ferme");
+    assert.deepEqual(ids, [parcelId], "aucune parcelle ne s'ajoute à la ferme");
   });
 
   it("refuse à qui n’a pas de session", async () => {
@@ -4613,7 +4541,13 @@ describe("la ferme libre", () => {
       buildings: { id: string; type: string; originX: number; originY: number; rotation: number }[];
       amenagements: { id: string; type: string; originX: number; originY: number; rotation: number }[];
     };
-    domaine: { marge: number; lotsAchetes: number; lots: LotVue[]; charme: number } | null;
+    domaine: {
+      marge: number;
+      bornes: { minX: number; minY: number; maxX: number; maxY: number };
+      lotsAchetes: number;
+      lots: LotVue[];
+      charme: number;
+    } | null;
   };
 
   async function fermeLibre(nom: string, crd = 500000) {
@@ -4658,11 +4592,50 @@ describe("la ferme libre", () => {
       jeton: moi.jeton,
     });
 
+  it("trace une clôture d'un geste : ce qui tient se pose, le reste est sauté, un seul paiement", async () => {
+    const { moi, parcelId } = await fermeLibre("Clôtureur");
+    const argentAvant = await argent(moi.jeton);
+    // Le long du bord nord, de la friche (x = −2) jusqu'à l'étable de départ.
+    const ligne = Array.from({ length: 14 }, (_, i) => ({ x: i - 2, y: 0 }));
+    const r = await appel(`/parcels/${parcelId}/amenagements/trace`, {
+      methode: "POST",
+      corps: { userId: moi.id, type: "cloture", cells: ligne },
+      jeton: moi.jeton,
+    });
+    assert.equal(r.statut, 201, JSON.stringify(r.corps));
+    const { poses, ignorees, cout } = r.corps as unknown as { poses: number; ignorees: number; cout: number };
+    const v = await vue(parcelId, moi.jeton);
+    const etable = new Set(
+      v.parcel.cells.filter((c) => c.kind === "BUILDING" && c.y === 0).map((c) => c.x),
+    );
+    // Deux cases de friche et celles de l'étable sont sautées.
+    assert.equal(poses, 12 - etable.size);
+    assert.equal(ignorees, 14 - poses);
+    assert.equal(cout, poses * 35);
+    assert.equal(await argent(moi.jeton), argentAvant - cout);
+    assert.equal(v.parcel.amenagements.filter((a) => a.type === "cloture").length, poses);
+    // Retracer la même ligne ne pose rien : tout est déjà clôturé ou occupé.
+    const deux = await appel(`/parcels/${parcelId}/amenagements/trace`, {
+      methode: "POST",
+      corps: { userId: moi.id, type: "cloture", cells: ligne },
+      jeton: moi.jeton,
+    });
+    assert.equal(deux.statut, 409, JSON.stringify(deux.corps));
+    // Un objet de plus d'une case ne se trace pas.
+    const puits = await appel(`/parcels/${parcelId}/amenagements/trace`, {
+      methode: "POST",
+      corps: { userId: moi.id, type: "batiment:BARN", cells: ligne },
+      jeton: moi.jeton,
+    });
+    assert.equal(puits.statut, 400);
+  });
+
   it("donne au siège un domaine, avec sa ferme au centre et de la friche autour", async () => {
     const { moi, parcelId } = await fermeLibre("Domaine");
     const v = await vue(parcelId, moi.jeton);
     assert.ok(v.domaine, "le propriétaire voit son domaine");
-    assert.equal(v.domaine.marge, 6);
+    // Un anneau d'un lot de friche autour de ce qu'on possède.
+    assert.deepEqual(v.domaine.bornes, { minX: -6, minY: -6, maxX: 18, maxY: 18 });
     // La ferme de départ : 144 cases, toutes à soi, rien en friche encore.
     assert.equal(v.parcel.cells.length, 144);
     assert.ok(v.parcel.cells.every((c) => c.x >= 0 && c.y >= 0 && c.x < 12 && c.y < 12));
@@ -4713,7 +4686,21 @@ describe("la ferme libre", () => {
     const coinApres = apres.domaine!.lots.find((l) => l.id === coin.id)!;
     assert.equal(coinApres.etat, "ACHETABLE");
     const memeTaille = apres.domaine!.lots.find((l) => l.etat === "ACHETABLE" && l.w === lot.w && l.h === lot.h)!;
-    assert.ok(memeTaille.prix > lot.prix, "chaque lot rend le suivant plus cher");
+    assert.ok(memeTaille.prix > lot.prix, "une ferme plus grande paie sa terre un peu plus cher");
+    // La friche a reculé d'un lot au nord, et seulement au nord : le terrain
+    // grandit sans limite, ses bords suivent.
+    assert.deepEqual(apres.domaine!.bornes, { minX: -6, minY: -12, maxX: 18, maxY: 18 });
+    const auNord = apres.domaine!.lots.find((l) => l.x === lot.x && l.y === lot.y - 6)!;
+    assert.equal(auNord.etat, "ACHETABLE", "le lot au-delà du nouveau devient achetable");
+    const encore = await appel(`/parcels/${parcelId}/lots/buy`, {
+      methode: "POST",
+      corps: { userId: moi.id, lot: auNord.id },
+      jeton: moi.jeton,
+    });
+    assert.equal(encore.statut, 201, JSON.stringify(encore.corps));
+    const loin = await vue(parcelId, moi.jeton);
+    assert.equal(loin.domaine!.bornes.minY, -18);
+    assert.equal(loin.parcel.cells.filter((c) => c.y < -6).length, 36);
   });
 
   it("refuse un lot qu'on ne peut pas payer, sans rien débiter", async () => {

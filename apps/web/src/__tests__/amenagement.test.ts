@@ -19,6 +19,10 @@ import {
   validerPose,
   BUILDING_DEFS,
   type CaseSource,
+  bornesDuDomaine,
+  lotDeCase,
+  lotParId,
+  NIVEAU_LOT_MAX,
 } from "@farmsim/shared";
 
 /**
@@ -174,28 +178,51 @@ describe("les lots de terrain", () => {
     const lots = lotsDuDomaine(bornes);
     expect(lots).toHaveLength(16);
     const possedees = new Set(fermeClassique().map((c) => `${c.x},${c.y}`));
-    const coin = lots.find((l) => l.i === 0 && l.j === 0)!;
-    const bord = lots.find((l) => l.i === 1 && l.j === 0)!;
-    const centre = lots.find((l) => l.i === 1 && l.j === 1)!;
+    // La trame est globale : le lot 0:0 couvre les cases 0 à 5.
+    const coin = lots.find((l) => l.i === -1 && l.j === -1)!;
+    const bord = lots.find((l) => l.i === 0 && l.j === -1)!;
+    const centre = lots.find((l) => l.i === 0 && l.j === 0)!;
     expect(etatLot(centre, possedees).etat).toBe("POSSEDE");
     expect(etatLot(bord, possedees)).toEqual({ etat: "ACHETABLE", aAcheter: 36 });
     // Le coin ne touche la ferme que par un angle : il faudra passer par un côté.
     expect(etatLot(coin, possedees).etat).toBe("ENCLAVE");
   });
 
-  it("coûtent de plus en plus, sans mur de niveau", () => {
-    const p1 = prixLot({ cases: 36, lotsAchetes: 0 });
-    const p6 = prixLot({ cases: 36, lotsAchetes: 5 });
-    const p12 = prixLot({ cases: 36, lotsAchetes: 11 });
-    // Le premier lot vaut un petit bâtiment, le douzième une étable et plus.
+  it("repoussent la friche : les bornes suivent ce qu'on possède, sans limite", () => {
+    const ferme = fermeClassique();
+    expect(bornesDuDomaine(ferme)).toEqual({ minX: -6, minY: -6, maxX: 18, maxY: 18 });
+    // Un lot acheté au nord : la friche recule d'un lot au nord seulement.
+    const plus = [...ferme, ...casesDuLot("0:-1")];
+    expect(bornesDuDomaine(plus)).toEqual({ minX: -6, minY: -12, maxX: 18, maxY: 18 });
+    // Très loin : aucune borne ne l'arrête.
+    const loin = [...plus, ...casesDuLot("0:-40")];
+    expect(bornesDuDomaine(loin).minY).toBe(-246);
+    expect(lotDeCase(-1, -1).id).toBe("-1:-1");
+  });
+
+  it("coûtent selon la surface possédée, en pente douce et sans mur", () => {
+    const p1 = prixLot({ cases: 36, possedees: 144 });
+    const x4 = prixLot({ cases: 36, possedees: 576 });
+    const x16 = prixLot({ cases: 36, possedees: 2304 });
+    // Le premier lot vaut à peu près la trésorerie de départ.
     expect(p1).toBeGreaterThan(5000);
     expect(p1).toBeLessThan(12000);
-    expect(p6).toBeGreaterThan(p1 * 2);
-    expect(p12).toBeGreaterThan(BUILDING_DEFS.CATTLE_BARN.cost);
+    // Quatre fois plus grand : deux fois plus cher. Seize fois : quatre fois.
+    expect(x4 / p1).toBeCloseTo(2, 1);
+    expect(x16 / p1).toBeCloseTo(4, 1);
+    expect(x16).toBeGreaterThan(BUILDING_DEFS.CATTLE_BARN.cost);
     expect(niveauPourLot(1)).toBe(1);
     expect(niveauPourLot(12)).toBeLessThanOrEqual(15);
+    expect(niveauPourLot(500)).toBe(NIVEAU_LOT_MAX);
   });
 });
+
+function casesDuLot(id: string): { x: number; y: number; sol: "PRE" }[] {
+  const l = lotParId(id)!;
+  const out: { x: number; y: number; sol: "PRE" }[] = [];
+  for (let y = l.y; y < l.y + l.h; y++) for (let x = l.x; x < l.x + l.w; x++) out.push({ x, y, sol: "PRE" });
+  return out;
+}
 
 describe("les effets du décor", () => {
   it("restent petits, lisibles et plafonnés", () => {

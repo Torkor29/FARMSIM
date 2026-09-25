@@ -2909,6 +2909,28 @@ export function App() {
   /* ------------------------------------------------------------------ */
 
   const defArme = useMemo(() => (arme ? (defConstruction(arme) ?? null) : null), [arme]);
+  /** Un objet d'une case se trace au glissé : clôture, haie, rangée d'arbres. */
+  const armeTracable = Boolean(defArme && defArme.pose === "OBJET" && defArme.emprise.w === 1 && defArme.emprise.h === 1);
+
+  /** Les poses d'un tracé d'objets, dans l'ordre, comme le serveur les fera. */
+  function poserLeLong(def: DefConstruction, cells: { x: number; y: number }[]) {
+    const g = construireGrille({ bornes: bornesIci, cells: grid, amenagements });
+    const ok: { x: number; y: number }[] = [];
+    const verdicts: { x: number; y: number; ok: boolean }[] = [];
+    let refus: string | undefined;
+    for (const c of cells) {
+      const v = validerPose(g, def, { x: c.x, y: c.y, rotation: rotationArme });
+      verdicts.push({ x: c.x, y: c.y, ok: v.ok });
+      if (!v.ok) {
+        refus ??= LIBELLE_REFUS[v.raison ?? "HORS_DOMAINE"];
+        continue;
+      }
+      ok.push(c);
+      const k = g.cases.get(cleCase(c.x, c.y));
+      if (k) k.volume = { type: "OBJET", id: `trace-${ok.length}`, defId: def.id };
+    }
+    return { ok, verdicts, refus };
+  }
 
   /**
    * Ce que la vue montre en construction, et ce que dit la ligne d'état.
@@ -2991,6 +3013,20 @@ export function App() {
               : `${defArme.nom} : glissez un rectangle sur la ferme.`,
         };
       }
+    } else if (defArme?.pose === "OBJET" && apercuTerrain.length > 1) {
+      const t = poserLeLong(defArme, apercuTerrain);
+      fantome = t.verdicts;
+      const cout = t.ok.length * defArme.prix;
+      const manque = !canPay(player, cout);
+      ligne = !t.ok.length
+        ? { texte: t.refus ?? "Rien à poser ici", refus: true }
+        : {
+            texte: manque
+              ? `Il vous manque ${Math.ceil(cout - (player?.crd ?? 0))} €`
+              : `${defArme.nom} × ${t.ok.length}${t.ok.length < apercuTerrain.length ? ` · ${apercuTerrain.length - t.ok.length} case(s) sautée(s)` : ""}`,
+            refus: manque,
+            cout,
+          };
     } else if (defArme?.pose === "OBJET") {
       if (at && !enFriche) {
         const v = validerPose(grilleDomaine, defArme, { x: at.x, y: at.y, rotation: rotationArme });
@@ -3003,7 +3039,12 @@ export function App() {
             ? { texte: `Il vous manque ${Math.ceil(defArme.prix - (player?.crd ?? 0))} €`, refus: true }
             : { texte: `${defArme.nom} — touchez pour poser`, cout: defArme.prix };
       } else {
-        ligne = { texte: `${defArme.nom} : touchez une case de votre terrain.`, cout: defArme.prix };
+        ligne = {
+          texte: armeTracable
+            ? `${defArme.nom} : touchez une case, ou glissez pour en tracer une rangée.`
+            : `${defArme.nom} : touchez une case de votre terrain.`,
+          cout: defArme.prix,
+        };
       }
     }
     // Survoler la friche parle du lot, quel que soit l'élément armé : c'est
@@ -3105,6 +3146,28 @@ export function App() {
     playUiSound("click");
   }
 
+  /**
+   * « Agrandir ma ferme », d'où qu'on vienne : on rentre chez soi s'il le
+   * faut, puis le mode construction s'ouvre, la friche à vendre autour.
+   */
+  const construireEnArrivant = useRef(false);
+  function agrandirMaFerme() {
+    const siege = player?.farm?.parcels[0]?.id;
+    if (!visiting && domaine) {
+      entrerConstruction();
+      return;
+    }
+    if (!siege) return;
+    construireEnArrivant.current = true;
+    setActiveParcelId(siege);
+  }
+  useEffect(() => {
+    if (!construireEnArrivant.current || visiting || !domaine) return;
+    construireEnArrivant.current = false;
+    entrerConstruction();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [domaine, visiting]);
+
   function quitterConstruction() {
     setConstruction(false);
     setArme(null);
@@ -3187,6 +3250,30 @@ export function App() {
         body: JSON.stringify({ userId: player.id, type: def.id, x, y, rotation: rotationArme }),
       });
       await apresConstruction(`${def.nom} posé · −${def.prix} €`);
+    } catch (e) {
+      flashToast(e instanceof Error ? e.message : String(e), true);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  /** Une rangée d'objets tracée au glissé : ce qui tient se pose, d'un seul paiement. */
+  async function tracerObjets(cells: { x: number; y: number }[]) {
+    if (!player || !activeParcelId || !defArme || !armeTracable) return;
+    const def = defArme;
+    const t = poserLeLong(def, cells);
+    setApercuTerrain([]);
+    if (!t.ok.length) {
+      flashToast(t.refus ?? "Rien à poser ici", true);
+      return;
+    }
+    setBusy(true);
+    try {
+      const r = await api<{ poses: number; cout: number }>(`/parcels/${activeParcelId}/amenagements/trace`, {
+        method: "POST",
+        body: JSON.stringify({ userId: player.id, type: def.id, cells: t.ok, rotation: rotationArme }),
+      });
+      await apresConstruction(`${def.nom} × ${r.poses} · −${r.cout.toLocaleString("fr-FR")} €`);
     } catch (e) {
       flashToast(e instanceof Error ? e.message : String(e), true);
     } finally {
@@ -4885,57 +4972,6 @@ export function App() {
     }
   }
 
-  /**
-   * Achète une parcelle — et laisse la caméra où elle est.
-   *
-   * Elle appelait `setActiveParcelId(parcelId)` juste après l'achat : la vue
-   * sautait sur la nouvelle parcelle sans que personne l'ait demandé. C'est ce
-   * que le joueur décrivait par « après un achat, mes parcelles ne sont plus
-   * au même endroit » — ce n'étaient pas les parcelles qui bougeaient, c'était
-   * lui qu'on téléportait, au milieu du chantier qu'il était en train de
-   * suivre.
-   *
-   * On achète souvent une terre en prévision, pas pour y aller tout de suite.
-   * Le déplacement redevient donc un geste : la nouvelle parcelle apparaît
-   * dans « Mes parcelles », et c'est un clic qui y emmène.
-   */
-  async function buyAdjacent(parcelId: string) {
-    if (!player) return;
-    setBusy(true);
-    try {
-      await api(`/parcels/${parcelId}/buy`, {
-        method: "POST",
-        body: JSON.stringify({ userId: player.id }),
-      });
-      const apres = await refreshPlayer();
-      await refreshMeta();
-      /*
-       * Le paysage aussi, et tout de suite.
-       *
-       * Avant, l'achat vous téléportait sur la parcelle, et ce déplacement
-       * rechargeait le voisinage au passage. Sans lui, la terre achetée
-       * restait « à vendre », à fleur de sol, jusqu'au rafraîchissement
-       * suivant — trois quarts de minute pendant lesquels un clic dessus
-       * rouvrait la fiche d'achat au lieu d'y mener.
-       */
-      if (activeParcelId) await loadVoisinage(activeParcelId).catch(() => undefined);
-      const achetee = apres?.farm?.parcels.find((p) => p.id === parcelId);
-      /* La surface dans le message d'achat : c'est elle qu'on vient de payer,
-         et elle n'est plus la même d'un lot à l'autre. */
-      setMsg(
-        achetee
-          ? `${achetee.label} est à vous — ${hectaresDeGrille(
-              achetee.gridW,
-              achetee.gridH,
-            ).toLocaleString("fr-FR")} ha, elle vous attend dans « Mes parcelles »`
-          : "Parcelle acquise",
-      );
-    } catch (e) {
-      setErr(e instanceof Error ? e.message : String(e));
-    } finally {
-      setBusy(false);
-    }
-  }
 
   /** Rachat immédiat par le négociant : prix bas, mais toujours preneur. */
   async function sellToDealer(commodity: TradeGood, tons: number) {
@@ -6552,11 +6588,14 @@ export function App() {
               // vingt-quatre touchers pour une bande de blé, c'était le geste
               // le plus répété du jeu.
               strokeSelect={
-                construction ? defArme?.pose === "TERRAIN" && !deplaceObjet : !visiting && isFieldWorkTool(tool)
+                construction
+                  ? (defArme?.pose === "TERRAIN" || armeTracable) && !deplaceObjet
+                  : !visiting && isFieldWorkTool(tool)
               }
-              // Un chemin se trace au doigt ; un champ, un pré, un étang se
-              // tirent en rectangle — c'est la forme qu'on leur veut.
-              strokeRect={construction ? defArme?.regle !== "CHEMIN" : dragRect}
+              // Un chemin, une clôture, une haie se tracent au doigt ; un
+              // champ, un pré, un étang se tirent en rectangle — c'est la
+              // forme qu'on leur veut.
+              strokeRect={construction ? defArme?.pose === "TERRAIN" && defArme.regle !== "CHEMIN" : dragRect}
               onStrokeStart={() => {
                 strokeBase.current = selectedCells;
                 if (construction) setApercuTerrain([]);
@@ -6573,7 +6612,8 @@ export function App() {
               }}
               onStrokeSelect={(cells, mods) => {
                 if (construction) {
-                  void peindreTerrain(cells);
+                  if (armeTracable) void tracerObjets(cells);
+                  else void peindreTerrain(cells);
                   return;
                 }
                 const next = applySelection(
@@ -7752,7 +7792,10 @@ export function App() {
             <div>
               <dt>Parcelle</dt>
               <dd>
-                {hectaresDeGrille(gw, gh).toLocaleString("fr-FR", { maximumFractionDigits: 1 })} Ha ({gw}×{gh})
+                {/* Ce qu'on possède vraiment : la ferme grandit par lots, sa
+                    surface n'est plus celle de la grille d'origine. */}
+                {hectaresDeGrille(grid.length || gw * gh, 1).toLocaleString("fr-FR", { maximumFractionDigits: 1 })} Ha
+                {" "}({(grid.length || gw * gh).toLocaleString("fr-FR")} cases)
               </dd>
             </div>
           </dl>
@@ -8198,9 +8241,9 @@ export function App() {
       <ParcelleVoisineSheet
         voisin={voisinOuvert}
         enCours={busy}
-        onAcheter={async (id) => {
-          await buyAdjacent(id);
+        onAcheter={() => {
           setVoisinOuvert(null);
+          agrandirMaFerme();
         }}
         /* Le paysage n'ouvre plus cette fiche sur une parcelle à soi — il y
            emmène directement. Le bouton reste pour les autres chemins qui
@@ -8315,7 +8358,10 @@ export function App() {
         )}
         myFarmId={player.farm?.id}
         expandableIds={expandableParcelIds}
-        onBuyLand={buyAdjacent}
+        onBuyLand={() => {
+          setShowEta(false);
+          agrandirMaFerme();
+        }}
         ledger={journal.page?.lignes ?? []}
         ledgerJours={journal.jours}
         ledgerPage={journal.page}

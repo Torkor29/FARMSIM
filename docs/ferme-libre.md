@@ -100,22 +100,41 @@ rien ne se pose en friche.
 Quarts de tour, comme les bâtiments : `empriseOrientee()` permute largeur et
 profondeur pour les quarts impairs (une grange 3×4 tournée occupe 4×3).
 
-### Extensions de terrain : des lots
+### Un seul système de terrain, sans limite
 
-Le domaine est découpé en **lots de 6×6 cases** (3,5 ha). Un lot est
-achetable s'il touche par un côté une case déjà possédée : la ferme pousse
-dans la direction que le joueur choisit, et sa silhouette devient la sienne.
+Il n'y a plus qu'**une** façon d'avoir de la terre : agrandir sa ferme autour
+d'elle. Acheter une parcelle ailleurs dans le monde (`/parcels/:id/buy`) est
+fermé — on payait une parcelle, puis chaque lot autour, deux systèmes qui se
+marchaient dessus. Le voisinage ne chiffre plus rien, ses pancartes « À vendre »
+ont disparu, et la fiche d'une parcelle voisine comme le Bureau proposent
+« Agrandir ma ferme », qui ouvre le mode construction. Les parcelles déjà
+acquises restent à leur propriétaire et grandissent de la même façon.
+
+La terre est découpée en **lots de 6×6 cases** (3,5 ha) sur une **trame
+globale** : le lot `i:j` couvre les cases `6i…6i+5` × `6j…6j+5`, négatives
+comprises. Les **bornes du domaine ne sont plus fixes** : c'est la boîte de ce
+qu'on possède, calée sur la trame, plus **un anneau d'un lot** de friche à
+vendre (`bornesDuDomaine`). Acheter un lot au bord repousse la friche d'un lot
+dans cette direction seulement : la ferme grandit aussi loin qu'on veut, et son
+bord, la friche, la caméra et la campagne suivent. Un lot est achetable s'il
+touche par un côté une case possédée ; un coin qui ne touche que par un angle
+est enclavé.
+
+La limite de propriété n'est plus une clôture posée d'office : c'est un liseré
+clair, montré en mode construction. Les **clôtures et les haies, c'est le
+joueur qui les trace**, au glissé, où il veut (`/parcels/:id/amenagements/trace`
+pose un objet d'une case sur chaque case valide du tracé, d'un seul paiement).
 
 **Prix** : `cases × 505,6 €` (le prix de la terre du jeu : 5 200 €/ha, 14 ha
-pour 144 cases) × **0,5** (une friche contiguë vaut moins qu'une parcelle
-équipée) × fertilité × prix régional × **1,18 par lot déjà acheté**, arrondi aux
-50 € supérieurs. À fertilité moyenne : premier lot ≈ 10 200 €, sixième ≈
-23 350 €, douzième ≈ 63 000 € (≈ 356 000 € pour les douze). Un lot de blé
-rapporte ≈ 2 800 € brut par récolte de 28 h : le premier se rembourse en quatre
-à cinq récoltes, les derniers sont un objectif de fin de partie. Le premier lot
-coûte à peu près la trésorerie de départ (12 000 €) : c'est le premier vrai
-choix — un lot, une machine ou un bâtiment. **Niveau** : un palier doux (`1, 1,
-2, 3, 4, 5, 6, 7, 8, 10, 12, 14`), pas de mur artificiel.
+pour 144 cases) × **0,5** × fertilité × prix régional × **√(cases possédées /
+144)**, arrondi aux 50 € supérieurs. Une escalade par lot (×1,18 à chaque achat)
+faisait un mur : le trentième lot aurait coûté cent fois le premier. Avec la
+racine, une ferme quatre fois plus grande paie sa terre deux fois plus cher,
+seize fois plus grande quatre fois. À fertilité moyenne : premier lot ≈
+10 200 €, ≈ 20 400 € à 576 cases, ≈ 40 800 € à 2 304 cases. Le premier lot coûte
+à peu près la trésorerie de départ : c'est le premier vrai choix — un lot, une
+machine ou un bâtiment. **Niveau** : un palier doux (`1, 1, 2, 3, 4, 5, 6, 7, 8,
+10, 12, 14`), puis un niveau tous les deux lots, plafonné à 60.
 
 ### Coûts d'aménagement
 

@@ -3005,7 +3005,26 @@ export function IsoFarmView({
        * la terre ne restait plus sous le doigt. Une 16×16 tient quand même
        * dans ce cadre : la cour, à l'ouest, lui laisse la place.
        */
-      viewSpan = GRILLE_STANDARD.w * step + parkingOverhang;
+      // Une ferme qui a grandi se cadre en entier : c'est sa terre qu'on veut
+      // voir, pas la friche autour. Jamais moins qu'une parcelle standard.
+      let coteFerme: number = GRILLE_STANDARD.w;
+      {
+        const cs = dataRef.current.cells;
+        if (cs.length) {
+          let x0 = Infinity;
+          let x1 = -Infinity;
+          let y0 = Infinity;
+          let y1 = -Infinity;
+          for (const c of cs) {
+            if (c.x < x0) x0 = c.x;
+            if (c.x > x1) x1 = c.x;
+            if (c.y < y0) y0 = c.y;
+            if (c.y > y1) y1 = c.y;
+          }
+          coteFerme = Math.max(coteFerme, x1 - x0 + 1, y1 - y0 + 1);
+        }
+      }
+      viewSpan = coteFerme * step + parkingOverhang;
       applyCamera();
     }
 

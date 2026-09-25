@@ -618,20 +618,16 @@ export function OfficePanel({
             </div>
           ) : mode === "LAND" ? (
             <div className="hdv-single">
-              <p className="hdv-muted">Parcelles libres ou cédées par un voisin, dans vos régions — cliquez pour acheter.</p>
-              <div className="zone-maps office-maps">
-                {zones.map((z) => (
-                  <ZoneMap
-                    key={z.id}
-                    zone={z}
-                    myFarmId={myFarmId}
-                    selectableIds={expandableIds}
-                    onSelect={onBuyLand}
-                    compact
-                  />
-                ))}
-              </div>
-              {expandableIds.size === 0 && <p className="hdv-empty">Aucune parcelle à racheter dans vos régions.</p>}
+              {/* Une seule façon d'avoir de la terre : agrandir sa ferme autour
+                  d'elle, depuis le mode construction. La carte des régions
+                  vendait des parcelles ailleurs, un second système. */}
+              <p className="hdv-muted">
+                Votre ferme grandit d'un seul tenant : la friche qui l'entoure se vend par lots de 6×6
+                cases, et chaque lot acheté repousse la friche plus loin. Il n'y a pas de limite.
+              </p>
+              <button type="button" className="primary" onClick={() => onBuyLand("")}>
+                Agrandir ma ferme
+              </button>
             </div>
           ) : mode === "MINE" ? (
             <MineBody

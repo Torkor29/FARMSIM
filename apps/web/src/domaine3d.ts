@@ -285,6 +285,8 @@ export function creerDomaine3d(opts: { shadows: boolean }): Domaine3d {
   const geoPoussiere = new THREE.RingGeometry(0.2, 0.34, 18).rotateX(-Math.PI / 2);
   const poufs: { m: THREE.Mesh; t0: number | null }[] = [];
   let signatures: Map<string, string> | null = null;
+  /** Le trait de la limite de propriété, calculé avec le terrain, montré en construction. */
+  const limite: Tableaux = { pos: [], col: [] };
 
   const matEau = new THREE.MeshStandardMaterial({
     color: 0x4f9cc4,
@@ -356,7 +358,6 @@ export function creerDomaine3d(opts: { shadows: boolean }): Domaine3d {
     signatures = suivantes;
     const possedees = new Set(d.cells.map((c) => cleCase(c.x, c.y)));
     const friche: Tableaux = { pos: [], col: [] };
-    const limite: Tableaux = { pos: [], col: [] };
     const chemins: Tableaux = { pos: [], col: [] };
     const berges: Tableaux = { pos: [], col: [] };
     const objets: Tableaux = { pos: [], col: [] };
@@ -412,15 +413,21 @@ export function creerDomaine3d(opts: { shadows: boolean }): Domaine3d {
       }
     }
 
-    /* La limite de propriété : une clôture basse entre sa terre et la friche. */
+    /*
+     * La limite de propriété : un liseré, pas une clôture.
+     *
+     * Une clôture d'office enfermait la ferme dans un enclos qu'on n'avait pas
+     * choisi, et qu'il fallait abattre et remonter à chaque lot acheté. La
+     * limite n'est plus qu'un trait clair au sol, montré en construction ; les
+     * clôtures et les haies, c'est le joueur qui les trace, où il veut.
+     */
+    limite.pos.length = 0;
+    limite.col.length = 0;
     const bord = (px: number, pz: number, dx: number, dz: number) => {
       const cx = px + (dx * pas) / 2;
       const cz = pz + (dz * pas) / 2;
       const long = dx !== 0;
-      for (const h of [0.14, 0.28]) {
-        ajouterBoite(limite.pos, limite.col, cx, TOP + h, cz, long ? 0.04 : pas, 0.035, long ? pas : 0.04, 0xc8a878);
-      }
-      ajouterBoite(limite.pos, limite.col, cx + (long ? 0 : pas / 2), TOP + 0.17, cz + (long ? pas / 2 : 0), 0.06, 0.34, 0.06, 0x8a6a45);
+      ajouterBoite(limite.pos, limite.col, cx, TOP + 0.035, cz, long ? 0.12 : pas + 0.12, 0.025, long ? pas + 0.12 : 0.12, 0xfff6cc);
     };
     for (const c of d.cells) {
       const { px, pz } = posDe(c.x, c.y);
@@ -557,7 +564,6 @@ export function creerDomaine3d(opts: { shadows: boolean }): Domaine3d {
 
     for (const [nom, t, ombre] of [
       ["domaine-friche", friche, false],
-      ["domaine-limite", limite, opts.shadows],
       ["domaine-chemins", chemins, false],
       ["domaine-berges", berges, false],
       ["domaine-objets", objets, opts.shadows],
@@ -577,6 +583,9 @@ export function creerDomaine3d(opts: { shadows: boolean }): Domaine3d {
     vider(construction);
     fantomeObjet = null;
     if (!e.actif) return;
+    if (limite.pos.length) {
+      construction.add(maillageFacette(limite.pos, limite.col, { nom: "domaine-limite" }));
+    }
     const coin = (x: number, y: number) => {
       const { px, pz } = posDe(x, y);
       return { x: px - pas / 2, z: pz - pas / 2 };

@@ -38,6 +38,36 @@ export function bornesDomaine(gridW: number, gridH: number, marge: number): Born
   return { minX: -m, minY: -m, maxX: gridW + m, maxY: gridH + m };
 }
 
+/**
+ * Les bornes d'un domaine qui grandit : ce qu'on possède, calé sur la trame
+ * des lots, plus un anneau de friche à vendre tout autour.
+ *
+ * Il n'y a plus de marge fixe. Acheter un lot au bord repousse la friche d'un
+ * lot plus loin, dans cette direction-là seulement : le terrain grandit
+ * autant qu'on veut, et ses bords suivent tout seuls.
+ */
+export function bornesDuDomaine(cells: readonly { x: number; y: number }[], anneau = 1): Bornes {
+  if (!cells.length) return { minX: 0, minY: 0, maxX: 0, maxY: 0 };
+  let minX = Infinity;
+  let minY = Infinity;
+  let maxX = -Infinity;
+  let maxY = -Infinity;
+  for (const c of cells) {
+    if (c.x < minX) minX = c.x;
+    if (c.y < minY) minY = c.y;
+    if (c.x > maxX) maxX = c.x;
+    if (c.y > maxY) maxY = c.y;
+  }
+  const t = TAILLE_LOT;
+  const r = Math.max(0, Math.round(anneau)) * t;
+  return {
+    minX: Math.floor(minX / t) * t - r,
+    minY: Math.floor(minY / t) * t - r,
+    maxX: Math.ceil((maxX + 1) / t) * t + r,
+    maxY: Math.ceil((maxY + 1) / t) * t + r,
+  };
+}
+
 export function dansBornes(b: Bornes, x: number, y: number): boolean {
   return x >= b.minX && y >= b.minY && x < b.maxX && y < b.maxY;
 }
@@ -872,7 +902,11 @@ export function champsDe(
 /* ------------------------------------------------------------------ */
 
 export type Lot = {
-  /** Identifiant stable : colonne et rang du lot dans le domaine. */
+  /**
+   * Identifiant stable : colonne et rang du lot sur la trame **globale** du
+   * terrain (le lot `0:0` couvre les cases 0 à 5). Il ne change donc pas
+   * quand le domaine grandit, et peut être négatif.
+   */
   id: string;
   i: number;
   j: number;
@@ -882,19 +916,35 @@ export type Lot = {
   h: number;
 };
 
-/** Le domaine découpé en lots de `TAILLE_LOT`, depuis son coin nord-ouest. */
+/** Le lot de la trame qui contient une case. */
+export function lotDeCase(x: number, y: number): Lot {
+  const i = Math.floor(x / TAILLE_LOT);
+  const j = Math.floor(y / TAILLE_LOT);
+  return { id: `${i}:${j}`, i, j, x: i * TAILLE_LOT, y: j * TAILLE_LOT, w: TAILLE_LOT, h: TAILLE_LOT };
+}
+
+/** Un lot par son identifiant de trame (`i:j`), ou `null` s'il est mal formé. */
+export function lotParId(id: string): Lot | null {
+  const m = /^(-?\d+):(-?\d+)$/.exec(id);
+  if (!m) return null;
+  return lotDeCase(Number(m[1]) * TAILLE_LOT, Number(m[2]) * TAILLE_LOT);
+}
+
+/** Les lots de la trame qui recouvrent des bornes (calées ou non). */
 export function lotsDuDomaine(b: Bornes): Lot[] {
   const lots: Lot[] = [];
-  for (let j = 0, y = b.minY; y < b.maxY; j++, y += TAILLE_LOT) {
-    for (let i = 0, x = b.minX; x < b.maxX; i++, x += TAILLE_LOT) {
+  const j0 = Math.floor(b.minY / TAILLE_LOT);
+  const i0 = Math.floor(b.minX / TAILLE_LOT);
+  for (let j = j0, y = j0 * TAILLE_LOT; y < b.maxY; j++, y += TAILLE_LOT) {
+    for (let i = i0, x = i0 * TAILLE_LOT; x < b.maxX; i++, x += TAILLE_LOT) {
       lots.push({
         id: `${i}:${j}`,
         i,
         j,
         x,
         y,
-        w: Math.min(TAILLE_LOT, b.maxX - x),
-        h: Math.min(TAILLE_LOT, b.maxY - y),
+        w: TAILLE_LOT,
+        h: TAILLE_LOT,
       });
     }
   }
@@ -931,22 +981,40 @@ export const PRIX_TERRE_PAR_CASE = (LAND_BASE_PER_HA * HECTARES_STANDARD) / CASE
 /**
  * Le premier lot à la moitié du prix de la terre : s'agrandir d'un bloc
  * contigu doit rester à portée tôt dans la partie — c'est le cœur de la
- * progression. Chaque lot suivant coûte `CROISSANCE_LOT` fois plus.
+ * progression.
  */
 export const REMISE_LOT = 0.5;
-export const CROISSANCE_LOT = 1.18;
 /** Niveau requis pour le n-ième lot (n à partir de 1) — un palier doux. */
 export const NIVEAU_LOTS: readonly number[] = [1, 1, 2, 3, 4, 5, 6, 7, 8, 10, 12, 14];
+/** Au-delà du tableau, un niveau de plus tous les deux lots, jusqu'à ce plafond. */
+export const NIVEAU_LOT_MAX = 60;
 
 export function niveauPourLot(n: number): number {
   const i = Math.max(1, Math.round(n)) - 1;
-  return NIVEAU_LOTS[Math.min(i, NIVEAU_LOTS.length - 1)]! + Math.max(0, i - (NIVEAU_LOTS.length - 1)) * 2;
+  const dernier = NIVEAU_LOTS.length - 1;
+  if (i <= dernier) return NIVEAU_LOTS[i]!;
+  return Math.min(NIVEAU_LOT_MAX, NIVEAU_LOTS[dernier]! + Math.ceil((i - dernier) / 2));
 }
 
-/** Prix d'un lot : cases à acheter × prix de la terre × fertilité × région × escalade. */
+/**
+ * Ce que la surface déjà possédée ajoute au prix : la racine du nombre de
+ * fermes de départ qu'on possède.
+ *
+ * Une escalade par lot (×1,18 à chaque achat) rendait le trentième lot cent
+ * fois plus cher que le premier — un mur, pas une pente. Avec la racine, une
+ * ferme quatre fois plus grande paie sa terre deux fois plus cher, une ferme
+ * seize fois plus grande quatre fois : on peut grandir sans fin, chaque lot
+ * restant un vrai choix face à une machine ou un bâtiment.
+ */
+export function facteurSurface(possedees: number): number {
+  return Math.sqrt(Math.max(1, possedees / CASES_STANDARD));
+}
+
+/** Prix d'un lot : cases à acheter × prix de la terre × fertilité × région × surface. */
 export function prixLot(opts: {
   cases: number;
-  lotsAchetes: number;
+  /** Cases déjà possédées sur ce terrain. */
+  possedees: number;
   fertilite?: number;
   prixRegional?: number;
 }): number {
@@ -956,7 +1024,7 @@ export function prixLot(opts: {
     REMISE_LOT *
     fertilityFactor(opts.fertilite ?? 0.7) *
     (opts.prixRegional ?? 1) *
-    Math.pow(CROISSANCE_LOT, Math.max(0, opts.lotsAchetes));
+    facteurSurface(opts.possedees);
   return Math.ceil(brut / 50) * 50;
 }
 
