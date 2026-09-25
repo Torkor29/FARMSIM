@@ -4584,3 +4584,332 @@ describe("le lien de réinitialisation", () => {
     assert.equal(restant.statut, 401, JSON.stringify(restant.corps));
   });
 });
+
+/*
+ * La ferme libre — voir docs/ferme-libre.md.
+ *
+ * Le siège devient un domaine qu'on agrandit par lots, et sur lequel on peint
+ * champs, prés, étangs et chemins, et on pose du décor. Ce qui décide vit dans
+ * `@farmsim/shared` ; ces tests vérifient que le serveur l'applique vraiment —
+ * argent, cases, refus — et que la ferme se relit à l'identique.
+ */
+describe("la ferme libre", () => {
+  type CaseVue = { x: number; y: number; sol: string; revetement: string | null; kind: string };
+  type LotVue = { id: string; x: number; y: number; w: number; h: number; etat: string; prix: number; niveau: number };
+  type Vue = {
+    parcel: {
+      id: string;
+      cells: CaseVue[];
+      buildings: { id: string; type: string; originX: number; originY: number; rotation: number }[];
+      amenagements: { id: string; type: string; originX: number; originY: number; rotation: number }[];
+    };
+    domaine: { marge: number; lotsAchetes: number; lots: LotVue[]; charme: number } | null;
+  };
+
+  async function fermeLibre(nom: string, crd = 500000) {
+    const moi = await inscrire(nom);
+    const monde = await appel("/world/AUR");
+    const regions = (monde.corps as unknown as { regions: { parcels: { id: string; taken: boolean }[] }[] }).regions;
+    const libre = regions.flatMap((r) => r.parcels ?? []).find((p) => !p.taken);
+    assert.ok(libre, "il faut une parcelle libre");
+    const claim = await appel("/world/claim", {
+      methode: "POST",
+      corps: { userId: moi.id, specialization: "CEREALIER", parcelId: libre.id },
+      jeton: moi.jeton,
+    });
+    assert.equal(claim.statut, 201, JSON.stringify(claim.corps));
+    await appel("/dev/grant", { methode: "POST", corps: { userId: moi.id, crd: 0 }, jeton: moi.jeton });
+    await appel("/dev/grant", { methode: "POST", corps: { userId: moi.id, crd, level: 20 }, jeton: moi.jeton });
+    return { moi, parcelId: libre.id };
+  }
+
+  async function vue(parcelId: string, jeton: string): Promise<Vue> {
+    const r = await appel(`/parcels/${parcelId}`, { jeton });
+    assert.equal(r.statut, 200, JSON.stringify(r.corps));
+    return r.corps as unknown as Vue;
+  }
+
+  async function argent(jeton: string): Promise<number> {
+    const me = await appel("/auth/me", { jeton });
+    return (me.corps as unknown as { player: { crd: number } }).player.crd;
+  }
+
+  const poser = (parcelId: string, moi: { id: string; jeton: string }, type: string, x: number, y: number, rotation = 0) =>
+    appel(`/parcels/${parcelId}/amenagements`, {
+      methode: "POST",
+      corps: { userId: moi.id, type, x, y, rotation },
+      jeton: moi.jeton,
+    });
+
+  const peindre = (parcelId: string, moi: { id: string; jeton: string }, outil: string, cells: { x: number; y: number }[]) =>
+    appel(`/parcels/${parcelId}/terrain`, {
+      methode: "POST",
+      corps: { userId: moi.id, outil, cells },
+      jeton: moi.jeton,
+    });
+
+  it("donne au siège un domaine, avec sa ferme au centre et de la friche autour", async () => {
+    const { moi, parcelId } = await fermeLibre("Domaine");
+    const v = await vue(parcelId, moi.jeton);
+    assert.ok(v.domaine, "le propriétaire voit son domaine");
+    assert.equal(v.domaine.marge, 6);
+    // La ferme de départ : 144 cases, toutes à soi, rien en friche encore.
+    assert.equal(v.parcel.cells.length, 144);
+    assert.ok(v.parcel.cells.every((c) => c.x >= 0 && c.y >= 0 && c.x < 12 && c.y < 12));
+    // Les cases de l'étable de départ sont du pré, le reste est du champ.
+    const pre = v.parcel.cells.filter((c) => c.sol === "PRE");
+    assert.ok(pre.length > 0 && pre.every((c) => c.kind === "BUILDING"));
+    // Seize lots : quatre à soi, huit mitoyens à vendre, quatre coins enclavés.
+    const etats = v.domaine.lots.map((l) => l.etat);
+    assert.equal(etats.filter((e) => e === "POSSEDE").length, 4);
+    assert.equal(etats.filter((e) => e === "ACHETABLE").length, 8);
+    assert.equal(etats.filter((e) => e === "ENCLAVE").length, 4);
+    // Un voisin qui regarde ne voit pas les devis.
+    const autre = await inscrire("Curieux");
+    const vueAutre = await vue(parcelId, autre.jeton);
+    assert.equal(vueAutre.domaine, null);
+  });
+
+  it("vend un lot mitoyen au prix annoncé, et la ferme gagne ses cases", async () => {
+    const { moi, parcelId } = await fermeLibre("Acheteur");
+    const avant = await vue(parcelId, moi.jeton);
+    const lot = avant.domaine!.lots.find((l) => l.etat === "ACHETABLE" && l.y < 0)!;
+    const coin = avant.domaine!.lots.find((l) => l.etat === "ENCLAVE" && l.y === lot.y)!;
+    const argentAvant = await argent(moi.jeton);
+
+    // Un coin ne s'achète pas : il ne touche la ferme que par un angle.
+    const refus = await appel(`/parcels/${parcelId}/lots/buy`, {
+      methode: "POST",
+      corps: { userId: moi.id, lot: coin.id },
+      jeton: moi.jeton,
+    });
+    assert.equal(refus.statut, 409, JSON.stringify(refus.corps));
+
+    const achat = await appel(`/parcels/${parcelId}/lots/buy`, {
+      methode: "POST",
+      corps: { userId: moi.id, lot: lot.id },
+      jeton: moi.jeton,
+    });
+    assert.equal(achat.statut, 201, JSON.stringify(achat.corps));
+    assert.equal(await argent(moi.jeton), argentAvant - lot.prix, "l'argent débité est le prix affiché");
+
+    const apres = await vue(parcelId, moi.jeton);
+    assert.equal(apres.parcel.cells.length, 144 + 36);
+    const nouvelles = apres.parcel.cells.filter((c) => c.y < 0);
+    assert.equal(nouvelles.length, 36);
+    assert.ok(nouvelles.every((c) => c.sol === "PRE"), "la terre achetée naît en pré");
+    assert.equal(apres.domaine!.lotsAchetes, 1);
+    // Le coin voisin, maintenant mitoyen, s'achète — et plus cher.
+    const coinApres = apres.domaine!.lots.find((l) => l.id === coin.id)!;
+    assert.equal(coinApres.etat, "ACHETABLE");
+    const memeTaille = apres.domaine!.lots.find((l) => l.etat === "ACHETABLE" && l.w === lot.w && l.h === lot.h)!;
+    assert.ok(memeTaille.prix > lot.prix, "chaque lot rend le suivant plus cher");
+  });
+
+  it("refuse un lot qu'on ne peut pas payer, sans rien débiter", async () => {
+    const { moi, parcelId } = await fermeLibre("Fauché", 100);
+    const v = await vue(parcelId, moi.jeton);
+    const lot = v.domaine!.lots.find((l) => l.etat === "ACHETABLE")!;
+    const r = await appel(`/parcels/${parcelId}/lots/buy`, {
+      methode: "POST",
+      corps: { userId: moi.id, lot: lot.id },
+      jeton: moi.jeton,
+    });
+    assert.equal(r.statut, 402, JSON.stringify(r.corps));
+    assert.equal(await argent(moi.jeton), 100);
+    assert.equal((await vue(parcelId, moi.jeton)).parcel.cells.length, 144);
+  });
+
+  it("pose du décor sur sa terre, jamais en friche ni sur une case prise", async () => {
+    const { moi, parcelId } = await fermeLibre("Jardinier");
+    const v = await vue(parcelId, moi.jeton);
+    const libre = v.parcel.cells.find((c) => c.kind === "EMPTY" && c.sol === "CHAMP")!;
+
+    const friche = await poser(parcelId, moi, "chene", -2, 3);
+    assert.equal(friche.statut, 409, JSON.stringify(friche.corps));
+    assert.match(String((friche.corps as unknown as { error: string }).error), /friche/i);
+
+    const argentAvant = await argent(moi.jeton);
+    const ok = await poser(parcelId, moi, "chene", libre.x, libre.y);
+    assert.equal(ok.statut, 201, JSON.stringify(ok.corps));
+    assert.equal(await argent(moi.jeton), argentAvant - 60);
+
+    const occupe = await poser(parcelId, moi, "banc", libre.x, libre.y);
+    assert.equal(occupe.statut, 409, JSON.stringify(occupe.corps));
+
+    const apres = await vue(parcelId, moi.jeton);
+    const sous = apres.parcel.cells.find((c) => c.x === libre.x && c.y === libre.y)!;
+    assert.equal(sous.sol, "PRE", "un champ nu sous l'arbre redevient du pré");
+    assert.equal(apres.parcel.amenagements.length, 1);
+  });
+
+  it("déplace et tourne un élément en gardant ce qu'il est, et refuse une place prise", async () => {
+    const { moi, parcelId } = await fermeLibre("Déménageur");
+    const v = await vue(parcelId, moi.jeton);
+    const libres = v.parcel.cells.filter((c) => c.kind === "EMPTY");
+    const [a, b] = [libres[0]!, libres[5]!];
+    const banc = (await poser(parcelId, moi, "banc", a.x, a.y, 1)).corps as unknown as { amenagement: { id: string } };
+    await poser(parcelId, moi, "rocher", b.x, b.y);
+
+    const surLeRocher = await appel(`/amenagements/${banc.amenagement.id}/move`, {
+      methode: "POST",
+      corps: { userId: moi.id, x: b.x, y: b.y },
+      jeton: moi.jeton,
+    });
+    assert.equal(surLeRocher.statut, 409, JSON.stringify(surLeRocher.corps));
+
+    const cible = libres[10]!;
+    const ok = await appel(`/amenagements/${banc.amenagement.id}/move`, {
+      methode: "POST",
+      corps: { userId: moi.id, x: cible.x, y: cible.y, rotation: 3 },
+      jeton: moi.jeton,
+    });
+    assert.equal(ok.statut, 200, JSON.stringify(ok.corps));
+    const apres = await vue(parcelId, moi.jeton);
+    const deplace = apres.parcel.amenagements.find((x) => x.id === banc.amenagement.id)!;
+    assert.deepEqual(
+      { type: deplace.type, x: deplace.originX, y: deplace.originY, rotation: deplace.rotation },
+      { type: "banc", x: cible.x, y: cible.y, rotation: 3 },
+    );
+  });
+
+  it("rembourse un élément retiré et libère sa case", async () => {
+    const { moi, parcelId } = await fermeLibre("Repentant");
+    const v = await vue(parcelId, moi.jeton);
+    const c = v.parcel.cells.find((x) => x.kind === "EMPTY")!;
+    const pose = (await poser(parcelId, moi, "puits", c.x, c.y)).corps as unknown as { amenagement: { id: string } };
+    const argentAvant = await argent(moi.jeton);
+    const vente = await appel(`/amenagements/${pose.amenagement.id}/sell`, {
+      methode: "POST",
+      corps: { userId: moi.id },
+      jeton: moi.jeton,
+    });
+    assert.equal(vente.statut, 200, JSON.stringify(vente.corps));
+    // Posé il y a un instant : la fenêtre de regret rend tout.
+    assert.equal(await argent(moi.jeton), argentAvant + 400);
+    assert.equal((await poser(parcelId, moi, "chene", c.x, c.y)).statut, 201, "la case est libre");
+  });
+
+  it("peint étang, chemin et champ, et n'en fait qu'à la règle", async () => {
+    const { moi, parcelId } = await fermeLibre("Paysagiste");
+    const v = await vue(parcelId, moi.jeton);
+    const libres = v.parcel.cells.filter((c) => c.kind === "EMPTY").slice(0, 4);
+
+    const argentAvant = await argent(moi.jeton);
+    const etang = await peindre(parcelId, moi, "etang", libres.slice(0, 2));
+    assert.equal(etang.statut, 200, JSON.stringify(etang.corps));
+    assert.equal(await argent(moi.jeton), argentAvant - 60);
+
+    // Pas de champ dans l'eau.
+    const dansLEau = await peindre(parcelId, moi, "champ", libres.slice(0, 1));
+    assert.equal(dansLEau.statut, 409, JSON.stringify(dansLEau.corps));
+
+    // Un chemin sur du champ nu : la case devient du pré à chemin.
+    const chemin = await peindre(parcelId, moi, "chemin-terre", libres.slice(2, 4));
+    assert.equal(chemin.statut, 200, JSON.stringify(chemin.corps));
+    const apres = await vue(parcelId, moi.jeton);
+    const lire = (p: { x: number; y: number }) => apres.parcel.cells.find((c) => c.x === p.x && c.y === p.y)!;
+    assert.equal(lire(libres[0]!).sol, "EAU");
+    assert.equal(lire(libres[2]!).revetement, "TERRE");
+
+    // Un bâtiment ne se pose pas sur un chemin.
+    const silo = await appel(`/parcels/${parcelId}/build`, {
+      methode: "POST",
+      corps: { userId: moi.id, type: "WATER_TROUGH", x: libres[2]!.x, y: libres[2]!.y },
+      jeton: moi.jeton,
+    });
+    assert.equal(silo.statut, 409, JSON.stringify(silo.corps));
+
+    // Et l'on ne sème pas hors d'un champ.
+    const semis = await appel(`/parcels/${parcelId}/jobs`, {
+      methode: "POST",
+      corps: { userId: moi.id, work: "PLANT", cells: [libres[2]!], crop: cropDeSaison() },
+      jeton: moi.jeton,
+    });
+    assert.equal(semis.statut, 409, JSON.stringify(semis.corps));
+    assert.match(String((semis.corps as unknown as { error: string }).error), /hors champ/);
+
+    // La gomme rend l'herbe — et fait payer le remblai de l'étang.
+    const argentGomme = await argent(moi.jeton);
+    const gomme = await peindre(parcelId, moi, "pre", libres.slice(0, 1));
+    assert.equal(gomme.statut, 200, JSON.stringify(gomme.corps));
+    assert.equal(await argent(moi.jeton), argentGomme - 8);
+  });
+
+  it("bâtit sur un lot acheté, en coordonnées négatives, jamais en friche", async () => {
+    const { moi, parcelId } = await fermeLibre("Bâtisseur");
+    const v = await vue(parcelId, moi.jeton);
+    const ouest = v.domaine!.lots.find((l) => l.etat === "ACHETABLE" && l.x < 0)!;
+
+    const avant = await appel(`/parcels/${parcelId}/build`, {
+      methode: "POST",
+      corps: { userId: moi.id, type: "SILO", x: ouest.x + 1, y: ouest.y + 1 },
+      jeton: moi.jeton,
+    });
+    assert.equal(avant.statut, 409, JSON.stringify(avant.corps));
+
+    await appel(`/parcels/${parcelId}/lots/buy`, {
+      methode: "POST",
+      corps: { userId: moi.id, lot: ouest.id },
+      jeton: moi.jeton,
+    });
+    const r = await appel(`/parcels/${parcelId}/build`, {
+      methode: "POST",
+      corps: { userId: moi.id, type: "SILO", x: ouest.x + 1, y: ouest.y + 1, rotation: 1 },
+      jeton: moi.jeton,
+    });
+    assert.equal(r.statut, 201, JSON.stringify(r.corps));
+    const silo = (r.corps as unknown as { building: { id: string } }).building;
+
+    // Le déplacer à cheval sur la friche : refusé.
+    const deborde = await appel(`/buildings/${silo.id}/move`, {
+      methode: "POST",
+      corps: { userId: moi.id, x: ouest.x - 1, y: ouest.y + 1 },
+      jeton: moi.jeton,
+    });
+    assert.equal(deborde.statut, 409, JSON.stringify(deborde.corps));
+  });
+
+  it("se relit à l'identique après une reconnexion", async () => {
+    const { moi, parcelId } = await fermeLibre("Mémoire");
+    const v = await vue(parcelId, moi.jeton);
+    const libres = v.parcel.cells.filter((c) => c.kind === "EMPTY");
+    const lot = v.domaine!.lots.find((l) => l.etat === "ACHETABLE")!;
+    await appel(`/parcels/${parcelId}/lots/buy`, { methode: "POST", corps: { userId: moi.id, lot: lot.id }, jeton: moi.jeton });
+    await poser(parcelId, moi, "banc", libres[0]!.x, libres[0]!.y, 2);
+    await poser(parcelId, moi, "haie", libres[1]!.x, libres[1]!.y);
+    await peindre(parcelId, moi, "chemin-gravier", [libres[2]!, libres[3]!]);
+    await peindre(parcelId, moi, "etang", [libres[4]!]);
+    await appel(`/parcels/${parcelId}/build`, {
+      methode: "POST",
+      corps: { userId: moi.id, type: "HENHOUSE", x: lot.x, y: lot.y, rotation: 1 },
+      jeton: moi.jeton,
+    });
+    const avant = await vue(parcelId, moi.jeton);
+
+    // Une autre session, comme un joueur qui revient le lendemain.
+    const email = (await appel("/auth/me", { jeton: moi.jeton })).corps as unknown as { player: { email: string } };
+    const reco = await appel("/auth/login", {
+      methode: "POST",
+      corps: { email: email.player.email, accessCode: "ferme-2026" },
+    });
+    assert.equal(reco.statut, 200, JSON.stringify(reco.corps));
+    const jeton = (reco.corps as unknown as { token: string }).token;
+    const apres = await vue(parcelId, jeton);
+
+    const cases = (x: Vue) =>
+      x.parcel.cells
+        .map((c) => `${c.x},${c.y}:${c.sol}:${c.revetement ?? "-"}:${c.kind}`)
+        .sort();
+    assert.deepEqual(cases(apres), cases(avant));
+    const objets = (x: Vue) =>
+      x.parcel.amenagements.map((a) => `${a.type}@${a.originX},${a.originY}r${a.rotation}`).sort();
+    assert.deepEqual(objets(apres), objets(avant));
+    assert.deepEqual(objets(apres).length, 2);
+    const batis = (x: Vue) =>
+      x.parcel.buildings.map((b) => `${b.type}@${b.originX},${b.originY}r${b.rotation}`).sort();
+    assert.deepEqual(batis(apres), batis(avant));
+    assert.ok(batis(apres).some((b) => b.startsWith("HENHOUSE@") && b.endsWith("r1")));
+    assert.equal(apres.domaine!.lotsAchetes, 1);
+  });
+});

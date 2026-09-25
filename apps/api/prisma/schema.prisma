@@ -161,6 +161,17 @@ enum CellKind {
   VEHICLE
 }
 
+/// Le sol d'une case possédée — voir `docs/ferme-libre.md`.
+///
+/// Toutes les cases étaient des champs. `CHAMP` reste la valeur par défaut :
+/// une ferme d'avant la ferme libre reste entièrement cultivable, sans qu'on
+/// touche à une seule de ses cases.
+enum SolCase {
+  CHAMP
+  PRE
+  EAU
+}
+
 /// Un lien de réinitialisation de mot de passe, en attente.
 ///
 /// Une table et non deux colonnes sur `User` : un joueur peut demander un
@@ -406,8 +417,18 @@ model Parcel {
   /// le tri place les indatables en tête, par identifiant, ce qui reste stable
   /// à défaut d'être exact.
   acquiredAt  DateTime?
+  /// La marge du domaine autour de la grille d'origine, en cases.
+  ///
+  /// Zéro pour une parcelle annexe ; le siège d'une ferme en a une. Les cases
+  /// de la marge n'ont pas de ligne tant qu'on ne les a pas achetées : ce sont
+  /// les friches, que la ferme gagne lot après lot. Aucune case existante ne
+  /// bouge — la marge ouest et nord se lit en coordonnées négatives.
+  domaineMarge Int        @default(0)
+  /// Lots de terrain achetés : chacun rend le suivant plus cher.
+  lotsAchetes  Int        @default(0)
   cells      ParcelCell[]
   buildings  Building[]
+  amenagements Amenagement[]
   machines   Machine[]  @relation("ParkedOn")
   laborOrders LaborOrder[]
 
@@ -473,8 +494,32 @@ model ParcelCell {
   strawTons        Float      @default(0)
   baleCount        Int        @default(0)
   plantedAsSilage  Boolean    @default(false)
+  /// Champ, pré ou étang. Seules les cases de champ se cultivent.
+  sol              SolCase    @default(CHAMP)
+  /// Un chemin : TERRE, GRAVIER ou PAVE. Nul sans chemin.
+  revetement       String?
 
   @@unique([parcelId, x, y])
+}
+
+/// Un élément de décor posé sur le domaine : arbre, haie, clôture, banc…
+///
+/// Ce que c'est, et ce que ça coûte, vit dans le catalogue partagé
+/// (`amenagement.ts`) : la table ne retient que le type et la place. Ajouter
+/// un objet au jeu ne demande donc aucune migration.
+model Amenagement {
+  id        String   @id @default(cuid())
+  parcelId  String
+  parcel    Parcel   @relation(fields: [parcelId], references: [id], onDelete: Cascade)
+  type      String
+  originX   Int
+  originY   Int
+  /// Quarts de tour, 0 à 3.
+  rotation  Int      @default(0)
+  /// Date de pose : la fenêtre de regret rembourse une erreur de clic.
+  createdAt DateTime @default(now())
+
+  @@index([parcelId])
 }
 
 /// Un troupeau vit dans une étable. Son bonheur dépend de l'accès à un

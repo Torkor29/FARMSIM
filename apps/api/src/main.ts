@@ -375,6 +375,24 @@ import {
   REINIT_REFUS,
   REINIT_TTL_LIBELLE,
   lienDeReinit,
+  MARGE_DOMAINE,
+  BUILDING_REGRET_MS,
+  LIBELLE_REFUS,
+  bonusAmenagementCase,
+  bornesDomaine,
+  charmeDe,
+  cleCase,
+  construireGrille,
+  defConstruction,
+  etatLot,
+  libelleCharme,
+  lotsDuDomaine,
+  niveauPourLot,
+  prixLot,
+  validerPeinture,
+  validerPose,
+  verrouConstruction,
+  type SourcesBonus,
 } from "@farmsim/shared";
 import {
   simulateCell,
@@ -1049,6 +1067,24 @@ type FieldAccess =
       } | null;
     }
   | { ok: false; status: number; error: string };
+
+/** Refus lisible si une case demandée n'est pas un champ possédé, sinon `null`. */
+function casesHorsChamp(
+  cells: { x: number; y: number; sol: string }[],
+  demandees: { x: number; y: number }[],
+): string | null {
+  const parCle = new Map(cells.map((c) => [cleCase(c.x, c.y), c]));
+  let friche = 0;
+  let autre = 0;
+  for (const d of demandees) {
+    const c = parCle.get(cleCase(d.x, d.y));
+    if (!c) friche++;
+    else if (c.sol !== "CHAMP") autre++;
+  }
+  if (!friche && !autre) return null;
+  if (friche) return `${friche} case${friche > 1 ? "s" : ""} hors de votre terrain`;
+  return `${autre} case${autre > 1 ? "s" : ""} hors champ — seules les cases de champ se cultivent`;
+}
 
 async function loadParcelForWork(parcelId: string) {
   return prisma.parcel.findUnique({
@@ -1946,6 +1982,17 @@ async function resolveFieldAccess(opts: {
   if (!parcel?.farm) {
     return { ok: false, status: 404, error: "Parcelle introuvable" };
   }
+  /*
+   * On ne cultive que dans un champ.
+   *
+   * Depuis la ferme libre, une case possédée peut être du pré, de l'eau ou un
+   * chemin. Le jeu ne les propose pas aux outils, mais la route doit le
+   * refuser elle-même : c'est la seule garde que rien ne contourne.
+   */
+  const horsChamp = casesHorsChamp(parcel.cells, opts.cells);
+  if (horsChamp) {
+    return { ok: false, status: 409, error: horsChamp };
+  }
   if (parcel.farm.userId === opts.userId) {
     return { ok: true, parcel, machines: parcel.farm.machines, workFarmId: parcel.farm.id, charge: true, order: null };
   }
@@ -2729,7 +2776,46 @@ async function getFarmBonuses(farmId: string) {
     hives: buildings
       .filter((b) => (BUILDING_DEFS[b.type as SharedBuildingType]?.pollinationRange ?? 0) > 0)
       .map((b) => ({ type: b.type, originX: b.originX, originY: b.originY })),
+    /**
+     * Le décor qui aide les cultures, par parcelle : haies et étangs.
+     *
+     * Même raison que les ruches : c'est un bonus qui dépend de l'endroit.
+     * Il voyage avec les autres pour ne pas ajouter une requête à chacun des
+     * calculs de rendement.
+     */
+    decor: await decorDeLaFerme(farmId),
   };
+}
+
+/** Les sources de bonus du décor, rangées par parcelle. */
+async function decorDeLaFerme(farmId: string): Promise<Record<string, SourcesBonus>> {
+  const aEffet = ["haie"];
+  const [objets, eaux] = await Promise.all([
+    prisma.amenagement.findMany({
+      where: { parcel: { farmId }, type: { in: aEffet } },
+      select: { parcelId: true, type: true, originX: true, originY: true },
+    }),
+    prisma.parcelCell.findMany({
+      where: { parcel: { farmId }, sol: "EAU" },
+      select: { parcelId: true, x: true, y: true },
+    }),
+  ]);
+  const out: Record<string, { objets: SourcesBonus["objets"][number][]; eaux: { x: number; y: number }[] }> = {};
+  const de = (id: string) => (out[id] ??= { objets: [], eaux: [] });
+  for (const o of objets) de(o.parcelId).objets.push(o);
+  for (const e of eaux) de(e.parcelId).eaux.push({ x: e.x, y: e.y });
+  return out;
+}
+
+/** Le coup de pouce du décor sur une case de champ. */
+function bonusDecorAt(
+  bonuses: { decor?: Record<string, SourcesBonus> } | null | undefined,
+  parcelId: string,
+  x: number,
+  y: number,
+): number {
+  const sources = bonuses?.decor?.[parcelId];
+  return sources ? bonusAmenagementCase(sources, x, y) : 0;
 }
 
 /* ------------------------------------------------------------------ */
@@ -3318,7 +3404,7 @@ async function publishFromConsignes() {
             specialization: playableSpec(user.specialization),
             buildingYieldBonus:
               bonuses.yieldBonus +
-              pollinationBonusAt(bonuses.hives, cell.x, cell.y, cell.crop),
+              pollinationBonusAt(bonuses.hives, cell.x, cell.y, cell.crop) + bonusDecorAt(bonuses, parcel.id, cell.x, cell.y),
             skillYieldBonus: bonuses.skills.CROP_YIELD,
           });
           if (sim.lost) continue;
@@ -4020,6 +4106,10 @@ app.post("/world/claim", async (req, res) => {
           acquiredAt: new Date(),
           gridW: DEFAULT_GRID.w,
           gridH: DEFAULT_GRID.h,
+          /* Le siège devient un domaine : la ferme de départ, et de la friche
+             autour, qu'on achètera lot par lot. */
+          domaineMarge: MARGE_DOMAINE,
+          lotsAchetes: 0,
           /* Le prix au cadastre suit la nouvelle surface, sinon la taxe
              foncière continuerait de porter sur le lot d'avant. */
           landPrice: marketValue({
@@ -4078,7 +4168,7 @@ app.post("/world/claim", async (req, res) => {
           for (const c of cells) {
             await tx.parcelCell.update({
               where: { parcelId_x_y: { parcelId: parcel.id, x: c.x, y: c.y } },
-              data: { kind: "BUILDING", buildingId: barn.id },
+              data: { kind: "BUILDING", buildingId: barn.id, sol: "PRE" },
             });
           }
           await tx.herd.create({
@@ -5675,6 +5765,7 @@ app.get("/parcels/:id", async (req, res) => {
       cells: true,
       buildings: true,
       machines: true,
+      amenagements: true,
       farm: { include: { user: { select: { id: true, displayName: true } } } },
     },
   });
@@ -5708,7 +5799,8 @@ app.get("/parcels/:id", async (req, res) => {
         rotation: rotationOf(c),
         buildingYieldBonus:
           (bonuses?.yieldBonus ?? 0) +
-          pollinationBonusAt(bonuses?.hives ?? [], c.x, c.y, c.crop),
+          pollinationBonusAt(bonuses?.hives ?? [], c.x, c.y, c.crop) +
+          bonusDecorAt(bonuses, parcel.id, c.x, c.y),
         skillYieldBonus: bonuses?.skills.CROP_YIELD ?? 0,
         weatherAtHarvest: weather?.state as WeatherState | undefined,
         cutsDone: grassCutsDone(c),
@@ -5756,6 +5848,9 @@ app.get("/parcels/:id", async (req, res) => {
     climate,
     workers,
     labor: labor.map(publicLaborOrder),
+    /* Le domaine : bornes, lots à vendre et charme. Seulement pour qui peut
+       l'agrandir — un voisin qui regarde n'a pas à voir les devis. */
+    domaine: parcel.farm?.userId && parcel.farm.userId === (await userFromAuthHeader(req))?.user.id ? domaineVue(parcel) : null,
   });
 });
 
@@ -5888,6 +5983,8 @@ async function createLaborOrderForCells(opts: {
   if (!parcel?.farm || parcel.farm.userId !== opts.userId) {
     return { ok: false, status: 403, error: "Parcelle non possédée" };
   }
+  const horsChampOrdre = casesHorsChamp(parcel.cells, unique);
+  if (horsChampOrdre) return { ok: false, status: 409, error: horsChampOrdre };
   for (const { x, y } of unique) {
     const cell = parcel.cells.find((c) => c.x === x && c.y === y);
     if (!cell || cell.kind === "BUILDING" || cell.kind === "VEHICLE") {
@@ -6507,6 +6604,11 @@ app.post("/parcels/:id/contractor", async (req, res) => {
     res.status(403).json({ error: "Parcelle non possédée" });
     return;
   }
+  const horsChampPresta = casesHorsChamp(parcel.cells, cells);
+  if (horsChampPresta) {
+    res.status(409).json({ error: horsChampPresta });
+    return;
+  }
   const user = await prisma.user.findUnique({ where: { id: body.data.userId } });
   if (!user) {
     res.status(404).json({ error: "Joueur introuvable" });
@@ -6820,7 +6922,7 @@ app.post("/parcels/:id/contractor", async (req, res) => {
       weedPressure: pressionAdventices(cell, currentSeason(climatDe(parcel).hemisphere ?? "N", Date.now())),
       fertilizedPasses: Math.min(2, cell.fertilizedPasses) as 0 | 1 | 2,
       buildingYieldBonus:
-        bonuses.yieldBonus + pollinationBonusAt(bonuses.hives, cell.x, cell.y, cell.crop),
+        bonuses.yieldBonus + pollinationBonusAt(bonuses.hives, cell.x, cell.y, cell.crop) + bonusDecorAt(bonuses, parcel.id, cell.x, cell.y),
       skillYieldBonus: bonuses.skills.CROP_YIELD,
       weatherAtHarvest: weather?.state as WeatherState | undefined,
       specialization: playableSpec(user.specialization),
@@ -8642,7 +8744,7 @@ app.post("/parcels/:id/harvest", async (req, res) => {
       rotation: rotationOf(cell),
       specialization: playableSpec(farm.user.specialization ?? user?.specialization),
       buildingYieldBonus:
-        bonuses.yieldBonus + pollinationBonusAt(bonuses.hives, cell.x, cell.y, cell.crop),
+        bonuses.yieldBonus + pollinationBonusAt(bonuses.hives, cell.x, cell.y, cell.crop) + bonusDecorAt(bonuses, parcel.id, cell.x, cell.y),
       skillYieldBonus: bonuses.skills.CROP_YIELD,
       weatherAtHarvest: weather?.state as WeatherState | undefined,
       cutsDone: grassCutsDone(cell),
@@ -8708,7 +8810,7 @@ app.post("/parcels/:id/harvest", async (req, res) => {
         rotation: rotationOf(cell),
         specialization: playableSpec(farm.user.specialization ?? user?.specialization),
         buildingYieldBonus:
-          bonuses.yieldBonus + pollinationBonusAt(bonuses.hives, cell.x, cell.y, cell.crop),
+          bonuses.yieldBonus + pollinationBonusAt(bonuses.hives, cell.x, cell.y, cell.crop) + bonusDecorAt(bonuses, parcel.id, cell.x, cell.y),
         skillYieldBonus: bonuses.skills.CROP_YIELD,
         weatherAtHarvest: weather?.state as WeatherState | undefined,
         cutsDone: grassCutsDone(cell),
@@ -9242,6 +9344,378 @@ app.post("/parcels/:id/collect", async (req, res) => {
   });
 });
 
+/* ------------------------------------------------------------------ */
+/* La ferme libre : domaine, lots, terrain, décor                       */
+/* ------------------------------------------------------------------ */
+/*
+ * Voir `docs/ferme-libre.md`. Tout ce qui décide — ce qui se pose, où, pour
+ * combien — vit dans `@farmsim/shared` (`amenagement.ts`) : le jeu lit les
+ * mêmes règles pour peindre son fantôme. Ces routes ne font que vérifier,
+ * débiter et écrire.
+ */
+
+type ParcelleGrille = {
+  gridW: number;
+  gridH: number;
+  domaineMarge: number;
+  cells: { x: number; y: number; sol: string; revetement: string | null; kind: string; buildingId: string | null; crop: string | null }[];
+  amenagements: { id: string; type: string; originX: number; originY: number; rotation: number }[];
+};
+
+/** La grille d'occupation d'une parcelle, telle que la règle partagée la lit. */
+function grilleDeParcelle(p: ParcelleGrille) {
+  return construireGrille({
+    bornes: bornesDomaine(p.gridW, p.gridH, p.domaineMarge),
+    cells: p.cells.map((c) => ({ ...c, sol: c.sol as "CHAMP" | "PRE" | "EAU" })),
+    amenagements: p.amenagements,
+  });
+}
+
+/**
+ * Le domaine tel que le jeu le dessine : ses bornes, ses lots avec leur prix
+ * et leur état, et le charme de la ferme.
+ */
+function domaineVue(p: ParcelleGrille & { lotsAchetes: number; fertility: number; zone: { priceMult: number } }) {
+  const bornes = bornesDomaine(p.gridW, p.gridH, p.domaineMarge);
+  const possedees = new Set(p.cells.map((c) => cleCase(c.x, c.y)));
+  const niveau = niveauPourLot(p.lotsAchetes + 1);
+  const lots = p.domaineMarge
+    ? lotsDuDomaine(bornes).map((lot) => {
+        const { etat, aAcheter } = etatLot(lot, possedees);
+        return {
+          ...lot,
+          etat,
+          aAcheter,
+          prix:
+            etat === "POSSEDE"
+              ? 0
+              : prixLot({
+                  cases: aAcheter,
+                  lotsAchetes: p.lotsAchetes,
+                  fertilite: p.fertility,
+                  prixRegional: p.zone.priceMult,
+                }),
+          niveau,
+        };
+      })
+    : [];
+  const charme = charmeDe({ cells: p.cells.map((c) => ({ ...c, sol: c.sol as "CHAMP" | "PRE" | "EAU" })), amenagements: p.amenagements });
+  return {
+    marge: p.domaineMarge,
+    bornes,
+    lotsAchetes: p.lotsAchetes,
+    lots,
+    charme,
+    charmeLibelle: libelleCharme(charme),
+  };
+}
+
+const includeDomaine = {
+  farm: true,
+  zone: true,
+  cells: true,
+  amenagements: true,
+} as const;
+
+/**
+ * Acheter un lot de terrain.
+ *
+ * Le lot doit toucher la ferme par un côté : elle pousse de proche en proche,
+ * dans la direction que le joueur choisit, et sa silhouette finit par être la
+ * sienne. Les cases achetées naissent en pré.
+ */
+app.post("/parcels/:id/lots/buy", async (req, res) => {
+  const body = z.object({ userId: z.string(), lot: z.string() }).safeParse(req.body);
+  if (!body.success) {
+    res.status(400).json(body.error.flatten());
+    return;
+  }
+  const parcel = await prisma.parcel.findUnique({ where: { id: req.params.id }, include: includeDomaine });
+  if (!parcel?.farm || parcel.farm.userId !== body.data.userId) {
+    res.status(403).json({ error: "Parcelle non possédée" });
+    return;
+  }
+  if (!parcel.domaineMarge) {
+    res.status(409).json({ error: "Cette parcelle ne s'agrandit pas : c'est votre siège qui a un domaine" });
+    return;
+  }
+  const vue = domaineVue(parcel);
+  const lot = vue.lots.find((l) => l.id === body.data.lot);
+  if (!lot) {
+    res.status(404).json({ error: "Lot introuvable" });
+    return;
+  }
+  if (lot.etat === "POSSEDE") {
+    res.status(409).json({ error: "Ce lot est déjà à vous" });
+    return;
+  }
+  if (lot.etat === "ENCLAVE") {
+    res.status(409).json({ error: "Ce lot ne touche pas votre terre — achetez d'abord un lot voisin" });
+    return;
+  }
+  const user = await prisma.user.findUnique({ where: { id: body.data.userId } });
+  if (!user) {
+    res.status(404).json({ error: "Joueur introuvable" });
+    return;
+  }
+  if (user.level < lot.niveau) {
+    res.status(403).json({ error: `Niveau ${lot.niveau} requis pour ce lot` });
+    return;
+  }
+  if (!peutPayer(user, lot.prix)) {
+    res.status(402).json({ error: `€ insuffisants — ${lot.prix} requis` });
+    return;
+  }
+  const possedees = new Set(parcel.cells.map((c) => cleCase(c.x, c.y)));
+  const nouvelles: { parcelId: string; x: number; y: number; sol: "PRE" }[] = [];
+  for (let y = lot.y; y < lot.y + lot.h; y++) {
+    for (let x = lot.x; x < lot.x + lot.w; x++) {
+      if (!possedees.has(cleCase(x, y))) nouvelles.push({ parcelId: parcel.id, x, y, sol: "PRE" });
+    }
+  }
+  try {
+    await prisma.$transaction(async (tx) => {
+      /* Le compteur d'abord, sous condition : deux achats simultanés du même
+         lot ne passent pas tous les deux — le second trouve le compteur changé. */
+      const garde = await tx.parcel.updateMany({
+        where: { id: parcel.id, lotsAchetes: parcel.lotsAchetes },
+        data: { lotsAchetes: { increment: 1 }, landPrice: { increment: lot.prix } },
+      });
+      if (garde.count !== 1) throw new Error("CONCURRENT");
+      await debit(tx, user.id, lot.prix, "TERRES", `Achat de terrain — lot ${lot.i + 1}·${lot.j + 1}`);
+      await tx.parcelCell.createMany({ data: nouvelles, skipDuplicates: true });
+    });
+  } catch (e) {
+    if (e instanceof Error && e.message === "CONCURRENT") {
+      res.status(409).json({ error: "Le domaine vient de changer — réessayez" });
+      return;
+    }
+    throw e;
+  }
+  res.status(201).json({ lot: lot.id, paid: lot.prix, cases: nouvelles.length });
+});
+
+/**
+ * Peindre du terrain : champ, pré, étang ou chemin, sur les cases données.
+ *
+ * On peint ce qui peut l'être et l'on saute le reste — le fantôme l'a montré.
+ * Une case réservée par un chantier en cours ne change pas de nature sous
+ * l'engin.
+ */
+app.post("/parcels/:id/terrain", async (req, res) => {
+  const body = z
+    .object({
+      userId: z.string(),
+      outil: z.string(),
+      cells: z.array(z.object({ x: z.number().int(), y: z.number().int() })).min(1).max(1200),
+    })
+    .safeParse(req.body);
+  if (!body.success) {
+    res.status(400).json(body.error.flatten());
+    return;
+  }
+  const def = defConstruction(body.data.outil);
+  if (!def || def.pose !== "TERRAIN") {
+    res.status(400).json({ error: "Outil de terrain inconnu" });
+    return;
+  }
+  const parcel = await prisma.parcel.findUnique({ where: { id: req.params.id }, include: includeDomaine });
+  if (!parcel?.farm || parcel.farm.userId !== body.data.userId) {
+    res.status(403).json({ error: "Parcelle non possédée" });
+    return;
+  }
+  const user = await prisma.user.findUnique({ where: { id: body.data.userId } });
+  if (!user) {
+    res.status(404).json({ error: "Joueur introuvable" });
+    return;
+  }
+  const verrou = verrouConstruction(def, user);
+  if (verrou) {
+    res.status(403).json({ error: `${def.nom} : ${verrou.toLowerCase()}` });
+    return;
+  }
+  const grille = grilleDeParcelle(parcel);
+  const reservees = await occupiedJobCells(parcel.id);
+  const cases = body.data.cells.filter((c) => !reservees.has(cleCase(c.x, c.y)));
+  const verdict = validerPeinture(grille, def, cases);
+  if (!verdict.ok) {
+    res.status(409).json({
+      error:
+        cases.length < body.data.cells.length && !cases.length
+          ? "Ces cases sont réservées par un chantier en cours"
+          : LIBELLE_REFUS[verdict.raison ?? "DEJA"],
+    });
+    return;
+  }
+  if (!peutPayer(user, verdict.cout)) {
+    res.status(402).json({ error: `€ insuffisants — ${verdict.cout} requis` });
+    return;
+  }
+  const peintes = verdict.cases.filter((c) => c.ok && c.change);
+  const data =
+    def.regle === "CHEMIN"
+      ? { revetement: def.revetement ?? null, sol: "PRE" as const }
+      : def.regle === "PRE"
+        ? { revetement: null, sol: "PRE" as const }
+        : { revetement: null, sol: def.sol! };
+  await prisma.$transaction(async (tx) => {
+    if (verdict.cout > 0) {
+      await debit(tx, user.id, verdict.cout, "BATIMENTS", `Aménagement — ${def.nom} (${peintes.length} case${peintes.length > 1 ? "s" : ""})`);
+    }
+    for (let i = 0; i < peintes.length; i += 200) {
+      const lot = peintes.slice(i, i + 200);
+      await tx.parcelCell.updateMany({
+        where: { parcelId: parcel.id, OR: lot.map((c) => ({ x: c.x, y: c.y })) },
+        data,
+      });
+    }
+  });
+  res.json({ peintes: peintes.length, ignorees: body.data.cells.length - peintes.length, cout: verdict.cout });
+});
+
+/** Poser un élément de décor : arbre, haie, clôture, banc… */
+app.post("/parcels/:id/amenagements", async (req, res) => {
+  const body = z
+    .object({
+      userId: z.string(),
+      type: z.string(),
+      x: z.number().int(),
+      y: z.number().int(),
+      rotation: z.number().int().min(0).max(3).optional(),
+    })
+    .safeParse(req.body);
+  if (!body.success) {
+    res.status(400).json(body.error.flatten());
+    return;
+  }
+  const def = defConstruction(body.data.type);
+  if (!def || def.pose !== "OBJET") {
+    res.status(400).json({ error: "Élément inconnu" });
+    return;
+  }
+  const parcel = await prisma.parcel.findUnique({ where: { id: req.params.id }, include: includeDomaine });
+  if (!parcel?.farm || parcel.farm.userId !== body.data.userId) {
+    res.status(403).json({ error: "Parcelle non possédée" });
+    return;
+  }
+  const user = await prisma.user.findUnique({ where: { id: body.data.userId } });
+  if (!user) {
+    res.status(404).json({ error: "Joueur introuvable" });
+    return;
+  }
+  const verrou = verrouConstruction(def, user);
+  if (verrou) {
+    res.status(403).json({ error: `${def.nom} : ${verrou.toLowerCase()}` });
+    return;
+  }
+  const rotation = def.rotations.includes(quarterTurns(body.data.rotation)) ? quarterTurns(body.data.rotation) : 0;
+  const verdict = validerPose(grilleDeParcelle(parcel), def, { x: body.data.x, y: body.data.y, rotation });
+  if (!verdict.ok) {
+    res.status(409).json({ error: `${def.nom} : ${LIBELLE_REFUS[verdict.raison!].toLowerCase()}` });
+    return;
+  }
+  if (!peutPayer(user, def.prix)) {
+    res.status(402).json({ error: `€ insuffisants — ${def.prix} requis` });
+    return;
+  }
+  const amenagement = await prisma.$transaction(async (tx) => {
+    await debit(tx, user.id, def.prix, "BATIMENTS", `Décor — ${def.nom}`);
+    const a = await tx.amenagement.create({
+      data: { parcelId: parcel.id, type: def.id, originX: body.data.x, originY: body.data.y, rotation },
+    });
+    // Un champ nu sous l'objet redevient du pré.
+    await tx.parcelCell.updateMany({
+      where: { parcelId: parcel.id, sol: "CHAMP", OR: verdict.cases.map((c) => ({ x: c.x, y: c.y })) },
+      data: { sol: "PRE" },
+    });
+    return a;
+  });
+  res.status(201).json({ amenagement });
+});
+
+async function amenagementPossede(id: string, userId: string) {
+  const a = await prisma.amenagement.findUnique({
+    where: { id },
+    include: { parcel: { include: includeDomaine } },
+  });
+  if (!a?.parcel.farm || a.parcel.farm.userId !== userId) return null;
+  return a;
+}
+
+/** Déplacer (et tourner) un élément de décor : gratuit, on réorganise sa ferme. */
+app.post("/amenagements/:id/move", async (req, res) => {
+  const body = z
+    .object({
+      userId: z.string(),
+      x: z.number().int(),
+      y: z.number().int(),
+      rotation: z.number().int().min(0).max(3).optional(),
+    })
+    .safeParse(req.body);
+  if (!body.success) {
+    res.status(400).json(body.error.flatten());
+    return;
+  }
+  const a = await amenagementPossede(req.params.id, body.data.userId);
+  if (!a) {
+    res.status(403).json({ error: "Élément non possédé" });
+    return;
+  }
+  const def = defConstruction(a.type);
+  if (!def) {
+    res.status(409).json({ error: "Élément inconnu" });
+    return;
+  }
+  const voulu = quarterTurns(body.data.rotation ?? a.rotation);
+  const rotation = def.rotations.includes(voulu) ? voulu : 0;
+  const verdict = validerPose(grilleDeParcelle(a.parcel), def, { x: body.data.x, y: body.data.y, rotation }, a.id);
+  if (!verdict.ok) {
+    res.status(409).json({ error: LIBELLE_REFUS[verdict.raison!] });
+    return;
+  }
+  const amenagement = await prisma.$transaction(async (tx) => {
+    await tx.parcelCell.updateMany({
+      where: { parcelId: a.parcelId, sol: "CHAMP", OR: verdict.cases.map((c) => ({ x: c.x, y: c.y })) },
+      data: { sol: "PRE" },
+    });
+    return tx.amenagement.update({
+      where: { id: a.id },
+      data: { originX: body.data.x, originY: body.data.y, rotation },
+    });
+  });
+  res.json({ amenagement });
+});
+
+/**
+ * Retirer un élément de décor.
+ *
+ * Moitié du prix rendue ; tout, dans la fenêtre de regret des bâtiments — un
+ * arbre posé d'un clic de travers ne doit rien coûter.
+ */
+app.post("/amenagements/:id/sell", async (req, res) => {
+  const body = z.object({ userId: z.string() }).safeParse(req.body);
+  if (!body.success) {
+    res.status(400).json(body.error.flatten());
+    return;
+  }
+  const a = await amenagementPossede(req.params.id, body.data.userId);
+  if (!a) {
+    res.status(403).json({ error: "Élément non possédé" });
+    return;
+  }
+  const def = defConstruction(a.type);
+  const prix = def?.prix ?? 0;
+  const regret = Date.now() - a.createdAt.getTime() < BUILDING_REGRET_MS;
+  const value = Math.round(regret ? prix : prix * (def?.revente ?? 0.5));
+  await prisma.$transaction(async (tx) => {
+    await tx.amenagement.delete({ where: { id: a.id } });
+    if (value > 0) {
+      await crediter(tx, body.data.userId, value, "BATIMENTS", `Décor retiré — ${def?.nom ?? a.type}`);
+    }
+  });
+  res.json({ sold: a.type, value });
+});
+
 app.post("/parcels/:id/build", async (req, res) => {
   const body = z
     .object({
@@ -9257,8 +9731,10 @@ app.post("/parcels/:id/build", async (req, res) => {
        * ne peut plus diverger.
        */
       type: z.enum(Object.keys(BUILDING_DEFS) as [string, ...string[]]),
-      x: z.number().int().min(0),
-      y: z.number().int().min(0),
+      /* Négatif permis : la marge ouest et nord d'un domaine. La pose,
+         elle, vérifie que chaque case est à soi. */
+      x: z.number().int(),
+      y: z.number().int(),
       /** Quarts de tour, 0 à 3 */
       rotation: z.number().int().min(0).max(3).optional(),
     })
@@ -9279,7 +9755,7 @@ app.post("/parcels/:id/build", async (req, res) => {
   }
   const parcel = await prisma.parcel.findUnique({
     where: { id: req.params.id },
-    include: { farm: true, cells: true },
+    include: { farm: true, cells: true, amenagements: true },
   });
   if (!parcel?.farm || parcel.farm.userId !== body.data.userId) {
     res.status(403).json({ error: "Parcelle non possédée" });
@@ -9291,8 +9767,18 @@ app.post("/parcels/:id/build", async (req, res) => {
   // superposer.
   const rotation = quarterTurns(body.data.rotation);
   const foot = orientedFootprint(body.data.type as BuildingType, rotation);
-  if (body.data.x + foot.w > parcel.gridW || body.data.y + foot.h > parcel.gridH) {
-    res.status(400).json({ error: "Emprise hors grille" });
+  /*
+   * La place se juge avec la règle partagée de la ferme libre : chaque case à
+   * soi, du pré ou un champ nu, ni chemin, ni décor, ni culture, ni autre
+   * bâtiment. C'est la même fonction qui peint le fantôme dans le jeu.
+   */
+  const verdict = validerPose(
+    grilleDeParcelle(parcel),
+    defConstruction(`batiment:${typeDemande}`)!,
+    { x: body.data.x, y: body.data.y, rotation },
+  );
+  if (!verdict.ok) {
+    res.status(409).json({ error: `${def.name} : ${LIBELLE_REFUS[verdict.raison!].toLowerCase()}` });
     return;
   }
   /*
@@ -9307,13 +9793,6 @@ app.post("/parcels/:id/build", async (req, res) => {
    * poser est exactement l'accident qu'on cherche à éviter.
    */
   const cells = footprintCells(body.data.x, body.data.y, foot.w, foot.h);
-  for (const c of cells) {
-    const cell = parcel.cells.find((p) => p.x === c.x && p.y === c.y);
-    if (!cell || cell.kind !== "EMPTY") {
-      res.status(409).json({ error: `Collision en ${c.x},${c.y}` });
-      return;
-    }
-  }
 
   /*
    * Une aire de sortie ne vaut que collée à son abri.
@@ -9378,7 +9857,8 @@ app.post("/parcels/:id/build", async (req, res) => {
       for (const c of cells) {
         await tx.parcelCell.update({
           where: { parcelId_x_y: { parcelId: parcel.id, x: c.x, y: c.y } },
-          data: { kind: "BUILDING", buildingId: b.id },
+          // Un champ nu sous le bâtiment redevient du pré : le bâti n'est pas une culture.
+          data: { kind: "BUILDING", buildingId: b.id, sol: "PRE" },
         });
       }
       await grantXp(tx, user.id, "BUILD", { cost: def.cost }, { buildingsBuilt: 1 });
@@ -9411,7 +9891,7 @@ app.post("/buildings/:id/rotate", async (req, res) => {
   }
   const building = await prisma.building.findUnique({
     where: { id: req.params.id },
-    include: { parcel: { include: { farm: true, cells: true } } },
+    include: { parcel: { include: { farm: true, cells: true, amenagements: true } } },
   });
   if (!building?.parcel.farm || building.parcel.farm.userId !== body.data.userId) {
     res.status(403).json({ error: "Bâtiment non possédé" });
@@ -9419,23 +9899,18 @@ app.post("/buildings/:id/rotate", async (req, res) => {
   }
   const next = quarterTurns(body.data.rotation ?? building.rotation + 1);
   const foot = orientedFootprint(building.type as SharedBuildingType, next);
-  if (
-    building.originX + foot.w > building.parcel.gridW ||
-    building.originY + foot.h > building.parcel.gridH
-  ) {
-    res.status(409).json({ error: "Pas la place de tourner ici" });
+  // Ses propres cases ne le gênent pas : il tourne sur place.
+  const verdictTour = validerPose(
+    grilleDeParcelle(building.parcel),
+    defConstruction(`batiment:${building.type}`)!,
+    { x: building.originX, y: building.originY, rotation: next },
+    building.id,
+  );
+  if (!verdictTour.ok) {
+    res.status(409).json({ error: `Pas la place de tourner — ${LIBELLE_REFUS[verdictTour.raison!].toLowerCase()}` });
     return;
   }
   const wanted = footprintCells(building.originX, building.originY, foot.w, foot.h);
-  for (const c of wanted) {
-    const cell = building.parcel.cells.find((p) => p.x === c.x && p.y === c.y);
-    // La case peut être occupée par le bâtiment lui-même : il tourne sur
-    // place, il ne se pose pas à côté.
-    if (!cell || (cell.kind !== "EMPTY" && cell.buildingId !== building.id)) {
-      res.status(409).json({ error: `Pas la place de tourner — ${c.x},${c.y} occupée` });
-      return;
-    }
-  }
 
   const updated = await prisma.$transaction(async (tx) => {
     await tx.parcelCell.updateMany({
@@ -9445,7 +9920,7 @@ app.post("/buildings/:id/rotate", async (req, res) => {
     for (const c of wanted) {
       await tx.parcelCell.update({
         where: { parcelId_x_y: { parcelId: building.parcelId, x: c.x, y: c.y } },
-        data: { kind: "BUILDING", buildingId: building.id },
+        data: { kind: "BUILDING", buildingId: building.id, sol: "PRE" },
       });
     }
     return tx.building.update({ where: { id: building.id }, data: { rotation: next } });
@@ -9469,8 +9944,8 @@ app.post("/buildings/:id/move", async (req, res) => {
   const body = z
     .object({
       userId: z.string(),
-      x: z.number().int().min(0),
-      y: z.number().int().min(0),
+      x: z.number().int(),
+      y: z.number().int(),
       rotation: z.number().int().min(0).max(3).optional(),
     })
     .safeParse(req.body);
@@ -9480,7 +9955,7 @@ app.post("/buildings/:id/move", async (req, res) => {
   }
   const building = await prisma.building.findUnique({
     where: { id: req.params.id },
-    include: { parcel: { include: { farm: true, cells: true } } },
+    include: { parcel: { include: { farm: true, cells: true, amenagements: true } } },
   });
   if (!building?.parcel.farm || building.parcel.farm.userId !== body.data.userId) {
     res.status(403).json({ error: "Bâtiment non possédé" });
@@ -9489,23 +9964,19 @@ app.post("/buildings/:id/move", async (req, res) => {
   const rotation = quarterTurns(body.data.rotation ?? building.rotation);
   const type = building.type as SharedBuildingType;
   const foot = orientedFootprint(type, rotation);
-  if (
-    body.data.x + foot.w > building.parcel.gridW ||
-    body.data.y + foot.h > building.parcel.gridH
-  ) {
-    res.status(409).json({ error: "Le bâtiment déborderait de la parcelle" });
+  /* Ses propres cases ne le gênent pas : un bâtiment peut glisser d'une case
+     et chevaucher sa place d'avant. Même règle que le quart de tour. */
+  const verdictDemenagement = validerPose(
+    grilleDeParcelle(building.parcel),
+    defConstruction(`batiment:${type}`)!,
+    { x: body.data.x, y: body.data.y, rotation },
+    building.id,
+  );
+  if (!verdictDemenagement.ok) {
+    res.status(409).json({ error: LIBELLE_REFUS[verdictDemenagement.raison!] });
     return;
   }
   const wanted = footprintCells(body.data.x, body.data.y, foot.w, foot.h);
-  for (const c of wanted) {
-    const cell = building.parcel.cells.find((p) => p.x === c.x && p.y === c.y);
-    /* Ses propres cases ne le gênent pas : un bâtiment peut glisser d'une case
-       et chevaucher sa place d'avant. Même règle que le quart de tour. */
-    if (!cell || (cell.kind !== "EMPTY" && cell.buildingId !== building.id)) {
-      res.status(409).json({ error: `Place occupée en ${c.x},${c.y}` });
-      return;
-    }
-  }
   if (body.data.x === building.originX && body.data.y === building.originY && rotation === building.rotation) {
     res.status(409).json({ error: "Le bâtiment est déjà là." });
     return;
@@ -9539,7 +10010,7 @@ app.post("/buildings/:id/move", async (req, res) => {
     for (const c of wanted) {
       await tx.parcelCell.update({
         where: { parcelId_x_y: { parcelId: building.parcelId, x: c.x, y: c.y } },
-        data: { kind: "BUILDING", buildingId: building.id },
+        data: { kind: "BUILDING", buildingId: building.id, sol: "PRE" },
       });
     }
     return tx.building.update({
