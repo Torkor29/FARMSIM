@@ -1497,6 +1497,9 @@ button.ghost {
 .stock-chip span { font-size: 0.82rem; font-weight: 700; }
 .stock-chip em { font-style: normal; font-size: 0.72rem; color: var(--muted); }
 .stock-chip em.wet { color: var(--danger); font-weight: 700; }
+/* La part achetée au négociant : elle ne se revend pas aux joueurs. */
+.stock-chip em.negoce { color: var(--gold-700); font-weight: 700; }
+.channel-card.negoce { background: var(--gold-100); }
 .market-warn {
   display: flex;
   flex-wrap: wrap;

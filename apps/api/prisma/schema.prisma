@@ -578,6 +578,12 @@ model InventoryItem {
   moisture Float  @default(0)
   /// Dernier passage de la péremption sur ce lot
   lastDecayAt DateTime @default(now())
+  /// La part du lot achetée au négociant, jamais plus que `qty`.
+  ///
+  /// Elle se consomme et se revend aux PNJ, jamais aux joueurs : sans cette
+  /// marque, on achetait de la paille au négociant pour la revendre à un
+  /// second compte au plafond de la criée, en boucle — de l'argent sans jouer.
+  negoce   Float  @default(0)
 }
 
 model Machine {

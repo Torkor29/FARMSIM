@@ -1405,6 +1405,54 @@ describe("livraisons", () => {
     assert.equal(await stockDe(moi, "STRAW"), avant + 5, "rentrer la caisse verse au stock");
   });
 
+  it("ce qui vient du négociant ne se revend pas aux joueurs", async () => {
+    /*
+     * Signalé en jeu : on achetait de la paille au PNJ et on la revendait à un
+     * second compte au plafond de la criée, en boucle — de l'argent sans
+     * jouer. Le négoce se consomme, se revend aux PNJ ou se jette ; il ne se
+     * met jamais en annonce.
+     */
+    const { moi, farmId } = await acheteur();
+    await appel("/market/buy", {
+      methode: "POST",
+      corps: { userId: moi.id, commodity: "STRAW", tons: 5 },
+      jeton: moi.jeton,
+    });
+    const liste = await appel(`/farms/${farmId}/supplies`, { jeton: moi.jeton });
+    const id = (liste.corps as unknown as { supplies: { id: string }[] }).supplies[0]!.id;
+    await appel(`/supplies/${id}/collect`, { methode: "POST", jeton: moi.jeton });
+    const me = await appel("/auth/me", { jeton: moi.jeton });
+    const lot = (me.corps as unknown as {
+      player: { farm: { inventory: { itemCode: string; qty: number; negoce: number }[] } };
+    }).player.farm.inventory.find((i) => i.itemCode === "STRAW")!;
+    assert.equal(lot.negoce, lot.qty, "une caisse du négociant est entièrement du négoce");
+
+    const annonce = await appel("/market/listings", {
+      methode: "POST",
+      corps: { userId: moi.id, commodity: "STRAW", tons: 2, pricePerTon: 150 },
+      jeton: moi.jeton,
+    });
+    assert.equal(annonce.statut, 409, JSON.stringify(annonce.corps));
+    assert.match(String((annonce.corps as { error?: string }).error), /négoce/);
+
+    // Le PNJ, lui, le reprend au cours du jour.
+    const vente = await appel("/market/sell", {
+      methode: "POST",
+      corps: { userId: moi.id, commodity: "STRAW", tons: 1 },
+      jeton: moi.jeton,
+    });
+    assert.equal(vente.statut, 200, JSON.stringify(vente.corps));
+
+    // Et on peut s'en défaire pour faire de la place.
+    const jete = await appel("/inventory/discard", {
+      methode: "POST",
+      corps: { userId: moi.id, commodity: "STRAW", tons: 2 },
+      jeton: moi.jeton,
+    });
+    assert.equal(jete.statut, 200, JSON.stringify(jete.corps));
+    assert.ok(Math.abs((await stockDe(moi, "STRAW")) - (lot.qty - 3)) < 0.01);
+  });
+
   it("deux commandes ne se posent pas sur la même case", async () => {
     const { moi, farmId } = await acheteur();
     for (const t of [2, 3]) {

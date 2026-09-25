@@ -154,6 +154,9 @@ import {
   silageYieldTons,
   WORLD_MARKET_GOODS,
   PURCHASABLE_GOODS,
+  nomNegoce,
+  partNegoce,
+  partPropre,
   type Consignes,
   type AbsenceLog,
   repairHalfwayTarget,
@@ -4617,7 +4620,8 @@ async function spoilPerishables() {
     else {
       await prisma.inventoryItem.update({
         where: { id: item.id },
-        data: { qty: left, lastDecayAt: new Date(now) },
+        // Le négoce se gâte comme le reste : il ne peut pas dépasser le lot.
+        data: { qty: left, negoce: Math.min(partNegoce(item), left), lastDecayAt: new Date(now) },
       });
     }
   }
@@ -11036,6 +11040,8 @@ async function addToStock(
   qty: number,
   moisture = 0,
   quality = 3,
+  /** Tonnes achetées au négociant dans cet apport — elles ne se revendront pas aux joueurs. */
+  negoce = 0,
 ) {
   const existing = await tx.inventoryItem.findFirst({ where: { farmId, itemCode } });
   if (existing) {
@@ -11043,11 +11049,12 @@ async function addToStock(
       where: { id: existing.id },
       data: {
         qty: existing.qty + qty,
+        negoce: partNegoce(existing) + negoce,
         moisture: mergeMoisture(existing.qty, existing.moisture, qty, moisture),
       },
     });
   } else {
-    await tx.inventoryItem.create({ data: { farmId, itemCode, qty, quality, moisture } });
+    await tx.inventoryItem.create({ data: { farmId, itemCode, qty, quality, moisture, negoce } });
   }
 }
 
@@ -11114,7 +11121,7 @@ async function applyGrainCapacity(
   const incoming = opts.incoming ?? [];
   const items = (await tx.inventoryItem.findMany({
     where: { farmId: opts.farmId, itemCode: { in: [...GRAIN_GOODS] } },
-  })) as { id: string; itemCode: string; qty: number; moisture: number }[];
+  })) as { id: string; itemCode: string; qty: number; moisture: number; negoce: number }[];
   const plan = allocateGrainIntake({
     capacity: opts.capacity,
     current: grainStockFromItems(items),
@@ -11853,7 +11860,8 @@ async function collectDelivery(d: {
   tons: number;
 }): Promise<void> {
   await prisma.$transaction(async (tx) => {
-    await addToStock(tx, d.farmId, d.commodity as TradeGood, d.tons, 0, 3);
+    // Une caisse du négociant : tout son contenu est du négoce.
+    await addToStock(tx, d.farmId, d.commodity as TradeGood, d.tons, 0, 3, d.tons);
     await tx.supplyOrder.delete({ where: { id: d.id } });
   });
 }
@@ -12803,16 +12811,31 @@ app.post("/machines/:id/store", async (req, res) => {
 /* Commerce : négociant, cours mondial, criée entre joueurs            */
 /* ------------------------------------------------------------------ */
 
-/** Retire des tonnes du stock d'une ferme, en supprimant le lot s'il est vidé. */
+/**
+ * Retire des tonnes du stock d'une ferme, en supprimant le lot s'il est vidé.
+ *
+ * La part achetée au négociant part la première : ce qu'on donne aux bêtes ou
+ * revend au PNJ entame le négoce, et la production du joueur reste vendable
+ * aux autres joueurs. Une annonce, elle, ne prend que la production —
+ * `propreSeulement` — et le négoce reste au silo.
+ */
 async function drawFromStock(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   tx: any,
-  item: { id: string; qty: number },
+  item: { id: string; qty: number; negoce: number },
   tons: number,
+  opts: { propreSeulement?: boolean } = {},
 ) {
   const left = item.qty - tons;
+  const negoce = partNegoce(item);
+  const negoceReste = opts.propreSeulement ? negoce : Math.max(0, negoce - tons);
   if (left <= 0.0001) await tx.inventoryItem.delete({ where: { id: item.id } });
-  else await tx.inventoryItem.update({ where: { id: item.id }, data: { qty: left } });
+  else {
+    await tx.inventoryItem.update({
+      where: { id: item.id },
+      data: { qty: left, negoce: Math.min(negoceReste, left) },
+    });
+  }
 }
 
 /**
@@ -13010,6 +13033,48 @@ app.post("/market/dealer", async (req, res) => {
   });
 });
 
+/**
+ * Jeter le négoce : faire de la place au silo.
+ *
+ * Ce qu'on a acheté au négociant ne se revend pas aux joueurs ; si on n'en a
+ * plus l'usage et que le PNJ en offre trop peu, on peut s'en débarrasser. Seule
+ * la part du négoce part : la production du joueur, elle, ne se jette pas par
+ * erreur.
+ */
+app.post("/inventory/discard", async (req, res) => {
+  const body = z
+    .object({
+      userId: z.string(),
+      commodity: z.string().min(1).max(40),
+      tons: z.number().positive().max(100_000).optional(),
+    })
+    .safeParse(req.body);
+  if (!body.success) {
+    res.status(400).json(body.error.flatten());
+    return;
+  }
+  const user = await prisma.user.findUnique({
+    where: { id: body.data.userId },
+    include: { farm: { include: { inventory: true } } },
+  });
+  if (!user?.farm) {
+    res.status(404).json({ error: "Ferme introuvable" });
+    return;
+  }
+  const inv = user.farm.inventory.find((i) => i.itemCode === body.data.commodity);
+  const negoce = inv ? partNegoce(inv) : 0;
+  const tons = Math.min(body.data.tons ?? negoce, negoce);
+  if (!inv || tons <= 0.0001) {
+    res.status(409).json({ error: "Rien du négoce à jeter ici." });
+    return;
+  }
+  // `drawFromStock` entame le négoce en premier : c'est exactement lui qui part.
+  await prisma.$transaction(async (tx) => {
+    await drawFromStock(tx, inv, tons);
+  });
+  res.json({ discarded: Math.round(tons * 100) / 100, commodity: inv.itemCode });
+});
+
 /** Annonces ouvertes, les plus avantageuses d'abord. */
 app.get("/market/listings", async (req, res) => {
   await expireListings();
@@ -13059,9 +13124,26 @@ app.post("/market/listings", async (req, res) => {
     return;
   }
   const inv = user.farm.inventory.find((i) => i.itemCode === body.data.commodity);
+  /*
+   * Seule la production du joueur se met en criée.
+   *
+   * Ce qui vient du négociant se revendait à un second compte au plafond de la
+   * criée, en boucle : de l'argent sans jouer. Il reste au silo, pour servir
+   * ou pour repartir chez un PNJ.
+   */
+  const propre = inv ? partPropre(inv) : 0;
+  if (inv && body.data.tons > propre + 0.005) {
+    res.status(409).json({
+      error:
+        propre > 0.005
+          ? `Seule votre production se vend aux joueurs : ${propre.toFixed(2)} t au plus. ${nomNegoce(body.data.commodity)} se revend au marché ou au négociant.`
+          : `${nomNegoce(body.data.commodity)} ne se vend pas aux joueurs : revendez-le au marché ou au négociant, ou utilisez-le.`,
+    });
+    return;
+  }
   // Mettre en criée la totalité d'un lot achoppait sur les mêmes centièmes que
   // la vente directe : on règle le tonnage sur ce qui est réellement en stock.
-  const tons = settleSaleTons(body.data.tons, inv?.qty ?? 0) ?? body.data.tons;
+  const tons = settleSaleTons(body.data.tons, propre) ?? body.data.tons;
   const market = await prisma.marketPrice.findUnique({
     where: { commodity: body.data.commodity },
   });
@@ -13077,7 +13159,7 @@ app.post("/market/listings", async (req, res) => {
     tons,
     marketPrice: market.price,
     openListings,
-    stockTons: inv?.qty ?? 0,
+    stockTons: propre,
     crd: estArgentIllimite(user.email) ? DEV_DISPLAY_CRD : user.crd,
   });
   if (!verdict.ok) {
@@ -13087,7 +13169,7 @@ app.post("/market/listings", async (req, res) => {
 
   const fee = listingFee(body.data.pricePerTon, tons);
   const listing = await prisma.$transaction(async (tx) => {
-    await drawFromStock(tx, inv!, tons);
+    await drawFromStock(tx, inv!, tons, { propreSeulement: true });
     await debit(tx, user.id, fee);
     return tx.marketListing.create({
       data: {
