@@ -47,6 +47,7 @@ import {
   SILAGE_MIN_PROGRESS,
   buildingMoveCost,
   GAME_DAY_MS,
+  weedPressureAfter,
 } from "@farmsim/shared";
 
 const API_DIR = fileURLToPath(new URL("../..", import.meta.url));
@@ -1969,10 +1970,27 @@ describe("calendrier cultural", () => {
     );
 
     // 1 — L'écran doit voir la salissure, et non le zéro figé du labour.
+    //
+    // On ne fixe pas un seuil de 0,1 : en hiver les adventices montent à
+    // 0,08 × 0,15 = 0,012 par jour, soit 0,072 en six jours — sous ce
+    // seuil. Le 25 septembre, `main` est tombé là-dessus (0,072003) alors
+    // que le rucher #101 n'avait pas touché ce modèle. On compare au
+    // modèle, saison comprise : c'est lui que la route doit appliquer,
+    // y compris quand il pousse peu.
+    const saison = saisonCourante();
+    const attendu = weedPressureAfter({
+      start: 0,
+      elapsedMs: Date.now() - ilYaSixJours.getTime(),
+      season: saison,
+    });
     const vue = await lire();
     assert.ok(
-      vue.weedPressure > 0.1,
-      `le champ reste annoncé propre six jours après le labour : ${vue.weedPressure}`,
+      vue.weedPressure > 0,
+      `le champ reste annoncé propre six jours après le labour : ${vue.weedPressure} (${saison})`,
+    );
+    assert.ok(
+      Math.abs(vue.weedPressure - attendu) < 0.02,
+      `pression lue ${vue.weedPressure} au lieu de ${attendu} (${saison})`,
     );
 
     // 2 — Et le semis en hérite, au lieu de repartir de zéro. On sème ce que
@@ -1986,8 +2004,12 @@ describe("calendrier cultural", () => {
     assert.ok(semis.statut < 400, `semis refusé : ${JSON.stringify(semis.corps)}`);
     const apres = await lire();
     assert.ok(
-      apres.weedPressure > 0.1,
-      `le semis a effacé les adventices levées depuis le labour : ${apres.weedPressure}`,
+      apres.weedPressure > 0,
+      `le semis a effacé les adventices levées depuis le labour : ${apres.weedPressure} (${saison})`,
+    );
+    assert.ok(
+      Math.abs(apres.weedPressure - vue.weedPressure) < 0.05,
+      `le semis n'a pas repris la pression levée : ${apres.weedPressure} contre ${vue.weedPressure}`,
     );
   });
 
