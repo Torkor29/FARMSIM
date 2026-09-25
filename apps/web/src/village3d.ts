@@ -20,6 +20,7 @@ import * as THREE from "three";
 import { createMachineRig, type MachineRig } from "./machines3d";
 import { ajouterArbre, ajouterBoite, ajouterGeometrie, maillageFacette, pose } from "./decor3d";
 import { COTE_LIEU, type GenreLieu, type Lieu } from "./countryside-plan";
+import { MODELES_DISPONIBLES, poserModele } from "./modeles-decor";
 
 /** Le bois des clôtures et des piquets, celui de la cour. */
 export const BOIS = 0x7a5534;
@@ -529,6 +530,127 @@ function cooperative(t: Tableaux, g: THREE.Group, j: Jetables): void {
 }
 
 /**
+ * Le rucher dessiné en code — la version de secours.
+ *
+ * Le vrai rucher est modélisé dans Blender (`blender/rucher.py`) et chargé à
+ * part ; celui-ci ne sert que là où le modèle ne peut pas l'être : dans les
+ * tests, ou si le fichier ne répond pas.
+ */
+function rucherEnCode(t: Tableaux): void {
+  /*
+   * Un rucher d'autrefois : trois ruches en paille sur un banc de bois,
+   * des pieds de lavande derrière, deux tournesols aux bouts du banc,
+   * des marguerites devant et une pancarte.
+   *
+   * Deux versions ont précédé, et la même question est revenue : « c'est
+   * quoi ça ? ». Des pavés à toit plat, puis des caisses à toit rouge,
+   * entourés de fleurs en dés ou en palets : rien qui ne soit une ruche
+   * ou une fleur qu'à condition de le savoir. La ruche en paille et le
+   * pied de lavande se lisent sans légende.
+   */
+  const PAILLE = 0xd8a849;
+  const zBanc = 0.35;
+  const hBanc = 0.46;
+  // Le banc : une planche épaisse, quatre pieds, une traverse.
+  ajouterBoite(t.pos, t.col, 0, hBanc - 0.05, zBanc, 3.9, 0.1, 0.8, BOIS_CLAIR);
+  for (const sx of [-1.75, 1.75]) {
+    for (const sz of [-0.28, 0.28]) {
+      ajouterBoite(t.pos, t.col, sx, (hBanc - 0.1) / 2, zBanc + sz, 0.12, hBanc - 0.1, 0.12, BOIS);
+    }
+    ajouterBoite(t.pos, t.col, sx, 0.14, zBanc, 0.08, 0.08, 0.6, BOIS);
+  }
+  ajouterBoite(t.pos, t.col, 0, 0.14, zBanc, 3.5, 0.08, 0.08, BOIS);
+  // Les ruches en paille, chacune sur son plateau, l'entrée face à nous.
+  for (let i = 0; i < 3; i++) {
+    const x = -1.25 + i * 1.25;
+    const haut = 1.0 + (i === 1 ? 0.08 : 0);
+    ajouterBoite(t.pos, t.col, x, hBanc + 0.02, zBanc, 1.0, 0.04, 0.72, 0x7a5a36);
+    ajouterGeometrie(t.pos, t.col, rucheEnPaille(), pose(x, hBanc + 0.04, zBanc, i * 0.9, 0.98, haut, 0.98), PAILLE);
+    // Le trou de vol : une petite arche sombre au pied, côté caméra.
+    ajouterBoite(t.pos, t.col, x + 0.33, hBanc + 0.12, zBanc + 0.33, 0.24, 0.14, 0.12, 0x2c2012, Math.PI / 4);
+  }
+  // La lavande : un pied vert-de-gris hérissé d'épis qui s'écartent.
+  const LAVANDE = [0x7c56c0, 0x9270d0, 0x6a48ae];
+  const pieds: [number, number][] = [];
+  for (const [z, dx] of [[-1.05, 0], [-2.15, 0.6]] as const) {
+    for (let k = 0; k < 4; k++) pieds.push([-2.1 + dx + k * 1.3, z]);
+  }
+  for (const [bx, bz] of pieds) {
+    // Le pied, bombé : c'est la masse ronde qui fait le buisson.
+    ajouterGeometrie(t.pos, t.col, touffe(), pose(bx, 0.2, bz, bx * 3, 0.92, 0.56, 0.92), 0x6f8c62);
+    const EPIS = 26;
+    for (let e = 0; e < EPIS; e++) {
+      const a = e * 2.39996 + bx;
+      const r = Math.sqrt((e + 0.5) / EPIS) * 0.38;
+      const incl = r * 0.85;
+      const L = 0.16 + ((e * 3) % 4) * 0.035;
+      // Le pied des épis suit le dôme : au centre plus haut qu'au bord.
+      const y0 = 0.2 + 0.26 * Math.sqrt(Math.max(0, 1 - (r / 0.46) ** 2));
+      const px = bx + Math.sin(a) * r;
+      const pz = bz + Math.cos(a) * r;
+      const dx = Math.sin(a) * Math.sin(incl);
+      const dz = Math.cos(a) * Math.sin(incl);
+      const dy = Math.cos(incl);
+      ajouterGeometrie(
+        t.pos, t.col, cylindre(4),
+        pose(px + dx * L * 0.5, y0 + dy * L * 0.5, pz + dz * L * 0.5, a, 0.03, L, 0.03, incl),
+        0x7f9d5e,
+      );
+      ajouterGeometrie(
+        t.pos, t.col, cylindre(5),
+        pose(px + dx * (L + 0.1), y0 + dy * (L + 0.1), pz + dz * (L + 0.1), a, 0.11, 0.24, 0.11, incl),
+        LAVANDE[e % 3]!,
+      );
+    }
+  }
+  // Deux tournesols aux bouts du banc, la fleur tournée vers la caméra.
+  for (const sx of [-2.45, 2.45]) {
+    const h = 1.45;
+    ajouterBoite(t.pos, t.col, sx, h / 2, zBanc, 0.07, h, 0.07, 0x5f8a3a);
+    for (const [dy, s] of [[0.45, 1], [0.8, -1]] as const) {
+      ajouterGeometrie(t.pos, t.col, touffe(), pose(sx + s * 0.16, dy, zBanc + s * 0.1, s * 0.8, 0.34, 0.06, 0.2), 0x5f8a3a);
+    }
+    const face = Math.PI / 4;
+    const penche = 1.15;
+    ajouterGeometrie(t.pos, t.col, cylindre(12), pose(sx, h, zBanc, face, 0.62, 0.05, 0.62, penche), 0xf2c21b);
+    ajouterGeometrie(
+      t.pos, t.col, cylindre(10),
+      pose(sx + Math.sin(face) * 0.03, h + 0.012, zBanc + Math.cos(face) * 0.03, face, 0.3, 0.06, 0.3, penche),
+      0x5a3a1c,
+    );
+  }
+  // Des marguerites devant le banc : une tige, un cœur jaune, des pétales.
+  const MARGUERITES: [number, number][] = [
+    [-0.9, 1.45], [-0.55, 1.75], [0.2, 1.5], [0.65, 1.9], [1.3, 1.55], [1.8, 2.05], [-0.1, 2.2], [1.05, 2.35],
+  ];
+  for (const [mx, mz] of MARGUERITES) {
+    const h = 0.26 + ((mx * 10) % 3) * 0.03;
+    ajouterBoite(t.pos, t.col, mx, h / 2, mz, 0.03, h, 0.03, 0x6f9a45);
+    ajouterGeometrie(t.pos, t.col, cylindre(8), pose(mx, h, mz, 0, 0.22, 0.03, 0.22), 0xfbf8ef);
+    ajouterGeometrie(t.pos, t.col, cylindre(6), pose(mx, h + 0.02, mz, 0, 0.08, 0.04, 0.08), 0xf2b91c);
+  }
+}
+
+/** La pancarte du rucher, tournée vers la caméra. */
+function pancarteRucher(t: Tableaux, group: THREE.Group, j: Jetables): void {
+  const px = -2.2;
+  const pz = 2.35;
+  for (const s of [-1, 1]) {
+    ajouterBoite(t.pos, t.col, px + s * 0.5, 0.5, pz - s * 0.5, 0.1, 1.0, 0.1, BOIS, Math.PI / 4);
+  }
+  const enseigne = plaque(
+    j,
+    { texte: "RUCHER", fond: "#fbf5e6", encre: "#8a5a12", bord: "#c99a2e", sous: "Miel de la ferme" },
+    1.7,
+    1.7 * (208 / 512),
+    0xf4e7c5,
+  );
+  enseigne.position.set(px, 1.0, pz);
+  enseigne.rotation.y = Math.PI / 4;
+  group.add(enseigne);
+}
+
+/**
  * Un lieu du village, posé sur son emprise. `y` est le sol de la campagne.
  */
 export function creerLieu(
@@ -606,114 +728,24 @@ export function creerLieu(
       break;
     }
     case "RUCHER": {
-      /*
-       * Un rucher d'autrefois : trois ruches en paille sur un banc de bois,
-       * des pieds de lavande derrière, deux tournesols aux bouts du banc,
-       * des marguerites devant et une pancarte.
-       *
-       * Deux versions ont précédé, et la même question est revenue : « c'est
-       * quoi ça ? ». Des pavés à toit plat, puis des caisses à toit rouge,
-       * entourés de fleurs en dés ou en palets : rien qui ne soit une ruche
-       * ou une fleur qu'à condition de le savoir. La ruche en paille et le
-       * pied de lavande se lisent sans légende.
-       */
-      const PAILLE = 0xd8a849;
-      const zBanc = 0.35;
-      const hBanc = 0.46;
-      // Le banc : une planche épaisse, quatre pieds, une traverse.
-      ajouterBoite(t.pos, t.col, 0, hBanc - 0.05, zBanc, 3.9, 0.1, 0.8, BOIS_CLAIR);
-      for (const sx of [-1.75, 1.75]) {
-        for (const sz of [-0.28, 0.28]) {
-          ajouterBoite(t.pos, t.col, sx, (hBanc - 0.1) / 2, zBanc + sz, 0.12, hBanc - 0.1, 0.12, BOIS);
-        }
-        ajouterBoite(t.pos, t.col, sx, 0.14, zBanc, 0.08, 0.08, 0.6, BOIS);
+      pancarteRucher(t, group, j);
+      if (!MODELES_DISPONIBLES) {
+        rucherEnCode(t);
+        break;
       }
-      ajouterBoite(t.pos, t.col, 0, 0.14, zBanc, 3.5, 0.08, 0.08, BOIS);
-      // Les ruches en paille, chacune sur son plateau, l'entrée face à nous.
-      for (let i = 0; i < 3; i++) {
-        const x = -1.25 + i * 1.25;
-        const haut = 1.0 + (i === 1 ? 0.08 : 0);
-        ajouterBoite(t.pos, t.col, x, hBanc + 0.02, zBanc, 1.0, 0.04, 0.72, 0x7a5a36);
-        ajouterGeometrie(t.pos, t.col, rucheEnPaille(), pose(x, hBanc + 0.04, zBanc, i * 0.9, 0.98, haut, 0.98), PAILLE);
-        // Le trou de vol : une petite arche sombre au pied, côté caméra.
-        ajouterBoite(t.pos, t.col, x + 0.33, hBanc + 0.12, zBanc + 0.33, 0.24, 0.14, 0.12, 0x2c2012, Math.PI / 4);
-      }
-      // La lavande : un pied vert-de-gris hérissé d'épis qui s'écartent.
-      const LAVANDE = [0x7c56c0, 0x9270d0, 0x6a48ae];
-      const pieds: [number, number][] = [];
-      for (const [z, dx] of [[-1.05, 0], [-2.15, 0.6]] as const) {
-        for (let k = 0; k < 4; k++) pieds.push([-2.1 + dx + k * 1.3, z]);
-      }
-      for (const [bx, bz] of pieds) {
-        // Le pied, bombé : c'est la masse ronde qui fait le buisson.
-        ajouterGeometrie(t.pos, t.col, touffe(), pose(bx, 0.2, bz, bx * 3, 0.92, 0.56, 0.92), 0x6f8c62);
-        const EPIS = 26;
-        for (let e = 0; e < EPIS; e++) {
-          const a = e * 2.39996 + bx;
-          const r = Math.sqrt((e + 0.5) / EPIS) * 0.38;
-          const incl = r * 0.85;
-          const L = 0.16 + ((e * 3) % 4) * 0.035;
-          // Le pied des épis suit le dôme : au centre plus haut qu'au bord.
-          const y0 = 0.2 + 0.26 * Math.sqrt(Math.max(0, 1 - (r / 0.46) ** 2));
-          const px = bx + Math.sin(a) * r;
-          const pz = bz + Math.cos(a) * r;
-          const dx = Math.sin(a) * Math.sin(incl);
-          const dz = Math.cos(a) * Math.sin(incl);
-          const dy = Math.cos(incl);
-          ajouterGeometrie(
-            t.pos, t.col, cylindre(4),
-            pose(px + dx * L * 0.5, y0 + dy * L * 0.5, pz + dz * L * 0.5, a, 0.03, L, 0.03, incl),
-            0x7f9d5e,
-          );
-          ajouterGeometrie(
-            t.pos, t.col, cylindre(5),
-            pose(px + dx * (L + 0.1), y0 + dy * (L + 0.1), pz + dz * (L + 0.1), a, 0.11, 0.24, 0.11, incl),
-            LAVANDE[e % 3]!,
-          );
-        }
-      }
-      // Deux tournesols aux bouts du banc, la fleur tournée vers la caméra.
-      for (const sx of [-2.45, 2.45]) {
-        const h = 1.45;
-        ajouterBoite(t.pos, t.col, sx, h / 2, zBanc, 0.07, h, 0.07, 0x5f8a3a);
-        for (const [dy, s] of [[0.45, 1], [0.8, -1]] as const) {
-          ajouterGeometrie(t.pos, t.col, touffe(), pose(sx + s * 0.16, dy, zBanc + s * 0.1, s * 0.8, 0.34, 0.06, 0.2), 0x5f8a3a);
-        }
-        const face = Math.PI / 4;
-        const penche = 1.15;
-        ajouterGeometrie(t.pos, t.col, cylindre(12), pose(sx, h, zBanc, face, 0.62, 0.05, 0.62, penche), 0xf2c21b);
-        ajouterGeometrie(
-          t.pos, t.col, cylindre(10),
-          pose(sx + Math.sin(face) * 0.03, h + 0.012, zBanc + Math.cos(face) * 0.03, face, 0.3, 0.06, 0.3, penche),
-          0x5a3a1c,
-        );
-      }
-      // Des marguerites devant le banc : une tige, un cœur jaune, des pétales.
-      const MARGUERITES: [number, number][] = [
-        [-0.9, 1.45], [-0.55, 1.75], [0.2, 1.5], [0.65, 1.9], [1.3, 1.55], [1.8, 2.05], [-0.1, 2.2], [1.05, 2.35],
-      ];
-      for (const [mx, mz] of MARGUERITES) {
-        const h = 0.26 + ((mx * 10) % 3) * 0.03;
-        ajouterBoite(t.pos, t.col, mx, h / 2, mz, 0.03, h, 0.03, 0x6f9a45);
-        ajouterGeometrie(t.pos, t.col, cylindre(8), pose(mx, h, mz, 0, 0.22, 0.03, 0.22), 0xfbf8ef);
-        ajouterGeometrie(t.pos, t.col, cylindre(6), pose(mx, h + 0.02, mz, 0, 0.08, 0.04, 0.08), 0xf2b91c);
-      }
-      // La pancarte, tournée vers la caméra.
-      const px = -2.2;
-      const pz = 2.35;
-      for (const s of [-1, 1]) {
-        ajouterBoite(t.pos, t.col, px + s * 0.5, 0.5, pz - s * 0.5, 0.1, 1.0, 0.1, BOIS, Math.PI / 4);
-      }
-      const enseigne = plaque(
-        j,
-        { texte: "RUCHER", fond: "#fbf5e6", encre: "#8a5a12", bord: "#c99a2e", sous: "Miel de la ferme" },
-        1.7,
-        1.7 * (208 / 512),
-        0xf4e7c5,
-      );
-      enseigne.position.set(px, 1.0, pz);
-      enseigne.rotation.y = Math.PI / 4;
-      group.add(enseigne);
+      poserModele("/assets/decor3d/rucher.glb", shadows)
+        .then((modele) => {
+          modele.name = "rucher-modele";
+          group.add(modele);
+        })
+        .catch(() => {
+          const secours: Tableaux = { pos: [], col: [] };
+          rucherEnCode(secours);
+          const m = maillageFacette(secours.pos, secours.col, { shadows, recoit: shadows, nom: "lieu-decor" });
+          j.geometries.push(m.geometry);
+          j.materiaux.push(m.material as THREE.Material);
+          group.add(m);
+        });
       break;
     }
   }
