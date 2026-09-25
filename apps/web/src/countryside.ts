@@ -47,6 +47,7 @@ import {
   makeVoiture,
 } from "./decor3d";
 import { fusionnerStatique } from "./fusion-statique";
+import { instancierPiece, MODELES_DISPONIBLES, PANCARTES } from "./modeles-decor";
 import { creerVoisinDetaille, poserBatimentsVoisin, type VoisinDetaille } from "./voisin3d";
 import { creerLieu, creerPancarteVente, type Jetables } from "./village3d";
 import type { BuildingRig } from "./buildings3d";
@@ -714,12 +715,32 @@ export function createCountryside(o: OptionsCampagne): Campagne {
   {
     const groupe = new THREE.Group();
     groupe.name = "campagne-pancartes";
+    const coins: THREE.Vector3[] = [];
     for (const p of plan.parcelles) {
       if (!p.reel || p.reel.statut === "MOI" || p.reel.prix === null) continue;
-      const pancarte = creerPancarteVente(jetables, { shadows });
       const coin = (p.cote - 0.5) / 2 - 1.2;
-      pancarte.position.set(p.x + coin, y0, p.z + coin);
-      groupe.add(pancarte);
+      coins.push(new THREE.Vector3(p.x + coin, y0, p.z + coin));
+    }
+    /*
+     * La pancarte modélisée dans Blender, instanciée : une trentaine de
+     * pancartes pour six appels de rendu. La version en code reste pour les
+     * tests, et si le fichier ne répond pas.
+     */
+    const pancartesEnCode = () => {
+      for (const c of coins) {
+        const pancarte = creerPancarteVente(jetables, { shadows });
+        pancarte.position.copy(c);
+        groupe.add(pancarte);
+      }
+    };
+    if (!MODELES_DISPONIBLES) pancartesEnCode();
+    else {
+      const face = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), Math.PI / 4);
+      const un = new THREE.Vector3(1, 1, 1);
+      const poses = coins.map((c) => new THREE.Matrix4().compose(c, face, un));
+      instancierPiece(PANCARTES, "pancarte-vente", poses, shadows)
+        .then((g) => groupe.add(g))
+        .catch(pancartesEnCode);
     }
     object.add(groupe);
 

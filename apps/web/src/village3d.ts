@@ -20,7 +20,7 @@ import * as THREE from "three";
 import { createMachineRig, type MachineRig } from "./machines3d";
 import { ajouterArbre, ajouterBoite, ajouterGeometrie, maillageFacette, pose } from "./decor3d";
 import { COTE_LIEU, type GenreLieu, type Lieu } from "./countryside-plan";
-import { MODELES_DISPONIBLES, poserModele } from "./modeles-decor";
+import { MODELES_DISPONIBLES, PANCARTES, poserModele, poserPiece } from "./modeles-decor";
 
 /** Le bois des clôtures et des piquets, celui de la cour. */
 export const BOIS = 0x7a5534;
@@ -239,6 +239,41 @@ function plaque(
 }
 
 /**
+ * Une enseigne du village : le modèle Blender (`blender/pancartes.py`) à sa
+ * place, ou — dans les tests, ou si le fichier ne répond pas — la version
+ * dessinée en code, que `secours` verse dans ses propres tableaux.
+ */
+function enseigne(
+  g: THREE.Group,
+  j: Jetables,
+  shadows: boolean,
+  nom: string,
+  ou: { x: number; y: number; z: number; rotY: number },
+  secours: (t: Tableaux, g: THREE.Group, j: Jetables) => void,
+): void {
+  const enCode = () => {
+    const t: Tableaux = { pos: [], col: [] };
+    secours(t, g, j);
+    if (!t.pos.length) return;
+    const m = maillageFacette(t.pos, t.col, { shadows, recoit: shadows, nom: "enseigne-secours" });
+    j.geometries.push(m.geometry);
+    j.materiaux.push(m.material as THREE.Material);
+    g.add(m);
+  };
+  if (!MODELES_DISPONIBLES) {
+    enCode();
+    return;
+  }
+  poserPiece(PANCARTES, nom, shadows)
+    .then((o) => {
+      o.position.set(ou.x, ou.y, ou.z);
+      o.rotation.y = ou.rotY;
+      g.add(o);
+    })
+    .catch(enCode);
+}
+
+/**
  * La pancarte « À VENDRE » : une potence et sa plaque suspendue.
  *
  * La première était un grand panneau carré sur deux piquets : lisible, mais
@@ -305,7 +340,7 @@ function place(t: Tableaux, cote: number): void {
  * son campanile à horloge. C'est le bâtiment du bourg : elle est plus haute
  * et plus large que tout ce qu'il y a autour.
  */
-function mairie(t: Tableaux, g: THREE.Group, j: Jetables): void {
+function mairie(t: Tableaux, g: THREE.Group, j: Jetables, shadows: boolean): void {
   const L = 5.4;
   const P = 3.1;
   const zc = -0.9;
@@ -377,16 +412,18 @@ function mairie(t: Tableaux, g: THREE.Group, j: Jetables): void {
   }
   ajouterBoite(t.pos, t.col, 1.2, 0.22, 2.7, 1.1, 0.08, 0.34, BOIS_CLAIR);
   ajouterBoite(t.pos, t.col, 1.2, 0.42, 2.55, 1.1, 0.3, 0.06, BOIS_CLAIR);
-  // L'inscription, sous le fronton.
-  const inscription = plaque(
-    j,
-    { texte: "MAIRIE", fond: "#fbf5e6", encre: "#23407a", bord: "#23407a" },
-    1.66,
-    1.66 * (208 / 512),
-    0xf4e7c5,
-  );
-  inscription.position.set(0, 2.9, zAv + 0.07);
-  g.add(inscription);
+  // L'inscription, sous le fronton : une plaque émaillée contre la façade.
+  enseigne(g, j, shadows, "plaque-mairie", { x: 0, y: 2.9, z: zAv + 0.05, rotY: 0 }, (_t, gg, jj) => {
+    const inscription = plaque(
+      jj,
+      { texte: "MAIRIE", fond: "#fbf5e6", encre: "#23407a", bord: "#23407a" },
+      1.66,
+      1.66 * (208 / 512),
+      0xf4e7c5,
+    );
+    inscription.position.set(0, 2.9, zAv + 0.07);
+    gg.add(inscription);
+  });
 }
 
 /**
@@ -446,30 +483,33 @@ function concession(t: Tableaux, g: THREE.Group, j: Jetables, shadows: boolean, 
     ajouterBoite(t.pos, t.col, x, 1.2, z, 0.06, 2.4, 0.06, 0xdedede);
     ajouterBoite(t.pos, t.col, x, 2.05, z + 0.2, 0.03, 0.62, 0.36, [MARQUE, JAUNE, MARQUE, JAUNE][i]!);
   }
-  const enseigne = plaque(
-    j,
-    { texte: "CONCESSION", fond: "#fbf5e6", encre: "#2f7d4a", bord: "#2f7d4a", sous: "Engins neufs & occasions" },
-    2.6,
-    2.6 * (208 / 512),
-    0xf4e7c5,
-  );
-  // L'enseigne sur le toit, sur deux montants : le bandeau est trop étroit.
-  const yEns = 0.16 + H + 0.64 + (2.6 * (208 / 512)) / 2;
-  enseigne.position.set(xc, yEns, zc + P / 2 - 0.3);
+  // L'enseigne sur le toit, sur son châssis : le bandeau est trop étroit.
   // Tournée vers la caméra : posée d'équerre sur le toit, la vue isométrique
   // la montrait de biais et l'on ne la lisait plus.
-  enseigne.rotation.y = Math.PI / 4;
-  g.add(enseigne);
-  for (const s of [-1, 1]) {
-    ajouterBoite(t.pos, t.col, xc + s * 1.0, yEns - 0.3, zc + P / 2 - 0.36, 0.08, 1.0, 0.08, 0x5e656b);
-  }
+  const toitHaut = 0.16 + H + 0.64;
+  enseigne(g, j, shadows, "enseigne-concession", { x: xc, y: toitHaut, z: zc + P / 2 - 0.3, rotY: Math.PI / 4 }, (tt, gg, jj) => {
+    const panneau = plaque(
+      jj,
+      { texte: "CONCESSION", fond: "#fbf5e6", encre: "#2f7d4a", bord: "#2f7d4a", sous: "Engins neufs & occasions" },
+      2.6,
+      2.6 * (208 / 512),
+      0xf4e7c5,
+    );
+    const yEns = toitHaut + (2.6 * (208 / 512)) / 2;
+    panneau.position.set(xc, yEns, zc + P / 2 - 0.3);
+    panneau.rotation.y = Math.PI / 4;
+    gg.add(panneau);
+    for (const s of [-1, 1]) {
+      ajouterBoite(tt.pos, tt.col, xc + s * 1.0, yEns - 0.3, zc + P / 2 - 0.36, 0.08, 1.0, 0.08, 0x5e656b);
+    }
+  });
 }
 
 /**
  * La coopérative : l'élévateur à grain qui domine le bourg, trois cellules,
  * le hangar de réception et le pont-bascule devant.
  */
-function cooperative(t: Tableaux, g: THREE.Group, j: Jetables): void {
+function cooperative(t: Tableaux, g: THREE.Group, j: Jetables, shadows: boolean): void {
   const TOLE = 0xc9ced2;
   const TOLE_SOMBRE = 0x9aa3a8;
   const ROUGE = 0xa8432f;
@@ -513,20 +553,22 @@ function cooperative(t: Tableaux, g: THREE.Group, j: Jetables): void {
     ajouterBoite(t.pos, t.col, 0.9 + (i % 3) * 0.5, 0.2 + Math.floor(i / 3) * 0.3, 1.0, 0.46, 0.28, 0.36, 0xe8d6a6);
   }
   // Le totem à l'entrée de la place, tourné vers la caméra.
-  const enseigne = plaque(
-    j,
-    { texte: "COOPÉRATIVE", fond: "#fbf5e6", encre: "#2f5d3a", bord: "#2f5d3a", sous: "Collecte · Vente des récoltes" },
-    2.4,
-    2.4 * (208 / 512),
-    0xf4e7c5,
-  );
   const tx = -2.3;
   const tz = 2.6;
-  ajouterBoite(t.pos, t.col, tx, 0.2, tz, 0.9, 0.4, 0.9, 0xb7ab93);
-  ajouterBoite(t.pos, t.col, tx, 0.95, tz, 0.16, 1.2, 0.16, 0x5e656b);
-  enseigne.position.set(tx, 1.95, tz);
-  enseigne.rotation.y = Math.PI / 4;
-  g.add(enseigne);
+  enseigne(g, j, shadows, "enseigne-cooperative", { x: tx, y: 0, z: tz, rotY: Math.PI / 4 }, (tt, gg, jj) => {
+    const panneau = plaque(
+      jj,
+      { texte: "COOPÉRATIVE", fond: "#fbf5e6", encre: "#2f5d3a", bord: "#2f5d3a", sous: "Collecte · Vente des récoltes" },
+      2.4,
+      2.4 * (208 / 512),
+      0xf4e7c5,
+    );
+    ajouterBoite(tt.pos, tt.col, tx, 0.2, tz, 0.9, 0.4, 0.9, 0xb7ab93);
+    ajouterBoite(tt.pos, tt.col, tx, 0.95, tz, 0.16, 1.2, 0.16, 0x5e656b);
+    panneau.position.set(tx, 1.95, tz);
+    panneau.rotation.y = Math.PI / 4;
+    gg.add(panneau);
+  });
 }
 
 /**
@@ -632,22 +674,24 @@ function rucherEnCode(t: Tableaux): void {
 }
 
 /** La pancarte du rucher, tournée vers la caméra. */
-function pancarteRucher(t: Tableaux, group: THREE.Group, j: Jetables): void {
+function pancarteRucher(g: THREE.Group, j: Jetables, shadows: boolean): void {
   const px = -2.2;
   const pz = 2.35;
-  for (const s of [-1, 1]) {
-    ajouterBoite(t.pos, t.col, px + s * 0.5, 0.5, pz - s * 0.5, 0.1, 1.0, 0.1, BOIS, Math.PI / 4);
-  }
-  const enseigne = plaque(
-    j,
-    { texte: "RUCHER", fond: "#fbf5e6", encre: "#8a5a12", bord: "#c99a2e", sous: "Miel de la ferme" },
-    1.7,
-    1.7 * (208 / 512),
-    0xf4e7c5,
-  );
-  enseigne.position.set(px, 1.0, pz);
-  enseigne.rotation.y = Math.PI / 4;
-  group.add(enseigne);
+  enseigne(g, j, shadows, "enseigne-rucher", { x: px, y: 0, z: pz, rotY: Math.PI / 4 }, (t, gg, jj) => {
+    for (const s of [-1, 1]) {
+      ajouterBoite(t.pos, t.col, px + s * 0.5, 0.5, pz - s * 0.5, 0.1, 1.0, 0.1, BOIS, Math.PI / 4);
+    }
+    const panneau = plaque(
+      jj,
+      { texte: "RUCHER", fond: "#fbf5e6", encre: "#8a5a12", bord: "#c99a2e", sous: "Miel de la ferme" },
+      1.7,
+      1.7 * (208 / 512),
+      0xf4e7c5,
+    );
+    panneau.position.set(px, 1.0, pz);
+    panneau.rotation.y = Math.PI / 4;
+    gg.add(panneau);
+  });
 }
 
 /**
@@ -669,13 +713,13 @@ export function creerLieu(
 
   switch (lieu.genre) {
     case "MAIRIE":
-      mairie(t, group, j);
+      mairie(t, group, j, shadows);
       break;
     case "CONCESSION":
       concession(t, group, j, shadows, engins);
       break;
     case "COOPERATIVE":
-      cooperative(t, group, j);
+      cooperative(t, group, j, shadows);
       break;
     case "ETANG": {
       // Un disque d'eau à bord de roseaux, et un ponton.
@@ -728,7 +772,7 @@ export function creerLieu(
       break;
     }
     case "RUCHER": {
-      pancarteRucher(t, group, j);
+      pancarteRucher(group, j, shadows);
       if (!MODELES_DISPONIBLES) {
         rucherEnCode(t);
         break;

@@ -33,3 +33,34 @@ describe("le rucher modélisé dans Blender", () => {
     expect(MODELES_DISPONIBLES).toBe(false);
   });
 });
+
+describe("les pancartes modélisées dans Blender", () => {
+  const PANCARTES = fs.readFileSync("blender/pancartes.py", "utf8");
+  const CAMPAGNE = fs.readFileSync("src/countryside.ts", "utf8");
+  const NOMS = ["pancarte-vente", "enseigne-rucher", "enseigne-cooperative", "enseigne-concession", "plaque-mairie"];
+
+  it("sont livrées dans un seul fichier, une pièce nommée par pancarte", () => {
+    const glb = fs.readFileSync("public/assets/decor3d/pancartes.glb");
+    const texte = glb.toString("latin1");
+    expect(glb.subarray(0, 4).toString("latin1")).toBe("glTF");
+    expect(texte).toContain("EXT_meshopt_compression");
+    for (const nom of NOMS) expect(texte).toContain(`"name":"${nom}"`);
+    expect(glb.length).toBeLessThan(512 * 1024);
+  });
+
+  it("écrivent en relief dans la police du jeu, contours fusionnés", () => {
+    // Une police variable garde des contours qui se chevauchent : remplis
+    // pair-impair, ils trouaient les lettres (« N » sans jambage).
+    expect(fs.existsSync("blender/polices/baloo2-800.ttf")).toBe(true);
+    expect(PANCARTES).toMatch(/OverlapMode\.REMOVE/);
+    expect(PANCARTES).toMatch(/extrude_face_region/);
+  });
+
+  it("remplacent chaque pancarte du jeu, la version en code restant en secours", () => {
+    for (const nom of NOMS.slice(1)) expect(VILLAGE).toContain(`"${nom}"`);
+    // Les « À VENDRE » sont instanciées : six appels de rendu pour toutes.
+    expect(CAMPAGNE).toMatch(/instancierPiece\(PANCARTES, "pancarte-vente", poses, shadows\)/);
+    expect(CAMPAGNE).toMatch(/\.catch\(pancartesEnCode\)/);
+    expect(VILLAGE).toMatch(/\.catch\(enCode\)/);
+  });
+});
