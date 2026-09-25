@@ -585,22 +585,51 @@ export function creerLieu(
       break;
     }
     case "RUCHER": {
-      // Des ruches qu'on reconnaît de loin : corps, hausse, toit débordant,
-      // posées sur un pied, au milieu d'un pré fleuri.
-      for (let i = 0; i < 4; i++) {
-        const x = -2.1 + i * 1.4;
-        const z = (i % 2) * 0.5 - 0.6;
-        ajouterBoite(t.pos, t.col, x, 0.12, z, 0.8, 0.24, 0.7, BOIS_CLAIR);
-        ajouterBoite(t.pos, t.col, x, 0.6, z, 0.9, 0.72, 0.8, i % 2 ? 0xf2d77a : 0xf4efe0);
-        ajouterBoite(t.pos, t.col, x, 1.06, z, 0.9, 0.2, 0.8, i % 2 ? 0xf4efe0 : 0xf2d77a);
-        ajouterBoite(t.pos, t.col, x, 1.22, z, 1.1, 0.12, 1.0, 0xa8432f);
-        ajouterBoite(t.pos, t.col, x, 0.34, z + 0.41, 0.4, 0.06, 0.03, 0x3a2a1a);
+      /*
+       * Un rucher qu'on reconnaît : trois ruches blanches à toit rouge sur
+       * leurs tréteaux, un champ de lavande derrière, une pancarte devant.
+       * La première version — des cubes plats et des fleurs en dés semés
+       * autour — appelait une seule question : « c'est quoi ça ? ».
+       */
+      const LAVANDE = [0x8e6cc4, 0x9b7bd0, 0x7f5fb8];
+      for (let r = 0; r < 3; r++) {
+        const z = -2.4 + r * 0.85;
+        ajouterBoite(t.pos, t.col, 0, 0.1, z, 5.4, 0.2, 0.42, 0x5c7f43);
+        for (let k = 0; k < 7; k++) {
+          const x = -2.4 + k * 0.8 + (r % 2) * 0.2;
+          ajouterGeometrie(t.pos, t.col, cylindre(6), pose(x, 0.36, z, k * 0.7, 0.62, 0.34, 0.5), LAVANDE[(k + r) % 3]!);
+        }
       }
-      for (let f = 0; f < 40; f++) {
-        const a = f * 2.39;
-        const r = 0.9 + (f % 7) * 0.32;
-        ajouterBoite(t.pos, t.col, Math.cos(a) * r, 0.1, Math.sin(a) * r, 0.26, 0.2, 0.26, [0xf2f2f2, 0xf5c542, 0xd96c8a][f % 3]!);
+      for (let i = 0; i < 3; i++) {
+        const x = -1.7 + i * 1.7;
+        const z = 1.1;
+        // Le tréteau : deux pieds, une planche.
+        for (const s of [-1, 1]) ajouterBoite(t.pos, t.col, x + s * 0.32, 0.14, z, 0.1, 0.28, 0.7, BOIS);
+        ajouterBoite(t.pos, t.col, x, 0.31, z, 0.9, 0.06, 0.8, BOIS_CLAIR);
+        // Le corps, la hausse, le toit à deux pans.
+        ajouterBoite(t.pos, t.col, x, 0.66, z, 0.82, 0.64, 0.72, 0xf4efe0);
+        ajouterBoite(t.pos, t.col, x, 1.1, z, 0.82, 0.24, 0.72, 0xeccb62);
+        ajouterGeometrie(t.pos, t.col, prismeUnite(), pose(x, 1.22, z, 0, 1.0, 0.34, 0.92), 0xa8432f);
+        // Le trou de vol et sa planche d'envol, face à la caméra.
+        ajouterBoite(t.pos, t.col, x, 0.44, z + 0.365, 0.36, 0.07, 0.02, 0x2e2418);
+        ajouterBoite(t.pos, t.col, x, 0.38, z + 0.43, 0.46, 0.03, 0.14, BOIS_CLAIR);
       }
+      // La pancarte, tournée vers la caméra.
+      const px = -2.2;
+      const pz = 2.35;
+      for (const s of [-1, 1]) {
+        ajouterBoite(t.pos, t.col, px + s * 0.5, 0.5, pz - s * 0.5, 0.1, 1.0, 0.1, BOIS, Math.PI / 4);
+      }
+      const enseigne = plaque(
+        j,
+        { texte: "RUCHER", fond: "#fbf5e6", encre: "#8a5a12", bord: "#c99a2e", sous: "Miel de la ferme" },
+        1.7,
+        1.7 * (208 / 512),
+        0xf4e7c5,
+      );
+      enseigne.position.set(px, 1.0, pz);
+      enseigne.rotation.y = Math.PI / 4;
+      group.add(enseigne);
       break;
     }
   }
