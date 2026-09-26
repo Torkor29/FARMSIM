@@ -3,7 +3,7 @@ import path from "node:path";
 import { catalogueConstruction } from "@farmsim/shared";
 
 /**
- * Le jeu d'icônes : un seul style, et aucune icône cassée.
+ * Les pictogrammes et les vignettes : un seul style, et aucune icône cassée.
  *
  * Les icônes sont générées par `scripts/icones-jeu.mjs`. Un attribut en double
  * dans une balise (deux `stroke-width`) rend un SVG invalide : le navigateur
@@ -44,10 +44,10 @@ describe("le jeu d'icônes", () => {
     for (const c of citees) expect(`${c}: ${fs.existsSync(`public${c}`)}`).toBe(`${c}: true`);
   });
 
-  it("chaque élément du catalogue de construction a son icône", () => {
+  it("chaque élément du catalogue de construction a sa vignette 3D", () => {
     for (const d of catalogueConstruction()) {
       if (d.pose === "BATIMENT") continue; // un bâtiment montre son illustration
-      expect(`${d.id}: ${fs.existsSync(`public/assets/icons/jeu/${d.id}.svg`)}`).toBe(`${d.id}: true`);
+      expect(`${d.id}: ${fs.existsSync(`public/assets/icons/catalogue/${d.id}.webp`)}`).toBe(`${d.id}: true`);
     }
   });
 });

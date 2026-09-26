@@ -73,7 +73,7 @@
 .splash-text-logo { display: grid; justify-items: center; gap: 0.1rem; }
 .splash-text-top,
 .splash-text-bottom {
-  font-family: "Baloo 2", Nunito, sans-serif;
+  font-family: "Barlow Semi Condensed", Nunito, sans-serif;
   font-weight: 800;
   letter-spacing: 0.08em;
   line-height: 1;
@@ -397,7 +397,7 @@
   border: 1px solid var(--line);
   backdrop-filter: blur(6px);
 }
-.gate-pitch strong { font-family: "Baloo 2", Nunito, sans-serif; color: var(--teal-700); }
+.gate-pitch strong { font-family: "Barlow Semi Condensed", Nunito, sans-serif; color: var(--teal-700); }
 .gate-pitch span { font-size: 0.82rem; color: var(--ink-soft); }
 
 .scene-loading {
@@ -862,7 +862,7 @@
   letter-spacing: 0.15em;
 }
 .globe-place-card strong {
-  font-family: "Baloo 2", Nunito, sans-serif;
+  font-family: "Barlow Semi Condensed", Nunito, sans-serif;
   font-size: clamp(1.05rem, 3vw, 1.45rem);
   line-height: 1.1;
 }
@@ -891,7 +891,7 @@
 .continent-card.full { opacity: 0.5; }
 .cc-dot { width: 0.9rem; height: 0.9rem; border-radius: 50%; box-shadow: var(--sh-1); }
 .cc-main { display: grid; gap: 0.1rem; min-width: 0; }
-.cc-main strong { font-family: "Baloo 2", Nunito, sans-serif; font-size: 1.05rem; color: var(--teal-700); }
+.cc-main strong { font-family: "Barlow Semi Condensed", Nunito, sans-serif; font-size: 1.05rem; color: var(--teal-700); }
 .cc-tag { font-size: 0.82rem; color: var(--ink-soft); }
 .cc-meta { display: flex; flex-wrap: wrap; gap: 0.3rem; margin-top: 0.15rem; }
 .cc-meta em {
@@ -1213,7 +1213,7 @@
   to { opacity: 1; transform: none; }
 }
 .arrival-caption strong {
-  font-family: "Baloo 2", Nunito, sans-serif;
+  font-family: "Barlow Semi Condensed", Nunito, sans-serif;
   font-size: clamp(1.3rem, 4vw, 2rem);
   color: #eef8ed;
 }

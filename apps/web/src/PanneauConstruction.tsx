@@ -43,7 +43,7 @@ type Props = {
   mobile: boolean;
 };
 
-/** Les catégories et le décor ont leur icône du jeu ; un bâtiment, son illustration. */
+/** Les catégories ont leur pictogramme ; un élément, sa vignette 3D ; un bâtiment, son illustration. */
 const ICONE_CATEGORIE: Record<CategorieConstruction, string> = {
   TERRAIN: "terrain",
   AGRICULTURE: "agriculture",
@@ -56,7 +56,8 @@ const ICONE_CATEGORIE: Record<CategorieConstruction, string> = {
 
 export function iconeConstruction(d: DefConstruction): string {
   if (d.pose === "BATIMENT" && d.batiment) return BUILDING_ART[d.batiment as BuildingType];
-  return `/assets/icons/jeu/${d.id}.svg`;
+  // Une vignette rendue depuis le modèle 3D du jeu : voir `scripts/vignettes/`.
+  return `/assets/icons/catalogue/${d.id}.webp`;
 }
 
 function prixAffiche(d: DefConstruction): string {

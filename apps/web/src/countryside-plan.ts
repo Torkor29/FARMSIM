@@ -424,6 +424,9 @@ export const MARGE_LISIERE = 2.5;
  * Déduit de l'emprise et non écrit en dur : un chiffre fixe se serait décalé
  * du damier au premier changement de taille de parcelle.
  */
+/** Le pré et le bois qu'on garde, au moins, entre le coin amont de l'île et la lisière. */
+export const PRE_AMONT_MIN = 12;
+
 export function horizonPour(emprise: number): number {
   return emprise * 2;
 }
@@ -778,10 +781,18 @@ export function planCampagne(o: OptionsPlan): PlanCampagne {
    * reculer le bois. Sans échelle de case (le décor sans réseau), c'est
    * l'emprise du joueur, comme avant.
    */
+  /*
+   * Mais jamais en deçà de l'île elle-même. Une ferme qui a grandi par lots
+   * dépassait la lisière comptée pour une 12×12 : son coin amont passait
+   * au-delà du sol, et la parcelle se dessinait dans le ciel. La lisière
+   * garde donc au moins `PRE_AMONT_MIN` de pré et de bois derrière le coin
+   * de l'île (qui est à `u = −emprise`).
+   */
   const horizon =
     o.horizon ??
-    horizonPour(
-      o.pasCase ? coteDeGrille(GRILLE_STANDARD.w, GRILLE_STANDARD.h, o.pasCase) : emprise,
+    Math.max(
+      horizonPour(o.pasCase ? coteDeGrille(GRILLE_STANDARD.w, GRILLE_STANDARD.h, o.pasCase) : emprise),
+      emprise + PRE_AMONT_MIN,
     );
   const rnd = suite(grainerDe(o.graine));
 

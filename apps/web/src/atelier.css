@@ -23,7 +23,7 @@ body {
 }
 
 .atelier-head h1 {
-  font-family: "Baloo 2", Nunito, system-ui, sans-serif;
+  font-family: "Barlow Semi Condensed", Nunito, system-ui, sans-serif;
   font-size: clamp(1.6rem, 3vw, 2.4rem);
   margin: 0 0 8px;
   color: var(--teal-600);
@@ -100,7 +100,7 @@ body {
 }
 
 .atelier-meta h2 {
-  font-family: "Baloo 2", Nunito, system-ui, sans-serif;
+  font-family: "Barlow Semi Condensed", Nunito, system-ui, sans-serif;
   margin: 0 0 4px;
   font-size: 1.15rem;
 }
@@ -131,7 +131,7 @@ body {
 }
 
 .atelier-farm h2 {
-  font-family: "Baloo 2", Nunito, system-ui, sans-serif;
+  font-family: "Barlow Semi Condensed", Nunito, system-ui, sans-serif;
   font-size: 1.4rem;
   margin: 0 0 12px;
   color: var(--teal-600);
