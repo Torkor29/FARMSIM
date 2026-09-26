@@ -1,7 +1,1 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48" fill="none" aria-hidden="true">
-  <ellipse cx="24" cy="43.5" rx="9" ry="2" fill="currentColor" opacity="0.18"/>
-  <rect x="6" y="27" width="17" height="12" rx="1.6" fill="#f0d27a" stroke="#c9a227" stroke-width="1.8"/>
-  <rect x="25" y="27" width="17" height="12" rx="1.6" fill="#f0d27a" stroke="#c9a227" stroke-width="1.8"/>
-  <rect x="15" y="13" width="17" height="12" rx="1.6" fill="#c9a227" stroke="#7d6112" stroke-width="1.8"/>
-  <path d="M11 27v12M18 27v12M30 27v12M37 27v12M20 13v12M27 13v12" stroke="#8a6a3a" stroke-width="1.5"/>
-</svg>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" aria-hidden="true"><ellipse cx="32" cy="58" rx="20" ry="3.6" fill="#2b1a0c" opacity=".18"/><rect x="10" y="22" width="44" height="30" rx="6" fill="#efd97e" stroke="#4a2c16" stroke-width="3" stroke-linejoin="round" stroke-linecap="round"/><path d="M16 30h32M16 38h32M16 46h32" stroke="#c9ab3e" stroke-width="2.4" stroke-linecap="round"/><path d="M24 22v30M40 22v30" stroke="#94592b" stroke-width="3.4"/><path d="M14 25h24v3H14z" fill="#fff" opacity=".42"/></svg>

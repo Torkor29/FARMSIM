@@ -333,7 +333,7 @@ export function MarketPanel({
               className={`hall-door sell ${tab === "SELL" ? "on" : ""}`}
               onClick={() => setTab("SELL")}
             >
-              <img className="hall-door-icon" src="/assets/icons/nav/marche.svg" alt="" aria-hidden="true" />
+              <img className="hall-door-icon" src="/assets/icons/jeu/ventes.svg" alt="" aria-hidden="true" />
               <strong>Vendre</strong>
               <em>{stock.length ? "Votre stock" : "Rien à vendre"}</em>
             </button>
@@ -661,7 +661,7 @@ export function MarketPanel({
                 /* Charte §7.7 : un écran vide porte une image, une phrase qui
                    explique, et l'action à faire — pas une ligne grise seule. */
                 <div className="market-empty">
-                  <img className="market-empty-art" src="/assets/icons/nav/marche.svg" alt="" aria-hidden="true" />
+                  <img className="market-empty-art" src="/assets/icons/jeu/ventes.svg" alt="" aria-hidden="true" />
                   <strong>La vitrine est vide</strong>
                   <span>
                     Personne ne vend pour l’instant. Mettez-y votre récolte, ou passez chez le

@@ -1,9 +1,11 @@
 import { useEffect, useMemo, useRef } from "react";
 import {
+  BUILDING_ART,
   CATEGORIES,
   catalogueConstruction,
   verrouConstruction,
   type CategorieConstruction,
+  type BuildingType,
   type DefConstruction,
 } from "@farmsim/shared";
 import "./construction.css";
@@ -40,6 +42,22 @@ type Props = {
   onQuitter: () => void;
   mobile: boolean;
 };
+
+/** Les catégories et le décor ont leur icône du jeu ; un bâtiment, son illustration. */
+const ICONE_CATEGORIE: Record<CategorieConstruction, string> = {
+  TERRAIN: "terrain",
+  AGRICULTURE: "agriculture",
+  BATIMENTS: "batiments",
+  ELEVAGE: "elevage",
+  NATURE: "nature",
+  CHEMINS: "chemins",
+  DECORATION: "decoration",
+};
+
+export function iconeConstruction(d: DefConstruction): string {
+  if (d.pose === "BATIMENT" && d.batiment) return BUILDING_ART[d.batiment as BuildingType];
+  return `/assets/icons/jeu/${d.id}.svg`;
+}
 
 function prixAffiche(d: DefConstruction): string {
   if (d.pose === "TERRAIN") return d.prix ? `${d.prix} €/case` : "gratuit";
@@ -95,7 +113,8 @@ export function PanneauConstruction(p: Props) {
             className={p.categorie === c.id ? "on" : ""}
             onClick={() => p.onCategorie(c.id)}
           >
-            <span aria-hidden="true">{c.icone}</span> {c.nom}
+            <img src={`/assets/icons/jeu/${ICONE_CATEGORIE[c.id]}.svg`} alt="" width={24} height={24} />
+            <span>{c.nom}</span>
           </button>
         ))}
       </nav>
@@ -121,7 +140,7 @@ export function PanneauConstruction(p: Props) {
               onClick={() => p.onChoisir(d)}
             >
               <span className="construction-icone" aria-hidden="true">
-                {d.icone}
+                <img src={iconeConstruction(d)} alt="" width={48} height={48} loading="lazy" />
               </span>
               <span className="construction-nom">{d.nom}</span>
               <span className="construction-prix">{verrou ?? prixAffiche(d)}</span>

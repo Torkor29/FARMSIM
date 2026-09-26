@@ -223,6 +223,7 @@ import {
 } from "./audio";
 import { ProfilePanel } from "./ProfilePanel";
 import { MenuClose } from "./ui/MenuClose";
+import { Gains } from "./ui/Gains";
 
 const API = "/api";
 
@@ -684,7 +685,7 @@ type SheetKey = "INFO" | "BUILD" | "GARAGE" | "HERD" | "STAFF" | "PROFILE";
  * Les onglets du bas.
  *
  * Leurs icônes étaient des emoji — 🌾 🏗️ 🐄 🚜 🤝 — alors que les outils, eux,
- * avaient de vrais dessins depuis toujours (`/assets/icons/tools/*.svg`). Les
+ * avaient de vrais dessins depuis toujours (aujourd’hui le jeu d’icônes `/assets/icons/jeu/`). Les
  * cinq boutons les plus vus du jeu, présents sur chaque écran, étaient donc
  * les seuls dont l'apparence dépendait du téléphone du joueur : ronds et
  * brillants sur iPhone, plats sur Android, et jamais dans la palette.
@@ -694,10 +695,10 @@ type SheetKey = "INFO" | "BUILD" | "GARAGE" | "HERD" | "STAFF" | "PROFILE";
  * « GARAGE » reste, c'est la concession qui l'ouvre.
  */
 const SHEET_TABS: { key: SheetKey; label: string; icon: string }[] = [
-  { key: "INFO", label: "Parcelle", icon: "/assets/icons/nav/parcelle.svg" },
-  { key: "BUILD", label: "Bâtir", icon: "/assets/icons/nav/batir.svg" },
-  { key: "HERD", label: "Troupeau", icon: "/assets/icons/nav/troupeau.svg" },
-  { key: "STAFF", label: "Personnel", icon: "/assets/icons/nav/personnel.svg" },
+  { key: "INFO", label: "Parcelle", icon: "/assets/icons/jeu/parcelle.svg" },
+  { key: "BUILD", label: "Bâtir", icon: "/assets/icons/jeu/construire.svg" },
+  { key: "HERD", label: "Troupeau", icon: "/assets/icons/jeu/elevage.svg" },
+  { key: "STAFF", label: "Personnel", icon: "/assets/icons/jeu/personnel.svg" },
 ];
 
 /** Temps restant d'un chantier, en clair. */
@@ -6682,7 +6683,7 @@ export function App() {
               aria-label="Ouvrir le guide"
               onClick={() => setShowGuide(true)}
             >
-              ?
+              <img src="/assets/icons/jeu/guide.svg" alt="" width={26} height={26} />
             </button>
           </div>
           {/*
@@ -6709,20 +6710,7 @@ export function App() {
                   la teindre au filtre — un noir qu'on éclaircit n'est jamais
                   tout à fait la couleur voulue. Tracée, elle prend l'or de la
                   charte, et le blanc quand l'onglet est ouvert. */}
-              <svg
-                className="skills-tab-icon"
-                viewBox="0 0 24 24"
-                width={18}
-                height={18}
-                fill="none"
-                stroke="currentColor"
-                strokeWidth={1.8}
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                aria-hidden="true"
-              >
-                <path d="m12 2.5 2.9 6 6.6.9-4.8 4.6 1.2 6.5L12 17.4 6.1 20.5l1.2-6.5L2.5 9.4l6.6-.9z" />
-              </svg>
+              <img className="skills-tab-icon" src="/assets/icons/jeu/competences.svg" alt="" width={26} height={26} />
               <span className="skills-tab-label long">Compétences</span>
               <span className="skills-tab-label court">Comp.</span>
               {/* Le compte n'apparaît qu'une fois l'arbre lu : afficher
@@ -6761,7 +6749,9 @@ export function App() {
                   : "Dernier palier atteint"
               }
             >
+              <img key={player.xp} className="hud-ico" src="/assets/icons/jeu/etoile.svg" alt="" width={22} height={22} />
               Nv.{player.level} · {player.xp} XP
+              <Gains valeur={player.xp} unite="XP" />
               {/* Une jauge, sinon « 0 XP » ne dit pas où l'on en est. */}
               <i
                 className="stat-xp-bar"
@@ -6770,7 +6760,17 @@ export function App() {
               />
             </span>
             <span className="gold" title={hasUnlimitedFunds(player) ? "Trésorerie illimitée (compte développeur)" : "Terrons (€)"}>
+              {/* La clé relance le saut de la pièce à chaque mouvement d'argent. */}
+              <img
+                key={Math.round(player.crd)}
+                className="hud-ico"
+                src="/assets/icons/jeu/piece.svg"
+                alt=""
+                width={22}
+                height={22}
+              />
               {walletLabel(player)}
+              {!hasUnlimitedFunds(player) && <Gains valeur={player.crd} />}
             </span>
             <button
               type="button"
@@ -6819,7 +6819,7 @@ export function App() {
               aria-label="Profil et réglages"
               onClick={() => setSheet((cur) => (cur === "PROFILE" ? null : "PROFILE"))}
             >
-              ☰
+              <img src="/assets/icons/jeu/reglages.svg" alt="" width={24} height={24} />
             </button>
             <button
               className="ghost logout-btn"
@@ -8001,7 +8001,7 @@ export function App() {
               {
                 id: "BUILD",
                 label: "Construire",
-                icon: "/assets/icons/nav/batir.svg",
+                icon: "/assets/icons/jeu/construire.svg",
                 hotkey: "B",
                 on: construction || showBuildPicker,
                 // Chez soi, « Construire » ouvre le mode construction ; chez
@@ -8027,7 +8027,7 @@ export function App() {
                     {
                       id: "MARKET",
                       label: "Ventes",
-                      icon: "/assets/icons/nav/marche.svg",
+                      icon: "/assets/icons/jeu/ventes.svg",
                       hotkey: "5",
                       on: showMarket,
                       onOpen: () => setShowMarket((v) => !v),
@@ -8036,7 +8036,7 @@ export function App() {
               {
                 id: "GARAGE",
                 label: "Garage",
-                icon: "/assets/icons/nav/garage.svg",
+                icon: "/assets/icons/jeu/garage.svg",
                 hotkey: "G",
                 on: showGarage,
                 onOpen: () => setShowGarage((v) => !v),
@@ -8044,7 +8044,7 @@ export function App() {
               {
                 id: "OFFICE",
                 label: "Bureau",
-                icon: "/assets/icons/nav/missions.svg",
+                icon: "/assets/icons/jeu/bureau.svg",
                 hotkey: "T",
                 on: showEta,
                 onOpen: () => setShowEta((v) => !v),
@@ -8052,7 +8052,7 @@ export function App() {
               {
                 id: "STAFF",
                 label: "Personnel",
-                icon: "/assets/icons/nav/personnel.svg",
+                icon: "/assets/icons/jeu/personnel.svg",
                 hotkey: "P",
                 on: showStaff,
                 onOpen: () => setShowStaff((v) => !v),
@@ -8062,7 +8062,7 @@ export function App() {
                     {
                       id: "HERD",
                       label: "Élevage",
-                      icon: "/assets/icons/nav/troupeau.svg",
+                      icon: "/assets/icons/jeu/elevage.svg",
                       on: showHerd,
                       onOpen: () => setShowHerd((v) => !v),
                     },
@@ -8073,6 +8073,7 @@ export function App() {
                     {
                       id: "DEV",
                       label: "Test",
+                      icon: "/assets/icons/jeu/test.svg",
                       on: false,
                       onOpen: () => setShowDev(true),
                     },

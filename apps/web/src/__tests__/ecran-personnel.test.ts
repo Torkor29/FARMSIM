@@ -46,8 +46,8 @@ describe("on peut atteindre l'écran", () => {
   });
 
   it("l'entrée du rail a une icône dessinée, pas un emoji", () => {
-    expect(CODE_APP).toMatch(/id: "STAFF"[\s\S]{0,200}icons\/nav\/personnel\.svg/);
-    expect(fs.existsSync("public/assets/icons/nav/personnel.svg")).toBe(true);
+    expect(CODE_APP).toMatch(/id: "STAFF"[\s\S]{0,200}icons\/jeu\/personnel\.svg/);
+    expect(fs.existsSync("public/assets/icons/jeu/personnel.svg")).toBe(true);
   });
 
   it("le raccourci annoncé fait bien ce qu'il annonce", () => {
@@ -58,7 +58,7 @@ describe("on peut atteindre l'écran", () => {
   });
 
   it("le tiroir du téléphone porte le même onglet", () => {
-    expect(CODE_APP).toMatch(/key: "STAFF"[\s\S]{0,120}icons\/nav\/personnel\.svg/);
+    expect(CODE_APP).toMatch(/key: "STAFF"[\s\S]{0,120}icons\/jeu\/personnel\.svg/);
   });
 
   it("le panneau a sa propre fenêtre, et n'est pas caché dans celle de l'élevage", () => {

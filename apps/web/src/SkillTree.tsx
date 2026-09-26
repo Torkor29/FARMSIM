@@ -283,7 +283,7 @@ export function SkillTree({ skills }: { skills: SkillView[] }) {
             const liste = parBranche.get(b) ?? [];
             const n = liste.filter((s) => s.unlocked).length;
             return (
-              <section className="sk-col" key={b}>
+              <section className="sk-col" key={b} data-branche={b}>
                 <h3 className="sk-col-head">
                   <img src={skillIconSrc(BRANCH_ICON_FILES[b])} alt="" width={22} height={22} />
                   <span>{BRANCH_LABELS[b]}</span>
