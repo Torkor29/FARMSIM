@@ -136,6 +136,28 @@ seize fois plus grande quatre fois. À fertilité moyenne : premier lot ≈
 machine ou un bâtiment. **Niveau** : un palier doux (`1, 1, 2, 3, 4, 5, 6, 7, 8,
 10, 12, 14`), puis un niveau tous les deux lots, plafonné à 60.
 
+### Terraformage : des lacs qu'on dessine
+
+Creuser l'eau se fait **à main levée** (une mare, un lac, une rivière), dès le
+niveau 1, à 30 €/case. L'eau n'est plus un carré bleu par case : c'est une
+nappe d'un seul tenant (`apps/web/src/eau3d.ts`) creusée sous le pré, avec
+sa berge d'herbe, son talus de terre et son fond.
+
+- **La forme.** Chaque case d'eau sait quelle part d'elle est de l'eau : une
+  rive recule d'une berge, un coin saillant prend son style, un coin rentrant
+  s'adoucit d'un congé. On échantillonne cette forme finement et on en tire le
+  contour, affiné par dichotomie : les arcs sont ronds, pas en escalier.
+- **Les berges.** L'outil *Berges* (gratuit) vise un coin : il s'allume, le
+  contour qu'il prendrait se dessine, et chaque clic le fait passer de rond à
+  d'équerre puis en biseau. La forme tient dans `ParcelCell.forme` (deux bits
+  par coin) ; reboucher une case l'oublie. Route : `POST /parcels/:id/berges`.
+- **La dopamine.** La pelle fait gicler des mottes, l'eau monte dans le trou
+  case après case dans l'ordre du geste, une éclaboussure l'accueille ; un
+  coin retouché jette des éclats ; chaque geste a son son (synthétisé). Un lac
+  qui franchit un palier (1, 4, 9, 16, 25… cases) se fête d'une fanfare et
+  d'un message. L'eau vit : claire au bord, sombre au large, écume, reflets,
+  nénuphars, roseaux, des canards dès six cases, un poisson qui saute.
+
 ### Coûts d'aménagement
 
 | Geste | Coût | Rendu à la suppression |

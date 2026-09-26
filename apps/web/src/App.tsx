@@ -111,6 +111,15 @@ import {
   type Nouveaute,
   kindForBarn,
   LIBELLE_REFUS,
+  NOMS_STYLE_COIN,
+  avecStyleCoin,
+  coinFaconnable,
+  coinVise,
+  etenduesEau,
+  palierFranchi,
+  styleCoin,
+  styleSuivant,
+  type Coin,
   BUILDING_REGRET_MS,
   cleCase,
   construireGrille,
@@ -267,6 +276,8 @@ type Cell = {
   sol?: "CHAMP" | "PRE" | "EAU";
   /** Un chemin posé sur la case, s'il y en a un. */
   revetement?: string | null;
+  /** Berges : la forme des coins d'une case d'eau. */
+  forme?: number;
 };
 
 type Building = {
@@ -1101,7 +1112,8 @@ export function App() {
   const haulSeenRef = useRef<Set<string>>(new Set());
   const haulReadyRef = useRef(false);
   const playHaulRef = useRef<(commodity?: string) => void>(() => undefined);
-  const [hoverCell, setHoverCell] = useState<{ x: number; y: number } | null>(null);
+  /** La case survolée, et où le curseur est dans la case (−½ à ½) — l'outil Berges vise un coin. */
+  const [hoverCell, setHoverCell] = useState<{ x: number; y: number; fx?: number; fy?: number } | null>(null);
   /**
    * Le mode construction de la ferme libre.
    *
@@ -2079,6 +2091,16 @@ export function App() {
     () => construireGrille({ bornes: bornesIci, cells: grid, amenagements }),
     [bornesIci, grid, amenagements],
   );
+  /** L'eau du domaine, et la forme des coins de chaque case d'eau. */
+  const eauxSet = useMemo(
+    () => new Set(grid.filter((c) => c.sol === "EAU").map((c) => cleCase(c.x, c.y))),
+    [grid],
+  );
+  const formeDe = (x: number, y: number) => grid.find((c) => c.x === x && c.y === y)?.forme ?? 0;
+  /** La plus grande étendue d'eau, en cases — pour fêter les paliers. */
+  const plusGrandLac = (cells: readonly { x: number; y: number; sol?: string | null }[]) =>
+    Math.max(0, ...etenduesEau(cells).map((z) => z.length));
+
   /** Seules les cases de champ se cultivent : un pré, un étang, un chemin non. */
   const surChamps = useCallback(
     (cells: { x: number; y: number }[]) =>
@@ -2958,6 +2980,7 @@ export function App() {
         : undefined;
     let fantome: EtatConstruction["fantome"] = [];
     let objetFantome: EtatConstruction["objetFantome"] = null;
+    let berge: EtatConstruction["berge"] = null;
     let ligne: { texte: string; refus?: boolean; cout?: number | null } = {
       texte: "Choisissez un élément ci-dessous, ou touchez ce qui est posé pour le modifier.",
     };
@@ -2987,6 +3010,22 @@ export function App() {
               ? `Déplacer ${nom} : touchez sa nouvelle place, puis confirmez.`
               : `${nom} : touchez une place, tournez-le, puis confirmez.`,
           };
+    } else if (defArme?.pose === "OUTIL") {
+      // Les berges : on vise un coin, il s'allume, et son contour à venir se dessine.
+      const k = at ? grilleDomaine.cases.get(cleCase(at.x, at.y)) : undefined;
+      if (at && k?.sol === "EAU") {
+        const coin = coinVise(at.fx ?? 0, at.fy ?? 0);
+        const ok = coinFaconnable(eauxSet, at.x, at.y, coin);
+        const forme = formeDe(at.x, at.y);
+        const actuel = styleCoin(forme, coin);
+        const suivant = styleSuivant(actuel);
+        berge = { x: at.x, y: at.y, coin, ok, forme: avecStyleCoin(forme, coin, suivant) };
+        ligne = ok
+          ? { texte: `Coin ${NOMS_STYLE_COIN[actuel]} → ${NOMS_STYLE_COIN[suivant]} — touchez pour le façonner` }
+          : { texte: "Ce coin continue dans l'eau : visez un coin de la rive", refus: true };
+      } else {
+        ligne = { texte: "Berges : visez le coin d'un lac — chaque clic l'arrondit, le taille en biseau ou le remet d'équerre." };
+      }
     } else if (defArme?.pose === "TERRAIN") {
       const cells = apercuTerrain.length ? apercuTerrain : at ? [at] : [];
       if (cells.length) {
@@ -3081,7 +3120,7 @@ export function App() {
     }
 
     return {
-      etat: { actif: true, lots, lotSurvole: lotIci?.id ?? null, fantome, objetFantome, selection },
+      etat: { actif: true, lots, lotSurvole: lotIci?.id ?? null, fantome, objetFantome, selection, berge },
       ligne,
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -3216,20 +3255,85 @@ export function App() {
       return;
     }
     const aPeindre = v.cases.filter((c) => c.ok).map((c) => ({ x: c.x, y: c.y }));
+    const def = defArme;
+    // Creuser se voit tout de suite : la ferme n'attend pas la réponse du
+    // serveur pour lancer la pelle. Si le serveur refuse, on recharge.
+    const lacAvant = plusGrandLac(grid);
+    const patch =
+      def.regle === "EAU"
+        ? { sol: "EAU" as const, revetement: null, forme: 0 }
+        : def.regle === "PRE"
+          ? { sol: "PRE" as const, revetement: null, forme: 0 }
+          : null;
+    if (patch) modifierCasesLocalement(aPeindre, patch);
     setBusy(true);
     try {
       const r = await api<{ peintes: number; ignorees: number; cout: number }>(
         `/parcels/${activeParcelId}/terrain`,
-        { method: "POST", body: JSON.stringify({ userId: player.id, outil: defArme.id, cells: aPeindre }) },
+        { method: "POST", body: JSON.stringify({ userId: player.id, outil: def.id, cells: aPeindre }) },
       );
       await apresConstruction(
-        `${defArme.nom} · ${r.peintes} case${r.peintes > 1 ? "s" : ""}${r.cout ? ` · −${r.cout} €` : ""}`,
+        `${def.nom} · ${r.peintes} case${r.peintes > 1 ? "s" : ""}${r.cout ? ` · −${r.cout} €` : ""}`,
       );
+      if (def.regle === "EAU") {
+        const cles = new Set(aPeindre.map((c) => cleCase(c.x, c.y)));
+        const apres = grid.map((c) => (cles.has(cleCase(c.x, c.y)) ? { ...c, sol: "EAU" as const } : c));
+        const palier = palierFranchi(lacAvant, plusGrandLac(apres));
+        // La fête attend que l'eau soit montée : on la voit, puis on l'entend.
+        if (palier) {
+          window.setTimeout(() => {
+            jouerSon("lac");
+            flashToast(
+              palier === 1
+                ? "Votre premier plan d'eau — les canards viendront quand il fera six cases"
+                : `Un lac de ${palier} cases prend forme · charme +${palier}`,
+            );
+          }, 1300);
+        }
+      }
     } catch (e) {
       flashToast(e instanceof Error ? e.message : String(e), true);
+      if (patch && activeParcelId) void loadParcel(activeParcelId);
     } finally {
       setBusy(false);
       setApercuTerrain([]);
+    }
+  }
+
+  /** Change des cases dans la parcelle affichée, sans attendre le serveur. */
+  function modifierCasesLocalement(cells: { x: number; y: number }[], patch: Partial<Cell>) {
+    const cles = new Set(cells.map((c) => cleCase(c.x, c.y)));
+    setParcelDetail((d) =>
+      d
+        ? {
+            ...d,
+            parcel: {
+              ...d.parcel,
+              cells: (d.parcel.cells ?? []).map((c) => (cles.has(cleCase(c.x, c.y)) ? { ...c, ...patch } : c)),
+            },
+          }
+        : d,
+    );
+  }
+
+  /** L'outil Berges : le coin visé passe au style suivant. Gratuit et instantané. */
+  async function faconnerBerge(x: number, y: number, coin: Coin) {
+    if (!player || !activeParcelId) return;
+    if (!coinFaconnable(eauxSet, x, y, coin)) {
+      flashToast("Ce coin continue dans l'eau : visez un coin de la rive", true);
+      return;
+    }
+    const forme = formeDe(x, y);
+    const suivant = styleSuivant(styleCoin(forme, coin));
+    modifierCasesLocalement([{ x, y }], { forme: avecStyleCoin(forme, coin, suivant) });
+    try {
+      await api(`/parcels/${activeParcelId}/berges`, {
+        method: "POST",
+        body: JSON.stringify({ userId: player.id, x, y, coin, style: suivant }),
+      });
+    } catch (e) {
+      flashToast(e instanceof Error ? e.message : String(e), true);
+      void loadParcel(activeParcelId);
     }
   }
 
@@ -3353,7 +3457,16 @@ export function App() {
   }
 
   /** Un toucher sur la ferme, en construction. */
-  function cliqueConstruction(x: number, y: number, mods: PointerMods) {
+  function cliqueConstruction(x: number, y: number, mods: PointerMods, frac?: { fx: number; fy: number }) {
+    if (defArme?.pose === "OUTIL" && !deplaceObjet) {
+      const k = grilleDomaine.cases.get(cleCase(x, y));
+      if (k?.sol !== "EAU") {
+        flashToast("Berges : visez le coin d'un lac", true);
+        return;
+      }
+      void faconnerBerge(x, y, coinVise(frac?.fx ?? hoverCell?.fx ?? 0, frac?.fy ?? hoverCell?.fy ?? 0));
+      return;
+    }
     if (tool === "BUILD") {
       void applyToolOnCell(x, y, mods);
       return;
@@ -6596,7 +6709,10 @@ export function App() {
               // Un chemin, une clôture, une haie se tracent au doigt ; un
               // champ, un pré, un étang se tirent en rectangle — c'est la
               // forme qu'on leur veut.
-              strokeRect={construction ? defArme?.pose === "TERRAIN" && defArme.regle !== "CHEMIN" : dragRect}
+              // L'eau aussi se trace à main levée : une rivière, une mare qui serpente.
+              strokeRect={
+                construction ? defArme?.pose === "TERRAIN" && defArme.regle !== "CHEMIN" && defArme.regle !== "EAU" : dragRect
+              }
               onStrokeStart={() => {
                 strokeBase.current = selectedCells;
                 if (construction) setApercuTerrain([]);
@@ -6633,8 +6749,8 @@ export function App() {
               supplies={supplies}
               onCollectSupply={(id) => void collectSupply(id)}
               hauls={hauls}
-              onCellClick={(x, y, mods) =>
-                construction ? cliqueConstruction(x, y, mods) : void applyToolOnCell(x, y, mods)
+              onCellClick={(x, y, mods, frac) =>
+                construction ? cliqueConstruction(x, y, mods, frac) : void applyToolOnCell(x, y, mods)
               }
               onCellHover={setHoverCell}
               onCellContext={openCellMenu}

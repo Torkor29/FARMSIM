@@ -75,6 +75,7 @@ const ICONES = {
   etoile: svg(`<path d="m12 3.5 2.6 5.3 5.9.8-4.3 4.1 1 5.8L12 16.7l-5.2 2.8 1-5.8-4.3-4.1 5.9-.8z"/>`),
 
   /* —— Catégories de construction —— */
+  terraformage: svg(`<path d="M2.5 19c2-2 4-2 6 0s4 2 6 0 4-2 7 0"/><path d="M15.5 3.5l-4 9"/><path d="M13.3 3l4.4 2"/><path d="M9.2 11.4l4.5 2-1.6 3.4a2.4 2.4 0 0 1-4.4-2z"/>`),
   terrain: svg(`<path d="M2.5 12 12 7.5l9.5 4.5L12 16.5z"/><path d="M2.5 12v3.5L12 20l9.5-4.5V12"/><path d="M12 16.5V20"/>`),
   agriculture: svg(epi(12, 3, 18) + `<path d="M7 21c0-3 1.4-5 3-6M17 21c0-3-1.4-5-3-6"/>`),
   batiments: svg(`<path d="M3 11 12 4l9 7"/><path d="M5 9.5V20h14V9.5"/><path d="M9.5 20v-5.5h5V20"/><path d="M9.5 14.5l5 5.5M14.5 14.5 9.5 20"/><circle cx="12" cy="10.3" r="1.5"/>`),

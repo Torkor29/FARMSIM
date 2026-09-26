@@ -21,6 +21,8 @@ export type Dalle = {
   labour: boolean;
   /** Sélectionnée d'avance (sélection venue du parent). */
   choisie: boolean;
+  /** Décalage vertical : le fond d'un bassin est plus bas que le pré. */
+  hauteur?: number;
 };
 
 export type DallesInstanciees = {
@@ -90,7 +92,7 @@ export function creerDalles(labourMap: THREE.Texture | null): DallesInstanciees 
     for (const d of dalles) {
       const mesh = d.labour ? labour : uni;
       const i = d.labour ? il++ : iu++;
-      m.makeTranslation(d.px, 0, d.pz);
+      m.makeTranslation(d.px, d.hauteur ?? 0, d.pz);
       mesh.setMatrixAt(i, m);
       const repos = new THREE.Color(d.couleur);
       mesh.setColorAt(i, repos);
@@ -113,7 +115,7 @@ export function creerDalles(labourMap: THREE.Texture | null): DallesInstanciees 
       e.mesh.setColorAt(e.i, c);
       if (lift !== dernieres[k]) {
         dernieres[k] = lift;
-        m.makeTranslation(e.dalle.px, lift, e.dalle.pz);
+        m.makeTranslation(e.dalle.px, (e.dalle.hauteur ?? 0) + lift, e.dalle.pz);
         e.mesh.setMatrixAt(e.i, m);
         matrices = true;
       }

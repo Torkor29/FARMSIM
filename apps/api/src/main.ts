@@ -380,6 +380,12 @@ import {
   LIBELLE_REFUS,
   bonusAmenagementCase,
   bornesDuDomaine,
+  avecStyleCoin,
+  coinFaconnable,
+  styleCoin,
+  styleSuivant,
+  type Coin,
+  type StyleCoin,
   charmeDe,
   cleCase,
   construireGrille,
@@ -9465,12 +9471,14 @@ app.post("/parcels/:id/terrain", async (req, res) => {
     return;
   }
   const peintes = verdict.cases.filter((c) => c.ok && c.change);
+  // Une case qui change de nature repart avec des berges arrondies : la
+  // forme d'un coin ne vaut que pour l'eau qui l'a reçue.
   const data =
     def.regle === "CHEMIN"
-      ? { revetement: def.revetement ?? null, sol: "PRE" as const }
+      ? { revetement: def.revetement ?? null, sol: "PRE" as const, forme: 0 }
       : def.regle === "PRE"
-        ? { revetement: null, sol: "PRE" as const }
-        : { revetement: null, sol: def.sol! };
+        ? { revetement: null, sol: "PRE" as const, forme: 0 }
+        : { revetement: null, sol: def.sol!, forme: 0 };
   await prisma.$transaction(async (tx) => {
     if (verdict.cout > 0) {
       await debit(tx, user.id, verdict.cout, "BATIMENTS", `Aménagement — ${def.nom} (${peintes.length} case${peintes.length > 1 ? "s" : ""})`);
@@ -9484,6 +9492,53 @@ app.post("/parcels/:id/terrain", async (req, res) => {
     }
   });
   res.json({ peintes: peintes.length, ignorees: body.data.cells.length - peintes.length, cout: verdict.cout });
+});
+
+/**
+ * Façonner une berge : le coin visé d'une case d'eau passe au style suivant
+ * (rond → d'équerre → biseau), ou au style demandé. Gratuit : c'est le geste
+ * qu'on répète pour dessiner son lac, il ne doit rien coûter.
+ */
+app.post("/parcels/:id/berges", async (req, res) => {
+  const body = z
+    .object({
+      userId: z.string(),
+      x: z.number().int(),
+      y: z.number().int(),
+      coin: z.number().int().min(0).max(3),
+      style: z.number().int().min(0).max(2).optional(),
+    })
+    .safeParse(req.body);
+  if (!body.success) {
+    res.status(400).json(body.error.flatten());
+    return;
+  }
+  const parcel = await prisma.parcel.findUnique({
+    where: { id: req.params.id },
+    include: { farm: true, cells: { where: { sol: "EAU" }, select: { x: true, y: true, forme: true } } },
+  });
+  if (!parcel?.farm || parcel.farm.userId !== body.data.userId) {
+    res.status(403).json({ error: "Parcelle non possédée" });
+    return;
+  }
+  const eaux = new Set(parcel.cells.map((c) => cleCase(c.x, c.y)));
+  const coin = body.data.coin as Coin;
+  if (!coinFaconnable(eaux, body.data.x, body.data.y, coin)) {
+    res.status(409).json({
+      error: eaux.has(cleCase(body.data.x, body.data.y))
+        ? "Ce coin continue dans l'eau : il n'a pas de forme à choisir"
+        : "Il n'y a pas d'eau ici",
+    });
+    return;
+  }
+  const cell = parcel.cells.find((c) => c.x === body.data.x && c.y === body.data.y)!;
+  const style = (body.data.style ?? styleSuivant(styleCoin(cell.forme, coin))) as StyleCoin;
+  const forme = avecStyleCoin(cell.forme, coin, style);
+  await prisma.parcelCell.updateMany({
+    where: { parcelId: parcel.id, x: body.data.x, y: body.data.y },
+    data: { forme },
+  });
+  res.json({ forme, style });
 });
 
 /** Poser un élément de décor : arbre, haie, clôture, banc… */

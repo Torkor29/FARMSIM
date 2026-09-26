@@ -79,6 +79,7 @@ export const cleCase = (x: number, y: number): string => `${x},${y}`;
 /* ------------------------------------------------------------------ */
 
 export type CategorieConstruction =
+  | "TERRAFORMAGE"
   | "TERRAIN"
   | "AGRICULTURE"
   | "BATIMENTS"
@@ -88,6 +89,7 @@ export type CategorieConstruction =
   | "DECORATION";
 
 export const CATEGORIES: readonly { id: CategorieConstruction; nom: string; icone: string }[] = [
+  { id: "TERRAFORMAGE", nom: "Terraformage", icone: "⛰️" },
   { id: "TERRAIN", nom: "Terrain", icone: "🗺️" },
   { id: "AGRICULTURE", nom: "Agriculture", icone: "🌾" },
   { id: "BATIMENTS", nom: "Bâtiments", icone: "🏠" },
@@ -101,9 +103,10 @@ export const CATEGORIES: readonly { id: CategorieConstruction; nom: string; icon
  * Comment on pose :
  * - `TERRAIN` : on peint des cases en glissant (champ, pré, étang, chemins) ;
  * - `OBJET` : un objet du décor, dans la table `Amenagement` ;
- * - `BATIMENT` : un bâtiment du jeu, par les routes qui existaient déjà.
+ * - `BATIMENT` : un bâtiment du jeu, par les routes qui existaient déjà ;
+ * - `OUTIL` : un geste qui façonne sans rien poser (les berges d'un lac).
  */
-export type ModePose = "TERRAIN" | "OBJET" | "BATIMENT";
+export type ModePose = "TERRAIN" | "OBJET" | "BATIMENT" | "OUTIL";
 
 /**
  * La règle d'occupation d'une entrée. Chacune dit quels sols elle admet et
@@ -175,6 +178,27 @@ export type DefConstruction = {
 /** Coût du remblai d'un étang, par case, quand on le rend au pré. */
 export const COUT_REMBLAI = 8;
 
+/**
+ * Les outils de terraformage : ils façonnent ce qui existe sans rien poser.
+ */
+const outils: DefConstruction[] = [
+  {
+    id: "berge",
+    categorie: "TERRAFORMAGE",
+    nom: "Berges",
+    description: "Visez un coin de l'eau : chaque clic l'arrondit, le taille en biseau ou le remet d'équerre.",
+    icone: "🪨",
+    pose: "OUTIL",
+    emprise: { w: 1, h: 1 },
+    rotations: [0],
+    prix: 0,
+    revente: 0,
+    niveauMin: 1,
+    regle: "EAU",
+    charme: 0,
+  },
+];
+
 const terrains: DefConstruction[] = [
   {
     id: "champ",
@@ -211,16 +235,17 @@ const terrains: DefConstruction[] = [
   },
   {
     id: "etang",
-    categorie: "NATURE",
-    nom: "Étang",
-    description: "Creuser un étang. Il irrigue les champs à trois cases ou moins.",
+    categorie: "TERRAFORMAGE",
+    nom: "Creuser l'eau",
+    description:
+      "Creuser un lac, une mare, une rivière : glissez sur le pré. Il irrigue les champs à trois cases ou moins.",
     icone: "💧",
     pose: "TERRAIN",
     emprise: { w: 1, h: 1 },
     rotations: [0],
     prix: 30,
     revente: 0,
-    niveauMin: 2,
+    niveauMin: 1,
     regle: "EAU",
     sol: "EAU",
     effet: { bonusRendement: 0.03, portee: 3, libelle: "Irrigation : +3 % de rendement à 3 cases" },
@@ -538,7 +563,7 @@ function batiments(): DefConstruction[] {
 let _catalogue: DefConstruction[] | null = null;
 /** Tout ce qui se pose, dans l'ordre d'affichage. */
 export function catalogueConstruction(): DefConstruction[] {
-  _catalogue ??= [...terrains, ...objets, ...batiments()];
+  _catalogue ??= [...outils, ...terrains, ...objets, ...batiments()];
   return _catalogue;
 }
 
@@ -1099,4 +1124,104 @@ export function libelleCharme(charme: number): string {
   if (charme >= 40) return "Ferme accueillante";
   if (charme >= 10) return "Ferme soignée";
   return "Ferme de travail";
+}
+
+/* ------------------------------------------------------------------ */
+/* Berges : la forme de chaque coin d'eau                               */
+/* ------------------------------------------------------------------ */
+
+/**
+ * La forme d'un coin d'eau : rond (par défaut — un lac se dessine en
+ * courbes), d'équerre, ou taillé en biseau.
+ *
+ * Une case d'eau porte ses quatre coins dans un entier (`ParcelCell.forme`),
+ * deux bits chacun : nord-ouest, nord-est, sud-est, sud-ouest.
+ */
+export type StyleCoin = 0 | 1 | 2;
+export const STYLE_ROND: StyleCoin = 0;
+export const STYLE_CARRE: StyleCoin = 1;
+export const STYLE_BISEAU: StyleCoin = 2;
+export const NOMS_STYLE_COIN: Record<StyleCoin, string> = { 0: "arrondi", 1: "d'équerre", 2: "en biseau" };
+
+/** 0 nord-ouest, 1 nord-est, 2 sud-est, 3 sud-ouest (y croît vers le sud). */
+export type Coin = 0 | 1 | 2 | 3;
+
+/** Les deux côtés qui encadrent un coin, en décalages de case. */
+export const COTES_DU_COIN: Record<Coin, readonly [readonly [number, number], readonly [number, number]]> = {
+  0: [[0, -1], [-1, 0]],
+  1: [[0, -1], [1, 0]],
+  2: [[0, 1], [1, 0]],
+  3: [[0, 1], [-1, 0]],
+};
+
+export function styleCoin(forme: number | null | undefined, coin: Coin): StyleCoin {
+  const v = ((forme ?? 0) >> (coin * 2)) & 3;
+  return (v > 2 ? 0 : v) as StyleCoin;
+}
+
+export function avecStyleCoin(forme: number | null | undefined, coin: Coin, style: StyleCoin): number {
+  return ((forme ?? 0) & ~(3 << (coin * 2))) | (style << (coin * 2));
+}
+
+/** Le style qui suit, à chaque clic : rond → d'équerre → biseau → rond. */
+export function styleSuivant(style: StyleCoin): StyleCoin {
+  return ((style + 1) % 3) as StyleCoin;
+}
+
+/** Le coin visé dans une case, d'après la position dans la case (−0,5 à 0,5). */
+export function coinVise(fx: number, fy: number): Coin {
+  if (fy < 0) return fx < 0 ? 0 : 1;
+  return fx < 0 ? 3 : 2;
+}
+
+/**
+ * Le coin se façonne-t-il ?
+ *
+ * Seul un coin **saillant** — aucun de ses deux côtés ne touche l'eau — a une
+ * forme à choisir ; un coin qui continue vers une autre case d'eau n'est pas
+ * un coin, c'est le milieu d'une rive.
+ */
+export function coinFaconnable(eaux: { has(k: string): boolean }, x: number, y: number, coin: Coin): boolean {
+  if (!eaux.has(cleCase(x, y))) return false;
+  return COTES_DU_COIN[coin].every(([dx, dy]) => !eaux.has(cleCase(x + dx, y + dy)));
+}
+
+/** Les paliers d'un lac qui grandit : chacun se fête. */
+export const PALIERS_LAC: readonly number[] = [1, 4, 9, 16, 25, 36, 49, 64, 81, 100];
+
+/** Les étendues d'eau d'un domaine, en ensembles de cases qui se touchent par un côté. */
+export function etenduesEau(cells: readonly { x: number; y: number; sol?: string | null }[]): string[][] {
+  const eaux = new Set(cells.filter((c) => c.sol === "EAU").map((c) => cleCase(c.x, c.y)));
+  const vues = new Set<string>();
+  const out: string[][] = [];
+  for (const k of eaux) {
+    if (vues.has(k)) continue;
+    const pile = [k];
+    const zone: string[] = [];
+    vues.add(k);
+    while (pile.length) {
+      const c = pile.pop()!;
+      zone.push(c);
+      const [x, y] = c.split(",").map(Number) as [number, number];
+      for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]] as const) {
+        const n = cleCase(x + dx, y + dy);
+        if (eaux.has(n) && !vues.has(n)) {
+          vues.add(n);
+          pile.push(n);
+        }
+      }
+    }
+    out.push(zone);
+  }
+  return out;
+}
+
+/**
+ * Le palier franchi par un geste, s'il y en a un : la plus grande étendue
+ * d'eau après le geste comparée à la plus grande avant.
+ */
+export function palierFranchi(avant: number, apres: number): number | null {
+  let franchi: number | null = null;
+  for (const p of PALIERS_LAC) if (avant < p && apres >= p) franchi = p;
+  return franchi;
 }

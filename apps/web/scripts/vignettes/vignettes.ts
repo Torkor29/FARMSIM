@@ -26,12 +26,12 @@ renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 renderer.outputColorSpace = THREE.SRGBColorSpace;
 document.body.appendChild(renderer.domElement);
 
-function dalle(x: number, z: number, couleur: number): THREE.Mesh {
+function dalle(x: number, z: number, couleur: number, hauteur = 0): THREE.Mesh {
   const m = new THREE.Mesh(
     new THREE.BoxGeometry(0.98, EP, 0.98),
     new THREE.MeshLambertMaterial({ color: couleur }),
   );
-  m.position.set(x, 0, z);
+  m.position.set(x, hauteur, z);
   m.receiveShadow = true;
   return m;
 }
@@ -101,9 +101,24 @@ function sceneDe(id: string): { groupe: THREE.Group; recul: number } {
       sol(pre(3));
       break;
     case "etang":
-      g.add(terrain(cellsCarre(3, (x, z) => (Math.abs(x) + Math.abs(z) <= 1 ? { sol: "EAU" } : {}))));
-      pre(3).forEach(([x, z]) => g.add(dalle(x, z, Math.abs(x) + Math.abs(z) <= 1 ? 0x8a7a55 : PRE[0]!)));
+    case "berge": {
+      // Creuser : un petit lac en L, tout en rondeurs. Berges : un canal dont
+      // un bout est d'équerre au nord, en biseau au sud, et l'autre arrondi.
+      const eau =
+        id === "etang"
+          ? (x: number, z: number) => (z === 0 && x >= -1) || (x === 0 && z === 1) || (x === -1 && z === -1)
+          : (_x: number, z: number) => z === 0;
+      const formes: Record<string, number> = id === "berge" ? { "0,1": (1 << 0) | (2 << 6) } : {};
+      g.add(
+        terrain(
+          cellsCarre(3, (x, z) =>
+            eau(x, z) ? { sol: "EAU", forme: formes[`${x + 1},${z + 1}`] ?? 0 } : {},
+          ),
+        ),
+      );
+      pre(3).forEach(([x, z]) => g.add(dalle(x, z, eau(x, z) ? 0x4b3d2c : PRE[Math.abs(Math.round(x + z)) % 2]!, eau(x, z) ? -0.2 : 0)));
       break;
+    }
     case "chemin-terre":
     case "chemin-gravier":
     case "chemin-pave": {

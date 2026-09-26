@@ -107,6 +107,8 @@ export type IsoCell = {
   sol?: "CHAMP" | "PRE" | "EAU";
   /** Ferme libre : le chemin qui passe sur la case, s'il y en a un. */
   revetement?: string | null;
+  /** Berges : la forme des coins d'une case d'eau. */
+  forme?: number;
 };
 
 export type ManurePile = {
@@ -403,8 +405,9 @@ type Props = {
   weather?: string;
   /** Saison courante — elle règle la lumière de toute la scène. */
   season?: string;
-  onCellClick: (x: number, y: number, mods: PointerMods) => void;
-  onCellHover?: (cell: { x: number; y: number } | null) => void;
+  /** `frac` : où, dans la case, le geste est tombé (−½ à ½) — l'outil Berges vise un coin. */
+  onCellClick: (x: number, y: number, mods: PointerMods, frac?: { fx: number; fy: number }) => void;
+  onCellHover?: (cell: { x: number; y: number; fx?: number; fy?: number } | null) => void;
   /**
    * Clic droit sur une case — menu contextuel du jeu.
    *
@@ -2812,7 +2815,8 @@ export function IsoFarmView({
           }
           // Le pré est de l'herbe, l'étang a sa berge : ni labour ni chaumes.
           if (solCase === "PRE" && cell.kind !== "BUILDING") col = (x + y) % 2 === 0 ? PRE : PRE_SOMBRE;
-          if (solCase === "EAU") col = BERGE;
+          // Sous l'eau : le fond du bassin, plus bas que le pré (voir `eau3d`).
+          if (solCase === "EAU") col = 0x4b3d2c;
           if (cell && solCase === "CHAMP" && cell.kind === "EMPTY" && look !== "PLAIN" && look !== "PLOWED") {
             soilDetails.push({ look, px, pz });
           }
@@ -2827,6 +2831,7 @@ export function IsoFarmView({
             couleur: col,
             labour: solCase === "CHAMP" && look === "PLOWED" && cell?.kind === "EMPTY",
             choisie: isSel,
+            hauteur: solCase === "EAU" ? -0.2 : 0,
           });
           // Toutes les cases sont à la même hauteur, bâtiments compris : un
           // volume posé sur la dalle n'a pas à s'enfoncer pour paraître posé.
@@ -2926,7 +2931,7 @@ export function IsoFarmView({
         domaine3d.majTerrain(
           {
             bornes: b ?? { minX: 0, minY: 0, maxX: gw, maxY: gh },
-            cells: cs.map((c) => ({ x: c.x, y: c.y, sol: c.sol ?? "CHAMP", revetement: c.revetement ?? null, kind: c.kind })),
+            cells: cs.map((c) => ({ x: c.x, y: c.y, sol: c.sol ?? "CHAMP", revetement: c.revetement ?? null, kind: c.kind, forme: c.forme ?? 0 })),
             amenagements: dataRef.current.amenagements,
           },
           cellWorldPos,
@@ -3184,15 +3189,17 @@ export function IsoFarmView({
         return { x: r.left + ((v.x + 1) / 2) * r.width, y: r.top + ((1 - v.y) / 2) * r.height };
       };
     }
-    function raycastCell(): { x: number; y: number } | null {
+    function raycastCell(): { x: number; y: number; fx: number; fy: number } | null {
       raycaster.setFromCamera(pointer, camera);
       if (!raycaster.ray.intersectPlane(planDalles, surDalle)) return null;
-      const x = Math.round((surDalle.x - ox) / step);
-      const y = Math.round((surDalle.z - oz) / step);
+      const gx = (surDalle.x - ox) / step;
+      const gy = (surDalle.z - oz) / step;
+      const x = Math.round(gx);
+      const y = Math.round(gy);
       const k = key(x, y);
       if (!dalles.a(k)) return null;
       if (fricheCles.has(k) && !dataRef.current.construction?.actif) return null;
-      return { x, y };
+      return { x, y, fx: gx - x, fy: gy - y };
     }
 
     /**
@@ -3622,7 +3629,7 @@ export function IsoFarmView({
       }
       const cell = raycastCell();
       if (cell) {
-        onClickRef.current(cell.x, cell.y, gestureMods);
+        onClickRef.current(cell.x, cell.y, gestureMods, { fx: cell.fx, fy: cell.fy });
         return;
       }
       // Hors de sa grille : peut-être un champ de voisin. C'est le seul geste
@@ -4832,7 +4839,7 @@ export function IsoFarmView({
     const c = cells
       .map(
         (x) =>
-          `${x.x},${x.y},${x.kind},${x.crop ?? ""},${x.fieldStage ?? ""},${x.machineType ?? ""},${x.hasStubble ? 1 : 0},${x.residuePasses ?? 0},${Math.round((x.weedPressure ?? 0) * 10)},${x.harvestsSincePlow ?? 0},${Math.round((x.strawTons ?? 0) * 10)},${x.baleCount ?? 0},${x.sol ?? ""},${x.revetement ?? ""}`,
+          `${x.x},${x.y},${x.kind},${x.crop ?? ""},${x.fieldStage ?? ""},${x.machineType ?? ""},${x.hasStubble ? 1 : 0},${x.residuePasses ?? 0},${Math.round((x.weedPressure ?? 0) * 10)},${x.harvestsSincePlow ?? 0},${Math.round((x.strawTons ?? 0) * 10)},${x.baleCount ?? 0},${x.sol ?? ""},${x.revetement ?? ""},${x.forme ?? 0}`,
       )
       .join("|");
     const b = buildings

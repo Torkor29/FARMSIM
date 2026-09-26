@@ -498,6 +498,8 @@ model ParcelCell {
   sol              SolCase    @default(CHAMP)
   /// Un chemin : TERRE, GRAVIER ou PAVE. Nul sans chemin.
   revetement       String?
+  /// Berges : la forme des quatre coins d'une case d'eau, deux bits par coin (voir `amenagement.ts`).
+  forme            Int       @default(0)
 
   @@unique([parcelId, x, y])
 }

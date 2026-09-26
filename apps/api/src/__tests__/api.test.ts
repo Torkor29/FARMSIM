@@ -4630,6 +4630,53 @@ describe("la ferme libre", () => {
     assert.equal(puits.statut, 400);
   });
 
+  it("façonne les berges d'un lac coin par coin, gratuitement, et les oublie quand on rebouche", async () => {
+    const { moi, parcelId } = await fermeLibre("Terraformeur");
+    // Un canal de deux cases : chacune a deux coins saillants, et un bout qui continue.
+    const creuse = await peindre(parcelId, moi, "etang", [{ x: 2, y: 5 }, { x: 3, y: 5 }]);
+    assert.equal(creuse.statut, 200, JSON.stringify(creuse.corps));
+    const argentAvant = await argent(moi.jeton);
+    const berge = (x: number, y: number, coin: number, style?: number) =>
+      appel(`/parcels/${parcelId}/berges`, {
+        methode: "POST",
+        corps: { userId: moi.id, x, y, coin, ...(style === undefined ? {} : { style }) },
+        jeton: moi.jeton,
+      });
+    // Coin nord-est de la case est : rond → d'équerre → biseau → rond.
+    const styles: number[] = [];
+    for (let i = 0; i < 3; i++) {
+      const r = await berge(3, 5, 1);
+      assert.equal(r.statut, 200, JSON.stringify(r.corps));
+      styles.push((r.corps as unknown as { style: number }).style);
+    }
+    assert.deepEqual(styles, [1, 2, 0]);
+    // Un style demandé est pris tel quel, et se relit.
+    await berge(3, 5, 2, 2);
+    const cellule = async () =>
+      (await vue(parcelId, moi.jeton)).parcel.cells.find((c) => c.x === 3 && c.y === 5) as unknown as { forme: number; sol: string };
+    assert.equal(((await cellule()).forme >> 4) & 3, 2);
+    assert.equal(await argent(moi.jeton), argentAvant, "façonner est gratuit");
+    // Le coin qui donne sur l'autre case d'eau n'est pas un coin.
+    const continu = await berge(3, 5, 0);
+    assert.equal(continu.statut, 409, JSON.stringify(continu.corps));
+    const aSec = await berge(5, 5, 1);
+    assert.equal(aSec.statut, 409, JSON.stringify(aSec.corps));
+    // Reboucher puis recreuser : la case repart arrondie.
+    assert.equal((await peindre(parcelId, moi, "pre", [{ x: 3, y: 5 }])).statut, 200);
+    assert.equal((await peindre(parcelId, moi, "etang", [{ x: 3, y: 5 }])).statut, 200);
+    const apres = await cellule();
+    assert.equal(apres.sol, "EAU");
+    assert.equal(apres.forme, 0);
+    // Un autre joueur ne touche pas à mes berges.
+    const autre = await inscrire("Voisin Pelle");
+    const vol = await appel(`/parcels/${parcelId}/berges`, {
+      methode: "POST",
+      corps: { userId: autre.id, x: 3, y: 5, coin: 1 },
+      jeton: autre.jeton,
+    });
+    assert.equal(vol.statut, 403);
+  });
+
   it("donne au siège un domaine, avec sa ferme au centre et de la friche autour", async () => {
     const { moi, parcelId } = await fermeLibre("Domaine");
     const v = await vue(parcelId, moi.jeton);

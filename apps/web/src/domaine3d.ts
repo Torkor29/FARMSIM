@@ -1,6 +1,8 @@
 import * as THREE from "three";
 import { casesEmprise, cleCase, defConstruction, empriseOrientee, masqueVoisins, type Bornes } from "@farmsim/shared";
 import { ajouterArbre, ajouterBoite, ajouterGeometrie, maillageFacette, pose } from "./decor3d";
+import { maillerEau, materiauEau } from "./eau3d";
+import { creerEauVivante } from "./eau-vivante";
 
 /**
  * Ce que la ferme libre ajoute au sol : la friche à acheter, la limite de la
@@ -20,6 +22,8 @@ export type CaseTerrain = {
   revetement: string | null;
   /** Ce qui occupe la case, pour ne pas faire pousser d'herbe sous un toit. */
   kind?: string;
+  /** Berges : la forme des coins d'une case d'eau. */
+  forme?: number;
 };
 
 export type ObjetPose = { id: string; type: string; originX: number; originY: number; rotation: number };
@@ -42,6 +46,8 @@ export type EtatConstruction = {
   objetFantome: { type: string; x: number; y: number; rotation: number; ok: boolean } | null;
   /** Le cadre de l'élément choisi. */
   selection: { x: number; y: number; w: number; h: number } | null;
+  /** L'outil Berges : le coin visé, et la forme qu'il prendrait. */
+  berge?: { x: number; y: number; coin: 0 | 1 | 2 | 3; ok: boolean; forme: number } | null;
 };
 
 type Tableaux = { pos: number[]; col: number[] };
@@ -65,6 +71,8 @@ function cylindre(cotes: number): THREE.CylinderGeometry {
   return g;
 }
 const _cone = new THREE.ConeGeometry(0.5, 1, 7);
+/** Une feuille de nénuphar : un disque échancré, à plat. */
+const _nenuphar = new THREE.CircleGeometry(1, 12, 0.35, Math.PI * 2 - 0.7).rotateX(-Math.PI / 2);
 const _ico = new THREE.IcosahedronGeometry(0.5, 0);
 const _ico1 = new THREE.IcosahedronGeometry(0.5, 1);
 
@@ -285,6 +293,16 @@ export function creerDomaine3d(opts: { shadows: boolean }): Domaine3d {
   const geoPoussiere = new THREE.RingGeometry(0.2, 0.34, 18).rotateX(-Math.PI / 2);
   const poufs: { m: THREE.Mesh; t0: number | null }[] = [];
   let signatures: Map<string, string> | null = null;
+  /** La forme des coins de chaque case d'eau, au dernier rendu. */
+  let formesPrec = new Map<string, number>();
+  /** Quand chaque case d'eau a été creusée — l'eau y monte pendant la seconde qui suit. */
+  const naissances = new Map<string, number>();
+  let eauxCourantes = new Map<string, number>();
+  let origineEau = { px: 0, pz: 0 };
+  let pasEau = 1;
+  let tCourant = 0;
+  const matNappe = materiauEau();
+  const vivante = creerEauVivante(group);
   /** Le trait de la limite de propriété, calculé avec le terrain, montré en construction. */
   const limite: Tableaux = { pos: [], col: [] };
 
@@ -313,7 +331,7 @@ export function creerDomaine3d(opts: { shadows: boolean }): Domaine3d {
         m.geometry?.dispose();
         const mat = m.material as THREE.Material | undefined;
         // Les matériaux partagés restent ; ceux des textes et des maillages fusionnés partent.
-        if (mat && ![matEau, matGrille, matLot, matLotSurvole, matBordLot, matFantomeOk, matFantomeNon, matSelection].includes(mat as never)) {
+        if (mat && ![matEau, matNappe, matGrille, matLot, matLotSurvole, matBordLot, matFantomeOk, matFantomeNon, matSelection].includes(mat as never)) {
           (mat as THREE.SpriteMaterial).map?.dispose();
           mat.dispose();
         }
@@ -329,10 +347,24 @@ export function creerDomaine3d(opts: { shadows: boolean }): Domaine3d {
     // Une autre parcelle n'est pas un changement : c'est une autre scène.
     let disparues = 0;
     if (signatures) for (const k of signatures.keys()) if (!k.startsWith("o:") && !suivantes.has(k)) disparues++;
+    const formesSuiv = new Map<string, number>();
+    for (const c of d.cells) if (c.sol === "EAU") formesSuiv.set(cleCase(c.x, c.y), c.forme ?? 0);
     if (signatures && disparues < 12) {
       const changees: { x: number; y: number }[] = [];
+      const creusees: { x: number; y: number }[] = [];
       for (const [k, v] of suivantes) {
-        if (signatures.get(k) === v) continue;
+        const avant = signatures.get(k);
+        if (avant === v) continue;
+        // Creuser et reboucher ont leur propre spectacle, plus parlant qu'une poussière.
+        if (!k.startsWith("o:") && v.startsWith("EAU|") && avant && !avant.startsWith("EAU|")) {
+          const [x, y] = k.split(",").map(Number) as [number, number];
+          creusees.push({ x, y });
+          continue;
+        }
+        if (!k.startsWith("o:") && avant?.startsWith("EAU|")) {
+          const [x, y] = k.split(",").map(Number) as [number, number];
+          vivante.reboucher(x, y, tCourant + Math.random() * 0.2);
+        }
         if (k.startsWith("o:")) {
           const [x, y] = v.split(",").map(Number) as [number, number];
           changees.push({ x, y });
@@ -354,7 +386,28 @@ export function creerDomaine3d(opts: { shadows: boolean }): Domaine3d {
         poussieres.add(m);
         poufs.push({ m, t0: null });
       }
+      // L'eau se creuse de proche en proche, dans l'ordre du geste.
+      if (creusees.length) {
+        const [a] = creusees;
+        creusees.sort((p, q) => Math.hypot(p.x - a!.x, p.y - a!.y) - Math.hypot(q.x - a!.x, q.y - a!.y));
+        const pasT = Math.min(0.07, 1.6 / creusees.length);
+        creusees.forEach((c, i) => {
+          const t = tCourant + 0.05 + i * pasT;
+          naissances.set(cleCase(c.x, c.y), t);
+          vivante.creuser(c.x, c.y, t);
+        });
+      }
+      // Un coin de berge retouché : un éclat là où il a changé.
+      for (const [k, f] of formesSuiv) {
+        const avant = formesPrec.get(k);
+        if (avant === undefined || avant === f) continue;
+        const [x, y] = k.split(",").map(Number) as [number, number];
+        for (let c = 0; c < 4; c++) {
+          if (((avant >> (c * 2)) & 3) !== ((f >> (c * 2)) & 3)) vivante.eclat(x, y, c as 0 | 1 | 2 | 3, tCourant);
+        }
+      }
     }
+    formesPrec = formesSuiv;
     signatures = suivantes;
     const possedees = new Set(d.cells.map((c) => cleCase(c.x, c.y)));
     const friche: Tableaux = { pos: [], col: [] };
@@ -488,66 +541,108 @@ export function creerDomaine3d(opts: { shadows: boolean }): Domaine3d {
       }
     }
 
-    /* Les étangs : une nappe par case, arrondie là où l'eau s'arrête. */
-    const eaux = new Set(d.cells.filter((c) => c.sol === "EAU").map((c) => cleCase(c.x, c.y)));
-    const formes: THREE.BufferGeometry[] = [];
-    for (const k of eaux) {
-      const [x, y] = k.split(",").map(Number) as [number, number];
-      const { px, pz } = posDe(x, y);
-      const m = masqueVoisins(eaux, x, y);
-      const marge = 0.16;
-      const demi = pas / 2;
-      const nord = m & 1 ? demi : demi - marge;
-      const est = m & 2 ? demi : demi - marge;
-      const sud = m & 4 ? demi : demi - marge;
-      const ouest = m & 8 ? demi : demi - marge;
-      const r = 0.22;
-      const arrondi = (a: number, b: number) => (!(m & a) && !(m & b) ? r : 0);
-      const forme = new THREE.Shape();
-      // Repère de la forme : x vers l'est, y vers le nord (z négatif).
-      const rNE = arrondi(1, 2);
-      const rSE = arrondi(4, 2);
-      const rSO = arrondi(4, 8);
-      const rNO = arrondi(1, 8);
-      forme.moveTo(-ouest + rSO, -sud);
-      forme.lineTo(est - rSE, -sud);
-      if (rSE) forme.quadraticCurveTo(est, -sud, est, -sud + rSE);
-      forme.lineTo(est, nord - rNE);
-      if (rNE) forme.quadraticCurveTo(est, nord, est - rNE, nord);
-      forme.lineTo(-ouest + rNO, nord);
-      if (rNO) forme.quadraticCurveTo(-ouest, nord, -ouest, nord - rNO);
-      forme.lineTo(-ouest, -sud + rSO);
-      if (rSO) forme.quadraticCurveTo(-ouest, -sud, -ouest + rSO, -sud);
-      const g = new THREE.ShapeGeometry(forme, 4);
-      g.rotateX(-Math.PI / 2);
-      g.translate(px, TOP + 0.012, pz);
-      formes.push(g);
-      // La berge : un liseré de terre et quelques roseaux là où l'eau finit.
-      for (const [bit, dx, dz] of [
-        [1, 0, -1],
-        [2, 1, 0],
-        [4, 0, 1],
-        [8, -1, 0],
-      ] as const) {
-        if (m & bit) continue;
-        const cxB = px + dx * (demi - marge / 2);
-        const czB = pz + dz * (demi - marge / 2);
-        ajouterBoite(berges.pos, berges.col, cxB, TOP + 0.01, czB, dx ? marge : pas, 0.02, dz ? marge : pas, 0x7d6a45);
-        if (hash(x, y, bit) > 0.45) {
-          for (let j = 0; j < 3; j++) {
-            const t = (hash(x + j, y, bit) - 0.5) * pas * 0.7;
-            ajouterBoite(berges.pos, berges.col, cxB + (dz ? t : 0), TOP + 0.2, czB + (dx ? t : 0), 0.03, 0.4, 0.03, 0x6f9a3a);
-          }
+    /*
+     * Les lacs : une nappe d'un seul tenant, creusée sous le pré.
+     *
+     * Voir `eau3d.ts` pour la forme. Ici on pose : la nappe à `NIVEAU`, la
+     * berge de pré au ras du sol dans les cases d'eau, le talus de terre qui
+     * descend de l'une à l'autre, des roseaux et des nénuphars.
+     */
+    eauxCourantes = formesSuiv;
+    origineEau = posDe(0, 0);
+    pasEau = pas;
+    const NIVEAU = TOP - 0.07;
+    const FOND = TOP - 0.2;
+    const me = maillerEau(eauxCourantes);
+    if (me.nappe.pos.length) {
+      const n = me.nappe.pos.length / 3;
+      const pos = new Float32Array(n * 3);
+      const prof = new Float32Array(n);
+      const nais = new Float32Array(n);
+      // Les triangles sortent dans le sens horaire vus d'en haut : on les
+      // retourne pour qu'ils regardent le ciel.
+      for (let t = 0; t < n; t += 3) {
+        for (let v = 0; v < 3; v++) {
+          const src = t + (v === 0 ? 0 : v === 1 ? 2 : 1);
+          pos[(t + v) * 3] = origineEau.px + me.nappe.pos[src * 3]! * pas;
+          pos[(t + v) * 3 + 1] = NIVEAU;
+          pos[(t + v) * 3 + 2] = origineEau.pz + me.nappe.pos[src * 3 + 2]! * pas;
+          prof[t + v] = me.nappe.prof[src]!;
+          nais[t + v] = naissances.get(me.nappe.cle[src]!) ?? -100;
+        }
+      }
+      const geo = new THREE.BufferGeometry();
+      geo.setAttribute("position", new THREE.BufferAttribute(pos, 3));
+      geo.setAttribute("aProf", new THREE.BufferAttribute(prof, 1));
+      geo.setAttribute("aNaissance", new THREE.BufferAttribute(nais, 1));
+      geo.computeBoundingSphere();
+      const nappe = new THREE.Mesh(geo, matNappe);
+      nappe.name = "lacs";
+      nappe.renderOrder = 2;
+      terrain.add(nappe);
+    }
+    const monde = (X: number, Y: number): [number, number] => [origineEau.px + X * pas, origineEau.pz + Y * pas];
+    const tri = (t: Tableaux, a: number[], b: number[], c: number[], couleur: number) => {
+      const col = new THREE.Color(couleur);
+      for (const v of [a, b, c]) {
+        t.pos.push(v[0]!, v[1]!, v[2]!);
+        t.col.push(col.r, col.g, col.b);
+      }
+    };
+    // La berge : le pré qui borde l'eau, dans les cases d'eau.
+    for (let k = 0; k < me.berge.length; k += 9) {
+      const a = monde(me.berge[k]!, me.berge[k + 2]!);
+      const b = monde(me.berge[k + 3]!, me.berge[k + 5]!);
+      const c = monde(me.berge[k + 6]!, me.berge[k + 8]!);
+      tri(berges, [a[0], TOP + 0.002, a[1]], [c[0], TOP + 0.002, c[1]], [b[0], TOP + 0.002, b[1]], 0x6fa645);
+    }
+    // Le talus : de la berge au fond, des deux faces (la forme n'a pas de sens).
+    for (let k = 0; k < me.contour.length; k += 4) {
+      const a = monde(me.contour[k]!, me.contour[k + 1]!);
+      const b = monde(me.contour[k + 2]!, me.contour[k + 3]!);
+      const haut = TOP + 0.004;
+      tri(berges, [a[0], haut, a[1]], [b[0], haut, b[1]], [b[0], FOND, b[1]], 0x6e5536);
+      tri(berges, [a[0], haut, a[1]], [b[0], FOND, b[1]], [a[0], FOND, a[1]], 0x5a4329);
+      tri(berges, [a[0], haut, a[1]], [b[0], FOND, b[1]], [b[0], haut, b[1]], 0x6e5536);
+      tri(berges, [a[0], haut, a[1]], [a[0], FOND, a[1]], [b[0], FOND, b[1]], 0x5a4329);
+      // Des roseaux, çà et là, sur la berge.
+      const mx = (me.contour[k]! + me.contour[k + 2]!) / 2;
+      const my = (me.contour[k + 1]! + me.contour[k + 3]!) / 2;
+      if (hash(Math.round(mx * 40), Math.round(my * 40), 5) > 0.86) {
+        const [wx, wz] = monde(mx, my);
+        for (let r = 0; r < 4; r++) {
+          const h = 0.18 + hash(Math.round(mx * 40), r, 9) * 0.2;
+          const ox = (hash(r, Math.round(my * 40), 3) - 0.5) * 0.12 * pas;
+          const oz = (hash(Math.round(my * 40), r, 7) - 0.5) * 0.12 * pas;
+          ajouterBoite(berges.pos, berges.col, wx + ox, TOP + h / 2, wz + oz, 0.018, h, 0.018, r % 2 ? 0x6f9a3a : 0x86a84a);
+          if (r === 1) ajouterBoite(berges.pos, berges.col, wx + ox, TOP + h - 0.03, wz + oz, 0.03, 0.07, 0.03, 0x6b4a2a);
         }
       }
     }
-    if (formes.length) {
-      const fusion = fusionner(formes);
-      const eau = new THREE.Mesh(fusion, matEau);
-      eau.name = "etangs";
-      eau.receiveShadow = true;
-      terrain.add(eau);
+    // Des nénuphars au large : une grappe sur une case d'eau profonde sur trois.
+    const auLarge = new Map<string, { x: number; y: number; p: number }>();
+    for (const f of me.large) {
+      const k = cleCase(Math.round(f.x), Math.round(f.y));
+      if (f.p < 0.3) continue;
+      const deja = auLarge.get(k);
+      if (!deja || f.p > deja.p) auLarge.set(k, f);
     }
+    for (const [k, f] of auLarge) {
+      const [cx, cy] = k.split(",").map(Number) as [number, number];
+      if (hash(cx, cy, 21) < 0.66) continue;
+      for (let n = 0; n < 3; n++) {
+        const ox = (hash(cx, cy, 30 + n) - 0.5) * 0.35;
+        const oy = (hash(cy, cx, 40 + n) - 0.5) * 0.35;
+        const [wx, wz] = monde(f.x + ox, f.y + oy);
+        const r = (0.07 + hash(cx + n, cy, 4) * 0.04) * pas;
+        ajouterGeometrie(berges.pos, berges.col, _nenuphar, pose(wx, NIVEAU + 0.004, wz, hash(cx, n, 2) * 6, r, 1, r), n === 1 ? 0x6a9a44 : 0x557f35);
+      }
+      if (hash(cx, cy, 8) > 0.5) {
+        const [wx, wz] = monde(f.x, f.y);
+        ajouterBoite(berges.pos, berges.col, wx, NIVEAU + 0.025, wz, 0.04, 0.03, 0.04, hash(cx, cy, 2) > 0.5 ? 0xf1c3d3 : 0xf6f2e6);
+      }
+    }
+    vivante.maj(eauxCourantes, me, origineEau, pas, NIVEAU);
 
     /* Le décor posé, raccordé à ses voisins du même type. */
     const parTypeObjet = new Map<string, Set<string>>();
@@ -585,6 +680,35 @@ export function creerDomaine3d(opts: { shadows: boolean }): Domaine3d {
     if (!e.actif) return;
     if (limite.pos.length) {
       construction.add(maillageFacette(limite.pos, limite.col, { nom: "domaine-limite" }));
+    }
+    /*
+     * L'outil Berges : le coin visé s'allume, et le contour qu'il prendrait
+     * se dessine sur l'eau avant même qu'on clique.
+     */
+    if (e.berge) {
+      const b = e.berge;
+      const dx = b.coin === 1 || b.coin === 2 ? 1 : -1;
+      const dy = b.coin >= 2 ? 1 : -1;
+      const o = posDe(0, 0);
+      const cx = o.px + (b.x + dx * 0.3) * pas;
+      const cz = o.pz + (b.y + dy * 0.3) * pas;
+      const marque = new THREE.Mesh(new THREE.CircleGeometry(0.13 * pas, 20).rotateX(-Math.PI / 2), b.ok ? matFantomeOk : matFantomeNon);
+      marque.position.set(cx, TOP + 0.03, cz);
+      marque.renderOrder = 4;
+      construction.add(marque);
+      if (b.ok) {
+        const apres = maillerEau(eauxCourantes, { restreindre: [[b.x, b.y]], formeForcee: { x: b.x, y: b.y, forme: b.forme } });
+        const l: number[] = [];
+        for (let k = 0; k < apres.contour.length; k += 4) {
+          l.push(o.px + apres.contour[k]! * pas, TOP - 0.05, o.pz + apres.contour[k + 1]! * pas);
+          l.push(o.px + apres.contour[k + 2]! * pas, TOP - 0.05, o.pz + apres.contour[k + 3]! * pas);
+        }
+        const g = new THREE.BufferGeometry();
+        g.setAttribute("position", new THREE.Float32BufferAttribute(l, 3));
+        const trait = new THREE.LineSegments(g, new THREE.LineBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.95, depthTest: false }));
+        trait.renderOrder = 5;
+        construction.add(trait);
+      }
     }
     const coin = (x: number, y: number) => {
       const { px, pz } = posDe(x, y);
@@ -694,6 +818,9 @@ export function creerDomaine3d(opts: { shadows: boolean }): Domaine3d {
   }
 
   function animer(t: number) {
+    tCourant = t;
+    matNappe.uniforms.uTemps!.value = t;
+    vivante.animer(t);
     // Le voile du lot survolé et le fantôme respirent doucement : on voit
     // qu'ils attendent un geste.
     matLotSurvole.opacity = 0.3 + Math.sin(t * 4) * 0.08;
@@ -723,6 +850,8 @@ export function creerDomaine3d(opts: { shadows: boolean }): Domaine3d {
     dispose() {
       vider(terrain);
       vider(construction);
+      vivante.dispose();
+      matNappe.dispose();
       for (const p of poufs) (p.m.material as THREE.Material).dispose();
       poufs.length = 0;
       geoPoussiere.dispose();

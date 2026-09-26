@@ -11,7 +11,7 @@ import { fileURLToPath } from "node:url";
 const ICI = path.dirname(fileURLToPath(import.meta.url));
 const SORTIE = process.env.SORTIE ?? path.join(ICI, "..", "..", "public", "assets", "icons", "catalogue");
 const IDS = [
-  "champ", "pre", "etang", "chemin-terre", "chemin-gravier", "chemin-pave",
+  "champ", "pre", "etang", "berge", "chemin-terre", "chemin-gravier", "chemin-pave",
   "chene", "pommier", "sapin", "buisson", "fleurs", "rocher", "haie", "cloture",
   "banc", "lampadaire", "botte-foin", "puits",
 ];

@@ -45,6 +45,7 @@ type Props = {
 
 /** Les catégories ont leur pictogramme ; un élément, sa vignette 3D ; un bâtiment, son illustration. */
 const ICONE_CATEGORIE: Record<CategorieConstruction, string> = {
+  TERRAFORMAGE: "terraformage",
   TERRAIN: "terrain",
   AGRICULTURE: "agriculture",
   BATIMENTS: "batiments",
@@ -62,6 +63,7 @@ export function iconeConstruction(d: DefConstruction): string {
 
 function prixAffiche(d: DefConstruction): string {
   if (d.pose === "TERRAIN") return d.prix ? `${d.prix} €/case` : "gratuit";
+  if (d.pose === "OUTIL") return "gratuit";
   return `${d.prix.toLocaleString("fr-FR")} €`;
 }
 
@@ -121,6 +123,12 @@ export function PanneauConstruction(p: Props) {
       </nav>
 
       <div className="construction-elements" role="listbox" aria-label="Éléments">
+        {p.categorie === "TERRAFORMAGE" && (
+          <div className="construction-aide-terrain">
+            Creusez à main levée : une mare, un lac, une rivière. Puis prenez les Berges et visez un coin pour
+            l'arrondir, le tailler ou l'équerrer.
+          </div>
+        )}
         {p.categorie === "TERRAIN" && (
           <div className="construction-aide-terrain">
             Survolez la friche dorée : chaque lot à vendre y affiche son prix. Un clic l'achète.
