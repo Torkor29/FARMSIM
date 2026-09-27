@@ -22,20 +22,6 @@ import { LAND_BASE_PER_HA, fertilityFactor } from "./land.js";
 /** Le sol d'une case possédée. La friche n'a pas de ligne : elle n'est pas à vous. */
 export type SolCase = "CHAMP" | "PRE" | "EAU" | "BOIS";
 
-/**
- * La vocation d'une case : la culture, ou la réserve.
- *
- * Une **réserve** s'achète quatre fois moins cher qu'une terre agricole
- * (`PART_PRIX_NATURE`). On y façonne le paysage — relief, eau, bois,
- * prairies, haies — mais on n'y cultive pas et l'on n'y bâtit pas, sauf un
- * rucher. C'est ce qui laisse les champs aux cultures : le terraformage se
- * fait à côté, sur une terre faite pour lui.
- */
-export type Vocation = "CULTURE" | "NATURE";
-/** Le prix d'un lot en réserve, rapporté à celui d'un lot agricole. */
-export const PART_PRIX_NATURE = 0.25;
-/** Les bâtiments qu'une réserve accepte. */
-export const BATIMENTS_EN_RESERVE: readonly string[] = ["BEEHIVE"];
 export const SOLS: readonly SolCase[] = ["CHAMP", "PRE", "EAU", "BOIS"];
 
 /** Le revêtement d'un chemin. */
@@ -140,7 +126,8 @@ export type RegleId =
   | "PONT"
   | "RAMPE"
   | "BOIS"
-  | "COUPE";
+  | "COUPE"
+  | "PRAIRIE";
 
 type Regle = {
   /** Sols sur lesquels on peut poser. */
@@ -175,6 +162,8 @@ const REGLES: Record<RegleId, Regle> = {
   BOIS: { sols: ["PRE", "BOIS"], champNuAdmis: true, surChemin: false, surVolume: false },
   /* Couper : seulement du bois, et seulement une futaie (voir `verdictCase`). */
   COUPE: { sols: ["BOIS"], champNuAdmis: false, surChemin: false, surVolume: false },
+  /* Semer une prairie fleurie : sur l'herbe de la campagne. */
+  PRAIRIE: { sols: ["PRE"], champNuAdmis: false, surChemin: false, surVolume: false },
 };
 
 export type EffetAmenagement = {
@@ -316,7 +305,50 @@ const bois: DefConstruction[] = [
     regle: "COUPE",
     charme: 0,
   },
+  {
+    id: "prairie",
+    categorie: "NATURE",
+    nom: "Prairie fleurie",
+    description:
+      "Semer des fleurs sauvages dans la campagne : coquelicots, bleuets, marguerites. Les pollinisateurs arrivent, et avec eux les oiseaux.",
+    icone: "🌼",
+    pose: "TERRAIN",
+    emprise: { w: 1, h: 1 },
+    rotations: [0],
+    prix: 10,
+    revente: 0,
+    niveauMin: 1,
+    regle: "PRAIRIE",
+    charme: 0,
+  },
 ];
+
+/** Ce qui se fait dans la campagne, autour de la ferme — et seulement là pour le gros terraformage. */
+export const OUTILS_CAMPAGNE: ReadonlySet<string> = new Set([
+  "etang",
+  "berge",
+  "surelever",
+  "abaisser",
+  "boiser",
+  "couper",
+  "prairie",
+  "pre",
+]);
+/** Ce qui ne se fait plus sur la ferme : le relief, l'eau, le bois, la prairie. */
+export const GROS_TERRAFORMAGE: ReadonlySet<string> = new Set(["etang", "surelever", "abaisser", "boiser", "prairie"]);
+/** Jusqu'où la campagne se façonne, en cases au-delà des lots à vendre. */
+export const PORTEE_CAMPAGNE = 30;
+
+/** Une case de la campagne : hors de la ferme et de ses lots à vendre, à portée. */
+export function dansCampagne(bornes: Bornes, x: number, y: number): boolean {
+  if (dansBornes(bornes, x, y)) return false;
+  return (
+    x >= bornes.minX - PORTEE_CAMPAGNE &&
+    x < bornes.maxX + PORTEE_CAMPAGNE &&
+    y >= bornes.minY - PORTEE_CAMPAGNE &&
+    y < bornes.maxY + PORTEE_CAMPAGNE
+  );
+}
 
 /** Coût du remblai d'un étang, par case, quand on le rend au pré. */
 export const COUT_REMBLAI = 8;
@@ -325,22 +357,6 @@ export const COUT_REMBLAI = 8;
  * Les outils de terraformage : ils façonnent ce qui existe sans rien poser.
  */
 const outils: DefConstruction[] = [
-  {
-    id: "vocation",
-    categorie: "TERRAIN",
-    nom: "Réserve ou culture",
-    description:
-      "Touchez un lot à vous : passez-le en réserve naturelle (gratuit), ou rendez une réserve à la culture en payant la différence.",
-    icone: "🦋",
-    pose: "OUTIL",
-    emprise: { w: 1, h: 1 },
-    rotations: [0],
-    prix: 0,
-    revente: 0,
-    niveauMin: 1,
-    regle: "PRE",
-    charme: 0,
-  },
   {
     id: "berge",
     categorie: "TERRAFORMAGE",
@@ -768,7 +784,8 @@ export type CaseDomaine = {
   niveau: number;
   /** Un bois : quand il a été planté (ou coupé pour la dernière fois). */
   boiseDepuis: Date | string | null;
-  vocation: Vocation;
+  /** Une prairie semée de fleurs sauvages (campagne). */
+  fleurie: boolean;
 };
 
 /** Une case telle que le serveur la stocke — le strict nécessaire. */
@@ -782,7 +799,7 @@ export type CaseSource = {
   crop?: string | null;
   niveau?: number | null;
   boiseDepuis?: Date | string | null;
-  vocation?: string | null;
+  fleurie?: boolean | null;
 };
 
 export type AmenagementSource = {
@@ -801,6 +818,11 @@ export type GrilleDomaine = {
   passages?: Passage[];
   /** L'heure de lecture : c'est elle qui dit l'âge d'un bois. */
   maintenant?: number;
+  /**
+   * La ferme, ou la campagne autour. Dans la campagne pas d'engins : un bois
+   * s'y coupe partout, sans chemin jusqu'à la lisière.
+   */
+  zone?: "FERME" | "CAMPAGNE";
 };
 
 function lireRevetement(v: string | null | undefined): Revetement | null {
@@ -812,6 +834,7 @@ export function construireGrille(opts: {
   cells: readonly CaseSource[];
   amenagements?: readonly AmenagementSource[];
   maintenant?: number;
+  zone?: "FERME" | "CAMPAGNE";
 }): GrilleDomaine {
   const cases = new Map<string, CaseDomaine>();
   for (const c of opts.cells) {
@@ -827,7 +850,7 @@ export function construireGrille(opts: {
       volume,
       niveau: c.niveau ?? 0,
       boiseDepuis: c.boiseDepuis ?? null,
-      vocation: c.vocation === "NATURE" ? "NATURE" : "CULTURE",
+      fleurie: !!c.fleurie,
     });
   }
   for (const a of opts.amenagements ?? []) {
@@ -842,7 +865,7 @@ export function construireGrille(opts: {
   const passages = (opts.amenagements ?? [])
     .filter((a) => a.type === "pont" || a.type === "rampe")
     .map((a) => ({ type: a.type, originX: a.originX, originY: a.originY, rotation: a.rotation }));
-  return { bornes: opts.bornes, cases, passages, maintenant: opts.maintenant ?? Date.now() };
+  return { bornes: opts.bornes, cases, passages, maintenant: opts.maintenant ?? Date.now(), zone: opts.zone ?? "FERME" };
 }
 
 const _acces = new WeakMap<GrilleDomaine, Set<string>>();
@@ -884,7 +907,9 @@ export type RaisonRefus =
   | "PAS_BOIS"
   | "JEUNE"
   | "ISOLE"
-  | "RESERVE";
+  | "CAMPAGNE"
+  | "SUR_LA_FERME"
+  | "OCCUPE";
 
 export const LIBELLE_REFUS: Record<RaisonRefus, string> = {
   FRICHE: "Terrain en friche — achetez ce lot d'abord",
@@ -905,7 +930,9 @@ export const LIBELLE_REFUS: Record<RaisonRefus, string> = {
   PAS_BOIS: "Il n'y a pas d'arbres ici",
   JEUNE: "Ces arbres sont trop jeunes pour la coupe",
   ISOLE: "Les engins n'y arrivent pas — ouvrez un chemin jusqu'à la lisière",
-  RESERVE: "Une réserve ne se cultive pas et ne se bâtit pas — sauf un rucher",
+  CAMPAGNE: "Relief, eau, bois et prairies se font dans la campagne, autour de la ferme",
+  SUR_LA_FERME: "C'est la ferme : ce geste se fait dessus, pas dans la campagne",
+  OCCUPE: "Une route, la cour, le village ou le champ d'un voisin est là",
 };
 
 export type VerdictCase = {
@@ -953,15 +980,18 @@ export function verdictCase(
   }
   if (def.regle === "COUPE") {
     if (stadeBois(croissanceBois(c.boiseDepuis, grille.maintenant ?? Date.now())) !== "FUTAIE") return non("JEUNE");
-    if (!aLaLisiere(grille, x, y)) return non("ISOLE");
+    if (grille.zone !== "CAMPAGNE" && !aLaLisiere(grille, x, y)) return non("ISOLE");
     return { x, y, ok: true, change: true };
   }
 
   if (def.regle === "BATIMENT" && c.niveau !== 0) return non("RELIEF");
-  // La réserve : ni champ ni bâtiment, sauf un rucher.
-  if (c.vocation === "NATURE") {
-    if (def.regle === "CHAMP") return non("RESERVE");
-    if (def.regle === "BATIMENT" && !BATIMENTS_EN_RESERVE.includes(def.batiment ?? "")) return non("RESERVE");
+  /* La ferme et la campagne se partagent les gestes : le gros terraformage
+     se fait dehors, les cultures, bâtiments et chemins sur la ferme. */
+  if (grille.zone === "CAMPAGNE" ? !OUTILS_CAMPAGNE.has(def.id) : GROS_TERRAFORMAGE.has(def.id)) {
+    return non(grille.zone === "CAMPAGNE" ? "SUR_LA_FERME" : "CAMPAGNE");
+  }
+  if (def.regle === "PRAIRIE") {
+    return c.sol === "PRE" && c.fleurie ? non("DEJA") : { x, y, ok: true, change: true };
   }
   if (def.regle === "RELIEF") {
     if (def.id === "surelever") return c.niveau >= NIVEAU_MAX ? non("SOMMET") : { x, y, ok: true, change: true };
@@ -970,7 +1000,7 @@ export function verdictCase(
   // Un terrain déjà dans l'état voulu ne coûte rien et ne change rien.
   if (def.pose === "TERRAIN") {
     if (def.regle === "PRE") {
-      const change = c.sol !== "PRE" || c.revetement !== null;
+      const change = c.sol !== "PRE" || c.revetement !== null || c.fleurie;
       return change ? { x, y, ok: true, change } : { x, y, ok: false, raison: "DEJA", change: false };
     }
     if (def.regle === "CHEMIN") {
@@ -1293,31 +1323,6 @@ export function prixLot(opts: {
   return Math.ceil(brut / 50) * 50;
 }
 
-/** Le prix du même lot en réserve naturelle. */
-export function prixLotNature(prixAgricole: number): number {
-  return Math.ceil((prixAgricole * PART_PRIX_NATURE) / 50) * 50;
-}
-
-/**
- * La vocation d'un lot possédé : celle de la majorité de ses cases. Un lot
- * n'en a qu'une en pratique — on l'achète, on le convertit, d'un bloc.
- */
-export function vocationDuLot(
-  lot: { x: number; y: number; w: number; h: number },
-  vocationDe: (x: number, y: number) => string | null | undefined,
-): Vocation {
-  let nature = 0;
-  let total = 0;
-  for (let y = lot.y; y < lot.y + lot.h; y++) {
-    for (let x = lot.x; x < lot.x + lot.w; x++) {
-      const v = vocationDe(x, y);
-      if (v == null) continue;
-      total++;
-      if (v === "NATURE") nature++;
-    }
-  }
-  return total && nature * 2 > total ? "NATURE" : "CULTURE";
-}
 
 /* ------------------------------------------------------------------ */
 /* Effets et charme                                                     */

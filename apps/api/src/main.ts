@@ -405,7 +405,6 @@ import {
   verrouConstruction,
   type SourcesBonus,
   type SolCase,
-  type Vocation,
   GUILDES,
   lireCarnet,
   observerEspeces,
@@ -425,9 +424,10 @@ import {
   lireHabitats,
   refugesDecor,
   scoreBiodiversite,
-  BATIMENTS_EN_RESERVE,
-  prixLotNature,
-  vocationDuLot,
+  PORTEE_CAMPAGNE,
+  PORTEE_BIEF,
+  OUTILS_CAMPAGNE,
+  dansCampagne,
   PRIX_COUPE,
   BOIS_MATURITE_MS,
   croissanceBois,
@@ -1309,19 +1309,28 @@ async function tickDebtInterest() {
 function forceDeLAtelier(
   b: { type: string; originX: number; originY: number; rotation: number },
   cells: { x: number; y: number; sol: string; niveau: number }[],
+  /** La campagne façonnée : un bief en amène l'eau jusqu'à la roue. */
+  campagne: { x: number; y: number; sol: string; niveau: number }[] = [],
 ): 1 | 2 | 3 {
   if (b.type !== "MILL") return 1;
   const def = defConstruction(`batiment:${b.type}`);
   if (!def) return 1;
   const { w, h } = empriseOrientee(def, quarterTurns(b.rotation));
-  return forceHydraulique(cells, { originX: b.originX, originY: b.originY, w, h });
+  const tout = [...cells, ...campagne];
+  return forceHydraulique(tout, { originX: b.originX, originY: b.originY, w, h }, hydrologie(tout), PORTEE_BIEF);
 }
 
 async function tickProcessing() {
   const ateliers = await prisma.building.findMany({
     where: { type: { in: PROCESSING_BUILDINGS } },
     include: {
-      parcel: { select: { farmId: true, cells: { select: { x: true, y: true, sol: true, niveau: true } } } },
+      parcel: {
+        select: {
+          farmId: true,
+          cells: { select: { x: true, y: true, sol: true, niveau: true } },
+          campagne: { select: { x: true, y: true, sol: true, niveau: true } },
+        },
+      },
     },
   });
   const now = new Date();
@@ -1342,7 +1351,7 @@ async function tickProcessing() {
     }
     const run = processRun({
       kind: def.processing,
-      perDay: processingThroughput(b.type as BuildingType, b.level) * forceDeLAtelier(b, b.parcel.cells),
+      perDay: processingThroughput(b.type as BuildingType, b.level) * forceDeLAtelier(b, b.parcel.cells, b.parcel.campagne),
       elapsedMs: now.getTime() - depuis.getTime(),
       stockIn: stock.qty,
     });
@@ -4612,6 +4621,10 @@ app.post("/dev/grant", async (req, res) => {
       where: { parcel: { farmId: user.farm.id }, sol: "BOIS" },
       data: { boiseDepuis: new Date(Date.now() - BOIS_MATURITE_MS - 60_000) },
     });
+    await prisma.caseCampagne.updateMany({
+      where: { parcel: { farmId: user.farm.id }, sol: "BOIS" },
+      data: { boiseDepuis: new Date(Date.now() - BOIS_MATURITE_MS - 60_000) },
+    });
     /**
      * On recule la date de semis, parce qu'il n'existe pas d'état « mûr » à
      * forcer : la maturité se déduit de la culture.
@@ -6175,7 +6188,15 @@ app.get("/parcels/:id", async (req, res) => {
        l'agrandir — un voisin qui regarde n'a pas à voir les devis. */
     domaine:
       parcel.farm?.userId && parcel.farm.userId === (await userFromAuthHeader(req))?.user.id
-        ? { ...domaineVue(parcel), biodiversite: await biodiversiteVue(parcel.farm.id) }
+        ? {
+            ...domaineVue(parcel),
+            biodiversite: await biodiversiteVue(parcel.farm.id),
+            /** La campagne façonnée autour de la ferme. */
+            campagne: await prisma.caseCampagne.findMany({
+              where: { parcelId: parcel.id },
+              select: { x: true, y: true, sol: true, fleurie: true, niveau: true, forme: true, boiseDepuis: true },
+            }),
+          }
         : null,
   });
 });
@@ -8060,7 +8081,11 @@ app.get("/farm/processing", async (req, res) => {
           inventory: true,
           parcels: {
             orderBy: ORDRE_PARCELLES,
-            include: { buildings: true, cells: { select: { x: true, y: true, sol: true, niveau: true } } },
+            include: {
+              buildings: true,
+              cells: { select: { x: true, y: true, sol: true, niveau: true } },
+              campagne: { select: { x: true, y: true, sol: true, niveau: true } },
+            },
           },
         },
       },
@@ -8073,12 +8098,12 @@ app.get("/farm/processing", async (req, res) => {
   const prix = await prisma.marketPrice.findMany();
   const cours = (code: string) => prix.find((p) => p.commodity === code)?.price ?? 0;
   const ateliers = user.farm.parcels
-    .flatMap((p) => p.buildings.map((b) => ({ b, cells: p.cells })))
+    .flatMap((p) => p.buildings.map((b) => ({ b, cells: p.cells, campagne: p.campagne })))
     .filter(({ b }) => BUILDING_DEFS[b.type as BuildingType].processing)
-    .map(({ b, cells }) => {
+    .map(({ b, cells, campagne }) => {
       const kind = BUILDING_DEFS[b.type as BuildingType].processing!;
       const recette = RECIPES[kind];
-      const force = forceDeLAtelier(b, cells);
+      const force = forceDeLAtelier(b, cells, campagne);
       const perDay = processingThroughput(b.type as BuildingType, b.level) * force;
       const stockIn = user.farm!.inventory.find((i) => i.itemCode === recette.input)?.qty ?? 0;
       const inputPrice = cours(recette.input);
@@ -9607,7 +9632,7 @@ type ParcelleGrille = {
   gridW: number;
   gridH: number;
   domaineMarge: number;
-  cells: { x: number; y: number; sol: string; revetement: string | null; kind: string; buildingId: string | null; crop: string | null; niveau: number; boiseDepuis: Date | null; vocation: string }[];
+  cells: { x: number; y: number; sol: string; revetement: string | null; kind: string; buildingId: string | null; crop: string | null; niveau: number; boiseDepuis: Date | null }[];
   amenagements: { id: string; type: string; originX: number; originY: number; rotation: number }[];
 };
 
@@ -9637,28 +9662,21 @@ function domaineVue(
   const bornes = bornesDuDomaine(p.cells);
   const possedees = new Set(p.cells.map((c) => cleCase(c.x, c.y)));
   const niveau = niveauPourLot(p.lotsAchetes + 1);
-  const vocations = new Map(p.cells.map((c) => [cleCase(c.x, c.y), c.vocation]));
   const lots = lotsDuDomaine(bornes).map((lot) => {
     const { etat, aAcheter } = etatLot(lot, possedees);
-    // Le prix agricole des cases du lot : ce qu'on paierait à l'achat, ou
-    // pour convertir une réserve déjà à soi.
-    const agricole = prixLot({
-      cases: etat === "POSSEDE" ? lot.w * lot.h : aAcheter,
-      possedees: p.cells.length,
-      fertilite: p.fertility,
-      prixRegional: p.zone.priceMult,
-    });
-    const vocation = etat === "POSSEDE" ? vocationDuLot(lot, (x, y) => vocations.get(cleCase(x, y))) : null;
     return {
       ...lot,
       etat,
       aAcheter,
-      prix: etat === "POSSEDE" ? 0 : agricole,
-      /** Le même lot en réserve naturelle. */
-      prixNature: etat === "POSSEDE" ? 0 : prixLotNature(agricole),
-      vocation,
-      /** Ce que coûte le passage d'une réserve à la culture : la différence. */
-      prixConversion: vocation === "NATURE" ? agricole - prixLotNature(agricole) : 0,
+      prix:
+        etat === "POSSEDE"
+          ? 0
+          : prixLot({
+              cases: aAcheter,
+              possedees: p.cells.length,
+              fertilite: p.fertility,
+              prixRegional: p.zone.priceMult,
+            }),
       niveau,
     };
   });
@@ -9698,6 +9716,7 @@ async function biodiversiteDeLaFerme(farmId: string, opts: { persister?: boolean
         select: {
           id: true,
           cells: true,
+          campagne: true,
           amenagements: { select: { type: true, originX: true, originY: true } },
           zone: { select: { hemisphere: true } },
         },
@@ -9706,13 +9725,25 @@ async function biodiversiteDeLaFerme(farmId: string, opts: { persister?: boolean
   });
   if (!farm) return null;
   const maintenant = Date.now();
-  // Chaque parcelle a son repère : on la lit seule, puis on additionne.
+  /*
+   * Chaque parcelle a son repère : on la lit seule, puis on additionne. La
+   * campagne façonnée autour d'une parcelle se lit à part — elle compte
+   * pleinement, et une case non façonnée y est de l'herbe — puis se fond
+   * dans la lecture de sa parcelle, pour les effets qui dépendent de l'endroit.
+   */
   const lectures = new Map<string, LectureHabitats>();
+  const lecturesCampagne: LectureHabitats[] = [];
+  let casesNature = 0;
   for (const p of farm.parcels) {
-    lectures.set(
-      p.id,
-      lireHabitats({ cells: p.cells, amenagements: p.amenagements, courante: hydrologie(p.cells).courante, maintenant }),
-    );
+    const ferme = lireHabitats({ cells: p.cells, amenagements: p.amenagements, courante: hydrologie(p.cells).courante, maintenant });
+    if (!p.campagne.length) {
+      lectures.set(p.id, ferme);
+      continue;
+    }
+    const camp = lireHabitats({ cells: p.campagne, campagne: true, courante: hydrologie(p.campagne).courante, maintenant });
+    lecturesCampagne.push(camp);
+    casesNature += camp.parCase.size;
+    lectures.set(p.id, { ...additionnerLectures([ferme, camp]), parCase: new Map([...ferme.parCase, ...camp.parCase]) });
   }
   const lecture = additionnerLectures([...lectures.values()]);
   const cible = cibleFaune(lecture, refugesDecor(lireDecorations(farm.decorJson)));
@@ -9750,16 +9781,6 @@ async function biodiversiteDeLaFerme(farmId: string, opts: { persister?: boolean
     });
   }
   const score = scoreBiodiversite(faune);
-  // Les cases de réserve aménagées : un habitat autre qu'un pré fauché.
-  let casesReserve = 0;
-  for (const p of farm.parcels) {
-    const l = lectures.get(p.id)!;
-    for (const c of p.cells) {
-      if (c.vocation !== "NATURE") continue;
-      const hs = l.parCase.get(cleCase(c.x, c.y));
-      if (hs?.some((h) => h !== "PRE")) casesReserve++;
-    }
-  }
   return {
     score,
     libelle: libelleBiodiversite(score),
@@ -9770,9 +9791,9 @@ async function biodiversiteDeLaFerme(farmId: string, opts: { persister?: boolean
     surfaces: lecture.surfaces,
     diversite: lecture.diversite,
     guildes: GUILDES,
-    casesReserve,
+    casesNature,
     /** L'aide agro-environnementale d'un jour de jeu, au rythme d'aujourd'hui. */
-    aideParJour: aideDuJour({ casesReserve, score, joursParSaison: JOURS_SAISON }),
+    aideParJour: aideDuJour({ casesNature, score, joursParSaison: JOURS_SAISON }),
     /** Le carnet de nature, et ce qu'on vient d'y ajouter. */
     carnet,
     nouvelles,
@@ -9798,9 +9819,8 @@ async function biodiversiteVue(farmId: string) {
  */
 async function tickAides(): Promise<void> {
   const maintenant = Date.now();
-  // Les fermes qui ont une réserve : on part de ses cases, une par parcelle.
-  const reserves = await prisma.parcelCell.findMany({
-    where: { vocation: "NATURE" },
+  // Les fermes qui ont façonné leur campagne : on part de ses cases, une par parcelle.
+  const reserves = await prisma.caseCampagne.findMany({
     select: { parcel: { select: { farmId: true } } },
     distinct: ["parcelId"],
   });
@@ -9825,7 +9845,7 @@ async function tickAides(): Promise<void> {
         data: { aidesAt: new Date(f.aidesAt!.getTime() + jours * GAME_DAY_MS) },
       });
       if (garde.count !== 1 || montant <= 0) return;
-      await crediter(tx, f.userId, montant, "AIDES", `Aides agro-environnementales — ${bio!.casesReserve} cases de réserve, ${jours} jour(s)`);
+      await crediter(tx, f.userId, montant, "AIDES", `Aides agro-environnementales — ${bio!.casesNature} cases de campagne aménagées, ${jours} jour(s)`);
     });
   }
 }
@@ -9846,7 +9866,7 @@ const includeDomaine = {
  */
 app.post("/parcels/:id/lots/buy", async (req, res) => {
   const body = z
-    .object({ userId: z.string(), lot: z.string(), vocation: z.enum(["CULTURE", "NATURE"]).default("CULTURE") })
+    .object({ userId: z.string(), lot: z.string() })
     .safeParse(req.body);
   if (!body.success) {
     res.status(400).json(body.error.flatten());
@@ -9880,17 +9900,41 @@ app.post("/parcels/:id/lots/buy", async (req, res) => {
     res.status(403).json({ error: `Niveau ${lot.niveau} requis pour ce lot` });
     return;
   }
-  const vocation: Vocation = body.data.vocation;
-  const prix = vocation === "NATURE" ? lot.prixNature : lot.prix;
+  const prix = lot.prix;
   if (!peutPayer(user, prix)) {
     res.status(402).json({ error: `€ insuffisants — ${prix} requis` });
     return;
   }
   const possedees = new Set(parcel.cells.map((c) => cleCase(c.x, c.y)));
-  const nouvelles: { parcelId: string; x: number; y: number; sol: "PRE"; vocation: Vocation }[] = [];
+  /* La campagne façonnée que le lot recouvre passe dans la ferme telle
+     quelle : un lac reste un lac, un bois garde son âge. */
+  const campagne = new Map(
+    (await prisma.caseCampagne.findMany({ where: { parcelId: parcel.id } })).map((c) => [cleCase(c.x, c.y), c]),
+  );
+  const reprises: string[] = [];
+  const nouvelles: {
+    parcelId: string;
+    x: number;
+    y: number;
+    sol: "PRE" | "EAU" | "BOIS";
+    niveau: number;
+    forme: number;
+    boiseDepuis: Date | null;
+  }[] = [];
   for (let y = lot.y; y < lot.y + lot.h; y++) {
     for (let x = lot.x; x < lot.x + lot.w; x++) {
-      if (!possedees.has(cleCase(x, y))) nouvelles.push({ parcelId: parcel.id, x, y, sol: "PRE", vocation });
+      if (possedees.has(cleCase(x, y))) continue;
+      const c = campagne.get(cleCase(x, y));
+      if (c) reprises.push(c.id);
+      nouvelles.push({
+        parcelId: parcel.id,
+        x,
+        y,
+        sol: c?.sol === "EAU" || c?.sol === "BOIS" ? c.sol : "PRE",
+        niveau: c?.niveau ?? 0,
+        forme: c?.forme ?? 0,
+        boiseDepuis: c?.boiseDepuis ?? null,
+      });
     }
   }
   try {
@@ -9907,9 +9951,10 @@ app.post("/parcels/:id/lots/buy", async (req, res) => {
         user.id,
         prix,
         "TERRES",
-        vocation === "NATURE" ? `Achat de réserve naturelle — ${nouvelles.length} cases` : `Achat de terrain — ${nouvelles.length} cases`,
+        `Achat de terrain — ${nouvelles.length} cases`,
       );
       await tx.parcelCell.createMany({ data: nouvelles, skipDuplicates: true });
+      if (reprises.length) await tx.caseCampagne.deleteMany({ where: { id: { in: reprises } } });
     });
   } catch (e) {
     if (e instanceof Error && e.message === "CONCURRENT") {
@@ -9918,81 +9963,9 @@ app.post("/parcels/:id/lots/buy", async (req, res) => {
     }
     throw e;
   }
-  res.status(201).json({ lot: lot.id, paid: prix, cases: nouvelles.length, vocation });
+  res.status(201).json({ lot: lot.id, paid: prix, cases: nouvelles.length, reprises: reprises.length });
 });
 
-/**
- * Changer la vocation d'un lot à soi.
- *
- * Vers la culture, on paie la différence avec le prix agricole du jour. Vers
- * la réserve, c'est gratuit, sans remboursement — et il faut d'abord que le
- * lot soit libre : ni culture en terre, ni bâtiment autre qu'un rucher. Les
- * champs nus y redeviennent du pré.
- */
-app.post("/parcels/:id/lots/vocation", async (req, res) => {
-  const body = z
-    .object({ userId: z.string(), lot: z.string(), vocation: z.enum(["CULTURE", "NATURE"]) })
-    .safeParse(req.body);
-  if (!body.success) {
-    res.status(400).json(body.error.flatten());
-    return;
-  }
-  const parcel = await prisma.parcel.findUnique({
-    where: { id: req.params.id },
-    include: { ...includeDomaine, buildings: true },
-  });
-  if (!parcel?.farm || parcel.farm.userId !== body.data.userId) {
-    res.status(403).json({ error: "Parcelle non possédée" });
-    return;
-  }
-  const lot = domaineVue(parcel).lots.find((l) => l.id === body.data.lot);
-  if (!lot || lot.etat !== "POSSEDE") {
-    res.status(404).json({ error: "Ce lot n'est pas à vous" });
-    return;
-  }
-  if (lot.vocation === body.data.vocation) {
-    res.status(409).json({ error: body.data.vocation === "NATURE" ? "C'est déjà une réserve" : "C'est déjà une terre de culture" });
-    return;
-  }
-  const dedans = parcel.cells.filter((c) => c.x >= lot.x && c.x < lot.x + lot.w && c.y >= lot.y && c.y < lot.y + lot.h);
-  const user = await prisma.user.findUnique({ where: { id: body.data.userId } });
-  if (!user) {
-    res.status(404).json({ error: "Joueur introuvable" });
-    return;
-  }
-  let prix = 0;
-  if (body.data.vocation === "NATURE") {
-    if (dedans.some((c) => c.kind === "CROP" || c.crop)) {
-      res.status(409).json({ error: "Une culture est en terre dans ce lot — récoltez d'abord" });
-      return;
-    }
-    const batis = new Set(dedans.map((c) => c.buildingId).filter((b): b is string => !!b));
-    const genant = parcel.buildings.find((b) => batis.has(b.id) && !BATIMENTS_EN_RESERVE.includes(b.type));
-    if (genant) {
-      res.status(409).json({ error: "Un bâtiment occupe ce lot — une réserve n'accueille qu'un rucher" });
-      return;
-    }
-  } else {
-    prix = lot.prixConversion;
-    if (!peutPayer(user, prix)) {
-      res.status(402).json({ error: `€ insuffisants — ${prix} requis` });
-      return;
-    }
-  }
-  await prisma.$transaction(async (tx) => {
-    if (prix > 0) {
-      await debit(tx, user.id, prix, "TERRES", `Réserve rendue à la culture — ${dedans.length} cases`);
-      await tx.parcel.update({ where: { id: parcel.id }, data: { landPrice: { increment: prix } } });
-    }
-    const ids = dedans.map((c) => c.id);
-    await tx.parcelCell.updateMany({ where: { id: { in: ids } }, data: { vocation: body.data.vocation } });
-    // Une réserve n'a pas de champ : un champ nu y redevient du pré.
-    if (body.data.vocation === "NATURE") {
-      await tx.parcelCell.updateMany({ where: { id: { in: ids }, sol: "CHAMP" }, data: { sol: "PRE" } });
-    }
-  });
-  res.json({ lot: lot.id, vocation: body.data.vocation, paid: prix });
-});
 
 /**
  * Peindre du terrain : champ, pré, étang ou chemin, sur les cases données.
@@ -10132,6 +10105,174 @@ app.post("/parcels/:id/berges", async (req, res) => {
     where: { parcelId: parcel.id, x: body.data.x, y: body.data.y },
     data: { forme },
   });
+  res.json({ forme, style });
+});
+
+/* ------------------------------------------------------------------ */
+/* La campagne : ce qu'on façonne autour de la ferme                    */
+/* ------------------------------------------------------------------ */
+/*
+ * Le gros terraformage — relief, eau, bois, prairies — se fait hors de la
+ * ferme et de ses lots à vendre, dans la campagne qui l'entoure
+ * (`dansCampagne`). Rien à acheter : on paie le geste, pas la terre. Les
+ * routes, la cour, le village et les champs des voisins se vérifient dans la
+ * vue, qui les connaît — comme pour la décoration libre.
+ */
+
+/** Les bornes de la campagne d'une ferme : le domaine, plus la portée tout autour. */
+function bornesCampagne(b: { minX: number; minY: number; maxX: number; maxY: number }) {
+  return {
+    minX: b.minX - PORTEE_CAMPAGNE,
+    minY: b.minY - PORTEE_CAMPAGNE,
+    maxX: b.maxX + PORTEE_CAMPAGNE,
+    maxY: b.maxY + PORTEE_CAMPAGNE,
+  };
+}
+
+app.post("/parcels/:id/campagne", async (req, res) => {
+  const body = z
+    .object({
+      userId: z.string(),
+      outil: z.string(),
+      cells: z.array(z.object({ x: z.number().int(), y: z.number().int() })).min(1).max(1200),
+    })
+    .safeParse(req.body);
+  if (!body.success) {
+    res.status(400).json(body.error.flatten());
+    return;
+  }
+  const def = defConstruction(body.data.outil);
+  if (!def || def.pose !== "TERRAIN" || !OUTILS_CAMPAGNE.has(def.id)) {
+    res.status(400).json({ error: "Ce geste ne se fait pas dans la campagne" });
+    return;
+  }
+  const parcel = await prisma.parcel.findUnique({
+    where: { id: req.params.id },
+    include: { farm: true, cells: { select: { x: true, y: true } }, campagne: true },
+  });
+  if (!parcel?.farm || parcel.farm.userId !== body.data.userId) {
+    res.status(403).json({ error: "Parcelle non possédée" });
+    return;
+  }
+  const user = await prisma.user.findUnique({ where: { id: body.data.userId } });
+  if (!user) {
+    res.status(404).json({ error: "Joueur introuvable" });
+    return;
+  }
+  const verrou = verrouConstruction(def, user);
+  if (verrou) {
+    res.status(403).json({ error: `${def.nom} : ${verrou.toLowerCase()}` });
+    return;
+  }
+  const domaine = bornesDuDomaine(parcel.cells);
+  const cases = body.data.cells.filter((c) => dansCampagne(domaine, c.x, c.y));
+  if (!cases.length) {
+    res.status(409).json({ error: "C'est la ferme ou un lot à vendre — la campagne commence au-delà" });
+    return;
+  }
+  // Une case non façonnée est de l'herbe : on la présente comme telle à la règle.
+  const connues = new Map(parcel.campagne.map((c) => [cleCase(c.x, c.y), c]));
+  const grille = construireGrille({
+    bornes: bornesCampagne(domaine),
+    cells: [
+      ...parcel.campagne.map((c) => ({ ...c, sol: c.sol as SolCase })),
+      ...cases.filter((c) => !connues.has(cleCase(c.x, c.y))).map((c) => ({ x: c.x, y: c.y, sol: "PRE" as const })),
+    ],
+    zone: "CAMPAGNE",
+  });
+  const verdict = validerPeinture(grille, def, cases);
+  if (!verdict.ok) {
+    res.status(409).json({ error: LIBELLE_REFUS[verdict.raison ?? "DEJA"] });
+    return;
+  }
+  if (!peutPayer(user, verdict.cout)) {
+    res.status(402).json({ error: `€ insuffisants — ${verdict.cout} requis` });
+    return;
+  }
+  const faites = verdict.cases.filter((c) => c.ok && c.change);
+  const maintenant = new Date();
+  const gain = def.regle === "COUPE" ? faites.length * PRIX_COUPE : 0;
+  /* Ce que le geste écrit : `creer` pour une case d'herbe encore absente,
+     `maj` pour une case déjà façonnée. */
+  const ecriture = (niveau: number): { creer: Prisma.CaseCampagneUncheckedCreateInput; maj: Prisma.CaseCampagneUpdateInput } => {
+    switch (def.regle) {
+      case "EAU":
+        return { creer: { parcelId: parcel.id, x: 0, y: 0, sol: "EAU", niveau }, maj: { sol: "EAU", fleurie: false, forme: 0, boiseDepuis: null } };
+      case "BOIS":
+        return {
+          creer: { parcelId: parcel.id, x: 0, y: 0, sol: "BOIS", boiseDepuis: maintenant, niveau },
+          maj: { sol: "BOIS", fleurie: false, forme: 0, boiseDepuis: maintenant },
+        };
+      case "PRAIRIE":
+        return { creer: { parcelId: parcel.id, x: 0, y: 0, sol: "PRE", fleurie: true, niveau }, maj: { sol: "PRE", fleurie: true, forme: 0, boiseDepuis: null } };
+      case "COUPE":
+        return { creer: { parcelId: parcel.id, x: 0, y: 0 }, maj: { boiseDepuis: maintenant } };
+      case "RELIEF":
+        return {
+          creer: { parcelId: parcel.id, x: 0, y: 0, niveau: niveau + (def.id === "surelever" ? 1 : -1) },
+          maj: { niveau: def.id === "surelever" ? { increment: 1 } : { decrement: 1 } },
+        };
+      default:
+        // Remettre en herbe : la case redevient ce qu'elle était, relief compris.
+        return { creer: { parcelId: parcel.id, x: 0, y: 0, niveau }, maj: { sol: "PRE", fleurie: false, forme: 0, boiseDepuis: null } };
+    }
+  };
+  await prisma.$transaction(async (tx) => {
+    if (verdict.cout > 0) {
+      await debit(tx, user.id, verdict.cout, "BATIMENTS", `Campagne — ${def.nom} (${faites.length} case${faites.length > 1 ? "s" : ""})`);
+    }
+    if (gain > 0) {
+      await crediter(tx, user.id, gain, "CULTURES", `Coupe de bois vendue à la scierie (${faites.length} case${faites.length > 1 ? "s" : ""})`);
+    }
+    for (const c of faites) {
+      const deja = connues.get(cleCase(c.x, c.y));
+      const e = ecriture(deja?.niveau ?? 0);
+      if (deja) await tx.caseCampagne.update({ where: { id: deja.id }, data: e.maj });
+      else await tx.caseCampagne.create({ data: { ...e.creer, x: c.x, y: c.y } });
+    }
+    // Ce qui est redevenu de l'herbe de plaine n'a plus besoin d'exister.
+    await tx.caseCampagne.deleteMany({ where: { parcelId: parcel.id, sol: "PRE", fleurie: false, niveau: 0 } });
+  });
+  res.json({ peintes: faites.length, ignorees: body.data.cells.length - faites.length, cout: verdict.cout, gain });
+});
+
+/** Façonner une berge dans la campagne : même geste qu'à la ferme. */
+app.post("/parcels/:id/campagne/berges", async (req, res) => {
+  const body = z
+    .object({
+      userId: z.string(),
+      x: z.number().int(),
+      y: z.number().int(),
+      coin: z.number().int().min(0).max(3),
+      style: z.number().int().min(0).max(2).optional(),
+    })
+    .safeParse(req.body);
+  if (!body.success) {
+    res.status(400).json(body.error.flatten());
+    return;
+  }
+  const parcel = await prisma.parcel.findUnique({
+    where: { id: req.params.id },
+    include: { farm: true, campagne: { where: { sol: "EAU" } } },
+  });
+  if (!parcel?.farm || parcel.farm.userId !== body.data.userId) {
+    res.status(403).json({ error: "Parcelle non possédée" });
+    return;
+  }
+  const eaux = new Set(parcel.campagne.map((c) => cleCase(c.x, c.y)));
+  const coin = body.data.coin as Coin;
+  if (!coinFaconnable(eaux, body.data.x, body.data.y, coin)) {
+    res.status(409).json({
+      error: eaux.has(cleCase(body.data.x, body.data.y))
+        ? "Ce coin continue dans l'eau : il n'a pas de forme à choisir"
+        : "Il n'y a pas d'eau ici",
+    });
+    return;
+  }
+  const cell = parcel.campagne.find((c) => c.x === body.data.x && c.y === body.data.y)!;
+  const style = (body.data.style ?? styleSuivant(styleCoin(cell.forme, coin))) as StyleCoin;
+  const forme = avecStyleCoin(cell.forme, coin, style);
+  await prisma.caseCampagne.update({ where: { id: cell.id }, data: { forme } });
   res.json({ forme, style });
 });
 
@@ -10820,7 +10961,7 @@ function installationAround(
 
 /** Les cases d'un paysage vivant d'une parcelle : haies, bois, mares, prairies. */
 function paysageDeParcelle(
-  cells: { x: number; y: number; sol: string; revetement: string | null; kind: string; niveau: number; boiseDepuis: Date | null; vocation: string }[],
+  cells: { x: number; y: number; sol: string; revetement: string | null; kind: string; niveau: number; boiseDepuis: Date | null }[],
   amenagements: { type: string; originX: number; originY: number }[],
 ): Set<string> {
   return casesPaysage(lireHabitats({ cells, amenagements, courante: hydrologie(cells).courante }));

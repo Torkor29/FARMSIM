@@ -34,7 +34,7 @@ export type BiodiversiteVue = {
   scoreCible: number;
   faune: Record<Guilde, number>;
   cible: Record<Guilde, number>;
-  casesReserve?: number;
+  casesNature?: number;
   aideParJour?: number;
   /** Le carnet de nature : code → date de première observation. */
   carnet?: Record<string, string>;
@@ -170,13 +170,14 @@ export function PanneauConstruction(p: Props) {
       <div className="construction-elements" role="listbox" aria-label="Éléments">
         {p.categorie === "TERRAFORMAGE" && (
           <div className="construction-aide-terrain">
-            Creusez à main levée : une mare, un lac, une rivière. Puis prenez les Berges et visez un coin pour
-            l'arrondir, le tailler ou l'équerrer.
+            Le terraformage se fait dans la campagne, autour de votre ferme — au-delà des lots à vendre. Creusez à
+            main levée une mare ou une rivière, montez des buttes, puis prenez les Berges pour arrondir un coin.
           </div>
         )}
         {p.categorie === "TERRAIN" && (
           <div className="construction-aide-terrain">
-            Survolez la friche dorée : chaque lot à vendre y affiche son prix. Un clic l'achète.
+            Survolez la friche dorée : chaque lot à vendre y affiche son prix. Un clic l'achète — avec ce que vous
+            avez façonné dessus dans la campagne.
           </div>
         )}
         {elements.map((d) => {
@@ -298,8 +299,8 @@ function FicheBiodiversite({
           🐞 Régulation jusqu'à +{pct(REGULATION_MAX * ((0.6 * bio.faune.AUXILIAIRES + 0.4 * bio.faune.OISEAUX) / 100))} %
         </span>
         {bio.aideParJour !== undefined && (
-          <span title="Aides agro-environnementales : chaque case de réserve aménagée, pondérée par la santé de la faune">
-            🌿 Aides {bio.aideParJour.toLocaleString("fr-FR")} €/jour · {bio.casesReserve ?? 0} cases de réserve
+          <span title="Aides agro-environnementales : chaque case de campagne aménagée, pondérée par la santé de la faune">
+            🌿 Aides {bio.aideParJour.toLocaleString("fr-FR")} €/jour · {bio.casesNature ?? 0} cases de campagne aménagées
           </span>
         )}
       </p>

@@ -463,6 +463,8 @@ model Parcel {
   /// les lectures de parcelles utilisent. Déclaré, il cesse d'être une dérive.
   @@index([farmId, acquiredAt])
   fieldJobs     FieldJob[]
+  /// La campagne façonnée autour de la ferme (voir `CaseCampagne`).
+  campagne     CaseCampagne[]
 }
 
 model ParcelCell {
@@ -524,8 +526,6 @@ model ParcelCell {
   niveau           Int       @default(0)
   /// Un bois : sa plantation, ou sa dernière coupe (voir `bois.ts`). Nul hors du bois.
   boiseDepuis      DateTime?
-  /// CULTURE ou NATURE : une réserve ne se cultive pas et ne se bâtit pas (voir `amenagement.ts`).
-  vocation         String    @default("CULTURE")
 
   @@unique([parcelId, x, y])
 }
@@ -929,4 +929,27 @@ model WeatherSnapshot {
   zoneCode  String
   state     String
   updatedAt DateTime @updatedAt
+}
+
+/// Une case de la campagne façonnée par le joueur, autour de sa ferme.
+///
+/// Hors de la ferme et de ses lots à vendre (`dansCampagne`), dans le repère
+/// des cases du siège. Seules les cases façonnées existent : une absente est
+/// de l'herbe. Un lot acheté reprend celles qu'il couvre, telles quelles.
+model CaseCampagne {
+  id          String    @id @default(cuid())
+  parcelId    String
+  parcel      Parcel    @relation(fields: [parcelId], references: [id], onDelete: Cascade)
+  x           Int
+  y           Int
+  /// PRE (herbe ou prairie), EAU ou BOIS.
+  sol         String    @default("PRE")
+  /// Une prairie semée de fleurs sauvages.
+  fleurie     Boolean   @default(false)
+  niveau      Int       @default(0)
+  forme       Int       @default(0)
+  boiseDepuis DateTime?
+  createdAt   DateTime  @default(now())
+
+  @@unique([parcelId, x, y])
 }

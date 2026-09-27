@@ -188,11 +188,11 @@ function sceneDe(id: string): { groupe: THREE.Group; recul: number } {
       }
       break;
     }
-    case "vocation": {
-      // Réserve ou culture : une prairie sauvage bordée de piquets, contre un champ labouré.
-      const reserve = (x: number, z: number) => x + z <= 0;
-      g.add(terrain(cellsCarre(3, (x, z) => (reserve(x, z) ? { vocation: "NATURE" } : { sol: "CHAMP" }))));
-      pre(3).forEach(([x, z]) => g.add(dalle(x, z, reserve(x, z) ? 0x86ad4d : 0x6b4526)));
+    case "prairie": {
+      // Une prairie semée de fleurs sauvages, qui gagne sur l'herbe rase.
+      const fleurie = (x: number, z: number) => x + z <= 1;
+      g.add(terrain(cellsCarre(3, (x, z) => (fleurie(x, z) ? { fleurie: true } : {}))));
+      pre(3).forEach(([x, z]) => g.add(dalle(x, z, fleurie(x, z) ? 0x86ad4d : PRE[Math.abs(Math.round(x + z)) % 2]!)));
       break;
     }
     case "haie":

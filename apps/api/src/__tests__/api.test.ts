@@ -4632,297 +4632,123 @@ describe("la ferme libre", () => {
     assert.equal(puits.statut, 400);
   });
 
-  it("façonne les berges d'un lac coin par coin, gratuitement, et les oublie quand on rebouche", async () => {
-    const { moi, parcelId } = await fermeLibre("Terraformeur");
-    // Un canal de deux cases : chacune a deux coins saillants, et un bout qui continue.
-    const creuse = await peindre(parcelId, moi, "etang", [{ x: 2, y: 5 }, { x: 3, y: 5 }]);
-    assert.equal(creuse.statut, 200, JSON.stringify(creuse.corps));
-    const argentAvant = await argent(moi.jeton);
-    const berge = (x: number, y: number, coin: number, style?: number) =>
-      appel(`/parcels/${parcelId}/berges`, {
-        methode: "POST",
-        corps: { userId: moi.id, x, y, coin, ...(style === undefined ? {} : { style }) },
-        jeton: moi.jeton,
-      });
-    // Coin nord-est de la case est : rond → d'équerre → biseau → rond.
-    const styles: number[] = [];
-    for (let i = 0; i < 3; i++) {
-      const r = await berge(3, 5, 1);
-      assert.equal(r.statut, 200, JSON.stringify(r.corps));
-      styles.push((r.corps as unknown as { style: number }).style);
-    }
-    assert.deepEqual(styles, [1, 2, 0]);
-    // Un style demandé est pris tel quel, et se relit.
-    await berge(3, 5, 2, 2);
-    const cellule = async () =>
-      (await vue(parcelId, moi.jeton)).parcel.cells.find((c) => c.x === 3 && c.y === 5) as unknown as { forme: number; sol: string };
-    assert.equal(((await cellule()).forme >> 4) & 3, 2);
-    assert.equal(await argent(moi.jeton), argentAvant, "façonner est gratuit");
-    // Le coin qui donne sur l'autre case d'eau n'est pas un coin.
-    const continu = await berge(3, 5, 0);
-    assert.equal(continu.statut, 409, JSON.stringify(continu.corps));
-    const aSec = await berge(5, 5, 1);
-    assert.equal(aSec.statut, 409, JSON.stringify(aSec.corps));
-    // Reboucher puis recreuser : la case repart arrondie.
-    assert.equal((await peindre(parcelId, moi, "pre", [{ x: 3, y: 5 }])).statut, 200);
-    assert.equal((await peindre(parcelId, moi, "etang", [{ x: 3, y: 5 }])).statut, 200);
-    const apres = await cellule();
-    assert.equal(apres.sol, "EAU");
-    assert.equal(apres.forme, 0);
-    // Un autre joueur ne touche pas à mes berges.
-    const autre = await inscrire("Voisin Pelle");
-    const vol = await appel(`/parcels/${parcelId}/berges`, {
+  // La campagne : ce qu'on façonne autour de la ferme, hors d'elle et de ses lots à vendre.
+  const campagne = (parcelId: string, moi: { id: string; jeton: string }, outil: string, cells: { x: number; y: number }[]) =>
+    appel(`/parcels/${parcelId}/campagne`, {
       methode: "POST",
-      corps: { userId: autre.id, x: 3, y: 5, coin: 1 },
-      jeton: autre.jeton,
-    });
-    assert.equal(vol.statut, 403);
-  });
-
-  it("surélève une terrasse, coupe les engins qu'une rampe ou un pont remettent en route", async () => {
-    const { moi, parcelId } = await fermeLibre("Terrassier");
-    const v0 = await vue(parcelId, moi.jeton);
-    const occupe = new Set(v0.parcel.cells.filter((c) => c.kind !== "EMPTY").map((c) => `${c.x},${c.y}`));
-    const carre = (x0: number, y0: number, n: number) =>
-      Array.from({ length: n * n }, (_, i) => ({ x: x0 + (i % n), y: y0 + Math.floor(i / n) }));
-    // Une terrasse de trois sur trois au sud-est, loin de l'étable de départ.
-    const terrasse = carre(7, 7, 3);
-    assert.ok(terrasse.every((c) => !occupe.has(`${c.x},${c.y}`)), "la terrasse tombe sur du libre");
-    const argentAvant = await argent(moi.jeton);
-    const monte = await peindre(parcelId, moi, "surelever", terrasse);
-    assert.equal(monte.statut, 200, JSON.stringify(monte.corps));
-    assert.equal(await argent(moi.jeton), argentAvant - 9 * 40);
-    const lu = (await vue(parcelId, moi.jeton)).parcel.cells.find((c) => c.x === 8 && c.y === 8) as unknown as { niveau: number; sol: string };
-    assert.equal(lu.niveau, 1);
-    assert.equal(lu.sol, "CHAMP", "le relief ne change pas la nature du sol");
-
-    // Un bâtiment se pose en plaine.
-    const moulinHaut = await appel(`/parcels/${parcelId}/build`, {
-      methode: "POST",
-      corps: { userId: moi.id, type: "SILO", x: 8, y: 8 },
+      corps: { userId: moi.id, outil, cells },
       jeton: moi.jeton,
     });
-    assert.equal(moulinHaut.statut, 409, JSON.stringify(moulinHaut.corps));
+  type CaseCampagneVue = { x: number; y: number; sol: string; fleurie: boolean; niveau: number; forme: number; boiseDepuis: string | null };
+  const campagneVue = async (parcelId: string, jeton: string) =>
+    ((await vue(parcelId, jeton)).domaine as unknown as { campagne: CaseCampagneVue[] }).campagne;
 
-    // Sans rampe, les engins ne montent pas : le travail est refusé.
-    const semer = () =>
-      appel(`/parcels/${parcelId}/jobs`, {
-        methode: "POST",
-        corps: { userId: moi.id, work: "PLANT", cells: [{ x: 8, y: 8 }], crop: cropDeSaison() },
-        jeton: moi.jeton,
-      });
-    const coupe = await semer();
-    assert.equal(coupe.statut, 409, JSON.stringify(coupe.corps));
-    assert.match(String((coupe.corps as unknown as { error: string }).error), /coupée/);
-    // Une rampe tournée vers la plaine ne tient pas ; tournée vers la terrasse, si.
-    const envers = await poser(parcelId, moi, "rampe", 8, 6, 0);
-    assert.equal(envers.statut, 409, JSON.stringify(envers.corps));
-    const rampe = await poser(parcelId, moi, "rampe", 8, 6, 2);
-    assert.equal(rampe.statut, 201, JSON.stringify(rampe.corps));
-    const monteeOk = await semer();
-    assert.doesNotMatch(String((monteeOk.corps as unknown as { error?: string }).error ?? ""), /coupée/);
+  it("façonne la campagne autour de la ferme — jamais la ferme ni ses lots à vendre", async () => {
+    const { moi, parcelId } = await fermeLibre("Paysagiste des alentours");
+    const v0 = await vue(parcelId, moi.jeton);
+    const b = v0.domaine!.bornes;
+    // Juste au-delà de l'anneau des lots à vendre, à l'est.
+    const X = b.maxX + 2;
+    const Y = b.minY + 8;
+    const argent0 = await argent(moi.jeton);
 
-    // Une douve autour d'une île : l'île est coupée, un pont la rejoint.
-    const ile = { x: 3, y: 9 };
-    const douve = carre(2, 8, 3).filter((c) => c.x !== ile.x || c.y !== ile.y);
-    assert.ok(douve.every((c) => !occupe.has(`${c.x},${c.y}`)), "la douve tombe sur du libre");
-    assert.equal((await peindre(parcelId, moi, "etang", douve)).statut, 200);
-    const travailIle = () =>
-      appel(`/parcels/${parcelId}/jobs`, {
-        methode: "POST",
-        corps: { userId: moi.id, work: "PLANT", cells: [ile], crop: cropDeSaison() },
-        jeton: moi.jeton,
-      });
-    assert.match(String(((await travailIle()).corps as unknown as { error: string }).error), /coupée/);
-    const pont = await poser(parcelId, moi, "pont", 2, 9, 0);
-    assert.equal(pont.statut, 201, JSON.stringify(pont.corps));
-    assert.doesNotMatch(String(((await travailIle()).corps as unknown as { error?: string }).error ?? ""), /coupée/);
-    // Un pont ne se pose que sur l'eau.
-    assert.equal((await poser(parcelId, moi, "pont", 5, 5, 0)).statut, 409);
+    // Creuser : dans la campagne, oui ; sur la ferme ou un lot à vendre, non.
+    const lac = await campagne(parcelId, moi, "etang", [{ x: X, y: Y }, { x: X + 1, y: Y }]);
+    assert.equal(lac.statut, 200, JSON.stringify(lac.corps));
+    assert.equal(await argent(moi.jeton), argent0 - 60);
+    const surLaFerme = await peindre(parcelId, moi, "etang", [{ x: 3, y: 8 }]);
+    assert.equal(surLaFerme.statut, 409, JSON.stringify(surLaFerme.corps));
+    assert.match(String((surLaFerme.corps as unknown as { error: string }).error), /campagne/);
+    assert.equal((await campagne(parcelId, moi, "etang", [{ x: b.maxX - 1, y: b.minY }])).statut, 409, "un lot à vendre n'est pas la campagne");
+    assert.equal((await peindre(parcelId, moi, "surelever", [{ x: 3, y: 8 }])).statut, 409);
+    assert.equal((await peindre(parcelId, moi, "boiser", [{ x: 3, y: 8 }])).statut, 409);
+
+    // Les berges se façonnent comme à la ferme, et c'est gratuit.
+    const berge = await appel(`/parcels/${parcelId}/campagne/berges`, {
+      methode: "POST",
+      corps: { userId: moi.id, x: X + 1, y: Y, coin: 1 },
+      jeton: moi.jeton,
+    });
+    assert.equal(berge.statut, 200, JSON.stringify(berge.corps));
+    let c = await campagneVue(parcelId, moi.jeton);
+    assert.equal(c.find((k) => k.x === X + 1 && k.y === Y)?.forme, 1 << 2);
+
+    // Surélever puis abaisser : une case redevenue de l'herbe de plaine disparaît.
+    const butte = [{ x: X, y: Y + 3 }, { x: X + 1, y: Y + 3 }];
+    assert.equal((await campagne(parcelId, moi, "surelever", butte)).statut, 200);
+    c = await campagneVue(parcelId, moi.jeton);
+    assert.equal(c.find((k) => k.x === X && k.y === Y + 3)?.niveau, 1);
+    assert.equal((await campagne(parcelId, moi, "abaisser", butte)).statut, 200);
+    c = await campagneVue(parcelId, moi.jeton);
+    assert.equal(c.some((k) => k.y === Y + 3), false);
+
+    // Semer une prairie fleurie, puis l'effacer.
+    const pre = [{ x: X + 3, y: Y }];
+    assert.equal((await campagne(parcelId, moi, "prairie", pre)).statut, 200);
+    assert.equal((await campagneVue(parcelId, moi.jeton)).find((k) => k.x === X + 3)?.fleurie, true);
+    assert.equal((await campagne(parcelId, moi, "prairie", pre)).statut, 409, "déjà fleurie");
+    assert.equal((await campagne(parcelId, moi, "pre", pre)).statut, 200);
+    assert.equal((await campagneVue(parcelId, moi.jeton)).some((k) => k.x === X + 3), false);
+
+    // Un bois : il pousse, se coupe partout (pas d'engins dans la campagne), se vend, repart.
+    const bois = [0, 1, 2].map((i) => ({ x: X + i, y: Y + 6 }));
+    assert.equal((await campagne(parcelId, moi, "boiser", bois)).statut, 200);
+    const tot = await campagne(parcelId, moi, "couper", bois);
+    assert.equal(tot.statut, 409);
+    assert.match(String((tot.corps as unknown as { error: string }).error), /jeunes/);
+    await appel("/dev/grant", { methode: "POST", corps: { userId: moi.id, ripenAll: true }, jeton: moi.jeton });
+    const argent1 = await argent(moi.jeton);
+    const coupe = await campagne(parcelId, moi, "couper", bois);
+    assert.equal(coupe.statut, 200, JSON.stringify(coupe.corps));
+    assert.equal((coupe.corps as unknown as { gain: number }).gain, 3 * PRIX_COUPE_TEST);
+    assert.equal(await argent(moi.jeton), argent1 + 3 * PRIX_COUPE_TEST);
+
+    // La faune vise plus haut : la campagne compte pleinement.
+    type Bio = { cible: Record<string, number>; faune: Record<string, number>; carnet: Record<string, string>; casesNature: number };
+    const bio = ((await vue(parcelId, moi.jeton)).domaine as unknown as { biodiversite: Bio }).biodiversite;
+    assert.ok(bio.cible.AMPHIBIENS > 0, JSON.stringify(bio.cible));
+    assert.ok(bio.faune.AMPHIBIENS < bio.cible.AMPHIBIENS, "la faune s'installe avec le temps");
+    assert.ok(bio.casesNature >= 5);
+    assert.deepEqual(bio.carnet, {});
+
+    // Un voisin ne façonne pas ma campagne, et ne la voit pas.
+    const autre = await inscrire("Voisin paysagiste");
+    assert.equal((await campagne(parcelId, autre, "etang", [{ x: X, y: Y + 9 }])).statut, 403);
+    assert.equal((await vue(parcelId, autre.jeton)).domaine, null);
   });
 
-  it("fait couler l'eau d'une terrasse en cascade, qui fait tourner le moulin trois fois plus vite", async () => {
-    const { moi, parcelId } = await fermeLibre("Meunier");
-    const v0 = await vue(parcelId, moi.jeton);
-    const occupe = new Set(v0.parcel.cells.filter((c) => c.kind !== "EMPTY").map((c) => `${c.x},${c.y}`));
-    // Un bief haut en x 6..8, y 3, qui tombe dans un lac bas en x 9..11.
-    const haut = [6, 7, 8].map((x) => ({ x, y: 3 }));
-    const bas = [9, 10, 11].map((x) => ({ x, y: 3 }));
-    assert.ok([...haut, ...bas].every((c) => !occupe.has(`${c.x},${c.y}`)));
-    assert.equal((await peindre(parcelId, moi, "surelever", haut)).statut, 200);
-    assert.equal((await peindre(parcelId, moi, "etang", [...haut, ...bas])).statut, 200);
-    // Un moulin au pied de la chute, et le charme de la cascade.
+  it("achète un lot : la campagne façonnée qu'il recouvre passe dans la ferme telle quelle", async () => {
+    const { moi, parcelId } = await fermeLibre("Agrandisseur");
+    // La ferme de départ couvre 0..11 ; ses lots à vendre vont jusqu'à 17.
+    // Un étang à x = 19, juste au-delà.
+    const mare = [{ x: 19, y: 2 }, { x: 20, y: 2 }];
+    assert.equal((await campagne(parcelId, moi, "etang", mare)).statut, 200);
+    const acheter = (lot: string) =>
+      appel(`/parcels/${parcelId}/lots/buy`, { methode: "POST", corps: { userId: moi.id, lot }, jeton: moi.jeton });
+    assert.equal((await acheter("2:0")).statut, 201);
+    // L'étang est maintenant dans un lot à vendre ; l'acheter l'amène à la ferme.
+    const achat = await acheter("3:0");
+    assert.equal(achat.statut, 201, JSON.stringify(achat.corps));
+    assert.equal((achat.corps as unknown as { reprises: number }).reprises, 2);
+    const v = await vue(parcelId, moi.jeton);
+    assert.equal(v.parcel.cells.find((c) => c.x === 19 && c.y === 2)?.sol, "EAU");
+    assert.equal((await campagneVue(parcelId, moi.jeton)).length, 0);
+  });
+
+  it("fait tourner le moulin trois fois plus vite, par un bief, au pied d'une cascade de la campagne", async () => {
+    const { moi, parcelId } = await fermeLibre("Meunier des collines");
+    // Une cascade dans la campagne, à l'est : de (20, 5) en hauteur vers (19, 5).
+    assert.equal((await campagne(parcelId, moi, "surelever", [{ x: 20, y: 5 }])).statut, 200);
+    assert.equal((await campagne(parcelId, moi, "etang", [{ x: 20, y: 5 }, { x: 19, y: 5 }])).statut, 200);
     const moulin = await appel(`/parcels/${parcelId}/build`, {
       methode: "POST",
-      corps: { userId: moi.id, type: "MILL", x: 9, y: 4 },
+      corps: { userId: moi.id, type: "MILL", x: 10, y: 4 },
       jeton: moi.jeton,
     });
     assert.equal(moulin.statut, 201, JSON.stringify(moulin.corps));
     const ateliers = await appel(`/farm/processing?userId=${moi.id}`, { jeton: moi.jeton });
-    const m = (ateliers.corps as unknown as { ateliers: { kind: string; force: number; perDay: number }[] }).ateliers.find(
-      (a) => a.kind === "MILL",
-    );
+    const m = (ateliers.corps as unknown as { ateliers: { kind: string; force: number }[] }).ateliers.find((a) => a.kind === "MILL");
     assert.equal(m?.force, 3);
-    const v = await vue(parcelId, moi.jeton);
-    const cellsN = v.parcel.cells as unknown as { x: number; y: number; niveau: number; sol: string }[];
-    assert.equal(cellsN.find((c) => c.x === 7 && c.y === 3)?.niveau, 1);
-    // Abaisser la terrasse d'eau ? Le relief ne se change pas sous l'eau.
-    assert.equal((await peindre(parcelId, moi, "abaisser", haut)).statut, 409);
-  });
-
-  it("plante un bois qui pousse, se coupe à la lisière, se vend et repart des souches", async () => {
-    const { moi, parcelId } = await fermeLibre("Forestier");
-    const v0 = await vue(parcelId, moi.jeton);
-    const occupe = new Set(v0.parcel.cells.filter((c) => c.kind !== "EMPTY").map((c) => `${c.x},${c.y}`));
-    const carre = (x0: number, y0: number, n: number) =>
-      Array.from({ length: n * n }, (_, i) => ({ x: x0 + (i % n), y: y0 + Math.floor(i / n) }));
-    const bois = carre(2, 6, 3);
-    assert.ok(bois.every((c) => !occupe.has(`${c.x},${c.y}`)));
-    const argent0 = await argent(moi.jeton);
-    const plante = await peindre(parcelId, moi, "boiser", bois);
-    assert.equal(plante.statut, 200, JSON.stringify(plante.corps));
-    assert.equal(await argent(moi.jeton), argent0 - 9 * 25);
-    const lire = async (x: number, y: number) =>
-      (await vue(parcelId, moi.jeton)).parcel.cells.find((c) => c.x === x && c.y === y) as unknown as {
-        sol: string;
-        boiseDepuis: string | null;
-      };
-    const planteLe = (await lire(3, 7)).boiseDepuis;
-    assert.equal((await lire(3, 7)).sol, "BOIS");
-    assert.ok(planteLe);
-
-    // Des plants ne se coupent pas.
-    const tot = await peindre(parcelId, moi, "couper", bois);
-    assert.equal(tot.statut, 409, JSON.stringify(tot.corps));
-    assert.match(String((tot.corps as unknown as { error: string }).error), /jeunes/);
-
-    // Un an plus tard : la lisière se coupe, le cœur attend un chemin.
-    await appel("/dev/grant", { methode: "POST", corps: { userId: moi.id, ripenAll: true }, jeton: moi.jeton });
-    const argent1 = await argent(moi.jeton);
-    const coupe = await peindre(parcelId, moi, "couper", bois);
-    assert.equal(coupe.statut, 200, JSON.stringify(coupe.corps));
-    const { peintes, gain } = coupe.corps as unknown as { peintes: number; gain: number };
-    assert.equal(peintes, 8, "tout sauf le cœur");
-    assert.equal(gain, 8 * PRIX_COUPE_TEST);
-    assert.equal(await argent(moi.jeton), argent1 + gain);
-    // La case coupée reste un bois, qui repart en plants.
-    const coupee = await lire(2, 6);
-    assert.equal(coupee.sol, "BOIS");
-    assert.ok(new Date(coupee.boiseDepuis!).getTime() > Date.now() - 60_000);
-
-    // Un bois arrête les engins : on ne sème pas au cœur d'un bois défriché
-    // sans chemin… et un chemin à travers le bois ouvre le passage.
-    assert.equal((await peindre(parcelId, moi, "pre", [{ x: 3, y: 7 }])).statut, 200);
-    assert.equal((await peindre(parcelId, moi, "champ", [{ x: 3, y: 7 }])).statut, 200);
-    const semer = () =>
-      appel(`/parcels/${parcelId}/jobs`, {
-        methode: "POST",
-        corps: { userId: moi.id, work: "PLANT", cells: [{ x: 3, y: 7 }], crop: cropDeSaison() },
-        jeton: moi.jeton,
-      });
-    assert.match(String(((await semer()).corps as unknown as { error: string }).error), /coupée/);
-    assert.equal((await peindre(parcelId, moi, "chemin-terre", [{ x: 3, y: 6 }])).statut, 200);
-    assert.doesNotMatch(String(((await semer()).corps as unknown as { error?: string }).error ?? ""), /coupée/);
-  });
-
-  it("achète un lot en réserve quatre fois moins cher : on y façonne, on n'y cultive ni ne bâtit", async () => {
-    const { moi, parcelId } = await fermeLibre("Naturaliste");
-    const v0 = await vue(parcelId, moi.jeton);
-    type LotV = LotVue & { prixNature: number; vocation: string | null; prixConversion: number };
-    const lot = (v0.domaine!.lots as LotV[]).find((l) => l.etat === "ACHETABLE")!;
-    assert.ok(lot.prixNature > 0 && lot.prixNature < lot.prix / 3, `${lot.prixNature} contre ${lot.prix}`);
-    const argent0 = await argent(moi.jeton);
-    const achat = await appel(`/parcels/${parcelId}/lots/buy`, {
-      methode: "POST",
-      corps: { userId: moi.id, lot: lot.id, vocation: "NATURE" },
-      jeton: moi.jeton,
-    });
-    assert.equal(achat.statut, 201, JSON.stringify(achat.corps));
-    assert.equal(await argent(moi.jeton), argent0 - lot.prixNature);
-    const v1 = await vue(parcelId, moi.jeton);
-    const lotLu = (v1.domaine!.lots as LotV[]).find((l) => l.id === lot.id)!;
-    assert.equal(lotLu.vocation, "NATURE");
-    const dedans = v1.parcel.cells.filter((c) => c.x >= lot.x && c.x < lot.x + lot.w && c.y >= lot.y && c.y < lot.y + lot.h);
-    assert.ok(dedans.every((c) => (c as unknown as { vocation: string }).vocation === "NATURE" && c.sol === "PRE"));
-    const coin = { x: lot.x + 1, y: lot.y + 1 };
-
-    // Pas de champ, pas de silo — mais un étang, un bois, un rucher, oui.
-    assert.equal((await peindre(parcelId, moi, "champ", [coin])).statut, 409);
-    const silo = await appel(`/parcels/${parcelId}/build`, {
-      methode: "POST",
-      corps: { userId: moi.id, type: "SILO", x: coin.x, y: coin.y },
-      jeton: moi.jeton,
-    });
-    assert.equal(silo.statut, 409, JSON.stringify(silo.corps));
-    assert.match(String((silo.corps as unknown as { error: string }).error), /réserve/);
-    assert.equal((await peindre(parcelId, moi, "etang", [coin])).statut, 200);
-    assert.equal((await peindre(parcelId, moi, "boiser", [{ x: lot.x + 3, y: lot.y + 3 }])).statut, 200);
-    const ruche = await appel(`/parcels/${parcelId}/build`, {
-      methode: "POST",
-      corps: { userId: moi.id, type: "BEEHIVE", x: lot.x + 4, y: lot.y },
-      jeton: moi.jeton,
-    });
-    assert.equal(ruche.statut, 201, JSON.stringify(ruche.corps));
-
-    // Rendue à la culture : on paie la différence, et le champ redevient possible.
-    const argent1 = await argent(moi.jeton);
-    const conv = await appel(`/parcels/${parcelId}/lots/vocation`, {
-      methode: "POST",
-      corps: { userId: moi.id, lot: lot.id, vocation: "CULTURE" },
-      jeton: moi.jeton,
-    });
-    assert.equal(conv.statut, 200, JSON.stringify(conv.corps));
-    assert.equal(await argent(moi.jeton), argent1 - lotLu.prixConversion);
-    assert.equal((await peindre(parcelId, moi, "champ", [{ x: lot.x + 5, y: lot.y + 5 }])).statut, 200);
-    // Et de nouveau en réserve : gratuit, le champ nu y redevient pré.
-    const argent2 = await argent(moi.jeton);
-    const retour = await appel(`/parcels/${parcelId}/lots/vocation`, {
-      methode: "POST",
-      corps: { userId: moi.id, lot: lot.id, vocation: "NATURE" },
-      jeton: moi.jeton,
-    });
-    assert.equal(retour.statut, 200, JSON.stringify(retour.corps));
-    assert.equal(await argent(moi.jeton), argent2);
-    const apres = (await vue(parcelId, moi.jeton)).parcel.cells.find((c) => c.x === lot.x + 5 && c.y === lot.y + 5)!;
-    assert.equal(apres.sol, "PRE");
-  });
-
-  it("lit les habitats de la ferme : la faune vise plus haut quand on crée une réserve", async () => {
-    const { moi, parcelId } = await fermeLibre("Écologue");
-    type Bio = {
-      score: number;
-      scoreCible: number;
-      cible: Record<string, number>;
-      faune: Record<string, number>;
-      diversite: number;
-      carnet: Record<string, string>;
-      aideParJour: number;
-    };
-    const bio = async () =>
-      ((await vue(parcelId, moi.jeton)).domaine as unknown as { biodiversite: Bio }).biodiversite;
-    const avant = await bio();
-    assert.ok(avant, "le propriétaire voit la biodiversité");
-    assert.equal(avant.cible.AMPHIBIENS, 0);
-    const v0 = await vue(parcelId, moi.jeton);
-    const lot = (v0.domaine!.lots as (LotVue & { prixNature: number })[]).find((l) => l.etat === "ACHETABLE")!;
-    assert.equal(
-      (await appel(`/parcels/${parcelId}/lots/buy`, { methode: "POST", corps: { userId: moi.id, lot: lot.id, vocation: "NATURE" }, jeton: moi.jeton })).statut,
-      201,
-    );
-    const eau = [0, 1, 2].map((i) => ({ x: lot.x + 1 + i, y: lot.y + 2 }));
-    assert.equal((await peindre(parcelId, moi, "etang", eau)).statut, 200);
-    const apres = await bio();
-    assert.ok(apres.cible.AMPHIBIENS > 0, JSON.stringify(apres.cible));
-    assert.ok(apres.scoreCible > avant.scoreCible);
-    // La faune ne s'installe pas d'un coup : sa population reste sous la cible.
-    assert.ok(apres.faune.AMPHIBIENS < apres.cible.AMPHIBIENS);
-    // Le carnet s'ouvre vide : on commence à observer aujourd'hui, sans rattrapage.
-    assert.deepEqual(apres.carnet, {});
-    // La réserve aménagée ouvre droit aux aides, au prorata de la faune (encore absente ici).
-    assert.equal(typeof apres.aideParJour, "number");
-    // Un voisin ne voit pas la biodiversité d'une autre ferme.
-    const autre = await inscrire("Curieux des bois");
-    assert.equal((await vue(parcelId, autre.jeton)).domaine, null);
   });
 
   it("donne au siège un domaine, avec sa ferme au centre et de la friche autour", async () => {
@@ -5082,26 +4908,25 @@ describe("la ferme libre", () => {
     assert.equal((await poser(parcelId, moi, "chene", c.x, c.y)).statut, 201, "la case est libre");
   });
 
-  it("peint étang, chemin et champ, et n'en fait qu'à la règle", async () => {
+  it("peint pré, chemin et champ sur la ferme — l'étang, lui, se creuse dans la campagne", async () => {
     const { moi, parcelId } = await fermeLibre("Paysagiste");
     const v = await vue(parcelId, moi.jeton);
     const libres = v.parcel.cells.filter((c) => c.kind === "EMPTY").slice(0, 4);
 
-    const argentAvant = await argent(moi.jeton);
+    // Plus d'étang sur la ferme.
     const etang = await peindre(parcelId, moi, "etang", libres.slice(0, 2));
-    assert.equal(etang.statut, 200, JSON.stringify(etang.corps));
-    assert.equal(await argent(moi.jeton), argentAvant - 60);
+    assert.equal(etang.statut, 409, JSON.stringify(etang.corps));
 
-    // Pas de champ dans l'eau.
-    const dansLEau = await peindre(parcelId, moi, "champ", libres.slice(0, 1));
-    assert.equal(dansLEau.statut, 409, JSON.stringify(dansLEau.corps));
+    // Un champ rendu au pré, puis remis en culture.
+    assert.equal((await peindre(parcelId, moi, "pre", libres.slice(0, 1))).statut, 200);
+    assert.equal((await peindre(parcelId, moi, "champ", libres.slice(0, 1))).statut, 200);
 
     // Un chemin sur du champ nu : la case devient du pré à chemin.
     const chemin = await peindre(parcelId, moi, "chemin-terre", libres.slice(2, 4));
     assert.equal(chemin.statut, 200, JSON.stringify(chemin.corps));
     const apres = await vue(parcelId, moi.jeton);
     const lire = (p: { x: number; y: number }) => apres.parcel.cells.find((c) => c.x === p.x && c.y === p.y)!;
-    assert.equal(lire(libres[0]!).sol, "EAU");
+    assert.equal(lire(libres[0]!).sol, "CHAMP");
     assert.equal(lire(libres[2]!).revetement, "TERRE");
 
     // Un bâtiment ne se pose pas sur un chemin.
@@ -5120,12 +4945,6 @@ describe("la ferme libre", () => {
     });
     assert.equal(semis.statut, 409, JSON.stringify(semis.corps));
     assert.match(String((semis.corps as unknown as { error: string }).error), /hors champ/);
-
-    // La gomme rend l'herbe — et fait payer le remblai de l'étang.
-    const argentGomme = await argent(moi.jeton);
-    const gomme = await peindre(parcelId, moi, "pre", libres.slice(0, 1));
-    assert.equal(gomme.statut, 200, JSON.stringify(gomme.corps));
-    assert.equal(await argent(moi.jeton), argentGomme - 8);
   });
 
   it("bâtit sur un lot acheté, en coordonnées négatives, jamais en friche", async () => {

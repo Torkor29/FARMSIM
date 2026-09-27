@@ -123,6 +123,7 @@ import {
   BUILDING_REGRET_MS,
   cleCase,
   espece,
+  PORTEE_CAMPAGNE,
   hydrologie,
   HABITATS,
   lireHabitats,
@@ -291,8 +292,8 @@ type Cell = {
   sol?: "CHAMP" | "PRE" | "EAU" | "BOIS";
   /** Un bois : sa plantation, ou sa dernière coupe. */
   boiseDepuis?: string | null;
-  /** CULTURE ou NATURE : une réserve ne se cultive ni ne se bâtit. */
-  vocation?: string | null;
+  /** Campagne : une prairie semée de fleurs sauvages. */
+  fleurie?: boolean;
   /** Un chemin posé sur la case, s'il y en a un. */
   revetement?: string | null;
   /** Berges : la forme des coins d'une case d'eau. */
@@ -351,16 +352,24 @@ type DomaineVue = {
     etat: "POSSEDE" | "ACHETABLE" | "ENCLAVE";
     aAcheter: number;
     prix: number;
-    /** Le même lot en réserve naturelle. */
-    prixNature?: number;
-    vocation?: "CULTURE" | "NATURE" | null;
-    /** Rendre une réserve à la culture : la différence de prix. */
-    prixConversion?: number;
     niveau: number;
   })[];
   charme: number;
   charmeLibelle: string;
   biodiversite?: BiodiversiteVue | null;
+  /** La campagne façonnée autour de la ferme. */
+  campagne?: CaseCampagneVue[];
+};
+
+/** Une case de campagne façonnée, telle que le serveur la renvoie. */
+type CaseCampagneVue = {
+  x: number;
+  y: number;
+  sol: string;
+  fleurie: boolean;
+  niveau: number;
+  forme: number;
+  boiseDepuis: string | null;
 };
 
 type ZoneRef = {
@@ -2233,10 +2242,15 @@ export function App() {
     [bornesIci, grid, amenagements],
   );
   /** Les habitats de la ferme, lus comme le serveur les lit : pour la carte. */
-  const lectureHabitats = useMemo(
-    () => lireHabitats({ cells: grid, amenagements, courante: hydrologie(grid).courante }),
-    [grid, amenagements],
-  );
+  const lectureHabitats = useMemo(() => {
+    const ferme = lireHabitats({ cells: grid, amenagements, courante: hydrologie(grid).courante });
+    const camp = domaine?.campagne ?? [];
+    if (!camp.length) return ferme;
+    const dehors = lireHabitats({ cells: camp, campagne: true, courante: hydrologie(camp).courante });
+    const surfaces = { ...ferme.surfaces };
+    for (const h of Object.keys(surfaces) as Habitat[]) surfaces[h] += dehors.surfaces[h];
+    return { parCase: new Map([...ferme.parCase, ...dehors.parCase]), surfaces, diversite: Math.max(ferme.diversite, dehors.diversite) };
+  }, [grid, amenagements, domaine?.campagne]);
   const [carteHabitats, setCarteHabitats] = useState(false);
   const [carnetOuvert, setCarnetOuvert] = useState(false);
   /*
@@ -2264,10 +2278,35 @@ export function App() {
   }, [carnetIci]);
   /** L'eau du domaine, et la forme des coins de chaque case d'eau. */
   const eauxSet = useMemo(
-    () => new Set(grid.filter((c) => c.sol === "EAU").map((c) => cleCase(c.x, c.y))),
-    [grid],
+    () =>
+      new Set([
+        ...grid.filter((c) => c.sol === "EAU").map((c) => cleCase(c.x, c.y)),
+        // La campagne est hors des bornes de la ferme : les deux ne se touchent pas.
+        ...(domaine?.campagne ?? []).filter((c) => c.sol === "EAU").map((c) => cleCase(c.x, c.y)),
+      ]),
+    [grid, domaine?.campagne],
   );
-  const formeDe = (x: number, y: number) => grid.find((c) => c.x === x && c.y === y)?.forme ?? 0;
+  /** La campagne façonnée autour de la ferme, et ce qu'on n'y peut pas toucher. */
+  const campagneCases = useMemo(() => domaine?.campagne ?? [], [domaine?.campagne]);
+  const [campagneBloquee, setCampagneBloquee] = useState<ReadonlySet<string>>(() => new Set());
+  /** La campagne telle que la vue la dessine. */
+  const campagneTerrain = useMemo(
+    () =>
+      campagneCases.map((c) => ({
+        x: c.x,
+        y: c.y,
+        sol: c.sol,
+        revetement: null,
+        kind: "EMPTY",
+        forme: c.forme,
+        niveau: c.niveau,
+        boiseDepuis: c.boiseDepuis,
+        fleurie: c.fleurie,
+      })),
+    [campagneCases],
+  );
+  const formeDe = (x: number, y: number) =>
+    grid.find((c) => c.x === x && c.y === y)?.forme ?? campagneCases.find((c) => c.x === x && c.y === y)?.forme ?? 0;
   /** La plus grande étendue d'eau, en cases — pour fêter les paliers. */
   const plusGrandLac = (cells: readonly { x: number; y: number; sol?: string | null }[]) =>
     Math.max(0, ...etenduesEau(cells).map((z) => z.length));
@@ -3181,25 +3220,10 @@ export function App() {
               ? `Déplacer ${nom} : touchez sa nouvelle place, puis confirmez.`
               : `${nom} : touchez une place, tournez-le, puis confirmez.`,
           };
-    } else if (defArme?.id === "vocation") {
-      // Le lot sous le doigt s'allume en entier, avec ce que coûterait le changement.
-      const lot = at ? domaine?.lots.find((l) => l.etat === "POSSEDE" && at.x >= l.x && at.x < l.x + l.w && at.y >= l.y && at.y < l.y + l.h) : undefined;
-      if (lot) {
-        const cases: { x: number; y: number; ok: boolean }[] = [];
-        for (let yy = lot.y; yy < lot.y + lot.h; yy++)
-          for (let xx = lot.x; xx < lot.x + lot.w; xx++) if (grilleDomaine.cases.has(cleCase(xx, yy))) cases.push({ x: xx, y: yy, ok: true });
-        fantome = cases;
-        ligne =
-          lot.vocation === "NATURE"
-            ? { texte: `Réserve naturelle — la rendre à la culture : ${(lot.prixConversion ?? 0).toLocaleString("fr-FR")} €` }
-            : { texte: "Terre de culture — la passer en réserve naturelle : gratuit" };
-      } else {
-        ligne = { texte: "Réserve ou culture : touchez un lot à vous pour changer sa vocation." };
-      }
     } else if (defArme?.pose === "OUTIL") {
       // Les berges : on vise un coin, il s'allume, et son contour à venir se dessine.
-      const k = at ? grilleDomaine.cases.get(cleCase(at.x, at.y)) : undefined;
-      if (at && k?.sol === "EAU") {
+      // La ferme ou la campagne : l'eau des deux se façonne de même.
+      if (at && eauxSet.has(cleCase(at.x, at.y))) {
         const coin = coinVise(at.fx ?? 0, at.fy ?? 0);
         const ok = coinFaconnable(eauxSet, at.x, at.y, coin);
         const forme = formeDe(at.x, at.y);
@@ -3215,7 +3239,7 @@ export function App() {
     } else if (defArme?.pose === "TERRAIN") {
       const cells = apercuTerrain.length ? apercuTerrain : at ? [at] : [];
       if (cells.length) {
-        const v = validerPeinture(grilleDomaine, defArme, cells);
+        const v = validerTerrain(defArme, cells);
         fantome = v.cases.filter((c) => c.raison !== "DEJA").map((c) => ({ x: c.x, y: c.y, ok: c.ok }));
         const n = v.cases.filter((c) => c.ok).length;
         const sautees = v.cases.filter((c) => !c.ok && c.raison !== "DEJA").length;
@@ -3369,6 +3393,9 @@ export function App() {
     player?.unlimitedCrd,
     carteHabitats,
     lectureHabitats,
+    campagneCases,
+    campagneBloquee,
+    eauxSet,
   ]);
 
   /** Ce que le panneau montre de l'élément touché. */
@@ -3472,17 +3499,22 @@ export function App() {
 
   async function peindreTerrain(cells: { x: number; y: number }[]) {
     if (!player || !activeParcelId || !defArme || defArme.pose !== "TERRAIN") return;
-    const v = validerPeinture(grilleDomaine, defArme, cells);
+    const v = validerTerrain(defArme, cells);
     if (!v.ok) {
       if (v.raison !== "DEJA") flashToast(LIBELLE_REFUS[v.raison ?? "FRICHE"], true);
       return;
     }
-    const aPeindre = v.cases.filter((c) => c.ok).map((c) => ({ x: c.x, y: c.y }));
+    const faites = v.cases.filter((c) => c.ok).map((c) => ({ x: c.x, y: c.y }));
+    // La ferme et la campagne ont chacune leur route.
+    const aPeindre = faites.filter((c) => dansBornes(bornesIci, c.x, c.y));
+    const dehors = faites.filter((c) => !dansBornes(bornesIci, c.x, c.y));
     const def = defArme;
     // Creuser se voit tout de suite : la ferme n'attend pas la réponse du
     // serveur pour lancer la pelle. Si le serveur refuse, on recharge.
-    const lacAvant = plusGrandLac(grid);
-    const chutesAvant = hydrologie(grid).chutes.length;
+    const monde = [...grid, ...campagneCases] as { x: number; y: number; sol?: string | null; niveau?: number | null }[];
+    const lacAvant = plusGrandLac(monde);
+    const chutesAvant = hydrologie(monde).chutes.length;
+    if (dehors.length) modifierCampagneLocalement(def, dehors);
     // Le relief monte (ou descend) d'un cran sous le doigt, sans attendre.
     if (def.regle === "RELIEF") {
       const sens = def.id === "surelever" ? 1 : -1;
@@ -3510,13 +3542,23 @@ export function App() {
             : def.regle === "COUPE"
               ? { boiseDepuis: maintenant }
               : null;
-    if (patch) modifierCasesLocalement(aPeindre, patch);
+    if (patch && aPeindre.length) modifierCasesLocalement(aPeindre, patch);
     setBusy(true);
     try {
-      const r = await api<{ peintes: number; ignorees: number; cout: number; gain?: number }>(
-        `/parcels/${activeParcelId}/terrain`,
-        { method: "POST", body: JSON.stringify({ userId: player.id, outil: def.id, cells: aPeindre }) },
-      );
+      type Reponse = { peintes: number; ignorees: number; cout: number; gain?: number };
+      const envoyer = (route: string, cases: { x: number; y: number }[]): Promise<Reponse> =>
+        cases.length
+          ? api<Reponse>(`/parcels/${activeParcelId}/${route}`, {
+              method: "POST",
+              body: JSON.stringify({ userId: player.id, outil: def.id, cells: cases }),
+            })
+          : Promise.resolve({ peintes: 0, ignorees: 0, cout: 0, gain: 0 });
+      const [rf, rc] = await Promise.all([envoyer("terrain", aPeindre), envoyer("campagne", dehors)]);
+      const r = {
+        peintes: rf.peintes + rc.peintes,
+        cout: rf.cout + rc.cout,
+        gain: (rf.gain ?? 0) + (rc.gain ?? 0),
+      };
       if (def.regle === "BOIS") jouerSon("plante");
       await apresConstruction(
         def.regle === "COUPE"
@@ -3525,9 +3567,13 @@ export function App() {
       );
       // Une première cascade se fête : c'est le clou d'un jardin d'eau.
       if (def.regle === "EAU" || def.regle === "RELIEF") {
-        const cles = new Set(aPeindre.map((c) => cleCase(c.x, c.y)));
+        const cles = new Set(faites.map((c) => cleCase(c.x, c.y)));
         const sens = def.id === "surelever" ? 1 : def.id === "abaisser" ? -1 : 0;
-        const apres = grid.map((c) =>
+        const avecNeuves = [
+          ...monde,
+          ...dehors.filter((c) => !monde.some((m) => m.x === c.x && m.y === c.y)).map((c) => ({ ...c, sol: "PRE", niveau: 0 })),
+        ];
+        const apres = avecNeuves.map((c) =>
           cles.has(cleCase(c.x, c.y))
             ? def.regle === "EAU"
               ? { ...c, sol: "EAU" as const }
@@ -3540,15 +3586,18 @@ export function App() {
             jouerSon("lac");
             flashToast(
               chutesAvant === 0
-                ? "Votre première cascade — l'eau coule, le moulin voisin tourne trois fois plus vite"
+                ? "Votre première cascade — l'eau coule ; un bief peut l'amener à la roue d'un moulin"
                 : `Une cascade de plus · charme +${(chutes - chutesAvant) * 3}`,
             );
           }, 1500);
         }
       }
       if (def.regle === "EAU") {
-        const cles = new Set(aPeindre.map((c) => cleCase(c.x, c.y)));
-        const apres = grid.map((c) => (cles.has(cleCase(c.x, c.y)) ? { ...c, sol: "EAU" as const } : c));
+        const cles = new Set(faites.map((c) => cleCase(c.x, c.y)));
+        const apres = [
+          ...monde.map((c) => (cles.has(cleCase(c.x, c.y)) ? { ...c, sol: "EAU" } : c)),
+          ...dehors.filter((c) => !monde.some((m) => m.x === c.x && m.y === c.y)).map((c) => ({ ...c, sol: "EAU" })),
+        ];
         const palier = palierFranchi(lacAvant, plusGrandLac(apres));
         // La fête attend que l'eau soit montée : on la voit, puis on l'entend.
         if (palier) {
@@ -3564,7 +3613,7 @@ export function App() {
       }
     } catch (e) {
       flashToast(e instanceof Error ? e.message : String(e), true);
-      if ((patch || def.regle === "RELIEF") && activeParcelId) void loadParcel(activeParcelId);
+      if ((patch || def.regle === "RELIEF" || dehors.length) && activeParcelId) void loadParcel(activeParcelId);
     } finally {
       setBusy(false);
       setApercuTerrain([]);
@@ -3587,6 +3636,73 @@ export function App() {
     );
   }
 
+  /** Change la campagne affichée, sans attendre le serveur — comme la ferme. */
+  function modifierCampagneLocalement(def: DefConstruction, cells: { x: number; y: number }[], forme?: number) {
+    const maintenant = new Date().toISOString();
+    setParcelDetail((d) => {
+      if (!d?.domaine) return d;
+      const parCle = new Map((d.domaine.campagne ?? []).map((c) => [cleCase(c.x, c.y), c]));
+      for (const p of cells) {
+        const k = cleCase(p.x, p.y);
+        const c = parCle.get(k) ?? { x: p.x, y: p.y, sol: "PRE", fleurie: false, niveau: 0, forme: 0, boiseDepuis: null };
+        let n: CaseCampagneVue = c;
+        if (forme !== undefined) n = { ...c, forme };
+        else if (def.regle === "EAU") n = { ...c, sol: "EAU", fleurie: false, forme: 0, boiseDepuis: null };
+        else if (def.regle === "BOIS") n = { ...c, sol: "BOIS", fleurie: false, forme: 0, boiseDepuis: maintenant };
+        else if (def.regle === "PRAIRIE") n = { ...c, sol: "PRE", fleurie: true, forme: 0, boiseDepuis: null };
+        else if (def.regle === "COUPE") n = { ...c, boiseDepuis: maintenant };
+        else if (def.regle === "RELIEF") n = { ...c, niveau: c.niveau + (def.id === "surelever" ? 1 : -1) };
+        else if (def.regle === "PRE") n = { ...c, sol: "PRE", fleurie: false, forme: 0, boiseDepuis: null };
+        if (n.sol === "PRE" && !n.fleurie && n.niveau === 0) parCle.delete(k);
+        else parCle.set(k, n);
+      }
+      return { ...d, domaine: { ...d.domaine, campagne: [...parCle.values()] } };
+    });
+  }
+
+  /**
+   * Valider un geste de terrain, sur la ferme **et** dans la campagne.
+   *
+   * Chaque zone a sa règle : le gros terraformage se fait dehors, les champs
+   * et chemins dedans. Dans la campagne, une case non façonnée est de
+   * l'herbe, et une case sous une route, la cour, le village ou un champ
+   * voisin se refuse — c'est la vue qui les connaît.
+   */
+  function validerTerrain(def: DefConstruction, cells: readonly { x: number; y: number }[]) {
+    const ferme = cells.filter((c) => dansBornes(bornesIci, c.x, c.y));
+    const dehors = cells.filter((c) => !dansBornes(bornesIci, c.x, c.y));
+    const parts = [] as ReturnType<typeof validerPeinture>[];
+    if (ferme.length) parts.push(validerPeinture(grilleDomaine, def, ferme));
+    if (dehors.length) {
+      const connues = new Set(campagneCases.map((c) => cleCase(c.x, c.y)));
+      const grille = construireGrille({
+        bornes: {
+          minX: bornesIci.minX - PORTEE_CAMPAGNE,
+          minY: bornesIci.minY - PORTEE_CAMPAGNE,
+          maxX: bornesIci.maxX + PORTEE_CAMPAGNE,
+          maxY: bornesIci.maxY + PORTEE_CAMPAGNE,
+        },
+        cells: [
+          ...campagneCases.map((c) => ({ ...c, sol: c.sol as "PRE" | "EAU" | "BOIS" })),
+          ...dehors
+            .filter((c) => !connues.has(cleCase(c.x, c.y)) && !campagneBloquee.has(cleCase(c.x, c.y)))
+            .map((c) => ({ x: c.x, y: c.y, sol: "PRE" as const })),
+        ],
+        zone: "CAMPAGNE",
+      });
+      const v = validerPeinture(grille, def, dehors);
+      // Une case absente de la grille est sous un obstacle, ou trop loin.
+      const cases = v.cases.map((c) =>
+        c.raison === "FRICHE" ? { ...c, raison: campagneBloquee.has(cleCase(c.x, c.y)) ? ("OCCUPE" as const) : ("HORS_DOMAINE" as const) } : c,
+      );
+      parts.push({ ...v, cases });
+    }
+    const cases = parts.flatMap((p) => p.cases);
+    const ok = cases.some((c) => c.ok && c.change);
+    const refus = cases.find((c) => !c.ok && c.raison !== "DEJA") ?? cases.find((c) => !c.ok);
+    return { ok, raison: ok ? undefined : (refus?.raison ?? "DEJA"), cases, cout: parts.reduce((s, p) => s + p.cout, 0) };
+  }
+
   /** L'outil Berges : le coin visé passe au style suivant. Gratuit et instantané. */
   async function faconnerBerge(x: number, y: number, coin: Coin) {
     if (!player || !activeParcelId) return;
@@ -3596,9 +3712,11 @@ export function App() {
     }
     const forme = formeDe(x, y);
     const suivant = styleSuivant(styleCoin(forme, coin));
-    modifierCasesLocalement([{ x, y }], { forme: avecStyleCoin(forme, coin, suivant) });
+    const dehors = !dansBornes(bornesIci, x, y);
+    if (dehors) modifierCampagneLocalement(defConstruction("berge")!, [{ x, y }], avecStyleCoin(forme, coin, suivant));
+    else modifierCasesLocalement([{ x, y }], { forme: avecStyleCoin(forme, coin, suivant) });
     try {
-      await api(`/parcels/${activeParcelId}/berges`, {
+      await api(`/parcels/${activeParcelId}/${dehors ? "campagne/berges" : "berges"}`, {
         method: "POST",
         body: JSON.stringify({ userId: player.id, x, y, coin, style: suivant }),
       });
@@ -3703,64 +3821,23 @@ export function App() {
       flashToast(`Ce lot s'achète au niveau ${lot.niveau}`, true);
       return;
     }
-    const prixNature = lot.prixNature ?? 0;
-    if (!canPay(player, Math.min(lot.prix, prixNature || lot.prix))) {
-      flashToast(`Il vous manque ${Math.ceil(Math.min(lot.prix, prixNature || lot.prix) - player.crd)} € pour ce lot`, true);
+    if (!canPay(player, lot.prix)) {
+      flashToast(`Il vous manque ${Math.ceil(lot.prix - player.crd)} € pour ce lot`, true);
       return;
     }
     const parcelleId = activeParcelId;
-    const acheter = async (vocation: "CULTURE" | "NATURE") => {
-      try {
-        const r = await api<{ paid: number; cases: number }>(`/parcels/${parcelleId}/lots/buy`, {
-          method: "POST",
-          body: JSON.stringify({ userId: player.id, lot: lot.id, vocation }),
-        });
-        jouerSon(vocation === "NATURE" ? "plante" : "construction");
-        await apresConstruction(
-          vocation === "NATURE"
-            ? `Réserve naturelle · ${r.cases} cases à façonner · −${r.paid.toLocaleString("fr-FR")} €`
-            : `Lot acheté · ${r.cases} cases de plus · −${r.paid.toLocaleString("fr-FR")} €`,
-        );
-      } catch (e) {
-        flashToast(e instanceof Error ? e.message : String(e), true);
-      }
-    };
     setConfirmRequest({
       title: `Acheter ce lot de ${lot.aAcheter} cases ?`,
-      detail:
-        `En terre de culture, ${lot.prix.toLocaleString("fr-FR")} € : champs, bâtiments, tout ce qu'on veut.` +
-        (prixNature
-          ? ` En réserve naturelle, ${prixNature.toLocaleString("fr-FR")} € : relief, eau, bois, prairies — mais ni champ ni bâtiment, sauf un rucher. Une réserve se rend à la culture plus tard, en payant la différence.`
-          : ""),
-      confirmLabel: `Culture · ${lot.prix.toLocaleString("fr-FR")} €`,
-      onConfirm: () => void acheter("CULTURE"),
-      alternative: prixNature ? { label: `Réserve · ${prixNature.toLocaleString("fr-FR")} €`, onConfirm: () => void acheter("NATURE") } : undefined,
-    });
-  }
-
-  /** Passer un lot à soi en réserve, ou rendre une réserve à la culture. */
-  function changerVocation(x: number, y: number) {
-    if (!player || !activeParcelId) return;
-    const lot = domaine?.lots.find((l) => l.etat === "POSSEDE" && x >= l.x && x < l.x + l.w && y >= l.y && y < l.y + l.h);
-    if (!lot) return flashToast("Touchez un lot à vous", true);
-    const versNature = lot.vocation !== "NATURE";
-    const prix = versNature ? 0 : (lot.prixConversion ?? 0);
-    if (!canPay(player, prix)) return flashToast(`Il vous manque ${Math.ceil(prix - player.crd)} €`, true);
-    const parcelleId = activeParcelId;
-    setConfirmRequest({
-      title: versNature ? "Passer ce lot en réserve naturelle ?" : "Rendre cette réserve à la culture ?",
-      detail: versNature
-        ? "Gratuit, sans remboursement. Les champs nus y redeviennent du pré ; il faut d'abord récolter ce qui est en terre et retirer les bâtiments (un rucher peut rester)."
-        : `${prix.toLocaleString("fr-FR")} € : la différence avec le prix d'une terre de culture. Ce que vous y avez façonné reste en place.`,
-      confirmLabel: versNature ? "Passer en réserve" : `Rendre à la culture · ${prix.toLocaleString("fr-FR")} €`,
+      detail: `${lot.prix.toLocaleString("fr-FR")} € · la friche devient un pré à vous, prêt à aménager. Ce que vous avez façonné dans la campagne sur ce lot passe dans la ferme tel quel.`,
+      confirmLabel: `Acheter · ${lot.prix.toLocaleString("fr-FR")} €`,
       onConfirm: async () => {
         try {
-          await api(`/parcels/${parcelleId}/lots/vocation`, {
+          const r = await api<{ paid: number; cases: number }>(`/parcels/${parcelleId}/lots/buy`, {
             method: "POST",
-            body: JSON.stringify({ userId: player.id, lot: lot.id, vocation: versNature ? "NATURE" : "CULTURE" }),
+            body: JSON.stringify({ userId: player.id, lot: lot.id }),
           });
-          jouerSon(versNature ? "plante" : "construction");
-          await apresConstruction(versNature ? "Le lot devient une réserve naturelle" : `Réserve rendue à la culture · −${prix.toLocaleString("fr-FR")} €`);
+          jouerSon("construction");
+          await apresConstruction(`Lot acheté · ${r.cases} cases de plus · −${r.paid.toLocaleString("fr-FR")} €`);
         } catch (e) {
           flashToast(e instanceof Error ? e.message : String(e), true);
         }
@@ -3770,18 +3847,8 @@ export function App() {
 
   /** Un toucher sur la ferme, en construction. */
   function cliqueConstruction(x: number, y: number, mods: PointerMods, frac?: { fx: number; fy: number }) {
-    if (defArme?.id === "vocation" && !deplaceObjet) {
-      if (!grilleDomaine.cases.get(cleCase(x, y))) {
-        const lot = domaine?.lots.find((l) => l.etat !== "POSSEDE" && x >= l.x && x < l.x + l.w && y >= l.y && y < l.y + l.h);
-        if (lot) acheterLot(lot);
-        return;
-      }
-      changerVocation(x, y);
-      return;
-    }
     if (defArme?.pose === "OUTIL" && !deplaceObjet) {
-      const k = grilleDomaine.cases.get(cleCase(x, y));
-      if (k?.sol !== "EAU") {
+      if (!eauxSet.has(cleCase(x, y))) {
         flashToast("Berges : visez le coin d'un lac", true);
         return;
       }
@@ -3800,6 +3867,12 @@ export function App() {
       const v = validerPose(grilleDomaine, def, { x, y, rotation: rotationArme }, a.id);
       if (!v.ok) return flashToast(LIBELLE_REFUS[v.raison ?? "HORS_DOMAINE"], true);
       void deplacerObjet(a.id, x, y, rotationArme, `${def.nom} déplacé`);
+      return;
+    }
+    // La campagne autour de la ferme : on y façonne le terrain.
+    if (!dansBornes(bornesIci, x, y)) {
+      if (defArme?.pose === "TERRAIN") return void peindreTerrain([{ x, y }]);
+      flashToast("La campagne se façonne : relief, eau, bois, prairie — choisissez un outil de terraformage", true);
       return;
     }
     if (!k) {
@@ -7135,6 +7208,8 @@ export function App() {
               amenagements={amenagements}
               floraison={(domaine?.biodiversite?.faune.POLLINISATEURS ?? 0) / 100}
               faune={domaine?.biodiversite?.faune}
+              campagne={campagneTerrain}
+              onCampagneBloquee={setCampagneBloquee}
               construction={vueConstruction?.etat ?? null}
             />
           </Suspense>

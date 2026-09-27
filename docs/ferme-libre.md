@@ -138,6 +138,9 @@ machine ou un bâtiment. **Niveau** : un palier doux (`1, 1, 2, 3, 4, 5, 6, 7, 8
 
 ### Terraformage : des lacs qu'on dessine
 
+> Ces gestes se font désormais **dans la campagne**, autour de la ferme, et
+> non plus sur elle : voir « La campagne à façonner ».
+
 Creuser l'eau se fait **à main levée** (une mare, un lac, une rivière), dès le
 niveau 1, à 30 €/case. L'eau n'est plus un carré bleu par case : c'est une
 nappe d'un seul tenant (`apps/web/src/eau3d.ts`) creusée sous le pré, avec
@@ -159,6 +162,9 @@ sa berge d'herbe, son talus de terre et son fond.
   nénuphars, roseaux, des canards dès six cases, un poisson qui saute.
 
 ### Relief, rivières, ponts et cascades
+
+> Ces gestes se font désormais **dans la campagne**, autour de la ferme, et
+> non plus sur elle : voir « La campagne à façonner ».
 
 L'autre moitié du terraformage. Les règles vivent dans
 `packages/shared/src/relief.ts`, le rendu dans `apps/web/src/domaine3d.ts`.
@@ -195,44 +201,59 @@ L'autre moitié du terraformage. Les règles vivent dans
     cascade (débit de l'atelier et bureau).
   - Chaque cascade ajoute +3 de charme, un pont +3, une rampe +1.
 
-### La réserve naturelle
+### La campagne à façonner
 
-Le terraformage se fait surtout **à côté des champs**, sur une terre faite
-pour lui. Chaque case a une vocation (`ParcelCell.vocation`) : culture ou
-nature.
+Le gros terraformage (relief, eau, bois, prairies) se fait **hors de la
+ferme** : dans la campagne qui l'entoure, au-delà des lots à vendre. La
+ferme garde sa place pour les cultures, et la campagne devient un terrain
+de jeu à part, où l'on revient façonner entre deux chantiers.
 
-- **Acheter.** Un lot de friche s'achète au choix en terre de culture (prix
-  habituel) ou en **réserve naturelle**, au quart du prix
-  (`PART_PRIX_NATURE`). Le dialogue d'achat propose les deux.
-- **Ce qu'on y fait.** Tout le terraformage : relief, eau, bois, prairies,
-  haies, décor. Ce qu'on n'y fait pas : un champ, un bâtiment. Seule
-  exception, le rucher (`BATIMENTS_EN_RESERVE`).
-- **Changer d'avis.** L'outil *Réserve ou culture* (onglet Terrain) touche un
-  lot à soi :
-  - une réserve se rend à la culture en payant la différence avec le prix
-    agricole du jour ;
-  - une terre de culture passe en réserve gratuitement, sans remboursement,
-    une fois le lot libre (ni culture en terre, ni bâtiment autre qu'un
-    rucher). Ses champs nus redeviennent du pré.
-  - Route : `POST /parcels/:id/lots/vocation`.
-- **À l'écran.** Une prairie non fauchée : herbes hautes, coquelicots,
-  bleuets, marguerites, boutons d'or. Une limite en piquets et cordelette,
-  toujours visible. Sur les lots à vendre, le prix en réserve s'affiche sous
-  le prix agricole.
+- **Où.** Partout à 30 cases au plus des bornes du domaine
+  (`dansCampagne`, `PORTEE_CAMPAGNE`), hors de la ferme et de ses lots à
+  vendre. La vue refuse une case sous une route, la cour, le village ou le
+  champ d'un voisin (« Une route, la cour, le village ou le champ d'un
+  voisin est là ») : c'est elle qui connaît la campagne, comme pour la
+  décoration libre.
+- **Quoi.** Creuser (lacs, rivières, berges), surélever et abaisser
+  (buttes, falaises, cascades), boiser et couper, semer une **prairie
+  fleurie** (10 €/case), remettre en herbe. On paie le geste, pas la terre.
+  En campagne, un bois se coupe partout : pas d'engins, pas de lisière à
+  respecter.
+- **Sur la ferme.** Relief, eau, bois et prairie y sont refusés (« Relief,
+  eau, bois et prairies se font dans la campagne, autour de la ferme »). Les
+  lacs et reliefs déjà faits restent, et se façonnent encore : berges,
+  coupe, remise en herbe, ponts et rampes. Champs, prés, chemins, haies,
+  clôtures et décor se posent sur la ferme comme avant.
+- **Stockage.** La table `CaseCampagne` (parcelle, x, y, sol, fleurie,
+  niveau, forme, âge du bois), dans le repère des cases du siège. Seules les
+  cases façonnées existent : une case absente est de l'herbe. Routes :
+  `POST /parcels/:id/campagne` et `/campagne/berges`.
+- **Agrandir.** Quand un lot acheté recouvre de la campagne façonnée, elle
+  passe dans la ferme telle quelle : un lac reste un lac, un bois garde son
+  âge.
+- **Le moulin** prend l'eau de la campagne par un **bief** : une cascade ou
+  une rivière à 8 cases au plus fait tourner sa roue (`PORTEE_BIEF`).
+- **À l'écran.** La campagne façonnée se dessine au niveau du sol de la
+  campagne, sous l'île. L'eau y affleure, une butte porte son propre dessus
+  d'herbe, un bois sa litière. Le décor tiré au sort (arbres, touffes) lui
+  laisse la place. En construction, on vise une case de campagne hors de
+  l'île, et un rectangle commencé dans la campagne s'y étend.
 
 ### La biodiversité
 
 Règles dans `packages/shared/src/biodiversite.ts`.
 
 - **Les habitats** se lisent sur les cases et le décor, sans rien saisir :
-  - prairie fleurie (pré de réserve) et pré fauché ;
+  - prairie fleurie (semée dans la campagne) et pré fauché ;
   - massif fleuri, haie, buissons, arbre isolé ;
   - jeune bois, futaie, vieux bois (2 ans) et lisière ;
   - mare, rivière, roselière ;
   - rocaille (bord de falaise).
 
-  Le gros terraformage fait en terre de culture compte **deux fois moins**
-  qu'en réserve.
+  La campagne compte pleinement ; ce qui reste de gros terraformage sur la
+  ferme compte **deux fois moins**. Dans la campagne, une case non façonnée
+  est de l'herbe : la voisine d'un bois fait sa lisière, celle d'une mare sa
+  berge.
 - **Cinq groupes de faune** : pollinisateurs, auxiliaires, oiseaux, rapaces,
   faune des mares. Chacun a ses affinités (`AFFINITES`) et une cible qui
   sature. Les rapaces veulent un perchoir et de la prairie où chasser.
@@ -244,8 +265,8 @@ Règles dans `packages/shared/src/biodiversite.ts`.
 - **La décoration libre compte** : nichoirs, bains d'oiseaux, ruches en
   paille, fleurs, lavande, roseaux, mares, arbres, rochers, chacun avec un
   plafond (`refugesDecor`).
-- **Calibrage.** Un lot de réserve bien aménagé vise environ 35/100, trois
-  lots approchent 80.
+- **Calibrage.** 36 cases de campagne bien aménagées visent environ 35/100 ;
+  trois fois plus approchent 80.
 - **À l'écran.** La pastille 🐝 du panneau de construction donne le score et
   sa cible (« 0 · Terre nue ↗ 34 »). Touchée, elle ouvre la fiche des cinq
   groupes (population, cible, habitats préférés), la légende, un conseil, et
@@ -267,11 +288,11 @@ comme avant.
   d'un abri lui vaut un **point d'installation** de plus, au même titre que
   l'enclos, l'abreuvoir ou le râtelier. L'écran d'élevage l'affiche.
 - **Aides agro-environnementales** : chaque jour de jeu, 20 € par saison et
-  par case de réserve aménagée (plafond 400 cases), pleines à partir d'un
+  par case de campagne aménagée (plafond 400 cases), pleines à partir d'un
   score de 50. Versées au journal sous « Aides », avec un rattrapage d'une
-  saison au plus. Une réserve d'un lot en bonne santé rapporte environ
+  saison au plus. 36 cases de campagne aménagées et en bonne santé rapportent environ
   720 € par saison.
-- **Floraison** : la réserve refleurit à mesure que les pollinisateurs
+- **Floraison** : les prairies refleurissent à mesure que les pollinisateurs
   s'installent, de deux à sept fleurs par case.
 - La fiche de biodiversité dit ce que tout cela vaut aujourd'hui.
 
@@ -308,6 +329,9 @@ comme avant.
 
 ### Le bois
 
+> Ces gestes se font désormais **dans la campagne**, autour de la ferme, et
+> non plus sur elle : voir « La campagne à façonner ».
+
 Règles dans `packages/shared/src/bois.ts`, rendu dans `verserBois`
 (`apps/web/src/domaine3d.ts`).
 
@@ -342,7 +366,7 @@ Règles dans `packages/shared/src/bois.ts`, rendu dans `verserBois`
 | Creuser un étang | 30 €/case | remblai 8 €/case |
 | Surélever / abaisser d'un niveau | 40 / 20 €/case | rien |
 | Pont / rampe | 180 / 120 € | 50 % |
-| Lot en réserve naturelle | ¼ du prix agricole | la différence pour le rendre à la culture |
+| Prairie fleurie (campagne) | 10 €/case | rien |
 | Boiser | 25 €/case | rien (la coupe rapporte 70 €/case de futaie, chaque année) |
 | Chemin de terre / gravier / pavés | 4 / 9 / 18 €/case | rien |
 | Objet de décor | 25 à 400 € | 50 % (100 % dans la fenêtre de regret) |

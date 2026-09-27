@@ -13,7 +13,7 @@ import {
 const T = 1_000_000_000_000;
 function terrain(w: number, h: number, f: (x: number, y: number) => Partial<CaseNature>): CaseNature[] {
   const out: CaseNature[] = [];
-  for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) out.push({ x, y, sol: "PRE", vocation: "NATURE", ...f(x, y) });
+  for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) out.push({ x, y, sol: "PRE", fleurie: true, ...f(x, y) });
   return out;
 }
 
@@ -22,17 +22,25 @@ describe("les habitats", () => {
     const cells = terrain(6, 3, (x, y) =>
       x === 0 ? { sol: "BOIS", boiseDepuis: new Date(T - BOIS_MATURITE_MS * 1.2) } : x === 5 && y === 1 ? { sol: "EAU" } : {},
     );
-    const l = lireHabitats({ cells, maintenant: T });
+    const l = lireHabitats({ cells, campagne: true, maintenant: T });
     expect(l.parCase.get("0,1")).toEqual(["FUTAIE", "LISIERE"]);
     expect(l.parCase.get("3,1")).toEqual(["PRAIRIE"]);
     expect(l.parCase.get("5,1")).toEqual(["MARE", "ROSELIERE"]);
     expect(l.surfaces.PRAIRIE).toBe(14);
   });
 
-  it("comptent deux fois moins en terre de culture qu'en réserve", () => {
-    const reserve = lireHabitats({ cells: terrain(2, 1, () => ({ sol: "EAU" })), maintenant: T });
-    const champs = lireHabitats({ cells: terrain(2, 1, () => ({ sol: "EAU", vocation: "CULTURE" })), maintenant: T });
-    expect(champs.surfaces.MARE).toBe(reserve.surfaces.MARE / 2);
+  it("comptent deux fois moins sur la ferme que dans la campagne", () => {
+    const campagne = lireHabitats({ cells: terrain(2, 1, () => ({ sol: "EAU" })), campagne: true, maintenant: T });
+    const ferme = lireHabitats({ cells: terrain(2, 1, () => ({ sol: "EAU" })), maintenant: T });
+    expect(ferme.surfaces.MARE).toBe(campagne.surfaces.MARE / 2);
+  });
+
+  it("dans la campagne, une case non façonnée est de l'herbe : un étang seul a sa berge", () => {
+    const l = lireHabitats({ cells: [{ x: 0, y: 0, sol: "EAU" }], campagne: true, maintenant: T });
+    expect(l.parCase.get("0,0")).toEqual(["MARE", "ROSELIERE"]);
+    // De l'herbe surélevée n'est pas une prairie, mais son bord est une rocaille.
+    const butte = lireHabitats({ cells: [{ x: 0, y: 0, sol: "PRE", niveau: 1 }], campagne: true, maintenant: T });
+    expect(butte.parCase.get("0,0")).toEqual(["ROCAILLE"]);
   });
 
   it("un bois de deux ans devient un vieux bois", () => {
@@ -115,8 +123,8 @@ describe("ce que la faune rend", () => {
   });
 
   it("verse des aides pour la réserve aménagée, pleines à partir d'un score de 50", () => {
-    expect(aideDuJour({ casesReserve: 7, score: 50, joursParSaison: 7 })).toBeCloseTo(AIDE_PAR_CASE_SAISON, 5);
-    expect(aideDuJour({ casesReserve: 7, score: 25, joursParSaison: 7 })).toBeCloseTo(AIDE_PAR_CASE_SAISON / 2, 5);
-    expect(aideDuJour({ casesReserve: 10_000, score: 100, joursParSaison: 7 })).toBeCloseTo((400 * AIDE_PAR_CASE_SAISON) / 7, 1);
+    expect(aideDuJour({ casesNature: 7, score: 50, joursParSaison: 7 })).toBeCloseTo(AIDE_PAR_CASE_SAISON, 5);
+    expect(aideDuJour({ casesNature: 7, score: 25, joursParSaison: 7 })).toBeCloseTo(AIDE_PAR_CASE_SAISON / 2, 5);
+    expect(aideDuJour({ casesNature: 10_000, score: 100, joursParSaison: 7 })).toBeCloseTo((400 * AIDE_PAR_CASE_SAISON) / 7, 1);
   });
 });

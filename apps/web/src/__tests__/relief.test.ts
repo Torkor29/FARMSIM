@@ -89,12 +89,17 @@ describe("le relief dans les règles de pose", () => {
   const cells = ferme(6, 6, (x) => (x >= 3 ? { niveau: 1, sol: "PRE" } : { sol: "PRE" }));
   const grille = construireGrille({ bornes, cells });
 
-  it("se surélève jusqu'au sommet et s'abaisse jusqu'à la plaine", () => {
-    const monter = validerPeinture(grille, defConstruction("surelever")!, [{ x: 0, y: 0 }, { x: 4, y: 0 }]);
+  it("se surélève jusqu'au sommet et s'abaisse jusqu'à la plaine — dans la campagne seulement", () => {
+    const campagne = construireGrille({ bornes, cells, zone: "CAMPAGNE" });
+    const monter = validerPeinture(campagne, defConstruction("surelever")!, [{ x: 0, y: 0 }, { x: 4, y: 0 }]);
     expect(monter.cases.every((c) => c.ok)).toBe(true);
-    const descendre = validerPeinture(grille, defConstruction("abaisser")!, [{ x: 0, y: 0 }]);
+    const descendre = validerPeinture(campagne, defConstruction("abaisser")!, [{ x: 0, y: 0 }]);
     expect(descendre.ok).toBe(false);
     expect(descendre.raison).toBe("PLAINE");
+    // Sur la ferme, le relief se refuse.
+    expect(validerPeinture(grille, defConstruction("surelever")!, [{ x: 0, y: 0 }]).raison).toBe("CAMPAGNE");
+    // Et un champ ne se trace pas dans la campagne.
+    expect(validerPeinture(campagne, defConstruction("champ")!, [{ x: 0, y: 0 }]).raison).toBe("SUR_LA_FERME");
   });
 
   it("pose un bâtiment en plaine seulement, et une rampe contre sa falaise", () => {

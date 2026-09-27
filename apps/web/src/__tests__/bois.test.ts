@@ -41,10 +41,12 @@ describe("boiser et couper", () => {
   const cells = ferme(8, 8, (x, y) => (x >= 2 && x <= 4 && y >= 2 && y <= 4 ? { sol: "BOIS", boiseDepuis: vieux } : {}));
   const grille = construireGrille({ bornes, cells, maintenant: T });
 
-  it("se plante sur du pré, pas sur l'eau", () => {
-    const v = validerPeinture(grille, defConstruction("boiser")!, [{ x: 0, y: 0 }, { x: 3, y: 3 }]);
+  it("se plante dans la campagne, sur l'herbe — pas sur la ferme", () => {
+    const campagne = construireGrille({ bornes, cells, maintenant: T, zone: "CAMPAGNE" });
+    const v = validerPeinture(campagne, defConstruction("boiser")!, [{ x: 0, y: 0 }, { x: 3, y: 3 }]);
     expect(v.cases.map((c) => c.ok)).toEqual([true, false]);
     expect(v.cout).toBe(25);
+    expect(validerPeinture(grille, defConstruction("boiser")!, [{ x: 0, y: 0 }]).raison).toBe("CAMPAGNE");
   });
 
   it("se coupe à la lisière ; le cœur d'un bois attend un chemin", () => {

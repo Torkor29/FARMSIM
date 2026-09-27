@@ -5,9 +5,10 @@
  *
  * Rien à saisir : une prairie de réserve, une haie, un bois, sa lisière, une
  * mare et sa roselière, une rivière, une falaise — tout se lit sur les cases
- * et le décor (`lireHabitats`). Le gros terraformage fait en terre de culture
- * compte **deux fois moins** qu'en réserve : les champs restent aux cultures,
- * la nature a sa place à côté.
+ * et le décor (`lireHabitats`). La **campagne** façonnée autour de la ferme
+ * compte pleinement ; ce qui reste sur la ferme (lacs et bois d'avant, haies,
+ * prés) compte deux fois moins pour le gros terraformage : les champs restent
+ * aux cultures, la nature a sa place à côté.
  *
  * ## Cinq groupes de faune
  *
@@ -105,7 +106,7 @@ export const DEMI_VIE_INSTALLATION: Record<Guilde, number> = {
 /** Un habitat détruit se vide plus vite qu'il ne se remplit. */
 const DEMI_VIE_DEPART = 1;
 
-/** Le gros terraformage en terre de culture compte deux fois moins qu'en réserve. */
+/** Le gros terraformage fait sur la ferme compte deux fois moins que dans la campagne. */
 export const POIDS_HORS_RESERVE = 0.5;
 const GROS_HABITATS: ReadonlySet<Habitat> = new Set([
   "PRAIRIE",
@@ -127,7 +128,8 @@ export type CaseNature = {
   kind?: string | null;
   niveau?: number | null;
   boiseDepuis?: Date | string | null;
-  vocation?: string | null;
+  /** Une prairie semée de fleurs sauvages. */
+  fleurie?: boolean | null;
 };
 
 export type LectureHabitats = {
@@ -160,6 +162,11 @@ const HABITAT_OBJET: Record<string, Habitat> = {
 
 export function lireHabitats(opts: {
   cells: readonly CaseNature[];
+  /**
+   * La campagne : tout y compte pleinement, et une case non façonnée est de
+   * l'herbe — la voisine d'un bois fait sa lisière, celle d'une mare sa berge.
+   */
+  campagne?: boolean;
   amenagements?: readonly { type: string; originX: number; originY: number }[];
   /** L'eau qui coule, si on la connaît (`hydrologie(cells).courante`). */
   courante?: ReadonlySet<string>;
@@ -177,37 +184,40 @@ export function lireHabitats(opts: {
     parCase.set(kk, l);
     surfaces[h] += reserve || !GROS_HABITATS.has(h) ? 1 : POIDS_HORS_RESERVE;
   };
+  const herbe: CaseNature = { x: 0, y: 0, sol: "PRE", niveau: 0 };
+  const voisine = (x: number, y: number) => cases.get(k(x, y)) ?? (opts.campagne ? herbe : undefined);
   const estPre = (c: CaseNature | undefined) => !!c && c.sol === "PRE" && !c.revetement && c.kind !== "BUILDING";
 
   for (const c of opts.cells) {
-    const reserve = c.vocation === "NATURE";
+    const reserve = opts.campagne === true;
     const n = c.niveau ?? 0;
     if (c.sol === "BOIS") {
       const age = c.boiseDepuis == null ? BOIS_MATURITE_MS : maintenant - new Date(c.boiseDepuis).getTime();
       const st = stadeBois(croissanceBois(c.boiseDepuis ?? null, maintenant));
       if (st === "FUTAIE") ajouter(c.x, c.y, age >= 2 * BOIS_MATURITE_MS ? "VIEUX_BOIS" : "FUTAIE", reserve);
       else ajouter(c.x, c.y, "BOIS_JEUNE", reserve);
-      if (st !== "PLANTS" && DIRS.some(([dx, dy]) => estPre(cases.get(k(c.x + dx, c.y + dy))))) ajouter(c.x, c.y, "LISIERE", reserve);
+      if (st !== "PLANTS" && DIRS.some(([dx, dy]) => estPre(voisine(c.x + dx, c.y + dy)))) ajouter(c.x, c.y, "LISIERE", reserve);
     } else if (c.sol === "EAU") {
       ajouter(c.x, c.y, opts.courante?.has(k(c.x, c.y)) ? "RIVIERE" : "MARE", reserve);
       if (DIRS.some(([dx, dy]) => {
-        const v = cases.get(k(c.x + dx, c.y + dy));
+        const v = voisine(c.x + dx, c.y + dy);
         return !!v && v.sol !== "EAU";
       })) ajouter(c.x, c.y, "ROSELIERE", reserve);
     } else if (estPre(c)) {
-      ajouter(c.x, c.y, reserve ? "PRAIRIE" : "PRE", reserve);
+      // Une prairie fleurie ; l'herbe de la campagne n'est rien de plus que de l'herbe.
+      if (c.fleurie) ajouter(c.x, c.y, "PRAIRIE", reserve);
+      else if (!opts.campagne) ajouter(c.x, c.y, "PRE", reserve);
     }
     // Une case au bord d'une falaise, en haut ou en bas : un abri de pierre.
     if (c.sol !== "CHAMP" && c.sol !== "EAU" && DIRS.some(([dx, dy]) => {
-      const v = cases.get(k(c.x + dx, c.y + dy));
+      const v = voisine(c.x + dx, c.y + dy);
       return !!v && (v.niveau ?? 0) !== n;
     })) ajouter(c.x, c.y, "ROCAILLE", reserve);
   }
   for (const a of opts.amenagements ?? []) {
     const h = HABITAT_OBJET[a.type];
     if (!h) continue;
-    const c = cases.get(k(a.originX, a.originY));
-    ajouter(a.originX, a.originY, h, c?.vocation === "NATURE");
+    ajouter(a.originX, a.originY, h, opts.campagne === true);
   }
   const diversite = (Object.keys(surfaces) as Habitat[]).filter((h) => h !== "PRE" && surfaces[h] >= 2).length;
   return { parCase, surfaces, diversite };
@@ -435,18 +445,18 @@ export function bonusBiodiversiteCase(
 /* Les aides agro-environnementales                                     */
 /* ------------------------------------------------------------------ */
 
-/** Ce qu'une case de réserve en bon état rapporte en aides, par saison. */
+/** Ce qu'une case de campagne aménagée rapporte en aides, par saison. */
 export const AIDE_PAR_CASE_SAISON = 20;
 /** Au-delà, les aides plafonnent : c'est une aide, pas une rente. */
 export const AIDE_CASES_MAX = 400;
 
 /**
- * L'aide d'une journée de jeu : chaque case de réserve aménagée (un habitat
- * autre que du pré fauché) touche sa part, pondérée par la santé de la faune
- * — pleine à partir d'un score de 50.
+ * L'aide d'une journée de jeu : chaque case de campagne aménagée (un habitat,
+ * pas de l'herbe) touche sa part, pondérée par la santé de la faune — pleine
+ * à partir d'un score de 50.
  */
-export function aideDuJour(opts: { casesReserve: number; score: number; joursParSaison: number }): number {
-  const n = Math.min(AIDE_CASES_MAX, Math.max(0, opts.casesReserve));
+export function aideDuJour(opts: { casesNature: number; score: number; joursParSaison: number }): number {
+  const n = Math.min(AIDE_CASES_MAX, Math.max(0, opts.casesNature));
   const qualite = Math.min(1, Math.max(0, opts.score) / 50);
   return Math.round(((n * AIDE_PAR_CASE_SAISON) / Math.max(1, opts.joursParSaison)) * qualite * 100) / 100;
 }

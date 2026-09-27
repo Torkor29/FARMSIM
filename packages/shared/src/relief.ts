@@ -24,7 +24,8 @@
  * part, reste un lac — sauf au pied de la chute, où l'eau bouillonne.
  *
  * L'eau courante irrigue mieux qu'un lac (`bonusAmenagementCase`), et fait
- * tourner un moulin plus vite (`forceHydraulique`).
+ * tourner un moulin plus vite (`forceHydraulique`) — par un bief, depuis la
+ * campagne (`PORTEE_BIEF`).
  */
 
 export const NIVEAU_MAX = 3;
@@ -241,18 +242,26 @@ export function coteaux(cells: readonly CaseRelief[]): Set<string> {
  * La force de l'eau pour un moulin : ×1 à sec, ×2 au bord d'une eau qui
  * coule, ×3 au pied d'une cascade.
  */
+/**
+ * La portée d'un bief : le canal qui amène l'eau d'une rivière ou d'une
+ * cascade de la campagne jusqu'à la roue du moulin, sur la ferme.
+ */
+export const PORTEE_BIEF = 8;
+
 export function forceHydraulique(
   cells: readonly CaseRelief[],
   batiment: { originX: number; originY: number; w: number; h: number },
   hydro: Hydrologie = hydrologie(cells),
+  /** Au plus près sans bief : 2 cases d'une chute, 1 d'une eau qui coule. */
+  portee?: number,
 ): 1 | 2 | 3 {
   const { originX: x0, originY: y0, w, h } = batiment;
   const pres = (x: number, y: number, r: number) =>
     x >= x0 - r && x < x0 + w + r && y >= y0 - r && y < y0 + h + r;
-  if (hydro.chutes.some((c) => pres(c.x + c.dx, c.y + c.dy, 2))) return 3;
+  if (hydro.chutes.some((c) => pres(c.x + c.dx, c.y + c.dy, portee ?? 2))) return 3;
   for (const kk of hydro.courante) {
     const [x, y] = kk.split(",").map(Number) as [number, number];
-    if (pres(x, y, 1)) return 2;
+    if (pres(x, y, portee ?? 1)) return 2;
   }
   return 1;
 }

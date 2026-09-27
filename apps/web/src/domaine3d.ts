@@ -7,6 +7,7 @@ import {
   axePont,
   casesEmprise,
   cleCase,
+  dansBornes,
   defConstruction,
   empriseOrientee,
   hydrologie,
@@ -45,8 +46,8 @@ export type CaseTerrain = {
   niveau?: number;
   /** Un bois : sa plantation ou sa dernière coupe. */
   boiseDepuis?: string | null;
-  /** CULTURE ou NATURE : la réserve pousse plus haut, fleurit, et a sa limite en piquets. */
-  vocation?: string | null;
+  /** Une prairie semée de fleurs sauvages : l'herbe y monte et fleurit. */
+  fleurie?: boolean;
 };
 
 export type ObjetPose = { id: string; type: string; originX: number; originY: number; rotation: number };
@@ -61,7 +62,7 @@ export type DonneesDomaine = {
   faune?: Partial<Faune>;
 };
 
-export type LotAffiche = { id: string; x: number; y: number; w: number; h: number; etat: string; prix: number; prixNature?: number };
+export type LotAffiche = { id: string; x: number; y: number; w: number; h: number; etat: string; prix: number };
 
 export type EtatConstruction = {
   actif: boolean;
@@ -458,7 +459,16 @@ export type Domaine3d = {
   dispose(): void;
 };
 
-export function creerDomaine3d(opts: { shadows: boolean }): Domaine3d {
+export function creerDomaine3d(opts: {
+  shadows: boolean;
+  /**
+   * La campagne autour de l'île : pas de dalles sous les cases — le sol de la
+   * campagne est là —, donc l'eau affleure au lieu d'être creusée, et une
+   * case surélevée porte son propre dessus. Pas de friche, de grille ni de
+   * lots : seulement ce que le joueur a façonné.
+   */
+  campagne?: boolean;
+}): Domaine3d {
   const group = new THREE.Group();
   group.name = "domaine";
   const terrain = new THREE.Group();
@@ -716,10 +726,10 @@ export function creerDomaine3d(opts: { shadows: boolean }): Domaine3d {
       if (c.sol !== "PRE" || c.revetement || c.kind === "BUILDING" || sousObjet.has(cleCase(c.x, c.y))) continue;
       const { px, pz } = posDe(c.x, c.y);
       const TOP = TOP_PLAINE + altitudeDe(c.x, c.y);
-      /* Une réserve n'est pas fauchée : l'herbe y monte, graminées et
-         fleurs sauvages mêlées — coquelicots, bleuets, marguerites, boutons
+      /* Une prairie fleurie n'est pas fauchée : l'herbe y monte, graminées
+         et fleurs sauvages mêlées — coquelicots, bleuets, marguerites, boutons
          d'or. C'est à cela qu'on la reconnaît d'un coup d'œil. */
-      const sauvage = c.vocation === "NATURE";
+      const sauvage = !!c.fleurie;
       for (let k = 0; k < (sauvage ? 7 : 4); k++) {
         const u = (hash(c.x, c.y, k + 20) - 0.5) * 0.8;
         const v = (hash(c.y, c.x, k + 27) - 0.5) * 0.8;
@@ -769,31 +779,6 @@ export function creerDomaine3d(opts: { shadows: boolean }): Domaine3d {
         const ny = c.y + dy;
         const dedans = nx >= d.bornes.minX && ny >= d.bornes.minY && nx < d.bornes.maxX && ny < d.bornes.maxY;
         if (dedans && !possedees.has(cleCase(nx, ny))) bord(px, pz, dx, dy, altitudeDe(c.x, c.y));
-      }
-    }
-
-    /*
-     * La limite de la réserve : des piquets de châtaignier et une cordelette,
-     * là où la réserve touche autre chose qu'elle. On la voit toujours — c'est
-     * une frontière de gestion, pas un simple repère de construction.
-     */
-    const nature = new Set(d.cells.filter((c) => c.vocation === "NATURE").map((c) => cleCase(c.x, c.y)));
-    for (const c of d.cells) {
-      if (c.vocation !== "NATURE") continue;
-      const { px, pz } = posDe(c.x, c.y);
-      const h0 = TOP + altitudeDe(c.x, c.y);
-      for (const [dx, dy] of DIRS) {
-        if (nature.has(cleCase(c.x + dx, c.y + dy))) continue;
-        const ex = px + (dx * pas) / 2 - dx * 0.06;
-        const ez = pz + (dy * pas) / 2 - dy * 0.06;
-        const long = dx === 0;
-        for (const t of [-0.5, 0, 0.5]) {
-          const ox = long ? t * pas : 0;
-          const oz = long ? 0 : t * pas;
-          ajouterBoite(objets.pos, objets.col, ex + ox, h0 + 0.14, ez + oz, 0.05, 0.28, 0.05, t === 0 ? 0x8a6a43 : 0x7a5c38);
-          ajouterBoite(objets.pos, objets.col, ex + ox, h0 + 0.285, ez + oz, 0.06, 0.012, 0.06, 0xa98a5c);
-        }
-        ajouterBoite(objets.pos, objets.col, ex, h0 + 0.2, ez, long ? pas : 0.012, 0.012, long ? 0.012 : pas, 0xe0d2aa);
       }
     }
 
@@ -858,7 +843,7 @@ export function creerDomaine3d(opts: { shadows: boolean }): Domaine3d {
     origineEau = posDe(0, 0);
     pasEau = pas;
     const H = HAUTEUR_NIVEAU;
-    const NIVEAU = TOP - 0.07;
+    const NIVEAU = opts.campagne ? TOP + 0.014 : TOP - 0.07;
     const FOND = TOP - 0.2;
     const monde = (X: number, Y: number): [number, number] => [origineEau.px + X * pas, origineEau.pz + Y * pas];
     const tri = (t: Tableaux, a: number[], b: number[], c: number[], couleur: number) => {
@@ -914,6 +899,27 @@ export function creerDomaine3d(opts: { shadows: boolean }): Domaine3d {
             pose(px + dx * (pas / 2) + Math.abs(dy) * le, hy, pz + dy * (pas / 2) + Math.abs(dx) * le, h0 * 9, t, t * 0.75, t),
             r ? 0x8e8b84 : 0x7b7872,
           );
+        }
+      }
+    }
+
+    /*
+     * La campagne n'a pas de dalles : une case façonnée porte son propre
+     * dessus — l'herbe d'une butte, la litière d'un bois, une prairie en
+     * fleurs, le fond d'un bassin perché.
+     */
+    if (opts.campagne) {
+      for (const c of d.cells) {
+        const L = c.niveau ?? 0;
+        const { px, pz } = posDe(c.x, c.y);
+        const dh = L * H;
+        const couleur =
+          c.sol === "EAU" ? 0x4b3d2c : c.sol === "BOIS" ? ((c.x + c.y) % 2 ? 0x5a6b34 : 0x55652f) : c.fleurie ? ((c.x + c.y) % 2 ? 0x86ad4d : 0x7fa548) : 0x74ad48;
+        if (L > 0) {
+          const dessus = c.sol === "EAU" ? TOP + dh - 0.06 : TOP + dh;
+          ajouterBoite(falaises.pos, falaises.col, px, dessus - 0.09, pz, pas, 0.18, pas, couleur);
+        } else if (c.sol !== "EAU") {
+          ajouterBoite(falaises.pos, falaises.col, px, TOP + 0.004, pz, pas * 0.98, 0.012, pas * 0.98, couleur);
         }
       }
     }
@@ -993,7 +999,7 @@ export function creerDomaine3d(opts: { shadows: boolean }): Domaine3d {
         const a = monde(me.berge[k]!, me.berge[k + 2]!);
         const b = monde(me.berge[k + 3]!, me.berge[k + 5]!);
         const c = monde(me.berge[k + 6]!, me.berge[k + 8]!);
-        const y = TOP + dh + 0.002;
+        const y = TOP + dh + (opts.campagne ? 0.006 : 0.002);
         tri(berges, [a[0], y, a[1]], [c[0], y, c[1]], [b[0], y, b[1]], 0x6fa645);
       }
       // Le talus : de la berge au fond, des deux faces (la forme n'a pas de sens).
@@ -1002,10 +1008,16 @@ export function creerDomaine3d(opts: { shadows: boolean }): Domaine3d {
         const b = monde(me.contour[k + 2]!, me.contour[k + 3]!);
         const haut = TOP + dh + 0.004;
         const fond = FOND + dh;
-        tri(berges, [a[0], haut, a[1]], [b[0], haut, b[1]], [b[0], fond, b[1]], 0x6e5536);
-        tri(berges, [a[0], haut, a[1]], [b[0], fond, b[1]], [a[0], fond, a[1]], 0x5a4329);
-        tri(berges, [a[0], haut, a[1]], [b[0], fond, b[1]], [b[0], haut, b[1]], 0x6e5536);
-        tri(berges, [a[0], haut, a[1]], [a[0], fond, a[1]], [b[0], fond, b[1]], 0x5a4329);
+        // Dans la campagne l'eau affleure : pas de talus à creuser.
+        if (!opts.campagne) {
+          tri(berges, [a[0], haut, a[1]], [b[0], haut, b[1]], [b[0], fond, b[1]], 0x6e5536);
+          tri(berges, [a[0], haut, a[1]], [b[0], fond, b[1]], [a[0], fond, a[1]], 0x5a4329);
+          tri(berges, [a[0], haut, a[1]], [b[0], fond, b[1]], [b[0], haut, b[1]], 0x6e5536);
+          tri(berges, [a[0], haut, a[1]], [a[0], fond, a[1]], [b[0], fond, b[1]], 0x5a4329);
+        } else {
+          // Un liseré de terre humide au bord de l'eau.
+          tri(berges, [a[0], haut + 0.004, a[1]], [b[0], haut + 0.004, b[1]], [b[0], NIVEAU + dh + 0.001, b[1]], 0x5e4a30);
+        }
         // Des roseaux, çà et là, sur la berge.
         const mx = (me.contour[k]! + me.contour[k + 2]!) / 2;
         const my = (me.contour[k + 1]! + me.contour[k + 3]!) / 2;
@@ -1192,7 +1204,20 @@ export function creerDomaine3d(opts: { shadows: boolean }): Domaine3d {
     vider(construction);
     fantomeObjet = null;
     if (!e.actif) return;
-    if (limite.pos.length) {
+    /* Deux couches se partagent le mode construction : l'île (la ferme et ses
+       lots à vendre) et la campagne autour. Chacune ne dessine que les siens. */
+    const ici = (x: number, y: number) =>
+      opts.campagne ? !dansBornes(bornes, x, y) : dansBornes(bornes, x, y);
+    e = {
+      ...e,
+      fantome: e.fantome.filter((c) => ici(c.x, c.y)),
+      habitats: e.habitats?.filter((c) => ici(c.x, c.y)) ?? null,
+      berge: e.berge && ici(e.berge.x, e.berge.y) ? e.berge : null,
+      objetFantome: e.objetFantome && ici(e.objetFantome.x, e.objetFantome.y) ? e.objetFantome : null,
+      selection: opts.campagne ? null : e.selection,
+      lots: opts.campagne ? [] : e.lots,
+    };
+    if (limite.pos.length && !opts.campagne) {
       construction.add(maillageFacette(limite.pos, limite.col, { nom: "domaine-limite" }));
     }
     /*
@@ -1233,6 +1258,7 @@ export function creerDomaine3d(opts: { shadows: boolean }): Domaine3d {
 
     /* La grille, discrète, sur tout le domaine. */
     const lignes: number[] = [];
+    if (!opts.campagne) {
     for (let x = bornes.minX; x <= bornes.maxX; x++) {
       const a = coin(x, bornes.minY);
       const b = coin(x, bornes.maxY);
@@ -1246,6 +1272,7 @@ export function creerDomaine3d(opts: { shadows: boolean }): Domaine3d {
     const gGrille = new THREE.BufferGeometry();
     gGrille.setAttribute("position", new THREE.Float32BufferAttribute(lignes, 3));
     construction.add(new THREE.LineSegments(gGrille, matGrille));
+    }
 
     /* Les lots à vendre : un voile doré, un liseré, et leur prix. */
     for (const lot of e.lots) {
@@ -1269,10 +1296,7 @@ export function creerDomaine3d(opts: { shadows: boolean }): Domaine3d {
         ),
       );
       construction.add(new THREE.LineSegments(cadre, matBordLot));
-      const etiquette = etiquettePrix(
-        `${lot.prix.toLocaleString("fr-FR")} €`,
-        lot.prixNature ? `réserve ${lot.prixNature.toLocaleString("fr-FR")} €` : undefined,
-      );
+      const etiquette = etiquettePrix(`${lot.prix.toLocaleString("fr-FR")} €`);
       etiquette.position.set(a.x + w / 2, 1.2, a.z + d / 2);
       construction.add(etiquette);
     }
@@ -1282,7 +1306,7 @@ export function creerDomaine3d(opts: { shadows: boolean }): Domaine3d {
      * pas tant qu'un pont ou une rampe ne les y mène — mieux vaut le voir
      * avant de semer.
      */
-    if (coupees.length) {
+    if (coupees.length && !opts.campagne) {
       const geo = new THREE.PlaneGeometry(pas * 0.9, pas * 0.9).rotateX(-Math.PI / 2);
       const inst = new THREE.InstancedMesh(geo, matCoupee, coupees.length);
       const m = new THREE.Matrix4();
