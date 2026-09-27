@@ -3,6 +3,8 @@ import path from "node:path";
 import * as THREE from "three";
 
 import { animerDecor, teinterSaison, type ManifesteDecor } from "../modeles-decor";
+import { SCENES } from "../scenes-decor";
+import { allumerLumieres } from "../lumieres";
 
 /**
  * La forge d'assets : des recettes Blender versionnées, des `.glb` livrés, et
@@ -27,7 +29,7 @@ describe("les décors de la forge", () => {
 
   it("sont au manifeste", () => {
     expect(MANIFESTE.version).toBe(1);
-    for (const id of ["nature", "moulin", "puits", "serre", "etal", "epouvantail", "fete", "sol"]) {
+    for (const id of ["nature", "moulin", "puits", "serre", "etal", "epouvantail", "fete", "sol", "jardin", "source_chaude"]) {
       expect(MANIFESTE.assets[id]).toBeDefined();
     }
   });
@@ -111,5 +113,31 @@ describe("animerDecor", () => {
     animerDecor(racine, 2);
     expect(ailes.rotation.z).not.toBe(0);
     expect(treuil.rotation.x).not.toBe(0);
+  });
+});
+
+describe("les scènes composées", () => {
+  it.each(Object.entries(SCENES))("%s : chaque pièce posée existe au manifeste", (_id, scene) => {
+    for (const pose of scene.poses) {
+      expect(MANIFESTE.assets[pose.asset]?.pieces[pose.piece]).toBeDefined();
+    }
+  });
+});
+
+describe("allumerLumieres", () => {
+  it("allume les fenêtres la nuit, les éteint le jour, et fait briller les lanternes", () => {
+    const fenetre = new THREE.MeshStandardMaterial({ emissive: 0xffb85c, emissiveIntensity: 0 });
+    fenetre.userData.allumable = "fenetre";
+    const lanterne = new THREE.MeshStandardMaterial({ name: "lumiere", emissive: 0xffc86b, emissiveIntensity: 2 });
+    const mur = new THREE.MeshStandardMaterial({ emissiveIntensity: 0 });
+    const g = new THREE.Group();
+    for (const m of [fenetre, lanterne, mur]) g.add(new THREE.Mesh(new THREE.BufferGeometry(), m));
+    allumerLumieres(g, 1);
+    expect(fenetre.emissiveIntensity).toBeGreaterThan(1);
+    expect(lanterne.emissiveIntensity).toBeGreaterThan(2);
+    expect(mur.emissiveIntensity).toBe(0);
+    allumerLumieres(g, 0);
+    expect(fenetre.emissiveIntensity).toBe(0);
+    expect(lanterne.emissiveIntensity).toBeLessThan(1);
   });
 });

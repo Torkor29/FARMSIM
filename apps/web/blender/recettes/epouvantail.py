@@ -12,8 +12,8 @@ from forge.formes import rot, vers
 ASSET = {
     "titre": "Épouvantail",
     "echelle": 1.0,
-    "budget_triangles": 5000,
-    "budget_appels": 10,
+    "budget_triangles": 7000,
+    "budget_appels": 12,
     "etiquettes": ["repere", "fete-des-recoltes"],
 }
 
@@ -74,6 +74,10 @@ def construire(a):
                    m=rot(x=0.12, y=-0.1))
             a.tour("peinture-rouge", [(0.165, 0.05), (0.162, 0.1)], cotes=18, fermer=False, lisse=True,
                    m=rot(x=0.12, y=-0.1))
+        # Des citrouilles à ses pieds.
+        a.citrouille("citrouille", (-0.35, -0.25, 0), 0.2, graine=1)
+        a.citrouille("citrouille", (0.3, -0.3, 0), 0.14, graine=2)
+        a.citrouille("peinture-blanche", (-0.1, -0.45, 0), 0.11, graine=3)
         # Un corbeau perché au bout du bras.
         corbeau(a, (0.52, 0.06, 1.47))
 

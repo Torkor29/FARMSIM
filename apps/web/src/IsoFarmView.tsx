@@ -64,9 +64,9 @@ import {
   type MachineRig,
 } from "./machines3d";
 import { createSpray } from "./particles";
-import { ambiance, heureCourante, melange, meteoCourante, type Ambiance, type Saison } from "./ambiance";
+import { ambiance, heureCourante, meteoCourante, type Ambiance, type Saison } from "./ambiance";
 import { creerMeteo3d } from "./meteo3d";
-import { allumerLumieres } from "./lumieres";
+import { allumerLumieres, appliquerAmbiance } from "./lumieres";
 import { buildCharacter } from "./character-mesh";
 import { initialQuality, makeFrameGovernor, qualityForContext, type RenderQuality } from "./render-quality";
 import {
@@ -1419,27 +1419,12 @@ export function IsoFarmView({
     let ambianceCalculee = -1;
     const calculerAmbiance = (saison: string): Ambiance =>
       ambiance(heureCourante(saison as Saison), saison as Saison, meteoCourante(weatherRef.current));
-    const appliquerAmbiance = (a: Ambiance, eclair = 0) => {
-      hemi.color.setHex(melange(a.hemi.ciel, 0xeef2ff, eclair));
-      hemi.groundColor.setHex(a.hemi.sol);
-      hemi.intensity = a.hemi.intensite + eclair * 1.6;
-      ambient.color.setHex(a.ambiante.couleur);
-      ambient.intensity = a.ambiante.intensite + eclair * 0.9;
-      sun.color.setHex(a.astre.couleur);
-      sun.intensity = a.astre.intensite;
-      const [dx, dy, dz] = a.astre.direction;
-      sun.position.set(dx * 30, dy * 30, dz * 30);
-      bounce.color.setHex(a.rebond.couleur);
-      bounce.intensity = a.rebond.intensite;
-      if (scene.fog instanceof THREE.Fog) {
-        scene.fog.color.setHex(melange(a.brume.couleur, 0xdfe6f4, eclair * 0.6));
-        scene.fog.near = a.brume.proche;
-        scene.fog.far = a.brume.loin;
-      }
-    };
+    const lumieres = { hemi, ambient, sun, bounce };
+    const appliquer = (a: Ambiance, eclair = 0) =>
+      appliquerAmbiance(lumieres, a, eclair, scene.fog instanceof THREE.Fog ? scene.fog : null);
     const eclairerPour = (saison: string) => {
       ambianceDuMoment = calculerAmbiance(saison);
-      appliquerAmbiance(ambianceDuMoment);
+      appliquer(ambianceDuMoment);
     };
     // Pluie, éclaboussures, neige et éclairs, dans la scène (voir `meteo3d.ts`).
     const meteo3d = creerMeteo3d({ pixelRatio: quality.pixelRatio, sobre: !quality.shadows });
@@ -3787,7 +3772,7 @@ export function IsoFarmView({
         centreMeteo,
         Math.max(30, (camera.right - camera.left) * 1.7),
       );
-      appliquerAmbiance(ambianceDuMoment, eclair);
+      appliquer(ambianceDuMoment, eclair);
       if (t - lampesVerifiees > 1) {
         lampesVerifiees = t;
         allumerLumieres(scene, ambianceDuMoment.lampes);

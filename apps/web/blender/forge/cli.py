@@ -57,7 +57,8 @@ def etat(ident: str, chemin: str, manifeste: dict) -> str:
     entree = manifeste["assets"].get(ident)
     if not entree or not os.path.exists(os.path.join(sortie.SORTIE, f"{ident}.glb")):
         return "absent"
-    return "à jour" if entree.get("empreinte") == sortie.empreinte(chemin) else "périmé"
+    deps = charger(chemin).ASSET.get("dependances", ())
+    return "à jour" if entree.get("empreinte") == sortie.empreinte(chemin, deps) else "périmé"
 
 
 def fabriquer(ident: str, chemin: str, args) -> dict:
@@ -102,7 +103,7 @@ def fabriquer(ident: str, chemin: str, args) -> dict:
             if ao:
                 cuisson.cuire_ao(a, echantillons=16 if args.vite else 48,
                                  distance=info.get("ao_distance", 0.6))
-            info["empreinte"] = sortie.empreinte(chemin)
+            info["empreinte"] = sortie.empreinte(chemin, info.get("dependances", ()))
             glb = sortie.exporter(a, compresser=not args.brut, ao=ao)
             sortie.inscrire(a, info, rapports, glb, chemin)
             rapport["exporte"] = True

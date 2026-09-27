@@ -19,7 +19,12 @@ import bpy
 from .silence import silence
 
 
-def cuire_ao(atelier, echantillons=48, distance=0.6, plancher=0.55, degrade=0.12):
+# Les feuillages sont éclairés par le dessus : leur dessous s'assombrit plus
+# que le reste (c'est ce qui donne le volume des arbres des références).
+FEUILLAGES = ("feuillage", "sapin", "lavande")
+
+
+def cuire_ao(atelier, echantillons=48, distance=0.6, plancher=0.55, degrade=0.12, dessous_feuillage=0.3):
     objets = [o for p in atelier.pieces.values() for o in p.objets]
     if not objets:
         return
@@ -59,10 +64,18 @@ def cuire_ao(atelier, echantillons=48, distance=0.6, plancher=0.55, degrade=0.12
         for o in piece.objets:
             attr = o.data.color_attributes["ao"]
             mw = o.matrix_world
+            mat = o.data.materials[0].name if o.data.materials else ""
+            feuillage = mat.startswith(FEUILLAGES)
+            if feuillage:
+                oz = [(mw @ v.co).z for v in o.data.vertices]
+                oz0, oh = min(oz), max(max(oz) - min(oz), 1e-3)
             for i, v in enumerate(o.data.vertices):
                 ao = attr.data[i].color[0]
-                t = ((mw @ v.co).z - z0) / h
+                z = (mw @ v.co).z
+                t = (z - z0) / h
                 f = (plancher + (1 - plancher) * ao) * (1 - degrade * (1 - min(1.0, t * 2.5)))
+                if feuillage:
+                    f *= 1 - dessous_feuillage * (1 - (z - oz0) / oh) ** 1.5
                 attr.data[i].color = (f, f, f, 1.0)
 
     for piece in atelier.pieces.values():

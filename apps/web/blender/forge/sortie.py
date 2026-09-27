@@ -29,10 +29,14 @@ MANIFESTE = os.path.join(SORTIE, "manifest.json")
 DEPOT = os.path.normpath(os.path.join(BLENDER, "..", "..", ".."))
 
 
-def empreinte(recette: str) -> str:
-    """L'empreinte de la recette et de toute la forge : si elle change, le .glb est périmé."""
+def empreinte(recette: str, dependances=()) -> str:
+    """
+    L'empreinte de la recette, des recettes qu'elle réutilise (`dependances`
+    de son ASSET) et de toute la forge : si elle change, le .glb est périmé.
+    """
     h = hashlib.sha256()
-    fichiers = [recette] + sorted(
+    dossier = os.path.dirname(recette)
+    fichiers = [recette] + [os.path.join(dossier, f"{d}.py") for d in dependances] + sorted(
         os.path.join(ICI, f) for f in os.listdir(ICI) if f.endswith(".py")
     )
     for f in fichiers:

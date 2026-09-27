@@ -19,6 +19,8 @@ from dataclasses import dataclass, field
 
 from mathutils import Vector
 
+AIRE_MIN = 1.5e-3  # m², en unités du jeu
+
 
 @dataclass
 class Rapport:
@@ -76,7 +78,11 @@ def coplanaires(objets, max_rapports=6) -> list[str]:
     for nom, tri in _triangles_monde(objets):
         n = (tri[1] - tri[0]).cross(tri[2] - tri[0])
         aire = n.length / 2
-        if aire < 1e-6:
+        # Un brin, une tige, un pétale : quelques millimètres de large. Deux
+        # brins qui se croisent presque à plat se recouvrent sur moins d'un
+        # pixel — pas de scintillement visible. On ne juge que les surfaces
+        # d'au moins 15 cm² (à l'échelle du jeu).
+        if aire < AIRE_MIN:
             continue
         n.normalize()
         d = n.dot(tri[0])

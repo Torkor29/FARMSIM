@@ -9,13 +9,15 @@ tourné vers la caméra).
 import math
 
 from forge.formes import rot
+from recettes.jardin import sac
 
 ASSET = {
     "titre": "Moulin à vent",
     "echelle": 1.0,
-    "budget_triangles": 12000,
-    "budget_appels": 14,
+    "budget_triangles": 16000,
+    "budget_appels": 20,
     "etiquettes": ["repere", "fete-des-recoltes"],
+    "dependances": ["jardin"],
 }
 
 H_TOUR = 4.3
@@ -51,7 +53,21 @@ def construire(a):
         a.boite("fer", (0.08, 0.05, 0.08), (0.22, yp - 0.09, 0.95), biseau=0.02)
         a.boite("pierre", (1.05, 0.4, 0.12), (0, yp - 0.12, 0.24), biseau=0.04)
 
-        # Deux fenêtres à volets.
+        # Devant la porte : un chemin de dalles, des sacs de farine, un tonneau.
+        a.dalles("pierre", 1.0, nb=9, epais=0.06, graine=5, hauteur=0.0,
+                 contour=[(-0.55, -1.3), (0.55, -1.3), (0.6, -2.6), (-0.6, -2.6)])
+        sac(a, (0.85, -1.35, 0), 0.4, 1)
+        sac(a, (1.15, -1.0, 0), -0.6, 2)
+        sac(a, (0.95, -1.05, 0.33), 1.2, 3)
+        a.tour("bois", [(0.24, 0.0), (0.28, 0.16), (0.29, 0.3), (0.28, 0.44), (0.24, 0.6)],
+               centre=(-0.95, -1.2, 0), cotes=14, lisse=True)
+        for z in (0.1, 0.5):
+            a.tore("fer", (-0.95, -1.2, z), 0.265, 0.01, cotes=16, section=4, aplatir=1.6)
+        a.cylindre("bois-sombre", 0.23, 0.58, 0.62, centre=(-0.95, -1.2), cotes=14, biseau=0.01)
+        for k in range(5):
+            a.touffe((-1.3 + k * 0.1, -1.5 + (k % 2) * 0.2, 0), graine=k, brins=6)
+
+        # Deux fenêtres à volets, chacune avec sa jardinière fleurie.
         for ang, z in ((math.radians(-60), 2.5), (math.radians(40), 3.3)):
             r = rayon_a(z)
             with a.repere((math.sin(ang) * r, -math.cos(ang) * r, z), rot_z=ang):
@@ -59,6 +75,11 @@ def construire(a):
                 a.boite("ombre", (0.34, 0.06, 0.44), (0, -0.07, 0), biseau=0.01)
                 for s in (-1, 1):
                     a.boite("peinture-verte", (0.2, 0.05, 0.56), (s * 0.37, -0.08, 0), rot_z=s * 0.25, biseau=0.015)
+                a.boite("bois", (0.56, 0.16, 0.12), (0, -0.12, -0.36), biseau=0.02)
+                for k in range(5):
+                    x = -0.2 + k * 0.1
+                    a.boule("feuillage", (x, -0.13, -0.27), 0.06, finesse=1)
+                    a.boule("coquelicot" if k % 2 else "rose", (x + 0.02, -0.18, -0.24), 0.03, finesse=1)
 
         # Le bonnet : une corniche, puis un toit de bardeaux en cloche.
         a.cylindre("bois-sombre", R_HAUT + 0.14, H_TOUR - 0.05, H_TOUR + 0.14, cotes=18, biseau=0.04)

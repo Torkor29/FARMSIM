@@ -393,11 +393,13 @@ class Formes:
                   [rayon * 0.1, rayon * 0.08, rayon * 0.06], cotes=5)
 
     def dalles(self, mat, rayon, nb=14, jeu=0.05, epais=0.08, graine=0, contour=None,
-               hauteur=0.0, mat2: str | None = None):
+               hauteur=0.0, mat2: str | None = None, trou=None):
         """
         Un dallage de pierres plates irrégulières (cellules de Voronoï) dans
-        un disque de `rayon` (ou dans `contour`, un polygone convexe) :
-        chaque dalle en retrait de `jeu`, biseautée, à hauteur un peu variable.
+        un disque de `rayon` (ou dans `contour`, un polygone) : chaque dalle
+        en retrait de `jeu`, biseautée, à hauteur un peu variable. `trou` (un
+        polygone) laisse la place d'un bassin : les dalles dont le centre y
+        tombe sont retirées, les autres rognées à son bord.
         """
         rnd = random.Random(graine)
         if contour is None:
@@ -406,11 +408,15 @@ class Formes:
         # Des germes répartis sans trop se toucher (tirage de Poisson naïf).
         germes = []
         essais = 0
-        dmin = rayon * 1.6 / math.sqrt(nb)
+        dmin = math.sqrt(_aire(contour) / nb) * 0.8
+        # Les germes se tirent dans la boîte du contour (pas du disque) : un
+        # dallage peut être une allée loin de l'origine.
+        x0, x1 = min(q[0] for q in contour), max(q[0] for q in contour)
+        y0, y1 = min(q[1] for q in contour), max(q[1] for q in contour)
         while len(germes) < nb and essais < nb * 60:
             essais += 1
-            p = (rnd.uniform(-rayon, rayon), rnd.uniform(-rayon, rayon))
-            if not _dans(contour, p):
+            p = (rnd.uniform(x0, x1), rnd.uniform(y0, y1))
+            if not _dans(contour, p) or (trou is not None and _dans(trou, p)):
                 continue
             if all((p[0] - q[0]) ** 2 + (p[1] - q[1]) ** 2 > dmin * dmin for q in germes):
                 germes.append(p)
@@ -429,6 +435,11 @@ class Formes:
                     break
             if len(cellule) < 3:
                 continue
+            if trou is not None:
+                # Rognée au bord du bassin : on retire les sommets qui y tombent.
+                cellule = [q for q in cellule if not _dans(trou, q)]
+                if len(cellule) < 3:
+                    continue
             # Retrait sur le bord extérieur aussi, et coins adoucis.
             cx = sum(p[0] for p in cellule) / len(cellule)
             cy = sum(p[1] for p in cellule) / len(cellule)
@@ -463,6 +474,11 @@ def contour_organique(rayon, graine=0, points=28, ampleur=0.16, lobes=5, aplatir
                                     + 0.2 * math.sin(a * 2 + phases[2])))
         out.append((math.cos(a) * r * aplatir[0], math.sin(a) * r * aplatir[1]))
     return out
+
+
+def _aire(poly) -> float:
+    return abs(sum(poly[i][0] * poly[(i + 1) % len(poly)][1] - poly[(i + 1) % len(poly)][0] * poly[i][1]
+                   for i in range(len(poly)))) / 2
 
 
 def _norme(x, y):

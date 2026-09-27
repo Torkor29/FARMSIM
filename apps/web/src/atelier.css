@@ -197,3 +197,14 @@ body {
   margin: 0 auto;
   border-radius: 12px;
 }
+
+.atelier-heure {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  font-weight: 700;
+  min-width: 320px;
+}
+.atelier-heure input {
+  flex: 1;
+}

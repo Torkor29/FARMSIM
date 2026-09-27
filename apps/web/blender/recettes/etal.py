@@ -9,12 +9,15 @@ bottes de foin, paniers). Face à la caméra (−Y).
 import math
 import random
 
+from recettes.jardin import lampion, sac
+
 ASSET = {
     "titre": "Étals de marché",
     "echelle": 1.0,
-    "budget_triangles": 9000,
-    "budget_appels": 14,
+    "budget_triangles": 13000,
+    "budget_appels": 18,
     "etiquettes": ["fete-des-recoltes", "village"],
+    "dependances": ["jardin"],
 }
 
 L, P = 2.0, 1.1
@@ -65,6 +68,24 @@ def etal(a, toile, graine):
     a.boite("paille", (0.7, 0.42, 0.4), (L / 2 + 0.25, -P / 2 - 0.05, 0.2), rot_z=0.2, biseau=0.08)
     a.citrouille("citrouille", (-L / 2 - 0.1, -P / 2 - 0.2, 0), 0.26, graine=graine)
     a.citrouille("citrouille", (-L / 2 + 0.25, -P / 2 - 0.35, 0), 0.18, graine=graine + 4)
+    # Des lampions pendus au bord de l'auvent : ils luisent le soir.
+    for x in (-0.75, 0.0, 0.75):
+        with a.repere((x, -P / 2 - 0.08, 1.42), echelle=0.68):
+            lampion(a)
+    # Des pots de miel alignés au bord du comptoir.
+    for k in range(5):
+        x = -0.85 + k * 0.1
+        a.cylindre("tournesol", 0.04, 0.9, 0.99, centre=(x, -P / 2 + 0.12), cotes=8, biseau=0.01)
+        a.cylindre("toile-rouge" if k % 2 else "toile-creme", 0.045, 0.99, 1.01, centre=(x, -P / 2 + 0.12),
+                   cotes=8, biseau=0.005)
+    # Des sacs de grain au pied, côté gauche, et une ardoise appuyée.
+    sac(a, (-L / 2 - 0.35, 0.15, 0), 0.5, graine)
+    sac(a, (-L / 2 - 0.3, 0.55, 0), -0.4, graine + 1)
+    with a.repere((0.35, -P / 2 - 0.25, 0), rot_z=0.15):
+        a.boite("bois", (0.42, 0.04, 0.55), (0, 0, 0.27), biseau=0.015, m=None)
+        a.boite("ombre", (0.34, 0.02, 0.44), (0, -0.025, 0.28), biseau=0.005)
+        for k in range(3):
+            a.boite("marguerite", (0.22 - k * 0.05, 0.01, 0.02), (0, -0.04, 0.4 - k * 0.08), biseau=0.0)
     # Un panier.
     a.tour("paille-sombre", [(0.14, 0.0), (0.2, 0.2), (0.21, 0.22), (0.19, 0.22)],
            centre=(L / 2 + 0.2, -P / 2 - 0.1, 0.4), cotes=12, lisse=False)

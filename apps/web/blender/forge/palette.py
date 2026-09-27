@@ -71,8 +71,15 @@ COULEURS: dict[str, tuple] = {
     "toile-orange": (0xec8a37, 0.95, 0.0, 0.0, 1.0, True),
     "toile-bleue": (0x6f9fd0, 0.95, 0.0, 0.0, 1.0, True),
     "toile-jute": (0xc8a676, 0.95, 0.0, 0.0, 1.0, True),
+    "bambou": (0xa9b35c, 0.6, 0.0, 0.0, 1.0, False),
+    "mousse": (0x7f9a3a, 0.95, 0.0, 0.0, 1.0, False),
+    "vapeur": (0xffffff, 1.0, 0.0, 0.0, 0.28, False),
+    "jute": (0xcfb383, 0.95, 0.0, 0.0, 1.0, False),
+    "pot": (0xc97a4c, 0.9, 0.0, 0.0, 1.0, False),
     # Ce qui brille la nuit
     "lumiere": (0xffc86b, 0.5, 0.0, 2.5, 1.0, False),
+    # Le papier d'un lampion : orange, qui luit doucement même le jour
+    "lampion": (0xf28a3a, 0.8, 0.0, 0.9, 1.0, False),
 }
 
 # Les couleurs de saison : seules les matières qui changent sont listées.
@@ -91,6 +98,7 @@ SAISONS: dict[str, dict[str, int]] = {
         "herbe-sombre": 0x9a9a48,
         "brin": 0xc2a857,
         "roseau": 0xb0955a,
+        "mousse": 0x9a8a3a,
     },
     "hiver": {
         "feuillage": 0xdfe8ec,

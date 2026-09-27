@@ -52,6 +52,10 @@ scripts/forge.sh liste
 scripts/forge.sh construire moulin --apercu
 ```
 
+Lumière du jour et météo : `?heure=19.2` (coucher), `?vitesse=60` (un jour en
+une minute et demie), `?meteo=RAIN|STORM|SNOW` — dans le jeu comme dans
+l'atelier `decor.html` (`?scene=fete-des-recoltes`, `?scene=source-chaude`).
+
 Voir [`apps/web/blender/README.md`](./apps/web/blender/README.md) et la R&D
 [`docs/FORGE_ASSETS.md`](./docs/FORGE_ASSETS.md).
 

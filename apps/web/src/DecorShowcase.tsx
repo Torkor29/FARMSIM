@@ -1,5 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import * as THREE from "three";
+import { ambiance, formatHeure, momentDuJour, type Meteo, type Saison } from "./ambiance";
+import { allumerLumieres, appliquerAmbiance } from "./lumieres";
+import { creerMeteo3d } from "./meteo3d";
 import {
   animerDecor,
   chargerManifeste,
@@ -9,29 +12,47 @@ import {
   type ManifesteDecor,
   type SaisonDecor,
 } from "./modeles-decor";
+import { SCENES, type SceneDecor } from "./scenes-decor";
 
 /**
- * Atelier — les décors de la forge.
+ * Atelier — les décors de la forge, sous la lumière du jeu.
  *
- * Page de travail, hors jeu. La forge (`blender/atelier.py`) rend déjà un
- * aperçu Cycles de chaque pièce ; celle-ci montre la **vraie** chose : le
- * `.glb` compressé, chargé par le chargeur du jeu, sous l'éclairage du jeu,
- * avec l'occlusion cuite dans les sommets, les couleurs de saison et les
- * nœuds animés. C'est l'acceptation finale d'un décor.
+ * Page de travail, hors jeu. On y juge un décor comme il sera en jeu : le
+ * `.glb` livré, chargé par le chargeur du jeu, éclairé par **la même
+ * ambiance** que la ferme (`ambiance.ts` + `lumieres.ts`) — à l'heure qu'on
+ * veut, par le temps qu'on veut, pluie et neige comprises.
  *
- * Pilotée par l'URL (les pilotes automatiques y arrivent mieux qu'aux clics) :
+ * Pilotée aussi par l'URL (les pilotes automatiques y arrivent mieux qu'aux
+ * clics) :
  *
- *   ?asset=moulin         n'affiche qu'un asset
- *   ?piece=moulin         ouvre une pièce en grand, qui tourne
- *   ?saison=automne       printemps | automne | hiver (été par défaut)
- *   ?nuit                 l'éclairage de nuit : ce qui est émissif brille
+ *   ?asset=moulin               n'affiche qu'un asset
+ *   ?piece=moulin               ouvre une pièce en grand, qui tourne
+ *   ?scene=fete-des-recoltes    une scène composée (voir `scenes-decor.ts`)
+ *   ?heure=19.2                 l'heure du jeu (13 par défaut)
+ *   ?meteo=RAIN                 CLEAR | CLOUDY | RAIN | STORM | SNOW
+ *   ?saison=AUTUMN              SPRING | SUMMER | AUTUMN | WINTER
+ *   ?defile                     le jour passe : une heure de jeu par seconde
  *
- * Une seule WebGLRenderer pour toute la page : les vignettes sont rendues
- * l'une après l'autre puis copiées dans des canevas 2D. Un navigateur ne
- * tient qu'une quinzaine de contextes WebGL à la fois.
+ * Une seule WebGLRenderer pour les vignettes : elles sont rendues l'une après
+ * l'autre puis copiées dans des canevas 2D (un navigateur ne tient qu'une
+ * quinzaine de contextes WebGL).
  */
 
-const SAISONS: (SaisonDecor | "ete")[] = ["ete", "printemps", "automne", "hiver"];
+const SAISONS: Saison[] = ["SPRING", "SUMMER", "AUTUMN", "WINTER"];
+const NOM_SAISON: Record<Saison, string> = { SPRING: "printemps", SUMMER: "été", AUTUMN: "automne", WINTER: "hiver" };
+const TEINTE_SAISON: Record<Saison, SaisonDecor | undefined> = {
+  SPRING: "printemps",
+  SUMMER: undefined,
+  AUTUMN: "automne",
+  WINTER: "hiver",
+};
+const METEOS: { v: Meteo; nom: string }[] = [
+  { v: "CLEAR", nom: "beau" },
+  { v: "CLOUDY", nom: "nuageux" },
+  { v: "RAIN", nom: "pluie" },
+  { v: "STORM", nom: "orage" },
+  { v: "SNOW", nom: "neige" },
+];
 const VIGNETTE = 260;
 
 interface Carte {
@@ -40,32 +61,65 @@ interface Carte {
   info: AssetDecor;
 }
 
+interface Reglage {
+  heure: number;
+  meteo: Meteo;
+  saison: Saison;
+}
+
 function params() {
   return new URLSearchParams(typeof location === "undefined" ? "" : location.search);
 }
 
-/** La scène et les lumières du jeu (`IsoFarmView`), de jour ou de nuit. */
-function scenePlateau(nuit: boolean) {
+/** La scène d'atelier : lumières du jeu, sol, et au besoin une île sur l'eau. */
+function plateau(ile: number | null) {
   const scene = new THREE.Scene();
-  scene.background = new THREE.Color(nuit ? 0x2c3f6e : 0xcfe8f2);
-  const hemi = new THREE.HemisphereLight(nuit ? 0x5a6fa8 : 0xffffff, nuit ? 0x1a2238 : 0x9ab87e, nuit ? 1.1 : 1.25);
-  const ambient = new THREE.AmbientLight(nuit ? 0x4a5a90 : 0xfff6e4, nuit ? 0.7 : 0.65);
-  const sun = new THREE.DirectionalLight(nuit ? 0x9fb4ff : 0xfff2d4, nuit ? 0.8 : 1.55);
-  sun.position.set(14, 24, 10);
+  const hemi = new THREE.HemisphereLight();
+  const ambient = new THREE.AmbientLight();
+  const sun = new THREE.DirectionalLight();
   sun.castShadow = true;
-  sun.shadow.mapSize.set(1024, 1024);
+  sun.shadow.mapSize.set(2048, 2048);
   sun.shadow.bias = -0.0006;
-  const bounce = new THREE.DirectionalLight(0xbfe0c8, nuit ? 0.1 : 0.4);
+  const bounce = new THREE.DirectionalLight();
   bounce.position.set(-10, 6, -8);
-  scene.add(hemi, ambient, sun, bounce);
-  const sol = new THREE.Mesh(
-    new THREE.CircleGeometry(40, 48),
-    new THREE.MeshStandardMaterial({ color: nuit ? 0x2f4a3a : 0x9cc865, roughness: 1 }),
-  );
-  sol.rotation.x = -Math.PI / 2;
-  sol.receiveShadow = true;
-  scene.add(sol);
-  return { scene, sun };
+  scene.add(hemi, ambient, sun, sun.target, bounce);
+  const lumieres = { hemi, ambient, sun, bounce };
+  const herbe = new THREE.MeshStandardMaterial({ color: 0x9cc865, roughness: 1 });
+  if (ile) {
+    // Une île : dessus d'herbe, liseré de sable, sur une eau turquoise.
+    const dessus = new THREE.Mesh(new THREE.CylinderGeometry(ile, ile * 1.02, 0.5, 64), herbe);
+    dessus.position.y = -0.25;
+    const sable = new THREE.Mesh(
+      new THREE.CylinderGeometry(ile * 1.05, ile * 1.1, 0.5, 64),
+      new THREE.MeshStandardMaterial({ color: 0xe9d9a4, roughness: 1 }),
+    );
+    sable.position.y = -0.37;
+    const eau = new THREE.Mesh(
+      new THREE.CircleGeometry(ile * 4, 64),
+      new THREE.MeshStandardMaterial({ color: 0x5fc3d4, roughness: 0.25, metalness: 0.05 }),
+    );
+    eau.rotation.x = -Math.PI / 2;
+    eau.position.y = -0.45;
+    for (const m of [dessus, sable, eau]) m.receiveShadow = true;
+    scene.add(dessus, sable, eau);
+  } else {
+    const sol = new THREE.Mesh(new THREE.CircleGeometry(40, 48), herbe);
+    sol.rotation.x = -Math.PI / 2;
+    sol.receiveShadow = true;
+    scene.add(sol);
+  }
+  const fond = new THREE.Color();
+  const eclairer = (r: Reglage, eclair = 0) => {
+    const a = ambiance(r.heure, r.saison, r.meteo);
+    appliquerAmbiance(lumieres, a, eclair, null, 40);
+    // Le fond : le ciel de jour, qui glisse vers le bas du ciel du moment.
+    fond.setHex(0xcfe8f2).lerp(new THREE.Color(a.ciel.bas), Math.min(1, a.ciel.voile));
+    scene.background = fond;
+    herbe.color.setHex(r.saison === "WINTER" ? 0xe4ecef : r.saison === "AUTUMN" ? 0xb4b05a : 0x9cc865);
+    allumerLumieres(scene, a.lampes);
+    return a;
+  };
+  return { scene, sun, eclairer };
 }
 
 /** Cadre la caméra orthographique iso (celle du jeu) sur l'objet. */
@@ -87,10 +141,11 @@ function cadrer(camera: THREE.OrthographicCamera, sun: THREE.DirectionalLight, o
   const s = sun.shadow.camera as THREE.OrthographicCamera;
   s.left = s.bottom = -r * 1.6;
   s.right = s.top = r * 1.6;
+  s.near = 0.5;
+  s.far = 120;
   s.updateProjectionMatrix();
   sun.target.position.copy(centre);
-  sun.position.set(centre.x + 14, centre.y + 24, centre.z + 10);
-  sun.target.updateMatrixWorld();
+  return { centre, r };
 }
 
 async function pieceSeule(url: string, nom: string): Promise<THREE.Object3D> {
@@ -108,18 +163,48 @@ async function pieceSeule(url: string, nom: string): Promise<THREE.Object3D> {
   return copie;
 }
 
+async function monterScene(s: SceneDecor, manifeste: ManifesteDecor, saison: Saison): Promise<THREE.Group> {
+  const g = new THREE.Group();
+  const objets = await Promise.all(
+    s.poses.map(async (pose) => {
+      const info = manifeste.assets[pose.asset];
+      if (!info) return null;
+      const o = await pieceSeule(info.url, pose.piece).catch(() => null);
+      if (!o) return null;
+      o.position.set(pose.x, pose.y ?? 0, pose.z);
+      o.rotation.y = pose.rot ?? 0;
+      o.scale.setScalar(pose.echelle ?? 1);
+      const t = TEINTE_SAISON[saison];
+      teinterSaison(o, t ? info.saisons[t] : undefined);
+      return o;
+    }),
+  );
+  for (const o of objets) if (o) g.add(o);
+  return g;
+}
+
 export function DecorShowcase() {
   const p = params();
   const [manifeste, setManifeste] = useState<ManifesteDecor | null>(null);
   const [erreur, setErreur] = useState<string | null>(null);
-  const [saison, setSaison] = useState<SaisonDecor | "ete">((p.get("saison") as SaisonDecor) ?? "ete");
-  const [nuit, setNuit] = useState(p.has("nuit"));
+  const [heure, setHeure] = useState(() => Number(p.get("heure") ?? 13) || 13);
+  const [meteo, setMeteo] = useState<Meteo>(() => (p.get("meteo")?.toUpperCase() as Meteo) || "CLEAR");
+  const [saison, setSaison] = useState<Saison>(() => (p.get("saison")?.toUpperCase() as Saison) || "SUMMER");
+  const [defile, setDefile] = useState(p.has("defile"));
   const [ouverte, setOuverte] = useState<Carte | null>(null);
+  const [scene, setScene] = useState<string | null>(p.get("scene"));
   const seul = p.get("asset");
 
   useEffect(() => {
     chargerManifeste().then(setManifeste, (e) => setErreur(String(e)));
   }, []);
+
+  // Le jour qui passe : une heure de jeu par seconde.
+  useEffect(() => {
+    if (!defile) return;
+    const id = window.setInterval(() => setHeure((h) => (h + 0.05) % 24), 50);
+    return () => window.clearInterval(id);
+  }, [defile]);
 
   const cartes = useMemo<Carte[]>(() => {
     if (!manifeste) return [];
@@ -128,55 +213,99 @@ export function DecorShowcase() {
       .flatMap(([asset, info]) => Object.keys(info.pieces).map((piece) => ({ asset, piece, info })));
   }, [manifeste, seul]);
 
-  // ?piece= ouvre directement la pièce en grand.
   useEffect(() => {
     const voulue = p.get("piece");
     if (voulue && cartes.length) setOuverte(cartes.find((c) => c.piece === voulue) ?? null);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [cartes]);
 
+  const reglage: Reglage = { heure, meteo, saison };
+  // Les vignettes ne suivent pas le défilement du jour : trop de rendus.
+  const heureVignettes = defile ? 13 : Math.round(heure * 4) / 4;
+
   return (
     <div className="atelier">
       <header className="atelier-head">
         <h1>Atelier — les décors de la forge</h1>
         <p>
-          Chaque pièce est le <code>.glb</code> livré au jeu, sous l'éclairage du jeu. Les sources sont les recettes
-          de <code>apps/web/blender/recettes/</code> ; on les reconstruit avec{" "}
-          <code>scripts/forge.sh construire --perimes</code>.
+          Chaque pièce est le <code>.glb</code> livré au jeu, sous la lumière du jeu à l'heure choisie. Les sources
+          sont les recettes de <code>apps/web/blender/recettes/</code> (<code>scripts/forge.sh</code>).
         </p>
         <div className="atelier-controls">
-          {SAISONS.map((s) => (
-            <button key={s} className={s === saison ? "on" : ""} onClick={() => setSaison(s)}>
-              {s === "ete" ? "été" : s}
+          {Object.entries(SCENES).map(([id, s]) => (
+            <button key={id} className={scene === id ? "on" : ""} onClick={() => setScene(scene === id ? null : id)}>
+              {s.titre.split(" — ")[0]}
             </button>
           ))}
-          <button className={nuit ? "on" : ""} onClick={() => setNuit(!nuit)}>
-            nuit
+        </div>
+        <div className="atelier-controls">
+          <label className="atelier-heure">
+            {formatHeure(heure)} · {momentDuJour(heure, saison)}
+            <input
+              type="range"
+              min={0}
+              max={23.99}
+              step={0.05}
+              value={heure}
+              onChange={(e) => {
+                setDefile(false);
+                setHeure(Number(e.target.value));
+              }}
+            />
+          </label>
+          <button className={defile ? "on" : ""} onClick={() => setDefile(!defile)}>
+            {defile ? "⏸ arrêter" : "▶ le jour passe"}
           </button>
+        </div>
+        <div className="atelier-controls">
+          {METEOS.map((m) => (
+            <button key={m.v} className={m.v === meteo ? "on" : ""} onClick={() => setMeteo(m.v)}>
+              {m.nom}
+            </button>
+          ))}
+          {SAISONS.map((s) => (
+            <button key={s} className={s === saison ? "on" : ""} onClick={() => setSaison(s)}>
+              {NOM_SAISON[s]}
+            </button>
+          ))}
         </div>
       </header>
       {erreur && <p>Pas de manifeste : {erreur}</p>}
-      {ouverte && (
-        <Grande carte={ouverte} saison={saison} nuit={nuit} fermer={() => setOuverte(null)} />
+      {manifeste && scene && SCENES[scene] && (
+        <Vue
+          titre={SCENES[scene].titre}
+          reglage={reglage}
+          fermer={() => setScene(null)}
+          monter={() => monterScene(SCENES[scene], manifeste, saison)}
+          ile={SCENES[scene].rayon}
+          cle={`${scene}/${saison}`}
+        />
       )}
-      <Planche cartes={cartes} saison={saison} nuit={nuit} ouvrir={setOuverte} />
+      {ouverte && (
+        <Vue
+          titre={`${ouverte.piece} — ${ouverte.info.titre}`}
+          reglage={reglage}
+          fermer={() => setOuverte(null)}
+          monter={async () => {
+            const o = await pieceSeule(ouverte.info.url, ouverte.piece);
+            const t = TEINTE_SAISON[saison];
+            teinterSaison(o, t ? ouverte.info.saisons[t] : undefined);
+            return o;
+          }}
+          ile={null}
+          tourne
+          cle={`${ouverte.asset}/${ouverte.piece}/${saison}`}
+        />
+      )}
+      <Planche cartes={cartes} reglage={{ ...reglage, heure: heureVignettes }} ouvrir={setOuverte} />
     </div>
   );
 }
 
 /** Les vignettes : une renderer, rendue carte après carte, copiée en 2D. */
-function Planche({
-  cartes,
-  saison,
-  nuit,
-  ouvrir,
-}: {
-  cartes: Carte[];
-  saison: SaisonDecor | "ete";
-  nuit: boolean;
-  ouvrir: (c: Carte) => void;
-}) {
+function Planche({ cartes, reglage, ouvrir }: { cartes: Carte[]; reglage: Reglage; ouvrir: (c: Carte) => void }) {
   const canevas = useRef<Map<string, HTMLCanvasElement>>(new Map());
+  const { heure, meteo, saison } = reglage;
 
   useEffect(() => {
     if (!cartes.length) return;
@@ -185,22 +314,21 @@ function Planche({
     renderer.setPixelRatio(Math.min(2, window.devicePixelRatio));
     renderer.setSize(VIGNETTE, VIGNETTE);
     renderer.shadowMap.enabled = true;
-    renderer.shadowMap.type = THREE.PCFSoftShadowMap;
-    const { scene, sun } = scenePlateau(nuit);
+    const { scene, sun, eclairer } = plateau(null);
     const camera = new THREE.OrthographicCamera(-1, 1, 1, -1, -100, 200);
     (async () => {
       for (const c of cartes) {
         if (annule) break;
-        const cle = `${c.asset}/${c.piece}`;
-        const cible = canevas.current.get(cle);
+        const cible = canevas.current.get(`${c.asset}/${c.piece}`);
         if (!cible) continue;
         const objet = await pieceSeule(c.info.url, c.piece);
-        teinterSaison(objet, saison === "ete" ? undefined : c.info.saisons[saison]);
+        const t = TEINTE_SAISON[saison];
+        teinterSaison(objet, t ? c.info.saisons[t] : undefined);
         scene.add(objet);
         cadrer(camera, sun, objet);
+        eclairer({ heure, meteo, saison });
         renderer.render(scene, camera);
-        const ctx = cible.getContext("2d");
-        ctx?.drawImage(renderer.domElement, 0, 0, cible.width, cible.height);
+        cible.getContext("2d")?.drawImage(renderer.domElement, 0, 0, cible.width, cible.height);
         scene.remove(objet);
       }
     })();
@@ -208,7 +336,7 @@ function Planche({
       annule = true;
       renderer.dispose();
     };
-  }, [cartes, saison, nuit]);
+  }, [cartes, heure, meteo, saison]);
 
   return (
     <div className="atelier-grid">
@@ -237,65 +365,93 @@ function Planche({
   );
 }
 
-/** Une pièce en grand, qui tourne, nœuds animés. */
-function Grande({
-  carte,
-  saison,
-  nuit,
+/**
+ * Une vue en grand, rendue en continu : une pièce qui tourne ou une scène
+ * composée, sous l'ambiance du réglage, pluie et neige comprises.
+ */
+function Vue({
+  titre,
+  reglage,
   fermer,
+  monter,
+  ile,
+  tourne = false,
+  cle,
 }: {
-  carte: Carte;
-  saison: SaisonDecor | "ete";
-  nuit: boolean;
+  titre: string;
+  reglage: Reglage;
   fermer: () => void;
+  monter: () => Promise<THREE.Object3D>;
+  ile: number | null;
+  tourne?: boolean;
+  cle: string;
 }) {
   const hote = useRef<HTMLDivElement>(null);
+  const reglageRef = useRef(reglage);
+  reglageRef.current = reglage;
 
   useEffect(() => {
     const el = hote.current;
     if (!el) return;
     const renderer = new THREE.WebGLRenderer({ antialias: true });
-    const cote = Math.min(720, el.clientWidth);
+    const largeur = Math.min(1100, el.clientWidth);
+    const hauteur = Math.round(largeur * (ile ? 0.62 : 1));
     renderer.setPixelRatio(Math.min(2, window.devicePixelRatio));
-    renderer.setSize(cote, cote);
+    renderer.setSize(largeur, hauteur);
     renderer.shadowMap.enabled = true;
-    renderer.shadowMap.type = THREE.PCFSoftShadowMap;
     el.appendChild(renderer.domElement);
-    const { scene, sun } = scenePlateau(nuit);
+    const { scene, sun, eclairer } = plateau(ile);
     const camera = new THREE.OrthographicCamera(-1, 1, 1, -1, -100, 200);
+    const meteo3d = creerMeteo3d({ pixelRatio: Math.min(2, window.devicePixelRatio) });
+    scene.add(meteo3d.objet);
     let objet: THREE.Object3D | null = null;
+    let cadre = { centre: new THREE.Vector3(), r: 5 };
     let fin = false;
     const t0 = performance.now();
-    pieceSeule(carte.info.url, carte.piece).then((o) => {
+    let avant = t0;
+    monter().then((o) => {
       if (fin) return;
       objet = o;
-      teinterSaison(o, saison === "ete" ? undefined : carte.info.saisons[saison]);
       scene.add(o);
+      cadre = cadrer(camera, sun, o);
+      // Une scène : on cadre sur l'île entière, pas seulement sur ce qui dépasse.
+      if (ile) cadre.r = ile * 0.5;
     });
     const boucle = () => {
       if (fin) return;
-      const t = (performance.now() - t0) / 1000;
+      const maintenant = performance.now();
+      const t = (maintenant - t0) / 1000;
+      const dt = (maintenant - avant) / 1000;
+      avant = maintenant;
       if (objet) {
         animerDecor(objet, t);
-        cadrer(camera, sun, objet, t * 0.25);
+        if (tourne) cadre = cadrer(camera, sun, objet, t * 0.25);
+        const aspect = largeur / hauteur;
+        camera.left = -cadre.r * aspect;
+        camera.right = cadre.r * aspect;
+        camera.top = cadre.r;
+        camera.bottom = -cadre.r;
+        camera.updateProjectionMatrix();
       }
+      const eclair = meteo3d.mettreAJour(dt, t, reglageRef.current.meteo, cadre.centre, cadre.r * 4);
+      eclairer(reglageRef.current, eclair);
       renderer.render(scene, camera);
       requestAnimationFrame(boucle);
     };
     boucle();
     return () => {
       fin = true;
+      meteo3d.dispose();
       renderer.dispose();
       renderer.domElement.remove();
     };
-  }, [carte, saison, nuit]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [cle]);
 
   return (
     <section className="atelier-big">
       <div className="atelier-big-head">
-        <strong>
-          {carte.piece} — {carte.info.titre}
-        </strong>
+        <strong>{titre}</strong>
         <button onClick={fermer}>fermer</button>
       </div>
       <div ref={hote} />

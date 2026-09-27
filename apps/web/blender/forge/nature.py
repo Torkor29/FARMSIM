@@ -314,20 +314,30 @@ class Nature:
         self.boule("coeur-fleur" if espece != "coquelicot" else "ombre", tete + Vector((0, 0, 0.004)),
                    0.012, finesse=1)
 
-    def lavande(self, position, graine=0, tiges=24, hauteur=0.6):
-        """Un pied de lavande : une boule de feuilles grises, des tiges arquées, des épis."""
+    def lavande(self, position, graine=0, tiges=42, hauteur=0.62):
+        """
+        Un pied de lavande : une touffe de feuilles fines gris-vert au pied,
+        des tiges arquées en gerbe, et des épis violets en grappe dense —
+        c'est la masse violette qui se lit de loin, pas le feuillage.
+        """
         rnd = random.Random(graine)
         x, y, z = position
-        self.fondre("feuillage-sombre", [((x, y, z + 0.06), (0.16, 0.16, 0.1))], voxel=0.035, lissage=2,
-                    triangles=100, sol=z)
+        for _ in range(14):
+            a = rnd.uniform(0, 2 * math.pi)
+            d = Vector((math.cos(a) * 0.5, math.sin(a) * 0.5, 1.0))
+            self.lame("feuillage-sombre", (x, y, z), d, (-math.sin(a), math.cos(a), 0),
+                      rnd.uniform(0.12, 0.2), 0.03, courbe=0.03, profil=lambda t: 1 - t * 0.8, pas=2)
         for _ in range(tiges):
             a = rnd.uniform(0, 2 * math.pi)
-            inc = rnd.uniform(0.1, 0.5)
-            h = hauteur * rnd.uniform(0.75, 1.1)
+            inc = rnd.uniform(0.15, 0.62)
+            h = hauteur * rnd.uniform(0.7, 1.1)
+            # Des pieds dispersés : des tiges parties du même point auraient des
+            # faces confondues (et scintilleraient).
+            r0 = rnd.uniform(0.01, 0.07)
+            pied = (x + math.cos(a) * r0, y + math.sin(a) * r0, z + rnd.uniform(0.0, 0.05))
             bout = Vector((x + math.cos(a) * inc * h, y + math.sin(a) * inc * h, z + h))
-            mi = Vector((x + math.cos(a) * inc * h * 0.35, y + math.sin(a) * inc * h * 0.35, z + h * 0.6))
-            pied = (x + math.cos(a) * 0.03, y + math.sin(a) * 0.03, z + 0.08)
-            self.tube("brin", [pied, mi, bout], 0.006, cotes=3, fermer=False)
+            mi = Vector((x + math.cos(a) * inc * h * 0.3, y + math.sin(a) * inc * h * 0.3, z + h * 0.6))
+            self.tube("brin", [pied, mi, bout], 0.005, cotes=3, fermer=False)
             d = (bout - mi).normalized()
-            self.tube("lavande", [bout - d * 0.01, bout + d * 0.03, bout + d * 0.1, bout + d * 0.13],
-                      [0.001, 0.02, 0.016, 0.001], cotes=5)
+            self.tube("lavande", [bout - d * 0.01, bout + d * 0.03, bout + d * 0.12, bout + d * 0.15],
+                      [0.001, 0.024, 0.018, 0.001], cotes=5)

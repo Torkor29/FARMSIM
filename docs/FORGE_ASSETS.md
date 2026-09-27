@@ -243,6 +243,16 @@ par sommet après quantification (u8).
 | `epouvantail` | épouvantail et son corbeau | 1 941 | ~35 Ko |
 | `fete` | citrouilles, botte de foin, tonneau, caisse, lanterne, guirlandes (fanions, lumineuse), bateau-bougie | 2 220 | ~100 Ko |
 | `sol` | terrasses, îlot, dallages, pas japonais, mare | 7 552 | ~255 Ko |
+| `jardin` | bain d'oiseaux, lanterne de pierre, ruche en paille, nichoir, banc, pots fleuris, lampion, sacs | ~2 300 | — |
+| `source_chaude` | la source chaude complète (dallage, bassin, gué, nénuphars, vapeur, bambou, lanternes…) | ~26 000 | — |
+
+**Deuxième passe (détail)** : les feuillages sont éclairés par le dessus
+(dessous assombri à la cuisson), la lavande est une gerbe dense d'épis, les
+étals portent des lampions, des pots de miel, des sacs et une ardoise, le
+moulin une allée dallée, des sacs de farine, un tonneau et des jardinières,
+l'épouvantail ses citrouilles. Les scènes composées (`scenes-decor.ts`)
+posent ces pièces comme le jeu le fera : `decor.html?scene=fete-des-recoltes`
+et `?scene=source-chaude`.
 
 Planche des aperçus : [`docs/forge/apercus.webp`](forge/apercus.webp).
 
@@ -266,7 +276,44 @@ Par ordre de rapport effet / coût sur téléphone :
 6. **Nuit** : l'émissif existe (`lumiere`) ; un bloom léger seulement sur
    ordinateur (réglage de qualité).
 
-## 9. Feuille de route
+## 9. La lumière du jour et la météo
+
+La ferme était éclairée en plein midi, toujours. Elle suit maintenant un jour
+complet (`apps/web/src/ambiance.ts`, testé) :
+
+- **Tout se règle sur la hauteur du soleil**, pas sur l'heure : nuit bleue
+  (la lune éclaire, la ferme reste lisible), heure bleue, aube rose, heure
+  dorée (soleil fort et chaud, peu de lumière d'appoint : les longues ombres
+  font l'effet), midi de la saison (l'ancien barème), coucher orangé,
+  crépuscule violet. L'aube et le soir diffèrent sous l'horizon.
+- **Le soleil se déplace** : il se lève à gauche, passe côté caméra à midi,
+  se couche à droite ; sa hauteur de midi et ses heures de lever/coucher
+  dépendent de la saison. La direction ne descend pas sous 7° (pas d'ombres
+  infinies) ; les couleurs, elles, suivent la vraie hauteur.
+- **La météo voile** : gris de pluie, blanc de neige, sombre d'orage ; la
+  brume se rapproche sous la pluie ; les lampes s'allument sous l'orage.
+- **Le jour est tassé** : la journée prend les trois quarts du cycle réel
+  (un jour de jeu ≈ 86 minutes), la nuit un quart.
+- **Le ciel CSS suit** (`SeasonSky`) : voile d'heure par-dessus la palette de
+  saison, soleil et lune qui traversent le ciel, étoiles.
+- **Pluie, neige, orage dans la scène** (`meteo3d.ts`) : traits de pluie
+  obliques et éclaboussures au sol, flocons qui se balancent, éclairs en
+  double battement. Tout est animé dans le shader : un appel de rendu par
+  couche, aucun calcul par image côté processeur ; moitié moins de
+  particules en qualité réduite.
+- **Les fenêtres s'allument** le soir (nouvelle matière `window` des
+  bâtiments), les lampes brillent plus, et la matière `lumiere` des décors
+  de la forge (lanternes, guirlandes, bougies) aussi (`lumieres.ts`).
+- **Pour voir sans attendre** : `?heure=19.2`, `?vitesse=60` (un jour en
+  une minute et demie), `?meteo=RAIN|STORM|SNOW|CLOUDY|CLEAR` — dans le jeu
+  comme dans l'atelier (`decor.html`, qui a aussi un curseur d'heure et un
+  bouton « le jour passe »).
+
+Pistes suivantes : reflets du ciel sur l'eau, sol mouillé plus sombre sous
+la pluie, neige qui s'accumule sur les toits, lucioles d'été la nuit, bloom
+léger sur ordinateur (réglage de qualité).
+
+## 10. Feuille de route
 
 - **Phase 1 (cette livraison)** : la forge, 8 recettes, l'atelier web, les
   tests, la compétence d'agent.
@@ -281,7 +328,7 @@ Par ordre de rapport effet / coût sur téléphone :
 - **CI** : un job facultatif qui lance `scripts/forge.sh liste --json` et
   signale les assets périmés (source modifiée sans reconstruction).
 
-## 10. Limites connues
+## 11. Limites connues
 
 - L'aperçu Cycles n'est pas le rendu three.js (éclairage global réel,
   AgX/Standard) : il sert à juger la forme ; la couleur finale se juge dans
