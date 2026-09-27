@@ -52,6 +52,8 @@ import {
   type Bornes,
 } from "./cadrage";
 import { geometrieHaie, makeArbre } from "./decor3d";
+import { arbresDeCoin } from "./placement";
+import { MODELES_DISPONIBLES, poserArbreForge } from "./modeles-decor";
 import { createCropField } from "./crop-field";
 import type { CropShape } from "./crop-shapes";
 import { attachStudioEnvironment } from "./machine-kit";
@@ -2612,12 +2614,13 @@ export function IsoFarmView({
       // Les arbres étaient deux cubes empilés, ce qui jurait franchement avec
       // des bâtiments dessinés. Ils reçoivent leur illustration, comme le
       // reste de la carte.
-      for (const [tx, tz] of [
-        [-hw / 2, -hh / 2],
-        [hw / 2, -hh / 2],
-        [-hw / 2, hh / 2],
-        [hw / 2, hh / 2],
-      ] as const) {
+      // Hors des coins, là où la place est libre (voir `arbresDeCoin`) : plus
+      // d'arbre planté dans la haie ou dans le bitume du parking.
+      const coins = arbresDeCoin(hw, hh, 2.1, [
+        ...(campagne?.plan.occupants ?? []),
+        { id: "cour", genre: "cour", forme: { type: "boite", ...courBoite } },
+      ]);
+      for (const { x: tx, z: tz } of coins) {
         const shade = new THREE.Mesh(
           new THREE.PlaneGeometry(0.8, 0.6),
           new THREE.MeshBasicMaterial({
@@ -2640,9 +2643,24 @@ export function IsoFarmView({
          * qu'elles sont — des autocollants sans épaisseur, dont l'ombre au sol
          * ne correspond à rien.
          */
-        const arbre = makeArbre(2.1, ((tx * 31 + tz * 17) | 0) >>> 0, quality.shadows);
-        arbre.position.set(tx, 0, tz);
-        fenceGroup.add(arbre);
+        // Le feuillu de la forge quand les modèles sont là ; l'arbre en code
+        // sinon (et dans les tests).
+        const graineCoin = ((tx * 31 + tz * 17) | 0) >>> 0;
+        const enCode = () => {
+          const arbre = makeArbre(2.1, graineCoin, quality.shadows);
+          arbre.position.set(tx, 0, tz);
+          fenceGroup.add(arbre);
+        };
+        if (!MODELES_DISPONIBLES) enCode();
+        else {
+          const groupeCoin = fenceGroup;
+          poserArbreForge(2.1, graineCoin, quality.shadows)
+            .then((arbre) => {
+              arbre.position.set(tx, 0, tz);
+              groupeCoin.add(arbre);
+            })
+            .catch(enCode);
+        }
       }
 
       /** Relief à semer sur les cases une fois la grille posée. */

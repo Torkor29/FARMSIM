@@ -667,10 +667,10 @@
     "nature": {
       "titre": "Kit nature",
       "url": "/assets/decor3d/nature.glb",
-      "octets": 155520,
+      "octets": 199580,
       "echelle": 1.0,
       "source": "apps/web/blender/recettes/nature.py",
-      "empreinte": "0a77eb868683f81c",
+      "empreinte": "d1fa8325d6fcf6df",
       "construit": "2026-09-27",
       "matieres": {
         "brin": "#7db84a",
@@ -678,6 +678,7 @@
         "coquelicot": "#e2493a",
         "ecorce": "#6e4631",
         "feuillage": "#7cb446",
+        "feuillage-clair": "#9ccb5a",
         "feuillage-roux": "#e0923a",
         "feuillage-sombre": "#5c9138",
         "lavande": "#8b7bd0",
@@ -693,16 +694,19 @@
       },
       "saisons": {
         "printemps": {
-          "feuillage": "#8ccc57"
+          "feuillage": "#8ccc57",
+          "feuillage-clair": "#aedb6c"
         },
         "automne": {
           "feuillage": "#e0923a",
+          "feuillage-clair": "#f0b34a",
           "feuillage-sombre": "#c0602f",
           "brin": "#c2a857",
           "roseau": "#b0955a"
         },
         "hiver": {
           "feuillage": "#dfe8ec",
+          "feuillage-clair": "#f2f6f8",
           "feuillage-sombre": "#c7d3da",
           "sapin": "#5d8a6a",
           "brin": "#cbd6c8"
@@ -766,6 +770,81 @@
           "matieres": [
             "ecorce",
             "feuillage-roux"
+          ],
+          "noeuds": []
+        },
+        "arbre-leger-1": {
+          "triangles": 796,
+          "appels": 2,
+          "sommets": 416,
+          "taille": [
+            3.301,
+            4.481,
+            3.403
+          ],
+          "matieres": [
+            "ecorce",
+            "feuillage"
+          ],
+          "noeuds": []
+        },
+        "arbre-leger-2": {
+          "triangles": 796,
+          "appels": 2,
+          "sommets": 416,
+          "taille": [
+            2.962,
+            3.874,
+            2.792
+          ],
+          "matieres": [
+            "ecorce",
+            "feuillage-clair"
+          ],
+          "noeuds": []
+        },
+        "arbre-leger-3": {
+          "triangles": 796,
+          "appels": 2,
+          "sommets": 416,
+          "taille": [
+            3.81,
+            5.13,
+            3.654
+          ],
+          "matieres": [
+            "ecorce",
+            "feuillage-sombre"
+          ],
+          "noeuds": []
+        },
+        "arbre-leger-4": {
+          "triangles": 796,
+          "appels": 2,
+          "sommets": 416,
+          "taille": [
+            3.258,
+            4.203,
+            3.293
+          ],
+          "matieres": [
+            "ecorce",
+            "feuillage"
+          ],
+          "noeuds": []
+        },
+        "sapin-leger": {
+          "triangles": 368,
+          "appels": 2,
+          "sommets": 194,
+          "taille": [
+            2.068,
+            4.609,
+            2.043
+          ],
+          "matieres": [
+            "ecorce",
+            "sapin"
           ],
           "noeuds": []
         },

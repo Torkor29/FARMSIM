@@ -219,3 +219,32 @@ export function animerDecor(objet: THREE.Object3D, t: number): void {
     else if (o.name.endsWith(":treuil")) o.rotation.x = Math.sin(t * 0.7) * 1.6;
   });
 }
+
+/**
+ * Les feuillus de la forge et leur hauteur à l'échelle 1 (manifeste) : ce
+ * que la campagne, les coins de la ferme et le verger plantent.
+ */
+export const ARBRES_FORGE: [string, number][] = [
+  ["arbre-leger-1", 4.48],
+  ["arbre-leger-2", 3.87],
+  ["arbre-leger-3", 5.13],
+  ["arbre-leger-4", 4.2],
+  ["sapin-leger", 4.61],
+];
+
+/** L'échelle qui donne à un arbre de la forge la hauteur d'un arbre en code (≈ 1,15 × taille). */
+export function echelleArbre(taille: number, hauteurModele: number): number {
+  return (taille * 1.15) / hauteurModele;
+}
+
+/**
+ * Un feuillu de la forge, à la taille d'un arbre en code (`ajouterArbre`),
+ * choisi par la graine parmi les quatre variantes (jamais le sapin).
+ */
+export async function poserArbreForge(taille: number, graine: number, shadows: boolean): Promise<THREE.Object3D> {
+  const [piece, hauteur] = ARBRES_FORGE[Math.abs(graine) % 4]!;
+  const arbre = await poserPiece(NATURE, piece, shadows);
+  arbre.scale.setScalar(echelleArbre(taille, hauteur));
+  arbre.rotation.y = (Math.abs(graine) % 628) / 100;
+  return arbre;
+}

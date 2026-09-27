@@ -68,7 +68,9 @@ export type MatKey =
   /** Terre battue de la cour */
   | "dirt"
   /** Vitre de fenêtre : s'allume le soir (voir `allumerLumieres`) */
-  | "window";
+  | "window"
+  /** Fleurs des jardinières */
+  | "flower";
 
 export type Palette = {
   /** Teinte de carrosserie */
@@ -198,6 +200,7 @@ export function createMaterials(pal: Palette, seed = 0, wear = 0): Materials {
     dirt: machine.cast,
     // Un engin n'a pas de fenêtre qui s'allume le soir : sa vitre reste vitre.
     window: machine.glass,
+    flower: machine.tail,
   };
 }
 
@@ -290,6 +293,7 @@ export function createBuildingMaterials(
       m.userData.allumable = "lampe";
       return m;
     })(),
+    flower: std({ color: 0xe2493a, metalness: 0, roughness: 0.8 }),
     /*
      * La vitre des fenêtres, opaque (l'embrasure sombre est derrière) : le
      * jour un reflet de ciel, le soir une lueur chaude. C'est la vue qui
@@ -575,6 +579,34 @@ export class Part {
   attach(piece: Part, pos: Vec3 = [0, 0, 0]): this {
     this.kids.push({ node: piece, pos });
     return this;
+  }
+
+  /**
+   * L'emprise au sol de ce qui s'élève dans la pièce (murs, poteaux, cuves),
+   * en boîtes alignées, dans le repère de la pièce. Les dalles et ce qui est
+   * posé à plat ne comptent pas : on peut planter un buisson au bord d'une
+   * dalle, pas dans un mur. Sert à habiller une cour sans percer le bâti.
+   */
+  emprises(decalage: Vec3 = [0, 0, 0]): { x: number; z: number; w: number; d: number }[] {
+    const out: { x: number; z: number; w: number; d: number }[] = [];
+    const b = new THREE.Box3();
+    for (const geos of this.buckets.values()) {
+      for (const g of geos) {
+        g.computeBoundingBox();
+        b.copy(g.boundingBox!);
+        if (b.max.y - b.min.y < 0.08 || b.max.y < 0.12) continue;
+        out.push({
+          x: (b.min.x + b.max.x) / 2 + decalage[0],
+          z: (b.min.z + b.max.z) / 2 + decalage[2],
+          w: b.max.x - b.min.x,
+          d: b.max.z - b.min.z,
+        });
+      }
+    }
+    for (const k of this.kids) {
+      out.push(...k.node.emprises([decalage[0] + k.pos[0], 0, decalage[2] + k.pos[2]]));
+    }
+    return out;
   }
 
   build(materials: Materials, roles: Map<Role, THREE.Object3D[]>, shadows: boolean): THREE.Group {

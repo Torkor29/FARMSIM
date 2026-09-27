@@ -1,8 +1,10 @@
 import * as THREE from "three";
+import { Occupation } from "./placement";
 import { BUILDING_DEFS, type BuildingType } from "@farmsim/shared";
 import {
   HALF,
   Part,
+  ball,
   box,
   cone,
   createBuildingMaterials,
@@ -297,6 +299,16 @@ function window_(part: Part, w: number, h: number, pos: Vec3, rot?: Vec3): void 
   node.add("timber", box(w + 0.03, 0.028, 0.035, [0, h / 2, 0.02]));
   node.add("timber", box(w + 0.03, 0.028, 0.035, [0, -h / 2, 0.02]));
   node.add("timber", box(0.028, h, 0.035, [0, 0, 0.024]));
+  // La jardinière sous l'appui : une caisse, trois touffes, des fleurs.
+  // C'est le détail qui fait qu'une façade est habitée.
+  if (w >= 0.14) {
+    // Cent cinquante triangles par fenêtre : une laiterie en a six.
+    node.add("timber", box(w + 0.04, 0.05, 0.07, [0, -h / 2 - 0.035, 0.05]));
+    node.add("foliage", box(w, 0.05, 0.06, [0, -h / 2 + 0.01, 0.05]));
+    for (const dx of [-w * 0.3, 0, w * 0.3]) {
+      node.add("flower", place(new THREE.IcosahedronGeometry(0.02, 0), [dx, -h / 2 + 0.04, 0.07]));
+    }
+  }
 }
 
 /**
@@ -336,6 +348,13 @@ function doorway(
     );
   }
   part.add("timber", box(w + 0.1, 0.07, thick * 1.2, [0, h + 0.03, z]));
+  // Une lanterne au mur, à droite de la porte : elle s'allume le soir.
+  if (opts.blind !== false) {
+    const lx = w / 2 + 0.11;
+    part.add("timber", box(0.02, 0.02, 0.07, [lx, h * 0.82 + 0.05, z + 0.035]));
+    part.add("lamp", box(0.05, 0.07, 0.05, [lx, h * 0.82, z + 0.07]));
+    part.add("roofDark", box(0.07, 0.015, 0.07, [lx, h * 0.82 + 0.043, z + 0.07]));
+  }
   part.child([0, 0, z + 0.16], { role: "threshold" });
 }
 
@@ -355,30 +374,60 @@ function chimney(part: Part, x: number, z: number, top: number): void {
  * enterrée, sans quoi le modèle descend sous le terrain.
  */
 function yardDressing(part: Part, w: number, d: number, seed: number): void {
+  for (const b of placerHabillage(w, d, seed, part.emprises())) {
+    if (b.genre === "buisson") {
+      part.add("foliage", mound(b.r, b.r * 1.15, [b.x, 0, b.z]));
+      part.add("foliage", mound(b.r * 0.62, b.r * 0.8, [b.x + b.r * 0.6, 0, b.z + b.r * 0.35]));
+    } else {
+      const rock = new THREE.DodecahedronGeometry(0.05, 0);
+      rock.scale(1, 0.55, 1);
+      part.add("concrete", place(rock, [b.x, 0.028, b.z]));
+    }
+  }
+}
+
+/**
+ * Où poser les buissons et les pierres d'une cour — pur, testé.
+ *
+ * Avant : cinq tirages, un seul interdit (« pas au milieu »), fixé à 64 % de
+ * la parcelle quel que soit le bâtiment. Des buissons se fondaient l'un dans
+ * l'autre, d'autres sortaient d'un mur. Maintenant chacun passe par
+ * l'occupation (`placement.ts`) : ni dans ce qui s'élève (`emprises`), ni
+ * dans un autre buisson, ni hors de l'empreinte.
+ */
+export function placerHabillage(
+  w: number,
+  d: number,
+  seed: number,
+  bati: { x: number; z: number; w: number; d: number }[],
+): { genre: "buisson" | "rocher"; x: number; z: number; r: number }[] {
   const rnd = (n: number) => {
     const s = Math.sin((seed + n) * 127.1) * 43758.5453;
     return s - Math.floor(s);
   };
   const MAX_R = 0.1;
-  const spanX = w - EDGE * 2 - MAX_R * 3;
-  const spanZ = d - EDGE * 2 - MAX_R * 3;
-  for (let i = 0; i < 5; i++) {
-    const x = (rnd(i) - 0.5) * spanX;
-    const z = (rnd(i + 20) - 0.5) * spanZ;
-    // On ne plante rien au milieu : c'est là que se trouve le bâti.
-    if (Math.abs(x) < w * 0.32 && Math.abs(z) < d * 0.32) continue;
-    const r = 0.05 + rnd(i + 40) * (MAX_R - 0.05);
-    part.add("foliage", mound(r, r * 1.15, [x, 0, z]));
-    part.add("foliage", mound(r * 0.62, r * 0.8, [x + r * 0.6, 0, z + r * 0.35]));
-  }
-  for (let i = 0; i < 2; i++) {
-    const x = (rnd(i + 60) - 0.5) * spanX;
-    const z = (rnd(i + 80) - 0.5) * spanZ;
-    if (Math.abs(x) < w * 0.34 && Math.abs(z) < d * 0.34) continue;
-    const rock = new THREE.DodecahedronGeometry(0.05, 0);
-    rock.scale(1, 0.55, 1);
-    part.add("concrete", place(rock, [x, 0.028, z]));
-  }
+  const occ = new Occupation();
+  for (const [i, b] of bati.entries()) occ.ajouter({ id: `bati-${i}`, genre: "batiment", forme: { type: "boite", ...b } });
+  const out: { genre: "buisson" | "rocher"; x: number; z: number; r: number }[] = [];
+  const limiteX = w / 2 - EDGE;
+  const limiteZ = d / 2 - EDGE;
+  const tirer = (genre: "buisson" | "rocher", n: number, essais: number, base: number) => {
+    let poses = 0;
+    for (let i = 0; i < essais && poses < n; i++) {
+      const r = genre === "buisson" ? 0.05 + rnd(base + i + 40) * (MAX_R - 0.05) : 0.05;
+      // L'encombrement réel : la touffe et sa voisine décalée.
+      const encombre = genre === "buisson" ? r * 1.45 : r;
+      const x = (rnd(base + i) - 0.5) * 2 * (limiteX - encombre);
+      const z = (rnd(base + i + 20) - 0.5) * 2 * (limiteZ - encombre);
+      if (occ.poser(`${genre}-${i}`, [{ genre, forme: { type: "cercle", x, z, r: encombre } }])) {
+        out.push({ genre, x, z, r });
+        poses++;
+      }
+    }
+  };
+  tirer("buisson", 5, 80, 0);
+  tirer("rocher", 2, 40, 100);
+  return out;
 }
 
 /** Panneaux solaires : la marque visible d'un bâtiment de haut niveau. */

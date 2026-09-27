@@ -45,6 +45,7 @@
  */
 
 import { COTE_MAX, GRILLE_STANDARD, TAILLES_PARCELLE, type Season } from "@farmsim/shared";
+import { boiteDeSegment, empreinteArbre, Occupation, type Genre, type Occupant } from "./placement";
 
 /** Ce qu'on voit dans une parcelle voisine. */
 export type EtatChamp =
@@ -239,6 +240,9 @@ export type Lieu = { genre: GenreLieu; x: number; z: number };
 /** Côté de l'emprise d'un lieu, en unités de la scène. */
 export const COTE_LIEU = 7.5;
 
+/** L'écart entre un lieu du village et la cour ou l'île du joueur. */
+export const ECART_COUR = 2;
+
 /** Le décor tient dans une emprise plus petite : il se glisse entre les champs. */
 export const COTE_DECOR = 6;
 
@@ -269,6 +273,8 @@ export type PlanCampagne = {
    * sont des pièces du kit nature de la forge, instanciées.
    */
   herbes: { x: number; z: number; piece: PieceHerbe; rot: number; echelle: number }[];
+  /** Tout ce qui occupe le sol, pour le contrôle (`placement.conflits`). */
+  occupants: Occupant[];
   sol: EmpriseSol;
   /**
    * Pas de la trame, entre deux centres de parcelle.
@@ -973,7 +979,10 @@ export function planCampagne(o: OptionsPlan): PlanCampagne {
       if (versEcranBas(x, z) - cote < sol.uMin + 4.5) return false;
       if (Math.abs(versEcranDroite(x, z)) + cote > sol.vMax - MARGE_LISIERE) return false;
       if (Math.abs(z - routeZ) < DEMI_ROUTE + demi + 0.6) return false;
-      if (seChevauchent(b, cour, 0.8) || seChevauchent(b, joueur, 0.8)) return false;
+      // Deux mètres et non quatre-vingts centimètres : vus d'en haut et de
+      // biais, les arbres d'un verger collé au parking le recouvraient, et on
+      // les croyait plantés dans le bitume.
+      if (seChevauchent(b, cour, ECART_COUR) || seChevauchent(b, joueur, ECART_COUR)) return false;
       if (parcelles.some((p) => seChevauchent(b, empriseParcelle(p, p.cote), 0.8))) return false;
       if (
         lieux.some((l) => {
@@ -1074,35 +1083,45 @@ export function planCampagne(o: OptionsPlan): PlanCampagne {
    * l'écran.
    */
   const arbres: { x: number; z: number; taille: number; graine: number }[] = [];
-  const libre = (x: number, z: number, r: number) => {
-    if (Math.abs(z - routeZ) < DEMI_ROUTE + r) return false;
-    // Pas un arbre au milieu d'un chemin d'accès.
-    for (const a of acces) {
-      for (let i = 0; i + 1 < a.points.length; i++) {
-        if (seChevauchent({ x, z, w: r * 2, d: r * 2 }, boiteSegment(a.points[i]!, a.points[i + 1]!), 0.3)) {
-          return false;
-        }
-      }
+  /*
+   * L'occupation du sol (voir `placement.ts`) : tout ce qui est dur ou déjà
+   * bâti y est déclaré d'abord ; les arbres puis les détails de l'herbe s'y
+   * posent selon les mêmes règles que le contrôle des tests. Un arbre y a sa
+   * vraie taille — pied et couronne — et non plus un rond de 0,9.
+   */
+  const occupation = new Occupation();
+  for (let i = 0; i + 1 < route.length; i++) {
+    const [p0, p1] = [route[i]!, route[i + 1]!];
+    occupation.ajouter({ id: "route", genre: "route", forme: boiteDeSegment(p0.x, p0.z, p1.x, p1.z, DEMI_ROUTE) });
+  }
+  for (let i = 0; i + 1 < desserte.length; i++) {
+    const [p0, p1] = [desserte[i]!, desserte[i + 1]!];
+    occupation.ajouter({ id: "desserte", genre: "chemin", forme: boiteDeSegment(p0.x, p0.z, p1.x, p1.z, DEMI_ACCES) });
+  }
+  for (const a of acces) {
+    for (let i = 0; i + 1 < a.points.length; i++) {
+      const b = boiteSegment(a.points[i]!, a.points[i + 1]!);
+      occupation.ajouter({ id: `acces-${a.id}`, genre: "chemin", forme: { type: "boite", ...b } });
     }
-    if (seChevauchent({ x, z, w: r * 2, d: r * 2 }, cour, 0.8)) return false;
-    if (seChevauchent({ x, z, w: r * 2, d: r * 2 }, joueur, 0.8)) return false;
-    // Ni sur le village, ni sur son décor.
-    if (
-      lieux.some((l) => {
-        const c = coteLieu(l.genre);
-        return seChevauchent({ x, z, w: r * 2, d: r * 2 }, { x: l.x, z: l.z, w: c, d: c }, 0.3);
-      })
-    ) {
-      return false;
-    }
-    return !parcelles.some((p) =>
-      seChevauchent({ x, z, w: r * 2, d: r * 2 }, empriseParcelle(p, emprise), 0.2),
-    );
-  };
+  }
+  occupation.ajouter({ id: "cour", genre: "cour", forme: { type: "boite", ...cour } });
+  occupation.ajouter({ id: "ile", genre: "ile", forme: { type: "boite", ...joueur } });
+  for (const p of parcelles) {
+    occupation.ajouter({ id: p.id, genre: "parcelle", forme: { type: "boite", ...empriseParcelle(p, emprise) } });
+  }
+  for (const l of lieux) {
+    const c = coteLieu(l.genre);
+    occupation.ajouter({
+      id: l.genre,
+      genre: l.genre === "ETANG" ? "eau" : "batiment",
+      forme: { type: "boite", x: l.x, z: l.z, w: c, d: c },
+    });
+  }
   const poser = (x: number, z: number, taille: number) => {
+    const graine = Math.floor(rnd() * 1e9);
     if (!surLeSol(sol, x, z)) return;
-    if (!libre(x, z, 0.9)) return;
-    arbres.push({ x, z, taille, graine: Math.floor(rnd() * 1e9) });
+    if (!occupation.poser(`arbre-${arbres.length}`, empreinteArbre(x, z, taille))) return;
+    arbres.push({ x, z, taille, graine });
   };
 
   /*
@@ -1163,30 +1182,51 @@ export function planCampagne(o: OptionsPlan): PlanCampagne {
    * rendraient invisibles — on ne paie pas pour ce qu'on ne voit pas.
    */
   const herbes: PlanCampagne["herbes"] = [];
-  const TIRAGE: [PieceHerbe, number, number, number][] = [
-    // pièce, nombre, rayon d'encombrement, échelle
-    ["touffe", 170, 0.2, 0.9],
-    ["fleurs", 55, 0.25, 1.0],
-    ["lavande", 18, 0.35, 0.9],
-    ["buisson-1", 16, 0.5, 0.55],
-    ["buisson-roses", 8, 0.5, 0.52],
-    ["rocher-2", 12, 0.5, 0.55],
+  // Les gros d'abord : un buisson trouve sa place avant que les touffes
+  // aient pris tout le pré. Le rayon est celui de la pièce de la forge à
+  // l'échelle 1 (demi-largeur mesurée au manifeste).
+  const TIRAGE: [PieceHerbe, Genre, number, number, number][] = [
+    // pièce, genre, nombre, rayon à l'échelle 1, échelle
+    ["buisson-1", "buisson", 16, 0.64, 0.55],
+    ["buisson-roses", "buisson", 8, 0.62, 0.52],
+    ["rocher-2", "rocher", 12, 0.57, 0.55],
+    ["lavande", "lavande", 18, 0.31, 0.9],
+    ["fleurs", "herbe", 55, 0.2, 1.0],
+    ["touffe", "herbe", 170, 0.1, 0.9],
   ];
-  for (const [piece, n, r, echelle] of TIRAGE) {
+  for (const [piece, genre, n, rayon, echelle] of TIRAGE) {
     let poses = 0;
-    for (let essai = 0; essai < n * 6 && poses < n; essai++) {
+    for (let essai = 0; essai < n * 8 && poses < n; essai++) {
       // Un anneau autour de l'île du joueur, plus dense près d'elle.
       const a = rnd() * Math.PI * 2;
       const d = emprise * 0.55 + Math.pow(rnd(), 1.6) * 26;
       const x = joueur.x + Math.cos(a) * d;
       const z = joueur.z + Math.sin(a) * d;
-      if (!surLeSol(sol, x, z) || !libre(x, z, r)) continue;
-      herbes.push({ x, z, piece, rot: rnd() * Math.PI * 2, echelle: echelle * (0.8 + rnd() * 0.4) });
+      const rot = rnd() * Math.PI * 2;
+      const e = echelle * (0.8 + rnd() * 0.4);
+      if (!surLeSol(sol, x, z)) continue;
+      const forme = { type: "cercle" as const, x, z, r: rayon * e };
+      if (!occupation.poser(`${piece}-${poses}`, [{ genre, forme }])) continue;
+      herbes.push({ x, z, piece, rot, echelle: e });
       poses++;
     }
   }
 
-  return { lieux, parcelles, acces, route, desserte, arbres, herbes, sol, pas, emprise, routeZ, quart };
+  return {
+    lieux,
+    parcelles,
+    acces,
+    route,
+    desserte,
+    arbres,
+    herbes,
+    occupants: occupation.occupants,
+    sol,
+    pas,
+    emprise,
+    routeZ,
+    quart,
+  };
 }
 
 /** L'emprise d'un tronçon de chemin, droit et parallèle à un axe. */

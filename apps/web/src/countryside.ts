@@ -50,7 +50,9 @@ import {
 } from "./decor3d";
 import { fusionnerStatique } from "./fusion-statique";
 import {
+  ARBRES_FORGE,
   chargerManifeste,
+  echelleArbre,
   instancierPiece,
   MODELES_DISPONIBLES,
   NATURE,
@@ -1325,6 +1327,22 @@ export function createCountryside(o: OptionsCampagne): Campagne {
     }
   }
 
+  /* —— Les détails de l'herbe ——
+     Touffes, fleurs, buissons, lavande et pierres du kit nature de la forge,
+     semés autour de la ferme (`plan.herbes`). Une pièce = un maillage
+     instancié par matière : cent soixante-dix touffes coûtent un appel de
+     rendu. Ils prennent la couleur de la saison avec le reste. */
+  const groupeHerbes = new THREE.Group();
+  groupeHerbes.name = "campagne-herbes";
+  object.add(groupeHerbes);
+  let saisonsNature: Record<string, Record<string, string>> | null = null;
+  let saisonHerbes: string | null = null;
+  const teinterHerbes = (saison: string) => {
+    saisonHerbes = saison;
+    if (!saisonsNature) return;
+    const cle = SAISON_DECOR[saison];
+    teinterSaison(groupeHerbes, cle ? saisonsNature[cle] : undefined);
+  };
   /* —— Les bosquets ——
      Reconstruits quand la saison tourne : le feuillage roussit à l'automne,
      blanchit l'hiver (voir `ajouterArbre`). Cent soixante-dix arbres, une
@@ -1350,24 +1368,49 @@ export function createCountryside(o: OptionsCampagne): Campagne {
       object.add(arbresMesh);
     }
   };
-  poserArbres("SUMMER");
+  /*
+   * Avec les modèles de la forge, le bois est fait des feuillus « nuage »
+   * de Blender (`nature.glb`, pièces `arbre-leger-*`) : un houppier d'une
+   * seule peau douce, l'ombre cuite, plus sombre dessous. Instanciés — une
+   * dizaine d'appels de rendu pour tout le bois — et teints à la saison avec
+   * les détails de l'herbe. Les arbres dessinés en code restent le secours.
+   */
+  const VARIANTES = ARBRES_FORGE;
+  const boisForge = MODELES_DISPONIBLES && plan.arbres.length > 0;
+  if (boisForge) {
+    const parPiece = new Map<string, THREE.Matrix4[]>();
+    const axeY = new THREE.Vector3(0, 1, 0);
+    for (const a of plan.arbres) {
+      // Un sapin sur neuf, au fond surtout (les grands arbres de lisière).
+      const k = a.graine % 9 === 0 ? 4 : a.graine % 4;
+      const [piece, hauteur] = VARIANTES[k]!;
+      // Même hauteur que l'arbre en code : tronc et houppier ≈ 1,15 × taille.
+      const e = echelleArbre(a.taille, hauteur);
+      const m = new THREE.Matrix4().compose(
+        new THREE.Vector3(a.x, y0 - 0.05, a.z),
+        new THREE.Quaternion().setFromAxisAngle(axeY, (a.graine % 628) / 100),
+        new THREE.Vector3(e, e, e),
+      );
+      const l = parPiece.get(piece) ?? [];
+      l.push(m);
+      parPiece.set(piece, l);
+    }
+    let echecs = 0;
+    for (const [piece, poses] of parPiece) {
+      instancierPiece(NATURE, piece, poses, shadows)
+        .then((g) => {
+          groupeHerbes.add(g);
+          if (saisonHerbes) teinterHerbes(saisonHerbes);
+        })
+        .catch(() => {
+          // Pas de modèle : le bois dessiné en code prend le relais, une fois.
+          if (echecs++ === 0) poserArbres(saisonHerbes ?? "SUMMER");
+        });
+    }
+  } else {
+    poserArbres("SUMMER");
+  }
 
-  /* —— Les détails de l'herbe ——
-     Touffes, fleurs, buissons, lavande et pierres du kit nature de la forge,
-     semés autour de la ferme (`plan.herbes`). Une pièce = un maillage
-     instancié par matière : cent soixante-dix touffes coûtent un appel de
-     rendu. Ils prennent la couleur de la saison avec le reste. */
-  const groupeHerbes = new THREE.Group();
-  groupeHerbes.name = "campagne-herbes";
-  object.add(groupeHerbes);
-  let saisonsNature: Record<string, Record<string, string>> | null = null;
-  let saisonHerbes: string | null = null;
-  const teinterHerbes = (saison: string) => {
-    saisonHerbes = saison;
-    if (!saisonsNature) return;
-    const cle = SAISON_DECOR[saison];
-    teinterSaison(groupeHerbes, cle ? saisonsNature[cle] : undefined);
-  };
   if (MODELES_DISPONIBLES && plan.herbes.length) {
     const parPiece = new Map<string, THREE.Matrix4[]>();
     const axeY = new THREE.Vector3(0, 1, 0);
@@ -1730,7 +1773,9 @@ export function createCountryside(o: OptionsCampagne): Campagne {
     }
     poserParcelles(jour, saison);
     if (saison !== saisonHerbes) teinterHerbes(saison);
-    poserArbres(saison);
+    // Le bois en code (secours) se reconstruit à la saison ; celui de la
+    // forge est teint avec l'herbe.
+    if (!boisForge || arbresMesh) poserArbres(saison);
   }
 
   function dispose(): void {

@@ -27,6 +27,17 @@ def construire(a):
         a.matiere("feuillage-roux", 0xe0923a, 0.85)
         a.arbre_rond(hauteur=4.0, envergure=3.1, graine=41, feuillage="feuillage-roux")
 
+    # Les arbres de la campagne : les mêmes feuillus « nuage », allégés (un
+    # houppier de 520 triangles) pour être instanciés par centaines. Chacun
+    # a sa matière de feuillage : à l'automne, le bois roussit en plusieurs
+    # teintes au lieu d'une seule.
+    for k, (h, env, mat, graine) in enumerate(((4.4, 3.4, "feuillage", 101), (3.8, 3.0, "feuillage-clair", 102),
+                                               (5.0, 3.7, "feuillage-sombre", 103), (4.1, 3.3, "feuillage", 104))):
+        with a.piece(f"arbre-leger-{k + 1}"):
+            a.arbre_rond(hauteur=h, envergure=env, graine=graine, feuillage=mat, triangles=520)
+    with a.piece("sapin-leger"):
+        a.sapin(hauteur=4.6, largeur=2.1, etages=4, graine=111)
+
     for k, (h, l) in enumerate(((5.0, 2.3), (3.8, 1.9))):
         with a.piece(f"sapin-{k + 1}"):
             a.sapin(hauteur=h, largeur=l, etages=4 if k == 0 else 3, graine=21 + k)

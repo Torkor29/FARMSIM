@@ -20,7 +20,7 @@ import * as THREE from "three";
 import { createMachineRig, type MachineRig } from "./machines3d";
 import { ajouterArbre, ajouterBoite, ajouterGeometrie, maillageFacette, pose } from "./decor3d";
 import { COTE_LIEU, type GenreLieu, type Lieu } from "./countryside-plan";
-import { MODELES_DISPONIBLES, PANCARTES, poserModele, poserPiece, SOL } from "./modeles-decor";
+import { MODELES_DISPONIBLES, PANCARTES, poserArbreForge, poserModele, poserPiece, SOL } from "./modeles-decor";
 
 /** Le bois des clôtures et des piquets, celui de la cour. */
 export const BOIS = 0x7a5534;
@@ -697,6 +697,9 @@ function pancarteRucher(g: THREE.Group, j: Jetables, shadows: boolean): void {
 /**
  * Un lieu du village, posé sur son emprise. `y` est le sol de la campagne.
  */
+/** L'écart des pommiers du verger : toute la couronne tient dans le décor. */
+export const ECART_VERGER = 1.9;
+
 /** Une pomme : une petite boule lisse, partagée. */
 const POMME = new THREE.IcosahedronGeometry(1, 1);
 
@@ -786,12 +789,35 @@ export function creerLieu(
       // feuillage : à la taille d'un buisson, les pommes flottaient au-dessus.
       for (let i = 0; i < 3; i++) {
         for (let k = 0; k < 3; k++) {
-          const x = -2.1 + i * 2.1;
-          const z = -2.1 + k * 2.1;
-          ajouterArbre(t.pos, t.col, x, 0, z, 2.3, 100 + i * 3 + k);
-          for (let f = 0; f < 5; f++) {
-            const a = f * 1.26 + i + k;
-            ajouterGeometrie(t.pos, t.col, POMME, pose(x + Math.cos(a) * 0.62, 1.02 + (f % 3) * 0.14, z + Math.sin(a) * 0.62, 0, 0.09), 0xd9463c);
+          // 1,9 et non 2,1 : la couronne (0,46 × 2,3) reste dans l'emprise du
+          // décor (±3) — sinon elle débordait sur le parking voisin.
+          const x = -ECART_VERGER + i * ECART_VERGER;
+          const z = -ECART_VERGER + k * ECART_VERGER;
+          const graine = 100 + i * 3 + k;
+          if (MODELES_DISPONIBLES) {
+            // Le pommier de la forge ; les pommes sur la surface de sa
+            // couronne (centre ≈ 1,7, rayon ≈ 1), pas enfouies dedans.
+            poserArbreForge(2.3, graine, shadows)
+              .then((arbre) => {
+                arbre.position.set(x, 0, z);
+                group.add(arbre);
+              })
+              .catch(() => {});
+            for (let f = 0; f < 7; f++) {
+              const a = f * 0.9 + i + k;
+              const el = -0.2 + (f % 3) * 0.3;
+              ajouterGeometrie(
+                t.pos, t.col, POMME,
+                pose(x + Math.cos(a) * Math.cos(el) * 1.0, 1.7 + Math.sin(el) * 0.9, z + Math.sin(a) * Math.cos(el) * 1.0, 0, 0.09),
+                0xd9463c,
+              );
+            }
+          } else {
+            ajouterArbre(t.pos, t.col, x, 0, z, 2.3, graine);
+            for (let f = 0; f < 5; f++) {
+              const a = f * 1.26 + i + k;
+              ajouterGeometrie(t.pos, t.col, POMME, pose(x + Math.cos(a) * 0.62, 1.02 + (f % 3) * 0.14, z + Math.sin(a) * 0.62, 0, 0.09), 0xd9463c);
+            }
           }
         }
       }
