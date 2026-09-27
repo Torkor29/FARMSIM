@@ -17,6 +17,7 @@
  */
 
 import * as THREE from "three";
+import { mergeGeometries } from "three/examples/jsm/utils/BufferGeometryUtils.js";
 import { createMachineRig, type MachineRig } from "./machines3d";
 import { ajouterArbre, ajouterBoite, ajouterGeometrie, maillageFacette, pose } from "./decor3d";
 import { COTE_LIEU, type GenreLieu, type Lieu } from "./countryside-plan";
@@ -101,7 +102,30 @@ const rucheEnPaille = () =>
 /** Une touffe arrondie : le pied d'un buisson de lavande. */
 const touffe = () => forme("touffe", () => new THREE.IcosahedronGeometry(0.5, 1));
 
-type Tableaux = { pos: number[]; col: number[] };
+type Tableaux = {
+  pos: number[];
+  col: number[];
+  /** Les globes des réverbères : un maillage émissif à part, qui s'allume le soir. */
+  lampes?: [number, number, number][];
+};
+
+/** Une fleur : une petite boule, partagée (au parvis, aux jardinières). */
+const FLEUR = new THREE.IcosahedronGeometry(1, 0);
+const COULEURS_FLEURS = [0xd94c5a, 0xf2c542, 0xf4f0f5, 0xe2493a, 0x8b7bd0];
+
+/**
+ * Un réverbère de village : un fût sombre, une console, un globe. Le globe
+ * est versé à part (`t.lampes`) : il brille, et s'allume le soir comme les
+ * lanternes (`allumerLumieres`).
+ */
+function reverbere(t: Tableaux, x: number, z: number, h = 2.2): void {
+  const FONTE = 0x3c4046;
+  ajouterBoite(t.pos, t.col, x, 0.1, z, 0.22, 0.2, 0.22, FONTE);
+  ajouterBoite(t.pos, t.col, x, h / 2, z, 0.08, h, 0.08, FONTE);
+  ajouterBoite(t.pos, t.col, x, h + 0.02, z, 0.2, 0.05, 0.2, FONTE);
+  ajouterBoite(t.pos, t.col, x, h + 0.38, z, 0.24, 0.05, 0.24, FONTE);
+  (t.lampes ??= []).push([x, h + 0.2, z]);
+}
 
 /** Un toit à deux pans : les pignons pleins, et des pans qui débordent. */
 function toit(
@@ -145,6 +169,19 @@ function fenetre(
       const [vx, vz] = face === "z" ? [s * (l / 2 + 0.13), 0.02] : [0.02, s * (l / 2 + 0.13)];
       const [vw, vd] = face === "z" ? [0.2, 0.04] : [0.04, 0.2];
       ajouterBoite(t.pos, t.col, x + vx, y, z + vz, vw, h, vd, o.volets);
+    }
+    // La jardinière sous l'appui, et ses fleurs : une fenêtre à volets est
+    // celle d'une maison habitée.
+    const [jx, jz] = face === "z" ? [0, 0.12] : [0.12, 0];
+    const [jw, jd] = face === "z" ? [l + 0.12, 0.16] : [0.16, l + 0.12];
+    ajouterBoite(t.pos, t.col, x + jx, y - h / 2 - 0.08, z + jz, jw, 0.12, jd, 0x8a6440);
+    ajouterBoite(t.pos, t.col, x + jx, y - h / 2 - 0.01, z + jz, jw * (face === "z" ? 0.92 : 0.7), 0.06,
+      jd * (face === "x" ? 0.92 : 0.7), 0x5f9a45);
+    for (let k = 0; k < 4; k++) {
+      const u = -l / 2 + (k + 0.5) * (l / 4);
+      const [fx, fz] = face === "z" ? [u, 0] : [0, u];
+      ajouterGeometrie(t.pos, t.col, FLEUR, pose(x + jx + fx, y - h / 2 + 0.05, z + jz + fz, k, 0.05),
+        COULEURS_FLEURS[k % COULEURS_FLEURS.length]!);
     }
   }
 }
@@ -405,11 +442,18 @@ function mairie(t: Tableaux, g: THREE.Group, j: Jetables, shadows: boolean): voi
   // Le parvis : deux massifs fleuris, deux tilleuls, un banc.
   for (const s of [-1, 1]) {
     ajouterBoite(t.pos, t.col, s * 2.1, 0.12, 1.55, 1.4, 0.18, 0.6, 0x7c5b3b);
-    for (let f = 0; f < 6; f++) {
-      ajouterBoite(t.pos, t.col, s * 2.1 - 0.55 + f * 0.22, 0.26, 1.55, 0.16, 0.12, 0.34, [0xd94c5a, 0xf2c542, 0xf4f0f5][f % 3]!);
+    // Un massif bombé de feuillage, piqué de fleurs rondes.
+    ajouterBoite(t.pos, t.col, s * 2.1, 0.25, 1.55, 1.25, 0.1, 0.45, 0x5f9a45);
+    for (let f = 0; f < 12; f++) {
+      const fx = s * 2.1 - 0.55 + (f % 6) * 0.22;
+      const fz = 1.45 + Math.floor(f / 6) * 0.2;
+      ajouterGeometrie(t.pos, t.col, FLEUR, pose(fx, 0.33, fz, f, 0.07), COULEURS_FLEURS[f % COULEURS_FLEURS.length]!);
     }
     ajouterArbre(t.pos, t.col, s * 3.0, 0, 2.9, 1.0, s > 0 ? 41 : 42);
   }
+  // Deux réverbères de part et d'autre du perron.
+  reverbere(t, -1.1, 1.6);
+  reverbere(t, 1.1, 1.6);
   ajouterBoite(t.pos, t.col, 1.2, 0.22, 2.7, 1.1, 0.08, 0.34, BOIS_CLAIR);
   ajouterBoite(t.pos, t.col, 1.2, 0.42, 2.55, 1.1, 0.3, 0.06, BOIS_CLAIR);
   // L'inscription, sous le fronton : une plaque émaillée contre la façade.
@@ -448,6 +492,9 @@ function concession(t: Tableaux, g: THREE.Group, j: Jetables, shadows: boolean, 
   }
   // Le hall : un socle, des montants, la vitrine d'angle.
   ajouterBoite(t.pos, t.col, xc, 0.08, zc, L, 0.16, P, 0x9aa1a7);
+  // Deux réverbères devant la vitrine.
+  reverbere(t, xc - L / 2 - 0.35, zc + P / 2 + 0.4);
+  reverbere(t, xc + L / 2 + 0.35, zc + P / 2 + 0.4);
   ajouterBoite(t.pos, t.col, xc, 0.16 + H / 2, zc, L - 0.1, H, P - 0.1, VITRE);
   for (let k = 0; k <= 5; k++) {
     ajouterBoite(t.pos, t.col, xc - L / 2 + k * (L / 5), 0.16 + H / 2, zc + P / 2, 0.08, H, 0.08, MUR);
@@ -548,6 +595,9 @@ function cooperative(t: Tableaux, g: THREE.Group, j: Jetables, shadows: boolean)
   ajouterBoite(t.pos, t.col, 0.9, 0.06, 2.1, 2.6, 0.06, 1.1, 0x5e656b);
   ajouterBoite(t.pos, t.col, 0.9, 0.1, 2.1, 2.4, 0.03, 0.9, 0x7e868c);
   ajouterGeometrie(t.pos, t.col, cone(10), pose(-2.5, 0.35, 0.7, 0, 1.3, 0.7, 1.3), 0xe0c26a);
+  // Deux réverbères aux bouts du pont-bascule.
+  reverbere(t, -0.75, 2.1, 2.4);
+  reverbere(t, 2.6, 2.1, 2.4);
   // Des sacs devant le hangar.
   for (let i = 0; i < 6; i++) {
     ajouterBoite(t.pos, t.col, 0.9 + (i % 3) * 0.5, 0.2 + Math.floor(i / 3) * 0.3, 1.0, 0.46, 0.28, 0.36, 0xe8d6a6);
@@ -844,6 +894,26 @@ export function creerLieu(
         });
       break;
     }
+  }
+  if (t.lampes?.length) {
+    // Les globes des réverbères, d'un seul maillage émissif.
+    const globes = t.lampes.map(([x, y, z]) =>
+      new THREE.IcosahedronGeometry(0.14, 1).translate(x, y, z),
+    );
+    const geo = mergeGeometries(globes, false)!;
+    for (const gg of globes) gg.dispose();
+    const mat = new THREE.MeshStandardMaterial({
+      color: 0xfff1c8,
+      emissive: new THREE.Color(0xffc86b),
+      emissiveIntensity: 0.9,
+      roughness: 0.4,
+    });
+    mat.userData.allumable = "lampe";
+    j.geometries.push(geo);
+    j.materiaux.push(mat);
+    const m = new THREE.Mesh(geo, mat);
+    m.name = "reverberes";
+    group.add(m);
   }
   if (t.pos.length) {
     const m = maillageFacette(t.pos, t.col, { shadows, recoit: shadows, nom: "lieu-decor" });
