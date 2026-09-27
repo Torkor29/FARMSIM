@@ -405,6 +405,10 @@ import {
   verrouConstruction,
   type SourcesBonus,
   type SolCase,
+  type Vocation,
+  BATIMENTS_EN_RESERVE,
+  prixLotNature,
+  vocationDuLot,
   PRIX_COUPE,
   BOIS_MATURITE_MS,
   croissanceBois,
@@ -9555,7 +9559,7 @@ type ParcelleGrille = {
   gridW: number;
   gridH: number;
   domaineMarge: number;
-  cells: { x: number; y: number; sol: string; revetement: string | null; kind: string; buildingId: string | null; crop: string | null; niveau: number; boiseDepuis: Date | null }[];
+  cells: { x: number; y: number; sol: string; revetement: string | null; kind: string; buildingId: string | null; crop: string | null; niveau: number; boiseDepuis: Date | null; vocation: string }[];
   amenagements: { id: string; type: string; originX: number; originY: number; rotation: number }[];
 };
 
@@ -9578,21 +9582,28 @@ function domaineVue(p: ParcelleGrille & { lotsAchetes: number; fertility: number
   const bornes = bornesDuDomaine(p.cells);
   const possedees = new Set(p.cells.map((c) => cleCase(c.x, c.y)));
   const niveau = niveauPourLot(p.lotsAchetes + 1);
+  const vocations = new Map(p.cells.map((c) => [cleCase(c.x, c.y), c.vocation]));
   const lots = lotsDuDomaine(bornes).map((lot) => {
     const { etat, aAcheter } = etatLot(lot, possedees);
+    // Le prix agricole des cases du lot : ce qu'on paierait à l'achat, ou
+    // pour convertir une réserve déjà à soi.
+    const agricole = prixLot({
+      cases: etat === "POSSEDE" ? lot.w * lot.h : aAcheter,
+      possedees: p.cells.length,
+      fertilite: p.fertility,
+      prixRegional: p.zone.priceMult,
+    });
+    const vocation = etat === "POSSEDE" ? vocationDuLot(lot, (x, y) => vocations.get(cleCase(x, y))) : null;
     return {
       ...lot,
       etat,
       aAcheter,
-      prix:
-        etat === "POSSEDE"
-          ? 0
-          : prixLot({
-              cases: aAcheter,
-              possedees: p.cells.length,
-              fertilite: p.fertility,
-              prixRegional: p.zone.priceMult,
-            }),
+      prix: etat === "POSSEDE" ? 0 : agricole,
+      /** Le même lot en réserve naturelle. */
+      prixNature: etat === "POSSEDE" ? 0 : prixLotNature(agricole),
+      vocation,
+      /** Ce que coûte le passage d'une réserve à la culture : la différence. */
+      prixConversion: vocation === "NATURE" ? agricole - prixLotNature(agricole) : 0,
       niveau,
     };
   });
@@ -9622,7 +9633,9 @@ const includeDomaine = {
  * sienne. Les cases achetées naissent en pré.
  */
 app.post("/parcels/:id/lots/buy", async (req, res) => {
-  const body = z.object({ userId: z.string(), lot: z.string() }).safeParse(req.body);
+  const body = z
+    .object({ userId: z.string(), lot: z.string(), vocation: z.enum(["CULTURE", "NATURE"]).default("CULTURE") })
+    .safeParse(req.body);
   if (!body.success) {
     res.status(400).json(body.error.flatten());
     return;
@@ -9655,15 +9668,17 @@ app.post("/parcels/:id/lots/buy", async (req, res) => {
     res.status(403).json({ error: `Niveau ${lot.niveau} requis pour ce lot` });
     return;
   }
-  if (!peutPayer(user, lot.prix)) {
-    res.status(402).json({ error: `€ insuffisants — ${lot.prix} requis` });
+  const vocation: Vocation = body.data.vocation;
+  const prix = vocation === "NATURE" ? lot.prixNature : lot.prix;
+  if (!peutPayer(user, prix)) {
+    res.status(402).json({ error: `€ insuffisants — ${prix} requis` });
     return;
   }
   const possedees = new Set(parcel.cells.map((c) => cleCase(c.x, c.y)));
-  const nouvelles: { parcelId: string; x: number; y: number; sol: "PRE" }[] = [];
+  const nouvelles: { parcelId: string; x: number; y: number; sol: "PRE"; vocation: Vocation }[] = [];
   for (let y = lot.y; y < lot.y + lot.h; y++) {
     for (let x = lot.x; x < lot.x + lot.w; x++) {
-      if (!possedees.has(cleCase(x, y))) nouvelles.push({ parcelId: parcel.id, x, y, sol: "PRE" });
+      if (!possedees.has(cleCase(x, y))) nouvelles.push({ parcelId: parcel.id, x, y, sol: "PRE", vocation });
     }
   }
   try {
@@ -9672,10 +9687,16 @@ app.post("/parcels/:id/lots/buy", async (req, res) => {
          lot ne passent pas tous les deux — le second trouve le compteur changé. */
       const garde = await tx.parcel.updateMany({
         where: { id: parcel.id, lotsAchetes: parcel.lotsAchetes },
-        data: { lotsAchetes: { increment: 1 }, landPrice: { increment: lot.prix } },
+        data: { lotsAchetes: { increment: 1 }, landPrice: { increment: prix } },
       });
       if (garde.count !== 1) throw new Error("CONCURRENT");
-      await debit(tx, user.id, lot.prix, "TERRES", `Achat de terrain — ${nouvelles.length} cases`);
+      await debit(
+        tx,
+        user.id,
+        prix,
+        "TERRES",
+        vocation === "NATURE" ? `Achat de réserve naturelle — ${nouvelles.length} cases` : `Achat de terrain — ${nouvelles.length} cases`,
+      );
       await tx.parcelCell.createMany({ data: nouvelles, skipDuplicates: true });
     });
   } catch (e) {
@@ -9685,7 +9706,80 @@ app.post("/parcels/:id/lots/buy", async (req, res) => {
     }
     throw e;
   }
-  res.status(201).json({ lot: lot.id, paid: lot.prix, cases: nouvelles.length });
+  res.status(201).json({ lot: lot.id, paid: prix, cases: nouvelles.length, vocation });
+});
+
+/**
+ * Changer la vocation d'un lot à soi.
+ *
+ * Vers la culture, on paie la différence avec le prix agricole du jour. Vers
+ * la réserve, c'est gratuit, sans remboursement — et il faut d'abord que le
+ * lot soit libre : ni culture en terre, ni bâtiment autre qu'un rucher. Les
+ * champs nus y redeviennent du pré.
+ */
+app.post("/parcels/:id/lots/vocation", async (req, res) => {
+  const body = z
+    .object({ userId: z.string(), lot: z.string(), vocation: z.enum(["CULTURE", "NATURE"]) })
+    .safeParse(req.body);
+  if (!body.success) {
+    res.status(400).json(body.error.flatten());
+    return;
+  }
+  const parcel = await prisma.parcel.findUnique({
+    where: { id: req.params.id },
+    include: { ...includeDomaine, buildings: true },
+  });
+  if (!parcel?.farm || parcel.farm.userId !== body.data.userId) {
+    res.status(403).json({ error: "Parcelle non possédée" });
+    return;
+  }
+  const lot = domaineVue(parcel).lots.find((l) => l.id === body.data.lot);
+  if (!lot || lot.etat !== "POSSEDE") {
+    res.status(404).json({ error: "Ce lot n'est pas à vous" });
+    return;
+  }
+  if (lot.vocation === body.data.vocation) {
+    res.status(409).json({ error: body.data.vocation === "NATURE" ? "C'est déjà une réserve" : "C'est déjà une terre de culture" });
+    return;
+  }
+  const dedans = parcel.cells.filter((c) => c.x >= lot.x && c.x < lot.x + lot.w && c.y >= lot.y && c.y < lot.y + lot.h);
+  const user = await prisma.user.findUnique({ where: { id: body.data.userId } });
+  if (!user) {
+    res.status(404).json({ error: "Joueur introuvable" });
+    return;
+  }
+  let prix = 0;
+  if (body.data.vocation === "NATURE") {
+    if (dedans.some((c) => c.kind === "CROP" || c.crop)) {
+      res.status(409).json({ error: "Une culture est en terre dans ce lot — récoltez d'abord" });
+      return;
+    }
+    const batis = new Set(dedans.map((c) => c.buildingId).filter((b): b is string => !!b));
+    const genant = parcel.buildings.find((b) => batis.has(b.id) && !BATIMENTS_EN_RESERVE.includes(b.type));
+    if (genant) {
+      res.status(409).json({ error: "Un bâtiment occupe ce lot — une réserve n'accueille qu'un rucher" });
+      return;
+    }
+  } else {
+    prix = lot.prixConversion;
+    if (!peutPayer(user, prix)) {
+      res.status(402).json({ error: `€ insuffisants — ${prix} requis` });
+      return;
+    }
+  }
+  await prisma.$transaction(async (tx) => {
+    if (prix > 0) {
+      await debit(tx, user.id, prix, "TERRES", `Réserve rendue à la culture — ${dedans.length} cases`);
+      await tx.parcel.update({ where: { id: parcel.id }, data: { landPrice: { increment: prix } } });
+    }
+    const ids = dedans.map((c) => c.id);
+    await tx.parcelCell.updateMany({ where: { id: { in: ids } }, data: { vocation: body.data.vocation } });
+    // Une réserve n'a pas de champ : un champ nu y redevient du pré.
+    if (body.data.vocation === "NATURE") {
+      await tx.parcelCell.updateMany({ where: { id: { in: ids }, sol: "CHAMP" }, data: { sol: "PRE" } });
+    }
+  });
+  res.json({ lot: lot.id, vocation: body.data.vocation, paid: prix });
 });
 
 /**

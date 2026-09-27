@@ -195,6 +195,31 @@ L'autre moitié du terraformage. Les règles vivent dans
     cascade (débit de l'atelier et bureau).
   - Chaque cascade ajoute +3 de charme, un pont +3, une rampe +1.
 
+### La réserve naturelle
+
+Le terraformage se fait surtout **à côté des champs**, sur une terre faite
+pour lui. Chaque case a une vocation (`ParcelCell.vocation`) : culture ou
+nature.
+
+- **Acheter.** Un lot de friche s'achète au choix en terre de culture (prix
+  habituel) ou en **réserve naturelle**, au quart du prix
+  (`PART_PRIX_NATURE`). Le dialogue d'achat propose les deux.
+- **Ce qu'on y fait.** Tout le terraformage : relief, eau, bois, prairies,
+  haies, décor. Ce qu'on n'y fait pas : un champ, un bâtiment. Seule
+  exception, le rucher (`BATIMENTS_EN_RESERVE`).
+- **Changer d'avis.** L'outil *Réserve ou culture* (onglet Terrain) touche un
+  lot à soi :
+  - une réserve se rend à la culture en payant la différence avec le prix
+    agricole du jour ;
+  - une terre de culture passe en réserve gratuitement, sans remboursement,
+    une fois le lot libre (ni culture en terre, ni bâtiment autre qu'un
+    rucher). Ses champs nus redeviennent du pré.
+  - Route : `POST /parcels/:id/lots/vocation`.
+- **À l'écran.** Une prairie non fauchée : herbes hautes, coquelicots,
+  bleuets, marguerites, boutons d'or. Une limite en piquets et cordelette,
+  toujours visible. Sur les lots à vendre, le prix en réserve s'affiche sous
+  le prix agricole.
+
 ### Le bois
 
 Règles dans `packages/shared/src/bois.ts`, rendu dans `verserBois`
@@ -231,6 +256,7 @@ Règles dans `packages/shared/src/bois.ts`, rendu dans `verserBois`
 | Creuser un étang | 30 €/case | remblai 8 €/case |
 | Surélever / abaisser d'un niveau | 40 / 20 €/case | rien |
 | Pont / rampe | 180 / 120 € | 50 % |
+| Lot en réserve naturelle | ¼ du prix agricole | la différence pour le rendre à la culture |
 | Boiser | 25 €/case | rien (la coupe rapporte 70 €/case de futaie, chaque année) |
 | Chemin de terre / gravier / pavés | 4 / 9 / 18 €/case | rien |
 | Objet de décor | 25 à 400 € | 50 % (100 % dans la fenêtre de regret) |

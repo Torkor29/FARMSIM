@@ -21,6 +21,21 @@ import { LAND_BASE_PER_HA, fertilityFactor } from "./land.js";
 
 /** Le sol d'une case possédée. La friche n'a pas de ligne : elle n'est pas à vous. */
 export type SolCase = "CHAMP" | "PRE" | "EAU" | "BOIS";
+
+/**
+ * La vocation d'une case : la culture, ou la réserve.
+ *
+ * Une **réserve** s'achète quatre fois moins cher qu'une terre agricole
+ * (`PART_PRIX_NATURE`). On y façonne le paysage — relief, eau, bois,
+ * prairies, haies — mais on n'y cultive pas et l'on n'y bâtit pas, sauf un
+ * rucher. C'est ce qui laisse les champs aux cultures : le terraformage se
+ * fait à côté, sur une terre faite pour lui.
+ */
+export type Vocation = "CULTURE" | "NATURE";
+/** Le prix d'un lot en réserve, rapporté à celui d'un lot agricole. */
+export const PART_PRIX_NATURE = 0.25;
+/** Les bâtiments qu'une réserve accepte. */
+export const BATIMENTS_EN_RESERVE: readonly string[] = ["BEEHIVE"];
 export const SOLS: readonly SolCase[] = ["CHAMP", "PRE", "EAU", "BOIS"];
 
 /** Le revêtement d'un chemin. */
@@ -310,6 +325,22 @@ export const COUT_REMBLAI = 8;
  * Les outils de terraformage : ils façonnent ce qui existe sans rien poser.
  */
 const outils: DefConstruction[] = [
+  {
+    id: "vocation",
+    categorie: "TERRAIN",
+    nom: "Réserve ou culture",
+    description:
+      "Touchez un lot à vous : passez-le en réserve naturelle (gratuit), ou rendez une réserve à la culture en payant la différence.",
+    icone: "🦋",
+    pose: "OUTIL",
+    emprise: { w: 1, h: 1 },
+    rotations: [0],
+    prix: 0,
+    revente: 0,
+    niveauMin: 1,
+    regle: "PRE",
+    charme: 0,
+  },
   {
     id: "berge",
     categorie: "TERRAFORMAGE",
@@ -737,6 +768,7 @@ export type CaseDomaine = {
   niveau: number;
   /** Un bois : quand il a été planté (ou coupé pour la dernière fois). */
   boiseDepuis: Date | string | null;
+  vocation: Vocation;
 };
 
 /** Une case telle que le serveur la stocke — le strict nécessaire. */
@@ -750,6 +782,7 @@ export type CaseSource = {
   crop?: string | null;
   niveau?: number | null;
   boiseDepuis?: Date | string | null;
+  vocation?: string | null;
 };
 
 export type AmenagementSource = {
@@ -794,6 +827,7 @@ export function construireGrille(opts: {
       volume,
       niveau: c.niveau ?? 0,
       boiseDepuis: c.boiseDepuis ?? null,
+      vocation: c.vocation === "NATURE" ? "NATURE" : "CULTURE",
     });
   }
   for (const a of opts.amenagements ?? []) {
@@ -849,7 +883,8 @@ export type RaisonRefus =
   | "BOIS"
   | "PAS_BOIS"
   | "JEUNE"
-  | "ISOLE";
+  | "ISOLE"
+  | "RESERVE";
 
 export const LIBELLE_REFUS: Record<RaisonRefus, string> = {
   FRICHE: "Terrain en friche — achetez ce lot d'abord",
@@ -870,6 +905,7 @@ export const LIBELLE_REFUS: Record<RaisonRefus, string> = {
   PAS_BOIS: "Il n'y a pas d'arbres ici",
   JEUNE: "Ces arbres sont trop jeunes pour la coupe",
   ISOLE: "Les engins n'y arrivent pas — ouvrez un chemin jusqu'à la lisière",
+  RESERVE: "Une réserve ne se cultive pas et ne se bâtit pas — sauf un rucher",
 };
 
 export type VerdictCase = {
@@ -922,6 +958,11 @@ export function verdictCase(
   }
 
   if (def.regle === "BATIMENT" && c.niveau !== 0) return non("RELIEF");
+  // La réserve : ni champ ni bâtiment, sauf un rucher.
+  if (c.vocation === "NATURE") {
+    if (def.regle === "CHAMP") return non("RESERVE");
+    if (def.regle === "BATIMENT" && !BATIMENTS_EN_RESERVE.includes(def.batiment ?? "")) return non("RESERVE");
+  }
   if (def.regle === "RELIEF") {
     if (def.id === "surelever") return c.niveau >= NIVEAU_MAX ? non("SOMMET") : { x, y, ok: true, change: true };
     return c.niveau <= 0 ? non("PLAINE") : { x, y, ok: true, change: true };
@@ -1250,6 +1291,32 @@ export function prixLot(opts: {
     (opts.prixRegional ?? 1) *
     facteurSurface(opts.possedees);
   return Math.ceil(brut / 50) * 50;
+}
+
+/** Le prix du même lot en réserve naturelle. */
+export function prixLotNature(prixAgricole: number): number {
+  return Math.ceil((prixAgricole * PART_PRIX_NATURE) / 50) * 50;
+}
+
+/**
+ * La vocation d'un lot possédé : celle de la majorité de ses cases. Un lot
+ * n'en a qu'une en pratique — on l'achète, on le convertit, d'un bloc.
+ */
+export function vocationDuLot(
+  lot: { x: number; y: number; w: number; h: number },
+  vocationDe: (x: number, y: number) => string | null | undefined,
+): Vocation {
+  let nature = 0;
+  let total = 0;
+  for (let y = lot.y; y < lot.y + lot.h; y++) {
+    for (let x = lot.x; x < lot.x + lot.w; x++) {
+      const v = vocationDe(x, y);
+      if (v == null) continue;
+      total++;
+      if (v === "NATURE") nature++;
+    }
+  }
+  return total && nature * 2 > total ? "NATURE" : "CULTURE";
 }
 
 /* ------------------------------------------------------------------ */

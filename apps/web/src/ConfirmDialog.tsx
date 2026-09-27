@@ -8,6 +8,8 @@ export type ConfirmRequest = {
   /** Action irréversible : le bouton se teinte en rouge */
   destructive?: boolean;
   onConfirm: () => void;
+  /** Un second choix, à côté du principal : acheter en réserve plutôt qu'en culture. */
+  alternative?: { label: string; onConfirm: () => void };
 };
 
 type Props = {
@@ -78,6 +80,18 @@ export function ConfirmDialog({ request, onCancel }: Props) {
           <button type="button" className="ghost" onClick={onCancel}>
             Annuler
           </button>
+          {request.alternative && (
+            <button
+              type="button"
+              className="confirm-go confirm-alt"
+              onClick={() => {
+                request.alternative!.onConfirm();
+                onCancel();
+              }}
+            >
+              {request.alternative.label}
+            </button>
+          )}
           <button
             ref={confirmRef}
             type="button"

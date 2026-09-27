@@ -511,6 +511,8 @@ model ParcelCell {
   niveau           Int       @default(0)
   /// Un bois : sa plantation, ou sa dernière coupe (voir `bois.ts`). Nul hors du bois.
   boiseDepuis      DateTime?
+  /// CULTURE ou NATURE : une réserve ne se cultive pas et ne se bâtit pas (voir `amenagement.ts`).
+  vocation         String    @default("CULTURE")
 
   @@unique([parcelId, x, y])
 }

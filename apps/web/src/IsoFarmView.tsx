@@ -120,6 +120,8 @@ export type IsoCell = {
   forme?: number;
   /** Relief : 0 en plaine, une terrasse au-dessus. */
   niveau?: number;
+  /** CULTURE ou NATURE. */
+  vocation?: string | null;
 };
 
 export type ManurePile = {
@@ -2826,6 +2828,8 @@ export function IsoFarmView({
           }
           // Le pré est de l'herbe, l'étang a sa berge : ni labour ni chaumes.
           if (solCase === "PRE" && cell.kind !== "BUILDING") col = (x + y) % 2 === 0 ? PRE : PRE_SOMBRE;
+          // La réserve : une prairie non fauchée, d'un vert plus doré.
+          if (solCase === "PRE" && cell.vocation === "NATURE" && cell.kind !== "BUILDING") col = (x + y) % 2 === 0 ? 0x86ad4d : 0x7fa548;
           // Sous l'eau : le fond du bassin, plus bas que le pré (voir `eau3d`).
           if (solCase === "EAU") col = 0x4b3d2c;
           // Le sous-bois : un sol de feuilles, plus sombre que le pré.
@@ -2945,7 +2949,7 @@ export function IsoFarmView({
         domaine3d.majTerrain(
           {
             bornes: b ?? { minX: 0, minY: 0, maxX: gw, maxY: gh },
-            cells: cs.map((c) => ({ x: c.x, y: c.y, sol: c.sol ?? "CHAMP", revetement: c.revetement ?? null, kind: c.kind, forme: c.forme ?? 0, niveau: c.niveau ?? 0, boiseDepuis: c.boiseDepuis ?? null })),
+            cells: cs.map((c) => ({ x: c.x, y: c.y, sol: c.sol ?? "CHAMP", revetement: c.revetement ?? null, kind: c.kind, forme: c.forme ?? 0, niveau: c.niveau ?? 0, boiseDepuis: c.boiseDepuis ?? null, vocation: c.vocation ?? null })),
             amenagements: dataRef.current.amenagements,
           },
           cellWorldPos,
@@ -4948,7 +4952,7 @@ export function IsoFarmView({
     const c = cells
       .map(
         (x) =>
-          `${x.x},${x.y},${x.kind},${x.crop ?? ""},${x.fieldStage ?? ""},${x.machineType ?? ""},${x.hasStubble ? 1 : 0},${x.residuePasses ?? 0},${Math.round((x.weedPressure ?? 0) * 10)},${x.harvestsSincePlow ?? 0},${Math.round((x.strawTons ?? 0) * 10)},${x.baleCount ?? 0},${x.sol ?? ""},${x.revetement ?? ""},${x.forme ?? 0},${x.niveau ?? 0},${x.sol === "BOIS" ? `${x.boiseDepuis ?? ""}:${Math.floor(croissanceBois(x.boiseDepuis ?? null) * 20)}` : ""}`,
+          `${x.x},${x.y},${x.kind},${x.crop ?? ""},${x.fieldStage ?? ""},${x.machineType ?? ""},${x.hasStubble ? 1 : 0},${x.residuePasses ?? 0},${Math.round((x.weedPressure ?? 0) * 10)},${x.harvestsSincePlow ?? 0},${Math.round((x.strawTons ?? 0) * 10)},${x.baleCount ?? 0},${x.sol ?? ""},${x.revetement ?? ""},${x.forme ?? 0},${x.niveau ?? 0},${x.vocation ?? ""},${x.sol === "BOIS" ? `${x.boiseDepuis ?? ""}:${Math.floor(croissanceBois(x.boiseDepuis ?? null) * 20)}` : ""}`,
       )
       .join("|");
     const b = buildings

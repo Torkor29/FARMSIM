@@ -285,6 +285,8 @@ type Cell = {
   sol?: "CHAMP" | "PRE" | "EAU" | "BOIS";
   /** Un bois : sa plantation, ou sa dernière coupe. */
   boiseDepuis?: string | null;
+  /** CULTURE ou NATURE : une réserve ne se cultive ni ne se bâtit. */
+  vocation?: string | null;
   /** Un chemin posé sur la case, s'il y en a un. */
   revetement?: string | null;
   /** Berges : la forme des coins d'une case d'eau. */
@@ -339,7 +341,17 @@ type DomaineVue = {
   marge: number;
   bornes: BornesDomaine;
   lotsAchetes: number;
-  lots: (LotDomaine & { etat: "POSSEDE" | "ACHETABLE" | "ENCLAVE"; aAcheter: number; prix: number; niveau: number })[];
+  lots: (LotDomaine & {
+    etat: "POSSEDE" | "ACHETABLE" | "ENCLAVE";
+    aAcheter: number;
+    prix: number;
+    /** Le même lot en réserve naturelle. */
+    prixNature?: number;
+    vocation?: "CULTURE" | "NATURE" | null;
+    /** Rendre une réserve à la culture : la différence de prix. */
+    prixConversion?: number;
+    niveau: number;
+  })[];
   charme: number;
   charmeLibelle: string;
 };
@@ -3132,6 +3144,21 @@ export function App() {
               ? `Déplacer ${nom} : touchez sa nouvelle place, puis confirmez.`
               : `${nom} : touchez une place, tournez-le, puis confirmez.`,
           };
+    } else if (defArme?.id === "vocation") {
+      // Le lot sous le doigt s'allume en entier, avec ce que coûterait le changement.
+      const lot = at ? domaine?.lots.find((l) => l.etat === "POSSEDE" && at.x >= l.x && at.x < l.x + l.w && at.y >= l.y && at.y < l.y + l.h) : undefined;
+      if (lot) {
+        const cases: { x: number; y: number; ok: boolean }[] = [];
+        for (let yy = lot.y; yy < lot.y + lot.h; yy++)
+          for (let xx = lot.x; xx < lot.x + lot.w; xx++) if (grilleDomaine.cases.has(cleCase(xx, yy))) cases.push({ x: xx, y: yy, ok: true });
+        fantome = cases;
+        ligne =
+          lot.vocation === "NATURE"
+            ? { texte: `Réserve naturelle — la rendre à la culture : ${(lot.prixConversion ?? 0).toLocaleString("fr-FR")} €` }
+            : { texte: "Terre de culture — la passer en réserve naturelle : gratuit" };
+      } else {
+        ligne = { texte: "Réserve ou culture : touchez un lot à vous pour changer sa vocation." };
+      }
     } else if (defArme?.pose === "OUTIL") {
       // Les berges : on vise un coin, il s'allume, et son contour à venir se dessine.
       const k = at ? grilleDomaine.cases.get(cleCase(at.x, at.y)) : undefined;
@@ -3622,23 +3649,64 @@ export function App() {
       flashToast(`Ce lot s'achète au niveau ${lot.niveau}`, true);
       return;
     }
-    if (!canPay(player, lot.prix)) {
-      flashToast(`Il vous manque ${Math.ceil(lot.prix - player.crd)} € pour ce lot`, true);
+    const prixNature = lot.prixNature ?? 0;
+    if (!canPay(player, Math.min(lot.prix, prixNature || lot.prix))) {
+      flashToast(`Il vous manque ${Math.ceil(Math.min(lot.prix, prixNature || lot.prix) - player.crd)} € pour ce lot`, true);
       return;
     }
     const parcelleId = activeParcelId;
+    const acheter = async (vocation: "CULTURE" | "NATURE") => {
+      try {
+        const r = await api<{ paid: number; cases: number }>(`/parcels/${parcelleId}/lots/buy`, {
+          method: "POST",
+          body: JSON.stringify({ userId: player.id, lot: lot.id, vocation }),
+        });
+        jouerSon(vocation === "NATURE" ? "plante" : "construction");
+        await apresConstruction(
+          vocation === "NATURE"
+            ? `Réserve naturelle · ${r.cases} cases à façonner · −${r.paid.toLocaleString("fr-FR")} €`
+            : `Lot acheté · ${r.cases} cases de plus · −${r.paid.toLocaleString("fr-FR")} €`,
+        );
+      } catch (e) {
+        flashToast(e instanceof Error ? e.message : String(e), true);
+      }
+    };
     setConfirmRequest({
       title: `Acheter ce lot de ${lot.aAcheter} cases ?`,
-      detail: `${lot.prix.toLocaleString("fr-FR")} € · la friche devient un pré à vous, prêt à aménager. Le lot suivant coûtera un peu plus cher.`,
-      confirmLabel: `Acheter · ${lot.prix.toLocaleString("fr-FR")} €`,
+      detail:
+        `En terre de culture, ${lot.prix.toLocaleString("fr-FR")} € : champs, bâtiments, tout ce qu'on veut.` +
+        (prixNature
+          ? ` En réserve naturelle, ${prixNature.toLocaleString("fr-FR")} € : relief, eau, bois, prairies — mais ni champ ni bâtiment, sauf un rucher. Une réserve se rend à la culture plus tard, en payant la différence.`
+          : ""),
+      confirmLabel: `Culture · ${lot.prix.toLocaleString("fr-FR")} €`,
+      onConfirm: () => void acheter("CULTURE"),
+      alternative: prixNature ? { label: `Réserve · ${prixNature.toLocaleString("fr-FR")} €`, onConfirm: () => void acheter("NATURE") } : undefined,
+    });
+  }
+
+  /** Passer un lot à soi en réserve, ou rendre une réserve à la culture. */
+  function changerVocation(x: number, y: number) {
+    if (!player || !activeParcelId) return;
+    const lot = domaine?.lots.find((l) => l.etat === "POSSEDE" && x >= l.x && x < l.x + l.w && y >= l.y && y < l.y + l.h);
+    if (!lot) return flashToast("Touchez un lot à vous", true);
+    const versNature = lot.vocation !== "NATURE";
+    const prix = versNature ? 0 : (lot.prixConversion ?? 0);
+    if (!canPay(player, prix)) return flashToast(`Il vous manque ${Math.ceil(prix - player.crd)} €`, true);
+    const parcelleId = activeParcelId;
+    setConfirmRequest({
+      title: versNature ? "Passer ce lot en réserve naturelle ?" : "Rendre cette réserve à la culture ?",
+      detail: versNature
+        ? "Gratuit, sans remboursement. Les champs nus y redeviennent du pré ; il faut d'abord récolter ce qui est en terre et retirer les bâtiments (un rucher peut rester)."
+        : `${prix.toLocaleString("fr-FR")} € : la différence avec le prix d'une terre de culture. Ce que vous y avez façonné reste en place.`,
+      confirmLabel: versNature ? "Passer en réserve" : `Rendre à la culture · ${prix.toLocaleString("fr-FR")} €`,
       onConfirm: async () => {
         try {
-          const r = await api<{ paid: number; cases: number }>(`/parcels/${parcelleId}/lots/buy`, {
+          await api(`/parcels/${parcelleId}/lots/vocation`, {
             method: "POST",
-            body: JSON.stringify({ userId: player.id, lot: lot.id }),
+            body: JSON.stringify({ userId: player.id, lot: lot.id, vocation: versNature ? "NATURE" : "CULTURE" }),
           });
-          jouerSon("construction");
-          await apresConstruction(`Lot acheté · ${r.cases} cases de plus · −${r.paid.toLocaleString("fr-FR")} €`);
+          jouerSon(versNature ? "plante" : "construction");
+          await apresConstruction(versNature ? "Le lot devient une réserve naturelle" : `Réserve rendue à la culture · −${prix.toLocaleString("fr-FR")} €`);
         } catch (e) {
           flashToast(e instanceof Error ? e.message : String(e), true);
         }
@@ -3648,6 +3716,15 @@ export function App() {
 
   /** Un toucher sur la ferme, en construction. */
   function cliqueConstruction(x: number, y: number, mods: PointerMods, frac?: { fx: number; fy: number }) {
+    if (defArme?.id === "vocation" && !deplaceObjet) {
+      if (!grilleDomaine.cases.get(cleCase(x, y))) {
+        const lot = domaine?.lots.find((l) => l.etat !== "POSSEDE" && x >= l.x && x < l.x + l.w && y >= l.y && y < l.y + l.h);
+        if (lot) acheterLot(lot);
+        return;
+      }
+      changerVocation(x, y);
+      return;
+    }
     if (defArme?.pose === "OUTIL" && !deplaceObjet) {
       const k = grilleDomaine.cases.get(cleCase(x, y));
       if (k?.sol !== "EAU") {

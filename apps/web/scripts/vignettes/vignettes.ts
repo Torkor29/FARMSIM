@@ -188,6 +188,13 @@ function sceneDe(id: string): { groupe: THREE.Group; recul: number } {
       }
       break;
     }
+    case "vocation": {
+      // Réserve ou culture : une prairie sauvage bordée de piquets, contre un champ labouré.
+      const reserve = (x: number, z: number) => x + z <= 0;
+      g.add(terrain(cellsCarre(3, (x, z) => (reserve(x, z) ? { vocation: "NATURE" } : { sol: "CHAMP" }))));
+      pre(3).forEach(([x, z]) => g.add(dalle(x, z, reserve(x, z) ? 0x86ad4d : 0x6b4526)));
+      break;
+    }
     case "haie":
     case "cloture":
       sol(pre(3));

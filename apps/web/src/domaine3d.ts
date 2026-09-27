@@ -42,6 +42,8 @@ export type CaseTerrain = {
   niveau?: number;
   /** Un bois : sa plantation ou sa dernière coupe. */
   boiseDepuis?: string | null;
+  /** CULTURE ou NATURE : la réserve pousse plus haut, fleurit, et a sa limite en piquets. */
+  vocation?: string | null;
 };
 
 export type ObjetPose = { id: string; type: string; originX: number; originY: number; rotation: number };
@@ -52,7 +54,7 @@ export type DonneesDomaine = {
   amenagements: readonly ObjetPose[];
 };
 
-export type LotAffiche = { id: string; x: number; y: number; w: number; h: number; etat: string; prix: number };
+export type LotAffiche = { id: string; x: number; y: number; w: number; h: number; etat: string; prix: number; prixNature?: number };
 
 export type EtatConstruction = {
   actif: boolean;
@@ -703,11 +705,25 @@ export function creerDomaine3d(opts: { shadows: boolean }): Domaine3d {
       if (c.sol !== "PRE" || c.revetement || c.kind === "BUILDING" || sousObjet.has(cleCase(c.x, c.y))) continue;
       const { px, pz } = posDe(c.x, c.y);
       const TOP = TOP_PLAINE + altitudeDe(c.x, c.y);
-      for (let k = 0; k < 4; k++) {
-        const u = (hash(c.x, c.y, k + 20) - 0.5) * 0.78;
-        const v = (hash(c.y, c.x, k + 27) - 0.5) * 0.78;
-        const h = 0.07 + hash(c.x, c.y, k + 31) * 0.06;
-        ajouterGeometrie(friche.pos, friche.col, _cone, pose(px + u, TOP + h / 2, pz + v, k, 0.1, h, 0.1), k % 2 ? 0x5f9a3a : 0x6ea945);
+      /* Une réserve n'est pas fauchée : l'herbe y monte, graminées et
+         fleurs sauvages mêlées — coquelicots, bleuets, marguerites, boutons
+         d'or. C'est à cela qu'on la reconnaît d'un coup d'œil. */
+      const sauvage = c.vocation === "NATURE";
+      for (let k = 0; k < (sauvage ? 7 : 4); k++) {
+        const u = (hash(c.x, c.y, k + 20) - 0.5) * 0.8;
+        const v = (hash(c.y, c.x, k + 27) - 0.5) * 0.8;
+        const h = (sauvage ? 0.13 : 0.07) + hash(c.x, c.y, k + 31) * (sauvage ? 0.12 : 0.06);
+        ajouterGeometrie(friche.pos, friche.col, _cone, pose(px + u, TOP + h / 2, pz + v, k, sauvage ? 0.12 : 0.1, h, sauvage ? 0.12 : 0.1), k % 3 === 2 && sauvage ? 0x9aa94f : k % 2 ? 0x5f9a3a : 0x6ea945);
+      }
+      if (sauvage) {
+        const fleurs = [0xd8342a, 0x4f6fd0, 0xf5f2ea, 0xf0c52e];
+        for (let k = 0; k < 4; k++) {
+          const u = (hash(c.x, c.y, k + 50) - 0.5) * 0.75;
+          const v = (hash(c.y, c.x, k + 57) - 0.5) * 0.75;
+          const h = 0.16 + hash(c.x, c.y, k + 61) * 0.1;
+          ajouterBoite(friche.pos, friche.col, px + u, TOP + h / 2, pz + v, 0.012, h, 0.012, 0x5d8f3a);
+          ajouterBoite(friche.pos, friche.col, px + u, TOP + h, pz + v, 0.055, 0.03, 0.055, fleurs[Math.floor(hash(c.x + k, c.y, 63) * 4)]!);
+        }
       }
       const f = hash(c.x, c.y, 41);
       if (f > 0.72) {
@@ -740,6 +756,31 @@ export function creerDomaine3d(opts: { shadows: boolean }): Domaine3d {
         const ny = c.y + dy;
         const dedans = nx >= d.bornes.minX && ny >= d.bornes.minY && nx < d.bornes.maxX && ny < d.bornes.maxY;
         if (dedans && !possedees.has(cleCase(nx, ny))) bord(px, pz, dx, dy, altitudeDe(c.x, c.y));
+      }
+    }
+
+    /*
+     * La limite de la réserve : des piquets de châtaignier et une cordelette,
+     * là où la réserve touche autre chose qu'elle. On la voit toujours — c'est
+     * une frontière de gestion, pas un simple repère de construction.
+     */
+    const nature = new Set(d.cells.filter((c) => c.vocation === "NATURE").map((c) => cleCase(c.x, c.y)));
+    for (const c of d.cells) {
+      if (c.vocation !== "NATURE") continue;
+      const { px, pz } = posDe(c.x, c.y);
+      const h0 = TOP + altitudeDe(c.x, c.y);
+      for (const [dx, dy] of DIRS) {
+        if (nature.has(cleCase(c.x + dx, c.y + dy))) continue;
+        const ex = px + (dx * pas) / 2 - dx * 0.06;
+        const ez = pz + (dy * pas) / 2 - dy * 0.06;
+        const long = dx === 0;
+        for (const t of [-0.5, 0, 0.5]) {
+          const ox = long ? t * pas : 0;
+          const oz = long ? 0 : t * pas;
+          ajouterBoite(objets.pos, objets.col, ex + ox, h0 + 0.14, ez + oz, 0.05, 0.28, 0.05, t === 0 ? 0x8a6a43 : 0x7a5c38);
+          ajouterBoite(objets.pos, objets.col, ex + ox, h0 + 0.285, ez + oz, 0.06, 0.012, 0.06, 0xa98a5c);
+        }
+        ajouterBoite(objets.pos, objets.col, ex, h0 + 0.2, ez, long ? pas : 0.012, 0.012, long ? 0.012 : pas, 0xe0d2aa);
       }
     }
 
@@ -1205,7 +1246,10 @@ export function creerDomaine3d(opts: { shadows: boolean }): Domaine3d {
         ),
       );
       construction.add(new THREE.LineSegments(cadre, matBordLot));
-      const etiquette = etiquettePrix(`${lot.prix.toLocaleString("fr-FR")} €`);
+      const etiquette = etiquettePrix(
+        `${lot.prix.toLocaleString("fr-FR")} €`,
+        lot.prixNature ? `réserve ${lot.prixNature.toLocaleString("fr-FR")} €` : undefined,
+      );
       etiquette.position.set(a.x + w / 2, 1.2, a.z + d / 2);
       construction.add(etiquette);
     }
@@ -1398,22 +1442,23 @@ function fusionner(geos: THREE.BufferGeometry[]): THREE.BufferGeometry {
 }
 
 /** Une étiquette de prix toujours tournée vers la caméra. */
-function etiquettePrix(texte: string): THREE.Sprite {
+function etiquettePrix(texte: string, sous?: string): THREE.Sprite {
   const canvas = typeof document !== "undefined" ? document.createElement("canvas") : null;
   const ctx = canvas?.getContext?.("2d") ?? null;
   const mat = new THREE.SpriteMaterial({ depthTest: false, transparent: true });
+  const H = sous ? 136 : 96;
   if (canvas && ctx) {
     canvas.width = 256;
-    canvas.height = 96;
+    canvas.height = H;
     ctx.fillStyle = "rgba(255, 250, 235, 0.96)";
     ctx.strokeStyle = "#c99a2e";
     ctx.lineWidth = 6;
     const r = 26;
     ctx.beginPath();
     ctx.moveTo(r, 4);
-    ctx.arcTo(252, 4, 252, 92, r);
-    ctx.arcTo(252, 92, 4, 92, r);
-    ctx.arcTo(4, 92, 4, 4, r);
+    ctx.arcTo(252, 4, 252, H - 4, r);
+    ctx.arcTo(252, H - 4, 4, H - 4, r);
+    ctx.arcTo(4, H - 4, 4, 4, r);
     ctx.arcTo(4, 4, 252, 4, r);
     ctx.closePath();
     ctx.fill();
@@ -1422,13 +1467,19 @@ function etiquettePrix(texte: string): THREE.Sprite {
     ctx.font = '800 40px "Baloo 2", Signika, system-ui, sans-serif';
     ctx.textAlign = "center";
     ctx.textBaseline = "middle";
-    ctx.fillText(texte, 128, 50);
+    ctx.fillText(texte, 128, sous ? 44 : 50);
+    // Le prix en réserve, en vert prairie : le même lot, pour la nature.
+    if (sous) {
+      ctx.fillStyle = "#4f7a2a";
+      ctx.font = '700 28px "Baloo 2", Signika, system-ui, sans-serif';
+      ctx.fillText(sous, 128, 96);
+    }
     const tex = new THREE.CanvasTexture(canvas);
     tex.colorSpace = THREE.SRGBColorSpace;
     mat.map = tex;
   }
   const s = new THREE.Sprite(mat);
-  s.scale.set(2.4, 0.9, 1);
+  s.scale.set(2.4, 0.9 * (H / 96), 1);
   s.renderOrder = 10;
   return s;
 }

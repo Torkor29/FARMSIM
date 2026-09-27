@@ -1191,6 +1191,9 @@ button.ghost {
   color: #fff;
 }
 .confirm-go.danger { background: linear-gradient(180deg, #e07a68, #c23c2b); }
+/* Le second choix d'une confirmation — acheter en réserve : vert prairie. */
+.confirm-go.confirm-alt { background: linear-gradient(180deg, #8fbf5a, #5f8f36); }
+.confirm-actions { flex-wrap: wrap; }
 
 /* —— Vente —— */
 .action.sell {
