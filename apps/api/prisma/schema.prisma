@@ -313,6 +313,13 @@ model Farm {
    * jamais interrogée ligne à ligne.
    */
   decorJson  String          @default("[]")
+  /**
+   * La faune installée sur la ferme, par groupe (`Faune` de
+   * `@farmsim/shared`), en JSON ; elle suit sa cible avec le temps, relue et
+   * réécrite à chaque lecture du domaine.
+   */
+  fauneJson  String          @default("{}")
+  fauneAt    DateTime?
 }
 
 /**

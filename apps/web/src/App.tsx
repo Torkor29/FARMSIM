@@ -123,6 +123,9 @@ import {
   BUILDING_REGRET_MS,
   cleCase,
   hydrologie,
+  HABITATS,
+  lireHabitats,
+  type Habitat,
   PRIX_COUPE,
   LIBELLE_STADE,
   croissanceBois,
@@ -148,6 +151,7 @@ import type { VoisinReel } from "./countryside-plan";
 import { BuildingSheet } from "./BuildingSheet";
 import { MachineSheet, MachineStarStrip, MachineTierPips, type MachinePreview } from "./MachineSheet";
 import { ConfirmDialog, type ConfirmRequest } from "./ConfirmDialog";
+import type { BiodiversiteVue } from "./PanneauConstruction";
 import { ParcelleVoisineSheet } from "./ParcelleVoisineSheet";
 import { NouveautesPanel } from "./NouveautesPanel";
 import { MachineCareOverlay, type CareMode } from "./MachineCareOverlay";
@@ -354,6 +358,7 @@ type DomaineVue = {
   })[];
   charme: number;
   charmeLibelle: string;
+  biodiversite?: BiodiversiteVue | null;
 };
 
 type ZoneRef = {
@@ -2225,6 +2230,12 @@ export function App() {
     () => construireGrille({ bornes: bornesIci, cells: grid, amenagements }),
     [bornesIci, grid, amenagements],
   );
+  /** Les habitats de la ferme, lus comme le serveur les lit : pour la carte. */
+  const lectureHabitats = useMemo(
+    () => lireHabitats({ cells: grid, amenagements, courante: hydrologie(grid).courante }),
+    [grid, amenagements],
+  );
+  const [carteHabitats, setCarteHabitats] = useState(false);
   /** L'eau du domaine, et la forme des coins de chaque case d'eau. */
   const eauxSet = useMemo(
     () => new Set(grid.filter((c) => c.sol === "EAU").map((c) => cleCase(c.x, c.y))),
@@ -3289,7 +3300,22 @@ export function App() {
     }
 
     return {
-      etat: { actif: true, lots, lotSurvole: lotIci?.id ?? null, fantome, objetFantome, selection, berge },
+      etat: {
+        actif: true,
+        lots,
+        lotSurvole: lotIci?.id ?? null,
+        fantome,
+        objetFantome,
+        selection,
+        berge,
+        // La carte des habitats : chaque case prend la couleur de son habitat principal.
+        habitats: carteHabitats
+          ? [...lectureHabitats.parCase].map(([k, hs]) => {
+              const [x, y] = k.split(",").map(Number) as [number, number];
+              return { x, y, couleur: HABITATS[hs[0]!].couleur };
+            })
+          : null,
+      },
       ligne,
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -3315,6 +3341,8 @@ export function App() {
     player?.level,
     player?.dev,
     player?.unlimitedCrd,
+    carteHabitats,
+    lectureHabitats,
   ]);
 
   /** Ce que le panneau montre de l'élément touché. */
@@ -7391,6 +7419,13 @@ export function App() {
           argent={hasUnlimitedFunds(player) ? Infinity : player.crd}
           etat={vueConstruction.ligne}
           charme={domaine ? { valeur: domaine.charme, libelle: domaine.charmeLibelle } : null}
+          biodiversite={domaine?.biodiversite ?? null}
+          habitats={(Object.entries(lectureHabitats.surfaces) as [Habitat, number][])
+            .filter(([, n]) => n > 0)
+            .sort((a, b) => b[1] - a[1])
+            .map(([id, surface]) => ({ id, surface }))}
+          carteHabitats={carteHabitats}
+          onCarteHabitats={() => setCarteHabitats((v) => !v)}
           selection={selectionConstruction}
           onDeplacer={deplacerChoix}
           onTourner={tournerChoix}

@@ -406,6 +406,14 @@ import {
   type SourcesBonus,
   type SolCase,
   type Vocation,
+  GUILDES,
+  cibleFaune,
+  deriveFaune,
+  libelleBiodiversite,
+  lireFaune,
+  lireHabitats,
+  refugesDecor,
+  scoreBiodiversite,
   BATIMENTS_EN_RESERVE,
   prixLotNature,
   vocationDuLot,
@@ -6128,7 +6136,10 @@ app.get("/parcels/:id", async (req, res) => {
     labor: labor.map(publicLaborOrder),
     /* Le domaine : bornes, lots à vendre et charme. Seulement pour qui peut
        l'agrandir — un voisin qui regarde n'a pas à voir les devis. */
-    domaine: parcel.farm?.userId && parcel.farm.userId === (await userFromAuthHeader(req))?.user.id ? domaineVue(parcel) : null,
+    domaine:
+      parcel.farm?.userId && parcel.farm.userId === (await userFromAuthHeader(req))?.user.id
+        ? { ...domaineVue(parcel), biodiversite: await biodiversiteDeLaFerme(parcel.farm.id) }
+        : null,
   });
 });
 
@@ -9615,6 +9626,51 @@ function domaineVue(p: ParcelleGrille & { lotsAchetes: number; fertility: number
     lots,
     charme,
     charmeLibelle: libelleCharme(charme),
+  };
+}
+
+/**
+ * La biodiversité d'une ferme : les habitats de toutes ses parcelles, les
+ * refuges de sa décoration, et la faune qui s'y installe.
+ *
+ * La faune stockée rattrape sa cible au rythme de chaque groupe, du temps
+ * écoulé depuis la dernière lecture ; on réécrit le résultat. Sans rien
+ * planifier : la lecture suffit, et une ferme qu'on ne regarde pas n'a pas
+ * besoin qu'on la calcule.
+ */
+async function biodiversiteDeLaFerme(farmId: string) {
+  const farm = await prisma.farm.findUnique({
+    where: { id: farmId },
+    select: {
+      decorJson: true,
+      fauneJson: true,
+      fauneAt: true,
+      parcels: { select: { cells: true, amenagements: { select: { type: true, originX: true, originY: true } } } },
+    },
+  });
+  if (!farm) return null;
+  const maintenant = Date.now();
+  const cells = farm.parcels.flatMap((p) => p.cells);
+  const lecture = lireHabitats({
+    cells,
+    amenagements: farm.parcels.flatMap((p) => p.amenagements),
+    courante: hydrologie(cells).courante,
+    maintenant,
+  });
+  const cible = cibleFaune(lecture, refugesDecor(lireDecorations(farm.decorJson)));
+  const faune = deriveFaune(lireFaune(farm.fauneJson), cible, farm.fauneAt ? maintenant - farm.fauneAt.getTime() : 0);
+  await prisma.farm.update({ where: { id: farmId }, data: { fauneJson: JSON.stringify(faune), fauneAt: new Date(maintenant) } });
+  const score = scoreBiodiversite(faune);
+  return {
+    score,
+    libelle: libelleBiodiversite(score),
+    faune,
+    cible,
+    /** Où la faune va : le score qu'atteindra la ferme telle qu'elle est. */
+    scoreCible: scoreBiodiversite(cible),
+    surfaces: lecture.surfaces,
+    diversite: lecture.diversite,
+    guildes: GUILDES,
   };
 }
 

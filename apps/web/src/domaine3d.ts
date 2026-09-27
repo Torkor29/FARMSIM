@@ -68,6 +68,8 @@ export type EtatConstruction = {
   selection: { x: number; y: number; w: number; h: number } | null;
   /** L'outil Berges : le coin visé, et la forme qu'il prendrait. */
   berge?: { x: number; y: number; coin: 0 | 1 | 2 | 3; ok: boolean; forme: number } | null;
+  /** La carte des habitats : une couleur par case. */
+  habitats?: readonly { x: number; y: number; couleur: string }[] | null;
 };
 
 type Tableaux = { pos: number[]; col: number[] };
@@ -486,6 +488,7 @@ export function creerDomaine3d(opts: { shadows: boolean }): Domaine3d {
   const matBrume = new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.24, depthWrite: false });
   const matEcume = new THREE.MeshLambertMaterial({ color: 0xf2f8f8, transparent: true, opacity: 0.9 });
   const matCoupee = new THREE.MeshBasicMaterial({ color: 0xe0823a, transparent: true, opacity: 0.34, depthWrite: false });
+  const matHabitat = new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.74, depthWrite: false });
   /** Le relief au dernier rendu : la hauteur de chaque case surélevée. */
   let altitudes = new Map<string, number>();
   const altitudeDe = (x: number, y: number) => altitudes.get(cleCase(x, y)) ?? 0;
@@ -554,7 +557,7 @@ export function creerDomaine3d(opts: { shadows: boolean }): Domaine3d {
         m.geometry?.dispose();
         const mat = m.material as THREE.Material | undefined;
         // Les matériaux partagés restent ; ceux des textes et des maillages fusionnés partent.
-        if (mat && ![matEau, matNappe, matCascade, matEcume, matBrume, matCoupee, matGrille, matLot, matLotSurvole, matBordLot, matFantomeOk, matFantomeNon, matSelection].includes(mat as never)) {
+        if (mat && ![matEau, matNappe, matCascade, matEcume, matBrume, matCoupee, matHabitat, matGrille, matLot, matLotSurvole, matBordLot, matFantomeOk, matFantomeNon, matSelection].includes(mat as never)) {
           (mat as THREE.SpriteMaterial).map?.dispose();
           mat.dispose();
         }
@@ -1274,6 +1277,24 @@ export function creerDomaine3d(opts: { shadows: boolean }): Domaine3d {
       construction.add(inst);
     }
 
+    /* La carte des habitats : chaque case teintée de son habitat principal. */
+    if (e.habitats?.length) {
+      const geo = new THREE.PlaneGeometry(pas * 0.96, pas * 0.96).rotateX(-Math.PI / 2);
+      const inst = new THREE.InstancedMesh(geo, matHabitat, e.habitats.length);
+      const m = new THREE.Matrix4();
+      const c = new THREE.Color();
+      e.habitats.forEach((h, i) => {
+        const { px, pz } = posDe(h.x, h.y);
+        m.makeTranslation(px, y0 + 0.02 + altitudeDe(h.x, h.y), pz);
+        inst.setMatrixAt(i, m);
+        inst.setColorAt(i, c.set(h.couleur));
+      });
+      inst.renderOrder = 3;
+      inst.frustumCulled = false;
+      inst.name = "carte-habitats";
+      construction.add(inst);
+    }
+
     /* Le fantôme : chaque case touchée, verte ou rouge. */
     if (e.fantome.length) {
       const geo = new THREE.PlaneGeometry(pas * 0.94, pas * 0.94);
@@ -1408,6 +1429,7 @@ export function creerDomaine3d(opts: { shadows: boolean }): Domaine3d {
       geoTronc.dispose();
       geoCouronne.dispose();
       matCoupee.dispose();
+      matHabitat.dispose();
       bouillons.clear();
       for (const p of poufs) (p.m.material as THREE.Material).dispose();
       poufs.length = 0;

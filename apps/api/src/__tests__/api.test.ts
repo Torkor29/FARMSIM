@@ -4887,6 +4887,32 @@ describe("la ferme libre", () => {
     assert.equal(apres.sol, "PRE");
   });
 
+  it("lit les habitats de la ferme : la faune vise plus haut quand on crée une réserve", async () => {
+    const { moi, parcelId } = await fermeLibre("Écologue");
+    type Bio = { score: number; scoreCible: number; cible: Record<string, number>; faune: Record<string, number>; diversite: number };
+    const bio = async () =>
+      ((await vue(parcelId, moi.jeton)).domaine as unknown as { biodiversite: Bio }).biodiversite;
+    const avant = await bio();
+    assert.ok(avant, "le propriétaire voit la biodiversité");
+    assert.equal(avant.cible.AMPHIBIENS, 0);
+    const v0 = await vue(parcelId, moi.jeton);
+    const lot = (v0.domaine!.lots as (LotVue & { prixNature: number })[]).find((l) => l.etat === "ACHETABLE")!;
+    assert.equal(
+      (await appel(`/parcels/${parcelId}/lots/buy`, { methode: "POST", corps: { userId: moi.id, lot: lot.id, vocation: "NATURE" }, jeton: moi.jeton })).statut,
+      201,
+    );
+    const eau = [0, 1, 2].map((i) => ({ x: lot.x + 1 + i, y: lot.y + 2 }));
+    assert.equal((await peindre(parcelId, moi, "etang", eau)).statut, 200);
+    const apres = await bio();
+    assert.ok(apres.cible.AMPHIBIENS > 0, JSON.stringify(apres.cible));
+    assert.ok(apres.scoreCible > avant.scoreCible);
+    // La faune ne s'installe pas d'un coup : sa population reste sous la cible.
+    assert.ok(apres.faune.AMPHIBIENS < apres.cible.AMPHIBIENS);
+    // Un voisin ne voit pas la biodiversité d'une autre ferme.
+    const autre = await inscrire("Curieux des bois");
+    assert.equal((await vue(parcelId, autre.jeton)).domaine, null);
+  });
+
   it("donne au siège un domaine, avec sa ferme au centre et de la friche autour", async () => {
     const { moi, parcelId } = await fermeLibre("Domaine");
     const v = await vue(parcelId, moi.jeton);

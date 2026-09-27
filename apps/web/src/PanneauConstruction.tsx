@@ -1,5 +1,10 @@
 import { useEffect, useMemo, useRef } from "react";
 import {
+  GUILDES,
+  HABITATS,
+  INFOS_GUILDE,
+  type Guilde,
+  type Habitat,
   PRIX_COUPE,
   BUILDING_ART,
   CATEGORIES,
@@ -20,6 +25,14 @@ import "./construction.css";
  * passer (ou pourquoi ça ne se peut pas), et les actions de l'élément choisi.
  */
 
+export type BiodiversiteVue = {
+  score: number;
+  libelle: string;
+  scoreCible: number;
+  faune: Record<Guilde, number>;
+  cible: Record<Guilde, number>;
+};
+
 export type SelectionConstruction =
   | { kind: "OBJET"; id: string; nom: string; revente: number; tournable: boolean }
   | { kind: "BATIMENT"; id: string; nom: string };
@@ -35,6 +48,12 @@ type Props = {
   /** Ce que dit la ligne d'état, et si c'est un refus. */
   etat: { texte: string; refus?: boolean; cout?: number | null };
   charme: { valeur: number; libelle: string } | null;
+  /** La biodiversité de la ferme : ce qui y vit, et où la faune va. */
+  biodiversite?: BiodiversiteVue | null;
+  /** Les habitats présents, pour la légende de la carte. */
+  habitats?: { id: Habitat; surface: number }[];
+  carteHabitats?: boolean;
+  onCarteHabitats?: () => void;
   selection: SelectionConstruction | null;
   onDeplacer: () => void;
   onTourner: () => void;
@@ -103,6 +122,17 @@ export function PanneauConstruction(p: Props) {
             ✿ {p.charme.valeur} · {p.charme.libelle}
           </span>
         )}
+        {p.biodiversite && (
+          <button
+            type="button"
+            className={`construction-bio${p.carteHabitats ? " on" : ""}`}
+            title="La biodiversité : ce qui vit sur votre ferme. Touchez pour la carte des habitats."
+            onClick={p.onCarteHabitats}
+          >
+            🐝 {p.biodiversite.score} · {p.biodiversite.libelle}
+            {p.biodiversite.scoreCible > p.biodiversite.score + 1 && <em> ↗ {p.biodiversite.scoreCible}</em>}
+          </button>
+        )}
         <button type="button" className="construction-fin" onClick={p.onQuitter}>
           Terminer
           {!p.mobile && <kbd>Échap</kbd>}
@@ -124,6 +154,8 @@ export function PanneauConstruction(p: Props) {
           </button>
         ))}
       </nav>
+
+      {p.carteHabitats && p.biodiversite && <FicheBiodiversite bio={p.biodiversite} habitats={p.habitats ?? []} />}
 
       <div className="construction-elements" role="listbox" aria-label="Éléments">
         {p.categorie === "TERRAFORMAGE" && (
@@ -199,5 +231,49 @@ export function PanneauConstruction(p: Props) {
         )}
       </footer>
     </section>
+  );
+}
+
+/**
+ * La fiche de la biodiversité : les cinq groupes de faune, chacun avec sa
+ * population et la cible vers laquelle il va, la légende de la carte, et un
+ * conseil pour le groupe le plus en retard.
+ */
+function FicheBiodiversite({ bio, habitats }: { bio: BiodiversiteVue; habitats: { id: Habitat; surface: number }[] }) {
+  const retard = [...GUILDES].sort((a, b) => bio.cible[a] - bio.cible[b])[0]!;
+  return (
+    <div className="bio-fiche">
+      <div className="bio-guildes">
+        {GUILDES.map((g) => (
+          <div key={g} className="bio-guilde" title={`${INFOS_GUILDE[g].qui} — aiment ${INFOS_GUILDE[g].aime}`}>
+            <span className="bio-nom">
+              {INFOS_GUILDE[g].icone} {INFOS_GUILDE[g].nom}
+            </span>
+            <span className="bio-barre">
+              <i style={{ width: `${bio.faune[g]}%` }} />
+              <b style={{ left: `${bio.cible[g]}%` }} />
+            </span>
+            <small>
+              {Math.round(bio.faune[g])}
+              {bio.cible[g] > bio.faune[g] + 1 ? ` → ${Math.round(bio.cible[g])}` : ""}
+            </small>
+          </div>
+        ))}
+      </div>
+      {habitats.length > 0 && (
+        <div className="bio-legende">
+          {habitats.map((h) => (
+            <span key={h.id}>
+              <i style={{ background: HABITATS[h.id].couleur }} />
+              {HABITATS[h.id].nom} <small>{Math.round(h.surface)}</small>
+            </span>
+          ))}
+        </div>
+      )}
+      <p className="bio-conseil">
+        Pour les {INFOS_GUILDE[retard].nom.toLowerCase()} ({INFOS_GUILDE[retard].qui}) : {INFOS_GUILDE[retard].aime}. La
+        mosaïque compte — plusieurs habitats qui se touchent valent mieux qu'un seul, étendu.
+      </p>
+    </div>
   );
 }

@@ -253,3 +253,36 @@
     animation: none;
   }
 }
+
+
+/* —— La biodiversité —— */
+.construction-bio {
+  font-size: 0.8rem;
+  color: #3f6a22;
+  background: #eef6df;
+  border: 1px solid #c8dfa4;
+  border-radius: var(--r-pill);
+  padding: 0.12rem 0.6rem;
+  cursor: pointer;
+}
+.construction-bio em { font-style: normal; color: #6a9a3a; font-weight: 700; }
+.construction-bio.on { background: #5f8f36; color: #fff; border-color: #5f8f36; }
+.construction-bio.on em { color: #e6f5cf; }
+.bio-fiche {
+  display: grid;
+  gap: 0.45rem;
+  padding: 0.5rem 0.25rem 0.35rem;
+  border-bottom: 1px solid rgba(0, 0, 0, 0.08);
+}
+.bio-guildes { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 0.3rem 0.8rem; }
+.bio-guilde { display: grid; grid-template-columns: 1fr auto; align-items: center; gap: 0.15rem 0.4rem; font-size: 0.8rem; }
+.bio-nom { grid-column: 1 / 3; font-weight: 600; }
+.bio-barre { position: relative; height: 7px; border-radius: 4px; background: #e6e1d2; overflow: visible; }
+.bio-barre i { position: absolute; inset: 0 auto 0 0; border-radius: 4px; background: linear-gradient(90deg, #8fbf5a, #4f8a2a); transition: width 0.6s; }
+.bio-barre b { position: absolute; top: -3px; width: 2px; height: 13px; background: #3f6a22; opacity: 0.55; }
+.bio-guilde small { color: #6b6250; font-variant-numeric: tabular-nums; }
+.bio-legende { display: flex; flex-wrap: wrap; gap: 0.25rem 0.7rem; font-size: 0.75rem; color: #4d4638; }
+.bio-legende span { display: inline-flex; align-items: center; gap: 0.25rem; }
+.bio-legende i { width: 10px; height: 10px; border-radius: 2px; display: inline-block; }
+.bio-legende small { color: #8a8170; }
+.bio-conseil { margin: 0; font-size: 0.78rem; color: #5a5243; }

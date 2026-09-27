@@ -220,6 +220,37 @@ nature.
   toujours visible. Sur les lots à vendre, le prix en réserve s'affiche sous
   le prix agricole.
 
+### La biodiversité
+
+Règles dans `packages/shared/src/biodiversite.ts`.
+
+- **Les habitats** se lisent sur les cases et le décor, sans rien saisir :
+  - prairie fleurie (pré de réserve) et pré fauché ;
+  - massif fleuri, haie, buissons, arbre isolé ;
+  - jeune bois, futaie, vieux bois (2 ans) et lisière ;
+  - mare, rivière, roselière ;
+  - rocaille (bord de falaise).
+
+  Le gros terraformage fait en terre de culture compte **deux fois moins**
+  qu'en réserve.
+- **Cinq groupes de faune** : pollinisateurs, auxiliaires, oiseaux, rapaces,
+  faune des mares. Chacun a ses affinités (`AFFINITES`) et une cible qui
+  sature. Les rapaces veulent un perchoir et de la prairie où chasser.
+- **La mosaïque paie** : de 0,55 pour un seul habitat à 1 à partir de sept.
+- **Le temps.** Chaque groupe s'installe avec sa demi-vie : un jour de jeu
+  pour les pollinisateurs, six pour les rapaces. Il part deux fois plus vite
+  qu'il ne vient. La faune est stockée sur la ferme (`Farm.fauneJson`) et
+  rattrapée à chaque lecture du domaine.
+- **La décoration libre compte** : nichoirs, bains d'oiseaux, ruches en
+  paille, fleurs, lavande, roseaux, mares, arbres, rochers, chacun avec un
+  plafond (`refugesDecor`).
+- **Calibrage.** Un lot de réserve bien aménagé vise environ 35/100, trois
+  lots approchent 80.
+- **À l'écran.** La pastille 🐝 du panneau de construction donne le score et
+  sa cible (« 0 · Terre nue ↗ 34 »). Touchée, elle ouvre la fiche des cinq
+  groupes (population, cible, habitats préférés), la légende, un conseil, et
+  la **carte des habitats** sur le terrain.
+
 ### Le bois
 
 Règles dans `packages/shared/src/bois.ts`, rendu dans `verserBois`
