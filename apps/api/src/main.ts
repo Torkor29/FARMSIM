@@ -407,6 +407,15 @@ import {
   type SolCase,
   type Vocation,
   GUILDES,
+  additionnerLectures,
+  aideDuJour,
+  bonusBiodiversiteCase,
+  casesPaysage,
+  paysageAutour,
+  sourcesBiodiversite,
+  SEASON_DAYS as JOURS_SAISON,
+  type LectureHabitats,
+  type SourcesBiodiversite,
   cibleFaune,
   deriveFaune,
   libelleBiodiversite,
@@ -2857,7 +2866,32 @@ async function getFarmBonuses(farmId: string) {
      * calculs de rendement.
      */
     decor: await decorDeLaFerme(farmId),
+    /**
+     * La faune, par parcelle : d'où rayonnent pollinisateurs et auxiliaires,
+     * et leur population. Lue sans réécrire — un calcul de rendement ne doit
+     * rien écrire.
+     */
+    biodiversite: await sourcesBiodiversiteDeLaFerme(farmId),
   };
+}
+
+async function sourcesBiodiversiteDeLaFerme(farmId: string): Promise<Record<string, SourcesBiodiversite>> {
+  const b = await biodiversiteDeLaFerme(farmId, { persister: false });
+  const out: Record<string, SourcesBiodiversite> = {};
+  if (!b) return out;
+  for (const [parcelId, l] of b.lectures) out[parcelId] = sourcesBiodiversite(l, b.faune);
+  return out;
+}
+
+/** Ce que la faune rend à une case de champ : pollinisation et régulation. */
+function bonusBiodiversiteAt(
+  bonuses: { biodiversite?: Record<string, SourcesBiodiversite> } | null | undefined,
+  parcelId: string,
+  x: number,
+  y: number,
+  crop: string | null | undefined,
+): number {
+  return bonusBiodiversiteCase(bonuses?.biodiversite?.[parcelId], x, y, crop).total;
 }
 
 /** Les sources de bonus du décor, rangées par parcelle. */
@@ -3502,7 +3536,7 @@ async function publishFromConsignes() {
             specialization: playableSpec(user.specialization),
             buildingYieldBonus:
               bonuses.yieldBonus +
-              pollinationBonusAt(bonuses.hives, cell.x, cell.y, cell.crop) + bonusDecorAt(bonuses, parcel.id, cell.x, cell.y),
+              pollinationBonusAt(bonuses.hives, cell.x, cell.y, cell.crop) + bonusDecorAt(bonuses, parcel.id, cell.x, cell.y) + bonusBiodiversiteAt(bonuses, parcel.id, cell.x, cell.y, cell.crop),
             skillYieldBonus: bonuses.skills.CROP_YIELD,
           });
           if (sim.lost) continue;
@@ -4848,6 +4882,7 @@ async function runWorldTick() {
   // Les salaires suivent le changement de jour, comme les intérêts : la
   // main-d'œuvre est un coût qui revient, y compris hors connexion.
   await tickSalaires();
+  await tickAides();
   // Les intérêts modifient la dette : ils courent au tick, pas à la lecture.
   // Les faire courir à l'affichage les ferait dépendre du nombre de fois où
   // le joueur ouvre son Bureau.
@@ -6086,7 +6121,7 @@ app.get("/parcels/:id", async (req, res) => {
         buildingYieldBonus:
           (bonuses?.yieldBonus ?? 0) +
           pollinationBonusAt(bonuses?.hives ?? [], c.x, c.y, c.crop) +
-          bonusDecorAt(bonuses, parcel.id, c.x, c.y),
+          bonusDecorAt(bonuses, parcel.id, c.x, c.y) + bonusBiodiversiteAt(bonuses, parcel.id, c.x, c.y, c.crop),
         skillYieldBonus: bonuses?.skills.CROP_YIELD ?? 0,
         weatherAtHarvest: weather?.state as WeatherState | undefined,
         cutsDone: grassCutsDone(c),
@@ -6138,7 +6173,7 @@ app.get("/parcels/:id", async (req, res) => {
        l'agrandir — un voisin qui regarde n'a pas à voir les devis. */
     domaine:
       parcel.farm?.userId && parcel.farm.userId === (await userFromAuthHeader(req))?.user.id
-        ? { ...domaineVue(parcel), biodiversite: await biodiversiteDeLaFerme(parcel.farm.id) }
+        ? { ...domaineVue(parcel), biodiversite: await biodiversiteVue(parcel.farm.id) }
         : null,
   });
 });
@@ -7128,7 +7163,7 @@ app.post("/parcels/:id/contractor", async (req, res) => {
       weedPressure: pressionAdventices(cell, currentSeason(climatDe(parcel).hemisphere ?? "N", Date.now())),
       fertilizedPasses: Math.min(2, cell.fertilizedPasses) as 0 | 1 | 2,
       buildingYieldBonus:
-        bonuses.yieldBonus + pollinationBonusAt(bonuses.hives, cell.x, cell.y, cell.crop) + bonusDecorAt(bonuses, parcel.id, cell.x, cell.y),
+        bonuses.yieldBonus + pollinationBonusAt(bonuses.hives, cell.x, cell.y, cell.crop) + bonusDecorAt(bonuses, parcel.id, cell.x, cell.y) + bonusBiodiversiteAt(bonuses, parcel.id, cell.x, cell.y, cell.crop),
       skillYieldBonus: bonuses.skills.CROP_YIELD,
       weatherAtHarvest: weather?.state as WeatherState | undefined,
       specialization: playableSpec(user.specialization),
@@ -8956,7 +8991,7 @@ app.post("/parcels/:id/harvest", async (req, res) => {
       rotation: rotationOf(cell),
       specialization: playableSpec(farm.user.specialization ?? user?.specialization),
       buildingYieldBonus:
-        bonuses.yieldBonus + pollinationBonusAt(bonuses.hives, cell.x, cell.y, cell.crop) + bonusDecorAt(bonuses, parcel.id, cell.x, cell.y),
+        bonuses.yieldBonus + pollinationBonusAt(bonuses.hives, cell.x, cell.y, cell.crop) + bonusDecorAt(bonuses, parcel.id, cell.x, cell.y) + bonusBiodiversiteAt(bonuses, parcel.id, cell.x, cell.y, cell.crop),
       skillYieldBonus: bonuses.skills.CROP_YIELD,
       weatherAtHarvest: weather?.state as WeatherState | undefined,
       cutsDone: grassCutsDone(cell),
@@ -9022,7 +9057,7 @@ app.post("/parcels/:id/harvest", async (req, res) => {
         rotation: rotationOf(cell),
         specialization: playableSpec(farm.user.specialization ?? user?.specialization),
         buildingYieldBonus:
-          bonuses.yieldBonus + pollinationBonusAt(bonuses.hives, cell.x, cell.y, cell.crop) + bonusDecorAt(bonuses, parcel.id, cell.x, cell.y),
+          bonuses.yieldBonus + pollinationBonusAt(bonuses.hives, cell.x, cell.y, cell.crop) + bonusDecorAt(bonuses, parcel.id, cell.x, cell.y) + bonusBiodiversiteAt(bonuses, parcel.id, cell.x, cell.y, cell.crop),
         skillYieldBonus: bonuses.skills.CROP_YIELD,
         weatherAtHarvest: weather?.state as WeatherState | undefined,
         cutsDone: grassCutsDone(cell),
@@ -9638,29 +9673,43 @@ function domaineVue(p: ParcelleGrille & { lotsAchetes: number; fertility: number
  * planifier : la lecture suffit, et une ferme qu'on ne regarde pas n'a pas
  * besoin qu'on la calcule.
  */
-async function biodiversiteDeLaFerme(farmId: string) {
+async function biodiversiteDeLaFerme(farmId: string, opts: { persister?: boolean } = {}) {
   const farm = await prisma.farm.findUnique({
     where: { id: farmId },
     select: {
       decorJson: true,
       fauneJson: true,
       fauneAt: true,
-      parcels: { select: { cells: true, amenagements: { select: { type: true, originX: true, originY: true } } } },
+      parcels: { select: { id: true, cells: true, amenagements: { select: { type: true, originX: true, originY: true } } } },
     },
   });
   if (!farm) return null;
   const maintenant = Date.now();
-  const cells = farm.parcels.flatMap((p) => p.cells);
-  const lecture = lireHabitats({
-    cells,
-    amenagements: farm.parcels.flatMap((p) => p.amenagements),
-    courante: hydrologie(cells).courante,
-    maintenant,
-  });
+  // Chaque parcelle a son repère : on la lit seule, puis on additionne.
+  const lectures = new Map<string, LectureHabitats>();
+  for (const p of farm.parcels) {
+    lectures.set(
+      p.id,
+      lireHabitats({ cells: p.cells, amenagements: p.amenagements, courante: hydrologie(p.cells).courante, maintenant }),
+    );
+  }
+  const lecture = additionnerLectures([...lectures.values()]);
   const cible = cibleFaune(lecture, refugesDecor(lireDecorations(farm.decorJson)));
   const faune = deriveFaune(lireFaune(farm.fauneJson), cible, farm.fauneAt ? maintenant - farm.fauneAt.getTime() : 0);
-  await prisma.farm.update({ where: { id: farmId }, data: { fauneJson: JSON.stringify(faune), fauneAt: new Date(maintenant) } });
+  if (opts.persister !== false) {
+    await prisma.farm.update({ where: { id: farmId }, data: { fauneJson: JSON.stringify(faune), fauneAt: new Date(maintenant) } });
+  }
   const score = scoreBiodiversite(faune);
+  // Les cases de réserve aménagées : un habitat autre qu'un pré fauché.
+  let casesReserve = 0;
+  for (const p of farm.parcels) {
+    const l = lectures.get(p.id)!;
+    for (const c of p.cells) {
+      if (c.vocation !== "NATURE") continue;
+      const hs = l.parCase.get(cleCase(c.x, c.y));
+      if (hs?.some((h) => h !== "PRE")) casesReserve++;
+    }
+  }
   return {
     score,
     libelle: libelleBiodiversite(score),
@@ -9671,7 +9720,61 @@ async function biodiversiteDeLaFerme(farmId: string) {
     surfaces: lecture.surfaces,
     diversite: lecture.diversite,
     guildes: GUILDES,
+    casesReserve,
+    /** L'aide agro-environnementale d'un jour de jeu, au rythme d'aujourd'hui. */
+    aideParJour: aideDuJour({ casesReserve, score, joursParSaison: JOURS_SAISON }),
+    lectures,
   };
+}
+
+/** Sans les lectures par parcelle : ce qu'on envoie au jeu. */
+async function biodiversiteVue(farmId: string) {
+  const b = await biodiversiteDeLaFerme(farmId);
+  if (!b) return null;
+  const { lectures: _l, ...vue } = b;
+  return vue;
+}
+
+/**
+ * Les aides agro-environnementales, chaque jour de jeu.
+ *
+ * Une ferme qui a une réserve aménagée touche sa part, pondérée par la santé
+ * de sa faune (`aideDuJour`). Le compte tourne hors connexion comme les
+ * salaires, mais ne rattrape pas plus d'une saison : une aide suppose qu'on
+ * entretienne.
+ */
+async function tickAides(): Promise<void> {
+  const maintenant = Date.now();
+  // Les fermes qui ont une réserve : on part de ses cases, une par parcelle.
+  const reserves = await prisma.parcelCell.findMany({
+    where: { vocation: "NATURE" },
+    select: { parcel: { select: { farmId: true } } },
+    distinct: ["parcelId"],
+  });
+  const ids = [...new Set(reserves.map((r) => r.parcel.farmId).filter((f): f is string => !!f))];
+  if (!ids.length) return;
+  const fermes = await prisma.farm.findMany({
+    where: { id: { in: ids } },
+    select: { id: true, userId: true, aidesAt: true },
+  });
+  for (const f of fermes) {
+    if (!f.aidesAt) {
+      await prisma.farm.update({ where: { id: f.id }, data: { aidesAt: new Date(maintenant) } });
+      continue;
+    }
+    const jours = Math.floor((maintenant - f.aidesAt.getTime()) / GAME_DAY_MS);
+    if (jours < 1) continue;
+    const bio = await biodiversiteDeLaFerme(f.id);
+    const montant = Math.round((bio?.aideParJour ?? 0) * Math.min(jours, JOURS_SAISON) * 100) / 100;
+    await prisma.$transaction(async (tx) => {
+      const garde = await tx.farm.updateMany({
+        where: { id: f.id, aidesAt: f.aidesAt },
+        data: { aidesAt: new Date(f.aidesAt!.getTime() + jours * GAME_DAY_MS) },
+      });
+      if (garde.count !== 1 || montant <= 0) return;
+      await crediter(tx, f.userId, montant, "AIDES", `Aides agro-environnementales — ${bio!.casesReserve} cases de réserve, ${jours} jour(s)`);
+    });
+  }
 }
 
 const includeDomaine = {
@@ -10628,12 +10731,15 @@ function paddocksFor(
 function installationAround(
   barn: { originX: number; originY: number; type: string; rotation?: number; level?: number },
   buildings: { type: string; originX: number; originY: number; rotation?: number }[],
-): { level: number; hasPaddock: boolean; hasTrough: boolean; hasRack: boolean } {
+  /** Les cases d'un paysage vivant sur la parcelle (`paysageDeParcelle`). */
+  paysage?: ReadonlySet<string>,
+): { level: number; hasPaddock: boolean; hasTrough: boolean; hasRack: boolean; hasPaysage: boolean } {
   const footprint = {
     originX: barn.originX,
     originY: barn.originY,
     ...orientedFootprint(barn.type as SharedBuildingType, barn.rotation),
   };
+  const hasPaysage = paysage ? paysageAutour(paysage, footprint) : false;
   const yardType = yardTypeForBarn(barn.type);
   let hasPaddock = false;
   let hasTrough = false;
@@ -10654,8 +10760,17 @@ function installationAround(
     hasPaddock,
     hasTrough,
     hasRack,
-    level: installationLevel({ barnLevel: barn.level ?? 1, hasPaddock, hasTrough, hasRack }),
+    hasPaysage,
+    level: installationLevel({ barnLevel: barn.level ?? 1, hasPaddock, hasTrough, hasRack, hasPaysage }),
   };
+}
+
+/** Les cases d'un paysage vivant d'une parcelle : haies, bois, mares, prairies. */
+function paysageDeParcelle(
+  cells: { x: number; y: number; sol: string; revetement: string | null; kind: string; niveau: number; boiseDepuis: Date | null; vocation: string }[],
+  amenagements: { type: string; originX: number; originY: number }[],
+): Set<string> {
+  return casesPaysage(lireHabitats({ cells, amenagements, courante: hydrologie(cells).courante }));
 }
 
 /**
@@ -10676,11 +10791,15 @@ async function installationForBarn(barn: {
   rotation?: number;
   level?: number;
 }): Promise<number> {
-  const voisins = await prisma.building.findMany({
-    where: { parcelId: barn.parcelId },
-    select: { type: true, originX: true, originY: true, rotation: true },
-  });
-  return installationAround(barn, voisins).level;
+  const [voisins, cells, amenagements] = await Promise.all([
+    prisma.building.findMany({
+      where: { parcelId: barn.parcelId },
+      select: { type: true, originX: true, originY: true, rotation: true },
+    }),
+    prisma.parcelCell.findMany({ where: { parcelId: barn.parcelId } }),
+    prisma.amenagement.findMany({ where: { parcelId: barn.parcelId }, select: { type: true, originX: true, originY: true } }),
+  ]);
+  return installationAround(barn, voisins, paysageDeParcelle(cells, amenagements)).level;
 }
 
 /** Fumier encore dans les fosses de la parcelle, en tonnes. */
@@ -10737,11 +10856,12 @@ async function settleAllHerds() {
   const herds = await prisma.herd.findMany({
     include: {
       building: {
-        include: { parcel: { include: { buildings: true, zone: true } } },
+        include: { parcel: { include: { buildings: true, zone: true, cells: true, amenagements: true } } },
       },
     },
   });
   const now = Date.now();
+  const paysages = new Map<string, Set<string>>();
   // La météo se lit une fois pour toutes : une requête par troupeau ferait
   // autant d'allers-retours que de fermes, à chaque tick.
   const weathers = await prisma.weatherSnapshot.findMany();
@@ -10757,7 +10877,12 @@ async function settleAllHerds() {
     const zone = barn.parcel.zone;
     const season = currentSeason((zone?.hemisphere as Hemisphere) ?? "N", now);
     const weather = weatherByZone.get(zone?.code ?? "") ?? "CLEAR";
-    const installation = installationAround(barn, barn.parcel.buildings);
+    let paysage = paysages.get(barn.parcel.id);
+    if (!paysage) {
+      paysage = paysageDeParcelle(barn.parcel.cells, barn.parcel.amenagements);
+      paysages.set(barn.parcel.id, paysage);
+    }
+    const installation = installationAround(barn, barn.parcel.buildings, paysage);
     const apres = await settleHerd(herd, paddock.capacity, now, barn.level, capacity, {
       season,
       weather,
@@ -11301,11 +11426,16 @@ app.get("/parcels/:id/livestock", async (req, res) => {
      même pour tous, donc elle se calcule une fois, hors de la boucle. */
   const partFumiere = partDeFumiere(parcel.buildings);
 
+  // Un paysage vivant autour des abris compte dans leur installation.
+  const paysageLivestock = paysageDeParcelle(
+    await prisma.parcelCell.findMany({ where: { parcelId: parcel.id } }),
+    await prisma.amenagement.findMany({ where: { parcelId: parcel.id }, select: { type: true, originX: true, originY: true } }),
+  );
   const barns = [];
   for (const b of parcel.buildings) {
     if (!kindForBarn(b.type)) continue;
     const paddock = paddocksFor(b, parcel.buildings);
-    const installation = installationAround(b, parcel.buildings);
+    const installation = installationAround(b, parcel.buildings, paysageLivestock);
     const bonus = installationBonus(installation.level);
     const stats = buildingStatsAtLevel(b.type as SharedBuildingType, b.level);
     const capacity = barnCapacity(b.type, stats);
@@ -11430,6 +11560,7 @@ app.get("/parcels/:id/livestock", async (req, res) => {
         hasPaddock: installation.hasPaddock,
         hasTrough: installation.hasTrough,
         hasRack: installation.hasRack,
+        hasPaysage: installation.hasPaysage,
         production: bonus.production,
         reproduction: bonus.reproduction,
         feed: bonus.feed,

@@ -74,3 +74,49 @@ describe("la faune", () => {
     expect(r.POLLINISATEURS).toBe(2);
   });
 });
+
+import {
+  AIDE_PAR_CASE_SAISON,
+  POLLINISATION_SAUVAGE_MAX,
+  REGULATION_MAX,
+  aideDuJour,
+  bonusBiodiversiteCase,
+  casesPaysage,
+  installationLevel,
+  paysageAutour,
+  sourcesBiodiversite,
+} from "@farmsim/shared";
+
+describe("ce que la faune rend", () => {
+  const prairie = lireHabitats({ cells: terrain(4, 4, () => ({})), maintenant: T });
+  const pleine = { POLLINISATEURS: 100, AUXILIAIRES: 100, OISEAUX: 100, RAPACES: 100, AMPHIBIENS: 100 };
+  const s = sourcesBiodiversite(prairie, pleine);
+
+  it("pollinise le colza près des fleurs, pas le blé", () => {
+    expect(bonusBiodiversiteCase(s, 5, 1, "RAPE").pollinisation).toBeCloseTo(POLLINISATION_SAUVAGE_MAX, 5);
+    expect(bonusBiodiversiteCase(s, 5, 1, "WHEAT").pollinisation).toBe(0);
+    // Loin des fleurs, l'effet décroît sans tomber sous un quart.
+    const loin = bonusBiodiversiteCase(s, 40, 1, "RAPE").pollinisation;
+    expect(loin).toBeCloseTo(POLLINISATION_SAUVAGE_MAX * 0.25, 5);
+  });
+
+  it("régule les ravageurs de toute culture, au prorata de la faune", () => {
+    expect(bonusBiodiversiteCase(s, 5, 1, "WHEAT").regulation).toBeCloseTo(REGULATION_MAX, 5);
+    const moitie = sourcesBiodiversite(prairie, { AUXILIAIRES: 50, OISEAUX: 50 });
+    expect(bonusBiodiversiteCase(moitie, 5, 1, "WHEAT").regulation).toBeCloseTo(REGULATION_MAX / 2, 5);
+    expect(bonusBiodiversiteCase(null, 5, 1, "WHEAT").total).toBe(0);
+  });
+
+  it("donne un point d'installation à un abri entouré de paysage", () => {
+    const p = casesPaysage(prairie);
+    expect(paysageAutour(p, { originX: 5, originY: 0, w: 2, h: 2 })).toBe(true);
+    expect(paysageAutour(p, { originX: 12, originY: 0, w: 2, h: 2 })).toBe(false);
+    expect(installationLevel({ barnLevel: 1, hasPaysage: true })).toBeGreaterThan(installationLevel({ barnLevel: 1 }));
+  });
+
+  it("verse des aides pour la réserve aménagée, pleines à partir d'un score de 50", () => {
+    expect(aideDuJour({ casesReserve: 7, score: 50, joursParSaison: 7 })).toBeCloseTo(AIDE_PAR_CASE_SAISON, 5);
+    expect(aideDuJour({ casesReserve: 7, score: 25, joursParSaison: 7 })).toBeCloseTo(AIDE_PAR_CASE_SAISON / 2, 5);
+    expect(aideDuJour({ casesReserve: 10_000, score: 100, joursParSaison: 7 })).toBeCloseTo((400 * AIDE_PAR_CASE_SAISON) / 7, 1);
+  });
+});

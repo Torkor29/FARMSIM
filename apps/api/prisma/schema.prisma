@@ -320,6 +320,8 @@ model Farm {
    */
   fauneJson  String          @default("{}")
   fauneAt    DateTime?
+  /** Le dernier jour de jeu dont les aides agro-environnementales ont été versées. */
+  aidesAt    DateTime?
 }
 
 /**

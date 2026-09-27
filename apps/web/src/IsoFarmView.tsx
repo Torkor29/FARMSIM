@@ -357,6 +357,8 @@ type Props = {
   bornes?: BornesDomaine | null;
   /** Le décor posé sur le domaine. */
   amenagements?: ObjetPose[];
+  /** La floraison de la réserve, 0 à 1 : elle suit les pollinisateurs. */
+  floraison?: number;
   /** Le mode construction : grille, lots, fantôme. Nul hors du mode. */
   construction?: EtatConstruction | null;
   cells: IsoCell[];
@@ -1191,6 +1193,7 @@ export function IsoFarmView({
   gridH,
   bornes = null,
   amenagements = [],
+  floraison = 0,
   construction = null,
   cells,
   buildings,
@@ -1369,6 +1372,7 @@ export function IsoFarmView({
     gridH,
     bornes,
     amenagements,
+    floraison,
     construction,
   });
   dataRef.current = {
@@ -1392,6 +1396,7 @@ export function IsoFarmView({
     gridH,
     bornes,
     amenagements,
+    floraison,
     construction,
   };
 
@@ -2951,6 +2956,7 @@ export function IsoFarmView({
             bornes: b ?? { minX: 0, minY: 0, maxX: gw, maxY: gh },
             cells: cs.map((c) => ({ x: c.x, y: c.y, sol: c.sol ?? "CHAMP", revetement: c.revetement ?? null, kind: c.kind, forme: c.forme ?? 0, niveau: c.niveau ?? 0, boiseDepuis: c.boiseDepuis ?? null, vocation: c.vocation ?? null })),
             amenagements: dataRef.current.amenagements,
+            floraison: dataRef.current.floraison,
           },
           cellWorldPos,
           step,
@@ -4988,8 +4994,10 @@ export function IsoFarmView({
     // Le domaine et son décor font partie de la scène.
     const dom = bornes ? `${bornes.minX},${bornes.minY},${bornes.maxX},${bornes.maxY}` : "";
     const am = amenagements.map((x) => `${x.id}:${x.type}:${x.originX},${x.originY}:${x.rotation}`).join("|");
-    return `${gridW}x${gridH}#${dom}#${c}#${b}#${s}#${sel}#${w}#${p}#${v}#${am}`;
-  }, [cells, buildings, cellSims, selected, workers, parked, gridW, gridH, voisinage, bornes, amenagements]);
+    // La floraison change par paliers : la réserve refleurit quand les pollinisateurs s'installent.
+    const fl = Math.round(floraison * 10);
+    return `${gridW}x${gridH}#${dom}#${c}#${b}#${s}#${sel}#${w}#${p}#${v}#${am}#${fl}`;
+  }, [cells, buildings, cellSims, selected, workers, parked, gridW, gridH, voisinage, bornes, amenagements, floraison]);
 
   useEffect(() => {
     layoutRef.current?.();

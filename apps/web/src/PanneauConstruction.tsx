@@ -3,6 +3,8 @@ import {
   GUILDES,
   HABITATS,
   INFOS_GUILDE,
+  POLLINISATION_SAUVAGE_MAX,
+  REGULATION_MAX,
   type Guilde,
   type Habitat,
   PRIX_COUPE,
@@ -31,6 +33,8 @@ export type BiodiversiteVue = {
   scoreCible: number;
   faune: Record<Guilde, number>;
   cible: Record<Guilde, number>;
+  casesReserve?: number;
+  aideParJour?: number;
 };
 
 export type SelectionConstruction =
@@ -239,6 +243,8 @@ export function PanneauConstruction(p: Props) {
  * population et la cible vers laquelle il va, la légende de la carte, et un
  * conseil pour le groupe le plus en retard.
  */
+const pct = (v: number) => (Math.round(v * 1000) / 10).toLocaleString("fr-FR");
+
 function FicheBiodiversite({ bio, habitats }: { bio: BiodiversiteVue; habitats: { id: Habitat; surface: number }[] }) {
   const retard = [...GUILDES].sort((a, b) => bio.cible[a] - bio.cible[b])[0]!;
   return (
@@ -270,6 +276,19 @@ function FicheBiodiversite({ bio, habitats }: { bio: BiodiversiteVue; habitats: 
           ))}
         </div>
       )}
+      <p className="bio-effets">
+        <span title="Colza et pois, près des fleurs">
+          🌼 Pollinisation jusqu'à +{pct(POLLINISATION_SAUVAGE_MAX * (bio.faune.POLLINISATEURS / 100))} %
+        </span>
+        <span title="Toute culture, près des haies et des abris">
+          🐞 Régulation jusqu'à +{pct(REGULATION_MAX * ((0.6 * bio.faune.AUXILIAIRES + 0.4 * bio.faune.OISEAUX) / 100))} %
+        </span>
+        {bio.aideParJour !== undefined && (
+          <span title="Aides agro-environnementales : chaque case de réserve aménagée, pondérée par la santé de la faune">
+            🌿 Aides {bio.aideParJour.toLocaleString("fr-FR")} €/jour · {bio.casesReserve ?? 0} cases de réserve
+          </span>
+        )}
+      </p>
       <p className="bio-conseil">
         Pour les {INFOS_GUILDE[retard].nom.toLowerCase()} ({INFOS_GUILDE[retard].qui}) : {INFOS_GUILDE[retard].aime}. La
         mosaïque compte — plusieurs habitats qui se touchent valent mieux qu'un seul, étendu.

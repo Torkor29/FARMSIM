@@ -52,6 +52,8 @@ export type DonneesDomaine = {
   bornes: Bornes;
   cells: readonly CaseTerrain[];
   amenagements: readonly ObjetPose[];
+  /** La floraison, 0 à 1 : les pollinisateurs font refleurir la réserve. */
+  floraison?: number;
 };
 
 export type LotAffiche = { id: string; x: number; y: number; w: number; h: number; etat: string; prix: number; prixNature?: number };
@@ -719,13 +721,15 @@ export function creerDomaine3d(opts: { shadows: boolean }): Domaine3d {
         ajouterGeometrie(friche.pos, friche.col, _cone, pose(px + u, TOP + h / 2, pz + v, k, sauvage ? 0.12 : 0.1, h, sauvage ? 0.12 : 0.1), k % 3 === 2 && sauvage ? 0x9aa94f : k % 2 ? 0x5f9a3a : 0x6ea945);
       }
       if (sauvage) {
-        const fleurs = [0xd8342a, 0x4f6fd0, 0xf5f2ea, 0xf0c52e];
-        for (let k = 0; k < 4; k++) {
+        const fleurs = [0xd8342a, 0x4f6fd0, 0xf5f2ea, 0xf0c52e, 0xb46fd0];
+        // Deux fleurs par case sans pollinisateurs, jusqu'à sept quand ils sont là.
+        const nFleurs = 2 + Math.round((d.floraison ?? 0) * 5);
+        for (let k = 0; k < nFleurs; k++) {
           const u = (hash(c.x, c.y, k + 50) - 0.5) * 0.75;
           const v = (hash(c.y, c.x, k + 57) - 0.5) * 0.75;
           const h = 0.16 + hash(c.x, c.y, k + 61) * 0.1;
           ajouterBoite(friche.pos, friche.col, px + u, TOP + h / 2, pz + v, 0.012, h, 0.012, 0x5d8f3a);
-          ajouterBoite(friche.pos, friche.col, px + u, TOP + h, pz + v, 0.055, 0.03, 0.055, fleurs[Math.floor(hash(c.x + k, c.y, 63) * 4)]!);
+          ajouterBoite(friche.pos, friche.col, px + u, TOP + h, pz + v, 0.055, 0.03, 0.055, fleurs[Math.floor(hash(c.x + k, c.y, 63) * 5)]!);
         }
       }
       const f = hash(c.x, c.y, 41);

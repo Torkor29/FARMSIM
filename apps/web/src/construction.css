@@ -286,3 +286,4 @@
 .bio-legende i { width: 10px; height: 10px; border-radius: 2px; display: inline-block; }
 .bio-legende small { color: #8a8170; }
 .bio-conseil { margin: 0; font-size: 0.78rem; color: #5a5243; }
+.bio-effets { margin: 0; display: flex; flex-wrap: wrap; gap: 0.2rem 1rem; font-size: 0.8rem; color: #3f6a22; font-weight: 600; }

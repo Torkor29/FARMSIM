@@ -251,6 +251,30 @@ Règles dans `packages/shared/src/biodiversite.ts`.
   groupes (population, cible, habitats préférés), la légende, un conseil, et
   la **carte des habitats** sur le terrain.
 
+### Ce que la biodiversité rapporte
+
+Tout est en bonus, jamais en malus : une ferme qui ignore la nature tourne
+comme avant.
+
+- **Pollinisation sauvage** : colza et pois, jusqu'à +6 %. L'effet suit la
+  population de pollinisateurs : plein à 4 cases des fleurs (prairie, massif,
+  lisière, haie), puis il décroît sans tomber sous un quart. Il s'ajoute au
+  rucher (+8 %).
+- **Régulation naturelle** : toute culture, jusqu'à +4 %. L'effet suit les
+  auxiliaires (60 %) et les oiseaux (40 %), à 5 cases de leurs abris (haie,
+  buissons, lisière, prairie, arbre, jeune bois).
+- **Élevage** : un paysage vivant (haie, bois, mare, prairie) à trois cases
+  d'un abri lui vaut un **point d'installation** de plus, au même titre que
+  l'enclos, l'abreuvoir ou le râtelier. L'écran d'élevage l'affiche.
+- **Aides agro-environnementales** : chaque jour de jeu, 20 € par saison et
+  par case de réserve aménagée (plafond 400 cases), pleines à partir d'un
+  score de 50. Versées au journal sous « Aides », avec un rattrapage d'une
+  saison au plus. Une réserve d'un lot en bonne santé rapporte environ
+  720 € par saison.
+- **Floraison** : la réserve refleurit à mesure que les pollinisateurs
+  s'installent, de deux à sept fleurs par case.
+- La fiche de biodiversité dit ce que tout cela vaut aujourd'hui.
+
 ### Le bois
 
 Règles dans `packages/shared/src/bois.ts`, rendu dans `verserBois`

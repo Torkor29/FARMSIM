@@ -213,6 +213,17 @@ export function lireHabitats(opts: {
   return { parCase, surfaces, diversite };
 }
 
+/**
+ * Plusieurs parcelles, une seule ferme : leurs surfaces s'additionnent, et un
+ * habitat compte dans la diversité dès qu'il fait deux cases en tout.
+ */
+export function additionnerLectures(lectures: readonly LectureHabitats[]): LectureHabitats {
+  const surfaces = Object.fromEntries(Object.keys(HABITATS).map((h) => [h, 0])) as Record<Habitat, number>;
+  for (const l of lectures) for (const h of Object.keys(surfaces) as Habitat[]) surfaces[h] += l.surfaces[h];
+  const diversite = (Object.keys(surfaces) as Habitat[]).filter((h) => h !== "PRE" && surfaces[h] >= 2).length;
+  return { parCase: new Map(), surfaces, diversite };
+}
+
 /** Ce que les décorations libres apportent, par groupe — plafonné par article. */
 const REFUGES_DECOR: Record<string, { guilde: Guilde; points: number; max: number }[]> = {
   NICHOIR: [{ guilde: "OISEAUX", points: 6, max: 5 }],
@@ -313,4 +324,129 @@ export function lireFaune(json: string | null | undefined): Partial<Faune> {
   } catch {
     return {};
   }
+}
+
+/* ------------------------------------------------------------------ */
+/* Ce que la faune rend                                                 */
+/* ------------------------------------------------------------------ */
+
+/** Les habitats qui font un paysage vivant autour d'un abri d'élevage. */
+export const ABRIS_PAYSAGE: ReadonlySet<Habitat> = new Set([
+  "HAIE",
+  "BOSQUET",
+  "ARBRE",
+  "BOIS_JEUNE",
+  "FUTAIE",
+  "VIEUX_BOIS",
+  "LISIERE",
+  "MARE",
+  "RIVIERE",
+  "ROSELIERE",
+  "PRAIRIE",
+]);
+/** Portée du paysage autour d'un abri, en cases depuis son emprise. */
+export const PORTEE_PAYSAGE = 3;
+
+/** Les cases d'un paysage vivant, pour `paysageAutour`. */
+export function casesPaysage(lecture: LectureHabitats): Set<string> {
+  const out = new Set<string>();
+  for (const [kk, hs] of lecture.parCase) if (hs.some((h) => ABRIS_PAYSAGE.has(h))) out.add(kk);
+  return out;
+}
+
+/** Un abri d'élevage a-t-il un paysage vivant à portée ? */
+export function paysageAutour(
+  paysage: ReadonlySet<string>,
+  emprise: { originX: number; originY: number; w: number; h: number },
+  portee = PORTEE_PAYSAGE,
+): boolean {
+  for (let y = emprise.originY - portee; y < emprise.originY + emprise.h + portee; y++) {
+    for (let x = emprise.originX - portee; x < emprise.originX + emprise.w + portee; x++) {
+      if (paysage.has(k(x, y))) return true;
+    }
+  }
+  return false;
+}
+
+/** La pollinisation sauvage, au plus, sur une culture à fleurs. */
+export const POLLINISATION_SAUVAGE_MAX = 0.06;
+/** La régulation naturelle des ravageurs, au plus, sur toute culture. */
+export const REGULATION_MAX = 0.04;
+/** Les cultures que les pollinisateurs visitent. */
+export const CULTURES_POLLINISEES: ReadonlySet<string> = new Set(["RAPE", "PEA"]);
+/** Les habitats où butinent les pollinisateurs. */
+const FLEURIES: ReadonlySet<Habitat> = new Set(["PRAIRIE", "FLEURS", "LISIERE", "HAIE"]);
+/** Les habitats d'où partent les auxiliaires et les oiseaux. */
+const ABRIS_AUXILIAIRES: ReadonlySet<Habitat> = new Set(["HAIE", "BOSQUET", "LISIERE", "PRAIRIE", "ARBRE", "BOIS_JEUNE"]);
+
+export type SourcesBiodiversite = {
+  faune: Partial<Faune>;
+  fleuries: readonly { x: number; y: number }[];
+  abris: readonly { x: number; y: number }[];
+};
+
+/** Les points d'où la faune rayonne, pour `bonusBiodiversiteCase`. */
+export function sourcesBiodiversite(lecture: LectureHabitats, faune: Partial<Faune>): SourcesBiodiversite {
+  const fleuries: { x: number; y: number }[] = [];
+  const abris: { x: number; y: number }[] = [];
+  for (const [kk, hs] of lecture.parCase) {
+    const [x, y] = kk.split(",").map(Number) as [number, number];
+    if (hs.some((h) => FLEURIES.has(h))) fleuries.push({ x, y });
+    if (hs.some((h) => ABRIS_AUXILIAIRES.has(h))) abris.push({ x, y });
+  }
+  return { faune, fleuries, abris };
+}
+
+/**
+ * Plein effet à portée, puis il décroît, sans tomber sous un quart : un
+ * bourdon va loin, mais il préfère le champ d'à côté.
+ */
+function proximite(points: readonly { x: number; y: number }[], x: number, y: number, portee: number): number {
+  if (!points.length) return 0;
+  let d = Infinity;
+  for (const p of points) d = Math.min(d, Math.hypot(p.x - x, p.y - y));
+  return d <= portee ? 1 : Math.max(0.25, 1 - (d - portee) / (2 * portee));
+}
+
+/**
+ * Ce que la faune rend à une case de champ.
+ *
+ * - **Pollinisation sauvage** : colza et pois, jusqu'à +6 %, selon la
+ *   population de pollinisateurs et la distance aux fleurs (4 cases).
+ * - **Régulation naturelle** : toute culture, jusqu'à +4 % — coccinelles,
+ *   carabes et oiseaux mangent pucerons et limaces à 5 cases de leurs abris.
+ */
+export function bonusBiodiversiteCase(
+  s: SourcesBiodiversite | null | undefined,
+  x: number,
+  y: number,
+  crop: string | null | undefined,
+): { pollinisation: number; regulation: number; total: number } {
+  if (!s) return { pollinisation: 0, regulation: 0, total: 0 };
+  const f = (g: Guilde) => (s.faune[g] ?? 0) / 100;
+  const pollinisation =
+    crop && CULTURES_POLLINISEES.has(crop) ? POLLINISATION_SAUVAGE_MAX * f("POLLINISATEURS") * proximite(s.fleuries, x, y, 4) : 0;
+  const regulation = REGULATION_MAX * (0.6 * f("AUXILIAIRES") + 0.4 * f("OISEAUX")) * proximite(s.abris, x, y, 5);
+  const r = (v: number) => Math.round(v * 10000) / 10000;
+  return { pollinisation: r(pollinisation), regulation: r(regulation), total: r(pollinisation + regulation) };
+}
+
+/* ------------------------------------------------------------------ */
+/* Les aides agro-environnementales                                     */
+/* ------------------------------------------------------------------ */
+
+/** Ce qu'une case de réserve en bon état rapporte en aides, par saison. */
+export const AIDE_PAR_CASE_SAISON = 20;
+/** Au-delà, les aides plafonnent : c'est une aide, pas une rente. */
+export const AIDE_CASES_MAX = 400;
+
+/**
+ * L'aide d'une journée de jeu : chaque case de réserve aménagée (un habitat
+ * autre que du pré fauché) touche sa part, pondérée par la santé de la faune
+ * — pleine à partir d'un score de 50.
+ */
+export function aideDuJour(opts: { casesReserve: number; score: number; joursParSaison: number }): number {
+  const n = Math.min(AIDE_CASES_MAX, Math.max(0, opts.casesReserve));
+  const qualite = Math.min(1, Math.max(0, opts.score) / 50);
+  return Math.round(((n * AIDE_PAR_CASE_SAISON) / Math.max(1, opts.joursParSaison)) * qualite * 100) / 100;
 }

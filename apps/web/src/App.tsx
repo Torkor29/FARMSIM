@@ -7107,6 +7107,7 @@ export function App() {
               onCellContext={openCellMenu}
               bornes={domaine?.bornes ?? null}
               amenagements={amenagements}
+              floraison={(domaine?.biodiversite?.faune.POLLINISATEURS ?? 0) / 100}
               construction={vueConstruction?.etat ?? null}
             />
           </Suspense>
