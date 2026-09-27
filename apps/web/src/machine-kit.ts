@@ -65,7 +65,9 @@ export type MatKey =
   /** Buisson de cour, herbe rase */
   | "foliage"
   /** Terre battue de la cour */
-  | "dirt";
+  | "dirt"
+  /** Vitre de fenêtre : s'allume le soir (voir `allumerLumieres`) */
+  | "window";
 
 export type Palette = {
   /** Teinte de carrosserie */
@@ -192,6 +194,8 @@ export function createMaterials(pal: Palette, seed = 0, wear = 0): Materials {
     hay: machine.grain,
     foliage: machine.grain,
     dirt: machine.cast,
+    // Un engin n'a pas de fenêtre qui s'allume le soir : sa vitre reste vitre.
+    window: machine.glass,
   };
 }
 
@@ -272,12 +276,32 @@ export function createBuildingMaterials(
       opacity: 0.42,
       side: THREE.DoubleSide,
     }),
-    lamp: std({
-      color: 0xfff4d2,
-      emissive: new THREE.Color(0xffe9a8),
-      emissiveIntensity: 0.7,
-      roughness: 0.22,
-    }),
+    lamp: (() => {
+      const m = std({
+        color: 0xfff4d2,
+        emissive: new THREE.Color(0xffe9a8),
+        emissiveIntensity: 0.7,
+        roughness: 0.22,
+      });
+      m.userData.allumable = "lampe";
+      return m;
+    })(),
+    /*
+     * La vitre des fenêtres, opaque (l'embrasure sombre est derrière) : le
+     * jour un reflet de ciel, le soir une lueur chaude. C'est la vue qui
+     * règle l'émission à l'heure (`allumerLumieres`).
+     */
+    window: (() => {
+      const m = std({
+        color: 0x9fd2e2,
+        emissive: new THREE.Color(0xffb85c),
+        emissiveIntensity: 0,
+        metalness: 0.02,
+        roughness: 0.1,
+      });
+      m.userData.allumable = "fenetre";
+      return m;
+    })(),
 
     /* — Clés de machine, sans emploi ici ——————————————————— */
     paint: roof,

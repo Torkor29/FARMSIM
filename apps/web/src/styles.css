@@ -7960,3 +7960,70 @@ button.tiny {
 .activite-engrais { margin: 1rem 0; padding: .8rem; border: 1px solid var(--line); border-radius: var(--r-sm); }
 .activite-engrais summary { cursor: pointer; font-weight: 700; }
 .activite-engrais label { display: flex; gap: .5rem; align-items: center; margin-top: .7rem; }
+
+/* ==========================================================================
+   L'heure du jour dans le ciel (voir `ambiance.ts`)
+
+   Un voile par-dessus la palette de saison : nul à midi, il monte avec le
+   soir — rose à l'aube, orangé au coucher, violet au crépuscule, bleu nuit.
+   L'astre (soleil ou lune) traverse le ciel de gauche à droite. Tout passe
+   par des transitions lentes : l'ambiance n'est recalculée que toutes les
+   deux secondes, le navigateur lisse l'entre-deux.
+   ========================================================================== */
+.sky-heure {
+  position: absolute;
+  inset: 0;
+  background:
+    radial-gradient(ellipse 120% 45% at 50% 100%, var(--h-horizon) 0%, transparent 70%),
+    linear-gradient(180deg, var(--h-haut) 0%, var(--h-bas) 100%);
+  transition: opacity 3s linear, background 3s linear;
+  pointer-events: none;
+}
+
+.sky-etoiles {
+  position: absolute;
+  inset: 0 0 35%;
+  background-image:
+    radial-gradient(1.5px 1.5px at 12% 18%, #fff 60%, transparent 61%),
+    radial-gradient(1px 1px at 27% 8%, #fff 60%, transparent 61%),
+    radial-gradient(1.5px 1.5px at 41% 26%, #fff 60%, transparent 61%),
+    radial-gradient(1px 1px at 58% 12%, #fff 60%, transparent 61%),
+    radial-gradient(2px 2px at 69% 30%, #fff 60%, transparent 61%),
+    radial-gradient(1px 1px at 83% 16%, #fff 60%, transparent 61%),
+    radial-gradient(1.5px 1.5px at 92% 38%, #fff 60%, transparent 61%),
+    radial-gradient(1px 1px at 6% 44%, #fff 60%, transparent 61%),
+    radial-gradient(1px 1px at 35% 48%, #fff 60%, transparent 61%),
+    radial-gradient(1.5px 1.5px at 76% 52%, #fff 60%, transparent 61%);
+  background-size: 420px 300px;
+  transition: opacity 4s linear;
+  animation: etoiles-scintillent 6s ease-in-out infinite alternate;
+  pointer-events: none;
+}
+@keyframes etoiles-scintillent {
+  from { filter: brightness(0.8); }
+  to { filter: brightness(1.25); }
+}
+
+.sky-astre {
+  position: absolute;
+  width: clamp(48px, 6vw, 92px);
+  aspect-ratio: 1;
+  translate: -50% -50%;
+  border-radius: 50%;
+  background: var(--astre);
+  box-shadow:
+    0 0 50px 22px color-mix(in srgb, var(--astre) 55%, transparent),
+    0 0 140px 70px color-mix(in srgb, var(--astre) 22%, transparent);
+  transition: left 2s linear, top 2s linear, background 3s linear, box-shadow 3s linear, opacity 3s linear;
+  pointer-events: none;
+}
+/* La lune : plus petite, un croissant d'ombre, un halo froid. */
+.sky-astre.lune {
+  width: clamp(34px, 4vw, 60px);
+  background: radial-gradient(circle at 36% 38%, #fbfcff 0 55%, #d8def0 56% 100%);
+  box-shadow: 0 0 40px 14px rgba(200, 214, 255, 0.35), inset -8px -4px 0 0 rgba(150, 165, 210, 0.45);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sky-etoiles { animation: none; }
+}

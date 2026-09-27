@@ -185,6 +185,7 @@ import {
   type CellContextItem,
 } from "./ui/desktop/CellContextMenu";
 import { SEASON_NAMES, SeasonSky } from "./ui/SeasonSky";
+import { formatHeure, heureCourante, momentDuJour, type Saison } from "./ambiance";
 import { SeasonMark, WeatherMark } from "./ui/HudMarks";
 import { useIsMobile } from "./use-media-query";
 
@@ -7096,6 +7097,13 @@ export function App() {
               <dt>Saison</dt>
               <dd>
                 {SEASON_LABELS[season]} · jour {jourDeSaison}/{seasonLengthDays(season)}
+              </dd>
+            </div>
+            <div>
+              <dt>Heure</dt>
+              <dd>
+                {formatHeure(heureCourante(season as Saison, horloge))} ·{" "}
+                {momentDuJour(heureCourante(season as Saison, horloge), season as Saison)}
               </dd>
             </div>
             <div>

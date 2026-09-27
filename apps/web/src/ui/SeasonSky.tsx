@@ -29,6 +29,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import type { Season } from "@farmsim/shared";
+import { ambiance, heureCourante, meteoCourante, type Ambiance } from "../ambiance";
 
 type Palette = {
   /** Haut du ciel, bas du ciel, brume d'horizon. */
@@ -152,8 +153,10 @@ export function SeasonSky({ season, weather }: Props) {
     return () => window.clearTimeout(timer.current);
   }, [season, current]);
 
-  const neige = weather === "SNOW";
-  const pluie = weather === "RAIN" || weather === "STORM";
+  const meteo = meteoCourante(weather ?? "CLEAR");
+  const neige = meteo === "SNOW";
+  const pluie = meteo === "RAIN" || meteo === "STORM";
+  const heure = useAmbiance(current, meteo);
 
   return (
     <div className="season-sky" aria-hidden="true" data-season={current}>
@@ -161,17 +164,57 @@ export function SeasonSky({ season, weather }: Props) {
         <div className="season-layer leaving" style={vars(PALETTES[leaving]) as never} />
       )}
       <div key={current} className="season-layer entering" style={vars(PALETTES[current]) as never}>
-        <span className="sky-sun" />
         <span className="sky-cloud c1" />
         <span className="sky-cloud c2" />
         <span className="sky-cloud c3" />
         <Motif season={current} />
       </div>
+      {/* L'heure du jour par-dessus la saison : aube, coucher, nuit. */}
+      <div className="sky-heure" style={varsHeure(heure) as never} />
+      <div className="sky-etoiles" style={{ opacity: heure.ciel.etoiles }} />
+      <span
+        className={heure.astre.lune ? "sky-astre lune" : "sky-astre"}
+        style={{
+          left: `${(heure.ciel.astreX * 100).toFixed(2)}%`,
+          top: `${(heure.ciel.astreY * 100).toFixed(2)}%`,
+          opacity: heure.astre.lune ? 1 - heure.couverture * 0.9 : 1 - heure.couverture * 0.8,
+          ["--astre" as never]: hex(heure.ciel.astreCouleur),
+        }}
+      />
       {/* Précipitations : elles suivent la météo, pas le calendrier. */}
       {neige && <div className="sky-precip snow" />}
       {pluie && <div className="sky-precip rain" />}
     </div>
   );
+}
+
+const hex = (c: number) => `#${c.toString(16).padStart(6, "0")}`;
+
+function varsHeure(a: Ambiance): Record<string, string | number> {
+  return {
+    "--h-haut": hex(a.ciel.haut),
+    "--h-bas": hex(a.ciel.bas),
+    "--h-horizon": hex(a.ciel.horizon),
+    opacity: a.ciel.voile,
+  };
+}
+
+/**
+ * L'ambiance du ciel, recalculée toutes les deux secondes : l'heure du jeu
+ * avance d'environ une minute de jeu par seconde réelle, les transitions CSS
+ * lissent le reste. Même module que la scène 3D : le ciel et la lumière ne
+ * se contredisent jamais.
+ */
+function useAmbiance(season: Season, meteo: ReturnType<typeof meteoCourante>): Ambiance {
+  const calcul = () => ambiance(heureCourante(season), season, meteo);
+  const [a, setA] = useState(calcul);
+  useEffect(() => {
+    setA(calcul());
+    const id = window.setInterval(() => setA(calcul()), 2000);
+    return () => window.clearInterval(id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [season, meteo]);
+  return a;
 }
 
 /**

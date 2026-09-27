@@ -284,11 +284,11 @@ function mound(r: number, hgt: number, pos: Vec3): THREE.BufferGeometry {
   return place(geo, pos);
 }
 
-/** Fenêtre : une embrasure sombre, un verre, et son cadre clair. */
+/** Fenêtre : une embrasure sombre, une vitre (qui s'allume le soir), et son cadre clair. */
 function window_(part: Part, w: number, h: number, pos: Vec3, rot?: Vec3): void {
   const node = part.child(pos, { rot });
   node.add("wallDark", box(w, h, 0.03, [0, 0, 0]));
-  node.add("glass", box(w - 0.03, h - 0.03, 0.012, [0, 0, 0.018]));
+  node.add("window", box(w - 0.03, h - 0.03, 0.012, [0, 0, 0.018]));
   node.add("timber", box(w + 0.03, 0.028, 0.035, [0, h / 2, 0.02]));
   node.add("timber", box(w + 0.03, 0.028, 0.035, [0, -h / 2, 0.02]));
   node.add("timber", box(0.028, h, 0.035, [0, 0, 0.024]));
@@ -1493,7 +1493,7 @@ function buildEmployeeHousing(w: number, d: number, lvl: number): Built {
   const pas = (corpsW * 0.78) / Math.max(1, lits);
   for (let i = 0; i < lits; i++) {
     const x = -((lits - 1) / 2) * pas + i * pas;
-    root.add("glass", box(0.1, 0.11, 0.02, [x, 0.04 + mur * 0.62, corpsD / 2 + 0.01]));
+    root.add("window", box(0.1, 0.11, 0.02, [x, 0.04 + mur * 0.62, corpsD / 2 + 0.01]));
   }
 
   // La porte, toujours au centre, et la cheminée : le seul signe qu'on y vit.

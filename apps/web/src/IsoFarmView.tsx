@@ -64,6 +64,9 @@ import {
   type MachineRig,
 } from "./machines3d";
 import { createSpray } from "./particles";
+import { ambiance, heureCourante, melange, meteoCourante, type Ambiance, type Saison } from "./ambiance";
+import { creerMeteo3d } from "./meteo3d";
+import { allumerLumieres } from "./lumieres";
 import { buildCharacter } from "./character-mesh";
 import { initialQuality, makeFrameGovernor, qualityForContext, type RenderQuality } from "./render-quality";
 import {
@@ -492,91 +495,6 @@ function lookOf(crop?: CropCode | null): CropLook {
  * pas ce qu'il venait de sélectionner. L'or du logo tranche sur toutes les
  * teintes de sol du jeu — terre nue, culture jeune, culture mûre.
  */
-/**
- * Le grain de lumière de chaque saison.
- *
- * Le ciel changeait de couleur derrière la ferme, mais la ferme, elle, était
- * éclairée exactement pareil toute l'année : même soleil, même ambiante, même
- * rebond. Un hiver et un été se ressemblaient donc « des masses », et le seul
- * indice restait le mot écrit dans le rail.
- *
- * On ne retouche ni les géométries ni les matériaux — trop coûteux pour ce
- * qu'on veut dire. On **règle la lumière**, ce qui repeint toute la scène d'un
- * coup : un été franc et haut, un automne cuivré et rasant, un hiver bleu et
- * bas, un printemps clair et vert.
- */
-const SEASON_LIGHT: Record<
-  string,
-  {
-    /** Ciel et sol de la lumière hémisphérique. */
-    hemiSky: number;
-    hemiGround: number;
-    hemiIntensity: number;
-    ambient: number;
-    ambientIntensity: number;
-    sun: number;
-    sunIntensity: number;
-    /** Hauteur du soleil : un soleil d'hiver rase, un soleil d'été surplombe. */
-    sunHeight: number;
-    bounce: number;
-    bounceIntensity: number;
-  }
-> = {
-  SPRING: {
-    hemiSky: 0xffffff,
-    hemiGround: 0x9ec98a,
-    hemiIntensity: 1.25,
-    ambient: 0xfff6e4,
-    ambientIntensity: 0.65,
-    sun: 0xfff4dc,
-    sunIntensity: 1.5,
-    sunHeight: 24,
-    bounce: 0xc6e8ce,
-    bounceIntensity: 0.42,
-  },
-  SUMMER: {
-    hemiSky: 0xfff8e0,
-    hemiGround: 0x9ab87e,
-    hemiIntensity: 1.35,
-    ambient: 0xfff2d0,
-    ambientIntensity: 0.7,
-    // Le soleil d'été est blanc-doré et tape fort : les ombres sont courtes
-    // et dures, et les couleurs saturent.
-    sun: 0xfff0c4,
-    sunIntensity: 1.85,
-    sunHeight: 30,
-    bounce: 0xd8e8b8,
-    bounceIntensity: 0.38,
-  },
-  AUTUMN: {
-    hemiSky: 0xf6e2c0,
-    hemiGround: 0xa8894e,
-    hemiIntensity: 1.1,
-    ambient: 0xf7e2c0,
-    ambientIntensity: 0.6,
-    // Cuivré et rasant : c'est ce qui donne les longues ombres d'octobre.
-    sun: 0xffce7e,
-    sunIntensity: 1.35,
-    sunHeight: 15,
-    bounce: 0xd9b98a,
-    bounceIntensity: 0.4,
-  },
-  WINTER: {
-    hemiSky: 0xdce9f6,
-    hemiGround: 0xb8c4cc,
-    hemiIntensity: 1.05,
-    // L'hiver ne se joue pas seulement en intensité : c'est la **teinte** qui
-    // le dit. Tout passe au bleu, y compris le soleil, qui éclaire sans
-    // réchauffer et reste bas sur l'horizon.
-    ambient: 0xe4eef8,
-    ambientIntensity: 0.62,
-    sun: 0xe8f0fb,
-    sunIntensity: 1.15,
-    sunHeight: 12,
-    bounce: 0xc4d4e4,
-    bounceIntensity: 0.34,
-  },
-};
 
 const SELECT_GLOW = 0xffd24a;
 /**
@@ -1490,20 +1408,46 @@ export function IsoFarmView({
     bounce.position.set(-10, 6, -8);
     scene.add(bounce);
 
-    /** Applique le barème de la saison à toutes les lumières d'un coup. */
-    const eclairerPour = (saison: string) => {
-      const g = SEASON_LIGHT[saison] ?? SEASON_LIGHT.SUMMER;
-      hemi.color.setHex(g.hemiSky);
-      hemi.groundColor.setHex(g.hemiGround);
-      hemi.intensity = g.hemiIntensity;
-      ambient.color.setHex(g.ambient);
-      ambient.intensity = g.ambientIntensity;
-      sun.color.setHex(g.sun);
-      sun.intensity = g.sunIntensity;
-      sun.position.set(14, g.sunHeight, 10);
-      bounce.color.setHex(g.bounce);
-      bounce.intensity = g.bounceIntensity;
+    /*
+     * L'ambiance du moment : l'heure du jeu, la saison et la météo en une
+     * lumière (voir `ambiance.ts`). Le soleil se lève à gauche, se couche à
+     * droite, rougit au ras de l'horizon ; la lune prend le relais la nuit.
+     * Recalculée quatre fois par seconde — l'heure avance lentement — et
+     * appliquée à chaque image, éclair d'orage compris.
+     */
+    let ambianceDuMoment: Ambiance | null = null;
+    let ambianceCalculee = -1;
+    const calculerAmbiance = (saison: string): Ambiance =>
+      ambiance(heureCourante(saison as Saison), saison as Saison, meteoCourante(weatherRef.current));
+    const appliquerAmbiance = (a: Ambiance, eclair = 0) => {
+      hemi.color.setHex(melange(a.hemi.ciel, 0xeef2ff, eclair));
+      hemi.groundColor.setHex(a.hemi.sol);
+      hemi.intensity = a.hemi.intensite + eclair * 1.6;
+      ambient.color.setHex(a.ambiante.couleur);
+      ambient.intensity = a.ambiante.intensite + eclair * 0.9;
+      sun.color.setHex(a.astre.couleur);
+      sun.intensity = a.astre.intensite;
+      const [dx, dy, dz] = a.astre.direction;
+      sun.position.set(dx * 30, dy * 30, dz * 30);
+      bounce.color.setHex(a.rebond.couleur);
+      bounce.intensity = a.rebond.intensite;
+      if (scene.fog instanceof THREE.Fog) {
+        scene.fog.color.setHex(melange(a.brume.couleur, 0xdfe6f4, eclair * 0.6));
+        scene.fog.near = a.brume.proche;
+        scene.fog.far = a.brume.loin;
+      }
     };
+    const eclairerPour = (saison: string) => {
+      ambianceDuMoment = calculerAmbiance(saison);
+      appliquerAmbiance(ambianceDuMoment);
+    };
+    // Pluie, éclaboussures, neige et éclairs, dans la scène (voir `meteo3d.ts`).
+    const meteo3d = creerMeteo3d({ pixelRatio: quality.pixelRatio, sobre: !quality.shadows });
+    scene.add(meteo3d.objet);
+    const centreMeteo = new THREE.Vector3();
+    // Les fenêtres et les lampes suivent l'heure. Une traversée par seconde :
+    // un bâtiment reconstruit en pleine nuit s'allume aussitôt.
+    let lampesVerifiees = -1;
     eclairerPour(seasonRef.current);
     seasonAppliedRef.current = seasonRef.current;
     relightRef.current = eclairerPour;
@@ -3830,8 +3774,24 @@ export function IsoFarmView({
 
       timer.update();
       const t = timer.getElapsed();
-      const sky = skyFor(weatherRef.current);
-      if (scene.fog instanceof THREE.Fog) scene.fog.color.setHex(sky);
+      if (!ambianceDuMoment || t - ambianceCalculee > 0.25) {
+        ambianceDuMoment = calculerAmbiance(seasonRef.current);
+        ambianceCalculee = t;
+      }
+      // Le volume de pluie suit le point visé, et couvre ce que l'on voit.
+      centreMeteo.set(camera.position.x - viewSpan * 0.95, 0, camera.position.z - viewSpan * 0.95);
+      const eclair = meteo3d.mettreAJour(
+        delta / 1000,
+        t,
+        meteoCourante(weatherRef.current),
+        centreMeteo,
+        Math.max(30, (camera.right - camera.left) * 1.7),
+      );
+      appliquerAmbiance(ambianceDuMoment, eclair);
+      if (t - lampesVerifiees > 1) {
+        lampesVerifiees = t;
+        allumerLumieres(scene, ambianceDuMoment.lampes);
+      }
       // La campagne suit le jour et la saison : un voisin moissonne le même
       // jour pour tout le monde, et l'hiver gèle ses champs comme les nôtres.
       if (campagne) {
@@ -4655,6 +4615,7 @@ export function IsoFarmView({
       workDust.dispose();
       workSmoke.dispose();
       grainSpray.dispose();
+      meteo3d.dispose();
       soilSpray.dispose();
       fertSpray.dispose();
       chimneySmoke.dispose();
