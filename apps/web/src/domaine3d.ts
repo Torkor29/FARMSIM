@@ -10,13 +10,16 @@ import {
   defConstruction,
   empriseOrientee,
   hydrologie,
+  lireHabitats,
   masqueVoisins,
+  type Faune,
   sensRampe,
   type Bornes,
 } from "@farmsim/shared";
 import { ajouterArbre, ajouterBoite, ajouterGeometrie, maillageFacette, pose } from "./decor3d";
 import { RIVE, maillerEau, materiauCascade, materiauEau, type MaillageEau } from "./eau3d";
 import { creerEauVivante } from "./eau-vivante";
+import { creerFaune3d } from "./faune3d";
 
 /**
  * Ce que la ferme libre ajoute au sol : la friche à acheter, la limite de la
@@ -54,6 +57,8 @@ export type DonneesDomaine = {
   amenagements: readonly ObjetPose[];
   /** La floraison, 0 à 1 : les pollinisateurs font refleurir la réserve. */
   floraison?: number;
+  /** La faune installée : ce qu'on voit voler, butiner, sauter. */
+  faune?: Partial<Faune>;
 };
 
 export type LotAffiche = { id: string; x: number; y: number; w: number; h: number; etat: string; prix: number; prixNature?: number };
@@ -531,6 +536,7 @@ export function creerDomaine3d(opts: { shadows: boolean }): Domaine3d {
   /** Les champs que les engins n'atteignent pas, montrés en construction. */
   let coupees: { x: number; y: number }[] = [];
   const vivante = creerEauVivante(group);
+  const faune = creerFaune3d(group);
   /** Le trait de la limite de propriété, calculé avec le terrain, montré en construction. */
   const limite: Tableaux = { pos: [], col: [] };
 
@@ -1124,6 +1130,16 @@ export function creerDomaine3d(opts: { shadows: boolean }): Domaine3d {
       niveauCase(x, y) * H,
     );
 
+    /* La faune : elle se pose là où sont ses habitats. */
+    faune.maj({
+      parCase: lireHabitats({ cells: d.cells, amenagements: d.amenagements, courante: hydro.courante }).parCase,
+      faune: d.faune ?? {},
+      posDe,
+      pas,
+      altitude: altitudeDe,
+      sol: TOP,
+    });
+
     /* Les champs que les engins n'atteignent pas : montrés en construction. */
     coupees = [];
     if (hydro.chutes.length || parNiveau.size || altitudes.size) {
@@ -1392,6 +1408,7 @@ export function creerDomaine3d(opts: { shadows: boolean }): Domaine3d {
       b.m.scale.setScalar(b.base * (0.5 + p * 0.9) * k);
     }
     vivante.animer(t);
+    faune.animer(t);
     // Le voile du lot survolé et le fantôme respirent doucement : on voit
     // qu'ils attendent un geste.
     matLotSurvole.opacity = 0.3 + Math.sin(t * 4) * 0.08;
@@ -1422,6 +1439,7 @@ export function creerDomaine3d(opts: { shadows: boolean }): Domaine3d {
       vider(terrain);
       vider(construction);
       vivante.dispose();
+      faune.dispose();
       matNappe.dispose();
       matCascade.dispose();
       matEcume.dispose();

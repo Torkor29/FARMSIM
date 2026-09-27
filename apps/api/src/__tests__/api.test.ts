@@ -4889,7 +4889,15 @@ describe("la ferme libre", () => {
 
   it("lit les habitats de la ferme : la faune vise plus haut quand on crée une réserve", async () => {
     const { moi, parcelId } = await fermeLibre("Écologue");
-    type Bio = { score: number; scoreCible: number; cible: Record<string, number>; faune: Record<string, number>; diversite: number };
+    type Bio = {
+      score: number;
+      scoreCible: number;
+      cible: Record<string, number>;
+      faune: Record<string, number>;
+      diversite: number;
+      carnet: Record<string, string>;
+      aideParJour: number;
+    };
     const bio = async () =>
       ((await vue(parcelId, moi.jeton)).domaine as unknown as { biodiversite: Bio }).biodiversite;
     const avant = await bio();
@@ -4908,6 +4916,10 @@ describe("la ferme libre", () => {
     assert.ok(apres.scoreCible > avant.scoreCible);
     // La faune ne s'installe pas d'un coup : sa population reste sous la cible.
     assert.ok(apres.faune.AMPHIBIENS < apres.cible.AMPHIBIENS);
+    // Le carnet s'ouvre vide : on commence à observer aujourd'hui, sans rattrapage.
+    assert.deepEqual(apres.carnet, {});
+    // La réserve aménagée ouvre droit aux aides, au prorata de la faune (encore absente ici).
+    assert.equal(typeof apres.aideParJour, "number");
     // Un voisin ne voit pas la biodiversité d'une autre ferme.
     const autre = await inscrire("Curieux des bois");
     assert.equal((await vue(parcelId, autre.jeton)).domaine, null);

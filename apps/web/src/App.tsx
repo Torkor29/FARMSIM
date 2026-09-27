@@ -122,6 +122,7 @@ import {
   type Coin,
   BUILDING_REGRET_MS,
   cleCase,
+  espece,
   hydrologie,
   HABITATS,
   lireHabitats,
@@ -152,6 +153,7 @@ import { BuildingSheet } from "./BuildingSheet";
 import { MachineSheet, MachineStarStrip, MachineTierPips, type MachinePreview } from "./MachineSheet";
 import { ConfirmDialog, type ConfirmRequest } from "./ConfirmDialog";
 import type { BiodiversiteVue } from "./PanneauConstruction";
+import { CarnetNature } from "./CarnetNature";
 import { ParcelleVoisineSheet } from "./ParcelleVoisineSheet";
 import { NouveautesPanel } from "./NouveautesPanel";
 import { MachineCareOverlay, type CareMode } from "./MachineCareOverlay";
@@ -2236,6 +2238,30 @@ export function App() {
     [grid, amenagements],
   );
   const [carteHabitats, setCarteHabitats] = useState(false);
+  const [carnetOuvert, setCarnetOuvert] = useState(false);
+  /*
+   * Une première observation se fête. On compare le carnet à celui de la
+   * lecture d'avant : la première lecture ne fête rien (c'est l'état de la
+   * ferme, pas une découverte), les suivantes fêtent ce qui est nouveau.
+   */
+  const carnetPrec = useRef<Set<string> | null>(null);
+  const carnetIci = domaine?.biodiversite?.carnet;
+  useEffect(() => {
+    if (!carnetIci) return;
+    const codes = new Set(Object.keys(carnetIci));
+    const avant = carnetPrec.current;
+    carnetPrec.current = codes;
+    if (!avant) return;
+    const neuves = [...codes].filter((c) => !avant.has(c));
+    neuves.forEach((code, i) => {
+      const e = espece(code);
+      if (!e) return;
+      window.setTimeout(() => {
+        jouerSon("decouverte");
+        flashToast(`${e.icone} Première observation : ${e.nom} ! · entrée au carnet de nature`);
+      }, 400 + i * 2600);
+    });
+  }, [carnetIci]);
   /** L'eau du domaine, et la forme des coins de chaque case d'eau. */
   const eauxSet = useMemo(
     () => new Set(grid.filter((c) => c.sol === "EAU").map((c) => cleCase(c.x, c.y))),
@@ -7108,6 +7134,7 @@ export function App() {
               bornes={domaine?.bornes ?? null}
               amenagements={amenagements}
               floraison={(domaine?.biodiversite?.faune.POLLINISATEURS ?? 0) / 100}
+              faune={domaine?.biodiversite?.faune}
               construction={vueConstruction?.etat ?? null}
             />
           </Suspense>
@@ -7427,6 +7454,7 @@ export function App() {
             .map(([id, surface]) => ({ id, surface }))}
           carteHabitats={carteHabitats}
           onCarteHabitats={() => setCarteHabitats((v) => !v)}
+          onCarnet={() => setCarnetOuvert(true)}
           selection={selectionConstruction}
           onDeplacer={deplacerChoix}
           onTourner={tournerChoix}
@@ -8756,6 +8784,9 @@ export function App() {
           setNouveautes([]);
         }}
       />
+      {carnetOuvert && domaine?.biodiversite?.carnet && (
+        <CarnetNature carnet={domaine.biodiversite.carnet} onClose={() => setCarnetOuvert(false)} />
+      )}
       <ConfirmDialog request={confirmRequest} onCancel={() => setConfirmRequest(null)} />
       {care && player && (() => {
         const m = player.farm?.machines.find((x) => x.id === care.machineId);

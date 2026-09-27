@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, type MutableRefObject } from "react";
 import * as THREE from "three";
-import { HAUTEUR_NIVEAU, NIVEAU_MAX, croissanceBois, rectangleCases, type Bornes as BornesDomaine } from "@farmsim/shared";
+import { HAUTEUR_NIVEAU, NIVEAU_MAX, croissanceBois, rectangleCases, type Faune, type Bornes as BornesDomaine } from "@farmsim/shared";
 import { creerDalles, type Dalle } from "./cases3d";
 import { creerDomaine3d, type EtatConstruction, type ObjetPose } from "./domaine3d";
 import {
@@ -359,6 +359,8 @@ type Props = {
   amenagements?: ObjetPose[];
   /** La floraison de la réserve, 0 à 1 : elle suit les pollinisateurs. */
   floraison?: number;
+  /** La faune installée, par groupe (0 à 100). */
+  faune?: Partial<Faune>;
   /** Le mode construction : grille, lots, fantôme. Nul hors du mode. */
   construction?: EtatConstruction | null;
   cells: IsoCell[];
@@ -490,6 +492,7 @@ const FRICHE = 0xa3ad62;
 const FRICHE_SOMBRE = 0x98a35a;
 const BERGE = 0x8a7a55;
 const SOIL_DARK = 0x8ab35e;
+const FAUNE_VIDE: Partial<Faune> = {};
 /** Hauteur des dalles, centrées à y=0 : le dessus est à TILE_TOP. */
 const TILE_THICK = 0.18;
 const TILE_TOP = TILE_THICK / 2;
@@ -1194,6 +1197,7 @@ export function IsoFarmView({
   bornes = null,
   amenagements = [],
   floraison = 0,
+  faune = FAUNE_VIDE,
   construction = null,
   cells,
   buildings,
@@ -1373,6 +1377,7 @@ export function IsoFarmView({
     bornes,
     amenagements,
     floraison,
+    faune,
     construction,
   });
   dataRef.current = {
@@ -1397,6 +1402,7 @@ export function IsoFarmView({
     bornes,
     amenagements,
     floraison,
+    faune,
     construction,
   };
 
@@ -2957,6 +2963,7 @@ export function IsoFarmView({
             cells: cs.map((c) => ({ x: c.x, y: c.y, sol: c.sol ?? "CHAMP", revetement: c.revetement ?? null, kind: c.kind, forme: c.forme ?? 0, niveau: c.niveau ?? 0, boiseDepuis: c.boiseDepuis ?? null, vocation: c.vocation ?? null })),
             amenagements: dataRef.current.amenagements,
             floraison: dataRef.current.floraison,
+            faune: dataRef.current.faune,
           },
           cellWorldPos,
           step,
@@ -4996,8 +5003,9 @@ export function IsoFarmView({
     const am = amenagements.map((x) => `${x.id}:${x.type}:${x.originX},${x.originY}:${x.rotation}`).join("|");
     // La floraison change par paliers : la réserve refleurit quand les pollinisateurs s'installent.
     const fl = Math.round(floraison * 10);
-    return `${gridW}x${gridH}#${dom}#${c}#${b}#${s}#${sel}#${w}#${p}#${v}#${am}#${fl}`;
-  }, [cells, buildings, cellSims, selected, workers, parked, gridW, gridH, voisinage, bornes, amenagements, floraison]);
+    const fa = Object.values(faune).map((x) => Math.round((x ?? 0) / 10)).join(",");
+    return `${gridW}x${gridH}#${dom}#${c}#${b}#${s}#${sel}#${w}#${p}#${v}#${am}#${fl}#${fa}`;
+  }, [cells, buildings, cellSims, selected, workers, parked, gridW, gridH, voisinage, bornes, amenagements, floraison, faune]);
 
   useEffect(() => {
     layoutRef.current?.();

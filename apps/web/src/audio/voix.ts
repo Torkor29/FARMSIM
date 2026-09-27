@@ -48,6 +48,7 @@ export type SonId =
   | "relief"
   | "coupe"
   | "plante"
+  | "decouverte"
   // Machines
   | "tracteur"
   | "moissonneuse"
@@ -519,6 +520,27 @@ export const CATALOGUE: Record<SonId, DefSon> = {
       const pb = passeBas(ctx, 5000, 0.5);
       chaine(source(ctx, t0 + 0.08, 0.3), passeHaut(ctx, 1800), pb, enveloppe(ctx, t0 + 0.08, 0.04, 0.12, 0.35), dest);
       cloche(ctx, dest, 1568, t0 + 0.2, 0.18, 0.5);
+    },
+  },
+
+  /**
+   * Une espèce entre au carnet : un trille d'oiseau, puis deux notes claires
+   * — la page qu'on tourne.
+   */
+  decouverte: {
+    bus: "effets",
+    dureeMs: 1400,
+    delaiMs: 1200,
+    gain: 0.3,
+    rendre(ctx, dest, t0) {
+      for (let k = 0; k < 6; k++) {
+        const t = t0 + k * 0.065;
+        const o = osc(ctx, "sine", 2600 + (k % 2) * 700, t, 0.06);
+        o.frequency.exponentialRampToValueAtTime(3400 + (k % 2) * 500, t + 0.05);
+        chaine(o, enveloppe(ctx, t, 0.004, 0.03, 0.35), dest);
+      }
+      cloche(ctx, dest, 1318.5, t0 + 0.5, 0.5, 0.8);
+      cloche(ctx, dest, 1975.5, t0 + 0.68, 0.7, 0.9);
     },
   },
 

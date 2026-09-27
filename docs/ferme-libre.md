@@ -275,6 +275,37 @@ comme avant.
   s'installent, de deux à sept fleurs par case.
 - La fiche de biodiversité dit ce que tout cela vaut aujourd'hui.
 
+### La faune vivante et le carnet de nature
+
+- **À l'écran** (`apps/web/src/faune3d.ts`) : la quantité suit la population
+  de chaque groupe.
+  - des papillons et des abeilles sur les fleurs ;
+  - des bandes d'oiseaux autour des haies et des bois ;
+  - une buse qui plane en grands cercles dès que les rapaces s'installent ;
+  - des libellules qui filent au ras des mares ;
+  - des grenouilles qui sautent sur les berges.
+
+  Chaque espèce est un seul maillage instancié.
+- **Le carnet** (`packages/shared/src/especes.ts`) compte 32 espèces : osmie,
+  machaon, coccinelle, hérisson, mésange, pic vert, loriot, grue cendrée,
+  buse, chouette hulotte, grand-duc, grenouille, héron, martin-pêcheur,
+  salamandre, etc. Chacune a :
+  - un seuil de population ;
+  - parfois un habitat exigé (6 cases de futaie pour la hulotte, 8 de rocaille
+    pour le grand-duc, une rivière pour le martin-pêcheur) ;
+  - parfois une saison.
+- **Les observations.** Chaque jour de jeu, une espèce qui peut se montrer a
+  de 8 % à 38 % de chances de le faire. Le tirage est déterministe (ferme,
+  espèce, jour), rattrapé à la lecture sur 14 jours au plus, sans rien
+  rattraper avant la première lecture. Le carnet est stocké sur la ferme
+  (`Farm.carnetJson`, `carnetJour`).
+- **La fête.** Une première observation déclenche un trille d'oiseau et un
+  message (« 🦅 Première observation : Faucon crécerelle ! »). Chaque espèce
+  vue ajoute un point de charme.
+- **Le carnet à l'écran.** On l'ouvre depuis la fiche de biodiversité. Les
+  espèces vues ont leur note et leur date ; les autres, leur silhouette et
+  l'indice de ce qu'il leur faut.
+
 ### Le bois
 
 Règles dans `packages/shared/src/bois.ts`, rendu dans `verserBois`

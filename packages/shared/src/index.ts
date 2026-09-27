@@ -69,6 +69,7 @@ export * from "./amenagement.js";
 export * from "./relief.js";
 export * from "./bois.js";
 export * from "./biodiversite.js";
+export * from "./especes.js";
 
 /** Monnaie du jeu : le terron (€). Le champ interne reste `crd`. */
 export const CURRENCY_CODE = "€";

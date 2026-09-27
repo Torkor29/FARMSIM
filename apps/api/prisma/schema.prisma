@@ -322,6 +322,10 @@ model Farm {
   fauneAt    DateTime?
   /** Le dernier jour de jeu dont les aides agro-environnementales ont été versées. */
   aidesAt    DateTime?
+  /** Le carnet de nature : code d'espèce → date de sa première observation (`especes.ts`). */
+  carnetJson String          @default("{}")
+  /** Le dernier jour de jeu dont les observations ont été tirées. */
+  carnetJour Int?
 }
 
 /**

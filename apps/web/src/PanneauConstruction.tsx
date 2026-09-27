@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef } from "react";
 import {
+  ESPECES,
   GUILDES,
   HABITATS,
   INFOS_GUILDE,
@@ -35,6 +36,8 @@ export type BiodiversiteVue = {
   cible: Record<Guilde, number>;
   casesReserve?: number;
   aideParJour?: number;
+  /** Le carnet de nature : code → date de première observation. */
+  carnet?: Record<string, string>;
 };
 
 export type SelectionConstruction =
@@ -58,6 +61,7 @@ type Props = {
   habitats?: { id: Habitat; surface: number }[];
   carteHabitats?: boolean;
   onCarteHabitats?: () => void;
+  onCarnet?: () => void;
   selection: SelectionConstruction | null;
   onDeplacer: () => void;
   onTourner: () => void;
@@ -159,7 +163,9 @@ export function PanneauConstruction(p: Props) {
         ))}
       </nav>
 
-      {p.carteHabitats && p.biodiversite && <FicheBiodiversite bio={p.biodiversite} habitats={p.habitats ?? []} />}
+      {p.carteHabitats && p.biodiversite && (
+        <FicheBiodiversite bio={p.biodiversite} habitats={p.habitats ?? []} onCarnet={p.onCarnet} />
+      )}
 
       <div className="construction-elements" role="listbox" aria-label="Éléments">
         {p.categorie === "TERRAFORMAGE" && (
@@ -245,7 +251,15 @@ export function PanneauConstruction(p: Props) {
  */
 const pct = (v: number) => (Math.round(v * 1000) / 10).toLocaleString("fr-FR");
 
-function FicheBiodiversite({ bio, habitats }: { bio: BiodiversiteVue; habitats: { id: Habitat; surface: number }[] }) {
+function FicheBiodiversite({
+  bio,
+  habitats,
+  onCarnet,
+}: {
+  bio: BiodiversiteVue;
+  habitats: { id: Habitat; surface: number }[];
+  onCarnet?: () => void;
+}) {
   const retard = [...GUILDES].sort((a, b) => bio.cible[a] - bio.cible[b])[0]!;
   return (
     <div className="bio-fiche">
@@ -289,6 +303,11 @@ function FicheBiodiversite({ bio, habitats }: { bio: BiodiversiteVue; habitats: 
           </span>
         )}
       </p>
+      {onCarnet && (
+        <button type="button" className="bio-carnet" onClick={onCarnet}>
+          📖 Carnet de nature · {Object.keys(bio.carnet ?? {}).length} / {ESPECES.length} espèces
+        </button>
+      )}
       <p className="bio-conseil">
         Pour les {INFOS_GUILDE[retard].nom.toLowerCase()} ({INFOS_GUILDE[retard].qui}) : {INFOS_GUILDE[retard].aime}. La
         mosaïque compte — plusieurs habitats qui se touchent valent mieux qu'un seul, étendu.

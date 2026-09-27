@@ -407,6 +407,8 @@ import {
   type SolCase,
   type Vocation,
   GUILDES,
+  lireCarnet,
+  observerEspeces,
   additionnerLectures,
   aideDuJour,
   bonusBiodiversiteCase,
@@ -9622,7 +9624,14 @@ function grilleDeParcelle(p: ParcelleGrille) {
  * Le domaine tel que le jeu le dessine : ses bornes, ses lots avec leur prix
  * et leur état, et le charme de la ferme.
  */
-function domaineVue(p: ParcelleGrille & { lotsAchetes: number; fertility: number; zone: { priceMult: number } }) {
+function domaineVue(
+  p: ParcelleGrille & {
+    lotsAchetes: number;
+    fertility: number;
+    zone: { priceMult: number };
+    farm?: { carnetJson: string } | null;
+  },
+) {
   // Plus de marge fixe : le domaine, c'est ce qu'on possède plus un anneau
   // de friche à vendre, et il grandit à chaque lot acheté au bord.
   const bornes = bornesDuDomaine(p.cells);
@@ -9653,7 +9662,10 @@ function domaineVue(p: ParcelleGrille & { lotsAchetes: number; fertility: number
       niveau,
     };
   });
-  const charme = charmeDe({ cells: p.cells.map((c) => ({ ...c, sol: c.sol as SolCase })), amenagements: p.amenagements });
+  // Chaque espèce entrée au carnet ajoute au charme : une ferme qu'on visite pour ses oiseaux.
+  const charme =
+    charmeDe({ cells: p.cells.map((c) => ({ ...c, sol: c.sol as SolCase })), amenagements: p.amenagements }) +
+    Object.keys(lireCarnet(p.farm?.carnetJson)).length;
   return {
     marge: p.domaineMarge,
     bornes,
@@ -9680,7 +9692,16 @@ async function biodiversiteDeLaFerme(farmId: string, opts: { persister?: boolean
       decorJson: true,
       fauneJson: true,
       fauneAt: true,
-      parcels: { select: { id: true, cells: true, amenagements: { select: { type: true, originX: true, originY: true } } } },
+      carnetJson: true,
+      carnetJour: true,
+      parcels: {
+        select: {
+          id: true,
+          cells: true,
+          amenagements: { select: { type: true, originX: true, originY: true } },
+          zone: { select: { hemisphere: true } },
+        },
+      },
     },
   });
   if (!farm) return null;
@@ -9696,8 +9717,37 @@ async function biodiversiteDeLaFerme(farmId: string, opts: { persister?: boolean
   const lecture = additionnerLectures([...lectures.values()]);
   const cible = cibleFaune(lecture, refugesDecor(lireDecorations(farm.decorJson)));
   const faune = deriveFaune(lireFaune(farm.fauneJson), cible, farm.fauneAt ? maintenant - farm.fauneAt.getTime() : 0);
+  /*
+   * Le carnet : chaque jour de jeu écoulé depuis le dernier tirage, chaque
+   * espèce pas encore vue qui peut se montrer a sa chance. Le premier
+   * passage ne rattrape rien — on commence à observer aujourd'hui.
+   */
+  const carnet = lireCarnet(farm.carnetJson);
+  const jour = Math.floor(maintenant / GAME_DAY_MS);
+  const hemisphere = (farm.parcels.find((p) => p.zone)?.zone?.hemisphere as Hemisphere | undefined) ?? "N";
+  const nouvelles =
+    opts.persister !== false && farm.carnetJour != null && jour > farm.carnetJour
+      ? observerEspeces({
+          graine: farmId,
+          deja: new Set(Object.keys(carnet)),
+          faune,
+          surfaces: lecture.surfaces,
+          saison: currentSeason(hemisphere, maintenant),
+          jourDebut: farm.carnetJour + 1,
+          jourFin: jour,
+        })
+      : [];
+  for (const code of nouvelles) carnet[code] = new Date(maintenant).toISOString();
   if (opts.persister !== false) {
-    await prisma.farm.update({ where: { id: farmId }, data: { fauneJson: JSON.stringify(faune), fauneAt: new Date(maintenant) } });
+    await prisma.farm.update({
+      where: { id: farmId },
+      data: {
+        fauneJson: JSON.stringify(faune),
+        fauneAt: new Date(maintenant),
+        carnetJson: JSON.stringify(carnet),
+        carnetJour: jour,
+      },
+    });
   }
   const score = scoreBiodiversite(faune);
   // Les cases de réserve aménagées : un habitat autre qu'un pré fauché.
@@ -9723,6 +9773,9 @@ async function biodiversiteDeLaFerme(farmId: string, opts: { persister?: boolean
     casesReserve,
     /** L'aide agro-environnementale d'un jour de jeu, au rythme d'aujourd'hui. */
     aideParJour: aideDuJour({ casesReserve, score, joursParSaison: JOURS_SAISON }),
+    /** Le carnet de nature, et ce qu'on vient d'y ajouter. */
+    carnet,
+    nouvelles,
     lectures,
   };
 }
