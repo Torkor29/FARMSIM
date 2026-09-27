@@ -2225,9 +2225,140 @@ function blueprint(type: MachineType, tier: MachineTier = 1): Blueprint {
   let bp = blueprints.get(key);
   if (!bp) {
     bp = BUILDERS[type](t);
+    signaler(type, bp);
     blueprints.set(key, bp);
   }
   return bp;
+}
+
+/**
+ * La signalisation routière, posée sur la carrosserie de chaque engin.
+ *
+ * Un engin agricole qui circule porte à l'arrière deux panneaux zébrés rouge
+ * et blanc (les outils et les moissonneuses), une plaque, et des
+ * catadioptres orange sur les flancs. C'est le détail qui fait « vrai
+ * matériel » plutôt que « jouet générique ».
+ *
+ * Chaque pièce se pose **sur une surface**, trouvée au rayon : on lance un
+ * rayon depuis l'extérieur vers la machine montée à blanc, et on colle la
+ * pièce au premier point touché. Les pièces mobiles (roues, outils,
+ * rabatteur…) sont ignorées : un panneau collé sur un pneu tournerait avec.
+ * Rien ne flotte, rien ne traverse.
+ */
+const SANS_MATIERE = new THREE.MeshBasicMaterial({ side: THREE.DoubleSide });
+/** Pièces qui tournent : on n'y colle rien. */
+const TOURNANTES: Role[] = ["wheel", "steer", "reel", "auger", "gang", "spinner", "beacon"];
+
+type Impact = { point: THREE.Vector3; porteur: THREE.Object3D };
+
+function signaler(type: MachineType, bp: Blueprint): void {
+  const roles = new Map<Role, THREE.Object3D[]>();
+  const materials = new Proxy({}, { get: () => SANS_MATIERE }) as Materials;
+  const g = bp.root.build(materials, roles, false);
+  g.updateMatrixWorld(true);
+  const tournantes = new Set<THREE.Object3D>();
+  for (const r of TOURNANTES) for (const o of roles.get(r) ?? []) o.traverse((c) => tournantes.add(c));
+  // Un outil se lève et se pose : ce qu'on colle dessus doit le suivre.
+  const outils = new Set(roles.get("tool") ?? []);
+  const fixes: THREE.Object3D[] = [];
+  g.traverse((o) => {
+    if ((o as THREE.Mesh).isMesh && !tournantes.has(o)) fixes.push(o);
+  });
+  const boite = new THREE.Box3().setFromObject(g);
+  const long = boite.max.x - boite.min.x;
+  const large = Math.max(-boite.min.z, boite.max.z);
+  const rayon = new THREE.Raycaster();
+  const normale = new THREE.Vector3();
+  /** Premier point touché, sur une face tournée vers le rayon. */
+  const touche = (origine: THREE.Vector3, dir: THREE.Vector3): Impact | null => {
+    rayon.set(origine, dir);
+    rayon.far = 6;
+    const h = rayon.intersectObjects(fixes, false)[0];
+    if (!h?.face) return null;
+    normale.copy(h.face.normal).transformDirection(h.object.matrixWorld);
+    if (normale.dot(dir) > -0.6) return null;
+    let porteur: THREE.Object3D = g;
+    for (let o: THREE.Object3D | null = h.object; o; o = o.parent) {
+      if (outils.has(o)) {
+        porteur = o;
+        break;
+      }
+    }
+    return { point: h.point, porteur };
+  };
+  /** Les pièces collées, rangées par porteur (le châssis ou un outil). */
+  const poses = new Map<THREE.Object3D, Part>();
+  const coller = (i: Impact, fn: (p: Part, local: THREE.Vector3) => void) => {
+    let part = poses.get(i.porteur);
+    if (!part) poses.set(i.porteur, (part = new Part()));
+    fn(part, i.porteur === g ? i.point.clone() : i.porteur.worldToLocal(i.point.clone()));
+  };
+  const hauteurs: number[] = [];
+  for (let y = 0.42; y <= Math.min(0.75, boite.max.y - 0.07); y += 0.05) hauteurs.push(y);
+  for (let y = 0.37; y >= 0.16; y -= 0.05) hauteurs.push(y);
+  /** Premier point de l'arrière, dans la moitié arrière de la machine. */
+  const arriere = (y: number, z: number) => {
+    const i = touche(new THREE.Vector3(boite.min.x - 1, y, z), new THREE.Vector3(1, 0, 0));
+    return i && i.point.x < boite.min.x + long * 0.45 ? i : null;
+  };
+
+  // Panneaux zébrés rouge et blanc : tout ce qui roule, sauf le tracteur
+  // (lui porte ses feux et sa plaque).
+  if (type !== "TRACTOR") {
+    for (const s of [1, -1] as const) {
+      panneau: for (const f of [0.85, 0.72, 0.6, 0.48, 0.36]) {
+        const z = s * large * f;
+        for (const y of hauteurs) {
+          const i = arriere(y, z);
+          if (!i) continue;
+          coller(i, (part, p) => {
+            const x = p.x - 0.008;
+            part.add("tail", box(0.012, 0.1, 0.1, [x, p.y, p.z]));
+            // Deux bandes blanches obliques, taillées pour rester dans le
+            // carré (une bande à 2,2 cm de la diagonale y mesure 9,7 cm).
+            for (const d of [-0.016, 0.016]) {
+              part.add("hazard", box(0.014, 0.08, 0.018, [x - 0.002, p.y + d, p.z - d * s], [(s * Math.PI) / 4, 0, 0]));
+            }
+          });
+          break panneau;
+        }
+      }
+    }
+  }
+  // Plaque d'immatriculation des automoteurs.
+  if (!isTowedImplement(type)) {
+    plaque: for (const y of [0.46, 0.5, 0.4, 0.54, 0.34, 0.3]) {
+      for (const z of [0.1, -0.1, 0.16, -0.16, 0.22, -0.22, 0]) {
+        const i = arriere(y, z);
+        if (!i) continue;
+        coller(i, (part, p) => {
+          part.add("hazard", box(0.008, 0.038, 0.1, [p.x - 0.005, p.y, p.z]));
+          part.add("plastic", box(0.004, 0.012, 0.07, [p.x - 0.01, p.y, p.z]));
+        });
+        break plaque;
+      }
+    }
+  }
+  // Catadioptres orange : deux par flanc sur une machine longue, un sinon.
+  const fractions = long > 1 ? [[0.22, 0.3, 0.14, 0.38], [0.7, 0.62, 0.78, 0.55]] : [[0.35, 0.25, 0.45, 0.55, 0.15]];
+  for (const s of [1, -1] as const) {
+    for (const fs of fractions) {
+      catadioptre: for (const f of fs) {
+        const x = boite.min.x + long * f;
+        for (const y of hauteurs) {
+          const i = touche(new THREE.Vector3(x, y, s * (large + 1)), new THREE.Vector3(0, 0, -s));
+          if (!i) continue;
+          coller(i, (part, p) => {
+            part.add("reflector", box(0.045, 0.022, 0.008, [p.x, p.y, p.z + s * 0.004]));
+          });
+          break catadioptre;
+        }
+      }
+    }
+  }
+  for (const [porteur, part] of poses) {
+    (porteur.userData.part as Part).attach(part);
+  }
 }
 
 /**

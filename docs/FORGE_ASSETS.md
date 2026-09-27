@@ -356,6 +356,35 @@ l'habillage des cours de bâtiments évite l'emprise réelle du bâti
 (`Part.emprises`). `placement.test.ts` exige **zéro conflit** sur plusieurs
 campagnes, avec et sans village.
 
+### La passe de détail, partout
+
+| Décor | Ce qui s'ajoute |
+| --- | --- |
+| Bâtiments (`buildings3d.ts`) | jardinières fleuries aux fenêtres, lanterne de porte qui s'allume le soir |
+| Village (`village3d.ts`) | réverbères à la mairie, à la concession et à la coopérative (globes émissifs fondus en un maillage) ; jardinières sous les fenêtres à volets ; massifs de fleurs rondes |
+| Engins (`machines3d.ts`, `signaler`) | panneaux zébrés rouge et blanc à l'arrière des outils et des automoteurs, plaque d'immatriculation, catadioptres orange sur les flancs ; phares et feux arrière qui s'allument la nuit |
+| Décors de la forge | mousse et touffes sur les rochers, arrosoir, piles de pots, sacs, seaux, citrouilles, fourche, robinet de tonneau… (moulin, puits, serre, étal, fête, terrasses) |
+
+La signalisation des engins est **posée au rayon** : la machine est montée à
+blanc, un rayon part de l'extérieur, la pièce se colle au premier point
+touché sur une face tournée vers lui. Les pièces qui tournent (roues,
+rabatteur, disques) sont ignorées ; ce qui tombe sur un outil qui se lève
+est accroché à l'outil et le suit. `machines-signalisation.test.ts` vérifie
+qu'aucun engin, à aucun palier, n'en manque.
+
+### Aucun objet n'en traverse un autre, dans les modèles de la forge
+
+Le contrôle de placement du jeu ne voit pas l'intérieur d'un `.glb`. La
+forge a donc le sien (`forge/controle.py`, `interpenetrations`) : chaque
+objet d'une recette déclare son empreinte (cercle ou boîte orientée, avec
+sa tranche de hauteur) — les formes sémantiques le font seules, les objets
+composés s'enveloppent dans `a.objet(...)`. Deux solides qui se recouvrent
+de plus de 3 cm à la même hauteur sont une **erreur bloquante** : pas
+d'export. Ce contrôle a trouvé et fait corriger des citrouilles et des sacs
+qui se traversaient, un tonneau enfoncé dans le socle du moulin, une botte
+de paille dans un poteau d'étal, et deux rochers de la source chaude l'un
+dans l'autre. `scripts/forge.sh test` le teste.
+
 ## 11. Feuille de route
 
 - **Phase 1 (cette livraison)** : la forge, 8 recettes, l'atelier web, les

@@ -44,6 +44,10 @@ export type MatKey =
   | "beacon"
   | "grain"
   | "seat"
+  /** Blanc réfléchissant : bandes des panneaux de signalisation, plaques */
+  | "hazard"
+  /** Catadioptre orange des flancs */
+  | "reflector"
   /* — Bâtiments ——————————————————————————————————————— */
   /** Couverture : tuile, bac acier, ardoise */
   | "roof"
@@ -157,18 +161,31 @@ export function createMaterials(pal: Palette, seed = 0, wear = 0): Materials {
       opacity: 0.46,
       side: THREE.DoubleSide,
     }),
-    lamp: std({
-      color: 0xfff4d2,
-      emissive: new THREE.Color(0xffe9a8),
-      emissiveIntensity: 0.7,
-      roughness: 0.22,
-      metalness: 0.1,
-    }),
-    tail: std({
-      color: 0xc0281c,
-      emissive: new THREE.Color(0x8c1a10),
-      emissiveIntensity: 0.35,
-      roughness: 0.3,
+    // Phares et feux arrière s'allument le soir, comme les fenêtres des
+    // bâtiments (`allumerLumieres`).
+    lamp: allumable(
+      std({
+        color: 0xfff4d2,
+        emissive: new THREE.Color(0xffe9a8),
+        emissiveIntensity: 0.7,
+        roughness: 0.22,
+        metalness: 0.1,
+      }),
+    ),
+    tail: allumable(
+      std({
+        color: 0xc0281c,
+        emissive: new THREE.Color(0x8c1a10),
+        emissiveIntensity: 0.35,
+        roughness: 0.3,
+      }),
+    ),
+    hazard: std({ color: 0xf2efe6, metalness: 0.05, roughness: 0.4 }),
+    reflector: std({
+      color: 0xf08a1c,
+      emissive: new THREE.Color(0xa85a0c),
+      emissiveIntensity: 0.25,
+      roughness: 0.25,
     }),
     beacon: std({
       color: 0xef9c18,
@@ -202,6 +219,11 @@ export function createMaterials(pal: Palette, seed = 0, wear = 0): Materials {
     window: machine.glass,
     flower: machine.tail,
   };
+}
+
+function allumable<M extends THREE.Material>(m: M): M {
+  m.userData.allumable = "lampe";
+  return m;
 }
 
 /* ------------------------------------------------------------------ */
@@ -325,6 +347,8 @@ export function createBuildingMaterials(
     beacon: roof,
     grain: timber,
     seat: timber,
+    hazard: corrugate,
+    reflector: roof,
   };
 }
 
@@ -611,6 +635,7 @@ export class Part {
 
   build(materials: Materials, roles: Map<Role, THREE.Object3D[]>, shadows: boolean): THREE.Group {
     const group = new THREE.Group();
+    group.userData.part = this;
     for (const [mat, geos] of this.buckets) {
       const merged = geos.length === 1 ? geos[0] : mergeAll(geos);
       const mesh = new THREE.Mesh(markShared(merged), materials[mat]);
