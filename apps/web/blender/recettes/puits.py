@@ -26,6 +26,8 @@ R = 0.72
 def construire(a):
     rnd = a.alea
     with a.piece("puits"):
+        # La margelle, les montants et le toit : un seul objet.
+        a.empreinte("objet", (0, 0), R + 0.12, 0, 2.9, nom="puits")
         # La margelle : trois rangs de pierres taillées, en quinconce.
         a.cylindre("pierre-sombre", R + 0.08, 0, 0.1, cotes=20, biseau=0.03)
         rangs = ((0.1, 0.24), (0.33, 0.22), (0.54, 0.2))
@@ -69,6 +71,7 @@ def construire(a):
         seau(a, (0.0, 0.0, 0.88))
 
         # Une pancarte de bois à côté, et un petit tapis d'herbe.
+        a.empreinte_boite("objet", (R + 0.45, -0.38), (0.48, 0.1), rot_z=-0.3, haut=0.86, nom="pancarte")
         a.baton("bois", (R + 0.45, -0.35, 0), (R + 0.45, -0.35, 0.8), 0.04)
         a.boite("bois-clair", (0.46, 0.05, 0.28), (R + 0.45, -0.4, 0.72), rot_z=-0.3, biseau=0.02)
         for k in range(6):

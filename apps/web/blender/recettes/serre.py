@@ -28,6 +28,8 @@ MONTANT = 0.07
 
 def construire(a):
     with a.piece("serre"):
+        # Le corps de la serre (soubassement, châssis, vitres, jardinières).
+        a.empreinte_boite("objet", (0, 0), (L + 0.12, P + 0.12), haut=H_FAITE + 0.1, nom="serre")
         # Le dallage, et le soubassement de planches peintes.
         a.dalles("pierre", 1.75, nb=16, epais=0.07, graine=4, hauteur=0.02, mat2="pierre-sombre")
         for s in (-1, 1):
@@ -86,6 +88,7 @@ def construire(a):
                     a.boule("peinture-rouge", (x + 0.05, s * 0.45 - 0.06, 0.55), 0.035, finesse=1)
         # Des pots devant la porte.
         for k, (x, y) in enumerate(((L / 2 + 0.28, -0.55), (L / 2 + 0.34, -0.2))):
+            a.empreinte("objet", (x, y), 0.16, 0.08, 0.55, nom=f"pot-{k}")
             a.tour("terre-claire", [(0.1, 0.0), (0.14, 0.2), (0.155, 0.2), (0.155, 0.24), (0.13, 0.24)],
                    centre=(x, y, 0.08), cotes=10, lisse=False)
             a.boule("feuillage", (x, y, 0.4), 0.14, finesse=2, bosses=0.2, graine=k + 10)

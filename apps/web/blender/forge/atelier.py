@@ -23,6 +23,7 @@ passe en Y vers le haut, et le −Y de Blender devient le +Z du jeu.
 from __future__ import annotations
 
 import contextlib
+import math
 import random
 from dataclasses import dataclass, field
 
@@ -44,9 +45,25 @@ class Noeud:
 
 
 @dataclass
+class Empreinte:
+    """La place d'un objet au sol : un cercle, et la tranche de hauteur qu'il occupe."""
+    nom: str
+    genre: str
+    x: float
+    y: float
+    r: float  # rayon d'un cercle ; 0 pour une boîte
+    bas: float
+    haut: float
+    w: float = 0.0  # boîte : largeur, profondeur, angle autour de Z
+    d: float = 0.0
+    angle: float = 0.0
+
+
+@dataclass
 class Piece:
     nom: str
     noeuds: dict[str, Noeud] = field(default_factory=dict)
+    empreintes: list[Empreinte] = field(default_factory=list)
     # Renseignés par `realiser()`
     racine: bpy.types.Object | None = None
     objets: list[bpy.types.Object] = field(default_factory=list)
@@ -63,6 +80,7 @@ class Atelier(Formes, Nature):
         self._piece: Piece | None = None
         self._noeud: Noeud | None = None
         self._pile: list[Matrix] = [Matrix.Identity(4)]
+        self._dans_objet = 0
         self.realise = False
 
     # ------------------------------------------------------------------
@@ -114,6 +132,68 @@ class Atelier(Formes, Nature):
             yield
         finally:
             self._pile.pop()
+
+    # ------------------------------------------------------------------
+    # Les empreintes : qui prend quelle place (voir `controle.interpenetrations`)
+    # ------------------------------------------------------------------
+
+    def empreinte(self, genre: str, centre, rayon: float, bas: float = 0.0, haut: float = 1.0,
+                  nom: str | None = None) -> None:
+        """
+        Déclare la place d'un objet : un cercle au sol (dans le repère courant)
+        et la tranche de hauteur qu'il occupe. Ignoré à l'intérieur d'un
+        `objet` : un objet composé n'a qu'une empreinte, la sienne.
+        """
+        if self._piece is None or self._dans_objet:
+            return
+        m = self._pile[-1]
+        c = m @ Vector((centre[0], centre[1], 0.0))
+        z0 = (m @ Vector((centre[0], centre[1], bas))).z
+        z1 = (m @ Vector((centre[0], centre[1], haut))).z
+        e = (m.to_3x3() @ Vector((1, 0, 0))).length
+        n = nom or f"{genre}-{len(self._piece.empreintes)}"
+        self._piece.empreintes.append(Empreinte(n, genre, c.x, c.y, rayon * e, min(z0, z1), max(z0, z1)))
+
+    def empreinte_boite(self, genre: str, centre, taille, rot_z: float = 0.0, bas: float = 0.0,
+                        haut: float = 1.0, nom: str | None = None) -> None:
+        """Comme `empreinte`, pour un objet long : une boîte tournée au sol."""
+        if self._piece is None or self._dans_objet:
+            return
+        m = self._pile[-1]
+        c = m @ Vector((centre[0], centre[1], 0.0))
+        z0 = (m @ Vector((centre[0], centre[1], bas))).z
+        z1 = (m @ Vector((centre[0], centre[1], haut))).z
+        ax = m.to_3x3() @ Vector((math.cos(rot_z), math.sin(rot_z), 0))
+        e = ax.length
+        n = nom or f"{genre}-{len(self._piece.empreintes)}"
+        self._piece.empreintes.append(Empreinte(n, genre, c.x, c.y, 0.0, min(z0, z1), max(z0, z1),
+                                                taille[0] * e, taille[1] * e, math.atan2(ax.y, ax.x)))
+
+    @contextlib.contextmanager
+    def objet_boite(self, genre: str, taille, centre=(0.0, 0.0), rot_z: float = 0.0, bas: float = 0.0,
+                    haut: float = 1.0, nom: str | None = None):
+        """Un objet composé long (étal, banc, comptoir) : une empreinte en boîte."""
+        self.empreinte_boite(genre, centre, taille, rot_z, bas, haut, nom)
+        self._dans_objet += 1
+        try:
+            yield
+        finally:
+            self._dans_objet -= 1
+
+    @contextlib.contextmanager
+    def objet(self, genre: str, rayon: float, centre=(0.0, 0.0), bas: float = 0.0, haut: float = 1.0,
+              nom: str | None = None):
+        """
+        Un objet composé (lanterne, puits, sac…) : une seule empreinte pour
+        tout ce qui est versé dedans. Les formes sémantiques appelées à
+        l'intérieur (buisson, lavande…) ne déclarent rien d'elles-mêmes.
+        """
+        self.empreinte(genre, centre, rayon, bas, haut, nom)
+        self._dans_objet += 1
+        try:
+            yield
+        finally:
+            self._dans_objet -= 1
 
     # ------------------------------------------------------------------
     # Matières

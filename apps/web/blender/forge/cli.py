@@ -133,7 +133,7 @@ def afficher(r: dict) -> None:
 
 def main(argv=None) -> int:
     p = argparse.ArgumentParser(prog="atelier.py", description="La forge d'assets 3D de FARMSIM.")
-    p.add_argument("commande", choices=["liste", "construire", "apercu"])
+    p.add_argument("commande", choices=["liste", "construire", "apercu", "test"])
     p.add_argument("assets", nargs="*")
     p.add_argument("--tout", action="store_true")
     p.add_argument("--perimes", action="store_true")
@@ -149,6 +149,14 @@ def main(argv=None) -> int:
     p.add_argument("--forcer", action="store_true")
     p.add_argument("--json", action="store_true")
     args = p.parse_args(argv)
+
+    if args.commande == "test":
+        import unittest
+
+        suite = unittest.defaultTestLoader.discover(os.path.join(sortie.BLENDER, "tests"),
+                                                    top_level_dir=sortie.BLENDER)
+        ok = unittest.TextTestRunner(verbosity=1).run(suite).wasSuccessful()
+        return 0 if ok else 1
 
     toutes = recettes()
     manifeste = sortie.lire_manifeste()

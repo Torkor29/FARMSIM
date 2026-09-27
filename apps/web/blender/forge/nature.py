@@ -150,6 +150,8 @@ class Nature:
         """
         rnd = random.Random(graine)
         x, y, z = position
+        self.empreinte("tronc", (x, y), envergure * 0.16, z, z + hauteur * 0.4)
+        self.empreinte("couronne", (x, y), envergure * 0.5, z + hauteur * 0.36, z + hauteur)
         h_tronc = hauteur * 0.36
         self.tronc(ecorce, (x, y, z), h_tronc + hauteur * 0.14, envergure * 0.085, graine, branches=3)
         hh = hauteur - h_tronc
@@ -175,6 +177,8 @@ class Nature:
         """Un sapin en étages de jupes dentelées, chacune retombant sur la suivante."""
         rnd = random.Random(graine)
         x, y, z = position
+        self.empreinte("tronc", (x, y), largeur * 0.12, z, z + hauteur * 0.3)
+        self.empreinte("couronne", (x, y), largeur * 0.5, z + hauteur * 0.14, z + hauteur)
         self.cylindre(ecorce, largeur * 0.08, z, z + hauteur * 0.3, centre=(x, y), cotes=7,
                       rayon_haut=largeur * 0.06)
         base = z + hauteur * 0.14
@@ -210,6 +214,7 @@ class Nature:
         """Un buisson rond assis dans l'herbe, fleuri si `fleurs` nomme une matière."""
         rnd = random.Random(graine)
         x, y, z = position
+        self.empreinte("buisson", (x, y), taille * 0.62, z, z + taille * 0.9)
         boules = [((x, y, z + taille * 0.42), (taille * 0.62, taille * 0.58, taille * 0.5))]
         lobes = rnd.randint(4, 6)
         for k in range(lobes):
@@ -233,6 +238,7 @@ class Nature:
                rot_z=0.0, facettes=False):
         """Une pierre posée : bosselée, aplatie dessous ; douce, ou à facettes franches."""
         x, y, z = position
+        self.empreinte("rocher", (x, y), max(taille[0], taille[1]) * 0.95, z, z + taille[2] * 1.2)
         with self.repere((x, y, z + taille[2] * 0.3), rot_z=rot_z):
             self.boule(mat, (0, 0, 0), taille, finesse=2 if facettes else 3, bosses=0.3, graine=graine,
                        lisse=not facettes, aplatir_bas=-0.55)
@@ -322,6 +328,7 @@ class Nature:
         """
         rnd = random.Random(graine)
         x, y, z = position
+        self.empreinte("lavande", (x, y), hauteur * 0.32, z, z + hauteur)
         for _ in range(14):
             a = rnd.uniform(0, 2 * math.pi)
             d = Vector((math.cos(a) * 0.5, math.sin(a) * 0.5, 1.0))

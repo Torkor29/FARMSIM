@@ -92,7 +92,17 @@ couleur. Le jeu repeint par nom (`teinterSaison`) avec les couleurs de
 4. **Budget par rôle.** Un élément instancié par centaines (touffe, fleur)
    reste sous quelques centaines de triangles ; un repère unique (moulin)
    peut monter à 10 000. Chaque matière coûte un appel de rendu.
-5. **Regarder l'aperçu, pas seulement le rapport.** La boucle est :
+5. **Aucun objet n'en traverse un autre.** Chaque objet déclare sa place :
+   les formes sémantiques le font seules (`rocher`, `buisson`, `arbre_rond`,
+   `sapin`, `lavande`, `citrouille`) ; un objet composé s'enveloppe dans
+   `with a.objet("objet", rayon, haut=…)` ou `a.objet_boite(...)` (une
+   seule empreinte pour tout ce qu'il contient) ; un grand corps (tour,
+   étal, serre) se déclare avec `a.empreinte(...)` / `a.empreinte_boite(...)`.
+   Deux solides qui se recouvrent de plus de 3 cm, à la même hauteur, sont
+   une **erreur** : l'export n'a pas lieu. Touffes, fleurs et nénuphars
+   peuvent tout frôler ; une couronne ne gêne que ce qui monte jusqu'à elle.
+   `scripts/forge.sh test` teste ce contrôle.
+6. **Regarder l'aperçu, pas seulement le rapport.** La boucle est :
    écrire → `apercu` → lire `planche.png` → corriger la chose la plus
    visible → recommencer.
 

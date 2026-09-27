@@ -30,6 +30,9 @@ def rayon_a(z):
 
 def construire(a):
     with a.piece("moulin"):
+        # La tour, socle compris, est un objet : ce qui est posé devant (sacs,
+        # tonneau) ne doit pas s'enfoncer dans le socle.
+        a.empreinte("objet", (0, 0), R_BAS + 0.2, 0, H_TOUR + 2.0, nom="tour")
         # Le socle de pierres et la tour chaulée, légèrement évasée au pied.
         a.cylindre("pierre-sombre", R_BAS + 0.2, 0, 0.28, cotes=18, biseau=0.06)
         a.tour("enduit", [(R_BAS, 0.2), (rayon_a(1.0) * 1.01, 1.0), (rayon_a(3.0), 3.0), (R_HAUT, H_TOUR)],
@@ -56,16 +59,19 @@ def construire(a):
         # Devant la porte : un chemin de dalles, des sacs de farine, un tonneau.
         a.dalles("pierre", 1.0, nb=9, epais=0.06, graine=5, hauteur=0.0,
                  contour=[(-0.55, -1.3), (0.55, -1.3), (0.6, -2.6), (-0.6, -2.6)])
-        sac(a, (0.85, -1.35, 0), 0.4, 1)
-        sac(a, (1.15, -1.0, 0), -0.6, 2)
-        sac(a, (0.95, -1.05, 0.33), 1.2, 3)
-        a.tour("bois", [(0.24, 0.0), (0.28, 0.16), (0.29, 0.3), (0.28, 0.44), (0.24, 0.6)],
-               centre=(-0.95, -1.2, 0), cotes=14, lisse=True)
-        for z in (0.1, 0.5):
-            a.tore("fer", (-0.95, -1.2, z), 0.265, 0.01, cotes=16, section=4, aplatir=1.6)
-        a.cylindre("bois-sombre", 0.23, 0.58, 0.62, centre=(-0.95, -1.2), cotes=14, biseau=0.01)
+        # Hors du socle (rayon 1,55) : deux sacs au sol, un troisième posé dessus.
+        sac(a, (1.05, -1.6, 0), 0.4, 1)
+        sac(a, (1.55, -1.2, 0), -0.6, 2)
+        sac(a, (1.3, -1.42, 0.44), 1.2, 3)
+        tx, ty = -1.3, -1.5
+        with a.objet("objet", 0.3, centre=(tx, ty), haut=0.62, nom="tonneau"):
+            a.tour("bois", [(0.24, 0.0), (0.28, 0.16), (0.29, 0.3), (0.28, 0.44), (0.24, 0.6)],
+                   centre=(tx, ty, 0), cotes=14, lisse=True)
+            for z in (0.1, 0.5):
+                a.tore("fer", (tx, ty, z), 0.265, 0.01, cotes=16, section=4, aplatir=1.6)
+            a.cylindre("bois-sombre", 0.23, 0.58, 0.62, centre=(tx, ty), cotes=14, biseau=0.01)
         for k in range(5):
-            a.touffe((-1.3 + k * 0.1, -1.5 + (k % 2) * 0.2, 0), graine=k, brins=6)
+            a.touffe((-1.75 + k * 0.1, -1.2 + (k % 2) * 0.2, 0), graine=k, brins=6)
 
         # Deux fenêtres à volets, chacune avec sa jardinière fleurie.
         for ang, z in ((math.radians(-60), 2.5), (math.radians(40), 3.3)):

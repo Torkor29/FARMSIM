@@ -21,6 +21,8 @@ ASSET = {
 def construire(a):
     rnd = a.alea
     with a.piece("epouvantail"):
+        # Le piquet : la chemise et les bras sont au-dessus de tout ce qui l'entoure.
+        a.empreinte("objet", (0, 0.02), 0.1, 0, 2.2, nom="piquet")
         # Le piquet et la traverse des bras.
         a.boite("bois", (0.09, 0.09, 1.95), (0, 0.02, 0.975), biseau=0.02)
         a.boite("bois", (1.45, 0.08, 0.08), (0, 0.06, 1.42), biseau=0.02)

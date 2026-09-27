@@ -45,10 +45,15 @@ def construire(a):
         a.matiere("eau-source", 0x8fdcdc, rugosite=0.12)
         a.prisme("eau-source", bassin, -0.1, EAU, biseau=0.0)
 
+        # Le rocher du bec de bambou, sur le bord ; les rochers de la margelle
+        # lui laissent sa place (sinon ils se traversent).
+        bx, by = bassin[16][0] * 1.12, bassin[16][1] * 1.12
         # Les rochers ronds du bord, moussus par endroits.
         for k, (x, y) in enumerate(bassin[::2]):
             if k in (3, 11):
                 continue  # deux trouées : l'eau touche les dalles
+            if math.hypot(x * 1.04 - bx, y * 1.04 - by) < 0.75:
+                continue
             ang = math.atan2(y, x)
             t = (0.2 + rnd.uniform(-0.04, 0.06), 0.17 + rnd.uniform(-0.03, 0.04), 0.13 + rnd.uniform(0, 0.06))
             a.rocher((x * 1.04, y * 1.04, -0.08), t, graine=30 + k, rot_z=ang,
@@ -83,9 +88,9 @@ def construire(a):
             a.fondre("vapeur", boules, voxel=0.04, lissage=4, triangles=140, graine=k)
 
         # Le bec de bambou qui verse dans le bassin, sur son rocher.
-        bx, by = bassin[16][0] * 1.12, bassin[16][1] * 1.12
         a.rocher((bx, by, 0), (0.38, 0.32, 0.36), graine=60, mat="pierre-sombre")
         haut = (bx * 0.86, by * 0.86, 0.62)
+        # (Le bambou est planté dans son rocher : c'est le rocher qui déclare la place.)
         a.baton("bambou", (bx, by, 0.2), (bx, by, 0.68), 0.045, cotes=8)
         a.baton("bambou", (bx, by, 0.6), haut, 0.03, cotes=8)
         for z in (0.35, 0.52):
@@ -94,7 +99,7 @@ def construire(a):
                [0.015, 0.012, 0.02], cotes=5)
 
         # Deux lanternes de pierre, un bain d'oiseaux, un nichoir, une pancarte.
-        for (x, y, rz) in ((-2.35, -0.55, 0.3), (1.95, 1.1, -0.4)):
+        for (x, y, rz) in ((-2.55, -0.95, 0.3), (1.95, 1.1, -0.4)):
             with a.repere((x, y, 0.06), rot_z=rz):
                 lanterne_pierre(a)
         with a.repere((1.3, -1.45, 0.06), rot_z=0.8):
@@ -135,6 +140,7 @@ def fleur_nenuphar(a, pos, graine):
 
 def pancarte(a):
     """Une pancarte de bois sous un petit toit, sur deux piquets."""
+    a.empreinte_boite("objet", (0, 0), (0.74, 0.28), haut=1.2, nom="pancarte")
     for x in (-0.25, 0.25):
         a.boite("bois-sombre", (0.06, 0.06, 1.0), (x, 0, 0.5), biseau=0.012)
     a.boite("bois-clair", (0.62, 0.05, 0.34), (0, -0.04, 0.78), biseau=0.02)

@@ -114,6 +114,74 @@ def coplanaires(objets, max_rapports=6) -> list[str]:
     return trouves
 
 
+# Les genres solides : deux d'entre eux ne se traversent pas. Une couronne
+# d'arbre ne traverse pas un solide qui monte jusqu'à elle. Les touffes, les
+# fleurs, les nénuphars (« herbe ») peuvent tout frôler.
+SOLIDES = {"tronc", "buisson", "rocher", "lavande", "objet"}
+TOLERANCE = 0.03  # un contact de trois centimètres n'est pas une traversée
+
+
+def _sommets(e):
+    import math
+    c, sn = math.cos(e.angle), math.sin(e.angle)
+    hw, hd = e.w / 2, e.d / 2
+    return [(e.x + c * dx - sn * dy, e.y + sn * dx + c * dy) for dx, dy in ((-hw, -hd), (hw, -hd), (hw, hd), (-hw, hd))]
+
+
+def _penetration(a, b) -> float:
+    """De combien deux empreintes se recouvrent au sol (≤ 0 : elles ne se touchent pas)."""
+    import math
+    if a.r and b.r:
+        return a.r + b.r - math.hypot(a.x - b.x, a.y - b.y)
+    if a.r or b.r:
+        cercle, boite = (a, b) if a.r else (b, a)
+        c, sn = math.cos(-boite.angle), math.sin(-boite.angle)
+        dx, dy = cercle.x - boite.x, cercle.y - boite.y
+        lx, ly = c * dx - sn * dy, sn * dx + c * dy
+        ex = max(abs(lx) - boite.w / 2, 0.0)
+        ey = max(abs(ly) - boite.d / 2, 0.0)
+        if ex == 0 and ey == 0:  # le centre est dans la boîte
+            return cercle.r + min(boite.w / 2 - abs(lx), boite.d / 2 - abs(ly))
+        return cercle.r - math.hypot(ex, ey)
+    # Deux boîtes : axes séparateurs, on garde le plus petit recouvrement.
+    pa, pb = _sommets(a), _sommets(b)
+    mini = 1e9
+    for poly in (pa, pb):
+        for i in range(4):
+            x0, y0 = poly[i]
+            x1, y1 = poly[(i + 1) % 4]
+            nx, ny = y1 - y0, x0 - x1
+            n = math.hypot(nx, ny) or 1.0
+            nx, ny = nx / n, ny / n
+            qa = [nx * x + ny * y for x, y in pa]
+            qb = [nx * x + ny * y for x, y in pb]
+            mini = min(mini, min(max(qa), max(qb)) - max(min(qa), min(qb)))
+    return mini
+
+
+def interpenetrations(empreintes, max_rapports=8) -> list[str]:
+    """Les objets d'une pièce qui se traversent (voir `Atelier.empreinte`)."""
+    out = []
+    for i, a in enumerate(empreintes):
+        for b in empreintes[i + 1:]:
+            solides = a.genre in SOLIDES and b.genre in SOLIDES
+            # Une couronne ne gêne ni un tronc (le sien, ou celui d'un voisin
+            # dans un bois), ni une autre couronne : seulement ce qui monte.
+            couronne = ({a.genre, b.genre} & {"couronne"}
+                        and ({a.genre, b.genre} & (SOLIDES - {"tronc"})))
+            if not (solides or couronne):
+                continue
+            if min(a.haut, b.haut) - max(a.bas, b.bas) <= 0.02:
+                continue  # l'un au-dessus de l'autre
+            chevauche = _penetration(a, b)
+            if chevauche > TOLERANCE:
+                out.append(f"{a.genre} {a.nom} et {b.genre} {b.nom} se traversent de {chevauche:.2f} "
+                           f"près de ({(a.x + b.x) / 2:.2f}, {(a.y + b.y) / 2:.2f})")
+                if len(out) >= max_rapports:
+                    return out
+    return out
+
+
 def controler(atelier, budget_triangles=None, budget_appels=None, posee=True,
               tolerance_sol=0.03, verifier_coplanaires=True) -> dict[str, Rapport]:
     """Un rapport par pièce. Les erreurs doivent être corrigées, les alertes lues."""
@@ -150,5 +218,7 @@ def controler(atelier, budget_triangles=None, budget_appels=None, posee=True,
                 r.alertes.append(f"s'enfonce de {-r.bas:.3f} sous le sol")
         if verifier_coplanaires:
             r.alertes.extend(coplanaires(piece.objets))
+        # Deux objets qui se traversent : une erreur, l'export n'a pas lieu.
+        r.erreurs.extend(interpenetrations(piece.empreintes))
         rapports[piece.nom] = r
     return rapports

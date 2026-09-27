@@ -370,6 +370,7 @@ class Formes:
     def citrouille(self, mat, centre, rayon, cotes=8, hauteur=0.72, graine=0, tige="bois-sombre"):
         """Une citrouille côtelée, un peu écrasée, et son pédoncule."""
         rnd = random.Random(graine)
+        self.empreinte("objet", centre[:2], rayon * 0.95, centre[2], centre[2] + rayon * hauteur * 1.8)
         bm = bmesh.new()
         # Une petite citrouille (dans une caisse) se contente de moins de facettes.
         grande = rayon > 0.15

@@ -32,6 +32,37 @@ def construire(a):
 
 def etal(a, toile, graine):
     rnd = random.Random(graine)
+    # Le corps de l'étal — poteaux, comptoir, enseigne, auvent, étalage,
+    # lampions — ne fait qu'un objet : ce qui est posé autour ne doit pas y
+    # entrer (voir `controle.interpenetrations`).
+    with a.objet_boite("objet", (L + 0.12, P + 0.12), haut=2.35, nom="etal"):
+        corps(a, toile, graine)
+
+    # Au pied : une botte de foin (et son panier), deux grosses citrouilles,
+    # des sacs, une ardoise — chacun à sa place, sans entrer dans l'étal.
+    bx, by = L / 2 + 0.5, -P / 2 - 0.3
+    with a.objet_boite("objet", (0.72, 0.44), centre=(bx, by), rot_z=0.2, haut=0.4, nom="botte"):
+        a.boite("paille", (0.7, 0.42, 0.4), (bx, by, 0.2), rot_z=0.2, biseau=0.08)
+    with a.objet("objet", 0.21, centre=(bx - 0.05, by), bas=0.4, haut=0.7, nom="panier"):
+        a.tour("paille-sombre", [(0.14, 0.0), (0.2, 0.2), (0.21, 0.22), (0.19, 0.22)],
+               centre=(bx - 0.05, by, 0.4), cotes=12, lisse=False)
+        for i in range(4):
+            a.boule("peinture-rouge", (bx - 0.05 + rnd.uniform(-0.08, 0.08), by + rnd.uniform(-0.08, 0.08), 0.64),
+                    0.06, finesse=1)
+    a.citrouille("citrouille", (-L / 2 - 0.2, -P / 2 - 0.25, 0), 0.26, graine=graine)
+    a.citrouille("citrouille", (-L / 2 + 0.3, -P / 2 - 0.5, 0), 0.18, graine=graine + 4)
+    sac(a, (-L / 2 - 0.35, 0.15, 0), 0.5, graine)
+    sac(a, (-L / 2 - 0.3, 0.62, 0), -0.4, graine + 1)
+    with a.repere((0.35, -P / 2 - 0.25, 0), rot_z=0.15), a.objet_boite("objet", (0.42, 0.06), haut=0.55,
+                                                                       nom="ardoise"):
+        a.boite("bois", (0.42, 0.04, 0.55), (0, 0, 0.27), biseau=0.015, m=None)
+        a.boite("ombre", (0.34, 0.02, 0.44), (0, -0.025, 0.28), biseau=0.005)
+        for k in range(3):
+            a.boite("marguerite", (0.22 - k * 0.05, 0.01, 0.02), (0, -0.04, 0.4 - k * 0.08), biseau=0.0)
+
+
+def corps(a, toile, graine):
+    """Poteaux, comptoir, enseigne, auvent rayé, étalage, lampions, pots de miel."""
     # Les quatre poteaux, plus hauts derrière (l'auvent penche vers l'avant).
     for sx in (-1, 1):
         a.boite("bois", (0.1, 0.1, 2.25), (sx * (L / 2 - 0.05), P / 2 - 0.05, 1.125), biseau=0.02)
@@ -51,7 +82,7 @@ def etal(a, toile, graine):
             fleche=0.06, centre=(0, P / 2 + 0.02, 2.3), pente_deg=pente)
     a.boite("bois-sombre", (L + 0.34, 0.07, 0.07), (0, P / 2 + 0.02, 2.29), biseau=0.015)
 
-    # L'étalage : caisses inclinées pleines, citrouilles, panier.
+    # L'étalage : caisses inclinées pleines.
     for k, x in enumerate((-0.6, 0.0, 0.6)):
         with a.repere((x, -0.05, 0.9)):
             a.boite("bois", (0.52, 0.4, 0.2), (0, 0, 0.1), biseau=0.02)
@@ -60,14 +91,10 @@ def etal(a, toile, graine):
                 for j in range(2):
                     px, py = -0.16 + i * 0.16, -0.08 + j * 0.16
                     if fruit == "citrouille":
-                        a.citrouille("citrouille", (px, py, 0.16), 0.085, graine=i + j * 3)
+                        a.citrouille("citrouille", (px, py, 0.16), 0.075, graine=i + j * 3)
                     else:
-                        a.boule(fruit if fruit != "tournesol" else "coeur-fleur", (px, py, 0.24), 0.075,
+                        a.boule(fruit if fruit != "tournesol" else "coeur-fleur", (px, py, 0.24), 0.07,
                                 finesse=2)
-    # Au pied : une botte de foin et deux grosses citrouilles.
-    a.boite("paille", (0.7, 0.42, 0.4), (L / 2 + 0.25, -P / 2 - 0.05, 0.2), rot_z=0.2, biseau=0.08)
-    a.citrouille("citrouille", (-L / 2 - 0.1, -P / 2 - 0.2, 0), 0.26, graine=graine)
-    a.citrouille("citrouille", (-L / 2 + 0.25, -P / 2 - 0.35, 0), 0.18, graine=graine + 4)
     # Des lampions pendus au bord de l'auvent : ils luisent le soir.
     for x in (-0.75, 0.0, 0.75):
         with a.repere((x, -P / 2 - 0.08, 1.42), echelle=0.68):
@@ -78,17 +105,3 @@ def etal(a, toile, graine):
         a.cylindre("tournesol", 0.04, 0.9, 0.99, centre=(x, -P / 2 + 0.12), cotes=8, biseau=0.01)
         a.cylindre("toile-rouge" if k % 2 else "toile-creme", 0.045, 0.99, 1.01, centre=(x, -P / 2 + 0.12),
                    cotes=8, biseau=0.005)
-    # Des sacs de grain au pied, côté gauche, et une ardoise appuyée.
-    sac(a, (-L / 2 - 0.35, 0.15, 0), 0.5, graine)
-    sac(a, (-L / 2 - 0.3, 0.55, 0), -0.4, graine + 1)
-    with a.repere((0.35, -P / 2 - 0.25, 0), rot_z=0.15):
-        a.boite("bois", (0.42, 0.04, 0.55), (0, 0, 0.27), biseau=0.015, m=None)
-        a.boite("ombre", (0.34, 0.02, 0.44), (0, -0.025, 0.28), biseau=0.005)
-        for k in range(3):
-            a.boite("marguerite", (0.22 - k * 0.05, 0.01, 0.02), (0, -0.04, 0.4 - k * 0.08), biseau=0.0)
-    # Un panier.
-    a.tour("paille-sombre", [(0.14, 0.0), (0.2, 0.2), (0.21, 0.22), (0.19, 0.22)],
-           centre=(L / 2 + 0.2, -P / 2 - 0.1, 0.4), cotes=12, lisse=False)
-    for i in range(4):
-        a.boule("peinture-rouge", (L / 2 + 0.2 + rnd.uniform(-0.08, 0.08),
-                                   -P / 2 - 0.1 + rnd.uniform(-0.08, 0.08), 0.64), 0.06, finesse=1)

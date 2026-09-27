@@ -24,8 +24,8 @@ def construire(a):
         a.citrouille("citrouille", (0, 0, 0), 0.32, graine=1)
     with a.piece("citrouilles"):
         a.citrouille("citrouille", (0, 0, 0), 0.34, graine=2)
-        a.citrouille("citrouille", (0.46, -0.12, 0), 0.22, graine=3)
-        a.citrouille("peinture-blanche", (-0.34, -0.3, 0), 0.18, graine=4)
+        a.citrouille("citrouille", (0.6, -0.12, 0), 0.22, graine=3)
+        a.citrouille("peinture-blanche", (-0.45, -0.35, 0), 0.18, graine=4)
         a.touffe((0.2, 0.25, 0), graine=5, brins=6)
 
     with a.piece("botte-de-foin"):

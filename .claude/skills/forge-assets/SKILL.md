@@ -46,7 +46,11 @@ iterating only; do the final `construire` without it.
    faces). Apply the highest-impact fix, render again.
 4. Stop at ≥ 85, after two plateauing scores (change the representation:
    e.g. `fondre` instead of stacked spheres), or after ten iterations.
-5. Read every `alerte` in the report: coincident faces z-fight in game; fix
+5. Every placed object must declare its footprint (semantic helpers do it;
+   wrap composites in `with a.objet(...)` / `a.objet_boite(...)`, declare big
+   bodies with `a.empreinte(...)`). Two solids overlapping by more than 3 cm
+   at the same height is an `ERREUR` and blocks the export: move one, do not
+   silence it. Read every `alerte` in the report: coincident faces z-fight in game; fix
    them by offsetting 1–3 cm (proud parts out, lapping parts in).
 6. `construire` without `--vite`, then run the web tests
    (`cd apps/web && pnpm test -- forge-decor`). Commit the recipe, the
