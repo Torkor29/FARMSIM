@@ -100,14 +100,17 @@ SAISONS: dict[str, dict[str, int]] = {
         "roseau": 0xb0955a,
         "mousse": 0x9a8a3a,
     },
+    # L'hiver en dormance, pas sous la neige : le sol du jeu reste un pré
+    # vert, et des houppiers blancs dessus se lisaient comme du coton. La
+    # neige, c'est la météo qui l'apporte (flocons), pas la saison.
     "hiver": {
-        "feuillage": 0xdfe8ec,
-        "feuillage-clair": 0xf2f6f8,
-        "feuillage-sombre": 0xc7d3da,
-        "sapin": 0x5d8a6a,
-        "herbe": 0xe7eef0,
-        "herbe-sombre": 0xd2dde2,
-        "brin": 0xcbd6c8,
+        "feuillage": 0x9aa68a,
+        "feuillage-clair": 0xaab39a,
+        "feuillage-sombre": 0x7f8c72,
+        "sapin": 0x4f7a5c,
+        "herbe": 0x9cb07e,
+        "herbe-sombre": 0x86996c,
+        "brin": 0xa9b48c,
     },
 }
 

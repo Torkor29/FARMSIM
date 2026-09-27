@@ -8037,7 +8037,9 @@ button.tiny {
   left: 50%;
   bottom: 12px;
   transform: translateX(-50%);
-  z-index: 40;
+  /* Au-dessus du bouton du calendrier (45) : pendant qu'on décore, il
+     mordait sur le dernier objet du rayon. */
+  z-index: 50;
   width: min(920px, calc(100vw - 24px));
   max-height: min(46vh, 330px);
   display: flex;

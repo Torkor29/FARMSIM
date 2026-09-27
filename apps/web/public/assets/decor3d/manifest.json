@@ -4,10 +4,10 @@
     "epouvantail": {
       "titre": "Épouvantail",
       "url": "/assets/decor3d/epouvantail.glb",
-      "octets": 46664,
+      "octets": 46588,
       "echelle": 1.0,
       "source": "apps/web/blender/recettes/epouvantail.py",
-      "empreinte": "99aae0d25b2f82df",
+      "empreinte": "7792e7ae73554518",
       "construit": "2026-09-27",
       "matieres": {
         "bois": "#a8764a",
@@ -28,7 +28,7 @@
           "brin": "#c2a857"
         },
         "hiver": {
-          "brin": "#cbd6c8"
+          "brin": "#a9b48c"
         }
       },
       "pieces": {
@@ -66,10 +66,10 @@
     "etal": {
       "titre": "Étals de marché",
       "url": "/assets/decor3d/etal.glb",
-      "octets": 224472,
+      "octets": 227608,
       "echelle": 1.0,
       "source": "apps/web/blender/recettes/etal.py",
-      "empreinte": "ecfdc6a21c436807",
+      "empreinte": "3e7f916f3db20676",
       "construit": "2026-09-27",
       "matieres": {
         "bois": "#a8764a",
@@ -195,10 +195,10 @@
     "fete": {
       "titre": "Kit de la fête",
       "url": "/assets/decor3d/fete.glb",
-      "octets": 122156,
+      "octets": 122800,
       "echelle": 1.0,
       "source": "apps/web/blender/recettes/fete.py",
-      "empreinte": "efb982ef849f7683",
+      "empreinte": "04b996bf8df60f8d",
       "construit": "2026-09-27",
       "matieres": {
         "bois": "#a8764a",
@@ -231,8 +231,8 @@
           "brin": "#c2a857"
         },
         "hiver": {
-          "feuillage": "#dfe8ec",
-          "brin": "#cbd6c8"
+          "feuillage": "#9aa68a",
+          "brin": "#a9b48c"
         }
       },
       "pieces": {
@@ -406,7 +406,7 @@
       "octets": 148412,
       "echelle": 1.0,
       "source": "apps/web/blender/recettes/jardin.py",
-      "empreinte": "ee171fe57a72d410",
+      "empreinte": "55ab5528f5793d3e",
       "construit": "2026-09-27",
       "matieres": {
         "bois": "#a8764a",
@@ -448,9 +448,9 @@
           "mousse": "#9a8a3a"
         },
         "hiver": {
-          "feuillage": "#dfe8ec",
-          "feuillage-sombre": "#c7d3da",
-          "brin": "#cbd6c8"
+          "feuillage": "#9aa68a",
+          "feuillage-sombre": "#7f8c72",
+          "brin": "#a9b48c"
         }
       },
       "pieces": {
@@ -639,7 +639,7 @@
       "octets": 177832,
       "echelle": 1.0,
       "source": "apps/web/blender/recettes/moulin.py",
-      "empreinte": "21c13d5fdf047df5",
+      "empreinte": "9c94fc093e892de6",
       "construit": "2026-09-27",
       "matieres": {
         "bois": "#a8764a",
@@ -669,8 +669,8 @@
           "brin": "#c2a857"
         },
         "hiver": {
-          "feuillage": "#dfe8ec",
-          "brin": "#cbd6c8"
+          "feuillage": "#9aa68a",
+          "brin": "#a9b48c"
         }
       },
       "pieces": {
@@ -718,7 +718,7 @@
       "octets": 212680,
       "echelle": 1.0,
       "source": "apps/web/blender/recettes/nature.py",
-      "empreinte": "6a248888fdc3cacb",
+      "empreinte": "d913b5aa10d611ab",
       "construit": "2026-09-27",
       "matieres": {
         "brin": "#7db84a",
@@ -755,11 +755,11 @@
           "mousse": "#9a8a3a"
         },
         "hiver": {
-          "feuillage": "#dfe8ec",
-          "feuillage-clair": "#f2f6f8",
-          "feuillage-sombre": "#c7d3da",
-          "sapin": "#5d8a6a",
-          "brin": "#cbd6c8"
+          "feuillage": "#9aa68a",
+          "feuillage-clair": "#aab39a",
+          "feuillage-sombre": "#7f8c72",
+          "sapin": "#4f7a5c",
+          "brin": "#a9b48c"
         }
       },
       "pieces": {
@@ -1110,7 +1110,7 @@
       "octets": 153020,
       "echelle": 1.0,
       "source": "apps/web/blender/recettes/puits.py",
-      "empreinte": "59b38b922e520300",
+      "empreinte": "e91aaf5c1cf82beb",
       "construit": "2026-09-27",
       "matieres": {
         "bois": "#a8764a",
@@ -1138,8 +1138,8 @@
           "mousse": "#9a8a3a"
         },
         "hiver": {
-          "feuillage-sombre": "#c7d3da",
-          "brin": "#cbd6c8"
+          "feuillage-sombre": "#7f8c72",
+          "brin": "#a9b48c"
         }
       },
       "pieces": {
@@ -1184,10 +1184,10 @@
     "serre": {
       "titre": "Serre",
       "url": "/assets/decor3d/serre.glb",
-      "octets": 130748,
+      "octets": 130716,
       "echelle": 1.0,
       "source": "apps/web/blender/recettes/serre.py",
-      "empreinte": "e737bb8abeaf86e9",
+      "empreinte": "a3f9f90c109c70ec",
       "construit": "2026-09-27",
       "matieres": {
         "bois": "#a8764a",
@@ -1219,9 +1219,9 @@
           "brin": "#c2a857"
         },
         "hiver": {
-          "feuillage": "#dfe8ec",
-          "feuillage-clair": "#f2f6f8",
-          "brin": "#cbd6c8"
+          "feuillage": "#9aa68a",
+          "feuillage-clair": "#aab39a",
+          "brin": "#a9b48c"
         }
       },
       "pieces": {
@@ -1267,7 +1267,7 @@
       "octets": 302608,
       "echelle": 1.0,
       "source": "apps/web/blender/recettes/sol.py",
-      "empreinte": "cd30cd1fc8d98862",
+      "empreinte": "011be3d9e4122e3f",
       "construit": "2026-09-27",
       "matieres": {
         "brin": "#7db84a",
@@ -1299,10 +1299,10 @@
           "mousse": "#9a8a3a"
         },
         "hiver": {
-          "feuillage-clair": "#f2f6f8",
-          "feuillage-sombre": "#c7d3da",
-          "herbe": "#e7eef0",
-          "brin": "#cbd6c8"
+          "feuillage-clair": "#aab39a",
+          "feuillage-sombre": "#7f8c72",
+          "herbe": "#9cb07e",
+          "brin": "#a9b48c"
         }
       },
       "pieces": {
@@ -1420,7 +1420,7 @@
       "octets": 324116,
       "echelle": 1.0,
       "source": "apps/web/blender/recettes/source_chaude.py",
-      "empreinte": "f6fb507506e300cf",
+      "empreinte": "f6c833fc504d3d24",
       "construit": "2026-09-27",
       "matieres": {
         "bambou": "#a9b35c",
@@ -1461,10 +1461,10 @@
           "mousse": "#9a8a3a"
         },
         "hiver": {
-          "feuillage": "#dfe8ec",
-          "feuillage-clair": "#f2f6f8",
-          "feuillage-sombre": "#c7d3da",
-          "brin": "#cbd6c8"
+          "feuillage": "#9aa68a",
+          "feuillage-clair": "#aab39a",
+          "feuillage-sombre": "#7f8c72",
+          "brin": "#a9b48c"
         }
       },
       "pieces": {

@@ -555,7 +555,9 @@ const FEUILLAGES: Record<SaisonArbre, number[]> = {
   SUMMER: [0x86bf4e, 0x7cb446, 0x94c957, 0x72ab42, 0x8fc454],
   // Pas tous roux à la fois : un chêne tient son vert plus longtemps.
   AUTUMN: [0xe0923a, 0xf0b34a, 0xd06a30, 0xe8a23f, 0x9aa845],
-  WINTER: [0xdfe8ec, 0xd2dde2, 0xe8eef0, 0x9fb3a4, 0xc7d3da],
+  // En dormance, pas enneigés : sur un pré qui reste vert, des houppiers
+  // blancs passaient pour du coton.
+  WINTER: [0x9aa68a, 0x8f9c80, 0xaab39a, 0x7f8c72, 0x94a086],
 };
 /** Les bruns d'écorce. */
 const ECORCES = [0x6e4631, 0x7a5236, 0x64402c];
