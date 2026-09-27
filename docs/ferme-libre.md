@@ -158,12 +158,51 @@ sa berge d'herbe, son talus de terre et son fond.
   d'un message. L'eau vit : claire au bord, sombre au large, écume, reflets,
   nénuphars, roseaux, des canards dès six cases, un poisson qui saute.
 
+### Relief, rivières, ponts et cascades
+
+L'autre moitié du terraformage. Les règles vivent dans
+`packages/shared/src/relief.ts`, le rendu dans `apps/web/src/domaine3d.ts`.
+
+- **Les niveaux.** Une case a un niveau, de 0 (la plaine) à 3
+  (`ParcelCell.niveau`). *Surélever* (40 €/case) et *Abaisser* (20 €/case) se
+  tirent en rectangle, sur du pré, du champ nu ou un chemin ; le sol ne change
+  pas. Entre deux niveaux se dresse une falaise : un socle, des strates, une
+  lèvre d'herbe, quelques rochers. On cultive sur une terrasse comme en
+  plaine ; **un bâtiment se pose en plaine**.
+- **L'accès des engins.** Les engins arrivent par le bord de la ferme, en
+  plaine, et roulent de case en case à niveau. L'eau les arrête, sauf sur un
+  **pont** posé dans son axe (180 €). Une falaise les arrête aussi, sauf par
+  une **rampe** posée au pied et tournée vers la terrasse (120 €, un niveau
+  d'écart exactement). Un champ que les engins n'atteignent pas ne se travaille
+  pas : les travaux, les demandes d'aide et les prestataires le refusent avec
+  « N cases coupées de la cour… — posez un pont ou une rampe ». En
+  construction, un voile orangé montre ces champs. Une ferme toute plate reste
+  entièrement accessible, comme avant.
+- **L'eau qui coule.** Deux cases d'eau voisines de niveaux différents font
+  une **cascade**. Une étendue d'un seul niveau qui se déverse par une
+  cascade **coule** vers elle : c'est une rivière, rayée de stries qui filent
+  dans le sens du courant. L'étendue d'en bas reste un lac, sauf au pied de la
+  chute où l'eau bouillonne. Chaque niveau a sa propre nappe. Une cascade a un
+  rideau d'eau, une lèvre d'écume, des bouillons à son pied, et une brume qui
+  monte au-dessus de la falaise. La brume la signale même quand elle tombe du
+  côté opposé à la caméra. La première cascade se fête.
+- **À quoi ça sert.**
+  - Une rivière irrigue mieux qu'un lac : +4 % à 2 cases, en plus des +3 % de
+    l'étang.
+  - Un **coteau** rapporte +2 % : un champ en terrasse dont la voisine du sud
+    est plus basse.
+  - Le **moulin** tourne ×2 au bord d'une eau qui coule, et ×3 au pied d'une
+    cascade (débit de l'atelier et bureau).
+  - Chaque cascade ajoute +3 de charme, un pont +3, une rampe +1.
+
 ### Coûts d'aménagement
 
 | Geste | Coût | Rendu à la suppression |
 |---|---|---|
 | Mettre en culture (pré → champ) | 12 €/case | rien (retour en pré gratuit si la case est nue) |
 | Creuser un étang | 30 €/case | remblai 8 €/case |
+| Surélever / abaisser d'un niveau | 40 / 20 €/case | rien |
+| Pont / rampe | 180 / 120 € | 50 % |
 | Chemin de terre / gravier / pavés | 4 / 9 / 18 €/case | rien |
 | Objet de décor | 25 à 400 € | 50 % (100 % dans la fenêtre de regret) |
 | Bâtiment | inchangé | inchangé (40 %, 100 % dans la fenêtre de regret) |
@@ -172,11 +211,13 @@ sa berge d'herbe, son talus de terre et son fond.
 
 - **Haie** : brise-vent, +2 % de rendement sur les champs à 2 cases ou moins.
 - **Étang** : irrigation, +3 % sur les champs à 3 cases ou moins.
+- **Rivière** (eau qui coule) : +4 % de plus à 2 cases ou moins.
+- **Coteau** : +2 % sur un champ en terrasse exposé au sud.
 - **Arbres, fleurs, chemins, bancs…** : pas de bonus de rendement, mais ils
   comptent dans le **charme** de la ferme, affiché (et prêt pour de futurs
   classements).
 
-Bonus non cumulables d'une même source, plafonnés à +5 %. Une ferme jolie ne
+Bonus non cumulables d'une même source, plafonnés à +8 %. Une ferme jolie ne
 paie donc aucune pénalité, et une ferme optimisée n'a pas de disposition
 unique : haies et étangs se placent où l'on veut.
 

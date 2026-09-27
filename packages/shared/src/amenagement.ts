@@ -11,6 +11,7 @@
  */
 import { BUILDING_DEFS, quarterTurns, type BuildingType } from "./index.js";
 import { CASES_STANDARD, HECTARES_STANDARD } from "./parcelles.js";
+import { NIVEAU_MAX, hydrologie, rampeValide } from "./relief.js";
 import { LAND_BASE_PER_HA, fertilityFactor } from "./land.js";
 
 /* ------------------------------------------------------------------ */
@@ -112,7 +113,7 @@ export type ModePose = "TERRAIN" | "OBJET" | "BATIMENT" | "OUTIL";
  * La règle d'occupation d'une entrée. Chacune dit quels sols elle admet et
  * quelles couches elle prend — c'est tout ce que `validerPose` regarde.
  */
-export type RegleId = "CHAMP" | "PRE" | "EAU" | "CHEMIN" | "DECOR" | "BATIMENT";
+export type RegleId = "CHAMP" | "PRE" | "EAU" | "CHEMIN" | "DECOR" | "BATIMENT" | "RELIEF" | "PONT" | "RAMPE";
 
 type Regle = {
   /** Sols sur lesquels on peut poser. */
@@ -135,6 +136,12 @@ const REGLES: Record<RegleId, Regle> = {
   CHEMIN: { sols: ["PRE"], champNuAdmis: true, surChemin: true, surVolume: false },
   DECOR: { sols: ["PRE"], champNuAdmis: true, surChemin: false, surVolume: false },
   BATIMENT: { sols: ["PRE"], champNuAdmis: true, surChemin: false, surVolume: false },
+  /* Surélever ou abaisser : la terre ferme nue, chemins compris (ils suivent). */
+  RELIEF: { sols: ["PRE", "CHAMP"], champNuAdmis: true, surChemin: true, surVolume: false },
+  /* Un pont ne se pose que sur l'eau. */
+  PONT: { sols: ["EAU"], champNuAdmis: false, surChemin: false, surVolume: false },
+  /* Une rampe, au pied d'une falaise ; un chemin peut y monter. */
+  RAMPE: { sols: ["PRE"], champNuAdmis: true, surChemin: true, surVolume: false },
 };
 
 export type EffetAmenagement = {
@@ -174,6 +181,72 @@ export type DefConstruction = {
   /** Ce qu'il apporte au charme de la ferme. */
   charme: number;
 };
+
+/** Le terraformage du relief et des passages : voir `relief.ts`. */
+const relief: DefConstruction[] = [
+  {
+    id: "surelever",
+    categorie: "TERRAFORMAGE",
+    nom: "Surélever",
+    description:
+      "Monter la terre d'un niveau : buttes, terrasses, falaises. Un champ en hauteur qui regarde le sud devient un coteau.",
+    icone: "⛰️",
+    pose: "TERRAIN",
+    emprise: { w: 1, h: 1 },
+    rotations: [0],
+    prix: 40,
+    revente: 0,
+    niveauMin: 1,
+    regle: "RELIEF",
+    effet: { bonusRendement: 0.02, portee: 0, libelle: "Coteau : +2 % sur un champ en hauteur exposé au sud" },
+    charme: 0,
+  },
+  {
+    id: "abaisser",
+    categorie: "TERRAFORMAGE",
+    nom: "Abaisser",
+    description: "Descendre la terre d'un niveau, jusqu'à la plaine.",
+    icone: "⛏️",
+    pose: "TERRAIN",
+    emprise: { w: 1, h: 1 },
+    rotations: [0],
+    prix: 20,
+    revente: 0,
+    niveauMin: 1,
+    regle: "RELIEF",
+    charme: 0,
+  },
+  {
+    id: "pont",
+    categorie: "TERRAFORMAGE",
+    nom: "Pont",
+    description: "Un pont de bois sur l'eau : les engins passent d'une rive à l'autre. Tournez-le dans l'axe du passage.",
+    icone: "🌉",
+    pose: "OBJET",
+    emprise: { w: 1, h: 1 },
+    rotations: [0, 1],
+    prix: 180,
+    revente: 0.5,
+    niveauMin: 1,
+    regle: "PONT",
+    charme: 3,
+  },
+  {
+    id: "rampe",
+    categorie: "TERRAFORMAGE",
+    nom: "Rampe",
+    description: "Une rampe au pied d'une falaise : les engins montent d'un niveau. Tournez-la vers le haut.",
+    icone: "📐",
+    pose: "OBJET",
+    emprise: { w: 1, h: 1 },
+    rotations: [0, 1, 2, 3],
+    prix: 120,
+    revente: 0.5,
+    niveauMin: 1,
+    regle: "RAMPE",
+    charme: 1,
+  },
+];
 
 /** Coût du remblai d'un étang, par case, quand on le rend au pré. */
 export const COUT_REMBLAI = 8;
@@ -248,7 +321,7 @@ const terrains: DefConstruction[] = [
     niveauMin: 1,
     regle: "EAU",
     sol: "EAU",
-    effet: { bonusRendement: 0.03, portee: 3, libelle: "Irrigation : +3 % de rendement à 3 cases" },
+    effet: { bonusRendement: 0.03, portee: 3, libelle: "Irrigation : +3 % à 3 cases, +4 % à 2 cases si l'eau coule" },
     charme: 1,
   },
   {
@@ -563,7 +636,7 @@ function batiments(): DefConstruction[] {
 let _catalogue: DefConstruction[] | null = null;
 /** Tout ce qui se pose, dans l'ordre d'affichage. */
 export function catalogueConstruction(): DefConstruction[] {
-  _catalogue ??= [...outils, ...terrains, ...objets, ...batiments()];
+  _catalogue ??= [...outils, ...relief, ...terrains, ...objets, ...batiments()];
   return _catalogue;
 }
 
@@ -605,6 +678,8 @@ export type CaseDomaine = {
   sol: SolCase;
   revetement: Revetement | null;
   volume: Volume | null;
+  /** Le relief : 0 en plaine. */
+  niveau: number;
 };
 
 /** Une case telle que le serveur la stocke — le strict nécessaire. */
@@ -616,6 +691,7 @@ export type CaseSource = {
   kind?: string | null;
   buildingId?: string | null;
   crop?: string | null;
+  niveau?: number | null;
 };
 
 export type AmenagementSource = {
@@ -653,6 +729,7 @@ export function construireGrille(opts: {
       sol: c.sol === "PRE" || c.sol === "EAU" ? c.sol : "CHAMP",
       revetement: lireRevetement(c.revetement),
       volume,
+      niveau: c.niveau ?? 0,
     });
   }
   for (const a of opts.amenagements ?? []) {
@@ -678,7 +755,11 @@ export type RaisonRefus =
   | "CHEMIN"
   | "EAU"
   | "CHAMP"
-  | "DEJA";
+  | "DEJA"
+  | "SOMMET"
+  | "PLAINE"
+  | "RELIEF"
+  | "RAMPE";
 
 export const LIBELLE_REFUS: Record<RaisonRefus, string> = {
   FRICHE: "Terrain en friche — achetez ce lot d'abord",
@@ -691,6 +772,10 @@ export const LIBELLE_REFUS: Record<RaisonRefus, string> = {
   EAU: "C'est de l'eau",
   CHAMP: "C'est un champ",
   DEJA: "Déjà fait",
+  SOMMET: "Déjà au plus haut",
+  PLAINE: "Déjà en plaine",
+  RELIEF: "Un bâtiment se pose en plaine",
+  RAMPE: "Une rampe monte d'un niveau : tournez-la vers la falaise",
 };
 
 export type VerdictCase = {
@@ -734,6 +819,11 @@ export function verdictCase(
     regle.sols.includes(c.sol) || (c.sol === "CHAMP" && regle.champNuAdmis && !volumeGenant);
   if (!solAdmis) return non(c.sol === "EAU" ? "EAU" : c.sol === "CHAMP" ? "CHAMP" : "DEJA");
 
+  if (def.regle === "BATIMENT" && c.niveau !== 0) return non("RELIEF");
+  if (def.regle === "RELIEF") {
+    if (def.id === "surelever") return c.niveau >= NIVEAU_MAX ? non("SOMMET") : { x, y, ok: true, change: true };
+    return c.niveau <= 0 ? non("PLAINE") : { x, y, ok: true, change: true };
+  }
   // Un terrain déjà dans l'état voulu ne coûte rien et ne change rien.
   if (def.pose === "TERRAIN") {
     if (def.regle === "PRE") {
@@ -771,7 +861,14 @@ export function validerPose(
   const cases = casesEmprise(pose.x, pose.y, e.w, e.h).map((p) =>
     verdictCase(grille, def, p.x, p.y, ignorer),
   );
-  const refus = cases.find((c) => !c.ok);
+  let refus = cases.find((c) => !c.ok);
+  if (!refus && def.regle === "RAMPE") {
+    const niveaux = [...grille.cases.values()].map((c) => ({ x: c.x, y: c.y, sol: c.sol, niveau: c.niveau }));
+    if (!rampeValide(niveaux, pose.x, pose.y, rot)) {
+      refus = { x: pose.x, y: pose.y, ok: false, raison: "RAMPE", change: false };
+      cases[0] = refus;
+    }
+  }
   return { ok: !refus, raison: refus?.raison, cases, cout: refus ? 0 : def.prix };
 }
 
@@ -1058,13 +1155,19 @@ export function prixLot(opts: {
 /* ------------------------------------------------------------------ */
 
 /** Plafond de tous les bonus du décor sur une case. */
-export const BONUS_AMENAGEMENT_MAX = 0.05;
+export const BONUS_AMENAGEMENT_MAX = 0.08;
+
+/** L'eau qui coule irrigue mieux et plus près qu'un lac. */
+export const BONUS_RIVIERE = 0.04;
+export const PORTEE_RIVIERE = 2;
 
 export type SourcesBonus = {
   /** Objets posés (haies…), avec leur type. */
   objets: readonly { type: string; originX: number; originY: number }[];
-  /** Cases d'eau du domaine. */
-  eaux: readonly { x: number; y: number }[];
+  /** Cases d'eau du domaine ; `courante` pour une rivière. */
+  eaux: readonly { x: number; y: number; courante?: boolean }[];
+  /** Les champs en coteau (terrasse exposée au sud). */
+  coteaux?: readonly { x: number; y: number }[];
 };
 
 /**
@@ -1087,12 +1190,13 @@ export function bonusAmenagementCase(sources: SourcesBonus, x: number, y: number
   const etang = defConstruction("etang")?.effet;
   if (etang) {
     for (const e of sources.eaux) {
-      if (Math.hypot(x - e.x, y - e.y) <= etang.portee) {
-        tenir("etang", etang.bonusRendement);
-        break;
-      }
+      const d = Math.hypot(x - e.x, y - e.y);
+      if (d <= etang.portee) tenir("etang", etang.bonusRendement);
+      if (e.courante && d <= PORTEE_RIVIERE) tenir("riviere", BONUS_RIVIERE);
     }
   }
+  const coteau = defConstruction("surelever")?.effet;
+  if (coteau && sources.coteaux?.some((c) => c.x === x && c.y === y)) tenir("coteau", coteau.bonusRendement);
   let total = 0;
   for (const v of meilleur.values()) total += v;
   return Math.min(BONUS_AMENAGEMENT_MAX, total);
@@ -1110,6 +1214,8 @@ export function charmeDe(opts: {
 }): number {
   let total = 0;
   for (const a of opts.amenagements) total += defConstruction(a.type)?.charme ?? 0;
+  // Une cascade, c'est le clou d'un jardin.
+  total += hydrologie(opts.cells).chutes.length * 3;
   for (const c of opts.cells) {
     if (c.sol === "EAU") total += 1;
     const r = lireRevetement(c.revetement);

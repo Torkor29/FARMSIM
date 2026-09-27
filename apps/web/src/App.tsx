@@ -122,6 +122,7 @@ import {
   type Coin,
   BUILDING_REGRET_MS,
   cleCase,
+  hydrologie,
   construireGrille,
   dansBornes,
   defConstruction,
@@ -278,6 +279,8 @@ type Cell = {
   revetement?: string | null;
   /** Berges : la forme des coins d'une case d'eau. */
   forme?: number;
+  /** Relief : 0 en plaine, jusqu'à trois terrasses au-dessus. */
+  niveau?: number;
 };
 
 type Building = {
@@ -3259,6 +3262,23 @@ export function App() {
     // Creuser se voit tout de suite : la ferme n'attend pas la réponse du
     // serveur pour lancer la pelle. Si le serveur refuse, on recharge.
     const lacAvant = plusGrandLac(grid);
+    const chutesAvant = hydrologie(grid).chutes.length;
+    // Le relief monte (ou descend) d'un cran sous le doigt, sans attendre.
+    if (def.regle === "RELIEF") {
+      const sens = def.id === "surelever" ? 1 : -1;
+      const cles = new Set(aPeindre.map((c) => cleCase(c.x, c.y)));
+      setParcelDetail((d) =>
+        d
+          ? {
+              ...d,
+              parcel: {
+                ...d.parcel,
+                cells: d.parcel.cells?.map((c) => (cles.has(cleCase(c.x, c.y)) ? { ...c, niveau: (c.niveau ?? 0) + sens } : c)),
+              },
+            }
+          : d,
+      );
+    }
     const patch =
       def.regle === "EAU"
         ? { sol: "EAU" as const, revetement: null, forme: 0 }
@@ -3275,6 +3295,29 @@ export function App() {
       await apresConstruction(
         `${def.nom} · ${r.peintes} case${r.peintes > 1 ? "s" : ""}${r.cout ? ` · −${r.cout} €` : ""}`,
       );
+      // Une première cascade se fête : c'est le clou d'un jardin d'eau.
+      if (def.regle === "EAU" || def.regle === "RELIEF") {
+        const cles = new Set(aPeindre.map((c) => cleCase(c.x, c.y)));
+        const sens = def.id === "surelever" ? 1 : def.id === "abaisser" ? -1 : 0;
+        const apres = grid.map((c) =>
+          cles.has(cleCase(c.x, c.y))
+            ? def.regle === "EAU"
+              ? { ...c, sol: "EAU" as const }
+              : { ...c, niveau: (c.niveau ?? 0) + sens }
+            : c,
+        );
+        const chutes = hydrologie(apres).chutes.length;
+        if (chutes > chutesAvant) {
+          window.setTimeout(() => {
+            jouerSon("lac");
+            flashToast(
+              chutesAvant === 0
+                ? "Votre première cascade — l'eau coule, le moulin voisin tourne trois fois plus vite"
+                : `Une cascade de plus · charme +${(chutes - chutesAvant) * 3}`,
+            );
+          }, 1500);
+        }
+      }
       if (def.regle === "EAU") {
         const cles = new Set(aPeindre.map((c) => cleCase(c.x, c.y)));
         const apres = grid.map((c) => (cles.has(cleCase(c.x, c.y)) ? { ...c, sol: "EAU" as const } : c));
@@ -3293,7 +3336,7 @@ export function App() {
       }
     } catch (e) {
       flashToast(e instanceof Error ? e.message : String(e), true);
-      if (patch && activeParcelId) void loadParcel(activeParcelId);
+      if ((patch || def.regle === "RELIEF") && activeParcelId) void loadParcel(activeParcelId);
     } finally {
       setBusy(false);
       setApercuTerrain([]);

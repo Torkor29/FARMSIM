@@ -1,7 +1,19 @@
 import * as THREE from "three";
-import { casesEmprise, cleCase, defConstruction, empriseOrientee, masqueVoisins, type Bornes } from "@farmsim/shared";
+import {
+  HAUTEUR_NIVEAU,
+  accesEngins,
+  axePont,
+  casesEmprise,
+  cleCase,
+  defConstruction,
+  empriseOrientee,
+  hydrologie,
+  masqueVoisins,
+  sensRampe,
+  type Bornes,
+} from "@farmsim/shared";
 import { ajouterArbre, ajouterBoite, ajouterGeometrie, maillageFacette, pose } from "./decor3d";
-import { maillerEau, materiauEau } from "./eau3d";
+import { RIVE, maillerEau, materiauCascade, materiauEau, type MaillageEau } from "./eau3d";
 import { creerEauVivante } from "./eau-vivante";
 
 /**
@@ -24,6 +36,8 @@ export type CaseTerrain = {
   kind?: string;
   /** Berges : la forme des coins d'une case d'eau. */
   forme?: number;
+  /** Relief : 0 en plaine, une terrasse au-dessus. */
+  niveau?: number;
 };
 
 export type ObjetPose = { id: string; type: string; originX: number; originY: number; rotation: number };
@@ -53,6 +67,8 @@ export type EtatConstruction = {
 type Tableaux = { pos: number[]; col: number[] };
 
 const TOP = 0.09;
+/** Le dessus d'une dalle de plaine : là où le relief commence. */
+const TOP_PLAINE = TOP;
 
 /** Un nombre pseudo-aléatoire stable par case : la friche ne bouge pas d'un rechargement à l'autre. */
 function hash(x: number, y: number, k = 0): number {
@@ -75,6 +91,13 @@ const _cone = new THREE.ConeGeometry(0.5, 1, 7);
 const _nenuphar = new THREE.CircleGeometry(1, 12, 0.35, Math.PI * 2 - 0.7).rotateX(-Math.PI / 2);
 const _ico = new THREE.IcosahedronGeometry(0.5, 0);
 const _ico1 = new THREE.IcosahedronGeometry(0.5, 1);
+const _boite = new THREE.BoxGeometry(1, 1, 1);
+const DIRS: readonly [number, number][] = [
+  [0, -1],
+  [1, 0],
+  [0, 1],
+  [-1, 0],
+];
 
 /* ------------------------------------------------------------------ */
 /* Les objets du décor                                                  */
@@ -95,9 +118,11 @@ export function verserObjet(
   pas: number,
   voisins = 0,
   graine = 0,
+  /** Le relief : la hauteur de la case où l'objet est posé. */
+  sol = 0,
 ): void {
   const rot = (rotation * Math.PI) / 2;
-  const y = TOP;
+  const y = TOP + sol;
   const b = (x: number, yy: number, z: number, w: number, h: number, d: number, c: number, r = rot) =>
     ajouterBoite(t.pos, t.col, cx + x, y + yy, cz + z, w, h, d, c, r);
   // Un décalage local tourné avec l'objet.
@@ -249,6 +274,83 @@ export function verserObjet(
       b(0, 0.82, 0, 0.5, 0.05, 0.05, 0x6b4726);
       break;
     }
+    case "pont": {
+      /* Un pont de bois en dos d'âne, posé sur l'eau : l'axe suit la
+         rotation (0 est-ouest, 1 nord-sud). La case est un bassin, le
+         tablier repart donc du niveau du pré. */
+      const r = axePont(rotation) === "EO" ? 0 : Math.PI / 2;
+      const bois = 0x9a6f45;
+      const L = pas * 1.04;
+      for (let k = 0; k < 5; k++) {
+        const u = (k - 2) / 5;
+        const bombe = 0.1 * (1 - (2 * u) ** 2);
+        const p = r ? { x: 0, z: u * L } : { x: u * L, z: 0 };
+        ajouterBoite(t.pos, t.col, cx + p.x, y + 0.02 + bombe, cz + p.z, r ? 0.52 : L / 5 + 0.01, 0.05, r ? L / 5 + 0.01 : 0.52, k % 2 ? bois : 0x8c6440);
+        for (const s of [-1, 1]) {
+          const q = r ? { x: s * 0.27, z: u * L } : { x: u * L, z: s * 0.27 };
+          ajouterBoite(t.pos, t.col, cx + q.x, y + 0.2 + bombe, cz + q.z, r ? 0.04 : L / 5 + 0.01, 0.04, r ? L / 5 + 0.01 : 0.04, 0x7a5535);
+          if (k % 2 === 0) ajouterBoite(t.pos, t.col, cx + q.x, y + 0.1 + bombe, cz + q.z, 0.05, 0.22, 0.05, 0x6b4a2c);
+        }
+      }
+      // Les culées de pierre, aux deux bouts.
+      for (const s of [-1, 1]) {
+        const p = r ? { x: 0, z: (s * L) / 2 } : { x: (s * L) / 2, z: 0 };
+        ajouterBoite(t.pos, t.col, cx + p.x, y - 0.06, cz + p.z, r ? 0.62 : 0.16, 0.16, r ? 0.16 : 0.62, 0x8e8b84);
+      }
+      break;
+    }
+    case "rampe": {
+      /* Une rampe de terre battue, qui monte d'un niveau vers la falaise
+         que désigne la rotation (0 nord, 1 est, 2 sud, 3 ouest). */
+      const [ddx, ddz] = sensRampe(rotation);
+      const yaw = Math.atan2(ddx, ddz);
+      const H = HAUTEUR_NIVEAU;
+      const L = pas;
+      const pente = Math.atan2(H, L);
+      const long = Math.hypot(H, L);
+      ajouterGeometrie(t.pos, t.col, _boite, pose(cx, y + H / 2 - 0.02, cz, yaw, 0.74, 0.06, long, -pente), 0xc2a57a);
+      // Des traverses en travers de la pente : elles disent « ça monte ».
+      for (let k = 0; k < 5; k++) {
+        const f = (k + 0.5) / 5 - 0.5;
+        ajouterGeometrie(
+          t.pos,
+          t.col,
+          _boite,
+          pose(cx + ddx * f * L, y + H / 2 + f * H + 0.015, cz + ddz * f * L, yaw, 0.72, 0.035, 0.06, -pente),
+          0x7a5535,
+        );
+      }
+      // Les flancs de pierre, pleins jusqu'au sol.
+      const px_ = Math.abs(ddz);
+      const pz_ = Math.abs(ddx);
+      const pierre = new THREE.Color(0x8a8378);
+      for (const s of [-1, 1]) {
+        const ox = px_ * s * 0.39;
+        const oz = pz_ * s * 0.39;
+        const a = [cx + ox - (ddx * L) / 2, y - 0.02, cz + oz - (ddz * L) / 2];
+        const b2 = [cx + ox + (ddx * L) / 2, y - 0.02, cz + oz + (ddz * L) / 2];
+        const c2 = [cx + ox + (ddx * L) / 2, y + H, cz + oz + (ddz * L) / 2];
+        for (const tri3 of [[a, b2, c2], [a, c2, b2]]) {
+          for (const v of tri3) {
+            t.pos.push(v[0]!, v[1]!, v[2]!);
+            t.col.push(pierre.r, pierre.g, pierre.b);
+          }
+        }
+      }
+      // Deux bordures de rondins, et le talus plein dessous.
+      for (const s of [-1, 1]) {
+        const ox = Math.cos(yaw) * s * 0.4;
+        const oz = -Math.sin(yaw) * s * 0.4;
+        ajouterGeometrie(t.pos, t.col, _boite, pose(cx + ox, y + H / 2 + 0.02, cz + oz, yaw, 0.07, 0.07, long, -pente), 0x6b4a2c);
+      }
+      for (let k = 0; k < 4; k++) {
+        const f = (k + 0.5) / 4;
+        const h = H * f;
+        const d = (f - 0.5) * L;
+        ajouterBoite(t.pos, t.col, cx + ddx * d, y + h / 2 - 0.03, cz + ddz * d, Math.abs(ddz) ? 0.82 : L / 4, h, Math.abs(ddx) ? 0.82 : L / 4, k % 2 ? 0x8a7156 : 0x7d664d);
+      }
+      break;
+    }
     default:
       b(0, 0.2, 0, 0.5, 0.4, 0.5, 0xb0a590, 0);
   }
@@ -283,7 +385,9 @@ export function creerDomaine3d(opts: { shadows: boolean }): Domaine3d {
   construction.name = "domaine-construction";
   const poussieres = new THREE.Group();
   poussieres.name = "domaine-poussieres";
-  group.add(terrain, construction, poussieres);
+  const bouillons = new THREE.Group();
+  bouillons.name = "domaine-bouillons";
+  group.add(terrain, construction, poussieres, bouillons);
   /*
    * Ce qui vient de changer se voit : un anneau de poussière claire s'ouvre
    * sur chaque case repeinte, chaque objet posé ou déplacé. Sans lui, une
@@ -302,6 +406,18 @@ export function creerDomaine3d(opts: { shadows: boolean }): Domaine3d {
   let pasEau = 1;
   let tCourant = 0;
   const matNappe = materiauEau();
+  const matCascade = materiauCascade();
+  /** L'écume au pied des cascades : des bouillons qui enflent et retombent. */
+  let ecumes: { m: THREE.Mesh; phase: number; base: number }[] = [];
+  let brumes: { m: THREE.Mesh; x: number; z: number; bas: number; montee: number; phase: number; base: number }[] = [];
+  const matBrume = new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.24, depthWrite: false });
+  const matEcume = new THREE.MeshLambertMaterial({ color: 0xf2f8f8, transparent: true, opacity: 0.9 });
+  const matCoupee = new THREE.MeshBasicMaterial({ color: 0xe0823a, transparent: true, opacity: 0.34, depthWrite: false });
+  /** Le relief au dernier rendu : la hauteur de chaque case surélevée. */
+  let altitudes = new Map<string, number>();
+  const altitudeDe = (x: number, y: number) => altitudes.get(cleCase(x, y)) ?? 0;
+  /** Les champs que les engins n'atteignent pas, montrés en construction. */
+  let coupees: { x: number; y: number }[] = [];
   const vivante = creerEauVivante(group);
   /** Le trait de la limite de propriété, calculé avec le terrain, montré en construction. */
   const limite: Tableaux = { pos: [], col: [] };
@@ -331,7 +447,7 @@ export function creerDomaine3d(opts: { shadows: boolean }): Domaine3d {
         m.geometry?.dispose();
         const mat = m.material as THREE.Material | undefined;
         // Les matériaux partagés restent ; ceux des textes et des maillages fusionnés partent.
-        if (mat && ![matEau, matNappe, matGrille, matLot, matLotSurvole, matBordLot, matFantomeOk, matFantomeNon, matSelection].includes(mat as never)) {
+        if (mat && ![matEau, matNappe, matCascade, matEcume, matBrume, matCoupee, matGrille, matLot, matLotSurvole, matBordLot, matFantomeOk, matFantomeNon, matSelection].includes(mat as never)) {
           (mat as THREE.SpriteMaterial).map?.dispose();
           mat.dispose();
         }
@@ -341,8 +457,13 @@ export function creerDomaine3d(opts: { shadows: boolean }): Domaine3d {
 
   function majTerrain(d: DonneesDomaine, posDe: (x: number, y: number) => { px: number; pz: number }, pas: number) {
     vider(terrain);
+    // L'écume partage sa géométrie : on la retire sans rien libérer.
+    bouillons.clear();
+    ecumes = [];
+    brumes = [];
+    altitudes = new Map(d.cells.filter((c) => c.niveau).map((c) => [cleCase(c.x, c.y), (c.niveau ?? 0) * HAUTEUR_NIVEAU]));
     const suivantes = new Map<string, string>();
-    for (const c of d.cells) suivantes.set(cleCase(c.x, c.y), `${c.sol}|${c.revetement ?? ""}`);
+    for (const c of d.cells) suivantes.set(cleCase(c.x, c.y), `${c.sol}|${c.revetement ?? ""}|${c.niveau ?? 0}`);
     for (const a of d.amenagements) suivantes.set(`o:${a.id}`, `${a.originX},${a.originY},${a.rotation}`);
     // Une autre parcelle n'est pas un changement : c'est une autre scène.
     let disparues = 0;
@@ -355,6 +476,16 @@ export function creerDomaine3d(opts: { shadows: boolean }): Domaine3d {
       for (const [k, v] of suivantes) {
         const avant = signatures.get(k);
         if (avant === v) continue;
+        // Une case qui monte ou descend : la terre se soulève, en gerbe.
+        if (!k.startsWith("o:") && avant) {
+          const [solA, revA, nA] = avant.split("|");
+          const [solB, revB, nB] = v.split("|");
+          if (solA === solB && revA === revB && nA !== nB) {
+            const [x, y] = k.split(",").map(Number) as [number, number];
+            vivante.soulever(x, y, tCourant + Math.random() * 0.15, Number(nB) > Number(nA));
+            continue;
+          }
+        }
         // Creuser et reboucher ont leur propre spectacle, plus parlant qu'une poussière.
         if (!k.startsWith("o:") && v.startsWith("EAU|") && avant && !avant.startsWith("EAU|")) {
           const [x, y] = k.split(",").map(Number) as [number, number];
@@ -381,7 +512,7 @@ export function creerDomaine3d(opts: { shadows: boolean }): Domaine3d {
           geoPoussiere,
           new THREE.MeshBasicMaterial({ color: 0xf3ead2, transparent: true, opacity: 0.8, depthWrite: false }),
         );
-        m.position.set(px, TOP + 0.03, pz);
+        m.position.set(px, TOP + 0.03 + altitudeDe(c.x, c.y), pz);
         m.renderOrder = 3;
         poussieres.add(m);
         poufs.push({ m, t0: null });
@@ -452,6 +583,7 @@ export function creerDomaine3d(opts: { shadows: boolean }): Domaine3d {
     for (const c of d.cells) {
       if (c.sol !== "PRE" || c.revetement || c.kind === "BUILDING" || sousObjet.has(cleCase(c.x, c.y))) continue;
       const { px, pz } = posDe(c.x, c.y);
+      const TOP = TOP_PLAINE + altitudeDe(c.x, c.y);
       for (let k = 0; k < 4; k++) {
         const u = (hash(c.x, c.y, k + 20) - 0.5) * 0.78;
         const v = (hash(c.y, c.x, k + 27) - 0.5) * 0.78;
@@ -476,11 +608,11 @@ export function creerDomaine3d(opts: { shadows: boolean }): Domaine3d {
      */
     limite.pos.length = 0;
     limite.col.length = 0;
-    const bord = (px: number, pz: number, dx: number, dz: number) => {
+    const bord = (px: number, pz: number, dx: number, dz: number, h = 0) => {
       const cx = px + (dx * pas) / 2;
       const cz = pz + (dz * pas) / 2;
       const long = dx !== 0;
-      ajouterBoite(limite.pos, limite.col, cx, TOP + 0.035, cz, long ? 0.12 : pas + 0.12, 0.025, long ? pas + 0.12 : 0.12, 0xfff6cc);
+      ajouterBoite(limite.pos, limite.col, cx, TOP + h + 0.035, cz, long ? 0.12 : pas + 0.12, 0.025, long ? pas + 0.12 : 0.12, 0xfff6cc);
     };
     for (const c of d.cells) {
       const { px, pz } = posDe(c.x, c.y);
@@ -488,7 +620,7 @@ export function creerDomaine3d(opts: { shadows: boolean }): Domaine3d {
         const nx = c.x + dx;
         const ny = c.y + dy;
         const dedans = nx >= d.bornes.minX && ny >= d.bornes.minY && nx < d.bornes.maxX && ny < d.bornes.maxY;
-        if (dedans && !possedees.has(cleCase(nx, ny))) bord(px, pz, dx, dy);
+        if (dedans && !possedees.has(cleCase(nx, ny))) bord(px, pz, dx, dy, altitudeDe(c.x, c.y));
       }
     }
 
@@ -505,6 +637,7 @@ export function creerDomaine3d(opts: { shadows: boolean }): Domaine3d {
     for (const c of d.cells) {
       if (!c.revetement) continue;
       const { px, pz } = posDe(c.x, c.y);
+      const TOP = TOP_PLAINE + altitudeDe(c.x, c.y);
       const couleur = COULEUR_CHEMIN[c.revetement] ?? COULEUR_CHEMIN.TERRE!;
       const m = masqueVoisins(tousChemins, c.x, c.y);
       const e = 0.018;
@@ -551,36 +684,9 @@ export function creerDomaine3d(opts: { shadows: boolean }): Domaine3d {
     eauxCourantes = formesSuiv;
     origineEau = posDe(0, 0);
     pasEau = pas;
+    const H = HAUTEUR_NIVEAU;
     const NIVEAU = TOP - 0.07;
     const FOND = TOP - 0.2;
-    const me = maillerEau(eauxCourantes);
-    if (me.nappe.pos.length) {
-      const n = me.nappe.pos.length / 3;
-      const pos = new Float32Array(n * 3);
-      const prof = new Float32Array(n);
-      const nais = new Float32Array(n);
-      // Les triangles sortent dans le sens horaire vus d'en haut : on les
-      // retourne pour qu'ils regardent le ciel.
-      for (let t = 0; t < n; t += 3) {
-        for (let v = 0; v < 3; v++) {
-          const src = t + (v === 0 ? 0 : v === 1 ? 2 : 1);
-          pos[(t + v) * 3] = origineEau.px + me.nappe.pos[src * 3]! * pas;
-          pos[(t + v) * 3 + 1] = NIVEAU;
-          pos[(t + v) * 3 + 2] = origineEau.pz + me.nappe.pos[src * 3 + 2]! * pas;
-          prof[t + v] = me.nappe.prof[src]!;
-          nais[t + v] = naissances.get(me.nappe.cle[src]!) ?? -100;
-        }
-      }
-      const geo = new THREE.BufferGeometry();
-      geo.setAttribute("position", new THREE.BufferAttribute(pos, 3));
-      geo.setAttribute("aProf", new THREE.BufferAttribute(prof, 1));
-      geo.setAttribute("aNaissance", new THREE.BufferAttribute(nais, 1));
-      geo.computeBoundingSphere();
-      const nappe = new THREE.Mesh(geo, matNappe);
-      nappe.name = "lacs";
-      nappe.renderOrder = 2;
-      terrain.add(nappe);
-    }
     const monde = (X: number, Y: number): [number, number] => [origineEau.px + X * pas, origineEau.pz + Y * pas];
     const tri = (t: Tableaux, a: number[], b: number[], c: number[], couleur: number) => {
       const col = new THREE.Color(couleur);
@@ -589,60 +695,277 @@ export function creerDomaine3d(opts: { shadows: boolean }): Domaine3d {
         t.col.push(col.r, col.g, col.b);
       }
     };
-    // La berge : le pré qui borde l'eau, dans les cases d'eau.
-    for (let k = 0; k < me.berge.length; k += 9) {
-      const a = monde(me.berge[k]!, me.berge[k + 2]!);
-      const b = monde(me.berge[k + 3]!, me.berge[k + 5]!);
-      const c = monde(me.berge[k + 6]!, me.berge[k + 8]!);
-      tri(berges, [a[0], TOP + 0.002, a[1]], [c[0], TOP + 0.002, c[1]], [b[0], TOP + 0.002, b[1]], 0x6fa645);
-    }
-    // Le talus : de la berge au fond, des deux faces (la forme n'a pas de sens).
-    for (let k = 0; k < me.contour.length; k += 4) {
-      const a = monde(me.contour[k]!, me.contour[k + 1]!);
-      const b = monde(me.contour[k + 2]!, me.contour[k + 3]!);
-      const haut = TOP + 0.004;
-      tri(berges, [a[0], haut, a[1]], [b[0], haut, b[1]], [b[0], FOND, b[1]], 0x6e5536);
-      tri(berges, [a[0], haut, a[1]], [b[0], FOND, b[1]], [a[0], FOND, a[1]], 0x5a4329);
-      tri(berges, [a[0], haut, a[1]], [b[0], FOND, b[1]], [b[0], haut, b[1]], 0x6e5536);
-      tri(berges, [a[0], haut, a[1]], [a[0], FOND, a[1]], [b[0], FOND, b[1]], 0x5a4329);
-      // Des roseaux, çà et là, sur la berge.
-      const mx = (me.contour[k]! + me.contour[k + 2]!) / 2;
-      const my = (me.contour[k + 1]! + me.contour[k + 3]!) / 2;
-      if (hash(Math.round(mx * 40), Math.round(my * 40), 5) > 0.86) {
-        const [wx, wz] = monde(mx, my);
-        for (let r = 0; r < 4; r++) {
-          const h = 0.18 + hash(Math.round(mx * 40), r, 9) * 0.2;
-          const ox = (hash(r, Math.round(my * 40), 3) - 0.5) * 0.12 * pas;
-          const oz = (hash(Math.round(my * 40), r, 7) - 0.5) * 0.12 * pas;
-          ajouterBoite(berges.pos, berges.col, wx + ox, TOP + h / 2, wz + oz, 0.018, h, 0.018, r % 2 ? 0x6f9a3a : 0x86a84a);
-          if (r === 1) ajouterBoite(berges.pos, berges.col, wx + ox, TOP + h - 0.03, wz + oz, 0.03, 0.07, 0.03, 0x6b4a2a);
+    const parCase = new Map(d.cells.map((c) => [cleCase(c.x, c.y), c]));
+    const niveauCase = (x: number, y: number) => parCase.get(cleCase(x, y))?.niveau ?? 0;
+
+    /*
+     * Les falaises : sous chaque terrasse, un socle ; sur chaque bord qui
+     * domine une case plus basse, une paroi de strates, une lèvre d'herbe, et
+     * quelques rochers en saillie. C'est ce qui fait lire un niveau d'un coup
+     * d'œil, à la manière d'Animal Crossing.
+     */
+    const falaises: Tableaux = { pos: [], col: [] };
+    const STRATES = [0x9b8263, 0x8a7257, 0xa48b6b, 0x7f684f];
+    for (const c of d.cells) {
+      const L = c.niveau ?? 0;
+      if (L <= 0) continue;
+      const { px, pz } = posDe(c.x, c.y);
+      const haut = L * H;
+      // Le socle s'arrête sous la dalle la plus basse qu'on y pose : le fond d'un bassin.
+      const socle = haut - 0.29;
+      ajouterBoite(falaises.pos, falaises.col, px, (socle - 0.09) / 2, pz, pas, socle + 0.09, pas, STRATES[1]!);
+      for (const [dx, dy] of DIRS) {
+        const nL = niveauCase(c.x + dx, c.y + dy);
+        if (nL >= L) continue;
+        const bas = nL * H - 0.09;
+        const sommet = haut + TOP;
+        const nb = Math.max(2, Math.round((sommet - bas) / 0.13));
+        const hb = (sommet - bas) / nb;
+        for (let k = 0; k < nb; k++) {
+          const e = 0.036 + hash(c.x * 4 + dx, c.y * 4 + dy, k) * 0.022;
+          const off = pas / 2 - 0.036 + e / 2;
+          ajouterBoite(falaises.pos, falaises.col, px + dx * off, bas + hb * (k + 0.5), pz + dy * off, dx ? e : pas, hb, dy ? e : pas, STRATES[(k + L) % 4]!);
+        }
+        const herbe = c.sol === "CHAMP" ? 0x7c8a46 : 0x68a040;
+        ajouterBoite(falaises.pos, falaises.col, px + dx * (pas / 2 - 0.01), sommet - 0.012, pz + dy * (pas / 2 - 0.01), dx ? 0.07 : pas + 0.02, 0.05, dy ? 0.07 : pas + 0.02, herbe);
+        for (let r = 0; r < 2; r++) {
+          const h0 = hash(c.x * 3 + r, c.y * 5 + dx + 2 * dy, 60);
+          if (h0 < 0.5) continue;
+          const le = (hash(c.y, c.x * 7 + r, 61 + dx) - 0.5) * 0.7 * pas;
+          const hy = bas + (sommet - bas) * (0.2 + hash(c.x, c.y * 3 + r, 62) * 0.55);
+          const t = 0.12 + h0 * 0.12;
+          ajouterGeometrie(
+            falaises.pos,
+            falaises.col,
+            _ico,
+            pose(px + dx * (pas / 2) + Math.abs(dy) * le, hy, pz + dy * (pas / 2) + Math.abs(dx) * le, h0 * 9, t, t * 0.75, t),
+            r ? 0x8e8b84 : 0x7b7872,
+          );
         }
       }
     }
-    // Des nénuphars au large : une grappe sur une case d'eau profonde sur trois.
-    const auLarge = new Map<string, { x: number; y: number; p: number }>();
-    for (const f of me.large) {
-      const k = cleCase(Math.round(f.x), Math.round(f.y));
-      if (f.p < 0.3) continue;
-      const deja = auLarge.get(k);
-      if (!deja || f.p > deja.p) auLarge.set(k, f);
+
+    /*
+     * Les lacs et les rivières : une nappe par niveau.
+     *
+     * L'eau voisine d'un autre niveau est donnée au maillage comme « mouillée
+     * mais pas à dessiner » : la nappe va jusqu'au bord de la chute au lieu
+     * de s'arrondir en berge. L'eau qui coule porte son sens de courant
+     * (`aFlux`), que le matériau raye de stries.
+     */
+    const hydro = hydrologie(d.cells);
+    const flux = new Map<string, [number, number]>(hydro.courant);
+    for (const ch of hydro.chutes) {
+      const kb = cleCase(ch.x + ch.dx, ch.y + ch.dy);
+      if (!flux.has(kb)) flux.set(kb, [ch.dx * 0.6, ch.dy * 0.6]);
     }
-    for (const [k, f] of auLarge) {
-      const [cx, cy] = k.split(",").map(Number) as [number, number];
-      if (hash(cx, cy, 21) < 0.66) continue;
-      for (let n = 0; n < 3; n++) {
-        const ox = (hash(cx, cy, 30 + n) - 0.5) * 0.35;
-        const oy = (hash(cy, cx, 40 + n) - 0.5) * 0.35;
-        const [wx, wz] = monde(f.x + ox, f.y + oy);
-        const r = (0.07 + hash(cx + n, cy, 4) * 0.04) * pas;
-        ajouterGeometrie(berges.pos, berges.col, _nenuphar, pose(wx, NIVEAU + 0.004, wz, hash(cx, n, 2) * 6, r, 1, r), n === 1 ? 0x6a9a44 : 0x557f35);
+    const parNiveau = new Map<number, Set<string>>();
+    for (const c of d.cells) {
+      if (c.sol !== "EAU") continue;
+      const n = c.niveau ?? 0;
+      let e = parNiveau.get(n);
+      if (!e) parNiveau.set(n, (e = new Set()));
+      e.add(cleCase(c.x, c.y));
+    }
+    const larges: MaillageEau["large"] = [];
+    for (const [n, sortie] of parNiveau) {
+      const dh = n * H;
+      const eauxN = new Map<string, number>();
+      for (const k of sortie) {
+        eauxN.set(k, eauxCourantes.get(k) ?? 0);
+        const [x, y] = k.split(",").map(Number) as [number, number];
+        for (const [dx, dy] of DIRS) {
+          const kv = cleCase(x + dx, y + dy);
+          if (eauxCourantes.has(kv)) eauxN.set(kv, eauxCourantes.get(kv) ?? 0);
+        }
       }
-      if (hash(cx, cy, 8) > 0.5) {
-        const [wx, wz] = monde(f.x, f.y);
-        ajouterBoite(berges.pos, berges.col, wx, NIVEAU + 0.025, wz, 0.04, 0.03, 0.04, hash(cx, cy, 2) > 0.5 ? 0xf1c3d3 : 0xf6f2e6);
+      const me = maillerEau(eauxN, { sortie });
+      if (me.nappe.pos.length) {
+        const nv = me.nappe.pos.length / 3;
+        const pos = new Float32Array(nv * 3);
+        const prof = new Float32Array(nv);
+        const nais = new Float32Array(nv);
+        const fl = new Float32Array(nv * 2);
+        // Les triangles sortent dans le sens horaire vus d'en haut : on les
+        // retourne pour qu'ils regardent le ciel.
+        for (let t = 0; t < nv; t += 3) {
+          for (let v = 0; v < 3; v++) {
+            const src = t + (v === 0 ? 0 : v === 1 ? 2 : 1);
+            pos[(t + v) * 3] = origineEau.px + me.nappe.pos[src * 3]! * pas;
+            pos[(t + v) * 3 + 1] = NIVEAU + dh;
+            pos[(t + v) * 3 + 2] = origineEau.pz + me.nappe.pos[src * 3 + 2]! * pas;
+            prof[t + v] = me.nappe.prof[src]!;
+            const cle = me.nappe.cle[src]!;
+            nais[t + v] = naissances.get(cle) ?? -100;
+            const f = flux.get(cle);
+            if (f) {
+              fl[(t + v) * 2] = f[0];
+              fl[(t + v) * 2 + 1] = f[1];
+            }
+          }
+        }
+        const geo = new THREE.BufferGeometry();
+        geo.setAttribute("position", new THREE.BufferAttribute(pos, 3));
+        geo.setAttribute("aProf", new THREE.BufferAttribute(prof, 1));
+        geo.setAttribute("aNaissance", new THREE.BufferAttribute(nais, 1));
+        geo.setAttribute("aFlux", new THREE.BufferAttribute(fl, 2));
+        geo.computeBoundingSphere();
+        const nappe = new THREE.Mesh(geo, matNappe);
+        nappe.name = n ? `lacs-${n}` : "lacs";
+        nappe.renderOrder = 2;
+        terrain.add(nappe);
+      }
+      // La berge : le pré qui borde l'eau, dans les cases d'eau.
+      for (let k = 0; k < me.berge.length; k += 9) {
+        const a = monde(me.berge[k]!, me.berge[k + 2]!);
+        const b = monde(me.berge[k + 3]!, me.berge[k + 5]!);
+        const c = monde(me.berge[k + 6]!, me.berge[k + 8]!);
+        const y = TOP + dh + 0.002;
+        tri(berges, [a[0], y, a[1]], [c[0], y, c[1]], [b[0], y, b[1]], 0x6fa645);
+      }
+      // Le talus : de la berge au fond, des deux faces (la forme n'a pas de sens).
+      for (let k = 0; k < me.contour.length; k += 4) {
+        const a = monde(me.contour[k]!, me.contour[k + 1]!);
+        const b = monde(me.contour[k + 2]!, me.contour[k + 3]!);
+        const haut = TOP + dh + 0.004;
+        const fond = FOND + dh;
+        tri(berges, [a[0], haut, a[1]], [b[0], haut, b[1]], [b[0], fond, b[1]], 0x6e5536);
+        tri(berges, [a[0], haut, a[1]], [b[0], fond, b[1]], [a[0], fond, a[1]], 0x5a4329);
+        tri(berges, [a[0], haut, a[1]], [b[0], fond, b[1]], [b[0], haut, b[1]], 0x6e5536);
+        tri(berges, [a[0], haut, a[1]], [a[0], fond, a[1]], [b[0], fond, b[1]], 0x5a4329);
+        // Des roseaux, çà et là, sur la berge.
+        const mx = (me.contour[k]! + me.contour[k + 2]!) / 2;
+        const my = (me.contour[k + 1]! + me.contour[k + 3]!) / 2;
+        if (hash(Math.round(mx * 40), Math.round(my * 40), 5) > 0.86) {
+          const [wx, wz] = monde(mx, my);
+          for (let r = 0; r < 4; r++) {
+            const h = 0.18 + hash(Math.round(mx * 40), r, 9) * 0.2;
+            const ox = (hash(r, Math.round(my * 40), 3) - 0.5) * 0.12 * pas;
+            const oz = (hash(Math.round(my * 40), r, 7) - 0.5) * 0.12 * pas;
+            ajouterBoite(berges.pos, berges.col, wx + ox, TOP + dh + h / 2, wz + oz, 0.018, h, 0.018, r % 2 ? 0x6f9a3a : 0x86a84a);
+            if (r === 1) ajouterBoite(berges.pos, berges.col, wx + ox, TOP + dh + h - 0.03, wz + oz, 0.03, 0.07, 0.03, 0x6b4a2a);
+          }
+        }
+      }
+      // Des nénuphars au large, sur l'eau qui dort seulement : une grappe
+      // sur une case d'eau profonde sur trois.
+      const auLarge = new Map<string, { x: number; y: number; p: number }>();
+      for (const f of me.large) {
+        larges.push(f);
+        const k = cleCase(Math.round(f.x), Math.round(f.y));
+        if (f.p < 0.3 || hydro.courante.has(k)) continue;
+        const deja = auLarge.get(k);
+        if (!deja || f.p > deja.p) auLarge.set(k, f);
+      }
+      for (const [k, f] of auLarge) {
+        const [cx, cy] = k.split(",").map(Number) as [number, number];
+        if (hash(cx, cy, 21) < 0.66) continue;
+        for (let m = 0; m < 3; m++) {
+          const ox = (hash(cx, cy, 30 + m) - 0.5) * 0.35;
+          const oy = (hash(cy, cx, 40 + m) - 0.5) * 0.35;
+          const [wx, wz] = monde(f.x + ox, f.y + oy);
+          const r = (0.07 + hash(cx + m, cy, 4) * 0.04) * pas;
+          ajouterGeometrie(berges.pos, berges.col, _nenuphar, pose(wx, NIVEAU + dh + 0.004, wz, hash(cx, m, 2) * 6, r, 1, r), m === 1 ? 0x6a9a44 : 0x557f35);
+        }
+        if (hash(cx, cy, 8) > 0.5) {
+          const [wx, wz] = monde(f.x, f.y);
+          ajouterBoite(berges.pos, berges.col, wx, NIVEAU + dh + 0.025, wz, 0.04, 0.03, 0.04, hash(cx, cy, 2) > 0.5 ? 0xf1c3d3 : 0xf6f2e6);
+        }
       }
     }
-    vivante.maj(eauxCourantes, me, origineEau, pas, NIVEAU);
+
+    /*
+     * Les cascades : un rideau d'eau qui déborde de la lèvre et tombe
+     * jusqu'à la nappe d'en bas, et des bouillons d'écume à son pied.
+     * Deux chutes côte à côte se rejoignent en une seule.
+     */
+    const rideau = { pos: [] as number[], chute: [] as number[], travers: [] as number[] };
+    for (const ch of hydro.chutes) {
+      const { px, pz } = posDe(ch.x, ch.y);
+      const ex = px + (ch.dx * pas) / 2;
+      const ez = pz + (ch.dy * pas) / 2;
+      const haut = ch.haut * H + NIVEAU;
+      const bas = ch.bas * H + NIVEAU;
+      const perp: [number, number] = [-ch.dy, ch.dx];
+      const suite = (s: number) =>
+        hydro.chutes.some((o) => o.x === ch.x + perp[0] * s && o.y === ch.y + perp[1] * s && o.dx === ch.dx && o.dy === ch.dy);
+      const g = suite(-1) ? pas / 2 : (0.5 - RIVE) * pas;
+      const dr = suite(1) ? pas / 2 : (0.5 - RIVE) * pas;
+      const N = 8;
+      /* t < 0 : la lèvre, à plat sur l'eau d'en haut, où le courant
+         s'accélère avant de basculer. C'est elle qu'on voit quand la chute
+         tombe du côté opposé à la caméra. */
+      const pt = (t: number, u: number) => {
+        const out = t < 0 ? t * 0.9 * pas : 0.03 + 0.17 * Math.sin((t * Math.PI) / 2);
+        const y = t < 0 ? haut + 0.006 : haut + (bas - haut) * Math.pow(t, 1.25);
+        return [ex + ch.dx * out + perp[0] * u, y, ez + ch.dy * out + perp[1] * u];
+      };
+      for (let i = -2; i < N; i++) {
+        const t0 = i < 0 ? i * 0.15 : i / N;
+        const t1 = i < 0 ? (i + 1) * 0.15 : (i + 1) / N;
+        const q = [pt(t0, -g), pt(t0, dr), pt(t1, dr), pt(t1, -g)];
+        const ts = [t0, t0, t1, t1];
+        const us = [0, 1, 1, 0];
+        for (const v of [0, 1, 2, 0, 2, 3]) {
+          rideau.pos.push(...q[v]!);
+          rideau.chute.push(ts[v]!);
+          rideau.travers.push(us[v]!);
+        }
+      }
+      for (let k = 0; k < 4; k++) {
+        const u = (hash(ch.x * 5 + k, ch.y, 70) - 0.5) * (g + dr) * 0.8 + (dr - g) / 2;
+        const o = 0.12 + hash(ch.y, ch.x * 5 + k, 71) * 0.22;
+        const m = new THREE.Mesh(_ico1, matEcume);
+        m.position.set(ex + ch.dx * o + perp[0] * u, bas + 0.01, ez + ch.dy * o + perp[1] * u);
+        const base = (0.12 + hash(ch.x, ch.y * 3 + k, 72) * 0.1) * pas;
+        m.scale.set(base, base * 0.55, base);
+        m.renderOrder = 3;
+        bouillons.add(m);
+        ecumes.push({ m, phase: hash(ch.x + k, ch.y, 73) * 6.28, base });
+      }
+      /* La brume : des bouffées qui montent du pied au-dessus de la lèvre.
+         Elle signale la cascade de loin, même cachée derrière sa falaise. */
+      for (let k = 0; k < 5; k++) {
+        const u = (hash(ch.x * 7 + k, ch.y, 74) - 0.5) * (g + dr) * 0.7 + (dr - g) / 2;
+        const m = new THREE.Mesh(_ico1, matBrume);
+        m.renderOrder = 4;
+        bouillons.add(m);
+        brumes.push({
+          m,
+          x: ex + ch.dx * 0.22 + perp[0] * u,
+          z: ez + ch.dy * 0.22 + perp[1] * u,
+          bas,
+          montee: haut - bas + 0.4,
+          phase: k / 5 + hash(ch.x, ch.y + k, 75) * 0.1,
+          base: (0.16 + hash(ch.y + k, ch.x, 76) * 0.08) * pas,
+        });
+      }
+    }
+    if (rideau.pos.length) {
+      const geo = new THREE.BufferGeometry();
+      geo.setAttribute("position", new THREE.Float32BufferAttribute(rideau.pos, 3));
+      geo.setAttribute("aChute", new THREE.Float32BufferAttribute(rideau.chute, 1));
+      geo.setAttribute("aTravers", new THREE.Float32BufferAttribute(rideau.travers, 1));
+      geo.computeBoundingSphere();
+      const m = new THREE.Mesh(geo, matCascade);
+      m.name = "cascades";
+      m.renderOrder = 3;
+      terrain.add(m);
+    }
+    if (falaises.pos.length) terrain.add(maillageFacette(falaises.pos, falaises.col, { shadows: opts.shadows, recoit: true, nom: "domaine-falaises" }));
+    vivante.maj(eauxCourantes, { nappe: { pos: [], prof: [], cle: [] }, berge: [], contour: [], large: larges }, origineEau, pas, NIVEAU, (x, y) =>
+      niveauCase(x, y) * H,
+    );
+
+    /* Les champs que les engins n'atteignent pas : montrés en construction. */
+    coupees = [];
+    if (hydro.chutes.length || parNiveau.size || altitudes.size) {
+      const acces = accesEngins(
+        d.cells,
+        d.amenagements.filter((a) => a.type === "pont" || a.type === "rampe"),
+      );
+      coupees = d.cells.filter((c) => c.sol === "CHAMP" && !acces.has(cleCase(c.x, c.y))).map((c) => ({ x: c.x, y: c.y }));
+    }
 
     /* Le décor posé, raccordé à ses voisins du même type. */
     const parTypeObjet = new Map<string, Set<string>>();
@@ -654,7 +977,7 @@ export function creerDomaine3d(opts: { shadows: boolean }): Domaine3d {
     for (const a of d.amenagements) {
       const { px, pz } = posDe(a.originX, a.originY);
       const voisins = masqueVoisins(parTypeObjet.get(a.type) ?? new Set(), a.originX, a.originY);
-      verserObjet(objets, a.type, px, pz, a.rotation, pas, voisins, Math.abs(a.originX * 31 + a.originY * 17));
+      verserObjet(objets, a.type, px, pz, a.rotation, pas, voisins, Math.abs(a.originX * 31 + a.originY * 17), altitudeDe(a.originX, a.originY));
     }
 
     for (const [nom, t, ombre] of [
@@ -693,15 +1016,16 @@ export function creerDomaine3d(opts: { shadows: boolean }): Domaine3d {
       const cx = o.px + (b.x + dx * 0.3) * pas;
       const cz = o.pz + (b.y + dy * 0.3) * pas;
       const marque = new THREE.Mesh(new THREE.CircleGeometry(0.13 * pas, 20).rotateX(-Math.PI / 2), b.ok ? matFantomeOk : matFantomeNon);
-      marque.position.set(cx, TOP + 0.03, cz);
+      marque.position.set(cx, TOP + 0.03 + altitudeDe(b.x, b.y), cz);
       marque.renderOrder = 4;
       construction.add(marque);
       if (b.ok) {
         const apres = maillerEau(eauxCourantes, { restreindre: [[b.x, b.y]], formeForcee: { x: b.x, y: b.y, forme: b.forme } });
         const l: number[] = [];
+        const yb = TOP - 0.05 + altitudeDe(b.x, b.y);
         for (let k = 0; k < apres.contour.length; k += 4) {
-          l.push(o.px + apres.contour[k]! * pas, TOP - 0.05, o.pz + apres.contour[k + 1]! * pas);
-          l.push(o.px + apres.contour[k + 2]! * pas, TOP - 0.05, o.pz + apres.contour[k + 3]! * pas);
+          l.push(o.px + apres.contour[k]! * pas, yb, o.pz + apres.contour[k + 1]! * pas);
+          l.push(o.px + apres.contour[k + 2]! * pas, yb, o.pz + apres.contour[k + 3]! * pas);
         }
         const g = new THREE.BufferGeometry();
         g.setAttribute("position", new THREE.Float32BufferAttribute(l, 3));
@@ -759,6 +1083,26 @@ export function creerDomaine3d(opts: { shadows: boolean }): Domaine3d {
       construction.add(etiquette);
     }
 
+    /*
+     * Les champs coupés de la cour : un voile orangé. Les engins n'y vont
+     * pas tant qu'un pont ou une rampe ne les y mène — mieux vaut le voir
+     * avant de semer.
+     */
+    if (coupees.length) {
+      const geo = new THREE.PlaneGeometry(pas * 0.9, pas * 0.9).rotateX(-Math.PI / 2);
+      const inst = new THREE.InstancedMesh(geo, matCoupee, coupees.length);
+      const m = new THREE.Matrix4();
+      coupees.forEach((c, i) => {
+        const { px, pz } = posDe(c.x, c.y);
+        m.makeTranslation(px, y0 + 0.025 + altitudeDe(c.x, c.y), pz);
+        inst.setMatrixAt(i, m);
+      });
+      inst.renderOrder = 3;
+      inst.frustumCulled = false;
+      inst.name = "champs-coupes";
+      construction.add(inst);
+    }
+
     /* Le fantôme : chaque case touchée, verte ou rouge. */
     if (e.fantome.length) {
       const geo = new THREE.PlaneGeometry(pas * 0.94, pas * 0.94);
@@ -774,7 +1118,7 @@ export function creerDomaine3d(opts: { shadows: boolean }): Domaine3d {
         const m = new THREE.Matrix4();
         liste.forEach((c, i) => {
           const { px, pz } = posDe(c.x, c.y);
-          m.makeTranslation(px, y0 + 0.03, pz);
+          m.makeTranslation(px, y0 + 0.03 + altitudeDe(c.x, c.y), pz);
           inst.setMatrixAt(i, m);
         });
         inst.renderOrder = 3;
@@ -788,7 +1132,7 @@ export function creerDomaine3d(opts: { shadows: boolean }): Domaine3d {
     if (e.objetFantome) {
       const t: Tableaux = { pos: [], col: [] };
       const { px, pz } = posDe(e.objetFantome.x, e.objetFantome.y);
-      verserObjet(t, e.objetFantome.type, px, pz, e.objetFantome.rotation, pas);
+      verserObjet(t, e.objetFantome.type, px, pz, e.objetFantome.rotation, pas, 0, 0, altitudeDe(e.objetFantome.x, e.objetFantome.y));
       if (t.pos.length) {
         const m = maillageFacette(t.pos, t.col, { nom: "objet-fantome" });
         const mat = m.material as THREE.MeshLambertMaterial;
@@ -804,7 +1148,7 @@ export function creerDomaine3d(opts: { shadows: boolean }): Domaine3d {
     if (e.selection) {
       const a = coin(e.selection.x, e.selection.y);
       const b = coin(e.selection.x + e.selection.w, e.selection.y + e.selection.h);
-      const yy = y0 + 0.05;
+      const yy = y0 + 0.05 + altitudeDe(e.selection.x, e.selection.y);
       const g = new THREE.BufferGeometry();
       g.setAttribute(
         "position",
@@ -820,6 +1164,18 @@ export function creerDomaine3d(opts: { shadows: boolean }): Domaine3d {
   function animer(t: number) {
     tCourant = t;
     matNappe.uniforms.uTemps!.value = t;
+    matCascade.uniforms.uTemps!.value = t;
+    for (const e of ecumes) {
+      const k = 1 + 0.28 * Math.sin(t * 5.3 + e.phase) + 0.12 * Math.sin(t * 11.7 + e.phase * 2);
+      e.m.scale.set(e.base * k, e.base * 0.55 * k, e.base * k);
+      e.m.rotation.y = t * 0.8 + e.phase;
+    }
+    for (const b of brumes) {
+      const p = (t * 0.35 + b.phase) % 1;
+      const k = Math.sin(p * Math.PI);
+      b.m.position.set(b.x, b.bas + p * b.montee, b.z);
+      b.m.scale.setScalar(b.base * (0.5 + p * 0.9) * k);
+    }
     vivante.animer(t);
     // Le voile du lot survolé et le fantôme respirent doucement : on voit
     // qu'ils attendent un geste.
@@ -852,6 +1208,11 @@ export function creerDomaine3d(opts: { shadows: boolean }): Domaine3d {
       vider(construction);
       vivante.dispose();
       matNappe.dispose();
+      matCascade.dispose();
+      matEcume.dispose();
+      matBrume.dispose();
+      matCoupee.dispose();
+      bouillons.clear();
       for (const p of poufs) (p.m.material as THREE.Material).dispose();
       poufs.length = 0;
       geoPoussiere.dispose();

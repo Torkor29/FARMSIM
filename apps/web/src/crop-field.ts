@@ -45,6 +45,8 @@ type CellEntry = {
   y: number;
   px: number;
   pz: number;
+  /** Le relief : la hauteur de la terrasse sous le champ. */
+  py?: number;
   height: number;
   color: number;
   /** Espèce semée : c'est elle qui choisit la forme du brin */
@@ -336,7 +338,7 @@ export function createCropField(maxCells: number, density = 1): CropField {
           const gz = (Math.floor(s / 8) - 2) / 5;
           dummy.position.set(
             cell.px + (gx + rx * 0.09) * spread,
-            0.09,
+            0.09 + (cell.py ?? 0),
             cell.pz + (gz + rz * 0.09) * spread,
           );
           dummy.rotation.set(0, noise % Math.PI, 0);

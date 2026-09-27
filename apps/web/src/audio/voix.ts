@@ -45,6 +45,7 @@ export type SonId =
   | "eau"
   | "berge"
   | "lac"
+  | "relief"
   // Machines
   | "tracteur"
   | "moissonneuse"
@@ -448,6 +449,27 @@ export const CATALOGUE: Record<SonId, DefSon> = {
     rendre(ctx, dest, t0) {
       chaine(source(ctx, t0, 0.05), formant(ctx, 1900, 6), enveloppe(ctx, t0, 0.001, 0.015, 1), dest);
       cloche(ctx, dest, 1174.7, t0 + 0.03, 0.28, 0.7);
+    },
+  },
+
+  /**
+   * La terre monte ou descend d'un niveau : un grondement bref, un roulement
+   * de cailloux. Le grave glisse vers le haut quand on surélève, vers le bas
+   * quand on abaisse — c'est l'oreille qui dit le sens du geste.
+   */
+  relief: {
+    bus: "effets",
+    dureeMs: 420,
+    delaiMs: 80,
+    gain: 0.36,
+    rendre(ctx, dest, t0) {
+      const o = osc(ctx, "triangle", 70, t0, 0.3);
+      o.frequency.exponentialRampToValueAtTime(Math.random() < 0.5 ? 55 : 95, t0 + 0.25);
+      chaine(o, enveloppe(ctx, t0, 0.01, 0.12, 0.9), dest);
+      for (let k = 0; k < 4; k++) {
+        const t = t0 + 0.05 + k * 0.055 + Math.random() * 0.02;
+        chaine(source(ctx, t, 0.04), formant(ctx, 900 + Math.random() * 900, 4), enveloppe(ctx, t, 0.001, 0.02, 0.5), dest);
+      }
     },
   },
 

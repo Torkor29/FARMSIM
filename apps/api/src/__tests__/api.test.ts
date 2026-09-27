@@ -4677,6 +4677,97 @@ describe("la ferme libre", () => {
     assert.equal(vol.statut, 403);
   });
 
+  it("surélève une terrasse, coupe les engins qu'une rampe ou un pont remettent en route", async () => {
+    const { moi, parcelId } = await fermeLibre("Terrassier");
+    const v0 = await vue(parcelId, moi.jeton);
+    const occupe = new Set(v0.parcel.cells.filter((c) => c.kind !== "EMPTY").map((c) => `${c.x},${c.y}`));
+    const carre = (x0: number, y0: number, n: number) =>
+      Array.from({ length: n * n }, (_, i) => ({ x: x0 + (i % n), y: y0 + Math.floor(i / n) }));
+    // Une terrasse de trois sur trois au sud-est, loin de l'étable de départ.
+    const terrasse = carre(7, 7, 3);
+    assert.ok(terrasse.every((c) => !occupe.has(`${c.x},${c.y}`)), "la terrasse tombe sur du libre");
+    const argentAvant = await argent(moi.jeton);
+    const monte = await peindre(parcelId, moi, "surelever", terrasse);
+    assert.equal(monte.statut, 200, JSON.stringify(monte.corps));
+    assert.equal(await argent(moi.jeton), argentAvant - 9 * 40);
+    const lu = (await vue(parcelId, moi.jeton)).parcel.cells.find((c) => c.x === 8 && c.y === 8) as unknown as { niveau: number; sol: string };
+    assert.equal(lu.niveau, 1);
+    assert.equal(lu.sol, "CHAMP", "le relief ne change pas la nature du sol");
+
+    // Un bâtiment se pose en plaine.
+    const moulinHaut = await appel(`/parcels/${parcelId}/build`, {
+      methode: "POST",
+      corps: { userId: moi.id, type: "SILO", x: 8, y: 8 },
+      jeton: moi.jeton,
+    });
+    assert.equal(moulinHaut.statut, 409, JSON.stringify(moulinHaut.corps));
+
+    // Sans rampe, les engins ne montent pas : le travail est refusé.
+    const semer = () =>
+      appel(`/parcels/${parcelId}/jobs`, {
+        methode: "POST",
+        corps: { userId: moi.id, work: "PLANT", cells: [{ x: 8, y: 8 }], crop: cropDeSaison() },
+        jeton: moi.jeton,
+      });
+    const coupe = await semer();
+    assert.equal(coupe.statut, 409, JSON.stringify(coupe.corps));
+    assert.match(String((coupe.corps as unknown as { error: string }).error), /coupée/);
+    // Une rampe tournée vers la plaine ne tient pas ; tournée vers la terrasse, si.
+    const envers = await poser(parcelId, moi, "rampe", 8, 6, 0);
+    assert.equal(envers.statut, 409, JSON.stringify(envers.corps));
+    const rampe = await poser(parcelId, moi, "rampe", 8, 6, 2);
+    assert.equal(rampe.statut, 201, JSON.stringify(rampe.corps));
+    const monteeOk = await semer();
+    assert.doesNotMatch(String((monteeOk.corps as unknown as { error?: string }).error ?? ""), /coupée/);
+
+    // Une douve autour d'une île : l'île est coupée, un pont la rejoint.
+    const ile = { x: 3, y: 9 };
+    const douve = carre(2, 8, 3).filter((c) => c.x !== ile.x || c.y !== ile.y);
+    assert.ok(douve.every((c) => !occupe.has(`${c.x},${c.y}`)), "la douve tombe sur du libre");
+    assert.equal((await peindre(parcelId, moi, "etang", douve)).statut, 200);
+    const travailIle = () =>
+      appel(`/parcels/${parcelId}/jobs`, {
+        methode: "POST",
+        corps: { userId: moi.id, work: "PLANT", cells: [ile], crop: cropDeSaison() },
+        jeton: moi.jeton,
+      });
+    assert.match(String(((await travailIle()).corps as unknown as { error: string }).error), /coupée/);
+    const pont = await poser(parcelId, moi, "pont", 2, 9, 0);
+    assert.equal(pont.statut, 201, JSON.stringify(pont.corps));
+    assert.doesNotMatch(String(((await travailIle()).corps as unknown as { error?: string }).error ?? ""), /coupée/);
+    // Un pont ne se pose que sur l'eau.
+    assert.equal((await poser(parcelId, moi, "pont", 5, 5, 0)).statut, 409);
+  });
+
+  it("fait couler l'eau d'une terrasse en cascade, qui fait tourner le moulin trois fois plus vite", async () => {
+    const { moi, parcelId } = await fermeLibre("Meunier");
+    const v0 = await vue(parcelId, moi.jeton);
+    const occupe = new Set(v0.parcel.cells.filter((c) => c.kind !== "EMPTY").map((c) => `${c.x},${c.y}`));
+    // Un bief haut en x 6..8, y 3, qui tombe dans un lac bas en x 9..11.
+    const haut = [6, 7, 8].map((x) => ({ x, y: 3 }));
+    const bas = [9, 10, 11].map((x) => ({ x, y: 3 }));
+    assert.ok([...haut, ...bas].every((c) => !occupe.has(`${c.x},${c.y}`)));
+    assert.equal((await peindre(parcelId, moi, "surelever", haut)).statut, 200);
+    assert.equal((await peindre(parcelId, moi, "etang", [...haut, ...bas])).statut, 200);
+    // Un moulin au pied de la chute, et le charme de la cascade.
+    const moulin = await appel(`/parcels/${parcelId}/build`, {
+      methode: "POST",
+      corps: { userId: moi.id, type: "MILL", x: 9, y: 4 },
+      jeton: moi.jeton,
+    });
+    assert.equal(moulin.statut, 201, JSON.stringify(moulin.corps));
+    const ateliers = await appel(`/farm/processing?userId=${moi.id}`, { jeton: moi.jeton });
+    const m = (ateliers.corps as unknown as { ateliers: { kind: string; force: number; perDay: number }[] }).ateliers.find(
+      (a) => a.kind === "MILL",
+    );
+    assert.equal(m?.force, 3);
+    const v = await vue(parcelId, moi.jeton);
+    const cellsN = v.parcel.cells as unknown as { x: number; y: number; niveau: number; sol: string }[];
+    assert.equal(cellsN.find((c) => c.x === 7 && c.y === 3)?.niveau, 1);
+    // Abaisser la terrasse d'eau ? Le relief ne se change pas sous l'eau.
+    assert.equal((await peindre(parcelId, moi, "abaisser", haut)).statut, 409);
+  });
+
   it("donne au siège un domaine, avec sa ferme au centre et de la friche autour", async () => {
     const { moi, parcelId } = await fermeLibre("Domaine");
     const v = await vue(parcelId, moi.jeton);

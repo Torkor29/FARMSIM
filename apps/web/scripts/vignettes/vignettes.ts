@@ -11,6 +11,7 @@
 import * as THREE from "three";
 import { creerDomaine3d, verserObjet, type CaseTerrain } from "../../src/domaine3d";
 import { maillageFacette } from "../../src/decor3d";
+import { HAUTEUR_NIVEAU } from "@farmsim/shared";
 
 const COTE = 256;
 const TOP = 0.09;
@@ -125,6 +126,30 @@ function sceneDe(id: string): { groupe: THREE.Group; recul: number } {
       const rev = id === "chemin-terre" ? "TERRE" : id === "chemin-gravier" ? "GRAVIER" : "PAVE";
       g.add(terrain(cellsCarre(3, (x, z) => (z === 0 || (x === 0 && z > 0) ? { revetement: rev } : {}))));
       sol(pre(3));
+      break;
+    }
+    case "surelever":
+    case "abaisser": {
+      // Surélever : deux terrasses qui montent vers le fond. Abaisser : une
+      // seule marche, plus basse.
+      const niv = (x: number, z: number) =>
+        id === "surelever" ? (z === -1 ? 2 : z === 0 && x >= 0 ? 1 : 0) : z === -1 || (z === 0 && x === 1) ? 1 : 0;
+      g.add(terrain(cellsCarre(3, (x, z) => ({ niveau: niv(x, z), sol: z === 1 ? "PRE" : "PRE" }))));
+      pre(3).forEach(([x, z]) => g.add(dalle(x, z, PRE[Math.abs(Math.round(x + z)) % 2]!, niv(x, z) * HAUTEUR_NIVEAU)));
+      break;
+    }
+    case "pont": {
+      const eau = (_x: number, z: number) => z === 0;
+      g.add(terrain(cellsCarre(3, (x, z) => (eau(x, z) ? { sol: "EAU" } : {}))));
+      pre(3).forEach(([x, z]) => g.add(dalle(x, z, eau(x, z) ? 0x4b3d2c : PRE[Math.abs(Math.round(x + z)) % 2]!, eau(x, z) ? -0.2 : 0)));
+      g.add(objet("pont", [{ x: 0, z: 0, rot: 1 }]));
+      break;
+    }
+    case "rampe": {
+      const niv = (_x: number, z: number) => (z === -1 ? 1 : 0);
+      g.add(terrain(cellsCarre(3, (x, z) => ({ niveau: niv(x, z) }))));
+      pre(3).forEach(([x, z]) => g.add(dalle(x, z, PRE[Math.abs(Math.round(x + z)) % 2]!, niv(x, z) * HAUTEUR_NIVEAU)));
+      g.add(objet("rampe", [{ x: 0, z: 0, rot: 0 }]));
       break;
     }
     case "haie":

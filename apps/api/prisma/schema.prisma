@@ -500,6 +500,8 @@ model ParcelCell {
   revetement       String?
   /// Berges : la forme des quatre coins d'une case d'eau, deux bits par coin (voir `amenagement.ts`).
   forme            Int       @default(0)
+  /// Relief : 0 en plaine, jusqu'à `NIVEAU_MAX` (voir `relief.ts`). Une falaise sépare deux niveaux.
+  niveau           Int       @default(0)
 
   @@unique([parcelId, x, y])
 }

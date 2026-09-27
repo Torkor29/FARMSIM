@@ -145,6 +145,8 @@ export type ProcessingView = {
   outputPrice: number;
   margin: number;
   daysOfWork: number;
+  /** La roue à eau du moulin : ×2 sur une rivière, ×3 sous une cascade. */
+  force?: number;
 };
 
 /** Ce que la banque renvoie sur l'état d'une exploitation. */
@@ -361,6 +363,11 @@ function Activite({
                     {a.perDay} {GOOD_DEFS[a.input].unit} de {GOOD_DEFS[a.input].name.toLowerCase()}{" "}
                     par jour → {Math.round((a.perDay / a.ratio) * 100) / 100}{" "}
                     {GOOD_DEFS[a.output].unit} de {GOOD_DEFS[a.output].name.toLowerCase()}
+                    {a.force && a.force > 1 ? (
+                      <b className="gain" title="La roue à eau : ×2 au bord d'une rivière, ×3 au pied d'une cascade">
+                        {" "}· roue à eau ×{a.force}
+                      </b>
+                    ) : null}
                   </span>
                   <span className="atelier-etat">
                     {aVide

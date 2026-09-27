@@ -379,6 +379,10 @@ import {
   BUILDING_REGRET_MS,
   LIBELLE_REFUS,
   bonusAmenagementCase,
+  casesCoupees,
+  coteaux,
+  forceHydraulique,
+  hydrologie,
   bornesDuDomaine,
   avecStyleCoin,
   coinFaconnable,
@@ -390,6 +394,7 @@ import {
   cleCase,
   construireGrille,
   defConstruction,
+  empriseOrientee,
   etatLot,
   libelleCharme,
   lotsDuDomaine,
@@ -1092,6 +1097,27 @@ function casesHorsChamp(
   return `${autre} case${autre > 1 ? "s" : ""} hors champ — seules les cases de champ se cultivent`;
 }
 
+/**
+ * Refus lisible si une case demandée est coupée de la cour, sinon `null`.
+ *
+ * Les engins arrivent par le bord de la ferme, en plaine ; l'eau ne se
+ * franchit que sur un pont, une falaise que par une rampe (`relief.ts`). Sans
+ * relief ni eau, tout est accessible et la requête ne coûte qu'une lecture.
+ */
+async function casesCoupeesDe(
+  parcel: { id: string; cells: { x: number; y: number; sol: string; niveau: number }[] },
+  demandees: { x: number; y: number }[],
+): Promise<string | null> {
+  if (!parcel.cells.some((c) => c.sol === "EAU" || c.niveau !== 0)) return null;
+  const passages = await prisma.amenagement.findMany({
+    where: { parcelId: parcel.id, type: { in: ["pont", "rampe"] } },
+    select: { type: true, originX: true, originY: true, rotation: true },
+  });
+  const n = casesCoupees(parcel.cells, passages, demandees).length;
+  if (!n) return null;
+  return `${n} case${n > 1 ? "s" : ""} coupée${n > 1 ? "s" : ""} de la cour par l'eau ou une falaise — posez un pont ou une rampe`;
+}
+
 async function loadParcelForWork(parcelId: string) {
   return prisma.parcel.findUnique({
     where: { id: parcelId },
@@ -1241,10 +1267,27 @@ async function tickDebtInterest() {
  * bâtiment, la matière en stock, et le cours du produit fini — qui baisse
  * quand on en écoule.
  */
+/**
+ * La force de l'eau sous un atelier : ×2 au bord d'une rivière, ×3 au pied
+ * d'une cascade. Seul le moulin a une roue ; les autres ateliers valent ×1.
+ */
+function forceDeLAtelier(
+  b: { type: string; originX: number; originY: number; rotation: number },
+  cells: { x: number; y: number; sol: string; niveau: number }[],
+): 1 | 2 | 3 {
+  if (b.type !== "MILL") return 1;
+  const def = defConstruction(`batiment:${b.type}`);
+  if (!def) return 1;
+  const { w, h } = empriseOrientee(def, quarterTurns(b.rotation));
+  return forceHydraulique(cells, { originX: b.originX, originY: b.originY, w, h });
+}
+
 async function tickProcessing() {
   const ateliers = await prisma.building.findMany({
     where: { type: { in: PROCESSING_BUILDINGS } },
-    include: { parcel: { select: { farmId: true } } },
+    include: {
+      parcel: { select: { farmId: true, cells: { select: { x: true, y: true, sol: true, niveau: true } } } },
+    },
   });
   const now = new Date();
   for (const b of ateliers) {
@@ -1264,7 +1307,7 @@ async function tickProcessing() {
     }
     const run = processRun({
       kind: def.processing,
-      perDay: processingThroughput(b.type as BuildingType, b.level),
+      perDay: processingThroughput(b.type as BuildingType, b.level) * forceDeLAtelier(b, b.parcel.cells),
       elapsedMs: now.getTime() - depuis.getTime(),
       stockIn: stock.qty,
     });
@@ -1995,7 +2038,7 @@ async function resolveFieldAccess(opts: {
    * chemin. Le jeu ne les propose pas aux outils, mais la route doit le
    * refuser elle-même : c'est la seule garde que rien ne contourne.
    */
-  const horsChamp = casesHorsChamp(parcel.cells, opts.cells);
+  const horsChamp = casesHorsChamp(parcel.cells, opts.cells) ?? (await casesCoupeesDe(parcel, opts.cells));
   if (horsChamp) {
     return { ok: false, status: 409, error: horsChamp };
   }
@@ -2796,20 +2839,39 @@ async function getFarmBonuses(farmId: string) {
 /** Les sources de bonus du décor, rangées par parcelle. */
 async function decorDeLaFerme(farmId: string): Promise<Record<string, SourcesBonus>> {
   const aEffet = ["haie"];
-  const [objets, eaux] = await Promise.all([
+  const [objets, cases] = await Promise.all([
     prisma.amenagement.findMany({
       where: { parcel: { farmId }, type: { in: aEffet } },
       select: { parcelId: true, type: true, originX: true, originY: true },
     }),
+    // L'eau, et le relief : une rivière et un coteau se lisent sur les voisines.
     prisma.parcelCell.findMany({
-      where: { parcel: { farmId }, sol: "EAU" },
-      select: { parcelId: true, x: true, y: true },
+      where: { parcel: { farmId }, OR: [{ sol: "EAU" }, { niveau: { gt: 0 } }] },
+      select: { parcelId: true, x: true, y: true, sol: true, niveau: true },
     }),
   ]);
-  const out: Record<string, { objets: SourcesBonus["objets"][number][]; eaux: { x: number; y: number }[] }> = {};
-  const de = (id: string) => (out[id] ??= { objets: [], eaux: [] });
+  type Sources = {
+    objets: SourcesBonus["objets"][number][];
+    eaux: SourcesBonus["eaux"][number][];
+    coteaux: { x: number; y: number }[];
+  };
+  const out: Record<string, Sources> = {};
+  const de = (id: string) => (out[id] ??= { objets: [], eaux: [], coteaux: [] });
   for (const o of objets) de(o.parcelId).objets.push(o);
-  for (const e of eaux) de(e.parcelId).eaux.push({ x: e.x, y: e.y });
+  const parParcelle = new Map<string, typeof cases>();
+  for (const c of cases) parParcelle.set(c.parcelId, [...(parParcelle.get(c.parcelId) ?? []), c]);
+  for (const [parcelId, cs] of parParcelle) {
+    const courante = hydrologie(cs).courante;
+    for (const c of cs) {
+      if (c.sol === "EAU") de(parcelId).eaux.push({ x: c.x, y: c.y, courante: courante.has(`${c.x},${c.y}`) });
+    }
+    /* Un coteau regarde une case plus basse au sud ; une case de plaine n'est
+       pas chargée ici, elle compte pour 0 : c'est bien le niveau voulu. */
+    for (const kk of coteaux(cs)) {
+      const [x, y] = kk.split(",").map(Number) as [number, number];
+      de(parcelId).coteaux.push({ x, y });
+    }
+  }
   return out;
 }
 
@@ -5989,7 +6051,7 @@ async function createLaborOrderForCells(opts: {
   if (!parcel?.farm || parcel.farm.userId !== opts.userId) {
     return { ok: false, status: 403, error: "Parcelle non possédée" };
   }
-  const horsChampOrdre = casesHorsChamp(parcel.cells, unique);
+  const horsChampOrdre = casesHorsChamp(parcel.cells, unique) ?? (await casesCoupeesDe(parcel, unique));
   if (horsChampOrdre) return { ok: false, status: 409, error: horsChampOrdre };
   for (const { x, y } of unique) {
     const cell = parcel.cells.find((c) => c.x === x && c.y === y);
@@ -6527,7 +6589,7 @@ app.post("/parcels/:id/contractor", async (req, res) => {
     res.status(403).json({ error: "Parcelle non possédée" });
     return;
   }
-  const horsChampPresta = casesHorsChamp(parcel.cells, cells);
+  const horsChampPresta = casesHorsChamp(parcel.cells, cells) ?? (await casesCoupeesDe(parcel, cells));
   if (horsChampPresta) {
     res.status(409).json({ error: horsChampPresta });
     return;
@@ -7738,7 +7800,10 @@ app.get("/farm/processing", async (req, res) => {
       farm: {
         include: {
           inventory: true,
-          parcels: { orderBy: ORDRE_PARCELLES, include: { buildings: true } },
+          parcels: {
+            orderBy: ORDRE_PARCELLES,
+            include: { buildings: true, cells: { select: { x: true, y: true, sol: true, niveau: true } } },
+          },
         },
       },
     },
@@ -7750,12 +7815,13 @@ app.get("/farm/processing", async (req, res) => {
   const prix = await prisma.marketPrice.findMany();
   const cours = (code: string) => prix.find((p) => p.commodity === code)?.price ?? 0;
   const ateliers = user.farm.parcels
-    .flatMap((p) => p.buildings)
-    .filter((b) => BUILDING_DEFS[b.type as BuildingType].processing)
-    .map((b) => {
+    .flatMap((p) => p.buildings.map((b) => ({ b, cells: p.cells })))
+    .filter(({ b }) => BUILDING_DEFS[b.type as BuildingType].processing)
+    .map(({ b, cells }) => {
       const kind = BUILDING_DEFS[b.type as BuildingType].processing!;
       const recette = RECIPES[kind];
-      const perDay = processingThroughput(b.type as BuildingType, b.level);
+      const force = forceDeLAtelier(b, cells);
+      const perDay = processingThroughput(b.type as BuildingType, b.level) * force;
       const stockIn = user.farm!.inventory.find((i) => i.itemCode === recette.input)?.qty ?? 0;
       const inputPrice = cours(recette.input);
       const outputPrice = cours(recette.output);
@@ -7768,6 +7834,8 @@ app.get("/farm/processing", async (req, res) => {
         output: recette.output,
         ratio: recette.ratio,
         perDay,
+        /** La roue à eau du moulin : ×1 à sec, ×2 sur une rivière, ×3 sous une cascade. */
+        force,
         stockIn: Math.round(stockIn * 100) / 100,
         inputPrice,
         outputPrice,
@@ -9281,7 +9349,7 @@ type ParcelleGrille = {
   gridW: number;
   gridH: number;
   domaineMarge: number;
-  cells: { x: number; y: number; sol: string; revetement: string | null; kind: string; buildingId: string | null; crop: string | null }[];
+  cells: { x: number; y: number; sol: string; revetement: string | null; kind: string; buildingId: string | null; crop: string | null; niveau: number }[];
   amenagements: { id: string; type: string; originX: number; originY: number; rotation: number }[];
 };
 
@@ -9473,12 +9541,16 @@ app.post("/parcels/:id/terrain", async (req, res) => {
   const peintes = verdict.cases.filter((c) => c.ok && c.change);
   // Une case qui change de nature repart avec des berges arrondies : la
   // forme d'un coin ne vaut que pour l'eau qui l'a reçue.
+  // Le relief, lui, ne touche pas au sol : il monte ou descend la case d'un
+  // niveau, champ, pré ou chemin compris.
   const data =
-    def.regle === "CHEMIN"
-      ? { revetement: def.revetement ?? null, sol: "PRE" as const, forme: 0 }
-      : def.regle === "PRE"
-        ? { revetement: null, sol: "PRE" as const, forme: 0 }
-        : { revetement: null, sol: def.sol!, forme: 0 };
+    def.regle === "RELIEF"
+      ? { niveau: def.id === "surelever" ? { increment: 1 } : { decrement: 1 } }
+      : def.regle === "CHEMIN"
+        ? { revetement: def.revetement ?? null, sol: "PRE" as const, forme: 0 }
+        : def.regle === "PRE"
+          ? { revetement: null, sol: "PRE" as const, forme: 0 }
+          : { revetement: null, sol: def.sol!, forme: 0 };
   await prisma.$transaction(async (tx) => {
     if (verdict.cout > 0) {
       await debit(tx, user.id, verdict.cout, "BATIMENTS", `Aménagement — ${def.nom} (${peintes.length} case${peintes.length > 1 ? "s" : ""})`);

@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, type MutableRefObject } from "react";
 import * as THREE from "three";
-import { rectangleCases, type Bornes as BornesDomaine } from "@farmsim/shared";
+import { HAUTEUR_NIVEAU, NIVEAU_MAX, rectangleCases, type Bornes as BornesDomaine } from "@farmsim/shared";
 import { creerDalles, type Dalle } from "./cases3d";
 import { creerDomaine3d, type EtatConstruction, type ObjetPose } from "./domaine3d";
 import {
@@ -109,6 +109,8 @@ export type IsoCell = {
   revetement?: string | null;
   /** Berges : la forme des coins d'une case d'eau. */
   forme?: number;
+  /** Relief : 0 en plaine, une terrasse au-dessus. */
+  niveau?: number;
 };
 
 export type ManurePile = {
@@ -2161,7 +2163,7 @@ export function IsoFarmView({
      * type de relief, quelle que soit la surface concernée.
      */
     function buildSoilRelief(
-      details: { look: SoilLook; px: number; pz: number }[],
+      details: { look: SoilLook; px: number; pz: number; py?: number }[],
       size: number,
     ) {
       while (reliefGroup.children.length) {
@@ -2277,7 +2279,7 @@ export function IsoFarmView({
             // enfonce pas.
             m.makeTranslation(
               cellPos.px + (dx + jitter) * size,
-              0.09 + kind.h / 2,
+              0.09 + (cellPos.py ?? 0) + kind.h / 2,
               cellPos.pz + dz * size,
             );
             mesh.setMatrixAt(i++, m);
@@ -2293,6 +2295,10 @@ export function IsoFarmView({
      * dorés ; le maïs un seul, trapu. C'est le signal « récoltable » le plus
      * direct qu'on puisse donner sur la grille elle-même.
      */
+    /** Le relief de chaque case, relu à chaque `layout()` : la hauteur du sol. */
+    let altitudes = new Map<string, number>();
+    const altitude = (x: number, y: number) => altitudes.get(key(x, y)) ?? 0;
+
     function cellWorldPos(x: number, y: number) {
       return { px: ox + x * step, pz: oz + y * step };
     }
@@ -2470,6 +2476,7 @@ export function IsoFarmView({
         y: number;
         px: number;
         pz: number;
+        py: number;
         height: number;
         shape: CropShape;
         color: number;
@@ -2775,12 +2782,13 @@ export function IsoFarmView({
       }
 
       /** Relief à semer sur les cases une fois la grille posée. */
-      const soilDetails: { look: SoilLook; px: number; pz: number }[] = [];
+      const soilDetails: { look: SoilLook; px: number; pz: number; py?: number }[] = [];
       /** Épis des cultures arrivées à maturité. */
 
       /* Des tables plutôt que des recherches : un domaine de 24×24 faisait
          cinq cent soixante-seize `find` sur cinq cent soixante-seize cases. */
       const parCle = new Map(cs.map((c) => [key(c.x, c.y), c]));
+      altitudes = new Map(cs.filter((c) => c.niveau).map((c) => [key(c.x, c.y), (c.niveau ?? 0) * HAUTEUR_NIVEAU]));
       const simParCle = new Map(sims.map((s) => [key(s.x, s.y), s]));
       const selCles = new Set(sel.map((s) => key(s.x, s.y)));
       const aPoser: Dalle[] = [];
@@ -2800,6 +2808,8 @@ export function IsoFarmView({
           const sim = simParCle.get(key(x, y));
           const isSel = selCles.has(key(x, y));
           const solCase = cell.sol ?? "CHAMP";
+          // Le relief : une terrasse porte sa dalle, ses cultures, ses engins.
+          const py = (cell.niveau ?? 0) * HAUTEUR_NIVEAU;
 
           // Le damier ne vaut que pour une terre au repos. Dès qu'une case a
           // été travaillée ou moissonnée, sa couleur dit son état — sans quoi
@@ -2818,7 +2828,7 @@ export function IsoFarmView({
           // Sous l'eau : le fond du bassin, plus bas que le pré (voir `eau3d`).
           if (solCase === "EAU") col = 0x4b3d2c;
           if (cell && solCase === "CHAMP" && cell.kind === "EMPTY" && look !== "PLAIN" && look !== "PLOWED") {
-            soilDetails.push({ look, px, pz });
+            soilDetails.push({ look, px, pz, py });
           }
           // Les adventices restent sur la terre nue. Sur une culture elles
           // se lisaient comme un second plant — on ne les superpose plus.
@@ -2831,7 +2841,7 @@ export function IsoFarmView({
             couleur: col,
             labour: solCase === "CHAMP" && look === "PLOWED" && cell?.kind === "EMPTY",
             choisie: isSel,
-            hauteur: solCase === "EAU" ? -0.2 : 0,
+            hauteur: py + (solCase === "EAU" ? -0.2 : 0),
           });
           // Toutes les cases sont à la même hauteur, bâtiments compris : un
           // volume posé sur la dalle n'a pas à s'enfoncer pour paraître posé.
@@ -2873,6 +2883,7 @@ export function IsoFarmView({
               y,
               px,
               pz,
+              py,
               height: h,
               // La silhouette nomme la culture : barbe pour l'orge, grappe
               // jaune pour le colza, panache pour le maïs.
@@ -2931,7 +2942,7 @@ export function IsoFarmView({
         domaine3d.majTerrain(
           {
             bornes: b ?? { minX: 0, minY: 0, maxX: gw, maxY: gh },
-            cells: cs.map((c) => ({ x: c.x, y: c.y, sol: c.sol ?? "CHAMP", revetement: c.revetement ?? null, kind: c.kind, forme: c.forme ?? 0 })),
+            cells: cs.map((c) => ({ x: c.x, y: c.y, sol: c.sol ?? "CHAMP", revetement: c.revetement ?? null, kind: c.kind, forme: c.forme ?? 0, niveau: c.niveau ?? 0 })),
             amenagements: dataRef.current.amenagements,
           },
           cellWorldPos,
@@ -3184,18 +3195,36 @@ export function IsoFarmView({
     // l'écran. Les scénarios automatisés visent ainsi une case, pas un pixel.
     if (/^(127\.0\.0\.1|localhost)$/.test(window.location.hostname)) {
       (window as unknown as { __caseEcran?: unknown }).__caseEcran = (x: number, y: number) => {
-        const v = new THREE.Vector3(ox + x * step, TILE_TOP, oz + y * step).project(camera);
+        const v = new THREE.Vector3(ox + x * step, TILE_TOP + altitude(Math.round(x), Math.round(y)), oz + y * step).project(camera);
         const r = renderer.domElement.getBoundingClientRect();
         return { x: r.left + ((v.x + 1) / 2) * r.width, y: r.top + ((1 - v.y) / 2) * r.height };
       };
     }
     function raycastCell(): { x: number; y: number; fx: number; fy: number } | null {
       raycaster.setFromCamera(pointer, camera);
-      if (!raycaster.ray.intersectPlane(planDalles, surDalle)) return null;
-      const gx = (surDalle.x - ox) / step;
-      const gy = (surDalle.z - oz) / step;
-      const x = Math.round(gx);
-      const y = Math.round(gy);
+      /* Le relief : on croise d'abord le plus haut plateau. Une case de
+         terrasse touchée à sa hauteur est la bonne ; sinon le rayon passe
+         au-dessus, et l'on descend d'un niveau — la plaine en dernier. */
+      let gx = 0;
+      let gy = 0;
+      let x = 0;
+      let y = 0;
+      let trouve = false;
+      for (let n = NIVEAU_MAX; n >= 0; n--) {
+        if (n > 0 && !altitudes.size) continue;
+        planDalles.constant = -(TILE_TOP + n * HAUTEUR_NIVEAU);
+        if (!raycaster.ray.intersectPlane(planDalles, surDalle)) continue;
+        gx = (surDalle.x - ox) / step;
+        gy = (surDalle.z - oz) / step;
+        x = Math.round(gx);
+        y = Math.round(gy);
+        if (n === 0 || Math.round(altitude(x, y) / HAUTEUR_NIVEAU) === n) {
+          trouve = true;
+          break;
+        }
+      }
+      planDalles.constant = -TILE_TOP;
+      if (!trouve) return null;
       const k = key(x, y);
       if (!dalles.a(k)) return null;
       if (fricheCles.has(k) && !dataRef.current.construction?.actif) return null;
@@ -4543,7 +4572,9 @@ export function IsoFarmView({
         lastWorkPos = { x: px, z: pz };
 
         const working = u < 1;
-        workRig.group.position.set(px, MACHINE_GROUND, pz);
+        const ha = altitude(a.x, a.y);
+        const py = ha + (altitude(b.x, b.y) - ha) * local;
+        workRig.group.position.set(px, MACHINE_GROUND + py, pz);
         workRig.group.rotation.y = heading;
         workRig.group.visible = true;
         workRig.update({
@@ -4567,7 +4598,7 @@ export function IsoFarmView({
         workDust.update(
           dt,
           px - Math.cos(heading) * rear,
-          MACHINE_GROUND + 0.03,
+          MACHINE_GROUND + py + 0.03,
           pz + Math.sin(heading) * rear,
           working,
         );
@@ -4734,18 +4765,21 @@ export function IsoFarmView({
         let px: number;
         let pz: number;
         let facing = 0;
+        let py = 0;
         if (worker.working && workRig && workPath.length && workRig.group.visible) {
           px = workRig.group.position.x + 0.38;
           pz = workRig.group.position.z + 0.22;
+          py = workRig.group.position.y - MACHINE_GROUND;
           facing = workRig.group.rotation.y;
         } else {
           const pos = cellWorldPos(worker.x, worker.y);
           px = pos.px;
           pz = pos.pz;
+          py = altitude(worker.x, worker.y);
         }
-        mesh.position.set(px, TILE_TOP, pz);
+        mesh.position.set(px, TILE_TOP + py, pz);
         mesh.rotation.y = facing + Math.sin(t * 2.4) * 0.08;
-        mesh.position.y = TILE_TOP + Math.abs(Math.sin(t * (worker.working ? 8 : 2.2))) * (worker.working ? 0.04 : 0.015);
+        mesh.position.y = TILE_TOP + py + Math.abs(Math.sin(t * (worker.working ? 8 : 2.2))) * (worker.working ? 0.04 : 0.015);
       }
 
       renderer.render(scene, camera);

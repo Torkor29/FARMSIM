@@ -182,7 +182,16 @@ export type MaillageEau = {
  */
 export function maillerEau(
   eaux: Eaux,
-  opts: { restreindre?: readonly [number, number][]; formeForcee?: { x: number; y: number; forme: number } } = {},
+  opts: {
+    restreindre?: readonly [number, number][];
+    formeForcee?: { x: number; y: number; forme: number };
+    /**
+     * Le relief : ne mailler que ces cases, les autres eaux ne servant qu'à
+     * dire où la nappe continue — de l'autre côté d'une cascade, l'eau d'un
+     * autre niveau prolonge la forme sans être dessinée ici.
+     */
+    sortie?: ReadonlySet<string>;
+  } = {},
 ): MaillageEau {
   const out: MaillageEau = { nappe: { pos: [], prof: [], cle: [] }, berge: [], contour: [], large: [] };
   if (!eaux.size) return out;
@@ -191,7 +200,9 @@ export function maillerEau(
     const { x, y, forme } = opts.formeForcee;
     formes.set(cleCase(x, y), formeCase(eaux, x, y, forme));
   }
-  const cases = opts.restreindre ?? [...eaux.keys()].map((k) => k.split(",").map(Number) as [number, number]);
+  const cases =
+    opts.restreindre ?? [...(opts.sortie ?? eaux.keys())].map((k) => k.split(",").map(Number) as [number, number]);
+  if (!cases.length) return out;
   let x0 = Infinity;
   let y0 = Infinity;
   let x1 = -Infinity;
@@ -266,6 +277,7 @@ export function maillerEau(
       const cle = cleCase(Math.round(cx), Math.round(cy));
       if (!eaux.has(cle)) continue;
       if (restreint && !restreint.has(cle)) continue;
+      if (opts.sortie && !opts.sortie.has(cle)) continue;
       const coins: [number, number, number, number][] = [
         [gx(i), gy(j), i, j],
         [gx(i + 1), gy(j), i + 1, j],
@@ -373,11 +385,14 @@ export function materiauEau(): THREE.ShaderMaterial {
     vertexShader: /* glsl */ `
       attribute float aProf;
       attribute float aNaissance;
+      attribute vec2 aFlux;
       uniform float uTemps;
       varying float vProf;
       varying float vAge;
       varying vec3 vMonde;
+      varying vec2 vFlux;
       void main() {
+        vFlux = aFlux;
         vec3 p = position;
         float age = uTemps - aNaissance;
         p.y -= (1.0 - smoothstep(0.15, 0.95, age)) * 0.14;
@@ -394,6 +409,7 @@ export function materiauEau(): THREE.ShaderMaterial {
       varying float vProf;
       varying float vAge;
       varying vec3 vMonde;
+      varying vec2 vFlux;
       void main() {
         vec3 clair = vec3(0.45, 0.71, 0.66);
         vec3 fonce = vec3(0.09, 0.30, 0.42);
@@ -406,12 +422,66 @@ export function materiauEau(): THREE.ShaderMaterial {
         float h = sin(vMonde.x * 7.3 + uTemps * 1.4) * sin(vMonde.z * 6.1 - uTemps * 1.1)
                 + 0.6 * sin((vMonde.x + vMonde.z) * 12.0 + uTemps * 2.3);
         c += smoothstep(1.2, 1.55, h) * 0.32 * (0.4 + d);
+        // L'eau qui coule : des stries qui filent vers la cascade.
+        float fl = length(vFlux);
+        if (fl > 0.01) {
+          vec2 dir = vFlux / fl;
+          float le = dot(vMonde.xz, dir);
+          float tr = dot(vMonde.xz, vec2(-dir.y, dir.x));
+          float stries = smoothstep(0.55, 1.0, sin(le * 7.0 - uTemps * 4.2 + sin(tr * 9.0) * 1.6));
+          stries *= 0.55 + 0.45 * sin(tr * 21.0 + le * 1.3);
+          c = mix(c, vec3(0.86, 0.94, 0.95), stries * 0.28 * min(fl, 1.0));
+        }
         // L'écume contre la berge.
         float bord = 1.0 - smoothstep(0.0, 0.07, vProf);
         float respire = 0.65 + 0.35 * sin(uTemps * 2.1 + vMonde.x * 17.0 + vMonde.z * 13.0);
         c = mix(c, vec3(0.9, 0.95, 0.93), bord * respire * 0.75);
         float a = mix(0.86, 0.97, d) * smoothstep(0.0, 0.35, vAge);
         gl_FragColor = vec4(c, a);
+      }
+    `,
+  });
+}
+
+/**
+ * Une cascade : un rideau d'eau qui file vers le bas, blanc d'écume.
+ *
+ * `aChute` va de 0 en haut à 1 en bas ; le rideau s'éclaircit en tombant.
+ */
+export function materiauCascade(): THREE.ShaderMaterial {
+  return new THREE.ShaderMaterial({
+    transparent: true,
+    depthWrite: false,
+    side: THREE.DoubleSide,
+    uniforms: { uTemps: { value: 0 } },
+    vertexShader: /* glsl */ `
+      attribute float aChute;
+      attribute float aTravers;
+      varying float vChute;
+      varying float vTravers;
+      void main() {
+        vChute = aChute;
+        vTravers = aTravers;
+        gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+      }
+    `,
+    fragmentShader: /* glsl */ `
+      uniform float uTemps;
+      varying float vChute;
+      varying float vTravers;
+      void main() {
+        // Des filets verticaux, et des paquets d'eau qui les descendent.
+        float fil = 0.5 + 0.5 * sin(vTravers * 37.0 + sin(vTravers * 5.0) * 2.0);
+        float coule = sin(vChute * 9.0 - uTemps * 8.0 + vTravers * 3.0);
+        vec3 bleu = vec3(0.42, 0.68, 0.72);
+        vec3 blanc = vec3(0.93, 0.97, 0.97);
+        float mousse = smoothstep(0.35, 1.0, fil) * 0.35 + smoothstep(0.4, 1.0, coule) * 0.35 + smoothstep(0.55, 1.0, vChute) * 0.7;
+        vec3 c = mix(bleu, blanc, clamp(mousse, 0.0, 1.0));
+        float bords = smoothstep(0.0, 0.12, vTravers) * smoothstep(1.0, 0.88, vTravers);
+        // La lèvre, sur l'eau d'en haut, naît de rien et blanchit en approchant du bord.
+        float levre = smoothstep(-0.3, -0.05, vChute);
+        c = mix(c, blanc, (1.0 - step(0.0, vChute)) * levre * 0.5);
+        gl_FragColor = vec4(c, (0.78 + 0.18 * coule) * bords * levre);
       }
     `,
   });
