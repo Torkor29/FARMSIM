@@ -20,7 +20,7 @@ import * as THREE from "three";
 import { createMachineRig, type MachineRig } from "./machines3d";
 import { ajouterArbre, ajouterBoite, ajouterGeometrie, maillageFacette, pose } from "./decor3d";
 import { COTE_LIEU, type GenreLieu, type Lieu } from "./countryside-plan";
-import { MODELES_DISPONIBLES, PANCARTES, poserModele, poserPiece } from "./modeles-decor";
+import { MODELES_DISPONIBLES, PANCARTES, poserModele, poserPiece, SOL } from "./modeles-decor";
 
 /** Le bois des clôtures et des piquets, celui de la cour. */
 export const BOIS = 0x7a5534;
@@ -697,6 +697,44 @@ function pancarteRucher(g: THREE.Group, j: Jetables, shadows: boolean): void {
 /**
  * Un lieu du village, posé sur son emprise. `y` est le sol de la campagne.
  */
+/** Une pomme : une petite boule lisse, partagée. */
+const POMME = new THREE.IcosahedronGeometry(1, 1);
+
+/** L'étang dessiné en code — la version de secours de la mare de la forge. */
+function etangEnCode(t: Tableaux, group: THREE.Group, j: Jetables): void {
+  // Un disque d'eau à bord de roseaux, et un ponton.
+  const n = 20;
+  // Il tient dans l'emprise du décor, plus petite que celle du village.
+  const rayon = (k: number) => 2.35 + Math.sin(k * 2.1) * 0.28 + Math.cos(k * 1.3) * 0.2;
+  const eau: number[] = [];
+  const eauCol: number[] = [];
+  for (let k = 0; k < n; k++) {
+    const a0 = (k / n) * Math.PI * 2;
+    const a1 = ((k + 1) / n) * Math.PI * 2;
+    for (const [r, h, c] of [
+      [1.18, 0.012, new THREE.Color(0x8aa65a)],
+      [1, 0.03, new THREE.Color(0x6fb4d6)],
+    ] as const) {
+      eau.push(
+        0, h, 0,
+        Math.cos(a1) * rayon(k + 1) * r, h, Math.sin(a1) * rayon(k + 1) * r,
+        Math.cos(a0) * rayon(k) * r, h, Math.sin(a0) * rayon(k) * r,
+      );
+      for (let v = 0; v < 3; v++) eauCol.push(c.r, c.g, c.b);
+    }
+  }
+  const m = maillageFacette(eau, eauCol, { nom: "etang" });
+  j.geometries.push(m.geometry);
+  j.materiaux.push(m.material as THREE.Material);
+  group.add(m);
+  for (let k = 0; k < 14; k++) {
+    const a = k * 0.9 + 0.4;
+    const r = rayon(k) * 1.05;
+    ajouterBoite(t.pos, t.col, Math.cos(a) * r, 0.35, Math.sin(a) * r, 0.07, 0.7 + (k % 3) * 0.15, 0.07, 0x6f9a3a);
+  }
+  ajouterBoite(t.pos, t.col, 2.1, 0.12, 0.5, 1.5, 0.08, 0.6, BOIS_CLAIR);
+}
+
 export function creerLieu(
   lieu: Lieu,
   o: { pasCase: number; y: number; shadows: boolean; jetables: Jetables },
@@ -722,37 +760,25 @@ export function creerLieu(
       cooperative(t, group, j, shadows);
       break;
     case "ETANG": {
-      // Un disque d'eau à bord de roseaux, et un ponton.
-      const n = 20;
-      // Il tient dans l'emprise du décor, plus petite que celle du village.
-      const rayon = (k: number) => 2.35 + Math.sin(k * 2.1) * 0.28 + Math.cos(k * 1.3) * 0.2;
-      const eau: number[] = [];
-      const eauCol: number[] = [];
-      for (let k = 0; k < n; k++) {
-        const a0 = (k / n) * Math.PI * 2;
-        const a1 = ((k + 1) / n) * Math.PI * 2;
-        for (const [r, h, c] of [
-          [1.18, 0.012, new THREE.Color(0x8aa65a)],
-          [1, 0.03, new THREE.Color(0x6fb4d6)],
-        ] as const) {
-          eau.push(
-            0, h, 0,
-            Math.cos(a1) * rayon(k + 1) * r, h, Math.sin(a1) * rayon(k + 1) * r,
-            Math.cos(a0) * rayon(k) * r, h, Math.sin(a0) * rayon(k) * r,
-          );
-          for (let v = 0; v < 3; v++) eauCol.push(c.r, c.g, c.b);
-        }
+      // La mare de la forge (`blender/recettes/sol.py`) : cerclée de pierres,
+      // nénuphars et roseaux. La version en code reste en secours.
+      if (!MODELES_DISPONIBLES) {
+        etangEnCode(t, group, j);
+        break;
       }
-      const m = maillageFacette(eau, eauCol, { nom: "etang" });
-      j.geometries.push(m.geometry);
-      j.materiaux.push(m.material as THREE.Material);
-      group.add(m);
-      for (let k = 0; k < 14; k++) {
-        const a = k * 0.9 + 0.4;
-        const r = rayon(k) * 1.05;
-        ajouterBoite(t.pos, t.col, Math.cos(a) * r, 0.35, Math.sin(a) * r, 0.07, 0.7 + (k % 3) * 0.15, 0.07, 0x6f9a3a);
-      }
-      ajouterBoite(t.pos, t.col, 2.1, 0.12, 0.5, 1.5, 0.08, 0.6, BOIS_CLAIR);
+      poserPiece(SOL, "mare", shadows)
+        .then((mare) => {
+          mare.scale.setScalar(1.25);
+          group.add(mare);
+        })
+        .catch(() => {
+          const secours: Tableaux = { pos: [], col: [] };
+          etangEnCode(secours, group, j);
+          const m = maillageFacette(secours.pos, secours.col, { shadows, recoit: shadows, nom: "lieu-decor" });
+          j.geometries.push(m.geometry);
+          j.materiaux.push(m.material as THREE.Material);
+          group.add(m);
+        });
       break;
     }
     case "VERGER": {
@@ -765,7 +791,7 @@ export function creerLieu(
           ajouterArbre(t.pos, t.col, x, 0, z, 2.3, 100 + i * 3 + k);
           for (let f = 0; f < 5; f++) {
             const a = f * 1.26 + i + k;
-            ajouterBoite(t.pos, t.col, x + Math.cos(a) * 0.62, 1.02 + (f % 3) * 0.14, z + Math.sin(a) * 0.62, 0.17, 0.17, 0.17, 0xd9463c);
+            ajouterGeometrie(t.pos, t.col, POMME, pose(x + Math.cos(a) * 0.62, 1.02 + (f % 3) * 0.14, z + Math.sin(a) * 0.62, 0, 0.09), 0xd9463c);
           }
         }
       }

@@ -313,7 +313,28 @@ Pistes suivantes : reflets du ciel sur l'eau, sol mouillé plus sombre sous
 la pluie, neige qui s'accumule sur les toits, lucioles d'été la nuit, bloom
 léger sur ordinateur (réglage de qualité).
 
-## 10. Feuille de route
+## 10. Une seule direction artistique pour tout le jeu
+
+Les décors de la forge ne suffisaient pas : posés au milieu d'un décor en
+code à facettes franches, ils juraient. La troisième passe aligne tout le
+reste sur leur style :
+
+| Ce qui change | Où | Comment |
+| --- | --- | --- |
+| Fin de la facette franche | `decor3d.ts` (campagne, village, voisins, voitures) | les normales de chaque forme suivent ses sommets : une boule reste ronde, un pavé garde ses biseaux arrondis |
+| Arêtes chanfreinées | `paveChanfreine` (décor, bâtiments, engins) | 44 triangles par pavé, biseau fixe en unités du monde ; les lattes (< 6 cm) et les cases des champs voisins restent vives pour tenir les budgets |
+| Arbres « nuage » | `ajouterArbre` | six lobes lisses, plus sombres dessous, racines au pied ; ils roussissent à l'automne et blanchissent l'hiver |
+| Haie en boules | `geometrieHaie` | la haie de la ferme devient une suite de touffes rondes |
+| Pré habité | `plan.herbes` + kit nature | touffes, fleurs, lavande, buissons, pierres instanciés autour de la ferme, teintés à la saison |
+| Matières mates | `machine-kit.ts` | tuile et bois peint sans reflet métallique, vernis et chromes des engins adoucis |
+| Palette | bâtiments, sol, granges voisines | vert sauge et tuile brique, herbe tendre, terre rousse — les couleurs de `palette.py` |
+| Mare du village | `village3d.ts` | la mare de la forge (pierres, nénuphars, roseaux), la version en code en secours |
+
+Budgets tenus : chaque bâtiment reste sous 3 500 triangles, la nappe des
+parcelles voisines sous 220 000 sommets (tests existants), le bois de la
+campagne passe d'environ 12 000 à 95 000 triangles.
+
+## 11. Feuille de route
 
 - **Phase 1 (cette livraison)** : la forge, 8 recettes, l'atelier web, les
   tests, la compétence d'agent.
@@ -328,7 +349,7 @@ léger sur ordinateur (réglage de qualité).
 - **CI** : un job facultatif qui lance `scripts/forge.sh liste --json` et
   signale les assets périmés (source modifiée sans reconstruction).
 
-## 11. Limites connues
+## 12. Limites connues
 
 - L'aperçu Cycles n'est pas le rendu three.js (éclairage global réel,
   AgX/Standard) : il sert à juger la forme ; la couleur finale se juge dans

@@ -112,6 +112,9 @@ export async function instancierPiece(
   return groupe;
 }
 
+/** Le kit du sol de la forge : mare, dallages, terrasses (`recettes/sol.py`). */
+export const SOL = "/assets/decor3d/sol.glb";
+
 /** Le kit nature de la forge (`blender/recettes/nature.py`). */
 export const NATURE = "/assets/decor3d/nature.glb";
 
