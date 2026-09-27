@@ -38,6 +38,8 @@ import { type Season } from "@farmsim/shared";
 import { createDustTrail, createMachineRig, type DustTrail, type MachineRig } from "./machines3d";
 import {
   ajouterArbre,
+  ajouterBoiteVive,
+  type SaisonArbre,
   ajouterBete,
   ajouterBoite,
   ajouterGrange,
@@ -47,7 +49,15 @@ import {
   makeVoiture,
 } from "./decor3d";
 import { fusionnerStatique } from "./fusion-statique";
-import { instancierPiece, MODELES_DISPONIBLES, PANCARTES } from "./modeles-decor";
+import {
+  chargerManifeste,
+  instancierPiece,
+  MODELES_DISPONIBLES,
+  NATURE,
+  PANCARTES,
+  SAISON_DECOR,
+  teinterSaison,
+} from "./modeles-decor";
 import { creerVoisinDetaille, poserBatimentsVoisin, type VoisinDetaille } from "./voisin3d";
 import { creerLieu, creerPancarteVente, type Jetables } from "./village3d";
 import type { BuildingRig } from "./buildings3d";
@@ -525,8 +535,10 @@ export function createCountryside(o: OptionsCampagne): Campagne {
     const pos: number[] = [];
     const col: number[] = [];
     const teinte = new THREE.Color();
-    const HERBE = 0x6aa259;
-    const HERBE_LOIN = 0x7ba766;
+    // Les verts tendres de la forge (`blender/forge/palette.py`) : un pré
+    // lumineux, pas une pelouse de golf à l'ombre.
+    const HERBE = 0x86bd52;
+    const HERBE_LOIN = 0x95c263;
     const { uMin, uMax, vMax } = plan.sol;
     const us = graduation(uMin, uMax, 4.2);
     const vs = graduation(-vMax, vMax, 4.2);
@@ -779,8 +791,8 @@ export function createCountryside(o: OptionsCampagne): Campagne {
     }
     const pos: number[] = [];
     const col: number[] = [];
-    const TERRE_DALLE = 0x8a6b4a;
-    const HAIE = 0x5c9a52;
+    const TERRE_DALLE = 0x9c5f3a;
+    const HAIE = 0x6fa343;
     const teinte = new THREE.Color();
 
     for (const p of plan.parcelles) {
@@ -837,7 +849,7 @@ export function createCountryside(o: OptionsCampagne): Campagne {
               teinte,
             );
           } else {
-            ajouterBoite(pos, col, cx, y0 + dy, cz, taille, CASE_EP, taille, teinte.getHex());
+            ajouterBoiteVive(pos, col, cx, y0 + dy, cz, taille, CASE_EP, taille, teinte.getHex());
           }
         }
       }
@@ -1313,16 +1325,77 @@ export function createCountryside(o: OptionsCampagne): Campagne {
     }
   }
 
-  /* —— Les bosquets —— */
-  {
+  /* —— Les bosquets ——
+     Reconstruits quand la saison tourne : le feuillage roussit à l'automne,
+     blanchit l'hiver (voir `ajouterArbre`). Cent soixante-dix arbres, une
+     fois par saison — rien à l'échelle d'une image. */
+  let arbresMesh: THREE.Mesh | null = null;
+  let saisonArbres: string | null = null;
+  const poserArbres = (saison: string) => {
+    if (saison === saisonArbres) return;
+    saisonArbres = saison;
     const pos: number[] = [];
     const col: number[] = [];
     for (const a of plan.arbres) {
-      ajouterArbre(pos, col, a.x, y0 - 0.05, a.z, a.taille, a.graine);
+      ajouterArbre(pos, col, a.x, y0 - 0.05, a.z, a.taille, a.graine, saison as SaisonArbre);
+    }
+    if (arbresMesh) {
+      object.remove(arbresMesh);
+      arbresMesh.geometry.dispose();
+      (arbresMesh.material as THREE.Material).dispose();
+      arbresMesh = null;
     }
     if (pos.length) {
-      object.add(garder(maillageFacette(pos, col, { shadows, nom: "campagne-arbres" })));
+      arbresMesh = maillageFacette(pos, col, { shadows, nom: "campagne-arbres" });
+      object.add(arbresMesh);
     }
+  };
+  poserArbres("SUMMER");
+
+  /* —— Les détails de l'herbe ——
+     Touffes, fleurs, buissons, lavande et pierres du kit nature de la forge,
+     semés autour de la ferme (`plan.herbes`). Une pièce = un maillage
+     instancié par matière : cent soixante-dix touffes coûtent un appel de
+     rendu. Ils prennent la couleur de la saison avec le reste. */
+  const groupeHerbes = new THREE.Group();
+  groupeHerbes.name = "campagne-herbes";
+  object.add(groupeHerbes);
+  let saisonsNature: Record<string, Record<string, string>> | null = null;
+  let saisonHerbes: string | null = null;
+  const teinterHerbes = (saison: string) => {
+    saisonHerbes = saison;
+    if (!saisonsNature) return;
+    const cle = SAISON_DECOR[saison];
+    teinterSaison(groupeHerbes, cle ? saisonsNature[cle] : undefined);
+  };
+  if (MODELES_DISPONIBLES && plan.herbes.length) {
+    const parPiece = new Map<string, THREE.Matrix4[]>();
+    const axeY = new THREE.Vector3(0, 1, 0);
+    for (const h of plan.herbes) {
+      const m = new THREE.Matrix4().compose(
+        new THREE.Vector3(h.x, y0 - 0.02, h.z),
+        new THREE.Quaternion().setFromAxisAngle(axeY, h.rot),
+        new THREE.Vector3(h.echelle, h.echelle, h.echelle),
+      );
+      const l = parPiece.get(h.piece) ?? [];
+      l.push(m);
+      parPiece.set(h.piece, l);
+    }
+    for (const [piece, poses] of parPiece) {
+      instancierPiece(NATURE, piece, poses, shadows && piece !== "touffe")
+        .then((g) => {
+          groupeHerbes.add(g);
+          if (saisonHerbes) teinterHerbes(saisonHerbes);
+        })
+        // Pas de modèle, pas de détail : le pré reste un pré.
+        .catch(() => {});
+    }
+    chargerManifeste()
+      .then((m) => {
+        saisonsNature = (m.assets.nature?.saisons as Record<string, Record<string, string>>) ?? null;
+        if (saisonHerbes) teinterHerbes(saisonHerbes);
+      })
+      .catch(() => {});
   }
 
   /* —— Les voitures ——
@@ -1656,9 +1729,16 @@ export function createCountryside(o: OptionsCampagne): Campagne {
       for (const e of engins) e.sillons.geometry.setDrawRange(0, 0);
     }
     poserParcelles(jour, saison);
+    if (saison !== saisonHerbes) teinterHerbes(saison);
+    poserArbres(saison);
   }
 
   function dispose(): void {
+    if (arbresMesh) {
+      arbresMesh.geometry.dispose();
+      (arbresMesh.material as THREE.Material).dispose();
+      arbresMesh = null;
+    }
     for (const d of detailles.values()) d.dispose();
     detailles.clear();
     for (const r of rigsBatiments) r.dispose();

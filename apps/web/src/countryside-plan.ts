@@ -247,6 +247,8 @@ export function coteLieu(genre: GenreLieu): number {
   return LIEUX_UTILES.includes(genre) ? COTE_LIEU : COTE_DECOR;
 }
 
+export type PieceHerbe = "touffe" | "fleurs" | "buisson-1" | "buisson-roses" | "lavande" | "rocher-2";
+
 export type PlanCampagne = {
   /** Le village et son décor, entre la ferme et la lisière. */
   lieux: Lieu[];
@@ -261,6 +263,12 @@ export type PlanCampagne = {
   /** L'amorce qui relie la cour au chemin. */
   desserte: PointPlan[];
   arbres: { x: number; z: number; taille: number; graine: number }[];
+  /**
+   * Les détails de l'herbe : touffes, fleurs, buissons, lavande, pierres —
+   * ce qui fait qu'un pré a l'air habité (voir `docs/FORGE_ASSETS.md`). Ce
+   * sont des pièces du kit nature de la forge, instanciées.
+   */
+  herbes: { x: number; z: number; piece: PieceHerbe; rot: number; echelle: number }[];
   sol: EmpriseSol;
   /**
    * Pas de la trame, entre deux centres de parcelle.
@@ -506,7 +514,7 @@ const TEINTES: Record<CultureVoisine, { pousse: number; mur: number }> = {
 };
 
 /** Terre retournée — celle des cases labourées du joueur. */
-const TERRE = 0x593a20;
+const TERRE = 0x7a4b2e;
 /** Chaume après la moisson — celui du joueur. */
 const CHAUME = 0xe3cf98;
 /** Herbe rase d'une jachère. */
@@ -1148,7 +1156,37 @@ export function planCampagne(o: OptionsPlan): PlanCampagne {
     );
   }
 
-  return { lieux, parcelles, acces, route, desserte, arbres, sol, pas, emprise, routeZ, quart };
+  /*
+   * Les détails de l'herbe, autour de la ferme seulement : c'est là que le
+   * regard se pose, et c'est là que le pré des références fourmille de
+   * touffes et de fleurs. Plus loin, la brume et la taille à l'écran les
+   * rendraient invisibles — on ne paie pas pour ce qu'on ne voit pas.
+   */
+  const herbes: PlanCampagne["herbes"] = [];
+  const TIRAGE: [PieceHerbe, number, number, number][] = [
+    // pièce, nombre, rayon d'encombrement, échelle
+    ["touffe", 170, 0.2, 0.9],
+    ["fleurs", 55, 0.25, 1.0],
+    ["lavande", 18, 0.35, 0.9],
+    ["buisson-1", 16, 0.5, 0.55],
+    ["buisson-roses", 8, 0.5, 0.52],
+    ["rocher-2", 12, 0.5, 0.55],
+  ];
+  for (const [piece, n, r, echelle] of TIRAGE) {
+    let poses = 0;
+    for (let essai = 0; essai < n * 6 && poses < n; essai++) {
+      // Un anneau autour de l'île du joueur, plus dense près d'elle.
+      const a = rnd() * Math.PI * 2;
+      const d = emprise * 0.55 + Math.pow(rnd(), 1.6) * 26;
+      const x = joueur.x + Math.cos(a) * d;
+      const z = joueur.z + Math.sin(a) * d;
+      if (!surLeSol(sol, x, z) || !libre(x, z, r)) continue;
+      herbes.push({ x, z, piece, rot: rnd() * Math.PI * 2, echelle: echelle * (0.8 + rnd() * 0.4) });
+      poses++;
+    }
+  }
+
+  return { lieux, parcelles, acces, route, desserte, arbres, herbes, sol, pas, emprise, routeZ, quart };
 }
 
 /** L'emprise d'un tronçon de chemin, droit et parallèle à un axe. */

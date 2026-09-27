@@ -51,7 +51,7 @@ import {
   retenir,
   type Bornes,
 } from "./cadrage";
-import { makeArbre } from "./decor3d";
+import { geometrieHaie, makeArbre } from "./decor3d";
 import { createCropField } from "./crop-field";
 import type { CropShape } from "./crop-shapes";
 import { attachStudioEnvironment } from "./machine-kit";
@@ -64,7 +64,7 @@ import {
   type MachineRig,
 } from "./machines3d";
 import { createSpray } from "./particles";
-import { ambiance, heureCourante, meteoCourante, type Ambiance, type Saison } from "./ambiance";
+import { ambiance, heureCourante, meteoCourante, saisonCourante, type Ambiance } from "./ambiance";
 import { creerMeteo3d } from "./meteo3d";
 import { allumerLumieres, appliquerAmbiance } from "./lumieres";
 import { buildCharacter } from "./character-mesh";
@@ -516,7 +516,7 @@ const PULSE = 0xfff2b0;
 const STUBBLE_SOIL = 0xe3cf98;
 const RESIDUE_SOIL = 0x8a7048;
 /** Terre labourée : brune et grasse, celle qui attend la semence. */
-const PLOWED_SOIL = 0x593a20;
+const PLOWED_SOIL = 0x7a4b2e;
 /** Terre sèche et craquelée, laissée par une culture perdue. */
 const DRY_SOIL = 0xb5a179;
 
@@ -1417,8 +1417,10 @@ export function IsoFarmView({
      */
     let ambianceDuMoment: Ambiance | null = null;
     let ambianceCalculee = -1;
-    const calculerAmbiance = (saison: string): Ambiance =>
-      ambiance(heureCourante(saison as Saison), saison as Saison, meteoCourante(weatherRef.current));
+    const calculerAmbiance = (saison: string): Ambiance => {
+      const s = saisonCourante(saison);
+      return ambiance(heureCourante(s), s, meteoCourante(weatherRef.current));
+    };
     const lumieres = { hemi, ambient, sun, bounce };
     const appliquer = (a: Ambiance, eclair = 0) =>
       appliquerAmbiance(lumieres, a, eclair, scene.fog instanceof THREE.Fog ? scene.fog : null);
@@ -1935,7 +1937,8 @@ export function IsoFarmView({
     platform.castShadow = true;
     world.add(platform);
 
-    const hedgeMat = new THREE.MeshLambertMaterial({ color: 0x5c9a52, flatShading: true });
+    // La haie en boules (voir `geometrieHaie`) : couleurs de sommets, lisse.
+    const hedgeMat = new THREE.MeshLambertMaterial({ vertexColors: true });
     const fenceGroup = new THREE.Group();
     world.add(fenceGroup);
 
@@ -2575,37 +2578,34 @@ export function IsoFarmView({
       const cotePassage = accesIci?.cote ?? -1;
       const ouestAvant = Math.max(0, passageZ - passage / 2 + hh / 2);
       const ouestApres = Math.max(0, hh / 2 - (passageZ + passage / 2));
-      const hedges: [THREE.BoxGeometry, [number, number, number]][] = [
-        [new THREE.BoxGeometry(hw, hedgeH, hedgeT), [0, 0.15, -hh / 2]],
-        [new THREE.BoxGeometry(hw, hedgeH, hedgeT), [0, 0.15, hh / 2]],
-        [new THREE.BoxGeometry(hedgeT, hedgeH, hh), [(-cotePassage * hw) / 2, 0.15, 0]],
+      // Chaque pan : longueur, axe (x ou z), position. Les pans en z sont des
+      // haies en x tournées d'un quart de tour.
+      const hedges: [number, "x" | "z", [number, number, number]][] = [
+        [hw, "x", [0, 0, -hh / 2]],
+        [hw, "x", [0, 0, hh / 2]],
+        [hh, "z", [(-cotePassage * hw) / 2, 0, 0]],
       ];
       if (ouestAvant > 0.05) {
-        hedges.push([
-          new THREE.BoxGeometry(hedgeT, hedgeH, ouestAvant),
-          [(cotePassage * hw) / 2, 0.15, -hh / 2 + ouestAvant / 2],
-        ]);
+        hedges.push([ouestAvant, "z", [(cotePassage * hw) / 2, 0, -hh / 2 + ouestAvant / 2]]);
       }
       if (ouestApres > 0.05) {
-        hedges.push([
-          new THREE.BoxGeometry(hedgeT, hedgeH, ouestApres),
-          [(cotePassage * hw) / 2, 0.15, hh / 2 - ouestApres / 2],
-        ]);
+        hedges.push([ouestApres, "z", [(cotePassage * hw) / 2, 0, hh / 2 - ouestApres / 2]]);
       }
-      for (const [geo, [px, py, pz]] of hedges) {
-        const m = new THREE.Mesh(geo, hedgeMat);
+      hedges.forEach(([longueur, axe, [px, py, pz]], i) => {
+        // La haie de boules monte un peu plus que l'ancien pavé (0,15 + 0,55/2).
+        const m = new THREE.Mesh(geometrieHaie(longueur, hedgeH + 0.28, hedgeT * 1.3, 11 + i), hedgeMat);
         m.position.set(px, py, pz);
+        if (axe === "z") m.rotation.y = Math.PI / 2;
         m.castShadow = true;
+        m.receiveShadow = true;
         fenceGroup.add(m);
-      }
+      });
       // Deux montants de part et d'autre du passage : sans eux, la haie
       // s'interrompt sans raison lisible et l'ouverture passe pour un trou.
       for (const side of [-1, 1]) {
-        const pilier = new THREE.Mesh(
-          new THREE.BoxGeometry(hedgeT * 1.2, hedgeH * 1.15, hedgeT * 1.2),
-          hedgeMat,
-        );
-        pilier.position.set((cotePassage * hw) / 2, 0.15, passageZ + (side * passage) / 2);
+        // Une touffe plus haute que la haie, de chaque côté du passage.
+        const pilier = new THREE.Mesh(geometrieHaie(hedgeT * 1.6, hedgeH + 0.42, hedgeT * 1.6, 30 + side), hedgeMat);
+        pilier.position.set((cotePassage * hw) / 2, 0, passageZ + (side * passage) / 2);
         pilier.castShadow = true;
         fenceGroup.add(pilier);
       }

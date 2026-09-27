@@ -366,6 +366,8 @@ export interface Forcages {
   /** Accélération du temps (1 = temps du jeu). */
   vitesse?: number;
   meteo?: Meteo;
+  /** Saison de la lumière (développement : juger un été un jour d'automne). */
+  saison?: Saison;
 }
 
 const METEOS: Meteo[] = ["CLEAR", "CLOUDY", "RAIN", "STORM", "SNOW"];
@@ -375,6 +377,7 @@ const METEOS: Meteo[] = ["CLEAR", "CLOUDY", "RAIN", "STORM", "SNOW"];
  *   ?heure=19.2      fige l'heure
  *   ?vitesse=60      un jour de jeu en une minute et demie
  *   ?meteo=RAIN      CLEAR | CLOUDY | RAIN | STORM | SNOW
+ *   ?saison=SUMMER   la lumière d'une autre saison (le jeu, lui, ne change pas)
  */
 export function lireForcages(recherche: string): Forcages {
   const p = new URLSearchParams(recherche);
@@ -385,6 +388,8 @@ export function lireForcages(recherche: string): Forcages {
   if (p.has("vitesse") && Number.isFinite(v) && v > 0) f.vitesse = v;
   const m = p.get("meteo")?.toUpperCase() as Meteo | undefined;
   if (m && METEOS.includes(m)) f.meteo = m;
+  const s = p.get("saison")?.toUpperCase() as Saison | undefined;
+  if (s && s in COURSE) f.saison = s;
   return f;
 }
 
@@ -397,6 +402,11 @@ export function heureCourante(saison: Saison, now: number = Date.now()): number 
   const v = FORCAGES.vitesse ?? 1;
   const t = DEPART + (now - DEPART) * v;
   return heureDuJeu(dayProgress(t), saison);
+}
+
+/** La saison de la lumière : celle du jeu, sauf forçage de l'URL. */
+export function saisonCourante(saison: string): Saison {
+  return FORCAGES.saison ?? ((saison in COURSE ? saison : "SUMMER") as Saison);
 }
 
 /** La météo à afficher : celle du jeu, sauf forçage de l'URL. */

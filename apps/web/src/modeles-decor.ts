@@ -112,6 +112,17 @@ export async function instancierPiece(
   return groupe;
 }
 
+/** Le kit nature de la forge (`blender/recettes/nature.py`). */
+export const NATURE = "/assets/decor3d/nature.glb";
+
+/** Les saisons du jeu, dans le vocabulaire des couleurs de la forge. */
+export const SAISON_DECOR: Record<string, SaisonDecor | undefined> = {
+  SPRING: "printemps",
+  SUMMER: undefined,
+  AUTUMN: "automne",
+  WINTER: "hiver",
+};
+
 /** L'adresse des pancartes modélisées dans Blender (`blender/pancartes.py`). */
 export const PANCARTES = "/assets/decor3d/pancartes.glb";
 

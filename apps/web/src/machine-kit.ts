@@ -1,5 +1,6 @@
 import * as THREE from "three";
 import { mergeGeometries } from "three/examples/jsm/utils/BufferGeometryUtils.js";
+import { paveChanfreine } from "./decor3d";
 import { markShared } from "./three-cleanup";
 
 /**
@@ -108,16 +109,17 @@ export function createMaterials(pal: Palette, seed = 0, wear = 0): Materials {
     return c;
   };
 
-  // Peinture vernie : une couche spéculaire nette par-dessus la couleur. C'est
-  // elle qui fait la différence entre une carrosserie et un aplat.
+  // Peinture satinée : un léger vernis par-dessus la couleur. La direction
+  // artistique est celle du jouet peint (voir `docs/FORGE_ASSETS.md`) — un
+  // reflet doux, pas une carrosserie de salon.
   const paint = (hex: number, roughness = 0.36) =>
     new THREE.MeshPhysicalMaterial({
       color: soil(tint(hex), 0.5),
-      metalness: 0.15,
-      roughness: Math.min(1, roughness + w * 0.34),
+      metalness: 0.04,
+      roughness: Math.min(1, roughness + 0.18 + w * 0.3),
       // Le vernis part le premier : une machine fatiguée ne brille plus.
-      clearcoat: 0.7 * (1 - w * 0.85),
-      clearcoatRoughness: 0.18 + w * 0.4,
+      clearcoat: 0.3 * (1 - w * 0.85),
+      clearcoatRoughness: 0.35 + w * 0.4,
     });
   const std = (p: THREE.MeshStandardMaterialParameters) => new THREE.MeshStandardMaterial(p);
 
@@ -127,12 +129,12 @@ export function createMaterials(pal: Palette, seed = 0, wear = 0): Materials {
     trim: paint(pal.trim, 0.42),
     chrome: std({
       color: new THREE.Color(0xd9dee2).lerp(RUST, w * 0.5),
-      metalness: 0.96 - w * 0.5,
-      roughness: 0.14 + w * 0.5,
+      metalness: 0.55 - w * 0.3,
+      roughness: 0.32 + w * 0.4,
     }),
     steel: std({
       color: new THREE.Color(0x8f979e).lerp(RUST, w * 0.45),
-      metalness: 0.72 - w * 0.35,
+      metalness: 0.4 - w * 0.2,
       roughness: 0.38 + w * 0.4,
     }),
     // Fonte de carter : mate, presque grenue.
@@ -243,22 +245,24 @@ export function createBuildingMaterials(
 
   // La couverture est la seule surface qui accroche un peu la lumière : c'est
   // ce qui distingue une tuile émaillée ou un bac acier d'un mur crépi.
+  // Matière mate, sans reflet métallique : la direction artistique est celle
+  // du bois peint et de la tuile de terre cuite, pas de la tôle émaillée.
   const roof = std({
     color: tint(pal.roof, 0.7),
-    metalness: 0.12,
-    roughness: 0.52 + w * 0.3,
+    metalness: 0,
+    roughness: 0.78 + w * 0.15,
   });
   const timber = std({ color: tint(pal.timber), metalness: 0.02, roughness: 0.86 + w * 0.1 });
   const corrugate = std({
     color: tint(pal.metal, 0.6),
-    metalness: 0.55 - w * 0.3,
-    roughness: 0.42 + w * 0.4,
+    metalness: 0.2 - w * 0.1,
+    roughness: 0.62 + w * 0.3,
   });
 
   return {
     /* — Bâtiment ————————————————————————————————————————— */
     roof,
-    roofDark: std({ color: tint(shade(pal.roof, 0.68), 0.7), metalness: 0.1, roughness: 0.6 }),
+    roofDark: std({ color: tint(shade(pal.roof, 0.68), 0.7), metalness: 0, roughness: 0.8 }),
     wall: std({ color: tint(pal.wall), metalness: 0, roughness: 0.9 }),
     wallDark: std({ color: tint(shade(pal.wall, 0.74)), metalness: 0, roughness: 0.92 }),
     timber,
@@ -334,8 +338,18 @@ export function place(geo: THREE.BufferGeometry, pos: Vec3, rot?: Vec3): THREE.B
   return geo;
 }
 
+/**
+ * Un pavé aux arêtes chanfreinées (voir `paveChanfreine`) : la direction
+ * artistique du jeu — bois poli, jouet — n'a pas d'arête vive. Le biseau est
+ * fixe en unités du monde (trois centimètres de case), borné au quart de la
+ * plus petite dimension pour ne pas manger une planche.
+ */
 export function box(w: number, h: number, d: number, pos: Vec3, rot?: Vec3) {
-  return place(new THREE.BoxGeometry(w, h, d), pos, rot);
+  // Une latte, une planche, un barreau : sous six centimètres, un biseau ne
+  // se voit pas à la distance du jeu, et il coûterait trente-deux triangles
+  // par pièce — une étable en compte des centaines.
+  if (Math.min(w, h, d) < 0.06) return place(new THREE.BoxGeometry(w, h, d), pos, rot);
+  return place(paveChanfreine(w, h, d, 0.03).clone(), pos, rot);
 }
 
 export function cyl(rt: number, rb: number, h: number, seg: number, pos: Vec3, rot?: Vec3) {

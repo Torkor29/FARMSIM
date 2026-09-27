@@ -49,10 +49,15 @@ import {
 /* Teintes                                                             */
 /* ------------------------------------------------------------------ */
 
+/*
+ * La palette de la forge (`blender/forge/palette.py`) : vert sauge pour les
+ * toitures de la ferme (l'unité de la cour, en plus doux que l'ancien vert
+ * sapin), tuile brique pour la maison et le poulailler, ardoise, bois miel.
+ */
 const PALETTES: Record<BuildingType, BuildingPalette> = {
-  SILO: { roof: 0x2f7d6b, wall: 0xc8ccd0, timber: 0x8a704e, metal: 0xb6bcc2 },
-  HAY_BARN: { roof: 0x2f7d6b, wall: 0xb0824c, timber: 0x8a5f38, metal: 0xa9b0b6 },
-  MACHINE_SHED: { roof: 0x2f7d6b, wall: 0xc08a52, timber: 0x8a5f38, metal: 0xa9b0b6 },
+  SILO: { roof: 0x5e9a63, wall: 0xc8ccd0, timber: 0x8a704e, metal: 0xb6bcc2 },
+  HAY_BARN: { roof: 0x5e9a63, wall: 0xb0824c, timber: 0x8a5f38, metal: 0xa9b0b6 },
+  MACHINE_SHED: { roof: 0x5e9a63, wall: 0xc08a52, timber: 0x8a5f38, metal: 0xa9b0b6 },
   // Bardage éclairci, ossature assombrie.
   //
   // La grange était le seul gros bâtiment sans contraste : mur à 48 % de
@@ -63,15 +68,15 @@ const PALETTES: Record<BuildingType, BuildingPalette> = {
   // On monte le bardage à 68 % et on descend l'ossature à 29 % : trente-neuf
   // points, du même ordre que la maison, sans toucher à la toiture verte qui
   // fait l'unité de la ferme.
-  CATTLE_BARN: { roof: 0x2f7d6b, wall: 0xd8b485, timber: 0x6b452a, metal: 0xa9b0b6 },
+  CATTLE_BARN: { roof: 0x5e9a63, wall: 0xd8b485, timber: 0x6b452a, metal: 0xa9b0b6 },
   PIGSTY: { roof: 0x9a5f3a, wall: 0xd6c6a8, timber: 0x8a6a45, metal: 0xa9b0b6 },
-  HENHOUSE: { roof: 0xc0503a, wall: 0xdcc38c, timber: 0x8a6a45, metal: 0xa9b0b6 },
+  HENHOUSE: { roof: 0xd6503a, wall: 0xdcc38c, timber: 0x8a6a45, metal: 0xa9b0b6 },
   SHEEPFOLD: { roof: 0x4f7f8c, wall: 0xc2a377, timber: 0x7d5330, metal: 0xa9b0b6 },
   WORKSHOP: { roof: 0x5a6470, wall: 0xa8a49c, timber: 0x6f5a3e, metal: 0x9aa2a9 },
-  FARMHOUSE: { roof: 0xa8503a, wall: 0xe6d9bd, timber: 0x7d5330, metal: 0xa9b0b6 },
-  PADDOCK: { roof: 0x2f7d6b, wall: 0xc2a377, timber: 0x8a6a45, metal: 0xa9b0b6 },
+  FARMHOUSE: { roof: 0xc4583f, wall: 0xe6d9bd, timber: 0x7d5330, metal: 0xa9b0b6 },
+  PADDOCK: { roof: 0x5e9a63, wall: 0xc2a377, timber: 0x8a6a45, metal: 0xa9b0b6 },
   PIG_YARD: { roof: 0x9a5f3a, wall: 0xc2a377, timber: 0x8a6a45, metal: 0xa9b0b6 },
-  HEN_YARD: { roof: 0xc0503a, wall: 0xc2a377, timber: 0x8a6a45, metal: 0xa9b0b6 },
+  HEN_YARD: { roof: 0xd6503a, wall: 0xc2a377, timber: 0x8a6a45, metal: 0xa9b0b6 },
   COLD_ROOM: { roof: 0x8f9aa4, wall: 0xe8ecef, timber: 0x6f5a3e, metal: 0x9aa2a9 },
   // Silo couloir : du béton et une bâche, aucune toiture — la teinte
   // « roof » ne sert qu'aux liserés d'arête.
@@ -88,8 +93,8 @@ const PALETTES: Record<BuildingType, BuildingPalette> = {
   // Les deux annexes d'élevage : l'inox clair du bac à eau, l'acier galvanisé
   // et le bois du râtelier. Toiture verte pour l'une et l'autre — elles se
   // posent contre une étable, et rien ne doit trancher avec elle.
-  WATER_TROUGH: { roof: 0x2f7d6b, wall: 0xd3dbe0, timber: 0x7d6a4a, metal: 0xcbd4d9 },
-  HAY_RACK: { roof: 0x2f7d6b, wall: 0xd8c68f, timber: 0x8a6a45, metal: 0xb2bbc1 },
+  WATER_TROUGH: { roof: 0x5e9a63, wall: 0xd3dbe0, timber: 0x7d6a4a, metal: 0xcbd4d9 },
+  HAY_RACK: { roof: 0x5e9a63, wall: 0xd8c68f, timber: 0x8a6a45, metal: 0xb2bbc1 },
   // Le logement : crépi clair et tuile sombre, la maison d'habitation plutôt
   // que le hangar. C'est le seul bâtiment de la cour où quelqu'un dort.
   EMPLOYEE_HOUSING: { roof: 0x3f7a6a, wall: 0xe6ddcb, timber: 0x8c6b46, metal: 0xb7735a },
