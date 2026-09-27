@@ -28,6 +28,7 @@ export * from "./land.js";
 export * from "./parcelles.js";
 export * from "./nouveautes.js";
 export * from "./reinitialisation.js";
+export * from "./decoration.js";
 export * from "./livestock.js";
 export * from "./ripeness.js";
 export * from "./soil.js";

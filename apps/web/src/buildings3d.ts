@@ -1,8 +1,10 @@
 import * as THREE from "three";
+import { Occupation } from "./placement";
 import { BUILDING_DEFS, type BuildingType } from "@farmsim/shared";
 import {
   HALF,
   Part,
+  ball,
   box,
   cone,
   createBuildingMaterials,
@@ -49,10 +51,15 @@ import {
 /* Teintes                                                             */
 /* ------------------------------------------------------------------ */
 
+/*
+ * La palette de la forge (`blender/forge/palette.py`) : vert sauge pour les
+ * toitures de la ferme (l'unité de la cour, en plus doux que l'ancien vert
+ * sapin), tuile brique pour la maison et le poulailler, ardoise, bois miel.
+ */
 const PALETTES: Record<BuildingType, BuildingPalette> = {
-  SILO: { roof: 0x2f7d6b, wall: 0xc8ccd0, timber: 0x8a704e, metal: 0xb6bcc2 },
-  HAY_BARN: { roof: 0x2f7d6b, wall: 0xb0824c, timber: 0x8a5f38, metal: 0xa9b0b6 },
-  MACHINE_SHED: { roof: 0x2f7d6b, wall: 0xc08a52, timber: 0x8a5f38, metal: 0xa9b0b6 },
+  SILO: { roof: 0x5e9a63, wall: 0xc8ccd0, timber: 0x8a704e, metal: 0xb6bcc2 },
+  HAY_BARN: { roof: 0x5e9a63, wall: 0xb0824c, timber: 0x8a5f38, metal: 0xa9b0b6 },
+  MACHINE_SHED: { roof: 0x5e9a63, wall: 0xc08a52, timber: 0x8a5f38, metal: 0xa9b0b6 },
   // Bardage éclairci, ossature assombrie.
   //
   // La grange était le seul gros bâtiment sans contraste : mur à 48 % de
@@ -63,15 +70,15 @@ const PALETTES: Record<BuildingType, BuildingPalette> = {
   // On monte le bardage à 68 % et on descend l'ossature à 29 % : trente-neuf
   // points, du même ordre que la maison, sans toucher à la toiture verte qui
   // fait l'unité de la ferme.
-  CATTLE_BARN: { roof: 0x2f7d6b, wall: 0xd8b485, timber: 0x6b452a, metal: 0xa9b0b6 },
+  CATTLE_BARN: { roof: 0x5e9a63, wall: 0xd8b485, timber: 0x6b452a, metal: 0xa9b0b6 },
   PIGSTY: { roof: 0x9a5f3a, wall: 0xd6c6a8, timber: 0x8a6a45, metal: 0xa9b0b6 },
-  HENHOUSE: { roof: 0xc0503a, wall: 0xdcc38c, timber: 0x8a6a45, metal: 0xa9b0b6 },
+  HENHOUSE: { roof: 0xd6503a, wall: 0xdcc38c, timber: 0x8a6a45, metal: 0xa9b0b6 },
   SHEEPFOLD: { roof: 0x4f7f8c, wall: 0xc2a377, timber: 0x7d5330, metal: 0xa9b0b6 },
   WORKSHOP: { roof: 0x5a6470, wall: 0xa8a49c, timber: 0x6f5a3e, metal: 0x9aa2a9 },
-  FARMHOUSE: { roof: 0xa8503a, wall: 0xe6d9bd, timber: 0x7d5330, metal: 0xa9b0b6 },
-  PADDOCK: { roof: 0x2f7d6b, wall: 0xc2a377, timber: 0x8a6a45, metal: 0xa9b0b6 },
+  FARMHOUSE: { roof: 0xc4583f, wall: 0xe6d9bd, timber: 0x7d5330, metal: 0xa9b0b6 },
+  PADDOCK: { roof: 0x5e9a63, wall: 0xc2a377, timber: 0x8a6a45, metal: 0xa9b0b6 },
   PIG_YARD: { roof: 0x9a5f3a, wall: 0xc2a377, timber: 0x8a6a45, metal: 0xa9b0b6 },
-  HEN_YARD: { roof: 0xc0503a, wall: 0xc2a377, timber: 0x8a6a45, metal: 0xa9b0b6 },
+  HEN_YARD: { roof: 0xd6503a, wall: 0xc2a377, timber: 0x8a6a45, metal: 0xa9b0b6 },
   COLD_ROOM: { roof: 0x8f9aa4, wall: 0xe8ecef, timber: 0x6f5a3e, metal: 0x9aa2a9 },
   // Silo couloir : du béton et une bâche, aucune toiture — la teinte
   // « roof » ne sert qu'aux liserés d'arête.
@@ -88,8 +95,8 @@ const PALETTES: Record<BuildingType, BuildingPalette> = {
   // Les deux annexes d'élevage : l'inox clair du bac à eau, l'acier galvanisé
   // et le bois du râtelier. Toiture verte pour l'une et l'autre — elles se
   // posent contre une étable, et rien ne doit trancher avec elle.
-  WATER_TROUGH: { roof: 0x2f7d6b, wall: 0xd3dbe0, timber: 0x7d6a4a, metal: 0xcbd4d9 },
-  HAY_RACK: { roof: 0x2f7d6b, wall: 0xd8c68f, timber: 0x8a6a45, metal: 0xb2bbc1 },
+  WATER_TROUGH: { roof: 0x5e9a63, wall: 0xd3dbe0, timber: 0x7d6a4a, metal: 0xcbd4d9 },
+  HAY_RACK: { roof: 0x5e9a63, wall: 0xd8c68f, timber: 0x8a6a45, metal: 0xb2bbc1 },
   // Le logement : crépi clair et tuile sombre, la maison d'habitation plutôt
   // que le hangar. C'est le seul bâtiment de la cour où quelqu'un dort.
   EMPLOYEE_HOUSING: { roof: 0x3f7a6a, wall: 0xe6ddcb, timber: 0x8c6b46, metal: 0xb7735a },
@@ -284,14 +291,24 @@ function mound(r: number, hgt: number, pos: Vec3): THREE.BufferGeometry {
   return place(geo, pos);
 }
 
-/** Fenêtre : une embrasure sombre, un verre, et son cadre clair. */
+/** Fenêtre : une embrasure sombre, une vitre (qui s'allume le soir), et son cadre clair. */
 function window_(part: Part, w: number, h: number, pos: Vec3, rot?: Vec3): void {
   const node = part.child(pos, { rot });
   node.add("wallDark", box(w, h, 0.03, [0, 0, 0]));
-  node.add("glass", box(w - 0.03, h - 0.03, 0.012, [0, 0, 0.018]));
+  node.add("window", box(w - 0.03, h - 0.03, 0.012, [0, 0, 0.018]));
   node.add("timber", box(w + 0.03, 0.028, 0.035, [0, h / 2, 0.02]));
   node.add("timber", box(w + 0.03, 0.028, 0.035, [0, -h / 2, 0.02]));
   node.add("timber", box(0.028, h, 0.035, [0, 0, 0.024]));
+  // La jardinière sous l'appui : une caisse, trois touffes, des fleurs.
+  // C'est le détail qui fait qu'une façade est habitée.
+  if (w >= 0.14) {
+    // Cent cinquante triangles par fenêtre : une laiterie en a six.
+    node.add("timber", box(w + 0.04, 0.05, 0.07, [0, -h / 2 - 0.035, 0.05]));
+    node.add("foliage", box(w, 0.05, 0.06, [0, -h / 2 + 0.01, 0.05]));
+    for (const dx of [-w * 0.3, 0, w * 0.3]) {
+      node.add("flower", place(new THREE.IcosahedronGeometry(0.02, 0), [dx, -h / 2 + 0.04, 0.07]));
+    }
+  }
 }
 
 /**
@@ -331,6 +348,13 @@ function doorway(
     );
   }
   part.add("timber", box(w + 0.1, 0.07, thick * 1.2, [0, h + 0.03, z]));
+  // Une lanterne au mur, à droite de la porte : elle s'allume le soir.
+  if (opts.blind !== false) {
+    const lx = w / 2 + 0.11;
+    part.add("timber", box(0.02, 0.02, 0.07, [lx, h * 0.82 + 0.05, z + 0.035]));
+    part.add("lamp", box(0.05, 0.07, 0.05, [lx, h * 0.82, z + 0.07]));
+    part.add("roofDark", box(0.07, 0.015, 0.07, [lx, h * 0.82 + 0.043, z + 0.07]));
+  }
   part.child([0, 0, z + 0.16], { role: "threshold" });
 }
 
@@ -350,30 +374,60 @@ function chimney(part: Part, x: number, z: number, top: number): void {
  * enterrée, sans quoi le modèle descend sous le terrain.
  */
 function yardDressing(part: Part, w: number, d: number, seed: number): void {
+  for (const b of placerHabillage(w, d, seed, part.emprises())) {
+    if (b.genre === "buisson") {
+      part.add("foliage", mound(b.r, b.r * 1.15, [b.x, 0, b.z]));
+      part.add("foliage", mound(b.r * 0.62, b.r * 0.8, [b.x + b.r * 0.6, 0, b.z + b.r * 0.35]));
+    } else {
+      const rock = new THREE.DodecahedronGeometry(0.05, 0);
+      rock.scale(1, 0.55, 1);
+      part.add("concrete", place(rock, [b.x, 0.028, b.z]));
+    }
+  }
+}
+
+/**
+ * Où poser les buissons et les pierres d'une cour — pur, testé.
+ *
+ * Avant : cinq tirages, un seul interdit (« pas au milieu »), fixé à 64 % de
+ * la parcelle quel que soit le bâtiment. Des buissons se fondaient l'un dans
+ * l'autre, d'autres sortaient d'un mur. Maintenant chacun passe par
+ * l'occupation (`placement.ts`) : ni dans ce qui s'élève (`emprises`), ni
+ * dans un autre buisson, ni hors de l'empreinte.
+ */
+export function placerHabillage(
+  w: number,
+  d: number,
+  seed: number,
+  bati: { x: number; z: number; w: number; d: number }[],
+): { genre: "buisson" | "rocher"; x: number; z: number; r: number }[] {
   const rnd = (n: number) => {
     const s = Math.sin((seed + n) * 127.1) * 43758.5453;
     return s - Math.floor(s);
   };
   const MAX_R = 0.1;
-  const spanX = w - EDGE * 2 - MAX_R * 3;
-  const spanZ = d - EDGE * 2 - MAX_R * 3;
-  for (let i = 0; i < 5; i++) {
-    const x = (rnd(i) - 0.5) * spanX;
-    const z = (rnd(i + 20) - 0.5) * spanZ;
-    // On ne plante rien au milieu : c'est là que se trouve le bâti.
-    if (Math.abs(x) < w * 0.32 && Math.abs(z) < d * 0.32) continue;
-    const r = 0.05 + rnd(i + 40) * (MAX_R - 0.05);
-    part.add("foliage", mound(r, r * 1.15, [x, 0, z]));
-    part.add("foliage", mound(r * 0.62, r * 0.8, [x + r * 0.6, 0, z + r * 0.35]));
-  }
-  for (let i = 0; i < 2; i++) {
-    const x = (rnd(i + 60) - 0.5) * spanX;
-    const z = (rnd(i + 80) - 0.5) * spanZ;
-    if (Math.abs(x) < w * 0.34 && Math.abs(z) < d * 0.34) continue;
-    const rock = new THREE.DodecahedronGeometry(0.05, 0);
-    rock.scale(1, 0.55, 1);
-    part.add("concrete", place(rock, [x, 0.028, z]));
-  }
+  const occ = new Occupation();
+  for (const [i, b] of bati.entries()) occ.ajouter({ id: `bati-${i}`, genre: "batiment", forme: { type: "boite", ...b } });
+  const out: { genre: "buisson" | "rocher"; x: number; z: number; r: number }[] = [];
+  const limiteX = w / 2 - EDGE;
+  const limiteZ = d / 2 - EDGE;
+  const tirer = (genre: "buisson" | "rocher", n: number, essais: number, base: number) => {
+    let poses = 0;
+    for (let i = 0; i < essais && poses < n; i++) {
+      const r = genre === "buisson" ? 0.05 + rnd(base + i + 40) * (MAX_R - 0.05) : 0.05;
+      // L'encombrement réel : la touffe et sa voisine décalée.
+      const encombre = genre === "buisson" ? r * 1.45 : r;
+      const x = (rnd(base + i) - 0.5) * 2 * (limiteX - encombre);
+      const z = (rnd(base + i + 20) - 0.5) * 2 * (limiteZ - encombre);
+      if (occ.poser(`${genre}-${i}`, [{ genre, forme: { type: "cercle", x, z, r: encombre } }])) {
+        out.push({ genre, x, z, r });
+        poses++;
+      }
+    }
+  };
+  tirer("buisson", 5, 80, 0);
+  tirer("rocher", 2, 40, 100);
+  return out;
 }
 
 /** Panneaux solaires : la marque visible d'un bâtiment de haut niveau. */
@@ -1493,7 +1547,7 @@ function buildEmployeeHousing(w: number, d: number, lvl: number): Built {
   const pas = (corpsW * 0.78) / Math.max(1, lits);
   for (let i = 0; i < lits; i++) {
     const x = -((lits - 1) / 2) * pas + i * pas;
-    root.add("glass", box(0.1, 0.11, 0.02, [x, 0.04 + mur * 0.62, corpsD / 2 + 0.01]));
+    root.add("window", box(0.1, 0.11, 0.02, [x, 0.04 + mur * 0.62, corpsD / 2 + 0.01]));
   }
 
   // La porte, toujours au centre, et la cheminée : le seul signe qu'on y vit.

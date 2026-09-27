@@ -42,6 +42,23 @@ catalogue de pièces, famille par famille (`?family=hat`, `beard`, `clothes`…)
 puis le menu de création. `?solo` n'affiche que le menu, pour juger un visage
 en grand sans faire tourner huit canevas.
 
+Forge d'assets 3D (décors modélisés par script dans Blender : arbres, moulin,
+puits, serre, étals, sol…) — recettes dans `apps/web/blender/recettes/`,
+`.glb` livrés dans `apps/web/public/assets/decor3d/`, atelier de contrôle
+`http://localhost:5173/decor.html` :
+
+```bash
+scripts/forge.sh liste
+scripts/forge.sh construire moulin --apercu
+```
+
+Lumière du jour et météo : `?heure=19.2` (coucher), `?vitesse=60` (un jour en
+une minute et demie), `?meteo=RAIN|STORM|SNOW` — dans le jeu comme dans
+l'atelier `decor.html` (`?scene=fete-des-recoltes`, `?scene=source-chaude`).
+
+Voir [`apps/web/blender/README.md`](./apps/web/blender/README.md) et la R&D
+[`docs/FORGE_ASSETS.md`](./docs/FORGE_ASSETS.md).
+
 Modèles 3D exportables (Blender, autre moteur) — `models/*.glb`, hiérarchie
 nommée et animation « Travail » incluses :
 

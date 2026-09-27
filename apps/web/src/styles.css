@@ -7960,3 +7960,254 @@ button.tiny {
 .activite-engrais { margin: 1rem 0; padding: .8rem; border: 1px solid var(--line); border-radius: var(--r-sm); }
 .activite-engrais summary { cursor: pointer; font-weight: 700; }
 .activite-engrais label { display: flex; gap: .5rem; align-items: center; margin-top: .7rem; }
+
+/* ==========================================================================
+   L'heure du jour dans le ciel (voir `ambiance.ts`)
+
+   Un voile par-dessus la palette de saison : nul à midi, il monte avec le
+   soir — rose à l'aube, orangé au coucher, violet au crépuscule, bleu nuit.
+   L'astre (soleil ou lune) traverse le ciel de gauche à droite. Tout passe
+   par des transitions lentes : l'ambiance n'est recalculée que toutes les
+   deux secondes, le navigateur lisse l'entre-deux.
+   ========================================================================== */
+.sky-heure {
+  position: absolute;
+  inset: 0;
+  background:
+    radial-gradient(ellipse 120% 45% at 50% 100%, var(--h-horizon) 0%, transparent 70%),
+    linear-gradient(180deg, var(--h-haut) 0%, var(--h-bas) 100%);
+  transition: opacity 3s linear, background 3s linear;
+  pointer-events: none;
+}
+
+.sky-etoiles {
+  position: absolute;
+  inset: 0 0 35%;
+  background-image:
+    radial-gradient(1.5px 1.5px at 12% 18%, #fff 60%, transparent 61%),
+    radial-gradient(1px 1px at 27% 8%, #fff 60%, transparent 61%),
+    radial-gradient(1.5px 1.5px at 41% 26%, #fff 60%, transparent 61%),
+    radial-gradient(1px 1px at 58% 12%, #fff 60%, transparent 61%),
+    radial-gradient(2px 2px at 69% 30%, #fff 60%, transparent 61%),
+    radial-gradient(1px 1px at 83% 16%, #fff 60%, transparent 61%),
+    radial-gradient(1.5px 1.5px at 92% 38%, #fff 60%, transparent 61%),
+    radial-gradient(1px 1px at 6% 44%, #fff 60%, transparent 61%),
+    radial-gradient(1px 1px at 35% 48%, #fff 60%, transparent 61%),
+    radial-gradient(1.5px 1.5px at 76% 52%, #fff 60%, transparent 61%);
+  background-size: 420px 300px;
+  transition: opacity 4s linear;
+  animation: etoiles-scintillent 6s ease-in-out infinite alternate;
+  pointer-events: none;
+}
+@keyframes etoiles-scintillent {
+  from { filter: brightness(0.8); }
+  to { filter: brightness(1.25); }
+}
+
+.sky-astre {
+  position: absolute;
+  width: clamp(48px, 6vw, 92px);
+  aspect-ratio: 1;
+  translate: -50% -50%;
+  border-radius: 50%;
+  background: var(--astre);
+  box-shadow:
+    0 0 50px 22px color-mix(in srgb, var(--astre) 55%, transparent),
+    0 0 140px 70px color-mix(in srgb, var(--astre) 22%, transparent);
+  transition: left 2s linear, top 2s linear, background 3s linear, box-shadow 3s linear, opacity 3s linear;
+  pointer-events: none;
+}
+/* La lune : plus petite, un croissant d'ombre, un halo froid. */
+.sky-astre.lune {
+  width: clamp(34px, 4vw, 60px);
+  background: radial-gradient(circle at 36% 38%, #fbfcff 0 55%, #d8def0 56% 100%);
+  box-shadow: 0 0 40px 14px rgba(200, 214, 255, 0.35), inset -8px -4px 0 0 rgba(150, 165, 210, 0.45);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sky-etoiles { animation: none; }
+}
+
+/* ------------------------------------------------------------------ */
+/* Décoration libre (`DecoPanel.tsx`)                                   */
+/* ------------------------------------------------------------------ */
+
+.deco-barre {
+  position: fixed;
+  left: 50%;
+  bottom: 12px;
+  transform: translateX(-50%);
+  /* Au-dessus du bouton du calendrier (45) : pendant qu'on décore, il
+     mordait sur le dernier objet du rayon. */
+  z-index: 50;
+  width: min(920px, calc(100vw - 24px));
+  max-height: min(46vh, 330px);
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+  padding: 0.6rem 0.75rem 0.7rem;
+  background: var(--glass);
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  box-shadow: 0 10px 30px rgba(14, 74, 61, 0.22);
+  backdrop-filter: blur(6px);
+  color: var(--ink);
+}
+.deco-tete {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+.deco-tete strong {
+  font-size: 1rem;
+  color: var(--teal-700);
+}
+.deco-aide {
+  flex: 1;
+  font-size: 0.78rem;
+  color: var(--ink-soft);
+  min-width: 0;
+}
+.deco-compte {
+  font-size: 0.75rem;
+  color: var(--muted);
+  white-space: nowrap;
+}
+.deco-fermer {
+  border: 0;
+  background: transparent;
+  font-size: 1.3rem;
+  line-height: 1;
+  cursor: pointer;
+  color: var(--ink-soft);
+  padding: 0 0.3rem;
+}
+.deco-rayons {
+  display: flex;
+  gap: 0.3rem;
+  overflow-x: auto;
+}
+.deco-rayons button {
+  border: 1px solid var(--line);
+  background: var(--cream);
+  border-radius: 999px;
+  padding: 0.28rem 0.75rem;
+  font-size: 0.8rem;
+  cursor: pointer;
+  white-space: nowrap;
+  color: var(--ink);
+}
+.deco-rayons button.on {
+  background: var(--teal-500);
+  border-color: var(--teal-500);
+  color: #fff;
+}
+.deco-articles {
+  list-style: none;
+  margin: 0;
+  padding: 0.1rem 0 0.2rem;
+  display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: 104px;
+  gap: 0.45rem;
+  overflow-x: auto;
+}
+.deco-article {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.15rem;
+  padding: 0.35rem 0.3rem 0.4rem;
+  border: 2px solid transparent;
+  border-radius: 12px;
+  background: var(--sand);
+  cursor: pointer;
+  color: var(--ink);
+}
+.deco-article img {
+  width: 72px;
+  height: 72px;
+  object-fit: contain;
+}
+.deco-article:hover:not(:disabled) {
+  border-color: var(--gold-300);
+}
+.deco-article.on {
+  border-color: var(--teal-500);
+  background: var(--teal-100);
+}
+.deco-article:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.deco-nom {
+  font-size: 0.72rem;
+  line-height: 1.15;
+  text-align: center;
+  min-height: 2.3em;
+}
+.deco-prix {
+  font-size: 0.72rem;
+  font-weight: 700;
+  color: var(--gold-700);
+}
+.deco-main,
+.deco-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.4rem;
+}
+.deco-etat {
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--ok);
+  margin-right: auto;
+}
+.deco-etat.non {
+  color: var(--danger);
+}
+.deco-fiche {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+.deco-fiche-nom {
+  display: flex;
+  align-items: baseline;
+  gap: 0.6rem;
+}
+.deco-vendre {
+  color: var(--danger);
+}
+.deco-nuancier {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.3rem;
+}
+.deco-pastille {
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  border: 2px solid rgba(0, 0, 0, 0.12);
+  cursor: pointer;
+  padding: 0;
+}
+.deco-pastille.on {
+  border-color: var(--ink);
+  box-shadow: 0 0 0 2px #fff inset;
+}
+.deco-pastille.origine {
+  background: conic-gradient(#c0503a, #e8c24a, #7fa36a, #4f78b0, #9a86c4, #c0503a);
+}
+@media (max-width: 640px) {
+  .deco-barre {
+    bottom: 0;
+    border-radius: 16px 16px 0 0;
+    width: 100vw;
+  }
+  .deco-aide {
+    display: none;
+  }
+}

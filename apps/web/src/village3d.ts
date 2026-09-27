@@ -17,10 +17,11 @@
  */
 
 import * as THREE from "three";
+import { mergeGeometries } from "three/examples/jsm/utils/BufferGeometryUtils.js";
 import { createMachineRig, type MachineRig } from "./machines3d";
 import { ajouterArbre, ajouterBoite, ajouterGeometrie, maillageFacette, pose } from "./decor3d";
 import { COTE_LIEU, type GenreLieu, type Lieu } from "./countryside-plan";
-import { MODELES_DISPONIBLES, PANCARTES, poserModele, poserPiece } from "./modeles-decor";
+import { MODELES_DISPONIBLES, PANCARTES, poserArbreForge, poserModele, poserPiece, SOL } from "./modeles-decor";
 
 /** Le bois des clôtures et des piquets, celui de la cour. */
 export const BOIS = 0x7a5534;
@@ -101,7 +102,30 @@ const rucheEnPaille = () =>
 /** Une touffe arrondie : le pied d'un buisson de lavande. */
 const touffe = () => forme("touffe", () => new THREE.IcosahedronGeometry(0.5, 1));
 
-type Tableaux = { pos: number[]; col: number[] };
+type Tableaux = {
+  pos: number[];
+  col: number[];
+  /** Les globes des réverbères : un maillage émissif à part, qui s'allume le soir. */
+  lampes?: [number, number, number][];
+};
+
+/** Une fleur : une petite boule, partagée (au parvis, aux jardinières). */
+const FLEUR = new THREE.IcosahedronGeometry(1, 0);
+const COULEURS_FLEURS = [0xd94c5a, 0xf2c542, 0xf4f0f5, 0xe2493a, 0x8b7bd0];
+
+/**
+ * Un réverbère de village : un fût sombre, une console, un globe. Le globe
+ * est versé à part (`t.lampes`) : il brille, et s'allume le soir comme les
+ * lanternes (`allumerLumieres`).
+ */
+function reverbere(t: Tableaux, x: number, z: number, h = 2.2): void {
+  const FONTE = 0x3c4046;
+  ajouterBoite(t.pos, t.col, x, 0.1, z, 0.22, 0.2, 0.22, FONTE);
+  ajouterBoite(t.pos, t.col, x, h / 2, z, 0.08, h, 0.08, FONTE);
+  ajouterBoite(t.pos, t.col, x, h + 0.02, z, 0.2, 0.05, 0.2, FONTE);
+  ajouterBoite(t.pos, t.col, x, h + 0.38, z, 0.24, 0.05, 0.24, FONTE);
+  (t.lampes ??= []).push([x, h + 0.2, z]);
+}
 
 /** Un toit à deux pans : les pignons pleins, et des pans qui débordent. */
 function toit(
@@ -145,6 +169,19 @@ function fenetre(
       const [vx, vz] = face === "z" ? [s * (l / 2 + 0.13), 0.02] : [0.02, s * (l / 2 + 0.13)];
       const [vw, vd] = face === "z" ? [0.2, 0.04] : [0.04, 0.2];
       ajouterBoite(t.pos, t.col, x + vx, y, z + vz, vw, h, vd, o.volets);
+    }
+    // La jardinière sous l'appui, et ses fleurs : une fenêtre à volets est
+    // celle d'une maison habitée.
+    const [jx, jz] = face === "z" ? [0, 0.12] : [0.12, 0];
+    const [jw, jd] = face === "z" ? [l + 0.12, 0.16] : [0.16, l + 0.12];
+    ajouterBoite(t.pos, t.col, x + jx, y - h / 2 - 0.08, z + jz, jw, 0.12, jd, 0x8a6440);
+    ajouterBoite(t.pos, t.col, x + jx, y - h / 2 - 0.01, z + jz, jw * (face === "z" ? 0.92 : 0.7), 0.06,
+      jd * (face === "x" ? 0.92 : 0.7), 0x5f9a45);
+    for (let k = 0; k < 4; k++) {
+      const u = -l / 2 + (k + 0.5) * (l / 4);
+      const [fx, fz] = face === "z" ? [u, 0] : [0, u];
+      ajouterGeometrie(t.pos, t.col, FLEUR, pose(x + jx + fx, y - h / 2 + 0.05, z + jz + fz, k, 0.05),
+        COULEURS_FLEURS[k % COULEURS_FLEURS.length]!);
     }
   }
 }
@@ -405,11 +442,18 @@ function mairie(t: Tableaux, g: THREE.Group, j: Jetables, shadows: boolean): voi
   // Le parvis : deux massifs fleuris, deux tilleuls, un banc.
   for (const s of [-1, 1]) {
     ajouterBoite(t.pos, t.col, s * 2.1, 0.12, 1.55, 1.4, 0.18, 0.6, 0x7c5b3b);
-    for (let f = 0; f < 6; f++) {
-      ajouterBoite(t.pos, t.col, s * 2.1 - 0.55 + f * 0.22, 0.26, 1.55, 0.16, 0.12, 0.34, [0xd94c5a, 0xf2c542, 0xf4f0f5][f % 3]!);
+    // Un massif bombé de feuillage, piqué de fleurs rondes.
+    ajouterBoite(t.pos, t.col, s * 2.1, 0.25, 1.55, 1.25, 0.1, 0.45, 0x5f9a45);
+    for (let f = 0; f < 12; f++) {
+      const fx = s * 2.1 - 0.55 + (f % 6) * 0.22;
+      const fz = 1.45 + Math.floor(f / 6) * 0.2;
+      ajouterGeometrie(t.pos, t.col, FLEUR, pose(fx, 0.33, fz, f, 0.07), COULEURS_FLEURS[f % COULEURS_FLEURS.length]!);
     }
     ajouterArbre(t.pos, t.col, s * 3.0, 0, 2.9, 1.0, s > 0 ? 41 : 42);
   }
+  // Deux réverbères de part et d'autre du perron.
+  reverbere(t, -1.1, 1.6);
+  reverbere(t, 1.1, 1.6);
   ajouterBoite(t.pos, t.col, 1.2, 0.22, 2.7, 1.1, 0.08, 0.34, BOIS_CLAIR);
   ajouterBoite(t.pos, t.col, 1.2, 0.42, 2.55, 1.1, 0.3, 0.06, BOIS_CLAIR);
   // L'inscription, sous le fronton : une plaque émaillée contre la façade.
@@ -448,6 +492,9 @@ function concession(t: Tableaux, g: THREE.Group, j: Jetables, shadows: boolean, 
   }
   // Le hall : un socle, des montants, la vitrine d'angle.
   ajouterBoite(t.pos, t.col, xc, 0.08, zc, L, 0.16, P, 0x9aa1a7);
+  // Deux réverbères devant la vitrine.
+  reverbere(t, xc - L / 2 - 0.35, zc + P / 2 + 0.4);
+  reverbere(t, xc + L / 2 + 0.35, zc + P / 2 + 0.4);
   ajouterBoite(t.pos, t.col, xc, 0.16 + H / 2, zc, L - 0.1, H, P - 0.1, VITRE);
   for (let k = 0; k <= 5; k++) {
     ajouterBoite(t.pos, t.col, xc - L / 2 + k * (L / 5), 0.16 + H / 2, zc + P / 2, 0.08, H, 0.08, MUR);
@@ -548,6 +595,9 @@ function cooperative(t: Tableaux, g: THREE.Group, j: Jetables, shadows: boolean)
   ajouterBoite(t.pos, t.col, 0.9, 0.06, 2.1, 2.6, 0.06, 1.1, 0x5e656b);
   ajouterBoite(t.pos, t.col, 0.9, 0.1, 2.1, 2.4, 0.03, 0.9, 0x7e868c);
   ajouterGeometrie(t.pos, t.col, cone(10), pose(-2.5, 0.35, 0.7, 0, 1.3, 0.7, 1.3), 0xe0c26a);
+  // Deux réverbères aux bouts du pont-bascule.
+  reverbere(t, -0.75, 2.1, 2.4);
+  reverbere(t, 2.6, 2.1, 2.4);
   // Des sacs devant le hangar.
   for (let i = 0; i < 6; i++) {
     ajouterBoite(t.pos, t.col, 0.9 + (i % 3) * 0.5, 0.2 + Math.floor(i / 3) * 0.3, 1.0, 0.46, 0.28, 0.36, 0xe8d6a6);
@@ -699,6 +749,47 @@ function pancarteRucher(g: THREE.Group, j: Jetables, shadows: boolean): void {
 /**
  * Un lieu du village, posé sur son emprise. `y` est le sol de la campagne.
  */
+/** L'écart des pommiers du verger : toute la couronne tient dans le décor. */
+export const ECART_VERGER = 1.9;
+
+/** Une pomme : une petite boule lisse, partagée. */
+const POMME = new THREE.IcosahedronGeometry(1, 1);
+
+/** L'étang dessiné en code — la version de secours de la mare de la forge. */
+function etangEnCode(t: Tableaux, group: THREE.Group, j: Jetables): void {
+  // Un disque d'eau à bord de roseaux, et un ponton.
+  const n = 20;
+  // Il tient dans l'emprise du décor, plus petite que celle du village.
+  const rayon = (k: number) => 2.35 + Math.sin(k * 2.1) * 0.28 + Math.cos(k * 1.3) * 0.2;
+  const eau: number[] = [];
+  const eauCol: number[] = [];
+  for (let k = 0; k < n; k++) {
+    const a0 = (k / n) * Math.PI * 2;
+    const a1 = ((k + 1) / n) * Math.PI * 2;
+    for (const [r, h, c] of [
+      [1.18, 0.012, new THREE.Color(0x8aa65a)],
+      [1, 0.03, new THREE.Color(0x6fb4d6)],
+    ] as const) {
+      eau.push(
+        0, h, 0,
+        Math.cos(a1) * rayon(k + 1) * r, h, Math.sin(a1) * rayon(k + 1) * r,
+        Math.cos(a0) * rayon(k) * r, h, Math.sin(a0) * rayon(k) * r,
+      );
+      for (let v = 0; v < 3; v++) eauCol.push(c.r, c.g, c.b);
+    }
+  }
+  const m = maillageFacette(eau, eauCol, { nom: "etang" });
+  j.geometries.push(m.geometry);
+  j.materiaux.push(m.material as THREE.Material);
+  group.add(m);
+  for (let k = 0; k < 14; k++) {
+    const a = k * 0.9 + 0.4;
+    const r = rayon(k) * 1.05;
+    ajouterBoite(t.pos, t.col, Math.cos(a) * r, 0.35, Math.sin(a) * r, 0.07, 0.7 + (k % 3) * 0.15, 0.07, 0x6f9a3a);
+  }
+  ajouterBoite(t.pos, t.col, 2.1, 0.12, 0.5, 1.5, 0.08, 0.6, BOIS_CLAIR);
+}
+
 export function creerLieu(
   lieu: Lieu,
   o: { pasCase: number; y: number; shadows: boolean; jetables: Jetables },
@@ -724,37 +815,25 @@ export function creerLieu(
       cooperative(t, group, j, shadows);
       break;
     case "ETANG": {
-      // Un disque d'eau à bord de roseaux, et un ponton.
-      const n = 20;
-      // Il tient dans l'emprise du décor, plus petite que celle du village.
-      const rayon = (k: number) => 2.35 + Math.sin(k * 2.1) * 0.28 + Math.cos(k * 1.3) * 0.2;
-      const eau: number[] = [];
-      const eauCol: number[] = [];
-      for (let k = 0; k < n; k++) {
-        const a0 = (k / n) * Math.PI * 2;
-        const a1 = ((k + 1) / n) * Math.PI * 2;
-        for (const [r, h, c] of [
-          [1.18, 0.012, new THREE.Color(0x8aa65a)],
-          [1, 0.03, new THREE.Color(0x6fb4d6)],
-        ] as const) {
-          eau.push(
-            0, h, 0,
-            Math.cos(a1) * rayon(k + 1) * r, h, Math.sin(a1) * rayon(k + 1) * r,
-            Math.cos(a0) * rayon(k) * r, h, Math.sin(a0) * rayon(k) * r,
-          );
-          for (let v = 0; v < 3; v++) eauCol.push(c.r, c.g, c.b);
-        }
+      // La mare de la forge (`blender/recettes/sol.py`) : cerclée de pierres,
+      // nénuphars et roseaux. La version en code reste en secours.
+      if (!MODELES_DISPONIBLES) {
+        etangEnCode(t, group, j);
+        break;
       }
-      const m = maillageFacette(eau, eauCol, { nom: "etang" });
-      j.geometries.push(m.geometry);
-      j.materiaux.push(m.material as THREE.Material);
-      group.add(m);
-      for (let k = 0; k < 14; k++) {
-        const a = k * 0.9 + 0.4;
-        const r = rayon(k) * 1.05;
-        ajouterBoite(t.pos, t.col, Math.cos(a) * r, 0.35, Math.sin(a) * r, 0.07, 0.7 + (k % 3) * 0.15, 0.07, 0x6f9a3a);
-      }
-      ajouterBoite(t.pos, t.col, 2.1, 0.12, 0.5, 1.5, 0.08, 0.6, BOIS_CLAIR);
+      poserPiece(SOL, "mare", shadows)
+        .then((mare) => {
+          mare.scale.setScalar(1.25);
+          group.add(mare);
+        })
+        .catch(() => {
+          const secours: Tableaux = { pos: [], col: [] };
+          etangEnCode(secours, group, j);
+          const m = maillageFacette(secours.pos, secours.col, { shadows, recoit: shadows, nom: "lieu-decor" });
+          j.geometries.push(m.geometry);
+          j.materiaux.push(m.material as THREE.Material);
+          group.add(m);
+        });
       break;
     }
     case "VERGER": {
@@ -762,12 +841,35 @@ export function creerLieu(
       // feuillage : à la taille d'un buisson, les pommes flottaient au-dessus.
       for (let i = 0; i < 3; i++) {
         for (let k = 0; k < 3; k++) {
-          const x = -2.1 + i * 2.1;
-          const z = -2.1 + k * 2.1;
-          ajouterArbre(t.pos, t.col, x, 0, z, 2.3, 100 + i * 3 + k);
-          for (let f = 0; f < 5; f++) {
-            const a = f * 1.26 + i + k;
-            ajouterBoite(t.pos, t.col, x + Math.cos(a) * 0.62, 1.02 + (f % 3) * 0.14, z + Math.sin(a) * 0.62, 0.17, 0.17, 0.17, 0xd9463c);
+          // 1,9 et non 2,1 : la couronne (0,46 × 2,3) reste dans l'emprise du
+          // décor (±3) — sinon elle débordait sur le parking voisin.
+          const x = -ECART_VERGER + i * ECART_VERGER;
+          const z = -ECART_VERGER + k * ECART_VERGER;
+          const graine = 100 + i * 3 + k;
+          if (MODELES_DISPONIBLES) {
+            // Le pommier de la forge ; les pommes sur la surface de sa
+            // couronne (centre ≈ 1,7, rayon ≈ 1), pas enfouies dedans.
+            poserArbreForge(2.3, graine, shadows)
+              .then((arbre) => {
+                arbre.position.set(x, 0, z);
+                group.add(arbre);
+              })
+              .catch(() => {});
+            for (let f = 0; f < 7; f++) {
+              const a = f * 0.9 + i + k;
+              const el = -0.2 + (f % 3) * 0.3;
+              ajouterGeometrie(
+                t.pos, t.col, POMME,
+                pose(x + Math.cos(a) * Math.cos(el) * 1.0, 1.7 + Math.sin(el) * 0.9, z + Math.sin(a) * Math.cos(el) * 1.0, 0, 0.09),
+                0xd9463c,
+              );
+            }
+          } else {
+            ajouterArbre(t.pos, t.col, x, 0, z, 2.3, graine);
+            for (let f = 0; f < 5; f++) {
+              const a = f * 1.26 + i + k;
+              ajouterGeometrie(t.pos, t.col, POMME, pose(x + Math.cos(a) * 0.62, 1.02 + (f % 3) * 0.14, z + Math.sin(a) * 0.62, 0, 0.09), 0xd9463c);
+            }
           }
         }
       }
@@ -794,6 +896,26 @@ export function creerLieu(
         });
       break;
     }
+  }
+  if (t.lampes?.length) {
+    // Les globes des réverbères, d'un seul maillage émissif.
+    const globes = t.lampes.map(([x, y, z]) =>
+      new THREE.IcosahedronGeometry(0.14, 1).translate(x, y, z),
+    );
+    const geo = mergeGeometries(globes, false)!;
+    for (const gg of globes) gg.dispose();
+    const mat = new THREE.MeshStandardMaterial({
+      color: 0xfff1c8,
+      emissive: new THREE.Color(0xffc86b),
+      emissiveIntensity: 0.9,
+      roughness: 0.4,
+    });
+    mat.userData.allumable = "lampe";
+    j.geometries.push(geo);
+    j.materiaux.push(mat);
+    const m = new THREE.Mesh(geo, mat);
+    m.name = "reverberes";
+    group.add(m);
   }
   if (t.pos.length) {
     const m = maillageFacette(t.pos, t.col, { shadows, recoit: shadows, nom: "lieu-decor" });

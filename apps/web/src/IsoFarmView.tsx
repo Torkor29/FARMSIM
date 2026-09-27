@@ -54,7 +54,11 @@ import {
   retenir,
   type Bornes,
 } from "./cadrage";
-import { makeArbre } from "./decor3d";
+import { geometrieHaie, makeArbre } from "./decor3d";
+import { arbresDeCoin } from "./placement";
+import { DecorJoueur, occupantsDeco } from "./decor-joueur";
+import type { ArticleDeco, Decoration } from "@farmsim/shared";
+import { MODELES_DISPONIBLES, poserArbreForge } from "./modeles-decor";
 import { createCropField } from "./crop-field";
 import type { CropShape } from "./crop-shapes";
 import { attachStudioEnvironment } from "./machine-kit";
@@ -67,6 +71,9 @@ import {
   type MachineRig,
 } from "./machines3d";
 import { createSpray } from "./particles";
+import { ambiance, heureCourante, meteoCourante, saisonCourante, type Ambiance } from "./ambiance";
+import { creerMeteo3d } from "./meteo3d";
+import { allumerLumieres, appliquerAmbiance } from "./lumieres";
 import { buildCharacter } from "./character-mesh";
 import { initialQuality, makeFrameGovernor, qualityForContext, type RenderQuality } from "./render-quality";
 import {
@@ -447,6 +454,28 @@ type Props = {
   onStrokePreview?: (cells: { x: number; y: number }[], mods: PointerMods) => void;
   onWorkStroke?: (cells: { x: number; y: number }[]) => void;
   onStrokeSelect?: (cells: { x: number; y: number }[], mods: PointerMods) => void;
+  /** Ce que le joueur a posé autour de sa ferme (`decor-joueur.ts`). */
+  decorations?: readonly Decoration[];
+  /**
+   * Le mode décoration, s'il est ouvert. `article` : ce qu'on a en main (le
+   * fantôme suit le pointeur) ; `deplace` : la décoration qu'on déplace ;
+   * `selection` : celle qu'on a touchée, entourée d'un halo.
+   */
+  deco?: ModeDeco | null;
+  /** Un clic pose l'article en main à cette place (repère du siège). */
+  onDecoPoser?: (pose: { x: number; z: number; rot: number }) => void;
+  /** Une décoration touchée (ou `null` : un clic dans le vide). */
+  onDecoToucher?: (id: string | null) => void;
+  /** Pourquoi le fantôme est rouge, ou `null` quand il a sa place. */
+  onDecoRaison?: (raison: string | null) => void;
+};
+
+export type ModeDeco = {
+  article: ArticleDeco | null;
+  rot: number;
+  teinte?: number;
+  deplace: string | null;
+  selection: string | null;
 };
 
 const SOIL = 0x9ac06a;
@@ -524,91 +553,6 @@ function lookOf(crop?: CropCode | null): CropLook {
  * pas ce qu'il venait de sélectionner. L'or du logo tranche sur toutes les
  * teintes de sol du jeu — terre nue, culture jeune, culture mûre.
  */
-/**
- * Le grain de lumière de chaque saison.
- *
- * Le ciel changeait de couleur derrière la ferme, mais la ferme, elle, était
- * éclairée exactement pareil toute l'année : même soleil, même ambiante, même
- * rebond. Un hiver et un été se ressemblaient donc « des masses », et le seul
- * indice restait le mot écrit dans le rail.
- *
- * On ne retouche ni les géométries ni les matériaux — trop coûteux pour ce
- * qu'on veut dire. On **règle la lumière**, ce qui repeint toute la scène d'un
- * coup : un été franc et haut, un automne cuivré et rasant, un hiver bleu et
- * bas, un printemps clair et vert.
- */
-const SEASON_LIGHT: Record<
-  string,
-  {
-    /** Ciel et sol de la lumière hémisphérique. */
-    hemiSky: number;
-    hemiGround: number;
-    hemiIntensity: number;
-    ambient: number;
-    ambientIntensity: number;
-    sun: number;
-    sunIntensity: number;
-    /** Hauteur du soleil : un soleil d'hiver rase, un soleil d'été surplombe. */
-    sunHeight: number;
-    bounce: number;
-    bounceIntensity: number;
-  }
-> = {
-  SPRING: {
-    hemiSky: 0xffffff,
-    hemiGround: 0x9ec98a,
-    hemiIntensity: 1.25,
-    ambient: 0xfff6e4,
-    ambientIntensity: 0.65,
-    sun: 0xfff4dc,
-    sunIntensity: 1.5,
-    sunHeight: 24,
-    bounce: 0xc6e8ce,
-    bounceIntensity: 0.42,
-  },
-  SUMMER: {
-    hemiSky: 0xfff8e0,
-    hemiGround: 0x9ab87e,
-    hemiIntensity: 1.35,
-    ambient: 0xfff2d0,
-    ambientIntensity: 0.7,
-    // Le soleil d'été est blanc-doré et tape fort : les ombres sont courtes
-    // et dures, et les couleurs saturent.
-    sun: 0xfff0c4,
-    sunIntensity: 1.85,
-    sunHeight: 30,
-    bounce: 0xd8e8b8,
-    bounceIntensity: 0.38,
-  },
-  AUTUMN: {
-    hemiSky: 0xf6e2c0,
-    hemiGround: 0xa8894e,
-    hemiIntensity: 1.1,
-    ambient: 0xf7e2c0,
-    ambientIntensity: 0.6,
-    // Cuivré et rasant : c'est ce qui donne les longues ombres d'octobre.
-    sun: 0xffce7e,
-    sunIntensity: 1.35,
-    sunHeight: 15,
-    bounce: 0xd9b98a,
-    bounceIntensity: 0.4,
-  },
-  WINTER: {
-    hemiSky: 0xdce9f6,
-    hemiGround: 0xb8c4cc,
-    hemiIntensity: 1.05,
-    // L'hiver ne se joue pas seulement en intensité : c'est la **teinte** qui
-    // le dit. Tout passe au bleu, y compris le soleil, qui éclaire sans
-    // réchauffer et reste bas sur l'horizon.
-    ambient: 0xe4eef8,
-    ambientIntensity: 0.62,
-    sun: 0xe8f0fb,
-    sunIntensity: 1.15,
-    sunHeight: 12,
-    bounce: 0xc4d4e4,
-    bounceIntensity: 0.34,
-  },
-};
 
 const SELECT_GLOW = 0xffd24a;
 /**
@@ -630,7 +574,7 @@ const PULSE = 0xfff2b0;
 const STUBBLE_SOIL = 0xe3cf98;
 const RESIDUE_SOIL = 0x8a7048;
 /** Terre labourée : brune et grasse, celle qui attend la semence. */
-const PLOWED_SOIL = 0x593a20;
+const PLOWED_SOIL = 0x7a4b2e;
 /** Terre sèche et craquelée, laissée par une culture perdue. */
 const DRY_SOIL = 0xb5a179;
 
@@ -1276,6 +1220,11 @@ export function IsoFarmView({
   onStrokePreview,
   onWorkStroke,
   onStrokeSelect,
+  decorations,
+  deco = null,
+  onDecoPoser,
+  onDecoToucher,
+  onDecoRaison,
 }: Props) {
   const mountRef = useRef<HTMLDivElement>(null);
   const onClickRef = useRef(onCellClick);
@@ -1300,6 +1249,18 @@ export function IsoFarmView({
   onCollectSupplyRef.current = onCollectSupply;
   const onStrokeSelectRef = useRef(onStrokeSelect);
   onStrokeSelectRef.current = onStrokeSelect;
+  const decorationsRef = useRef(decorations);
+  decorationsRef.current = decorations;
+  const decoRef = useRef(deco);
+  decoRef.current = deco;
+  const onDecoPoserRef = useRef(onDecoPoser);
+  onDecoPoserRef.current = onDecoPoser;
+  const onDecoToucherRef = useRef(onDecoToucher);
+  onDecoToucherRef.current = onDecoToucher;
+  const onDecoRaisonRef = useRef(onDecoRaison);
+  onDecoRaisonRef.current = onDecoRaison;
+  /** Le décor du joueur, tenu par le grand effet de montage. */
+  const decorJoueurRef = useRef<DecorJoueur | null>(null);
   const layoutRef = useRef<(() => void) | null>(null);
   /** Repeint la scène quand la saison tourne, sans la reconstruire. */
   const relightRef = useRef<((saison: string) => void) | null>(null);
@@ -1531,20 +1492,33 @@ export function IsoFarmView({
     bounce.position.set(-10, 6, -8);
     scene.add(bounce);
 
-    /** Applique le barème de la saison à toutes les lumières d'un coup. */
-    const eclairerPour = (saison: string) => {
-      const g = SEASON_LIGHT[saison] ?? SEASON_LIGHT.SUMMER;
-      hemi.color.setHex(g.hemiSky);
-      hemi.groundColor.setHex(g.hemiGround);
-      hemi.intensity = g.hemiIntensity;
-      ambient.color.setHex(g.ambient);
-      ambient.intensity = g.ambientIntensity;
-      sun.color.setHex(g.sun);
-      sun.intensity = g.sunIntensity;
-      sun.position.set(14, g.sunHeight, 10);
-      bounce.color.setHex(g.bounce);
-      bounce.intensity = g.bounceIntensity;
+    /*
+     * L'ambiance du moment : l'heure du jeu, la saison et la météo en une
+     * lumière (voir `ambiance.ts`). Le soleil se lève à gauche, se couche à
+     * droite, rougit au ras de l'horizon ; la lune prend le relais la nuit.
+     * Recalculée quatre fois par seconde — l'heure avance lentement — et
+     * appliquée à chaque image, éclair d'orage compris.
+     */
+    let ambianceDuMoment: Ambiance | null = null;
+    let ambianceCalculee = -1;
+    const calculerAmbiance = (saison: string): Ambiance => {
+      const s = saisonCourante(saison);
+      return ambiance(heureCourante(s), s, meteoCourante(weatherRef.current));
     };
+    const lumieres = { hemi, ambient, sun, bounce };
+    const appliquer = (a: Ambiance, eclair = 0) =>
+      appliquerAmbiance(lumieres, a, eclair, scene.fog instanceof THREE.Fog ? scene.fog : null);
+    const eclairerPour = (saison: string) => {
+      ambianceDuMoment = calculerAmbiance(saison);
+      appliquer(ambianceDuMoment);
+    };
+    // Pluie, éclaboussures, neige et éclairs, dans la scène (voir `meteo3d.ts`).
+    const meteo3d = creerMeteo3d({ pixelRatio: quality.pixelRatio, sobre: !quality.shadows });
+    scene.add(meteo3d.objet);
+    const centreMeteo = new THREE.Vector3();
+    // Les fenêtres et les lampes suivent l'heure. Une traversée par seconde :
+    // un bâtiment reconstruit en pleine nuit s'allume aussitôt.
+    let lampesVerifiees = -1;
     eclairerPour(seasonRef.current);
     seasonAppliedRef.current = seasonRef.current;
     relightRef.current = eclairerPour;
@@ -1561,6 +1535,10 @@ export function IsoFarmView({
      */
     const campagneGroup = new THREE.Group();
     scene.add(campagneGroup);
+    // Ce que le joueur a posé, sur le sol de la campagne.
+    const decorJoueur = new DecorJoueur(quality.shadows, CAMPAGNE_Y);
+    scene.add(decorJoueur.group);
+    decorJoueurRef.current = decorJoueur;
     let campagne: Campagne | null = null;
     let campagneCle = "";
     /** Les parcelles du voisinage précédent, et celles qui étaient déjà au joueur. */
@@ -2055,7 +2033,8 @@ export function IsoFarmView({
     platform.castShadow = true;
     world.add(platform);
 
-    const hedgeMat = new THREE.MeshLambertMaterial({ color: 0x5c9a52, flatShading: true });
+    // La haie en boules (voir `geometrieHaie`) : couleurs de sommets, lisse.
+    const hedgeMat = new THREE.MeshLambertMaterial({ vertexColors: true });
     const fenceGroup = new THREE.Group();
     world.add(fenceGroup);
 
@@ -2583,7 +2562,12 @@ export function IsoFarmView({
             `${v.col},${v.rang}:${v.gridW ?? "-"}x${v.gridH ?? "-"}:${v.culture ?? "-"}:${v.stade ?? "-"}:${v.batiments.length}:${v.statut}`,
         )
         .join("|");
-      const cle = `${gw}x${gh}|${courBoite.x.toFixed(2)},${courBoite.z.toFixed(2)},${courBoite.w.toFixed(2)},${courBoite.d.toFixed(2)}|${parcelIdRef.current}|${empreinteVoisins}`;
+      /* Les décorations du joueur : les arbres et l'herbe tirés au sort leur
+         laissent la place, il faut donc replanter quand elles bougent. */
+      const empreinteDeco = (decorationsRef.current ?? [])
+        .map((d) => `${d.id}:${d.code}:${d.x},${d.z},${d.rot}`)
+        .join("|");
+      const cle = `${gw}x${gh}|${courBoite.x.toFixed(2)},${courBoite.z.toFixed(2)},${courBoite.w.toFixed(2)},${courBoite.d.toFixed(2)}|${parcelIdRef.current}|${empreinteVoisins}|${empreinteDeco}`;
       if (cle !== campagneCle) {
         campagneCle = cle;
         /*
@@ -2654,6 +2638,7 @@ export function IsoFarmView({
           cases: Math.max(gw, gh),
           chantiers,
           voisins: voisins?.length ? voisins : undefined,
+          decorations: occupantsDeco(decorationsRef.current ?? [], repere),
           cour: courBoite,
           shadows: quality.shadows,
           sobre: !quality.shadows,
@@ -2662,6 +2647,7 @@ export function IsoFarmView({
           y: CAMPAGNE_Y,
         });
         campagneGroup.add(campagne.object);
+        decorJoueur.setTerrain(repere, campagne.plan.durs);
       }
 
       /*
@@ -2713,49 +2699,47 @@ export function IsoFarmView({
       const cotePassage = accesIci?.cote ?? -1;
       const ouestAvant = Math.max(0, passageZ - passage / 2 + hh / 2);
       const ouestApres = Math.max(0, hh / 2 - (passageZ + passage / 2));
-      const hedges: [THREE.BoxGeometry, [number, number, number]][] = [
-        [new THREE.BoxGeometry(hw, hedgeH, hedgeT), [0, 0.15, -hh / 2]],
-        [new THREE.BoxGeometry(hw, hedgeH, hedgeT), [0, 0.15, hh / 2]],
-        [new THREE.BoxGeometry(hedgeT, hedgeH, hh), [(-cotePassage * hw) / 2, 0.15, 0]],
+      // Chaque pan : longueur, axe (x ou z), position. Les pans en z sont des
+      // haies en x tournées d'un quart de tour.
+      const hedges: [number, "x" | "z", [number, number, number]][] = [
+        [hw, "x", [0, 0, -hh / 2]],
+        [hw, "x", [0, 0, hh / 2]],
+        [hh, "z", [(-cotePassage * hw) / 2, 0, 0]],
       ];
       if (ouestAvant > 0.05) {
-        hedges.push([
-          new THREE.BoxGeometry(hedgeT, hedgeH, ouestAvant),
-          [(cotePassage * hw) / 2, 0.15, -hh / 2 + ouestAvant / 2],
-        ]);
+        hedges.push([ouestAvant, "z", [(cotePassage * hw) / 2, 0, -hh / 2 + ouestAvant / 2]]);
       }
       if (ouestApres > 0.05) {
-        hedges.push([
-          new THREE.BoxGeometry(hedgeT, hedgeH, ouestApres),
-          [(cotePassage * hw) / 2, 0.15, hh / 2 - ouestApres / 2],
-        ]);
+        hedges.push([ouestApres, "z", [(cotePassage * hw) / 2, 0, hh / 2 - ouestApres / 2]]);
       }
-      for (const [geo, [px, py, pz]] of hedges) {
-        const m = new THREE.Mesh(geo, hedgeMat);
+      hedges.forEach(([longueur, axe, [px, py, pz]], i) => {
+        // La haie de boules monte un peu plus que l'ancien pavé (0,15 + 0,55/2).
+        const m = new THREE.Mesh(geometrieHaie(longueur, hedgeH + 0.28, hedgeT * 1.3, 11 + i), hedgeMat);
         m.position.set(px, py, pz);
+        if (axe === "z") m.rotation.y = Math.PI / 2;
         m.castShadow = true;
+        m.receiveShadow = true;
         fenceGroup.add(m);
-      }
+      });
       // Deux montants de part et d'autre du passage : sans eux, la haie
       // s'interrompt sans raison lisible et l'ouverture passe pour un trou.
       for (const side of [-1, 1]) {
-        const pilier = new THREE.Mesh(
-          new THREE.BoxGeometry(hedgeT * 1.2, hedgeH * 1.15, hedgeT * 1.2),
-          hedgeMat,
-        );
-        pilier.position.set((cotePassage * hw) / 2, 0.15, passageZ + (side * passage) / 2);
+        // Une touffe plus haute que la haie, de chaque côté du passage.
+        const pilier = new THREE.Mesh(geometrieHaie(hedgeT * 1.6, hedgeH + 0.42, hedgeT * 1.6, 30 + side), hedgeMat);
+        pilier.position.set((cotePassage * hw) / 2, 0, passageZ + (side * passage) / 2);
         pilier.castShadow = true;
         fenceGroup.add(pilier);
       }
       // Les arbres étaient deux cubes empilés, ce qui jurait franchement avec
       // des bâtiments dessinés. Ils reçoivent leur illustration, comme le
       // reste de la carte.
-      for (const [tx, tz] of [
-        [-hw / 2, -hh / 2],
-        [hw / 2, -hh / 2],
-        [-hw / 2, hh / 2],
-        [hw / 2, hh / 2],
-      ] as const) {
+      // Hors des coins, là où la place est libre (voir `arbresDeCoin`) : plus
+      // d'arbre planté dans la haie ou dans le bitume du parking.
+      const coins = arbresDeCoin(hw, hh, 2.1, [
+        ...(campagne?.plan.occupants ?? []),
+        { id: "cour", genre: "cour", forme: { type: "boite", ...courBoite } },
+      ]);
+      for (const { x: tx, z: tz } of coins) {
         const shade = new THREE.Mesh(
           new THREE.PlaneGeometry(0.8, 0.6),
           new THREE.MeshBasicMaterial({
@@ -2778,9 +2762,24 @@ export function IsoFarmView({
          * qu'elles sont — des autocollants sans épaisseur, dont l'ombre au sol
          * ne correspond à rien.
          */
-        const arbre = makeArbre(2.1, ((tx * 31 + tz * 17) | 0) >>> 0, quality.shadows);
-        arbre.position.set(tx, 0, tz);
-        fenceGroup.add(arbre);
+        // Le feuillu de la forge quand les modèles sont là ; l'arbre en code
+        // sinon (et dans les tests).
+        const graineCoin = ((tx * 31 + tz * 17) | 0) >>> 0;
+        const enCode = () => {
+          const arbre = makeArbre(2.1, graineCoin, quality.shadows);
+          arbre.position.set(tx, 0, tz);
+          fenceGroup.add(arbre);
+        };
+        if (!MODELES_DISPONIBLES) enCode();
+        else {
+          const groupeCoin = fenceGroup;
+          poserArbreForge(2.1, graineCoin, quality.shadows)
+            .then((arbre) => {
+              arbre.position.set(tx, 0, tz);
+              groupeCoin.add(arbre);
+            })
+            .catch(enCode);
+        }
       }
 
       /** Relief à semer sur les cases une fois la grille posée. */
@@ -3508,6 +3507,48 @@ export function IsoFarmView({
       return { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
     }
 
+    /** Le sol de la campagne, où se posent les décorations. */
+    const solDeco = new THREE.Plane(new THREE.Vector3(0, 1, 0), -CAMPAGNE_Y);
+    const solDecoHit = new THREE.Vector3();
+    /** Aimanté au quart d'unité : poser en ligne devient facile. */
+    const aimanter = (v: number) => Math.round(v * 4) / 4;
+    function suivreFantome(clientX: number, clientY: number): boolean {
+      pointerFromClient(clientX, clientY);
+      raycaster.setFromCamera(pointer, camera);
+      const p = raycaster.ray.intersectPlane(solDeco, solDecoHit)
+        ? { x: aimanter(solDecoHit.x), z: aimanter(solDecoHit.z) }
+        : null;
+      decorJoueur.bougerFantome(p);
+      onDecoRaisonRef.current?.(p ? decorJoueur.raison() : null);
+      return p !== null;
+    }
+    /** Un toucher sur l'écran touchant : la première fois il place le fantôme. */
+    let dernierToucher: { x: number; y: number } | null = null;
+    function clicDeco(ev: PointerEvent) {
+      const mode = decoRef.current!;
+      if (mode.article) {
+        const toucher = ev.pointerType !== "mouse";
+        const memePlace =
+          dernierToucher && Math.hypot(ev.clientX - dernierToucher.x, ev.clientY - dernierToucher.y) < 24;
+        suivreFantome(ev.clientX, ev.clientY);
+        // Au doigt, pas de survol : un premier toucher montre où irait
+        // l'objet, un second au même endroit le pose.
+        if (toucher && !memePlace) {
+          dernierToucher = { x: ev.clientX, y: ev.clientY };
+          return;
+        }
+        dernierToucher = null;
+        const pose = decorJoueur.poseFantome();
+        if (pose) onDecoPoserRef.current?.(pose);
+        return;
+      }
+      raycaster.setFromCamera(pointer, camera);
+      const auSol = raycaster.ray.intersectPlane(solDeco, solDecoHit)
+        ? { x: solDecoHit.x, z: solDecoHit.z }
+        : null;
+      onDecoToucherRef.current?.(decorJoueur.toucher(raycaster, auSol));
+    }
+
     function onPointerDown(ev: PointerEvent) {
       tientLaVue = true;
       const touch = ev.pointerType !== "mouse";
@@ -3548,6 +3589,12 @@ export function IsoFarmView({
       if (!pointers.has(ev.pointerId)) {
         // Survol à la souris, sans bouton enfoncé.
         setPointerFromEvent(ev);
+        if (decoRef.current) {
+          // En décoration, le fantôme suit le pointeur ; les cases ne
+          // s'allument pas.
+          if (decoRef.current.article) suivreFantome(ev.clientX, ev.clientY);
+          return;
+        }
         onHoverRef.current?.(raycastCell());
         return;
       }
@@ -3640,6 +3687,10 @@ export function IsoFarmView({
       }
       if (dragged || wasPan) return;
       setPointerFromEvent(ev);
+      if (decoRef.current) {
+        clicDeco(ev);
+        return;
+      }
       // Une caisse passe avant le sol : elle est posée hors de la grille, et
       // c'est le geste le plus évident du jeu — il ne doit pas demander de
       // changer d'outil d'abord.
@@ -4005,8 +4056,24 @@ export function IsoFarmView({
 
       timer.update();
       const t = timer.getElapsed();
-      const sky = skyFor(weatherRef.current);
-      if (scene.fog instanceof THREE.Fog) scene.fog.color.setHex(sky);
+      if (!ambianceDuMoment || t - ambianceCalculee > 0.25) {
+        ambianceDuMoment = calculerAmbiance(seasonRef.current);
+        ambianceCalculee = t;
+      }
+      // Le volume de pluie suit le point visé, et couvre ce que l'on voit.
+      centreMeteo.set(camera.position.x - viewSpan * 0.95, 0, camera.position.z - viewSpan * 0.95);
+      const eclair = meteo3d.mettreAJour(
+        delta / 1000,
+        t,
+        meteoCourante(weatherRef.current),
+        centreMeteo,
+        Math.max(30, (camera.right - camera.left) * 1.7),
+      );
+      appliquer(ambianceDuMoment, eclair);
+      if (t - lampesVerifiees > 1) {
+        lampesVerifiees = t;
+        allumerLumieres(scene, ambianceDuMoment.lampes);
+      }
       // La campagne suit le jour et la saison : un voisin moissonne le même
       // jour pour tout le monde, et l'hiver gèle ses champs comme les nôtres.
       if (campagne) {
@@ -4025,6 +4092,7 @@ export function IsoFarmView({
         );
         campagne.update(t);
       }
+      decorJoueur.update(t);
 
       // Engins garés : moteur coupé. Ni roue, ni gyrophare, ni flottement —
       // c'est le contraste avec l'engin au travail qui dit lequel est occupé.
@@ -4800,6 +4868,8 @@ export function IsoFarmView({
 
     return () => {
       cancelAnimationFrame(raf);
+      decorJoueur.dispose();
+      decorJoueurRef.current = null;
       layoutRef.current = null;
       recadrerRef.current = null;
       if (controle) controle.current = null;
@@ -4847,6 +4917,7 @@ export function IsoFarmView({
       workDust.dispose();
       workSmoke.dispose();
       grainSpray.dispose();
+      meteo3d.dispose();
       soilSpray.dispose();
       fertSpray.dispose();
       chimneySmoke.dispose();
@@ -4919,6 +4990,20 @@ export function IsoFarmView({
   useEffect(() => {
     layoutRef.current?.();
   }, [sceneKey]);
+
+  /*
+   * La décoration : la liste posée, et le fantôme de ce qu'on a en main. Une
+   * liste qui change replante aussi la campagne (ses arbres cèdent la place),
+   * d'où le `layout` — il ne reconstruit que si la signature a bougé.
+   */
+  useEffect(() => {
+    decorJoueurRef.current?.setDecorations(decorations ?? [], deco?.selection ?? null);
+    layoutRef.current?.();
+  }, [decorations, deco?.selection]);
+  useEffect(() => {
+    decorJoueurRef.current?.setFantome(deco?.article ?? null, deco?.rot ?? 0, deco?.teinte, deco?.deplace ?? null);
+    onDecoRaisonRef.current?.(decorJoueurRef.current?.raison() ?? null);
+  }, [deco?.article, deco?.rot, deco?.teinte, deco?.deplace]);
 
   /*
    * La vue suit la parcelle.

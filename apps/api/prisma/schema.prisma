@@ -307,6 +307,12 @@ model Farm {
   debtCrd    Float           @default(0)
   /** Dernière écriture d'intérêts — sert de point de départ au calcul. */
   debtAt     DateTime?
+  /**
+   * Les décorations posées par le joueur (`Decoration[]` de
+   * `@farmsim/shared`), en JSON : une liste qu'on relit et réécrit en entier,
+   * jamais interrogée ligne à ligne.
+   */
+  decorJson  String          @default("[]")
 }
 
 /**

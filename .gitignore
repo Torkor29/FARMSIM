@@ -14,3 +14,8 @@ coverage
 
 # Cache Vite local
 apps/web/.vite/
+
+# Forge d'assets : aperçus de travail, environnement bpy
+apps/web/blender/.apercus/
+.forge-env/
+__pycache__/

@@ -5105,3 +5105,109 @@ describe("la ferme libre", () => {
     assert.equal(apres.domaine!.lotsAchetes, 1);
   });
 });
+
+describe("la décoration libre", () => {
+  type Deco = { id: string; code: string; x: number; z: number; rot: number; teinte?: number };
+  const solde = async (jeton: string) =>
+    ((await appel("/auth/me", { jeton })).corps as unknown as { player: { crd: number } }).player.crd;
+
+  it("pose, déplace, repeint et revend — l'argent suit, la liste persiste", async () => {
+    const moi = await inscrire("Décoratrice");
+    const avant = await solde(moi.jeton);
+
+    const pose = await appel("/decorations", {
+      methode: "POST",
+      corps: { code: "BANC", x: 12.5, z: -4, rot: 0.5 },
+      jeton: moi.jeton,
+    });
+    assert.equal(pose.statut, 200, JSON.stringify(pose.corps));
+    const banc = (pose.corps as unknown as { decoration: Deco }).decoration;
+    assert.equal(await solde(moi.jeton), avant - 180);
+
+    // Déplacer, tourner et repeindre ne coûtent rien.
+    const bouge = await appel(`/decorations/${banc.id}`, {
+      methode: "PATCH",
+      corps: { x: 14, rot: 7, teinte: 3 },
+      jeton: moi.jeton,
+    });
+    assert.equal(bouge.statut, 200, JSON.stringify(bouge.corps));
+    const lu = await appel("/decorations", { jeton: moi.jeton });
+    const liste = (lu.corps as unknown as { decorations: Deco[] }).decorations;
+    assert.equal(liste.length, 1);
+    assert.equal(liste[0]!.x, 14);
+    assert.equal(liste[0]!.z, -4);
+    assert.equal(liste[0]!.teinte, 3);
+    // Le cap est ramené dans ]-π, π].
+    assert.ok(Math.abs(liste[0]!.rot - (7 - 2 * Math.PI)) < 0.01);
+    assert.equal(await solde(moi.jeton), avant - 180);
+
+    const vend = await appel(`/decorations/${banc.id}`, { methode: "DELETE", jeton: moi.jeton });
+    assert.equal(vend.statut, 200, JSON.stringify(vend.corps));
+    assert.equal((vend.corps as unknown as { rendu: number }).rendu, 144);
+    assert.equal(await solde(moi.jeton), avant - 180 + 144);
+    const vide = await appel("/decorations", { jeton: moi.jeton });
+    assert.deepEqual((vide.corps as unknown as { decorations: Deco[] }).decorations, []);
+  });
+
+  it("refuse l'article inconnu, le niveau trop bas, la teinte d'un objet qui ne se repeint pas", async () => {
+    const moi = await inscrire("Exigeant");
+    const inconnu = await appel("/decorations", {
+      methode: "POST",
+      corps: { code: "FUSEE", x: 1, z: 1, rot: 0 },
+      jeton: moi.jeton,
+    });
+    assert.equal(inconnu.statut, 400);
+    const moulin = await appel("/decorations", {
+      methode: "POST",
+      corps: { code: "MOULIN", x: 1, z: 1, rot: 0 },
+      jeton: moi.jeton,
+    });
+    assert.equal(moulin.statut, 403, JSON.stringify(moulin.corps));
+    const teinte = await appel("/decorations", {
+      methode: "POST",
+      corps: { code: "BAIN_OISEAUX", x: 1, z: 1, rot: 0, teinte: 2 },
+      jeton: moi.jeton,
+    });
+    assert.equal(teinte.statut, 400);
+    const loin = await appel("/decorations", {
+      methode: "POST",
+      corps: { code: "BANC", x: 500, z: 1, rot: 0 },
+      jeton: moi.jeton,
+    });
+    assert.equal(loin.statut, 400);
+  });
+
+  it("ne touche pas aux décorations d'un autre joueur", async () => {
+    const a = await inscrire("Proprio");
+    const b = await inscrire("Voisin");
+    const pose = await appel("/decorations", {
+      methode: "POST",
+      corps: { code: "LAMPION", x: 3, z: 3, rot: 0 },
+      jeton: a.jeton,
+    });
+    const id = (pose.corps as unknown as { decoration: Deco }).decoration.id;
+    const vol = await appel(`/decorations/${id}`, { methode: "DELETE", jeton: b.jeton });
+    assert.equal(vol.statut, 404);
+    const lu = await appel("/decorations", { jeton: a.jeton });
+    assert.equal((lu.corps as unknown as { decorations: Deco[] }).decorations.length, 1);
+  });
+
+  it("ne perd aucune pose lancée en même temps", async () => {
+    const moi = await inscrire("Pressée");
+    const r = await Promise.all(
+      Array.from({ length: 6 }, (_, i) =>
+        appel("/decorations", {
+          methode: "POST",
+          corps: { code: "CITROUILLE", x: i * 2, z: 5, rot: 0 },
+          jeton: moi.jeton,
+        }),
+      ),
+    );
+    const ok = r.filter((x) => x.statut === 200).length;
+    const lu = await appel("/decorations", { jeton: moi.jeton });
+    const n = (lu.corps as unknown as { decorations: Deco[] }).decorations.length;
+    // Chaque pose acceptée est dans la liste, et payée une fois.
+    assert.equal(n, ok);
+    assert.ok(ok >= 1);
+  });
+});
