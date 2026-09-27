@@ -385,6 +385,44 @@ qui se traversaient, un tonneau enfoncé dans le socle du moulin, une botte
 de paille dans un poteau d'étal, et deux rochers de la source chaude l'un
 dans l'autre. `scripts/forge.sh test` le teste.
 
+### La décoration libre : le joueur pose ce qu'il veut
+
+Tout l'espace du joueur est à lui : la ferme, la campagne autour, le village.
+Le bouton **Décorer** (touche `D`) ouvre un catalogue en bas de l'écran, comme
+le mode construction des Sims, et la scène reste cliquable au-dessus.
+
+| Geste | Comment |
+| --- | --- |
+| Poser | choisir un objet : son fantôme suit le pointeur, vert si la place est libre, rouge sinon (avec la raison : « Pas sur la route »…). Un clic pose, l'objet reste en main pour en poser d'autres |
+| Tourner | `R` / `Maj+R`, ou les flèches du panneau (par huitième de tour) |
+| Repeindre | douze teintes de la palette de la forge, sur la matière que l'article déclare (le bois du banc, la toile du lampion…) |
+| Déplacer, tourner, repeindre ce qui est posé | toucher l'objet : c'est gratuit |
+| Vendre | 80 % du prix revient |
+| Au doigt | un premier toucher montre le fantôme, un second au même endroit pose |
+
+Où sont les choses :
+
+- `packages/shared/src/decoration.ts` : le catalogue (41 articles en six
+  rayons, prix, niveau requis, modèle de la forge, échelle, emprise), les
+  règles qui ne dépendent pas du terrain, l'emprise en cercles ;
+- `apps/api` : la colonne `Farm.decorJson` et les routes `GET/POST
+  /decorations`, `PATCH/DELETE /decorations/:id` (débit au journal, poste
+  « Décoration ») ;
+- `apps/web/src/decor-joueur.ts` : repère du siège ↔ scène, validation par
+  les règles de `placement.ts`, modèles et fantôme ;
+- `apps/web/src/DecoPanel.tsx` : le catalogue.
+
+Une décoration est enregistrée **autour du siège de la ferme**, carte
+ramenée à son orientation de référence : changer de parcelle active ne la
+déplace pas. Elle ne se pose ni sur le dur (route, chemin, cour, champs,
+bâtiments du village), ni dans l'eau, ni dans une autre décoration ; un
+objet peut se poser sur un dallage. Les arbres et l'herbe tirés au sort lui
+**cèdent la place** : la campagne est replantée autour.
+
+Ajouter un article : une ligne au catalogue (dimensions copiées du
+manifeste, un test vérifie qu'elles n'ont pas dérivé), puis
+`node scripts/vignettes-deco.mjs` (serveur de la vue lancé) pour sa vignette.
+
 ## 11. Feuille de route
 
 - **Phase 1 (cette livraison)** : la forge, 8 recettes, l'atelier web, les

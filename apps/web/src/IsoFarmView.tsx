@@ -53,6 +53,8 @@ import {
 } from "./cadrage";
 import { geometrieHaie, makeArbre } from "./decor3d";
 import { arbresDeCoin } from "./placement";
+import { DecorJoueur, occupantsDeco } from "./decor-joueur";
+import type { ArticleDeco, Decoration } from "@farmsim/shared";
 import { MODELES_DISPONIBLES, poserArbreForge } from "./modeles-decor";
 import { createCropField } from "./crop-field";
 import type { CropShape } from "./crop-shapes";
@@ -426,6 +428,28 @@ type Props = {
   onStrokePreview?: (cells: { x: number; y: number }[], mods: PointerMods) => void;
   onWorkStroke?: (cells: { x: number; y: number }[]) => void;
   onStrokeSelect?: (cells: { x: number; y: number }[], mods: PointerMods) => void;
+  /** Ce que le joueur a posé autour de sa ferme (`decor-joueur.ts`). */
+  decorations?: readonly Decoration[];
+  /**
+   * Le mode décoration, s'il est ouvert. `article` : ce qu'on a en main (le
+   * fantôme suit le pointeur) ; `deplace` : la décoration qu'on déplace ;
+   * `selection` : celle qu'on a touchée, entourée d'un halo.
+   */
+  deco?: ModeDeco | null;
+  /** Un clic pose l'article en main à cette place (repère du siège). */
+  onDecoPoser?: (pose: { x: number; z: number; rot: number }) => void;
+  /** Une décoration touchée (ou `null` : un clic dans le vide). */
+  onDecoToucher?: (id: string | null) => void;
+  /** Pourquoi le fantôme est rouge, ou `null` quand il a sa place. */
+  onDecoRaison?: (raison: string | null) => void;
+};
+
+export type ModeDeco = {
+  article: ArticleDeco | null;
+  rot: number;
+  teinte?: number;
+  deplace: string | null;
+  selection: string | null;
 };
 
 const SOIL = 0x9ac06a;
@@ -1161,6 +1185,11 @@ export function IsoFarmView({
   onStrokePreview,
   onWorkStroke,
   onStrokeSelect,
+  decorations,
+  deco = null,
+  onDecoPoser,
+  onDecoToucher,
+  onDecoRaison,
 }: Props) {
   const mountRef = useRef<HTMLDivElement>(null);
   const onClickRef = useRef(onCellClick);
@@ -1185,6 +1214,18 @@ export function IsoFarmView({
   onCollectSupplyRef.current = onCollectSupply;
   const onStrokeSelectRef = useRef(onStrokeSelect);
   onStrokeSelectRef.current = onStrokeSelect;
+  const decorationsRef = useRef(decorations);
+  decorationsRef.current = decorations;
+  const decoRef = useRef(deco);
+  decoRef.current = deco;
+  const onDecoPoserRef = useRef(onDecoPoser);
+  onDecoPoserRef.current = onDecoPoser;
+  const onDecoToucherRef = useRef(onDecoToucher);
+  onDecoToucherRef.current = onDecoToucher;
+  const onDecoRaisonRef = useRef(onDecoRaison);
+  onDecoRaisonRef.current = onDecoRaison;
+  /** Le décor du joueur, tenu par le grand effet de montage. */
+  const decorJoueurRef = useRef<DecorJoueur | null>(null);
   const layoutRef = useRef<(() => void) | null>(null);
   /** Repeint la scène quand la saison tourne, sans la reconstruire. */
   const relightRef = useRef<((saison: string) => void) | null>(null);
@@ -1453,6 +1494,10 @@ export function IsoFarmView({
      */
     const campagneGroup = new THREE.Group();
     scene.add(campagneGroup);
+    // Ce que le joueur a posé, sur le sol de la campagne.
+    const decorJoueur = new DecorJoueur(quality.shadows, CAMPAGNE_Y);
+    scene.add(decorJoueur.group);
+    decorJoueurRef.current = decorJoueur;
     let campagne: Campagne | null = null;
     let campagneCle = "";
     /** Les parcelles du voisinage précédent, et celles qui étaient déjà au joueur. */
@@ -2450,7 +2495,12 @@ export function IsoFarmView({
             `${v.col},${v.rang}:${v.gridW ?? "-"}x${v.gridH ?? "-"}:${v.culture ?? "-"}:${v.stade ?? "-"}:${v.batiments.length}:${v.statut}`,
         )
         .join("|");
-      const cle = `${gw}x${gh}|${courBoite.x.toFixed(2)},${courBoite.z.toFixed(2)},${courBoite.w.toFixed(2)},${courBoite.d.toFixed(2)}|${parcelIdRef.current}|${empreinteVoisins}`;
+      /* Les décorations du joueur : les arbres et l'herbe tirés au sort leur
+         laissent la place, il faut donc replanter quand elles bougent. */
+      const empreinteDeco = (decorationsRef.current ?? [])
+        .map((d) => `${d.id}:${d.code}:${d.x},${d.z},${d.rot}`)
+        .join("|");
+      const cle = `${gw}x${gh}|${courBoite.x.toFixed(2)},${courBoite.z.toFixed(2)},${courBoite.w.toFixed(2)},${courBoite.d.toFixed(2)}|${parcelIdRef.current}|${empreinteVoisins}|${empreinteDeco}`;
       if (cle !== campagneCle) {
         campagneCle = cle;
         /*
@@ -2521,6 +2571,7 @@ export function IsoFarmView({
           cases: Math.max(gw, gh),
           chantiers,
           voisins: voisins?.length ? voisins : undefined,
+          decorations: occupantsDeco(decorationsRef.current ?? [], repere),
           cour: courBoite,
           shadows: quality.shadows,
           sobre: !quality.shadows,
@@ -2529,6 +2580,7 @@ export function IsoFarmView({
           y: CAMPAGNE_Y,
         });
         campagneGroup.add(campagne.object);
+        decorJoueur.setTerrain(repere, campagne.plan.durs);
       }
 
       /*
@@ -3280,6 +3332,48 @@ export function IsoFarmView({
       return { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
     }
 
+    /** Le sol de la campagne, où se posent les décorations. */
+    const solDeco = new THREE.Plane(new THREE.Vector3(0, 1, 0), -CAMPAGNE_Y);
+    const solDecoHit = new THREE.Vector3();
+    /** Aimanté au quart d'unité : poser en ligne devient facile. */
+    const aimanter = (v: number) => Math.round(v * 4) / 4;
+    function suivreFantome(clientX: number, clientY: number): boolean {
+      pointerFromClient(clientX, clientY);
+      raycaster.setFromCamera(pointer, camera);
+      const p = raycaster.ray.intersectPlane(solDeco, solDecoHit)
+        ? { x: aimanter(solDecoHit.x), z: aimanter(solDecoHit.z) }
+        : null;
+      decorJoueur.bougerFantome(p);
+      onDecoRaisonRef.current?.(p ? decorJoueur.raison() : null);
+      return p !== null;
+    }
+    /** Un toucher sur l'écran touchant : la première fois il place le fantôme. */
+    let dernierToucher: { x: number; y: number } | null = null;
+    function clicDeco(ev: PointerEvent) {
+      const mode = decoRef.current!;
+      if (mode.article) {
+        const toucher = ev.pointerType !== "mouse";
+        const memePlace =
+          dernierToucher && Math.hypot(ev.clientX - dernierToucher.x, ev.clientY - dernierToucher.y) < 24;
+        suivreFantome(ev.clientX, ev.clientY);
+        // Au doigt, pas de survol : un premier toucher montre où irait
+        // l'objet, un second au même endroit le pose.
+        if (toucher && !memePlace) {
+          dernierToucher = { x: ev.clientX, y: ev.clientY };
+          return;
+        }
+        dernierToucher = null;
+        const pose = decorJoueur.poseFantome();
+        if (pose) onDecoPoserRef.current?.(pose);
+        return;
+      }
+      raycaster.setFromCamera(pointer, camera);
+      const auSol = raycaster.ray.intersectPlane(solDeco, solDecoHit)
+        ? { x: solDecoHit.x, z: solDecoHit.z }
+        : null;
+      onDecoToucherRef.current?.(decorJoueur.toucher(raycaster, auSol));
+    }
+
     function onPointerDown(ev: PointerEvent) {
       tientLaVue = true;
       const touch = ev.pointerType !== "mouse";
@@ -3320,6 +3414,12 @@ export function IsoFarmView({
       if (!pointers.has(ev.pointerId)) {
         // Survol à la souris, sans bouton enfoncé.
         setPointerFromEvent(ev);
+        if (decoRef.current) {
+          // En décoration, le fantôme suit le pointeur ; les cases ne
+          // s'allument pas.
+          if (decoRef.current.article) suivreFantome(ev.clientX, ev.clientY);
+          return;
+        }
         onHoverRef.current?.(raycastCell());
         return;
       }
@@ -3412,6 +3512,10 @@ export function IsoFarmView({
       }
       if (dragged || wasPan) return;
       setPointerFromEvent(ev);
+      if (decoRef.current) {
+        clicDeco(ev);
+        return;
+      }
       // Une caisse passe avant le sol : elle est posée hors de la grille, et
       // c'est le geste le plus évident du jeu — il ne doit pas demander de
       // changer d'outil d'abord.
@@ -3813,6 +3917,7 @@ export function IsoFarmView({
         );
         campagne.update(t);
       }
+      decorJoueur.update(t);
 
       // Engins garés : moteur coupé. Ni roue, ni gyrophare, ni flottement —
       // c'est le contraste avec l'engin au travail qui dit lequel est occupé.
@@ -4571,6 +4676,8 @@ export function IsoFarmView({
 
     return () => {
       cancelAnimationFrame(raf);
+      decorJoueur.dispose();
+      decorJoueurRef.current = null;
       layoutRef.current = null;
       recadrerRef.current = null;
       if (controle) controle.current = null;
@@ -4686,6 +4793,20 @@ export function IsoFarmView({
   useEffect(() => {
     layoutRef.current?.();
   }, [sceneKey]);
+
+  /*
+   * La décoration : la liste posée, et le fantôme de ce qu'on a en main. Une
+   * liste qui change replante aussi la campagne (ses arbres cèdent la place),
+   * d'où le `layout` — il ne reconstruit que si la signature a bougé.
+   */
+  useEffect(() => {
+    decorJoueurRef.current?.setDecorations(decorations ?? [], deco?.selection ?? null);
+    layoutRef.current?.();
+  }, [decorations, deco?.selection]);
+  useEffect(() => {
+    decorJoueurRef.current?.setFantome(deco?.article ?? null, deco?.rot ?? 0, deco?.teinte, deco?.deplace ?? null);
+    onDecoRaisonRef.current?.(decorJoueurRef.current?.raison() ?? null);
+  }, [deco?.article, deco?.rot, deco?.teinte, deco?.deplace]);
 
   /*
    * La vue suit la parcelle.

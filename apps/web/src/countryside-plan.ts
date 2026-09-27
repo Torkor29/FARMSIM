@@ -275,6 +275,12 @@ export type PlanCampagne = {
   herbes: { x: number; z: number; piece: PieceHerbe; rot: number; echelle: number }[];
   /** Tout ce qui occupe le sol, pour le contrôle (`placement.conflits`). */
   occupants: Occupant[];
+  /**
+   * Ce qui est fixe — routes, chemins, cour, île, champs, village —, sans
+   * les arbres ni l'herbe tirés au sort ni les décorations du joueur. C'est
+   * contre cela qu'une décoration se valide (`decor-joueur.gene`).
+   */
+  durs: Occupant[];
   sol: EmpriseSol;
   /**
    * Pas de la trame, entre deux centres de parcelle.
@@ -361,6 +367,12 @@ export type OptionsPlan = {
    * travaille sur une autre de ses parcelles : sa propre cour le recouvre.
    */
   maison?: string;
+  /**
+   * Ce que le joueur a posé (`decor-joueur.ts`), en occupants de la scène.
+   * Les arbres et les détails de l'herbe tirés au sort leur laissent la
+   * place : la décoration du joueur l'emporte toujours sur le hasard.
+   */
+  decorations?: readonly Occupant[];
 };
 
 /* ------------------------------------------------------------------ */
@@ -1137,6 +1149,11 @@ export function planCampagne(o: OptionsPlan): PlanCampagne {
       forme: { type: "boite", x: l.x, z: l.z, w: c, d: c },
     });
   }
+  // Ce qui est fixe : routes, chemins, cour, île, champs, village. C'est
+  // contre cela, et non contre les arbres tirés au sort, qu'une décoration
+  // du joueur se valide.
+  const durs = [...occupation.occupants];
+  for (const d of o.decorations ?? []) occupation.ajouter(d);
   const poser = (x: number, z: number, taille: number) => {
     const graine = Math.floor(rnd() * 1e9);
     if (!surLeSol(sol, x, z)) return;
@@ -1241,6 +1258,7 @@ export function planCampagne(o: OptionsPlan): PlanCampagne {
     arbres,
     herbes,
     occupants: occupation.occupants,
+    durs,
     sol,
     pas,
     emprise,

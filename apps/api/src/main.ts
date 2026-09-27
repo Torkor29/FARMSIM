@@ -375,6 +375,13 @@ import {
   REINIT_REFUS,
   REINIT_TTL_LIBELLE,
   lienDeReinit,
+  DECO_MAX,
+  articleDeco,
+  lireDecorations,
+  normaliserCap,
+  prixRevente,
+  refusDecoration,
+  type Decoration,
 } from "@farmsim/shared";
 import {
   simulateCell,
@@ -5633,6 +5640,189 @@ app.post("/me/consignes", async (req, res) => {
     data: { consignesJson: JSON.stringify(next) },
   });
   res.json({ consignes: next });
+});
+
+/* ------------------------------------------------------------------ */
+/* Décoration libre                                                    */
+/* ------------------------------------------------------------------ */
+
+/**
+ * La décoration : ce que le joueur pose autour de sa ferme, pour le plaisir.
+ *
+ * Le serveur tient la liste, l'argent et le niveau ; le terrain (ne pas
+ * poser un banc sur la route) se vérifie dans la vue, avec les règles du
+ * décor. Voir `packages/shared/src/decoration.ts`.
+ *
+ * La liste vit dans une colonne JSON de la ferme. Deux gestes lancés
+ * ensemble ne doivent pas s'écraser : l'écriture n'a lieu que si la colonne
+ * n'a pas bougé depuis sa lecture, sinon on recommence (trois fois).
+ */
+class RefusDeco extends Error {
+  constructor(
+    readonly status: number,
+    message: string,
+  ) {
+    super(message);
+  }
+}
+
+async function modifierDecor<T>(
+  userId: string,
+  geste: (
+    liste: Decoration[],
+    tx: Prisma.TransactionClient,
+  ) => Promise<{ liste: Decoration[]; resultat: T }>,
+): Promise<{ liste: Decoration[]; resultat: T }> {
+  for (let essai = 0; essai < 3; essai++) {
+    const fait = await prisma.$transaction(async (tx) => {
+      const farm = await tx.farm.findUnique({ where: { userId }, select: { id: true, decorJson: true } });
+      if (!farm) throw new RefusDeco(404, "Ferme introuvable");
+      const sortie = await geste(lireDecorations(farm.decorJson), tx);
+      const ecrit = await tx.farm.updateMany({
+        where: { id: farm.id, decorJson: farm.decorJson },
+        data: { decorJson: JSON.stringify(sortie.liste) },
+      });
+      // La liste a changé entre-temps : on annule tout (débit compris).
+      if (ecrit.count === 0) throw new RefusDeco(409, "course");
+      return sortie;
+    }).catch((e: unknown) => {
+      if (e instanceof RefusDeco && e.status === 409 && e.message === "course") return null;
+      throw e;
+    });
+    if (fait) return fait;
+  }
+  throw new RefusDeco(409, "La décoration a changé ailleurs — réessaie");
+}
+
+/** Répond à une erreur de décoration ; relance les autres. */
+function repondreDeco(res: express.Response, e: unknown): void {
+  if (e instanceof RefusDeco) {
+    res.status(e.status).json({ error: e.message });
+    return;
+  }
+  if (e instanceof InsufficientFunds) {
+    res.status(402).json({ error: e.message });
+    return;
+  }
+  console.error("décoration :", e instanceof Error ? e.message : e);
+  res.status(500).json({ error: "Le serveur n'a pas pu traiter cette action" });
+}
+
+const corpsDeco = z.object({
+  code: z.string().min(1).max(40),
+  x: z.number(),
+  z: z.number(),
+  rot: z.number(),
+  teinte: z.number().int().nullable().optional(),
+});
+
+app.get("/decorations", async (req, res) => {
+  const auth = await userFromAuthHeader(req);
+  if (!auth) {
+    res.status(401).json({ error: "Session invalide" });
+    return;
+  }
+  const farm = await prisma.farm.findUnique({ where: { userId: auth.user.id }, select: { decorJson: true } });
+  res.json({ decorations: lireDecorations(farm?.decorJson) });
+});
+
+app.post("/decorations", async (req, res) => {
+  const auth = await userFromAuthHeader(req);
+  if (!auth) {
+    res.status(401).json({ error: "Session invalide" });
+    return;
+  }
+  const body = corpsDeco.safeParse(req.body);
+  if (!body.success) {
+    res.status(400).json(body.error.flatten());
+    return;
+  }
+  const { teinte, ...reste } = body.data;
+  const voulue: Omit<Decoration, "id"> = {
+    ...reste,
+    rot: normaliserCap(reste.rot),
+    ...(teinte != null ? { teinte } : {}),
+  };
+  const refus = refusDecoration(voulue);
+  if (refus) {
+    res.status(400).json({ error: refus });
+    return;
+  }
+  const article = articleDeco(voulue.code)!;
+  if (auth.user.level < article.niveau) {
+    res.status(403).json({ error: `${article.nom} : niveau ${article.niveau} requis` });
+    return;
+  }
+  try {
+    const { liste, resultat } = await modifierDecor(auth.user.id, async (liste, tx) => {
+      if (liste.length >= DECO_MAX) throw new RefusDeco(409, `${DECO_MAX} décorations au plus`);
+      await debit(tx, auth.user.id, article.prix, "DECORATION", `Décoration — ${article.nom}`);
+      const posee: Decoration = { id: randomUUID(), ...voulue };
+      return { liste: [...liste, posee], resultat: posee };
+    });
+    res.json({ decoration: resultat, decorations: liste, player: await playerPayload(auth.user.id) });
+  } catch (e) {
+    repondreDeco(res, e);
+  }
+});
+
+/** Déplacer, tourner, repeindre : gratuit, on essaie tant qu'on veut. */
+app.patch("/decorations/:id", async (req, res) => {
+  const auth = await userFromAuthHeader(req);
+  if (!auth) {
+    res.status(401).json({ error: "Session invalide" });
+    return;
+  }
+  const body = corpsDeco.omit({ code: true }).partial().safeParse(req.body);
+  if (!body.success) {
+    res.status(400).json(body.error.flatten());
+    return;
+  }
+  try {
+    const { liste, resultat } = await modifierDecor(auth.user.id, async (liste) => {
+      const i = liste.findIndex((d) => d.id === req.params.id);
+      if (i < 0) throw new RefusDeco(404, "Décoration introuvable");
+      const avant = liste[i]!;
+      const { teinte, ...reste } = body.data;
+      const apres: Decoration = {
+        ...avant,
+        ...reste,
+        rot: normaliserCap(reste.rot ?? avant.rot),
+      };
+      if (teinte === null) delete apres.teinte;
+      else if (teinte != null) apres.teinte = teinte;
+      const refus = refusDecoration(apres);
+      if (refus) throw new RefusDeco(400, refus);
+      const suite = [...liste];
+      suite[i] = apres;
+      return { liste: suite, resultat: apres };
+    });
+    res.json({ decoration: resultat, decorations: liste });
+  } catch (e) {
+    repondreDeco(res, e);
+  }
+});
+
+/** Revendre : une part du prix revient (`DECO_REVENTE`). */
+app.delete("/decorations/:id", async (req, res) => {
+  const auth = await userFromAuthHeader(req);
+  if (!auth) {
+    res.status(401).json({ error: "Session invalide" });
+    return;
+  }
+  try {
+    const { liste, resultat } = await modifierDecor(auth.user.id, async (liste, tx) => {
+      const d = liste.find((x) => x.id === req.params.id);
+      if (!d) throw new RefusDeco(404, "Décoration introuvable");
+      const article = articleDeco(d.code);
+      const rendu = article ? prixRevente(article) : 0;
+      if (article) await crediter(tx, auth.user.id, rendu, "DECORATION", `Revente — ${article.nom}`);
+      return { liste: liste.filter((x) => x.id !== d.id), resultat: rendu };
+    });
+    res.json({ rendu: resultat, decorations: liste, player: await playerPayload(auth.user.id) });
+  } catch (e) {
+    repondreDeco(res, e);
+  }
 });
 
 app.get("/session/resume", async (req, res) => {

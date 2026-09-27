@@ -46,7 +46,11 @@ export type Genre =
    * derrière lui. Un arbre planté dans l'herbe juste devant la route la
    * recouvre à l'écran, et on le croit planté dans le bitume.
    */
-  | "masque";
+  | "masque"
+  /** Ce que le joueur pose : banc, lanterne, puits… (`decoration.ts`). */
+  | "objet"
+  /** Un sol posé par le joueur (dallage, pas japonais) : on y pose des objets. */
+  | "dalle";
 
 export interface Occupant {
   id: string;
@@ -89,6 +93,25 @@ const REGLES: [Genre, Genre, number][] = [
   // Une touffe peut frôler un buisson, pas pousser sur la route.
   ...DUR.map((d): [Genre, Genre, number] => ["herbe", d, 0.05]),
   ["herbe", "tronc", 0],
+  // Deux mares ne se fondent pas l'une dans l'autre.
+  ["eau", "eau", 0],
+  // Ce que pose le joueur : ni sur le dur, ni dans l'eau, ni dans un tronc,
+  // ni dans un autre objet. Il peut se poser sur un dallage.
+  ...DUR.map((d): [Genre, Genre, number] => ["objet", d, 0.04]),
+  ["objet", "objet", 0.01],
+  ["objet", "tronc", 0.04],
+  ["objet", "buisson", 0.02],
+  ["objet", "rocher", 0.02],
+  ["objet", "lavande", 0.02],
+  // Un dallage borde le dur sans le recouvrir, et l'herbe n'y pousse pas.
+  ...DUR.map((d): [Genre, Genre, number] => ["dalle", d, 0]),
+  ["dalle", "dalle", 0],
+  ["dalle", "tronc", 0.04],
+  ["dalle", "buisson", 0],
+  ["dalle", "rocher", 0],
+  ["dalle", "lavande", 0],
+  ["dalle", "herbe", 0],
+  ["objet", "herbe", 0],
 ];
 
 const TABLE = new Map<string, number>();
@@ -140,6 +163,9 @@ export function conflits(occupants: Occupant[], limite = 200): Conflit[] {
   const grille = new GrilleOccupation(4);
   for (const o of occupants) {
     for (const autre of grille.voisins(o.forme)) {
+      // Les morceaux d'un même objet (la file de cercles d'un banc) ne se
+      // gênent pas entre eux.
+      if (autre.id === o.id) continue;
       const m = marge(o.genre, autre.genre);
       if (m === null) continue;
       if (chevauchent(o.forme, autre.forme, m)) {

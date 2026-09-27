@@ -73,3 +73,7 @@ iterating only; do the final `construire` without it.
   `decor.html` (three.js, game lights).
 - Changing anything in `forge/*.py` marks **every** asset stale (the
   fingerprint covers the whole forge): rebuild them all before committing.
+- A forge piece can be offered to players in the decoration catalogue
+  (`packages/shared/src/decoration.ts`): add an entry with the manifest
+  size, then run `node scripts/vignettes-deco.mjs` with the web dev server up
+  to render its catalogue thumbnail.

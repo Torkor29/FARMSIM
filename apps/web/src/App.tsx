@@ -185,6 +185,8 @@ import {
   type CellContextItem,
 } from "./ui/desktop/CellContextMenu";
 import { SEASON_NAMES, SeasonSky } from "./ui/SeasonSky";
+import { DecoPanel, type MainDeco } from "./DecoPanel";
+import { articleDeco, normaliserCap, type Decoration } from "@farmsim/shared";
 import { formatHeure, heureCourante, momentDuJour, type Saison } from "./ambiance";
 import { SeasonMark, WeatherMark } from "./ui/HudMarks";
 import { useIsMobile } from "./use-media-query";
@@ -1030,6 +1032,103 @@ export function App() {
   const [showGuide, setShowGuide] = useState(false);
   /** Les compétences ont leur propre porte, au milieu du bandeau. */
   const [showSkills, setShowSkills] = useState(false);
+  /*
+   * La décoration libre : ce que le joueur pose autour de sa ferme, où il
+   * veut, dans le sens qu'il veut, de la couleur qu'il veut. Voir
+   * `DecoPanel` et `decor-joueur.ts`.
+   */
+  const [decoOuvert, setDecoOuvert] = useState(false);
+  const [decorations, setDecorations] = useState<Decoration[]>([]);
+  const [decoMain, setDecoMain] = useState<MainDeco | null>(null);
+  const [decoSel, setDecoSel] = useState<string | null>(null);
+  const [decoRaison, setDecoRaison] = useState<string | null>(null);
+  const [decoBusy, setDecoBusy] = useState(false);
+  useEffect(() => {
+    if (!player?.id) return;
+    let vivant = true;
+    api<{ decorations: Decoration[] }>("/decorations")
+      .then((r) => vivant && setDecorations(r.decorations))
+      .catch(() => {
+        /* la décoration n'empêche pas de jouer : on retentera au prochain chargement */
+      });
+    return () => {
+      vivant = false;
+    };
+  }, [player?.id]);
+
+  /** Un geste de décoration envoyé au serveur ; la liste revient à jour. */
+  async function gesteDeco(
+    chemin: string,
+    init: RequestInit,
+    apres?: (r: { decoration?: Decoration; decorations: Decoration[]; player?: Player; rendu?: number }) => void,
+  ) {
+    setDecoBusy(true);
+    try {
+      const r = await api<{ decoration?: Decoration; decorations: Decoration[]; player?: Player; rendu?: number }>(
+        chemin,
+        init,
+      );
+      setDecorations(r.decorations);
+      if (r.player) setPlayer(r.player);
+      apres?.(r);
+    } catch (e) {
+      flashToast(e instanceof Error ? e.message : "La décoration n'a pas pu être enregistrée", true);
+    } finally {
+      setDecoBusy(false);
+    }
+  }
+
+  function poserDeco(pose: { x: number; z: number; rot: number }) {
+    const main = decoMain;
+    if (!main || decoBusy) return;
+    if (main.deplace) {
+      const id = main.deplace;
+      void gesteDeco(`/decorations/${id}`, { method: "PATCH", body: JSON.stringify(pose) }, () => {
+        setDecoMain(null);
+        setDecoSel(id);
+      });
+      return;
+    }
+    // On garde l'article en main : une allée de lanternes se pose d'un clic
+    // par lanterne, comme dans les Sims.
+    void gesteDeco("/decorations", {
+      method: "POST",
+      body: JSON.stringify({ code: main.article.code, ...pose, ...(main.teinte != null ? { teinte: main.teinte } : {}) }),
+    });
+  }
+
+  function fermerDeco() {
+    setDecoOuvert(false);
+    setDecoMain(null);
+    setDecoSel(null);
+    setDecoRaison(null);
+  }
+
+  // R pour tourner ce qu'on tient, Échap pour le lâcher. En capture : le
+  // clavier du jeu (R y tourne un bâtiment) ne doit pas le voir passer.
+  useEffect(() => {
+    if (!decoOuvert) return;
+    const onKey = (e: KeyboardEvent) => {
+      const el = e.target as HTMLElement | null;
+      if (el && /^(INPUT|TEXTAREA|SELECT)$/.test(el.tagName)) return;
+      if (e.key === "r" || e.key === "R") {
+        e.preventDefault();
+        e.stopImmediatePropagation();
+        const delta = (e.shiftKey ? -1 : 1) * (Math.PI / 4);
+        if (decoMain) setDecoMain({ ...decoMain, rot: normaliserCap(decoMain.rot + delta) });
+        return;
+      }
+      if (e.key === "Escape") {
+        e.preventDefault();
+        e.stopImmediatePropagation();
+        if (decoMain) setDecoMain(null);
+        else if (decoSel) setDecoSel(null);
+        else fermerDeco();
+      }
+    };
+    window.addEventListener("keydown", onKey, true);
+    return () => window.removeEventListener("keydown", onKey, true);
+  }, [decoOuvert, decoMain, decoSel]);
   const [guideFlags, setGuideFlags] = useState<GuideFlags>({ ...EMPTY_GUIDE_FLAGS });
   const [pulseCells, setPulseCells] = useState<{ x: number; y: number }[]>([]);
   /**
@@ -1663,12 +1762,16 @@ export function App() {
       else if (e.key === "t" || e.key === "T") setShowEta((v) => !v);
       else if (e.key === "m" || e.key === "M") setShowMarket((v) => !v);
       else if (e.key === "c" || e.key === "C") setShowSkills((v) => !v);
+      else if ((e.key === "d" || e.key === "D") && !visiting) {
+        if (decoOuvert) fermerDeco();
+        else setDecoOuvert(true);
+      }
       else if (e.key === "?") setShowGuide(true);
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isMobile, player?.id, tool, selectedCells, cellMenu, busy]);
+  }, [isMobile, player?.id, tool, selectedCells, cellMenu, busy, decoOuvert]);
 
   // Changer de bâtiment ne garde pas la place retenue — un fantôme de silo
   // resté après le passage au poulailler poserait le mauvais. Mais on ne
@@ -5826,6 +5929,45 @@ export function App() {
           saison était calculée et écrite dans le rail, mais jamais donnée à
           voir. */}
       <SeasonSky season={season} weather={localWeather} />
+      {decoOuvert && !visiting && (
+        <DecoPanel
+          niveau={player.level}
+          argent={player.crd}
+          illimite={hasUnlimitedFunds(player)}
+          decorations={decorations}
+          main={decoMain}
+          selection={decoSel}
+          raison={decoRaison}
+          busy={decoBusy}
+          onPrendre={(m) => {
+            setDecoMain(m);
+            setDecoSel(null);
+          }}
+          onTourner={(d) => decoMain && setDecoMain({ ...decoMain, rot: normaliserCap(decoMain.rot + d) })}
+          onTeinte={(t) => decoMain && setDecoMain({ ...decoMain, teinte: t })}
+          onDeplacer={(id) => {
+            const d = decorations.find((x) => x.id === id);
+            const article = d ? articleDeco(d.code) : undefined;
+            if (!d || !article) return;
+            setDecoMain({ article, rot: d.rot, teinte: d.teinte, deplace: id });
+          }}
+          onTournerPosee={(id, delta) => {
+            const d = decorations.find((x) => x.id === id);
+            if (d) void gesteDeco(`/decorations/${id}`, { method: "PATCH", body: JSON.stringify({ rot: d.rot + delta }) });
+          }}
+          onTeintePosee={(id, t) =>
+            void gesteDeco(`/decorations/${id}`, { method: "PATCH", body: JSON.stringify({ teinte: t ?? null }) })
+          }
+          onVendre={(id) =>
+            void gesteDeco(`/decorations/${id}`, { method: "DELETE" }, (r) => {
+              setDecoSel(null);
+              if (r.rendu) flashToast(`Revendu · +${r.rendu} €`);
+            })
+          }
+          onDeselectionner={() => setDecoSel(null)}
+          onFermer={fermerDeco}
+        />
+      )}
       <div className="iso-layer">
         {parcel ? (
           <Suspense fallback={<SceneLoading label="Chargement de la ferme…" />}>
@@ -5877,6 +6019,21 @@ export function App() {
                  est stable côté serveur, ce siège ne change donc pas d'une
                  session à l'autre. */
               homeParcelId={player?.farm?.parcels[0]?.id}
+              decorations={visiting ? undefined : decorations}
+              deco={
+                decoOuvert && !visiting
+                  ? {
+                      article: decoMain?.article ?? null,
+                      rot: decoMain?.rot ?? 0,
+                      teinte: decoMain?.teinte,
+                      deplace: decoMain?.deplace ?? null,
+                      selection: decoSel,
+                    }
+                  : null
+              }
+              onDecoPoser={poserDeco}
+              onDecoToucher={(id) => setDecoSel(id)}
+              onDecoRaison={setDecoRaison}
               gridW={gw}
               gridH={gh}
               cells={grid}
@@ -7327,6 +7484,18 @@ export function App() {
                 on: showBuildPicker,
                 onOpen: () => setShowBuildPicker((v) => !v),
               },
+              ...(visiting
+                ? []
+                : [
+                    {
+                      id: "DECOR",
+                      label: "Décorer",
+                      icon: "/assets/icons/nav/decorer.svg",
+                      hotkey: "D",
+                      on: decoOuvert,
+                      onOpen: () => (decoOuvert ? fermerDeco() : setDecoOuvert(true)),
+                    },
+                  ]),
               /*
                * Ventes, Garage et Bureau, aussi au menu sur PC.
                *
@@ -7738,6 +7907,22 @@ export function App() {
                   </button>
                 );
               })}
+              {!visiting && (
+                <button
+                  type="button"
+                  className={`tab${decoOuvert ? " on" : ""}`}
+                  style={{ animationDelay: `${SHEET_TABS.length * 45}ms` }}
+                  onClick={() => {
+                    setMoreOpen(false);
+                    setSheet(null);
+                    if (decoOuvert) fermerDeco();
+                    else setDecoOuvert(true);
+                  }}
+                >
+                  <img className="tab-icon" src="/assets/icons/nav/decorer.svg" alt="" aria-hidden="true" />
+                  <span className="tab-label">Décorer</span>
+                </button>
+              )}
               {devEnabled && (
                 <button
                   type="button"
