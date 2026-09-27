@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef } from "react";
 import {
+  PRIX_COUPE,
   BUILDING_ART,
   CATEGORIES,
   catalogueConstruction,
@@ -62,6 +63,8 @@ export function iconeConstruction(d: DefConstruction): string {
 }
 
 function prixAffiche(d: DefConstruction): string {
+  // Couper rapporte : la scierie paie la case.
+  if (d.regle === "COUPE") return `+${PRIX_COUPE} €/case`;
   if (d.pose === "TERRAIN") return d.prix ? `${d.prix} €/case` : "gratuit";
   if (d.pose === "OUTIL") return "gratuit";
   return `${d.prix.toLocaleString("fr-FR")} €`;

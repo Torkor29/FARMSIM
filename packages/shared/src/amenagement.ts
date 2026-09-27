@@ -11,7 +11,8 @@
  */
 import { BUILDING_DEFS, quarterTurns, type BuildingType } from "./index.js";
 import { CASES_STANDARD, HECTARES_STANDARD } from "./parcelles.js";
-import { NIVEAU_MAX, hydrologie, rampeValide } from "./relief.js";
+import { NIVEAU_MAX, accesEngins, hydrologie, rampeValide, type Passage } from "./relief.js";
+import { BONUS_BOIS, PORTEE_BOIS, PRIX_COUPE, croissanceBois, stadeBois } from "./bois.js";
 import { LAND_BASE_PER_HA, fertilityFactor } from "./land.js";
 
 /* ------------------------------------------------------------------ */
@@ -19,8 +20,8 @@ import { LAND_BASE_PER_HA, fertilityFactor } from "./land.js";
 /* ------------------------------------------------------------------ */
 
 /** Le sol d'une case possédée. La friche n'a pas de ligne : elle n'est pas à vous. */
-export type SolCase = "CHAMP" | "PRE" | "EAU";
-export const SOLS: readonly SolCase[] = ["CHAMP", "PRE", "EAU"];
+export type SolCase = "CHAMP" | "PRE" | "EAU" | "BOIS";
+export const SOLS: readonly SolCase[] = ["CHAMP", "PRE", "EAU", "BOIS"];
 
 /** Le revêtement d'un chemin. */
 export type Revetement = "TERRE" | "GRAVIER" | "PAVE";
@@ -113,7 +114,18 @@ export type ModePose = "TERRAIN" | "OBJET" | "BATIMENT" | "OUTIL";
  * La règle d'occupation d'une entrée. Chacune dit quels sols elle admet et
  * quelles couches elle prend — c'est tout ce que `validerPose` regarde.
  */
-export type RegleId = "CHAMP" | "PRE" | "EAU" | "CHEMIN" | "DECOR" | "BATIMENT" | "RELIEF" | "PONT" | "RAMPE";
+export type RegleId =
+  | "CHAMP"
+  | "PRE"
+  | "EAU"
+  | "CHEMIN"
+  | "DECOR"
+  | "BATIMENT"
+  | "RELIEF"
+  | "PONT"
+  | "RAMPE"
+  | "BOIS"
+  | "COUPE";
 
 type Regle = {
   /** Sols sur lesquels on peut poser. */
@@ -131,17 +143,23 @@ const REGLES: Record<RegleId, Regle> = {
      dans un étang, et un chemin se retire d'abord. */
   CHAMP: { sols: ["PRE", "CHAMP"], champNuAdmis: true, surChemin: false, surVolume: false },
   /* La gomme : elle rend l'herbe à ce qui n'est ni bâti ni semé. */
-  PRE: { sols: ["PRE", "CHAMP", "EAU"], champNuAdmis: true, surChemin: true, surVolume: false },
+  PRE: { sols: ["PRE", "CHAMP", "EAU", "BOIS"], champNuAdmis: true, surChemin: true, surVolume: false },
   EAU: { sols: ["PRE", "EAU"], champNuAdmis: true, surChemin: false, surVolume: false },
-  CHEMIN: { sols: ["PRE"], champNuAdmis: true, surChemin: true, surVolume: false },
+  /* Un chemin s'ouvre aussi à travers un bois : c'est un layon, et les
+     engins y passent. */
+  CHEMIN: { sols: ["PRE", "BOIS"], champNuAdmis: true, surChemin: true, surVolume: false },
   DECOR: { sols: ["PRE"], champNuAdmis: true, surChemin: false, surVolume: false },
   BATIMENT: { sols: ["PRE"], champNuAdmis: true, surChemin: false, surVolume: false },
   /* Surélever ou abaisser : la terre ferme nue, chemins compris (ils suivent). */
-  RELIEF: { sols: ["PRE", "CHAMP"], champNuAdmis: true, surChemin: true, surVolume: false },
+  RELIEF: { sols: ["PRE", "CHAMP", "BOIS"], champNuAdmis: true, surChemin: true, surVolume: false },
   /* Un pont ne se pose que sur l'eau. */
   PONT: { sols: ["EAU"], champNuAdmis: false, surChemin: false, surVolume: false },
   /* Une rampe, au pied d'une falaise ; un chemin peut y monter. */
   RAMPE: { sols: ["PRE"], champNuAdmis: true, surChemin: true, surVolume: false },
+  /* Boiser : du pré ou un champ nu. */
+  BOIS: { sols: ["PRE", "BOIS"], champNuAdmis: true, surChemin: false, surVolume: false },
+  /* Couper : seulement du bois, et seulement une futaie (voir `verdictCase`). */
+  COUPE: { sols: ["BOIS"], champNuAdmis: false, surChemin: false, surVolume: false },
 };
 
 export type EffetAmenagement = {
@@ -245,6 +263,43 @@ const relief: DefConstruction[] = [
     niveauMin: 1,
     regle: "RAMPE",
     charme: 1,
+  },
+];
+
+/** Le bois : voir `bois.ts`. */
+const bois: DefConstruction[] = [
+  {
+    id: "boiser",
+    categorie: "NATURE",
+    nom: "Boiser",
+    description:
+      "Planter un bois : il pousse seul, en une année de jeu, et se coupe ensuite tous les ans. Les engins n'y entrent pas — ouvrez-y un chemin.",
+    icone: "🌲",
+    pose: "TERRAIN",
+    emprise: { w: 1, h: 1 },
+    rotations: [0],
+    prix: 25,
+    revente: 0,
+    niveauMin: 1,
+    regle: "BOIS",
+    sol: "BOIS",
+    effet: { bonusRendement: BONUS_BOIS, portee: PORTEE_BOIS, libelle: "Brise-vent : +3 % à 2 cases, une fois le bois levé" },
+    charme: 0,
+  },
+  {
+    id: "couper",
+    categorie: "NATURE",
+    nom: "Couper",
+    description: `Couper une futaie et la vendre à la scierie, ${PRIX_COUPE} € la case. Les souches rejettent : le bois repousse seul.`,
+    icone: "🪓",
+    pose: "TERRAIN",
+    emprise: { w: 1, h: 1 },
+    rotations: [0],
+    prix: 0,
+    revente: 0,
+    niveauMin: 1,
+    regle: "COUPE",
+    charme: 0,
   },
 ];
 
@@ -636,7 +691,7 @@ function batiments(): DefConstruction[] {
 let _catalogue: DefConstruction[] | null = null;
 /** Tout ce qui se pose, dans l'ordre d'affichage. */
 export function catalogueConstruction(): DefConstruction[] {
-  _catalogue ??= [...outils, ...relief, ...terrains, ...objets, ...batiments()];
+  _catalogue ??= [...outils, ...relief, ...terrains, ...bois, ...objets, ...batiments()];
   return _catalogue;
 }
 
@@ -680,6 +735,8 @@ export type CaseDomaine = {
   volume: Volume | null;
   /** Le relief : 0 en plaine. */
   niveau: number;
+  /** Un bois : quand il a été planté (ou coupé pour la dernière fois). */
+  boiseDepuis: Date | string | null;
 };
 
 /** Une case telle que le serveur la stocke — le strict nécessaire. */
@@ -692,6 +749,7 @@ export type CaseSource = {
   buildingId?: string | null;
   crop?: string | null;
   niveau?: number | null;
+  boiseDepuis?: Date | string | null;
 };
 
 export type AmenagementSource = {
@@ -706,6 +764,10 @@ export type AmenagementSource = {
 export type GrilleDomaine = {
   bornes: Bornes;
   cases: Map<string, CaseDomaine>;
+  /** Ponts et rampes : ce qui ouvre le passage aux engins (`relief.ts`). */
+  passages?: Passage[];
+  /** L'heure de lecture : c'est elle qui dit l'âge d'un bois. */
+  maintenant?: number;
 };
 
 function lireRevetement(v: string | null | undefined): Revetement | null {
@@ -716,6 +778,7 @@ export function construireGrille(opts: {
   bornes: Bornes;
   cells: readonly CaseSource[];
   amenagements?: readonly AmenagementSource[];
+  maintenant?: number;
 }): GrilleDomaine {
   const cases = new Map<string, CaseDomaine>();
   for (const c of opts.cells) {
@@ -726,10 +789,11 @@ export function construireGrille(opts: {
     cases.set(cleCase(c.x, c.y), {
       x: c.x,
       y: c.y,
-      sol: c.sol === "PRE" || c.sol === "EAU" ? c.sol : "CHAMP",
+      sol: c.sol === "PRE" || c.sol === "EAU" || c.sol === "BOIS" ? c.sol : "CHAMP",
       revetement: lireRevetement(c.revetement),
       volume,
       niveau: c.niveau ?? 0,
+      boiseDepuis: c.boiseDepuis ?? null,
     });
   }
   for (const a of opts.amenagements ?? []) {
@@ -741,7 +805,29 @@ export function construireGrille(opts: {
       if (c) c.volume = { type: "OBJET", id: a.id, defId: a.type };
     }
   }
-  return { bornes: opts.bornes, cases };
+  const passages = (opts.amenagements ?? [])
+    .filter((a) => a.type === "pont" || a.type === "rampe")
+    .map((a) => ({ type: a.type, originX: a.originX, originY: a.originY, rotation: a.rotation }));
+  return { bornes: opts.bornes, cases, passages, maintenant: opts.maintenant ?? Date.now() };
+}
+
+const _acces = new WeakMap<GrilleDomaine, Set<string>>();
+/**
+ * Une case de bois que les engins peuvent couper : à la lisière d'une case
+ * où ils roulent. Le fond d'un grand bois demande un chemin.
+ */
+export function aLaLisiere(grille: GrilleDomaine, x: number, y: number): boolean {
+  let acces = _acces.get(grille);
+  if (!acces) {
+    acces = accesEngins([...grille.cases.values()], grille.passages ?? []);
+    _acces.set(grille, acces);
+  }
+  return [
+    [0, -1],
+    [1, 0],
+    [0, 1],
+    [-1, 0],
+  ].some(([dx, dy]) => acces.has(cleCase(x + dx!, y + dy!)));
 }
 
 /** Pourquoi une case refuse — dit tel quel au joueur. */
@@ -759,7 +845,11 @@ export type RaisonRefus =
   | "SOMMET"
   | "PLAINE"
   | "RELIEF"
-  | "RAMPE";
+  | "RAMPE"
+  | "BOIS"
+  | "PAS_BOIS"
+  | "JEUNE"
+  | "ISOLE";
 
 export const LIBELLE_REFUS: Record<RaisonRefus, string> = {
   FRICHE: "Terrain en friche — achetez ce lot d'abord",
@@ -776,6 +866,10 @@ export const LIBELLE_REFUS: Record<RaisonRefus, string> = {
   PLAINE: "Déjà en plaine",
   RELIEF: "Un bâtiment se pose en plaine",
   RAMPE: "Une rampe monte d'un niveau : tournez-la vers la falaise",
+  BOIS: "C'est un bois — défrichez d'abord (Remettre en herbe)",
+  PAS_BOIS: "Il n'y a pas d'arbres ici",
+  JEUNE: "Ces arbres sont trop jeunes pour la coupe",
+  ISOLE: "Les engins n'y arrivent pas — ouvrez un chemin jusqu'à la lisière",
 };
 
 export type VerdictCase = {
@@ -817,7 +911,15 @@ export function verdictCase(
   if (c.revetement && !regle.surChemin) return non("CHEMIN");
   const solAdmis =
     regle.sols.includes(c.sol) || (c.sol === "CHAMP" && regle.champNuAdmis && !volumeGenant);
-  if (!solAdmis) return non(c.sol === "EAU" ? "EAU" : c.sol === "CHAMP" ? "CHAMP" : "DEJA");
+  if (!solAdmis) {
+    if (def.regle === "COUPE") return non("PAS_BOIS");
+    return non(c.sol === "EAU" ? "EAU" : c.sol === "CHAMP" ? "CHAMP" : c.sol === "BOIS" ? "BOIS" : "DEJA");
+  }
+  if (def.regle === "COUPE") {
+    if (stadeBois(croissanceBois(c.boiseDepuis, grille.maintenant ?? Date.now())) !== "FUTAIE") return non("JEUNE");
+    if (!aLaLisiere(grille, x, y)) return non("ISOLE");
+    return { x, y, ok: true, change: true };
+  }
 
   if (def.regle === "BATIMENT" && c.niveau !== 0) return non("RELIEF");
   if (def.regle === "RELIEF") {
@@ -1168,6 +1270,8 @@ export type SourcesBonus = {
   eaux: readonly { x: number; y: number; courante?: boolean }[];
   /** Les champs en coteau (terrasse exposée au sud). */
   coteaux?: readonly { x: number; y: number }[];
+  /** Les cases de bois levé (jeune bois ou futaie) : un brise-vent. */
+  bois?: readonly { x: number; y: number }[];
 };
 
 /**
@@ -1195,6 +1299,10 @@ export function bonusAmenagementCase(sources: SourcesBonus, x: number, y: number
       if (e.courante && d <= PORTEE_RIVIERE) tenir("riviere", BONUS_RIVIERE);
     }
   }
+  // Un bois levé coupe le vent mieux qu'une haie ; les deux ne s'ajoutent pas.
+  for (const b of sources.bois ?? []) {
+    if (Math.hypot(x - b.x, y - b.y) <= PORTEE_BOIS) tenir("haie", BONUS_BOIS);
+  }
   const coteau = defConstruction("surelever")?.effet;
   if (coteau && sources.coteaux?.some((c) => c.x === x && c.y === y)) tenir("coteau", coteau.bonusRendement);
   let total = 0;
@@ -1211,13 +1319,20 @@ export function bonusAmenagementCase(sources: SourcesBonus, x: number, y: number
 export function charmeDe(opts: {
   cells: readonly CaseSource[];
   amenagements: readonly { type: string }[];
+  maintenant?: number;
 }): number {
   let total = 0;
   for (const a of opts.amenagements) total += defConstruction(a.type)?.charme ?? 0;
   // Une cascade, c'est le clou d'un jardin.
   total += hydrologie(opts.cells).chutes.length * 3;
+  const maintenant = opts.maintenant ?? Date.now();
   for (const c of opts.cells) {
     if (c.sol === "EAU") total += 1;
+    // Un bois compte à mesure qu'il se lève : un demi-point par case de futaie.
+    if (c.sol === "BOIS") {
+      const st = stadeBois(croissanceBois(c.boiseDepuis, maintenant));
+      total += st === "FUTAIE" ? 0.5 : st === "JEUNE" ? 0.25 : 0;
+    }
     const r = lireRevetement(c.revetement);
     if (r) total += defConstruction(r === "TERRE" ? "chemin-terre" : r === "GRAVIER" ? "chemin-gravier" : "chemin-pave")?.charme ?? 0;
   }

@@ -11,7 +11,8 @@
  *
  * Les engins arrivent par le **bord de la ferme, au niveau de la plaine**, et
  * roulent de case en case sur la terre ferme et à niveau. L'eau les arrête —
- * sauf un **pont** ; une falaise les arrête — sauf une **rampe**. Un champ
+ * sauf un **pont** ; une falaise les arrête — sauf une **rampe** ; un bois les
+ * arrête aussi, sauf un chemin ouvert au travers. Un champ
  * qu'ils ne peuvent pas atteindre ne se travaille pas : c'est ce qui fait du
  * terraformage un aménagement, et plus seulement un décor.
  *
@@ -61,6 +62,7 @@ type Index = {
   cases: Map<string, CaseRelief>;
   niveau(x: number, y: number): number;
   eau(x: number, y: number): boolean;
+  bois(x: number, y: number): boolean;
 };
 
 function indexer(cells: readonly CaseRelief[]): Index {
@@ -69,6 +71,7 @@ function indexer(cells: readonly CaseRelief[]): Index {
     cases,
     niveau: (x, y) => cases.get(k(x, y))?.niveau ?? 0,
     eau: (x, y) => cases.get(k(x, y))?.sol === "EAU",
+    bois: (x, y) => cases.get(k(x, y))?.sol === "BOIS",
   };
 }
 
@@ -101,7 +104,9 @@ export function accesEngins(cells: readonly CaseRelief[], passages: readonly Pas
     if (p.type === "pont") ponts.set(k(p.originX, p.originY), axePont(p.rotation));
     else if (p.type === "rampe") rampes.set(k(p.originX, p.originY), ((p.rotation % 4) + 4) % 4);
   }
-  const praticable = (x: number, y: number) => ix.cases.has(k(x, y)) && (!ix.eau(x, y) || ponts.has(k(x, y)));
+  // Un bois arrête les engins comme l'eau ; un chemin à travers en fait du pré.
+  const praticable = (x: number, y: number) =>
+    ix.cases.has(k(x, y)) && !ix.bois(x, y) && (!ix.eau(x, y) || ponts.has(k(x, y)));
   const dansAxe = (x: number, y: number, dx: number) => {
     const a = ponts.get(k(x, y));
     return !a || (a === "EO" ? dx !== 0 : dx === 0);
@@ -111,7 +116,7 @@ export function accesEngins(cells: readonly CaseRelief[], passages: readonly Pas
   const vus = new Set<string>();
   const file: [number, number][] = [];
   for (const c of cells) {
-    if (c.sol === "EAU" || (c.niveau ?? 0) !== 0) continue;
+    if (c.sol === "EAU" || c.sol === "BOIS" || (c.niveau ?? 0) !== 0) continue;
     const auBord = DIRS.some(([dx, dy]) => !ix.cases.has(k(c.x + dx, c.y + dy)));
     if (!auBord) continue;
     vus.add(k(c.x, c.y));

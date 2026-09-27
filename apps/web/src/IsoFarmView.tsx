@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, type MutableRefObject } from "react";
 import * as THREE from "three";
-import { HAUTEUR_NIVEAU, NIVEAU_MAX, rectangleCases, type Bornes as BornesDomaine } from "@farmsim/shared";
+import { HAUTEUR_NIVEAU, NIVEAU_MAX, croissanceBois, rectangleCases, type Bornes as BornesDomaine } from "@farmsim/shared";
 import { creerDalles, type Dalle } from "./cases3d";
 import { creerDomaine3d, type EtatConstruction, type ObjetPose } from "./domaine3d";
 import {
@@ -104,7 +104,9 @@ export type IsoCell = {
   /** Épandage de fumier récent : la case s'assombrit une minute */
   manuredUntil?: number;
   /** Ferme libre : champ, pré ou étang. Absent : champ, comme avant. */
-  sol?: "CHAMP" | "PRE" | "EAU";
+  sol?: "CHAMP" | "PRE" | "EAU" | "BOIS";
+  /** Un bois : sa plantation, ou sa dernière coupe. */
+  boiseDepuis?: string | null;
   /** Ferme libre : le chemin qui passe sur la case, s'il y en a un. */
   revetement?: string | null;
   /** Berges : la forme des coins d'une case d'eau. */
@@ -2827,6 +2829,8 @@ export function IsoFarmView({
           if (solCase === "PRE" && cell.kind !== "BUILDING") col = (x + y) % 2 === 0 ? PRE : PRE_SOMBRE;
           // Sous l'eau : le fond du bassin, plus bas que le pré (voir `eau3d`).
           if (solCase === "EAU") col = 0x4b3d2c;
+          // Le sous-bois : un sol de feuilles, plus sombre que le pré.
+          if (solCase === "BOIS") col = (x + y) % 2 === 0 ? 0x5a6b34 : 0x55652f;
           if (cell && solCase === "CHAMP" && cell.kind === "EMPTY" && look !== "PLAIN" && look !== "PLOWED") {
             soilDetails.push({ look, px, pz, py });
           }
@@ -2942,7 +2946,7 @@ export function IsoFarmView({
         domaine3d.majTerrain(
           {
             bornes: b ?? { minX: 0, minY: 0, maxX: gw, maxY: gh },
-            cells: cs.map((c) => ({ x: c.x, y: c.y, sol: c.sol ?? "CHAMP", revetement: c.revetement ?? null, kind: c.kind, forme: c.forme ?? 0, niveau: c.niveau ?? 0 })),
+            cells: cs.map((c) => ({ x: c.x, y: c.y, sol: c.sol ?? "CHAMP", revetement: c.revetement ?? null, kind: c.kind, forme: c.forme ?? 0, niveau: c.niveau ?? 0, boiseDepuis: c.boiseDepuis ?? null })),
             amenagements: dataRef.current.amenagements,
           },
           cellWorldPos,
@@ -4873,7 +4877,7 @@ export function IsoFarmView({
     const c = cells
       .map(
         (x) =>
-          `${x.x},${x.y},${x.kind},${x.crop ?? ""},${x.fieldStage ?? ""},${x.machineType ?? ""},${x.hasStubble ? 1 : 0},${x.residuePasses ?? 0},${Math.round((x.weedPressure ?? 0) * 10)},${x.harvestsSincePlow ?? 0},${Math.round((x.strawTons ?? 0) * 10)},${x.baleCount ?? 0},${x.sol ?? ""},${x.revetement ?? ""},${x.forme ?? 0}`,
+          `${x.x},${x.y},${x.kind},${x.crop ?? ""},${x.fieldStage ?? ""},${x.machineType ?? ""},${x.hasStubble ? 1 : 0},${x.residuePasses ?? 0},${Math.round((x.weedPressure ?? 0) * 10)},${x.harvestsSincePlow ?? 0},${Math.round((x.strawTons ?? 0) * 10)},${x.baleCount ?? 0},${x.sol ?? ""},${x.revetement ?? ""},${x.forme ?? 0},${x.niveau ?? 0},${x.sol === "BOIS" ? `${x.boiseDepuis ?? ""}:${Math.floor(croissanceBois(x.boiseDepuis ?? null) * 20)}` : ""}`,
       )
       .join("|");
     const b = buildings

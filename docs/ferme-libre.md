@@ -195,6 +195,34 @@ L'autre moitié du terraformage. Les règles vivent dans
     cascade (débit de l'atelier et bureau).
   - Chaque cascade ajoute +3 de charme, un pont +3, une rampe +1.
 
+### Le bois
+
+Règles dans `packages/shared/src/bois.ts`, rendu dans `verserBois`
+(`apps/web/src/domaine3d.ts`).
+
+- **Planter.** *Boiser* (onglet Nature, 25 €/case, tracé à main levée) fait
+  d'un pré ou d'un champ nu un sol `BOIS`. L'âge des arbres est dans
+  `ParcelCell.boiseDepuis`. La pousse passe par trois stades : des plants dans
+  leurs manchons, un jeune bois (à 30 % de la pousse), puis une futaie au bout
+  d'une année de jeu (≈ 36 h réelles). Feuillus et résineux sont mêlés, sur
+  une litière. Une futaie a parfois ses champignons. Aucun travail entre-temps.
+- **Couper.** *Couper* (même onglet) se tire en rectangle sur une futaie. La
+  scierie paie 70 € la case (poste « Cultures » du journal). Les souches
+  rejettent : la case repart en plants, sans rien racheter. Seule une case **à
+  la lisière** se coupe, c'est-à-dire voisine d'une case où roulent les
+  engins ; le cœur d'un grand bois demande un chemin. Un chemin se trace à
+  travers le bois (c'est un layon : la case redevient du pré). Les arbres
+  tombent un par un, avec copeaux, feuilles et le son de la hache.
+- **Ce qu'il change.**
+  - Un bois levé (jeune bois ou futaie) coupe le vent : +3 % à 2 cases. Il
+    remplace la haie (+2 %) au lieu de s'y ajouter.
+  - Le charme monte de +0,25 par case de jeune bois et +0,5 par case de futaie.
+  - Un bois **arrête les engins** comme l'eau : un champ enclos derrière un
+    bois ne se travaille plus, jusqu'à ce qu'un chemin l'ouvre.
+  - Survolé avec *Couper*, un bois dit son stade et le temps qu'il lui reste
+    avant la coupe.
+- **Défricher.** *Remettre en herbe* rend le pré.
+
 ### Coûts d'aménagement
 
 | Geste | Coût | Rendu à la suppression |
@@ -203,6 +231,7 @@ L'autre moitié du terraformage. Les règles vivent dans
 | Creuser un étang | 30 €/case | remblai 8 €/case |
 | Surélever / abaisser d'un niveau | 40 / 20 €/case | rien |
 | Pont / rampe | 180 / 120 € | 50 % |
+| Boiser | 25 €/case | rien (la coupe rapporte 70 €/case de futaie, chaque année) |
 | Chemin de terre / gravier / pavés | 4 / 9 / 18 €/case | rien |
 | Objet de décor | 25 à 400 € | 50 % (100 % dans la fenêtre de regret) |
 | Bâtiment | inchangé | inchangé (40 %, 100 % dans la fenêtre de regret) |
@@ -213,6 +242,7 @@ L'autre moitié du terraformage. Les règles vivent dans
 - **Étang** : irrigation, +3 % sur les champs à 3 cases ou moins.
 - **Rivière** (eau qui coule) : +4 % de plus à 2 cases ou moins.
 - **Coteau** : +2 % sur un champ en terrasse exposé au sud.
+- **Bois** : brise-vent, +3 % à 2 cases (remplace celui d'une haie).
 - **Arbres, fleurs, chemins, bancs…** : pas de bonus de rendement, mais ils
   comptent dans le **charme** de la ferme, affiché (et prêt pour de futurs
   classements).

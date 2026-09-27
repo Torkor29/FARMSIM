@@ -1,7 +1,9 @@
 import * as THREE from "three";
 import {
   HAUTEUR_NIVEAU,
+  SEUIL_JEUNE,
   accesEngins,
+  croissanceBois,
   axePont,
   casesEmprise,
   cleCase,
@@ -38,6 +40,8 @@ export type CaseTerrain = {
   forme?: number;
   /** Relief : 0 en plaine, une terrasse au-dessus. */
   niveau?: number;
+  /** Un bois : sa plantation ou sa dernière coupe. */
+  boiseDepuis?: string | null;
 };
 
 export type ObjetPose = { id: string; type: string; originX: number; originY: number; rotation: number };
@@ -356,6 +360,73 @@ export function verserObjet(
   }
 }
 
+/**
+ * Verse une case de bois, à son stade.
+ *
+ * Des plants dans leurs manchons d'abord — c'est ainsi qu'on reboise pour de
+ * vrai —, puis trois arbres par case qui grandissent avec la pousse, feuillus
+ * et résineux mêlés, sur une litière de feuilles et de fougères. Une futaie
+ * a parfois ses champignons.
+ */
+export function verserBois(
+  t: Tableaux,
+  px: number,
+  pz: number,
+  y: number,
+  gx: number,
+  gy: number,
+  progres: number,
+  pas: number,
+): void {
+  const L = pas * 0.84;
+  for (let k = 0; k < 4; k++) {
+    const u = (hash(gx, gy, 200 + k) - 0.5) * L;
+    const v = (hash(gy, gx, 210 + k) - 0.5) * L;
+    ajouterBoite(t.pos, t.col, px + u, y + 0.008, pz + v, 0.22, 0.012, 0.16, k % 2 ? 0x6b5a33 : 0x4f6a2e, hash(gx, k, 7) * 3);
+  }
+  if (progres < SEUIL_JEUNE) {
+    const f = progres / SEUIL_JEUNE;
+    const h = 0.12 + f * 0.1;
+    for (let k = 0; k < 4; k++) {
+      const u = ((k % 2) - 0.5) * 0.46 * pas + (hash(gx, gy, 220 + k) - 0.5) * 0.08;
+      const v = (Math.floor(k / 2) - 0.5) * 0.46 * pas + (hash(gy, gx, 230 + k) - 0.5) * 0.08;
+      ajouterBoite(t.pos, t.col, px + u, y + h / 2, pz + v, 0.05, h, 0.05, 0xd8d2bf);
+      ajouterGeometrie(t.pos, t.col, _ico, pose(px + u, y + h + 0.03 + f * 0.04, pz + v, k, 0.1 + f * 0.1, 0.09 + f * 0.1, 0.1 + f * 0.1), 0x5f9a3a);
+    }
+    return;
+  }
+  const f = Math.min(1, (progres - SEUIL_JEUNE) / (1 - SEUIL_JEUNE));
+  const places: [number, number][] = [
+    [-0.2, -0.17],
+    [0.19, -0.07],
+    [-0.03, 0.2],
+  ];
+  places.forEach(([ou, ov], i) => {
+    const u = (ou + (hash(gx, gy, 240 + i) - 0.5) * 0.12) * pas;
+    const v = (ov + (hash(gy, gx, 250 + i) - 0.5) * 0.12) * pas;
+    const taille = (0.65 + 0.65 * f) * (0.85 + hash(gx, gy, 260 + i) * 0.3);
+    if (hash(gx * 3 + i, gy, 270) < 0.38) {
+      // Un résineux : un fût droit, trois étages de cônes.
+      const k = taille / 1.5;
+      ajouterBoite(t.pos, t.col, px + u, y + 0.2 * k, pz + v, 0.08 * k, 0.4 * k, 0.08 * k, 0x5b3d22);
+      for (let e = 0; e < 3; e++) {
+        const r = (0.62 - e * 0.16) * k;
+        ajouterGeometrie(t.pos, t.col, _cone, pose(px + u, y + (0.45 + e * 0.3) * k, pz + v, i + e, r, 0.55 * k, r), e === 2 ? 0x3a7a3c : 0x2c6433);
+      }
+    } else {
+      ajouterArbre(t.pos, t.col, px + u, y, pz + v, taille, Math.abs(gx * 131 + gy * 71 + i * 17));
+    }
+  });
+  if (f >= 1 && hash(gx, gy, 280) > 0.72) {
+    for (let k = 0; k < 2; k++) {
+      const u = (hash(gx, k, 281) - 0.5) * 0.5 * pas;
+      const v = (hash(k, gy, 282) - 0.5) * 0.5 * pas;
+      ajouterBoite(t.pos, t.col, px + u, y + 0.03, pz + v, 0.025, 0.05, 0.025, 0xf1ead8);
+      ajouterGeometrie(t.pos, t.col, _ico, pose(px + u, y + 0.065, pz + v, k, 0.08, 0.04, 0.08), k ? 0xb8452e : 0x9a6b3c);
+    }
+  }
+}
+
 /* ------------------------------------------------------------------ */
 /* Le domaine                                                           */
 /* ------------------------------------------------------------------ */
@@ -416,6 +487,40 @@ export function creerDomaine3d(opts: { shadows: boolean }): Domaine3d {
   /** Le relief au dernier rendu : la hauteur de chaque case surélevée. */
   let altitudes = new Map<string, number>();
   const altitudeDe = (x: number, y: number) => altitudes.get(cleCase(x, y)) ?? 0;
+  /**
+   * Un arbre qui tombe : un fût et sa couronne, pivotés au pied, qui
+   * basculent de plus en plus vite puis s'effacent dans leurs copeaux.
+   */
+  const tombes: { g: THREE.Group; t0: number; x: number; y: number; impact: boolean; base: number }[] = [];
+  const matTronc = new THREE.MeshLambertMaterial({ color: 0x6b4a2c, flatShading: true });
+  const matCouronne = new THREE.MeshLambertMaterial({ color: 0x4f8a3a, flatShading: true, transparent: true });
+  const geoTronc = new THREE.CylinderGeometry(0.045, 0.07, 0.72, 6).translate(0, 0.36, 0);
+  const geoCouronne = new THREE.IcosahedronGeometry(0.34, 0).translate(0, 0.86, 0);
+  function abattre(
+    x: number,
+    y: number,
+    t0: number,
+    posDe: (x: number, y: number) => { px: number; pz: number },
+    pas: number,
+    son: boolean,
+  ) {
+    const g = new THREE.Group();
+    const tronc = new THREE.Mesh(geoTronc, matTronc);
+    const couronne = new THREE.Mesh(geoCouronne, matCouronne);
+    tronc.castShadow = couronne.castShadow = opts.shadows;
+    const pivot = new THREE.Group();
+    pivot.add(tronc, couronne);
+    g.add(pivot);
+    const { px, pz } = posDe(x, y);
+    g.position.set(px, TOP + altitudeDe(x, y), pz);
+    g.rotation.y = hash(x, y, 300) * Math.PI * 2;
+    g.scale.setScalar(pas * 1.1);
+    g.visible = false;
+    poussieres.add(g);
+    tombes.push({ g, t0, x, y, impact: false, base: pas * 1.1 });
+    vivante.copeaux(x, y, t0, son);
+  }
+
   /** Les champs que les engins n'atteignent pas, montrés en construction. */
   let coupees: { x: number; y: number }[] = [];
   const vivante = creerEauVivante(group);
@@ -463,7 +568,7 @@ export function creerDomaine3d(opts: { shadows: boolean }): Domaine3d {
     brumes = [];
     altitudes = new Map(d.cells.filter((c) => c.niveau).map((c) => [cleCase(c.x, c.y), (c.niveau ?? 0) * HAUTEUR_NIVEAU]));
     const suivantes = new Map<string, string>();
-    for (const c of d.cells) suivantes.set(cleCase(c.x, c.y), `${c.sol}|${c.revetement ?? ""}|${c.niveau ?? 0}`);
+    for (const c of d.cells) suivantes.set(cleCase(c.x, c.y), `${c.sol}|${c.revetement ?? ""}|${c.niveau ?? 0}|${c.boiseDepuis ?? ""}`);
     for (const a of d.amenagements) suivantes.set(`o:${a.id}`, `${a.originX},${a.originY},${a.rotation}`);
     // Une autre parcelle n'est pas un changement : c'est une autre scène.
     let disparues = 0;
@@ -473,13 +578,20 @@ export function creerDomaine3d(opts: { shadows: boolean }): Domaine3d {
     if (signatures && disparues < 12) {
       const changees: { x: number; y: number }[] = [];
       const creusees: { x: number; y: number }[] = [];
+      const abattus: { x: number; y: number }[] = [];
       for (const [k, v] of suivantes) {
         const avant = signatures.get(k);
         if (avant === v) continue;
         // Une case qui monte ou descend : la terre se soulève, en gerbe.
         if (!k.startsWith("o:") && avant) {
-          const [solA, revA, nA] = avant.split("|");
-          const [solB, revB, nB] = v.split("|");
+          const [solA, revA, nA, bA] = avant.split("|");
+          const [solB, revB, nB, bB] = v.split("|");
+          // Un bois dont l'âge repart à zéro : on vient de le couper.
+          if (solA === "BOIS" && solB === "BOIS" && bA !== bB) {
+            const [x, y] = k.split(",").map(Number) as [number, number];
+            abattus.push({ x, y });
+            continue;
+          }
           if (solA === solB && revA === revB && nA !== nB) {
             const [x, y] = k.split(",").map(Number) as [number, number];
             vivante.soulever(x, y, tCourant + Math.random() * 0.15, Number(nB) > Number(nA));
@@ -516,6 +628,13 @@ export function creerDomaine3d(opts: { shadows: boolean }): Domaine3d {
         m.renderOrder = 3;
         poussieres.add(m);
         poufs.push({ m, t0: null });
+      }
+      // Les arbres tombent de proche en proche, comme sous la tronçonneuse.
+      if (abattus.length) {
+        const [a] = abattus;
+        abattus.sort((p, q) => Math.hypot(p.x - a!.x, p.y - a!.y) - Math.hypot(q.x - a!.x, q.y - a!.y));
+        const pasT = Math.min(0.18, 2.2 / abattus.length);
+        abattus.slice(0, 30).forEach((c, i) => abattre(c.x, c.y, tCourant + 0.05 + i * pasT, posDe, pas, i < 4));
       }
       // L'eau se creuse de proche en proche, dans l'ordre du geste.
       if (creusees.length) {
@@ -967,6 +1086,14 @@ export function creerDomaine3d(opts: { shadows: boolean }): Domaine3d {
       coupees = d.cells.filter((c) => c.sol === "CHAMP" && !acces.has(cleCase(c.x, c.y))).map((c) => ({ x: c.x, y: c.y }));
     }
 
+    /* Les bois, à leur stade. */
+    const maintenant = Date.now();
+    for (const c of d.cells) {
+      if (c.sol !== "BOIS") continue;
+      const { px, pz } = posDe(c.x, c.y);
+      verserBois(objets, px, pz, TOP + altitudeDe(c.x, c.y), c.x, c.y, croissanceBois(c.boiseDepuis ?? null, maintenant), pas);
+    }
+
     /* Le décor posé, raccordé à ses voisins du même type. */
     const parTypeObjet = new Map<string, Set<string>>();
     for (const a of d.amenagements) {
@@ -1170,6 +1297,25 @@ export function creerDomaine3d(opts: { shadows: boolean }): Domaine3d {
       e.m.scale.set(e.base * k, e.base * 0.55 * k, e.base * k);
       e.m.rotation.y = t * 0.8 + e.phase;
     }
+    for (let i = tombes.length - 1; i >= 0; i--) {
+      const a = tombes[i]!;
+      const k = t - a.t0;
+      if (k < 0) continue;
+      a.g.visible = true;
+      const pivot = a.g.children[0]!;
+      // Il penche, puis tombe de plus en plus vite ; un rebond à l'impact.
+      const chute = Math.min(1, (k / 0.95) ** 2.2);
+      pivot.rotation.z = chute * 1.5 - (chute >= 1 ? Math.sin(Math.min(1, (k - 0.95) / 0.25) * Math.PI) * 0.06 : 0);
+      if (chute >= 1 && !a.impact) {
+        a.impact = true;
+        vivante.impact(a.x, a.y, t);
+      }
+      if (k > 1.4) a.g.scale.setScalar(Math.max(0.001, 1 - (k - 1.4) / 0.5) * a.base);
+      if (k > 1.9) {
+        poussieres.remove(a.g);
+        tombes.splice(i, 1);
+      }
+    }
     for (const b of brumes) {
       const p = (t * 0.35 + b.phase) % 1;
       const k = Math.sin(p * Math.PI);
@@ -1211,6 +1357,12 @@ export function creerDomaine3d(opts: { shadows: boolean }): Domaine3d {
       matCascade.dispose();
       matEcume.dispose();
       matBrume.dispose();
+      for (const a of tombes) poussieres.remove(a.g);
+      tombes.length = 0;
+      matTronc.dispose();
+      matCouronne.dispose();
+      geoTronc.dispose();
+      geoCouronne.dispose();
       matCoupee.dispose();
       bouillons.clear();
       for (const p of poufs) (p.m.material as THREE.Material).dispose();

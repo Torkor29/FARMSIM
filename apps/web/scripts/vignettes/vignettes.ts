@@ -11,7 +11,7 @@
 import * as THREE from "three";
 import { creerDomaine3d, verserObjet, type CaseTerrain } from "../../src/domaine3d";
 import { maillageFacette } from "../../src/decor3d";
-import { HAUTEUR_NIVEAU } from "@farmsim/shared";
+import { BOIS_MATURITE_MS, HAUTEUR_NIVEAU } from "@farmsim/shared";
 
 const COTE = 256;
 const TOP = 0.09;
@@ -150,6 +150,42 @@ function sceneDe(id: string): { groupe: THREE.Group; recul: number } {
       g.add(terrain(cellsCarre(3, (x, z) => ({ niveau: niv(x, z) }))));
       pre(3).forEach(([x, z]) => g.add(dalle(x, z, PRE[Math.abs(Math.round(x + z)) % 2]!, niv(x, z) * HAUTEUR_NIVEAU)));
       g.add(objet("rampe", [{ x: 0, z: 0, rot: 0 }]));
+      break;
+    }
+    case "boiser":
+    case "couper": {
+      // Boiser : les trois âges d'un bois, des plants à la futaie. Couper :
+      // une futaie entamée, des souches, un fût à terre et la hache.
+      const age = (x: number, z: number) =>
+        id === "boiser" ? (z === -1 ? 1.2 : z === 0 ? 0.62 : 0.1) : x === 1 && z === 1 ? 0.02 : 1.2;
+      const depuis = (x: number, z: number) => new Date(Date.now() - age(x, z) * BOIS_MATURITE_MS).toISOString();
+      const sansBois = (x: number, z: number) => id === "couper" && (x === 0 || x === 1) && z === 1;
+      g.add(terrain(cellsCarre(3, (x, z) => (sansBois(x, z) && !(x === 1 && z === 1) ? {} : { sol: "BOIS", boiseDepuis: depuis(x, z) }))));
+      pre(3).forEach(([x, z]) => g.add(dalle(x, z, sansBois(x, z) && !(x === 1 && z === 1) ? PRE[0]! : 0x5a6b34)));
+      if (id === "couper") {
+        const bois = new THREE.MeshLambertMaterial({ color: 0x7a5535, flatShading: true });
+        const coeur = new THREE.MeshLambertMaterial({ color: 0xe0c48e, flatShading: true });
+        for (const [x, z] of [[-0.2, 0.9], [0.25, 1.15], [0.95, 0.75]] as const) {
+          const souche = new THREE.Mesh(new THREE.CylinderGeometry(0.1, 0.13, 0.12, 9), [bois, coeur, bois]);
+          souche.position.set(x, TOP + 0.06, z);
+          souche.castShadow = true;
+          g.add(souche);
+        }
+        const fut = new THREE.Mesh(new THREE.CylinderGeometry(0.09, 0.11, 1.3, 9), [bois, coeur, coeur]);
+        fut.rotation.z = Math.PI / 2;
+        fut.rotation.y = 0.5;
+        fut.position.set(0.05, TOP + 0.1, 0.6);
+        fut.castShadow = true;
+        g.add(fut);
+        const manche = new THREE.Mesh(new THREE.BoxGeometry(0.035, 0.42, 0.035), new THREE.MeshLambertMaterial({ color: 0xb08a55 }));
+        manche.position.set(0.25, TOP + 0.3, 1.15);
+        manche.rotation.z = -0.5;
+        g.add(manche);
+        const fer = new THREE.Mesh(new THREE.BoxGeometry(0.14, 0.08, 0.03), new THREE.MeshLambertMaterial({ color: 0x8b9096 }));
+        fer.position.set(0.35, TOP + 0.48, 1.15);
+        fer.rotation.z = -0.5;
+        g.add(fer);
+      }
       break;
     }
     case "haie":

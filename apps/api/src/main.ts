@@ -404,6 +404,11 @@ import {
   validerPose,
   verrouConstruction,
   type SourcesBonus,
+  type SolCase,
+  PRIX_COUPE,
+  BOIS_MATURITE_MS,
+  croissanceBois,
+  stadeBois,
 } from "@farmsim/shared";
 import {
   simulateCell,
@@ -1108,14 +1113,14 @@ async function casesCoupeesDe(
   parcel: { id: string; cells: { x: number; y: number; sol: string; niveau: number }[] },
   demandees: { x: number; y: number }[],
 ): Promise<string | null> {
-  if (!parcel.cells.some((c) => c.sol === "EAU" || c.niveau !== 0)) return null;
+  if (!parcel.cells.some((c) => c.sol === "EAU" || c.sol === "BOIS" || c.niveau !== 0)) return null;
   const passages = await prisma.amenagement.findMany({
     where: { parcelId: parcel.id, type: { in: ["pont", "rampe"] } },
     select: { type: true, originX: true, originY: true, rotation: true },
   });
   const n = casesCoupees(parcel.cells, passages, demandees).length;
   if (!n) return null;
-  return `${n} case${n > 1 ? "s" : ""} coupée${n > 1 ? "s" : ""} de la cour par l'eau ou une falaise — posez un pont ou une rampe`;
+  return `${n} case${n > 1 ? "s" : ""} coupée${n > 1 ? "s" : ""} de la cour par l'eau, un bois ou une falaise — ouvrez un chemin, posez un pont ou une rampe`;
 }
 
 async function loadParcelForWork(parcelId: string) {
@@ -2844,19 +2849,21 @@ async function decorDeLaFerme(farmId: string): Promise<Record<string, SourcesBon
       where: { parcel: { farmId }, type: { in: aEffet } },
       select: { parcelId: true, type: true, originX: true, originY: true },
     }),
-    // L'eau, et le relief : une rivière et un coteau se lisent sur les voisines.
+    // L'eau, le relief et le bois : une rivière, un coteau, un brise-vent.
     prisma.parcelCell.findMany({
-      where: { parcel: { farmId }, OR: [{ sol: "EAU" }, { niveau: { gt: 0 } }] },
-      select: { parcelId: true, x: true, y: true, sol: true, niveau: true },
+      where: { parcel: { farmId }, OR: [{ sol: "EAU" }, { sol: "BOIS" }, { niveau: { gt: 0 } }] },
+      select: { parcelId: true, x: true, y: true, sol: true, niveau: true, boiseDepuis: true },
     }),
   ]);
   type Sources = {
     objets: SourcesBonus["objets"][number][];
     eaux: SourcesBonus["eaux"][number][];
     coteaux: { x: number; y: number }[];
+    bois: { x: number; y: number }[];
   };
   const out: Record<string, Sources> = {};
-  const de = (id: string) => (out[id] ??= { objets: [], eaux: [], coteaux: [] });
+  const de = (id: string) => (out[id] ??= { objets: [], eaux: [], coteaux: [], bois: [] });
+  const maintenant = Date.now();
   for (const o of objets) de(o.parcelId).objets.push(o);
   const parParcelle = new Map<string, typeof cases>();
   for (const c of cases) parParcelle.set(c.parcelId, [...(parParcelle.get(c.parcelId) ?? []), c]);
@@ -2864,6 +2871,10 @@ async function decorDeLaFerme(farmId: string): Promise<Record<string, SourcesBon
     const courante = hydrologie(cs).courante;
     for (const c of cs) {
       if (c.sol === "EAU") de(parcelId).eaux.push({ x: c.x, y: c.y, courante: courante.has(`${c.x},${c.y}`) });
+      // Un bois coupe le vent dès qu'il est levé ; des plants, pas encore.
+      if (c.sol === "BOIS" && stadeBois(croissanceBois(c.boiseDepuis, maintenant)) !== "PLANTS") {
+        de(parcelId).bois.push({ x: c.x, y: c.y });
+      }
     }
     /* Un coteau regarde une case plus basse au sud ; une case de plaine n'est
        pas chargée ici, elle compte pour 0 : c'est bien le niveau voulu. */
@@ -4541,6 +4552,11 @@ app.post("/dev/grant", async (req, res) => {
     done.push(`${body.data.stock.tons} t de ${body.data.stock.commodity}`);
   }
   if (body.data.ripenAll && user.farm) {
+    // Les bois aussi : une futaie bonne à couper.
+    await prisma.parcelCell.updateMany({
+      where: { parcel: { farmId: user.farm.id }, sol: "BOIS" },
+      data: { boiseDepuis: new Date(Date.now() - BOIS_MATURITE_MS - 60_000) },
+    });
     /**
      * On recule la date de semis, parce qu'il n'existe pas d'état « mûr » à
      * forcer : la maturité se déduit de la culture.
@@ -9349,7 +9365,7 @@ type ParcelleGrille = {
   gridW: number;
   gridH: number;
   domaineMarge: number;
-  cells: { x: number; y: number; sol: string; revetement: string | null; kind: string; buildingId: string | null; crop: string | null; niveau: number }[];
+  cells: { x: number; y: number; sol: string; revetement: string | null; kind: string; buildingId: string | null; crop: string | null; niveau: number; boiseDepuis: Date | null }[];
   amenagements: { id: string; type: string; originX: number; originY: number; rotation: number }[];
 };
 
@@ -9357,7 +9373,7 @@ type ParcelleGrille = {
 function grilleDeParcelle(p: ParcelleGrille) {
   return construireGrille({
     bornes: bornesDuDomaine(p.cells),
-    cells: p.cells.map((c) => ({ ...c, sol: c.sol as "CHAMP" | "PRE" | "EAU" })),
+    cells: p.cells.map((c) => ({ ...c, sol: c.sol as SolCase })),
     amenagements: p.amenagements,
   });
 }
@@ -9390,7 +9406,7 @@ function domaineVue(p: ParcelleGrille & { lotsAchetes: number; fertility: number
       niveau,
     };
   });
-  const charme = charmeDe({ cells: p.cells.map((c) => ({ ...c, sol: c.sol as "CHAMP" | "PRE" | "EAU" })), amenagements: p.amenagements });
+  const charme = charmeDe({ cells: p.cells.map((c) => ({ ...c, sol: c.sol as SolCase })), amenagements: p.amenagements });
   return {
     marge: p.domaineMarge,
     bornes,
@@ -9543,17 +9559,27 @@ app.post("/parcels/:id/terrain", async (req, res) => {
   // forme d'un coin ne vaut que pour l'eau qui l'a reçue.
   // Le relief, lui, ne touche pas au sol : il monte ou descend la case d'un
   // niveau, champ, pré ou chemin compris.
+  /* Le bois se compte depuis sa plantation ; une coupe le fait repartir des
+     souches. Tout ce qui n'est plus du bois oublie son âge. */
+  const maintenant = new Date();
   const data =
     def.regle === "RELIEF"
       ? { niveau: def.id === "surelever" ? { increment: 1 } : { decrement: 1 } }
-      : def.regle === "CHEMIN"
-        ? { revetement: def.revetement ?? null, sol: "PRE" as const, forme: 0 }
-        : def.regle === "PRE"
-          ? { revetement: null, sol: "PRE" as const, forme: 0 }
-          : { revetement: null, sol: def.sol!, forme: 0 };
+      : def.regle === "COUPE"
+        ? { boiseDepuis: maintenant }
+        : def.regle === "CHEMIN"
+          ? { revetement: def.revetement ?? null, sol: "PRE" as const, forme: 0, boiseDepuis: null }
+          : def.regle === "PRE"
+            ? { revetement: null, sol: "PRE" as const, forme: 0, boiseDepuis: null }
+            : { revetement: null, sol: def.sol!, forme: 0, boiseDepuis: def.sol === "BOIS" ? maintenant : null };
+  // La scierie paie la coupe.
+  const gain = def.regle === "COUPE" ? peintes.length * PRIX_COUPE : 0;
   await prisma.$transaction(async (tx) => {
     if (verdict.cout > 0) {
       await debit(tx, user.id, verdict.cout, "BATIMENTS", `Aménagement — ${def.nom} (${peintes.length} case${peintes.length > 1 ? "s" : ""})`);
+    }
+    if (gain > 0) {
+      await crediter(tx, user.id, gain, "CULTURES", `Coupe de bois vendue à la scierie (${peintes.length} case${peintes.length > 1 ? "s" : ""})`);
     }
     for (let i = 0; i < peintes.length; i += 200) {
       const lot = peintes.slice(i, i + 200);
@@ -9563,7 +9589,7 @@ app.post("/parcels/:id/terrain", async (req, res) => {
       });
     }
   });
-  res.json({ peintes: peintes.length, ignorees: body.data.cells.length - peintes.length, cout: verdict.cout });
+  res.json({ peintes: peintes.length, ignorees: body.data.cells.length - peintes.length, cout: verdict.cout, gain });
 });
 
 /**

@@ -46,6 +46,8 @@ export type SonId =
   | "berge"
   | "lac"
   | "relief"
+  | "coupe"
+  | "plante"
   // Machines
   | "tracteur"
   | "moissonneuse"
@@ -470,6 +472,53 @@ export const CATALOGUE: Record<SonId, DefSon> = {
         const t = t0 + 0.05 + k * 0.055 + Math.random() * 0.02;
         chaine(source(ctx, t, 0.04), formant(ctx, 900 + Math.random() * 900, 4), enveloppe(ctx, t, 0.001, 0.02, 0.5), dest);
       }
+    },
+  },
+
+  /**
+   * Un arbre qu'on abat : trois coups de hache, le craquement du fût, et la
+   * chute, sourde, dans les feuilles.
+   */
+  coupe: {
+    bus: "effets",
+    dureeMs: 1300,
+    delaiMs: 140,
+    gain: 0.34,
+    rendre(ctx, dest, t0) {
+      for (let k = 0; k < 3; k++) {
+        const t = t0 + k * 0.17;
+        chaine(source(ctx, t, 0.05), formant(ctx, 700 + k * 60, 5), enveloppe(ctx, t, 0.001, 0.03, 0.9), dest);
+        const o = osc(ctx, "sine", 180, t, 0.08);
+        o.frequency.exponentialRampToValueAtTime(90, t + 0.07);
+        chaine(o, enveloppe(ctx, t, 0.002, 0.04, 0.6), dest);
+      }
+      // Le fût qui cède : un grincement qui descend.
+      const cr = osc(ctx, "sawtooth", 260, t0 + 0.5, 0.35);
+      cr.frequency.exponentialRampToValueAtTime(120, t0 + 0.82);
+      chaine(cr, passeBas(ctx, 900, 3), enveloppe(ctx, t0 + 0.5, 0.05, 0.15, 0.25), dest);
+      // La chute.
+      const pb = passeBas(ctx, 1200, 0.8);
+      pb.frequency.linearRampToValueAtTime(300, t0 + 1.25);
+      chaine(source(ctx, t0 + 0.9, 0.4), pb, enveloppe(ctx, t0 + 0.9, 0.01, 0.2, 0.9), dest);
+      const o = osc(ctx, "sine", 75, t0 + 0.92, 0.3);
+      o.frequency.exponentialRampToValueAtTime(40, t0 + 1.2);
+      chaine(o, enveloppe(ctx, t0 + 0.92, 0.005, 0.15, 0.9), dest);
+    },
+  },
+
+  /** Planter : la bêche dans la terre meuble, un froissement de feuilles. */
+  plante: {
+    bus: "effets",
+    dureeMs: 420,
+    delaiMs: 90,
+    gain: 0.3,
+    rendre(ctx, dest, t0) {
+      const o = osc(ctx, "sine", 130, t0, 0.14);
+      o.frequency.exponentialRampToValueAtTime(70, t0 + 0.12);
+      chaine(o, enveloppe(ctx, t0, 0.003, 0.05, 0.8), dest);
+      const pb = passeBas(ctx, 5000, 0.5);
+      chaine(source(ctx, t0 + 0.08, 0.3), passeHaut(ctx, 1800), pb, enveloppe(ctx, t0 + 0.08, 0.04, 0.12, 0.35), dest);
+      cloche(ctx, dest, 1568, t0 + 0.2, 0.18, 0.5);
     },
   },
 

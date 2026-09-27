@@ -11,7 +11,7 @@ import { fileURLToPath } from "node:url";
 const ICI = path.dirname(fileURLToPath(import.meta.url));
 const SORTIE = process.env.SORTIE ?? path.join(ICI, "..", "..", "public", "assets", "icons", "catalogue");
 const IDS = process.env.IDS ? process.env.IDS.split(",") : [
-  "champ", "pre", "etang", "berge", "surelever", "abaisser", "pont", "rampe", "chemin-terre", "chemin-gravier", "chemin-pave",
+  "champ", "pre", "etang", "berge", "surelever", "abaisser", "pont", "rampe", "boiser", "couper", "chemin-terre", "chemin-gravier", "chemin-pave",
   "chene", "pommier", "sapin", "buisson", "fleurs", "rocher", "haie", "cloture",
   "banc", "lampadaire", "botte-foin", "puits",
 ];

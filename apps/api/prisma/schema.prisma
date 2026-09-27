@@ -170,6 +170,7 @@ enum SolCase {
   CHAMP
   PRE
   EAU
+  BOIS
 }
 
 /// Un lien de réinitialisation de mot de passe, en attente.
@@ -502,6 +503,8 @@ model ParcelCell {
   forme            Int       @default(0)
   /// Relief : 0 en plaine, jusqu'à `NIVEAU_MAX` (voir `relief.ts`). Une falaise sépare deux niveaux.
   niveau           Int       @default(0)
+  /// Un bois : sa plantation, ou sa dernière coupe (voir `bois.ts`). Nul hors du bois.
+  boiseDepuis      DateTime?
 
   @@unique([parcelId, x, y])
 }

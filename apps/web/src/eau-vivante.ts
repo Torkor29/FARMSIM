@@ -39,6 +39,10 @@ export type EauVivante = {
   creuser(x: number, y: number, t: number): void;
   /** Une case vient de monter (ou de descendre) d'un niveau : la terre gicle. */
   soulever(x: number, y: number, t: number, monte: boolean): void;
+  /** Un arbre qu'on abat : la tronçonneuse, des copeaux qui volent. */
+  copeaux(x: number, y: number, t: number, son: boolean): void;
+  /** L'arbre touche le sol : feuilles et poussière. */
+  impact(x: number, y: number, t: number): void;
   /** Une case vient d'être rebouchée. */
   reboucher(x: number, y: number, t: number): void;
   /** Un coin de berge vient d'être retouché. */
@@ -60,6 +64,8 @@ export function creerEauVivante(parent: THREE.Group): EauVivante {
   const matGoutte = new THREE.MeshBasicMaterial({ color: 0xd8f0f4, transparent: true, opacity: 0.9 });
   const matEclat = new THREE.MeshBasicMaterial({ color: 0xfff7d6, transparent: true, opacity: 1 });
   const matPierre = new THREE.MeshLambertMaterial({ color: 0x8e8b84 });
+  const matCopeau = new THREE.MeshLambertMaterial({ color: 0xd9b77a });
+  const matFeuille = new THREE.MeshLambertMaterial({ color: 0x5f9a3a });
 
   let origine = { px: 0, pz: 0 };
   let pas = 1;
@@ -257,6 +263,28 @@ export function creerEauVivante(parent: THREE.Group): EauVivante {
     });
   }
 
+  function copeaux(x: number, y: number, t: number, son: boolean) {
+    plus(t, () => {
+      if (son) jouerSon("coupe");
+      for (let k = 0; k < 8; k++) {
+        const a = Math.random() * Math.PI * 2;
+        const f = 0.4 + Math.random() * 0.6;
+        particule(geoEclat, matCopeau, x, y, 0.14, 0.018 + Math.random() * 0.015, new THREE.Vector3(Math.cos(a) * f, 0.9 + Math.random() * 0.6, Math.sin(a) * f), 0.7);
+      }
+    });
+  }
+
+  function impact(x: number, y: number, t: number) {
+    plus(t, () => {
+      for (let k = 0; k < 10; k++) {
+        const a = Math.random() * Math.PI * 2;
+        const f = 0.3 + Math.random() * 0.7;
+        particule(geoMotte, k % 3 ? matFeuille : matCopeau, x + (Math.random() - 0.5) * 0.8, y + (Math.random() - 0.5) * 0.8, 0.1, 0.025 + Math.random() * 0.02, new THREE.Vector3(Math.cos(a) * f, 0.5 + Math.random() * 0.6, Math.sin(a) * f), 0.8);
+      }
+      rond(x, y, 0xe9dcc0, tCourant, 0.8);
+    });
+  }
+
   function reboucher(x: number, y: number, t: number) {
     plus(t, () => {
       jouerSon("pose");
@@ -314,7 +342,7 @@ export function creerEauVivante(parent: THREE.Group): EauVivante {
       if (age < 0) continue;
       if (age > p.vie) {
         groupe.remove(p.m);
-        if (p.m.material !== matMotte[0] && p.m.material !== matMotte[1] && p.m.material !== matMotte[2] && p.m.material !== matPierre) (p.m.material as THREE.Material).dispose();
+        if (p.m.material !== matMotte[0] && p.m.material !== matMotte[1] && p.m.material !== matMotte[2] && p.m.material !== matPierre && p.m.material !== matCopeau && p.m.material !== matFeuille) (p.m.material as THREE.Material).dispose();
         particules.splice(i, 1);
         continue;
       }
@@ -373,13 +401,15 @@ export function creerEauVivante(parent: THREE.Group): EauVivante {
     maj,
     creuser,
     soulever,
+    copeaux,
+    impact,
     reboucher,
     eclat,
     animer,
     dispose() {
       parent.remove(groupe);
       for (const g of [geoMotte, geoGoutte, geoRond, geoEclat, geoCorps]) g.dispose();
-      for (const m of [...matMotte, matPierre, matGoutte, matEclat, matPlume, matPlumeBlanc, matTete, matBec, matPoisson]) m.dispose();
+      for (const m of [...matMotte, matPierre, matCopeau, matFeuille, matGoutte, matEclat, matPlume, matPlumeBlanc, matTete, matBec, matPoisson]) m.dispose();
       for (const p of particules) if (p.m.material instanceof THREE.MeshBasicMaterial) p.m.material.dispose();
     },
   };

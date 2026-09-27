@@ -4531,6 +4531,8 @@ describe("le lien de réinitialisation", () => {
  * `@farmsim/shared` ; ces tests vérifient que le serveur l'applique vraiment —
  * argent, cases, refus — et que la ferme se relit à l'identique.
  */
+const PRIX_COUPE_TEST = 70;
+
 describe("la ferme libre", () => {
   type CaseVue = { x: number; y: number; sol: string; revetement: string | null; kind: string };
   type LotVue = { id: string; x: number; y: number; w: number; h: number; etat: string; prix: number; niveau: number };
@@ -4766,6 +4768,61 @@ describe("la ferme libre", () => {
     assert.equal(cellsN.find((c) => c.x === 7 && c.y === 3)?.niveau, 1);
     // Abaisser la terrasse d'eau ? Le relief ne se change pas sous l'eau.
     assert.equal((await peindre(parcelId, moi, "abaisser", haut)).statut, 409);
+  });
+
+  it("plante un bois qui pousse, se coupe à la lisière, se vend et repart des souches", async () => {
+    const { moi, parcelId } = await fermeLibre("Forestier");
+    const v0 = await vue(parcelId, moi.jeton);
+    const occupe = new Set(v0.parcel.cells.filter((c) => c.kind !== "EMPTY").map((c) => `${c.x},${c.y}`));
+    const carre = (x0: number, y0: number, n: number) =>
+      Array.from({ length: n * n }, (_, i) => ({ x: x0 + (i % n), y: y0 + Math.floor(i / n) }));
+    const bois = carre(2, 6, 3);
+    assert.ok(bois.every((c) => !occupe.has(`${c.x},${c.y}`)));
+    const argent0 = await argent(moi.jeton);
+    const plante = await peindre(parcelId, moi, "boiser", bois);
+    assert.equal(plante.statut, 200, JSON.stringify(plante.corps));
+    assert.equal(await argent(moi.jeton), argent0 - 9 * 25);
+    const lire = async (x: number, y: number) =>
+      (await vue(parcelId, moi.jeton)).parcel.cells.find((c) => c.x === x && c.y === y) as unknown as {
+        sol: string;
+        boiseDepuis: string | null;
+      };
+    const planteLe = (await lire(3, 7)).boiseDepuis;
+    assert.equal((await lire(3, 7)).sol, "BOIS");
+    assert.ok(planteLe);
+
+    // Des plants ne se coupent pas.
+    const tot = await peindre(parcelId, moi, "couper", bois);
+    assert.equal(tot.statut, 409, JSON.stringify(tot.corps));
+    assert.match(String((tot.corps as unknown as { error: string }).error), /jeunes/);
+
+    // Un an plus tard : la lisière se coupe, le cœur attend un chemin.
+    await appel("/dev/grant", { methode: "POST", corps: { userId: moi.id, ripenAll: true }, jeton: moi.jeton });
+    const argent1 = await argent(moi.jeton);
+    const coupe = await peindre(parcelId, moi, "couper", bois);
+    assert.equal(coupe.statut, 200, JSON.stringify(coupe.corps));
+    const { peintes, gain } = coupe.corps as unknown as { peintes: number; gain: number };
+    assert.equal(peintes, 8, "tout sauf le cœur");
+    assert.equal(gain, 8 * PRIX_COUPE_TEST);
+    assert.equal(await argent(moi.jeton), argent1 + gain);
+    // La case coupée reste un bois, qui repart en plants.
+    const coupee = await lire(2, 6);
+    assert.equal(coupee.sol, "BOIS");
+    assert.ok(new Date(coupee.boiseDepuis!).getTime() > Date.now() - 60_000);
+
+    // Un bois arrête les engins : on ne sème pas au cœur d'un bois défriché
+    // sans chemin… et un chemin à travers le bois ouvre le passage.
+    assert.equal((await peindre(parcelId, moi, "pre", [{ x: 3, y: 7 }])).statut, 200);
+    assert.equal((await peindre(parcelId, moi, "champ", [{ x: 3, y: 7 }])).statut, 200);
+    const semer = () =>
+      appel(`/parcels/${parcelId}/jobs`, {
+        methode: "POST",
+        corps: { userId: moi.id, work: "PLANT", cells: [{ x: 3, y: 7 }], crop: cropDeSaison() },
+        jeton: moi.jeton,
+      });
+    assert.match(String(((await semer()).corps as unknown as { error: string }).error), /coupée/);
+    assert.equal((await peindre(parcelId, moi, "chemin-terre", [{ x: 3, y: 6 }])).statut, 200);
+    assert.doesNotMatch(String(((await semer()).corps as unknown as { error?: string }).error ?? ""), /coupée/);
   });
 
   it("donne au siège un domaine, avec sa ferme au centre et de la friche autour", async () => {

@@ -123,6 +123,11 @@ import {
   BUILDING_REGRET_MS,
   cleCase,
   hydrologie,
+  PRIX_COUPE,
+  LIBELLE_STADE,
+  croissanceBois,
+  resteAvantCoupe,
+  stadeBois,
   construireGrille,
   dansBornes,
   defConstruction,
@@ -274,7 +279,9 @@ type Cell = {
   machineId?: string | null;
   machineType?: MachineType | null;
   /** Ferme libre : ce qu'est le sol de la case (champ, pré, eau). */
-  sol?: "CHAMP" | "PRE" | "EAU";
+  sol?: "CHAMP" | "PRE" | "EAU" | "BOIS";
+  /** Un bois : sa plantation, ou sa dernière coupe. */
+  boiseDepuis?: string | null;
   /** Un chemin posé sur la case, s'il y en a un. */
   revetement?: string | null;
   /** Berges : la forme des coins d'une case d'eau. */
@@ -282,6 +289,14 @@ type Cell = {
   /** Relief : 0 en plaine, jusqu'à trois terrasses au-dessus. */
   niveau?: number;
 };
+
+/** Une durée à venir, dite comme on la dit : « 12 h », « 40 min ». */
+function dureeCourte(ms: number): string {
+  const min = Math.max(1, Math.round(ms / 60_000));
+  if (min < 60) return `${min} min`;
+  const h = Math.round(min / 60);
+  return h < 48 ? `${h} h` : `${Math.round(h / 24)} j`;
+}
 
 type Building = {
   id: string;
@@ -3036,8 +3051,24 @@ export function App() {
         fantome = v.cases.filter((c) => c.raison !== "DEJA").map((c) => ({ x: c.x, y: c.y, ok: c.ok }));
         const n = v.cases.filter((c) => c.ok).length;
         const sautees = v.cases.filter((c) => !c.ok && c.raison !== "DEJA").length;
+        // Un bois sous le doigt dit son âge : on sait quand revenir couper.
+        const seule = cells.length === 1 ? grilleDomaine.cases.get(cleCase(cells[0]!.x, cells[0]!.y)) : undefined;
+        const ageBois =
+          seule?.sol === "BOIS" && v.cases[0] && !v.cases[0].ok
+            ? (() => {
+                const p = croissanceBois(seule.boiseDepuis);
+                const reste = resteAvantCoupe(seule.boiseDepuis);
+                return p >= 1 ? LIBELLE_STADE.FUTAIE : `${LIBELLE_STADE[stadeBois(p)]} · futaie dans ${dureeCourte(reste)}`;
+              })()
+            : null;
         if (!v.ok) {
-          ligne = { texte: LIBELLE_REFUS[v.raison ?? "DEJA"], refus: v.raison !== "DEJA" };
+          ligne = ageBois
+            ? { texte: ageBois, refus: v.raison === "JEUNE" }
+            : { texte: LIBELLE_REFUS[v.raison ?? "DEJA"], refus: v.raison !== "DEJA" };
+        } else if (defArme.regle === "COUPE") {
+          ligne = {
+            texte: `${defArme.nom} · ${n} case${n > 1 ? "s" : ""} · +${(n * PRIX_COUPE).toLocaleString("fr-FR")} € à la scierie${sautees ? ` · ${sautees} ignorée${sautees > 1 ? "s" : ""}` : ""}`,
+          };
         } else {
           const manque = !canPay(player, v.cout);
           ligne = {
@@ -3053,7 +3084,11 @@ export function App() {
           texte:
             defArme.regle === "CHEMIN"
               ? `${defArme.nom} : glissez sur la ferme pour tracer le chemin.`
-              : `${defArme.nom} : glissez un rectangle sur la ferme.`,
+              : defArme.regle === "BOIS"
+                ? `${defArme.nom} : glissez sur la ferme pour planter les arbres.`
+                : defArme.regle === "COUPE"
+                  ? `${defArme.nom} : glissez un rectangle sur une futaie, à la lisière.`
+                  : `${defArme.nom} : glissez un rectangle sur la ferme.`,
         };
       }
     } else if (defArme?.pose === "OBJET" && apercuTerrain.length > 1) {
@@ -3279,21 +3314,29 @@ export function App() {
           : d,
       );
     }
+    const maintenant = new Date().toISOString();
     const patch =
       def.regle === "EAU"
-        ? { sol: "EAU" as const, revetement: null, forme: 0 }
+        ? { sol: "EAU" as const, revetement: null, forme: 0, boiseDepuis: null }
         : def.regle === "PRE"
-          ? { sol: "PRE" as const, revetement: null, forme: 0 }
-          : null;
+          ? { sol: "PRE" as const, revetement: null, forme: 0, boiseDepuis: null }
+          : def.regle === "BOIS"
+            ? { sol: "BOIS" as const, revetement: null, forme: 0, boiseDepuis: maintenant }
+            : def.regle === "COUPE"
+              ? { boiseDepuis: maintenant }
+              : null;
     if (patch) modifierCasesLocalement(aPeindre, patch);
     setBusy(true);
     try {
-      const r = await api<{ peintes: number; ignorees: number; cout: number }>(
+      const r = await api<{ peintes: number; ignorees: number; cout: number; gain?: number }>(
         `/parcels/${activeParcelId}/terrain`,
         { method: "POST", body: JSON.stringify({ userId: player.id, outil: def.id, cells: aPeindre }) },
       );
+      if (def.regle === "BOIS") jouerSon("plante");
       await apresConstruction(
-        `${def.nom} · ${r.peintes} case${r.peintes > 1 ? "s" : ""}${r.cout ? ` · −${r.cout} €` : ""}`,
+        def.regle === "COUPE"
+          ? `Coupe vendue à la scierie · ${r.peintes} case${r.peintes > 1 ? "s" : ""} · +${(r.gain ?? 0).toLocaleString("fr-FR")} € — le bois repousse`
+          : `${def.nom} · ${r.peintes} case${r.peintes > 1 ? "s" : ""}${r.cout ? ` · −${r.cout} €` : ""}`,
       );
       // Une première cascade se fête : c'est le clou d'un jardin d'eau.
       if (def.regle === "EAU" || def.regle === "RELIEF") {
@@ -6754,7 +6797,9 @@ export function App() {
               // forme qu'on leur veut.
               // L'eau aussi se trace à main levée : une rivière, une mare qui serpente.
               strokeRect={
-                construction ? defArme?.pose === "TERRAIN" && defArme.regle !== "CHEMIN" && defArme.regle !== "EAU" : dragRect
+                construction
+                  ? defArme?.pose === "TERRAIN" && defArme.regle !== "CHEMIN" && defArme.regle !== "EAU" && defArme.regle !== "BOIS"
+                  : dragRect
               }
               onStrokeStart={() => {
                 strokeBase.current = selectedCells;
