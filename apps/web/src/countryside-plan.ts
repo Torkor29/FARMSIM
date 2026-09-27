@@ -1042,10 +1042,30 @@ export function planCampagne(o: OptionsPlan): PlanCampagne {
       }
     }
     prochesDuSiege.sort((a, b) => a.d - b.d);
+    /*
+     * Le verger est haut : ses pommiers cachent à la caméra le sol qui est
+     * derrière eux. On vérifie donc aussi la place que masque sa ramure
+     * (voir `placement.masque`) — sinon, posé devant la route ou la cour, il
+     * les recouvre à l'écran et semble planté dans le bitume.
+     */
+    const masqueLibre = (genre: GenreLieu, x: number, z: number): boolean => {
+      if (genre !== "VERGER") return true;
+      const recul = (2.3 * 1.15 * 1.2) / Math.SQRT2;
+      const b: Boite = { x: x - recul, z: z - recul, w: COTE_DECOR, d: COTE_DECOR };
+      if (Math.abs(b.z - routeZ) < DEMI_ROUTE + COTE_DECOR / 2) return false;
+      if (seChevauchent(b, cour, 0.2) || seChevauchent(b, joueur, 0.2)) return false;
+      for (const a of acces) {
+        for (let i = 0; i + 1 < a.points.length; i++) {
+          if (seChevauchent(b, boiteSegment(a.points[i]!, a.points[i + 1]!), 0)) return false;
+        }
+      }
+      return !seChevauchent(b, boiteSegment(desserte0(), desserte1()), 0);
+    };
     for (const genre of LIEUX_DECOR) {
       const c = prochesDuSiege.find(
         (c) =>
           libreLieu(c.x, c.z, COTE_DECOR) &&
+          masqueLibre(genre, c.x, c.z) &&
           lieux.every((l) => LIEUX_UTILES.includes(l.genre) || Math.hypot(l.x - c.x, l.z - c.z) > COTE_DECOR * 2.2),
       );
       if (c) lieux.push({ genre, x: c.x, z: c.z });

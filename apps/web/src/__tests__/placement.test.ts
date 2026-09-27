@@ -90,7 +90,19 @@ describe("les règles", () => {
     occ.ajouter({ id: "cour", genre: "cour", forme: { type: "boite", x: 0, z: 0, w: 4, d: 4 } });
     // Tronc à 0,6 du bord, couronne de 0,97 : elle déborde sur la cour.
     expect(occ.poser("a", empreinteArbre(2.6, 0, 2.1))).toBe(false);
-    expect(occ.poser("b", empreinteArbre(3.3, 0, 2.1))).toBe(true);
+    // Derrière la cour (côté opposé à la caméra), il ne cache rien.
+    expect(occ.poser("b", empreinteArbre(-3.3, 0, 2.1))).toBe(true);
+  });
+
+  it("refuse un arbre posé dans l'herbe mais qui cache la route à la caméra", () => {
+    const occ = new Occupation();
+    // Une route le long de x, en z = 0.
+    occ.ajouter({ id: "route", genre: "route", forme: { type: "boite", x: 0, z: 0, w: 40, d: 1.9 } });
+    // Côté caméra (z > 0), à 2,2 du bord : tronc et couronne dans l'herbe,
+    // mais la ramure recouvre la chaussée à l'écran.
+    expect(occ.poser("devant", empreinteArbre(0, 3.2, 2.1))).toBe(false);
+    // Du côté opposé, à la même distance : il ne cache que le pré.
+    expect(occ.poser("derriere", empreinteArbre(0, -3.2, 2.1))).toBe(true);
   });
 });
 

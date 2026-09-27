@@ -389,12 +389,35 @@ export function ajouterGrange(
       toit, rotY, s * pente,
     );
   }
-  // La porte, au pignon.
-  ajouterBoite(
-    pos, col,
-    x + Math.cos(rotY) * (l / 2), y + h * 0.34, z - Math.sin(rotY) * (l / 2),
-    0.07, h * 0.62, prof * 0.34, eclaircir(toit, -0.2), rotY,
-  );
+  // La porte, au pignon, dans son encadrement clair.
+  const px = x + Math.cos(rotY) * (l / 2);
+  const pz = z - Math.sin(rotY) * (l / 2);
+  ajouterBoite(pos, col, px, y + h * 0.34, pz, 0.07, h * 0.62, prof * 0.34, eclaircir(toit, -0.2), rotY);
+  ajouterBoite(pos, col, px, y + h * 0.67, pz, 0.09, 0.06, prof * 0.42, 0xcf9f68, rotY);
+
+  // Le faîtage : une poutre sombre qui ferme les deux pans.
+  ajouterBoite(pos, col, x, faite + 0.02, z, l * 1.16, 0.08, 0.14, eclaircir(toit, -0.3), rotY);
+
+  /*
+   * Deux fenêtres sur le long pan, chacune avec son cadre et sa jardinière :
+   * une grange sans fenêtre se lisait comme un bloc. Posées un peu hors du
+   * mur (jamais dans son plan : pas de scintillement).
+   */
+  for (const s of [-0.25, 0.25]) {
+    for (const cote of [-1, 1]) {
+      const lx = s * l;
+      const lz = cote * (prof / 2 + 0.02);
+      const wx = x + Math.cos(rotY) * lx + Math.sin(rotY) * lz;
+      const wz = z - Math.sin(rotY) * lx + Math.cos(rotY) * lz;
+      ajouterBoite(pos, col, wx, y + h * 0.58, wz, 0.3, 0.26, 0.04, 0xcf9f68, rotY);
+      const wx2 = x + Math.cos(rotY) * lx + Math.sin(rotY) * (lz + cote * 0.015);
+      const wz2 = z - Math.sin(rotY) * lx + Math.cos(rotY) * (lz + cote * 0.015);
+      ajouterBoite(pos, col, wx2, y + h * 0.58, wz2, 0.2, 0.17, 0.03, 0x3d4a58, rotY);
+      const jx = x + Math.cos(rotY) * lx + Math.sin(rotY) * (lz + cote * 0.05);
+      const jz = z - Math.sin(rotY) * lx + Math.cos(rotY) * (lz + cote * 0.05);
+      ajouterBoite(pos, col, jx, y + h * 0.4, jz, 0.34, 0.07, 0.09, 0x6fa343, rotY);
+    }
+  }
 }
 
 /** Robes : brun-noir de la vache, laine sale du mouton, rose du cochon. */

@@ -334,6 +334,28 @@ Budgets tenus : chaque bâtiment reste sous 3 500 triangles, la nappe des
 parcelles voisines sous 220 000 sommets (tests existants), le bois de la
 campagne passe d'environ 12 000 à 95 000 triangles.
 
+### Les erreurs de placement, codées (`apps/web/src/placement.ts`)
+
+Chaque décor déclare sa place au sol (cercle ou boîte) et son genre ; une
+table de règles dit qui ne mord pas sur qui :
+
+- un **tronc** ne pousse ni dans la route, ni dans un chemin, la cour, un
+  champ, un bâtiment ou l'eau ; deux troncs gardent leurs distances ;
+- une **couronne** ne déborde ni sur la cour, ni sur un bâtiment, ni sur la
+  route, ni sur l'île du joueur ;
+- le **masque** d'un arbre — le sol que sa ramure cache à la caméra
+  isométrique, à ≈ 1,2 × sa hauteur derrière lui — ne recouvre ni route, ni
+  chemin, ni cour, ni le champ du joueur (« l'arbre dans le bitume » vu
+  d'en haut) ;
+- **buissons, pierres, lavande** ne se fondent ni entre eux, ni dans un
+  tronc, ni dans le dur ; les touffes ne poussent pas sur le dur.
+
+Le plan de campagne pose arbres et détails de l'herbe par ces règles ; les
+arbres des coins de la ferme cherchent une place libre hors de la haie ;
+l'habillage des cours de bâtiments évite l'emprise réelle du bâti
+(`Part.emprises`). `placement.test.ts` exige **zéro conflit** sur plusieurs
+campagnes, avec et sans village.
+
 ## 11. Feuille de route
 
 - **Phase 1 (cette livraison)** : la forge, 8 recettes, l'atelier web, les

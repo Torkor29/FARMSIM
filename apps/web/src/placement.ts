@@ -39,7 +39,14 @@ export type Genre =
   | "rocher"
   | "lavande"
   /** Touffes et fleurs : petites, elles ne gênent que le dur. */
-  | "herbe";
+  | "herbe"
+  /**
+   * Le sol que la couronne d'un arbre **cache à la caméra**. La vue est
+   * isométrique, caméra en (+x, +z) : un arbre haut masque le terrain
+   * derrière lui. Un arbre planté dans l'herbe juste devant la route la
+   * recouvre à l'écran, et on le croit planté dans le bitume.
+   */
+  | "masque";
 
 export interface Occupant {
   id: string;
@@ -62,6 +69,12 @@ const REGLES: [Genre, Genre, number][] = [
   ["couronne", "cour", 0.05],
   ["couronne", "route", 0],
   ["couronne", "ile", 0],
+  // Ce que cache une couronne : ni la route, ni un chemin, ni la cour, ni
+  // le champ du joueur.
+  ["masque", "route", 0],
+  ["masque", "chemin", 0],
+  ["masque", "cour", 0],
+  ["masque", "ile", 0],
   // Deux troncs trop proches : deux arbres plantés l'un dans l'autre.
   ["tronc", "tronc", 0.25],
   // Les buissons, les pierres et la lavande ne se fondent ni entre eux,
@@ -237,7 +250,19 @@ export function empreinteArbre(x: number, z: number, taille: number): { genre: G
   return [
     { genre: "tronc", forme: { type: "cercle", x, z, r: taille * 0.17 } },
     { genre: "couronne", forme: { type: "cercle", x, z, r: taille * 0.46 } },
+    { genre: "masque", forme: masque(x, z, taille * 1.15, taille * 0.46) },
   ];
+}
+
+/**
+ * Le sol qu'un objet de hauteur `hauteur` et de rayon `rayon` cache à la
+ * caméra isométrique (élévation ≈ 32°, azimut 45°) : la couronne, à mi-hauteur
+ * de sa masse (≈ 0,75 × hauteur), se projette sur le sol derrière elle, à
+ * 0,75 × h / tan 32° ≈ 1,2 × h, dans la direction opposée à la caméra.
+ */
+export function masque(x: number, z: number, hauteur: number, rayon: number): Forme {
+  const recul = (hauteur * 1.2) / Math.SQRT2;
+  return { type: "cercle", x: x - recul, z: z - recul, r: rayon * 0.9 };
 }
 
 /**
