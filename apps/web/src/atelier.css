@@ -162,3 +162,38 @@ body {
   color: var(--ink-muted);
   line-height: 1.5;
 }
+
+/* Atelier des décors de la forge (decor.html). */
+.atelier-card figcaption {
+  padding: 8px 10px 10px;
+  font-size: 0.85rem;
+  line-height: 1.4;
+  color: var(--ink-muted);
+}
+
+.atelier-card figcaption strong {
+  color: var(--ink);
+}
+
+.atelier-big {
+  margin: 0 0 24px;
+  padding: 12px;
+  background: var(--cream-0);
+  border: 1px solid var(--sand-300);
+  border-radius: 16px;
+}
+
+.atelier-big-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 8px;
+}
+
+.atelier-big canvas {
+  display: block;
+  max-width: 100%;
+  height: auto;
+  margin: 0 auto;
+  border-radius: 12px;
+}
