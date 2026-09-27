@@ -16,7 +16,7 @@ from forge.formes import contour_organique
 ASSET = {
     "titre": "Kit du sol",
     "echelle": 1.0,
-    "budget_triangles": 8000,
+    "budget_triangles": 13000,
     "budget_appels": 8,
     "etiquettes": ["terrain", "instanciable"],
 }
@@ -31,6 +31,12 @@ def construire(a):
         for k in range(8):
             ang = 2 * math.pi * k / 8 + 0.2
             a.touffe((math.cos(ang) * 2.7, math.sin(ang) * 2.7, 0.45), graine=k, brins=7)
+        # Quelques pierres au pied des talus, et de la lavande sur le premier gradin.
+        for k, ang in enumerate((1.9, 2.6, 3.4, 4.3, 5.0)):
+            a.rocher((math.cos(ang) * 3.15, math.sin(ang) * 3.15, 0), (0.22, 0.18, 0.15), graine=70 + k,
+                     rot_z=ang, mousse=k % 2 == 0)
+        for k, ang in enumerate((0.6, 1.2, 5.6)):
+            a.lavande((math.cos(ang) * 2.5, math.sin(ang) * 2.5, 0.45), graine=80 + k, tiges=18, hauteur=0.5)
 
     with a.piece("ilot"):
         c = contour_organique(1.3, graine=3, points=26, ampleur=0.12, lobes=3)

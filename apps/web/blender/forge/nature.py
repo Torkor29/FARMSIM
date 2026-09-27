@@ -235,13 +235,18 @@ class Nature:
                 self.boule(fleurs, p, taille * rnd.uniform(0.05, 0.075), finesse=1, graine=k)
 
     def rocher(self, position=(0, 0, 0), taille=(0.8, 0.6, 0.45), graine=0, mat="pierre",
-               rot_z=0.0, facettes=False):
+               rot_z=0.0, facettes=False, mousse=False):
         """Une pierre posée : bosselée, aplatie dessous ; douce, ou à facettes franches."""
         x, y, z = position
         self.empreinte("rocher", (x, y), max(taille[0], taille[1]) * 0.95, z, z + taille[2] * 1.2)
         with self.repere((x, y, z + taille[2] * 0.3), rot_z=rot_z):
             self.boule(mat, (0, 0, 0), taille, finesse=2 if facettes else 3, bosses=0.3, graine=graine,
                        lisse=not facettes, aplatir_bas=-0.55)
+            if mousse:
+                # Une calotte de mousse sur le dessus, décalée vers l'ombre.
+                self.boule("mousse", (taille[0] * 0.08, taille[1] * 0.12, taille[2] * 0.9),
+                           (taille[0] * 0.55, taille[1] * 0.5, taille[2] * 0.22), finesse=2, bosses=0.3,
+                           graine=graine + 3)
 
     # ------------------------------------------------------------------
     # Herbes et fleurs

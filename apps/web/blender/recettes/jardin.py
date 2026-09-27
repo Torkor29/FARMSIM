@@ -37,6 +37,11 @@ def construire(a):
         pots_fleurs(a)
     with a.piece("lampion"):
         lampion(a)
+    with a.piece("arrosoir"):
+        arrosoir(a, (0, 0, 0))
+    with a.piece("pots-vides"):
+        pile_de_pots(a, (0, 0, 0))
+        pile_de_pots(a, (0.3, 0.12, 0), n=2)
     with a.piece("sacs"):
         for k, (x, y, rz) in enumerate(((0, 0, 0.2), (0.44, 0.05, -0.3), (0.2, 0.44, 0.9))):
             sac(a, (x, y, 0), rz, k)
@@ -178,3 +183,26 @@ def oiseau(a, pos, cap):
         a.tour("coeur-fleur", [(0.01, 0.0), (0.0, 0.03)], cotes=4,
                m=Matrix.Translation((0, -0.08, 0.1)) @ rot(x=math.pi / 2))
         a.boite("bois-sombre", (0.04, 0.07, 0.015), (0, 0.08, 0.07), biseau=0.005, m=rot(x=-0.4))
+
+
+def arrosoir(a, pos, rot_z=0.0, mat="peinture-verte"):
+    """Un arrosoir de zinc peint : corps, bec long et pomme, anse."""
+    with a.repere(pos, rot_z=rot_z), a.objet("objet", 0.22, haut=0.4):
+        a.cylindre(mat, 0.1, 0.0, 0.2, cotes=12, biseau=0.01)
+        a.tube(mat, [(0.08, 0, 0.04), (0.18, 0, 0.14), (0.26, 0, 0.24)], [0.02, 0.016, 0.014], cotes=6)
+        a.cylindre(mat, 0.03, 0.0, 0.02, cotes=8, biseau=0.0,
+                   m=Matrix.Translation((0.27, 0, 0.25)) @ rot(y=math.radians(60)))
+        a.tore(mat, (0, 0, 0), 0.08, 0.01, cotes=12, section=4, m=Matrix.Translation((-0.02, 0, 0.23)) @ rot(x=math.pi / 2))
+
+
+def pile_de_pots(a, pos, n=3):
+    """Des pots de terre vides, empilés de travers."""
+    with a.repere(pos), a.objet("objet", 0.14, haut=0.12 + n * 0.06):
+        for k in range(n):
+            a.tour("pot", [(0.08, 0.0), (0.11, 0.12), (0.12, 0.12), (0.12, 0.14), (0.1, 0.14)],
+                   centre=(0.01 * k, 0.0, k * 0.06), cotes=10, lisse=False)
+
+
+def mousse(a, pos, taille=0.12, graine=0):
+    """Une plaque de mousse, posée à plat sur une pierre ou un toit."""
+    a.boule("mousse", pos, (taille, taille * 0.8, taille * 0.25), finesse=2, bosses=0.3, graine=graine)

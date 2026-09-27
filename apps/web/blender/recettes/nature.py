@@ -8,6 +8,8 @@ l'origine : le jeu en pose des clones, ou les instancie par centaines
 (`instancierPiece`).
 """
 
+import math
+
 ASSET = {
     "titre": "Kit nature",
     "echelle": 1.0,
@@ -52,7 +54,12 @@ def construire(a):
 
     for k, t in enumerate(((0.9, 0.7, 0.5), (0.55, 0.45, 0.35), (1.3, 0.9, 0.75))):
         with a.piece(f"rocher-{k + 1}"):
-            a.rocher(taille=t, graine=51 + k, mat="pierre" if k != 2 else "pierre-sombre")
+            a.rocher(taille=t, graine=51 + k, mat="pierre" if k != 2 else "pierre-sombre", mousse=k != 1)
+            # Quelques touffes au pied : une pierre posée dans un pré n'est jamais nue.
+            for j in range(3):
+                ang = j * 2.1 + k
+                a.touffe((math.cos(ang) * t[0] * 1.15, math.sin(ang) * t[1] * 1.15, 0), graine=60 + k * 3 + j,
+                         brins=7)
 
     with a.piece("roseaux"):
         a.roseaux((0, 0, 0), graine=61, tiges=7)

@@ -12,12 +12,15 @@ from mathutils import Matrix
 
 from forge.formes import rot
 
+from recettes.jardin import mousse
+
 ASSET = {
     "titre": "Puits à souhaits",
     "echelle": 1.0,
-    "budget_triangles": 7000,
-    "budget_appels": 16,
+    "budget_triangles": 9500,
+    "budget_appels": 22,
     "etiquettes": ["repere", "port-au-clair-de-lune"],
+    "dependances": ["jardin"],
 }
 
 R = 0.72
@@ -70,6 +73,16 @@ def construire(a):
         a.baton("paille-sombre", (0, 0, 1.5), (0, 0, 1.12), 0.015, cotes=4)
         seau(a, (0.0, 0.0, 0.88))
 
+        # De la mousse sur quelques pierres du couronnement, de la lavande et
+        # des fleurs au pied, un second seau posé dans l'herbe.
+        for k, ang in enumerate((0.4, 2.2, 3.9, 5.3)):
+            mousse(a, (math.cos(ang) * R, math.sin(ang) * R, 0.86), 0.1, graine=k)
+        a.lavande((-R - 0.4, 0.35, 0), graine=12, tiges=26, hauteur=0.55)
+        for k, (x, y, esp) in enumerate(((-0.35, -R - 0.3, "coquelicot"), (-0.1, -R - 0.38, "marguerite"),
+                                         (0.18, -R - 0.32, "coquelicot"))):
+            a.fleur((x, y, 0), esp, graine=30 + k)
+        with a.objet("objet", 0.18, centre=(-0.75, -R - 0.2), haut=0.42, nom="seau-sol"):
+            seau(a, (-0.75, -R - 0.2, 0.0))
         # Une pancarte de bois à côté, et un petit tapis d'herbe.
         a.empreinte_boite("objet", (R + 0.45, -0.38), (0.48, 0.1), rot_z=-0.3, haut=0.86, nom="pancarte")
         a.baton("bois", (R + 0.45, -0.35, 0), (R + 0.45, -0.35, 0.8), 0.04)

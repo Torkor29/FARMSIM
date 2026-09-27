@@ -11,12 +11,15 @@ from mathutils import Matrix
 
 from forge.formes import rot
 
+from recettes.jardin import arrosoir, pile_de_pots, sac
+
 ASSET = {
     "titre": "Serre",
     "echelle": 1.0,
     "budget_triangles": 9000,
-    "budget_appels": 12,
+    "budget_appels": 18,
     "etiquettes": ["repere", "fete-des-recoltes"],
+    "dependances": ["jardin"],
 }
 
 L, P = 2.4, 1.7  # longueur (X), profondeur (Y)
@@ -86,6 +89,13 @@ def construire(a):
                 else:
                     a.boule("feuillage", (x, s * 0.45, 0.5), (0.1, 0.1, 0.1), finesse=2, bosses=0.25, graine=k)
                     a.boule("peinture-rouge", (x + 0.05, s * 0.45 - 0.06, 0.55), 0.035, finesse=1)
+        # Autour : un arrosoir, des pots vides, un sac de terreau, une citrouille.
+        arrosoir(a, (L / 2 + 0.38, 0.4, 0.0), rot_z=0.6)
+        pile_de_pots(a, (-L / 2 - 0.3, -0.5, 0.0))
+        sac(a, (-L / 2 - 0.36, 0.32, 0), 0.3, 7)
+        a.citrouille("citrouille", (0.35, -P / 2 - 0.4, 0), 0.2, graine=5)
+        a.touffe((-0.6, -P / 2 - 0.3, 0), graine=3, brins=8)
+        a.touffe((L / 2 + 0.2, 0.9, 0), graine=4, brins=8)
         # Des pots devant la porte.
         for k, (x, y) in enumerate(((L / 2 + 0.28, -0.55), (L / 2 + 0.34, -0.2))):
             a.empreinte("objet", (x, y), 0.16, 0.08, 0.55, nom=f"pot-{k}")

@@ -7,7 +7,7 @@
       "octets": 46664,
       "echelle": 1.0,
       "source": "apps/web/blender/recettes/epouvantail.py",
-      "empreinte": "8b0f2cce87b373ca",
+      "empreinte": "99aae0d25b2f82df",
       "construit": "2026-09-27",
       "matieres": {
         "bois": "#a8764a",
@@ -66,10 +66,10 @@
     "etal": {
       "titre": "Étals de marché",
       "url": "/assets/decor3d/etal.glb",
-      "octets": 226236,
+      "octets": 224472,
       "echelle": 1.0,
       "source": "apps/web/blender/recettes/etal.py",
-      "empreinte": "ea79fcd1b3c6439c",
+      "empreinte": "ecfdc6a21c436807",
       "construit": "2026-09-27",
       "matieres": {
         "bois": "#a8764a",
@@ -99,9 +99,9 @@
           "appels": 17,
           "sommets": 5026,
           "taille": [
-            3.186,
+            3.436,
             2.33,
-            1.817
+            2.037
           ],
           "matieres": [
             "bois",
@@ -113,12 +113,12 @@
             "peinture-rouge",
             "coeur-fleur",
             "citrouille",
-            "paille",
             "fer",
             "lampion",
             "tournesol",
-            "jute",
+            "paille",
             "paille-sombre",
+            "jute",
             "ombre",
             "marguerite"
           ],
@@ -129,9 +129,9 @@
           "appels": 18,
           "sommets": 5026,
           "taille": [
-            3.186,
+            3.436,
             2.33,
-            1.817
+            2.037
           ],
           "matieres": [
             "bois",
@@ -143,13 +143,13 @@
             "coeur-fleur",
             "citrouille",
             "peinture-rouge",
-            "paille",
             "fer",
             "lampion",
             "toile-rouge",
             "tournesol",
-            "jute",
+            "paille",
             "paille-sombre",
+            "jute",
             "ombre",
             "marguerite"
           ],
@@ -160,9 +160,9 @@
           "appels": 18,
           "sommets": 5026,
           "taille": [
-            3.186,
+            3.436,
             2.33,
-            1.817
+            2.037
           ],
           "matieres": [
             "bois",
@@ -174,13 +174,13 @@
             "citrouille",
             "peinture-rouge",
             "coeur-fleur",
-            "paille",
             "fer",
             "lampion",
             "toile-rouge",
             "tournesol",
-            "jute",
+            "paille",
             "paille-sombre",
+            "jute",
             "ombre",
             "marguerite"
           ],
@@ -195,10 +195,10 @@
     "fete": {
       "titre": "Kit de la fête",
       "url": "/assets/decor3d/fete.glb",
-      "octets": 103120,
+      "octets": 122156,
       "echelle": 1.0,
       "source": "apps/web/blender/recettes/fete.py",
-      "empreinte": "9813fca9715c78c2",
+      "empreinte": "efb982ef849f7683",
       "construit": "2026-09-27",
       "matieres": {
         "bois": "#a8764a",
@@ -206,23 +206,32 @@
         "bois-sombre": "#6f4a31",
         "brin": "#7db84a",
         "citrouille": "#e8832c",
+        "coquelicot": "#e2493a",
         "fer": "#4a4744",
+        "feuillage": "#7cb446",
         "lumiere": "#ffc86b",
         "marguerite": "#f6f1e6",
         "paille": "#e2bf72",
         "paille-sombre": "#c49a4e",
         "peinture-blanche": "#f5f2ea",
+        "peinture-bleue": "#6f9fc8",
         "peinture-rouge": "#d6503a",
         "toile-creme": "#f5ead3",
         "toile-orange": "#ec8a37",
         "toile-rouge": "#d9533f",
-        "toile-verte": "#5b9a5d"
+        "toile-verte": "#5b9a5d",
+        "tournesol": "#f3c332"
       },
       "saisons": {
+        "printemps": {
+          "feuillage": "#8ccc57"
+        },
         "automne": {
+          "feuillage": "#e0923a",
           "brin": "#c2a857"
         },
         "hiver": {
+          "feuillage": "#dfe8ec",
           "brin": "#cbd6c8"
         }
       },
@@ -247,9 +256,9 @@
           "appels": 4,
           "sommets": 1149,
           "taille": [
-            1.2,
+            1.45,
             0.53,
-            0.82
+            0.87
           ],
           "matieres": [
             "citrouille",
@@ -260,33 +269,39 @@
           "noeuds": []
         },
         "botte-de-foin": {
-          "triangles": 306,
-          "appels": 2,
-          "sommets": 194,
+          "triangles": 564,
+          "appels": 6,
+          "sommets": 335,
           "taille": [
-            1.0,
-            0.56,
+            1.134,
+            1.12,
             0.7
           ],
           "matieres": [
             "paille",
+            "citrouille",
+            "bois-sombre",
+            "bois-clair",
+            "fer",
             "paille-sombre"
           ],
           "noeuds": []
         },
         "tonneau": {
-          "triangles": 632,
-          "appels": 3,
-          "sommets": 320,
+          "triangles": 776,
+          "appels": 5,
+          "sommets": 402,
           "taille": [
             0.66,
-            0.8,
-            0.66
+            0.9,
+            0.756
           ],
           "matieres": [
             "bois",
-            "fer",
-            "bois-sombre"
+            "tournesol",
+            "bois-sombre",
+            "peinture-bleue",
+            "fer"
           ],
           "noeuds": []
         },
@@ -307,11 +322,11 @@
           "noeuds": []
         },
         "lanterne": {
-          "triangles": 482,
-          "appels": 4,
-          "sommets": 297,
+          "triangles": 706,
+          "appels": 8,
+          "sommets": 423,
           "taille": [
-            0.61,
+            0.67,
             2.0,
             0.28
           ],
@@ -319,7 +334,11 @@
             "bois-sombre",
             "fer",
             "lumiere",
-            "brin"
+            "brin",
+            "paille-sombre",
+            "feuillage",
+            "marguerite",
+            "coquelicot"
           ],
           "noeuds": []
         },
@@ -384,10 +403,10 @@
     "jardin": {
       "titre": "Kit du jardin",
       "url": "/assets/decor3d/jardin.glb",
-      "octets": 136940,
+      "octets": 148412,
       "echelle": 1.0,
       "source": "apps/web/blender/recettes/jardin.py",
-      "empreinte": "1d6c3c5e9dcc8197",
+      "empreinte": "ee171fe57a72d410",
       "construit": "2026-09-27",
       "matieres": {
         "bois": "#a8764a",
@@ -410,6 +429,7 @@
         "paille-sombre": "#c49a4e",
         "peinture-bleue": "#6f9fc8",
         "peinture-rouge": "#d6503a",
+        "peinture-verte": "#5e9a63",
         "pierre": "#cbc6bc",
         "pierre-sombre": "#9d978d",
         "pot": "#c97a4c",
@@ -563,14 +583,42 @@
           ],
           "noeuds": []
         },
+        "arrosoir": {
+          "triangles": 296,
+          "appels": 1,
+          "sommets": 154,
+          "taille": [
+            0.412,
+            0.32,
+            0.2
+          ],
+          "matieres": [
+            "peinture-verte"
+          ],
+          "noeuds": []
+        },
+        "pots-vides": {
+          "triangles": 480,
+          "appels": 1,
+          "sommets": 250,
+          "taille": [
+            0.55,
+            0.26,
+            0.348
+          ],
+          "matieres": [
+            "pot"
+          ],
+          "noeuds": []
+        },
         "sacs": {
           "triangles": 1038,
           "appels": 2,
           "sommets": 540,
           "taille": [
-            0.863,
+            0.883,
             0.466,
-            0.664
+            0.824
           ],
           "matieres": [
             "jute",
@@ -588,10 +636,10 @@
     "moulin": {
       "titre": "Moulin à vent",
       "url": "/assets/decor3d/moulin.glb",
-      "octets": 177780,
+      "octets": 177832,
       "echelle": 1.0,
       "source": "apps/web/blender/recettes/moulin.py",
-      "empreinte": "106f7fdea474177d",
+      "empreinte": "21c13d5fdf047df5",
       "construit": "2026-09-27",
       "matieres": {
         "bois": "#a8764a",
@@ -667,10 +715,10 @@
     "nature": {
       "titre": "Kit nature",
       "url": "/assets/decor3d/nature.glb",
-      "octets": 199580,
+      "octets": 212680,
       "echelle": 1.0,
       "source": "apps/web/blender/recettes/nature.py",
-      "empreinte": "d1fa8325d6fcf6df",
+      "empreinte": "6a248888fdc3cacb",
       "construit": "2026-09-27",
       "matieres": {
         "brin": "#7db84a",
@@ -684,6 +732,7 @@
         "lavande": "#8b7bd0",
         "marguerite": "#f6f1e6",
         "massette": "#6a4128",
+        "mousse": "#7f9a3a",
         "ombre": "#2a1d14",
         "peinture-bleue": "#6f9fc8",
         "pierre": "#cbc6bc",
@@ -702,7 +751,8 @@
           "feuillage-clair": "#f0b34a",
           "feuillage-sombre": "#c0602f",
           "brin": "#c2a857",
-          "roseau": "#b0955a"
+          "roseau": "#b0955a",
+          "mousse": "#9a8a3a"
         },
         "hiver": {
           "feuillage": "#dfe8ec",
@@ -937,44 +987,49 @@
           "noeuds": []
         },
         "rocher-1": {
-          "triangles": 320,
-          "appels": 1,
-          "sommets": 162,
+          "triangles": 505,
+          "appels": 3,
+          "sommets": 351,
           "taille": [
             2.125,
             0.999,
-            1.326
+            1.492
           ],
           "matieres": [
-            "pierre"
+            "pierre",
+            "mousse",
+            "brin"
           ],
           "noeuds": []
         },
         "rocher-2": {
-          "triangles": 320,
-          "appels": 1,
-          "sommets": 162,
+          "triangles": 425,
+          "appels": 2,
+          "sommets": 309,
           "taille": [
-            1.12,
+            1.328,
             0.589,
-            1.149
+            1.186
           ],
           "matieres": [
-            "pierre"
+            "pierre",
+            "brin"
           ],
           "noeuds": []
         },
         "rocher-3": {
-          "triangles": 320,
-          "appels": 1,
-          "sommets": 162,
+          "triangles": 505,
+          "appels": 3,
+          "sommets": 351,
           "taille": [
-            2.658,
-            1.292,
-            2.166
+            2.803,
+            1.314,
+            2.169
           ],
           "matieres": [
-            "pierre-sombre"
+            "pierre-sombre",
+            "mousse",
+            "brin"
           ],
           "noeuds": []
         },
@@ -1052,18 +1107,24 @@
     "puits": {
       "titre": "Puits à souhaits",
       "url": "/assets/decor3d/puits.glb",
-      "octets": 126176,
+      "octets": 153020,
       "echelle": 1.0,
       "source": "apps/web/blender/recettes/puits.py",
-      "empreinte": "0197fb1bafb2c043",
+      "empreinte": "59b38b922e520300",
       "construit": "2026-09-27",
       "matieres": {
         "bois": "#a8764a",
         "bois-clair": "#cf9f68",
         "bois-sombre": "#6f4a31",
         "brin": "#7db84a",
+        "coeur-fleur": "#f0b92c",
+        "coquelicot": "#e2493a",
         "eau": "#6cc9d6",
         "fer": "#4a4744",
+        "feuillage-sombre": "#5c9138",
+        "lavande": "#8b7bd0",
+        "marguerite": "#f6f1e6",
+        "mousse": "#7f9a3a",
         "ombre": "#2a1d14",
         "paille-sombre": "#c49a4e",
         "pierre": "#cbc6bc",
@@ -1072,21 +1133,24 @@
       },
       "saisons": {
         "automne": {
-          "brin": "#c2a857"
+          "feuillage-sombre": "#c0602f",
+          "brin": "#c2a857",
+          "mousse": "#9a8a3a"
         },
         "hiver": {
+          "feuillage-sombre": "#c7d3da",
           "brin": "#cbd6c8"
         }
       },
       "pieces": {
         "puits": {
-          "triangles": 6398,
-          "appels": 15,
-          "sommets": 3514,
+          "triangles": 8529,
+          "appels": 21,
+          "sommets": 4857,
           "taille": [
-            2.421,
-            2.78,
-            1.871
+            2.874,
+            2.781,
+            2.156
           ],
           "matieres": [
             "pierre-sombre",
@@ -1098,8 +1162,14 @@
             "paille-sombre",
             "ombre",
             "fer",
-            "bois-clair",
-            "brin"
+            "mousse",
+            "feuillage-sombre",
+            "brin",
+            "lavande",
+            "coquelicot",
+            "marguerite",
+            "coeur-fleur",
+            "bois-clair"
           ],
           "noeuds": [
             "treuil"
@@ -1114,19 +1184,26 @@
     "serre": {
       "titre": "Serre",
       "url": "/assets/decor3d/serre.glb",
-      "octets": 105552,
+      "octets": 130748,
       "echelle": 1.0,
       "source": "apps/web/blender/recettes/serre.py",
-      "empreinte": "ea71e309bb6f3103",
+      "empreinte": "e737bb8abeaf86e9",
       "construit": "2026-09-27",
       "matieres": {
         "bois": "#a8764a",
+        "bois-sombre": "#6f4a31",
+        "brin": "#7db84a",
+        "citrouille": "#e8832c",
         "feuillage": "#7cb446",
         "feuillage-clair": "#9ccb5a",
+        "jute": "#cfb383",
+        "paille-sombre": "#c49a4e",
         "peinture-blanche": "#f5f2ea",
         "peinture-rouge": "#d6503a",
+        "peinture-verte": "#5e9a63",
         "pierre": "#cbc6bc",
         "pierre-sombre": "#9d978d",
+        "pot": "#c97a4c",
         "terre": "#9c5f3a",
         "terre-claire": "#b97c4c",
         "verre": "#dff4f2"
@@ -1138,20 +1215,22 @@
         },
         "automne": {
           "feuillage": "#e0923a",
-          "feuillage-clair": "#f0b34a"
+          "feuillage-clair": "#f0b34a",
+          "brin": "#c2a857"
         },
         "hiver": {
           "feuillage": "#dfe8ec",
-          "feuillage-clair": "#f2f6f8"
+          "feuillage-clair": "#f2f6f8",
+          "brin": "#cbd6c8"
         }
       },
       "pieces": {
         "serre": {
-          "triangles": 6164,
-          "appels": 10,
-          "sommets": 3236,
+          "triangles": 7904,
+          "appels": 17,
+          "sommets": 4201,
           "taille": [
-            3.46,
+            3.62,
             1.999,
             3.455
           ],
@@ -1165,6 +1244,13 @@
             "feuillage",
             "peinture-rouge",
             "feuillage-clair",
+            "peinture-verte",
+            "pot",
+            "jute",
+            "paille-sombre",
+            "citrouille",
+            "bois-sombre",
+            "brin",
             "terre-claire"
           ],
           "noeuds": []
@@ -1178,17 +1264,20 @@
     "sol": {
       "titre": "Kit du sol",
       "url": "/assets/decor3d/sol.glb",
-      "octets": 266920,
+      "octets": 302608,
       "echelle": 1.0,
       "source": "apps/web/blender/recettes/sol.py",
-      "empreinte": "9ebb9721e6611799",
+      "empreinte": "cd30cd1fc8d98862",
       "construit": "2026-09-27",
       "matieres": {
         "brin": "#7db84a",
         "eau": "#6cc9d6",
         "feuillage-clair": "#9ccb5a",
+        "feuillage-sombre": "#5c9138",
         "herbe": "#8fc257",
+        "lavande": "#8b7bd0",
         "massette": "#6a4128",
+        "mousse": "#7f9a3a",
         "pierre": "#cbc6bc",
         "pierre-sombre": "#9d978d",
         "rose": "#f2a39a",
@@ -1203,30 +1292,37 @@
         },
         "automne": {
           "feuillage-clair": "#f0b34a",
+          "feuillage-sombre": "#c0602f",
           "herbe": "#b6b25c",
           "brin": "#c2a857",
-          "roseau": "#b0955a"
+          "roseau": "#b0955a",
+          "mousse": "#9a8a3a"
         },
         "hiver": {
           "feuillage-clair": "#f2f6f8",
+          "feuillage-sombre": "#c7d3da",
           "herbe": "#e7eef0",
           "brin": "#cbd6c8"
         }
       },
       "pieces": {
         "terrasses": {
-          "triangles": 7552,
-          "appels": 3,
-          "sommets": 4040,
+          "triangles": 12152,
+          "appels": 7,
+          "sommets": 6794,
           "taille": [
-            6.211,
-            1.4,
-            5.894
+            6.402,
+            1.403,
+            6.526
           ],
           "matieres": [
             "terre",
             "herbe",
-            "brin"
+            "brin",
+            "pierre",
+            "mousse",
+            "feuillage-sombre",
+            "lavande"
           ],
           "noeuds": []
         },
@@ -1321,10 +1417,10 @@
     "source_chaude": {
       "titre": "Source chaude",
       "url": "/assets/decor3d/source_chaude.glb",
-      "octets": 329296,
+      "octets": 324116,
       "echelle": 1.0,
       "source": "apps/web/blender/recettes/source_chaude.py",
-      "empreinte": "183ebacab2636935",
+      "empreinte": "f6fb507506e300cf",
       "construit": "2026-09-27",
       "matieres": {
         "bambou": "#a9b35c",
@@ -1373,13 +1469,13 @@
       },
       "pieces": {
         "source-chaude": {
-          "triangles": 27470,
+          "triangles": 26430,
           "appels": 24,
-          "sommets": 15618,
+          "sommets": 15088,
           "taille": [
-            6.37,
+            6.348,
             1.849,
-            5.767
+            5.754
           ],
           "matieres": [
             "pierre-sombre",

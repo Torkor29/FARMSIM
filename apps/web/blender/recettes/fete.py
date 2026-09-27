@@ -30,6 +30,11 @@ def construire(a):
 
     with a.piece("botte-de-foin"):
         a.boite("paille", (1.0, 0.56, 0.52), (0, 0, 0.26), biseau=0.12, segments=3)
+        # Une petite citrouille posée dessus, une fourche appuyée contre.
+        a.citrouille("citrouille", (0.22, 0.02, 0.52), 0.12, graine=9)
+        a.baton("bois-clair", (-0.62, -0.1, 0.0), (-0.48, -0.1, 0.95), 0.018, cotes=5)
+        for dx in (-0.04, 0.0, 0.04):
+            a.baton("fer", (-0.47 + dx, -0.1, 0.93), (-0.45 + dx, -0.1, 1.1), 0.007, cotes=3)
         for x in (-0.25, 0.25):
             a.boite("paille-sombre", (0.035, 0.6, 0.56), (x, 0, 0.26), biseau=0.015)
         # Des brins qui s'échappent.
@@ -42,6 +47,13 @@ def construire(a):
     with a.piece("tonneau"):
         prof = [(0.26, 0.0), (0.31, 0.2), (0.33, 0.4), (0.31, 0.6), (0.26, 0.8)]
         a.tour("bois", prof, cotes=16, lisse=True)
+        # Le robinet de laiton, la bonde, un gobelet posé sur le couvercle.
+        a.baton("tournesol", (0, -0.3, 0.2), (0, -0.4, 0.2), 0.025, cotes=6)
+        a.baton("tournesol", (0, -0.4, 0.2), (0, -0.4, 0.15), 0.02, cotes=6)
+        a.boule("tournesol", (0, -0.4, 0.24), 0.03, finesse=1)
+        a.cylindre("bois-sombre", 0.035, 0.785, 0.8, centre=(0.1, 0.05), cotes=8, biseau=0.0)
+        a.tour("peinture-bleue", [(0.04, 0.8), (0.05, 0.9), (0.045, 0.9)], cotes=10, fermer=True,
+               lisse=False, centre=(-0.08, -0.05, 0))
         for z in (0.12, 0.68):
             r = 0.26 + 0.07 * math.sin(math.pi * z / 0.8)
             a.tore("fer", (0, 0, z), r + 0.002, 0.011, cotes=18, section=4, aplatir=1.6)
@@ -62,6 +74,14 @@ def construire(a):
         a.baton("fer", (0.42, 0, 1.92), (0.42, 0, 1.8), 0.01, cotes=4)
         lanterne(a, (0.42, 0, 1.52))
         a.touffe((0.06, -0.05, 0), graine=7, brins=8)
+        # Un panier fleuri accroché au bras, sous la lanterne.
+        a.baton("fer", (0.08, 0, 1.92), (0.08, 0, 1.72), 0.006, cotes=3)
+        a.tour("paille-sombre", [(0.06, 1.6), (0.1, 1.7), (0.11, 1.72)], cotes=10, lisse=False)
+        a.boule("feuillage", (0.08, 0, 1.73), (0.1, 0.1, 0.05), finesse=2, bosses=0.3)
+        for k in range(4):
+            ang = k * 1.6
+            a.boule("coquelicot" if k % 2 else "marguerite", (0.08 + math.cos(ang) * 0.06, math.sin(ang) * 0.06, 1.77),
+                    0.022, finesse=1)
 
     with a.piece("guirlande"):
         # Deux poteaux et une guirlande de fanions entre eux, face à la caméra.
