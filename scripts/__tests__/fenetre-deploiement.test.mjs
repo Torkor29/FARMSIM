@@ -164,6 +164,42 @@ describe("la fenêtre SSH", () => {
 });
 
 /**
+ * Le diagnostic doit nommer une clé refusée, pas seulement un port fermé.
+ *
+ * Le 28 août, tests et image verts, la session SSH a échoué en cinq
+ * secondes :
+ *
+ *     ssh: handshake failed: ssh: unable to authenticate,
+ *     attempted methods [none publickey], no supported methods remain
+ *
+ * Le diagnostic avait déjà déclaré « OK » : l'hôte n'était pas de l'IPv6,
+ * la clé commençait par BEGIN, le port 22 acceptait le TCP. Il n'avait
+ * jamais présenté la clé. C'est le cas qu'il existait pour distinguer.
+ */
+describe("le diagnostic SSH", () => {
+  const WORKFLOW = readFileSync(join(RACINE, ".github", "workflows", "deploy.yml"), "utf8");
+
+  it("vérifie l'utilisateur, pas seulement l'hôte et la clé", () => {
+    assert.match(WORKFLOW, /UTILISATEUR: \$\{\{ secrets\.VPS_USER \}\}/);
+    assert.match(WORKFLOW, /VPS_USER est vide/);
+  });
+
+  it("éprouve la clé avec OpenSSH, pas seulement sa première ligne", () => {
+    assert.match(WORKFLOW, /ssh-keygen -y/);
+    assert.match(WORKFLOW, /OpenSSH refuse de lire VPS_SSH_KEY/);
+  });
+
+  it("ouvre une session avant d'envoyer le script", () => {
+    assert.match(WORKFLOW, /PreferredAuthentications=publickey/);
+    assert.match(WORKFLOW, /le serveur a refusé la clé/);
+  });
+
+  it("déploie avec le fichier déjà accepté, pas le secret brut", () => {
+    assert.match(WORKFLOW, /key_path: \$\{\{ runner\.temp \}\}\/vps_deploy_key/);
+  });
+});
+
+/**
  * Le filet ne doit pas empêcher le sauvetage.
  *
  * Suite directe de la coupure : `farmsim-db` est resté à l'état `created`,
