@@ -4751,6 +4751,50 @@ describe("la ferme libre", () => {
     assert.equal(m?.force, 3);
   });
 
+  it("irrigue les champs depuis la campagne, par des rigoles à travers les lots à vendre", async () => {
+    const { moi, parcelId } = await fermeLibre("Irrigant des alentours");
+    // La ferme couvre 0..11, ses lots à vendre 12..17 : x = 18 est la première
+    // colonne de campagne. Une mare au ras, une autre bien plus loin.
+    assert.equal((await campagne(parcelId, moi, "etang", [{ x: 18, y: 4 }, { x: 30, y: 4 }])).statut, 200);
+    const v = await vue(parcelId, moi.jeton);
+    const eaux = (v as unknown as { bonuses: { decor: Record<string, { eaux: { x: number; y: number }[] }> } }).bonuses.decor[parcelId]!.eaux;
+    // Elle compte comme si elle bordait la ferme : la portée part de là.
+    assert.deepEqual(
+      eaux.map((e) => [e.x, e.y]).sort((a, b) => a[0]! - b[0]!),
+      [[12, 4], [24, 4]],
+    );
+  });
+
+  it("rend à l'herbe, et rembourse, la campagne qu'un redessin du pays recouvre", async () => {
+    const { moi, parcelId } = await fermeLibre("Exproprié de la route");
+    const Y = 30;
+    assert.equal((await campagne(parcelId, moi, "surelever", [{ x: 5, y: Y }])).statut, 200);
+    assert.equal((await campagne(parcelId, moi, "etang", [{ x: 5, y: Y }, { x: 6, y: Y }])).statut, 200);
+    assert.equal((await campagne(parcelId, moi, "boiser", [{ x: 7, y: Y }])).statut, 200);
+    assert.equal((await campagne(parcelId, moi, "prairie", [{ x: 8, y: Y }])).statut, 200);
+    await appel("/dev/grant", { methode: "POST", corps: { userId: moi.id, ripenAll: true }, jeton: moi.jeton });
+    const argent0 = await argent(moi.jeton);
+    const enfouir = (qui: { id: string; jeton: string }, cells: { x: number; y: number }[]) =>
+      appel(`/parcels/${parcelId}/campagne/enfouies`, { methode: "POST", corps: { userId: qui.id, cells }, jeton: qui.jeton });
+    // Un voisin ne rend pas ma campagne.
+    const autre = await inscrire("Voisin cantonnier");
+    assert.equal((await enfouir(autre, [{ x: 5, y: Y }])).statut, 403);
+    // La route passe sur la butte en eau, l'étang, la futaie et la prairie — et sur de l'herbe.
+    const r = await enfouir(moi, [5, 6, 7, 8, 9].map((x) => ({ x, y: Y })));
+    assert.equal(r.statut, 200, JSON.stringify(r.corps));
+    const { rendues, rendu, bois } = r.corps as unknown as { rendues: number; rendu: number; bois: number };
+    assert.equal(rendues, 4);
+    // Relief 40 + eau 30, eau 30, bois 25, prairie 10 ; la futaie part à la scierie.
+    assert.equal(rendu, 40 + 30 + 30 + 25 + 10);
+    assert.equal(bois, PRIX_COUPE_TEST);
+    assert.equal(await argent(moi.jeton), argent0 + rendu + bois);
+    assert.equal((await campagneVue(parcelId, moi.jeton)).some((c) => c.y === Y), false);
+    // Rien de plus la seconde fois : il n'y a plus rien à rendre.
+    const deux = await enfouir(moi, [{ x: 5, y: Y }]);
+    assert.equal((deux.corps as unknown as { rendues: number }).rendues, 0);
+    assert.equal(await argent(moi.jeton), argent0 + rendu + bois);
+  });
+
   it("donne au siège un domaine, avec sa ferme au centre et de la friche autour", async () => {
     const { moi, parcelId } = await fermeLibre("Domaine");
     const v = await vue(parcelId, moi.jeton);

@@ -369,6 +369,8 @@ type Props = {
    * de la campagne.
    */
   onCampagneBloquee?: (cles: ReadonlySet<string>) => void;
+  /** Les cases de campagne façonnées qu'un redessin du pays vient de recouvrir. */
+  onCampagneEnfouie?: (cells: { x: number; y: number }[]) => void;
   /** Le mode construction : grille, lots, fantôme. Nul hors du mode. */
   construction?: EtatConstruction | null;
   cells: IsoCell[];
@@ -1209,6 +1211,7 @@ export function IsoFarmView({
   faune = FAUNE_VIDE,
   campagne = CAMPAGNE_VIDE,
   onCampagneBloquee,
+  onCampagneEnfouie,
   construction = null,
   cells,
   buildings,
@@ -1394,6 +1397,8 @@ export function IsoFarmView({
   });
   const onCampagneBloqueeRef = useRef(onCampagneBloquee);
   onCampagneBloqueeRef.current = onCampagneBloquee;
+  const onCampagneEnfouieRef = useRef(onCampagneEnfouie);
+  onCampagneEnfouieRef.current = onCampagneEnfouie;
   dataRef.current = {
     cells,
     buildings,
@@ -2709,6 +2714,20 @@ export function IsoFarmView({
               }
             }
             onCampagneBloqueeRef.current?.(bloquees);
+            /*
+             * Ce qu'on avait façonné et que le pays redessiné recouvre.
+             *
+             * Seulement une fois le voisinage connu : avant, le pays se
+             * dessine autour de la parcelle active comme si elle était le
+             * siège, et la route n'est pas encore à sa vraie place — on
+             * rendrait à l'herbe des cases que rien ne recouvre.
+             */
+            if (voisinageRef.current?.length) {
+              const enfouies = (dataRef.current.campagne ?? [])
+                .filter((c) => !dansBornes(b, c.x, c.y) && bloquees.has(key(c.x, c.y)))
+                .map((c) => ({ x: c.x, y: c.y }));
+              if (enfouies.length) onCampagneEnfouieRef.current?.(enfouies);
+            }
           }
         }
       }

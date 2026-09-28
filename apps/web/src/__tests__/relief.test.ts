@@ -4,11 +4,13 @@ import {
   construireGrille,
   coteaux,
   defConstruction,
+  eauxDeLaCampagne,
   forceHydraulique,
   hydrologie,
   rampeValide,
   validerPeinture,
   validerPose,
+  valeurCaseCampagne,
   type CaseRelief,
 } from "@farmsim/shared";
 
@@ -115,5 +117,37 @@ describe("le relief dans les règles de pose", () => {
     expect(c.has("0,1")).toBe(true);
     expect(c.has("0,0")).toBe(false);
     expect(bonusAmenagementCase({ objets: [], eaux: [], coteaux: [{ x: 0, y: 1 }] }, 0, 1)).toBeCloseTo(0.02, 5);
+  });
+});
+
+describe("l'eau de la campagne", () => {
+  // Une ferme de 0 à 11, ses lots à vendre jusqu'à −6 et 18 : la campagne est au-delà.
+  const domaine = { minX: -6, minY: -6, maxX: 18, maxY: 18 };
+
+  it("arrive par les rigoles : comptée depuis le bord de la ferme", () => {
+    const eaux = eauxDeLaCampagne(domaine, [
+      { x: 18, y: 4, courante: true },
+      { x: -7, y: 4 },
+      { x: 20, y: 20 },
+      { x: 30, y: 4 },
+    ]);
+    expect(eaux).toEqual([
+      { x: 12, y: 4, courante: true },
+      { x: -1, y: 4 },
+      { x: 14, y: 14 },
+      { x: 24, y: 4 },
+    ]);
+    // Le champ du bord, x = 11, en profite ; la mare lointaine reste lointaine.
+    expect(bonusAmenagementCase({ objets: [], eaux: eaux.slice(0, 1) }, 11, 4)).toBeCloseTo(0.07, 5);
+    expect(bonusAmenagementCase({ objets: [], eaux: eaux.slice(0, 1) }, 9, 4)).toBeCloseTo(0.03, 5);
+    expect(bonusAmenagementCase({ objets: [], eaux: eaux.slice(3) }, 11, 4)).toBe(0);
+  });
+
+  it("rend à son prix le travail qu'une route recouvre", () => {
+    expect(valeurCaseCampagne({ sol: "EAU", niveau: 2 })).toEqual({ rendu: 30 + 80, bois: 0 });
+    expect(valeurCaseCampagne({ sol: "PRE", niveau: 0, fleurie: true })).toEqual({ rendu: 10, bois: 0 });
+    const planté = Date.now();
+    expect(valeurCaseCampagne({ sol: "BOIS", niveau: 0, boiseDepuis: planté }, planté)).toEqual({ rendu: 25, bois: 0 });
+    expect(valeurCaseCampagne({ sol: "BOIS", niveau: 0, boiseDepuis: 0 }, planté)).toEqual({ rendu: 25, bois: 70 });
   });
 });

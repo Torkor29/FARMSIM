@@ -233,6 +233,29 @@ de jeu à part, où l'on revient façonner entre deux chantiers.
   âge.
 - **Le moulin** prend l'eau de la campagne par un **bief** : une cascade ou
   une rivière à 8 cases au plus fait tourner sa roue (`PORTEE_BIEF`).
+- **L'irrigation** arrive par des **rigoles** qui traversent l'anneau des
+  lots à vendre (`eauxDeLaCampagne`). Une case d'eau de campagne compte
+  comme si elle bordait la ferme : on la rapproche d'un lot (6 cases) sur
+  chaque axe où elle dépasse le domaine. La portée part de là : +3 % à
+  3 cases du bord de la ferme, +4 % à 2 cases si l'eau coule. Un lac à dix
+  cases de l'anneau reste trop loin. Le brise-vent d'un bois de campagne,
+  lui, ne traverse pas l'anneau : il n'agit que de près.
+- **Quand le pays se redessine.** Si la ferme grandit, la route peut glisser
+  d'un couloir, un voisin s'installer, l'île s'élargir. Deux cas se
+  présentent :
+  - **Le village cède la place.** Ses lieux (coopérative, rucher, mare du
+    décor…) ne tiennent à aucun endroit. Ils prennent le premier
+    emplacement libre qui ne recouvre ni une case façonnée ni une
+    décoration du joueur.
+  - **Une route, la cour, l'île ou le champ d'un voisin, eux, ne bougent
+    pas.** La vue relève les cases façonnées qui se retrouvent dessous (une
+    fois le voisinage chargé, pour ne rien juger sur un pays provisoire)
+    et les retire aussitôt de l'écran. `POST /parcels/:id/campagne/enfouies`
+    les rend à l'herbe et rembourse leur travail (`valeurCaseCampagne`) :
+    l'eau 30 €, chaque niveau de relief 40 €, le bois 25 €, les fleurs 10 €.
+    Une futaie part en plus à la scierie (70 €). Un toast le dit. Ce qu'un
+    client déclarerait à tort ne lui rapporte jamais plus que ce qu'il a
+    payé.
 - **À l'écran.** La campagne façonnée se dessine au niveau du sol de la
   campagne, sous l'île. L'eau y affleure, une butte porte son propre dessus
   d'herbe, un bois sa litière. Le décor tiré au sort (arbres, touffes) lui
@@ -375,7 +398,8 @@ Règles dans `packages/shared/src/bois.ts`, rendu dans `verserBois`
 ### Effets du décor (peu, et lisibles)
 
 - **Haie** : brise-vent, +2 % de rendement sur les champs à 2 cases ou moins.
-- **Étang** : irrigation, +3 % sur les champs à 3 cases ou moins.
+- **Étang** : irrigation, +3 % sur les champs à 3 cases ou moins — depuis la
+  campagne, comptées à partir du bord de la ferme (les rigoles).
 - **Rivière** (eau qui coule) : +4 % de plus à 2 cases ou moins.
 - **Coteau** : +2 % sur un champ en terrasse exposé au sud.
 - **Bois** : brise-vent, +3 % à 2 cases (remplace celui d'une haie).

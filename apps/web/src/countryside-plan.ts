@@ -45,7 +45,7 @@
  */
 
 import { COTE_MAX, GRILLE_STANDARD, TAILLES_PARCELLE, type Season } from "@farmsim/shared";
-import { boiteDeSegment, empreinteArbre, Occupation, type Genre, type Occupant } from "./placement";
+import { boiteDeSegment, chevauchent, empreinteArbre, Occupation, type Genre, type Occupant } from "./placement";
 
 /** Ce qu'on voit dans une parcelle voisine. */
 export type EtatChamp =
@@ -1007,6 +1007,16 @@ export function planCampagne(o: OptionsPlan): PlanCampagne {
       // les croyait plantés dans le bitume.
       if (seChevauchent(b, cour, ECART_COUR) || seChevauchent(b, joueur, ECART_COUR)) return false;
       if (parcelles.some((p) => seChevauchent(b, empriseParcelle(p, p.cote), 0.8))) return false;
+      /*
+       * Le village cède la place à ce que le joueur a fait.
+       *
+       * Un lieu ne tient à aucun endroit précis : quand la ferme grandit et que
+       * le pays se redessine, il prend le premier emplacement libre — et une
+       * mare creusée, un bois planté, une décoration posée ne le sont pas.
+       * Une marge négative : ce qui a été posé **contre** le lieu, validé
+       * contre lui, ne doit pas le faire déménager au redessin suivant.
+       */
+      if (o.decorations?.some((d) => chevauchent(d.forme, { type: "boite", ...b }, -0.1))) return false;
       if (
         lieux.some((l) => {
           const c = coteLieu(l.genre);

@@ -350,6 +350,32 @@ export function dansCampagne(bornes: Bornes, x: number, y: number): boolean {
   );
 }
 
+/**
+ * Ce que rend une case de campagne façonnée qu'un redessin du pays recouvre.
+ *
+ * La route, la cour, l'île et les champs des voisins sont tracés d'après la
+ * ferme : quand elle grandit, la route peut glisser d'un couloir et passer là
+ * où l'on avait creusé. Le travail n'est pas perdu pour rien : la case
+ * redevient de l'herbe et chaque geste qu'elle portait est rendu à son prix —
+ * l'eau, chaque niveau de relief, le bois, les fleurs. Une futaie abattue pour
+ * la route part en plus à la scierie, comme une coupe.
+ */
+export function valeurCaseCampagne(
+  c: { sol: string; niveau: number; fleurie?: boolean; boiseDepuis?: Date | string | number | null },
+  maintenant = Date.now(),
+): { rendu: number; bois: number } {
+  const prix = (id: string) => defConstruction(id)?.prix ?? 0;
+  let rendu = Math.max(0, c.niveau) * prix("surelever");
+  let bois = 0;
+  if (c.sol === "EAU") rendu += prix("etang");
+  if (c.sol === "BOIS") {
+    rendu += prix("boiser");
+    if (stadeBois(croissanceBois(c.boiseDepuis ?? null, maintenant)) === "FUTAIE") bois = PRIX_COUPE;
+  }
+  if (c.fleurie) rendu += prix("prairie");
+  return { rendu, bois };
+}
+
 /** Coût du remblai d'un étang, par case, quand on le rend au pré. */
 export const COUT_REMBLAI = 8;
 
@@ -413,7 +439,7 @@ const terrains: DefConstruction[] = [
     categorie: "TERRAFORMAGE",
     nom: "Creuser l'eau",
     description:
-      "Creuser un lac, une mare, une rivière : glissez sur le pré. Il irrigue les champs à trois cases ou moins.",
+      "Creuser un lac, une mare, une rivière dans la campagne : glissez sur le pré. Des rigoles traversent les lots à vendre : l'eau irrigue les champs à trois cases ou moins du bord de la ferme.",
     icone: "💧",
     pose: "TERRAIN",
     emprise: { w: 1, h: 1 },
@@ -423,7 +449,7 @@ const terrains: DefConstruction[] = [
     niveauMin: 1,
     regle: "EAU",
     sol: "EAU",
-    effet: { bonusRendement: 0.03, portee: 3, libelle: "Irrigation : +3 % à 3 cases, +4 % à 2 cases si l'eau coule" },
+    effet: { bonusRendement: 0.03, portee: 3, libelle: "Irrigation : +3 % sur les champs à 3 cases du bord de la ferme, +4 % à 2 cases si l'eau coule" },
     charme: 1,
   },
   {
@@ -1334,6 +1360,28 @@ export const BONUS_AMENAGEMENT_MAX = 0.08;
 /** L'eau qui coule irrigue mieux et plus près qu'un lac. */
 export const BONUS_RIVIERE = 0.04;
 export const PORTEE_RIVIERE = 2;
+
+/**
+ * L'eau de la campagne, comptée depuis le bord de la ferme.
+ *
+ * La campagne commence au-delà de l'anneau des lots à vendre : à six cases au
+ * moins du premier champ, un étang ou une rivière qu'on y creuse n'en
+ * irriguerait aucun. L'eau y arrive donc par des rigoles qui traversent
+ * l'anneau — une case de campagne au ras des lots à vendre compte comme si
+ * elle bordait la ferme, et la portée se mesure à partir de là. Rien de plus :
+ * un lac à dix cases du bord reste trop loin pour les champs.
+ *
+ * `bornes` sont celles du domaine, anneau compris (`bornesDuDomaine`).
+ */
+export function eauxDeLaCampagne<T extends { x: number; y: number }>(bornes: Bornes, eaux: readonly T[]): T[] {
+  const rapprocher = (v: number, min: number, max: number) =>
+    v >= max ? v - TAILLE_LOT : v < min ? v + TAILLE_LOT : v;
+  return eaux.map((e) => ({
+    ...e,
+    x: rapprocher(e.x, bornes.minX, bornes.maxX),
+    y: rapprocher(e.y, bornes.minY, bornes.maxY),
+  }));
+}
 
 export type SourcesBonus = {
   /** Objets posés (haies…), avec leur type. */

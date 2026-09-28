@@ -3661,6 +3661,47 @@ export function App() {
   }
 
   /**
+   * Les cases de campagne qu'un redessin du pays a recouvertes.
+   *
+   * Quand la ferme grandit, la route peut glisser d'un couloir, un voisin
+   * s'installer : la vue signale ce qui se retrouve dessous. Ces cases
+   * disparaissent aussitôt de l'écran, et le serveur les rend à l'herbe en
+   * remboursant le travail qu'elles portaient.
+   */
+  const enfouiesEnCours = useRef(new Set<string>());
+  async function rendreCampagneEnfouie(cells: { x: number; y: number }[]) {
+    if (!player || !activeParcelId) return;
+    const parcelId = activeParcelId;
+    const neuves = cells.filter((c) => !enfouiesEnCours.current.has(`${parcelId}:${cleCase(c.x, c.y)}`));
+    if (!neuves.length) return;
+    const cles = new Set(neuves.map((c) => cleCase(c.x, c.y)));
+    for (const k of cles) enfouiesEnCours.current.add(`${parcelId}:${k}`);
+    setParcelDetail((d) =>
+      d?.domaine && d.parcel.id === parcelId
+        ? { ...d, domaine: { ...d.domaine, campagne: (d.domaine.campagne ?? []).filter((c) => !cles.has(cleCase(c.x, c.y))) } }
+        : d,
+    );
+    try {
+      const r = await api<{ rendues: number; rendu: number; bois: number }>(`/parcels/${parcelId}/campagne/enfouies`, {
+        method: "POST",
+        body: JSON.stringify({ userId: player.id, cells: neuves }),
+      });
+      if (r.rendues > 0) {
+        const s = r.rendues > 1 ? "s" : "";
+        flashToast(
+          `${r.rendues} case${s} de campagne sous le nouveau tracé du pays : rendue${s} à l'herbe, +${r.rendu + r.bois} € remboursés`,
+        );
+        void refreshPlayer();
+      }
+    } catch (e) {
+      flashToast(e instanceof Error ? e.message : String(e), true);
+      void loadParcel(parcelId);
+    } finally {
+      for (const k of cles) enfouiesEnCours.current.delete(`${parcelId}:${k}`);
+    }
+  }
+
+  /**
    * Valider un geste de terrain, sur la ferme **et** dans la campagne.
    *
    * Chaque zone a sa règle : le gros terraformage se fait dehors, les champs
@@ -7210,6 +7251,7 @@ export function App() {
               faune={domaine?.biodiversite?.faune}
               campagne={campagneTerrain}
               onCampagneBloquee={setCampagneBloquee}
+              onCampagneEnfouie={rendreCampagneEnfouie}
               construction={vueConstruction?.etat ?? null}
             />
           </Suspense>

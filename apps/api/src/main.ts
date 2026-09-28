@@ -428,6 +428,8 @@ import {
   PORTEE_BIEF,
   OUTILS_CAMPAGNE,
   dansCampagne,
+  eauxDeLaCampagne,
+  valeurCaseCampagne,
   PRIX_COUPE,
   BOIS_MATURITE_MS,
   croissanceBois,
@@ -2908,7 +2910,7 @@ function bonusBiodiversiteAt(
 /** Les sources de bonus du décor, rangées par parcelle. */
 async function decorDeLaFerme(farmId: string): Promise<Record<string, SourcesBonus>> {
   const aEffet = ["haie"];
-  const [objets, cases] = await Promise.all([
+  const [objets, cases, eauxCampagne] = await Promise.all([
     prisma.amenagement.findMany({
       where: { parcel: { farmId }, type: { in: aEffet } },
       select: { parcelId: true, type: true, originX: true, originY: true },
@@ -2917,6 +2919,11 @@ async function decorDeLaFerme(farmId: string): Promise<Record<string, SourcesBon
     prisma.parcelCell.findMany({
       where: { parcel: { farmId }, OR: [{ sol: "EAU" }, { sol: "BOIS" }, { niveau: { gt: 0 } }] },
       select: { parcelId: true, x: true, y: true, sol: true, niveau: true, boiseDepuis: true },
+    }),
+    // L'eau creusée dans la campagne : elle irrigue par les rigoles (`eauxDeLaCampagne`).
+    prisma.caseCampagne.findMany({
+      where: { parcel: { farmId }, sol: "EAU" },
+      select: { parcelId: true, x: true, y: true, niveau: true },
     }),
   ]);
   type Sources = {
@@ -2945,6 +2952,31 @@ async function decorDeLaFerme(farmId: string): Promise<Record<string, SourcesBon
     for (const kk of coteaux(cs)) {
       const [x, y] = kk.split(",").map(Number) as [number, number];
       de(parcelId).coteaux.push({ x, y });
+    }
+  }
+  if (eauxCampagne.length) {
+    /* Les bornes du domaine ne demandent que ses extrêmes : on ne charge pas
+       toutes les cases de la ferme pour les connaître. */
+    const etendues = await prisma.parcelCell.groupBy({
+      by: ["parcelId"],
+      where: { parcelId: { in: [...new Set(eauxCampagne.map((c) => c.parcelId))] } },
+      _min: { x: true, y: true },
+      _max: { x: true, y: true },
+    });
+    for (const e of etendues) {
+      if (e._min.x === null || e._min.y === null || e._max.x === null || e._max.y === null) continue;
+      const bornes = bornesDuDomaine([
+        { x: e._min.x, y: e._min.y },
+        { x: e._max.x, y: e._max.y },
+      ]);
+      const cs = eauxCampagne.filter((c) => c.parcelId === e.parcelId);
+      const courante = hydrologie(cs.map((c) => ({ ...c, sol: "EAU" as const }))).courante;
+      de(e.parcelId).eaux.push(
+        ...eauxDeLaCampagne(
+          bornes,
+          cs.map((c) => ({ x: c.x, y: c.y, courante: courante.has(`${c.x},${c.y}`) })),
+        ),
+      );
     }
   }
   return out;
@@ -10234,6 +10266,65 @@ app.post("/parcels/:id/campagne", async (req, res) => {
     await tx.caseCampagne.deleteMany({ where: { parcelId: parcel.id, sol: "PRE", fleurie: false, niveau: 0 } });
   });
   res.json({ peintes: faites.length, ignorees: body.data.cells.length - faites.length, cout: verdict.cout, gain });
+});
+
+/**
+ * Les cases de campagne qu'un redessin du pays a recouvertes.
+ *
+ * Seule la vue sait où passent la route, la cour et les champs des voisins :
+ * c'est elle qui les signale, après avoir redessiné le pays. Chaque case
+ * redevient de l'herbe et son travail est rendu (`valeurCaseCampagne`) — ce
+ * qu'on déclarerait à tort ne rapporterait jamais plus que ce qu'il a coûté.
+ */
+app.post("/parcels/:id/campagne/enfouies", async (req, res) => {
+  const body = z
+    .object({
+      userId: z.string(),
+      cells: z.array(z.object({ x: z.number().int(), y: z.number().int() })).min(1).max(400),
+    })
+    .safeParse(req.body);
+  if (!body.success) {
+    res.status(400).json(body.error.flatten());
+    return;
+  }
+  const parcel = await prisma.parcel.findUnique({ where: { id: req.params.id }, include: { farm: true } });
+  if (!parcel?.farm || parcel.farm.userId !== body.data.userId) {
+    res.status(403).json({ error: "Parcelle non possédée" });
+    return;
+  }
+  const voulues = new Set(body.data.cells.map((c) => cleCase(c.x, c.y)));
+  const cases = (
+    await prisma.caseCampagne.findMany({
+      where: { parcelId: parcel.id, x: { in: body.data.cells.map((c) => c.x) }, y: { in: body.data.cells.map((c) => c.y) } },
+    })
+  ).filter((c) => voulues.has(cleCase(c.x, c.y)));
+  const maintenant = Date.now();
+  let rendu = 0;
+  let bois = 0;
+  for (const c of cases) {
+    const v = valeurCaseCampagne(c, maintenant);
+    rendu += v.rendu;
+    bois += v.bois;
+  }
+  const n = cases.length;
+  const pluriel = n > 1 ? "s" : "";
+  try {
+    await prisma.$transaction(async (tx) => {
+      // La suppression d'abord, et c'est elle qui compte : deux signalements
+      // simultanés ne remboursent pas deux fois la même case.
+      const faites = await tx.caseCampagne.deleteMany({ where: { id: { in: cases.map((c) => c.id) } } });
+      if (faites.count !== n) throw new Error("CONCURRENT");
+      await crediter(tx, body.data.userId, rendu, "BATIMENTS", `Campagne recouverte par le pays — ${n} case${pluriel} remboursée${pluriel}`);
+      await crediter(tx, body.data.userId, bois, "CULTURES", "Bois abattu sous la route, vendu à la scierie");
+    });
+  } catch (e) {
+    if (e instanceof Error && e.message === "CONCURRENT") {
+      res.status(409).json({ error: "Ces cases viennent d'être rendues" });
+      return;
+    }
+    throw e;
+  }
+  res.json({ rendues: n, rendu, bois });
 });
 
 /** Façonner une berge dans la campagne : même geste qu'à la ferme. */
