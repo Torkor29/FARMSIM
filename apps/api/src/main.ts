@@ -4774,7 +4774,7 @@ app.post("/sim/tick", async (req, res) => {
     res.status(404).json({ error: "Route inconnue" });
     return;
   }
-  const result = await runWorldTick();
+  const result = await tourDeMonde();
   res.json(result);
 });
 app.get("/contracts", async (req, res) => {
@@ -4899,6 +4899,31 @@ async function spoilPerishables() {
       });
     }
   }
+}
+
+/*
+ * Un tour de monde à la fois.
+ *
+ * Le tour régulier et `/sim/tick` appelaient `runWorldTick` chacun de son
+ * côté : deux tours pouvaient donc se chevaucher. Chacun lit un troupeau et
+ * son silo, puis écrit la mangeoire d'après ce qu'il a lu. Le plus lent
+ * réécrivait ainsi un état périmé : un lot remis à sec entre-temps se
+ * retrouvait servi, avec un fourrage qui n'existait plus. La suite
+ * d'intégration l'a attrapé (« l'employé a nourri sans stock »), et le même
+ * chevauchement pouvait servir deux rations ou payer deux salaires.
+ *
+ * Les tours passent donc en file. Le tour régulier ne s'ajoute pas à une
+ * file déjà occupée : s'il en reste un à faire, le suivant s'en chargera.
+ */
+let fileDesTours: Promise<unknown> = Promise.resolve();
+let toursEnFile = 0;
+function tourDeMonde(): ReturnType<typeof runWorldTick> {
+  toursEnFile++;
+  const tour = fileDesTours.then(() => runWorldTick()).finally(() => {
+    toursEnFile--;
+  });
+  fileDesTours = tour.catch(() => {});
+  return tour;
 }
 
 async function runWorldTick() {
@@ -15252,9 +15277,10 @@ async function main() {
    * ferme, et nous laisser le temps de comprendre. Le même traitement que les
    * tours suivants, pour la même raison.
    */
-  await runWorldTick().catch((e) => console.error("premier tour de simulation en échec", e));
+  await tourDeMonde().catch((e) => console.error("premier tour de simulation en échec", e));
   setInterval(() => {
-    runWorldTick().catch((e) => console.error("sim tick failed", e));
+    if (toursEnFile > 0) return;
+    tourDeMonde().catch((e) => console.error("sim tick failed", e));
   }, SIM_TICK_MS);
   app.listen(PORT, () => {
     console.log(`API Farming Navigateur sur http://localhost:${PORT}`);
