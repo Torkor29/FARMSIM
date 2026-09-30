@@ -824,9 +824,23 @@ describe("lieu de vie", () => {
     });
     assert.equal(embauche.statut, 201, `embauche refusée : ${JSON.stringify(embauche.corps)}`);
     const recrue = (embauche.corps as unknown as { employee: { id: string } }).employee;
-    prismaExec(
-      `UPDATE "Employee" SET elevage = 5, poste = 'ELEVAGE' WHERE id = '${recrue.id}';`,
-    );
+    // Le poste par la route du jeu ; seule la compétence est forcée en base.
+    const affectation = await appel(`/employees/${recrue.id}/post`, {
+      methode: "POST",
+      corps: { poste: "ELEVAGE" },
+      jeton: moi.jeton,
+    });
+    assert.equal(affectation.statut, 200, `affectation refusée : ${JSON.stringify(affectation.corps)}`);
+    prismaExec(`UPDATE "Employee" SET elevage = 5 WHERE id = '${recrue.id}';`);
+    /* Ce que la base contient vraiment, avant de mesurer : sur le runner
+       d'intégration, l'annonce est une fois restée sans le bonus, et rien ne
+       disait si l'employé était là, à quel poste, à quel niveau. */
+    const fiche = execFileSync(
+      "psql",
+      [base!.url, "-tAc", `SELECT poste || ':' || elevage FROM "Employee" WHERE id = '${recrue.id}'`],
+      { encoding: "utf8" },
+    ).trim();
+    assert.equal(fiche, "ELEVAGE:5", `l'employé en base : « ${fiche} »`);
 
     const apres = await litresAnnonces();
     assert.ok(
