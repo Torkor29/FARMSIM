@@ -997,6 +997,12 @@ export const INSTALLATION_POINTS = {
   barnMid: 1,
   /** Étable de niveau 5 */
   barnTop: 1,
+  /**
+   * Un paysage vivant autour de l'abri — haie, bois, mare, prairie à trois
+   * cases : de l'ombre, de l'eau, et des hirondelles qui mangent les mouches.
+   * Voir `paysageAutour` (`biodiversite.ts`).
+   */
+  paysage: 1,
 } as const;
 
 /** Niveau d'installation d'après ce que le joueur a réellement posé. */
@@ -1006,9 +1012,11 @@ export function installationLevel(input: {
   hasPaddock?: boolean;
   hasTrough?: boolean;
   hasRack?: boolean;
+  hasPaysage?: boolean;
 }): number {
   const barn = clamp(Math.round(input.barnLevel ?? 1), 1, MAX_BARN_LEVEL);
   let points = 0;
+  if (input.hasPaysage) points += INSTALLATION_POINTS.paysage;
   if (input.hasPaddock) points += INSTALLATION_POINTS.paddock;
   if (input.hasTrough) points += INSTALLATION_POINTS.trough;
   if (input.hasRack) points += INSTALLATION_POINTS.rack;

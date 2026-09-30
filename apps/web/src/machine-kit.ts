@@ -1,5 +1,6 @@
 import * as THREE from "three";
 import { mergeGeometries } from "three/examples/jsm/utils/BufferGeometryUtils.js";
+import { paveChanfreine } from "./decor3d";
 import { markShared } from "./three-cleanup";
 
 /**
@@ -43,6 +44,10 @@ export type MatKey =
   | "beacon"
   | "grain"
   | "seat"
+  /** Blanc réfléchissant : bandes des panneaux de signalisation, plaques */
+  | "hazard"
+  /** Catadioptre orange des flancs */
+  | "reflector"
   /* — Bâtiments ——————————————————————————————————————— */
   /** Couverture : tuile, bac acier, ardoise */
   | "roof"
@@ -65,7 +70,11 @@ export type MatKey =
   /** Buisson de cour, herbe rase */
   | "foliage"
   /** Terre battue de la cour */
-  | "dirt";
+  | "dirt"
+  /** Vitre de fenêtre : s'allume le soir (voir `allumerLumieres`) */
+  | "window"
+  /** Fleurs des jardinières */
+  | "flower";
 
 export type Palette = {
   /** Teinte de carrosserie */
@@ -106,16 +115,17 @@ export function createMaterials(pal: Palette, seed = 0, wear = 0): Materials {
     return c;
   };
 
-  // Peinture vernie : une couche spéculaire nette par-dessus la couleur. C'est
-  // elle qui fait la différence entre une carrosserie et un aplat.
+  // Peinture satinée : un léger vernis par-dessus la couleur. La direction
+  // artistique est celle du jouet peint (voir `docs/FORGE_ASSETS.md`) — un
+  // reflet doux, pas une carrosserie de salon.
   const paint = (hex: number, roughness = 0.36) =>
     new THREE.MeshPhysicalMaterial({
       color: soil(tint(hex), 0.5),
-      metalness: 0.15,
-      roughness: Math.min(1, roughness + w * 0.34),
+      metalness: 0.04,
+      roughness: Math.min(1, roughness + 0.18 + w * 0.3),
       // Le vernis part le premier : une machine fatiguée ne brille plus.
-      clearcoat: 0.7 * (1 - w * 0.85),
-      clearcoatRoughness: 0.18 + w * 0.4,
+      clearcoat: 0.3 * (1 - w * 0.85),
+      clearcoatRoughness: 0.35 + w * 0.4,
     });
   const std = (p: THREE.MeshStandardMaterialParameters) => new THREE.MeshStandardMaterial(p);
 
@@ -125,12 +135,12 @@ export function createMaterials(pal: Palette, seed = 0, wear = 0): Materials {
     trim: paint(pal.trim, 0.42),
     chrome: std({
       color: new THREE.Color(0xd9dee2).lerp(RUST, w * 0.5),
-      metalness: 0.96 - w * 0.5,
-      roughness: 0.14 + w * 0.5,
+      metalness: 0.55 - w * 0.3,
+      roughness: 0.32 + w * 0.4,
     }),
     steel: std({
       color: new THREE.Color(0x8f979e).lerp(RUST, w * 0.45),
-      metalness: 0.72 - w * 0.35,
+      metalness: 0.4 - w * 0.2,
       roughness: 0.38 + w * 0.4,
     }),
     // Fonte de carter : mate, presque grenue.
@@ -151,18 +161,31 @@ export function createMaterials(pal: Palette, seed = 0, wear = 0): Materials {
       opacity: 0.46,
       side: THREE.DoubleSide,
     }),
-    lamp: std({
-      color: 0xfff4d2,
-      emissive: new THREE.Color(0xffe9a8),
-      emissiveIntensity: 0.7,
-      roughness: 0.22,
-      metalness: 0.1,
-    }),
-    tail: std({
-      color: 0xc0281c,
-      emissive: new THREE.Color(0x8c1a10),
-      emissiveIntensity: 0.35,
-      roughness: 0.3,
+    // Phares et feux arrière s'allument le soir, comme les fenêtres des
+    // bâtiments (`allumerLumieres`).
+    lamp: allumable(
+      std({
+        color: 0xfff4d2,
+        emissive: new THREE.Color(0xffe9a8),
+        emissiveIntensity: 0.7,
+        roughness: 0.22,
+        metalness: 0.1,
+      }),
+    ),
+    tail: allumable(
+      std({
+        color: 0xc0281c,
+        emissive: new THREE.Color(0x8c1a10),
+        emissiveIntensity: 0.35,
+        roughness: 0.3,
+      }),
+    ),
+    hazard: std({ color: 0xf2efe6, metalness: 0.05, roughness: 0.4 }),
+    reflector: std({
+      color: 0xf08a1c,
+      emissive: new THREE.Color(0xa85a0c),
+      emissiveIntensity: 0.25,
+      roughness: 0.25,
     }),
     beacon: std({
       color: 0xef9c18,
@@ -192,7 +215,15 @@ export function createMaterials(pal: Palette, seed = 0, wear = 0): Materials {
     hay: machine.grain,
     foliage: machine.grain,
     dirt: machine.cast,
+    // Un engin n'a pas de fenêtre qui s'allume le soir : sa vitre reste vitre.
+    window: machine.glass,
+    flower: machine.tail,
   };
+}
+
+function allumable<M extends THREE.Material>(m: M): M {
+  m.userData.allumable = "lampe";
+  return m;
 }
 
 /* ------------------------------------------------------------------ */
@@ -239,22 +270,24 @@ export function createBuildingMaterials(
 
   // La couverture est la seule surface qui accroche un peu la lumière : c'est
   // ce qui distingue une tuile émaillée ou un bac acier d'un mur crépi.
+  // Matière mate, sans reflet métallique : la direction artistique est celle
+  // du bois peint et de la tuile de terre cuite, pas de la tôle émaillée.
   const roof = std({
     color: tint(pal.roof, 0.7),
-    metalness: 0.12,
-    roughness: 0.52 + w * 0.3,
+    metalness: 0,
+    roughness: 0.78 + w * 0.15,
   });
   const timber = std({ color: tint(pal.timber), metalness: 0.02, roughness: 0.86 + w * 0.1 });
   const corrugate = std({
     color: tint(pal.metal, 0.6),
-    metalness: 0.55 - w * 0.3,
-    roughness: 0.42 + w * 0.4,
+    metalness: 0.2 - w * 0.1,
+    roughness: 0.62 + w * 0.3,
   });
 
   return {
     /* — Bâtiment ————————————————————————————————————————— */
     roof,
-    roofDark: std({ color: tint(shade(pal.roof, 0.68), 0.7), metalness: 0.1, roughness: 0.6 }),
+    roofDark: std({ color: tint(shade(pal.roof, 0.68), 0.7), metalness: 0, roughness: 0.8 }),
     wall: std({ color: tint(pal.wall), metalness: 0, roughness: 0.9 }),
     wallDark: std({ color: tint(shade(pal.wall, 0.74)), metalness: 0, roughness: 0.92 }),
     timber,
@@ -272,12 +305,33 @@ export function createBuildingMaterials(
       opacity: 0.42,
       side: THREE.DoubleSide,
     }),
-    lamp: std({
-      color: 0xfff4d2,
-      emissive: new THREE.Color(0xffe9a8),
-      emissiveIntensity: 0.7,
-      roughness: 0.22,
-    }),
+    lamp: (() => {
+      const m = std({
+        color: 0xfff4d2,
+        emissive: new THREE.Color(0xffe9a8),
+        emissiveIntensity: 0.7,
+        roughness: 0.22,
+      });
+      m.userData.allumable = "lampe";
+      return m;
+    })(),
+    flower: std({ color: 0xe2493a, metalness: 0, roughness: 0.8 }),
+    /*
+     * La vitre des fenêtres, opaque (l'embrasure sombre est derrière) : le
+     * jour un reflet de ciel, le soir une lueur chaude. C'est la vue qui
+     * règle l'émission à l'heure (`allumerLumieres`).
+     */
+    window: (() => {
+      const m = std({
+        color: 0x9fd2e2,
+        emissive: new THREE.Color(0xffb85c),
+        emissiveIntensity: 0,
+        metalness: 0.02,
+        roughness: 0.1,
+      });
+      m.userData.allumable = "fenetre";
+      return m;
+    })(),
 
     /* — Clés de machine, sans emploi ici ——————————————————— */
     paint: roof,
@@ -293,6 +347,8 @@ export function createBuildingMaterials(
     beacon: roof,
     grain: timber,
     seat: timber,
+    hazard: corrugate,
+    reflector: roof,
   };
 }
 
@@ -310,8 +366,18 @@ export function place(geo: THREE.BufferGeometry, pos: Vec3, rot?: Vec3): THREE.B
   return geo;
 }
 
+/**
+ * Un pavé aux arêtes chanfreinées (voir `paveChanfreine`) : la direction
+ * artistique du jeu — bois poli, jouet — n'a pas d'arête vive. Le biseau est
+ * fixe en unités du monde (trois centimètres de case), borné au quart de la
+ * plus petite dimension pour ne pas manger une planche.
+ */
 export function box(w: number, h: number, d: number, pos: Vec3, rot?: Vec3) {
-  return place(new THREE.BoxGeometry(w, h, d), pos, rot);
+  // Une latte, une planche, un barreau : sous six centimètres, un biseau ne
+  // se voit pas à la distance du jeu, et il coûterait trente-deux triangles
+  // par pièce — une étable en compte des centaines.
+  if (Math.min(w, h, d) < 0.06) return place(new THREE.BoxGeometry(w, h, d), pos, rot);
+  return place(paveChanfreine(w, h, d, 0.03).clone(), pos, rot);
 }
 
 export function cyl(rt: number, rb: number, h: number, seg: number, pos: Vec3, rot?: Vec3) {
@@ -539,8 +605,37 @@ export class Part {
     return this;
   }
 
+  /**
+   * L'emprise au sol de ce qui s'élève dans la pièce (murs, poteaux, cuves),
+   * en boîtes alignées, dans le repère de la pièce. Les dalles et ce qui est
+   * posé à plat ne comptent pas : on peut planter un buisson au bord d'une
+   * dalle, pas dans un mur. Sert à habiller une cour sans percer le bâti.
+   */
+  emprises(decalage: Vec3 = [0, 0, 0]): { x: number; z: number; w: number; d: number }[] {
+    const out: { x: number; z: number; w: number; d: number }[] = [];
+    const b = new THREE.Box3();
+    for (const geos of this.buckets.values()) {
+      for (const g of geos) {
+        g.computeBoundingBox();
+        b.copy(g.boundingBox!);
+        if (b.max.y - b.min.y < 0.08 || b.max.y < 0.12) continue;
+        out.push({
+          x: (b.min.x + b.max.x) / 2 + decalage[0],
+          z: (b.min.z + b.max.z) / 2 + decalage[2],
+          w: b.max.x - b.min.x,
+          d: b.max.z - b.min.z,
+        });
+      }
+    }
+    for (const k of this.kids) {
+      out.push(...k.node.emprises([decalage[0] + k.pos[0], 0, decalage[2] + k.pos[2]]));
+    }
+    return out;
+  }
+
   build(materials: Materials, roles: Map<Role, THREE.Object3D[]>, shadows: boolean): THREE.Group {
     const group = new THREE.Group();
+    group.userData.part = this;
     for (const [mat, geos] of this.buckets) {
       const merged = geos.length === 1 ? geos[0] : mergeAll(geos);
       const mesh = new THREE.Mesh(markShared(merged), materials[mat]);

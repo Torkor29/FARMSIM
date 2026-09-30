@@ -28,6 +28,7 @@ export * from "./land.js";
 export * from "./parcelles.js";
 export * from "./nouveautes.js";
 export * from "./reinitialisation.js";
+export * from "./decoration.js";
 export * from "./livestock.js";
 export * from "./ripeness.js";
 export * from "./soil.js";
@@ -64,6 +65,11 @@ export * from "./forage.js";
 export * from "./species.js";
 export * from "./husbandry.js";
 export * from "./mot-de-passe.js";
+export * from "./amenagement.js";
+export * from "./relief.js";
+export * from "./bois.js";
+export * from "./biodiversite.js";
+export * from "./especes.js";
 
 /** Monnaie du jeu : le terron (€). Le champ interne reste `crd`. */
 export const CURRENCY_CODE = "€";

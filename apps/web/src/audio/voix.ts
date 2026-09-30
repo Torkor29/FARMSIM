@@ -40,6 +40,15 @@ export type SonId =
   | "chantier"
   | "niveau"
   | "recolte"
+  // Terraformage
+  | "creuse"
+  | "eau"
+  | "berge"
+  | "lac"
+  | "relief"
+  | "coupe"
+  | "plante"
+  | "decouverte"
   // Machines
   | "tracteur"
   | "moissonneuse"
@@ -387,6 +396,165 @@ export const CATALOGUE: Record<SonId, DefSon> = {
       chaine(source(ctx, t0, 0.4), passeHaut(ctx, 700), pb, env, dest);
       cloche(ctx, dest, 1046.5, t0 + 0.26, 0.3, 0.75);
       cloche(ctx, dest, 1568, t0 + 0.35, 0.32, 0.6);
+    },
+  },
+
+  /* --- Terraformage ------------------------------------------------ */
+
+  /** La pelle entre dans la terre : un choc sourd et un grattement. */
+  creuse: {
+    bus: "effets",
+    dureeMs: 300,
+    delaiMs: 90,
+    gain: 0.34,
+    rendre(ctx, dest, t0) {
+      const o = osc(ctx, "sine", 150, t0, 0.2);
+      o.frequency.exponentialRampToValueAtTime(60, t0 + 0.16);
+      chaine(o, enveloppe(ctx, t0, 0.003, 0.05, 0.9), dest);
+      const pb = passeBas(ctx, 1800, 1.2);
+      pb.frequency.linearRampToValueAtTime(600, t0 + 0.2);
+      chaine(source(ctx, t0, 0.26), passeHaut(ctx, 250), pb, enveloppe(ctx, t0 + 0.01, 0.01, 0.06, 0.7), dest);
+    },
+  },
+
+  /**
+   * L'eau arrive : un « ploc » et ses bulles.
+   *
+   * La goutte, c'est une sinusoïde qui **monte** très vite — l'oreille
+   * l'entend comme une bulle qui crève. Trois bulles plus petites suivent.
+   */
+  eau: {
+    bus: "effets",
+    dureeMs: 520,
+    delaiMs: 110,
+    gain: 0.32,
+    rendre(ctx, dest, t0) {
+      const bulle = (t: number, f: number, g: number) => {
+        const o = osc(ctx, "sine", f, t, 0.12);
+        o.frequency.exponentialRampToValueAtTime(f * 2.6, t + 0.07);
+        chaine(o, enveloppe(ctx, t, 0.002, 0.03, g), dest);
+      };
+      bulle(t0, 420 + Math.random() * 80, 1);
+      bulle(t0 + 0.09, 700 + Math.random() * 120, 0.5);
+      bulle(t0 + 0.16, 560 + Math.random() * 120, 0.4);
+      bulle(t0 + 0.24, 900 + Math.random() * 150, 0.25);
+      const pb = passeBas(ctx, 2600, 0.7);
+      chaine(source(ctx, t0, 0.3), passeHaut(ctx, 900), pb, enveloppe(ctx, t0, 0.005, 0.07, 0.35), dest);
+    },
+  },
+
+  /** Une berge retouchée : un déclic de bois et une note claire. */
+  berge: {
+    bus: "effets",
+    dureeMs: 360,
+    delaiMs: 60,
+    gain: 0.28,
+    rendre(ctx, dest, t0) {
+      chaine(source(ctx, t0, 0.05), formant(ctx, 1900, 6), enveloppe(ctx, t0, 0.001, 0.015, 1), dest);
+      cloche(ctx, dest, 1174.7, t0 + 0.03, 0.28, 0.7);
+    },
+  },
+
+  /**
+   * La terre monte ou descend d'un niveau : un grondement bref, un roulement
+   * de cailloux. Le grave glisse vers le haut quand on surélève, vers le bas
+   * quand on abaisse — c'est l'oreille qui dit le sens du geste.
+   */
+  relief: {
+    bus: "effets",
+    dureeMs: 420,
+    delaiMs: 80,
+    gain: 0.36,
+    rendre(ctx, dest, t0) {
+      const o = osc(ctx, "triangle", 70, t0, 0.3);
+      o.frequency.exponentialRampToValueAtTime(Math.random() < 0.5 ? 55 : 95, t0 + 0.25);
+      chaine(o, enveloppe(ctx, t0, 0.01, 0.12, 0.9), dest);
+      for (let k = 0; k < 4; k++) {
+        const t = t0 + 0.05 + k * 0.055 + Math.random() * 0.02;
+        chaine(source(ctx, t, 0.04), formant(ctx, 900 + Math.random() * 900, 4), enveloppe(ctx, t, 0.001, 0.02, 0.5), dest);
+      }
+    },
+  },
+
+  /**
+   * Un arbre qu'on abat : trois coups de hache, le craquement du fût, et la
+   * chute, sourde, dans les feuilles.
+   */
+  coupe: {
+    bus: "effets",
+    dureeMs: 1300,
+    delaiMs: 140,
+    gain: 0.34,
+    rendre(ctx, dest, t0) {
+      for (let k = 0; k < 3; k++) {
+        const t = t0 + k * 0.17;
+        chaine(source(ctx, t, 0.05), formant(ctx, 700 + k * 60, 5), enveloppe(ctx, t, 0.001, 0.03, 0.9), dest);
+        const o = osc(ctx, "sine", 180, t, 0.08);
+        o.frequency.exponentialRampToValueAtTime(90, t + 0.07);
+        chaine(o, enveloppe(ctx, t, 0.002, 0.04, 0.6), dest);
+      }
+      // Le fût qui cède : un grincement qui descend.
+      const cr = osc(ctx, "sawtooth", 260, t0 + 0.5, 0.35);
+      cr.frequency.exponentialRampToValueAtTime(120, t0 + 0.82);
+      chaine(cr, passeBas(ctx, 900, 3), enveloppe(ctx, t0 + 0.5, 0.05, 0.15, 0.25), dest);
+      // La chute.
+      const pb = passeBas(ctx, 1200, 0.8);
+      pb.frequency.linearRampToValueAtTime(300, t0 + 1.25);
+      chaine(source(ctx, t0 + 0.9, 0.4), pb, enveloppe(ctx, t0 + 0.9, 0.01, 0.2, 0.9), dest);
+      const o = osc(ctx, "sine", 75, t0 + 0.92, 0.3);
+      o.frequency.exponentialRampToValueAtTime(40, t0 + 1.2);
+      chaine(o, enveloppe(ctx, t0 + 0.92, 0.005, 0.15, 0.9), dest);
+    },
+  },
+
+  /** Planter : la bêche dans la terre meuble, un froissement de feuilles. */
+  plante: {
+    bus: "effets",
+    dureeMs: 420,
+    delaiMs: 90,
+    gain: 0.3,
+    rendre(ctx, dest, t0) {
+      const o = osc(ctx, "sine", 130, t0, 0.14);
+      o.frequency.exponentialRampToValueAtTime(70, t0 + 0.12);
+      chaine(o, enveloppe(ctx, t0, 0.003, 0.05, 0.8), dest);
+      const pb = passeBas(ctx, 5000, 0.5);
+      chaine(source(ctx, t0 + 0.08, 0.3), passeHaut(ctx, 1800), pb, enveloppe(ctx, t0 + 0.08, 0.04, 0.12, 0.35), dest);
+      cloche(ctx, dest, 1568, t0 + 0.2, 0.18, 0.5);
+    },
+  },
+
+  /**
+   * Une espèce entre au carnet : un trille d'oiseau, puis deux notes claires
+   * — la page qu'on tourne.
+   */
+  decouverte: {
+    bus: "effets",
+    dureeMs: 1400,
+    delaiMs: 1200,
+    gain: 0.3,
+    rendre(ctx, dest, t0) {
+      for (let k = 0; k < 6; k++) {
+        const t = t0 + k * 0.065;
+        const o = osc(ctx, "sine", 2600 + (k % 2) * 700, t, 0.06);
+        o.frequency.exponentialRampToValueAtTime(3400 + (k % 2) * 500, t + 0.05);
+        chaine(o, enveloppe(ctx, t, 0.004, 0.03, 0.35), dest);
+      }
+      cloche(ctx, dest, 1318.5, t0 + 0.5, 0.5, 0.8);
+      cloche(ctx, dest, 1975.5, t0 + 0.68, 0.7, 0.9);
+    },
+  },
+
+  /** Un lac franchit un palier : une petite fanfare qui ruisselle. */
+  lac: {
+    bus: "effets",
+    dureeMs: 1300,
+    delaiMs: 900,
+    gain: 0.34,
+    rendre(ctx, dest, t0) {
+      [587.3, 740, 880, 1174.7, 1480].forEach((f, i) => cloche(ctx, dest, f, t0 + i * 0.085, i === 4 ? 0.7 : 0.32, 0.9));
+      const pb = passeBas(ctx, 5000, 0.6);
+      pb.frequency.linearRampToValueAtTime(1200, t0 + 0.9);
+      chaine(source(ctx, t0 + 0.3, 0.8), passeHaut(ctx, 2500), pb, enveloppe(ctx, t0 + 0.3, 0.2, 0.25, 0.12), dest);
     },
   },
 

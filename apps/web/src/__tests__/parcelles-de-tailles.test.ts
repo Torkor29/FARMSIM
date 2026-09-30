@@ -317,9 +317,9 @@ describe("aller sur sa parcelle en cliquant dessus", () => {
     expect(FICHE).toContain("libelleDeTaille");
   });
 
-  it("dit aussi la surface une fois la parcelle achetée", () => {
-    // Le message d'achat annonçait un nom et rien d'autre. C'est la surface
-    // qu'on vient de payer, et elle n'est plus la même d'un lot à l'autre.
-    expect(APP).toContain("est à vous — ${hectaresDeGrille(");
+  it("dit la surface qu'on possède vraiment, lots achetés compris", () => {
+    // La ferme grandit par lots : sa surface est celle de ses cases, plus
+    // celle de sa grille d'origine.
+    expect(APP).toContain("hectaresDeGrille(grid.length || gw * gh, 1)");
   });
 });

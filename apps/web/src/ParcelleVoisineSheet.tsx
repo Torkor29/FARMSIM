@@ -180,25 +180,23 @@ export function ParcelleVoisineSheet({
           </dl>
 
           {aVendre ? (
+            /* La terre du pays ne se vend plus à la parcelle : la ferme grandit
+               d'un seul tenant, autour d'elle. La fiche y renvoie plutôt que
+               de laisser croire qu'un bouton manque. */
             <div className="voisin-marche">
-              {voisin.prix !== null && <p className="voisin-prix">{formatEuros(voisin.prix)}</p>}
-              {voisin.achetable ? (
-                <button
-                  ref={premier}
-                  type="button"
-                  className="voisin-acheter"
-                  disabled={enCours}
-                  onClick={() => onAcheter(voisin.id)}
-                >
-                  {enCours
-                    ? "Achat en cours…"
-                    : voisin.statut === "PNJ"
-                      ? "Racheter cette parcelle"
-                      : "Acheter cette parcelle"}
-                </button>
-              ) : (
-                <p className="voisin-refus">{voisin.refus ?? "Pas encore accessible."}</p>
-              )}
+              <p className="voisin-refus">
+                Cette terre n'est pas à vendre. Votre ferme grandit d'un seul tenant : achetez la friche
+                qui l'entoure, lot par lot, aussi loin que vous voulez.
+              </p>
+              <button
+                ref={premier}
+                type="button"
+                className="voisin-acheter"
+                disabled={enCours}
+                onClick={() => onAcheter(voisin.id)}
+              >
+                Agrandir ma ferme
+              </button>
             </div>
           ) : voisin.statut === "MOI" ? (
             /* L'impasse d'avant. « Cette parcelle est déjà la vôtre » était vrai
@@ -207,7 +205,7 @@ export function ParcelleVoisineSheet({
             <button
               ref={premier}
               type="button"
-              /* La même classe que « Acheter cette parcelle » : c'est le même
+              /* La même classe que « Agrandir ma ferme » : c'est le même
                  geste au même endroit de la fiche, il doit avoir la même tenue.
                  Inventer une classe qui n'existe pas dans la feuille rendrait un
                  bouton nu. */

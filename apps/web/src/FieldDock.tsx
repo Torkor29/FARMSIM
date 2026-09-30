@@ -474,9 +474,13 @@ export function FieldDock({
             aria-expanded={moreOpen}
             onClick={onMore}
           >
-            <span className="dock-emoji" aria-hidden="true">
-              {moreOpen ? "✕" : "☰"}
-            </span>
+            <img
+              className="dock-emoji"
+              src={moreOpen ? "/assets/icons/jeu/fermer.svg" : "/assets/icons/jeu/plus.svg"}
+              alt=""
+              width={22}
+              height={22}
+            />
             <span className="dock-label">{moreOpen ? "Fermer" : "Plus"}</span>
             {!moreOpen && moreBadge > 0 && <span className="dock-badge">{moreBadge}</span>}
           </button>
@@ -497,9 +501,13 @@ export function FieldDock({
           }
           onClick={onDragRect}
         >
-          <span className="dock-emoji" aria-hidden="true">
-            {dragRect ? "▦" : "✎"}
-          </span>
+          <img
+            className="dock-emoji"
+            src={dragRect ? "/assets/icons/jeu/rectangle.svg" : "/assets/icons/jeu/trace.svg"}
+            alt=""
+            width={22}
+            height={22}
+          />
           <span className="dock-label">{dragRect ? "Rectangle" : "Trace"}</span>
         </button>
       </div>
