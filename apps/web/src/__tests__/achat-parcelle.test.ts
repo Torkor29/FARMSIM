@@ -1,57 +1,42 @@
 import fs from "node:fs";
 
 /**
- * La caméra ne se téléporte pas parce qu'on a signé un acte de vente.
+ * Une seule façon d'avoir de la terre.
  *
- * Un joueur a rapporté qu'« après un achat, ses parcelles ne sont plus au même
- * endroit ». Deux causes étaient possibles. Mesurées, les deux existaient, mais
- * pas au même moment :
- *
- *  - la liste renvoyée par le serveur n'avait **aucun tri**, et le moindre
- *    travail de champ y déplaçait la parcelle travaillée. C'est réel, c'est
- *    corrigé côté API (`ordre-parcelles.test.ts`), mais cela ne se déclenche
- *    pas à l'achat ;
- *  - `buyAdjacent()` appelait `setActiveParcelId(parcelId)` juste après
- *    l'achat. **C'est celle-là que le joueur ressent** : la vue saute sur la
- *    parcelle qu'il vient d'acheter, au milieu du chantier qu'il regardait.
- *
- * On achète souvent une terre en prévision, pas pour y aller. Le déplacement
- * redevient donc un geste : un clic dans « Mes parcelles ».
+ * Le jeu en avait deux, qui se marchaient dessus : acheter une parcelle du
+ * monde, puis acheter chaque lot autour de sa ferme. « T'achètes une parcelle
+ * ET t'achètes chaque carré. » Il n'en reste qu'une : la ferme grandit d'un
+ * seul tenant, lot par lot, depuis le mode construction, sans limite. Tous
+ * les chemins qui vendaient une parcelle mènent maintenant là.
  */
 const APP = fs.readFileSync("src/App.tsx", "utf8");
+const SHEET = fs.readFileSync("src/ParcelleVoisineSheet.tsx", "utf8");
+const OFFICE = fs.readFileSync("src/OfficePanel.tsx", "utf8");
 
-/** Le corps de `buyAdjacent`, du nom de la fonction à sa dernière accolade. */
-function corpsDeBuyAdjacent(): string {
-  const debut = APP.indexOf("async function buyAdjacent");
-  expect(debut).toBeGreaterThan(-1);
-  const suivant = APP.indexOf("\n  async function ", debut + 1);
-  const fin = APP.indexOf("\n  /** Rachat immédiat", debut);
-  return APP.slice(debut, Math.min(...[suivant, fin].filter((i) => i > debut)));
-}
-
-describe("acheter une parcelle ne déplace pas le joueur", () => {
-  it("l’achat ne change pas la parcelle regardée", () => {
-    expect(corpsDeBuyAdjacent()).not.toMatch(/setActiveParcelId\(/);
+describe("la terre s'achète autour de sa ferme, et nulle part ailleurs", () => {
+  it("le jeu n'achète plus de parcelle du monde", () => {
+    expect(APP).not.toMatch(/`\/parcels\/\$\{parcelId\}\/buy`/);
+    expect(APP).not.toContain("async function buyAdjacent");
   });
 
-  it("mais il le dit, et nomme la parcelle acquise", () => {
-    // Sans retour visible, l'achat n'aurait plus aucun effet perceptible :
-    // supprimer le saut ne doit pas supprimer la confirmation.
-    const corps = corpsDeBuyAdjacent();
-    expect(corps).toMatch(/setMsg\(/);
-    expect(corps).toMatch(/Mes parcelles/);
+  it("la fiche d'une parcelle voisine et le Bureau mènent à l'agrandissement", () => {
+    expect(SHEET).toContain("Agrandir ma ferme");
+    expect(SHEET).not.toMatch(/Acheter cette parcelle/);
+    expect(OFFICE).toContain("Agrandir ma ferme");
+    expect(APP).toMatch(/onBuyLand=\{\(\) => \{\s*setShowEta\(false\);\s*agrandirMaFerme\(\);/);
   });
 
-  it("mais le paysage se met à jour aussitôt : la terre achetée n'est plus « à vendre »", () => {
-    // Le saut rechargeait le voisinage au passage. Sans lui, la parcelle
-    // restait dessinée comme à vendre jusqu'au rafraîchissement suivant, et un
-    // clic dessus rouvrait la fiche d'achat au lieu d'y mener.
-    expect(corpsDeBuyAdjacent()).toMatch(/loadVoisinage\(activeParcelId\)/);
+  it("agrandir ramène chez soi s'il le faut, puis ouvre la construction", () => {
+    const debut = APP.indexOf("function agrandirMaFerme()");
+    expect(debut).toBeGreaterThan(-1);
+    const corps = APP.slice(debut, APP.indexOf("\n  }\n", debut));
+    // Déjà chez soi : on reste où l'on est, rien ne saute.
+    expect(corps).toMatch(/if \(!visiting && domaine\) \{\s*entrerConstruction\(\);/);
+    // Chez un voisin : on rentre au siège, et la construction s'ouvre à l'arrivée.
+    expect(corps).toContain("setActiveParcelId(siege)");
   });
 
   it("le seul déplacement de vue reste celui que le joueur demande", () => {
-    // Le rail « Mes parcelles » est la porte de sortie : c'est lui, et lui
-    // seul, qui doit emmener sur une parcelle qu'on vient d'acheter.
     expect(APP).toMatch(/onClick=\{\(\) => setActiveParcelId\(p\.id\)\}/);
   });
 });

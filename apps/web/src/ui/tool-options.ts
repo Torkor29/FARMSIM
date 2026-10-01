@@ -29,16 +29,16 @@ export type ToolGroupDef = {
 };
 
 export const TOOL_GROUPS: ToolGroupDef[] = [
-  { id: "SELECT", label: "Voir", icon: "/assets/icons/tools/select.svg", hotkey: "1", entry: "SELECT" },
-  { id: "PLANT", label: "Semer", icon: "/assets/icons/tools/plant.svg", hotkey: "2", entry: "PLANT_WHEAT" },
+  { id: "SELECT", label: "Voir", icon: "/assets/icons/jeu/voir.svg", hotkey: "1", entry: "SELECT" },
+  { id: "PLANT", label: "Semer", icon: "/assets/icons/jeu/semer.svg", hotkey: "2", entry: "PLANT_WHEAT" },
   /* L'ordre suit la saison, pas l'ordre d'écriture du code : on prépare le
      sol, on sème, on récolte, on déchaume — et on vend. « Récolte » se trouvait
      avant « Sol », ce qui plaçait la moisson avant le labour. */
-  { id: "SOIL", label: "Sol", icon: "/assets/icons/tools/plow.svg", hotkey: "3", entry: "STUBBLE" },
-  { id: "HARVEST", label: "Récolte", icon: "/assets/icons/tools/harvest.svg", hotkey: "4", entry: "HARVEST" },
+  { id: "SOIL", label: "Sol", icon: "/assets/icons/jeu/sol.svg", hotkey: "3", entry: "STUBBLE" },
+  { id: "HARVEST", label: "Récolte", icon: "/assets/icons/jeu/recolte.svg", hotkey: "4", entry: "HARVEST" },
   // Le panneau s'intitule « Hôtel des ventes ». « Marché » ne s'y lit nulle
   // part, et le tonnage à la place du mot laissait un sac € sans menu.
-  { id: "SELL", label: "Ventes", icon: "/assets/icons/nav/marche.svg", hotkey: "5" },
+  { id: "SELL", label: "Ventes", icon: "/assets/icons/jeu/ventes.svg", hotkey: "5" },
 ];
 
 /**

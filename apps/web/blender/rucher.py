@@ -18,7 +18,8 @@ compressé par `gltf-transform meshopt` (Node requis : 1,3 Mo → 320 Ko ; le je
 décode avec le `MeshoptDecoder` de three). Chaque
 matière n'y forme qu'un maillage : une quinzaine d'appels de rendu pour tout
 le rucher. On modélise en mètres réels, puis on met à l'échelle du jeu
-(`ECHELLE`) : l'emprise d'un décor y est de six unités.
+(`ECHELLE`, 0,75 unité par mètre : le tracteur du jeu mesure une unité de
+long) ; le rucher tient dans les six unités d'emprise d'un décor.
 
 Repère : Blender est en Z vers le haut ; l'export glTF passe en Y vers le
 haut, et le −Y de Blender devient le +Z du jeu — le côté de la caméra. Les
@@ -37,7 +38,7 @@ from mathutils import Matrix, Vector
 
 ICI = os.path.dirname(os.path.abspath(__file__))
 SORTIE = os.path.join(ICI, "..", "public", "assets", "decor3d", "rucher.glb")
-ECHELLE = 1.7
+ECHELLE = 0.75
 ALEA = random.Random(1789)
 
 
@@ -380,54 +381,61 @@ def construire():
     sol = matiere("sol-fauche", 0x6a8f3d, 0.95)
     bm = bmesh.new()
     pts = []
-    for k in range(24):
-        a = 2 * math.pi * k / 24
-        r = 1.05 + 0.12 * math.sin(a * 3) + ALEA.uniform(-0.05, 0.05)
-        pts.append(bm.verts.new((math.cos(a) * r * 1.35, 0.25 + math.sin(a) * r * 0.75, 0.008)))
+    for k in range(32):
+        a = 2 * math.pi * k / 32
+        r = 1.0 + 0.07 * math.sin(a * 3) + ALEA.uniform(-0.03, 0.03)
+        pts.append(bm.verts.new((math.cos(a) * r * 3.4, 0.35 + math.sin(a) * r * 2.55, 0.008)))
     bm.faces.new(pts)
     verser(bm, sol)
 
-    # Quatre ruches en arc, de couleurs dépareillées.
-    for i, x in enumerate((-1.2, -0.4, 0.4, 1.2)):
-        y = 0.3 + 0.08 * abs(x)
-        ruche(x, y, ALEA.uniform(-0.1, 0.1) - x * 0.06, PEINTURES[i], hausses=1 + (i % 3 == 0),
-              pierre=i != 2, graine=100 + i)
+    # Neuf ruches en deux rangs décalés, de couleurs dépareillées. À taille
+    # réelle : une ruche arrive au genou d'un tracteur, pas à son capot.
+    rangs = [(0.45, (-1.8, -0.9, 0.0, 0.9, 1.8)), (1.4, (-1.35, -0.45, 0.45, 1.35))]
+    n = 0
+    for y0, xs in rangs:
+        for x in xs:
+            ruche(x, y0 + 0.05 * abs(x), ALEA.uniform(-0.12, 0.12) - x * 0.03, PEINTURES[n % len(PEINTURES)],
+                  hausses=1 + (n % 3 == 0), pierre=n % 4 != 2, graine=100 + n)
+            n += 1
 
-    # La lavande, derrière.
-    for k in range(4):
-        lavande(-1.25 + k * 0.82, 1.2, 200 + k)
-    for k in range(3):
-        lavande(-0.85 + k * 0.82, 1.62, 300 + k)
+    # La lavande, en deux haies derrière les ruches.
+    for k in range(8):
+        lavande(-2.85 + k * 0.8, 2.3, 200 + k, tiges=34)
+    for k in range(7):
+        lavande(-2.45 + k * 0.8, 2.85, 300 + k, tiges=34)
 
-    # Trois tournesols au bout du rang.
-    for k, (x, y, h) in enumerate(((1.55, 1.15, 1.55), (1.7, 0.75, 1.4), (1.5, 1.52, 1.65))):
-        tournesol(x, y, h, 400 + k)
+    # Un carré de tournesols sur le côté.
+    for k in range(7):
+        x = 2.55 + (k % 2) * 0.45 + ALEA.uniform(-0.08, 0.08)
+        y = 0.1 + k * 0.32
+        tournesol(x, y, ALEA.uniform(1.15, 1.5), 400 + k)
 
     # Les fleurs des champs en massifs, avec leur herbe, devant et sur les
     # bords — le coin de la pancarte (côté caméra, à gauche) reste dégagé.
-    massifs = [(-1.55, 0.2), (-1.2, -0.45), (-0.45, -0.55), (0.35, -0.75), (1.1, -0.55),
-               (1.6, 0.15), (-0.2, -1.25), (0.85, -1.3), (1.55, -1.1), (-1.7, 1.2)]
+    massifs = [(-2.9, 0.9), (-2.6, 1.7), (-1.1, -0.45), (-0.3, -0.85), (0.6, -0.5), (1.5, -0.8),
+               (2.4, -0.5), (3.0, -1.2), (-0.8, -1.6), (0.3, -1.75), (1.3, -1.6), (2.2, -1.6), (3.0, 2.5)]
     especes = ("coquelicot", "coquelicot", "bleuet", "marguerite")
     for m, (mx, my) in enumerate(massifs):
         rnd = random.Random(500 + m)
-        for k in range(7):
+        for k in range(6):
             a = rnd.uniform(0, 2 * math.pi)
-            r = rnd.uniform(0, 0.2)
+            r = rnd.uniform(0, 0.28)
             fleur(mx + math.cos(a) * r, my + math.sin(a) * r, especes[(k + m) % 4], 500 + m * 10 + k)
         for k in range(4):
             a = rnd.uniform(0, 2 * math.pi)
-            r = rnd.uniform(0, 0.24)
+            r = rnd.uniform(0, 0.3)
             touffe(mx + math.cos(a) * r, my + math.sin(a) * r, 700 + m * 10 + k, brins=12)
     # Quelques touffes isolées, et au pied des parpaings.
-    for k in range(14):
-        x = ALEA.uniform(-1.7, 1.7)
-        y = ALEA.uniform(-1.5, 1.8)
-        if x < -0.8 and y < -0.8:
+    for k in range(26):
+        x = ALEA.uniform(-3.1, 3.1)
+        y = ALEA.uniform(-1.9, 2.6)
+        if x < -1.5 and y < -1.0:
             continue
         touffe(x, y, 800 + k)
-    for x in (-1.2, -0.4, 0.4, 1.2):
-        for dx in (-0.3, 0.3):
-            touffe(x + dx, 0.1 + 0.08 * abs(x), 900 + int(x * 10 + dx * 100))
+    for y0, xs in rangs:
+        for x in xs:
+            for dx in (-0.3, 0.3):
+                touffe(x + dx, y0 - 0.2 + 0.05 * abs(x), 900 + int(x * 10 + dx * 100 + y0 * 1000))
 
     # Un maillage par matière, mis à l'échelle du jeu.
     echelle = Matrix.Scale(ECHELLE, 4)

@@ -1,0 +1,793 @@
+/*
+ * Le thème semi-réaliste.
+ *
+ * La scène est riche : l'interface se tait. On prend les matières d'une
+ * exploitation — le lin des fiches, le vert profond d'un champ de blé en
+ * herbe, le laiton d'une plaque, la terre — et on les pose sobrement : des
+ * coins à peine adoucis, des filets fins, des ombres portées comme par un
+ * soleil, et des mouvements courts qui ne rebondissent pas.
+ *
+ * Le premier essai (autocollants, boutons gonflés, bandeaux festonnés) faisait
+ * jeu d'enfant. Celui-ci vise un simulateur de ferme.
+ *
+ * Cette feuille passe après toutes les autres : elle redéfinit les jetons de
+ * la charte, puis habille les composants communs sans toucher à leur place.
+ */
+
+:root {
+  --lin-50: #fbf9f4;
+  --lin-100: #f5f1e7;
+  --lin-200: #ece5d5;
+  --lin-300: #ddd2bb;
+  --lin-500: #b9a887;
+  --champ-300: #9cc07f;
+  --champ-500: #4f8a3f;
+  --champ-600: #43773a;
+  --champ-700: #36602f;
+  --champ-900: #243f20;
+  --laiton-300: #e2c486;
+  --laiton-500: #b8872b;
+  --laiton-700: #7d5a17;
+  --terre-500: #7a5a3a;
+  --terre-700: #4e3824;
+  --brique-500: #b5452f;
+  --brique-700: #8c3222;
+  --ardoise-700: #2d3a2c;
+
+  --teal-100: #e4eedc;
+  --teal-300: var(--champ-300);
+  --teal-500: var(--champ-600);
+  --teal-700: var(--champ-900);
+  --gold-100: #f6ecd3;
+  --gold-300: var(--laiton-300);
+  --gold-500: var(--laiton-500);
+  --gold-700: var(--laiton-700);
+  --cream: var(--lin-100);
+  --sand: var(--lin-200);
+  --paper: var(--lin-50);
+  --ink: #2b2f26;
+  --ink-soft: #505649;
+  --muted: #7e8074;
+  --line: rgba(60, 48, 28, 0.16);
+  --accent: var(--champ-600);
+  --ok: var(--champ-600);
+  --danger: var(--brique-500);
+  --info: #3e6f8f;
+  --glass: rgba(250, 247, 240, 0.96);
+  --glass-border: rgba(60, 48, 28, 0.18);
+  --bar: rgba(250, 247, 240, 0.95);
+
+  --r-sm: 5px;
+  --r-md: 7px;
+  --r-lg: 10px;
+
+  --sh-1: 0 1px 2px rgba(30, 24, 12, 0.14);
+  --sh-2: 0 2px 4px rgba(30, 24, 12, 0.1), 0 8px 22px rgba(30, 24, 12, 0.14);
+  --sh-3: 0 4px 10px rgba(20, 16, 8, 0.16), 0 22px 48px rgba(20, 16, 8, 0.24);
+
+  --doux: cubic-bezier(0.2, 0.7, 0.2, 1);
+  --menu-ease: var(--doux);
+  --menu-ms: 0.24s;
+  --submenu-ms: 0.2s;
+  --veil-ms: 0.2s;
+}
+
+h1,
+h2,
+h3,
+.brand-mark {
+  color: var(--ink);
+  font-weight: 700;
+  letter-spacing: 0;
+}
+
+/* ------------------------------------------------------------------ */
+/* Les boutons                                                          */
+/* ------------------------------------------------------------------ */
+
+button {
+  border-radius: var(--r-sm);
+  border: 1px solid var(--lin-300);
+  background: linear-gradient(180deg, #fdfbf7, var(--lin-200));
+  box-shadow:
+    0 1px 1px rgba(30, 24, 12, 0.1),
+    inset 0 1px 0 rgba(255, 255, 255, 0.8);
+  color: var(--ink);
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  transition:
+    background 0.15s ease,
+    border-color 0.15s ease,
+    box-shadow 0.15s ease,
+    transform 0.08s ease;
+}
+/* `:where` : le survol générique ne doit jamais l'emporter sur l'état
+   « choisi » d'un onglet ou d'un outil — le doigt reste posé sur le bouton
+   après l'avoir touché, et l'outil actif virait au blanc. */
+:where(button):hover:not(:disabled) {
+  transform: none;
+  filter: none;
+  border-color: var(--lin-500);
+  background: linear-gradient(180deg, #fff, var(--lin-100));
+}
+button:active:not(:disabled) {
+  transform: translateY(1px);
+  box-shadow: inset 0 1px 2px rgba(30, 24, 12, 0.15);
+}
+button:disabled {
+  opacity: 0.5;
+}
+button.ghost {
+  background: transparent;
+  border-color: var(--line);
+  box-shadow: none;
+}
+
+/* L'action principale : le vert d'un champ. */
+button.primary,
+button.accent,
+.btn-primary,
+.confirm-go,
+.build-go,
+.selection-bar-go:not(.ghost),
+.voisin-acheter,
+.construction-fin {
+  color: #fff;
+  border: 1px solid var(--champ-900);
+  background: linear-gradient(180deg, var(--champ-500), var(--champ-700));
+  box-shadow:
+    0 1px 2px rgba(20, 30, 10, 0.3),
+    inset 0 1px 0 rgba(255, 255, 255, 0.18);
+  text-shadow: 0 1px 0 rgba(0, 0, 0, 0.25);
+}
+button.primary:hover:not(:disabled),
+.btn-primary:hover:not(:disabled),
+.confirm-go:hover:not(:disabled),
+.build-go:hover:not(:disabled),
+.selection-bar-go:not(.ghost):hover:not(:disabled),
+.voisin-acheter:hover:not(:disabled),
+.construction-fin:hover:not(:disabled) {
+  border-color: var(--champ-900);
+  background: linear-gradient(180deg, #5a9848, var(--champ-600));
+}
+.confirm-go.danger,
+button.danger {
+  color: #fff;
+  border-color: var(--brique-700);
+  background: linear-gradient(180deg, #c55a42, var(--brique-700));
+  text-shadow: 0 1px 0 rgba(0, 0, 0, 0.25);
+}
+
+/* Les boutons qui ne sont que du texte cliquable restent du texte. */
+:is(
+    .cell-menu-item,
+    .char-tab,
+    .emp-poste button,
+    .emp-renvoi,
+    .hdv-cats button,
+    .hdv-sort,
+    .herd-stepper button,
+    .link,
+    .machine-name-btn,
+    .machine-sheet-tiers button,
+    .profile-back,
+    .profile-logout,
+    .profile-row,
+    .sk-node-head,
+    .voisin-fermer
+  ) {
+  box-shadow: none !important;
+}
+
+/* La fermeture : une croix discrète, qui se précise au survol. */
+.menu-close {
+  width: 36px;
+  height: 36px;
+  margin: 0;
+  border: 1px solid transparent;
+  border-radius: var(--r-sm);
+  background: transparent;
+  box-shadow: none;
+  color: currentColor;
+  opacity: 0.75;
+}
+.menu-close:hover,
+.menu-close:focus-visible {
+  opacity: 1;
+  background: rgba(255, 255, 255, 0.14);
+  border-color: rgba(255, 255, 255, 0.25);
+}
+
+/* ------------------------------------------------------------------ */
+/* Les cadres                                                           */
+/* ------------------------------------------------------------------ */
+
+.glass {
+  background: var(--glass);
+  border: 1px solid var(--glass-border);
+  border-radius: var(--r-lg);
+  box-shadow: var(--sh-2);
+  backdrop-filter: blur(10px) saturate(1.05);
+}
+
+.win-backdrop,
+.hdv-backdrop,
+.market-backdrop,
+.skills-backdrop,
+.confirm-backdrop {
+  background: rgba(18, 22, 14, 0.46);
+  backdrop-filter: blur(3px);
+}
+
+/* Une fenêtre : une fiche de lin, un en-tête vert sombre, un filet de laiton. */
+.win,
+.hdv-shell,
+.market-sheet,
+.skills-screen {
+  border-radius: var(--r-lg);
+  border: 1px solid rgba(40, 32, 18, 0.35);
+  background: var(--lin-100);
+  box-shadow: var(--sh-3);
+  animation: fenetre-entre 0.24s var(--doux) both;
+}
+@keyframes fenetre-entre {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+}
+.win-head,
+.hdv-top,
+.hall .hall-head,
+.skills-screen .skills-head {
+  position: relative;
+  align-items: center;
+  border-bottom: 2px solid var(--laiton-500);
+  background: linear-gradient(180deg, #3d6534, var(--champ-900));
+  color: #f4f1e8;
+  box-shadow: none;
+}
+.win-head {
+  padding: 0.75rem 1rem;
+}
+.win-title h2,
+.hdv-top h2,
+.hdv-top h3,
+.hall .hall-head h2,
+.skills-screen .skills-head h2 {
+  color: #fbf8ef;
+  font-size: 1.3rem;
+  font-weight: 700;
+  text-shadow: 0 1px 1px rgba(0, 0, 0, 0.3);
+}
+.win-title p,
+.hdv-kicker,
+.hall .hall-kicker,
+.hall .hall-wallet,
+.skills-screen .skills-kicker,
+.skills-screen .skills-score small {
+  color: #cfd9c3 !important;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+}
+.hall .hall-wallet {
+  letter-spacing: 0;
+}
+.hall .hall-wallet strong {
+  color: var(--laiton-300);
+}
+.win-head .menu-close,
+.hdv-top .menu-close,
+.hall-head .menu-close,
+.skills-head .menu-close {
+  color: #f4f1e8;
+}
+.hall .hall-head {
+  margin: -1.1rem -1.2rem 0.9rem;
+  padding: 0.9rem 1.2rem;
+}
+.skills-screen .skills-head {
+  margin: calc(-1 * clamp(0.8rem, 1.6vw, 1.3rem)) calc(-1 * clamp(0.8rem, 1.6vw, 1.3rem)) 0.9rem;
+  padding: 0.85rem clamp(0.8rem, 1.6vw, 1.3rem);
+}
+.skills-screen .skills-score strong {
+  color: #fff;
+}
+.skills-screen .skills-ring-bg {
+  stroke: rgba(255, 255, 255, 0.25);
+}
+.skills-screen .skills-ring-fill {
+  stroke: var(--laiton-300);
+}
+.hdv-purse {
+  border-radius: var(--r-sm);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  background: rgba(0, 0, 0, 0.18);
+  box-shadow: none;
+}
+.hdv-purse span,
+.hdv-purse em {
+  color: #cfd9c3;
+}
+.hdv-purse strong {
+  color: #fff;
+}
+
+/* ------------------------------------------------------------------ */
+/* Les onglets : un contrôle segmenté                                   */
+/* ------------------------------------------------------------------ */
+
+.hdv-modes button,
+.construction-onglets button,
+.sk-filters button,
+.guide-tabs button,
+.region-tab,
+.gate-tab {
+  border-radius: var(--r-sm) !important;
+  border: 1px solid transparent !important;
+  background: transparent !important;
+  box-shadow: none !important;
+  color: var(--ink-soft) !important;
+  font-weight: 600;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+.hdv-modes button:hover,
+.construction-onglets button:hover,
+.sk-filters button:hover,
+.guide-tabs button:hover {
+  background: rgba(60, 48, 28, 0.06) !important;
+}
+.hdv-modes button.on,
+.hdv-modes button[aria-selected="true"],
+.hdv-modes button[aria-current="page"],
+.construction-onglets button.on,
+.sk-filters button.on,
+.sk-filters button[aria-selected="true"],
+.guide-tabs button.on,
+.region-tab.on,
+.gate-tab.on,
+.gate-tab.active,
+.skills-nav button.on,
+.skills-nav button.on:hover {
+  color: #fff !important;
+  border-color: var(--champ-900) !important;
+  background: linear-gradient(180deg, var(--champ-500), var(--champ-700)) !important;
+  box-shadow: 0 1px 2px rgba(20, 30, 10, 0.25) !important;
+}
+.construction-onglets img {
+  width: 18px;
+  height: 18px;
+}
+.construction-onglets button.on img,
+.hdv-modes button.on img {
+  filter: brightness(0) invert(1);
+}
+
+/* ------------------------------------------------------------------ */
+/* Le bandeau du haut                                                   */
+/* ------------------------------------------------------------------ */
+
+.brand-mark {
+  color: var(--champ-900);
+}
+.help-btn,
+.profile-btn {
+  display: inline-grid;
+  place-items: center;
+  width: 38px;
+  height: 38px;
+  min-height: 38px;
+  padding: 0;
+}
+.help-btn img,
+.profile-btn img {
+  width: 22px;
+  height: 22px;
+}
+.hud-stats .gold,
+.hud-stats .stat-xp,
+.hud-stats .stat-name {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  min-height: 32px;
+  padding: 0.1rem 0.7rem;
+  border-radius: var(--r-sm);
+  background: var(--glass);
+  border: 1px solid var(--glass-border);
+  box-shadow: var(--sh-1);
+  font-family: "Barlow Semi Condensed", Signika, sans-serif;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+.hud-stats .gold {
+  color: var(--laiton-700) !important;
+}
+.hud-ico {
+  width: 18px;
+  height: 18px;
+  opacity: 0.85;
+}
+.hud-stats .gold .hud-ico {
+  filter: sepia(1) saturate(3) hue-rotate(-5deg) brightness(0.75);
+}
+@media (max-width: 820px) {
+  .hud-stats .stat-name,
+  .hud-stats .stat-xp {
+    display: none;
+  }
+}
+.skills-tab {
+  border-radius: var(--r-sm);
+}
+.skills-tab.on {
+  color: #fff;
+  border-color: var(--champ-900);
+  background: linear-gradient(180deg, var(--champ-500), var(--champ-700));
+}
+.skills-tab-icon {
+  width: 20px;
+  height: 20px;
+}
+.skills-tab.on .skills-tab-icon {
+  filter: brightness(0) invert(1);
+}
+
+/* ------------------------------------------------------------------ */
+/* Le rail (bureau)                                                     */
+/* ------------------------------------------------------------------ */
+
+.tool-rail {
+  background: var(--bar);
+  border-right: 1px solid var(--glass-border);
+  box-shadow: 2px 0 14px rgba(20, 16, 8, 0.1);
+}
+.tool-rail-title {
+  font-family: "Barlow Semi Condensed", Signika, sans-serif;
+  font-weight: 700;
+  color: var(--muted);
+  letter-spacing: 0.1em;
+}
+.tool-rail-group,
+.tool-rail-option,
+.tool-rail-toggle {
+  position: relative;
+  border-radius: var(--r-sm);
+  border: 1px solid transparent;
+  box-shadow: none;
+  background: transparent;
+  font-family: "Barlow Semi Condensed", Signika, sans-serif;
+  font-size: 0.98rem;
+  font-weight: 600;
+}
+.tool-rail-group:hover:not(:disabled),
+.tool-rail-option:hover:not(:disabled),
+.tool-rail-toggle:hover:not(:disabled) {
+  background: rgba(60, 48, 28, 0.06);
+  border-color: transparent;
+}
+.tool-rail-icon {
+  width: 22px;
+}
+.tool-rail-icon img {
+  width: 20px;
+  height: 20px;
+}
+.tool-rail-group.on,
+.tool-rail-group.on:hover:not(:disabled),
+.tool-rail-option.on,
+.tool-rail-option.on:hover:not(:disabled) {
+  color: #fff;
+  border-color: var(--champ-900);
+  background: linear-gradient(180deg, var(--champ-500), var(--champ-700));
+  box-shadow: 0 1px 2px rgba(20, 30, 10, 0.25);
+}
+.tool-rail-group.on .tool-rail-icon img {
+  filter: brightness(0) invert(1);
+}
+.tool-rail-group.on .tool-rail-key {
+  background: rgba(255, 255, 255, 0.18);
+  color: #fff;
+  border-color: transparent;
+}
+.tool-rail-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.tool-rail-key {
+  flex: none;
+  margin-left: auto;
+}
+.tool-rail-badge {
+  background: var(--brique-500);
+}
+
+/* ------------------------------------------------------------------ */
+/* Le dock et les tiroirs (téléphone)                                   */
+/* ------------------------------------------------------------------ */
+
+.dock-bar,
+.tab-drawer {
+  border-radius: var(--r-lg);
+  border: 1px solid var(--glass-border);
+  background: var(--bar);
+  box-shadow: var(--sh-3);
+}
+.dock-tool {
+  border-radius: var(--r-sm);
+  border: 1px solid transparent;
+  box-shadow: none;
+  background: transparent;
+  font-family: "Barlow Semi Condensed", Signika, sans-serif;
+}
+.dock-tool img,
+.dock-tool .dock-emoji {
+  width: 22px;
+  height: 22px;
+  filter: none;
+}
+.dock-tool.on,
+.dock-tool.on:hover:not(:disabled) {
+  color: #fff;
+  border-color: var(--champ-900);
+  background: linear-gradient(180deg, var(--champ-500), var(--champ-700));
+}
+.dock-tool.on img,
+.dock-tool.on .dock-emoji {
+  filter: brightness(0) invert(1);
+}
+.dock-badge {
+  background: var(--brique-500);
+}
+.tab-drawer .tab {
+  border-radius: var(--r-md);
+  border: 1px solid var(--lin-300);
+  background: linear-gradient(180deg, #fdfbf7, var(--lin-200));
+  box-shadow: var(--sh-1);
+}
+.tab-drawer .tab .tab-icon {
+  width: 24px;
+  height: 24px;
+}
+.chip {
+  border-radius: var(--r-sm);
+  border: 1px solid var(--lin-300);
+  background: linear-gradient(180deg, #fdfbf7, var(--lin-200));
+  box-shadow: var(--sh-1);
+  font-weight: 600;
+}
+.chip.on,
+.chip.on:hover:not(:disabled) {
+  color: #fff;
+  border-color: var(--champ-900);
+  background: linear-gradient(180deg, var(--champ-500), var(--champ-700));
+}
+.chip.go {
+  color: var(--laiton-700);
+  border-color: var(--laiton-500);
+  background: linear-gradient(180deg, #fbf3de, #f0dfb4);
+}
+
+/* ------------------------------------------------------------------ */
+/* Messages, confirmations, barres                                      */
+/* ------------------------------------------------------------------ */
+
+.toast {
+  border-radius: var(--r-md);
+  border: 1px solid var(--glass-border);
+  border-left: 4px solid currentColor;
+  background: var(--lin-50);
+  box-shadow: var(--sh-2);
+  font-family: "Barlow Semi Condensed", Signika, sans-serif;
+  font-size: 0.95rem;
+  font-weight: 600;
+  animation: toast-entre 0.22s var(--doux) both;
+}
+@keyframes toast-entre {
+  from {
+    opacity: 0;
+    transform: translate(-50%, -8px);
+  }
+  to {
+    opacity: 1;
+    transform: translate(-50%, 0);
+  }
+}
+.toast.good {
+  color: var(--champ-700);
+}
+.toast.warn {
+  color: var(--laiton-700);
+}
+.toast.bad {
+  color: var(--brique-700);
+}
+.confirm-card {
+  border-radius: var(--r-lg);
+  border: 1px solid rgba(40, 32, 18, 0.35);
+  border-top: 4px solid var(--champ-700);
+  background: var(--lin-100);
+  box-shadow: var(--sh-3);
+  animation: fenetre-entre 0.22s var(--doux) both;
+}
+.confirm-card h3 {
+  color: var(--champ-900);
+}
+.build-confirm,
+.selection-bar {
+  border-radius: var(--r-lg);
+  border: 1px solid var(--glass-border);
+  background: var(--glass);
+  box-shadow: var(--sh-3);
+}
+.build-confirm-art {
+  border-radius: var(--r-sm);
+  border: 1px solid var(--lin-300);
+}
+
+/* L'hôtel des ventes : deux grandes portes, sobres. */
+.hall-door {
+  border-radius: var(--r-md);
+  border: 1px solid var(--lin-300);
+  background: linear-gradient(180deg, #fdfbf7, var(--lin-200));
+  box-shadow: var(--sh-1);
+}
+.hall-door-icon {
+  width: 34px;
+  height: 34px;
+}
+.hall-door.buy.on,
+.hall-door.sell.on {
+  color: var(--champ-900);
+  border-color: var(--champ-600);
+  background: linear-gradient(180deg, #eef4e7, #dde9d2);
+  box-shadow:
+    inset 0 0 0 1px var(--champ-600),
+    var(--sh-1);
+}
+.panel-head h3 {
+  color: var(--champ-900);
+}
+
+/* ------------------------------------------------------------------ */
+/* Le catalogue de construction                                         */
+/* ------------------------------------------------------------------ */
+
+.construction-titre {
+  color: var(--champ-900);
+}
+.construction-charme {
+  border: 1px solid var(--laiton-300);
+  background: #f8f0dc;
+  color: var(--laiton-700);
+  font-weight: 600;
+  border-radius: var(--r-sm);
+}
+.construction-carte {
+  flex-basis: 7.4rem;
+  border-radius: var(--r-md);
+  border: 1px solid var(--lin-300);
+  background: var(--lin-50);
+  box-shadow: var(--sh-1);
+  transition:
+    border-color 0.15s ease,
+    box-shadow 0.15s ease,
+    transform 0.15s var(--doux);
+}
+.construction-carte:hover:not(:disabled) {
+  transform: translateY(-2px);
+  border-color: var(--champ-500);
+  box-shadow: var(--sh-2);
+}
+.construction-carte.on {
+  border-color: var(--champ-600);
+  background: #eef4e7;
+  box-shadow:
+    inset 0 0 0 1px var(--champ-600),
+    var(--sh-1);
+}
+.construction-icone {
+  display: grid;
+  place-items: center;
+  width: 84px;
+  height: 64px;
+}
+.construction-icone img {
+  width: 76px;
+  height: 64px;
+  object-fit: contain;
+  filter: drop-shadow(0 2px 3px rgba(30, 24, 12, 0.25));
+}
+.construction-nom {
+  font-family: "Barlow Semi Condensed", Signika, sans-serif;
+  font-weight: 600;
+  font-size: 0.88rem;
+}
+.construction-prix {
+  font-weight: 700;
+  color: var(--laiton-700);
+  font-variant-numeric: tabular-nums;
+}
+.construction-carte.verrou .construction-prix {
+  color: var(--muted);
+}
+
+/* ------------------------------------------------------------------ */
+/* L'arbre des compétences                                              */
+/* ------------------------------------------------------------------ */
+
+.sk-node {
+  border: 1px solid var(--lin-300);
+  border-radius: var(--r-md);
+  background: var(--lin-50);
+  box-shadow: var(--sh-1);
+}
+.sk-node.on {
+  border-color: var(--champ-600);
+  background: #eef4e7;
+}
+.sk-col-head {
+  border-bottom: 2px solid var(--laiton-500);
+}
+
+/* ------------------------------------------------------------------ */
+/* L'argent qui bouge : un chiffre qui monte et s'efface                */
+/* ------------------------------------------------------------------ */
+
+.gains-vol {
+  position: absolute;
+  left: 50%;
+  top: 100%;
+  width: 0;
+  pointer-events: none;
+  z-index: 40;
+}
+.gain-vol {
+  position: absolute;
+  left: 0;
+  top: 0.25rem;
+  transform: translateX(-50%);
+  white-space: nowrap;
+  font-family: "Barlow Semi Condensed", Signika, sans-serif;
+  font-size: 0.95rem;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  text-shadow:
+    0 0 3px var(--lin-50),
+    0 0 3px var(--lin-50),
+    0 1px 1px rgba(0, 0, 0, 0.2);
+  animation: gain-monte 1.3s var(--doux) forwards;
+}
+.gain-vol.plus {
+  color: var(--champ-700);
+}
+.gain-vol.moins {
+  color: var(--brique-700);
+}
+@keyframes gain-monte {
+  0% {
+    opacity: 0;
+    transform: translate(-50%, 4px);
+  }
+  15% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+    transform: translate(-50%, 18px);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}

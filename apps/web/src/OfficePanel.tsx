@@ -145,6 +145,8 @@ export type ProcessingView = {
   outputPrice: number;
   margin: number;
   daysOfWork: number;
+  /** La roue à eau du moulin : ×2 sur une rivière, ×3 sous une cascade. */
+  force?: number;
 };
 
 /** Ce que la banque renvoie sur l'état d'une exploitation. */
@@ -361,6 +363,11 @@ function Activite({
                     {a.perDay} {GOOD_DEFS[a.input].unit} de {GOOD_DEFS[a.input].name.toLowerCase()}{" "}
                     par jour → {Math.round((a.perDay / a.ratio) * 100) / 100}{" "}
                     {GOOD_DEFS[a.output].unit} de {GOOD_DEFS[a.output].name.toLowerCase()}
+                    {a.force && a.force > 1 ? (
+                      <b className="gain" title="La roue à eau : ×2 au bord d'une rivière, ×3 au pied d'une cascade">
+                        {" "}· roue à eau ×{a.force}
+                      </b>
+                    ) : null}
                   </span>
                   <span className="atelier-etat">
                     {aVide
@@ -618,20 +625,16 @@ export function OfficePanel({
             </div>
           ) : mode === "LAND" ? (
             <div className="hdv-single">
-              <p className="hdv-muted">Parcelles libres ou cédées par un voisin, dans vos régions — cliquez pour acheter.</p>
-              <div className="zone-maps office-maps">
-                {zones.map((z) => (
-                  <ZoneMap
-                    key={z.id}
-                    zone={z}
-                    myFarmId={myFarmId}
-                    selectableIds={expandableIds}
-                    onSelect={onBuyLand}
-                    compact
-                  />
-                ))}
-              </div>
-              {expandableIds.size === 0 && <p className="hdv-empty">Aucune parcelle à racheter dans vos régions.</p>}
+              {/* Une seule façon d'avoir de la terre : agrandir sa ferme autour
+                  d'elle, depuis le mode construction. La carte des régions
+                  vendait des parcelles ailleurs, un second système. */}
+              <p className="hdv-muted">
+                Votre ferme grandit d'un seul tenant : la friche qui l'entoure se vend par lots de 6×6
+                cases, et chaque lot acheté repousse la friche plus loin. Il n'y a pas de limite.
+              </p>
+              <button type="button" className="primary" onClick={() => onBuyLand("")}>
+                Agrandir ma ferme
+              </button>
             </div>
           ) : mode === "MINE" ? (
             <MineBody

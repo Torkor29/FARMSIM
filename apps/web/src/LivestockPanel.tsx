@@ -121,6 +121,8 @@ export type BarnState = {
     hasPaddock: boolean;
     hasTrough: boolean;
     hasRack: boolean;
+    /** Un paysage vivant à trois cases : haie, bois, mare, prairie. */
+    hasPaysage?: boolean;
     production: number;
     reproduction: number;
     feed: number;
@@ -987,6 +989,12 @@ export function LivestockPanel({
                       </li>
                       <li className={equipements?.hasRack ? "ok" : ""}>
                         {equipements?.hasRack ? "✓" : "○"} Râtelier à fourrage
+                      </li>
+                      <li
+                        className={equipements?.hasPaysage ? "ok" : ""}
+                        title="Une haie, un bois, une mare ou une prairie à trois cases de l'abri : de l'ombre, de l'eau, et des hirondelles contre les mouches"
+                      >
+                        {equipements?.hasPaysage ? "✓" : "○"} Paysage vivant autour
                       </li>
                       <li className={barn.level >= 3 ? "ok" : ""}>
                         {barn.level >= 3 ? "✓" : "○"} Bâtiment Nv.{barn.level}

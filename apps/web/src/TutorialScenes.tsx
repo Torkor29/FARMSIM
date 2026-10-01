@@ -5,17 +5,17 @@ import type { Scene } from "./tutorial-steps";
 type Props = { scene: Scene; tactile: boolean };
 
 const OUTILS = [
-  ["Voir", "/assets/icons/tools/select.svg"],
-  ["Semer", "/assets/icons/tools/plant.svg"],
-  ["Sol", "/assets/icons/tools/plow.svg"],
-  ["Récolte", "/assets/icons/tools/harvest.svg"],
+  ["Voir", "/assets/icons/jeu/voir.svg"],
+  ["Semer", "/assets/icons/jeu/semer.svg"],
+  ["Sol", "/assets/icons/jeu/sol.svg"],
+  ["Récolte", "/assets/icons/jeu/recolte.svg"],
 ] as const;
 
 const PANNEAUX = [
-  ["Parcelle", "/assets/icons/nav/parcelle.svg"],
-  ["Bâtir", "/assets/icons/nav/batir.svg"],
-  ["Troupeau", "/assets/icons/nav/troupeau.svg"],
-  ["Personnel", "/assets/icons/nav/personnel.svg"],
+  ["Parcelle", "/assets/icons/jeu/parcelle.svg"],
+  ["Bâtir", "/assets/icons/jeu/construire.svg"],
+  ["Troupeau", "/assets/icons/jeu/elevage.svg"],
+  ["Personnel", "/assets/icons/jeu/personnel.svg"],
 ] as const;
 
 function Texte({ x, y, children, classe = "" }: { x: number; y: number; children: ReactNode; classe?: string }) {

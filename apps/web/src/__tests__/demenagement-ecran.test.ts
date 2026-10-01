@@ -81,10 +81,11 @@ describe("la place qu’on quitte ne se gêne pas elle-même", () => {
      * Un bâtiment qui glisse d'une case chevauche sa place d'avant. Sans cette
      * exception, tout déplacement de moins d'une emprise serait refusé — et le
      * réglage fin, qui est justement ce qu'on veut permettre, deviendrait le
-     * seul cas impossible. Le serveur applique la même règle.
+     * seul cas impossible. Le serveur applique la même règle — la règle
+     * partagée de la ferme libre, à qui l'écran passe le bâtiment à ignorer.
      */
     expect(CODE).toContain(
-      'return c?.kind === "EMPTY" || (movingBuildingId != null && c?.buildingId === movingBuildingId);',
+      "validerPose(grilleDomaine, def, { x, y, rotation: rot }, movingBuildingId ?? undefined)",
     );
   });
 

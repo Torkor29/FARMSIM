@@ -23,8 +23,8 @@ describe("l’achat des parcelles alentours", () => {
     expect(OFFICE).not.toMatch(/parcelle adjacente/);
   });
 
-  it("garde le bouton d’achat sur la fiche voisine", () => {
-    expect(SHEET).toMatch(/Racheter cette parcelle/);
-    expect(SHEET).toMatch(/Acheter cette parcelle/);
+  it("renvoie la fiche voisine vers l'agrandissement de sa ferme", () => {
+    // La terre ne se vend plus à la parcelle : voir `achat-parcelle.test.ts`.
+    expect(SHEET).toMatch(/Agrandir ma ferme/);
   });
 });

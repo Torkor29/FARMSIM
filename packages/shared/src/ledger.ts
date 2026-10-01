@@ -25,7 +25,11 @@ export type LedgerPoste =
   /** Intérêts, tirages et remboursements de la ligne de crédit. */
   | "BANQUE"
   /** Les salaires du personnel, prélevés au changement de jour de jeu. */
-  | "SALAIRES";
+  | "SALAIRES"
+  /** Ce qu'on pose pour le plaisir : bancs, lanternes, arbres, repères. */
+  | "DECORATION"
+  /** Les aides agro-environnementales : la réserve entretenue paie. */
+  | "AIDES";
 
 export const LEDGER_POSTES: LedgerPoste[] = [
   "CULTURES",
@@ -38,6 +42,8 @@ export const LEDGER_POSTES: LedgerPoste[] = [
   "PROGRESSION",
   "BANQUE",
   "SALAIRES",
+  "DECORATION",
+  "AIDES",
 ];
 
 export const LEDGER_LABELS: Record<LedgerPoste, string> = {
@@ -51,6 +57,8 @@ export const LEDGER_LABELS: Record<LedgerPoste, string> = {
   PROGRESSION: "Progression",
   BANQUE: "Banque",
   SALAIRES: "Salaires",
+  DECORATION: "Décoration",
+  AIDES: "Aides",
 };
 
 /** Ce que chaque poste recouvre, pour l'infobulle du Bureau. */
@@ -65,6 +73,8 @@ export const LEDGER_HINTS: Record<LedgerPoste, string> = {
   PROGRESSION: "Récompenses de quêtes et de contrats",
   BANQUE: "Tirages, remboursements et intérêts de la ligne de crédit",
   SALAIRES: "Le personnel, payé chaque jour de jeu",
+  DECORATION: "Décorations achetées et revendues",
+  AIDES: "Aides agro-environnementales, pour la réserve et sa faune",
 };
 
 export type LedgerLine = {
