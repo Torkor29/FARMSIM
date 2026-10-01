@@ -63,6 +63,8 @@ export type OfficeContract = {
   id: string;
   title: string;
   jobType: string;
+  /** Le travail, dans le vocabulaire des chantiers (le serveur l'envoie). */
+  work?: FarmWork;
   rewardCrd: number;
   cells?: number;
   /** Ce qui manque pour le faire soi-même, ou `null` si rien ne manque. */
@@ -173,7 +175,8 @@ export type CreditView = {
  * désormais ; c'est ici qu'il se lit.
  */
 type Mode = "OBJECTIFS" | "ACTIVITE" | "TAKE" | "MINE" | "CONSIGNES" | "LAND";
-type WorkCat = "ALL" | FarmWork;
+/** `PNJ` : les contrats des fermes voisines, à part des chantiers des joueurs. */
+type WorkCat = "ALL" | "PNJ" | FarmWork;
 type SortKey = "payout" | "ttl" | "cells" | "client";
 
 const WORK_CATS: { id: WorkCat; label: string }[] = [
@@ -510,7 +513,20 @@ export function OfficePanel({
     () => posted.reduce((s, o) => s + (o.status === "OPEN" || o.status === "ACCEPTED" ? o.escrowCrd : 0), 0),
     [posted],
   );
-  const toEarn = useMemo(() => board.reduce((s, o) => s + o.payoutCrd, 0), [board]);
+  const toEarn = useMemo(
+    () => board.reduce((s, o) => s + o.payoutCrd, 0) + ghost.reduce((s, c) => s + c.rewardCrd, 0),
+    [board, ghost],
+  );
+  /*
+   * Les contrats des fermes PNJ se prennent ici, avec ceux des joueurs.
+   *
+   * Ils vivaient sous « Mes offres », derrière un bouton du carnet, pendant
+   * que l'onglet « Prendre » affichait « (0) » : « on a toujours pas les
+   * contrats de PNJ », alors qu'il y en avait trois au tableau. Quand aucun
+   * joueur ne publie rien, c'est sur eux que l'onglet s'ouvre.
+   */
+  const offres = board.length + ghost.length;
+  const vueCat: WorkCat = cat === "ALL" && board.length === 0 && ghost.length > 0 ? "PNJ" : cat;
   const cannotTake = busy || Boolean(active) || takeLocked;
 
   const filtered = useMemo(() => {
@@ -571,7 +587,7 @@ export function OfficePanel({
             <div className="hdv-purse alt">
               <span>À gagner</span>
               <strong className="gain">{money(toEarn)}</strong>
-              <em>{board.length} offre(s)</em>
+              <em>{offres} offre(s)</em>
             </div>
             <MenuClose onClose={onClose} />
           </header>
@@ -581,7 +597,7 @@ export function OfficePanel({
               [
                 ["OBJECTIFS", `Objectifs${aFaire > 0 ? ` (${aFaire})` : ""}`],
                 ["ACTIVITE", "Activité"],
-                ["TAKE", `Prendre (${board.length})`],
+                ["TAKE", `Prendre (${offres})`],
                 ["MINE", `Mes offres (${posted.length + (active ? 1 : 0)})`],
                 ["CONSIGNES", "Consignes"],
                 ["LAND", "Terres"],
@@ -652,6 +668,15 @@ export function OfficePanel({
           ) : (
             <div className="hdv-body">
               <aside className="hdv-cats" aria-label="Types de chantier">
+                {ghost.length > 0 && (
+                  <>
+                    <p>Fermes voisines</p>
+                    <button type="button" className={vueCat === "PNJ" ? "on" : ""} onClick={() => setCat("PNJ")}>
+                      <span>Contrats PNJ</span>
+                      <em>{ghost.length}</em>
+                    </button>
+                  </>
+                )}
                 <p>Travaux</p>
                 {WORK_CATS.map((c) => {
                   const n = c.id === "ALL" ? board.length : board.filter((o) => o.work === c.id).length;
@@ -660,7 +685,7 @@ export function OfficePanel({
                     <button
                       key={c.id}
                       type="button"
-                      className={cat === c.id ? "on" : ""}
+                      className={vueCat === c.id ? "on" : ""}
                       onClick={() => setCat(c.id)}
                     >
                       <span>{c.label}</span>
@@ -685,6 +710,10 @@ export function OfficePanel({
                     </button>
                   </div>
                 )}
+                {vueCat === "PNJ" ? (
+                  <ContratsPnj ghost={ghost} pick={ghostPick} onPick={setGhostId} />
+                ) : (
+                <>
                 <div className="hdv-toolbar">
                   <input
                     type="search"
@@ -763,10 +792,18 @@ export function OfficePanel({
                     </table>
                   </div>
                 )}
+                </>
+                )}
               </section>
 
               <aside className="hdv-detail">
-                {pick ? (
+                {vueCat === "PNJ" ? (
+                  ghostPick ? (
+                    <OffreVoisin c={ghostPick} cannotTake={cannotTake} onTakeGhost={onTakeGhost} />
+                  ) : (
+                    <p className="hdv-empty">Sélectionnez un contrat pour voir le détail.</p>
+                  )
+                ) : pick ? (
                   <div className="hdv-card">
                     <header>
                       <h3>{WORK_LABELS[pick.work]}</h3>
@@ -919,34 +956,7 @@ function MineBody({
             </div>
           )
         ) : (
-          <div className="hdv-table-wrap">
-            <table className="hdv-table">
-              <thead>
-                <tr>
-                  <th>Mission</th>
-                  <th>Type</th>
-                  <th>Cases</th>
-                  <th>Salaire</th>
-                </tr>
-              </thead>
-              <tbody>
-                {ghost.map((c) => (
-                  <tr
-                    key={c.id}
-                    className={ghostPick?.id === c.id ? "sel" : ""}
-                    onClick={() => setGhostId(c.id)}
-                  >
-                    <td>
-                      <strong>{c.title}</strong>
-                    </td>
-                    <td>{c.jobType}</td>
-                    <td className="num">{c.cells ?? "—"}</td>
-                    <td className="num last">{money(c.rewardCrd)}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+          <ContratsPnj ghost={ghost} pick={ghostPick} onPick={setGhostId} />
         )}
       </section>
       <aside className="hdv-detail">
@@ -980,61 +990,123 @@ function MineBody({
             )}
           </div>
         ) : ghostPick ? (
-          <div className="hdv-card">
-            <header>
-              <h3>{ghostPick.title}</h3>
-            </header>
-            <p className="hdv-muted">Un voisin cherche quelqu’un pour ce passage.</p>
-            <dl className="hdv-quotes">
-              <div>
-                <dt>Salaire</dt>
-                <dd>{money(ghostPick.rewardCrd)}</dd>
-              </div>
-              <div>
-                <dt>Cases</dt>
-                <dd>{ghostPick.cells ?? "—"}</dd>
-              </div>
-              {ghostPick.location && (
-                <div>
-                  <dt>Si vous louez</dt>
-                  <dd>{money(ghostPick.location.salaire)}</dd>
-                </div>
-              )}
-            </dl>
-            {/*
-              Il manque l'engin : plutôt qu'un bouton qui refusera, on dit ce
-              qui manque et on met la sortie de secours à côté, avec son
-              chiffre. C'est par les contrats qu'un débutant finance sa
-              première moissonneuse ; un mur y coupait le seul chemin.
-            */}
-            {ghostPick.manqueMachine && (
-              <p className="hdv-muted">{ghostPick.manqueMachine}</p>
-            )}
-            {!ghostPick.manqueMachine && (
-              <button
-                type="button"
-                className="accent"
-                disabled={cannotTake}
-                onClick={() => onTakeGhost(ghostPick.id)}
-              >
-                Prendre
-              </button>
-            )}
-            {ghostPick.location && (
-              <button
-                type="button"
-                className={ghostPick.manqueMachine ? "accent" : "ghost"}
-                disabled={cannotTake}
-                onClick={() => onTakeGhost(ghostPick.id, true)}
-              >
-                Louer {ghostPick.location.materiel} · {money(ghostPick.location.salaire)} net
-              </button>
-            )}
-          </div>
+          <OffreVoisin c={ghostPick} cannotTake={cannotTake} onTakeGhost={onTakeGhost} />
         ) : (
           <p className="hdv-empty">Rien à afficher.</p>
         )}
       </aside>
+    </div>
+  );
+}
+
+/** Les contrats des fermes PNJ, en tableau : on choisit, le détail suit à droite. */
+function ContratsPnj({
+  ghost,
+  pick,
+  onPick,
+}: {
+  ghost: OfficeContract[];
+  pick: OfficeContract | null;
+  onPick: (id: string) => void;
+}) {
+  return (
+    <div className="hdv-table-wrap">
+      <table className="hdv-table">
+        <thead>
+          <tr>
+            <th>Contrat</th>
+            <th>Travail</th>
+            <th>Cases</th>
+            <th>Salaire</th>
+          </tr>
+        </thead>
+        <tbody>
+          {ghost.map((c) => (
+            <tr key={c.id} className={pick?.id === c.id ? "sel" : ""} onClick={() => onPick(c.id)}>
+              <td>
+                <strong>{c.title}</strong>
+                <em className="local-tag">voisin</em>
+              </td>
+              <td>{c.work ? WORK_LABELS[c.work] : c.jobType}</td>
+              <td className="num">{c.cells ?? "—"}</td>
+              <td className="num last">
+                {money(c.manqueMachine && c.location ? c.location.salaire : c.rewardCrd)}
+                {c.manqueMachine && c.location && <span className="hdv-sub">en louant</span>}
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+/**
+ * Un contrat de ferme voisine : on y va avec son matériel, ou on loue.
+ *
+ * Comme dans un jeu de ferme classique : si l'engin est au garage, on le prend
+ * et le salaire est entier ; sinon on loue celui du voisin, et sa location est
+ * retenue sur la paie. Les deux chiffres viennent du serveur.
+ */
+function OffreVoisin({
+  c,
+  cannotTake,
+  onTakeGhost,
+}: {
+  c: OfficeContract;
+  cannotTake: boolean;
+  onTakeGhost: (id: string, rented?: boolean) => void;
+}) {
+  return (
+    <div className="hdv-card">
+      <header>
+        <h3>{c.title}</h3>
+        <em className="local-tag">voisin</em>
+      </header>
+      <p className="hdv-muted">
+        Une ferme voisine cherche quelqu’un pour ce passage{c.work ? ` : ${WORK_LABELS[c.work].toLowerCase()}` : ""}.
+      </p>
+      <dl className="hdv-quotes">
+        <div>
+          <dt>Avec votre matériel</dt>
+          <dd>{money(c.rewardCrd)}</dd>
+        </div>
+        <div>
+          <dt>Cases</dt>
+          <dd>{c.cells ?? "—"}</dd>
+        </div>
+        {c.location && (
+          <div>
+            <dt>En louant</dt>
+            <dd>{money(c.location.salaire)}</dd>
+          </div>
+        )}
+      </dl>
+      {/*
+        Il manque l'engin : plutôt qu'un bouton qui refusera, on dit ce qui
+        manque et on met la sortie de secours à côté, avec son chiffre. C'est
+        par les contrats qu'un débutant finance sa première moissonneuse ; un
+        mur y coupait le seul chemin.
+      */}
+      {c.manqueMachine && <p className="hdv-muted">{c.manqueMachine}</p>}
+      {!c.manqueMachine && (
+        <button type="button" className="accent" disabled={cannotTake} onClick={() => onTakeGhost(c.id)}>
+          Y aller avec mon matériel · {money(c.rewardCrd)}
+        </button>
+      )}
+      {c.location && (
+        <button
+          type="button"
+          className={c.manqueMachine ? "accent" : "ghost"}
+          disabled={cannotTake}
+          onClick={() => onTakeGhost(c.id, true)}
+        >
+          Louer {c.location.materiel} · {money(c.location.salaire)} net
+        </button>
+      )}
+      {cannotTake && (
+        <p className="hdv-muted">Terminez ou lâchez le contrat en cours avant d’en prendre un autre.</p>
+      )}
     </div>
   );
 }
