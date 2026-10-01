@@ -39,11 +39,11 @@ describe("le tableau des voisins", () => {
     expect(PANNEAU).toContain("manqueMachine");
     // Le bouton « Prendre » ne s'affiche que si rien ne manque : sinon on
     // reproduit le clic pour rien.
-    expect(PANNEAU).toContain("{!ghostPick.manqueMachine && (");
+    expect(PANNEAU).toContain("{!c.manqueMachine && (");
   });
 
   it("propose la location avec son chiffre, pas seulement son principe", () => {
-    expect(PANNEAU).toContain("ghostPick.location");
+    expect(PANNEAU).toContain("c.location");
     expect(PANNEAU).toContain("location.materiel");
     expect(PANNEAU).toContain("location.salaire");
   });
@@ -51,11 +51,23 @@ describe("le tableau des voisins", () => {
   it("passe le drapeau jusqu’à la requête", () => {
     // Le point qui ne se voit pas à l'écran : sans lui, le bouton « Louer »
     // ouvrirait un chantier au plein salaire, que le serveur refuserait.
-    expect(PANNEAU).toMatch(/onTakeGhost\(ghostPick\.id, true\)/);
+    expect(PANNEAU).toMatch(/onTakeGhost\(c\.id, true\)/);
     expect(PANNEAU).toMatch(/onTakeGhost: \(id: string, rented\?: boolean\) => void/);
     expect(APP).toMatch(/acceptContract\(id: string, rented = false\)/);
     expect(APP).toMatch(/JSON\.stringify\(\{ userId: player\.id, rented \}\)/);
     expect(APP).toMatch(/onTakeGhost=\{\(id, rented\) =>/);
+  });
+
+  it("se prend dans l’onglet « Prendre », compté avec les chantiers des joueurs", () => {
+    /*
+     * « On a toujours pas les contrats de PNJ » : il y en avait trois au
+     * tableau, rangés sous « Mes offres » pendant que « Prendre » affichait
+     * « (0) ». L'onglet les compte et s'ouvre sur eux quand aucun joueur ne
+     * publie rien.
+     */
+    expect(PANNEAU).toContain("const offres = board.length + ghost.length;");
+    expect(PANNEAU).toContain("`Prendre (${offres})`");
+    expect(PANNEAU).toMatch(/vueCat === "PNJ" \? \(\s*<ContratsPnj/);
   });
 
   it("ne parle plus d’un filet abandonné", () => {
