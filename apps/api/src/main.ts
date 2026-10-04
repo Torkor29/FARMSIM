@@ -321,6 +321,16 @@ import {
   machineLifeHours,
   peutRacheter,
   colleeAuxSiennes,
+  mitoyennes,
+  orientationTrame,
+  separeesParLaRoute,
+  separeesParLaCour,
+  couloirEntre,
+  rectDansHote,
+  decalageDansHote,
+  PRIX_REUNION_PAR_CASE,
+  type Quart,
+  type RectCases,
   REFUS_PAS_COLLEE,
   machineHoursPerHectare,
   machineCost,
@@ -851,6 +861,8 @@ const ORDRE_PARCELLES = [
 function farmInclude() {
   return {
     parcels: {
+      // Une parcelle réunie à une autre ne se joue plus à part : on la retrouve dans l'île de l'hôte.
+      where: { fusionneeDans: null },
       orderBy: ORDRE_PARCELLES,
       include: {
         zone: true,
@@ -6709,6 +6721,229 @@ app.post("/parcels/:id/buy", async (req, res) => {
   });
 });
 
+/* ------------------------------------------------------------------ */
+/* Réunir deux parcelles                                                */
+/* ------------------------------------------------------------------ */
+/*
+ * Deux parcelles à soi, séparées par un chemin de terre, se réunissent en un
+ * seul champ : le chemin devient du champ, et l'une passe dans l'autre — ses
+ * cases, ses bâtiments, son décor, décalés de sa place sur la trame. La route
+ * goudronnée, elle, ne s'efface pas, et la cour du siège non plus.
+ *
+ * La géométrie — trame, orientation, couloir — vit dans `@farmsim/shared`
+ * (`reunion.ts`) : le paysage la lit pour dessiner exactement ce qu'on paie.
+ */
+
+/** Le siège d'une ferme, et l'orientation de sa commune dans le paysage. */
+async function orientationDeLaFerme(farmId: string): Promise<{ siege: { id: string; zoneId: string; mapX: number; mapY: number }; quart: Quart } | null> {
+  const siege = await prisma.parcel.findFirst({
+    where: { farmId, fusionneeDans: null },
+    orderBy: ORDRE_PARCELLES,
+    select: { id: true, zoneId: true, mapX: true, mapY: true },
+  });
+  if (!siege) return null;
+  const R = 3;
+  const autour = await prisma.parcel.findMany({
+    where: { zoneId: siege.zoneId, mapX: { gte: siege.mapX - R, lte: siege.mapX + R }, mapY: { gte: siege.mapY - R, lte: siege.mapY + R } },
+    select: { mapX: true, mapY: true },
+  });
+  // L'orientation ne dépend que de la géographie de la commune : elle ne
+  // tourne pas quand on achète ou qu'on réunit.
+  const quart = orientationTrame(autour.map((p) => ({ col: p.mapX - siege.mapX, rang: p.mapY - siege.mapY })));
+  return { siege, quart };
+}
+
+type ParcelleReunie = { id: string; zoneId: string; mapX: number; mapY: number; gridW: number; gridH: number; fusionneeDans: string | null };
+
+/**
+ * Le devis d'une réunion : qui reçoit, qui est absorbé, quels chemins
+ * deviennent du champ, et combien. `refus` dit pourquoi pas.
+ */
+function devisReunion(opts: {
+  a: ParcelleReunie;
+  b: ParcelleReunie;
+  miennes: readonly ParcelleReunie[];
+  siege: { id: string; mapX: number; mapY: number };
+  quart: Quart;
+  dejaPossedees: ReadonlySet<string>;
+}):
+  | { ok: true; hote: ParcelleReunie; absorbee: ParcelleReunie; groupe: ParcelleReunie[]; couloirs: RectCases[]; cases: { x: number; y: number }[]; prix: number }
+  | { ok: false; refus: string } {
+  const hoteDe = (p: ParcelleReunie) => opts.miennes.find((q) => q.id === (p.fusionneeDans ?? p.id)) ?? p;
+  const ha = hoteDe(opts.a);
+  const hb = hoteDe(opts.b);
+  if (ha.id === hb.id) return { ok: false, refus: "Ces deux parcelles sont déjà réunies" };
+  const membres = (h: ParcelleReunie) => opts.miennes.filter((q) => q.id === h.id || q.fusionneeDans === h.id);
+  // Le siège reçoit toujours : c'est lui qui porte la cour et la maison.
+  const siegeDansB = membres(hb).some((q) => q.id === opts.siege.id);
+  const hote = siegeDansB ? hb : ha;
+  const absorbee = siegeDansB ? ha : hb;
+  const gHote = membres(hote);
+  const gAbs = membres(absorbee);
+  const couloirs: RectCases[] = [];
+  let routeOuCour: string | null = null;
+  for (const m of gHote) {
+    for (const n of gAbs) {
+      if (m.zoneId !== n.zoneId || !mitoyennes(m, n)) continue;
+      if (separeesParLaRoute(opts.siege, m, n, opts.quart)) {
+        routeOuCour = "La route goudronnée passe entre les deux : elle ne s'efface pas";
+        continue;
+      }
+      if (separeesParLaCour(opts.siege, m, n, opts.quart)) {
+        routeOuCour = "La cour de la ferme est entre les deux";
+        continue;
+      }
+      const c = couloirEntre(rectDansHote(hote, m, opts.quart), rectDansHote(hote, n, opts.quart));
+      if (c) couloirs.push(c);
+    }
+  }
+  if (!couloirs.length) {
+    return { ok: false, refus: routeOuCour ?? "Elles ne se touchent pas : seules deux parcelles collées se réunissent" };
+  }
+  const cases: { x: number; y: number }[] = [];
+  const vues = new Set<string>();
+  for (const r of couloirs) {
+    for (let y = r.y0; y <= r.y1; y++) {
+      for (let x = r.x0; x <= r.x1; x++) {
+        const k = cleCase(x, y);
+        if (vues.has(k) || opts.dejaPossedees.has(k)) continue;
+        vues.add(k);
+        cases.push({ x, y });
+      }
+    }
+  }
+  return { ok: true, hote, absorbee, groupe: gAbs, couloirs, cases, prix: cases.length * PRIX_REUNION_PAR_CASE };
+}
+
+app.post("/parcels/:id/reunir", async (req, res) => {
+  const body = z.object({ userId: z.string(), avec: z.string() }).safeParse(req.body);
+  if (!body.success) {
+    res.status(400).json(body.error.flatten());
+    return;
+  }
+  const user = await prisma.user.findUnique({ where: { id: body.data.userId }, include: { farm: true } });
+  if (!user?.farm) {
+    res.status(404).json({ error: "Ferme introuvable" });
+    return;
+  }
+  const miennes = await prisma.parcel.findMany({
+    where: { farmId: user.farm.id },
+    orderBy: ORDRE_PARCELLES,
+    select: { id: true, zoneId: true, mapX: true, mapY: true, gridW: true, gridH: true, fusionneeDans: true },
+  });
+  const a = miennes.find((p) => p.id === req.params.id);
+  const b = miennes.find((p) => p.id === body.data.avec);
+  if (!a || !b) {
+    res.status(403).json({ error: "Ces deux parcelles doivent être à vous" });
+    return;
+  }
+  const orient = await orientationDeLaFerme(user.farm.id);
+  if (!orient) {
+    res.status(404).json({ error: "Ferme introuvable" });
+    return;
+  }
+  // Qui reçoit d'abord, puis ce qu'il possède déjà : le chemin ne se paie qu'une fois.
+  const essai = devisReunion({ a, b, miennes, siege: orient.siege, quart: orient.quart, dejaPossedees: new Set() });
+  const possedees = essai.ok
+    ? new Set(
+        (await prisma.parcelCell.findMany({ where: { parcelId: essai.hote.id }, select: { x: true, y: true } })).map((c) =>
+          cleCase(c.x, c.y),
+        ),
+      )
+    : new Set<string>();
+  const devis = devisReunion({ a, b, miennes, siege: orient.siege, quart: orient.quart, dejaPossedees: possedees });
+  if (!devis.ok) {
+    res.status(409).json({ error: devis.refus });
+    return;
+  }
+  const { hote, groupe, cases, prix } = devis;
+  const ids = groupe.map((p) => p.id);
+  // Un chantier en cours sur la parcelle absorbée désigne ses cases : on attend qu'il finisse.
+  const [chantiers, commandes] = await Promise.all([
+    prisma.fieldJob.count({ where: { parcelId: { in: ids }, status: "RUNNING" } }),
+    prisma.laborOrder.count({ where: { parcelId: { in: ids }, status: { in: ["OPEN", "ACCEPTED"] } } }),
+  ]);
+  if (chantiers || commandes) {
+    res.status(409).json({ error: "Un chantier est en cours sur cette parcelle : attendez qu'il se termine" });
+    return;
+  }
+  if (!peutPayer(user, prix)) {
+    res.status(402).json({ error: `€ insuffisants — ${prix} requis` });
+    return;
+  }
+  // Le décalage de chaque hôte absorbé : ses cases sont déjà dans son repère.
+  const hoteAbs = groupe.find((p) => !p.fusionneeDans) ?? groupe[0]!;
+  const { dx, dy } = decalageDansHote(hote, hoteAbs, orient.quart);
+  try {
+    await prisma.$transaction(async (tx) => {
+      const garde = await tx.parcel.updateMany({
+        where: { id: hoteAbs.id, farmId: user.farm!.id, fusionneeDans: null },
+        data: { fusionneeDans: hote.id },
+      });
+      if (garde.count !== 1) throw new Error("CONCURRENT");
+      await tx.parcel.updateMany({ where: { fusionneeDans: hoteAbs.id }, data: { fusionneeDans: hote.id } });
+      if (prix > 0) {
+        await debit(tx, user.id, prix, "TERRES", `Réunion de parcelles — ${cases.length} cases de chemin rendues au champ`);
+      }
+      const decaler = { parcelId: hote.id };
+      await tx.parcelCell.updateMany({ where: { parcelId: hoteAbs.id }, data: { ...decaler, x: { increment: dx }, y: { increment: dy } } });
+      await tx.building.updateMany({ where: { parcelId: hoteAbs.id }, data: { ...decaler, originX: { increment: dx }, originY: { increment: dy } } });
+      await tx.amenagement.updateMany({ where: { parcelId: hoteAbs.id }, data: { ...decaler, originX: { increment: dx }, originY: { increment: dy } } });
+      await tx.supplyOrder.updateMany({ where: { parcelId: hoteAbs.id }, data: { ...decaler, x: { increment: dx }, y: { increment: dy } } });
+      await tx.machine.updateMany({ where: { parkedParcelId: hoteAbs.id }, data: { parkedParcelId: hote.id } });
+      await tx.user.updateMany({ where: { lastParcelId: hoteAbs.id }, data: { lastParcelId: hote.id } });
+      /* La campagne de l'absorbée passe chez l'hôte, décalée ; là où les
+         deux en avaient une, celle de l'hôte reste. */
+      const deja = new Set(
+        (await tx.caseCampagne.findMany({ where: { parcelId: hote.id }, select: { x: true, y: true } })).map((c) => cleCase(c.x, c.y)),
+      );
+      for (const c of await tx.caseCampagne.findMany({ where: { parcelId: hoteAbs.id } })) {
+        if (deja.has(cleCase(c.x + dx, c.y + dy))) await tx.caseCampagne.delete({ where: { id: c.id } });
+        else await tx.caseCampagne.update({ where: { id: c.id }, data: { parcelId: hote.id, x: c.x + dx, y: c.y + dy } });
+      }
+      /* Le chemin devient du champ. Ce qu'on y avait façonné dans la campagne
+         — une mare, un bois — passe dans la ferme tel quel, comme à l'achat
+         d'un lot. */
+      const campagne = new Map(
+        (await tx.caseCampagne.findMany({ where: { parcelId: hote.id } })).map((c) => [cleCase(c.x, c.y), c]),
+      );
+      const reprises: string[] = [];
+      await tx.parcelCell.createMany({
+        data: cases.map((p) => {
+          const c = campagne.get(cleCase(p.x, p.y));
+          if (c) reprises.push(c.id);
+          return {
+            parcelId: hote.id,
+            x: p.x,
+            y: p.y,
+            sol: c?.sol === "EAU" || c?.sol === "BOIS" ? c.sol : "CHAMP",
+            niveau: c?.niveau ?? 0,
+            forme: c?.forme ?? 0,
+            boiseDepuis: c?.boiseDepuis ?? null,
+          };
+        }),
+      });
+      // Les cases de campagne recouvertes par la parcelle absorbée, et par le chemin, n'en sont plus.
+      const occupees = new Set(
+        (await tx.parcelCell.findMany({ where: { parcelId: hote.id }, select: { x: true, y: true } })).map((c) => cleCase(c.x, c.y)),
+      );
+      for (const c of campagne.values()) if (occupees.has(cleCase(c.x, c.y)) && !reprises.includes(c.id)) reprises.push(c.id);
+      if (reprises.length) await tx.caseCampagne.deleteMany({ where: { id: { in: reprises } } });
+    });
+  } catch (e) {
+    if (e instanceof Error && e.message === "CONCURRENT") {
+      res.status(409).json({ error: "Ces parcelles viennent de changer — réessayez" });
+      return;
+    }
+    if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === "P2002") {
+      res.status(409).json({ error: "Les deux parcelles se chevauchent : impossible de les réunir telles quelles" });
+      return;
+    }
+    throw e;
+  }
+  res.status(201).json({ hote: hote.id, absorbee: hoteAbs.id, cases: cases.length, prix });
+});
+
 /** Devis détaillé avant achat : le joueur voit chaque facteur du prix. */
 app.get("/parcels/:id/quote", async (req, res) => {
   const auth = await userFromAuthHeader(req);
@@ -6813,6 +7048,36 @@ app.get("/parcels/:id/voisinage", async (req, res) => {
   const monFarmId = farm?.id ?? null;
   const counts = await loadQuoteCounts(centre.zoneId, centre.zone.continentCode);
   const casesPossedees = monFarmId ? await prisma.parcelCell.count({ where: { parcel: { farmId: monFarmId } } }) : 0;
+  /* L'orientation de la commune, fixée par le siège : le paysage la lit d'ici
+     plutôt que de la recalculer depuis la parcelle qu'il regarde. */
+  const orient = monFarmId ? await orientationDeLaFerme(monFarmId) : null;
+  /** Réunir la parcelle regardée à une autre des siennes : le devis, ou pourquoi pas. */
+  const reunionAvec = async (b: (typeof autour)[number]) => {
+    if (!orient || centre.farmId !== monFarmId || b.farmId !== monFarmId) return null;
+    const miennes = owned as unknown as ParcelleReunie[];
+    const a = miennes.find((p) => p.id === centre.id);
+    const autre = miennes.find((p) => p.id === b.id);
+    if (!a || !autre || (autre.fusionneeDans ?? autre.id) === (a.fusionneeDans ?? a.id)) return null;
+    const essai = devisReunion({ a, b: autre, miennes, siege: orient.siege, quart: orient.quart, dejaPossedees: new Set() });
+    if (!essai.ok) return { prix: null, cases: 0, refus: essai.refus };
+    const possedees = new Set(
+      (await prisma.parcelCell.findMany({ where: { parcelId: essai.hote.id }, select: { x: true, y: true } })).map((c) => cleCase(c.x, c.y)),
+    );
+    const d = devisReunion({ a, b: autre, miennes, siege: orient.siege, quart: orient.quart, dejaPossedees: possedees });
+    return d.ok ? { prix: d.prix, cases: d.cases.length, refus: null } : { prix: null, cases: 0, refus: d.refus };
+  };
+  const hoteCentre = centre.fusionneeDans ?? centre.id;
+  const groupeCentre = owned.filter((q) => q.id === hoteCentre || q.fusionneeDans === hoteCentre);
+  const mitoyennesAuGroupe = (p: { id: string; fusionneeDans: string | null }): boolean => {
+    const h = p.fusionneeDans ?? p.id;
+    if (h === hoteCentre) return false;
+    const sien = owned.filter((q) => q.id === h || q.fusionneeDans === h);
+    return groupeCentre.some((g) => sien.some((q) => mitoyennes(g, q)));
+  };
+  const reunions = new Map<string, Awaited<ReturnType<typeof reunionAvec>>>();
+  for (const p of autour) {
+    if (p.farmId && p.farmId === monFarmId && mitoyennesAuGroupe(p)) reunions.set(p.id, await reunionAvec(p));
+  }
   const gate = canAcquire({
     playerLevel: auth.user.level,
     ownedTotal: owned.length,
@@ -6875,6 +7140,8 @@ app.get("/parcels/:id/voisinage", async (req, res) => {
         })),
         cheptel,
         landPrice: p.landPrice,
+        fusionneeDans: p.fusionneeDans,
+        reunion: reunions.get(p.id) ?? null,
         prix: devis?.total ?? null,
         achetable: Boolean(devis) && gate.ok,
         refus: !rachetable
@@ -6902,6 +7169,8 @@ app.get("/parcels/:id/voisinage", async (req, res) => {
       mapH: centre.zone.mapH,
     },
     rayon,
+    quart: orient?.quart ?? null,
+    siege: orient?.siege.id ?? null,
     parcelles,
   });
 });

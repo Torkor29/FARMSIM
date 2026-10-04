@@ -32,6 +32,8 @@ type Props = {
   onAcheter: (id: string) => void;
   /** Rejoindre une parcelle qu'on possède déjà, au lieu de l'impasse d'avant. */
   onAller?: (id: string) => void;
+  /** La réunir à celle qu'on regarde : le chemin de terre devient du champ. */
+  onReunir?: (id: string) => void;
   onFermer: () => void;
 };
 
@@ -66,6 +68,7 @@ export function ParcelleVoisineSheet({
   enCours = false,
   onAcheter,
   onAller,
+  onReunir,
   onFermer,
 }: Props) {
   const premier = useRef<HTMLButtonElement | null>(null);
@@ -206,19 +209,48 @@ export function ParcelleVoisineSheet({
             /* L'impasse d'avant. « Cette parcelle est déjà la vôtre » était vrai
                et sans issue : il fallait fermer la fiche et repasser par les
                pastilles du rail pour y aller. */
-            <button
-              ref={premier}
-              type="button"
-              /* La même classe que « Acheter cette parcelle » : c'est le même
-                 geste au même endroit de la fiche, il doit avoir la même tenue.
-                 Inventer une classe qui n'existe pas dans la feuille rendrait un
-                 bouton nu. */
-              className="voisin-acheter"
-              onClick={() => onAller?.(voisin.id)}
-              disabled={!onAller}
-            >
-              Aller sur cette parcelle
-            </button>
+            <div className="voisin-marche">
+              {voisin.reunion && (
+                /* Deux parcelles à soi, collées : le chemin de terre entre les
+                   deux devient du champ, et l'on n'en a plus qu'une. */
+                <>
+                  {voisin.reunion.prix !== null ? (
+                    <>
+                      <p className="voisin-stade">
+                        Le chemin de terre qui la sépare de votre champ devient du champ :{" "}
+                        {voisin.reunion.cases} cases défrichées et labourées. Les deux parcelles n'en font plus
+                        qu'une.
+                      </p>
+                      <p className="voisin-prix">{formatEuros(voisin.reunion.prix)}</p>
+                      <button
+                        ref={premier}
+                        type="button"
+                        className="voisin-acheter"
+                        disabled={enCours || !onReunir}
+                        onClick={() => onReunir?.(voisin.id)}
+                      >
+                        {enCours ? "Travaux en cours…" : "Réunir en un seul champ"}
+                      </button>
+                    </>
+                  ) : (
+                    <p className="voisin-refus">{voisin.reunion.refus}</p>
+                  )}
+                </>
+              )}
+              <button
+                ref={voisin.reunion?.prix != null ? undefined : premier}
+                type="button"
+                /* La même classe que « Acheter cette parcelle » : c'est le même
+                   geste au même endroit de la fiche, il doit avoir la même tenue.
+                   Inventer une classe qui n'existe pas dans la feuille rendrait un
+                   bouton nu. */
+                className={voisin.reunion?.prix != null ? "voisin-aller" : "voisin-acheter"}
+                onClick={() => onAller?.(voisin.fusionneeDans ?? voisin.id)}
+                disabled={!onAller}
+              >
+                Aller sur cette parcelle
+              </button>
+            </div>
           ) : (
             <p className="voisin-refus">
               {voisin.exploitation ?? "Cette exploitation"} la travaille. Elle ne sera à reprendre que

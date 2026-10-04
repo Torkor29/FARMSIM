@@ -910,6 +910,7 @@ export function App() {
    * pour se monter.
    */
   const [voisinage, setVoisinage] = useState<VoisinReel[]>([]);
+  const [quartTrame, setQuartTrame] = useState<0 | 1 | 2 | 3 | null>(null);
   /* La fiche ouverte en cliquant sur un champ de voisin, s'il y en a une. */
   const [voisinOuvert, setVoisinOuvert] = useState<VoisinReel | null>(null);
   /** Les nouveautés que ce joueur n'a pas encore lues, s'il y en a. */
@@ -1737,6 +1738,13 @@ export function App() {
     // Réponse d'une parcelle qu'on ne regarde plus : on la jette. Sans ce
     // garde, elle écrasait celle qu'on venait d'ouvrir.
     if (parcelleAffichee.current !== id) return;
+    // Réunie à une autre depuis (un autre appareil, un onglet resté ouvert) :
+    // on va sur l'île qui l'a reçue plutôt que de montrer une parcelle vide.
+    const hote = (d?.parcel as { fusionneeDans?: string | null } | undefined)?.fusionneeDans;
+    if (hote) {
+      setActiveParcelId(hote);
+      return;
+    }
     setParcelDetail((prev) => keepIfSame(prev, d));
   }, []);
 
@@ -1749,9 +1757,11 @@ export function App() {
    * réponse identique ne déclenche aucun rendu.
    */
   const loadVoisinage = useCallback(async (id: string) => {
-    const d = await api<{ parcelles: VoisinReel[] }>(`/parcels/${id}/voisinage`);
+    const d = await api<{ parcelles: VoisinReel[]; quart?: 0 | 1 | 2 | 3 | null }>(`/parcels/${id}/voisinage`);
     if (parcelleAffichee.current !== id) return;
     setVoisinage((prev) => keepIfSame(prev, d.parcelles));
+    // L'orientation de la commune, fixée par le siège : la même vue d'où qu'on regarde.
+    setQuartTrame(d.quart ?? null);
   }, []);
 
   useEffect(() => {
@@ -3457,8 +3467,39 @@ export function App() {
       const achetee = apres?.farm?.parcels.find((p) => p.id === parcelId);
       flashToast(
         achetee
-          ? `${achetee.label} est à vous — ${hectaresDeGrille(achetee.gridW, achetee.gridH).toLocaleString("fr-FR")} ha pour ${r.paid.toLocaleString("fr-FR")} €`
+          ? `${achetee.label} est à vous — ${hectaresDeGrille(achetee.gridW, achetee.gridH).toLocaleString("fr-FR")} ha pour ${r.paid.toLocaleString("fr-FR")} €. Touchez-la pour y aller, ou la réunir à votre champ.`
           : "Parcelle achetée",
+      );
+    } catch (e) {
+      flashToast(e instanceof Error ? e.message : String(e), true);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  /**
+   * Réunir une de ses parcelles à celle qu'on regarde.
+   *
+   * Le chemin de terre entre les deux devient du champ, et l'une passe dans
+   * l'autre. On se retrouve sur l'île réunie — celle du siège s'il en est.
+   */
+  async function reunirParcelles(avec: string) {
+    if (!player || !activeParcelId) return;
+    setBusy(true);
+    try {
+      const r = await api<{ hote: string; cases: number; prix: number }>(`/parcels/${activeParcelId}/reunir`, {
+        method: "POST",
+        body: JSON.stringify({ userId: player.id, avec }),
+      });
+      await refreshPlayer();
+      if (r.hote !== activeParcelId) setActiveParcelId(r.hote);
+      else {
+        await loadParcel(r.hote);
+        await loadVoisinage(r.hote).catch(() => undefined);
+      }
+      playUiSound("place");
+      flashToast(
+        `Parcelles réunies : ${r.cases} cases de chemin rendues au champ${r.prix ? ` · −${r.prix.toLocaleString("fr-FR")} €` : ""}`,
       );
     } catch (e) {
       flashToast(e instanceof Error ? e.message : String(e), true);
@@ -7069,6 +7110,7 @@ export function App() {
               controle={vueControle}
               onEgare={setVueEgaree}
               voisinage={voisinage}
+              quartTrame={quartTrame}
               /*
                * Cliquer sur sa propre parcelle y emmène — le bouton devient
                * facultatif.
@@ -7085,7 +7127,11 @@ export function App() {
                * paysage ne montre pas.
                */
               onVoisinClick={(v) => {
-                if (v.statut === "MOI") setActiveParcelId(v.id);
+                /* Une des siennes qu'on peut réunir à celle-ci : la fiche
+                   propose d'y aller ou de les réunir. Réunie à une autre : on
+                   va sur l'île qui l'a reçue. */
+                if (v.statut === "MOI" && v.reunion) setVoisinOuvert(v);
+                else if (v.statut === "MOI") setActiveParcelId(v.fusionneeDans ?? v.id);
                 else setVoisinOuvert(v);
               }}
               /* Le village sert : la coopérative mène au marché, la
@@ -8907,6 +8953,10 @@ export function App() {
            l'ouvrent, afin qu'aucun ne retombe dans l'impasse. */
         onAller={(id) => {
           setActiveParcelId(id);
+          setVoisinOuvert(null);
+        }}
+        onReunir={async (id) => {
+          await reunirParcelles(id);
           setVoisinOuvert(null);
         }}
         onFermer={() => setVoisinOuvert(null)}

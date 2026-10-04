@@ -446,6 +446,13 @@ model Parcel {
   domaineMarge Int        @default(0)
   /// Lots de terrain achetés : chacun rend le suivant plus cher.
   lotsAchetes  Int        @default(0)
+  /// La parcelle hôte, quand celle-ci lui a été réunie (« Réunir »).
+  ///
+  /// Ses cases, ses bâtiments et son décor sont passés chez l'hôte, décalés
+  /// de sa place sur la trame. Elle reste à la ferme — c'est toujours sa case
+  /// de la commune, et elle compte dans ce qu'on possède — mais elle ne se
+  /// joue plus à part : on la retrouve dans l'île de l'hôte.
+  fusionneeDans String?
   cells      ParcelCell[]
   buildings  Building[]
   amenagements Amenagement[]
@@ -465,6 +472,7 @@ model Parcel {
   fieldJobs     FieldJob[]
   /// La campagne façonnée autour de la ferme (voir `CaseCampagne`).
   campagne     CaseCampagne[]
+  @@index([fusionneeDans])
 }
 
 model ParcelCell {

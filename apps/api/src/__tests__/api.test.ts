@@ -4089,6 +4089,89 @@ describe("le voisinage d’une parcelle", () => {
     assert.equal((await acheter(collee.id)).statut, 409);
   });
 
+  it("réunit deux parcelles collées en un seul champ : le chemin de terre devient du champ", async () => {
+    const { moi, parcelId, vue: voisinage } = await fermeAvecVoisins("Remembreur");
+    type Case = { x: number; y: number; sol: string };
+    const ile = async () =>
+      ((await appel(`/parcels/${parcelId}`, { jeton: moi.jeton })).corps as unknown as { parcel: { cells: Case[] } });
+    await appel("/dev/grant", { methode: "POST", corps: { userId: moi.id, crd: 900000, level: 40 }, jeton: moi.jeton });
+    type Voisine = (typeof voisinage.parcelles)[number] & {
+      gridW: number;
+      gridH: number;
+      reunion: { prix: number | null; cases: number; refus: string | null } | null;
+      fusionneeDans: string | null;
+    };
+    const lire = async () =>
+      ((await appel(`/parcels/${parcelId}/voisinage`, { jeton: moi.jeton })).corps as unknown as { parcelles: Voisine[]; quart: number; siege: string });
+    const acheter = (id: string) =>
+      appel(`/parcels/${id}/buy`, { methode: "POST", corps: { userId: moi.id }, jeton: moi.jeton });
+    const reunir = (avec: string) =>
+      appel(`/parcels/${parcelId}/reunir`, { methode: "POST", corps: { userId: moi.id, avec }, jeton: moi.jeton });
+
+    // On achète les voisines collées jusqu'à en trouver une qu'un chemin de terre sépare de la nôtre.
+    const v0 = await lire();
+    assert.equal(v0.siege, parcelId);
+    assert.ok(v0.quart !== null);
+    let cible: Voisine | null = null;
+    let refusee: Voisine | null = null;
+    for (const p of v0.parcelles.filter((q) => q.achetable && Math.abs(q.col) + Math.abs(q.rang) === 1)) {
+      assert.equal((await acheter(p.id)).statut, 201);
+      const ici = (await lire()).parcelles.find((q) => q.id === p.id)!;
+      assert.ok(ici.reunion, "une parcelle à soi, collée, a son devis de réunion");
+      if (ici.reunion.prix !== null && !cible) cible = ici;
+      else if (ici.reunion.prix === null) refusee = ici;
+    }
+    assert.ok(cible, "il faut une voisine que seul un chemin de terre sépare");
+    if (refusee) assert.match(String(refusee.reunion!.refus), /route|cour/);
+
+    const avant = await ile();
+    const argentAvant = ((await appel("/auth/me", { jeton: moi.jeton })).corps as unknown as { player: { crd: number } }).player.crd;
+    const r = await reunir(cible.id);
+    assert.equal(r.statut, 201, JSON.stringify(r.corps));
+    const { cases, prix, hote, absorbee } = r.corps as unknown as { cases: number; prix: number; hote: string; absorbee: string };
+    assert.equal(hote, parcelId, "le siège reçoit");
+    assert.equal(absorbee, cible.id);
+    assert.equal(prix, cible.reunion!.prix, "on paie le devis affiché");
+    assert.ok(cases >= 8 * 8, `un chemin entier devient du champ : ${cases} cases`);
+    const me = (await appel("/auth/me", { jeton: moi.jeton })).corps as unknown as {
+      player: { crd: number; farm: { parcels: { id: string }[] } };
+    };
+    assert.equal(me.player.crd, argentAvant - prix);
+    assert.ok(!me.player.farm.parcels.some((p) => p.id === cible!.id), "la parcelle absorbée ne se joue plus à part");
+
+    // L'île : ses cases, celles de l'absorbée, et le chemin — d'un seul tenant.
+    const apres = await ile();
+    assert.equal(apres.parcel.cells.length, avant.parcel.cells.length + cible.gridW * cible.gridH + cases);
+    const cle = new Set(apres.parcel.cells.map((c) => `${c.x},${c.y}`));
+    const voisinsDe = (x: number, y: number) => [[1, 0], [-1, 0], [0, 1], [0, -1]].filter(([dx, dy]) => cle.has(`${x + dx!},${y + dy!}`)).length;
+    // D'un seul tenant : depuis la case 0,0, on atteint toutes les cases.
+    const vues = new Set<string>(["0,0"]);
+    const file = [[0, 0]];
+    while (file.length) {
+      const [x, y] = file.pop()!;
+      for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+        const k = `${x! + dx!},${y! + dy!}`;
+        if (cle.has(k) && !vues.has(k)) {
+          vues.add(k);
+          file.push([x! + dx!, y! + dy!]);
+        }
+      }
+    }
+    assert.equal(vues.size, cle.size, "l'île réunie est d'un seul tenant");
+    assert.ok(apres.parcel.cells.every((c) => voisinsDe(c.x, c.y) > 0));
+    assert.ok(apres.parcel.cells.filter((c) => c.sol === "CHAMP").length > avant.parcel.cells.filter((c) => c.sol === "CHAMP").length);
+
+    // Le paysage la voit réunie, et ne la propose plus.
+    const v1 = await lire();
+    const absorbeeVue = v1.parcelles.find((q) => q.id === cible!.id)!;
+    assert.equal(absorbeeVue.fusionneeDans, parcelId);
+    assert.equal(absorbeeVue.reunion, null);
+    assert.equal((await reunir(cible.id)).statut, 409, "déjà réunies");
+    // Une parcelle d'un autre ne se réunit pas.
+    const autre = v1.parcelles.find((q) => q.statut !== "MOI")!;
+    assert.equal((await reunir(autre.id)).statut, 403);
+  });
+
   it("refuse à qui n’a pas de session", async () => {
     const monde = await appel("/world/AUR");
     const id = (monde.corps as unknown as {
