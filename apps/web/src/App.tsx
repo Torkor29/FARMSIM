@@ -2199,6 +2199,9 @@ export function App() {
   );
 
   const ownedParcels = player?.farm?.parcels ?? [];
+  /** Le siège, et si l'on joue ailleurs (une autre de ses parcelles). */
+  const siegeId = ownedParcels[0]?.id ?? null;
+  const horsDuSiege = Boolean(siegeId && activeParcelId && activeParcelId !== siegeId && ownedParcels.some((p) => p.id === activeParcelId));
   /**
    * Le joueur est-il vraiment installé ?
    *
@@ -3463,11 +3466,14 @@ export function App() {
         body: JSON.stringify({ userId: player.id }),
       });
       const apres = await refreshPlayer();
-      if (activeParcelId) await loadVoisinage(activeParcelId).catch(() => undefined);
       const achetee = apres?.farm?.parcels.find((p) => p.id === parcelId);
+      /* On y va tout de suite : on l'a achetée pour la travailler. Le paysage
+         recule d'autant, et la même terre reste sous le même pixel. */
+      if (achetee) setActiveParcelId(parcelId);
+      else if (activeParcelId) await loadVoisinage(activeParcelId).catch(() => undefined);
       flashToast(
         achetee
-          ? `${achetee.label} est à vous — ${hectaresDeGrille(achetee.gridW, achetee.gridH).toLocaleString("fr-FR")} ha pour ${r.paid.toLocaleString("fr-FR")} €. Touchez-la pour y aller, ou la réunir à votre champ.`
+          ? `${achetee.label} est à vous — ${hectaresDeGrille(achetee.gridW, achetee.gridH).toLocaleString("fr-FR")} ha pour ${r.paid.toLocaleString("fr-FR")} €. « Ma ferme » vous ramène chez vous.`
           : "Parcelle achetée",
       );
     } catch (e) {
@@ -7130,7 +7136,7 @@ export function App() {
                 /* Une des siennes qu'on peut réunir à celle-ci : la fiche
                    propose d'y aller ou de les réunir. Réunie à une autre : on
                    va sur l'île qui l'a reçue. */
-                if (v.statut === "MOI" && v.reunion) setVoisinOuvert(v);
+                if (v.statut === "MOI" && v.reunion?.prix != null) setVoisinOuvert(v);
                 else if (v.statut === "MOI") setActiveParcelId(v.fusionneeDans ?? v.id);
                 else setVoisinOuvert(v);
               }}
@@ -8513,19 +8519,10 @@ export function App() {
             </div>
           )}
 
-          <h3 className="spaced">Mes parcelles</h3>
-          <div className="chip-row">
-            {ownedParcels.map((p) => (
-              <button
-                key={p.id}
-                type="button"
-                className={activeParcelId === p.id ? "chip on" : "chip"}
-                onClick={() => setActiveParcelId(p.id)}
-              >
-                {p.label}
-              </button>
-            ))}
-          </div>
+          {/* Plus de pastilles « Mes parcelles » : on va sur une de ses
+              parcelles en la touchant dans le paysage, et « Ma ferme » ramène
+              au siège. Deux façons de faire la même chose, c'était une de
+              trop — et la liste se désynchronisait de ce qu'on voyait. */}
         </aside>
         {/* Au doigt seulement.
 
@@ -8826,10 +8823,14 @@ export function App() {
           cesserait de le voir. */}
       <button
         type="button"
-        className={`vue-recentrer${vueEgaree ? " visible" : ""}`}
-        onClick={() => vueControle.current?.recentrer()}
-        tabIndex={vueEgaree ? 0 : -1}
-        aria-hidden={!vueEgaree}
+        className={`vue-recentrer${vueEgaree || horsDuSiege ? " visible" : ""}`}
+        onClick={() => {
+          // Sur une autre de ses parcelles : « Ma ferme » ramène au siège.
+          if (horsDuSiege && siegeId) setActiveParcelId(siegeId);
+          else vueControle.current?.recentrer();
+        }}
+        tabIndex={vueEgaree || horsDuSiege ? 0 : -1}
+        aria-hidden={!(vueEgaree || horsDuSiege)}
         title="Revenir sur ma ferme"
       >
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" aria-hidden="true">

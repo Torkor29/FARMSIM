@@ -21,9 +21,12 @@ describe("une case de sa parcelle voisine se travaille directement", () => {
     expect(VUE).toMatch(/onOwnedCellRef\.current\(touche\.voisin\.id, touche\.x, touche\.y/);
   });
 
-  it("la caméra compense le changement d'origine au lieu de sauter", () => {
-    expect(VUE).toMatch(/view\.panX -= ici\.x;/);
-    expect(VUE).toMatch(/view\.panZ -= ici\.z;/);
+  it("la caméra compense le changement d'origine, puis glisse vers la parcelle d'arrivée", () => {
+    // Pas de saut : la même terre reste sous le même pixel…
+    expect(VUE).toMatch(/view\.panX \+= ileVue\.x - ici\.x - ileMonde\.x;/);
+    expect(VUE).toMatch(/view\.panZ \+= ileVue\.z - ici\.z - ileMonde\.z;/);
+    // …puis la vue rejoint la parcelle où l'on joue, au lieu de rester sur l'ancienne.
+    expect(VUE).toMatch(/retourVers = \{ x: 0, z: 0 \};\n\s*\}\n\s*ileVue = /);
   });
 
   it("la cour, le chemin et l'orientation restent au siège de la ferme", () => {

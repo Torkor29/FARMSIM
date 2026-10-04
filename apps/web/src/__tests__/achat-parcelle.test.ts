@@ -31,8 +31,13 @@ describe("la terre s'achète parcelle par parcelle, dans le paysage", () => {
     expect(APP).toMatch(/onBuyLand=\{\(\) => \{\s*setShowEta\(false\);\s*agrandirMaFerme\(\);/);
   });
 
-  it("le seul déplacement de vue reste celui que le joueur demande", () => {
-    expect(APP).toMatch(/onClick=\{\(\) => setActiveParcelId\(p\.id\)\}/);
+  it("plus de pastilles « Mes parcelles » : on y va par le paysage, « Ma ferme » ramène", () => {
+    expect(APP).not.toMatch(/onClick=\{\(\) => setActiveParcelId\(p\.id\)\}/);
+    expect(APP).not.toContain('<h3 className="spaced">Mes parcelles</h3>');
+    // Après l'achat, on joue sur la parcelle qu'on vient de payer.
+    expect(APP).toContain("if (achetee) setActiveParcelId(parcelId);");
+    // Ailleurs que chez soi, « Ma ferme » ramène au siège.
+    expect(APP).toContain("if (horsDuSiege && siegeId) setActiveParcelId(siegeId);");
   });
 });
 

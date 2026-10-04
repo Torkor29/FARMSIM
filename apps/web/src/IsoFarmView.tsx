@@ -2101,6 +2101,8 @@ export function IsoFarmView({
     world.add(platform);
     /** L'île dans le monde, talus non compris : son centre et sa taille. */
     let ileMonde = { x: 0, z: 0, w: 1, d: 1 };
+    /** Le milieu de l'île au dernier dessin du pays : la vue s'y comptait. */
+    let ileVue = { x: 0, z: 0 };
 
     // La haie en boules (voir `geometrieHaie`) : couleurs de sommets, lisse.
     const hedgeMat = new THREE.MeshLambertMaterial({ vertexColors: true });
@@ -2695,9 +2697,17 @@ export function IsoFarmView({
         const idActif = parcelIdRef.current;
         const ici = campagne?.plan.parcelles.find((v) => v.id === idActif);
         if (ici) {
-          view.panX -= ici.x;
-          view.panZ -= ici.z;
+          // La vue se compte depuis le milieu de l'île : celle d'avant et
+          // celle d'arrivée n'ont pas forcément le même.
+          view.panX += ileVue.x - ici.x - ileMonde.x;
+          view.panZ += ileVue.z - ici.z - ileMonde.z;
+          /* Puis la vue glisse jusqu'à la parcelle d'arrivée : on y va pour
+             y jouer. Elle restait sur celle d'avant, la nouvelle hors cadre
+             — on croyait n'avoir pas changé de parcelle. */
+          tientLaVue = false;
+          retourVers = { x: 0, z: 0 };
         }
+        ileVue = { x: ileMonde.x, z: ileMonde.z };
         /*
          * Les parcelles qui viennent de passer à nous : on les voyait déjà, à
          * un autre, et les voici au joueur. Leur chemin d'accès se construit
