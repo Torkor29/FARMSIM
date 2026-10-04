@@ -711,28 +711,17 @@ export function orientationTrame(
     for (const c of cases) {
       const t = tourner(c, quart);
       if (t.col === 0 && t.rang === 0) continue;
-      /*
-       * La case sous la cour est interdite à ses parcelles.
-       *
-       * La cour déborde de l'île vers l'ouest — c'est par là qu'on entre — et
-       * mord la case `(-1, 0)` de la trame. Une parcelle du joueur tournée là
-       * serait recouverte par son propre parking, donc pas dessinée : c'est
-       * la pire des orientations pour elle, pire encore que l'amont.
-       */
-      if (c.statut === "MOI" && t.col === -1 && t.rang === 0) {
-        vus -= 1000;
-        continue;
-      }
       if (t.col + t.rang < 0) continue;
       /*
-       * Ses propres parcelles d'abord, et de loin.
+       * Ses parcelles comptent comme les autres.
        *
-       * Un joueur qui achète la parcelle d'à côté doit la **voir** : c'est
-       * elle qu'il vient chercher à l'écran. Compter chacune pour cent voisins
-       * fait qu'aucun gain sur le nombre de parcelles étrangères visibles ne
-       * peut justifier de reléguer l'une des siennes en amont, hors du cadre.
+       * Elles pesaient cent voisins, pour ne jamais tomber en amont, hors du
+       * cadre. Mais une parcelle à soi ou à vendre se dessine maintenant
+       * aussi en amont, la lisière reculant derrière elle : la peser à part
+       * ne faisait plus que **tourner le pays** au moment de l'achat — la
+       * parcelle qu'on venait de payer sautait à l'autre bout de l'écran.
        */
-      vus += c.statut === "MOI" ? 100 : 1;
+      vus += 1;
     }
     if (vus > record) {
       record = vus;
@@ -835,10 +824,14 @@ export function planCampagne(o: OptionsPlan): PlanCampagne {
    * On garde la même bande de pré et de bois, mais comptée depuis la plus
    * haute de ses parcelles au lieu de la seule parcelle active. Une ferme qui
    * ne s'étend pas vers l'amont garde exactement le paysage d'avant.
+   *
+   * Les parcelles à vendre comptent comme les siennes : on s'agrandit en
+   * achetant celle d'à côté, et celle d'en haut doit se voir pour s'acheter.
    */
+  const aMontrer = (v: VoisinReel) => v.statut === "MOI" || v.achetable || v.prix !== null;
   let uMaison = 0;
   for (const v of o.voisins ?? []) {
-    if (v.statut !== "MOI" || (v.col === 0 && v.rang === 0)) continue;
+    if (!aMontrer(v) || (v.col === 0 && v.rang === 0)) continue;
     const t = tourner(v, quart);
     uMaison = Math.min(uMaison, versEcranBas(t.col * pas, t.rang * pas));
   }
@@ -867,8 +860,11 @@ export function planCampagne(o: OptionsPlan): PlanCampagne {
     if (versEcranBas(x, z) - cote < (aMoi ? sol.uMin : lisiereEtrangers)) return false;
     if (versEcranBas(x, z) + cote > sol.uMax - MARGE_LISIERE) return false;
     if (Math.abs(versEcranDroite(x, z)) + cote > sol.vMax - MARGE_LISIERE) return false;
-    // Le siège est exempté : sa cour mord volontairement son bord.
-    if (!estMaison && seChevauchent(boite, cour, 0.4)) return false;
+    // Le siège est exempté : sa cour mord volontairement son bord. Ses autres
+    // parcelles et celles à vendre aussi : l'orientation ne tourne plus pour
+    // les écarter de la cour (le pays pivotait à l'achat), et une terre à soi
+    // ou à vendre doit se voir, même si un grand garage la frôle.
+    if (!estMaison && !aMoi && seChevauchent(boite, cour, 0.4)) return false;
     if (seChevauchent(boite, joueur, 0.4)) return false;
     // Le chemin passe dans un couloir de trame : une parcelle ne peut pas y
     // être, mais on le vérifie plutôt que de le supposer.
@@ -891,7 +887,7 @@ export function planCampagne(o: OptionsPlan): PlanCampagne {
       const x = col * pas;
       const z = rang * pas;
       const cote = coteDe(v.gridW, v.gridH);
-      if (!posable(x, z, cote, v.statut === "MOI", v.id === o.maison)) continue;
+      if (!posable(x, z, cote, aMontrer(v), v.id === o.maison)) continue;
       const grain = suite(grainerDe(v.id));
       parcelles.push({
         id: v.id,
@@ -1087,6 +1083,8 @@ export function planCampagne(o: OptionsPlan): PlanCampagne {
       const b: Boite = { x: x - recul, z: z - recul, w: COTE_DECOR, d: COTE_DECOR };
       if (Math.abs(b.z - routeZ) < DEMI_ROUTE + COTE_DECOR / 2) return false;
       if (seChevauchent(b, cour, 0.2) || seChevauchent(b, joueur, 0.2)) return false;
+      // Ni sur un champ : ses pommiers débordaient sur le coin d'une parcelle.
+      if (parcelles.some((p) => seChevauchent(b, empriseParcelle(p, p.cote), 0.2))) return false;
       for (const a of acces) {
         for (let i = 0; i + 1 < a.points.length; i++) {
           if (seChevauchent(b, boiteSegment(a.points[i]!, a.points[i + 1]!), 0)) return false;

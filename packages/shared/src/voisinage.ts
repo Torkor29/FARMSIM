@@ -130,8 +130,8 @@ export function statutParcelle(
  * voisins exploitants plutôt qu'un damier figé. Tenue par un autre joueur,
  * jamais : on n'expulse personne.
  *
- * L'adjacence n'entre pas ici. On achète dans le voisinage, pas seulement
- * collé : les bordures mitoyennes restent un facteur de **prix**.
+ * L'adjacence se vérifie à part (`colleeAuxSiennes`) : le statut dit à qui
+ * est la terre, la position dit si on peut y prétendre.
  */
 export function peutRacheter(statut: StatutParcelle): boolean {
   return statut === "LIBRE" || statut === "PNJ";
@@ -150,6 +150,25 @@ export function mitoyennes(
 ): boolean {
   return Math.abs(a.mapX - b.mapX) + Math.abs(a.mapY - b.mapY) === 1;
 }
+
+/**
+ * Cette parcelle touche-t-elle, par un côté, l'une de celles du joueur ?
+ *
+ * C'est la règle d'achat : on s'agrandit de proche en proche, comme dans un
+ * jeu de ferme, en rachetant le champ d'à côté — collé, ou de l'autre côté
+ * du chemin ou de la route qui borde le sien. Pas en diagonale, pas plus
+ * loin, et jamais dans une autre commune.
+ */
+export function colleeAuxSiennes(
+  cible: { zoneId: string; mapX: number; mapY: number },
+  siennes: readonly { zoneId: string; mapX: number; mapY: number }[],
+): boolean {
+  return siennes.some((p) => p.zoneId === cible.zoneId && mitoyennes(p, cible));
+}
+
+/** Le refus, quand la parcelle ne touche aucune des siennes. */
+export const REFUS_PAS_COLLEE =
+  "Elle ne touche pas vos terres : achetez d'abord une parcelle collée à la vôtre";
 
 /**
  * La case de la trame où poser une parcelle, vue depuis celle du joueur.

@@ -3437,27 +3437,44 @@ export function App() {
   }
 
   /**
-   * « Agrandir ma ferme », d'où qu'on vienne : on rentre chez soi s'il le
-   * faut, puis le mode construction s'ouvre, la friche à vendre autour.
+   * Acheter la parcelle d'à côté, entière.
+   *
+   * Le paysage se recharge tout de suite : sans cela, la terre achetée
+   * resterait « à vendre » jusqu'au sondage suivant, et un clic dessus
+   * rouvrirait la fiche d'achat au lieu d'y mener. Son chemin d'accès se
+   * construit alors sous les yeux du joueur.
    */
-  const construireEnArrivant = useRef(false);
-  function agrandirMaFerme() {
-    const siege = player?.farm?.parcels[0]?.id;
-    if (!visiting && domaine) {
-      entrerConstruction();
-      return;
+  async function acheterParcelleVoisine(parcelId: string) {
+    if (!player) return;
+    setBusy(true);
+    try {
+      const r = await api<{ paid: number }>(`/parcels/${parcelId}/buy`, {
+        method: "POST",
+        body: JSON.stringify({ userId: player.id }),
+      });
+      const apres = await refreshPlayer();
+      if (activeParcelId) await loadVoisinage(activeParcelId).catch(() => undefined);
+      const achetee = apres?.farm?.parcels.find((p) => p.id === parcelId);
+      flashToast(
+        achetee
+          ? `${achetee.label} est à vous — ${hectaresDeGrille(achetee.gridW, achetee.gridH).toLocaleString("fr-FR")} ha pour ${r.paid.toLocaleString("fr-FR")} €`
+          : "Parcelle achetée",
+      );
+    } catch (e) {
+      flashToast(e instanceof Error ? e.message : String(e), true);
+    } finally {
+      setBusy(false);
     }
-    if (!siege) return;
-    construireEnArrivant.current = true;
-    setActiveParcelId(siege);
   }
-  useEffect(() => {
-    if (!construireEnArrivant.current || visiting || !domaine) return;
-    construireEnArrivant.current = false;
-    entrerConstruction();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [domaine, visiting]);
 
+  /**
+   * « Agrandir ma ferme » : la terre s'achète dans le paysage, parcelle par
+   * parcelle. On ramène la vue chez soi, d'où l'on voit les pancartes.
+   */
+  function agrandirMaFerme() {
+    setShowEta(false);
+    flashToast("Touchez une parcelle voisine marquée « À vendre » dans le paysage pour l'acheter entière");
+  }
   function quitterConstruction() {
     setConstruction(false);
     setArme(null);
@@ -8881,9 +8898,9 @@ export function App() {
       <ParcelleVoisineSheet
         voisin={voisinOuvert}
         enCours={busy}
-        onAcheter={() => {
+        onAcheter={async (id) => {
+          await acheterParcelleVoisine(id);
           setVoisinOuvert(null);
-          agrandirMaFerme();
         }}
         /* Le paysage n'ouvre plus cette fiche sur une parcelle à soi — il y
            emmène directement. Le bouton reste pour les autres chemins qui

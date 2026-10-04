@@ -42,14 +42,14 @@ export function bornesDomaine(gridW: number, gridH: number, marge: number): Born
 }
 
 /**
- * Les bornes d'un domaine qui grandit : ce qu'on possède, calé sur la trame
- * des lots, plus un anneau de friche à vendre tout autour.
+ * Les bornes d'un domaine : exactement ce qu'on possède (max exclus).
  *
- * Il n'y a plus de marge fixe. Acheter un lot au bord repousse la friche d'un
- * lot plus loin, dans cette direction-là seulement : le terrain grandit
- * autant qu'on veut, et ses bords suivent tout seuls.
+ * Il y avait un anneau de friche à vendre autour, en lots de 6×6 : on
+ * complétait sa propre parcelle carré par carré. On s'agrandit maintenant en
+ * achetant la parcelle d'à côté, entière : le domaine s'arrête au bord de ce
+ * qu'on possède, et la campagne commence juste derrière.
  */
-export function bornesDuDomaine(cells: readonly { x: number; y: number }[], anneau = 1): Bornes {
+export function bornesDuDomaine(cells: readonly { x: number; y: number }[]): Bornes {
   if (!cells.length) return { minX: 0, minY: 0, maxX: 0, maxY: 0 };
   let minX = Infinity;
   let minY = Infinity;
@@ -61,14 +61,7 @@ export function bornesDuDomaine(cells: readonly { x: number; y: number }[], anne
     if (c.x > maxX) maxX = c.x;
     if (c.y > maxY) maxY = c.y;
   }
-  const t = TAILLE_LOT;
-  const r = Math.max(0, Math.round(anneau)) * t;
-  return {
-    minX: Math.floor(minX / t) * t - r,
-    minY: Math.floor(minY / t) * t - r,
-    maxX: Math.ceil((maxX + 1) / t) * t + r,
-    maxY: Math.ceil((maxY + 1) / t) * t + r,
-  };
+  return { minX, minY, maxX: maxX + 1, maxY: maxY + 1 };
 }
 
 export function dansBornes(b: Bornes, x: number, y: number): boolean {
@@ -336,10 +329,10 @@ export const OUTILS_CAMPAGNE: ReadonlySet<string> = new Set([
 ]);
 /** Ce qui ne se fait plus sur la ferme : le relief, l'eau, le bois, la prairie. */
 export const GROS_TERRAFORMAGE: ReadonlySet<string> = new Set(["etang", "surelever", "abaisser", "boiser", "prairie"]);
-/** Jusqu'où la campagne se façonne, en cases au-delà des lots à vendre. */
+/** Jusqu'où la campagne se façonne, en cases au-delà du bord de la ferme. */
 export const PORTEE_CAMPAGNE = 30;
 
-/** Une case de la campagne : hors de la ferme et de ses lots à vendre, à portée. */
+/** Une case de la campagne : hors de la ferme, à portée. */
 export function dansCampagne(bornes: Bornes, x: number, y: number): boolean {
   if (dansBornes(bornes, x, y)) return false;
   return (
@@ -439,7 +432,7 @@ const terrains: DefConstruction[] = [
     categorie: "TERRAFORMAGE",
     nom: "Creuser l'eau",
     description:
-      "Creuser un lac, une mare, une rivière dans la campagne : glissez sur le pré. Des rigoles traversent les lots à vendre : l'eau irrigue les champs à trois cases ou moins du bord de la ferme.",
+      "Creuser un lac, une mare, une rivière dans la campagne : glissez sur le pré. Il irrigue les champs à trois cases ou moins.",
     icone: "💧",
     pose: "TERRAIN",
     emprise: { w: 1, h: 1 },
@@ -449,7 +442,7 @@ const terrains: DefConstruction[] = [
     niveauMin: 1,
     regle: "EAU",
     sol: "EAU",
-    effet: { bonusRendement: 0.03, portee: 3, libelle: "Irrigation : +3 % sur les champs à 3 cases du bord de la ferme, +4 % à 2 cases si l'eau coule" },
+    effet: { bonusRendement: 0.03, portee: 3, libelle: "Irrigation : +3 % sur les champs à 3 cases, +4 % à 2 cases si l'eau coule" },
     charme: 1,
   },
   {
@@ -1331,6 +1324,26 @@ export function facteurSurface(possedees: number): number {
   return Math.sqrt(Math.max(1, possedees / CASES_STANDARD));
 }
 
+/**
+ * Le prix d'une parcelle voisine, entière.
+ *
+ * Le même barème que les lots d'avant, qui avait été réglé pour que
+ * s'agrandir reste à portée tôt dans la partie : cases × prix de la terre ×
+ * fertilité × région × surface déjà possédée. Une petite 8×8 vaut à peu près
+ * la trésorerie de départ, une 16×16 quatre fois plus ; et plus la ferme est
+ * grande, plus sa terre se paie cher, en pente douce.
+ */
+export function prixParcelle(opts: {
+  /** Cases de la parcelle à acheter (`gridW × gridH`). */
+  cases: number;
+  /** Cases que la ferme possède déjà, toutes parcelles comprises. */
+  possedees: number;
+  fertilite?: number;
+  prixRegional?: number;
+}): number {
+  return prixLot(opts);
+}
+
 /** Prix d'un lot : cases à acheter × prix de la terre × fertilité × région × surface. */
 export function prixLot(opts: {
   cases: number;
@@ -1362,25 +1375,15 @@ export const BONUS_RIVIERE = 0.04;
 export const PORTEE_RIVIERE = 2;
 
 /**
- * L'eau de la campagne, comptée depuis le bord de la ferme.
+ * L'eau de la campagne, telle qu'elle irrigue la ferme.
  *
- * La campagne commence au-delà de l'anneau des lots à vendre : à six cases au
- * moins du premier champ, un étang ou une rivière qu'on y creuse n'en
- * irriguerait aucun. L'eau y arrive donc par des rigoles qui traversent
- * l'anneau — une case de campagne au ras des lots à vendre compte comme si
- * elle bordait la ferme, et la portée se mesure à partir de là. Rien de plus :
- * un lac à dix cases du bord reste trop loin pour les champs.
- *
- * `bornes` sont celles du domaine, anneau compris (`bornesDuDomaine`).
+ * La campagne commençait au-delà d'un anneau de lots à vendre : des rigoles
+ * le traversaient, et l'eau comptait comme si elle bordait la ferme. L'anneau
+ * n'existe plus — la campagne touche la ferme — et l'eau se compte donc là
+ * où elle est : +3 % à 3 cases du champ, +4 % à 2 cases si elle coule.
  */
-export function eauxDeLaCampagne<T extends { x: number; y: number }>(bornes: Bornes, eaux: readonly T[]): T[] {
-  const rapprocher = (v: number, min: number, max: number) =>
-    v >= max ? v - TAILLE_LOT : v < min ? v + TAILLE_LOT : v;
-  return eaux.map((e) => ({
-    ...e,
-    x: rapprocher(e.x, bornes.minX, bornes.maxX),
-    y: rapprocher(e.y, bornes.minY, bornes.maxY),
-  }));
+export function eauxDeLaCampagne<T extends { x: number; y: number }>(_bornes: Bornes, eaux: readonly T[]): T[] {
+  return eaux.map((e) => ({ ...e }));
 }
 
 export type SourcesBonus = {

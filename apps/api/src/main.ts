@@ -320,6 +320,8 @@ import {
   machineWidth,
   machineLifeHours,
   peutRacheter,
+  colleeAuxSiennes,
+  REFUS_PAS_COLLEE,
   machineHoursPerHectare,
   machineCost,
   machineVariant,
@@ -429,6 +431,7 @@ import {
   OUTILS_CAMPAGNE,
   dansCampagne,
   eauxDeLaCampagne,
+  prixParcelle,
   valeurCaseCampagne,
   PRIX_COUPE,
   BOIS_MATURITE_MS,
@@ -6594,18 +6597,115 @@ app.post("/labor-orders/:id/abandon", async (req, res) => {
 });
 
 /**
- * Acheter une parcelle ailleurs : fermé.
+ * Acheter la parcelle d'à côté, entière.
  *
- * Il y avait deux façons d'avoir de la terre — acheter une parcelle du monde,
- * et acheter des lots autour de sa ferme — et elles se marchaient dessus : on
- * payait une parcelle, puis chaque carré autour. Il n'en reste qu'une. La
- * ferme grandit d'un seul tenant, lot par lot, depuis le mode construction,
- * aussi loin qu'on veut. Les parcelles déjà acquises restent à leur
- * propriétaire, et grandissent de la même façon.
+ * Comme dans un jeu de ferme : on s'agrandit en rachetant le champ voisin,
+ * libre ou tenu par un PNJ, collé à l'une de ses parcelles — de l'autre côté
+ * du chemin ou de la route. Il n'y a plus de lots de 6×6 à grappiller autour
+ * de la sienne : on achète une parcelle comme elle est, petite ou grande, et
+ * on peut ensuite la réunir à sa voisine (« Réunir »).
  */
-app.post("/parcels/:id/buy", async (_req, res) => {
-  res.status(409).json({
-    error: "La terre s'achète maintenant autour de votre ferme : ouvrez « Construire » et touchez la friche à vendre.",
+app.post("/parcels/:id/buy", async (req, res) => {
+  const body = z.object({ userId: z.string() }).safeParse(req.body);
+  if (!body.success) {
+    res.status(400).json(body.error.flatten());
+    return;
+  }
+  const target = await prisma.parcel.findUnique({
+    where: { id: req.params.id },
+    include: { zone: true, farm: { include: { user: true } } },
+  });
+  if (!target) {
+    res.status(404).json({ error: "Parcelle introuvable" });
+    return;
+  }
+  /* Libre, ou cédée par un PNJ. Un autre joueur, jamais. */
+  const npcCede = Boolean(target.farm?.user.isNpc);
+  if (target.farmId && !npcCede) {
+    res.status(409).json({ error: "Parcelle indisponible" });
+    return;
+  }
+  const user = await prisma.user.findUnique({
+    where: { id: body.data.userId },
+    include: { farm: { include: { parcels: { orderBy: ORDRE_PARCELLES } } } },
+  });
+  if (!user?.farm) {
+    res.status(404).json({ error: "Ferme introuvable" });
+    return;
+  }
+  const owned = user.farm.parcels;
+  if (!colleeAuxSiennes(target, owned)) {
+    res.status(409).json({ error: REFUS_PAS_COLLEE });
+    return;
+  }
+  const quote = await quoteParcel(target, owned, user.level);
+  // Le prix demandé : le barème de la terre du jeu (`prixParcelle`), le même
+  // que le paysage affiche sur la pancarte.
+  const prix = prixParcelle({
+    cases: target.gridW * target.gridH,
+    possedees: await prisma.parcelCell.count({ where: { parcel: { farmId: user.farm.id } } }),
+    fertilite: target.fertility,
+    prixRegional: target.zone.priceMult,
+  });
+  const gate = canAcquire({
+    playerLevel: user.level,
+    ownedTotal: owned.length,
+    ownedInRegion: owned.filter((p) => p.zoneId === target.zoneId).length,
+    regionParcelCount: await prisma.parcel.count({ where: { zoneId: target.zoneId } }),
+  });
+  if (!gate.ok) {
+    res.status(403).json({ error: acquisitionRefusal(gate.reason!, user, owned.length) });
+    return;
+  }
+  if (!peutPayer(user, prix)) {
+    res.status(402).json({ error: `€ insuffisants — ${prix} requis` });
+    return;
+  }
+  const vendeur = target.farmId;
+  try {
+    await prisma.$transaction(async (tx) => {
+      /* La parcelle d'abord, sous condition : deux achats simultanés ne
+         passent pas tous les deux — le second la trouve déjà prise. */
+      const garde = await tx.parcel.updateMany({
+        where: { id: target.id, farmId: vendeur },
+        /*
+         * La date d'entrée dans la ferme, et c'est elle qui tient l'ordre de
+         * la liste. Sans elle, la nouvelle venue n'aurait pas de rang et se
+         * rangerait où PostgreSQL voudrait.
+         */
+        data: { farmId: user.farm!.id, landPrice: prix, acquiredAt: new Date() },
+      });
+      if (garde.count !== 1) throw new Error("CONCURRENT");
+      await debit(tx, user.id, prix, "TERRES", `Achat de parcelle — ${target.label}`);
+      if (npcCede && vendeur) {
+        const batis = await tx.building.findMany({ where: { parcelId: target.id }, select: { id: true } });
+        const ids = batis.map((b) => b.id);
+        if (ids.length) {
+          // Le troupeau suit son étable ; les engins du voisin restent les siens.
+          await tx.herd.updateMany({ where: { buildingId: { in: ids } }, data: { farmId: user.farm!.id } });
+          await tx.machine.updateMany({
+            where: { storedInBuildingId: { in: ids } },
+            data: { storedInBuildingId: null, parkedParcelId: null },
+          });
+        }
+        await tx.machine.updateMany({
+          where: { parkedParcelId: target.id, farmId: vendeur },
+          data: { parkedParcelId: null },
+        });
+      }
+    });
+  } catch (e) {
+    if (e instanceof Error && e.message === "CONCURRENT") {
+      res.status(409).json({ error: "Cette parcelle vient d'être vendue" });
+      return;
+    }
+    throw e;
+  }
+  res.status(201).json({
+    parcelId: target.id,
+    paid: prix,
+    marketValue: quote.marketValue,
+    adjacentOwned: quote.adjacentOwnedBorders,
   });
 });
 
@@ -6712,6 +6812,7 @@ app.get("/parcels/:id/voisinage", async (req, res) => {
   const owned = farm?.parcels ?? [];
   const monFarmId = farm?.id ?? null;
   const counts = await loadQuoteCounts(centre.zoneId, centre.zone.continentCode);
+  const casesPossedees = monFarmId ? await prisma.parcelCell.count({ where: { parcel: { farmId: monFarmId } } }) : 0;
   const gate = canAcquire({
     playerLevel: auth.user.level,
     ownedTotal: owned.length,
@@ -6733,8 +6834,20 @@ app.get("/parcels/:id/voisinage", async (req, res) => {
         .filter((h) => ici.has(h.buildingId))
         .map((h) => ({ kind: h.kind, size: h.size }));
 
-      /* Les parcelles du pays ne se vendent plus : la terre s'achète autour de
-         sa ferme, lot par lot. Plus de prix, donc plus de pancarte. */
+      /* On s'agrandit en rachetant le champ d'à côté, libre ou PNJ, collé à
+         l'une de ses parcelles. Le devis ne se fait que pour celles-là. */
+      const rachetable = peutRacheter(statut);
+      const collee = rachetable && colleeAuxSiennes(p, owned);
+      const devis = collee
+        ? {
+            total: prixParcelle({
+              cases: p.gridW * p.gridH,
+              possedees: casesPossedees,
+              fertilite: p.fertility,
+              prixRegional: centre.zone.priceMult,
+            }),
+          }
+        : null;
 
       return {
         id: p.id,
@@ -6762,9 +6875,15 @@ app.get("/parcels/:id/voisinage", async (req, res) => {
         })),
         cheptel,
         landPrice: p.landPrice,
-        prix: null,
-        achetable: false,
-        refus: null,
+        prix: devis?.total ?? null,
+        achetable: Boolean(devis) && gate.ok,
+        refus: !rachetable
+          ? null
+          : !collee
+            ? REFUS_PAS_COLLEE
+            : !gate.ok
+              ? acquisitionRefusal(gate.reason!, auth.user, owned.length)
+              : null,
       };
   });
 
@@ -9714,29 +9833,10 @@ function domaineVue(
     farm?: { carnetJson: string } | null;
   },
 ) {
-  // Plus de marge fixe : le domaine, c'est ce qu'on possède plus un anneau
-  // de friche à vendre, et il grandit à chaque lot acheté au bord.
+  // Le domaine, c'est ce qu'on possède : plus de lots à vendre autour — on
+  // s'agrandit en achetant la parcelle d'à côté, entière.
   const bornes = bornesDuDomaine(p.cells);
-  const possedees = new Set(p.cells.map((c) => cleCase(c.x, c.y)));
-  const niveau = niveauPourLot(p.lotsAchetes + 1);
-  const lots = lotsDuDomaine(bornes).map((lot) => {
-    const { etat, aAcheter } = etatLot(lot, possedees);
-    return {
-      ...lot,
-      etat,
-      aAcheter,
-      prix:
-        etat === "POSSEDE"
-          ? 0
-          : prixLot({
-              cases: aAcheter,
-              possedees: p.cells.length,
-              fertilite: p.fertility,
-              prixRegional: p.zone.priceMult,
-            }),
-      niveau,
-    };
-  });
+  const lots: never[] = [];
   // Chaque espèce entrée au carnet ajoute au charme : une ferme qu'on visite pour ses oiseaux.
   const charme =
     charmeDe({ cells: p.cells.map((c) => ({ ...c, sol: c.sol as SolCase })), amenagements: p.amenagements }) +
@@ -9915,112 +10015,16 @@ const includeDomaine = {
 } as const;
 
 /**
- * Acheter un lot de terrain.
+ * Acheter un lot de 6×6 autour de sa ferme : fermé.
  *
- * Le lot doit toucher la ferme par un côté : elle pousse de proche en proche,
- * dans la direction que le joueur choisit, et sa silhouette finit par être la
- * sienne. Les cases achetées naissent en pré.
+ * On complétait sa parcelle carré par carré ; on achète maintenant la parcelle
+ * d'à côté, entière (`POST /parcels/:id/buy`). Ce qui a déjà été acheté en
+ * lots reste à son propriétaire.
  */
-app.post("/parcels/:id/lots/buy", async (req, res) => {
-  const body = z
-    .object({ userId: z.string(), lot: z.string() })
-    .safeParse(req.body);
-  if (!body.success) {
-    res.status(400).json(body.error.flatten());
-    return;
-  }
-  const parcel = await prisma.parcel.findUnique({ where: { id: req.params.id }, include: includeDomaine });
-  if (!parcel?.farm || parcel.farm.userId !== body.data.userId) {
-    res.status(403).json({ error: "Parcelle non possédée" });
-    return;
-  }
-  const vue = domaineVue(parcel);
-  const lot = vue.lots.find((l) => l.id === body.data.lot);
-  if (!lot) {
-    res.status(404).json({ error: "Lot introuvable" });
-    return;
-  }
-  if (lot.etat === "POSSEDE") {
-    res.status(409).json({ error: "Ce lot est déjà à vous" });
-    return;
-  }
-  if (lot.etat === "ENCLAVE") {
-    res.status(409).json({ error: "Ce lot ne touche pas votre terre — achetez d'abord un lot voisin" });
-    return;
-  }
-  const user = await prisma.user.findUnique({ where: { id: body.data.userId } });
-  if (!user) {
-    res.status(404).json({ error: "Joueur introuvable" });
-    return;
-  }
-  if (user.level < lot.niveau) {
-    res.status(403).json({ error: `Niveau ${lot.niveau} requis pour ce lot` });
-    return;
-  }
-  const prix = lot.prix;
-  if (!peutPayer(user, prix)) {
-    res.status(402).json({ error: `€ insuffisants — ${prix} requis` });
-    return;
-  }
-  const possedees = new Set(parcel.cells.map((c) => cleCase(c.x, c.y)));
-  /* La campagne façonnée que le lot recouvre passe dans la ferme telle
-     quelle : un lac reste un lac, un bois garde son âge. */
-  const campagne = new Map(
-    (await prisma.caseCampagne.findMany({ where: { parcelId: parcel.id } })).map((c) => [cleCase(c.x, c.y), c]),
-  );
-  const reprises: string[] = [];
-  const nouvelles: {
-    parcelId: string;
-    x: number;
-    y: number;
-    sol: "PRE" | "EAU" | "BOIS";
-    niveau: number;
-    forme: number;
-    boiseDepuis: Date | null;
-  }[] = [];
-  for (let y = lot.y; y < lot.y + lot.h; y++) {
-    for (let x = lot.x; x < lot.x + lot.w; x++) {
-      if (possedees.has(cleCase(x, y))) continue;
-      const c = campagne.get(cleCase(x, y));
-      if (c) reprises.push(c.id);
-      nouvelles.push({
-        parcelId: parcel.id,
-        x,
-        y,
-        sol: c?.sol === "EAU" || c?.sol === "BOIS" ? c.sol : "PRE",
-        niveau: c?.niveau ?? 0,
-        forme: c?.forme ?? 0,
-        boiseDepuis: c?.boiseDepuis ?? null,
-      });
-    }
-  }
-  try {
-    await prisma.$transaction(async (tx) => {
-      /* Le compteur d'abord, sous condition : deux achats simultanés du même
-         lot ne passent pas tous les deux — le second trouve le compteur changé. */
-      const garde = await tx.parcel.updateMany({
-        where: { id: parcel.id, lotsAchetes: parcel.lotsAchetes },
-        data: { lotsAchetes: { increment: 1 }, landPrice: { increment: prix } },
-      });
-      if (garde.count !== 1) throw new Error("CONCURRENT");
-      await debit(
-        tx,
-        user.id,
-        prix,
-        "TERRES",
-        `Achat de terrain — ${nouvelles.length} cases`,
-      );
-      await tx.parcelCell.createMany({ data: nouvelles, skipDuplicates: true });
-      if (reprises.length) await tx.caseCampagne.deleteMany({ where: { id: { in: reprises } } });
-    });
-  } catch (e) {
-    if (e instanceof Error && e.message === "CONCURRENT") {
-      res.status(409).json({ error: "Le domaine vient de changer — réessayez" });
-      return;
-    }
-    throw e;
-  }
-  res.status(201).json({ lot: lot.id, paid: prix, cases: nouvelles.length, reprises: reprises.length });
+app.post("/parcels/:id/lots/buy", async (_req, res) => {
+  res.status(410).json({
+    error: "La terre ne se vend plus en lots : touchez une parcelle voisine dans le paysage pour l'acheter entière.",
+  });
 });
 
 

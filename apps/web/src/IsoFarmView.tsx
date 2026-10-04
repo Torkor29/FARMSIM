@@ -3305,6 +3305,14 @@ export function IsoFarmView({
         const r = renderer.domElement.getBoundingClientRect();
         return { x: r.left + ((v.x + 1) / 2) * r.width, y: r.top + ((1 - v.y) / 2) * r.height };
       };
+      // Et le milieu d'une parcelle du pays, par son identifiant.
+      (window as unknown as { __parcelleEcran?: unknown }).__parcelleEcran = (id: string) => {
+        const p = campagne?.plan.parcelles.find((q) => q.reel?.id === id);
+        if (!p) return null;
+        const v = new THREE.Vector3(p.x, CAMPAGNE_Y, p.z).project(camera);
+        const r = renderer.domElement.getBoundingClientRect();
+        return { x: r.left + ((v.x + 1) / 2) * r.width, y: r.top + ((1 - v.y) / 2) * r.height };
+      };
     }
     function raycastCell(): { x: number; y: number; fx: number; fy: number } | null {
       raycaster.setFromCamera(pointer, camera);

@@ -121,26 +121,16 @@ describe("le relief dans les règles de pose", () => {
 });
 
 describe("l'eau de la campagne", () => {
-  // Une ferme de 0 à 11, ses lots à vendre jusqu'à −6 et 18 : la campagne est au-delà.
-  const domaine = { minX: -6, minY: -6, maxX: 18, maxY: 18 };
+  // Une ferme de 0 à 11 : la campagne commence juste derrière son bord.
+  const domaine = { minX: 0, minY: 0, maxX: 12, maxY: 12 };
 
-  it("arrive par les rigoles : comptée depuis le bord de la ferme", () => {
-    const eaux = eauxDeLaCampagne(domaine, [
-      { x: 18, y: 4, courante: true },
-      { x: -7, y: 4 },
-      { x: 20, y: 20 },
-      { x: 30, y: 4 },
-    ]);
-    expect(eaux).toEqual([
-      { x: 12, y: 4, courante: true },
-      { x: -1, y: 4 },
-      { x: 14, y: 14 },
-      { x: 24, y: 4 },
-    ]);
+  it("irrigue de là où elle est : la campagne touche la ferme", () => {
+    const eaux = eauxDeLaCampagne(domaine, [{ x: 12, y: 4, courante: true }, { x: 20, y: 4 }]);
+    expect(eaux).toEqual([{ x: 12, y: 4, courante: true }, { x: 20, y: 4 }]);
     // Le champ du bord, x = 11, en profite ; la mare lointaine reste lointaine.
     expect(bonusAmenagementCase({ objets: [], eaux: eaux.slice(0, 1) }, 11, 4)).toBeCloseTo(0.07, 5);
     expect(bonusAmenagementCase({ objets: [], eaux: eaux.slice(0, 1) }, 9, 4)).toBeCloseTo(0.03, 5);
-    expect(bonusAmenagementCase({ objets: [], eaux: eaux.slice(3) }, 11, 4)).toBe(0);
+    expect(bonusAmenagementCase({ objets: [], eaux: eaux.slice(1) }, 11, 4)).toBe(0);
   });
 
   it("rend à son prix le travail qu'une route recouvre", () => {

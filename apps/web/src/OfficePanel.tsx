@@ -641,15 +641,16 @@ export function OfficePanel({
             </div>
           ) : mode === "LAND" ? (
             <div className="hdv-single">
-              {/* Une seule façon d'avoir de la terre : agrandir sa ferme autour
-                  d'elle, depuis le mode construction. La carte des régions
-                  vendait des parcelles ailleurs, un second système. */}
+              {/* La terre s'achète dans le paysage, là où on la voit : une
+                  parcelle voisine entière, collée à l'une des siennes. */}
               <p className="hdv-muted">
-                Votre ferme grandit d'un seul tenant : la friche qui l'entoure se vend par lots de 6×6
-                cases, et chaque lot acheté repousse la friche plus loin. Il n'y a pas de limite.
+                On s'agrandit en rachetant la parcelle d'à côté, entière — libre, ou cédée par une ferme
+                PNJ — à condition qu'elle touche l'une des vôtres, même de l'autre côté d'un chemin ou de
+                la route. Les parcelles n'ont pas toutes la même taille : de 8×8 à 16×16 cases. Deux
+                parcelles à vous, séparées par un chemin de terre, se réunissent en un seul champ.
               </p>
               <button type="button" className="primary" onClick={() => onBuyLand("")}>
-                Agrandir ma ferme
+                Voir les parcelles à vendre
               </button>
             </div>
           ) : mode === "MINE" ? (
