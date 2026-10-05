@@ -222,3 +222,12 @@ describe("la sauvegarde d’avant-déploiement, quand la base est à l’arrêt"
     assert.match(DEPLOY, /exit 1/);
   });
 });
+
+describe("le contrôle du volume de données", () => {
+  it("porte sur la base, pas sur l'ancien volume SQLite", () => {
+    // `/data` n'est plus monté depuis la bascule sur PostgreSQL : le
+    // contrôle avertissait à chaque déploiement, pour rien.
+    assert.doesNotMatch(DEPLOY, /echo "WARN: volume \/data/);
+    assert.match(DEPLOY, /\/var\/lib\/postgresql\/data/);
+  });
+});

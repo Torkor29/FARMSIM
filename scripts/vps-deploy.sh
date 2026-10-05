@@ -576,18 +576,23 @@ for _ in $(seq 1 30); do
   sleep 5
 done
 
-# Un volume nommé créé par une exécution antérieure — ou par une image
-# construite avec un uid différent — garde son propriétaire d'origine tant
-# que personne ne le change explicitement. On force la propriété une fois ;
-# sans effet si elle était déjà correcte (voir deploiement/ du dépôt Vigie,
-# check-list « Ajouter un site ou un service »).
-echo "==> Vérification des droits sur le volume de données"
-DATA_VOL="$(docker inspect farmsim -f '{{range .Mounts}}{{if eq .Destination "/data"}}{{.Name}}{{end}}{{end}}' 2>/dev/null || true)"
-if [[ -n "$DATA_VOL" ]]; then
-  docker run --rm -v "${DATA_VOL}:/data" busybox chown -R 10001:10001 /data
-  monter up -d
+# Les données du jeu vivent dans le volume de PostgreSQL, et nulle part
+# ailleurs.
+#
+# On vérifiait ici le volume `/data` du conteneur `farmsim` — celui du
+# fichier SQLite d'avant la bascule. Il n'est plus monté depuis : le conteneur
+# du jeu est en lecture seule et n'écrit rien sur disque. Le contrôle
+# annonçait donc à chaque déploiement « volume /data introuvable », un faux
+# signal qui apprenait à ignorer cette ligne.
+#
+# Ce qui compte, c'est que la base soit sur un **volume nommé** : sans lui,
+# recréer `farmsim-db` repartirait d'une base vide. C'est ça qu'on contrôle.
+echo "==> Volume de la base"
+PG_VOL="$(docker inspect "${FARMSIM_DB_CONTAINER:-farmsim-db}" -f '{{range .Mounts}}{{if eq .Destination "/var/lib/postgresql/data"}}{{.Type}}:{{.Name}}{{end}}{{end}}' 2>/dev/null || true)"
+if [[ "$PG_VOL" == volume:?* ]]; then
+  echo "    ${PG_VOL#volume:}"
 else
-  echo "WARN: volume /data introuvable sur le conteneur farmsim — vérifie docker-compose.yml" >&2
+  echo "WARN: la base n'est pas sur un volume nommé (${PG_VOL:-aucun montage}) — ses données ne survivraient pas à une recréation. Vérifie docker-compose.yml." >&2
 fi
 
 # Le serveur amorce le monde — régions, parcelles, fermes voisines — **avant**
