@@ -43,6 +43,16 @@ describe("le ménage Docker", () => {
     // au prochain incident.
     assert.match(DEPLOY, /Ménage Docker sauté — disque à \$\{occupe_pct\} %/);
   });
+
+  it("retire les anciennes images du jeu, pas seulement les orphelines", () => {
+    // Chaque image déployée garde son étiquette : `prune -f` ne la voit pas,
+    // et elles avaient rempli le disque au point de bloquer la sauvegarde.
+    assert.match(DEPLOY, /docker image prune -af --filter "until=\d+h"/);
+  });
+
+  it("ne touche jamais aux volumes", () => {
+    assert.doesNotMatch(DEPLOY, /^\s*[^#\n]*docker [a-z ]*prune[^\n]*--volumes/m);
+  });
 });
 
 describe("la lecture des migrations", () => {
