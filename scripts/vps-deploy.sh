@@ -179,6 +179,17 @@ if (( occupe_pct >= 70 )) || [[ "${FARMSIM_FORCE_PRUNE:-0}" == "1" ]]; then
   echo "==> Ménage Docker (cache de construction et images orphelines)"
   timeout 300 docker builder prune -af >/dev/null 2>&1 || echo "    (cache : ménage incomplet)"
   timeout 300 docker image prune -f >/dev/null 2>&1 || echo "    (images : ménage incomplet)"
+  # Les anciennes images du jeu, que `prune -f` ne voit pas.
+  #
+  # Chaque déploiement tire `ghcr.io/…/farmsim:<commit>` : l'image d'avant
+  # garde son étiquette, elle n'est donc jamais « orpheline » et `prune -f`
+  # la laisse. Le 5 octobre, elles occupaient treize gigaoctets sous
+  # /var/lib/containerd ; le disque à 94 %, la sauvegarde de contrôle n'a
+  # plus trouvé où restaurer et le déploiement s'est arrêté. `-a` retire
+  # toute image qu'aucun conteneur n'emploie — celles du jeu en marche, de la
+  # base et du proxy restent — et `until=48h` épargne les plus récentes.
+  timeout 300 docker image prune -af --filter "until=48h" >/dev/null 2>&1 \
+    || echo "    (anciennes images : ménage incomplet)"
   timeout 120 docker container prune -f >/dev/null 2>&1 || true
 else
   echo "==> Ménage Docker sauté — disque à ${occupe_pct} %, la place ne manque pas."
