@@ -45,6 +45,22 @@ describe("le ménage Docker", () => {
   });
 });
 
+describe("le disque plein n'arrête plus le déploiement", () => {
+  /**
+   * Le 5 octobre : 94 % occupé, 1,6 Go libres, ménage Docker inchangé.
+   * La relecture a saturé PostgreSQL, la sauvegarde a été déclarée
+   * échouée, et #106 n'est pas parti.
+   */
+  it("élague les dumps quand il ne reste presque plus de place", () => {
+    assert.match(DEPLOY, /on ne garde que 3 dumps, les plus récents/);
+  });
+
+  it("jette les bases farmsim_verif_ orphelines avant l'instantané", () => {
+    assert.match(DEPLOY, /farmsim_verif_%/);
+    assert.match(DEPLOY, /Bases d'essai orphelines/);
+  });
+});
+
 describe("la lecture des migrations", () => {
   it("est bornée", () => {
     // Sept minutes mesurées. Non bornée, une requête qui n'aboutit pas

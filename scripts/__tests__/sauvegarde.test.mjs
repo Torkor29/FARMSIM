@@ -31,8 +31,11 @@ import { fileURLToPath } from "node:url";
 import {
   RienASauvegarder,
   élaguer,
+  estDisquePlein,
+  fautRestaurer,
   horodatage,
   instantané,
+  jeterBasesVerif,
   sauvegarder,
   vérifier,
 } from "../farmsim-backup.mjs";
@@ -241,6 +244,38 @@ describe("rotation", () => {
     const tard = horodatage(new Date("2026-11-30T23:59:59.000Z"));
     assert.ok(tôt < tard, `${tôt} devrait précéder ${tard}`);
     assert.match(tôt, /^\d{4}-\d{2}-\d{2}T\d{6}Z$/);
+  });
+});
+
+describe("disque plein", () => {
+  /**
+   * Le 5 octobre, `main` est tombé ici : 94 % occupé, 1,6 Go libres,
+   * `pg_restore` a voulu une seconde copie de la base, et le déploiement
+   * s'est arrêté — l'archive a même été effacée.
+   */
+  it("reconnaît l'erreur PostgreSQL", () => {
+    assert.equal(
+      estDisquePlein('ERROR:  could not extend file "base/188321/188806": No space left on device'),
+      true,
+    );
+    assert.equal(estDisquePlein("Command failed: pg_restore --dbname postgresql://…"), false);
+  });
+
+  it("refuse de restaurer sans la place d'une seconde copie", () => {
+    assert.equal(fautRestaurer(1_600_000_000, 2_000_000_000), false);
+    assert.equal(fautRestaurer(5_000_000_000, 2_000_000_000), true);
+  });
+
+  it("jette les bases d'essai orphelines avant d'en créer une", () => {
+    const nom = `farmsim_verif_${randomBytes(6).toString("hex")}`;
+    psql(ADMIN, `CREATE DATABASE "${nom}"`);
+    try {
+      const jetées = jeterBasesVerif(url);
+      assert.ok(jetées.includes(nom), `attendue ${nom}, obtenues ${jetées.join(",")}`);
+      assert.equal(psql(ADMIN, `SELECT count(*) FROM pg_database WHERE datname = '${nom}'`), "0");
+    } finally {
+      detruire(nom);
+    }
   });
 });
 
