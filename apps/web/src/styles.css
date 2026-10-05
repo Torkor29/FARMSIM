@@ -7264,6 +7264,17 @@ button.tiny {
   cursor: pointer;
 }
 .voisin-acheter:disabled { opacity: 0.6; cursor: progress; }
+/* Le geste second d'une fiche : aller sur la parcelle quand on peut la réunir. */
+.voisin-aller {
+  padding: 0.55rem 1rem;
+  border: 1px solid var(--line, rgba(0, 0, 0, 0.15));
+  border-radius: var(--r-md);
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
 .voisin-refus {
   margin: 0;
   font-size: 0.88rem;

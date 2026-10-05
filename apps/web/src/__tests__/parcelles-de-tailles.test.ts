@@ -159,7 +159,9 @@ describe("le paysage, quand la commune a répondu", () => {
      * sur cette trame-là aurait mordu sur le chemin de son voisin, et deux
      * champs se seraient touchés sans séparation.
      */
-    expect(plan.pas).toBe(coteDeGrille(COTE_MAX, COTE_MAX, PAS_CASE) + LARGEUR_CHEMIN);
+    expect(plan.pas).toBeGreaterThanOrEqual(coteDeGrille(COTE_MAX, COTE_MAX, PAS_CASE) + LARGEUR_CHEMIN);
+    // Et un nombre entier de cases : deux parcelles réunies tombent juste.
+    expect(plan.pas / PAS_CASE).toBeCloseTo(Math.round(plan.pas / PAS_CASE), 9);
     for (const p of plan.parcelles) {
       expect({ id: p.id, tient: p.cote + LARGEUR_CHEMIN <= plan.pas + 1e-9 }).toEqual({
         id: p.id,
@@ -299,7 +301,7 @@ describe("aller sur sa parcelle en cliquant dessus", () => {
      * il ouvrait une fiche dont tout le contenu était « Cette parcelle est
      * déjà la vôtre ».
      */
-    expect(APP).toContain('if (v.statut === "MOI") setActiveParcelId(v.id);');
+    expect(APP).toContain('else if (v.statut === "MOI") setActiveParcelId(v.fusionneeDans ?? v.id);');
   });
 
   it("ferme l’impasse partout, pas seulement dans le paysage", () => {

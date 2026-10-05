@@ -170,14 +170,14 @@ export function PanneauConstruction(p: Props) {
       <div className="construction-elements" role="listbox" aria-label="Éléments">
         {p.categorie === "TERRAFORMAGE" && (
           <div className="construction-aide-terrain">
-            Le terraformage se fait dans la campagne, autour de votre ferme — au-delà des lots à vendre. Creusez à
+            Le terraformage se fait dans la campagne, autour de votre ferme — juste derrière son bord. Creusez à
             main levée une mare ou une rivière, montez des buttes, puis prenez les Berges pour arrondir un coin.
           </div>
         )}
         {p.categorie === "TERRAIN" && (
           <div className="construction-aide-terrain">
-            Survolez la friche dorée : chaque lot à vendre y affiche son prix. Un clic l'achète — avec ce que vous
-            avez façonné dessus dans la campagne.
+            Pour vous agrandir, touchez une parcelle voisine marquée « À vendre » dans le paysage : elle
+            s'achète entière.
           </div>
         )}
         {elements.map((d) => {

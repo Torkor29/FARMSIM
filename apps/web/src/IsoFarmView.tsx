@@ -23,6 +23,7 @@ import {
   machineMeshScale,
   asTier,
   COTE_MAX,
+  PAS_TRAME_CASES,
   GRILLE_STANDARD,
 } from "@farmsim/shared";
 import { disposeRenderer, disposeThreeScene, markShared } from "./three-cleanup";
@@ -56,6 +57,7 @@ import {
 } from "./cadrage";
 import { geometrieHaie, makeArbre } from "./decor3d";
 import { arbresDeCoin, chevauchent, type Occupant } from "./placement";
+import { pansDeHaie, rectanglesDeCases } from "./contour-ile";
 import { DecorJoueur, occupantsDeco } from "./decor-joueur";
 import type { ArticleDeco, Decoration } from "@farmsim/shared";
 import { MODELES_DISPONIBLES, poserArbreForge } from "./modeles-decor";
@@ -316,6 +318,8 @@ type Props = {
    * temps que la route réponde, et la vue se monte donc sans réseau.
    */
   voisinage?: readonly VoisinReel[];
+  /** L'orientation de la commune, donnée par le serveur (fixée par le siège). */
+  quartTrame?: 0 | 1 | 2 | 3 | null;
   /** Un champ de voisin a été touché : la coquille en ouvre la fiche. */
   onVoisinClick?: (voisin: VoisinReel) => void;
   /**
@@ -1199,6 +1203,7 @@ export function IsoFarmView({
   controle,
   onEgare,
   voisinage,
+  quartTrame,
   onVoisinClick,
   onOwnedCellClick,
   onLieuClick,
@@ -1325,6 +1330,8 @@ export function IsoFarmView({
    */
   const voisinageRef = useRef(voisinage);
   voisinageRef.current = voisinage;
+  const quartTrameRef = useRef(quartTrame);
+  quartTrameRef.current = quartTrame;
   const parcelIdRef = useRef(parcelId);
   parcelIdRef.current = parcelId;
   const onVoisinRef = useRef(onVoisinClick);
@@ -1598,10 +1605,18 @@ export function IsoFarmView({
      * rien glisser. Une fonction et non une constante : `step` n'est déclaré
      * que plus bas.
      */
-    const pasTrame = (): number => coteDeGrille(COTE_MAX, COTE_MAX, step) + LARGEUR_CHEMIN;
+    const pasTrame = (): number => Math.max(PAS_TRAME_CASES * step, coteDeGrille(COTE_MAX, COTE_MAX, step) + LARGEUR_CHEMIN);
     /** Les dimensions du siège, là où est la cour — pas forcément la parcelle active. */
     function tailleSiege(gw: number, gh: number): { gw: number; gh: number } {
       const siege = voisinageRef.current?.find((v) => v.id === homeRef.current);
+      /*
+       * La grille d'origine du siège, pas le rectangle de son île : réuni à
+       * sa voisine, il s'étend d'une case de trame, et la route — calée sous
+       * sa cour — sauterait d'un couloir avec lui.
+       */
+      if (siege?.id === parcelIdRef.current && dataRef.current.gridW && dataRef.current.gridH) {
+        return { gw: dataRef.current.gridW, gh: dataRef.current.gridH };
+      }
       if (!siege?.gridW || !siege.gridH || siege.id === parcelIdRef.current) return { gw, gh };
       return { gw: siege.gridW, gh: siege.gridH };
     }
@@ -1613,7 +1628,7 @@ export function IsoFarmView({
       }
       const maison = voisins.find((v) => v.id === homeRef.current);
       if (!maison) {
-        repere = { quart: orientationTrame(voisins), mx: 0, mz: 0 };
+        repere = { quart: quartTrameRef.current ?? orientationTrame(voisins), mx: 0, mz: 0 };
         return;
       }
       const autourDuSiege = voisins.map((v) => ({
@@ -1621,7 +1636,7 @@ export function IsoFarmView({
         col: v.col - maison.col,
         rang: v.rang - maison.rang,
       }));
-      const quart = orientationTrame(autourDuSiege);
+      const quart = quartTrameRef.current ?? orientationTrame(autourDuSiege);
       const pas = pasTrame();
       const t = tourner(maison, quart);
       repere = { quart, mx: t.col * pas, mz: t.rang * pas };
@@ -2074,10 +2089,20 @@ export function IsoFarmView({
     const farmerMeshes = new Map<string, THREE.Group>();
 
     const platformMat = new THREE.MeshLambertMaterial({ color: 0x8a6b4a, flatShading: true });
-    const platform = new THREE.Mesh(new THREE.BoxGeometry(1, 0.45, 1), platformMat);
-    platform.receiveShadow = true;
-    platform.castShadow = true;
+    /*
+     * Le socle de l'île, une dalle par rectangle de cases.
+     *
+     * C'était une seule dalle, à la taille du rectangle englobant. Une île
+     * réunie peut être en L ou en T : la dalle unique aurait couvert
+     * l'encoche — c'est-à-dire le champ du voisin qui l'occupe.
+     */
+    const platformGeo = markShared(new THREE.BoxGeometry(1, 0.45, 1));
+    const platform = new THREE.Group();
     world.add(platform);
+    /** L'île dans le monde, talus non compris : son centre et sa taille. */
+    let ileMonde = { x: 0, z: 0, w: 1, d: 1 };
+    /** Le milieu de l'île au dernier dessin du pays : la vue s'y comptait. */
+    let ileVue = { x: 0, z: 0 };
 
     // La haie en boules (voir `geometrieHaie`) : couleurs de sommets, lisse.
     const hedgeMat = new THREE.MeshLambertMaterial({ vertexColors: true });
@@ -2351,8 +2376,27 @@ export function IsoFarmView({
       calculerRepere();
       // La cour borde l'île du siège : ce sont ses dimensions à lui qui comptent.
       const siege = tailleSiege(gw, gh);
-      const ileOuest = -(siege.gw * step + TALUS_PARCELLE) / 2;
-      const ileSud = (siege.gh * step + TALUS_PARCELLE) / 2;
+      let ileOuest = -(siege.gw * step + TALUS_PARCELLE) / 2;
+      let ileSud = (siege.gh * step + TALUS_PARCELLE) / 2;
+      /*
+       * Chez soi, le vrai bord de l'île : la grille d'origine est calée au
+       * centre, mais l'île a pu s'étendre (une parcelle réunie au nord, des
+       * lots achetés jadis à l'ouest). La cour se cale sur le bord ouest des
+       * rangées du siège, et sur son bord sud.
+       */
+      const { cells: casesIle, gridW: w0, gridH: h0 } = dataRef.current;
+      if (!voisinageRef.current?.some((v) => v.id === homeRef.current) || homeRef.current === parcelIdRef.current) {
+        // Le bord ouest des rangées du siège, le bord sud de ses colonnes : ce
+        // qu'on lui a réuni à l'est ou au nord ne déplace pas la cour.
+        let xMin = Infinity;
+        let yMax = -Infinity;
+        for (const c of casesIle) {
+          if (c.y >= 0 && c.y < (h0 || gh) && c.x < xMin) xMin = c.x;
+          if (c.x >= 0 && c.x < (w0 || gw) && c.y > yMax) yMax = c.y;
+        }
+        if (Number.isFinite(xMin)) ileOuest = ox + (xMin - 0.5) * step - TALUS_PARCELLE / 2;
+        if (Number.isFinite(yMax)) ileSud = oz + (yMax + 0.5) * step + TALUS_PARCELLE / 2;
+      }
       // Le chemin du modèle saille de 0,72 case au-delà de la dalle : on cale
       // la cour pour qu'il rejoigne exactement le bord de l'île — celle du
       // siège, décalée de sa place quand on travaille sur une autre parcelle.
@@ -2573,11 +2617,34 @@ export function IsoFarmView({
       cellSize = 1;
       const gap = 0.06;
       step = cellSize + gap;
-      ox = -((gw - 1) * step) / 2 - baseX * step;
-      oz = -((gh - 1) * step) / 2 - baseY * step;
+      /*
+       * L'île est calée sur la grille d'origine de sa parcelle, pas sur son
+       * rectangle englobant.
+       *
+       * C'est elle qui occupe sa case de la trame : une parcelle réunie à sa
+       * voisine s'étend vers la case d'à côté, et c'est **là** que doit se
+       * dessiner la partie réunie — pas l'île entière recentrée, qui ferait
+       * glisser tout le paysage d'un demi-champ.
+       */
+      const g0 = { w: dataRef.current.gridW || gw, h: dataRef.current.gridH || gh };
+      ox = -((g0.w - 1) * step) / 2;
+      oz = -((g0.h - 1) * step) / 2;
+      ileMonde = {
+        x: ox + (baseX + gw / 2 - 0.5) * step,
+        z: oz + (baseY + gh / 2 - 0.5) * step,
+        w: gw * step,
+        d: gh * step,
+      };
 
-      platform.scale.set(gw * step + 1.4, 1, gh * step + 1.4);
-      platform.position.set(0, -0.28, 0);
+      while (platform.children.length) platform.remove(platform.children[0]!);
+      for (const r of rectanglesDeCases(dataRef.current.cells)) {
+        const m = new THREE.Mesh(platformGeo, platformMat);
+        m.receiveShadow = true;
+        m.castShadow = true;
+        m.scale.set((r.x1 - r.x0 + 1) * step + 1.4, 1, (r.y1 - r.y0 + 1) * step + 1.4);
+        m.position.set(ox + ((r.x0 + r.x1) / 2) * step, -0.28, oz + ((r.y0 + r.y1) / 2) * step);
+        platform.add(m);
+      }
 
       // La cour d'abord : c'est elle qui dit où la haie doit s'ouvrir.
       buildParking();
@@ -2605,7 +2672,7 @@ export function IsoFarmView({
             /* La grille en fait partie : c'est elle qui donne sa taille au
                champ. L'omettre laisserait le pays uniforme jusqu'au prochain
                changement de culture d'un voisin. */
-            `${v.col},${v.rang}:${v.gridW ?? "-"}x${v.gridH ?? "-"}:${v.culture ?? "-"}:${v.stade ?? "-"}:${v.batiments.length}:${v.statut}`,
+            `${v.col},${v.rang}:${v.gridW ?? "-"}x${v.gridH ?? "-"}:${v.culture ?? "-"}:${v.stade ?? "-"}:${v.batiments.length}:${v.statut}:${v.fusionneeDans ?? ""}`,
         )
         .join("|");
       /* Les décorations du joueur : les arbres et l'herbe tirés au sort leur
@@ -2615,7 +2682,7 @@ export function IsoFarmView({
         .join("|");
       // La campagne façonnée aussi : le décor tiré au sort lui laisse la place.
       const empreinteCampagne = (dataRef.current.campagne ?? []).map((c) => `${c.x},${c.y}`).join("|");
-      const cle = `${gw}x${gh}|${courBoite.x.toFixed(2)},${courBoite.z.toFixed(2)},${courBoite.w.toFixed(2)},${courBoite.d.toFixed(2)}|${parcelIdRef.current}|${empreinteVoisins}|${empreinteDeco}|${empreinteCampagne}`;
+      const cle = `${gw}x${gh}@${ileMonde.x.toFixed(2)},${ileMonde.z.toFixed(2)}q${repere.quart}|${courBoite.x.toFixed(2)},${courBoite.z.toFixed(2)},${courBoite.w.toFixed(2)},${courBoite.d.toFixed(2)}|${parcelIdRef.current}|${empreinteVoisins}|${empreinteDeco}|${empreinteCampagne}`;
       if (cle !== campagneCle) {
         campagneCle = cle;
         /*
@@ -2630,9 +2697,17 @@ export function IsoFarmView({
         const idActif = parcelIdRef.current;
         const ici = campagne?.plan.parcelles.find((v) => v.id === idActif);
         if (ici) {
-          view.panX -= ici.x;
-          view.panZ -= ici.z;
+          // La vue se compte depuis le milieu de l'île : celle d'avant et
+          // celle d'arrivée n'ont pas forcément le même.
+          view.panX += ileVue.x - ici.x - ileMonde.x;
+          view.panZ += ileVue.z - ici.z - ileMonde.z;
+          /* Puis la vue glisse jusqu'à la parcelle d'arrivée : on y va pour
+             y jouer. Elle restait sur celle d'avant, la nouvelle hors cadre
+             — on croyait n'avoir pas changé de parcelle. */
+          tientLaVue = false;
+          retourVers = { x: 0, z: 0 };
         }
+        ileVue = { x: ileMonde.x, z: ileMonde.z };
         /*
          * Les parcelles qui viennent de passer à nous : on les voyait déjà, à
          * un autre, et les voici au joueur. Leur chemin d'accès se construit
@@ -2682,6 +2757,7 @@ export function IsoFarmView({
            * de la leur.
            */
           emprise: Math.max(gw, gh) * step + TALUS_PARCELLE,
+          ile: { x: ileMonde.x, z: ileMonde.z, w: ileMonde.w + TALUS_PARCELLE, d: ileMonde.d + TALUS_PARCELLE },
           pasCase: step,
           cases: Math.max(gw, gh),
           chantiers,
@@ -2740,7 +2816,7 @@ export function IsoFarmView({
        * **centrer** la plus lointaine et pas seulement l'amener au bord.
        */
       {
-        const ile = { x: 0, z: 0, w: gw * step + 1.4, d: gh * step + 1.4 };
+        const ile = { x: ileMonde.x, z: ileMonde.z, w: ileMonde.w + 1.4, d: ileMonde.d + 1.4 };
         const boites = [ile, courBoite];
         if (campagne) {
           for (const v of campagne.plan.parcelles) {
@@ -2755,7 +2831,11 @@ export function IsoFarmView({
             boites.push({ x: l.x, z: l.z, w: COTE_LIEU, d: COTE_LIEU });
           }
         }
-        bornesVue = bornesDeplacement(boites, ile.w / 2);
+        /* La vue se compte depuis le milieu de l'île : réunie à ses voisines,
+           elle n'est plus centrée sur sa parcelle d'origine, et « Ma ferme »
+           doit ramener sur toute l'île. */
+        const b = bornesDeplacement(boites, ile.w / 2);
+        bornesVue = { xMin: b.xMin - ileMonde.x, xMax: b.xMax - ileMonde.x, zMin: b.zMin - ileMonde.z, zMax: b.zMax - ileMonde.z };
       }
 
       const hedgeH = 0.55;
@@ -2779,20 +2859,42 @@ export function IsoFarmView({
       const passage = accesIci ? 1.8 : 1.5;
       const passageZ = accesIci ? 0 : parkingGateZ;
       const cotePassage = accesIci?.cote ?? -1;
-      const ouestAvant = Math.max(0, passageZ - passage / 2 + hh / 2);
-      const ouestApres = Math.max(0, hh / 2 - (passageZ + passage / 2));
-      // Chaque pan : longueur, axe (x ou z), position. Les pans en z sont des
-      // haies en x tournées d'un quart de tour.
-      const hedges: [number, "x" | "z", [number, number, number]][] = [
-        [hw, "x", [0, 0, -hh / 2]],
-        [hw, "x", [0, 0, hh / 2]],
-        [hh, "z", [(-cotePassage * hw) / 2, 0, 0]],
-      ];
-      if (ouestAvant > 0.05) {
-        hedges.push([ouestAvant, "z", [(cotePassage * hw) / 2, 0, -hh / 2 + ouestAvant / 2]]);
-      }
-      if (ouestApres > 0.05) {
-        hedges.push([ouestApres, "z", [(cotePassage * hw) / 2, 0, hh / 2 - ouestApres / 2]]);
+      /*
+       * Les pans suivent le bord des cases : une île réunie n'est plus un
+       * rectangle, et sa haie passe autour — jamais entre deux parcelles
+       * qu'on vient de réunir. Le passage s'ouvre dans le pan le plus à
+       * l'ouest (la cour) ou du côté du chemin d'accès, à sa hauteur.
+       */
+      const ecartHaie = 0.45 / step;
+      const versX = (e: number) => ox + (e - 0.5) * step;
+      const versZ = (e: number) => oz + (e - 0.5) * step;
+      const hedges: [number, "x" | "z", [number, number, number]][] = [];
+      const pans = pansDeHaie(dataRef.current.cells, ecartHaie);
+      const candidats = pans
+        .filter((p) => p.axe === "y" && p.normale === cotePassage)
+        .filter((p) => versZ(p.debut) <= passageZ - passage / 2 && versZ(p.fin) >= passageZ + passage / 2)
+        .sort((a, b) => cotePassage * (b.a - a.a));
+      const fendu = candidats[0] ?? null;
+      let xPassage = (cotePassage * hw) / 2;
+      for (const p of pans) {
+        if (p.axe === "x") {
+          const x0 = versX(p.debut);
+          const x1 = versX(p.fin);
+          hedges.push([x1 - x0, "x", [(x0 + x1) / 2, 0, versZ(p.a)]]);
+          continue;
+        }
+        const x = versX(p.a);
+        const z0 = versZ(p.debut);
+        const z1 = versZ(p.fin);
+        if (p !== fendu) {
+          hedges.push([z1 - z0, "z", [x, 0, (z0 + z1) / 2]]);
+          continue;
+        }
+        xPassage = x;
+        const avant = passageZ - passage / 2 - z0;
+        const apres = z1 - (passageZ + passage / 2);
+        if (avant > 0.05) hedges.push([avant, "z", [x, 0, z0 + avant / 2]]);
+        if (apres > 0.05) hedges.push([apres, "z", [x, 0, z1 - apres / 2]]);
       }
       hedges.forEach(([longueur, axe, [px, py, pz]], i) => {
         // La haie de boules monte un peu plus que l'ancien pavé (0,15 + 0,55/2).
@@ -2808,7 +2910,7 @@ export function IsoFarmView({
       for (const side of [-1, 1]) {
         // Une touffe plus haute que la haie, de chaque côté du passage.
         const pilier = new THREE.Mesh(geometrieHaie(hedgeT * 1.6, hedgeH + 0.42, hedgeT * 1.6, 30 + side), hedgeMat);
-        pilier.position.set((cotePassage * hw) / 2, 0, passageZ + (side * passage) / 2);
+        pilier.position.set(xPassage, 0, passageZ + (side * passage) / 2);
         pilier.castShadow = true;
         fenceGroup.add(pilier);
       }
@@ -2820,7 +2922,7 @@ export function IsoFarmView({
       const coins = arbresDeCoin(hw, hh, 2.1, [
         ...(campagne?.plan.occupants ?? []),
         { id: "cour", genre: "cour", forme: { type: "boite", ...courBoite } },
-      ]);
+      ], { x: ileMonde.x, z: ileMonde.z });
       for (const { x: tx, z: tz } of coins) {
         const shade = new THREE.Mesh(
           new THREE.PlaneGeometry(0.8, 0.6),
@@ -3141,7 +3243,10 @@ export function IsoFarmView({
           coteFerme = Math.max(coteFerme, x1 - x0 + 1, y1 - y0 + 1);
         }
       }
-      viewSpan = coteFerme * step + parkingOverhang;
+      /* Une île réunie de plusieurs parcelles ne se cadre pas en entier : on
+         reculerait jusqu'à noyer la ferme dans la brume du lointain. Le cadre
+         s'arrête à une grande parcelle et demie ; la molette fait le reste. */
+      viewSpan = Math.min(coteFerme, 26) * step + parkingOverhang;
       applyCamera();
     }
 
@@ -3249,9 +3354,10 @@ export function IsoFarmView({
        */
       const vueX = elastique(view.panX, bornesVue.xMin, bornesVue.xMax);
       const vueZ = elastique(view.panZ, bornesVue.zMin, bornesVue.zMax);
-      const cibleX = vueX - parkingOverhang / 2;
-      camera.position.set(span * 0.95 + cibleX, span * 0.85, span * 0.95 + vueZ);
-      camera.lookAt(cibleX, 0, vueZ);
+      const cibleX = vueX + ileMonde.x - parkingOverhang / 2;
+      const cibleZ = vueZ + ileMonde.z;
+      camera.position.set(span * 0.95 + cibleX, span * 0.85, span * 0.95 + cibleZ);
+      camera.lookAt(cibleX, 0, cibleZ);
       camera.updateMatrixWorld();
     }
 
@@ -3302,6 +3408,14 @@ export function IsoFarmView({
           ? CAMPAGNE_Y + altitudeCampagne(Math.round(x), Math.round(y))
           : TILE_TOP + altitude(Math.round(x), Math.round(y));
         const v = new THREE.Vector3(ox + x * step, h, oz + y * step).project(camera);
+        const r = renderer.domElement.getBoundingClientRect();
+        return { x: r.left + ((v.x + 1) / 2) * r.width, y: r.top + ((1 - v.y) / 2) * r.height };
+      };
+      // Et le milieu d'une parcelle du pays, par son identifiant.
+      (window as unknown as { __parcelleEcran?: unknown }).__parcelleEcran = (id: string) => {
+        const p = campagne?.plan.parcelles.find((q) => q.reel?.id === id);
+        if (!p) return null;
+        const v = new THREE.Vector3(p.x, CAMPAGNE_Y, p.z).project(camera);
         const r = renderer.domElement.getBoundingClientRect();
         return { x: r.left + ((v.x + 1) / 2) * r.width, y: r.top + ((1 - v.y) / 2) * r.height };
       };
@@ -3875,6 +3989,9 @@ export function IsoFarmView({
       const hauteur = touche.voisin.gridH ?? GRILLE_STANDARD.h;
       if (
         touche.voisin.statut === "MOI" &&
+        // À réunir, ou déjà réunie à une autre : la fiche d'abord (voir App).
+        !touche.voisin.reunion &&
+        !touche.voisin.fusionneeDans &&
         onOwnedCellRef.current &&
         touche.x >= 0 && touche.x < largeur &&
         touche.y >= 0 && touche.y < hauteur
@@ -4223,8 +4340,8 @@ export function IsoFarmView({
          * distances.
          */
         campagne.setCentreVue(
-          elastique(view.panX, bornesVue.xMin, bornesVue.xMax),
-          elastique(view.panZ, bornesVue.zMin, bornesVue.zMax),
+          elastique(view.panX, bornesVue.xMin, bornesVue.xMax) + ileMonde.x,
+          elastique(view.panZ, bornesVue.zMin, bornesVue.zMax) + ileMonde.z,
         );
         campagne.update(t);
       }

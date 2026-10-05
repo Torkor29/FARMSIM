@@ -796,6 +796,22 @@ export function createCountryside(o: OptionsCampagne): Campagne {
     const TERRE_DALLE = 0x9c5f3a;
     const HAIE = 0x6fa343;
     const teinte = new THREE.Color();
+    /*
+     * Les parcelles réunies, vues d'ailleurs.
+     *
+     * Deux parcelles du joueur réunies en un seul champ se dessinent chacune
+     * à sa case, mais sans haie entre elles, et le chemin qui les séparait
+     * devient une bande de champ. Le groupe : l'hôte, ou celle qui l'a reçue.
+     */
+    const groupeDe = (p: ParcelleVoisine): string | null =>
+      p.reel?.statut === "MOI" ? (p.reel.fusionneeDans ?? p.reel.id) : null;
+    const parCase = new Map(plan.parcelles.map((p) => [`${p.col},${p.rang}`, p]));
+    const memeGroupe = (p: ParcelleVoisine, dc: number, dr: number): ParcelleVoisine | null => {
+      const g = groupeDe(p);
+      if (!g) return null;
+      const q = parCase.get(`${p.col + dc},${p.rang + dr}`);
+      return q && groupeDe(q) === g ? q : null;
+    };
 
     for (const p of plan.parcelles) {
       /* Le côté de **cette** parcelle. C'est la ligne qui rend le parcellaire
@@ -896,11 +912,11 @@ export function createCountryside(o: OptionsCampagne): Campagne {
         const porte = accesPar.get(p.id)?.cote ?? 0;
         const OUVERTURE = 1.8;
         const troncon = bordHaie - OUVERTURE / 2;
-        const cotes: [number, number, number, number][] = [
-          [0, -bordHaie, bordHaie * 2, ep],
-          [0, bordHaie, bordHaie * 2, ep],
-        ];
+        const cotes: [number, number, number, number][] = [];
+        if (!memeGroupe(p, 0, -1)) cotes.push([0, -bordHaie, bordHaie * 2, ep]);
+        if (!memeGroupe(p, 0, 1)) cotes.push([0, bordHaie, bordHaie * 2, ep]);
         for (const sx of [-1, 1]) {
+          if (memeGroupe(p, sx, 0)) continue;
           if (sx === porte) {
             cotes.push([sx * bordHaie, -(OUVERTURE / 2 + troncon / 2), ep, troncon]);
             cotes.push([sx * bordHaie, OUVERTURE / 2 + troncon / 2, ep, troncon]);
@@ -962,6 +978,42 @@ export function createCountryside(o: OptionsCampagne): Campagne {
               p.z + Math.sin(a) * r,
               grain() * Math.PI * 2,
               troupeau.kind,
+            );
+          }
+        }
+      }
+    }
+    // Les bandes de champ entre parcelles réunies : la dalle, puis les cases.
+    for (const p of plan.parcelles) {
+      for (const [dc, dr] of [[1, 0], [0, 1]] as const) {
+        const q = memeGroupe(p, dc, dr);
+        if (!q) continue;
+        const dy = levee(p);
+        const large = Math.min(p.cote, q.cote) - TALUS_PARCELLE;
+        // D'un bord de champ à l'autre (le côté compte le talus, le champ non).
+        const debut = (dc ? p.x : p.z) + (p.cote - TALUS_PARCELLE) / 2;
+        const fin = (dc ? q.x : q.z) - (q.cote - TALUS_PARCELLE) / 2;
+        const long = fin - debut;
+        if (long <= 0) continue;
+        const cx = dc ? (debut + fin) / 2 : (p.x + q.x) / 2;
+        const cz = dc ? (p.z + q.z) / 2 : (debut + fin) / 2;
+        ajouterBoite(
+          pos, col, cx, y0 + dy + DALLE_HAUT - DALLE_EP / 2, cz,
+          dc ? long : large + TALUS_PARCELLE, DALLE_EP, dc ? large + TALUS_PARCELLE : long, TERRE_DALLE,
+        );
+        const base = couleurChamp(p.culture, p.etat ?? etatChamp(p, jour, saison));
+        const nl = Math.max(1, Math.round(long / pasCase));
+        const nt = Math.max(1, Math.round(large / pasCase));
+        const taille = pasCase - JOINT;
+        for (let i = 0; i < nl; i++) {
+          for (let k = 0; k < nt; k++) {
+            const u = debut + (i + 0.5) * (long / nl);
+            const v = -large / 2 + (k + 0.5) * pasCase;
+            teinte.setHex(eclaircir(base, ((i * 7 + k * 3) % 5) * 0.02 - 0.04));
+            ajouterBoiteVive(
+              pos, col,
+              dc ? u : p.x + v, y0 + dy, dc ? p.z + v : u,
+              taille, CASE_EP, taille, teinte.getHex(),
             );
           }
         }

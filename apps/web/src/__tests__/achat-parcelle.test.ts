@@ -1,42 +1,63 @@
 import fs from "node:fs";
 
+import { REFUS_PAS_COLLEE, colleeAuxSiennes } from "@farmsim/shared";
+
 /**
- * Une seule façon d'avoir de la terre.
+ * La terre s'achète parcelle par parcelle, dans le paysage.
  *
- * Le jeu en avait deux, qui se marchaient dessus : acheter une parcelle du
- * monde, puis acheter chaque lot autour de sa ferme. « T'achètes une parcelle
- * ET t'achètes chaque carré. » Il n'en reste qu'une : la ferme grandit d'un
- * seul tenant, lot par lot, depuis le mode construction, sans limite. Tous
- * les chemins qui vendaient une parcelle mènent maintenant là.
+ * Il y a eu les lots de 6×6 : on complétait sa propre parcelle carré par
+ * carré, autour d'elle. « Je préfère pouvoir acheter les parcelles voisines »,
+ * comme dans un jeu de ferme : la parcelle d'à côté, entière, libre ou tenue
+ * par un PNJ, collée à l'une des siennes — de l'autre côté du chemin ou de la
+ * route s'il le faut.
  */
 const APP = fs.readFileSync("src/App.tsx", "utf8");
 const SHEET = fs.readFileSync("src/ParcelleVoisineSheet.tsx", "utf8");
 const OFFICE = fs.readFileSync("src/OfficePanel.tsx", "utf8");
 
-describe("la terre s'achète autour de sa ferme, et nulle part ailleurs", () => {
-  it("le jeu n'achète plus de parcelle du monde", () => {
-    expect(APP).not.toMatch(/`\/parcels\/\$\{parcelId\}\/buy`/);
-    expect(APP).not.toContain("async function buyAdjacent");
+describe("la terre s'achète parcelle par parcelle, dans le paysage", () => {
+  it("la fiche d'une parcelle voisine l'achète entière", () => {
+    expect(APP).toMatch(/`\/parcels\/\$\{parcelId\}\/buy`/);
+    expect(APP).toMatch(/onAcheter=\{async \(id\) => \{\s*await acheterParcelleVoisine\(id\);/);
+    expect(SHEET).toContain("Acheter cette parcelle");
+    expect(SHEET).toContain("Racheter cette parcelle");
+    // Le refus vient du serveur, qui seul sait ce qui est collé et ce qui est permis.
+    expect(SHEET).toContain("voisin.refus");
   });
 
-  it("la fiche d'une parcelle voisine et le Bureau mènent à l'agrandissement", () => {
-    expect(SHEET).toContain("Agrandir ma ferme");
-    expect(SHEET).not.toMatch(/Acheter cette parcelle/);
-    expect(OFFICE).toContain("Agrandir ma ferme");
+  it("le Bureau renvoie au paysage, où sont les pancartes", () => {
+    expect(OFFICE).toContain("Voir les parcelles à vendre");
+    expect(OFFICE).not.toContain("lots de 6×6");
     expect(APP).toMatch(/onBuyLand=\{\(\) => \{\s*setShowEta\(false\);\s*agrandirMaFerme\(\);/);
   });
 
-  it("agrandir ramène chez soi s'il le faut, puis ouvre la construction", () => {
-    const debut = APP.indexOf("function agrandirMaFerme()");
-    expect(debut).toBeGreaterThan(-1);
-    const corps = APP.slice(debut, APP.indexOf("\n  }\n", debut));
-    // Déjà chez soi : on reste où l'on est, rien ne saute.
-    expect(corps).toMatch(/if \(!visiting && domaine\) \{\s*entrerConstruction\(\);/);
-    // Chez un voisin : on rentre au siège, et la construction s'ouvre à l'arrivée.
-    expect(corps).toContain("setActiveParcelId(siege)");
+  it("plus de pastilles « Mes parcelles » : on y va par le paysage, « Ma ferme » ramène", () => {
+    expect(APP).not.toMatch(/onClick=\{\(\) => setActiveParcelId\(p\.id\)\}/);
+    expect(APP).not.toContain('<h3 className="spaced">Mes parcelles</h3>');
+    // Après l'achat, on joue sur la parcelle qu'on vient de payer.
+    expect(APP).toContain("if (achetee) setActiveParcelId(parcelId);");
+    // Ailleurs que chez soi, « Ma ferme » ramène au siège.
+    expect(APP).toContain("if (horsDuSiege && siegeId) setActiveParcelId(siegeId);");
+  });
+});
+
+describe("ce qu'on peut acheter", () => {
+  const miennes = [{ zoneId: "Z", mapX: 4, mapY: 4 }];
+
+  it("la parcelle collée par un côté, pas en diagonale ni plus loin", () => {
+    expect(colleeAuxSiennes({ zoneId: "Z", mapX: 5, mapY: 4 }, miennes)).toBe(true);
+    expect(colleeAuxSiennes({ zoneId: "Z", mapX: 4, mapY: 3 }, miennes)).toBe(true);
+    expect(colleeAuxSiennes({ zoneId: "Z", mapX: 5, mapY: 5 }, miennes)).toBe(false);
+    expect(colleeAuxSiennes({ zoneId: "Z", mapX: 6, mapY: 4 }, miennes)).toBe(false);
   });
 
-  it("le seul déplacement de vue reste celui que le joueur demande", () => {
-    expect(APP).toMatch(/onClick=\{\(\) => setActiveParcelId\(p\.id\)\}/);
+  it("de proche en proche : chaque achat ouvre ses propres voisines", () => {
+    const deux = [...miennes, { zoneId: "Z", mapX: 5, mapY: 4 }];
+    expect(colleeAuxSiennes({ zoneId: "Z", mapX: 6, mapY: 4 }, deux)).toBe(true);
+  });
+
+  it("jamais dans une autre commune, et le refus le dit", () => {
+    expect(colleeAuxSiennes({ zoneId: "Y", mapX: 5, mapY: 4 }, miennes)).toBe(false);
+    expect(REFUS_PAS_COLLEE).toMatch(/collée/);
   });
 });

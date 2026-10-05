@@ -20,6 +20,7 @@ import {
 
 export * from "./euros.js";
 export * from "./voisinage.js";
+export * from "./reunion.js";
 export * from "./ledger.js";
 export * from "./time.js";
 export * from "./world.js";

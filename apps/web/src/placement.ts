@@ -305,6 +305,8 @@ export function arbresDeCoin(
   profondeur: number,
   taille: number,
   occupants: Occupant[],
+  /** Le milieu de l'île : une île réunie n'est plus centrée sur sa parcelle d'origine. */
+  centre: { x: number; z: number } = { x: 0, z: 0 },
 ): { x: number; z: number }[] {
   const occ = new Occupation();
   for (const o of occupants) occ.ajouter(o);
@@ -315,7 +317,7 @@ export function arbresDeCoin(
     largeur = Math.max(largeur, ile.w);
     profondeur = Math.max(profondeur, ile.d);
   }
-  occ.ajouter({ id: "haie", genre: "ile", forme: { type: "boite", x: 0, z: 0, w: largeur, d: profondeur } });
+  occ.ajouter({ id: "haie", genre: "ile", forme: { type: "boite", x: centre.x, z: centre.z, w: largeur, d: profondeur } });
   const d = taille * 0.46 + 0.12;
   const out: { x: number; z: number }[] = [];
   for (const [sx, sz] of [
@@ -324,8 +326,8 @@ export function arbresDeCoin(
     [-1, 1],
     [1, 1],
   ] as const) {
-    const cx = sx * (largeur / 2 + d * 0.72);
-    const cz = sz * (profondeur / 2 + d * 0.72);
+    const cx = centre.x + sx * (largeur / 2 + d * 0.72);
+    const cz = centre.z + sz * (profondeur / 2 + d * 0.72);
     const candidats: [number, number][] = [[cx, cz]];
     for (let k = 1; k <= 8; k++) {
       candidats.push([cx, cz - sz * k * 0.8], [cx - sx * k * 0.8, cz]);

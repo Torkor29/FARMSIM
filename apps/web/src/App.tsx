@@ -910,6 +910,7 @@ export function App() {
    * pour se monter.
    */
   const [voisinage, setVoisinage] = useState<VoisinReel[]>([]);
+  const [quartTrame, setQuartTrame] = useState<0 | 1 | 2 | 3 | null>(null);
   /* La fiche ouverte en cliquant sur un champ de voisin, s'il y en a une. */
   const [voisinOuvert, setVoisinOuvert] = useState<VoisinReel | null>(null);
   /** Les nouveautés que ce joueur n'a pas encore lues, s'il y en a. */
@@ -1737,6 +1738,13 @@ export function App() {
     // Réponse d'une parcelle qu'on ne regarde plus : on la jette. Sans ce
     // garde, elle écrasait celle qu'on venait d'ouvrir.
     if (parcelleAffichee.current !== id) return;
+    // Réunie à une autre depuis (un autre appareil, un onglet resté ouvert) :
+    // on va sur l'île qui l'a reçue plutôt que de montrer une parcelle vide.
+    const hote = (d?.parcel as { fusionneeDans?: string | null } | undefined)?.fusionneeDans;
+    if (hote) {
+      setActiveParcelId(hote);
+      return;
+    }
     setParcelDetail((prev) => keepIfSame(prev, d));
   }, []);
 
@@ -1749,9 +1757,11 @@ export function App() {
    * réponse identique ne déclenche aucun rendu.
    */
   const loadVoisinage = useCallback(async (id: string) => {
-    const d = await api<{ parcelles: VoisinReel[] }>(`/parcels/${id}/voisinage`);
+    const d = await api<{ parcelles: VoisinReel[]; quart?: 0 | 1 | 2 | 3 | null }>(`/parcels/${id}/voisinage`);
     if (parcelleAffichee.current !== id) return;
     setVoisinage((prev) => keepIfSame(prev, d.parcelles));
+    // L'orientation de la commune, fixée par le siège : la même vue d'où qu'on regarde.
+    setQuartTrame(d.quart ?? null);
   }, []);
 
   useEffect(() => {
@@ -2189,6 +2199,9 @@ export function App() {
   );
 
   const ownedParcels = player?.farm?.parcels ?? [];
+  /** Le siège, et si l'on joue ailleurs (une autre de ses parcelles). */
+  const siegeId = ownedParcels[0]?.id ?? null;
+  const horsDuSiege = Boolean(siegeId && activeParcelId && activeParcelId !== siegeId && ownedParcels.some((p) => p.id === activeParcelId));
   /**
    * Le joueur est-il vraiment installé ?
    *
@@ -3437,27 +3450,78 @@ export function App() {
   }
 
   /**
-   * « Agrandir ma ferme », d'où qu'on vienne : on rentre chez soi s'il le
-   * faut, puis le mode construction s'ouvre, la friche à vendre autour.
+   * Acheter la parcelle d'à côté, entière.
+   *
+   * Le paysage se recharge tout de suite : sans cela, la terre achetée
+   * resterait « à vendre » jusqu'au sondage suivant, et un clic dessus
+   * rouvrirait la fiche d'achat au lieu d'y mener. Son chemin d'accès se
+   * construit alors sous les yeux du joueur.
    */
-  const construireEnArrivant = useRef(false);
-  function agrandirMaFerme() {
-    const siege = player?.farm?.parcels[0]?.id;
-    if (!visiting && domaine) {
-      entrerConstruction();
-      return;
+  async function acheterParcelleVoisine(parcelId: string) {
+    if (!player) return;
+    setBusy(true);
+    try {
+      const r = await api<{ paid: number }>(`/parcels/${parcelId}/buy`, {
+        method: "POST",
+        body: JSON.stringify({ userId: player.id }),
+      });
+      const apres = await refreshPlayer();
+      const achetee = apres?.farm?.parcels.find((p) => p.id === parcelId);
+      /* On y va tout de suite : on l'a achetée pour la travailler. Le paysage
+         recule d'autant, et la même terre reste sous le même pixel. */
+      if (achetee) setActiveParcelId(parcelId);
+      else if (activeParcelId) await loadVoisinage(activeParcelId).catch(() => undefined);
+      flashToast(
+        achetee
+          ? `${achetee.label} est à vous — ${hectaresDeGrille(achetee.gridW, achetee.gridH).toLocaleString("fr-FR")} ha pour ${r.paid.toLocaleString("fr-FR")} €. « Ma ferme » vous ramène chez vous.`
+          : "Parcelle achetée",
+      );
+    } catch (e) {
+      flashToast(e instanceof Error ? e.message : String(e), true);
+    } finally {
+      setBusy(false);
     }
-    if (!siege) return;
-    construireEnArrivant.current = true;
-    setActiveParcelId(siege);
   }
-  useEffect(() => {
-    if (!construireEnArrivant.current || visiting || !domaine) return;
-    construireEnArrivant.current = false;
-    entrerConstruction();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [domaine, visiting]);
 
+  /**
+   * Réunir une de ses parcelles à celle qu'on regarde.
+   *
+   * Le chemin de terre entre les deux devient du champ, et l'une passe dans
+   * l'autre. On se retrouve sur l'île réunie — celle du siège s'il en est.
+   */
+  async function reunirParcelles(avec: string) {
+    if (!player || !activeParcelId) return;
+    setBusy(true);
+    try {
+      const r = await api<{ hote: string; cases: number; prix: number }>(`/parcels/${activeParcelId}/reunir`, {
+        method: "POST",
+        body: JSON.stringify({ userId: player.id, avec }),
+      });
+      await refreshPlayer();
+      if (r.hote !== activeParcelId) setActiveParcelId(r.hote);
+      else {
+        await loadParcel(r.hote);
+        await loadVoisinage(r.hote).catch(() => undefined);
+      }
+      playUiSound("place");
+      flashToast(
+        `Parcelles réunies : ${r.cases} cases de chemin rendues au champ${r.prix ? ` · −${r.prix.toLocaleString("fr-FR")} €` : ""}`,
+      );
+    } catch (e) {
+      flashToast(e instanceof Error ? e.message : String(e), true);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  /**
+   * « Agrandir ma ferme » : la terre s'achète dans le paysage, parcelle par
+   * parcelle. On ramène la vue chez soi, d'où l'on voit les pancartes.
+   */
+  function agrandirMaFerme() {
+    setShowEta(false);
+    flashToast("Touchez une parcelle voisine marquée « À vendre » dans le paysage pour l'acheter entière");
+  }
   function quitterConstruction() {
     setConstruction(false);
     setArme(null);
@@ -7052,6 +7116,7 @@ export function App() {
               controle={vueControle}
               onEgare={setVueEgaree}
               voisinage={voisinage}
+              quartTrame={quartTrame}
               /*
                * Cliquer sur sa propre parcelle y emmène — le bouton devient
                * facultatif.
@@ -7068,7 +7133,11 @@ export function App() {
                * paysage ne montre pas.
                */
               onVoisinClick={(v) => {
-                if (v.statut === "MOI") setActiveParcelId(v.id);
+                /* Une des siennes qu'on peut réunir à celle-ci : la fiche
+                   propose d'y aller ou de les réunir. Réunie à une autre : on
+                   va sur l'île qui l'a reçue. */
+                if (v.statut === "MOI" && v.reunion?.prix != null) setVoisinOuvert(v);
+                else if (v.statut === "MOI") setActiveParcelId(v.fusionneeDans ?? v.id);
                 else setVoisinOuvert(v);
               }}
               /* Le village sert : la coopérative mène au marché, la
@@ -8450,19 +8519,10 @@ export function App() {
             </div>
           )}
 
-          <h3 className="spaced">Mes parcelles</h3>
-          <div className="chip-row">
-            {ownedParcels.map((p) => (
-              <button
-                key={p.id}
-                type="button"
-                className={activeParcelId === p.id ? "chip on" : "chip"}
-                onClick={() => setActiveParcelId(p.id)}
-              >
-                {p.label}
-              </button>
-            ))}
-          </div>
+          {/* Plus de pastilles « Mes parcelles » : on va sur une de ses
+              parcelles en la touchant dans le paysage, et « Ma ferme » ramène
+              au siège. Deux façons de faire la même chose, c'était une de
+              trop — et la liste se désynchronisait de ce qu'on voyait. */}
         </aside>
         {/* Au doigt seulement.
 
@@ -8763,10 +8823,14 @@ export function App() {
           cesserait de le voir. */}
       <button
         type="button"
-        className={`vue-recentrer${vueEgaree ? " visible" : ""}`}
-        onClick={() => vueControle.current?.recentrer()}
-        tabIndex={vueEgaree ? 0 : -1}
-        aria-hidden={!vueEgaree}
+        className={`vue-recentrer${vueEgaree || horsDuSiege ? " visible" : ""}`}
+        onClick={() => {
+          // Sur une autre de ses parcelles : « Ma ferme » ramène au siège.
+          if (horsDuSiege && siegeId) setActiveParcelId(siegeId);
+          else vueControle.current?.recentrer();
+        }}
+        tabIndex={vueEgaree || horsDuSiege ? 0 : -1}
+        aria-hidden={!(vueEgaree || horsDuSiege)}
         title="Revenir sur ma ferme"
       >
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" aria-hidden="true">
@@ -8881,15 +8945,19 @@ export function App() {
       <ParcelleVoisineSheet
         voisin={voisinOuvert}
         enCours={busy}
-        onAcheter={() => {
+        onAcheter={async (id) => {
+          await acheterParcelleVoisine(id);
           setVoisinOuvert(null);
-          agrandirMaFerme();
         }}
         /* Le paysage n'ouvre plus cette fiche sur une parcelle à soi — il y
            emmène directement. Le bouton reste pour les autres chemins qui
            l'ouvrent, afin qu'aucun ne retombe dans l'impasse. */
         onAller={(id) => {
           setActiveParcelId(id);
+          setVoisinOuvert(null);
+        }}
+        onReunir={async (id) => {
+          await reunirParcelles(id);
           setVoisinOuvert(null);
         }}
         onFermer={() => setVoisinOuvert(null)}

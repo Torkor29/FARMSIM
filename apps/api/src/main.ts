@@ -320,6 +320,18 @@ import {
   machineWidth,
   machineLifeHours,
   peutRacheter,
+  colleeAuxSiennes,
+  mitoyennes,
+  orientationTrame,
+  separeesParLaRoute,
+  separeesParLaCour,
+  couloirEntre,
+  rectDansHote,
+  decalageDansHote,
+  PRIX_REUNION_PAR_CASE,
+  type Quart,
+  type RectCases,
+  REFUS_PAS_COLLEE,
   machineHoursPerHectare,
   machineCost,
   machineVariant,
@@ -429,6 +441,7 @@ import {
   OUTILS_CAMPAGNE,
   dansCampagne,
   eauxDeLaCampagne,
+  prixParcelle,
   valeurCaseCampagne,
   PRIX_COUPE,
   BOIS_MATURITE_MS,
@@ -848,6 +861,8 @@ const ORDRE_PARCELLES = [
 function farmInclude() {
   return {
     parcels: {
+      // Une parcelle réunie à une autre ne se joue plus à part : on la retrouve dans l'île de l'hôte.
+      where: { fusionneeDans: null },
       orderBy: ORDRE_PARCELLES,
       include: {
         zone: true,
@@ -6594,19 +6609,339 @@ app.post("/labor-orders/:id/abandon", async (req, res) => {
 });
 
 /**
- * Acheter une parcelle ailleurs : fermé.
+ * Acheter la parcelle d'à côté, entière.
  *
- * Il y avait deux façons d'avoir de la terre — acheter une parcelle du monde,
- * et acheter des lots autour de sa ferme — et elles se marchaient dessus : on
- * payait une parcelle, puis chaque carré autour. Il n'en reste qu'une. La
- * ferme grandit d'un seul tenant, lot par lot, depuis le mode construction,
- * aussi loin qu'on veut. Les parcelles déjà acquises restent à leur
- * propriétaire, et grandissent de la même façon.
+ * Comme dans un jeu de ferme : on s'agrandit en rachetant le champ voisin,
+ * libre ou tenu par un PNJ, collé à l'une de ses parcelles — de l'autre côté
+ * du chemin ou de la route. Il n'y a plus de lots de 6×6 à grappiller autour
+ * de la sienne : on achète une parcelle comme elle est, petite ou grande, et
+ * on peut ensuite la réunir à sa voisine (« Réunir »).
  */
-app.post("/parcels/:id/buy", async (_req, res) => {
-  res.status(409).json({
-    error: "La terre s'achète maintenant autour de votre ferme : ouvrez « Construire » et touchez la friche à vendre.",
+app.post("/parcels/:id/buy", async (req, res) => {
+  const body = z.object({ userId: z.string() }).safeParse(req.body);
+  if (!body.success) {
+    res.status(400).json(body.error.flatten());
+    return;
+  }
+  const target = await prisma.parcel.findUnique({
+    where: { id: req.params.id },
+    include: { zone: true, farm: { include: { user: true } } },
   });
+  if (!target) {
+    res.status(404).json({ error: "Parcelle introuvable" });
+    return;
+  }
+  /* Libre, ou cédée par un PNJ. Un autre joueur, jamais. */
+  const npcCede = Boolean(target.farm?.user.isNpc);
+  if (target.farmId && !npcCede) {
+    res.status(409).json({ error: "Parcelle indisponible" });
+    return;
+  }
+  const user = await prisma.user.findUnique({
+    where: { id: body.data.userId },
+    include: { farm: { include: { parcels: { orderBy: ORDRE_PARCELLES } } } },
+  });
+  if (!user?.farm) {
+    res.status(404).json({ error: "Ferme introuvable" });
+    return;
+  }
+  const owned = user.farm.parcels;
+  if (!colleeAuxSiennes(target, owned)) {
+    res.status(409).json({ error: REFUS_PAS_COLLEE });
+    return;
+  }
+  const quote = await quoteParcel(target, owned, user.level);
+  // Le prix demandé : le barème de la terre du jeu (`prixParcelle`), le même
+  // que le paysage affiche sur la pancarte.
+  const prix = prixParcelle({
+    cases: target.gridW * target.gridH,
+    possedees: await prisma.parcelCell.count({ where: { parcel: { farmId: user.farm.id } } }),
+    fertilite: target.fertility,
+    prixRegional: target.zone.priceMult,
+  });
+  const gate = canAcquire({
+    playerLevel: user.level,
+    ownedTotal: owned.length,
+    ownedInRegion: owned.filter((p) => p.zoneId === target.zoneId).length,
+    regionParcelCount: await prisma.parcel.count({ where: { zoneId: target.zoneId } }),
+  });
+  if (!gate.ok) {
+    res.status(403).json({ error: acquisitionRefusal(gate.reason!, user, owned.length) });
+    return;
+  }
+  if (!peutPayer(user, prix)) {
+    res.status(402).json({ error: `€ insuffisants — ${prix} requis` });
+    return;
+  }
+  const vendeur = target.farmId;
+  try {
+    await prisma.$transaction(async (tx) => {
+      /* La parcelle d'abord, sous condition : deux achats simultanés ne
+         passent pas tous les deux — le second la trouve déjà prise. */
+      const garde = await tx.parcel.updateMany({
+        where: { id: target.id, farmId: vendeur },
+        /*
+         * La date d'entrée dans la ferme, et c'est elle qui tient l'ordre de
+         * la liste. Sans elle, la nouvelle venue n'aurait pas de rang et se
+         * rangerait où PostgreSQL voudrait.
+         */
+        data: { farmId: user.farm!.id, landPrice: prix, acquiredAt: new Date() },
+      });
+      if (garde.count !== 1) throw new Error("CONCURRENT");
+      await debit(tx, user.id, prix, "TERRES", `Achat de parcelle — ${target.label}`);
+      if (npcCede && vendeur) {
+        const batis = await tx.building.findMany({ where: { parcelId: target.id }, select: { id: true } });
+        const ids = batis.map((b) => b.id);
+        if (ids.length) {
+          // Le troupeau suit son étable ; les engins du voisin restent les siens.
+          await tx.herd.updateMany({ where: { buildingId: { in: ids } }, data: { farmId: user.farm!.id } });
+          await tx.machine.updateMany({
+            where: { storedInBuildingId: { in: ids } },
+            data: { storedInBuildingId: null, parkedParcelId: null },
+          });
+        }
+        await tx.machine.updateMany({
+          where: { parkedParcelId: target.id, farmId: vendeur },
+          data: { parkedParcelId: null },
+        });
+      }
+    });
+  } catch (e) {
+    if (e instanceof Error && e.message === "CONCURRENT") {
+      res.status(409).json({ error: "Cette parcelle vient d'être vendue" });
+      return;
+    }
+    throw e;
+  }
+  res.status(201).json({
+    parcelId: target.id,
+    paid: prix,
+    marketValue: quote.marketValue,
+    adjacentOwned: quote.adjacentOwnedBorders,
+  });
+});
+
+/* ------------------------------------------------------------------ */
+/* Réunir deux parcelles                                                */
+/* ------------------------------------------------------------------ */
+/*
+ * Deux parcelles à soi, séparées par un chemin de terre, se réunissent en un
+ * seul champ : le chemin devient du champ, et l'une passe dans l'autre — ses
+ * cases, ses bâtiments, son décor, décalés de sa place sur la trame. La route
+ * goudronnée, elle, ne s'efface pas, et la cour du siège non plus.
+ *
+ * La géométrie — trame, orientation, couloir — vit dans `@farmsim/shared`
+ * (`reunion.ts`) : le paysage la lit pour dessiner exactement ce qu'on paie.
+ */
+
+/** Le siège d'une ferme, et l'orientation de sa commune dans le paysage. */
+async function orientationDeLaFerme(farmId: string): Promise<{ siege: { id: string; zoneId: string; mapX: number; mapY: number }; quart: Quart } | null> {
+  const siege = await prisma.parcel.findFirst({
+    where: { farmId, fusionneeDans: null },
+    orderBy: ORDRE_PARCELLES,
+    select: { id: true, zoneId: true, mapX: true, mapY: true },
+  });
+  if (!siege) return null;
+  const R = 3;
+  const autour = await prisma.parcel.findMany({
+    where: { zoneId: siege.zoneId, mapX: { gte: siege.mapX - R, lte: siege.mapX + R }, mapY: { gte: siege.mapY - R, lte: siege.mapY + R } },
+    select: { mapX: true, mapY: true },
+  });
+  // L'orientation ne dépend que de la géographie de la commune : elle ne
+  // tourne pas quand on achète ou qu'on réunit.
+  const quart = orientationTrame(autour.map((p) => ({ col: p.mapX - siege.mapX, rang: p.mapY - siege.mapY })));
+  return { siege, quart };
+}
+
+type ParcelleReunie = { id: string; zoneId: string; mapX: number; mapY: number; gridW: number; gridH: number; fusionneeDans: string | null };
+
+/**
+ * Le devis d'une réunion : qui reçoit, qui est absorbé, quels chemins
+ * deviennent du champ, et combien. `refus` dit pourquoi pas.
+ */
+function devisReunion(opts: {
+  a: ParcelleReunie;
+  b: ParcelleReunie;
+  miennes: readonly ParcelleReunie[];
+  siege: { id: string; mapX: number; mapY: number };
+  quart: Quart;
+  dejaPossedees: ReadonlySet<string>;
+}):
+  | { ok: true; hote: ParcelleReunie; absorbee: ParcelleReunie; groupe: ParcelleReunie[]; couloirs: RectCases[]; cases: { x: number; y: number }[]; prix: number }
+  | { ok: false; refus: string } {
+  const hoteDe = (p: ParcelleReunie) => opts.miennes.find((q) => q.id === (p.fusionneeDans ?? p.id)) ?? p;
+  const ha = hoteDe(opts.a);
+  const hb = hoteDe(opts.b);
+  if (ha.id === hb.id) return { ok: false, refus: "Ces deux parcelles sont déjà réunies" };
+  const membres = (h: ParcelleReunie) => opts.miennes.filter((q) => q.id === h.id || q.fusionneeDans === h.id);
+  // Le siège reçoit toujours : c'est lui qui porte la cour et la maison.
+  const siegeDansB = membres(hb).some((q) => q.id === opts.siege.id);
+  const hote = siegeDansB ? hb : ha;
+  const absorbee = siegeDansB ? ha : hb;
+  const gHote = membres(hote);
+  const gAbs = membres(absorbee);
+  const couloirs: RectCases[] = [];
+  let routeOuCour: string | null = null;
+  for (const m of gHote) {
+    for (const n of gAbs) {
+      if (m.zoneId !== n.zoneId || !mitoyennes(m, n)) continue;
+      if (separeesParLaRoute(opts.siege, m, n, opts.quart)) {
+        routeOuCour = "La route goudronnée passe entre les deux : elle ne s'efface pas";
+        continue;
+      }
+      if (separeesParLaCour(opts.siege, m, n, opts.quart)) {
+        routeOuCour = "La cour de la ferme est entre les deux";
+        continue;
+      }
+      const c = couloirEntre(rectDansHote(hote, m, opts.quart), rectDansHote(hote, n, opts.quart));
+      if (c) couloirs.push(c);
+    }
+  }
+  if (!couloirs.length) {
+    return { ok: false, refus: routeOuCour ?? "Elles ne se touchent pas : seules deux parcelles collées se réunissent" };
+  }
+  const cases: { x: number; y: number }[] = [];
+  const vues = new Set<string>();
+  for (const r of couloirs) {
+    for (let y = r.y0; y <= r.y1; y++) {
+      for (let x = r.x0; x <= r.x1; x++) {
+        const k = cleCase(x, y);
+        if (vues.has(k) || opts.dejaPossedees.has(k)) continue;
+        vues.add(k);
+        cases.push({ x, y });
+      }
+    }
+  }
+  return { ok: true, hote, absorbee, groupe: gAbs, couloirs, cases, prix: cases.length * PRIX_REUNION_PAR_CASE };
+}
+
+app.post("/parcels/:id/reunir", async (req, res) => {
+  const body = z.object({ userId: z.string(), avec: z.string() }).safeParse(req.body);
+  if (!body.success) {
+    res.status(400).json(body.error.flatten());
+    return;
+  }
+  const user = await prisma.user.findUnique({ where: { id: body.data.userId }, include: { farm: true } });
+  if (!user?.farm) {
+    res.status(404).json({ error: "Ferme introuvable" });
+    return;
+  }
+  const miennes = await prisma.parcel.findMany({
+    where: { farmId: user.farm.id },
+    orderBy: ORDRE_PARCELLES,
+    select: { id: true, zoneId: true, mapX: true, mapY: true, gridW: true, gridH: true, fusionneeDans: true },
+  });
+  const a = miennes.find((p) => p.id === req.params.id);
+  const b = miennes.find((p) => p.id === body.data.avec);
+  if (!a || !b) {
+    res.status(403).json({ error: "Ces deux parcelles doivent être à vous" });
+    return;
+  }
+  const orient = await orientationDeLaFerme(user.farm.id);
+  if (!orient) {
+    res.status(404).json({ error: "Ferme introuvable" });
+    return;
+  }
+  // Qui reçoit d'abord, puis ce qu'il possède déjà : le chemin ne se paie qu'une fois.
+  const essai = devisReunion({ a, b, miennes, siege: orient.siege, quart: orient.quart, dejaPossedees: new Set() });
+  const possedees = essai.ok
+    ? new Set(
+        (await prisma.parcelCell.findMany({ where: { parcelId: essai.hote.id }, select: { x: true, y: true } })).map((c) =>
+          cleCase(c.x, c.y),
+        ),
+      )
+    : new Set<string>();
+  const devis = devisReunion({ a, b, miennes, siege: orient.siege, quart: orient.quart, dejaPossedees: possedees });
+  if (!devis.ok) {
+    res.status(409).json({ error: devis.refus });
+    return;
+  }
+  const { hote, groupe, cases, prix } = devis;
+  const ids = groupe.map((p) => p.id);
+  // Un chantier en cours sur la parcelle absorbée désigne ses cases : on attend qu'il finisse.
+  const [chantiers, commandes] = await Promise.all([
+    prisma.fieldJob.count({ where: { parcelId: { in: ids }, status: "RUNNING" } }),
+    prisma.laborOrder.count({ where: { parcelId: { in: ids }, status: { in: ["OPEN", "ACCEPTED"] } } }),
+  ]);
+  if (chantiers || commandes) {
+    res.status(409).json({ error: "Un chantier est en cours sur cette parcelle : attendez qu'il se termine" });
+    return;
+  }
+  if (!peutPayer(user, prix)) {
+    res.status(402).json({ error: `€ insuffisants — ${prix} requis` });
+    return;
+  }
+  // Le décalage de chaque hôte absorbé : ses cases sont déjà dans son repère.
+  const hoteAbs = groupe.find((p) => !p.fusionneeDans) ?? groupe[0]!;
+  const { dx, dy } = decalageDansHote(hote, hoteAbs, orient.quart);
+  try {
+    await prisma.$transaction(async (tx) => {
+      const garde = await tx.parcel.updateMany({
+        where: { id: hoteAbs.id, farmId: user.farm!.id, fusionneeDans: null },
+        data: { fusionneeDans: hote.id },
+      });
+      if (garde.count !== 1) throw new Error("CONCURRENT");
+      await tx.parcel.updateMany({ where: { fusionneeDans: hoteAbs.id }, data: { fusionneeDans: hote.id } });
+      if (prix > 0) {
+        await debit(tx, user.id, prix, "TERRES", `Réunion de parcelles — ${cases.length} cases de chemin rendues au champ`);
+      }
+      const decaler = { parcelId: hote.id };
+      await tx.parcelCell.updateMany({ where: { parcelId: hoteAbs.id }, data: { ...decaler, x: { increment: dx }, y: { increment: dy } } });
+      await tx.building.updateMany({ where: { parcelId: hoteAbs.id }, data: { ...decaler, originX: { increment: dx }, originY: { increment: dy } } });
+      await tx.amenagement.updateMany({ where: { parcelId: hoteAbs.id }, data: { ...decaler, originX: { increment: dx }, originY: { increment: dy } } });
+      await tx.supplyOrder.updateMany({ where: { parcelId: hoteAbs.id }, data: { ...decaler, x: { increment: dx }, y: { increment: dy } } });
+      await tx.machine.updateMany({ where: { parkedParcelId: hoteAbs.id }, data: { parkedParcelId: hote.id } });
+      await tx.user.updateMany({ where: { lastParcelId: hoteAbs.id }, data: { lastParcelId: hote.id } });
+      /* La campagne de l'absorbée passe chez l'hôte, décalée ; là où les
+         deux en avaient une, celle de l'hôte reste. */
+      const deja = new Set(
+        (await tx.caseCampagne.findMany({ where: { parcelId: hote.id }, select: { x: true, y: true } })).map((c) => cleCase(c.x, c.y)),
+      );
+      for (const c of await tx.caseCampagne.findMany({ where: { parcelId: hoteAbs.id } })) {
+        if (deja.has(cleCase(c.x + dx, c.y + dy))) await tx.caseCampagne.delete({ where: { id: c.id } });
+        else await tx.caseCampagne.update({ where: { id: c.id }, data: { parcelId: hote.id, x: c.x + dx, y: c.y + dy } });
+      }
+      /* Le chemin devient du champ. Ce qu'on y avait façonné dans la campagne
+         — une mare, un bois — passe dans la ferme tel quel, comme à l'achat
+         d'un lot. */
+      const campagne = new Map(
+        (await tx.caseCampagne.findMany({ where: { parcelId: hote.id } })).map((c) => [cleCase(c.x, c.y), c]),
+      );
+      const reprises: string[] = [];
+      await tx.parcelCell.createMany({
+        data: cases.map((p) => {
+          const c = campagne.get(cleCase(p.x, p.y));
+          if (c) reprises.push(c.id);
+          return {
+            parcelId: hote.id,
+            x: p.x,
+            y: p.y,
+            sol: c?.sol === "EAU" || c?.sol === "BOIS" ? c.sol : "CHAMP",
+            niveau: c?.niveau ?? 0,
+            forme: c?.forme ?? 0,
+            boiseDepuis: c?.boiseDepuis ?? null,
+          };
+        }),
+      });
+      // Les cases de campagne recouvertes par la parcelle absorbée, et par le chemin, n'en sont plus.
+      const occupees = new Set(
+        (await tx.parcelCell.findMany({ where: { parcelId: hote.id }, select: { x: true, y: true } })).map((c) => cleCase(c.x, c.y)),
+      );
+      for (const c of campagne.values()) if (occupees.has(cleCase(c.x, c.y)) && !reprises.includes(c.id)) reprises.push(c.id);
+      if (reprises.length) await tx.caseCampagne.deleteMany({ where: { id: { in: reprises } } });
+    });
+  } catch (e) {
+    if (e instanceof Error && e.message === "CONCURRENT") {
+      res.status(409).json({ error: "Ces parcelles viennent de changer — réessayez" });
+      return;
+    }
+    if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === "P2002") {
+      res.status(409).json({ error: "Les deux parcelles se chevauchent : impossible de les réunir telles quelles" });
+      return;
+    }
+    throw e;
+  }
+  res.status(201).json({ hote: hote.id, absorbee: hoteAbs.id, cases: cases.length, prix });
 });
 
 /** Devis détaillé avant achat : le joueur voit chaque facteur du prix. */
@@ -6712,6 +7047,37 @@ app.get("/parcels/:id/voisinage", async (req, res) => {
   const owned = farm?.parcels ?? [];
   const monFarmId = farm?.id ?? null;
   const counts = await loadQuoteCounts(centre.zoneId, centre.zone.continentCode);
+  const casesPossedees = monFarmId ? await prisma.parcelCell.count({ where: { parcel: { farmId: monFarmId } } }) : 0;
+  /* L'orientation de la commune, fixée par le siège : le paysage la lit d'ici
+     plutôt que de la recalculer depuis la parcelle qu'il regarde. */
+  const orient = monFarmId ? await orientationDeLaFerme(monFarmId) : null;
+  /** Réunir la parcelle regardée à une autre des siennes : le devis, ou pourquoi pas. */
+  const reunionAvec = async (b: (typeof autour)[number]) => {
+    if (!orient || centre.farmId !== monFarmId || b.farmId !== monFarmId) return null;
+    const miennes = owned as unknown as ParcelleReunie[];
+    const a = miennes.find((p) => p.id === centre.id);
+    const autre = miennes.find((p) => p.id === b.id);
+    if (!a || !autre || (autre.fusionneeDans ?? autre.id) === (a.fusionneeDans ?? a.id)) return null;
+    const essai = devisReunion({ a, b: autre, miennes, siege: orient.siege, quart: orient.quart, dejaPossedees: new Set() });
+    if (!essai.ok) return { prix: null, cases: 0, refus: essai.refus };
+    const possedees = new Set(
+      (await prisma.parcelCell.findMany({ where: { parcelId: essai.hote.id }, select: { x: true, y: true } })).map((c) => cleCase(c.x, c.y)),
+    );
+    const d = devisReunion({ a, b: autre, miennes, siege: orient.siege, quart: orient.quart, dejaPossedees: possedees });
+    return d.ok ? { prix: d.prix, cases: d.cases.length, refus: null } : { prix: null, cases: 0, refus: d.refus };
+  };
+  const hoteCentre = centre.fusionneeDans ?? centre.id;
+  const groupeCentre = owned.filter((q) => q.id === hoteCentre || q.fusionneeDans === hoteCentre);
+  const mitoyennesAuGroupe = (p: { id: string; fusionneeDans: string | null }): boolean => {
+    const h = p.fusionneeDans ?? p.id;
+    if (h === hoteCentre) return false;
+    const sien = owned.filter((q) => q.id === h || q.fusionneeDans === h);
+    return groupeCentre.some((g) => sien.some((q) => mitoyennes(g, q)));
+  };
+  const reunions = new Map<string, Awaited<ReturnType<typeof reunionAvec>>>();
+  for (const p of autour) {
+    if (p.farmId && p.farmId === monFarmId && mitoyennesAuGroupe(p)) reunions.set(p.id, await reunionAvec(p));
+  }
   const gate = canAcquire({
     playerLevel: auth.user.level,
     ownedTotal: owned.length,
@@ -6733,8 +7099,20 @@ app.get("/parcels/:id/voisinage", async (req, res) => {
         .filter((h) => ici.has(h.buildingId))
         .map((h) => ({ kind: h.kind, size: h.size }));
 
-      /* Les parcelles du pays ne se vendent plus : la terre s'achète autour de
-         sa ferme, lot par lot. Plus de prix, donc plus de pancarte. */
+      /* On s'agrandit en rachetant le champ d'à côté, libre ou PNJ, collé à
+         l'une de ses parcelles. Le devis ne se fait que pour celles-là. */
+      const rachetable = peutRacheter(statut);
+      const collee = rachetable && colleeAuxSiennes(p, owned);
+      const devis = collee
+        ? {
+            total: prixParcelle({
+              cases: p.gridW * p.gridH,
+              possedees: casesPossedees,
+              fertilite: p.fertility,
+              prixRegional: centre.zone.priceMult,
+            }),
+          }
+        : null;
 
       return {
         id: p.id,
@@ -6762,9 +7140,17 @@ app.get("/parcels/:id/voisinage", async (req, res) => {
         })),
         cheptel,
         landPrice: p.landPrice,
-        prix: null,
-        achetable: false,
-        refus: null,
+        fusionneeDans: p.fusionneeDans,
+        reunion: reunions.get(p.id) ?? null,
+        prix: devis?.total ?? null,
+        achetable: Boolean(devis) && gate.ok,
+        refus: !rachetable
+          ? null
+          : !collee
+            ? REFUS_PAS_COLLEE
+            : !gate.ok
+              ? acquisitionRefusal(gate.reason!, auth.user, owned.length)
+              : null,
       };
   });
 
@@ -6783,6 +7169,8 @@ app.get("/parcels/:id/voisinage", async (req, res) => {
       mapH: centre.zone.mapH,
     },
     rayon,
+    quart: orient?.quart ?? null,
+    siege: orient?.siege.id ?? null,
     parcelles,
   });
 });
@@ -9714,29 +10102,10 @@ function domaineVue(
     farm?: { carnetJson: string } | null;
   },
 ) {
-  // Plus de marge fixe : le domaine, c'est ce qu'on possède plus un anneau
-  // de friche à vendre, et il grandit à chaque lot acheté au bord.
+  // Le domaine, c'est ce qu'on possède : plus de lots à vendre autour — on
+  // s'agrandit en achetant la parcelle d'à côté, entière.
   const bornes = bornesDuDomaine(p.cells);
-  const possedees = new Set(p.cells.map((c) => cleCase(c.x, c.y)));
-  const niveau = niveauPourLot(p.lotsAchetes + 1);
-  const lots = lotsDuDomaine(bornes).map((lot) => {
-    const { etat, aAcheter } = etatLot(lot, possedees);
-    return {
-      ...lot,
-      etat,
-      aAcheter,
-      prix:
-        etat === "POSSEDE"
-          ? 0
-          : prixLot({
-              cases: aAcheter,
-              possedees: p.cells.length,
-              fertilite: p.fertility,
-              prixRegional: p.zone.priceMult,
-            }),
-      niveau,
-    };
-  });
+  const lots: never[] = [];
   // Chaque espèce entrée au carnet ajoute au charme : une ferme qu'on visite pour ses oiseaux.
   const charme =
     charmeDe({ cells: p.cells.map((c) => ({ ...c, sol: c.sol as SolCase })), amenagements: p.amenagements }) +
@@ -9915,112 +10284,16 @@ const includeDomaine = {
 } as const;
 
 /**
- * Acheter un lot de terrain.
+ * Acheter un lot de 6×6 autour de sa ferme : fermé.
  *
- * Le lot doit toucher la ferme par un côté : elle pousse de proche en proche,
- * dans la direction que le joueur choisit, et sa silhouette finit par être la
- * sienne. Les cases achetées naissent en pré.
+ * On complétait sa parcelle carré par carré ; on achète maintenant la parcelle
+ * d'à côté, entière (`POST /parcels/:id/buy`). Ce qui a déjà été acheté en
+ * lots reste à son propriétaire.
  */
-app.post("/parcels/:id/lots/buy", async (req, res) => {
-  const body = z
-    .object({ userId: z.string(), lot: z.string() })
-    .safeParse(req.body);
-  if (!body.success) {
-    res.status(400).json(body.error.flatten());
-    return;
-  }
-  const parcel = await prisma.parcel.findUnique({ where: { id: req.params.id }, include: includeDomaine });
-  if (!parcel?.farm || parcel.farm.userId !== body.data.userId) {
-    res.status(403).json({ error: "Parcelle non possédée" });
-    return;
-  }
-  const vue = domaineVue(parcel);
-  const lot = vue.lots.find((l) => l.id === body.data.lot);
-  if (!lot) {
-    res.status(404).json({ error: "Lot introuvable" });
-    return;
-  }
-  if (lot.etat === "POSSEDE") {
-    res.status(409).json({ error: "Ce lot est déjà à vous" });
-    return;
-  }
-  if (lot.etat === "ENCLAVE") {
-    res.status(409).json({ error: "Ce lot ne touche pas votre terre — achetez d'abord un lot voisin" });
-    return;
-  }
-  const user = await prisma.user.findUnique({ where: { id: body.data.userId } });
-  if (!user) {
-    res.status(404).json({ error: "Joueur introuvable" });
-    return;
-  }
-  if (user.level < lot.niveau) {
-    res.status(403).json({ error: `Niveau ${lot.niveau} requis pour ce lot` });
-    return;
-  }
-  const prix = lot.prix;
-  if (!peutPayer(user, prix)) {
-    res.status(402).json({ error: `€ insuffisants — ${prix} requis` });
-    return;
-  }
-  const possedees = new Set(parcel.cells.map((c) => cleCase(c.x, c.y)));
-  /* La campagne façonnée que le lot recouvre passe dans la ferme telle
-     quelle : un lac reste un lac, un bois garde son âge. */
-  const campagne = new Map(
-    (await prisma.caseCampagne.findMany({ where: { parcelId: parcel.id } })).map((c) => [cleCase(c.x, c.y), c]),
-  );
-  const reprises: string[] = [];
-  const nouvelles: {
-    parcelId: string;
-    x: number;
-    y: number;
-    sol: "PRE" | "EAU" | "BOIS";
-    niveau: number;
-    forme: number;
-    boiseDepuis: Date | null;
-  }[] = [];
-  for (let y = lot.y; y < lot.y + lot.h; y++) {
-    for (let x = lot.x; x < lot.x + lot.w; x++) {
-      if (possedees.has(cleCase(x, y))) continue;
-      const c = campagne.get(cleCase(x, y));
-      if (c) reprises.push(c.id);
-      nouvelles.push({
-        parcelId: parcel.id,
-        x,
-        y,
-        sol: c?.sol === "EAU" || c?.sol === "BOIS" ? c.sol : "PRE",
-        niveau: c?.niveau ?? 0,
-        forme: c?.forme ?? 0,
-        boiseDepuis: c?.boiseDepuis ?? null,
-      });
-    }
-  }
-  try {
-    await prisma.$transaction(async (tx) => {
-      /* Le compteur d'abord, sous condition : deux achats simultanés du même
-         lot ne passent pas tous les deux — le second trouve le compteur changé. */
-      const garde = await tx.parcel.updateMany({
-        where: { id: parcel.id, lotsAchetes: parcel.lotsAchetes },
-        data: { lotsAchetes: { increment: 1 }, landPrice: { increment: prix } },
-      });
-      if (garde.count !== 1) throw new Error("CONCURRENT");
-      await debit(
-        tx,
-        user.id,
-        prix,
-        "TERRES",
-        `Achat de terrain — ${nouvelles.length} cases`,
-      );
-      await tx.parcelCell.createMany({ data: nouvelles, skipDuplicates: true });
-      if (reprises.length) await tx.caseCampagne.deleteMany({ where: { id: { in: reprises } } });
-    });
-  } catch (e) {
-    if (e instanceof Error && e.message === "CONCURRENT") {
-      res.status(409).json({ error: "Le domaine vient de changer — réessayez" });
-      return;
-    }
-    throw e;
-  }
-  res.status(201).json({ lot: lot.id, paid: prix, cases: nouvelles.length, reprises: reprises.length });
+app.post("/parcels/:id/lots/buy", async (_req, res) => {
+  res.status(410).json({
+    error: "La terre ne se vend plus en lots : touchez une parcelle voisine dans le paysage pour l'acheter entière.",
+  });
 });
 
 

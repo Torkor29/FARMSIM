@@ -44,7 +44,7 @@
  * et elle est la même à chaque rechargement.
  */
 
-import { COTE_MAX, GRILLE_STANDARD, TAILLES_PARCELLE, type Season } from "@farmsim/shared";
+import { COTE_MAX, GRILLE_STANDARD, PAS_TRAME_CASES, TAILLES_PARCELLE, orientationTrame, tourner, type Season } from "@farmsim/shared";
 import { boiteDeSegment, chevauchent, empreinteArbre, Occupation, type Genre, type Occupant } from "./placement";
 
 /** Ce qu'on voit dans une parcelle voisine. */
@@ -191,6 +191,10 @@ export type VoisinReel = {
   prix: number | null;
   achetable: boolean;
   refus: string | null;
+  /** La parcelle hôte, quand celle-ci lui a été réunie. */
+  fusionneeDans?: string | null;
+  /** Réunir cette parcelle à celle qu'on regarde : le devis, ou pourquoi pas. */
+  reunion?: { prix: number | null; cases: number; refus: string | null } | null;
 };
 
 export type PointPlan = { x: number; z: number };
@@ -373,6 +377,12 @@ export type OptionsPlan = {
    * place : la décoration du joueur l'emporte toujours sur le hasard.
    */
   decorations?: readonly Occupant[];
+  /**
+   * L'île de la parcelle active, talus compris, quand elle n'est plus le
+   * carré centré d'`emprise` : réunie à sa voisine, elle s'étend vers la case
+   * d'à côté.
+   */
+  ile?: Boite;
 };
 
 /* ------------------------------------------------------------------ */
@@ -681,89 +691,12 @@ export function couloirRoute(o: OptionsPlan, pasTrame?: number): number {
 /* L'orientation de la commune                                         */
 /* ------------------------------------------------------------------ */
 
-/**
- * De quel quart de tour poser la carte sur la trame.
- *
- * En vue isométrique, tout ce qui est en amont de la ferme sort par le haut du
- * cadre : la campagne ne peut montrer que le quartier **aval**, celui où
- * `col + rang` croît. Or la ferme du joueur n'est pas au milieu de sa commune
- * — elle peut être dans n'importe quel coin. Posée telle quelle, une ferme du
- * bord sud n'aurait aucun voisin visible : mesuré en jeu, seize parcelles
- * existaient autour et deux se dessinaient.
- *
- * On tourne donc la carte d'un quart de tour ou trois pour amener le gros de
- * la commune dans le quartier visible. C'est une **rotation** et jamais une
- * symétrie : le plan du Bureau et le paysage doivent rester superposables à
- * une rotation près, sinon la parcelle qu'on croit acheter à droite arriverait
- * à gauche.
- *
- * Le choix ne dépend que de la place du joueur dans sa commune : il ne change
- * donc pas d'un rafraîchissement à l'autre, et le pays ne pivote pas sous les
- * pieds.
+/*
+ * L'orientation et le quart de tour vivent dans le paquet partagé : le
+ * serveur en a besoin pour réunir deux parcelles exactement là où le
+ * paysage les dessine.
  */
-export function orientationTrame(
-  cases: readonly { col: number; rang: number; statut?: string }[],
-): 0 | 1 | 2 | 3 {
-  let meilleur: 0 | 1 | 2 | 3 = 0;
-  let record = -1;
-  for (const quart of [0, 1, 2, 3] as const) {
-    let vus = 0;
-    for (const c of cases) {
-      const t = tourner(c, quart);
-      if (t.col === 0 && t.rang === 0) continue;
-      /*
-       * La case sous la cour est interdite à ses parcelles.
-       *
-       * La cour déborde de l'île vers l'ouest — c'est par là qu'on entre — et
-       * mord la case `(-1, 0)` de la trame. Une parcelle du joueur tournée là
-       * serait recouverte par son propre parking, donc pas dessinée : c'est
-       * la pire des orientations pour elle, pire encore que l'amont.
-       */
-      if (c.statut === "MOI" && t.col === -1 && t.rang === 0) {
-        vus -= 1000;
-        continue;
-      }
-      if (t.col + t.rang < 0) continue;
-      /*
-       * Ses propres parcelles d'abord, et de loin.
-       *
-       * Un joueur qui achète la parcelle d'à côté doit la **voir** : c'est
-       * elle qu'il vient chercher à l'écran. Compter chacune pour cent voisins
-       * fait qu'aucun gain sur le nombre de parcelles étrangères visibles ne
-       * peut justifier de reléguer l'une des siennes en amont, hors du cadre.
-       */
-      vus += c.statut === "MOI" ? 100 : 1;
-    }
-    if (vus > record) {
-      record = vus;
-      meilleur = quart;
-    }
-  }
-  return meilleur;
-}
-
-/**
- * Un quart de tour dans le plan de la trame.
- *
- * Le `+ 0` n'est pas décoratif : `-0` traverse les comparaisons de valeur du
- * langage sans se faire remarquer, puis ressort dans une clé de reconstruction
- * ou une comparaison stricte, où il ne vaut plus tout à fait zéro.
- */
-export function tourner(
-  c: { col: number; rang: number },
-  quart: 0 | 1 | 2 | 3,
-): { col: number; rang: number } {
-  switch (quart) {
-    case 1:
-      return { col: -c.rang + 0, rang: c.col + 0 };
-    case 2:
-      return { col: -c.col + 0, rang: -c.rang + 0 };
-    case 3:
-      return { col: c.rang + 0, rang: -c.col + 0 };
-    default:
-      return { col: c.col + 0, rang: c.rang + 0 };
-  }
-}
+export { orientationTrame, tourner } from "@farmsim/shared";
 
 /* ------------------------------------------------------------------ */
 /* Le plan complet                                                     */
@@ -795,7 +728,9 @@ export function planCampagne(o: OptionsPlan): PlanCampagne {
   const coteMax = o.pasCase
     ? Math.max(emprise, coteDeGrille(COTE_MAX, COTE_MAX, o.pasCase))
     : emprise;
-  const pas = coteMax + LARGEUR_CHEMIN;
+  /* Un nombre entier de cases quand on connaît la case : deux parcelles
+     réunies tombent alors exactement à leur place (voir `PAS_TRAME_CASES`). */
+  const pas = o.pasCase ? Math.max(PAS_TRAME_CASES * o.pasCase, coteMax + LARGEUR_CHEMIN) : coteMax + LARGEUR_CHEMIN;
   /** Le côté d'une parcelle du cadastre, ou l'emprise du joueur à défaut. */
   const coteDe = (gridW?: number, gridH?: number): number =>
     o.pasCase && gridW && gridH ? coteDeGrille(gridW, gridH, o.pasCase) : emprise;
@@ -835,10 +770,14 @@ export function planCampagne(o: OptionsPlan): PlanCampagne {
    * On garde la même bande de pré et de bois, mais comptée depuis la plus
    * haute de ses parcelles au lieu de la seule parcelle active. Une ferme qui
    * ne s'étend pas vers l'amont garde exactement le paysage d'avant.
+   *
+   * Les parcelles à vendre comptent comme les siennes : on s'agrandit en
+   * achetant celle d'à côté, et celle d'en haut doit se voir pour s'acheter.
    */
+  const aMontrer = (v: VoisinReel) => v.statut === "MOI" || v.achetable || v.prix !== null;
   let uMaison = 0;
   for (const v of o.voisins ?? []) {
-    if (v.statut !== "MOI" || (v.col === 0 && v.rang === 0)) continue;
+    if (!aMontrer(v) || (v.col === 0 && v.rang === 0)) continue;
     const t = tourner(v, quart);
     uMaison = Math.min(uMaison, versEcranBas(t.col * pas, t.rang * pas));
   }
@@ -847,7 +786,10 @@ export function planCampagne(o: OptionsPlan): PlanCampagne {
   const lisiereEtrangers = -horizon;
   const routeZ = o.routeZ ?? couloirRoute(o, pas);
   const cour: Boite = { ...o.cour };
-  const joueur: Boite = { x: 0, z: 0, w: emprise, d: emprise };
+  /* L'île réelle : une parcelle réunie à sa voisine s'étend vers la case
+     d'à côté, et ce qui s'y posait doit lui laisser la place. */
+  const joueur: Boite = o.ile ?? { x: 0, z: 0, w: emprise, d: emprise };
+  const actifId = o.voisins?.find((v) => v.col === 0 && v.rang === 0)?.id ?? null;
 
   const cultures: CultureVoisine[] = ["BLE", "ORGE", "COLZA", "MAIS", "TOURNESOL", "HERBE"];
   const parcelles: ParcelleVoisine[] = [];
@@ -867,8 +809,11 @@ export function planCampagne(o: OptionsPlan): PlanCampagne {
     if (versEcranBas(x, z) - cote < (aMoi ? sol.uMin : lisiereEtrangers)) return false;
     if (versEcranBas(x, z) + cote > sol.uMax - MARGE_LISIERE) return false;
     if (Math.abs(versEcranDroite(x, z)) + cote > sol.vMax - MARGE_LISIERE) return false;
-    // Le siège est exempté : sa cour mord volontairement son bord.
-    if (!estMaison && seChevauchent(boite, cour, 0.4)) return false;
+    // Le siège est exempté : sa cour mord volontairement son bord. Ses autres
+    // parcelles et celles à vendre aussi : l'orientation ne tourne plus pour
+    // les écarter de la cour (le pays pivotait à l'achat), et une terre à soi
+    // ou à vendre doit se voir, même si un grand garage la frôle.
+    if (!estMaison && !aMoi && seChevauchent(boite, cour, 0.4)) return false;
     if (seChevauchent(boite, joueur, 0.4)) return false;
     // Le chemin passe dans un couloir de trame : une parcelle ne peut pas y
     // être, mais on le vérifie plutôt que de le supposer.
@@ -886,12 +831,14 @@ export function planCampagne(o: OptionsPlan): PlanCampagne {
      */
     for (const brut of o.voisins) {
       if (brut.col === 0 && brut.rang === 0) continue;
+      // Réunie à l'île qu'on regarde : elle en fait partie, l'île la dessine.
+      if (actifId && brut.fusionneeDans === actifId) continue;
       const v = brut;
       const { col, rang } = tourner(brut, quart);
       const x = col * pas;
       const z = rang * pas;
       const cote = coteDe(v.gridW, v.gridH);
-      if (!posable(x, z, cote, v.statut === "MOI", v.id === o.maison)) continue;
+      if (!posable(x, z, cote, aMontrer(v), v.id === o.maison)) continue;
       const grain = suite(grainerDe(v.id));
       parcelles.push({
         id: v.id,
@@ -974,6 +921,7 @@ export function planCampagne(o: OptionsPlan): PlanCampagne {
     routeZ,
     cour,
     ile: emprise,
+    ileBoite: joueur,
   });
 
   /*
@@ -1087,6 +1035,8 @@ export function planCampagne(o: OptionsPlan): PlanCampagne {
       const b: Boite = { x: x - recul, z: z - recul, w: COTE_DECOR, d: COTE_DECOR };
       if (Math.abs(b.z - routeZ) < DEMI_ROUTE + COTE_DECOR / 2) return false;
       if (seChevauchent(b, cour, 0.2) || seChevauchent(b, joueur, 0.2)) return false;
+      // Ni sur un champ : ses pommiers débordaient sur le coin d'une parcelle.
+      if (parcelles.some((p) => seChevauchent(b, empriseParcelle(p, p.cote), 0.2))) return false;
       for (const a of acces) {
         for (let i = 0; i + 1 < a.points.length; i++) {
           if (seChevauchent(b, boiteSegment(a.points[i]!, a.points[i + 1]!), 0)) return false;
@@ -1318,26 +1268,32 @@ export function cheminsAcces(o: {
   routeZ: number;
   cour: Boite;
   ile: number;
+  /** L'île réelle de la parcelle active, quand elle n'est plus un carré centré. */
+  ileBoite?: Boite;
 }): Acces[] {
-  const cibles: { id: string; x: number; z: number; emprise: number }[] = [];
+  const cibles: { id: string; x: number; z: number; emprise: number; porteX?: [number, number] }[] = [];
   const active = o.voisins.find((v) => v.col === 0 && v.rang === 0);
+  const ile = o.ileBoite ?? { x: 0, z: 0, w: o.ile, d: o.ile };
   if (active && active.statut === "MOI" && o.maison && active.id !== o.maison) {
-    cibles.push({ id: active.id, x: 0, z: 0, emprise: o.ile });
+    // La porte au milieu de la rangée d'origine, sur le bord réel de l'île.
+    cibles.push({ id: active.id, x: 0, z: 0, emprise: o.ile, porteX: [ile.x - ile.w / 2, ile.x + ile.w / 2] });
   }
   for (const p of o.parcelles) {
-    if (p.reel?.statut !== "MOI" || p.id === o.maison) continue;
+    // Une parcelle réunie à une autre n'a pas de chemin à elle : l'île en a un.
+    if (p.reel?.statut !== "MOI" || p.id === o.maison || p.reel.fusionneeDans) continue;
     cibles.push({ id: p.id, x: p.x, z: p.z, emprise: p.cote });
   }
   const obstacles: { id: string; boite: Boite }[] = [
     { id: "", boite: o.cour },
-    { id: active?.id ?? "", boite: { x: 0, z: 0, w: o.ile, d: o.ile } },
+    { id: active?.id ?? "", boite: ile },
     ...o.parcelles.map((p) => ({ id: p.id, boite: empriseParcelle(p, p.cote) })),
   ];
   const acces: Acces[] = [];
   for (const c of cibles) {
     for (const cote of [-1, 1] as const) {
-      const couloir = c.x + (cote * o.pas) / 2;
-      const porte = { x: c.x + (cote * c.emprise) / 2, z: c.z };
+      const bord = c.porteX ? (cote < 0 ? c.porteX[0] : c.porteX[1]) : c.x + (cote * c.emprise) / 2;
+      const couloir = c.porteX ? bord + (cote * (o.pas - c.emprise)) / 2 : c.x + (cote * o.pas) / 2;
+      const porte = { x: bord, z: c.z };
       const points = [{ x: couloir, z: o.routeZ }, { x: couloir, z: c.z }, porte];
       const bloque = [0, 1].some((i) => {
         const b = boiteSegment(points[i]!, points[i + 1]!);

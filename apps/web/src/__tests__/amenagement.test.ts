@@ -188,15 +188,12 @@ describe("les lots de terrain", () => {
     expect(etatLot(coin, possedees).etat).toBe("ENCLAVE");
   });
 
-  it("repoussent la friche : les bornes suivent ce qu'on possède, sans limite", () => {
+  it("s'arrêtent au bord de ce qu'on possède : plus d'anneau de friche à vendre", () => {
     const ferme = fermeClassique();
-    expect(bornesDuDomaine(ferme)).toEqual({ minX: -6, minY: -6, maxX: 18, maxY: 18 });
-    // Un lot acheté au nord : la friche recule d'un lot au nord seulement.
+    expect(bornesDuDomaine(ferme)).toEqual({ minX: 0, minY: 0, maxX: 12, maxY: 12 });
+    // Ce qui a été acheté en lots, avant, reste dans les bornes.
     const plus = [...ferme, ...casesDuLot("0:-1")];
-    expect(bornesDuDomaine(plus)).toEqual({ minX: -6, minY: -12, maxX: 18, maxY: 18 });
-    // Très loin : aucune borne ne l'arrête.
-    const loin = [...plus, ...casesDuLot("0:-40")];
-    expect(bornesDuDomaine(loin).minY).toBe(-246);
+    expect(bornesDuDomaine(plus)).toEqual({ minX: 0, minY: -6, maxX: 12, maxY: 12 });
     expect(lotDeCase(-1, -1).id).toBe("-1:-1");
   });
 

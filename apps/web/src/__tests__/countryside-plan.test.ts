@@ -852,14 +852,6 @@ describe("les parcelles du joueur", () => {
     expect(plan.parcelles.some((p) => p.id === "p-0-1")).toBe(true);
   });
 
-  it("l'orientation ne la pose jamais sous la cour quand elle peut l'éviter", () => {
-    for (const [c, r] of [[1, 0], [-1, 0], [0, 1], [0, -1]] as const) {
-      const quart = orientationTrame(commune([moi(c, r)]));
-      const t = tourner({ col: c, rang: r }, quart);
-      expect(t.col === -1 && t.rang === 0).toBe(false);
-    }
-  });
-
   it("la lisière recule au-dessus d'elle, et seulement pour elle", () => {
     const sans = planCampagne({ ...OPTIONS, voisins: commune([]), quart: 0 });
     const avec = planCampagne({ ...OPTIONS, voisins: commune([moi(-1, 0)]), quart: 0 });
@@ -878,13 +870,25 @@ describe("les parcelles du joueur", () => {
     expect(plan.sol.uMin).toBe(-horizonPour(OPTIONS.emprise));
   });
 
-  it("l'orientation préfère montrer ses parcelles plutôt que celles des autres", () => {
-    // Une seule parcelle au joueur, en (-1, 0) : sans préférence, l'orientation
-    // retenue la laisserait en amont pour montrer un voisin de plus.
-    const voisins = commune([moi(-1, 0)]);
-    const quart = orientationTrame(voisins);
-    const t = tourner({ col: -1, rang: 0 }, quart);
-    expect(t.col + t.rang).toBeGreaterThanOrEqual(0);
+  it("l'orientation ne tourne pas le pays quand on achète", () => {
+    /*
+     * La parcelle qu'on vient de payer doit rester où on l'a vue. Ses
+     * parcelles pesaient cent voisins dans le choix de l'orientation : acheter
+     * celle d'en haut faisait pivoter toute la carte pour la ramener en bas.
+     * Elle se dessine maintenant en amont aussi — la lisière recule.
+     */
+    for (const [c, r] of [[1, 0], [-1, 0], [0, 1], [0, -1]] as const) {
+      const avant = orientationTrame(commune([]));
+      expect(orientationTrame(commune([moi(c, r)]))).toBe(avant);
+      const plan = planCampagne({ ...OPTIONS, voisins: commune([moi(c, r)]), quart: avant });
+      expect(plan.parcelles.some((p) => p.id === `p-${c}-${r}`)).toBe(true);
+    }
+  });
+
+  it("ses parcelles se dessinent même du côté de la cour", () => {
+    // L'orientation ne tourne plus pour les écarter : elles passent la cour.
+    const plan = planCampagne({ ...OPTIONS, voisins: commune([moi(-1, 0)]), quart: 0 });
+    expect(plan.parcelles.some((p) => p.id === "p--1-0")).toBe(true);
   });
 
   it("le siège reste dessiné malgré sa cour", () => {
@@ -1032,7 +1036,8 @@ describe("le village", () => {
       fertility: 0.7,
       batiments: [],
       cheptel: [],
-      prix: statut === "MOI" ? null : 1000,
+      // Le prix ne vient qu'aux parcelles collées à la ferme (`colleeAuxSiennes`).
+      prix: null,
       achetable: false,
       refus: null,
     };

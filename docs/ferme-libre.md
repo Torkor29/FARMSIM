@@ -100,41 +100,79 @@ rien ne se pose en friche.
 Quarts de tour, comme les bâtiments : `empriseOrientee()` permute largeur et
 profondeur pour les quarts impairs (une grange 3×4 tournée occupe 4×3).
 
-### Un seul système de terrain, sans limite
+### Des parcelles entières, qu'on achète à côté et qu'on réunit
 
-Il n'y a plus qu'**une** façon d'avoir de la terre : agrandir sa ferme autour
-d'elle. Acheter une parcelle ailleurs dans le monde (`/parcels/:id/buy`) est
-fermé — on payait une parcelle, puis chaque lot autour, deux systèmes qui se
-marchaient dessus. Le voisinage ne chiffre plus rien, ses pancartes « À vendre »
-ont disparu, et la fiche d'une parcelle voisine comme le Bureau proposent
-« Agrandir ma ferme », qui ouvre le mode construction. Les parcelles déjà
-acquises restent à leur propriétaire et grandissent de la même façon.
+On démarre avec **sa parcelle entière** (12×12), et l'on s'agrandit comme dans
+un jeu de ferme : en rachetant **la parcelle d'à côté**, entière — libre, ou
+cédée par une ferme PNJ, jamais celle d'un autre joueur. Il y a eu des lots de
+6×6 à grappiller autour de sa parcelle pour la compléter, carré par carré :
+« je préfère pouvoir acheter les parcelles voisines ». Les lots ont disparu
+(`/parcels/:id/lots/buy` répond 410) ; ce qui a été acheté ainsi reste.
 
-La terre est découpée en **lots de 6×6 cases** (3,5 ha) sur une **trame
-globale** : le lot `i:j` couvre les cases `6i…6i+5` × `6j…6j+5`, négatives
-comprises. Les **bornes du domaine ne sont plus fixes** : c'est la boîte de ce
-qu'on possède, calée sur la trame, plus **un anneau d'un lot** de friche à
-vendre (`bornesDuDomaine`). Acheter un lot au bord repousse la friche d'un lot
-dans cette direction seulement : la ferme grandit aussi loin qu'on veut, et son
-bord, la friche, la caméra et la campagne suivent. Un lot est achetable s'il
-touche par un côté une case possédée ; un coin qui ne touche que par un angle
-est enclavé.
+- **Ce qui s'achète.** Une parcelle collée par un côté à l'une des siennes
+  (`colleeAuxSiennes`) — de l'autre côté d'un chemin ou de la route s'il le
+  faut, jamais en diagonale ni plus loin. Le paysage la marque d'une pancarte
+  « À vendre » ; sa fiche donne la surface, la culture, le prix, et
+  « Acheter / Racheter cette parcelle », ou le refus du serveur. Les
+  parcelles du catalogue vont de 8×8 à 16×16 cases. Les plafonds de niveau et
+  de nombre de parcelles (`canAcquire`) s'appliquent.
+- **Prix** (`prixParcelle`) : le barème de la terre du jeu, celui qu'avaient
+  les lots — `cases × 505,6 €` (5 200 €/ha, 14 ha pour 144 cases) × 0,5 ×
+  fertilité × prix régional × √(cases possédées / 144), arrondi aux 50 €.
+  Une 10×10 vaut environ 23 000 € en début de partie, une 14×14 environ
+  47 000 € ; plus la ferme est grande, plus sa terre se paie cher, en pente
+  douce. Une parcelle PNJ se rachète avec son bâti et son cheptel ; ses
+  engins restent au voisin.
+- **Le paysage.** La parcelle achetée reste exactement où on l'a vue, et son
+  chemin d'accès se construit depuis la route. Les parcelles à soi et à
+  vendre se dessinent aussi en amont (la lisière recule derrière elles), et
+  l'orientation de la commune ne dépend plus que de sa géographie : acheter
+  ne fait plus pivoter le pays. Le domaine s'arrête au bord de ce qu'on
+  possède ; la campagne à façonner commence juste derrière.
+
+**Réunir.** Deux parcelles à soi, collées et séparées par un **chemin de
+terre**, se réunissent en **un seul champ** (`POST /parcels/:id/reunir`). On
+touche dans le paysage la parcelle qu'on veut réunir à celle où l'on est : sa
+fiche propose « Réunir en un seul champ », avec le prix — 50 € par case de
+chemin défrichée, nivelée et labourée (`PRIX_REUNION_PAR_CASE`), 84 cases pour
+deux parcelles de 12 et 14 cases, soit 4 200 €.
+
+- **Ce qui ne s'efface pas.** La **route goudronnée**, qui court entre le
+  rang du siège et le suivant d'un bout à l'autre de la commune
+  (`separeesParLaRoute`), et la **cour** du siège, entre lui et sa voisine de
+  l'ouest (`separeesParLaCour`). Ces deux-là se refusent avec leur raison.
+- **Ce qui se passe.** Le siège reçoit toujours (il porte la cour) ; sinon,
+  la parcelle d'où l'on réunit. L'autre lui passe ses cases, ses bâtiments
+  (et leurs troupeaux), son décor, sa campagne façonnée et ses caisses
+  livrées, décalés de sa place sur la trame (`decalageDansHote`). Le chemin
+  entre les deux devient du champ, sur toute la longueur où elles se font face
+  (`couloirEntre`) ; ce qu'on y avait creusé ou planté dans la campagne passe
+  dans la ferme tel quel. La parcelle absorbée reste à la ferme
+  (`Parcel.fusionneeDans`) — c'est toujours sa case de la commune, elle compte
+  dans ce qu'on possède et ouvre ses propres voisines à l'achat — mais elle ne
+  se joue plus à part. On peut réunir de proche en proche : trois, quatre,
+  neuf parcelles finissent en un champ immense. Refusé tant qu'un chantier
+  tourne sur la parcelle absorbée.
+- **La trame tombe juste.** Son pas vaut un nombre entier de cases
+  (`PAS_TRAME_CASES` = 20) : une parcelle réunie se pose exactement à sa
+  place, et réunir par étapes ou d'un coup donne la même île. L'orientation de
+  la commune vient du serveur (`quart` du voisinage, fixée par le siège) : le
+  paysage et la réunion lisent la même.
+- **À l'écran.** L'île est calée sur la grille d'origine de sa parcelle, plus
+  sur son rectangle englobant : la partie réunie se dessine là où était la
+  parcelle. Le socle est une dalle par rectangle de cases
+  (`rectanglesDeCases`) et la haie suit le bord réel des cases
+  (`pansDeHaie`) — une île en L ou en T ne couvre jamais le champ du voisin
+  qui occupe l'encoche, et la haie passe autour, jamais entre. Vue depuis une
+  autre parcelle, une île réunie se dessine d'un seul tenant : pas de haie
+  entre ses morceaux, et une bande de champ à la place du chemin. La caméra
+  vise le milieu de l'île, et ne recule pas au-delà d'une grande parcelle et
+  demie : une ferme de neuf parcelles se parcourt à la molette.
 
 La limite de propriété n'est plus une clôture posée d'office : c'est un liseré
 clair, montré en mode construction. Les **clôtures et les haies, c'est le
 joueur qui les trace**, au glissé, où il veut (`/parcels/:id/amenagements/trace`
 pose un objet d'une case sur chaque case valide du tracé, d'un seul paiement).
-
-**Prix** : `cases × 505,6 €` (le prix de la terre du jeu : 5 200 €/ha, 14 ha
-pour 144 cases) × **0,5** × fertilité × prix régional × **√(cases possédées /
-144)**, arrondi aux 50 € supérieurs. Une escalade par lot (×1,18 à chaque achat)
-faisait un mur : le trentième lot aurait coûté cent fois le premier. Avec la
-racine, une ferme quatre fois plus grande paie sa terre deux fois plus cher,
-seize fois plus grande quatre fois. À fertilité moyenne : premier lot ≈
-10 200 €, ≈ 20 400 € à 576 cases, ≈ 40 800 € à 2 304 cases. Le premier lot coûte
-à peu près la trésorerie de départ : c'est le premier vrai choix — un lot, une
-machine ou un bâtiment. **Niveau** : un palier doux (`1, 1, 2, 3, 4, 5, 6, 7, 8,
-10, 12, 14`), puis un niveau tous les deux lots, plafonné à 60.
 
 ### Terraformage : des lacs qu'on dessine
 
@@ -204,13 +242,12 @@ L'autre moitié du terraformage. Les règles vivent dans
 ### La campagne à façonner
 
 Le gros terraformage (relief, eau, bois, prairies) se fait **hors de la
-ferme** : dans la campagne qui l'entoure, au-delà des lots à vendre. La
+ferme** : dans la campagne qui l'entoure, juste derrière son bord. La
 ferme garde sa place pour les cultures, et la campagne devient un terrain
 de jeu à part, où l'on revient façonner entre deux chantiers.
 
 - **Où.** Partout à 30 cases au plus des bornes du domaine
-  (`dansCampagne`, `PORTEE_CAMPAGNE`), hors de la ferme et de ses lots à
-  vendre. La vue refuse une case sous une route, la cour, le village ou le
+  (`dansCampagne`, `PORTEE_CAMPAGNE`), hors de la ferme. La vue refuse une case sous une route, la cour, le village ou le
   champ d'un voisin (« Une route, la cour, le village ou le champ d'un
   voisin est là ») : c'est elle qui connaît la campagne, comme pour la
   décoration libre.
@@ -228,18 +265,14 @@ de jeu à part, où l'on revient façonner entre deux chantiers.
   niveau, forme, âge du bois), dans le repère des cases du siège. Seules les
   cases façonnées existent : une case absente est de l'herbe. Routes :
   `POST /parcels/:id/campagne` et `/campagne/berges`.
-- **Agrandir.** Quand un lot acheté recouvre de la campagne façonnée, elle
-  passe dans la ferme telle quelle : un lac reste un lac, un bois garde son
-  âge.
+- **Agrandir.** Quand une réunion fait d'un chemin du champ, la campagne
+  façonnée qu'il portait passe dans la ferme telle quelle : un lac reste un
+  lac, un bois garde son âge.
 - **Le moulin** prend l'eau de la campagne par un **bief** : une cascade ou
   une rivière à 8 cases au plus fait tourner sa roue (`PORTEE_BIEF`).
-- **L'irrigation** arrive par des **rigoles** qui traversent l'anneau des
-  lots à vendre (`eauxDeLaCampagne`). Une case d'eau de campagne compte
-  comme si elle bordait la ferme : on la rapproche d'un lot (6 cases) sur
-  chaque axe où elle dépasse le domaine. La portée part de là : +3 % à
-  3 cases du bord de la ferme, +4 % à 2 cases si l'eau coule. Un lac à dix
-  cases de l'anneau reste trop loin. Le brise-vent d'un bois de campagne,
-  lui, ne traverse pas l'anneau : il n'agit que de près.
+- **L'irrigation.** La campagne touche la ferme : une case d'eau de
+  campagne irrigue de là où elle est (`eauxDeLaCampagne`), +3 % à 3 cases,
+  +4 % à 2 cases si l'eau coule.
 - **Quand le pays se redessine.** Si la ferme grandit, la route peut glisser
   d'un couloir, un voisin s'installer, l'île s'élargir. Deux cas se
   présentent :
@@ -425,8 +458,8 @@ unique : haies et étangs se placent où l'on veut.
 ### Mode construction (jeu)
 
 - Un bouton **Construire** (et `B`) ouvre le mode : la vue se recule sur le
-  domaine, la grille apparaît discrètement, la friche montre ses lots
-  achetables avec leur prix.
+  domaine et la grille apparaît discrètement. La terre, elle, s'achète dans
+  le paysage, parcelle par parcelle (voir plus haut).
 - Une barre en bas : catégories (Terrain, Agriculture, Bâtiments, Élevage,
   Nature, Chemins, Décoration) et leurs objets, verrouillés au besoin avec la
   raison.
