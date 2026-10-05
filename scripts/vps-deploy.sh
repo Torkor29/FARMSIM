@@ -217,6 +217,35 @@ if [[ -n "$libre_pct" ]] && (( libre_pct > 85 )); then
   du -xhd2 /var 2>/dev/null | sort -rh | head -10 | sed 's/^/    /' >&2 || true
 fi
 
+# Les dumps d'avant-déploiement, que le ménage Docker ne touche pas.
+#
+# Le 5 octobre : disque à 94 %, 1,6 Go libres, ménage Docker inchangé
+# (toujours 94 %). La relecture restaure une **seconde copie** de la base
+# dans PostgreSQL ; sans place, `pg_restore` échoue, le script efface
+# l'archive, et le déploiement s'arrête — alors que le jeu tournait.
+DEPOT_SAUV="${FARMSIM_BACKUP_DIR:-/var/backups/farmsim}"
+GARDE_DUMPS="${FARMSIM_BACKUP_KEEP:-14}"
+if [[ -d "$DEPOT_SAUV" ]]; then
+  echo "==> Sauvegardes déjà sur le disque"
+  du -sh "$DEPOT_SAUV" 2>/dev/null | sed 's/^/    /' || true
+fi
+if [[ -n "$libre_pct" ]] && (( libre_pct >= 85 )); then
+  GARDE_DUMPS=3
+  echo "==> Disque à ${libre_pct} % — on ne garde que 3 dumps, les plus récents."
+  if [[ -d "$DEPOT_SAUV" ]]; then
+    mapfile -t dumps < <(ls -1t "$DEPOT_SAUV"/farmsim-*.dump 2>/dev/null || true)
+    if (( ${#dumps[@]} > 3 )); then
+      for f in "${dumps[@]:3}"; do
+        echo "    efface $(basename "$f")"
+        rm -f "$f"
+      done
+    else
+      echo "    rien à élaguer"
+    fi
+  fi
+  timeout 60 df -h / | tail -n +2 | awk '{print "    après dumps : " $5 " occupé, " $4 " libre sur " $2}'
+fi
+
 # --- git ---
 #
 # Le VPS a déjà perdu GitHub en plein `git fetch` (SSL connection timeout)
@@ -398,9 +427,24 @@ else
   # repli. Ne pas livrer est un risque, lui aussi.
   # ——————————————————————————————————————————————————————————————————
   if (( relire == 1 )); then budget=900; repli=600; else budget=300; repli=0; fi
+  echo "==> Bases d'essai orphelines"
+  orphelines="$(timeout 30 docker exec "${FARMSIM_DB_CONTAINER:-farmsim-db}" \
+      psql -U "${FARMSIM_DB_USER:-farmsim}" -d postgres -tAc \
+      "SELECT datname FROM pg_database WHERE datname LIKE 'farmsim_verif_%'" 2>/dev/null || true)"
+  if [[ -z "${orphelines//[$' \t\n']/}" ]]; then
+    echo "    aucune"
+  else
+    while read -r db; do
+      [[ -n "$db" ]] || continue
+      echo "    drop $db"
+      timeout 30 docker exec "${FARMSIM_DB_CONTAINER:-farmsim-db}" \
+        psql -U "${FARMSIM_DB_USER:-farmsim}" -d postgres -c \
+        "DROP DATABASE IF EXISTS \"$db\" WITH (FORCE)" >/dev/null 2>&1 || true
+    done <<< "$orphelines"
+  fi
   echo "==> Sauvegarde avant migration (budget ${budget} s)"
   code=0
-  timeout "$budget" env FARMSIM_BACKUP_VERIFY="$relire" \
+  timeout "$budget" env FARMSIM_BACKUP_VERIFY="$relire" FARMSIM_BACKUP_KEEP="${GARDE_DUMPS:-14}" \
     bash "$APP_DIR/scripts/farmsim-backup.sh" avant-deploi || code=$?
   if (( code == 124 && repli > 0 )); then
     # 124 : la borne a parlé. On retente un instantané **sans relecture** —
@@ -409,7 +453,7 @@ else
     # refuser le repli ne rendrait personne plus sûr.
     echo "WARN: sauvegarde relue trop longue ($(( budget / 60 )) min) — instantané sans relecture." >&2
     code=0
-    timeout "$repli" env FARMSIM_BACKUP_VERIFY=0 \
+    timeout "$repli" env FARMSIM_BACKUP_VERIFY=0 FARMSIM_BACKUP_KEEP="${GARDE_DUMPS:-14}" \
       bash "$APP_DIR/scripts/farmsim-backup.sh" avant-deploi || code=$?
   elif (( code == 124 )); then
     # Pas de migration en vue : on ne rejoue pas, on le dit et on déploie.

@@ -49,6 +49,83 @@ function psql(url, sql) {
   }).trim();
 }
 
+/** PostgreSQL (ou le disque) n'a plus de place pour écrire. */
+export function estDisquePlein(texte) {
+  return /no space left on device/i.test(String(texte));
+}
+
+/**
+ * Place restante sur le système de fichiers de `chemin`, en octets.
+ *
+ * `df` sur le fichier de dump, pas sur `/` du conteneur : le dump est monté
+ * depuis l'hôte, et c'est l'hôte qui a saturé le 5 octobre (94 %, 1,6 Go).
+ */
+export function octetsLibres(chemin) {
+  try {
+    const out = execFileSync("df", ["-B1", "--output=avail", chemin], {
+      encoding: "utf8",
+    });
+    const n = Number(out.trim().split(/\s+/).pop());
+    return Number.isFinite(n) && n > 0 ? n : 0;
+  } catch {
+    return 0;
+  }
+}
+
+/** Taille de la base visée, en octets. */
+function tailleBase(url) {
+  return Number(psql(url, "SELECT pg_database_size(current_database())"));
+}
+
+/**
+ * Une restauration d'essai demande une **seconde copie** de la base, plus un
+ * peu de WAL. En dessous, `pg_restore` échoue au milieu et le déploiement
+ * s'arrête — c'est le 5 octobre : 1,6 Go libres, relecture impossible.
+ */
+export function fautRestaurer(libre, besoin) {
+  return libre > besoin;
+}
+
+/** Sommaire de l'archive : fichier lisible et complet, sans rien restaurer. */
+function lireSommaire(fichier) {
+  const octets = statSync(fichier).size;
+  execFileSync("pg_restore", ["--list", fichier], {
+    stdio: ["ignore", "ignore", "inherit"],
+  });
+  return { integrité: "sommaire lu, non restaurée", lignes: {}, octets };
+}
+
+/**
+ * Les bases `farmsim_verif_*` d'un tour précédent.
+ *
+ * `vérifier` les jette dans son `finally`, mais un `pg_restore` tué par le
+ * disque plein (ou par la borne SSH) peut laisser le `DROP` inachevé. Une
+ * copie orpheline occupe alors exactement la place que le tour suivant
+ * voudrait pour s'éprouver.
+ */
+export function jeterBasesVerif(url) {
+  const admin = urlVers(url, "postgres");
+  let noms = "";
+  try {
+    noms = psql(
+      admin,
+      `SELECT datname FROM pg_database WHERE datname LIKE 'farmsim_verif_%'`,
+    );
+  } catch {
+    return [];
+  }
+  const jetées = [];
+  for (const nom of noms.split("\n").map((s) => s.trim()).filter(Boolean)) {
+    try {
+      psql(admin, `DROP DATABASE IF EXISTS "${nom}" WITH (FORCE)`);
+      jetées.push(nom);
+    } catch {
+      /* le ménage ne doit pas masquer l'erreur d'origine */
+    }
+  }
+  return jetées;
+}
+
 /**
  * Erreur distincte : il n'y a **rien** à sauvegarder.
  *
@@ -106,11 +183,7 @@ export function instantané(url, destination, { relire = true } = {}) {
      * --list` lit le sommaire, ce qui attrape un fichier tronqué sans rien
      * restaurer.
      */
-    const octets = statSync(destination).size;
-    execFileSync("pg_restore", ["--list", destination], {
-      stdio: ["ignore", "ignore", "inherit"],
-    });
-    return { integrité: "sommaire lu, non restaurée", lignes: {}, octets };
+    return lireSommaire(destination);
   }
   return vérifier(destination, url);
 }
@@ -124,16 +197,43 @@ export function instantané(url, destination, { relire = true } = {}) {
  * @returns `{ integrité, lignes, octets }`
  */
 export function vérifier(fichier, url) {
+  jeterBasesVerif(url);
   const octets = statSync(fichier).size;
+  const besoin = Math.ceil(tailleBase(url) * 1.2);
+  const libre = octetsLibres(fichier);
+  if (!fautRestaurer(libre, besoin)) {
+    console.warn(
+      `WARN: ${Math.round(libre / 1048576)} Mo libres, ${Math.round(besoin / 1048576)} Mo pour une copie d'essai — sommaire seulement.`,
+    );
+    return {
+      ...lireSommaire(fichier),
+      integrité: "sommaire lu, non restaurée (disque trop juste)",
+    };
+  }
   const essai = `farmsim_verif_${randomBytes(6).toString("hex")}`;
   const admin = urlVers(url, "postgres");
   psql(admin, `CREATE DATABASE "${essai}"`);
   try {
-    execFileSync(
-      "pg_restore",
-      ["--dbname", urlVers(url, essai), "--no-owner", "--no-privileges", "--exit-on-error", fichier],
-      { stdio: ["ignore", "ignore", "inherit"] },
-    );
+    try {
+      execFileSync(
+        "pg_restore",
+        ["--dbname", urlVers(url, essai), "--no-owner", "--no-privileges", "--exit-on-error", fichier],
+        { stdio: ["ignore", "ignore", "pipe"] },
+      );
+    } catch (e) {
+      const stderr = Buffer.isBuffer(e.stderr) ? e.stderr.toString() : String(e.stderr ?? "");
+      if (stderr) process.stderr.write(stderr);
+      if (estDisquePlein(`${e.message}\n${stderr}`)) {
+        console.warn(
+          "WARN: relecture arrêtée, plus de place sur le disque — on garde l'archive si son sommaire se lit.",
+        );
+        return {
+          ...lireSommaire(fichier),
+          integrité: "sommaire lu, restauration impossible (disque plein)",
+        };
+      }
+      throw e;
+    }
     const lignes = {};
     for (const table of TABLES_VITALES) {
       const n = Number(psql(urlVers(url, essai), `SELECT COUNT(*) FROM "${table}"`));
@@ -202,6 +302,9 @@ export function horodatage(date = new Date()) {
 
 export function sauvegarder({ url, dossier, garder = 14, étiquette = "", relire = true }) {
   mkdirSync(dossier, { recursive: true });
+  // Élague **avant** l'instantané : le 5 octobre les dumps d'hier tenaient
+  // encore le disque à 94 %, et la relecture n'avait nulle part où copier.
+  élaguer(dossier, garder);
   const nom = `farmsim-${horodatage()}${étiquette ? `-${étiquette}` : ""}.dump`;
   const destination = join(dossier, nom);
   try {
@@ -210,7 +313,9 @@ export function sauvegarder({ url, dossier, garder = 14, étiquette = "", relire
     return { fichier: destination, ...rapport, ...ménage };
   } catch (e) {
     // Un fichier douteux ne reste pas sur le disque : il ferait croire à une
-    // sauvegarde valide le jour où l'on en aura besoin.
+    // sauvegarde valide le jour où l'on en aura besoin. Une archive dont le
+    // sommaire se lit, elle, n'est pas douteuse — `vérifier` l'a déjà
+    // conservée en retournant un sommaire plutôt qu'en lançant.
     rmSync(destination, { force: true });
     throw e;
   }
