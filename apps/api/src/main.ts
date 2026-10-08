@@ -1967,6 +1967,30 @@ async function finDesChantiersSur(parcelId: string, cells: CellXY[]): Promise<Da
   return fin;
 }
 
+/**
+ * Une durée de culture lisible : « 25 min », « 3 h », « 2 h 15 ».
+ *
+ * `attenteEnClair` compte en secondes et en minutes, à l'échelle d'un
+ * chantier. Une culture se compte en heures : « 180 min » ne se lit pas.
+ */
+function dureeEnClair(ms: number): string {
+  const minutes = Math.max(1, Math.ceil(ms / 60000));
+  if (minutes < 90) return `${minutes} min`;
+  const h = Math.floor(minutes / 60);
+  const m = minutes % 60;
+  return m >= 5 ? `${h} h ${String(m).padStart(2, "0")}` : `${h} h`;
+}
+
+/**
+ * Ce que redevient une case quand un bâtiment la quitte.
+ *
+ * Poser un bâtiment met ses cases en pré (`sol: "PRE"`) ; le déplacer, le
+ * tourner ou le démolir les vidait sans leur rendre leur sol. Elles restaient
+ * en pré, et un pré ne se laboure ni ne se sème : le champ gardait, à vie, des
+ * carrés vert clair à l'emplacement de chaque ancien hangar.
+ */
+const CASE_RENDUE_AU_CHAMP = { kind: "EMPTY", buildingId: null, sol: "CHAMP" } as const;
+
 /** Une attente lisible : « 40 s », « 3 min ». `null` si c'est déjà passé. */
 function attenteEnClair(quand: Date): string | null {
   const secondes = Math.ceil((quand.getTime() - Date.now()) / 1000);
@@ -8252,7 +8276,7 @@ app.post("/parcels/:id/jobs", async (req, res) => {
    */
   await libererChantiersAbandonnes(parcel.id, body.data.userId);
   const pris = await occupiedJobCells(parcel.id);
-  const cells = demandees.filter((c) => !pris.has(`${c.x},${c.y}`));
+  let cells = demandees.filter((c) => !pris.has(`${c.x},${c.y}`));
   const ignorees = demandees.length - cells.length;
   if (!cells.length) {
     /*
@@ -8311,9 +8335,81 @@ app.post("/parcels/:id/jobs", async (req, res) => {
     return;
   }
 
-  const candidate = pickMachineForWork(access.machines, work);
+  /*
+   * La récolte ne part que sur ce qui est récoltable, et avec la bonne machine.
+   *
+   * Deux pièges, tous deux signalés sur du maïs. L'outil Récolte envoyait la
+   * sélection telle quelle : la moissonneuse faisait tout le chantier, puis
+   * la route de récolte répondait « Rien à récolter (pas prêt) ». Et le
+   * chantier exigeait une moissonneuse alors que la route sait ensiler : le
+   * joueur équipé de la seule ensileuse ne pouvait pas lancer son maïs.
+   *
+   * Même règle que la route de récolte (`cellGoesToSilage`) : avec une
+   * ensileuse, le maïs assez avancé part en ensilage ; tout le reste doit être
+   * mûr et pas perdu. La machine suit ce qui part : la moissonneuse dès qu'une
+   * case part en grain, l'ensileuse si tout part en ensilage.
+   */
+  let machineWork: FarmWork = work;
+  if (work === "HARVEST") {
+    const ensileuse = pickMachineForWork(access.machines, "SILAGE");
+    const maintenant = Date.now();
+    const recoltables: CellXY[] = [];
+    let enGrain = 0;
+    let perdues = 0;
+    let prochaine: number | null = null;
+    for (const c of cells) {
+      const cell = parcel.cells.find((p) => p.x === c.x && p.y === c.y);
+      if (!cell || cell.kind !== "CROP" || !cell.crop || !cell.plantedAt) continue;
+      const sim = simulateCell({
+        ...climatDe(parcel),
+        crop: cell.crop as CropCode,
+        plantedAt: cell.plantedAt.getTime(),
+        now: maintenant,
+        fertility: parcel.fertility,
+        weedPressure: pressionAdventices(cell, currentSeason(climatDe(parcel).hemisphere ?? "N", maintenant)),
+        fertilizedPasses: Math.min(2, cell.fertilizedPasses) as 0 | 1 | 2,
+        residuePasses: cell.residuePasses,
+        directSeeded: cell.directSeeded,
+        rotation: rotationOf(cell),
+        cutsDone: grassCutsDone(cell),
+      });
+      if (
+        ensileuse &&
+        cell.crop === "MAIZE" &&
+        canSilageHarvest({ crop: cell.crop as CropCode, progress: sim.progress, lost: sim.lost })
+      ) {
+        recoltables.push(c);
+        continue;
+      }
+      if (sim.lost) {
+        perdues += 1;
+        continue;
+      }
+      if (!sim.ready) {
+        if (sim.readyAt && (prochaine === null || sim.readyAt < prochaine)) prochaine = sim.readyAt;
+        continue;
+      }
+      recoltables.push(c);
+      enGrain += 1;
+    }
+    if (!recoltables.length) {
+      const dans = prochaine ? dureeEnClair(prochaine - maintenant) : null;
+      res.status(409).json({
+        error: dans
+          ? `Rien n'est mûr dans la sélection — premières cases prêtes dans ${dans}.`
+          : perdues
+            ? "Récolte perdue sur ces cases — passez l'outil Labour pour les libérer."
+            : "Rien à récolter dans la sélection.",
+      });
+      return;
+    }
+    cells = recoltables;
+    if (!enGrain) machineWork = "SILAGE";
+  }
+
+  const candidate = pickMachineForWork(access.machines, machineWork);
   if (!candidate) {
-    res.status(409).json({ error: explainNoMachine(access.machines, work) });
+    res.status(409).json({ error: explainNoMachine(access.machines, machineWork) });
     return;
   }
   let picked = candidate;
@@ -8394,7 +8490,7 @@ app.post("/parcels/:id/jobs", async (req, res) => {
     const reserved = new Set(reservations.flatMap((j) => [j.machineId, j.tractorId]));
     // Le premier choix peut être pris pendant l'aller-retour. Choisir un
     // autre attelage libre, et non refuser une ferme qui en possède deux.
-    const rig = pickMachineForWork(machines.filter((m) => !reserved.has(m.id)), work);
+    const rig = pickMachineForWork(machines.filter((m) => !reserved.has(m.id)), machineWork);
     if (!rig) throw new Error("RIG_RESERVED");
     picked = rig;
     const currentTeam = await bonusEquipe(workFarmId, tx);
@@ -11086,7 +11182,7 @@ app.post("/buildings/:id/rotate", async (req, res) => {
   const updated = await prisma.$transaction(async (tx) => {
     await tx.parcelCell.updateMany({
       where: { buildingId: building.id },
-      data: { kind: "EMPTY", buildingId: null },
+      data: CASE_RENDUE_AU_CHAMP,
     });
     for (const c of wanted) {
       await tx.parcelCell.update({
@@ -11176,7 +11272,7 @@ app.post("/buildings/:id/move", async (req, res) => {
     }
     await tx.parcelCell.updateMany({
       where: { buildingId: building.id },
-      data: { kind: "EMPTY", buildingId: null },
+      data: CASE_RENDUE_AU_CHAMP,
     });
     for (const c of wanted) {
       await tx.parcelCell.update({
@@ -13972,7 +14068,7 @@ app.post("/buildings/:id/sell", async (req, res) => {
     });
     await tx.parcelCell.updateMany({
       where: { buildingId: building.id },
-      data: { kind: "EMPTY", buildingId: null },
+      data: CASE_RENDUE_AU_CHAMP,
     });
     await tx.building.delete({ where: { id: building.id } });
     await crediter(tx, body.data.userId, value, "BATIMENTS", `Démolition — ${BUILDING_DEFS[building.type as SharedBuildingType]?.name ?? building.type}`);

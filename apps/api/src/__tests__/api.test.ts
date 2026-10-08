@@ -474,10 +474,12 @@ describe("argent", () => {
     // Les cases d'avant se libèrent, celles d'arrivée se prennent.
     const cases = (
       (await appel(`/parcels/${f.parcelId}`)).corps as unknown as {
-        parcel: { cells: { x: number; y: number; kind: string; buildingId: string | null }[] };
+        parcel: { cells: { x: number; y: number; kind: string; buildingId: string | null; sol?: string }[] };
       }
     ).parcel.cells;
     assert.equal(cases.find((c) => c.x === 0 && c.y === 0)!.kind, "EMPTY", "l'ancienne place est restée occupée");
+    // Et elle redevient du champ : restée en pré, elle ne se labourait plus.
+    assert.equal(cases.find((c) => c.x === 0 && c.y === 0)!.sol, "CHAMP", "l'ancienne place est restée en pré");
     assert.equal(cases.find((c) => c.x === 6 && c.y === 6)!.buildingId, silo.id, "la nouvelle place n'est pas prise");
   });
 
@@ -2237,6 +2239,77 @@ describe("calendrier cultural", () => {
     assert.equal(apres.strawTons, 0, "l'ensilage a laissé de la paille derrière lui");
   });
 
+  /*
+   * La récolte ne part pas sur un maïs vert.
+   *
+   * L'outil Récolte envoyait la sélection telle quelle : le chantier partait,
+   * la moissonneuse faisait tout le trajet, et c'est seulement au bout que la
+   * route répondait « Rien à récolter (pas prêt) ». Le refus doit tomber au
+   * départ, avec le délai qui reste.
+   */
+  it("refuse au départ une récolte de maïs pas mûr, en disant quand il le sera", async () => {
+    const { moi, parcelle, cells } = await fermeSemable();
+    const lot = cells.slice(0, 4);
+    const ou = lot.map((c) => `(x = ${c.x} AND y = ${c.y})`).join(" OR ");
+    prismaExec(
+      `UPDATE "ParcelCell" SET kind = 'CROP', crop = 'MAIZE', "fieldStage" = 'PLANTED', ` +
+        `"plantedAt" = '${new Date(Date.now() - 60 * 60 * 1000).toISOString()}' ` +
+        `WHERE "parcelId" = '${parcelle.id}' AND (${ou});`,
+    );
+    const r = await appel(`/parcels/${parcelle.id}/jobs`, {
+      methode: "POST",
+      corps: { userId: moi.id, work: "HARVEST", cells: lot },
+      jeton: moi.jeton,
+    });
+    assert.equal(r.statut, 409, JSON.stringify(r.corps));
+    assert.match(String(r.corps.error), /Rien n'est mûr.*prêtes dans \d+ h/);
+  });
+
+  /*
+   * L'ensileuse seule suffit à récolter son maïs.
+   *
+   * La route de récolte savait ensiler sans moissonneuse ; le chantier, lui,
+   * réclamait une moissonneuse avant de partir — le joueur équipé pour le
+   * maïs ne pouvait pas le lancer.
+   */
+  it("lance la récolte du maïs avec la seule ensileuse, et la mène au silo", async () => {
+    const { moi, parcelle, cells } = await fermeSemable();
+    await appel("/dev/grant", { methode: "POST", corps: { userId: moi.id, crd: 900000 }, jeton: moi.jeton });
+    const achat = await appel("/machines/buy", {
+      methode: "POST",
+      corps: { userId: moi.id, type: "FORAGE_HARVESTER" },
+      jeton: moi.jeton,
+    });
+    assert.equal(achat.statut, 201, JSON.stringify(achat.corps));
+    const lot = cells.slice(0, 4);
+    const ou = lot.map((c) => `(x = ${c.x} AND y = ${c.y})`).join(" OR ");
+    // Bien au-delà de la pousse de base : mûr quelle que soit la saison.
+    prismaExec(
+      `UPDATE "ParcelCell" SET kind = 'CROP', crop = 'MAIZE', "fieldStage" = 'PLANTED', ` +
+        `"plantedAt" = '${new Date(Date.now() - 40 * 60 * 60 * 1000).toISOString()}' ` +
+        `WHERE "parcelId" = '${parcelle.id}' AND (${ou});`,
+    );
+    const job = await appel(`/parcels/${parcelle.id}/jobs`, {
+      methode: "POST",
+      corps: { userId: moi.id, work: "HARVEST", cells: lot },
+      jeton: moi.jeton,
+    });
+    assert.equal(job.statut, 201, `chantier refusé : ${JSON.stringify(job.corps)}`);
+    const chantier = job.corps.job as unknown as { id: string; cells: { x: number; y: number }[] };
+    assert.equal(chantier.cells.length, lot.length);
+    // Le chantier est arrivé à son terme.
+    prismaExec(`UPDATE "FieldJob" SET "endsAt" = now() - interval '1 second' WHERE id = '${chantier.id}';`);
+    const r = await appel(`/parcels/${parcelle.id}/harvest`, {
+      methode: "POST",
+      corps: { userId: moi.id, jobId: chantier.id, cells: chantier.cells },
+      jeton: moi.jeton,
+    });
+    assert.equal(r.statut, 200, `récolte refusée : ${JSON.stringify(r.corps)}`);
+    const recolte = r.corps.harvested as unknown as { silage?: boolean }[];
+    assert.equal(recolte.length, lot.length);
+    assert.ok(recolte.every((h) => h.silage), "le maïs aurait dû partir en ensilage");
+  });
+
   it("inscrit chaque prestation sous son vrai nom au grand livre", async () => {
     /*
      * Trois libellés étaient des copiés-collés qui n'avaient pas été relus :
@@ -2673,10 +2746,13 @@ describe("un chantier prend du temps", () => {
 
   it("rend le plein quand le refus ne peut venir qu'après", async () => {
     /**
-     * Toutes les refusals ne se prévoient pas : savoir si une culture est mûre
-     * demande de la simuler. Le chantier part donc, et c'est au retour qu'on
-     * apprend qu'il n'y avait rien. Ce qui ne doit pas rester au joueur, c'est
-     * la facture : il a payé une sélection, pas un travail.
+     * Tous les refus ne se prévoient pas : le chantier part sur un champ mûr,
+     * et le champ peut changer pendant qu'il roule. C'est alors au retour
+     * qu'on apprend qu'il n'y avait plus rien. Ce qui ne doit pas rester au
+     * joueur, c'est la facture : il a payé une sélection, pas un travail.
+     *
+     * Le départ, lui, refuse désormais ce qui n'est pas mûr : on sème donc un
+     * maïs mûr pour que le chantier parte, et on le retire en route.
      */
     const { moi, parcelle, cells } = await fermeAuChamp("Moisson à vide");
     // Le parc de départ n'a pas de moissonneuse : sans elle, le chantier se
@@ -2688,6 +2764,12 @@ describe("un chantier prend du temps", () => {
     });
     assert.equal(achat.statut, 201, `moissonneuse refusée : ${JSON.stringify(achat.corps)}`);
     const lot = cells.slice(0, 3);
+    const ou = lot.map((c) => `(x = ${c.x} AND y = ${c.y})`).join(" OR ");
+    prismaExec(
+      `UPDATE "ParcelCell" SET kind = 'CROP', crop = 'MAIZE', "fieldStage" = 'PLANTED', ` +
+        `"plantedAt" = '${new Date(Date.now() - 40 * 60 * 60 * 1000).toISOString()}' ` +
+        `WHERE "parcelId" = '${parcelle.id}' AND (${ou});`,
+    );
     const avant = await appel("/auth/me", { jeton: moi.jeton });
     const cuveAvant = (avant.corps as unknown as {
       player: { farm: { fuelL: number } };
@@ -2706,6 +2788,11 @@ describe("un chantier prend du temps", () => {
       player: { farm: { fuelL: number } };
     }).player.farm.fuelL;
     assert.ok(cuvePendant < cuveAvant, "le plein aurait dû partir au départ de la cour");
+    // Le champ change pendant que la moissonneuse roule : il n'y a plus rien.
+    prismaExec(
+      `UPDATE "ParcelCell" SET kind = 'EMPTY', crop = NULL, "fieldStage" = 'EMPTY', "plantedAt" = NULL ` +
+        `WHERE "parcelId" = '${parcelle.id}' AND (${ou});`,
+    );
 
     /*
       Attendre la fin du chantier, comme le fait `travailler()`.
