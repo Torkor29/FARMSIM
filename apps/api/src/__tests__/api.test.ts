@@ -474,10 +474,12 @@ describe("argent", () => {
     // Les cases d'avant se libèrent, celles d'arrivée se prennent.
     const cases = (
       (await appel(`/parcels/${f.parcelId}`)).corps as unknown as {
-        parcel: { cells: { x: number; y: number; kind: string; buildingId: string | null }[] };
+        parcel: { cells: { x: number; y: number; kind: string; buildingId: string | null; sol?: string }[] };
       }
     ).parcel.cells;
     assert.equal(cases.find((c) => c.x === 0 && c.y === 0)!.kind, "EMPTY", "l'ancienne place est restée occupée");
+    // Et elle redevient du champ : restée en pré, elle ne se labourait plus.
+    assert.equal(cases.find((c) => c.x === 0 && c.y === 0)!.sol, "CHAMP", "l'ancienne place est restée en pré");
     assert.equal(cases.find((c) => c.x === 6 && c.y === 6)!.buildingId, silo.id, "la nouvelle place n'est pas prise");
   });
 

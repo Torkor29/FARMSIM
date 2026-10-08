@@ -1981,6 +1981,16 @@ function dureeEnClair(ms: number): string {
   return m >= 5 ? `${h} h ${String(m).padStart(2, "0")}` : `${h} h`;
 }
 
+/**
+ * Ce que redevient une case quand un bâtiment la quitte.
+ *
+ * Poser un bâtiment met ses cases en pré (`sol: "PRE"`) ; le déplacer, le
+ * tourner ou le démolir les vidait sans leur rendre leur sol. Elles restaient
+ * en pré, et un pré ne se laboure ni ne se sème : le champ gardait, à vie, des
+ * carrés vert clair à l'emplacement de chaque ancien hangar.
+ */
+const CASE_RENDUE_AU_CHAMP = { kind: "EMPTY", buildingId: null, sol: "CHAMP" } as const;
+
 /** Une attente lisible : « 40 s », « 3 min ». `null` si c'est déjà passé. */
 function attenteEnClair(quand: Date): string | null {
   const secondes = Math.ceil((quand.getTime() - Date.now()) / 1000);
@@ -11172,7 +11182,7 @@ app.post("/buildings/:id/rotate", async (req, res) => {
   const updated = await prisma.$transaction(async (tx) => {
     await tx.parcelCell.updateMany({
       where: { buildingId: building.id },
-      data: { kind: "EMPTY", buildingId: null },
+      data: CASE_RENDUE_AU_CHAMP,
     });
     for (const c of wanted) {
       await tx.parcelCell.update({
@@ -11262,7 +11272,7 @@ app.post("/buildings/:id/move", async (req, res) => {
     }
     await tx.parcelCell.updateMany({
       where: { buildingId: building.id },
-      data: { kind: "EMPTY", buildingId: null },
+      data: CASE_RENDUE_AU_CHAMP,
     });
     for (const c of wanted) {
       await tx.parcelCell.update({
@@ -14058,7 +14068,7 @@ app.post("/buildings/:id/sell", async (req, res) => {
     });
     await tx.parcelCell.updateMany({
       where: { buildingId: building.id },
-      data: { kind: "EMPTY", buildingId: null },
+      data: CASE_RENDUE_AU_CHAMP,
     });
     await tx.building.delete({ where: { id: building.id } });
     await crediter(tx, body.data.userId, value, "BATIMENTS", `Démolition — ${BUILDING_DEFS[building.type as SharedBuildingType]?.name ?? building.type}`);
