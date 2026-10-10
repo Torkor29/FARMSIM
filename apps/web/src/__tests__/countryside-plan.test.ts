@@ -1107,3 +1107,112 @@ describe("le village", () => {
     expect(planCampagne(OPTIONS).lieux).toEqual([]);
   });
 });
+
+/**
+ * Le même pays, d'où qu'on regarde.
+ *
+ * Signalé en vidéo par un joueur : en passant de son siège à un champ réuni,
+ * « la map change complètement » — la trame s'étirait (son pas suivait l'île
+ * active), la lisière et le village se comptaient depuis l'active, et la
+ * moitié des voisins sortait du sol. Le dessin garde l'active à l'origine ;
+ * le pays, lui, doit être le même, simplement décalé.
+ */
+describe("le même pays, d'où qu'on regarde", () => {
+  const PAS_CASE = 1.06;
+  function parcelle(col: number, rang: number, p: Partial<VoisinReel> = {}): VoisinReel {
+    return {
+      id: `p-${col}-${rang}`,
+      label: `Champ ${col}·${rang}`,
+      col,
+      rang,
+      statut: "PNJ",
+      proprietaire: "Ferme Duval",
+      exploitation: "Duval",
+      culture: "WHEAT",
+      stade: "GROWING",
+      partCultivee: 1,
+      fertility: 0.7,
+      batiments: [],
+      cheptel: [],
+      prix: null,
+      achetable: false,
+      refus: null,
+      gridW: 12,
+      gridH: 12,
+      ...p,
+    };
+  }
+  // Vue du siège : le siège en (0,0), un champ réuni de deux parcelles en
+  // (0,1) et (0,2), des voisins tout autour.
+  const commune: VoisinReel[] = [];
+  for (let c = -3; c <= 3; c++) {
+    for (let r = -3; r <= 3; r++) {
+      if (c === 0 && r === 0) commune.push(parcelle(0, 0, { id: "siege", statut: "MOI" }));
+      else if (c === 0 && r === 1) commune.push(parcelle(0, 1, { id: "grand", statut: "MOI" }));
+      else if (c === 0 && r === 2) commune.push(parcelle(0, 2, { id: "absorbee", statut: "MOI", fusionneeDans: "grand" }));
+      else commune.push(parcelle(c, r));
+    }
+  }
+  const pas = 20 * PAS_CASE;
+  const cour = { x: -11.5, z: 2.5, w: 6, d: 9 };
+  const routeZ = couloirRoute({ graine: "", emprise: EMPRISE, cour }, pas);
+  const commun = { graine: "siege", maison: "siege", quart: 0 as const, pasCase: PAS_CASE };
+  const auSiege = planCampagne({
+    ...commun,
+    emprise: EMPRISE,
+    cour,
+    routeZ,
+    voisins: commune,
+    ile: { x: 0, z: 0, w: EMPRISE, d: EMPRISE },
+  });
+  // Vue du champ réuni : le même pays, recompté depuis (0,1). Son île couvre
+  // deux cases de trame — bien plus large que le siège.
+  const auGrand = planCampagne({
+    ...commun,
+    emprise: 34.26,
+    cour: { ...cour, z: cour.z - pas },
+    routeZ: routeZ - pas,
+    voisins: commune.map((v) => ({ ...v, rang: v.rang - 1 })),
+    ile: { x: 0, z: pas / 2, w: EMPRISE, d: pas + EMPRISE },
+  });
+
+  it("garde le même pas de trame, quelle que soit la taille de l'île", () => {
+    expect(auGrand.pas).toBeCloseTo(auSiege.pas, 9);
+  });
+
+  it("garde la même lisière et le même sol, comptés depuis le siège", () => {
+    const rel = (p: typeof auSiege) => ({
+      uMin: p.sol.uMin - (p.sol.uCentre ?? 0),
+      uMax: p.sol.uMax - (p.sol.uCentre ?? 0),
+      vMax: p.sol.vMax,
+    });
+    const a = rel(auSiege);
+    const b = rel(auGrand);
+    expect(b.uMin).toBeCloseTo(a.uMin, 6);
+    expect(b.uMax).toBeCloseTo(a.uMax, 6);
+    expect(b.vMax).toBeCloseTo(a.vMax, 6);
+  });
+
+  it("dessine les mêmes voisins, à la même place", () => {
+    const etrangers = (p: typeof auSiege, dz: number) =>
+      p.parcelles
+        .filter((q) => q.reel?.statut === "PNJ")
+        .map((q) => `${q.id}@${q.x.toFixed(3)},${(q.z + dz).toFixed(3)}`)
+        .sort();
+    expect(etrangers(auGrand, pas)).toEqual(etrangers(auSiege, 0));
+    expect(etrangers(auSiege, 0).length).toBeGreaterThan(20);
+  });
+
+  it("montre le siège quand on regarde ailleurs", () => {
+    expect(auGrand.parcelles.some((q) => q.id === "siege")).toBe(true);
+    // Et ni le champ regardé, ni ce qui lui est réuni : l'île les dessine.
+    expect(auGrand.parcelles.some((q) => q.id === "grand" || q.id === "absorbee")).toBe(false);
+  });
+
+  it("laisse le village où il est", () => {
+    const village = (p: typeof auSiege, dz: number) =>
+      p.lieux.map((l) => `${l.genre}@${l.x.toFixed(2)},${(l.z + dz).toFixed(2)}`).sort();
+    expect(village(auGrand, pas)).toEqual(village(auSiege, 0));
+    expect(auSiege.lieux.length).toBeGreaterThan(0);
+  });
+});

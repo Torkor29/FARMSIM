@@ -206,7 +206,21 @@ export type PointPlan = { x: number; z: number };
  * trois autres sont posées assez loin pour rester hors cadre au zoom le plus
  * large.
  */
-export type EmpriseSol = { uMin: number; uMax: number; vMax: number };
+export type EmpriseSol = {
+  uMin: number;
+  uMax: number;
+  vMax: number;
+  /**
+   * Le milieu du sol en largeur, et le siège en profondeur.
+   *
+   * Le sol se comptait depuis la parcelle active : en passer une autre
+   * déplaçait la lisière, le village et le bois. Il se compte depuis le
+   * siège, et ces deux valeurs disent où il est dans le repère du dessin.
+   * Absentes (décor sans réseau), elles valent zéro.
+   */
+  vCentre?: number;
+  uCentre?: number;
+};
 
 /**
  * Le chemin d'accès d'une parcelle du joueur.
@@ -641,7 +655,7 @@ export function parcelleSous(
 /** Un point est-il sur la terre ferme ? */
 export function surLeSol(sol: EmpriseSol, x: number, z: number): boolean {
   const u = versEcranBas(x, z);
-  return u >= sol.uMin && u <= sol.uMax && Math.abs(versEcranDroite(x, z)) <= sol.vMax;
+  return u >= sol.uMin && u <= sol.uMax && Math.abs(versEcranDroite(x, z) - (sol.vCentre ?? 0)) <= sol.vMax;
 }
 
 /* ------------------------------------------------------------------ */
@@ -725,15 +739,26 @@ export function planCampagne(o: OptionsPlan): PlanCampagne {
    * exactement ce qu'on veut montrer — une campagne où les parcelles n'ont pas
    * la même taille a des marges irrégulières, c'est ce qui la rend lisible.
    */
-  const coteMax = o.pasCase
-    ? Math.max(emprise, coteDeGrille(COTE_MAX, COTE_MAX, o.pasCase))
-    : emprise;
+  /*
+   * Quand on connaît la case, la trame ne regarde **pas** l'île active.
+   *
+   * Elle prenait le plus grand de l'île et du plus grand lot : sur un champ
+   * réuni de trente-quatre unités, le pas passait de 21 à 37, tout le pays
+   * s'étirait, et la moitié des voisins sortait du sol — le joueur changeait
+   * de carte en changeant de parcelle (signalé en vidéo). La vue 3D, elle,
+   * gardait vingt cases (`pasTrame`), si bien que les deux ne s'accordaient
+   * même plus. Une île réunie occupe plusieurs cases de trame : c'est fait
+   * pour, elle n'a pas à élargir les autres.
+   */
+  const coteMax = o.pasCase ? coteDeGrille(COTE_MAX, COTE_MAX, o.pasCase) : emprise;
   /* Un nombre entier de cases quand on connaît la case : deux parcelles
      réunies tombent alors exactement à leur place (voir `PAS_TRAME_CASES`). */
   const pas = o.pasCase ? Math.max(PAS_TRAME_CASES * o.pasCase, coteMax + LARGEUR_CHEMIN) : coteMax + LARGEUR_CHEMIN;
   /** Le côté d'une parcelle du cadastre, ou l'emprise du joueur à défaut. */
   const coteDe = (gridW?: number, gridH?: number): number =>
     o.pasCase && gridW && gridH ? coteDeGrille(gridW, gridH, o.pasCase) : emprise;
+  /** Le côté d'une parcelle standard : la mesure du décor, d'où qu'on regarde. */
+  const empriseRef = o.pasCase ? coteDeGrille(GRILLE_STANDARD.w, GRILLE_STANDARD.h, o.pasCase) : emprise;
   const colonnes = o.colonnes ?? 3;
   const rangs = o.rangs ?? 3;
   /*
@@ -749,12 +774,16 @@ export function planCampagne(o: OptionsPlan): PlanCampagne {
    * garde donc au moins `PRE_AMONT_MIN` de pré et de bois derrière le coin
    * de l'île (qui est à `u = −emprise`).
    */
+  /*
+   * Avec l'échelle de case, la profondeur ne dépend plus de l'île active non
+   * plus : une île réunie la reculait, et le bois avec. L'île garde son pré
+   * d'amont par la borne posée plus bas, sur son coin réel.
+   */
   const horizon =
     o.horizon ??
-    Math.max(
-      horizonPour(o.pasCase ? coteDeGrille(GRILLE_STANDARD.w, GRILLE_STANDARD.h, o.pasCase) : emprise),
-      emprise + PRE_AMONT_MIN,
-    );
+    (o.pasCase
+      ? horizonPour(coteDeGrille(GRILLE_STANDARD.w, GRILLE_STANDARD.h, o.pasCase))
+      : Math.max(horizonPour(emprise), emprise + PRE_AMONT_MIN));
   const rnd = suite(grainerDe(o.graine));
 
   const quart: 0 | 1 | 2 | 3 = o.quart ?? (o.voisins ? orientationTrame(o.voisins) : 0);
@@ -775,15 +804,47 @@ export function planCampagne(o: OptionsPlan): PlanCampagne {
    * achetant celle d'à côté, et celle d'en haut doit se voir pour s'acheter.
    */
   const aMontrer = (v: VoisinReel) => v.statut === "MOI" || v.achetable || v.prix !== null;
-  let uMaison = 0;
+  /*
+   * L'ancre : le siège, dans le repère du dessin.
+   *
+   * Le dessin garde la parcelle active à l'origine — c'est elle qu'on
+   * travaille. Mais le **monde** se compte depuis le siège : la lisière, le
+   * village, le bois et les bornes du sol. Compté depuis l'active, il se
+   * redessinait à chaque changement de parcelle — un autre bois, un village
+   * ailleurs ou disparu ; le joueur croyait changer de carte.
+   */
+  const siegeVoisin = o.maison ? o.voisins?.find((v) => v.id === o.maison) : undefined;
+  const ancre = siegeVoisin ? tourner(siegeVoisin, quart) : { col: 0, rang: 0 };
+  const ancreX = ancre.col * pas;
+  const ancreZ = ancre.rang * pas;
+  const uAncre = versEcranBas(ancreX, ancreZ);
+  const vAncre = versEcranDroite(ancreX, ancreZ);
+  /** L'écart latéral depuis le siège : le sol est centré sur lui. */
+  const decalV = (x: number, z: number) => versEcranDroite(x, z) - vAncre;
+  /*
+   * La lisière recule au-dessus de la plus haute des parcelles du joueur —
+   * toutes, l'active comprise, et d'abord le siège. Comptée ainsi, elle est
+   * la même d'où qu'on regarde : l'active est l'une d'elles.
+   */
+  let uMaison = Math.min(0, uAncre);
   for (const v of o.voisins ?? []) {
     if (!aMontrer(v) || (v.col === 0 && v.rang === 0)) continue;
     const t = tourner(v, quart);
     uMaison = Math.min(uMaison, versEcranBas(t.col * pas, t.rang * pas));
   }
-  const sol: EmpriseSol = { uMin: uMaison - horizon, uMax: SOL_AVAL, vMax: SOL_LARGEUR };
-  /** Où s'arrêtaient les terres des autres — la lisière d'avant. */
-  const lisiereEtrangers = -horizon;
+  /* Le coin amont de l'île active garde son pré, si grande soit-elle. Le plus
+     souvent la lisière comptée depuis le siège le couvre déjà, et cette borne
+     ne change rien : elle ne joue que pour une île qui dépasse. */
+  const ileAmont = o.ile ? versEcranBas(o.ile.x - o.ile.w / 2, o.ile.z - o.ile.d / 2) : -emprise;
+  const sol: EmpriseSol = {
+    uMin: Math.min(uMaison - horizon, ileAmont - PRE_AMONT_MIN),
+    uMax: uAncre + SOL_AVAL,
+    vMax: SOL_LARGEUR,
+    vCentre: vAncre,
+    uCentre: uAncre,
+  };
+  /** Où s'arrêtaient les terres des autres — la lisière d'avant, depuis le siège. */
+  const lisiereEtrangers = uAncre - horizon;
   const routeZ = o.routeZ ?? couloirRoute(o, pas);
   const cour: Boite = { ...o.cour };
   /* L'île réelle : une parcelle réunie à sa voisine s'étend vers la case
@@ -808,7 +869,7 @@ export function planCampagne(o: OptionsPlan): PlanCampagne {
     // pré ni à manger le ciel.
     if (versEcranBas(x, z) - cote < (aMoi ? sol.uMin : lisiereEtrangers)) return false;
     if (versEcranBas(x, z) + cote > sol.uMax - MARGE_LISIERE) return false;
-    if (Math.abs(versEcranDroite(x, z)) + cote > sol.vMax - MARGE_LISIERE) return false;
+    if (Math.abs(decalV(x, z)) + cote > sol.vMax - MARGE_LISIERE) return false;
     // Le siège est exempté : sa cour mord volontairement son bord. Ses autres
     // parcelles et celles à vendre aussi : l'orientation ne tourne plus pour
     // les écarter de la cour (le pays pivotait à l'achat), et une terre à soi
@@ -892,8 +953,10 @@ export function planCampagne(o: OptionsPlan): PlanCampagne {
    * qui est derrière la ferme est petit et à moitié caché. Le choix est
    * déterministe — les meilleurs, pas des tirés au sort.
    */
+  // Comptés depuis le siège : ce ne sont pas d'autres voisins qui se
+  // mettent au travail parce qu'on regarde une autre de ses parcelles.
   const visible = (p: ParcelleVoisine) =>
-    Math.hypot(p.x, p.z) - 0.4 * versEcranBas(p.x, p.z);
+    Math.hypot(p.x - ancreX, p.z - ancreZ) - 0.4 * (versEcranBas(p.x, p.z) - uAncre);
   const candidats = parcelles
     // On ne laboure ni la prairie, ni la terre d'un autre joueur — ni la
     // sienne : c'est le joueur qui travaille ses parcelles à lui.
@@ -909,7 +972,7 @@ export function planCampagne(o: OptionsPlan): PlanCampagne {
      * s'exécutait là où personne ne la voit. Mieux vaut pas de tracteur qu'un
      * tracteur hors champ.
      */
-    .filter((p) => Math.hypot(p.x, p.z) <= 1.7 * pas)
+    .filter((p) => Math.hypot(p.x - ancreX, p.z - ancreZ) <= 1.7 * pas)
     .sort((a, b) => visible(a) - visible(b));
   for (const p of candidats.slice(0, ENGINS_MAX)) p.travaille = true;
 
@@ -948,13 +1011,22 @@ export function planCampagne(o: OptionsPlan): PlanCampagne {
       const demi = cote / 2;
       const b: Boite = { x, z, w: cote, d: cote };
       if (versEcranBas(x, z) - cote < sol.uMin + 4.5) return false;
-      if (Math.abs(versEcranDroite(x, z)) + cote > sol.vMax - MARGE_LISIERE) return false;
+      if (Math.abs(decalV(x, z)) + cote > sol.vMax - MARGE_LISIERE) return false;
       if (Math.abs(z - routeZ) < DEMI_ROUTE + demi + 0.6) return false;
       // Deux mètres et non quatre-vingts centimètres : vus d'en haut et de
       // biais, les arbres d'un verger collé au parking le recouvraient, et on
       // les croyait plantés dans le bitume.
       if (seChevauchent(b, cour, ECART_COUR) || seChevauchent(b, joueur, ECART_COUR)) return false;
-      if (parcelles.some((p) => seChevauchent(b, empriseParcelle(p, p.cote), 0.8))) return false;
+      /* Les parcelles du joueur gardent l'écart de son île : le siège, vu
+         d'une autre de ses parcelles, n'est plus l'île mais reste la ferme,
+         et le village ne doit pas s'en rapprocher pour autant. */
+      if (
+        parcelles.some((p) =>
+          seChevauchent(b, empriseParcelle(p, p.cote), p.reel?.statut === "MOI" ? ECART_COUR : 0.8),
+        )
+      ) {
+        return false;
+      }
       /*
        * Le village cède la place à ce que le joueur a fait.
        *
@@ -1062,8 +1134,8 @@ export function planCampagne(o: OptionsPlan): PlanCampagne {
    * deux contraintes : rester entre `uMin` et `uMax`, et rester dans la largeur.
    */
   const route: PointPlan[] = [
-    { x: Math.max(sol.uMin - routeZ, routeZ - sol.vMax), z: routeZ },
-    { x: Math.min(sol.uMax - routeZ, routeZ + sol.vMax), z: routeZ },
+    { x: Math.max(sol.uMin - routeZ, routeZ + vAncre - sol.vMax), z: routeZ },
+    { x: Math.min(sol.uMax - routeZ, routeZ + vAncre + sol.vMax), z: routeZ },
   ];
 
   /*
@@ -1140,7 +1212,7 @@ export function planCampagne(o: OptionsPlan): PlanCampagne {
    * haut du cadre — ce qui rendait la bande de ciel invisible.
    */
   const vBord = Math.min(sol.vMax, 70);
-  for (let v = -vBord; v <= vBord; v += 1.7 + rnd() * 1.1) {
+  for (let v = vAncre - vBord; v <= vAncre + vBord; v += 1.7 + rnd() * 1.1) {
     for (const [prof, ampleur] of [
       [1.1, 1.0],
       [3.4, 1.2],
@@ -1164,8 +1236,8 @@ export function planCampagne(o: OptionsPlan): PlanCampagne {
     }
   };
   for (let i = 0; i < 14; i++) {
-    const u = sol.uMin + 5.5 + rnd() * (horizon - emprise - 7);
-    const v = (rnd() * 2 - 1) * Math.min(sol.vMax, 62);
+    const u = sol.uMin + 5.5 + rnd() * Math.max(0, horizon - empriseRef - 7);
+    const v = vAncre + (rnd() * 2 - 1) * Math.min(sol.vMax, 62);
     bosquet((u + v) / 2, (u - v) / 2, 2 + Math.floor(rnd() * 3));
   }
 
@@ -1177,8 +1249,8 @@ export function planCampagne(o: OptionsPlan): PlanCampagne {
     const col = Math.round((rnd() * 2 - 1) * colonnes);
     const rang = Math.round((rnd() * 2 - 1) * rangs);
     poser(
-      col * pas + (rnd() < 0.5 ? -1 : 1) * (emprise / 2 + LARGEUR_CHEMIN / 2),
-      rang * pas + (rnd() - 0.5) * emprise,
+      ancreX + col * pas + (rnd() < 0.5 ? -1 : 1) * (empriseRef / 2 + LARGEUR_CHEMIN / 2),
+      ancreZ + rang * pas + (rnd() - 0.5) * empriseRef,
       2.2 + rnd() * 1.3,
     );
   }

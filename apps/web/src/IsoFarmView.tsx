@@ -510,6 +510,13 @@ const FAUNE_VIDE: Partial<Faune> = {};
 const CAMPAGNE_VIDE: CaseTerrain[] = [];
 /** Hauteur des dalles, centrées à y=0 : le dessus est à TILE_TOP. */
 const TILE_THICK = 0.18;
+/**
+ * Le plus grand côté, en cases, que le cadrage fait tenir à l'écran.
+ *
+ * Seize : la plus grande parcelle du cadastre. Au-delà, la caméra
+ * reculerait dans la brume (voir `layout`).
+ */
+const COTE_CADRE_MAX = 16;
 const TILE_TOP = TILE_THICK / 2;
 /** Pneus légèrement dans la dalle : un contact pile au sommet laisse un
  *  interstice d'un pixel iso, et l'engin a l'air de flotter. */
@@ -2745,7 +2752,10 @@ export function IsoFarmView({
               },
               pasTrame(),
             ) + repere.mz,
-          graine: parcelIdRef.current || `${gw}x${gh}`,
+          /* La graine du siège, pas de la parcelle active : le bois, les
+             bosquets et les fleurs sont ceux de la ferme, et ne se retirent
+             pas au sort quand on va travailler une autre de ses parcelles. */
+          graine: homeRef.current || parcelIdRef.current || `${gw}x${gh}`,
           /*
            * L'île du joueur, et l'échelle du pays.
            *
@@ -3243,10 +3253,17 @@ export function IsoFarmView({
           coteFerme = Math.max(coteFerme, x1 - x0 + 1, y1 - y0 + 1);
         }
       }
-      /* Une île réunie de plusieurs parcelles ne se cadre pas en entier : on
-         reculerait jusqu'à noyer la ferme dans la brume du lointain. Le cadre
-         s'arrête à une grande parcelle et demie ; la molette fait le reste. */
-      viewSpan = Math.min(coteFerme, 26) * step + parkingOverhang;
+      /*
+       * Une île réunie de plusieurs parcelles ne se cadre pas en entier.
+       *
+       * Le cadre s'arrêtait à vingt-six cases : passer du siège à un champ
+       * réuni faisait reculer la caméra de plus du double, jusque dans la
+       * brume — tout le pays devenait un aplat rose, et le joueur croyait
+       * changer de carte. Il s'arrête maintenant à une grande parcelle : on
+       * arrive sur le champ à la même hauteur qu'au siège, et la molette fait
+       * le reste.
+       */
+      viewSpan = Math.min(coteFerme, COTE_CADRE_MAX) * step + parkingOverhang;
       applyCamera();
     }
 
@@ -3356,7 +3373,15 @@ export function IsoFarmView({
       const vueZ = elastique(view.panZ, bornesVue.zMin, bornesVue.zMax);
       const cibleX = vueX + ileMonde.x - parkingOverhang / 2;
       const cibleZ = vueZ + ileMonde.z;
-      camera.position.set(span * 0.95 + cibleX, span * 0.85, span * 0.95 + cibleZ);
+      /*
+       * La caméra est orthographique : sa distance ne change rien à la taille
+       * à l'écran, elle ne règle que la brume, comptée depuis elle. Elle
+       * reculait avec le cadre — un grand champ réuni noyait tout le pays.
+       * Elle se tient maintenant à la distance d'une parcelle standard,
+       * quelle que soit l'île regardée : la même lumière partout.
+       */
+      const portee = GRILLE_STANDARD.w * step + parkingOverhang;
+      camera.position.set(portee * 0.95 + cibleX, portee * 0.85, portee * 0.95 + cibleZ);
       camera.lookAt(cibleX, 0, cibleZ);
       camera.updateMatrixWorld();
     }
