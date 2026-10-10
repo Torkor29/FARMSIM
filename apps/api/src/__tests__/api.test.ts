@@ -788,11 +788,31 @@ describe("lieu de vie", () => {
           `UPDATE "Herd" SET happiness = 0.9, "feedQuality" = 1, size = 12,` +
           ` "gestatingSince" = NULL WHERE id = '${herdId}';`,
       );
-      const el = await appel(`/parcels/${pid}/livestock`, { jeton: moi.jeton });
-      const b = (el.corps as unknown as {
-        barns: { herd: { id: string; milkPerCycle?: number } | null }[];
-      }).barns.find((x) => x.herd?.id === herdId)!;
-      return b.herd?.milkPerCycle ?? 0;
+      /*
+       * Et un cinquième : le savoir-faire du joueur.
+       *
+       * Le lait annoncé multiplie aussi par la compétence « lait » du joueur,
+       * qui se recalcule depuis son niveau, ses troupeaux et ses compteurs.
+       * Sur le runner d'intégration, une mesure est sortie à « gain 0,000 au
+       * lieu de 0,200 », l'employé bien en base à ELEVAGE:5 : un bonus qui
+       * bouge entre deux lectures peut couvrir exactement celui qu'on
+       * mesure. On le lit à côté de chaque annonce, et on le retire.
+       */
+      const competenceLait = async () =>
+        ((await appel("/auth/me", { jeton: moi.jeton })).corps as unknown as {
+          player: { bonuses: { skills: { MILK_YIELD: number } } };
+        }).player.bonuses.skills.MILK_YIELD;
+      for (let essai = 0; essai < 3; essai++) {
+        const avantLecture = await competenceLait();
+        const el = await appel(`/parcels/${pid}/livestock`, { jeton: moi.jeton });
+        const b = (el.corps as unknown as {
+          barns: { herd: { id: string; milkPerCycle?: number } | null }[];
+        }).barns.find((x) => x.herd?.id === herdId)!;
+        // Le savoir-faire a bougé pendant la lecture : on relit.
+        if ((await competenceLait()) !== avantLecture) continue;
+        return (b.herd?.milkPerCycle ?? 0) / (1 + avantLecture);
+      }
+      throw new Error("le savoir-faire du joueur ne tient pas en place le temps d'une lecture");
     };
 
     /* Des adultes, et une étable qui tourne : le lot de départ peut être
