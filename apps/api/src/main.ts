@@ -7039,16 +7039,35 @@ app.get("/parcels/:id/voisinage", async (req, res) => {
     return;
   }
 
-  const [farm, autour] = await Promise.all([
-    prisma.farm.findUnique({
-      where: { userId: auth.user.id },
-      include: { parcels: { orderBy: ORDRE_PARCELLES } },
-    }),
+  const farm = await prisma.farm.findUnique({
+    where: { userId: auth.user.id },
+    include: { parcels: { orderBy: ORDRE_PARCELLES } },
+  });
+  /*
+   * La fenêtre de la commune ne suit pas la parcelle regardée.
+   *
+   * Elle se prenait autour du centre : en passant du siège à une parcelle
+   * achetée deux cases plus loin, une rangée de voisins disparaissait d'un
+   * côté et une autre apparaissait de l'autre — le paysage entier changeait,
+   * village et bois compris (signalé en vidéo par un joueur). Elle se prend
+   * désormais autour du siège, élargie d'une case autour de chacune de ses
+   * parcelles dans la commune : la même, d'où qu'on regarde. Seuls `col` et
+   * `rang` restent comptés depuis le centre — c'est le repère du dessin.
+   */
+  const ancres = (farm?.parcels ?? []).filter((q) => q.zoneId === centre.zoneId);
+  const siegeIci = ancres[0] ?? centre;
+  const fenetre = {
+    x0: Math.min(siegeIci.mapX - rayon, ...ancres.map((q) => q.mapX - 1), centre.mapX - 1),
+    x1: Math.max(siegeIci.mapX + rayon, ...ancres.map((q) => q.mapX + 1), centre.mapX + 1),
+    y0: Math.min(siegeIci.mapY - rayon, ...ancres.map((q) => q.mapY - 1), centre.mapY - 1),
+    y1: Math.max(siegeIci.mapY + rayon, ...ancres.map((q) => q.mapY + 1), centre.mapY + 1),
+  };
+  const [autour] = await Promise.all([
     prisma.parcel.findMany({
       where: {
         zoneId: centre.zoneId,
-        mapX: { gte: centre.mapX - rayon, lte: centre.mapX + rayon },
-        mapY: { gte: centre.mapY - rayon, lte: centre.mapY + rayon },
+        mapX: { gte: fenetre.x0, lte: fenetre.x1 },
+        mapY: { gte: fenetre.y0, lte: fenetre.y1 },
       },
       include: {
         cells: { select: { kind: true, crop: true, fieldStage: true } },

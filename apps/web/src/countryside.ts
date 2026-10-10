@@ -542,8 +542,11 @@ export function createCountryside(o: OptionsCampagne): Campagne {
     const HERBE = 0x86bd52;
     const HERBE_LOIN = 0x95c263;
     const { uMin, uMax, vMax } = plan.sol;
+    // Centré sur le siège, comme tout le pays (voir `EmpriseSol`).
+    const vC = plan.sol.vCentre ?? 0;
+    const uC = plan.sol.uCentre ?? 0;
     const us = graduation(uMin, uMax, 4.2);
-    const vs = graduation(-vMax, vMax, 4.2);
+    const vs = graduation(vC - vMax, vC + vMax, 4.2);
     /*
      * Du repère de l'écran vers celui du monde : x = (u + v)/2, z = (u − v)/2.
      *
@@ -563,7 +566,7 @@ export function createCountryside(o: OptionsCampagne): Campagne {
         const v1 = vs[k + 1]!;
         // La perspective aérienne avant la brume : les prés du fond tirent vers
         // le gris-vert, ce qui donne la distance même par temps clair.
-        const loin = Math.min(1, Math.max(0, (-((u0 + u1) / 2) - 6) / 26));
+        const loin = Math.min(1, Math.max(0, (uC - (u0 + u1) / 2 - 6) / 26));
         /*
          * Un souffle de variation, pas un patchwork. À ±6 % les mailles du
          * lointain — qui font vingt unités de côté — se lisaient comme des
