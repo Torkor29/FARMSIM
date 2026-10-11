@@ -2324,14 +2324,21 @@ export function App() {
   const plusGrandLac = (cells: readonly { x: number; y: number; sol?: string | null }[]) =>
     Math.max(0, ...etenduesEau(cells).map((z) => z.length));
 
-  /** Seules les cases de champ se cultivent : un pré, un étang, un chemin non. */
+  /**
+   * Seules les cases de champ se cultivent : un pré, un étang, un chemin non.
+   *
+   * Sauf la charrue sur un pré nu : le labourer le remet en champ. C'est ce
+   * qui rend leur terre aux carrés où s'élevaient d'anciens bâtiments.
+   */
   const surChamps = useCallback(
     (cells: { x: number; y: number }[]) =>
       cells.filter((c) => {
         const k = grilleDomaine.cases.get(cleCase(c.x, c.y));
-        return k != null && k.sol === "CHAMP" && !k.revetement;
+        if (k == null || k.revetement) return false;
+        if (k.sol === "CHAMP") return true;
+        return tool === "PLOW" && k.sol === "PRE" && grid.some((g) => g.x === c.x && g.y === c.y && g.kind === "EMPTY");
       }),
-    [grilleDomaine],
+    [grilleDomaine, tool, grid],
   );
 
   /**
@@ -4217,7 +4224,9 @@ export function App() {
     for (const c of grid) {
       if (c.kind === "BUILDING" || c.kind === "VEHICLE") continue;
       // Un pré, un étang ou un chemin ne se travaillent pas.
-      if ((c.sol ?? "CHAMP") !== "CHAMP" || c.revetement) continue;
+      if (c.revetement) continue;
+      // Le pré nu ne se propose qu'à la charrue, qui le remet en champ.
+      if ((c.sol ?? "CHAMP") !== "CHAMP" && !(t === "PLOW" && c.sol === "PRE" && c.kind === "EMPTY")) continue;
       if (isPlantTool(t) && c.kind === "CROP") continue;
       if (t === "HARVEST" && c.kind !== "CROP") continue;
       // Presser, ramasser et désherber ne concernent qu'une poignée de cases :

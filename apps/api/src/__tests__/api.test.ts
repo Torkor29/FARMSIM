@@ -3290,6 +3290,41 @@ describe("un chantier prend du temps", () => {
    * chemin complet, du chantier à la case relue, parce que c'est le seul qui
    * dirait où ça casse.
    */
+  /*
+   * « On ne peut rien semer où étaient les bâtiments. »
+   *
+   * Un bâtiment mettait ses cases en pré, et le démolir les laissait en pré :
+   * aucun outil ne les travaillait. Rien ne distingue ce pré d'un pré peint
+   * exprès ; c'est la charrue qui le remet en champ, et ensuite le semoir.
+   */
+  it("laboure un pré nu et le rend au champ, puis le laisse semer", async () => {
+    const { moi, parcelle, cells } = await fermeAuChamp("Ancien hangar");
+    const bloc = cells.slice(0, 4);
+    const paires = bloc.map((c) => `(${c.x}, ${c.y})`).join(", ");
+    prismaExec(
+      `UPDATE "ParcelCell" SET sol = 'PRE', kind = 'EMPTY', "buildingId" = NULL, crop = NULL,` +
+        ` "fieldStage" = 'EMPTY' WHERE "parcelId" = '${parcelle.id}' AND (x, y) IN (${paires});`,
+    );
+    // Le semoir, lui, refuse toujours le pré.
+    const semisAvant = await appel(`/parcels/${parcelle.id}/jobs`, {
+      methode: "POST",
+      corps: { userId: moi.id, work: "PLANT", cells: bloc, crop: cropDeSaison() },
+      jeton: moi.jeton,
+    });
+    assert.equal(semisAvant.statut, 409, `un pré s'est fait semer : ${JSON.stringify(semisAvant.corps)}`);
+
+    const laboure = await travailler(parcelle.id, "plow", "PLOW", moi, bloc);
+    assert.equal(laboure.statut, 200, `labour du pré refusé : ${JSON.stringify(laboure.corps)}`);
+    const det = await appel(`/parcels/${parcelle.id}`);
+    const apres = (det.corps as unknown as {
+      parcel: { cells: { x: number; y: number; sol: string; fieldStage: string }[] };
+    }).parcel.cells.filter((c) => bloc.some((b) => b.x === c.x && b.y === c.y));
+    assert.ok(apres.every((c) => c.sol === "CHAMP"), `toujours du pré : ${JSON.stringify(apres)}`);
+
+    const seme = await travailler(parcelle.id, "plant", "PLANT", moi, bloc, { crop: cropDeSaison() });
+    assert.equal(seme.statut, 200, `semis refusé après labour : ${JSON.stringify(seme.corps)}`);
+  });
+
   it("remet en herbe une terre labourée et nue", async () => {
     const { moi, parcelle, cells } = await fermeAuChamp("Enherbe");
     const bloc = cells.slice(0, 6);
