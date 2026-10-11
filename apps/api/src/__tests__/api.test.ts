@@ -49,6 +49,7 @@ import {
   GAME_DAY_MS,
   WEED_GROWTH_PER_DAY,
   WEED_SEASON_SPEED,
+  levelForXp,
 } from "@farmsim/shared";
 
 const API_DIR = fileURLToPath(new URL("../..", import.meta.url));
@@ -3193,7 +3194,10 @@ describe("un chantier prend du temps", () => {
    */
   it("refuse les cases d'un chantier qui tourne, et dit jusqu'à quand", async () => {
     const { moi, parcelle, cells } = await fermeAuChamp("Occupe");
-    const bloc = cells.slice(0, 6);
+    /* Assez de cases pour que le chantier dure plus qu'un aller-retour : le
+       niveau de la ferme d'essai est réel, sa vitesse de travail aussi, et
+       six cases finissaient parfois avant la seconde demande. */
+    const bloc = cells.slice(0, 40);
     const lance = await appel(`/parcels/${parcelle.id}/jobs`, {
       methode: "POST",
       corps: { userId: moi.id, work: "PLANT", crop: cropDeSaison(), cells: bloc },
@@ -5352,5 +5356,25 @@ describe("la décoration libre", () => {
     // Chaque pose acceptée est dans la liste, et payée une fois.
     assert.equal(n, ok);
     assert.ok(ok >= 1);
+  });
+});
+
+/*
+ * Le panneau Test règle le niveau que le jeu lit.
+ *
+ * Il posait la colonne `level` seule ; tous les verrous recalculent le niveau
+ * depuis `xp`. Le panneau affichait 13, la fiche d'une parcelle répondait
+ * « Niveau 6 requis — vous êtes Nv.5 » (signalé en jouant).
+ */
+describe("le niveau des outils de test", () => {
+  it("pose l'expérience du palier, et le jeu voit ce niveau", async () => {
+    const moi = await inscrire("Niveau forcé");
+    const r = await appel("/dev/grant", { methode: "POST", corps: { userId: moi.id, level: 13 }, jeton: moi.jeton });
+    assert.equal(r.statut, 200, JSON.stringify(r.corps));
+    const me = (await appel("/auth/me", { jeton: moi.jeton })).corps as unknown as {
+      player: { level: number; xp: number };
+    };
+    assert.equal(me.player.level, 13);
+    assert.equal(levelForXp(me.player.xp), 13, `xp ${me.player.xp} ne donne pas le niveau 13`);
   });
 });

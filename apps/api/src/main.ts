@@ -4691,12 +4691,23 @@ app.post("/dev/grant", async (req, res) => {
     done.push(`trésorerie à ${Math.round(body.data.crd)} €`);
   }
   if (body.data.level !== undefined || body.data.xp !== undefined) {
+    /*
+     * Le niveau se lit sur l'expérience, partout dans le jeu.
+     *
+     * Le panneau Test n'envoyait que `level` : la colonne passait à 13, mais
+     * chaque verrou (`shortfall`, les compétences, l'achat d'une parcelle)
+     * recalcule le niveau depuis `xp` — « Niveau 6 requis, vous êtes Nv.5 »
+     * avec 13 affiché dans le panneau. Un niveau demandé seul pose donc
+     * l'expérience exacte de ce palier, et les deux colonnes disent la même
+     * chose. Une expérience fournie l'emporte, et le niveau s'en déduit.
+     */
+    const xp =
+      body.data.xp !== undefined
+        ? body.data.xp
+        : xpForLevel(body.data.level!);
     await prisma.user.update({
       where: { id: user.id },
-      data: {
-        ...(body.data.level !== undefined ? { level: body.data.level } : {}),
-        ...(body.data.xp !== undefined ? { xp: body.data.xp } : {}),
-      },
+      data: { xp, level: levelForXp(xp) },
     });
     done.push("niveau et expérience");
   }
