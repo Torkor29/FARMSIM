@@ -21,12 +21,24 @@ describe("une case de sa parcelle voisine se travaille directement", () => {
     expect(VUE).toMatch(/onOwnedCellRef\.current\(touche\.voisin\.id, touche\.x, touche\.y/);
   });
 
-  it("la caméra compense le changement d'origine, puis glisse vers la parcelle d'arrivée", () => {
+  it("la caméra compense le changement d'origine, et ne bouge plus", () => {
     // Pas de saut : la même terre reste sous le même pixel…
     expect(VUE).toMatch(/view\.panX \+= ileVue\.x - ici\.x - ileMonde\.x;/);
     expect(VUE).toMatch(/view\.panZ \+= ileVue\.z - ici\.z - ileMonde\.z;/);
-    // …puis la vue rejoint la parcelle où l'on joue, au lieu de rester sur l'ancienne.
-    expect(VUE).toMatch(/retourVers = \{ x: 0, z: 0 \};\n\s*\}\n\s*ileVue = /);
+    // …et sans glissement ensuite : « à chaque clic sur une de nos parcelles,
+    // ça recentre la vue — un effet atroce ». Le bloc de bascule ne lance
+    // aucun rappel ; seul « Ma ferme » le fait.
+    const debut = VUE.indexOf("const ici = campagne?.plan.parcelles.find");
+    const fin = VUE.indexOf("ileVueId = idActif;", debut);
+    expect(debut).toBeGreaterThan(-1);
+    expect(fin).toBeGreaterThan(debut);
+    expect(VUE.slice(debut, fin)).not.toMatch(/retourVers\s*=/);
+  });
+
+  it("garde l'échelle à l'écran quand l'île change de taille", () => {
+    // Douze cases au siège, seize sur un champ réuni : sans report sur le
+    // zoom, tout le pays semblait glisser vers le centre au changement.
+    expect(VUE).toMatch(/view\.zoom \*= viewSpan \/ spanAvant/);
   });
 
   it("la cour, le chemin et l'orientation restent au siège de la ferme", () => {

@@ -52,11 +52,20 @@ describe("la vue suit la parcelle", () => {
     expect(corps).toMatch(/onEgareRef\.current\?\.\(false\)/);
   });
 
-  it("et il part au changement de parcelle, pas au changement de scène", () => {
-    // `sceneKey` bouge à chaque sondage — toutes les quatre secondes pendant
-    // un chantier. Recadrer là-dessus rendrait la vue impossible à déplacer.
-    const effet = ISO.slice(ISO.indexOf("recadrerRef.current?.();"));
-    expect(effet).toMatch(/recadrerRef\.current\?\.\(\);\s*\n\s*\},\s*\[parcelId\]\);/);
+  it("mais il ne part plus d'office au changement de parcelle", () => {
+    // Il recentrait à chaque clic sur l'une de ses parcelles, puis la
+    // compensation ramenait la vue : un saut et un glissement (retour de
+    // joueur). Ni au changement de parcelle, ni au changement de scène —
+    // `sceneKey` bouge à chaque sondage.
+    expect(ISO).not.toMatch(/recadrerRef\.current\?\.\(\);\s*\n\s*\},\s*\[(parcelId|sceneKey)\]\);/);
+  });
+
+  it("une parcelle qu'on ne voyait pas est cadrée d'emblée", () => {
+    const i = ISO.indexOf("} else if (idActif !== ileVueId) {");
+    expect(i).toBeGreaterThan(-1);
+    const bloc = ISO.slice(i, ISO.indexOf("}", i + 40));
+    expect(bloc).toMatch(/view\.panX = 0/);
+    expect(bloc).toMatch(/view\.panZ = 0/);
   });
 });
 

@@ -8835,8 +8835,10 @@ export function App() {
         className={`vue-recentrer${vueEgaree || horsDuSiege ? " visible" : ""}`}
         onClick={() => {
           // Sur une autre de ses parcelles : « Ma ferme » ramène au siège.
+          // La vue glisse jusqu'au siège : c'est le seul déplacement de
+          // caméra que le jeu fasse de lui-même, parce qu'on l'a demandé.
           if (horsDuSiege && siegeId) setActiveParcelId(siegeId);
-          else vueControle.current?.recentrer();
+          vueControle.current?.recentrer();
         }}
         tabIndex={vueEgaree || horsDuSiege ? 0 : -1}
         aria-hidden={!(vueEgaree || horsDuSiege)}
