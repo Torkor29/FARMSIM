@@ -1131,10 +1131,27 @@ type FieldAccess =
     }
   | { ok: false; status: number; error: string };
 
+/**
+ * Un pré nu qu'on peut retourner à la charrue.
+ *
+ * Un bâtiment met ses cases en pré, et le déplacer ou le démolir les laissait
+ * en pré avant qu'on ne les rende au champ : des joueurs gardaient des carrés
+ * qu'aucun outil ne travaillait (« on ne peut rien semer où étaient les
+ * bâtiments »). Rien ne distingue ce pré-là d'un pré peint exprès, si bien
+ * qu'aucune migration ne peut trancher à la place du joueur. Le labour le
+ * fait : retourner une prairie la remet en culture, comme aux champs. Un
+ * chemin, de l'eau ou du bois ne se labourent pas.
+ */
+function preALabourer(c: { sol: string; revetement?: string | null; kind?: string }): boolean {
+  return c.sol === "PRE" && !c.revetement && (c.kind === undefined || c.kind === "EMPTY");
+}
+
 /** Refus lisible si une case demandée n'est pas un champ possédé, sinon `null`. */
 function casesHorsChamp(
-  cells: { x: number; y: number; sol: string }[],
+  cells: { x: number; y: number; sol: string; revetement?: string | null }[],
   demandees: { x: number; y: number }[],
+  /** Le labour retourne aussi un pré nu : c'est ce qui le remet en champ. */
+  labour = false,
 ): string | null {
   const parCle = new Map(cells.map((c) => [cleCase(c.x, c.y), c]));
   let friche = 0;
@@ -1142,7 +1159,7 @@ function casesHorsChamp(
   for (const d of demandees) {
     const c = parCle.get(cleCase(d.x, d.y));
     if (!c) friche++;
-    else if (c.sol !== "CHAMP") autre++;
+    else if (c.sol !== "CHAMP" && !(labour && preALabourer(c))) autre++;
   }
   if (!friche && !autre) return null;
   if (friche) return `${friche} case${friche > 1 ? "s" : ""} hors de votre terrain`;
@@ -2123,7 +2140,8 @@ async function resolveFieldAccess(opts: {
    * chemin. Le jeu ne les propose pas aux outils, mais la route doit le
    * refuser elle-même : c'est la seule garde que rien ne contourne.
    */
-  const horsChamp = casesHorsChamp(parcel.cells, opts.cells) ?? (await casesCoupeesDe(parcel, opts.cells));
+  const horsChamp =
+    casesHorsChamp(parcel.cells, opts.cells, opts.work === "PLOW") ?? (await casesCoupeesDe(parcel, opts.cells));
   if (horsChamp) {
     return { ok: false, status: 409, error: horsChamp };
   }
@@ -4673,12 +4691,23 @@ app.post("/dev/grant", async (req, res) => {
     done.push(`trésorerie à ${Math.round(body.data.crd)} €`);
   }
   if (body.data.level !== undefined || body.data.xp !== undefined) {
+    /*
+     * Le niveau se lit sur l'expérience, partout dans le jeu.
+     *
+     * Le panneau Test n'envoyait que `level` : la colonne passait à 13, mais
+     * chaque verrou (`shortfall`, les compétences, l'achat d'une parcelle)
+     * recalcule le niveau depuis `xp` — « Niveau 6 requis, vous êtes Nv.5 »
+     * avec 13 affiché dans le panneau. Un niveau demandé seul pose donc
+     * l'expérience exacte de ce palier, et les deux colonnes disent la même
+     * chose. Une expérience fournie l'emporte, et le niveau s'en déduit.
+     */
+    const xp =
+      body.data.xp !== undefined
+        ? body.data.xp
+        : xpForLevel(body.data.level!);
     await prisma.user.update({
       where: { id: user.id },
-      data: {
-        ...(body.data.level !== undefined ? { level: body.data.level } : {}),
-        ...(body.data.xp !== undefined ? { xp: body.data.xp } : {}),
-      },
+      data: { xp, level: levelForXp(xp) },
     });
     done.push("niveau et expérience");
   }
@@ -7070,7 +7099,18 @@ app.get("/parcels/:id/voisinage", async (req, res) => {
         mapY: { gte: fenetre.y0, lte: fenetre.y1 },
       },
       include: {
-        cells: { select: { kind: true, crop: true, fieldStage: true } },
+        cells: {
+          select: {
+            kind: true,
+            crop: true,
+            fieldStage: true,
+            x: true,
+            y: true,
+            sol: true,
+            revetement: true,
+            hasStubble: true,
+          },
+        },
         buildings: {
           select: { id: true, type: true, level: true, originX: true, originY: true, rotation: true },
         },
@@ -7128,6 +7168,42 @@ app.get("/parcels/:id/voisinage", async (req, res) => {
     regionParcelCount: counts.regionTotal,
   });
 
+  /*
+   * Le champ des siennes, case par case.
+   *
+   * Une parcelle du joueur se dessinait de deux façons : en détail quand on
+   * la travaille, en un aplat d'une seule culture vue d'à côté. En passer
+   * une autre changeait donc l'allure de toutes — « la carte change
+   * complètement, les parcelles sont comme instanciées » (retour de joueur).
+   * On envoie l'état de chaque case de ses parcelles, et le paysage les peint
+   * comme l'île. Une parcelle réunie lit ses cases dans l'hôte, au décalage
+   * de la réunion.
+   */
+  const codeCase = (c: (typeof autour)[number]["cells"][number] | undefined): string => {
+    if (!c) return ".";
+    if (c.revetement) return "R";
+    if (c.kind === "BUILDING") return "T";
+    if (c.sol === "EAU") return "E";
+    if (c.sol === "BOIS") return "B";
+    if (c.sol === "PRE") return "P";
+    if (c.kind === "CROP" && c.crop) return `${c.crop}:${c.fieldStage}`;
+    if (c.hasStubble || c.fieldStage === "HARVESTED" || c.fieldStage === "SPOILED") return "C";
+    if (c.fieldStage === "PREPARED") return "L";
+    return ".";
+  };
+  const grilleDe = (p: (typeof autour)[number]): string[] | undefined => {
+    if (!monFarmId || p.farmId !== monFarmId || !orient) return undefined;
+    const hote = p.fusionneeDans ? autour.find((q) => q.id === p.fusionneeDans) : p;
+    if (!hote) return undefined;
+    const { dx, dy } = p.fusionneeDans ? decalageDansHote(hote, p, orient.quart) : { dx: 0, dy: 0 };
+    const parCle = new Map(hote.cells.map((c) => [`${c.x},${c.y}`, c]));
+    const out: string[] = [];
+    for (let y = 0; y < p.gridH; y++) {
+      for (let x = 0; x < p.gridW; x++) out.push(codeCase(parCle.get(`${x + dx},${y + dy}`)));
+    }
+    return out;
+  };
+
   const parcelles = autour.map((p) => {
       const { col, rang } = caseDeTrame(centre, p);
       const statut = statutParcelle(p, p.farm?.user ?? null, monFarmId);
@@ -7184,6 +7260,7 @@ app.get("/parcels/:id/voisinage", async (req, res) => {
         cheptel,
         landPrice: p.landPrice,
         fusionneeDans: p.fusionneeDans,
+        grille: grilleDe(p),
         reunion: reunions.get(p.id) ?? null,
         prix: devis?.total ?? null,
         achetable: Boolean(devis) && gate.ok,
@@ -7920,7 +7997,7 @@ function planSemisLot(
 function rienAFaire(
   work: FarmWork,
   cells: CellXY[],
-  parcel: { cells: { x: number; y: number; kind: string; hasStubble: boolean; fieldStage: string }[] },
+  parcel: { cells: { x: number; y: number; kind: string; hasStubble: boolean; fieldStage: string; sol: string; revetement: string | null }[] },
   season?: Season,
 ): string | null {
   const vues = cells
@@ -7931,7 +8008,7 @@ function rienAFaire(
     // Même règle que la route de labour : chaumes, culture perdue, ou sol qui
     // réclame la charrue. Ce qui suit ne dépend que de l'état stocké.
     const bons = vues.filter(
-      (c) => c.hasStubble || c.fieldStage === "SPOILED" || c.kind === "CROP",
+      (c) => c.hasStubble || c.fieldStage === "SPOILED" || c.kind === "CROP" || preALabourer(c),
     );
     if (bons.length) return null;
     const ailleurs = parcel.cells.filter((c) => c.hasStubble || c.fieldStage === "SPOILED").length;
@@ -9236,6 +9313,8 @@ app.post("/parcels/:id/plow", async (req, res) => {
         : parcel.cells
   ).filter((cell) => {
     if (cell.hasStubble) return true;
+    // Un pré nu se retourne : il redevient du champ (voir `preALabourer`).
+    if (preALabourer(cell)) return true;
     // Une case qui a atteint la limite de récoltes réclame la charrue, même
     // sans chaumes visibles : la refuser enfermerait le joueur, puisque le
     // déchaumage et le semis direct la refusent déjà pour la même raison.
@@ -9284,6 +9363,8 @@ app.post("/parcels/:id/plow", async (req, res) => {
         where: { id: cell.id },
         data: {
           kind: "EMPTY",
+          // Le pré retourné redevient du champ ; un champ le reste.
+          sol: "CHAMP",
           crop: null,
           fieldStage: "PREPARED",
           plantedAt: null,

@@ -64,6 +64,7 @@ import { creerVoisinDetaille, poserBatimentsVoisin, type VoisinDetaille } from "
 import { creerLieu, creerPancarteVente, type Jetables } from "./village3d";
 import type { BuildingRig } from "./buildings3d";
 import {
+  couleurCase,
   couleurChamp,
   type EtatChamp,
   DEMI_ACCES,
@@ -858,8 +859,13 @@ export function createCountryside(o: OptionsCampagne): Campagne {
           const cx = p.x + o0 + i * pasCase;
           const cz = p.z + o0 + k * pasCase;
           // Une teinte par case, très légèrement différente : un aplat parfait
-          // se lit comme une nappe, pas comme un champ.
-          teinte.setHex(teinter(eclaircir(base, (grain() - 0.5) * 0.12), p));
+          // se lit comme une nappe, pas comme un champ. Une parcelle à soi
+          // prend la couleur réelle de chaque case (voir `grille`).
+          const g = p.reel?.grille;
+          const gw = p.reel?.gridW ?? casesIci;
+          const gh = p.reel?.gridH ?? casesIci;
+          const code = g && i < gw && k < gh ? g[k * gw + i] : undefined;
+          teinte.setHex(teinter(eclaircir(code ? couleurCase(code) : base, (grain() - 0.5) * 0.12), p));
           if (sobre) {
             quad(
               pos, col,

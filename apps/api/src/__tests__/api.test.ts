@@ -49,6 +49,7 @@ import {
   GAME_DAY_MS,
   WEED_GROWTH_PER_DAY,
   WEED_SEASON_SPEED,
+  levelForXp,
 } from "@farmsim/shared";
 
 const API_DIR = fileURLToPath(new URL("../..", import.meta.url));
@@ -3193,7 +3194,10 @@ describe("un chantier prend du temps", () => {
    */
   it("refuse les cases d'un chantier qui tourne, et dit jusqu'à quand", async () => {
     const { moi, parcelle, cells } = await fermeAuChamp("Occupe");
-    const bloc = cells.slice(0, 6);
+    /* Assez de cases pour que le chantier dure plus qu'un aller-retour : le
+       niveau de la ferme d'essai est réel, sa vitesse de travail aussi, et
+       six cases finissaient parfois avant la seconde demande. */
+    const bloc = cells.slice(0, 40);
     const lance = await appel(`/parcels/${parcelle.id}/jobs`, {
       methode: "POST",
       corps: { userId: moi.id, work: "PLANT", crop: cropDeSaison(), cells: bloc },
@@ -3290,6 +3294,41 @@ describe("un chantier prend du temps", () => {
    * chemin complet, du chantier à la case relue, parce que c'est le seul qui
    * dirait où ça casse.
    */
+  /*
+   * « On ne peut rien semer où étaient les bâtiments. »
+   *
+   * Un bâtiment mettait ses cases en pré, et le démolir les laissait en pré :
+   * aucun outil ne les travaillait. Rien ne distingue ce pré d'un pré peint
+   * exprès ; c'est la charrue qui le remet en champ, et ensuite le semoir.
+   */
+  it("laboure un pré nu et le rend au champ, puis le laisse semer", async () => {
+    const { moi, parcelle, cells } = await fermeAuChamp("Ancien hangar");
+    const bloc = cells.slice(0, 4);
+    const paires = bloc.map((c) => `(${c.x}, ${c.y})`).join(", ");
+    prismaExec(
+      `UPDATE "ParcelCell" SET sol = 'PRE', kind = 'EMPTY', "buildingId" = NULL, crop = NULL,` +
+        ` "fieldStage" = 'EMPTY' WHERE "parcelId" = '${parcelle.id}' AND (x, y) IN (${paires});`,
+    );
+    // Le semoir, lui, refuse toujours le pré.
+    const semisAvant = await appel(`/parcels/${parcelle.id}/jobs`, {
+      methode: "POST",
+      corps: { userId: moi.id, work: "PLANT", cells: bloc, crop: cropDeSaison() },
+      jeton: moi.jeton,
+    });
+    assert.equal(semisAvant.statut, 409, `un pré s'est fait semer : ${JSON.stringify(semisAvant.corps)}`);
+
+    const laboure = await travailler(parcelle.id, "plow", "PLOW", moi, bloc);
+    assert.equal(laboure.statut, 200, `labour du pré refusé : ${JSON.stringify(laboure.corps)}`);
+    const det = await appel(`/parcels/${parcelle.id}`);
+    const apres = (det.corps as unknown as {
+      parcel: { cells: { x: number; y: number; sol: string; fieldStage: string }[] };
+    }).parcel.cells.filter((c) => bloc.some((b) => b.x === c.x && b.y === c.y));
+    assert.ok(apres.every((c) => c.sol === "CHAMP"), `toujours du pré : ${JSON.stringify(apres)}`);
+
+    const seme = await travailler(parcelle.id, "plant", "PLANT", moi, bloc, { crop: cropDeSaison() });
+    assert.equal(seme.statut, 200, `semis refusé après labour : ${JSON.stringify(seme.corps)}`);
+  });
+
   it("remet en herbe une terre labourée et nue", async () => {
     const { moi, parcelle, cells } = await fermeAuChamp("Enherbe");
     const bloc = cells.slice(0, 6);
@@ -4153,6 +4192,15 @@ describe("le voisinage d’une parcelle", () => {
     // Trois cases sur cent quarante-quatre : la part doit rester une part, et
     // non un booléen déguisé.
     assert.ok(mienne.partCultivee < 0.1, `part trop grande : ${mienne.partCultivee}`);
+
+    /* Et case par case : le paysage peint ses parcelles comme l'île, au lieu
+       d'un aplat d'une culture (« la carte change complètement »). */
+    const grille = (mienne as unknown as { grille?: string[]; gridW: number; gridH: number }).grille;
+    assert.ok(grille, "pas de grille pour sa propre parcelle");
+    assert.equal(grille.length, mienne.gridW * mienne.gridH);
+    for (const c of cases) assert.match(grille[c.y * mienne.gridW + c.x]!, new RegExp(`^${crop}:`));
+    const ailleurs = trame.filter((p) => p.statut !== "MOI");
+    assert.ok(ailleurs.every((p) => (p as unknown as { grille?: unknown }).grille === undefined), "la grille d'un autre est privée");
   });
 
   it("vend la parcelle collée, entière — jamais celle qui ne touche pas la sienne", async () => {
@@ -5317,5 +5365,25 @@ describe("la décoration libre", () => {
     // Chaque pose acceptée est dans la liste, et payée une fois.
     assert.equal(n, ok);
     assert.ok(ok >= 1);
+  });
+});
+
+/*
+ * Le panneau Test règle le niveau que le jeu lit.
+ *
+ * Il posait la colonne `level` seule ; tous les verrous recalculent le niveau
+ * depuis `xp`. Le panneau affichait 13, la fiche d'une parcelle répondait
+ * « Niveau 6 requis — vous êtes Nv.5 » (signalé en jouant).
+ */
+describe("le niveau des outils de test", () => {
+  it("pose l'expérience du palier, et le jeu voit ce niveau", async () => {
+    const moi = await inscrire("Niveau forcé");
+    const r = await appel("/dev/grant", { methode: "POST", corps: { userId: moi.id, level: 13 }, jeton: moi.jeton });
+    assert.equal(r.statut, 200, JSON.stringify(r.corps));
+    const me = (await appel("/auth/me", { jeton: moi.jeton })).corps as unknown as {
+      player: { level: number; xp: number };
+    };
+    assert.equal(me.player.level, 13);
+    assert.equal(levelForXp(me.player.xp), 13, `xp ${me.player.xp} ne donne pas le niveau 13`);
   });
 });

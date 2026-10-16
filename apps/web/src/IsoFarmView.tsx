@@ -2110,6 +2110,10 @@ export function IsoFarmView({
     let ileMonde = { x: 0, z: 0, w: 1, d: 1 };
     /** Le milieu de l'île au dernier dessin du pays : la vue s'y comptait. */
     let ileVue = { x: 0, z: 0 };
+    /** La parcelle que la vue montrait au dernier dessin du pays. */
+    let ileVueId: string | null = null;
+    /** Le débord de la cour au dernier dessin du pays : la visée en retranche la moitié. */
+    let debordVue = 0;
 
     // La haie en boules (voir `geometrieHaie`) : couleurs de sommets, lisse.
     const hedgeMat = new THREE.MeshLambertMaterial({ vertexColors: true });
@@ -2161,6 +2165,8 @@ export function IsoFarmView({
      * l'autre. Le zoom vaut 1 quand la parcelle tient juste dans l'écran.
      */
     const view = { zoom: 1, panX: 0, panZ: 0 };
+    /** Le premier cadrage est fait : ensuite, l'échelle à l'écran se garde. */
+    let cadrePose = false;
     let viewSpan = 12;
     /*
      * Jusqu'où la vue peut aller. Recalculé par `layout()` à partir du monde
@@ -2679,7 +2685,7 @@ export function IsoFarmView({
             /* La grille en fait partie : c'est elle qui donne sa taille au
                champ. L'omettre laisserait le pays uniforme jusqu'au prochain
                changement de culture d'un voisin. */
-            `${v.col},${v.rang}:${v.gridW ?? "-"}x${v.gridH ?? "-"}:${v.culture ?? "-"}:${v.stade ?? "-"}:${v.batiments.length}:${v.statut}:${v.fusionneeDans ?? ""}`,
+            `${v.col},${v.rang}:${v.gridW ?? "-"}x${v.gridH ?? "-"}:${v.culture ?? "-"}:${v.stade ?? "-"}:${v.batiments.length}:${v.statut}:${v.fusionneeDans ?? ""}:${v.grille?.join("") ?? ""}`,
         )
         .join("|");
       /* Les décorations du joueur : les arbres et l'herbe tirés au sort leur
@@ -2708,12 +2714,39 @@ export function IsoFarmView({
           // celle d'arrivée n'ont pas forcément le même.
           view.panX += ileVue.x - ici.x - ileMonde.x;
           view.panZ += ileVue.z - ici.z - ileMonde.z;
-          /* Puis la vue glisse jusqu'à la parcelle d'arrivée : on y va pour
-             y jouer. Elle restait sur celle d'avant, la nouvelle hors cadre
-             — on croyait n'avoir pas changé de parcelle. */
-          tientLaVue = false;
-          retourVers = { x: 0, z: 0 };
+          /* La visée retranche la moitié du débord de la cour (`applyCamera`).
+             Le siège en a une, les autres parcelles non : sans ce terme, la
+             vue sautait d'une demi-cour au changement de parcelle. */
+          view.panX += (parkingOverhang - debordVue) / 2;
+          /*
+           * Et la vue ne bouge pas.
+           *
+           * Elle glissait jusqu'à la parcelle d'arrivée : à chaque clic sur
+           * l'une des siennes, tout le pays défilait pour la recentrer —
+           * « un effet atroce » (retour de joueur). On a cliqué la parcelle
+           * là où on la voyait : elle y reste, active, et la caméra ne se
+           * déplace que si le joueur la déplace (ou demande « Ma ferme »).
+           */
+        } else if (idActif !== ileVueId) {
+          /* Une parcelle qu'on ne voyait pas — premier affichage, arrivée
+             d'ailleurs : on la cadre d'emblée, sans glissement. */
+          view.panX = 0;
+          view.panZ = 0;
+        } else {
+          /*
+           * Même parcelle, île redessinée.
+           *
+           * Le pays se refait une première fois dès le clic, l'île encore
+           * celle d'avant ; puis une seconde quand la nouvelle arrive, avec
+           * sa taille et sans cour. La visée se compte depuis le milieu de
+           * l'île et retranche la moitié de la cour : sans ce terme, la vue
+           * sautait de quelques mètres à la seconde reconstruction.
+           */
+          view.panX += ileVue.x - ileMonde.x + (parkingOverhang - debordVue) / 2;
+          view.panZ += ileVue.z - ileMonde.z;
         }
+        ileVueId = idActif;
+        debordVue = parkingOverhang;
         ileVue = { x: ileMonde.x, z: ileMonde.z };
         /*
          * Les parcelles qui viennent de passer à nous : on les voyait déjà, à
@@ -3263,7 +3296,21 @@ export function IsoFarmView({
        * arrive sur le champ à la même hauteur qu'au siège, et la molette fait
        * le reste.
        */
+      const spanAvant = viewSpan;
       viewSpan = Math.min(coteFerme, COTE_CADRE_MAX) * step + parkingOverhang;
+      /*
+       * L'échelle à l'écran ne change pas avec l'île.
+       *
+       * Le cadre dépend de l'île active — douze cases et une cour au siège,
+       * seize sur un grand champ. Passer de l'une à l'autre changeait donc
+       * l'échelle : tout le pays semblait glisser vers le centre, un saut à
+       * chaque clic sur l'une de ses parcelles. Une fois la vue posée, on
+       * reporte l'écart sur le zoom : la même terre garde la même taille.
+       */
+      if (cadrePose && spanAvant !== viewSpan) view.zoom *= viewSpan / spanAvant;
+      // Seulement une fois la ferme chargée : le cadrage d'une grille encore
+      // vide ne doit pas fixer l'échelle d'une ferme qui a grandi.
+      if (dataRef.current.cells.length) cadrePose = true;
       applyCamera();
     }
 
@@ -5297,9 +5344,15 @@ export function IsoFarmView({
    * parcelle hors cadre, avec le bouton « Ma ferme » allumé. Reproduit en
    * jeu — on tire la vue, on bascule, on ne voit plus rien de chez soi.
    */
-  useEffect(() => {
-    recadrerRef.current?.();
-  }, [parcelId]);
+  /*
+   * Plus de recadrage d'office au changement de parcelle.
+   *
+   * Il remettait la vue au milieu de la nouvelle parcelle, puis la
+   * compensation du pays (dans `layout`) la ramenait sous le doigt : un saut,
+   * puis un glissement, à chaque clic sur l'une de ses parcelles. La
+   * compensation suffit — la terre cliquée reste sous le doigt — et une
+   * parcelle qu'on ne voyait pas est cadrée là-bas.
+   */
 
   return <div className="iso-viewport" ref={mountRef} aria-label="Vue isométrique de la ferme" />;
 }
