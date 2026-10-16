@@ -2685,7 +2685,7 @@ export function IsoFarmView({
             /* La grille en fait partie : c'est elle qui donne sa taille au
                champ. L'omettre laisserait le pays uniforme jusqu'au prochain
                changement de culture d'un voisin. */
-            `${v.col},${v.rang}:${v.gridW ?? "-"}x${v.gridH ?? "-"}:${v.culture ?? "-"}:${v.stade ?? "-"}:${v.batiments.length}:${v.statut}:${v.fusionneeDans ?? ""}`,
+            `${v.col},${v.rang}:${v.gridW ?? "-"}x${v.gridH ?? "-"}:${v.culture ?? "-"}:${v.stade ?? "-"}:${v.batiments.length}:${v.statut}:${v.fusionneeDans ?? ""}:${v.grille?.join("") ?? ""}`,
         )
         .join("|");
       /* Les décorations du joueur : les arbres et l'herbe tirés au sort leur

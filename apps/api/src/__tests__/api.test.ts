@@ -4192,6 +4192,15 @@ describe("le voisinage d’une parcelle", () => {
     // Trois cases sur cent quarante-quatre : la part doit rester une part, et
     // non un booléen déguisé.
     assert.ok(mienne.partCultivee < 0.1, `part trop grande : ${mienne.partCultivee}`);
+
+    /* Et case par case : le paysage peint ses parcelles comme l'île, au lieu
+       d'un aplat d'une culture (« la carte change complètement »). */
+    const grille = (mienne as unknown as { grille?: string[]; gridW: number; gridH: number }).grille;
+    assert.ok(grille, "pas de grille pour sa propre parcelle");
+    assert.equal(grille.length, mienne.gridW * mienne.gridH);
+    for (const c of cases) assert.match(grille[c.y * mienne.gridW + c.x]!, new RegExp(`^${crop}:`));
+    const ailleurs = trame.filter((p) => p.statut !== "MOI");
+    assert.ok(ailleurs.every((p) => (p as unknown as { grille?: unknown }).grille === undefined), "la grille d'un autre est privée");
   });
 
   it("vend la parcelle collée, entière — jamais celle qui ne touche pas la sienne", async () => {

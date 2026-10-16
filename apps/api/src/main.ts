@@ -7099,7 +7099,18 @@ app.get("/parcels/:id/voisinage", async (req, res) => {
         mapY: { gte: fenetre.y0, lte: fenetre.y1 },
       },
       include: {
-        cells: { select: { kind: true, crop: true, fieldStage: true } },
+        cells: {
+          select: {
+            kind: true,
+            crop: true,
+            fieldStage: true,
+            x: true,
+            y: true,
+            sol: true,
+            revetement: true,
+            hasStubble: true,
+          },
+        },
         buildings: {
           select: { id: true, type: true, level: true, originX: true, originY: true, rotation: true },
         },
@@ -7157,6 +7168,42 @@ app.get("/parcels/:id/voisinage", async (req, res) => {
     regionParcelCount: counts.regionTotal,
   });
 
+  /*
+   * Le champ des siennes, case par case.
+   *
+   * Une parcelle du joueur se dessinait de deux façons : en détail quand on
+   * la travaille, en un aplat d'une seule culture vue d'à côté. En passer
+   * une autre changeait donc l'allure de toutes — « la carte change
+   * complètement, les parcelles sont comme instanciées » (retour de joueur).
+   * On envoie l'état de chaque case de ses parcelles, et le paysage les peint
+   * comme l'île. Une parcelle réunie lit ses cases dans l'hôte, au décalage
+   * de la réunion.
+   */
+  const codeCase = (c: (typeof autour)[number]["cells"][number] | undefined): string => {
+    if (!c) return ".";
+    if (c.revetement) return "R";
+    if (c.kind === "BUILDING") return "T";
+    if (c.sol === "EAU") return "E";
+    if (c.sol === "BOIS") return "B";
+    if (c.sol === "PRE") return "P";
+    if (c.kind === "CROP" && c.crop) return `${c.crop}:${c.fieldStage}`;
+    if (c.hasStubble || c.fieldStage === "HARVESTED" || c.fieldStage === "SPOILED") return "C";
+    if (c.fieldStage === "PREPARED") return "L";
+    return ".";
+  };
+  const grilleDe = (p: (typeof autour)[number]): string[] | undefined => {
+    if (!monFarmId || p.farmId !== monFarmId || !orient) return undefined;
+    const hote = p.fusionneeDans ? autour.find((q) => q.id === p.fusionneeDans) : p;
+    if (!hote) return undefined;
+    const { dx, dy } = p.fusionneeDans ? decalageDansHote(hote, p, orient.quart) : { dx: 0, dy: 0 };
+    const parCle = new Map(hote.cells.map((c) => [`${c.x},${c.y}`, c]));
+    const out: string[] = [];
+    for (let y = 0; y < p.gridH; y++) {
+      for (let x = 0; x < p.gridW; x++) out.push(codeCase(parCle.get(`${x + dx},${y + dy}`)));
+    }
+    return out;
+  };
+
   const parcelles = autour.map((p) => {
       const { col, rang } = caseDeTrame(centre, p);
       const statut = statutParcelle(p, p.farm?.user ?? null, monFarmId);
@@ -7213,6 +7260,7 @@ app.get("/parcels/:id/voisinage", async (req, res) => {
         cheptel,
         landPrice: p.landPrice,
         fusionneeDans: p.fusionneeDans,
+        grille: grilleDe(p),
         reunion: reunions.get(p.id) ?? null,
         prix: devis?.total ?? null,
         achetable: Boolean(devis) && gate.ok,

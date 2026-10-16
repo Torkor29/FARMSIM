@@ -92,6 +92,38 @@ export function cultureDe(code: string | null | undefined): CultureVoisine {
 }
 
 /**
+ * La couleur d'une case d'une parcelle à soi, d'après sa grille.
+ *
+ * Mêmes teintes que les champs du pays pour les cultures, et la couleur
+ * propre du pré, de l'eau, du bois, du bâti et des chemins : la parcelle se
+ * reconnaît d'un coup d'œil, qu'on la travaille ou qu'on la regarde d'à côté.
+ */
+export function couleurCase(code: string): number {
+  switch (code) {
+    case "L":
+      return couleurChamp("BLE", "LABOUR");
+    case "C":
+      return couleurChamp("BLE", "CHAUME");
+    case "P":
+      return 0x74ad48;
+    case "E":
+      return 0x4a8fb5;
+    case "B":
+      return 0x4f6b2e;
+    case "T":
+      return 0x9a9285;
+    case "R":
+      return 0xb59a72;
+    case ".":
+      return couleurChamp("HERBE", "JACHERE");
+    default: {
+      const [crop, stade] = code.split(":");
+      return couleurChamp(cultureDe(crop), etatDepuisStade(stade, 1));
+    }
+  }
+}
+
+/**
  * De l'avancement d'un champ à ce qu'on en voit.
  *
  * Une parcelle qui n'a rien de semé n'est pas « en jachère » pour autant : si
@@ -193,6 +225,13 @@ export type VoisinReel = {
   refus: string | null;
   /** La parcelle hôte, quand celle-ci lui a été réunie. */
   fusionneeDans?: string | null;
+  /**
+   * Ses parcelles à soi, case par case (ligne par ligne, `gridW` de large) :
+   * `CROP:STADE`, ou `L` labour, `C` chaume, `P` pré, `E` eau, `B` bois,
+   * `T` bâti, `R` chemin, `.` terre nue. Le paysage les peint comme l'île,
+   * au lieu d'un aplat d'une seule culture.
+   */
+  grille?: string[];
   /** Réunir cette parcelle à celle qu'on regarde : le devis, ou pourquoi pas. */
   reunion?: { prix: number | null; cases: number; refus: string | null } | null;
 };
