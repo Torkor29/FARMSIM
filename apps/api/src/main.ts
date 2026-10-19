@@ -7109,6 +7109,10 @@ app.get("/parcels/:id/voisinage", async (req, res) => {
             sol: true,
             revetement: true,
             hasStubble: true,
+            plantedAt: true,
+            baleCount: true,
+            strawTons: true,
+            residuePasses: true,
           },
         },
         buildings: {
@@ -7186,8 +7190,22 @@ app.get("/parcels/:id/voisinage", async (req, res) => {
     if (c.sol === "EAU") return "E";
     if (c.sol === "BOIS") return "B";
     if (c.sol === "PRE") return "P";
-    if (c.kind === "CROP" && c.crop) return `${c.crop}:${c.fieldStage}`;
-    if (c.hasStubble || c.fieldStage === "HARVESTED" || c.fieldStage === "SPOILED") return "C";
+    if (c.kind === "CROP" && c.crop) {
+      /* Perdue : l'île la peint en terre sèche, le paysage doit en faire
+         autant — une récolte gâtée passait ici pour du blé mûr. */
+      if (c.fieldStage === "SPOILED") return `${c.crop}:LOST`;
+      if (c.plantedAt) {
+        const grow = cropGrowMs(c.crop as CropCode, 0);
+        if (ripenessAt(c.plantedAt.getTime() + grow, grow, Date.now()).needsPlowing) return `${c.crop}:LOST`;
+      }
+      return `${c.crop}:${c.fieldStage}`;
+    }
+    // Même ordre que l'île (`soilLook`) : bottes, paille, chaumes, résidus, labour.
+    if (c.fieldStage === "SPOILED") return "C";
+    if ((c.baleCount ?? 0) > 0) return "K";
+    if ((c.strawTons ?? 0) > 0) return "S";
+    if (c.hasStubble) return "C";
+    if ((c.residuePasses ?? 0) > 0) return "U";
     if (c.fieldStage === "PREPARED") return "L";
     return ".";
   };
