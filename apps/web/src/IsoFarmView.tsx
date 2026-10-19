@@ -1,3 +1,19 @@
+import {
+  BOTTES_SOIL,
+  CROP_LOOK,
+  DIRT,
+  DRY_SOIL,
+  lookOf,
+  PAILLE_SOIL,
+  PLOWED_SOIL,
+  PRE,
+  PRE_SOMBRE,
+  RESIDUE_SOIL,
+  SOIL,
+  SOIL_DARK,
+  STUBBLE_SOIL,
+  TERRE_SOUS_RANG,
+} from "./teintes-cases";
 import { useEffect, useMemo, useRef, type MutableRefObject } from "react";
 import * as THREE from "three";
 import { HAUTEUR_NIVEAU, NIVEAU_MAX, PORTEE_CAMPAGNE, croissanceBois, dansBornes, rectangleCases, type Faune, type Bornes as BornesDomaine } from "@farmsim/shared";
@@ -498,14 +514,10 @@ export type ModeDeco = {
   selection: string | null;
 };
 
-const SOIL = 0x9ac06a;
 /* Ferme libre : le pré, la friche à acheter, la berge d'un étang. */
-const PRE = 0x74ad48;
-const PRE_SOMBRE = 0x6ca342;
 const FRICHE = 0xa3ad62;
 const FRICHE_SOMBRE = 0x98a35a;
 const BERGE = 0x8a7a55;
-const SOIL_DARK = 0x8ab35e;
 const FAUNE_VIDE: Partial<Faune> = {};
 const CAMPAGNE_VIDE: CaseTerrain[] = [];
 /** Hauteur des dalles, centrées à y=0 : le dessus est à TILE_TOP. */
@@ -545,34 +557,6 @@ function windFor(weather: string): number {
   return 0.55;
 }
 
-type CropLook = {
-  grow: number;
-  ready: number;
-  fullH: number;
-};
-
-const CROP_LOOK: Record<string, CropLook> = {
-  // Six cultures, six couleurs qu'on doit pouvoir nommer de loin.
-  //
-  // Le blé et le maïs portaient **le même** `ready` (0xe8c65e), et l'orge n'en
-  // était qu'à quatre degrés de teinte : trois beiges indiscernables sur une
-  // parcelle. Ils s'écartent maintenant franchement — le blé va au doré chaud,
-  // l'orge au blond pâle, et le maïs **reste vert**, ce qu'il est réellement à
-  // la récolte : c'est la plante entière qu'on coupe, pas un épi mûr.
-  //
-  // Les jeunes pousses se séparent aussi : elles partaient toutes du même vert
-  // à huit degrés près, et un champ semé ne disait pas ce qu'il portait.
-  WHEAT: { grow: 0x8fc457, ready: 0xdcae3f, fullH: 0.7 },
-  MAIZE: { grow: 0x3f8f2c, ready: 0x74a83a, fullH: 0.98 },
-  PEA: { grow: 0x7cc86a, ready: 0xb9cf6a, fullH: 0.55 },
-  BARLEY: { grow: 0xa8c96a, ready: 0xefdca4, fullH: 0.58 },
-  RAPE: { grow: 0x5aaa38, ready: 0xf2d429, fullH: 0.72 },
-  GRASS: { grow: 0x4a9a36, ready: 0x5aad42, fullH: 0.38 },
-};
-
-function lookOf(crop?: CropCode | null): CropLook {
-  return CROP_LOOK[crop ?? ""] ?? CROP_LOOK.WHEAT;
-}
 /**
  * Teinte de sélection.
  *
@@ -595,17 +579,12 @@ const SELECT_LIFT = 0.08;
 const HOVER = 0x53c5f5;
 const PREVIEW_OK = 0x2fc46a;
 const PREVIEW_BAD = 0xef4444;
-const DIRT = 0xa4835c;
 
 const PULSE = 0xfff2b0;
 
 
-const STUBBLE_SOIL = 0xe3cf98;
-const RESIDUE_SOIL = 0x8a7048;
 /** Terre labourée : brune et grasse, celle qui attend la semence. */
-const PLOWED_SOIL = 0x7a4b2e;
 /** Terre sèche et craquelée, laissée par une culture perdue. */
-const DRY_SOIL = 0xb5a179;
 
 /**
  * État visuel d'une case, tel qu'il doit se lire d'un coup d'œil.
@@ -637,8 +616,8 @@ const SOIL_COLORS: Record<SoilLook, number> = {
   WEEDS: SOIL,
   PLOWED: PLOWED_SOIL,
   STUBBLE: STUBBLE_SOIL,
-  STRAW: 0xc9b15a,
-  BALES: 0xb8943a,
+  STRAW: PAILLE_SOIL,
+  BALES: BOTTES_SOIL,
   RESIDUE: RESIDUE_SOIL,
   DRY: DRY_SOIL,
   PLAIN: SOIL,
@@ -724,7 +703,6 @@ function cropColor(c: IsoCell, sim?: IsoSim): number {
  * L'écart entre les deux est ce qui donne du relief à un champ, et ce qui
  * fait qu'on le reconnaît comme tel.
  */
-const TERRE_SOUS_RANG = 0x8a6a44;
 
 function cropGroundColor(c: IsoCell, sim?: IsoSim): number {
   const plante = new THREE.Color(cropColor(c, sim));

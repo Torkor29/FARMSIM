@@ -63,8 +63,8 @@ import {
 import { creerVoisinDetaille, poserBatimentsVoisin, type VoisinDetaille } from "./voisin3d";
 import { creerLieu, creerPancarteVente, type Jetables } from "./village3d";
 import type { BuildingRig } from "./buildings3d";
+import { couleurCaseGrille } from "./teintes-cases";
 import {
-  couleurCase,
   couleurChamp,
   type EtatChamp,
   DEMI_ACCES,
@@ -865,7 +865,10 @@ export function createCountryside(o: OptionsCampagne): Campagne {
           const gw = p.reel?.gridW ?? casesIci;
           const gh = p.reel?.gridH ?? casesIci;
           const code = g && i < gw && k < gh ? g[k * gw + i] : undefined;
-          teinte.setHex(teinter(eclaircir(code ? couleurCase(code) : base, (grain() - 0.5) * 0.12), p));
+          // Les siennes, aux teintes exactes de l'île (`teintes-cases`) : ni
+          // grain ni voile, sans quoi elles changeraient encore d'allure.
+          const voile = (grain() - 0.5) * 0.12;
+          teinte.setHex(code ? couleurCaseGrille(code, i, k) : teinter(eclaircir(base, voile), p));
           if (sobre) {
             quad(
               pos, col,
