@@ -2440,6 +2440,14 @@ export function App() {
         : voisinage,
     [composee, morceaux, siegeParcelle, voisinage],
   );
+  // Pour les essais : ce que la vue composée a posé, et où.
+  (window as unknown as { __fermeComposee?: unknown }).__fermeComposee = {
+    composee,
+    morceaux,
+    actif: activeParcelId,
+    cases: vueComposee?.cells.length ?? 0,
+    autres: Object.keys(detailsAutres),
+  };
   /** Une liste de cases de la parcelle active, posée dans la vue. */
   const enVue = <T extends { x: number; y: number }>(l: readonly T[]): T[] => decaler(l, decalActif.dx, decalActif.dy);
   /** Cases touchées dans la vue, gardées pour la parcelle `id` et rendues dans son repère. */
