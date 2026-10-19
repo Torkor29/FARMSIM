@@ -249,6 +249,7 @@ import {
 import { ProfilePanel } from "./ProfilePanel";
 import { MenuClose } from "./ui/MenuClose";
 import { Gains } from "./ui/Gains";
+import { composerFerme, decaler, decalerConstruction, decalerOrigines, proprietaires, versLocal, type Morceau } from "./ferme-composee";
 
 const API = "/api";
 
@@ -2074,6 +2075,93 @@ export function App() {
     };
   }, [player]);
 
+  /*
+   * Toutes ses parcelles de la région, dessinées ensemble depuis le siège.
+   *
+   * La vue ne dépend plus de la parcelle active : elle part toujours du siège,
+   * et chaque parcelle s'y pose à sa case de trame (voir `ferme-composee`).
+   * La parcelle active ne dit plus que **où** part le prochain travail.
+   */
+  const siegeParcelle = player?.farm?.parcels[0] ?? null;
+  const enVisite = Boolean(visitOrder && activeParcelId && visitOrder.parcelId === activeParcelId);
+  const morceaux = useMemo((): Morceau[] | null => {
+    if (!siegeParcelle || quartTrame == null) return null;
+    const m = composerFerme(siegeParcelle, player?.farm?.parcels ?? [], quartTrame);
+    return m;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [siegeParcelle?.id, quartTrame, (player?.farm?.parcels ?? []).map((p) => `${p.id}:${p.mapX},${p.mapY},${p.gridW}x${p.gridH}`).join("|")]);
+  /** La vue est-elle composée ? Seulement chez soi, sur une parcelle de la composition. */
+  const composee = Boolean(
+    morceaux && morceaux.length > 1 && !enVisite && activeParcelId && morceaux.some((m) => m.id === activeParcelId),
+  );
+  /** La parcelle depuis laquelle on dessine (et charge la commune). */
+  const parcelleDeVue = composee ? siegeParcelle!.id : activeParcelId;
+  /** Le décalage de la parcelle active dans la vue. */
+  const decalActif = (composee && morceaux?.find((m) => m.id === activeParcelId)) || { dx: 0, dy: 0 };
+  /** Le détail des autres parcelles de la composition, tenu à jour. */
+  const [detailsAutres, setDetailsAutres] = useState<Record<string, NonNullable<typeof parcelDetail>>>({});
+  const idsAutres = composee ? morceaux!.map((m) => m.id).filter((id) => id !== activeParcelId) : [];
+  const cleAutres = idsAutres.join("|");
+  useEffect(() => {
+    if (!cleAutres) return;
+    let vivant = true;
+    const charger = () => {
+      for (const id of cleAutres.split("|")) {
+        api<NonNullable<typeof parcelDetail>>(`/parcels/${id}`)
+          .then((d) => {
+            if (!vivant || !d) return;
+            setDetailsAutres((avant) => (avant[id] && JSON.stringify(avant[id]) === JSON.stringify(d) ? avant : { ...avant, [id]: d }));
+          })
+          .catch(() => undefined);
+      }
+    };
+    charger();
+    const t = setInterval(charger, 6000);
+    return () => {
+      vivant = false;
+      clearInterval(t);
+    };
+  }, [cleAutres]);
+  /* La parcelle qu'on quitte garde sa dernière lecture : elle reste dessinée
+     telle quelle, sans trou le temps d'une requête. */
+  useEffect(() => {
+    if (parcelDetail?.parcel?.id) {
+      const id = parcelDetail.parcel.id;
+      setDetailsAutres((avant) => (avant[id] === parcelDetail ? avant : { ...avant, [id]: parcelDetail }));
+    }
+  }, [parcelDetail]);
+  /** Le détail d'une parcelle de la composition : l'active en direct, les autres en cache. */
+  const detailDe = (id: string) => (id === activeParcelId ? parcelDetail : detailsAutres[id]) ?? null;
+  /** Qui possède chaque case de la vue. */
+  const proprio = useMemo(
+    () =>
+      composee && morceaux
+        ? proprietaires(morceaux, (id) => (id === activeParcelId ? parcelDetail?.parcel?.cells : detailsAutres[id]?.parcel?.cells))
+        : new Map<string, string>(),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [composee, morceaux, activeParcelId, parcelDetail?.parcel?.cells, detailsAutres],
+  );
+  /** Une case de la vue, dans le repère de sa parcelle. */
+  const caseLocale = (gx: number, gy: number) =>
+    composee && morceaux
+      ? versLocal(gx, gy, morceaux, proprio, activeParcelId ?? "")
+      : { id: activeParcelId ?? "", x: gx, y: gy };
+  /**
+   * Passer la main à une autre parcelle, sans rien changer à l'écran.
+   *
+   * Son détail est déjà là (la vue le dessine) : on le pose tout de suite,
+   * pour que l'outil sache sur-le-champ quelles cases sont libres.
+   */
+  const garderSelection = useRef(false);
+  function prendreParcelle(id: string, garder = false) {
+    if (id === activeParcelId) return;
+    const d = detailsAutres[id];
+    if (d) setParcelDetail(d);
+    garderSelection.current = garder;
+    parcelleAffichee.current = id;
+    setActiveParcelId(id);
+  }
+
   /**
    * Le geste fait sur une autre de ses parcelles, rejoué une fois qu'elle est là.
    *
@@ -2126,14 +2214,19 @@ export function App() {
    * ils pointent une case d'un champ qu'on ne regarde plus.
    */
   useEffect(() => {
-    setSelectedCells([]);
     setHoverCell(null);
+    setCellMenu(null);
+    if (garderSelection.current) {
+      garderSelection.current = false;
+      return;
+    }
+    setSelectedCells([]);
     setCellMenu(null);
     setPendingBuild(null);
   }, [activeParcelId]);
 
   useEffect(() => {
-    if (!activeParcelId) {
+    if (!parcelleDeVue) {
       setVoisinage([]);
       return;
     }
@@ -2152,14 +2245,14 @@ export function App() {
      * parcelles », loin d'ici — repart de rien, comme avant.
      */
     setVoisinage((avant) => {
-      const cible = avant.find((v) => v.id === activeParcelId);
+      const cible = avant.find((v) => v.id === parcelleDeVue);
       if (!cible) return [];
       return avant.map((v) => ({ ...v, col: v.col - cible.col, rang: v.rang - cible.rang }));
     });
-    loadVoisinage(activeParcelId).catch(() => undefined);
-    const t = setInterval(() => loadVoisinage(activeParcelId).catch(() => undefined), 45_000);
+    loadVoisinage(parcelleDeVue).catch(() => undefined);
+    const t = setInterval(() => loadVoisinage(parcelleDeVue).catch(() => undefined), 45_000);
     return () => clearInterval(t);
-  }, [activeParcelId, loadVoisinage]);
+  }, [parcelleDeVue, loadVoisinage]);
 
   useEffect(() => {
     if (!player || !activeParcelId) return;
@@ -2254,6 +2347,108 @@ export function App() {
     () => construireGrille({ bornes: bornesIci, cells: grid, amenagements }),
     [bornesIci, grid, amenagements],
   );
+  /**
+   * Ce que la vue dessine quand toutes ses parcelles sont ensemble.
+   *
+   * Chaque parcelle apporte ses cases, ses bâtiments, sa pousse et son décor,
+   * décalés à sa place dans le repère du siège. Nul hors composition : la vue
+   * reçoit alors la parcelle active seule, comme avant.
+   */
+  const vueComposee = useMemo(() => {
+    if (!composee || !morceaux || !siegeParcelle) return null;
+    const cells: (Cell & { manuredUntil?: number })[] = [];
+    const buildings: Building[] = [];
+    const sims: NonNullable<typeof parcelDetail>["cellSims"] = [];
+    const amen: ObjetPose[] = [];
+    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+    const etendre = (x0: number, y0: number, x1: number, y1: number) => {
+      minX = Math.min(minX, x0); minY = Math.min(minY, y0);
+      maxX = Math.max(maxX, x1); maxY = Math.max(maxY, y1);
+    };
+    for (const m of morceaux) {
+      const d = m.id === activeParcelId ? parcelDetail : detailsAutres[m.id];
+      const cs = m.id === activeParcelId ? grid : (d?.parcel.cells ?? []);
+      if (!d) continue;
+      cells.push(...decaler(cs, m.dx, m.dy));
+      buildings.push(...decalerOrigines(d.parcel.buildings ?? [], m.dx, m.dy));
+      sims.push(...decaler(d.cellSims ?? [], m.dx, m.dy));
+      amen.push(...decalerOrigines(d.parcel.amenagements ?? [], m.dx, m.dy));
+      const b = d.domaine?.bornes;
+      if (b) etendre(b.minX + m.dx, b.minY + m.dy, b.maxX + m.dx, b.maxY + m.dy);
+      etendre(m.dx, m.dy, m.dx + m.w, m.dy + m.h);
+      for (const c of cs) etendre(c.x + m.dx, c.y + m.dy, c.x + m.dx + 1, c.y + m.dy + 1);
+    }
+    const dSiege = siegeParcelle.id === activeParcelId ? parcelDetail : detailsAutres[siegeParcelle.id];
+    if (!dSiege) return null;
+    const bSiege = dSiege.domaine?.bornes ?? { minX: 0, minY: 0, maxX: siegeParcelle.gridW, maxY: siegeParcelle.gridH };
+    return {
+      cells,
+      buildings,
+      sims,
+      amenagements: amen,
+      bornes: { minX, minY, maxX, maxY } as BornesDomaine,
+      fricheDans: bSiege as BornesDomaine,
+      gridW: siegeParcelle.gridW,
+      gridH: siegeParcelle.gridH,
+      domaineSiege: dSiege.domaine ?? null,
+    };
+  }, [composee, morceaux, siegeParcelle, activeParcelId, parcelDetail, detailsAutres, grid]);
+  /** La campagne du siège : c'est depuis lui que la vue composée se dessine. */
+  const campagneDuSiege = useMemo(
+    () =>
+      (vueComposee?.domaineSiege?.campagne ?? []).map((c) => ({
+        x: c.x,
+        y: c.y,
+        sol: c.sol,
+        revetement: null,
+        kind: "EMPTY",
+        forme: c.forme,
+        niveau: c.niveau,
+        boiseDepuis: c.boiseDepuis,
+        fleurie: c.fleurie,
+      })),
+    [vueComposee?.domaineSiege?.campagne],
+  );
+  /**
+   * Les cases d'un tracé, pour la parcelle où il a commencé.
+   *
+   * Un tracé qui part d'une autre de ses parcelles la fait passer active
+   * (sans rien changer à l'écran) ; il s'arrête au bord de celle-ci.
+   */
+  const casesDuTrace = (vues: readonly { x: number; y: number }[]) => {
+    const premiere = vues[0];
+    if (!premiere || !composee) return decaler(vues, -decalActif.dx, -decalActif.dy);
+    const id = caseLocale(premiere.x, premiere.y).id;
+    if (id && id !== activeParcelId) {
+      strokeBase.current = [];
+      prendreParcelle(id, true);
+    }
+    return casesDe(vues, id);
+  };
+  /** La sélection, posée dans la vue (une même liste tant qu'elle ne change pas). */
+  const selectionVue = useMemo(
+    () => decaler(selectedCells, decalActif.dx, decalActif.dy),
+    [selectedCells, decalActif.dx, decalActif.dy],
+  );
+  /** La commune, sans les parcelles que la vue dessine déjà avec le siège. */
+  const voisinageVue = useMemo(
+    () =>
+      composee && morceaux && siegeParcelle
+        ? voisinage.map((v) =>
+            v.id !== siegeParcelle.id && morceaux.some((m) => m.id === v.id) ? { ...v, fusionneeDans: siegeParcelle.id } : v,
+          )
+        : voisinage,
+    [composee, morceaux, siegeParcelle, voisinage],
+  );
+  /** Une liste de cases de la parcelle active, posée dans la vue. */
+  const enVue = <T extends { x: number; y: number }>(l: readonly T[]): T[] => decaler(l, decalActif.dx, decalActif.dy);
+  /** Cases touchées dans la vue, gardées pour la parcelle `id` et rendues dans son repère. */
+  const casesDe = (l: readonly { x: number; y: number }[], id: string) =>
+    l.flatMap((c) => {
+      const loc = caseLocale(c.x, c.y);
+      return loc.id === id ? [{ x: loc.x, y: loc.y }] : [];
+    });
+
   /** Les habitats de la ferme, lus comme le serveur les lit : pour la carte. */
   const lectureHabitats = useMemo(() => {
     const ferme = lireHabitats({ cells: grid, amenagements, courante: hydrologie(grid).courante });
@@ -7121,10 +7316,10 @@ export function App() {
           <Suspense fallback={<SceneLoading label="Chargement de la ferme…" />}>
             <IsoFarmView
               key={`qualite-${qualiteVue}`}
-              parcelId={activeParcelId ?? ""}
+              parcelId={parcelleDeVue ?? ""}
               controle={vueControle}
               onEgare={setVueEgaree}
-              voisinage={voisinage}
+              voisinage={voisinageVue}
               quartTrame={quartTrame}
               /*
                * Cliquer sur sa propre parcelle y emmène — le bouton devient
@@ -7187,21 +7382,32 @@ export function App() {
               onDecoPoser={poserDeco}
               onDecoToucher={(id) => setDecoSel(id)}
               onDecoRaison={setDecoRaison}
-              gridW={gw}
-              gridH={gh}
-              cells={grid}
-              buildings={parcel.buildings ?? []}
-              cellSims={parcelDetail?.cellSims ?? []}
-              selected={selectedCells}
-              hoverCell={hoverCell}
-              previewBuilding={previewBuilding}
-              pulseCells={pulseCells}
+              gridW={vueComposee?.gridW ?? gw}
+              gridH={vueComposee?.gridH ?? gh}
+              cells={vueComposee?.cells ?? grid}
+              buildings={vueComposee?.buildings ?? parcel.buildings ?? []}
+              cellSims={vueComposee?.sims ?? parcelDetail?.cellSims ?? []}
+              selected={selectionVue}
+              hoverCell={hoverCell ? enVue([hoverCell])[0] : hoverCell}
+              previewBuilding={
+                previewBuilding
+                  ? { ...previewBuilding, originX: previewBuilding.originX + decalActif.dx, originY: previewBuilding.originY + decalActif.dy }
+                  : previewBuilding
+              }
+              pulseCells={enVue(pulseCells)}
               /* La vue ne montre qu'un champ : elle ne reçoit donc que
                  l'engin qui y travaille. Les autres roulent sans être
                  dessinés, et réapparaissent quand on revient sur leur
                  parcelle. */
-              activeWork={activeWorks.find((w) => w.parcelId === activeParcelId) ?? null}
-              grazing={grazingHerds}
+              activeWork={(() => {
+                const w = activeWorks.find((x) => x.parcelId === activeParcelId);
+                return w ? { ...w, cells: enVue(w.cells) } : null;
+              })()}
+              grazing={grazingHerds.map((g) => ({
+                ...g,
+                barn: { ...g.barn, originX: g.barn.originX + decalActif.dx, originY: g.barn.originY + decalActif.dy },
+                paddock: { ...g.paddock, originX: g.paddock.originX + decalActif.dx, originY: g.paddock.originY + decalActif.dy },
+              }))}
               manurePiles={barns.flatMap((barn) => {
                 const b = (parcel?.buildings ?? []).find((x) => x.id === barn.buildingId);
                 const fill = barn.herd?.manureFill ?? 0;
@@ -7210,8 +7416,8 @@ export function App() {
                 return [
                   {
                     buildingId: b.id,
-                    originX: b.originX,
-                    originY: b.originY,
+                    originX: b.originX + decalActif.dx,
+                    originY: b.originY + decalActif.dy,
                     w: def.w,
                     h: def.h,
                     fill,
@@ -7227,8 +7433,8 @@ export function App() {
                 if (barn.herd.canCollectEggs) {
                   out.push({
                     kind: "eggs",
-                    originX: b.originX,
-                    originY: b.originY,
+                    originX: b.originX + decalActif.dx,
+                    originY: b.originY + decalActif.dy,
                     w: def.w,
                     h: def.h,
                   });
@@ -7236,8 +7442,8 @@ export function App() {
                 if (barn.herd.canShear) {
                   out.push({
                     kind: "wool",
-                    originX: b.originX,
-                    originY: b.originY,
+                    originX: b.originX + decalActif.dx,
+                    originY: b.originY + decalActif.dy,
                     w: def.w,
                     h: def.h,
                   });
@@ -7289,19 +7495,22 @@ export function App() {
               // L'aperçu part toujours de la sélection **d'avant le geste** :
               // sinon un tracé en mode « retirer » mangerait sa propre trace au
               // fur et à mesure, et un tracé additif se dédoublerait.
-              onStrokePreview={(cells, mods) => {
+              onStrokePreview={(vues, mods) => {
                 if (construction) {
-                  setApercuTerrain(cells);
+                  setApercuTerrain(decaler(vues, -decalActif.dx, -decalActif.dy));
                   return;
                 }
+                const cells = casesDuTrace(vues);
                 setSelectedCells(applySelection(strokeBase.current, surChamps(etaler(cells)), mods.mode));
               }}
-              onStrokeSelect={(cells, mods) => {
+              onStrokeSelect={(vues, mods) => {
                 if (construction) {
+                  const cells = decaler(vues, -decalActif.dx, -decalActif.dy);
                   if (armeTracable) void tracerObjets(cells);
                   else void peindreTerrain(cells);
                   return;
                 }
+                const cells = casesDuTrace(vues);
                 const next = applySelection(
                   strokeBase.current,
                   surChamps(etaler(cells)),
@@ -7313,24 +7522,44 @@ export function App() {
               }}
               onWorkStroke={(cells) => {
                 if (busy) return;
-                void runWorkOnCells(cells);
+                void runWorkOnCells(decaler(cells, -decalActif.dx, -decalActif.dy));
               }}
               supplies={supplies}
               onCollectSupply={(id) => void collectSupply(id)}
-              hauls={hauls}
-              onCellClick={(x, y, mods, frac) =>
-                construction ? cliqueConstruction(x, y, mods, frac) : void applyToolOnCell(x, y, mods)
-              }
-              onCellHover={setHoverCell}
-              onCellContext={openCellMenu}
-              bornes={domaine?.bornes ?? null}
-              amenagements={amenagements}
+              hauls={enVue(hauls)}
+              onCellClick={(gx, gy, mods, frac) => {
+                if (construction) {
+                  void cliqueConstruction(gx - decalActif.dx, gy - decalActif.dy, mods, frac);
+                  return;
+                }
+                const loc = caseLocale(gx, gy);
+                if (loc.id && loc.id !== activeParcelId) {
+                  // Une autre de ses parcelles : elle prend la main, et le geste
+                  // part dès que ses cases sont lues (souvent tout de suite).
+                  gesteApresBascule.current = { parcelId: loc.id, x: loc.x, y: loc.y, mods };
+                  prendreParcelle(loc.id);
+                  return;
+                }
+                void applyToolOnCell(loc.x, loc.y, mods);
+              }}
+              onCellHover={(c) => {
+                if (!c) return setHoverCell(null);
+                const loc = caseLocale(c.x, c.y);
+                setHoverCell(loc.id === activeParcelId ? { ...c, x: loc.x, y: loc.y } : null);
+              }}
+              onCellContext={(c, ecran) => {
+                const loc = caseLocale(c.x, c.y);
+                if (loc.id === activeParcelId) openCellMenu({ x: loc.x, y: loc.y }, ecran);
+              }}
+              bornes={vueComposee?.bornes ?? domaine?.bornes ?? null}
+              fricheDans={vueComposee?.fricheDans ?? null}
+              amenagements={vueComposee?.amenagements ?? amenagements}
               floraison={(domaine?.biodiversite?.faune.POLLINISATEURS ?? 0) / 100}
               faune={domaine?.biodiversite?.faune}
-              campagne={campagneTerrain}
+              campagne={vueComposee ? campagneDuSiege : campagneTerrain}
               onCampagneBloquee={setCampagneBloquee}
               onCampagneEnfouie={rendreCampagneEnfouie}
-              construction={vueConstruction?.etat ?? null}
+              construction={decalerConstruction(vueConstruction?.etat ?? null, decalActif.dx, decalActif.dy)}
             />
           </Suspense>
         ) : (
