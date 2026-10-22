@@ -375,6 +375,15 @@ type Props = {
    * négatives — la marge ouest et nord.
    */
   bornes?: BornesDomaine | null;
+  /**
+   * Où une case absente est de la friche.
+   *
+   * Toutes ses parcelles sont dessinées ensemble : les bornes couvrent alors
+   * le rectangle qui les englobe, et ce qui sépare deux parcelles n'est pas de
+   * la friche à acheter mais le paysage. Hors de ces bornes, une case absente
+   * ne se dessine pas.
+   */
+  fricheDans?: BornesDomaine | null;
   /** Le décor posé sur le domaine. */
   amenagements?: ObjetPose[];
   /** La floraison de la réserve, 0 à 1 : elle suit les pollinisateurs. */
@@ -1196,6 +1205,7 @@ export function IsoFarmView({
   gridW,
   gridH,
   bornes = null,
+  fricheDans = null,
   amenagements = [],
   floraison = 0,
   faune = FAUNE_VIDE,
@@ -1381,6 +1391,7 @@ export function IsoFarmView({
     gridW,
     gridH,
     bornes,
+    fricheDans,
     amenagements,
     floraison,
     faune,
@@ -1411,6 +1422,7 @@ export function IsoFarmView({
     gridW,
     gridH,
     bornes,
+    fricheDans,
     amenagements,
     floraison,
     faune,
@@ -2779,6 +2791,14 @@ export function IsoFarmView({
            */
           emprise: Math.max(gw, gh) * step + TALUS_PARCELLE,
           ile: { x: ileMonde.x, z: ileMonde.z, w: ileMonde.w + TALUS_PARCELLE, d: ileMonde.d + TALUS_PARCELLE },
+          iles: dataRef.current.fricheDans
+            ? rectanglesDeCases(dataRef.current.cells).map((r) => ({
+                x: ox + ((r.x0 + r.x1) / 2) * step,
+                z: oz + ((r.y0 + r.y1) / 2) * step,
+                w: (r.x1 - r.x0 + 1) * step + TALUS_PARCELLE,
+                d: (r.y1 - r.y0 + 1) * step + TALUS_PARCELLE,
+              }))
+            : undefined,
           pasCase: step,
           cases: Math.max(gw, gh),
           chantiers,
@@ -3006,6 +3026,8 @@ export function IsoFarmView({
           const cell = parCle.get(key(x, y));
           const { px, pz } = cellWorldPos(x, y);
           if (!cell) {
+            const fd = dataRef.current.fricheDans;
+            if (fd && (x < fd.minX || x >= fd.maxX || y < fd.minY || y >= fd.maxY)) continue;
             // La friche : de l'herbe folle, à acheter.
             fricheCles.add(key(x, y));
             aPoser.push({ x, y, px, pz, couleur: (x + y) % 2 === 0 ? FRICHE : FRICHE_SOMBRE, labour: false, choisie: false });
@@ -5294,7 +5316,7 @@ export function IsoFarmView({
       .map((x) => `${x.x},${x.y}:${x.sol}:${x.fleurie ? 1 : 0}:${x.niveau ?? 0}:${x.forme ?? 0}:${x.sol === "BOIS" ? `${x.boiseDepuis ?? ""}:${Math.floor(croissanceBois(x.boiseDepuis ?? null) * 20)}` : ""}`)
       .join("|");
     return `${gridW}x${gridH}#${dom}#${c}#${b}#${s}#${sel}#${w}#${p}#${v}#${am}#${fl}#${fa}#${ca}`;
-  }, [cells, buildings, cellSims, selected, workers, parked, gridW, gridH, voisinage, bornes, amenagements, floraison, faune, campagne]);
+  }, [cells, buildings, cellSims, selected, workers, parked, gridW, gridH, voisinage, bornes, fricheDans, amenagements, floraison, faune, campagne]);
 
   useEffect(() => {
     layoutRef.current?.();
