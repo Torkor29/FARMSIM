@@ -4785,7 +4785,9 @@ app.post("/dev/grant", async (req, res) => {
     done.push("niveau et expérience");
   }
   if (body.data.stock && user.farm) {
-    await addToStock(prisma, user.farm.id, body.data.stock.commodity, body.data.stock.tons, 0);
+    const farmId = user.farm.id;
+    const st = body.data.stock;
+    await prisma.$transaction((tx) => addToStock(tx, farmId, st.commodity, st.tons, 0));
     done.push(`${body.data.stock.tons} t de ${body.data.stock.commodity}`);
   }
   if (body.data.ripenAll && user.farm) {
@@ -13040,7 +13042,7 @@ async function addToStock(
    * créaient deux, et la seconde devenait invisible. Le verrou ne vit que le
    * temps de la transaction.
    */
-  await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`stock:${farmId}:${itemCode}`}))`;
+  await tx.$queryRaw`SELECT pg_advisory_xact_lock(hashtext(${`stock:${farmId}:${itemCode}`}))::text`;
   const existing = await tx.inventoryItem.findFirst({ where: { farmId, itemCode } });
   if (existing) {
     await tx.inventoryItem.update({
