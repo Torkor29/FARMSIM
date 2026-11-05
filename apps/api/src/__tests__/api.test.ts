@@ -5419,12 +5419,13 @@ describe("requêtes simultanées", () => {
 
   it("deux ventes au marché ne vendent pas plus que le silo", async () => {
     const { moi } = await installe("Vendeur");
-    await appel("/dev/grant", { methode: "POST", corps: { userId: moi.id, stock: { commodity: "HAY", tons: 10 } }, jeton: moi.jeton });
-    const vendre = () => appel("/market/sell", { methode: "POST", corps: { userId: moi.id, commodity: "HAY", tons: 6 }, jeton: moi.jeton });
+    const depart = await stock(moi, "STRAW_BALE");
+    await appel("/dev/grant", { methode: "POST", corps: { userId: moi.id, stock: { commodity: "STRAW_BALE", tons: 10 } }, jeton: moi.jeton });
+    const vendre = () => appel("/market/sell", { methode: "POST", corps: { userId: moi.id, commodity: "STRAW_BALE", tons: 6 }, jeton: moi.jeton });
     const [a, b] = await Promise.all([vendre(), vendre()]);
     const reussies = [a, b].filter((r) => r.statut === 200).length;
     assert.equal(reussies, 1, `une seule vente doit passer : ${a.statut} / ${b.statut}`);
-    assert.ok(Math.abs((await stock(moi, "HAY")) - 4) < 0.01, "il reste 4 t, pas moins");
+    assert.ok(Math.abs((await stock(moi, "STRAW_BALE")) - (depart + 4)) < 0.01, "il reste 4 t, pas moins");
   });
 
   it("deux apports simultanés s'additionnent, sans ligne en double", async () => {
