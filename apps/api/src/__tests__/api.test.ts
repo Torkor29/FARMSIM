@@ -5419,25 +5419,25 @@ describe("requêtes simultanées", () => {
 
   it("deux ventes au marché ne vendent pas plus que le silo", async () => {
     const { moi } = await installe("Vendeur");
-    await appel("/dev/grant", { methode: "POST", corps: { userId: moi.id, stock: { commodity: "WHEAT", tons: 10 } }, jeton: moi.jeton });
-    const vendre = () => appel("/market/sell", { methode: "POST", corps: { userId: moi.id, commodity: "WHEAT", tons: 6 }, jeton: moi.jeton });
+    await appel("/dev/grant", { methode: "POST", corps: { userId: moi.id, stock: { commodity: "HAY", tons: 10 } }, jeton: moi.jeton });
+    const vendre = () => appel("/market/sell", { methode: "POST", corps: { userId: moi.id, commodity: "HAY", tons: 6 }, jeton: moi.jeton });
     const [a, b] = await Promise.all([vendre(), vendre()]);
     const reussies = [a, b].filter((r) => r.statut === 200).length;
     assert.equal(reussies, 1, `une seule vente doit passer : ${a.statut} / ${b.statut}`);
-    assert.ok(Math.abs((await stock(moi, "WHEAT")) - 4) < 0.01, "il reste 4 t, pas moins");
+    assert.ok(Math.abs((await stock(moi, "HAY")) - 4) < 0.01, "il reste 4 t, pas moins");
   });
 
   it("deux apports simultanés s'additionnent, sans ligne en double", async () => {
     const { moi } = await installe("Silo");
-    const verser = () => appel("/dev/grant", { methode: "POST", corps: { userId: moi.id, stock: { commodity: "BARLEY", tons: 3 } }, jeton: moi.jeton });
+    const verser = () => appel("/dev/grant", { methode: "POST", corps: { userId: moi.id, stock: { commodity: "STRAW_BALE", tons: 3 } }, jeton: moi.jeton });
     await Promise.all([verser(), verser(), verser()]);
-    assert.ok(Math.abs((await stock(moi, "BARLEY")) - 9) < 0.01, "les trois apports sont là");
+    assert.ok(Math.abs((await stock(moi, "STRAW_BALE")) - 9) < 0.01, "les trois apports sont là");
   });
 
   it("un lot de la criée ne part que chez un seul acheteur", async () => {
     const { moi: vendeur } = await installe("Criee");
-    await appel("/dev/grant", { methode: "POST", corps: { userId: vendeur.id, stock: { commodity: "WHEAT", tons: 5 } }, jeton: vendeur.jeton });
-    const annonce = await appel("/market/listings", { methode: "POST", corps: { userId: vendeur.id, commodity: "WHEAT", tons: 5, pricePerTon: 200 }, jeton: vendeur.jeton });
+    await appel("/dev/grant", { methode: "POST", corps: { userId: vendeur.id, stock: { commodity: "HAY", tons: 5 } }, jeton: vendeur.jeton });
+    const annonce = await appel("/market/listings", { methode: "POST", corps: { userId: vendeur.id, commodity: "HAY", tons: 5, pricePerTon: 120 }, jeton: vendeur.jeton });
     assert.ok(annonce.statut < 300, JSON.stringify(annonce.corps));
     const id = (annonce.corps as unknown as { listing: { id: string } }).listing.id;
     const { moi: a } = await installe("AcheteurA");
