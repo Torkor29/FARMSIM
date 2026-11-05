@@ -319,7 +319,7 @@ export const CROP_DEFS: Record<
     yieldPerCell: 0.45,
     // Semé au début du printemps, mûr à l'automne. Qui plante du maïs engage
     // son champ jusqu'aux moissons, et c'est ce qui doit rendre le choix
-    // sérieux — mais il paie le mieux à la case.
+    // sérieux — il paie bien à la case (72 € nets), sans battre le colza (85 €).
     growMs: croissanceHeures(27),
     seedCostPerCell: 18,
   },
@@ -329,7 +329,9 @@ export const CROP_DEFS: Record<
   PEA: {
     code: "PEA",
     name: "Pois",
-    yieldPerCell: 0.26,
+    // 0,26 t en faisait de loin la culture la plus payée à l'heure (4,78 €
+    // contre 2,21 pour le blé), azote en prime : on ne semait plus que lui.
+    yieldPerCell: 0.19,
     // La plus rapide des cultures de vente : semé au printemps, mûr en été,
     // dans la saison qui suit. C'est le pois qui donne une raison de revenir
     // quand tout le reste immobilise le champ deux ou trois saisons.
@@ -386,9 +388,13 @@ export const CROP_DEFS: Record<
    *     mesclun  2 h   2,50 €/case/h
    *     radis    3 h   2,83
    *     épinard  4 h   3,00
-   *     salade   5 h   2,92
+   *     salade   5 h   3,08
    *     patate  10 h   3,10
-   *     — pour mémoire : blé 2,21 · maïs 2,67 · orge 3,19 · pois 4,78
+   *     — pour mémoire : blé 2,21 · maïs 2,67 · orge 3,29 · pois 3,24
+   *
+   * Le mesclun recoupé ne paie pas de semence : la repousse donne donc moins
+   * (`facteurRecoupe`), ce qui le tient à 3,20 €/case/h au lieu de dix — sans
+   * quoi on ne sèmerait plus que lui.
    *
    * Le maraîchage se glisse donc entre les céréales qu'on sème et qu'on
    * oublie, et l'orge ou le pois qu'on surveille. Ce qu'il coûte vraiment
@@ -425,7 +431,8 @@ export const CROP_DEFS: Record<
   LETTUCE: {
     code: "LETTUCE",
     name: "Salade",
-    yieldPerCell: 0.11,
+    // Plus longue que l'épinard, elle doit payer un peu plus à l'heure.
+    yieldPerCell: 0.113,
     growMs: croissanceHeures(5),
     seedCostPerCell: 14,
   },

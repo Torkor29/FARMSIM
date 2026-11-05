@@ -1812,6 +1812,17 @@ export function createBuildingRig(
   const roles = new Map<Role, THREE.Object3D[]>();
   const group = new THREE.Group();
   group.add(bp.root.build(materials, roles, opts.shadows ?? true));
+  /*
+   * Les géométries du plan sont partagées entre tous les bâtiments du même
+   * type : on le marque, pour que le nettoyage générique de la scène ne les
+   * libère pas. Sans cela, chaque déplacement du fantôme de pose — et chaque
+   * reconstruction de la ferme — renvoyait au GPU celles des vrais bâtiments,
+   * d'où un à-coup sous le doigt.
+   */
+  group.traverse((o) => {
+    const g = (o as THREE.Mesh).geometry as THREE.BufferGeometry | undefined;
+    if (g) g.userData.shared = true;
+  });
 
   // Le gond est à gauche pour le premier vantail, à droite pour le second :
   // les deux battants doivent s'écarter, pas partir du même côté. On retient

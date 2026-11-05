@@ -2,6 +2,7 @@ import {
   FERTILIZE_YIELD_STEP,
   CROP_DEFS,
   cropGrowMs,
+  facteurRecoupe,
   GOOD_DEFS,
   DRYING,
   MARKET_BOUNDS,
@@ -380,8 +381,9 @@ export function simulateCell(input: CellSimInput): CellSimResult {
   // culture, d'où leur place à côté du climat plutôt que dans `managementFactor`.
   const rotation = rotationFactor(input.rotation ?? NO_ROTATION, input.crop);
   const tillage = input.directSeeded ? 1 - DIRECT_SEED_YIELD_MALUS : 1;
+  const recoupe = facteurRecoupe(input.crop, input.cutsDone ?? 0);
   const estimatedYieldTons =
-    def.yieldPerCell * mgmt * climate * (1 - wet) * overripe * rotation * tillage;
+    def.yieldPerCell * mgmt * climate * (1 - wet) * overripe * rotation * tillage * recoupe;
   return {
     ready,
     progress,

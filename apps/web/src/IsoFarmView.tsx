@@ -2543,6 +2543,17 @@ export function IsoFarmView({
     }
 
     function layout() {
+      const debutLayout = performance.now();
+      try {
+        layoutCorps();
+      } finally {
+        const w = window as unknown as { __layouts?: { n: number; ms: number[] } };
+        w.__layouts ??= { n: 0, ms: [] };
+        w.__layouts.n++;
+        w.__layouts.ms.push(Math.round(performance.now() - debutLayout));
+      }
+    }
+    function layoutCorps() {
       grazeIdKey = "";
       grazeOutKey = "";
       const cropStalks: {
@@ -4280,6 +4291,8 @@ export function IsoFarmView({
         }
         mesh.material = copie;
       });
+      // Les matières d'origine sont propres à ce rig (créées pour lui) : on
+      // les libère, les copies partent avec le fantôme.
       for (const m of remplacees.keys()) m.dispose();
       ghost.group.scale.setScalar(cellSize);
       ghost.group.position.set(centerX, MACHINE_GROUND, centerZ);
@@ -5293,7 +5306,10 @@ export function IsoFarmView({
           )}`,
       )
       .join("|");
-    const sel = selected.map((x) => `${x.x},${x.y}`).join("|");
+    // La sélection n'en fait pas partie : elle se peint à chaque image depuis
+    // `dataRef` (voir `dalles.animer`). La compter ici reconstruisait toute la
+    // scène — toutes les parcelles, plantes et bâtiments — à chaque case
+    // touchée, et c'est ce qu'on voyait « charger » sous le doigt.
     const w = workers.map((x) => x.id).join("|");
     // Le parc fait partie du décor : une machine achetée doit apparaître sur la
     // cour sans attendre qu'une case du champ change.
@@ -5304,10 +5320,12 @@ export function IsoFarmView({
     // ici, la campagne resterait le décor tiré au sort jusqu'au prochain coup
     // de bêche du joueur.
     const v = (voisinage ?? [])
-      .map((x) => `${x.col},${x.rang}:${x.culture ?? "-"}:${x.stade ?? "-"}:${x.statut}`)
+      .map((x) => `${x.col},${x.rang}:${x.culture ?? "-"}:${x.stade ?? "-"}:${x.statut}:${x.fusionneeDans ?? ""}:${(x.grille ?? []).join("")}`)
       .join("|");
     // Le domaine et son décor font partie de la scène.
-    const dom = bornes ? `${bornes.minX},${bornes.minY},${bornes.maxX},${bornes.maxY}` : "";
+    const dom =
+      (bornes ? `${bornes.minX},${bornes.minY},${bornes.maxX},${bornes.maxY}` : "") +
+      (fricheDans ? `/${fricheDans.minX},${fricheDans.minY},${fricheDans.maxX},${fricheDans.maxY}` : "");
     const am = amenagements.map((x) => `${x.id}:${x.type}:${x.originX},${x.originY}:${x.rotation}`).join("|");
     // La floraison change par paliers : la réserve refleurit quand les pollinisateurs s'installent.
     const fl = Math.round(floraison * 10);
@@ -5315,10 +5333,13 @@ export function IsoFarmView({
     const ca = campagne
       .map((x) => `${x.x},${x.y}:${x.sol}:${x.fleurie ? 1 : 0}:${x.niveau ?? 0}:${x.forme ?? 0}:${x.sol === "BOIS" ? `${x.boiseDepuis ?? ""}:${Math.floor(croissanceBois(x.boiseDepuis ?? null) * 20)}` : ""}`)
       .join("|");
-    return `${gridW}x${gridH}#${dom}#${c}#${b}#${s}#${sel}#${w}#${p}#${v}#${am}#${fl}#${fa}#${ca}`;
-  }, [cells, buildings, cellSims, selected, workers, parked, gridW, gridH, voisinage, bornes, fricheDans, amenagements, floraison, faune, campagne]);
+    return `${gridW}x${gridH}#${dom}#${c}#${b}#${s}#${w}#${p}#${v}#${am}#${fl}#${fa}#${ca}`;
+  }, [cells, buildings, cellSims, workers, parked, gridW, gridH, voisinage, bornes, fricheDans, amenagements, floraison, faune, campagne]);
 
   useEffect(() => {
+    // Pour les essais : les deux dernières signatures, pour voir ce qui a bougé.
+    const w = window as unknown as { __cles?: string[] };
+    w.__cles = [...(w.__cles ?? []).slice(-1), sceneKey];
     layoutRef.current?.();
   }, [sceneKey]);
 

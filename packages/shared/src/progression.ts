@@ -150,8 +150,10 @@ export const XP_TABLE: Record<XpEvent, (ctx: XpContext) => number> = {
   MACHINE_CARE: (c) => (cost(c) > 0 ? 8 + Math.round(cost(c) / 40) : 4),
   MACHINE_BUY: (c) => 20 + Math.round(cost(c) / 200),
   // Une tonne vendue, un point. Le forfait de dix payait pareil un sac et une
-  // remorque — le geste comptait, pas la récolte.
-  SELL: (c) => Math.max(1, Math.round(tons(c))),
+  // remorque — le geste comptait, pas la récolte. Sans plancher : un point par
+  // vente, même de dix kilos, refaisait payer le geste (cent ventes de 10 kg
+  // valaient cent fois une tonne).
+  SELL: (c) => Math.round(tons(c)),
   DELIVER: (c) => 12 + Math.round(tons(c)),
   CONTRACT: (c) => 15 + cells(c),
   LABOR: (c) => 15 + cells(c),

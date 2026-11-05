@@ -95,11 +95,23 @@ export function couleurCaseGrille(code: string, x: number, y: number): number {
       const look = lookOf((crop ?? null) as CropCode | null);
       if (stade === "LOST" || stade === "SPOILED") return DRY_SOIL;
       if (stade === "READY") return look.ready;
-      // En pousse : à mi-chemin du vert de levée et de la couleur mûre.
-      return new THREE.Color(look.grow).lerp(new THREE.Color(look.ready), stade === "GROWING" ? 0.45 : 0.15).getHex();
+      // En pousse : à mi-chemin du vert de levée et de la couleur mûre. Le
+      // mélange se calcule une fois par culture et par stade — la nappe le
+      // demandait case par case, deux couleurs neuves à chaque fois.
+      const cle = `${crop}:${stade}`;
+      let teinte = MELANGES.get(cle);
+      if (teinte === undefined) {
+        teinte = A.set(look.grow).lerp(B.set(look.ready), stade === "GROWING" ? 0.45 : 0.15).getHex();
+        MELANGES.set(cle, teinte);
+      }
+      return teinte;
     }
   }
 }
+
+const MELANGES = new Map<string, number>();
+const A = new THREE.Color();
+const B = new THREE.Color();
 
 /** La perte, telle que l'île la peint sur une culture gâtée. */
 export const TEINTE_PERDUE = RIPENESS_COLORS.LOST;

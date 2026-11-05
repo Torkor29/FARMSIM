@@ -6,6 +6,7 @@ import {
   MACHINE_ART,
   MACHINE_DEFS,
   explainNoMachine,
+  canSowInSeason,
   type MachineForWork,
   MAX_BUILDING_LEVEL,
   WORK_LABELS,
@@ -1615,7 +1616,7 @@ export function App() {
         method: "POST",
         body: JSON.stringify(grant),
       });
-      await refreshPlayer();
+      await refreshPlayer().catch(() => undefined);
       if (activeParcelId) await loadParcel(activeParcelId).catch(() => undefined);
       flashToast(r.done.length ? `Test : ${r.done.join(" · ")}` : "Rien à faire");
     } catch (e) {
@@ -1645,7 +1646,8 @@ export function App() {
       const r = await api<{ contracts: FuturesContract[] }>("/futures");
       setFutures((prev) => keepIfSame(prev, r.contracts));
     } catch {
-      setFutures([]);
+      /* Une lecture ratée garde la liste d'avant : la vider faisait croire,
+         le temps d'une coupure réseau, que tout avait disparu. */
     }
   }, []);
 
@@ -1702,7 +1704,8 @@ export function App() {
       );
       setListings((prev) => keepIfSame(prev, r.listings));
     } catch {
-      setListings([]);
+      /* Une lecture ratée garde la liste d'avant : la vider faisait croire,
+         le temps d'une coupure réseau, que tout avait disparu. */
     }
   }, []);
 
@@ -1730,7 +1733,8 @@ export function App() {
       }
       haulReadyRef.current = true;
     } catch {
-      setDeliveries([]);
+      /* Une lecture ratée garde la liste d'avant : la vider faisait croire,
+         le temps d'une coupure réseau, que tout avait disparu. */
     }
   }, []);
 
@@ -2090,17 +2094,15 @@ export function App() {
     return m;
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [siegeParcelle?.id, quartTrame, (player?.farm?.parcels ?? []).map((p) => `${p.id}:${p.mapX},${p.mapY},${p.gridW}x${p.gridH}`).join("|")]);
-  /** La vue est-elle composée ? Seulement chez soi, sur une parcelle de la composition. */
-  const composee = Boolean(
+  /** Peut-on composer la vue ? Seulement chez soi, sur une parcelle de la composition. */
+  const composable = Boolean(
     morceaux && morceaux.length > 1 && !enVisite && activeParcelId && morceaux.some((m) => m.id === activeParcelId),
   );
-  /** La parcelle depuis laquelle on dessine (et charge la commune). */
-  const parcelleDeVue = composee ? siegeParcelle!.id : activeParcelId;
-  /** Le décalage de la parcelle active dans la vue. */
-  const decalActif = (composee && morceaux?.find((m) => m.id === activeParcelId)) || { dx: 0, dy: 0 };
+  /** La parcelle depuis laquelle on charge la commune : le siège, dès qu'on peut composer. */
+  const parcelleDeCommune = composable ? siegeParcelle!.id : activeParcelId;
   /** Le détail des autres parcelles de la composition, tenu à jour. */
   const [detailsAutres, setDetailsAutres] = useState<Record<string, NonNullable<typeof parcelDetail>>>({});
-  const idsAutres = composee ? morceaux!.map((m) => m.id).filter((id) => id !== activeParcelId) : [];
+  const idsAutres = composable ? morceaux!.map((m) => m.id).filter((id) => id !== activeParcelId) : [];
   const cleAutres = idsAutres.join("|");
   useEffect(() => {
     if (!cleAutres) return;
@@ -2130,6 +2132,19 @@ export function App() {
       setDetailsAutres((avant) => (avant[id] === parcelDetail ? avant : { ...avant, [id]: parcelDetail }));
     }
   }, [parcelDetail]);
+  /*
+   * La vue ne se compose qu'une fois **toutes** les parcelles lues.
+   *
+   * Composée au fil des réponses, l'île grandissait morceau par morceau au
+   * chargement — quatre reconstructions de la scène, et des champs qui
+   * surgissaient un à un. On attend qu'elles soient toutes là : une seule
+   * bascule, d'un coup.
+   */
+  const composee = composable && idsAutres.every((id) => detailsAutres[id]);
+  /** La parcelle depuis laquelle on dessine. */
+  const parcelleDeVue = composee ? siegeParcelle!.id : activeParcelId;
+  /** Le décalage de la parcelle active dans la vue. */
+  const decalActif = (composee && morceaux?.find((m) => m.id === activeParcelId)) || { dx: 0, dy: 0 };
   /** Le détail d'une parcelle de la composition : l'active en direct, les autres en cache. */
   const detailDe = (id: string) => (id === activeParcelId ? parcelDetail : detailsAutres[id]) ?? null;
   /** Qui possède chaque case de la vue. */
@@ -2153,11 +2168,22 @@ export function App() {
    * pour que l'outil sache sur-le-champ quelles cases sont libres.
    */
   const garderSelection = useRef(false);
+  /** La case survolée, dans le repère de la vue (toutes parcelles). */
+  const [survolVue, setSurvolVue] = useState<{ x: number; y: number } | null>(null);
   function prendreParcelle(id: string, garder = false) {
     if (id === activeParcelId) return;
     const d = detailsAutres[id];
     if (d) setParcelDetail(d);
-    garderSelection.current = garder;
+    /*
+     * La sélection se vide **ici**, pas dans l'effet de changement de parcelle.
+     *
+     * L'effet passait après celui qui rejoue le geste : la case touchée était
+     * retenue, puis effacée dans la même image — il fallait toucher deux fois
+     * l'autre parcelle pour qu'elle prenne. On vide tout de suite, et l'effet
+     * laisse faire.
+     */
+    if (!garder) setSelectedCells([]);
+    garderSelection.current = true;
     parcelleAffichee.current = id;
     setActiveParcelId(id);
   }
@@ -2178,12 +2204,19 @@ export function App() {
     x: number;
     y: number;
     mods: PointerMods;
+    /** Un clic du mode construction (poser, peindre, acheter un lot). */
+    construction?: boolean;
+    frac?: { fx: number; fy: number };
+    /** Un tracé du mode construction, à reprendre en entier. */
+    trace?: { x: number; y: number }[];
   } | null>(null);
   useEffect(() => {
     const attente = gesteApresBascule.current;
     if (!attente || parcelDetail?.parcel.id !== attente.parcelId) return;
     gesteApresBascule.current = null;
-    void applyToolOnCell(attente.x, attente.y, attente.mods);
+    if (attente.trace) void finirTraceConstruction(attente.trace);
+    else if (attente.construction) cliqueConstruction(attente.x, attente.y, attente.mods, attente.frac);
+    else void applyToolOnCell(attente.x, attente.y, attente.mods);
     // `applyToolOnCell` change à chaque rendu : c'est l'arrivée de la parcelle
     // qui déclenche, rien d'autre.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -2226,7 +2259,7 @@ export function App() {
   }, [activeParcelId]);
 
   useEffect(() => {
-    if (!parcelleDeVue) {
+    if (!parcelleDeCommune) {
       setVoisinage([]);
       return;
     }
@@ -2245,14 +2278,14 @@ export function App() {
      * parcelles », loin d'ici — repart de rien, comme avant.
      */
     setVoisinage((avant) => {
-      const cible = avant.find((v) => v.id === parcelleDeVue);
+      const cible = avant.find((v) => v.id === parcelleDeCommune);
       if (!cible) return [];
       return avant.map((v) => ({ ...v, col: v.col - cible.col, rang: v.rang - cible.rang }));
     });
-    loadVoisinage(parcelleDeVue).catch(() => undefined);
-    const t = setInterval(() => loadVoisinage(parcelleDeVue).catch(() => undefined), 45_000);
+    loadVoisinage(parcelleDeCommune).catch(() => undefined);
+    const t = setInterval(() => loadVoisinage(parcelleDeCommune).catch(() => undefined), 45_000);
     return () => clearInterval(t);
-  }, [parcelleDeVue, loadVoisinage]);
+  }, [parcelleDeCommune, loadVoisinage]);
 
   useEffect(() => {
     if (!player || !activeParcelId) return;
@@ -2409,6 +2442,22 @@ export function App() {
       })),
     [vueComposee?.domaineSiege?.campagne],
   );
+  /**
+   * À quelle parcelle s'adresse un geste du mode construction.
+   *
+   * Une case d'une de ses parcelles : celle-là. Ailleurs, c'est la campagne,
+   * et la campagne appartient au domaine du siège.
+   */
+  const parcelleDeConstruction = (gx: number, gy: number): { id: string; x: number; y: number } => {
+    if (!composee || !morceaux || !siegeParcelle) return { id: activeParcelId ?? "", x: gx - decalActif.dx, y: gy - decalActif.dy };
+    if (proprio.has(`${gx},${gy}`)) return caseLocale(gx, gy);
+    return { id: siegeParcelle.id, x: gx, y: gy };
+  };
+  /** Un tracé de construction, une fois la bonne parcelle active. */
+  function finirTraceConstruction(cells: { x: number; y: number }[]) {
+    if (armeTracable) return tracerObjets(cells);
+    return peindreTerrain(cells);
+  }
   /**
    * Les cases d'un tracé, pour la parcelle où il a commencé.
    *
@@ -3112,6 +3161,18 @@ export function App() {
     const t = window.setTimeout(() => setMsg(null), TOAST_MS);
     return () => window.clearTimeout(t);
   }, [msg, toastTick]);
+  /*
+   * L'erreur s'en va aussi.
+   *
+   * Seul le message vert avait sa minuterie : le rouge restait à l'écran
+   * jusqu'à la prochaine action, alors que sa barre se vidait comme s'il
+   * allait partir. Il dure un peu plus, le temps d'être lu.
+   */
+  useEffect(() => {
+    if (!err) return;
+    const t = window.setTimeout(() => setErr(null), TOAST_MS * 2);
+    return () => window.clearTimeout(t);
+  }, [err]);
 
   const onFarm = Boolean(player && ownedParcels.length);
   useEffect(() => {
@@ -3675,7 +3736,7 @@ export function App() {
         method: "POST",
         body: JSON.stringify({ userId: player.id }),
       });
-      const apres = await refreshPlayer();
+      const apres = await refreshPlayer().catch(() => undefined);
       const achetee = apres?.farm?.parcels.find((p) => p.id === parcelId);
       /* On y va tout de suite : on l'a achetée pour la travailler. Le paysage
          recule d'autant, et la même terre reste sous le même pixel. */
@@ -3707,10 +3768,10 @@ export function App() {
         method: "POST",
         body: JSON.stringify({ userId: player.id, avec }),
       });
-      await refreshPlayer();
+      await refreshPlayer().catch(() => undefined);
       if (r.hote !== activeParcelId) setActiveParcelId(r.hote);
       else {
-        await loadParcel(r.hote);
+        await loadParcel(r.hote).catch(() => undefined);
         await loadVoisinage(r.hote).catch(() => undefined);
       }
       playUiSound("place");
@@ -3767,8 +3828,8 @@ export function App() {
   async function apresConstruction(message: string, son: "place" | "click" = "place") {
     flashToast(message);
     playUiSound(son);
-    await refreshPlayer();
-    if (activeParcelId) await loadParcel(activeParcelId);
+    await refreshPlayer().catch(() => undefined);
+    if (activeParcelId) await loadParcel(activeParcelId).catch(() => undefined);
   }
 
   async function peindreTerrain(cells: { x: number; y: number }[]) {
@@ -3887,7 +3948,7 @@ export function App() {
       }
     } catch (e) {
       flashToast(e instanceof Error ? e.message : String(e), true);
-      if ((patch || def.regle === "RELIEF" || dehors.length) && activeParcelId) void loadParcel(activeParcelId);
+      if ((patch || def.regle === "RELIEF" || dehors.length) && activeParcelId) void loadParcel(activeParcelId).catch(() => undefined);
     } finally {
       setBusy(false);
       setApercuTerrain([]);
@@ -3969,7 +4030,7 @@ export function App() {
       }
     } catch (e) {
       flashToast(e instanceof Error ? e.message : String(e), true);
-      void loadParcel(parcelId);
+      void loadParcel(parcelId).catch(() => undefined);
     } finally {
       for (const k of cles) enfouiesEnCours.current.delete(`${parcelId}:${k}`);
     }
@@ -4037,7 +4098,7 @@ export function App() {
       });
     } catch (e) {
       flashToast(e instanceof Error ? e.message : String(e), true);
-      void loadParcel(activeParcelId);
+      void loadParcel(activeParcelId).catch(() => undefined);
     }
   }
 
@@ -4487,7 +4548,7 @@ export function App() {
         body: JSON.stringify({ userId: player.id }),
       });
       flashToast(`Litière refaite · ${r.tons.toFixed(2)} t de paille étalée`);
-      await refreshPlayer();
+      await refreshPlayer().catch(() => undefined);
       if (activeParcelId) await loadLivestock(activeParcelId);
     } catch (e) {
       flashToast(e instanceof Error ? e.message : String(e), true);
@@ -4633,7 +4694,7 @@ export function App() {
          du bâtiment. Le passer par le moteur des chantiers le faisait partir
          d'un coin du champ, en allers-retours de labour. */
       flashToast(`${r.tons} t de ${nom.toLowerCase()} · l'attelage vient la chercher`);
-      await refreshPlayer();
+      await refreshPlayer().catch(() => undefined);
     } catch (e) {
       // Refusée — le camion n'était pas là, ou la caisse n'est plus : on
       // remet la liste au clair plutôt que de laisser un trou.
@@ -4977,6 +5038,14 @@ export function App() {
       horloge,
     );
     if (parc) return parc;
+    /* Hors saison, le serveur refuse le semis : le bouton le dit avant, au
+       lieu d'un clic qui ne donne rien. La culture était déjà barrée dans la
+       liste, mais « Semer Blé · 3 cases » restait cliquable. */
+    if (work === "PLANT") {
+      const crop = cropFromPlantTool(tool);
+      const verdict = crop ? canSowInSeason(crop, season) : null;
+      if (verdict && !verdict.ok) return verdict.reason ?? "Hors saison";
+    }
     // La machine est là ; reste à savoir si la sélection a de quoi l'occuper.
     if ((work === "HARVEST" || work === "MOW") && selectedCells.length) {
       if (dansSelection((sim) => sim.ready && !sim.lost) === 0) {
@@ -4984,7 +5053,7 @@ export function App() {
       }
     }
     return null;
-  }, [tool, player?.farm?.machines, selectedCells.length, dansSelection, horloge]);
+  }, [tool, player?.farm?.machines, selectedCells.length, dansSelection, horloge, season]);
 
   const laborQuote = useMemo(() => {
     if (visiting || !contractorOffer) return null;
@@ -5035,7 +5104,7 @@ export function App() {
       });
       flashToast("Cet argent est bloqué jusqu’à la fin (ou l’annulation).");
       setSelectedCells([]);
-      await refreshPlayer();
+      await refreshPlayer().catch(() => undefined);
       await refreshMeta();
     } catch (e) {
       flashToast(e instanceof Error ? e.message : String(e), true);
@@ -5057,7 +5126,7 @@ export function App() {
       setSheet(null);
       setShowEta(false);
       flashToast(`Chez ${r.order.clientName} — ${WORK_LABELS[r.order.work]}`);
-      await loadParcel(r.order.parcelId);
+      await loadParcel(r.order.parcelId).catch(() => undefined);
       await refreshMeta();
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e));
@@ -5141,8 +5210,8 @@ export function App() {
       const tons = r.totalTons ? ` · ${r.totalTons.toFixed(2)} t` : "";
       flashToast(`C’est fait : ${WORK_LABELS[contractorOffer.work]} ×${r.cells}${tons} · −${r.cost} €`);
       setSelectedCells([]);
-      await refreshPlayer();
-      await loadParcel(activeParcelId);
+      await refreshPlayer().catch(() => undefined);
+      await loadParcel(activeParcelId).catch(() => undefined);
     } catch (e) {
       flashToast(e instanceof Error ? e.message : String(e), true);
       stopWork();
@@ -5673,8 +5742,8 @@ export function App() {
         labor = r.labor;
       }
       setSelectedCells([]);
-      await refreshPlayer();
-      await loadParcel(activeParcelId);
+      await refreshPlayer().catch(() => undefined);
+      await loadParcel(activeParcelId).catch(() => undefined);
       if (labor?.completed) {
         flashToast(`Chantier terminé · +${Math.round(labor.payout ?? 0)} €`);
         jouerSon("recolte");
@@ -5786,8 +5855,8 @@ export function App() {
         const home = player.farm?.parcels[0]?.id;
         if (home) setActiveParcelId(home);
       }
-      await refreshPlayer();
-      await loadParcel(activeParcelId);
+      await refreshPlayer().catch(() => undefined);
+      await loadParcel(activeParcelId).catch(() => undefined);
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e));
       stopWork(jobId);
@@ -5810,7 +5879,7 @@ export function App() {
       flashToast(`Négociant : ${tons.toFixed(2)} t · +${r.revenue} €`);
       jouerSon("piece");
       markGuideFlag("sold");
-      await refreshPlayer();
+      await refreshPlayer().catch(() => undefined);
       await refreshMeta();
     } catch (e) {
       flashToast(e instanceof Error ? e.message : String(e), true);
@@ -5841,7 +5910,7 @@ export function App() {
         body: JSON.stringify({ userId: player.id, commodity }),
       });
       flashToast(`${nom} jeté · ${r.discarded.toFixed(2)}`);
-      await refreshPlayer();
+      await refreshPlayer().catch(() => undefined);
     } catch (e) {
       flashToast(e instanceof Error ? e.message : String(e), true);
     } finally {
@@ -5858,7 +5927,7 @@ export function App() {
         body: JSON.stringify({ userId: player.id, commodity, tons, pricePerTon }),
       });
       flashToast(`Lot mis en vente · frais ${r.fee} €`);
-      await refreshPlayer();
+      await refreshPlayer().catch(() => undefined);
       await loadListings(player.id);
     } catch (e) {
       flashToast(e instanceof Error ? e.message : String(e), true);
@@ -5876,7 +5945,7 @@ export function App() {
         body: JSON.stringify({ userId: player.id }),
       });
       flashToast(`${r.returned.toFixed(2)} t revenues au silo`);
-      await refreshPlayer();
+      await refreshPlayer().catch(() => undefined);
       await loadListings(player.id);
     } catch (e) {
       flashToast(e instanceof Error ? e.message : String(e), true);
@@ -5894,7 +5963,7 @@ export function App() {
         body: JSON.stringify({ userId: player.id }),
       });
       flashToast("Pas encore chez vous : quelqu’un doit livrer.");
-      await refreshPlayer();
+      await refreshPlayer().catch(() => undefined);
       await loadListings(player.id);
       await loadDeliveries(player.id);
     } catch (e) {
@@ -5913,7 +5982,7 @@ export function App() {
         body: JSON.stringify({ userId: player.id }),
       });
       flashToast(`Livré ${r.delivered.toFixed(2)} t`);
-      await refreshPlayer();
+      await refreshPlayer().catch(() => undefined);
       await loadDeliveries(player.id);
     } catch (e) {
       flashToast(e instanceof Error ? e.message : String(e), true);
@@ -5936,7 +6005,7 @@ export function App() {
       flashToast(`Arrivé · −${r.autoFee} €`);
       haulSeenRef.current.add(id);
       flashDeliveryArrival(r.commodity);
-      await refreshPlayer();
+      await refreshPlayer().catch(() => undefined);
       await loadDeliveries(player.id);
     } catch (e) {
       flashToast(e instanceof Error ? e.message : String(e), true);
@@ -5985,7 +6054,7 @@ export function App() {
       });
       const nom = GOOD_DEFS[commodity]?.name ?? commodity;
       const pourLeLot = nourrirApres;
-      await refreshPlayer();
+      await refreshPlayer().catch(() => undefined);
       /*
        * Le négociant livre, il ne remplit pas le silo.
        *
@@ -6034,7 +6103,7 @@ export function App() {
         method: "POST",
         body: JSON.stringify({ userId: player.id, commodity, tons }),
       });
-      await refreshPlayer();
+      await refreshPlayer().catch(() => undefined);
       await refreshMeta();
       setMsg(`Vendu pour ${r.revenue} €`);
       jouerSon("piece");
@@ -6054,7 +6123,7 @@ export function App() {
         method: "POST",
         body: JSON.stringify({ userId: player.id, itemId, passes: 1 }),
       });
-      await refreshPlayer();
+      await refreshPlayer().catch(() => undefined);
       setMsg(
         `Séché (−${(r.reduction * 100).toFixed(0)} pts) · ${(r.moisture * 100).toFixed(0)} % · −${r.cost} €`,
       );
@@ -6105,7 +6174,7 @@ export function App() {
           body: JSON.stringify({ userId: player.id }),
         },
       );
-      await refreshPlayer();
+      await refreshPlayer().catch(() => undefined);
       await refreshMeta();
       // Louer, c'est ne pas user son matériel : il n'y a donc pas d'usure à
       // annoncer, mais il y a une location — et c'est elle qui explique
@@ -6175,7 +6244,7 @@ export function App() {
         body: JSON.stringify({ userId: player.id, amount }),
       });
       flashToast(`Emprunté ${Math.round(amount)} €`);
-      await refreshPlayer();
+      await refreshPlayer().catch(() => undefined);
       await loadCredit();
     } catch (e) {
       flashToast(e instanceof Error ? e.message : String(e), true);
@@ -6193,7 +6262,7 @@ export function App() {
         body: JSON.stringify({ userId: player.id, amount }),
       });
       flashToast(`Remboursé ${Math.round(r.repaid)} €`);
-      await refreshPlayer();
+      await refreshPlayer().catch(() => undefined);
       await loadCredit();
     } catch (e) {
       flashToast(e instanceof Error ? e.message : String(e), true);
@@ -6212,7 +6281,7 @@ export function App() {
         body: JSON.stringify({ userId: player.id, liters }),
       });
       flashToast(`${Math.round(r.liters)} L de gazole · −${Math.round(r.cost)} €`);
-      await refreshPlayer();
+      await refreshPlayer().catch(() => undefined);
     } catch (e) {
       flashToast(e instanceof Error ? e.message : String(e), true);
     } finally {
@@ -6229,8 +6298,8 @@ export function App() {
         method: "POST",
         body: JSON.stringify({ userId: player.id, type, tier }),
       });
-      await refreshPlayer();
-      if (activeParcelId) await loadParcel(activeParcelId);
+      await refreshPlayer().catch(() => undefined);
+      if (activeParcelId) await loadParcel(activeParcelId).catch(() => undefined);
       setMachinePreview(null);
       setMsg(`${machineVariant(type, tier).label} acheté`);
     } catch (e) {
@@ -6251,8 +6320,8 @@ export function App() {
       });
       flashToast(`${r.label} · palier ${r.tier} — ${r.cost.toLocaleString("fr-FR")} €`);
       setMachinePreview(null);
-      await refreshPlayer();
-      if (activeParcelId) await loadParcel(activeParcelId);
+      await refreshPlayer().catch(() => undefined);
+      if (activeParcelId) await loadParcel(activeParcelId).catch(() => undefined);
     } catch (e) {
       flashToast(e instanceof Error ? e.message : String(e), true);
     } finally {
@@ -6270,8 +6339,8 @@ export function App() {
         { method: "POST", body: JSON.stringify({ userId: player.id }) },
       );
       flashToast(`Niveau ${r.building.level} · ${r.levelName} — ${r.cost} €`);
-      await refreshPlayer();
-      if (activeParcelId) await loadParcel(activeParcelId);
+      await refreshPlayer().catch(() => undefined);
+      if (activeParcelId) await loadParcel(activeParcelId).catch(() => undefined);
     } catch (e) {
       flashToast(e instanceof Error ? e.message : String(e), true);
     } finally {
@@ -6302,7 +6371,7 @@ export function App() {
        * avec l'achat. On le prévient à la seconde où il dépasse.
        */
       if (r.crowding) flashToast(r.crowding, "warn");
-      await refreshPlayer();
+      await refreshPlayer().catch(() => undefined);
       if (activeParcelId) await loadLivestock(activeParcelId);
     } catch (e) {
       flashToast(e instanceof Error ? e.message : String(e), true);
@@ -6373,7 +6442,7 @@ export function App() {
       });
       flashToast(`Objectif tenu · +${r.reward.crd} € · +${r.reward.xp} XP`);
       jouerSon("piece");
-      await refreshPlayer();
+      await refreshPlayer().catch(() => undefined);
       await loadQuests();
     } catch (e) {
       flashToast(e instanceof Error ? e.message : String(e), true);
@@ -6505,7 +6574,7 @@ export function App() {
                 ? "Ensilage"
                 : "Foin";
       flashToast(`${label} distribué · ${tons.toFixed(1)} t · ${r.units} kg`);
-      await refreshPlayer();
+      await refreshPlayer().catch(() => undefined);
       if (activeParcelId) await loadLivestock(activeParcelId);
     } catch (e) {
       flashToast(e instanceof Error ? e.message : String(e), true);
@@ -6523,7 +6592,7 @@ export function App() {
         body: JSON.stringify({ userId: player.id }),
       });
       flashToast(`Traite : ${r.litres} L au silo`);
-      await refreshPlayer();
+      await refreshPlayer().catch(() => undefined);
       if (activeParcelId) await loadLivestock(activeParcelId);
     } catch (e) {
       flashToast(e instanceof Error ? e.message : String(e), true);
@@ -6551,7 +6620,7 @@ export function App() {
       const ou = r.housing === "OUTSIDE" ? "Bêtes sorties" : "Bêtes rentrées";
       const temp = r.tempC !== null ? ` · ${r.tempC} °C` : "";
       flashToast(r.warning ? `${ou}${temp} — ${r.warning}` : `${ou}${temp}`, r.warning ? "warn" : false);
-      await refreshPlayer();
+      await refreshPlayer().catch(() => undefined);
       if (activeParcelId) loadLivestock(activeParcelId);
     } catch (e) {
       flashToast(e instanceof Error ? e.message : String(e), true);
@@ -6575,7 +6644,7 @@ export function App() {
         { method: "POST", body: JSON.stringify({ userId: player.id }) },
       );
       flashToast(`Fumier vendu au voisin · ${r.tons.toFixed(2)} t · +${r.proceeds} €`);
-      await refreshPlayer();
+      await refreshPlayer().catch(() => undefined);
       if (activeParcelId) await loadLivestock(activeParcelId);
     } catch (e) {
       flashToast(e instanceof Error ? e.message : String(e), true);
@@ -6593,7 +6662,7 @@ export function App() {
         body: JSON.stringify({ userId: player.id }),
       });
       flashToast(`Œufs : ${r.crates} caisse(s) au stock`);
-      await refreshPlayer();
+      await refreshPlayer().catch(() => undefined);
       if (activeParcelId) await loadLivestock(activeParcelId);
     } catch (e) {
       flashToast(e instanceof Error ? e.message : String(e), true);
@@ -6611,7 +6680,7 @@ export function App() {
         body: JSON.stringify({ userId: player.id }),
       });
       flashToast(`Tonte : ${r.tons.toFixed(3)} t de laine`);
-      await refreshPlayer();
+      await refreshPlayer().catch(() => undefined);
       if (activeParcelId) await loadLivestock(activeParcelId);
     } catch (e) {
       flashToast(e instanceof Error ? e.message : String(e), true);
@@ -6633,7 +6702,7 @@ export function App() {
       });
       flashToast(`${r.employee.name} embauché(e) · ${r.employee.salaire} € par jour de jeu`);
       await loadStaff();
-      await refreshPlayer();
+      await refreshPlayer().catch(() => undefined);
     } catch (e) {
       flashToast(e instanceof Error ? e.message : String(e), true);
     } finally {
@@ -6698,7 +6767,7 @@ export function App() {
         { method: "POST", body: JSON.stringify({ userId: player.id, count }) },
       );
       flashToast(`Abattu · ${r.kg} kg de viande · maturité ${r.maturity} %`);
-      await refreshPlayer();
+      await refreshPlayer().catch(() => undefined);
       if (activeParcelId) await loadLivestock(activeParcelId);
     } catch (e) {
       flashToast(e instanceof Error ? e.message : String(e), true);
@@ -6747,9 +6816,9 @@ export function App() {
         body: JSON.stringify({ userId: player.id, priceCrd }),
       });
       flashToast(`${label} en vente · ${priceCrd} €`);
-      await refreshPlayer();
+      await refreshPlayer().catch(() => undefined);
       await loadMachineListings();
-      if (activeParcelId) await loadParcel(activeParcelId);
+      if (activeParcelId) await loadParcel(activeParcelId).catch(() => undefined);
     } catch (e) {
       flashToast(e instanceof Error ? e.message : String(e), true);
     } finally {
@@ -6794,9 +6863,9 @@ export function App() {
         body: JSON.stringify({ userId: player.id }),
       });
       flashToast(`${label} acheté d’occasion`);
-      await refreshPlayer();
+      await refreshPlayer().catch(() => undefined);
       await loadMachineListings();
-      if (activeParcelId) await loadParcel(activeParcelId);
+      if (activeParcelId) await loadParcel(activeParcelId).catch(() => undefined);
     } catch (e) {
       flashToast(e instanceof Error ? e.message : String(e), true);
     } finally {
@@ -6813,9 +6882,9 @@ export function App() {
         body: JSON.stringify({ userId: player.id }),
       });
       flashToast("Annonce retirée");
-      await refreshPlayer();
+      await refreshPlayer().catch(() => undefined);
       await loadMachineListings();
-      if (activeParcelId) await loadParcel(activeParcelId);
+      if (activeParcelId) await loadParcel(activeParcelId).catch(() => undefined);
     } catch (e) {
       flashToast(e instanceof Error ? e.message : String(e), true);
     } finally {
@@ -6833,8 +6902,8 @@ export function App() {
         body: JSON.stringify({ userId: player.id }),
       });
       flashToast(`${label} vendu · +${r.value} €`);
-      await refreshPlayer();
-      if (activeParcelId) await loadParcel(activeParcelId);
+      await refreshPlayer().catch(() => undefined);
+      if (activeParcelId) await loadParcel(activeParcelId).catch(() => undefined);
     } catch (e) {
       flashToast(e instanceof Error ? e.message : String(e), true);
     } finally {
@@ -6871,7 +6940,7 @@ export function App() {
       });
       flashToast(`${label} tourné d'un quart`);
       jouerSon("porte");
-      if (activeParcelId) await loadParcel(activeParcelId);
+      if (activeParcelId) await loadParcel(activeParcelId).catch(() => undefined);
     } catch (e) {
       flashToast(e instanceof Error ? e.message : String(e), true);
     } finally {
@@ -6924,8 +6993,8 @@ export function App() {
       flashToast(r.cost > 0 ? `${nom} déplacé · −${r.cost} €` : `${nom} déplacé`);
       playUiSound("place");
       cancelMoveBuilding();
-      await refreshPlayer();
-      await loadParcel(activeParcelId);
+      await refreshPlayer().catch(() => undefined);
+      await loadParcel(activeParcelId).catch(() => undefined);
     } catch (e) {
       flashToast(e instanceof Error ? e.message : String(e), true);
     } finally {
@@ -6953,8 +7022,8 @@ export function App() {
       flashToast(`${def.name} bâti · −${def.cost} €`);
       jouerSon("construction");
       setPendingBuild(null);
-      await refreshPlayer();
-      await loadParcel(activeParcelId);
+      await refreshPlayer().catch(() => undefined);
+      await loadParcel(activeParcelId).catch(() => undefined);
     } catch (e) {
       flashToast(e instanceof Error ? e.message : String(e), true);
     } finally {
@@ -6972,8 +7041,8 @@ export function App() {
         body: JSON.stringify({ userId: player.id }),
       });
       flashToast(`${label} démoli · +${r.value} €`);
-      await refreshPlayer();
-      if (activeParcelId) await loadParcel(activeParcelId);
+      await refreshPlayer().catch(() => undefined);
+      if (activeParcelId) await loadParcel(activeParcelId).catch(() => undefined);
     } catch (e) {
       flashToast(e instanceof Error ? e.message : String(e), true);
     } finally {
@@ -6990,7 +7059,7 @@ export function App() {
         method: "POST",
         body: JSON.stringify({ userId: player.id, extent }),
       });
-      await refreshPlayer();
+      await refreshPlayer().catch(() => undefined);
       setMsg(
         extent === "half"
           ? `Rafistolé → ${r.condition.toFixed(0)}% (−${r.cost} €)`
@@ -7029,7 +7098,7 @@ export function App() {
         setMsg(`Réparé → ${r.condition.toFixed(0)}% (−${r.cost} €)`);
       }
       setCare(null);
-      await refreshPlayer();
+      await refreshPlayer().catch(() => undefined);
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e));
       flashToast(e instanceof Error ? e.message : String(e), true);
@@ -7396,7 +7465,7 @@ export function App() {
               buildings={vueComposee?.buildings ?? parcel.buildings ?? []}
               cellSims={vueComposee?.sims ?? parcelDetail?.cellSims ?? []}
               selected={selectionVue}
-              hoverCell={hoverCell ? enVue([hoverCell])[0] : hoverCell}
+              hoverCell={survolVue ?? (hoverCell ? enVue([hoverCell])[0] : hoverCell)}
               previewBuilding={
                 previewBuilding
                   ? { ...previewBuilding, originX: previewBuilding.originX + decalActif.dx, originY: previewBuilding.originY + decalActif.dy }
@@ -7513,9 +7582,16 @@ export function App() {
               }}
               onStrokeSelect={(vues, mods) => {
                 if (construction) {
-                  const cells = decaler(vues, -decalActif.dx, -decalActif.dy);
-                  if (armeTracable) void tracerObjets(cells);
-                  else void peindreTerrain(cells);
+                  const premiere = vues[0];
+                  const cible = premiere ? parcelleDeConstruction(premiere.x, premiere.y) : null;
+                  const m = (cible && morceaux?.find((x) => x.id === cible.id)) || decalActif;
+                  const cells = decaler(vues, -m.dx, -m.dy);
+                  if (cible?.id && cible.id !== activeParcelId) {
+                    gesteApresBascule.current = { parcelId: cible.id, x: cible.x, y: cible.y, mods, trace: cells };
+                    prendreParcelle(cible.id);
+                    return;
+                  }
+                  void finirTraceConstruction(cells);
                   return;
                 }
                 const cells = casesDuTrace(vues);
@@ -7537,7 +7613,15 @@ export function App() {
               hauls={enVue(hauls)}
               onCellClick={(gx, gy, mods, frac) => {
                 if (construction) {
-                  void cliqueConstruction(gx - decalActif.dx, gy - decalActif.dy, mods, frac);
+                  // Une case d'une autre parcelle, ou la campagne (qui est celle
+                  // du siège) : cette parcelle prend la main, puis le clic part.
+                  const cible = parcelleDeConstruction(gx, gy);
+                  if (cible.id && cible.id !== activeParcelId) {
+                    gesteApresBascule.current = { parcelId: cible.id, x: cible.x, y: cible.y, mods, frac, construction: true };
+                    prendreParcelle(cible.id);
+                    return;
+                  }
+                  void cliqueConstruction(cible.x, cible.y, mods, frac);
                   return;
                 }
                 const loc = caseLocale(gx, gy);
@@ -7551,6 +7635,9 @@ export function App() {
                 void applyToolOnCell(loc.x, loc.y, mods);
               }}
               onCellHover={(c) => {
+                // Le survol s'allume sur toutes ses parcelles, pas seulement
+                // l'active : c'est la case qu'on va toucher.
+                setSurvolVue(composee && c ? { x: c.x, y: c.y } : null);
                 if (!c) return setHoverCell(null);
                 const loc = caseLocale(c.x, c.y);
                 setHoverCell(loc.id === activeParcelId ? { ...c, x: loc.x, y: loc.y } : null);
@@ -7778,7 +7865,13 @@ export function App() {
             fenêtre — un achat au marché — et doit se lire par-dessus elle. */}
         {(msg || err) && (
           <Portail>
-            <div key={toastTick} className={`toast ${err ? "bad" : toastTone}`} role="status">
+            <div
+              key={err ? `e-${err}` : toastTick}
+              className={`toast ${err ? "bad long" : toastTone}`}
+              role="status"
+              // Un toucher le referme : on n'attend pas qu'une erreur lue s'efface.
+              onClick={() => (err ? setErr(null) : setMsg(null))}
+            >
               <span>{err ?? msg}</span>
               <i className="toast-bar" />
             </div>
@@ -7788,7 +7881,7 @@ export function App() {
 
       {/* Le bilan d'absence annonce parfois huit cultures perdues : il mérite
           d'être lu, donc acquitté, plutôt que de flotter sur la ferme. */}
-      {resumeBanner && !err && (
+      {resumeBanner && (
         <Portail>
           <div className="resume-backdrop" role="dialog" aria-modal="true">
             <div className="resume-card glass">

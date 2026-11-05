@@ -19,7 +19,7 @@
  * @see docs/research/45_ROTATION.md
  */
 
-import type { CropCode } from "./index.js";
+import { CROP_DEFS, type CropCode } from "./index.js";
 
 /**
  * Perte de rendement selon le nombre de fois où la culture a déjà occupé la
@@ -76,14 +76,16 @@ export function rotationWarning(state: RotationState, crop: CropCode): string | 
   if (factor >= 1) return null;
   const pct = Math.round((1 - factor) * 100);
   const nth = state.cropStreak + 1;
-  return `${nth}ᵉ cycle de la même culture — ${pct} % de rendement`;
+  return `${nth}ᵉ cycle de la même culture — −${pct} % de rendement`;
 }
 
 /** Résumé de l'état de rotation d'une case, pour l'affichage. */
 export function rotationSummary(state: RotationState): string {
   if (!state.lastCrop || state.cropStreak <= 0) return "Aucun précédent";
-  if (state.cropStreak === 1) return `Précédent : ${state.lastCrop}`;
-  return `Précédent : ${state.lastCrop} × ${state.cropStreak}`;
+  // Le nom français, pas le code : « Précédent : WHEAT » ne parle à personne.
+  const nom = CROP_DEFS[state.lastCrop]?.name ?? state.lastCrop;
+  if (state.cropStreak === 1) return `Précédent : ${nom}`;
+  return `Précédent : ${nom} × ${state.cropStreak}`;
 }
 
 /**

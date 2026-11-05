@@ -18,6 +18,8 @@ import {
   cropGrowMs,
   harvestItemCode,
   isMowCrop,
+  repousseApresCoupe,
+  coupesMax,
   grassWillRegrow,
   grassCutsDone,
   isCropCode,
@@ -201,6 +203,7 @@ import {
   MACHINE_LISTING_MIN_RATE,
   MACHINE_LISTING_MAX_RATE,
   buildingResaleValue,
+  withinRegret,
   buildingMoveCost,
   isPaddockAdjacent,
   explainNoMachine as explainNoMachineShared,
@@ -1292,33 +1295,56 @@ async function capitauxPropres(userId: string): Promise<{
 async function tickDebtInterest() {
   const endettees = await prisma.farm.findMany({
     where: { debtCrd: { gt: 0 } },
+    select: { id: true },
+  });
+  for (const f of endettees) {
+    await prisma.$transaction((tx) => arreterInterets(tx, f.id)).catch((e) => console.error("intérêts :", e));
+  }
+}
+
+/**
+ * Arrête les intérêts d'une ferme à l'instant, sous verrou.
+ *
+ * Trois défauts tenaient au même geste fait à moitié :
+ * - un tirage ou un remboursement remettait la date d'arrêté à maintenant sans
+ *   capitaliser ce qui avait couru : rembourser un euro par jour effaçait tous
+ *   les intérêts ;
+ * - le tour d'intérêts écrivait la dette en valeur absolue depuis une lecture
+ *   ancienne, et effaçait un remboursement tombé entre les deux ;
+ * - deux tirages simultanés passaient chacun le plafond.
+ *
+ * Le verrou sur la ferme sérialise ces gestes ; chacun capitalise d'abord.
+ */
+async function arreterInterets(tx: Prisma.TransactionClient, farmId: string) {
+  await tx.$queryRaw`SELECT "id" FROM "Farm" WHERE "id" = ${farmId} FOR UPDATE`;
+  const f = await tx.farm.findUnique({
+    where: { id: farmId },
     select: { id: true, userId: true, debtCrd: true, debtAt: true },
   });
+  if (!f) return null;
   const now = new Date();
-  for (const f of endettees) {
-    const depuis = f.debtAt?.getTime() ?? now.getTime();
-    const { interest, debtCrd } = accrueInterest({
-      debtCrd: f.debtCrd,
-      elapsedMs: now.getTime() - depuis,
-    });
-    if (interest <= 0.01) {
-      if (!f.debtAt) await prisma.farm.update({ where: { id: f.id }, data: { debtAt: now } });
-      continue;
-    }
-    await prisma.$transaction(async (tx) => {
-      await tx.farm.update({ where: { id: f.id }, data: { debtCrd, debtAt: now } });
-      // L'intérêt est une charge : il apparaît au journal même s'il ne sort pas
-      // de la trésorerie, sinon le Bureau ne dirait pas ce qu'il coûte.
-      await tx.ledgerEntry.create({
-        data: {
-          userId: f.userId,
-          amount: -interest,
-          poste: "BANQUE",
-          label: "Intérêts de la ligne de crédit",
-        },
-      });
-    });
+  if (f.debtCrd <= 0) {
+    return f.debtAt ? f : tx.farm.update({ where: { id: f.id }, data: { debtAt: now }, select: { id: true, userId: true, debtCrd: true, debtAt: true } });
   }
+  const { interest } = accrueInterest({
+    debtCrd: f.debtCrd,
+    elapsedMs: now.getTime() - (f.debtAt?.getTime() ?? now.getTime()),
+  });
+  // Sous le centime, on laisse courir : la date reste, les intérêts s'accumulent.
+  if (interest <= 0.01) {
+    return f.debtAt ? f : tx.farm.update({ where: { id: f.id }, data: { debtAt: now }, select: { id: true, userId: true, debtCrd: true, debtAt: true } });
+  }
+  const apres = await tx.farm.update({
+    where: { id: f.id },
+    data: { debtCrd: { increment: interest }, debtAt: now },
+    select: { id: true, userId: true, debtCrd: true, debtAt: true },
+  });
+  // L'intérêt est une charge : il apparaît au journal même s'il ne sort pas
+  // de la trésorerie, sinon le Bureau ne dirait pas ce qu'il coûte.
+  await tx.ledgerEntry.create({
+    data: { userId: f.userId, amount: -interest, poste: "BANQUE", label: "Intérêts de la ligne de crédit" },
+  });
+  return apres;
 }
 
 /* ------------------------------------------------------------------ */
@@ -3062,6 +3088,21 @@ export type XpGain = {
   levelUp: number | null;
 };
 
+/**
+ * Une action déjà faite, ou défaite, par une requête concurrente.
+ *
+ * Les routes lisaient l'état, le vérifiaient, puis écrivaient sans reprendre
+ * la condition : deux clics simultanés passaient tous deux le contrôle, et un
+ * lot se vendait deux fois. L'écriture porte maintenant sa condition, et la
+ * seconde requête finit ici — un refus clair, jamais un doublon.
+ */
+class Conflit extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "Conflit";
+  }
+}
+
 /** Refus de débit : le solde ne couvre plus la dépense au moment de payer. */
 class InsufficientFunds extends Error {
   constructor(readonly needed: number) {
@@ -3210,6 +3251,30 @@ async function grantXp(
     },
   });
   return { xp: gain, level, levelUp: level > before.level ? level : null };
+}
+
+/** L'XP d'une construction annulée (pose et améliorations), et ses compteurs. */
+async function reprendreXpDeConstruction(
+  tx: Prisma.TransactionClient,
+  userId: string,
+  type: SharedBuildingType,
+  level: number,
+): Promise<void> {
+  let xp = xpFor("BUILD", { cost: BUILDING_DEFS[type]?.cost ?? 0 });
+  for (let l = 1; l < level; l++) {
+    const c = buildingUpgradeCost(type, l);
+    if (c != null) xp += xpFor("UPGRADE", { cost: c });
+  }
+  const u = await tx.user.findUnique({ where: { id: userId }, select: { xp: true, statsJson: true } });
+  if (!u) return;
+  const total = Math.max(0, u.xp - xp);
+  const stats = readStats(u.statsJson);
+  stats.buildingsBuilt = Math.max(0, (stats.buildingsBuilt ?? 0) - 1);
+  stats.buildingsUpgraded = Math.max(0, (stats.buildingsUpgraded ?? 0) - Math.max(0, level - 1));
+  await tx.user.update({
+    where: { id: userId },
+    data: { xp: total, level: levelForXp(total), statsJson: JSON.stringify(stats) },
+  });
 }
 
 /**
@@ -4557,16 +4622,21 @@ app.post("/futures/:id/deliver", async (req, res) => {
   const revenue = futuresProceeds(contract.pricePerTon, tons);
   const market = await prisma.marketPrice.findUnique({ where: { commodity: contract.commodity } });
   await prisma.$transaction(async (tx) => {
+    // Le contrat se dénoue d'abord, et une seule fois : un double « livrer »
+    // prenait deux fois le stock et payait deux fois ; l'échéance automatique
+    // qui passait en même temps ajoutait la pénalité au revenu.
+    const denoue = await tx.futuresContract.updateMany({
+      where: { id: contract.id, status: "OPEN" },
+      data: { status: "SETTLED", settledAt: new Date(), marketAtDue: market?.price ?? null },
+    });
+    if (denoue.count !== 1) throw new Conflit("Ce contrat vient d'être dénoué");
     await drawFromStock(tx, inv, tons);
     await crediter(tx, user!.id, revenue, posteDeVente(contract.commodity), `Contrat à terme — ${contract.commodity}, ${tons} t`);
+    await grantXp(tx, user!.id, "DELIVER", { tons }, { tonsSold: tons });
     // La marchandise part sur le marché comme n'importe quelle vente.
     await tx.marketPrice.update({
       where: { commodity: contract.commodity },
       data: { stockTons: { increment: tons } },
-    });
-    await tx.futuresContract.update({
-      where: { id: contract.id },
-      data: { status: "SETTLED", settledAt: new Date(), marketAtDue: market?.price ?? null },
     });
   });
   res.json({
@@ -4597,6 +4667,17 @@ async function settleDueFutures() {
   for (const c of due) {
     const penalty = futuresPenalty(c.pricePerTon, c.tons);
     await prisma.$transaction(async (tx) => {
+      // Échu seulement s'il est encore ouvert : livré à la main entre-temps,
+      // il ne doit pas aussi payer la pénalité.
+      const echu = await tx.futuresContract.updateMany({
+        where: { id: c.id, status: "OPEN" },
+        data: {
+          status: "DEFAULTED",
+          settledAt: new Date(),
+          marketAtDue: market.find((m) => m.commodity === c.commodity)?.price ?? null,
+        },
+      });
+      if (echu.count !== 1) return;
       // Seul débit qui ne passe **pas** par `debit()` : une pénalité de
       // contrat à terme non honoré peut légitimement creuser le compte. Une
       // dette se rembourse, elle ne s'efface pas faute de trésorerie — et un
@@ -4612,14 +4693,6 @@ async function settleDueFutures() {
           data: { crd: { decrement: penalty } },
         });
       }
-      await tx.futuresContract.update({
-        where: { id: c.id },
-        data: {
-          status: "DEFAULTED",
-          settledAt: new Date(),
-          marketAtDue: market.find((m) => m.commodity === c.commodity)?.price ?? null,
-        },
-      });
     });
   }
 }
@@ -6604,11 +6677,17 @@ app.post("/labor-orders/:id/accept", async (req, res) => {
     res.status(409).json({ error: explainNoMachine(user.farm.machines, order.work as FarmWork) });
     return;
   }
-  const updated = await prisma.laborOrder.update({
-    where: { id: order.id },
+  // Pris seulement s'il est encore libre : deux prestataires qui acceptaient
+  // ensemble s'écrasaient l'un l'autre.
+  const pris = await prisma.laborOrder.updateMany({
+    where: { id: order.id, status: "OPEN" },
     data: { providerId: user.id, status: "ACCEPTED" },
-    include: laborOrderInclude,
   });
+  if (pris.count !== 1) {
+    res.status(409).json({ error: "Ce chantier vient d'être pris" });
+    return;
+  }
+  const updated = await prisma.laborOrder.findUniqueOrThrow({ where: { id: order.id }, include: laborOrderInclude });
   const remaining = parseCellJson(updated.remainingJson);
   await touchFieldPresence(user.id, updated.parcelId, remaining[0]);
   res.json({ order: publicLaborOrder(updated) });
@@ -6630,10 +6709,14 @@ app.post("/labor-orders/:id/cancel", async (req, res) => {
     return;
   }
   await prisma.$transaction(async (tx) => {
-    await tx.laborOrder.update({
-      where: { id: order.id },
+    // Annulé seulement s'il est encore libre : une double annulation rendait
+    // deux fois le séquestre, et une annulation qui croisait une acceptation
+    // remboursait un chantier déjà pris.
+    const annule = await tx.laborOrder.updateMany({
+      where: { id: order.id, status: "OPEN" },
       data: { status: "CANCELLED" },
     });
+    if (annule.count !== 1) throw new Conflit("Ce chantier vient d'être pris ou annulé");
     await crediter(tx, order.clientId, order.escrowCrd, "CHANTIERS", "Chantier annulé — séquestre rendu");
   });
   res.json({ ok: true, refunded: order.escrowCrd });
@@ -7882,20 +7965,30 @@ function afterTakeField(
   keepSwath = true,
 ) {
   const nextCuts = Math.min(MAX_HARVESTS_BEFORE_PLOW, cell.harvestsSincePlow + 1);
-  if (isMowCrop(cell.crop) && grassWillRegrow(nextCuts)) {
+  /*
+   * L'herbe et le mesclun repartent après la coupe.
+   *
+   * Seule l'herbe était testée : le mesclun, annoncé « et ça repousse après la
+   * coupe », redevenait du chaume. La culture d'origine est gardée — un rang
+   * de mesclun recoupé ne doit pas se changer en prairie.
+   */
+  const repart =
+    repousseApresCoupe(cell.crop) &&
+    (isMowCrop(cell.crop) ? grassWillRegrow(nextCuts) : !silage && cell.harvestsSincePlow + 1 < coupesMax(cell.crop));
+  if (repart) {
     return {
       regrow: true as const,
       data: {
         kind: "CROP" as const,
-        crop: "GRASS" as CropCode,
+        crop: cell.crop,
         fieldStage: "PLANTED" as const,
         plantedAt: new Date(now),
-        readyAt: new Date(now + cropGrowMs("GRASS", nextCuts)),
+        readyAt: new Date(now + cropGrowMs(cell.crop, nextCuts)),
         fertilizedPasses: 0,
         weedPressure: 0,
         hasStubble: false,
         harvestsSincePlow: nextCuts,
-        lastCrop: "GRASS" as CropCode,
+        lastCrop: cell.crop,
         cropStreak: 1,
         strawTons: 0,
         baleCount: 0,
@@ -8830,11 +8923,16 @@ app.post("/farm/loan", async (req, res) => {
     return;
   }
   const apres = await prisma.$transaction(async (tx) => {
+    // Sous verrou, intérêts arrêtés, plafond revu sur la dette du moment :
+    // dix tirages simultanés passaient chacun le contrôle fait plus haut.
+    const ferme = await arreterInterets(tx, user.farm!.id);
+    const marge = borrowingRoom({ equity: bilan.equity, debtCrd: ferme?.debtCrd ?? bilan.debtCrd });
+    if (body.data.amount > marge) {
+      throw new Conflit(`La banque s'arrête à ${Math.floor(Math.max(0, marge))} € — vos capitaux propres ne portent pas davantage.`);
+    }
     await crediter(tx, user.id, body.data.amount, "BANQUE", "Tirage sur la ligne de crédit");
     return tx.farm.update({
       where: { id: user.farm!.id },
-      // La date d'arrêté part de maintenant : les intérêts ne courent pas sur
-      // un capital qui n'était pas encore prêté.
       data: { debtCrd: { increment: body.data.amount }, debtAt: new Date() },
     });
   });
@@ -8862,18 +8960,25 @@ app.post("/farm/repay", async (req, res) => {
     res.status(409).json({ error: "Rien à rembourser" });
     return;
   }
-  // On ne rembourse jamais plus qu'on ne doit, ni plus qu'on n'a.
-  const montant = Math.min(body.data.amount, user.farm.debtCrd, user.crd);
-  if (montant <= 0) {
+  if (user.crd <= 0) {
     res.status(402).json({ error: "€ insuffisants" });
     return;
   }
-  const apres = await prisma.$transaction(async (tx) => {
-    await debit(tx, user.id, montant, "BANQUE", "Remboursement de la ligne de crédit");
-    return tx.farm.update({
+  const { apres, montant } = await prisma.$transaction(async (tx) => {
+    // Intérêts arrêtés d'abord, sous verrou ; le montant se borne sur la dette
+    // **du moment** — deux remboursements simultanés la faisaient passer sous
+    // zéro, et le surplus était débité pour rien.
+    const ferme = await arreterInterets(tx, user.farm!.id);
+    const solde = await tx.user.findUnique({ where: { id: user.id }, select: { crd: true } });
+    // On ne rembourse jamais plus qu'on ne doit, ni plus qu'on n'a.
+    const m = Math.min(body.data.amount, ferme?.debtCrd ?? 0, solde?.crd ?? 0);
+    if (m <= 0) throw new Conflit("Rien à rembourser");
+    await debit(tx, user.id, m, "BANQUE", "Remboursement de la ligne de crédit");
+    const f = await tx.farm.update({
       where: { id: user.farm!.id },
-      data: { debtCrd: { decrement: montant }, debtAt: new Date() },
+      data: { debtCrd: { decrement: m }, debtAt: new Date() },
     });
+    return { apres: f, montant: m };
   });
   res.json({ debtCrd: Math.max(0, apres.debtCrd), repaid: montant });
 });
@@ -12927,12 +13032,21 @@ async function addToStock(
   /** Tonnes achetées au négociant dans cet apport — elles ne se revendront pas aux joueurs. */
   negoce = 0,
 ) {
+  /*
+   * Un seul apport à la fois par ferme et par produit.
+   *
+   * Deux apports simultanés lisaient la même ligne et écrivaient chacun
+   * « ancien + le mien » : l'un des deux se perdait. Sans ligne encore, ils en
+   * créaient deux, et la seconde devenait invisible. Le verrou ne vit que le
+   * temps de la transaction.
+   */
+  await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`stock:${farmId}:${itemCode}`}))`;
   const existing = await tx.inventoryItem.findFirst({ where: { farmId, itemCode } });
   if (existing) {
     await tx.inventoryItem.update({
       where: { id: existing.id },
       data: {
-        qty: existing.qty + qty,
+        qty: { increment: qty },
         negoce: partNegoce(existing) + negoce,
         moisture: mergeMoisture(existing.qty, existing.moisture, qty, moisture),
       },
@@ -14087,7 +14201,13 @@ app.post("/machines/listings/:id/cancel", async (req, res) => {
     return;
   }
   await prisma.$transaction(async (tx) => {
-    await tx.machineListing.update({ where: { id: listing.id }, data: { status: "CANCELLED" } });
+    // Retirée seulement si elle est encore en vente : un retrait qui croisait
+    // un achat rendait l'engin au vendeur, déjà payé — la machine en double.
+    const retiree = await tx.machineListing.updateMany({
+      where: { id: listing.id, status: "OPEN" },
+      data: { status: "CANCELLED" },
+    });
+    if (retiree.count !== 1) throw new Conflit("Cet engin vient d'être vendu");
     await installMachine(tx, farm.id, listing);
   });
   res.json({ cancelled: listing.id });
@@ -14163,10 +14283,23 @@ app.post("/buildings/:id/sell", async (req, res) => {
   }
   const building = await prisma.building.findUnique({
     where: { id: req.params.id },
-    include: { parcel: { include: { farm: true } }, storedMachines: true },
+    include: { parcel: { include: { farm: true } }, storedMachines: true, herd: true },
   });
   if (!building?.parcel.farm || building.parcel.farm.userId !== body.data.userId) {
     res.status(403).json({ error: "Bâtiment non possédé" });
+    return;
+  }
+  /*
+   * Une étable habitée ne se démolit pas.
+   *
+   * La démolition supprimait le bâtiment, et la base supprimait avec lui le
+   * troupeau qu'il abritait : un clic, et tout le cheptel disparaissait sans
+   * un euro. Il faut d'abord vendre les bêtes.
+   */
+  if (building.herd && building.herd.size > 0) {
+    res.status(409).json({
+      error: `Vendez d'abord les ${building.herd.size} bête(s) qui vivent ici : on ne démolit pas une étable habitée.`,
+    });
     return;
   }
   // Fenêtre de regret : une construction toute fraîche se démolit intégralement
@@ -14189,6 +14322,12 @@ app.post("/buildings/:id/sell", async (req, res) => {
       data: CASE_RENDUE_AU_CHAMP,
     });
     await tx.building.delete({ where: { id: building.id } });
+    // Remboursée en entier, la construction est annulée : l'XP qu'elle avait
+    // rapportée repart avec. Sans cela, construire et démolir aussitôt
+    // donnait de l'XP gratuite, sans limite.
+    if (withinRegret(Date.now() - building.createdAt.getTime())) {
+      await reprendreXpDeConstruction(tx, body.data.userId, building.type as SharedBuildingType, building.level);
+    }
     await crediter(tx, body.data.userId, value, "BATIMENTS", `Démolition — ${BUILDING_DEFS[building.type as SharedBuildingType]?.name ?? building.type}`);
   });
   const bonuses = await getFarmBonuses(building.parcel.farm.id);
@@ -14710,16 +14849,31 @@ async function drawFromStock(
   tons: number,
   opts: { propreSeulement?: boolean } = {},
 ) {
-  const left = item.qty - tons;
+  /*
+   * Le retrait se fait **sur la ligne en base**, à la condition qu'elle
+   * couvre la quantité.
+   *
+   * Le reste se calculait sur une lecture faite avant la transaction, puis
+   * s'écrivait tel quel : deux ventes de 6 t sur un silo de 10 t écrivaient
+   * chacune « 4 t », et le joueur était payé 12 t.
+   */
+  const pris = await tx.inventoryItem.updateMany({
+    where: { id: item.id, qty: { gte: tons - 0.0001 } },
+    data: { qty: { decrement: tons } },
+  });
+  if (pris.count !== 1) throw new Conflit("Stock insuffisant : il vient d'être utilisé");
+  const ligne = await tx.inventoryItem.findUnique({ where: { id: item.id } });
+  if (!ligne) return;
+  if (ligne.qty <= 0.0001) {
+    await tx.inventoryItem.delete({ where: { id: item.id } });
+    return;
+  }
   const negoce = partNegoce(item);
   const negoceReste = opts.propreSeulement ? negoce : Math.max(0, negoce - tons);
-  if (left <= 0.0001) await tx.inventoryItem.delete({ where: { id: item.id } });
-  else {
-    await tx.inventoryItem.update({
-      where: { id: item.id },
-      data: { qty: left, negoce: Math.min(negoceReste, left) },
-    });
-  }
+  await tx.inventoryItem.update({
+    where: { id: item.id },
+    data: { negoce: Math.min(negoceReste, ligne.qty) },
+  });
 }
 
 /**
@@ -15090,12 +15244,15 @@ app.post("/market/listings/:id/cancel", async (req, res) => {
     return;
   }
   const farmId = listing.seller.farm?.id;
-  await prisma.$transaction(async (tx) => {
-    await tx.marketListing.update({
-      where: { id: listing.id },
+  const rendu = await prisma.$transaction(async (tx) => {
+    // Retiré seulement s'il est encore ouvert : un retrait qui croisait un
+    // achat rendait le stock au vendeur, déjà payé.
+    const retire = await tx.marketListing.updateMany({
+      where: { id: listing.id, status: "OPEN" },
       data: { status: "CANCELLED" },
     });
-    if (!farmId) return;
+    if (retire.count !== 1) return false;
+    if (!farmId) return true;
     const existing = await tx.inventoryItem.findFirst({
       where: { farmId, itemCode: listing.commodity },
     });
@@ -15123,7 +15280,12 @@ app.post("/market/listings/:id/cancel", async (req, res) => {
         },
       });
     }
+    return true;
   });
+  if (!rendu) {
+    res.status(409).json({ error: "Cette annonce vient d'être vendue" });
+    return;
+  }
   res.json({ returned: listing.tons, commodity: listing.commodity });
 });
 
@@ -15160,12 +15322,13 @@ app.post("/market/listings/:id/buy", async (req, res) => {
   const proceeds = listingProceeds(listing.pricePerTon, listing.tons);
 
   await prisma.$transaction(async (tx) => {
-    const fresh = await tx.marketListing.findUnique({ where: { id: listing.id } });
-    if (!fresh || fresh.status !== "OPEN") throw new Error("LISTING_GONE");
-    await tx.marketListing.update({
-      where: { id: listing.id },
+    // Le passage à SOLD porte sa condition : deux acheteurs qui cliquent au
+    // même instant lisaient tous deux OPEN, et le lot partait deux fois.
+    const pris = await tx.marketListing.updateMany({
+      where: { id: listing.id, status: "OPEN" },
       data: { status: "SOLD", buyerId: buyer.id, soldAt: new Date() },
     });
+    if (pris.count !== 1) throw new Conflit("Ce lot vient d'être vendu ou retiré");
     await debit(tx, buyer.id, total, "INTRANTS", `Achat au carnet — ${listing.commodity}, ${listing.tons} t`);
     await crediter(tx, listing.sellerId, proceeds, posteDeVente(listing.commodity), `Vente au carnet — ${listing.commodity}, ${listing.tons} t`);
     // L'argent change de main tout de suite. Le stock, non : quelqu'un doit livrer.
@@ -15197,8 +15360,19 @@ app.post("/market/listings/:id/buy", async (req, res) => {
 async function fulfillDelivery(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   tx: any,
-  delivery: { id: string; buyerFarmId: string; commodity: string; tons: number; moisture: number; quality: number },
+  delivery: { id: string; sellerId: string; buyerFarmId: string; commodity: string; tons: number; moisture: number; quality: number },
 ) {
+  // La livraison se réserve **avant** de créditer le stock : livrer à la main,
+  // faire livrer et l'échéance automatique pouvaient tomber ensemble, et
+  // l'acheteur recevait deux fois le même grain.
+  const prise = await tx.delivery.updateMany({
+    where: { id: delivery.id, status: "PENDING" },
+    data: { status: "DELIVERED", deliveredAt: new Date() },
+  });
+  if (prise.count !== 1) throw new Conflit("Cette livraison vient d'être faite");
+  // Livrer est vendre : l'XP de livraison existait au barème sans jamais être
+  // versée, et la quête « écoulez cinq tonnes » ignorait ces ventes.
+  await grantXp(tx, delivery.sellerId, "DELIVER", { tons: delivery.tons }, { tonsSold: delivery.tons });
   await addToStock(
     tx,
     delivery.buyerFarmId,
@@ -15207,10 +15381,6 @@ async function fulfillDelivery(
     delivery.moisture,
     delivery.quality,
   );
-  await tx.delivery.update({
-    where: { id: delivery.id },
-    data: { status: "DELIVERED", deliveredAt: new Date() },
-  });
 }
 
 /** TTL écoulé : un voisin auto livre, et facture l'acheteur. */
@@ -15220,15 +15390,23 @@ async function settleOverdueDeliveries() {
     include: { buyer: true },
   });
   for (const d of stale) {
-    await prisma.$transaction(async (tx) => {
-      const fresh = await tx.delivery.findUnique({ where: { id: d.id } });
-      if (!fresh || fresh.status !== "PENDING") return;
-      const fee = estArgentIllimite(d.buyer.email) ? 0 : Math.min(d.buyer.crd, d.autoFee);
-      if (fee > 0) {
-        await debit(tx, d.buyerId, fee);
-      }
-      await fulfillDelivery(tx, fresh);
-    });
+    await prisma
+      .$transaction(async (tx) => {
+        const fresh = await tx.delivery.findUnique({ where: { id: d.id } });
+        if (!fresh || fresh.status !== "PENDING") return;
+        // Le solde se relit ici : celui de la liste a pu baisser depuis, et un
+        // débit refusé faisait répondre 402 à toute la liste des livraisons.
+        const acheteur = await tx.user.findUnique({ where: { id: d.buyerId }, select: { crd: true, email: true } });
+        const fee = !acheteur || estArgentIllimite(acheteur.email) ? 0 : Math.max(0, Math.min(acheteur.crd, d.autoFee));
+        if (fee > 0) {
+          await debit(tx, d.buyerId, fee);
+        }
+        await fulfillDelivery(tx, fresh);
+      })
+      .catch((e) => {
+        // Livrée entre-temps, ou solde changé : on la reprendra au prochain passage.
+        if (!(e instanceof Conflit) && !(e instanceof InsufficientFunds)) console.error("livraison échue :", e);
+      });
   }
 }
 
@@ -15282,7 +15460,7 @@ app.post("/deliveries/:id/deliver", async (req, res) => {
   }
   await prisma.$transaction(async (tx) => {
     const fresh = await tx.delivery.findUnique({ where: { id: delivery.id } });
-    if (!fresh || fresh.status !== "PENDING") throw new Error("DELIVERY_GONE");
+    if (!fresh || fresh.status !== "PENDING") throw new Conflit("Cette livraison vient d'être faite");
     await fulfillDelivery(tx, fresh);
   });
   res.json({ delivered: delivery.tons, commodity: delivery.commodity });
@@ -15313,7 +15491,7 @@ app.post("/deliveries/:id/auto", async (req, res) => {
   }
   await prisma.$transaction(async (tx) => {
     const fresh = await tx.delivery.findUnique({ where: { id: delivery.id } });
-    if (!fresh || fresh.status !== "PENDING") throw new Error("DELIVERY_GONE");
+    if (!fresh || fresh.status !== "PENDING") throw new Conflit("Cette livraison vient d'être faite");
     await debit(tx, delivery.buyerId, delivery.autoFee);
     await fulfillDelivery(tx, fresh);
   });
@@ -15395,16 +15573,23 @@ app.post("/market/sell", async (req, res) => {
     // recalculerait pas — c'était le défaut d'origine.
     const g = await grantXp(tx, user.id, "SELL", { tons }, { tonsSold: tons });
     const bonusXp = Math.max(0, xpGain - g.xp);
-    const u = await tx.user.update({
+    let u = await tx.user.update({
       where: { id: user.id },
       data: { crd: { increment: sale.revenue }, xp: { increment: bonusXp } },
     });
+    // Le bonus passe le niveau lui aussi : ajouté seul, il laissait le niveau
+    // stocké en retard, et un passage de niveau ne s'annonçait jamais.
+    const niveau = levelForXp(u.xp);
+    if (niveau !== u.level) u = await tx.user.update({ where: { id: user.id }, data: { level: niveau } });
     await ecrireJournal(tx, user.id, sale.revenue, posteDeVente(body.data.commodity), `Vente au marché — ${body.data.commodity}, ${tons} t`);
+    // Le cours bouge **de l'écart** de cette vente, sur la valeur en base : écrit
+    // en absolu depuis une lecture ancienne, deux ventes simultanées de deux
+    // joueurs s'écrasaient l'une l'autre.
     await tx.marketPrice.update({
       where: { commodity: body.data.commodity },
-      data: { price: tick.price, stockTons: tick.stockTons },
+      data: { price: { increment: tick.price - market.price }, stockTons: { increment: tick.stockTons - market.stockTons } },
     });
-    return { user: u, gain: { ...g, xp: g.xp + bonusXp } };
+    return { user: u, gain: { ...g, xp: g.xp + bonusXp, level: niveau, levelUp: niveau > user.level ? niveau : g.levelUp } };
   });
   res.json({
     revenue: sale.revenue,
@@ -15665,14 +15850,20 @@ app.post("/contracts/:id/complete", async (req, res) => {
           specialization: user.specialization,
         })
       : null;
-    await tx.npcContract.update({
-      where: { id: contract.id },
+    // Clos seulement s'il est encore accepté par ce joueur : un double clic
+    // payait deux fois la récompense et l'XP.
+    const clos = await tx.npcContract.updateMany({
+      where: { id: contract.id, status: "ACCEPTED", providerId: user.id },
       data: { status: "COMPLETED", completedAt: new Date() },
     });
+    if (clos.count !== 1) throw new Conflit("Ce contrat est déjà encaissé");
     await grantXp(tx, user.id, "CONTRACT", { cells: contract.cells }, { contracts: 1 });
+    // Une location plus chère que la récompense se paie comme une dépense,
+    // jamais en laissant le compte passer sous zéro.
+    if (net < 0) await debit(tx, user.id, -net);
     const u = await tx.user.update({
       where: { id: user.id },
-      data: { crd: { increment: net } },
+      data: { crd: { increment: Math.max(0, net) } },
     });
     // Deux lignes plutôt qu'un salaire déjà rogné : le joueur doit pouvoir
     // lire ce que la location lui a coûté, et non deviner pourquoi le chiffre
@@ -15739,6 +15930,10 @@ app.use(
     if (res.headersSent) return;
     if (err instanceof InsufficientFunds) {
       res.status(402).json({ error: err.message });
+      return;
+    }
+    if (err instanceof Conflit) {
+      res.status(409).json({ error: err.message });
       return;
     }
     const msg = err instanceof Error ? err.message : String(err);
