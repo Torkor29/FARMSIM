@@ -2846,6 +2846,18 @@ export function App() {
     }
     return out;
   }, [barns, parcel?.buildings]);
+  /** Les troupeaux de la parcelle active, posés dans la vue (même liste tant qu'ils ne bougent pas). */
+  const troupeauxVue = useMemo(
+    () =>
+      !decalActif.dx && !decalActif.dy
+        ? grazingHerds
+        : grazingHerds.map((g) => ({
+            ...g,
+            barn: { ...g.barn, originX: g.barn.originX + decalActif.dx, originY: g.barn.originY + decalActif.dy },
+            paddock: { ...g.paddock, originX: g.paddock.originX + decalActif.dx, originY: g.paddock.originY + decalActif.dy },
+          })),
+    [grazingHerds, decalActif.dx, decalActif.dy],
+  );
 
   const hayInStock = useMemo(
     () => (player?.farm?.inventory ?? []).find((i) => i.itemCode === "HAY")?.qty ?? 0,
@@ -7480,11 +7492,7 @@ export function App() {
                 const w = activeWorks.find((x) => x.parcelId === activeParcelId);
                 return w ? { ...w, cells: enVue(w.cells) } : null;
               })()}
-              grazing={grazingHerds.map((g) => ({
-                ...g,
-                barn: { ...g.barn, originX: g.barn.originX + decalActif.dx, originY: g.barn.originY + decalActif.dy },
-                paddock: { ...g.paddock, originX: g.paddock.originX + decalActif.dx, originY: g.paddock.originY + decalActif.dy },
-              }))}
+              grazing={troupeauxVue}
               manurePiles={barns.flatMap((barn) => {
                 const b = (parcel?.buildings ?? []).find((x) => x.id === barn.buildingId);
                 const fill = barn.herd?.manureFill ?? 0;

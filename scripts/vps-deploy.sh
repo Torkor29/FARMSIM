@@ -548,6 +548,10 @@ epingler_image() {
   rm -f "$tmp"
 }
 
+# L'image qui tournait jusqu'ici : c'est elle qu'on relance si la nouvelle
+# ne démarre pas (voir « Retour arrière » plus bas).
+IMAGE_PRECEDENTE="$(grep '^FARMSIM_IMAGE=' .env 2>/dev/null | tail -n 1 | cut -d= -f2- || true)"
+
 if [[ -n "${FARMSIM_IMAGE:-}" ]]; then
   export FARMSIM_IMAGE
   epingler_image "$FARMSIM_IMAGE"
@@ -555,9 +559,17 @@ if [[ -n "${FARMSIM_IMAGE:-}" ]]; then
   if docker compose pull farmsim; then
     echo "==> Démarrage sur l'image du registre"
     monter up -d --force-recreate
-  else
-    echo "WARN: image introuvable au registre — construction sur place." >&2
+  elif [[ "${FARMSIM_BUILD_SUR_PLACE:-0}" == "1" ]]; then
+    echo "WARN: image introuvable au registre — construction sur place (FARMSIM_BUILD_SUR_PLACE=1)." >&2
     monter up -d --build --force-recreate
+  else
+    # Construire sur cette machine dépasse la fenêtre SSH et la sature : c'est
+    # précisément ce que la construction dans la CI a supprimé. On s'arrête,
+    # l'ancienne image tourne toujours, rien n'a été recréé.
+    echo "ERROR: image introuvable au registre — déploiement interrompu, le jeu reste sur l'image d'avant." >&2
+    echo "       Pour construire ici malgré tout : FARMSIM_BUILD_SUR_PLACE=1." >&2
+    if [[ -n "$IMAGE_PRECEDENTE" ]]; then epingler_image "$IMAGE_PRECEDENTE"; fi
+    exit 1
   fi
 else
   echo "==> Aucune image fournie — construction sur place"
@@ -620,6 +632,26 @@ docker ps --filter name=farmsim --format 'table {{.Names}}\t{{.Status}}\t{{.Port
 if [[ "$ok" -ne 1 ]]; then
   echo "ERROR: health local KO" >&2
   docker compose logs --tail=100
+  # Retour arrière : la nouvelle image ne démarre pas, on relance celle d'avant
+  # plutôt que de laisser le jeu à terre. Seulement si aucune migration n'était
+  # à appliquer — sur un schéma changé, l'ancienne image pourrait ne pas
+  # démarrer non plus, et c'est alors la sauvegarde qu'il faut restaurer.
+  if [[ -n "$IMAGE_PRECEDENTE" && "$IMAGE_PRECEDENTE" != "${FARMSIM_IMAGE:-}" && "${relire:-1}" == "0" ]]; then
+    echo "==> Retour arrière sur $IMAGE_PRECEDENTE"
+    epingler_image "$IMAGE_PRECEDENTE"
+    export FARMSIM_IMAGE="$IMAGE_PRECEDENTE"
+    monter up -d --force-recreate farmsim || true
+    for _ in $(seq 1 60); do
+      if curl -fsS "http://127.0.0.1:${FARMSIM_PORT:-8081}/api/health" >/dev/null 2>&1; then
+        echo "    l'ancienne version répond : le jeu tourne, le déploiement a échoué." >&2
+        break
+      fi
+      sleep 2
+    done
+  elif [[ "${relire:-1}" != "0" ]]; then
+    echo "    Une migration était à appliquer : pas de retour arrière automatique." >&2
+    echo "    Restaurer la sauvegarde d'avant migration si le jeu ne repart pas." >&2
+  fi
   exit 1
 fi
 

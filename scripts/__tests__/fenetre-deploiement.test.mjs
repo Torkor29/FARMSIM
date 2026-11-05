@@ -231,3 +231,34 @@ describe("le contrôle du volume de données", () => {
     assert.match(DEPLOY, /\/var\/lib\/postgresql\/data/);
   });
 });
+
+/**
+ * Une mise en ligne ratée ne laisse pas le jeu à terre.
+ *
+ * Le contrôle de santé échouait, le script affichait les journaux et sortait :
+ * le conteneur cassé restait en place, et le jeu avec lui.
+ */
+describe("le retour arrière", () => {
+  it("retient l'image d'avant, avant de la remplacer", () => {
+    const retenue = DEPLOY.indexOf('IMAGE_PRECEDENTE="$(grep');
+    const remplacee = DEPLOY.indexOf('epingler_image "$FARMSIM_IMAGE"');
+    assert.ok(retenue > 0 && retenue < remplacee, "l'image précédente se lit avant d'épingler la nouvelle");
+  });
+
+  it("relance l'image d'avant quand la nouvelle ne répond pas", () => {
+    const bloc = DEPLOY.slice(DEPLOY.indexOf('echo "ERROR: health local KO"'));
+    assert.match(bloc, /Retour arrière sur \$IMAGE_PRECEDENTE/);
+    assert.match(bloc, /epingler_image "\$IMAGE_PRECEDENTE"/);
+  });
+
+  it("ne revient pas en arrière par-dessus une migration", () => {
+    const bloc = DEPLOY.slice(DEPLOY.indexOf('echo "ERROR: health local KO"'));
+    assert.match(bloc, /"\$\{relire:-1\}" == "0"/);
+  });
+
+  it("ne construit plus sur le serveur sans qu'on le demande", () => {
+    // Construire ici dépasse la fenêtre SSH et sature la machine.
+    assert.match(DEPLOY, /FARMSIM_BUILD_SUR_PLACE:-0/);
+    assert.match(DEPLOY, /image introuvable au registre — déploiement interrompu/);
+  });
+});

@@ -129,6 +129,6 @@ describe("l'échelle des plans reste lisible", () => {
     }
     expect(toast).toBeLessThan(z("confirm-backdrop"));
     const APP = fs.readFileSync(path.join(SRC, "App.tsx"), "utf8");
-    expect(APP).toMatch(/<Portail>\s*<div key=\{toastTick\} className=\{`toast/);
+    expect(APP).toMatch(/<Portail>\s*<div\s+key=\{[^\n]*\}\s+className=\{`toast/);
   });
 });

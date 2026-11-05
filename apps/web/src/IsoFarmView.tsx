@@ -1795,6 +1795,8 @@ export function IsoFarmView({
     world.add(grazeGroup);
     let grazeIdKey = "";
     let grazeOutKey = "";
+    let troupeauxVus: unknown = null;
+    const clesTroupeaux = { id: "", out: "" };
     const cowWalkers: {
       mesh: THREE.Group;
       /** Place à l'intérieur du bâtiment : la bête y est masquée */
@@ -4449,10 +4451,17 @@ export function IsoFarmView({
 
       // Troupeaux : deux poses, et une vraie marche entre la porte et le pré.
       const herds = dataRef.current.grazing ?? [];
-      const nextIdKey = herds
-        .map((h) => `${h.buildingId}:${h.animals}:${h.kind ?? "COW"}:${h.sheared ? 1 : 0}`)
-        .join("|");
-      const nextOutKey = herds.map((h) => `${h.buildingId}:${h.out ? 1 : 0}`).join("|");
+      // Les clés ne se refont que si la liste a changé : les bâtir à chaque
+      // image nourrissait le ramasse-miettes, d'où des micro-saccades.
+      if (herds !== troupeauxVus) {
+        troupeauxVus = herds;
+        clesTroupeaux.id = herds
+          .map((h) => `${h.buildingId}:${h.animals}:${h.kind ?? "COW"}:${h.sheared ? 1 : 0}`)
+          .join("|");
+        clesTroupeaux.out = herds.map((h) => `${h.buildingId}:${h.out ? 1 : 0}`).join("|");
+      }
+      const nextIdKey = clesTroupeaux.id;
+      const nextOutKey = clesTroupeaux.out;
 
       if (nextIdKey !== grazeIdKey) {
         grazeIdKey = nextIdKey;

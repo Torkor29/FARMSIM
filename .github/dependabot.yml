@@ -1,0 +1,18 @@
+# Les dépendances se tiennent à jour par petites marches, une fois par
+# semaine, plutôt que par un grand saut tous les deux ans (Express 5, Prisma 7
+# et Vite 7 sont déjà sortis). Les mises à jour mineures sont groupées pour ne
+# pas noyer les PR ; les majeures arrivent seules, pour être lues.
+version: 2
+updates:
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    groups:
+      mineures:
+        update-types: [minor, patch]
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: monthly
