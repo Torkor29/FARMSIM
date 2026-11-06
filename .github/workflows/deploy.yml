@@ -96,7 +96,7 @@ jobs:
 
       # Pas de version en dur : `pnpm/action-setup` lit le champ
       # `packageManager` du package.json, seule source de vérité.
-      - uses: pnpm/action-setup@v4
+      - uses: pnpm/action-setup@v6
 
       - uses: actions/setup-node@v4
         with:
