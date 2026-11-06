@@ -784,6 +784,8 @@ export function createCountryside(o: OptionsCampagne): Campagne {
    */
   const detailles = new Map<string, VoisinDetaille>();
   let clefDetail = "";
+  /** Le dernier point regardé pour lequel on a choisi les détails. */
+  const dernierCentre = { x: Number.NaN, z: Number.NaN };
 
 
   function poserParcelles(jour: number, saison: Season): void {
@@ -1787,12 +1789,22 @@ export function createCountryside(o: OptionsCampagne): Campagne {
    * par seconde ferait de la fluidité le prix du déplacement.
    */
   function setCentreVue(x: number, z: number): void {
-    const portee = plan.pas * PORTEE_DETAIL;
+    // Appelé à chaque image pendant un glissement : tant que le regard n'a
+    // pas bougé d'un quart de parcelle, le choix ne peut pas changer, et l'on
+    // ne refait ni le tri ni les distances.
+    if (Number.isFinite(dernierCentre.x) && Math.abs(x - dernierCentre.x) + Math.abs(z - dernierCentre.z) < plan.pas * 0.25) return;
+    dernierCentre.x = x;
+    dernierCentre.z = z;
+    const portee2 = (plan.pas * PORTEE_DETAIL) ** 2;
     const combien = sobre ? 1 : DETAILS_MAX;
     const choisies = plan.parcelles
-      .filter((p) => p.reel && Math.hypot(p.x - x, p.z - z) <= portee)
-      .sort((a, b) => Math.hypot(a.x - x, a.z - z) - Math.hypot(b.x - x, b.z - z))
-      .slice(0, combien);
+      .flatMap((p) => {
+        const d2 = (p.x - x) ** 2 + (p.z - z) ** 2;
+        return p.reel && d2 <= portee2 ? [{ p, d2 }] : [];
+      })
+      .sort((a, b) => a.d2 - b.d2)
+      .slice(0, combien)
+      .map((e) => e.p);
     const clef = choisies.map((p) => p.id).join("|");
     if (clef === clefDetail) return;
     clefDetail = clef;

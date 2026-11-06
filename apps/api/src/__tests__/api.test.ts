@@ -5387,3 +5387,98 @@ describe("le niveau des outils de test", () => {
     assert.equal(levelForXp(me.player.xp), 13, `xp ${me.player.xp} ne donne pas le niveau 13`);
   });
 });
+
+/**
+ * Deux clics au même instant ne font jamais deux fois la même chose.
+ *
+ * Les routes lisaient l'état, le vérifiaient, puis écrivaient sans reprendre
+ * la condition : une vente se payait deux fois, un lot partait chez deux
+ * acheteurs, deux tirages passaient le plafond de la banque. Chaque test
+ * lance les deux requêtes ensemble et regarde ce qui reste.
+ */
+describe("requêtes simultanées", () => {
+  async function installe(nom: string, crd = 300_000) {
+    const moi = await inscrire(nom);
+    const monde = await appel("/world/AUR");
+    const regions = (monde.corps as unknown as { regions: { parcels: { id: string; taken: boolean }[] }[] }).regions;
+    let parcelId = "";
+    for (const r of regions) {
+      const libre = (r.parcels ?? []).find((p) => !p.taken);
+      if (libre) { parcelId = libre.id; break; }
+    }
+    assert.ok(parcelId, "il faut une parcelle libre");
+    await appel("/world/claim", { methode: "POST", corps: { userId: moi.id, specialization: "CEREALIER", parcelId }, jeton: moi.jeton });
+    await appel("/dev/grant", { methode: "POST", corps: { userId: moi.id, crd, level: 30 }, jeton: moi.jeton });
+    return { moi, parcelId };
+  }
+  const stock = async (moi: { jeton: string }, code: string) => {
+    const me = await appel("/auth/me", { jeton: moi.jeton });
+    const inv = (me.corps as unknown as { player: { farm: { inventory: { itemCode: string; qty: number }[] } } }).player.farm.inventory;
+    return inv.filter((i) => i.itemCode === code).reduce((s, i) => s + i.qty, 0);
+  };
+
+  it("deux ventes au marché ne vendent pas plus que le silo", async () => {
+    const { moi } = await installe("Vendeur");
+    const depart = await stock(moi, "STRAW_BALE");
+    await appel("/dev/grant", { methode: "POST", corps: { userId: moi.id, stock: { commodity: "STRAW_BALE", tons: 10 } }, jeton: moi.jeton });
+    const vendre = () => appel("/market/sell", { methode: "POST", corps: { userId: moi.id, commodity: "STRAW_BALE", tons: 6 }, jeton: moi.jeton });
+    const [a, b] = await Promise.all([vendre(), vendre()]);
+    const reussies = [a, b].filter((r) => r.statut === 200).length;
+    assert.equal(reussies, 1, `une seule vente doit passer : ${a.statut} / ${b.statut}`);
+    assert.ok(Math.abs((await stock(moi, "STRAW_BALE")) - (depart + 4)) < 0.01, "il reste 4 t, pas moins");
+  });
+
+  it("deux apports simultanés s'additionnent, sans ligne en double", async () => {
+    const { moi } = await installe("Silo");
+    const verser = () => appel("/dev/grant", { methode: "POST", corps: { userId: moi.id, stock: { commodity: "STRAW_BALE", tons: 3 } }, jeton: moi.jeton });
+    await Promise.all([verser(), verser(), verser()]);
+    assert.ok(Math.abs((await stock(moi, "STRAW_BALE")) - 9) < 0.01, "les trois apports sont là");
+  });
+
+  it("un lot de la criée ne part que chez un seul acheteur", async () => {
+    const { moi: vendeur } = await installe("Criee");
+    await appel("/dev/grant", { methode: "POST", corps: { userId: vendeur.id, stock: { commodity: "HAY", tons: 5 } }, jeton: vendeur.jeton });
+    const annonce = await appel("/market/listings", { methode: "POST", corps: { userId: vendeur.id, commodity: "HAY", tons: 5, pricePerTon: 120 }, jeton: vendeur.jeton });
+    assert.ok(annonce.statut < 300, JSON.stringify(annonce.corps));
+    const id = (annonce.corps as unknown as { listing: { id: string } }).listing.id;
+    const { moi: a } = await installe("AcheteurA");
+    const { moi: b } = await installe("AcheteurB");
+    const [ra, rb] = await Promise.all([
+      appel(`/market/listings/${id}/buy`, { methode: "POST", corps: { userId: a.id }, jeton: a.jeton }),
+      appel(`/market/listings/${id}/buy`, { methode: "POST", corps: { userId: b.id }, jeton: b.jeton }),
+    ]);
+    const statuts = [ra.statut, rb.statut].sort();
+    assert.deepEqual(statuts, [200, 409], `un achat, un refus : ${JSON.stringify([ra.corps, rb.corps])}`);
+  });
+
+  it("deux tirages à la banque ne dépassent pas le plafond", async () => {
+    const { moi } = await installe("Emprunteur");
+    const bureau = await appel(`/farm/credit?userId=${moi.id}`, { jeton: moi.jeton });
+    const marge = Number((bureau.corps as unknown as { room?: number }).room ?? 0);
+    // Sans marge connue, on emprunte un montant qui ne passe qu'une fois.
+    const montant = marge > 1000 ? Math.floor(marge * 0.8) : 50_000;
+    const tirer = () => appel("/farm/loan", { methode: "POST", corps: { userId: moi.id, amount: montant }, jeton: moi.jeton });
+    const [a, b] = await Promise.all([tirer(), tirer()]);
+    if (marge > 1000) {
+      assert.equal([a, b].filter((r) => r.statut === 201).length, 1, `${a.statut} / ${b.statut}`);
+    } else {
+      assert.ok([a, b].filter((r) => r.statut === 201).length <= 1);
+    }
+  });
+
+  it("construire puis démolir aussitôt ne laisse pas d'XP", async () => {
+    const { moi, parcelId } = await installe("Batisseur");
+    const avant = (await appel("/auth/me", { jeton: moi.jeton })).corps as unknown as { player: { xp: number } };
+    let pose: Awaited<ReturnType<typeof appel>> | null = null;
+    for (const [x, y] of [[0, 0], [2, 2], [4, 4], [6, 6], [8, 2], [2, 8]]) {
+      pose = await appel(`/parcels/${parcelId}/build`, { methode: "POST", corps: { userId: moi.id, type: "SILO", x, y }, jeton: moi.jeton });
+      if (pose.statut < 300) break;
+    }
+    assert.ok(pose && pose.statut < 300, `pose refusée : ${JSON.stringify(pose?.corps)}`);
+    const id = (pose!.corps as unknown as { building: { id: string } }).building.id;
+    const vente = await appel(`/buildings/${id}/sell`, { methode: "POST", corps: { userId: moi.id }, jeton: moi.jeton });
+    assert.equal(vente.statut, 200, JSON.stringify(vente.corps));
+    const apres = (await appel("/auth/me", { jeton: moi.jeton })).corps as unknown as { player: { xp: number } };
+    assert.equal(apres.player.xp, avant.player.xp, "l'XP de la pose repart avec le remboursement");
+  });
+});

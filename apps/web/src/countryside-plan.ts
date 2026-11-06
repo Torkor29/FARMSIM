@@ -403,6 +403,14 @@ export type OptionsPlan = {
    * d'à côté.
    */
   ile?: Boite;
+  /**
+   * Les morceaux réels de l'île, quand elle en a plusieurs.
+   *
+   * Toutes ses parcelles se dessinent ensemble : leur rectangle englobant
+   * couvre aussi les champs des autres qui les séparent. Ce sont ces
+   * morceaux, et non l'englobant, qui écartent une parcelle voisine.
+   */
+  iles?: Boite[];
 };
 
 /* ------------------------------------------------------------------ */
@@ -881,7 +889,7 @@ export function planCampagne(o: OptionsPlan): PlanCampagne {
     // les écarter de la cour (le pays pivotait à l'achat), et une terre à soi
     // ou à vendre doit se voir, même si un grand garage la frôle.
     if (!estMaison && !aMoi && seChevauchent(boite, cour, 0.4)) return false;
-    if (seChevauchent(boite, joueur, 0.4)) return false;
+    if (o.iles?.length ? o.iles.some((b) => seChevauchent(boite, b, 0.4)) : seChevauchent(boite, joueur, 0.4)) return false;
     // Le chemin passe dans un couloir de trame : une parcelle ne peut pas y
     // être, mais on le vérifie plutôt que de le supposer.
     return Math.abs(z - routeZ) >= cote / 2 + DEMI_ROUTE;

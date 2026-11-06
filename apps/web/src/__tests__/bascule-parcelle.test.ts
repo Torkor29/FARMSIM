@@ -135,7 +135,8 @@ describe("un chantier n’éteint plus le jeu", () => {
   });
 
   it("la vue ne reçoit que l’engin de la parcelle regardée", () => {
-    expect(APP).toMatch(/activeWork=\{activeWorks\.find\(\(w\) => w\.parcelId === activeParcelId\) \?\? null\}/);
+    // Posé à sa place dans la vue composée, mais toujours le seul.
+    expect(APP).toMatch(/const w = activeWorks\.find\(\(x\) => x\.parcelId === activeParcelId\);\s*return w \? \{ \.\.\.w, cells: enVue\(w\.cells\) \} : null;/);
   });
 
   /**

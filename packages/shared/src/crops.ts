@@ -42,10 +42,10 @@ export const GRASS_MAX_CUTS = 3;
  *
  * Les jeunes pousses se coupent et repartent — c'est le vrai geste du
  * maraîcher, et la seule culture de **vente** qu'on ne resème pas à chaque
- * récolte. Deux coupes de moins que l'herbe : un rang de mesclun s'épuise
- * plus vite qu'une prairie.
+ * récolte. Autant de coupes que l'herbe : le compteur de récoltes avant
+ * labour plafonne à trois, une quatrième coupe ne pourrait jamais venir.
  */
-export const MESCLUN_MAX_CUTS = 4;
+export const MESCLUN_MAX_CUTS = 3;
 
 /**
  * Le maraîchage : ce qui se sème et se récolte dans une soirée.
@@ -106,7 +106,22 @@ export function grassCutsDone(cell: {
   lastCrop?: CropCode | null;
   harvestsSincePlow?: number;
 }): number {
-  if (cell.crop !== "GRASS") return 0;
-  if (cell.lastCrop === "GRASS") return cell.harvestsSincePlow ?? 0;
+  // Toute culture qui repart après la coupe, pas seulement l'herbe : un rang
+  // de mesclun recoupé doit pousser à son rythme de repousse.
+  if (!repousseApresCoupe(cell.crop)) return 0;
+  if (cell.lastCrop === cell.crop) return cell.harvestsSincePlow ?? 0;
   return 0;
+}
+
+/**
+ * Ce que donne une repousse, rapporté à la première coupe.
+ *
+ * Les jeunes pousses repartent moins fournies. Sans cela, une recoupe qui ne
+ * paie pas de semence rapportait dix euros par case et par heure, trois fois
+ * tout le reste du maraîchage. L'herbe garde son rendement : sa fauche a son
+ * propre barème.
+ */
+export function facteurRecoupe(crop: CropCode | null | undefined, coupesFaites: number): number {
+  if (coupesFaites <= 0) return 1;
+  return crop === "MESCLUN" ? 0.3 : 1;
 }

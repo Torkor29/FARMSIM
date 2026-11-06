@@ -641,7 +641,9 @@ export function creerDomaine3d(opts: {
       }
       // Un lot acheté change trente-six cases d'un coup : on en garde assez
       // pour qu'on le voie, pas de quoi remplir l'écran de fumée.
-      for (const c of changees.length > 80 ? [] : changees.slice(0, 48)) {
+      // Douze suffisent à le voir : chaque nuage est un dessin transparent de
+      // plus, et quarante-huit faisaient trébucher un téléphone.
+      for (const c of changees.length > 80 ? [] : changees.filter((_, i) => i % Math.max(1, Math.ceil(changees.length / 12)) === 0).slice(0, 12)) {
         const { px, pz } = posDe(c.x, c.y);
         const m = new THREE.Mesh(
           geoPoussiere,

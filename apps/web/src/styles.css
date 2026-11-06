@@ -2906,6 +2906,9 @@ html.playing .build-confirm { position: fixed; }
 .toast.good { color: var(--ok); border-color: color-mix(in srgb, var(--ok) 45%, transparent); }
 .toast.warn { color: var(--gold-700); border-color: color-mix(in srgb, var(--gold-500) 55%, transparent); }
 .toast.bad { color: var(--danger); border-color: color-mix(in srgb, var(--danger) 45%, transparent); }
+/* L'erreur reste deux fois plus longtemps, et se referme d'un toucher. */
+.toast.bad { pointer-events: auto; cursor: pointer; }
+.toast.long .toast-bar { animation-duration: 6.4s; }
 /* Charte §8.4. La règle ne couvrait que le toast : tout le reste — tiroirs,
    rails, cascades — continuait de bouger pour qui demande l'inverse. */
 @media (prefers-reduced-motion: reduce) {
@@ -2920,6 +2923,7 @@ html.playing .build-confirm { position: fixed; }
   /* La barre du toast mesure un temps réel : elle doit garder sa durée,
      sinon la notification se ferme sans que rien ne l'ait annoncé. */
   .toast-bar { animation-duration: 3.2s !important; }
+  .toast.long .toast-bar { animation-duration: 6.4s !important; }
 }
 
 .row { display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: center; }

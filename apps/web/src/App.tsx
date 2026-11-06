@@ -6,6 +6,7 @@ import {
   MACHINE_ART,
   MACHINE_DEFS,
   explainNoMachine,
+  canSowInSeason,
   type MachineForWork,
   MAX_BUILDING_LEVEL,
   WORK_LABELS,
@@ -249,6 +250,7 @@ import {
 import { ProfilePanel } from "./ProfilePanel";
 import { MenuClose } from "./ui/MenuClose";
 import { Gains } from "./ui/Gains";
+import { composerFerme, decaler, decalerConstruction, decalerOrigines, proprietaires, versLocal, type Morceau } from "./ferme-composee";
 
 const API = "/api";
 
@@ -1614,7 +1616,7 @@ export function App() {
         method: "POST",
         body: JSON.stringify(grant),
       });
-      await refreshPlayer();
+      await refreshPlayer().catch(() => undefined);
       if (activeParcelId) await loadParcel(activeParcelId).catch(() => undefined);
       flashToast(r.done.length ? `Test : ${r.done.join(" · ")}` : "Rien à faire");
     } catch (e) {
@@ -1644,7 +1646,8 @@ export function App() {
       const r = await api<{ contracts: FuturesContract[] }>("/futures");
       setFutures((prev) => keepIfSame(prev, r.contracts));
     } catch {
-      setFutures([]);
+      /* Une lecture ratée garde la liste d'avant : la vider faisait croire,
+         le temps d'une coupure réseau, que tout avait disparu. */
     }
   }, []);
 
@@ -1701,7 +1704,8 @@ export function App() {
       );
       setListings((prev) => keepIfSame(prev, r.listings));
     } catch {
-      setListings([]);
+      /* Une lecture ratée garde la liste d'avant : la vider faisait croire,
+         le temps d'une coupure réseau, que tout avait disparu. */
     }
   }, []);
 
@@ -1729,7 +1733,8 @@ export function App() {
       }
       haulReadyRef.current = true;
     } catch {
-      setDeliveries([]);
+      /* Une lecture ratée garde la liste d'avant : la vider faisait croire,
+         le temps d'une coupure réseau, que tout avait disparu. */
     }
   }, []);
 
@@ -2074,6 +2079,115 @@ export function App() {
     };
   }, [player]);
 
+  /*
+   * Toutes ses parcelles de la région, dessinées ensemble depuis le siège.
+   *
+   * La vue ne dépend plus de la parcelle active : elle part toujours du siège,
+   * et chaque parcelle s'y pose à sa case de trame (voir `ferme-composee`).
+   * La parcelle active ne dit plus que **où** part le prochain travail.
+   */
+  const siegeParcelle = player?.farm?.parcels[0] ?? null;
+  const enVisite = Boolean(visitOrder && activeParcelId && visitOrder.parcelId === activeParcelId);
+  const morceaux = useMemo((): Morceau[] | null => {
+    if (!siegeParcelle || quartTrame == null) return null;
+    const m = composerFerme(siegeParcelle, player?.farm?.parcels ?? [], quartTrame);
+    return m;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [siegeParcelle?.id, quartTrame, (player?.farm?.parcels ?? []).map((p) => `${p.id}:${p.mapX},${p.mapY},${p.gridW}x${p.gridH}`).join("|")]);
+  /** Peut-on composer la vue ? Seulement chez soi, sur une parcelle de la composition. */
+  const composable = Boolean(
+    morceaux && morceaux.length > 1 && !enVisite && activeParcelId && morceaux.some((m) => m.id === activeParcelId),
+  );
+  /** La parcelle depuis laquelle on charge la commune : le siège, dès qu'on peut composer. */
+  const parcelleDeCommune = composable ? siegeParcelle!.id : activeParcelId;
+  /** Le détail des autres parcelles de la composition, tenu à jour. */
+  const [detailsAutres, setDetailsAutres] = useState<Record<string, NonNullable<typeof parcelDetail>>>({});
+  const idsAutres = composable ? morceaux!.map((m) => m.id).filter((id) => id !== activeParcelId) : [];
+  const cleAutres = idsAutres.join("|");
+  useEffect(() => {
+    if (!cleAutres) return;
+    let vivant = true;
+    const charger = () => {
+      for (const id of cleAutres.split("|")) {
+        api<NonNullable<typeof parcelDetail>>(`/parcels/${id}`)
+          .then((d) => {
+            if (!vivant || !d) return;
+            setDetailsAutres((avant) => (avant[id] && JSON.stringify(avant[id]) === JSON.stringify(d) ? avant : { ...avant, [id]: d }));
+          })
+          .catch(() => undefined);
+      }
+    };
+    charger();
+    const t = setInterval(charger, 6000);
+    return () => {
+      vivant = false;
+      clearInterval(t);
+    };
+  }, [cleAutres]);
+  /* La parcelle qu'on quitte garde sa dernière lecture : elle reste dessinée
+     telle quelle, sans trou le temps d'une requête. */
+  useEffect(() => {
+    if (parcelDetail?.parcel?.id) {
+      const id = parcelDetail.parcel.id;
+      setDetailsAutres((avant) => (avant[id] === parcelDetail ? avant : { ...avant, [id]: parcelDetail }));
+    }
+  }, [parcelDetail]);
+  /*
+   * La vue ne se compose qu'une fois **toutes** les parcelles lues.
+   *
+   * Composée au fil des réponses, l'île grandissait morceau par morceau au
+   * chargement — quatre reconstructions de la scène, et des champs qui
+   * surgissaient un à un. On attend qu'elles soient toutes là : une seule
+   * bascule, d'un coup.
+   */
+  const composee = composable && idsAutres.every((id) => detailsAutres[id]);
+  /** La parcelle depuis laquelle on dessine. */
+  const parcelleDeVue = composee ? siegeParcelle!.id : activeParcelId;
+  /** Le décalage de la parcelle active dans la vue. */
+  const decalActif = (composee && morceaux?.find((m) => m.id === activeParcelId)) || { dx: 0, dy: 0 };
+  /** Le détail d'une parcelle de la composition : l'active en direct, les autres en cache. */
+  const detailDe = (id: string) => (id === activeParcelId ? parcelDetail : detailsAutres[id]) ?? null;
+  /** Qui possède chaque case de la vue. */
+  const proprio = useMemo(
+    () =>
+      composee && morceaux
+        ? proprietaires(morceaux, (id) => (id === activeParcelId ? parcelDetail?.parcel?.cells : detailsAutres[id]?.parcel?.cells))
+        : new Map<string, string>(),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [composee, morceaux, activeParcelId, parcelDetail?.parcel?.cells, detailsAutres],
+  );
+  /** Une case de la vue, dans le repère de sa parcelle. */
+  const caseLocale = (gx: number, gy: number) =>
+    composee && morceaux
+      ? versLocal(gx, gy, morceaux, proprio, activeParcelId ?? "")
+      : { id: activeParcelId ?? "", x: gx, y: gy };
+  /**
+   * Passer la main à une autre parcelle, sans rien changer à l'écran.
+   *
+   * Son détail est déjà là (la vue le dessine) : on le pose tout de suite,
+   * pour que l'outil sache sur-le-champ quelles cases sont libres.
+   */
+  const garderSelection = useRef(false);
+  /** La case survolée, dans le repère de la vue (toutes parcelles). */
+  const [survolVue, setSurvolVue] = useState<{ x: number; y: number } | null>(null);
+  function prendreParcelle(id: string, garder = false) {
+    if (id === activeParcelId) return;
+    const d = detailsAutres[id];
+    if (d) setParcelDetail(d);
+    /*
+     * La sélection se vide **ici**, pas dans l'effet de changement de parcelle.
+     *
+     * L'effet passait après celui qui rejoue le geste : la case touchée était
+     * retenue, puis effacée dans la même image — il fallait toucher deux fois
+     * l'autre parcelle pour qu'elle prenne. On vide tout de suite, et l'effet
+     * laisse faire.
+     */
+    if (!garder) setSelectedCells([]);
+    garderSelection.current = true;
+    parcelleAffichee.current = id;
+    setActiveParcelId(id);
+  }
+
   /**
    * Le geste fait sur une autre de ses parcelles, rejoué une fois qu'elle est là.
    *
@@ -2090,12 +2204,19 @@ export function App() {
     x: number;
     y: number;
     mods: PointerMods;
+    /** Un clic du mode construction (poser, peindre, acheter un lot). */
+    construction?: boolean;
+    frac?: { fx: number; fy: number };
+    /** Un tracé du mode construction, à reprendre en entier. */
+    trace?: { x: number; y: number }[];
   } | null>(null);
   useEffect(() => {
     const attente = gesteApresBascule.current;
     if (!attente || parcelDetail?.parcel.id !== attente.parcelId) return;
     gesteApresBascule.current = null;
-    void applyToolOnCell(attente.x, attente.y, attente.mods);
+    if (attente.trace) void finirTraceConstruction(attente.trace);
+    else if (attente.construction) cliqueConstruction(attente.x, attente.y, attente.mods, attente.frac);
+    else void applyToolOnCell(attente.x, attente.y, attente.mods);
     // `applyToolOnCell` change à chaque rendu : c'est l'arrivée de la parcelle
     // qui déclenche, rien d'autre.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -2126,14 +2247,19 @@ export function App() {
    * ils pointent une case d'un champ qu'on ne regarde plus.
    */
   useEffect(() => {
-    setSelectedCells([]);
     setHoverCell(null);
+    setCellMenu(null);
+    if (garderSelection.current) {
+      garderSelection.current = false;
+      return;
+    }
+    setSelectedCells([]);
     setCellMenu(null);
     setPendingBuild(null);
   }, [activeParcelId]);
 
   useEffect(() => {
-    if (!activeParcelId) {
+    if (!parcelleDeCommune) {
       setVoisinage([]);
       return;
     }
@@ -2152,14 +2278,14 @@ export function App() {
      * parcelles », loin d'ici — repart de rien, comme avant.
      */
     setVoisinage((avant) => {
-      const cible = avant.find((v) => v.id === activeParcelId);
+      const cible = avant.find((v) => v.id === parcelleDeCommune);
       if (!cible) return [];
       return avant.map((v) => ({ ...v, col: v.col - cible.col, rang: v.rang - cible.rang }));
     });
-    loadVoisinage(activeParcelId).catch(() => undefined);
-    const t = setInterval(() => loadVoisinage(activeParcelId).catch(() => undefined), 45_000);
+    loadVoisinage(parcelleDeCommune).catch(() => undefined);
+    const t = setInterval(() => loadVoisinage(parcelleDeCommune).catch(() => undefined), 45_000);
     return () => clearInterval(t);
-  }, [activeParcelId, loadVoisinage]);
+  }, [parcelleDeCommune, loadVoisinage]);
 
   useEffect(() => {
     if (!player || !activeParcelId) return;
@@ -2254,6 +2380,132 @@ export function App() {
     () => construireGrille({ bornes: bornesIci, cells: grid, amenagements }),
     [bornesIci, grid, amenagements],
   );
+  /**
+   * Ce que la vue dessine quand toutes ses parcelles sont ensemble.
+   *
+   * Chaque parcelle apporte ses cases, ses bâtiments, sa pousse et son décor,
+   * décalés à sa place dans le repère du siège. Nul hors composition : la vue
+   * reçoit alors la parcelle active seule, comme avant.
+   */
+  const vueComposee = useMemo(() => {
+    if (!composee || !morceaux || !siegeParcelle) return null;
+    const cells: (Cell & { manuredUntil?: number })[] = [];
+    const buildings: Building[] = [];
+    const sims: NonNullable<typeof parcelDetail>["cellSims"] = [];
+    const amen: ObjetPose[] = [];
+    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+    const etendre = (x0: number, y0: number, x1: number, y1: number) => {
+      minX = Math.min(minX, x0); minY = Math.min(minY, y0);
+      maxX = Math.max(maxX, x1); maxY = Math.max(maxY, y1);
+    };
+    for (const m of morceaux) {
+      const d = m.id === activeParcelId ? parcelDetail : detailsAutres[m.id];
+      const cs = m.id === activeParcelId ? grid : (d?.parcel.cells ?? []);
+      if (!d) continue;
+      cells.push(...decaler(cs, m.dx, m.dy));
+      buildings.push(...decalerOrigines(d.parcel.buildings ?? [], m.dx, m.dy));
+      sims.push(...decaler(d.cellSims ?? [], m.dx, m.dy));
+      amen.push(...decalerOrigines(d.parcel.amenagements ?? [], m.dx, m.dy));
+      const b = d.domaine?.bornes;
+      if (b) etendre(b.minX + m.dx, b.minY + m.dy, b.maxX + m.dx, b.maxY + m.dy);
+      etendre(m.dx, m.dy, m.dx + m.w, m.dy + m.h);
+      for (const c of cs) etendre(c.x + m.dx, c.y + m.dy, c.x + m.dx + 1, c.y + m.dy + 1);
+    }
+    const dSiege = siegeParcelle.id === activeParcelId ? parcelDetail : detailsAutres[siegeParcelle.id];
+    if (!dSiege) return null;
+    const bSiege = dSiege.domaine?.bornes ?? { minX: 0, minY: 0, maxX: siegeParcelle.gridW, maxY: siegeParcelle.gridH };
+    return {
+      cells,
+      buildings,
+      sims,
+      amenagements: amen,
+      bornes: { minX, minY, maxX, maxY } as BornesDomaine,
+      fricheDans: bSiege as BornesDomaine,
+      gridW: siegeParcelle.gridW,
+      gridH: siegeParcelle.gridH,
+      domaineSiege: dSiege.domaine ?? null,
+    };
+  }, [composee, morceaux, siegeParcelle, activeParcelId, parcelDetail, detailsAutres, grid]);
+  /** La campagne du siège : c'est depuis lui que la vue composée se dessine. */
+  const campagneDuSiege = useMemo(
+    () =>
+      (vueComposee?.domaineSiege?.campagne ?? []).map((c) => ({
+        x: c.x,
+        y: c.y,
+        sol: c.sol,
+        revetement: null,
+        kind: "EMPTY",
+        forme: c.forme,
+        niveau: c.niveau,
+        boiseDepuis: c.boiseDepuis,
+        fleurie: c.fleurie,
+      })),
+    [vueComposee?.domaineSiege?.campagne],
+  );
+  /**
+   * À quelle parcelle s'adresse un geste du mode construction.
+   *
+   * Une case d'une de ses parcelles : celle-là. Ailleurs, c'est la campagne,
+   * et la campagne appartient au domaine du siège.
+   */
+  const parcelleDeConstruction = (gx: number, gy: number): { id: string; x: number; y: number } => {
+    if (!composee || !morceaux || !siegeParcelle) return { id: activeParcelId ?? "", x: gx - decalActif.dx, y: gy - decalActif.dy };
+    if (proprio.has(`${gx},${gy}`)) return caseLocale(gx, gy);
+    return { id: siegeParcelle.id, x: gx, y: gy };
+  };
+  /** Un tracé de construction, une fois la bonne parcelle active. */
+  function finirTraceConstruction(cells: { x: number; y: number }[]) {
+    if (armeTracable) return tracerObjets(cells);
+    return peindreTerrain(cells);
+  }
+  /**
+   * Les cases d'un tracé, pour la parcelle où il a commencé.
+   *
+   * Un tracé qui part d'une autre de ses parcelles la fait passer active
+   * (sans rien changer à l'écran) ; il s'arrête au bord de celle-ci.
+   */
+  const casesDuTrace = (vues: readonly { x: number; y: number }[]) => {
+    const premiere = vues[0];
+    if (!premiere || !composee) return decaler(vues, -decalActif.dx, -decalActif.dy);
+    const id = caseLocale(premiere.x, premiere.y).id;
+    if (id && id !== activeParcelId) {
+      strokeBase.current = [];
+      prendreParcelle(id, true);
+    }
+    return casesDe(vues, id);
+  };
+  /** La sélection, posée dans la vue (une même liste tant qu'elle ne change pas). */
+  const selectionVue = useMemo(
+    () => decaler(selectedCells, decalActif.dx, decalActif.dy),
+    [selectedCells, decalActif.dx, decalActif.dy],
+  );
+  /** La commune, sans les parcelles que la vue dessine déjà avec le siège. */
+  const voisinageVue = useMemo(
+    () =>
+      composee && morceaux && siegeParcelle
+        ? voisinage.map((v) =>
+            v.id !== siegeParcelle.id && morceaux.some((m) => m.id === v.id) ? { ...v, fusionneeDans: siegeParcelle.id } : v,
+          )
+        : voisinage,
+    [composee, morceaux, siegeParcelle, voisinage],
+  );
+  // Pour les essais : ce que la vue composée a posé, et où.
+  (window as unknown as { __fermeComposee?: unknown }).__fermeComposee = {
+    composee,
+    morceaux,
+    actif: activeParcelId,
+    cases: vueComposee?.cells.length ?? 0,
+    autres: Object.keys(detailsAutres),
+  };
+  /** Une liste de cases de la parcelle active, posée dans la vue. */
+  const enVue = <T extends { x: number; y: number }>(l: readonly T[]): T[] => decaler(l, decalActif.dx, decalActif.dy);
+  /** Cases touchées dans la vue, gardées pour la parcelle `id` et rendues dans son repère. */
+  const casesDe = (l: readonly { x: number; y: number }[], id: string) =>
+    l.flatMap((c) => {
+      const loc = caseLocale(c.x, c.y);
+      return loc.id === id ? [{ x: loc.x, y: loc.y }] : [];
+    });
+
   /** Les habitats de la ferme, lus comme le serveur les lit : pour la carte. */
   const lectureHabitats = useMemo(() => {
     const ferme = lireHabitats({ cells: grid, amenagements, courante: hydrologie(grid).courante });
@@ -2594,6 +2846,18 @@ export function App() {
     }
     return out;
   }, [barns, parcel?.buildings]);
+  /** Les troupeaux de la parcelle active, posés dans la vue (même liste tant qu'ils ne bougent pas). */
+  const troupeauxVue = useMemo(
+    () =>
+      !decalActif.dx && !decalActif.dy
+        ? grazingHerds
+        : grazingHerds.map((g) => ({
+            ...g,
+            barn: { ...g.barn, originX: g.barn.originX + decalActif.dx, originY: g.barn.originY + decalActif.dy },
+            paddock: { ...g.paddock, originX: g.paddock.originX + decalActif.dx, originY: g.paddock.originY + decalActif.dy },
+          })),
+    [grazingHerds, decalActif.dx, decalActif.dy],
+  );
 
   const hayInStock = useMemo(
     () => (player?.farm?.inventory ?? []).find((i) => i.itemCode === "HAY")?.qty ?? 0,
@@ -2909,6 +3173,18 @@ export function App() {
     const t = window.setTimeout(() => setMsg(null), TOAST_MS);
     return () => window.clearTimeout(t);
   }, [msg, toastTick]);
+  /*
+   * L'erreur s'en va aussi.
+   *
+   * Seul le message vert avait sa minuterie : le rouge restait à l'écran
+   * jusqu'à la prochaine action, alors que sa barre se vidait comme s'il
+   * allait partir. Il dure un peu plus, le temps d'être lu.
+   */
+  useEffect(() => {
+    if (!err) return;
+    const t = window.setTimeout(() => setErr(null), TOAST_MS * 2);
+    return () => window.clearTimeout(t);
+  }, [err]);
 
   const onFarm = Boolean(player && ownedParcels.length);
   useEffect(() => {
@@ -3472,7 +3748,7 @@ export function App() {
         method: "POST",
         body: JSON.stringify({ userId: player.id }),
       });
-      const apres = await refreshPlayer();
+      const apres = await refreshPlayer().catch(() => undefined);
       const achetee = apres?.farm?.parcels.find((p) => p.id === parcelId);
       /* On y va tout de suite : on l'a achetée pour la travailler. Le paysage
          recule d'autant, et la même terre reste sous le même pixel. */
@@ -3504,10 +3780,10 @@ export function App() {
         method: "POST",
         body: JSON.stringify({ userId: player.id, avec }),
       });
-      await refreshPlayer();
+      await refreshPlayer().catch(() => undefined);
       if (r.hote !== activeParcelId) setActiveParcelId(r.hote);
       else {
-        await loadParcel(r.hote);
+        await loadParcel(r.hote).catch(() => undefined);
         await loadVoisinage(r.hote).catch(() => undefined);
       }
       playUiSound("place");
@@ -3564,8 +3840,8 @@ export function App() {
   async function apresConstruction(message: string, son: "place" | "click" = "place") {
     flashToast(message);
     playUiSound(son);
-    await refreshPlayer();
-    if (activeParcelId) await loadParcel(activeParcelId);
+    await refreshPlayer().catch(() => undefined);
+    if (activeParcelId) await loadParcel(activeParcelId).catch(() => undefined);
   }
 
   async function peindreTerrain(cells: { x: number; y: number }[]) {
@@ -3684,7 +3960,7 @@ export function App() {
       }
     } catch (e) {
       flashToast(e instanceof Error ? e.message : String(e), true);
-      if ((patch || def.regle === "RELIEF" || dehors.length) && activeParcelId) void loadParcel(activeParcelId);
+      if ((patch || def.regle === "RELIEF" || dehors.length) && activeParcelId) void loadParcel(activeParcelId).catch(() => undefined);
     } finally {
       setBusy(false);
       setApercuTerrain([]);
@@ -3766,7 +4042,7 @@ export function App() {
       }
     } catch (e) {
       flashToast(e instanceof Error ? e.message : String(e), true);
-      void loadParcel(parcelId);
+      void loadParcel(parcelId).catch(() => undefined);
     } finally {
       for (const k of cles) enfouiesEnCours.current.delete(`${parcelId}:${k}`);
     }
@@ -3834,7 +4110,7 @@ export function App() {
       });
     } catch (e) {
       flashToast(e instanceof Error ? e.message : String(e), true);
-      void loadParcel(activeParcelId);
+      void loadParcel(activeParcelId).catch(() => undefined);
     }
   }
 
@@ -4284,7 +4560,7 @@ export function App() {
         body: JSON.stringify({ userId: player.id }),
       });
       flashToast(`Litière refaite · ${r.tons.toFixed(2)} t de paille étalée`);
-      await refreshPlayer();
+      await refreshPlayer().catch(() => undefined);
       if (activeParcelId) await loadLivestock(activeParcelId);
     } catch (e) {
       flashToast(e instanceof Error ? e.message : String(e), true);
@@ -4430,7 +4706,7 @@ export function App() {
          du bâtiment. Le passer par le moteur des chantiers le faisait partir
          d'un coin du champ, en allers-retours de labour. */
       flashToast(`${r.tons} t de ${nom.toLowerCase()} · l'attelage vient la chercher`);
-      await refreshPlayer();
+      await refreshPlayer().catch(() => undefined);
     } catch (e) {
       // Refusée — le camion n'était pas là, ou la caisse n'est plus : on
       // remet la liste au clair plutôt que de laisser un trou.
@@ -4774,6 +5050,14 @@ export function App() {
       horloge,
     );
     if (parc) return parc;
+    /* Hors saison, le serveur refuse le semis : le bouton le dit avant, au
+       lieu d'un clic qui ne donne rien. La culture était déjà barrée dans la
+       liste, mais « Semer Blé · 3 cases » restait cliquable. */
+    if (work === "PLANT") {
+      const crop = cropFromPlantTool(tool);
+      const verdict = crop ? canSowInSeason(crop, season) : null;
+      if (verdict && !verdict.ok) return verdict.reason ?? "Hors saison";
+    }
     // La machine est là ; reste à savoir si la sélection a de quoi l'occuper.
     if ((work === "HARVEST" || work === "MOW") && selectedCells.length) {
       if (dansSelection((sim) => sim.ready && !sim.lost) === 0) {
@@ -4781,7 +5065,7 @@ export function App() {
       }
     }
     return null;
-  }, [tool, player?.farm?.machines, selectedCells.length, dansSelection, horloge]);
+  }, [tool, player?.farm?.machines, selectedCells.length, dansSelection, horloge, season]);
 
   const laborQuote = useMemo(() => {
     if (visiting || !contractorOffer) return null;
@@ -4832,7 +5116,7 @@ export function App() {
       });
       flashToast("Cet argent est bloqué jusqu’à la fin (ou l’annulation).");
       setSelectedCells([]);
-      await refreshPlayer();
+      await refreshPlayer().catch(() => undefined);
       await refreshMeta();
     } catch (e) {
       flashToast(e instanceof Error ? e.message : String(e), true);
@@ -4854,7 +5138,7 @@ export function App() {
       setSheet(null);
       setShowEta(false);
       flashToast(`Chez ${r.order.clientName} — ${WORK_LABELS[r.order.work]}`);
-      await loadParcel(r.order.parcelId);
+      await loadParcel(r.order.parcelId).catch(() => undefined);
       await refreshMeta();
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e));
@@ -4938,8 +5222,8 @@ export function App() {
       const tons = r.totalTons ? ` · ${r.totalTons.toFixed(2)} t` : "";
       flashToast(`C’est fait : ${WORK_LABELS[contractorOffer.work]} ×${r.cells}${tons} · −${r.cost} €`);
       setSelectedCells([]);
-      await refreshPlayer();
-      await loadParcel(activeParcelId);
+      await refreshPlayer().catch(() => undefined);
+      await loadParcel(activeParcelId).catch(() => undefined);
     } catch (e) {
       flashToast(e instanceof Error ? e.message : String(e), true);
       stopWork();
@@ -5470,8 +5754,8 @@ export function App() {
         labor = r.labor;
       }
       setSelectedCells([]);
-      await refreshPlayer();
-      await loadParcel(activeParcelId);
+      await refreshPlayer().catch(() => undefined);
+      await loadParcel(activeParcelId).catch(() => undefined);
       if (labor?.completed) {
         flashToast(`Chantier terminé · +${Math.round(labor.payout ?? 0)} €`);
         jouerSon("recolte");
@@ -5583,8 +5867,8 @@ export function App() {
         const home = player.farm?.parcels[0]?.id;
         if (home) setActiveParcelId(home);
       }
-      await refreshPlayer();
-      await loadParcel(activeParcelId);
+      await refreshPlayer().catch(() => undefined);
+      await loadParcel(activeParcelId).catch(() => undefined);
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e));
       stopWork(jobId);
@@ -5607,7 +5891,7 @@ export function App() {
       flashToast(`Négociant : ${tons.toFixed(2)} t · +${r.revenue} €`);
       jouerSon("piece");
       markGuideFlag("sold");
-      await refreshPlayer();
+      await refreshPlayer().catch(() => undefined);
       await refreshMeta();
     } catch (e) {
       flashToast(e instanceof Error ? e.message : String(e), true);
@@ -5638,7 +5922,7 @@ export function App() {
         body: JSON.stringify({ userId: player.id, commodity }),
       });
       flashToast(`${nom} jeté · ${r.discarded.toFixed(2)}`);
-      await refreshPlayer();
+      await refreshPlayer().catch(() => undefined);
     } catch (e) {
       flashToast(e instanceof Error ? e.message : String(e), true);
     } finally {
@@ -5655,7 +5939,7 @@ export function App() {
         body: JSON.stringify({ userId: player.id, commodity, tons, pricePerTon }),
       });
       flashToast(`Lot mis en vente · frais ${r.fee} €`);
-      await refreshPlayer();
+      await refreshPlayer().catch(() => undefined);
       await loadListings(player.id);
     } catch (e) {
       flashToast(e instanceof Error ? e.message : String(e), true);
@@ -5673,7 +5957,7 @@ export function App() {
         body: JSON.stringify({ userId: player.id }),
       });
       flashToast(`${r.returned.toFixed(2)} t revenues au silo`);
-      await refreshPlayer();
+      await refreshPlayer().catch(() => undefined);
       await loadListings(player.id);
     } catch (e) {
       flashToast(e instanceof Error ? e.message : String(e), true);
@@ -5691,7 +5975,7 @@ export function App() {
         body: JSON.stringify({ userId: player.id }),
       });
       flashToast("Pas encore chez vous : quelqu’un doit livrer.");
-      await refreshPlayer();
+      await refreshPlayer().catch(() => undefined);
       await loadListings(player.id);
       await loadDeliveries(player.id);
     } catch (e) {
@@ -5710,7 +5994,7 @@ export function App() {
         body: JSON.stringify({ userId: player.id }),
       });
       flashToast(`Livré ${r.delivered.toFixed(2)} t`);
-      await refreshPlayer();
+      await refreshPlayer().catch(() => undefined);
       await loadDeliveries(player.id);
     } catch (e) {
       flashToast(e instanceof Error ? e.message : String(e), true);
@@ -5733,7 +6017,7 @@ export function App() {
       flashToast(`Arrivé · −${r.autoFee} €`);
       haulSeenRef.current.add(id);
       flashDeliveryArrival(r.commodity);
-      await refreshPlayer();
+      await refreshPlayer().catch(() => undefined);
       await loadDeliveries(player.id);
     } catch (e) {
       flashToast(e instanceof Error ? e.message : String(e), true);
@@ -5782,7 +6066,7 @@ export function App() {
       });
       const nom = GOOD_DEFS[commodity]?.name ?? commodity;
       const pourLeLot = nourrirApres;
-      await refreshPlayer();
+      await refreshPlayer().catch(() => undefined);
       /*
        * Le négociant livre, il ne remplit pas le silo.
        *
@@ -5831,7 +6115,7 @@ export function App() {
         method: "POST",
         body: JSON.stringify({ userId: player.id, commodity, tons }),
       });
-      await refreshPlayer();
+      await refreshPlayer().catch(() => undefined);
       await refreshMeta();
       setMsg(`Vendu pour ${r.revenue} €`);
       jouerSon("piece");
@@ -5851,7 +6135,7 @@ export function App() {
         method: "POST",
         body: JSON.stringify({ userId: player.id, itemId, passes: 1 }),
       });
-      await refreshPlayer();
+      await refreshPlayer().catch(() => undefined);
       setMsg(
         `Séché (−${(r.reduction * 100).toFixed(0)} pts) · ${(r.moisture * 100).toFixed(0)} % · −${r.cost} €`,
       );
@@ -5902,7 +6186,7 @@ export function App() {
           body: JSON.stringify({ userId: player.id }),
         },
       );
-      await refreshPlayer();
+      await refreshPlayer().catch(() => undefined);
       await refreshMeta();
       // Louer, c'est ne pas user son matériel : il n'y a donc pas d'usure à
       // annoncer, mais il y a une location — et c'est elle qui explique
@@ -5972,7 +6256,7 @@ export function App() {
         body: JSON.stringify({ userId: player.id, amount }),
       });
       flashToast(`Emprunté ${Math.round(amount)} €`);
-      await refreshPlayer();
+      await refreshPlayer().catch(() => undefined);
       await loadCredit();
     } catch (e) {
       flashToast(e instanceof Error ? e.message : String(e), true);
@@ -5990,7 +6274,7 @@ export function App() {
         body: JSON.stringify({ userId: player.id, amount }),
       });
       flashToast(`Remboursé ${Math.round(r.repaid)} €`);
-      await refreshPlayer();
+      await refreshPlayer().catch(() => undefined);
       await loadCredit();
     } catch (e) {
       flashToast(e instanceof Error ? e.message : String(e), true);
@@ -6009,7 +6293,7 @@ export function App() {
         body: JSON.stringify({ userId: player.id, liters }),
       });
       flashToast(`${Math.round(r.liters)} L de gazole · −${Math.round(r.cost)} €`);
-      await refreshPlayer();
+      await refreshPlayer().catch(() => undefined);
     } catch (e) {
       flashToast(e instanceof Error ? e.message : String(e), true);
     } finally {
@@ -6026,8 +6310,8 @@ export function App() {
         method: "POST",
         body: JSON.stringify({ userId: player.id, type, tier }),
       });
-      await refreshPlayer();
-      if (activeParcelId) await loadParcel(activeParcelId);
+      await refreshPlayer().catch(() => undefined);
+      if (activeParcelId) await loadParcel(activeParcelId).catch(() => undefined);
       setMachinePreview(null);
       setMsg(`${machineVariant(type, tier).label} acheté`);
     } catch (e) {
@@ -6048,8 +6332,8 @@ export function App() {
       });
       flashToast(`${r.label} · palier ${r.tier} — ${r.cost.toLocaleString("fr-FR")} €`);
       setMachinePreview(null);
-      await refreshPlayer();
-      if (activeParcelId) await loadParcel(activeParcelId);
+      await refreshPlayer().catch(() => undefined);
+      if (activeParcelId) await loadParcel(activeParcelId).catch(() => undefined);
     } catch (e) {
       flashToast(e instanceof Error ? e.message : String(e), true);
     } finally {
@@ -6067,8 +6351,8 @@ export function App() {
         { method: "POST", body: JSON.stringify({ userId: player.id }) },
       );
       flashToast(`Niveau ${r.building.level} · ${r.levelName} — ${r.cost} €`);
-      await refreshPlayer();
-      if (activeParcelId) await loadParcel(activeParcelId);
+      await refreshPlayer().catch(() => undefined);
+      if (activeParcelId) await loadParcel(activeParcelId).catch(() => undefined);
     } catch (e) {
       flashToast(e instanceof Error ? e.message : String(e), true);
     } finally {
@@ -6099,7 +6383,7 @@ export function App() {
        * avec l'achat. On le prévient à la seconde où il dépasse.
        */
       if (r.crowding) flashToast(r.crowding, "warn");
-      await refreshPlayer();
+      await refreshPlayer().catch(() => undefined);
       if (activeParcelId) await loadLivestock(activeParcelId);
     } catch (e) {
       flashToast(e instanceof Error ? e.message : String(e), true);
@@ -6170,7 +6454,7 @@ export function App() {
       });
       flashToast(`Objectif tenu · +${r.reward.crd} € · +${r.reward.xp} XP`);
       jouerSon("piece");
-      await refreshPlayer();
+      await refreshPlayer().catch(() => undefined);
       await loadQuests();
     } catch (e) {
       flashToast(e instanceof Error ? e.message : String(e), true);
@@ -6302,7 +6586,7 @@ export function App() {
                 ? "Ensilage"
                 : "Foin";
       flashToast(`${label} distribué · ${tons.toFixed(1)} t · ${r.units} kg`);
-      await refreshPlayer();
+      await refreshPlayer().catch(() => undefined);
       if (activeParcelId) await loadLivestock(activeParcelId);
     } catch (e) {
       flashToast(e instanceof Error ? e.message : String(e), true);
@@ -6320,7 +6604,7 @@ export function App() {
         body: JSON.stringify({ userId: player.id }),
       });
       flashToast(`Traite : ${r.litres} L au silo`);
-      await refreshPlayer();
+      await refreshPlayer().catch(() => undefined);
       if (activeParcelId) await loadLivestock(activeParcelId);
     } catch (e) {
       flashToast(e instanceof Error ? e.message : String(e), true);
@@ -6348,7 +6632,7 @@ export function App() {
       const ou = r.housing === "OUTSIDE" ? "Bêtes sorties" : "Bêtes rentrées";
       const temp = r.tempC !== null ? ` · ${r.tempC} °C` : "";
       flashToast(r.warning ? `${ou}${temp} — ${r.warning}` : `${ou}${temp}`, r.warning ? "warn" : false);
-      await refreshPlayer();
+      await refreshPlayer().catch(() => undefined);
       if (activeParcelId) loadLivestock(activeParcelId);
     } catch (e) {
       flashToast(e instanceof Error ? e.message : String(e), true);
@@ -6372,7 +6656,7 @@ export function App() {
         { method: "POST", body: JSON.stringify({ userId: player.id }) },
       );
       flashToast(`Fumier vendu au voisin · ${r.tons.toFixed(2)} t · +${r.proceeds} €`);
-      await refreshPlayer();
+      await refreshPlayer().catch(() => undefined);
       if (activeParcelId) await loadLivestock(activeParcelId);
     } catch (e) {
       flashToast(e instanceof Error ? e.message : String(e), true);
@@ -6390,7 +6674,7 @@ export function App() {
         body: JSON.stringify({ userId: player.id }),
       });
       flashToast(`Œufs : ${r.crates} caisse(s) au stock`);
-      await refreshPlayer();
+      await refreshPlayer().catch(() => undefined);
       if (activeParcelId) await loadLivestock(activeParcelId);
     } catch (e) {
       flashToast(e instanceof Error ? e.message : String(e), true);
@@ -6408,7 +6692,7 @@ export function App() {
         body: JSON.stringify({ userId: player.id }),
       });
       flashToast(`Tonte : ${r.tons.toFixed(3)} t de laine`);
-      await refreshPlayer();
+      await refreshPlayer().catch(() => undefined);
       if (activeParcelId) await loadLivestock(activeParcelId);
     } catch (e) {
       flashToast(e instanceof Error ? e.message : String(e), true);
@@ -6430,7 +6714,7 @@ export function App() {
       });
       flashToast(`${r.employee.name} embauché(e) · ${r.employee.salaire} € par jour de jeu`);
       await loadStaff();
-      await refreshPlayer();
+      await refreshPlayer().catch(() => undefined);
     } catch (e) {
       flashToast(e instanceof Error ? e.message : String(e), true);
     } finally {
@@ -6495,7 +6779,7 @@ export function App() {
         { method: "POST", body: JSON.stringify({ userId: player.id, count }) },
       );
       flashToast(`Abattu · ${r.kg} kg de viande · maturité ${r.maturity} %`);
-      await refreshPlayer();
+      await refreshPlayer().catch(() => undefined);
       if (activeParcelId) await loadLivestock(activeParcelId);
     } catch (e) {
       flashToast(e instanceof Error ? e.message : String(e), true);
@@ -6544,9 +6828,9 @@ export function App() {
         body: JSON.stringify({ userId: player.id, priceCrd }),
       });
       flashToast(`${label} en vente · ${priceCrd} €`);
-      await refreshPlayer();
+      await refreshPlayer().catch(() => undefined);
       await loadMachineListings();
-      if (activeParcelId) await loadParcel(activeParcelId);
+      if (activeParcelId) await loadParcel(activeParcelId).catch(() => undefined);
     } catch (e) {
       flashToast(e instanceof Error ? e.message : String(e), true);
     } finally {
@@ -6591,9 +6875,9 @@ export function App() {
         body: JSON.stringify({ userId: player.id }),
       });
       flashToast(`${label} acheté d’occasion`);
-      await refreshPlayer();
+      await refreshPlayer().catch(() => undefined);
       await loadMachineListings();
-      if (activeParcelId) await loadParcel(activeParcelId);
+      if (activeParcelId) await loadParcel(activeParcelId).catch(() => undefined);
     } catch (e) {
       flashToast(e instanceof Error ? e.message : String(e), true);
     } finally {
@@ -6610,9 +6894,9 @@ export function App() {
         body: JSON.stringify({ userId: player.id }),
       });
       flashToast("Annonce retirée");
-      await refreshPlayer();
+      await refreshPlayer().catch(() => undefined);
       await loadMachineListings();
-      if (activeParcelId) await loadParcel(activeParcelId);
+      if (activeParcelId) await loadParcel(activeParcelId).catch(() => undefined);
     } catch (e) {
       flashToast(e instanceof Error ? e.message : String(e), true);
     } finally {
@@ -6630,8 +6914,8 @@ export function App() {
         body: JSON.stringify({ userId: player.id }),
       });
       flashToast(`${label} vendu · +${r.value} €`);
-      await refreshPlayer();
-      if (activeParcelId) await loadParcel(activeParcelId);
+      await refreshPlayer().catch(() => undefined);
+      if (activeParcelId) await loadParcel(activeParcelId).catch(() => undefined);
     } catch (e) {
       flashToast(e instanceof Error ? e.message : String(e), true);
     } finally {
@@ -6668,7 +6952,7 @@ export function App() {
       });
       flashToast(`${label} tourné d'un quart`);
       jouerSon("porte");
-      if (activeParcelId) await loadParcel(activeParcelId);
+      if (activeParcelId) await loadParcel(activeParcelId).catch(() => undefined);
     } catch (e) {
       flashToast(e instanceof Error ? e.message : String(e), true);
     } finally {
@@ -6721,8 +7005,8 @@ export function App() {
       flashToast(r.cost > 0 ? `${nom} déplacé · −${r.cost} €` : `${nom} déplacé`);
       playUiSound("place");
       cancelMoveBuilding();
-      await refreshPlayer();
-      await loadParcel(activeParcelId);
+      await refreshPlayer().catch(() => undefined);
+      await loadParcel(activeParcelId).catch(() => undefined);
     } catch (e) {
       flashToast(e instanceof Error ? e.message : String(e), true);
     } finally {
@@ -6750,8 +7034,8 @@ export function App() {
       flashToast(`${def.name} bâti · −${def.cost} €`);
       jouerSon("construction");
       setPendingBuild(null);
-      await refreshPlayer();
-      await loadParcel(activeParcelId);
+      await refreshPlayer().catch(() => undefined);
+      await loadParcel(activeParcelId).catch(() => undefined);
     } catch (e) {
       flashToast(e instanceof Error ? e.message : String(e), true);
     } finally {
@@ -6769,8 +7053,8 @@ export function App() {
         body: JSON.stringify({ userId: player.id }),
       });
       flashToast(`${label} démoli · +${r.value} €`);
-      await refreshPlayer();
-      if (activeParcelId) await loadParcel(activeParcelId);
+      await refreshPlayer().catch(() => undefined);
+      if (activeParcelId) await loadParcel(activeParcelId).catch(() => undefined);
     } catch (e) {
       flashToast(e instanceof Error ? e.message : String(e), true);
     } finally {
@@ -6787,7 +7071,7 @@ export function App() {
         method: "POST",
         body: JSON.stringify({ userId: player.id, extent }),
       });
-      await refreshPlayer();
+      await refreshPlayer().catch(() => undefined);
       setMsg(
         extent === "half"
           ? `Rafistolé → ${r.condition.toFixed(0)}% (−${r.cost} €)`
@@ -6826,7 +7110,7 @@ export function App() {
         setMsg(`Réparé → ${r.condition.toFixed(0)}% (−${r.cost} €)`);
       }
       setCare(null);
-      await refreshPlayer();
+      await refreshPlayer().catch(() => undefined);
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e));
       flashToast(e instanceof Error ? e.message : String(e), true);
@@ -7121,10 +7405,10 @@ export function App() {
           <Suspense fallback={<SceneLoading label="Chargement de la ferme…" />}>
             <IsoFarmView
               key={`qualite-${qualiteVue}`}
-              parcelId={activeParcelId ?? ""}
+              parcelId={parcelleDeVue ?? ""}
               controle={vueControle}
               onEgare={setVueEgaree}
-              voisinage={voisinage}
+              voisinage={voisinageVue}
               quartTrame={quartTrame}
               /*
                * Cliquer sur sa propre parcelle y emmène — le bouton devient
@@ -7187,21 +7471,28 @@ export function App() {
               onDecoPoser={poserDeco}
               onDecoToucher={(id) => setDecoSel(id)}
               onDecoRaison={setDecoRaison}
-              gridW={gw}
-              gridH={gh}
-              cells={grid}
-              buildings={parcel.buildings ?? []}
-              cellSims={parcelDetail?.cellSims ?? []}
-              selected={selectedCells}
-              hoverCell={hoverCell}
-              previewBuilding={previewBuilding}
-              pulseCells={pulseCells}
+              gridW={vueComposee?.gridW ?? gw}
+              gridH={vueComposee?.gridH ?? gh}
+              cells={vueComposee?.cells ?? grid}
+              buildings={vueComposee?.buildings ?? parcel.buildings ?? []}
+              cellSims={vueComposee?.sims ?? parcelDetail?.cellSims ?? []}
+              selected={selectionVue}
+              hoverCell={survolVue ?? (hoverCell ? enVue([hoverCell])[0] : hoverCell)}
+              previewBuilding={
+                previewBuilding
+                  ? { ...previewBuilding, originX: previewBuilding.originX + decalActif.dx, originY: previewBuilding.originY + decalActif.dy }
+                  : previewBuilding
+              }
+              pulseCells={enVue(pulseCells)}
               /* La vue ne montre qu'un champ : elle ne reçoit donc que
                  l'engin qui y travaille. Les autres roulent sans être
                  dessinés, et réapparaissent quand on revient sur leur
                  parcelle. */
-              activeWork={activeWorks.find((w) => w.parcelId === activeParcelId) ?? null}
-              grazing={grazingHerds}
+              activeWork={(() => {
+                const w = activeWorks.find((x) => x.parcelId === activeParcelId);
+                return w ? { ...w, cells: enVue(w.cells) } : null;
+              })()}
+              grazing={troupeauxVue}
               manurePiles={barns.flatMap((barn) => {
                 const b = (parcel?.buildings ?? []).find((x) => x.id === barn.buildingId);
                 const fill = barn.herd?.manureFill ?? 0;
@@ -7210,8 +7501,8 @@ export function App() {
                 return [
                   {
                     buildingId: b.id,
-                    originX: b.originX,
-                    originY: b.originY,
+                    originX: b.originX + decalActif.dx,
+                    originY: b.originY + decalActif.dy,
                     w: def.w,
                     h: def.h,
                     fill,
@@ -7227,8 +7518,8 @@ export function App() {
                 if (barn.herd.canCollectEggs) {
                   out.push({
                     kind: "eggs",
-                    originX: b.originX,
-                    originY: b.originY,
+                    originX: b.originX + decalActif.dx,
+                    originY: b.originY + decalActif.dy,
                     w: def.w,
                     h: def.h,
                   });
@@ -7236,8 +7527,8 @@ export function App() {
                 if (barn.herd.canShear) {
                   out.push({
                     kind: "wool",
-                    originX: b.originX,
-                    originY: b.originY,
+                    originX: b.originX + decalActif.dx,
+                    originY: b.originY + decalActif.dy,
                     w: def.w,
                     h: def.h,
                   });
@@ -7289,19 +7580,29 @@ export function App() {
               // L'aperçu part toujours de la sélection **d'avant le geste** :
               // sinon un tracé en mode « retirer » mangerait sa propre trace au
               // fur et à mesure, et un tracé additif se dédoublerait.
-              onStrokePreview={(cells, mods) => {
+              onStrokePreview={(vues, mods) => {
                 if (construction) {
-                  setApercuTerrain(cells);
+                  setApercuTerrain(decaler(vues, -decalActif.dx, -decalActif.dy));
                   return;
                 }
+                const cells = casesDuTrace(vues);
                 setSelectedCells(applySelection(strokeBase.current, surChamps(etaler(cells)), mods.mode));
               }}
-              onStrokeSelect={(cells, mods) => {
+              onStrokeSelect={(vues, mods) => {
                 if (construction) {
-                  if (armeTracable) void tracerObjets(cells);
-                  else void peindreTerrain(cells);
+                  const premiere = vues[0];
+                  const cible = premiere ? parcelleDeConstruction(premiere.x, premiere.y) : null;
+                  const m = (cible && morceaux?.find((x) => x.id === cible.id)) || decalActif;
+                  const cells = decaler(vues, -m.dx, -m.dy);
+                  if (cible?.id && cible.id !== activeParcelId) {
+                    gesteApresBascule.current = { parcelId: cible.id, x: cible.x, y: cible.y, mods, trace: cells };
+                    prendreParcelle(cible.id);
+                    return;
+                  }
+                  void finirTraceConstruction(cells);
                   return;
                 }
+                const cells = casesDuTrace(vues);
                 const next = applySelection(
                   strokeBase.current,
                   surChamps(etaler(cells)),
@@ -7313,24 +7614,55 @@ export function App() {
               }}
               onWorkStroke={(cells) => {
                 if (busy) return;
-                void runWorkOnCells(cells);
+                void runWorkOnCells(decaler(cells, -decalActif.dx, -decalActif.dy));
               }}
               supplies={supplies}
               onCollectSupply={(id) => void collectSupply(id)}
-              hauls={hauls}
-              onCellClick={(x, y, mods, frac) =>
-                construction ? cliqueConstruction(x, y, mods, frac) : void applyToolOnCell(x, y, mods)
-              }
-              onCellHover={setHoverCell}
-              onCellContext={openCellMenu}
-              bornes={domaine?.bornes ?? null}
-              amenagements={amenagements}
+              hauls={enVue(hauls)}
+              onCellClick={(gx, gy, mods, frac) => {
+                if (construction) {
+                  // Une case d'une autre parcelle, ou la campagne (qui est celle
+                  // du siège) : cette parcelle prend la main, puis le clic part.
+                  const cible = parcelleDeConstruction(gx, gy);
+                  if (cible.id && cible.id !== activeParcelId) {
+                    gesteApresBascule.current = { parcelId: cible.id, x: cible.x, y: cible.y, mods, frac, construction: true };
+                    prendreParcelle(cible.id);
+                    return;
+                  }
+                  void cliqueConstruction(cible.x, cible.y, mods, frac);
+                  return;
+                }
+                const loc = caseLocale(gx, gy);
+                if (loc.id && loc.id !== activeParcelId) {
+                  // Une autre de ses parcelles : elle prend la main, et le geste
+                  // part dès que ses cases sont lues (souvent tout de suite).
+                  gesteApresBascule.current = { parcelId: loc.id, x: loc.x, y: loc.y, mods };
+                  prendreParcelle(loc.id);
+                  return;
+                }
+                void applyToolOnCell(loc.x, loc.y, mods);
+              }}
+              onCellHover={(c) => {
+                // Le survol s'allume sur toutes ses parcelles, pas seulement
+                // l'active : c'est la case qu'on va toucher.
+                setSurvolVue(composee && c ? { x: c.x, y: c.y } : null);
+                if (!c) return setHoverCell(null);
+                const loc = caseLocale(c.x, c.y);
+                setHoverCell(loc.id === activeParcelId ? { ...c, x: loc.x, y: loc.y } : null);
+              }}
+              onCellContext={(c, ecran) => {
+                const loc = caseLocale(c.x, c.y);
+                if (loc.id === activeParcelId) openCellMenu({ x: loc.x, y: loc.y }, ecran);
+              }}
+              bornes={vueComposee?.bornes ?? domaine?.bornes ?? null}
+              fricheDans={vueComposee?.fricheDans ?? null}
+              amenagements={vueComposee?.amenagements ?? amenagements}
               floraison={(domaine?.biodiversite?.faune.POLLINISATEURS ?? 0) / 100}
               faune={domaine?.biodiversite?.faune}
-              campagne={campagneTerrain}
+              campagne={vueComposee ? campagneDuSiege : campagneTerrain}
               onCampagneBloquee={setCampagneBloquee}
               onCampagneEnfouie={rendreCampagneEnfouie}
-              construction={vueConstruction?.etat ?? null}
+              construction={decalerConstruction(vueConstruction?.etat ?? null, decalActif.dx, decalActif.dy)}
             />
           </Suspense>
         ) : (
@@ -7541,7 +7873,13 @@ export function App() {
             fenêtre — un achat au marché — et doit se lire par-dessus elle. */}
         {(msg || err) && (
           <Portail>
-            <div key={toastTick} className={`toast ${err ? "bad" : toastTone}`} role="status">
+            <div
+              key={err ? `e-${err}` : toastTick}
+              className={`toast ${err ? "bad long" : toastTone}`}
+              role="status"
+              // Un toucher le referme : on n'attend pas qu'une erreur lue s'efface.
+              onClick={() => (err ? setErr(null) : setMsg(null))}
+            >
               <span>{err ?? msg}</span>
               <i className="toast-bar" />
             </div>
@@ -7551,7 +7889,7 @@ export function App() {
 
       {/* Le bilan d'absence annonce parfois huit cultures perdues : il mérite
           d'être lu, donc acquitté, plutôt que de flotter sur la ferme. */}
-      {resumeBanner && !err && (
+      {resumeBanner && (
         <Portail>
           <div className="resume-backdrop" role="dialog" aria-modal="true">
             <div className="resume-card glass">

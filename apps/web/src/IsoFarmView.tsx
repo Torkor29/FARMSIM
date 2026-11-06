@@ -375,6 +375,15 @@ type Props = {
    * négatives — la marge ouest et nord.
    */
   bornes?: BornesDomaine | null;
+  /**
+   * Où une case absente est de la friche.
+   *
+   * Toutes ses parcelles sont dessinées ensemble : les bornes couvrent alors
+   * le rectangle qui les englobe, et ce qui sépare deux parcelles n'est pas de
+   * la friche à acheter mais le paysage. Hors de ces bornes, une case absente
+   * ne se dessine pas.
+   */
+  fricheDans?: BornesDomaine | null;
   /** Le décor posé sur le domaine. */
   amenagements?: ObjetPose[];
   /** La floraison de la réserve, 0 à 1 : elle suit les pollinisateurs. */
@@ -1196,6 +1205,7 @@ export function IsoFarmView({
   gridW,
   gridH,
   bornes = null,
+  fricheDans = null,
   amenagements = [],
   floraison = 0,
   faune = FAUNE_VIDE,
@@ -1381,6 +1391,7 @@ export function IsoFarmView({
     gridW,
     gridH,
     bornes,
+    fricheDans,
     amenagements,
     floraison,
     faune,
@@ -1411,6 +1422,7 @@ export function IsoFarmView({
     gridW,
     gridH,
     bornes,
+    fricheDans,
     amenagements,
     floraison,
     faune,
@@ -1783,6 +1795,8 @@ export function IsoFarmView({
     world.add(grazeGroup);
     let grazeIdKey = "";
     let grazeOutKey = "";
+    let troupeauxVus: unknown = null;
+    const clesTroupeaux = { id: "", out: "" };
     const cowWalkers: {
       mesh: THREE.Group;
       /** Place à l'intérieur du bâtiment : la bête y est masquée */
@@ -2531,6 +2545,17 @@ export function IsoFarmView({
     }
 
     function layout() {
+      const debutLayout = performance.now();
+      try {
+        layoutCorps();
+      } finally {
+        const w = window as unknown as { __layouts?: { n: number; ms: number[] } };
+        w.__layouts ??= { n: 0, ms: [] };
+        w.__layouts.n++;
+        w.__layouts.ms.push(Math.round(performance.now() - debutLayout));
+      }
+    }
+    function layoutCorps() {
       grazeIdKey = "";
       grazeOutKey = "";
       const cropStalks: {
@@ -2779,6 +2804,14 @@ export function IsoFarmView({
            */
           emprise: Math.max(gw, gh) * step + TALUS_PARCELLE,
           ile: { x: ileMonde.x, z: ileMonde.z, w: ileMonde.w + TALUS_PARCELLE, d: ileMonde.d + TALUS_PARCELLE },
+          iles: dataRef.current.fricheDans
+            ? rectanglesDeCases(dataRef.current.cells).map((r) => ({
+                x: ox + ((r.x0 + r.x1) / 2) * step,
+                z: oz + ((r.y0 + r.y1) / 2) * step,
+                w: (r.x1 - r.x0 + 1) * step + TALUS_PARCELLE,
+                d: (r.y1 - r.y0 + 1) * step + TALUS_PARCELLE,
+              }))
+            : undefined,
           pasCase: step,
           cases: Math.max(gw, gh),
           chantiers,
@@ -3006,6 +3039,8 @@ export function IsoFarmView({
           const cell = parCle.get(key(x, y));
           const { px, pz } = cellWorldPos(x, y);
           if (!cell) {
+            const fd = dataRef.current.fricheDans;
+            if (fd && (x < fd.minX || x >= fd.maxX || y < fd.minY || y >= fd.maxY)) continue;
             // La friche : de l'herbe folle, à acheter.
             fricheCles.add(key(x, y));
             aPoser.push({ x, y, px, pz, couleur: (x + y) % 2 === 0 ? FRICHE : FRICHE_SOMBRE, labour: false, choisie: false });
@@ -4258,6 +4293,8 @@ export function IsoFarmView({
         }
         mesh.material = copie;
       });
+      // Les matières d'origine sont propres à ce rig (créées pour lui) : on
+      // les libère, les copies partent avec le fantôme.
       for (const m of remplacees.keys()) m.dispose();
       ghost.group.scale.setScalar(cellSize);
       ghost.group.position.set(centerX, MACHINE_GROUND, centerZ);
@@ -4414,10 +4451,17 @@ export function IsoFarmView({
 
       // Troupeaux : deux poses, et une vraie marche entre la porte et le pré.
       const herds = dataRef.current.grazing ?? [];
-      const nextIdKey = herds
-        .map((h) => `${h.buildingId}:${h.animals}:${h.kind ?? "COW"}:${h.sheared ? 1 : 0}`)
-        .join("|");
-      const nextOutKey = herds.map((h) => `${h.buildingId}:${h.out ? 1 : 0}`).join("|");
+      // Les clés ne se refont que si la liste a changé : les bâtir à chaque
+      // image nourrissait le ramasse-miettes, d'où des micro-saccades.
+      if (herds !== troupeauxVus) {
+        troupeauxVus = herds;
+        clesTroupeaux.id = herds
+          .map((h) => `${h.buildingId}:${h.animals}:${h.kind ?? "COW"}:${h.sheared ? 1 : 0}`)
+          .join("|");
+        clesTroupeaux.out = herds.map((h) => `${h.buildingId}:${h.out ? 1 : 0}`).join("|");
+      }
+      const nextIdKey = clesTroupeaux.id;
+      const nextOutKey = clesTroupeaux.out;
 
       if (nextIdKey !== grazeIdKey) {
         grazeIdKey = nextIdKey;
@@ -5271,7 +5315,10 @@ export function IsoFarmView({
           )}`,
       )
       .join("|");
-    const sel = selected.map((x) => `${x.x},${x.y}`).join("|");
+    // La sélection n'en fait pas partie : elle se peint à chaque image depuis
+    // `dataRef` (voir `dalles.animer`). La compter ici reconstruisait toute la
+    // scène — toutes les parcelles, plantes et bâtiments — à chaque case
+    // touchée, et c'est ce qu'on voyait « charger » sous le doigt.
     const w = workers.map((x) => x.id).join("|");
     // Le parc fait partie du décor : une machine achetée doit apparaître sur la
     // cour sans attendre qu'une case du champ change.
@@ -5282,10 +5329,12 @@ export function IsoFarmView({
     // ici, la campagne resterait le décor tiré au sort jusqu'au prochain coup
     // de bêche du joueur.
     const v = (voisinage ?? [])
-      .map((x) => `${x.col},${x.rang}:${x.culture ?? "-"}:${x.stade ?? "-"}:${x.statut}`)
+      .map((x) => `${x.col},${x.rang}:${x.culture ?? "-"}:${x.stade ?? "-"}:${x.statut}:${x.fusionneeDans ?? ""}:${(x.grille ?? []).join("")}`)
       .join("|");
     // Le domaine et son décor font partie de la scène.
-    const dom = bornes ? `${bornes.minX},${bornes.minY},${bornes.maxX},${bornes.maxY}` : "";
+    const dom =
+      (bornes ? `${bornes.minX},${bornes.minY},${bornes.maxX},${bornes.maxY}` : "") +
+      (fricheDans ? `/${fricheDans.minX},${fricheDans.minY},${fricheDans.maxX},${fricheDans.maxY}` : "");
     const am = amenagements.map((x) => `${x.id}:${x.type}:${x.originX},${x.originY}:${x.rotation}`).join("|");
     // La floraison change par paliers : la réserve refleurit quand les pollinisateurs s'installent.
     const fl = Math.round(floraison * 10);
@@ -5293,10 +5342,13 @@ export function IsoFarmView({
     const ca = campagne
       .map((x) => `${x.x},${x.y}:${x.sol}:${x.fleurie ? 1 : 0}:${x.niveau ?? 0}:${x.forme ?? 0}:${x.sol === "BOIS" ? `${x.boiseDepuis ?? ""}:${Math.floor(croissanceBois(x.boiseDepuis ?? null) * 20)}` : ""}`)
       .join("|");
-    return `${gridW}x${gridH}#${dom}#${c}#${b}#${s}#${sel}#${w}#${p}#${v}#${am}#${fl}#${fa}#${ca}`;
-  }, [cells, buildings, cellSims, selected, workers, parked, gridW, gridH, voisinage, bornes, amenagements, floraison, faune, campagne]);
+    return `${gridW}x${gridH}#${dom}#${c}#${b}#${s}#${w}#${p}#${v}#${am}#${fl}#${fa}#${ca}`;
+  }, [cells, buildings, cellSims, workers, parked, gridW, gridH, voisinage, bornes, fricheDans, amenagements, floraison, faune, campagne]);
 
   useEffect(() => {
+    // Pour les essais : les deux dernières signatures, pour voir ce qui a bougé.
+    const w = window as unknown as { __cles?: string[] };
+    w.__cles = [...(w.__cles ?? []).slice(-1), sceneKey];
     layoutRef.current?.();
   }, [sceneKey]);
 
