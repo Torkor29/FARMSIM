@@ -79,7 +79,7 @@ jobs:
       FARMSIM_TEST_PG: postgresql://farmsim:farmsim-local@127.0.0.1:5432/postgres
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       # `pg_dump`, `pg_restore` et `psql` en version 16 : le client livré par
       # défaut sur les exécuteurs GitHub est plus ancien que le serveur, et
@@ -153,7 +153,7 @@ jobs:
     outputs:
       image: ${{ steps.nom.outputs.image }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       # ghcr.io exige un chemin en minuscules ; le compte s'écrit « Torkor29 ».
       - name: Choisir le nom de l'image
@@ -276,7 +276,7 @@ jobs:
       # guillemet, apostrophe ou accent n'ait à être échappé — le script en
       # est plein.
       # ——————————————————————————————————————————————————————————————
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         if: steps.config.outputs.pret == 'oui'
 
       - name: Emporter le script de déploiement
