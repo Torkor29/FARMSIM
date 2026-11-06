@@ -162,7 +162,7 @@ jobs:
           depot="$(echo '${{ github.repository }}' | tr '[:upper:]' '[:lower:]')"
           echo "image=ghcr.io/${depot}" >> "$GITHUB_OUTPUT"
 
-      - uses: docker/setup-buildx-action@v3
+      - uses: docker/setup-buildx-action@v4
 
       - uses: docker/login-action@v3
         with:
