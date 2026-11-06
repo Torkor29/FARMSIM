@@ -11,19 +11,19 @@
   },
   "dependencies": {
     "@farmsim/shared": "workspace:*",
-    "react": "^19.0.0",
-    "react-dom": "^19.0.0",
-    "three": "^0.185.1"
+    "react": "^19.3.1",
+    "react-dom": "^19.3.1",
+    "three": "^0.187.0"
   },
   "devDependencies": {
     "@types/jest": "^29.5.14",
     "@types/node": "^22.10.7",
-    "@types/react": "^19.0.7",
-    "@types/react-dom": "^19.0.3",
-    "@types/three": "^0.185.4",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
+    "@types/three": "^0.187.0",
     "@vitejs/plugin-react": "^4.3.4",
     "jest": "^29.7.0",
-    "ts-jest": "^29.2.5",
+    "ts-jest": "^29.4.15",
     "typescript": "^5.7.3",
     "vite": "^6.0.7"
   }
