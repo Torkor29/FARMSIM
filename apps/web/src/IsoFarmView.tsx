@@ -3198,7 +3198,10 @@ export function IsoFarmView({
         const b = dataRef.current.bornes;
         domaine3d.majTerrain(
           {
-            bornes: b ?? { minX: 0, minY: 0, maxX: gw, maxY: gh },
+            // Toutes ses parcelles dessinées ensemble : les bornes englobent
+            // aussi les chemins et les champs des voisins qui les séparent. La
+            // friche et la limite du domaine restent celles du siège.
+            bornes: dataRef.current.fricheDans ?? b ?? { minX: 0, minY: 0, maxX: gw, maxY: gh },
             cells: cs.map((c) => ({ x: c.x, y: c.y, sol: c.sol ?? "CHAMP", revetement: c.revetement ?? null, kind: c.kind, forme: c.forme ?? 0, niveau: c.niveau ?? 0, boiseDepuis: c.boiseDepuis ?? null, fleurie: c.fleurie ?? false })),
             amenagements: dataRef.current.amenagements,
             floraison: dataRef.current.floraison,
