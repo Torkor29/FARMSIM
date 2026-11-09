@@ -1056,6 +1056,8 @@ export function App() {
     }[]
   >([]);
   /** Retire un chantier de la liste, sans toucher aux autres. */
+  /** Chantiers que l'entreprise a faits à notre place : leur fin ne fait plus rien. */
+  const chantiersRepris = useRef(new Set<string>());
   const clore = useCallback((id: string) => {
     setChantiers((liste) => liste.filter((c) => c.id !== id));
   }, []);
@@ -5219,6 +5221,23 @@ export function App() {
           }),
         },
       );
+      /*
+       * L'entreprise a fait ces cases : notre propre chantier dessus n'a plus
+       * d'objet.
+       *
+       * Lancer un chantier puis appeler l'entreprise dans la seconde laissait
+       * tourner le minuteur du premier jusqu'au bout, sur un champ déjà fait.
+       * On l'annule (le gazole revient à la cuve), son bandeau s'en va, et sa
+       * fin ne déclenchera plus rien.
+       */
+      for (const c of chantiers) {
+        if (c.parcelId !== activeParcelId) continue;
+        if (!c.cells.some((k) => workCells.some((w) => w.x === k.x && w.y === k.y))) continue;
+        chantiersRepris.current.add(c.id);
+        clore(c.id);
+        stopWork(c.id);
+        void api(`/jobs/${c.id}/cancel`, { method: "POST", body: JSON.stringify({ userId: player.id }) }).catch(() => undefined);
+      }
       const tons = r.totalTons ? ` · ${r.totalTons.toFixed(2)} t` : "";
       flashToast(`C’est fait : ${WORK_LABELS[contractorOffer.work]} ×${r.cells}${tons} · −${r.cost} €`);
       setSelectedCells([]);
@@ -5571,6 +5590,11 @@ export function App() {
           { jobMs: chantierOuvert.durationMs - arrivee, delayMs: arrivee },
         );
         await attendreChantier(chantierOuvert.id, chantierOuvert.endsAt);
+        // Repris par l'entreprise pendant l'attente : il n'y a plus rien à faire.
+        if (chantiersRepris.current.has(chantierOuvert.id)) {
+          chantiersRepris.current.delete(chantierOuvert.id);
+          return;
+        }
       }
       if (plantCrop) {
         const crop = plantCrop;
