@@ -116,7 +116,12 @@ type Bucket = {
  * d'appauvrir la forme — un champ moins dru reste un champ, un champ en
  * bâtonnets n'en est plus un.
  */
-export function createCropField(maxCells: number, density = 1): CropField {
+export function createCropField(
+  maxCells: number,
+  density = 1,
+  /** Brins au plus sur tout le champ (voir `eclaircie`). */
+  budget = Number.POSITIVE_INFINITY,
+): CropField {
   const group = new THREE.Group();
   group.name = "crop-field";
   const sowing = Math.max(0.2, Math.min(1, density));
@@ -293,9 +298,20 @@ export function createCropField(maxCells: number, density = 1): CropField {
   const dummy = new THREE.Object3D();
   const color = new THREE.Color();
 
+  /**
+   * Part des brins gardés, pour tenir le budget de l'image.
+   *
+   * Toutes ses parcelles se dessinent maintenant ensemble : six cents cases de
+   * colza et de maïs faisaient plus de quatre cent mille triangles, près de la
+   * moitié de l'image, à redessiner soixante fois par seconde. Au-delà du
+   * budget, chaque case reçoit un peu moins de brins ; vu de la caméra, le
+   * champ reste plein.
+   */
+  let eclaircie = 1;
+
   /** Nombre de brins semés sur une case, peuplement et espèce compris. */
   function plantedOn(cell: CellEntry): number {
-    const perCell = STALKS_PER_CELL * CROP_DENSITY[cell.shape ?? "WHEAT"] * sowing;
+    const perCell = STALKS_PER_CELL * CROP_DENSITY[cell.shape ?? "WHEAT"] * sowing * eclaircie;
     const health = Math.max(0, Math.min(1, cell.density ?? 1));
     return Math.max(5, Math.round(perCell * (0.34 + 0.66 * health)));
   }
@@ -305,6 +321,10 @@ export function createCropField(maxCells: number, density = 1): CropField {
 
     setCells(cells, cellSize) {
       ranges.clear();
+      eclaircie = 1;
+      let total = 0;
+      for (const cell of cells) total += plantedOn(cell);
+      eclaircie = total > budget ? budget / total : 1;
       // Un premier passage compte, un second remplit : c'est ce qui permet de
       // dimensionner chaque lot exactement, sans réserver six fois la place.
       const need = new Map<CropShape, number>();
