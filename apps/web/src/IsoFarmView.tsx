@@ -1490,6 +1490,18 @@ export function IsoFarmView({
     // PCFSoftShadowMap est déprécié depuis r185 : le renderer le remplace de
     // toute façon par PCFShadowMap en émettant un avertissement.
     renderer.shadowMap.type = THREE.PCFShadowMap;
+    /*
+     * Les ombres se recalculent une image sur trois.
+     *
+     * La passe d'ombres redessine toute la scène — toutes les parcelles, tous
+     * les bâtiments — à chaque image : elle doublait le coût d'une image. Le
+     * soleil est fixe, la carte d'ombres ne dépend donc pas de la caméra ;
+     * seuls les engins et les bêtes qui bougent la font changer, et vingt
+     * mises à jour par seconde suffisent à leurs ombres.
+     */
+    renderer.shadowMap.autoUpdate = false;
+    renderer.shadowMap.needsUpdate = true;
+    let imageOmbre = 0;
     el.appendChild(renderer.domElement);
 
     const plowedMap = makeFurrowMap();
@@ -4312,6 +4324,7 @@ export function IsoFarmView({
       quality = next;
       renderer.setPixelRatio(next.pixelRatio);
       renderer.shadowMap.enabled = next.shadows;
+      renderer.shadowMap.needsUpdate = true;
       sun.castShadow = next.shadows;
       scene.traverse((o) => {
         const mats = (o as Partial<THREE.Mesh>).material;
@@ -5200,7 +5213,19 @@ export function IsoFarmView({
         mesh.position.y = TILE_TOP + py + Math.abs(Math.sin(t * (worker.working ? 8 : 2.2))) * (worker.working ? 0.04 : 0.015);
       }
 
+      if (renderer.shadowMap.enabled) {
+        imageOmbre = (imageOmbre + 1) % 3;
+        if (imageOmbre === 0) renderer.shadowMap.needsUpdate = true;
+      }
       renderer.render(scene, camera);
+      // Pour les essais : le coût de l'image (appels de dessin, triangles).
+      (window as unknown as { __rendu?: unknown }).__rendu = {
+        appels: renderer.info.render.calls,
+        triangles: renderer.info.render.triangles,
+        geometries: renderer.info.memory.geometries,
+        ombres: renderer.shadowMap.enabled,
+        resolution: renderer.getPixelRatio(),
+      };
     }
     tick();
 
