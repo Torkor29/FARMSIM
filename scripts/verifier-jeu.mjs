@@ -166,11 +166,31 @@ verifier("changer de parcelle ne reconstruit pas la scène", (await etat()).layo
 verifier("aucun éclair à l'écran", eclairs === 0, `${images.length} images, ${eclairs} éclair(s)`);
 
 /* ---------- Choisir des cases sur une autre parcelle ---------- */
-const cible = autres.find((m) => m.w >= 10) ?? autres[0];
+// Une case nue d'une autre parcelle : semer sur une culture est refusé, à raison.
+let cible = autres[0];
+let caseNue = { x: 2, y: 2 };
+for (const m of autres) {
+  const d = (await j(`/parcels/${m.id}`, null, jeton))[1];
+  const nue = d?.parcel?.cells?.find((c) => c.kind === "EMPTY" && (c.sol ?? "CHAMP") === "CHAMP" && c.x > 0 && c.y > 0);
+  if (nue) {
+    cible = m;
+    caseNue = nue;
+    break;
+  }
+}
 if (MOBILE) await page.locator("button:visible", { hasText: /^Semer$/ }).first().click().catch(() => {});
 else await page.keyboard.press("2");
 await page.waitForTimeout(400);
-await toucher(cible.dx + 2, cible.dy + 2);
+// Une culture de saison, pour que le semis soit possible.
+for (const nom of ["Maïs", "Colza", "Pois", "Radis", "Blé"]) {
+  const b = page.locator("button:visible", { hasText: new RegExp(`^${nom}$`) });
+  if ((await b.count()) && !(await b.first().evaluate((e) => e.className.includes("out-of-season")))) {
+    await b.first().click();
+    break;
+  }
+}
+await page.waitForTimeout(300);
+await toucher(cible.dx + caseNue.x, cible.dy + caseNue.y);
 await page.waitForTimeout(1200);
 const e1 = await etat();
 verifier("le premier toucher retient la case", e1.actif === cible.id && (await retenues()) >= 1, `${await retenues()} case(s)`);
