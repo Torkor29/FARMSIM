@@ -212,8 +212,8 @@ export function creerVoisinDetaille(o: OptionsVoisin): VoisinDetaille {
       // Moitié moins dru que chez soi : on voit ces champs de loin, et trois
       // parcelles au semis plein faisaient à elles seules sept cent mille
       // triangles par image — l'essentiel de « c'est super lent ».
-      // Un voisin se voit de loin : 1 500 brins suffisent à le lire semé.
-      champ = createCropField(indices.length, sobre ? 0.25 : 0.35, sobre ? 800 : 1500);
+      // Un voisin se voit de loin : 800 brins suffisent à le lire semé.
+      champ = createCropField(indices.length, sobre ? 0.25 : 0.35, sobre ? 500 : 800);
       const teinte = couleurChamp(parcelle.culture, parcelle.etat ?? "POUSSE");
       const grand = reel.culture === "MAIZE";
       champ.setCells(

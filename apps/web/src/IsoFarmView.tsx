@@ -1682,8 +1682,8 @@ export function IsoFarmView({
     // la forme du brin : un champ moins dru reste un champ, un champ en
     // bâtonnets n'en est plus un.
     // Le budget de brins tient l'image légère quand toutes les parcelles sont
-    // semées : 5 000 brins au plus (environ 180 000 triangles), 2 500 en sobre.
-    const cropField = createCropField(400, quality.shadows ? 1 : 0.62, quality.shadows ? 5000 : 2500);
+    // semées : 3 500 brins au plus (environ 140 000 triangles), 2 000 en sobre.
+    const cropField = createCropField(400, quality.shadows ? 1 : 0.62, quality.shadows ? 3500 : 2000);
     world.add(cropField.object);
     /**
      * Matériaux de culture indexés par couleur. Les cases ne prennent qu'une
