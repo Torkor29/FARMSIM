@@ -1490,6 +1490,18 @@ export function IsoFarmView({
     // PCFSoftShadowMap est déprécié depuis r185 : le renderer le remplace de
     // toute façon par PCFShadowMap en émettant un avertissement.
     renderer.shadowMap.type = THREE.PCFShadowMap;
+    /*
+     * Les ombres se recalculent une image sur trois.
+     *
+     * La passe d'ombres redessine toute la scène — toutes les parcelles, tous
+     * les bâtiments — à chaque image : elle doublait le coût d'une image. Le
+     * soleil est fixe, la carte d'ombres ne dépend donc pas de la caméra ;
+     * seuls les engins et les bêtes qui bougent la font changer, et vingt
+     * mises à jour par seconde suffisent à leurs ombres.
+     */
+    renderer.shadowMap.autoUpdate = false;
+    renderer.shadowMap.needsUpdate = true;
+    let imageOmbre = 0;
     el.appendChild(renderer.domElement);
 
     const plowedMap = makeFurrowMap();
@@ -1669,7 +1681,10 @@ export function IsoFarmView({
     // Sur une machine qui peine, on éclaircit le semis plutôt que d'appauvrir
     // la forme du brin : un champ moins dru reste un champ, un champ en
     // bâtonnets n'en est plus un.
-    const cropField = createCropField(400, quality.shadows ? 1 : 0.62);
+    // Le budget de brins tient l'image légère quand toutes les parcelles sont
+    // semées : 4 500 brins au plus, 2 500 en sobre. Plus bas, le colza perdait
+    // visiblement ses fleurs (comparé à l'écran, avant et après).
+    const cropField = createCropField(400, quality.shadows ? 1 : 0.62, quality.shadows ? 4500 : 2500);
     world.add(cropField.object);
     /**
      * Matériaux de culture indexés par couleur. Les cases ne prennent qu'une
@@ -3184,7 +3199,10 @@ export function IsoFarmView({
         const b = dataRef.current.bornes;
         domaine3d.majTerrain(
           {
-            bornes: b ?? { minX: 0, minY: 0, maxX: gw, maxY: gh },
+            // Toutes ses parcelles dessinées ensemble : les bornes englobent
+            // aussi les chemins et les champs des voisins qui les séparent. La
+            // friche et la limite du domaine restent celles du siège.
+            bornes: dataRef.current.fricheDans ?? b ?? { minX: 0, minY: 0, maxX: gw, maxY: gh },
             cells: cs.map((c) => ({ x: c.x, y: c.y, sol: c.sol ?? "CHAMP", revetement: c.revetement ?? null, kind: c.kind, forme: c.forme ?? 0, niveau: c.niveau ?? 0, boiseDepuis: c.boiseDepuis ?? null, fleurie: c.fleurie ?? false })),
             amenagements: dataRef.current.amenagements,
             floraison: dataRef.current.floraison,
@@ -4312,6 +4330,7 @@ export function IsoFarmView({
       quality = next;
       renderer.setPixelRatio(next.pixelRatio);
       renderer.shadowMap.enabled = next.shadows;
+      renderer.shadowMap.needsUpdate = true;
       sun.castShadow = next.shadows;
       scene.traverse((o) => {
         const mats = (o as Partial<THREE.Mesh>).material;
@@ -5200,7 +5219,21 @@ export function IsoFarmView({
         mesh.position.y = TILE_TOP + py + Math.abs(Math.sin(t * (worker.working ? 8 : 2.2))) * (worker.working ? 0.04 : 0.015);
       }
 
+      if (renderer.shadowMap.enabled) {
+        imageOmbre = (imageOmbre + 1) % 3;
+        if (imageOmbre === 0) renderer.shadowMap.needsUpdate = true;
+      }
       renderer.render(scene, camera);
+      // Pour les essais : la scène, pour compter ce qui pèse.
+      (window as unknown as { __scene?: unknown }).__scene = scene;
+      // Pour les essais : le coût de l'image (appels de dessin, triangles).
+      (window as unknown as { __rendu?: unknown }).__rendu = {
+        appels: renderer.info.render.calls,
+        triangles: renderer.info.render.triangles,
+        geometries: renderer.info.memory.geometries,
+        ombres: renderer.shadowMap.enabled,
+        resolution: renderer.getPixelRatio(),
+      };
     }
     tick();
 

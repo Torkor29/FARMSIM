@@ -119,3 +119,52 @@ describe("le joueur a le dernier mot sur la qualité", () => {
     expect(APP).toMatch(/key=\{`qualite-\$\{qualiteVue\}`\}/);
   });
 });
+
+/**
+ * Le régulateur descend par marches.
+ *
+ * Il ne descendait qu'en dessous de 25 images par seconde, et d'un coup : un
+ * téléphone à 30 ou 40 images gardait ombres et double résolution.
+ */
+describe("le régulateur d'images", () => {
+  const charger = async () => {
+    let mod: typeof import("../render-quality");
+    await jest.isolateModulesAsync(async () => {
+      mod = await import("../render-quality");
+    });
+    return mod!;
+  };
+  const nourrir = (sample: (d: number) => void, ms: number, n = 110) => {
+    for (let i = 0; i < n; i++) sample(ms);
+  };
+
+  it("ne touche à rien quand tout est fluide", async () => {
+    const { makeFrameGovernor } = await charger();
+    const recus: unknown[] = [];
+    const g = makeFrameGovernor((q) => recus.push(q));
+    nourrir(g, 16, 400);
+    expect(recus).toHaveLength(0);
+  });
+
+  it("baisse d'abord la résolution, puis les ombres, puis passe en sobre", async () => {
+    const { makeFrameGovernor } = await charger();
+    const recus: { shadows: boolean; pixelRatio: number; maxFps: number }[] = [];
+    const g = makeFrameGovernor((q) => recus.push(q));
+    nourrir(g, 28);
+    expect(recus[0]).toMatchObject({ shadows: true });
+    expect(recus[0]!.pixelRatio).toBeLessThanOrEqual(1.5);
+    nourrir(g, 28);
+    expect(recus[1]).toMatchObject({ shadows: false });
+    nourrir(g, 28);
+    expect(recus[2]).toMatchObject({ shadows: false, pixelRatio: 1, maxFps: 30 });
+  });
+
+  it("passe directement en sobre quand c'est très lent", async () => {
+    const { makeFrameGovernor } = await charger();
+    const recus: { maxFps: number }[] = [];
+    const g = makeFrameGovernor((q) => recus.push(q));
+    nourrir(g, 50);
+    expect(recus).toHaveLength(1);
+    expect(recus[0]!.maxFps).toBe(30);
+  });
+});
