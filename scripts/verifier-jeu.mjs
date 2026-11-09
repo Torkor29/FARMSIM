@@ -58,13 +58,21 @@ if (s >= 300) throw new Error(`inscription refusée : ${JSON.stringify(inscrit)}
 const jeton = inscrit.token;
 const joueur = inscrit.player.id;
 const monde = (await j("/world/KOR"))[1];
+// Une parcelle libre au milieu d'une région, pour avoir des voisines à acheter.
+// On essaie jusqu'à ce que l'installation prenne : une autre vérification a pu
+// prendre la même entre la lecture et la demande.
 let siege = null;
-for (const r of monde.regions.filter((r) => r.starterEligible)) {
-  siege = r.parcels.find((p) => !p.farmId && !p.owner && !p.npc && p.mapX > 0 && p.mapY > 0 && p.mapX < r.mapW - 1 && p.mapY < r.mapH - 1);
-  if (siege) break;
+const candidates = monde.regions
+  .filter((r) => r.starterEligible)
+  .flatMap((r) => r.parcels.filter((p) => !p.taken && !p.farmId && p.mapX > 0 && p.mapY > 0 && p.mapX < r.mapW - 1 && p.mapY < r.mapH - 1));
+for (const p of candidates) {
+  const [code] = await j("/world/claim", { parcelId: p.id, specialization: "CEREALIER" }, jeton);
+  if (code < 300) {
+    siege = p;
+    break;
+  }
 }
-if (!siege) throw new Error("aucune parcelle de départ libre");
-await j("/world/claim", { parcelId: siege.id, specialization: "CEREALIER" }, jeton);
+if (!siege) throw new Error("aucune parcelle de départ n'a pu être prise");
 await j("/dev/grant", { userId: joueur, crd: 5_000_000, level: 30 }, jeton);
 const voisinage = (await j(`/parcels/${siege.id}/voisinage`, null, jeton))[1];
 for (const p of voisinage.parcelles.filter((q) => q.achetable).slice(0, 3)) {
