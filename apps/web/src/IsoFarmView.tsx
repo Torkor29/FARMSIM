@@ -5218,6 +5218,8 @@ export function IsoFarmView({
         if (imageOmbre === 0) renderer.shadowMap.needsUpdate = true;
       }
       renderer.render(scene, camera);
+      // Pour les essais : la scène, pour compter ce qui pèse.
+      (window as unknown as { __scene?: unknown }).__scene = scene;
       // Pour les essais : le coût de l'image (appels de dessin, triangles).
       (window as unknown as { __rendu?: unknown }).__rendu = {
         appels: renderer.info.render.calls,

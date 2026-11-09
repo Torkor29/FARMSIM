@@ -115,7 +115,17 @@ verifier("la ferme s'ouvre", e0.composee === true, `${((Date.now() - debut) / 10
 verifier("les quatre parcelles sont dessinées ensemble", (e0.morceaux ?? []).length === 4, `${e0.cases} cases`);
 await page.screenshot({ path: `${SORTIE}/1-ferme.png` });
 
-const ecran = (x, y) => page.evaluate(([a, b]) => window.__caseEcran(a, b), [x, y]);
+const ecran = async (x, y) => {
+  // La vue doit être montée : si elle a disparu, c'est un défaut à montrer.
+  for (let i = 0; i < 40 && !(await page.evaluate(() => typeof window.__caseEcran === "function")); i++) {
+    if (i === 0) {
+      await page.screenshot({ path: `${SORTIE}/vue-absente.png` });
+      verifier("la vue 3D reste montée", false, (await page.evaluate(() => document.body.innerText.slice(0, 160))).replace(/\s+/g, " "));
+    }
+    await page.waitForTimeout(500);
+  }
+  return page.evaluate(([a, b]) => window.__caseEcran(a, b), [x, y]);
+};
 const toucher = async (x, y) => {
   const p = await ecran(x, y);
   if (MOBILE) await page.touchscreen.tap(p.x, p.y);
