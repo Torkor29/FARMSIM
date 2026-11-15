@@ -144,7 +144,9 @@ export function creerVieCampagne(o: {
     dummy.rotation.set(0, cap, 0);
     // Le battement : l'échelle verticale passe par zéro, les ailes montent
     // et descendent autour du corps.
-    dummy.scale.set(1, Math.sin(t * cadence + i * 1.7) * 1.6, 1);
+    // Vus de la caméra du jeu, des oiseaux à leur taille réelle sont des
+    // points : on les grossit, comme tout ce qui doit se lire de loin.
+    dummy.scale.set(1.9, Math.sin(t * cadence + i * 1.7) * 3, 1.9);
     dummy.updateMatrix();
     oiseaux.setMatrixAt(i, dummy.matrix);
   }
