@@ -257,6 +257,37 @@ const API = "/api";
 /** Durée d'affichage d'un message passager — charte §8.1 #17. */
 const TOAST_MS = 3200;
 
+/**
+ * Ce que dit le décor quand on le touche.
+ *
+ * L'étang, le verger, le rucher et les arbres ne servaient à rien d'autre
+ * qu'à être regardés ; les toucher ne faisait rien. Ils ne changent toujours
+ * rien au jeu, mais ils répondent — quelques phrases qui tournent, pour ne
+ * pas lire deux fois la même.
+ */
+const CURIOSITES: Partial<Record<string, readonly string[]>> = {
+  ETANG: [
+    "L'étang du village. Les grenouilles y chantent dès que le soir tombe.",
+    "Une carpe saute, et l'eau se referme.",
+    "On dit que le vieux Marcel y pêche depuis quarante ans, sans jamais rien prendre.",
+  ],
+  VERGER: [
+    "Le verger communal. Les pommes sont à qui les ramasse.",
+    "Les étourneaux s'envolent des pommiers.",
+    "Ça sent la pomme mûre et l'herbe coupée.",
+  ],
+  RUCHER: [
+    "Le rucher du village. Les abeilles butinent jusqu'à vos champs de colza.",
+    "Ça bourdonne. Mieux vaut ne pas s'approcher davantage.",
+    "Le miel de lavande d'ici se vend au marché du dimanche.",
+  ],
+  ARBRE: [
+    "Les oiseaux s'envolent.",
+    "Un vieux chêne. Il était là avant la ferme.",
+    "Une volée de moineaux quitte les branches.",
+  ],
+};
+
 type SessionResume = {
   awayMs: number;
   awayLabel: string;
@@ -7470,6 +7501,13 @@ export function App() {
                   // bourse des chantiers l'a absorbé.
                   setSheet(null);
                   setShowEta(true);
+                } else {
+                  // Le décor répond : un mot, un son, des oiseaux qui s'envolent.
+                  const mots = CURIOSITES[genre];
+                  if (mots) {
+                    jouerSon(genre === "ETANG" ? "eau" : genre === "RUCHER" ? "decouverte" : "plante");
+                    flashToast(mots[Math.floor(Math.random() * mots.length)]!);
+                  }
                 }
               }}
               onOwnedCellClick={(parcelId, x, y, mods) => {
