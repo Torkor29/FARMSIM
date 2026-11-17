@@ -82,7 +82,7 @@ export function creerVieCampagne(o: {
 
   /* —— Les oiseaux —— */
   const geoOiseau = geometrieOiseau();
-  const matOiseau = new THREE.MeshBasicMaterial({ color: 0x2f3338, side: THREE.DoubleSide });
+  const matOiseau = new THREE.MeshBasicMaterial({ color: 0x4a5058, side: THREE.DoubleSide });
   const oiseaux = new THREE.InstancedMesh(geoOiseau, matOiseau, N_OISEAUX);
   oiseaux.name = "vie-oiseaux";
   oiseaux.frustumCulled = false;
@@ -146,7 +146,7 @@ export function creerVieCampagne(o: {
     // et descendent autour du corps.
     // Vus de la caméra du jeu, des oiseaux à leur taille réelle sont des
     // points : on les grossit, comme tout ce qui doit se lire de loin.
-    dummy.scale.set(1.9, Math.sin(t * cadence + i * 1.7) * 3, 1.9);
+    dummy.scale.set(1.4, Math.sin(t * cadence + i * 1.7) * 2.2, 1.4);
     dummy.updateMatrix();
     oiseaux.setMatrixAt(i, dummy.matrix);
   }
