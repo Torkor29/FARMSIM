@@ -3378,7 +3378,8 @@ html.playing .build-confirm { position: fixed; }
     border: 0;
     padding: 0;
     background: rgba(24, 44, 38, 0.28);
-    backdrop-filter: blur(2px);
+    /* Pas de flou : flouter toute la carte 3D derrière un menu coûte cher sur
+       un téléphone, et le navigateur de test la rendait toute blanche. */
     animation: veil-in var(--veil-ms) var(--menu-ease) both;
   }
 
