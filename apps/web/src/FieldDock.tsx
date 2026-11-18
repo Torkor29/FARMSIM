@@ -1,4 +1,4 @@
-import { useLayoutEffect, useRef, useState, type ReactNode } from "react";
+import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import type { ObjectiveView, Season } from "@farmsim/shared";
 import { isFieldWorkTool, isPlantTool, isSoilTool, toolBareVerb, toolVerb, type Tool } from "./tools";
 import { BRUSH_SIZES, RAIL_GROUPS, groupOf, optionsFor } from "./ui/tool-options";
@@ -194,7 +194,11 @@ export function FieldDock({
   }, [tool, optionsOpen]);
 
   const group = groupOf(tool);
-  const options = optionsFor(group, season);
+  /*
+   * Les cultures de saison d'abord : le blé barré en tête de liste était la
+   * première chose qu'on voyait — et celle qu'on ne pouvait pas semer.
+   */
+  const options = [...optionsFor(group, season)].sort((a, b) => Number(!!a.outOfSeason) - Number(!!b.outOfSeason));
   const arme = options.find((o) => o.tool === tool);
   const horsSaison = Boolean(arme?.outOfSeason);
   const plant = isPlantTool(tool);
@@ -265,10 +269,30 @@ export function FieldDock({
   }
   const blocage = raisonDuGrisage();
 
+  /*
+   * En ouvrant « Semer », la culture armée doit pouvoir se semer.
+   *
+   * L'outil gardait la dernière culture choisie, ou le blé par défaut — hors
+   * saison l'été : « Semer Blé ×0 », grisé, dès l'ouverture. On passe à la
+   * première culture de saison, une fois, à l'entrée dans le groupe ; un choix
+   * fait ensuite par le joueur, même barré, est respecté.
+   */
+  const groupeVu = useRef(group);
+  useEffect(() => {
+    const entree = groupeVu.current !== group;
+    groupeVu.current = group;
+    if (!entree || !plant || !horsSaison) return;
+    const saison = options.find((o) => !o.outOfSeason);
+    if (saison) onTool(saison.tool);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [group]);
+
   return (
     <div className="field-dock">
       {chantierBar}
-      <button type="button" className="quest-chip" onClick={onGuide}>
+      {/* Outil ouvert, le bandeau « À faire » se range : il coûtait une
+          rangée de carte de plus, au moment où l'on regarde le champ. */}
+      <button type="button" className={`quest-chip${showTray ? " range" : ""}`} onClick={onGuide}>
         <span className="quest-chip-mark" aria-hidden="true">
           {allGoalsDone ? "★" : "➤"}
         </span>
@@ -328,8 +352,11 @@ export function FieldDock({
               </button>
             )}
 
-            {/* Le pinceau termine la même rangée : sur sa propre ligne il
-                coûtait une deuxième rangée. */}
+          </div>
+
+          <div className="dock-chips dock-chips-end">
+            {/* Le pinceau vit avec l'action : dans la rangée des options, il
+                se perdait au bout d'un défilement. */}
             <span className="dock-choice-group" role="radiogroup" aria-label="Taille du pinceau">
               {BRUSH_SIZES.map((n) => (
                 <button
@@ -345,9 +372,6 @@ export function FieldDock({
                 </button>
               ))}
             </span>
-          </div>
-
-          <div className="dock-chips dock-chips-end">
             {/* Deux options sur dix tenaient dans la rangée dès qu'une action
                 occupait la colonne de droite. Ce bouton la déplie. */}
             {options.length > 0 && (

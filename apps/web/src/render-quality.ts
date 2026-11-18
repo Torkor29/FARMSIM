@@ -145,11 +145,27 @@ export function qualityForContext(gl: WebGLRenderingContext | WebGL2RenderingCon
  * la première image, qui compile les shaders et téléverse les textures.
  */
 export function makeFrameGovernor(onDowngrade: (q: RenderQuality) => void) {
-  const SLOW_FRAME_MS = 40;
+  /*
+   * Trois marches, et non plus une seule.
+   *
+   * Le régulateur ne descendait qu'en dessous de 25 images par seconde, et
+   * d'un coup jusqu'au réglage sobre. Un téléphone qui tournait à 30 ou 40
+   * images — ce qu'on sent comme « pas fluide » — gardait tout : ombres,
+   * double résolution, anticrénelage. On descend maintenant par étapes, en
+   * commençant par ce qui coûte le plus et se voit le moins :
+   *   1. la résolution (×2 → ×1,5) ;
+   *   2. les ombres, et la résolution à ×1,25 ;
+   *   3. le réglage sobre (×1, 30 images par seconde stables).
+   * Chaque marche se juge à nouveau sur une centaine d'images.
+   */
+  const LENT_MS = 22;
+  const TRES_LENT_MS = 34;
   const SAMPLE = 100;
   let average = 16;
   let seen = 0;
+  let marche = 0;
   let done = false;
+  const dpr = typeof window === "undefined" ? 1 : window.devicePixelRatio || 1;
 
   return function sample(deltaMs: number): void {
     if (done) return;
@@ -167,12 +183,23 @@ export function makeFrameGovernor(onDowngrade: (q: RenderQuality) => void) {
     if (deltaMs > 500) return;
     average += (deltaMs - average) / 12;
     if (++seen < SAMPLE) return;
-    if (average > SLOW_FRAME_MS) {
+    seen = 0;
+    if (average <= LENT_MS) return;
+    // Très lent : inutile de passer par les marches intermédiaires.
+    if (average > TRES_LENT_MS || marche >= 2) {
       done = true;
       known = true;
       onDowngrade(reduced());
-    } else {
-      seen = 0;
+      return;
     }
+    marche++;
+    const f = full();
+    onDowngrade(
+      marche === 1
+        ? { ...f, pixelRatio: Math.min(dpr, 1.5) }
+        : { ...f, shadows: false, pixelRatio: Math.min(dpr, 1.25) },
+    );
+    // La marche change le coût : on repart d'une moyenne neuve.
+    average = 16;
   };
 }

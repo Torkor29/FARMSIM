@@ -257,6 +257,37 @@ const API = "/api";
 /** Durée d'affichage d'un message passager — charte §8.1 #17. */
 const TOAST_MS = 3200;
 
+/**
+ * Ce que dit le décor quand on le touche.
+ *
+ * L'étang, le verger, le rucher et les arbres ne servaient à rien d'autre
+ * qu'à être regardés ; les toucher ne faisait rien. Ils ne changent toujours
+ * rien au jeu, mais ils répondent — quelques phrases qui tournent, pour ne
+ * pas lire deux fois la même.
+ */
+const CURIOSITES: Partial<Record<string, readonly string[]>> = {
+  ETANG: [
+    "L'étang du village. Les grenouilles y chantent dès que le soir tombe.",
+    "Une carpe saute, et l'eau se referme.",
+    "On dit que le vieux Marcel y pêche depuis quarante ans, sans jamais rien prendre.",
+  ],
+  VERGER: [
+    "Le verger communal. Les pommes sont à qui les ramasse.",
+    "Les étourneaux s'envolent des pommiers.",
+    "Ça sent la pomme mûre et l'herbe coupée.",
+  ],
+  RUCHER: [
+    "Le rucher du village. Les abeilles butinent jusqu'à vos champs de colza.",
+    "Ça bourdonne. Mieux vaut ne pas s'approcher davantage.",
+    "Le miel de lavande d'ici se vend au marché du dimanche.",
+  ],
+  ARBRE: [
+    "Les oiseaux s'envolent.",
+    "Un vieux chêne. Il était là avant la ferme.",
+    "Une volée de moineaux quitte les branches.",
+  ],
+};
+
 type SessionResume = {
   awayMs: number;
   awayLabel: string;
@@ -1056,6 +1087,8 @@ export function App() {
     }[]
   >([]);
   /** Retire un chantier de la liste, sans toucher aux autres. */
+  /** Chantiers que l'entreprise a faits à notre place : leur fin ne fait plus rien. */
+  const chantiersRepris = useRef(new Set<string>());
   const clore = useCallback((id: string) => {
     setChantiers((liste) => liste.filter((c) => c.id !== id));
   }, []);
@@ -5219,6 +5252,23 @@ export function App() {
           }),
         },
       );
+      /*
+       * L'entreprise a fait ces cases : notre propre chantier dessus n'a plus
+       * d'objet.
+       *
+       * Lancer un chantier puis appeler l'entreprise dans la seconde laissait
+       * tourner le minuteur du premier jusqu'au bout, sur un champ déjà fait.
+       * On l'annule (le gazole revient à la cuve), son bandeau s'en va, et sa
+       * fin ne déclenchera plus rien.
+       */
+      for (const c of chantiers) {
+        if (c.parcelId !== activeParcelId) continue;
+        if (!c.cells.some((k) => workCells.some((w) => w.x === k.x && w.y === k.y))) continue;
+        chantiersRepris.current.add(c.id);
+        clore(c.id);
+        stopWork(c.id);
+        void api(`/jobs/${c.id}/cancel`, { method: "POST", body: JSON.stringify({ userId: player.id }) }).catch(() => undefined);
+      }
       const tons = r.totalTons ? ` · ${r.totalTons.toFixed(2)} t` : "";
       flashToast(`C’est fait : ${WORK_LABELS[contractorOffer.work]} ×${r.cells}${tons} · −${r.cost} €`);
       setSelectedCells([]);
@@ -5571,6 +5621,11 @@ export function App() {
           { jobMs: chantierOuvert.durationMs - arrivee, delayMs: arrivee },
         );
         await attendreChantier(chantierOuvert.id, chantierOuvert.endsAt);
+        // Repris par l'entreprise pendant l'attente : il n'y a plus rien à faire.
+        if (chantiersRepris.current.has(chantierOuvert.id)) {
+          chantiersRepris.current.delete(chantierOuvert.id);
+          return;
+        }
       }
       if (plantCrop) {
         const crop = plantCrop;
@@ -7446,6 +7501,13 @@ export function App() {
                   // bourse des chantiers l'a absorbé.
                   setSheet(null);
                   setShowEta(true);
+                } else {
+                  // Le décor répond : un mot, un son, des oiseaux qui s'envolent.
+                  const mots = CURIOSITES[genre];
+                  if (mots) {
+                    jouerSon(genre === "ETANG" ? "eau" : genre === "RUCHER" ? "decouverte" : "plante");
+                    flashToast(mots[Math.floor(Math.random() * mots.length)]!);
+                  }
                 }
               }}
               onOwnedCellClick={(parcelId, x, y, mods) => {
@@ -9453,12 +9515,8 @@ export function App() {
           ) : null}
           {moreOpen && (
             <nav className="tab-drawer" aria-label="Panneaux">
-              <MenuClose
-                onClose={() => {
-                  setMoreOpen(false);
-                  setSheet(null);
-                }}
-              />
+              {/* Pas de croix ici : la case « Fermer » de la barre et le
+                  voile font déjà ce geste, et la croix flottait par-dessus. */}
               {SHEET_TABS.map((t, i) => {
                 const disabled = t.key === "HERD" && !barnsFerme.length;
                 const badge = tabBadge(alerts, t.key);

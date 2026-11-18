@@ -78,6 +78,7 @@ import { DecorJoueur, occupantsDeco } from "./decor-joueur";
 import type { ArticleDeco, Decoration } from "@farmsim/shared";
 import { MODELES_DISPONIBLES, poserArbreForge } from "./modeles-decor";
 import { createCropField } from "./crop-field";
+import { creerVieCampagne, type VieCampagne } from "./vie-campagne";
 import type { CropShape } from "./crop-shapes";
 import { attachStudioEnvironment } from "./machine-kit";
 import {
@@ -355,7 +356,7 @@ type Props = {
    * Un lieu du village touché dans le paysage : la coopérative, la
    * concession ou la mairie. Chacun ouvre ce qu'il abrite.
    */
-  onLieuClick?: (genre: GenreLieu) => void;
+  onLieuClick?: (genre: GenreLieu | "ARBRE") => void;
   /**
    * Le siège de l'exploitation : la parcelle où est la cour.
    *
@@ -1490,6 +1491,18 @@ export function IsoFarmView({
     // PCFSoftShadowMap est déprécié depuis r185 : le renderer le remplace de
     // toute façon par PCFShadowMap en émettant un avertissement.
     renderer.shadowMap.type = THREE.PCFShadowMap;
+    /*
+     * Les ombres se recalculent une image sur trois.
+     *
+     * La passe d'ombres redessine toute la scène — toutes les parcelles, tous
+     * les bâtiments — à chaque image : elle doublait le coût d'une image. Le
+     * soleil est fixe, la carte d'ombres ne dépend donc pas de la caméra ;
+     * seuls les engins et les bêtes qui bougent la font changer, et vingt
+     * mises à jour par seconde suffisent à leurs ombres.
+     */
+    renderer.shadowMap.autoUpdate = false;
+    renderer.shadowMap.needsUpdate = true;
+    let imageOmbre = 0;
     el.appendChild(renderer.domElement);
 
     const plowedMap = makeFurrowMap();
@@ -1577,6 +1590,10 @@ export function IsoFarmView({
     scene.add(decorJoueur.group);
     decorJoueurRef.current = decorJoueur;
     let campagne: Campagne | null = null;
+    /** Oiseaux, passants, ombres de nuages : voir `vie-campagne`. */
+    let vie: VieCampagne | null = null;
+    /** L'heure de scène de la dernière image, pour dater une envolée au clic. */
+    let tScene = 0;
     let campagneCle = "";
     /** Les parcelles du voisinage précédent, et celles qui étaient déjà au joueur. */
     let dejaVus: Set<string> | null = null;
@@ -1669,7 +1686,10 @@ export function IsoFarmView({
     // Sur une machine qui peine, on éclaircit le semis plutôt que d'appauvrir
     // la forme du brin : un champ moins dru reste un champ, un champ en
     // bâtonnets n'en est plus un.
-    const cropField = createCropField(400, quality.shadows ? 1 : 0.62);
+    // Le budget de brins tient l'image légère quand toutes les parcelles sont
+    // semées : 4 500 brins au plus, 2 500 en sobre. Plus bas, le colza perdait
+    // visiblement ses fleurs (comparé à l'écran, avant et après).
+    const cropField = createCropField(400, quality.shadows ? 1 : 0.62, quality.shadows ? 4500 : 2500);
     world.add(cropField.object);
     /**
      * Matériaux de culture indexés par couleur. Les cases ne prennent qu'une
@@ -2769,6 +2789,7 @@ export function IsoFarmView({
           dejaMiens = new Set(voisins.filter((v) => v.statut === "MOI").map((v) => v.id));
         }
         campagne?.dispose();
+        vie?.dispose();
         campagneGroup.clear();
         const siege = tailleSiege(gw, gh);
         campagne = createCountryside({
@@ -2825,6 +2846,13 @@ export function IsoFarmView({
           y: CAMPAGNE_Y,
         });
         campagneGroup.add(campagne.object);
+        vie = creerVieCampagne({
+          plan: campagne.plan,
+          y: CAMPAGNE_Y,
+          yOmbres: TILE_TOP + 0.5,
+          sobre: !quality.shadows,
+        });
+        campagneGroup.add(vie.object);
         decorJoueur.setTerrain(repere, [...campagne.plan.durs, ...occupantsCampagne()]);
         /*
          * Où la campagne se façonne : partout à portée, hors de l'île, sauf
@@ -3184,7 +3212,10 @@ export function IsoFarmView({
         const b = dataRef.current.bornes;
         domaine3d.majTerrain(
           {
-            bornes: b ?? { minX: 0, minY: 0, maxX: gw, maxY: gh },
+            // Toutes ses parcelles dessinées ensemble : les bornes englobent
+            // aussi les chemins et les champs des voisins qui les séparent. La
+            // friche et la limite du domaine restent celles du siège.
+            bornes: dataRef.current.fricheDans ?? b ?? { minX: 0, minY: 0, maxX: gw, maxY: gh },
             cells: cs.map((c) => ({ x: c.x, y: c.y, sol: c.sol ?? "CHAMP", revetement: c.revetement ?? null, kind: c.kind, forme: c.forme ?? 0, niveau: c.niveau ?? 0, boiseDepuis: c.boiseDepuis ?? null, fleurie: c.fleurie ?? false })),
             amenagements: dataRef.current.amenagements,
             floraison: dataRef.current.floraison,
@@ -3594,6 +3625,45 @@ export function IsoFarmView({
         if (genre && lieuUtile(genre)) return genre;
       }
       return null;
+    }
+
+    /**
+     * Un élément du décor sous le doigt : un lieu d'agrément, ou un arbre.
+     *
+     * Rien ne répondait hors des champs et des trois commerces : on touchait
+     * l'étang, un pommier, et l'écran restait muet. Ces touchers ne font rien
+     * au jeu ; ils disent seulement que le monde est là.
+     */
+    const planSol = new THREE.Plane(new THREE.Vector3(0, 1, 0), -CAMPAGNE_Y);
+    const pointSol = new THREE.Vector3();
+    function raycastCuriosite(arbres: boolean): { genre: GenreLieu | "ARBRE"; x: number; z: number } | null {
+      if (!campagne) return null;
+      raycaster.setFromCamera(pointer, camera);
+      const village = campagne.object.getObjectByName("campagne-lieux");
+      if (village) {
+        for (const hit of raycaster.intersectObject(village, true)) {
+          let o: THREE.Object3D | null = hit.object;
+          while (o && !o.userData.genre) o = o.parent;
+          const genre = o?.userData.genre as GenreLieu | undefined;
+          if (genre && !lieuUtile(genre)) {
+            const l = campagne.plan.lieux.find((x) => x.genre === genre);
+            return { genre, x: l?.x ?? hit.point.x, z: l?.z ?? hit.point.z };
+          }
+        }
+      }
+      if (!arbres || !raycaster.ray.intersectPlane(planSol, pointSol)) return null;
+      // Un arbre se touche par sa couronne, qui est plus haut que son pied à
+      // l'écran : on cherche autour du point du sol, un peu vers le haut.
+      let proche: { x: number; z: number } | null = null;
+      let dMin = 1.6;
+      for (const a of campagne.plan.arbres) {
+        const d = Math.hypot(a.x - pointSol.x, a.z - pointSol.z);
+        if (d < dMin) {
+          dMin = d;
+          proche = a;
+        }
+      }
+      return proche ? { genre: "ARBRE", x: proche.x, z: proche.z } : null;
     }
 
     function raycastParcelle(): { voisin: VoisinReel; x: number; y: number } | null {
@@ -4060,8 +4130,21 @@ export function IsoFarmView({
         onLieuRef.current?.(lieu);
         return;
       }
+      // Le décor répond lui aussi : l'étang, le verger, le rucher, un arbre.
+      const reagir = (c: { genre: GenreLieu | "ARBRE"; x: number; z: number }) => {
+        if (c.genre !== "ETANG") vie?.envol(c.x, c.z, tScene);
+        onLieuRef.current?.(c.genre);
+      };
+      const curiosite = raycastCuriosite(false);
+      if (curiosite) return reagir(curiosite);
       const touche = raycastParcelle();
-      if (!touche) return;
+      if (!touche) {
+        // Ni champ ni lieu : un arbre, peut-être. Après les champs, pour
+        // qu'un arbre en lisière ne prenne jamais le toucher d'une parcelle.
+        const arbre = raycastCuriosite(true);
+        if (arbre) reagir(arbre);
+        return;
+      }
       /*
        * Une de ses propres parcelles : on y travaille, on n'ouvre pas de fiche.
        *
@@ -4312,6 +4395,7 @@ export function IsoFarmView({
       quality = next;
       renderer.setPixelRatio(next.pixelRatio);
       renderer.shadowMap.enabled = next.shadows;
+      renderer.shadowMap.needsUpdate = true;
       sun.castShadow = next.shadows;
       scene.traverse((o) => {
         const mats = (o as Partial<THREE.Mesh>).material;
@@ -4431,6 +4515,8 @@ export function IsoFarmView({
           elastique(view.panZ, bornesVue.zMin, bornesVue.zMax) + ileMonde.z,
         );
         campagne.update(t);
+        tScene = t;
+        vie?.update(t, ambianceDuMoment.lampes);
       }
       decorJoueur.update(t);
 
@@ -5200,7 +5286,21 @@ export function IsoFarmView({
         mesh.position.y = TILE_TOP + py + Math.abs(Math.sin(t * (worker.working ? 8 : 2.2))) * (worker.working ? 0.04 : 0.015);
       }
 
+      if (renderer.shadowMap.enabled) {
+        imageOmbre = (imageOmbre + 1) % 3;
+        if (imageOmbre === 0) renderer.shadowMap.needsUpdate = true;
+      }
       renderer.render(scene, camera);
+      // Pour les essais : la scène, pour compter ce qui pèse.
+      (window as unknown as { __scene?: unknown }).__scene = scene;
+      // Pour les essais : le coût de l'image (appels de dessin, triangles).
+      (window as unknown as { __rendu?: unknown }).__rendu = {
+        appels: renderer.info.render.calls,
+        triangles: renderer.info.render.triangles,
+        geometries: renderer.info.memory.geometries,
+        ombres: renderer.shadowMap.enabled,
+        resolution: renderer.getPixelRatio(),
+      };
     }
     tick();
 
@@ -5251,6 +5351,8 @@ export function IsoFarmView({
       // Sans cela, chaque changement de parcelle en laissait un jeu derrière.
       campagne?.dispose();
       campagne = null;
+      vie?.dispose();
+      vie = null;
       scene.remove(campagneGroup);
       clearWorkVehicle();
       // L'engin qui rentrait au garage n'appartient plus à `workRig` : sans
