@@ -8276,3 +8276,7 @@ button.tiny {
     display: none;
   }
 }
+
+/* Tiroir ou panneau ouvert au téléphone : la pastille du calendrier se range,
+   elle chevauchait la dernière case du tiroir (relevé du 18 novembre). */
+.game-stage.mobile:has(.sheet-scrim) .calendrier-ouvrir { display: none; }

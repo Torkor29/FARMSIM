@@ -9515,12 +9515,8 @@ export function App() {
           ) : null}
           {moreOpen && (
             <nav className="tab-drawer" aria-label="Panneaux">
-              <MenuClose
-                onClose={() => {
-                  setMoreOpen(false);
-                  setSheet(null);
-                }}
-              />
+              {/* Pas de croix ici : la case « Fermer » de la barre et le
+                  voile font déjà ce geste, et la croix flottait par-dessus. */}
               {SHEET_TABS.map((t, i) => {
                 const disabled = t.key === "HERD" && !barnsFerme.length;
                 const badge = tabBadge(alerts, t.key);
