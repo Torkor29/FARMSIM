@@ -117,18 +117,26 @@ export function EmployeesPanel({
         </header>
       )}
 
-      <p className="emp-regle">
-        Un chantier de plus demande un attelage libre <strong>et</strong> quelqu’un pour le
-        conduire. Vous comptez pour un conducteur : avec {auChamp} employé(s) aux champs, vous
-        pouvez mener <strong>{1 + auChamp} chantier(s)</strong> à la fois.
+      {/* L'essentiel en une ligne, le détail sur demande : quinze lignes de
+          règles précédaient le premier candidat, et sur un téléphone on ne
+          voyait plus personne à embaucher. */}
+      <p className="emp-resume">
+        <strong>{1 + auChamp} chantier(s)</strong> à la fois · élevage{" "}
+        <strong>+{Math.round(herdBonus * 100)} %</strong>
       </p>
-
-      <p className="emp-regle">
-        À l’élevage : <strong>+{Math.round(herdBonus * 100)} % de lait, d’œufs et de laine</strong> actuellement.
-        Le meilleur niveau affecté à ce poste compte ; les bonus ne s’additionnent pas.
-        L’employé vend automatiquement le surplus des fumières proches du débordement et conserve la moitié de leur capacité.
-        Nourrir, pailler et collecter les produits restent vos actions.
-      </p>
+      <details className="emp-details">
+        <summary>Comment ça marche</summary>
+        <p className="emp-regle">
+          Un chantier de plus demande un attelage libre <strong>et</strong> quelqu’un pour le
+          conduire. Vous comptez pour un conducteur : avec {auChamp} employé(s) aux champs, vous
+          pouvez mener <strong>{1 + auChamp} chantier(s)</strong> à la fois.
+        </p>
+        <p className="emp-regle">
+          À l’élevage, le meilleur niveau affecté à ce poste compte ; les bonus ne s’additionnent pas.
+          L’employé vend automatiquement le surplus des fumières proches du débordement et conserve la moitié de leur capacité.
+          Nourrir, pailler et collecter les produits restent vos actions.
+        </p>
+      </details>
       <section className="emp-bloc">
         <h4>
           L’équipe <span className="emp-compte">{employees.length}</span>

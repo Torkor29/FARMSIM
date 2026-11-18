@@ -8146,6 +8146,9 @@ button.tiny {
   cursor: pointer;
   color: var(--ink-soft);
   padding: 0 0.3rem;
+  /* 18 px de large : la croix se manquait au doigt. */
+  min-width: 44px;
+  min-height: 44px;
 }
 .deco-rayons {
   display: flex;
@@ -8280,3 +8283,10 @@ button.tiny {
 /* Tiroir ou panneau ouvert au téléphone : la pastille du calendrier se range,
    elle chevauchait la dernière case du tiroir (relevé du 18 novembre). */
 .game-stage.mobile:has(.sheet-scrim) .calendrier-ouvrir { display: none; }
+
+/* Un panneau ouvert au téléphone : le bandeau « À faire » se range aussi —
+   il restait coincé entre le panneau et la barre du bas. */
+.game-stage.mobile:has(.sheet-scrim) .quest-chip { display: none; }
+.emp-resume { margin: 0 0 0.4rem; font-size: 0.9rem; }
+.emp-details { margin-bottom: 0.8rem; }
+.emp-details summary { cursor: pointer; font-weight: 700; color: var(--ink-soft); font-size: 0.85rem; min-height: 32px; display: flex; align-items: center; }
