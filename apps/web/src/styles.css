@@ -3370,14 +3370,24 @@ html.playing .build-confirm { position: fixed; }
     to { transform: translateY(0); opacity: 1; }
   }
 
+  /*
+   * Le voile est un bouton (une tape hors du tiroir le referme). Laissé à
+   * son apparence native, le navigateur le peignait en bouton : un rectangle
+   * blanc opaque sur tout l'écran, carte et barres comprises — et la teinte
+   * voulue était écrasée par une règle de bouton plus précise. On lui retire
+   * toute apparence, et la teinte est posée à la spécificité du jeu.
+   */
+  .game-stage .sheet-scrim,
   .sheet-scrim {
+    -webkit-appearance: none;
+    appearance: none;
     display: block;
     position: fixed;
     inset: 0;
     z-index: 11;
     border: 0;
     padding: 0;
-    background: rgba(24, 44, 38, 0.28);
+    background: rgba(24, 44, 38, 0.28) !important;
     /* Pas de flou : flouter toute la carte 3D derrière un menu coûte cher sur
        un téléphone, et le navigateur de test la rendait toute blanche. */
     animation: veil-in var(--veil-ms) var(--menu-ease) both;
