@@ -3453,7 +3453,8 @@ html.playing .build-confirm { position: fixed; }
     bottom: calc(0.35rem + env(safe-area-inset-bottom));
   }
   .dock-tool { min-height: 48px; }
-  .dock-label { font-size: 0.64rem; }
+  /* 9 px mesurés : illisibles sur un téléphone. 11 px, le plancher d'iOS. */
+  .dock-label { font-size: 11px; }
   .chip { min-height: 44px; }
   .action { min-height: 44px; padding: 0.5rem 0.7rem; }
 
@@ -6580,6 +6581,37 @@ button.tiny {
   mask-image: none;
   row-gap: 0.28rem;
 }
+/*
+ * Les cultures sur une rangée qui défile — et cette fois, ça se voit.
+ *
+ * Douze cultures enroulées faisaient trois rangées : le tiroir « Semer »
+ * cachait 40 % de la carte (relevé du 18 novembre, 390 × 844). Le défilement
+ * avait été abandonné parce qu'il cachait le pinceau et l'action ; ceux-ci
+ * vivent maintenant dans la rangée du bas, toujours visible. Ne défilent que
+ * les cultures, de saison en tête, avec un voile et une flèche pour dire
+ * qu'il y a une suite.
+ */
+.game-stage.mobile .dock-chips:not(.dock-chips-end) {
+  flex-wrap: nowrap;
+  overflow-x: auto;
+  -webkit-mask-image: linear-gradient(90deg, #000 calc(100% - 2.2rem), transparent);
+  mask-image: linear-gradient(90deg, #000 calc(100% - 2.2rem), transparent);
+  padding-right: 1.6rem;
+  position: relative;
+}
+.game-stage.mobile .dock-tray { position: relative; }
+.game-stage.mobile .dock-tray::after {
+  content: "›";
+  position: absolute;
+  right: 0.55rem;
+  top: 0.55rem;
+  font-size: 1.3rem;
+  font-weight: 800;
+  color: var(--ink-soft);
+  pointer-events: none;
+}
+/* Outil ouvert : le bandeau « À faire » se range. */
+.game-stage.mobile .quest-chip.range { display: none; }
 .game-stage.mobile .dock-chips-end {
   grid-column: 1;
   justify-content: flex-start;
