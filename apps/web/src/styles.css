@@ -8290,3 +8290,9 @@ button.tiny {
 .emp-resume { margin: 0 0 0.4rem; font-size: 0.9rem; }
 .emp-details { margin-bottom: 0.8rem; }
 .emp-details summary { cursor: pointer; font-weight: 700; color: var(--ink-soft); font-size: 0.85rem; min-height: 32px; display: flex; align-items: center; }
+
+/* Relevé du 18 novembre, 390 px : la barre du haut écrivait « Comp. » et la
+   saison en 9 px, et la croix des panneaux faisait 36 px de large. */
+.game-stage.mobile .skills-tab-label.court,
+.game-stage.mobile .saison-nom { font-size: 11px; }
+.game-stage.mobile .menu-close { min-width: 44px; min-height: 44px; }
